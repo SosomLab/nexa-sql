@@ -243,7 +243,7 @@ impl App {
 
     /// 검색 시작 — 열린 탭 본문 · 활성 파일 폴더 · 설정을 모아 패널에 넘긴다.
     pub(crate) fn start_search(&mut self) {
-        let excludes: Vec<String> = self
+        let mut excludes: Vec<String> = self
             .settings
             .get("search.excludes")
             .unwrap_or("")
@@ -252,6 +252,16 @@ impl App {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect();
+        // ★ D-260(사용자 10-07): Ctrl+P·프로젝트 필터의 제외 폴더(`project.exclude`)를 파일 검색에도 — gitignore 폴더 패턴 `이름/`
+        //   (어느 깊이든 그 이름의 폴더) · 검색 로그엔 무시 규칙으로 걸러진 것과 같이 보인다.
+        for n in
+            super::goto::exclude_names(self.settings.get(super::goto::EXCLUDE_KEY).unwrap_or(""))
+        {
+            let pat = format!("{n}/");
+            if !excludes.contains(&pat) {
+                excludes.push(pat);
+            }
+        }
         // 범위 상자가 비었을 때의 기본 = 작업 모드별(사용자 09-23): 파일 모드 = 열린 파일만 · 폴더 모드 = + 그 폴더 이하 ·
         //   프로젝트 모드 = + 프로젝트 폴더(파일이 있는 곳) + 프로젝트에 추가한 폴더.
         let mut default_roots: Vec<PathBuf> = Vec::new();
@@ -268,6 +278,19 @@ impl App {
                     }
                 }
             }
+        }
+        // ★ D-260(협업 bin49 f): 기본 루트 **자체**가 제외 이름(예 `target`)을 품으면 뺀다 — gitignore 패턴은 루트 아래만 보기 때문.
+        //   사용자가 범위 상자에 직접 적은 루트는 그대로(명시 = 뜻).
+        {
+            let excl = super::goto::exclude_names(
+                self.settings.get(super::goto::EXCLUDE_KEY).unwrap_or(""),
+            );
+            default_roots.retain(|r| {
+                !r.components().any(|c| {
+                    let s = c.as_os_str().to_string_lossy();
+                    excl.iter().any(|n| *n == s)
+                })
+            });
         }
         let ctx = SearchCtx {
             tabs: self.editors.tab_texts(),

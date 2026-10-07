@@ -37,6 +37,24 @@ pub enum Command {
     Undefine {
         names: Vec<String>,
     },
+    /// ★ `VAR x DROP [GLOBAL]`(사용자 10-07 · docs/63 §11-4): 바인드 변수 하나를 지운다 — 탭 층에 있으면 탭 층(가리던 글로벌이 다시 보인다) ·
+    /// 없으면 공유 층 · `GLOBAL`이면 글로벌 층도. 프로필 층은 못 지운다. `UNDEFINE`은 `&치환` 변수용으로 그대로.
+    VarDrop {
+        name: String,
+        global: bool,
+    },
+    /// ★ `VAR CLEAR [GLOBAL|ALL]`: 현재 탭 층의 바인드 변수 전부 · `GLOBAL` = 글로벌 층도 · `ALL` = 공유 층까지(프로필 층은 늘 남는다).
+    VarClear {
+        global: bool,
+        shared: bool,
+    },
+    /// ★ 선언 + 층 지정 한 줄(사용자 10-07): `VAR x NUMBER = 1 GLOBAL` · `VAR x GLOBAL NUMBER = 1` · `VAR x VARCHAR2(30) SHARE`.
+    VarDeclareIn {
+        name: String,
+        ty: VarType,
+        init: Option<Value>,
+        layer: crate::vars::Layer,
+    },
     /// `COL[UMN] 열 NEW_V[ALUE] 변수`(SQL*Plus · T-153) — 그 열의 **마지막 행 값**을 치환 변수에 넣는다(`&변수`로 다음 문장에서 쓴다).
     /// `COLUMN 열 CLEAR` = 해제. 그 밖의 옵션(`FORMAT` · `HEADING` …)은 표시용이라 받아 주고 무시한다(서버로 보내지 않는다).
     Column {
@@ -458,6 +476,23 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
             init: None,
         });
     }
+    // ★ `VAR CLEAR [GLOBAL|ALL]`(사용자 10-07) — 이름 자리의 CLEAR는 명령(변수 이름이 CLEAR인 드문 경우는 `VAR :CLEAR`로).
+    {
+        let up = rest.to_ascii_uppercase();
+        let mut it = up.split_whitespace();
+        if it.next() == Some("CLEAR") {
+            let (global, shared) = match it.next() {
+                None => (false, false),
+                Some("GLOBAL") => (true, false),
+                Some("ALL") => (true, true),
+                Some(o) => return Err(format!("VARIABLE CLEAR: 알 수 없는 옵션 {o}")),
+            };
+            if it.next().is_some() {
+                return Err("VARIABLE CLEAR: 옵션이 너무 많습니다".into());
+            }
+            return Ok(Command::VarClear { global, shared });
+        }
+    }
     let (name, after) = {
         let n = rest
             .chars()
@@ -477,7 +512,25 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
             init: None,
         });
     }
-    match after.to_ascii_uppercase().as_str() {
+    let after_norm = after
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    match after_norm.as_str() {
+        // ★ 범위 제거(사용자 10-07): 탭(→ 공유) 층의 이 이름 · GLOBAL = 글로벌 층까지.
+        "DROP" | "REMOVE" | "DELETE" => {
+            return Ok(Command::VarDrop {
+                name: bare,
+                global: false,
+            })
+        }
+        "DROP GLOBAL" | "REMOVE GLOBAL" | "DELETE GLOBAL" => {
+            return Ok(Command::VarDrop {
+                name: bare,
+                global: true,
+            })
+        }
         "SHARE" | "SHARED" => {
             return Ok(Command::VarScope {
                 name: bare,
@@ -498,18 +551,55 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
         }
         _ => {}
     }
-    let (ty_text, init_text) = match after.find('=') {
-        Some(i) => (after[..i].trim(), Some(after[i + 1..].trim())),
-        None => (after, None),
+    // ★ 층 낱말이 타입 앞/뒤에 붙으면 "선언 + 층 지정"(사용자 10-07 "Global 선언하면서 자료형도").
+    let (decl, layer_in) = split_layer_word(after);
+    let (ty_text, init_text) = match decl.find('=') {
+        Some(i) => (decl[..i].trim(), Some(decl[i + 1..].trim())),
+        None => (decl.as_str(), None),
     };
-    let ty =
-        VarType::parse(ty_text).ok_or_else(|| format!("VARIABLE: 알 수 없는 타입 '{ty_text}'"))?;
+    // 타입 생략 + 값(`VAR x = 10` · `VAR x GLOBAL = 10`) = Auto(값에서 타입 추론 · Golden 관용 · 사용자 10-07).
+    let ty = if ty_text.is_empty() && init_text.is_some() {
+        VarType::Auto
+    } else {
+        VarType::parse(ty_text).ok_or_else(|| format!("VARIABLE: 알 수 없는 타입 '{ty_text}'"))?
+    };
     let init = init_text.map(parse_literal).transpose()?;
+    if let Some(layer) = layer_in {
+        return Ok(Command::VarDeclareIn {
+            name: bare,
+            ty,
+            init,
+            layer,
+        });
+    }
     Ok(Command::Variable {
         name,
         ty: Some(ty),
         init,
     })
+}
+
+/// 선언 글의 **첫 낱말 또는 마지막 낱말**이 층 이름(GLOBAL · SHARE/SHARED · LOCAL/TAB)이면 떼어 돌려준다 — 리터럴 안의 낱말(`= 'GLOBAL'`)은
+/// 따옴표 때문에 맞지 않는다. 돌려주는 값 = (층 낱말을 뺀 글, 층).
+fn split_layer_word(s: &str) -> (String, Option<crate::vars::Layer>) {
+    use crate::vars::Layer;
+    let layer_of = |w: &str| match w.to_ascii_uppercase().as_str() {
+        "GLOBAL" => Some(Layer::Global),
+        "SHARE" | "SHARED" => Some(Layer::Shared),
+        "LOCAL" | "TAB" => Some(Layer::Local),
+        _ => None,
+    };
+    let words: Vec<&str> = s.split_whitespace().collect();
+    if words.len() < 2 {
+        return (s.to_string(), None);
+    }
+    if let Some(l) = layer_of(words[0]) {
+        return (words[1..].join(" "), Some(l));
+    }
+    if let Some(l) = layer_of(words[words.len() - 1]) {
+        return (words[..words.len() - 1].join(" "), Some(l));
+    }
+    (s.to_string(), None)
 }
 
 /// 대입 우변이 리터럴이면 값으로. 문자열('…' · ''이스케이프) · 정수 · 실수 · NULL.
@@ -838,6 +928,111 @@ mod tests {
     }
 
     use super::*;
+
+    /// ★ 변수 범위 명령(사용자 10-07): `VAR x DROP [GLOBAL]` · `VAR CLEAR [GLOBAL|ALL]` · 표기 보존 · 틀린 옵션 = 오류.
+    #[test]
+    fn variable_drop_and_clear_commands() {
+        let p = |s: &str| parse_command(s).expect("parse").expect("command");
+        assert_eq!(
+            p("VAR v_Name DROP"),
+            Command::VarDrop {
+                name: "v_Name".into(),
+                global: false
+            }
+        );
+        assert_eq!(
+            p("VARIABLE :x  drop   global"),
+            Command::VarDrop {
+                name: "x".into(),
+                global: true
+            }
+        );
+        assert_eq!(
+            p("VAR CLEAR"),
+            Command::VarClear {
+                global: false,
+                shared: false
+            }
+        );
+        assert_eq!(
+            p("VAR clear GLOBAL"),
+            Command::VarClear {
+                global: true,
+                shared: false
+            }
+        );
+        assert_eq!(
+            p("VAR CLEAR ALL"),
+            Command::VarClear {
+                global: true,
+                shared: true
+            }
+        );
+        assert!(parse_command("VAR CLEAR NOPE").is_err());
+        // ★ 선언 + 층(사용자 10-07): 층 낱말이 앞이든 뒤든 · 리터럴 안의 낱말은 아님.
+        let d = |s: &str| match p(s) {
+            Command::VarDeclareIn {
+                name,
+                ty,
+                init,
+                layer,
+            } => (name, ty, init, layer),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            d("VAR g NUMBER = 10 GLOBAL"),
+            (
+                "g".into(),
+                VarType::Number,
+                Some(Value::Int(10)),
+                crate::vars::Layer::Global
+            )
+        );
+        assert_eq!(
+            d("VAR g GLOBAL VARCHAR2(30)"),
+            (
+                "g".into(),
+                VarType::Varchar2(30),
+                None,
+                crate::vars::Layer::Global
+            )
+        );
+        assert_eq!(
+            d("VAR s VARCHAR2(10) = 'GLOBAL' SHARE").3,
+            crate::vars::Layer::Shared
+        );
+        // ★ 엄격 타입 파싱(사용자 10-07 "VARCHAR2(50) GLOBAL이 VARCHAR2(4000)으로"): 층 낱말은 떼고 길이는 그대로 · 잔여 글·잘못된 길이 = 오류.
+        assert_eq!(d("VAR v VARCHAR2(50) GLOBAL").1, VarType::Varchar2(50));
+        assert_eq!(VarType::parse("VARCHAR2(50) GLOBAL"), None);
+        assert_eq!(VarType::parse("VARCHAR2(abc)"), None);
+        assert_eq!(VarType::parse("VARCHAR2(50"), None);
+        assert_eq!(
+            VarType::parse("VARCHAR2(50 CHAR)"),
+            Some(VarType::Varchar2(50))
+        );
+        assert_eq!(VarType::parse("NUMBER(10,2)"), Some(VarType::Number));
+        assert_eq!(VarType::parse("VARCHAR2"), Some(VarType::Varchar2(4000)));
+        assert!(parse_command("VAR v VARCHAR2(50) GLOBAAL").is_err());
+        // 타입 생략 + 값 = Auto.
+        assert_eq!(
+            d("VAR g GLOBAL = 10"),
+            (
+                "g".into(),
+                VarType::Auto,
+                Some(Value::Int(10)),
+                crate::vars::Layer::Global
+            )
+        );
+        assert!(matches!(
+            p("VAR t VARCHAR2(10) = 'GLOBAL'"),
+            Command::Variable {
+                init: Some(Value::Str(ref v)),
+                ..
+            } if v == "GLOBAL"
+        ));
+        // 종전 뜻은 그대로: `VAR x GLOBAL` = 층 이동.
+        assert!(matches!(p("VAR x GLOBAL"), Command::VarScope { .. }));
+    }
 
     #[test]
     fn server_set_statements_pass_through_and_sqlplus_set_is_command() {

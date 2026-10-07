@@ -338,6 +338,12 @@ const TX_IDLE_ACTION_OPTS: &[(&str, Msg)] = &[
     ("commit", Msg::ValTxIdleCommit),
 ];
 /// 저장하지 않은 탭을 닫을 때.
+/// 부분 결과에 필터를 걸 때(T-285 · D-257): auto = 서버에서 걸러 같은 탭 재조회 · local = 가져온 행만(채움 상한) · ask = 안내.
+const FILTER_SERVER_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValFilterServerAuto),
+    ("local", Msg::ValFilterServerLocal),
+    ("ask", Msg::ValFilterServerAsk),
+];
 /// 조건 바 열 이름 인용(사용자 10-07): needed = 필요할 때만(특수문자·숫자 시작·예약어·대소문자 접힘 규칙 위반) · always = 늘.
 const QUOTE_IDENTS_OPTS: &[(&str, Msg)] = &[
     ("needed", Msg::ValQuoteNeeded),
@@ -2025,6 +2031,23 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // 필터 줄(칩 · × · 77 §2-2 · T-181) — 필터가 있을 때만 한 줄을 차지한다.
+    // ★ 필터 중 자동 페치(T-285 · 사용자 결정 D-257/D-258 10-07 · docs/103 §4).
+    Entry {
+        key: "grid.filter_server",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterServer,
+        desc: Msg::DescGridFilterServer,
+        kind: SettingKind::Choice(FILTER_SERVER_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "grid.filter_fill_pages",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterFillPages,
+        desc: Msg::DescGridFilterFillPages,
+        kind: SettingKind::Int { min: 0, max: 20 },
+        default: "3",
+    },
     Entry {
         key: "grid.filter_strip",
         cat: Msg::CatGridFilter,
@@ -3414,6 +3437,23 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescProjectIndexTtl,
         kind: SettingKind::Int { min: 0, max: 3600 },
         default: "60",
+    },
+    // ★ 폴더 변경 감시(T-293 · D-263 · 10-07): 켬 · 묶음 시간 · 성능 프로필 low = 끔(39 §3 부하원 = 스레드 루트+1 · 유휴 CPU 0).
+    Entry {
+        key: "project.watch",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectWatch,
+        desc: Msg::DescProjectWatch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "project.watch_debounce_ms",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectWatchDebounce,
+        desc: Msg::DescProjectWatchDebounce,
+        kind: SettingKind::Int { min: 50, max: 5000 },
+        default: "400",
     },
     Entry {
         key: "project.exclude",
@@ -4920,7 +4960,8 @@ pub const REGISTRY: &[Entry] = &[
     //   격리 홈에서 on). 종전 `license.gates_dev`(Debug 전용 · Release 늘 켬)에서 이름·뜻이 바뀌었다(RENAMED). HIDDEN.
     Entry {
         key: "license.gates",
-        cat: Msg::CatSession,
+        // ★ 고급 ▸ 내부(사용자 10-07 "개발자/사용자가 볼 수 없어야") — 설정 창에는 고급을 켜도 안 보인다(`INTERNAL_CATEGORIES`).
+        cat: Msg::CatInternal,
         label: Msg::LblLicenseGatesDev,
         desc: Msg::DescLicenseGatesDev,
         kind: SettingKind::Bool,
@@ -4953,7 +4994,8 @@ pub const REGISTRY: &[Entry] = &[
     // 데모(사용자 09-17): 최초 실행 1회 "샘플 데이터(Demo) 만들까요?" 팝업을 띄웠는가(자동 기억 · HIDDEN).
     Entry {
         key: "demo.prompted",
-        cat: Msg::CatLog,
+        // ★ 고급 ▸ 기억된 상태(사용자 10-07 "별도 그룹으로") — 앱이 스스로 적는 값.
+        cat: Msg::CatRemembered,
         label: Msg::LblDemoPrompted,
         desc: Msg::DescDemoPrompted,
         kind: SettingKind::Bool,
@@ -6192,7 +6234,82 @@ pub const REGISTRY: &[Entry] = &[
 /// 키로 항목 찾기.
 #[must_use]
 pub fn entry(key: &str) -> Option<&'static Entry> {
-    REGISTRY.iter().find(|e| e.key == key)
+    REGISTRY
+        .iter()
+        .find(|e| e.key == key)
+        .or_else(|| dynamic_entries().into_iter().find(|e| e.key == key))
+}
+
+/// ★ 동적 항목(사용자 10-07 "모든 확장 = 설정에 사용 여부"): 컴파일 때 모르는 키(설치된 확장마다 `ext.<id>.use`)를 런타임에 등재한다.
+/// 한 번 등재한 항목은 프로세스가 끝날 때까지 산다(같은 키 재등재 = 교체 · 누수 상한 = 서로 다른 키 수).
+static DYNAMIC: std::sync::Mutex<Vec<&'static Entry>> = std::sync::Mutex::new(Vec::new());
+
+/// 동적 항목 등재(같은 키는 교체). `Entry.key`는 [`ext_use_key`]처럼 interned `&'static str`이어야 한다.
+pub fn register_dynamic(entries: Vec<Entry>) {
+    let mut v = DYNAMIC
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for e in entries {
+        if let Some(slot) = v.iter_mut().find(|x| x.key == e.key) {
+            *slot = Box::leak(Box::new(e));
+        } else {
+            v.push(Box::leak(Box::new(e)));
+        }
+    }
+}
+
+/// 지금 등재된 동적 항목 전부(등재 순).
+#[must_use]
+pub fn dynamic_entries() -> Vec<&'static Entry> {
+    DYNAMIC
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// 확장 id → 공통 설정 키 `ext.<id>.use`(`-` → `_` · interned · 같은 id = 같은 포인터).
+#[must_use]
+pub fn ext_use_key(id: &str) -> &'static str {
+    static KEYS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let want = format!("ext.{}.use", id.replace('-', "_"));
+    let mut v = KEYS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(k) = v.iter().find(|k| **k == want) {
+        return k;
+    }
+    let k: &'static str = Box::leak(want.into_boxed_str());
+    v.push(k);
+    k
+}
+
+/// 동적 확장 분류(확장 이름 분류 · [`Msg::Dyn`]) ↔ 확장 id — [`EXTENSION_CATEGORIES`]와 합쳐 [`extension_categories`]로 본다.
+static DYN_EXT_CATS: std::sync::Mutex<Vec<(Msg, &'static str)>> = std::sync::Mutex::new(Vec::new());
+
+/// 동적 확장 분류 등재(같은 id = 분류 교체).
+pub fn register_extension_category(cat: Msg, id: &str) {
+    let mut v = DYN_EXT_CATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(slot) = v.iter_mut().find(|(_, i)| *i == id) {
+        slot.0 = cat;
+    } else {
+        v.push((cat, Box::leak(id.to_string().into_boxed_str())));
+    }
+}
+
+/// 확장이 소유한 분류 전부 = 정적([`EXTENSION_CATEGORIES`]) + 동적.
+#[must_use]
+pub fn extension_categories() -> Vec<(Msg, &'static str)> {
+    let mut out: Vec<(Msg, &'static str)> = EXTENSION_CATEGORIES.to_vec();
+    out.extend(
+        DYN_EXT_CATS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .copied(),
+    );
+    out
 }
 
 /// ★ 설정 트리(DBeaver Preferences 차용 · 사용자 09-15) — 그룹 → 카테고리 순서. 설정 화면(T-39) 사이드바·`config list` 머리글의 단일 원천.
@@ -6278,7 +6395,18 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatExtSqlFormatter,
         ],
     ),
+    // ★ 고급(사용자 10-07): 기억된 상태(앱이 스스로 적는 값 · 고급 켜면 보임) · 내부(설정 창에 **절대 안 보임** · `config list all`만).
+    (Msg::GrpAdvanced, &[Msg::CatRemembered, Msg::CatInternal]),
 ];
+
+/// ★ 설정 창에 **보이지 않는** 분류(사용자 10-07 `license.gates`) — 고급 스위치와 무관하게 트리·검색에서 뺀다. CLI `config list all`에는 나온다.
+pub const INTERNAL_CATEGORIES: &[Msg] = &[Msg::CatInternal];
+
+/// 내부 분류의 키인가([`INTERNAL_CATEGORIES`]).
+#[must_use]
+pub fn is_internal(key: &str) -> bool {
+    entry(key).is_some_and(|e| INTERNAL_CATEGORIES.contains(&e.cat))
+}
 
 /// ★ OS별 기본값(사용자 09-17 "OS별 차이를 잘 분석해 기능·UI/UX를 관리"): (키, macOS, Linux). Windows = 레지스트리 `default`.
 /// 텍스트 래스터 5키는 Windows GDI ClearType을 흉내내려 넣은 것(42~44차)이라 macOS에서는 **전부 끈다** — Apple 텍스트는
@@ -6425,6 +6553,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("ui.busy_ring_lap_ms", "ui.busy_ring", Dep::On),
     ("ui.busy_ring_hold_ms", "ui.busy_ring", Dep::On),
     ("ui.busy_ring_done_ms", "ui.busy_ring", Dep::On),
+    ("project.watch_debounce_ms", "project.watch", Dep::On),
     ("tabs.history_max", "tabs.history", Dep::On),
     ("tabs.close_use_history", "tabs.history", Dep::On),
     (
@@ -6576,6 +6705,8 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    // D-256(10-07): 값 목록 상한 폐지 — 키는 옛 설정 파일 호환으로만 남긴다(효과 없음).
+    "grid.filter_values_max",
     "ui.prefs_advanced",
     "probe.dns_cache_secs",
     "license.gates",
@@ -6788,6 +6919,11 @@ pub fn is_advanced(key: &str) -> bool {
 #[must_use]
 pub fn display_order(key: &str) -> (usize, usize, usize, usize) {
     let Some(idx) = REGISTRY.iter().position(|e| e.key == key) else {
+        // 동적 항목(확장 "사용")은 그 분류의 **맨 앞**.
+        if let Some(e) = dynamic_entries().into_iter().find(|e| e.key == key) {
+            let (g, c) = tree_order(e.cat);
+            return (g, c, 0, 0);
+        }
         return (usize::MAX, usize::MAX, usize::MAX, usize::MAX);
     };
     let e = &REGISTRY[idx];
@@ -7210,6 +7346,7 @@ impl Settings {
     pub fn list(&self) -> Vec<(&'static Entry, &str, bool)> {
         REGISTRY
             .iter()
+            .chain(dynamic_entries())
             .map(|e| {
                 (
                     e,

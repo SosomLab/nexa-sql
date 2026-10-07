@@ -2326,6 +2326,12 @@ pub enum Msg {
     DescProjectExclude,
     LblProjectIndexTtl,
     DescProjectIndexTtl,
+    LblProjectWatch,
+    DescProjectWatch,
+    LblProjectWatchDebounce,
+    DescProjectWatchDebounce,
+    StDirWatchUnsupported,
+    StDirWatchRootGone,
     PalHelpFile,
     PalHelpPath,
     PalHelpFileLine,
@@ -2858,6 +2864,15 @@ pub enum Msg {
     LblFetchAllSize,
     DescFetchAllSize,
     GrpExtensions,
+    // ★ 고급 그룹(사용자 10-07): 기억된 상태(자동으로 적히는 값) · 내부(설정 창에 안 보임).
+    GrpAdvanced,
+    CatRemembered,
+    CatInternal,
+    // ★ 모든 확장의 공통 설정 "확장 사용"(사용자 10-07).
+    LblExtUse,
+    DescExtUse,
+    /// ★ 동적 글(런타임 등록 · [`dyn_msg`]) — 확장 이름처럼 컴파일 때 모르는 라벨. 번호 = 등록 순.
+    Dyn(u16),
     CatExtManager,
     CatExtRainbowPairs,
     CatFormat,
@@ -2937,6 +2952,16 @@ pub enum Msg {
     LblGridFilterListMax,
     DescGridFilterListMax,
     LblGridFilterStrip,
+    LblGridFilterServer,
+    DescGridFilterServer,
+    ValFilterServerAuto,
+    ValFilterServerLocal,
+    ValFilterServerAsk,
+    LblGridFilterFillPages,
+    DescGridFilterFillPages,
+    StFilterFillStopped,
+    StFilterServerPromoted,
+    StFilterAskServer,
     DescGridFilterStrip,
     TipFilterClearAll,
     LblFmtMaxKb,
@@ -3373,7 +3398,7 @@ pub enum Msg {
 
 impl Msg {
     /// `[영어, 한국어]` — 한국어 칸이 비면 영어 폴백.
-    const fn row(self) -> [&'static str; 2] {
+    fn row(self) -> [&'static str; 2] {
         match self {
             Msg::PhProfileName => ["Profile name", "프로필 이름"],
             Msg::BtnSave => ["Save", "저장"],
@@ -5788,15 +5813,15 @@ impl Msg {
             Msg::MnLanguageMenu => ["Language", "언어"],
             Msg::LblGridFilterEnabled => ["Result filter", "결과 필터 사용"],
             Msg::DescGridFilterEnabled => ["Turn the result-set filter off to hide every filter menu, the funnel icons and the value list; filters already applied are removed", "끄면 필터 메뉴·깔때기 아이콘·값 목록이 모두 숨고, 걸려 있던 필터도 풀립니다"],
-            Msg::LblGridColTypeIcons => ["Column type icons", "컬럼 유형 표시"],
-            Msg::DescGridColTypeIcons => ["Show a small icon left of each column name for its data type: text (lines), number (#), date (calendar), boolean (check box) - drawn as shapes, same size as the filter funnel. Performance boost mode turns it off", "열 이름 왼쪽에 데이터 유형 아이콘을 보입니다: 글(줄 두 개) · 숫자(#) · 날짜(달력) · 참/거짓(체크 상자) - 도형으로 그리며 크기는 필터 깔때기와 같습니다. 성능 향상 모드에서는 꺼집니다"],
+            Msg::LblGridColTypeIcons => ["Column type badges", "컬럼 유형 표시"],
+            Msg::DescGridColTypeIcons => ["Show a two-letter badge left of each column name (base font -4 px): AZ = text, DT = date/time, 09 = number, ID = ROWID/UUID/IDENTITY, TF = boolean, BI = binary, EX = XML/JSON/other. Color: green = legacy types rarely used today (CHAR, SQL Server TEXT, MONEY, IMAGE ...), blue = common types, red = special (CLOB, TIMESTAMP, decimals, BLOB, spatial ...). Copying a header copies the name only. Performance boost mode turns it off", "열 이름 왼쪽에 2글자 배지를 보입니다(기준 글꼴 -4 px): AZ = 문자 · DT = 일시 · 09 = 숫자 · ID = ROWID/UUID/IDENTITY · TF = 참/거짓 · BI = 이진 · EX = XML/JSON/그 밖. 색: 녹 = 예전엔 흔했지만 지금은 드문 타입(CHAR · SQL Server TEXT · MONEY · IMAGE …) · 파 = 자주 쓰는 일반 타입 · 빨 = 특수 타입(CLOB · TIMESTAMP · 실수 · BLOB · 공간 …). 헤더 복사는 이름만 복사합니다. 성능 향상 모드에서는 꺼집니다"],
             Msg::LblGridFilterFunnel => ["Funnel icon display", "깔때기 아이콘 표시"],
             Msg::DescGridFilterFunnel => ["When to show the funnel at the right of a column header - always, only while the mouse is over that header, or never (use the header's right-click menu). A filtered column always shows a hatched funnel; clicking it opens the value list", "열 머리 오른쪽 깔때기를 언제 보일지 - 항상 · 그 머리 위에 마우스가 있을 때만 · 없음(열 머리 우클릭 메뉴로). 필터가 걸린 열은 늘 빗금 깔때기가 보이며 클릭하면 값 목록이 열립니다"],
             Msg::OptFunnelAlways => ["Always", "항상"],
             Msg::OptFunnelHover => ["On header hover", "헤더 마우스 오버 시"],
             Msg::OptFunnelNone => ["None (right-click menu)", "없음(우클릭 메뉴)"],
             Msg::LblGridFilterValuesMax => ["Value list size", "값 목록 항목 상한"],
-            Msg::DescGridFilterValuesMax => ["How many distinct values the value list popup collects from fetched rows (first appearance order; more values → '… more values')", "값 목록 팝업이 받은 행에서 모으는 고유값 수(처음 나온 순서 · 넘치면 '값이 더 있음')"],
+            Msg::DescGridFilterValuesMax => ["(No effect since D-256: the value list now shows every distinct value of the fetched rows) - kept only so old settings files still load", "(D-256 이후 효과 없음: 값 목록은 가져온 행의 고유값을 전부 보입니다) - 옛 설정 파일 호환용으로만 남김"],
             Msg::LblGridFilterPopupRows => ["Value list rows", "값 목록 표시 행 수"],
             Msg::DescGridFilterPopupRows => ["How many rows the value list popup shows at once - the popup keeps this height while you search (fewer matches leave blank rows; more scroll)", "값 목록 팝업이 한 번에 보이는 행 수 - 검색 중에도 이 높이를 유지합니다(결과가 적으면 빈 줄 · 많으면 스크롤)"],
             Msg::LblGridFilterValuesScope => ["Value list scope", "값 목록 범위"],
@@ -5826,7 +5851,7 @@ impl Msg {
             Msg::CondErrStatement => ["Only a condition (what follows WHERE) is allowed here", "WHERE 뒤에 올 조건식만 쓸 수 있습니다"],
             Msg::CondErrPgCast => ["'::' cast is PostgreSQL-only", "'::' 형 변환은 PostgreSQL 전용입니다"],
             Msg::StCondInvalid => ["Condition not run - {0}", "조건을 실행하지 않았습니다 - {0}"],
-            Msg::VpickMore => ["… more values not listed (limit)", "… 값이 더 있음(상한)"],
+            Msg::VpickMore => ["Based on fetched rows - more rows on the server (fetch more to see their values)", "가져온 행 기준 - 서버에 더 있음(더 가져오면 그 값도 목록에)"],
             Msg::VpickNone => ["No matching values", "일치하는 값 없음"],
             Msg::PalFilterRegex => ["Regular expression (case-insensitive; start with (?-i) to match case) - e.g. ^(A|B)  ^(1|3|8)$", "정규식(대소문자 무시 · (?-i)로 시작하면 구분) - 예: ^(A|B)  ^(1|3|8)$"],
             Msg::PalFilterIn => ["Values separated by , or | (any one matches)", "값 목록 - , 또는 |로 구분(하나라도 같으면 통과)"],
@@ -6179,6 +6204,12 @@ impl Msg {
             Msg::MnLowerCase => ["Lower Case", "소문자로"],
             Msg::MnGotoLine => ["Go to Line…", "줄로 이동…"],
             Msg::MnGotoAnything => ["Goto Anything…", "Goto Anything(탭·파일·명령·심볼)…"],
+            Msg::LblProjectWatch => ["Watch project folders for changes", "프로젝트 폴더 변경 감시"],
+            Msg::DescProjectWatch => ["Watch the project folders with the OS (Windows: ReadDirectoryChangesW) and update the Ctrl+P / filter index and the project tree as soon as files change - only the changed folder is re-read; excluded folders are ignored. Where no backend exists (macOS/Linux for now) the refresh interval applies. Off in the low performance profile", "프로젝트 폴더를 OS 감시(Windows: ReadDirectoryChangesW)로 지켜보다 파일이 바뀌면 Ctrl+P·필터 색인과 프로젝트 트리를 바로 맞춥니다 - 바뀐 폴더만 다시 읽고 제외 폴더는 무시합니다. 백엔드가 없는 OS(지금 macOS·Linux)는 재열거 간격이 대신합니다. 성능 프로필 low에서는 끕니다"],
+            Msg::LblProjectWatchDebounce => ["Change batching (ms)", "변경 묶음 시간(ms)"],
+            Msg::DescProjectWatchDebounce => ["Changes arriving within this window are applied together (a build writing hundreds of files = one update)", "이 시간 안에 온 변경은 한 번에 반영합니다(빌드가 수백 파일을 쓸 때 = 갱신 1회)"],
+            Msg::StDirWatchUnsupported => ["Folder watch is not available on this OS yet - the file index refreshes on its interval", "이 OS에는 아직 폴더 감시가 없습니다 - 파일 색인은 재열거 간격으로 갱신됩니다"],
+            Msg::StDirWatchRootGone => ["Folder watch stopped for {0} (removed or renamed) - falling back to the refresh interval", "{0} 감시를 멈췄습니다(삭제 또는 이름 변경) - 재열거 간격으로 갱신합니다"],
             Msg::LblProjectIndexTtl => ["File index refresh interval (s)", "파일 색인 재열거 간격(초)"],
             Msg::DescProjectIndexTtl => ["Ctrl+P and the project filter share one file index of the project folders. Opening them again within this many seconds reuses it; 0 = re-scan every time. Changes the app knows about (a newly saved file, excluded-folder changes) refresh it immediately; files created outside the app appear after the interval", "Ctrl+P와 프로젝트 필터는 프로젝트 폴더의 파일 색인 하나를 같이 씁니다. 이 시간 안에 다시 열면 그대로 쓰고 · 0 = 열 때마다 다시 읽습니다. 앱이 아는 변경(새 파일 저장 · 제외 폴더 변경)은 즉시 반영되고, 앱 밖에서 만든 파일은 이 간격이 지나면 보입니다"],
             Msg::LblProjectExclude => ["Excluded folder names (Goto Anything index)", "제외 폴더 이름(Goto Anything 색인)"],
@@ -6563,6 +6594,12 @@ impl Msg {
             Msg::StFetchCancelling => ["Stopping after the current batch…", "이번 배치 뒤에 멈춥니다…"],
             Msg::TipFetchCancel => ["Stop fetching (Esc)", "가져오기 중지 (Esc)"],
             Msg::GrpExtensions => ["Extensions", "확장"],
+            Msg::GrpAdvanced => ["Advanced", "고급"],
+            Msg::CatRemembered => ["Remembered state", "기억된 상태"],
+            Msg::CatInternal => ["Internal", "내부"],
+            Msg::LblExtUse => ["Use this extension", "확장 사용"],
+            Msg::DescExtUse => ["Turn this extension on or off (same as the Enable/Disable button in the Extensions panel). Off = its commands, menus and effects are not loaded; its other settings stay as they are", "이 확장을 켜거나 끕니다(확장 패널의 켜기/끄기 버튼과 같음). 끄면 명령·메뉴·효과를 싣지 않습니다. 나머지 설정은 그대로 남습니다"],
+            Msg::Dyn(i) => dyn_row(i),
             Msg::CatExtManager => ["Manager", "관리자"],
             Msg::CatExtRainbowPairs => ["Rainbow Pairs", "Rainbow Pairs"],
             Msg::CatFormat => ["SQL Formatting", "SQL 포맷"],
@@ -6640,6 +6677,16 @@ impl Msg {
             Msg::FilterRegexListCapped => ["regex: {0} → value list stopped at {1} (grid.filter_list_max · fetched rows)", "regex: {0} → 값 목록 {1}개에서 멈춤(grid.filter_list_max · 가져온 행 기준)"],
             Msg::LblGridFilterListMax => ["Regex filter value list limit", "정규식 필터 값 목록 상한"],
             Msg::LblGridFilterStrip => ["Filter chip strip below the condition bar", "조건 입력란 아래 필터 칩 줄"],
+            Msg::LblGridFilterServer => ["Filtering a partially fetched result", "다 가져오지 않은 결과에 필터"],
+            Msg::DescGridFilterServer => ["When the result still has more rows on the server and you add a filter: auto = re-run the query on the server with the filter in the same tab (condition bar and filters combined; failure keeps the current result); local = filter fetched rows only and auto-fetch at most 'Extra pages under filter' more; ask = show a hint once, then behave like local", "서버에 행이 더 남아 있는 결과에 필터를 걸면: auto = 필터를 넣어 같은 탭에서 서버 재조회(조건 입력란 식과 합쳐 한 문장 · 실패하면 지금 결과 유지) · local = 가져온 행만 거르고 '필터 중 추가 페이지'까지만 더 가져옴 · ask = 한 번 안내하고 local처럼"],
+            Msg::ValFilterServerAuto => ["auto (re-query on server)", "자동(서버 재조회)"],
+            Msg::ValFilterServerLocal => ["local (fetched rows only)", "로컬(가져온 행만)"],
+            Msg::ValFilterServerAsk => ["ask", "물어보기"],
+            Msg::LblGridFilterFillPages => ["Extra pages under filter", "필터 중 추가 페이지"],
+            Msg::DescGridFilterFillPages => ["While a local filter leaves the view short of rows, auto-fetch pulls at most this many more pages, then stops with 'based on N fetched rows' (0 = none). Use Fetch next / Fetch all on the result toolbar to continue", "로컬 필터로 화면이 덜 찼을 때 자동 페치가 더 가져올 최대 페이지 수 · 그 뒤에는 '가져온 N행 기준'으로 멈춥니다(0 = 안 가져옴). 더 보려면 결과 도구줄의 다음/전체 가져오기"],
+            Msg::StFilterFillStopped => ["Filter is based on {0} fetched rows - more rows on the server (Fetch next / Fetch all)", "가져온 {0}행 기준 필터 - 서버에 더 있음(다음/전체 가져오기)"],
+            Msg::StFilterServerPromoted => ["Filter applied on the server (re-queried in this tab)", "필터를 서버에서 적용했습니다(이 탭에서 재조회)"],
+            Msg::StFilterAskServer => ["Result is partial - filter applies to fetched rows only. Set 'Filtering a partially fetched result' to auto to re-query on the server", "결과가 일부입니다 - 필터는 가져온 행에만 적용됩니다. 서버에서 거르려면 설정 '다 가져오지 않은 결과에 필터'를 자동으로"],
             Msg::DescGridFilterStrip => ["While a result is filtered, show one chip per filter in a row below the condition bar (above the grid); the × on a chip removes that filter and the × at the right end clears all. Off by default: filtered columns show a striped funnel and filters can be removed from the column header menu or the value list", "결과에 필터가 걸려 있는 동안 조건 입력란 아래(그리드 위) 한 줄에 필터마다 칩 하나를 보인다 - 칩의 ×는 그 필터를 지우고 오른쪽 끝 ×는 전부 지운다. 기본 숨김: 필터 걸린 열은 빗금 깔때기로 보이고 제거는 열 머리 메뉴·값 목록에서도 된다"],
             Msg::TipFilterClearAll => ["Clear all filters", "필터 모두 지우기"],
             Msg::DescGridFilterListMax => ["When a regex filter cannot be expressed in the DBMS (regex or LIKE), the query SQL lists matching values from the fetched rows; collection stops at this many distinct values", "정규식 필터를 DBMS 정규식·LIKE로 옮길 수 없을 때 조회 SQL은 가져온 행의 일치 값을 목록으로 넣는다 · 고유값이 이 개수에 닿으면 모으기를 멈춘다"],
@@ -9285,6 +9332,12 @@ impl Msg {
         Msg::DescProjectExclude,
         Msg::LblProjectIndexTtl,
         Msg::DescProjectIndexTtl,
+        Msg::LblProjectWatch,
+        Msg::DescProjectWatch,
+        Msg::LblProjectWatchDebounce,
+        Msg::DescProjectWatchDebounce,
+        Msg::StDirWatchUnsupported,
+        Msg::StDirWatchRootGone,
         Msg::PalHelpFile,
         Msg::PalHelpPath,
         Msg::PalHelpFileLine,
@@ -9802,6 +9855,11 @@ impl Msg {
         Msg::LblFetchAllSize,
         Msg::DescFetchAllSize,
         Msg::GrpExtensions,
+        Msg::GrpAdvanced,
+        Msg::CatRemembered,
+        Msg::CatInternal,
+        Msg::LblExtUse,
+        Msg::DescExtUse,
         Msg::CatExtManager,
         Msg::CatExtRainbowPairs,
         Msg::CatFormat,
@@ -9880,6 +9938,16 @@ impl Msg {
         Msg::LblGridFilterListMax,
         Msg::DescGridFilterListMax,
         Msg::LblGridFilterStrip,
+        Msg::LblGridFilterServer,
+        Msg::DescGridFilterServer,
+        Msg::ValFilterServerAuto,
+        Msg::ValFilterServerLocal,
+        Msg::ValFilterServerAsk,
+        Msg::LblGridFilterFillPages,
+        Msg::DescGridFilterFillPages,
+        Msg::StFilterFillStopped,
+        Msg::StFilterServerPromoted,
+        Msg::StFilterAskServer,
         Msg::DescGridFilterStrip,
         Msg::TipFilterClearAll,
         Msg::LblFmtMaxKb,
@@ -10322,6 +10390,39 @@ pub fn tr(lang: Lang, msg: Msg) -> &'static str {
 #[must_use]
 pub fn t(msg: Msg) -> &'static str {
     tr(current_lang(), msg)
+}
+
+/// ★ 동적 글 표(사용자 10-07 · 확장 이름 분류): 등록 순 번호 → `[영어, 한국어]`. 한 번 등록한 글은 프로세스가 끝날 때까지 산다(누수 상한 =
+/// 서로 다른 글 수 · 같은 글은 같은 번호).
+static DYN_TEXTS: std::sync::Mutex<Vec<[&'static str; 2]>> = std::sync::Mutex::new(Vec::new());
+
+/// 동적 글을 등록하고 그 [`Msg::Dyn`]을 돌려준다 — 같은 (영어, 한국어)면 같은 번호. 65535개를 넘으면 마지막 번호.
+#[must_use]
+pub fn dyn_msg(en: &str, ko: &str) -> Msg {
+    let mut v = DYN_TEXTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(i) = v.iter().position(|r| r[0] == en && r[1] == ko) {
+        return Msg::Dyn(i as u16);
+    }
+    if v.len() >= usize::from(u16::MAX) {
+        return Msg::Dyn(u16::MAX - 1);
+    }
+    let row: [&'static str; 2] = [
+        Box::leak(en.to_string().into_boxed_str()),
+        Box::leak(ko.to_string().into_boxed_str()),
+    ];
+    v.push(row);
+    Msg::Dyn((v.len() - 1) as u16)
+}
+
+fn dyn_row(i: u16) -> [&'static str; 2] {
+    DYN_TEXTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(usize::from(i))
+        .copied()
+        .unwrap_or(["", ""])
 }
 
 /// 현재 언어 + `{0}` `{1}` … 치환. 없는 자리는 그대로 둔다.

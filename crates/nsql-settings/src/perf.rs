@@ -221,6 +221,8 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("ui.busy_ring", b(Domain::Gfx, "on", "on", "off")),
     // 결과 헤더 유형 아이콘(10-07) — 열마다 도형 그리기 · low = 끔.
     ("grid.col_type_icons", b(Domain::Gfx, "on", "on", "off")),
+    // 프로젝트 폴더 변경 감시(T-293 · 10-07) — 스레드 루트+1 · low = 끔(TTL 폴백).
+    ("project.watch", b(Domain::Cpu, "on", "on", "off")),
     ("editor.caret_blink", b(Domain::Gfx, "on", "on", "off")),
     // 플래시 메시지(09-27 · 유지+페이드 동안 프레임마다 다시 그림 · low = 짧게)
     ("ui.flash_hold_ms", b(Domain::Gfx, "2000", "1000", "300")),

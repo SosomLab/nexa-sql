@@ -601,6 +601,7 @@ impl App {
                     objlink_hot,
                     &objlink_buttons,
                     self.pointer,
+                    self.objlinks.card_pressed,
                     self.settings
                         .get("objlink.tooltip_pos")
                         .unwrap_or("top_right"),

@@ -355,6 +355,13 @@ pub(crate) struct Grid {
     pending_follow: Option<(usize, String)>,
     /// 필터 메뉴 "필터로 서버 재조회"가 남긴 조회용 Query(77 §2-2 · T-181) — 호스트가 새 결과 탭으로 실행(1회성).
     pending_requery: Option<String>,
+    /// ★ 필터 중 자동 페치(T-285 · D-257/258 · 103 §4): 서버 승격 방식 · 채움 상한(페이지) · 남은 채움 수 · 지금 출처가 승격 결과인가.
+    filter_server: FilterServerMode,
+    fill_pages: usize,
+    fill_pages_left: usize,
+    filter_promoted: bool,
+    /// `ask` 안내를 이 결과에서 한 번 했는가.
+    filter_asked: bool,
     /// ★ 술어 결합(T-181): 거짓 = AND(기본 · 전부 맞아야) · 참 = OR(하나만 맞아도) — 투영·조회용 Query·칩 줄이 같이 본다.
     filter_or: bool,
     /// 필터 오류(정규식 컴파일 실패 등 · 1회성).
@@ -371,10 +378,10 @@ pub(crate) struct Grid {
     filter_enabled: bool,
     /// 마우스가 올라간 열 머리(원본 index · hover 모드의 깔때기 자리).
     funnel_hover: Option<usize>,
+    /// ★ 마우스 아래 열 머리(원본 index · 머리 칸 사각형) — 호스트의 열 머리 hover 카드(사용자 10-07 · 편집기 링크 카드와 같은 카드).
+    hdr_hover: Option<(usize, Rect)>,
     /// 호스트가 가져가는 "다시 그려 달라" 깃발(헤더 hover 변화처럼 사건이 없이 그림만 바뀔 때).
     dirty: bool,
-    /// 값 목록 팝업의 고유값 상한(설정 `grid.filter_values_max` · 72 §3).
-    filter_values_max: usize,
     /// 값 목록 팝업의 표시 행 수(설정 `grid.filter_popup_rows` · 고정).
     filter_popup_rows: usize,
     /// 값 목록 범위(설정 `grid.filter_values_scope`): true = **다른 열의 필터를 통과한 행**의 값만(종속 목록 · 기본) · false = 받은 행 전체.
@@ -442,8 +449,10 @@ pub(crate) struct Grid {
     dialect: Dialect,
     /// 조건 바 열 이름 인용 정책(설정 `editor.quote_idents` · true = 항상).
     cond_quote_always: bool,
-    /// ★ 열 머리 유형 아이콘(설정 `grid.col_type_icons` · 성능 향상 모드 = 끔 · 사용자 10-07).
+    /// ★ 열 머리 유형 표시(설정 `grid.col_type_icons` · 성능 향상 모드 = 끔 · 사용자 10-07) — T-301 = 2글자 배지.
     type_icons: bool,
+    /// 열별 배지 캐시(글자 · 색조) — 결과가 바뀌면 비운다(그리기마다 표본을 다시 보지 않게).
+    type_badges: Vec<(&'static str, BadgeTone)>,
     /// SQL 복사의 대상 테이블(실행문에서 추정 · 없으면 `T`).
     source_table: Option<String>,
     /// 실행문 원문(새로고침 · 추가 페치 · COUNT의 근거).
@@ -595,6 +604,11 @@ impl Default for Grid {
             menu_row: None,
             pending_follow: None,
             pending_requery: None,
+            filter_server: FilterServerMode::Auto,
+            fill_pages: 3,
+            fill_pages_left: 3,
+            filter_promoted: false,
+            filter_asked: false,
             filter_or: false,
             pending_error: None,
             mark_hover: None,
@@ -603,8 +617,8 @@ impl Default for Grid {
             funnel_mode: FunnelMode::Always,
             filter_enabled: true,
             funnel_hover: None,
+            hdr_hover: None,
             dirty: false,
-            filter_values_max: 500,
             filter_popup_rows: 12,
             values_scope_others: true,
             fast_override: None,
@@ -640,6 +654,7 @@ impl Default for Grid {
             dialect: Dialect::Oracle,
             cond_quote_always: false,
             type_icons: false,
+            type_badges: Vec::new(),
             source_table: None,
             source_sql: String::new(),
             countable: false,
@@ -775,7 +790,6 @@ impl Grid {
             filter_pick_max: self.filter_pick_max,
             funnel_mode: self.funnel_mode,
             filter_enabled: self.filter_enabled,
-            filter_values_max: self.filter_values_max,
             filter_popup_rows: self.filter_popup_rows,
             values_scope_others: self.values_scope_others,
             cond_on: self.cond_on,
@@ -794,6 +808,9 @@ impl Grid {
             // 10-07 bin47 결함: 새 설정은 여기도 함께(안 그러면 새 탭 그리드만 기본값) — 열 이름 인용 · 유형 아이콘.
             cond_quote_always: self.cond_quote_always,
             type_icons: self.type_icons,
+            filter_server: self.filter_server,
+            fill_pages: self.fill_pages,
+            fill_pages_left: self.fill_pages,
             ..Grid::default()
         };
         g.set_fast_override(self.fast_override);
@@ -979,10 +996,23 @@ impl Grid {
     /// 결과가 도착했을 때 호스트가 알려 준다: 이 결과를 만든 문장(`source_sql`이 된다)과 그것이 조회 문장인가.
     pub(crate) fn set_result_origin(&mut self, stmt: &str, is_query: bool) {
         // 우리가 낸 감싼 문장이 아니면 = 새 실행 → 조건 바와 바탕 문장 초기화.
+        // ★ 비교는 정규화해서(양끝 공백 · 끝 `;`): 분할기가 다듬은 `stmt`와 우리가 낸 글(승격 SQL은 끝에 개행)이 글자 그대로는 달라
+        //   승격 상태가 초기화되던 결함(협업 bin49/50 a2 · `cond.dump last=` 빈 값).
         self.cond_prev_sql = None;
-        if self.cond_last_sql.as_deref() != Some(stmt) {
+        let same = self
+            .cond_last_sql
+            .as_deref()
+            .is_some_and(|l| same_stmt(l, stmt));
+        if !same {
             self.cond_base = None;
             self.cond_last_sql = None;
+            if self.filter_promoted && !self.filters.is_empty() {
+                // 승격 중 다른 새 실행 = 필터도 새 조회 규칙대로 비움.
+                self.filters.clear();
+                self.apply_sort();
+            }
+            self.filter_promoted = false;
+            self.filter_asked = false;
             self.cond.set_text("");
         }
         self.set_source_sql(stmt);
@@ -2357,6 +2387,24 @@ impl Grid {
             self.can_identify(),
             self.edit_status_text().unwrap_or_default()
         ));
+        // 페치 상태(T-285 진단 · 협업 bin50 b1): 자동 페치 조건의 재료 전부.
+        let (_, my) = self.max_scroll();
+        out.push_str(&format!(
+            "fetch more={} fetching={} req={} auto={} at={:?} fill_left={} filters={} promoted={} my={} scroll_y={} row_h={} view_h={} page={}\n",
+            self.more,
+            self.fetching,
+            self.fetch_req.is_some(),
+            self.auto_fetch,
+            self.auto_fetch_at,
+            self.fill_pages_left,
+            self.filters.len(),
+            self.filter_promoted,
+            my,
+            self.scroll_y,
+            self.row_h,
+            self.bounds.h - self.footer_h,
+            self.page_rows
+        ));
         out.push_str(&format!(
             "tools add={} dup={} del={} save={} cancel={} sel={:?}\n",
             self.tb_edit.item_enabled("row.add"),
@@ -2601,6 +2649,14 @@ impl Grid {
         self.fetching = false;
         self.more = more;
         self.sync_fetch_tools();
+        // 채움 카운터(T-285): 필터가 걸린 채 받은 페이지마다 −1 · 0이 되고도 더 있으면 "가져온 N행 기준" 안내(오해 방지 · 43 §9).
+        if !self.filters.is_empty() {
+            self.fill_pages_left = self.fill_pages_left.saturating_sub(1);
+            if self.fill_pages_left == 0 && more {
+                let n = (self.src_rows() + page.rows.len()).to_string();
+                self.status(tf(Msg::StFilterFillStopped, &[&n]));
+            }
+        }
         let Some(rs) = self.rs.as_mut() else {
             return;
         };
@@ -2612,6 +2668,10 @@ impl Grid {
         // 정렬 **또는 필터**가 있으면 새 행에 다시 투영(필터만 있을 때 새 페이지가 걸러지지 않던 결함 · 사용자 09-29).
         if !self.sort_keys.is_empty() || !self.filters.is_empty() {
             self.apply_sort();
+        }
+        // 로컬 채움 연쇄(T-285 · D-258): 아직 상한 안이고 화면이 덜 찼으면 다음 페이지를 바로(이벤트 없이 · 협업 bin49 b1).
+        if !self.filters.is_empty() && more && self.fill_pages_left > 0 {
+            self.clamp();
         }
         self.perf_report = true;
         if self.view != ResultView::Grid {
@@ -3253,7 +3313,7 @@ impl Grid {
             && self.text_job.is_none()
             && self.page_rows > 0
             && ((my > 0 && self.text_scroll.1 >= my - self.row_h.max(1))
-                || (my == 0 && !self.filters.is_empty()))
+                || (my == 0 && !self.filters.is_empty() && self.fill_pages_left > 0))
             && self.auto_fetch_at != Some(self.src_rows())
         {
             let offset = self.src_rows();
@@ -3568,21 +3628,17 @@ impl Grid {
         }
     }
 
-    /// 이 열 머리에 민무늬 깔때기(값 목록 버튼)를 그릴까 — 필터 켜짐 · 표시 방법 · 메뉴 닫힘 · 필터 안 걸림(걸리면 빗금 깔때기).
+    /// 이 열 머리에 민무늬 깔때기(값 목록 버튼)를 그릴까 — 필터 켜짐 · 표시 방법 · 필터 안 걸림(걸리면 빗금 깔때기).
+    /// 🔧 사용자 10-07 "우클릭 메뉴 중 깔때기가 사라짐": 종전엔 `!menu.is_open()`이 always에도 걸렸다(의도 = 메뉴가 열린 동안 hover 변화를
+    /// 차단) → always는 설정대로 늘 · hover만 메뉴 중 숨김(메뉴가 마우스를 가져가 hover가 뜻이 없다).
     fn want_plain_funnel(&self, ci: usize, filtered: bool) -> bool {
         self.filter_enabled
             && !filtered
-            && !self.menu.is_open()
             && match self.funnel_mode {
                 FunnelMode::Always => true,
-                FunnelMode::Hover => self.funnel_hover == Some(ci),
+                FunnelMode::Hover => !self.menu.is_open() && self.funnel_hover == Some(ci),
                 FunnelMode::None => false,
             }
-    }
-
-    /// 값 목록 팝업 고유값 상한(설정 `grid.filter_values_max`).
-    pub(crate) fn set_filter_values_max(&mut self, n: usize) {
-        self.filter_values_max = n.clamp(20, 5000);
     }
 
     /// 값 목록 팝업 표시 행 수(설정 `grid.filter_popup_rows`).
@@ -3593,6 +3649,23 @@ impl Grid {
     /// 값 목록 범위(설정 `grid.filter_values_scope` · `others` = 다른 필터 통과 행 · `all` = 전체).
     pub(crate) fn set_filter_values_scope(&mut self, scope: &str) {
         self.values_scope_others = scope.trim() != "all";
+    }
+
+    /// 설정 `grid.filter_server`(auto | local | ask) — 부분 결과에 필터를 걸 때 서버에서 걸러 다시 조회할지(T-285 · D-257).
+    pub(crate) fn set_filter_server(&mut self, mode: &str) {
+        self.filter_server = FilterServerMode::parse(mode);
+    }
+
+    /// 설정 `grid.filter_fill_pages` — 로컬 필터 중 자동 페치가 더 가져올 최대 페이지 수(T-285 · D-258 · 0 = 안 가져옴).
+    pub(crate) fn set_fill_pages(&mut self, n: usize) {
+        self.fill_pages = n.min(20);
+        self.fill_pages_left = self.fill_pages_left.min(self.fill_pages);
+    }
+
+    /// 자체 시험: 남은 채움 페이지 수.
+    #[cfg(test)]
+    pub(crate) fn fill_pages_left(&self) -> usize {
+        self.fill_pages_left
     }
 
     /// 설정 `grid.col_type_icons` — 열 머리 이름 왼쪽에 유형 아이콘(글/숫자/날짜/참거짓).
@@ -3683,6 +3756,14 @@ impl Grid {
         self.pending_cond_run.take()
     }
 
+    /// ★ 호스트가 걷어 갈 요청이 남아 있는가(페치 · 승격/복귀 재조회 · 재질의) — 입력 사건 없이 생긴 요청(필터 변경 · 페이지 연쇄 ·
+    /// 기동 명령)을 틱에서 수거하기 위한 판정(협업 bin50/51 a2·b1 = `req=true fetching=false`로 멈춰 있던 원인).
+    pub(crate) fn has_pending_requests(&self) -> bool {
+        self.fetch_req.is_some()
+            || self.pending_cond_run.is_some()
+            || self.pending_requery.is_some()
+    }
+
     /// 호스트: 글 상자 우클릭 메뉴 동작(한 번) — `clip_action`으로 잇는다(복사·잘라내기·붙여넣기 · 사용자 10-06).
     pub(crate) fn take_text_edit_ctx(&mut self) -> Option<nexa_ctl::EditCtxAction> {
         self.pending_edit_ctx.take()
@@ -3771,7 +3852,15 @@ impl Grid {
         self.mark_hover = None;
         self.chip_hover = None;
         self.funnel_hover = None;
+        self.hdr_hover = None;
         had
+    }
+
+    /// 마우스 아래 열 머리 — (열 이름, 머리 칸 사각형) · 호스트의 hover 카드 재료(사용자 10-07).
+    pub(crate) fn header_hover(&self) -> Option<(String, Rect)> {
+        let (ci, r) = self.hdr_hover?;
+        let name = self.rs.as_ref()?.columns().get(ci)?.name.clone();
+        Some((name, r))
     }
 
     pub(crate) fn value_pick_mut(&mut self) -> &mut crate::valuepick::ValuePick {
@@ -3799,7 +3888,8 @@ impl Grid {
         if ci >= rs.columns().len() || self.row_h <= 0 {
             return;
         }
-        let max = self.filter_values_max;
+        // ★ D-256(T-284 1단계 · 10-07): 값 목록 = 가져온 행 **전부**(상한 없음 · 팝업은 보이는 행만 그린다 = 길이와 그리기 비용 무관) ·
+        //   "더 있음" = 서버에 아직 안 가져온 행이 있다(부분 결과). 남은 단계 = DistinctIndex(문자열 복사 0 · 시간 예산) · [서버에서 값 읽기].
         // ★ 값 목록 범위(사용자 10-06): 기본 = **다른 열**의 필터(AND)를 통과한 행의 값만 — 1번 열을 고르고 나면 2번 열 목록은
         //   그 안에서 고를 수 있는 값만 보인다(엑셀 자동 필터와 같다). 자기 열의 필터는 빼야 이미 고른 값도 체크된 채 보인다.
         //   OR 결합이면 "다른 필터 통과"가 뜻이 없어 전체.
@@ -3809,16 +3899,15 @@ impl Grid {
             .filter(|p| p.col != ci && p.col < rs.columns().len())
             .collect();
         let cascade = self.values_scope_others && !self.filter_or && !others.is_empty();
-        let mut values = distinct_capped(
+        let values = distinct_capped(
             (0..rs.len())
                 .filter(|&r| !cascade || others.iter().all(|p| p.pass_value(rs.cell(r, p.col))))
                 .map(|r| rs.cell(r, ci))
                 .filter(|v| !matches!(v, Value::Null))
                 .map(|v| cell_text(v, "")),
-            max,
+            usize::MAX - 1,
         );
-        let more = values.len() > max;
-        values.truncate(max);
+        let more = self.more;
         let chosen: Vec<String> = self
             .filters
             .iter()
@@ -3866,6 +3955,7 @@ impl Grid {
         self.filters.retain(|p| p.col != col);
         if values.is_empty() {
             self.apply_sort();
+            self.after_filters_changed();
             return;
         }
         let op = if values.len() == 1 {
@@ -4143,6 +4233,7 @@ impl Grid {
         self.filters.retain(|p| p.col != col);
         if self.filters.len() != n {
             self.apply_sort();
+            self.after_filters_changed();
             self.scroll_y = 0;
         }
     }
@@ -4168,8 +4259,13 @@ impl Grid {
         self.row_order = (0..rs.rows.len()).collect();
         self.sort_keys.clear();
         // 새 조회 = 필터도 초기화(사용자 09-29 "모든 컬럼이 초기화") · 자동 페치 잠금 해제.
-        self.filters.clear();
+        // ★ 단 **서버 승격 재조회**(T-285)의 결과면 필터 모델(칩)은 그대로 — 지우면 복귀가 성립해야 한다(협업 bin49 a2). 다른 새 실행이
+        //   들어오면 `set_result_origin`이 비운다.
+        if !self.filter_promoted {
+            self.filters.clear();
+        }
         self.menu_cell = None;
+        self.type_badges.clear();
         self.auto_fetch_at = None;
         self.hdr_drag = None;
         self.hdr_resize = None;
@@ -5320,6 +5416,7 @@ impl Grid {
                 p.value = join_list(&items);
                 self.apply_sort();
                 self.scroll_y = 0;
+                self.after_filters_changed();
                 return Ok(());
             }
         }
@@ -5329,12 +5426,38 @@ impl Grid {
         self.filters.push(pred);
         self.apply_sort();
         self.scroll_y = 0;
+        self.after_filters_changed();
         Ok(())
     }
 
     /// 그리드가 알릴 오류(정규식 오류 등 · 1회성 · 호스트가 상태줄로).
     pub(crate) fn take_error(&mut self) -> Option<String> {
         self.pending_error.take()
+    }
+
+    /// 열 `ci`의 유형 배지(캐시 · 결과당 한 번 계산 · 표본 = 앞 200행 · 방언별 규칙).
+    fn ensure_type_badges(&mut self) {
+        let Some(rs) = self.rs.as_ref() else {
+            return;
+        };
+        if self.type_badges.len() != rs.columns().len() {
+            let n = rs.len().min(200);
+            let d = self.dialect;
+            self.type_badges = rs
+                .columns()
+                .iter()
+                .enumerate()
+                .map(|(k, c)| type_badge(d, &c.type_name, (0..n).map(|r| rs.cell(r, k).clone())))
+                .collect();
+        }
+    }
+
+    /// 열 `ci`의 배지(캐시 읽기만 · 그리기 루프 = `rs` 차용 중이라 채움은 `ensure_type_badges`가 먼저).
+    fn type_badge_at(&self, ci: usize) -> (&'static str, BadgeTone) {
+        self.type_badges
+            .get(ci)
+            .copied()
+            .unwrap_or(("EX", BadgeTone::Red))
     }
 
     /// 열의 데이터 종류(드라이버 타입 이름 + 앞 200행 표본).
@@ -5354,6 +5477,7 @@ impl Grid {
         if !self.filters.is_empty() {
             self.filters.clear();
             self.apply_sort();
+            self.after_filters_changed();
         }
     }
 
@@ -5375,11 +5499,96 @@ impl Grid {
 
     /// 조회용 Query(77 §2-2): 출처 문장을 서브쿼리로 감싸 술어를 `WHERE 1=1 AND …`로 — 출처가 없거나 필터가 없으면 None.
     pub(crate) fn filter_query(&self) -> Option<String> {
+        self.filter_query_on(self.source_sql())
+    }
+
+    /// ★ 필터 변경 뒤(T-285 · 103 §4-1): 채움 카운터 리셋 → 판정(`fetch_under_filter`) → 서버 승격이면 조건 바 길로 같은 탭 재조회
+    /// (출처 보존 · 실패 되돌림 = `cond_run_failed`) · 필터를 다 지웠고 승격 결과였으면 출처(조건 식 포함)로 복귀 · `ask`면 안내 1회.
+    fn after_filters_changed(&mut self) {
+        self.fill_pages_left = self.fill_pages;
+        let has_filter = !self.filters.is_empty();
+        let editing = self.edit.as_ref().is_some_and(|e| e.cs.is_dirty());
+        if !has_filter {
+            if self.filter_promoted && !editing {
+                // 복귀 = 출처(+ 조건 식)로 다시 조회.
+                let base = self
+                    .cond_base
+                    .clone()
+                    .unwrap_or_else(|| self.source_sql.clone());
+                let c = self.cond.text();
+                let sql = if c.trim().is_empty() {
+                    base.clone()
+                } else {
+                    crate::condbar::wrap_condition(&base, &c)
+                };
+                self.cond_base = Some(base);
+                self.cond_prev_sql = Some(self.source_sql.clone());
+                self.cond_last_sql = Some(sql.clone());
+                self.pending_cond_run = Some(sql);
+                self.filter_promoted = false;
+            }
+            return;
+        }
+        let translatable = self
+            .filters
+            .iter()
+            .all(|p| p.op != FilterOp::Regex || !p.needs_value_list(self.dialect));
+        match fetch_under_filter(
+            self.more || self.filter_promoted,
+            has_filter,
+            self.filter_server,
+            translatable,
+            editing,
+        ) {
+            FetchPlan::Server => {
+                if let Some(sql) = self.promoted_sql() {
+                    let base = self
+                        .cond_base
+                        .clone()
+                        .unwrap_or_else(|| self.source_sql.clone());
+                    self.cond_base = Some(base);
+                    self.cond_prev_sql = Some(self.source_sql.clone());
+                    self.cond_last_sql = Some(sql.clone());
+                    self.pending_cond_run = Some(sql);
+                    self.filter_promoted = true;
+                    self.status(t(Msg::StFilterServerPromoted).to_string());
+                }
+            }
+            FetchPlan::Ask => {
+                if !self.filter_asked {
+                    self.filter_asked = true;
+                    self.status(t(Msg::StFilterAskServer).to_string());
+                }
+                // 안내 뒤 로컬과 같다 — 첫 채움 페치를 깨운다.
+                self.clamp();
+            }
+            // 로컬 채움: 첫 페치는 이벤트 없이도 바로(협업 bin49 b1 = 마우스가 움직여야 `clamp`가 돌았다) · 다음 페이지는 `append_page`가.
+            FetchPlan::Fill => self.clamp(),
+        }
+    }
+
+    /// 서버 승격 SQL = 출처(조건 바 기준 `cond_base`) + 조건 식 + 필터 술어 — 한 문장(`WHERE 1=1 AND (조건) AND 필터…` · 103 §4-1).
+    fn promoted_sql(&self) -> Option<String> {
+        let base = self
+            .cond_base
+            .clone()
+            .unwrap_or_else(|| self.source_sql.clone());
+        let c = self.cond.text();
+        let with_cond = if c.trim().is_empty() {
+            base
+        } else {
+            crate::condbar::wrap_condition(&base, &c)
+        };
+        self.filter_query_on(&with_cond)
+    }
+
+    /// 필터 조회 SQL을 **주어진 출처** 위에(`filter_query` = 지금 출처 · 승격 = 조건 식을 입힌 출처).
+    pub(crate) fn filter_query_on(&self, src_in: &str) -> Option<String> {
         let rs = self.rs.as_ref()?;
         if self.filters.is_empty() {
             return None;
         }
-        let src = self.source_sql().trim().trim_end_matches(';').trim();
+        let src = src_in.trim().trim_end_matches(';').trim();
         if src.is_empty() {
             return None;
         }
@@ -5487,6 +5696,7 @@ impl Grid {
                 }
                 self.apply_sort();
                 self.scroll_y = 0;
+                self.after_filters_changed();
             } else {
                 self.add_filter(ci, FilterOp::Eq, v);
             }
@@ -5495,6 +5705,7 @@ impl Grid {
         if what == "clear_col" {
             self.filters.retain(|p| p.col != ci);
             self.apply_sort();
+            self.after_filters_changed();
             return;
         }
         // 선택된 값 N개 한꺼번에(사용자 10-07): 1개면 `=`/`<>` · 여럿이면 값 목록 IN / NOT IN.
@@ -5689,6 +5900,7 @@ impl Grid {
         self.sort_keys.clear();
         self.filters.clear();
         self.menu_cell = None;
+        self.type_badges.clear();
         self.text_lines = Vec::new();
         self.text_bytes = 0;
         self.messages.clear();
@@ -5779,9 +5991,10 @@ impl Grid {
             && !self.fetching
             && self.fetch_req.is_none()
             && self.page_rows > 0
-            // 끝에 닿았을 때 · 또는 필터로 걸러져 화면을 못 채울 때(스크롤 없음)도 이어서(사용자 09-29 "끝으로 가면 전부 로딩").
+            // 끝에 닿았을 때 · 또는 필터로 걸러져 화면을 못 채울 때(스크롤 없음)도 이어서(사용자 09-29 "끝으로 가면 전부 로딩") —
+            //   단 **채움 상한**(`grid.filter_fill_pages` · T-285 · D-258)까지만: 끝까지 자동으로 읽지 않는다(39 §2).
             && ((my > 0 && self.scroll_y >= my - self.row_h.max(1))
-                || (my == 0 && !self.filters.is_empty()))
+                || (my == 0 && !self.filters.is_empty() && self.fill_pages_left > 0))
             && self.auto_fetch_at != Some(self.src_rows())
         {
             // ★ 오프셋은 **원본 행 수**(필터로 걸러진 표시 행 수가 아님 · 사용자 09-29 재질의 반복 결함).
@@ -5887,6 +6100,18 @@ impl Grid {
                 self.funnel_hover = fh;
                 self.dirty = true;
             }
+            // 열 머리 hover(카드용): 머리 안이면 (원본 열, 칸 사각형) · 밖이면 없음.
+            self.hdr_hover =
+                if self.rs.is_some() && self.row_h > 0 && self.header_rect().contains(p) {
+                    self.header_pos_at(x).and_then(|pos| {
+                        let ci = *self.col_order.get(pos)?;
+                        let cw = self.col_w.get(ci).copied().unwrap_or(80);
+                        let hr = self.header_rect();
+                        Some((ci, Rect::new(self.col_x(pos), hr.y, cw, hr.h)))
+                    })
+                } else {
+                    None
+                };
             let hit = self
                 .filters
                 .iter()
@@ -5929,6 +6154,13 @@ impl Grid {
             if matches!(ev, InputEvent::MouseMove { .. }) {
                 return;
             }
+        }
+        // ★ 셀/행 드래그 선택 중의 MouseUp = **어디서 놓든 드래그 끝**(사용자 10-07 "버튼을 뗐는데 Release가 안 돼 이동마다 선택이
+        //   바뀜") — 아래의 필터 줄·푸터 도구줄·셀 편집기 분기가 자기 영역의 MouseUp을 먹고 돌아가 해제 팔(아래 `MouseUp if drag_sel`)에
+        //   닿지 못하던 결함. 해제만 하고 사건은 계속 흘린다(그 자리 컨트롤의 놓임 처리는 그대로).
+        if matches!(ev, InputEvent::MouseUp { .. }) && self.drag_sel.is_some() {
+            self.drag_sel = None;
+            self.dirty = true;
         }
         // 필터 줄(칩·조건 바)이 먼저 — 줄 안의 클릭은 셀·머리로 흘리지 않는다. 단 **열 머리를 끌는 중**이면 이동·놓임은 끌기
         //   몫(조건 바 위로 끌어 놓기 · 협업 V1 C 10-06 = 조건 바가 이동을 먹어 고스트가 머리 줄에 머물렀다).
@@ -6497,6 +6729,10 @@ impl Grid {
             self.paint_footer(dc, th, s, footer, 0, 0, n);
             return;
         }
+        // 유형 배지 캐시(T-301)는 `rs`를 빌리기 전에 채운다(그리기 루프는 읽기만).
+        if self.type_icons {
+            self.ensure_type_badges();
+        }
         let Some(rs) = self.rs.as_ref() else {
             self.paint_footer(dc, th, s, footer, 0, 0, 0);
             return;
@@ -6817,15 +7053,25 @@ impl Grid {
             let filtered_col = self.filter_enabled && self.filters.iter().any(|p| p.col == ci);
             let sort_pos = self.sort_keys.iter().position(|(k, _)| *k == ci);
             let want_funnel = self.want_plain_funnel(ci, filtered_col);
-            // ★ 유형 아이콘(설정 · 사용자 10-07): 이름 **왼쪽** · 깔때기와 같은 크기 · 도형(글꼴 글리프 X · 3-OS 동일) · 흐린 색.
+            // ★ 유형 배지(T-301 · 사용자 10-07): 이름 **왼쪽**에 2글자(AZ·DT·09·ID·EX·TF·BI) · 기준 글꼴 −4 px 굵게(사용자 10-07 "2단계 더") · 색 = 녹(레거시)/
+            //   파(일반)/빨(특수) · 어두운 테마 = 밝게 · 뒤 공백 1 · 복사는 이름만(배지는 그리기뿐).
             let icon_w = if self.type_icons {
-                let g = self.funnel_g();
-                let gap = (g / 3).max(2);
-                let ir = Rect::new(x + pad, header.y + (header.h - g) / 2, g, g);
-                if ir.right() + gap < x + cw - pad {
-                    type_glyph(dc, ir.intersection(&hcells), self.col_kind(ci), th.text_dim);
+                let (badge, tone) = self.type_badge_at(ci);
+                dc.select_font_sized(FontSlot::Base, true, -4.0);
+                let bw = dc.text_width(badge);
+                let sp = dc.text_width(" ");
+                if x + pad + bw + sp < x + cw - pad {
+                    let by = dc.text_center_y(header.y, header.h);
+                    dc.text(
+                        x + pad,
+                        by,
+                        Rect::new(x + pad, header.y, bw, header.h).intersection(&hcells),
+                        badge,
+                        badge_color(tone, th),
+                    );
                 }
-                g + gap
+                dc.select_font(FontSlot::Base, false);
+                bw + sp
             } else {
                 0
             };
@@ -7268,6 +7514,57 @@ pub(crate) fn hex_dump(b: &[u8]) -> String {
 /// 헤더 표식 툴팁 머무름(ms).
 const MARK_TIP_MS: u64 = 450;
 
+/// 부분 결과에 필터를 걸 때의 방식(설정 `grid.filter_server` · D-257).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FilterServerMode {
+    /// 서버에서 걸러 같은 탭에 다시 조회(기본).
+    Auto,
+    /// 가져온 행에서만(채움 상한까지 더 가져옴).
+    Local,
+    /// 처음 한 번 안내(지금은 안내 뒤 로컬과 같다 · 모달은 후속).
+    Ask,
+}
+
+impl FilterServerMode {
+    pub(crate) fn parse(s: &str) -> Self {
+        match s {
+            "local" => FilterServerMode::Local,
+            "ask" => FilterServerMode::Ask,
+            _ => FilterServerMode::Auto,
+        }
+    }
+}
+
+/// 필터 변경 뒤 할 일(T-285 · 103 §4-1 판정표).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FetchPlan {
+    /// 서버 승격(같은 탭 재조회).
+    Server,
+    /// 로컬 = 채움 상한까지 자동 페치.
+    Fill,
+    /// 안내 1회 뒤 로컬.
+    Ask,
+}
+
+/// 순수 판정(MC/DC): 결과가 완전(`more`=false · 승격 결과도 아님)이면 로컬이 정답 · 부분 + auto + 번역 가능 + 편집 중 아님 = 서버 ·
+/// `ask` = 안내 · 그 밖(local · 번역 불가 · 편집 중) = 채움 상한.
+pub(crate) fn fetch_under_filter(
+    more: bool,
+    has_filter: bool,
+    mode: FilterServerMode,
+    translatable: bool,
+    editing: bool,
+) -> FetchPlan {
+    if !more || !has_filter || editing || !translatable {
+        return FetchPlan::Fill;
+    }
+    match mode {
+        FilterServerMode::Auto => FetchPlan::Server,
+        FilterServerMode::Ask => FetchPlan::Ask,
+        FilterServerMode::Local => FetchPlan::Fill,
+    }
+}
+
 /// ★ 그리드 필터 연산(T-181 · 77 §2-2 · 타입별 확장 사용자 09-29).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FilterOp {
@@ -7365,8 +7662,12 @@ pub(crate) enum ColKind {
 impl ColKind {
     /// 드라이버 타입 이름으로 먼저(NUMBER/INT/DECIMAL/… · DATE/TIME/TIMESTAMP · BOOL/BIT) · 모르면 값 표본.
     pub(crate) fn infer(type_name: &str, sample: impl Iterator<Item = Value>) -> ColKind {
-        let tn = type_name.to_ascii_lowercase();
-        if tn.contains("bool") || tn == "bit" {
+        let tn = type_name.to_ascii_lowercase().replace(' ', "");
+        // 판정 흠(협업 10-07 ⑥): INTERVAL·POINT·GEOMETRY는 `int`를 품지만 숫자가 아니다 · MySQL TINYINT(1)·BIT(1) = 참/거짓.
+        if tn.contains("interval") || tn.contains("point") || tn.contains("geom") {
+            return ColKind::Text;
+        }
+        if tn.contains("bool") || tn == "bit" || tn == "bit(1)" || tn == "tinyint(1)" {
             return ColKind::Bool;
         }
         if tn.contains("date") || tn.contains("time") {
@@ -7866,42 +8167,199 @@ fn funnel_contains(r: Rect, px: f32, py: f32) -> bool {
 
 /// 깔때기 — 위가 넓은 **사다리꼴 컵**(위 폭 g · 아래 폭 = 꼭지 폭 · 높이 55 %) + 아래로 내려오는 꼭지. 도형으로(글꼴 글리프 X ·
 /// 3-OS 동일) · `r` = 정사각형 자리. 삼각형 하나로 그리면 작은 크기에서 `T`처럼 보였다(협업 V1 10-06).
-/// ★ 열 유형 아이콘(설정 `grid.col_type_icons` · 사용자 10-07 "구글 머티리얼·VS Code 모양") — 도형으로 그린다(글꼴 글리프 X · 3-OS 동일 ·
-/// 크기 = 깔때기): 글 = `short_text`(긴 줄 + 짧은 줄) · 숫자 = `tag`(`#`) · 날짜 = `calendar_today`(상자 + 머리 띠 + 고리 2) ·
-/// 참/거짓 = `check_box`(상자 + 체크). 획 두께 = 크기/6(최소 1).
-fn type_glyph(dc: &mut dyn DrawCtx, r: Rect, kind: ColKind, color: nexa_ctl::Color) {
-    let g = r.w.max(4);
-    let t = (g / 6).max(1);
-    match kind {
-        ColKind::Text => {
-            dc.fill_rect(Rect::new(r.x, r.y + g / 3 - t / 2, g, t), color);
-            dc.fill_rect(
-                Rect::new(r.x, r.y + g * 2 / 3 - t / 2, (g * 2 / 3).max(2), t),
-                color,
-            );
+/// 같은 문장인가 — 양끝 공백과 끝 `;`만 다른 글은 같은 문장(결과 도착 때 분할기가 다듬은 글 ↔ 우리가 낸 글).
+fn same_stmt(a: &str, b: &str) -> bool {
+    let n = |s: &str| s.trim().trim_end_matches(';').trim().to_string();
+    n(a) == n(b)
+}
+
+/// 배지 색조(T-301 · 사용자 색 규칙 10-07): 녹 = 예전엔 흔했지만 지금은 드문(레거시) · 파 = 자주 쓰는 일반 · 빨 = 특수.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BadgeTone {
+    Green,
+    Blue,
+    Red,
+}
+
+/// 배지 색 — 어두운 테마는 흰색 쪽으로 35 % 섞어 밝게.
+fn badge_color(tone: BadgeTone, th: &Theme) -> nexa_ctl::Color {
+    let base = match tone {
+        BadgeTone::Green => nexa_ctl::Color(0x001B_7F3B),
+        BadgeTone::Blue => nexa_ctl::Color(0x001F_4FBF),
+        BadgeTone::Red => nexa_ctl::Color(0x00B3_261E),
+    };
+    if th.is_dark {
+        base.lerp(nexa_ctl::Color(0x00FF_FFFF), 0.35)
+    } else {
+        base
+    }
+}
+
+/// ★ 열 유형 **2글자 배지**(T-301 · 사용자 표 + 색 규칙 + 협업 추천 매핑 10-07): 드라이버 타입 이름(방언별) 먼저 · 모르면 표본 · 그래도 모르면 `EX` 빨.
+/// `AZ` 녹 = CHAR/NCHAR · SQL Server TEXT/NTEXT · Oracle LONG | 파 = VARCHAR/VARCHAR2/NVARCHAR · PG TEXT/CITEXT | 빨 = CLOB/NCLOB ·
+/// MySQL TEXT 계열 · (N)VARCHAR(MAX) · `DT` 녹 = SMALLDATETIME · YEAR | 파 = DATE/DATETIME/TIME | 빨 = TIMESTAMP(TZ) · DATETIME2 ·
+/// DATETIMEOFFSET · INTERVAL · `09` 녹 = MONEY/SMALLMONEY · BIT(n>1) | 파 = 정수 · NUMBER(p,0) | 빨 = 실수(NUMBER(p,s>0) · DECIMAL ·
+/// FLOAT · REAL · DOUBLE · BINARY_FLOAT/DOUBLE) · `TF` 파 = BOOLEAN · SQL Server BIT | 녹 = MySQL TINYINT(1)/BIT(1) · `BI` 녹 = IMAGE ·
+/// LONG RAW · RAW | 빨 = BLOB/BYTEA/VARBINARY/BINARY/BFILE · `ID` 파 = ROWID/UUID/UNIQUEIDENTIFIER/IDENTITY/SERIAL | 녹 = UROWID ·
+/// `EX` 파 = XML/JSON/JSONB | 빨 = 공간·ARRAY·ENUM/SET·RANGE·INET·TSVECTOR·HIERARCHYID·SQL_VARIANT·ROWVERSION(SQL Server TIMESTAMP)·REF CURSOR.
+pub(crate) fn type_badge(
+    dialect: Dialect,
+    type_name: &str,
+    sample: impl Iterator<Item = Value>,
+) -> (&'static str, BadgeTone) {
+    use BadgeTone::{Blue, Green, Red};
+    let tn = type_name.to_ascii_lowercase().replace(' ', "");
+    let has = |k: &str| tn.contains(k);
+    let mssql = dialect == Dialect::Mssql;
+    let mysql = dialect == Dialect::Mysql;
+    // 식별자 · 참거짓 · 이진(이름이 겹치는 것들보다 먼저).
+    if has("urowid") {
+        return ("ID", Green);
+    }
+    if has("rowid") || has("uuid") || has("uniqueidentifier") || has("identity") || has("serial") {
+        return ("ID", Blue);
+    }
+    if tn == "tinyint(1)" || (mysql && tn == "bit(1)") {
+        return ("TF", Green);
+    }
+    if has("bool") || tn == "bit" || tn == "bit(1)" {
+        return ("TF", Blue);
+    }
+    if tn == "image" || has("longraw") || tn.starts_with("raw") {
+        return ("BI", Green);
+    }
+    if has("blob") || has("binary") || has("bytea") || has("bfile") {
+        return ("BI", Red);
+    }
+    // SQL Server TIMESTAMP/ROWVERSION = 행 버전(일시 아님).
+    if has("rowversion") || (mssql && tn == "timestamp") {
+        return ("EX", Red);
+    }
+    if has("xml") || has("json") {
+        return ("EX", Blue);
+    }
+    if has("geom")
+        || has("geog")
+        || has("point")
+        || has("array")
+        || has("enum")
+        || tn.starts_with("set(")
+        || has("range")
+        || has("inet")
+        || has("cidr")
+        || has("macaddr")
+        || has("tsvector")
+        || has("hierarchyid")
+        || has("sql_variant")
+        || has("cursor")
+        || has("sdo_")
+        || has("varray")
+        || has("object")
+    {
+        return ("EX", Red);
+    }
+    // 일시.
+    if has("smalldatetime") || tn == "year" {
+        return ("DT", Green);
+    }
+    if has("timestamp") || has("datetime2") || has("datetimeoffset") || has("interval") {
+        return ("DT", Red);
+    }
+    if has("date") || has("time") {
+        return ("DT", Blue);
+    }
+    // 문자.
+    if has("varchar(max)") || has("nvarchar(max)") {
+        return ("AZ", Red);
+    }
+    if has("clob") || (has("text") && !mssql && dialect != Dialect::Postgres) {
+        return ("AZ", Red);
+    }
+    if has("text") && mssql {
+        return ("AZ", Green);
+    }
+    if has("text") || has("citext") {
+        return ("AZ", Blue);
+    }
+    if tn == "long" {
+        return ("AZ", Green);
+    }
+    if has("varchar") || has("varying") || has("string") {
+        return ("AZ", Blue);
+    }
+    if tn.starts_with("nchar")
+        || tn.starts_with("char")
+        || tn.starts_with("character")
+        || tn.starts_with("bpchar")
+    {
+        return ("AZ", Green);
+    }
+    // 숫자: MONEY/BIT(n>1) = 녹 · (p,s) → s>0 = 실수 · 이름으로 정수/실수 · 자릿수 미상 = 표본.
+    if has("money") || (tn.starts_with("bit(") && tn != "bit(1)") {
+        return ("09", Green);
+    }
+    let scale = tn
+        .rsplit_once(',')
+        .and_then(|(_, s)| s.trim_end_matches(')').parse::<i32>().ok());
+    if has("int") || has("num") || has("dec") || has("float") || has("double") || has("real") {
+        if let Some(s) = scale {
+            return ("09", if s > 0 { Red } else { Blue });
         }
-        ColKind::Number => {
-            let (a, b) = (g / 3, g * 2 / 3);
-            dc.fill_rect(Rect::new(r.x + a - t / 2, r.y, t, g), color);
-            dc.fill_rect(Rect::new(r.x + b - t / 2, r.y, t, g), color);
-            dc.fill_rect(Rect::new(r.x, r.y + a - t / 2, g, t), color);
-            dc.fill_rect(Rect::new(r.x, r.y + b - t / 2, g, t), color);
+        if has("float") || has("double") || has("real") {
+            return ("09", Red);
         }
-        ColKind::Date => {
-            dc.stroke_round_rect(Rect::new(r.x, r.y + t, g, (g - t).max(2)), 1, color, 1.0);
-            dc.fill_rect(Rect::new(r.x, r.y + t, g, t), color);
-            dc.fill_rect(Rect::new(r.x + g / 4 - t / 2, r.y, t, t * 2), color);
-            dc.fill_rect(Rect::new(r.x + g * 3 / 4 - t / 2, r.y, t, t * 2), color);
+        if has("int") && !has("num") {
+            return ("09", Blue);
         }
-        ColKind::Bool => {
-            dc.stroke_round_rect(r, 1, color, 1.0);
-            let pts = [
-                (r.x + g / 5, r.y + g / 2),
-                (r.x + g * 2 / 5, r.y + g * 3 / 4),
-                (r.x + g * 4 / 5, r.y + g / 4),
-            ];
-            dc.polyline(&pts, color, t as f32);
+        if has("dec") || tn == "numeric" {
+            return ("09", Red);
         }
+        // NUMBER 자릿수 미상 = 표본에 소수점이 있으면 실수(표본 없음 = 실수로).
+        let mut n = 0usize;
+        let mut frac = false;
+        for v in sample {
+            match &v {
+                Value::Null => continue,
+                Value::Float(_) => frac = true,
+                Value::Decimal(_) | Value::Str(_) => {
+                    let s = cell_text(&v, "");
+                    if s.contains('.') && !s.trim_end_matches('0').ends_with('.') {
+                        frac = true;
+                    }
+                }
+                _ => {}
+            }
+            n += 1;
+        }
+        return ("09", if frac || n == 0 { Red } else { Blue });
+    }
+    // 이름을 모르면 표본으로 · 그래도 모르면 EX 빨.
+    let (mut n, mut ints, mut floats, mut bools, mut dates, mut strs) =
+        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    for v in sample {
+        match &v {
+            Value::Null => continue,
+            Value::Int(_) => ints += 1,
+            Value::Float(_) | Value::Decimal(_) => floats += 1,
+            Value::Bool(_) => bools += 1,
+            Value::Str(s) if looks_like_date(s) => dates += 1,
+            Value::Str(_) => strs += 1,
+            _ => {}
+        }
+        n += 1;
+    }
+    if n > 0 && ints == n {
+        ("09", Blue)
+    } else if n > 0 && ints + floats == n {
+        ("09", Red)
+    } else if n > 0 && bools == n {
+        ("TF", Blue)
+    } else if n > 0 && dates == n {
+        ("DT", Blue)
+    } else if n > 0 && strs + dates == n {
+        ("AZ", Blue)
+    } else {
+        ("EX", Red)
     }
 }
 
@@ -8543,6 +9001,131 @@ mod tests {
         assert!(!rx.needs_value_list(Dialect::Mssql)); // LIKE 번역 가능
         assert!(hard.needs_value_list(Dialect::Mssql));
         assert!(!hard.needs_value_list(Dialect::Postgres));
+    }
+
+    /// T-285 판정표 MC/DC(5조건): 완전 결과·필터 없음·편집 중·번역 불가 = 채움 · 부분+auto = 서버 · ask = 안내 · local = 채움.
+    #[test]
+    fn fetch_under_filter_rules() {
+        use FilterServerMode as M;
+        let f = fetch_under_filter;
+        assert_eq!(f(true, true, M::Auto, true, false), FetchPlan::Server);
+        assert_eq!(
+            f(false, true, M::Auto, true, false),
+            FetchPlan::Fill,
+            "완전 결과 = 로컬이 정답"
+        );
+        assert_eq!(
+            f(true, false, M::Auto, true, false),
+            FetchPlan::Fill,
+            "필터 없음"
+        );
+        assert_eq!(
+            f(true, true, M::Auto, true, true),
+            FetchPlan::Fill,
+            "편집 중 = 보류"
+        );
+        assert_eq!(
+            f(true, true, M::Auto, false, false),
+            FetchPlan::Fill,
+            "번역 불가"
+        );
+        assert_eq!(f(true, true, M::Ask, true, false), FetchPlan::Ask);
+        assert_eq!(f(true, true, M::Local, true, false), FetchPlan::Fill);
+        assert_eq!(FilterServerMode::parse("local"), M::Local);
+        assert_eq!(FilterServerMode::parse("x"), M::Auto);
+    }
+
+    /// 채움 카운터(D-258): 필터가 바뀌면 상한으로 · 필터 중 페이지마다 −1 · 0이면 자동 페치 조건이 꺼진다.
+    #[test]
+    fn fill_pages_counter() {
+        let mut g = grid_with(&[1, 2, 3]);
+        g.set_fill_pages(2);
+        g.set_filter_server("local");
+        g.add_filter(0, FilterOp::Eq, "1".into());
+        assert_eq!(g.fill_pages_left(), 2);
+        let page = |v: i32| ResultSet {
+            columns: vec![nsql_core::Column {
+                name: "a".into(),
+                type_name: "INT".into(),
+            }],
+            rows: vec![vec![Value::Int(i64::from(v))]],
+        };
+        g.append_page(page(1), true);
+        assert_eq!(g.fill_pages_left(), 1);
+        g.append_page(page(1), true);
+        assert_eq!(g.fill_pages_left(), 0);
+        g.clear_filters();
+        assert_eq!(g.fill_pages_left(), 2, "필터 변경 = 리셋");
+    }
+
+    /// T-301 배지 표(사용자 색 규칙 녹/파/빨 + 협업 추천 매핑 · 방언별) · ColKind 판정 흠.
+    #[test]
+    fn type_badge_table() {
+        use nsql_core::Dialect as D;
+        use BadgeTone::{Blue, Green, Red};
+        let none = std::iter::empty::<Value>;
+        let b = |d: D, t: &str| type_badge(d, t, none());
+        assert_eq!(b(D::Oracle, "CHAR(10)"), ("AZ", Green));
+        assert_eq!(b(D::Oracle, "VARCHAR2(20)"), ("AZ", Blue));
+        assert_eq!(b(D::Oracle, "CLOB"), ("AZ", Red));
+        assert_eq!(b(D::Oracle, "LONG"), ("AZ", Green));
+        assert_eq!(
+            b(D::Mssql, "text"),
+            ("AZ", Green),
+            "SQL Server TEXT = 레거시"
+        );
+        assert_eq!(b(D::Postgres, "text"), ("AZ", Blue), "PG TEXT = 일반");
+        assert_eq!(b(D::Mysql, "longtext"), ("AZ", Red));
+        assert_eq!(b(D::Mssql, "nvarchar(max)"), ("AZ", Red));
+        assert_eq!(b(D::Oracle, "DATE"), ("DT", Blue));
+        assert_eq!(b(D::Oracle, "TIMESTAMP(6) WITH TIME ZONE"), ("DT", Red));
+        assert_eq!(b(D::Mssql, "smalldatetime"), ("DT", Green));
+        assert_eq!(b(D::Oracle, "INTERVAL DAY TO SECOND"), ("DT", Red));
+        assert_eq!(
+            b(D::Mssql, "timestamp"),
+            ("EX", Red),
+            "SQL Server TIMESTAMP = 행 버전"
+        );
+        assert_eq!(b(D::Oracle, "INT"), ("09", Blue));
+        assert_eq!(b(D::Oracle, "NUMBER(10,0)"), ("09", Blue));
+        assert_eq!(b(D::Oracle, "NUMBER(10,2)"), ("09", Red));
+        assert_eq!(b(D::Mssql, "money"), ("09", Green));
+        assert_eq!(b(D::Mysql, "bit(8)"), ("09", Green));
+        assert_eq!(
+            type_badge(D::Oracle, "NUMBER", [Value::Int(1)].into_iter()),
+            ("09", Blue)
+        );
+        assert_eq!(
+            type_badge(D::Oracle, "NUMBER", [Value::Float(1.5)].into_iter()),
+            ("09", Red)
+        );
+        assert_eq!(b(D::Oracle, "ROWID"), ("ID", Blue));
+        assert_eq!(b(D::Oracle, "UROWID"), ("ID", Green));
+        assert_eq!(b(D::Mysql, "tinyint(1)"), ("TF", Green));
+        assert_eq!(b(D::Mssql, "bit"), ("TF", Blue));
+        assert_eq!(b(D::Mssql, "image"), ("BI", Green));
+        assert_eq!(b(D::Oracle, "RAW(16)"), ("BI", Green));
+        assert_eq!(b(D::Postgres, "bytea"), ("BI", Red));
+        assert_eq!(b(D::Oracle, "XMLTYPE"), ("EX", Blue));
+        assert_eq!(b(D::Postgres, "jsonb"), ("EX", Blue));
+        assert_eq!(b(D::Postgres, "point"), ("EX", Red));
+        assert_eq!(b(D::Postgres, "tsvector"), ("EX", Red));
+        assert_eq!(
+            type_badge(D::Sqlite, "", [Value::Int(3)].into_iter()),
+            ("09", Blue)
+        );
+        assert_eq!(
+            type_badge(D::Sqlite, "", [Value::Str("a".into())].into_iter()),
+            ("AZ", Blue)
+        );
+        assert_eq!(b(D::Sqlite, ""), ("EX", Red), "모르면 EX 빨");
+        // ColKind 판정 흠(⑥).
+        assert_eq!(
+            ColKind::infer("INTERVAL DAY TO SECOND", none()),
+            ColKind::Text
+        );
+        assert_eq!(ColKind::infer("point", none()), ColKind::Text);
+        assert_eq!(ColKind::infer("tinyint(1)", none()), ColKind::Bool);
     }
 
     /// `fresh_like` = 새 탭 그리드가 설정을 **전부** 물려받는다(10-07 bin47 결함: 인용 정책·유형 아이콘이 기본값으로).

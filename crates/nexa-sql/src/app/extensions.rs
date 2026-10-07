@@ -58,6 +58,52 @@ impl App {
                 disabled.push(id);
             }
         }
+        // ★ 모든 확장 = 설정에 "확장 사용" 항목(사용자 10-07): 설치된 것마다 `ext.<id>.use`(자기 분류가 있으면 그 분류 맨 앞 · 없으면
+        //   확장 이름 분류를 동적으로 = Project Explorer Menus처럼 설정이 0인 확장도 설정 창에 분류가 생긴다). 값 = `extensions.disabled`의
+        //   거울(단일 원천은 목록 · 관리자 끔은 반영하지 않는다 = 개별 상태 보존).
+        let mut extra_cats: Vec<Msg> = Vec::new();
+        let mut dyn_entries = Vec::new();
+        for r in &installed {
+            let cat = match nsql_settings::extension_categories()
+                .into_iter()
+                .find(|(_, i)| *i == r.id)
+            {
+                Some((c, _)) => c,
+                None => {
+                    let c = nsql_i18n::dyn_msg(&r.name, &r.name);
+                    nsql_settings::register_extension_category(c, &r.id);
+                    c
+                }
+            };
+            if !nsql_settings::CATEGORY_TREE
+                .iter()
+                .any(|(_, cats)| cats.contains(&cat))
+            {
+                extra_cats.push(cat);
+            }
+            dyn_entries.push(nsql_settings::Entry {
+                key: nsql_settings::ext_use_key(&r.id),
+                cat,
+                label: Msg::LblExtUse,
+                desc: Msg::DescExtUse,
+                kind: nsql_settings::SettingKind::Bool,
+                default: "on",
+            });
+        }
+        nsql_settings::register_dynamic(dyn_entries);
+        let list_off = self.ext_disabled_list();
+        for r in &installed {
+            let key = nsql_settings::ext_use_key(&r.id);
+            let v = if list_off.contains(&r.id) {
+                "off"
+            } else {
+                "on"
+            };
+            if self.settings.get(key) != Some(v) {
+                let _ = self.settings.set(key, v);
+            }
+        }
+        self.prefs_win.set_extra_categories(extra_cats);
         let effects = self
             .extensions
             .on_settings(&self.settings, changed_key, &disabled);
@@ -84,11 +130,12 @@ impl App {
         // 설정 창 `format.default` 콤보 = 지금 쓸 수 있는 포맷터(사용자 09-29).
         let choices = self.format_default_choices();
         self.prefs_win.set_dyn_choices("format.default", choices);
-        // 설정 창: 끈/미설치 확장의 분류는 숨긴다(사용자 09-17 "설치되면 보이고 제거하면 사라진다").
-        let hidden: Vec<Msg> = nsql_settings::EXTENSION_CATEGORIES
-            .iter()
-            .filter(|(_, id)| disabled.iter().any(|d| d == id))
-            .map(|(c, _)| *c)
+        // 설정 창: **미설치** 확장의 분류만 숨긴다(사용자 09-17 "설치되면 보이고 제거하면 사라진다") — 끈 확장의 분류는 이제 남는다
+        //   ("확장 사용" 토글로 설정 창에서 다시 켤 수 있어야 하므로 · 사용자 10-07).
+        let hidden: Vec<Msg> = nsql_settings::extension_categories()
+            .into_iter()
+            .filter(|(_, id)| !installed.iter().any(|r| r.id == *id))
+            .map(|(c, _)| c)
             .collect();
         self.prefs_win.set_hidden_categories(hidden);
         self.prefs_sync();
@@ -601,10 +648,10 @@ impl App {
 
     /// ★ 설정 버튼(사용자 09-30): 그 확장의 설정 분류(`EXTENSION_CATEGORIES`)로 설정 창을 연다 · 분류가 없는 확장은 접두 검색.
     pub(crate) fn ext_open_settings(&mut self, id: &str) {
-        let cat = nsql_settings::EXTENSION_CATEGORIES
-            .iter()
+        let cat = nsql_settings::extension_categories()
+            .into_iter()
             .find(|(_, i)| *i == id)
-            .map(|(c, _)| *c);
+            .map(|(c, _)| c);
         match cat {
             Some(c) => self.prefs_category = Some(c),
             None => {
@@ -619,6 +666,24 @@ impl App {
             }
         }
         self.open_prefs = true;
+    }
+
+    /// ★ 설정 창에서 "확장 사용"(`ext.<id>.use`)을 바꿨다 → 확장 패널 켜기/끄기와 같은 길(`extensions.disabled` 갱신 → 재적용).
+    pub(crate) fn ext_use_changed(&mut self, key: &str) {
+        let Some(id) = extensions::manager::installed()
+            .into_iter()
+            .map(|r| r.id)
+            .find(|id| nsql_settings::ext_use_key(id) == key)
+        else {
+            return;
+        };
+        let on = self.settings.flag(key);
+        let already_off = self.ext_disabled_list().contains(&id);
+        if on == !already_off {
+            return;
+        }
+        let verb = if on { "enable" } else { "disable" };
+        self.ext_pick(&format!("ext.{verb}:{id}"));
     }
 
     /// ★ 프로젝트 복원(사용자 09-30): `ext:<id>` 뷰 탭을 같은 뷰로 다시 연다 — 설치 목록에 있으면 true.

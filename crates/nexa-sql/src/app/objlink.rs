@@ -445,6 +445,17 @@ pub(crate) struct ObjLinks {
     pub card: Option<CardLayout>,
     /// MouseDown으로 누른 카드 버튼 id — 같은 버튼 위에서 놓으면 동작(사용자 10-06 "마우스업에서 동작").
     pub card_pressed: Option<&'static str>,
+    /// ★ 결과 열 머리 hover 카드(사용자 10-07): 머문 열 · 머리 칸(카드 앵커) · 머문 시작 · 띄웠으면 합성 링크 번호(목록 끝).
+    pub header: Option<HeaderCard>,
+}
+
+/// 열 머리 hover 카드 상태.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeaderCard {
+    pub col: String,
+    pub anchor: Rect,
+    pub since: std::time::Instant,
+    pub link: Option<usize>,
 }
 
 /// hover 카드 배치(그리기가 채우고 사건 처리가 읽는다).
@@ -952,10 +963,136 @@ impl App {
             hover_at: self.objlinks.hover_at,
             card: None,
             card_pressed: None,
+            header: self.objlinks.header.take(),
         };
+        // 열 머리 카드의 합성 링크는 재분석에 밀려나므로 다시 끝에 둔다.
+        self.objlink_header_restore();
         if self.objlink_apply_marks() || display != Display::None {
             self.redraw();
         }
+    }
+
+    /// 열 머리 카드가 띄워져 있으면 합성 컬럼 링크를 목록 끝에 다시 두고 hot으로.
+    fn objlink_header_restore(&mut self) {
+        let Some(h) = self.objlinks.header.clone() else {
+            return;
+        };
+        if h.link.is_none() {
+            return;
+        }
+        let Some(table) = self.grid.reveal_table() else {
+            self.objlinks.header = None;
+            return;
+        };
+        self.objlinks.links.push(Link {
+            range: (0, 0),
+            kind: LinkKind::Column,
+            schema: None,
+            owner: Some(table),
+            name: h.col,
+            known: true,
+        });
+        let k = self.objlinks.links.len() - 1;
+        self.objlinks.hot = Some(k);
+        if let Some(hh) = self.objlinks.header.as_mut() {
+            hh.link = Some(k);
+        }
+    }
+
+    /// ★ 열 머리 hover 카드 틱(사용자 10-07 "컬럼 헤더에서도 호버 카드"): 그리드가 알려 준 머리 칸에 `objlink.hover_ms` 머물면 출처 테이블
+    /// (단일 테이블 결과)의 합성 컬럼 링크로 **같은 카드**(종류·이름·타입·설명·버튼)를 띄운다 · 열이 바뀌면 다시 · 머리를 떠나면 끝(카드 영역
+    /// 안이면 유지). 돌려주는 값 = 다음 깨울 시각.
+    pub(crate) fn objlink_header_tick(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        let ms = self.settings.int("objlink.hover_ms").max(0) as u64;
+        if ms == 0 || !self.settings.flag("objlink.tooltip") || self.primary {
+            return None;
+        }
+        let hov = if self.focus_allows_hover() {
+            self.grid.header_hover()
+        } else {
+            None
+        };
+        let dwell = std::time::Duration::from_millis(ms);
+        match (self.objlinks.header.clone(), hov) {
+            (None, Some((col, anchor))) => {
+                if self.grid.reveal_table().is_some() {
+                    self.objlinks.header = Some(HeaderCard {
+                        col,
+                        anchor,
+                        since: now,
+                        link: None,
+                    });
+                    return Some(now + dwell);
+                }
+                None
+            }
+            (Some(h), Some((col, anchor))) if h.col != col => {
+                self.objlink_header_end();
+                self.objlinks.header = Some(HeaderCard {
+                    col,
+                    anchor,
+                    since: now,
+                    link: None,
+                });
+                Some(now + dwell)
+            }
+            (Some(h), Some((_, anchor))) => {
+                if h.link.is_some() {
+                    if let Some(hh) = self.objlinks.header.as_mut() {
+                        hh.anchor = anchor;
+                    }
+                    return None;
+                }
+                if now < h.since + dwell {
+                    return Some(h.since + dwell);
+                }
+                // 머무름 완료 = 분석을 켜고 합성 링크를 띄운다.
+                self.objlinks.hover = true;
+                self.objlink_sync();
+                if !self.objlinks.active {
+                    self.objlinks.hover = false;
+                    self.objlinks.header = None;
+                    return None;
+                }
+                if let Some(hh) = self.objlinks.header.as_mut() {
+                    hh.link = Some(usize::MAX); // 표식: 복원이 실제 번호로
+                }
+                self.objlink_header_restore();
+                if let Some(k) = self.objlinks.hot {
+                    self.objlink_prefetch(k);
+                }
+                self.redraw();
+                None
+            }
+            (Some(h), None) => {
+                let in_card = self
+                    .cursor_point()
+                    .is_some_and(|p| self.objlink_card_zone(p));
+                if h.link.is_none() || !in_card {
+                    self.objlink_header_end();
+                }
+                None
+            }
+            (None, None) => None,
+        }
+    }
+
+    /// 열 머리 카드 끝 — 합성 링크를 걷고 머무름 모드도 끝낸다.
+    pub(crate) fn objlink_header_end(&mut self) {
+        if self.objlinks.header.take().is_some() {
+            self.objlink_hover_end();
+        }
+    }
+
+    /// 지금 포인터 자리(알면).
+    fn cursor_point(&self) -> Option<Point> {
+        (self.cursor.0 >= 0 && self.cursor.1 >= 0).then_some(Point {
+            x: self.cursor.0,
+            y: self.cursor.1,
+        })
     }
 
     /// 커서 아래 링크 index.
@@ -981,6 +1118,10 @@ impl App {
     /// ★ 포인터가 멈춘 자리를 기억한다(머무름 툴팁 · Ctrl 없음) — 머무름 모드 중 링크를 벗어나면 모드를 끝낸다.
     /// `objlink_hover`보다 먼저 부른다(모드가 끝나면 그쪽이 걷는다).
     pub(crate) fn objlink_rest(&mut self, p: Point) {
+        // 열 머리 카드가 떠 있으면(또는 머무는 중) 편집기 머무름 판정은 건드리지 않는다 — 끝은 `objlink_header_tick`이.
+        if self.objlinks.header.is_some() {
+            return;
+        }
         if self.primary {
             self.objlinks.hover_due = None;
             return;
@@ -1044,6 +1185,7 @@ impl App {
     /// 머무름 모드 끝(키 입력 · 링크 이탈 · 탭 전환) — 분석 결과를 걷고 다시 그린다.
     pub(crate) fn objlink_hover_end(&mut self) {
         self.objlinks.hover_due = None;
+        self.objlinks.header = None;
         if self.objlinks.hover {
             self.objlinks.hover = false;
             self.objlink_sync();
@@ -1317,6 +1459,8 @@ impl App {
             LinkKind::Routine => Msg::ObjKindRoutine,
         })
         .to_string();
+        // ★ 컬럼이면 이름 줄에 데이터 타입(+ NOT NULL)을 덧붙인다(사용자 10-07 "컬럼의 경우 데이터 타입을 추가로") — 메타 L2가 있을 때만.
+        let mut col_type: Option<String> = None;
         let desc = match link.kind {
             LinkKind::Column => {
                 let table = link.owner.as_deref();
@@ -1324,6 +1468,19 @@ impl App {
                     self.objlink_resolve(names, &snap, link.schema.as_deref(), cur.as_deref(), tb)
                 });
                 let col = &link.name;
+                col_type = id.and_then(|id| match snap.columns(id) {
+                    ColState::Loaded { cols, .. } => cols
+                        .iter()
+                        .find(|c| names.get(c.name).eq_ignore_ascii_case(col))
+                        .map(|c| {
+                            let mut t = names.get(c.data_type).to_string();
+                            if c.nullable == Some(false) {
+                                t.push_str(" NOT NULL");
+                            }
+                            t
+                        }),
+                    _ => None,
+                });
                 id.and_then(|id| {
                     let from_cols = match snap.columns(id) {
                         ColState::Loaded { cols, .. } => cols
@@ -1385,11 +1542,12 @@ impl App {
                         })
                 }),
         };
-        Some((
-            kind_label,
-            link.qualified(self.settings.flag("objlink.show_schema")),
-            desc.filter(|d| !d.trim().is_empty()),
-        ))
+        let mut name_line = link.qualified(self.settings.flag("objlink.show_schema"));
+        if let Some(t) = col_type.filter(|t| !t.trim().is_empty()) {
+            name_line.push_str(" · ");
+            name_line.push_str(&t);
+        }
+        Some((kind_label, name_line, desc.filter(|d| !d.trim().is_empty())))
     }
 
     /// 클릭(좌 = 설정 `objlink.click` — 설명 복사(기본) 또는 객체 탐색기에서 보기 · **Shift+좌** = `이름 - 설명` 복사 ·
@@ -2092,6 +2250,12 @@ impl App {
             None => t(Msg::ObjLinkNoDesc).to_string(),
         };
         let text = format!("{kind} {name}\n{second}");
+        // 열 머리 카드 = 앵커가 편집기 글자가 아니라 머리 칸(사용자 10-07).
+        if let Some(h) = self.objlinks.header.as_ref() {
+            if h.link == Some(k) {
+                return Some((text, h.anchor));
+            }
+        }
         let tb = self.editors.cur();
         let (a, e) = link.range;
         let (p0, p1) = (tb.point_at(a)?, tb.point_at(e)?);
@@ -2111,6 +2275,7 @@ pub(crate) fn paint_hover_card(
     link: usize,
     buttons: &[(&'static str, String, bool)],
     pointer: Option<Point>,
+    pressed: Option<&'static str>,
     pos: &str,
     scale: f32,
     clamp: Rect,
@@ -2160,11 +2325,20 @@ pub(crate) fn paint_hover_card(
     for ((id, label, on), bw) in buttons.iter().zip(widths) {
         let br = Rect::new(bx, by, bw, btn_h);
         let hot = *on && pointer.is_some_and(|p| br.contains(p));
+        // ★ 눌림 효과(사용자 10-07 "클릭시 클릭 효과가 없어"): 누른 버튼 위에 있는 동안 채움을 진하게 + 글자 1px 아래(머티리얼 pressed).
+        let down = hot && pressed == Some(*id);
         if *on {
-            dc.fill_round_rect_alpha(br, s(3.0), th.panel_bg, if hot { 0.38 } else { 0.18 });
+            let a = if down {
+                0.6
+            } else if hot {
+                0.38
+            } else {
+                0.18
+            };
+            dc.fill_round_rect_alpha(br, s(3.0), th.panel_bg, a);
         }
         let tx = br.x + (br.w - dc.text_width(label)) / 2;
-        let ty = dc.text_center_y(br.y, br.h);
+        let ty = dc.text_center_y(br.y, br.h) + i32::from(down);
         dc.text(
             tx,
             ty,

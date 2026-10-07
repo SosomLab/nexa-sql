@@ -138,6 +138,10 @@ pub(crate) struct PrefsWin {
     /// ★ 카드 덧말(키 → 한 줄 · 강조색 · 호스트가 상황값을 넣는다 — 예: 활성 탭의 들여쓰기 · 사용자 09-29). `info`의 `#note`와 합친다.
     notes: std::collections::HashMap<String, String>,
     vtree: Vec<(Msg, Vec<Msg>)>,
+    /// 동적 분류(확장 이름 · 호스트가 넣는다).
+    extra_cats: Vec<Msg>,
+    /// ★ 다음 그리기에서 보이게 스크롤할 트리 행(`select_category` · 배치 전에는 뷰포트가 없어 그때 못 한다 · 사용자 10-07).
+    reveal_row: Option<usize>,
     /// 트리 라벨을 만든 언어 — 바뀌면(View ▸ 언어 · 설정) 다음 그리기에서 트리·카드를 다시 만든다(사용자 10-06).
     model_lang: nsql_i18n::Lang,
     advanced: Switch,
@@ -212,15 +216,22 @@ fn is_folder_key(k: &str) -> bool {
 
 impl PrefsWin {
     /// 보이는 트리(그룹 ▸ 분류) — `CATEGORY_TREE`에서 숨긴 분류(끈/미설치 확장)를 뺀 것.
-    fn visible_tree(hidden: &[Msg]) -> Vec<(Msg, Vec<Msg>)> {
+    /// 트리 = 레지스트리 분류 − 숨긴 분류 − 내부 분류(`INTERNAL_CATEGORIES` · 사용자 10-07) + 확장 그룹 끝에 동적 분류(`extra` ·
+    /// 자기 분류가 없는 설치 확장 = 이름 분류 · 사용자 10-07).
+    fn visible_tree(hidden: &[Msg], extra: &[Msg]) -> Vec<(Msg, Vec<Msg>)> {
         CATEGORY_TREE
             .iter()
             .map(|(g, cats)| {
-                let kept: Vec<Msg> = cats
+                let mut kept: Vec<Msg> = cats
                     .iter()
                     .copied()
-                    .filter(|c| !hidden.contains(c))
+                    .filter(|c| {
+                        !hidden.contains(c) && !nsql_settings::INTERNAL_CATEGORIES.contains(c)
+                    })
                     .collect();
+                if *g == Msg::GrpExtensions {
+                    kept.extend(extra.iter().copied().filter(|c| !hidden.contains(c)));
+                }
                 (*g, kept)
             })
             .filter(|(_, cats)| !cats.is_empty())
@@ -291,10 +302,10 @@ impl PrefsWin {
             .get(self.sel.0)
             .and_then(|(_, cats)| self.sel.1.and_then(|ci| cats.get(ci)))
             .copied()?;
-        nsql_settings::EXTENSION_CATEGORIES
-            .iter()
+        nsql_settings::extension_categories()
+            .into_iter()
             .find(|(c, _)| *c == cat)
-            .map(|(_, id)| *id)
+            .map(|(_, id)| id)
     }
 
     /// 지금 선택한 분류가 포맷 분류(내장 옵션 · 확장 포맷터)인가 — 미리보기를 보이는 조건.
@@ -327,7 +338,20 @@ impl PrefsWin {
             return;
         }
         self.hidden = hidden;
-        self.vtree = Self::visible_tree(&self.hidden);
+        self.rebuild_tree();
+    }
+
+    /// ★ 동적 분류(확장 그룹 끝 · 사용자 10-07 "모든 확장은 설정에 사용 여부") — 바뀌면 트리를 다시 만든다.
+    pub(crate) fn set_extra_categories(&mut self, extra: Vec<Msg>) {
+        if self.extra_cats == extra {
+            return;
+        }
+        self.extra_cats = extra;
+        self.rebuild_tree();
+    }
+
+    fn rebuild_tree(&mut self) {
+        self.vtree = Self::visible_tree(&self.hidden, &self.extra_cats);
         self.tree = TreeView::new(Self::build_model(&self.vtree));
         if self.sel.0 >= self.vtree.len() {
             self.sel = (0, None);
@@ -344,7 +368,7 @@ impl PrefsWin {
     }
 
     pub(crate) fn new() -> Self {
-        let vtree = Self::visible_tree(&[]);
+        let vtree = Self::visible_tree(&[], &[]);
         let model = Self::build_model(&vtree);
         PrefsWin {
             hidden: Vec::new(),
@@ -352,6 +376,8 @@ impl PrefsWin {
             info: std::collections::HashMap::new(),
             notes: std::collections::HashMap::new(),
             vtree,
+            extra_cats: Vec::new(),
+            reveal_row: None,
             model_lang: nsql_i18n::current_lang(),
             window: None,
             memo: crate::wingeom::Memo::default(),
@@ -503,7 +529,7 @@ impl PrefsWin {
         let mut adv_hidden = 0usize;
         if !q.is_empty() {
             for sn in &self.snap {
-                if self.hidden.contains(&sn.entry.cat) {
+                if self.hidden.contains(&sn.entry.cat) || nsql_settings::is_internal(sn.entry.key) {
                     continue;
                 }
                 let hay = format!(
@@ -781,6 +807,10 @@ impl PrefsWin {
         {
             self.tree.set_selected_row(row);
             self.last_tree_row = row;
+            // ★ 선택 행이 트리 뷰포트 밖이면 스크롤(사용자 10-07 "좌측에는 위치가 보이지 않는 상태") — 지금 배치가 있으면 바로 ·
+            //   창이 아직 안 열렸으면 다음 그리기에서(`reveal_row`).
+            self.tree.reveal_row(row);
+            self.reveal_row = Some(row);
         }
         self.sel = (gi, Some(ci));
         self.preview_k = None;
@@ -1983,6 +2013,9 @@ impl PrefsWin {
             self.content_h = y + self.scroll - list.y;
             // ── 그리기: 검색 · 트리 · 카드(클립) · 하단
             self.search.paint(&mut dc, th);
+            if let Some(r) = self.reveal_row.take() {
+                self.tree.reveal_row(r);
+            }
             self.tree.paint(&mut dc, th);
             // 스플리터 — 가는 선 + hover/드래그 시 진해지는 손잡이.
             let sr = self.split_rect;

@@ -77,6 +77,15 @@ impl App {
         let tab = self.editors.active_id();
         let changed = (self.vars_changed.0 == tab).then_some(&self.vars_changed.1);
         let local = self.tab_vars.get(&tab).map(Vec::as_slice).unwrap_or(&[]);
+        // ★ 가림 판정(사용자 10-07): 공유 줄은 탭에 같은 이름이 있으면 · 글로벌 줄은 탭/공유에 있으면 가려진 줄(흐리게).
+        let up = |s: &str| s.to_ascii_uppercase();
+        let local_names: std::collections::BTreeSet<String> =
+            local.iter().map(|v| up(&v.name)).collect();
+        let near_names: std::collections::BTreeSet<String> = local_names
+            .iter()
+            .cloned()
+            .chain(self.sess.shared_vars.iter().map(|v| up(&v.name)))
+            .collect();
         local
             .iter()
             .map(|v| (v, nsql_script::Layer::Local))
@@ -105,6 +114,11 @@ impl App {
                 } else {
                     full.clone()
                 };
+                let shadowed = match layer {
+                    nsql_script::Layer::Shared => local_names.contains(&up(&v.name)),
+                    nsql_script::Layer::Global => near_names.contains(&up(&v.name)),
+                    _ => false,
+                };
                 vars_win::VarRow {
                     name: v.name.clone(),
                     ty: var_type_text(&v.ty),
@@ -112,6 +126,7 @@ impl App {
                     edit: if v.secret { String::new() } else { full },
                     layer,
                     changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
+                    shadowed,
                 }
             })
             // 치환 변수(`&이름` · DEFINE) — 표시값 = 사용 시 모드면 `원문 → 현재 값`(63 §9) · 편집 = 원문.
@@ -127,6 +142,7 @@ impl App {
                         edit: raw.clone(),
                         layer: nsql_script::Layer::Local,
                         changed: false,
+                        shadowed: false,
                     }),
             )
             .collect()

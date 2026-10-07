@@ -369,12 +369,18 @@ impl App {
             .unwrap_or("always")
             .to_string();
         self.all_grids().for_each(|g| g.set_filter_funnel(&funnel));
+        // 필터 중 자동 페치(T-285 · D-257/258): 서버 승격 방식 · 채움 상한.
+        let fsv = self
+            .settings
+            .get("grid.filter_server")
+            .unwrap_or("auto")
+            .to_string();
+        self.all_grids().for_each(|g| g.set_filter_server(&fsv));
+        let fill = self.settings.int("grid.filter_fill_pages").clamp(0, 20) as usize;
+        self.all_grids().for_each(|g| g.set_fill_pages(fill));
         // 열 머리 유형 아이콘(사용자 10-07 · 성능 향상 모드 = BOOST off).
         let ticons = self.settings.flag("grid.col_type_icons");
         self.all_grids().for_each(|g| g.set_type_icons(ticons));
-        let values_max = self.settings.int("grid.filter_values_max").clamp(20, 5000) as usize;
-        self.all_grids()
-            .for_each(|g| g.set_filter_values_max(values_max));
         let popup_rows = self.settings.int("grid.filter_popup_rows").clamp(3, 40) as usize;
         self.all_grids()
             .for_each(|g| g.set_filter_popup_rows(popup_rows));

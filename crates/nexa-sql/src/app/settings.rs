@@ -583,6 +583,8 @@ impl App {
             | "grid.filter_pick_max"
             | "grid.filter_strip"
             | "grid.col_type_icons"
+            | "grid.filter_server"
+            | "grid.filter_fill_pages"
             | "editor.quote_idents" => self.apply_grid_edit_cfg(),
             "grid.fk_follow" => self.grid_fk_sync(),
             "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
@@ -819,6 +821,8 @@ impl App {
                 self.layout();
             }
             "extensions.disabled" => self.apply_extensions(None),
+            // 확장 공통 "확장 사용"(사용자 10-07) — 목록으로 되돌려 적용.
+            k if k.starts_with("ext.") && k.ends_with(".use") => self.ext_use_changed(k),
             k if k.starts_with("ext.rainbow_pairs.") => self.apply_extensions(Some(k)),
             "editor.text_pad_left" => self
                 .editors
@@ -1251,7 +1255,8 @@ impl App {
         let _ = self.tool_dock.take_actions();
         self.apply_toolbar_visibility();
         self.conn_win.relabel();
-        self.editors.rebuild_boxes();
+        // 편집기 탭은 건드리지 않는다(사용자 10-07 "언어를 바꾸는 행위가 편집기 탭에 변경을 할 필요가 없다") — 종전 `rebuild_boxes`가
+        //   TextBox를 새로 만들어 캐럿·스크롤·선택·되돌리기 기록을 잃었다. 편집기 placeholder는 비어 있어 언어에 걸린 글이 없다.
         self.layout();
         self.set_focus(self.focus);
     }

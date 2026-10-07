@@ -1001,6 +1001,9 @@ pub(crate) fn is_client_only(sql: &str) -> bool {
                 | Command::Print { .. }
                 | Command::Variable { .. }
                 | Command::VarScope { .. }
+                | Command::VarDrop { .. }
+                | Command::VarClear { .. }
+                | Command::VarDeclareIn { .. }
                 | Command::Describe { .. }
                 | Command::Remark
         ))

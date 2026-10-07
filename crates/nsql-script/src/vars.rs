@@ -24,6 +24,9 @@ pub struct Var {
     pub label: String,
     /// 비밀 값(D-140) — 패널·로그에서 가리고 저장하지 않는다.
     pub secret: bool,
+    /// ★ 타입이 **값을 따라가는** 변수인가(선언 없이 생겼거나 타입 없이 선언 `VAR x` · `VAR x GLOBAL`) — 대입마다 지금 값에서 다시 추론
+    /// (사용자 10-07 "`'Number to String'`이 NUMBER처럼 보임" = 첫 값에서 한 번만 추론하던 결함). 타입을 적어 선언한 변수는 고정.
+    pub auto_ty: bool,
 }
 
 /// 변수가 사는 층.
@@ -108,6 +111,8 @@ impl VarStore {
 
     fn fresh(name: &str, ty: VarType, value: Value, declared: bool) -> Var {
         Var {
+            // 선언 없이 생긴 변수(값에서 추론한 타입으로 태어나도) · 타입 없이 선언한 변수 = 값을 따라간다(협업 bin54 ② = `!declared` 빠져 있었음).
+            auto_ty: !declared || ty == VarType::Auto,
             ty,
             value,
             declared,
@@ -116,12 +121,18 @@ impl VarStore {
         }
     }
 
-    /// 고칠 수 있는 자리(탭 → 공유) — 프로필 층은 고치지 않는다.
+    /// 고칠 수 있는 자리(탭 → 공유 → **글로벌**) — 프로필 층은 고치지 않는다.
+    /// ★ D-264(사용자 10-07 두 번 확인 "`VAR x GLOBAL` 뒤 `SELECT … INTO :x` = 글로벌에 값"): 대입은 그 이름이 **사는 층**에 쓴다 · 어디에도
+    /// 없으면 탭. 글로벌은 명시 선언(`VAR x GLOBAL` · `VAR x 타입 = 값 GLOBAL`)으로만 생기므로 서버 간 오염 방지(63 §11-3)는 그대로 ·
+    /// 탭에서 **가리고** 싶으면 명시 선언(`VAR x 타입 [= 값]` = 늘 탭에 만든다). 종전(09-25) "대입 = 늘 탭 가림"은 폐기.
     fn slot_mut(&mut self, key: &str) -> Option<&mut Var> {
         if self.vars.contains_key(key) {
             return self.vars.get_mut(key);
         }
-        self.shared.get_mut(key)
+        if self.shared.contains_key(key) {
+            return self.shared.get_mut(key);
+        }
+        self.global.get_mut(key)
     }
 
     /// `VARIABLE name type [= value]` — 공유 층에 있는 이름이면 그 자리에서 다시 선언한다.
@@ -129,7 +140,8 @@ impl VarStore {
         let key = norm(name);
         let mut var = Self::fresh(name, ty, init.unwrap_or(Value::Null), true);
         if let Some(old) = self.slot_mut(&key) {
-            var.label = std::mem::take(&mut old.label);
+            // 라벨은 **복제**(종전 `mem::take`는 가려지는 글로벌 줄의 이름을 비웠다 · 협업 bin54 "Name 빈칸").
+            var.label = old.label.clone();
             var.secret = old.secret;
         }
         if self.shared.contains_key(&key) && !self.vars.contains_key(&key) {
@@ -146,7 +158,8 @@ impl VarStore {
         let key = norm(name);
         match self.slot_mut(&key) {
             Some(v) => {
-                if v.ty == VarType::Auto {
+                // ★ 자동 타입 변수는 **지금 값**을 따른다(NULL은 타입을 안 바꾼다) · 선언 타입은 고정(사용자 10-07).
+                if (v.auto_ty && value != Value::Null) || v.ty == VarType::Auto {
                     v.ty = VarType::infer(&value);
                 }
                 // ★ 값이 **실제로 바뀔 때만** 의존 수식을 stale로(사용자 09-27 Linux: 재계산 EXEC의 OUT 흡수가 안 바뀐 `:A`까지
@@ -310,6 +323,46 @@ impl VarStore {
         gone
     }
 
+    /// ★ `VAR x DROP [GLOBAL]`(사용자 10-07 · docs/63 §11-4): 탭 층에 있으면 탭 층의 그 이름을(가리던 글로벌 값이 다시 보인다) ·
+    /// 없으면 공유 층을 지운다 · `global`이면 글로벌 층도 — 프로필 층은 남는다. 수식 등록도 함께 지운다. 돌려주는 값 = 하나라도 지웠는가.
+    pub fn drop_var(&mut self, name: &str, global: bool) -> bool {
+        let key = norm(name);
+        let mut gone = self.vars.remove(&key).is_some();
+        if !gone {
+            gone = self.shared.remove(&key).is_some();
+        }
+        if global {
+            gone |= self.global.remove(&key).is_some();
+        }
+        if gone {
+            self.formulas.remove(&key);
+            self.dirty.insert(key);
+        }
+        gone
+    }
+
+    /// ★ `VAR CLEAR [GLOBAL|ALL]`: 탭 층 전부(기본) · `global` = 글로벌 층도 · `shared` = 공유 층도 — 프로필 층은 늘 남는다.
+    /// 돌려주는 값 = 지운 이름 수(층이 겹친 같은 이름은 하나로).
+    pub fn clear_layers(&mut self, shared: bool, global: bool) -> usize {
+        let mut keys: Vec<String> = self.vars.keys().cloned().collect();
+        self.vars.clear();
+        if shared {
+            keys.extend(self.shared.keys().cloned());
+            self.shared.clear();
+        }
+        if global {
+            keys.extend(self.global.keys().cloned());
+            self.global.clear();
+        }
+        for k in &keys {
+            self.formulas.remove(k);
+            self.dirty.insert(k.clone());
+        }
+        keys.sort();
+        keys.dedup();
+        keys.len()
+    }
+
     /// 보이는 변수 전부(앞선 층이 가린다 · 이름순).
     pub fn iter(&self) -> impl Iterator<Item = (&String, &Var)> {
         let mut seen: BTreeMap<&String, &Var> = BTreeMap::new();
@@ -323,6 +376,32 @@ impl VarStore {
             seen.insert(k, v);
         }
         seen.into_iter()
+    }
+
+    /// ★ **모든 층의** 변수(사용자 10-07 "같은 이름의 글로벌·탭을 함께 · 가려진 것은 흐리게"): 이름순 · 같은 이름은 앞 층(tab → shared →
+    /// global → profile)부터 · 마지막 값 = 가려졌는가(앞 층에 같은 이름이 있다). `SHOW VARIABLES` 표·변수 창용.
+    pub fn iter_all(&self) -> Vec<(&String, &Var, Layer, bool)> {
+        let mut out: Vec<(&String, &Var, Layer, bool)> = Vec::new();
+        let layers: [(&BTreeMap<String, Var>, Layer); 4] = [
+            (&self.vars, Layer::Local),
+            (&self.shared, Layer::Shared),
+            (&self.global, Layer::Global),
+            (&self.fixed, Layer::Fixed),
+        ];
+        for (map, layer) in layers {
+            for (k, v) in map {
+                let shadowed = self.layer_of(k) != Some(layer);
+                out.push((k, v, layer, shadowed));
+            }
+        }
+        let rank = |l: Layer| match l {
+            Layer::Local => 0,
+            Layer::Shared => 1,
+            Layer::Global => 2,
+            Layer::Fixed => 3,
+        };
+        out.sort_by(|a, b| a.0.cmp(b.0).then(rank(a.2).cmp(&rank(b.2))));
+        out
     }
 
     /// 보이는 변수 수.
@@ -407,6 +486,7 @@ impl VarStore {
                 (
                     norm(&s.name),
                     Var {
+                        auto_ty: s.ty == VarType::Auto || !s.declared,
                         ty: s.ty,
                         value: s.value,
                         declared: s.declared,
@@ -549,7 +629,9 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
         if matches!(
             &item.kind,
             crate::split::ItemKind::Command(
-                crate::command::Command::Variable { .. } | crate::command::Command::Exec { .. }
+                crate::command::Command::Variable { .. }
+                    | crate::command::Command::VarDeclareIn { .. }
+                    | crate::command::Command::Exec { .. }
             )
         ) {
             // 리터럴 대입·선언은 `plan` 안에서 표에 반영된다 · 서버로 가야 하는 식은 실행하지 않으므로 버려진다.
@@ -581,14 +663,17 @@ mod tests {
             s.get("PROJECT").map(|v| v.value.clone()),
             Some(Value::Str("g".into()))
         );
-        // 탭에서 대입 = 글로벌은 그대로 · 탭 층 값이 앞선다.
+        // ★ D-264(10-07): 대입 = 그 이름이 사는 층 — 글로벌 값이 바뀌고 탭 층은 생기지 않는다.
         s.assign("project", Value::Str("t".into()));
-        assert_eq!(s.layer_of("project"), Some(Layer::Local));
-        assert_eq!(s.global_states()[0].value, Value::Str("g".into()));
-        // 탭 값을 글로벌로 올리면 글로벌이 바뀐다.
-        assert!(s.set_layer("project", Layer::Global));
+        assert_eq!(s.layer_of("project"), Some(Layer::Global));
         assert_eq!(s.global_states()[0].value, Value::Str("t".into()));
         assert!(s.local_states().is_empty());
+        // 탭에서 가리려면 명시 선언 — 글로벌은 그대로.
+        s.declare("project", VarType::Auto, Some(Value::Str("l".into())));
+        assert_eq!(s.layer_of("project"), Some(Layer::Local));
+        assert_eq!(s.global_states()[0].value, Value::Str("t".into()));
+        assert!(s.drop_var("project", false));
+        assert_eq!(s.layer_of("project"), Some(Layer::Global));
         assert!(s.set_layer("project", Layer::Shared));
         assert_eq!(s.layer_of("project"), Some(Layer::Shared));
         assert!(!s.set_layer("nope", Layer::Global), "없는 이름");
@@ -597,6 +682,110 @@ mod tests {
             "프로필 층으로는 못 옮긴다"
         );
         assert!(s.remove("project").is_some());
+    }
+
+    /// ★ 자동 타입 변수(사용자 10-07 "`'Number to String'`이 NUMBER처럼"): 선언 없는 변수·타입 없는 선언은 **값마다** 타입을 다시 추론 ·
+    /// NULL은 타입 유지 · 타입을 적어 선언한 변수는 고정 · 가려진 글로벌 줄의 라벨은 비지 않는다(`declare`가 라벨을 복제).
+    #[test]
+    fn auto_typed_variables_follow_the_value() {
+        let mut s = VarStore::new();
+        s.assign("E1", Value::Int(1999));
+        assert_eq!(s.get("E1").map(|v| v.ty.clone()), Some(VarType::Number));
+        s.assign("E1", Value::Str("Number to String".into()));
+        assert_eq!(
+            s.get("E1").map(|v| v.ty.clone()),
+            Some(VarType::Varchar2(16)),
+            "자동 변수 = 지금 값의 타입"
+        );
+        s.assign("E1", Value::Null);
+        assert_eq!(
+            s.get("E1").map(|v| v.ty.clone()),
+            Some(VarType::Varchar2(16)),
+            "NULL = 유지"
+        );
+        s.declare("T", VarType::Auto, None);
+        s.assign("T", Value::Int(1));
+        s.assign("T", Value::Str("x".into()));
+        assert_eq!(
+            s.get("T").map(|v| v.ty.clone()),
+            Some(VarType::Varchar2(1)),
+            "타입 없는 선언도 따라간다"
+        );
+        s.declare("G", VarType::Number, None);
+        s.assign("G", Value::Str("abc".into()));
+        assert_eq!(
+            s.get("G").map(|v| v.ty.clone()),
+            Some(VarType::Number),
+            "선언 타입은 고정"
+        );
+        // 가려진 글로벌의 라벨 보존.
+        s.declare("Proj", VarType::Auto, Some(Value::Int(1)));
+        assert!(s.set_layer("Proj", Layer::Global));
+        s.declare("Proj", VarType::Auto, Some(Value::Int(2)));
+        let all = s.iter_all();
+        let g = all
+            .iter()
+            .find(|(_, _, l, _)| *l == Layer::Global)
+            .expect("global row");
+        assert_eq!(g.1.label, "Proj");
+        assert!(g.3, "글로벌 줄 = 가려짐");
+        let t = all
+            .iter()
+            .find(|(_, _, l, _)| *l == Layer::Local)
+            .expect("tab row");
+        assert!(!t.3);
+    }
+
+    /// ★ 범위 규칙(사용자 10-07 시나리오 · D-264): `VAR A GLOBAL` + `:A := 10` = 글로벌 10(대입 = 사는 층) → 로컬 변수는 명시 선언
+    /// `VAR A NUMBER = 5`(탭 가림) → DROP = 탭만 지워 10 복귀 → DROP GLOBAL = 없는 변수 · CLEAR = 탭 층만 · CLEAR GLOBAL = 글로벌도(공유는 ALL).
+    #[test]
+    fn drop_and_clear_follow_scope_rules() {
+        let mut s = VarStore::new();
+        s.declare("A", VarType::Auto, None);
+        assert!(s.set_layer("A", Layer::Global));
+        s.assign("A", Value::Int(10));
+        assert_eq!(
+            s.layer_of("A"),
+            Some(Layer::Global),
+            "대입 = 사는 층(글로벌)"
+        );
+        assert_eq!(s.get("A").map(|v| v.value.clone()), Some(Value::Int(10)));
+        s.declare("A", VarType::Number, Some(Value::Int(5)));
+        assert_eq!(
+            s.layer_of("A"),
+            Some(Layer::Local),
+            "명시 선언 = 탭에 만들어 가린다(글로벌은 그대로)"
+        );
+        assert_eq!(s.get("A").map(|v| v.value.clone()), Some(Value::Int(5)));
+        assert_eq!(s.global_states()[0].value, Value::Int(10));
+        s.assign("A", Value::Int(6));
+        assert_eq!(s.layer_of("A"), Some(Layer::Local), "가린 뒤 대입 = 탭");
+        assert!(s.drop_var("A", false));
+        assert_eq!(
+            s.get("A").map(|v| v.value.clone()),
+            Some(Value::Int(10)),
+            "탭을 지우면 글로벌이 다시 보인다"
+        );
+        assert_eq!(s.layer_of("A"), Some(Layer::Global));
+        assert!(!s.drop_var("NOPE", false));
+        assert!(s.drop_var("A", true));
+        assert!(s.get("A").is_none(), "글로벌까지 지우면 없는 변수");
+        let _ = s.take_dirty();
+        s.assign("B", Value::Int(1));
+        s.assign("C", Value::Int(2));
+        assert!(s.set_layer("C", Layer::Global));
+        s.assign("D", Value::Int(3));
+        assert!(s.share("D"));
+        assert_eq!(s.clear_layers(false, false), 1, "탭 층만(B)");
+        assert!(s.get("B").is_none());
+        assert_eq!(s.layer_of("C"), Some(Layer::Global));
+        assert_eq!(s.layer_of("D"), Some(Layer::Shared));
+        assert_eq!(s.clear_layers(false, true), 1, "글로벌도(C)");
+        assert!(s.get("C").is_none() && s.get("D").is_some());
+        assert_eq!(s.clear_layers(true, true), 1, "ALL = 공유도(D)");
+        assert!(s.is_empty());
+        let dirty = s.take_dirty();
+        assert!(dirty.iter().any(|n| n == "C") && dirty.iter().any(|n| n == "D"));
     }
 
     /// 보존·내보내기 왕복: 선언·타입·값이 돌아오고 비밀·커서·여러 줄은 값이 빠진다 · 결과는 실행 가능한 스크립트다.

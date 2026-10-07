@@ -321,6 +321,10 @@ impl ApplicationHandler<Wake> for App {
         }
         self.project_sync_active();
         self.project_index_pump();
+        // 프로젝트 폴더 변경 감시(T-293 · 10-07).
+        if self.dir_watch_pump() {
+            self.redraw();
+        }
         self.project_autosave_tick();
         self.sync_open_files();
         self.bm_tick();
@@ -448,8 +452,11 @@ impl ApplicationHandler<Wake> for App {
         }
         self.file_loads_poll();
         self.multi_load_poll();
-        // ★ 그리드 편집 요청이 세션 바쁨으로 미뤄졌으면 한가해진 뒤 여기서(docs/87 · 키 조회).
-        if self.grid.has_edit_requests() && !self.sess.blocked() {
+        // ★ 그리드 편집 요청이 세션 바쁨으로 미뤄졌으면 한가해진 뒤 여기서(docs/87 · 키 조회) · 입력 사건 없이 생긴 페치/재조회 요청
+        //   (필터 변경 → 로컬 채움 · 승격/복귀 · 페이지 연쇄 · 기동 명령)도 같은 자리에서(협업 bin50/51 a2·b1 · 10-07).
+        if (self.grid.has_edit_requests() || self.grid.has_pending_requests())
+            && !self.sess.blocked()
+        {
             self.after_grid_event();
         }
         // 명령·IME로 온 편집이 거대 편집 확인에 막혔으면 알린다(키 입력은 `route`가 바로 알린다).
@@ -509,6 +516,10 @@ impl ApplicationHandler<Wake> for App {
         }
         // 머무름 툴팁 마감(Ctrl 없는 객체 설명 · `objlink.hover_ms`).
         if let Some(t) = self.objlink_hover_tick(now) {
+            next = next.min(t);
+        }
+        // 결과 열 머리 hover 카드(사용자 10-07).
+        if let Some(t) = self.objlink_header_tick(now) {
             next = next.min(t);
         }
         // ★ 메모리 맵 창(docs/80): 열려 있을 때만 `mem.refresh_ms`마다 표본 → 창·상태줄 갱신. 닫혀 있으면 깨우지도 않는다.

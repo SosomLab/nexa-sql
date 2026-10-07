@@ -231,8 +231,32 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 - 타 도구: SQL Workbench/J = 작업공간 변수(`WbVarDef` · 파일 저장) · DBeaver = 전역 변수 파일(서버끼리 섞임이 단점 · 63 §1) · cbq/usql = 세션 한정.
 
 ### 11-3. 설계(T-211 · 구현 ✅ §194)
-- 층 하나 추가: **global**(`Layer::Global`) — 앱 전역(모든 서버·세션·탭) · 우선순위 **tab > shared > global > fixed**(글로벌은 "기본값" 성격 · 탭/연결이 덮어쓴다) · 보존 = `NSQL_HOME/vars/global.sql`(`vars_to_script` 형식 · 실행 가능한 스크립트 · 비밀·커서 값 제외 · 바뀔 때 저장 · 시작 때 읽음).
+- 층 하나 추가: **global**(`Layer::Global`) — 앱 전역(모든 서버·세션·탭) · 우선순위 **tab > shared > global > fixed**(글로벌은 "기본값" 성격 · **같은 이름을 탭/연결에 명시 선언하면 가린다 · 대입은 그 이름이 사는 층에 쓴다** = 10-07 D-264 최종) · 보존 = `NSQL_HOME/vars/global.sql`(`vars_to_script` 형식 · 실행 가능한 스크립트 · 비밀·커서 값 제외 · 바뀔 때 저장 · 시작 때 읽음).
 - 넣는 법: `VAR x GLOBAL`(↔ `VAR x SHARE` · `VAR x LOCAL`) · 변수 창 Layer 열을 **드롭다운**(tab/shared/global)으로 · 우클릭 "글로벌로 올리기/내리기".
 - 흐름: GUI `App.global_vars`(단일 원천) → 세션이 생기거나 값이 바뀔 때 워커 `Cmd::GlobalVars` → 러너 `VarStore.set_global` · 러너가 스크립트에서 `VAR x GLOBAL`로 올리면 `RunEvent::Vars{global}`로 되돌아와 앱이 갱신·저장 · 다른 세션에도 즉시 전파(브로드캐스트).
 - 서버 간 오염 방지(DBeaver 단점): 글로벌은 **명시적으로 올린 값만**(자동 생성 금지) · 변수 창에 `global` 표시 · 로그 "변수 X 글로벌".
 - 결정: **D-206** 우선순위 tab > shared > global > fixed ✅ · **D-207** 자동 저장 = `vars.global_persist` 기본 켬 ✅ · 변수 창 층 버튼 = 순환(탭 → 공유 → 글로벌) · `SHOW VARIABLES` Layer 열 global/profile.
+
+### 11-4. 변수 제거·범위 명령(사용자 10-07 · T-304 · bin51)
+
+| 명령 | 뜻 | 남는 층 |
+|---|---|---|
+| `VAR x DROP`(= `REMOVE` / `DELETE`) | 탭 층의 x 제거 · 탭에 없으면 공유 층 | 글로벌 · 프로필(가려져 있던 값이 다시 보임) |
+| `VAR x DROP GLOBAL` | 위 + 글로벌 층의 x | 프로필 |
+| `VAR CLEAR` | 현재 탭 층 변수 전부 | 공유 · 글로벌 · 프로필 |
+| `VAR CLEAR GLOBAL` | 탭 + 글로벌 | 공유 · 프로필 |
+| `VAR CLEAR ALL` | 탭 + 공유 + 글로벌 | 프로필 |
+
+- 규칙: 같은 이름은 **앞 층이 가린다**(tab > shared > global > profile · D-206). 글로벌 A=10일 때 `:A := 5`는 탭 층에 A를 만들어 가린다(글로벌은 안 바뀜) · 탭 A를 지우면 글로벌 10이 다시 보인다 · 글로벌까지 지우면 없는 변수.
+- 지운 이름의 수식(`EXEC :V := 식` 등록)도 함께 지운다. 변수 창 · `vars/global.sql`은 dirty로 즉시 갱신.
+- `UNDEFINE x`는 `&x` 치환 변수용(바인드 변수와 저장소가 다름).
+- ★ **대입은 그 이름이 사는 층에 쓴다**(D-264 최종 · 사용자 10-07 2회 확인 · bin54): tab → shared → global 순으로 찾아 **있는 층**에 쓰고, 어디에도 없으면 tab에 만든다. `SELECT … INTO :x` · `EXEC :x := 값` · OUTPUT 모두 같다. 종전(09-25) "대입 = 늘 탭에서 가림"은 **폐기**. 서버 간 오염 방지(§11-3)는 **글로벌은 명시 선언으로만 생긴다**로 유지.
+- **탭에서 가리기 = 명시 선언**: 타입 없는 `VAR A`(탭 · 공유에 없으면 탭에 Auto · NULL로 선언 · 글로벌 같은 이름을 가림 · 이미 있으면 정보만) 또는 `VAR A 타입 [= 값]`.
+- **선언 + 층 한 줄**(bin53): `VAR A NUMBER = 10 GLOBAL` · `VAR A GLOBAL NUMBER = 10` · `VAR A GLOBAL = 10`(Auto) · `VAR x VARCHAR2(30) SHARE` · `VAR x GLOBAL`(값 없음) = 없으면 빈 글로벌 선언 · 있으면 올림.
+- **자동 타입 = 지금 값에서 매번 추론**(bin54 · `Var.auto_ty`): 선언 없이 생겼거나 타입 없이 선언한 변수 · 타입을 적어 선언한 변수는 고정 · NULL은 타입 유지.
+- **`SHOW VARIABLES` = 모든 층 줄**(`VarStore::iter_all` · 같은 이름은 tab → shared → global → profile 순) + 열 `Active`(`*` = 지금 쓰이는 값 · 빈칸 = 앞 층에 가려짐) · 변수 창은 가려진 줄을 흐리게(`VarRow.shadowed`).
+- 타입은 **엄격하게 읽는다**(bin53): 닫는 괄호 뒤 남은 글 · 잘못된 길이 · 짝 없는 괄호 = 오류(변수 안 생김) · `VARCHAR2(50 CHAR)` = 50.
+- 협업 V1 ④(bin54 · CLI · 사용자 시나리오): `VAR A GLOBAL` → `:A := 10` = **global 10 `*`** → `VAR A` → `:A := 5` = tab 5 `*` + global 10(빈칸) → `VAR A DROP` → `PRINT A` = 10 · global `*` → `VAR A DROP GLOBAL` → 0행 · "없음" ✓ · ⚠ 관찰 = 같은 이름 둘째 줄과 **DROP 뒤 글로벌만 남은 줄의 Name 칸이 빈칸**(이름이 안 보임) · ✗ 자동 타입 = 리터럴 대입 `:E1 := 1999` → `:E1 := 'Number to String'` 뒤에도 NUMBER(재추론 안 됨 · `SELECT … INTO` 경로는 SQLite 미지원으로 실서버 실기) · 관찰 = 타입 고정 `VAR G NUMBER`에 `:G := 'abc'`가 오류 없이 들어감.
+- 협업 V1 ③ (bin53 · CLI): `VAR A NUMBER = 10 GLOBAL` → `PRINT A` = 10 → `EXEC :A := 5` → 5(tab) → `VAR A DROP` → 10 → `VAR A DROP GLOBAL` → 없음 ✓ · `VAR B GLOBAL NUMBER = 7` · `VAR C GLOBAL = 3`(auto) · `VAR D VARCHAR2(30) SHARE` ✓ · `VARCHAR2(50) GLOBAL` = global VARCHAR2(50) · `GLOBAAL` · `(abc)` · `(50`(짝 없음) = 오류 · `(50 CHAR)` = 50 ✓ · 다른 탭 즉시 조회(브로드캐스트) = GUI 실기.
+- 협업 V1 ② (bin52 · 사용자 원문 순서): `VAR A GLOBAL`(빈 글로벌) → `EXEC :A := 10`(탭 10) → `EXEC :A := 5`(탭 5) → `VAR A DROP` → `PRINT A` = **빈 값**(글로벌 NULL) → `VAR A DROP GLOBAL` → "변수 A가 없습니다" — 원문 기대(10)와 다름 → 개발 세션 판단 대기.
+- 협업 V1 ①(bin51 · CLI `nsql run` · 격리 홈 · 만든 뒤 올리기): `EXEC :A := 10` → `VAR A GLOBAL`(global 10) → `EXEC :A := 5`(tab 5가 가림) → `VAR A DROP` → `PRINT A` = 10 → `VAR A DROP GLOBAL` → `PRINT A` = "변수 A가 없습니다" · `VAR CLEAR` = 탭 B 제거 · 글로벌 C 유지 · `VAR CLEAR GLOBAL` = 0행 ✓.

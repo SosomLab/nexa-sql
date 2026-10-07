@@ -341,13 +341,21 @@ impl Engine {
                     .collect();
                 vec![Action::ListVars(list)]
             }
+            // ★ 타입 없는 `VAR x`(사용자 10-07): 탭·공유 층에 없으면 **탭에 선언**(Auto · NULL · 글로벌/프로필의 같은 이름을 가린다) —
+            //   종전 SQL*Plus 뜻("변수 보기")은 이미 있는 변수에만. 보기는 `PRINT` · `VARIABLE`(인자 없음) · `SHOW VARIABLES`.
             Command::Variable {
                 name: Some(n),
                 ty: None,
                 ..
-            } => match self.vars.get(n) {
-                Some(v) => vec![Action::Nothing(format!("variable {n} {:?}", v.ty))],
-                None => vec![Action::Error(format!("변수 {n}가 없습니다"))],
+            } => match self.vars.layer_of(n) {
+                Some(crate::vars::Layer::Local) | Some(crate::vars::Layer::Shared) => {
+                    let ty = self.vars.get(n).map(|v| v.ty.clone());
+                    vec![Action::Nothing(format!("variable {n} {ty:?}"))]
+                }
+                _ => {
+                    self.vars.declare(n, nsql_core::VarType::Auto, None);
+                    vec![Action::Nothing(format!("variable {n} 선언 tab"))]
+                }
             },
             Command::Variable {
                 name: Some(n),
@@ -358,12 +366,51 @@ impl Engine {
                 vec![Action::Nothing(format!("variable {n} 선언"))]
             }
             Command::VarScope { name, layer } => {
+                // ★ 없는 이름이면 **그 층에 새로 선언**(사용자 10-07 시나리오 "`VAR A GLOBAL` 뒤 `EXEC :A := 10`" · 종전엔 "변수가 없습니다") —
+                //   타입 Auto · 값 NULL · 프로필 층(Fixed)으로는 못 만든다.
+                let mut created = false;
+                if !self.vars.contains(name) && *layer != crate::vars::Layer::Fixed {
+                    self.vars.declare(name, nsql_core::VarType::Auto, None);
+                    created = true;
+                }
                 let ok = self.vars.set_layer(name, *layer);
                 if ok {
                     let layer = layer.word();
-                    vec![Action::Nothing(format!("variable {name} {layer}"))]
+                    let tail = if created { " (new)" } else { "" };
+                    vec![Action::Nothing(format!("variable {name} {layer}{tail}"))]
                 } else {
                     vec![Action::Error(format!("변수 {name}가 없습니다"))]
+                }
+            }
+            // ★ 범위 제거(사용자 10-07 · docs/63 §11-4): 지운 뒤 가려져 있던 아래 층(글로벌·프로필)이 다시 보인다.
+            Command::VarDrop { name, global } => {
+                if self.vars.drop_var(name, *global) {
+                    let scope = if *global { " global" } else { "" };
+                    vec![Action::Nothing(format!("variable {name} drop{scope}"))]
+                } else {
+                    vec![Action::Error(format!("변수 {name}가 없습니다"))]
+                }
+            }
+            Command::VarClear { global, shared } => {
+                let n = self.vars.clear_layers(*shared, *global);
+                vec![Action::Nothing(format!("variable clear {n}"))]
+            }
+            // ★ 선언 + 층 한 줄(사용자 10-07) — 선언(타입·초기값)한 뒤 그 층으로.
+            Command::VarDeclareIn {
+                name,
+                ty,
+                init,
+                layer,
+            } => {
+                self.vars.declare(name, ty.clone(), init.clone());
+                if self.vars.set_layer(name, *layer) {
+                    let layer = layer.word();
+                    vec![Action::Nothing(format!("variable {name} 선언 {layer}"))]
+                } else {
+                    vec![Action::Error(format!(
+                        "변수 {name}를 {}로 옮길 수 없습니다",
+                        layer.word()
+                    ))]
                 }
             }
             Command::Print { names } => {

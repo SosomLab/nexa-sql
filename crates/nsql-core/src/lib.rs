@@ -143,25 +143,43 @@ pub enum VarType {
 
 impl VarType {
     /// `VARIABLE` 문의 타입 토큰을 해석한다. 예: `NUMBER`, `VARCHAR2(30)`, `REFCURSOR`.
+    /// ★ 엄격(사용자 10-07): 닫는 괄호 뒤의 잔여 글(`VARCHAR2(50) GLOBAL`) · 괄호 안의 숫자 아닌 길이(`VARCHAR2(abc)`) · 짝 없는 괄호는
+    /// `None` — 종전엔 길이 변환 실패를 **4000으로 조용히 폴백**하고 뒤 낱말을 무시해 `VARCHAR2(50) GLOBAL`이 탭 `VARCHAR2(4000)`으로 선언됐다.
+    /// 길이 없는 `VARCHAR2`는 4000 · `VARCHAR2(50 CHAR)`·`NUMBER(10,2)`처럼 첫 숫자 뒤 단위·정밀도는 받아 준다.
     pub fn parse(s: &str) -> Option<VarType> {
         let s = s.trim();
         let up = s.to_ascii_uppercase();
-        let (head, arg) = match up.find('(') {
-            Some(i) => (&up[..i], up[i + 1..].trim_end_matches(')').trim()),
-            None => (up.as_str(), ""),
+        let tail_owned: String;
+        let (head, arg, tail): (&str, &str, &str) = match up.find('(') {
+            Some(i) => {
+                let rest = &up[i + 1..];
+                let j = rest.find(')')?;
+                (up[..i].trim(), rest[..j].trim(), rest[j + 1..].trim())
+            }
+            None => {
+                let mut it = up.split_whitespace();
+                let h = it.next().unwrap_or("");
+                tail_owned = it.collect::<Vec<_>>().join(" ");
+                (h, "", tail_owned.as_str())
+            }
         };
-        let len = || -> u32 {
-            arg.split_whitespace()
+        if !tail.is_empty() {
+            return None;
+        }
+        let len = || -> Option<u32> {
+            if arg.is_empty() {
+                return Some(4000);
+            }
+            arg.split([',', ' '])
                 .next()
-                .and_then(|n| n.parse().ok())
-                .unwrap_or(4000)
+                .and_then(|n| n.trim().parse().ok())
         };
-        Some(match head.trim() {
+        Some(match head {
             "NUMBER" | "NUM" | "INT" | "INTEGER" | "DECIMAL" | "NUMERIC" => VarType::Number,
             "VARCHAR2" | "VARCHAR" | "NVARCHAR2" | "NVARCHAR" | "STRING" => {
-                VarType::Varchar2(len())
+                VarType::Varchar2(len()?)
             }
-            "CHAR" | "NCHAR" => VarType::Char(if arg.is_empty() { 1 } else { len() }),
+            "CHAR" | "NCHAR" => VarType::Char(if arg.is_empty() { 1 } else { len()? }),
             "CLOB" | "NCLOB" | "TEXT" => VarType::Clob,
             "REFCURSOR" | "REF_CURSOR" | "CURSOR" | "SYS_REFCURSOR" => VarType::RefCursor,
             "BINARY_FLOAT" | "FLOAT" | "REAL" => VarType::BinaryFloat,

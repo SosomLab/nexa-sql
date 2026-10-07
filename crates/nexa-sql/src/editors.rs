@@ -2058,25 +2058,6 @@ impl Editors {
             .collect()
     }
 
-    /// 언어 전환 등으로 placeholder를 다시 만들 때 — 본문 보존 재생성.
-    pub(crate) fn rebuild_boxes(&mut self) {
-        let texts: Vec<String> = self.bufs.iter().map(TextBox::text).collect();
-        let focused = self.cur().is_focused();
-        self.bufs = texts
-            .iter()
-            .zip(self.syntax.iter())
-            .map(|(s, syn)| self.make_box(s, syn))
-            .collect();
-        for (i, b) in self.bufs.iter_mut().enumerate() {
-            if let Some((ts, sp)) = self.indents.get(i).copied().flatten() {
-                b.set_indent(ts, sp);
-            }
-        }
-        self.cur_mut().set_focused(focused);
-        let mut inv = Invalidations::default();
-        self.layout(&mut inv);
-    }
-
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
         self.bounds = b;
         self.scale = scale;

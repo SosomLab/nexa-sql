@@ -387,7 +387,8 @@
 | D-260 | 제외 설정 `project.exclude` 하나를 Goto · 파일 검색 · 프로젝트 탐색기가 공용 (10-07) | ✅ 사용자 10-07 저녁 = 파일 검색(Ctrl+Shift+F)에도 동일하게 제외 | 105-fast-file-enumeration-survey.md §5 · T-290 |
 | D-261 | 디스크 색인 캐시 (10-07) | ✖ 사용자 10-07 저녁 = 하지 않음(제외) | 105-fast-file-enumeration-survey.md §3-3 |
 | D-262 | Windows `FileIdBothDirectoryInfo` 대량 열거 어댑터 (10-07) | ✖ 사용자 10-07 저녁 = 하지 않음(제외) | 105-fast-file-enumeration-survey.md §3-3 · T-294 |
-| D-263 | 폴더 감시 포트 `DirWatch`(3-OS 어댑터 · 상한 넘으면 폴링) (10-07) | ⏳ 결정 대기(권장 = 단계 2로 채택) | 105-fast-file-enumeration-survey.md §3-3 · T-293 |
+| D-263 | 폴더 감시 포트 `DirWatch`(3-OS 어댑터 · 상한 넘으면 폴링) (10-07) | ✅ 사용자 10-07 저녁 = 채택 · "전체 개발 진행"(T-293 · 협업 평가 = 제외 규칙과 함께 쓰면 유휴 CPU 0 · OS 메모리 ≈ 0.2 MB · 크기 수십 KB) | 105-fast-file-enumeration-survey.md §3-3 · T-293 |
+| D-264 | **변수 대입은 그 이름이 사는 층에 쓴다**(tab → shared → global · 어디에도 없으면 tab) · 탭에서 가리기 = 명시 선언(`VAR A` · `VAR A 타입 [= 값]`) · 글로벌은 명시 선언으로만 생김(오염 방지 유지) · 선언 + 층 한 줄 `VAR A NUMBER = 10 GLOBAL` (10-07) | ✅ **최종**(사용자 10-07 2회 확인 · bin54) · 09-25 "대입 = 늘 탭 가림" 폐기 · bin53의 "설계 유지" 판단도 뒤집힘 | 63-variable-management.md §11-3 · §11-4 · T-304 |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |
 | L-3 | 라이선스 ID 체계 `NSL-2026-000001` · 대장은 발급 PC 로컬(비공개 저장소에도 안 올림) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:452 §12-7 · journal/2026-09-27.md:205 |

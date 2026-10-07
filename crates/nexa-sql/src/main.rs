@@ -409,6 +409,10 @@ struct App {
     project_index_key: (u64, usize, bool),
     /// 마지막 증분 전달 시각(열거 중 250 ms 스로틀).
     project_index_last: Instant,
+    /// ★ 프로젝트 폴더 변경 감시(T-293 · D-263 · nexa-fs `dirwatch`) · 시작 열쇠(루트 · 제외 · 디바운스) · 폴백 안내 1회.
+    dir_watch: Option<nexa_fs::dirwatch::DirWatch>,
+    dir_watch_key: (Vec<PathBuf>, Vec<String>, u64),
+    dir_watch_told: bool,
     /// ★ 다중 열기(사용자 09-22): 확인 팝업이 기다리는 (파일들 · 인코딩) · 진행 중인 순차 적재.
     multi_pending: Option<(Vec<PathBuf>, String)>,
     multi_load: Option<MultiLoad>,
@@ -1704,6 +1708,9 @@ fn main() {
         project_sync_quiet: false,
         project_index_key: (0, 0, false),
         project_index_last: Instant::now(),
+        dir_watch: None,
+        dir_watch_key: (Vec::new(), Vec::new(), 0),
+        dir_watch_told: false,
         multi_pending: None,
         multi_load: None,
         arg_project,

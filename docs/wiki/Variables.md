@@ -33,6 +33,23 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 - `SET DEFINE OFF` = `&`를 글자로.
 - 스크립트 인자 `&1 &2 …` = `nsql run file.sql arg1 arg2`.
 
+## 변수 지우기(10-07)
+
+| 명령 | 지우는 것 |
+|---|---|
+| `VAR 이름 DROP` | 이 탭의 그 변수 |
+| `VAR 이름 DROP GLOBAL` | 이 탭과 글로벌의 그 변수 |
+| `VAR CLEAR` | 이 탭의 변수 전부(글로벌은 남음) |
+| `VAR CLEAR GLOBAL` | 이 탭 + 글로벌 변수 전부 |
+| `VAR CLEAR ALL` | 이 탭 + 연결 공유 + 글로벌 변수 전부 |
+
+같은 이름이 탭과 글로벌에 둘 다 있으면 **탭 값이 쓰이고**, 탭 값을 지우면 글로벌 값이 다시 쓰입니다. **값은 그 변수가 있는 곳에 들어갑니다**: `VAR A GLOBAL` 뒤 `EXEC :A := 10`(또는 `SELECT … INTO :A`)이면 글로벌 A가 10이 됩니다. 이 탭에서만 다른 값을 쓰려면 먼저 `VAR A`(또는 `VAR A NUMBER`)로 이 탭에 선언하세요 — 그다음 `:A := 5`는 이 탭에만 들어가고 글로벌은 10 그대로입니다. `VAR A DROP`이면 다시 글로벌 10이 쓰입니다.
+
+- 선언하면서 값 주기: `VAR A NUMBER = 10 GLOBAL` · `VAR A GLOBAL = 10` · 연결 공유 `VAR x VARCHAR2(30) SHARE`.
+- `SHOW VARIABLES`는 같은 이름의 모든 층을 보여 주고, 지금 쓰이는 줄에 `Active` `*`가 붙습니다. 변수 창에서는 가려진 줄이 흐리게 보입니다.
+- 타입 없이 생긴 변수는 값에 따라 타입이 바뀝니다(숫자 → 글자 등). 타입을 적어 선언하면 고정됩니다.
+- 타입을 잘못 쓰면(`VARCHAR2(50) GLOBAAL` 등) 변수를 만들지 않고 오류를 냅니다.
+
 ## 내장 변수 — `${workspaceFolder}`처럼(설정 `vars.intrinsic` · 기본 켬)
 
 앱이 아는 값을 VS Code와 같은 이름·문법으로 스크립트와 경로 설정(`log.file` · `oracle.client_dir` · `oracle.tns_admin`)에서 씁니다. 찾는 순서 = **`DEFINE` 변수 → 내장 변수 → 글자 그대로**, `${env:이름}`은 **내장 별칭(`NSQL_*`) → OS 환경 변수**.

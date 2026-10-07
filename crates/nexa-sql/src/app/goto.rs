@@ -252,6 +252,126 @@ impl App {
         self.goto_walk = Some(parwalk::spawn(folders, opts, threads));
     }
 
+    /// ★ 폴더 변경 감시 동기화(T-293 · 틱마다 열쇠 비교 하나): 설정 `project.watch` · 프로젝트 폴더 · 제외 이름 · 디바운스가 바뀌면 감시를
+    /// 다시 시작(없애거나) — 백엔드가 없는 OS(지금 macOS·Linux)는 시작하지 않고 TTL로 폴백(상태줄 안내 1회).
+    pub(crate) fn dir_watch_sync(&mut self) {
+        let on = self.settings.flag("project.watch");
+        let folders = self.project.folders.clone();
+        let excl = exclude_names(self.settings.get(EXCLUDE_KEY).unwrap_or(""));
+        let debounce = self
+            .settings
+            .int("project.watch_debounce_ms")
+            .clamp(50, 5000) as u64;
+        if !on || folders.is_empty() {
+            if self.dir_watch.is_some() {
+                self.dir_watch = None;
+                self.dir_watch_key = (Vec::new(), Vec::new(), 0);
+            }
+            return;
+        }
+        let key = (folders, excl, debounce);
+        if self.dir_watch.is_some() && key == self.dir_watch_key {
+            return;
+        }
+        self.dir_watch_key = key.clone();
+        if !nexa_fs::dirwatch::DirWatch::supported() {
+            self.dir_watch = None;
+            if !self.dir_watch_told {
+                self.dir_watch_told = true;
+                self.sess.status = t(Msg::StDirWatchUnsupported).into();
+            }
+            return;
+        }
+        self.dir_watch = nexa_fs::dirwatch::DirWatch::spawn(
+            &key.0,
+            nexa_fs::dirwatch::DirWatchOpts {
+                exclude_names: key.1,
+                debounce_ms: key.2,
+            },
+        );
+    }
+
+    /// ★ 감시 사건 수거(틱): 바뀐 폴더만 다시 읽어 색인을 **증분** 갱신(그 폴더의 직접 자식 교체) + 프로젝트 트리 새로 고침 ·
+    /// 넘침/루트 소실 = 색인 낡음(다음 열기 때 재열거) + 트리 새로 고침 · 돌려주는 값 = 다시 그릴 것.
+    pub(crate) fn dir_watch_pump(&mut self) -> bool {
+        self.dir_watch_sync();
+        let mut events = Vec::new();
+        if let Some(w) = &self.dir_watch {
+            while let Some(e) = w.try_recv() {
+                events.push(e);
+                if events.len() > 64 {
+                    break;
+                }
+            }
+        }
+        if events.is_empty() {
+            return false;
+        }
+        let mut full = false;
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for e in events {
+            match e {
+                nexa_fs::dirwatch::DirEvent::Changed(ds) => dirs.extend(ds),
+                nexa_fs::dirwatch::DirEvent::Overflow(_) => full = true,
+                nexa_fs::dirwatch::DirEvent::RootGone(r) => {
+                    full = true;
+                    self.sess.status = tf(Msg::StDirWatchRootGone, &[&r.display().to_string()]);
+                }
+            }
+        }
+        if full || self.goto_into_new || self.goto_walk.is_some() {
+            // 재열거 중이거나 놓친 게 있으면 통째로(이중 버퍼라 목록은 그동안 유지).
+            self.goto_index_invalidate();
+        } else if self.goto_files_at.is_some() {
+            for d in &dirs {
+                self.goto_index_update_dir(d);
+            }
+            if self.palette.is_open() && self.palette.goto_mode() {
+                let files = self.goto_file_items();
+                self.palette.set_files(files);
+                self.goto_sent = self.goto_files.len();
+            }
+        }
+        if self.project_panel.is_visible() {
+            self.project_panel.refresh();
+        }
+        true
+    }
+
+    /// 색인에서 `dir`의 직접 자식 파일을 다시 읽어 교체(T-293 ⑤ · 숨김/점 규칙 = 열거와 같음).
+    fn goto_index_update_dir(&mut self, dir: &Path) {
+        let show_hidden = self.settings.flag("file.show_hidden");
+        let show_dot = self.settings.flag("file.show_dot");
+        let Ok(entries) = nexa_fs::list_opts(dir, show_hidden, show_dot) else {
+            // 폴더가 사라졌다 = 그 아래 전부 제거.
+            let keep: Vec<bool> = self
+                .goto_files
+                .iter()
+                .map(|p| !p.starts_with(dir))
+                .collect();
+            let mut k = keep.iter();
+            self.goto_files.retain(|_| *k.next().unwrap_or(&true));
+            let mut k2 = keep.iter();
+            self.goto_lower.retain(|_| *k2.next().unwrap_or(&true));
+            return;
+        };
+        let keep: Vec<bool> = self
+            .goto_files
+            .iter()
+            .map(|p| p.parent() != Some(dir))
+            .collect();
+        let mut k = keep.iter();
+        self.goto_files.retain(|_| *k.next().unwrap_or(&true));
+        let mut k2 = keep.iter();
+        self.goto_lower.retain(|_| *k2.next().unwrap_or(&true));
+        for e in entries {
+            if !e.is_dir {
+                self.goto_lower.push(e.name.to_lowercase());
+                self.goto_files.push(e.path);
+            }
+        }
+    }
+
     /// 파일 색인을 낡음으로(T-299 ① · 사용자 10-07 "색인을 써도 최근 변경이 보여야"): 앱이 아는 변경(새 파일 저장 · 제외 규칙 변경 ·
     /// 폴더 변경) 직후 호출 — 다음 Ctrl+P/필터 열기 때 재열거(이중 버퍼라 옛 목록은 그동안 그대로 보인다).
     pub(crate) fn goto_index_invalidate(&mut self) {

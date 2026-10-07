@@ -27,6 +27,7 @@
 | 9 | IBM Carbon · Atlassian | https://carbondesignsystem.com/components/data-table/usage/ · https://atlassian.design/components/dropdown-menu/usage | Apache 2.0 / 열람 | 다중 선택 헤더 3상태 · 일괄 작업 바 · 정렬 아이콘은 정렬 열만 · 지브라 옵션 / 메뉴 = 트리거 아래 · 포커스 락 · 라벨 잘림 회피 |
 | 10 | Windows UX Guidelines(Win7 · 레거시 · "원칙은 유효") | https://learn.microsoft.com/windows/win32/uxguide/guidelines (`cmd-menus` · `ctrl-text-boxes` · `inter-keyboard` · `ctrl-tooltips-and-infotips` · `mess-error`) | CC BY 4.0 | 컨텍스트 메뉴 ≤ 15 · 그룹 ≤ 7 · 순서 = 주 명령 → 보조 → Cut/Copy/Paste → 설정 → Delete/Rename → Properties · Cut/Copy/Paste/Delete/Rename은 늘 두고 비활성 · 컨텍스트 메뉴에 단축키 표시 안 함 · 메뉴 전용 명령 금지 · 숫자·금액 우측 정렬 · 재입력형 = 포커스 시 전체 선택 · 잘못된 입력은 지우지 않음 · 입력 포커스 컨트롤을 비활성화하지 않음 · Esc = 취소 · Enter = 기본 버튼 · **툴팁은 "보거나 조작하려는 대상을 가리지 말 것 · 다음에 볼 항목(오른쪽·아래)도"** · 오류 = 문제·원인·해법 · 타이핑 중 모달 금지 |
 | 11 | Shneiderman 8 골든 룰 | (교과서 · 요약 https://ixdf.org/literature/article/shneiderman-s-eight-golden-rules-will-help-you-design-better-interfaces) | 열람 | 일관성 · 단축키 · 피드백 · 닫힘 있는 대화 · 오류 예방 · **쉬운 되돌리기** · 사용자 주도 · 단기 기억 부담 축소 |
+| 12 | **아이콘 모양 참고** — Google Material Symbols · VS Code Codicons(10-07 · T-303 · [106](106-menu-icon-audit.md)) | https://fonts.google.com/icons · https://github.com/microsoft/vscode-codicons | Material Symbols = Apache-2.0 · Codicons = CC-BY-4.0 | **모양만 참고해 `toolicons.rs` 벡터 도형으로 직접 그림**(이미지·글꼴 파일 미포함 · 저작권 고지 불요 수준 유지) · 메뉴 항목 글과 그림이 맞을 것(CSV · 텍스트 · Markdown · JSON 구별) |
 
 ---
 

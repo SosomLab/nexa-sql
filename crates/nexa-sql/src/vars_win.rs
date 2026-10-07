@@ -34,6 +34,8 @@ pub(crate) struct VarRow {
     /// 사는 층(tab · shared · global · profile).
     pub layer: nsql_script::Layer,
     pub changed: bool,
+    /// ★ 앞 층에 같은 이름이 있어 **가려진** 줄(글로벌·공유) — 흐리게 그린다(사용자 10-07 "같은 이름의 글로벌·탭을 함께 · 글로벌은 흐릿하게").
+    pub shadowed: bool,
 }
 
 pub(crate) enum VarsWinAction {
@@ -533,10 +535,11 @@ impl VarsWin {
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
                     let cell = Rect::new(cx, clip.y, *w - px(4.0), clip.h);
-                    let color = if i == 0 || i == 2 {
-                        th.text
-                    } else {
+                    // 가려진 줄(앞 층에 같은 이름)은 전부 흐리게.
+                    let color = if r.shadowed || !(i == 0 || i == 2) {
                         th.text_dim
+                    } else {
+                        th.text
                     };
                     dc.text(cx + px(6.0), ty, cell, &cells[i], color);
                     cx += w;

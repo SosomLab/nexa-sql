@@ -2111,17 +2111,13 @@ impl Runner {
                 // `SHOW VARIABLES` = 변수 표를 **결과 표**로(이름 · 타입 · 값 · 층 · 선언 — 비밀 값은 가린다 · docs/63 V2).
                 //   GUI에서는 결과 탭 하나로, CLI에서는 표로 보인다(종전 = 글자 한 덩어리).
                 if matches!(w_up.as_str(), "VARIABLES" | "VAR" | "VARS") {
+                    // ★ 모든 층(사용자 10-07): 같은 이름의 글로벌·탭 줄을 함께 — `Active` = `*`(지금 쓰이는 값) · 빈칸 = 앞 층에 가려짐.
                     let rows: Vec<Vec<String>> = self
                         .engine
                         .vars
-                        .iter()
-                        .map(|(key, v)| {
-                            let layer = match self.engine.vars.layer_of(key) {
-                                Some(nsql_script::Layer::Shared) => "shared",
-                                Some(nsql_script::Layer::Global) => "global",
-                                Some(nsql_script::Layer::Fixed) => "profile",
-                                _ => "tab",
-                            };
+                        .iter_all()
+                        .into_iter()
+                        .map(|(_, v, layer, shadowed)| {
                             vec![
                                 v.label.clone(),
                                 var_type_label(&v.ty),
@@ -2130,14 +2126,18 @@ impl Runner {
                                 } else {
                                     v.value.display()
                                 },
-                                layer.to_string(),
+                                layer.word().to_string(),
                                 if v.declared { "VAR" } else { "auto" }.to_string(),
+                                if shadowed { "" } else { "*" }.to_string(),
                             ]
                         })
                         .collect();
                     emit(RunEvent::ResultSet {
                         index,
-                        rs: text_result_set(&["Name", "Type", "Value", "Layer", "Declared"], rows),
+                        rs: text_result_set(
+                            &["Name", "Type", "Value", "Layer", "Declared", "Active"],
+                            rows,
+                        ),
                         elapsed: Duration::ZERO,
                         more: false,
                         label: Some("Variables".to_string()),

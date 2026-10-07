@@ -127,6 +127,11 @@ impl App {
             let _ = std::fs::write(path, self.palette.dump());
             return;
         }
+        // 활성 탭을 그 경로로 저장(자체 시험 · T-299 ① 색인 즉시 반영 확인 · 10-07).
+        if let Some(p) = id.strip_prefix("file.save_as:") {
+            self.save_to(std::path::Path::new(p));
+            return;
+        }
         // 탭 이동 기록 덤프(10-07 · 오래된 것 → 최근 · `id\t제목` 줄).
         if let Some(path) = id.strip_prefix("editor.tabhist:") {
             let out: String = self
@@ -242,6 +247,8 @@ impl App {
                 {
                     self.grid
                         .add_filter(c, op, it.next().unwrap_or_default().to_string());
+                    // 칩 ×·메뉴 길과 같게 요청(채움 페치 · 승격)을 바로 걷는다.
+                    self.after_grid_event();
                     self.redraw();
                 }
             }
@@ -252,6 +259,7 @@ impl App {
             .and_then(|c| c.trim().parse::<usize>().ok())
         {
             self.grid.remove_filter(c);
+            self.after_grid_event();
             self.redraw();
             return;
         }

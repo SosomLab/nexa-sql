@@ -264,7 +264,8 @@ pub fn missing_inputs(
                     name: Some(n),
                     ty: Some(_),
                     ..
-                } => {
+                }
+                | Command::VarDeclareIn { name: n, .. } => {
                     assigned.insert(norm(n));
                 }
                 Command::Exec { body } => {
