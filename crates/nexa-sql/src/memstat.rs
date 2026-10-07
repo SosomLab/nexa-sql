@@ -188,6 +188,44 @@ impl Sample {
     pub(crate) fn other(&self) -> u64 {
         self.sys.footprint.saturating_sub(self.data.sum())
     }
+
+    /// ★ **화면에 보이는 값의 서명**(T-310 · 10-08): 메모리 바이트는 매초 조금씩 흔들려 원값 비교로는 "안 바뀜"이 거의 없다 →
+    /// 표에 실제로 찍히는 글(`fmt` 유효숫자 3 · 비율 소수 1 · 묶음 소계 · 시스템 행)로 해시를 만들어 같으면 다시 그리지 않는다.
+    pub(crate) fn display_sig(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let foot = self.sys.footprint.max(1);
+        let pct = |b: u64| format!("{:.1}", b as f64 * 100.0 / foot as f64);
+        for c in Cat::ALL {
+            let b = self.data.get(c);
+            fmt(b).hash(&mut h);
+            pct(b).hash(&mut h);
+        }
+        let other = self.other();
+        fmt(other).hash(&mut h);
+        pct(other).hash(&mut h);
+        for g in Group::ALL {
+            let sum = if g == Group::Runtime {
+                other
+            } else {
+                self.data.group_sum(g)
+            };
+            fmt(sum).hash(&mut h);
+        }
+        for v in [
+            self.sys.footprint,
+            self.sys.private_ws,
+            self.sys.resident,
+            self.sys.anon,
+            self.sys.file_backed,
+            self.sys.compressed,
+            self.sys.heap_used,
+            self.sys.heap_held,
+        ] {
+            fmt(v).hash(&mut h);
+        }
+        h.finish()
+    }
 }
 
 /// 전체 표본(창이 열려 있을 때 · `mem.refresh_ms`마다) — OS 조회 + 부품 보고.
@@ -587,6 +625,31 @@ mod tests {
         assert!(Group::ALL
             .iter()
             .all(|g| *g == Group::Runtime || Cat::ALL.iter().any(|c| c.group() == *g)));
+    }
+
+    /// 표시 서명: 같은 글로 찍히는 작은 흔들림(수 바이트~수 KB)은 같은 서명 · 글이 바뀌는 변화(MB 단위)는 다른 서명(T-310).
+    #[test]
+    fn display_sig_ignores_sub_display_jitter() {
+        let mb = 1024 * 1024;
+        let a = sample_of(100 * mb, &[(Cat::ResultData, 10 * mb)], 20 * mb);
+        let b = sample_of(
+            100 * mb + 3_000,
+            &[(Cat::ResultData, 10 * mb + 700)],
+            20 * mb + 40_000,
+        );
+        assert_eq!(
+            a.display_sig(),
+            b.display_sig(),
+            "글로 안 보이는 흔들림 = 같은 서명"
+        );
+        let c = sample_of(100 * mb, &[(Cat::ResultData, 15 * mb)], 20 * mb);
+        assert_ne!(a.display_sig(), c.display_sig(), "5 MB 변화 = 다른 서명");
+        let d = sample_of(100 * mb, &[(Cat::ResultData, 10 * mb)], 2 * mb);
+        assert_ne!(
+            a.display_sig(),
+            d.display_sig(),
+            "힙 여유 20 → 2 MB = 다른 서명"
+        );
     }
 
     fn sample_of(footprint: u64, parts: &[(Cat, u64)], heap_held: u64) -> Sample {

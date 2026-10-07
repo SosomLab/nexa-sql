@@ -270,6 +270,7 @@ impl App {
                     title,
                     text,
                     origin,
+                    db,
                 } if self.tab_room() => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
@@ -286,6 +287,13 @@ impl App {
                         self.object_tabs.insert(tab, o);
                         self.sync_sess();
                         self.sync_sess_ui();
+                    }
+                    // ★ 표가 속한 DB로 새 탭의 작업 단위를 바로(사용자 10-08): 접속 기본 DB(master)에 머물면 `SELECT TOP 200 * FROM [dbo].[T]`가
+                    //   "개체 없음"으로 실패했다 → 탭별 작업 단위(⑯)에 심고 즉시 `USE`(툴바 전환과 같은 길 · 그 탭은 이후에도 그 DB를 기억).
+                    if let Some(db) = db {
+                        let tab = self.editors.active_id();
+                        self.tab_unit.insert((tab, self.sess.id), db);
+                        self.apply_tab_unit();
                     }
                 }
                 ExplorerAction::OpenSql { .. } => {}

@@ -56,6 +56,8 @@ pub(crate) struct MemWin {
     fit: bool,
     /// 마지막으로 **값이 바뀐** 표본의 벽시계(바닥 글 "갱신 hh:mm:ss") — T-310: 안 바뀐 표본은 다시 그리지 않는다.
     updated_at: String,
+    /// 마지막으로 그린 표본의 **표시 서명**(`Sample::display_sig` · 바이트 흔들림은 같은 서명).
+    last_sig: Option<u64>,
 }
 
 /// [힙 정리] 뒤 버튼을 잠가 두는 표본 수(즉시 표본 1 + 다음 주기 1) · 결과 안내가 남는 표본 수.
@@ -83,6 +85,7 @@ impl MemWin {
             trim_note: None,
             fit: false,
             updated_at: String::new(),
+            last_sig: None,
         }
     }
 
@@ -161,6 +164,7 @@ impl MemWin {
         // 표본·이력은 창과 함께 버린다(닫힌 뒤 상주 0 · docs/80 §5).
         self.sample = None;
         self.hist = VecDeque::new();
+        self.last_sig = None;
         self.trend = Trend::default();
         self.trim_hold = 0;
         self.trim_note = None;
@@ -234,10 +238,11 @@ impl MemWin {
         }
         // ★ T-310(사용자 10-07 "바뀐 줄만"): 값이 하나도 안 바뀐 표본은 **다시 그리지 않는다**(1초마다 전체 표를 그리던 비용 → 0) ·
         //   바뀌었거나 ▲/▼·정리 잠금·결과 안내가 진행 중일 때만 그린다. 바닥 글은 경과 초 대신 마지막 갱신 시각.
-        let changed = self
-            .sample
-            .is_none_or(|p| p.sys != s.sys || p.data != s.data);
+        //   비교 = 원값이 아니라 **화면에 보이는 글의 서명**(원값은 매초 바이트 단위로 흔들려 늘 "바뀜"이었다 · 협업 재측정 10-08).
+        let sig = s.display_sig();
+        let changed = self.last_sig != Some(sig);
         if changed {
+            self.last_sig = Some(sig);
             self.updated_at = nsql_log::local_at(std::time::SystemTime::now()).time_only();
             self.updated_at.truncate(8);
         }

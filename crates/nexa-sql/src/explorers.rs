@@ -1418,12 +1418,14 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                         title,
                         text,
                         origin: Some(mut o),
+                        db,
                     } => {
                         o.server = p.key.clone();
                         out.push(ExplorerAction::OpenSql {
                             title,
                             text,
                             origin: Some(o),
+                            db,
                         });
                     }
                     ExplorerAction::Import { owner, .. } => {
