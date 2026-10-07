@@ -161,11 +161,56 @@ EXEC NSQLT_VARS_DEMO(P_N => 2, PC_A => :PC_A, PC_B => :PC_B, P_MSG => :V_MSG)
 
 DROP PROCEDURE NSQLT_VARS_DEMO;
 
--- ── 9. 범위 · 비밀 ───────────────────────────────────────────────────────────────────────
--- 변수 표의 주인은 **탭**이다(D-135). 같은 연결을 쓰는 다른 탭과 나누려면 올리고, 되돌리려면 내린다.
+-- ── 9. 층(Scope) — 탭 · 공유 · 글로벌 · 프로필 (docs/63 §11 · D-135 · D-206 · D-264 · 10-07) ───────────────
+-- 공통 언어 전부 = common.sql §5. 여기서는 Oracle 식으로 같은 흐름.
+-- [§11-1] 변수 표의 주인은 **탭**(D-135). 같은 연결의 탭과 나누려면 SHARE · 되돌리려면 LOCAL. 값은 CONNECT/재접속을 넘어 살고 **커서만** 무효.
 VAR V_OWNER SHARE
 VAR V_OWNER LOCAL
--- 값은 CONNECT/재접속을 넘어 살아남는다 — **커서만** 무효가 된다.
--- 이름에 PASS · PWD · SECRET · TOKEN이 들면 비밀 — 창·로그·SHOW VARIABLES에서 ******, 파일에 저장하지 않는다(D-140).
+-- [§11-3] 글로벌 = 모든 서버·탭 공통 · 디스크 보존(vars/global.sql) · 명시 선언으로만 생긴다. 선언 + 층 한 줄(타입·값 포함).
+VAR G_PROJECT VARCHAR2(30) = 'SEBANG' GLOBAL
+VAR G_LIMIT GLOBAL
+-- [§11-4 D-264] 대입은 그 이름이 **사는 층**에 — G_LIMIT는 글로벌이라 글로벌 값이 3이 된다(SELECT INTO · OUT도 같다).
+EXEC :G_LIMIT := 3
+SELECT :G_PROJECT AS prj, :G_LIMIT AS lim FROM DUAL;
+-- [§11-4] 이 탭에서만 다른 값 = 명시 선언으로 가림(`VAR 이름` 또는 `VAR 이름 타입 [= 값]`) → 뒤 대입은 탭에 · 글로벌 그대로.
+VAR G_LIMIT NUMBER = 1
+SHOW VARIABLES
+-- → G_LIMIT NUMBER 1 tab * / G_LIMIT NUMBER 3 global (Active 빈칸 = 가려짐)
+-- [§11-4] DROP = 탭 층 제거 → 글로벌 3 복귀 · DROP GLOBAL = 글로벌까지 · CLEAR [GLOBAL|ALL] = 층 단위 전부(common.sql §5).
+VAR G_LIMIT DROP
+PRINT G_LIMIT
+VAR G_LIMIT DROP GLOBAL
+VAR G_PROJECT DROP GLOBAL
+--   방언 대체: SQL*Plus에는 층·DROP이 없다(변수는 세션 끝까지) · PL/SQL Developer 격자는 "오래된 변수는 지우지 않고 끔" · SQL Workbench/J `WbVarDelete`.
+
+-- ── 10. 자동 타입 (§11-4 · 10-07) ────────────────────────────────────────────────────────
+-- [§11-4] 선언 없이 생긴 변수는 **값마다** 타입을 다시 추론(1999 → NUMBER · 'Number to String' → VARCHAR2) · 타입을 적어 선언하면 고정.
+EXEC SELECT 1999, 'Year' INTO :EXE1, :EXE2 FROM DUAL
+EXEC SELECT 'Number to String', 2026 INTO :EXE1, :EXE2 FROM DUAL
+SHOW VARIABLES
+-- [§11-4] 타입은 엄격하게 읽는다 — `VAR X VARCHAR2(50) GLOBAAL`·`VARCHAR2(abc)`는 오류(변수 안 생김). 종전엔 조용히 VARCHAR2(4000)이 됐다.
+
+-- ── 11. 변수 안의 변수 — 확장 시점 설정 `vars.expand_at` (§9 · D-184) ──────────────────────────
+-- 설정에서 바꾼다(GUI 환경 설정 ▸ 스크립트·변수 · CLI `nsql config set vars.expand_at use`). 두 모드로 각각 실행해 비교.
+DEFINE v1 = 2
+DEFINE v2 = &v1 + 5
+DEFINE v1 = 5
+SELECT &v2 AS v2 FROM DUAL;          -- assign: 7 · use: 10
+EXEC :B1 := 2
+-- 서버 식(BEGIN :B2 := :B1 + 5; END;) · use 모드 = 수식으로 등록
+EXEC :B2 := :B1 + 5
+EXEC :B1 := 5
+SELECT :B2 AS b2 FROM DUAL;          -- assign: 7 · use: 10(:B1이 바뀐 뒤 처음 쓰는 문장 앞에서 서버 재계산 1회)
+--   방언 대체: SQL*Plus·psql·sqlcmd = 전부 대입 시(assign) · 사용 시는 SQL Workbench/J `$[v]`뿐 · Make `=`/`:=`.
+
+-- ── 12. 비밀 · 보존 (§12-6 · D-136 · D-140) ─────────────────────────────────────────────────
+-- 이름에 PASS · PWD · SECRET · TOKEN이 들면 비밀 — 창·로그·SHOW VARIABLES에서 ******, 파일에 저장하지 않는다(D-140). ACCEPT HIDE도 같다.
 EXEC :V_API_TOKEN := 'abc123'
 SHOW VARIABLES
+-- 탭 변수는 파일별 보존(vars/<경로 해시>.sql · 비밀·커서 제외) · 글로벌 = vars/global.sql · 공유 = 세션과 함께.
+
+-- ── 부록. SQL*Plus / Golden 과 우리 앱 — 같은 글이 어떻게 다른가 ───────────────────────────────
+--   같다   : VARIABLE · EXEC · PRINT · DEFINE/UNDEFINE/&/&& · ACCEPT · COLUMN NEW_VALUE · SET DEFINE OFF · @script &1
+--   더 있다: 선언 없는 바인드(Golden 관용 · 진짜 SQL*Plus는 SP2-0552) · 층(SHARE/GLOBAL · DROP/CLEAR) · ${v:q|id|n} 안전 인용형 · 시스템 변수 9종 ·
+--            내장 변수 ${file} ${workspaceFolder} · ${env:} · SHOW VARIABLES 표 · 변수 창 · 파일별 보존 · 확장 시점 설정
+--   다르다 : DATE/TIMESTAMP/BOOLEAN이 **진짜 타입**으로 바인드된다(SQL*Plus는 DATE 바인드가 없어 글자로) · 커서는 결과 탭으로 바로

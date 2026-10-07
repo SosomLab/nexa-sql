@@ -128,12 +128,54 @@ SET DEFINE OFF
 SELECT 'R&D' AS literal_amp;
 SET DEFINE ON
 
--- ── 8. 범위 · 비밀 ───────────────────────────────────────────────────────────────────────
+-- ── 8. 층(Scope) · 자동 타입 · 확장 시점 · 비밀 (docs/63 §11 · §9 · 10-07 · 공통 언어 전부 = common.sql §5~§8) ─────
+-- [§11-1] 탭 ↔ 연결 공유.
 VAR V_PRG_NM SHARE
 VAR V_PRG_NM LOCAL
--- 이름에 PASS · PWD · SECRET · TOKEN이 들면 비밀 — 창·로그·SHOW VARIABLES에서 ******, 파일에 저장하지 않는다(D-140).
+-- [§11-3 §11-4] 글로벌 선언 + 층 한 줄 · 대입은 사는 층(D-264) · 가림 = 명시 선언 · DROP/DROP GLOBAL.
+VAR G_DB NVARCHAR(50) GLOBAL
+EXEC :G_DB := DB_NAME()
+SELECT :G_DB AS g_db;
+-- 이 탭에 가림(Auto · NULL)
+VAR G_DB
+EXEC :G_DB := 'tab only'
+-- G_DB tab * / G_DB global (가려짐)
+SHOW VARIABLES
+VAR G_DB DROP
+-- 글로벌 값 복귀
+PRINT G_DB
+VAR G_DB DROP GLOBAL
+-- [§11-4] 자동 타입 = 값마다 재추론(FROM 없는 SELECT INTO는 T-162 흠 → 표에서 읽는다).
+EXEC SELECT 1999, N'Year' INTO :EXE1, :EXE2 FROM #nsql_vars WHERE id = 1
+EXEC SELECT N'Number to String', 2026 INTO :EXE1, :EXE2 FROM #nsql_vars WHERE id = 1
+SHOW VARIABLES
+-- [§9] 확장 시점(설정 vars.expand_at · assign/use 두 모드로 실행해 비교).
+DEFINE v1 = 2
+DEFINE v2 = &v1 + 5
+DEFINE v1 = 5
+SELECT &v2 AS v2;                          -- assign: 7 · use: 10
+EXEC :B1 := 2
+-- DECLARE @B2 … ; SET @B2 = @B1 + 5; SELECT @B2(꼬리 행)
+EXEC :B2 := :B1 + 5
+EXEC :B1 := 5
+SELECT :B2 AS b2;                          -- assign: 7 · use: 10
+-- [§12-6 D-140] 비밀.
 EXEC :V_API_TOKEN := 'abc123'
 SHOW VARIABLES
+
+-- ── 부록. T-SQL 자신의 변수와 우리 변수 — 나란히 ──────────────────────────────────────────────
+-- T-SQL `@v` = 서버 배치 변수. GO가 끝나면 사라진다. 그대로 실행된다(서버 문장).
+DECLARE @t_native INT = 7;
+SELECT @t_native AS native_in_batch;
+GO
+--   SELECT @t_native;                      -- 다음 배치 = "Must declare the scalar variable" 오류
+-- 우리 `:v` = 클라이언트 값. GO를 넘어 살고 sp_executesql 인자로 간다.
+EXEC :V_OURS := 7
+SELECT :V_OURS AS ours;
+GO
+SELECT :V_OURS AS ours_after_go;
+--   sqlcmd 대체: `:setvar v 값` + `$(v)`(글자) = 우리 `:setvar v 값` + `&v` · `-v name=value` = `nsql run -v name=value`
+--   SSMS 대체: 템플릿 매개변수 `<name, type, default>`(Ctrl+Shift+M) ≈ 우리 ACCEPT · 실행 전 입력 창(D-137)
 
 DROP PROCEDURE #nsql_vars_io
 DROP TABLE #nsql_vars

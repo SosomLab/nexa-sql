@@ -80,11 +80,36 @@ SET DEFINE OFF
 SELECT 'R&D' AS literal_amp;
 SET DEFINE ON
 
--- ── 7. 범위 · 비밀 ───────────────────────────────────────────────────────────────────────
--- 변수 표의 주인은 **탭**이다(다른 탭의 실행이 내 값을 바꾸지 않는다 · D-135). 같은 연결의 탭들과 나눠 쓰려면 올린다.
+-- ── 7. 층(Scope) · 자동 타입 · 확장 시점 · 비밀 (docs/63 §11 · §9 · 10-07) ────────────────────────────
+-- 공통 언어 **전부**는 같은 폴더 common.sql(§5~§8 · 주석마다 docs/63 절 번호와 방언 대체어)에 있다 — 여기는 요약.
+-- [§11-1] 변수 표의 주인은 **탭**(D-135). 같은 연결의 탭과 나누려면 SHARE · 되돌리려면 LOCAL.
 VAR V_DEPT SHARE
 VAR V_DEPT LOCAL
--- 이름에 PASS · PWD · SECRET · TOKEN이 들면 비밀 — 창·로그·SHOW VARIABLES에서 ******, 파일에 저장하지 않는다(D-140).
+-- [§11-3 §11-4] 글로벌 선언(+ 타입·값) · 대입은 사는 층(D-264) · 가림 = 명시 선언 · DROP / DROP GLOBAL.
+VAR G_BONUS NUMBER = 10 GLOBAL
+-- 글로벌 20
+EXEC :G_BONUS := 20
+-- 이 탭에 가림
+VAR G_BONUS
+EXEC :G_BONUS := 1
+-- G_BONUS tab 1 * / G_BONUS global 20 (가려짐)
+SHOW VARIABLES
+VAR G_BONUS DROP
+-- 20
+PRINT G_BONUS
+VAR G_BONUS DROP GLOBAL
+-- [§11-4] 자동 타입 = 값마다 재추론 · 선언 타입은 고정.
+EXEC :E1 := 1999
+-- E1 = VARCHAR2(16)
+EXEC :E1 := 'Number to String'
+-- [§9] 확장 시점(설정 vars.expand_at · assign/use) — common.sql §7과 같다.
+DEFINE v1 = 2
+DEFINE v2 = &v1 + 5
+DEFINE v1 = 5
+SELECT &v2 AS v2;                           -- assign: 7 · use: 10
+-- [§12-6 D-140] 비밀.
 EXEC :V_API_TOKEN := 'abc123'
 SHOW VARIABLES
 -- 값은 파일별로 보존된다(설정 vars.persist · 비밀·커서 제외) — 다음에 이 파일을 열면 이어서 쓸 수 있다.
+--   방언 대체: sqlite3 CLI `.parameter set :x 값`(세션 바인드 · 타입 없음) = 우리 `EXEC :x := 값` · `.parameter list` = `SHOW VARIABLES` ·
+--   SQLite의 `@x` `$x` 표기도 우리 변수로 묶인다(D-142).

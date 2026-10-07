@@ -116,9 +116,45 @@ SET DEFINE OFF
 SELECT 'R&D' AS literal_amp;
 SET DEFINE ON
 
--- ── 9. 범위 · 비밀 ───────────────────────────────────────────────────────────────────────
+-- ── 9. 층(Scope) · 자동 타입 · 확장 시점 · 비밀 (docs/63 §11 · §9 · 10-07 · 공통 언어 전부 = common.sql §5~§8) ─────
+-- [§11-1] 탭 ↔ 연결 공유.
 VAR V_PRG_NM SHARE
 VAR V_PRG_NM LOCAL
--- 이름에 PASS · PWD · SECRET · TOKEN이 들면 비밀 — 창·로그·SHOW VARIABLES에서 ******, 파일에 저장하지 않는다(D-140).
+-- [§11-3 §11-4] 글로벌 선언 + 층 한 줄 · 대입은 사는 층(D-264) · 가림 = 명시 선언 · DROP/DROP GLOBAL.
+VAR G_DB VARCHAR(63) GLOBAL
+EXEC :G_DB := current_database()
+SELECT :G_DB AS g_db;
+-- 이 탭에 가림(Auto · NULL)
+VAR G_DB
+EXEC :G_DB := 'tab only'
+-- G_DB tab * / G_DB global (가려짐)
+SHOW VARIABLES
+VAR G_DB DROP
+-- 글로벌 값 복귀
+PRINT G_DB
+VAR G_DB DROP GLOBAL
+-- [§11-4] 자동 타입 = 값마다 재추론.
+EXEC SELECT 1999, 'Year' INTO :EXE1, :EXE2 FROM generate_series(1, 1)
+EXEC SELECT 'Number to String', 2026 INTO :EXE1, :EXE2 FROM generate_series(1, 1)
+SHOW VARIABLES
+-- [§9] 확장 시점(설정 vars.expand_at · assign/use 두 모드로 실행해 비교).
+DEFINE v1 = 2
+DEFINE v2 = &v1 + 5
+DEFINE v1 = 5
+SELECT &v2 AS v2;                          -- assign: 7 · use: 10
+EXEC :B1 := 2
+-- SELECT ($1 + 5) AS "B2" 1행 잡기
+EXEC :B2 := :B1 + 5
+EXEC :B1 := 5
+SELECT :B2 AS b2;                          -- assign: 7 · use: 10
+-- [§12-6 D-140] 비밀.
 EXEC :V_API_TOKEN := 'abc123'
 SHOW VARIABLES
+
+-- ── 부록. psql 변수와 우리 변수 — 대조(psql 메타 명령은 우리 앱에서 돌지 않는다 · 주석) ───────────────
+--   psql `\set v 3` + `SELECT :v`          = 글자 치환(타입 없음)           → 우리 DEFINE v = 3 + `&v` · 또는 진짜 바인드 `EXEC :v := 3` + `:v`
+--   psql `:'v'` · `:"v"`                   = 안전 인용형                    → 우리 `${v:q}` · `${v:id}`(psql 어휘 규칙을 그대로 차용)
+--   psql `SELECT … \gset [접두]`             = 1행을 변수로                   → 우리 `EXEC SELECT … INTO :a, :b`(0행·여러 행 정책 명시 D-139)
+--   psql `\if :v = 1`                      = 흐름 제어                      → 아직 없음(63 §0 9군)
+--   PG 서버 `set_config('my.v', …)`·`current_setting` = 트랜잭션을 타는 서버 변수 → 우리 변수는 클라이언트(ROLLBACK 무관 · D-143 서버 비추기는 뒤로)
+--   `::타입` 캐스트와 `:=`는 바인드로 읽지 않는다(psql 어휘 규칙 차용).

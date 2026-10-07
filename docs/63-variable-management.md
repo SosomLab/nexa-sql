@@ -93,12 +93,13 @@
 
 | 파일 | 실행 | 서버에 남는 것 |
 |---|---|---|
-| [examples/variables/oracle.sql](../examples/variables/oracle.sql) | `nsql run -c <프로필> examples/variables/oracle.sql SCOTT` | §1~7·§9 = 없음 · §8만 `NSQLT_VARS_DEMO` 프로시저를 만들고 지운다 |
+| ★ [examples/variables/common.sql](../examples/variables/common.sql)(10-07) | `nsql run -c sqlite::memory: examples/variables/common.sql KOREA` | 없음 — **우리 앱의 변수 언어 전부**(§12의 실행판 · 문장마다 `[§절] 기능 — 효과 · 방언 대체` 주석 · 확장 시점은 설정을 바꿔 두 번) |
+| [examples/variables/oracle.sql](../examples/variables/oracle.sql) | `nsql run -c <프로필> examples/variables/oracle.sql SCOTT` | §1~7·§9~12 = 없음(글로벌은 끝에서 DROP) · §8만 `NSQLT_VARS_DEMO` 프로시저를 만들고 지운다 · 부록 = SQL*Plus/Golden 대조 |
 | [examples/variables/mssql.sql](../examples/variables/mssql.sql) | `nsql run -c <프로필> examples/variables/mssql.sql 5` | 없음(세션 임시 `#…`) |
 | [examples/variables/pg.sql](../examples/variables/pg.sql) | `nsql run -c <프로필> examples/variables/pg.sql 5` | 없음(`pg_temp.…`) |
 | [examples/variables/sqlite.sql](../examples/variables/sqlite.sql) | `nsql run -c sqlite::memory: examples/variables/sqlite.sql KOREA` | 없음(메모리) |
 
-네 파일은 **같은 절 순서**(선언·리터럴 → 서버 식 → `SELECT … INTO` → 살펴보기 → 바인드 → 프로시저·커서·다중 결과 → 치환 변수 → 범위·비밀)라 나란히 놓고 방언 차이를 볼 수 있다. 접속 없이 재작성만 보려면 `nsql plan -d <방언> <파일>`. MySQL/MariaDB·NoSQL은 드라이버가 없어 샘플도 없다. 검증 중 나온 흠 = [TODO](TODO.md) T-162.
+다섯 파일은 **같은 절 순서**(선언·리터럴 → 서버 식 → `SELECT … INTO` → 살펴보기 → 바인드 → 프로시저·커서·다중 결과 → 치환 변수 → 층·자동 타입·확장 시점·비밀 → 부록 네이티브 대조)라 나란히 놓고 방언 차이를 볼 수 있다(README = 절 ↔ 방언 표). 접속 없이 재작성만 보려면 `nsql plan -d <방언> <파일>`. MySQL/MariaDB·NoSQL은 드라이버가 없어 샘플도 없다(개념은 common.sql "방언 대체" 주석). 검증 중 나온 흠 = [TODO](TODO.md) T-162 · T-304. common.sql은 10-07 CLI 격리 홈에서 `assign`·`use` 두 모드 모두 끝까지 통과(기대값 = 주석).
 
 ## 4. 성능·안정성·메모리 기준 (개발 뒤 전수 점검 항목)
 
@@ -260,3 +261,92 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 - 협업 V1 ③ (bin53 · CLI): `VAR A NUMBER = 10 GLOBAL` → `PRINT A` = 10 → `EXEC :A := 5` → 5(tab) → `VAR A DROP` → 10 → `VAR A DROP GLOBAL` → 없음 ✓ · `VAR B GLOBAL NUMBER = 7` · `VAR C GLOBAL = 3`(auto) · `VAR D VARCHAR2(30) SHARE` ✓ · `VARCHAR2(50) GLOBAL` = global VARCHAR2(50) · `GLOBAAL` · `(abc)` · `(50`(짝 없음) = 오류 · `(50 CHAR)` = 50 ✓ · 다른 탭 즉시 조회(브로드캐스트) = GUI 실기.
 - 협업 V1 ② (bin52 · 사용자 원문 순서): `VAR A GLOBAL`(빈 글로벌) → `EXEC :A := 10`(탭 10) → `EXEC :A := 5`(탭 5) → `VAR A DROP` → `PRINT A` = **빈 값**(글로벌 NULL) → `VAR A DROP GLOBAL` → "변수 A가 없습니다" — 원문 기대(10)와 다름 → 개발 세션 판단 대기.
 - 협업 V1 ①(bin51 · CLI `nsql run` · 격리 홈 · 만든 뒤 올리기): `EXEC :A := 10` → `VAR A GLOBAL`(global 10) → `EXEC :A := 5`(tab 5가 가림) → `VAR A DROP` → `PRINT A` = 10 → `VAR A DROP GLOBAL` → `PRINT A` = "변수 A가 없습니다" · `VAR CLEAR` = 탭 B 제거 · 글로벌 C 유지 · `VAR CLEAR GLOBAL` = 0행 ✓.
+
+## 12. 개념 총정리(10-07 · 사용자 "개념 정리 + DBMS별 예제") — 실행판 = [examples/variables/common.sql](../examples/variables/common.sql)
+
+§0~§11은 조사·결정·구현의 역사다. 이 절은 **지금 동작하는 것**만 한 벌로 모은다. 각 줄의 `[§]`는 근거 절, 예제 파일의 주석 `[§절]`과 같은 번호다.
+
+### 12-1. 변수의 다섯 층위 — 섞이지 않는다(이름이 같아도 별개)
+
+| 층위 | 문법 | 성격 | 어디서 계산 | 만들기 · 지우기 · 보기 |
+|---|---|---|---|---|
+| **바인드 변수** | `:V` | 타입을 가진 **값** · 서버에 진짜 바인드로 간다(글자 치환 아님 · 주입 안전 · 계획 재사용) | 리터럴 대입 = 클라이언트(왕복 0 · DR-8) · 식 = 서버 | `VAR` · `EXEC :V := …` · `EXEC SELECT … INTO` · OUT/커서 · 입력 창 / `VAR x DROP [GLOBAL]` · `VAR CLEAR [GLOBAL\|ALL]` / `PRINT` · `VARIABLE` · `SHOW VARIABLES` · 변수 창 |
+| **치환 변수** | `&v` `&&v` `${v[:형식]}` | **글자 매크로** · 보내기 전에 글에 끼워진다(식별자·조각도) | 클라이언트 | `DEFINE` · `:setvar` · `ACCEPT` · `COLUMN … NEW_VALUE` · 인자 `&1` · CLI `-v` / `UNDEFINE` / `DEFINE`(인자 없음) |
+| **시스템 변수** | `&_USER` `&_DATE` `&_ROW_COUNT` … 9종 | 읽기 전용 · 실행 시점 값 | 호스트가 채움 | — |
+| **내장 변수** | `${file}` `${workspaceFolder}` `${config:키}` … | 앱이 아는 값(VS Code 이름 · §10) · 모르는 문맥 = 글자 그대로 | 실행마다 스냅숏 | — (설정 `vars.intrinsic`) |
+| **환경 변수** | `${env:이름}` | 내장 별칭 `NSQL_*` → OS 환경 변수 | 클라이언트 | — (설정 `vars.env_subst`) |
+
+치환의 층 순서 = `DEFINE` → 내장 → 글자 그대로. `::타입` 캐스트·`:=`는 바인드로 읽지 않는다(psql 어휘 규칙). 주석 안은 치환하지 않고 문자열 안은 선택(`define.in_strings`) · `SET DEFINE OFF`로 끈다(D-141).
+
+### 12-2. 바인드 변수 — 선언·타입·대입
+
+| 글 | 뜻 | 비고 |
+|---|---|---|
+| `VAR x NUMBER` · `VAR x VARCHAR2(30) = '값'` | 타입을 적어 선언 = **타입 고정** | 타입은 엄격하게 읽는다(잔여 글·잘못된 길이·짝 없는 괄호 = 오류 · `VARCHAR2(50 CHAR)` = 50 · 10-07) |
+| `VAR x = 값` | 타입 생략 + 값 = Auto(값에서 추론) | Golden 관용 |
+| `VAR x` | 탭·공유에 없으면 **이 탭에 선언**(Auto · NULL · 아래 층의 같은 이름을 가림) · 있으면 정보만 | 10-07 · SQL*Plus "변수 보기"는 있는 변수에만 |
+| `EXEC :x := 리터럴` | 로컬 대입(왕복 0) · 선언 없으면 그 자리에서 생김(자동 타입) · `NULL`은 값(지우지 않음) | 전 방언 동일 |
+| `EXEC :x := 식` | 서버가 계산 | §3-1 재작성(Oracle `BEGIN … END;` · SQL Server 꼬리 행 + sql_variant 타입 복원 D-254 · PG/SQLite `SELECT (식)`) |
+| `EXEC SELECT a, b INTO :A, :B FROM …` | 1행을 자리 순서로 | 0행·여러 행 = 오류(`vars.into_policy` · D-139) · FROM 없는 INTO = T-162 흠 |
+| 자동 타입 | 선언 없이 생겼거나 타입 없이 선언한 변수는 **값마다** 타입을 다시 추론(1999 → NUMBER · 글자 → VARCHAR2(n) · NULL은 유지) | `Var.auto_ty` · 10-07 |
+| 이름 | 대소문자 무시(처음 표기 보존) · SQLite `:x @x $x` = 한 변수 | D-142 |
+
+### 12-3. 층(Scope) — tab > shared > global > profile([§11](#11-글로벌-변수--개념-정리설계사용자-09-25--변수-창-layer--tab--declared--auto-캡처))
+
+| 층 | 수명 · 범위 | 넣기 | 보존 |
+|---|---|---|---|
+| **tab** | 편집기 탭 하나(다른 탭의 실행이 내 값을 바꾸지 않는다 · D-135) | 대입 · `VAR` · 입력 창 · 변수 창 | 파일 탭 = `vars/<경로 해시>.sql`(`vars.persist` · 비밀·커서 제외 · D-136) |
+| **shared** | 연결(세션) — 같은 공유 세션의 탭 전부 · 재접속을 넘어 살고 커서만 무효 | `VAR x SHARE` · `VAR x 타입 [= 값] SHARE` | 없음(세션과 함께) |
+| **global** | 앱 전역 — 모든 서버·세션·탭 · 바뀌면 즉시 전파(브로드캐스트) | `VAR x GLOBAL`(없으면 빈 글로벌 선언 · 있으면 올림) · `VAR x NUMBER = 10 GLOBAL` · `VAR x GLOBAL = 10` | `vars/global.sql`(`vars.global_persist` · D-207) |
+| **profile** | 접속 프로필의 고정 값(읽기 전용) | 프로필 | 프로필 |
+
+- 같은 이름은 **앞 층이 가린다**(D-206). `SHOW VARIABLES`는 모든 층을 보여 주고 `Active` `*`가 지금 쓰이는 값 · 변수 창은 가려진 줄을 흐리게(10-07).
+- ★ **대입은 그 이름이 사는 층에 쓴다**(D-264 최종): tab → shared → global 순으로 찾아 있는 층 · 어디에도 없으면 tab. 글로벌은 **명시 선언으로만** 생기므로 서버 간 오염(DBeaver 단점)은 없다. 이 탭에서만 다른 값 = 명시 선언(`VAR x` · `VAR x 타입 [= 값]`)으로 가린 뒤 대입.
+- 지우기 = `VAR x DROP`(탭 → 없으면 공유) · `VAR x DROP GLOBAL`(글로벌까지) · `VAR CLEAR`(탭 전부) · `VAR CLEAR GLOBAL`(+ 글로벌) · `VAR CLEAR ALL`(+ 공유) · 프로필 층은 못 지운다 · 지운 이름의 수식도 함께(§11-4).
+- 층 옮기기 = `VAR x SHARE` · `VAR x LOCAL`(= 내리기 · 글로벌 → 탭도 이동이라 글로벌이 사라진다 — 가림이 목적이면 선언을 쓴다) · `VAR x GLOBAL`.
+
+### 12-4. 치환 변수 — 매크로·인용형·입력
+
+| 글 | 뜻 | 방언 |
+|---|---|---|
+| `DEFINE v = 글` · `&v` · `&v..col`(`.` = 이름 종결) · `&&v`(한 번 묻고 정의) | 그대로 끼움(식별자·조각 포함) | SQL*Plus 그대로 · `:setvar v 글`(sqlcmd)은 같은 저장소 |
+| `UNDEFINE v` | 치환 변수 제거 | 바인드와 저장소가 다르다 |
+| `${v:q}` · `${v:id}` · `${v:n}` · `${v:upper\|lower\|raw}` | 안전 인용형(psql `:'v'` `:"v"` 차용) — 글자 상수 · 인용한 이름 · 수일 때만 | `q` = SQL Server `N'…'` · MySQL 역슬래시 두 번 · `id` = `"…"`/`[…]`/`` `…` `` |
+| `&1 &2 …` | 스크립트 인자(`nsql run f.sql a b` · `@f a b`) | SQL*Plus 같음 |
+| `COLUMN 열 NEW_VALUE v` · `COLUMN 열 CLEAR` | 결과 그 열의 마지막 행 값 → 치환 변수 | SQL*Plus 그대로 · 전 방언 |
+| `ACCEPT v [NUMBER\|CHAR\|DATE] [DEFAULT d] [PROMPT 글\|NOPROMPT] [HIDE]` | 물어서 치환 변수로(GUI 입력 창 · CLI 터미널 · `--no-prompt` = 기본값) | HIDE = 비밀(D-140) · 값 없는 **바인드**를 읽으면 실행당 한 번 입력 창(D-137 · `vars.undeclared`) |
+| `SET DEFINE OFF\|ON` | `&`를 글자로 | D-141 |
+
+### 12-5. 살펴보기 · 로그
+
+`PRINT 이름…`(값 · GUI 로그 = 값 · 비밀 ******) · `VARIABLE`(선언 목록) · `SHOW VARIABLES`(결과 표 Name·Type·Value·Layer·Declared·Active) · `DEFINE`(치환 목록 · use 모드 = `원문 → 현재 값`) · View ▸ Variables 창(탭·공유·글로벌·치환 한 표 · 제자리 편집 · 층 버튼 · 바뀐 줄 강조 · 가려진 줄 흐림) · 실행 로그 = 바뀐 값만(`RunEvent::Vars`). SQL Server의 `PRINT 'text'`·`PRINT @v`는 서버 문장.
+
+### 12-6. 수명 · 세션 전환 · 비밀 · 상한
+
+- 세션(연결)을 바꾸면: **tab 층은 탭을 따라간다**(타입은 추상 `VarType` → 바인드 때 방언으로 · Oracle `VARCHAR2(50)` = SQL Server `NVARCHAR(50)`) · **shared 층은 새 연결의 것으로 바뀐다** · global 같음 · REFCURSOR 값은 무효(SQL Server는 커서 바인드 없음) · 수식(`vars.expand_at = use`)은 새 방언으로 재계산된다(Oracle 전용 식이면 오류).
+- 비밀 = 이름 `PASS` `PWD` `SECRET` `TOKEN` · `ACCEPT HIDE` → 창·로그·표에서 ****** · 저장 안 함(D-140).
+- 보존 = 파일 탭 `vars/<해시>.sql` · 글로벌 `vars/global.sql`(실행 가능한 스크립트 꼴 · 비밀·커서 제외) · 공유 = 없음.
+- 상한 = 값 하나 `vars.max_value_kb`(1024) · 창·로그는 앞부분만 · 열린 커서는 받자마자 닫는다(§4).
+
+### 12-7. 변수 안의 변수 — 확장 시점([§9](#9-변수-안의-변수--확장-시점대입-시-vs-사용-시-조사권장구현-09-22--사용자-요청))
+
+설정 `vars.expand_at`(GUI 환경 설정 ▸ 접속 ▸ 스크립트·변수 · CLI `nsql config set vars.expand_at use`) — 스크립트 안 명령이 아니다.
+
+| | `assign`(기본) | `use` |
+|---|---|---|
+| 치환 변수 `DEFINE v2 = &v1 + 5` | DEFINE할 때 편다(SQL\*Plus · psql · sqlcmd · Make `:=`) → `v1`을 바꿔도 `v2` 그대로 | 원문 보관 · 쓸 때 재귀로 편다(깊이 16 · 순환 = 오류) · `DEFINE` 목록 = `원문 → 현재 값` |
+| 바인드 수식 `EXEC :B2 := :B1 + 5` | 대입 시 값 고정(서버 1회) | 수식 등록(dirty 추적) → `:B1`이 바뀐 뒤 `:B2`를 처음 쓰는 문장 앞에서 **서버 재계산 1회**(안 바뀌면 0 · D-184) |
+| 예제 결과(common.sql §7) | `v2` = 7 · `b2` = 7 | `v2` = 10 · `b2` = 10 |
+
+### 12-8. 공통 언어 ↔ DBMS 네이티브 대조(예제 파일 부록과 같다)
+
+| 우리(전 방언 동일) | Oracle SQL\*Plus/Golden | SQL Server T-SQL/sqlcmd | PostgreSQL psql | MySQL | SQLite sqlite3 |
+|---|---|---|---|---|---|
+| `VAR x NUMBER` · `EXEC :x := 식` · `PRINT x` | 같음(SQL\*Plus) · 암묵 선언은 Golden | `DECLARE @x INT; SET @x = 식; SELECT @x`(배치 안에서만 · GO 넘으면 사라짐) | 없음(`\set`은 글자) · 서버 `set_config` | `SET @x = 식`(세션 · 타입 없음) | `.parameter set :x 값` |
+| `EXEC SELECT a, b INTO :A, :B` | 같음 | `SELECT @A = a, @B = b` | `SELECT … \gset` | `SELECT … INTO @a, @b` | 없음 |
+| `DEFINE v` · `&v` · `${v:q}` | `DEFINE` · `&v`(인용형 없음) | `:setvar v` · `$(v)` | `\set v` · `:v` · `:'v'` `:"v"` | 없음 | 없음 |
+| `ACCEPT` · `COLUMN NEW_VALUE` | 같음 | SSMS 템플릿 `<name,type,default>` | `\prompt` | 없음 | 없음 |
+| 층 · `DROP`/`CLEAR` · `SHOW VARIABLES` | 없음(세션 끝까지) | 없음 | `\unset` | 없음 | `.parameter clear` · `.parameter list` |
+| 커서 → 결과 탭 | `PRINT rc`(글) | 결과 집합마다(커서 바인드 없음) | `FETCH ALL IN "n"` | n번째 결과 | — |
+
+우리 쪽 재작성 규칙(같은 글 → 같은 결과)은 [§3-1](#3-1-방언별-구현-기법-같은-글--같은-결과) · 능력표 `Caps`는 [§3](#3-추상-구조--dbms를-가리지-않는-한-벌).
