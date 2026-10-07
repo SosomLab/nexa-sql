@@ -480,6 +480,8 @@ impl App {
     /// (**다른** 프로젝트를 열 때만 true — 지금 작업 환경을 그 파일에 저장하는 길(저장 · 새 프로젝트 · 닫기)은 false.
     ///  저장 때도 복원이 돌아 누를 때마다 스크립트 탭이 하나씩 늘던 결함 · 사용자 09-23).
     fn project_set(&mut self, p: project::Project, restore: bool) {
+        // 미저장 탭의 툴팁 "저장(프로젝트 파일)" 줄 = 이 프로젝트 파일(사용자 10-07).
+        self.editors.set_tip_saved_fallback(p.path.clone());
         self.project = p;
         let last = self
             .project

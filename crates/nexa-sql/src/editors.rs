@@ -92,6 +92,8 @@ pub(crate) struct Editors {
     tab_line: [Option<nexa_ctl::Color>; 3],
     /// ★ 미저장 탭 이름 글자 색(사용자 09-28 · `editor.tab_unsaved_text`/`_color` · None = 미저장 줄 색).
     tab_unsaved_text: bool,
+    /// ★ 확장 뷰 탭에 세션 표식을 그리나(설정 `extensions.tab_badge` · 기본 끔 = 제목만 · 사용자 10-07 "확장은 서버 연결이 필요 없다").
+    view_tab_badge: bool,
     tab_unsaved_color: Option<nexa_ctl::Color>,
     /// ★ 전체 선택 뒤 화면 유지(설정 `editor.select_all_view` = keep · 기본 · 사용자 09-30).
     select_all_keep: bool,
@@ -135,8 +137,12 @@ pub(crate) struct Editors {
     preview: Option<u64>,
     line_numbers: bool,
     tooltip_on: bool,
-    /// 툴팁의 "저장" 줄 캐시 = (탭 번호, 머무름 시작, 글) — hover당 파일 mtime을 한 번만 읽는다(10-07).
-    tip_saved: std::cell::RefCell<Option<(usize, Instant, String)>>,
+    /// 툴팁의 "저장" 줄 캐시 = (탭 번호, 머무름 시작, (라벨, 글)) — hover당 파일 mtime을 한 번만 읽는다(10-07).
+    tip_saved: std::cell::RefCell<Option<TipSaved>>,
+    /// 미저장 탭의 "저장" 줄에 쓸 파일 = 프로젝트 파일(호스트가 넣는다 · 사용자 10-07).
+    tip_saved_fallback: Option<PathBuf>,
+    /// ★ 디스크에서 **삭제된** 파일의 탭(id) — 미저장으로 판정(닫을 때 묻는다) · 탭 줄·점 = 진빨강 · 저장/재등장 때 해제(사용자 10-07).
+    deleted: std::collections::HashSet<u64>,
     /// (탭 index · 머문 시작) — 1초 뒤 카드.
     hover: Option<(usize, Instant)>,
     cursor: (i32, i32),
@@ -267,6 +273,7 @@ impl Editors {
             project_folders: Vec::new(),
             tab_line: [None; 3],
             tab_unsaved_text: true,
+            view_tab_badge: false,
             tab_unsaved_color: None,
             select_all_keep: true,
             bufs: Vec::new(),
@@ -290,6 +297,8 @@ impl Editors {
             line_numbers,
             tooltip_on,
             tip_saved: std::cell::RefCell::new(None),
+            tip_saved_fallback: None,
+            deleted: std::collections::HashSet::new(),
             hover: None,
             cursor: (0, 0),
             conn_desc: String::new(),
@@ -711,6 +720,10 @@ impl Editors {
             .iter()
             // 호스트가 아직 알려 주지 않은 탭(방금 만든 탭)도 **처음부터 고정 자리**(미연결 사선) — 나중에 표식이 생기며 제목이 밀리지 않는다(사용자 09-18).
             .map(|id| {
+                // 확장 뷰 탭 = 표식 없음(폭도 차지하지 않음 · 설정으로 켤 수 있다).
+                if !self.view_tab_badge && self.view_tabs.contains_key(id) {
+                    return TabBadge::None;
+                }
                 self.sess_info
                     .get(id)
                     .map_or(TabBadge::LinkOff, |(b, _)| *b)
@@ -726,7 +739,13 @@ impl Editors {
         self.tabs.set_group(group, &mut inv);
         // 탭별 줄 색 = 구분별(미저장 · 저장된 파일 · 미리보기 · 묶인 탭도 자기 색 · 사용자 09-23/09-28).
         let colors: Vec<Option<nexa_ctl::Color>> = (0..self.titles.len())
-            .map(|i| self.line_color_of(i))
+            .map(|i| {
+                if self.deleted.contains(&self.tab_id(i)) {
+                    Some(DELETED_TAB_COLOR)
+                } else {
+                    self.line_color_of(i)
+                }
+            })
             .collect();
         self.tabs.set_tab_colors(colors, &mut inv);
         // ★ 이름 글자 색: 미리보기 탭 = 미리보기색(제목 접두 ◦ 대신 · 사용자 09-28 "글자색도") · 미저장 탭 = 미저장 색(활성이
@@ -758,7 +777,8 @@ impl Editors {
         }
         match self.tab_kind(i) {
             TabKind::Preview => false,
-            TabKind::Scratch => true,
+            // 읽기 전용 안내 탭(디스크 보기 · 객체 정보)은 고칠 수 없으니 저장할 것도 없다(협업 bin62 ① · 종전 = 경로 없는 탭이면 늘 ●).
+            TabKind::Scratch => !self.read_only.contains(&self.tab_id(i)),
             TabKind::File => self.is_dirty(i),
         }
     }
@@ -773,6 +793,14 @@ impl Editors {
             TabKind::Preview => self.tab_line[TabKind::Preview as usize],
             _ if self.is_unsaved(i) => self.tab_line[TabKind::Scratch as usize],
             _ => self.tab_line[TabKind::File as usize],
+        }
+    }
+
+    /// 확장 뷰 탭의 세션 표식 켬/끔(설정 `extensions.tab_badge` · 사용자 10-07).
+    pub(crate) fn set_view_tab_badge(&mut self, on: bool) {
+        if self.view_tab_badge != on {
+            self.view_tab_badge = on;
+            self.sync_badges();
         }
     }
 
@@ -919,6 +947,36 @@ impl Editors {
         self.tabs.set_multiline(on);
     }
 
+    /// ★ 탭 `i`의 파일이 디스크에서 삭제됐다/다시 생겼다(사용자 10-07): 삭제 = 미저장 판정 + 진빨강 + **미리보기 탭이면 편집기 탭으로 승격**
+    /// (다른 파일을 클릭해도 사라지지 않게) · 해제 = 저장·파일 재등장.
+    pub(crate) fn set_deleted(&mut self, i: usize, on: bool) {
+        if i >= self.bufs.len() {
+            return;
+        }
+        let id = self.tab_id(i);
+        let changed = if on {
+            self.deleted.insert(id)
+        } else {
+            self.deleted.remove(&id)
+        };
+        if !changed {
+            return;
+        }
+        if on && self.preview == Some(id) {
+            self.preview = None;
+        }
+        self.dirty_cache.borrow_mut().remove(&id);
+        self.sync_tabs();
+    }
+
+    /// 미저장 탭의 툴팁 "저장(프로젝트)" 줄에 쓸 파일(프로젝트 파일 · 없으면 `-`).
+    pub(crate) fn set_tip_saved_fallback(&mut self, p: Option<PathBuf>) {
+        if self.tip_saved_fallback != p {
+            self.tip_saved_fallback = p;
+            *self.tip_saved.borrow_mut() = None;
+        }
+    }
+
     pub(crate) fn set_tooltip(&mut self, on: bool) {
         self.tooltip_on = on;
     }
@@ -1021,6 +1079,10 @@ impl Editors {
     /// 탭 `i`가 마지막 열기/저장 뒤 바뀌었나 — 본문 비교는 **세대가 바뀌었을 때만**(09-19 성능: 종전엔 이벤트 루프마다
     /// 모든 탭의 본문을 String으로 만들어 비교했다 · `dirty_cache` = (세대, 결과)).
     pub(crate) fn is_dirty(&self, i: usize) -> bool {
+        // 디스크에서 삭제된 파일 = 저장 확인 대상(사용자 10-07).
+        if self.deleted.contains(&self.tab_id(i)) {
+            return true;
+        }
         let (Some(b), Some(s)) = (self.bufs.get(i), self.saved.get(i)) else {
             return false;
         };
@@ -1315,9 +1377,15 @@ impl Editors {
         tb.set_focused(focused);
         let mut inv = Invalidations::default();
         tb.set_bounds(self.editor_bounds(), &mut inv);
+        // 읽을거리는 **1행 1열**에서 시작(사용자 10-07 "디스크 보기가 맨 뒤로 가 있다" · 객체 소스 BOF 처방 09-26과 같음).
+        tb.goto_line(1);
         self.bufs[i] = tb;
         self.syntax[i] = syntax;
         self.saved[i] = text.to_string();
+        // 저장 상태의 줄끝도 지금 것으로(종전엔 `is_dirty`의 줄끝 비교에 걸려 정보 탭이 ●를 달았다 · 협업 bin61 관찰).
+        if let (Some(e), Some(se)) = (self.eol.get(i).copied(), self.saved_eol.get_mut(i)) {
+            *se = e;
+        }
         self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
         self.refresh_baseline(i);
         self.sync_tabs();
@@ -2621,26 +2689,6 @@ impl Editors {
             t(Msg::PalSetSyntax),
             self.syntax.get(i).map(|s| s.name.as_str()).unwrap_or("")
         ));
-        // ★ 최근 저장 일시(ms까지 · 사용자 10-07) = 파일 mtime(앱 저장·외부 저장 모두) · 미저장 탭 = `-` · hover당 한 번만 읽는다.
-        let saved = {
-            let mut cache = self.tip_saved.borrow_mut();
-            match cache.as_ref() {
-                Some((ci, cs, s)) if *ci == i && *cs == since => s.clone(),
-                _ => {
-                    let s = self
-                        .paths
-                        .get(i)
-                        .and_then(|p| p.as_ref())
-                        .and_then(|p| std::fs::metadata(p).ok())
-                        .and_then(|m| m.modified().ok())
-                        .map(|t| nsql_log::local_at(t).stamp())
-                        .unwrap_or_else(|| "-".to_string());
-                    *cache = Some((i, since, s.clone()));
-                    s
-                }
-            }
-        };
-        card.push_str(&format!("\n{}: {}", t(Msg::TipSaved), saved));
         // 접속: 전용 세션 탭은 자기 세션 설명(끊겼으면 빈 글) · 그 외는 공유 세션.
         let conn = match self.ids.get(i).and_then(|id| self.sess_info.get(id)) {
             Some((_, d)) => d.as_str(),
@@ -2652,11 +2700,47 @@ impl Editors {
             card.push_str(": ");
             card.push_str(conn);
         }
+        // ★ 최근 저장 일시(ms까지 · 사용자 10-07) = **맨 아래 줄** · 파일 탭 = 그 파일 mtime(앱 저장·외부 저장 모두) · 미저장 탭 =
+        //   **프로젝트 파일**(탭 본문이 거기 보존된다 · 라벨 "저장(프로젝트)") · 둘 다 없으면 `-` · hover당 한 번만 읽는다.
+        let (label, saved) = {
+            let mut cache = self.tip_saved.borrow_mut();
+            match cache.as_ref() {
+                Some((ci, cs, s)) if *ci == i && *cs == since => s.clone(),
+                _ => {
+                    let mtime = |p: &Path| {
+                        std::fs::metadata(p)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .map(|t| nsql_log::local_at(t).stamp())
+                    };
+                    let own = self.paths.get(i).and_then(|p| p.as_ref());
+                    let s = match own {
+                        Some(p) => (Msg::TipSaved, mtime(p).unwrap_or_else(|| "-".to_string())),
+                        None => (
+                            Msg::TipSavedProject,
+                            self.tip_saved_fallback
+                                .as_deref()
+                                .and_then(mtime)
+                                .unwrap_or_else(|| "-".to_string()),
+                        ),
+                    };
+                    *cache = Some((i, since, s.clone()));
+                    s
+                }
+            }
+        };
+        card.push_str(&format!("\n{}: {}", t(label), saved));
         // ★ 가로 클램프는 창 왼쪽이 아니라 **편집기 영역의 x부터**(사용자 09-18 캡처): 첫 탭의 카드가 탭 가운데에 맞춰지며
         //   왼쪽으로 나가 탐색기 밑에 깔렸다(탐색기가 나중에 그려진다) — 결과 도구줄 툴팁(09-16)과 같은 처방.
         draw_tooltip_in(dc, th, r, (self.bounds.x, clamp_w), &card, self.scale);
     }
 }
+
+/// 툴팁 "저장" 줄 캐시 항목 = (탭 번호, 머무름 시작, (라벨, 글)).
+type TipSaved = (usize, Instant, (Msg, String));
+
+/// 디스크에서 삭제된 파일 탭의 줄·점 색 = 진빨강(사용자 10-07).
+const DELETED_TAB_COLOR: nexa_ctl::Color = nexa_ctl::Color(0x00A5_1C1C);
 
 /// 경로 → 탭 제목(파일 이름 · 없으면 경로 전체).
 pub(crate) fn file_title(path: &Path) -> String {

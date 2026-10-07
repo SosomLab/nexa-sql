@@ -92,6 +92,13 @@ impl ApplicationHandler<Wake> for App {
         self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
         self.apply_tab_line_colors();
         self.apply_tab_history_cfg();
+        self.apply_flash_font();
+        self.project_panel.set_flash_style(
+            self.settings.get("ui.flash_shape").unwrap_or("rounded"),
+            self.settings.boost_on(),
+        );
+        self.editors
+            .set_view_tab_badge(self.settings.flag("extensions.tab_badge"));
         // 프로젝트 탐색기 필터 = 파일 색인 모드(Ctrl+P와 같은 원천 · 10-07).
         self.project_panel.set_index_mode(true);
         self.apply_busy_style();
@@ -402,6 +409,13 @@ impl ApplicationHandler<Wake> for App {
         } else {
             self.next_blink
         };
+        // ★ 플래시 페이드 = 프레임 **×3**(사용자 10-07 "사라지는 프레임이 너무 적다") · 향상 모드 = 즉시 모드(프레임 0 · 마감 때 한 번만).
+        if self.project_panel.flash_animating() {
+            next = next.min(now + Duration::from_millis((frame_ms / 3).max(4)));
+        }
+        if let Some(t) = self.project_panel.flash_deadline() {
+            next = next.min(t);
+        }
         // 서버 신호등 재시도 예약(접속 창이 열려 있을 때만).
         if let Some(t) = self.conn_win.tick(now) {
             next = next.min(t);
@@ -1536,6 +1550,8 @@ impl App {
                     self.mem_status = (s.sys.footprint, Some(Instant::now()));
                     let every = self.mem_every();
                     self.mem_win.set_sample(s, every.as_millis() as u64);
+                    // 바닥 줄 "힙 정리 완료 — N 반환(ms)" + 줄별 ▲/▼는 표본이 알아서(사용자 10-07).
+                    self.mem_win.set_trim_result(before, s.sys.footprint, us);
                     self.sess.status = tf(
                         Msg::StMemTrimResult,
                         &[

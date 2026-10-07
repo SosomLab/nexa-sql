@@ -96,6 +96,12 @@ pub(crate) struct ProjectPanel {
     bounds: Rect,
     scale: f32,
     filter: FilterBar,
+    /// ★ 상단 플래시(파일 색인 다시 읽기 동작·이유 · 사용자 10-07) — 필터 바 아래 · 보이는 동안 다시 그린다.
+    flash: nexa_ctl::Flash,
+    flash_live: bool,
+    /// 플래시 모양(`ui.flash_shape` rounded = 둥근 5px) · 즉시 모드(향상 모드 = 페이드 없음 · 프레임 0).
+    flash_rounded: bool,
+    flash_instant: bool,
     /// 프로젝트 이름(없으면 None = 빈 상태).
     name: Option<String>,
     nodes: Vec<Node>,
@@ -204,6 +210,10 @@ impl ProjectPanel {
             bounds: Rect::default(),
             scale: 1.0,
             filter,
+            flash: nexa_ctl::Flash::new(),
+            flash_live: false,
+            flash_rounded: true,
+            flash_instant: false,
             name: None,
             nodes: Vec::new(),
             roots: Vec::new(),
@@ -698,6 +708,35 @@ impl ProjectPanel {
     }
 
     /// 디스크가 바뀌었을 수 있다 — 펼친 폴더를 다시 열거(호스트: 파일 저장·새 파일 뒤).
+    /// ★ 폴더 `dir`의 **자식 이름 집합**이 트리의 것과 다른가(사용자 10-07 "저장하면 폴더 부분이 깜빡임" = 구조 변화가 없는데도 `refresh()`로
+    /// 전체 트리를 다시 만들던 것) — 트리에 없거나 아직 안 읽은 폴더 = 거짓(다시 만들 것도 없다) · 폴더가 사라졌으면 참.
+    pub(crate) fn dir_children_differ(
+        &self,
+        dir: &Path,
+        show_hidden: bool,
+        show_dot: bool,
+    ) -> bool {
+        let Some(node) = self
+            .nodes
+            .iter()
+            .find(|n| n.is_dir && n.loaded && n.path == dir)
+        else {
+            return false;
+        };
+        let Ok(entries) = nexa_fs::list_opts(dir, show_hidden, show_dot) else {
+            return true;
+        };
+        let now: std::collections::BTreeSet<&str> =
+            entries.iter().map(|e| e.name.as_str()).collect();
+        let have: std::collections::BTreeSet<&str> = node
+            .children
+            .iter()
+            .filter_map(|&c| self.nodes.get(c))
+            .map(|n| n.name.as_str())
+            .collect();
+        now != have
+    }
+
     pub(crate) fn refresh(&mut self) {
         // ★ 색인 모드(필터 글 있음)에서 트리를 다시 만들면 일치 노드가 사라진다 → 호스트에 **전체 재적용**을 요청(사용자 10-07 "결과가 있다가
         //   폴더 감시 갱신 뒤 '일치 없음'").
@@ -1475,6 +1514,9 @@ impl ProjectPanel {
         self.now_hint = now_ms;
         let mut changed =
             self.filter.tick(now_ms) | self.bars.tick(now_ms) | self.typeahead.tick(now_ms);
+        // ★ 플래시 페이드 구간 = 틱마다 다시 그린다(종전엔 빠져 있어 틱만 촘촘하고 그림은 안 바뀌었다 · 사용자 10-07 "유지만 길어진 듯") ·
+        //   즉시 모드 = 유지가 끝난 순간 한 번(지우는 그리기).
+        changed |= self.flash_animating() || self.flash_due_hide();
         // 필터 열거 워커의 결과 합치기(시간 예산 안 · 남은 것은 다음 틱).
         if self.scan_pump() {
             self.rebuild_rows();
@@ -1505,7 +1547,96 @@ impl ProjectPanel {
     }
 
     pub(crate) fn animating(&self) -> bool {
-        self.visible && (self.filter.is_animating() || self.scan.is_some())
+        self.visible
+            && (self.filter.is_animating() || self.scan.is_some() || self.flash_animating())
+    }
+
+    /// 플래시가 **페이드 프레임**을 요구하는가 = 보이는 중 + 페이드 구간(유지 중·즉시 모드 = 거짓 → 호스트는 [`Self::flash_deadline`]에 한 번만 깬다).
+    pub(crate) fn flash_animating(&self) -> bool {
+        self.visible && self.flash_live && self.flash.fading(Instant::now())
+    }
+
+    /// 호스트가 다음에 깨어야 할 시각: 유지 중 = 페이드 시작(그때부터 프레임 틱) · 즉시 모드 = 유지 끝(한 번 깨어 지운다) · 페이드 중 = `None`(틱이 맡음).
+    pub(crate) fn flash_deadline(&self) -> Option<Instant> {
+        if !self.visible || !self.flash.active() {
+            return None;
+        }
+        if self.flash_instant {
+            return self.flash.deadline();
+        }
+        let start = self.flash.fade_start()?;
+        (Instant::now() < start).then_some(start)
+    }
+
+    /// 즉시 모드에서 유지가 끝났는데 아직 그려져 있다 = 지우는 그리기가 한 번 필요하다.
+    fn flash_due_hide(&self) -> bool {
+        self.visible
+            && self.flash_instant
+            && self.flash.active()
+            && self.flash.deadline().is_some_and(|t| Instant::now() >= t)
+    }
+
+    /// 자체 시험(기동 명령 `flash.dump:<파일>`): 모양·즉시 모드·상태 한 줄.
+    pub(crate) fn flash_dump(&self) -> String {
+        format!(
+            "rounded={} instant={} background_active={} fading={} text={}",
+            self.flash_rounded,
+            self.flash_instant,
+            self.flash.active(),
+            self.flash.fading(Instant::now()),
+            self.flash.text()
+        )
+    }
+
+    /// 플래시 모양·즉시 모드(사용자 10-07): `shape` = rect | rounded | none · `instant` = 성능 향상 모드.
+    pub(crate) fn set_flash_style(&mut self, shape: &str, instant: bool) {
+        self.flash.set_background(shape != "none");
+        self.flash_rounded = shape == "rounded";
+        self.flash_instant = instant;
+        self.flash.set_instant(instant);
+    }
+
+    /// 플래시가 보이는 중인가(호스트가 전용 글꼴 dc를 만들지 판단).
+    pub(crate) fn flash_active(&self) -> bool {
+        self.visible && self.flash.active()
+    }
+
+    /// ★ 플래시 그리기(호스트가 자체 글꼴 dc로 부른다 · 사용자 10-07): 자리 = 공용 `Flash` 규칙(필터 바 위 오른쪽 · 패널 이름 줄) ·
+    /// 오른쪽 끝 = 패널 경계에서 **8px 안쪽**(사용자 10-07 "3px 안쪽" → 실기 뒤 "조금 더 왼쪽" = 8). 돌려주는 값은 `flash_live`에.
+    pub(crate) fn paint_flash(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if !self.visible {
+            self.flash_live = false;
+            return;
+        }
+        let inset = (8.0 * self.scale).round() as i32;
+        let b = self.bounds;
+        let host = Rect::new(b.x, b.y, (b.w - inset).max(1), b.h);
+        // 앵커(필터 바)를 3px 올려 넘긴다 = 상자가 3px 위로(사용자 10-07 "위로 3px").
+        let lift = (3.0 * self.scale).round() as i32;
+        let fb = self.filter.bounds();
+        let anchor = Rect::new(fb.x, fb.y - lift, fb.w, fb.h);
+        // 둥근 모서리 = 5(논리 px · 사용자 10-07) · 직사각형/없음 = 0.
+        self.flash.set_radius(if self.flash_rounded {
+            (5.0 * self.scale).round() as i32
+        } else {
+            0
+        });
+        // ★ 테두리 없이 배경만 · 색 = 머티리얼 스낵바 **역상 표면**(사용자 10-07 "촌스럽다 · 예쁘게"): 밝은 테마 = 진회색 상자 + 흰 글 ·
+        //   어두운 테마 = 밝은 표면 + 진한 글(테마 바탕과 대비가 확실한 쪽).
+        self.flash.set_border(false);
+        self.flash.set_colors(Some(if th.is_dark {
+            (nexa_ctl::Color(0x00E8_EAED), nexa_ctl::Color(0x0020_2124))
+        } else {
+            (nexa_ctl::Color(0x0032_3232), nexa_ctl::Color(0x00FF_FFFF))
+        }));
+        self.flash_live = self.flash.paint(dc, th, anchor, host);
+    }
+
+    /// ★ 상단 플래시(사용자 10-07): 파일 색인을 다시 읽거나 폴더 변경을 반영할 때 "동작 - 이유" 한 줄(정보 색 · 유지·페이드 = 설정).
+    pub(crate) fn flash(&mut self, text: String, hold_ms: u64, fade_ms: u64) {
+        self.flash
+            .show(text, nexa_ctl::FlashTone::Info, hold_ms, fade_ms);
+        self.flash_live = true;
     }
 
     fn row_at(&self, p: Point) -> Option<usize> {
@@ -2131,6 +2262,7 @@ impl ProjectPanel {
         if let Some((r, m)) = self.pinned_header() {
             self.paint_section_header(dc, th, r, r.intersection(&lr), t(m), true);
         }
+        // ★ 상단 플래시는 호스트가 **자체 글꼴 dc**로 이 다음에 그린다(`paint_flash` · 사용자 10-07 "글꼴 설정").
         // 타입어헤드 HUD(입력 중 접두 · 패널 영역 기준 3×3 위치 · 객체 탐색기와 같은 부품).
         let ta_text = self.typeahead_text();
         if !ta_text.is_empty() {

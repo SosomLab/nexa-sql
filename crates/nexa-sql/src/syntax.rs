@@ -79,16 +79,54 @@ impl SyntaxRegistry {
         self.specs.iter().find(|s| s.name == name).cloned()
     }
 
-    /// 탭 제목(파일명)에서 기본 구문 — 확장자 매칭 · 없으면 SQL.
+    /// 탭 제목(파일명)에서 기본 구문 — 확장자 매칭 · **확장자가 있는데 아무 구문에도 없으면 Plain Text**(`.rs`·`.toml`·`.exe`… 를 SQL로 열면
+    /// `--`가 주석이 돼 `[--flag`가 "짝 없는 괄호"로 그어졌다 · 사용자 10-07 캡처) · 확장자 없음(`Script_N`·`NoName`) = SQL.
     pub(crate) fn for_title(&self, title: &str) -> Rc<SyntaxSpec> {
-        let ext = title.rsplit_once('.').map(|(_, e)| e.to_lowercase());
-        if let Some(ext) = ext {
+        let ext = title
+            .rsplit_once('.')
+            .map(|(stem, e)| (stem, e.to_lowercase()))
+            .filter(|(stem, e)| !stem.is_empty() && !e.is_empty() && !e.contains(' '));
+        if let Some((_, ext)) = ext {
             if let Some(s) = self.specs.iter().find(|s| s.extensions.contains(&ext)) {
                 return s.clone();
             }
+            return self
+                .get("Plain Text")
+                .unwrap_or_else(|| Rc::new(SyntaxSpec::plain()));
         }
         self.get("SQL")
             .or_else(|| self.specs.first().cloned())
             .unwrap_or_else(|| Rc::new(SyntaxSpec::plain()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reg() -> SyntaxRegistry {
+        SyntaxRegistry {
+            specs: vec![Rc::new(SyntaxSpec::sql()), Rc::new(SyntaxSpec::plain())],
+        }
+    }
+
+    /// 확장자 → 구문: .sql = SQL · .txt/.log/.md = Plain Text · **모르는 확장자(.rs/.toml/.exe) = Plain Text** · 확장자 없음 = SQL ·
+    /// `.`으로 시작하는 이름(.gitignore)은 확장자가 아니다 = SQL(종전과 같음).
+    #[test]
+    fn for_title_falls_back_to_plain_for_unknown_extension() {
+        let r = reg();
+        assert_eq!(r.for_title("a.sql").name, "SQL");
+        assert_eq!(r.for_title("A.SQL").name, "SQL");
+        assert_eq!(r.for_title("readme.md").name, "Plain Text");
+        assert_eq!(r.for_title("main.rs").name, "Plain Text");
+        assert_eq!(r.for_title("rust-toolchain.toml").name, "Plain Text");
+        assert_eq!(
+            r.for_title("nexa-clip-0.1.6-windows-x64-setup.exe").name,
+            "Plain Text"
+        );
+        assert_eq!(r.for_title("Script_1").name, "SQL");
+        assert_eq!(r.for_title("NoName1").name, "SQL");
+        assert_eq!(r.for_title("테스트1").name, "SQL");
+        assert_eq!(r.for_title(".gitignore").name, "SQL");
     }
 }

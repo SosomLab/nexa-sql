@@ -820,6 +820,8 @@ impl App {
                 }
                 self.layout();
             }
+            "ui.flash_font_face" => self.apply_flash_font(),
+            "extensions.tab_badge" => self.editors.set_view_tab_badge(self.settings.flag(key)),
             "extensions.disabled" => self.apply_extensions(None),
             // 확장 공통 "확장 사용"(사용자 10-07) — 목록으로 되돌려 적용.
             k if k.starts_with("ext.") && k.ends_with(".use") => self.ext_use_changed(k),
@@ -900,6 +902,21 @@ impl App {
 
     /// 편집기 탭 유형별 활성 줄 색(사용자 09-22): 설정 `editor.tab_line_{scratch,file,preview}`(`#RRGGBB` · 빈 값 = 기본) —
     /// 기본 = 스크립트 warn(미저장 주의) · 파일 accent · 미리보기 text_dim(임시). 테마·설정이 바뀔 때 다시 계산.
+    /// ★ 플래시 메시지 글꼴(사용자 10-07): `ui.flash_font_face` 비면 UI 글꼴(시스템 기본) = `None` · 이름이면 그 얼굴(못 찾으면 UI 글꼴).
+    pub(crate) fn apply_flash_font(&mut self) {
+        let face = self
+            .settings
+            .get("ui.flash_font_face")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        self.flash_font = if face.is_empty() {
+            None
+        } else {
+            nexa_font::ui_font(Some(&face)).map(|l| l.font)
+        };
+    }
+
     pub(crate) fn apply_tab_line_colors(&mut self) {
         let pick = |s: &Settings, key: &str, dflt: Option<nexa_ctl::Color>| {
             color_alpha_setting(s, key).0.or(dflt)

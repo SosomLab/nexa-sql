@@ -41,8 +41,18 @@ impl Cat {
     ];
     pub(crate) const N: usize = Self::ALL.len();
 
-    fn idx(self) -> usize {
+    pub(crate) fn idx(self) -> usize {
         Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+    }
+
+    /// 묶음(표의 구획 · 소계 단위 · 사용자 10-07 "그룹별 합산").
+    pub(crate) fn group(self) -> Group {
+        match self {
+            Cat::ResultData | Cat::ResultText => Group::Results,
+            Cat::EditorText | Cat::EditorHistory | Cat::EditorCache => Group::Editor,
+            Cat::Meta | Cat::MetaCols | Cat::MetaDetail | Cat::Intel => Group::Metadata,
+            Cat::Logs | Cat::Surfaces | Cat::Icons => Group::Ui,
+        }
     }
 
     pub(crate) fn label(self) -> Msg {
@@ -84,6 +94,36 @@ impl Cat {
     pub(crate) const OTHER_COLOR: (u8, u8, u8) = (0x9A, 0xA0, 0xA6);
 }
 
+/// 표의 구획 — 데이터 카테고리 묶음 넷 + 런타임(기타 = 총량 − 집계 합).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Group {
+    Results,
+    Editor,
+    Metadata,
+    Ui,
+    Runtime,
+}
+
+impl Group {
+    pub(crate) const ALL: [Group; 5] = [
+        Group::Results,
+        Group::Editor,
+        Group::Metadata,
+        Group::Ui,
+        Group::Runtime,
+    ];
+
+    pub(crate) fn label(self) -> Msg {
+        match self {
+            Group::Results => Msg::MemGrpResults,
+            Group::Editor => Msg::MemGrpEditor,
+            Group::Metadata => Msg::MemGrpMeta,
+            Group::Ui => Msg::MemGrpUi,
+            Group::Runtime => Msg::MemGrpRuntime,
+        }
+    }
+}
+
 /// OS가 말하는 프로세스 총량(모르는 칸 = 0).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SysMem {
@@ -101,6 +141,10 @@ pub(crate) struct SysMem {
     /// 할당자가 **들고 있지만 안 쓰는** 바이트 — mac `mstats().bytes_free`·glibc `fordblks`·Win 커밋−할당. mac은 **가상 예약**이라
     /// 상주보다 클 수 있다(회수 `memtrim`이 돌려줄 수 있는 몫의 상한으로 읽는다).
     pub heap_held: u64,
+    /// ★ **전용 워킹 셋**(사용자 10-07 "작업 관리자와 다른 이유") = 지금 RAM에 있는 페이지 중 공유 아닌 것 — Windows 작업 관리자
+    /// "메모리(개인 작업 집합)"의 정의(`QueryWorkingSet` Shared 비트 제외 합) · Linux `smaps_rollup` Private_* · mac = 0(활성 상태 보기는
+    /// 풋프린트와 같다). 풋프린트(커밋)와 다른 축이라 두 숫자가 다른 것이 정상. **전체 표본에서만** 센다(상태줄 조회에는 없음 · 페이지 수 비례).
+    pub private_ws: u64,
 }
 
 /// 카테고리 누적기.
@@ -118,6 +162,13 @@ impl Acc {
     }
     pub(crate) fn sum(&self) -> u64 {
         self.bytes.iter().fold(0u64, |a, b| a.saturating_add(*b))
+    }
+    /// 묶음 소계(런타임은 호출자가 `Sample::other`로).
+    pub(crate) fn group_sum(&self, g: Group) -> u64 {
+        Cat::ALL
+            .iter()
+            .filter(|c| c.group() == g)
+            .fold(0u64, |a, c| a.saturating_add(self.get(*c)))
     }
 }
 
@@ -148,11 +199,91 @@ pub(crate) fn sample(sources: &[&dyn MemSource], extra: impl FnOnce(&mut Acc)) -
         s.mem_report(&mut data);
     }
     extra(&mut data);
+    let mut sys = os::sys();
+    sys.private_ws = os::private_ws(&sys);
     Sample {
         at: Instant::now(),
-        sys: os::sys(),
+        sys,
         data,
     }
+}
+
+/// 변화 표시가 남는 표본 수(바뀐 뒤 이만큼의 표본 동안 ▲/▼를 보여 준다 · nexa-dir3와 같음).
+pub(crate) const TREND_HOLD: u8 = 6;
+/// "기타"·시스템 줄은 운영체제 값의 차이라 늘 조금씩 흔들린다 — 이보다 작은 변화는 표시하지 않는다.
+const SYS_NOISE: u64 = 64 * 1024;
+
+/// ★ 줄마다 **늘고 주는 과정**(사용자 10-07 · nexa-dir3 이식): 직전 표본과의 차이를 기억해 [`TREND_HOLD`] 표본 동안 보여 준다 —
+/// 힙 정리 뒤 어느 줄이 얼마나 줄었는지가 바로 보인다. 칸 = 영역 [`Cat::N`] + 기타 1 + 시스템 [`Trend::SYS_N`](풋프린트·상주·힙 사용·힙 여유·전용 WS).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Trend {
+    last: Option<[u64; Trend::LEN]>,
+    delta: [i64; Trend::LEN],
+    ttl: [u8; Trend::LEN],
+}
+
+impl Trend {
+    /// "기타" 칸.
+    pub(crate) const OTHER: usize = Cat::N;
+    /// 시스템 칸 시작(순서 = `SYS_ORDER`).
+    pub(crate) const SYS: usize = Cat::N + 1;
+    pub(crate) const SYS_N: usize = 5;
+    const LEN: usize = Cat::N + 1 + Self::SYS_N;
+
+    /// 시스템 칸 차례: 풋프린트 · 상주 · 힙 사용 · 힙 여유 · 전용 워킹 셋.
+    fn sys_values(s: &SysMem) -> [u64; Self::SYS_N] {
+        [
+            s.footprint,
+            s.resident,
+            s.heap_used,
+            s.heap_held,
+            s.private_ws,
+        ]
+    }
+
+    fn values(s: &Sample) -> [u64; Self::LEN] {
+        let mut v = [0u64; Self::LEN];
+        for c in Cat::ALL {
+            v[c.idx()] = s.data.get(c);
+        }
+        v[Self::OTHER] = s.other();
+        v[Self::SYS..].copy_from_slice(&Self::sys_values(&s.sys));
+        v
+    }
+
+    /// 새 표본 — 바뀐 칸은 차이를 새로 적고, 안 바뀐 칸은 남은 표시 시간을 하나 줄인다.
+    pub(crate) fn update(&mut self, s: &Sample) {
+        let now = Self::values(s);
+        if let Some(prev) = self.last {
+            for i in 0..Self::LEN {
+                let d = now[i] as i64 - prev[i] as i64;
+                let noise = i >= Self::OTHER && d.unsigned_abs() < SYS_NOISE;
+                if d != 0 && !noise {
+                    self.delta[i] = d;
+                    self.ttl[i] = TREND_HOLD;
+                } else if self.ttl[i] > 0 {
+                    self.ttl[i] -= 1;
+                }
+            }
+        }
+        self.last = Some(now);
+    }
+
+    /// 칸 `i`의 최근 변화(표시 시간이 남아 있을 때만 · 양수 = 늘었다).
+    pub(crate) fn shown(&self, i: usize) -> Option<i64> {
+        (self.ttl.get(i).copied().unwrap_or(0) > 0).then(|| self.delta[i])
+    }
+
+    /// 시스템 칸 `k`(0..SYS_N)의 최근 변화.
+    pub(crate) fn shown_sys(&self, k: usize) -> Option<i64> {
+        self.shown(Self::SYS + k)
+    }
+}
+
+/// 변화 표기 — `▲ 1.20 MB` / `▼ 300 KB`.
+pub(crate) fn fmt_delta(d: i64) -> String {
+    let arrow = if d >= 0 { "▲" } else { "▼" };
+    format!("{arrow} {}", fmt(d.unsigned_abs()))
 }
 
 /// 상태줄용 총량만(창이 닫혀 있을 때의 유일한 조회 · ≈ µs).
@@ -217,7 +348,13 @@ mod os {
             compressed: if ok { info[15] } else { 0 },
             heap_used: ms.bytes_used as u64,
             heap_held: ms.bytes_free as u64,
+            private_ws: 0,
         }
+    }
+
+    /// 활성 상태 보기의 "메모리" = 풋프린트 그대로 — 따로 세지 않는다(행 숨김).
+    pub(super) fn private_ws(_s: &SysMem) -> u64 {
+        0
     }
 }
 
@@ -255,6 +392,33 @@ mod os {
         fn GetProcessHeap() -> *mut c_void;
         fn K32GetProcessMemoryInfo(process: *mut c_void, counters: *mut Pmc, cb: u32) -> i32;
         fn HeapSummary(heap: *mut c_void, flags: u32, summary: *mut HeapSummaryT) -> i32;
+        fn K32QueryWorkingSet(process: *mut c_void, pv: *mut c_void, cb: u32) -> i32;
+    }
+
+    /// 작업 관리자 "메모리(개인 작업 집합)" = 워킹 셋 페이지 중 **Shared 비트(8) 없는** 것 × 페이지 크기(`PSAPI_WORKING_SET_BLOCK`).
+    /// 비용 = 페이지 수 비례(300 MB ≈ 77k 항목 · 수백 µs) — 창이 열려 있을 때의 전체 표본에서만 부른다.
+    pub(super) fn private_ws(s: &SysMem) -> u64 {
+        const PAGE: u64 = 4096;
+        // 첫 칸 = 항목 수 · 이어서 항목들(ULONG_PTR) — 상주 페이지 수 + 여유로 잡고, 모자라면 첫 칸이 알려 주는 수로 한 번 더.
+        let mut cap = (s.resident / PAGE) as usize + 4096;
+        for _ in 0..2 {
+            let mut buf = vec![0usize; cap + 1];
+            let cb = (buf.len() * std::mem::size_of::<usize>()) as u32;
+            // SAFETY: 버퍼 길이를 바이트로 알리고 커널은 그만큼만 채운다 · 자기 프로세스 핸들은 늘 유효.
+            let ok =
+                unsafe { K32QueryWorkingSet(GetCurrentProcess(), buf.as_mut_ptr().cast(), cb) }
+                    != 0;
+            let n = buf[0];
+            if ok && n <= cap {
+                let private = buf[1..=n].iter().filter(|e| (*e >> 8) & 1 == 0).count() as u64;
+                return private * PAGE;
+            }
+            if n == 0 || n > (1usize << 26) {
+                break;
+            }
+            cap = n + 1024;
+        }
+        0
     }
 
     pub(super) fn sys() -> SysMem {
@@ -283,6 +447,7 @@ mod os {
             } else {
                 0
             },
+            private_ws: 0,
         }
     }
 }
@@ -329,7 +494,22 @@ mod os {
             compressed: 0,
             heap_used: (mi.uordblks + mi.hblkhd) as u64,
             heap_held: mi.fordblks as u64,
+            private_ws: 0,
         }
+    }
+
+    /// `/proc/self/smaps_rollup`의 Private_Clean + Private_Dirty(kB) — 없으면 0.
+    pub(super) fn private_ws(_s: &SysMem) -> u64 {
+        std::fs::read_to_string("/proc/self/smaps_rollup")
+            .ok()
+            .map(|s| {
+                s.lines()
+                    .filter(|l| l.starts_with("Private_Clean:") || l.starts_with("Private_Dirty:"))
+                    .filter_map(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+                    .sum::<u64>()
+                    * 1024
+            })
+            .unwrap_or(0)
     }
 }
 
@@ -342,6 +522,9 @@ mod os {
     use super::SysMem;
     pub(super) fn sys() -> SysMem {
         SysMem::default()
+    }
+    pub(super) fn private_ws(_s: &SysMem) -> u64 {
+        0
     }
 }
 
@@ -380,5 +563,81 @@ mod tests {
         }
         assert!(s.other() <= s.sys.footprint);
         assert!(Cat::ALL.iter().all(|c| c.color() != Cat::OTHER_COLOR));
+        // 전용 워킹 셋(Windows·Linux glibc) = 상주 이하 · 0보다 큼.
+        if cfg!(any(windows, all(target_os = "linux", target_env = "gnu"))) {
+            assert!(
+                s.sys.private_ws > 0 && s.sys.private_ws <= s.sys.resident.max(s.sys.private_ws)
+            );
+        }
+    }
+
+    /// 묶음 = 모든 카테고리를 정확히 한 번씩 덮고, 소계 합 = 전체 합.
+    #[test]
+    fn groups_partition_categories() {
+        let mut acc = Acc::default();
+        for (i, c) in Cat::ALL.into_iter().enumerate() {
+            acc.add(c, (i as u64 + 1) * 10);
+        }
+        let by_group: u64 = Group::ALL
+            .iter()
+            .filter(|g| **g != Group::Runtime)
+            .map(|g| acc.group_sum(*g))
+            .sum();
+        assert_eq!(by_group, acc.sum());
+        assert_eq!(acc.group_sum(Group::Runtime), 0);
+        assert!(Group::ALL
+            .iter()
+            .all(|g| *g == Group::Runtime || Cat::ALL.iter().any(|c| c.group() == *g)));
+    }
+
+    fn sample_of(footprint: u64, parts: &[(Cat, u64)], heap_held: u64) -> Sample {
+        let mut data = Acc::default();
+        for (c, n) in parts {
+            data.add(*c, *n);
+        }
+        Sample {
+            at: Instant::now(),
+            sys: SysMem {
+                footprint,
+                resident: footprint,
+                heap_held,
+                ..SysMem::default()
+            },
+            data,
+        }
+    }
+
+    /// 변화량: 첫 표본 = 없음 · 바뀐 칸만 TREND_HOLD 표본 동안 · 기타·시스템 줄의 작은 흔들림은 생략 · 힙 여유가 줄면 ▼.
+    #[test]
+    fn trend_tracks_changes_with_hold_and_noise() {
+        let mut t = Trend::default();
+        let mb = 1024 * 1024;
+        t.update(&sample_of(100 * mb, &[(Cat::ResultData, 10 * mb)], 20 * mb));
+        assert_eq!(t.shown(Cat::ResultData.idx()), None);
+        // 결과 데이터 +5 MB · 기타 −5 MB(= 같은 총량) · 힙 여유 20 → 2 MB(정리).
+        t.update(&sample_of(100 * mb, &[(Cat::ResultData, 15 * mb)], 2 * mb));
+        assert_eq!(t.shown(Cat::ResultData.idx()), Some(5 * mb as i64));
+        assert_eq!(t.shown(Trend::OTHER), Some(-(5 * mb as i64)));
+        assert_eq!(t.shown_sys(3), Some(-(18 * mb as i64)));
+        assert_eq!(t.shown_sys(0), None, "풋프린트는 안 바뀜");
+        assert_eq!(fmt_delta(5 * mb as i64), "▲ 5.00 MB");
+        assert_eq!(fmt_delta(-(18 * mb as i64)), "▼ 18.0 MB");
+        // 기타 줄의 32 KB 흔들림 = 잡음(표시 안 함 · 남은 시간만 줄어든다).
+        t.update(&sample_of(
+            100 * mb + 32 * 1024,
+            &[(Cat::ResultData, 15 * mb)],
+            2 * mb,
+        ));
+        assert_eq!(t.shown(Trend::OTHER), Some(-(5 * mb as i64)));
+        // 안 바뀐 표본 HOLD번 뒤에는 사라진다.
+        for _ in 0..TREND_HOLD {
+            t.update(&sample_of(
+                100 * mb + 32 * 1024,
+                &[(Cat::ResultData, 15 * mb)],
+                2 * mb,
+            ));
+        }
+        assert_eq!(t.shown(Cat::ResultData.idx()), None);
+        assert_eq!(t.shown(Trend::OTHER), None);
     }
 }

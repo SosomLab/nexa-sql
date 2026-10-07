@@ -939,12 +939,27 @@ impl App {
                 self.push_recent(path);
                 // 새 파일이 생겼을 수 있다 — 프로젝트 탐색기의 펼친 폴더를 다시 열거 · Ctrl+P/필터 **파일 색인**도 낡음(색인에 없는 경로일 때 ·
                 //   T-299 ① · 사용자 10-07 "색인을 써도 최근 변경이 보여야").
+                // 트리는 그 폴더의 **자식 목록이 달라졌을 때만**(새 파일) 다시 만든다 — 기존 파일 저장은 그대로(사용자 10-07 "깜빡임").
                 if self.project_panel.is_visible() {
-                    self.project_panel.refresh();
+                    let sh = self.settings.flag("file.show_hidden");
+                    let sd = self.settings.flag("file.show_dot");
+                    if path
+                        .parent()
+                        .is_some_and(|d| self.project_panel.dir_children_differ(d, sh, sd))
+                    {
+                        self.project_panel.refresh();
+                    }
                 }
                 if !self.goto_files.iter().any(|p| p == path) {
-                    self.goto_index_invalidate();
+                    let nm = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.goto_index_invalidate_because(tf(Msg::ProjReidxReasonNewFile, &[&nm]));
                 }
+                // 삭제됐던 파일을 다시 저장하면 "삭제됨" 표시 해제(사용자 10-07).
+                let ai = self.editors.active();
+                self.editors.set_deleted(ai, false);
                 let name = path
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())

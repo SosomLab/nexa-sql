@@ -10,6 +10,10 @@ Edit 메뉴 · 명령 팔레트에도 같은 항목이 있습니다.
 | **Basic**(내장) | 기본 | 절 단독 줄 · 항목마다 한 줄 · 콤마 위치/간격 · `WHERE 1=1` 시드 · 대소문자 · 서브쿼리 펼침 · 짧은 CASE는 한 줄 |
 | **SQL Formatter for kiros33**(확장) | Extension Manager ▸ Install | Basic 공통 옵션 위에 **탭 수직 정렬**(AS · 비교 연산자 · ORDER BY 방향) · AND/OR를 WHERE 열에 · 집합 연산자 대시 구분행 · `ext.sqlfmt_kiros33.strict`(기본 켬) = 스킬 규정값 강제 |
 
+![포맷 미리보기 탭](images/sql-format-preview.png)
+
+*포맷 미리보기 탭 — 한 줄로 쓴 SQL을 Basic 포맷터로 정리한 결과*
+
 ## 자주 쓰는 순서
 
 1. **한 번 쓰기**: 팔레트 ▸ "포맷터 골라 포맷…" ▸ `SQL Formatter for kiros33(으)로 포맷`.

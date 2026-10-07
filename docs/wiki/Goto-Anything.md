@@ -2,6 +2,18 @@
 
 **Ctrl+P**(맥 ⌘P · 보기 ▸ Goto Anything)를 누르면 화면 위쪽에 입력란과 목록이 열립니다. VS Code의 Quick Open과 같은 방식으로, **입력란의 첫 글자(접두)** 에 따라 무엇을 찾을지가 바뀝니다. 아무 접두 없이 글자를 치면 파일을 찾습니다.
 
+![Ctrl+P](images/goto-anything-files.png)
+
+*Ctrl+P — 파일 이름 퍼지 검색(열린 탭 · 최근 · 프로젝트 폴더)*
+
+![`>` 접두 = 명령 찾기](images/goto-anything-commands.png)
+
+*`>` 접두 = 명령 찾기*
+
+![`@` 접두 = 지금 문서의 심볼(문장 · 객체)](images/goto-anything-symbols.png)
+
+*`@` 접두 = 지금 문서의 심볼(문장 · 객체)*
+
 ## 입력창 접두사 정리
 
 | 입력 예 | 동작 |

@@ -2,13 +2,13 @@
 //! 총량 막대(데이터 카테고리 색 + 기타) · 데이터 표 · 시스템 표. 갱신 주기는 호스트(`about_to_wait` · `mem.refresh_ms`)가 맡고,
 //! 이 창은 표본을 받아 그리기만 한다(닫혀 있으면 아무 비용도 없다).
 
-use crate::memstat::{fmt, Cat, Sample};
+use crate::memstat::{fmt, fmt_delta, Cat, Group, Sample, Trend};
 use nexa_ctl::controls::{Button, LabelSide, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{Color, FontPrefs, Theme};
-use nexa_ctl::{InputEvent, Invalidations, Widget};
+use nexa_ctl::{Control, InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use std::collections::VecDeque;
@@ -39,12 +39,26 @@ pub(crate) struct MemWin {
     top_switch: Switch,
     /// 힙 정리 버튼(80 §7 · T-197 잔여).
     trim_btn: Button,
+    /// 바닥 [닫기](사용자 10-07 · Esc와 같음).
+    close_btn: Button,
     /// 풋프린트 이력(최근 60 표본 · 스파크라인 · 480 B).
     hist: VecDeque<u64>,
     sample: Option<Sample>,
     /// 갱신 주기(ms · 바닥 안내 글).
     every_ms: u64,
+    /// ★ 줄별 변화량(▲/▼ · 사용자 10-07 · nexa-dir3 이식).
+    trend: Trend,
+    /// [힙 정리] 뒤 버튼을 잠가 두는 남은 표본 수(0 = 평소).
+    trim_hold: u8,
+    /// 마지막 정리 결과 안내(바닥 줄 · 남은 표시 표본 수).
+    trim_note: Option<(String, u8)>,
+    /// 처음 열 때 한 번 — 내용 전체가 보이도록 창 높이를 맞춘다(사용자 10-07).
+    fit: bool,
 }
+
+/// [힙 정리] 뒤 버튼을 잠가 두는 표본 수(즉시 표본 1 + 다음 주기 1) · 결과 안내가 남는 표본 수.
+const TRIM_HOLD: u8 = 2;
+const TRIM_NOTE_HOLD: u8 = 8;
 
 impl MemWin {
     pub(crate) fn new() -> Self {
@@ -58,10 +72,45 @@ impl MemWin {
             on_top: false,
             top_switch: Switch::new(t(Msg::LblLogSwTop), false).with_label_side(LabelSide::Right),
             trim_btn: Button::new(t(Msg::MemTrim)),
+            close_btn: Button::new(t(Msg::BtnClose)),
             hist: VecDeque::with_capacity(60),
             sample: None,
             every_ms: 1000,
+            trend: Trend::default(),
+            trim_hold: 0,
+            trim_note: None,
+            fit: false,
         }
+    }
+
+    /// [힙 정리]를 누른 직후 — 버튼을 잠그고 글을 "정리 중…"으로(호스트가 정리를 마치고 [`Self::set_trim_result`]를 부른다).
+    fn begin_trim(&mut self) {
+        self.trim_hold = TRIM_HOLD;
+        self.trim_btn.set_enabled(false);
+        self.trim_btn.set_label(t(Msg::MemTrimming));
+        self.redraw();
+    }
+
+    /// 정리 결과(전 · 후 풋프린트 · 걸린 µs) → 바닥 안내 글(줄었으면 반환량 · 아니면 "반환할 것이 없음").
+    pub(crate) fn set_trim_result(&mut self, before: u64, after: u64, us: u128) {
+        let ms = format!("{:.1}", us as f64 / 1000.0);
+        let text = if before > after {
+            tf(Msg::MemTrimmed, &[&fmt(before - after), &ms])
+        } else {
+            tf(Msg::MemTrimmedNone, &[&ms])
+        };
+        self.trim_note = Some((text, TRIM_NOTE_HOLD));
+        self.redraw();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trim_note(&self) -> Option<&str> {
+        self.trim_note.as_ref().map(|n| n.0.as_str())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trimming(&self) -> bool {
+        self.trim_hold > 0
     }
 
     /// 열기(모델리스 · 메인 소유 창) — 세션 창과 같은 규칙 + 최상위 옵션.
@@ -87,7 +136,8 @@ impl MemWin {
                 dy: 40,
                 owner,
                 memo: Some(&self.memo),
-                default_size: (620.0, 560.0),
+                // 표 전체(묶음 5 + 시스템 8줄)가 들어가는 높이 — 글꼴·배율이 다르면 첫 그리기에서 `fit`이 한 번 더 맞춘다.
+                default_size: (640.0, 780.0),
                 ime: false,
             },
         ) else {
@@ -96,6 +146,7 @@ impl MemWin {
         self.scale = o.scale;
         self.surface = o.surface;
         self.window = Some(o.window);
+        self.fit = true;
         self.apply_level();
         self.redraw();
     }
@@ -107,6 +158,11 @@ impl MemWin {
         // 표본·이력은 창과 함께 버린다(닫힌 뒤 상주 0 · docs/80 §5).
         self.sample = None;
         self.hist = VecDeque::new();
+        self.trend = Trend::default();
+        self.trim_hold = 0;
+        self.trim_note = None;
+        self.trim_btn.set_enabled(true);
+        self.trim_btn.set_label(t(Msg::MemTrim));
     }
 
     pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
@@ -158,6 +214,21 @@ impl MemWin {
             self.hist.pop_front();
         }
         self.hist.push_back(s.sys.footprint);
+        self.trend.update(&s);
+        // 정리 뒤 잠금·결과 안내는 표본 수로 센다(갱신 주기에 맞춰 자연히 풀린다).
+        if self.trim_hold > 0 {
+            self.trim_hold -= 1;
+            if self.trim_hold == 0 {
+                self.trim_btn.set_enabled(true);
+                self.trim_btn.set_label(t(Msg::MemTrim));
+            }
+        }
+        if let Some((_, left)) = &mut self.trim_note {
+            *left = left.saturating_sub(1);
+            if *left == 0 {
+                self.trim_note = None;
+            }
+        }
         self.sample = Some(s);
         self.every_ms = every_ms;
         self.redraw();
@@ -193,6 +264,7 @@ impl MemWin {
                 };
                 self.top_switch.on_event(&mv, &mut inv);
                 self.trim_btn.on_event(&mv, &mut inv);
+                self.close_btn.on_event(&mv, &mut inv);
                 if !inv.is_empty() {
                     self.redraw();
                 }
@@ -224,8 +296,14 @@ impl MemWin {
                 if up || self.trim_btn.bounds().contains(p) {
                     self.trim_btn.on_event(&ev, &mut inv);
                 }
+                if up || self.close_btn.bounds().contains(p) {
+                    self.close_btn.on_event(&ev, &mut inv);
+                }
+                if self.close_btn.take_clicked() {
+                    return MemWinAction::Close;
+                }
                 if self.trim_btn.take_clicked() {
-                    self.redraw();
+                    self.begin_trim();
                     return MemWinAction::Trim;
                 }
                 if let Some(on) = self.top_switch.take_toggled() {
@@ -365,19 +443,23 @@ impl MemWin {
             dc.stroke_round_rect(bar, 0, th.border, 1.0);
             y += bar.h + px(14.0);
 
-            // ── 표 두 개 ───────────────────────────────────────────────────────────
+            // ── 표: 묶음(소계) + 시스템 ─────────────────────────────────────────────
             let row_h = th_txt + px(6.0);
             let label_x = pad + px(18.0);
-            let pct_w = px(54.0);
-            let bytes_w = px(84.0);
-            let bar_x0 = pad + px(270.0);
-            let bar_x1 = wi - pad - bytes_w - pct_w - px(8.0);
+            let pct_w = dc.text_width("100.0%") + px(6.0);
+            let bytes_w = dc.text_width("999.9 MB") + px(8.0);
+            let delta_w = dc.text_width("▲ 999.9 MB") + px(8.0);
+            let label_w = px(230.0).min((wi - pad * 2) / 2);
+            let bar_x0 = label_x + label_w;
+            let bar_x1 = wi - pad - pct_w - bytes_w - delta_w - px(6.0);
+            let trend = self.trend;
             let row = |dc: &mut dyn DrawCtx,
                        y: i32,
                        chip: Option<(u8, u8, u8)>,
                        label: &str,
                        bytes: u64,
-                       denom: u64| {
+                       denom: u64,
+                       delta: Option<i64>| {
                 if let Some((r, g, b)) = chip {
                     let c = px(10.0);
                     dc.fill_round_rect(
@@ -408,9 +490,17 @@ impl MemWin {
                         );
                     }
                 }
+                // 변화(▲ 늘었다 = 위험색 · ▼ 줄었다 = 강조색) — 바뀐 뒤 몇 표본 동안만.
+                if let Some(d) = delta {
+                    let dt = fmt_delta(d);
+                    let dw = dc.text_width(&dt);
+                    let dx = wi - pad - pct_w - bytes_w - dw - px(4.0);
+                    let col = if d >= 0 { th.danger } else { th.accent };
+                    dc.text(dx, ty, Rect::new(dx, y, dw, row_h), &dt, col);
+                }
                 let bt = fmt(bytes);
                 let bw = dc.text_width(&bt);
-                let bx = wi - pad - pct_w - px(8.0) - bw;
+                let bx = wi - pad - pct_w - bw;
                 dc.text(bx, ty, Rect::new(bx, y, bw, row_h), &bt, th.text);
                 let pct = if denom == 0 {
                     String::new()
@@ -426,7 +516,8 @@ impl MemWin {
                     th.text_dim,
                 );
             };
-            let section = |dc: &mut dyn DrawCtx, y: i32, label: &str| {
+            // 구획 머리: 묶음 이름(굵게) + 소계(오른쪽 · 바이트 열 자리) + 밑줄.
+            let section = |dc: &mut dyn DrawCtx, y: i32, label: &str, sum: Option<u64>| {
                 dc.select_font(FontSlot::Base, true);
                 let ty = dc.text_center_y(y, row_h);
                 dc.text(
@@ -436,72 +527,157 @@ impl MemWin {
                     label,
                     th.text_dim,
                 );
-                dc.fill_rect(Rect::new(pad, y + row_h - 1, wi - pad * 2, 1), th.border);
                 dc.select_font(FontSlot::Base, false);
+                if let Some(v) = sum {
+                    let st = fmt(v);
+                    let sw = dc.text_width(&st);
+                    let sx = wi - pad - pct_w - sw;
+                    dc.text(sx, ty, Rect::new(sx, y, sw, row_h), &st, th.text_dim);
+                }
+                dc.fill_rect(Rect::new(pad, y + row_h - 1, wi - pad * 2, 1), th.border);
             };
 
-            section(&mut dc, y, t(Msg::MemGrpData));
-            y += row_h + px(2.0);
             if let Some(sm) = sample {
-                for c in Cat::ALL {
-                    row(
-                        &mut dc,
-                        y,
-                        Some(c.color()),
-                        t(c.label()),
-                        sm.data.get(c),
-                        foot,
-                    );
-                    y += row_h;
+                for g in Group::ALL {
+                    let other = sm.other();
+                    let sum = if g == Group::Runtime {
+                        other
+                    } else {
+                        sm.data.group_sum(g)
+                    };
+                    section(&mut dc, y, t(g.label()), Some(sum));
+                    y += row_h + px(2.0);
+                    for c in Cat::ALL.into_iter().filter(|c| c.group() == g) {
+                        row(
+                            &mut dc,
+                            y,
+                            Some(c.color()),
+                            t(c.label()),
+                            sm.data.get(c),
+                            foot,
+                            trend.shown(c.idx()),
+                        );
+                        y += row_h;
+                    }
+                    if g == Group::Runtime {
+                        row(
+                            &mut dc,
+                            y,
+                            Some(Cat::OTHER_COLOR),
+                            t(Msg::MemCatOther),
+                            other,
+                            foot,
+                            trend.shown(Trend::OTHER),
+                        );
+                        y += row_h;
+                    }
+                    y += px(6.0);
+                }
+            } else {
+                for g in Group::ALL {
+                    section(&mut dc, y, t(g.label()), None);
+                    y += row_h + px(2.0);
+                    y += row_h * Cat::ALL.iter().filter(|c| c.group() == g).count() as i32
+                        + if g == Group::Runtime { row_h } else { 0 }
+                        + px(6.0);
+                }
+            }
+            y += px(4.0);
+            section(&mut dc, y, t(Msg::MemGrpSystem), None);
+            y += row_h + px(2.0);
+            // (라벨, 값, 변화 칸 · None = 안 보임, 0이어도 보임)
+            for (label, v, tk, always) in [
+                (Msg::MemSysFootprint, sys.footprint, Some(0), true),
+                (Msg::MemSysPrivateWs, sys.private_ws, Some(4), false),
+                (Msg::MemSysResident, sys.resident, Some(1), true),
+                (Msg::MemSysAnon, sys.anon, None, true),
+                (Msg::MemSysFile, sys.file_backed, None, true),
+                (Msg::MemSysCompressed, sys.compressed, None, true),
+                (Msg::MemHeapUsed, sys.heap_used, Some(2), true),
+                (Msg::MemHeapHeld, sys.heap_held, Some(3), true),
+            ] {
+                if !always && v == 0 {
+                    continue;
                 }
                 row(
                     &mut dc,
                     y,
-                    Some(Cat::OTHER_COLOR),
-                    t(Msg::MemCatOther),
-                    sm.other(),
-                    foot,
+                    None,
+                    t(label),
+                    v,
+                    scale_max,
+                    tk.and_then(|k| trend.shown_sys(k)),
                 );
                 y += row_h;
             }
-            y += px(10.0);
-            section(&mut dc, y, t(Msg::MemGrpSystem));
-            y += row_h + px(2.0);
-            for (label, v) in [
-                (Msg::MemSysFootprint, sys.footprint),
-                (Msg::MemSysResident, sys.resident),
-                (Msg::MemSysAnon, sys.anon),
-                (Msg::MemSysFile, sys.file_backed),
-                (Msg::MemSysCompressed, sys.compressed),
-                (Msg::MemHeapUsed, sys.heap_used),
-                (Msg::MemHeapHeld, sys.heap_held),
-            ] {
-                row(&mut dc, y, None, t(label), v, scale_max);
-                y += row_h;
+
+            // 처음 열 때 한 번: 내용 끝 + 바닥 줄이 들어가도록 창 높이를 맞춘다(사용자 10-07 "열릴 때 전체 내용이 보이게").
+            let btn_h = th_txt + px(12.0);
+            if self.fit {
+                self.fit = false;
+                let need = y + px(10.0) + btn_h + pad;
+                if need > hi {
+                    let _ = win
+                        .request_inner_size(winit::dpi::PhysicalSize::new(size.width, need as u32));
+                }
             }
 
-            // ── 바닥: 갱신 안내 ─────────────────────────────────────────────────────
-            let foot_txt = match sample {
-                Some(sm) => tf(
+            // ── 바닥: 정리 결과(방금 눌렀으면 · 몇 표본 뒤 평소 안내로) 또는 갱신 안내 ───────────
+            let foot_txt = match (&self.trim_note, sample) {
+                (Some((note, _)), _) => note.clone(),
+                (None, Some(sm)) => tf(
                     Msg::MemUpdated,
                     &[
                         &format!("{:.1}", sm.at.elapsed().as_secs_f32()),
                         &format!("{:.1}", self.every_ms as f32 / 1000.0),
                     ],
                 ),
-                None => t(Msg::StIntelLoading).to_string(),
+                (None, None) => t(Msg::StIntelLoading).to_string(),
             };
-            let fy = hi - pad - th_txt;
-            let ty = dc.text_center_y(fy, th_txt);
+            // 바닥 줄 = 안내 글(왼쪽) + [닫기](오른쪽 · 사용자 10-07).
+            let by = hi - pad - btn_h;
+            self.close_btn.set_scale(s);
+            let bw = dc.text_width(t(Msg::BtnClose)) + px(28.0);
+            self.close_btn
+                .set_bounds(Rect::new(wi - pad - bw, by, bw, btn_h), &mut inv);
+            self.close_btn.paint(&mut dc, th);
+            let ty = dc.text_center_y(by, btn_h);
             dc.text(
                 pad,
                 ty,
-                Rect::new(pad, fy, wi - pad * 2, th_txt),
+                Rect::new(pad, by, (wi - pad * 2 - bw - px(8.0)).max(1), btn_h),
                 &foot_txt,
                 th.text_dim,
             );
         }
         let _ = buf.present();
         self.surface = Some(surface);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 정리 결과 글: 줄었으면 반환량 · 아니면 "없음" · 표본 TRIM_NOTE_HOLD번 뒤 사라짐 · 버튼 잠금은 TRIM_HOLD 표본.
+    #[test]
+    fn trim_note_and_hold_follow_samples() {
+        let mut w = MemWin::new();
+        assert!(!w.trimming());
+        w.begin_trim();
+        assert!(w.trimming());
+        w.set_trim_result(10 * 1024 * 1024, 7 * 1024 * 1024, 1500);
+        let n = w.trim_note().unwrap_or_default().to_string();
+        assert!(n.contains("3.00 MB") && n.contains("1.5"), "{n}");
+        w.set_trim_result(5, 5, 200);
+        assert!(w.trim_note().unwrap_or_default().contains("0.2"));
+        let s = crate::memstat::sample(&[], |_| {});
+        for i in 0..TRIM_NOTE_HOLD {
+            assert_eq!(w.trimming(), i < TRIM_HOLD);
+            assert!(w.trim_note().is_some());
+            w.set_sample(s, 1000);
+        }
+        assert!(w.trim_note().is_none());
+        assert!(!w.trimming());
     }
 }

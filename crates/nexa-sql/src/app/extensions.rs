@@ -957,7 +957,7 @@ impl App {
         use nexa_fs::watch::WatchEvent as E;
         match ev {
             E::Missing { key, path } => {
-                let Some(_) = self.editors.index_of_id(key) else {
+                let Some(i) = self.editors.index_of_id(key) else {
                     return false;
                 };
                 let info = self.ext_files.entry(key).or_default();
@@ -966,6 +966,8 @@ impl App {
                 }
                 info.deleted = true;
                 info.pending = None;
+                // 탭 = 미저장(●) · 진빨강 · 미리보기면 편집기 탭으로 승격(사용자 10-07).
+                self.editors.set_deleted(i, true);
                 let name = nexa_fs::path::display(&path);
                 self.sess.status = tf(Msg::StExtDeleted, &[&name]);
                 self.log_win
@@ -1035,6 +1037,8 @@ impl App {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let now = Instant::now();
+        // 파일이 (다시) 있다 = 삭제 표시 해제(사용자 10-07).
+        self.editors.set_deleted(i, false);
         let info = self.ext_files.entry(id).or_default();
         info.deleted = false;
         let suggest = info.note_change(now);
@@ -1246,6 +1250,9 @@ impl App {
                         let tab = self.editors.active_id();
                         self.make_unconnected(tab);
                     }
+                    // 디스크 사본은 읽을거리 — 읽기 전용(객체 정보 탭과 같음 · 협업 bin61 관찰).
+                    let di = self.editors.active();
+                    self.editors.set_read_only(di, true);
                     self.set_focus(Focus::Editor);
                 }
             }

@@ -565,6 +565,20 @@ impl App {
                 self.outline_panel.paint(&mut dc, &th);
                 self.ext_panel.paint(&mut dc, &th);
             }
+            // ★ 프로젝트 탐색기 플래시(사용자 10-07) — 자체 글꼴(`ui.flash_font_face` 비면 UI 글꼴 = 시스템 기본 · 크기
+            //   `ui.flash_font_size` 12pt) · 패널 다음 층 · 팝업 아래.
+            if self.project_panel.flash_active() {
+                // 모양·즉시 모드는 그리기 직전에 설정에서(향상 모드 토글·모양 변경이 바로 반영 · 비용 = 문자열 조회 2).
+                self.project_panel.set_flash_style(
+                    self.settings.get("ui.flash_shape").unwrap_or("rounded"),
+                    self.settings.boost_on(),
+                );
+                let fpx = self.settings.font_px("ui.flash_font_size");
+                let prefs = FontPrefs::with_base(if fpx > 0.0 { fpx } else { ui_px });
+                let font = self.flash_font.as_ref().unwrap_or(&self.ui_font);
+                let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
+                self.project_panel.paint_flash(&mut dc, &th);
+            }
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
                                           // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
             {
@@ -591,8 +605,8 @@ impl App {
                 self.ext_panel.paint_popup(&mut dc, &th);
                 self.objdetail.paint_popup(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
-                //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
-                self.status_menu.paint(&mut dc, &th);
+                //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙). 상태 메뉴(탭 닫기 확인 등)는 더 뒤 —
+                //   여기서 그리면 외부 변경 띠·토스트가 메뉴를 덮었다(사용자 10-07 캡처) → 팔레트 직전으로.
                 // ★ Ctrl/머무름 객체 링크 설명 카드(툴팁 + 동작 버튼 · T-256/T-179) + 메뉴(팝업 층).
                 self.objlinks.card = app::objlink::paint_hover_card(
                     &mut dc,
@@ -670,6 +684,8 @@ impl App {
                 self.ext_view.paint_popup(&mut dc, &th);
                 self.panel.output_paint_popup(&mut dc, &th);
                 self.explorer.paint_popups(&mut dc, &th);
+                // 상태 메뉴(탭 닫기 확인 · 상태줄 칸 메뉴) = 팝업 층 맨 뒤(외부 변경 띠·토스트·카드 위 · 사용자 10-07).
+                self.status_menu.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 let eb = self.editors.editor_bounds();
                 // ★ 파일 적재 진행 막 — 편집 영역 가운데 · 맨 위 층(적재 중에는 입력도 받지 않는다).

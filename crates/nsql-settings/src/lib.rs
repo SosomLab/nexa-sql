@@ -279,6 +279,12 @@ pub struct Entry {
 }
 
 /// 줄끝(docs/38 · DBeaver/Eclipse "New text file line delimiter" 대응 · 09-16).
+/// 플래시 메시지 상자 모양(사용자 10-07): 직사각형 · 둥근 모서리(기본) · 없음(글만).
+const FLASH_SHAPE_OPTS: &[(&str, Msg)] = &[
+    ("rect", Msg::ValFlashShapeRect),
+    ("rounded", Msg::ValFlashShapeRounded),
+    ("none", Msg::ValFlashShapeNone),
+];
 const TAB_STOPS_OPTS: &[(&str, Msg)] = &[
     ("stop", Msg::ValTabStopsStop),
     ("fixed", Msg::ValTabStopsFixed),
@@ -1112,6 +1118,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExtDisabled,
         kind: SettingKind::Text,
         default: "",
+    },
+    // ★ 확장 뷰 탭의 세션 표식(사용자 10-07 "확장은 서버 연결이 필요 없다") — 기본 숨김 · 고급.
+    Entry {
+        key: "extensions.tab_badge",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtTabBadge,
+        desc: Msg::DescExtTabBadge,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     // ★ SQL 포맷(docs/95 · 사용자 09-28): 기본 포맷터 + Basic·확장 공용 옵션(`format.*`).
     Entry {
@@ -2345,6 +2360,32 @@ pub const REGISTRY: &[Entry] = &[
             max: 30_000,
         },
         default: "3000",
+    },
+    // ★ 플래시 메시지 글꼴(사용자 10-07): 얼굴 비면 시스템 기본(UI 글꼴) · 크기 10pt(프로젝트 탐색기 "색인 다시 읽기" 알림 등).
+    Entry {
+        key: "ui.flash_font_face",
+        cat: Msg::CatAppearance,
+        label: Msg::LblFlashFontFace,
+        desc: Msg::DescFlashFontFace,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "ui.flash_font_size",
+        cat: Msg::CatAppearance,
+        label: Msg::LblFlashFontSize,
+        desc: Msg::DescFlashFontSize,
+        kind: SettingKind::Size { min: 6, max: 40 },
+        // 12pt → 9pt → 10pt(사용자 10-07 실기 "9pt로" → "1pt 키워줘").
+        default: "10pt",
+    },
+    Entry {
+        key: "ui.flash_shape",
+        cat: Msg::CatAppearance,
+        label: Msg::LblFlashShape,
+        desc: Msg::DescFlashShape,
+        kind: SettingKind::Choice(FLASH_SHAPE_OPTS),
+        default: "rounded",
     },
     Entry {
         key: "ui.fade_slow_ms",
@@ -6798,6 +6839,8 @@ pub fn is_hidden(key: &str) -> bool {
 /// 한 번 정하면 거의 손대지 않는 값. 글꼴·색·모드·켜기/끄기·초 단위 습관값(자동 저장 주기 · 유휴 초)은 기본 표시로 남긴다.
 /// 표에 없는 키를 적으면 시험 `advanced_keys_exist`가 잡는다.
 pub const ADVANCED: &[&str] = &[
+    // 확장 뷰 탭 세션 표식(사용자 10-07 "고급 설정으로")
+    "extensions.tab_badge",
     // 시간 상수(ms)
     "ui.fade_slow_ms",
     "ui.fade_fast_ms",

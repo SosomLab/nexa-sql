@@ -608,16 +608,37 @@ impl App {
             let _ = std::fs::write(path, out);
             return;
         }
+        // 자체 시험(10-07): 프로젝트 탐색기 플래시 상태 + 향상 모드 판정(`perf.boost` 원값) — 협업 bin64 ⓒ 진단.
+        if let Some(path) = id.strip_prefix("flash.dump:") {
+            let out = format!(
+                "{} boost_on={} perf.boost={:?}\n",
+                self.project_panel.flash_dump(),
+                self.settings.boost_on(),
+                self.settings.get("perf.boost")
+            );
+            let _ = std::fs::write(path, out);
+            return;
+        }
         if let Some(path) = id.strip_prefix("mem.dump:") {
             let smp = self.mem_sample();
             let mut out = format!(
-                "footprint={} resident={} anon={} sum={} other={}\n",
+                "footprint={} resident={} anon={} private_ws={} sum={} other={}\n",
                 smp.sys.footprint,
                 smp.sys.resident,
                 smp.sys.anon,
+                smp.sys.private_ws,
                 smp.data.sum(),
                 smp.other()
             );
+            for g in memstat::Group::ALL {
+                // 런타임 묶음 = 기타(총량 − 집계 합) — 화면 소계와 같은 값(협업 bin63 관찰).
+                let sum = if g == memstat::Group::Runtime {
+                    smp.other()
+                } else {
+                    smp.data.group_sum(g)
+                };
+                out.push_str(&format!("group {g:?}={sum}\n"));
+            }
             for c in memstat::Cat::ALL {
                 out.push_str(&format!("{c:?}={}\n", smp.data.get(c)));
             }

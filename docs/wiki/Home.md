@@ -2,6 +2,10 @@
 
 Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windows · macOS · Linux · 올 러스트 단일 바이너리).
 
+![Nexa SQL 메인 화면](images/main-window.png)
+
+*Nexa SQL 메인 화면 — 객체 탐색기 · 편집기 · 결과 그리드(열 머리 타입 배지 · 조건 바)*
+
 ## 페이지
 
 | 페이지 | 내용 |
@@ -22,5 +26,22 @@ Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windo
 | [Output 탭](Output-Tab.md) | 서버 메시지(DBMS_OUTPUT · PRINT · RAISE NOTICE) · 컴파일 결과 · 오류 · 문장 완료 줄이 모이는 탭 · 언제 나타나는지(`output.show`/`output.activate`) · 객체 소스 탭의 F5 = 한 단위 실행 |
 | [Ctrl 객체 링크와 설명 툴팁](Object-Links.md) | Ctrl(⌘)을 누르는 동안 테이블·컬럼·루틴이 링크 · 코멘트 툴팁(우상단 · 위치 설정) · 좌클릭 = 설명 복사 · 우클릭 메뉴 · 향상 모드·큰 파일 자동 끔 |
 
-> 이 폴더(`docs/wiki/`)가 원본이고 `scripts/wiki-publish.sh`가 GitHub 위키 저장소로 복사합니다. 이미지는 `images/`(맥 캡처 = `scripts/mac-capture.sh`).
+
+## 화면 둘러보기
+
+![실행 상태 카드](images/detail-run-status-card.png)
+
+*실행 상태 카드 — 문장 · 시작 시각 · 경과 · 행 수 · 전송량*
+
+![세션 창](images/sessions-window.png)
+
+*세션 창 — 서버별 공유/전용 연결 · 상태 · 유휴 시간*
+
+![열 머리 타입 배지](images/detail-column-type-badges.png)
+
+*결과 열 머리의 타입 배지(AZ 문자 · 09 숫자 · DT 날짜 · ID 식별자) — 색 = 레거시 / 일반 / 특수*
+
+> 그림은 영어 화면 · 라이트 테마 · SQLite 데모 DB로 찍었습니다(2026-10-07 · Windows · 위키와 홈페이지 공용).
+
+> 이 폴더(`docs/wiki/`)가 원본이고 `scripts/wiki-publish.sh`가 GitHub 위키 저장소로 복사합니다. 이미지는 `images/`(Windows 캡처 = 격리 홈 + 기동 명령 · 맥 캡처 = `scripts/mac-capture.sh`).
 > 기술 원장·설계 문서는 저장소 `docs/`(예: 제한 원장 = docs/72).

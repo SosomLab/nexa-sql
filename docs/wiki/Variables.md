@@ -27,6 +27,14 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 
 ## 변수 창(View ▸ Variables)
 
+![변수 창](images/variables-window.png)
+
+*변수 창 — 이름 · 타입 · 값 · 층(탭 / 공유 / 글로벌)*
+
+![`VAR`로 선언한 변수를 바인드(`:min_salary`)로 쓴 실행](images/variables-run.png)
+
+*`VAR`로 선언한 변수를 바인드(`:min_salary`)로 쓴 실행*
+
 바인드 변수(탭 층 · 연결 공유 층)와 치환 변수(`&이름` · 타입 `DEFINE`)를 한 표에서 봅니다. 값을 고치면 다음 실행에 반영됩니다. 비밀로 보이는 이름(`PASSWORD` 등)은 가려집니다.
 
 ## 자주 쓰는 것

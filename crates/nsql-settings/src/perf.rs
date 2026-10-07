@@ -457,7 +457,11 @@ impl Settings {
     /// 실행 속도 향상 모드가 켜져 있는가(`perf.boost`).
     #[must_use]
     pub fn boost_on(&self) -> bool {
-        self.get("perf.boost") == Some("on")
+        // 저장 표기 전부(on/true/1/yes · 손으로 쓴 설정 파일 포함 · 협업 bin64 ⓒ).
+        matches!(
+            self.get("perf.boost").map(str::trim),
+            Some("on" | "true" | "1" | "yes")
+        )
     }
 
     /// 향상 모드가 지금 이 키를 강제·잠금 중인가(설정 창 잠금 · 값은 [`boost_value`]).

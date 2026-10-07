@@ -224,16 +224,39 @@ impl App {
             self.goto_walk = None;
             return;
         }
-        let stale = self.goto_files_key != folders
-            || self
+        // ★ 왜 다시 읽는가(사용자 10-07 "실제 변경이 있을 때만 · 이유를 플래시로"): 폴더 구성 변경 → 무효화(이유는 무효화한 쪽이 적음 ·
+        //   없으면 첫 읽기) → TTL(**폴더 감시가 없을 때만** · 감시가 켜져 있으면 사건이 원천이라 주기로는 안 돈다).
+        let ttl = self.settings.int("project.index_ttl_secs").max(0) as u64;
+        let reason: Option<String> = if self.goto_files_key != folders {
+            Some(t(Msg::ProjReidxReasonFolders).to_string())
+        } else if self.goto_files_at.is_none() {
+            Some(
+                self.goto_reidx_reason
+                    .take()
+                    .unwrap_or_else(|| t(Msg::ProjReidxReasonFirst).to_string()),
+            )
+        } else if self.dir_watch.is_none()
+            && self
                 .goto_files_at
-                // TTL = 설정 `project.index_ttl_secs`(60 · 0 = 열 때마다 · T-299 ③).
-                .is_none_or(|t| {
-                    let ttl = self.settings.int("project.index_ttl_secs").max(0) as u64;
-                    ttl == 0 || t.elapsed().as_secs() >= ttl
-                });
-        if !stale || self.goto_walk.is_some() {
+                .is_some_and(|t0| ttl == 0 || t0.elapsed().as_secs() >= ttl)
+        {
+            Some(tf(Msg::ProjReidxReasonTtl, &[&ttl.to_string()]))
+        } else {
+            None
+        };
+        let Some(reason) = reason else {
             return;
+        };
+        if self.goto_walk.is_some() {
+            return;
+        }
+        self.goto_reidx_reason = None;
+        // 재열거 알림 = 패널이 보이면 늘(종전 = 필터 글이 있을 때만 → 필터가 비면 안 보였다 · 사용자 10-07).
+        if self.project_panel.is_visible() {
+            let hold = self.settings.int("ui.flash_hold_ms").clamp(0, 30_000) as u64;
+            let fade = self.settings.int("ui.flash_ms").clamp(200, 30_000) as u64;
+            self.project_panel
+                .flash(tf(Msg::ProjReidx, &[&reason]), hold, fade);
         }
         // ★ 옛 목록이 있으면 **비우지 않고** 새 버퍼에 모아 끝날 때 교체한다(사용자 10-07 "실제 파일이 있는데 안 나옴" = 재열거 동안
         //   목록이 비던 결함 · 협업 105 ①). 첫 열거(옛 목록 없음)만 도착하는 대로 바로 보탠다.
@@ -319,27 +342,72 @@ impl App {
                 }
             }
         }
+        // 실제로 바뀐 폴더(색인 증분 ∪ 트리 구조) — 플래시 이름 재료.
+        let mut noted: Vec<PathBuf> = Vec::new();
         if full || self.goto_into_new || self.goto_walk.is_some() {
             // 재열거 중이거나 놓친 게 있으면 통째로(이중 버퍼라 목록은 그동안 유지).
-            self.goto_index_invalidate();
+            let why = if full {
+                t(Msg::ProjReidxReasonOverflow).to_string()
+            } else {
+                tf(
+                    Msg::ProjReidxReasonWatch,
+                    &[&dirs
+                        .first()
+                        .and_then(|d| d.file_name())
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()],
+                )
+            };
+            self.goto_index_invalidate_because(why);
         } else if self.goto_files_at.is_some() {
+            // 목록이 **실제로 바뀐** 폴더만(감시는 열기·속성·같은 이름 덮어쓰기에도 사건을 보낸다 — 협업 bin62 ⓐⓑ "변경 없는데 반영 알림").
             for d in &dirs {
-                self.goto_index_update_dir(d);
+                if self.goto_index_update_dir(d) && !noted.contains(d) {
+                    noted.push(d.clone());
+                }
             }
-            if self.palette.is_open() && self.palette.goto_mode() {
+            if !noted.is_empty() && self.palette.is_open() && self.palette.goto_mode() {
                 let files = self.goto_file_items();
                 self.palette.set_files(files);
                 self.goto_sent = self.goto_files.len();
             }
         }
+        // 트리는 **구조가 바뀐 폴더가 있을 때만** 다시 만든다(수정만 있는 저장 = 그대로 · 사용자 10-07 "깜빡임").
         if self.project_panel.is_visible() {
-            self.project_panel.refresh();
+            let sh = self.settings.flag("file.show_hidden");
+            let sd = self.settings.flag("file.show_dot");
+            for d in &dirs {
+                if self.project_panel.dir_children_differ(d, sh, sd) && !noted.contains(d) {
+                    noted.push(d.clone());
+                }
+            }
+            if full || !noted.is_empty() {
+                self.project_panel.refresh();
+            }
+            // ★ 실제로 바뀐 폴더(색인 ∪ 트리)가 있으면 "폴더 변경 반영: …"(사용자 10-07 "동작과 이유" · 필터 글 유무와 무관 —
+            //   종전 = 색인 모드에서만 알려 필터가 비면 트리가 바뀌어도 조용했다).
+            if !noted.is_empty() {
+                let names: Vec<String> = noted
+                    .iter()
+                    .filter_map(|d| d.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .take(3)
+                    .collect();
+                let hold = self.settings.int("ui.flash_hold_ms").clamp(0, 30_000) as u64;
+                let fade = self.settings.int("ui.flash_ms").clamp(200, 30_000) as u64;
+                self.project_panel.flash(
+                    tf(Msg::ProjReidxApplied, &[&names.join(", ")]),
+                    hold,
+                    fade,
+                );
+            }
         }
         true
     }
 
-    /// 색인에서 `dir`의 직접 자식 파일을 다시 읽어 교체(T-293 ⑤ · 숨김/점 규칙 = 열거와 같음).
-    fn goto_index_update_dir(&mut self, dir: &Path) {
+    /// 색인에서 `dir`의 직접 자식 파일을 다시 읽어 교체(T-293 ⑤ · 숨김/점 규칙 = 열거와 같음). 돌려주는 값 = **목록이 바뀌었나**
+    /// (같은 파일들이면 거짓 — 수정만 있는 저장·속성 변경은 알리지 않는다 · 협업 bin62 ⓐⓑ).
+    fn goto_index_update_dir(&mut self, dir: &Path) -> bool {
         let show_hidden = self.settings.flag("file.show_hidden");
         let show_dot = self.settings.flag("file.show_dot");
         let Ok(entries) = nexa_fs::list_opts(dir, show_hidden, show_dot) else {
@@ -349,12 +417,27 @@ impl App {
                 .iter()
                 .map(|p| !p.starts_with(dir))
                 .collect();
+            let removed = keep.iter().any(|k| !k);
             let mut k = keep.iter();
             self.goto_files.retain(|_| *k.next().unwrap_or(&true));
             let mut k2 = keep.iter();
             self.goto_lower.retain(|_| *k2.next().unwrap_or(&true));
-            return;
+            return removed;
         };
+        let now: std::collections::BTreeSet<&Path> = entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| e.path.as_path())
+            .collect();
+        let have: std::collections::BTreeSet<&Path> = self
+            .goto_files
+            .iter()
+            .filter(|p| p.parent() == Some(dir))
+            .map(PathBuf::as_path)
+            .collect();
+        if now == have {
+            return false;
+        }
         let keep: Vec<bool> = self
             .goto_files
             .iter()
@@ -370,11 +453,15 @@ impl App {
                 self.goto_files.push(e.path);
             }
         }
+        true
     }
 
     /// 파일 색인을 낡음으로(T-299 ① · 사용자 10-07 "색인을 써도 최근 변경이 보여야"): 앱이 아는 변경(새 파일 저장 · 제외 규칙 변경 ·
     /// 폴더 변경) 직후 호출 — 다음 Ctrl+P/필터 열기 때 재열거(이중 버퍼라 옛 목록은 그동안 그대로 보인다).
-    pub(crate) fn goto_index_invalidate(&mut self) {
+    /// 이유를 적으며 낡음으로(사용자 10-07 "실제 변경 때만 · 이유를 보여라") — 다음 재열거 시작 때 탐색기 상단 플래시에 보인다.
+    /// (이유 없는 무효화는 없앴다 — 모든 호출자가 이유를 적는다.)
+    pub(crate) fn goto_index_invalidate_because(&mut self, reason: String) {
+        self.goto_reidx_reason = Some(reason);
         self.goto_files_at = None;
     }
 

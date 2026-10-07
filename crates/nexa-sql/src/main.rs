@@ -220,6 +220,8 @@ struct App {
     mono_font: Font,
     /// 결과 그리드·텍스트 보기 글꼴(설정 `grid.font_face` · None = UI 글꼴 · 사용자 09-16 Golden 참고).
     grid_font: Option<Font>,
+    /// ★ 플래시 메시지 글꼴(설정 `ui.flash_font_face` · None = UI 글꼴 = 시스템 기본 · 사용자 10-07).
+    flash_font: Option<Font>,
     theme: Theme,
     /// 앱 설정(언어·테마 모드·글꼴 크기) — 단축키로 바꾸면 즉시 저장.
     settings: Settings,
@@ -408,6 +410,8 @@ struct App {
     /// 프로젝트 탐색기 색인 펌프의 마지막 전달 열쇠(필터 글 세대 · 파일 수 · 읽는 중 · **열거 세대** `goto_files_at`) — 바뀔 때만 다시 민다(10-07 ·
     /// 세대가 바뀌면 = 재열거로 목록이 교체됨 → 길이가 같아도 전체 재적용).
     project_index_key: (u64, usize, bool, Option<Instant>),
+    /// 다음 색인 재열거의 이유(탐색기 상단 플래시 · 사용자 10-07) — 무효화한 쪽이 적는다.
+    goto_reidx_reason: Option<String>,
     /// 마지막 증분 전달 시각(열거 중 250 ms 스로틀).
     project_index_last: Instant,
     /// ★ 프로젝트 폴더 변경 감시(T-293 · D-263 · nexa-fs `dirwatch`) · 시작 열쇠(루트 · 제외 · 디바운스) · 폴백 안내 1회.
@@ -1594,6 +1598,7 @@ fn main() {
         vars_pruned: false,
         ui_font: ui.font,
         mono_font: mono.font,
+        flash_font: None,
         grid_font: load_grid_font(
             settings.get("grid.font_face").unwrap_or(""),
             settings.get("editor.font_face"),
@@ -1708,6 +1713,7 @@ fn main() {
         last_synced_tab: u64::MAX,
         project_sync_quiet: false,
         project_index_key: (0, 0, false, None),
+        goto_reidx_reason: None,
         project_index_last: Instant::now(),
         dir_watch: None,
         dir_watch_key: (Vec::new(), Vec::new(), 0),
