@@ -10,7 +10,7 @@
 //! | macOS | `defaults read -g AppleInterfaceStyle`(= "Dark" · 키 부재 = 라이트) | winit `ThemeChanged` |
 //! | Linux | `gsettings get org.gnome.desktop.interface color-scheme`(`prefer-dark`/`prefer-light`) | 없음(다음 실행 · 또는 winit Wayland `ThemeChanged`) |
 //!
-//! 우선순위: winit `Window::theme()`(창이 있으면 · OS가 알려준 값) → 이 모듈의 OS 조회 → `None`(= 다크 · 제품 기본 룩).
+//! 우선순위: **Windows = 레지스트리 → 창 판정**([`system_dark`] `os_first` · T-308) · 다른 OS = winit `Window::theme()` → OS 조회 → `None`(= 다크 · 제품 기본 룩).
 
 use nexa_ctl::theme::Theme;
 use nsql_settings::ThemeMode;
@@ -20,14 +20,34 @@ pub(crate) fn system_prefers_dark() -> Option<bool> {
     imp::prefers_dark()
 }
 
-/// 모드 + (winit 창 판정 → OS 조회) → 팔레트.
+/// System 모드의 OS 판정 고르기(순수 · 조건 2 = MC/DC 시험): `os_first`면 OS 조회 → 창 판정 · 아니면 창 판정 → OS 조회.
+///
+/// ★ Windows는 `os_first`(T-308 · nexa-dir3 교차 검증 10-07): winit 0.30.13의 `Window::theme()`는 **창을 만들 때의 판정이 고정**된다 —
+/// `set_theme()`는 `try_theme`만 부르고 `window_state.current_theme`을 갱신하지 않는다(`platform_impl/windows/window.rs:962` vs `:1143`).
+/// Dark로 기동한 뒤 System으로 바꾸면 창 판정이 계속 Dark라 레지스트리(`AppsUseLightTheme`)를 먼저 본다. 다른 OS는 winit 판정이 더 정확하다(폴백 = 외부 명령).
+pub(crate) fn system_dark(os: Option<bool>, window: Option<bool>, os_first: bool) -> Option<bool> {
+    if os_first {
+        os.or(window)
+    } else {
+        window.or(os)
+    }
+}
+
+/// 모드 + (winit 창 판정 ↔ OS 조회 · 순서는 [`system_dark`]) → 팔레트.
 pub(crate) fn resolve(mode: ThemeMode, window_theme: Option<winit::window::Theme>) -> Theme {
-    let sys = match window_theme {
+    let window = match window_theme {
         Some(winit::window::Theme::Dark) => Some(true),
         Some(winit::window::Theme::Light) => Some(false),
-        None => system_prefers_dark(),
+        None => None,
     };
-    if mode.is_dark(sys) {
+    let os_first = cfg!(windows);
+    // 명시 모드(Light/Dark)는 OS를 안 보므로 조회를 아낀다 · 창 판정으로 충분한 OS에서도 조회하지 않는다.
+    let os = if mode == ThemeMode::System && (os_first || window.is_none()) {
+        system_prefers_dark()
+    } else {
+        None
+    };
+    if mode.is_dark(system_dark(os, window, os_first)) {
         Theme::dark()
     } else {
         Theme::light()
@@ -167,10 +187,30 @@ mod tests {
         assert!(resolve(ThemeMode::Dark, Some(winit::window::Theme::Light)).is_dark);
     }
 
+    /// MC/DC: OS 조회·창 판정·순서 — 조건 하나씩만 바꿔 결과가 바뀜을 본다(T-308).
     #[test]
-    fn system_follows_window_theme() {
-        assert!(resolve(ThemeMode::System, Some(winit::window::Theme::Dark)).is_dark);
-        assert!(!resolve(ThemeMode::System, Some(winit::window::Theme::Light)).is_dark);
+    fn system_dark_order_mcdc() {
+        assert_eq!(system_dark(Some(false), Some(true), true), Some(false));
+        assert_eq!(system_dark(Some(true), Some(false), true), Some(true));
+        assert_eq!(system_dark(None, Some(true), true), Some(true));
+        assert_eq!(system_dark(None, None, true), None);
+        assert_eq!(system_dark(Some(false), Some(true), false), Some(true));
+        assert_eq!(system_dark(Some(true), None, false), Some(true));
+        assert_eq!(system_dark(None, None, false), None);
+    }
+
+    /// System 모드: Windows는 레지스트리가 읽히면 창 판정(고정값)을 무시한다 · 다른 OS(또는 레지스트리 못 읽음)는 창 판정을 따른다.
+    #[test]
+    fn system_follows_window_theme_unless_windows_registry() {
+        let dark = resolve(ThemeMode::System, Some(winit::window::Theme::Dark)).is_dark;
+        let light = resolve(ThemeMode::System, Some(winit::window::Theme::Light)).is_dark;
+        if cfg!(windows) && system_prefers_dark().is_some() {
+            assert_eq!(dark, light, "Windows = 레지스트리 판정 하나로 같아야 한다");
+            assert_eq!(dark, system_prefers_dark().unwrap_or(true));
+        } else {
+            assert!(dark);
+            assert!(!light);
+        }
     }
 
     #[test]

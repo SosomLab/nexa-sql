@@ -5,7 +5,6 @@
 //! - 데이터 카테고리는 각 부품의 어림(`approx_bytes` 규칙)이고, OS 총량과의 차이는 [`Sample::other`]로 드러낸다.
 
 use nsql_i18n::Msg;
-use std::time::Instant;
 
 /// 데이터 카테고리 원장 — 새 캐시를 만들면 여기 한 줄 + `MemSource` 구현 한 줄(39 §3 부하원 등재와 짝).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -180,7 +179,6 @@ pub(crate) trait MemSource {
 /// 한 번의 표본 — 상태줄·창이 같은 것을 읽는다.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Sample {
-    pub at: Instant,
     pub sys: SysMem,
     pub data: Acc,
 }
@@ -201,11 +199,7 @@ pub(crate) fn sample(sources: &[&dyn MemSource], extra: impl FnOnce(&mut Acc)) -
     extra(&mut data);
     let mut sys = os::sys();
     sys.private_ws = os::private_ws(&sys);
-    Sample {
-        at: Instant::now(),
-        sys,
-        data,
-    }
+    Sample { sys, data }
 }
 
 /// 변화 표시가 남는 표본 수(바뀐 뒤 이만큼의 표본 동안 ▲/▼를 보여 준다 · nexa-dir3와 같음).
@@ -277,6 +271,11 @@ impl Trend {
     /// 시스템 칸 `k`(0..SYS_N)의 최근 변화.
     pub(crate) fn shown_sys(&self, k: usize) -> Option<i64> {
         self.shown(Self::SYS + k)
+    }
+
+    /// 아직 보여 줄 변화가 남아 있는 칸이 있는가(있으면 표본마다 다시 그려야 ▲/▼가 사라진다 · T-310).
+    pub(crate) fn any_shown(&self) -> bool {
+        self.ttl.iter().any(|t| *t > 0)
     }
 }
 
@@ -596,7 +595,6 @@ mod tests {
             data.add(*c, *n);
         }
         Sample {
-            at: Instant::now(),
             sys: SysMem {
                 footprint,
                 resident: footprint,

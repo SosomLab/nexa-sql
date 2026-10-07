@@ -30,6 +30,8 @@ pub mod lexer;
 pub mod outline;
 pub mod split;
 pub mod vars;
+/// 글로벌 변수 층 파일(`vars/global.sql`) 읽기/쓰기 — GUI·CLI 공용(T-307 · 10-07).
+pub mod varsfile;
 
 pub use bind::{extract_binds, BindRef};
 pub use call::{call_shape, mark_output, tsql_call_shape, CallArg, CallShape};

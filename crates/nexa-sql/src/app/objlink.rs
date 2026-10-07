@@ -94,6 +94,26 @@ const RELATION_AFTER: &[&str] = &[
     "FROM", "JOIN", "INTO", "UPDATE", "TABLE", "DESC", "DESCRIBE", "TRUNCATE", "USING",
 ];
 
+/// DDL 괄호 안에서 컬럼 정의가 아닌 첫 낱말(제약·키 절) — 키워드 표에 없더라도 컬럼으로 읽지 않는다(T-288).
+const DDL_NOT_COLUMN: &[&str] = &[
+    "CONSTRAINT",
+    "PRIMARY",
+    "FOREIGN",
+    "UNIQUE",
+    "CHECK",
+    "INDEX",
+    "KEY",
+    "PERIOD",
+    "LIKE",
+    "PARTITION",
+    "WITH",
+    "ON",
+    "TABLESPACE",
+];
+/// 절 표식: `CREATE/ALTER TABLE t (` 안 = 컬럼 정의 · `KEY (`/`UNIQUE (` 안 = 컬럼 목록.
+const DDL_COLS: &str = "\u{1}DDL_COLS";
+const DDL_KEYS: &str = "\u{1}DDL_KEYS";
+
 /// ★ 문서 → 링크 목록(순수 · 토큰 = nsql-format 렉서 · 별칭 = nsql-script `context_at` 문장별 1회). 범위 = `text` 안의 문자 인덱스.
 pub(crate) fn scan(
     text: &str,
@@ -143,10 +163,30 @@ pub(crate) fn scan(
     let is_relation = |schema: Option<&str>, name: &str| {
         res.object_class(schema, name) == Some(ObjClass::Relation)
     };
+    // ★ T-288(사용자 10-07): `CREATE/ALTER TABLE t`의 `t`(토큰 index · 스키마 · 이름 · 실제 관계인가) — 뒤따르는 괄호 안 컬럼 정의 ·
+    //   `KEY (…)`/`UNIQUE (…)` 목록 · `ADD`/`MODIFY` 컬럼을 **그 테이블의 컬럼**으로 푼다. 테이블이 메타에 없으면(새로 만드는 DDL) 컬럼은 링크하지 않는다.
+    let mut ddl_table: Option<(usize, Option<String>, String, bool)> = None;
     for (i, t) in toks.iter().enumerate() {
         match t.kind {
             Kind::Punct if t.text == "(" => {
-                clause.push(None);
+                let marker = match (&ddl_table, sig(i)) {
+                    (Some((ti, ..)), Some(p)) if std::ptr::eq(p, &toks[*ti]) => {
+                        Some(DDL_COLS.to_string())
+                    }
+                    (Some(_), Some(p)) if matches!(p.up().as_str(), "ADD" | "MODIFY") => {
+                        Some(DDL_COLS.to_string())
+                    }
+                    (Some(_), Some(p))
+                        if clause
+                            .last()
+                            .is_some_and(|c| c.as_deref() == Some(DDL_COLS))
+                            && matches!(p.up().as_str(), "KEY" | "UNIQUE") =>
+                    {
+                        Some(DDL_KEYS.to_string())
+                    }
+                    _ => None,
+                };
+                clause.push(marker);
                 continue;
             }
             Kind::Punct if t.text == ")" => {
@@ -158,6 +198,7 @@ pub(crate) fn scan(
             Kind::Punct if t.text == ";" => {
                 clause.clear();
                 clause.push(None);
+                ddl_table = None;
                 continue;
             }
             Kind::Word => {}
@@ -238,6 +279,31 @@ pub(crate) fn scan(
         let a0 = char_at(toks[head].span.0);
         let a1 = char_at(t.span.1);
         let name = t.text.clone();
+        // ★ T-288: DDL 컬럼 자리 = `CREATE/ALTER TABLE t (` 안의 정의 첫 낱말(`(` 또는 `,` 다음) · `KEY/UNIQUE (` 목록 · `ADD/MODIFY col`.
+        if let Some((_, dschema, dname, exists)) = &ddl_table {
+            let in_ddl_paren = matches!(cur_clause.as_deref(), Some(c) if c == DDL_COLS || c == DDL_KEYS)
+                && prev.is_some_and(|p| p.is_punct("(") || p.is_punct(","));
+            let after_alter = clause.len() == 1
+                && matches!(prev_up.as_str(), "ADD" | "MODIFY" | "COLUMN")
+                && !relation_pos;
+            if quals.is_empty()
+                && (in_ddl_paren || after_alter)
+                && !DDL_NOT_COLUMN.contains(&up.as_str())
+            {
+                if *exists {
+                    let known = res.has_column(dschema.as_deref(), dname, &name) != Some(false);
+                    out.push(Link {
+                        range: (a0, a1),
+                        kind: LinkKind::Column,
+                        schema: dschema.clone(),
+                        owner: Some(dname.clone()),
+                        name,
+                        known,
+                    });
+                }
+                continue;
+            }
+        }
         let is_local = |n: &str| {
             aliases
                 .iter()
@@ -276,6 +342,17 @@ pub(crate) fn scan(
             } else {
                 // 관계 자리 = 구조적으로 테이블/뷰 — 메타에 있으면 정상, 없으면 미확인(설명 없음 · 벽돌색).
                 let known = is_relation(schema.as_deref(), &name);
+                // `CREATE/ALTER TABLE t` = 이어지는 컬럼 정의의 주인(T-288 · `TABLE` 앞이 CREATE/ALTER/TEMPORARY).
+                if prev_up == "TABLE"
+                    && sig(head)
+                        .and_then(|p| toks.iter().position(|x| std::ptr::eq(x, p)))
+                        .and_then(&sig)
+                        .is_some_and(|pp| {
+                            matches!(pp.up().as_str(), "CREATE" | "ALTER" | "TEMPORARY")
+                        })
+                {
+                    ddl_table = Some((i, schema.clone(), name.clone(), known));
+                }
                 out.push(Link {
                     range: (a0, a1),
                     kind: LinkKind::Table,
@@ -2538,6 +2615,65 @@ mod tests {
         let (a, e) = v[0].range;
         let s: String = text.chars().skip(a).take(e - a).collect();
         assert_eq!(s, "tb_order");
+    }
+
+    /// ★ T-288(사용자 10-07): `CREATE TABLE t (…)`의 컬럼 정의 첫 낱말 · `PRIMARY KEY (…)`/`UNIQUE (…)` 목록 · `ALTER TABLE t ADD/MODIFY c` =
+    /// **그 테이블의 컬럼**(테이블이 메타에 있을 때 · 있는 컬럼 = 정상 · 없는 컬럼 = 미확인) · 타입 낱말·제약 키워드·`VARCHAR2(20)` 안 숫자는 링크 아님 ·
+    /// 테이블이 메타에 없으면(새 DDL) 컬럼 링크 0.
+    #[test]
+    fn create_table_column_definitions_resolve_to_that_table() {
+        let text = "CREATE TABLE tb_order (\n ord_no NUMBER\n, nope VARCHAR2(10)\n, CONSTRAINT pk_o PRIMARY KEY (ord_no)\n, UNIQUE (nope)\n);\nALTER TABLE tb_order ADD newcol NUMBER;\nALTER TABLE tb_order MODIFY ord_no NUMBER(10);";
+        let v = scan(text, Some(nsql_core::Dialect::Oracle), &Fake);
+        let cols: Vec<(&str, bool)> = v
+            .iter()
+            .filter(|l| l.kind == LinkKind::Column)
+            .map(|l| (l.name.as_str(), l.known))
+            .collect();
+        assert!(
+            v.iter().filter(|l| l.kind == LinkKind::Table).count() == 3
+                && v.iter()
+                    .all(|l| l.kind != LinkKind::Table || l.name == "tb_order"),
+            "{v:?}"
+        );
+        assert!(
+            v.iter()
+                .filter(|l| l.kind == LinkKind::Column)
+                .all(|l| l.owner.as_deref() == Some("tb_order")),
+            "{v:?}"
+        );
+        assert_eq!(
+            cols.iter().filter(|(n, k)| *n == "ord_no" && *k).count(),
+            3,
+            "{cols:?}"
+        );
+        assert_eq!(
+            cols.iter().filter(|(n, k)| *n == "nope" && !*k).count(),
+            2,
+            "{cols:?}"
+        );
+        assert!(cols.iter().any(|(n, k)| *n == "newcol" && !*k), "{cols:?}");
+        let names: Vec<&str> = v.iter().map(|l| l.name.as_str()).collect();
+        for bad in [
+            "NUMBER",
+            "VARCHAR2",
+            "10",
+            "CONSTRAINT",
+            "pk_o",
+            "PRIMARY",
+            "KEY",
+            "UNIQUE",
+        ] {
+            assert!(
+                !names.iter().any(|n| n.eq_ignore_ascii_case(bad)),
+                "{bad} {v:?}"
+            );
+        }
+        let w = scan(
+            "CREATE TABLE test_bsy (user_id VARCHAR2(20), user_no INTEGER)",
+            Some(nsql_core::Dialect::Oracle),
+            &Fake,
+        );
+        assert!(w.iter().all(|l| l.kind == LinkKind::Table), "{w:?}");
     }
 
     /// 미확인(사용자 09-29 2차): 관계 자리의 이름이 메타에 없으면 링크이되 `known = false` · 별칭 컬럼도 테이블/컬럼이 없으면 미확인 ·

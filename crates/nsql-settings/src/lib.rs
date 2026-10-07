@@ -4970,6 +4970,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-307(사용자 10-07): CLI `nsql run`도 글로벌 층 파일을 쓸 것인가 — 기본 끔 · 실행 시작 때 읽고 끝날 때 쓴다(설정은 실행마다 새로 읽힘).
+    Entry {
+        key: "vars.cli_global",
+        cat: Msg::CatScriptVars,
+        label: Msg::LblVarsCliGlobal,
+        desc: Msg::DescVarsCliGlobal,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "vars.persist",
         cat: Msg::CatScriptVars,

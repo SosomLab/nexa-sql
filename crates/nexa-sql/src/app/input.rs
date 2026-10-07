@@ -761,6 +761,12 @@ impl App {
             }
         }
         if is_mouse {
+            // ★ 메뉴바를 눌러 풀다운을 여는 순간 = 테마 상태 재조회(OS가 바뀌었으면 System 모드 재적용 · 라벨 `시스템 (다크)` 갱신 · 사용자 10-07).
+            if !self.menubar.is_open()
+                && matches!(ev, InputEvent::MouseDown { x, y, .. } if self.menubar.bounds().contains(Point { x, y }))
+            {
+                self.refresh_theme_state();
+            }
             self.menubar.on_event(&ev, &mut inv);
             if let Some(id) = self.menubar.take_picked() {
                 self.menu_action(&id);

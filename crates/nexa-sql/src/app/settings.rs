@@ -1022,19 +1022,42 @@ impl App {
         self.sess.status = tf(Msg::StThemeChanged, &[t(next.label())]);
     }
 
-    /// 보기 ▸ 테마 하위 메뉴 항목(시스템 · 라이트 · 다크 · 현재 값 ✓).
+    /// 보기 ▸ 테마 하위 메뉴 항목(시스템 · 라이트 · 다크 · 현재 값 ✓) — 시스템 항목은 **지금 OS가 고른 쪽**을 함께(`시스템 (다크)` · 언어 메뉴처럼
+    /// 현재 상태 표시 · 사용자 10-07). 상태는 [`Self::refresh_theme_state`]가 메뉴를 열 때마다 새로 읽는다.
     pub(crate) fn theme_menu_entries(&self) -> Vec<nexa_ctl::MenuEntry> {
         let cur = self.settings.theme_mode();
+        let resolved = if self.theme.is_dark {
+            nsql_settings::ThemeMode::Dark
+        } else {
+            nsql_settings::ThemeMode::Light
+        };
         nsql_settings::ThemeMode::ALL
             .iter()
             .map(|m| {
                 let mark = if *m == cur { "✓ " } else { "   " };
+                let label = if *m == nsql_settings::ThemeMode::System {
+                    format!("{mark}{} ({})", t(m.label()), t(resolved.label()))
+                } else {
+                    format!("{mark}{}", t(m.label()))
+                };
                 nexa_ctl::MenuEntry::Item(nexa_ctl::ComboItem::new(
                     format!("view.theme:{}", m.as_str()),
-                    format!("{mark}{}", t(m.label())),
+                    label,
                 ))
             })
             .collect()
+    }
+
+    /// ★ 풀다운을 열기 직전(사용자 10-07 "메뉴가 새로 그려질 때마다 현재 상태를 읽어 최신 정보로 · 모든 OS"): OS 테마를 다시 읽어
+    /// System 모드면 바뀐 쪽으로 즉시 적용(Windows 레지스트리 · mac `defaults` · Linux `gsettings` = `theme::resolve`) · 메뉴 라벨(`시스템 (다크)`) 갱신.
+    /// 비용 = 메뉴바 클릭마다 OS 조회 1 + 메뉴 재구성 1(mac/Linux는 외부 명령 한 번 · 사용자 동작에만 묶임).
+    pub(crate) fn refresh_theme_state(&mut self) {
+        let wt = self.window.as_ref().and_then(|w| w.theme());
+        let fresh = theme::resolve(self.settings.theme_mode(), wt);
+        if fresh.is_dark != self.theme.is_dark {
+            self.apply_theme();
+        }
+        self.rebuild_menus();
     }
 
     /// 보기 ▸ 언어 하위 메뉴 항목(시스템 + 지원 언어 endonym · 현재 설정 값 ✓).

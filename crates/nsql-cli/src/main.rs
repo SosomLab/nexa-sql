@@ -1430,11 +1430,30 @@ fn cmd_run(o: &Opts) -> i32 {
     let no_prompt = o.no_prompt || path == "-";
     let mut prompt = |name: &str| if no_prompt { None } else { prompt_stdin(name) };
     printer.set_source(&src);
+    // ★ T-307(사용자 10-07): 설정 `vars.cli_global`(기본 끔)이 켜져 있으면 GUI와 같은 `vars/global.sql`을 **실행 시작 때 읽고 끝날 때 쓴다**
+    //   — 설정은 실행마다 새로 읽히므로 바꾼 뒤 다음 실행부터 적용.
+    let cli_global = settings_cached()
+        .ok()
+        .is_some_and(|s| s.flag("vars.cli_global"));
+    let vars_dir = nsql_settings::config_dir().map(|d| d.join("vars"));
+    if cli_global {
+        if let Some(d) = &vars_dir {
+            runner
+                .engine
+                .vars
+                .set_global(nsql_script::varsfile::load_global(d));
+        }
+    }
     // 파일이면 그 폴더가 `@@`의 기준(T-9) · stdin이면 cwd.
     let script_path = (path != "-").then(|| Path::new(path.as_str()));
     let errs = runner.run_script_in(&src, script_path, &mut prompt, &mut |e| printer.handle(e));
     printer.flush_sql(runner.session.as_deref_mut());
     runner.commit_at_exit();
+    if cli_global {
+        if let Some(d) = &vars_dir {
+            nsql_script::varsfile::store_global(d, &runner.engine.vars.global_states());
+        }
+    }
     close_spool(&printer.spool);
     if errs > 0 {
         1

@@ -1167,6 +1167,8 @@ impl Chord {
             "down" => "↓",
             "left" => "←",
             "right" => "→",
+            // `\` 글리프가 한글 글꼴(맑은 고딕 등)에서는 `₩`로 그려져 `Ctrl+₩`로 보였다(T-297 · V3 관찰) → 이름으로.
+            "\\" => "Backslash",
             other => {
                 return self.prefix() + &other.to_ascii_uppercase();
             }

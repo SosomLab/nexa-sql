@@ -54,6 +54,8 @@ pub(crate) struct MemWin {
     trim_note: Option<(String, u8)>,
     /// 처음 열 때 한 번 — 내용 전체가 보이도록 창 높이를 맞춘다(사용자 10-07).
     fit: bool,
+    /// 마지막으로 **값이 바뀐** 표본의 벽시계(바닥 글 "갱신 hh:mm:ss") — T-310: 안 바뀐 표본은 다시 그리지 않는다.
+    updated_at: String,
 }
 
 /// [힙 정리] 뒤 버튼을 잠가 두는 표본 수(즉시 표본 1 + 다음 주기 1) · 결과 안내가 남는 표본 수.
@@ -80,6 +82,7 @@ impl MemWin {
             trim_hold: 0,
             trim_note: None,
             fit: false,
+            updated_at: String::new(),
         }
     }
 
@@ -229,9 +232,20 @@ impl MemWin {
                 self.trim_note = None;
             }
         }
+        // ★ T-310(사용자 10-07 "바뀐 줄만"): 값이 하나도 안 바뀐 표본은 **다시 그리지 않는다**(1초마다 전체 표를 그리던 비용 → 0) ·
+        //   바뀌었거나 ▲/▼·정리 잠금·결과 안내가 진행 중일 때만 그린다. 바닥 글은 경과 초 대신 마지막 갱신 시각.
+        let changed = self
+            .sample
+            .is_none_or(|p| p.sys != s.sys || p.data != s.data);
+        if changed {
+            self.updated_at = nsql_log::local_at(std::time::SystemTime::now()).time_only();
+            self.updated_at.truncate(8);
+        }
         self.sample = Some(s);
         self.every_ms = every_ms;
-        self.redraw();
+        if changed || self.trend.any_shown() || self.trim_hold > 0 || self.trim_note.is_some() {
+            self.redraw();
+        }
     }
 
     /// 창 표면(프레임버퍼) 바이트 — 호스트가 `Cat::Surfaces`에 더한다.
@@ -625,10 +639,10 @@ impl MemWin {
             // ── 바닥: 정리 결과(방금 눌렀으면 · 몇 표본 뒤 평소 안내로) 또는 갱신 안내 ───────────
             let foot_txt = match (&self.trim_note, sample) {
                 (Some((note, _)), _) => note.clone(),
-                (None, Some(sm)) => tf(
+                (None, Some(_)) => tf(
                     Msg::MemUpdated,
                     &[
-                        &format!("{:.1}", sm.at.elapsed().as_secs_f32()),
+                        &self.updated_at,
                         &format!("{:.1}", self.every_ms as f32 / 1000.0),
                     ],
                 ),

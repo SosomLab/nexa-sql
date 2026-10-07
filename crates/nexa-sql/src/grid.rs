@@ -5086,9 +5086,11 @@ impl Grid {
         ];
         // ★ 서브메뉴는 1단(88 §3 15 · T-233): Copy SQL ▸ 은 Advanced ▸ 안이 아니라 같은 층에.
         let adv = vec![
-            CtxItem::item("copy_csv", t(Msg::MnCopyCsv)).with_icon(Some(toolicons::mi_table())),
-            CtxItem::item("copy_txt", t(Msg::MnCopyText)).with_icon(Some(toolicons::mi_table())),
-            CtxItem::item("copy_md", t(Msg::MnCopyMarkdown)).with_icon(Some(toolicons::mi_table())),
+            // 형식마다 다른 도형(T-303 첫 묶음 · 사용자 10-07 "CSV·TEXT·Markdown부터" · 종전 셋 다 표 아이콘).
+            CtxItem::item("copy_csv", t(Msg::MnCopyCsv)).with_icon(Some(toolicons::mi_csv())),
+            CtxItem::item("copy_txt", t(Msg::MnCopyText)).with_icon(Some(toolicons::mi_text())),
+            CtxItem::item("copy_md", t(Msg::MnCopyMarkdown))
+                .with_icon(Some(toolicons::mi_markdown())),
             CtxItem::item("copy_json", t(Msg::MnCopyJson)).with_icon(Some(toolicons::mi_braces())),
         ];
         let mut adv_item = CtxItem::submenu("adv", t(Msg::MnAdvancedCopy), adv);

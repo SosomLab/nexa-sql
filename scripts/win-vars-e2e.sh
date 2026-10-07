@@ -105,13 +105,19 @@ chk "③-c VARCHAR2(50 CHAR) = 길이 50" "Y +.*VARCHAR2?\(50" "$o"
 chk "③-d 잘못된 길이 = 오류(4000 폴백 아님)" "VARCHAR2\(abc\)|잘못|invalid|오류|error" "$o"
 nchk "③-e Z가 4000으로 만들어지지 않음" "Z +.*4000" "$o"
 
-# ── 4. 글로벌 파일(vars/global.sql) — GUI 전용 보존(varsfile.rs · docs/63 §11) · CLI `nsql run`은 실행 안에서만 → 관찰 메모(결정 대기).
-F4a="$OUT/scope4a.sql"; printf 'VAR KEEP NUMBER = 77 GLOBAL
-SELECT :KEEP AS kept;
-' > "$F4a"
+# ── 4. 글로벌 파일(vars/global.sql · T-307): 설정 `vars.cli_global` 기본 끔 = CLI는 쓰지 않음 · 켜면 실행 시작 때 읽고 끝날 때 쓴다(GUI와 같은 파일).
+F4a="$OUT/scope4a.sql"; printf 'VAR KEEP NUMBER = 77 GLOBAL\nSELECT :KEEP AS kept;\n' > "$F4a"
+F4b="$OUT/scope4b.sql"; printf 'SHOW VARIABLES\nSELECT :KEEP AS kept;\nVAR KEEP DROP GLOBAL\n' > "$F4b"
 o=$(run "$F4a"); show "$o"
 chk "④-a 글로벌 선언 = 같은 실행에서 바인드 77" "kept[^0-9]*77|^ *77 *$" "$o"
-if [ -f "$H/vars/global.sql" ]; then ok "④-b CLI도 vars/global.sql 보존"; else say "  NOTE  ④-b CLI 실행은 vars/global.sql을 쓰지 않음(GUI 전용 보존 · docs/63 §11) — CLI 보존 여부 = 결정 대기(T-307 후보)"; fi
+if [ -f "$H/vars/global.sql" ]; then bad "④-b 기본(vars.cli_global=off) = CLI는 global.sql을 쓰지 않아야 함"; else ok "④-b 기본 off = global.sql 없음"; fi
+"$NSQL" config set vars.cli_global on >/dev/null 2>&1
+o=$(run "$F4a"); o2=$(run "$F4b"); show "$o2"
+chk "④-c vars.cli_global=on → 첫 실행이 global.sql을 씀" "." "$(ls "$H"/vars/global.sql 2>&1)"
+chk "④-d 두 번째 실행이 글로벌 KEEP=77을 읽음(SHOW VARIABLES global 층)" "KEEP +.*77.*global" "$o2"
+chk "④-e 두 번째 실행 바인드 77" "kept[^0-9]*77|^ *77 *$" "$o2"
+if [ -f "$H/vars/global.sql" ]; then bad "④-f DROP GLOBAL 뒤 실행 끝 = 파일 삭제(남길 것 없음)"; else ok "④-f DROP GLOBAL 뒤 실행 끝 = 파일 없음"; fi
+"$NSQL" config set vars.cli_global off >/dev/null 2>&1
 
 # ── 5. 공통 예제 두 확장 시점(README) ──────────────────────────────────────────────────────────
 for mode in assign use; do

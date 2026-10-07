@@ -403,6 +403,44 @@ fn shape_table(x: f32, y: f32) -> bool {
         || stroke(x, y, (128.0, 48.0), (128.0, 208.0), 18.0)
 }
 
+/// CSV — 두 열의 셀 세 줄과 그 사이 쉼표(T-303 첫 묶음 · 10-07 · 종전 = 표 아이콘과 같았다).
+fn shape_csv(x: f32, y: f32) -> bool {
+    let mut hit = false;
+    for cy in [60.0, 116.0, 172.0] {
+        hit = hit
+            || rrect(x, y, 40.0, cy, 56.0, 36.0, 6.0)
+            || rrect(x, y, 152.0, cy, 64.0, 36.0, 6.0)
+            // 쉼표 = 짧은 사선 획(아래로 왼쪽).
+            || stroke(x, y, (126.0, cy + 22.0), (112.0, cy + 44.0), 14.0);
+    }
+    hit
+}
+
+/// 텍스트 — 문서 틀 + 길이가 다른 글줄 넷(머티리얼 subject/notes 모양).
+fn shape_text(x: f32, y: f32) -> bool {
+    let frame =
+        rrect(x, y, 48.0, 32.0, 160.0, 192.0, 14.0) && !rrect(x, y, 66.0, 50.0, 124.0, 156.0, 6.0);
+    frame
+        || stroke(x, y, (84.0, 84.0), (172.0, 84.0), 14.0)
+        || stroke(x, y, (84.0, 120.0), (172.0, 120.0), 14.0)
+        || stroke(x, y, (84.0, 156.0), (148.0, 156.0), 14.0)
+        || stroke(x, y, (84.0, 192.0), (124.0, 192.0), 14.0)
+}
+
+/// Markdown — 틀 안에 `M`과 아래 화살표(공식 마크 모양을 선으로).
+fn shape_markdown(x: f32, y: f32) -> bool {
+    let frame =
+        rrect(x, y, 24.0, 56.0, 208.0, 144.0, 16.0) && !rrect(x, y, 42.0, 74.0, 172.0, 108.0, 8.0);
+    let m = stroke(x, y, (60.0, 164.0), (60.0, 92.0), 16.0)
+        || stroke(x, y, (60.0, 92.0), (92.0, 132.0), 16.0)
+        || stroke(x, y, (92.0, 132.0), (124.0, 92.0), 16.0)
+        || stroke(x, y, (124.0, 92.0), (124.0, 164.0), 16.0);
+    let arrow = stroke(x, y, (176.0, 92.0), (176.0, 164.0), 16.0)
+        || stroke(x, y, (150.0, 138.0), (176.0, 164.0), 16.0)
+        || stroke(x, y, (202.0, 138.0), (176.0, 164.0), 16.0);
+    frame || m || arrow
+}
+
 /// JSON — 중괄호 한 쌍.
 fn shape_braces(x: f32, y: f32) -> bool {
     let left = stroke(x, y, (100.0, 44.0), (72.0, 44.0), 22.0)
@@ -571,6 +609,15 @@ pub(crate) fn mi_table() -> MenuIcon {
 }
 pub(crate) fn mi_braces() -> MenuIcon {
     menu_icon(shape_braces)
+}
+pub(crate) fn mi_csv() -> MenuIcon {
+    menu_icon(shape_csv)
+}
+pub(crate) fn mi_text() -> MenuIcon {
+    menu_icon(shape_text)
+}
+pub(crate) fn mi_markdown() -> MenuIcon {
+    menu_icon(shape_markdown)
 }
 pub(crate) fn mi_db() -> MenuIcon {
     menu_icon(shape_db)
