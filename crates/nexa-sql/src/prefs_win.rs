@@ -597,9 +597,26 @@ impl PrefsWin {
                         Switch::new("", sn.value == "on").with_label_side(LabelSide::None),
                     ),
                     SettingKind::Choice(opts) => {
+                        // ★ 테마 "시스템" = 지금 OS가 고른 쪽을 괄호로(`시스템 (다크)` · 풀다운 메뉴와 같은 표기 · 사용자 10-08) — 언어 콤보의
+                        //   `시스템 (한국어)`와 같은 규칙 · 상태는 카드를 만들 때(열 때·값 바뀔 때) 풀다운과 같은 함수로 새로 읽는다.
+                        let theme_now = (sn.entry.key == "ui.theme").then(|| {
+                            let dark =
+                                crate::theme::resolve(nsql_settings::ThemeMode::System, None)
+                                    .is_dark;
+                            if dark {
+                                nsql_settings::ThemeMode::Dark
+                            } else {
+                                nsql_settings::ThemeMode::Light
+                            }
+                        });
                         let items: Vec<ComboItem> = opts
                             .iter()
-                            .map(|(v, m)| ComboItem::new(*v, t(*m)))
+                            .map(|(v, m)| match theme_now {
+                                Some(now) if *v == "system" => {
+                                    ComboItem::new(*v, format!("{} ({})", t(*m), t(now.label())))
+                                }
+                                _ => ComboItem::new(*v, t(*m)),
+                            })
                             .collect();
                         let idx = opts.iter().position(|(v, _)| *v == sn.value).unwrap_or(0);
                         CardCtl::Choice(Box::new(Combo::new(items, idx)))
