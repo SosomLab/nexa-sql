@@ -60,6 +60,10 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 - 타입 없이 생긴 변수는 값에 따라 타입이 바뀝니다(숫자 → 글자 등). 타입을 적어 선언하면 고정됩니다.
 - 타입을 잘못 쓰면(`VARCHAR2(50) GLOBAAL` 등) 변수를 만들지 않고 오류를 냅니다.
 
+## CLI에서 글로벌 변수(10-07)
+
+`nsql run`(CLI)은 기본으로 글로벌 변수 파일(`vars/global.sql`)을 쓰지 않습니다 — 배치 스크립트가 화면에서 쓰던 값에 영향을 받지 않게 하려는 것입니다. CLI도 글로벌 변수를 이어 쓰려면 설정 `vars.cli_global`을 켭니다(`nsql config set vars.cli_global on`).
+
 ## 내장 변수 — `${workspaceFolder}`처럼(설정 `vars.intrinsic` · 기본 켬)
 
 앱이 아는 값을 VS Code와 같은 이름·문법으로 스크립트와 경로 설정(`log.file` · `oracle.client_dir` · `oracle.tns_admin`)에서 씁니다. 찾는 순서 = **`DEFINE` 변수 → 내장 변수 → 글자 그대로**, `${env:이름}`은 **내장 별칭(`NSQL_*`) → OS 환경 변수**.

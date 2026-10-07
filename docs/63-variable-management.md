@@ -238,6 +238,10 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 - 서버 간 오염 방지(DBeaver 단점): 글로벌은 **명시적으로 올린 값만**(자동 생성 금지) · 변수 창에 `global` 표시 · 로그 "변수 X 글로벌".
 - 결정: **D-206** 우선순위 tab > shared > global > fixed ✅ · **D-207** 자동 저장 = `vars.global_persist` 기본 켬 ✅ · 변수 창 층 버튼 = 순환(탭 → 공유 → 글로벌) · `SHOW VARIABLES` Layer 열 global/profile.
 
+### 11-5. CLI 글로벌 층(10-07 밤 · T-307 · 설정 `vars.cli_global`)
+
+CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는다**(스크립트·배치가 GUI 세션의 글로벌 값에 흔들리지 않게). 설정 `vars.cli_global=on`이면 CLI도 실행 시작에 글로벌 층을 읽고 끝에 저장한다(GUI와 같은 파일 · 마지막 저장이 남는다). 변수 E2E ④ = 기본 off(보존 없음) · on(다음 실행에 보임) 6검사.
+
 ### 11-4. 변수 제거·범위 명령(사용자 10-07 · T-304 · bin51)
 
 | 명령 | 뜻 | 남는 층 |
