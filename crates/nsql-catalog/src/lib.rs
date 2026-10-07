@@ -2147,7 +2147,8 @@ fn info(
 
 // ───────────────────────────────────────────── 컬럼
 
-fn fmt_type(base: &str, len: &str, prec: &str, scale: &str) -> String {
+/// 기저 타입 + 길이/정밀도/scale → 표시·DDL·적재가 같이 쓰는 타입 글(`decimal(12,2)` · `nvarchar(30)` · T-309 nsql-run 적재 경로도 재사용).
+pub fn fmt_type(base: &str, len: &str, prec: &str, scale: &str) -> String {
     let up = base.to_ascii_uppercase();
     let (len, prec, scale) = (len.trim(), prec.trim(), scale.trim());
     if !prec.is_empty() && prec != "0" && (up.contains("NUM") || up.contains("DEC")) {

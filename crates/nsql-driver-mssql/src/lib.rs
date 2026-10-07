@@ -1005,22 +1005,69 @@ impl nsql_core::CancelHandle for MssqlCancel {
     }
 }
 
+impl MssqlSession {
+    /// 표의 decimal/numeric/money 열 `(이름, scale)` — `OBJECT_ID(N'<표>')`로 1·2·3부 이름 모두(세션 DB 변경 없음 · T-309 방어층).
+    fn numeric_scales(&mut self, table: &str) -> Result<Vec<(String, u8)>, DbError> {
+        let lit = format!("N'{}'", table.replace('\'', "''"));
+        let sql = format!(
+            "SELECT c.name, c.scale FROM sys.all_columns c JOIN sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({lit}) AND t.name IN ('decimal','numeric','money','smallmoney')"
+        );
+        let client = &mut self.client;
+        let rows = self.rt.block_on(async {
+            client
+                .simple_query(&sql)
+                .await
+                .map_err(err)?
+                .into_first_result()
+                .await
+                .map_err(err)
+        })?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let name: &str = r.try_get::<&str, usize>(0).ok().flatten()?;
+                let scale: u8 = r.try_get::<u8, usize>(1).ok().flatten()?;
+                Some((name.to_string(), scale))
+            })
+            .collect())
+    }
+}
+
 impl Session for MssqlSession {
     fn bulk_begin<'a>(
         &'a mut self,
         table: &str,
-        _cols: &[String],
+        cols: &[String],
         types: &[String],
         _opts: &nsql_core::BulkOpts,
     ) -> Result<Box<dyn nsql_core::BulkSink + 'a>, DbError> {
         self.bulk_table = table.to_string();
+        let mut kinds: Vec<MsKind> = types.iter().map(|t| MsKind::of(t)).collect();
+        // ★ 방어층(T-309 · 10-07): TDS bulk는 Numeric의 scale이 열 scale과 **정확히** 같아야 한다 — 어긋나면 tiberius가 `todo!()`로 프로세스를
+        //   끝낸다(panic=abort · GUI Import 창도 같은 길). 호출자가 준 타입 글(`decimal`만 · scale 없음)을 믿지 않고 서버 `sys.all_columns`에서
+        //   scale을 읽어 덮어쓴다 · 못 읽으면 bulk를 거절(일반 INSERT 경로로).
+        if kinds.iter().any(|k| matches!(k, MsKind::Numeric(_))) {
+            let server = self.numeric_scales(table)?;
+            for (i, k) in kinds.iter_mut().enumerate() {
+                if let MsKind::Numeric(sc) = k {
+                    let name = cols.get(i).map(String::as_str).unwrap_or("");
+                    match server.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                        Some((_, s)) => *sc = *s,
+                        None => {
+                            return Err(bulk_err(format!(
+                                "bulk: cannot verify decimal scale of column {name} in {table} - use --mode insert"
+                            )))
+                        }
+                    }
+                }
+            }
+        }
         let MssqlSession {
             rt,
             client,
             bulk_table,
             ..
         } = self;
-        let kinds: Vec<MsKind> = types.iter().map(|t| MsKind::of(t)).collect();
         let mut sink = TdsSink {
             rt,
             client,

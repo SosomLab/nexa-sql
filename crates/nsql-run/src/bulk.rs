@@ -881,11 +881,23 @@ impl Runner {
             //   "column … not found"가 됐다 → 그 DB의 INFORMATION_SCHEMA를 직접 조회(세션 DB는 바꾸지 않는다).
             if let Some(sql) = mssql_cols_sql(dialect, table) {
                 if let Ok((rs, _, _)) = self.query_once(&sql, 4096) {
+                    // 타입 = 카탈로그와 같은 조립(`decimal(12,2)` · `nvarchar(30)`) — scale이 빠지면 TDS bulk가 열 scale과 어긋나
+                    //   tiberius가 `todo!()`로 프로세스를 끝낸다(협업 bin69 · T-309).
                     table_cols = rs
                         .rows
                         .iter()
-                        .filter(|r| r.len() >= 2)
-                        .map(|r| (r[0].display(), r[1].display()))
+                        .filter(|r| r.len() >= 5)
+                        .map(|r| {
+                            (
+                                r[0].display(),
+                                nsql_catalog::fmt_type(
+                                    &r[1].display(),
+                                    &r[2].display(),
+                                    &r[3].display(),
+                                    &r[4].display(),
+                                ),
+                            )
+                        })
                         .collect();
                 }
             }
@@ -989,8 +1001,9 @@ impl Runner {
     }
 }
 
-/// SQL Server **3부 이름**(`DB.schema.table` · 따옴표/대괄호 허용)의 컬럼 조회 SQL — 그 DB의 `INFORMATION_SCHEMA.COLUMNS`(열 이름 · 타입 ·
-/// 순서) · 다른 방언이나 1·2부 이름 = `None`(종전 카탈로그 길). 순수 함수(T-309).
+/// SQL Server **3부 이름**(`DB.schema.table` · 따옴표/대괄호 허용)의 컬럼 조회 SQL — 그 DB의 `sys.all_columns`를 `OBJECT_ID(N'[DB].[s].[t]')`로
+/// (열 이름 · 기저 타입 · 길이 · 정밀도 · scale · 순서 = 카탈로그 `columns`와 같은 다섯 열 → `fmt_type`) · 다른 방언이나 1·2부 이름 = `None`(종전 카탈로그 길).
+/// 순수 함수(T-309). `OBJECT_ID`는 3부 이름을 그 DB에서 푼다(세션 DB를 바꾸지 않음).
 pub(crate) fn mssql_cols_sql(dialect: Dialect, table: &str) -> Option<String> {
     if dialect != Dialect::Mssql {
         return None;
@@ -1013,49 +1026,54 @@ pub(crate) fn mssql_cols_sql(dialect: Dialect, table: &str) -> Option<String> {
     if db.is_empty() || name.is_empty() {
         return None;
     }
-    let lit = |v: &str| format!("'{}'", v.replace('\'', "''"));
-    let schema_pred = if schema.is_empty() {
-        String::new()
+    let br = |v: &str| format!("[{}]", v.replace(']', "]]"));
+    let full = if schema.is_empty() {
+        format!("{}..{}", br(&db), br(&name))
     } else {
-        format!(" AND TABLE_SCHEMA = {}", lit(&schema))
+        format!("{}.{}.{}", br(&db), br(&schema), br(&name))
     };
+    let lit = format!("N'{}'", full.replace('\'', "''"));
     Some(format!(
-        "SELECT COLUMN_NAME, DATA_TYPE FROM [{}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = {}{} ORDER BY ORDINAL_POSITION",
-        db.replace(']', "]]"),
-        lit(&name),
-        schema_pred
+        "SELECT c.name, t.name, CASE WHEN t.name IN ('nchar','nvarchar') AND c.max_length > 0 THEN c.max_length / 2 ELSE c.max_length END, c.precision, c.scale FROM {db}.sys.all_columns c JOIN {db}.sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({lit}) ORDER BY c.column_id",
+        db = br(&db)
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    /// T-309: 3부 이름만 · SQL Server만 · 대괄호/따옴표 벗김 · 스키마 비면 조건 생략 · 작은따옴표 이스케이프.
+    /// T-309: 3부 이름만 · SQL Server만 · 그 DB의 sys.all_columns + OBJECT_ID(3부) · 다섯 열(이름·타입·길이·정밀도·scale) · 대괄호/따옴표 벗김 ·
+    /// 스키마 비면 `DB..T` · 작은따옴표 이스케이프 · 조립 = 카탈로그와 같은 `fmt_type`(scale이 살아야 TDS bulk가 안전).
     #[test]
     fn mssql_cols_sql_for_three_part_names() {
         use super::mssql_cols_sql;
         use nsql_core::Dialect;
         let sql = mssql_cols_sql(Dialect::Mssql, "M4PLAN_MS.dbo.NSQLT_BULK").unwrap_or_default();
+        assert!(sql.starts_with("SELECT c.name, t.name, "), "{sql}");
         assert!(
-            sql.starts_with(
-                "SELECT COLUMN_NAME, DATA_TYPE FROM [M4PLAN_MS].INFORMATION_SCHEMA.COLUMNS"
-            ),
+            sql.contains("c.precision, c.scale FROM [M4PLAN_MS].sys.all_columns c"),
             "{sql}"
         );
         assert!(
-            sql.contains("TABLE_NAME = 'NSQLT_BULK'") && sql.contains("TABLE_SCHEMA = 'dbo'"),
+            sql.contains("OBJECT_ID(N'[M4PLAN_MS].[dbo].[NSQLT_BULK]')"),
             "{sql}"
         );
         let sql = mssql_cols_sql(Dialect::Mssql, "[My DB].[dbo].[O'Tbl]").unwrap_or_default();
         assert!(
-            sql.contains("[My DB].INFORMATION_SCHEMA") && sql.contains("'O''Tbl'"),
+            sql.contains("[My DB].sys.all_columns") && sql.contains("[O''Tbl]"),
             "{sql}"
         );
-        assert!(
-            mssql_cols_sql(Dialect::Mssql, "DB..T").is_some_and(|s| !s.contains("TABLE_SCHEMA"))
-        );
+        assert!(mssql_cols_sql(Dialect::Mssql, "DB..T").is_some_and(|s| s.contains("[DB]..[T]")));
         assert_eq!(mssql_cols_sql(Dialect::Mssql, "dbo.T"), None);
         assert_eq!(mssql_cols_sql(Dialect::Mssql, "T"), None);
         assert_eq!(mssql_cols_sql(Dialect::Oracle, "A.B.C"), None);
+        assert_eq!(
+            nsql_catalog::fmt_type("decimal", "9", "12", "2"),
+            "decimal(12,2)"
+        );
+        assert_eq!(
+            nsql_catalog::fmt_type("nvarchar", "30", "0", "0"),
+            "nvarchar(30)"
+        );
     }
 
     use super::*;
