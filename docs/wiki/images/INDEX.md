@@ -41,4 +41,7 @@ Full-window shots are 1280×831 with the window shadow trimmed; `detail-*` files
 | license-window.png | License | License window (machine code and request code are masked in the image) |
 | import-window.png | Bulk-Import-Export | Import Data: target table, header row, column mapping, batch size and file preview |
 
-Not captured yet: result column header hover card (does not open from startup commands).
+| result-header-card.png | — (homepage) | Hover a result column header to see its source column, type and description |
+| detail-result-header-card.png | Data-Editing | Result column header card close-up |
+
+All planned screens are captured.

@@ -2,12 +2,22 @@
 # mac-bulk-e2e.sh — 대량 적재(`nsql import`) E2E(docs/89 · T-236 · 09-26). CLI만(키 주입 0) · 격리 홈 · SQLite ①~③ + 실서버(선택) 임시 표 NSQLT_BULK.
 #   ① 1,000행 csv 적재 → 건수·값 ② 중복 PK로 500번째 행 실패 → "row 500 (line 501)" 지목 · 그 앞 499행 커밋 ③ tsv + --no-header --cols + --map
 #   -P <실제 설정 폴더> -d 프로필:방언,… = 실서버(임시 표 생성 → 5,000행 적재 → 건수 → DROP · 61 §2-4 ⑤) · rows/s 출력(89 실측).
-# 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql]
+# 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS]
+#   `프로필:방언[:DB]` — 셋째 조각(선택) = SQL Server 임시 표를 만들 DB(로그인 기본 DB가 master일 때 · T-309 ④) · 파이썬 = `NSQL_PYTHON` 우선(T-309 ③).
 set -u
-# 파이썬 인터프리터(T-309 · 10-07): Windows Git Bash의 `python3`는 pyenv .bat 셸 래퍼라 heredoc을 배치 파일로 읽어 IndentationError →
-#   Windows = `python` 우선 · 그 밖 = `python3` · `NSQL_PYTHON`으로 지정 가능.
+# 파이썬 인터프리터(T-309 · 10-07): Windows Git Bash의 `python`·`python3`는 pyenv 셸 래퍼(`pyenv exec`)라 heredoc/stdin 코드를 배치로 읽어
+#   IndentationError → **실제 실행 파일**을 찾는다: `NSQL_PYTHON` → `pyenv which python` → `py -3` → `python` · 그 밖 OS = `python3`.
+#   파이썬 코드는 heredoc stdin이 아니라 **임시 .py 파일**로 실행한다(래퍼가 섞여도 안전 · 102 §12 "인라인/heredoc 파이썬 금지").
 PY="${NSQL_PYTHON:-}"
-if [ -z "$PY" ]; then case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PY=python;; *) PY=python3;; esac; fi
+if [ -z "$PY" ]; then
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      PY=$(pyenv which python 2>/dev/null | tr -d '\r')
+      if [ -z "$PY" ] || [ ! -f "$PY" ]; then if command -v py >/dev/null 2>&1; then PY="py -3"; else PY=python; fi; fi;;
+    *) PY=python3;;
+  esac
+fi
+pyrun() { local f=$1; shift; $PY "$f" "$@"; }   # $PY = "py -3"처럼 두 낱말일 수 있어 따옴표 없이
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NSQL="$ROOT/target/debug/nsql"; APP="$ROOT/target/debug/nexa-sql"; H="${TMPDIR:-/tmp}/nsql-bulk-e2e"; PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
 while getopts "n:e:H:P:d:" o; do case $o in n) NSQL=$OPTARG;; e) APP=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
@@ -28,7 +38,7 @@ run_gui() { # <초> <인자> <기동 명령> — GUI Import 창(89 §3-3 · 키 
 NSQL_HOME="$H" "$NSQL" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
 # 기대 문구가 영어다 — 화면 언어 기본값이 system이라 한국어 OS에서는 한국어가 나온다(10-05 Windows 전수 시험).
 NSQL_HOME="$H" "$NSQL" config set ui.lang en >/dev/null 2>&1
-"$PY" - "$D" <<'PY'
+cat > "$D/_gen_sqlite.py" <<'PY'
 import sys, os
 d=sys.argv[1]
 with open(os.path.join(d,'ok.csv'),'w') as f:
@@ -43,7 +53,8 @@ with open(os.path.join(d,'nohdr.tsv'),'w') as f:
     for i in range(1,11): f.write(f'{5000+i}\tt{i}\t{i}\t2026-01-0{(i%9)+1} 09:00:00\n')
 with open(os.path.join(d,'mapped.csv'),'w') as f:
     f.write('code,label\n'); f.write('7001,seven\n7002,\n')
-PY
+PY
+pyrun "$D/_gen_sqlite.py" "$D"
 cat > "$D/setup.sql" <<'SQL'
 DROP TABLE IF EXISTS bulk_t;
 CREATE TABLE bulk_t (id INTEGER PRIMARY KEY, name TEXT, amt REAL, dt TEXT);
@@ -73,7 +84,7 @@ printf "SELECT name, amt IS NULL AS an FROM bulk_t WHERE id IN (8001, 8002) ORDE
 expect_grep "jsonl 유니코드 이스케이프 j1" "$v" "j1"; expect_grep "jsonl 빠진 키/null = NULL" "$v" " 1$"
 echo "=== SQLite ⑤ GUI Import 창(import.open → start → dump · 성공 · 실패 지목 · 89 §3-3)"
 if [ -x "$APP" ]; then
-  "$PY" - "$D" <<'PYG'
+  cat > "$D/_gen_gui.py" <<'PYG'
 import sys, os
 d=sys.argv[1]
 with open(os.path.join(d,'gui.csv'),'w') as f:
@@ -82,7 +93,8 @@ with open(os.path.join(d,'gui.csv'),'w') as f:
 with open(os.path.join(d,'guidup.csv'),'w') as f:
     f.write('id,name,amt,dt\n')
     for i in range(1,21): f.write(f'{(9001 if i==15 else 9500+i)},d{i},1,2026-03-01 00:00:00\n')
-PYG
+PYG
+  pyrun "$D/_gen_gui.py" "$D"
   run_gui 14 Local "import.open:bulk_t;$D/gui.csv,@after:2500:import.start,@after:8000:import.dump:$O/imp1.txt"
   d1=$(cat "$O/imp1.txt" 2>/dev/null)
   expect_grep "창 상태 = 끝(running=false) · 성공 300행" "$d1" "running=false.*report=ok rows=300"
@@ -97,22 +109,27 @@ else
 fi
 # ── 실서버
 bulk_suite() {
-  local P=$1 dl=$2 ddl
+  local P=$1 dl=$2 db=${3:-} ddl tbl=NSQLT_BULK
+  # SQL Server: 로그인 기본 DB가 master면 임시 표를 지정 DB에(`-d 프로필:mssql:DB` · grid-edit E2E와 같은 규약) — 문장 앞 `USE` · import 표 = 3부 이름.
+  if [ "$dl" = mssql ] && [ -n "$db" ]; then tbl="$db.dbo.NSQLT_BULK"; fi
   case $dl in
     oracle)   ddl='CREATE TABLE NSQLT_BULK (ID NUMBER PRIMARY KEY, NAME VARCHAR2(30), AMT NUMBER(12,2), DT DATE)';;
     postgres) ddl='CREATE TABLE NSQLT_BULK (ID integer PRIMARY KEY, NAME varchar(30), AMT numeric(12,2), DT timestamp)';;
     mssql)    ddl='CREATE TABLE NSQLT_BULK (ID int PRIMARY KEY, NAME nvarchar(30), AMT decimal(12,2), DT datetime2(0))';;
   esac
-  printf 'DROP TABLE NSQLT_BULK;\n' > "$D/${P}_drop.sql"; printf '%s;\n' "$ddl" > "$D/${P}_ddl.sql"
-  printf 'SELECT COUNT(*) AS N, MAX(ID) AS MX FROM NSQLT_BULK;\n' > "$D/${P}_chk.sql"
-  "$PY" -c "
-with open('$D/${P}_5k.csv','w') as f:
+  local use=""; if [ "$dl" = mssql ] && [ -n "$db" ]; then use="USE $db;"$'\n'; fi
+  printf '%sDROP TABLE NSQLT_BULK;\n' "$use" > "$D/${P}_drop.sql"; printf '%s%s;\n' "$use" "$ddl" > "$D/${P}_ddl.sql"
+  printf '%sSELECT COUNT(*) AS N, MAX(ID) AS MX FROM NSQLT_BULK;\n' "$use" > "$D/${P}_chk.sql"
+  cat > "$D/_gen_5k.py" <<'PY5'
+import sys
+with open(sys.argv[1],'w') as f:
     f.write('ID,NAME,AMT,DT\n')
     for i in range(1,5001): f.write(f'{i},name {i},{i*1.25:.2f},2026-09-{(i%28)+1:02d} 12:34:56\n')
-"
+PY5
+  pyrun "$D/_gen_5k.py" "$D/${P}_5k.csv"
   cli "$P" "$D/${P}_drop.sql" >/dev/null 2>&1; cli "$P" "$D/${P}_ddl.sql" >/dev/null 2>&1
   echo "=== $P($dl) 5,000행 적재"
-  local o v; o=$(imp "$P" -t NSQLT_BULK "$D/${P}_5k.csv"); v=$(cli "$P" "$D/${P}_chk.sql")
+  local o v; o=$(imp "$P" -t "$tbl" "$D/${P}_5k.csv"); v=$(cli "$P" "$D/${P}_chk.sql")
   expect_grep "$P 적재 보고 5000행" "$o" "5000 rows imported"; echo "      $(echo "$o" | grep 'rows imported')"
   case $dl in mssql) expect_grep "$P 경로 = TDS bulk" "$o" "driver:tdsbulk";; postgres) expect_grep "$P 경로 = COPY" "$o" "driver:copyin";; oracle) expect_grep "$P 경로 = 배열 DML" "$o" "driver:arraydml";; esac
   expect_grep "$P 서버 건수 5000" "$v" "5000"
@@ -123,6 +140,6 @@ with open('$D/${P}_5k.csv','w') as f:
   fi
   cli "$P" "$D/${P}_drop.sql" >/dev/null 2>&1
 }
-if [ -n "$DBMS" ]; then IFS=',' read -ra PAIRS <<< "$DBMS"; for pr in "${PAIRS[@]}"; do bulk_suite "${pr%%:*}" "${pr##*:}"; done; fi
+if [ -n "$DBMS" ]; then IFS=',' read -ra PAIRS <<< "$DBMS"; for pr in "${PAIRS[@]}"; do IFS=':' read -r P_ DL_ DB_ <<< "$pr"; bulk_suite "$P_" "$DL_" "${DB_:-}"; done; fi
 echo "=== 결과: PASS $pass · FAIL $fail"
 [ "$fail" -eq 0 ]

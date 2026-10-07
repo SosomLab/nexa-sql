@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-07-115o | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | T-309 ③④(협업 V3 확인): `mac-bulk-e2e.sh` 파이썬 = 실제 실행 파일 해석(`NSQL_PYTHON` → `pyenv which python` → `py -3` → `python`) + heredoc/`-c` → 임시 .py `pyrun` · `-d 프로필:방언[:DB]` + SQL Server `USE`/`DB.dbo.NSQLT_BULK` |
 | work/2026-10-07-115n | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 115차 win 10차(10-07 밤 · V3 전수 결과 · 협업 수행): 기능 94/94 · 그리드 편집 E2E 46+59 · 변수 22 · 성능 회귀 없음(26 §7-15 · 8.memwin 초당 18~26 ms = 설계 · 9.projwatch 유휴 0 · L5 0.018) · 🔧 T-309 시험 자산 보정(conn-cmd `—`→`-`·백틱 · bulk `$PY`) · 🔧 journal NUL 1바이트 · TODO T-305 ✅ · T-307~T-309 · 위키 캡처 +3(설정·라이선스·Import) |
 | work/2026-10-07-115m | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 115차 9차 보정(연기 ✗5): 🔧 앱 안 저장 새 파일 = 트리 갱신 플래시 · S84 `tab.prev` 트리거 · S87/S88 확장 설치본 배치 · S94 `gt` |
 | work/2026-10-07-115l | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 115차 win 9차(10-07 밤 · 전체 시험 시나리오 갱신 = 개발 세션 설계): ★ 기능 점검 S80~S94(메모리 창 · 플래시/감시/향상 모드 · 삭제 탭 · 디스크 보기 · Plain Text 폴백 · 확장 뷰 탭 표식 · 탭 툴팁 · 색인 재열거 · T-305 창 셋 · T-285 승격) · ★ 성능 8.memwin·9.projwatch + 누수 L5 · ★ `win-vars-e2e.sh`(변수 Scope 22) · 자체 시험 훅(`fs.write/delete` · `mem.trim` · `tabs.dump` · `ext.view` · `ext.banner` · `editor.dump` 구문) · 🔧 T-305 기동 명령 뒤 창 펌프 + 설정 창 펌프(`open_prefs_now`) · docs/71 §C 13·14·L5 |
