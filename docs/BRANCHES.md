@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-07-115u | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 편집기 탭 툴팁(사용자 캡처): 툴바에 가려짐 = 전역 "위" 배치 → 탭 툴팁만 **아래**(nexa-ui 175 `draw_tooltip_in_dir(false)`) · 미저장 탭 저장 줄 = 라벨 `저장:` 통일 · 파일 모드 `-` · 프로젝트 모드 = 열린 프로젝트 파일 mtime(그릴 때마다 경로 전달 · 종전 project_set에서만 → `-`) |
 | work/2026-10-07-115t | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 115차 10-07 진행사항 최신화(docs만 · 사용자 지시): STATUS 10-07 블록(115k~115s 전체 · V3 전수 · T-309 종결 + 제품 결함 3) · DEVLOG · TODO 상태 전수 · journal §20 마무리(CI 249685f) · 10 §3-1 변동 없음 · 102 §12 오늘 사례 · 이 행 |
 | work/2026-10-07-115s | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | docs: T-309 ✅ 종결(bin71 실서버 28/0 · SQL Server tdsbulk 12.6k행/s) · journal 115p~r 확인 · TODO · CLAUDE 현 단계 종결 줄(제품 결함 3 · 교훈) |
 | work/2026-10-07-115r | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 T-309 경로(협업 bin70: SQL Server multirow 1.4k행/s): 방어층 `numeric_scales`가 세션 DB의 sys.all_columns를 봐 3부 이름 표를 못 찾고 bulk 거절 → `[DB].sys.all_columns`(`db_prefix` 순수 · 시험) · Runner = `bulk_begin` 거절 사유를 보고 경로 글에(`multirow (driver refused: …)`) |

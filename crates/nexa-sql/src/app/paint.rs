@@ -540,6 +540,9 @@ impl App {
                 if !view_mode {
                     self.grid.paint_footer_text(&mut dc, &th);
                 }
+                // 미저장 탭의 "저장:" 줄 = 지금 열린 프로젝트 파일(복원·자동 저장 경로에서도 맞게 · 값 비교라 비용 0 · 사용자 10-07).
+                self.editors
+                    .set_tip_saved_fallback(self.project.path.clone());
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
             // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)

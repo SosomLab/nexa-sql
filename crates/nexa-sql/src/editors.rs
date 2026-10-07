@@ -8,7 +8,7 @@ use crate::eol::Eol;
 use crate::memstat::{Acc, Cat, MemSource};
 use crate::syntax::SyntaxRegistry;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
-use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
+use nexa_ctl::draw::{draw_tooltip_in_dir, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::PreparedText;
@@ -980,7 +980,7 @@ impl Editors {
         self.sync_tabs();
     }
 
-    /// 미저장 탭의 툴팁 "저장(프로젝트)" 줄에 쓸 파일(프로젝트 파일 · 없으면 `-`).
+    /// 미저장 탭의 툴팁 "저장:" 줄에 쓸 파일 = 열린 프로젝트 파일(없으면 `-` = 파일 모드) — 호스트가 그릴 때마다 넣는다(값 비교 · 바뀔 때만 캐시 비움).
     pub(crate) fn set_tip_saved_fallback(&mut self, p: Option<PathBuf>) {
         if self.tip_saved_fallback != p {
             self.tip_saved_fallback = p;
@@ -2711,8 +2711,9 @@ impl Editors {
             card.push_str(": ");
             card.push_str(conn);
         }
-        // ★ 최근 저장 일시(ms까지 · 사용자 10-07) = **맨 아래 줄** · 파일 탭 = 그 파일 mtime(앱 저장·외부 저장 모두) · 미저장 탭 =
-        //   **프로젝트 파일**(탭 본문이 거기 보존된다 · 라벨 "저장(프로젝트)") · 둘 다 없으면 `-` · hover당 한 번만 읽는다.
+        // ★ 최근 저장 일시(ms까지 · 사용자 10-07) = **맨 아래 줄** · 라벨은 늘 "저장:" · 파일 탭 = 그 파일 mtime(앱 저장·외부 저장 모두) ·
+        //   미저장 탭 = **열린 프로젝트 파일**의 수정 시각(탭 본문이 거기 보존된다 · 호스트가 그릴 때마다 경로를 넣는다) · 파일 모드 = `-` ·
+        //   hover당 한 번만 읽는다.
         let (label, saved) = {
             let mut cache = self.tip_saved.borrow_mut();
             match cache.as_ref() {
@@ -2728,7 +2729,7 @@ impl Editors {
                     let s = match own {
                         Some(p) => (Msg::TipSaved, mtime(p).unwrap_or_else(|| "-".to_string())),
                         None => (
-                            Msg::TipSavedProject,
+                            Msg::TipSaved,
                             self.tip_saved_fallback
                                 .as_deref()
                                 .and_then(mtime)
@@ -2743,7 +2744,16 @@ impl Editors {
         card.push_str(&format!("\n{}: {}", t(label), saved));
         // ★ 가로 클램프는 창 왼쪽이 아니라 **편집기 영역의 x부터**(사용자 09-18 캡처): 첫 탭의 카드가 탭 가운데에 맞춰지며
         //   왼쪽으로 나가 탐색기 밑에 깔렸다(탐색기가 나중에 그려진다) — 결과 도구줄 툴팁(09-16)과 같은 처방.
-        draw_tooltip_in(dc, th, r, (self.bounds.x, clamp_w), &card, self.scale);
+        // ★ 세로 = **아래**(사용자 10-07 캡처): 탭 바 위는 툴바라 전역 기본(위)으로 두면 반투명 캡슐이 툴바 위에 떠 아이콘이 비친다(nexa-ui 175).
+        draw_tooltip_in_dir(
+            dc,
+            th,
+            r,
+            (self.bounds.x, clamp_w),
+            &card,
+            self.scale,
+            false,
+        );
     }
 }
 
