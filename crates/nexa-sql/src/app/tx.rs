@@ -139,7 +139,7 @@ impl App {
                 };
                 s.tx_blocker_who
                     .iter()
-                    .map(move |w| format!("{name} — {w}"))
+                    .map(move |w| format!("{name} - {w}"))
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -357,7 +357,7 @@ impl App {
             ),
         };
         self.log_win
-            .push(LogEntry::new(LogKind::Error, format!("{title} — {detail}")));
+            .push(LogEntry::new(LogKind::Error, format!("{title} - {detail}")));
         self.tx_warn.show(txwarn::TxWarnView {
             sess_id: id,
             title,

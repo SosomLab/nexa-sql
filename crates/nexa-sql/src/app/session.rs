@@ -619,7 +619,7 @@ impl App {
                 self.explorer.current_schema(spec.as_ref()).as_deref(),
             )
         } else {
-            ("—".to_string(), false)
+            ("-".to_string(), false)
         };
         self.tool_dock
             .set_item_label("sess.db", &db_label, &mut inv);

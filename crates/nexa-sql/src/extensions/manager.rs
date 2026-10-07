@@ -248,7 +248,7 @@ impl Source {
                 t0.elapsed().as_millis(),
                 speed(b.len(), t0.elapsed())
             )),
-            Err(e) => tr.push(format!("FAIL {} — {e}", self.rel_display(rel))),
+            Err(e) => tr.push(format!("FAIL {} - {e}", self.rel_display(rel))),
         }
         r.map(|(b, _)| b)
     }
@@ -303,7 +303,7 @@ pub(crate) fn fetch_url_traced(url: &str, tr: &mut Trace) -> Result<Vec<u8>, Str
             t0.elapsed().as_millis(),
             speed(b.len(), t0.elapsed())
         )),
-        Err(e) => tr.push(format!("FAIL {url} — {e}")),
+        Err(e) => tr.push(format!("FAIL {url} - {e}")),
     }
     r.map(|(b, _)| b)
 }
@@ -676,7 +676,7 @@ pub(crate) fn install_traced(
         match src {
             Source::Url(_) => "remote · one GET per file",
             Source::Dir(_) =>
-                "local folder · no download — set extensions.default_repository to a URL to use the remote",
+                "local folder · no download - set extensions.default_repository to a URL to use the remote",
         }
     ));
     // 메타는 **한 번만** 받는다(그 바이트를 보관 사본으로도 쓴다 — 예전엔 추적 없이 한 번 더 받았다).
@@ -725,7 +725,7 @@ pub(crate) fn install_traced(
         let got = super::sha256::hex(&bytes);
         if got != f.sha256 {
             tr.push(format!(
-                "verify {} — sha256 MISMATCH {got} ≠ {}",
+                "verify {} - sha256 MISMATCH {got} ≠ {}",
                 f.path, f.sha256
             ));
             return Err(format!(
@@ -733,7 +733,7 @@ pub(crate) fn install_traced(
                 f.path, got, f.sha256
             ));
         }
-        tr.push(format!("verify {} — sha256 ok ({}…)", f.path, &got[..12]));
+        tr.push(format!("verify {} - sha256 ok ({}…)", f.path, &got[..12]));
         let kept = keep.join(&f.path);
         if let Some(d) = kept.parent() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;

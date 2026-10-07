@@ -1095,7 +1095,7 @@ impl ConnWin {
             f64::from(self.tuning.window_h),
         ));
         let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinLogin)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinLogin)))
             .with_theme(theme)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
         let monitor = owner.and_then(Window::current_monitor);

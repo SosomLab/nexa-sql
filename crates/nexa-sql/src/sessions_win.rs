@@ -111,7 +111,7 @@ impl SessionsWin {
         let Some(o) = crate::winhost::open_window(
             el,
             crate::winhost::OpenSpec {
-                title: format!("Nexa SQL — {}", t(Msg::WinSessions)),
+                title: format!("Nexa SQL - {}", t(Msg::WinSessions)),
                 theme,
                 near,
                 dy: 40,

@@ -162,7 +162,7 @@ impl OrderWin {
         let Some(o) = crate::winhost::open_window(
             el,
             crate::winhost::OpenSpec {
-                title: format!("Nexa SQL — {}", t(spec.title)),
+                title: format!("Nexa SQL - {}", t(spec.title)),
                 theme,
                 near,
                 dy: 60,

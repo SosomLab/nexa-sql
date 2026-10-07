@@ -72,7 +72,7 @@ impl App {
             });
             items.push(CtxItem::item(
                 format!("tbg:{gid}"),
-                format!("{title} — {verb}"),
+                format!("{title} - {verb}"),
             ));
             items.push(CtxItem::Separator);
         }
@@ -328,7 +328,7 @@ impl App {
         let win = ToolFloatWin::open(
             el,
             gid,
-            &format!("Nexa SQL — {title}"),
+            &format!("Nexa SQL - {title}"),
             theme::window_theme(self.settings.theme_mode()),
             pos,
             (bw, bh),
@@ -493,11 +493,11 @@ impl App {
             "tabconn",
             t(Msg::TbGroupTabConn),
             vec![
-                ToolItem::text("sess.tab", "—")
+                ToolItem::text("sess.tab", "-")
                     .with_dropdown()
                     .tip(t(Msg::TipTabConn)),
                 // ★ 작업 단위(사용자 10-01 ⑫ · 라벨 없이 값만): Oracle 스키마(고정) · SQL Server/MySQL 현재 DB(드롭다운 = USE) · PG DB(고정).
-                ToolItem::text("sess.db", "—")
+                ToolItem::text("sess.db", "-")
                     .with_dropdown()
                     .tip(t(Msg::TipTabDb))
                     .disabled(),

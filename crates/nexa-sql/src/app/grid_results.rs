@@ -1008,7 +1008,7 @@ impl App {
 
     /// ★ 페치/건수의 실행 상태 카드 시작(docs/43 §11 실행 Facade): 직접 실행과 같은 카드 · 결과(`Page`/`Count`)가 오면 끝난다.
     pub(crate) fn fetch_card_start(&mut self, key: u64, kind: Msg, sql: &str) {
-        let text = format!("{} — {}", t(kind), nsql_run::txlog::one_line(sql, 200));
+        let text = format!("{} - {}", t(kind), nsql_run::txlog::one_line(sql, 200));
         self.sess.fetch_card = Some((key, Instant::now()));
         self.sess.run_card = self
             .run_toast

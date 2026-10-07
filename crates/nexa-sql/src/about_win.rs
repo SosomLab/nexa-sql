@@ -67,7 +67,7 @@ impl AboutWin {
         }
         let size = winit::dpi::LogicalSize::new(520.0, 300.0);
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinAbout)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinAbout)))
             .with_theme(theme)
             .with_resizable(false)
             .with_inner_size(size);

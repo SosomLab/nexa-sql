@@ -99,7 +99,7 @@ impl Vault {
     pub fn open_default() -> io::Result<Vault> {
         let dir = Self::default_dir().ok_or_else(|| {
             io::Error::other(
-                "사용자 설정 폴더를 알 수 없습니다(APPDATA/HOME 없음) — NSQL_HOME을 지정하세요",
+                "사용자 설정 폴더를 알 수 없습니다(APPDATA/HOME 없음) - NSQL_HOME을 지정하세요",
             )
         })?;
         Self::open(dir)
@@ -204,7 +204,7 @@ impl Vault {
         if let Ok(t) = std::fs::read_to_string(&path) {
             if let Some(other) = Self::parse_doc(&t).2.filter(|n| n != name) {
                 return Err(io::Error::other(format!(
-                    "프로필 '{name}'의 파일 이름이 '{other}'와 겹칩니다 — 다른 이름을 쓰세요"
+                    "프로필 '{name}'의 파일 이름이 '{other}'와 겹칩니다 - 다른 이름을 쓰세요"
                 )));
             }
         }
@@ -265,7 +265,7 @@ impl Vault {
                 .ok_or_else(|| io::Error::other(format!("{name}: secret 손상(hex)")))?;
             let pw = sealed::open(&Self::domain(name), &self.key, &env).ok_or_else(|| {
                 io::Error::other(format!(
-                    "{name}: 비밀번호 봉투를 열 수 없습니다(다른 기기 키 또는 손상) — `nsql conn add {name} …`로 다시 저장하세요"
+                    "{name}: 비밀번호 봉투를 열 수 없습니다(다른 기기 키 또는 손상) - `nsql conn add {name} …`로 다시 저장하세요"
                 ))
             })?;
             spec.password = Some(String::from_utf8_lossy(&pw).into_owned());
@@ -369,7 +369,7 @@ impl Vault {
         match self.get(t)? {
             Some(s) => Ok(Some(s)),
             None => Err(io::Error::other(format!(
-                "프로필 '{t}'이(가) 없습니다 — `nsql conn list`로 확인하거나 접속 문자열을 쓰세요"
+                "프로필 '{t}'이(가) 없습니다 - `nsql conn list`로 확인하거나 접속 문자열을 쓰세요"
             ))),
         }
     }

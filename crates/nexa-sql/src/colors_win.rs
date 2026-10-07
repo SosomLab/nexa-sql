@@ -208,7 +208,7 @@ impl ColorsWin {
         }
         let (lw, lh) = (500.0, 340.0);
         let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinColors)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinColors)))
             .with_theme(theme)
             .with_resizable(false)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));

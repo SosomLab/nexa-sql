@@ -100,7 +100,7 @@ impl DropWin {
         }
         let size = winit::dpi::LogicalSize::new(600.0, 360.0);
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::DropWinTitle)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::DropWinTitle)))
             .with_theme(theme)
             .with_resizable(false)
             .with_inner_size(size);
@@ -327,7 +327,7 @@ impl DropWin {
                 DropPhase::Confirm => (t(Msg::DropNoteConfirm).to_string(), th.text_dim),
                 DropPhase::Backing => (t(Msg::DropNoteBacking).to_string(), th.accent),
                 DropPhase::BackupFailed(e) => {
-                    (format!("{} — {e}", t(Msg::DropNoteBackupFailed)), th.danger)
+                    (format!("{} - {e}", t(Msg::DropNoteBackupFailed)), th.danger)
                 }
                 DropPhase::Blocked(e) => (e.clone(), th.danger),
                 DropPhase::Done(m) => (m.clone(), th.ok),

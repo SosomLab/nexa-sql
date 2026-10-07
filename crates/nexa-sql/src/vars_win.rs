@@ -141,9 +141,9 @@ impl VarsWin {
 
     fn title(&self) -> String {
         if self.title_ctx.is_empty() {
-            format!("Nexa SQL — {}", t(Msg::MnVariables))
+            format!("Nexa SQL - {}", t(Msg::MnVariables))
         } else {
-            format!("Nexa SQL — {} [{}]", t(Msg::MnVariables), self.title_ctx)
+            format!("Nexa SQL - {} [{}]", t(Msg::MnVariables), self.title_ctx)
         }
     }
 

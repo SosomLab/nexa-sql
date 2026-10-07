@@ -2734,7 +2734,7 @@ pub fn linked_server(s: &mut dyn Session, name: &str) -> Result<LinkedServerInfo
 pub fn linked_server_script(i: &LinkedServerInfo) -> String {
     let n = |s: &str| format!("N'{}'", s.replace('\'', "''"));
     let mut out = format!(
-        "-- Linked server [{}] — {}{}\n",
+        "-- Linked server [{}] - {}{}\n",
         i.name,
         if i.product.is_empty() {
             "?"
@@ -2749,7 +2749,7 @@ pub fn linked_server_script(i: &LinkedServerInfo) -> String {
     );
     out.push_str("-- Nexa SQL: sys.servers · sys.linked_logins 재생성 스크립트. 그대로 실행하면 \"이미 있음\"으로 끝난다(보수적 생성).\n");
     out.push_str("-- 바꾸려면 ① 아래 DROP 줄의 주석을 풀고 ② @rmtpassword 자리(********)를 채운 뒤 실행한다(비밀번호는 서버가 주지 않는다).\n");
-    out.push_str("-- sp_serveroption은 트랜잭션 안에서 실행할 수 없다 — 수동 커밋 모드면 자동 커밋(SET AUTOCOMMIT ON)으로 실행한다.\n");
+    out.push_str("-- sp_serveroption은 트랜잭션 안에서 실행할 수 없다 - 수동 커밋 모드면 자동 커밋(SET AUTOCOMMIT ON)으로 실행한다.\n");
     out.push_str(&format!(
         "-- EXEC master.dbo.sp_dropserver @server = {}, @droplogins = 'droplogins';\n",
         n(&i.name)

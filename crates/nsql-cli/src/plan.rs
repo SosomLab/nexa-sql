@@ -32,7 +32,7 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
                     match engine.vars.get(n) {
                         Some(v) => println!("  → PRINT  {n} = {}", v.value.display()),
                         None if pending(n) => println!(
-                            "  · PRINT  {n} = (서버가 채우는 값 — 접속 없는 plan에서는 알 수 없음)"
+                            "  · PRINT  {n} = (서버가 채우는 값 - 접속 없는 plan에서는 알 수 없음)"
                         ),
                         None => {
                             errors += 1;

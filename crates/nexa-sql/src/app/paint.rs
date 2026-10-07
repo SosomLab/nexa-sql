@@ -110,7 +110,7 @@ impl App {
                         "{busy}{broken}[{}: {}] {}",
                         t(Msg::StSessPrivate),
                         if self.sess.desc.is_empty() {
-                            "—"
+                            "-"
                         } else {
                             self.sess.desc.as_str()
                         },

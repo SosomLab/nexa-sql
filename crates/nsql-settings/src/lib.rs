@@ -3270,6 +3270,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "0",
     },
     // 필터 열거 워커 스레드 수(사용자 09-23 "별도 스레드 · 분할 병렬" · 39 §3 부하원) — 0 = 코어 수/2.
+    // ★ D-259/260(10-07 · 105 §3): 색인·검색에서 건너뛸 폴더 이름(쉼표) — 빌드 산출물·VCS가 열거의 대부분(협업 실측 target/ 수십만).
+    Entry {
+        key: "project.exclude",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectExclude,
+        desc: Msg::DescProjectExclude,
+        kind: SettingKind::Text,
+        default: ".git,.svn,.hg,node_modules,target,.nsql",
+    },
     Entry {
         key: "project.scan_threads",
         cat: Msg::CatProject,

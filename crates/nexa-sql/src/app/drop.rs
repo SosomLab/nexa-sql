@@ -431,7 +431,7 @@ impl App {
                 "  {}: {}",
                 t(Msg::OutConnProfile),
                 if s.profile.trim().is_empty() {
-                    "—"
+                    "-"
                 } else {
                     s.profile.trim()
                 }
@@ -449,7 +449,7 @@ impl App {
                             .flatten()
                     })
                     .flatten();
-                let base = saved.map_or_else(|| "—".to_string(), |sp| env_label(sp.env));
+                let base = saved.map_or_else(|| "-".to_string(), |sp| env_label(sp.env));
                 env_line = format!("{env_line} ({})", tf(Msg::OutConnEnvTemp, &[&base]));
             }
             lines.push(format!("  {}: {}", t(Msg::OutConnEnv), env_line));
@@ -462,7 +462,7 @@ impl App {
             lines.push(format!(
                 "  {}: {}",
                 t(Msg::OutConnSchema),
-                s.cur_schema.as_deref().unwrap_or("—")
+                s.cur_schema.as_deref().unwrap_or("-")
             ));
             lines.push(format!("  {}: {} #{}", t(Msg::OutConnSession), kind, s.id));
             lines.push(format!(

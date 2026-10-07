@@ -44,7 +44,7 @@ pub(crate) fn start(owner: usize) {
         if matches!(c.try_wait(), Ok(None)) {
             return;
         }
-        trace("child exited on its own — restarting");
+        trace("child exited on its own - restarting");
         *g = None;
     }
     let Some(addr) = ibus_address() else {

@@ -383,6 +383,11 @@
 | D-256 | 결과 필터 **값 목록 상한 폐지** → 가져온 행 전부(인덱스) · 상한은 서버 길에만(`grid.filter_server_values_max` 1,000) · 메뉴 판 `filter_pick_max` 30 유지 (10-07) | ⏳ 결정 대기(권장안 = 한 줄 고지 뒤 진행) | 103-filter-values-and-fetch-under-filter.md · T-284 · journal/2026-10-07.md §6 |
 | D-257 | 부분 결과(페치 중) + 필터 = **서버 승격** 기본 — `grid.filter_server` auto/local/ask · 기본 auto (10-07) | ⏳ 결정 대기(권장안 = 한 줄 고지 뒤 진행) | 103-filter-values-and-fetch-under-filter.md · T-285 |
 | D-258 | 로컬 폴백 = **3페이지 채움 뒤 수동**(`grid.filter_fill_pages` 3) (10-07) | ⏳ 결정 대기(권장안 = 한 줄 고지 뒤 진행) | 103-filter-values-and-fetch-under-filter.md · T-285 |
+| D-259 | 프로젝트 파일 열거 기본 제외 = `.git` `.svn` `.hg` `node_modules` `target` `.nsql` + 최상위 `.gitignore` (10-07) | ⏳ 결정 대기(권장 = 채택) | 105-fast-file-enumeration-survey.md §5 · T-290 |
+| D-260 | 제외 설정 `project.exclude` 하나를 Goto · 파일 검색 · 프로젝트 탐색기가 공용 (10-07) | ⏳ 결정 대기(권장 = 공용) | 105-fast-file-enumeration-survey.md §5 · T-290 |
+| D-261 | 디스크 색인 캐시 (10-07) | ⏳ 결정 대기(권장 = 보류 · 100k까지 열거 충분) | 105-fast-file-enumeration-survey.md §3-3 |
+| D-262 | Windows `FileIdBothDirectoryInfo` 대량 열거 어댑터 (10-07) | ⏳ 결정 대기(권장 = 보류 · 콜드·네트워크 측정 뒤) | 105-fast-file-enumeration-survey.md §3-3 · T-294 |
+| D-263 | 폴더 감시 포트 `DirWatch`(3-OS 어댑터 · 상한 넘으면 폴링) (10-07) | ⏳ 결정 대기(권장 = 단계 2로 채택) | 105-fast-file-enumeration-survey.md §3-3 · T-293 |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |
 | L-3 | 라이선스 ID 체계 `NSL-2026-000001` · 대장은 발급 PC 로컬(비공개 저장소에도 안 올림) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:452 §12-7 · journal/2026-09-27.md:205 |

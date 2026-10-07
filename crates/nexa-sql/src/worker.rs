@@ -850,7 +850,7 @@ pub(crate) fn spawn(
                                         params: vec![],
                                     };
                                     if let Err(e) = s.execute(&req) {
-                                        emit(RunEvent::Message(format!("{sql} — {}", e.message)));
+                                        emit(RunEvent::Message(format!("{sql} - {}", e.message)));
                                     }
                                 }
                                 if let Some(sql) = session_id_sql(dialect) {

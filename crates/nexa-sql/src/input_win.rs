@@ -116,7 +116,7 @@ impl InputWin {
         self.password_remember = ask.remember;
         self.run_btn.set_label(t(Msg::BtnConnect));
         if let Some(w) = &self.window {
-            w.set_title(&format!("Nexa SQL — {}", t(Msg::WinPassword)));
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinPassword)));
             // 비밀번호 창은 폭이 좁고 안내가 두 줄 — `open`이 잡은 입력 창 크기를 바꾼다.
             let _ = w.request_inner_size(self.desired_size());
         }
@@ -176,7 +176,7 @@ impl InputWin {
         self.focus = 0;
         self.sync_focus();
         if let Some(w) = &self.window {
-            w.set_title(&format!("Nexa SQL — {}", t(Msg::WinInputs)));
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinInputs)));
             let _ = w.request_inner_size(self.desired_size());
             crate::winfocus::focus(w);
             self.redraw();
@@ -184,7 +184,7 @@ impl InputWin {
         }
         let size = self.desired_size();
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinInputs)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinInputs)))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(size);

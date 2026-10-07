@@ -161,9 +161,9 @@ impl TxLogWin {
 
     fn title(&self) -> String {
         if self.title_ctx.is_empty() {
-            format!("Nexa SQL — {}", t(Msg::WinTxLog))
+            format!("Nexa SQL - {}", t(Msg::WinTxLog))
         } else {
-            format!("Nexa SQL — {} [{}]", t(Msg::WinTxLog), self.title_ctx)
+            format!("Nexa SQL - {} [{}]", t(Msg::WinTxLog), self.title_ctx)
         }
     }
 

@@ -1073,7 +1073,7 @@ impl Session for MssqlSession {
     }
 
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
-        Err(DbError { code: None, message: "SQL Server: 커서 변수는 sp_executesql로 넘길 수 없습니다 — 결과 집합으로 받으세요(docs/05 §7)".into(), position: None })
+        Err(DbError { code: None, message: "SQL Server: 커서 변수는 sp_executesql로 넘길 수 없습니다 - 결과 집합으로 받으세요(docs/05 §7)".into(), position: None })
     }
 
     /// `schema` = 기본 데이터베이스 전환(`USE [db]` · SQL Server는 세션 기본 스키마를 바꿀 수 없어 DB 전환이 그 자리 · 사용자 09-18).

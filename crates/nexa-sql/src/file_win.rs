@@ -241,7 +241,7 @@ impl FileWin {
             PickerMode::Folder => t(Msg::WinSelectFolder),
         };
         let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {title}"))
+            .with_title(format!("Nexa SQL - {title}"))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh))

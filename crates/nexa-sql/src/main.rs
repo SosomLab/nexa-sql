@@ -251,6 +251,13 @@ struct App {
     goto_files: Vec<PathBuf>,
     goto_files_key: Vec<PathBuf>,
     goto_files_at: Option<Instant>,
+    /// 팔레트에 이미 보낸 파일 수 · 마지막 보낸 시각(100ms 스로틀).
+    goto_sent: usize,
+    goto_last_push: Instant,
+    /// 재열거용 새 버퍼(옛 목록은 끝날 때까지 유지) · 새 버퍼로 모으는 중인가 · 상한(`project.scan_max`)에 닿았나.
+    goto_files_new: Vec<PathBuf>,
+    goto_into_new: bool,
+    goto_capped: bool,
     goto_walk: Option<(
         std::sync::mpsc::Receiver<parwalk::DirMsg>,
         std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1351,7 +1358,7 @@ fn main() {
         settings.theme_mode().as_str()
     );
     if args.first().map(String::as_str) == Some("--smoke") {
-        println!("smoke ok — 드라이버: {:?}", nsql_drivers::available());
+        println!("smoke ok - 드라이버: {:?}", nsql_drivers::available());
         return;
     }
     if matches!(
@@ -1594,6 +1601,11 @@ fn main() {
         goto_files: Vec::new(),
         goto_files_key: Vec::new(),
         goto_files_at: None,
+        goto_sent: 0,
+        goto_last_push: Instant::now(),
+        goto_files_new: Vec::new(),
+        goto_into_new: false,
+        goto_capped: false,
         goto_walk: None,
         ui_face: ui.chain.first().cloned().unwrap_or_default(),
         mono_face: mono.chain.first().cloned().unwrap_or_default(),

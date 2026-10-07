@@ -2201,6 +2201,11 @@ impl Editors {
         self.menu.is_open()
     }
 
+    /// 열린 탭 메뉴 영역(호스트의 "안/밖" 판정).
+    pub(crate) fn tab_menu_bounds(&self) -> Rect {
+        self.menu.bounds()
+    }
+
     /// 탭 메뉴·표식 메뉴를 닫는다(다른 영역에서 새 메뉴가 열릴 때 — **한 창에 열린 메뉴는 하나**).
     pub(crate) fn close_tab_menu(&mut self) {
         if self.menu.is_open() {

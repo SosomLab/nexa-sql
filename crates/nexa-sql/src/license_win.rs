@@ -107,7 +107,7 @@ impl LicenseWin {
         // 높이 = 정식 상태의 표(13행) + 요청 코드 구역 + 버튼 행이 흐름대로 들어가는 값(사용자 09-27 "여백 줄이고 설명 밑에 버튼").
         let size = winit::dpi::LogicalSize::new(640.0, 540.0);
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinLicense)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinLicense)))
             .with_theme(theme)
             .with_resizable(true)
             .with_min_inner_size(winit::dpi::LogicalSize::new(520.0, 380.0))

@@ -153,7 +153,7 @@ impl ImportWin {
     }
 
     fn title(&self) -> String {
-        format!("Nexa SQL — {} — {}", t(Msg::WinImport), self.table)
+        format!("Nexa SQL - {} - {}", t(Msg::WinImport), self.table)
     }
 
     fn sync_mode_label(&mut self) {

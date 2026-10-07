@@ -28,10 +28,12 @@ pub(crate) enum DirMsg {
     Done { dirs: usize },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Default)]
 pub(crate) struct ListOpts {
     pub show_hidden: bool,
     pub show_dot: bool,
+    /// 건너뛸 폴더 **이름**(어느 깊이든 · 대소문자 그대로 · 예 `.git` `target` `node_modules` · 설정 `project.exclude` · D-259/260 · T-290).
+    pub skip_dirs: Vec<String>,
 }
 
 struct Queue {
@@ -124,6 +126,8 @@ fn run(roots: Vec<PathBuf>, opts: ListOpts, n: usize, tx: Sender<DirMsg>, cancel
                         .map(|v| {
                             v.iter()
                                 .filter(|e| e.is_dir)
+                                // 제외 폴더(이름 일치)는 내려가지 않는다 — 빌드 산출물·VCS 폴더가 열거의 대부분이던 실측(10-07 협업).
+                                .filter(|e| !opts.skip_dirs.iter().any(|n| n == &e.name))
                                 .map(|e| e.path.clone())
                                 .collect()
                         })
@@ -170,6 +174,7 @@ mod tests {
             ListOpts {
                 show_hidden: false,
                 show_dot: true,
+                skip_dirs: Vec::new(),
             },
             3,
         );
@@ -207,6 +212,7 @@ mod tests {
             ListOpts {
                 show_hidden: false,
                 show_dot: true,
+                skip_dirs: Vec::new(),
             },
             2,
             tx,

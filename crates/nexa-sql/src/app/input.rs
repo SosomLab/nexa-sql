@@ -573,6 +573,37 @@ impl App {
                 return;
             }
         }
+        // ★ 편집기 **탭 우클릭 메뉴**도 창 위에 뜬다 → 열려 있는 동안은 다른 영역(프로젝트 패널·그리드…)보다 먼저 사건을 받는다
+        //   (탐색기 메뉴와 같은 길 · 사용자 10-07 "탭 메뉴 열린 채 다른 기능이 동작하면 닫히게"): 메뉴 안·키·휠 = 메뉴 ·
+        //   **바깥 클릭 = 메뉴를 닫고 그 클릭은 그대로 아래로 흘린다**(다시 클릭할 필요 없음 = 저장소 팝업 규칙) · 이동은 여기서 끝.
+        if self.editors.tab_menu_open() {
+            let at = match ev {
+                InputEvent::MouseDown { x, y, .. }
+                | InputEvent::RightDown { x, y }
+                | InputEvent::MouseUp { x, y }
+                | InputEvent::MouseMove { x, y } => Some(Point { x, y }),
+                _ => None,
+            };
+            let inside = at.is_none_or(|p| self.editors.tab_menu_bounds().contains(p));
+            if self.editors.route_tabs(&ev, &mut inv) {
+                if let Some(i) = self.editors.take_tx_close_request() {
+                    self.close_tab_guarded(i);
+                }
+                if let Some(req) = self.editors.take_tab_menu_request() {
+                    self.tab_menu_request(req);
+                }
+                self.redraw();
+            }
+            let outside_click = !inside
+                && matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                );
+            if !outside_click {
+                return;
+            }
+            self.redraw();
+        }
         // ★ MouseUp은 커서가 어디에 있든 **편집기에도** 전달한다 — 탭 바·탐색기 위에서 놓으면 편집기가 드래그 끝을
         //   못 받아 다음 MouseMove가 선택을 바꾸던 결함(사용자 09-15). 중복 전달은 무해(dragging=false 멱등).
         if matches!(ev, InputEvent::MouseUp { .. }) {

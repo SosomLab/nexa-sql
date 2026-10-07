@@ -178,7 +178,7 @@ impl App {
                                 cmds.push((
                                     format!("ext.install:{n}"),
                                     format!(
-                                        "{} {} — {} [{}] · {}",
+                                        "{} {} - {} [{}] · {}",
                                         p.name,
                                         p.version,
                                         p.summary,
@@ -319,7 +319,7 @@ impl App {
                         let note = if meta.message_install.is_empty() {
                             String::new()
                         } else {
-                            format!(" — {}", meta.message_install)
+                            format!(" - {}", meta.message_install)
                         };
                         self.sess.status =
                             tf(Msg::StExtInstalled, &[&meta.name, &meta.version, &note]);
@@ -912,7 +912,7 @@ impl App {
                     LogEntry::new(
                         LogKind::Info,
                         format!(
-                            "external change: {} unreadable — {error} (tab {key})",
+                            "external change: {} unreadable - {error} (tab {key})",
                             nexa_fs::path::display(&path)
                         ),
                     )

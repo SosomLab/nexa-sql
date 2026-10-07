@@ -1497,7 +1497,7 @@ impl ConnectPanel {
         {
             let fr = self.file_rect;
             let file = self.profile_file_name();
-            let label = file.clone().unwrap_or_else(|| "—".to_string());
+            let label = file.clone().unwrap_or_else(|| "-".to_string());
             let ty = fr.y + (fr.h - dc.text_height()) / 2;
             let clip = Rect::new(
                 fr.x,

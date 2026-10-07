@@ -23,8 +23,10 @@ pub(crate) enum PaletteAction {
 pub(crate) struct Palette {
     open: bool,
     input: TextBox,
-    /// (id, 표시 라벨)
-    cmds: Vec<(String, String)>,
+    /// 자체 목록(명령 팔레트 · Goto의 생성 모드 `%`/`?`/`#`) — (id, 표시 라벨) + 소문자 캐시.
+    cmds: Src,
+    /// 지금 거르는 원천(Goto 모드는 접두로 바뀐다 · **복제 없이** 참조만 · 사용자 10-07 "Ctrl+P 멈춤").
+    active: Active,
     /// 필터 결과 — cmds index (점수순).
     matches: Vec<usize>,
     sel: usize,
@@ -50,16 +52,62 @@ pub(crate) struct Palette {
     /// ★ Goto Anything 원천(사용자 10-07 · VS Code식 접두): 기본 = 파일 · `>` = 명령 · `@` = 현재 파일 심볼(`@:` = 종류별) ·
     /// `%` = 현재 파일 줄 · `?` = 도움말 · `#` = 프로젝트 심볼(다음 단계 · 안내만). `set_commands`로 연 단순 팔레트는 `goto_mode` = 거짓.
     goto_mode: bool,
-    src_files: Vec<(String, String)>,
-    src_cmds: Vec<(String, String)>,
-    src_syms: Vec<(String, String)>,
+    src_files: Src,
+    src_cmds: Src,
+    src_syms: Src,
     doc_lines: Vec<String>,
     help: Vec<(String, String)>,
     /// 파일 모드 `이름:줄`의 줄 — Pick id에 `#L<n>` 꼬리로 붙인다.
     tail_line: Option<usize>,
     /// 접두 모드의 안내(결과가 없을 때 한 줄 · `#` 등).
     mode_hint: String,
+    /// 파일 목록 안내(호스트가 준다 · 상한·열거 중) · 상위 K에서 잘린 수(결과 끝 흐린 줄 "…외 N개").
+    files_note: String,
+    more_hidden: usize,
 }
+
+/// 원천 한 벌 — (id, 라벨) + **소문자 라벨 캐시**(키 입력마다 `to_lowercase` 할당을 안 한다 · 10k 파일에서 멈춤의 뿌리).
+/// `with_id`면 라벨 뒤에 id도 붙여 두어 영어 낱말(`save`)이 한국어 라벨의 명령(`file.save`)에 맞는다(Goto `>`).
+#[derive(Default, Clone, Debug)]
+pub(crate) struct Src {
+    items: Vec<(String, String)>,
+    lower: Vec<String>,
+}
+
+impl Src {
+    fn from_items(items: Vec<(String, String)>, with_id: bool) -> Self {
+        let mut s = Src::default();
+        s.extend(items, with_id);
+        s
+    }
+    fn extend(&mut self, items: Vec<(String, String)>, with_id: bool) {
+        self.lower.reserve(items.len());
+        for (id, label) in &items {
+            let mut l = label.to_lowercase();
+            if with_id {
+                l.push(' ');
+                l.push_str(&id.to_lowercase());
+            }
+            self.lower.push(l);
+        }
+        self.items.extend(items);
+    }
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// 지금 거르는 원천.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Active {
+    Own,
+    Files,
+    Cmds,
+    Syms,
+}
+
+/// 퍼지 결과 상한 — 화면 12행에 넉넉히 · 그 이상은 부분 정렬(`select_nth`)로 끊는다(10k 전부 정렬 안 함).
+const TOP_K: usize = 400;
 
 /// 접두 풀이(순수 · 시험): 어느 원천을 어떤 질의로 볼지.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,7 +176,8 @@ impl Palette {
         Palette {
             open: false,
             input: TextBox::new(t(Msg::PhPalette)).with_clearable(),
-            cmds: Vec::new(),
+            cmds: Src::default(),
+            active: Active::Own,
             matches: Vec::new(),
             sel: 0,
             top: 0,
@@ -143,14 +192,21 @@ impl Palette {
             anchor: None,
             win: (0, 0),
             goto_mode: false,
-            src_files: Vec::new(),
-            src_cmds: Vec::new(),
-            src_syms: Vec::new(),
+            src_files: Src::default(),
+            src_cmds: Src::default(),
+            src_syms: Src::default(),
             doc_lines: Vec::new(),
             help: Vec::new(),
             tail_line: None,
             mode_hint: String::new(),
+            files_note: String::new(),
+            more_hidden: 0,
         }
+    }
+
+    /// 파일 목록 안내 글(빈 글 = 없음) — 파일 모드 결과 끝에 흐리게.
+    pub(crate) fn set_files_note(&mut self, note: &str) {
+        self.files_note = note.to_string();
     }
 
     /// ★ Goto Anything로 열기(사용자 10-07) — 원천 전부를 받고 접두 모드를 켠다.
@@ -163,9 +219,9 @@ impl Palette {
         help: Vec<(String, String)>,
         prefill: &str,
     ) {
-        self.src_files = files;
-        self.src_cmds = cmds;
-        self.src_syms = syms;
+        self.src_files = Src::from_items(files, false);
+        self.src_cmds = Src::from_items(cmds, true);
+        self.src_syms = Src::from_items(syms, false);
         self.doc_lines = doc_lines;
         self.help = help;
         self.goto_mode = true;
@@ -191,19 +247,36 @@ impl Palette {
         if !self.mode_hint.is_empty() {
             out.push_str(&format!(" hint={}", self.mode_hint));
         }
+        if !self.files_note.is_empty() {
+            out.push_str(&format!(" note={}", self.files_note));
+        }
+        if self.more_hidden > 0 {
+            out.push_str(&format!(" more={}", self.more_hidden));
+        }
         for &i in self.matches.iter().skip(self.top).take(MAX_ROWS) {
             out.push('\n');
-            out.push_str(&self.cmds[i].0);
+            out.push_str(&self.items().items[i].0);
             out.push('\t');
-            out.push_str(&self.cmds[i].1);
+            out.push_str(&self.items().items[i].1);
         }
         out
     }
 
-    /// 파일 원천 갱신(프로젝트 폴더 열거가 도착할 때) — Goto 모드일 때만.
+    /// 파일 원천 교체(Goto 모드일 때만).
     pub(crate) fn set_files(&mut self, files: Vec<(String, String)>) {
         if self.goto_mode {
-            self.src_files = files;
+            self.src_files = Src::from_items(files, false);
+            self.refilter(true);
+        }
+    }
+
+    /// 파일 원천 **덧붙이기**(프로젝트 폴더 열거가 도착할 때 · 새 파일만 · 재생성 0) — 파일 모드면 다시 거른다.
+    pub(crate) fn append_files(&mut self, files: Vec<(String, String)>) {
+        if !self.goto_mode || files.is_empty() {
+            return;
+        }
+        self.src_files.extend(files, false);
+        if self.active == Active::Files {
             self.refilter(true);
         }
     }
@@ -255,8 +328,19 @@ impl Palette {
 
     pub(crate) fn set_commands(&mut self, cmds: Vec<(String, String)>) {
         self.goto_mode = false;
-        self.cmds = cmds;
+        self.cmds = Src::from_items(cmds, false);
+        self.active = Active::Own;
         self.refilter(true);
+    }
+
+    /// 지금 원천.
+    fn items(&self) -> &Src {
+        match self.active {
+            Active::Own => &self.cmds,
+            Active::Files => &self.src_files,
+            Active::Cmds => &self.src_cmds,
+            Active::Syms => &self.src_syms,
+        }
     }
 
     /// IME 조합 중 글자(preedit)를 입력 상자에 보인다 — 팔레트는 `Focus` 변형이 아니라 호스트가 IME 사건을 여기로 넘긴다(09-27 한글 버그).
@@ -358,23 +442,59 @@ impl Palette {
         Rect::new(b.x + p, top, b.w - p * 2, self.row_h * MAX_ROWS as i32)
     }
 
+    /// 파일 모드 안내 글(읽는 중 · 상한 · …외 N) — 입력란 바로 아래 **결과 위**에 한 줄(사용자 10-07 "결과가 많아도 보이게").
+    fn note_text(&self) -> String {
+        if !(self.goto_mode && self.active == Active::Files) {
+            return String::new();
+        }
+        let mut note = self.files_note.clone();
+        if self.more_hidden > 0 {
+            if !note.is_empty() {
+                note.push_str(" · ");
+            }
+            note.push_str(&tf(Msg::PalMoreHidden, &[&self.more_hidden.to_string()]));
+        }
+        note
+    }
+
+    /// 결과 행 수(안내 줄이 있으면 한 줄 적게) · 결과 첫 행 y 오프셋.
+    fn rows_visible(&self) -> usize {
+        if self.note_text().is_empty() {
+            MAX_ROWS
+        } else {
+            MAX_ROWS - 1
+        }
+    }
+    fn rows_offset(&self) -> i32 {
+        if self.note_text().is_empty() {
+            0
+        } else {
+            self.row_h
+        }
+    }
+
     /// 점 아래 결과 행(전체 결과 기준 인덱스 · 목록 밖/빈 행 = None).
     fn row_at(&self, p: Point) -> Option<usize> {
         let rr = self.rows_rect();
         if self.goto.is_some() || self.prompt.is_some() || !rr.contains(p) {
             return None;
         }
-        let row = ((p.y - rr.y) / self.row_h.max(1)) as usize;
+        let y = p.y - rr.y - self.rows_offset();
+        if y < 0 {
+            return None;
+        }
+        let row = (y / self.row_h.max(1)) as usize;
         let i = self.top + row;
-        (row < MAX_ROWS && i < self.matches.len()).then_some(i)
+        (row < self.rows_visible() && i < self.matches.len()).then_some(i)
     }
 
     /// 선택 행이 보이도록 굴린다.
     fn reveal_sel(&mut self) {
+        let vis = self.rows_visible();
         if self.sel < self.top {
             self.top = self.sel;
-        } else if self.sel >= self.top + MAX_ROWS {
-            self.top = self.sel + 1 - MAX_ROWS;
+        } else if self.sel >= self.top + vis {
+            self.top = self.sel + 1 - vis;
         }
     }
 
@@ -399,31 +519,32 @@ impl Palette {
         self.goto = None;
         self.tail_line = None;
         self.mode_hint.clear();
-        // ★ Goto 모드 = 접두로 원천을 고른다(사용자 10-07 · VS Code식).
+        self.more_hidden = 0;
+        // ★ Goto 모드 = 접두로 원천을 고른다(사용자 10-07 · VS Code식) — 원천은 **참조**(복제 0 · 사용자 10-07 "멈춤").
         let mut files_mode = false;
+        let mut by_kind = false;
         let q = if self.goto_mode {
             let (mode, rest, line) = parse_goto(&q);
             self.tail_line = line;
             match mode {
                 GotoMode::Files | GotoMode::Line => {
                     files_mode = true;
-                    self.cmds = self.src_files.clone();
+                    self.active = Active::Files;
                 }
-                GotoMode::Commands => self.cmds = self.src_cmds.clone(),
-                GotoMode::Symbols => self.cmds = self.src_syms.clone(),
+                GotoMode::Commands => self.active = Active::Cmds,
+                GotoMode::Symbols => self.active = Active::Syms,
                 GotoMode::SymbolsByKind => {
-                    // 종류별 = 라벨의 `—  종류` 뒤를 1차 키로(안정 정렬 · 원래 순서 보존).
-                    let mut v = self.src_syms.clone();
-                    v.sort_by_key(|(_, l)| l.split("—").nth(1).unwrap_or("").trim().to_string());
-                    self.cmds = v;
+                    self.active = Active::Syms;
+                    by_kind = true;
                 }
                 GotoMode::WorkspaceSymbols => {
-                    self.cmds = Vec::new();
+                    self.cmds = Src::default();
+                    self.active = Active::Own;
                     self.mode_hint = t(Msg::PalHintWorkspaceSym).to_string();
                 }
                 GotoMode::QuickSearch => {
                     let needle = rest.trim().to_lowercase();
-                    self.cmds = self
+                    let items: Vec<(String, String)> = self
                         .doc_lines
                         .iter()
                         .enumerate()
@@ -437,13 +558,16 @@ impl Palette {
                         })
                         .collect();
                     // 내용 검색은 포함 여부가 곧 결과 — 퍼지 점수는 생략(순서 = 줄 순).
+                    self.cmds = Src::from_items(items, false);
+                    self.active = Active::Own;
                     self.matches = (0..self.cmds.len()).collect();
                     self.sel = 0;
                     self.top = 0;
                     return;
                 }
                 GotoMode::Help => {
-                    self.cmds = self.help.clone();
+                    self.cmds = Src::from_items(self.help.clone(), false);
+                    self.active = Active::Own;
                     self.matches = (0..self.cmds.len()).collect();
                     self.sel = 0;
                     self.top = 0;
@@ -454,22 +578,63 @@ impl Palette {
         } else {
             q
         };
-        let mut scored: Vec<(i32, usize)> = self
-            .cmds
-            .iter()
-            .enumerate()
-            .filter_map(|(i, (id, label))| {
-                // Goto 모드 = 라벨에 안 맞으면 **id**로도(명령 `file.save` = 영어 낱말 · 협업 V1 bin34 `>save` 0행).
-                fuzzy_score(&q, label)
-                    .or_else(|| self.goto_mode.then(|| fuzzy_score(&q, id)).flatten())
-                    .map(|s| (s + if files_mode { tier_bonus(id) } else { 0 }, i))
-            })
+        // 띄어쓰기 = 낱말 토큰(각각 퍼지 · AND).
+        let tokens: Vec<Vec<char>> = q
+            .to_lowercase()
+            .split_whitespace()
+            .map(|t| t.chars().collect())
             .collect();
-        scored.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then_with(|| self.cmds[a.1].1.cmp(&self.cmds[b.1].1))
-        });
-        self.matches = scored.into_iter().map(|(_, i)| i).collect();
+        let mut hidden = 0usize;
+        let src = self.items();
+        // 빈 질의 = 점수 없이 원천 순서 그대로(열린 탭 → 최근 → 프로젝트 = 이미 그 순서 · 10k 정렬 안 함).
+        let mut matches: Vec<usize> = if tokens.is_empty() {
+            (0..src.len()).collect()
+        } else {
+            let mut scored: Vec<(i32, usize)> = src
+                .lower
+                .iter()
+                .enumerate()
+                .filter_map(|(i, l)| {
+                    // 파일 모드 라벨 = `이름  -  경로` → 이름 경계(바이트) · 그 안 일치 우선.
+                    let name_end = if files_mode { l.find("  -  ") } else { None };
+                    query_score(&tokens, l, name_end).map(|s| {
+                        (
+                            s + if files_mode {
+                                tier_bonus(&src.items[i].0)
+                            } else {
+                                0
+                            },
+                            i,
+                        )
+                    })
+                })
+                .collect();
+            // 상위 K만 — 넘치면 부분 정렬로 K개를 뽑은 뒤 그 안에서만 정렬(10k 전부 정렬 안 함).
+            if scored.len() > TOP_K {
+                hidden = scored.len() - TOP_K;
+                scored.select_nth_unstable_by(TOP_K, |a, b| b.0.cmp(&a.0));
+                scored.truncate(TOP_K);
+            }
+            scored.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| src.items[a.1].1.cmp(&src.items[b.1].1))
+            });
+            scored.into_iter().map(|(_, i)| i).collect()
+        };
+        if by_kind {
+            // 종류별 = 라벨의 `—  종류` 뒤를 1차 키로(안정 정렬 · 원래 순서 보존).
+            matches.sort_by_cached_key(|&i| {
+                src.items[i]
+                    .1
+                    .split("  -  ")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            });
+        }
+        self.matches = matches;
+        self.more_hidden = hidden;
         self.sel = 0;
         self.top = 0;
     }
@@ -520,7 +685,7 @@ impl Palette {
                 }
                 return match self.matches.get(self.sel) {
                     Some(&i) => {
-                        let id = self.cmds[i].0.clone();
+                        let id = self.items().items[i].0.clone();
                         // `이름:줄` = 파일 항목이면 열고 그 줄로(`#L` 꼬리 · 호스트 `goto_pick`).
                         match self.tail_line {
                             Some(n) if id.starts_with("tab:") || id.starts_with("file.") => {
@@ -603,7 +768,7 @@ impl Palette {
                 }
                 if self.rows_rect().contains(p) {
                     if let Some(i) = self.row_at(p) {
-                        return PaletteAction::Pick(self.cmds[self.matches[i]].0.clone());
+                        return PaletteAction::Pick(self.items().items[self.matches[i]].0.clone());
                     }
                     return PaletteAction::None;
                 }
@@ -728,14 +893,28 @@ impl Palette {
             );
             return;
         }
+        // ★ 안내 줄(읽는 중 · 상한 · …외 N개)은 **결과 위**(입력란 바로 아래) — 결과가 12행을 채워도 보인다(사용자 10-07).
+        let note = self.note_text();
+        let off = self.rows_offset();
+        if !note.is_empty() {
+            let r = Rect::new(rr.x, rr.y, rr.w, self.row_h);
+            let shown = nexa_ctl::draw::ellipsize_middle(dc, &note, r.w - pad * 2);
+            dc.text(
+                r.x + pad,
+                rr.y + (self.row_h - th_px) / 2,
+                r,
+                &shown,
+                th.text_dim,
+            );
+        }
         for (row, &i) in self
             .matches
             .iter()
             .skip(self.top)
-            .take(MAX_ROWS)
+            .take(self.rows_visible())
             .enumerate()
         {
-            let y = rr.y + row as i32 * self.row_h;
+            let y = rr.y + off + row as i32 * self.row_h;
             let r = Rect::new(rr.x, y, rr.w, self.row_h);
             if self.top + row == self.sel {
                 dc.fill_rect(r, th.sel_bg);
@@ -744,7 +923,7 @@ impl Palette {
                 r.x + pad,
                 y + (self.row_h - th_px) / 2,
                 r,
-                &self.cmds[i].1,
+                &self.items().items[i].1,
                 th.text,
             );
         }
@@ -752,31 +931,73 @@ impl Palette {
 }
 
 /// 퍼지 점수 — 대소문자 무관 부분열 매치. 연속 매치·단어 첫 글자 매치에 가산 · 없으면 None. 빈 질의 = 0.
+#[cfg(test)]
 pub(crate) fn fuzzy_score(query: &str, label: &str) -> Option<i32> {
     let q: Vec<char> = query.trim().to_lowercase().chars().collect();
+    fuzzy_score_lower(&q, &label.to_lowercase())
+}
+
+/// 퍼지 점수 코어 — 질의(소문자 글자들)·라벨(소문자) 모두 준비된 것으로 **할당 없이** 한 번 훑는다(키 입력마다 10k 라벨).
+/// 가점 = 글자 +1 · 연속 +3 · **낱말 머리**(앞 글자가 영숫자 아님 = `_` `/` `.` `-` 공백 · 또는 첫 글자) +6 · 연속 부분 문자열 +40 ·
+/// 감점 = 첫 일치~끝 일치 사이의 **빈 글자 수**(촘촘할수록 위 · 상한 30 · `cf35`가 `cflz0d…` 잡음보다 `cache_file_35`에 가게).
+pub(crate) fn fuzzy_score_lower(q: &[char], lower: &str) -> Option<i32> {
     if q.is_empty() {
         return Some(0);
     }
-    let l: Vec<char> = label.to_lowercase().chars().collect();
-    let mut score = 0i32;
+    let qs: String = q.iter().collect();
+    let mut score = if lower.contains(&qs) { 40 } else { 0 };
     let mut qi = 0usize;
     let mut prev_hit = false;
-    for (i, &c) in l.iter().enumerate() {
+    let mut prev: Option<char> = None;
+    let mut first: Option<usize> = None;
+    let mut last = 0usize;
+    for (i, c) in lower.chars().enumerate() {
         if qi < q.len() && c == q[qi] {
             score += 1;
             if prev_hit {
                 score += 3;
             }
-            if i == 0 || !l[i - 1].is_alphanumeric() {
-                score += 2;
+            if prev.is_none_or(|p| !p.is_alphanumeric()) {
+                score += 6;
             }
             prev_hit = true;
             qi += 1;
+            if first.is_none() {
+                first = Some(i);
+            }
+            last = i;
         } else {
             prev_hit = false;
         }
+        prev = Some(c);
     }
-    (qi == q.len()).then_some(score)
+    if qi != q.len() {
+        return None;
+    }
+    let span = last + 1 - first.unwrap_or(0);
+    let gaps = (span.saturating_sub(q.len())).min(30) as i32;
+    Some(score - gaps)
+}
+
+/// 질의 전체 점수 — **띄어쓰기 = 낱말 AND**(토큰마다 퍼지 · 하나라도 안 맞으면 없음 · 점수 합) · `name_end`가 있으면(파일 모드 라벨
+/// `이름  -  경로`) **이름 안에서 맞으면 +30**(경로 글자만 맞는 것보다 위 · 사용자 10-07 `cache file 35` · `cf35`).
+pub(crate) fn query_score(
+    tokens: &[Vec<char>],
+    lower: &str,
+    name_end: Option<usize>,
+) -> Option<i32> {
+    let mut total = 0i32;
+    for t in tokens {
+        let s = match name_end {
+            Some(end) => match fuzzy_score_lower(t, &lower[..end]) {
+                Some(s) => s + 30,
+                None => fuzzy_score_lower(t, lower)?,
+            },
+            None => fuzzy_score_lower(t, lower)?,
+        };
+        total += s;
+    }
+    Some(total)
 }
 
 #[cfg(test)]
@@ -798,12 +1019,50 @@ mod tests {
         }
         assert_eq!(p.query(), "로그");
         assert_eq!(p.matches.len(), 1, "'로그'로 거른 결과 = 로그 창 하나");
-        assert_eq!(p.cmds[p.matches[0]].0, "view.log");
+        assert_eq!(p.cmds.items[p.matches[0]].0, "view.log");
         p.set_preedit("ㅊ", &mut inv);
         assert_eq!(p.query(), "로그", "조합 중 글자는 본문이 아니다");
     }
 
     use super::{fuzzy_score, parse_goto, GotoMode};
+
+    /// 점수 규칙(사용자 10-07): 띄어쓰기 = 낱말 AND · 이름 안 일치 우선 · 촘촘한 일치가 흩어진 일치보다 위 · 오타(빠진 글자)는 부분열로 허용.
+    #[test]
+    fn query_score_rules() {
+        use super::query_score;
+        let tok = |q: &str| -> Vec<Vec<char>> {
+            q.to_lowercase()
+                .split_whitespace()
+                .map(|t| t.chars().collect())
+                .collect()
+        };
+        let a = "cache_file_35.txt  -  downloads/many/cache_file_35.txt";
+        let noise = "cflz3x5d.o  -  target/debug/deps/cflz3x5d.o";
+        let ne = |l: &str| l.find("  -  ");
+        assert!(
+            query_score(&tok("cache file 35"), a, ne(a)).is_some(),
+            "띄어쓰기 = AND"
+        );
+        assert!(
+            query_score(&tok("chche file 35"), a, ne(a)).is_some(),
+            "빠진 글자 허용"
+        );
+        assert!(
+            query_score(&tok("cache zzz"), a, ne(a)).is_none(),
+            "토큰 하나라도 안 맞으면 없음"
+        );
+        let s_a = query_score(&tok("cf35"), a, ne(a)).expect("a");
+        let s_n = query_score(&tok("cf35"), noise, ne(noise)).expect("noise");
+        assert!(
+            s_a > s_n,
+            "cf35: 머리글자·촘촘함 = cache_file_35 {s_a} > 잡음 {s_n}"
+        );
+        let s_name =
+            query_score(&tok("many"), "x.txt  -  downloads/many/x.txt", Some(5)).expect("path");
+        let s_in_name =
+            query_score(&tok("many"), "many.txt  -  downloads/x/many.txt", Some(8)).expect("name");
+        assert!(s_in_name > s_name, "이름 안 일치가 경로 일치보다 위");
+    }
 
     /// 접두 풀이(사용자 10-07): `>` 명령 · `:` 줄 · `@`/`@:` 심볼 · `#` 프로젝트 심볼 · `%` 빠른 검색 · `?` 도움 · `이름:줄`.
     #[test]

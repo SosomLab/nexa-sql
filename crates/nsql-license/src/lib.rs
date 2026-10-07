@@ -801,7 +801,7 @@ mod tests {
             name: "홍길동".into(),
             email: " a@b.c ".into(),
         }) else {
-            eprintln!("이 환경은 기기 ID가 없다(컨테이너?) — 건너뜀");
+            eprintln!("이 환경은 기기 ID가 없다(컨테이너?) - 건너뜀");
             return;
         };
         assert!(code.starts_with("NEXAREQ1."));

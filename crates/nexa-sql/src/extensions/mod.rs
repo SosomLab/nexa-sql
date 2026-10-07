@@ -242,7 +242,7 @@ impl Registry {
                 Ok(ext) => {
                     if ext.id() != id {
                         notes.push(format!(
-                            "wasm extension {}: module says id {} — not loaded",
+                            "wasm extension {}: module says id {} - not loaded",
                             id,
                             ext.id()
                         ));
@@ -260,7 +260,7 @@ impl Registry {
                     self.loaded_wasm.push((id.clone(), path.clone()));
                 }
                 Err(e) => notes.push(format!(
-                    "wasm extension {id}: load failed — {e} (builtin fallback if any)"
+                    "wasm extension {id}: load failed - {e} (builtin fallback if any)"
                 )),
             }
         }

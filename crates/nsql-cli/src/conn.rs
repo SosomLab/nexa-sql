@@ -142,7 +142,7 @@ fn list() -> i32 {
     };
     if list.is_empty() {
         eprintln!(
-            "저장된 프로필이 없습니다 — nsql conn add <name> <target>  ({})",
+            "저장된 프로필이 없습니다 - nsql conn add <name> <target>  ({})",
             v.dir().display()
         );
         return 0;
@@ -235,7 +235,7 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
         if spec.password.is_some() {
             ""
         } else {
-            "  (비밀번호 없음 — 접속 시 방언이 요구하면 실패)"
+            "  (비밀번호 없음 - 접속 시 방언이 요구하면 실패)"
         },
         v.dir().display()
     );
@@ -311,7 +311,7 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
         None => match spec_from_opts(o, None) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("nsql conn test <name>  또는  nsql conn test -d … --host … — {e}");
+                eprintln!("nsql conn test <name>  또는  nsql conn test -d … --host … - {e}");
                 return 2;
             }
         },

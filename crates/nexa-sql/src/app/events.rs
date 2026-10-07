@@ -412,7 +412,7 @@ impl App {
                         let line = if m.is_empty() {
                             tf(Msg::StSessBroken, &[&self.sess.desc])
                         } else {
-                            format!("{} — {m}", tf(Msg::StSessBroken, &[&self.sess.desc]))
+                            format!("{} - {m}", tf(Msg::StSessBroken, &[&self.sess.desc]))
                         };
                         self.log_win
                             .push(LogEntry::new(LogKind::Error, line.clone()));

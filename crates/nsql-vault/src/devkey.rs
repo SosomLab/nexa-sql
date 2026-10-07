@@ -32,7 +32,7 @@ fn decode(bytes: &[u8], path: &Path) -> io::Result<[u8; 32]> {
         {
             let plain = dpapi::unprotect(&bytes[5..]).map_err(|e| {
                 io::Error::other(format!(
-                    "{}: 기기 키를 풀 수 없습니다(다른 Windows 계정·PC에서 만든 키) — {e}",
+                    "{}: 기기 키를 풀 수 없습니다(다른 Windows 계정·PC에서 만든 키) - {e}",
                     path.display()
                 ))
             })?;

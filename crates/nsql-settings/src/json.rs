@@ -362,7 +362,7 @@ pub fn to_json(s: &Settings) -> String {
         "_comment".into(),
         Node {
             leaf: Some(escape(
-                "Nexa SQL settings — edit and save; the app reloads changed keys immediately. Keys = registry (nsql config list all). Unknown keys are ignored.",
+                "Nexa SQL settings - edit and save; the app reloads changed keys immediately. Keys = registry (nsql config list all). Unknown keys are ignored.",
             )),
             kids: BTreeMap::new(),
         },

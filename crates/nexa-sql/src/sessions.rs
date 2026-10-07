@@ -1060,32 +1060,32 @@ pub(crate) fn db_unit(
                     spec.and_then(|s| nonempty(s.user.as_deref()))
                         .map(|u| u.to_ascii_uppercase())
                 })
-                .unwrap_or_else(|| "—".into()),
+                .unwrap_or_else(|| "-".into()),
             // 바꿈 = `ALTER SESSION SET CURRENT_SCHEMA`(사용자 10-01 ⑮ · 처음의 "고정"을 뒤집음).
             true,
         ),
         Some(Dialect::Mssql) => (
             nonempty(current_db)
                 .or(spec_db)
-                .unwrap_or_else(|| "—".into()),
+                .unwrap_or_else(|| "-".into()),
             true,
         ),
         Some(Dialect::Mysql) => (
             nonempty(current_db)
                 .or_else(|| nonempty(current_schema))
                 .or(spec_db)
-                .unwrap_or_else(|| "—".into()),
+                .unwrap_or_else(|| "-".into()),
             true,
         ),
         // 파일 이름만(OS 무관 — `/`·`\` 둘 다 구분자 · CI mac/ubuntu에서 Windows 경로 시험이 깨졌다 10-01).
         Some(Dialect::Sqlite) => (
             spec_db
                 .map(|p| p.rsplit(['/', '\\']).next().unwrap_or(&p).to_string())
-                .unwrap_or_else(|| "—".into()),
+                .unwrap_or_else(|| "-".into()),
             false,
         ),
-        Some(Dialect::Postgres | Dialect::Odbc) => (spec_db.unwrap_or_else(|| "—".into()), false),
-        None => ("—".into(), false),
+        Some(Dialect::Postgres | Dialect::Odbc) => (spec_db.unwrap_or_else(|| "-".into()), false),
+        None => ("-".into(), false),
     }
 }
 
@@ -1432,7 +1432,7 @@ mod tests {
                 None,
                 None
             ),
-            ("—".into(), true)
+            ("-".into(), true)
         );
         assert_eq!(
             db_unit(
@@ -1462,7 +1462,7 @@ mod tests {
             ),
             ("demo.sqlite".into(), false)
         );
-        assert_eq!(db_unit(None, None, None, None), ("—".into(), false));
+        assert_eq!(db_unit(None, None, None, None), ("-".into(), false));
         assert_eq!(
             use_sql(Dialect::Mssql, "a]b").as_deref(),
             Some("USE [a]]b]")
@@ -1733,7 +1733,7 @@ mod tests {
                 assert_eq!(
                     n,
                     allowed,
-                    "{} 에 `{d}` {n}곳 — Sess::submit/control을 쓴다",
+                    "{} 에 `{d}` {n}곳 - Sess::submit/control을 쓴다",
                     f.display()
                 );
             }

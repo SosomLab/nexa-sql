@@ -175,7 +175,7 @@ impl SqlPrevWin {
         text: Result<String, String>,
         tb: TextBox,
     ) {
-        self.title = format!("{} — {}", t(Msg::WinSqlPreview), spec.title());
+        self.title = format!("{} - {}", t(Msg::WinSqlPreview), spec.title());
         self.cbs_from_opts(spec.opts);
         self.spec = Some(spec);
         self.server = server;
@@ -189,14 +189,14 @@ impl SqlPrevWin {
         self.set_result(text);
         self.tb.set_focused(true);
         if let Some(w) = &self.window {
-            w.set_title(&format!("Nexa SQL — {}", self.title));
+            w.set_title(&format!("Nexa SQL - {}", self.title));
             crate::winfocus::focus(w);
             self.redraw();
             return;
         }
         let size = self.desired_size();
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", self.title))
+            .with_title(format!("Nexa SQL - {}", self.title))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(size);
@@ -258,7 +258,7 @@ impl SqlPrevWin {
         max_mb: usize,
         image_on: bool,
     ) {
-        self.title = format!("{} — {}", t(Msg::WinGeValue), v.name);
+        self.title = format!("{} - {}", t(Msg::WinGeValue), v.name);
         self.spec = None;
         self.server = None;
         self.tb = tb;
@@ -303,14 +303,14 @@ impl SqlPrevWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.set_title(&format!("Nexa SQL — {}", self.title));
+            w.set_title(&format!("Nexa SQL - {}", self.title));
             crate::winfocus::focus(w);
             self.redraw();
             return;
         }
         let size = self.desired_size();
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", self.title))
+            .with_title(format!("Nexa SQL - {}", self.title))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(size);

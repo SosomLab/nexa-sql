@@ -94,7 +94,7 @@ mod tests {
     fn roundtrip_and_fresh_envelope_every_time() {
         let a = seal(b"profile-v1/dev", &S, b"hello").unwrap();
         let b = seal(b"profile-v1/dev", &S, b"hello").unwrap();
-        assert_ne!(a, b, "salt·nonce 신선 — 같은 평문도 봉투가 다르다");
+        assert_ne!(a, b, "salt·nonce 신선 - 같은 평문도 봉투가 다르다");
         assert!(is_sealed(&a));
         assert_eq!(open(b"profile-v1/dev", &S, &a).unwrap(), b"hello");
     }

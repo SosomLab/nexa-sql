@@ -354,15 +354,22 @@ impl ProjectPanel {
     }
 
     /// OPEN FILES 갱신(바뀔 때만 · 줄 수가 바뀌면 다시 배치).
+    /// ★ 줄 수가 바뀌면 **트리 행이 제자리에 있게 스크롤을 보정**한다(사용자 10-07: 미열림 파일을 클릭하면 미리보기 탭이 열려 OPEN FILES가
+    ///   한 줄 늘고 트리가 한 칸 밀려 더블클릭의 둘째 클릭이 다른 행에 떨어졌다 · 닫혀서 줄어들 때도 같은 보정 · 상한에 걸리면 그만큼만).
     pub(crate) fn set_open_files(&mut self, v: Vec<OpenFile>) -> bool {
         if v == self.open_files {
             return false;
         }
-        let relayout = v.len() != self.open_files.len();
+        let before = self.open_block_rows() as i32;
         self.open_files = v;
-        if relayout {
+        let after = self.open_block_rows() as i32;
+        if before != after {
             let (b, s) = (self.bounds, self.scale);
             self.set_bounds(b, s);
+            if self.name.is_some() && !self.rows.is_empty() {
+                self.scroll_y += (after - before) * self.row_h.max(1);
+                self.clamp_scroll();
+            }
         }
         true
     }
@@ -460,6 +467,8 @@ impl ProjectPanel {
         }
         self.clamp_scroll();
         self.relayout_open_rows();
+        // 포인터가 멈춘 채 목록이 움직였다 → 옛 행 hover·툴팁은 지운다(다음 이동에서 다시 판정 · 협업 V1 bin40 ②).
+        self.hover = None;
     }
 
     /// 열린 파일 항목 `k`가 보이게(제목 줄 다음이 0번).
@@ -707,6 +716,24 @@ impl ProjectPanel {
     /// 활성 탭의 파일을 트리에서 골라 보인다(있으면 · 조상을 펼친다). 호스트 배선 = T-165 P4 잔여(`project.reveal_active`).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reveal(&mut self, path: &Path) -> bool {
+        self.reveal_inner(path, true)
+    }
+
+    /// 조상을 펼치고 트리 행을 **선택만**(스크롤·포커스 이동 없음) — 탭 전환 동기(사용자 10-07 "탐색기에 표시 가능하면 선택 상태만 ·
+    /// 포커스는 열린 파일로"). 트리로 스크롤하는 것은 사용자가 "프로젝트 탐색기에서 보기"를 눌렀을 때(`reveal`)뿐.
+    pub(crate) fn reveal_quiet(&mut self, path: &Path) -> bool {
+        self.reveal_inner(path, false)
+    }
+
+    /// 열린 파일(OPEN FILES) 중 **활성 탭 행**이 보이게 스크롤 — 탭 전환의 기본 포커스 자리(사용자 10-07).
+    pub(crate) fn focus_open_active(&mut self) {
+        if let Some(k) = self.open_files.iter().position(|f| f.active) {
+            let top = (1 + k) as i32 * self.row_h.max(1);
+            self.scroll_to_show(top);
+        }
+    }
+
+    fn reveal_inner(&mut self, path: &Path, scroll: bool) -> bool {
         // 조상 루트를 찾아 경로를 따라 펼친다.
         let root = self
             .roots
@@ -734,7 +761,10 @@ impl ProjectPanel {
         self.rebuild_rows();
         if let Some(r) = self.rows.iter().position(|&n| n == cur) {
             self.sel = Some(r);
-            self.ensure_visible(r);
+            self.sel_path = Some(path.to_path_buf());
+            if scroll {
+                self.ensure_visible(r);
+            }
             return true;
         }
         false
@@ -1018,6 +1048,8 @@ impl ProjectPanel {
             crate::parwalk::ListOpts {
                 show_hidden: self.show_hidden,
                 show_dot: self.show_dot,
+                // 프로젝트 탐색기 트리는 전부 보인다(제외 규칙은 Goto Anything 색인에만 · D-260 공용화는 다음 단계).
+                skip_dirs: Vec::new(),
             },
             self.scan_threads,
         );

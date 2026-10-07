@@ -1243,8 +1243,9 @@ impl App {
         self.redraw();
     }
 
-    /// 활성 탭이 바뀌면 탐색기의 선택을 그 파일에 맞춘다(프로젝트 폴더 안 파일만) — 기본은 펼치지 않고 표시만(`mark_path`) ·
-    /// `project.auto_reveal`이면 조상을 펼치고 스크롤(`reveal` · 포커스는 안 옮긴다).
+    /// 활성 탭이 바뀌면(사용자 10-07 규칙) ① 트리에 있는 파일이면 트리 행에 **선택 표시만**(스크롤·포커스 이동 없음 · `project.auto_reveal`이면
+    /// 조상도 펼침 = `reveal_quiet` · 아니면 `mark_path`) ② **열린 파일(OPEN FILES)** 행도 선택(활성) + 그 행이 보이게 스크롤 = 기본 포커스.
+    /// 트리로 스크롤하는 것은 사용자가 "프로젝트 탐색기에서 보기"를 눌렀을 때(`reveal_in_project`)뿐.
     pub(crate) fn project_sync_active(&mut self) {
         let id = self.editors.active_id();
         if id == self.last_synced_tab {
@@ -1254,17 +1255,18 @@ impl App {
         if !self.project.is_open() {
             return;
         }
-        let Some(p) = self.editors.active_path() else {
-            return;
-        };
-        if !self.editors.in_project(&p) {
-            return;
+        // 열린 파일 목록을 먼저 지금 탭에 맞춘다(활성 행이 바로 있어야 그쪽으로 스크롤할 수 있다).
+        self.sync_open_files();
+        if let Some(p) = self.editors.active_path() {
+            if self.editors.in_project(&p) {
+                if self.settings.flag("project.auto_reveal") {
+                    self.project_panel.reveal_quiet(&p);
+                } else {
+                    self.project_panel.mark_path(&p);
+                }
+            }
         }
-        if self.settings.flag("project.auto_reveal") {
-            self.project_panel.reveal(&p);
-        } else {
-            self.project_panel.mark_path(&p);
-        }
+        self.project_panel.focus_open_active();
         self.redraw();
     }
 

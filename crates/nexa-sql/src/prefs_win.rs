@@ -833,7 +833,7 @@ impl PrefsWin {
         let same = self.memo.on_same_monitor(owner);
         let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((920.0, 640.0));
         let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinPreferences)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinPreferences)))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));

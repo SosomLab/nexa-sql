@@ -1595,7 +1595,7 @@ mod tests {
                                 assert_eq!(
                                     v.code(),
                                     ch.code(),
-                                    "{}: {part} — 한글 IME 자모 {}로 오면 다른 코드",
+                                    "{}: {part} - 한글 IME 자모 {}로 오면 다른 코드",
                                     c.id,
                                     jamo(l, ch.shift)
                                 );

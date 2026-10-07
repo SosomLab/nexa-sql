@@ -543,7 +543,7 @@ fn dml_sql(
     let key_idx: Vec<usize> = (0..cols.len())
         .filter(|&i| is_key(&cols[i].name, &keys))
         .collect();
-    let no_key_note = "-- no primary/unique key: WHERE 1 = 0 keeps this from touching every row — set your own condition\n";
+    let no_key_note = "-- no primary/unique key: WHERE 1 = 0 keeps this from touching every row - set your own condition\n";
     let where_keys = |indent: &str| -> String {
         if key_idx.is_empty() {
             return format!("{indent}WHERE 1 = 0\n");
@@ -622,7 +622,7 @@ fn merge_sql(
     non_key: &[usize],
 ) -> String {
     if key_idx.is_empty() {
-        let mut out = String::from("-- MERGE needs a primary/unique key and this table has none — INSERT is generated instead\n");
+        let mut out = String::from("-- MERGE needs a primary/unique key and this table has none - INSERT is generated instead\n");
         out.push_str(&format!("INSERT INTO {qn} (\n"));
         out.push_str(&list(names, "    "));
         out.push_str(") VALUES (\n");
@@ -829,7 +829,7 @@ fn call_one(
         }
         _ => {
             if params.is_empty() {
-                out.push_str("-- argument list unknown for this DBMS — fill in the values\n");
+                out.push_str("-- argument list unknown for this DBMS - fill in the values\n");
             }
             let inner: Vec<String> = params.iter().map(|p| bind(&p.name)).collect();
             if is_function {

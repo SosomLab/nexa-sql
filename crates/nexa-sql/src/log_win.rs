@@ -712,7 +712,7 @@ impl LogWin {
         let Some(o) = crate::winhost::open_window(
             el,
             crate::winhost::OpenSpec {
-                title: format!("Nexa SQL — {}", t(Msg::WinLog)),
+                title: format!("Nexa SQL - {}", t(Msg::WinLog)),
                 theme,
                 near,
                 dy: 0,

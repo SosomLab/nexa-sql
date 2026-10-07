@@ -81,7 +81,7 @@ impl MemWin {
         let Some(o) = crate::winhost::open_window(
             el,
             crate::winhost::OpenSpec {
-                title: format!("Nexa SQL — {}", t(Msg::WinMemory)),
+                title: format!("Nexa SQL - {}", t(Msg::WinMemory)),
                 theme,
                 near,
                 dy: 40,

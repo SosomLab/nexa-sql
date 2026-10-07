@@ -185,7 +185,7 @@ impl KeysWin {
         }
         let (lw, lh) = (560.0, 620.0);
         let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinKeys)))
+            .with_title(format!("Nexa SQL - {}", t(Msg::WinKeys)))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));

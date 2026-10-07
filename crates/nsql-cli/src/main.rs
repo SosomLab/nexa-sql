@@ -1270,7 +1270,7 @@ impl Printer {
                 let e = nsql_script::ConnEnv::from_name(&v);
                 let _ = writeln!(
                     out,
-                    "conntype: {} ({}) — temporary attribute of the GUI editor session; to save it in a profile use `nsql conn env <name> {}`",
+                    "conntype: {} ({}) - temporary attribute of the GUI editor session; to save it in a profile use `nsql conn env <name> {}`",
                     nsql_script::ConnEnv::name_of(e),
                     nsql_script::ConnEnv::abbr_of(e),
                     nsql_script::ConnEnv::abbr_of(e).to_ascii_lowercase()
