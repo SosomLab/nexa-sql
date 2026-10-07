@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-07-115t | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 115차 10-07 진행사항 최신화(docs만 · 사용자 지시): STATUS 10-07 블록(115k~115s 전체 · V3 전수 · T-309 종결 + 제품 결함 3) · DEVLOG · TODO 상태 전수 · journal §20 마무리(CI 249685f) · 10 §3-1 변동 없음 · 102 §12 오늘 사례 · 이 행 |
 | work/2026-10-07-115s | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | docs: T-309 ✅ 종결(bin71 실서버 28/0 · SQL Server tdsbulk 12.6k행/s) · journal 115p~r 확인 · TODO · CLAUDE 현 단계 종결 줄(제품 결함 3 · 교훈) |
 | work/2026-10-07-115r | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 T-309 경로(협업 bin70: SQL Server multirow 1.4k행/s): 방어층 `numeric_scales`가 세션 DB의 sys.all_columns를 봐 3부 이름 표를 못 찾고 bulk 거절 → `[DB].sys.all_columns`(`db_prefix` 순수 · 시험) · Runner = `bulk_begin` 거절 사유를 보고 경로 글에(`multirow (driver refused: …)`) |
 | work/2026-10-07-115q | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 T-309 마지막(제품 결함 · 협업 bin69 bulk SQL Server 패닉): TDS bulk Decimal scale 불일치 = tiberius `todo!()` → panic=abort로 CLI·GUI Import 종료 → ① 3부 이름 컬럼 조회 = `sys.all_columns`+`OBJECT_ID` + 카탈로그 `fmt_type`(공개) ② ★ 드라이버 `bulk_begin` 방어층 = 서버 scale 재확인·덮어쓰기 · 못 읽으면 bulk 거절(`numeric_scales`) |
