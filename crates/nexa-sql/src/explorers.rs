@@ -1417,15 +1417,21 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                     ExplorerAction::OpenSql {
                         title,
                         text,
-                        origin: Some(mut o),
+                        origin,
                         db,
+                        ..
                     } => {
-                        o.server = p.key.clone();
+                        // 소스 탭 = 출처에 · SELECT 템플릿 탭 = `server`에 이 칸의 서버를(둘 다 그 서버 세션에 묶인다 · 10-08).
+                        let origin = origin.map(|mut o| {
+                            o.server = p.key.clone();
+                            o
+                        });
                         out.push(ExplorerAction::OpenSql {
                             title,
                             text,
-                            origin: Some(o),
+                            origin,
                             db,
+                            server: p.key.clone(),
                         });
                     }
                     ExplorerAction::Import { owner, .. } => {

@@ -271,6 +271,7 @@ impl App {
                     text,
                     origin,
                     db,
+                    server,
                 } if self.tab_room() => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
@@ -285,6 +286,12 @@ impl App {
                             self.bind_tab_to_server(tab, &spec);
                         }
                         self.object_tabs.insert(tab, o);
+                        self.sync_sess();
+                        self.sync_sess_ui();
+                    } else if let Some(spec) = server {
+                        // SELECT 템플릿 탭도 그 표의 서버 세션에(활성 세션이 다른 서버 — 예: Oracle 탭에서 SQL Server 표 행 조회 · 사용자 10-08 캡처).
+                        let tab = self.editors.active_id();
+                        self.bind_tab_to_server(tab, &spec);
                         self.sync_sess();
                         self.sync_sess_ui();
                     }

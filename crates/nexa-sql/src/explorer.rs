@@ -886,6 +886,8 @@ pub(crate) enum ExplorerAction {
         /// ★ 표가 속한 데이터베이스(SQL Server/MySQL 트리 · `db_of` · None = 연결 현재 DB) — 호스트가 새 탭의 작업 단위를 이 DB로 심는다
         ///   (사용자 10-08 "행 조회 탭이 접속 기본 DB(master)에 머물러 실행되지 않음").
         db: Option<String>,
+        /// 이 칸의 서버(`ExplorerSet`이 채운다) — SELECT 템플릿 탭도 소스 탭처럼 **그 서버 세션에 묶은 뒤** DB를 심는다(활성 세션이 다른 서버일 때).
+        server: Option<ConnectSpec>,
     },
     /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
     Notice(String),
@@ -4332,6 +4334,7 @@ impl Explorer {
                             text,
                             origin: Some(origin),
                             db: None,
+                            server: None,
                         }),
                         Err(e) => self.actions.push(ExplorerAction::Status(e)),
                     }
@@ -5601,6 +5604,7 @@ impl Explorer {
                     origin: None,
                     // 표의 DB(다른 DB 표 = 새 탭을 그 DB로 · 사용자 10-08).
                     db: self.db_of(i),
+                    server: None,
                 });
             }
             NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
