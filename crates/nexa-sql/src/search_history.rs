@@ -281,6 +281,11 @@ impl Recall {
         &self.shown
     }
 
+    #[cfg(test)]
+    pub(crate) fn row_rect_for_test(&self, i: usize) -> Option<Rect> {
+        self.menu.row_rect_of(i)
+    }
+
     /// 드롭다운을 그린다(팝업 층 · 담는 쪽의 `paint_popup` 끝에).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         if self.menu.is_open() {

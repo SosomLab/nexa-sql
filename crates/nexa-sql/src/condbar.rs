@@ -379,6 +379,24 @@ impl CondBar {
         self.drop_template = on;
     }
 
+    #[cfg(test)]
+    pub(crate) fn max_lines_for_test(&self) -> usize {
+        self.max_lines
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drop_template_for_test(&self) -> bool {
+        self.drop_template
+    }
+
+    /// 설정만 물려받기(새 탭의 짝 조건 바 · `Grid::fresh_like` · 10-07 bin47 결함 = 새 그리드가 기본값으로 돌아갔다).
+    pub(crate) fn copy_cfg_from(&mut self, o: &CondBar) {
+        self.max_lines = o.max_lines;
+        self.drop_template = o.drop_template;
+        self.key_passthrough = o.key_passthrough;
+        self.min_chars = o.min_chars;
+    }
+
     /// 완성 규칙 = 편집기 인텔리센스 설정 그대로(`intel.key_passthrough` · `intel.min_chars`).
     pub(crate) fn set_intel_cfg(&mut self, key_passthrough: bool, min_chars: usize) {
         self.key_passthrough = key_passthrough;

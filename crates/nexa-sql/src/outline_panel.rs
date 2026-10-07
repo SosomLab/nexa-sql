@@ -329,6 +329,13 @@ impl OutlinePanel {
             return false;
         }
         let mut inv = Invalidations::default();
+        // ★ 필터 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
+        if self.filter.popup_takes(ev) {
+            let _ = self.filter_feed(ev);
+            if self.filter.popup_keeps(ev) {
+                return true;
+            }
+        }
         if matches!(
             ev,
             InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }

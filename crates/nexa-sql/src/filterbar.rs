@@ -596,6 +596,37 @@ impl FilterBar {
         self.matcher().matches_facts(f)
     }
 
+    /// ★ 팝업(이력 드롭다운 · 편집 메뉴)이 떠 있을 때 마우스 사건은 **틀이 먼저** 받아야 한다 — 드롭다운이 목록 행 위에 겹쳐 그려지므로
+    /// 담는 쪽이 행 클릭을 먼저 처리하면 "클릭으로 검색어가 안 들어간다"(사용자 10-07 · 프로젝트 탐색기·북마크·아웃라인·확장 4곳 ·
+    /// 객체 탐색기·파일 검색은 이미 이 규칙). 담는 쪽 = `if popup_takes(ev) { 사건 넣기; if popup_keeps(ev) { return true } }`.
+    pub(crate) fn popup_takes(&self, ev: &InputEvent) -> bool {
+        self.popup_open()
+            && matches!(
+                ev,
+                InputEvent::MouseDown { .. }
+                    | InputEvent::MouseUp { .. }
+                    | InputEvent::MouseMove { .. }
+                    | InputEvent::RightDown { .. }
+            )
+    }
+
+    /// 사건을 넣은 **뒤**: 팝업이 아직 열려 있거나(항목 위 누름 · 이동) 놓임이면 담는 쪽은 끝 · 바깥 누름으로 닫혔으면 그 클릭은 통과(`false`
+    /// · 팝업 UX 규칙 "바깥 클릭은 닫고 그대로 진행").
+    pub(crate) fn popup_keeps(&self, ev: &InputEvent) -> bool {
+        self.popup_open()
+            || !matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            )
+    }
+
+    #[cfg(test)]
+    fn history_row_rect(&self, i: usize) -> Option<Rect> {
+        self.history
+            .as_ref()
+            .and_then(|(_, r)| r.row_rect_for_test(i))
+    }
+
     /// 지금 글이 구조 질의(docs/98 · `size>1M` `type:file` …)를 품고 있는가 — 단순 포함 검색의 빠른 길을 쓸 수 있는지 판정(색인 모드).
     pub(crate) fn has_structured_query(&self) -> bool {
         Matcher::query_of(&self.text, self.matcher.is_some()).is_some()
@@ -760,6 +791,63 @@ mod tests {
 #[cfg(test)]
 mod search_anim_tests {
     use super::*;
+
+    /// ★ 팝업 선처리(사용자 10-07): 드롭다운이 열려 있으면 틀이 마우스를 먼저 받는다 — 항목 Down/Up = 글 넣기 · 바깥 Down = 닫고 통과.
+    #[test]
+    fn popup_takes_and_keeps_rules() {
+        let h = crate::search_history::SearchHistory::new(20).shared();
+        let mut f = FilterBar::new("f", &[]);
+        f.set_history(h, "filter.test");
+        f.set_bounds(Rect::new(0, 0, 300, 30), 1.0);
+        let mut inv = Invalidations::default();
+        let tbb = f.text_bounds();
+        let (ix, iy) = (tbb.x + 5, tbb.y + tbb.h / 2);
+        let click = |x: i32, y: i32| InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        };
+        // 두 항목 기록(Enter = 기록).
+        for w in ["alpha", "beta"] {
+            f.on_event(&click(ix, iy), &mut inv);
+            f.on_event(&InputEvent::MouseUp { x: ix, y: iy }, &mut inv);
+            f.set_text(w);
+            f.on_event(
+                &InputEvent::Key {
+                    key: nexa_ctl::Key::Enter,
+                    shift: false,
+                    primary: false,
+                },
+                &mut inv,
+            );
+        }
+        f.set_text("");
+        // 상자 클릭 = 드롭다운(최근 것부터 = beta · alpha).
+        f.on_event(&click(ix, iy), &mut inv);
+        f.on_event(&InputEvent::MouseUp { x: ix, y: iy }, &mut inv);
+        assert!(f.popup_open(), "이력 드롭다운");
+        let row = f.history_row_rect(1).expect("둘째 행");
+        let (cx, cy) = (row.x + 5, row.y + row.h / 2);
+        let down = click(cx, cy);
+        assert!(f.popup_takes(&down));
+        f.on_event(&down, &mut inv);
+        assert!(f.popup_keeps(&down), "항목 위 누름 = 열린 채(담는 쪽 끝)");
+        let up = InputEvent::MouseUp { x: cx, y: cy };
+        assert!(f.popup_takes(&up));
+        assert_eq!(f.on_event(&up, &mut inv), FilterEvent::Changed);
+        assert!(!f.popup_open());
+        assert!(f.popup_keeps(&up), "놓임은 담는 쪽이 더 처리하지 않는다");
+        assert_eq!(f.display_text(), "alpha", "클릭한 행의 글이 상자에");
+        // 다시 열고 바깥 누름 = 닫고 통과.
+        f.on_event(&click(ix, iy), &mut inv);
+        f.on_event(&InputEvent::MouseUp { x: ix, y: iy }, &mut inv);
+        assert!(f.popup_open());
+        let out = click(900, 900);
+        assert!(f.popup_takes(&out));
+        f.on_event(&out, &mut inv);
+        assert!(!f.popup_keeps(&out), "바깥 누름 = 닫고 그 클릭은 통과");
+    }
 
     /// Running → Done = 두 번 깜빡임(4 위상 × 130 ms) 뒤 완료 테두리 · Idle로 가면 깜빡임 취소 · Running 동안은 늘 애니메이션.
     #[test]

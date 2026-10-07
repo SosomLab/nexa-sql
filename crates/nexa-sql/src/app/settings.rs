@@ -356,6 +356,7 @@ impl App {
             | "ui.busy_ring_lap_ms"
             | "ui.busy_ring_hold_ms"
             | "ui.busy_ring_done_ms" => self.apply_busy_style(),
+            "ui.tooltip_above" => nexa_ctl::set_tooltip_above(self.settings.flag(key)),
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
             "ui.toast_ms" | "ui.toast_alpha" => {
                 self.toasts.configure(
@@ -580,7 +581,9 @@ impl App {
             | "grid.paste_max_rows"
             | "grid.filter_list_max"
             | "grid.filter_pick_max"
-            | "grid.filter_strip" => self.apply_grid_edit_cfg(),
+            | "grid.filter_strip"
+            | "grid.col_type_icons"
+            | "editor.quote_idents" => self.apply_grid_edit_cfg(),
             "grid.fk_follow" => self.grid_fk_sync(),
             "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
                 self.apply_click_policy();
@@ -1172,7 +1175,9 @@ impl App {
     }
 
     /// ★ 진행 표시 링(혜성) 전역 스타일(사용자 10-07) → nexa-ctl(모든 TextBox가 상속 · 성능 향상 모드 = `ui.busy_ring` 강제 off).
+    ///   툴팁 기본 자리(`ui.tooltip_above`)도 여기서 같이 전역에(시작 때 한 번).
     pub(crate) fn apply_busy_style(&mut self) {
+        nexa_ctl::set_tooltip_above(self.settings.flag("ui.tooltip_above"));
         let color = self
             .settings
             .get("ui.busy_ring_color")

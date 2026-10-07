@@ -440,6 +440,10 @@ pub(crate) struct Grid {
     menu_click_consumed: bool,
     /// INSERT 복사용 방언(접속 시 호스트가 알려 준다).
     dialect: Dialect,
+    /// 조건 바 열 이름 인용 정책(설정 `editor.quote_idents` · true = 항상).
+    cond_quote_always: bool,
+    /// ★ 열 머리 유형 아이콘(설정 `grid.col_type_icons` · 성능 향상 모드 = 끔 · 사용자 10-07).
+    type_icons: bool,
     /// SQL 복사의 대상 테이블(실행문에서 추정 · 없으면 `T`).
     source_table: Option<String>,
     /// 실행문 원문(새로고침 · 추가 페치 · COUNT의 근거).
@@ -634,6 +638,8 @@ impl Default for Grid {
             sc_all: String::new(),
             menu_click_consumed: false,
             dialect: Dialect::Oracle,
+            cond_quote_always: false,
+            type_icons: false,
             source_table: None,
             source_sql: String::new(),
             countable: false,
@@ -785,9 +791,14 @@ impl Grid {
             auto_fetch: self.auto_fetch,
             edit_cfg: self.edit_cfg.clone(),
             prod: self.prod,
+            // 10-07 bin47 결함: 새 설정은 여기도 함께(안 그러면 새 탭 그리드만 기본값) — 열 이름 인용 · 유형 아이콘.
+            cond_quote_always: self.cond_quote_always,
+            type_icons: self.type_icons,
             ..Grid::default()
         };
         g.set_fast_override(self.fast_override);
+        // 조건 바 설정(펼침 줄 수 · DnD 틀 · 완성 기준)도 물려준다 — 종전엔 기본값과 같아 티가 안 났다.
+        g.cond.copy_cfg_from(&self.cond);
         g
     }
 
@@ -3584,6 +3595,19 @@ impl Grid {
         self.values_scope_others = scope.trim() != "all";
     }
 
+    /// 설정 `grid.col_type_icons` — 열 머리 이름 왼쪽에 유형 아이콘(글/숫자/날짜/참거짓).
+    pub(crate) fn set_type_icons(&mut self, on: bool) {
+        if self.type_icons != on {
+            self.type_icons = on;
+            self.dirty = true;
+        }
+    }
+
+    /// 설정 `editor.quote_idents` — 조건 바에 넣는 열 이름 인용(`always` = 늘 · 아니면 필요할 때만 · `identq`).
+    pub(crate) fn set_cond_quote_always(&mut self, on: bool) {
+        self.cond_quote_always = on;
+    }
+
     /// 설정 `grid.cond_drop_template` — 열 머리 DnD 때 `AND` 연결 + 타입별 기본값.
     pub(crate) fn set_cond_drop_template(&mut self, on: bool) {
         self.cond.set_drop_template(on);
@@ -4678,7 +4702,9 @@ impl Grid {
             return;
         };
         let kind = self.col_kind(ci);
-        if let Some(sql) = cond_pred_sql(&name, kind, what, val.as_deref()) {
+        // 열 이름 인용 = DnD와 **같은 정책**(`identq::quote` · 사용자 10-07 "동일한 기준").
+        let col = crate::identq::quote(self.dialect, &name, self.cond_quote_always);
+        if let Some(sql) = cond_pred_sql(&col, kind, what, val.as_deref()) {
             self.cond.append_condition(&sql);
             self.dirty = true;
         }
@@ -4697,7 +4723,19 @@ impl Grid {
         let kind = self.col_kind(ci);
         let mut f = Vec::new();
         // 값 기준(우클릭한 셀) — 불리언은 참/거짓 항목이 대신한다.
-        if let Some(v) = val.filter(|_| kind != ColKind::Bool) {
+        // ★ 여러 셀을 골랐으면(2행 이상) 그 열의 **선택된 값 N개**를 한꺼번에(사용자 10-07 "이 값만: 3개 선택") = IN / NOT IN.
+        let sel_vals = self.selected_values(ci);
+        if kind != ColKind::Bool && sel_vals.len() > 1 {
+            let n = sel_vals.len().to_string();
+            f.push(CtxItem::item(
+                "filter.eq_sel",
+                tf(Msg::MnFilterEqMany, &[&n]),
+            ));
+            f.push(CtxItem::item(
+                "filter.ne_sel",
+                tf(Msg::MnFilterNeMany, &[&n]),
+            ));
+        } else if let Some(v) = val.filter(|_| kind != ColKind::Bool) {
             f.push(CtxItem::item(
                 "filter.eq",
                 tf(Msg::MnFilterEq, &[&short(v)]),
@@ -5210,6 +5248,37 @@ impl Grid {
     }
 
     /// 우클릭한 셀 → (원본 열, 셀 글) — 필터 메뉴 대상(행번호 칸은 첫 열).
+    /// 선택 구간들이 덮는 **그 열의 값**(표시 순 · 중복 제거 · NULL 제외) — "이 값만/제외: N개 선택"의 재료(사용자 10-07).
+    fn selected_values(&self, ci: usize) -> Vec<String> {
+        let Some(rs) = self.rs.as_ref() else {
+            return Vec::new();
+        };
+        let Some(pos) = self.col_order.iter().position(|&c| c == ci) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        let n = self.rows();
+        for &(r0, r1, c0, c1) in &self.regions {
+            if pos < c0 || pos > c1 || n == 0 {
+                continue;
+            }
+            for di in r0..=r1.min(n - 1) {
+                let Some(&r) = self.row_order.get(di) else {
+                    continue;
+                };
+                if r >= self.src_len() {
+                    continue;
+                }
+                if let Some(v) = cell_opt(rs.cell(r, ci)) {
+                    if !out.iter().any(|x| x == &v) {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn cell_filter_target(&self, cell: (usize, usize)) -> Option<(usize, Option<String>)> {
         let ci = *self.col_order.get(cell.1)?;
         let rs = self.rs.as_ref()?;
@@ -5426,6 +5495,26 @@ impl Grid {
         if what == "clear_col" {
             self.filters.retain(|p| p.col != ci);
             self.apply_sort();
+            return;
+        }
+        // 선택된 값 N개 한꺼번에(사용자 10-07): 1개면 `=`/`<>` · 여럿이면 값 목록 IN / NOT IN.
+        if what == "eq_sel" || what == "ne_sel" {
+            let vals = self.selected_values(ci);
+            if vals.is_empty() {
+                return;
+            }
+            let op = match (what, vals.len()) {
+                ("eq_sel", 1) => FilterOp::Eq,
+                ("eq_sel", _) => FilterOp::In,
+                (_, 1) => FilterOp::Ne,
+                _ => FilterOp::NotIn,
+            };
+            let value = if vals.len() == 1 {
+                vals[0].clone()
+            } else {
+                join_list(&vals)
+            };
+            self.add_filter(ci, op, value);
             return;
         }
         let Some(op) = FilterOp::parse(what) else {
@@ -6265,7 +6354,13 @@ impl Grid {
                             });
                             if let (Some(ci), Some(name)) = (ci, name) {
                                 let numeric = self.col_kind(ci) == ColKind::Number;
-                                self.cond.insert_column(&name, numeric);
+                                // 열 이름 인용 = 조건 메뉴와 같은 정책(`identq::quote`).
+                                let col = crate::identq::quote(
+                                    self.dialect,
+                                    &name,
+                                    self.cond_quote_always,
+                                );
+                                self.cond.insert_column(&col, numeric);
                                 self.dirty = true;
                             }
                         }
@@ -6722,6 +6817,18 @@ impl Grid {
             let filtered_col = self.filter_enabled && self.filters.iter().any(|p| p.col == ci);
             let sort_pos = self.sort_keys.iter().position(|(k, _)| *k == ci);
             let want_funnel = self.want_plain_funnel(ci, filtered_col);
+            // ★ 유형 아이콘(설정 · 사용자 10-07): 이름 **왼쪽** · 깔때기와 같은 크기 · 도형(글꼴 글리프 X · 3-OS 동일) · 흐린 색.
+            let icon_w = if self.type_icons {
+                let g = self.funnel_g();
+                let gap = (g / 3).max(2);
+                let ir = Rect::new(x + pad, header.y + (header.h - g) / 2, g, g);
+                if ir.right() + gap < x + cw - pad {
+                    type_glyph(dc, ir.intersection(&hcells), self.col_kind(ci), th.text_dim);
+                }
+                g + gap
+            } else {
+                0
+            };
             let name_clip = if filtered_col || sort_pos.is_some() || want_funnel {
                 let g = self.funnel_g();
                 let gap = (g / 3).max(2);
@@ -6780,18 +6887,23 @@ impl Grid {
                     dc.fill_triangle(a, b, c, th.accent);
                     used = right - gx;
                 }
-                let need = dc.text_width(&c.name) + pad * 2 + used + gap;
+                let need = dc.text_width(&c.name) + pad * 2 + used + gap + icon_w;
                 if cw < need && need <= hi {
                     grow.push((ci, need));
                 }
-                Rect::new(x, header.y, (cw - pad - used - gap).max(0), header.h)
-                    .intersection(&hcells)
+                Rect::new(
+                    x + icon_w,
+                    header.y,
+                    (cw - pad - used - gap - icon_w).max(0),
+                    header.h,
+                )
+                .intersection(&hcells)
             } else {
-                clip
+                Rect::new(clip.x + icon_w, clip.y, (clip.w - icon_w).max(0), clip.h)
             };
             let hy = dc.text_center_y(header.y, header.h);
             dc.text(
-                x + pad,
+                x + pad + icon_w,
                 hy,
                 name_clip,
                 &c.name,
@@ -7177,6 +7289,8 @@ pub(crate) enum FilterOp {
     Regex,
     /// 값 목록(`a, b, c` · `|`도 구분자) — 하나라도 같으면 통과 · "이 값만"을 반복하면 여기로 모인다.
     In,
+    /// 값 목록 제외(`NOT IN`) — 여러 셀을 고르고 "이 값 제외: N개 선택"(사용자 10-07) · NULL은 통과(`Ne`와 같은 규칙).
+    NotIn,
 }
 
 impl FilterOp {
@@ -7198,6 +7312,7 @@ impl FilterOp {
             FilterOp::NotNull => "notnull",
             FilterOp::Regex => "regex",
             FilterOp::In => "in",
+            FilterOp::NotIn => "notin",
         }
     }
     pub(crate) fn parse(s: &str) -> Option<FilterOp> {
@@ -7217,6 +7332,7 @@ impl FilterOp {
             "notnull" => FilterOp::NotNull,
             "regex" => FilterOp::Regex,
             "in" => FilterOp::In,
+            "notin" => FilterOp::NotIn,
             _ => return None,
         })
     }
@@ -7349,6 +7465,7 @@ fn pred_text(p: &Predicate) -> String {
         FilterOp::Between => tf(Msg::TipFilterBetween, &[&p.value]),
         FilterOp::Regex => tf(Msg::TipFilterRegex, &[&p.value]),
         FilterOp::In => tf(Msg::TipFilterIn, &[&p.value]),
+        FilterOp::NotIn => tf(Msg::TipFilterNotIn, &[&p.value]),
         FilterOp::IsTrue => t(Msg::MnFilterTrue).to_string(),
         FilterOp::IsFalse => t(Msg::MnFilterFalse).to_string(),
         FilterOp::IsNull => t(Msg::MnFilterNull).to_string(),
@@ -7487,7 +7604,7 @@ impl Predicate {
             return !matches!(v, Value::Null);
         }
         if matches!(v, Value::Null) {
-            return matches!(self.op, FilterOp::Ne);
+            return matches!(self.op, FilterOp::Ne | FilterOp::NotIn);
         }
         match self.op {
             FilterOp::Regex => self
@@ -7495,6 +7612,15 @@ impl Predicate {
                 .as_ref()
                 .is_some_and(|rx| rx.is_match(&cell_text(v, ""))),
             FilterOp::In => split_list(&self.value).into_iter().any(|one| {
+                Predicate {
+                    op: FilterOp::Eq,
+                    value: one,
+                    rx: None,
+                    ..self.clone()
+                }
+                .pass_value(v)
+            }),
+            FilterOp::NotIn => !split_list(&self.value).into_iter().any(|one| {
                 Predicate {
                     op: FilterOp::Eq,
                     value: one,
@@ -7600,6 +7726,14 @@ impl Predicate {
                     "1=1".to_string()
                 } else {
                     format!("{c} IN ({})", join_list(&items))
+                }
+            }
+            FilterOp::NotIn => {
+                let items: Vec<String> = split_list(&self.value).iter().map(|s| lit(s)).collect();
+                if items.is_empty() {
+                    "1=1".to_string()
+                } else {
+                    format!("{c} NOT IN ({})", join_list(&items))
                 }
             }
             // 정규식은 방언·값 목록이 필요해 [`Grid::regex_sql`]이 만든다.
@@ -7732,6 +7866,45 @@ fn funnel_contains(r: Rect, px: f32, py: f32) -> bool {
 
 /// 깔때기 — 위가 넓은 **사다리꼴 컵**(위 폭 g · 아래 폭 = 꼭지 폭 · 높이 55 %) + 아래로 내려오는 꼭지. 도형으로(글꼴 글리프 X ·
 /// 3-OS 동일) · `r` = 정사각형 자리. 삼각형 하나로 그리면 작은 크기에서 `T`처럼 보였다(협업 V1 10-06).
+/// ★ 열 유형 아이콘(설정 `grid.col_type_icons` · 사용자 10-07 "구글 머티리얼·VS Code 모양") — 도형으로 그린다(글꼴 글리프 X · 3-OS 동일 ·
+/// 크기 = 깔때기): 글 = `short_text`(긴 줄 + 짧은 줄) · 숫자 = `tag`(`#`) · 날짜 = `calendar_today`(상자 + 머리 띠 + 고리 2) ·
+/// 참/거짓 = `check_box`(상자 + 체크). 획 두께 = 크기/6(최소 1).
+fn type_glyph(dc: &mut dyn DrawCtx, r: Rect, kind: ColKind, color: nexa_ctl::Color) {
+    let g = r.w.max(4);
+    let t = (g / 6).max(1);
+    match kind {
+        ColKind::Text => {
+            dc.fill_rect(Rect::new(r.x, r.y + g / 3 - t / 2, g, t), color);
+            dc.fill_rect(
+                Rect::new(r.x, r.y + g * 2 / 3 - t / 2, (g * 2 / 3).max(2), t),
+                color,
+            );
+        }
+        ColKind::Number => {
+            let (a, b) = (g / 3, g * 2 / 3);
+            dc.fill_rect(Rect::new(r.x + a - t / 2, r.y, t, g), color);
+            dc.fill_rect(Rect::new(r.x + b - t / 2, r.y, t, g), color);
+            dc.fill_rect(Rect::new(r.x, r.y + a - t / 2, g, t), color);
+            dc.fill_rect(Rect::new(r.x, r.y + b - t / 2, g, t), color);
+        }
+        ColKind::Date => {
+            dc.stroke_round_rect(Rect::new(r.x, r.y + t, g, (g - t).max(2)), 1, color, 1.0);
+            dc.fill_rect(Rect::new(r.x, r.y + t, g, t), color);
+            dc.fill_rect(Rect::new(r.x + g / 4 - t / 2, r.y, t, t * 2), color);
+            dc.fill_rect(Rect::new(r.x + g * 3 / 4 - t / 2, r.y, t, t * 2), color);
+        }
+        ColKind::Bool => {
+            dc.stroke_round_rect(r, 1, color, 1.0);
+            let pts = [
+                (r.x + g / 5, r.y + g / 2),
+                (r.x + g * 2 / 5, r.y + g * 3 / 4),
+                (r.x + g * 4 / 5, r.y + g / 4),
+            ];
+            dc.polyline(&pts, color, t as f32);
+        }
+    }
+}
+
 fn funnel_glyph(dc: &mut dyn DrawCtx, r: Rect, color: nexa_ctl::Color) {
     let g = r.w.max(6);
     let cup_h = (g * 55 / 100).max(3);
@@ -7747,15 +7920,16 @@ fn funnel_glyph(dc: &mut dyn DrawCtx, r: Rect, color: nexa_ctl::Color) {
 }
 
 /// 처음 나온 순서를 지키는 distinct — 해시 집합 O(n) · `cap`+1개가 모이면 멈춘다(상한 초과를 알 수 있게 · 사용자 09-30). 순수.
-/// 조건 ▸ 메뉴의 술어 글(순수 · 사용자 10-07): 열은 `"COL"`(`q.` 없이 — 조건 바 검증이 결과 열 이름으로 확인한다) · 값은 숫자 열이고
-/// 숫자로 읽히면 그대로, 아니면 `'…'`(`'` 두 번) · LIKE 세 가지는 글자 그대로(와일드카드 이스케이프는 하지 않는다 = 필터와 같음).
+/// 조건 ▸ 메뉴의 술어 글(순수 · 사용자 10-07): `col`은 **이미 인용 정책을 거친** 열 글(`identq::quote` · `q.` 없이 — 조건 바 검증이 결과 열
+/// 이름으로 확인한다) · 값은 숫자 열이고 숫자로 읽히면 그대로, 아니면 `'…'`(`'` 두 번) · LIKE 세 가지는 글자 그대로(와일드카드 이스케이프는
+/// 하지 않는다 = 필터와 같음).
 pub(crate) fn cond_pred_sql(
     col: &str,
     kind: ColKind,
     op: &str,
     value: Option<&str>,
 ) -> Option<String> {
-    let c = format!("\"{}\"", col.replace('"', "\"\""));
+    let c = col;
     let esc = |v: &str| v.replace('\'', "''");
     let lit = |v: &str| -> String {
         if kind == ColKind::Number && v.trim().replace(',', "").parse::<f64>().is_ok() {
@@ -8086,6 +8260,25 @@ mod tests {
         g.set_result(rs);
         g.set_filter_pick_max(5);
         assert_eq!(g.column_values(0), ["b", "a", "c"]);
+        // ★ 여러 셀 선택(행 0~2 · 열 0) → "이 값만: N개" = IN(b, a) · "이 값 제외" = NOT IN · NULL은 제외 쪽에서 통과.
+        g.regions = vec![(0, 2, 0, 0)];
+        assert_eq!(
+            g.selected_values(0),
+            ["b", "a"],
+            "표시 순 · 중복 없음 · NULL 제외"
+        );
+        g.menu_cell = Some((0, Some("b".into())));
+        g.filter_pick("eq_sel");
+        assert_eq!(g.filters[0].op, FilterOp::In);
+        assert_eq!(g.row_order, vec![0, 2, 3]);
+        g.filters.clear();
+        g.apply_sort();
+        g.filter_pick("ne_sel");
+        assert_eq!(g.filters[0].op, FilterOp::NotIn);
+        assert_eq!(g.row_order, vec![1, 4], "b·a 제외 = NULL 행 + c");
+        g.filters.clear();
+        g.apply_sort();
+        g.regions.clear();
         g.menu_cell = Some((0, None));
         g.filter_pick("pick:0"); // b
         assert_eq!(g.row_order, vec![0, 3]);
@@ -8352,10 +8545,25 @@ mod tests {
         assert!(!hard.needs_value_list(Dialect::Postgres));
     }
 
+    /// `fresh_like` = 새 탭 그리드가 설정을 **전부** 물려받는다(10-07 bin47 결함: 인용 정책·유형 아이콘이 기본값으로).
+    #[test]
+    fn fresh_like_keeps_new_settings() {
+        let mut g = grid_with(&[1]);
+        g.set_type_icons(true);
+        g.set_cond_quote_always(true);
+        g.set_cond_max_lines(7);
+        g.set_cond_drop_template(false);
+        let f = g.fresh_like();
+        assert!(f.type_icons && f.cond_quote_always);
+        assert_eq!(f.cond.max_lines_for_test(), 7);
+        assert!(!f.cond.drop_template_for_test());
+    }
+
     /// distinct 상한(사용자 09-30): 처음 나온 순서 · cap+1개에서 멈춤.
     #[test]
     fn cond_pred_sql_rules() {
-        let t = |op, v: Option<&str>| cond_pred_sql("ITEM_CD", ColKind::Text, op, v);
+        // 열 글은 호출자가 인용 정책을 거쳐 준다(`identq::quote`) — 여기서는 `"ITEM_CD"`를 그대로 받는다.
+        let t = |op, v: Option<&str>| cond_pred_sql("\"ITEM_CD\"", ColKind::Text, op, v);
         assert_eq!(
             t("eq", Some("O'Neil")).as_deref(),
             Some("\"ITEM_CD\" = 'O''Neil'")
@@ -8381,13 +8589,19 @@ mod tests {
         assert!(t("eq", None).is_none(), "값 없는 = 는 없음");
         assert_eq!(
             cond_pred_sql("QTY", ColKind::Number, "eq", Some("1,200")).as_deref(),
-            Some("\"QTY\" = 1200"),
-            "숫자 열 = 숫자 리터럴"
+            Some("QTY = 1200"),
+            "숫자 열 = 숫자 리터럴 · 열 글은 받은 그대로"
         );
         assert_eq!(
-            cond_pred_sql("a\"b", ColKind::Text, "null", None).as_deref(),
+            cond_pred_sql(
+                &crate::identq::quote(nsql_core::Dialect::Oracle, "a\"b", false),
+                ColKind::Text,
+                "null",
+                None
+            )
+            .as_deref(),
             Some("\"a\"\"b\" IS NULL"),
-            "식별자 따옴표 두 번"
+            "정책을 거친 열 = 식별자 따옴표 두 번"
         );
     }
 

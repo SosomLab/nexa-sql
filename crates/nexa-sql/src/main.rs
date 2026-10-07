@@ -17,6 +17,7 @@ mod bookmarks_panel;
 mod clipboard;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod clipboard_x11;
+mod identq;
 
 /// 설정 `clipboard.x11_native`의 사본 — 클립보드 함수는 `&self` 없이 불리므로 전역에 둔다(input.rs `NATURAL`과 같은 꼴).
 static CLIP_NATIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);

@@ -338,6 +338,11 @@ const TX_IDLE_ACTION_OPTS: &[(&str, Msg)] = &[
     ("commit", Msg::ValTxIdleCommit),
 ];
 /// 저장하지 않은 탭을 닫을 때.
+/// 조건 바 열 이름 인용(사용자 10-07): needed = 필요할 때만(특수문자·숫자 시작·예약어·대소문자 접힘 규칙 위반) · always = 늘.
+const QUOTE_IDENTS_OPTS: &[(&str, Msg)] = &[
+    ("needed", Msg::ValQuoteNeeded),
+    ("always", Msg::ValQuoteAlways),
+];
 const CLOSE_UNSAVED_OPTS: &[(&str, Msg)] =
     &[("ask", Msg::ValCloseAsk), ("twice", Msg::ValCloseTwice)];
 const SELECT_ALL_OPTS: &[(&str, Msg)] = &[
@@ -2048,6 +2053,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // ★ 열 머리 깔때기 표시 방법(T-181 후속 · 10-06 · 77 §2-2): 항상 · 머리 위 마우스 오버 · 없음(우클릭 메뉴로만).
+    // ★ 열 머리 유형 아이콘(사용자 10-07): 글/숫자/날짜/참거짓 · 깔때기 크기 · 성능 향상 모드 = 끔(헤더 그리기 비용).
+    Entry {
+        key: "grid.col_type_icons",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridColTypeIcons,
+        desc: Msg::DescGridColTypeIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "grid.filter_funnel",
         cat: Msg::CatGridFilter,
@@ -2334,6 +2348,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     // ★ 진행 표시 링(혜성 · 사용자 10-07 "모든 검색에 · 컨트롤 속성 · 사용/두께/색/유지시간 설정 · 성능 향상 모드에서 끔"): 전역 스타일 → nexa-ctl.
+    // ★ 툴팁 자리(사용자 10-07): 기본 = 항목 위(읽는 방향 · 다음 줄을 가리지 않게) · 끄면 아래.
+    Entry {
+        key: "ui.tooltip_above",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTooltipAbove,
+        desc: Msg::DescTooltipAbove,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.busy_ring",
         cat: Msg::CatAppearance,
@@ -3383,6 +3406,15 @@ pub const REGISTRY: &[Entry] = &[
     },
     // 필터 열거 워커 스레드 수(사용자 09-23 "별도 스레드 · 분할 병렬" · 39 §3 부하원) — 0 = 코어 수/2.
     // ★ D-259/260(10-07 · 105 §3): 색인·검색에서 건너뛸 폴더 이름(쉼표) — 빌드 산출물·VCS가 열거의 대부분(협업 실측 target/ 수십만).
+    // ★ 파일 색인 TTL(T-299 ③ · 10-07): 이 시간 안에 다시 열면 재열거 생략 · 0 = 열 때마다 · 앱이 아는 변경(새 파일 저장 · 제외 변경)은 즉시 낡음.
+    Entry {
+        key: "project.index_ttl_secs",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectIndexTtl,
+        desc: Msg::DescProjectIndexTtl,
+        kind: SettingKind::Int { min: 0, max: 3600 },
+        default: "60",
+    },
     Entry {
         key: "project.exclude",
         cat: Msg::CatProject,
@@ -4717,6 +4749,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTxLockWait,
         kind: SettingKind::Int { min: 0, max: 3600 },
         default: "0",
+    },
+    // ★ 식별자 인용 정책(사용자 10-07 "항상 감쌀지 필요할 때만인지 편집기 설정에 · 두 경로 동일 기준 · DBMS별 표현").
+    Entry {
+        key: "editor.quote_idents",
+        cat: Msg::CatEditor,
+        label: Msg::LblQuoteIdents,
+        desc: Msg::DescQuoteIdents,
+        kind: SettingKind::Choice(QUOTE_IDENTS_OPTS),
+        default: "needed",
     },
     Entry {
         key: "editor.close_unsaved",

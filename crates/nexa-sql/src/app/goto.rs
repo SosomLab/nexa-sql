@@ -7,8 +7,6 @@
 use crate::*;
 use std::sync::atomic::Ordering;
 
-/// 프로젝트 폴더 파일 캐시 수명(초) — 그 안에 다시 열면 열거를 생략한다.
-const GOTO_CACHE_SECS: u64 = 60;
 /// `%` 빠른 검색이 보는 최대 줄 수(큰 파일 모드는 아예 비움).
 const GOTO_DOC_LINES_MAX: usize = 50_000;
 
@@ -229,7 +227,11 @@ impl App {
         let stale = self.goto_files_key != folders
             || self
                 .goto_files_at
-                .is_none_or(|t| t.elapsed().as_secs() >= GOTO_CACHE_SECS);
+                // TTL = 설정 `project.index_ttl_secs`(60 · 0 = 열 때마다 · T-299 ③).
+                .is_none_or(|t| {
+                    let ttl = self.settings.int("project.index_ttl_secs").max(0) as u64;
+                    ttl == 0 || t.elapsed().as_secs() >= ttl
+                });
         if !stale || self.goto_walk.is_some() {
             return;
         }
@@ -248,6 +250,12 @@ impl App {
         };
         let threads = self.settings.int("project.scan_threads").clamp(0, 16) as usize;
         self.goto_walk = Some(parwalk::spawn(folders, opts, threads));
+    }
+
+    /// 파일 색인을 낡음으로(T-299 ① · 사용자 10-07 "색인을 써도 최근 변경이 보여야"): 앱이 아는 변경(새 파일 저장 · 제외 규칙 변경 ·
+    /// 폴더 변경) 직후 호출 — 다음 Ctrl+P/필터 열기 때 재열거(이중 버퍼라 옛 목록은 그동안 그대로 보인다).
+    pub(crate) fn goto_index_invalidate(&mut self) {
+        self.goto_files_at = None;
     }
 
     /// 열거 결과 수거(틱) — 파일만 모으고(`project.scan_max` 0 = 무제한) 팔레트가 Goto 모드로 열려 있으면 목록을 바꾼다. 돌려주는 값 = 다시 그릴 것.

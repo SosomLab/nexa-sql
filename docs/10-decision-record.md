@@ -380,13 +380,13 @@
 | D-253 | 서버 헤더 = `호스트:포트 (제품 버전 - 로그인)` · 전 방언 같은 틀 — 권장안으로 진행 | 🚧 권장안 진행 | 101-mssql-ssms-explorer-databases-layer.md:101 §6 · journal/2026-09-30.md:130 |
 | D-254 | SQL Server 선언 없는 변수의 서버 타입 보존 — 처음 값을 받는 `Auto` 변수를 `NVARCHAR(4000)`이 아니라 **`sql_variant`**로 선언 + 꼬리 행 `[이름$type]`으로 타입 복원(T-162 ⑤) · 기본값 변경(한 줄 고지) · 한계 = `(n)varchar(max)`·`xml`·`text` 값은 못 받음(종전 = 4000자 절단 · 지금 = 서버 오류) → `VARIABLE v VARCHAR2(8000)` 선언으로 우회 · 번호 = 16 §2-9 규칙 첫 적용(저장소 전체 grep 뒤 D-254) (10-05) | 🚧 권장안 진행 | journal/2026-10-05.md §17 · 63 §3-1 · TODO T-162 |
 | D-255 | 결과 그리드 **필터 칩 줄 `grid.filter_strip` 기본 off** — 조건 바(인라인 조건 입력란)가 결과 그리드 위 기본 자리 · 칩 줄은 켰을 때만 **조건 바 아래 두 번째 줄**(필터가 있을 때만) · 개별 필터 제거는 열 머리 우클릭 메뉴 · 값 목록 팝업([필터 해제]) · 빗금 깔때기로 대신 · 숨김 비용 0 · 기본값 변경(사용자 10-06 "조건 바 밑에 필터 바가 보이는 개념으로 on 시키면 보이도록") (10-06) | ✅ 확정(사용자) | journal/2026-10-06.md §11 · journal/2026-10-07.md §1 · 위키 Data-Editing · 94 §6-6 |
-| D-256 | 결과 필터 **값 목록 상한 폐지** → 가져온 행 전부(인덱스) · 상한은 서버 길에만(`grid.filter_server_values_max` 1,000) · 메뉴 판 `filter_pick_max` 30 유지 (10-07) | ⏳ 결정 대기(권장안 = 한 줄 고지 뒤 진행) | 103-filter-values-and-fetch-under-filter.md · T-284 · journal/2026-10-07.md §6 |
-| D-257 | 부분 결과(페치 중) + 필터 = **서버 승격** 기본 — `grid.filter_server` auto/local/ask · 기본 auto (10-07) | ⏳ 결정 대기(권장안 = 한 줄 고지 뒤 진행) | 103-filter-values-and-fetch-under-filter.md · T-285 |
-| D-258 | 로컬 폴백 = **3페이지 채움 뒤 수동**(`grid.filter_fill_pages` 3) (10-07) | ⏳ 결정 대기(권장안 = 한 줄 고지 뒤 진행) | 103-filter-values-and-fetch-under-filter.md · T-285 |
-| D-259 | 프로젝트 파일 열거 기본 제외 = `.git` `.svn` `.hg` `node_modules` `target` `.nsql` + 최상위 `.gitignore` (10-07) | ⏳ 결정 대기(권장 = 채택) | 105-fast-file-enumeration-survey.md §5 · T-290 |
-| D-260 | 제외 설정 `project.exclude` 하나를 Goto · 파일 검색 · 프로젝트 탐색기가 공용 (10-07) | ⏳ 결정 대기(권장 = 공용) | 105-fast-file-enumeration-survey.md §5 · T-290 |
-| D-261 | 디스크 색인 캐시 (10-07) | ⏳ 결정 대기(권장 = 보류 · 100k까지 열거 충분) | 105-fast-file-enumeration-survey.md §3-3 |
-| D-262 | Windows `FileIdBothDirectoryInfo` 대량 열거 어댑터 (10-07) | ⏳ 결정 대기(권장 = 보류 · 콜드·네트워크 측정 뒤) | 105-fast-file-enumeration-survey.md §3-3 · T-294 |
+| D-256 | 결과 필터 **값 목록 상한 폐지** → 가져온 행 전부(인덱스) · 상한은 서버 길에만(`grid.filter_server_values_max` 1,000) · 메뉴 판 `filter_pick_max` 30 유지 (10-07) | ✅ 사용자 10-07 저녁 = 권장안 채택(가져온 행 전부 · "권장으로 끝까지 개발") | 103-filter-values-and-fetch-under-filter.md · T-284 · journal/2026-10-07.md §6 |
+| D-257 | 부분 결과(페치 중) + 필터 = **서버 승격** 기본 — `grid.filter_server` auto/local/ask · 기본 auto (10-07) | ✅ 사용자 10-07 저녁 = 권장안(기본 auto · 서버 재조회) | 103-filter-values-and-fetch-under-filter.md · T-285 |
+| D-258 | 로컬 폴백 = **3페이지 채움 뒤 수동**(`grid.filter_fill_pages` 3) (10-07) | ✅ 사용자 10-07 저녁 = 권장안(로컬 = 3페이지 채움 뒤 멈춤) | 103-filter-values-and-fetch-under-filter.md · T-285 |
+| D-259 | 프로젝트 파일 열거 기본 제외 = `.git` `.svn` `.hg` `node_modules` `target` `.nsql` + 최상위 `.gitignore` (10-07) | ✅ 사용자 10-07 저녁 = 확정(이미 기본값) | 105-fast-file-enumeration-survey.md §5 · T-290 |
+| D-260 | 제외 설정 `project.exclude` 하나를 Goto · 파일 검색 · 프로젝트 탐색기가 공용 (10-07) | ✅ 사용자 10-07 저녁 = 파일 검색(Ctrl+Shift+F)에도 동일하게 제외 | 105-fast-file-enumeration-survey.md §5 · T-290 |
+| D-261 | 디스크 색인 캐시 (10-07) | ✖ 사용자 10-07 저녁 = 하지 않음(제외) | 105-fast-file-enumeration-survey.md §3-3 |
+| D-262 | Windows `FileIdBothDirectoryInfo` 대량 열거 어댑터 (10-07) | ✖ 사용자 10-07 저녁 = 하지 않음(제외) | 105-fast-file-enumeration-survey.md §3-3 · T-294 |
 | D-263 | 폴더 감시 포트 `DirWatch`(3-OS 어댑터 · 상한 넘으면 폴링) (10-07) | ⏳ 결정 대기(권장 = 단계 2로 채택) | 105-fast-file-enumeration-survey.md §3-3 · T-293 |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |

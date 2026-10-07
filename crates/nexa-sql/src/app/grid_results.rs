@@ -369,6 +369,9 @@ impl App {
             .unwrap_or("always")
             .to_string();
         self.all_grids().for_each(|g| g.set_filter_funnel(&funnel));
+        // 열 머리 유형 아이콘(사용자 10-07 · 성능 향상 모드 = BOOST off).
+        let ticons = self.settings.flag("grid.col_type_icons");
+        self.all_grids().for_each(|g| g.set_type_icons(ticons));
         let values_max = self.settings.int("grid.filter_values_max").clamp(20, 5000) as usize;
         self.all_grids()
             .for_each(|g| g.set_filter_values_max(values_max));
@@ -386,6 +389,9 @@ impl App {
         self.all_grids().for_each(|g| g.set_condition_bar(cond));
         let tpl = self.settings.flag("grid.cond_drop_template");
         self.all_grids().for_each(|g| g.set_cond_drop_template(tpl));
+        // 열 이름 인용 정책(사용자 10-07 · DnD·조건 메뉴 공통).
+        let qa = self.settings.get("editor.quote_idents") == Some("always");
+        self.all_grids().for_each(|g| g.set_cond_quote_always(qa));
         let lines = self.settings.int("grid.cond_max_lines").clamp(2, 12) as usize;
         self.all_grids().for_each(|g| g.set_cond_max_lines(lines));
         // 조건 바 완성 = 편집기 인텔리센스와 같은 기준(사용자 10-07).

@@ -1566,6 +1566,15 @@ impl ProjectPanel {
                 return false;
             }
         }
+        // ★ 필터 틀의 팝업(이력 드롭다운 · 편집 메뉴)이 떠 있으면 마우스는 틀이 먼저(목록 행 위에 겹쳐 그려짐 · 사용자 10-07 "클릭으로
+        //   검색어가 안 들어감") · 바깥 누름은 닫고 아래로 통과(팝업 UX 규칙 · 객체 탐색기와 같은 규칙).
+        if self.name.is_some() && self.filter.popup_takes(ev) {
+            let fe = self.filter.on_event(ev, &mut inv);
+            self.on_filter_event(fe);
+            if self.filter.popup_keeps(ev) {
+                return true;
+            }
+        }
         // 열린 파일 rect = 지금 스크롤 기준(목록과 한 스크롤).
         self.relayout_open_rows();
         if self.name.is_some() {

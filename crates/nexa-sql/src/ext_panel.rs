@@ -229,6 +229,15 @@ impl ExtPanel {
             return false;
         }
         let mut inv = Invalidations::default();
+        // ★ 검색 틀 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
+        if self.search.popup_takes(ev) {
+            if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
+                self.scroll = 0;
+            }
+            if self.search.popup_keeps(ev) {
+                return true;
+            }
+        }
         match *ev {
             InputEvent::MouseMove { x, y } => {
                 // 검색 틀 토글 hover.

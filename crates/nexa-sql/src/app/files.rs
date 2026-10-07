@@ -937,9 +937,13 @@ impl App {
                 self.ext_track_active();
                 self.git.refresh(true);
                 self.push_recent(path);
-                // 새 파일이 생겼을 수 있다 — 프로젝트 탐색기의 펼친 폴더를 다시 열거.
+                // 새 파일이 생겼을 수 있다 — 프로젝트 탐색기의 펼친 폴더를 다시 열거 · Ctrl+P/필터 **파일 색인**도 낡음(색인에 없는 경로일 때 ·
+                //   T-299 ① · 사용자 10-07 "색인을 써도 최근 변경이 보여야").
                 if self.project_panel.is_visible() {
                     self.project_panel.refresh();
+                }
+                if !self.goto_files.iter().any(|p| p == path) {
+                    self.goto_index_invalidate();
                 }
                 let name = path
                     .file_name()
