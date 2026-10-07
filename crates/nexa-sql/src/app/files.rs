@@ -943,11 +943,20 @@ impl App {
                 if self.project_panel.is_visible() {
                     let sh = self.settings.flag("file.show_hidden");
                     let sd = self.settings.flag("file.show_dot");
-                    if path
+                    if let Some(dir) = path
                         .parent()
-                        .is_some_and(|d| self.project_panel.dir_children_differ(d, sh, sd))
+                        .filter(|d| self.project_panel.dir_children_differ(d, sh, sd))
                     {
                         self.project_panel.refresh();
+                        // 앱 안 저장으로 생긴 구조 변화도 "폴더 변경 반영: <폴더>"(감시 사건 경로와 같은 글 · 협업 연기 S90).
+                        let name = dir
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let hold = self.settings.int("ui.flash_hold_ms").clamp(0, 30_000) as u64;
+                        let fade = self.settings.int("ui.flash_ms").clamp(200, 30_000) as u64;
+                        self.project_panel
+                            .flash(tf(Msg::ProjReidxApplied, &[&name]), hold, fade);
                     }
                 }
                 if !self.goto_files.iter().any(|p| p == path) {

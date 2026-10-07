@@ -410,7 +410,7 @@ Set-Content -LiteralPath $a -Encoding UTF8 -Value "-- file a`nSELECT 1;"
 $delFile = Join-Path $DataDir "s84_delete_me.sql"
 Set-Content -LiteralPath $delFile -Encoding UTF8 -Value "SELECT 'delete me';"
 $s84tabs = Join-Path $Out "s84_tabs.txt"
-Run-Scenario -Id S84 -Title "삭제된 파일 탭 = 진빨강 ● · 닫기 확인 팝업이 띠 위(115-8)" -Cmd ("open:" + $delFile + ",@after:1200:fs.delete:" + $delFile + ",@after:4200:tabs.dump:" + $s84tabs + ",@after:4400:file.close_tab") -Conf "file.external_poll_ms=500`n" -WaitMs 5200 -Expect "빨간 띠 '파일이 디스크에서 삭제되었습니다 …' · 탭 줄·점 진빨강 · 탭 닫기 → '저장하고 닫기/변경 버리고 닫기/취소' 메뉴가 띠 **위**에 그려짐 · 파일 검사 deleted=true unsaved=true"
+Run-Scenario -Id S84 -Title "삭제된 파일 탭 = 진빨강 ● · 닫기 확인 팝업이 띠 위(115-8)" -Cmd ("open:" + $delFile + ",open:" + $a + ",@after:1200:fs.delete:" + $delFile + ",@after:2200:tab.prev,@after:4200:tabs.dump:" + $s84tabs + ",@after:4400:file.close_tab") -Conf "file.external_poll_ms=500`n" -WaitMs 5200 -Expect "빨간 띠 '파일이 디스크에서 삭제되었습니다 …' · 탭 줄·점 진빨강 · 탭 닫기 → '저장하고 닫기/변경 버리고 닫기/취소' 메뉴가 띠 **위**에 그려짐 · 파일 검사 deleted=true unsaved=true"
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S84")) {
     $t = if (Test-Path -LiteralPath $s84tabs) { Get-Content -LiteralPath $s84tabs -Raw } else { "" }
     Say ("  file: " + (($t -split "`n" | Where-Object { $_ -match "s84_delete_me" }) -join " "))
@@ -437,6 +437,15 @@ if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains 
 }
 # 확장 뷰 탭 = 세션 표식 없음(기본 숨김 `extensions.tab_badge=off`) · 켜면 표식.
 $s87tabs = Join-Path $Out "s87_tabs.txt"
+# 확장 설치본 = <홈>/extensions/<id>/installed.json + <id>/<버전>/extension.json(+wasm) — 매니저 `installed_in`/`installed_meta_in` 규약.
+$extSrc = Join-Path $root "extensions\rainbow-pairs"
+$extMeta = Get-Content -LiteralPath (Join-Path $extSrc "extension.json") -Raw
+$extVer = if ($extMeta -match '"version":\s*"([^"]+)"') { $Matches[1] } else { "1.1.1" }
+$extRoot = Join-Path $HomeDir "extensions\rainbow-pairs"
+New-Item -ItemType Directory -Path (Join-Path $extRoot $extVer) -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $extSrc "extension.json") -Destination (Join-Path $extRoot ($extVer + "\extension.json")) -Force
+if (Test-Path -LiteralPath (Join-Path $extSrc "rainbow_pairs.wasm")) { Copy-Item -LiteralPath (Join-Path $extSrc "rainbow_pairs.wasm") -Destination (Join-Path $extRoot ($extVer + "\rainbow_pairs.wasm")) -Force }
+Set-Content -LiteralPath (Join-Path $extRoot "installed.json") -Encoding UTF8 -Value ("{`n  `"format`": 1,`n  `"id`": `"rainbow-pairs`",`n  `"name`": `"Rainbow Pairs`",`n  `"version`": `"" + $extVer + "`",`n  `"kind`": `"wasm`",`n  `"placed`": []`n}`n")
 Run-Scenario -Id S87 -Title "확장 뷰 탭 = 세션 표식 숨김(기본)(115-8 · extensions.tab_badge)" -Cmd ("view.extensions,@after:1500:ext.view:rainbow-pairs,@after:2800:tabs.dump:" + $s87tabs) -Conf "extensions.enabled=on`n" -WaitMs 3800 -Expect "탭 'Extension: Rainbow Pairs' 앞에 플러그 표식 없음(제목만 · Script_1 탭은 미연결 사선 그대로) · 뷰 본문 = 확장 상세 · 파일 검사 view=true unsaved=false"
 Run-Scenario -Id S88 -Title "확장 뷰 탭 = 표식 켬(extensions.tab_badge=on)(115-8)" -Cmd "view.extensions,@after:1500:ext.view:rainbow-pairs" -Conf "extensions.enabled=on`nextensions.tab_badge=on`n" -WaitMs 3500 -Expect "탭 'Extension: Rainbow Pairs' 앞에 미연결 표식(사선 플러그) 보임"
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S87")) {
@@ -462,7 +471,7 @@ Set-Content -LiteralPath $csvImp -Encoding UTF8 -Value "id,name`n1,a`n2,b"
 Run-Scenario -Id S93 -Title "기동 명령 @after → Import 창 열림(T-305)" -Cmd ("@after:1200:import.open:t_s93;" + $csvImp) -WaitMs 4500 -Expect "창 2 = 메인 + Import Data(표 t_s93 · 파일 s93_import.csv · 미리보기 2행)"
 # T-285 부분 결과 + 필터 = 서버 승격(grid.filter_server=auto · 상한 200 < 500행) → grid.dump 둘째 줄 페치 진단.
 $s94dump = Join-Path $Out "s94_grid.txt"
-Run-Scenario -Id S94 -Title "부분 결과 + 필터 = 서버 승격 · 승격 뒤 필터 해제 = 복귀(T-285)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:grid.addfilter:0;>;400,@after:5500:grid.dump:" + $s94dump) -WaitMs 6200 -Expect "결과 200행 상한에 걸린 부분 결과 → 필터(id > 400) = 서버 재조회로 승격(결과 100행 · 조건 바/칩에 조건) · 파일 검사 둘째 줄 fetch 진단에 promoted/server"
+Run-Scenario -Id S94 -Title "부분 결과 + 필터 = 서버 승격 · 승격 뒤 필터 해제 = 복귀(T-285)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:grid.addfilter:0;gt;400,@after:5500:grid.dump:" + $s94dump) -WaitMs 6200 -Expect "결과 200행 상한에 걸린 부분 결과 → 필터(id > 400) = 서버 재조회로 승격(결과 100행 · 조건 바/칩에 조건) · 파일 검사 둘째 줄 fetch 진단에 promoted/server"
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S94")) {
     $t = if (Test-Path -LiteralPath $s94dump) { (Get-Content -LiteralPath $s94dump -TotalCount 3) -join " ¦ " } else { "" }
     Say ("  file: " + $t)
