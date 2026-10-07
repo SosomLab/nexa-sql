@@ -135,6 +135,8 @@ pub(crate) struct Editors {
     preview: Option<u64>,
     line_numbers: bool,
     tooltip_on: bool,
+    /// 툴팁의 "저장" 줄 캐시 = (탭 번호, 머무름 시작, 글) — hover당 파일 mtime을 한 번만 읽는다(10-07).
+    tip_saved: std::cell::RefCell<Option<(usize, Instant, String)>>,
     /// (탭 index · 머문 시작) — 1초 뒤 카드.
     hover: Option<(usize, Instant)>,
     cursor: (i32, i32),
@@ -287,6 +289,7 @@ impl Editors {
             preview: None,
             line_numbers,
             tooltip_on,
+            tip_saved: std::cell::RefCell::new(None),
             hover: None,
             cursor: (0, 0),
             conn_desc: String::new(),
@@ -1565,7 +1568,7 @@ impl Editors {
             .iter()
             .find(|(_, k)| k.as_str() == key)
             .and_then(|(id, _)| self.index_of_id(*id));
-        match found {
+        let created = match found {
             Some(i) => {
                 self.switch(i);
                 if self.titles[i] != title {
@@ -1580,7 +1583,19 @@ impl Editors {
                 self.view_tabs.insert(id, key.to_string());
                 true
             }
+        };
+        // ★ 뷰 탭 본문은 늘 비어 있고 **읽기 전용**(사용자 10-07 "확장 탭에 SQL이 저장돼 있음" = 상세 데이터가 없는 순간 일반 편집기로
+        //   그려져 붙여 넣기가 들어갔다) — 들어온 글은 비우고 저장 상태로(닫을 때 묻지 않게).
+        let i = self.active;
+        if let Some(tb) = self.bufs.get_mut(i) {
+            tb.set_read_only(false);
+            if !tb.text().is_empty() {
+                tb.set_text("");
+            }
+            tb.mark_saved();
         }
+        self.set_read_only(i, true);
+        created
     }
 
     /// 탭 `i`가 뷰 탭이면 그 열쇠(`ext:<id>` …) — 프로젝트 파일에 저장해 다시 열 때 같은 뷰로 복원(사용자 09-30).
@@ -2606,6 +2621,26 @@ impl Editors {
             t(Msg::PalSetSyntax),
             self.syntax.get(i).map(|s| s.name.as_str()).unwrap_or("")
         ));
+        // ★ 최근 저장 일시(ms까지 · 사용자 10-07) = 파일 mtime(앱 저장·외부 저장 모두) · 미저장 탭 = `-` · hover당 한 번만 읽는다.
+        let saved = {
+            let mut cache = self.tip_saved.borrow_mut();
+            match cache.as_ref() {
+                Some((ci, cs, s)) if *ci == i && *cs == since => s.clone(),
+                _ => {
+                    let s = self
+                        .paths
+                        .get(i)
+                        .and_then(|p| p.as_ref())
+                        .and_then(|p| std::fs::metadata(p).ok())
+                        .and_then(|m| m.modified().ok())
+                        .map(|t| nsql_log::local_at(t).stamp())
+                        .unwrap_or_else(|| "-".to_string());
+                    *cache = Some((i, since, s.clone()));
+                    s
+                }
+            }
+        };
+        card.push_str(&format!("\n{}: {}", t(Msg::TipSaved), saved));
         // 접속: 전용 세션 탭은 자기 세션 설명(끊겼으면 빈 글) · 그 외는 공유 세션.
         let conn = match self.ids.get(i).and_then(|id| self.sess_info.get(id)) {
             Some((_, d)) => d.as_str(),

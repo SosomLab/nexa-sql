@@ -60,13 +60,13 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 |---|---|---|
 | `workspaceFolder` · `workspaceFolderBasename` · `workspaceFile` · `workspaceName` | 프로젝트 파일 폴더 · 그 이름 · 프로젝트 파일 · 프로젝트 이름(프로젝트가 없으면 없음) | `NSQL_PROJECT_DIR` · `NSQL_PROJECT_FILE` · `NSQL_PROJECT_NAME` |
 | `workspaceFolder:이름` | 등록 폴더(마지막 폴더 이름으로) | — |
-| `file` · `fileDirname` · `fileBasename` · `fileBasenameNoExtension` · `fileExtname` · `relativeFile` · `relativeFileDirname` · `fileWorkspaceFolder` | 활성 탭의 파일(미저장 스크립트면 없음) | `NSQL_FILE` · `NSQL_FILE_DIR` · `NSQL_FILE_NAME` |
+| `file` · `fileDirname` · `fileBasename` · `fileBasenameNoExtension` · `fileExtname` · `relativeFile` · `relativeFileDirname` · `fileWorkspaceFolder` | 활성 탭의 파일(미저장 탭이면 화면 언어로 `(저장되지 않은 탭)` / `(unsaved tab)` · CLI = 스크립트 파일) | `NSQL_FILE` · `NSQL_FILE_DIR` · `NSQL_FILE_NAME` |
 | `lineNumber` · `columnNumber` | 캐럿(1 기준) | — |
 | `userHome` · `nsqlHome` · `cwd` · `execPath` · `pathSeparator`(=`/`) · `os` | 홈 · 앱 설정 폴더 · 현재 폴더 · 실행 파일 · OS 구분자 · `windows`/`macos`/`linux` | `NSQL_USER_HOME` · `NSQL_HOME` · `NSQL_CWD` · `NSQL_EXEC` · `NSQL_OS` |
 | `profile` · `dialect` | 활성 접속 프로필 이름 · 방언 | `NSQL_PROFILE` · `NSQL_DIALECT` |
 | `config:키` | 설정 값(예 `${config:db.fetch_size}`) | — |
 
-형식 접미도 됩니다: `${fileBasename:q}` = `'a.sql'`. 모르는 이름·없는 문맥은 글자 그대로 남습니다(묻지 않음). CLI(`nsql run`)에는 프로젝트가 없어 `${workspaceFolder}`가 없고 `${file}`은 스크립트 경로입니다.
+형식 접미도 됩니다: `${fileBasename:q}` = `'a.sql'`. 모르는 이름·없는 문맥은 글자 그대로 남습니다(묻지 않음). 단 파일 계열(`${file…}`·`relativeFile…`·`NSQL_FILE*`)은 미저장 탭에서 글자 그대로 두지 않고 `(저장되지 않은 탭)`(영어 화면 `(unsaved tab)`)이 됩니다. CLI(`nsql run`)에는 프로젝트가 없어 `${workspaceFolder}`가 없고 `${file}`은 스크립트 경로입니다.
 
 ```
 SPOOL ${workspaceFolder}/out/${fileBasenameNoExtension}.log

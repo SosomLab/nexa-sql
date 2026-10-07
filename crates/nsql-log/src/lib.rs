@@ -121,9 +121,49 @@ pub fn now_local() -> LocalTime {
 
 /// UTC(폴백 · 시간대 조회 실패 시). Howard Hinnant civil_from_days.
 pub fn now_utc() -> LocalTime {
-    let d = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
+    utc_at(std::time::SystemTime::now())
+}
+
+/// ★ 임의 시각(파일 mtime 등)을 **로컬** 시각으로(사용자 10-07 "탭 툴팁에 저장 일시 ms까지"): UTC civil에 지금의 로컬 오프셋(now_local −
+/// now_utc · 15분 단위 반올림 · 시간대 API 없이 전 OS 동일)을 더한다. 오프셋이 과거와 달랐던 시각(서머타임 경계)은 현재 오프셋으로 보인다.
+pub fn local_at(t: std::time::SystemTime) -> LocalTime {
+    let off = local_offset_secs();
+    let shifted = if off >= 0 {
+        t.checked_add(std::time::Duration::from_secs(off as u64))
+    } else {
+        t.checked_sub(std::time::Duration::from_secs((-off) as u64))
+    };
+    utc_at(shifted.unwrap_or(t))
+}
+
+/// 지금의 로컬 − UTC(초 · 15분 단위).
+fn local_offset_secs() -> i64 {
+    let l = now_local();
+    let u = now_utc();
+    let s = |t: &LocalTime| {
+        days_from_civil(t.year, t.month, t.day) * 86_400
+            + i64::from(t.hour) * 3600
+            + i64::from(t.min) * 60
+            + i64::from(t.sec)
+    };
+    let d = s(&l) - s(&u);
+    ((d + 450).div_euclid(900)) * 900
+}
+
+/// Howard Hinnant days_from_civil(1970-01-01 = 0).
+fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+    let y = i64::from(y) - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (i64::from(m) + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// 임의 시각의 UTC civil(Howard Hinnant civil_from_days).
+pub fn utc_at(t: std::time::SystemTime) -> LocalTime {
+    let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = d.as_secs() as i64;
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400) as u32;

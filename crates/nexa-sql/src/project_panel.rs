@@ -699,6 +699,11 @@ impl ProjectPanel {
 
     /// 디스크가 바뀌었을 수 있다 — 펼친 폴더를 다시 열거(호스트: 파일 저장·새 파일 뒤).
     pub(crate) fn refresh(&mut self) {
+        // ★ 색인 모드(필터 글 있음)에서 트리를 다시 만들면 일치 노드가 사라진다 → 호스트에 **전체 재적용**을 요청(사용자 10-07 "결과가 있다가
+        //   폴더 감시 갱신 뒤 '일치 없음'").
+        if self.index_wanted().is_some() {
+            self.index_req = true;
+        }
         let expanded: Vec<PathBuf> = self
             .nodes
             .iter()
@@ -2061,8 +2066,10 @@ impl ProjectPanel {
             y += rh;
         }
         // 안내 글은 위에서부터 한 줄씩(겹치지 않게 · 사용자 09-22): 행이 없으면 "일치 없음"/"폴더 없음" 먼저, 그 아래 상한 안내.
+        // 🔧 행이 없을 때도 **열린 파일 블록·폴더 머리글 아래**부터(종전 `lr.y + 4` = 이력 선택 직후 결과가 비는 순간 "일치 없음/읽는 중"이
+        //   열린 파일 글 위에 겹쳐 보였다 · 사용자 10-07). 이 안내는 상태 표시라 인라인이 맞다(플래시는 사라져 부적합).
         let mut my = if self.rows.is_empty() {
-            lr.y + px(4.0)
+            (lr.y + base - self.scroll_y).max(lr.y) + px(4.0)
         } else {
             y
         };

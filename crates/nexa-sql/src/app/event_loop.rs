@@ -321,6 +321,20 @@ impl ApplicationHandler<Wake> for App {
         }
         self.project_sync_active();
         self.project_index_pump();
+        // ★ 활성 뷰 탭의 상세 데이터가 없으면(메모리뿐이라 끊길 수 있다) 다시 채운다 · 확장이 없어졌으면 그 뷰 탭을 닫는다 — 종전엔 빈 일반
+        //   편집기로 그려져 사용자가 글을 넣을 수 있었다(사용자 10-07 "확장 탭에 SQL").
+        if let Some(k) = self.editors.active_view().map(str::to_string) {
+            if !self.ext_details.contains_key(&k) {
+                let ok = k
+                    .strip_prefix("ext:")
+                    .map(|id| id.to_string())
+                    .is_some_and(|id| self.ext_reopen_view(&id));
+                if !ok {
+                    self.editors.close_view_tabs(&k);
+                }
+                self.redraw();
+            }
+        }
         // 프로젝트 폴더 변경 감시(T-293 · 10-07).
         if self.dir_watch_pump() {
             self.redraw();
@@ -1597,8 +1611,9 @@ impl App {
                     let hold = self.settings.int("ui.flash_hold_ms").clamp(0, 30_000) as u64;
                     let fade = self.settings.int("ui.flash_ms").clamp(200, 30_000) as u64;
                     let ok = clipboard::write_text(&text);
+                    // 글 복사(이메일 주소 등) = 일반 문구 — 요청 코드 문구(`LicNoteCopied`)는 `CopyRequest`에서만(협업 10-07).
                     let msg = if ok {
-                        t(Msg::LicNoteCopied).to_string()
+                        t(Msg::LicNoteTextCopied).to_string()
                     } else {
                         t(Msg::LicNoteCopyFailed).to_string()
                     };

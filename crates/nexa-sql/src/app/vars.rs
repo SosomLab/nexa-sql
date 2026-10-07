@@ -38,6 +38,8 @@ impl App {
                 .map(|f| (leaf(f), f.clone()))
                 .collect(),
             file: self.editors.active_path(),
+            // 미저장 탭 = 현재 언어의 기본값 글(사용자 10-07).
+            no_file_text: Some(t(Msg::VarUnsavedTab).to_string()),
             line: Some(line + 1),
             column: Some(col + 1),
             user_home: std::env::var_os("HOME")

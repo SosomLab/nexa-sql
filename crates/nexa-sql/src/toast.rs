@@ -187,7 +187,18 @@ impl Toasts {
             };
             let life = (age.as_millis() as f32 / ttl_ms).clamp(0.0, 1.0);
             let a = self.alpha * life_alpha(life, self.fade_to, self.progress) * fade;
-            let h = pad * 2 + lh * 2 + px(2.0);
+            // ★ 본문 단어 단위 줄바꿈(사용자 10-07 "토스트 내용이 길면 word wrap") — 폭 안에서 · 긴 토큰은 글자 단위 · 최대 6줄(마지막 …) ·
+            //   높이 = 제목 1줄 + 본문 줄 수.
+            let text_x0 = px(6.0) + bar + pad;
+            let avail = w - text_x0 - pad;
+            let body_lines = wrap_words(
+                &t.body,
+                avail,
+                &mut |s: &str| dc.text_width(s),
+                MAX_BODY_LINES,
+            );
+            let n = body_lines.len().max(1) as i32;
+            let h = pad * 2 + lh * (1 + n) + px(2.0);
             let r = Rect::new(right - gap - w, y - h, w, h);
             t.rect = r;
             dc.fill_round_rect_alpha(r, px(6.0), th.panel_bg, a);
@@ -217,12 +228,125 @@ impl Toasts {
                     a,
                 );
             }
-            let tx = r.x + px(6.0) + bar + pad;
+            let tx = r.x + text_x0;
             let clip = Rect::new(r.x, r.y, r.w - pad, r.h);
             dc.text(tx, r.y + pad, clip, &t.title, color);
-            dc.text(tx, r.y + pad + lh + px(2.0), clip, &t.body, th.text);
+            let mut by = r.y + pad + lh + px(2.0);
+            for line in &body_lines {
+                dc.text(tx, by, clip, line, th.text);
+                by += lh;
+            }
             y = r.y - gap;
         }
+    }
+}
+
+/// 토스트 본문 최대 줄 수(넘치면 마지막 줄 끝 `…`).
+const MAX_BODY_LINES: usize = 6;
+
+/// ★ 단어 단위 줄바꿈(순수 · 사용자 10-07): 공백으로 나눈 낱말을 폭 안에서 이어 붙이고, 한 낱말이 폭보다 길면 글자 단위로 끊는다 ·
+/// `max_lines`를 넘으면 마지막 줄 끝에 `…`. 원문의 `\n`은 강제 줄바꿈. 빈 글 = 빈 줄 하나.
+pub(crate) fn wrap_words(
+    text: &str,
+    max_w: i32,
+    measure: &mut dyn FnMut(&str) -> i32,
+    max_lines: usize,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut fits = |s: &str| measure(s) <= max_w.max(1);
+    'outer: for para in text.split('\n') {
+        let mut line = String::new();
+        for word in para.split(' ') {
+            if word.is_empty() {
+                continue;
+            }
+            let cand = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if fits(&cand) {
+                line = cand;
+                continue;
+            }
+            if !line.is_empty() {
+                out.push(std::mem::take(&mut line));
+                if out.len() >= max_lines {
+                    break 'outer;
+                }
+            }
+            // 낱말 하나가 폭보다 길다 → 글자 단위.
+            let mut piece = String::new();
+            for ch in word.chars() {
+                let mut next = piece.clone();
+                next.push(ch);
+                if fits(&next) || piece.is_empty() {
+                    piece = next;
+                } else {
+                    out.push(std::mem::take(&mut piece));
+                    if out.len() >= max_lines {
+                        break 'outer;
+                    }
+                    piece.push(ch);
+                }
+            }
+            line = piece;
+        }
+        out.push(line);
+        if out.len() >= max_lines {
+            break;
+        }
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    // 넘쳤으면 마지막 줄에 말줄임(전체 글이 다 들어갔는지 = 줄 합 길이로 판정).
+    let shown: usize = out.iter().map(|l| l.chars().count()).sum();
+    let total: usize = text.chars().filter(|c| *c != ' ' && *c != '\n').count();
+    let shown_ns: usize = out
+        .iter()
+        .map(|l| l.chars().filter(|c| *c != ' ').count())
+        .sum();
+    if out.len() >= max_lines && (shown_ns < total || shown == 0) {
+        if let Some(last) = out.last_mut() {
+            while measure(&format!("{last}…")) > max_w.max(1) && last.pop().is_some() {}
+            last.push('…');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::wrap_words;
+
+    /// 글자 수 = 폭(측정 = 글자 수)으로 규칙만 본다.
+    #[test]
+    fn wraps_words_breaks_long_tokens_and_ellipsizes() {
+        let mut m = |s: &str| s.chars().count() as i32;
+        assert_eq!(wrap_words("", 10, &mut m, 6), vec![String::new()]);
+        assert_eq!(
+            wrap_words("ab cd", 10, &mut m, 6),
+            vec!["ab cd".to_string()]
+        );
+        assert_eq!(
+            wrap_words("ab cd ef", 5, &mut m, 6),
+            vec!["ab cd".to_string(), "ef".to_string()]
+        );
+        // 긴 낱말 = 글자 단위.
+        assert_eq!(
+            wrap_words("abcdefgh", 3, &mut m, 6),
+            vec!["abc".to_string(), "def".to_string(), "gh".to_string()]
+        );
+        // 강제 줄바꿈.
+        assert_eq!(
+            wrap_words("a\nb", 10, &mut m, 6),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        // 상한 + 말줄임.
+        let w = wrap_words("aa bb cc dd ee", 2, &mut m, 2);
+        assert_eq!(w.len(), 2);
+        assert!(w[1].ends_with('…'), "{w:?}");
     }
 }
 

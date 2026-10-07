@@ -1040,6 +1040,8 @@ impl App {
         let suggest = info.note_change(now);
         let follow = info.follow;
         let mut notable = false;
+        // ★ T-300(사용자 10-07): 본문에 반영된 경우의 알림 글 — 끝에서 토스트로(설정 `file.external_notify`).
+        let mut applied_note: Option<String> = None;
         match decision {
             extfile::Decision::Ignore => {
                 info.sig = Some(sig);
@@ -1051,6 +1053,12 @@ impl App {
                 info.diverged = false;
                 self.editors
                     .apply_external(i, None, &disk, Some(disk_eol), Some(used));
+                // 수정 없는 탭이 조용히 디스크를 따라간 경우 — 종전엔 아무 표시가 없어 "변경이 자동 반영되는데 메시지가 없다"(사용자 10-07).
+                let note = tf(Msg::ToastExtAdopted, &[&name]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, note.clone()));
+                // 기법도 함께(사용자 10-07 "단순 로딩·변경 병합 등 사용된 기법").
+                applied_note = Some(format!("{note} · {}", t(Msg::ExtMethodAdopt)));
             }
             extfile::Decision::Reload => {
                 info.sig = Some(sig);
@@ -1062,6 +1070,11 @@ impl App {
                 self.sess.status = tf(Msg::StExtReloaded, &[&name]);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                applied_note = Some(format!(
+                    "{} · {}",
+                    self.sess.status,
+                    t(Msg::ExtMethodReload)
+                ));
                 notable = true;
             }
             extfile::Decision::Merge(merged) => {
@@ -1076,6 +1089,11 @@ impl App {
                 self.sess.status = tf(Msg::StExtMerged, &[&name, &merged.applied.to_string()]);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                applied_note = Some(format!(
+                    "{} · {}",
+                    self.sess.status,
+                    tf(Msg::ExtMethodMerge, &[&merged.applied.to_string()])
+                ));
                 notable = true;
             }
             extfile::Decision::Ask(conflicts) => {
@@ -1097,6 +1115,16 @@ impl App {
                         .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                     notable = true;
                 }
+            }
+        }
+        // ★ T-300: 본문에 반영됐으면 토스트(설정 `file.external_notify` · 상태줄·로그는 위에서 늘).
+        if let Some(note) = applied_note.take() {
+            if self.settings.flag("file.external_notify") {
+                self.toasts.push(
+                    toast::ToastKind::Info,
+                    t(Msg::ToastExtChanged).to_string(),
+                    note,
+                );
             }
         }
         // 자주 바뀌는 파일 — 띠가 떠 있을 때 "조용히 따라가기"를 함께 내놓는다(`ext_banner_sync`가 본다).

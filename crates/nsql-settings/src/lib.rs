@@ -3626,6 +3626,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 60000 },
         default: "2000",
     },
+    // ★ T-300(사용자 10-07): 외부 변경이 본문에 반영될 때 토스트로 알린다(변경 없는 탭 자동 채택 · 다시 읽기 · 자동 병합).
+    Entry {
+        key: "file.external_notify",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtNotify,
+        desc: Msg::DescExtNotify,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "file.external_merge_max_kb",
         cat: Msg::CatFiles,

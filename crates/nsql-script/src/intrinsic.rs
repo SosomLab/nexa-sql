@@ -35,6 +35,9 @@ pub struct Context {
     pub dialect: Option<String>,
     /// 설정 값(`config:키`) — 호스트가 원하는 만큼(전부 또는 경로형만).
     pub config: Vec<(String, String)>,
+    /// ★ 활성 탭이 파일이 아닐 때(미저장 스크립트) `file` 계열에 넣을 글(사용자 10-07 "파일이 아닙니다 류의 기본값 · 다국어") — 호스트가
+    /// 현재 언어로 준다(`(저장되지 않은 탭)` · `(unsaved tab)`). `None`(CLI)이면 종전처럼 변수를 만들지 않는다(글자 그대로).
+    pub no_file_text: Option<String>,
 }
 
 fn s(p: &Path) -> String {
@@ -86,6 +89,27 @@ pub fn build(ctx: &Context) -> BTreeMap<String, String> {
     for (name, dir) in &ctx.folders {
         if !name.is_empty() {
             m.insert(format!("workspaceFolder:{name}"), s(dir));
+        }
+    }
+    // ★ 파일 아닌 탭 = 호스트가 준 글로 file 계열 전부를 채운다(글자 그대로 `${fileBasename}`이 결과에 남지 않게 · 사용자 10-07).
+    if ctx.file.is_none() {
+        if let Some(txt) = &ctx.no_file_text {
+            for k in [
+                "file",
+                "NSQL_FILE",
+                "fileDirname",
+                "NSQL_FILE_DIR",
+                "fileDirnameBasename",
+                "fileBasename",
+                "NSQL_FILE_NAME",
+                "fileBasenameNoExtension",
+                "fileExtname",
+                "relativeFile",
+                "relativeFileDirname",
+                "fileWorkspaceFolder",
+            ] {
+                m.insert(k.to_string(), txt.clone());
+            }
         }
     }
     if let Some(f) = &ctx.file {
@@ -225,6 +249,7 @@ mod tests {
             profile: Some("BISCM".into()),
             dialect: Some("oracle".into()),
             config: vec![("log.file".into(), "${nsqlHome}/log.txt".into())],
+            no_file_text: None,
         }
     }
 
@@ -238,6 +263,15 @@ mod tests {
         assert_eq!(m["workspaceName"], "demo");
         assert_eq!(m["workspaceFolder:nexa-ui"], p("/x/nexa-ui"));
         assert_eq!(m["fileBasename"], "a.sql");
+        // ★ 파일 아닌 탭(10-07) = 호스트 글로 채움 · 글이 없으면(CLI) 변수도 없다.
+        let unsaved = build(&Context {
+            no_file_text: Some("(unsaved tab)".into()),
+            ..Default::default()
+        });
+        assert_eq!(unsaved["fileBasename"], "(unsaved tab)");
+        assert_eq!(unsaved["NSQL_FILE"], "(unsaved tab)");
+        assert_eq!(unsaved["fileExtname"], "(unsaved tab)");
+        assert!(!build(&Context::default()).contains_key("fileBasename"));
         assert_eq!(m["fileBasenameNoExtension"], "a");
         assert_eq!(m["fileExtname"], ".sql");
         assert_eq!(m["relativeFile"], p("sql/a.sql"));

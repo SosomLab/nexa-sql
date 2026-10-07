@@ -1254,16 +1254,18 @@ impl App {
     /// 조상만 노드로 만든다(워커 열거 0). 틱마다 호출 · 비용 = 열쇠 비교 하나.
     pub(crate) fn project_index_pump(&mut self) {
         let Some(rev) = self.project_panel.index_wanted() else {
-            self.project_index_key = (0, 0, false);
+            self.project_index_key = (0, 0, false, None);
             return;
         };
         self.goto_refresh_files();
         let scanning = self.goto_walk.is_some();
         let len = self.goto_files.len();
+        let at = self.goto_files_at;
         let requested = self.project_panel.take_index_request();
-        let (prev_rev, prev_len, prev_scan) = self.project_index_key;
-        // 전체 다시 = 필터 글이 바뀜 · 목록이 줄었다(재열거 교체) · 처음. 그 밖(목록이 자람 · 읽는 중 끝) = **증분**(새 파일만).
-        let full = requested || rev != prev_rev || len < prev_len;
+        let (prev_rev, prev_len, prev_scan, prev_at) = self.project_index_key;
+        // 전체 다시 = 필터 글이 바뀜 · 목록이 줄었다 · **열거 세대가 바뀜**(재열거 완료로 목록 교체 · 길이가 같아도 · 사용자 10-07) · 패널이 요청
+        //   (트리 재구성 뒤) · 처음. 그 밖(목록이 자람 · 읽는 중 끝) = **증분**(새 파일만).
+        let full = requested || rev != prev_rev || len < prev_len || at != prev_at;
         if !full && len == prev_len && scanning == prev_scan {
             return;
         }
@@ -1272,7 +1274,7 @@ impl App {
             return;
         }
         let from = if full { 0 } else { prev_len };
-        self.project_index_key = (rev, len, scanning);
+        self.project_index_key = (rev, len, scanning, at);
         self.project_index_last = Instant::now();
         let excluded =
             !super::goto::exclude_names(self.settings.get(super::goto::EXCLUDE_KEY).unwrap_or(""))

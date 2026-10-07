@@ -548,6 +548,8 @@ fn intrinsic_vars(path: &str, dialect: Dialect) -> std::collections::BTreeMap<St
         cwd: std::env::current_dir().ok(),
         profile: None,
         dialect: Some(dialect.to_string()),
+        // CLI = 늘 파일이 있다 · 없을 때도 글자 그대로(종전).
+        no_file_text: None,
         config: s
             .as_ref()
             .map(|s| {

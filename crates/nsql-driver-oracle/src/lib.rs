@@ -477,6 +477,9 @@ impl OracleSession {
         )
     }
 
+    /// OUT 바인드(늘 VARCHAR2로 받는다)의 글자를 변수 타입에 맞는 값으로.
+    /// ★ 숫자 타입이라도 **숫자 꼴이 아닌 글자**는 `Str`로(사용자 10-07 "`'Number to String'`이 NUMBER로 표시" = 종전엔 `Decimal("Number to
+    ///   String")`으로 감싸 자동 타입 변수가 글자를 들고도 NUMBER로 남았다). 숫자 꼴 판정 = `f64`로 읽히는 글(`1.5` · `-2e3` · `.5`).
     fn coerce(ty: &VarType, s: Option<String>) -> Value {
         match s {
             None => Value::Null,
@@ -484,7 +487,8 @@ impl OracleSession {
                 VarType::Number | VarType::BinaryFloat | VarType::BinaryDouble => {
                     match s.parse::<i64>() {
                         Ok(i) => Value::Int(i),
-                        Err(_) => Value::Decimal(s),
+                        Err(_) if s.trim().parse::<f64>().is_ok() => Value::Decimal(s),
+                        Err(_) => Value::Str(s),
                     }
                 }
                 VarType::Auto => match s.parse::<i64>() {
@@ -962,6 +966,29 @@ fn parse_bool_text(s: &str) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    /// ★ OUT 글자 → 값(사용자 10-07): NUMBER 타입에 숫자 꼴은 Int/Decimal · 숫자 아닌 글은 Str(자동 타입 변수가 VARCHAR2로 따라가게) ·
+    /// Auto는 정수면 Int 아니면 Str · 글자 타입은 Str · NULL은 Null.
+    #[test]
+    fn out_text_coerces_by_type_but_never_fakes_numbers() {
+        use nsql_core::{Value, VarType};
+        let c = |ty: VarType, s: &str| super::OracleSession::coerce(&ty, Some(s.to_string()));
+        assert_eq!(c(VarType::Number, "1999"), Value::Int(1999));
+        assert_eq!(c(VarType::Number, "1.5"), Value::Decimal("1.5".into()));
+        assert_eq!(c(VarType::Number, "-2e3"), Value::Decimal("-2e3".into()));
+        assert_eq!(
+            c(VarType::Number, "Number to String"),
+            Value::Str("Number to String".into()),
+            "숫자 꼴이 아니면 Decimal로 감싸지 않는다"
+        );
+        assert_eq!(c(VarType::Auto, "42"), Value::Int(42));
+        assert_eq!(c(VarType::Auto, "Year"), Value::Str("Year".into()));
+        assert_eq!(c(VarType::Varchar2(10), "7"), Value::Str("7".into()));
+        assert_eq!(
+            super::OracleSession::coerce(&VarType::Number, None),
+            Value::Null
+        );
+    }
+
     /// T-151 — 시각 글자: ISO 꼴만 읽는다(날짜만 · 분까지 · 초 · 소수 초 1~9자리 · `T`) · NLS 꼴·엉뚱한 글은 물러난다 ·
     /// 표시 글자는 뒤의 0을 뗀다 · 불리언 글자.
     #[test]
