@@ -158,21 +158,18 @@ impl CondBar {
         self.host = host;
     }
 
-    /// 조건 바가 원하는 높이 — 상자(멀티라인) 안쪽 = 위 여백 8 + 줄 20×N(TextBox `paint_multiline`과 같은 값) + 바 위아래 여백 2.
-    /// 접힘 = 한 줄(32) · 펼침 = `max_lines`줄. (협업 V1 bin26 E = 26이면 한 줄이 위로 잘렸다.)
+    /// 조건 바가 원하는 높이 — 상자 안쪽 = 위 여백 4 + 줄 × N + 아래 4(TextBox 보이는 줄 수 = (높이 − 8) / 줄) · 바 위아래 2.
+    /// 줄 높이 = TextBox **실측** `line_h()`(글꼴 상자 + 4 · 최소 20×배율) → 글꼴 크기가 바뀌면 다음 그리기에서 바가 따라 커진다
+    /// (사용자 10-07 "폰트 크기가 바뀌어도 잘 적용되도록"). 접힘 = 한 줄 · 펼침 = `max_lines`줄.
     pub(crate) fn wanted_height(&self, scale: f32) -> i32 {
         let s = |v: f32| (v * scale).round() as i32;
-        // TextBox 멀티라인은 보이는 줄 수를 `(높이 - 12) / 20`으로 센다 — N줄이 다 보이려면 안쪽 20N+12(사용자 10-07 "3줄이 안 보임").
-        //   접힘은 한 줄 = 위 여백 8 + 줄 20 = 28(캐럿 줄 하나).
-        // 상자 안쪽 = 위 여백 4 + 줄 20×N + 아래 4(TextBox 보이는 줄 수 = (높이 − 8) / 20) · 바 위아래 2.
-        s(20.0)
-            * if self.expanded {
-                self.max_lines as i32
-            } else {
-                1
-            }
-            + s(8.0)
-            + s(2.0) * 2
+        let lh = self.tb.line_h().max(s(20.0));
+        let lines = if self.expanded {
+            self.max_lines as i32
+        } else {
+            1
+        };
+        lh * lines + s(8.0) + s(2.0) * 2
     }
 
     /// 설정 `grid.cond_max_lines` — 펼쳤을 때 보이는 최대 줄 수(2~12).
@@ -259,7 +256,7 @@ impl CondBar {
             r.x + pad_x,
             r.y + pad_y,
             (self.btn_mode.x - s(6.0) - (r.x + pad_x)).max(s(40.0)),
-            (r.h - pad_y * 2).max(s(28.0)),
+            (r.h - pad_y * 2).max(self.tb.line_h() + s(8.0)),
         );
         self.tb.set_bounds(tb_rect, &mut inv);
         self.btn_clear = Rect::new(tb_rect.right() - s(4.0) - bh, by, bh, bh);
