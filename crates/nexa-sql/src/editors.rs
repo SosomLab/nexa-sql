@@ -34,6 +34,35 @@ pub(crate) enum TabKind {
     Preview = 2,
 }
 
+/// 방금 닫힌 탭의 종류(사용자 10-07 "미리보기/확장 닫기 = 포커스 유지 · 편집기 닫기 = 이동") — 호스트가 닫힘 뒤 자동 선택된 탭의
+/// 탐색기 동기 방식(`tabs.close_preview_focus` · `tabs.close_editor_focus`)을 고르는 기준.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClosedKind {
+    /// 미리보기 탭 · 뷰 탭(확장 상세 · 정보 · 비교 등 본문 없는 탭).
+    PreviewOrView,
+    /// 정식 파일 탭 · 스크립트 탭.
+    Editor,
+}
+
+/// 활성 탭을 닫은 뒤 다음 활성 index(순수 · 사용자 10-07): `from_hist` = 이동 기록의 최근 탭(닫힌 뒤 index · 설정이 켜져 있을 때만 `Some`) ·
+/// 없으면 `prev`(이전 = 닫힌 자리 왼쪽 · 맨 왼쪽이면 0) / 다음(= 닫힌 자리 · 끝이면 마지막). `len` = 닫은 뒤 탭 수(≥ 1).
+pub(crate) fn pick_after_close(
+    closed: usize,
+    len: usize,
+    from_hist: Option<usize>,
+    prev: bool,
+) -> usize {
+    let last = len.saturating_sub(1);
+    if let Some(h) = from_hist {
+        return h.min(last);
+    }
+    if prev {
+        closed.saturating_sub(1).min(last)
+    } else {
+        closed.min(last)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TabMenuReq {
     Rename(usize),
@@ -178,6 +207,15 @@ pub(crate) struct Editors {
     save_close_req: Option<usize>,
     /// 다음 `close_tab` 한 번은 저장 여부를 묻지 않는다(호스트가 이미 물었다).
     close_forced: bool,
+    /// 방금 실제로 닫힌 탭의 종류(1회성 · 호스트 `take_closed_kind`).
+    closed_kind: Option<ClosedKind>,
+    /// ★ 탭 이동 기록(사용자 10-07 · **메모리만** · 프로젝트 파일에 안 남김): 활성이 된 순서(뒤 = 최근) · `hist_max`까지 · 닫힌 탭은 지운다.
+    hist: std::collections::VecDeque<u64>,
+    hist_on: bool,
+    hist_max: usize,
+    /// 닫힘 뒤 선택에 기록을 쓰는가(`tabs.close_use_history`) · 기록이 없을 때(또는 안 쓸 때) 이전(true)/다음(false)(`tabs.close_select`).
+    hist_close: bool,
+    close_prev: bool,
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
     /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
@@ -307,6 +345,12 @@ impl Editors {
             tx_close_req: None,
             save_close_req: None,
             close_forced: false,
+            closed_kind: None,
+            hist: std::collections::VecDeque::new(),
+            hist_on: true,
+            hist_max: 20,
+            hist_close: true,
+            close_prev: false,
             encs: Vec::new(),
             shown_titles: Vec::new(),
             titles_rev: 0,
@@ -1752,6 +1796,57 @@ impl Editors {
         self.tx_close_req.take()
     }
 
+    /// 방금 닫힌 탭의 종류(1회성) — 틱마다 호스트가 꺼낸다(닫힘이 활성 탭을 바꾸지 않았으면 그냥 버려진다).
+    pub(crate) fn take_closed_kind(&mut self) -> Option<ClosedKind> {
+        self.closed_kind.take()
+    }
+
+    /// 탭 이동 기록 설정(설정 ▸ 탭 동작): 끄면 기록을 비운다 · 상한을 줄이면 오래된 것부터 버린다.
+    pub(crate) fn set_tab_history_cfg(
+        &mut self,
+        on: bool,
+        max: usize,
+        use_on_close: bool,
+        prev: bool,
+    ) {
+        self.hist_on = on;
+        self.hist_max = max.max(1);
+        self.hist_close = use_on_close;
+        self.close_prev = prev;
+        if !on {
+            self.hist.clear();
+        }
+        while self.hist.len() > self.hist_max {
+            self.hist.pop_front();
+        }
+        // 켜는 순간의 활성 탭부터 기록.
+        self.note_active();
+    }
+
+    /// 지금 활성 탭을 기록 끝으로(이미 끝이면 그대로 · 상한 초과 = 앞에서 버림).
+    fn note_active(&mut self) {
+        if !self.hist_on || self.bufs.is_empty() {
+            return;
+        }
+        let id = self.active_id();
+        if self.hist.back() == Some(&id) {
+            return;
+        }
+        self.hist.retain(|x| *x != id);
+        self.hist.push_back(id);
+        while self.hist.len() > self.hist_max {
+            self.hist.pop_front();
+        }
+    }
+
+    /// 이동 기록(오래된 것 → 최근 · 자체 시험 `editor.tabhist:`): (id, 제목).
+    pub(crate) fn tab_history(&self) -> Vec<(u64, String)> {
+        self.hist
+            .iter()
+            .filter_map(|id| self.index_of_id(*id).map(|i| (*id, self.titles[i].clone())))
+            .collect()
+    }
+
     /// 탭 닫기(확인 없이 · 미커밋 확인을 이미 거친 뒤).
     pub(crate) fn close_tab_confirmed(&mut self, i: usize) {
         self.tx_badges.remove(&self.tab_id(i));
@@ -1782,6 +1877,7 @@ impl Editors {
         self.tx_close_req = None;
         self.save_close_req = None;
         self.preview = None;
+        self.hist.clear();
     }
 
     /// 저장 여부를 **이미 물은 뒤** 닫는다(저장했거나 · 버리기로 했다).
@@ -1828,6 +1924,16 @@ impl Editors {
             return;
         }
         self.pending_close = None;
+        // ★ 닫힌 탭의 종류(미리보기/뷰 vs 편집기) — 호스트가 닫힘 뒤 자동 선택된 탭의 탐색기 동기 방식을 정한다
+        //   (설정 `tabs.close_preview_focus`/`tabs.close_editor_focus` · 사용자 10-07). 뷰 탭 열쇠는 호스트가 닫은 **뒤** 지우므로 여기선 아직 있다.
+        let closing_id = self.tab_id(i);
+        self.closed_kind = Some(
+            if self.preview == Some(closing_id) || self.view_tabs.contains_key(&closing_id) {
+                ClosedKind::PreviewOrView
+            } else {
+                ClosedKind::Editor
+            },
+        );
         if self.bufs.len() <= 1 {
             // 마지막 탭은 비우기만(제목 없는 새 스크립트로).
             if let Some(b) = self.bufs.get_mut(i) {
@@ -1849,6 +1955,8 @@ impl Editors {
         if self.preview == Some(self.tab_id(i)) {
             self.preview = None;
         }
+        let was_active = i == self.active;
+        self.hist.retain(|x| *x != closing_id);
         self.bufs.remove(i);
         self.titles.remove(i);
         self.syntax.remove(i);
@@ -1861,8 +1969,14 @@ impl Editors {
         if i < self.indents.len() {
             self.indents.remove(i);
         }
-        if self.active >= self.bufs.len() {
-            self.active = self.bufs.len() - 1;
+        if was_active {
+            // ★ 닫힌 탭이 활성이었다 → 다음 활성 = 이동 기록의 가장 최근 탭(설정) · 없으면 이전/다음(설정 · 종전 = 다음).
+            let from_hist = if self.hist_on && self.hist_close {
+                self.hist.iter().rev().find_map(|id| self.index_of_id(*id))
+            } else {
+                None
+            };
+            self.active = pick_after_close(i, self.bufs.len(), from_hist, self.close_prev);
         } else if i < self.active {
             self.active -= 1;
         }
@@ -1919,6 +2033,8 @@ impl Editors {
     }
 
     fn sync_tabs(&mut self) {
+        // 활성이 바뀌는 모든 길(열기 · 전환 · 닫기 · 끌어 옮김)이 여기를 지난다 → 이동 기록은 여기서 한 번.
+        self.note_active();
         let mut inv = Invalidations::default();
         let shown: Vec<String> = (0..self.titles.len())
             .map(|i| self.shown_title(i))
@@ -2940,5 +3056,56 @@ impl MemSource for Editors {
                 acc.add(Cat::EditorCache, cache as u64);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tab_history_tests {
+    use super::*;
+
+    /// 기록 우선 · 기록 없으면 이전/다음 · 경계(맨 끝 · 맨 앞)(MC/DC).
+    #[test]
+    fn pick_after_close_rules() {
+        assert_eq!(
+            pick_after_close(2, 4, Some(0), false),
+            0,
+            "기록이 있으면 그 탭"
+        );
+        assert_eq!(
+            pick_after_close(2, 4, Some(9), true),
+            3,
+            "기록 index는 상한으로"
+        );
+        assert_eq!(pick_after_close(2, 4, None, false), 2, "다음 = 닫힌 자리");
+        assert_eq!(pick_after_close(2, 4, None, true), 1, "이전 = 왼쪽");
+        assert_eq!(pick_after_close(4, 4, None, false), 3, "끝을 닫으면 마지막");
+        assert_eq!(pick_after_close(0, 3, None, true), 0, "맨 앞의 이전 = 0");
+    }
+
+    /// 기록은 메모리에서 활성 순서를 따라가고 · 닫힌 탭은 빠지며 · 상한을 넘기면 오래된 것부터 · 끄면 비운다.
+    #[test]
+    fn history_follows_active_and_drives_close() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        ed.set_tab_history_cfg(true, 3, true, false);
+        let base = ed.len();
+        ed.new_tab(None); // A
+        ed.new_tab(None); // B
+        ed.new_tab(None); // C
+        let (a, b, c) = (base, base + 1, base + 2);
+        ed.switch(a);
+        ed.switch(c);
+        let ids: Vec<u64> = ed.tab_history().iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids.len(), 3, "상한 3");
+        assert_eq!(*ids.last().expect("last"), ed.tab_id(c));
+        // C(활성)를 닫으면 → 기록의 최근 = A(그 자리의 다음 탭이 아니라).
+        ed.close_tab_forced(c);
+        assert_eq!(ed.active(), a, "기록 우선");
+        // 기록 끔 + 다음 = 닫힌 자리(B가 A 자리로 온다).
+        ed.set_tab_history_cfg(false, 3, true, false);
+        assert!(ed.tab_history().is_empty());
+        ed.switch(a);
+        ed.close_tab_forced(a);
+        assert_eq!(ed.active(), a.min(ed.len() - 1), "다음 = 그 자리");
+        assert_eq!(ed.tab_id(ed.active()), ed.tab_id(b.min(ed.len() - 1)));
     }
 }

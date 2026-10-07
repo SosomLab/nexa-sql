@@ -256,6 +256,9 @@ struct App {
     goto_last_push: Instant,
     /// 재열거용 새 버퍼(옛 목록은 끝날 때까지 유지) · 새 버퍼로 모으는 중인가 · 상한(`project.scan_max`)에 닿았나.
     goto_files_new: Vec<PathBuf>,
+    /// 파일 이름 소문자 캐시(`goto_files`와 같은 길이 · 프로젝트 탐색기 색인 모드) · 재열거용 새 버퍼.
+    goto_lower: Vec<String>,
+    goto_lower_new: Vec<String>,
     goto_into_new: bool,
     goto_capped: bool,
     goto_walk: Option<(
@@ -398,6 +401,13 @@ struct App {
     exit_project_asked: bool,
     /// 마지막으로 탐색기와 맞춘 활성 탭(바뀌면 `project_sync_active` · 사용자 09-22).
     last_synced_tab: u64,
+    /// ★ 다음 탭 동기는 **조용히**(열린 파일 행으로 스크롤하지 않음 · 선택만) — 전환이 프로젝트 패널(열린 파일 행 · 트리 클릭)에서
+    /// 비롯됐을 때(사용자 10-07 매트릭스: 패널에서 클릭한 자리에 포커스가 머물러 아래 파일을 이어 고를 수 있게).
+    project_sync_quiet: bool,
+    /// 프로젝트 탐색기 색인 펌프의 마지막 전달 열쇠(필터 글 세대 · 파일 수 · 읽는 중) — 바뀔 때만 다시 민다(10-07).
+    project_index_key: (u64, usize, bool),
+    /// 마지막 증분 전달 시각(열거 중 250 ms 스로틀).
+    project_index_last: Instant,
     /// ★ 다중 열기(사용자 09-22): 확인 팝업이 기다리는 (파일들 · 인코딩) · 진행 중인 순차 적재.
     multi_pending: Option<(Vec<PathBuf>, String)>,
     multi_load: Option<MultiLoad>,
@@ -1604,6 +1614,8 @@ fn main() {
         goto_sent: 0,
         goto_last_push: Instant::now(),
         goto_files_new: Vec::new(),
+        goto_lower: Vec::new(),
+        goto_lower_new: Vec::new(),
         goto_into_new: false,
         goto_capped: false,
         goto_walk: None,
@@ -1688,6 +1700,9 @@ fn main() {
         exit_pending: false,
         exit_project_asked: false,
         last_synced_tab: u64::MAX,
+        project_sync_quiet: false,
+        project_index_key: (0, 0, false),
+        project_index_last: Instant::now(),
         multi_pending: None,
         multi_load: None,
         arg_project,

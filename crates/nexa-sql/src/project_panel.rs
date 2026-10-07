@@ -68,6 +68,9 @@ struct Node {
     error: bool,
 }
 
+/// 색인 모드에서 트리에 만드는 일치 파일 상한(그 밖은 "…외 N개" 안내 · 더 입력해 좁히기).
+pub(crate) const INDEX_HITS_MAX: usize = 2000;
+
 /// ★ 필터 열거 워커(사용자 09-23 "폴더/파일이 많아도 멈추지 않게 · 별도 스레드 · 분할 병렬 · 로그 병합") — [`crate::parwalk`]가
 ///   아직 열거하지 않은 폴더들 아래를 병렬로 읽어 **폴더째** 보내고, 패널은 틱마다 시간 예산 안에서 트리에 합친다(메인 루프는 막히지 않는다).
 ///   필터 글이 바뀌면 이전 열거는 취소되고(수신자 버림) 이미 트리에 들어온 폴더는 `loaded`라 다시 읽지 않는다.
@@ -138,6 +141,16 @@ pub(crate) struct ProjectPanel {
     scan: Option<Scan>,
     /// 워커 스레드 수(설정 `project.scan_threads` · 0 = 코어 수/2).
     scan_threads: usize,
+    /// ★ 색인 모드(사용자 10-07 "Ctrl+P와 같은 데이터 원천"): 필터 열거를 워커 대신 호스트의 파일 색인으로 — 패널은 일치 파일의 조상만 노드로.
+    index_mode: bool,
+    /// 호스트에 색인 전달을 요청(필터 글이 바뀜) · 필터 글 세대 · 상한 밖 일치 수 · 색인 읽는 중 · 제외 폴더 있음.
+    index_req: bool,
+    filter_rev: u64,
+    /// 누적 일치 수(증분 전달 · `from` > 0이면 이어 센다) · 상한 밖 일치 수.
+    index_hits: usize,
+    index_more: usize,
+    index_scanning: bool,
+    index_excluded: bool,
     /// 읽지 못한 폴더(경로 · 사유) — 도착 순 병합 · 호스트가 `take_scan_log`로 로그 창에 옮긴다.
     scan_log: Vec<(PathBuf, String)>,
     /// 이번 필터 열거에서 읽지 못한 폴더 수(안내 한 줄).
@@ -223,6 +236,13 @@ impl ProjectPanel {
             scan_capped: false,
             scan: None,
             scan_threads: 4,
+            index_mode: false,
+            index_req: false,
+            filter_rev: 0,
+            index_hits: 0,
+            index_more: 0,
+            index_scanning: false,
+            index_excluded: false,
             scan_log: Vec::new(),
             scan_errors: 0,
             path_index: std::collections::HashMap::new(),
@@ -654,23 +674,20 @@ impl ProjectPanel {
     /// 필터 글을 넣고 바로 거른다(자체 시험 `project.filter:` · 키 주입 없이).
     pub(crate) fn set_filter_text(&mut self, text: &str) {
         self.filter.set_text(text);
-        self.filter_text = text.to_string();
-        if !self.filter_text.trim().is_empty() {
-            self.scan_for_filter();
-        } else {
-            self.scan = None; // 필터를 비우면 진행 중 열거도 취소
-            self.scan_capped = false;
-        }
-        self.sel = None;
-        self.scroll_y = 0;
-        self.scroll_x = 0;
-        self.rebuild_rows();
+        // 입력 경로(`apply_filter`)와 **같은 길** — 색인 모드면 워커 대신 색인 요청(10-07).
+        self.apply_filter(text.to_string());
     }
 
     /// 활성 탭의 파일을 선택 표시(펼치지 않는다 · 스크롤 안 함) — 보이는 행이면 지금 선택 · 접혀 있으면 펼칠 때 선택돼 나타난다.
     pub(crate) fn mark_path(&mut self, p: &Path) {
         self.sel_path = Some(p.to_path_buf());
         self.sel = self.rows.iter().position(|&n| self.nodes[n].path == p);
+    }
+
+    /// 활성 탭이 트리 밖 파일(또는 파일 아님)이면 선택 표시를 지운다 — 닫힌 파일의 선택이 남지 않게(협업 V1 bin42 관찰 · 10-07).
+    pub(crate) fn clear_mark(&mut self) {
+        self.sel_path = None;
+        self.sel = None;
     }
 
     /// 지금 선택된 항목의 경로(프로젝트 파일 `selected`에 저장).
@@ -1141,6 +1158,186 @@ impl ProjectPanel {
         }
     }
 
+    /// 색인 모드 켬/끔(호스트 · 앱은 늘 켬 · 시험 기본 끔 = 워커 열거).
+    pub(crate) fn set_index_mode(&mut self, on: bool) {
+        self.index_mode = on;
+    }
+
+    /// 색인이 필요한가 — 색인 모드이고 필터 글이 있으면 그 글의 세대(호스트는 세대·파일 수·읽는 중이 바뀌면 다시 민다).
+    pub(crate) fn index_wanted(&self) -> Option<u64> {
+        (self.index_mode && self.name.is_some() && !self.filter_text.trim().is_empty())
+            .then_some(self.filter_rev)
+    }
+
+    /// 필터 글이 바뀌어 색인을 새로 받아야 하는가(1회성).
+    pub(crate) fn take_index_request(&mut self) -> bool {
+        std::mem::take(&mut self.index_req)
+    }
+
+    /// ★ 호스트가 파일 색인을 민다(Ctrl+P와 같은 원천): `files`·`lower`(파일 이름 소문자 · 같은 길이) · `from` = 이번에 새로 볼 시작 번호
+    /// (**증분** · 0 = 처음부터 = 일치 수 초기화 · 열거가 자라는 동안 새 파일만 판정 · 협업 bin45 "틱마다 전체를 다시 거름 = CPU 1코어") ·
+    /// `scanning` = 아직 읽는 중 · `excluded` = 제외 폴더 규칙이 있다(안내). 일치 파일만 **조상 노드와 함께** 트리에 만들고 행을 다시 짠다 ·
+    /// 상한 [`INDEX_HITS_MAX`](누적).
+    pub(crate) fn apply_index(
+        &mut self,
+        files: &[PathBuf],
+        lower: &[String],
+        from: usize,
+        scanning: bool,
+        excluded: bool,
+    ) {
+        self.index_scanning = scanning;
+        self.index_excluded = excluded;
+        if from == 0 {
+            self.index_hits = 0;
+            self.index_more = 0;
+        }
+        let needle = self.filter_text.trim().to_string();
+        if needle.is_empty() {
+            return;
+        }
+        // 빠른 길 = 옵션·구조 질의 없는 단순 포함(대소문자 무시) → 소문자 캐시 `contains`(할당 0) · 그 밖 = 노드 판정과 같은 술어.
+        let simple = !self.filter.is_on(BtnKind::Word)
+            && !self.filter.is_on(BtnKind::Regex)
+            && !self.filter.is_on(BtnKind::PathMatch)
+            && !self.filter.has_structured_query();
+        let case = self.filter.is_on(BtnKind::Case);
+        let needle_lower = needle.to_lowercase();
+        for (k, p) in files.iter().enumerate().skip(from) {
+            let hit = if simple {
+                if case {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().contains(&needle))
+                } else {
+                    lower.get(k).is_some_and(|l| l.contains(&needle_lower))
+                }
+            } else {
+                self.index_hit_full(p)
+            };
+            if !hit {
+                continue;
+            }
+            self.index_hits += 1;
+            if self.index_hits > INDEX_HITS_MAX {
+                self.index_more += 1;
+                continue;
+            }
+            self.ensure_node(p);
+        }
+        self.filter.set_search_state(if scanning {
+            crate::filterbar::SearchState::Running
+        } else {
+            crate::filterbar::SearchState::Done
+        });
+        self.rebuild_rows();
+    }
+
+    /// 색인 파일 하나를 노드 판정과 **같은 술어**로(옵션·경로·구조 질의) — 노드를 만들기 전이라 사실을 경로에서 만든다.
+    fn index_hit_full(&self, p: &Path) -> bool {
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let rel = self.rel_path_of(p).unwrap_or_else(|| name.clone());
+        let text = if self.filter.is_on(BtnKind::PathMatch) {
+            rel.clone()
+        } else {
+            name
+        };
+        let size = self
+            .filter
+            .query_has("size")
+            .then(|| std::fs::metadata(p).ok().map(|m| m.len()))
+            .flatten();
+        let ext = p
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let fields = [("ext", ext), ("path", rel)];
+        self.filter.matches_facts(&crate::filterbar::NodeFacts {
+            text: &text,
+            kind: Some("file"),
+            size,
+            fields: &fields,
+        })
+    }
+
+    /// 루트 폴더 이름부터의 상대 경로(`root/a/b.sql`) — 경로만으로(노드 없이).
+    fn rel_path_of(&self, p: &Path) -> Option<String> {
+        let r = self
+            .roots
+            .iter()
+            .copied()
+            .find(|&r| p.starts_with(&self.nodes[r].path))?;
+        let rel = p.strip_prefix(&self.nodes[r].path).ok()?;
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        Some(if rel.is_empty() {
+            self.nodes[r].name.clone()
+        } else {
+            format!("{}/{}", self.nodes[r].name, rel)
+        })
+    }
+
+    /// 경로의 노드를 보장한다 — 루트에서 내려가며 없는 조상 폴더·파일 노드를 만든다(폴더는 `loaded = false` 그대로 = 펼치면 정식 열거가
+    /// 자식을 다시 채운다). 돌려주는 값 = 그 노드.
+    fn ensure_node(&mut self, p: &Path) -> Option<usize> {
+        if let Some(&k) = self.path_index.get(p) {
+            return Some(k);
+        }
+        let r = self
+            .roots
+            .iter()
+            .copied()
+            .find(|&r| p.starts_with(&self.nodes[r].path))?;
+        let rel = p.strip_prefix(&self.nodes[r].path).ok()?;
+        let comps: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let mut cur = r;
+        let mut cur_path = self.nodes[r].path.clone();
+        let n = comps.len();
+        for (ci, name) in comps.into_iter().enumerate() {
+            cur_path.push(&name);
+            if let Some(&k) = self.path_index.get(&cur_path) {
+                cur = k;
+                continue;
+            }
+            let is_dir = ci + 1 < n;
+            let k = self.nodes.len();
+            let depth = self.nodes[cur].depth + 1;
+            self.nodes.push(Node {
+                path: cur_path.clone(),
+                name,
+                is_dir,
+                depth,
+                parent: Some(cur),
+                children: Vec::new(),
+                expanded: false,
+                loaded: false,
+                error: false,
+            });
+            self.path_index.insert(cur_path.clone(), k);
+            self.nodes[cur].children.push(k);
+            // 자식 순서 = 정식 열거와 같게(폴더 먼저 · 이름 대소문자 무시).
+            let mut kids = std::mem::take(&mut self.nodes[cur].children);
+            kids.sort_by(|&a, &b| {
+                self.nodes[b]
+                    .is_dir
+                    .cmp(&self.nodes[a].is_dir)
+                    .then_with(|| {
+                        self.nodes[a]
+                            .name
+                            .to_lowercase()
+                            .cmp(&self.nodes[b].name.to_lowercase())
+                    })
+            });
+            self.nodes[cur].children = kids;
+            cur = k;
+        }
+        Some(cur)
+    }
+
     /// 이름이 필터에 걸리는가 — 옵션(Aa·ab·(.*))은 부품이 본다(`needle`은 종전 호출자 호환용 · 안 쓴다).
     fn matches(&self, i: usize, _needle: &str) -> bool {
         let n = &self.nodes[i];
@@ -1257,7 +1454,12 @@ impl ProjectPanel {
     }
 
     fn content_h(&self) -> i32 {
-        let extra = if self.scan_capped { 1 } else { 0 };
+        let mut extra = if self.scan_capped { 1 } else { 0 };
+        if self.index_mode && !self.filter_text.trim().is_empty() {
+            extra += i32::from(self.index_scanning)
+                + i32::from(self.index_more > 0)
+                + i32::from(self.index_excluded);
+        }
         (self.prefix_rows() as i32 + self.rows.len() as i32 + extra) * self.row_h
     }
 
@@ -1600,11 +1802,23 @@ impl ProjectPanel {
     /// 필터 글이 바뀌었다(조합 중 글자 포함) — 열거·행 재구성.
     fn apply_filter(&mut self, text: String) {
         self.filter_text = text;
+        self.filter_rev = self.filter_rev.wrapping_add(1);
         if !self.filter_text.trim().is_empty() {
-            self.scan_for_filter();
+            if self.index_mode {
+                // ★ 색인 모드: 워커 열거 대신 호스트의 파일 색인을 받아 거른다(`apply_index` · 사용자 10-07 "Ctrl+P와 같은 원천 · 속도").
+                self.scan = None;
+                self.scan_capped = false;
+                self.index_req = true;
+            } else {
+                self.scan_for_filter();
+            }
         } else {
             self.scan = None; // 필터를 비우면 진행 중 열거도 취소
             self.scan_capped = false;
+            self.index_more = 0;
+            self.index_req = false;
+            self.filter
+                .set_search_state(crate::filterbar::SearchState::Idle);
         }
         self.sel = None;
         self.scroll_y = 0;
@@ -1858,6 +2072,21 @@ impl ProjectPanel {
         if let Some(sc) = &self.scan {
             notes.push((tf(Msg::ProjScanning, &[&sc.dirs.to_string()]), th.text_dim));
         }
+        // 색인 모드 안내(10-07): 읽는 중 · 상한 밖 일치 · 제외 폴더.
+        if self.index_mode && !self.filter_text.trim().is_empty() {
+            if self.index_scanning {
+                notes.push((t(Msg::ProjIndexScanning).to_string(), th.text_dim));
+            }
+            if self.index_more > 0 {
+                notes.push((
+                    tf(Msg::ProjIndexMore, &[&self.index_more.to_string()]),
+                    th.text_dim,
+                ));
+            }
+            if self.index_excluded {
+                notes.push((t(Msg::ProjIndexExcluded).to_string(), th.text_dim));
+            }
+        }
         if self.scan_capped {
             notes.push((
                 tf(Msg::ProjScanCapped, &[&self.scan_max.to_string()]),
@@ -1919,8 +2148,9 @@ impl ProjectPanel {
             return;
         };
         let text = nexa_fs::path::display(&self.nodes[node].path);
-        let y = self.list_rect.y - self.scroll_y % self.row_h.max(1)
-            + (r as i32 - self.scroll_y / self.row_h.max(1)) * self.row_h;
+        // 🔧 행 y = 목록 위 + (앞부분 행 = 열린 파일 블록 + 폴더 머리글 + 트리 행 번호) × 행 높이 − 스크롤 — `row_at`의 역산
+        //   (종전엔 앞부분 행을 빼먹어 열린 파일이 있으면 그만큼 위에 찍혔다 · 사용자 10-07).
+        let y = self.list_rect.y - self.scroll_y + (r + self.prefix_rows()) as i32 * self.row_h;
         let anchor = Rect::new(
             self.list_rect.x + (8.0 * self.scale).round() as i32,
             y + self.row_h,
@@ -2053,6 +2283,58 @@ mod tests {
             Some(Path::new("/nowhere/x.sql")),
         );
         assert!(p.selected_path().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 색인 모드(10-07): 워커 없이 호스트 색인으로 — 일치 파일의 조상만 노드 · 상한 밖은 안내 수 · 경로 토글은 노드 판정과 같은 술어.
+    #[test]
+    fn index_mode_builds_only_matching_ancestors() {
+        let dir = fixture("index");
+        let mut p = ProjectPanel::new();
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
+        p.set_index_mode(true);
+        p.set_filter_text("two");
+        assert!(!p.scanning(), "색인 모드 = 워커 없음");
+        assert!(p.take_index_request());
+        let files = vec![
+            dir.join("a/b/two.sql"),
+            dir.join("one.sql"),
+            dir.join("c/twofold.txt"),
+        ];
+        let lower: Vec<String> = files
+            .iter()
+            .map(|f| f.file_name().unwrap().to_string_lossy().to_lowercase())
+            .collect();
+        p.apply_index(&files, &lower, 0, false, true);
+        let names: Vec<&str> = p.rows.iter().map(|&n| p.nodes[n].name.as_str()).collect();
+        // 루트 다음 = 일치 파일과 그 조상만(폴더 먼저 · 이름순) · `one.sql`은 없다 · 노드도 일치분만.
+        assert_eq!(
+            names[1..],
+            ["a", "b", "two.sql", "c", "twofold.txt"],
+            "{names:?}"
+        );
+        assert!(!p.nodes.iter().any(|n| n.name == "one.sql"));
+        // 상한 밖 일치 수 안내.
+        let many: Vec<PathBuf> = (0..INDEX_HITS_MAX + 5)
+            .map(|i| dir.join(format!("m/two_{i}.sql")))
+            .collect();
+        let many_lower: Vec<String> = many
+            .iter()
+            .map(|f| f.file_name().unwrap().to_string_lossy().to_lowercase())
+            .collect();
+        p.apply_index(&many, &many_lower, 0, true, false);
+        assert_eq!(p.index_more, 5);
+        assert!(p.index_scanning);
+        // 증분: 뒤에 붙은 새 파일만 판정 · 일치 수는 이어 센다(상한 밖 +2).
+        let mut grown = many.clone();
+        grown.push(dir.join("m/two_extra_a.sql"));
+        grown.push(dir.join("m/two_extra_b.sql"));
+        let mut grown_lower = many_lower.clone();
+        grown_lower.push("two_extra_a.sql".into());
+        grown_lower.push("two_extra_b.sql".into());
+        p.apply_index(&grown, &grown_lower, many.len(), false, false);
+        assert_eq!(p.index_more, 7);
+        assert!(!p.index_scanning);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

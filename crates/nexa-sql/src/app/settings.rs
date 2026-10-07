@@ -346,6 +346,16 @@ impl App {
             | "editor.tab_unsaved_text"
             | "editor.tab_unsaved_color"
             | "editor.tab_close_show" => self.apply_tab_line_colors(),
+            "tabs.history"
+            | "tabs.history_max"
+            | "tabs.close_use_history"
+            | "tabs.close_select" => self.apply_tab_history_cfg(),
+            "ui.busy_ring"
+            | "ui.busy_ring_width"
+            | "ui.busy_ring_color"
+            | "ui.busy_ring_lap_ms"
+            | "ui.busy_ring_hold_ms"
+            | "ui.busy_ring_done_ms" => self.apply_busy_style(),
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
             "ui.toast_ms" | "ui.toast_alpha" => {
                 self.toasts.configure(
@@ -701,6 +711,8 @@ impl App {
             | "project.scan_threads"
             | "file.show_hidden"
             | "file.show_dot" => self.sync_project_panel_opts(),
+            // 제외 폴더(카드에서 직접 고친 경우) = Ctrl+P 캐시 낡음.
+            "project.exclude" => self.goto_files_at = None,
             "search.history_max" => self
                 .search_history
                 .borrow_mut()
@@ -1104,7 +1116,12 @@ impl App {
                 label: super::toolbar::toolbar_order_label,
                 locked: super::toolbar::TOOLBAR_GROUP_IDS,
                 child_move: false,
+                free: false,
             });
+        }
+        // 제외 폴더(Goto Anything 색인 · 사용자 10-07 "설정에서 추가/삭제") = 자유 항목 모드.
+        if key == super::goto::EXCLUDE_KEY {
+            return Some(super::goto::exclude_spec());
         }
         (key == crate::statusbar::KEY).then_some(crate::order_win::OrderSpec {
             key: crate::statusbar::KEY,
@@ -1114,6 +1131,7 @@ impl App {
             label: crate::statusbar::label,
             locked: crate::statusbar::LOCKED,
             child_move: true,
+            free: false,
         })
     }
 
@@ -1153,6 +1171,33 @@ impl App {
         );
     }
 
+    /// ★ 진행 표시 링(혜성) 전역 스타일(사용자 10-07) → nexa-ctl(모든 TextBox가 상속 · 성능 향상 모드 = `ui.busy_ring` 강제 off).
+    pub(crate) fn apply_busy_style(&mut self) {
+        let color = self
+            .settings
+            .get("ui.busy_ring_color")
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .and_then(|v| nexa_ctl::color_from_hex(v.trim_start_matches('#')));
+        nexa_ctl::set_busy_style(nexa_ctl::BusyStyle {
+            enabled: self.settings.flag("ui.busy_ring"),
+            width: self.settings.int("ui.busy_ring_width").clamp(1, 8) as f32,
+            color,
+            lap_ms: self.settings.int("ui.busy_ring_lap_ms").clamp(300, 5000) as u32,
+            hold_ms: self.settings.int("ui.busy_ring_hold_ms").clamp(0, 5000) as u32,
+            done_ms: self.settings.int("ui.busy_ring_done_ms").clamp(0, 10000) as u32,
+        });
+    }
+
+    /// 탭 이동 기록 설정(사용자 10-07 · 설정 ▸ 탭 동작) → `Editors`에(메모리 기록 · 닫힘 뒤 선택 규칙).
+    pub(crate) fn apply_tab_history_cfg(&mut self) {
+        let on = self.settings.flag("tabs.history");
+        let max = self.settings.int("tabs.history_max").clamp(1, 1000) as usize;
+        let use_hist = on && self.settings.flag("tabs.close_use_history");
+        let prev = self.settings.get("tabs.close_select") == Some("prev");
+        self.editors.set_tab_history_cfg(on, max, use_hist, prev);
+    }
+
     /// 편집 창의 변경 통지 — 저장 → 즉시 반영(빈 값 = 기본 = 줄을 지운다) · 설정 창 카드도 새 값으로.
     pub(crate) fn order_changed(&mut self, key: &str, value: &str) {
         if key == super::toolbar::TOOLBAR_ORDER_KEY {
@@ -1167,6 +1212,10 @@ impl App {
             self.settings.set(key, value).map(|_| ())
         };
         if r.is_ok() {
+            if key == super::goto::EXCLUDE_KEY {
+                // 제외 규칙이 바뀌면 Ctrl+P 파일 캐시는 낡은 것(다음 열기 때 다시 열거).
+                self.goto_files_at = None;
+            }
             self.persist_settings();
             self.redraw();
             self.prefs_win.refresh(&self.settings);

@@ -419,6 +419,16 @@ const FILTER_SCOPE_OPTS: &[(&str, Msg)] =
     &[("all", Msg::ValFilterAll), ("shown", Msg::ValFilterShown)];
 
 /// 탭 닫기 상자 표시(`editor.tab_close_show`).
+/// 탭 닫힘 뒤 자동 선택된 탭이 탐색기에 미치는 동작(사용자 10-07): keep = 선택만(지금 자리 유지) · move = 탭을 클릭한 것처럼 이동.
+const TAB_CLOSE_FOCUS_OPTS: &[(&str, Msg)] = &[
+    ("keep", Msg::ValTabFocusKeep),
+    ("move", Msg::ValTabFocusMove),
+];
+/// 닫힘 뒤 다음 활성(기록을 안 쓸 때): next = 닫힌 자리(종전 동작) · prev = 왼쪽.
+const TAB_CLOSE_SELECT_OPTS: &[(&str, Msg)] = &[
+    ("next", Msg::ValTabCloseSelectNext),
+    ("prev", Msg::ValTabCloseSelectPrev),
+];
 const TAB_CLOSE_SHOW_OPTS: &[(&str, Msg)] = &[
     ("always", Msg::ValTabCloseAlways),
     ("hover", Msg::ValTabCloseHover),
@@ -1012,7 +1022,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.tab_accent_color",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabAccent,
         desc: Msg::DescEditorTabAccent,
         kind: SettingKind::Text,
@@ -2323,9 +2333,61 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 진행 표시 링(혜성 · 사용자 10-07 "모든 검색에 · 컨트롤 속성 · 사용/두께/색/유지시간 설정 · 성능 향상 모드에서 끔"): 전역 스타일 → nexa-ctl.
+    Entry {
+        key: "ui.busy_ring",
+        cat: Msg::CatAppearance,
+        label: Msg::LblBusyRing,
+        desc: Msg::DescBusyRing,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ui.busy_ring_width",
+        cat: Msg::CatAppearance,
+        label: Msg::LblBusyRingWidth,
+        desc: Msg::DescBusyRingWidth,
+        kind: SettingKind::Int { min: 1, max: 8 },
+        default: "3",
+    },
+    Entry {
+        key: "ui.busy_ring_color",
+        cat: Msg::CatAppearance,
+        label: Msg::LblBusyRingColor,
+        desc: Msg::DescBusyRingColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "ui.busy_ring_lap_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblBusyRingLapMs,
+        desc: Msg::DescBusyRingLapMs,
+        kind: SettingKind::Int {
+            min: 300,
+            max: 5000,
+        },
+        default: "1200",
+    },
+    Entry {
+        key: "ui.busy_ring_hold_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblBusyRingHoldMs,
+        desc: Msg::DescBusyRingHoldMs,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "600",
+    },
+    Entry {
+        key: "ui.busy_ring_done_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblBusyRingDoneMs,
+        desc: Msg::DescBusyRingDoneMs,
+        kind: SettingKind::Int { min: 0, max: 10000 },
+        default: "0",
+    },
     Entry {
         key: "tabs.rows",
-        cat: Msg::CatAppearance,
+        cat: Msg::CatTabs,
         label: Msg::LblTabsRows,
         desc: Msg::DescTabsRows,
         kind: SettingKind::Choice(TAB_ROWS_OPTS),
@@ -2333,7 +2395,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tabs.tooltip",
-        cat: Msg::CatAppearance,
+        cat: Msg::CatTabs,
         label: Msg::LblTabsTooltip,
         desc: Msg::DescTabsTooltip,
         kind: SettingKind::Bool,
@@ -2835,7 +2897,7 @@ pub const REGISTRY: &[Entry] = &[
     //   accent · 미리보기 text_dim). 미저장 = 파일이 아닌 스크립트 탭 + 저장 뒤 바뀐 파일 탭.
     Entry {
         key: "editor.tab_line_unsaved",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabLineUnsaved,
         desc: Msg::DescEditorTabLineUnsaved,
         kind: SettingKind::Text,
@@ -2843,7 +2905,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.tab_line_file",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabLineFile,
         desc: Msg::DescEditorTabLineFile,
         kind: SettingKind::Text,
@@ -2851,7 +2913,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.tab_line_preview",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabLinePreview,
         desc: Msg::DescEditorTabLinePreview,
         kind: SettingKind::Text,
@@ -2860,7 +2922,7 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 미저장 탭 = 탭 **이름 글자**에도 색(사용자 09-28 "포커스가 없을 때는 상단 줄로 구분이 안 된다") · 기본 켬 · 색은 빈 값 = 줄 색.
     Entry {
         key: "editor.tab_unsaved_text",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabUnsavedText,
         desc: Msg::DescEditorTabUnsavedText,
         kind: SettingKind::Bool,
@@ -2869,15 +2931,65 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 탭 닫기 상자 표시(사용자 09-28): 기본 = 늘 보임 · hover = 탭 클릭(활성)·마우스 오버·미저장 탭에서만. 편집기 탭·결과 탭 공통.
     Entry {
         key: "editor.tab_close_show",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabCloseShow,
         desc: Msg::DescEditorTabCloseShow,
         kind: SettingKind::Choice(TAB_CLOSE_SHOW_OPTS),
         default: "always",
     },
+    // ★ 탭 닫힘 뒤 포커스(사용자 10-07): 미리보기/확장(뷰) 탭 닫기 = 유지 기본(탐색을 이어 가는 뜻) · 편집기 탭 닫기 = 이동 기본.
+    Entry {
+        key: "tabs.close_preview_focus",
+        cat: Msg::CatTabs,
+        label: Msg::LblTabsClosePreviewFocus,
+        desc: Msg::DescTabsClosePreviewFocus,
+        kind: SettingKind::Choice(TAB_CLOSE_FOCUS_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "tabs.close_editor_focus",
+        cat: Msg::CatTabs,
+        label: Msg::LblTabsCloseEditorFocus,
+        desc: Msg::DescTabsCloseEditorFocus,
+        kind: SettingKind::Choice(TAB_CLOSE_FOCUS_OPTS),
+        default: "move",
+    },
+    // ★ 탭 이동 기록(사용자 10-07 · 메모리만): 켬 · 상한 · 닫힘 뒤 선택에 적용 · (안 쓸 때) 이전/다음 — `DEPENDS`로 잠금.
+    Entry {
+        key: "tabs.history",
+        cat: Msg::CatTabs,
+        label: Msg::LblTabsHistory,
+        desc: Msg::DescTabsHistory,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "tabs.history_max",
+        cat: Msg::CatTabs,
+        label: Msg::LblTabsHistoryMax,
+        desc: Msg::DescTabsHistoryMax,
+        kind: SettingKind::Int { min: 2, max: 200 },
+        default: "20",
+    },
+    Entry {
+        key: "tabs.close_use_history",
+        cat: Msg::CatTabs,
+        label: Msg::LblTabsCloseUseHistory,
+        desc: Msg::DescTabsCloseUseHistory,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "tabs.close_select",
+        cat: Msg::CatTabs,
+        label: Msg::LblTabsCloseSelect,
+        desc: Msg::DescTabsCloseSelect,
+        kind: SettingKind::Choice(TAB_CLOSE_SELECT_OPTS),
+        default: "next",
+    },
     Entry {
         key: "editor.tab_unsaved_color",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblEditorTabUnsavedColor,
         desc: Msg::DescEditorTabUnsavedColor,
         kind: SettingKind::Text,
@@ -4608,7 +4720,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.close_unsaved",
-        cat: Msg::CatEditor,
+        cat: Msg::CatTabs,
         label: Msg::LblCloseUnsaved,
         desc: Msg::DescCloseUnsaved,
         kind: SettingKind::Choice(CLOSE_UNSAVED_OPTS),
@@ -6073,6 +6185,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
         Msg::GrpEditors,
         &[
             Msg::CatEditor,
+            // 탭 동작(사용자 10-07 "탭 동작 관련 설정을 모아") — 줄·툴팁·닫기 버튼·미저장 표시·줄 색·닫기 확인·닫힘 뒤 포커스.
+            Msg::CatTabs,
             // 되돌리기(78 · T-250): 예산·묶음·기록 파일 — 종전 Performance/Editor에 흩어져 있던 `editor.undo_*`.
             Msg::CatUndo,
             Msg::CatIntel,
@@ -6264,6 +6378,19 @@ const LARGE_LEVEL_OPTS: &[(&str, Msg)] = &[
 ];
 
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
+    // 탭 이동 기록(10-07): 상한·적용은 기록이 켜져 있을 때 · 이전/다음은 **기록 적용이 꺼져 있을 때만**(사용자 "적용이 체크되면 설정 못 하게").
+    ("ui.busy_ring_width", "ui.busy_ring", Dep::On),
+    ("ui.busy_ring_color", "ui.busy_ring", Dep::On),
+    ("ui.busy_ring_lap_ms", "ui.busy_ring", Dep::On),
+    ("ui.busy_ring_hold_ms", "ui.busy_ring", Dep::On),
+    ("ui.busy_ring_done_ms", "ui.busy_ring", Dep::On),
+    ("tabs.history_max", "tabs.history", Dep::On),
+    ("tabs.close_use_history", "tabs.history", Dep::On),
+    (
+        "tabs.close_select",
+        "tabs.close_use_history",
+        Dep::Eq("off"),
+    ),
     ("scroll.fast_speed", "scroll.fast", Dep::On),
     ("scroll.fast_grid_extra", "scroll.fast", Dep::On),
     ("scroll.fast_hud", "scroll.fast", Dep::On),

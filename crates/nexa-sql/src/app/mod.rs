@@ -14,7 +14,7 @@ mod extensions;
 mod files;
 mod find;
 mod format;
-mod goto;
+pub(crate) mod goto;
 mod grid_results;
 mod input;
 mod license;

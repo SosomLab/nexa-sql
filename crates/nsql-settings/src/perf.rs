@@ -217,6 +217,8 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     // ── GFX(§3-4)
     ("ui.max_fps", b(Domain::Gfx, "60", "30", "15")),
     ("ui.animations", b(Domain::Gfx, "auto", "auto", "off")),
+    // 진행 표시 링(혜성 · 10-07) — 진행 중 프레임마다 다시 그림 · low = 끔.
+    ("ui.busy_ring", b(Domain::Gfx, "on", "on", "off")),
     ("editor.caret_blink", b(Domain::Gfx, "on", "on", "off")),
     // 플래시 메시지(09-27 · 유지+페이드 동안 프레임마다 다시 그림 · low = 짧게)
     ("ui.flash_hold_ms", b(Domain::Gfx, "2000", "1000", "300")),
@@ -250,6 +252,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("ui.flash_ms", "200"),
     // 고속 스크롤 속도 HUD(09-30) — 멈춘 뒤 유지·페이드 동안 프레임을 그린다 · 가속 자체(큐·타이머 0)는 그대로 둔다.
     ("scroll.fast_hud", "off"),
+    // 진행 표시 링(혜성 · 10-07) — 검색/열거 진행 동안 프레임마다 다시 그림 · 상태 추적은 그대로(비용 0).
+    ("ui.busy_ring", "off"),
     // Linux IME 감시(09-27) — 자식 프로세스·스레드 0(엔진 이름·토글 키·입력 종류 폴백).
     ("input.ime_hint_watch", "off"),
     // 파일 검색 한 파일 상한 = HDD 기준 2 MB(사용자 09-28 "성능 향상 모드에서는 HDD 기준" · docs/72 §4-1).

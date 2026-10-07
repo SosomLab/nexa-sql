@@ -127,6 +127,28 @@ impl App {
             let _ = std::fs::write(path, self.palette.dump());
             return;
         }
+        // 탭 이동 기록 덤프(10-07 · 오래된 것 → 최근 · `id\t제목` 줄).
+        if let Some(path) = id.strip_prefix("editor.tabhist:") {
+            let out: String = self
+                .editors
+                .tab_history()
+                .iter()
+                .map(|(id, t)| format!("{id}\t{t}\n"))
+                .collect();
+            let _ = std::fs::write(path, out);
+            return;
+        }
+        // 결과 n번째 행을 Enter처럼 고른다(협업 V1 "Ctrl+P 결과를 여는 기동 명령" · 키 주입 0).
+        if let Some(n) = id.strip_prefix("palette.pick:") {
+            let i = n.trim().parse::<usize>().unwrap_or(0);
+            if let Some(pid) = self.palette.pick_row(i) {
+                self.palette.close();
+                self.ime_refresh();
+                self.menu_action(&pid);
+                self.redraw();
+            }
+            return;
+        }
         // 자체 시험(T-283): 마지막 비교 결과 `same=… hunks=… name=…`.
         if let Some(path) = id.strip_prefix("compare.dump:") {
             self.compare_dump(path);
@@ -546,8 +568,12 @@ impl App {
             let a = if let Some(n) = arg.strip_prefix("select=") {
                 self.order_win.select(n.parse().unwrap_or(0));
                 crate::order_win::OrderWinAction::None
+            } else if let Some(name) = arg.strip_prefix("add=") {
+                // 자유 항목 모드(제외 폴더): 이름 추가 · `del` = 선택 행 삭제.
+                self.order_win.add_item(name)
             } else {
                 match arg {
+                    "del" => self.order_win.remove_sel(),
                     "up" => self.order_win.move_sel(false),
                     "down" => self.order_win.move_sel(true),
                     "toggle" => {

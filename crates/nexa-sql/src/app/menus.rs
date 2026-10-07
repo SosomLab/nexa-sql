@@ -479,7 +479,11 @@ impl App {
                 self.redraw();
             }
             // ★ Goto Anything(10-07): `…#L<n>` · `file.path:<i>` · `help:<접두>`.
-            id if id.contains("#L") || id.starts_with("file.path:") || id.starts_with("help:") => {
+            id if id.contains("#L")
+                || id.starts_with("file.path:")
+                || id.starts_with("help:")
+                || id.starts_with("info:") =>
+            {
                 let id = id.to_string();
                 self.goto_pick(&id);
             }

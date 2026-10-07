@@ -2,15 +2,17 @@
 //! [편집…]에서 여는 보조 창. 행 = 체크(표시) + 이름 · 선택한 행을 ▲▼ / Ctrl(⌘)+↑↓ / 끌기로 옮긴다 · Space = 표시 전환 ·
 //! ★ **그룹 단위 이동**(사용자 10-04): 그룹(블록) 행 = 통째 이동 · 자식 행 = 그 그룹 안에서만 · 그룹 체크 = 통째 숨김(자식 체크 보존) ·
 //! 잠긴 항목은 체크를 못 끈다 · Esc = 끌기 취소 → 닫기. 바꿀 때마다 [`OrderWinAction::Changed`]로 호스트에 알려 **즉시 적용·저장**
-//! (확인/취소 없음 — nexa-dir3 DLG-073과 같은 규약). 무엇을 고치는지는 [`OrderSpec`] 어댑터가 정한다(지금 = 상태바 하나).
+//! (확인/취소 없음 — nexa-dir3 DLG-073과 같은 규약). 무엇을 고치는지는 [`OrderSpec`] 어댑터가 정한다(상태바 · 툴바 · 제외 폴더).
+//! ★ **자유 항목 모드**(`OrderSpec::free` · 사용자 10-07 "제외 규칙을 설정에서 추가/삭제") = 행이 고정 집합이 아니라 사용자가 적는 이름:
+//! 체크 없음 · 목록 아래 입력란 + [추가](Enter) · [삭제](Delete) · 같은 이름은 한 번 · 빈 목록도 저장(어댑터가 표현을 정한다).
 
-use nexa_ctl::controls::Button;
+use nexa_ctl::controls::{Button, TextBox};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::order::OrderBlock;
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, Theme};
-use nexa_ctl::{InputEvent, Invalidations, Widget};
+use nexa_ctl::{Control, InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
 use std::rc::Rc;
@@ -35,6 +37,8 @@ pub(crate) struct OrderSpec {
     pub locked: &'static [&'static str],
     /// 자식의 순서를 바꿀 수 있는가(툴바 = 그룹 안 버튼 순서는 고정 → `false`).
     pub child_move: bool,
+    /// ★ 자유 항목 모드 — 블록 = 사용자가 적은 이름(체크·그룹 없음 · 입력란으로 추가 · 삭제 가능 · 라벨 = 이름 그대로).
+    pub free: bool,
 }
 
 /// 툴팁 문구를 라벨로 쓸 때 끝의 단축키 괄호(`Run statement (Ctrl+Enter)`)를 뗀다 — 이름만 남긴다(단축키 표기는 OS마다 다르다).
@@ -76,6 +80,8 @@ const SIDE_W: f32 = 84.0;
 const CHECK: f32 = 16.0;
 const INDENT: f32 = 22.0;
 const DRAG_THRESHOLD: i32 = 5;
+/// 자유 항목 모드: 목록과 입력란 사이 틈.
+const INPUT_GAP: f32 = 6.0;
 
 /// 끌기 — 누른 자리에서 [`DRAG_THRESHOLD`]를 넘으면 시작 · 시작할 때의 목록을 들고 있다가 Esc면 되돌린다.
 struct Drag {
@@ -100,6 +106,11 @@ pub(crate) struct OrderWin {
     up: Button,
     down: Button,
     reset: Button,
+    /// 자유 항목 모드: 새 이름 입력란 · [추가] · [삭제] · Shift 상태(입력란 선택용).
+    input: TextBox,
+    add: Button,
+    remove: Button,
+    shift: bool,
 }
 
 /// 항목 하나를 `from` → `to`로 옮긴다(순수 · 범위 밖이면 그대로). 돌려주는 값 = 실제로 옮겼는가.
@@ -128,7 +139,51 @@ impl OrderWin {
             up: Button::new("▲"),
             down: Button::new("▼"),
             reset: Button::new(t(Msg::OrdReset)),
+            input: TextBox::new(t(Msg::OrdNewItem)),
+            add: Button::new(t(Msg::OrdAdd)),
+            remove: Button::new(t(Msg::OrdRemove)),
+            shift: false,
         }
+    }
+
+    fn free(&self) -> bool {
+        self.spec.is_some_and(|sp| sp.free)
+    }
+
+    /// 자유 항목 추가(입력란/기동 명령) — 다듬은 이름 · 빈 글·중복은 무시 · 새 행 선택 · 입력란 비움. 돌려주는 값 = 바뀌었으면 `Changed`.
+    pub(crate) fn add_item(&mut self, name: &str) -> OrderWinAction {
+        if !self.free() {
+            return OrderWinAction::None;
+        }
+        let name = name.trim();
+        if name.is_empty() || name.contains(',') {
+            return OrderWinAction::None;
+        }
+        if let Some(i) = self.blocks.iter().position(|b| b.0 == name) {
+            // 이미 있음 = 그 행을 고르기만(사용자 "추가/삭제 관리" · 중복 없음).
+            self.select_block(i);
+            self.input.set_text("");
+            self.redraw();
+            return OrderWinAction::None;
+        }
+        self.blocks.push((name.to_string(), true, Vec::new()));
+        let last = self.blocks.len() - 1;
+        self.select_block(last);
+        self.input.set_text("");
+        self.changed()
+    }
+
+    /// 선택 행 삭제(자유 항목 모드).
+    pub(crate) fn remove_sel(&mut self) -> OrderWinAction {
+        if !self.free() {
+            return OrderWinAction::None;
+        }
+        let Some(&(bi, _)) = self.rows().get(self.sel) else {
+            return OrderWinAction::None;
+        };
+        self.blocks.remove(bi);
+        self.sel = self.sel.min(self.rows().len().saturating_sub(1));
+        self.changed()
     }
 
     /// 편집 대상과 지금 값을 넣는다(열기 전 · 열려 있으면 내용만 바뀐다).
@@ -138,6 +193,13 @@ impl OrderWin {
         self.sel = self.sel.min(self.rows().len().saturating_sub(1));
         self.drag = None;
         self.reset.set_label(t(Msg::OrdReset));
+        if spec.free {
+            self.input = TextBox::new(t(Msg::OrdNewItem));
+            self.input.set_scale(self.scale);
+            self.input.set_focused(true);
+            self.add.set_label(t(Msg::OrdAdd));
+            self.remove.set_label(t(Msg::OrdRemove));
+        }
         self.redraw();
     }
 
@@ -158,7 +220,21 @@ impl OrderWin {
             return;
         };
         let rows = self.rows().len().max(1) as f64;
-        let h = f64::from(PAD) * 3.0 + 24.0 + rows * f64::from(ROW_H) + 2.0;
+        // 자유 항목 모드 = 입력란 한 줄 + 틈 · 버튼 네 개가 들어갈 최소 높이.
+        let extra = if spec.free {
+            f64::from(ROW_H + INPUT_GAP)
+        } else {
+            0.0
+        };
+        // 안내는 자유 항목 모드에서 두 줄(창 폭에서 잘리지 않게 · 협업 bin43 관찰).
+        let hint_lines = if spec.free { 2.0 } else { 1.0 };
+        let min_h = if spec.free {
+            f64::from(PAD) * 3.0 + 24.0 * hint_lines + f64::from(BTN_H) * 5.0 + 30.0
+        } else {
+            0.0
+        };
+        let h = (f64::from(PAD) * 3.0 + 24.0 * hint_lines + rows * f64::from(ROW_H) + 2.0 + extra)
+            .max(min_h);
         let Some(o) = crate::winhost::open_window(
             el,
             crate::winhost::OpenSpec {
@@ -169,12 +245,14 @@ impl OrderWin {
                 owner,
                 memo: None,
                 default_size: (380.0, h),
-                ime: false,
+                // 자유 항목(폴더 이름)은 한글도 적는다.
+                ime: spec.free,
             },
         ) else {
             return;
         };
         self.scale = o.scale;
+        self.input.set_scale(self.scale);
         self.surface = o.surface;
         self.window = Some(o.window);
         self.redraw();
@@ -246,6 +324,9 @@ impl OrderWin {
 
     /// 표시 전환(행 index) — 그룹 행 = 통째(잠긴 블록 = 거부) · 자식 행 = 그 칸만(그룹이 숨겨져 있으면 거부).
     pub(crate) fn toggle(&mut self, row: usize) -> OrderWinAction {
+        if self.free() {
+            return OrderWinAction::None;
+        }
         let Some(&(bi, ci)) = self.rows().get(row) else {
             return OrderWinAction::None;
         };
@@ -389,6 +470,7 @@ impl OrderWin {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.scale = *scale_factor as f32;
+                self.input.set_scale(self.scale);
                 self.redraw();
                 OrderWinAction::None
             }
@@ -398,6 +480,25 @@ impl OrderWin {
                 } else {
                     m.state().control_key()
                 };
+                self.shift = m.state().shift_key();
+                OrderWinAction::None
+            }
+            // 자유 항목 모드: IME 조합·확정은 입력란으로(한글 폴더 이름).
+            WindowEvent::Ime(ime) if self.free() => {
+                let mut inv = Invalidations::default();
+                match ime {
+                    winit::event::Ime::Preedit(t, _) => self.input.set_preedit(t, &mut inv),
+                    winit::event::Ime::Commit(s) => {
+                        for c in s.chars() {
+                            self.input
+                                .on_event(&InputEvent::Char { c, now_ms: 0 }, &mut inv);
+                        }
+                    }
+                    _ => {}
+                }
+                if !inv.is_empty() {
+                    self.redraw();
+                }
                 OrderWinAction::None
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -423,6 +524,11 @@ impl OrderWin {
                 self.up.on_event(&mv, &mut inv);
                 self.down.on_event(&mv, &mut inv);
                 self.reset.on_event(&mv, &mut inv);
+                if self.free() {
+                    self.add.on_event(&mv, &mut inv);
+                    self.remove.on_event(&mv, &mut inv);
+                    self.input.on_event(&mv, &mut inv);
+                }
                 if !inv.is_empty() {
                     self.redraw();
                 }
@@ -441,6 +547,16 @@ impl OrderWin {
                 } else if let Some(i) = self.row_at(x, y) {
                     self.sel = i;
                     self.redraw();
+                    if self.free() {
+                        // 포커스 규칙: 목록을 고르면 입력란 링은 끈다(한 창에 하나).
+                        self.input.set_focused(false);
+                        self.drag = Some(Drag {
+                            press_y: y,
+                            active: false,
+                            before: self.blocks.clone(),
+                        });
+                        return OrderWinAction::None;
+                    }
                     // 체크 칸(행 왼쪽 · 자식은 들여쓴 자리) = 표시 전환 · 그 밖 = 선택 + 끌기 준비.
                     let indent = if self.rows()[i].1.is_some() {
                         INDENT
@@ -476,6 +592,30 @@ impl OrderWin {
                         b.on_event(&ev, &mut inv);
                     }
                 }
+                if self.free() {
+                    for b in [&mut self.add, &mut self.remove] {
+                        if up || b.bounds().contains(p) {
+                            b.on_event(&ev, &mut inv);
+                        }
+                    }
+                    if !up {
+                        // 입력란 클릭 = 포커스(다른 데 클릭 = 끔 · 포커스 링 하나).
+                        let hit = self.input.bounds().contains(p);
+                        self.input.set_focused(hit);
+                        if hit {
+                            self.input.on_event(&ev, &mut inv);
+                        }
+                    } else {
+                        self.input.on_event(&ev, &mut inv);
+                    }
+                    if self.add.take_clicked() {
+                        let s = self.input.text();
+                        return self.add_item(&s);
+                    }
+                    if self.remove.take_clicked() {
+                        return self.remove_sel();
+                    }
+                }
                 if self.up.take_clicked() {
                     return self.move_sel(false);
                 }
@@ -490,8 +630,50 @@ impl OrderWin {
                 }
                 OrderWinAction::None
             }
+            WindowEvent::KeyboardInput { event: kev, .. }
+                if kev.state == ElementState::Pressed && self.free() && self.input.is_focused() =>
+            {
+                // 입력란에 포커스: Enter = 추가 · Esc = 글이 있으면 비우기, 없으면 닫기 · 그 밖 = 글자/편집 키.
+                match kev.logical_key.as_ref() {
+                    Key::Named(NamedKey::Enter) => {
+                        let s = self.input.text();
+                        self.add_item(&s)
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        if self.input.text().is_empty() {
+                            OrderWinAction::Close
+                        } else {
+                            self.input.set_text("");
+                            self.redraw();
+                            OrderWinAction::None
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown) => {
+                        // 목록으로 포커스 이동.
+                        self.input.set_focused(false);
+                        self.redraw();
+                        OrderWinAction::None
+                    }
+                    _ => {
+                        if let Some(ev) = crate::input::text_key_event(
+                            kev,
+                            self.shift,
+                            self.primary,
+                            crate::input::TextKeys::Line,
+                        ) {
+                            let mut inv = Invalidations::default();
+                            self.input.on_event(&ev, &mut inv);
+                            if !inv.is_empty() {
+                                self.redraw();
+                            }
+                        }
+                        OrderWinAction::None
+                    }
+                }
+            }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
+                    Key::Named(NamedKey::Delete) if self.free() => self.remove_sel(),
                     Key::Named(NamedKey::Escape) => {
                         // 끌기 중 = 끌기 전으로 되돌림 · 아니면 닫기.
                         if let Some(d) = self.drag.take() {
@@ -544,27 +726,35 @@ impl OrderWin {
             let pad = px(PAD);
             dc.select_font(FontSlot::Base, false);
             let th_txt = dc.text_height();
-            // 안내 한 줄(조작법).
-            let hint_h = px(24.0);
-            let ty = dc.text_center_y(pad, hint_h);
+            // 안내(조작법 · 자유 항목 모드 = 두 줄).
+            let line_h = px(24.0);
             // 맥의 이동 단축키는 ⌘+↑↓(`primary`) — 안내 글의 수정키 이름도 맞춘다.
+            let free = self.free();
+            let hint_msg = if free { Msg::OrdHintFree } else { Msg::OrdHint };
             let hint = if cfg!(target_os = "macos") {
-                t(Msg::OrdHint).replace("Ctrl", "⌘")
+                t(hint_msg).replace("Ctrl", "⌘")
             } else {
-                t(Msg::OrdHint).to_string()
+                t(hint_msg).to_string()
             };
-            dc.text(
-                pad,
-                ty,
-                Rect::new(pad, pad, wi - pad * 2, hint_h),
-                &hint,
-                th.text_dim,
-            );
+            let mut hint_h = 0;
+            for line in hint.split('\n') {
+                let ty = dc.text_center_y(pad + hint_h, line_h);
+                dc.text(
+                    pad,
+                    ty,
+                    Rect::new(pad, pad + hint_h, wi - pad * 2, line_h),
+                    line,
+                    th.text_dim,
+                );
+                hint_h += line_h;
+            }
             // 목록(왼쪽) + 버튼 열(오른쪽).
             let side_w = px(SIDE_W);
             let top = pad + hint_h + px(4.0);
             let row_h = self.row_h();
-            let list = Rect::new(pad, top, wi - pad * 3 - side_w, hi - top - pad);
+            // 자유 항목 모드 = 목록 아래 입력란 한 줄 자리를 남긴다.
+            let input_h = if free { row_h + px(INPUT_GAP) } else { 0 };
+            let list = Rect::new(pad, top, wi - pad * 3 - side_w, hi - top - pad - input_h);
             self.list = Rect::new(
                 list.x,
                 list.y,
@@ -594,9 +784,16 @@ impl OrderWin {
                     Some(_) => !block.1,
                 };
                 let indent = if ci.is_some() { px(INDENT) } else { 0 };
-                let cb = Rect::new(r.x + pad + indent, r.y + (row_h - check) / 2, check, check);
-                nexa_ctl::controls::draw_checkbox_glyph(&mut dc, th, cb, vis, !fixed);
+                let cb = if free {
+                    // 체크 없음 — 글자는 패딩 자리부터.
+                    Rect::new(r.x + pad - px(8.0), r.y, 0, row_h)
+                } else {
+                    let cb = Rect::new(r.x + pad + indent, r.y + (row_h - check) / 2, check, check);
+                    nexa_ctl::controls::draw_checkbox_glyph(&mut dc, th, cb, vis, !fixed);
+                    cb
+                };
                 let label = match self.spec {
+                    Some(sp) if sp.free => block.0.as_str(),
                     Some(sp) => without_shortcut(t((sp.label)(&block.0, item))),
                     None => item.unwrap_or(block.0.as_str()),
                 };
@@ -616,7 +813,7 @@ impl OrderWin {
             }
             dc.select_font(FontSlot::Base, false);
             let _ = th_txt;
-            // 버튼 열: ▲ ▼ 위 · 기본값 아래.
+            // 버튼 열: ▲ ▼ 위 · (자유 항목 = 추가 · 삭제) · 기본값 아래.
             let bx = wi - pad - side_w;
             let bh = px(BTN_H);
             let mut inv = Invalidations::default();
@@ -625,6 +822,20 @@ impl OrderWin {
                 .set_bounds(Rect::new(bx, top + bh + px(6.0), side_w, bh), &mut inv);
             self.reset
                 .set_bounds(Rect::new(bx, hi - pad - bh, side_w, bh), &mut inv);
+            if free {
+                let y2 = top + (bh + px(6.0)) * 2 + px(8.0);
+                self.add.set_bounds(Rect::new(bx, y2, side_w, bh), &mut inv);
+                self.remove
+                    .set_bounds(Rect::new(bx, y2 + bh + px(6.0), side_w, bh), &mut inv);
+                // 입력란 = 목록 바로 아래 · 목록 폭.
+                self.input.set_bounds(
+                    Rect::new(list.x, list.bottom() + px(INPUT_GAP), list.w, row_h),
+                    &mut inv,
+                );
+                self.add.paint(&mut dc, th);
+                self.remove.paint(&mut dc, th);
+                self.input.paint(&mut dc, th);
+            }
             // 연타가 뜻인 버튼(한 칸씩 여러 번).
             self.up.set_rapid(true);
             self.down.set_rapid(true);
@@ -650,7 +861,38 @@ mod tests {
             label: crate::statusbar::label,
             locked: crate::statusbar::LOCKED,
             child_move: true,
+            free: false,
         }
+    }
+
+    /// 자유 항목 모드(제외 폴더): 추가·중복·삭제·빈 목록 표현(`-`)·기본값.
+    #[test]
+    fn free_items_add_remove_default() {
+        let mut w = OrderWin::new();
+        w.set(crate::app::goto::exclude_spec(), "");
+        let d = w.dump();
+        assert!(d.contains("[x] .git") && d.contains("[x] target"), "{d}");
+        // 추가 = 끝에 · 선택 따라감 · 쉼표·빈 글은 거부 · 중복은 선택만.
+        let v = value(w.add_item("  node_modules_x ")).expect("changed");
+        assert!(v.ends_with(",node_modules_x"), "{v}");
+        assert!(value(w.add_item("")).is_none());
+        assert!(value(w.add_item("a,b")).is_none());
+        assert!(value(w.add_item("target")).is_none());
+        assert_eq!(w.selected(), row_of(&w, "target"));
+        // 전부 삭제 = 빈 목록 = `-`(기본으로 되돌아가지 않게).
+        let n = w.rows().len();
+        let mut last = None;
+        for _ in 0..n {
+            w.select(0);
+            last = value(w.remove_sel());
+        }
+        assert_eq!(last.as_deref(), Some("-"));
+        assert!(crate::app::goto::exclude_names("-").is_empty());
+        // 기본값 = 빈 설정값 · 기본 목록.
+        assert_eq!(value(w.reset_all()).as_deref(), Some(""));
+        assert!(!crate::app::goto::exclude_names("").is_empty());
+        // 체크 전환은 자유 모드에서 무시.
+        assert!(value(w.toggle(0)).is_none());
     }
 
     fn value(a: OrderWinAction) -> Option<String> {

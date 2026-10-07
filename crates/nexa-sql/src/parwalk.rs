@@ -157,6 +157,109 @@ fn run(roots: Vec<PathBuf>, opts: ListOpts, n: usize, tx: Sender<DirMsg>, cancel
 mod tests {
     use super::*;
 
+    /// 단일 스레드 대조(기본 ignore): 같은 트리를 **원시 `read_dir` + `file_type`만**으로 걷는 시간 vs `nexa_fs::list_opts`로 걷는 시간 —
+    /// 생산 병목이 열거 API인지 `Entry` 만들기인지 가른다. `NSQL_PARWALK_DIR=<폴더> cargo test -p nexa-sql parwalk::tests::probe_raw_vs_list -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn probe_raw_vs_list() {
+        let Ok(dir) = std::env::var("NSQL_PARWALK_DIR") else {
+            return;
+        };
+        let root = PathBuf::from(dir);
+        // ① 원시
+        let t0 = std::time::Instant::now();
+        let (mut dirs, mut files) = (0usize, 0usize);
+        let mut stack = vec![root.clone()];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            dirs += 1;
+            for de in rd.flatten() {
+                if de.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    stack.push(de.path());
+                } else {
+                    files += 1;
+                }
+            }
+        }
+        eprintln!(
+            "raw read_dir: dirs={dirs} files={files} total={:?}",
+            t0.elapsed()
+        );
+        // ② nexa_fs::list_opts
+        let t0 = std::time::Instant::now();
+        let (mut dirs, mut files) = (0usize, 0usize);
+        let mut stack = vec![root];
+        while let Some(d) = stack.pop() {
+            let Ok(es) = nexa_fs::list_opts(&d, false, false) else {
+                continue;
+            };
+            dirs += 1;
+            for e in es {
+                if e.is_dir {
+                    stack.push(e.path);
+                } else {
+                    files += 1;
+                }
+            }
+        }
+        eprintln!(
+            "list_opts: dirs={dirs} files={files} total={:?}",
+            t0.elapsed()
+        );
+    }
+
+    /// 처리량 수동 측정(기본 ignore · 협업 V1 bin41 "제외 비우면 16초/4.3만"의 생산 vs 수거 가르기):
+    /// `NSQL_PARWALK_DIR=<폴더> [NSQL_PARWALK_SKIP=a,b] cargo test -p nexa-sql parwalk::tests::probe_throughput -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn probe_throughput() {
+        let Ok(dir) = std::env::var("NSQL_PARWALK_DIR") else {
+            return;
+        };
+        let skip: Vec<String> = std::env::var("NSQL_PARWALK_SKIP")
+            .map(|s| {
+                s.split(',')
+                    .filter(|x| !x.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let t0 = std::time::Instant::now();
+        let (rx, _c) = spawn(
+            vec![PathBuf::from(dir)],
+            ListOpts {
+                show_hidden: false,
+                show_dot: false,
+                skip_dirs: skip,
+            },
+            std::env::var("NSQL_PARWALK_THREADS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+        );
+        let (mut dirs, mut files, mut msgs) = (0usize, 0usize, 0usize);
+        let mut first = None;
+        for m in rx {
+            msgs += 1;
+            first.get_or_insert(t0.elapsed());
+            match m {
+                DirMsg::Dir { entries, .. } => {
+                    dirs += 1;
+                    if let Ok(es) = entries {
+                        files += es.iter().filter(|e| !e.is_dir).count();
+                    }
+                }
+                DirMsg::Done { .. } => break,
+            }
+        }
+        eprintln!(
+            "parwalk probe: dirs={dirs} files={files} msgs={msgs} first={first:?} total={:?}",
+            t0.elapsed()
+        );
+    }
+
     /// 깊은 트리를 병렬로 전부 열거 · 부모 메시지가 자식보다 먼저 · 실패 폴더는 사유와 함께 · Done은 마지막 · 취소는 멈춘다.
     #[test]
     fn walks_everything_parent_first_and_cancels() {

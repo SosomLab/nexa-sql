@@ -1178,11 +1178,17 @@ impl App {
                     self.sess.status = tf(Msg::StRevealFailed, &[&e.to_string()]);
                 }
             } else {
+                // 열린 파일 행 클릭(`editor.switch:`) = 패널에서 비롯된 전환 → 동기는 조용히(선택만 · 사용자 10-07).
+                if id.starts_with("editor.switch:") {
+                    self.project_sync_quiet = true;
+                }
                 self.project_cmd(&id);
             }
             self.redraw();
         }
         if let Some(req) = self.project_panel.take_open() {
+            // 트리에서 열기 = 패널에서 비롯된 전환 → 동기는 조용히(클릭한 행에 포커스 유지 · 사용자 10-07).
+            self.project_sync_quiet = true;
             self.project_open_req(req);
         }
     }
@@ -1243,10 +1249,64 @@ impl App {
         self.redraw();
     }
 
+    /// ★ 프로젝트 탐색기 필터 = Ctrl+P와 **같은 파일 색인**(사용자 10-07 "유니버설 데이터 · 속도"): 필터 글이 있으면 색인 열거를 깨우고
+    /// (60초 캐시 · 제외 폴더 · 이중 버퍼 = `goto_refresh_files`) 글 세대·파일 수·읽는 중이 바뀔 때마다 패널에 민다 — 패널은 일치 파일의
+    /// 조상만 노드로 만든다(워커 열거 0). 틱마다 호출 · 비용 = 열쇠 비교 하나.
+    pub(crate) fn project_index_pump(&mut self) {
+        let Some(rev) = self.project_panel.index_wanted() else {
+            self.project_index_key = (0, 0, false);
+            return;
+        };
+        self.goto_refresh_files();
+        let scanning = self.goto_walk.is_some();
+        let len = self.goto_files.len();
+        let requested = self.project_panel.take_index_request();
+        let (prev_rev, prev_len, prev_scan) = self.project_index_key;
+        // 전체 다시 = 필터 글이 바뀜 · 목록이 줄었다(재열거 교체) · 처음. 그 밖(목록이 자람 · 읽는 중 끝) = **증분**(새 파일만).
+        let full = requested || rev != prev_rev || len < prev_len;
+        if !full && len == prev_len && scanning == prev_scan {
+            return;
+        }
+        // 열거가 자라는 동안의 증분 밀기는 250 ms마다(틱마다 다시 거르고 행을 짜던 CPU 1코어 · 협업 bin45) — 끝·글 변경은 즉시.
+        if !full && scanning && self.project_index_last.elapsed() < Duration::from_millis(250) {
+            return;
+        }
+        let from = if full { 0 } else { prev_len };
+        self.project_index_key = (rev, len, scanning);
+        self.project_index_last = Instant::now();
+        let excluded =
+            !super::goto::exclude_names(self.settings.get(super::goto::EXCLUDE_KEY).unwrap_or(""))
+                .is_empty();
+        let files = std::mem::take(&mut self.goto_files);
+        let lower = std::mem::take(&mut self.goto_lower);
+        self.project_panel
+            .apply_index(&files, &lower, from, scanning, excluded);
+        self.goto_files = files;
+        self.goto_lower = lower;
+        self.redraw();
+    }
+
     /// 활성 탭이 바뀌면(사용자 10-07 규칙) ① 트리에 있는 파일이면 트리 행에 **선택 표시만**(스크롤·포커스 이동 없음 · `project.auto_reveal`이면
     /// 조상도 펼침 = `reveal_quiet` · 아니면 `mark_path`) ② **열린 파일(OPEN FILES)** 행도 선택(활성) + 그 행이 보이게 스크롤 = 기본 포커스.
     /// 트리로 스크롤하는 것은 사용자가 "프로젝트 탐색기에서 보기"를 눌렀을 때(`reveal_in_project`)뿐.
     pub(crate) fn project_sync_active(&mut self) {
+        // 🔧 1회성 깃발은 **활성 탭이 안 바뀌었어도** 매 틱 소비한다(사용자 10-07 ① "Ctrl+P로 연 파일이 열린 파일 행으로 안 감" =
+        //   패널에서 같은 탭을 다시 고른 뒤 깃발이 남아 다음 전환(Ctrl+P 열기)에 잘못 적용되던 결함).
+        // 매트릭스(사용자 10-07): 편집기 탭 클릭 등 = 열린 파일 행으로 스크롤(기본 포커스) · 패널(열린 파일·트리)에서 비롯된 전환 = 선택만.
+        let mut quiet = std::mem::take(&mut self.project_sync_quiet);
+        // 탭 닫힘 뒤 자동 선택된 탭(사용자 10-07 ②): 미리보기/뷰 탭 닫힘 = `tabs.close_preview_focus`(기본 keep = 선택만 · 프로젝트 폴더
+        //   탐색을 이어 가려는 뜻) · 편집기 탭 닫힘 = `tabs.close_editor_focus`(기본 move = 탭을 클릭한 것처럼).
+        if let Some(kind) = self.editors.take_closed_kind() {
+            quiet |= close_keeps_focus(
+                kind,
+                self.settings
+                    .get("tabs.close_preview_focus")
+                    .unwrap_or("keep"),
+                self.settings
+                    .get("tabs.close_editor_focus")
+                    .unwrap_or("move"),
+            );
+        }
         let id = self.editors.active_id();
         if id == self.last_synced_tab {
             return;
@@ -1257,16 +1317,20 @@ impl App {
         }
         // 열린 파일 목록을 먼저 지금 탭에 맞춘다(활성 행이 바로 있어야 그쪽으로 스크롤할 수 있다).
         self.sync_open_files();
-        if let Some(p) = self.editors.active_path() {
-            if self.editors.in_project(&p) {
+        match self.editors.active_path() {
+            Some(p) if self.editors.in_project(&p) => {
                 if self.settings.flag("project.auto_reveal") {
                     self.project_panel.reveal_quiet(&p);
                 } else {
                     self.project_panel.mark_path(&p);
                 }
             }
+            // 트리 밖 파일·스크립트 탭 = 트리 선택 없음(닫힌 파일 표시가 남지 않게 · 협업 bin42 관찰).
+            _ => self.project_panel.clear_mark(),
         }
-        self.project_panel.focus_open_active();
+        if !quiet {
+            self.project_panel.focus_open_active();
+        }
         self.redraw();
     }
 
@@ -1416,5 +1480,37 @@ impl App {
     pub(crate) fn project_autosave_on(&self) -> bool {
         self.settings.flag("project.autosave")
             && self.entitled(nsql_license::Feature::ProjectRestore)
+    }
+}
+
+/// 탭 닫힘 뒤 자동 선택된 탭의 탐색기 동기를 **조용히(선택만)** 할 것인가 — 닫힌 탭 종류별 설정값(`keep` = 유지 · `move` = 이동).
+pub(crate) fn close_keeps_focus(
+    kind: crate::editors::ClosedKind,
+    preview_focus: &str,
+    editor_focus: &str,
+) -> bool {
+    match kind {
+        crate::editors::ClosedKind::PreviewOrView => preview_focus == "keep",
+        crate::editors::ClosedKind::Editor => editor_focus == "keep",
+    }
+}
+
+#[cfg(test)]
+mod close_focus_tests {
+    use super::close_keeps_focus;
+    use crate::editors::ClosedKind;
+
+    /// 기본값 = 미리보기/뷰 유지(keep) · 편집기 이동(move) · 각 키는 자기 종류에만 영향(MC/DC 쌍).
+    #[test]
+    fn close_keeps_focus_matrix() {
+        assert!(close_keeps_focus(ClosedKind::PreviewOrView, "keep", "move"));
+        assert!(!close_keeps_focus(ClosedKind::Editor, "keep", "move"));
+        assert!(!close_keeps_focus(
+            ClosedKind::PreviewOrView,
+            "move",
+            "move"
+        ));
+        assert!(close_keeps_focus(ClosedKind::Editor, "keep", "keep"));
+        assert!(!close_keeps_focus(ClosedKind::Editor, "move", "move"));
     }
 }

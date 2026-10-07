@@ -186,116 +186,8 @@ impl Matcher {
     }
 }
 
-/// 검색 진행 상태(호스트 → 필터 틀 · 84 §8).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum SearchState {
-    Idle,
-    Running,
-    Done,
-}
-
-/// 도는 선 한 바퀴(ms) · 선 길이(둘레 비율) · 완료 깜빡임 한 위상(ms) · 위상 수(켬·끔·켬·끔 = 두 번).
-const LAP_MS: u64 = 1200;
-const SEG_FRACTION: f32 = 0.22;
-/// 혜성 꼬리 단계 수(꼬리 = 배경에 가깝게 · 머리 = 강조색 · 사용자 09-25 "조금 더 눈에 띄게").
-const COMET_STEPS: usize = 8;
-const BLINK_MS: u64 = 130;
-const BLINK_PHASES: u64 = 4;
-/// ★ 완료 플래시(사용자 09-25 "종료 시 플래시 느낌으로 이목"): 상자 안쪽을 강조색으로 번쩍 → 이 시간에 걸쳐 사라진다(깜빡임과 겹침).
-const FLASH_MS: u64 = 520;
-
-/// 둥근 사각형 둘레의 폴리라인(시작 = 위쪽 변 왼쪽 끝 · 시계 방향 · 모서리는 호를 6분할).
-pub(crate) fn round_rect_path(fb: Rect, r: i32) -> Vec<(f32, f32)> {
-    let r = r.max(0).min(fb.w / 2).min(fb.h / 2) as f32;
-    let (x0, y0, x1, y1) = (
-        fb.x as f32,
-        fb.y as f32,
-        fb.right() as f32,
-        fb.bottom() as f32,
-    );
-    let mut pts = Vec::with_capacity(32);
-    let arc = |pts: &mut Vec<(f32, f32)>, cx: f32, cy: f32, a0: f32, a1: f32| {
-        let n = 6;
-        for i in 0..=n {
-            let a = a0 + (a1 - a0) * i as f32 / n as f32;
-            pts.push((cx + r * a.cos(), cy + r * a.sin()));
-        }
-    };
-    use std::f32::consts::PI;
-    pts.push((x0 + r, y0));
-    pts.push((x1 - r, y0));
-    arc(&mut pts, x1 - r, y0 + r, -PI / 2.0, 0.0);
-    pts.push((x1, y1 - r));
-    arc(&mut pts, x1 - r, y1 - r, 0.0, PI / 2.0);
-    pts.push((x0 + r, y1));
-    arc(&mut pts, x0 + r, y1 - r, PI / 2.0, PI);
-    pts.push((x0, y0 + r));
-    arc(&mut pts, x0 + r, y0 + r, PI, 1.5 * PI);
-    pts
-}
-
-pub(crate) fn path_len(path: &[(f32, f32)]) -> f32 {
-    path.windows(2)
-        .map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt())
-        .sum()
-}
-
-/// 둘레 위 `[start, start+len)` 구간의 점들(끝점 보간 · 한 바퀴를 넘으면 둘로 나눠 돌려준다).
-pub(crate) fn path_window(
-    path: &[(f32, f32)],
-    total: f32,
-    start: f32,
-    len: f32,
-) -> Vec<Vec<(i32, i32)>> {
-    if total <= 0.0 || len <= 0.0 || path.len() < 2 {
-        return Vec::new();
-    }
-    let s = start.rem_euclid(total);
-    let e = s + len.min(total);
-    let mut out = Vec::new();
-    if e <= total {
-        out.push(path_slice(path, s, e));
-    } else {
-        out.push(path_slice(path, s, total));
-        out.push(path_slice(path, 0.0, e - total));
-    }
-    out.retain(|v| v.len() >= 2);
-    out
-}
-
-fn path_slice(path: &[(f32, f32)], a: f32, b: f32) -> Vec<(i32, i32)> {
-    let mut out: Vec<(i32, i32)> = Vec::new();
-    let mut acc = 0.0f32;
-    let push = |p: (f32, f32), out: &mut Vec<(i32, i32)>| {
-        let q = (p.0.round() as i32, p.1.round() as i32);
-        if out.last() != Some(&q) {
-            out.push(q);
-        }
-    };
-    for w in path.windows(2) {
-        let d = ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt();
-        let (sa, sb) = (acc, acc + d);
-        if sb >= a && sa <= b && d > 0.0 {
-            let ta = ((a - sa) / d).clamp(0.0, 1.0);
-            let tb = ((b - sa) / d).clamp(0.0, 1.0);
-            let pa = (
-                w[0].0 + (w[1].0 - w[0].0) * ta,
-                w[0].1 + (w[1].1 - w[0].1) * ta,
-            );
-            let pb = (
-                w[0].0 + (w[1].0 - w[0].0) * tb,
-                w[0].1 + (w[1].1 - w[0].1) * tb,
-            );
-            push(pa, &mut out);
-            push(pb, &mut out);
-        }
-        acc = sb;
-        if acc > b {
-            break;
-        }
-    }
-    out
-}
+/// 검색 진행 상태(호스트 → 필터 틀 · 84 §8) = nexa-ctl 진행 표시 링의 상태(`TextBox` 속성 · 10-07 "컨트롤 속성으로 상속").
+pub(crate) type SearchState = nexa_ctl::BusyState;
 
 pub(crate) struct FilterBar {
     tb: TextBox,
@@ -316,14 +208,6 @@ pub(crate) struct FilterBar {
     history: Option<(SharedHistory, Recall)>,
     /// 상자 드래그가 상자 밖으로 나갔는가(놓임 때 드롭다운을 닫을지 · 단순 클릭과 구별 · 09-30).
     drag_out: bool,
-    /// ★ 검색 진행 표시(84 §8 · 사용자 09-25 "진행 중인지 직관적으로"): 진행 = 테두리를 따라 도는 밝은 선 · 완료 = 두 번 깜빡인 뒤 완료 테두리.
-    search: SearchState,
-    /// 완료 깜빡임 시작 시각(ms · `tick`의 시계) — Running → Done 전환 뒤 첫 tick에 잡는다.
-    blink_start: Option<u64>,
-    blink_pending: bool,
-    anim_now: u64,
-    /// 완료 시그니처를 사용자가 "봤다"(상자 재포커스 · 글 변경 · 초기화) → 다음 Running까지 Done을 기본 테두리로(사용자 09-25).
-    done_seen: bool,
 }
 
 impl FilterBar {
@@ -332,6 +216,8 @@ impl FilterBar {
         // × 지우기 = 검색 입력란 공통(글이 있을 때만 · 사용자 09-23) — 네 패널이 함께 얻는다.
         let mut tb = TextBox::new(placeholder).with_clearable();
         tb.set_focus_ring(false);
+        // ★ 진행 표시 링(혜성)은 상자 속성(nexa-ctl 170)이되 **틀 둘레**에 그린다(상자를 틀 안에 품으므로 · 종전 모양 그대로).
+        tb.set_busy_host_painted(true);
         let mut btns = vec![
             FindBtn::new(BtnKind::Case, toolicons::mi_match_case),
             FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
@@ -354,11 +240,6 @@ impl FilterBar {
             placeholder: placeholder.to_string(),
             history: None,
             drag_out: false,
-            search: SearchState::Idle,
-            blink_start: None,
-            blink_pending: false,
-            anim_now: 0,
-            done_seen: false,
         }
     }
 
@@ -715,79 +596,42 @@ impl FilterBar {
         self.matcher().matches_facts(f)
     }
 
+    /// 지금 글이 구조 질의(docs/98 · `size>1M` `type:file` …)를 품고 있는가 — 단순 포함 검색의 빠른 길을 쓸 수 있는지 판정(색인 모드).
+    pub(crate) fn has_structured_query(&self) -> bool {
+        Matcher::query_of(&self.text, self.matcher.is_some()).is_some()
+    }
+
     /// 지금 글의 구조 질의에 이 술어 키가 있는가(`size` 등 — 비싼 사실은 필요할 때만 모으게).
     pub(crate) fn query_has(&self, key: &str) -> bool {
         Matcher::query_of(&self.text, self.matcher.is_some()).is_some_and(|q| q.has_key(key))
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.anim_now = now_ms;
+        // 진행 표시 링의 시계는 상자 안(`TextBox::tick`).
         let mut any = self.tb.tick(now_ms);
         for b in &mut self.btns {
             any |= b.hover.tick(now_ms);
         }
-        if self.blink_pending {
-            self.blink_pending = false;
-            self.blink_start = Some(now_ms);
-        }
-        any || self.search_animating()
+        any
     }
 
-    /// 호스트가 검색 상태를 알려 준다(검색어 없음 = Idle · 인덱스/완성 진행 = Running · 다 끝남 = Done).
+    /// 호스트가 검색 상태를 알려 준다(검색어 없음 = Idle · 인덱스/완성 진행 = Running · 다 끝남 = Done) — 규칙은 nexa-ctl `BusyRing`.
     pub(crate) fn set_search_state(&mut self, st: SearchState) {
-        // 완료 시그니처 뒤 사용자가 상자를 다시 만졌으면(포커스·글 변경·초기화) 다음 Running까지 Done = 기본 테두리.
-        let st = if st == SearchState::Done && self.done_seen {
-            SearchState::Idle
-        } else {
-            st
-        };
-        if st == SearchState::Running {
-            self.done_seen = false;
-        }
-        if self.search == st {
-            return;
-        }
-        if self.search == SearchState::Running && st == SearchState::Done {
-            // 완료 = 두 번 깜빡임(시각은 다음 tick에서).
-            self.blink_pending = true;
-            self.blink_start = None;
-        }
-        if st != SearchState::Done {
-            self.blink_start = None;
-            self.blink_pending = false;
-        }
-        self.search = st;
+        self.tb.set_busy(st);
     }
 
     #[cfg(test)]
     pub(crate) fn search_state(&self) -> SearchState {
-        self.search
+        self.tb.busy_state()
     }
 
-    /// 완료 시그니처 원복(사용자 09-25): 상자 재포커스 · 글 변경 · 초기화 → 기본 테두리(다음 검색이 Running으로 가면 다시 살아난다).
+    /// 완료 시그니처 원복(사용자 09-25): 상자 재포커스 · 글 변경 · 초기화 → 기본 테두리.
     fn dismiss_done(&mut self) {
-        self.done_seen = true;
-        if self.search == SearchState::Done {
-            self.search = SearchState::Idle;
-            self.blink_start = None;
-            self.blink_pending = false;
-        }
-    }
-
-    fn blinking(&self) -> bool {
-        self.blink_pending
-            || self
-                .blink_start
-                .is_some_and(|t0| self.anim_now.saturating_sub(t0) < BLINK_MS * BLINK_PHASES)
-    }
-
-    fn search_animating(&self) -> bool {
-        self.search == SearchState::Running || self.blinking()
+        self.tb.busy_dismiss();
     }
 
     pub(crate) fn is_animating(&self) -> bool {
-        self.search_animating()
-            || self.tb.is_animating()
+        self.tb.is_animating()
             || self.btns.iter().any(|b| b.hover.is_animating())
             || self.btns.iter().any(|b| {
                 b.hover_since
@@ -839,7 +683,8 @@ impl FilterBar {
             dc.stroke_round_rect(fb, r, th.accent, 1.0);
         }
         let t_s = std::time::Instant::now();
-        self.paint_search(dc, th, fb, r);
+        // 진행 표시 링 = 상자 속성 · 그리기는 틀 둘레(`fb`)에(상자는 `set_busy_host_painted`로 생략).
+        self.tb.busy_ring().paint(dc, th, fb, r, self.scale);
         let s_ms = t_s.elapsed().as_millis();
         let t_b = std::time::Instant::now();
         let mut per: Vec<u128> = Vec::new();
@@ -853,56 +698,6 @@ impl FilterBar {
             eprintln!(
                 "[filterbar] paint textbox {tb_ms} ms · search {s_ms} ms · btns {b_ms} ms {per:?}"
             );
-        }
-    }
-
-    /// ★ 검색 진행 표시(84 §8): Running = 테두리 둘레를 따라 짧은 밝은 선이 한 바퀴(1.6 s) · Done 직후 = 두 번 깜빡임(강조 2px ↔ 없음) ·
-    /// Done 유지 = 완료 테두리(`th.ok`) — 검색어를 지우면 Idle.
-    fn paint_search(&self, dc: &mut dyn DrawCtx, th: &Theme, fb: Rect, r: i32) {
-        match self.search {
-            SearchState::Idle => {}
-            SearchState::Running => {
-                let path = round_rect_path(fb, r);
-                let total = path_len(&path);
-                if total <= 0.0 {
-                    return;
-                }
-                // ② 진행 중엔 테두리 전체를 강조색 절반으로 물들여 "일하는 중"이 상자 단위로 읽히게.
-                dc.stroke_round_rect(fb, r, th.accent.lerp(th.border, 0.5), 1.0);
-                // ① 혜성: 꼬리(배경에 가깝게) → 머리(강조색) 8단계 그라데이션 · 3px · 1.2 s 한 바퀴.
-                let t = (self.anim_now % LAP_MS) as f32 / LAP_MS as f32;
-                let seg = total * SEG_FRACTION;
-                let start = t * total;
-                let step = seg / COMET_STEPS as f32;
-                for i in 0..COMET_STEPS {
-                    let k = (i + 1) as f32 / COMET_STEPS as f32; // 0 = 꼬리 끝 · 1 = 머리
-                    let color = th.accent.lerp(th.field_bg, 0.85 * (1.0 - k));
-                    let width = 1.5 + 1.5 * k;
-                    for pts in path_window(&path, total, start + step * i as f32, step + 0.5) {
-                        dc.polyline(&pts, color, width);
-                    }
-                }
-            }
-            SearchState::Done => {
-                if self.blinking() {
-                    let since = self
-                        .blink_start
-                        .map_or(0, |t0| self.anim_now.saturating_sub(t0));
-                    // 플래시 = 안쪽 채움(0.45 → 0 · FLASH_MS) — 글자 위에 얹히므로 옅게 · 배경색과 강조색 사이.
-                    if since < FLASH_MS {
-                        let k = 1.0 - since as f32 / FLASH_MS as f32;
-                        let inner =
-                            Rect::new(fb.x + 1, fb.y + 1, (fb.w - 2).max(0), (fb.h - 2).max(0));
-                        dc.fill_round_rect_alpha(inner, r, th.accent, 0.45 * k);
-                    }
-                    let phase = since / BLINK_MS;
-                    if phase.is_multiple_of(2) {
-                        dc.stroke_round_rect(fb, r, th.accent, 2.0);
-                    }
-                } else {
-                    dc.stroke_round_rect(fb, r, th.ok, 1.0);
-                }
-            }
         }
     }
 
@@ -966,29 +761,15 @@ mod tests {
 mod search_anim_tests {
     use super::*;
 
-    /// 둘레 폴리라인 = 네 변 + 네 호(≈ 2πr) · 창은 한 바퀴를 넘으면 둘로 · 길이 0 = 없음.
-    #[test]
-    fn round_rect_path_len_and_window_wrap() {
-        let fb = Rect::new(10, 20, 200, 30);
-        let r = 6;
-        let path = round_rect_path(fb, r);
-        let total = path_len(&path);
-        let expect = 2.0 * (200.0 + 30.0) - 8.0 * r as f32 + 2.0 * std::f32::consts::PI * r as f32;
-        assert!((total - expect).abs() < 1.5, "둘레 {total} ≈ {expect}");
-        let one = path_window(&path, total, 10.0, 40.0);
-        assert_eq!(one.len(), 1);
-        assert!(one[0].len() >= 2);
-        // 끝을 넘어가는 창 = 두 조각.
-        let two = path_window(&path, total, total - 5.0, 20.0);
-        assert_eq!(two.len(), 2, "한 바퀴를 넘으면 둘로");
-        assert!(path_window(&path, total, 0.0, 0.0).is_empty());
-        // 시작이 음수/둘레 초과여도 rem_euclid로 안전.
-        assert_eq!(path_window(&path, total, -3.0, 10.0).len(), 2);
-    }
-
     /// Running → Done = 두 번 깜빡임(4 위상 × 130 ms) 뒤 완료 테두리 · Idle로 가면 깜빡임 취소 · Running 동안은 늘 애니메이션.
     #[test]
     fn search_state_transitions_and_blink_window() {
+        use nexa_ctl::controls::busy::{BLINK_MS, BLINK_PHASES};
+        // 이 시험은 상태 전이만 본다 → 최소 표시 0(전역 스타일).
+        nexa_ctl::set_busy_style(nexa_ctl::BusyStyle {
+            hold_ms: 0,
+            ..nexa_ctl::BusyStyle::default()
+        });
         let mut f = FilterBar::new("f", &[]);
         assert!(!f.is_animating());
         f.set_search_state(SearchState::Running);

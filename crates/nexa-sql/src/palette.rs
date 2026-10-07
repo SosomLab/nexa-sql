@@ -83,7 +83,8 @@ impl Src {
     fn extend(&mut self, items: Vec<(String, String)>, with_id: bool) {
         self.lower.reserve(items.len());
         for (id, label) in &items {
-            let mut l = label.to_lowercase();
+            // 경로 구분자 정규화(사용자 10-07 "`/`로 되는 것은 `\`도"): 최근 파일 라벨은 OS 구분자(`~\Downloads\many`)라 질의와 같이 `/`로.
+            let mut l = norm_seps(&label.to_lowercase());
             if with_id {
                 l.push(' ');
                 l.push_str(&id.to_lowercase());
@@ -204,6 +205,37 @@ impl Palette {
         }
     }
 
+    /// 호스트: 프로젝트 폴더 열거 진행 상태 — 켜면 입력 상자 둘레에 혜성(Running) · 끄면 완료(Done = 두 번 깜빡임 뒤 완료 테두리 ·
+    /// 글을 바꾸면 원복). 열거가 없었으면(캐시) 아무것도 안 그린다(Idle).
+    pub(crate) fn set_scanning(&mut self, on: bool) {
+        use nexa_ctl::BusyState;
+        // ★ 진행 표시 = 입력 상자의 **속성**(nexa-ctl 170 · 객체 탐색기 검색 상자와 같은 부품·전역 스타일).
+        if on {
+            self.input.set_busy(BusyState::Running);
+        } else if self.input.busy_state() == BusyState::Running {
+            self.input.set_busy(BusyState::Done);
+        }
+    }
+
+    /// 시계 전진(호스트 틱 · 열려 있을 때만) — 돌려주는 값 = 다시 그릴 것.
+    pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        self.open && self.input.tick(now_ms)
+    }
+
+    /// 움직이는 그림(혜성 · 완료 깜빡임)이 있는가 — 호스트가 프레임을 이어 간다.
+    pub(crate) fn animating(&self) -> bool {
+        self.open && self.input.is_animating()
+    }
+
+    /// 자체 시험(`palette.pick:<n>`): 보이는 결과 n번째 행의 id(없으면 `None`) — 호스트가 Enter와 같은 길로 처리한다.
+    pub(crate) fn pick_row(&self, i: usize) -> Option<String> {
+        if !self.open || self.prompt.is_some() {
+            return None;
+        }
+        let m = *self.matches.get(i)?;
+        Some(self.items().items[m].0.clone())
+    }
+
     /// 파일 목록 안내 글(빈 글 = 없음) — 파일 모드 결과 끝에 흐리게.
     pub(crate) fn set_files_note(&mut self, note: &str) {
         self.files_note = note.to_string();
@@ -252,6 +284,9 @@ impl Palette {
         }
         if self.more_hidden > 0 {
             out.push_str(&format!(" more={}", self.more_hidden));
+        }
+        if self.input.busy_state() == nexa_ctl::BusyState::Running {
+            out.push_str(" scanning=true");
         }
         for &i in self.matches.iter().skip(self.top).take(MAX_ROWS) {
             out.push('\n');
@@ -507,6 +542,10 @@ impl Palette {
         if !force && q == self.last_query {
             return;
         }
+        if q != self.last_query {
+            // 글이 바뀌면 완료 테두리는 "봤다"(필터 틀과 같은 규칙).
+            self.input.busy_dismiss();
+        }
         self.last_query = q.clone();
         // `:123` = 줄 이동(항목 필터 대신 안내 한 줄).
         if let Some(rest) = q.trim().strip_prefix(':') {
@@ -578,12 +617,8 @@ impl Palette {
         } else {
             q
         };
-        // 띄어쓰기 = 낱말 토큰(각각 퍼지 · AND).
-        let tokens: Vec<Vec<char>> = q
-            .to_lowercase()
-            .split_whitespace()
-            .map(|t| t.chars().collect())
-            .collect();
+        // 띄어쓰기 = 낱말 토큰(각각 퍼지 · AND) · `\` = `/`(라벨 캐시와 같은 정규화).
+        let tokens: Vec<Vec<char>> = query_tokens(&q);
         let mut hidden = 0usize;
         let src = self.items();
         // 빈 질의 = 점수 없이 원천 순서 그대로(열린 탭 → 최근 → 프로젝트 = 이미 그 순서 · 10k 정렬 안 함).
@@ -827,6 +862,7 @@ impl Palette {
         // 그림자 느낌의 테두리 2겹
         dc.fill_rect(Rect::new(b.x - 1, b.y - 1, b.w + 2, b.h + 2), th.border);
         dc.fill_rect(b, th.chrome_bg);
+        // 조회 중 표시(혜성 · 완료 깜빡임)는 상자가 자기 테두리에 그린다(속성 · nexa-ctl 170).
         self.input.paint(dc, th);
         if let (Some(a), true) = (self.anchor, self.prompt.is_some()) {
             // ★ 수정 중인 대상 강조: 대상 탭에 **강조색 테두리**(2px) + 상자의 그쪽 변도 같은 색 — 어느 탭의 이름을 바꾸는지
@@ -937,6 +973,23 @@ pub(crate) fn fuzzy_score(query: &str, label: &str) -> Option<i32> {
     fuzzy_score_lower(&q, &label.to_lowercase())
 }
 
+/// 경로 구분자 정규화 — `\`를 `/`로(라벨 캐시·질의 양쪽 · Windows 최근 파일 라벨과 프로젝트 상대 경로가 한 어휘가 된다 · 사용자 10-07).
+fn norm_seps(s: &str) -> String {
+    if s.contains('\\') {
+        s.replace('\\', "/")
+    } else {
+        s.to_string()
+    }
+}
+
+/// 질의 → 낱말 토큰(소문자 · 띄어쓰기 AND · `\` = `/`).
+pub(crate) fn query_tokens(q: &str) -> Vec<Vec<char>> {
+    norm_seps(&q.to_lowercase())
+        .split_whitespace()
+        .map(|t| t.chars().collect())
+        .collect()
+}
+
 /// 퍼지 점수 코어 — 질의(소문자 글자들)·라벨(소문자) 모두 준비된 것으로 **할당 없이** 한 번 훑는다(키 입력마다 10k 라벨).
 /// 가점 = 글자 +1 · 연속 +3 · **낱말 머리**(앞 글자가 영숫자 아님 = `_` `/` `.` `-` 공백 · 또는 첫 글자) +6 · 연속 부분 문자열 +40 ·
 /// 감점 = 첫 일치~끝 일치 사이의 **빈 글자 수**(촘촘할수록 위 · 상한 30 · `cf35`가 `cflz0d…` 잡음보다 `cache_file_35`에 가게).
@@ -1036,6 +1089,11 @@ mod tests {
                 .map(|t| t.chars().collect())
                 .collect()
         };
+        // `\` = `/`(사용자 10-07): 질의 `downloads\many`가 `/` 라벨에 · 질의 `downloads/many`가 `\` 라벨(최근 파일)에 맞는다.
+        let bsq = query_tokens(&format!("downloads{}many", '\\'));
+        let bsl = norm_seps(&format!("~{0}downloads{0}many", '\\'));
+        assert!(query_score(&bsq, "cache_file_35.txt  -  downloads/many/x", Some(17)).is_some());
+        assert!(query_score(&tok("downloads/many"), &bsl, None).is_some());
         let a = "cache_file_35.txt  -  downloads/many/cache_file_35.txt";
         let noise = "cflz3x5d.o  -  target/debug/deps/cflz3x5d.o";
         let ne = |l: &str| l.find("  -  ");

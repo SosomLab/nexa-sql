@@ -91,6 +91,10 @@ impl ApplicationHandler<Wake> for App {
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
         self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
         self.apply_tab_line_colors();
+        self.apply_tab_history_cfg();
+        // 프로젝트 탐색기 필터 = 파일 색인 모드(Ctrl+P와 같은 원천 · 10-07).
+        self.project_panel.set_index_mode(true);
+        self.apply_busy_style();
         rmark("window", &mut rmarks);
         match present::Presenter::new(win.clone()) {
             Ok(p) => {
@@ -311,7 +315,12 @@ impl ApplicationHandler<Wake> for App {
         if self.outline_panel.is_visible() && self.outline_panel.tick(now_ms) {
             self.redraw();
         }
+        // Ctrl+P 조회 중 표시(혜성 · 완료 깜빡임 · 10-07).
+        if self.palette.tick(now_ms) {
+            self.redraw();
+        }
         self.project_sync_active();
+        self.project_index_pump();
         self.project_autosave_tick();
         self.sync_open_files();
         self.bm_tick();
@@ -366,6 +375,7 @@ impl ApplicationHandler<Wake> for App {
             || self.editors.tooltip_pending()
             || self.zoom_hud.visible()
             || self.goto_walk.is_some()
+            || self.palette.animating()
             || self.toasts.animating();
         // 애니메이션 프레임 간격 = 1000 / `ui.max_fps`(60 = 16ms · 30 = 33ms · 15 = 66ms · 향상 모드 30).
         let frame_ms = (1000 / self.settings.int("ui.max_fps").clamp(5, 240)).max(4) as u64;

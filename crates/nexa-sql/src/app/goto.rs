@@ -12,10 +12,75 @@ const GOTO_CACHE_SECS: u64 = 60;
 /// `%` 빠른 검색이 보는 최대 줄 수(큰 파일 모드는 아예 비움).
 const GOTO_DOC_LINES_MAX: usize = 50_000;
 
+/// 제외 폴더 설정 키.
+pub(crate) const EXCLUDE_KEY: &str = "project.exclude";
+/// "제외 없음"을 뜻하는 설정값(빈 값은 기본 목록이라 따로 둔다 · 편집 창에서 전부 지우면 이 값).
+pub(crate) const EXCLUDE_NONE: &str = "-";
+
+/// 설정값 → 제외 폴더 이름 목록(쉼표 · 다듬기 · 빈 값 = 기본 목록 · `-` = 없음) — 열거·편집 창이 같은 풀이를 쓴다.
+pub(crate) fn exclude_names(value: &str) -> Vec<String> {
+    let v = value.trim();
+    if v == EXCLUDE_NONE {
+        return Vec::new();
+    }
+    let src = if v.is_empty() {
+        nsql_settings::default_of(EXCLUDE_KEY).unwrap_or("")
+    } else {
+        v
+    };
+    src.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != EXCLUDE_NONE)
+        .map(str::to_string)
+        .collect()
+}
+
+/// 편집 창 어댑터(자유 항목 · 사용자 10-07): 블록 = 이름 · 저장 = 쉼표 목록(기본과 같으면 빈 값 · 비면 `-`).
+pub(crate) fn exclude_blocks(value: &str) -> Vec<nexa_ctl::order::OrderBlock> {
+    exclude_names(value)
+        .into_iter()
+        .map(|n| (n, true, Vec::new()))
+        .collect()
+}
+
+pub(crate) fn exclude_setting(blocks: &[nexa_ctl::order::OrderBlock]) -> String {
+    let names: Vec<&str> = blocks.iter().map(|b| b.0.as_str()).collect();
+    if names.is_empty() {
+        return EXCLUDE_NONE.to_string();
+    }
+    let joined = names.join(",");
+    let default = exclude_names("");
+    if names == default.iter().map(String::as_str).collect::<Vec<_>>() {
+        String::new()
+    } else {
+        joined
+    }
+}
+
+fn exclude_label(_block: &str, _item: Option<&str>) -> Msg {
+    // 자유 항목 모드는 이름을 그대로 그린다 — 라벨 fn은 형식상.
+    Msg::LblProjectExclude
+}
+
+pub(crate) fn exclude_spec() -> crate::order_win::OrderSpec {
+    crate::order_win::OrderSpec {
+        key: EXCLUDE_KEY,
+        title: Msg::WinProjectExclude,
+        blocks: exclude_blocks,
+        to_setting: exclude_setting,
+        label: exclude_label,
+        locked: &[],
+        child_move: false,
+        free: true,
+    }
+}
+
 /// `?` 도움말 항목 — (id = `help:<접두>` · 라벨) · Enter = 그 접두를 입력란에.
 pub(crate) fn goto_help_items() -> Vec<(String, String)> {
-    // 비례폭 글꼴이라 열 맞춤 대신 `예시  —  설명` · 예시는 SQL 맥락(협업 V1 bin34 관찰).
+    // 비례폭 글꼴이라 열 맞춤 대신 `예시  -  설명` · 예시는 SQL 맥락(협업 V1 bin34 관찰).
     let row = |prefix: &str, m: Msg| (format!("help:{prefix}"), format!("{prefix}  -  {}", t(m)));
+    // 설명 줄(접두 아님 · Enter = 아무 일 없음 · id `info:`).
+    let info = |k: &str, m: Msg| (format!("info:{k}"), format!("·  {}", t(m)));
     vec![
         row("emp", Msg::PalHelpFile),
         row("sql/emp", Msg::PalHelpPath),
@@ -27,6 +92,13 @@ pub(crate) fn goto_help_items() -> Vec<(String, String)> {
         row("#emp", Msg::PalHelpWorkspaceSym),
         row("%where", Msg::PalHelpQuick),
         row("?", Msg::PalHelpHelp),
+        // ★ 검색 방식 상세(사용자 10-07 "사용 가능한 모든 방식/기호").
+        info("fuzzy", Msg::PalHelpFuzzy),
+        info("words", Msg::PalHelpWords),
+        info("rank", Msg::PalHelpRank),
+        info("scope", Msg::PalHelpScope),
+        info("limit", Msg::PalHelpLimit),
+        info("keys", Msg::PalHelpKeys),
     ]
 }
 
@@ -42,6 +114,8 @@ impl App {
         let lines = self.goto_doc_lines();
         self.palette
             .open_goto(files, cmds, syms, lines, goto_help_items(), prefill);
+        self.palette.set_scanning(self.goto_walk.is_some());
+        self.palette.set_files_note(&self.goto_files_note());
         self.ime_refresh();
         self.redraw();
     }
@@ -142,10 +216,11 @@ impl App {
     }
 
     /// 프로젝트 폴더 파일 캐시 — 폴더 목록이 바뀌었거나 60초가 지났으면 `parwalk`로 다시 열거(백그라운드 · 도착은 `goto_walk_tick`).
-    fn goto_refresh_files(&mut self) {
+    pub(crate) fn goto_refresh_files(&mut self) {
         let folders = self.project.folders.clone();
         if folders.is_empty() {
             self.goto_files.clear();
+            self.goto_lower.clear();
             self.goto_files_key.clear();
             self.goto_files_at = None;
             self.goto_walk = None;
@@ -162,21 +237,14 @@ impl App {
         //   목록이 비던 결함 · 협업 105 ①). 첫 열거(옛 목록 없음)만 도착하는 대로 바로 보탠다.
         self.goto_into_new = !self.goto_files.is_empty();
         self.goto_files_new.clear();
+        self.goto_lower_new.clear();
         self.goto_capped = false;
         self.goto_files_key = folders.clone();
         let opts = parwalk::ListOpts {
             show_hidden: self.settings.flag("file.show_hidden"),
             show_dot: self.settings.flag("file.show_dot"),
-            // 제외 폴더(설정 `project.exclude` · 쉼표 구분 · D-259 기본 `.git,.svn,.hg,node_modules,target,.nsql`).
-            skip_dirs: self
-                .settings
-                .get("project.exclude")
-                .unwrap_or("")
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect(),
+            // 제외 폴더(설정 `project.exclude` · 쉼표 구분 · D-259 기본 `.git,.svn,.hg,node_modules,target,.nsql` · `-` = 없음).
+            skip_dirs: exclude_names(self.settings.get(EXCLUDE_KEY).unwrap_or("")),
         };
         let threads = self.settings.int("project.scan_threads").clamp(0, 16) as usize;
         self.goto_walk = Some(parwalk::spawn(folders, opts, threads));
@@ -202,13 +270,15 @@ impl App {
             match rx.try_recv() {
                 Ok(parwalk::DirMsg::Dir { entries, .. }) => {
                     if let Ok(es) = entries {
-                        let dst = if into_new {
-                            &mut self.goto_files_new
+                        // 파일 경로 + 이름 소문자 캐시(프로젝트 탐색기 필터 색인 모드가 할당 0으로 거른다 · 10-07).
+                        let (dst, dl) = if into_new {
+                            (&mut self.goto_files_new, &mut self.goto_lower_new)
                         } else {
-                            &mut self.goto_files
+                            (&mut self.goto_files, &mut self.goto_lower)
                         };
                         for e in es {
                             if !e.is_dir {
+                                dl.push(e.name.to_lowercase());
                                 dst.push(e.path);
                                 changed = true;
                                 if max > 0 && dst.len() >= max {
@@ -242,9 +312,12 @@ impl App {
             // 정렬하지 않는다 — 항목 id가 `file.path:<번호>`(목록 위치)라 순서가 곧 열쇠.
             self.goto_walk = None;
             self.goto_files_at = Some(Instant::now());
+            // 혜성 끝 → 완료 플래시(팔레트가 열려 있을 때만 의미).
+            self.palette.set_scanning(false);
             if into_new {
                 // 재열거 끝 = 새 목록으로 **교체**하고 팔레트 목록을 통째로 다시(인덱스가 바뀌므로 덧붙이기 아님).
                 self.goto_files = std::mem::take(&mut self.goto_files_new);
+                self.goto_lower = std::mem::take(&mut self.goto_lower_new);
                 self.goto_into_new = false;
                 self.goto_sent = self.goto_files.len();
                 self.goto_last_push = Instant::now();
@@ -368,6 +441,10 @@ impl App {
             let p = prefix.to_string();
             self.palette.set_query(&p);
             self.redraw();
+            return true;
+        }
+        if id.starts_with("info:") {
+            // 설명 줄 = 아무 일 없음(팔레트 유지).
             return true;
         }
         false
