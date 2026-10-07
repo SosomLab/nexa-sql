@@ -877,12 +877,26 @@ impl Runner {
             };
         if table_cols.is_empty() {
             let dialect = self.engine.dialect;
-            let (schema, name) = nsql_io::split_table(dialect, table);
-            if let Some(sess) = self.session.as_deref_mut() {
-                if let Ok(cols) =
-                    nsql_catalog::columns(sess, schema.as_deref().unwrap_or(""), &name)
-                {
-                    table_cols = cols.into_iter().map(|c| (c.name, c.data_type)).collect();
+            // ★ SQL Server 3부 이름(`DB.schema.table` · T-309): `split_table`은 DB 조각을 버리므로 카탈로그가 현재 DB(master)에서 찾아
+            //   "column … not found"가 됐다 → 그 DB의 INFORMATION_SCHEMA를 직접 조회(세션 DB는 바꾸지 않는다).
+            if let Some(sql) = mssql_cols_sql(dialect, table) {
+                if let Ok((rs, _, _)) = self.query_once(&sql, 4096) {
+                    table_cols = rs
+                        .rows
+                        .iter()
+                        .filter(|r| r.len() >= 2)
+                        .map(|r| (r[0].display(), r[1].display()))
+                        .collect();
+                }
+            }
+            if table_cols.is_empty() {
+                let (schema, name) = nsql_io::split_table(dialect, table);
+                if let Some(sess) = self.session.as_deref_mut() {
+                    if let Ok(cols) =
+                        nsql_catalog::columns(sess, schema.as_deref().unwrap_or(""), &name)
+                    {
+                        table_cols = cols.into_iter().map(|c| (c.name, c.data_type)).collect();
+                    }
                 }
             }
         }
@@ -975,8 +989,75 @@ impl Runner {
     }
 }
 
+/// SQL Server **3부 이름**(`DB.schema.table` · 따옴표/대괄호 허용)의 컬럼 조회 SQL — 그 DB의 `INFORMATION_SCHEMA.COLUMNS`(열 이름 · 타입 ·
+/// 순서) · 다른 방언이나 1·2부 이름 = `None`(종전 카탈로그 길). 순수 함수(T-309).
+pub(crate) fn mssql_cols_sql(dialect: Dialect, table: &str) -> Option<String> {
+    if dialect != Dialect::Mssql {
+        return None;
+    }
+    let parts: Vec<&str> = table.split('.').collect();
+    let [db, schema, name] = parts.as_slice() else {
+        return None;
+    };
+    let unq = |p: &str| -> String {
+        let p = p.trim();
+        let q =
+            (p.starts_with('[') && p.ends_with(']')) || (p.starts_with('"') && p.ends_with('"'));
+        if q && p.len() >= 2 {
+            p[1..p.len() - 1].to_string()
+        } else {
+            p.to_string()
+        }
+    };
+    let (db, schema, name) = (unq(db), unq(schema), unq(name));
+    if db.is_empty() || name.is_empty() {
+        return None;
+    }
+    let lit = |v: &str| format!("'{}'", v.replace('\'', "''"));
+    let schema_pred = if schema.is_empty() {
+        String::new()
+    } else {
+        format!(" AND TABLE_SCHEMA = {}", lit(&schema))
+    };
+    Some(format!(
+        "SELECT COLUMN_NAME, DATA_TYPE FROM [{}].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = {}{} ORDER BY ORDINAL_POSITION",
+        db.replace(']', "]]"),
+        lit(&name),
+        schema_pred
+    ))
+}
+
 #[cfg(test)]
 mod tests {
+    /// T-309: 3부 이름만 · SQL Server만 · 대괄호/따옴표 벗김 · 스키마 비면 조건 생략 · 작은따옴표 이스케이프.
+    #[test]
+    fn mssql_cols_sql_for_three_part_names() {
+        use super::mssql_cols_sql;
+        use nsql_core::Dialect;
+        let sql = mssql_cols_sql(Dialect::Mssql, "M4PLAN_MS.dbo.NSQLT_BULK").unwrap_or_default();
+        assert!(
+            sql.starts_with(
+                "SELECT COLUMN_NAME, DATA_TYPE FROM [M4PLAN_MS].INFORMATION_SCHEMA.COLUMNS"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("TABLE_NAME = 'NSQLT_BULK'") && sql.contains("TABLE_SCHEMA = 'dbo'"),
+            "{sql}"
+        );
+        let sql = mssql_cols_sql(Dialect::Mssql, "[My DB].[dbo].[O'Tbl]").unwrap_or_default();
+        assert!(
+            sql.contains("[My DB].INFORMATION_SCHEMA") && sql.contains("'O''Tbl'"),
+            "{sql}"
+        );
+        assert!(
+            mssql_cols_sql(Dialect::Mssql, "DB..T").is_some_and(|s| !s.contains("TABLE_SCHEMA"))
+        );
+        assert_eq!(mssql_cols_sql(Dialect::Mssql, "dbo.T"), None);
+        assert_eq!(mssql_cols_sql(Dialect::Mssql, "T"), None);
+        assert_eq!(mssql_cols_sql(Dialect::Oracle, "A.B.C"), None);
+    }
+
     use super::*;
     use nsql_core::{DbError, ExecResult, ResultSet, Session};
     use nsql_script::ConnectSpec;
