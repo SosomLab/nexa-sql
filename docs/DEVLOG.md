@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-08 (🚀 v0.1.6 릴리스)** — 8fd48a1 + 태그 v0.1.6 · release.yml ✓ · 자산 6 · 공개 01:19 UTC · Homebrew c3c237e · pkg.sosomlab.com 0.1.6(APT · RPM · 수동 publish) · winget·choco 제외(변수 false · 사용자 10-08) · V2 test 822/0 · clippy ✓.
 - **2026-10-08 (115차 · win · 11~12 · 새벽)** — bin72~80 · push b08d22e · 0a00c04 · 0ef636a · b3aba7d · 4aeb0f9 · 80ed644 · 82c5716 · 87e1d6e · 0540b46 · CI 전부 ✓(0a00c04~000b4e1 clippy 빨강 5 = rustc 1.99 새 린트 `&sig` → 80ed644 복구) · ★ T-310 ✅ 메모리 창 유휴 CPU 뿌리 = 1초 표본의 힙 걷기 → `sys_lite` + `mem.heap_refresh_ms` 5 s(8.memwin 109~156 → 16 ms/6초) · T-311 ✅(흔들림 · 부하) · ★ T-312 탐색기 행 조회 탭 = 표의 DB(실기 대기) · T-288 CREATE 컬럼 링크 · T-307 `vars.cli_global` · T-308 System 테마 · T-297 · T-303 첫 묶음 · 탭 툴팁 탭 아래 · `editor.quote_idents` SELECT 템플릿 · 메모리 창 fit · 툴체인 1.99.0(nexa-dir3 세션 rustup) · V3 전수 실패 0(기능 94 · 실서버 3방언 87 · 대량 적재 28 · 변수 27 · 접속 38).
 - **2026-10-07 (115차 · win · 8~10)** — 115k~115s · nexa-ui 174 · ★ T-305 기동 명령 창 펌프 · 메모리 창 · 플래시 마무리 · 앱 안 저장 새 파일 알림 · ★ 전체 시험(S80~S94 신설 · V3 전수 기능 94/94 · E2E 넷 · 성능 26 §7-15 회귀 없음) · ★ T-309 종결 + 제품 결함 3(SQL Server 3부 이름 컬럼 · Decimal scale 패닉 방지 · 방어층 DB 접두 → TDS bulk 12.6k행/s) · 위키 스크린샷 38장 · CI 전부 ✓.
 - **2026-10-07 (115차 · win · 7)** — bin56~66 · 사용자 지시 17건 · Oracle OUT coerce · 미저장 탭 내장 변수 기본값 · ★ T-300 외부 변경 토스트(방법 글 · 줄바꿈) · 탭 툴팁 저장 일시 · 디스크 보기 탭 1:1·읽기 전용 · 삭제된 파일 탭 · ★ T-299 ✅(감시 = TTL 생략 · 이유 플래시) · 플래시 모양(스낵바 역상 · 10pt · BOOST 즉시) · 메모리 창(소계 · ▲/▼ · 전용 워킹 셋 · 닫기) · 모르는 확장자 Plain Text · ★ 위키 스크린샷 32장(영어 · 홈페이지 공용) · push 2f60a5a CI ✓.
