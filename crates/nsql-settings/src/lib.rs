@@ -2413,6 +2413,23 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ 진행 표시 링(혜성 · 사용자 10-07 "모든 검색에 · 컨트롤 속성 · 사용/두께/색/유지시간 설정 · 성능 향상 모드에서 끔"): 전역 스타일 → nexa-ctl.
     // ★ 툴팁 자리(사용자 10-07): 기본 = 항목 위(읽는 방향 · 다음 줄을 가리지 않게) · 끄면 아래.
+    // ★ 우클릭 메뉴 영역 간 배타(사용자 10-08): 다른 영역 클릭·키 = 닫기 · 닫은 클릭을 바로 진행할지.
+    Entry {
+        key: "ui.ctxmenu_exclusive",
+        cat: Msg::CatAppearance,
+        label: Msg::LblCtxmenuExclusive,
+        desc: Msg::DescCtxmenuExclusive,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ui.ctxmenu_passthrough",
+        cat: Msg::CatAppearance,
+        label: Msg::LblCtxmenuPassthrough,
+        desc: Msg::DescCtxmenuPassthrough,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.tooltip_above",
         cat: Msg::CatAppearance,

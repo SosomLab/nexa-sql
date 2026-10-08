@@ -322,6 +322,22 @@ impl App {
     /// **새로 열린 메뉴가 있으면 나머지를 전부 닫는다**(마지막에 연 것이 이긴다). 같은 메뉴의 하위 메뉴·툴팁·팔레트는 대상이 아니다.
     pub(crate) fn route(&mut self, ev: InputEvent) {
         let before = self.open_menus();
+        // ★ 영역 간 배타(사용자 10-08 · `ui.ctxmenu_exclusive`): 열린 우클릭 메뉴 **밖**의 좌/우 클릭 = 그 메뉴들을 먼저 닫는다 ·
+        //   메뉴가 안 쓰는 키(글자 등) = 전부 닫는다. 닫은 뒤 그 클릭을 바로 진행할지(`ui.ctxmenu_passthrough` 켬 = 즉시 반응)
+        //   닫기만 하고 다음 클릭부터 반응할지는 설정. 메뉴바(1)·완성 팝업(1024)은 제 규칙.
+        if let Some(swallow) = ctxmenu_exclusive_step(
+            before & !(1 | 1024),
+            &ev,
+            |p| self.menu_hit_bits(p),
+            self.settings.flag("ui.ctxmenu_exclusive"),
+            self.settings.flag("ui.ctxmenu_passthrough"),
+        ) {
+            self.close_menu_bits(swallow.close);
+            self.redraw();
+            if swallow.stop {
+                return;
+            }
+        }
         self.route_dispatch(ev);
         let after = self.open_menus();
         let fresh = after & !before;
@@ -409,51 +425,31 @@ impl App {
     }
 
     pub(crate) fn route_inner(&mut self, ev: InputEvent, mut inv: Invalidations) {
+        // ★ 클릭 = 놓을 때(사용자 10-09 · 업계 표준): 떠 있는 카드·띠·상태줄 항목은 MouseDown에서 **자리만 기억**(그 클릭은 아래로
+        //   흘리지 않는다 · 종전과 같음) · 같은 자리에서 MouseUp일 때 동작 · 다른 자리에서 놓으면 아무것도 없음(버튼 규칙).
+        //   선택·캐럿·드래그 시작(편집기·그리드·트리)은 표준대로 Down. Ctrl 링크는 `objlink` 블록이 같은 규칙으로.
         if let InputEvent::MouseDown { x, y, .. } = ev {
-            if self.toasts.click(Point { x, y }) {
-                if let Some(a) = self.toasts.take_action() {
-                    self.menu_action(&a);
+            let p = Point { x, y };
+            if let Some(z) = self.overlay_zone_at(p) {
+                if let OverlayZone::Status(i) = z {
+                    // 눌림 표시(상태줄 메모리·자동 저장 칸)는 누를 때부터.
+                    self.mem_pressed = i == 3;
+                    self.autosave_pressed = i == 5;
                 }
+                self.click_arm = Some(z);
                 self.redraw();
                 return;
             }
-            match self.ext_banner.click(Point { x, y }) {
-                extfile::BannerHit::None => {}
-                hit => {
-                    self.ext_banner_pick(hit);
-                    self.redraw();
-                    return;
+        }
+        if let InputEvent::MouseUp { x, y } = ev {
+            if let Some(z) = self.click_arm.filter(|z| *z != OverlayZone::Link) {
+                self.click_arm = None;
+                let p = Point { x, y };
+                if self.overlay_zone_at(p) == Some(z) {
+                    self.overlay_act(z, p);
                 }
-            }
-            match self.tx_warn.click(Point { x, y }) {
-                txwarn::TxWarnHit::None => {}
-                hit => {
-                    self.tx_warn_pick(hit);
-                    self.redraw();
-                    return;
-                }
-            }
-            match self.run_toast.click(Point { x, y }) {
-                runtoast::RunToastHit::Stop => {
-                    self.stop_run();
-                    return;
-                }
-                runtoast::RunToastHit::Card => {
-                    self.redraw();
-                    return;
-                }
-                runtoast::RunToastHit::Copy(sql) => {
-                    // 실행 카드의 복사 버튼(사용자 09-23) — 결과 탭 "SQL 복사"와 같은 상태줄 문구.
-                    if clipboard::write_text(&sql) {
-                        self.sess.status =
-                            tf(Msg::StResultSqlCopied, &[&sql.lines().count().to_string()]);
-                    } else {
-                        self.sess.status = t(Msg::ErrClipboard).into();
-                    }
-                    self.redraw();
-                    return;
-                }
-                runtoast::RunToastHit::None => {}
+                self.redraw();
+                return;
             }
         }
         if let InputEvent::Wheel { delta } = ev {
@@ -680,10 +676,29 @@ impl App {
         }
         if self.objlinks.active {
             let hit = match ev {
-                InputEvent::MouseDown { x, y, .. } => self.objlink_click(Point { x, y }, false),
+                // ★ Ctrl 링크 좌클릭 = 놓을 때(사용자 10-09): 누름은 삼키고(캐럿이 안 움직이게) 같은 링크 위에서 놓으면 동작.
+                InputEvent::MouseDown { x, y, .. } => {
+                    let p = Point { x, y };
+                    if self.objlink_card_click(p) {
+                        true
+                    } else if self.primary && self.objlink_at(p).is_some() {
+                        self.click_arm = Some(OverlayZone::Link);
+                        true
+                    } else {
+                        self.objlink_click(p, false)
+                    }
+                }
                 InputEvent::RightDown { x, y } => self.objlink_click(Point { x, y }, true),
-                // hover 카드 버튼은 놓을 때 동작(사용자 10-06).
-                InputEvent::MouseUp { x, y } => self.objlink_card_release(Point { x, y }),
+                // hover 카드 버튼·Ctrl 링크는 놓을 때 동작(사용자 10-06 · 10-09).
+                InputEvent::MouseUp { x, y } => {
+                    let p = Point { x, y };
+                    if self.click_arm == Some(OverlayZone::Link) {
+                        self.click_arm = None;
+                        self.objlink_at(p).is_some() && self.objlink_click(p, false)
+                    } else {
+                        self.objlink_card_release(p)
+                    }
+                }
                 _ => false,
             };
             if hit {
@@ -694,51 +709,7 @@ impl App {
         if is_mouse && self.route_splitters(&ev) {
             return;
         }
-        // 상태줄 구문 이름 클릭 → 팔레트(Set Syntax) · 들여쓰기 세그먼트 클릭 → 팝업.
-        if let InputEvent::MouseDown { x, y, .. } = ev {
-            if self.status_syntax_rect.contains(Point { x, y }) {
-                let prefill = format!("{}: ", t(Msg::PalSetSyntax));
-                self.open_palette(&prefill);
-                return;
-            }
-            if self.status_tab_rect.contains(Point { x, y }) {
-                self.open_indent_menu();
-                self.redraw();
-                return;
-            }
-            if self.status_eol_rect.contains(Point { x, y }) {
-                self.open_eol_menu();
-                self.redraw();
-                return;
-            }
-            if self.status_mem_rect.contains(Point { x, y }) {
-                self.mem_pressed = true;
-                self.toggle_mem_window();
-                self.redraw();
-                return;
-            }
-            if self.status_lic_rect.contains(Point { x, y }) {
-                self.open_license = true;
-                self.redraw();
-                return;
-            }
-            if self.status_autosave_rect.contains(Point { x, y }) {
-                self.autosave_pressed = true;
-                self.open_autosave_menu();
-                self.redraw();
-                return;
-            }
-            if self.status_tx_rect.contains(Point { x, y }) {
-                self.open_tx_menu();
-                self.redraw();
-                return;
-            }
-            if self.status_enc_rect.contains(Point { x, y }) {
-                self.open_enc_menu();
-                self.redraw();
-                return;
-            }
-        }
+        // (상태줄 항목 클릭은 위 "놓을 때" 블록이 `OverlayZone::Status`로 받는다 · 동작 = `overlay_act`.)
         // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다. 단 **우클릭**은 풀다운을 닫고 그대로 진행(그 자리의 우클릭 메뉴가 열린다 · 배타).
         if self.menubar.is_open() && !matches!(ev, InputEvent::RightDown { .. }) {
             self.menubar.on_event(&ev, &mut inv);
@@ -1271,6 +1242,89 @@ impl App {
             }
         }
         false
+    }
+
+    /// ★ 놓을 때 동작하는 겹침 요소 분류(사용자 10-09): 점 아래의 토스트 → 외부 변경 띠 → 트랜잭션 경고 카드 → 실행 카드 → 상태줄 항목.
+    pub(crate) fn overlay_zone_at(&mut self, p: Point) -> Option<OverlayZone> {
+        if let Some(i) = self.toasts.hit(p) {
+            return Some(OverlayZone::Toast(i));
+        }
+        match self.ext_banner.click(p) {
+            extfile::BannerHit::None => {}
+            hit => return Some(OverlayZone::Banner(hit)),
+        }
+        match self.tx_warn.click(p) {
+            txwarn::TxWarnHit::None => {}
+            hit => return Some(OverlayZone::TxWarn(hit)),
+        }
+        if self.run_toast.hit_any(p) {
+            return Some(OverlayZone::RunToast);
+        }
+        self.status_item_at(p).map(OverlayZone::Status)
+    }
+
+    /// 겹침 요소의 동작(놓은 자리 `p` · 분류는 같은 자리로 확인된 뒤).
+    fn overlay_act(&mut self, z: OverlayZone, p: Point) {
+        match z {
+            OverlayZone::Toast(i) => {
+                self.toasts.pick(i, p);
+                if let Some(a) = self.toasts.take_action() {
+                    self.menu_action(&a);
+                }
+            }
+            OverlayZone::Banner(hit) => self.ext_banner_pick(hit),
+            OverlayZone::TxWarn(hit) => self.tx_warn_pick(hit),
+            OverlayZone::RunToast => match self.run_toast.click(p) {
+                runtoast::RunToastHit::Stop => self.stop_run(),
+                runtoast::RunToastHit::Copy(sql) => {
+                    // 실행 카드의 복사 버튼(사용자 09-23) — 결과 탭 "SQL 복사"와 같은 상태줄 문구.
+                    if clipboard::write_text(&sql) {
+                        self.sess.status =
+                            tf(Msg::StResultSqlCopied, &[&sql.lines().count().to_string()]);
+                    } else {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                }
+                runtoast::RunToastHit::Card | runtoast::RunToastHit::None => {}
+            },
+            OverlayZone::Status(i) => self.status_item_act(i),
+            OverlayZone::Link => {}
+        }
+    }
+
+    /// 상태줄의 클릭되는 항목 index(0 구문 · 1 들여쓰기 · 2 줄끝 · 3 메모리 · 4 라이선스 · 5 자동 저장 · 6 트랜잭션 · 7 인코딩).
+    fn status_item_at(&self, p: Point) -> Option<u8> {
+        [
+            self.status_syntax_rect,
+            self.status_tab_rect,
+            self.status_eol_rect,
+            self.status_mem_rect,
+            self.status_lic_rect,
+            self.status_autosave_rect,
+            self.status_tx_rect,
+            self.status_enc_rect,
+        ]
+        .iter()
+        .position(|r| r.w > 0 && r.contains(p))
+        .map(|i| i as u8)
+    }
+
+    /// 상태줄 항목 동작(놓을 때): 구문 = 팔레트(Set Syntax) · 들여쓰기/줄끝/트랜잭션/인코딩/자동 저장 = 팝업 · 메모리 = 창 토글 · 라이선스 = 창.
+    fn status_item_act(&mut self, i: u8) {
+        match i {
+            0 => {
+                let prefill = format!("{}: ", t(Msg::PalSetSyntax));
+                self.open_palette(&prefill);
+            }
+            1 => self.open_indent_menu(),
+            2 => self.open_eol_menu(),
+            3 => self.toggle_mem_window(),
+            4 => self.open_license = true,
+            5 => self.open_autosave_menu(),
+            6 => self.open_tx_menu(),
+            7 => self.open_enc_menu(),
+            _ => {}
+        }
     }
 
     /// 상태줄 팝업 메뉴. 가져갔으면 `true`(연쇄 끝).
@@ -2003,5 +2057,172 @@ impl App {
             }
         }
         false
+    }
+}
+
+/// ★ 놓을 때 동작하는 겹침 요소(사용자 10-09 "급박한 UI가 아니면 클릭은 Release 시점에"): 누른 자리와 놓은 자리가 같을 때만 동작.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum OverlayZone {
+    /// 토스트 카드(index).
+    Toast(usize),
+    /// 외부 변경 띠의 버튼/본문.
+    Banner(extfile::BannerHit),
+    /// 트랜잭션 경고 카드의 버튼/본문.
+    TxWarn(txwarn::TxWarnHit),
+    /// 실행 카드(어느 카드든 — 동작은 놓은 자리의 버튼으로).
+    RunToast,
+    /// 상태줄 항목(index · `status_item_at`).
+    Status(u8),
+    /// Ctrl 객체 링크(동작은 `objlink` 블록).
+    Link,
+}
+
+/// 배타 규칙의 결과: 닫을 메뉴 비트 · 그 사건을 여기서 끝낼지(닫기만 · `passthrough` 끔).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ExclusiveStep {
+    pub close: u32,
+    pub stop: bool,
+}
+
+/// ★ 순수 판정(사용자 10-08 · MC/DC): `open` = 열린 우클릭 메뉴 비트(제외분 뺀 것) · 좌/우 MouseDown = 좌표를 안에 받는 메뉴(`hit`)를
+/// 뺀 나머지가 "다른 영역의 메뉴" → 닫는다(`passthrough` 끔이면 그 클릭은 닫기만) · 메뉴가 쓰지 않는 키(글자·백스페이스 등) = 전부
+/// 닫고 키는 그대로 진행 · 그 밖(MouseMove · 휠 · 메뉴 탐색 키) = 아무것도 안 함. 꺼져 있으면 늘 `None`.
+pub(crate) fn ctxmenu_exclusive_step(
+    open: u32,
+    ev: &InputEvent,
+    hit: impl FnOnce(Point) -> u32,
+    exclusive: bool,
+    passthrough: bool,
+) -> Option<ExclusiveStep> {
+    if !exclusive || open == 0 {
+        return None;
+    }
+    match *ev {
+        InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
+            let foreign = open & !hit(Point { x, y });
+            (foreign != 0).then_some(ExclusiveStep {
+                close: foreign,
+                stop: !passthrough,
+            })
+        }
+        InputEvent::Key { key, .. } => {
+            use nexa_ctl::Key as K;
+            // 메뉴가 쓰는 키(탐색·확정·닫기)는 메뉴 몫 · 그 밖의 키 = 다른 영역 입력.
+            let menu_key = matches!(
+                key,
+                K::Up | K::Down | K::Left | K::Right | K::Home | K::End | K::Enter | K::Escape
+            );
+            (!menu_key).then_some(ExclusiveStep {
+                close: open,
+                stop: false,
+            })
+        }
+        InputEvent::Char { .. } => Some(ExclusiveStep {
+            close: open,
+            stop: false,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod exclusive_tests {
+    use super::{ctxmenu_exclusive_step as f, ExclusiveStep};
+    use nexa_ctl::{InputEvent, Key};
+
+    fn down(x: i32, y: i32) -> InputEvent {
+        InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        }
+    }
+
+    /// MC/DC: 켬/끔 · 열린 메뉴 유무 · 안/밖 · 통과 설정 · 키 종류.
+    #[test]
+    fn rules() {
+        let hit_none = |_| 0u32;
+        let hit_all = |_| 2u32 | 32;
+        assert_eq!(
+            f(2 | 32, &down(1, 1), hit_none, false, true),
+            None,
+            "꺼짐 = 없음"
+        );
+        assert_eq!(
+            f(0, &down(1, 1), hit_none, true, true),
+            None,
+            "열린 메뉴 없음"
+        );
+        assert_eq!(
+            f(2 | 32, &down(1, 1), hit_none, true, true),
+            Some(ExclusiveStep {
+                close: 2 | 32,
+                stop: false
+            }),
+            "밖 클릭 = 전부 닫고 통과"
+        );
+        assert_eq!(
+            f(2 | 32, &down(1, 1), hit_none, true, false),
+            Some(ExclusiveStep {
+                close: 2 | 32,
+                stop: true
+            }),
+            "통과 끔 = 닫기만"
+        );
+        assert_eq!(
+            f(2 | 32, &down(1, 1), hit_all, true, true),
+            None,
+            "안 클릭 = 메뉴 몫"
+        );
+        assert_eq!(
+            f(2 | 32, &down(1, 1), |_| 2, true, true),
+            Some(ExclusiveStep {
+                close: 32,
+                stop: false
+            }),
+            "한 메뉴 안 = 다른 메뉴만 닫는다"
+        );
+        let key = |k| InputEvent::Key {
+            key: k,
+            shift: false,
+            primary: false,
+        };
+        assert_eq!(
+            f(2, &key(Key::Down), hit_none, true, true),
+            None,
+            "메뉴 탐색 키 = 메뉴 몫"
+        );
+        assert_eq!(
+            f(2, &key(Key::PageUp), hit_none, true, false),
+            Some(ExclusiveStep {
+                close: 2,
+                stop: false
+            }),
+            "다른 키 = 닫고 키는 진행(통과 설정과 무관)"
+        );
+        assert_eq!(
+            f(
+                2,
+                &InputEvent::Char { c: 'a', now_ms: 0 },
+                hit_none,
+                true,
+                true
+            ),
+            Some(ExclusiveStep {
+                close: 2,
+                stop: false
+            })
+        );
+        assert_eq!(
+            f(
+                2,
+                &InputEvent::MouseMove { x: 1, y: 1 },
+                hit_none,
+                true,
+                true
+            ),
+            None
+        );
     }
 }

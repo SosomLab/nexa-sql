@@ -465,6 +465,11 @@ impl RunToast {
         changed
     }
 
+    /// 점이 어느 카드 위인가(누름/놓음 짝 맞추기 · 동작은 [`Self::click`]).
+    pub(crate) fn hit_any(&self, p: Point) -> bool {
+        self.run_at(p).is_some()
+    }
+
     pub(crate) fn click(&mut self, p: Point) -> RunToastHit {
         let Some(r) = self.run_at(p) else {
             return RunToastHit::None;

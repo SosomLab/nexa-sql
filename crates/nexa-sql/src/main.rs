@@ -356,6 +356,8 @@ struct App {
     objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
     /// ★ 시그니처 카드(T-178): 캐럿이 아는 함수의 괄호 안에 있는 동안 (시그니처 글, 탭 id) — 팝업 층에 캐럿 위로 그린다.
     sig_card: Option<(String, u64)>,
+    /// ★ 놓을 때 동작하는 겹침 요소(토스트·띠·실행 카드·상태줄 항목·Ctrl 링크)의 누름 기억(사용자 10-09 "클릭은 Release에서").
+    click_arm: Option<app::input::OverlayZone>,
     /// 거터(북마크/니모닉 영역) 우클릭 메뉴의 대상 — (탭 index, 논리 줄, 그 줄의 북마크 id) · `status_menu`를 빌려 쓴다(사용자 09-23).
     bm_gutter: Option<(usize, usize, Option<u64>)>,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
@@ -1696,6 +1698,7 @@ fn main() {
         objlinks: Default::default(),
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         sig_card: None,
+        click_arm: None,
         health: Default::default(),
         netwatch: None,
         net_last: None,

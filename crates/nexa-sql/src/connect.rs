@@ -113,6 +113,8 @@ pub(crate) struct ConnectPanel {
     file_rect: Rect,
     /// 파일 줄의 복사 버튼(부품 `copybtn` · 눌림 → 체크 → 복귀 · 사용자 09-23).
     copy: crate::copybtn::CopyBtn,
+    /// 복사 버튼 누름(놓을 때 동작 · 사용자 10-09).
+    copy_armed: bool,
     field_focus: Option<Field>,
     /// 동작(Test/Connect/Save)을 눌렀을 때 비어 있던 필수 칸 — 경고 띠 · 채우면 즉시 해제(22 §10).
     warn: Vec<Field>,
@@ -316,6 +318,7 @@ impl ConnectPanel {
             save_btn: Button::new(t(Msg::BtnSave)),
             file_rect: Rect::default(),
             copy: crate::copybtn::CopyBtn::new(),
+            copy_armed: false,
             field_focus: None,
             warn: Vec::new(),
             auto_port: None,
@@ -1080,6 +1083,15 @@ impl ConnectPanel {
             }
             InputEvent::MouseDown { x, y, .. }
                 if self.profile_file_name().is_some() && self.copy.hit(Point { x, y }) =>
+            {
+                // 누름만 기억 — 동작은 같은 자리에서 놓을 때(사용자 10-09 · 버튼 규칙).
+                self.copy_armed = true;
+                return None;
+            }
+            InputEvent::MouseUp { x, y }
+                if std::mem::take(&mut self.copy_armed)
+                    && self.profile_file_name().is_some()
+                    && self.copy.hit(Point { x, y }) =>
             {
                 // 눌림 → 체크 → 복귀(부품 시계 시작 · 실제 복사는 호스트의 `copy_profile_file` 한 길).
                 self.copy.press(std::time::Instant::now());

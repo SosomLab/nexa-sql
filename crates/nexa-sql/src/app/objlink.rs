@@ -1274,7 +1274,7 @@ impl App {
     }
 
     /// 커서 아래 링크 index.
-    fn objlink_at(&self, p: Point) -> Option<usize> {
+    pub(crate) fn objlink_at(&self, p: Point) -> Option<usize> {
         if !self.objlinks.active {
             return None;
         }
@@ -1457,7 +1457,7 @@ impl App {
 
     /// hover 카드 안 MouseDown — 카드 안이면 true(편집기로 가지 않는다 · 빈 자리도 삼킨다). 버튼 위면 **누름만** 기억하고
     /// 동작은 `objlink_card_release`(같은 버튼에서 놓을 때 · 사용자 10-06)에서.
-    fn objlink_card_click(&mut self, p: Point) -> bool {
+    pub(crate) fn objlink_card_click(&mut self, p: Point) -> bool {
         let Some(card) = self.objlinks.card.as_ref() else {
             return false;
         };

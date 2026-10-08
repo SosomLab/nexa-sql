@@ -167,18 +167,22 @@ impl Toasts {
         !self.items.is_empty()
     }
 
-    /// 클릭으로 닫기 — 카드 위였으면 true(호출자는 그 클릭을 아래로 흘리지 않는다).
-    pub(crate) fn click(&mut self, p: Point) -> bool {
-        if let Some(i) = self.items.iter().position(|t| t.rect.contains(p)) {
-            let t = self.items.remove(i);
-            if let Some((_, a)) = t.button.as_ref().filter(|_| t.btn_rect.contains(p)) {
-                self.taken = Some(a.clone());
-            } else if t.action.is_some() && t.button.is_none() {
-                self.taken = t.action;
-            }
-            return true;
+    /// 점 아래 카드(index) — 누름/놓음 짝 맞추기용(동작은 [`Self::pick`]).
+    pub(crate) fn hit(&self, p: Point) -> Option<usize> {
+        self.items.iter().position(|t| t.rect.contains(p))
+    }
+
+    /// 카드 `i`를 `p`에서 놓았다 — 닫고, 버튼 위면 버튼 명령 · 버튼 없는 카드의 본문이면 카드 명령(`take_action`).
+    pub(crate) fn pick(&mut self, i: usize, p: Point) {
+        if i >= self.items.len() {
+            return;
         }
-        false
+        let t = self.items.remove(i);
+        if let Some((_, a)) = t.button.as_ref().filter(|_| t.btn_rect.contains(p)) {
+            self.taken = Some(a.clone());
+        } else if t.action.is_some() && t.button.is_none() {
+            self.taken = t.action;
+        }
     }
 
     /// 우측 하단부터 위로 쌓아 그린다(`bottom` = 상태줄 위 y · `right` = 창 오른쪽).
@@ -499,7 +503,10 @@ mod tests {
         assert!(!ts.tick(Instant::now() + Duration::from_secs(2)));
         ts.push(ToastKind::Error, "a", "b");
         ts.items[0].rect = Rect::new(0, 0, 10, 10);
-        assert!(ts.click(Point { x: 5, y: 5 }));
+        // 놓을 때 동작(10-09): 점 아래 카드 → pick.
+        let i = ts.hit(Point { x: 5, y: 5 }).expect("카드 위");
+        ts.pick(i, Point { x: 5, y: 5 });
         assert!(!ts.animating());
+        assert!(ts.hit(Point { x: 5, y: 5 }).is_none());
     }
 }

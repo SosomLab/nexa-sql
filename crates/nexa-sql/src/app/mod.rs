@@ -17,7 +17,7 @@ mod format;
 pub(crate) mod goto;
 mod grid_results;
 pub(crate) mod health;
-mod input;
+pub(crate) mod input;
 mod license;
 mod live;
 mod memory;
