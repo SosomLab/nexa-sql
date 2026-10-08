@@ -3949,6 +3949,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // ★ 상태바 오른쪽 항목의 순서·표시(사용자 10-04 · nexa-ctl `order` 문법 `tx:1|mem:0|…` · 빈 값 = 기본 · 편집 = 설정 창 [편집…] → 조정 창).
+    // ★ 서버 유형 배지(사용자 10-08): 켬 = 접속된 탭이면 늘 3자리 약어(NON · DEV · TST · PRD) · 끔 = 늘 숨김(종전 = PRD·TST만).
+    Entry {
+        key: "statusbar.env_badge",
+        cat: Msg::CatWindow,
+        label: Msg::LblStatusEnvBadge,
+        desc: Msg::DescStatusEnvBadge,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "statusbar.layout",
         cat: Msg::CatWindow,

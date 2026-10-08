@@ -362,17 +362,18 @@ impl App {
                 // 왼쪽 상태 문구는 세그먼트 앞에서 잘라 겹치지 않게(09-16 캡처: 긴 타이밍 문구가 세그먼트 위로 지나갔다).
                 dc.select_font(FontSlot::Base, false);
                 let left_w = (xr - px(8.0, s) - px(4.0, s)).max(0);
-                // 서버 유형 칩(상태줄 맨 앞 · 3자리 약어 · 운영 = 위험색 · 테스트 = 경고색) — 지금 탭의 세션이 붙어 있을 때만.
-                //   세션에서 임시로 바꾼 유형 = 외곽선 칩(프로필 값 = 채운 칩 · 사용자 10-01).
-                let env_chip = self
-                    .sess
-                    .connected
-                    .then(|| self.sess.spec.as_ref().and_then(|sp| sp.env))
-                    .flatten()
-                    .and_then(|e| match e {
-                        nsql_script::ConnEnv::Prod => Some((e.abbr(), th.danger)),
-                        nsql_script::ConnEnv::Test => Some((e.abbr(), th.warn)),
-                        nsql_script::ConnEnv::Dev => None,
+                // 서버 유형 칩(상태줄 맨 앞 · 3자리 약어 · 운영 = 위험색 · 테스트 = 경고색 · 개발 = 강조색 · 없음 = 흐림) — 지금 탭의
+                //   세션이 붙어 있을 때만. 설정 `statusbar.env_badge`(사용자 10-08) = 켬이면 **유형과 무관하게 늘** · 끔이면 늘 숨김
+                //   (종전 = PRD·TST만). 세션에서 임시로 바꾼 유형 = 외곽선 칩(프로필 값 = 채운 칩 · 사용자 10-01).
+                let env_chip = (self.sess.connected && self.settings.flag("statusbar.env_badge"))
+                    .then(|| {
+                        let env = self.sess.spec.as_ref().and_then(|sp| sp.env);
+                        match env {
+                            Some(e @ nsql_script::ConnEnv::Prod) => (e.abbr(), th.danger),
+                            Some(e @ nsql_script::ConnEnv::Test) => (e.abbr(), th.warn),
+                            Some(e @ nsql_script::ConnEnv::Dev) => (e.abbr(), th.accent),
+                            None => (nsql_script::connect::ENV_NONE_ABBR, th.text_dim),
+                        }
                     });
                 let mut lx = px(8.0, s);
                 if let Some((label, color)) = env_chip {
