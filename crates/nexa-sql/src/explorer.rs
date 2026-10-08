@@ -1433,10 +1433,18 @@ thread_local! {
     static META_LAST_ERR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
-fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn() + Send>) {
+/// `bg` = 배경 스레드(선적재 컬럼 · 사전 · 인덱스 · 용량 — 사용자가 기다리지 않는 긴 질의): 생존 가드는 같되 **호출 상한은 걸지 않는다**
+///   (Oracle 사전 14.6 s 실측 · 협업 V1 bin97 — 15 s 상한이 정상 질의를 끊을 뻔했다). 전경 스레드(사용자가 기다리는 요청)만 상한.
+fn meta_thread(
+    rx: mpsc::Receiver<Req>,
+    tx: mpsc::Sender<Resp>,
+    wake: Box<dyn Fn() + Send>,
+    bg: bool,
+) {
     let mut session: Option<Box<dyn Session>> = None;
     let mut cur_gen = 0u64;
     let mut guard = MetaGuard::new();
+    let call_cap = |guard: &mut MetaGuard| if bg { 0 } else { guard.cfg().3 };
     // ★ 101 §4: 메타 세션의 DB 전환 — 기준 DB(연결의 현재 DB) · 메타 세션이 지금 서 있는 DB.
     let mut base_db: Option<String> = None;
     let mut meta_db: Option<String> = None;
@@ -1475,10 +1483,10 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
             if let Some(spec) = resume.as_ref() {
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
                 // 재개 전 빠른 판정(docs/53): 끊긴 서버에 메타 스레드가 접속 타임아웃까지 갇히지 않게.
-                if reachable(spec) {
+                if reachable(spec, guard.cfg().0) {
                     if let Ok(Ok(s)) = catch_unwind(AssertUnwindSafe(|| open_meta(spec, default))) {
                         session = Some(s);
-                        let (_, _, _, call) = guard.cfg();
+                        let call = call_cap(&mut guard);
                         apply_call_timeout(&mut session, call);
                     }
                 } else if let Some(ep) = ep_of(Some(spec)) {
@@ -1488,7 +1496,10 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                         guard.broken_told = true;
                         let m = tf(
                             Msg::ErrServerUnreachable,
-                            &[&format!("{}:{}", ep.0, ep.1), "2000"],
+                            &[
+                                &format!("{}:{}", ep.0, ep.1),
+                                &guard.cfg().0.as_millis().to_string(),
+                            ],
                         );
                         send_health(&tx, &*wake, cur_gen, &ep, false, m);
                     }
@@ -1503,18 +1514,20 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
             Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend
         );
         if catalog_req && session.is_some() {
-            let (timeout, stale, auto, call) = guard.cfg();
+            let (timeout, stale, auto, _) = guard.cfg();
+            let call = call_cap(&mut guard);
             let dead_hint = session.as_ref().is_some_and(|s| !s.is_alive());
             let stale_now = stale.as_secs() > 0 && guard.last_ok.elapsed() >= stale;
             let plan =
                 crate::sessions::live_plan(false, guard.suspect, dead_hint, stale_now, true, auto);
             if let (true, Some(ep)) = (plan.probe, ep_of(resume.as_ref())) {
                 let t = Instant::now();
+                // ICMP 보조 판정 없이(TCP 한 번 = 상한이 `probe.timeout_ms` 한 번에 그친다 · 협업 V1 bin97 ③ = ICMP까지 3.5 s).
                 if crate::probe::probe_once(
                     &ep.0,
                     ep.1,
                     timeout,
-                    true,
+                    false,
                     crate::probe::DEFAULT_DNS_TTL,
                 ) != crate::probe::Outcome::Up
                 {
@@ -1571,7 +1584,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
                 // (비밀번호 자리가 없는 스펙 = `open_meta`가 금고에서 빌리거나, 없으면 서버에 가지 않고 거절한다.)
-                let r = if reachable(&spec) {
+                let r = if reachable(&spec, guard.cfg().0) {
                     catch_unwind(AssertUnwindSafe(|| open_meta(&spec, default)))
                 } else {
                     Ok(Err(DbError {
@@ -1601,7 +1614,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                         // ★ 새 접속 = 가드 초기화 + 메타 호출 상한(docs/107 ① · D-265).
                         guard = MetaGuard::new();
                         {
-                            let (_, _, _, call) = guard.cfg();
+                            let call = call_cap(&mut guard);
                             apply_call_timeout(&mut session, call);
                         }
                         // ★ 서버 정보 1회(101 · D-253): 버전·로그인·현재 DB — 실패는 빈 값(헤더는 호스트:포트만).
@@ -2107,11 +2120,11 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
     }
 }
 
-/// 접속 전 빠른 판정(호스트:포트 TCP · 2초 · 파일 방언은 해당 없음).
-fn reachable(spec: &ConnectSpec) -> bool {
+/// 접속 전 빠른 판정(호스트:포트 TCP · 상한 = `probe.timeout_ms` — 종전 고정 2 s · docs/107 P1 "≤ probe.timeout_ms" · 파일 방언은 해당 없음).
+fn reachable(spec: &ConnectSpec, timeout: Duration) -> bool {
     match (&spec.host, spec.port) {
         (Some(h), Some(p)) => {
-            crate::probe::probe_once(h, p, Duration::from_secs(2), true, Duration::ZERO)
+            crate::probe::probe_once(h, p, timeout, false, Duration::ZERO)
                 == crate::probe::Outcome::Up
         }
         _ => true,
@@ -2391,11 +2404,11 @@ impl Explorer {
         let wake_fn = mk_wake(Arc::clone(wake));
         let _ = std::thread::Builder::new()
             .name("nsql-explorer".into())
-            .spawn(move || meta_thread(req_rx, resp_tx, wake_fn));
+            .spawn(move || meta_thread(req_rx, resp_tx, wake_fn, false));
         let wake_bg = mk_wake(Arc::clone(wake));
         let _ = std::thread::Builder::new()
             .name("nsql-explorer-bg".into())
-            .spawn(move || meta_thread(bg_rx, resp_bg, wake_bg));
+            .spawn(move || meta_thread(bg_rx, resp_bg, wake_bg, true));
         (tx, tx_bg, rx)
     }
 

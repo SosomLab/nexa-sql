@@ -2,11 +2,11 @@
 //! 알린다 — 종전에는 실행 세션의 Broken은 메타로, 메타의 실패는 실행 세션으로 전해지지 않았다(같은 서버인데 상태가 둘). ②에서
 //! `ServerHealth` 레지스트리(끝점 + 세션 두 층 · `health_merge`)로 키운다.
 
-use nsql_log::{LogEntry, LogKind};
 use crate::sessions::Sess;
 use crate::toast::ToastKind;
 use crate::App;
 use nsql_i18n::{t, tf, Msg};
+use nsql_log::{LogEntry, LogKind};
 use nsql_script::ConnectSpec;
 
 /// 스펙의 끝점 글 `host:port`(파일 방언 = None) — 메타 스레드의 `ep_of`와 같은 꼴.
