@@ -1026,7 +1026,7 @@ impl Runner {
         let Some(ov) = pick else {
             return;
         };
-        let hints: Vec<(String, nsql_core::VarType)> = need
+        let hints: Vec<(String, nsql_core::VarType, String)> = need
             .iter()
             .filter_map(|(pos, named, bind)| {
                 let arg = all.iter().find(|a| {
@@ -1036,7 +1036,11 @@ impl Runner {
                             None => a.position == *pos,
                         }
                 })?;
-                Some(((*bind).to_string(), var_type_of(&arg.data_type)?))
+                Some((
+                    (*bind).to_string(),
+                    var_type_of(&arg.data_type)?,
+                    arg.in_out.clone(),
+                ))
             })
             .collect();
         let outputs: Vec<String> = if marks {
@@ -1044,8 +1048,9 @@ impl Runner {
         } else {
             Vec::new()
         };
-        for (bind, ty) in hints {
-            self.engine.vars.hint_type(&bind, ty);
+        for (bind, ty, in_out) in hints {
+            // ★ 자동 변수는 OUT 자리에서 서명 타입으로 다시 맞춘다(사용자 10-08 · `VarStore::hint_type`).
+            self.engine.vars.hint_type(&bind, ty, &in_out);
         }
         self.engine.call_outputs = outputs;
     }

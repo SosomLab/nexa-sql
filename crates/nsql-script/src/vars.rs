@@ -249,17 +249,35 @@ impl VarStore {
         self.formulas.get(&norm(name))
     }
 
-    /// 타입 힌트(루틴 서명에서 읽은 타입) — **선언하지 않았고 아직 타입이 정해지지 않은**(`Auto`) 변수에만 적용하고,
-    /// 없으면 `NULL` 값으로 만든다(선언 아님 = `declared: false`). 돌려주는 값 = 적용했는가.
-    pub fn hint_type(&mut self, name: &str, ty: VarType) -> bool {
+    /// 타입 힌트(루틴 서명에서 읽은 타입 · `in_out` = 서명의 방향 `IN` | `OUT` | `IN/OUT`) — **선언하지 않은** 변수에만.
+    /// · 타입이 아직 없으면(`Auto`) 그 타입으로 · 없는 이름은 `NULL` 값으로 만든다(선언 아님 = `declared: false`)
+    /// · ★ 자동 변수가 이미 **다른 타입**을 가졌고 자리가 **OUT/IN OUT**이면 서명 타입으로 다시 맞춘다(사용자 10-08 "같은 변수를 다른
+    ///   프로시저에 쓰면 기존 변수를 버리고 덮어쓰기" = `:RET`이 첫 호출에서 NUMBER 23이 된 뒤 REF CURSOR OUT에 묶여 PLS-00306).
+    ///   값은 **OUT**(서버가 덮어쓴다)이거나 타입 부류가 다를 때(커서 ↔ 스칼라 · 그대로는 호출이 실패) NULL로 · IN OUT 같은 부류는 값 유지.
+    /// · IN 자리·타입을 적어 선언한 변수는 건드리지 않는다. 돌려주는 값 = 적용했는가.
+    pub fn hint_type(&mut self, name: &str, ty: VarType, in_out: &str) -> bool {
         let key = norm(name);
+        let dir = in_out.to_ascii_uppercase();
+        let out = dir.contains("OUT");
+        let pure_out = dir == "OUT";
         match self.slot_mut(&key) {
-            Some(v) if v.declared || v.ty != VarType::Auto => false,
-            Some(v) => {
+            Some(v) if v.declared => false,
+            Some(v) if v.ty == VarType::Auto => {
                 v.ty = ty;
                 self.dirty.insert(key);
                 true
             }
+            Some(v) if out && v.auto_ty && v.ty != ty => {
+                let class_differs =
+                    matches!(v.ty, VarType::RefCursor) != matches!(ty, VarType::RefCursor);
+                if pure_out || class_differs {
+                    v.value = Value::Null;
+                }
+                v.ty = ty;
+                self.dirty.insert(key);
+                true
+            }
+            Some(_) => false,
             None => {
                 self.vars
                     .insert(key.clone(), Self::fresh(name, ty, Value::Null, false));
@@ -269,12 +287,13 @@ impl VarStore {
         }
     }
 
-    /// 서명 추론이 필요한가 — 없는 이름이거나, 선언하지 않았고 타입이 `Auto`이며 값이 없는 변수.
+    /// 서명 추론이 필요한가 — 없는 이름이거나 **선언하지 않은 자동 변수**(값·타입이 있어도 OUT 자리면 다시 맞춰야 하므로 ·
+    /// 서명은 루틴당 1회 캐시라 비용 없음 · 10-08).
     #[must_use]
     pub fn needs_type(&self, name: &str) -> bool {
         match self.get(name) {
             None => true,
-            Some(v) => !v.declared && v.ty == VarType::Auto && v.value == Value::Null,
+            Some(v) => !v.declared && v.auto_ty,
         }
     }
 
@@ -682,6 +701,38 @@ mod tests {
             "프로필 층으로는 못 옮긴다"
         );
         assert!(s.remove("project").is_some());
+    }
+
+    /// ★ OUT 자리의 자동 변수는 서명 타입으로 다시 맞춘다(사용자 10-08 `:RET` NUMBER → 다음 프로시저 REF CURSOR OUT): 값은 NULL ·
+    /// IN 자리·선언한 변수는 그대로 · IN OUT 같은 부류는 값 유지.
+    #[test]
+    fn out_bind_retypes_auto_variable() {
+        let mut s = VarStore::new();
+        s.assign("RET", Value::Int(23));
+        assert_eq!(s.get("RET").map(|v| v.ty.clone()), Some(VarType::Number));
+        assert!(s.needs_type("RET"), "자동 변수는 늘 서명을 본다");
+        assert!(s.hint_type("RET", VarType::RefCursor, "OUT"));
+        let v = s.get("RET").unwrap();
+        assert_eq!(
+            (v.ty.clone(), v.value.clone()),
+            (VarType::RefCursor, Value::Null)
+        );
+        // IN 자리 = 값 입력 → 건드리지 않는다.
+        s.assign("P", Value::Str("SSS".into()));
+        assert!(!s.hint_type("P", VarType::Number, "IN"));
+        assert_eq!(s.get("P").unwrap().value, Value::Str("SSS".into()));
+        // IN OUT · 같은 부류(스칼라 ↔ 스칼라) = 타입만 맞추고 값 유지.
+        s.assign("Q", Value::Int(7));
+        assert!(s.hint_type("Q", VarType::Varchar2(4000), "IN/OUT"));
+        assert_eq!(s.get("Q").unwrap().value, Value::Int(7));
+        // 타입을 적어 선언한 변수 = 고정.
+        s.declare("D", VarType::Number, Some(Value::Int(1)));
+        assert!(!s.needs_type("D"));
+        assert!(!s.hint_type("D", VarType::RefCursor, "OUT"));
+        assert_eq!(s.get("D").unwrap().ty, VarType::Number);
+        // 없는 이름 = NULL 값으로 생김(종전).
+        assert!(s.hint_type("NEW", VarType::RefCursor, "OUT"));
+        assert_eq!(s.get("NEW").unwrap().ty, VarType::RefCursor);
     }
 
     /// ★ 자동 타입 변수(사용자 10-07 "`'Number to String'`이 NUMBER처럼"): 선언 없는 변수·타입 없는 선언은 **값마다** 타입을 다시 추론 ·
