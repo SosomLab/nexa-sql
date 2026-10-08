@@ -224,7 +224,8 @@ impl DiffView {
         dc.fill_rect(b, th.panel_bg);
         // 머리 줄: 결과 글 + 덩어리 위치 + 라벨.
         dc.select_font(FontSlot::Base, false);
-        let hy = dc.text_center_y(b.y, self.head_h());
+        // 결과 글은 첫 줄(24px) 가운데 — 머리 전체(결과 줄 + 라벨 줄) 가운데에 두면 라벨 줄과 겹친다(협업 V1 bin112 (b)).
+        let hy = dc.text_center_y(b.y, self.s(24.0));
         let pos = match (self.cur, self.hunks.len()) {
             (Some(k), n) if n > 0 => format!(" · {}/{n}", k + 1),
             _ => String::new(),

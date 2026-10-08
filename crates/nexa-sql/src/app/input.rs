@@ -194,9 +194,7 @@ impl App {
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
             // ★ 뷰 탭(확장 상세)이 활성이면 클립보드 동작(⌘/Ctrl+C·A)의 대상은 그 본문 상자(사용자 09-30).
-            Focus::Editor if self.editors.active_view().is_some() => {
-                Some(self.ext_view.textbox_mut())
-            }
+            Focus::Editor if self.ext_view_active() => Some(self.ext_view.textbox_mut()),
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Find => self.find.focused_textbox(),
             Focus::Search => self.search.focused_textbox(),
@@ -1871,7 +1869,7 @@ impl App {
         if self.objdetail.is_visible() {
             changed |= self.objdetail.on_event(&out, Instant::now());
         }
-        if self.editors.active_view().is_some() {
+        if self.ext_view_active() {
             changed |= self.ext_view.on_event(&out);
         }
         // 스크롤바 hover(썸 두꺼움)를 가진 패널들도(10-08 · 위 hover 이탈 통지와 같은 목록).
@@ -1975,7 +1973,7 @@ impl App {
     fn dispatch_captured(&mut self, area: Focus, ev: InputEvent, inv: &mut Invalidations) {
         match area {
             Focus::Editor => {
-                if self.editors.active_view().is_some() {
+                if self.ext_view_active() {
                     self.ext_view.on_event(&ev);
                     self.ext_view_actions();
                 } else {
@@ -2084,7 +2082,8 @@ impl App {
         if self.route_diff_tab(ev, is_mouse) {
             return true;
         }
-        if self.editors.active_view().is_some() && !self.compare_is_diff_tab() {
+        // 확장 뷰(상세 있음)만 — 상세 없는 뷰 탭(비교 inline · 서버 DDL · 정보)은 읽기 전용 편집기 경로(bin112 ④).
+        if self.ext_view_active() && !self.compare_is_diff_tab() {
             let cur = Point {
                 x: self.cursor.0,
                 y: self.cursor.1,

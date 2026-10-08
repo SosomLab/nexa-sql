@@ -506,6 +506,15 @@ impl App {
     }
 
     /// 확장 상세 뷰가 낸 동작 — 확장 패널과 같은 경로.
+    /// 활성 탭이 **확장 뷰로 그려지는** 뷰 탭인가(`ext_details`에 상세가 있는 키 = paint의 `Some(detail)` 가지와 같은 판정).
+    /// 상세 없는 뷰 탭(비교 inline `compare:*` · 서버 DDL `compare-server:*` · 정보 탭)은 읽기 전용 **편집기**로 그려지므로 입력도
+    /// 편집기로 — 종전엔 모든 뷰 탭의 마우스·키를 `ext_view`로 보내 본문 우클릭 메뉴(복사·전체 선택)가 열리지 않았다(협업 V1 bin112 ④).
+    pub(crate) fn ext_view_active(&self) -> bool {
+        self.editors
+            .active_view()
+            .is_some_and(|k| self.ext_details.contains_key(k))
+    }
+
     pub(crate) fn ext_view_actions(&mut self) {
         for a in self.ext_view.take_actions() {
             match a {
