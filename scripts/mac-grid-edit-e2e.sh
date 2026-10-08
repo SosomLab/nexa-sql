@@ -229,6 +229,39 @@ SQL
   else
     expect_grep "$tag 중복 행 = 사전 검사 차단(변경 집합 유지)" "$d" "dirty=true"; expect_absent "$tag 서버: ONE 없음" "$v" "ONE"
   fi
+  # ⑬ LOB(T-182 CLOB 커밋 · 10-09): 임시 표 NSQLT_GE3(ID · DOC = CLOB/text/nvarchar(max)) · 40,000자(Oracle VARCHAR2 바인드 32,767 바이트 밖
+  #    = 진짜 CLOB 바인드 경로 · 87 §5-1 "4,000자 넘는 글 = VarType::Clob")를 파일에서 셀에 넣어 적용 → 서버 길이 40000.
+  echo "=== $tag ⑬ CLOB 40,000자 그리드 적용(진짜 LOB 바인드)"
+  python3 - "$D" "$tag" <<'PYCLOB'
+import sys, os
+d, tag = sys.argv[1], sys.argv[2]
+open(os.path.join(d, tag + '_big.txt'), 'w', encoding='utf-8').write(('abcdefghij' * 4000))
+PYCLOB
+  case $dl in
+    oracle)
+      printf 'CREATE TABLE NSQLT_GE3 (ID NUMBER PRIMARY KEY, DOC CLOB);\nINSERT INTO NSQLT_GE3 VALUES (1, %s);\nCOMMIT;\n' "'x'" > "$D/${tag}_lob_setup.sql"
+      printf 'SELECT ID, DBMS_LOB.GETLENGTH(DOC) AS DLEN FROM NSQLT_GE3;\n' > "$D/${tag}_lob_chk.sql";;
+    postgres)
+      printf 'CREATE TABLE nsqlt_ge3 (id integer PRIMARY KEY, doc text);\nINSERT INTO nsqlt_ge3 VALUES (1, %s);\n' "'x'" > "$D/${tag}_lob_setup.sql"
+      printf 'SELECT id, length(doc) AS dlen FROM nsqlt_ge3;\n' > "$D/${tag}_lob_chk.sql";;
+    mssql)
+      printf 'CREATE TABLE NSQLT_GE3 (ID int PRIMARY KEY, DOC nvarchar(max));\nINSERT INTO NSQLT_GE3 VALUES (1, %s);\n' "'x'" > "$D/${tag}_lob_setup.sql"
+      printf 'SELECT ID, LEN(DOC) AS DLEN FROM NSQLT_GE3;\n' > "$D/${tag}_lob_chk.sql";;
+  esac
+  printf 'SELECT ID, DOC FROM NSQLT_GE3;\n' > "$D/${tag}_lob_sel.sql"
+  printf 'DROP TABLE NSQLT_GE3;\n' > "$D/${tag}_lob_drop.sql"
+  if [ -n "$db" ] && [ "$dl" = mssql ]; then
+    for f in lob_setup lob_chk lob_sel lob_drop; do
+      printf 'USE %s;\n' "$db" | cat - "$D/${tag}_$f.sql" > "$D/${tag}_$f.tmp" && mv "$D/${tag}_$f.tmp" "$D/${tag}_$f.sql"
+    done
+  fi
+  cli "$T" "$D/${tag}_lob_drop.sql" >/dev/null 2>&1; cli "$T" "$D/${tag}_lob_setup.sql" >/dev/null 2>&1
+  run_gui 24 "$T" "open:$D/${tag}_lob_sel.sql,@after:4000:run.all,@after:9000:grid.edit.load:0;1;$D/${tag}_big.txt,@after:10000:grid.dump:$O/${tag}5a.txt,@after:10500:grid.edit.cmd:row.save,@after:18000:grid.dump:$O/${tag}5.txt"
+  da=$(cat "$O/${tag}5a.txt" 2>/dev/null); d=$(cat "$O/${tag}5.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_lob_chk.sql")
+  expect_grep "$tag 40,000자 넣기 = 변경 집합" "$da" "dirty=true"
+  expect_grep "$tag 적용 뒤 깨끗(CLOB 바인드)" "$d" "dirty=false"
+  expect_grep "$tag 서버: 길이 40000" "$v" "40000"
+  cli "$T" "$D/${tag}_lob_drop.sql" >/dev/null 2>&1
   cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1
 }
 if [ -n "${NSQL_E2E_ORACLE:-}" ]; then NSQL_HOME="$H" "$NSQL" conn add ORA "$NSQL_E2E_ORACLE" -d oracle --no-prompt >/dev/null 2>&1; dbms_suite ORA oracle Oracle; fi
