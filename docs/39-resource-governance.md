@@ -75,6 +75,8 @@
 | 탐색기 메타 세션 **서버당 1**(DR-34 · 52 §2-2 · 그 서버에 붙은 세션 ≥1이면 유지 · 0이면 접속만 닫고 트리 유지) | 서버 수 · 유휴 회수 | `session.idle_secs`(메타 세션 유휴 닫기 · 다음 요청 때 재개) · `explorer.visible` | — | — | — | `ExplorerSet::sync_refs` · `suspend_if_idle` |
 | 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout_ms` | — | — | — | `worker::ensure_alive` |
 | 탐색기 메타 가드 SYN(T-313 ① · 10-08 · 107 §6) | 카탈로그 요청당 최대 1(직전 오류·드라이버 힌트·`probe.stale_secs` 뒤에만 · 정상 운용 0회) | `probe.stale_secs` · `probe.timeout_ms` · 호출 상한 HIDDEN `meta.call_timeout_secs`(0 = `explorer.timeout` 15 s · 전경 요청만 · 배경 스레드 제외) | — | — | — | — |
+| OS 네트워크 변경 감시 `netwatch`(T-313 ⑤ · 10-09 · Windows만) | OS 콜백(iphlpapi) → 깃발 + 깨우기 · 1초 합치기 · 평소 비용 0(사건 없으면 아무것도 안 함) | `net.watch`(켬 · 다음 시작부터) · 끝점마다 다음 동작 전 SYN 1회까지 | — | — | — | — |
+| 끊긴 끝점의 배경 워머 정지(T-313 ④ · 10-09) | 끊긴 동안 컬럼 선적재·코멘트·인덱스 요청 0 · 복귀 때 재개 | 자동(레지스트리 `broken_since`) · 끊김 토스트 억제 창 `net.notify_quiet_secs`(60) | — | — | — | — |
 | TCP keepalive 빈 세그먼트(PG·MSSQL · 53) | 60s | `net.keepalive_secs`(0 = 끔) | — | — | — | 드라이버 `set_keepalive_secs` |
 | 메모리 회수(힙 → OS · 보이지 않는 탭의 그리기 캐시 해제 · 59 §2) | 큰 것을 놓은 1초 뒤 1회 + 유휴 300s(수 ms · UI 스레드) | `mem.trim_on_release` · `mem.trim_secs`(0 = 끔) · `mem.release_results_on_disconnect` | 300 | 300 | 300 | `App::mem_tick` · `memtrim.rs` |
 | 변수 표 보존 파일(`<설정 폴더>/vars/<경로 해시>.sql` · 실행이 그 탭의 변수를 바꿨을 때만 · 수백 바이트 · 63 V4) | 실행당 ≤ 1회 쓰기 · 파일 열 때 1회 읽기(≤ 4 MB) | `vars.persist`(off = 끔) · `vars.persist_days` | on | on | on | `varsfile.rs` |

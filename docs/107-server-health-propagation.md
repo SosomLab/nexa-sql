@@ -72,6 +72,8 @@ L4 복구(재접속·재개) ───────▶   Alive 복귀            
 
 반응 종류: **막기**(gate · 서버에 안 보냄 · 안내) · **판정 뒤**(Suspect일 때 SYN 1회 → 살아 있으면 진행/재접속 · 죽었으면 막기) · **허용**(서버 불필요 · 캐시) · **배경 정지**(사용자 동작 아님 · 조용히 멈추고 복귀 때 재개).
 
+> **10-09 해석(④ 구현 · 6e8a347)**: 표의 "막기"는 **UI 게이트에서 동기로 막는다는 뜻이 아니다** — 게이트에서 SYN을 기다리면 UI가 멈추므로, 실행·페치·건수·커밋은 지금처럼 워커가 비동기로 판정(`ensure_alive` · 레지스트리가 Broken/Suspect면 preflight)해 서버에 보내기 전에 실패시키고 안내한다. UI 게이트에서 바로 막는 것은 **서버에 오래 붙는 작업의 시작**(Import)뿐 · 배경 워머는 끊긴 동안 아예 돌지 않는다.
+
 | 기능 | 서버 필요 | Suspect | Broken | 안내 채널 | 비고 |
 |---|---|---|---|---|---|
 | 실행(F5 · Ctrl+Enter · 전체/현재 문) | ○ | 판정 뒤 · 살아 있으면 자동 재접속 | 막기 → 토스트 1회(억제 창 안 중복 = 상태줄만) | 토스트 · 상태줄 · 탭 표식 | 53 §8 그대로 + 레지스트리 선판정 |
@@ -108,11 +110,11 @@ L4 복구(재접속·재개) ───────▶   Alive 복귀            
 | 단계 | 내용 | 크기 | 시험 |
 |---|---|---|---|
 | **① 사건 직접 수리** | 메타 스레드 `MetaGuard`(`last_ok`·`suspect` · 카탈로그 요청마다 `live_plan` → `reachable`) · `Req::Source/Details/GenSql/Sizes/DbSizes/Live/Blockers`를 `loading_since`에 · 메타 세션 `set_call_timeout(explorer.timeout)` · 실패 = `ExplorerAction::Notify(토스트 · 로그)` + 상태줄 · 진행 중 헤더 혜성 | 소 | ✅ **10-08 구현**(174861e · bin97) · 보정 **①-b**(56fd9c5 · bin98) = ⓐ 배경 메타 스레드(`nsql-explorer-bg` · 사전·인덱스·선적재·용량)는 호출 상한 제외(Oracle 사전 14.6 s 실측이 15 s 상한에 근접) ⓑ 접속 전 판정 `reachable` 상한 = `probe.timeout_ms`(종전 고정 2 s) ⓒ 가드 SYN = ICMP 보조 없이 TCP 한 번 · **①-c**(9ebe923 · bin99) = 실행 세션 워커의 빠른 판정 셋(접속 전 · `ensure_alive` · 실행 전)도 TCP 한 번(신호등 프로브만 ICMP) · 협업 V1 = 닫힌 포트 2015→2012 ms · 응답 없는 IP 3528→2010 ms(= `probe.timeout_ms` 기본 **2000**) · 소스 열기 회귀 10~28 ms · `explorer.timeout=1`에서도 헛실패 0 · 탐색기 E2E 34/0 · 78/0 · conn-cmd 38/0 · **실 VPN 끊김 사용자 ✓ 10-08**(끊김 안내·탭 표식 → 재연결 뒤 명령 실행 = 재접속) · 남음 ②~⑥(사용자 확인 뒤) |
-| **② ServerHealth** | `app/health.rs` 레지스트리 · `health_merge` 순수 함수(MC/DC) · 워커 `ConnOutcome::Broken/Alive`와 메타 `Resp::Health` 합류 · `Sess.broken` = 투영 · `health_changed` 한 자리 → `sync_sess_ui` + 탐색기 헤더 | 중 | 단위(merge 표) · 개발 스위치 기동 명령 `net.break:<ep>`/`net.heal:<ep>`로 주입 → `tabs.dump`·`explorer.dump` 헤더 글 |
-| **③ 토스트 + 다시 연결** | 토스트 버튼 → 그 끝점 실행 세션 재접속(`ensure_alive` 길) + 메타 `Req::Open` 재개 · 억제 창 `net.notify_quiet_secs` | 소 | ② 주입 뒤 버튼 자체 시험 `ui.click` |
-| **④ 기능별 게이트** | §4 표대로 `gate_open`/`gate_view`에 `health` 합류(막기·비활성·메뉴 라벨) · 워머 정지/재개 · 그리드 적용 보존 · Import 시작 전 막기 | 중 | MC/DC `gate_view` 확장 · 기능 점검 S95~(끊김 주입 시나리오) |
-| **⑤ L0 OS 신호(T-130)** | nexa-sys `netwatch` 3-OS → `NetChanged` → Suspect | 중 | VPN 토글 실기(사용자) · 모의 이벤트 단위 시험 |
-| **⑥ 문서·위키** | 53 §9 갱신 · 28 · 52 §3 · 위키 Connections "끊겼을 때" 절 · 39 §3 부하원(netwatch · 상한 키) | 소 | — |
+| **② ServerHealth** | `app/health.rs` 레지스트리 · `health_merge` 순수 함수(MC/DC) · 워커 `ConnOutcome::Broken/Alive`와 메타 `Resp::Health` 합류 · `Sess.broken` = 투영 · `health_changed` 한 자리 → `sync_sess_ui` + 탐색기 헤더 | 중 | ✅ **10-08 d39ff79**(bin101) · 보정 6e8a347(복귀 = 기록 제거 · 헤더 "끊김 hh:mm" = 이름 앞) · 시험 훅 `net.break/suspect/heal:<ep>` · `health.dump:<경로>`(레지스트리 · 세션별 broken · 칸 끊김 시각) · 같은 끊김 사건은 로그·토스트 1회(두 번째 break = 상태 변화 없음 = 사건 아님) · 협업 V1 bin101~102 ✓ |
+| **③ 토스트 + 다시 연결** | 토스트 버튼 → 그 끝점 실행 세션 재접속(`ensure_alive` 길) + 메타 `Req::Open` 재개 · 억제 창 `net.notify_quiet_secs` | 소 | ✅ **10-08 d39ff79 · 6e8a347**(토스트 클릭 = `net.reconnect:<ep>` · 끊겼던 끝점은 진짜 재접속(`reconnect_same=true`) · 조용한 접속 완료 = broken 해제 + 끝점 Up) · 억제 창 `net.notify_quiet_secs` 60(D-266 · 실질 = 복귀 뒤 재끊김 토스트) · 클릭 = 놓을 때(af9a280) · 협업 V1 bin102 ② ✓ · bin103 Down만 = 무동작 · Up = 재접속 ✓ |
+| **④ 기능별 게이트** | §4 표대로 `gate_open`/`gate_view`에 `health` 합류(막기·비활성·메뉴 라벨) · 워머 정지/재개 · 그리드 적용 보존 · Import 시작 전 막기 | 중 | ✅ **10-09 6e8a347 · beefed8** = 끊긴 끝점의 배경 워머 정지(컬럼 선적재 · 코멘트 · 유휴 인덱스 `index_step` · `broken_since`) · 복귀 때 재개 · Import 시작 전 막기(`StEpBrokenBlocked`) · **실행·페치는 워커 비동기 판정 유지**(게이트에서 동기 SYN = UI 정지라 하지 않음 · §4 표 "막기" 해석 참고) · 협업 V1 bin103 = 끊김 10 s 동안 메타 요청 0 · 복귀 뒤 재개 ✓ |
+| **⑤ L0 OS 신호(T-130)** | nexa-sys `netwatch` 3-OS → `NetChanged` → Suspect | 중 | ✅ **10-09 6e8a347 · nexa-ui 5d128d6** = nexa-sys `netwatch`(**Windows만** · iphlpapi `NotifyIpInterfaceChange`+`NotifyRouteChange2` · 콜백 = 깃발 + 깨우기 · mac/Linux = None 후속) → `App::net_changed`(1초 합치기 · 세션 있는 끝점 전부 Suspect · 토스트 없음 · 로그 "네트워크 경로 변경 - 서버 N곳은 다음 동작 전에 다시 판정합니다" · 메타 `Req::NetChanged` · 다음 실행 preflight) · 성공 = 의심 해소(배경 메타 요청 성공으로도 바로 해소 = 의도) · 설정 `net.watch`(켬 · 다음 시작부터) · 기동 명령 `net.changed` · 협업 V1 bin102 ③ ✓ |
+| **⑥ 문서·위키** | 53 §9 갱신 · 28 · 52 §3 · 위키 Connections "끊겼을 때" 절 · 39 §3 부하원(netwatch · 상한 키) | 소 | ✅ 10-09 협업(53 §8 · 39 §3 · 24 · 61 §2-2-b · 30 §2 · 위키 Settings · journal) |
 
 설정 키(모두 `REGISTRY` · 39 §3 등재): 기존 `probe.timeout_ms`(**2000** · 10-08 확인 = 레지스트리 기본) · `probe.stale_secs`(60) · `connect.auto_reconnect` · `explorer.timeout`(15) · 새 = `net.watch`(on · ⑤) · `net.notify_quiet_secs`(60 · ③) · `meta.call_timeout_secs`(= `explorer.timeout` 따름 · 0 = 끔).
 

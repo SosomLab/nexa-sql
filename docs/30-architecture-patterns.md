@@ -49,6 +49,9 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
+| **`OverlayZone` 누름/놓음 짝**(10-09) | `app/` 겹침 요소 · `overlay_zone_at`/`overlay_act` | 겹쳐 그려지는 요소(토스트·띠·카드·상태줄 항목·Ctrl 링크)가 Down에 바로 동작해 끌기 취소·오클릭이 안 됨 → Down = 자리 기억(삼킴) · 같은 자리 Up = 동작 | 토스트 · 외부 변경 띠 · 트랜잭션 경고 카드 · 실행 카드 · 상태줄 항목 8 · Ctrl 객체 링크 · 접속 창 복사 버튼(61 §2-2-b 9항) |
+| **`Toasts::push_button`**(10-08) | 토스트 부품 | 3초 안 다시 고르기 2단 확인을 마우스로 하기 어려움 → 카드 안 위험색 버튼(= `TimeoutButton` 무장 모양) · 버튼 = 명령 1회 · 카드 나머지 클릭 = 닫기만 | 운영 해제 2단 확인(`sess.env_force:<유형>`) |
+| **`ctxmenu_exclusive_step` + `menu_hit_bits` + `menu_bounds`**(10-09) | `app/` 라우팅 · 순수 판정 MC/DC 9 | 영역마다 따로 열린 우클릭 메뉴가 다른 영역 클릭에도 남음 → 열린 메뉴 비트 · 좌표 판정 · 닫기/통과 결정을 한 함수로 | 우클릭 메뉴 전부(탭·편집·상태/툴바·탐색기·그리드·결과 탭·북마크·프로젝트·상세·링크) · 설정 `ui.ctxmenu_exclusive`/`passthrough`(61 §2-2-b 10항) |
 | **점-도형 판정 `shape`**(09-28 · docs/93) | nexa-ctl `shape.rs` | 아이콘 래스터의 "점이 도형 안인가": `seg_dist`·`stroke`·`rect`·`rrect`·`disc`·`ring`·`ellipse`·`tri`·`poly`·`polys_evenodd/nonzero` — 세 곳에 복사돼 있던 식을 한 벌로 | nexa-ctl 글리프 · nexa-sql 탐색기 아이콘(`exp_icons`) · 툴바 아이콘(`toolicons`) |
 | **한 크기 글꼴 설정 `FontPrefs::with_base(_status)`**(09-28) | nexa-ctl `theme.rs` | 창마다 `SlotFont{size,bold:false,italic:false}`를 손으로 조립하던 것 → 생성 함수(Factory) · `SlotFont::plain` | nexa-sql 보조 창·패널 27곳 |
 | **보조 창 입력 변환 `input::text_key_event`**(09-28) | nexa-sql `input.rs` | winit 키 → 컨트롤 입력(Adapter) · 묶음 `TextKeys::{Line, Multi, MultiTab}` · 판정 본체 `text_key_of`(순수 · 시험) | 입력·라이선스·트랜잭션 로그·변수·가져오기·SQL 미리보기 창 |
