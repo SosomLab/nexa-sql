@@ -20,7 +20,7 @@ pub(crate) struct CompareTarget {
 }
 
 /// `nsql_core::DdlKind` → 카탈로그 객체 종류(스키마는 객체가 아님).
-fn kind_of(k: nsql_core::DdlKind) -> Option<nsql_catalog::ObjectKind> {
+pub(crate) fn kind_of(k: nsql_core::DdlKind) -> Option<nsql_catalog::ObjectKind> {
     use nsql_catalog::ObjectKind as O;
     use nsql_core::DdlKind as D;
     Some(match k {

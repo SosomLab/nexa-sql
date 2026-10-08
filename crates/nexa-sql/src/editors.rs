@@ -78,6 +78,8 @@ pub(crate) enum TabMenuReq {
     KeepOpen(usize),
     /// 프로젝트 탐색기에서 그 파일 보기(프로젝트 폴더 안 파일만 · 사용자 09-22).
     RevealProject(usize),
+    /// 첫 실행 문장이 객체 DDL인 탭 → 그 객체를 객체 탐색기에서 보기(사용자 10-08 · `app/tabobj.rs`).
+    RevealObject(usize),
 }
 
 pub(crate) struct Editors {
@@ -244,6 +246,8 @@ pub(crate) struct Editors {
     shown_titles: Vec<String>,
     /// 탭 제목·구성 세대(`sync_tabs`마다 +1) — 탭 이름을 **id로 조회해 표시하는 쪽**(북마크 패널)이 바뀐 때만 다시 만들도록.
     titles_rev: u64,
+    /// ★ 탭 메뉴 "객체 탐색기에서 보기"(탭 id → (라벨, 활성)) — 호스트가 판정해 넣는다(`App::tab_obj_tick` · 사용자 10-08).
+    tab_obj: HashMap<u64, (String, bool)>,
     /// 더러운 탭 닫기 2단(같은 탭을 3초 안에 다시 닫으면 버림).
     pending_close: Option<(usize, Instant)>,
     /// 호스트 상태줄에 전할 1회성 안내.
@@ -366,6 +370,7 @@ impl Editors {
             encs: Vec::new(),
             shown_titles: Vec::new(),
             titles_rev: 0,
+            tab_obj: HashMap::new(),
             pending_close: None,
             notice: None,
         };
@@ -2388,6 +2393,18 @@ impl Editors {
         self.project_folders.iter().any(|f| path.starts_with(f))
     }
 
+    /// 탭 메뉴 "객체 탐색기에서 보기" 라벨·활성(없음 = 항목 없음) — 호스트 판정(`App::tab_obj_tick`).
+    pub(crate) fn set_tab_obj(&mut self, id: u64, v: Option<(String, bool)>) {
+        match v {
+            Some(v) => {
+                self.tab_obj.insert(id, v);
+            }
+            None => {
+                self.tab_obj.remove(&id);
+            }
+        }
+    }
+
     pub(crate) fn tab_menu_open(&self) -> bool {
         self.menu.is_open()
     }
@@ -2429,6 +2446,7 @@ impl Editors {
                     "close_all" => Some(TabMenuReq::CloseAll),
                     "reveal" => Some(TabMenuReq::Reveal(i)),
                     "reveal_project" => Some(TabMenuReq::RevealProject(i)),
+                    "reveal_object" => Some(TabMenuReq::RevealObject(i)),
                     "copy_name" => Some(TabMenuReq::CopyName(i)),
                     "copy_path" => Some(TabMenuReq::CopyPath(i)),
                     "keep_open" => Some(TabMenuReq::KeepOpen(i)),
@@ -2563,7 +2581,10 @@ impl Editors {
         let kind = self.tab_kind(i);
         let is_view = self.view_tabs.contains_key(&self.tab_id(i));
         let has_path = self.paths.get(i).and_then(|p| p.as_ref()).is_some();
-        let items = vec![
+        // ★ 첫 실행 문장이 객체 DDL이면 그 객체(사용자 10-08) — 라벨·활성(연결 여부)은 호스트가 틱마다 넣는다(`set_tab_obj`) ·
+        //   대상이 아니면 항목 자체가 없다.
+        let obj = self.tab_obj.get(&self.tab_id(i)).cloned();
+        let mut items = vec![
             CtxItem::maybe("keep_open", t(Msg::MnTabKeepOpen), kind == TabKind::Preview),
             CtxItem::maybe(
                 "rename",
@@ -2583,6 +2604,9 @@ impl Editors {
             CtxItem::maybe("reveal", t(Msg::MnTabReveal), has_file),
             CtxItem::maybe("reveal_project", t(Msg::MnTabRevealProject), in_project),
         ];
+        if let Some((label, on)) = obj {
+            items.push(CtxItem::maybe("reveal_object", label, on));
+        }
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;
         self.menu.open_at(p.x, p.y, items, host, text_w);

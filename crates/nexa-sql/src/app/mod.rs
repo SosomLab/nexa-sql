@@ -30,6 +30,7 @@ mod run;
 mod session;
 mod settings;
 mod startup_cmd;
+mod tabobj;
 mod toolbar;
 mod tx;
 mod vars;

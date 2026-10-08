@@ -349,6 +349,7 @@ impl ApplicationHandler<Wake> for App {
         self.project_autosave_tick();
         self.sync_open_files();
         self.bm_tick();
+        self.tab_obj_tick();
         self.project_pump();
         if self.editors.poll_preview() {
             self.redraw();

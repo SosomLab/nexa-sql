@@ -1076,6 +1076,7 @@ impl App {
                     self.reveal_in_project(&path);
                 }
             }
+            TabMenuReq::RevealObject(i) => self.tab_reveal_object(i),
         }
     }
 
