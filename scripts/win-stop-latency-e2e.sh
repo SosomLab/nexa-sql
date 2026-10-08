@@ -54,12 +54,19 @@ judge() {
 
 say "=== 실행 중지 지연 E2E · $(date '+%F %T') · gui=$EXE · 프로필 $ORA · ■까지 ${WAIT} ms · 판정선 ${LIMIT} ms"
 
-# ① 대기 중 취소(DBMS_SESSION.SLEEP · 60 s) — 권한/버전 폴백 DBMS_LOCK.SLEEP.
+# ① 대기 중 취소(DBMS_SESSION.SLEEP · 60 s · 18c+). 예외 처리기를 두지 않는다 — `WHEN OTHERS`는 ■의 ORA-01013까지 삼킨다(협업 10-09).
 d=$(run_stop "s1_sleep" "BEGIN
-  BEGIN DBMS_SESSION.SLEEP(60); EXCEPTION WHEN OTHERS THEN DBMS_LOCK.SLEEP(60); END;
+  DBMS_SESSION.SLEEP(60);
 END;
 /")
 judge "① DBMS_SESSION.SLEEP 60 s" "$d"
+
+# ①-b 참고(판정 아님): `WHEN OTHERS`가 ORA-01013을 삼키고 다시 자는 꼴 — 사용자 프로시저에 같은 처리기가 있으면 "중지가 안 걸리는" 원인.
+d=$(run_stop "s1b_swallow" "BEGIN
+  BEGIN DBMS_SESSION.SLEEP(60); EXCEPTION WHEN OTHERS THEN DBMS_SESSION.SLEEP(60); END;
+END;
+/")
+r=$(latency "$d"); if [ -n "$r" ]; then set -- $r; say "  INFO  ①-b WHEN OTHERS 삼킴 = 요청 → 확정 $3 ms ($4)"; else say "  INFO  ①-b WHEN OTHERS 삼킴 = 25 s 안에 확정 없음(삼켜져 두 번째 SLEEP 진행 = 예상)"; fi
 
 # ② PL/SQL CPU 루프(60 s · 서버 CPU 하나) — 루프 안에서 OCIBreak가 걸리는지.
 d=$(run_stop "s2_loop" "DECLARE
