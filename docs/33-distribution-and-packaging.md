@@ -138,6 +138,8 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - **v0.1.5 결과**: Homebrew 탭 `780e053` · pkg.sosomlab.com nexa-sql 0.1.5(APT·RPM) · choco 0.1.5 push(Pending) · winget PR #447007(OPEN).
 - **v0.1.6 = winget·choco 제외**(사용자 10-08 "winget/choco는 제외하고 게시"): 저장소 변수 `WINGET_PUBLISH` · `CHOCO_PUSH` = **false** → publish-windows-packages guard가 두 잡을 건너뜀(로그 `vars.WINGET_PUBLISH='false'` · 제출 0) · **다시 열 때 = 두 변수를 true**(그 뒤 릴리스부터 자동 · 이미 공개한 판은 `workflow_dispatch`) · 결과 = Homebrew 탭 `c3c237e` · pkg.sosomlab.com nexa-sql 0.1.6(APT · RPM · 시크릿 없어 linux-repo `publish` 수동) · winget PR #447007 OPEN · choco 0.1.5 Pending 그대로(journal 10-07 §23).
 
+- ★ **릴리스마다 확인(사용자 10-08 "winget·choco 재개 = 배포 시마다 확인 필요")**: 릴리스 **전에** 저장소 변수 `WINGET_PUBLISH` · `CHOCO_PUSH` 값을 사용자에게 묻는다(`gh variable list` · 기본 = 지난 릴리스 값 유지 · 지금 = **false**) · 답에 따라 true/false로 맞춘 뒤 태그 · 릴리스 노트·journal에 "winget·choco = 게시/제외" 한 줄.
+
 ### 5-4. 남은 확인
 
 - 정적 CRT로 링크한 Oracle 드라이버(ODPI-C · 런타임에 `oci.dll` 적재)의 **Windows 실서버 접속 확인** — SQLite·GUI 자체 점검(`--smoke`)은 ✓(09-28), 실서버는 사용자 PC에서.
