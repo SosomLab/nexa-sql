@@ -861,12 +861,18 @@ impl Intel {
                                         ..ctx.replace.start.max(ctx.statement.start)],
                                 );
                                 for (i, a) in list.iter().enumerate() {
+                                    // ★ T-SQL 명명 인자 = `@이름 = `(카탈로그는 `@`를 뗀 이름 · 사용자 10-08 "DBMS 특징에 맞게").
                                     let n = m.names.get(a.name);
-                                    if used.iter().any(|u| u.eq_ignore_ascii_case(n)) {
+                                    let shown = if n.starts_with('@') {
+                                        n.to_string()
+                                    } else {
+                                        format!("@{n}")
+                                    };
+                                    if used.iter().any(|u| u.eq_ignore_ascii_case(&shown)) {
                                         continue;
                                     }
                                     cands.push(Cand {
-                                        text: n.to_string(),
+                                        text: format!("{shown} = "),
                                         kind: CandKind::Variable,
                                         detail: if show_types {
                                             m.names.get(a.detail).to_string()
@@ -902,7 +908,8 @@ impl Intel {
                             continue;
                         }
                         cands.push(Cand {
-                            text: (*name).to_string(),
+                            // T-SQL 명명 인자 꼴 `@이름 = `(사용자 10-08).
+                            text: format!("{name} = "),
                             kind: CandKind::Variable,
                             detail: if show_types {
                                 (*ty).to_string()
@@ -1722,6 +1729,19 @@ impl Intel {
     }
 
     /// 시그니처 도움(`intel.signature_help` · T-178): 캐럿을 감싸는 안 닫힌 `(`의 주인이 내장 함수·패키지 멤버면 그 시그니처.
+    /// ★ 캐럿이 루틴 괄호 안의 **인자 시작**(`(`·`,` 뒤)인가(Oracle·PG · 이름 지정 인자 자동 열림 · 사용자 10-08 "두 번째 인자도").
+    pub(crate) fn named_arg_site(&self, doc: &str, caret: usize, dialect: Option<Dialect>) -> bool {
+        if !self.cfg.enabled || !matches!(dialect, Some(Dialect::Oracle | Dialect::Postgres)) {
+            return false;
+        }
+        let ctx = intel::context_at(doc, caret, dialect);
+        ctx.kind == CtxKind::Expr
+            && ctx.paren_owner.is_some()
+            && named_arg_start(
+                &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)],
+            )
+    }
+
     pub(crate) fn signature_at(
         &self,
         doc: &str,

@@ -48,6 +48,11 @@ impl App {
                 if *c == '(' || self.sig_card.is_some() {
                     self.intel_signature_help();
                 }
+                // ★ 루틴 괄호 안의 `,` = 다음 인자 자리 → 이름 지정 인자 후보를 `(`처럼 바로 연다(사용자 10-08 "두 번째 전달인자도
+                //   `이름 =>` 꼴로" — 종전엔 `,`가 트리거가 아니라 시그니처 카드만 떴다). 자동 완성이 켜져 있을 때만.
+                if *c == ',' && self.intel.cfg().auto && self.intel_named_arg_site() {
+                    self.intel_request(false);
+                }
             }
             // Esc = 카드 숨김(완성 팝업과 같은 키) · 그 밖의 키·클릭 = 캐럿이 움직였으니 카드가 떠 있으면 다시 판정.
             InputEvent::Key {
@@ -263,6 +268,27 @@ impl App {
             self.intel_signature_help();
         }
         self.redraw();
+    }
+
+    /// 캐럿이 루틴 괄호 안의 인자 시작 자리인가(활성 탭 · 편집기 포커스 · 큰 파일 제외).
+    fn intel_named_arg_site(&mut self) -> bool {
+        if self.focus != Focus::Editor {
+            return false;
+        }
+        let i = self.editors.active();
+        if self.intel_unsuitable(i, true).is_some() {
+            return false;
+        }
+        let (text, caret_c) = {
+            let ed = self.editors.cur();
+            (ed.text(), ed.caret())
+        };
+        let caret_b = text
+            .char_indices()
+            .nth(caret_c)
+            .map_or(text.len(), |(b, _)| b);
+        self.intel
+            .named_arg_site(&text, caret_b, Some(self.sess.dialect))
     }
 
     /// 시그니처 도움(`intel.signature_help`): 캐럿을 감싸는 `(`의 주인이 내장 함수면 상태줄에 시그니처 한 줄.

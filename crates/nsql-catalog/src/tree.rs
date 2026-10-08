@@ -380,7 +380,9 @@ pub fn sub_items(
                 .into_iter()
                 .filter(|a| !a.name.is_empty())
                 .map(|a| {
-                    let ov = if matches!(a.overload.as_str(), "" | "0" | "1") {
+                    // 오버로드 번호는 Oracle/PG 몫 — SQL Server의 `overload`는 object_id라 꼬리 `#1760061356`이 붙었다(사용자 10-08).
+                    let ov = if d == Dialect::Mssql || matches!(a.overload.as_str(), "" | "0" | "1")
+                    {
                         String::new()
                     } else {
                         format!(" #{}", a.overload)
