@@ -507,14 +507,25 @@ impl App {
         //   영역을 기억하고, 커서가 그 영역 밖으로 나간 **이동·놓임**은 커서 아래 컨트롤이 아니라 **누른 영역**에 준다(그 영역이
         //   포커스일 때만 — 팝업·메뉴가 누름을 먹은 경우는 제외). 놓임으로 캡처가 끝난다. 개별 컨트롤마다 고치지 않는다.
         if let InputEvent::MouseMove { x, y } = ev {
-            // ★ hover 이탈 통지: 영역이 바뀌면 이전 영역에 "밖" 이동을 한 번(툴팁·hover 정리). 지금은 hover 상태를 스스로 못 걷는
-            //   객체 탐색기·객체 상세만(다른 영역은 자기 MouseMove에서 걷는다) — 새 영역이 툴팁을 갖게 되면 여기 한 줄.
+            // ★ hover 이탈 통지: 영역이 바뀌면 이전 영역에 "밖" 이동을 한 번(툴팁·hover 정리). 영역은 자기 MouseMove를 더 못 받으면
+            //   hover를 스스로 못 걷는다 — 오버레이 스크롤바(`ScrollBars`)의 썸 hover(두꺼움)가 그 예: 포인터가 패널 밖으로 나가면
+            //   `hover`가 남아 `tick`이 "접근 중"으로 보고 막대를 영영 숨기지 않았다(사용자 10-08 "두꺼워진 스크롤바가 사라지지 않는다" ·
+            //   프로젝트 탐색기). → 스크롤바·툴팁을 가진 영역 전부에 준다. 새 영역이 hover 상태를 갖게 되면 여기 한 줄.
             let now_area = self.area_at(Point { x, y });
             if now_area != self.hover_area {
                 let out = InputEvent::MouseMove { x: -1, y: -1 };
                 let left = match self.hover_area {
                     Some(Focus::Explorer) => self.explorer.on_event(&out),
                     Some(Focus::Details) => self.objdetail.on_event(&out, Instant::now()),
+                    Some(Focus::Project) => self.project_panel.on_event(&out),
+                    Some(Focus::Bookmarks) => self.bm_panel.on_event(&out),
+                    Some(Focus::Outline) => self.outline_panel.on_event(&out),
+                    Some(Focus::Ext) => self.ext_panel.on_event(&out),
+                    Some(Focus::Search) => self.search.on_event(&out),
+                    Some(Focus::Grid) => {
+                        self.grid.on_event(&out, self.scale);
+                        true
+                    }
                     _ => false,
                 };
                 if left {
@@ -1795,6 +1806,22 @@ impl App {
         }
         if self.editors.active_view().is_some() {
             changed |= self.ext_view.on_event(&out);
+        }
+        // 스크롤바 hover(썸 두꺼움)를 가진 패널들도(10-08 · 위 hover 이탈 통지와 같은 목록).
+        if self.project_panel.is_visible() {
+            changed |= self.project_panel.on_event(&out);
+        }
+        if self.bm_panel.is_visible() {
+            changed |= self.bm_panel.on_event(&out);
+        }
+        if self.outline_panel.is_visible() {
+            changed |= self.outline_panel.on_event(&out);
+        }
+        if self.ext_panel.is_visible() {
+            changed |= self.ext_panel.on_event(&out);
+        }
+        if self.search.is_visible() {
+            changed |= self.search.on_event(&out);
         }
         self.grid.on_event(&out, self.scale);
         self.hover_area = None;
