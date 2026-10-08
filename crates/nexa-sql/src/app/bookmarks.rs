@@ -222,6 +222,10 @@ impl App {
         if !self.bookmarks.enabled {
             return false;
         }
+        // 뷰 탭(비교 diff 뷰어 · 확장 상세)은 자리 탭의 숨은 상자 위에 다른 것이 그려진다 → 그 거터 자리의 우클릭은 뷰의 몫.
+        if self.editors.active_view().is_some() {
+            return false;
+        }
         let i = self.editors.active();
         let Some(tb) = self.editors.tab_box(i) else {
             return false;

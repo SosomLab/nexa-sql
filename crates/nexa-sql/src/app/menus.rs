@@ -1961,6 +1961,9 @@ impl App {
         if self.objlink_menu.is_open() {
             m |= 4096;
         }
+        if self.diff_view.popup_open() {
+            m |= 8192;
+        }
         m
     }
 
@@ -1998,6 +2001,9 @@ impl App {
         if self.objlink_menu.is_open() && self.objlink_menu.bounds().contains(p) {
             m |= 4096;
         }
+        if self.diff_view.popup_open() && self.diff_view.popup_bounds().contains(p) {
+            m |= 8192;
+        }
         m
     }
 
@@ -2025,6 +2031,9 @@ impl App {
         }
         if bits & 4096 != 0 {
             self.objlink_menu.close();
+        }
+        if bits & 8192 != 0 {
+            self.diff_view.close_popup();
         }
         if bits & 128 != 0 {
             self.bm_panel.close_menu();

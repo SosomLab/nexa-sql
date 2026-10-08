@@ -2209,6 +2209,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 서버 DDL 꾸밈 무시(협업 V1 bin111 (a) · 10-09): Oracle `EDITIONABLE`/`NONEDITIONABLE` · 따옴표 식별자 `"A"."B"` → `A.B`.
+    Entry {
+        key: "compare.canon",
+        cat: Msg::CatEditor,
+        label: Msg::LblCompareCanon,
+        desc: Msg::DescCompareCanon,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 조건 바 펼침 최대 줄 수(사용자 10-06 "SHIFT+ENTER를 누르면 최대 3줄(설정)까지 확장").
     Entry {
         key: "grid.cond_max_lines",

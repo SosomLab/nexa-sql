@@ -73,12 +73,96 @@ pub(crate) fn compare_target(
 }
 
 /// 비교 전 정규화(19 §6-3 · 순수): 줄 끝 공백 · 탭 → 공백 4 · 빈 줄 연속 → 하나 · 끝의 `;`/`/`·공백 제거 ·
-/// `ignore_ws`면 줄 안 공백 연속도 하나로(들여쓰기 차이 무시).
-pub(crate) fn normalize_ddl(text: &str, ignore_ws: bool) -> Vec<String> {
+/// `ignore_ws`면 줄 안 공백 연속도 하나로(들여쓰기 차이 무시) · `canon`이면 [`canon_line`](편집 가능 키워드 · 따옴표 식별자).
+/// 앱은 표시용 원문도 필요해 [`normalize_pairs`]를 쓴다 — 이 꼴은 시험의 비교용 요약.
+#[cfg(test)]
+pub(crate) fn normalize_ddl(text: &str, ignore_ws: bool, canon: bool) -> Vec<String> {
+    normalize_pairs(text, ignore_ws, canon)
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect()
+}
+
+/// 서버 DDL의 꾸밈을 걷는다(순수 · 설정 `compare.canon` · 협업 V1 bin111 (a)): Oracle `DBMS_METADATA`가 붙이는 `EDITIONABLE`/
+/// `NONEDITIONABLE` 낱말을 빼고, 따옴표 식별자 `"BISCM"."SP_TEST1"`은 안이 **대소문자 섞이지 않은 보통 식별자**일 때만 따옴표를
+/// 벗긴다(`"MyTab"`처럼 섞인 것은 따옴표가 뜻을 가지므로 그대로). 양쪽(편집기·서버)에 같이 적용하므로 "같은 뜻 = 같은 줄"만 맞춘다.
+pub(crate) fn canon_line(l: &str) -> String {
+    let mut out = String::with_capacity(l.len());
+    let cs: Vec<char> = l.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        // 문자열 리터럴 `'…'`은 그대로(안의 낱말·따옴표는 데이터 · `''` 이스케이프는 두 리터럴로 읽혀도 결과는 같다).
+        if c == '\'' {
+            let end = cs[i + 1..]
+                .iter()
+                .position(|&x| x == '\'')
+                .map_or(cs.len(), |j| i + 1 + j + 1);
+            out.extend(&cs[i..end]);
+            i = end;
+            continue;
+        }
+        if c == '"' {
+            if let Some(j) = cs[i + 1..].iter().position(|&x| x == '"') {
+                let inner: String = cs[i + 1..i + 1 + j].iter().collect();
+                if plain_ident(&inner) {
+                    out.push_str(&inner);
+                    i += j + 2;
+                    continue;
+                }
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c.is_alphabetic() {
+            let st = i;
+            while i < cs.len() && (cs[i].is_alphanumeric() || cs[i] == '_') {
+                i += 1;
+            }
+            let w: String = cs[st..i].iter().collect();
+            let up = w.to_ascii_uppercase();
+            if up == "EDITIONABLE" || up == "NONEDITIONABLE" {
+                // 낱말 + 뒤따르는 공백 하나를 함께 뺀다(`CREATE OR REPLACE NONEDITIONABLE PROCEDURE` → `CREATE OR REPLACE PROCEDURE`).
+                if i < cs.len() && cs[i] == ' ' {
+                    i += 1;
+                }
+                continue;
+            }
+            out.push_str(&w);
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// 따옴표를 벗겨도 뜻이 같은 식별자인가 — 글자/`_` 시작 · 영숫자·`_`·`$`·`#` · 대소문자가 섞이지 않음.
+fn plain_ident(s: &str) -> bool {
+    let mut it = s.chars();
+    let Some(f) = it.next() else { return false };
+    if !(f.is_ascii_alphabetic() || f == '_') {
+        return false;
+    }
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#'))
+    {
+        return false;
+    }
+    let has_up = s.chars().any(|c| c.is_ascii_uppercase());
+    let has_lo = s.chars().any(|c| c.is_ascii_lowercase());
+    !(has_up && has_lo)
+}
+
+/// [`normalize_ddl`] + 표시용 원문 쌍 — `(비교용, 표시용)` · 표시용 = 그 줄의 원문(줄 끝 공백 제거 · 탭 → 공백 4 · 들여쓰기 유지).
+/// diff 뷰어는 비교는 앞 것으로 · 본문은 뒤 것으로 보인다(협업 V1 bin111 (c) = 공백을 걷은 글이 보였다).
+pub(crate) fn normalize_pairs(text: &str, ignore_ws: bool, canon: bool) -> Vec<(String, String)> {
     let t = text
         .trim()
         .trim_end_matches(|c: char| c == ';' || c == '/' || c.is_whitespace());
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(String, String)> = Vec::new();
     let mut prev_blank = false;
     // 머리의 `-- 주석`·빈 줄은 뺀다(생성 DDL은 `-- t2 definition` 머리 줄을 단다 · 협업 V1 H1 = 그 줄이 "삭제"로 잡혔다).
     let body_at = t
@@ -89,18 +173,22 @@ pub(crate) fn normalize_ddl(text: &str, ignore_ws: bool) -> Vec<String> {
         })
         .unwrap_or(0);
     for raw in t.lines().skip(body_at) {
-        let mut l = raw.trim_end().replace('\t', "    ");
+        let show = raw.trim_end().replace('\t', "    ");
+        let mut l = show.clone();
         if ignore_ws {
             l = l.split_whitespace().collect::<Vec<_>>().join(" ");
+        }
+        if canon {
+            l = canon_line(&l);
         }
         let blank = l.trim().is_empty();
         if blank && prev_blank {
             continue;
         }
         prev_blank = blank;
-        out.push(l);
+        out.push((l, show));
     }
-    while out.last().is_some_and(|l| l.trim().is_empty()) {
+    while out.last().is_some_and(|(l, _)| l.trim().is_empty()) {
         out.pop();
     }
     out
@@ -225,8 +313,13 @@ impl App {
     /// `inline` = 1단계(거터 표식만).
     fn compare_open(&mut self, w: CompareTarget, ddl: &str) {
         let ignore_ws = self.settings.flag("compare.ignore_ws");
-        let cur = normalize_ddl(&w.stmt, ignore_ws);
-        let base = normalize_ddl(ddl, ignore_ws);
+        let canon = self.settings.flag("compare.canon");
+        let (cur, cur_show): (Vec<String>, Vec<String>) =
+            normalize_pairs(&w.stmt, ignore_ws, canon)
+                .into_iter()
+                .unzip();
+        let (base, base_show): (Vec<String>, Vec<String>) =
+            normalize_pairs(ddl, ignore_ws, canon).into_iter().unzip();
         let n = diff_count(&base, &cur);
         let obj = object_label(&w.owner);
         if self.settings.get("compare.view").unwrap_or("diff") == "diff" {
@@ -238,12 +331,17 @@ impl App {
             self.diff_view.set(
                 &cur,
                 &base,
+                &cur_show,
+                &base_show,
                 &obj,
                 (
                     t(Msg::CompareLabelEditor).to_string(),
                     t(Msg::CompareLabelServer).to_string(),
                 ),
             );
+            // 자리 탭의 숨은 상자도 읽기 전용(어느 길로든 그 상자의 메뉴·입력이 닿으면 §214 규칙대로 쓰기 항목 비활성).
+            let i = self.editors.active();
+            self.editors.set_read_only(i, true);
             self.compare_diff_key = key;
             let hunks = self.diff_view.hunk_count();
             self.compare_last = Some((w.owner.name, ddl.to_string(), hunks));
@@ -396,6 +494,7 @@ mod tests {
         let a = normalize_ddl(
             "CREATE TABLE t (\n\tid  INT,  \n\n\n  name VARCHAR2(10)\n)\n;\n",
             false,
+            false,
         );
         assert_eq!(
             a,
@@ -410,24 +509,74 @@ mod tests {
         let b = normalize_ddl(
             "CREATE TABLE t (\n  id INT,\n  name VARCHAR2(10)\n)\n/",
             true,
+            false,
         );
         assert_eq!(
             b,
             vec!["CREATE TABLE t (", "id INT,", "name VARCHAR2(10)", ")"]
         );
         // 같은 뜻 다른 들여쓰기 = ignore_ws면 차이 0.
-        let c = normalize_ddl("CREATE TABLE t (\n\tid INT,\n\tname VARCHAR2(10)\n);", true);
+        let c = normalize_ddl(
+            "CREATE TABLE t (\n\tid INT,\n\tname VARCHAR2(10)\n);",
+            true,
+            false,
+        );
         assert_eq!(diff_count(&b, &c), 0);
         // 컬럼 하나 다름 = 1군데.
-        let d = normalize_ddl("CREATE TABLE t (\n  id INT,\n  name VARCHAR2(20)\n)", true);
+        let d = normalize_ddl(
+            "CREATE TABLE t (\n  id INT,\n  name VARCHAR2(20)\n)",
+            true,
+            false,
+        );
         assert_eq!(diff_count(&b, &d), 1);
         // 생성 DDL 머리 주석 + 빈 줄 + 끝 `;` = 차이 아님(협업 V1 bin27 H1 · SQLite `-- t2 definition`).
         let s = normalize_ddl(
             "-- t2 definition\n\nCREATE TABLE t2 (id INTEGER, name TEXT);",
             true,
+            false,
         );
-        let e = normalize_ddl("CREATE TABLE t2 (id INTEGER, name TEXT)", true);
+        let e = normalize_ddl("CREATE TABLE t2 (id INTEGER, name TEXT)", true, false);
         assert_eq!(s, e);
         assert_eq!(diff_count(&s, &e), 0);
+    }
+
+    /// `compare.canon`(협업 V1 bin111 (a)): `NONEDITIONABLE`/`EDITIONABLE` 무시 · 따옴표 식별자는 대소문자 안 섞인 것만 벗김 ·
+    /// 표시용 원문은 들여쓰기 그대로.
+    #[test]
+    fn canon_rules() {
+        assert_eq!(
+            canon_line("CREATE OR REPLACE NONEDITIONABLE PROCEDURE \"BISCM\".\"SP_TEST1\" ("),
+            "CREATE OR REPLACE PROCEDURE BISCM.SP_TEST1 ("
+        );
+        assert_eq!(
+            canon_line("create editionable function \"f1\""),
+            "create function f1"
+        );
+        // 섞인 대소문자·문자열 리터럴·낱말 일부는 손대지 않는다.
+        assert_eq!(
+            canon_line("\"MyTab\" 'NONEDITIONABLE x'"),
+            "\"MyTab\" 'NONEDITIONABLE x'"
+        );
+        assert_eq!(canon_line("EDITIONABLEX \"A B\""), "EDITIONABLEX \"A B\"");
+        let srv = normalize_ddl(
+            "CREATE OR REPLACE NONEDITIONABLE PROCEDURE \"BISCM\".\"SP_TEST1\" AS\nBEGIN\n  NULL;\nEND;\n/",
+            true,
+            true,
+        );
+        let ed = normalize_ddl(
+            "CREATE OR REPLACE PROCEDURE BISCM.SP_TEST1 AS\nBEGIN\n    NULL;\nEND;",
+            true,
+            true,
+        );
+        assert_eq!(srv, ed);
+        // 끄면 차이로 센다.
+        assert_ne!(
+            normalize_ddl("CREATE NONEDITIONABLE PROCEDURE \"A\".\"B\"", true, false),
+            normalize_ddl("CREATE PROCEDURE A.B", true, false)
+        );
+        // 표시용 = 원문 들여쓰기(탭 → 4칸) · 비교용 = 접힘.
+        let pairs = normalize_pairs("CREATE TABLE t (\n\tid INT\n)", true, true);
+        assert_eq!(pairs[1].0, "id INT");
+        assert_eq!(pairs[1].1, "    id INT");
     }
 }

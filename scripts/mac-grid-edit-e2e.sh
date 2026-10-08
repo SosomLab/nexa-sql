@@ -11,7 +11,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
 # 기본 격리 홈 = OS별(10-09 · 협업 원장): Windows Git Bash의 `/tmp`는 Windows exe가 못 연다(`unable to open database file`) → 저장소 `target/` 아래.
-case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) H="$ROOT/target/nsql-ge-e2e";; *) H="${TMPDIR:-/tmp}/nsql-ge-e2e";; esac
+# Windows exe에는 Git Bash 경로(`/d/…`)가 아니라 `D:/…` 꼴을 줘야 한다(협업 10-09 bin111 = `/d/Projects/…/local.sqlite` 못 염) → cygpath -m.
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) H="$(cygpath -m "$ROOT")/target/nsql-ge-e2e";; *) H="${TMPDIR:-/tmp}/nsql-ge-e2e";; esac
 PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
 while getopts "e:n:H:P:d:" o; do case $o in e) APP=$OPTARG;; n) NSQL=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
 D="$H/data"; O="$H/out"; rm -rf "$H"; mkdir -p "$D" "$O"

@@ -1,6 +1,9 @@
 //! ★ 2-pane diff 뷰어(T-283 2단계 · docs/19 §6-2 · 10-09): 왼쪽 = 편집기 문장(정규화) · 오른쪽 = 서버 DDL(정규화) · 행 정렬 =
-//! nexa-ctl `diff::align`(맞은편 빈 행 채움) · 줄 배경 = 추가 `ok` · 삭제 `danger` · 변경 `warn`(테마 토큰 · 알파) · 스크롤 동기(한쪽을
-//! 움직이면 다른 쪽도 같은 첫 줄) · 머리 줄 = 일치/N군데 다름 + 지금 덩어리 `k/N` · 다음/이전 덩어리(`compare.next`/`compare.prev`).
+//! nexa-ctl `diff::align`(맞은편 빈 행 채움) · 줄 배경 = **편집기에만** `ok`(초록 · a쪽 = `RowKind::Delete`) · **서버에만** `danger`
+//! (빨강 · b쪽 = `RowKind::Insert`) · 변경 `warn`(테마 토큰 · 알파 · 협업 V1 bin111 ② = 종전 Insert/Delete를 그대로 초록/빨강에 붙여
+//! 뒤집혀 보였다) · 스크롤 동기(한쪽을 움직이면 다른 쪽도 같은 첫 줄) · 머리 줄 = 일치/N군데 다름 + 지금 덩어리 `k/N` + 둘째 줄에 칸
+//! 라벨(편집기 | 서버 · 종전엔 본문 위에 겹쳐 그렸다 · bin111 (b)) · 다음/이전 덩어리(`compare.next`/`compare.prev`).
+//! 비교는 정규화한 줄로 하되 **보이는 글은 원문 줄**(들여쓰기 유지 · bin111 (c)) — `set`이 비교용·표시용 둘을 받는다(길이 같음).
 //! 본문 상자 둘은 읽기 전용 TextBox(선택·복사·검색은 상자 몫) — 같은 부품을 19 §1(두 버퍼 비교)·§3(시점 캐시)도 쓸 수 있게 nexa-sql
 //! 안에서는 이 모듈 하나만 안다.
 
@@ -54,20 +57,31 @@ impl DiffView {
         (v * self.scale).round() as i32
     }
 
-    /// 내용을 넣는다(정규화된 줄 목록 둘 · 제목 · 라벨) — 행 정렬 · 양쪽 본문(빈 행 = "") · 색조 · 덩어리.
-    pub(crate) fn set(&mut self, a: &[String], b: &[String], obj: &str, labels: (String, String)) {
+    /// 내용을 넣는다 — `a`/`b` = 비교용(정규화) 줄 · `a_show`/`b_show` = 그 줄의 표시용 원문(같은 길이 · 아니면 비교용을 보인다) ·
+    /// 제목 · 라벨. 행 정렬 · 양쪽 본문(빈 행 = "") · 색조 · 덩어리.
+    pub(crate) fn set(
+        &mut self,
+        a: &[String],
+        b: &[String],
+        a_show: &[String],
+        b_show: &[String],
+        obj: &str,
+        labels: (String, String),
+    ) {
         self.rows = diff::align(a, b);
         self.hunks = diff::hunks(&self.rows);
         self.cur = (!self.hunks.is_empty()).then_some(0);
+        let a_show = if a_show.len() == a.len() { a_show } else { a };
+        let b_show = if b_show.len() == b.len() { b_show } else { b };
         let lt: Vec<&str> = self
             .rows
             .iter()
-            .map(|r| r.a.map_or("", |i| a[i].as_str()))
+            .map(|r| r.a.map_or("", |i| a_show[i].as_str()))
             .collect();
         let rt: Vec<&str> = self
             .rows
             .iter()
-            .map(|r| r.b.map_or("", |j| b[j].as_str()))
+            .map(|r| r.b.map_or("", |j| b_show[j].as_str()))
             .collect();
         self.left.set_text(&lt.join("\n"));
         self.right.set_text(&rt.join("\n"));
@@ -86,7 +100,7 @@ impl DiffView {
         self.hunks.len()
     }
 
-    /// 진단 덤프(`compare.dump`): 행 종류 요약 + 덩어리 범위.
+    /// 진단 덤프(`compare.dump`): 행 종류 요약(`editor_only` = 왼쪽(a)에만 · `server_only` = 오른쪽(b)에만) + 덩어리 범위.
     pub(crate) fn dump(&self) -> String {
         let (mut e, mut i, mut d, mut r) = (0, 0, 0, 0);
         for row in &self.rows {
@@ -108,7 +122,7 @@ impl DiffView {
             })
             .collect();
         format!(
-            "rows={} equal={e} insert={i} delete={d} replace={r} hunks={} cur={:?}\n{}",
+            "rows={} equal={e} editor_only={d} server_only={i} replace={r} hunks={} cur={:?}\n{}",
             self.rows.len(),
             self.hunks.len(),
             self.cur,
@@ -138,13 +152,14 @@ impl DiffView {
         true
     }
 
+    /// 줄 색조 — 왼쪽(a = 편집기)에만 있는 줄(`Delete`) = 초록 · 오른쪽(b = 서버)에만(`Insert`) = 빨강 · 변경 = 노랑(머리 줄 범례와 같다).
     fn tints(&self, th: &Theme) -> Vec<Option<(nexa_ctl::theme::Color, f32)>> {
         self.rows
             .iter()
             .map(|r| match r.kind {
                 RowKind::Equal => None,
-                RowKind::Insert => Some((th.ok, 0.18)),
-                RowKind::Delete => Some((th.danger, 0.18)),
+                RowKind::Delete => Some((th.ok, 0.18)),
+                RowKind::Insert => Some((th.danger, 0.18)),
                 RowKind::Replace => Some((th.warn, 0.20)),
             })
             .collect()
@@ -164,9 +179,29 @@ impl DiffView {
         self.left.popup_open() || self.right.popup_open()
     }
 
-    /// 머리 줄 높이.
+    /// 열린 편집 메뉴의 사각형(우클릭 메뉴 배타 비트 `menu_hit_bits` · 없으면 빈 사각형).
+    pub(crate) fn popup_bounds(&self) -> Rect {
+        if self.left.popup_open() {
+            self.left.popup_bounds()
+        } else if self.right.popup_open() {
+            self.right.popup_bounds()
+        } else {
+            Rect::default()
+        }
+    }
+
+    pub(crate) fn close_popup(&mut self) {
+        self.left.close_menu();
+        self.right.close_menu();
+    }
+
+    /// 머리 높이 = 결과 줄 + 칸 라벨 줄.
     fn head_h(&self) -> i32 {
-        self.s(24.0)
+        self.s(24.0) + self.label_h()
+    }
+
+    fn label_h(&self) -> i32 {
+        self.s(18.0)
     }
 
     fn pane_rects(&self) -> (Rect, Rect) {
@@ -195,10 +230,22 @@ impl DiffView {
             _ => String::new(),
         };
         let head = format!("{}{pos} · {}", self.head, t(Msg::CompareHeadKeys));
-        let clip = Rect::new(b.x, b.y, b.w, self.head_h());
+        let clip = Rect::new(b.x, b.y, b.w, self.s(24.0));
         dc.text(b.x + self.s(8.0), hy, clip, &head, th.text);
         // 상자 둘(동기 스크롤 · 색조).
         let (lr, rr) = self.pane_rects();
+        // 칸 라벨 줄(둘째 머리 줄 · 각 칸 위 왼쪽 · 흐림) — 본문 위에 겹치지 않는다.
+        dc.select_font(FontSlot::Status, false);
+        let ly = b.y + self.s(24.0);
+        for (r, lab) in [(lr, &self.labels.0), (rr, &self.labels.1)] {
+            if lab.is_empty() || r.w <= 0 {
+                continue;
+            }
+            let lb = Rect::new(r.x, ly, r.w, self.label_h());
+            let cy = dc.text_center_y(lb.y, lb.h);
+            dc.text(r.x + self.s(8.0), cy, lb, lab, th.text_dim);
+        }
+        dc.select_font(FontSlot::Base, false);
         let tints = self.tints(th);
         let mut inv = Invalidations::default();
         self.left.set_row_tints(tints.clone());
@@ -215,20 +262,6 @@ impl DiffView {
         }
         self.left.paint(dc, th);
         self.right.paint(dc, th);
-        // 라벨(각 상자 오른쪽 위 · 흐림).
-        dc.select_font(FontSlot::Status, false);
-        for (r, lab) in [(lr, &self.labels.0), (rr, &self.labels.1)] {
-            if lab.is_empty() || r.w <= 0 {
-                continue;
-            }
-            let w = dc.text_width(lab) + self.s(8.0);
-            let x = r.right() - self.s(18.0) - w;
-            let y = r.y + self.s(4.0);
-            let lb = Rect::new(x, y, w, self.s(16.0));
-            dc.fill_round_rect_alpha(lb, self.s(3.0), th.panel_bg, 0.85);
-            let cy = dc.text_center_y(lb.y, lb.h);
-            dc.text(x + self.s(4.0), cy, lb, lab, th.text_dim);
-        }
     }
 
     /// 팝업(우클릭 편집 메뉴)을 맨 위에.
@@ -331,12 +364,9 @@ mod tests {
     #[test]
     fn set_and_step() {
         let mut v = DiffView::default();
-        v.set(
-            &s(&["a", "b", "c"]),
-            &s(&["a", "X", "c", "d"]),
-            "T",
-            ("L".into(), "R".into()),
-        );
+        let a = s(&["a", "b", "c"]);
+        let b = s(&["a", "X", "c", "d"]);
+        v.set(&a, &b, &a, &b, "T", ("L".into(), "R".into()));
         // 양쪽 본문 줄 수 같음(맞은편 빈 행 채움 · 끝 빈 행도 세야 하므로 `split`).
         assert_eq!(
             v.left.text().split('\n').count(),
@@ -353,9 +383,37 @@ mod tests {
         assert_eq!(v.cur, Some(1));
         assert!(v
             .dump()
-            .starts_with("rows=4 equal=2 insert=1 delete=0 replace=1 hunks=2"));
-        v.set(&s(&["a"]), &s(&["a"]), "T", ("L".into(), "R".into()));
+            .starts_with("rows=4 equal=2 editor_only=0 server_only=1 replace=1 hunks=2"));
+        let one = s(&["a"]);
+        v.set(&one, &one, &one, &one, "T", ("L".into(), "R".into()));
         assert_eq!(v.hunk_count(), 0);
         assert!(!v.step(true));
+    }
+
+    /// 표시용 원문은 보이고 비교는 정규화 줄로(들여쓰기만 다른 두 줄 = Equal · 본문엔 원문 들여쓰기 그대로) · 편집기에만 있는 줄 =
+    /// `Delete`(a쪽) = 초록 범례 쪽(`editor_only`).
+    #[test]
+    fn show_original_compare_normalized() {
+        let mut v = DiffView::default();
+        let a = s(&["x", "y", "extra"]);
+        let b = s(&["x", "y"]);
+        let a_show = s(&["  x", "    y", "extra"]);
+        let b_show = s(&["x", "\ty"]);
+        v.set(&a, &b, &a_show, &b_show, "T", ("L".into(), "R".into()));
+        assert!(v
+            .dump()
+            .starts_with("rows=3 equal=2 editor_only=1 server_only=0"));
+        assert_eq!(v.left.text(), "  x\n    y\nextra");
+        assert_eq!(v.right.text(), "x\n\ty\n");
+        // 길이가 다른 표시용은 무시(비교용을 보인다).
+        v.set(
+            &a,
+            &b,
+            &s(&["only-one"]),
+            &b_show,
+            "T",
+            ("L".into(), "R".into()),
+        );
+        assert_eq!(v.left.text(), "x\ny\nextra");
     }
 }
