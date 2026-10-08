@@ -168,6 +168,13 @@ impl Toasts {
     }
 
     /// 점 아래 카드(index) — 누름/놓음 짝 맞추기용(동작은 [`Self::pick`]).
+    /// 누르는 동안 수명을 다시 준다(협업 V1 bin103 ⑥ 관찰 = 누르고 있는 사이 만료되면 놓아도 무동작) — 놓을 때 동작하는 규칙의 짝.
+    pub(crate) fn hold(&mut self, i: usize) {
+        if let Some(t) = self.items.get_mut(i) {
+            t.born = Instant::now();
+        }
+    }
+
     pub(crate) fn hit(&self, p: Point) -> Option<usize> {
         self.items.iter().position(|t| t.rect.contains(p))
     }

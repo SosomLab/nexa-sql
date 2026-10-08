@@ -431,6 +431,9 @@ impl App {
         if let InputEvent::MouseDown { x, y, .. } = ev {
             let p = Point { x, y };
             if let Some(z) = self.overlay_zone_at(p) {
+                if let OverlayZone::Toast(i) = z {
+                    self.toasts.hold(i);
+                }
                 if let OverlayZone::Status(i) = z {
                     // 눌림 표시(상태줄 메모리·자동 저장 칸)는 누를 때부터.
                     self.mem_pressed = i == 3;
