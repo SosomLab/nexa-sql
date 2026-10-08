@@ -107,14 +107,14 @@ L4 복구(재접속·재개) ───────▶   Alive 복귀            
 
 | 단계 | 내용 | 크기 | 시험 |
 |---|---|---|---|
-| **① 사건 직접 수리** | 메타 스레드 `MetaGuard`(`last_ok`·`suspect` · 카탈로그 요청마다 `live_plan` → `reachable`) · `Req::Source/Details/GenSql/Sizes/DbSizes/Live/Blockers`를 `loading_since`에 · 메타 세션 `set_call_timeout(explorer.timeout)` · 실패 = `ExplorerAction::Notify(토스트 · 로그)` + 상태줄 · 진행 중 헤더 혜성 | 소 | 격리 홈 + 닫힌 포트(127.0.0.1:1) 프로필 · 기동 명령 `explorer.source:<경로>` → 1 s 안 토스트 · 자체 시험 `toast.dump`/`log.dump` |
+| **① 사건 직접 수리** | 메타 스레드 `MetaGuard`(`last_ok`·`suspect` · 카탈로그 요청마다 `live_plan` → `reachable`) · `Req::Source/Details/GenSql/Sizes/DbSizes/Live/Blockers`를 `loading_since`에 · 메타 세션 `set_call_timeout(explorer.timeout)` · 실패 = `ExplorerAction::Notify(토스트 · 로그)` + 상태줄 · 진행 중 헤더 혜성 | 소 | ✅ **10-08 구현**(174861e · bin97) · 보정 **①-b**(56fd9c5 · bin98) = ⓐ 배경 메타 스레드(`nsql-explorer-bg` · 사전·인덱스·선적재·용량)는 호출 상한 제외(Oracle 사전 14.6 s 실측이 15 s 상한에 근접) ⓑ 접속 전 판정 `reachable` 상한 = `probe.timeout_ms`(종전 고정 2 s) ⓒ 가드 SYN = ICMP 보조 없이 TCP 한 번 · **①-c**(9ebe923 · bin99) = 실행 세션 워커의 빠른 판정 셋(접속 전 · `ensure_alive` · 실행 전)도 TCP 한 번(신호등 프로브만 ICMP) · 협업 V1 = 닫힌 포트 2015→2012 ms · 응답 없는 IP 3528→2010 ms(= `probe.timeout_ms` 기본 **2000**) · 소스 열기 회귀 10~28 ms · `explorer.timeout=1`에서도 헛실패 0 · 탐색기 E2E 34/0 · 78/0 · conn-cmd 38/0 · **실 VPN 끊김 사용자 ✓ 10-08**(끊김 안내·탭 표식 → 재연결 뒤 명령 실행 = 재접속) · 남음 ②~⑥(사용자 확인 뒤) |
 | **② ServerHealth** | `app/health.rs` 레지스트리 · `health_merge` 순수 함수(MC/DC) · 워커 `ConnOutcome::Broken/Alive`와 메타 `Resp::Health` 합류 · `Sess.broken` = 투영 · `health_changed` 한 자리 → `sync_sess_ui` + 탐색기 헤더 | 중 | 단위(merge 표) · 개발 스위치 기동 명령 `net.break:<ep>`/`net.heal:<ep>`로 주입 → `tabs.dump`·`explorer.dump` 헤더 글 |
 | **③ 토스트 + 다시 연결** | 토스트 버튼 → 그 끝점 실행 세션 재접속(`ensure_alive` 길) + 메타 `Req::Open` 재개 · 억제 창 `net.notify_quiet_secs` | 소 | ② 주입 뒤 버튼 자체 시험 `ui.click` |
 | **④ 기능별 게이트** | §4 표대로 `gate_open`/`gate_view`에 `health` 합류(막기·비활성·메뉴 라벨) · 워머 정지/재개 · 그리드 적용 보존 · Import 시작 전 막기 | 중 | MC/DC `gate_view` 확장 · 기능 점검 S95~(끊김 주입 시나리오) |
 | **⑤ L0 OS 신호(T-130)** | nexa-sys `netwatch` 3-OS → `NetChanged` → Suspect | 중 | VPN 토글 실기(사용자) · 모의 이벤트 단위 시험 |
 | **⑥ 문서·위키** | 53 §9 갱신 · 28 · 52 §3 · 위키 Connections "끊겼을 때" 절 · 39 §3 부하원(netwatch · 상한 키) | 소 | — |
 
-설정 키(모두 `REGISTRY` · 39 §3 등재): 기존 `probe.timeout_ms`(1000) · `probe.stale_secs`(60) · `connect.auto_reconnect` · `explorer.timeout`(15) · 새 = `net.watch`(on · ⑤) · `net.notify_quiet_secs`(60 · ③) · `meta.call_timeout_secs`(= `explorer.timeout` 따름 · 0 = 끔).
+설정 키(모두 `REGISTRY` · 39 §3 등재): 기존 `probe.timeout_ms`(**2000** · 10-08 확인 = 레지스트리 기본) · `probe.stale_secs`(60) · `connect.auto_reconnect` · `explorer.timeout`(15) · 새 = `net.watch`(on · ⑤) · `net.notify_quiet_secs`(60 · ③) · `meta.call_timeout_secs`(= `explorer.timeout` 따름 · 0 = 끔).
 
 ## 7. 결정 대기(D-265 ~ · 권장안 표시)
 

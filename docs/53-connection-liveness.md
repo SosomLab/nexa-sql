@@ -119,6 +119,7 @@
 | 항목 | 구현 |
 |---|---|
 | 동작 직전 판정(D-109) | 워커 `ensure_alive` — 순수 판정 `sessions::live_plan(preflight, suspect, dead_hint, stale, allow, auto)`(MC/DC D15) → 판정 = TCP SYN 1(`probe.timeout_ms`) · **Run · FetchPage · Count · Keys · Commit/Rollback** 전부 · 커밋/롤백은 재접속 안 함 · `probe.stale_secs`(60 · 0 = 신호등 조건만) · 마지막 성공 시각 `last_ok`는 명령이 성공할 때마다 |
+| 빠른 판정 = TCP 한 번(10-08 · T-313 ①-c · 9ebe923) | 워커의 빠른 판정 셋(접속 전 · `ensure_alive` · 실행 전)과 탐색기 메타 가드(`MetaGuard` · 107 §6 ①)는 **ICMP 보조 없이 TCP SYN 한 번 ≤ `probe.timeout_ms`**(기본 2000) — 결과는 `Up`인지만 쓰므로 PortClosed/Down 구분 불필요 · 종전 = TCP 상한 뒤 ICMP까지 2단(응답 없는 IP 3.5 s) · **접속 창 신호등 프로브만 ICMP 유지**(구분 표시용) · Windows는 닫힌 loopback 포트도 RST 없이 상한까지 기다림(실측) |
 | 접속 자체도 판정 먼저 | 접속 창 Connect · 실행 인자 · 유휴 뒤 재접속 · 탐색기 메타 Open/재개 — 모두 SYN 1 뒤 드라이버 접속(끊긴 네트워크에서 드라이버 타임아웃 대기 0) · 테스트 `unreachable_server_fails_fast_and_reports_broken`(TEST-NET-1 · 4초) |
 | Broken 상태(D-114) | `ConnOutcome::Broken/Alive`(워커 → UI · 1회) · `Sess.broken` · 접속성 오류(`is_connection_error`)도 Broken · 표시 = 탭 표식 끊김 · 툴바 플러그 **빨강**(`ToolTone::Danger`) · Disconnect ▾ 줄 "· 끊김" · 상태줄 `[끊김]` · 로그 1줄 · 살아나면 "접속 회복" 1줄 |
 | 재접속(D-112) | 판정이 살아 있고(`suspect`/`dead_hint`) `connect.auto_reconnect`면 같은 스펙으로 · 성공 = Connected → `broken=false` · `stateful`이면 세션 상태 소실 안내(52 §6-4) · 열린 트랜잭션 = Lost |

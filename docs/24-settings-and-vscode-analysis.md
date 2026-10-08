@@ -109,6 +109,7 @@
 - ★ **화면 언어 `ui.lang` = `system | en | ko`, 기본 `system`(10-04 · 사용자 "nexa-dir3처럼 언어에도 시스템 · 기본값" · [journal 10-04 §10](journal/2026-10-04.md))**: `nsql_settings::LANG_SYSTEM` · `Settings::lang()` = `system`이면 `nsql_i18n::system_lang()`으로 풂 · 종전 특례(기본값 = OS 언어 코드 · `follows_os_default`) 제거 · 저장 파일의 `ui.lang=ko|en`은 그대로 유효(이주 없음) · 줄이 없으면 `system`(실효 언어는 종전과 같음) · 설정 창 콤보 첫 항목 = `시스템 (한국어)`(지금 풀린 언어) · ⌘⇧L/Ctrl+Shift+L 순환 = 시스템 → English → 한국어.
 
 - ★ **상태바 항목 순서·표시 `statusbar.layout`(10-04 · [journal 10-04 §13](journal/2026-10-04.md))**: 문법 `id:1|id:0|…`(nexa-ctl `order` · nexa-dir3와 같은 문법) · 빈 값 = 기본 순서 · 편집 = 설정 창 Window 카드 [편집…] → 항목 창(체크 = 표시 · ▲▼ · Ctrl/⌘+↑↓ · 끌기 · Reset · 즉시 저장) · `license` = 잠금(무료판 문구 상시) · ★ 10-04 **그룹 단위**: `tx | state[large,readonly,bookmark] | pos | result[rows,time] | project[autosave,git] | format[enc,eol,indent,syntax] | mem | license`(그룹 = 통째 이동·숨김 · 자식 = 그룹 안에서만 · 기본 mem = license 왼쪽 · 그룹 전 평면 값은 정의 순으로 보충).
+- ★ **서버 유형 배지 `statusbar.env_badge`(10-08 · 3ecd137 · 설정 ▸ Window · 기본 켬)**: 켬 = 접속된 탭이면 유형과 무관하게 상태줄 맨 앞 3자리 배지 늘(PRD 빨강 · TST 주황 · DEV 강조색 · NON 흐림 · 세션 임시 유형 = 외곽선) · 끔 = 늘 숨김(종전 = PRD·TST만 · 설정 없음).
 
 ### 3-2. 남은 것
 
