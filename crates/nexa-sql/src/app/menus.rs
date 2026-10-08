@@ -1960,6 +1960,43 @@ impl App {
         m
     }
 
+    /// ★ 우클릭 메뉴 배타 규칙(사용자 10-08 "각 영역의 우클릭 메뉴는 다른 영역의 우클릭·좌클릭·키 입력이 있으면 숨김"):
+    /// 좌/우 MouseDown 좌표가 **안에** 든 열린 메뉴의 비트(하위 메뉴 포함 · 메뉴바·완성 팝업은 제 규칙이라 제외).
+    pub(crate) fn menu_hit_bits(&self, p: nexa_ctl::geom::Point) -> u32 {
+        let mut m = 0;
+        if self.editors.tab_menu_open() && self.editors.tab_menu_bounds().contains(p) {
+            m |= 2;
+        }
+        if self.editors.edit_menu_open() && self.editors.edit_menu_bounds().contains(p) {
+            m |= 4;
+        }
+        if self.status_menu.is_open() && self.status_menu.bounds().contains(p) {
+            m |= 8;
+        }
+        if self.explorer.menu_open() && self.explorer.menu_bounds().contains(p) {
+            m |= 16;
+        }
+        if self.grid.menu_open() && self.grid.menu_bounds().contains(p) {
+            m |= 32;
+        }
+        if self.panel.menu_open() && self.panel.menu_bounds().contains(p) {
+            m |= 64;
+        }
+        if self.bm_panel.menu_open() && self.bm_panel.menu_bounds().contains(p) {
+            m |= 128;
+        }
+        if self.project_panel.menu_open() && self.project_panel.menu_bounds().contains(p) {
+            m |= 256;
+        }
+        if self.objdetail.menu_open() && self.objdetail.menu_bounds().contains(p) {
+            m |= 2048;
+        }
+        if self.objlink_menu.is_open() && self.objlink_menu.bounds().contains(p) {
+            m |= 4096;
+        }
+        m
+    }
+
     pub(crate) fn close_menu_bits(&mut self, bits: u32) {
         if bits & 1 != 0 {
             self.menubar.dismiss();

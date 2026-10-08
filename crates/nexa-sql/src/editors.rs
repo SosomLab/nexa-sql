@@ -2335,6 +2335,16 @@ impl Editors {
         self.bufs.iter().any(|tb| tb.popup_open())
     }
 
+    /// 열린 본문 편집 메뉴의 영역(합집합 · 닫혀 있으면 빈 Rect) — 호스트의 "다른 영역 클릭" 판정(사용자 10-08).
+    pub(crate) fn edit_menu_bounds(&self) -> Rect {
+        self.bufs
+            .iter()
+            .filter(|tb| tb.popup_open())
+            .map(|tb| tb.popup_bounds())
+            .reduce(|a, b| a.union(&b))
+            .unwrap_or_default()
+    }
+
     /// 본문 편집 메뉴만 닫기.
     pub(crate) fn close_edit_menus(&mut self) {
         for tb in &mut self.bufs {

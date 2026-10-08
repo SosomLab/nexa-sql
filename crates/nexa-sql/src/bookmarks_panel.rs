@@ -270,6 +270,10 @@ impl BookmarksPanel {
     pub(crate) fn menu_open(&self) -> bool {
         self.menu.is_open() || self.filter.popup_open()
     }
+    /// 열린 우클릭 메뉴 영역(필터 이력 드롭다운은 제 규칙으로 닫히므로 제외).
+    pub(crate) fn menu_bounds(&self) -> Rect {
+        self.menu.bounds()
+    }
     pub(crate) fn close_menu(&mut self) {
         self.menu.close();
     }

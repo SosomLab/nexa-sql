@@ -6699,6 +6699,8 @@ impl Explorer {
         if !c.on
             || !c.prefetch
             || self.offline
+            // 끊긴 끝점(docs/107 §4) = 유휴 인덱스 선적재도 정지(협업 V1 bin102 ④ · 복귀 때 재개).
+            || self.broken_since.is_some()
             || self.dialect.is_none()
             || self.filter.is_some()
             || self.index_inflight.is_some()

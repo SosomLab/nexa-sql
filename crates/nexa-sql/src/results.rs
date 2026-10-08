@@ -289,6 +289,11 @@ impl ResultPanel {
         self.menu.is_open()
     }
 
+    /// 열린 결과 탭 메뉴 영역(닫혀 있으면 빈 Rect).
+    pub(crate) fn menu_bounds(&self) -> Rect {
+        self.menu.bounds()
+    }
+
     /// 탭 바·메뉴 이벤트. 소비했으면 `Some(동작 또는 None)` · 바 밖이면 `None`.
     pub(crate) fn route(&mut self, ev: &InputEvent, cursor: Point) -> Option<Option<PanelAction>> {
         if self.menu.is_open() {

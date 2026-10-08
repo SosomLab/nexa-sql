@@ -4345,6 +4345,11 @@ impl Grid {
         self.menu.is_open()
     }
 
+    /// 열린 우클릭 메뉴 영역(하위 메뉴 포함 · 닫혀 있으면 빈 Rect).
+    pub(crate) fn menu_bounds(&self) -> Rect {
+        self.menu.bounds()
+    }
+
     /// 호스트가 클립보드에 쓸 텍스트(셀 수).
     pub(crate) fn take_copy(&mut self) -> Option<(String, usize)> {
         self.pending_copy.take()
