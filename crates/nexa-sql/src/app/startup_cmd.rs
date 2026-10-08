@@ -826,6 +826,12 @@ impl App {
             self.health_event(ep, app::health::HealthEvent::Down("test".into()));
             return;
         }
+        if id == "net.changed" {
+            // L0 신호 모의 = 실제 처리 함수 그대로(끝점 전부 Suspect + 메타 NetChanged + 다음 실행 preflight).
+            self.net_last = None;
+            self.net_changed();
+            return;
+        }
         if let Some(ep) = id.strip_prefix("net.suspect:") {
             // L0 OS 신호 모의(⑤ 전까지는 시험 훅만) — Alive → Suspect(알림 없음 · 다음 동작이 판정).
             self.health_event(ep, app::health::HealthEvent::NetChanged);

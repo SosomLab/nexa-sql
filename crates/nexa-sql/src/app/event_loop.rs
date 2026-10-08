@@ -218,6 +218,10 @@ impl ApplicationHandler<Wake> for App {
         if nexa_sys::input_source::take_changed() {
             self.sync_hangul_mode();
         }
+        // ★ 네트워크 경로 변경(L0 · docs/107): 접속된 끝점 전부 "의심" + 메타·워커의 다음 동작은 판정부터.
+        if self.netwatch.as_ref().is_some_and(|w| w.take_changed()) {
+            self.net_changed();
+        }
         self.persist_window_sizes(false);
         self.pump_window_requests(el);
         // 캐럿 깜빡임 — 0.5초 타이머가 **실제로 만료됐을 때만** 다시 그린다.

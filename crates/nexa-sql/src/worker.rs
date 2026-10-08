@@ -1540,6 +1540,10 @@ pub(crate) fn spawn(
                             }
                         } else {
                             last_ok = std::time::Instant::now();
+                            // UI가 판정을 요구한 실행(의심 끝점 · 107 ⑤)이 성공 = 의심 해소 신호(UI는 멱등하게 받는다).
+                            if preflight.is_some() && !broken_told {
+                                let _ = ctx_tx.send(ConnOutcome::Alive);
+                            }
                         }
                         let _ = dtx.send(if errs > 0 {
                             Some(tf(Msg::WkErrors, &[&errs.to_string()]))

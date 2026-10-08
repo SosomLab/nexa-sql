@@ -217,10 +217,17 @@ impl App {
             changed = true;
             match o {
                 ConnOutcome::Connected(d) if !std::mem::take(&mut self.sess.attempt_inflight) => {
-                    // 접속 창을 거치지 않은 접속(개별 모드 자동 접속 · 유휴 뒤 재접속) — 시도 큐·접속 창 표시는 그대로.
+                    // 접속 창을 거치지 않은 접속(개별 모드 자동 접속 · 유휴 뒤 재접속 · [다시 연결]) — 시도 큐·접속 창 표시는 그대로.
                     self.sess.key_cache.clear();
                     self.sess.connected = true;
                     self.sess.desc = d;
+                    self.sess.broken = false;
+                    if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
+                        if self.health.state(&ep) != app::health::HealthState::Alive {
+                            self.health_event(&ep, app::health::HealthEvent::Up);
+                        }
+                    }
+                    self.sync_sess_ui();
                 }
                 ConnOutcome::ConnectFailed(e)
                     if !std::mem::take(&mut self.sess.attempt_inflight) =>
@@ -234,6 +241,7 @@ impl App {
                     self.attempt_done();
                     self.sess.key_cache.clear();
                     self.sess.connected = true;
+                    self.sess.broken = false;
                     self.sess.desc = d.clone();
                     // 접속 창으로 붙은 세션 = 탐색기·접속 창 표시가 따라가는 세션 · 개별 모드의 새 탭이 쓸 기본 접속 정보.
                     //   공유 모드면 이 연결이 **활성 공유 연결**이 된다(묶이지 않은 탭이 따른다 · 기존 연결은 그대로 유지).
@@ -438,9 +446,9 @@ impl App {
                         ));
                         self.sync_sess_ui();
                     }
-                    // 한 세션이 닿았으면 끝점도 산 것(107 §9-2) — 끊겼던 끝점이면 복귀 전파.
+                    // 한 세션이 닿았으면 끝점도 산 것(107 §9-2) — 끊겼던 끝점이면 복귀 전파 · 의심(L0)이었으면 조용히 해소.
                     if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
-                        if self.health.is_broken(&ep) {
+                        if self.health.state(&ep) != app::health::HealthState::Alive {
                             self.health_event(&ep, app::health::HealthEvent::Up);
                         }
                     }
@@ -711,6 +719,20 @@ impl App {
         }
         if let Some(sv) = &server {
             self.sync_sess();
+            // ★ 끊긴 끝점(docs/107 §4 · T-313 ④): 시작 전에 막는다 — 적재 중 끊김은 배치 경계 중단(89)이지만 시작은 애초에 안 한다.
+            if let Some(ep) = app::health::ep_text(Some(sv)) {
+                if self.health.is_broken(&ep) {
+                    let msg = tf(Msg::StEpBrokenBlocked, &[&ep]);
+                    self.sess.status = msg.clone();
+                    self.toasts.push(
+                        toast::ToastKind::Warn,
+                        t(Msg::ExpHealthDownTitle).to_string(),
+                        msg,
+                    );
+                    self.redraw();
+                    return;
+                }
+            }
             let same = self
                 .sess
                 .spec

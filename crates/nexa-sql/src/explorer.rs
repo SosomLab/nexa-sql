@@ -285,6 +285,8 @@ enum Req {
     Close,
     /// 메타 세션만 닫는다(유휴 회수 · docs/52 §2-2) — 스펙은 기억해 두었다가 **다음 요청 때 조용히 다시 연다**.
     Suspend,
+    /// ★ L0 네트워크 신호(docs/107 ⑤): 다음 카탈로그 요청은 판정부터(`MetaGuard.suspect`) · 성공하면 복귀(의심 해소)를 알린다.
+    NetChanged,
     /// ★ 백그라운드 메타 스레드용(09-24): 세션을 **열지 않고** 재개 스펙·세대만 기억한다 — 첫 요청이 올 때 연다(연결 +1은
     ///   미리 읽기/선적재가 실제로 있을 때만 · 26 §8).
     Prepare {
@@ -1358,6 +1360,8 @@ struct MetaGuard {
     last_ok: Instant,
     suspect: bool,
     broken_told: bool,
+    /// L0 신호로 의심 중 — 다음 성공 때 `Health(alive)`로 해소를 알린다.
+    net_told: bool,
     /// (빠른 판정 상한 · 오래됨 기준 · 자동 재접속 · 호출 상한 초).
     cfg: (Duration, Duration, bool, u64),
     cfg_at: Instant,
@@ -1369,6 +1373,7 @@ impl MetaGuard {
             last_ok: Instant::now(),
             suspect: false,
             broken_told: false,
+            net_told: false,
             cfg: meta_liveness(),
             cfg_at: Instant::now(),
         }
@@ -1513,7 +1518,7 @@ fn meta_thread(
         //   살아 있고 재접속 조건이면 조용히 다시 연다.
         let catalog_req = !matches!(
             req,
-            Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend
+            Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend | Req::NetChanged
         );
         if catalog_req && session.is_some() {
             let (timeout, stale, auto, _) = guard.cfg();
@@ -1714,6 +1719,11 @@ fn meta_thread(
                 if let Some(mut s) = session.take() {
                     let _ = s.rollback();
                 }
+                continue;
+            }
+            Req::NetChanged => {
+                guard.suspect = true;
+                guard.net_told = true;
                 continue;
             }
             Req::Schemas { gen, node, opts } => {
@@ -2091,6 +2101,11 @@ fn meta_thread(
                     guard.last_ok = Instant::now();
                     if let (true, Some(ep)) = (guard.broken_told, ep_of(resume.as_ref())) {
                         guard.broken_told = false;
+                        guard.net_told = false;
+                        send_health(&tx, &*wake, cur_gen, &ep, true, String::new());
+                    } else if let (true, Some(ep)) = (guard.net_told, ep_of(resume.as_ref())) {
+                        // 의심(L0)이 성공으로 풀렸다 — 레지스트리 Suspect → Alive(알림 없음).
+                        guard.net_told = false;
                         send_health(&tx, &*wake, cur_gen, &ep, true, String::new());
                     }
                 }
@@ -3090,6 +3105,12 @@ impl Explorer {
         let label = self.server_label();
         // 끊긴 끝점(107 §5 "끊긴 동안 지속") = 이름을 위험색으로 + "끊김 hh:mm".
         let broken = self.broken_since;
+        // "끊김 hh:mm"은 서버 이름 **앞**에(이름이 길면 뒤가 잘린다 · 협업 V1 bin101 관찰 ①).
+        if let Some(t0) = broken {
+            let lost = tf(Msg::ExpHeaderBroken, &[&crate::app::health::hhmm(t0)]);
+            dc.text(x, ty, r, &lost, th.danger);
+            x += dc.text_width(&lost) + (6.0 * s).round() as i32;
+        }
         dc.text(
             x,
             ty,
@@ -3097,15 +3118,19 @@ impl Explorer {
             &label,
             if broken.is_some() { th.danger } else { th.text },
         );
-        let mut sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
-        if let Some(t0) = broken {
-            let lost = tf(Msg::ExpHeaderBroken, &[&crate::app::health::hhmm(t0)]);
-            dc.text(sx0, ty, r, &lost, th.danger);
-            sx0 += dc.text_width(&lost) + (8.0 * s).round() as i32;
-        }
         if !sub.is_empty() {
+            let sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
             dc.text(sx0, ty, r, sub, th.text_dim);
         }
+    }
+
+    /// ★ L0 네트워크 신호(⑤): 두 메타 스레드의 다음 요청은 판정부터.
+    pub(crate) fn net_changed(&mut self) {
+        if self.conn_desc.is_empty() || self.offline {
+            return;
+        }
+        let _ = self.tx.send(Req::NetChanged);
+        let _ = self.tx_bg.send(Req::NetChanged);
     }
 
     /// 끝점 끊김/복귀 투영(docs/107 ② · `ExplorerSet::set_ep_broken`).
@@ -6587,7 +6612,11 @@ impl Explorer {
 
     /// 스키마 코멘트 한 걸음(86 §5): 진행 중 없고 간격이 지났으면 큐 앞 스키마를 백그라운드 세션으로.
     fn comment_step(&mut self, now: Instant) -> bool {
-        if self.offline || self.comment_inflight.is_some() || self.comment_q.is_empty() {
+        if self.offline
+            || self.broken_since.is_some()
+            || self.comment_inflight.is_some()
+            || self.comment_q.is_empty()
+        {
             return false;
         }
         if self.warm_last.is_some_and(|t| {
@@ -6619,7 +6648,12 @@ impl Explorer {
         if self.comment_step(now) {
             return true;
         }
-        if self.offline || self.warm_inflight.is_some() || self.warm_q.is_empty() {
+        // 끊긴 끝점(docs/107 §4) = 배경 선적재 정지 · 복귀(`set_broken(None)`) 뒤 다음 틱에 재개 · 알림 없음.
+        if self.offline
+            || self.broken_since.is_some()
+            || self.warm_inflight.is_some()
+            || self.warm_q.is_empty()
+        {
             return false;
         }
         if self.warm_last.is_some_and(|t| {
@@ -6832,7 +6866,8 @@ impl Explorer {
     }
 
     fn pump_index(&mut self) {
-        if self.index_inflight.is_some() || self.offline {
+        // 끊긴 끝점 = 인덱스 읽기도 정지(검색은 읽어 둔 캐시만 · docs/107 §4).
+        if self.index_inflight.is_some() || self.offline || self.broken_since.is_some() {
             return;
         }
         while let Some(s) = self.index_q.pop_front() {

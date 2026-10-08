@@ -289,8 +289,11 @@ impl App {
         // 신호등이 초록이 아닌 서버(빨강·파랑·확인 중·모름)에는 실행 전 빠른 포트 판정을 건다(사용자 09-14).
         let pol = *self.conn_win.policy();
         let light = self.conn_win.status_of(self.conn_win.active_name());
-        let preflight =
-            (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
+        // ★ 끝점이 Alive가 아니면(L0 의심 · 끊김) 신호등과 무관하게 판정부터(docs/107 §4 "판정 뒤").
+        let ep_doubt = app::health::ep_text(self.sess.spec.as_ref())
+            .is_some_and(|ep| self.health.state(&ep) != app::health::HealthState::Alive);
+        let preflight = ((pol.enabled && light != Some(probe::ProbeStatus::Up)) || ep_doubt)
+            .then_some(pol.timeout);
         self.sess.last_run_items = if whole {
             vec![src.clone()]
         } else {

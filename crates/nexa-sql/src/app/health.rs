@@ -126,11 +126,9 @@ impl ServerHealth {
         if let HealthEvent::Down(r) = ev {
             e.reason.clone_from(r);
         }
-        if next == HealthState::Alive && prev != HealthState::Broken {
-            // 멀쩡한 끝점은 기록을 들고 있을 이유가 없다(수명 규칙과 별개로 가볍게).
-            if e.reason.is_empty() {
-                self.map.remove(ep);
-            }
+        if next == HealthState::Alive {
+            // 멀쩡한 끝점은 기록을 들고 있을 이유가 없다 — 복귀 뒤 다시 끊기면 새 사건(토스트) · 덤프에 `Alive` 줄이 남지 않는다(협업 V1 bin101 ②).
+            self.map.remove(ep);
         }
         notify
     }
@@ -295,7 +293,9 @@ impl App {
             })
             .map(|s| s.id)
             .collect();
-        let again = self.settings.flag("connect.reconnect_same");
+        // 끊겼던 끝점이므로 "같은 서버면 유지"(`connect.reconnect_same` 끔)를 적용하지 않고 **진짜 재접속**(협업 V1 bin101 ④ = 유지 길로
+        //   가서 `접속 중…`에 머물렀다).
+        let again = true;
         for id in ids {
             self.with_sess(id, |a| {
                 if a.sess.busy {
@@ -309,6 +309,37 @@ impl App {
         self.explorer.kick_meta_for_ep(ep);
         self.sync_sess_ui();
         self.redraw();
+    }
+
+    /// ★ L0 네트워크 신호(⑤ · 107 §3-2): 1초 안 신호는 합친다 · 세션이 있는 끝점 전부 `NetChanged`(Alive → Suspect · 알림 없음) ·
+    /// 메타 스레드는 `Req::NetChanged`(다음 카탈로그 요청 = 판정부터) · 워커는 다음 실행의 `preflight`(run.rs = 끝점이 Alive가 아니면).
+    pub(crate) fn net_changed(&mut self) {
+        let now = Instant::now();
+        if self
+            .net_last
+            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.net_last = Some(now);
+        let mut eps: Vec<String> = self
+            .all_sess()
+            .filter(|s| s.connected)
+            .filter_map(|s| ep_text(s.spec.as_ref()))
+            .collect();
+        eps.sort();
+        eps.dedup();
+        if eps.is_empty() {
+            return;
+        }
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            tf(Msg::LogNetChanged, &[&eps.len().to_string()]),
+        ));
+        for ep in &eps {
+            self.health_event(ep, HealthEvent::NetChanged);
+        }
+        self.explorer.net_changed_all();
     }
 
     /// 진단(기동 명령 `health.dump:<경로>`): 레지스트리 · 세션별 끝점/broken · 탐색기 칸 끊김.
@@ -416,9 +447,10 @@ mod tests {
         assert!(r.toast_allowed("a:1", t0, q));
         assert!(!r.toast_allowed("a:1", t0 + Duration::from_secs(10), q));
         assert!(r.toast_allowed("a:1", t0 + Duration::from_secs(61), q));
-        // 복귀.
+        // 복귀 = 기록 제거(협업 V1 bin101 ②).
         assert_eq!(r.apply("a:1", &HealthEvent::Up, t0), Notify::Up);
         assert!(!r.is_broken("a:1"));
+        assert!(r.get("a:1").is_none(), "복귀 뒤 줄 없음");
         // 멀쩡한 끝점의 NetChanged = 의심(기록 생김 · 알림 없음) · Up = 조용히 Alive.
         assert_eq!(r.apply("b:2", &HealthEvent::NetChanged, t0), Notify::None);
         assert_eq!(r.state("b:2"), HealthState::Suspect);

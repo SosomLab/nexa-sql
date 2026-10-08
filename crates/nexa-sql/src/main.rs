@@ -317,6 +317,10 @@ struct App {
     toasts: toast::Toasts,
     /// ★ 서버 건강 레지스트리(docs/107 · T-313 ② · 끝점 단위 · `app/health.rs`).
     health: app::health::ServerHealth,
+    /// ★ L0 네트워크 신호 감시(⑤ · `net.watch` · Windows) — 깃발은 `about_to_wait`에서 읽는다 · 없음 = 미지원 OS/끔.
+    netwatch: Option<nexa_sys::netwatch::NetWatch>,
+    /// 마지막 네트워크 신호 처리 시각(1초 합치기).
+    net_last: Option<Instant>,
     /// 유휴 미커밋 경고 카드(docs/56 L2) — 세션 하나를 가리킨다(가장 급한 것).
     tx_warn: txwarn::TxWarn,
     /// 다음 미커밋 점검 시각(about_to_wait 깨움).
@@ -1693,6 +1697,8 @@ fn main() {
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         sig_card: None,
         health: Default::default(),
+        netwatch: None,
+        net_last: None,
         bm_gutter: None,
         toggle_log: false,
         open_colors: false,
@@ -1950,6 +1956,16 @@ fn main() {
     app.editors.set_rulers(rulers);
     app.conn_win
         .set_probe(probe_hub, probe_policy(&app.settings));
+    // ★ L0 네트워크 신호(docs/107 §3-2 · T-313 ⑤ · 39 §3 부하원 = 콜백뿐): 깃발 + 깨우기 → `about_to_wait`에서 `net_changed`.
+    if app.settings.flag("net.watch") {
+        let net_proxy: EventLoopProxy<Wake> = el.create_proxy();
+        let net_proxy = std::sync::Mutex::new(net_proxy);
+        app.netwatch = nexa_sys::netwatch::NetWatch::start(Box::new(move || {
+            if let Ok(p) = net_proxy.lock() {
+                let _ = p.send_event(Wake);
+            }
+        }));
+    }
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
     app.toasts.configure(

@@ -342,6 +342,13 @@ impl ExplorerSet {
         }
     }
 
+    /// L0 네트워크 신호(⑤): 모든 칸의 메타 스레드에 전한다.
+    pub(crate) fn net_changed_all(&mut self) {
+        for p in &mut self.panes {
+            p.ex.net_changed();
+        }
+    }
+
     /// 복귀·[다시 연결] 뒤 그 끝점 칸의 메타를 깨운다(트리가 비었으면 루트부터 · 있으면 다음 요청 때 스스로 재개).
     pub(crate) fn kick_meta_for_ep(&mut self, ep: &str) {
         for i in self.panes_on(ep) {
