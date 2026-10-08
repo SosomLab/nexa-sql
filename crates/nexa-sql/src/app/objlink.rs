@@ -2627,9 +2627,11 @@ pub(crate) fn paint_tip(
     };
     // 위 공간이 없으면 링크 아래로(글자를 덮지 않게 · 판정 = 편집기 영역) — 그래도 안 들어가는 것은 draw_tooltip_in이 밀어 넣는다.
     let y = flip_vertical(pos, *link, h, s(6.0), flip_host.y, flip_host.bottom());
-    // draw_tooltip_in = 기준 rect 아래 6px · 가로 중앙 → 원하는 (x, y)에 오도록 0×0 기준을 역산한다.
+    // 자리는 여기서 다 정했다 → 0×0 기준을 "아래 6px · 가로 중앙"으로 역산해 **방향 고정(아래)** 으로 그린다. 종전 `draw_tooltip_in`은
+    //   전역 기본이 "위"(nexa-ui 171 `set_tooltip_above` · 10-07)가 된 뒤 기준 **위**로 한 번 더 올려 시그니처 카드가 캐럿 줄에서
+    //   카드 높이 + 12px만큼 더 떠 보였다(사용자 10-08 "캐럿 바로 윗줄에 · 여러 줄이면 끝줄이 캐럿 윗줄에").
     let anchor = Rect::new(x + w / 2, y - s(6.0), 0, 0);
-    nexa_ctl::draw::draw_tooltip_in(dc, th, anchor, (clamp.x, clamp.w), text, scale);
+    nexa_ctl::draw::draw_tooltip_in_dir(dc, th, anchor, (clamp.x, clamp.w), text, scale, false);
 }
 
 /// Ctrl+좌클릭이 할 일(`objlink.click`).
