@@ -394,6 +394,8 @@
 | D-267 | 끊긴 상태의 탐색기 캐시 열람 (10-08) | ⏳ 결정 대기 · 권장 = 허용(트리·검색·완성은 캐시로 계속 · 서버가 필요한 것만 막기) | 107-server-health-propagation.md §7 · T-313 ④ |
 | D-268 | L0 OS 네트워크 신호 도입 시점 (10-08) | ⏳ 결정 대기 · 권장 = ⑤로 미룸(①~④가 사건을 막는다 · T-130 유지 → 107 ⑤로 흡수) | 107-server-health-propagation.md §7 · T-313 ⑤ · 53 D-113 |
 | D-269 | 커밋/롤백의 끊김 안내 (10-08) | ⏳ 결정 대기 · 권장 = 재접속 없이 막고 "서버 쪽 롤백 가능성" 경고 + 트랜잭션 로그 Lost(53 D-109 유지) | 107-server-health-propagation.md §7 · T-313 ④ |
+| D-270 | 세션 층 Broken(그 접속 하나만 끊김)의 전용 탭 복귀 안내 기본 표시 (10-08) | ⏳ 결정 대기 · 권장 = 표시 | 107-server-health-propagation.md §9-6 · T-313 |
+| D-271 | 일회성 비밀번호 세션의 [다시 연결] (10-08) | ⏳ 결정 대기 · 권장 = 비밀번호 창을 띄움 | 107-server-health-propagation.md §9-6 · T-313 ③ |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |
 | L-3 | 라이선스 ID 체계 `NSL-2026-000001` · 대장은 발급 PC 로컬(비공개 저장소에도 안 올림) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:452 §12-7 · journal/2026-09-27.md:205 |
