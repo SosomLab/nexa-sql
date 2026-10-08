@@ -619,6 +619,13 @@ fn card_zone_contains(card: Rect, anchor: Rect, pad: i32, p: Point) -> bool {
     Rect::new(u.x - pad, u.y - pad, u.w + pad * 2, u.h + pad * 2).contains(p)
 }
 
+/// 카드 영역 안에서 **다른 링크로 바꿔도 되는가** — 링크와 같은 줄 띠(앵커의 세로 범위)에서만(이웃 단어 위에서는 바뀐다 · 10-06 결함) ·
+/// 카드로 올라가는 길에 지나는 **다른 줄**의 링크는 무시한다(사용자 10-08 "MP_VRSN_ID 카드가 마우스를 움직이면 사라짐" = 카드와 링크
+/// 사이 줄의 테이블 링크를 지나며 hot이 바뀌어 카드가 교체·소멸했다).
+fn switch_allowed_in_zone(anchor: Rect, p: Point) -> bool {
+    p.y >= anchor.y && p.y < anchor.bottom()
+}
+
 /// 카드·툴팁의 세로 자리 — 정방향(`pos`의 위/아래)이 호스트 세로 범위 밖이면 **반대쪽**(링크 아래 ↔ 위)으로 뒤집는다
 /// (61 §2-2 "정방향 → 반대쪽 → 밀어 넣기"). 밀어 넣기만 하면 링크 줄과 그 오른쪽 글자를 덮었다(협업 V1 10-06 관찰 ①②).
 /// `host_y`/`host_bottom` = 호스트 세로 범위 · 반대쪽도 안 들어가면 정방향 값 그대로(호출자가 밀어 넣는다).
@@ -1292,7 +1299,10 @@ impl App {
             let over_other = self
                 .objlink_at(p)
                 .is_some_and(|k| Some(k) != self.objlinks.hot);
-            if over_other || (self.objlink_at(p).is_none() && !self.objlink_card_zone(p)) {
+            let in_zone = self.objlink_card_zone(p);
+            // 영역 밖의 다른 링크 = 끝(새 자리) · 영역 안의 다른 링크 = 같은 줄 띠일 때만 끝(다른 줄은 카드로 가는 길).
+            let switch = over_other && (!in_zone || self.objlink_switch_in_zone(p));
+            if switch || (self.objlink_at(p).is_none() && !in_zone) {
                 self.objlink_hover_end();
             } else {
                 return;
@@ -1356,6 +1366,19 @@ impl App {
     }
 
     /// 포인터가 hover 카드 **영역** 안인가(`card_zone_contains` · 여유 = 8 px × 배율) — 링크 → 카드 이동 중 유지 판정.
+    /// 카드 영역 안에서 포인터 아래의 **다른** 링크로 바꿔야 하는가(같은 줄 띠에서만 · `switch_allowed_in_zone`).
+    fn objlink_switch_in_zone(&self, p: Point) -> bool {
+        let other = self
+            .objlink_at(p)
+            .is_some_and(|k| Some(k) != self.objlinks.hot);
+        other
+            && self
+                .objlinks
+                .card
+                .as_ref()
+                .is_none_or(|c| switch_allowed_in_zone(c.anchor, p))
+    }
+
     fn objlink_card_zone(&self, p: Point) -> bool {
         let pad = (8.0 * self.scale).round() as i32;
         self.objlinks
@@ -1491,11 +1514,7 @@ impl App {
         }
         // 카드 영역(카드 ∪ 링크 + 여유) 안에서는 링크 판정을 바꾸지 않는다(버튼까지 가는 길에 카드가 사라지지 않게 ·
         // 링크와 카드 사이 틈도 포함) · 버튼 hover 색만 다시 그린다.
-        if self.objlink_card_zone(p)
-            && !self
-                .objlink_at(p)
-                .is_some_and(|k| Some(k) != self.objlinks.hot)
-        {
+        if self.objlink_card_zone(p) && !self.objlink_switch_in_zone(p) {
             self.redraw();
             return;
         }
@@ -2752,6 +2771,26 @@ mod tests {
         assert!(z(96, 220), "여유 8 px 안");
         assert!(!z(60, 208), "왼쪽 멀리");
         assert!(!z(200, 260), "아래 멀리");
+    }
+
+    /// 카드 영역 안의 링크 교체 = 앵커와 같은 줄 띠에서만(사용자 10-08).
+    #[test]
+    fn switch_in_zone_only_on_anchor_line() {
+        use super::switch_allowed_in_zone;
+        use nexa_ctl::geom::{Point, Rect};
+        let anchor = Rect::new(100, 200, 60, 18);
+        assert!(
+            switch_allowed_in_zone(anchor, Point { x: 170, y: 208 }),
+            "같은 줄 이웃 단어"
+        );
+        assert!(
+            !switch_allowed_in_zone(anchor, Point { x: 120, y: 180 }),
+            "카드로 가는 길의 윗줄 링크"
+        );
+        assert!(
+            !switch_allowed_in_zone(anchor, Point { x: 120, y: 230 }),
+            "아랫줄"
+        );
     }
 
     /// 세로 뒤집기: 위가 모자라면 아래 · 아래가 모자라면 위 · 둘 다 모자라면 정방향(밀어 넣기 몫).
