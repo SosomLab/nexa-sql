@@ -143,6 +143,22 @@ pub struct TableDetail {
     pub col_comments: Vec<(Sym, Sym)>,
 }
 
+/// ★ 루틴 인자 하나(T-317 10-08 · `EXEC proc |` 완성): 이름(SQL Server = `@이름`) · 부가(타입·모드 — 카탈로그 `SubItem.detail` 그대로).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArgEntry {
+    pub name: Sym,
+    pub detail: Sym,
+}
+
+/// 루틴 인자 채움 상태(필요할 때 한 번 · 백그라운드 메타 세션).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum ArgState {
+    #[default]
+    Unknown,
+    Loading,
+    Loaded(Arc<Vec<ArgEntry>>),
+}
+
 /// 테이블 상세 채움 상태(컬럼과 별개 — 필요할 때 한 번).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum DetailState {
@@ -241,6 +257,8 @@ pub struct Snapshot {
     pub cols: Vec<ColState>,
     /// 테이블 상세(제약·인덱스) — 요청한 것만(09-24).
     pub details: HashMap<ObjId, DetailState>,
+    /// 루틴 인자(T-317) — `EXEC proc |` 완성이 요청하고 한 번 채운다.
+    pub args: HashMap<ObjId, ArgState>,
     /// ★ 컬럼 코멘트 그대로(86 §5 · L2 워머가 스키마 단위로 채움): 객체 → [(컬럼, 코멘트 · NULL = None)].
     pub col_comments: HashMap<ObjId, ColComments>,
     /// 코멘트를 읽어 둔 스키마(여기 있으면 "코멘트 없음"도 알고 있음 = NULL).
@@ -792,6 +810,36 @@ impl MetaStore {
         self.commit(s);
     }
 
+    /// 루틴 인자 적재 중 표시(T-317).
+    pub fn mark_args_loading(&mut self, id: ObjId) {
+        let mut s = self.edit();
+        if !matches!(s.args.get(&id), Some(ArgState::Loaded(_))) {
+            s.args.insert(id, ArgState::Loading);
+        }
+        self.commit(s);
+    }
+
+    /// 루틴 인자 채움(이름 · 부가)(T-317).
+    pub fn set_args(&mut self, id: ObjId, list: &[(String, String)]) {
+        let entries: Vec<ArgEntry> = list
+            .iter()
+            .map(|(n, d)| ArgEntry {
+                name: self.names.intern(n),
+                detail: self.names.intern(d),
+            })
+            .collect();
+        let mut s = self.edit();
+        s.args.insert(id, ArgState::Loaded(Arc::new(entries)));
+        self.commit(s);
+    }
+
+    /// 루틴 인자 되돌리기(실패 → 다음 요청 때 다시).
+    pub fn reset_args(&mut self, id: ObjId) {
+        let mut s = self.edit();
+        s.args.remove(&id);
+        self.commit(s);
+    }
+
     pub fn mark_detail_loading(&mut self, id: ObjId) {
         let mut s = self.edit();
         if !matches!(s.details.get(&id), Some(DetailState::Loaded { .. })) {
@@ -1194,6 +1242,11 @@ impl Snapshot {
     #[must_use]
     pub fn detail(&self, id: ObjId) -> DetailState {
         self.details.get(&id).cloned().unwrap_or_default()
+    }
+
+    /// 루틴 인자 상태(T-317).
+    pub fn args(&self, id: ObjId) -> ArgState {
+        self.args.get(&id).cloned().unwrap_or_default()
     }
 
     /// 컬럼(없으면 상태만).

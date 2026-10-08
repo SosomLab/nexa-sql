@@ -1335,6 +1335,12 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes[i].ex.request_columns_by_id(id);
     }
 
+    /// 루틴 인자 즉시 채움(T-317 · `EXEC proc |`).
+    pub(crate) fn request_args(&mut self, spec: Option<&ConnectSpec>, id: nsql_run::meta::ObjId) {
+        let i = self.meta_pane(spec);
+        self.panes[i].ex.request_args(id);
+    }
+
     /// 자동 완성 즉시 채움 — 스키마(또는 사전)의 관계 객체(09-23).
     pub(crate) fn request_objects(&mut self, spec: Option<&ConnectSpec>, schema: &str) {
         let i = self.meta_pane(spec);

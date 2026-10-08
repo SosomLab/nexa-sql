@@ -185,6 +185,10 @@ impl App {
         for id in self.intel.take_need_details() {
             self.explorer.request_detail(spec.as_ref(), id);
         }
+        // 사용자 루틴 인자(T-317 · `EXEC proc |`) — 백그라운드 메타 세션 · 오면 팝업을 다시 그린다.
+        for id in self.intel.take_need_args() {
+            self.explorer.request_args(spec.as_ref(), id);
+        }
         self.intel_card_settle();
         // 예산 초과 = 로그 창 한 줄(개발자 상세 · D-202의 근거).
         if let Some((n, ms)) = self.intel.take_over_budget() {

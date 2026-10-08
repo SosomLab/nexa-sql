@@ -200,6 +200,8 @@ pub(crate) struct Intel {
     need_objects: Vec<String>,
     /// 마지막 요청이 남긴 **테이블 상세**(제약) 채움 요청 — `JOIN … ON` 조건 조각이 외래 키를 기다린다(T-178).
     need_details: Vec<nsql_run::meta::ObjId>,
+    /// 루틴 인자 채움 요청(T-317 · `EXEC proc |`).
+    need_args: Vec<nsql_run::meta::ObjId>,
     /// "불러오는 중" 표시 여부(마지막 요청).
     pub(crate) loading: bool,
     /// 객체 목록(테이블 등)을 기다리는 중(표시 문구 선택).
@@ -242,6 +244,7 @@ impl Intel {
             needs: Vec::new(),
             need_objects: Vec::new(),
             need_details: Vec::new(),
+            need_args: Vec::new(),
             loading: false,
             loading_objects: false,
             over_budget: None,
@@ -840,6 +843,54 @@ impl Intel {
                 }
             }
             // ★ 특정 종류만(10-01 ⑩): 키워드·문서 낱말 없이 메타의 그 종류 + 스키마.
+            // ★ T-317: 사용자 루틴 인자 — 메타의 `ArgState`(없으면 요청 + 불러오는 중) · 이미 쓴 `@이름` 제외.
+            CtxKind::ExecArgs { routine } => {
+                if let Some(m) = meta {
+                    let (schema, name) = routine
+                        .rsplit_once('.')
+                        .map_or((None, routine.as_str()), |(s, n)| (Some(s), n));
+                    let cur = m.snap.current_schema.map(|s| m.names.get(s).to_string());
+                    if let Some(id) =
+                        m.snap
+                            .lookup_resolvable_from(m.names, schema, cur.as_deref(), name)
+                    {
+                        match m.snap.args(id) {
+                            nsql_run::meta::ArgState::Loaded(list) => {
+                                let used = param_names_in(
+                                    &doc[ctx.statement.start
+                                        ..ctx.replace.start.max(ctx.statement.start)],
+                                );
+                                for (i, a) in list.iter().enumerate() {
+                                    let n = m.names.get(a.name);
+                                    if used.iter().any(|u| u.eq_ignore_ascii_case(n)) {
+                                        continue;
+                                    }
+                                    cands.push(Cand {
+                                        text: n.to_string(),
+                                        kind: CandKind::Variable,
+                                        detail: if show_types {
+                                            m.names.get(a.detail).to_string()
+                                        } else {
+                                            String::new()
+                                        },
+                                        source: 4,
+                                        tag: 0,
+                                        mark: String::new(),
+                                        order: i as u32,
+                                        qualifier: String::new(),
+                                        layer: 0,
+                                    });
+                                }
+                            }
+                            nsql_run::meta::ArgState::Loading => self.loading = true,
+                            nsql_run::meta::ArgState::Unknown => {
+                                self.need_args.push(id);
+                                self.loading = true;
+                            }
+                        }
+                    }
+                }
+            }
             CtxKind::Want(intel::Want::ProcParam(p)) => {
                 // ★ T-316: 시스템 프로시저 파라미터 — 문장 안에 이미 쓴 `@이름`은 뺀다(메타 불필요).
                 let used: Vec<String> = param_names_in(
@@ -1637,6 +1688,11 @@ impl Intel {
     /// 마지막 요청이 남긴 테이블 상세 채움 요청(`JOIN … ON` 조건 조각) — 호스트가 탐색기에 넘긴다(T-178).
     pub(crate) fn take_need_details(&mut self) -> Vec<nsql_run::meta::ObjId> {
         std::mem::take(&mut self.need_details)
+    }
+
+    /// 루틴 인자 채움 요청(T-317) — 호스트가 탐색기 메타 큐(백그라운드)에 넣는다.
+    pub(crate) fn take_need_args(&mut self) -> Vec<nsql_run::meta::ObjId> {
+        std::mem::take(&mut self.need_args)
     }
 
     /// 마지막 요청이 남긴 객체 목록 채움 요청(스키마 이름 · 사전) — 호스트가 탐색기에 넘긴다(09-23).

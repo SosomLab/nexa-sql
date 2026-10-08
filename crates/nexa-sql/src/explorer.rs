@@ -426,6 +426,12 @@ enum Req {
         schema: String,
         table: String,
     },
+    /// ★ 루틴 인자(T-317 · `EXEC proc |` 완성) — 백그라운드 세션 · 카탈로그 `sub_items(Arguments)`.
+    Args {
+        gen: u64,
+        id: nsql_run::meta::ObjId,
+        owner: ObjectInfo,
+    },
     Source {
         gen: u64,
         schema: String,
@@ -764,6 +770,12 @@ enum Resp {
         schema: String,
         table: String,
         r: Result<nsql_catalog::TableDetail, String>,
+    },
+    /// 루틴 인자(T-317): (이름, 부가) 목록.
+    Args {
+        gen: u64,
+        id: nsql_run::meta::ObjId,
+        r: Result<Vec<(String, String)>, String>,
     },
     Source {
         gen: u64,
@@ -1281,6 +1293,7 @@ fn req_label(r: &Req) -> String {
         Req::ObjectsMeta { schema, kind, .. } => format!("objects-meta {schema} {kind:?}"),
         Req::DictMeta { .. } => "dictionary".into(),
         Req::DetailMeta { schema, table, .. } => format!("detail {schema}.{table}"),
+        Req::Args { owner, .. } => format!("args {}.{}", owner.schema, owner.name),
         Req::Source { name, .. } => format!("source {name}"),
         _ => "other".into(),
     }
@@ -1297,6 +1310,7 @@ fn req_prio(r: &Req) -> u8 {
         | Req::GenSql { .. }
         | Req::Details { .. }
         | Req::Comments { .. }
+        | Req::Args { .. }
         | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
@@ -1825,6 +1839,23 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     origin,
                     db,
                 }
+            }
+            Req::Args { gen, id, owner } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                switch_db(
+                    &mut session,
+                    &mut meta_db,
+                    &base_db,
+                    (!owner.db.is_empty()).then_some(owner.db.as_str()),
+                );
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::sub_items(s, &owner, SubKind::Arguments)
+                        .map(|v| v.into_iter().map(|it| (it.name, it.detail)).collect())
+                        .map_err(err_s)
+                });
+                Resp::Args { gen, id, r }
             }
             Req::Live { gen, req } => {
                 if gen != cur_gen {
@@ -3568,6 +3599,43 @@ impl Explorer {
         });
     }
 
+    /// ★ 루틴 인자 요청(T-317 · `EXEC proc |` 완성) — 모를 때 한 번 · 백그라운드 세션 · SQL Server 다른 DB 루틴은 `DB.스키마` 열쇠를 가른다.
+    pub(crate) fn request_args(&mut self, id: nsql_run::meta::ObjId) {
+        if self.dialect.is_none() || self.offline {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        if !matches!(snap.args(id), nsql_run::meta::ArgState::Unknown) {
+            return;
+        }
+        let Some(o) = snap.object(id) else { return };
+        if !o.kind.is_routine() {
+            return;
+        }
+        let schema_key = self.meta.names.get(o.schema).to_string();
+        let (db, schema) = match (self.dialect, schema_key.split_once('.')) {
+            (Some(Dialect::Mssql), Some((d, s))) if !s.is_empty() => (d.to_string(), s.to_string()),
+            _ => (String::new(), schema_key),
+        };
+        let owner = ObjectInfo {
+            db,
+            schema,
+            name: self.meta.names.get(o.name).to_string(),
+            kind: o.kind,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        self.meta.mark_args_loading(id);
+        self.last_used = Instant::now();
+        self.suspended = false;
+        let _ = self.tx_bg.send(Req::Args {
+            gen: self.gen,
+            id,
+            owner,
+        });
+    }
+
     /// 완성 상세 카드 — 객체 id로 컬럼 1건 요청(급한 세션).
     pub(crate) fn request_columns_by_id(&mut self, id: nsql_run::meta::ObjId) {
         if self.dialect.is_none() || self.offline {
@@ -4274,6 +4342,15 @@ impl Explorer {
                             self.meta.set_detail(id, &nd, Self::now_secs());
                         }
                         Err(_) => self.meta.reset_detail(id),
+                    }
+                }
+                Resp::Args { gen, id, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    match r {
+                        Ok(list) => self.meta.set_args(id, &list),
+                        Err(_) => self.meta.reset_args(id),
                     }
                 }
                 Resp::DictMeta { gen, r } => {

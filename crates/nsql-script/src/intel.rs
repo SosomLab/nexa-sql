@@ -29,6 +29,9 @@ pub enum CtxKind {
     /// ★ 특정 종류의 객체만 고르는 자리(10-01 ⑩ · [`Want`]): `USE |` = 데이터베이스 · `ALTER SESSION SET CURRENT_SCHEMA = |`·
     /// `SET search_path TO |` = 스키마 · `EXEC|CALL |` = 루틴 · `DROP VIEW |` 등 = 그 종류.
     Want(Want),
+    /// ★ 사용자 루틴의 인자 자리(T-317 10-08): `EXEC [s.]proc |` · `, |` — 시스템 표에 없는 루틴. 호스트가 메타의 인자
+    /// (`ArgState` · 없으면 요청 + "불러오는 중")에서 아직 안 쓴 것을 낸다. `routine` = 적힌 이름 그대로(`dbo.PROC_TEST`).
+    ExecArgs { routine: String },
 }
 
 /// ★ `CtxKind::Want`가 고르는 것(10-01 ⑩) — 호스트가 메타 저장소에서 그 종류만 낸다(키워드 없음).
@@ -117,6 +120,44 @@ const WANT_KINDS: &[(&str, &str)] = &[
 ];
 
 /// ★ 특정 종류만 고르는 자리인가(10-01 ⑩ · 순수): `before` = 접두 앞 낱말들.
+/// `EXEC [@r =] [s.]proc` 뒤의 인자 자리인가 — 루틴 이름(사슬 그대로)과 "자리 맞음"(이름 바로 뒤 또는 `,` 뒤 · `=` 뒤는 값 자리).
+fn exec_routine_at(before: &[&Word<'_>]) -> Option<(String, bool)> {
+    let n = before.len();
+    if n < 2 || !(is_word(before[0], "EXEC") || is_word(before[0], "EXECUTE")) {
+        return None;
+    }
+    let last = before[n - 1];
+    let mut k = 1;
+    if k + 1 < n && before[k].text.starts_with('@') && before[k + 1].text == "=" {
+        k += 2;
+    }
+    let mut name = String::new();
+    let mut last_idx = None;
+    while k < n && is_name(before[k]) && !before[k].text.starts_with('@') {
+        if !name.is_empty() {
+            name.push('.');
+        }
+        name.push_str(before[k].text);
+        last_idx = Some(k);
+        if k + 1 < n && before[k + 1].text == "." {
+            k += 2;
+        } else {
+            break;
+        }
+    }
+    let pi = last_idx?;
+    Some((name, pi == n - 1 || last.text == ","))
+}
+
+/// 사용자 루틴의 인자 자리(T-317): 시스템 표에 없는 루틴 이름 · 자리 맞을 때만.
+fn exec_user_routine(before: &[&Word<'_>], dialect: Option<Dialect>) -> Option<String> {
+    let (name, at) = exec_routine_at(before)?;
+    if !at || crate::builtins::proc_params(dialect, &name).is_some() {
+        return None;
+    }
+    Some(name)
+}
+
 fn want_at(
     before: &[&Word<'_>],
     stmt_kind: Option<&str>,
@@ -702,6 +743,24 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
     } else {
         None
     };
+    // ★ T-317: 사용자 루틴 인자 자리(`EXEC [s.]proc |` · `, |`) — 시스템 표(`Want::ProcParam`)에 없는 루틴.
+    if let Some(name) = exec_user_routine(&before, dialect) {
+        return Context {
+            kind: CtxKind::ExecArgs {
+                routine: name.clone(),
+            },
+            prefix,
+            replace,
+            aliases,
+            statement: stmt,
+            paren_owner: Some(name),
+            paren_into: false,
+            star: None,
+            from_chain: false,
+            clause,
+            stmt_kind,
+        };
+    }
     // ★ 특정 종류만 고르는 자리(10-01 ⑩) — 관계 판정보다 먼저(`DROP VIEW |` · `USE |` · `EXEC |`).
     if let Some(w) = want_at(&before, stmt_kind.as_deref(), dialect) {
         // 파라미터 자리 = 시그니처 도움의 주인도 그 프로시저(`EXEC sp_x` 는 괄호가 없다 · T-316).
@@ -1907,6 +1966,27 @@ mod tests {
             k("EXEC my_proc ", Dialect::Mssql),
             CtxKind::Want(Want::ProcParam(_))
         ));
+        // ★ T-317: 사용자 루틴 = ExecArgs(이름 사슬 그대로) · `=` 뒤·EXEC 바로 뒤는 아님.
+        assert_eq!(
+            k("EXEC PROC_TEST ", Dialect::Mssql),
+            CtxKind::ExecArgs {
+                routine: "PROC_TEST".into()
+            }
+        );
+        assert_eq!(
+            k(
+                "EXEC dbo.PROC_TEST @VS_PROJECT_CD = 'BBBB', ",
+                Dialect::Mssql
+            ),
+            CtxKind::ExecArgs {
+                routine: "dbo.PROC_TEST".into()
+            }
+        );
+        assert!(!matches!(
+            k("EXEC PROC_TEST @a = ", Dialect::Mssql),
+            CtxKind::ExecArgs { .. }
+        ));
+        assert_eq!(k("EXEC ", Dialect::Mssql), CtxKind::Want(Want::Routine));
         let c = context_at("EXEC sp_rename ", 15, Some(Dialect::Mssql));
         assert_eq!(
             c.paren_owner.as_deref(),
