@@ -292,8 +292,10 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 | `EXEC :x := 리터럴` | 로컬 대입(왕복 0) · 선언 없으면 그 자리에서 생김(자동 타입) · `NULL`은 값(지우지 않음) | 전 방언 동일 |
 | `EXEC :x := 식` | 서버가 계산 | §3-1 재작성(Oracle `BEGIN … END;` · SQL Server 꼬리 행 + sql_variant 타입 복원 D-254 · PG/SQLite `SELECT (식)`) |
 | `EXEC SELECT a, b INTO :A, :B FROM …` | 1행을 자리 순서로 | 0행·여러 행 = 오류(`vars.into_policy` · D-139) · FROM 없는 INTO = T-162 흠 |
-| 자동 타입 | 선언 없이 생겼거나 타입 없이 선언한 변수는 **값마다** 타입을 다시 추론(1999 → NUMBER · 글자 → VARCHAR2(n) · NULL은 유지) | `Var.auto_ty` · 10-07 |
+| 자동 타입 | 선언 없이 생겼거나 타입 없이 선언한 변수는 **값마다** 타입을 다시 추론(1999 → NUMBER · 글자 → VARCHAR2(n) · NULL은 유지) | `Var.auto_ty` · 10-07 · **10-08 OUT 자리 재추론**(c86a67e): 자동 변수는 EXEC마다 루틴 서명(루틴당 1회 캐시 · `needs_type`)을 보고 **OUT/IN OUT 자리면 서명 타입으로 다시 맞춘다**(`VarStore::hint_type(name, ty, in_out)`) — OUT = 값 NULL로 덮어씀 · IN OUT + 같은 부류 = 값 유지 · IN 자리 · `VAR x 타입`으로 선언한 변수 = 그대로 |
 | 이름 | 대소문자 무시(처음 표기 보존) · SQLite `:x @x $x` = 한 변수 | D-142 |
+
+> **사용자 시나리오(10-08 · Oracle · c86a67e)**: `EXEC SP_TEST1(:RET,'SSS')` → `:RET`이 자동 변수로 생겨 NUMBER 23 · 이어서 `EXEC SP_TEST2(:RET,'SSS')`(첫 인자 = REF CURSOR OUT) → 종전 = NUMBER 바인드 그대로 보내 **PLS-00306** · 지금 = OUT 자리라 `:RET`을 REF CURSOR로 다시 맞춰(값 NULL) 커서 결과가 나온다. 타입을 고정하고 싶으면 `VAR RET NUMBER`로 선언(선언 변수는 재추론 안 함).
 
 ### 12-3. 층(Scope) — tab > shared > global > profile([§11](#11-글로벌-변수--개념-정리설계사용자-09-25--변수-창-layer--tab--declared--auto-캡처))
 

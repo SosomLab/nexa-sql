@@ -58,6 +58,8 @@ same = JOIN                 # 별칭
 
 - **10-08 `Want::ProcParam`**(T-316 · c2cdb04): `EXEC [sys.]sp_x |` · `, |` · `@…` 입력 중 = 그 프로시저의 **아직 안 쓴 `@파라미터`**(타입 상세) · 값 자리(`= |`)는 제외 · 원천 = 내장 표 `MSSQL_SYSTEM_PROC_PARAMS` 30종(확장 속성 3 · sp_rename · sp_help* · sp_columns/tables · sp_executesql · 연결된 서버 · xp_cmdshell …) · 시험 nsql-script 13 · 호스트 19.
 
+- **10-08 `CtxKind::ExecArgs`**(T-317 · 3af60cb): 사용자 프로시저 `EXEC [s.]proc |`·`, |` = 메타 루틴 인자(시스템 표는 `Want::ProcParam` 그대로) · **4bb512d** = Oracle·PG 괄호 호출 인자 시작에서 `이름 => ` 조각(이미 적은 이름 제외).
+
 ## 8. 10-01 보완 2 — SQL Server 3부 이름(`DB.스키마.객체` · [journal §21](journal/2026-09-30.md))
 - 다른 DB의 객체 = 메타 복합 열쇠 `DB.스키마` 버킷(스키마 자리에 두 조각 글자) · `DB.` = `(DB, Schema)` 버킷. 별칭 표는 점 사슬 전부(`schema = "DB.스키마"`). 호스트는 열쇠를 `split_db_key`로 풀어 메타 세션을 `USE`로 옮긴 뒤 읽는다. bare 이름은 현재 DB의 현재 스키마(dbo) — `USE` 뒤 재읽기로 갱신.
 - 컬럼 없는 종류(Database·Schema·사용자·역할·연결된 서버)는 별칭 해석(테이블로 보는 단계)에서 제외.

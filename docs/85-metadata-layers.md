@@ -54,6 +54,8 @@
 
 - 회수 훅 = `ExplorerSet::idle_tick`(30 s) → `Explorer::reclaim_meta` → `MetaStore::reclaim(now, keep=현재 스키마, detail_max, detail_ttl, cols_ttl)` · 목록은 유지(다음 요청 때 다시 · 깜빡임 0).
 
+- **10-08 루틴 인자 `ArgState`**(T-317 · 3af60cb): L3 상세의 한 종류 — 완성이 `EXEC proc |`에서 처음 필요로 할 때만 탐색기 백그라운드 `Req::Args`(카탈로그 `sub_items(Arguments)`) **1회** · 결과는 루틴별 캐시 · 오기 전 = "불러오는 중" 상태(재요청 없음) · 회수 = L3 규칙.
+
 ## 5. 메모리·속도(설계 근거)
 
 | 항목 | 값 | 근거 |

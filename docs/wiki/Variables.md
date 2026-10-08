@@ -43,6 +43,8 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 - `SET DEFINE OFF` = `&`를 글자로.
 - 스크립트 인자 `&1 &2 …` = `nsql run file.sql arg1 arg2`.
 
+> **같은 변수를 다른 프로시저에**(10-08): 선언 없이 생긴 변수(예: `EXEC SP_TEST1(:RET, 'SSS')`로 생긴 `:RET`)를 다른 프로시저의 OUT 자리에 다시 넘기면(`EXEC SP_TEST2(:RET, 'SSS')` · REF CURSOR OUT) 그 프로시저의 인자 타입으로 자동으로 바뀝니다. 타입을 바꾸고 싶지 않으면 `VAR RET NUMBER`처럼 타입을 적어 선언하세요.
+
 ## 변수 지우기(10-07)
 
 | 명령 | 지우는 것 |
