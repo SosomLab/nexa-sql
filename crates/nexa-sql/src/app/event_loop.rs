@@ -334,8 +334,10 @@ impl ApplicationHandler<Wake> for App {
         self.project_index_pump();
         // ★ 활성 뷰 탭의 상세 데이터가 없으면(메모리뿐이라 끊길 수 있다) 다시 채운다 · 확장이 없어졌으면 그 뷰 탭을 닫는다 — 종전엔 빈 일반
         //   편집기로 그려져 사용자가 글을 넣을 수 있었다(사용자 10-07 "확장 탭에 SQL").
+        //   ★ 확장 뷰(`ext:*`)에만 — 비교 탭(`compare:*` · 서버 DDL 탭)·정보 탭 같은 다른 뷰 탭은 상세 데이터가 없는 것이 정상인데
+        //   함께 닫혀 1·2단계 비교 탭이 열리자마자 사라졌다(10-07 저녁 회귀 · 협업 V1 bin110 ① · 10-09).
         if let Some(k) = self.editors.active_view().map(str::to_string) {
-            if !self.ext_details.contains_key(&k) {
+            if k.starts_with("ext:") && !self.ext_details.contains_key(&k) {
                 let ok = k
                     .strip_prefix("ext:")
                     .map(|id| id.to_string())
