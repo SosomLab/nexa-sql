@@ -206,6 +206,7 @@
 - ✅ **10-05(T-182 · 112차 win) 포커스별 키맵**: 결과 그리드에 포커스가 있을 때만 **F2 = 셀 편집 시작** · **Ctrl+D(맥 ⌘D) = 행 복제** — 전역 키맵의 F2(다음 북마크)·Ctrl+D(다음 같은 낱말 선택)는 그리드 밖에서 그대로 · 수식 키가 더 붙으면(Ctrl+F2 · Shift+F2 …) 전역 키맵 · 팔레트가 열려 있으면 적용 안 함 · 자동 반복 무시. `keymap.rs` `grid_focus_command`(+ 시험) · `app/event_loop.rs`(키맵 조회 앞 분기 → `grid.edit_command` → `after_grid_event`). 키 입력이 있어야 보이는 동작이라 자체 시험 없음 = 사용자 실기(U-180).
 - 실서버 4방언 시험(SQL Server `@p` · PG `$n`·ctid/xmin · NULL 키 — Oracle·SQLite는 E2E ✓) · 편집 모드 페인트 예산(26 §5) · 확인표 U-* · `Caps.returning`.
 - **10-05 기준 남음 요약** = CLOB 편집 커밋 · 실서버 4방언 · 페인트 예산 · `Caps.returning`.
+- ✅ **10-09 CLOB 편집 커밋 = 실서버 검증**(E2E `mac-grid-edit-e2e.sh` ⑬ · 임시 표 NSQLT_GE3 · 40,000자 파일 → `grid.edit.load` → 적용 → 서버 길이 40000 · Oracle(VARCHAR2 바인드 32,767 바이트 밖 = `OracleType::CLOB`) · PG text · SQL Server nvarchar(max) 3/3 ✓ · 표시 상한 `grid.lob_view_max_mb`는 값 창 표시 상한이지 커밋 상한이 아님) · **남음** = 값 창 큰 파일 모드(59) · 페인트 예산 · `Caps.returning`.
 
 ---
 

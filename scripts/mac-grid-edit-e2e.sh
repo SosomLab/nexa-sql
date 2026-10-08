@@ -9,7 +9,9 @@
 #   4-DBMS 실서버: -P "$HOME/Library/Application Support/nexa-sql" -d BISCM:oracle,Repository:postgres,M4PLAN:mssql (사용자 09-26)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"; H="${TMPDIR:-/tmp}/nsql-ge-e2e"
+APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
+# 기본 격리 홈 = OS별(10-09 · 협업 원장): Windows Git Bash의 `/tmp`는 Windows exe가 못 연다(`unable to open database file`) → 저장소 `target/` 아래.
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) H="$ROOT/target/nsql-ge-e2e";; *) H="${TMPDIR:-/tmp}/nsql-ge-e2e";; esac
 PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
 while getopts "e:n:H:P:d:" o; do case $o in e) APP=$OPTARG;; n) NSQL=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
 D="$H/data"; O="$H/out"; rm -rf "$H"; mkdir -p "$D" "$O"
@@ -85,8 +87,9 @@ expect_grep "숨은 열 = 뒤쪽 1개" "$d7a" "hidden=1"
 expect_grep "덤프 행 = 화면 열 2개만(숨은 rowid 제외)" "$d7a" "^0|[A-Za-z]*|k|v1$"
 expect_grep "적용 뒤 깨끗" "$d7" "dirty=false"
 expect_grep "rowid 행 제자리 재조회" "$d7" "patched=1/0/0"
-expect_grep "서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"
-expect_grep "서버: 나머지 중복 행 v1 유지" "$(echo "$v" | grep -c v1)" "^1$"
+expect_grep "서버: ONE 1행" "$(echo "$v" | grep -cE '^k +ONE$')" "^1$"
+# 행 패턴으로 센다 — `grep -c v1`은 접속 문자열(`Connected: sqlite://…/v1-bin110/…`)까지 세어 헛 FAIL(협업 10-09).
+expect_grep "서버: 나머지 중복 행 v1 유지" "$(echo "$v" | grep -cE '^k +v1$')" "^1$"
 # 09-27: 기본값 = 재조회 안 함(grid.edit_hidden_keys/rowid off · D-225) → 주입 경로 시나리오는 명시적으로 켠다.
 NSQL_HOME="$H" "$NSQL" config set grid.edit_hidden_keys on >/dev/null
 echo "=== SQLite ⑧ PK 열이 빠진 결과 = 숨은 키 열 주입(1급-보완) → 적용"
@@ -225,7 +228,7 @@ SQL
   run_gui 24 "$T" "open:$D/${tag}_sel2.sql,@after:4000:run.all,@after:10000:grid.edit.set:1;2;ONE,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/${tag}4.txt"
   d=$(cat "$O/${tag}4.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_sel2.sql")
   if [ "$kind" = Physical ]; then
-    expect_grep "$tag 적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "$tag 서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"; expect_grep "$tag 서버: 원래 x 1행 남음" "$(echo "$v" | grep -c ' x')" "^1$"
+    expect_grep "$tag 적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "$tag 서버: ONE 1행" "$(echo "$v" | grep -cE '^z +.*ONE')" "^1$"; expect_grep "$tag 서버: 원래 x 1행 남음" "$(echo "$v" | grep -cE '^z +.* x$')" "^1$"
   else
     expect_grep "$tag 중복 행 = 사전 검사 차단(변경 집합 유지)" "$d" "dirty=true"; expect_absent "$tag 서버: ONE 없음" "$v" "ONE"
   fi
