@@ -30,6 +30,10 @@ struct Toast {
     rect: Rect,
     /// 클릭하면 실행할 명령 id(예 북마크 제거 되돌리기 · docs/69 C-28).
     action: Option<String>,
+    /// ★ 카드 안 **위험색 버튼**(라벨 · 명령 id · 사용자 10-08 "운영 해제 토스트에 빨간 실행 버튼 — 마우스로는 3초 안에 다시 고르기 어렵다"):
+    ///   누르면 그 명령 1회 · 카드 닫힘. 모양 = `TimeoutButton` 무장 상태(위험색 채움 · 밝은 글자).
+    button: Option<(String, String)>,
+    btn_rect: Rect,
 }
 
 const MAX_TOASTS: usize = 5;
@@ -111,6 +115,8 @@ impl Toasts {
             born: Instant::now(),
             rect: Rect::default(),
             action: None,
+            button: None,
+            btn_rect: Rect::default(),
         });
         while self.items.len() > MAX_TOASTS {
             self.items.remove(0);
@@ -128,6 +134,21 @@ impl Toasts {
         self.push(kind, title, body);
         if let Some(t) = self.items.last_mut() {
             t.action = Some(action.to_string());
+        }
+    }
+
+    /// 카드 안 위험색 버튼이 있는 토스트(버튼 = `action` 1회 · 카드의 나머지 클릭 = 닫기만).
+    pub(crate) fn push_button(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        label: impl Into<String>,
+        action: &str,
+    ) {
+        self.push(kind, title, body);
+        if let Some(t) = self.items.last_mut() {
+            t.button = Some((label.into(), action.to_string()));
         }
     }
 
@@ -150,7 +171,9 @@ impl Toasts {
     pub(crate) fn click(&mut self, p: Point) -> bool {
         if let Some(i) = self.items.iter().position(|t| t.rect.contains(p)) {
             let t = self.items.remove(i);
-            if t.action.is_some() {
+            if let Some((_, a)) = t.button.as_ref().filter(|_| t.btn_rect.contains(p)) {
+                self.taken = Some(a.clone());
+            } else if t.action.is_some() && t.button.is_none() {
                 self.taken = t.action;
             }
             return true;
@@ -198,7 +221,9 @@ impl Toasts {
                 MAX_BODY_LINES,
             );
             let n = body_lines.len().max(1) as i32;
-            let h = pad * 2 + lh * (1 + n) + px(2.0);
+            // 버튼 줄(있을 때만): 글자 높이 + 위아래 3px · 본문과 4px 틈.
+            let btn_h = if t.button.is_some() { lh + px(6.0) } else { 0 };
+            let h = pad * 2 + lh * (1 + n) + px(2.0) + if btn_h > 0 { btn_h + px(4.0) } else { 0 };
             let r = Rect::new(right - gap - w, y - h, w, h);
             t.rect = r;
             dc.fill_round_rect_alpha(r, px(6.0), th.panel_bg, a);
@@ -235,6 +260,17 @@ impl Toasts {
             for line in &body_lines {
                 dc.text(tx, by, clip, line, th.text);
                 by += lh;
+            }
+            // ★ 위험색 버튼 = 오른쪽 아래(제목 색이 아니라 늘 위험색 — "되돌릴 수 없는 실행" 신호 · `TimeoutButton` 무장 모양).
+            if let Some((label, _)) = t.button.as_ref() {
+                let bw = dc.text_width(label) + px(16.0);
+                let br = Rect::new(r.right() - pad - bw, r.bottom() - pad - btn_h, bw, btn_h);
+                t.btn_rect = br;
+                dc.fill_round_rect_alpha(br, px(4.0), th.danger, a);
+                let cy = dc.text_center_y(br.y, br.h);
+                dc.text(br.x + px(8.0), cy, br, label, th.panel_bg);
+            } else {
+                t.btn_rect = Rect::default();
             }
             y = r.y - gap;
         }

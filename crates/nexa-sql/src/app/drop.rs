@@ -394,10 +394,16 @@ impl App {
                 self.sess.prod_armed = Some((key, Instant::now()));
                 let line = tf(Msg::StProdEnvConfirm, &[&env_label(cur), &env_label(env)]);
                 self.sess.status = line.clone();
-                self.toasts.push(
+                // ★ 토스트 안 빨간 [실행] 버튼(사용자 10-08) = 3초 안에 다시 고르는 대신 한 번에 진행(`sess.env_force:<유형>`).
+                self.toasts.push_button(
                     crate::toast::ToastKind::Error,
                     t(Msg::StProdConfirmTitle),
                     line.clone(),
+                    t(Msg::MnRun),
+                    &format!(
+                        "sess.env_force:{}",
+                        env.map_or("none", nsql_script::ConnEnv::as_str)
+                    ),
                 );
                 self.output_push(
                     self.editors.active_id(),

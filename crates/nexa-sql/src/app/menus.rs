@@ -941,6 +941,13 @@ impl App {
                     &x["session.env:".len()..],
                 ));
             }
+            // ★ 운영 해제 토스트의 [실행] 버튼(사용자 10-08) = 2단 확인을 지금 통과시킨다.
+            x if x.starts_with("sess.env_force:") => {
+                self.sess.prod_armed = None;
+                self.set_session_env(nsql_script::ConnEnv::from_name(
+                    &x["sess.env_force:".len()..],
+                ));
+            }
             "conn.disconnect" => {
                 self.sess.disc_path = Some(sessions::DiscPath::Toolbar);
                 self.disconnect_now();
