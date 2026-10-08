@@ -1484,7 +1484,12 @@ impl App {
             }
         }
         self.sess.run_cancel_requested = self.sess.busy;
-        self.sess.run_cancel_at = self.sess.busy.then(Instant::now);
+        // 첫 요청 시각은 재전송에도 유지(연타해도 강제 중지 창이 뒤로 밀리지 않게).
+        self.sess.run_cancel_at = if self.sess.busy {
+            self.sess.run_cancel_at.or_else(|| Some(Instant::now()))
+        } else {
+            None
+        };
         if self.sess.dialect == Dialect::Mssql
             && self.settings.get("mssql.cancel") != Some("socket")
             && self.settings.get("mssql.encrypt") != Some("login")
@@ -1494,7 +1499,17 @@ impl App {
                 t(Msg::StMssqlAttentionFallback),
             ));
         }
-        let (sent, drops) = self.sess.worker.cancel_run();
+        // 시험 훅: 취소를 보내지 않고 "요청됨" 상태만(강제 중지 경로 · Debug 전용).
+        let (sent, drops) = if cfg!(debug_assertions) && std::mem::take(&mut self.sess.cancel_mute)
+        {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                "[test] run.stop_mute: cancel not sent".into(),
+            ));
+            (true, false)
+        } else {
+            self.sess.worker.cancel_run()
+        };
         self.sess.run_cancel_drops = drops;
         self.sess.status = t(if sent && drops {
             Msg::StRunCancellingDrop

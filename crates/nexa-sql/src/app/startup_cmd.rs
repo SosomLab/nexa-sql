@@ -831,6 +831,13 @@ impl App {
             self.health_event(ep, app::health::HealthEvent::Down("test".into()));
             return;
         }
+        // 시험 훅(Debug 전용): 다음 ■ 한 번은 드라이버 취소를 보내지 않는다(강제 중지 경로 · 협업 10-09).
+        if id == "run.stop_mute" {
+            if cfg!(debug_assertions) {
+                self.sess.cancel_mute = true;
+            }
+            return;
+        }
         if id == "net.changed" {
             // L0 신호 모의 = 실제 처리 함수 그대로(끝점 전부 Suspect + 메타 NetChanged + 다음 실행 preflight).
             self.net_last = None;
