@@ -130,6 +130,7 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 
 - **Ctrl+Enter**(`run.statement`): 활성 결과 탭에 **교체**(rows drop → 새 결과 · 탭 로컬 max_rows 유지). 결과 탭이 없으면 하나 만든다.
 - **Ctrl+\\**(`run.statement_new_tab` · mac `cmd+\\`): 새 결과 탭 추가 → 활성. 탭 제목 = 문장에서 추정한 테이블/첫 단어 + 순번(`M4S_I002040 2`) · 더블클릭 이름 바꾸기 · 고정(pin)은 자동 정리에서 제외.
+- **딸린 결과 탭 제목 = 번호 규칙 따름**(10-08 · 5a22122 · 사용자 "결과가 둘이면 결과1·결과2 · Oracle RETURN 변수 이름도 같은 방식"): `grid.result_tab_title = number`(기본)이면 커서 변수 결과·같은 문장의 둘째 결과 집합도 늘 다음 번호 `결과N`(종전 = 변수 이름 `RET` · `결과1 (2)`) · 재실행 = 같은 번호 재사용 · `table` 규칙 = 종전대로 제안 이름(변수 이름 · 첫 단어) + 겹침 접미 · 이름 붙인/고정 탭 그대로 · 규칙 한 자리 = `ResultPanel::title_extra`. **10-08 보강(0c87ba8)**: 딸린 탭 **자리 = 부모(와 앞선 딸린 탭) 바로 뒤 · Output 앞**(`ResultPanel::insert_child`/`insert_at` · 활성 인덱스 보정 · 종전 `push` = Output 뒤 `결과1 | Output | 결과2`) · `table` 규칙 겹침 셈은 **제 딸린 탭 제외**(`unique_title`의 `except` · 종전 재실행마다 `EXEC 2`·`EXEC 2 (2)`로 밀림).
 - 탭 상한 `grid.result_tabs_max`(기본 8 · 편집기당) — 넘으면 **가장 오래된 비고정 탭** 닫기(rows 해제) + 상태줄 안내.
 - F5(스크립트 전체)는 종전대로 마지막 결과 집합을 활성 탭에(여러 결과 집합 = D-5와 함께 탭으로 펼치는 옵션 `grid.script_results_tabs`).
 - 그리기: 활성 탭만 `Grid::paint` · 탭바는 편집기 탭바 부품(`TabBar`) 재사용 · 우클릭 = 닫기/다른 탭 닫기/고정/이름 바꾸기/Export.

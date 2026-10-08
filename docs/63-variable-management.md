@@ -122,7 +122,7 @@
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | **V0 기반 결함** | 저장 코드 DDL은 바인드 안 함(`:NEW`/`:OLD`) · Oracle 암묵 결과 전부 · Oracle/SQL Server는 1행 결과를 변수로 흡수하지 않음 · ★ T-146 수동 커밋이 실제로는 자동 커밋이던 결함 | ✅ 09-21 |
-| **V1 커서·다중 결과** | REF CURSOR 자동 표시(`run.cursor_autoshow`) · 결과 라벨 = 변수 이름 · 서명 추론(`call_shape` + `routine_args`) · GUI 딸린 결과 탭 | ✅ 09-21(Oracle 실기) |
+| **V1 커서·다중 결과** | REF CURSOR 자동 표시(`run.cursor_autoshow`) · 결과 라벨 = 변수 이름(→ 10-08 번호 규칙 `grid.result_tab_title = number`(기본)이면 `결과N` · `table` 규칙일 때만 변수 이름 · 43 §탭 이름) · 서명 추론(`call_shape` + `routine_args`) · GUI 딸린 결과 탭 | ✅ 09-21(Oracle 실기) |
 | **V2 보이기** | ✅ 09-21 `RunEvent::Vars` · 로그에 바뀐 값(비밀 가림) · `SHOW VARIABLES` = 결과 표 · **변수 창 `vars_win.rs`**(View ▸ Variables — 탭 층 + 공유 층 · 바뀐 줄 강조 · 제자리 편집 · NULL · 공유 토글 · 삭제 · `이름 = 값` 새 변수 · 스크립트로). ☐ 옆 패널 · 편집기 hover 값 · 미정의 경고 | ✅(잔여) |
 | **V3 입력** | ✅ 09-21 89차(win): `ACCEPT [타입] [FORMAT] [DEFAULT] [PROMPT|NOPROMPT] [HIDE]`(입력 창 = 안내 글·기본값·가림 · 실행할 때마다) · 미정의 바인드 경고(실행 메시지 1회). ✅ 09-21 GUI 입력 창(실행당 **한 번** · 빠진 바인드 + `&` 매크로를 한 격자에서 · Skip = 종전 · 값은 탭에 기억 · `vars.undeclared`). ☐ 타입 열·미리보기 · `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE` | 🔶 |
 | **V4 범위·보존** | ✅ 09-21 D-135 계층(탭이 주인 · `VAR x SHARE|LOCAL` · 재접속 = 커서 무효화) · D-136 **파일별 보존**(`vars/<경로 해시>.sql` = 실행 가능한 스크립트 · 비밀·커서 제외) · 스크립트로 내보내기. ☐ 이름 없는 탭(S-1 hot exit와 함께) · 프로필 층 값의 출처(접속 프로필 필드) | 🔶 |
