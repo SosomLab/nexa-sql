@@ -4689,6 +4689,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 86400 },
         default: "60",
     },
+    // ★ L0 네트워크 신호(docs/107 §3-2 · T-313 ⑤): OS가 경로 변경을 알리면 모든 끝점을 "의심"으로(다음 동작이 판정 · 알림 없음).
+    Entry {
+        key: "net.watch",
+        cat: Msg::CatServerStatus,
+        label: Msg::LblNetWatch,
+        desc: Msg::DescNetWatch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 끊김 토스트 억제 창(docs/107 D-266): 같은 끝점 재알림은 이 시간에 한 번.
     Entry {
         key: "net.notify_quiet_secs",
