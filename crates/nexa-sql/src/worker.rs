@@ -711,7 +711,7 @@ pub(crate) fn spawn(
                 let timeout = preflight.unwrap_or(timeout);
                 if let (true, Some((host, port))) = (plan.probe, active_ep.as_ref()) {
                     let t = std::time::Instant::now();
-                    if probe::probe_once(host, *port, timeout, true, probe::DEFAULT_DNS_TTL)
+                    if probe::probe_once(host, *port, timeout, false, probe::DEFAULT_DNS_TTL)
                         != probe::Outcome::Up
                     {
                         let ep = format!("{host}:{port}");
@@ -778,6 +778,7 @@ pub(crate) fn spawn(
                         }
                         let mut last_err: Option<String> = None;
                         // 접속 전 빠른 판정(SYN 1 · docs/53): 끊긴 네트워크에서 드라이버의 긴 접속 타임아웃을 기다리지 않는다.
+                        //   ★ ICMP 보조 판정 없이 TCP 한 번(결과는 `Up`인지만 본다 · 종전 = 상한 뒤 ICMP까지 2~3.5 s · 협업 V1 bin98 · 107 P1 "≤ probe.timeout_ms").
                         //   (같은 서버 재접속·유휴 뒤 재접속·접속 창 Connect 모두 — 접속 창의 신호등과 별개로 지금 이 순간을 본다.)
                         let (timeout, _, _) = liveness_settings();
                         let reachable = match endpoint(&spec) {
@@ -787,7 +788,7 @@ pub(crate) fn spawn(
                                     &host,
                                     port,
                                     timeout,
-                                    true,
+                                    false,
                                     probe::DEFAULT_DNS_TTL,
                                 ) == probe::Outcome::Up;
                                 if !up {
@@ -1385,7 +1386,7 @@ pub(crate) fn spawn(
                                             &host,
                                             port,
                                             timeout,
-                                            true,
+                                            false,
                                             probe::DEFAULT_DNS_TTL,
                                         ) == probe::Outcome::Up;
                                         if !up {
