@@ -22,6 +22,8 @@ pub(crate) enum LinkKind {
     Table,
     Column,
     Routine,
+    /// ★ 제약(PK · UK · FK · CHECK · DEFAULT 이름 · T-315 10-08): `owner` = 테이블 · `name` = 제약 이름.
+    Constraint,
 }
 
 /// 링크 하나(문자 인덱스 구간).
@@ -69,6 +71,10 @@ pub(crate) trait Resolver {
     fn object_class(&self, schema: Option<&str>, name: &str) -> Option<ObjClass>;
     /// 그 테이블에 이 컬럼이 있는가 — `Some(있다/없다)` · `None` = 컬럼 목록을 아직 모른다(호스트가 뒤에서 요청한다).
     fn has_column(&self, schema: Option<&str>, table: &str, col: &str) -> Option<bool>;
+    /// 그 테이블에 이 제약(키)이 있는가 — `None` = 상세(키 목록)를 아직 모른다(T-315).
+    fn has_constraint(&self, _schema: Option<&str>, _table: &str, _name: &str) -> Option<bool> {
+        None
+    }
 }
 
 /// 표시 방식(`objlink.display`).
@@ -166,6 +172,8 @@ pub(crate) fn scan(
     // ★ T-288(사용자 10-07): `CREATE/ALTER TABLE t`의 `t`(토큰 index · 스키마 · 이름 · 실제 관계인가) — 뒤따르는 괄호 안 컬럼 정의 ·
     //   `KEY (…)`/`UNIQUE (…)` 목록 · `ADD`/`MODIFY` 컬럼을 **그 테이블의 컬럼**으로 푼다. 테이블이 메타에 없으면(새로 만드는 DDL) 컬럼은 링크하지 않는다.
     let mut ddl_table: Option<(usize, Option<String>, String, bool)> = None;
+    // ★ T-315: `ALTER TABLE t ADD c1 T, c2 T …`(SQL Server · 괄호 없는 목록) — ADD 뒤 컬럼을 하나 읽으면 깊이 1의 `,` 다음 낱말도 컬럼.
+    let mut ddl_add_list = false;
     for (i, t) in toks.iter().enumerate() {
         match t.kind {
             Kind::Punct if t.text == "(" => {
@@ -176,12 +184,8 @@ pub(crate) fn scan(
                     (Some(_), Some(p)) if matches!(p.up().as_str(), "ADD" | "MODIFY") => {
                         Some(DDL_COLS.to_string())
                     }
-                    (Some(_), Some(p))
-                        if clause
-                            .last()
-                            .is_some_and(|c| c.as_deref() == Some(DDL_COLS))
-                            && matches!(p.up().as_str(), "KEY" | "UNIQUE") =>
-                    {
+                    // `KEY (`/`UNIQUE (` = 컬럼 목록 — CREATE TABLE 괄호 안이든 `ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (`이든(T-315).
+                    (Some(_), Some(p)) if matches!(p.up().as_str(), "KEY" | "UNIQUE") => {
                         Some(DDL_KEYS.to_string())
                     }
                     _ => None,
@@ -199,6 +203,7 @@ pub(crate) fn scan(
                 clause.clear();
                 clause.push(None);
                 ddl_table = None;
+                ddl_add_list = false;
                 continue;
             }
             Kind::Word => {}
@@ -279,13 +284,40 @@ pub(crate) fn scan(
         let a0 = char_at(toks[head].span.0);
         let a1 = char_at(t.span.1);
         let name = t.text.clone();
+        // ★ T-315(사용자 10-08): SQL Server 확장 속성 프로시저(`sys.sp_add/update/dropextendedproperty`)의 **인자 문자열** 속 객체
+        //   (`@level0name` 스키마 · `@level1name` 테이블/뷰/루틴 · `@level2name` 컬럼/제약)도 링크 — 루틴 링크 자체는 아래 보통 길로.
+        if up.starts_with("SP_") && up.ends_with("EXTENDEDPROPERTY") {
+            out.extend(extprop_links(&toks, i, &mut char_at, res));
+        }
+        // ★ T-315: `CONSTRAINT <이름>`(ADD/DROP CONSTRAINT · 컬럼 정의의 `CONSTRAINT DF_x DEFAULT` · CREATE TABLE 괄호 안) = 제약 링크
+        //   (주인 = DDL 테이블 · 메타 상세의 키 목록으로 판정 · 테이블이 메타에 없으면 미확인).
+        if let Some((_, dschema, dname, exists)) = &ddl_table {
+            if quals.is_empty() && prev_up == "CONSTRAINT" {
+                let known =
+                    *exists && res.has_constraint(dschema.as_deref(), dname, &name) != Some(false);
+                out.push(Link {
+                    range: (a0, a1),
+                    kind: LinkKind::Constraint,
+                    schema: dschema.clone(),
+                    owner: Some(dname.clone()),
+                    name,
+                    known,
+                });
+                continue;
+            }
+        }
         // ★ T-288: DDL 컬럼 자리 = `CREATE/ALTER TABLE t (` 안의 정의 첫 낱말(`(` 또는 `,` 다음) · `KEY/UNIQUE (` 목록 · `ADD/MODIFY col`.
         if let Some((_, dschema, dname, exists)) = &ddl_table {
             let in_ddl_paren = matches!(cur_clause.as_deref(), Some(c) if c == DDL_COLS || c == DDL_KEYS)
                 && prev.is_some_and(|p| p.is_punct("(") || p.is_punct(","));
+            // ADD/MODIFY/COLUMN/CHANGE 바로 뒤 · 또는 ADD 목록(SQL Server `ADD a T, b T`)의 `,` 뒤(T-315).
             let after_alter = clause.len() == 1
-                && matches!(prev_up.as_str(), "ADD" | "MODIFY" | "COLUMN")
-                && !relation_pos;
+                && !relation_pos
+                && (matches!(prev_up.as_str(), "ADD" | "MODIFY" | "COLUMN" | "CHANGE")
+                    || (ddl_add_list && prev.is_some_and(|p| p.is_punct(","))));
+            if after_alter && matches!(prev_up.as_str(), "ADD" | "COLUMN") {
+                ddl_add_list = true;
+            }
             if quals.is_empty()
                 && (in_ddl_paren || after_alter)
                 && !DDL_NOT_COLUMN.contains(&up.as_str())
@@ -472,6 +504,19 @@ pub(crate) fn scan(
                 }
             }
             _ => {
+                // ★ T-315: `스키마.테이블.컬럼`(`COMMENT ON COLUMN s.t.c` · PG) — 둘째 한정자가 관계면 컬럼 링크.
+                if quals.len() == 2 && is_relation(Some(&quals[0]), &quals[1]) {
+                    let known = res.has_column(Some(&quals[0]), &quals[1], &name) != Some(false);
+                    out.push(Link {
+                        range: (a0, a1),
+                        kind: LinkKind::Column,
+                        schema: Some(quals[0].clone()),
+                        owner: Some(quals[1].clone()),
+                        name,
+                        known,
+                    });
+                    continue;
+                }
                 if followed_by_paren {
                     if matches!(
                         res.object_class(None, &name),
@@ -696,6 +741,18 @@ impl SnapResolver<'_> {
 }
 
 impl Resolver for SnapResolver<'_> {
+    fn has_constraint(&self, schema: Option<&str>, table: &str, name: &str) -> Option<bool> {
+        let id = self.resolve(schema, table)?;
+        match self.snap.detail(id) {
+            DetailState::Loaded { detail, .. } => Some(
+                detail
+                    .keys
+                    .iter()
+                    .any(|k| self.names.get(k.name).eq_ignore_ascii_case(name)),
+            ),
+            _ => None,
+        }
+    }
     fn object_class(&self, schema: Option<&str>, name: &str) -> Option<ObjClass> {
         // 서버가 풀 수 있고 이 세션이 닿을 수 있는 이름만 정상(96 §6) · 메타에 없으면 시스템 객체 표(㉙).
         let Some(id) = self.resolve(schema, name) else {
@@ -1471,7 +1528,7 @@ impl App {
         };
         let spec = self.sess.spec.clone();
         let (table, schema) = match link.kind {
-            LinkKind::Column => (link.owner.clone(), link.schema.clone()),
+            LinkKind::Column | LinkKind::Constraint => (link.owner.clone(), link.schema.clone()),
             _ => (Some(link.name.clone()), link.schema.clone()),
         };
         let Some(table) = table else { return };
@@ -1564,6 +1621,7 @@ impl App {
             LinkKind::Table => Msg::ObjKindTable,
             LinkKind::Column => Msg::ObjKindColumn,
             LinkKind::Routine => Msg::ObjKindRoutine,
+            LinkKind::Constraint => Msg::ObjKindConstraint,
         })
         .to_string();
         // ★ 컬럼이면 이름 줄에 데이터 타입(+ NOT NULL)을 덧붙인다(사용자 10-07 "컬럼의 경우 데이터 타입을 추가로") — 메타 L2가 있을 때만.
@@ -1614,6 +1672,40 @@ impl App {
                                 .map(|(_, c)| names.get(*c).to_string()),
                             _ => None,
                         })
+                })
+            }
+            // ★ 제약(T-315): 주인 테이블 상세의 키 목록에서 종류·컬럼·참조 테이블을 설명으로.
+            LinkKind::Constraint => {
+                let id = link.owner.as_deref().and_then(|tb| {
+                    self.objlink_resolve(names, &snap, link.schema.as_deref(), cur.as_deref(), tb)
+                });
+                id.and_then(|id| match snap.detail(id) {
+                    DetailState::Loaded { detail, .. } => detail
+                        .keys
+                        .iter()
+                        .find(|k| names.get(k.name).eq_ignore_ascii_case(&link.name))
+                        .map(|k| {
+                            let what = match k.kind {
+                                'P' => "PRIMARY KEY",
+                                'U' => "UNIQUE",
+                                'R' => "FOREIGN KEY",
+                                'C' => "CHECK",
+                                _ => "CONSTRAINT",
+                            };
+                            let cols: Vec<&str> = k.cols.iter().map(|c| names.get(*c)).collect();
+                            let mut s = format!("{what} ({})", cols.join(", "));
+                            if let Some(rt) = k.ref_table {
+                                s.push_str(" → ");
+                                s.push_str(names.get(rt));
+                                if !k.ref_cols.is_empty() {
+                                    let rc: Vec<&str> =
+                                        k.ref_cols.iter().map(|c| names.get(*c)).collect();
+                                    s.push_str(&format!(" ({})", rc.join(", ")));
+                                }
+                            }
+                            s
+                        }),
+                    _ => None,
                 })
             }
             // ★ 시스템 패키지 멤버(㉙ · `DBMS_XPLAN.DISPLAY_CURSOR`) = 내장 표의 시그니처가 설명.
@@ -1723,6 +1815,11 @@ impl App {
             LinkKind::Table => {
                 let (s, k, n) = resolve(&link.name)?;
                 (s, k, n, None)
+            }
+            // 제약 = 주인 테이블 + 멤버(탐색기 Constraints/Keys 폴더의 그 항목 · T-315).
+            LinkKind::Constraint => {
+                let (s, k, n) = resolve(link.owner.as_deref()?)?;
+                (s, k, n, Some(link.name.clone()))
             }
         };
         // SQL Server 다른 DB 객체 = 복합 열쇠 `DB.스키마`(⑭) → DB와 스키마로.
@@ -2202,8 +2299,8 @@ impl App {
         let Some(link) = self.objlinks.links.get(k) else {
             return Vec::new();
         };
-        // 스키마를 적었어도 그 스키마에 없으면(미확인) 다른 스키마의 같은 이름을 후보로(사용자 10-08).
-        if (link.schema.is_some() && link.known) || matches!(link.kind, LinkKind::Column) {
+        // 스키마를 적은 이름은 그 스키마에서만(사용자 10-08 "인접 추가 검사하지 않도록") · 컬럼·제약은 후보 없음.
+        if link.schema.is_some() || matches!(link.kind, LinkKind::Column | LinkKind::Constraint) {
             return Vec::new();
         }
         let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
@@ -2354,26 +2451,9 @@ impl App {
         let link = &self.objlinks.links[k];
         let second = match desc {
             Some(d) => d,
-            None if !link.known => {
-                // 다른 스키마에 같은 이름이 있으면 어디에 있는지까지(사용자 10-08 "원인을 알 수 있게").
-                let elsewhere: Vec<String> = self
-                    .objlink_candidates(k)
-                    .into_iter()
-                    .filter_map(|(label, _)| label.split_once('.').map(|(s, _)| s.to_string()))
-                    .collect();
-                if elsewhere.is_empty() {
-                    // ★ 없는 객체(다른 스키마에도 없음)는 카드·툴팁을 띄우지 않는다(사용자 10-08 "없는 객체인 경우는 hover 카드 뜨지 않도록") —
-                    //   밑줄(벽돌색)만 남아 "메타에 없음"을 알린다 · 우클릭 메뉴는 그대로.
-                    return None;
-                } else {
-                    let stated = link
-                        .schema
-                        .clone()
-                        .or_else(|| self.objlink_cur_schema())
-                        .unwrap_or_default();
-                    tf(Msg::ObjLinkElsewhere, &[&stated, &elsewhere.join(", ")])
-                }
-            }
+            // ★ 없는 객체(적힌 스키마·현재 스키마에 없음)는 카드·툴팁을 띄우지 않는다(사용자 10-08 "해당 DB에 있는지만 판단 · 인접 검사 없음 ·
+            //   없는 객체는 카드 없음") — 밑줄(벽돌색)만 남아 "메타에 없음"을 알린다 · 우클릭 메뉴는 그대로.
+            None if !link.known => return None,
             None => t(Msg::ObjLinkNoDesc).to_string(),
         };
         let text = format!("{kind} {name}\n{second}");
@@ -2532,6 +2612,118 @@ fn click_action(setting: Option<&str>, can_reveal: bool) -> ClickAction {
     }
 }
 
+/// ★ T-315: SQL Server 확장 속성 프로시저의 명명 인자(`@level0type/name` 스키마 · `@level1type/name` 테이블·뷰·루틴 ·
+/// `@level2type/name` 컬럼·제약)에서 **문자열 속 이름**을 링크로(범위 = 따옴표 안 · `N'…'`의 N은 별도 낱말). 순수.
+fn extprop_links(
+    toks: &[nsql_format::Token],
+    start: usize,
+    char_at: &mut dyn FnMut(usize) -> usize,
+    res: &dyn Resolver,
+) -> Vec<Link> {
+    use nsql_format::Kind;
+    // (종류, (이름, 바이트 시작, 바이트 끝)) × level 0~2
+    type Level = (Option<String>, Option<(String, usize, usize)>);
+    let mut lv: [Level; 3] = Default::default();
+    let mut j = start + 1;
+    while j < toks.len() {
+        let t = &toks[j];
+        if t.is_punct(";")
+            || (t.kind == Kind::Word && matches!(t.up().as_str(), "EXEC" | "EXECUTE" | "GO"))
+        {
+            break;
+        }
+        // 명명 인자 = `@level1name`(렉서 = `Kind::Bind` · 접두 `@` 포함).
+        if matches!(t.kind, Kind::Bind | Kind::Word) && t.text.starts_with('@') {
+            let key = t.up();
+            if let Some(rest) = key.strip_prefix("@LEVEL") {
+                let (n, what) = rest.split_at(1.min(rest.len()));
+                if let Ok(n) = n.parse::<usize>() {
+                    if n < 3 {
+                        let mut v = j + 1;
+                        while v < toks.len() && toks[v].text != "=" {
+                            v += 1;
+                        }
+                        v += 1;
+                        while v < toks.len()
+                            && toks[v].kind == Kind::Word
+                            && toks[v].text.eq_ignore_ascii_case("N")
+                        {
+                            v += 1;
+                        }
+                        if let Some(st) = toks.get(v).filter(|s| s.kind == Kind::Str) {
+                            // `'x'` · `N'x'`(접두는 같은 토큰 안) — 첫 따옴표와 끝 따옴표 사이가 이름.
+                            let q0 = st.text.find('\'').unwrap_or(0);
+                            let q1 = st.text.rfind('\'').unwrap_or(st.text.len());
+                            let inner = if q1 > q0 { &st.text[q0 + 1..q1] } else { "" };
+                            let s0 = st.span.0 + q0 + 1;
+                            let s1 = s0 + inner.len();
+
+                            match what {
+                                "TYPE" => lv[n].0 = Some(inner.to_uppercase()),
+                                "NAME" => lv[n].1 = Some((inner.to_string(), s0, s1)),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        j += 1;
+    }
+    let mut out = Vec::new();
+    let schema = match (&lv[0].0, &lv[0].1) {
+        (Some(t), Some((n, ..))) if t == "SCHEMA" => Some(n.clone()),
+        _ => None,
+    };
+    let Some((obj, o0, o1)) = lv[1].1.clone() else {
+        return out;
+    };
+    let obj_kind = match lv[1].0.as_deref() {
+        Some("TABLE" | "VIEW") => Some(LinkKind::Table),
+        Some("PROCEDURE" | "FUNCTION") => Some(LinkKind::Routine),
+        _ => None,
+    };
+    let Some(obj_kind) = obj_kind else {
+        return out;
+    };
+    let class = res.object_class(schema.as_deref(), &obj);
+    let known = match obj_kind {
+        LinkKind::Table => class == Some(ObjClass::Relation),
+        _ => class == Some(ObjClass::Routine),
+    };
+    out.push(Link {
+        range: (char_at(o0), char_at(o1)),
+        kind: obj_kind,
+        schema: schema.clone(),
+        owner: None,
+        name: obj.clone(),
+        known,
+    });
+    if let (Some(t2), Some((m, m0, m1))) = (&lv[2].0, &lv[2].1) {
+        let kind = match t2.as_str() {
+            "COLUMN" => Some(LinkKind::Column),
+            "CONSTRAINT" => Some(LinkKind::Constraint),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let known = known
+                && match kind {
+                    LinkKind::Column => res.has_column(schema.as_deref(), &obj, m) != Some(false),
+                    _ => res.has_constraint(schema.as_deref(), &obj, m) != Some(false),
+                };
+            out.push(Link {
+                range: (char_at(*m0), char_at(*m1)),
+                kind,
+                schema,
+                owner: Some(obj),
+                name: m.clone(),
+                known,
+            });
+        }
+    }
+    out
+}
+
 /// DDL 머리 낱말 뒤의 이름 자리 — `CREATE/ALTER/DROP … <종류> <이름>`의 `<종류>`가 무엇이면 어떤 링크인가(순수).
 fn ddl_head_kind(prev_up: &str) -> Option<LinkKind> {
     match prev_up {
@@ -2588,7 +2780,7 @@ mod tests {
         fn object_class(&self, schema: Option<&str>, name: &str) -> Option<ObjClass> {
             match (schema, name.to_ascii_uppercase().as_str()) {
                 (_, "TB_ORDER" | "TB_ITEM" | "TB_LAZY") => Some(ObjClass::Relation),
-                (_, "SP_RUN" | "FN_CALC") => Some(ObjClass::Routine),
+                (_, "SP_RUN" | "FN_CALC" | "SP_ADDEXTENDEDPROPERTY") => Some(ObjClass::Routine),
                 (_, "PKG_X") => Some(ObjClass::Package),
                 _ => None,
             }
@@ -2627,6 +2819,67 @@ mod tests {
         assert!(!fn_.known && fn_.kind == LinkKind::Routine);
         assert_eq!(ddl_head_kind("TABLE"), Some(LinkKind::Table));
         assert_eq!(ddl_head_kind("SELECT"), None);
+    }
+
+    /// ★ T-315(사용자 10-08 예문): Oracle `ALTER TABLE t ADD (…)` · `COMMENT ON COLUMN` · 제약(ADD/DROP CONSTRAINT · 컬럼 DEFAULT 제약 ·
+    /// `PRIMARY KEY (…)` 목록) · SQL Server 괄호 없는 ADD 목록 · `sp_addextendedproperty` 인자 문자열 속 스키마/테이블/컬럼.
+    #[test]
+    fn ddl_alter_comment_constraints_and_extended_properties() {
+        let text = "ALTER TABLE TB_ORDER ADD (NEW_A VARCHAR2(10), ORD_NO VARCHAR2(5) DEFAULT 'P');\n\
+COMMENT ON COLUMN TB_ORDER.ORD_NO IS 'x';\n\
+COMMENT ON COLUMN S1.TB_ORDER.ITEM_CD IS 'y';\n\
+ALTER TABLE TB_ORDER ADD CONSTRAINT PK_TB_ORDER PRIMARY KEY (ORD_NO);\n\
+ALTER TABLE TB_ORDER DROP CONSTRAINT PK_TB_ORDER;\n\
+ALTER TABLE dbo.TB_ORDER ADD USE_YN CHAR(1) NOT NULL CONSTRAINT DF_USE DEFAULT ('Y'), REG_DTTM DATETIME2(0) NULL CONSTRAINT DF_REG DEFAULT (SYSDATETIME());\n\
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상태', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'TB_ORDER', @level2type = N'COLUMN', @level2name = N'ORD_NO';";
+        let v = scan(text, Some(nsql_core::Dialect::Oracle), &Fake);
+        let of = |n: &str, k: LinkKind| {
+            v.iter()
+                .filter(|l| l.name == n && l.kind == k)
+                .collect::<Vec<_>>()
+        };
+        // 테이블 링크 = ALTER ×4 · COMMENT ON COLUMN의 주인은 컬럼 링크로만 · 확장 속성 인자 1(스키마 dbo).
+        let tables = of("TB_ORDER", LinkKind::Table);
+        assert!(tables.len() >= 5, "{tables:?}");
+        assert!(
+            tables
+                .iter()
+                .any(|l| l.schema.as_deref() == Some("dbo") && l.known),
+            "확장 속성 인자 테이블 {tables:?}"
+        );
+        // 새 컬럼(메타에 없음) = 미확인 · 있는 컬럼 = 정상.
+        let new_a = of("NEW_A", LinkKind::Column);
+        assert_eq!(new_a.len(), 1);
+        assert!(!new_a[0].known);
+        let ord = of("ORD_NO", LinkKind::Column);
+        assert!(
+            ord.len() >= 4,
+            "ADD 목록 · COMMENT · PRIMARY KEY (…) · 확장 속성 = {ord:?}"
+        );
+        assert!(ord
+            .iter()
+            .all(|l| l.known && l.owner.as_deref() == Some("TB_ORDER")));
+        // 스키마.테이블.컬럼(COMMENT ON COLUMN S1.TB_ORDER.ITEM_CD) = 컬럼 링크.
+        let item = of("ITEM_CD", LinkKind::Column);
+        assert_eq!(item.len(), 1, "{v:?}");
+        assert_eq!(item[0].schema.as_deref(), Some("S1"));
+        // 제약 = PK ×2(ADD · DROP) · DEFAULT 제약 ×2 · 주인 = TB_ORDER · 상세를 모르면(None) 정상.
+        let pk = of("PK_TB_ORDER", LinkKind::Constraint);
+        assert_eq!(pk.len(), 2, "{v:?}");
+        assert!(pk
+            .iter()
+            .all(|l| l.owner.as_deref() == Some("TB_ORDER") && l.known));
+        assert_eq!(of("DF_USE", LinkKind::Constraint).len(), 1);
+        assert_eq!(of("DF_REG", LinkKind::Constraint).len(), 1);
+        // SQL Server 괄호 없는 ADD 목록 = 둘 다 컬럼(메타에 없어 미확인).
+        assert_eq!(of("USE_YN", LinkKind::Column).len(), 1);
+        assert_eq!(of("REG_DTTM", LinkKind::Column).len(), 1, "{v:?}");
+        // 확장 속성 프로시저 자체 = 루틴 링크(시스템 객체) · 인자 이름(@name 등)은 링크 아님.
+        assert!(v
+            .iter()
+            .any(|l| l.name.eq_ignore_ascii_case("sp_addextendedproperty")
+                && l.kind == LinkKind::Routine));
+        assert!(v.iter().all(|l| !l.name.starts_with('@')));
     }
 
     fn kinds(text: &str) -> Vec<(String, LinkKind, Option<String>)> {
@@ -2735,12 +2988,18 @@ mod tests {
         );
         assert!(cols.iter().any(|(n, k)| *n == "newcol" && !*k), "{cols:?}");
         let names: Vec<&str> = v.iter().map(|l| l.name.as_str()).collect();
+        // `CONSTRAINT pk_o` = 제약 링크(T-315 · 컬럼이 아니다).
+        assert!(
+            v.iter().any(|l| l.name == "pk_o"
+                && l.kind == LinkKind::Constraint
+                && l.owner.as_deref() == Some("tb_order")),
+            "{v:?}"
+        );
         for bad in [
             "NUMBER",
             "VARCHAR2",
             "10",
             "CONSTRAINT",
-            "pk_o",
             "PRIMARY",
             "KEY",
             "UNIQUE",

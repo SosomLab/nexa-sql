@@ -5,13 +5,13 @@
 //! - 판정 시점 = 탭이 열릴 때 · 탭의 연결이 바뀔 때 · 본문이 바뀔 때 — 틱에서 탭별 열쇠 `(본문 세대, 세션 id, 연결 여부)`가 바뀐 탭만
 //!   문장을 다시 가르고(머리 [`HEAD_CHARS`]글자만 · 큰 파일도 상수 비용), 메타 조회(해시 1~2번)는 틱마다 다시 한다(메타가 뒤늦게
 //!   읽혀도 항목이 나타나게).
-//! - ★ **항목은 메타에서 실제로 풀릴 때만**(사용자 10-08 2차 "목록을 확인할 대상이 아니면 표시하지 않도록"): 연결이 없거나 메타에 그 객체가
-//!   없으면 항목 자체가 없다. 적힌 스키마에 없으면 **다른 스키마의 같은 이름**(종류 일치)을 찾아 그쪽으로(사용자 캡처 = `BISCM.SP_X`인데
-//!   이 서버엔 `BISCM_SB`에만 있음 · 상태줄에 "BISCM에 없음 · BISCM_SB에 있음" 안내) · 스키마를 안 적었으면 그 탭 세션의 현재 스키마.
+//! - ★ **항목은 메타에서 실제로 풀릴 때만**(사용자 10-08 2차 "목록을 확인할 대상이 아니면 표시하지 않도록"): 연결이 없거나 **적힌 스키마**
+//!   (없으면 그 탭 세션의 현재 스키마)에 그 객체가 없으면 항목 자체가 없다 — 다른 스키마는 보지 않는다(사용자 10-08 3차 "해당 DB에 있는지만 ·
+//!   인접 추가 검사 없음" · `BISCM.SP_X`가 BISCM_SB에만 있어도 없는 객체).
 //! - SQL Server `DB.스키마`는 DB와 스키마로(objlink ⑭와 같은 규칙).
 
 use nsql_core::{DdlTarget, Dialect};
-use nsql_i18n::{t, tf, Msg};
+use nsql_i18n::{t, Msg};
 
 use crate::explorer::RevealTarget;
 use crate::{App, Focus};
@@ -73,8 +73,6 @@ pub(crate) type TabObjCache = std::collections::HashMap<u64, ((u64, u64, bool), 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TabObj {
     pub target: RevealTarget,
-    /// 적힌 스키마와 다른 스키마에서 찾았으면 `Some((적힌 스키마, 찾은 스키마))` — 상태줄 안내.
-    pub moved: Option<(String, String)>,
 }
 
 impl App {
@@ -91,7 +89,7 @@ impl App {
             .filter(|x| !x.is_empty())
     }
 
-    /// DDL 대상을 그 탭 세션의 메타로 푼다 — 적힌 스키마(없으면 현재 스키마) → 없으면 다른 스키마의 같은 이름(종류 일치 · 첫 것).
+    /// DDL 대상을 그 탭 세션의 메타로 푼다 — 적힌 스키마(없으면 현재 스키마)에서만 · 종류가 맞아야(다른 스키마 폴백 없음).
     fn resolve_tab_obj(&self, sid: u64, t: &DdlTarget) -> Option<TabObj> {
         let s = self.sess_by_id(sid)?;
         if !s.connected || s.broken {
@@ -101,21 +99,12 @@ impl App {
         let cur = Self::tab_cur_schema(s);
         let dialect = s.dialect;
         let (names, snap) = self.explorer.meta_view(s.spec.as_ref());
-        let stated = t.schema.as_deref().or(cur.as_deref());
-        let direct =
-            snap.lookup_resolvable_from(names, t.schema.as_deref(), cur.as_deref(), &t.name);
-        let (id, moved) = match direct {
-            Some(id) => (id, None),
-            None => {
-                let id = snap
-                    .lookup_any_schema(names, &t.name)
-                    .into_iter()
-                    .find(|&id| snap.object(id).is_some_and(|o| kind_matches(kind, o.kind)))?;
-                let found = names.get(snap.object(id)?.schema).to_string();
-                (id, Some((stated.unwrap_or_default().to_string(), found)))
-            }
-        };
+        let id =
+            snap.lookup_resolvable_from(names, t.schema.as_deref(), cur.as_deref(), &t.name)?;
         let o = snap.object(id)?;
+        if !kind_matches(kind, o.kind) {
+            return None;
+        }
         let schema = names.get(o.schema).to_string();
         let name = names.get(o.name).to_string();
         let (db, schema) = match (dialect, schema.split_once('.')) {
@@ -130,9 +119,9 @@ impl App {
                 schema,
                 kind: o.kind,
                 name,
-                member: None,
+                // 제약 DDL(`ADD/DROP CONSTRAINT x`)이면 테이블 아래 그 항목까지(T-315).
+                member: t.member.clone(),
             },
-            moved,
         })
     }
 
@@ -193,13 +182,10 @@ impl App {
         if !self.explorer.is_visible() {
             self.menu_action("view.explorer");
         }
-        let ok = self.explorer.reveal(spec.as_ref(), obj.target.clone());
+        let ok = self.explorer.reveal(spec.as_ref(), obj.target);
         if ok {
             self.set_focus(Focus::Explorer);
             self.explorer_actions();
-            if let Some((stated, found)) = obj.moved {
-                self.sess.status = tf(Msg::ObjLinkElsewhere, &[&stated, &found]);
-            }
         }
         self.redraw();
     }

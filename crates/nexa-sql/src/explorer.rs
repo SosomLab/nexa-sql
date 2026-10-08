@@ -4571,7 +4571,18 @@ impl Explorer {
             .copied()
             .filter(|&c| {
                 matches!(&self.nodes[c].kind, NodeKind::Sub { sub, .. }
-                    if matches!(sub, SubKind::Columns | SubKind::Procedures | SubKind::Functions))
+                if matches!(
+                    sub,
+                    SubKind::Columns
+                        | SubKind::Procedures
+                        | SubKind::Functions
+                        // 제약 링크·탭 메뉴의 멤버(T-315) = 제약/키/외래 키/인덱스 폴더.
+                        | SubKind::Constraints
+                        | SubKind::UniqueKeys
+                        | SubKind::CheckConstraints
+                        | SubKind::ForeignKeys
+                        | SubKind::Indexes
+                ))
             })
             .collect();
         if subs.is_empty() {
@@ -8457,6 +8468,7 @@ mod refresh_tests {
             kind,
             schema: schema.map(String::from),
             name: name.into(),
+            member: None,
         };
         assert_eq!(
             ex.apply_ddl(&t(DdlVerb::Create, DdlKind::Table, None, "X"), None),

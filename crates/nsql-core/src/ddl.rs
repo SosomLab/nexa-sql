@@ -55,6 +55,8 @@ pub struct DdlTarget {
     pub schema: Option<String>,
     /// 객체 이름(따옴표를 벗긴 것 · 대소문자는 적힌 그대로 — 비교는 호출자가 대소문자 무시로).
     pub name: String,
+    /// ★ 멤버(T-315 10-08): `ALTER TABLE t ADD/DROP CONSTRAINT <이름>`의 제약 이름 — 탐색기 찾기가 테이블 아래 그 항목까지.
+    pub member: Option<String>,
 }
 
 /// 머리말 토큰: 낱말(대문자로 접은 것 + 원문) 또는 점으로 이은 이름.
@@ -231,6 +233,7 @@ pub fn ddl_target(sql: &str, _dialect: Dialect) -> Option<DdlTarget> {
                 kind: DdlKind::Table,
                 schema,
                 name,
+                member: None,
             });
         }
         "COMMENT" => {
@@ -252,6 +255,7 @@ pub fn ddl_target(sql: &str, _dialect: Dialect) -> Option<DdlTarget> {
                 kind,
                 schema,
                 name,
+                member: None,
             });
         }
         _ => return None,
@@ -301,11 +305,21 @@ pub fn ddl_target(sql: &str, _dialect: Dialect) -> Option<DdlTarget> {
     } else {
         verb
     };
+    // `ALTER TABLE t ADD|DROP CONSTRAINT <이름>` = 멤버(T-315).
+    let member = (verb == DdlVerb::Alter)
+        .then(|| {
+            toks[i..]
+                .windows(2)
+                .find(|w| w[0].upper == "CONSTRAINT")
+                .and_then(|w| w[1].parts.last().cloned())
+        })
+        .flatten();
     Some(DdlTarget {
         verb,
         kind,
         schema,
         name,
+        member,
     })
 }
 
@@ -318,6 +332,36 @@ mod tests {
             let schema: Option<&'static str> = d.schema.map(|s| &*Box::leak(s.into_boxed_str()));
             (d.verb, d.kind, schema, d.name)
         })
+    }
+
+    /// ★ T-315(10-08): `ALTER TABLE t ADD/DROP CONSTRAINT <이름>` = 테이블 대상 + 멤버(제약 이름) · 그 밖 ALTER = 멤버 없음.
+    #[test]
+    fn alter_constraint_member() {
+        let d = ddl_target(
+            "ALTER TABLE BISCM.M4S_O400100 ADD CONSTRAINT PK_M4S_O400100 PRIMARY KEY (MP_VRSN_ID)",
+            Dialect::Oracle,
+        )
+        .unwrap();
+        assert_eq!((d.verb, d.kind), (DdlVerb::Alter, DdlKind::Table));
+        assert_eq!(d.schema.as_deref(), Some("BISCM"));
+        assert_eq!(d.name, "M4S_O400100");
+        assert_eq!(d.member.as_deref(), Some("PK_M4S_O400100"));
+        let d = ddl_target(
+            "ALTER TABLE dbo.SALES_ORDER DROP CONSTRAINT DF_SALES_ORDER_USE_YN",
+            Dialect::Mssql,
+        )
+        .unwrap();
+        assert_eq!(d.member.as_deref(), Some("DF_SALES_ORDER_USE_YN"));
+        let d = ddl_target(
+            "ALTER TABLE M4S_O400100 ADD (MP_VRSN_ID VARCHAR2(20))",
+            Dialect::Oracle,
+        )
+        .unwrap();
+        assert_eq!(d.member, None);
+        assert!(ddl_target("CREATE TABLE t (a INT)", Dialect::Oracle)
+            .unwrap()
+            .member
+            .is_none());
     }
 
     #[test]

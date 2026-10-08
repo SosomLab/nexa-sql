@@ -123,8 +123,11 @@ next = TABLE, VIEW, INDEX, UNIQUE INDEX, SEQUENCE, TRIGGER, PROCEDURE, FUNCTION,
 [clause ALTER]
 next = TABLE, VIEW, INDEX, SEQUENCE, TRIGGER, PROCEDURE, FUNCTION, SCHEMA
 objects = table, schema
+[clause ALTER TABLE]
+next = ADD, ADD CONSTRAINT, DROP COLUMN, DROP CONSTRAINT, RENAME TO, RENAME COLUMN
+objects = table, schema
 [clause DROP]
 next = TABLE, VIEW, INDEX, SEQUENCE, TRIGGER, PROCEDURE, FUNCTION, SCHEMA, TYPE, IF EXISTS
-objects = table, view, schema
+objects = table, view, function, schema
 [clause TRUNCATE TABLE]
 objects = table, schema
