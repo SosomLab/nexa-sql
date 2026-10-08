@@ -1048,6 +1048,62 @@ impl Intel {
                 }
             }
             CtxKind::Expr | CtxKind::Start => {
+                // ★ 이름 지정 인자(사용자 10-08 "Argument 이름에 직접 지정하는 문법에서도 자동완성" · T-317 확장): 괄호 주인이 메타의
+                //   루틴이고 캐럿이 인자 시작(`(`·`,` 뒤)이면 `이름 => ` 조각(Oracle·PG 명명 표기 · SQL Server는 괄호 없는 `@이름` = T-317) ·
+                //   이미 `이름 =>`로 적은 인자는 제외 · 인자를 모르면 요청 + 불러오는 중.
+                if ctx.kind == CtxKind::Expr
+                    && matches!(dialect, Some(Dialect::Oracle | Dialect::Postgres))
+                {
+                    if let (Some(owner), Some(m)) = (ctx.paren_owner.as_deref(), meta) {
+                        let head =
+                            &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)];
+                        if named_arg_start(head) {
+                            let (schema, name) = owner
+                                .rsplit_once('.')
+                                .map_or((None, owner), |(sc, n)| (Some(sc), n));
+                            let cur = m.snap.current_schema.map(|c| m.names.get(c).to_string());
+                            let id = m
+                                .snap
+                                .lookup_resolvable_from(m.names, schema, cur.as_deref(), name)
+                                .filter(|&id| {
+                                    m.snap.object(id).is_some_and(|o| o.kind.is_routine())
+                                });
+                            if let Some(id) = id {
+                                match m.snap.args(id) {
+                                    nsql_run::meta::ArgState::Loaded(list) => {
+                                        let used = named_args_used(head);
+                                        for (i, a) in list.iter().enumerate() {
+                                            let n = m.names.get(a.name);
+                                            if used.iter().any(|u| u.eq_ignore_ascii_case(n)) {
+                                                continue;
+                                            }
+                                            cands.push(Cand {
+                                                text: format!("{n} => "),
+                                                kind: CandKind::Variable,
+                                                detail: if show_types {
+                                                    m.names.get(a.detail).to_string()
+                                                } else {
+                                                    String::new()
+                                                },
+                                                source: 1,
+                                                tag: 0,
+                                                mark: String::new(),
+                                                order: i as u32,
+                                                qualifier: String::new(),
+                                                layer: 0,
+                                            });
+                                        }
+                                    }
+                                    nsql_run::meta::ArgState::Loading => self.loading = true,
+                                    nsql_run::meta::ArgState::Unknown => {
+                                        self.need_args.push(id);
+                                        self.loading = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // ★ `*` / `A.*` 뒤 = "모든 컬럼 (N)" 조각(사용자 09-24): `A.*` = 그 별칭의 컬럼 · bare `*` = FROM의 모든 테이블 컬럼(둘 이상이거나
                 //   별칭을 썼으면 `A.컬럼` · 하나뿐이고 별칭이 없으면 이름만). 안 읽은 테이블은 급한 채움 요청 + "불러오는 중".
                 if ctx.kind == CtxKind::Expr && self.cfg.insert_columns {
@@ -2028,6 +2084,31 @@ fn from_kinds(dialect: Option<Dialect>, routines: bool) -> Vec<ObjectKind> {
 /// 창 방식 문맥 구간(09-24 §187): 캐럿 앞뒤 `WINDOW_BYTES` 안에서 빈 줄(`\n\n`) 경계를 찾아 자르고(없으면 줄 시작/끝) 글자 경계로 맞춘다.
 /// 문장은 보통 빈 줄로 나뉘므로 캐럿 문장은 통째로 들어온다. 반환 = (시작, 끝) 절대 바이트.
 const WINDOW_BYTES: usize = 256 * 1024;
+/// 캐럿 앞 글(접두 제외)이 **인자 시작** 자리인가 — 공백을 걷은 마지막 글자가 `(` 또는 `,`(순수 · T-317 이름 지정 인자).
+fn named_arg_start(head: &str) -> bool {
+    matches!(head.trim_end().chars().last(), Some('(' | ','))
+}
+
+/// 이미 이름을 지정한 인자들(`이름 =>` 의 이름 · 순수).
+fn named_args_used(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, _) in text.match_indices("=>") {
+        let before = text[..i].trim_end();
+        let name: String = before
+            .chars()
+            .rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '#')
+            .collect::<Vec<char>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// 글 안의 `@이름` 낱말들(시스템 프로시저 파라미터 자리에서 이미 쓴 것 · T-316 · 순수).
 fn param_names_in(text: &str) -> Vec<String> {
     let b = text.as_bytes();
@@ -2458,6 +2539,24 @@ impl crate::memstat::MemSource for Intel {
 mod tests {
     use super::*;
     use nsql_run::meta::{MetaStore, NewCol, NewObj};
+
+    /// 이름 지정 인자 도우미(T-317 확장 · 10-08): 인자 시작 = `(`·`,` 뒤 · 이미 적은 `이름 =>` 수집.
+    #[test]
+    fn named_arg_helpers() {
+        assert!(named_arg_start("EXEC BISCM.SP_X("));
+        assert!(named_arg_start("EXEC BISCM.SP_X(p_a => 1, "));
+        assert!(!named_arg_start("EXEC BISCM.SP_X(p_a => "));
+        assert!(!named_arg_start("SELECT fn(a"));
+        assert_eq!(
+            named_args_used("EXEC SP_X(p_pjt_code => 'A', p_result=>:r, "),
+            vec!["p_pjt_code".to_string(), "p_result".to_string()]
+        );
+        assert!(named_args_used("EXEC SP_X(1, 2)").is_empty());
+        assert_eq!(
+            param_names_in("@a = 1, @level0type = N'x'"),
+            vec!["@a", "@level0type"]
+        );
+    }
 
     fn cfg() -> IntelCfg {
         IntelCfg {
