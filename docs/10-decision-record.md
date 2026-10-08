@@ -389,6 +389,11 @@
 | D-262 | Windows `FileIdBothDirectoryInfo` 대량 열거 어댑터 (10-07) | ✖ 사용자 10-07 저녁 = 하지 않음(제외) | 105-fast-file-enumeration-survey.md §3-3 · T-294 |
 | D-263 | 폴더 감시 포트 `DirWatch`(3-OS 어댑터 · 상한 넘으면 폴링) (10-07) | ✅ 사용자 10-07 저녁 = 채택 · "전체 개발 진행"(T-293 · 협업 평가 = 제외 규칙과 함께 쓰면 유휴 CPU 0 · OS 메모리 ≈ 0.2 MB · 크기 수십 KB) | 105-fast-file-enumeration-survey.md §3-3 · T-293 |
 | D-264 | **변수 대입은 그 이름이 사는 층에 쓴다**(tab → shared → global · 어디에도 없으면 tab) · 탭에서 가리기 = 명시 선언(`VAR A` · `VAR A 타입 [= 값]`) · 글로벌은 명시 선언으로만 생김(오염 방지 유지) · 선언 + 층 한 줄 `VAR A NUMBER = 10 GLOBAL` (10-07) | ✅ **최종**(사용자 10-07 2회 확인 · bin54) · 09-25 "대입 = 늘 탭 가림" 폐기 · bin53의 "설계 유지" 판단도 뒤집힘 | 63-variable-management.md §11-3 · §11-4 · T-304 |
+| D-265 | 메타 세션 호출 상한 기본 (10-08) | ⏳ 결정 대기 · 권장 = `explorer.timeout`과 같은 15 s(별도 키는 HIDDEN) | 107-server-health-propagation.md §7 · T-313 ① |
+| D-266 | 끊김 토스트 억제 창 (10-08) | ⏳ 결정 대기 · 권장 = 끝점당 60 s(`net.notify_quiet_secs`) | 107-server-health-propagation.md §7 · T-313 ③ |
+| D-267 | 끊긴 상태의 탐색기 캐시 열람 (10-08) | ⏳ 결정 대기 · 권장 = 허용(트리·검색·완성은 캐시로 계속 · 서버가 필요한 것만 막기) | 107-server-health-propagation.md §7 · T-313 ④ |
+| D-268 | L0 OS 네트워크 신호 도입 시점 (10-08) | ⏳ 결정 대기 · 권장 = ⑤로 미룸(①~④가 사건을 막는다 · T-130 유지 → 107 ⑤로 흡수) | 107-server-health-propagation.md §7 · T-313 ⑤ · 53 D-113 |
+| D-269 | 커밋/롤백의 끊김 안내 (10-08) | ⏳ 결정 대기 · 권장 = 재접속 없이 막고 "서버 쪽 롤백 가능성" 경고 + 트랜잭션 로그 Lost(53 D-109 유지) | 107-server-health-propagation.md §7 · T-313 ④ |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |
 | L-3 | 라이선스 ID 체계 `NSL-2026-000001` · 대장은 발급 PC 로컬(비공개 저장소에도 안 올림) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:452 §12-7 · journal/2026-09-27.md:205 |
