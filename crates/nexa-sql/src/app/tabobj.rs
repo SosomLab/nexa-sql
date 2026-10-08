@@ -8,7 +8,7 @@
 //! - 스키마가 적혀 있지 않으면 그 탭 세션의 현재 스키마(서버가 답한 값 → `?schema=` → 사용자) · SQL Server `DB.스키마`는 DB와 스키마로.
 
 use nsql_core::{DdlTarget, Dialect};
-use nsql_i18n::{t, tf, Msg};
+use nsql_i18n::{t, Msg};
 
 use crate::explorer::RevealTarget;
 use crate::{App, Focus};
@@ -40,7 +40,8 @@ pub(crate) fn first_ddl_target(text: &str, dialect: Option<Dialect>) -> Option<D
     nsql_core::ddl_target(body, dialect.unwrap_or(Dialect::Oracle))
 }
 
-/// 메뉴 라벨에 넣을 이름(`스키마.이름` 또는 `이름`).
+/// `스키마.이름` 또는 `이름`(시험·진단용 — 메뉴 라벨에는 이름을 넣지 않는다 · 사용자 10-08 2차).
+#[cfg(test)]
 pub(crate) fn qualified(t: &DdlTarget) -> String {
     match &t.schema {
         Some(s) if !s.is_empty() => format!("{s}.{}", t.name),
@@ -74,8 +75,8 @@ impl App {
                 }
                 (key, head_text(tb.buf(), HEAD_CHARS))
             };
-            let label = first_ddl_target(&head, dialect)
-                .map(|t| tf(Msg::MnTabRevealObject, &[&qualified(&t)]));
+            let label =
+                first_ddl_target(&head, dialect).map(|_| t(Msg::MnTabRevealObject).to_string());
             self.tab_obj_cache.insert(id, key);
             self.editors.set_tab_obj(id, label.map(|l| (l, connected)));
         }

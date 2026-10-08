@@ -151,7 +151,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 > 상태(10-05): 앱 쪽 워크플로 `.github/workflows/linux-repo.yml` · 릴리스 노트의 설치 표/등록 명령(`release.yml`) · 형제 저장소 `../linux-repo/apps/nexa-sql.toml`(미커밋)까지 작성. **미검증 = 실제 dispatch · linux-repo publish · `apt`/`dnf` 실기**(TODO T-280).
 
-**배포 채널 요약**(10-05 v0.1.5): brew(맥 · 열림) · **APT/RPM 저장소 pkg.sosomlab.com**(Linux · toml 등록 완료 · 신호 시크릿 `LINUX_REPO_DISPATCH_TOKEN`은 사용자 몫 → 그때까지 publish 수동/정기) · **winget · choco(열림 · §5-3)** · 그 밖 = GitHub Release 설치본 직접 내려받기.
+**배포 채널 요약**(10-05 v0.1.5): brew(맥 · 열림) · **APT/RPM 저장소 pkg.sosomlab.com**(Linux · toml 등록 완료 · 신호 시크릿 `LINUX_REPO_DISPATCH_TOKEN` = **등록됨 10-08**(SosomLab/nexa-sql 저장소 시크릿 · fine-grained PAT = linux-repo Contents RW · 첫 자동 신호 publish 37738359314 · 그 전 기록: 사용자 몫 → 그때까지 publish 수동/정기) · **winget · choco(열림 · §5-3)** · 그 밖 = GitHub Release 설치본 직접 내려받기.
 
 **사용자 설치 명령**(linux-repo README와 같다 · 한 번 등록하면 `apt upgrade`/`dnf upgrade`로 갱신):
 

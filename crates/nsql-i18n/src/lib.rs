@@ -1728,7 +1728,7 @@ pub enum Msg {
     MnTabCloseAll,
     MnTabReveal,
     MnTabRevealProject,
-    /// 탭 메뉴 "객체 탐색기에서 보기: {0}"(첫 실행 문장이 객체 DDL일 때 · 사용자 10-08).
+    /// 탭 메뉴 "객체 탐색기에서 보기"(첫 실행 문장이 객체 DDL일 때 · 사용자 10-08 · 이름은 라벨에 넣지 않는다 = 사용자 10-08 2차).
     MnTabRevealObject,
     PhTabRename,
     StRevealFailed,
@@ -5462,7 +5462,7 @@ impl Msg {
             Msg::MnTabCloseAll => ["Close all tabs", "탭 모두 닫기"],
             Msg::MnTabReveal => ["Open file location", "파일 위치 열기"],
             Msg::MnTabRevealProject => ["Reveal in Project Explorer", "프로젝트 탐색기에서 보기"],
-            Msg::MnTabRevealObject => ["Reveal {0} in Object Explorer", "객체 탐색기에서 보기: {0}"],
+            Msg::MnTabRevealObject => ["Reveal in Object Explorer", "객체 탐색기에서 보기"],
             Msg::PhTabRename => ["New tab name - Enter to apply, Esc to cancel", "새 탭 이름 - Enter 적용 · Esc 취소"],
             Msg::StObjRevealNone => ["No database object under the caret to reveal", "캐럿 위치에 객체 탐색기에서 찾을 객체가 없습니다"],
             Msg::StRevealFailed => ["Could not open the file location: {0}", "파일 위치를 열 수 없습니다: {0}"],
