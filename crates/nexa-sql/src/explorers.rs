@@ -948,7 +948,10 @@ impl ExplorerSet {
         let b = self.bounds;
         let content_y = self.pane_top(i) + y;
         self.scroll = (content_y - b.h / 3).max(0);
-        self.bars.show();
+        // ★ 스크롤바는 깨우지 않는다(사용자 10-08 "탭을 클릭하면 세로 스크롤바가 보인다 · 직접 스크롤한 경우가 아니면 보이지 않게"):
+        //   이 길은 탭 연결 동기(`focus_server`)·찾기·"객체 탐색기에서 보기"처럼 **코드가 옮기는** 스크롤이다 — 위치가 바뀌어도
+        //   막대는 휠·드래그·썸 접근(`ScrollBars::on_event`)에서만 나타난다. 키보드로 선택을 옮겨 따라가는 `reveal_selection`은
+        //   사용자 입력이라 종전대로 깨운다.
         self.relayout();
     }
 
