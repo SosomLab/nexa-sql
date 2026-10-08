@@ -30,7 +30,7 @@ mod run;
 mod session;
 mod settings;
 mod startup_cmd;
-mod tabobj;
+pub(crate) mod tabobj;
 mod toolbar;
 mod tx;
 mod vars;
