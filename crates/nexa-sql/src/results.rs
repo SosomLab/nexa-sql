@@ -422,6 +422,44 @@ impl ResultPanel {
         self.tabs.len() - 1
     }
 
+    /// ★ 딸린 결과 탭은 **부모(와 앞선 딸린 탭) 바로 뒤**에 끼운다 — `push`로 끝에 붙이면 Output 탭 뒤로 가서
+    ///   `결과1 | Output | 결과2`가 됐다(협업 V1 bin94 관찰 (b) · 10-08). 부모가 없으면 끝에.
+    pub(crate) fn insert_child(&mut self, parent: u64, tab: ResultTab) -> usize {
+        let at = match self.index_of(parent) {
+            Some(pi) => {
+                let mut at = pi + 1;
+                while self
+                    .tabs
+                    .get(at)
+                    .is_some_and(|t| t.child_of.is_some_and(|(p, _)| p == parent))
+                {
+                    at += 1;
+                }
+                at
+            }
+            None => self.tabs.len(),
+        };
+        self.insert_at(at, tab)
+    }
+
+    /// 자리 지정 추가(활성 인덱스 보정 · 번호 규칙 적용 · 막대 변화 신호).
+    pub(crate) fn insert_at(&mut self, at: usize, tab: ResultTab) -> usize {
+        let at = at.min(self.tabs.len());
+        if at == self.tabs.len() {
+            return self.push(tab);
+        }
+        let was = self.bar_visible();
+        self.tabs.insert(at, tab);
+        if at <= self.active {
+            self.active += 1;
+        }
+        self.number_if_default(at);
+        if self.bar_visible() != was {
+            self.bar_changed = true;
+        }
+        at
+    }
+
     /// 탭 제거(활성 탭이면 호스트가 먼저 그리드를 돌려놓고 부른다) — 남은 탭이 없으면 `None`.
     pub(crate) fn remove(&mut self, i: usize) -> Option<ResultTab> {
         if i >= self.tabs.len() {
@@ -466,14 +504,18 @@ impl ResultPanel {
         }
     }
 
-    /// 제목 자동 부여(같은 이름이면 ` 2` `3`… 접미).
+    /// 제목 자동 부여(같은 이름이면 ` 2` `3`… 접미) — **`except` 탭에 딸린 탭(`결과 (2)`)은 겹침으로 세지 않는다**(종전 규칙에서
+    /// 재실행마다 부모가 `EXEC 2` · 딸린 탭이 `EXEC 2 (2)`로 밀리던 결함 · 협업 V1 bin94 관찰 (a) · 10-08).
     pub(crate) fn unique_title(&self, base: &str, except: usize) -> String {
+        let me = self.tabs.get(except).map(|t| t.id);
         let n = self
             .tabs
             .iter()
             .enumerate()
             .filter(|(i, t)| {
-                *i != except && (t.title == base || t.title.starts_with(&format!("{base} ")))
+                *i != except
+                    && !t.child_of.is_some_and(|(p, _)| Some(p) == me)
+                    && (t.title == base || t.title.starts_with(&format!("{base} ")))
             })
             .count();
         if n == 0 {
@@ -702,6 +744,44 @@ mod tests {
         let l = p.push(tab_default(5));
         p.title_extra(l, "RET");
         assert_eq!(p.tabs[l].title, "RET 2");
+    }
+
+    /// 협업 V1 bin94 관찰 둘(10-08): (a) table 규칙 재실행 = 부모가 제 딸린 탭(`EXEC (2)`)을 겹침으로 세어 `EXEC 2`로 밀리지 않는다 ·
+    /// (b) 딸린 탭은 Output 탭 뒤가 아니라 부모 바로 뒤(앞선 딸린 탭 다음) · 활성 인덱스 보정.
+    #[test]
+    fn child_tabs_sit_after_parent_and_do_not_bump_parent_title() {
+        let mut p = ResultPanel::new(tab(1, 1, false), true, false);
+        p.set_numbered(false);
+        p.tabs[0].title = "EXEC".into();
+        let mut out = tab(9, 9, true);
+        out.is_output = true;
+        out.named = true;
+        out.title = "Output".into();
+        p.push(out);
+        p.active = 1;
+        let mut c0 = tab(2, 2, false);
+        c0.child_of = Some((1, 0));
+        let i0 = p.insert_child(1, c0);
+        assert_eq!(i0, 1, "첫 딸린 탭 = 부모 바로 뒤");
+        assert_eq!(p.active, 2, "Output이 활성이었으면 인덱스가 밀린다");
+        p.tabs[i0].title = p.unique_title("EXEC (2)", i0);
+        assert_eq!(p.tabs[i0].title, "EXEC (2)");
+        let mut c1 = tab(3, 3, false);
+        c1.child_of = Some((1, 1));
+        let i1 = p.insert_child(1, c1);
+        assert_eq!(i1, 2, "둘째 딸린 탭 = 첫 딸린 탭 다음");
+        let order: Vec<u64> = p.tabs.iter().map(|t| t.id).collect();
+        assert_eq!(order, vec![1, 2, 3, 9], "Output은 늘 뒤");
+        // 재실행: 부모 제목을 다시 매겨도 딸린 탭은 겹침이 아니다.
+        assert_eq!(p.unique_title("EXEC", 0), "EXEC");
+        // 남의 탭이 같은 이름이면 그때는 접미.
+        p.push(tab(4, 4, false));
+        p.tabs[4].title = "EXEC".into();
+        assert_eq!(p.unique_title("EXEC", 0), "EXEC 2");
+        // 부모가 없으면 끝에.
+        let mut orphan = tab(5, 5, false);
+        orphan.child_of = Some((77, 0));
+        assert_eq!(p.insert_child(77, orphan), 5);
     }
 
     /// ㉘ Output에서 결과 탭으로: Output 활성 × 정책(MC/DC — 조건 둘).

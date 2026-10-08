@@ -660,18 +660,22 @@ impl App {
         }
         let id = self.next_result_id;
         self.next_result_id += 1;
-        panel.push(ResultTab {
-            id,
-            title: t(Msg::ResultTabDefault).to_string(),
-            pinned: false,
-            sys_pinned: false,
-            named: false,
-            sql: String::new(),
-            grid: fresh,
-            seq: id,
-            child_of: Some((parent, ord)),
-            is_output: false,
-        });
+        // 딸린 탭 = 부모 바로 뒤(Output 탭 앞 · 협업 V1 bin94 (b)).
+        panel.insert_child(
+            parent,
+            ResultTab {
+                id,
+                title: t(Msg::ResultTabDefault).to_string(),
+                pinned: false,
+                sys_pinned: false,
+                named: false,
+                sql: String::new(),
+                grid: fresh,
+                seq: id,
+                child_of: Some((parent, ord)),
+                is_output: false,
+            },
+        );
         if panel.tabs.len() > max && evict {
             // 방금 만든 탭·부모·활성 탭은 걷지 않는다.
             let active = panel.active;
