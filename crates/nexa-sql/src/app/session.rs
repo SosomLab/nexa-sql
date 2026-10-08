@@ -1424,8 +1424,13 @@ impl App {
     /// 지금 세션의 워커를 버리고 새 워커로(즉시 해제 규약 09-16 — 죽은 소켓에 갇힌 호출을 기다리지 않는다).
     /// 세션은 **끊김(Broken)으로 남기고 스펙을 지킨다** → 다음 동작 때 판정 뒤 조용히 재접속(`wake_if_idle`).
     fn abandon_worker(&mut self) {
+        self.abandon_worker_via(sessions::DiscPath::Stop);
+    }
+
+    /// 워커를 버린다(죽은 소켓에 logoff를 보내지 않음) — `path` = 로그에 남길 해제 경로(끊긴 접속 ■ · 강제 중지 ■■).
+    fn abandon_worker_via(&mut self, path: sessions::DiscPath) {
         let (w, ev) = self.spawn_worker();
-        self.log_disconnect(sessions::DiscPath::Stop);
+        self.log_disconnect(path);
         self.sess.control(worker::Cmd::Disconnect);
         self.sess.worker = w;
         self.sess.events = ev;
@@ -1472,7 +1477,7 @@ impl App {
             let wait = Duration::from_secs(self.settings.int("run.force_stop_secs").max(0) as u64);
             if wait.as_secs() > 0 && self.sess.run_cancel_at.is_some_and(|t| t.elapsed() >= wait) {
                 let desc = self.sess.desc.clone();
-                self.abandon_worker();
+                self.abandon_worker_via(sessions::DiscPath::ForceStop);
                 self.sess.run_cancel_at = None;
                 self.sess.status = tf(Msg::StRunForceStopped, &[&desc]);
                 self.log_win
@@ -1500,8 +1505,11 @@ impl App {
             ));
         }
         // 시험 훅: 취소를 보내지 않고 "요청됨" 상태만(강제 중지 경로 · Debug 전용).
-        let (sent, drops) = if cfg!(debug_assertions) && std::mem::take(&mut self.sess.cancel_mute)
-        {
+        let muted = cfg!(debug_assertions) && self.sess.cancel_mute > 0;
+        if muted {
+            self.sess.cancel_mute -= 1;
+        }
+        let (sent, drops) = if muted {
             self.log_win.push(LogEntry::new(
                 LogKind::Info,
                 "[test] run.stop_mute: cancel not sent".to_string(),

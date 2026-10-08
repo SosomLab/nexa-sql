@@ -834,7 +834,7 @@ impl App {
         // 시험 훅(Debug 전용): 다음 ■ 한 번은 드라이버 취소를 보내지 않는다(강제 중지 경로 · 협업 10-09).
         if id == "run.stop_mute" {
             if cfg!(debug_assertions) {
-                self.sess.cancel_mute = true;
+                self.sess.cancel_mute = self.sess.cancel_mute.saturating_add(1);
             }
             return;
         }

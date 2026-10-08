@@ -152,9 +152,9 @@ pub(crate) struct Sess {
     /// ★ 취소를 요청한 시각(사용자 10-09 "중지가 5~10초 뒤에야" — 서버가 break를 늦게 받는 경우의 탈출구): 요청 뒤 `run.force_stop_secs`가
     ///   지나서 다시 ■ = 접속을 끊어 강제 중지(`abandon_worker` · 트랜잭션 Lost · 다음 실행 때 재접속).
     pub run_cancel_at: Option<Instant>,
-    /// 시험 훅(Debug · 기동 명령 `run.stop_mute`): 다음 ■ 한 번은 드라이버 취소를 **보내지 않는다**(서버가 break를 못 받는 상황 모의 →
-    ///   강제 중지 경로 시험 · 협업 10-09). Release에서는 켜지지 않는다.
-    pub cancel_mute: bool,
+    /// 시험 훅(Debug · 기동 명령 `run.stop_mute` · 넣은 횟수만큼): 다음 ■ N번은 드라이버 취소를 **보내지 않는다**(서버가 break를 못 받는
+    ///   상황 모의 → 강제 중지 경로 시험 · 협업 10-09). Release에서는 켜지지 않는다.
+    pub cancel_mute: u8,
     pub last_rows: Option<usize>,
     pub last_secs: Option<f64>,
     /// ★ 이 세션의 실행 카드 id(앱 공용 스택 `App.run_toast` 안 · docs/43 §11 · 09-22) — 진행 갱신은 이 id로.
@@ -241,7 +241,7 @@ impl Sess {
             run_cancel_requested: false,
             run_cancel_drops: false,
             run_cancel_at: None,
-            cancel_mute: false,
+            cancel_mute: 0,
             last_rows: None,
             last_secs: None,
             run_card: None,
@@ -740,6 +740,8 @@ pub(crate) enum DiscPath {
     Idle,
     TabClose,
     Stop,
+    /// 두 번째 ■ 강제 중지(취소가 서버에 안 닿아 접속을 끊음 · 10-09).
+    ForceStop,
     Switch,
 }
 
@@ -756,6 +758,7 @@ impl DiscPath {
             DiscPath::Idle => Msg::DiscPathIdle,
             DiscPath::TabClose => Msg::DiscPathTabClose,
             DiscPath::Stop => Msg::DiscPathStop,
+            DiscPath::ForceStop => Msg::DiscPathForceStop,
             DiscPath::Switch => Msg::DiscPathSwitch,
         }
     }

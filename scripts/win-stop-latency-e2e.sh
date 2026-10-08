@@ -37,11 +37,14 @@ run_stop() {
 }
 # ms <hh:mm:ss.mmm> → 하루 기준 ms
 ms() { awk -F'[:.]' '{ printf "%d", (($1*3600)+($2*60)+$3)*1000+$4 }' <<< "$1"; }
-FIN_RE="Execution stopped by user|Stopped by user|ORA-01013|57014|canceling statement"
+# 요청 줄 = "Cancelling…" 또는 SQL Server 소켓 닫기 경로의 "Attention needs encryption = login only - closing the socket instead"(44 §6-1).
+REQ_RE="Cancelling the running statement|Attention needs encryption"
+# 확정 줄 = 앱 판정(취소 · 접속 닫기) 또는 드라이버 오류(ORA-01013 · PG 57014).
+FIN_RE="Execution stopped by user|Stopped by user|Execution stopped by closing the connection|ORA-01013|57014|canceling statement"
 # latency <덤프> → "요청ms 확정ms 지연ms 확정문구" (없으면 빈 값)
 latency() {
   local d=$1 req fin
-  req=$(grep -m1 "Cancelling the running statement" "$d" | cut -d'|' -f1)
+  req=$(grep -m1 -E "$REQ_RE" "$d" | cut -d'|' -f1)
   fin=$(grep -m1 -E "$FIN_RE" "$d" | cut -d'|' -f1)
   [ -n "$req" ] && [ -n "$fin" ] || { echo ""; return; }
   local a b; a=$(ms "$req"); b=$(ms "$fin")
@@ -95,7 +98,8 @@ if [ -n "$MS" ]; then
   d=$(run_stop "m2_loop" "$MS" "DECLARE @t DATETIME = GETDATE(), @i BIGINT = 0;
 WHILE DATEDIFF(SECOND, @t, GETDATE()) < 60 SET @i = @i + 1;")
   judge "M② T-SQL CPU 루프 60 s" "$d"
-  d=$(run_stop "m3_join" "$MS" "SELECT COUNT_BIG(*) FROM sys.all_objects a CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c;")
+  # 행마다 계산을 강제(COUNT_BIG(*)만은 0.1 s에 끝났음 · bin108) — 2000³ ≈ 8e9 행 · 수 분.
+  d=$(run_stop "m3_join" "$MS" "SELECT SUM(CAST(CHECKSUM(a.name, b.name, c.object_id) AS BIGINT)) FROM sys.all_objects a CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c;")
   judge "M③ 큰 조인 SELECT" "$d"
 fi
 

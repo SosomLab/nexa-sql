@@ -145,6 +145,7 @@ pub enum Msg {
     DiscPathIdle,
     DiscPathTabClose,
     DiscPathStop,
+    DiscPathForceStop,
     DiscPathSwitch,
     TxColSession,
     StSessBroken,
@@ -3573,6 +3574,7 @@ impl Msg {
             Msg::DiscPathIdle => ["idle close", "유휴 닫기"],
             Msg::DiscPathTabClose => ["tab closed", "탭 닫기"],
             Msg::DiscPathStop => ["stop on broken connection (■)", "끊긴 접속 중지(■)"],
+            Msg::DiscPathForceStop => ["force stop (second ■ after cancel did not land)", "강제 중지(취소가 안 닿아 두 번째 ■)"],
             Msg::DiscPathSwitch => ["switched to another connection", "다른 연결로 전환"],
             Msg::TxColSession => [
                 "Session",
@@ -7385,6 +7387,7 @@ impl Msg {
         Msg::DiscPathIdle,
         Msg::DiscPathTabClose,
         Msg::DiscPathStop,
+        Msg::DiscPathForceStop,
         Msg::DiscPathSwitch,
         Msg::TxColSession,
         Msg::StSessBroken,
