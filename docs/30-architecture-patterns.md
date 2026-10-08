@@ -49,6 +49,7 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
+| **`diff::{align, hunks}` + `DiffView` 호스트**(10-09 · T-283 2단계) | nexa-ctl `diff`(990ae1c) · nexa-sql `diff_view.rs` | 두 글의 줄 단위 비교를 화면에 맞추기 → `align` = 행 정렬(맞은편 빈 행 · LCS 상한 1500 · 한쪽만 소비 = Replace 짝) · `hunks` = 변경 덩어리 · TextBox `set_row_tints`(줄 배경) · `vscroll_top`(스크롤 동기) · 비교용·표시용 줄 쌍 | 실제 객체와 비교(19 §6-2) · 후속 = 두 버퍼 비교(19 §1) |
 | **`OverlayZone` 누름/놓음 짝**(10-09) | `app/` 겹침 요소 · `overlay_zone_at`/`overlay_act` | 겹쳐 그려지는 요소(토스트·띠·카드·상태줄 항목·Ctrl 링크)가 Down에 바로 동작해 끌기 취소·오클릭이 안 됨 → Down = 자리 기억(삼킴) · 같은 자리 Up = 동작 | 토스트 · 외부 변경 띠 · 트랜잭션 경고 카드 · 실행 카드 · 상태줄 항목 8 · Ctrl 객체 링크 · 접속 창 복사 버튼(61 §2-2-b 9항) |
 | **`Toasts::push_button`**(10-08) | 토스트 부품 | 3초 안 다시 고르기 2단 확인을 마우스로 하기 어려움 → 카드 안 위험색 버튼(= `TimeoutButton` 무장 모양) · 버튼 = 명령 1회 · 카드 나머지 클릭 = 닫기만 | 운영 해제 2단 확인(`sess.env_force:<유형>`) |
 | **`ctxmenu_exclusive_step` + `menu_hit_bits` + `menu_bounds`**(10-09) | `app/` 라우팅 · 순수 판정 MC/DC 9 | 영역마다 따로 열린 우클릭 메뉴가 다른 영역 클릭에도 남음 → 열린 메뉴 비트 · 좌표 판정 · 닫기/통과 결정을 한 함수로 | 우클릭 메뉴 전부(탭·편집·상태/툴바·탐색기·그리드·결과 탭·북마크·프로젝트·상세·링크) · 설정 `ui.ctxmenu_exclusive`/`passthrough`(61 §2-2-b 10항) |

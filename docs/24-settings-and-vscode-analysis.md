@@ -111,6 +111,7 @@
 - ★ **상태바 항목 순서·표시 `statusbar.layout`(10-04 · [journal 10-04 §13](journal/2026-10-04.md))**: 문법 `id:1|id:0|…`(nexa-ctl `order` · nexa-dir3와 같은 문법) · 빈 값 = 기본 순서 · 편집 = 설정 창 Window 카드 [편집…] → 항목 창(체크 = 표시 · ▲▼ · Ctrl/⌘+↑↓ · 끌기 · Reset · 즉시 저장) · `license` = 잠금(무료판 문구 상시) · ★ 10-04 **그룹 단위**: `tx | state[large,readonly,bookmark] | pos | result[rows,time] | project[autosave,git] | format[enc,eol,indent,syntax] | mem | license`(그룹 = 통째 이동·숨김 · 자식 = 그룹 안에서만 · 기본 mem = license 왼쪽 · 그룹 전 평면 값은 정의 순으로 보충).
 - ★ **서버 유형 배지 `statusbar.env_badge`(10-08 · 3ecd137 · 설정 ▸ Window · 기본 켬)**: 켬 = 접속된 탭이면 유형과 무관하게 상태줄 맨 앞 3자리 배지 늘(PRD 빨강 · TST 주황 · DEV 강조색 · NON 흐림 · 세션 임시 유형 = 외곽선) · 끔 = 늘 숨김(종전 = PRD·TST만 · 설정 없음).
 - ★ **우클릭 메뉴 영역 간 배타(10-09 · beefed8 · af9a280)**: `ui.ctxmenu_exclusive`(켬 · 열린 메뉴 밖 좌/우 클릭·안 쓰는 키 = 닫기 · 끔 = 종전) · `ui.ctxmenu_passthrough`(켬 = 닫는 클릭이 바로 동작 · 끔 = 닫기만) · 61 §2-2-b 10항.
+- ★ **CREATE 문 ↔ 실제 객체 비교(10-09 · T-283 2단계)**: `compare.view`(diff = 나란히 보기 · inline = 1단계 거터 표식 탭) · `compare.canon`(켬 · EDITIONABLE/NONEDITIONABLE·따옴표 식별자 차이 무시 · 설정 ▸ 편집기) · 기존 `compare.ignore_ws` · 19 §6-2.
 - ★ **서버 연결 끊김(T-313 · 10-08~09)**: `net.notify_quiet_secs`(60 · 같은 끝점 끊김 토스트 억제 창) · `net.watch`(켬 · OS 네트워크 변경 감시 · Windows · 다음 시작부터) · HIDDEN `meta.call_timeout_secs`(0 = `explorer.timeout`) · 107.
 
 ### 3-2. 남은 것

@@ -89,6 +89,15 @@
    - 장점 = 새 컨트롤 0 · 오늘 있는 부품만. 한계 = 서버 쪽에만 있고 편집기에 없는 줄의 **내용**은 안 보임("위에서 삭제" 표식뿐).
 2. **2단계(diff 뷰어 부품 · nexa-ui)** = nexa-ctl `DiffView`(새 부품 · 30 §2 등재): 공개 `diff_hunks(a, b) -> Vec<Hunk{a: Range, b: Range, kind}>`(`match_lines` 래퍼) · 2-pane(왼쪽 편집기 문장 · 오른쪽 서버 DDL) · 줄 전체 배경(추가 초록 · 삭제 빨강 · 변경 노랑 = 테마 토큰) · 맞은편 빈 줄 채움 · 스크롤 동기화 · F7/Shift+F7 다음/이전 변경 · 옵션 공백 무시/대소문자 무시. 같은 부품을 docs/19 §1(두 버퍼 비교) · §3(시점 캐시 복원) · T-140 남은 "좌우 비교 뷰"가 함께 쓴다.
 
+> ✅ **2단계 구현 10-09**(개발 세션 · nexa-ui `990ae1c` `diff::{align, hunks}` + TextBox `set_row_tints`/`vscroll_top` · nexa-sql `diff_view.rs` · f0fa563 → a145717 → 05ffd38 → 261839a · 협업 V1 bin110~113):
+> - **화면** = 비교 탭(`compare:*` 뷰 탭)을 호스트가 2-pane으로 그림 — 왼쪽 **편집기** 문장 | 오른쪽 **서버** DDL · 머리 첫 줄 = "비교 X: N군데 다름(초록 = 편집기에만 · 빨강 = 서버에만 · 노랑 = 변경) · k/N · 팔레트: 비교 다음/이전 변경" · 둘째 줄 = 칸 라벨 "편집기 | 서버" · 행 정렬(맞은편 빈 행) · 스크롤 동기(주도권 쪽 첫 줄) · 읽기 전용 상자(우클릭 = 복사·전체 선택 · 잘라내기·붙여넣기 흐림).
+> - **색 규칙**(범례와 매핑은 한 자리) = 편집기에만(a쪽 · `RowKind::Delete`) **초록** · 서버에만(b쪽 · `Insert`) **빨강** · 변경(Replace) **노랑** · `compare.dump` = `rows= equal= editor_only= server_only= replace= hunks= cur=` + 덩어리 범위.
+> - **보이는 글 = 원문 줄**(들여쓰기·탭 유지) · 비교는 정규화 줄(`normalize_pairs` = 비교용·표시용 쌍).
+> - **`compare.canon`**(기본 켬) = Oracle EDITIONABLE/NONEDITIONABLE 무시 + 대소문자 안 섞인 따옴표 식별자 벗김(`"BISCM"."SP_TEST1"` = `BISCM.SP_TEST1` · `"MyTab"` 유지 · 문자열 리터럴 보존) → 소스 열기 본문 그대로 비교 = `same=true hunks=0`(BISCM SP_TEST1 실측).
+> - 이동 = 팔레트 "비교: 다음/이전 변경"(`compare.next/prev` · 순환) · F7/Shift+F7 키맵은 후속 · `compare.view` = diff(기본)/inline(1단계 거터 표식 탭) · 서버 DDL 탭 `obj.compare_server`는 비교 결과가 있을 때(비동기 왕복 뒤)만.
+> - **회귀 2 수정**: 10-07 저녁 "상세 없는 뷰 탭 자동 닫기"가 모든 뷰 탭을 닫아 1·2단계 비교 탭이 사라짐(a145717 · `ext:` 키만) · 입력 라우팅의 뷰 탭 판정이 그리기와 달라 상세 없는 뷰 탭(inline·서버 DDL·정보 탭) 본문 우클릭 메뉴가 안 열림(261839a · `App::ext_view_active()` 한 판정).
+> - 남음 = F7/Shift+F7 · §1 두 버퍼 비교에 같은 부품 재사용 · T-283 "정적 선언 차이"(인자·컬럼).
+
 ### 6-3. 비교 전 정규화(헛 차이 줄이기 · 순수 함수 + 시험)
 
 - 줄 끝 공백 · 빈 줄 연속 · 끝 `;`/`/` 한 개 · 탭↔공백(설정 `compare.ignore_ws` 기본 on).
