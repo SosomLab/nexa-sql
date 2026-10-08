@@ -415,6 +415,11 @@ impl App {
         }
         // ★ 프로젝트 명령(docs/67 §2-2 · `project.*` 전부 — 접미 인자가 붙는 것도) — 메뉴바·팔레트·툴바·패널 링크·기동 명령이
         //   전부 이 한 길로(🔧 09-22 사용자: 풀다운 "새 프로젝트 저장…"이 무반응 — 패널 링크만 `project_cmd`로 갔다).
+        // ★ 끊김 토스트 클릭 = 그 끝점 다시 연결(docs/107 ③ · `app/health.rs`).
+        if let Some(ep) = id.strip_prefix("net.reconnect:") {
+            self.reconnect_endpoint(ep);
+            return;
+        }
         if id.starts_with("project.") {
             self.project_cmd(id);
             return;

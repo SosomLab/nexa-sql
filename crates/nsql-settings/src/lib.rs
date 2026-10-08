@@ -4689,6 +4689,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 86400 },
         default: "60",
     },
+    // ★ 끊김 토스트 억제 창(docs/107 D-266): 같은 끝점 재알림은 이 시간에 한 번.
+    Entry {
+        key: "net.notify_quiet_secs",
+        cat: Msg::CatServerStatus,
+        label: Msg::LblNetNotifyQuiet,
+        desc: Msg::DescNetNotifyQuiet,
+        kind: SettingKind::Int { min: 0, max: 3600 },
+        default: "60",
+    },
     Entry {
         key: "net.keepalive_secs",
         cat: Msg::CatServerStatus,

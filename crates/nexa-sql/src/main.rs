@@ -315,6 +315,8 @@ struct App {
     open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
+    /// ★ 서버 건강 레지스트리(docs/107 · T-313 ② · 끝점 단위 · `app/health.rs`).
+    health: app::health::ServerHealth,
     /// 유휴 미커밋 경고 카드(docs/56 L2) — 세션 하나를 가리킨다(가장 급한 것).
     tx_warn: txwarn::TxWarn,
     /// 다음 미커밋 점검 시각(about_to_wait 깨움).
@@ -1690,6 +1692,7 @@ fn main() {
         objlinks: Default::default(),
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         sig_card: None,
+        health: Default::default(),
         bm_gutter: None,
         toggle_log: false,
         open_colors: false,

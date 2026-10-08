@@ -143,6 +143,12 @@ pub(crate) enum ConnOutcome {
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
     Keys(String, Option<nsql_core::KeyInfo>),
+    /// ★ 끊김 확인(docs/53 §3 · 107 §9-2 두 층): `endpoint` = SYN 실패·접속 전 판정 실패(끝점 층 = 그 서버의 모든 세션) ·
+    ///   거짓 = 접속성 오류만 봤거나 재접속 실패(세션 층 = 이 세션만 · 다음 동작의 SYN이 가른다).
+    Broken {
+        reason: String,
+        endpoint: bool,
+    },
     /// `Cmd::Apply` 결과(+ 행 단위 재조회 결과 · 요청 순서 그대로 · 적용 실패면 비어 있음).
     Applied {
         key: u64,
@@ -191,8 +197,6 @@ pub(crate) enum ConnOutcome {
         key: u64,
         result: Result<u64, String>,
     },
-    /// ★ 끊김 확인(docs/53 §3): 동작 직전 빠른 판정이 실패했거나 접속성 오류가 났다 — 세션 객체·스펙은 그대로(Broken).
-    Broken(String),
     /// 끊김이었던 세션이 다시 살아 있음을 확인했다(판정 성공 · 재접속 성공).
     Alive,
 }
@@ -720,7 +724,10 @@ pub(crate) fn spawn(
                         *suspect = true;
                         if !*broken_told {
                             *broken_told = true;
-                            let _ = ctx_tx.send(ConnOutcome::Broken(m.clone()));
+                            let _ = ctx_tx.send(ConnOutcome::Broken {
+                                reason: m.clone(),
+                                endpoint: true,
+                            });
                         }
                         return Err(m);
                     }
@@ -742,10 +749,10 @@ pub(crate) fn spawn(
                             *suspect = true;
                             if !*broken_told {
                                 *broken_told = true;
-                                let _ = ctx_tx.send(ConnOutcome::Broken(tf(
-                                    Msg::StReconnecting,
-                                    &[&spec.redacted()],
-                                )));
+                                let _ = ctx_tx.send(ConnOutcome::Broken {
+                                    reason: tf(Msg::StReconnecting, &[&spec.redacted()]),
+                                    endpoint: false,
+                                });
                             }
                             return Err(String::new());
                         }
@@ -810,9 +817,10 @@ pub(crate) fn spawn(
                         if !reachable {
                             if !broken_told {
                                 broken_told = true;
-                                let _ = ctx_tx.send(ConnOutcome::Broken(
-                                    last_err.clone().unwrap_or_default(),
-                                ));
+                                let _ = ctx_tx.send(ConnOutcome::Broken {
+                                    reason: last_err.clone().unwrap_or_default(),
+                                    endpoint: true,
+                                });
                             }
                             emit(err(last_err.clone().unwrap_or_default()));
                         }
@@ -1525,7 +1533,10 @@ pub(crate) fn spawn(
                         if conn_err {
                             if !broken_told {
                                 broken_told = true;
-                                let _ = ctx_tx.send(ConnOutcome::Broken(String::new()));
+                                let _ = ctx_tx.send(ConnOutcome::Broken {
+                                    reason: String::new(),
+                                    endpoint: false,
+                                });
                             }
                         } else {
                             last_ok = std::time::Instant::now();
@@ -1712,7 +1723,7 @@ mod tests {
         while std::time::Instant::now() < deadline && !(broken && failed) {
             while let Ok(o) = w.conn.try_recv() {
                 match o {
-                    ConnOutcome::Broken(_) => broken = true,
+                    ConnOutcome::Broken { .. } => broken = true,
                     ConnOutcome::ConnectFailed(_) => failed = true,
                     _ => {}
                 }

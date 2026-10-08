@@ -1121,6 +1121,8 @@ pub(crate) struct Explorer {
     font_px: f32,
     /// 소스 요청 중(더블클릭 연타 방지).
     source_pending: bool,
+    /// ★ 이 칸의 끝점이 끊겼다(docs/107 ② · 레지스트리 투영 · 벽시계 = 헤더 "끊김 hh:mm").
+    broken_since: Option<std::time::SystemTime>,
     /// ★ 소스 요청 시각·이름(docs/107 ① 호출 상한 · `explorer.timeout`이 지나면 실패 안내 · 늦게 오면 그때 연다).
     source_since: Option<Instant>,
     source_name: String,
@@ -2460,6 +2462,7 @@ impl Explorer {
             meta: nsql_run::meta::MetaStore::new(64 << 20),
             font_px: ICON_REF_FONT_PX,
             source_pending: false,
+            broken_since: None,
             source_since: None,
             source_name: String::new(),
             row_px: 0,
@@ -3085,11 +3088,33 @@ impl Explorer {
         }
         dc.select_font(FontSlot::Base, false);
         let label = self.server_label();
-        dc.text(x, ty, r, &label, th.text);
+        // 끊긴 끝점(107 §5 "끊긴 동안 지속") = 이름을 위험색으로 + "끊김 hh:mm".
+        let broken = self.broken_since;
+        dc.text(
+            x,
+            ty,
+            r,
+            &label,
+            if broken.is_some() { th.danger } else { th.text },
+        );
+        let mut sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
+        if let Some(t0) = broken {
+            let lost = tf(Msg::ExpHeaderBroken, &[&crate::app::health::hhmm(t0)]);
+            dc.text(sx0, ty, r, &lost, th.danger);
+            sx0 += dc.text_width(&lost) + (8.0 * s).round() as i32;
+        }
         if !sub.is_empty() {
-            let sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
             dc.text(sx0, ty, r, sub, th.text_dim);
         }
+    }
+
+    /// 끝점 끊김/복귀 투영(docs/107 ② · `ExplorerSet::set_ep_broken`).
+    pub(crate) fn set_broken(&mut self, since: Option<std::time::SystemTime>) {
+        self.broken_since = since;
+    }
+
+    pub(crate) fn broken_since(&self) -> Option<std::time::SystemTime> {
+        self.broken_since
     }
 
     /// 이 연결의 DBMS 그림(제품 힌트 → 방언) — 테마 · 원본 크기 · 표시 크기별 캐시.

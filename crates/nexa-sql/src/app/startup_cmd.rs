@@ -821,6 +821,24 @@ impl App {
             let _ = std::fs::write(path, text);
             return;
         }
+        // ★ 자체 시험(docs/107 ② · T-313): 끝점 끊김/복귀 주입 · 레지스트리 덤프(키 주입·네트워크 조작 없이 전파를 본다).
+        if let Some(ep) = id.strip_prefix("net.break:") {
+            self.health_event(ep, app::health::HealthEvent::Down("test".into()));
+            return;
+        }
+        if let Some(ep) = id.strip_prefix("net.suspect:") {
+            // L0 OS 신호 모의(⑤ 전까지는 시험 훅만) — Alive → Suspect(알림 없음 · 다음 동작이 판정).
+            self.health_event(ep, app::health::HealthEvent::NetChanged);
+            return;
+        }
+        if let Some(ep) = id.strip_prefix("net.heal:") {
+            self.health_event(ep, app::health::HealthEvent::Up);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("health.dump:") {
+            let _ = std::fs::write(path, self.health_dump_text());
+            return;
+        }
         if let Some(path) = id.strip_prefix("explorer.selpath:") {
             let _ = std::fs::write(path, self.explorer.selected_path());
             return;

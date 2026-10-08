@@ -325,6 +325,48 @@ impl ExplorerSet {
     }
 
     /// ★ 그 연결의 칸 메타가 비어 있으면 루트 읽기를 시작한다(㉗-g · 링크 분석·완성이 다른 칸 스냅숏에 기대지 않게). 시작했으면 true.
+    /// ★ 끝점(host:port)이 같은 칸들(docs/107 ②) — 카탈로그 키의 끝점으로.
+    fn panes_on(&self, ep: &str) -> Vec<usize> {
+        self.panes
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| crate::app::health::ep_text(p.key.as_ref()).as_deref() == Some(ep))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// 끝점 끊김/복귀를 그 끝점의 칸 헤더에 투영("끊김 hh:mm" · 위험색).
+    pub(crate) fn set_ep_broken(&mut self, ep: &str, since: Option<std::time::SystemTime>) {
+        for i in self.panes_on(ep) {
+            self.panes[i].ex.set_broken(since);
+        }
+    }
+
+    /// 복귀·[다시 연결] 뒤 그 끝점 칸의 메타를 깨운다(트리가 비었으면 루트부터 · 있으면 다음 요청 때 스스로 재개).
+    pub(crate) fn kick_meta_for_ep(&mut self, ep: &str) {
+        for i in self.panes_on(ep) {
+            let _ = self.panes[i].ex.kick_meta_load();
+        }
+    }
+
+    /// 진단(기동 명령 `health.dump`): 칸마다 끝점 · 끊김 시각 · 오프라인.
+    pub(crate) fn health_dump(&self) -> String {
+        self.panes
+            .iter()
+            .filter(|p| p.key.is_some())
+            .map(|p| {
+                format!(
+                    "pane {}|broken={}|offline={}",
+                    crate::app::health::ep_text(p.key.as_ref()).unwrap_or_default(),
+                    p.ex.broken_since()
+                        .map_or("-".to_string(), crate::app::health::hhmm),
+                    p.ex.is_offline()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub(crate) fn ensure_meta(&mut self, spec: Option<&ConnectSpec>, cur: Option<&str>) -> bool {
         let Some(i) = spec.and_then(|s| self.find(s)) else {
             return false;

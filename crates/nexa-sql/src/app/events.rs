@@ -406,7 +406,16 @@ impl App {
                 }
                 ConnOutcome::Disconnected => self.on_conn_disconnected(),
                 // ★ 끊김 확인(docs/53 §3): 세션은 남기고 상태만 — 표식·플러그·목록이 "끊김"을 보인다.
-                ConnOutcome::Broken(m) => {
+                ConnOutcome::Broken {
+                    reason: m,
+                    endpoint,
+                } => {
+                    // ★ 끝점 층(107 §9-2): SYN 실패는 그 서버의 모든 세션·탐색기에 — 레지스트리 한 자리로(토스트·투영·헤더).
+                    if endpoint {
+                        if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
+                            self.health_event(&ep, app::health::HealthEvent::Down(m.clone()));
+                        }
+                    }
                     if !self.sess.broken {
                         self.sess.broken = true;
                         let line = if m.is_empty() {
@@ -428,6 +437,12 @@ impl App {
                             tf(Msg::StSessAlive, &[&self.sess.desc]),
                         ));
                         self.sync_sess_ui();
+                    }
+                    // 한 세션이 닿았으면 끝점도 산 것(107 §9-2) — 끊겼던 끝점이면 복귀 전파.
+                    if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
+                        if self.health.is_broken(&ep) {
+                            self.health_event(&ep, app::health::HealthEvent::Up);
+                        }
                     }
                 }
             }
@@ -1176,7 +1191,20 @@ impl App {
                     self.sess.dialect = dialect;
                     self.sess.connected = true;
                     self.sess.cur_schema = Some(schema).filter(|s| !s.is_empty());
-                    self.sess.broken = false;
+                    let was_broken = std::mem::take(&mut self.sess.broken);
+                    // ★ 전용 탭 복귀 안내(107 §9-4 · D-270): 전용 세션은 거의 늘 상태가 있다(CONNECT 자체 · ALTER SESSION) → 끊겼다 붙으면 알린다.
+                    if was_broken && self.sess.is_private() {
+                        let m = t(Msg::StPrivateSessReset).to_string();
+                        self.log_win.push(LogEntry::new(LogKind::Info, m.clone()));
+                        self.toasts
+                            .push(toast::ToastKind::Warn, description.clone(), m);
+                    }
+                    // 접속 성공 = 끝점이 살아 있다(107 §9-2) — 끊겼던 끝점이면 복귀 전파.
+                    if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
+                        if self.health.is_broken(&ep) {
+                            self.health_event(&ep, app::health::HealthEvent::Up);
+                        }
+                    }
                     self.sess.user_disconnected = false;
                     self.sess.idle_closed = false;
                     self.sess.desc = description.clone();
