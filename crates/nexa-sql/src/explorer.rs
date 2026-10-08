@@ -4841,6 +4841,26 @@ impl Explorer {
     }
 
     /// ★ 노드가 속한 데이터베이스(101 · Database 조상 · 서버 수준/다른 방언 = None = 연결의 현재 DB).
+    /// ★ 새 탭에 심을 **작업 단위**(사용자 10-08 "소유 데이터베이스/스키마로"): SQL Server/MySQL = 객체의 DB(`db_of`) · Oracle = 객체의
+    ///   스키마(툴바 작업 단위 = `ALTER SESSION SET CURRENT_SCHEMA` ⑮) · PG = 고정(None).
+    fn unit_of(&self, i: usize, schema: &str) -> Option<String> {
+        self.db_of(i).or_else(|| {
+            (self.dialect == Some(Dialect::Oracle) && !schema.is_empty())
+                .then(|| schema.to_string())
+        })
+    }
+
+    /// 객체 정보로 같은 판정(트리 노드 없이 · 소스 열기).
+    fn unit_for(&self, o: &ObjectInfo) -> Option<String> {
+        if !o.db.is_empty() {
+            Some(o.db.clone())
+        } else if self.dialect == Some(Dialect::Oracle) && !o.schema.is_empty() {
+            Some(o.schema.clone())
+        } else {
+            None
+        }
+    }
+
     fn db_of(&self, i: usize) -> Option<String> {
         let mut cur = Some(i);
         while let Some(n) = cur {
@@ -5632,8 +5652,8 @@ impl Explorer {
                     // 스키마·테이블 인용 = 조건 바와 같은 정책(`identq` · needed = 필요할 때만 · 사용자 10-08).
                     text: crate::identq::select_template(d, &o.schema, &o.name, self.quote_always),
                     origin: None,
-                    // 표의 DB(다른 DB 표 = 새 탭을 그 DB로 · 사용자 10-08).
-                    db: self.db_of(i),
+                    // 표의 DB/스키마(다른 DB·스키마 표 = 새 탭을 그 작업 단위로 · 사용자 10-08).
+                    db: self.unit_of(i, &o.schema),
                     server: None,
                 });
             }
@@ -6023,7 +6043,8 @@ impl Explorer {
                 server: None,
             },
             qualify: self.source_qualify,
-            db: (!o.db.is_empty()).then(|| o.db.clone()),
+            // 소스 탭의 작업 단위 = 객체의 DB(SQL Server/MySQL) 또는 스키마(Oracle · 사용자 10-08 "오라클도").
+            db: self.unit_for(o),
         });
     }
 

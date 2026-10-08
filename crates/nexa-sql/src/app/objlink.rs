@@ -485,10 +485,11 @@ pub(crate) fn scan(
                         //   남겨 툴팁 "(BISCM에 없음 · BISCM_SB에 있음)"과 우클릭 "다른 스키마의 같은 이름 ▸"이 닿게 한다.
                         _ => {
                             let head = ddl_head_kind(&prev_up);
-                            if followed_by_paren || head.is_some() {
+                            let exec = matches!(prev_up.as_str(), "EXEC" | "EXECUTE" | "CALL");
+                            if followed_by_paren || head.is_some() || exec {
                                 out.push(Link {
                                     range: (a0, a1),
-                                    kind: if followed_by_paren {
+                                    kind: if followed_by_paren || exec {
                                         LinkKind::Routine
                                     } else {
                                         head.unwrap_or(LinkKind::Table)
@@ -504,6 +505,22 @@ pub(crate) fn scan(
                 }
             }
             _ => {
+                // ★ `EXEC proc @a = 1`(괄호 없는 호출 · SQL Server · 사용자 10-08) = 루틴 링크(메타에 없으면 미확인).
+                if quals.is_empty() && matches!(prev_up.as_str(), "EXEC" | "EXECUTE" | "CALL") {
+                    let known = matches!(
+                        res.object_class(None, &name),
+                        Some(ObjClass::Routine | ObjClass::Package)
+                    );
+                    out.push(Link {
+                        range: (a0, a1),
+                        kind: LinkKind::Routine,
+                        schema: None,
+                        owner: None,
+                        name,
+                        known,
+                    });
+                    continue;
+                }
                 // ★ T-315: `스키마.테이블.컬럼`(`COMMENT ON COLUMN s.t.c` · PG) — 둘째 한정자가 관계면 컬럼 링크.
                 if quals.len() == 2 && is_relation(Some(&quals[0]), &quals[1]) {
                     let known = res.has_column(Some(&quals[0]), &quals[1], &name) != Some(false);
@@ -2918,6 +2935,23 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
             .iter()
             .any(|l| l.name.eq_ignore_ascii_case("sp_addextendedproperty")
                 && l.kind == LinkKind::Routine));
+        assert!(v.iter().all(|l| !l.name.starts_with('@')));
+    }
+
+    /// `EXEC proc …`(괄호 없음 · 사용자 10-08): 아는 루틴 = 정상 · 모르는 이름 = 미확인 루틴 · `sys.sp_x` 한정도.
+    #[test]
+    fn exec_without_parens_links_routine() {
+        let v = scan(
+            "EXEC SP_RUN @a = 1;\nEXEC PROC_TEST @VS_PROJECT_CD = 'BBBB';\nEXECUTE dbo.PROC_TEST;",
+            Some(nsql_core::Dialect::Mssql),
+            &Fake,
+        );
+        let f = |n: &str| v.iter().filter(|l| l.name == n).collect::<Vec<_>>();
+        assert!(f("SP_RUN")[0].known && f("SP_RUN")[0].kind == LinkKind::Routine);
+        let p = f("PROC_TEST");
+        assert_eq!(p.len(), 2, "{v:?}");
+        assert!(p.iter().all(|l| l.kind == LinkKind::Routine && !l.known));
+        assert_eq!(p[1].schema.as_deref(), Some("dbo"));
         assert!(v.iter().all(|l| !l.name.starts_with('@')));
     }
 

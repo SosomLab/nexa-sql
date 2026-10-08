@@ -349,6 +349,12 @@ impl ExplorerSet {
         (own, has, self.meta_pane(spec))
     }
 
+    /// 그 연결의 칸이 지금 보이는 칸인가(없으면 false) — 탭 전환 동기가 **서버가 바뀔 때만** 현재 스키마로 옮기게(사용자 10-08
+    /// "소스 열기 뒤 탐색기가 현재 스키마 행으로 튄다" = 같은 서버의 새 탭에도 ㉗-j가 돌았다).
+    pub(crate) fn is_shown(&self, spec: Option<&ConnectSpec>) -> bool {
+        spec.and_then(|s| self.find(s)) == Some(self.shown)
+    }
+
     fn find(&self, spec: &ConnectSpec) -> Option<usize> {
         self.panes
             .iter()

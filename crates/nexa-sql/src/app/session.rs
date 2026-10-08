@@ -537,11 +537,14 @@ impl App {
         // ★ 활성 탭의 연결이 바뀌었다(접속 추가·표식 메뉴·탭 전환) → 탐색기를 그 서버 칸의 현재 스키마로 한 번(10-01 ㉗-j · 세션마다 한 번).
         if self.sess.connected {
             let key = (self.editors.active_id(), self.sess.id);
-            if self.explorer_focus_key != Some(key) {
-                let spec = self.sess.spec.clone();
-                if self.explorer.focus_server(spec.as_ref()) {
-                    self.explorer_focus_key = Some(key);
-                }
+            let spec = self.sess.spec.clone();
+            // ★ 그 서버 칸이 이미 보이면 옮기지 않는다(사용자 10-08: 탐색기에서 소스를 연 새 탭에도 ㉗-j가 돌아 선택이 현재 스키마 행으로
+            //   튀었다) — 다른 서버 칸일 때만 그 칸 + 현재 스키마로.
+            if self.explorer_focus_key != Some(key)
+                && !self.explorer.is_shown(spec.as_ref())
+                && self.explorer.focus_server(spec.as_ref())
+            {
+                self.explorer_focus_key = Some(key);
             }
         }
         let mut info: HashMap<u64, (nexa_ctl::TabBadge, String)> = HashMap::new();
