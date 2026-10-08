@@ -16,6 +16,7 @@ mod find;
 mod format;
 pub(crate) mod goto;
 mod grid_results;
+pub(crate) mod health;
 mod input;
 mod license;
 mod live;

@@ -1219,6 +1219,10 @@ pub trait Session {
         true
     }
 
+    /// ★ 호출 상한(docs/107 D-265 · T-313 ①): 서버 호출 하나가 이 시간을 넘으면 드라이버가 끊는다 — 죽은 소켓에 보낸 호출이
+    ///   OS 재전송 한도(분)까지 막히지 않게. 기본 = 지원 없음(아무 일도 안 함). 메타 세션이 `explorer.timeout`으로 건다(Oracle).
+    fn set_call_timeout(&mut self, _timeout: Option<std::time::Duration>) {}
+
     /// ★ 대량 적재 싱크(docs/89 · T-236): `table`의 `cols`(이름 · `types` = 결과 타입 이름 · 같은 길이)에 행을 넣을 드라이버 최속 경로.
     /// 기본 = 없음(`Err`) → 러너는 다중 행 `INSERT` 폴백. 싱크는 이 세션을 빌리고 트랜잭션도 스스로 다룬다.
     fn bulk_begin<'a>(

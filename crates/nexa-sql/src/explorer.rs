@@ -666,6 +666,13 @@ fn live_query(s: &mut dyn Session, req: &LiveReq) -> LiveResult {
 }
 
 enum Resp {
+    /// ★ 메타 세션 생존 판정 결과(docs/107 ① · T-313): 끊김 확정(`alive=false` · 사유) / 복귀. 끝점 = `host:port`.
+    Health {
+        gen: u64,
+        alive: bool,
+        ep: String,
+        reason: String,
+    },
     Opened {
         gen: u64,
         /// (방언 · 설명 · ★ 서버 정보 101 = 버전·로그인·현재 DB).
@@ -906,6 +913,17 @@ pub(crate) enum ExplorerAction {
     },
     /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
     Notice(String),
+    /// ★ 실패 안내(docs/107 §5 · "상태줄 한 줄로 끝내지 않는다"): 제목 + 본문 → 오류 토스트 + 상태줄 + 로그 1줄.
+    Fail {
+        title: String,
+        body: String,
+    },
+    /// ★ 서버 건강(docs/107 ①): 메타 세션이 끊김을 확정했거나(`alive=false`) 다시 닿았다. 호스트 = 토스트·로그 + 같은 끝점 세션 투영.
+    Health {
+        alive: bool,
+        ep: String,
+        reason: String,
+    },
     /// 상태줄 한 줄.
     Status(String),
     /// 로그 창 한 줄(진단 · "탐색기에서 보기" 단계 ㉗-f).
@@ -1103,6 +1121,9 @@ pub(crate) struct Explorer {
     font_px: f32,
     /// 소스 요청 중(더블클릭 연타 방지).
     source_pending: bool,
+    /// ★ 소스 요청 시각·이름(docs/107 ① 호출 상한 · `explorer.timeout`이 지나면 실패 안내 · 늦게 오면 그때 연다).
+    source_since: Option<Instant>,
+    source_name: String,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
     row_px: i32,
     /// 로딩 점 애니메이션(300ms 단계) — 로딩 중인 노드가 있을 때만 다시 그린다(nexa-dir2 "Loading…" 자리 · 사용자 09-15).
@@ -1329,9 +1350,93 @@ fn req_prio(r: &Req) -> u8 {
     }
 }
 
+/// ★ 메타 세션 생존 가드(docs/107 ① · T-313 · 실행 세션 워커의 `ensure_alive`와 같은 규칙 = `sessions::live_plan`): 마지막 성공 시각 ·
+///   직전 접속성 오류 · 끊김 알림 여부 · 설정 스냅숏(5초마다 다시 읽음 — 카탈로그 요청마다 설정 파일을 열지 않게).
+struct MetaGuard {
+    last_ok: Instant,
+    suspect: bool,
+    broken_told: bool,
+    /// (빠른 판정 상한 · 오래됨 기준 · 자동 재접속 · 호출 상한 초).
+    cfg: (Duration, Duration, bool, u64),
+    cfg_at: Instant,
+}
+
+impl MetaGuard {
+    fn new() -> Self {
+        Self {
+            last_ok: Instant::now(),
+            suspect: false,
+            broken_told: false,
+            cfg: meta_liveness(),
+            cfg_at: Instant::now(),
+        }
+    }
+
+    fn cfg(&mut self) -> (Duration, Duration, bool, u64) {
+        if self.cfg_at.elapsed() >= Duration::from_secs(5) {
+            self.cfg = meta_liveness();
+            self.cfg_at = Instant::now();
+        }
+        self.cfg
+    }
+}
+
+/// 생존 설정(워커 `liveness_settings`와 같은 키 + 메타 호출 상한 `meta.call_timeout_secs` · 0 = `explorer.timeout`).
+fn meta_liveness() -> (Duration, Duration, bool, u64) {
+    let Ok(s) = nsql_settings::Settings::open_default() else {
+        return (Duration::from_secs(2), Duration::from_secs(60), true, 15);
+    };
+    let mut call = s.int("meta.call_timeout_secs").max(0) as u64;
+    if call == 0 {
+        call = s.int("explorer.timeout").max(0) as u64;
+    }
+    (
+        Duration::from_millis(s.int("probe.timeout_ms").clamp(100, 60_000) as u64),
+        Duration::from_secs(s.int("probe.stale_secs").max(0) as u64),
+        s.flag("connect.auto_reconnect"),
+        call,
+    )
+}
+
+/// 스펙의 끝점 `host:port`(파일 방언 = None).
+fn ep_of(spec: Option<&ConnectSpec>) -> Option<(String, u16)> {
+    let s = spec?;
+    Some((s.host.clone()?, s.port?))
+}
+
+fn send_health(
+    tx: &mpsc::Sender<Resp>,
+    wake: &dyn Fn(),
+    gen: u64,
+    ep: &(String, u16),
+    alive: bool,
+    reason: String,
+) {
+    let _ = tx.send(Resp::Health {
+        gen,
+        alive,
+        ep: format!("{}:{}", ep.0, ep.1),
+        reason,
+    });
+    wake();
+}
+
+/// 메타 세션의 호출 상한(Oracle · 그 밖은 no-op).
+fn apply_call_timeout(session: &mut Option<Box<dyn Session>>, secs: u64) {
+    if let (Some(s), true) = (session.as_mut(), secs > 0) {
+        s.set_call_timeout(Some(Duration::from_secs(secs)));
+    }
+}
+
+thread_local! {
+    /// `with_session`이 남긴 마지막 오류 — 요청 뒤 접속성 오류 분류(docs/107 L3)에 쓴다(한 요청에 한 번 · 꺼내면 비운다).
+    static META_LAST_ERR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn() + Send>) {
     let mut session: Option<Box<dyn Session>> = None;
     let mut cur_gen = 0u64;
+    let mut guard = MetaGuard::new();
     // ★ 101 §4: 메타 세션의 DB 전환 — 기준 DB(연결의 현재 DB) · 메타 세션이 지금 서 있는 DB.
     let mut base_db: Option<String> = None;
     let mut meta_db: Option<String> = None;
@@ -1373,10 +1478,78 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if reachable(spec) {
                     if let Ok(Ok(s)) = catch_unwind(AssertUnwindSafe(|| open_meta(spec, default))) {
                         session = Some(s);
+                        let (_, _, _, call) = guard.cfg();
+                        apply_call_timeout(&mut session, call);
+                    }
+                } else if let Some(ep) = ep_of(Some(spec)) {
+                    // ★ 끊김 확정(docs/107 ①) — 한 번만 알린다 · 요청은 아래서 "접속 안 됨"으로 즉시 실패.
+                    guard.suspect = true;
+                    if !guard.broken_told {
+                        guard.broken_told = true;
+                        let m = tf(
+                            Msg::ErrServerUnreachable,
+                            &[&format!("{}:{}", ep.0, ep.1), "2000"],
+                        );
+                        send_health(&tx, &*wake, cur_gen, &ep, false, m);
                     }
                 }
             }
         }
+        // ★ 동작 직전 판정(docs/107 L1 · 실행 세션 `ensure_alive`와 같은 `live_plan`): 살아 있다고 믿던 세션도 직전 오류·드라이버 힌트·
+        //   오래됨(`probe.stale_secs`)이면 SYN 1회 → 죽었으면 세션을 버리고(죽은 소켓에 질의 금지 · 다음 요청은 재개 길) 끊김을 알린다 ·
+        //   살아 있고 재접속 조건이면 조용히 다시 연다.
+        let catalog_req = !matches!(
+            req,
+            Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend
+        );
+        if catalog_req && session.is_some() {
+            let (timeout, stale, auto, call) = guard.cfg();
+            let dead_hint = session.as_ref().is_some_and(|s| !s.is_alive());
+            let stale_now = stale.as_secs() > 0 && guard.last_ok.elapsed() >= stale;
+            let plan =
+                crate::sessions::live_plan(false, guard.suspect, dead_hint, stale_now, true, auto);
+            if let (true, Some(ep)) = (plan.probe, ep_of(resume.as_ref())) {
+                let t = Instant::now();
+                if crate::probe::probe_once(
+                    &ep.0,
+                    ep.1,
+                    timeout,
+                    true,
+                    crate::probe::DEFAULT_DNS_TTL,
+                ) != crate::probe::Outcome::Up
+                {
+                    guard.suspect = true;
+                    session = None;
+                    if !guard.broken_told {
+                        guard.broken_told = true;
+                        let m = tf(
+                            Msg::ErrServerUnreachable,
+                            &[
+                                &format!("{}:{}", ep.0, ep.1),
+                                &t.elapsed().as_millis().to_string(),
+                            ],
+                        );
+                        send_health(&tx, &*wake, cur_gen, &ep, false, m);
+                    }
+                } else if plan.reconnect {
+                    if let Some(spec) = resume.as_ref() {
+                        let default = spec.dialect.unwrap_or(Dialect::Oracle);
+                        match catch_unwind(AssertUnwindSafe(|| open_meta(spec, default))) {
+                            Ok(Ok(s)) => {
+                                session = Some(s);
+                                apply_call_timeout(&mut session, call);
+                                guard.suspect = false;
+                            }
+                            _ => {
+                                session = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let used_session = catalog_req && session.is_some();
+        META_LAST_ERR.with(|c| *c.borrow_mut() = None);
         // 계측(09-24 "컬럼 캐싱 속도"): 300 ms를 넘는 메타 질의는 stderr에 종류와 시간을 남긴다(개발자 모드 캡처용).
         let t0 = Instant::now();
         let what = req_label(&req);
@@ -1425,6 +1598,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                         let d = s.dialect();
                         let desc = s.describe();
                         session = Some(s);
+                        // ★ 새 접속 = 가드 초기화 + 메타 호출 상한(docs/107 ① · D-265).
+                        guard = MetaGuard::new();
+                        {
+                            let (_, _, _, call) = guard.cfg();
+                            apply_call_timeout(&mut session, call);
+                        }
                         // ★ 서버 정보 1회(101 · D-253): 버전·로그인·현재 DB — 실패는 빈 값(헤더는 호스트:포트만).
                         let info = with_session(&mut session, |s| {
                             nsql_catalog::server_info(s).map_err(err_s)
@@ -1880,6 +2059,28 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 Resp::Watermark { gen, r }
             }
         };
+        // ★ 요청 뒤 분류(docs/107 L3): 접속성 오류로 끝났으면 다음 요청이 반드시 판정부터(`suspect`) · 정상이면 마지막 성공 갱신 ·
+        //   끊겼다고 알렸던 뒤 첫 성공 = 복귀 알림.
+        if used_session {
+            let err = META_LAST_ERR.with(|c| c.borrow_mut().take());
+            match err {
+                Some(e) if crate::probe::is_connection_error(None, &e) => {
+                    guard.suspect = true;
+                    if let (false, Some(ep)) = (guard.broken_told, ep_of(resume.as_ref())) {
+                        guard.broken_told = true;
+                        send_health(&tx, &*wake, cur_gen, &ep, false, e);
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    guard.last_ok = Instant::now();
+                    if let (true, Some(ep)) = (guard.broken_told, ep_of(resume.as_ref())) {
+                        guard.broken_told = false;
+                        send_health(&tx, &*wake, cur_gen, &ep, true, String::new());
+                    }
+                }
+            }
+        }
         let ms = t0.elapsed().as_millis();
         // 인덱스·검색은 늘 남긴다(스키마당 1줄 · 09-25 "검색이 끝나지 않는다" 진단).
         // `NSQL_TRACE_META=1` = 전 요청(결과 상태 포함 · 10-01 ⑭ 진단).
@@ -2004,10 +2205,14 @@ fn with_session<T>(
     let Some(s) = session.as_mut() else {
         return Err(t(Msg::ExpNotConnected).to_string());
     };
-    match catch_unwind(AssertUnwindSafe(|| f(s.as_mut()))) {
+    let r = match catch_unwind(AssertUnwindSafe(|| f(s.as_mut()))) {
         Ok(r) => r,
         Err(_) => Err("internal: catalog panicked".into()),
+    };
+    if let Err(e) = &r {
+        META_LAST_ERR.with(|c| *c.borrow_mut() = Some(e.clone()));
     }
+    r
 }
 
 /// ★ 현재 스키마 판정(순수 · 09-23): 서버가 알려 준 값(목록에 있을 때) → 접속 계정과 같은 이름 → 방언 기본(`public` · `dbo` ·
@@ -2242,6 +2447,8 @@ impl Explorer {
             meta: nsql_run::meta::MetaStore::new(64 << 20),
             font_px: ICON_REF_FONT_PX,
             source_pending: false,
+            source_since: None,
+            source_name: String::new(),
             row_px: 0,
             dots_step: 0,
             grouped: false,
@@ -4371,6 +4578,24 @@ impl Explorer {
                         ),
                     }
                 }
+                Resp::Health {
+                    gen,
+                    alive,
+                    ep,
+                    reason,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    if !alive {
+                        // 끊김 = 기다리던 소스는 오지 않는다(진행 표시 걷기 · 다시 고르면 재요청).
+                        self.source_pending = false;
+                        self.source_since = None;
+                    }
+                    self.actions
+                        .push(ExplorerAction::Health { alive, ep, reason });
+                    changed = true;
+                }
                 Resp::Watermark { gen, r } => {
                     self.wm_inflight = false;
                     if gen != self.gen {
@@ -4419,6 +4644,7 @@ impl Explorer {
                     db,
                 } => {
                     self.source_pending = false;
+                    self.source_since = None;
                     if gen != self.gen {
                         continue;
                     }
@@ -4431,7 +4657,11 @@ impl Explorer {
                             db,
                             server: None,
                         }),
-                        Err(e) => self.actions.push(ExplorerAction::Status(e)),
+                        // 실패 = 상태줄 한 줄로 끝내지 않는다(docs/107 §5 · 사건 = "아무 메시지 없음").
+                        Err(e) => self.actions.push(ExplorerAction::Fail {
+                            title: t(Msg::ExpSourceFailedTitle).to_string(),
+                            body: e,
+                        }),
                     }
                 }
             }
@@ -6093,6 +6323,8 @@ impl Explorer {
             return;
         }
         self.source_pending = true;
+        self.source_since = Some(Instant::now());
+        self.source_name = o.name.clone();
         let name = if o.kind == ObjectKind::Function || o.kind == ObjectKind::Procedure {
             // PG 오버로드 — 서명 포함 이름으로.
             if self.dialect == Some(Dialect::Postgres) && !o.extra.is_empty() {
@@ -7068,6 +7300,23 @@ impl Explorer {
                     .get(*i)
                     .is_some_and(|n| n.state == LoadState::Loading)
             });
+        }
+        // ★ 소스 열기 상한(docs/107 ① · 사건 = 죽은 소켓에 갇혀 "아무 메시지 없음"): `explorer.timeout`이 지나면 실패 안내(토스트) ·
+        //   요청은 그대로 두고 늦게 오면 그때 연다(노드 로드와 같은 규칙).
+        if self.load_timeout_ms > 0
+            && self.source_pending
+            && self
+                .source_since
+                .is_some_and(|t| t.elapsed().as_millis() as u64 > self.load_timeout_ms)
+        {
+            self.source_pending = false;
+            self.source_since = None;
+            let secs = (self.load_timeout_ms / 1000).to_string();
+            self.actions.push(ExplorerAction::Fail {
+                title: t(Msg::ExpSourceFailedTitle).to_string(),
+                body: tf(Msg::ExpSourceTimeout, &[&self.source_name, &secs]),
+            });
+            d = true;
         }
         // 새 객체 강조 — 시간이 지나면 걷는다(남아 있는 동안은 서서히 옅어지므로 계속 그린다).
         let had = !self.fresh.is_empty();

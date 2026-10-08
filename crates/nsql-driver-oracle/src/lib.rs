@@ -571,6 +571,11 @@ impl Session for OracleSession {
         }))
     }
     /// OCI 서버 핸들 상태(왕복 0 · `OCI_ATTR_SERVER_STATUS`): 마지막 네트워크 결과·FIN/RST를 반영한다.
+    fn set_call_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        // 세션별 상한(메타 세션 = `explorer.timeout` · docs/107 ①) — 접속 때의 전역값(`session.call_timeout_secs`)을 덮는다.
+        let _ = self.conn.set_call_timeout(timeout);
+    }
+
     fn is_alive(&self) -> bool {
         !matches!(self.conn.status(), Ok(oracle::ConnStatus::NotConnected))
     }

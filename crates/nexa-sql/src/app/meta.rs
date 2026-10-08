@@ -311,6 +311,16 @@ impl App {
                 ExplorerAction::Log(s) => self.log_win.push(LogEntry::new(LogKind::Info, s)),
                 ExplorerAction::ServerInfo => self.sess_ui_dirty = true,
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
+                ExplorerAction::Fail { title, body } => {
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, format!("{title} - {body}")));
+                    self.toasts
+                        .push(toast::ToastKind::Error, title, body.clone());
+                    self.sess.status = body;
+                }
+                ExplorerAction::Health { alive, ep, reason } => {
+                    self.health_changed(&ep, alive, &reason);
+                }
                 ExplorerAction::Notice(s) => {
                     self.toasts.push(
                         toast::ToastKind::Warn,
