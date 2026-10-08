@@ -205,13 +205,58 @@ impl App {
         true
     }
 
+    /// 지금 활성 탭이 2-pane diff 비교 탭인가(`compare:*` 뷰 탭 · `compare.view = diff`로 열렸을 때).
+    pub(crate) fn compare_is_diff_tab(&self) -> bool {
+        self.editors
+            .active_view()
+            .is_some_and(|k| k.starts_with("compare:") && k == self.compare_diff_key)
+    }
+
+    /// 명령 `compare.next`/`compare.prev`: diff 뷰어의 다음/이전 덩어리.
+    pub(crate) fn compare_step(&mut self, forward: bool) {
+        if !self.compare_is_diff_tab() || !self.diff_view.step(forward) {
+            self.sess.status = t(Msg::StCompareNoHunk).into();
+        }
+        self.redraw();
+    }
+
     /// 비교 탭 열기 — 본문 = 편집기 문장(정규화) · 기준선 = 서버 DDL(정규화) · 머리 줄 = 일치/N군데 다름(둘 다 같은 머리 줄).
+    /// `compare.view = diff`(기본 · T-283 2단계) = 2-pane diff 뷰어(맞은편 줄 내용 · 줄 배경 · 스크롤 동기 · 덩어리 이동) ·
+    /// `inline` = 1단계(거터 표식만).
     fn compare_open(&mut self, w: CompareTarget, ddl: &str) {
         let ignore_ws = self.settings.flag("compare.ignore_ws");
         let cur = normalize_ddl(&w.stmt, ignore_ws);
         let base = normalize_ddl(ddl, ignore_ws);
         let n = diff_count(&base, &cur);
         let obj = object_label(&w.owner);
+        if self.settings.get("compare.view").unwrap_or("diff") == "diff" {
+            let title = format!("⇄ {}", w.owner.name);
+            let key = format!("compare:{obj}");
+            if !self.editors.open_view_tab(&key, &title) && !self.tab_room() {
+                return;
+            }
+            self.diff_view.set(
+                &cur,
+                &base,
+                &obj,
+                (
+                    t(Msg::CompareLabelEditor).to_string(),
+                    t(Msg::CompareLabelServer).to_string(),
+                ),
+            );
+            self.compare_diff_key = key;
+            let hunks = self.diff_view.hunk_count();
+            self.compare_last = Some((w.owner.name, ddl.to_string(), hunks));
+            self.sess.status = if hunks == 0 {
+                t(Msg::StCompareSame).into()
+            } else {
+                tf(Msg::StCompareDiff2, &[&hunks.to_string()])
+            };
+            self.set_focus(Focus::Editor);
+            self.diff_view.set_focused(true);
+            self.redraw();
+            return;
+        }
         let head = if n == 0 {
             format!("-- {}", tf(Msg::CompareHeadSame, &[&obj]))
         } else {
@@ -277,10 +322,14 @@ impl App {
 
     /// 자체 시험 덤프(`compare.dump:<파일>`): `same=<bool> hunks=<n> name=<이름>` 또는 `none`.
     pub(crate) fn compare_dump(&self, path: &str) {
-        let text = match &self.compare_last {
+        let mut text = match &self.compare_last {
             Some((name, _, n)) => format!("same={} hunks={n} name={name}\n", *n == 0),
             None => "none\n".to_string(),
         };
+        if self.compare_is_diff_tab() {
+            text.push_str(&self.diff_view.dump());
+            text.push('\n');
+        }
         let _ = std::fs::write(path, text);
     }
 

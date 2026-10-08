@@ -37,6 +37,8 @@ impl App {
         let objlink_buttons = self.objlink_card_buttons();
         let objlink_hot = self.objlinks.hot.unwrap_or_default();
         let sig_tip = self.sig_card_tip();
+        // ★ 비교 탭(2-pane diff 뷰어)인가 — 표면을 빌리기 전에 셈한다(borrow).
+        let diff_tab = self.compare_is_diff_tab();
         // 카드·툴팁의 위/아래 뒤집기 판정 영역 = 편집기 사각형(툴바·탭 위로 올라가지 않게 · 10-06).
         let ed_rect = self.editors.cur().bounds();
         // 글꼴 크기 HUD 모양 — 표면 버퍼를 빌리기 전에 셈한다(borrow).
@@ -429,6 +431,14 @@ impl App {
                         self.ext_view.set_bounds(self.editors.editor_bounds(), s);
                         self.ext_view.paint(&mut dc, &th, &detail);
                     }
+                    // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).
+                    None if diff_tab => {
+                        let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
+                            .with_fonts(prefs)
+                            .with_caret_on(caret_on);
+                        self.diff_view.set_bounds(self.editors.editor_bounds(), s);
+                        self.diff_view.paint(&mut dc, &th);
+                    }
                     None => {
                         let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
                             .with_fonts(prefs)
@@ -686,6 +696,9 @@ impl App {
                 }
                 self.editors.paint_popups(&mut dc, &th);
                 self.ext_view.paint_popup(&mut dc, &th);
+                if diff_tab {
+                    self.diff_view.paint_popup(&mut dc, &th);
+                }
                 self.panel.output_paint_popup(&mut dc, &th);
                 self.explorer.paint_popups(&mut dc, &th);
                 // 상태 메뉴(탭 닫기 확인 · 상태줄 칸 메뉴) = 팝업 층 맨 뒤(외부 변경 띠·토스트·카드 위 · 사용자 10-07).

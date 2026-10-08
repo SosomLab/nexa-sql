@@ -99,6 +99,9 @@ impl App {
             self.grid.blur_text_input();
         }
         self.ed_mut().set_focused(f == Focus::Editor);
+        if self.compare_is_diff_tab() {
+            self.diff_view.set_focused(f == Focus::Editor);
+        }
         self.explorer.set_focused(f == Focus::Explorer);
         self.objdetail.set_focused(f == Focus::Details);
         self.find.set_focused(f == Focus::Find);
@@ -2032,9 +2035,56 @@ impl App {
         }
     }
 
+    /// ★ 비교 탭(diff 뷰어 · T-283 2단계). 가져갔으면 `true`.
+    fn route_diff_tab(&mut self, ev: InputEvent, is_mouse: bool) -> bool {
+        if !self.compare_is_diff_tab() {
+            return false;
+        }
+        let cur = Point {
+            x: self.cursor.0,
+            y: self.cursor.1,
+        };
+        let in_view = self.editors.editor_bounds().contains(cur);
+        let pointer =
+            is_mouse || matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
+        let popup = self.diff_view.popup_open();
+        if pointer && (in_view || popup) {
+            if matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. }) {
+                self.diff_view.note_pointer(cur);
+            }
+            if matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) {
+                self.set_focus(Focus::Editor);
+                self.diff_view.set_focused(true);
+            }
+            if self.diff_view.on_event(&ev) {
+                self.redraw();
+            }
+            if let Some(a) = self.diff_view.take_edit_ctx() {
+                self.clip_action(a);
+            }
+            return true;
+        }
+        if !pointer && self.focus == Focus::Editor {
+            if self.diff_view.on_event(&ev) {
+                self.redraw();
+            }
+            if let Some(a) = self.diff_view.take_edit_ctx() {
+                self.clip_action(a);
+            }
+            return true;
+        }
+        false
+    }
+
     /// 뷰 탭(확장 상세). 가져갔으면 `true`(연쇄 끝).
     fn route_view_tab(&mut self, ev: InputEvent, is_mouse: bool) -> bool {
-        if self.editors.active_view().is_some() {
+        if self.route_diff_tab(ev, is_mouse) {
+            return true;
+        }
+        if self.editors.active_view().is_some() && !self.compare_is_diff_tab() {
             let cur = Point {
                 x: self.cursor.0,
                 y: self.cursor.1,

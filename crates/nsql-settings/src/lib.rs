@@ -2191,6 +2191,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 100 },
         default: "100",
     },
+    // ★ 비교 보기 방식(T-283 2단계 · 10-09): diff = 2-pane 뷰어(기본) · inline = 1단계 거터 표식.
+    Entry {
+        key: "compare.view",
+        cat: Msg::CatEditor,
+        label: Msg::LblCompareView,
+        desc: Msg::DescCompareView,
+        kind: SettingKind::Choice(COMPARE_VIEW_OPTS),
+        default: "diff",
+    },
     // ★ CREATE 문 ↔ 실제 객체 비교(T-283 · 19 §6-3): 줄 안 공백 차이 무시.
     Entry {
         key: "compare.ignore_ws",
@@ -6693,6 +6702,11 @@ const OUTPUT_ACT_OPTS: &[(&str, Msg)] = &[
     ("no_results", Msg::ValOutputActNoResults),
     ("always", Msg::ValOutputActAlways),
 ];
+const COMPARE_VIEW_OPTS: &[(&str, Msg)] = &[
+    ("diff", Msg::ValCompareViewDiff),
+    ("inline", Msg::ValCompareViewInline),
+];
+
 const RESULT_TITLE_OPTS: &[(&str, Msg)] = &[
     ("number", Msg::ValResultTitleNumber),
     ("table", Msg::ValResultTitleTable),

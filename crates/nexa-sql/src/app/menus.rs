@@ -907,6 +907,8 @@ impl App {
             // ★ CREATE 문 ↔ 실제 객체 비교(T-283 · 19 §6).
             "obj.compare" => self.obj_compare(),
             "obj.compare_server" => self.open_compare_server(),
+            "compare.next" => self.compare_step(true),
+            "compare.prev" => self.compare_step(false),
             // ★ `obj.*` = 탐색기 선택 노드의 메뉴 동작을 팔레트·키로(T-180 ④ · 묻는 동작(삭제·서버 해제)은 메뉴에서만).
             "obj.menu" => self.obj_act(None),
             "obj.select_rows" => self.obj_act(Some("select")),
@@ -1673,6 +1675,8 @@ impl App {
         cmds.push(m("view.zoom_out", Msg::MnView, Msg::MnZoomOut));
         cmds.push(m("view.zoom_reset", Msg::MnView, Msg::MnZoomReset));
         cmds.push(m("obj.compare", Msg::MnEdit, Msg::MnObjCompare));
+        cmds.push(m("compare.next", Msg::MnEdit, Msg::MnCompareNext));
+        cmds.push(m("compare.prev", Msg::MnEdit, Msg::MnComparePrev));
         cmds.push(m(
             "obj.compare_server",
             Msg::MnEdit,

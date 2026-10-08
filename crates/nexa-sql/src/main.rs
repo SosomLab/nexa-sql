@@ -35,6 +35,8 @@ mod conn_win;
 mod connect;
 mod copybtn;
 mod dbms_icons;
+/// ★ 2-pane diff 뷰어(T-283 2단계 · 비교 탭).
+mod diff_view;
 mod drop_win;
 mod editable;
 mod editors;
@@ -245,6 +247,8 @@ struct App {
     /// ★ CREATE 문 ↔ 실제 객체 비교(T-283): 서버 DDL을 기다리는 대상 · 마지막 비교(이름 · 서버 DDL · 차이 수 = "서버 DDL 열기"·덤프).
     compare_wait: Option<app::compare::CompareTarget>,
     compare_last: Option<(String, String, usize)>,
+    /// diff 뷰어로 연 비교 탭의 뷰 키(`compare:<객체>` · 다른 비교 탭은 1단계 꼴).
+    compare_diff_key: String,
     /// ★ 글꼴 크기 HUD(사용자 10-07): 바뀐 영역 위 캡슐 `얼굴 · N px` · 영역 = 편집기 본문/그리드 · 얼굴 이름 = 적재된 글꼴 사슬의 첫 이름.
     zoom_hud: nexa_ctl::TextHud,
     zoom_hud_area: Rect,
@@ -532,6 +536,8 @@ struct App {
     ext_fetch_rx: Option<std::sync::mpsc::Receiver<ExtFetch>>,
     /// 확장 상세 뷰(편집기 자리에 그리는 전용 페이지) · 뷰 열쇠(`ext:<id>`)별 내용 · 마지막으로 그린 열쇠(바뀌면 스크롤 초기화).
     ext_view: ext_view::ExtView,
+    /// ★ 비교 탭(`compare:*` 뷰 탭)의 2-pane diff 뷰어(T-283 2단계 · `compare.view = diff`).
+    diff_view: diff_view::DiffView,
     ext_details: HashMap<String, ext_view::ExtDetail>,
     ext_view_key: String,
     /// ★ 포인터 캡처(사용자 09-30 "드래그 컨트롤은 영역 밖에서 놓아도 기본 처리"): 누른 영역 — MouseUp까지 그 영역이 이동·놓임을 받는다.
@@ -1640,6 +1646,7 @@ fn main() {
         drop_backup_wait: None,
         compare_wait: None,
         compare_last: None,
+        compare_diff_key: String::new(),
         zoom_hud: nexa_ctl::TextHud::default(),
         zoom_hud_area: Rect::default(),
         goto_files: Vec::new(),
@@ -1814,6 +1821,7 @@ fn main() {
         ext_panel,
         ext_fetch_rx: None,
         ext_view: ext_view::ExtView::default(),
+        diff_view: diff_view::DiffView::default(),
         ext_details: HashMap::new(),
         ext_view_key: String::new(),
         press_capture: None,
