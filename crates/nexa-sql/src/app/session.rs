@@ -1504,7 +1504,7 @@ impl App {
         {
             self.log_win.push(LogEntry::new(
                 LogKind::Info,
-                "[test] run.stop_mute: cancel not sent".into(),
+                "[test] run.stop_mute: cancel not sent".to_string(),
             ));
             (true, false)
         } else {
