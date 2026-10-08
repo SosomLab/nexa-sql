@@ -745,7 +745,8 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// 결과 탭 제목을 정해 준다(커서 변수 이름 · 딸린 결과 번호) — 사용자가 이름 붙였거나 고정한 탭은 그대로.
+    /// 딸린 결과 탭의 제목(커서 변수 이름 · 같은 문장의 둘째 결과) — 규칙은 `ResultPanel::title_extra` 한 자리(번호 규칙이면
+    /// 제안 이름 대신 `결과N` · 사용자 10-08) · 이름 붙였거나 고정한 탭은 그대로.
     pub(crate) fn title_result_as(&mut self, key: u64, title: &str) {
         let panel = if self.panel.index_of(key).is_some() {
             Some(&mut self.panel)
@@ -754,9 +755,7 @@ impl App {
         };
         if let Some(p) = panel {
             if let Some(i) = p.index_of(key) {
-                if !p.tabs[i].named && !p.tabs[i].pinned {
-                    p.tabs[i].title = p.unique_title(title, i);
-                }
+                p.title_extra(i, title);
             }
             p.sync_bar();
         }

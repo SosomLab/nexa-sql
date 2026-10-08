@@ -450,6 +450,22 @@ impl ResultPanel {
             .map(|(i, _)| i)
     }
 
+    /// 딸린 결과(커서 변수 · 같은 문장의 둘째 결과 집합)의 제목 — **번호 규칙이면 제안 이름을 쓰지 않고 늘 `결과N`**(사용자 10-08
+    /// "결과가 둘이면 결과1 · 결과2 · Oracle RETURN 변수 이름도 같은 방식" — 종전 = 변수 이름 · `결과1 (2)`) · 종전 규칙이면 제안
+    /// 이름에 겹침 접미 · 이름 붙인·고정한 탭은 그대로.
+    pub(crate) fn title_extra(&mut self, i: usize, suggested: &str) {
+        let Some(tab) = self.tabs.get(i) else { return };
+        if tab.named || tab.pinned {
+            return;
+        }
+        if self.numbered {
+            self.ensure_numbered(i);
+        } else {
+            let title = self.unique_title(suggested, i);
+            self.tabs[i].title = title;
+        }
+    }
+
     /// 제목 자동 부여(같은 이름이면 ` 2` `3`… 접미).
     pub(crate) fn unique_title(&self, base: &str, except: usize) -> String {
         let n = self
@@ -645,6 +661,47 @@ mod tests {
         p.push(tab(2, 2, false));
         assert_eq!(p.unique_title("EMP", 1), "EMP 2");
         assert_eq!(p.unique_title("DEPT", 1), "DEPT");
+    }
+
+    /// 딸린 결과 제목(사용자 10-08): 번호 규칙 = 커서 변수 이름·`(2)` 대신 `결과N` · 종전 규칙 = 제안 이름 + 겹침 접미 ·
+    /// 이름 붙인 탭은 그대로.
+    #[test]
+    fn extra_result_titles_follow_numbering() {
+        let mut p = panel_of(1);
+        let i = p.push(tab_default(2));
+        p.tabs[i].title = t(Msg::ResultTabDefault).to_string();
+        p.title_extra(i, "RET");
+        assert_eq!(
+            numbered_index(&p.tabs[i].title),
+            Some(2),
+            "커서 변수 이름 대신 번호"
+        );
+        let j = p.push(tab_default(3));
+        p.tabs[j].title = t(Msg::ResultTabDefault).to_string();
+        p.title_extra(j, "결과1 (2)");
+        assert_eq!(
+            numbered_index(&p.tabs[j].title),
+            Some(3),
+            "`결과1 (2)` 대신 번호"
+        );
+        p.title_extra(j, "RET");
+        assert_eq!(
+            numbered_index(&p.tabs[j].title),
+            Some(3),
+            "이미 번호가 있으면 그대로"
+        );
+        let id = p.tabs[j].id;
+        assert!(p.rename(id, "커서"));
+        p.title_extra(j, "RET");
+        assert_eq!(p.tabs[j].title, "커서", "이름 붙인 탭은 그대로");
+        // 종전 규칙(테이블 이름): 제안 이름 + 겹침 접미.
+        p.set_numbered(false);
+        let k = p.push(tab_default(4));
+        p.title_extra(k, "RET");
+        assert_eq!(p.tabs[k].title, "RET");
+        let l = p.push(tab_default(5));
+        p.title_extra(l, "RET");
+        assert_eq!(p.tabs[l].title, "RET 2");
     }
 
     /// ㉘ Output에서 결과 탭으로: Output 활성 × 정책(MC/DC — 조건 둘).
