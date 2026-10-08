@@ -2671,15 +2671,21 @@ impl Explorer {
             NodeKind::Sub { sub, owner } => format!("{sub:?} · {}.{}", owner.schema, owner.name),
             NodeKind::Item(_) => String::new(),
         };
-        let mut text = main;
-        if !dim.is_empty() {
-            text.push_str("  ");
-            text.push_str(&dim);
-        }
-        if !kind.is_empty() {
-            text.push('\n');
-            text.push_str(&kind);
-        }
+        // ★ 객체 노드는 둘째 줄(`종류 · 스키마.이름 · 상태 · 수정일`)에 이름이 이미 들어 있어 첫 줄(이름만)을 뺀다(사용자 10-08).
+        let mut text = if matches!(n.kind, NodeKind::Object(_)) && !kind.is_empty() {
+            kind
+        } else {
+            let mut text = main;
+            if !dim.is_empty() {
+                text.push_str("  ");
+                text.push_str(&dim);
+            }
+            if !kind.is_empty() {
+                text.push('\n');
+                text.push_str(&kind);
+            }
+            text
+        };
         if let LoadState::Error(e) = &n.state {
             text.push('\n');
             text.push_str(e);
