@@ -376,16 +376,20 @@ pub fn sub_items(
             } else {
                 format!("{schema}.{name}")
             };
-            Ok(routine_args(s, &call)?
+            let args = routine_args(s, &call)?;
+            // 오버로드 꼬리 `#n`은 **오버로드가 둘 이상일 때만**(Oracle 번호) — PG `overload` = oid · SQL Server = object_id라 늘 붙던 꼬리
+            //   `#718165`/`#1760061356`(E2E 10-08).
+            let overloads: std::collections::HashSet<&str> =
+                args.iter().map(|a| a.overload.as_str()).collect();
+            let multi = overloads.len() > 1;
+            Ok(args
                 .into_iter()
                 .filter(|a| !a.name.is_empty())
                 .map(|a| {
-                    // 오버로드 번호는 Oracle/PG 몫 — SQL Server의 `overload`는 object_id라 꼬리 `#1760061356`이 붙었다(사용자 10-08).
-                    let ov = if d == Dialect::Mssql || matches!(a.overload.as_str(), "" | "0" | "1")
-                    {
-                        String::new()
-                    } else {
+                    let ov = if multi && !matches!(a.overload.as_str(), "" | "0" | "1") {
                         format!(" #{}", a.overload)
+                    } else {
+                        String::new()
                     };
                     item(
                         a.name,

@@ -33,13 +33,14 @@ skp() { say "  SKIP  $1"; skip=$((skip+1)); }
 show() { echo "$1" | head -8 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null; }
 w() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
-# probe <이름> <프로필> <본문> <캐럿> [앞서 실행할 파일] → 후보 덤프 경로를 echo. 앞 파일이 있으면 그 탭에서 run.all 뒤 새 탭을 연다.
+# probe <이름> <프로필> <본문> <캐럿> [run] → 후보 덤프 경로를 echo. 다섯째 인자가 "run"이면 **같은 탭**에서 run.all(예: 첫 줄 `USE DB` + GO)을
+#   먼저 돌린 뒤 캐럿 자리에서 완성한다(탭별 작업 단위 ⑯ = 새 탭은 기본 DB라 같은 탭이어야 한다 · E2E 10-08).
 probe() {
   local name=$1 profile=$2 body=$3 caret=$4 pre=${5:-} f="$OUT/$1.sql" d="$OUT/$1.cands"
   printf '%s' "$body" > "$f"; rm -f "$d"
   local cmd
   if [ -n "$pre" ]; then
-    cmd="@connected:open:$(w "$pre"),@after:6000:run.all,@after:9500:open:$(w "$f"),@after:10500:editor.caret:$caret,@after:10800:intel.probe,@after:14500:intel.probe,@after:15500:intel.dump:$d"
+    cmd="@connected:open:$(w "$f"),@after:6000:run.all,@after:10000:editor.caret:$caret,@after:10300:intel.probe,@after:14000:intel.probe,@after:15000:intel.dump:$d"
     NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 19 "$EXE" "$profile" > "$OUT/$1.stdout" 2> "$OUT/$1.stderr"
   else
     cmd="@connected:open:$(w "$f"),@after:6000:editor.caret:$caret,@after:6300:intel.probe,@after:10500:intel.probe,@after:11500:intel.dump:$d"
@@ -47,13 +48,13 @@ probe() {
   fi
   echo "$d"
 }
-# links <이름> <프로필> <본문> [앞서 실행할 파일] → objlink 덤프 경로를 echo.
+# links <이름> <프로필> <본문> [run] → objlink 덤프 경로를 echo. "run"이면 같은 탭에서 run.all 뒤(USE 뒤 메타 재분석) 덤프.
 links() {
   local name=$1 profile=$2 body=$3 pre=${4:-} f="$OUT/$1.sql" d="$OUT/$1.links"
   printf '%s' "$body" > "$f"; rm -f "$d"
   local cmd
   if [ -n "$pre" ]; then
-    cmd="@connected:open:$(w "$pre"),@after:6000:run.all,@after:9500:open:$(w "$f"),@after:13500:objlink.dump:$d"
+    cmd="@connected:open:$(w "$f"),@after:6000:run.all,@after:13000:objlink.dump:$d"
     NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 17 "$EXE" "$profile" > "$OUT/$1.stdout" 2> "$OUT/$1.stderr"
   else
     cmd="@connected:open:$(w "$f"),@after:9000:objlink.dump:$d"
@@ -61,7 +62,7 @@ links() {
   fi
   echo "$d"
 }
-has()  { echo "$2" | grep -qE -- "$1"; }
+has()  { echo "$2" | grep -qiE -- "$1"; }
 
 say "=== 전달인자 완성·EXEC 링크·OUT 재추론 E2E · $(date '+%F %T') · gui=$EXE · nsql=$NSQL"
 
@@ -77,7 +78,8 @@ if [ -n "$ORA" ]; then
   d=$(probe "o2_second" "$ORA" "EXEC $ORA.$ORA_P2($A1 => :R, " end)
   if [ -s "$d" ]; then c=$(cat "$d"); show "$c"
     has "^Variable\|$A2 => \|" "$c" && ok "O② \`,\` 뒤 = \`$A2 => \`(둘째 인자)" || bad "O② 둘째 인자 후보 없음" "$c"
-    has "^Variable\|$A1 => \|" "$c" && bad "O② 이미 적은 \`$A1\`이 남음" "$c" || ok "O② 이미 적은 \`$A1\` 제외"
+    has "^Variable\|$A1" "$c" && bad "O② 이미 적은 \`$A1\`이 남음" "$c" || ok "O② 이미 적은 \`$A1\` 제외"
+    has "^Variable\|@" "$c" && bad "O② Oracle에 SQL Server 꼴(\`@이름 = \`)" "$c" || ok "O② \`@이름 = \` 꼴 없음(방언 맞음)"
   else bad "O② 후보 덤프 없음" "$(tail -3 "$OUT/o2_second.stderr")"; fi
   # O③ CLI: 자동 변수 :RET = 첫 프로시저(NUMBER OUT) → 둘째(REF CURSOR OUT)에 재사용 = 서명 타입으로 다시 맞춰 PLS-00306 없음.
   F3="$OUT/o3_out.sql"; printf 'EXEC %s.%s(:RET, '"'"'SSS'"'"');\nEXEC %s.%s(:RET, '"'"'SSS'"'"');\nSHOW VARIABLES;\n' "$ORA" "$ORA_P1" "$ORA" "$ORA_P2" > "$F3"
@@ -89,8 +91,8 @@ else skp "Oracle 건너뜀(-O 빈 값)"; fi
 # ── SQL Server ────────────────────────────────────────────────────────────────
 if [ -n "$MS" ]; then
   say "— SQL Server · 프로필 $MS · DB $MS_DB · $MS_PROC(@$MS_ARG)"
-  PRE="$OUT/ms_use.sql"; printf 'USE %s\nGO\n' "$MS_DB" > "$PRE"
-  d=$(probe "m1_user" "$MS" "EXEC $MS_PROC " end "$PRE")
+  USE=$'USE '"$MS_DB"$'\nGO\n'
+  d=$(probe "m1_user" "$MS" "${USE}EXEC $MS_PROC " end run)
   if [ -s "$d" ]; then c=$(cat "$d"); show "$c"
     has "^Variable\|@$MS_ARG = \|" "$c" && ok "M① \`USE $MS_DB\` 뒤 \`EXEC $MS_PROC \` = \`@$MS_ARG = \`" || bad "M① \`@$MS_ARG = \` 없음" "$c"
     has "^Variable\|$MS_ARG\|" "$c" && bad "M① \`@\` 없는 이름이 섞임" "$c" || ok "M① \`@\` 없는 이름 없음"
@@ -106,7 +108,7 @@ if [ -n "$MS" ]; then
     has "^Variable\|@value = \|" "$c" && ok "M③ \`,\` 뒤 = \`@value = \`" || bad "M③ \`@value = \` 없음" "$c"
     has "^Variable\|@name = \|" "$c" && bad "M③ 이미 쓴 \`@name\`이 남음" "$c" || ok "M③ 이미 쓴 \`@name\` 제외"
   else bad "M③ 후보 덤프 없음" "$(tail -3 "$OUT/m3_used.stderr")"; fi
-  d=$(links "m4_link" "$MS" "EXEC $MS_PROC @$MS_ARG = 'BBBB';" "$PRE")
+  d=$(links "m4_link" "$MS" "${USE}EXEC $MS_PROC @$MS_ARG = 'BBBB';" run)
   if [ -s "$d" ]; then c=$(cat "$d"); show "$c"
     has "^Routine\|(dbo\.)?$MS_PROC\|true" "$c" && ok "M④ \`EXEC $MS_PROC …\` = 루틴 링크(정상)" || bad "M④ 루틴 링크 없음/미확인" "$c"
     has "\|@$MS_ARG\|" "$c" && bad "M④ 인자 이름이 링크로 잡힘" "$c" || ok "M④ 인자 이름은 링크 아님"

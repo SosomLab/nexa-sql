@@ -1080,8 +1080,14 @@ impl Intel {
                                     nsql_run::meta::ArgState::Loaded(list) => {
                                         let used = named_args_used(head);
                                         for (i, a) in list.iter().enumerate() {
-                                            let n = m.names.get(a.name);
-                                            if used.iter().any(|u| u.eq_ignore_ascii_case(n)) {
+                                            // 카탈로그는 이름을 대문자로 접는다(서명 대조용) — PG는 소문자 식별자가 자연스러워 소문자로(E2E 10-08).
+                                            let raw = m.names.get(a.name);
+                                            let n = if dialect == Some(Dialect::Postgres) {
+                                                raw.to_lowercase()
+                                            } else {
+                                                raw.to_string()
+                                            };
+                                            if used.iter().any(|u| u.eq_ignore_ascii_case(&n)) {
                                                 continue;
                                             }
                                             cands.push(Cand {

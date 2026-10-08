@@ -146,6 +146,11 @@ fn exec_routine_at(before: &[&Word<'_>]) -> Option<(String, bool)> {
         }
     }
     let pi = last_idx?;
+    // ★ 이름 바로 뒤가 `(`이면 괄호 호출(Oracle `EXEC proc(…)` · PG `CALL`) = 괄호 안 식 문맥(`paren_owner` · 이름 지정 인자 `=>`)이지
+    //   T-SQL 괄호 없는 인자 자리가 아니다(E2E O② = Oracle `,` 뒤에 `@이름 = `가 나오던 결함 · 10-08).
+    if before.get(pi + 1).is_some_and(|w| w.text == "(") {
+        return None;
+    }
     Some((name, pi == n - 1 || last.text == ","))
 }
 
@@ -1986,6 +1991,17 @@ mod tests {
             k("EXEC PROC_TEST @a = ", Dialect::Mssql),
             CtxKind::ExecArgs { .. }
         ));
+        // 괄호 호출(Oracle) = ExecArgs 아님 · 괄호 주인만(이름 지정 인자 길).
+        let c = context_at("EXEC BISCM.SP_TEST2(RET => :R, ", 31, Some(Dialect::Oracle));
+        assert!(
+            !matches!(
+                c.kind,
+                CtxKind::ExecArgs { .. } | CtxKind::Want(Want::ProcParam(_))
+            ),
+            "{:?}",
+            c.kind
+        );
+        assert_eq!(c.paren_owner.as_deref(), Some("BISCM.SP_TEST2"));
         assert_eq!(k("EXEC ", Dialect::Mssql), CtxKind::Want(Want::Routine));
         let c = context_at("EXEC sp_rename ", 15, Some(Dialect::Mssql));
         assert_eq!(
