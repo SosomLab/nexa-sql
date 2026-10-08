@@ -770,6 +770,9 @@ enum Resp {
         title: String,
         r: Result<String, String>,
         origin: ObjectOrigin,
+        /// ★ 객체가 속한 DB(SQL Server/MySQL 트리 · 요청의 `db` 그대로) — 호스트가 소스 탭의 작업 단위를 이 DB로 심는다(사용자 10-08
+        ///   "M4PLAN_MS 프로시저를 열면 탭이 master" · T-312는 행 조회 탭만이었다).
+        db: Option<String>,
     },
     Live {
         gen: u64,
@@ -1820,6 +1823,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     title,
                     r,
                     origin,
+                    db,
                 }
             }
             Req::Live { gen, req } => {
@@ -4335,17 +4339,19 @@ impl Explorer {
                     title,
                     r,
                     origin,
+                    db,
                 } => {
                     self.source_pending = false;
                     if gen != self.gen {
                         continue;
                     }
                     match r {
+                        // 소스 탭도 그 객체의 DB로(사용자 10-08 · 행 조회 탭 T-312와 같은 길 = 호스트 `tab_unit` + `apply_tab_unit`).
                         Ok(text) => self.actions.push(ExplorerAction::OpenSql {
                             title,
                             text,
                             origin: Some(origin),
-                            db: None,
+                            db,
                             server: None,
                         }),
                         Err(e) => self.actions.push(ExplorerAction::Status(e)),
