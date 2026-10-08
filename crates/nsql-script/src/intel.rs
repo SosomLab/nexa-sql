@@ -42,6 +42,9 @@ pub enum Want {
     Routine,
     /// 한 종류(`nsql_catalog::ObjectKind::parse`가 아는 코드 · `view`·`procedure`·`sequence` …).
     Kind(&'static str),
+    /// ★ SQL Server 시스템 프로시저의 **파라미터**(T-316 10-08): `EXEC [sys.]sp_x |` · `, |` · `@…` 자리 — 값 = 표의 프로시저 이름 ·
+    /// 호스트는 [`crate::builtins::proc_params`]에서 아직 안 쓴 `@파라미터`를 낸다(메타 불필요).
+    ProcParam(&'static str),
 }
 
 /// alias 한 줄.
@@ -145,6 +148,30 @@ fn want_at(
     }
     if n >= 3 && last.text == "=" && is_word(before[n - 3], "EXEC") {
         return Some(Want::Routine);
+    }
+    // ★ `EXEC [sys.]sp_x |` · `EXEC sp_x @a = 1, |`(T-316): 프로시저 이름 = EXEC 뒤 첫 이름 사슬의 마지막(`@r =` 꼴은 건너뜀) ·
+    //   자리 = 이름 바로 뒤(공백) 또는 `,` 뒤 — `=` 뒤(값 자리)는 아니다.
+    if n >= 2 && (is_word(before[0], "EXEC") || is_word(before[0], "EXECUTE")) {
+        let mut k = 1;
+        if k + 1 < n && before[k].text.starts_with('@') && before[k + 1].text == "=" {
+            k += 2;
+        }
+        let mut name_idx = None;
+        while k < n && is_name(before[k]) && !before[k].text.starts_with('@') {
+            name_idx = Some(k);
+            if k + 1 < n && before[k + 1].text == "." {
+                k += 2;
+            } else {
+                break;
+            }
+        }
+        if let Some(pi) = name_idx {
+            if let Some(p) = crate::builtins::proc_params(dialect, before[pi].text) {
+                if pi == n - 1 || last.text == "," {
+                    return Some(Want::ProcParam(p.name));
+                }
+            }
+        }
     }
     // `DROP <종류> [IF EXISTS] |` · `ALTER <종류> |`(TABLE은 관계 자리 그대로).
     if matches!(stmt_kind, Some("DROP" | "ALTER")) {
@@ -677,6 +704,11 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
     };
     // ★ 특정 종류만 고르는 자리(10-01 ⑩) — 관계 판정보다 먼저(`DROP VIEW |` · `USE |` · `EXEC |`).
     if let Some(w) = want_at(&before, stmt_kind.as_deref(), dialect) {
+        // 파라미터 자리 = 시그니처 도움의 주인도 그 프로시저(`EXEC sp_x` 는 괄호가 없다 · T-316).
+        let paren_owner = match w {
+            Want::ProcParam(p) => Some(p.to_string()),
+            _ => paren_owner,
+        };
         return Context {
             kind: CtxKind::Want(w),
             prefix,
@@ -1851,6 +1883,38 @@ mod tests {
             CtxKind::Want(Want::Schema)
         );
         assert_eq!(k("EXEC ", Dialect::Oracle), CtxKind::Want(Want::Routine));
+        // ★ T-316: 시스템 프로시저 파라미터 자리(이름 뒤 · `,` 뒤 · `sys.` 접두) · `=` 뒤는 값 자리.
+        assert_eq!(
+            k("EXEC sys.sp_addextendedproperty ", Dialect::Mssql),
+            CtxKind::Want(Want::ProcParam("sp_addextendedproperty"))
+        );
+        assert_eq!(
+            k(
+                "EXEC sp_updateextendedproperty @name = N'MS_Description', @value = N'x', ",
+                Dialect::Mssql
+            ),
+            CtxKind::Want(Want::ProcParam("sp_updateextendedproperty"))
+        );
+        assert_eq!(
+            k("EXEC sp_rename ", Dialect::Mssql),
+            CtxKind::Want(Want::ProcParam("sp_rename"))
+        );
+        assert!(!matches!(
+            k("EXEC sp_rename @objname = ", Dialect::Mssql),
+            CtxKind::Want(Want::ProcParam(_))
+        ));
+        assert!(!matches!(
+            k("EXEC my_proc ", Dialect::Mssql),
+            CtxKind::Want(Want::ProcParam(_))
+        ));
+        let c = context_at("EXEC sp_rename ", 15, Some(Dialect::Mssql));
+        assert_eq!(
+            c.paren_owner.as_deref(),
+            Some("sp_rename"),
+            "시그니처 도움 주인"
+        );
+        assert!(crate::builtins::proc_params(Some(Dialect::Mssql), "sys.sp_rename").is_some());
+        assert!(crate::builtins::signature(Some(Dialect::Mssql), "sp_rename").is_some());
         assert_eq!(k("CALL ", Dialect::Postgres), CtxKind::Want(Want::Routine));
         assert_eq!(
             k("EXEC @r = ", Dialect::Mssql),

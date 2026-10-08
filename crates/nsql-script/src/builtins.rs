@@ -732,6 +732,84 @@ pub fn signature(d: Option<Dialect>, name: &str) -> Option<&'static str> {
         .into_iter()
         .find(|b| b.name.eq_ignore_ascii_case(name))
         .map(|b| b.sig)
+        // SQL Server 시스템 프로시저(`EXEC sp_x` 자리의 시그니처 도움 · T-316).
+        .or_else(|| proc_params(d, name).map(|p| p.sig))
+}
+
+/// ★ SQL Server 시스템 프로시저 **파라미터**(사용자 10-08 "시스템 프로시저 parameter 자동완성" · T-316): `EXEC [sys.]sp_x |`·`, |`·`@…` 자리에
+/// 아직 안 쓴 `@파라미터`를 후보로 · `sig` = 상태줄/카드 시그니처 한 줄 · 타입은 표시용(문서 요약).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SysProc {
+    pub name: &'static str,
+    pub sig: &'static str,
+    pub params: &'static [(&'static str, &'static str)],
+}
+
+macro_rules! p {
+    ($n:literal, $s:literal, [$($pn:literal : $pt:literal),* $(,)?]) => {
+        SysProc { name: $n, sig: $s, params: &[$(($pn, $pt)),*] }
+    };
+}
+
+pub const MSSQL_SYSTEM_PROC_PARAMS: &[SysProc] = &[
+    p!("sp_addextendedproperty", "sp_addextendedproperty @name, @value, @level0type, @level0name, @level1type, @level1name, @level2type, @level2name",
+        ["@name": "sysname", "@value": "sql_variant", "@level0type": "varchar(128)", "@level0name": "sysname",
+         "@level1type": "varchar(128)", "@level1name": "sysname", "@level2type": "varchar(128)", "@level2name": "sysname"]),
+    p!("sp_updateextendedproperty", "sp_updateextendedproperty @name, @value, @level0type, @level0name, @level1type, @level1name, @level2type, @level2name",
+        ["@name": "sysname", "@value": "sql_variant", "@level0type": "varchar(128)", "@level0name": "sysname",
+         "@level1type": "varchar(128)", "@level1name": "sysname", "@level2type": "varchar(128)", "@level2name": "sysname"]),
+    p!("sp_dropextendedproperty", "sp_dropextendedproperty @name, @level0type, @level0name, @level1type, @level1name, @level2type, @level2name",
+        ["@name": "sysname", "@level0type": "varchar(128)", "@level0name": "sysname",
+         "@level1type": "varchar(128)", "@level1name": "sysname", "@level2type": "varchar(128)", "@level2name": "sysname"]),
+    p!("sp_rename", "sp_rename @objname, @newname [, @objtype]", ["@objname": "nvarchar(1035)", "@newname": "sysname", "@objtype": "varchar(13)"]),
+    p!("sp_help", "sp_help [@objname]", ["@objname": "nvarchar(776)"]),
+    p!("sp_helptext", "sp_helptext @objname [, @columnname]", ["@objname": "nvarchar(776)", "@columnname": "sysname"]),
+    p!("sp_helpindex", "sp_helpindex @objname", ["@objname": "nvarchar(776)"]),
+    p!("sp_helpdb", "sp_helpdb [@dbname]", ["@dbname": "sysname"]),
+    p!("sp_helpconstraint", "sp_helpconstraint @objname [, @nomsg]", ["@objname": "nvarchar(776)", "@nomsg": "varchar(5)"]),
+    p!("sp_columns", "sp_columns @table_name [, @table_owner, @table_qualifier, @column_name, @ODBCVer]",
+        ["@table_name": "nvarchar(384)", "@table_owner": "nvarchar(384)", "@table_qualifier": "sysname", "@column_name": "nvarchar(384)", "@ODBCVer": "int"]),
+    p!("sp_tables", "sp_tables [@table_name, @table_owner, @table_qualifier, @table_type, @fUsePattern]",
+        ["@table_name": "nvarchar(384)", "@table_owner": "nvarchar(384)", "@table_qualifier": "sysname", "@table_type": "varchar(100)", "@fUsePattern": "bit"]),
+    p!("sp_depends", "sp_depends @objname", ["@objname": "nvarchar(776)"]),
+    p!("sp_who", "sp_who [@loginame]", ["@loginame": "sysname"]),
+    p!("sp_who2", "sp_who2 [@loginame]", ["@loginame": "sysname"]),
+    p!("sp_lock", "sp_lock [@spid1, @spid2]", ["@spid1": "int", "@spid2": "int"]),
+    p!("sp_spaceused", "sp_spaceused [@objname, @updateusage, @mode, @oneresultset]",
+        ["@objname": "nvarchar(776)", "@updateusage": "varchar(5)", "@mode": "varchar(11)", "@oneresultset": "bit"]),
+    p!("sp_recompile", "sp_recompile @objname", ["@objname": "nvarchar(776)"]),
+    p!("sp_executesql", "sp_executesql @stmt [, @params, …]", ["@stmt": "nvarchar(max)", "@params": "nvarchar(max)"]),
+    p!("sp_configure", "sp_configure [@configname, @configvalue]", ["@configname": "varchar(35)", "@configvalue": "int"]),
+    p!("sp_addlinkedserver", "sp_addlinkedserver @server [, @srvproduct, @provider, @datasrc, @location, @provstr, @catalog]",
+        ["@server": "sysname", "@srvproduct": "nvarchar(128)", "@provider": "nvarchar(128)", "@datasrc": "nvarchar(4000)",
+         "@location": "nvarchar(4000)", "@provstr": "nvarchar(4000)", "@catalog": "sysname"]),
+    p!("sp_addlinkedsrvlogin", "sp_addlinkedsrvlogin @rmtsrvname [, @useself, @locallogin, @rmtuser, @rmtpassword]",
+        ["@rmtsrvname": "sysname", "@useself": "varchar(8)", "@locallogin": "sysname", "@rmtuser": "sysname", "@rmtpassword": "sysname"]),
+    p!("sp_serveroption", "sp_serveroption @server, @optname, @optvalue", ["@server": "sysname", "@optname": "varchar(35)", "@optvalue": "varchar(10)"]),
+    p!("sp_dropserver", "sp_dropserver @server [, @droplogins]", ["@server": "sysname", "@droplogins": "char(10)"]),
+    p!("sp_catalogs", "sp_catalogs @server_name", ["@server_name": "sysname"]),
+    p!("sp_tables_ex", "sp_tables_ex @table_server [, @table_name, @table_schema, @table_catalog, @table_type]",
+        ["@table_server": "sysname", "@table_name": "sysname", "@table_schema": "sysname", "@table_catalog": "sysname", "@table_type": "sysname"]),
+    p!("sp_columns_ex", "sp_columns_ex @table_server [, @table_name, @table_schema, @table_catalog, @column_name, @ODBCVer]",
+        ["@table_server": "sysname", "@table_name": "sysname", "@table_schema": "sysname", "@table_catalog": "sysname", "@column_name": "sysname", "@ODBCVer": "int"]),
+    p!("sp_testlinkedserver", "sp_testlinkedserver @servername", ["@servername": "sysname"]),
+    p!("sp_updatestats", "sp_updatestats [@resample]", ["@resample": "char(8)"]),
+    p!("sp_msforeachtable", "sp_msforeachtable @command1 [, @replacechar, @command2, @command3, @whereand, @precommand, @postcommand]",
+        ["@command1": "nvarchar(2000)", "@replacechar": "nchar(1)", "@command2": "nvarchar(2000)", "@command3": "nvarchar(2000)",
+         "@whereand": "nvarchar(2000)", "@precommand": "nvarchar(2000)", "@postcommand": "nvarchar(2000)"]),
+    p!("xp_cmdshell", "xp_cmdshell @command_string [, no_output]", ["@command_string": "varchar(8000)"]),
+];
+
+/// 시스템 프로시저 파라미터 표 조회 — SQL Server(또는 방언 모름)만 · `sys.` 접두는 벗긴다 · 대소문자 무시.
+#[must_use]
+pub fn proc_params(d: Option<Dialect>, name: &str) -> Option<&'static SysProc> {
+    if d.is_some_and(|d| d != Dialect::Mssql) {
+        return None;
+    }
+    let bare = name.rsplit_once('.').map_or(name, |(_, n)| n);
+    MSSQL_SYSTEM_PROC_PARAMS
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(bare))
 }
 
 /// ★ SQL Server 시스템 프로시저(자주 쓰는 것 · 10-01 ⑩ · `EXEC |` 자리) — 이름만(인자 안내는 2차).

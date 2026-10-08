@@ -840,6 +840,34 @@ impl Intel {
                 }
             }
             // ★ 특정 종류만(10-01 ⑩): 키워드·문서 낱말 없이 메타의 그 종류 + 스키마.
+            CtxKind::Want(intel::Want::ProcParam(p)) => {
+                // ★ T-316: 시스템 프로시저 파라미터 — 문장 안에 이미 쓴 `@이름`은 뺀다(메타 불필요).
+                let used: Vec<String> = param_names_in(
+                    &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)],
+                );
+                if let Some(sp) = nsql_script::builtins::proc_params(dialect, p) {
+                    for (i, (name, ty)) in sp.params.iter().enumerate() {
+                        if used.iter().any(|u| u.eq_ignore_ascii_case(name)) {
+                            continue;
+                        }
+                        cands.push(Cand {
+                            text: (*name).to_string(),
+                            kind: CandKind::Variable,
+                            detail: if show_types {
+                                (*ty).to_string()
+                            } else {
+                                String::new()
+                            },
+                            source: 4,
+                            tag: 0,
+                            mark: String::new(),
+                            order: i as u32,
+                            qualifier: String::new(),
+                            layer: 0,
+                        });
+                    }
+                }
+            }
             CtxKind::Want(w) => {
                 self.want_cands(*w, meta, dialect, show_types, &mut cands);
             }
@@ -1731,6 +1759,8 @@ impl Intel {
                 }
                 None => {}
             },
+            // 파라미터 자리는 호출자가 메타 없이 처리한다(T-316).
+            intel::Want::ProcParam(_) => return,
         }
         if databases {
             match m.names.find("") {
@@ -1942,6 +1972,28 @@ fn from_kinds(dialect: Option<Dialect>, routines: bool) -> Vec<ObjectKind> {
 /// 창 방식 문맥 구간(09-24 §187): 캐럿 앞뒤 `WINDOW_BYTES` 안에서 빈 줄(`\n\n`) 경계를 찾아 자르고(없으면 줄 시작/끝) 글자 경계로 맞춘다.
 /// 문장은 보통 빈 줄로 나뉘므로 캐럿 문장은 통째로 들어온다. 반환 = (시작, 끝) 절대 바이트.
 const WINDOW_BYTES: usize = 256 * 1024;
+/// 글 안의 `@이름` 낱말들(시스템 프로시저 파라미터 자리에서 이미 쓴 것 · T-316 · 순수).
+fn param_names_in(text: &str) -> Vec<String> {
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'@' {
+            let s = i;
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'@') {
+                i += 1;
+            }
+            if i > s + 1 {
+                out.push(text[s..i].to_string());
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 fn window_of(doc: &str, caret: usize) -> (usize, usize) {
     let caret = caret.min(doc.len());
     let mut a = caret.saturating_sub(WINDOW_BYTES);
