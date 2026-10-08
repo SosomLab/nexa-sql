@@ -1162,7 +1162,14 @@ impl App {
         let editor_h = if view_mode {
             body_h
         } else {
-            (body_h as f32 * pct) as i32
+            // ★ 최소 높이 둘(사용자 10-09 · `layout.editor_min_px` · `layout.result_min_px` · 논리 px × 배율).
+            app::split::clamp_editor_h(
+                (body_h as f32 * pct) as i32,
+                body_h,
+                pad,
+                px(self.settings.int("layout.editor_min_px") as f32, s),
+                px(self.settings.int("layout.result_min_px") as f32, s),
+            )
         };
         self.editors
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);

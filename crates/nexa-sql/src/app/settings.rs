@@ -893,7 +893,9 @@ impl App {
             | "grid.font_size"
             | "explorer.width"
             | "explorer.font_size"
-            | "layout.editor_split_pct" => {
+            | "layout.editor_split_pct"
+            | "layout.editor_min_px"
+            | "layout.result_min_px" => {
                 self.layout();
             }
             _ => return false,

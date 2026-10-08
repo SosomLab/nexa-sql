@@ -30,6 +30,7 @@ mod project;
 mod run;
 mod session;
 mod settings;
+pub(crate) mod split;
 mod startup_cmd;
 pub(crate) mod tabobj;
 mod toolbar;

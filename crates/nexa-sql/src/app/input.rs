@@ -67,7 +67,14 @@ impl App {
                 let pad = px(8.0, s);
                 let body = self.act_bar.bounds();
                 if body.h > 0 {
-                    let editor_h = y + pad - body.y;
+                    // 최소 높이 둘 안에서만(사용자 10-09) — 배치와 같은 순수 함수.
+                    let editor_h = app::split::clamp_editor_h(
+                        y + pad - body.y,
+                        body.h,
+                        pad,
+                        px(self.settings.int("layout.editor_min_px") as f32, s),
+                        px(self.settings.int("layout.result_min_px") as f32, s),
+                    );
                     let pct = (editor_h as f32 / body.h as f32 * 100.0).round() as i64;
                     let _ = self
                         .settings

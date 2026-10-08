@@ -3355,6 +3355,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 160, max: 800 },
         default: "260",
     },
+    // ★ 편집기 · 결과 영역 최소 높이(사용자 10-09): 분할 비율·스플리터가 이 아래로 내려가지 않는다(논리 px · 창이 더 작으면 비례).
+    Entry {
+        key: "layout.editor_min_px",
+        cat: Msg::CatWindow,
+        label: Msg::LblLayoutEditorMin,
+        desc: Msg::DescLayoutEditorMin,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "120",
+    },
+    Entry {
+        key: "layout.result_min_px",
+        cat: Msg::CatWindow,
+        label: Msg::LblLayoutResultMin,
+        desc: Msg::DescLayoutResultMin,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "120",
+    },
     // 편집기/결과 상하 분할 비율 — 스플리터 드래그로 바뀌고 자동 기억(HIDDEN · 사용자 09-16).
     Entry {
         key: "layout.editor_split_pct",
