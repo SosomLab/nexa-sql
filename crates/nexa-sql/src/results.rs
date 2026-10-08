@@ -478,6 +478,19 @@ impl ResultPanel {
         Some(tab)
     }
 
+    /// ★ Output을 보던 중 실행의 대상(㉘ 10-01) = **가장 최근의 뿌리 결과 탭**(딸린 탭 제외) — 딸린 탭(`결과2`)을 부모로 삼으면
+    ///   같은 문장의 둘째 결과가 `결과3`으로 늘어나고 옛 `결과1`이 남는다(협업 V1 bin95 관찰 · 10-08). 뿌리가 없으면 최근 비Output 탭.
+    pub(crate) fn latest_root_tab(&self) -> Option<u64> {
+        let pick = |root_only: bool| {
+            self.tabs
+                .iter()
+                .filter(|t| !t.is_output && (!root_only || t.child_of.is_none()))
+                .max_by_key(|t| t.seq)
+                .map(|t| t.id)
+        };
+        pick(true).or_else(|| pick(false))
+    }
+
     /// 자동 정리 후보 = 가장 오래된 **비고정·비활성** 탭(D-75 `grid.result_tab_evict`).
     pub(crate) fn evict_candidate(&self) -> Option<usize> {
         self.tabs
@@ -782,6 +795,29 @@ mod tests {
         let mut orphan = tab(5, 5, false);
         orphan.child_of = Some((77, 0));
         assert_eq!(p.insert_child(77, orphan), 5);
+    }
+
+    /// Output 보던 중 실행 대상 = 최근 **뿌리** 탭(딸린 탭 아님 · Output 아님) · 뿌리가 없으면 최근 비Output.
+    #[test]
+    fn output_run_target_is_latest_root_tab() {
+        let mut p = ResultPanel::new(tab(1, 1, false), true, false);
+        let mut c = tab(2, 2, false);
+        c.child_of = Some((1, 0));
+        p.insert_child(1, c);
+        let mut out = tab(9, 9, true);
+        out.is_output = true;
+        p.push(out);
+        assert_eq!(
+            p.latest_root_tab(),
+            Some(1),
+            "딸린 탭(2)·Output(9)보다 뿌리 1"
+        );
+        p.push(tab(3, 3, false));
+        assert_eq!(p.latest_root_tab(), Some(3), "새 뿌리가 더 최근");
+        p.tabs.retain(|t| t.id == 2 || t.id == 9);
+        assert_eq!(p.latest_root_tab(), Some(2), "뿌리가 없으면 최근 비Output");
+        p.tabs.retain(|t| t.id == 9);
+        assert_eq!(p.latest_root_tab(), None);
     }
 
     /// ㉘ Output에서 결과 탭으로: Output 활성 × 정책(MC/DC — 조건 둘).

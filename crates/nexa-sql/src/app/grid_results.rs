@@ -569,14 +569,9 @@ impl App {
         if !self.panel.output_active() {
             return self.grid_tab;
         }
-        if let Some(t) = self
-            .panel
-            .tabs
-            .iter()
-            .filter(|t| !t.is_output)
-            .max_by_key(|t| t.seq)
-        {
-            return t.id;
+        // 최근 **뿌리** 결과 탭(딸린 탭은 부모가 되지 않는다 · 협업 V1 bin95 · 10-08).
+        if let Some(id) = self.panel.latest_root_tab() {
+            return id;
         }
         self.new_result_tab();
         self.grid_tab
