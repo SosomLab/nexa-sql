@@ -2362,7 +2362,9 @@ impl App {
                     .filter_map(|(label, _)| label.split_once('.').map(|(s, _)| s.to_string()))
                     .collect();
                 if elsewhere.is_empty() {
-                    t(Msg::ObjLinkNotFound).to_string()
+                    // ★ 없는 객체(다른 스키마에도 없음)는 카드·툴팁을 띄우지 않는다(사용자 10-08 "없는 객체인 경우는 hover 카드 뜨지 않도록") —
+                    //   밑줄(벽돌색)만 남아 "메타에 없음"을 알린다 · 우클릭 메뉴는 그대로.
+                    return None;
                 } else {
                     let stated = link
                         .schema
