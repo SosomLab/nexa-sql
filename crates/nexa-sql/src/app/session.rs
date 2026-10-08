@@ -1465,7 +1465,26 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ 두 번째 ■(사용자 10-09): 취소를 보냈는데 `run.force_stop_secs`가 지나도 서버가 안 멈추면 접속을 끊어 강제 중지 — 종전에는
+        //   ■를 몇 번 눌러도 같은 취소만 다시 보냈다(OOB 차단망 · 원격 DB 링크 · 긴 서버 호출에서 수 초~분 기다림). 끊은 뒤 = 열린 트랜잭션
+        //   Lost(서버 롤백) · 다음 실행 때 자동 재접속 · 로그 1줄.
+        if self.sess.busy && self.sess.run_cancel_requested {
+            let wait = Duration::from_secs(self.settings.int("run.force_stop_secs").max(0) as u64);
+            if wait.as_secs() > 0 && self.sess.run_cancel_at.is_some_and(|t| t.elapsed() >= wait) {
+                let desc = self.sess.desc.clone();
+                self.abandon_worker();
+                self.sess.run_cancel_at = None;
+                self.sess.status = tf(Msg::StRunForceStopped, &[&desc]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                self.tx_close(TxOutcome::Lost);
+                self.sync_sess_ui();
+                self.redraw();
+                return;
+            }
+        }
         self.sess.run_cancel_requested = self.sess.busy;
+        self.sess.run_cancel_at = self.sess.busy.then(Instant::now);
         if self.sess.dialect == Dialect::Mssql
             && self.settings.get("mssql.cancel") != Some("socket")
             && self.settings.get("mssql.encrypt") != Some("login")

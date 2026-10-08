@@ -4732,6 +4732,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 강제 중지(사용자 10-09): 취소 요청 뒤 이 시간이 지나도 서버가 안 멈추면 두 번째 ■ = 접속을 끊는다(0 = 끔).
+    Entry {
+        key: "run.force_stop_secs",
+        cat: Msg::CatServerStatus,
+        label: Msg::LblRunForceStop,
+        desc: Msg::DescRunForceStop,
+        kind: SettingKind::Int { min: 0, max: 600 },
+        default: "3",
+    },
     // ★ 끊김 토스트 억제 창(docs/107 D-266): 같은 끝점 재알림은 이 시간에 한 번.
     Entry {
         key: "net.notify_quiet_secs",

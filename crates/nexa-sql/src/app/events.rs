@@ -843,6 +843,7 @@ impl App {
         // 이 세션의 문장 실행 = 활동(docs/56 L2) — 유휴 시계·경고·카운트다운을 되돌린다.
         self.tx_guard_reset();
         self.sess.run_cancel_requested = false;
+        self.sess.run_cancel_at = None;
         self.sync_run_stmt_button();
         self.editors.set_running(self.sess.run_editor, true);
         self.editors.set_error_line(self.sess.run_editor, None);
