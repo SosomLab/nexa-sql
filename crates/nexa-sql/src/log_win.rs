@@ -769,6 +769,23 @@ impl LogWin {
     }
 
     /// 자체 시험(`log.dump:<파일>` · 10-01 ㉗-k): 로그 본문 전부(한 줄 하나).
+    /// 시각 붙은 덤프(`hh:mm:ss.mmm|종류|메시지` · 기동 명령 `log.dump_t` · 중지 지연 E2E 10-09) — `dump_text`는 메시지만(기존 스크립트 호환).
+    pub(crate) fn dump_text_timed(&self) -> String {
+        self.buf
+            .iter()
+            .map(|e| {
+                format!(
+                    "{:02}:{:02}:{:02}.{:03}|{:?}|{}",
+                    e.ts.hour, e.ts.min, e.ts.sec, e.ts.ms, e.kind, e.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            )
+    }
+
     pub(crate) fn dump_text(&self) -> String {
         self.buf
             .iter()

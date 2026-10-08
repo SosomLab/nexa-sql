@@ -797,6 +797,11 @@ impl App {
             let _ = std::fs::write(path, self.log_win.dump_text());
             return;
         }
+        // 시각 붙은 로그 덤프(중지 지연 측정 · 10-09).
+        if let Some(path) = id.strip_prefix("log.dump_t:") {
+            let _ = std::fs::write(path, self.log_win.dump_text_timed());
+            return;
+        }
         if let Some(name) = id.strip_prefix("objlink.menu:") {
             let ok = self.objlink_menu_named(name);
             self.sess.status = format!("objlink.menu {name} ok={ok}");
