@@ -1414,7 +1414,12 @@ impl App {
                 }
             }
             Some("card.copy") => {
-                self.objlink_copy_desc(k);
+                // ★ Shift+클릭 = "이름 - 설명"(우클릭 메뉴 "이름 - 설명 복사" · Ctrl+Shift+클릭과 같은 결과 · 사용자 10-08).
+                if self.shift {
+                    self.objlink_copy_name_desc(k);
+                } else {
+                    self.objlink_copy_desc(k);
+                }
                 self.objlink_hover_end();
             }
             _ => {}
