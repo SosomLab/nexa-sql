@@ -448,7 +448,26 @@ pub(crate) fn scan(
                             name,
                             known: true,
                         }),
-                        _ => {}
+                        // ★ 적힌 스키마에 없는 한정 이름(사용자 10-08 "`CREATE … BISCM.SP_X`인데 이 서버엔 BISCM_SB에만 있다 ·
+                        //   Ctrl을 눌러도 링크가 없다"): DDL 머리 자리(`PROCEDURE/TABLE … 뒤`)나 호출 꼴 `(`이면 **미확인 링크**(벽돌색)로
+                        //   남겨 툴팁 "(BISCM에 없음 · BISCM_SB에 있음)"과 우클릭 "다른 스키마의 같은 이름 ▸"이 닿게 한다.
+                        _ => {
+                            let head = ddl_head_kind(&prev_up);
+                            if followed_by_paren || head.is_some() {
+                                out.push(Link {
+                                    range: (a0, a1),
+                                    kind: if followed_by_paren {
+                                        LinkKind::Routine
+                                    } else {
+                                        head.unwrap_or(LinkKind::Table)
+                                    },
+                                    schema: Some(q.clone()),
+                                    owner: None,
+                                    name,
+                                    known: false,
+                                });
+                            }
+                        }
                     },
                 }
             }
@@ -2178,7 +2197,8 @@ impl App {
         let Some(link) = self.objlinks.links.get(k) else {
             return Vec::new();
         };
-        if link.schema.is_some() || matches!(link.kind, LinkKind::Column) {
+        // 스키마를 적었어도 그 스키마에 없으면(미확인) 다른 스키마의 같은 이름을 후보로(사용자 10-08).
+        if (link.schema.is_some() && link.known) || matches!(link.kind, LinkKind::Column) {
             return Vec::new();
         }
         let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
@@ -2329,7 +2349,24 @@ impl App {
         let link = &self.objlinks.links[k];
         let second = match desc {
             Some(d) => d,
-            None if !link.known => t(Msg::ObjLinkNotFound).to_string(),
+            None if !link.known => {
+                // 다른 스키마에 같은 이름이 있으면 어디에 있는지까지(사용자 10-08 "원인을 알 수 있게").
+                let elsewhere: Vec<String> = self
+                    .objlink_candidates(k)
+                    .into_iter()
+                    .filter_map(|(label, _)| label.split_once('.').map(|(s, _)| s.to_string()))
+                    .collect();
+                if elsewhere.is_empty() {
+                    t(Msg::ObjLinkNotFound).to_string()
+                } else {
+                    let stated = link
+                        .schema
+                        .clone()
+                        .or_else(|| self.objlink_cur_schema())
+                        .unwrap_or_default();
+                    tf(Msg::ObjLinkElsewhere, &[&stated, &elsewhere.join(", ")])
+                }
+            }
             None => t(Msg::ObjLinkNoDesc).to_string(),
         };
         let text = format!("{kind} {name}\n{second}");
@@ -2488,6 +2525,17 @@ fn click_action(setting: Option<&str>, can_reveal: bool) -> ClickAction {
     }
 }
 
+/// DDL 머리 낱말 뒤의 이름 자리 — `CREATE/ALTER/DROP … <종류> <이름>`의 `<종류>`가 무엇이면 어떤 링크인가(순수).
+fn ddl_head_kind(prev_up: &str) -> Option<LinkKind> {
+    match prev_up {
+        "PROCEDURE" | "FUNCTION" | "PACKAGE" | "BODY" | "TRIGGER" | "TYPE" => {
+            Some(LinkKind::Routine)
+        }
+        "TABLE" | "VIEW" | "SYNONYM" | "SEQUENCE" | "INDEX" => Some(LinkKind::Table),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// 카드 영역 = 카드 ∪ 링크 둘레 상자 + 여유: 틈·비스듬한 경로는 안 · 멀리는 밖.
@@ -2551,6 +2599,27 @@ mod tests {
                 ("TB_ORDER", "ORD_NO" | "ITEM_CD") | ("TB_ITEM", "ITEM_CD" | "ITEM_NM")
             ))
         }
+    }
+
+    /// ★ 적힌 스키마에 없는 한정 이름(사용자 10-08): DDL 머리 자리·호출 꼴은 미확인 링크로 남는다 · 그 밖(`x.y` 컬럼 꼴)은 종전대로 없음.
+    #[test]
+    fn qualified_name_missing_in_schema_is_unknown_link_at_ddl_head() {
+        let v = scan(
+            "CREATE OR REPLACE PROCEDURE BISCM.SP_NOPE (p IN NUMBER) AS BEGIN OTHER.FN_NOPE(1); END;",
+            Some(nsql_core::Dialect::Oracle),
+            &Fake,
+        );
+        let sp = v
+            .iter()
+            .find(|l| l.name == "SP_NOPE")
+            .expect("ddl head link");
+        assert_eq!(sp.kind, LinkKind::Routine);
+        assert_eq!(sp.schema.as_deref(), Some("BISCM"));
+        assert!(!sp.known);
+        let fn_ = v.iter().find(|l| l.name == "FN_NOPE").expect("call link");
+        assert!(!fn_.known && fn_.kind == LinkKind::Routine);
+        assert_eq!(ddl_head_kind("TABLE"), Some(LinkKind::Table));
+        assert_eq!(ddl_head_kind("SELECT"), None);
     }
 
     fn kinds(text: &str) -> Vec<(String, LinkKind, Option<String>)> {

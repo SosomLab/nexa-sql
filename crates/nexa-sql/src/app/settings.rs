@@ -429,6 +429,7 @@ impl App {
             "explorer.timeout" => self
                 .explorer
                 .set_load_timeout(self.settings.int(key).clamp(0, 600) as u64),
+            "explorer.filter_expand" => self.explorer.set_filter_expand(self.settings.flag(key)),
             "explorer.disconnect_pick" => self
                 .explorer
                 .set_disconnect_pick(self.settings.get(key).unwrap_or("auto")),

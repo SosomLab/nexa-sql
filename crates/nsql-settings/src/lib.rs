@@ -2599,6 +2599,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 600 },
         default: "15",
     },
+    // ★ 검색 일치 폴더 자동 펼침(사용자 10-08 "자동 확장하지 않고 개수만" → 기본 끔 · 옛 동작은 켜면).
+    Entry {
+        key: "explorer.filter_expand",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerFilterExpand,
+        desc: Msg::DescExplorerFilterExpand,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "explorer.disconnect_pick",
         cat: Msg::CatExplorer,

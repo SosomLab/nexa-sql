@@ -207,6 +207,8 @@ pub(crate) struct ExplorerSet {
     schema_opts: nsql_catalog::SchemaOpts,
     /// ★ 검색 인덱스 설정(84 §5 · 새 칸에도 준다).
     index_cfg: crate::explorer::IndexCfg,
+    /// 검색 일치 폴더 자동 펼침(`explorer.filter_expand` · 새 칸에도).
+    filter_expand: bool,
     /// ★ 칸 단위(사용자 09-25 원복): 끔(기본) = **연결(계정)마다 칸·인텔리센스 분리**(권한이 달라 보이는 객체가 다르다) ·
     /// 켬 = 같은 카탈로그(방언·호스트·포트·DB)의 연결들이 칸을 공유(docs/54 §10 · 설정 `explorer.share_catalog`).
     share_catalog: bool,
@@ -253,6 +255,7 @@ impl ExplorerSet {
             quote_always: false,
             schema_opts: nsql_catalog::SchemaOpts::default(),
             index_cfg: crate::explorer::IndexCfg::default(),
+            filter_expand: false,
             share_catalog: false,
             filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
             filter_scope: FilterScope::All,
@@ -278,6 +281,7 @@ impl ExplorerSet {
         ex.set_quote_always(self.quote_always);
         ex.set_schema_opts(self.schema_opts);
         ex.set_index_cfg(self.index_cfg);
+        ex.set_filter_expand(self.filter_expand);
         // ★ 검색어가 있는 채로 서버가 추가되면 새 칸도 바로 검색 모드(사용자 09-25) — 스키마 목록이 오는 즉시 인덱스·부분 노드로 이어진다.
         if self.filter_on() && matches!(self.filter_scope, FilterScope::All) {
             ex.apply_filter(Some(self.filter.matcher()));
@@ -733,6 +737,14 @@ impl ExplorerSet {
     pub(crate) fn set_load_timeout(&mut self, secs: u64) {
         for p in &mut self.panes {
             p.ex.set_load_timeout(secs);
+        }
+    }
+
+    /// 검색 일치 폴더 자동 펼침(`explorer.filter_expand` · 전 칸 · 새 칸에도).
+    pub(crate) fn set_filter_expand(&mut self, on: bool) {
+        self.filter_expand = on;
+        for p in &mut self.panes {
+            p.ex.set_filter_expand(on);
         }
     }
 

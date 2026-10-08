@@ -3,12 +3,15 @@
 //! (`ExplorerSet::reveal` · Ctrl 링크 "객체 탐색기에서 보기"와 같은 길).
 //!
 //! - 판정 시점 = 탭이 열릴 때 · 탭의 연결이 바뀔 때 · 본문이 바뀔 때 — 틱에서 탭별 열쇠 `(본문 세대, 세션 id, 연결 여부)`가 바뀐 탭만
-//!   다시 판정한다(비용 = 탭 수만큼의 해시 비교 · 판정은 머리 [`HEAD_CHARS`]글자만 가른다 · 큰 파일도 상수 비용).
-//! - 연결이 없거나 끊겼으면 항목은 보이되 흐리다(탭이 DDL 문서임은 알 수 있게 · 누르면 상태줄 안내).
-//! - 스키마가 적혀 있지 않으면 그 탭 세션의 현재 스키마(서버가 답한 값 → `?schema=` → 사용자) · SQL Server `DB.스키마`는 DB와 스키마로.
+//!   문장을 다시 가르고(머리 [`HEAD_CHARS`]글자만 · 큰 파일도 상수 비용), 메타 조회(해시 1~2번)는 틱마다 다시 한다(메타가 뒤늦게
+//!   읽혀도 항목이 나타나게).
+//! - ★ **항목은 메타에서 실제로 풀릴 때만**(사용자 10-08 2차 "목록을 확인할 대상이 아니면 표시하지 않도록"): 연결이 없거나 메타에 그 객체가
+//!   없으면 항목 자체가 없다. 적힌 스키마에 없으면 **다른 스키마의 같은 이름**(종류 일치)을 찾아 그쪽으로(사용자 캡처 = `BISCM.SP_X`인데
+//!   이 서버엔 `BISCM_SB`에만 있음 · 상태줄에 "BISCM에 없음 · BISCM_SB에 있음" 안내) · 스키마를 안 적었으면 그 탭 세션의 현재 스키마.
+//! - SQL Server `DB.스키마`는 DB와 스키마로(objlink ⑭와 같은 규칙).
 
 use nsql_core::{DdlTarget, Dialect};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 
 use crate::explorer::RevealTarget;
 use crate::{App, Focus};
@@ -49,12 +52,92 @@ pub(crate) fn qualified(t: &DdlTarget) -> String {
     }
 }
 
+/// 같은 종류로 치는가(패키지 본문은 패키지 노드로 찾는다 · 그 밖은 같아야).
+fn kind_matches(want: nsql_catalog::ObjectKind, have: nsql_catalog::ObjectKind) -> bool {
+    use nsql_catalog::ObjectKind as K;
+    want == have
+        || matches!(
+            (want, have),
+            (K::PackageBody, K::Package) | (K::Package, K::PackageBody)
+        )
+}
+
 fn head_text(buf: &nexa_ctl::edit::TextBuf, max_chars: usize) -> String {
     buf.slice_string(0, buf.len().min(max_chars))
 }
 
+/// 탭별 판정 캐시: 탭 id → (열쇠 `(본문 세대, 세션 id, 연결 여부)`, 가른 DDL 대상).
+pub(crate) type TabObjCache = std::collections::HashMap<u64, ((u64, u64, bool), Option<DdlTarget>)>;
+
+/// 탭 하나의 풀린 대상(메타에서 확인된 것) — 클릭 때 그대로 쓴다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TabObj {
+    pub target: RevealTarget,
+    /// 적힌 스키마와 다른 스키마에서 찾았으면 `Some((적힌 스키마, 찾은 스키마))` — 상태줄 안내.
+    pub moved: Option<(String, String)>,
+}
+
 impl App {
-    /// 틱(북마크 `bm_tick` 옆): 열쇠 `(본문 세대, 세션 id, 연결 여부)`가 바뀐 탭만 다시 판정해 Editors에 라벨·활성을 넣는다.
+    /// 그 탭 세션의 현재 스키마(서버가 답한 값 → `?schema=` → 사용자).
+    fn tab_cur_schema(sess: &crate::sessions::Sess) -> Option<String> {
+        sess.cur_schema
+            .clone()
+            .filter(|x| !x.is_empty())
+            .or_else(|| {
+                sess.spec
+                    .as_ref()
+                    .and_then(|p| p.schema.clone().or_else(|| p.user.clone()))
+            })
+            .filter(|x| !x.is_empty())
+    }
+
+    /// DDL 대상을 그 탭 세션의 메타로 푼다 — 적힌 스키마(없으면 현재 스키마) → 없으면 다른 스키마의 같은 이름(종류 일치 · 첫 것).
+    fn resolve_tab_obj(&self, sid: u64, t: &DdlTarget) -> Option<TabObj> {
+        let s = self.sess_by_id(sid)?;
+        if !s.connected || s.broken {
+            return None;
+        }
+        let kind = super::compare::kind_of(t.kind)?;
+        let cur = Self::tab_cur_schema(s);
+        let dialect = s.dialect;
+        let (names, snap) = self.explorer.meta_view(s.spec.as_ref());
+        let stated = t.schema.as_deref().or(cur.as_deref());
+        let direct =
+            snap.lookup_resolvable_from(names, t.schema.as_deref(), cur.as_deref(), &t.name);
+        let (id, moved) = match direct {
+            Some(id) => (id, None),
+            None => {
+                let id = snap
+                    .lookup_any_schema(names, &t.name)
+                    .into_iter()
+                    .find(|&id| snap.object(id).is_some_and(|o| kind_matches(kind, o.kind)))?;
+                let found = names.get(snap.object(id)?.schema).to_string();
+                (id, Some((stated.unwrap_or_default().to_string(), found)))
+            }
+        };
+        let o = snap.object(id)?;
+        let schema = names.get(o.schema).to_string();
+        let name = names.get(o.name).to_string();
+        let (db, schema) = match (dialect, schema.split_once('.')) {
+            (Dialect::Mssql, Some((d, sc))) if !sc.is_empty() => {
+                (Some(d.to_string()), sc.to_string())
+            }
+            _ => (None, schema),
+        };
+        Some(TabObj {
+            target: RevealTarget {
+                db,
+                schema,
+                kind: o.kind,
+                name,
+                member: None,
+            },
+            moved,
+        })
+    }
+
+    /// 틱(북마크 `bm_tick` 옆): 열쇠 `(본문 세대, 세션 id, 연결 여부)`가 바뀐 탭만 문장을 다시 가르고, 메타 조회는 매 틱(가볍다) →
+    /// Editors에 항목 유무를 넣는다.
     pub(crate) fn tab_obj_tick(&mut self) {
         let n = self.editors.tab_count();
         let mut live: Vec<u64> = Vec::with_capacity(n);
@@ -65,84 +148,58 @@ impl App {
             let (connected, dialect) = self.sess_by_id(sid).map_or((false, None), |s| {
                 (s.connected && !s.broken, Some(s.dialect))
             });
-            let (key, head) = {
+            let (key, parsed) = {
                 let Some(tb) = self.editors.tab_box(i) else {
                     continue;
                 };
                 let key = (tb.rev(), sid, connected);
-                if self.tab_obj_cache.get(&id) == Some(&key) {
-                    continue;
+                match self.tab_obj_cache.get(&id) {
+                    Some((k, parsed)) if *k == key => (key, parsed.clone()),
+                    _ => (
+                        key,
+                        first_ddl_target(&head_text(tb.buf(), HEAD_CHARS), dialect),
+                    ),
                 }
-                (key, head_text(tb.buf(), HEAD_CHARS))
             };
-            let label =
-                first_ddl_target(&head, dialect).map(|_| t(Msg::MnTabRevealObject).to_string());
-            self.tab_obj_cache.insert(id, key);
-            self.editors.set_tab_obj(id, label.map(|l| (l, connected)));
+            self.tab_obj_cache.insert(id, (key, parsed.clone()));
+            let resolved = parsed.as_ref().and_then(|t| self.resolve_tab_obj(sid, t));
+            let changed = self.tab_obj_target.get(&id) != resolved.as_ref();
+            if changed {
+                match resolved {
+                    Some(o) => {
+                        self.tab_obj_target.insert(id, o);
+                        self.editors
+                            .set_tab_obj(id, Some((t(Msg::MnTabRevealObject).to_string(), true)));
+                    }
+                    None => {
+                        self.tab_obj_target.remove(&id);
+                        self.editors.set_tab_obj(id, None);
+                    }
+                }
+            }
         }
         self.tab_obj_cache.retain(|id, _| live.contains(id));
+        self.tab_obj_target.retain(|id, _| live.contains(id));
     }
 
-    /// 탭 메뉴 "객체 탐색기에서 보기": 그 탭의 세션 기준으로 대상을 풀어 탐색기를 보이게 하고 그 서버 칸에서 찾아 선택한다.
+    /// 탭 메뉴 "객체 탐색기에서 보기": 틱이 풀어 둔 대상을 그 탭의 세션 칸에서 찾아 선택(탐색기 자동 표시 · 포커스).
     pub(crate) fn tab_reveal_object(&mut self, i: usize) {
         let id = self.editors.tab_id(i);
-        let Some(head) = self
-            .editors
-            .tab_box(i)
-            .map(|tb| head_text(tb.buf(), HEAD_CHARS))
-        else {
+        let Some(obj) = self.tab_obj_target.get(&id).cloned() else {
             return;
         };
         let sid = self.sess_id_for_tab(id);
-        let Some((connected, dialect, spec, cur)) = self.sess_by_id(sid).map(|s| {
-            let cur = s
-                .cur_schema
-                .clone()
-                .filter(|x| !x.is_empty())
-                .or_else(|| {
-                    s.spec
-                        .as_ref()
-                        .and_then(|p| p.schema.clone().or_else(|| p.user.clone()))
-                })
-                .filter(|x| !x.is_empty());
-            (s.connected && !s.broken, s.dialect, s.spec.clone(), cur)
-        }) else {
-            return;
-        };
-        if !connected {
-            self.sess.status = t(Msg::ExpNotConnected).to_string();
-            self.redraw();
-            return;
-        }
-        let Some(target) = first_ddl_target(&head, Some(dialect)) else {
-            return;
-        };
-        // 스키마·사용자 DDL은 탐색기 노드가 없다(`kind_of` = None) — 조용히 끝(메뉴는 라벨만 보였던 셈).
-        let Some(kind) = super::compare::kind_of(target.kind) else {
-            return;
-        };
-        let schema = target.schema.or(cur).unwrap_or_default();
-        // SQL Server 다른 DB 객체 = `DB.스키마`(objlink와 같은 규칙 ⑭).
-        let (db, schema) = match (dialect, schema.split_once('.')) {
-            (Dialect::Mssql, Some((d, s))) if !s.is_empty() => (Some(d.to_string()), s.to_string()),
-            _ => (None, schema),
-        };
+        let spec = self.sess_by_id(sid).and_then(|s| s.spec.clone());
         if !self.explorer.is_visible() {
             self.menu_action("view.explorer");
         }
-        let ok = self.explorer.reveal(
-            spec.as_ref(),
-            RevealTarget {
-                db,
-                schema,
-                kind,
-                name: target.name,
-                member: None,
-            },
-        );
+        let ok = self.explorer.reveal(spec.as_ref(), obj.target.clone());
         if ok {
             self.set_focus(Focus::Explorer);
             self.explorer_actions();
+            if let Some((stated, found)) = obj.moved {
+                self.sess.status = tf(Msg::ObjLinkElsewhere, &[&stated, &found]);
+            }
         }
         self.redraw();
     }
@@ -181,5 +238,13 @@ mod tests {
         assert_eq!(qualified(&t), "s.t");
         // 빈 글·주석만 = None.
         assert!(first_ddl_target("-- 아무것도\n", None).is_none());
+    }
+
+    #[test]
+    fn package_body_matches_package_node() {
+        use nsql_catalog::ObjectKind as K;
+        assert!(kind_matches(K::PackageBody, K::Package));
+        assert!(kind_matches(K::Procedure, K::Procedure));
+        assert!(!kind_matches(K::Procedure, K::Table));
     }
 }

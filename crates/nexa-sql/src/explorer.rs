@@ -1010,6 +1010,8 @@ pub(crate) struct Explorer {
     filter: Option<crate::filterbar::Matcher>,
     /// 필터가 **대신 펼친** 노드(사용자가 펼친 적 없음) — 필터를 지우면 다시 접는다(사용자 09-25 "UI가 복잡해진다").
     filter_expanded: std::collections::HashSet<usize>,
+    /// ★ 검색 일치 폴더 자동 펼침(`explorer.filter_expand` · 기본 끔 · 사용자 10-08 "셰브론을 자동 확장하지 않고 개수만 표시 · 직접 찾아 보게").
+    filter_expand: bool,
     /// ★ L1 이름 층 빌더(84 §2 · 85 §2): 스키마 단위로 순차(현재 스키마 먼저 · 한 번에 하나) — 항목은 `MetaStore`(`Coverage::Names`)에 산다(단일 원천) ·
     /// 검색 판정용 사본은 백그라운드 메타 스레드가 든다(85 §6) · `index_done`의 스키마는 다 들어갔다.
     index_done: HashSet<String>,
@@ -2219,6 +2221,7 @@ impl Explorer {
             filter_tokens: Vec::new(),
             filter: None,
             filter_expanded: std::collections::HashSet::new(),
+            filter_expand: false,
             gen_opts: GenOpts::default(),
             source_qualify: true,
             quote_always: false,
@@ -6739,14 +6742,18 @@ impl Explorer {
             under[i] = parent.is_some_and(|p| hit[p] || under[p]);
             keep[i] = i == 0 || strong[i] || under[i];
         }
-        for i in 0..n {
-            if strong[i]
-                && matches!(self.nodes[i].state, LoadState::Loaded | LoadState::Partial)
-                && self.nodes[i].children.iter().any(|&c| strong[c])
-                && !self.nodes[i].expanded
-            {
-                self.nodes[i].expanded = true;
-                self.filter_expanded.insert(i);
+        // ★ 자동 펼침은 설정일 때만(사용자 10-08): 기본은 접힌 노드를 그대로 두고 폴더 `일치/전체` · 스키마 `일치 N`만 보여 사용자가
+        //   직접 펼쳐 본다(펼친 상태는 사용자가 둔 그대로 · 필터를 지워도 되돌릴 것이 없다).
+        if self.filter_expand {
+            for i in 0..n {
+                if strong[i]
+                    && matches!(self.nodes[i].state, LoadState::Loaded | LoadState::Partial)
+                    && self.nodes[i].children.iter().any(|&c| strong[c])
+                    && !self.nodes[i].expanded
+                {
+                    self.nodes[i].expanded = true;
+                    self.filter_expanded.insert(i);
+                }
             }
         }
         self.filter_hits = hit.iter().filter(|h| **h).count();
@@ -6757,6 +6764,23 @@ impl Explorer {
 
     pub(crate) fn filter_hits(&self) -> usize {
         self.filter_hits
+    }
+
+    /// 검색 일치 폴더 자동 펼침(`explorer.filter_expand`).
+    pub(crate) fn set_filter_expand(&mut self, on: bool) {
+        self.filter_expand = on;
+    }
+
+    /// 필터 중 스키마/DB 노드 아래의 일치 객체 수(폴더들의 kept 자식 합 · 접힌 스키마도 개수는 보이게 · 사용자 10-08).
+    fn schema_hit_count(&self, n: &Node) -> usize {
+        let Some(keep) = self.filter_keep.as_ref() else {
+            return 0;
+        };
+        n.children
+            .iter()
+            .filter_map(|&f| self.nodes.get(f))
+            .map(|f| f.children.iter().filter(|c| keep.contains(c)).count())
+            .sum()
     }
 
     /// 다음(또는 이전) 직접 일치 행으로 선택을 옮긴다(보이는 순서 · 끝이면 처음부터) — 검색창 Enter.
@@ -7696,14 +7720,24 @@ impl Explorer {
                 } else {
                     self.current_db.as_deref().or(self.server_schema.as_deref())
                 };
-                (
-                    s.clone(),
-                    if cur.is_some_and(|c| c.eq_ignore_ascii_case(s)) {
-                        t(Msg::ExpCurrentDbMark).to_string()
-                    } else {
-                        String::new()
-                    },
-                )
+                let mut suffix = if cur.is_some_and(|c| c.eq_ignore_ascii_case(s)) {
+                    t(Msg::ExpCurrentDbMark).to_string()
+                } else {
+                    String::new()
+                };
+                // 필터 중 = "일치 N"(접힌 스키마에서도 몇 개가 맞는지 · 사용자 10-08).
+                if self.filter.is_some() {
+                    let hits = self.schema_hit_count(n);
+                    if hits > 0 {
+                        let h = tf(Msg::ExpFilterHits, &[&hits.to_string()]);
+                        suffix = if suffix.is_empty() {
+                            h
+                        } else {
+                            format!("{suffix} · {h}")
+                        };
+                    }
+                }
+                (s.clone(), suffix)
             }
             // ★ 101: DB 노드 = 이름 + "(현재)" · 묶음 = i18n 라벨.
             NodeKind::Database(d) => {
@@ -8268,11 +8302,34 @@ mod refresh_tests {
         assert!(ex.fresh.is_empty());
     }
 
+    /// ★ 기본(사용자 10-08 "셰브론을 자동 확장하지 않고 개수만") = 필터가 접힌 폴더를 펼치지 않는다 · 폴더 `일치/전체` ·
+    /// 스키마 덧말 `일치 N`만 보이고 사용자가 직접 펼친다.
+    #[test]
+    fn filter_default_does_not_expand_and_counts_on_schema() {
+        let (mut ex, schema, tables) = sample();
+        ex.nodes[tables].expanded = false;
+        ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
+        assert!(!ex.nodes[tables].expanded, "자동 펼침 없음");
+        assert_eq!(ex.label(tables).0, "Tables (1/3)", "폴더 개수 = 일치/전체");
+        let suffix = ex.label(schema).1;
+        assert!(suffix.contains('1'), "스키마 덧말 = 일치 1: {suffix:?}");
+        let b = ex.nodes[tables].children[1];
+        assert!(
+            !ex.visible_rows().contains(&b),
+            "접힌 폴더의 일치는 펼쳐야 보인다"
+        );
+        assert!(
+            ex.filter_expanded.is_empty(),
+            "필터가 펼친 노드 없음 = 해제 때 되돌릴 것도 없음"
+        );
+    }
+
     /// 검색창 필터(docs/28 §7): 일치 노드 + 조상 + 안 읽은 폴더만 남고, 일치를 품은 읽어 둔 조상은 펼쳐진다 · 빈 글 = 해제 ·
     /// Enter = 다음 일치로 선택 이동(끝이면 처음).
     #[test]
     fn filter_keeps_matches_ancestors_and_unloaded_folders() {
         let (mut ex, schema, tables) = sample();
+        ex.set_filter_expand(true); // 자동 펼침은 설정(기본 끔 · 사용자 10-08) — 이 시험은 켠 경우.
         let b = ex.nodes[tables].children[1];
         ex.nodes[tables].expanded = false;
         ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
@@ -8319,6 +8376,7 @@ mod refresh_tests {
     #[test]
     fn index_materializes_hits_into_unloaded_folders_and_completes() {
         let (mut ex, schema, tables) = sample();
+        ex.set_filter_expand(true); // 자동 펼침은 설정(기본 끔 · 사용자 10-08) — 이 시험은 켠 경우.
         let views = ex.nodes[schema].children[1];
         assert_eq!(ex.nodes[views].state, LoadState::Idle);
         // L1 = MetaStore(85 §2): 이름 층으로 뷰 둘 · 테이블 하나(테이블 폴더는 트리에 이미 읽혔다).
