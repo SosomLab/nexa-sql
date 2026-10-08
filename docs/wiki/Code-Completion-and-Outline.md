@@ -113,6 +113,14 @@ JOIN 조건 완성(FK 대상 정보가 메타에 들어온 뒤) · hover 카드(
 - SQL Server 변경 문장의 `OUTPUT INSERTED.` · `DELETED.` 뒤에는 대상 테이블의 컬럼이 나옵니다.
 - MySQL에 문법 파일이 생겨 `USE` · `SHOW TABLES` · `LIMIT` · `ON DUPLICATE KEY UPDATE` 같은 키워드가 제자리에 나옵니다.
 
+> **`ALTER TABLE` 절(10-08)**: `ALTER TABLE t ` 뒤에서 `ADD`·`MODIFY`(Oracle)·`ALTER COLUMN`(SQL Server·PostgreSQL)·`DROP CONSTRAINT` 같은 다음 낱말이 완성 목록에 나옵니다. `DROP FUNCTION` 뒤에는 함수가 나옵니다.
+
+### 시스템 프로시저 파라미터(SQL Server · 10-08)
+
+`EXEC sys.sp_updateextendedproperty ` 처럼 시스템 프로시저 이름 뒤에서 **Ctrl+Space**(또는 `@`를 치기 시작)하면 그 프로시저의 `@파라미터`가 타입과 함께 나옵니다 — `@name` · `@value` · `@level0type` …. `@l`까지 치면 `@level…`만 남고, 이미 쓴 파라미터는 빠집니다. `, ` 다음에도 나오며, 값을 쓰는 자리(`= ` 뒤)에서는 뜨지 않습니다. 이름 뒤에 있는 동안 상태줄(또는 시그니처 카드)에 전체 시그니처가 보입니다.
+
+- 대상 = 내장 표의 30종(확장 속성 추가/수정/삭제 · `sp_rename` · `sp_help` 계열 · `sp_columns` · `sp_tables` · `sp_executesql` · 연결된 서버 · `xp_cmdshell` 등). 사용자 프로시저의 파라미터는 아직 아닙니다.
+
 ### SQL Server 3부 이름(10-01)
 
 - 스키마 없는 이름은 **현재 DB의 현재 스키마**(보통 `dbo`)로 해석됩니다. `USE 다른DB`를 실행하면 그 기준이 바뀝니다.

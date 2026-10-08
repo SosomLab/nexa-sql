@@ -56,8 +56,13 @@ same = JOIN                 # 별칭
 - `ON`·`USING`은 `RELATION_AFTER`에서 빼고 문장별로(`relation_after_special`) — `JOIN … ON |`은 식 자리(별칭 컬럼). `mysql.sqlg` 신설 · `MYSQL_KEYWORDS`.
 - 다음(T-274): `objects =`를 `Want`로 소비(문법에서 `[clause USE] objects = database`처럼 선언) — 지금은 코드 표(`WANT_KINDS`).
 
+- **10-08 `Want::ProcParam`**(T-316 · c2cdb04): `EXEC [sys.]sp_x |` · `, |` · `@…` 입력 중 = 그 프로시저의 **아직 안 쓴 `@파라미터`**(타입 상세) · 값 자리(`= |`)는 제외 · 원천 = 내장 표 `MSSQL_SYSTEM_PROC_PARAMS` 30종(확장 속성 3 · sp_rename · sp_help* · sp_columns/tables · sp_executesql · 연결된 서버 · xp_cmdshell …) · 시험 nsql-script 13 · 호스트 19.
+
 ## 8. 10-01 보완 2 — SQL Server 3부 이름(`DB.스키마.객체` · [journal §21](journal/2026-09-30.md))
 - 다른 DB의 객체 = 메타 복합 열쇠 `DB.스키마` 버킷(스키마 자리에 두 조각 글자) · `DB.` = `(DB, Schema)` 버킷. 별칭 표는 점 사슬 전부(`schema = "DB.스키마"`). 호스트는 열쇠를 `split_db_key`로 풀어 메타 세션을 `USE`로 옮긴 뒤 읽는다. bare 이름은 현재 DB의 현재 스키마(dbo) — `USE` 뒤 재읽기로 갱신.
 - 컬럼 없는 종류(Database·Schema·사용자·역할·연결된 서버)는 별칭 해석(테이블로 보는 단계)에서 제외.
 - 진단: `NSQL_TRACE_META=1` → 메타 요청 전부(결과 상태) + `[intel] ctx` · 자체 시험 `editor.caret` · `intel.probe` · `intel.dump` → `win-intel-3part-e2e.sh`.
 
+
+## 9. 10-08 보완 — `ALTER TABLE` 절(T-315 · bb81c51)
+- ansi `[clause ALTER TABLE]` 신설 · DROP objects에 function · Oracle ALTER 종류 + `ALTER TABLE` MODIFY/ADD`(` · mssql ALTER COLUMN · pg ADD/ALTER COLUMN · 시험 nsql-script 119 · 같은 커밋의 링크 쪽 = [96 §10](96-object-links.md).

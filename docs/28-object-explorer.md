@@ -37,6 +37,7 @@
 - 컨트롤 = **nexa-grid 계층 그리드**(nexa-ui 21 · FileGrid와 같은 `RowSource` + depth 글리프) · `CatalogSource` 하나 추가. 컬럼 = 이름 · (선택) 종류/행 수/수정 시각(펼친 뒤 채움).
 - 위치 = 접속 패널 아래(왼쪽 사이드바 · 접기 가능) · 폭 조절. 더블클릭 = 테이블이면 편집기에 `SELECT * FROM …` 템플릿 · 프로시저면 `DESC`/소스(후속).
 - 탐색기 노드도 [nexa-ui 21 §3-3](../../nexa-ui/docs/21-grid-family.md)와 같은 **툴팁 카드**(종류 · 스키마 · 소유자 · 행 수 · 마지막 조회 시각 · 설정 `tabs.tooltip`과 같은 토글 `explorer.tooltip`). · **10-08 객체 노드 툴팁 = 한 줄**(`종류 · 스키마.이름 · 상태 · 수정일` · 이름만 있던 첫 줄 제거 · 5a89b7e · 스키마/폴더/DB 노드는 그대로)
+- **멤버 찾기 폴더**(10-08 T-315 · 96 §10): "객체 탐색기에서 보기"가 제약 이름이면 테이블 › Constraints / Keys / Foreign Keys / Indexes 중 그 이름이 든 폴더의 멤버까지 선택(방언마다 폴더 이름이 다름 · 컬럼 = Columns · 패키지 멤버 = Procedures/Functions).
 
 ---
 

@@ -94,7 +94,7 @@
 권한을 가진 **다른** 스키마는 수집 계정이 달라 미확인으로 남는다(보수적 = 허용처럼 보이지 않음). 연결별 수집 계정 태그(버킷마다 `collected_by`) +
 세션 계정으로 재수집이 다음 단계.
 
-> **10-08 한정 이름 미확인 링크(bin85 · 97ae995)**: 스키마를 적은 이름(`BISCM.SP_X`)이 그 스키마에서 안 풀려도 링크를 만든다 = **미확인**(벽돌색 · DDL 머리·호출 꼴 포함) + 툴팁 "(BISCM에 없음 · BISCM_SB에 있음)" + 우클릭 "다른 스키마의 같은 이름 ▸" · 종전 = 링크를 아예 안 만들어 Ctrl·툴팁 없이 조용했다.
+> **10-08 한정 이름 미확인 링크(bin85 · 97ae995 → bb81c51 엄격 재확정)**: 스키마를 적은 이름(`BISCM.SP_X`)이 그 스키마에서 안 풀려도 링크는 만든다 = **미확인**(벽돌색 밑줄 · DDL 머리·호출 꼴 포함) · ~~툴팁 "(BISCM에 없음 · BISCM_SB에 있음)" + 우클릭 "다른 스키마의 같은 이름 ▸"~~ → **삭제(사용자 10-08 3차 "해당 DB에 있는지만 · 인접 검사 없음")** = 툴팁·카드 없음 · 스키마를 적은 이름은 후보 메뉴 없음(§10).
 
 > **10-05 후보 메뉴(T-180 ⑦)**: 위 엄격 판정은 그대로다 — 스키마 없이 쓴 이름이 현재 스키마(세션 기준)에서 안 풀리면 **미확인**이고 다른 스키마로 자동 폴백하지 않는다(사용자 09-30). 대신 그 이름이 **다른 접속 스키마**에 있으면(`Snapshot::lookup_any_schema` · 종류 무관) 우클릭 메뉴에 하위 메뉴 **"다른 스키마의 같은 이름 ▸ `SCHEMA.NAME [Kind]`"**(최대 12)를 붙여 사용자가 고르게 하고, 고르면 객체 탐색기에서 그 객체를 찾아 선택한다(`objlink_candidates` · `reveal_obj_id` · 항목 id `objlink.cand:<id>`). **F4**(`obj.reveal`)도 캐럿 아래 링크가 못 풀리면 같은 메뉴를 캐럿 아래에 연다. 고른 것은 그 자리에서만 쓰이고 판정 규칙·링크 색은 바뀌지 않는다.
 
@@ -126,7 +126,7 @@
 - **10-06 hover 카드 동작 버튼(T-179 완료)**: 머무름 툴팁이 카드로 — 글 + 버튼 셋(`obj.reveal` 탐색기에서 보기 · `obj.rows` 데이터 200행 보기(테이블·뷰만 활성) · 설명 복사) · 설정 `objlink.card_buttons`. 🔧 첫 판의 결함 = 카드 버튼을 눌러도 아래 편집기로 감(캐럿 이동 · 카드만 닫힘) — `route_dispatch`(app/input.rs)가 MouseDown마다 `objlink_hover_end()`를 먼저 불러 `objlinks.active`가 꺼진 뒤 `objlink_click`에 못 닿음 → 카드 사각형 안 좌클릭은 hover를 걷지 않음 + 버튼 실행 뒤 카드 닫음(app/objlink.rs). 발견 = 협업 세션 격리 자체 시험(`ui.move` 머무름 → 버튼 위 `ui.click` → `result.dump` 새 탭 없음 · journal 10-06 §3). 실기 = U-194. · **10-08 [설명 복사] Shift+좌클릭 = `이름 - 설명` 복사**(우클릭 메뉴 "이름 - 설명 복사"와 같음 · 4a68d4c)
 - **10-06 카드·툴팁 배치 규칙(T-179 2차)**: 기준 = **링크 글자 사각형**(줄 `[top, top+line_h]` · `TextBox::point_at`의 y는 줄 바닥이라 쓰지 않음) · 위치 = 61 §2-2대로 **정방향(`objlink.tooltip_pos`) → 반대쪽**(정방향이 편집기 영역 밖이면 · `flip_vertical` · 판정 host = 편집기 사각형) **→ 밀어 넣기**(창 전체 · `nudge_into`) · 링크 줄과 그 옆 글자를 덮지 않는다 · **카드 영역** = 카드 ∪ 링크 글자 둘레 + 8 px(`card_zone_contains`) — 포인터가 이 안에 있는 동안 카드 유지(틈·비스듬한 경로) · 벗어나면 닫힘. Ctrl 툴팁(`paint_tip`)·시그니처 카드(`sig_card_tip`)도 같은 규칙. 시험 = journal 10-06 §3-1(A 5행 · B 1행 뒤집힘 · C 시그니처 카드).
 - **10-06 카드 버튼 = MouseUp 확정**(사용자 추가 요구 · 값 목록 팝업 버튼과 같은 규칙): 버튼 위에서 누르고 **뗄 때** 실행 · 누른 채 버튼 밖으로 벗어나 떼면 취소 · 기동 명령 `ui.click`(Down+Up) 회귀 = "데이터 200행 보기" → 결과2 rows=4(journal 10-06 §9 ⑤).
-- **10-08 없는 객체 = 카드 없음**(98504fc · 사용자 캡처): 메타에도 다른 스키마에도 없는 이름 = 벽돌색 밑줄만 · Ctrl 툴팁·hover 카드를 띄우지 않는다(종전 "(현재 연결에 없는 객체)" 카드) · 다른 스키마에 같은 이름이 있으면 안내 카드("(BISCM에 없음 · BISCM_SB에 있음)")는 유지.
+- **10-08 없는 객체 = 카드 없음**(98504fc · bb81c51 · 사용자 캡처): 미확인 이름 = 벽돌색 밑줄만 · Ctrl 툴팁·hover 카드를 띄우지 않는다(종전 "(현재 연결에 없는 객체)" 카드) · ~~다른 스키마에 있으면 안내 카드 유지~~ → bb81c51에서 그 안내도 삭제(`ObjLinkElsewhere` 제거 · §10 엄격 판정).
 
 - **10-05 `obj.*` 액션(얇은 판 · T-180 ④)**: 77 §1-1 액션 레지스트리를 "id 이관" 대신 **얇게** — 탐색기 우클릭 메뉴의 id 12개(`select` · `source` · `copy` …)는 E2E가 쓰므로 그대로 두고, 호스트 명령 `obj.*`가 **선택 노드에 대해 같은 길(`Explorer::menu_pick`)** 을 부른다(`act_selected` · `open_menu_selected` · `app/meta.rs` `obj_act`). 명령 = `obj.menu`(Shift+F10 · 선택 행 자리에 우클릭 메뉴) · `obj.select_rows` · `obj.source` · `obj.copy_name` · `obj.refresh` · `obj.refresh_meta` · `obj.sizes`(팔레트 "오브젝트 탐색기" 묶음) · 기존 `obj.reveal`(F4) · `obj.info`(Shift+F4) · `obj.rows`. 탐색기가 닫혀 있으면 열고 · 선택 없음 = 상태줄 "객체 탐색기에서 선택한 항목이 없습니다" · 삭제·서버 해제·접속처럼 **묻는 동작은 명령으로 두지 않는다**(메뉴에서만). `ObjectRef` 통일(링크 `Link` · 탐색기 `ObjectInfo` · `RevealTarget`)은 설계 메모로 남김(보류 가능).
 
@@ -152,6 +152,47 @@
 | C7 조합+전환 | 둘째 연결 + 스키마 전환 | F1 |
 
 케이스: A1~A9(단일) · B1~B4(같은 서버 둘) · C1~C5(다른 서버 둘 · C5 = `-R`) · D1~D3(셋) · E1~E6(전환) · F1. 결과·결함 = [journal §35](journal/2026-09-30.md).
+
+## 10. DDL·시스템 프로시저 인자 객체 인식(T-315 · 10-08 · bb81c51 · 89be477)
+
+사용자 10-08 예문(Oracle `ALTER TABLE … ADD (…)`·`COMMENT ON COLUMN`·제약 / SQL Server 괄호 없는 `ADD`·DEFAULT 제약·`sys.sp_addextendedproperty`)에서 링크가 안 되던 자리를 채운다. 판정은 `objlink::scan` 한 곳 · 시험 = `ddl_alter_comment_constraints_and_extended_properties`.
+
+| 자리 | 예 | 링크 |
+|---|---|---|
+| `ALTER TABLE t ADD (…)` · `MODIFY (…)` 괄호 안 | `ALTER TABLE TB_ORDER ADD (NEW_A VARCHAR2(10), ORD_NO VARCHAR2(5) DEFAULT 'P');` | 컬럼(주인 = t · 메타에 없는 새 컬럼 = 미확인) |
+| SQL Server 괄호 없는 `ADD` 목록 | `ALTER TABLE dbo.TB_ORDER ADD USE_YN CHAR(1) NOT NULL CONSTRAINT DF_USE DEFAULT ('Y'), REG_DTTM DATETIME2(0) NULL …` | 깊이 1의 `,` 다음 낱말도 컬럼 |
+| `COMMENT ON COLUMN t.c` · `s.t.c`(PG 포함) | `COMMENT ON COLUMN S1.TB_ORDER.ITEM_CD IS 'y';` | 컬럼(스키마 = S1) |
+| `PRIMARY KEY (…)` · `UNIQUE (…)` | `ALTER TABLE TB_ORDER ADD CONSTRAINT PK_TB_ORDER PRIMARY KEY (ORD_NO);` | 괄호 안 = 컬럼(CREATE TABLE 괄호뿐 아니라 ALTER에서도) |
+| ★ 제약 이름 `LinkKind::Constraint` | `ADD CONSTRAINT PK_…` · `DROP CONSTRAINT PK_…` · 컬럼 `CONSTRAINT DF_USE DEFAULT …` · CREATE TABLE 괄호 안 제약 | 주인 = DDL 테이블 · 판정 `Resolver::has_constraint` = 메타 상세 키 목록(모르면 `None` = 정상 표시 후 요청) · 설명 = PK/UK/FK/CHECK + 컬럼 + 참조 · 탐색기 찾기 = 테이블 › Constraints/Keys/Foreign Keys/Indexes 멤버 |
+| ★ `sys.sp_add/update/dropextendedproperty` 인자 문자열 | `@level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'TB_ORDER', @level2type = N'COLUMN', @level2name = N'ORD_NO'` | 따옴표 속 이름 = 스키마/테이블·루틴/컬럼·제약(level 종류대로) · 프로시저 이름 = 루틴(시스템 객체) · `@name` 같은 인자 이름은 링크 아님 |
+| 탭 메뉴 "객체 탐색기에서 보기" | 첫 문장이 `ALTER TABLE t ADD/DROP CONSTRAINT c` | `ddl_target.member` → 테이블 › 그 제약까지 선택 |
+
+사용자 붙임 예문 원문(10-08 · 실기 기준):
+
+```sql
+-- Oracle
+ALTER TABLE M4S_O400100 ADD (
+	MP_VRSN_ID	VARCHAR2(20)
+,	PRGS_STA_CD	VARCHAR2(10)	DEFAULT 'P00'
+);
+COMMENT ON COLUMN M4S_O400100.MP_VRSN_ID  IS 'MP 버전 아이디';
+COMMENT ON COLUMN M4S_O400100.PRGS_STA_CD IS 'FP 진행상태코드(FP_PRGS_STA_CD)';
+
+-- SQL Server ①
+ALTER TABLE dbo.SALES_ORDER ADD ORDER_STATUS VARCHAR(10) NULL;
+ALTER TABLE dbo.SALES_ORDER ADD USE_YN CHAR(1) NOT NULL CONSTRAINT DF_SALES_ORDER_USE_YN DEFAULT ('Y');
+ALTER TABLE dbo.SALES_ORDER ADD REG_USER VARCHAR(20) NULL, REG_DTTM DATETIME2(0) NULL CONSTRAINT DF_SALES_ORDER_REG_DTTM DEFAULT (SYSDATETIME());
+
+-- SQL Server ②
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상태 코드', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'SALES_ORDER', @level2type = N'COLUMN', @level2name = N'ORDER_STATUS';
+-- sys.sp_updateextendedproperty = 같은 인자 · sys.sp_dropextendedproperty = @name + @level0~2
+```
+
+- **스키마 없이 쓴 이름**의 "다른 스키마의 같은 이름 ▸" 후보 메뉴(§6 10-05 · U-191)는 엄격 판정과 별개로 그대로 · 제약·컬럼 링크는 후보에서 제외(개발 세션 확인 10-08).
+- **문법 보강**(82 §9): ansi `[clause ALTER TABLE]` · DROP objects에 function · Oracle ALTER 종류·`ALTER TABLE` MODIFY/ADD( · mssql ALTER COLUMN · pg ADD/ALTER COLUMN.
+- ★ **엄격 판정 = 적힌(또는 현재) 스키마에서만 · 폴백 없음**(사용자 10-08 3차 "해당 DB에 있는지만 · 인접 검사 없음"): 미확인 링크 = 툴팁·카드 없음(다른 스키마 안내 삭제) · 스키마를 적은 이름 = 후보 메뉴 없음 · 탭 메뉴 = 적힌/현재 스키마에서 **종류까지** 맞을 때만(10-08 bin85의 같은 종류 다른 스키마 폴백 제거). 스키마 없이 쓴 이름의 "다른 스키마의 같은 이름 ▸" 후보 메뉴(§6 10-05)는 그대로.
+- 🔧 **카드 가는 길의 다른 줄 링크**(89be477 · 사용자 10-08 `MP_VRSN_ID`): 카드 영역 안에서 다른 링크를 지나면 카드가 교체·소멸하던 결함 → 교체는 앵커와 **같은 줄 띠**에서만(`switch_allowed_in_zone` · 이웃 단어 교체는 유지).
+- 라벨 "실제 객체와 비교…" → "실제 객체와 비교"(b9f2d56).
 
 ## 5. 후속(T-257)
 
