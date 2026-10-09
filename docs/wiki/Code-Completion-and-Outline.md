@@ -121,6 +121,22 @@ JOIN 조건 완성(FK 대상 정보가 메타에 들어온 뒤) · hover 카드(
 
 - 대상 = 내장 표의 30종(확장 속성 추가/수정/삭제 · `sp_rename` · `sp_help` 계열 · `sp_columns` · `sp_tables` · `sp_executesql` · 연결된 서버 · `xp_cmdshell` 등). 사용자 프로시저의 파라미터는 아직 아닙니다.
 
+### 자료형 · 사용자 정의 함수(10-09)
+
+자료형을 쓰는 자리에서 그 DBMS의 **내장 자료형**이 꼴과 함께 나옵니다(예 `NUMBER(p, s)` · `VARCHAR2(n [CHAR|BYTE])` · `decimal(p, s)`). 서버에 사용자 정의 타입(TYPE · 도메인 · 테이블 타입)이 있으면 함께 나옵니다.
+
+| 자리 | 예 |
+|---|---|
+| 형변환 | `CAST(a AS ` · `CONVERT(` · PostgreSQL `a::` |
+| 변수 선언 | Oracle `DECLARE` 아래 `v_x ` · 프로시저 `IS`/`AS` 뒤 · SQL Server `DECLARE @x ` · `VAR x ` |
+| 루틴 머리 | 파라미터 `p IN ` · SQL Server `@a ` · `RETURN ` · `RETURNS ` |
+| 테이블 | `CREATE TABLE t (id ` · `ALTER TABLE t ADD c ` · `MODIFY` · `ALTER COLUMN` |
+
+- 별칭(`SELECT a AS `)이나 본문의 식 자리에는 자료형이 끼어들지 않습니다.
+- `SELECT ` · `WHERE x = ` 같은 식 자리에는 내장 함수와 함께 **현재 스키마의 사용자 정의 함수·패키지**가 스키마 접두 없이 나옵니다(처음 한 번은 잠깐 "불러오는 중").
+- 내장 자료형을 빼려면 설정 `intel.types`를 끕니다(사용자 정의 타입은 그대로 나옵니다).
+- 아직 안 되는 것: PostgreSQL `$$ … $$` 본문 안 · Oracle `%TYPE`/`%ROWTYPE`.
+
 ### 사용자 프로시저 인자(10-08)
 
 - **SQL Server**: `EXEC PROC_TEST ` 뒤(또는 `, ` 뒤)에서 Ctrl+Space를 누르면 그 프로시저의 `@인자`가 타입과 함께 나옵니다(예 `@VS_PROJECT_CD VARCHAR(100)`). 처음 한 번은 서버에서 인자 목록을 읽느라 "불러오는 중"이 잠깐 보이고, 오면 목록이 채워집니다. 이미 쓴 `@인자`는 빠집니다. T-SQL은 괄호 없는 `EXEC proc @a = 1, @b = 2` 꼴이 표준입니다(괄호는 오류).

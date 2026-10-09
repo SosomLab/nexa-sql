@@ -96,6 +96,7 @@ FROM MTXRPTY2.MTX_AGENT_LOG A, MTXRPTY2.MTX_DBMS C, MTXRPTY2.MTX_REPORT D, MTXRP
   - MSSQL: `sys.*` 카탈로그 뷰 · `sp_*` 시스템 프로시저 · `@@` 함수 · 내장 함수(`ISNULL`, `DATEADD`, `STRING_AGG`) · 힌트.
   - PostgreSQL: `pg_catalog.*` · `information_schema` · 내장 함수 · 연산자 · `::` 캐스트 타입.
   - SQLite: `sqlite_master` · 내장 함수 · pragma.
+  - **10-09 구현 현황**: 내장 표는 데이터 파일이 아니라 코드 표 `nsql-script builtins.rs`(함수·패키지·사전 뷰 · **자료형 `types(d)`** = ANSI 공통 + Oracle 36 · PG 60 · SQL Server 37 · MySQL 32 · SQLite 8) · 자료형 자리 판정·사용자 정의 타입·식 자리 사용자 함수 = [76 §17](76-intellisense-and-outline.md) · 설정 `intel.types`.
 - 표시: 후보에 종류 아이콘(패키지·함수·뷰·컬럼) · 함수는 **시그니처 힌트**(`TO_CHAR(value, format)` — 인자 위치 굵게) · 시스템 오브젝트는 흐린 색으로 구분. 서버에서 실제 목록을 못 가져와도(권한) 정적 파일로 동작 → 오프라인에서도 같다.
 - 강조에도 연결: 접속 방언의 내장 함수는 `TokenKind::Builtin`(신설 예정 · 색 `syn_builtin`)로 칠한다 — 규격 파일 `builtins =` 키 + 접속 시 방언 내장 목록 병합.
 

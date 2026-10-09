@@ -112,6 +112,7 @@
 - ★ **서버 유형 배지 `statusbar.env_badge`(10-08 · 3ecd137 · 설정 ▸ Window · 기본 켬)**: 켬 = 접속된 탭이면 유형과 무관하게 상태줄 맨 앞 3자리 배지 늘(PRD 빨강 · TST 주황 · DEV 강조색 · NON 흐림 · 세션 임시 유형 = 외곽선) · 끔 = 늘 숨김(종전 = PRD·TST만 · 설정 없음).
 - ★ **우클릭 메뉴 영역 간 배타(10-09 · beefed8 · af9a280)**: `ui.ctxmenu_exclusive`(켬 · 열린 메뉴 밖 좌/우 클릭·안 쓰는 키 = 닫기 · 끔 = 종전) · `ui.ctxmenu_passthrough`(켬 = 닫는 클릭이 바로 동작 · 끔 = 닫기만) · 61 §2-2-b 10항.
 - ★ **CREATE 문 ↔ 실제 객체 비교(10-09 · T-283 2단계)**: `compare.view`(diff = 나란히 보기 · inline = 1단계 거터 표식 탭) · `compare.canon`(켬 · EDITIONABLE/NONEDITIONABLE·따옴표 식별자 차이 무시 · 설정 ▸ 편집기) · 기존 `compare.ignore_ws` · 19 §6-2.
+- ★ **자동완성 내장 자료형 `intel.types`(10-09 · db5338a · 기본 켬)**: 자료형 자리에서 방언의 내장 자료형을 꼴과 함께 · 끄면 내장만 빠지고 서버의 사용자 정의 타입은 그대로 · 76 §17.
 - ★ **서버 연결 끊김(T-313 · 10-08~09)**: `net.notify_quiet_secs`(60 · 같은 끝점 끊김 토스트 억제 창) · `net.watch`(켬 · OS 네트워크 변경 감시 · Windows · 다음 시작부터) · HIDDEN `meta.call_timeout_secs`(0 = `explorer.timeout`) · 107.
 
 ### 3-2. 남은 것

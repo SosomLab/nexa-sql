@@ -204,6 +204,14 @@ impl App {
     }
 
     /// 본문 실행의 공통 경로 — 편집기 실행(`run_sql`)과 **디스크에서 바로 실행**(docs/59 §4 3단계 · 편집기에 싣지 않는다)이 같이 쓴다.
+    /// ★ 실행이 서버에 보낼 세그먼트 크기 = **결과가 갈 결과 탭**의 그리드 값(탭마다 푸터 입력란 · 0 = 전체) · 탭이 없으면 활성 그리드.
+    pub(crate) fn run_page_rows(&mut self, tab: u64) -> usize {
+        match self.grid_for(tab) {
+            Some(g) => g.page_rows(),
+            None => self.grid.page_rows(),
+        }
+    }
+
     pub(crate) fn run_text(&mut self, src: String, line_base: usize, all: bool) {
         self.run_text_in(src, line_base, all, false);
     }
@@ -301,7 +309,9 @@ impl App {
         };
         // 세션 상태 표식(`stateful`)은 여기서 일괄로 켜지 않는다 — 문장이 **서버로 나가는 순간**(`RunEvent::Begin`) 그때의 세션에 켠다.
         // (실행 전 일괄이면 `CONNECT` 뒤 문장의 상태가 **앞** 세션에 붙어 재접속 직후 헛경고가 났다 · 사용자 09-30.)
-        let max_rows = self.grid.page_rows();
+        // ★ 행 수는 **결과가 갈 탭**의 그리드에서(사용자 10-09 "행 수 0 → 중지 → 재조회 = 200행" 결함): 종전 `self.grid`(활성 그리드)는
+        //   중지 오류가 Output 탭을 활성화한 뒤엔 Output 자리표시 그리드(기본 200)라, 결과1에 0을 적어 두고도 200을 보냈다.
+        let max_rows = self.run_page_rows(target);
         self.sess.single_run = !all;
         self.sess.submit(
             pass,
@@ -355,12 +365,13 @@ impl App {
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
+        let max_rows = self.run_page_rows(self.sess.run_tab);
         self.sess.submit(
             pass,
             worker::Cmd::Run {
                 src,
                 preflight: None,
-                max_rows: self.grid.page_rows(),
+                max_rows,
                 vars: self.run_vars(),
                 defines: self.run_defines(),
                 intrinsic: Some(self.run_intrinsic()),
