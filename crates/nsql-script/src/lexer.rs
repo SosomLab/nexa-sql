@@ -132,8 +132,47 @@ fn scan_q_quoted(b: &[u8], start: usize) -> usize {
     n
 }
 
+/// ★ 위치 `pos`가 든 **달러 인용 본문**의 안쪽 구간(태그를 뺀 `본문 시작..본문 끝`) — 완성이 PL/pgSQL 본문 안에서도 동작하게
+/// (사용자 10-09 "PG `$$ … $$` 본문 안 선언 판정"): `classes`의 Str 구간 가운데 `$`로 시작하는 것만 본다. 닫는 태그가 없으면 끝까지.
+#[must_use]
+pub fn dollar_body_at(text: &str, classes: &[Class], pos: usize) -> Option<(usize, usize)> {
+    let b = text.as_bytes();
+    let n = b.len().min(classes.len());
+    let mut i = 0;
+    while i < n {
+        if classes[i] != Class::Str {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && classes[i] == Class::Str {
+            i += 1;
+        }
+        if b[start] != b'$' {
+            continue;
+        }
+        let Some(end) = scan_dollar_quoted(b, start) else {
+            continue;
+        };
+        // 태그 = `$ident$`.
+        let mut t = start + 1;
+        while t < n && b[t] != b'$' {
+            t += 1;
+        }
+        let tag_len = t + 1 - start;
+        let inner_start = start + tag_len;
+        let closed =
+            end >= inner_start + tag_len && b[end - tag_len..end] == b[start..start + tag_len];
+        let inner_end = if closed { end - tag_len } else { end.min(n) };
+        if pos >= inner_start && pos <= inner_end {
+            return Some((inner_start, inner_end));
+        }
+    }
+    None
+}
+
 /// PostgreSQL 달러 인용 — 여는 태그 `$[ident]$`를 읽고 같은 태그가 닫을 때까지. 태그가 아니면 None.
-fn scan_dollar_quoted(b: &[u8], start: usize) -> Option<usize> {
+pub(crate) fn scan_dollar_quoted(b: &[u8], start: usize) -> Option<usize> {
     let n = b.len();
     let mut j = start + 1;
     while j < n && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {

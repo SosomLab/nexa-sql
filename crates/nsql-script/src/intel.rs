@@ -7,7 +7,7 @@
 //!   한글 질의는 자모열([`nsql_core::hangul`]).
 //! - 키워드 표 [`KEYWORDS`](ANSI + 방언 공통 · 대문자).
 
-use crate::lexer::{classify, is_ident_char, Class};
+use crate::lexer::{classify, dollar_body_at, is_ident_char, Class};
 use crate::outline::{words, Word};
 use crate::split::statement_at_in;
 use nsql_core::Dialect;
@@ -54,6 +54,8 @@ pub enum Want {
     DataType,
     /// ★ `COLLATE |` 뒤 = 정렬 이름(사용자 10-09): 방언의 정적 표([`crate::builtins::collations`]) · 메타 불필요.
     Collation,
+    /// ★ `이름%|` 뒤(Oracle PL/SQL · PL/pgSQL · 사용자 10-09) = `TYPE` · `ROWTYPE`(앵커 속성) · 메타 불필요.
+    TypeAttr,
 }
 
 /// alias 한 줄.
@@ -512,6 +514,15 @@ fn want_at(
     if is_word(last, "COLLATE") {
         return Some(Want::Collation);
     }
+    // ★ `emp.ename%|` · `emp%|` = 앵커 속성 TYPE/ROWTYPE(Oracle·PG · 이름에 **붙은** `%`만 — `a % b` 나머지 연산은 띄어 쓴다).
+    if last.text == "%"
+        && n >= 2
+        && is_name(before[n - 2])
+        && before[n - 2].end == last.start
+        && matches!(dialect, Some(Dialect::Oracle | Dialect::Postgres) | None)
+    {
+        return Some(Want::TypeAttr);
+    }
     // ★ 자료형 자리(사용자 10-09) — 다른 규칙보다 먼저(`ALTER TABLE t ADD c |`는 ALTER 규칙과 겹친다).
     if type_at(before, stmt_kind, dialect) {
         return Some(Want::DataType);
@@ -950,6 +961,11 @@ fn is_name(w: &Word<'_>) -> bool {
 /// 캐럿 문맥.
 #[must_use]
 pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context {
+    context_at_in(src, caret, dialect, false)
+}
+
+/// `whole` = 문서 전체를 **한 문장**으로(PG 달러 인용 본문 = PL/pgSQL 블록 · `;`마다 나누면 둘째 선언부터 DECLARE 구역을 잃는다).
+fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool) -> Context {
     let caret = caret.min(src.len());
     let b = src.as_bytes();
     // 접두 = 캐럿 앞 식별자 글자들(`:`·`&`·`@` 접두 포함).
@@ -976,24 +992,40 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         stmt_kind: None,
         alias_ok: false,
     };
-    let Some(item) = statement_at_in(src, caret, dialect) else {
-        // 문장이 없으면(빈 문서) 시작 문맥.
-        return Context {
-            kind: CtxKind::Start,
-            ..none
+    let stmt = if whole {
+        0..src.len()
+    } else {
+        let Some(item) = statement_at_in(src, caret, dialect) else {
+            // 문장이 없으면(빈 문서) 시작 문맥.
+            return Context {
+                kind: CtxKind::Start,
+                ..none
+            };
         };
+        let stmt = item.span;
+        // 캐럿이 문장 밖(다음 문장 앞 빈 자리)이면 시작 문맥.
+        if caret < stmt.start || caret > stmt.end + 1 {
+            return Context {
+                kind: CtxKind::Start,
+                ..none
+            };
+        }
+        stmt
     };
-    let stmt = item.span;
-    // 캐럿이 문장 밖(다음 문장 앞 빈 자리)이면 시작 문맥.
-    if caret < stmt.start || caret > stmt.end + 1 {
-        return Context {
-            kind: CtxKind::Start,
-            ..none
-        };
-    }
     let text = &src[stmt.start..stmt.end.min(src.len())];
     let classes = classify(text);
     let rel = (s.max(stmt.start) - stmt.start).min(classes.len());
+    // ★ PostgreSQL 달러 인용 본문(`$$ … $$` · 사용자 10-09): 렉서는 문자열로 보지만 완성에는 **그 안이 PL/pgSQL 문서**다 → 본문만
+    //   떼어 같은 분석을 다시 하고 구간을 되돌린다(선언부 자료형 · FROM 테이블 · 식 전부 그대로).
+    if let Some((bs, be)) = dollar_body_at(text, &classes, rel) {
+        let body = &text[bs..be];
+        let inner_caret = (caret - stmt.start).saturating_sub(bs).min(body.len());
+        let mut c = context_at_in(body, inner_caret, dialect, true);
+        let off = stmt.start + bs;
+        c.replace = c.replace.start + off..c.replace.end + off;
+        c.statement = c.statement.start + off..c.statement.end + off;
+        return c;
+    }
     // 접두 바로 앞 글자의 부류 — 문자열/주석이면 팝업 없음.
     if rel > 0 && !matches!(classes[rel - 1], Class::Code | Class::Ident) {
         return none;
@@ -2405,6 +2437,49 @@ mod tests {
     /// ★ 자동 별칭 허용 자리(사용자 10-09): FROM/JOIN/목록 콤마 · MERGE INTO/USING · UPDATE/DELETE(SQL Server 제외) = 허용 ·
     /// ALTER/CREATE/DROP/TRUNCATE TABLE · CREATE INDEX ON · INSERT INTO · DESC · GRANT ON = 불허.
     /// ★ `COLLATE |` = 정렬 이름 자리(사용자 10-09) — 식·열 정의·ORDER BY 어디서든 · `COLLATE x |` 뒤는 식.
+    /// ★ PG 달러 인용 본문 안(사용자 10-09): `DO $$ DECLARE v |` = 자료형 · 본문 안 FROM = 관계 · 본문 안 식 = 식 · 치환 구간은 바깥 좌표 ·
+    /// 닫는 태그가 없어도(입력 중) 본문 · 보통 문자열 안은 그대로 없음.
+    #[test]
+    fn dollar_body_contexts() {
+        let pg = Dialect::Postgres;
+        let k = |src: &str| context_at(src, src.len(), Some(pg));
+        let t = CtxKind::Want(Want::DataType);
+        assert_eq!(k("DO $$ DECLARE v_x ").kind, t);
+        assert_eq!(k("DO $$\nDECLARE\n  v_x integer;\n  v_y ").kind, t);
+        assert_eq!(
+            k("CREATE FUNCTION f() RETURNS int AS $body$ DECLARE v ").kind,
+            t
+        );
+        assert_eq!(k("DO $$ BEGIN SELECT * FROM ").kind, CtxKind::Relation);
+        assert_eq!(
+            k("DO $$ BEGIN SELECT a FROM t WHERE x = ").kind,
+            CtxKind::Expr
+        );
+        let c = k("DO $$ DECLARE v_x inte");
+        assert_eq!(c.kind, t);
+        assert_eq!(c.prefix, "inte");
+        assert_eq!(c.replace, 18..22, "치환 구간 = 바깥 문서 좌표");
+        // 닫힌 본문 안의 캐럿.
+        let src = "DO $$ DECLARE v_x | BEGIN NULL; END $$;";
+        let caret = src.find('|').unwrap();
+        let text = src.replacen('|', "", 1);
+        assert_eq!(context_at(&text, caret, Some(pg)).kind, t);
+        // 보통 문자열 안 = 없음.
+        assert_eq!(k("SELECT 'DECLARE v ").kind, CtxKind::None);
+    }
+
+    /// ★ `이름%|` = TYPE/ROWTYPE(Oracle·PG · 붙은 `%`만) · `a % |` 나머지 연산은 식.
+    #[test]
+    fn type_attr_contexts() {
+        let k = |src: &str, d: Dialect| context_at(src, src.len(), Some(d)).kind;
+        let a = CtxKind::Want(Want::TypeAttr);
+        assert_eq!(k("DECLARE\n  v_name emp.ename%", Dialect::Oracle), a);
+        assert_eq!(k("DECLARE\n  r emp%", Dialect::Oracle), a);
+        assert_eq!(k("DO $$ DECLARE r emp%", Dialect::Postgres), a);
+        assert_eq!(k("SELECT a % ", Dialect::Oracle), CtxKind::Expr);
+        assert_eq!(k("SELECT a % ", Dialect::Mssql), CtxKind::Expr);
+    }
+
     #[test]
     fn collate_contexts() {
         let k = |src: &str, d: Dialect| context_at(src, src.len(), Some(d)).kind;
