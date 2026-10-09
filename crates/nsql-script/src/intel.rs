@@ -48,6 +48,10 @@ pub enum Want {
     /// ★ SQL Server 시스템 프로시저의 **파라미터**(T-316 10-08): `EXEC [sys.]sp_x |` · `, |` · `@…` 자리 — 값 = 표의 프로시저 이름 ·
     /// 호스트는 [`crate::builtins::proc_params`]에서 아직 안 쓴 `@파라미터`를 낸다(메타 불필요).
     ProcParam(&'static str),
+    /// ★ 자료형 자리(사용자 10-09 "기본 변수형 자동완성"): `CAST(x AS |` · `DECLARE @x |` · PL/SQL 선언부 `v_x |` · 루틴 파라미터
+    /// `p IN |` · `RETURN |`/`RETURNS |` · `CREATE TABLE t (c |` · `ALTER TABLE … ADD c |` · `VAR x |` · PG `::|`. 호스트는 방언의
+    /// 내장 자료형([`crate::builtins::types`]) + 메타의 사용자 정의 타입(`ObjectKind::Type` · 현재 스키마 + `스키마.`)을 낸다.
+    DataType,
 }
 
 /// alias 한 줄.
@@ -119,6 +123,308 @@ const WANT_KINDS: &[(&str, &str)] = &[
     ("PACKAGE", "package"),
 ];
 
+/// 열 정의 자리에서 열 이름이 될 수 없는 예약어(제약·키 절의 머리).
+const NOT_COLUMN: &[&str] = &[
+    "CONSTRAINT",
+    "PRIMARY",
+    "UNIQUE",
+    "FOREIGN",
+    "CHECK",
+    "INDEX",
+    "KEY",
+    "LIKE",
+    "PERIOD",
+    "EXCLUDE",
+    "FULLTEXT",
+    "SPATIAL",
+];
+
+/// 선언부에서 "이름 하나"로 끝났을 때 변수 이름이 아닌 낱말(선언의 머리·구조 키워드).
+const NOT_DECL_NAME: &[&str] = &[
+    "BEGIN",
+    "END",
+    "EXCEPTION",
+    "DECLARE",
+    "IS",
+    "AS",
+    "CURSOR",
+    "TYPE",
+    "SUBTYPE",
+    "PROCEDURE",
+    "FUNCTION",
+    "PRAGMA",
+    "RETURN",
+    "THEN",
+    "ELSE",
+    "LOOP",
+    "IF",
+    "WHEN",
+    "INTO",
+    "FROM",
+    "SELECT",
+];
+
+/// 괄호가 안 닫힌 `(`의 index와 그 앞 이름 사슬의 시작 index(`a.b.c(` → `(`의 index · `a`의 index).
+fn open_paren(before: &[&Word<'_>]) -> Option<(usize, usize)> {
+    let mut depth = 0i32;
+    let mut open: Option<usize> = None;
+    for (i, w) in before.iter().enumerate().rev() {
+        match w.text {
+            ")" => depth += 1,
+            "(" => {
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let k = open?;
+    if k == 0 || !is_name(before[k - 1]) {
+        return Some((k, k));
+    }
+    let mut j = k - 1;
+    while j >= 2 && before[j - 1].text == "." && is_name(before[j - 2]) {
+        j -= 2;
+    }
+    Some((k, j))
+}
+
+/// ★ PL 선언 구역의 시작 index(순수): 괄호 깊이 0에서 마지막 `DECLARE`, 또는 루틴 머리(`FUNCTION`·`PROCEDURE`·`PACKAGE [BODY]`·
+/// `TYPE`·`TRIGGER`) 뒤 `;`·`BEGIN` 없이 나온 `IS`/`AS`. 그 뒤 깊이 0에 `BEGIN`이 있으면 선언 구역이 끝난 것(= None).
+fn declare_zone_start(before: &[&Word<'_>]) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut zone: Option<usize> = None;
+    // 루틴 머리 키워드를 본 뒤(`;`·BEGIN 전) 만나는 IS/AS만 구역.
+    let mut header_open = false;
+    for (i, w) in before.iter().enumerate() {
+        match w.text {
+            "(" => {
+                depth += 1;
+                continue;
+            }
+            ")" => {
+                depth -= 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth != 0 {
+            continue;
+        }
+        if is_word(w, "DECLARE") {
+            zone = Some(i);
+            header_open = false;
+        } else if ["FUNCTION", "PROCEDURE", "PACKAGE", "TYPE", "TRIGGER"]
+            .iter()
+            .any(|k| is_word(w, k))
+        {
+            header_open = true;
+        } else if header_open && (is_word(w, "IS") || is_word(w, "AS")) {
+            zone = Some(i);
+            header_open = false;
+        } else if is_word(w, "BEGIN") {
+            zone = None;
+            header_open = false;
+        } else if w.text == ";" {
+            header_open = false;
+        }
+    }
+    zone
+}
+
+/// ★ 자료형 자리인가(사용자 10-09 "기본 변수형 자동완성" · 순수 · MC/DC 시험 `type_contexts`).
+fn type_at(before: &[&Word<'_>], stmt_kind: Option<&str>, dialect: Option<Dialect>) -> bool {
+    let n = before.len();
+    let last = before[n - 1];
+    let prev = (n >= 2).then(|| before[n - 2]);
+    let prev2 = (n >= 3).then(|| before[n - 3]);
+    let at_var = |w: &Word<'_>| {
+        !w.quoted && w.text.len() > 1 && w.text.starts_with('@') && !w.text.starts_with("@@")
+    };
+    let plain_name = |w: &Word<'_>| is_name(w) && !w.text.starts_with(['@', ':', '&', '#', '$']);
+    // ① `CAST(x AS |` · `TRY_CAST` · `TREAT(x AS |` · SQL Server `CONVERT(|`·`TRY_CONVERT(|`(첫 인자 = 자료형).
+    let paren = open_paren(before);
+    if is_word(last, "AS") {
+        if let Some((k, _)) = paren {
+            if k >= 1
+                && ["CAST", "TRY_CAST", "SAFE_CAST", "TREAT"]
+                    .iter()
+                    .any(|f| is_word(before[k - 1], f))
+            {
+                return true;
+            }
+        }
+    }
+    if last.text == "(" && prev.is_some_and(|p| is_word(p, "CONVERT") || is_word(p, "TRY_CONVERT"))
+    {
+        return true;
+    }
+    // ② PostgreSQL `expr::|`(`:` 둘이 붙어 있음).
+    if last.text == ":" && prev.is_some_and(|p| p.text == ":" && p.end == last.start) {
+        return true;
+    }
+    // ③ nsql `VAR x |` · SQL*Plus `VARIABLE x |`.
+    if n == 2 && (is_word(before[0], "VAR") || is_word(before[0], "VARIABLE")) && plain_name(last) {
+        return true;
+    }
+    // ④ T-SQL 변수·파라미터: `DECLARE @x |` · `DECLARE @x AS |` · `, @y |` · `(@p |` · `CREATE PROC p @p |`(루틴 머리 안).
+    let routine_stmt = matches!(stmt_kind, Some("CREATE" | "ALTER"))
+        && before.iter().any(|w| {
+            ["PROCEDURE", "PROC", "FUNCTION"]
+                .iter()
+                .any(|k| is_word(w, k))
+        });
+    if at_var(last) {
+        if let Some(p) = prev {
+            if is_word(p, "DECLARE")
+                || p.text == ","
+                || p.text == "("
+                || (routine_stmt && plain_name(p))
+            {
+                return true;
+            }
+        }
+    }
+    if is_word(last, "AS") && prev.is_some_and(at_var) {
+        return true;
+    }
+    // ⑤ 함수 반환형: `RETURNS |` · `RETURNS SETOF |`(PG) · Oracle 머리의 `RETURN |`(FUNCTION 뒤 · BEGIN 전) · `TYPE … REF CURSOR RETURN |`.
+    if is_word(last, "RETURNS")
+        || (is_word(last, "SETOF") && prev.is_some_and(|p| is_word(p, "RETURNS")))
+    {
+        return true;
+    }
+    if is_word(last, "RETURN") {
+        let mut seen_fn = false;
+        let mut depth = 0i32;
+        let mut ok = false;
+        for w in before.iter().take(n - 1) {
+            match w.text {
+                "(" => depth += 1,
+                ")" => depth -= 1,
+                _ if depth == 0 => {
+                    if is_word(w, "FUNCTION") || is_word(w, "CURSOR") {
+                        seen_fn = true;
+                        ok = true;
+                    } else if seen_fn
+                        && (is_word(w, "BEGIN") || is_word(w, "IS") || is_word(w, "AS"))
+                    {
+                        ok = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if ok {
+            return true;
+        }
+    }
+    // ⑥ 루틴 파라미터 목록 `FUNCTION f(p |` · `, p |` · `p IN |` · `p OUT |` · `p IN OUT |` · PG `IN p |`.
+    if let Some((k, j)) = paren {
+        let head_is_routine = j >= 1
+            && ["FUNCTION", "PROCEDURE", "PROC"]
+                .iter()
+                .any(|kw| is_word(before[j - 1], kw));
+        if head_is_routine && k < n - 1 {
+            let mode = |w: &Word<'_>| {
+                ["IN", "OUT", "INOUT", "NOCOPY"]
+                    .iter()
+                    .any(|m| is_word(w, m))
+            };
+            if mode(last)
+                && prev.is_some_and(|p| plain_name(p) || mode(p) || p.text == "(" || p.text == ",")
+            {
+                return true;
+            }
+            if plain_name(last) && !mode(last) {
+                if let Some(p) = prev {
+                    if p.text == "(" || p.text == "," || mode(p) {
+                        return true;
+                    }
+                }
+            }
+        }
+        // ⑦ 열 정의 목록: `CREATE TABLE t (c |` · `, c |` · `TYPE r IS RECORD (f |` · `CREATE TYPE t AS OBJECT (f |` ·
+        //    `DECLARE @t TABLE (c |` · `RETURNS TABLE (c |` · PG `CREATE TYPE t AS (f |` · `ALTER TABLE t ADD (c |`.
+        let owner = (k >= 1).then(|| before[k - 1]);
+        let table_list = owner.is_some_and(|o| {
+            (j >= 1 && is_word(before[j - 1], "TABLE") && plain_name(o))
+                || ["RECORD", "OBJECT", "TABLE", "ADD", "MODIFY"]
+                    .iter()
+                    .any(|kw| is_word(o, kw))
+                || (is_word(o, "AS")
+                    && stmt_kind == Some("CREATE")
+                    && before.iter().any(|w| is_word(w, "TYPE")))
+        });
+        if table_list
+            && plain_name(last)
+            && !NOT_COLUMN.iter().any(|kw| is_word(last, kw))
+            && prev.is_some_and(|p| p.text == "(" || p.text == ",")
+        {
+            return true;
+        }
+    }
+    // ⑧ `ALTER TABLE … ADD [COLUMN] c |` · `MODIFY [COLUMN] c |` · `ALTER COLUMN c |` · `ALTER COLUMN c [SET DATA] TYPE |` · `CHANGE [COLUMN] a b |`.
+    if stmt_kind == Some("ALTER") && before.iter().any(|w| is_word(w, "TABLE")) {
+        if is_word(last, "TYPE") && prev.is_some_and(|p| plain_name(p) || is_word(p, "DATA")) {
+            return true;
+        }
+        if plain_name(last) && !NOT_COLUMN.iter().any(|kw| is_word(last, kw)) {
+            if let Some(p) = prev {
+                if ["ADD", "COLUMN", "MODIFY"].iter().any(|kw| is_word(p, kw)) {
+                    return true;
+                }
+                if plain_name(p)
+                    && prev2.is_some_and(|q| is_word(q, "CHANGE") || is_word(q, "COLUMN"))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    // ⑨ `CREATE DOMAIN d AS |` · `CREATE TYPE t FROM |`(SQL Server 별칭 타입) · `TYPE t IS TABLE OF |` · `SUBTYPE s IS |`.
+    if stmt_kind == Some("CREATE") {
+        if is_word(last, "AS") && before.iter().any(|w| is_word(w, "DOMAIN")) {
+            return true;
+        }
+        if is_word(last, "FROM") && n >= 3 && is_word(before[1], "TYPE") {
+            return true;
+        }
+    }
+    if is_word(last, "OF")
+        && prev.is_some_and(|p| is_word(p, "TABLE") || is_word(p, "VARRAY") || p.text == ")")
+    {
+        return true;
+    }
+    if is_word(last, "IS") && prev2.is_some_and(|q| is_word(q, "SUBTYPE")) {
+        return true;
+    }
+    // ⑩ PL 선언 구역(Oracle PL/SQL · PG PL/pgSQL `DECLARE` · 패키지 명세): 현재 항목 = 마지막 `;` 뒤 — `이름 |` · `이름 CONSTANT |`.
+    if let Some(z) = declare_zone_start(before) {
+        let mut st = z + 1;
+        let mut depth = 0i32;
+        for (i, w) in before.iter().enumerate().skip(z + 1) {
+            match w.text {
+                "(" => depth += 1,
+                ")" => depth -= 1,
+                ";" if depth == 0 => st = i + 1,
+                _ => {}
+            }
+        }
+        let item = &before[st..];
+        match item {
+            [a] if plain_name(a) && !NOT_DECL_NAME.iter().any(|kw| is_word(a, kw)) => return true,
+            [a, c] if plain_name(a) && is_word(c, "CONSTANT") => return true,
+            _ => {}
+        }
+    }
+    let _ = dialect;
+    false
+}
+
 /// ★ 특정 종류만 고르는 자리인가(10-01 ⑩ · 순수): `before` = 접두 앞 낱말들.
 /// `EXEC [@r =] [s.]proc` 뒤의 인자 자리인가 — 루틴 이름(사슬 그대로)과 "자리 맞음"(이름 바로 뒤 또는 `,` 뒤 · `=` 뒤는 값 자리).
 fn exec_routine_at(before: &[&Word<'_>]) -> Option<(String, bool)> {
@@ -170,6 +476,10 @@ fn want_at(
 ) -> Option<Want> {
     let n = before.len();
     let last = before[n - 1];
+    // ★ 자료형 자리(사용자 10-09) — 다른 규칙보다 먼저(`ALTER TABLE t ADD c |`는 ALTER 규칙과 겹친다).
+    if type_at(before, stmt_kind, dialect) {
+        return Some(Want::DataType);
+    }
     // `USE |`(SQL Server = 데이터베이스 · MySQL = 스키마(= DB)).
     if n == 1 && is_word(last, "USE") {
         return Some(match dialect {
@@ -1283,6 +1593,8 @@ pub enum CandKind {
     Function,
     /// 여러 글자를 한 번에 넣는 조각(`INSERT INTO t (` 뒤 전체 컬럼 목록 등) — `text`가 통째로 들어간다.
     Snippet,
+    /// 자료형(내장 표 또는 사용자 정의 타입 · 사용자 10-09) — 확정 때 이름만.
+    Type,
 }
 
 /// 후보 하나.
@@ -1924,6 +2236,124 @@ mod tests {
 
     /// ★ 10-01 ⑩: 종류 자리 — USE(DB/스키마) · CURRENT_SCHEMA · search_path · EXEC/CALL · DROP 종류(IF EXISTS·MATERIALIZED) ·
     /// `JOIN … ON |`은 컬럼 자리(Expr) · `MERGE … USING |`은 관계 · ALTER TABLE/MERGE USING/CREATE INDEX ON 별칭 · OUTPUT 가짜 별칭.
+    /// ★ 자료형 자리(사용자 10-09): CAST/CONVERT/`::` · T-SQL DECLARE·파라미터 · PL 선언부 · 루틴 파라미터 · RETURN(S) · 열 정의 ·
+    /// ALTER TABLE · VAR · 반례(식 자리 · BEGIN 뒤 · 제약 절 · `SELECT a AS` · EXEC 인자).
+    #[test]
+    fn type_contexts() {
+        let k = |src: &str, d: Dialect| context_at(src, src.len(), Some(d)).kind;
+        let t = CtxKind::Want(Want::DataType);
+        let o = Dialect::Oracle;
+        // ① CAST · CONVERT
+        assert_eq!(k("SELECT CAST(a AS ", o), t);
+        assert_eq!(k("SELECT CAST(a AS NU", o), t, "접두 입력 중");
+        assert_eq!(k("SELECT CONVERT(", Dialect::Mssql), t);
+        assert_eq!(k("SELECT TRY_CAST(a AS ", Dialect::Mssql), t);
+        assert_ne!(k("SELECT a AS ", o), t, "별칭 자리");
+        assert_ne!(k("SELECT CAST(a AS NUMBER) AS ", o), t);
+        // ② PG `::`
+        assert_eq!(k("SELECT a::", Dialect::Postgres), t);
+        // ③ VAR
+        assert_eq!(k("VAR x ", o), t);
+        assert_eq!(k("VARIABLE rc ", o), t);
+        // ④ T-SQL
+        assert_eq!(k("DECLARE @x ", Dialect::Mssql), t);
+        assert_eq!(k("DECLARE @x AS ", Dialect::Mssql), t);
+        assert_eq!(k("DECLARE @x int, @y ", Dialect::Mssql), t);
+        assert_eq!(k("CREATE PROC dbo.p @a ", Dialect::Mssql), t);
+        assert_eq!(k("CREATE PROCEDURE p (@a int, @b ", Dialect::Mssql), t);
+        assert_eq!(k("DECLARE @t TABLE (id ", Dialect::Mssql), t);
+        assert_ne!(k("SELECT @x ", Dialect::Mssql), t);
+        assert_ne!(k("SET @x = @y ", Dialect::Mssql), t);
+        assert_ne!(k("EXEC dbo.p @a ", Dialect::Mssql), t, "EXEC 인자 값 자리");
+        // ⑤ RETURN(S)
+        assert_eq!(k("CREATE FUNCTION f(p IN NUMBER) RETURN ", o), t);
+        assert_eq!(k("CREATE FUNCTION f() RETURNS ", Dialect::Postgres), t);
+        assert_eq!(
+            k("CREATE FUNCTION f() RETURNS SETOF ", Dialect::Postgres),
+            t
+        );
+        assert_ne!(
+            k("CREATE FUNCTION f RETURN NUMBER IS BEGIN RETURN ", o),
+            t,
+            "본문 RETURN = 식"
+        );
+        // ⑥ 루틴 파라미터
+        assert_eq!(k("CREATE OR REPLACE FUNCTION f(p ", o), t);
+        assert_eq!(k("CREATE FUNCTION f(p IN ", o), t);
+        assert_eq!(k("CREATE FUNCTION f(p IN OUT ", o), t);
+        assert_eq!(k("CREATE PROCEDURE p(a NUMBER, b ", o), t);
+        assert_eq!(k("CREATE FUNCTION f(IN a ", Dialect::Postgres), t);
+        assert_eq!(k("CREATE PACKAGE pk IS\n  FUNCTION f(a ", o), t);
+        assert_ne!(k("CREATE FUNCTION f(p IN NUMBER DEFAULT ", o), t);
+        // ⑦ 열 정의
+        assert_eq!(k("CREATE TABLE t (id ", o), t);
+        assert_eq!(k("CREATE TABLE s.t (id NUMBER, name ", o), t);
+        assert_eq!(k("CREATE GLOBAL TEMPORARY TABLE t (id ", o), t);
+        assert_eq!(k("CREATE TYPE ty AS OBJECT (id ", o), t);
+        assert_eq!(k("CREATE TYPE ty AS (id ", Dialect::Postgres), t);
+        assert_eq!(k("DECLARE\n  TYPE r IS RECORD (id ", o), t);
+        assert_ne!(
+            k(
+                "CREATE TABLE t (id NUMBER, CONSTRAINT pk PRIMARY KEY (id ",
+                o
+            ),
+            t,
+            "제약 열 목록"
+        );
+        assert_ne!(k("CREATE TABLE t (id NUMBER, CONSTRAINT ", o), t);
+        assert_ne!(
+            k("CREATE TABLE t (id NUMBER ", o),
+            t,
+            "타입 뒤 = 제약/기본값"
+        );
+        // ⑧ ALTER TABLE
+        assert_eq!(k("ALTER TABLE t ADD c ", o), t);
+        assert_eq!(k("ALTER TABLE t ADD COLUMN c ", Dialect::Postgres), t);
+        assert_eq!(k("ALTER TABLE t ADD (c ", o), t);
+        assert_eq!(k("ALTER TABLE t MODIFY (c ", o), t);
+        assert_eq!(k("ALTER TABLE t ALTER COLUMN c ", Dialect::Mssql), t);
+        assert_eq!(
+            k("ALTER TABLE t ALTER COLUMN c TYPE ", Dialect::Postgres),
+            t
+        );
+        assert_eq!(k("ALTER TABLE t CHANGE COLUMN a b ", Dialect::Mysql), t);
+        assert_ne!(k("ALTER TABLE t ADD CONSTRAINT ", o), t);
+        assert_ne!(k("ALTER TABLE t ADD c NUMBER ", o), t);
+        // ⑨ DOMAIN · 별칭 타입 · TABLE OF · SUBTYPE
+        assert_eq!(k("CREATE DOMAIN d AS ", Dialect::Postgres), t);
+        assert_eq!(k("CREATE TYPE phone FROM ", Dialect::Mssql), t);
+        assert_eq!(k("DECLARE\n  TYPE tt IS TABLE OF ", o), t);
+        assert_eq!(k("DECLARE\n  SUBTYPE st IS ", o), t);
+        // ⑩ PL 선언 구역
+        assert_eq!(k("DECLARE\n  v_x ", o), t);
+        assert_eq!(k("DECLARE\n  v_x CONSTANT ", o), t);
+        assert_eq!(k("DECLARE\n  v_x NUMBER;\n  v_y ", o), t);
+        assert_eq!(k("CREATE OR REPLACE PROCEDURE p IS\n  v_x ", o), t);
+        assert_eq!(
+            k("CREATE OR REPLACE FUNCTION f RETURN NUMBER AS\n  v_x ", o),
+            t
+        );
+        assert_eq!(k("CREATE PACKAGE pk IS\n  g_x ", o), t);
+        assert_eq!(
+            k(
+                "CREATE PACKAGE BODY pk IS\n  FUNCTION f RETURN NUMBER IS\n    l_x ",
+                o
+            ),
+            t
+        );
+        assert_ne!(
+            k("DECLARE\n  v_x NUMBER;\nBEGIN\n  v_x ", o),
+            t,
+            "본문 = 식"
+        );
+        assert_ne!(k("DECLARE\n  v_x NUMBER := ", o), t);
+        assert_ne!(k("CREATE VIEW v AS ", o), t);
+        assert_ne!(k("DECLARE\n  CURSOR c IS ", o), t);
+        // 식·관계 자리는 그대로.
+        assert_eq!(k("SELECT * FROM t WHERE a = ", o), CtxKind::Expr);
+        assert_eq!(k("SELECT * FROM ", o), CtxKind::Relation);
+    }
+
     #[test]
     fn want_contexts() {
         let k = |src: &str, d: Dialect| context_at(src, src.len(), Some(d)).kind;

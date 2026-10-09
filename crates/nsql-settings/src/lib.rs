@@ -5785,6 +5785,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 자료형 자리의 내장 자료형(사용자 10-09 "기본 변수형 자동완성") — 사용자 정의 타입은 메타(늘).
+    Entry {
+        key: "intel.types",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelTypes,
+        desc: Msg::DescIntelTypes,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 09-23(사용자 "기본 스키마는 접속 시 바로 메모리에 · 특정 `스키마.` 입력 시 그 시점에 캐싱"): 접속 직후 현재 스키마의
     //   테이블·뷰·시노님 + 권한 반영 사전 뷰를 메타 세션으로 한 번 읽는다(26 §8 · 39 §3). 끄면 처음 완성을 요청할 때 읽는다.
     Entry {

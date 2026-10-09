@@ -66,6 +66,8 @@ pub(crate) struct IntelCfg {
     /// T-178: 내장 함수·시스템 패키지·사전 객체(정적 표) · 삽입 옵션 · 시그니처 도움 · 예산.
     pub functions: bool,
     pub insert_parens: bool,
+    /// `intel.types` — 자료형 자리에 방언의 내장 자료형(사용자 10-09).
+    pub types: bool,
     pub insert_alias: bool,
     /// alias 방식(`intel.alias_style` · true = A, B, C 순서 · false = 약어 · 사용자 09-29).
     pub alias_letters: bool,
@@ -120,6 +122,7 @@ impl IntelCfg {
             show_types: s.flag("intel.show_types"),
             functions: s.flag("intel.functions"),
             insert_parens: s.flag("intel.insert_parens"),
+            types: s.flag("intel.types"),
             insert_alias: s.flag("intel.insert_alias"),
             alias_letters: s.get("intel.alias_style").unwrap_or("abbr") == "letters",
             insert_space: s.flag("intel.insert_space"),
@@ -1432,6 +1435,23 @@ impl Intel {
                             });
                         }
                     }
+                    // ★ 사용자 정의 함수·패키지(사용자 10-09 "사용자 정의 함수 보완"): 식 자리에서 접두 없이 — 현재 스키마의 메타
+                    //   버킷(L1 이름)에서 · 없으면 채움 요청 · 레이어는 FROM 자리와 같은 `obj_cand`(함수·패키지 = 2).
+                    if let Some(m) = meta {
+                        if let Some(cur) = m.snap.current_schema {
+                            for kind in [ObjectKind::Function, ObjectKind::Package] {
+                                if dialect
+                                    .is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind))
+                                {
+                                    continue;
+                                }
+                                self.note_coverage(m, cur, kind);
+                                for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
+                                    cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                                }
+                            }
+                        }
+                    }
                 }
                 for (name, k) in &symbols {
                     cands.push(Cand {
@@ -1834,6 +1854,27 @@ impl Intel {
         show_types: bool,
         cands: &mut Vec<Cand>,
     ) {
+        // ★ 자료형 자리(사용자 10-09): 내장 자료형은 접속·메타 없이도(정적 표 · `intel.types`) · 사용자 정의 타입은 아래 메타 길
+        //   (`ObjectKind::Type` · 현재 스키마 + `스키마.`).
+        if w == intel::Want::DataType && self.cfg.types {
+            for (i, b) in nsql_script::builtins::types(dialect).iter().enumerate() {
+                cands.push(Cand {
+                    text: b.name.to_string(),
+                    kind: CandKind::Type,
+                    detail: if show_types {
+                        b.sig.to_string()
+                    } else {
+                        String::new()
+                    },
+                    source: 4,
+                    tag: 0,
+                    mark: String::new(),
+                    order: i as u32,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
         let Some(m) = meta else { return };
         let schema_cand = |m: &MetaView<'_>, s: Sym| Cand {
             text: m.names.get(s).to_string(),
@@ -1899,6 +1940,11 @@ impl Intel {
             },
             // 파라미터 자리는 호출자가 메타 없이 처리한다(T-316).
             intel::Want::ProcParam(_) => return,
+            // 사용자 정의 타입(Oracle TYPE · PG 복합/열거/도메인 · SQL Server 별칭/테이블 타입) + `스키마.`.
+            intel::Want::DataType => {
+                kinds.push(ObjectKind::Type);
+                with_schemas = true;
+            }
         }
         if databases {
             match m.names.find("") {
@@ -2292,6 +2338,7 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
         CandKind::Sequence => IconKind::Sequence,
         CandKind::Package => IconKind::Package,
         CandKind::Routine | CandKind::Function => IconKind::Function,
+        CandKind::Type => IconKind::Type,
         CandKind::Schema | CandKind::Database => IconKind::Schema,
         _ => return None,
     })
@@ -2539,6 +2586,7 @@ fn cand_kind(k: ObjectKind) -> CandKind {
         ObjectKind::Procedure | ObjectKind::Function => CandKind::Routine,
         ObjectKind::Database => CandKind::Database,
         ObjectKind::Schema => CandKind::Schema,
+        ObjectKind::Type => CandKind::Type,
         _ => CandKind::Symbol,
     }
 }
@@ -2615,6 +2663,7 @@ mod tests {
             show_types: true,
             functions: true,
             insert_parens: true,
+            types: true,
             insert_alias: true,
             alias_letters: false,
             insert_space: true,
@@ -2673,6 +2722,81 @@ mod tests {
     }
 
     /// T-178 JOIN 조건 조각(통합): 제약을 모르면 상세 요청 + 불러오는 중 → 채워지면 첫 후보 = FK 조건 조각 · 설정 끔 = 없음.
+    /// ★ 자료형 자리(사용자 10-09): 메타 없이도 방언 내장 자료형(정적 표)이 후보 · `CAST(x AS NU` 접두로 NUMBER가 맨 위 ·
+    /// `intel.types` 끄면 내장 자료형 0 · 메타가 있으면 사용자 정의 타입(ObjectKind::Type)도 함께.
+    #[test]
+    fn data_type_position_offers_builtin_and_user_types() {
+        let host = Rect::new(0, 0, 800, 600);
+        let ask = |it: &mut Intel, doc: &str, view: Option<&MetaView<'_>>| {
+            it.request(
+                1,
+                1,
+                doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                view,
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None,
+            )
+        };
+        let mut it = Intel::new(cfg());
+        ask(&mut it, "SELECT CAST(a AS NU", None);
+        assert!(
+            it.cands
+                .iter()
+                .any(|c| c.kind == CandKind::Type && c.text == "NUMBER"),
+            "{}",
+            it.dump_cands()
+        );
+        assert!(
+            it.cands.iter().all(|c| c.kind == CandKind::Type),
+            "자료형만"
+        );
+        ask(&mut it, "DECLARE\n  v_x ", None);
+        assert!(it.cands.iter().any(|c| c.text == "VARCHAR2"));
+        assert!(
+            it.cands.iter().any(|c| c.text == "SYS_REFCURSOR"),
+            "PL/SQL 전용도"
+        );
+        // 끄면 0.
+        let mut off_cfg = cfg();
+        off_cfg.types = false;
+        let mut off = Intel::new(off_cfg);
+        ask(&mut off, "SELECT CAST(a AS ", None);
+        assert!(!off.cands.iter().any(|c| c.kind == CandKind::Type));
+        // 메타의 사용자 정의 타입.
+        let mut m = store();
+        m.load_bucket(
+            "SCOTT",
+            ObjectKind::Type,
+            &[
+                NewObj {
+                    name: "T_ADDR".into(),
+                    ..Default::default()
+                },
+                NewObj {
+                    name: "T_NUM_TAB".into(),
+                    ..Default::default()
+                },
+            ],
+            1,
+        );
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        ask(&mut it, "CREATE TABLE t (addr T_", Some(&view));
+        assert!(
+            it.cands
+                .iter()
+                .any(|c| c.kind == CandKind::Type && c.text == "T_ADDR"),
+            "{}",
+            it.dump_cands()
+        );
+    }
+
     #[test]
     fn join_on_offers_fk_condition_after_details_load() {
         use nsql_run::meta::NewDetail;

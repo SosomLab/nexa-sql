@@ -935,3 +935,264 @@ mod tests {
         }
     }
 }
+
+// ───────────────────────── 자료형(사용자 10-09 "기본 변수형 자동완성") ─────────────────────────
+// `sig` = 표시용 꼴(괄호 인자 힌트). 확정 때는 이름만 들어간다. PL/SQL 전용(BOOLEAN · PLS_INTEGER · SYS_REFCURSOR)도 Oracle 표에.
+
+/// ANSI 공통 자료형.
+pub const COMMON_TYPES: &[Builtin] = &[
+    b!("INTEGER", "INTEGER"),
+    b!("INT", "INT"),
+    b!("SMALLINT", "SMALLINT"),
+    b!("BIGINT", "BIGINT"),
+    b!("DECIMAL", "DECIMAL(p, s)"),
+    b!("NUMERIC", "NUMERIC(p, s)"),
+    b!("FLOAT", "FLOAT(p)"),
+    b!("REAL", "REAL"),
+    b!("DOUBLE PRECISION", "DOUBLE PRECISION"),
+    b!("CHAR", "CHAR(n)"),
+    b!("VARCHAR", "VARCHAR(n)"),
+    b!("DATE", "DATE"),
+    b!("TIME", "TIME"),
+    b!("TIMESTAMP", "TIMESTAMP"),
+    b!("BOOLEAN", "BOOLEAN"),
+];
+
+pub const ORACLE_TYPES: &[Builtin] = &[
+    b!("NUMBER", "NUMBER(p, s)"),
+    b!("VARCHAR2", "VARCHAR2(n [CHAR | BYTE])"),
+    b!("NVARCHAR2", "NVARCHAR2(n)"),
+    b!("CHAR", "CHAR(n [CHAR | BYTE])"),
+    b!("NCHAR", "NCHAR(n)"),
+    b!("DATE", "DATE"),
+    b!("TIMESTAMP", "TIMESTAMP[(fractional_seconds)]"),
+    b!("TIMESTAMP WITH TIME ZONE", "TIMESTAMP[(n)] WITH TIME ZONE"),
+    b!(
+        "TIMESTAMP WITH LOCAL TIME ZONE",
+        "TIMESTAMP[(n)] WITH LOCAL TIME ZONE"
+    ),
+    b!("INTERVAL YEAR TO MONTH", "INTERVAL YEAR[(p)] TO MONTH"),
+    b!("INTERVAL DAY TO SECOND", "INTERVAL DAY[(p)] TO SECOND[(s)]"),
+    b!("CLOB", "CLOB"),
+    b!("NCLOB", "NCLOB"),
+    b!("BLOB", "BLOB"),
+    b!("BFILE", "BFILE"),
+    b!("RAW", "RAW(n)"),
+    b!("LONG", "LONG"),
+    b!("LONG RAW", "LONG RAW"),
+    b!("ROWID", "ROWID"),
+    b!("UROWID", "UROWID[(n)]"),
+    b!("FLOAT", "FLOAT[(p)]"),
+    b!("BINARY_FLOAT", "BINARY_FLOAT"),
+    b!("BINARY_DOUBLE", "BINARY_DOUBLE"),
+    b!("INTEGER", "INTEGER (= NUMBER(38))"),
+    b!("PLS_INTEGER", "PLS_INTEGER (PL/SQL)"),
+    b!("BINARY_INTEGER", "BINARY_INTEGER (PL/SQL)"),
+    b!("SIMPLE_INTEGER", "SIMPLE_INTEGER (PL/SQL · NOT NULL)"),
+    b!("NATURAL", "NATURAL (PL/SQL · >= 0)"),
+    b!("POSITIVE", "POSITIVE (PL/SQL · > 0)"),
+    b!("BOOLEAN", "BOOLEAN (PL/SQL)"),
+    b!("SYS_REFCURSOR", "SYS_REFCURSOR (PL/SQL)"),
+    b!("XMLTYPE", "XMLTYPE"),
+    b!("JSON", "JSON (21c+)"),
+    b!("SDO_GEOMETRY", "SDO_GEOMETRY"),
+    b!("ANYDATA", "ANYDATA"),
+    b!("BOOLEAN", "BOOLEAN (PL/SQL · 23ai SQL)"),
+];
+
+pub const POSTGRES_TYPES: &[Builtin] = &[
+    b!("INTEGER", "integer (int4)"),
+    b!("INT", "int (int4)"),
+    b!("INT2", "int2 (smallint)"),
+    b!("INT4", "int4 (integer)"),
+    b!("INT8", "int8 (bigint)"),
+    b!("SMALLINT", "smallint (int2)"),
+    b!("BIGINT", "bigint (int8)"),
+    b!("SERIAL", "serial (auto-increment int4)"),
+    b!("BIGSERIAL", "bigserial (auto-increment int8)"),
+    b!("SMALLSERIAL", "smallserial"),
+    b!("NUMERIC", "numeric(p, s)"),
+    b!("DECIMAL", "decimal(p, s)"),
+    b!("REAL", "real (float4)"),
+    b!("DOUBLE PRECISION", "double precision (float8)"),
+    b!("FLOAT4", "float4"),
+    b!("FLOAT8", "float8"),
+    b!("MONEY", "money"),
+    b!("BOOLEAN", "boolean"),
+    b!("BOOL", "bool"),
+    b!("CHAR", "char(n)"),
+    b!("CHARACTER", "character(n)"),
+    b!("VARCHAR", "varchar(n)"),
+    b!("CHARACTER VARYING", "character varying(n)"),
+    b!("TEXT", "text"),
+    b!("BYTEA", "bytea"),
+    b!("DATE", "date"),
+    b!("TIME", "time[(p)] [without time zone]"),
+    b!("TIMETZ", "timetz (time with time zone)"),
+    b!("TIMESTAMP", "timestamp[(p)] [without time zone]"),
+    b!("TIMESTAMPTZ", "timestamptz (timestamp with time zone)"),
+    b!("INTERVAL", "interval [fields] [(p)]"),
+    b!("UUID", "uuid"),
+    b!("JSON", "json"),
+    b!("JSONB", "jsonb"),
+    b!("XML", "xml"),
+    b!("INET", "inet"),
+    b!("CIDR", "cidr"),
+    b!("MACADDR", "macaddr"),
+    b!("POINT", "point"),
+    b!("LINE", "line"),
+    b!("POLYGON", "polygon"),
+    b!("CIRCLE", "circle"),
+    b!("INT4RANGE", "int4range"),
+    b!("INT8RANGE", "int8range"),
+    b!("NUMRANGE", "numrange"),
+    b!("TSRANGE", "tsrange"),
+    b!("TSTZRANGE", "tstzrange"),
+    b!("DATERANGE", "daterange"),
+    b!("TSVECTOR", "tsvector"),
+    b!("TSQUERY", "tsquery"),
+    b!("OID", "oid"),
+    b!("NAME", "name"),
+    b!("RECORD", "record (PL/pgSQL)"),
+    b!("REFCURSOR", "refcursor (PL/pgSQL)"),
+    b!("VOID", "void (RETURNS)"),
+    b!("SETOF", "SETOF type (RETURNS)"),
+    b!("ANYELEMENT", "anyelement"),
+    b!("ANYARRAY", "anyarray"),
+    b!("TRIGGER", "trigger (RETURNS)"),
+];
+
+pub const MSSQL_TYPES: &[Builtin] = &[
+    b!("INT", "int"),
+    b!("BIGINT", "bigint"),
+    b!("SMALLINT", "smallint"),
+    b!("TINYINT", "tinyint"),
+    b!("BIT", "bit"),
+    b!("DECIMAL", "decimal(p, s)"),
+    b!("NUMERIC", "numeric(p, s)"),
+    b!("MONEY", "money"),
+    b!("SMALLMONEY", "smallmoney"),
+    b!("FLOAT", "float(n)"),
+    b!("REAL", "real"),
+    b!("DATE", "date"),
+    b!("DATETIME", "datetime"),
+    b!("DATETIME2", "datetime2(n)"),
+    b!("SMALLDATETIME", "smalldatetime"),
+    b!("DATETIMEOFFSET", "datetimeoffset(n)"),
+    b!("TIME", "time(n)"),
+    b!("CHAR", "char(n)"),
+    b!("VARCHAR", "varchar(n | max)"),
+    b!("NCHAR", "nchar(n)"),
+    b!("NVARCHAR", "nvarchar(n | max)"),
+    b!("TEXT", "text (deprecated → varchar(max))"),
+    b!("NTEXT", "ntext (deprecated → nvarchar(max))"),
+    b!("BINARY", "binary(n)"),
+    b!("VARBINARY", "varbinary(n | max)"),
+    b!("IMAGE", "image (deprecated → varbinary(max))"),
+    b!("UNIQUEIDENTIFIER", "uniqueidentifier"),
+    b!("XML", "xml"),
+    b!("SQL_VARIANT", "sql_variant"),
+    b!("HIERARCHYID", "hierarchyid"),
+    b!("GEOGRAPHY", "geography"),
+    b!("GEOMETRY", "geometry"),
+    b!("ROWVERSION", "rowversion"),
+    b!("TIMESTAMP", "timestamp (= rowversion)"),
+    b!("SYSNAME", "sysname (nvarchar(128))"),
+    b!("TABLE", "TABLE (...) (table variable)"),
+    b!("CURSOR", "cursor"),
+];
+
+pub const MYSQL_TYPES: &[Builtin] = &[
+    b!("TINYINT", "TINYINT[(n)] [UNSIGNED]"),
+    b!("SMALLINT", "SMALLINT[(n)] [UNSIGNED]"),
+    b!("MEDIUMINT", "MEDIUMINT[(n)] [UNSIGNED]"),
+    b!("INT", "INT[(n)] [UNSIGNED]"),
+    b!("BIGINT", "BIGINT[(n)] [UNSIGNED]"),
+    b!("DECIMAL", "DECIMAL(p, s)"),
+    b!("FLOAT", "FLOAT"),
+    b!("DOUBLE", "DOUBLE"),
+    b!("BIT", "BIT(n)"),
+    b!("BOOL", "BOOL (= TINYINT(1))"),
+    b!("DATE", "DATE"),
+    b!("DATETIME", "DATETIME[(fsp)]"),
+    b!("TIMESTAMP", "TIMESTAMP[(fsp)]"),
+    b!("TIME", "TIME[(fsp)]"),
+    b!("YEAR", "YEAR"),
+    b!("CHAR", "CHAR(n)"),
+    b!("VARCHAR", "VARCHAR(n)"),
+    b!("BINARY", "BINARY(n)"),
+    b!("VARBINARY", "VARBINARY(n)"),
+    b!("TINYBLOB", "TINYBLOB"),
+    b!("BLOB", "BLOB"),
+    b!("MEDIUMBLOB", "MEDIUMBLOB"),
+    b!("LONGBLOB", "LONGBLOB"),
+    b!("TINYTEXT", "TINYTEXT"),
+    b!("TEXT", "TEXT"),
+    b!("MEDIUMTEXT", "MEDIUMTEXT"),
+    b!("LONGTEXT", "LONGTEXT"),
+    b!("ENUM", "ENUM('a', 'b', …)"),
+    b!("SET", "SET('a', 'b', …)"),
+    b!("JSON", "JSON"),
+    b!("GEOMETRY", "GEOMETRY"),
+    b!("POINT", "POINT"),
+];
+
+pub const SQLITE_TYPES: &[Builtin] = &[
+    b!("INTEGER", "INTEGER (affinity)"),
+    b!("REAL", "REAL (affinity)"),
+    b!("TEXT", "TEXT (affinity)"),
+    b!("BLOB", "BLOB (affinity)"),
+    b!("NUMERIC", "NUMERIC (affinity)"),
+    b!("VARCHAR", "VARCHAR(n) → TEXT"),
+    b!("BOOLEAN", "BOOLEAN → NUMERIC"),
+    b!("DATETIME", "DATETIME → NUMERIC"),
+];
+
+/// 방언별 내장 자료형(공통 + 방언 · 같은 이름은 방언 꼴이 이김 · 순서 = 표 순서 = 자주 쓰는 것).
+#[must_use]
+pub fn types(d: Option<Dialect>) -> Vec<&'static Builtin> {
+    let extra: &[Builtin] = match d {
+        Some(Dialect::Oracle) => ORACLE_TYPES,
+        Some(Dialect::Postgres) => POSTGRES_TYPES,
+        Some(Dialect::Mssql) => MSSQL_TYPES,
+        Some(Dialect::Mysql) => MYSQL_TYPES,
+        Some(Dialect::Sqlite) => SQLITE_TYPES,
+        Some(Dialect::Odbc) | None => &[],
+    };
+    // 방언 표를 앞에(자주 쓰는 순) · 공통은 방언에 없는 이름만 뒤에.
+    let mut out: Vec<&'static Builtin> = Vec::new();
+    for b in extra {
+        if !out.iter().any(|c| c.name.eq_ignore_ascii_case(b.name)) {
+            out.push(b);
+        }
+    }
+    for b in COMMON_TYPES {
+        if !out.iter().any(|c| c.name.eq_ignore_ascii_case(b.name)) {
+            out.push(b);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod type_tests {
+    use super::*;
+
+    /// 방언 꼴이 공통을 덮고(`FLOAT` Oracle) · 공통은 뒤에 · 중복 없음.
+    #[test]
+    fn types_merge() {
+        let o = types(Some(Dialect::Oracle));
+        assert_eq!(o[0].name, "NUMBER");
+        assert!(o.iter().any(|b| b.name == "VARCHAR2"));
+        assert!(o.iter().any(|b| b.name == "VARCHAR"), "공통 보충");
+        let n = o
+            .iter()
+            .filter(|b| b.name.eq_ignore_ascii_case("FLOAT"))
+            .count();
+        assert_eq!(n, 1);
+        assert!(types(Some(Dialect::Postgres))
+            .iter()
+            .any(|b| b.name == "JSONB"));
+        assert!(types(None).iter().any(|b| b.name == "INTEGER"));
+    }
+}
