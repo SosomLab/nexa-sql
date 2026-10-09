@@ -45,6 +45,7 @@ impl App {
         //   아래"(`open_beside`)는 누른 자리와 어긋났다. 창 밖으로 나가면 공용 규칙(반대쪽 → 밀어 넣기)이 안전망.
         self.status_menu
             .open_at(x, y, items, host, px(220.0, self.scale));
+        self.status_menu_band = 1;
     }
 
     /// 우클릭 메뉴 항목(순수에 가깝게 — 위치만 받는다 · 시험·덤프용으로 분리).
@@ -98,6 +99,7 @@ impl App {
         //   왼쪽 x = 마우스 x · 아래 변 = 마우스 y(작업 표시줄 우클릭과 같은 꼴) · 종전 "띠 바로 위"는 x만 맞고 y가 띠 높이만큼 떴다.
         self.status_menu
             .open_at(x, y, items, host, px(220.0, self.scale));
+        self.status_menu_band = 2;
     }
 
     pub(crate) fn statusbar_menu_items(

@@ -355,6 +355,8 @@ struct App {
     /// 상태줄 git 세그먼트(활성 파일 폴더 · 배경 조회).
     git: gitstat::GitWatch,
     status_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
+    /// `status_menu`를 연 띠(0 = 없음 · 1 = 툴바 · 2 = 상태바) — 같은 띠 우클릭 = 토글 닫기(사용자 10-09).
+    status_menu_band: u8,
     /// ★ Ctrl 객체 하이퍼링크(T-256 · 사용자 09-29): 링크 목록·hover 상태 + 우클릭 메뉴("설명 복사").
     objlinks: app::objlink::ObjLinks,
     objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
@@ -1709,6 +1711,7 @@ fn main() {
         git,
         status_tab_rect: Rect::new(0, 0, 0, 0),
         status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
+        status_menu_band: 0,
         objlinks: Default::default(),
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         sig_card: None,

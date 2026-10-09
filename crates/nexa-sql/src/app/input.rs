@@ -329,6 +329,18 @@ impl App {
     /// ★ 팝업 메뉴 배타 규칙(사용자 09-22 "다른 메뉴들도 배타적 배치가 기본"): 사건 전후로 열린 메뉴 집합을 비교해
     /// **새로 열린 메뉴가 있으면 나머지를 전부 닫는다**(마지막에 연 것이 이긴다). 같은 메뉴의 하위 메뉴·툴팁·팔레트는 대상이 아니다.
     pub(crate) fn route(&mut self, ev: InputEvent) {
+        // ★ 툴바·상태바 우클릭 메뉴 = 토글(사용자 10-09 "한 번 클릭하면 펼쳐지고 한 번 더 누르면 닫히도록"): 그 띠의 메뉴가 열린
+        //   채 **같은 띠**를 다시 우클릭하면 닫기만(배타·통과 규칙보다 먼저 — 통과가 켜져 있으면 닫힌 자리에 바로 다시 열렸다).
+        if let InputEvent::RightDown { x, y } = ev {
+            if self.status_menu.is_open()
+                && self.toolbar_band_at(Point { x, y }) == self.status_menu_band
+            {
+                self.status_menu.close();
+                self.status_menu_band = 0;
+                self.redraw();
+                return;
+            }
+        }
         let before = self.open_menus();
         // ★ 영역 간 배타(사용자 10-08 · `ui.ctxmenu_exclusive`): 열린 우클릭 메뉴 **밖**의 좌/우 클릭 = 그 메뉴들을 먼저 닫는다 ·
         //   메뉴가 안 쓰는 키(글자 등) = 전부 닫는다. 닫은 뒤 그 클릭을 바로 진행할지(`ui.ctxmenu_passthrough` 켬 = 즉시 반응)
@@ -352,6 +364,17 @@ impl App {
         if fresh != 0 && after != fresh {
             self.close_menu_bits(after & !fresh);
             self.redraw();
+        }
+    }
+
+    /// 점이 든 띠(1 = 툴바 · 2 = 상태바 · 0 = 둘 다 아님) — 툴바/상태바 메뉴 토글 판정.
+    pub(crate) fn toolbar_band_at(&self, p: Point) -> u8 {
+        if self.tool_dock.bounds().contains(p) {
+            1
+        } else if self.status_bar_rect.contains(p) {
+            2
+        } else {
+            0
         }
     }
 
