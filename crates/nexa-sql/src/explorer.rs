@@ -3504,6 +3504,68 @@ impl Explorer {
         acc.add(Cat::Icons, icons as u64);
     }
 
+    /// ★ 자동 완성이 청한 **종류 하나** 적재(사용자 10-09 "ALTER TABLE 자료형 팝업에서 선택 불가"): 종전 [`Self::request_objects`]는
+    /// 관계 넷(+루틴)만 읽어 `Type`(사용자 정의 타입) · 루틴 끔일 때의 `Function`/`Package` 버킷이 영영 Missing → 팝업이 "불러오는 중"을
+    /// 유지한 채 메타가 올 때마다 다시 조립돼 선택이 풀렸다. 이미 읽었거나 읽는 중·실패면 0 · SQL Server `DB.스키마` 복합 열쇠 지원 ·
+    /// 현재 스키마가 아니면 회수 대상.
+    pub(crate) fn request_object_kind(&mut self, schema: &str, kind: ObjectKind) {
+        let Some(d) = self.dialect else { return };
+        if self.offline || schema.is_empty() || schema == nsql_catalog::DICT_SCHEMA {
+            return;
+        }
+        if !nsql_catalog::kinds_for(d).contains(&kind) {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        let cov = self
+            .meta
+            .names
+            .find(schema)
+            .map_or(nsql_run::meta::Coverage::Missing, |s| {
+                snap.coverage(s, kind)
+            });
+        if !matches!(
+            cov,
+            nsql_run::meta::Coverage::Missing
+                | nsql_run::meta::Coverage::Stale { .. }
+                | nsql_run::meta::Coverage::Names {
+                    upgrading: false,
+                    ..
+                }
+        ) {
+            return;
+        }
+        let (sc, db) = match (d == Dialect::Mssql)
+            .then(|| self.split_db_key(schema))
+            .flatten()
+        {
+            Some((db, sc)) => (sc, Some(db)),
+            None => (schema.to_string(), None),
+        };
+        self.meta.mark_loading(schema, kind);
+        let _ = self.tx_bg.send(Req::ObjectsMeta {
+            gen: self.gen,
+            schema: sc,
+            kind,
+            db,
+            key: schema.to_string(),
+        });
+        let is_current = self
+            .server_schema
+            .as_deref()
+            .is_some_and(|c| c.eq_ignore_ascii_case(schema));
+        if !is_current
+            && !self
+                .intel_buckets
+                .iter()
+                .any(|(s, k)| s.eq_ignore_ascii_case(schema) && *k == kind)
+        {
+            self.intel_buckets.push((schema.to_string(), kind));
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
+    }
+
     /// ★ 자동 완성 즉시 채움 — 스키마 하나의 관계 객체(또는 `DICT_SCHEMA` = 사전 뷰). 이미 읽었거나 읽는 중이면 0 ·
     /// 실패한 것은 다시 묻지 않는다(26 §8). 현재 스키마·사전이 아닌 스키마는 회수 대상으로 적어 둔다.
     pub(crate) fn request_objects(&mut self, schema: &str) {

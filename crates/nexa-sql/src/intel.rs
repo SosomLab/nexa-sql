@@ -201,6 +201,8 @@ pub(crate) struct Intel {
     needs: Vec<NeedColumns>,
     /// 마지막 요청이 남긴 객체 목록 채움 요청(스키마 이름 · `DICT_SCHEMA` = 사전 · 09-23).
     need_objects: Vec<String>,
+    /// 종류를 지정한 버킷 채움 요청(사용자 정의 타입 · 식 자리 함수·패키지 · 10-09) — `request_objects`가 안 읽는 종류.
+    need_kinds: Vec<(String, ObjectKind)>,
     /// 마지막 요청이 남긴 **테이블 상세**(제약) 채움 요청 — `JOIN … ON` 조건 조각이 외래 키를 기다린다(T-178).
     need_details: Vec<nsql_run::meta::ObjId>,
     /// 루틴 인자 채움 요청(T-317 · `EXEC proc |`).
@@ -246,6 +248,7 @@ impl Intel {
             accept: None,
             needs: Vec::new(),
             need_objects: Vec::new(),
+            need_kinds: Vec::new(),
             need_details: Vec::new(),
             need_args: Vec::new(),
             loading: false,
@@ -453,6 +456,7 @@ impl Intel {
         let t0 = Instant::now();
         self.needs.clear();
         self.need_objects.clear();
+        self.need_kinds.clear();
         self.need_details.clear();
         self.loading = false;
         self.loading_objects = false;
@@ -1445,7 +1449,7 @@ impl Intel {
                                 {
                                     continue;
                                 }
-                                self.note_coverage(m, cur, kind);
+                                self.note_coverage_kind(m, cur, kind);
                                 for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
                                     cands.push(obj_cand(m, &h, kind, dialect, show_types));
                                 }
@@ -1802,6 +1806,10 @@ impl Intel {
         std::mem::take(&mut self.need_objects)
     }
 
+    pub(crate) fn take_need_kinds(&mut self) -> Vec<(String, ObjectKind)> {
+        std::mem::take(&mut self.need_kinds)
+    }
+
     /// 강조된 행의 전체 글(이름 + 오른쪽 열) — 긴 이름이 잘려 보일 때 상태줄에 그대로(09-23).
     pub(crate) fn hovered_full(&self) -> Option<String> {
         let i = self.menu.hovered()?;
@@ -1968,7 +1976,7 @@ impl Intel {
                 if dialect.is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind)) {
                     continue;
                 }
-                self.note_coverage(m, cur, kind);
+                self.note_coverage_kind(m, cur, kind);
                 for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
                     cands.push(obj_cand(m, &h, kind, dialect, show_types));
                 }
@@ -1992,6 +2000,29 @@ impl Intel {
             Coverage::Stale { .. } => push_need(&mut self.need_objects, m.names.get(schema)),
             // ★ L1 이름 층(85 §2): 이름만으로 즉시 후보 · 상태(유효성·부가)는 L2 승격이 뒤에서 채운다 — 완성은 청하지 않는다.
             Coverage::Names { .. } => {}
+            _ => {}
+        }
+    }
+
+    /// [`Self::note_coverage`]의 **종류 지정** 판 — 관계 넷이 아닌 종류(사용자 정의 타입 · 식 자리 함수·패키지)는 `request_objects`가
+    /// 읽지 않으므로 `(스키마, 종류)`로 청한다(10-09 · 종전엔 Type 버킷이 영영 Missing → 팝업 재조립 반복 → 선택 불가).
+    fn note_coverage_kind(&mut self, m: &MetaView<'_>, schema: Sym, kind: ObjectKind) {
+        let name = m.names.get(schema);
+        let push = |v: &mut Vec<(String, ObjectKind)>| {
+            if !v
+                .iter()
+                .any(|(s, k)| s.eq_ignore_ascii_case(name) && *k == kind)
+            {
+                v.push((name.to_string(), kind));
+            }
+        };
+        match m.snap.coverage(schema, kind) {
+            Coverage::Loading => self.loading_objects = true,
+            Coverage::Missing => {
+                self.loading_objects = true;
+                push(&mut self.need_kinds);
+            }
+            Coverage::Stale { .. } => push(&mut self.need_kinds),
             _ => {}
         }
     }
@@ -2044,8 +2075,9 @@ impl Intel {
                     text.push(' ');
                 }
             }
+            // ★ 문법이 별칭을 허용하는 자리만(`Context::alias_ok` · 사용자 10-09 "ALTER TABLE t A"·"CREATE INDEX … ON t A" 안 붙게).
             CandKind::Table | CandKind::View | CandKind::Synonym
-                if self.cfg.insert_alias && ctx.kind == CtxKind::Relation =>
+                if self.cfg.insert_alias && ctx.kind == CtxKind::Relation && ctx.alias_ok =>
             {
                 // 치던 접두 자체가 alias 표에 테이블로 잡혀 있으면(`FROM sc|`) 그것은 제외.
                 let taken: Vec<&str> = ctx
@@ -2795,6 +2827,24 @@ mod tests {
             "{}",
             it.dump_cands()
         );
+        assert!(it.take_need_kinds().is_empty(), "버킷이 있으면 요청 없음");
+        // ★ Type 버킷이 없으면 **종류 지정** 요청(10-09 "ALTER TABLE 자료형 팝업 선택 불가"의 뿌리 = `request_objects`가 Type을 안 읽어
+        //   영영 "불러오는 중" → 팝업 재조립 반복). 내장 자료형은 그대로 후보.
+        let m2 = store();
+        let view2 = MetaView {
+            names: &m2.names,
+            snap: m2.snapshot(),
+        };
+        ask(&mut it, "ALTER TABLE t ADD c ", Some(&view2));
+        assert!(it.loading_objects);
+        let kinds = it.take_need_kinds();
+        assert!(
+            kinds
+                .iter()
+                .any(|(s, k)| s == "SCOTT" && *k == ObjectKind::Type),
+            "{kinds:?}"
+        );
+        assert!(it.cands.iter().any(|c| c.text == "VARCHAR2"));
     }
 
     #[test]

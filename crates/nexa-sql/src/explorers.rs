@@ -1396,6 +1396,17 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes[i].ex.request_objects(schema);
     }
 
+    /// 자동 완성이 청한 종류 하나(사용자 정의 타입 · 식 자리 함수·패키지 · 10-09).
+    pub(crate) fn request_object_kind(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        schema: &str,
+        kind: nsql_catalog::ObjectKind,
+    ) {
+        let i = self.meta_pane(spec);
+        self.panes[i].ex.request_object_kind(schema, kind);
+    }
+
     /// ★ 명시 메타 갱신(T-188): `spec`의 서버(없으면 보이는 칸) · `all` = 전 서버. 반환 = (표시한 버킷, 비운 객체) 합.
     pub(crate) fn refresh_meta(
         &mut self,

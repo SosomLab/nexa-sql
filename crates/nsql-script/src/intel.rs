@@ -89,6 +89,9 @@ pub struct Context {
     pub clause: Option<String>,
     /// 문장의 첫 낱말(대문자 · `SELECT`/`INSERT`/`WITH` …).
     pub stmt_kind: Option<String>,
+    /// ★ 관계 자리에서 **자동 별칭을 붙여도 되는가**(사용자 10-09 "ALTER TABLE t A · CREATE INDEX … ON t A"): 문법이 별칭을 허용하는
+    /// 자리(FROM/JOIN · MERGE INTO/USING · 방언이 허용하는 UPDATE/DELETE 대상)만 true — [`alias_allowed`].
+    pub alias_ok: bool,
 }
 
 /// `*` 자리 정보.
@@ -103,6 +106,33 @@ pub struct Star {
 const RELATION_AFTER: &[&str] = &[
     "FROM", "JOIN", "UPDATE", "INTO", "TABLE", "DESC", "DESCRIBE", "TRUNCATE",
 ];
+
+/// ★ 관계 자리에서 테이블 뒤 **별칭이 문법상 허용되는가**(사용자 10-09 · 순수 · MC/DC 시험 `alias_allowed_rules`).
+/// 허용 = `FROM`/`JOIN`(과 그 목록의 `,`) · `MERGE INTO`/`USING` · `UPDATE` 대상(SQL Server 제외 = `UPDATE t a SET`가 문법 오류 ·
+/// 별칭은 `FROM` 절에서) · `DELETE FROM` 대상(SQL Server 제외). 불허 = `INSERT INTO`(방언마다 다르고 뜻이 없다) · `ALTER/CREATE/DROP/
+/// TRUNCATE/LOCK TABLE` · `DESC` · `CREATE INDEX … ON` · `GRANT/REVOKE … ON` · `COMMENT ON TABLE` · 그 밖 모든 자리.
+pub fn alias_allowed(
+    before: &[&Word<'_>],
+    stmt_kind: Option<&str>,
+    dialect: Option<Dialect>,
+) -> bool {
+    let Some(last) = before.last() else {
+        return false;
+    };
+    let mssql = dialect == Some(Dialect::Mssql);
+    if is_word(last, "FROM") || is_word(last, "JOIN") || (last.text == "," && in_from_list(before))
+    {
+        // `DELETE FROM t a`는 SQL Server에서 불가(`DELETE a FROM t a` 꼴만).
+        return !(stmt_kind == Some("DELETE") && mssql);
+    }
+    if is_word(last, "UPDATE") {
+        return stmt_kind == Some("UPDATE") && !mssql;
+    }
+    if is_word(last, "INTO") || is_word(last, "USING") {
+        return stmt_kind == Some("MERGE");
+    }
+    false
+}
 
 /// `ON`·`USING`이 관계 자리인 문장(10-01 ⑩): `GRANT/REVOKE … ON 객체` · `CREATE INDEX … ON 테이블` · `COMMENT ON TABLE` · `MERGE … USING 원천`.
 fn relation_after_special(last: &Word<'_>, stmt_kind: Option<&str>) -> bool {
@@ -934,6 +964,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         from_chain: false,
         clause: None,
         stmt_kind: None,
+        alias_ok: false,
     };
     let Some(item) = statement_at_in(src, caret, dialect) else {
         // 문장이 없으면(빈 문서) 시작 문맥.
@@ -985,6 +1016,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             from_chain: false,
             clause: None,
             stmt_kind: None,
+            alias_ok: false,
         };
     }
     let (stmt_kind, clause) = grammar_clause(&before, dialect);
@@ -1038,6 +1070,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             from_chain,
             clause,
             stmt_kind,
+            alias_ok: false,
         };
     }
     // ★ `*` / `alias.*` 바로 뒤(접두 없음 · `COUNT(*`는 제외): "모든 컬럼" 조각 자리 — 치환 구간 = 별표(와 별칭) 전체.
@@ -1074,6 +1107,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             from_chain: false,
             clause,
             stmt_kind,
+            alias_ok: false,
         };
     }
     // ★ 특정 종류만 고르는 자리(10-01 ⑩) — 관계 판정보다 먼저(`DROP VIEW |` · `USE |` · `EXEC |`).
@@ -1095,6 +1129,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             from_chain: false,
             clause,
             stmt_kind,
+            alias_ok: false,
         };
     }
     // 관계 자리: 바로 앞 낱말이 FROM/JOIN/… 이거나, 콤마 앞 관계 목록이 이어지는 중 · `ON`/`USING`은 문장에 따라.
@@ -1102,6 +1137,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         || relation_after_special(last, stmt_kind.as_deref())
         || (last.text == "," && in_from_list(&before));
     if relation {
+        let alias_ok = alias_allowed(&before, stmt_kind.as_deref(), dialect);
         return Context {
             kind: CtxKind::Relation,
             prefix,
@@ -1114,6 +1150,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             from_chain: false,
             clause,
             stmt_kind,
+            alias_ok,
         };
     }
     Context {
@@ -1128,6 +1165,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         from_chain: false,
         clause,
         stmt_kind,
+        alias_ok: false,
     }
 }
 
@@ -2352,6 +2390,39 @@ mod tests {
         // 식·관계 자리는 그대로.
         assert_eq!(k("SELECT * FROM t WHERE a = ", o), CtxKind::Expr);
         assert_eq!(k("SELECT * FROM ", o), CtxKind::Relation);
+    }
+
+    /// ★ 자동 별칭 허용 자리(사용자 10-09): FROM/JOIN/목록 콤마 · MERGE INTO/USING · UPDATE/DELETE(SQL Server 제외) = 허용 ·
+    /// ALTER/CREATE/DROP/TRUNCATE TABLE · CREATE INDEX ON · INSERT INTO · DESC · GRANT ON = 불허.
+    #[test]
+    fn alias_allowed_rules() {
+        let a = |src: &str, d: Dialect| {
+            let c = context_at(src, src.len(), Some(d));
+            (c.kind == CtxKind::Relation, c.alias_ok)
+        };
+        let o = Dialect::Oracle;
+        assert_eq!(a("SELECT * FROM ", o), (true, true));
+        assert_eq!(a("SELECT * FROM a JOIN ", o), (true, true));
+        assert_eq!(a("SELECT * FROM a, ", o), (true, true));
+        assert_eq!(a("MERGE INTO ", o), (true, true));
+        assert_eq!(a("MERGE INTO t a USING ", o), (true, true));
+        assert_eq!(a("UPDATE ", o), (true, true));
+        assert_eq!(a("DELETE FROM ", o), (true, true));
+        assert_eq!(a("UPDATE ", Dialect::Postgres), (true, true));
+        // SQL Server = UPDATE/DELETE 대상 별칭 불가(FROM 절에서만).
+        assert_eq!(a("UPDATE ", Dialect::Mssql), (true, false));
+        assert_eq!(a("DELETE FROM ", Dialect::Mssql), (true, false));
+        assert_eq!(a("SELECT * FROM ", Dialect::Mssql), (true, true));
+        // 불허.
+        assert_eq!(a("ALTER TABLE ", o), (true, false));
+        assert_eq!(a("CREATE INDEX ix ON ", o), (true, false));
+        assert_eq!(a("DROP TABLE ", o), (true, false));
+        assert_eq!(a("TRUNCATE TABLE ", o), (true, false));
+        assert_eq!(a("INSERT INTO ", o), (true, false));
+        assert_eq!(a("DESC ", o), (true, false));
+        assert_eq!(a("GRANT SELECT ON ", o), (true, false));
+        assert_eq!(a("COMMENT ON TABLE ", o), (true, false));
+        assert_eq!(a("LOCK TABLE ", o), (true, false));
     }
 
     #[test]

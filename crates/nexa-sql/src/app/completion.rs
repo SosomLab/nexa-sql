@@ -186,6 +186,10 @@ impl App {
         for s in self.intel.take_need_objects() {
             self.explorer.request_objects(spec.as_ref(), &s);
         }
+        // ★ 종류 지정 채움(사용자 정의 타입 · 식 자리 함수·패키지 · 10-09) — `request_objects`가 안 읽는 종류.
+        for (s, k) in self.intel.take_need_kinds() {
+            self.explorer.request_object_kind(spec.as_ref(), &s, k);
+        }
         // `JOIN … ON` 조건 조각이 기다리는 테이블 제약(T-178) — 백그라운드 메타 세션 · 오면 팝업을 다시 그린다.
         for id in self.intel.take_need_details() {
             self.explorer.request_detail(spec.as_ref(), id);
