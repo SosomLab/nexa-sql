@@ -861,6 +861,13 @@ impl App {
             }
             return;
         }
+        // `sess.kill` = 활성 탭 세션의 워커 접속을 실제로 떨어뜨림(Debug · 자동 재접속 경로 시험 · 10-09).
+        if id == "sess.kill" {
+            if cfg!(debug_assertions) {
+                self.sess.control(crate::worker::Cmd::KillSession);
+            }
+            return;
+        }
         if id == "net.changed" {
             // L0 신호 모의 = 실제 처리 함수 그대로(끝점 전부 Suspect + 메타 NetChanged + 다음 실행 preflight).
             self.net_last = None;

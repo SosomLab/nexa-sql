@@ -38,6 +38,10 @@ pub(crate) enum Cmd {
         reconnect_same: bool,
     },
     Disconnect,
+    /// ★ 자체 시험 훅(Debug · 10-09): 워커의 세션 객체를 **실제로 떨어뜨리고** 의심 표시만 남긴다(재접속 원천 `active_spec`은 유지) —
+    /// 네트워크 끊김 뒤 죽은 접속을 흉내 내어 다음 실행의 자동 재접속 경로(`ensure_alive` → 금고 인출 → `connect`)를 자동 시험한다
+    /// (`net.break` 훅은 건강 신호만이라 OCI 접속이 살아 있어 그 경로에 닿지 않았음 · 협업 bin125).
+    KillSession,
     /// 테이블 키(PK·유니크) 조회 — 그리드 Copy SQL의 키 규칙(docs/41). 스키마 없음 = 현재 스키마.
     Keys {
         /// 캐시 키(실행문의 테이블 표기 그대로 · 답에 그대로 실린다).
@@ -119,6 +123,7 @@ impl Cmd {
         matches!(
             self,
             Cmd::Disconnect
+                | Cmd::KillSession
                 | Cmd::Quit
                 | Cmd::Autocommit(_)
                 | Cmd::SharedVars(_)
@@ -1437,6 +1442,17 @@ pub(crate) fn spawn(
                     }
                     Cmd::Autocommit(on) => {
                         runner.set_autocommit(on);
+                        true
+                    }
+                    Cmd::KillSession => {
+                        // 접속만 버린다(logoff 없음 = 서버 쪽은 끊긴 것과 같음) · `active_spec`/`active_ep`는 그대로 · 다음 실행 = 의심 → 판정 → 재접속.
+                        runner.close_cursor();
+                        runner.session = None;
+                        suspect = true;
+                        emit(RunEvent::Message(
+                            "[test] sess.kill: session dropped (reconnect source kept)".to_string(),
+                        ));
+                        wake_now();
                         true
                     }
                     Cmd::Disconnect => {
