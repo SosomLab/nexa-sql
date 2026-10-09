@@ -491,6 +491,9 @@ pub(crate) struct Grid {
     session_connected: bool,
     /// 전체 조회가 나가 있다 — 그 사이 도착하는 늦은 세그먼트는 버린다(사용자 09-17: 자동 페치 중 누른 전체 조회가 무시되던 결함).
     fetch_all_pending: bool,
+    /// ★ 증분 표시 예약(사용자 10-09): 첫 세그먼트가 왔지만 세션이 아직 busy(Done 전)라 바로 못 청한다 → Done 뒤 호스트가 거둔다
+    ///   (협업 bin119 = 결과 도착 시점의 `request_fetch_all`이 `session_blocked`에 막혀 버려졌다).
+    auto_fetch_all: bool,
     fetch_req: Option<FetchReq>,
     /// 전체 조회 진행(행, 바이트 · T-48b) — 푸터 "가져오는 중… n행 · MB".
     fetch_progress: Option<(u64, u64)>,
@@ -708,6 +711,7 @@ impl Default for Grid {
             session_blocked: false,
             session_connected: true,
             fetch_all_pending: false,
+            auto_fetch_all: false,
             fetch_req: None,
             fetch_progress: None,
             cancel_req: false,
@@ -933,7 +937,15 @@ impl Grid {
     /// 전체 조회 요청(도구줄 ⇊ · 09-17 "나머지 이어 받기"): 더 있을 때만 · 자동 페치가 나가 있으면 **큐에 두었다가** 그 세그먼트가
     /// 붙은 뒤 정확한 offset으로 보낸다([`Self::take_fetch_request`]) — 종전엔 교체라 늦은 세그먼트를 버렸다.
     pub(crate) fn request_fetch_all(&mut self) {
-        if self.session_blocked || self.fetch_all_pending || self.rs.is_none() || !self.more {
+        if self.session_blocked {
+            return;
+        }
+        self.request_fetch_all_force();
+    }
+
+    /// 세션 가드 없이 전체 조회 요청(증분 자동 이어 받기 · 호스트가 Done 뒤 세션이 빈 것을 확인하고 부른다 · 문지기는 제출 때 다시 본다).
+    pub(crate) fn request_fetch_all_force(&mut self) {
+        if self.fetch_all_pending || self.rs.is_none() || !self.more {
             return;
         }
         self.fetch_req = Some(FetchReq::All);
@@ -941,6 +953,20 @@ impl Grid {
         self.fetch_progress = None;
         self.cancel_req = false;
         self.sync_fetch_tools();
+    }
+
+    /// 증분 표시 예약(결과 도착 때 · Done 뒤 [`Self::take_auto_fetch_all`]).
+    pub(crate) fn arm_auto_fetch_all(&mut self) {
+        self.auto_fetch_all = true;
+    }
+
+    pub(crate) fn take_auto_fetch_all(&mut self) -> bool {
+        std::mem::take(&mut self.auto_fetch_all)
+    }
+
+    /// 자체 시험 훅 `grid.sort:<열>`(열 머리 클릭과 같은 토글).
+    pub(crate) fn sort_by_col_cmd(&mut self, col: usize) {
+        self.toggle_sort(col, false);
     }
 
     /// 중지(■ · Esc): 아직 큐에만 있으면 요청을 지우고 끝 · 나가 있으면 워커 깃발(호스트가 가져간다).
@@ -4273,6 +4299,7 @@ impl Grid {
     }
 
     pub(crate) fn set_result(&mut self, rs: ResultSet) {
+        self.auto_fetch_all = false;
         self.cond
             .set_columns(rs.columns.iter().map(|c| c.name.clone()).collect());
         self.cond.set_dialect(self.dialect);

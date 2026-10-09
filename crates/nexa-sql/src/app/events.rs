@@ -1049,7 +1049,8 @@ impl App {
                             g.set_result_origin(s, is_query);
                         }
                         if live && more && g.page_rows() == 0 && is_query {
-                            g.request_fetch_all();
+                            // 세션이 아직 busy(Done 전)라 여기서 청하면 `session_blocked`에 막힌다 → 예약 · Done 뒤 거둔다(협업 bin119).
+                            g.arm_auto_fetch_all();
                         }
                     }
                     // 외래 키 열 표시(T-180 ⑥) — 활성 그리드 기준(다른 탭의 결과면 탭 전환 때 drain이 다시 맞춘다).
@@ -1486,6 +1487,16 @@ impl App {
             self.sess.busy = false;
             self.sync_run_stmt_button();
             self.editors.set_running(self.sess.run_editor, false);
+            // ★ 증분 표시(사용자 10-09): 첫 세그먼트가 "더 있음"으로 왔고 탭 행 수가 0(전체)이면 실행이 끝난 지금 나머지를 자동으로
+            //   이어 받는다(⇊과 같은 길 · 배치마다 Batch · 실패한 실행은 아님).
+            if done.is_none() {
+                let tab = self.sess.run_tab;
+                if let Some(g) = self.grid_for(tab) {
+                    if g.take_auto_fetch_all() {
+                        g.request_fetch_all_force();
+                    }
+                }
+            }
             // 실행이 끝났다 = 이번 실행에서 쓰이지 않은 딸린 결과 탭(앞선 실행의 커서 탭)을 걷는다.
             if std::mem::take(&mut self.sess.run_tracking) {
                 self.prune_child_results(self.sess.run_tab, self.sess.run_children);

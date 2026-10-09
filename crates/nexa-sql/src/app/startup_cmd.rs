@@ -265,6 +265,20 @@ impl App {
         }
         // 자체 시험(T-181 후속 · 값 목록 팝업): `grid.funnel:<열 번호>` = 깔때기 클릭 · `grid.vpick:<글>` = 검색 상자 글 ·
         // `grid.vpick.toggle:<n>` = 보이는 n번째 값 토글 · `grid.vpick.apply` = [적용] · `grid.vpick.dump:<파일>` = 팝업 상태 덤프.
+        // `grid.fetch_all` = 도구줄 ⇊(나머지 이어 받기) · `grid.sort:<열>` = 열 머리 클릭 정렬 토글 — 자체 시험(증분 표시 V1 · 10-09).
+        if id == "grid.fetch_all" {
+            self.grid.request_fetch_all();
+            self.redraw();
+            return;
+        }
+        if let Some(c) = id
+            .strip_prefix("grid.sort:")
+            .and_then(|c| c.trim().parse::<usize>().ok())
+        {
+            self.grid.sort_by_col_cmd(c);
+            self.redraw();
+            return;
+        }
         // `grid.page:<n>` = 활성 결과 탭의 세그먼트 크기(푸터 입력란과 같은 탭별 값 · 0 = 전체) — 자체 시험(10-09 "행 수 0 → 중지 → 재조회 200행").
         if let Some(n) = id
             .strip_prefix("grid.page:")
