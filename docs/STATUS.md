@@ -2,22 +2,11 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(bin111~124 = 116차 후반 10-09 낮~저녁 · 끝 = bin124 자동완성 한계 보완 · 열린 작업 0 · 사용자 실기 전부 ✓) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(§30 = 🚀 v0.1.7 릴리스 10-09 10:27 UTC · bin111~124 = 116차 후반 · 열린 작업 0 · 사용자 실기 전부 ✓ · 대기 = winget/choco 재개 시점 · T-318) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
 
 ## 2026-10-09 저녁 (🚀 **v0.1.7 릴리스** · [journal 10-07 §30](journal/2026-10-07.md))
 
 - 버전 커밋 6b60596 · 태그 v0.1.7 · release.yml 37916372262 ✓ · 자산 6 · 공개 10:27:14 UTC · Latest · 풀 테스트 = V2 853/0 · V3 실패 0(기능 점검 94 · E2E 11종) · winget·choco 제외 유지(변수 false) · Homebrew 탭 b194d49 ✓ · pkg.sosomlab.com APT·RPM 0.1.7 ✓(자동 publish · 시크릿 있음) · winget·choco guard 건너뜀 ✓.
-
-## 2026-10-09 (116차 · **win** · 10-08 낮 ~ 10-09 새벽 · [journal 10-07 §24~§28](journal/2026-10-07.md))
-
-- push 전부 **CI ✓**(마지막 a145717 · 3519503 코드 누락·8dc4895 빌드 실패 push 2건은 바로 다음 커밋이 고침 · 102 §12 원장) · 협업 쌍 운영 bin81~110 · V3 전수 10-08 밤(실패 0).
-- ★ **T-315·T-316·T-317**(DDL·시스템 프로시저 인자 안 객체 링크 · 전달인자 완성 `@이름 = `/`이름 => ` · `:RET` OUT 재추론 · `win-intel-args-e2e.sh` 22/0) · 탭 우클릭 ▸ 객체 탐색기에서 보기(엄격 판정) · 결과 탭 이름·자리(`결과N` · 딸린 탭 = 부모 뒤 · Output 중 실행 = 최근 뿌리) · 시그니처 카드 자리 — **전부 사용자 ✓**.
-- ★ **T-313 서버 건강 전파 ①~⑥ 전부 ✅**([107](107-server-health-propagation.md) · `app/health.rs` 레지스트리 + `health_merge` MC/DC · 메타 세션 생존 가드 `MetaGuard` · 호출 상한 · 끊김 토스트 클릭 = 다시 연결 · 헤더 "끊김 hh:mm" · 워머·인덱스 정지 · Import 막기 · Windows `netwatch`(nexa-sys) · 시험 훅 `net.break/suspect/heal/changed` · `health.dump` · **실 VPN 사용자 ✓**) · 결정 D-265~271 ✅.
-- ★ **UI 규칙 둘**(61 §2-2-b 9·10항): **클릭 = 놓을 때**(토스트·띠·실행 카드·상태줄·Ctrl 링크·접속 창 복사 · nexa-ctl 체크박스·스위치·풀다운 + 다른 세션 181차) · **우클릭 메뉴 영역 간 배타**(`ui.ctxmenu_exclusive`/`ui.ctxmenu_passthrough` · `ctxmenu_exclusive_step` MC/DC · 협업 V1 6/6).
-- ★ 설정 셋(사용자 10-08~09) = 서버 유형 배지 `statusbar.env_badge` · 편집기/결과 최소 높이 `layout.editor_min_px`/`result_min_px`(`app/split.rs` MC/DC) · 운영 해제 토스트 빨간 [실행] 버튼(`Toasts::push_button` · 사용자 ✓) · 탭 × 뒤 여백 40%(nexa-ctl · 사용자 ✓).
-- ★ **중지 지연 실측 3-DBMS**(`win-stop-latency-e2e.sh` · `log.dump_t` · 44 §6) = Oracle 19/28/45 ms · PG 442/78/112 · SQL Server 25/5/14(소켓 닫기 경로) · `WHEN OTHERS`는 취소를 막지 않음 · 사용자 5~10 s 미재현 → **두 번째 ■ 강제 중지**(`run.force_stop_secs` 3 · `DiscPath::ForceStop` · 시험 훅 `run.stop_mute` · 협업 V1 ✓).
-- ★ **T-283 2단계 2-pane diff 뷰어**(nexa-ctl `diff::align/hunks` + TextBox 줄 색조·스크롤 동기 · `diff_view.rs` · `compare.view` · 팔레트 다음/이전 변경) · 🔧 **비교 탭 회귀**(10-07 저녁 뷰 탭 자동 닫기가 `compare:*`까지 닫음 → `ext:`만 · a145717) · T-296 판단 = 통합 안 함 · T-182 CLOB 커밋 = 이미 구현(실서버 ⑬ 40,000자 검증 중) · examples/lob(협업).
-- 남은 것 = 협업 grid-edit E2E ⑬ 결과 → bin111(a145717) V1(비교 탭 ①~⑧) → 문서 · 사용자 = 어제 프로시저 꼴(중지 지연) · 실기(배타 두 설정 · 놓을 때 · Ctrl 링크 · VPN 토글 · 최소 높이 · ■■ · 나란히 보기) · T-294 콜드 측정 · 남은 구현 = T-298 부분 다시 그리기 · T-291/292 · T-182 잔여(큰 파일 모드 · 페인트 예산 · `Caps.returning`) · T-283 F7 키맵 · mac/Linux `netwatch`.
 
 ## 2026-10-09 (116차 후반 · **win** · 낮 ~ 저녁 · [journal 10-07](journal/2026-10-07.md) bin111~124)
 
@@ -30,6 +19,17 @@
 - ★ **자연 정렬 전 영역**(nexa-ui f74dcfa `nexa_ctl::natural` = dir3 `cmp_natural` 이식 · 5fda818 · 9484472) = 전역 `ui.sort_natural`(설정 ▸ 모양 · 기본 켬 · 영역별 설정 없음 = 그리드 "예외" 철회 · 61 §2-2-b 12항) · 그리드 글자 열 · 객체 탐색기(`sort_kids_natural` = 전체·디프 자식) · 프로젝트 · 북마크 · 로그인 목록 · 팔레트 동점 · 30 §2 부품 · 미적용 = 자동완성 후보(점수 우선) · 아웃라인 · 값 목록.
 - 📐 **타 도구 비교·권장안 보고**(점진 표시 · 정렬 전역 vs 영역별 — 사용자 검토로 설계 수정 = 102 §12 원장) · 102 원장 추가 = 빌드 요청 뒤 손 뗌(d6f3f3b 중 d437361 커밋 → E0425) · 적재 단위 = 소비 종류 · 자동 후속 요청은 Done 뒤 거둠 · 범례와 색 매핑 한 자리 · 그리기 분기 = 입력 분기 같은 판정 · V1은 새 홈·직접 만든 재현 데이터.
 - 남은 것 = 사용자 지시 대기(열린 작업 0) · 남은 구현 후보 = T-283 F7/Shift+F7 키맵 · T-298 부분 다시 그리기 · T-291/292 · T-182 잔여(값 창 큰 파일 모드 · 페인트 예산 · `Caps.returning`) · mac/Linux `netwatch` · T-294 콜드 측정 · 자동 확정 훅 `intel.accept:<n>`(별칭 자동 시험용 · 협업 제안).
+
+## 2026-10-09 (116차 · **win** · 10-08 낮 ~ 10-09 새벽 · [journal 10-07 §24~§28](journal/2026-10-07.md))
+
+- push 전부 **CI ✓**(마지막 a145717 · 3519503 코드 누락·8dc4895 빌드 실패 push 2건은 바로 다음 커밋이 고침 · 102 §12 원장) · 협업 쌍 운영 bin81~110 · V3 전수 10-08 밤(실패 0).
+- ★ **T-315·T-316·T-317**(DDL·시스템 프로시저 인자 안 객체 링크 · 전달인자 완성 `@이름 = `/`이름 => ` · `:RET` OUT 재추론 · `win-intel-args-e2e.sh` 22/0) · 탭 우클릭 ▸ 객체 탐색기에서 보기(엄격 판정) · 결과 탭 이름·자리(`결과N` · 딸린 탭 = 부모 뒤 · Output 중 실행 = 최근 뿌리) · 시그니처 카드 자리 — **전부 사용자 ✓**.
+- ★ **T-313 서버 건강 전파 ①~⑥ 전부 ✅**([107](107-server-health-propagation.md) · `app/health.rs` 레지스트리 + `health_merge` MC/DC · 메타 세션 생존 가드 `MetaGuard` · 호출 상한 · 끊김 토스트 클릭 = 다시 연결 · 헤더 "끊김 hh:mm" · 워머·인덱스 정지 · Import 막기 · Windows `netwatch`(nexa-sys) · 시험 훅 `net.break/suspect/heal/changed` · `health.dump` · **실 VPN 사용자 ✓**) · 결정 D-265~271 ✅.
+- ★ **UI 규칙 둘**(61 §2-2-b 9·10항): **클릭 = 놓을 때**(토스트·띠·실행 카드·상태줄·Ctrl 링크·접속 창 복사 · nexa-ctl 체크박스·스위치·풀다운 + 다른 세션 181차) · **우클릭 메뉴 영역 간 배타**(`ui.ctxmenu_exclusive`/`ui.ctxmenu_passthrough` · `ctxmenu_exclusive_step` MC/DC · 협업 V1 6/6).
+- ★ 설정 셋(사용자 10-08~09) = 서버 유형 배지 `statusbar.env_badge` · 편집기/결과 최소 높이 `layout.editor_min_px`/`result_min_px`(`app/split.rs` MC/DC) · 운영 해제 토스트 빨간 [실행] 버튼(`Toasts::push_button` · 사용자 ✓) · 탭 × 뒤 여백 40%(nexa-ctl · 사용자 ✓).
+- ★ **중지 지연 실측 3-DBMS**(`win-stop-latency-e2e.sh` · `log.dump_t` · 44 §6) = Oracle 19/28/45 ms · PG 442/78/112 · SQL Server 25/5/14(소켓 닫기 경로) · `WHEN OTHERS`는 취소를 막지 않음 · 사용자 5~10 s 미재현 → **두 번째 ■ 강제 중지**(`run.force_stop_secs` 3 · `DiscPath::ForceStop` · 시험 훅 `run.stop_mute` · 협업 V1 ✓).
+- ★ **T-283 2단계 2-pane diff 뷰어**(nexa-ctl `diff::align/hunks` + TextBox 줄 색조·스크롤 동기 · `diff_view.rs` · `compare.view` · 팔레트 다음/이전 변경) · 🔧 **비교 탭 회귀**(10-07 저녁 뷰 탭 자동 닫기가 `compare:*`까지 닫음 → `ext:`만 · a145717) · T-296 판단 = 통합 안 함 · T-182 CLOB 커밋 = 이미 구현(실서버 ⑬ 40,000자 검증 중) · examples/lob(협업).
+- 남은 것 = 협업 grid-edit E2E ⑬ 결과 → bin111(a145717) V1(비교 탭 ①~⑧) → 문서 · 사용자 = 어제 프로시저 꼴(중지 지연) · 실기(배타 두 설정 · 놓을 때 · Ctrl 링크 · VPN 토글 · 최소 높이 · ■■ · 나란히 보기) · T-294 콜드 측정 · 남은 구현 = T-298 부분 다시 그리기 · T-291/292 · T-182 잔여(큰 파일 모드 · 페인트 예산 · `Caps.returning`) · T-283 F7 키맵 · mac/Linux `netwatch`.
 
 ## 2026-10-08 🚀 **v0.1.6 릴리스**(win · [journal 10-07 §23](journal/2026-10-07.md))
 
