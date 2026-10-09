@@ -5106,6 +5106,25 @@ impl Explorer {
         }
     }
 
+    /// ★ 객체 폴더의 자식 = 자연 정렬(전역 `ui.sort_natural` · nexa-ctl `natural::cmp_names` · 사용자 10-09): 서버가 `ORDER BY name`
+    ///   (바이트 순 · `T1 T10 T2 t3`)으로 준 순서를 그대로 쓰던 것을 **객체·데이터베이스 노드만** 다시 정렬한다(종류 폴더·묶음 순서는 고정
+    ///   · 협업 V1 bin121 b = 탐색기만 적용 안 됨). 자연 정렬이 꺼져 있으면 대소문자 무시 글자 순(`cmp_ci`).
+    fn sort_kids_natural(&self, ids: &mut [usize]) {
+        let name_of = |i: usize| -> Option<&str> {
+            match &self.nodes[i].kind {
+                NodeKind::Object(o) => Some(o.name.as_str()),
+                NodeKind::Database(d) => Some(d.as_str()),
+                _ => None,
+            }
+        };
+        if ids.is_empty() || !ids.iter().all(|&i| name_of(i).is_some()) {
+            return;
+        }
+        ids.sort_by(|&a, &b| {
+            nexa_ctl::natural::cmp_names(name_of(a).unwrap_or(""), name_of(b).unwrap_or(""))
+        });
+    }
+
     fn set_children(&mut self, node: usize, kids: Vec<Node>) {
         // 옛 자식은 버린다(인덱스는 재사용하지 않는다 — 단순함 우선 · 노드 수는 수천 규모).
         let old: Vec<usize> = std::mem::take(&mut self.nodes[node].children);
@@ -5117,6 +5136,7 @@ impl Explorer {
             self.nodes.push(k);
             ids.push(self.nodes.len() - 1);
         }
+        self.sort_kids_natural(&mut ids);
         self.nodes[node].children = ids;
         self.nodes[node].state = LoadState::Loaded;
         self.nodes[node].expanded = true;
@@ -5167,6 +5187,7 @@ impl Explorer {
                 self.selected = Some(node);
             }
         }
+        self.sort_kids_natural(&mut ids);
         self.nodes[node].children = ids;
         self.nodes[node].state = LoadState::Loaded;
         self.clamp_scroll();
