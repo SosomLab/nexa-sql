@@ -361,6 +361,8 @@ struct App {
     status_menu_item: Option<u8>,
     /// 토글로 닫은 누름의 놓음을 삼킨다(놓을 때 동작이 다시 열지 않게).
     menu_toggle_swallow_up: bool,
+    /// 툴바 ▾ 항목(`sess.tab` 서버 · `sess.db` DB/스키마)으로 연 배지 메뉴의 주인 — 같은 항목을 다시 누르면 토글 닫기(사용자 10-09).
+    badge_menu_tool: Option<&'static str>,
     /// ★ Ctrl 객체 하이퍼링크(T-256 · 사용자 09-29): 링크 목록·hover 상태 + 우클릭 메뉴("설명 복사").
     objlinks: app::objlink::ObjLinks,
     objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
@@ -1718,6 +1720,7 @@ fn main() {
         status_menu_band: 0,
         status_menu_item: None,
         menu_toggle_swallow_up: false,
+        badge_menu_tool: None,
         objlinks: Default::default(),
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         sig_card: None,

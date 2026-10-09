@@ -974,8 +974,14 @@ impl App {
                     self.redraw();
                 }
             }
-            "sess.tab" | "sess.tab#drop" => self.open_tab_conn_menu(),
-            "sess.db" | "sess.db#drop" => self.open_tab_db_menu(),
+            "sess.tab" | "sess.tab#drop" => {
+                self.open_tab_conn_menu();
+                self.badge_menu_tool = self.editors.tab_menu_open().then_some("sess.tab");
+            }
+            "sess.db" | "sess.db#drop" => {
+                self.open_tab_db_menu();
+                self.badge_menu_tool = self.editors.tab_menu_open().then_some("sess.db");
+            }
             "conn.sessions" | "view.sessions" => {
                 if self.sessions_win.is_open() {
                     self.sessions_win.close();

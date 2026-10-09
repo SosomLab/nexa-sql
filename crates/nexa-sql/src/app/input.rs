@@ -347,6 +347,22 @@ impl App {
         }
         // ★ 상태바 **항목 좌클릭** 메뉴도 토글(사용자 10-09): 그 항목의 메뉴가 열린 채 **같은 항목**을 다시 누르면 닫기만 — 누름에서
         //   닫고 놓음은 삼킨다(놓을 때 동작이 다시 열지 않게 · 61 §2-2-b 9항). 다른 항목 누름은 종전 배타 규칙(닫고 그 항목 열림).
+        // ★ 툴바 ▾ 드롭다운(서버 `sess.tab` · DB/스키마 `sess.db`)도 토글(사용자 10-09): 목록이 열린 채 같은 항목을 다시 누르면 닫기만
+        //   (누름에서 닫고 놓음은 삼킨다 = 툴바 버튼 동작이 다시 열지 않게).
+        if let InputEvent::MouseDown { x, y, .. } = ev {
+            let p = Point { x, y };
+            if !self.editors.tab_menu_open() {
+                self.badge_menu_tool = None;
+            } else if let Some(id) = self.badge_menu_tool {
+                if self.tool_dock.item_rect(id).is_some_and(|r| r.contains(p)) {
+                    self.editors.close_tab_menu();
+                    self.badge_menu_tool = None;
+                    self.menu_toggle_swallow_up = true;
+                    self.redraw();
+                    return;
+                }
+            }
+        }
         if let InputEvent::MouseDown { x, y, .. } = ev {
             let p = Point { x, y };
             if self.status_menu.is_open()
