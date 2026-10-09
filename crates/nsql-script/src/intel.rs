@@ -52,6 +52,8 @@ pub enum Want {
     /// `p IN |` · `RETURN |`/`RETURNS |` · `CREATE TABLE t (c |` · `ALTER TABLE … ADD c |` · `VAR x |` · PG `::|`. 호스트는 방언의
     /// 내장 자료형([`crate::builtins::types`]) + 메타의 사용자 정의 타입(`ObjectKind::Type` · 현재 스키마 + `스키마.`)을 낸다.
     DataType,
+    /// ★ `COLLATE |` 뒤 = 정렬 이름(사용자 10-09): 방언의 정적 표([`crate::builtins::collations`]) · 메타 불필요.
+    Collation,
 }
 
 /// alias 한 줄.
@@ -506,6 +508,10 @@ fn want_at(
 ) -> Option<Want> {
     let n = before.len();
     let last = before[n - 1];
+    // ★ `COLLATE |` = 정렬 이름(사용자 10-09 · 식·열 정의·ORDER BY 어디서든).
+    if is_word(last, "COLLATE") {
+        return Some(Want::Collation);
+    }
     // ★ 자료형 자리(사용자 10-09) — 다른 규칙보다 먼저(`ALTER TABLE t ADD c |`는 ALTER 규칙과 겹친다).
     if type_at(before, stmt_kind, dialect) {
         return Some(Want::DataType);
@@ -753,6 +759,7 @@ pub const KEYWORDS: &[&str] = &[
 
 /// 방언 고유 키워드(09-24 4-DBMS 검토) — 공통 표 뒤에 붙는다(`keywords_for`).
 const ORACLE_KEYWORDS: &[&str] = &[
+    "COLLATE",
     "ROWNUM",
     "CONNECT BY",
     "START WITH",
@@ -768,6 +775,8 @@ const ORACLE_KEYWORDS: &[&str] = &[
     "SYSDATE",
 ];
 const MSSQL_KEYWORDS: &[&str] = &[
+    "COLLATE",
+    "COLLATE DATABASE_DEFAULT",
     "TOP",
     "CROSS APPLY",
     "OUTER APPLY",
@@ -783,6 +792,7 @@ const MSSQL_KEYWORDS: &[&str] = &[
     "GETDATE()",
 ];
 const POSTGRES_KEYWORDS: &[&str] = &[
+    "COLLATE",
     "ILIKE",
     "LATERAL",
     "ON CONFLICT",
@@ -2394,6 +2404,33 @@ mod tests {
 
     /// ★ 자동 별칭 허용 자리(사용자 10-09): FROM/JOIN/목록 콤마 · MERGE INTO/USING · UPDATE/DELETE(SQL Server 제외) = 허용 ·
     /// ALTER/CREATE/DROP/TRUNCATE TABLE · CREATE INDEX ON · INSERT INTO · DESC · GRANT ON = 불허.
+    /// ★ `COLLATE |` = 정렬 이름 자리(사용자 10-09) — 식·열 정의·ORDER BY 어디서든 · `COLLATE x |` 뒤는 식.
+    #[test]
+    fn collate_contexts() {
+        let k = |src: &str, d: Dialect| context_at(src, src.len(), Some(d)).kind;
+        let c = CtxKind::Want(Want::Collation);
+        assert_eq!(k("SELECT a COLLATE ", Dialect::Mssql), c);
+        assert_eq!(k("SELECT a COLLATE Kor", Dialect::Mssql), c, "접두 입력 중");
+        assert_eq!(k("WHERE USER_ID COLLATE ", Dialect::Mssql), c);
+        assert_eq!(
+            k("CREATE TABLE #t (c VARCHAR(20) COLLATE ", Dialect::Mssql),
+            c
+        );
+        assert_eq!(
+            k("ALTER TABLE t ADD c VARCHAR(10) COLLATE ", Dialect::Mssql),
+            c
+        );
+        assert_eq!(
+            k("SELECT * FROM t ORDER BY name COLLATE ", Dialect::Postgres),
+            c
+        );
+        assert_eq!(k("SELECT a COLLATE ", Dialect::Mysql), c);
+        assert_ne!(
+            k("SELECT a COLLATE Korean_Wansung_CI_AS ", Dialect::Mssql),
+            c
+        );
+    }
+
     #[test]
     fn alias_allowed_rules() {
         let a = |src: &str, d: Dialect| {

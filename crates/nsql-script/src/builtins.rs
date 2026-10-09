@@ -1196,3 +1196,145 @@ mod type_tests {
         assert!(types(None).iter().any(|b| b.name == "INTEGER"));
     }
 }
+
+// ───────────────────────── 정렬(COLLATE) 이름(사용자 10-09 "COLLATE 예약어 및 값 유형 자동 완성") ─────────────────────────
+// `COLLATE |` 뒤 후보 — 서버 전체 목록(SQL Server `sys.fn_helpcollations()` 5,000+)은 너무 커서 **자주 쓰는 것**의 정적 표 ·
+// `sig` = 한 줄 설명(CI/CS = 대소문자 · AI/AS = 악센트 · BIN = 이진). 서버의 실제 목록 조회는 후속(76 §17).
+
+pub const MSSQL_COLLATIONS: &[Builtin] = &[
+    b!(
+        "DATABASE_DEFAULT",
+        "current database default collation (tempdb/#temp · cross-DB joins)"
+    ),
+    b!(
+        "Korean_Wansung_CI_AS",
+        "Korean · case-insensitive · accent-sensitive"
+    ),
+    b!(
+        "Korean_Wansung_CS_AS",
+        "Korean · case-sensitive · accent-sensitive"
+    ),
+    b!(
+        "Korean_Wansung_CI_AI",
+        "Korean · case-insensitive · accent-insensitive"
+    ),
+    b!("Korean_Wansung_BIN", "Korean · binary"),
+    b!("Korean_Wansung_BIN2", "Korean · binary (code point)"),
+    b!("Korean_100_CI_AS", "Korean 100 · case-insensitive"),
+    b!("Korean_100_CS_AS", "Korean 100 · case-sensitive"),
+    b!(
+        "Korean_100_CI_AS_SC_UTF8",
+        "Korean 100 · UTF-8 · supplementary characters"
+    ),
+    b!(
+        "SQL_Latin1_General_CP1_CI_AS",
+        "SQL Server default (US English) · case-insensitive"
+    ),
+    b!(
+        "SQL_Latin1_General_CP1_CS_AS",
+        "US English · case-sensitive"
+    ),
+    b!("Latin1_General_CI_AS", "Windows Latin1 · case-insensitive"),
+    b!("Latin1_General_CS_AS", "Windows Latin1 · case-sensitive"),
+    b!(
+        "Latin1_General_CI_AI",
+        "Windows Latin1 · case/accent-insensitive"
+    ),
+    b!("Latin1_General_BIN", "Latin1 · binary"),
+    b!("Latin1_General_BIN2", "Latin1 · binary (code point)"),
+    b!("Latin1_General_100_CI_AS", "Latin1 100 · case-insensitive"),
+    b!(
+        "Latin1_General_100_CI_AS_SC",
+        "Latin1 100 · supplementary characters"
+    ),
+    b!("Latin1_General_100_CI_AS_SC_UTF8", "Latin1 100 · UTF-8"),
+    b!(
+        "Latin1_General_100_BIN2_UTF8",
+        "Latin1 100 · binary · UTF-8"
+    ),
+    b!("Japanese_CI_AS", "Japanese · case-insensitive"),
+    b!(
+        "Japanese_XJIS_100_CI_AS",
+        "Japanese XJIS 100 · case-insensitive"
+    ),
+    b!("Chinese_PRC_CI_AS", "Chinese (PRC) · case-insensitive"),
+    b!(
+        "Chinese_Taiwan_Stroke_CI_AS",
+        "Chinese (Taiwan) · stroke order"
+    ),
+];
+
+pub const POSTGRES_COLLATIONS: &[Builtin] = &[
+    b!("\"default\"", "database default collation"),
+    b!("\"C\"", "byte order (fastest · no locale)"),
+    b!("\"POSIX\"", "byte order (= C)"),
+    b!("\"C.UTF-8\"", "C with UTF-8 (PG 17 builtin: C.UTF-8)"),
+    b!("ucs_basic", "SQL standard · code point order"),
+    b!("\"ko_KR.utf8\"", "Korean (libc)"),
+    b!("\"ko-x-icu\"", "Korean (ICU)"),
+    b!("\"ko-KR-x-icu\"", "Korean · Korea (ICU)"),
+    b!("\"en_US.utf8\"", "English · US (libc)"),
+    b!("\"en-US-x-icu\"", "English · US (ICU)"),
+    b!("\"und-x-icu\"", "ICU root collation"),
+    b!("\"ja_JP.utf8\"", "Japanese (libc)"),
+    b!("\"zh_CN.utf8\"", "Chinese (libc)"),
+];
+
+pub const MYSQL_COLLATIONS: &[Builtin] = &[
+    b!(
+        "utf8mb4_0900_ai_ci",
+        "MySQL 8 default · accent/case-insensitive"
+    ),
+    b!("utf8mb4_0900_as_cs", "MySQL 8 · accent/case-sensitive"),
+    b!("utf8mb4_0900_bin", "MySQL 8 · binary"),
+    b!("utf8mb4_general_ci", "legacy general · case-insensitive"),
+    b!("utf8mb4_unicode_ci", "Unicode 4.0 · case-insensitive"),
+    b!("utf8mb4_unicode_520_ci", "Unicode 5.2 · case-insensitive"),
+    b!("utf8mb4_bin", "binary"),
+    b!("utf8mb4_ko_0900_as_cs", "Korean · accent/case-sensitive"),
+    b!("utf8_general_ci", "utf8 (3-byte) · case-insensitive"),
+    b!("euckr_korean_ci", "EUC-KR · Korean"),
+    b!("euckr_bin", "EUC-KR · binary"),
+    b!("latin1_swedish_ci", "latin1 default"),
+    b!("latin1_general_cs", "latin1 · case-sensitive"),
+    b!("ascii_general_ci", "ASCII · case-insensitive"),
+];
+
+pub const ORACLE_COLLATIONS: &[Builtin] = &[
+    b!("BINARY", "binary (default)"),
+    b!("BINARY_CI", "binary · case-insensitive (12.2+)"),
+    b!("BINARY_AI", "binary · accent/case-insensitive (12.2+)"),
+    b!("KOREAN_M", "Korean · multilingual"),
+    b!("KOREAN_M_CI", "Korean · case-insensitive"),
+    b!("KOREAN_M_AI", "Korean · accent/case-insensitive"),
+    b!("GENERIC_M", "generic multilingual"),
+    b!("GENERIC_M_CI", "generic multilingual · case-insensitive"),
+    b!(
+        "GENERIC_M_AI",
+        "generic multilingual · accent/case-insensitive"
+    ),
+    b!("UCA0700_DUCET", "Unicode Collation Algorithm 7.0"),
+    b!(
+        "USING_NLS_COMP",
+        "session NLS_COMP/NLS_SORT (pseudo collation)"
+    ),
+];
+
+pub const SQLITE_COLLATIONS: &[Builtin] = &[
+    b!("BINARY", "memcmp order (default)"),
+    b!("NOCASE", "ASCII case-insensitive"),
+    b!("RTRIM", "binary · trailing spaces ignored"),
+];
+
+/// 방언별 정렬 이름(정적 표 · 없으면 빈 목록).
+#[must_use]
+pub fn collations(d: Option<Dialect>) -> &'static [Builtin] {
+    match d {
+        Some(Dialect::Mssql) => MSSQL_COLLATIONS,
+        Some(Dialect::Postgres) => POSTGRES_COLLATIONS,
+        Some(Dialect::Mysql) => MYSQL_COLLATIONS,
+        Some(Dialect::Oracle) => ORACLE_COLLATIONS,
+        Some(Dialect::Sqlite) => SQLITE_COLLATIONS,
+        Some(Dialect::Odbc) | None => &[],
+    }
+}

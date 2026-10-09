@@ -1864,6 +1864,30 @@ impl Intel {
     ) {
         // ★ 자료형 자리(사용자 10-09): 내장 자료형은 접속·메타 없이도(정적 표 · `intel.types`) · 사용자 정의 타입은 아래 메타 길
         //   (`ObjectKind::Type` · 현재 스키마 + `스키마.`).
+        // ★ `COLLATE |` = 정렬 이름(정적 표 · 메타 없이 · 사용자 10-09). 키워드 종류라 확정 뒤 공백(`intel.insert_space`).
+        if w == intel::Want::Collation {
+            for (i, b) in nsql_script::builtins::collations(dialect)
+                .iter()
+                .enumerate()
+            {
+                cands.push(Cand {
+                    text: b.name.to_string(),
+                    kind: CandKind::Keyword,
+                    detail: if show_types {
+                        b.sig.to_string()
+                    } else {
+                        String::new()
+                    },
+                    source: 4,
+                    tag: 0,
+                    mark: String::new(),
+                    order: i as u32,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+            return;
+        }
         if w == intel::Want::DataType && self.cfg.types {
             for (i, b) in nsql_script::builtins::types(dialect).iter().enumerate() {
                 cands.push(Cand {
@@ -1953,6 +1977,8 @@ impl Intel {
                 kinds.push(ObjectKind::Type);
                 with_schemas = true;
             }
+            // 정렬 이름은 위에서 끝났다(메타 없음).
+            intel::Want::Collation => return,
         }
         if databases {
             match m.names.find("") {
