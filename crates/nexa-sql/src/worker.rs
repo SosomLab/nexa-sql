@@ -741,6 +741,19 @@ pub(crate) fn spawn(
                     }
                 }
                 if plan.reconnect {
+                    // 재접속할 사양이 없으면 "회복"으로 넘기지 않는다(죽은 접속에 쿼리를 보내 DPI-1010이 나던 자리 · 10-09).
+                    if active_spec.is_none() && runner.session.as_ref().is_some_and(|s| !s.is_alive()) {
+                        let m = t(Msg::StReconnectNoSpec).to_string();
+                        *suspect = true;
+                        if !*broken_told {
+                            *broken_told = true;
+                            let _ = ctx_tx.send(ConnOutcome::Broken {
+                                reason: m.clone(),
+                                endpoint: false,
+                            });
+                        }
+                        return Err(m);
+                    }
                     if let Some(spec) = active_spec.clone() {
                         emit(RunEvent::Message(tf(
                             Msg::StReconnecting,
@@ -1587,6 +1600,16 @@ pub(crate) fn spawn(
                             runner.run_script(&src, &mut prompt, &mut on_ev)
                         };
                         run_seq.fetch_add(1, Ordering::Relaxed);
+                        // ★ 전용 세션 재접속 원천(사용자 10-09): 스크립트 안 `CONNECT`로 붙은 접속은 워커의 `active_spec`에 없어
+                        //   네트워크 복귀 뒤 `ensure_alive`가 재접속할 사양이 없었다(공유 세션은 `Cmd::ConnectSpec`으로 붙어 있었음) →
+                        //   실행이 끝날 때마다 러너가 붙어 있는 대상(**비밀번호 없음**)으로 맞춘다 · 비밀번호는 재접속 때 opener가
+                        //   세션 자격 금고(`nsql_vault::session::recall`)에서 인출한다(21 §7 · 평문 사본을 더 만들지 않는다).
+                        if let Some(sp) = runner.connected_to() {
+                            if active_spec.as_ref() != Some(sp) {
+                                active_ep = endpoint(sp);
+                                active_spec = Some(sp.clone());
+                            }
+                        }
                         suspect = conn_err;
                         if conn_err {
                             if !broken_told {

@@ -452,7 +452,8 @@ pub struct Runner {
     pub resolver: Option<Resolver>,
     /// 마지막 접속 설명(상태줄).
     pub connection: Option<String>,
-    /// 지금 붙어 있는 대상(비밀번호 없음) — 같은 서버·계정에 다시 `CONNECT`하는지 본다.
+    /// 지금 붙어 있는 대상(**비밀번호 없음** · 21 §7) — 같은 서버·계정에 다시 `CONNECT`하는지 보고, 호스트 워커의 자동 재접속
+    /// 원천([`Self::connected_to`] · 비밀번호는 세션 자격 금고에서 인출 · 사용자 10-09)이 된다.
     connected_to: Option<ConnectSpec>,
     /// ★ 결과 셋 페치 상한(0 = 무제한 · DBeaver "ResultSet fetch size" 차용 · 사용자 09-15). 드라이버에는
     /// 세션 옵션 `max_rows`로 `상한+1`을 알려 조기 중단(Oracle·SQLite)하고, 호스트는 상한 초과분을 잘라 `more`를 표시한다.
@@ -1639,6 +1640,14 @@ impl Runner {
         self
     }
 
+    /// 지금 붙어 있는 대상(**비밀번호 없음** · 프로필 이름은 푼 뒤) — 호스트의 자동 재접속 원천. 비밀번호는 세션 자격 금고
+    /// (nsql-vault `session` · 접속마다 opener가 인출)에서 온다(21 §7 · 사용자 10-09 "저장된 비밀번호가 아니면 암호화해서 메모리에 ·
+    /// 인출 API로"). 접속한 적이 없으면 None.
+    #[must_use]
+    pub fn connected_to(&self) -> Option<&ConnectSpec> {
+        self.connected_to.as_ref()
+    }
+
     pub fn connect(&mut self, spec: &ConnectSpec, emit: &mut dyn FnMut(RunEvent)) -> bool {
         // 프로필 이름이면 저장소에서 완전한 스펙으로 바꾼다(비밀번호 포함).
         let resolved;
@@ -1711,6 +1720,7 @@ impl Runner {
                     password: None,
                     ..spec.clone()
                 });
+
                 // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
                 self.sig_cache.clear();
                 self.note_tx_ended();
@@ -3309,6 +3319,10 @@ mod tests {
         assert!(r.connect(&a, &mut |e| ev.push(e)));
         // 같은 대상 · 다른 자격 · 성공 = 끊김 알림 없이 다시 붙는다.
         let b = ConnectSpec::parse("oracle://u:pw@h:1521/svc?schema=HR").unwrap();
+        // ★ 재접속 원천(10-09): 붙어 있는 대상은 **비밀번호 없이** 남는다(비밀번호는 금고 몫 · 21 §7).
+        assert!(r
+            .connected_to()
+            .is_some_and(|s| s.password.is_none() && s.user.as_deref() == Some("u")));
         ev.clear();
         assert!(r.connect(&b, &mut |e| ev.push(e)));
         assert!(!ev

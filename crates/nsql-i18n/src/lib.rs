@@ -2346,6 +2346,7 @@ pub enum Msg {
     LblAutoReconnect,
     DescAutoReconnect,
     StReconnecting,
+    StReconnectNoSpec,
     // 찾기/바꾸기(T-73)
     MnFind,
     MnReplace,
@@ -6196,6 +6197,7 @@ impl Msg {
                 "If the previous run failed with a connectivity error, the next run first reconnects with the same profile (session variables are kept in the client)",
                 "직전 실행이 접속성 오류로 끝났으면 다음 실행 전에 같은 프로필로 먼저 다시 접속한다(세션 변수는 클라이언트에 있어 유지)",
             ],
+            Msg::StReconnectNoSpec => ["Cannot reconnect: this session has no saved connection info - run CONNECT again", "다시 접속할 수 없음: 이 세션의 접속 정보가 없습니다 - CONNECT를 다시 실행하세요"],
             Msg::StReconnecting => ["Reconnecting: {0}", "다시 접속 중: {0}"],
             Msg::MnFind => ["Find…", "찾기…"],
             Msg::MnReplace => ["Replace…", "바꾸기…"],
@@ -9615,6 +9617,7 @@ impl Msg {
         Msg::LblAutoReconnect,
         Msg::DescAutoReconnect,
         Msg::StReconnecting,
+        Msg::StReconnectNoSpec,
         Msg::MnFind,
         Msg::MnReplace,
         Msg::MnFindNext,
