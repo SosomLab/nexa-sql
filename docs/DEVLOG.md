@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-09 밤 (🚀 v0.1.8 릴리스 · 패치)** — 전용 세션 자동 재접속 수정(1e624fd · ad2c765 `sess.kill`/E2E) · 8c3e6fc + 태그 v0.1.8 · release.yml 37936923843 ✓ · 자산 6 · 공개 13:41 UTC · 풀 테스트 V2 853/0 · V3 실패 0(reconnect 8 포함) · Homebrew 73db4d6 · pkg.sosomlab.com 0.1.8(자동) · winget·choco 제외 유지 · [journal 10-07 §31~§32](journal/2026-10-07.md).
 - **2026-10-09 (🚀 v0.1.7 릴리스)** — 6b60596 + 태그 v0.1.7 · release.yml 37916372262 ✓ · 자산 6 · 공개 10:27 UTC · 풀 테스트 V2 853/0 · V3 실패 0 · winget·choco 제외 유지 · Homebrew b194d49 · pkg.sosomlab.com 0.1.7(자동 publish) · winget·choco guard 건너뜀 · [journal 10-07 §30](journal/2026-10-07.md).
 - **2026-10-09 (116차 후반 · win · 낮~저녁)** — bin111~124 · diff 뷰어 결함 일괄 · 툴바/상태바 메뉴 위치·토글(우클릭·좌클릭·툴바 ▾) · 🔧 행 수 0 중지 뒤 재조회 200행(`run_page_rows` + E2E 11) · ★ 자동완성 보완(자료형·사용자 타입 종류 지정 적재·사용자 함수·별칭 불허·COLLATE·PG 달러 본문·%TYPE) · ★ 결과 점진 표시 증분 기본("결과 조회" 설정 그룹 · Batch append · Done 뒤 자동 이어 받기) · ★ 자연 정렬 전 영역(nexa-ctl `natural` · `ui.sort_natural`) · 사용자 실기 전부 ✓ · CI 전부 ✓(nexa-ui f74dcfa 포함).
 - **2026-10-09 (116차 · win · 새벽)** — bin101~110 · T-313 ②~⑥ ✅(레지스트리 · 다시 연결 · 워머 정지 · netwatch) · 클릭 = 놓을 때 · 우클릭 메뉴 배타 설정 · 최소 높이 설정 · 탭 여백 40% · 중지 지연 실측 3-DBMS + 두 번째 ■ 강제 중지 · ★ T-283 2단계 diff 뷰어 + 비교 탭 회귀 수정 · T-296 판단 · T-182 CLOB = 구현됨(⑬ 검증) · 원장 = 코드 누락 push·빌드 실패 push·실행 중 스크립트 수정 3건 · CI 전부 ✓.

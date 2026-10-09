@@ -2,7 +2,11 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(§30 = 🚀 v0.1.7 릴리스 10-09 10:27 UTC · bin111~124 = 116차 후반 · 열린 작업 0 · 사용자 실기 전부 ✓ · 대기 = winget/choco 재개 시점 · T-318) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+
+## 2026-10-09 밤 (🚀 **v0.1.8 릴리스** · 패치 · [journal 10-07 §31~§32](journal/2026-10-07.md))
+
+- ★ 전용 세션(편집기 `CONNECT` 문) 자동 재접속 결함 수정(1e624fd · 재접속 원천 = `Runner::connected_to` + 금고 인출 · Debug 훅 `sess.kill` + `win-reconnect-e2e.sh` 8/0 · 실서버 BISCM recall(hit) 1) · 버전 커밋 8c3e6fc · 태그 v0.1.8 · release.yml 37936923843 ✓ · 자산 6 · 공개 13:41:03 UTC · Latest · 풀 테스트 V2 853/0 · V3 실패 0 · Homebrew 73db4d6 · pkg.sosomlab.com 0.1.8(자동) · winget·choco 제외 유지.
 
 ## 2026-10-09 저녁 (🚀 **v0.1.7 릴리스** · [journal 10-07 §30](journal/2026-10-07.md))
 
