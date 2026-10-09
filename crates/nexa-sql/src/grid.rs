@@ -860,6 +860,12 @@ impl Grid {
         self.page_rows
     }
 
+    /// 이 탭의 세그먼트 크기(푸터 입력란 Enter와 같은 길 · 기동 명령 `grid.page:<n>`).
+    pub(crate) fn set_page_rows(&mut self, n: usize) {
+        self.page_rows = n;
+        self.page_box.set_text(&n.to_string());
+    }
+
     /// 전역 기본(`grid.max_rows`) 변경 — 모든 결과 탭에 적용(탭에서 바꾼 값은 다음 변경 전까지 유지되지 않는다).
     pub(crate) fn set_default_page_rows(&mut self, n: usize) {
         self.default_page_rows = n;
