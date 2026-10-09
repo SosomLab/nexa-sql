@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(§24~§28 = 116차 10-08 낮~10-09 새벽 · 끝 = §28 bin110 · 대기 = grid-edit E2E ⑬ → bin111 비교 탭 V1 · 사용자 실기 7건 · 중지 지연 프로시저 꼴) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(bin111~124 = 116차 후반 10-09 낮~저녁 · 끝 = bin124 자동완성 한계 보완 · 열린 작업 0 · 사용자 실기 전부 ✓) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
 
 ## 2026-10-09 (116차 · **win** · 10-08 낮 ~ 10-09 새벽 · [journal 10-07 §24~§28](journal/2026-10-07.md))
 
@@ -14,6 +14,18 @@
 - ★ **중지 지연 실측 3-DBMS**(`win-stop-latency-e2e.sh` · `log.dump_t` · 44 §6) = Oracle 19/28/45 ms · PG 442/78/112 · SQL Server 25/5/14(소켓 닫기 경로) · `WHEN OTHERS`는 취소를 막지 않음 · 사용자 5~10 s 미재현 → **두 번째 ■ 강제 중지**(`run.force_stop_secs` 3 · `DiscPath::ForceStop` · 시험 훅 `run.stop_mute` · 협업 V1 ✓).
 - ★ **T-283 2단계 2-pane diff 뷰어**(nexa-ctl `diff::align/hunks` + TextBox 줄 색조·스크롤 동기 · `diff_view.rs` · `compare.view` · 팔레트 다음/이전 변경) · 🔧 **비교 탭 회귀**(10-07 저녁 뷰 탭 자동 닫기가 `compare:*`까지 닫음 → `ext:`만 · a145717) · T-296 판단 = 통합 안 함 · T-182 CLOB 커밋 = 이미 구현(실서버 ⑬ 40,000자 검증 중) · examples/lob(협업).
 - 남은 것 = 협업 grid-edit E2E ⑬ 결과 → bin111(a145717) V1(비교 탭 ①~⑧) → 문서 · 사용자 = 어제 프로시저 꼴(중지 지연) · 실기(배타 두 설정 · 놓을 때 · Ctrl 링크 · VPN 토글 · 최소 높이 · ■■ · 나란히 보기) · T-294 콜드 측정 · 남은 구현 = T-298 부분 다시 그리기 · T-291/292 · T-182 잔여(큰 파일 모드 · 페인트 예산 · `Caps.returning`) · T-283 F7 키맵 · mac/Linux `netwatch`.
+
+## 2026-10-09 (116차 후반 · **win** · 낮 ~ 저녁 · [journal 10-07](journal/2026-10-07.md) bin111~124)
+
+- push 전부 **CI ✓**(05ffd38 → d451eac · nexa-ui f74dcfa) · 협업 쌍 운영 bin111~124 · 사용자 실기 전부 ✓ · 작업 트리 clean.
+- ★ **T-283 2단계 diff 뷰어 결함 일괄**(05ffd38 · 261839a · 색 = 편집기에만 초록/서버에만 빨강 · 라벨 줄 · 원문 표시·정규화 비교 · `compare.canon` · 상세 없는 뷰 탭 = 읽기 전용 편집기 경로 `ext_view_active`).
+- ★ **툴바·상태바 우클릭 메뉴 = 마우스 위치 좌상단**(1be82e1 `open_at`) · **토글**(9effd5b 같은 띠 우클릭 = 닫기 · 5fda818 좌클릭 항목 메뉴 열린 채 우클릭 = 통과 규칙) · **상태바 항목 좌클릭 토글**(65eab8d) · **툴바 서버·DB/스키마 ▾ 토글**(d07478a `badge_menu_tool`) · 61 §2-2-b 11항.
+- 🔧 **행 수 0 → 중지 → 재조회 200행**(c30a777 · 뿌리 = 중지 오류가 Output 탭을 활성화 → 재실행이 활성(자리표시) 그리드의 200을 보냄 → `App::run_page_rows(tab)` = 결과가 갈 탭의 값 · 회귀 E2E `win-maxrows-stop-e2e.sh` 11/11 · 훅 `grid.page:<n>`).
+- ★ **자동완성 보완**(db5338a · d6f3f3b · d437361 · 3af0764 · [76 §17~18](76-intellisense-and-outline.md)) = DBMS별 내장 자료형(`builtins::types` · `Want::DataType` · 순수 `type_at` ①~⑩ · `intel.types`) · 사용자 정의 타입(메타 `Type` 버킷 · **종류 지정 적재** `request_object_kind` = ALTER TABLE 팝업 선택 불가의 뿌리) · 식 자리 사용자 함수·패키지 · **자동 별칭 불허 자리**(`Context::alias_ok` · ALTER TABLE/CREATE INDEX ON/INSERT INTO/SQL Server UPDATE·DELETE) · **COLLATE** 예약어 + 정렬 이름 표(SQL Server 24 · PG 13 · MySQL 14 · Oracle 11) · **PG 달러 본문 안 완성**(`dollar_body_at` · 본문 = 한 문장 재분석) · **`이름%` → TYPE/ROWTYPE**.
+- ★ **결과 점진 표시 = 증분 기본**(65eab8d · 352123b · [43 §4-3b](43-fetch-model-and-result-tabs.md) · 설정 분류 **결과 조회** `grid.fetch_display` incremental|whole + 페치 키 6 이동) = 행 수 0 실행 = 첫 세그먼트(`db.fetch_size`) 즉시 표시 → Done 뒤 자동 이어 받기(`arm_auto_fetch_all` · 세션 가드 뒤) → 배치마다 `ConnOutcome::Batch` append(`fetch_all_with` 싱크 · `Grid::append_live` · 열 너비 = 첫 세그먼트 · 정렬·필터 재투영 · ■·진행률·예산 = 배치 경계 · 협업 실측 = 30만 행 증가 표시 · ■ 39 ms) · 이어 받기 ■ = `more=true` 유지(43 T-48b) · 실행 ■ = 부분 결과 · 훅 `grid.fetch_all`/`grid.sort:<열>`.
+- ★ **자연 정렬 전 영역**(nexa-ui f74dcfa `nexa_ctl::natural` = dir3 `cmp_natural` 이식 · 5fda818 · 9484472) = 전역 `ui.sort_natural`(설정 ▸ 모양 · 기본 켬 · 영역별 설정 없음 = 그리드 "예외" 철회 · 61 §2-2-b 12항) · 그리드 글자 열 · 객체 탐색기(`sort_kids_natural` = 전체·디프 자식) · 프로젝트 · 북마크 · 로그인 목록 · 팔레트 동점 · 30 §2 부품 · 미적용 = 자동완성 후보(점수 우선) · 아웃라인 · 값 목록.
+- 📐 **타 도구 비교·권장안 보고**(점진 표시 · 정렬 전역 vs 영역별 — 사용자 검토로 설계 수정 = 102 §12 원장) · 102 원장 추가 = 빌드 요청 뒤 손 뗌(d6f3f3b 중 d437361 커밋 → E0425) · 적재 단위 = 소비 종류 · 자동 후속 요청은 Done 뒤 거둠 · 범례와 색 매핑 한 자리 · 그리기 분기 = 입력 분기 같은 판정 · V1은 새 홈·직접 만든 재현 데이터.
+- 남은 것 = 사용자 지시 대기(열린 작업 0) · 남은 구현 후보 = T-283 F7/Shift+F7 키맵 · T-298 부분 다시 그리기 · T-291/292 · T-182 잔여(값 창 큰 파일 모드 · 페인트 예산 · `Caps.returning`) · mac/Linux `netwatch` · T-294 콜드 측정 · 자동 확정 훅 `intel.accept:<n>`(별칭 자동 시험용 · 협업 제안).
 
 ## 2026-10-08 🚀 **v0.1.6 릴리스**(win · [journal 10-07 §23](journal/2026-10-07.md))
 
