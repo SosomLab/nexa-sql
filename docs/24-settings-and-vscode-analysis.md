@@ -113,6 +113,7 @@
 - ★ **우클릭 메뉴 영역 간 배타(10-09 · beefed8 · af9a280)**: `ui.ctxmenu_exclusive`(켬 · 열린 메뉴 밖 좌/우 클릭·안 쓰는 키 = 닫기 · 끔 = 종전) · `ui.ctxmenu_passthrough`(켬 = 닫는 클릭이 바로 동작 · 끔 = 닫기만) · 61 §2-2-b 10항.
 - ★ **CREATE 문 ↔ 실제 객체 비교(10-09 · T-283 2단계)**: `compare.view`(diff = 나란히 보기 · inline = 1단계 거터 표식 탭) · `compare.canon`(켬 · EDITIONABLE/NONEDITIONABLE·따옴표 식별자 차이 무시 · 설정 ▸ 편집기) · 기존 `compare.ignore_ws` · 19 §6-2.
 - ★ **자동완성 내장 자료형 `intel.types`(10-09 · db5338a · 기본 켬)**: 자료형 자리에서 방언의 내장 자료형을 꼴과 함께 · 끄면 내장만 빠지고 서버의 사용자 정의 타입은 그대로 · 76 §17.
+- ★ **결과 조회 분류 `CatFetch` · 점진 표시 `grid.fetch_display`(10-09 · 65eab8d · 352123b)**: `incremental`(기본 · 첫 세그먼트를 바로 보이고 나머지는 배치마다 이어 붙임 · 행 수 0이면 실행 뒤 전체 조회 자동) | `whole`(종전 · 다 받은 뒤 한 번에) · 같은 분류로 옮긴 키 = `grid.max_rows` · `grid.auto_fetch` · `grid.memory_budget_mb` · `grid.fetch_mode` · `db.fetch_size` · `db.fetch_all_size` · 설계 = [43 §4-3b](43-fetch-model-and-result-tabs.md).
 - ★ **서버 연결 끊김(T-313 · 10-08~09)**: `net.notify_quiet_secs`(60 · 같은 끝점 끊김 토스트 억제 창) · `net.watch`(켬 · OS 네트워크 변경 감시 · Windows · 다음 시작부터) · HIDDEN `meta.call_timeout_secs`(0 = `explorer.timeout`) · 107.
 
 ### 3-2. 남은 것

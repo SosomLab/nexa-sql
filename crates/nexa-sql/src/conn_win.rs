@@ -233,7 +233,7 @@ fn sort_shown(
                 (true, true) => Ordering::Equal,
                 (true, false) => Ordering::Greater,
                 (false, true) => Ordering::Less,
-                _ => ka.cmp(&kb),
+                _ => nexa_ctl::natural::cmp_names(&ka, &kb),
             };
             if o != Ordering::Equal {
                 return if *asc { o } else { o.reverse() };

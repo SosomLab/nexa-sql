@@ -651,8 +651,9 @@ impl Palette {
                 scored.truncate(TOP_K);
             }
             scored.sort_by(|a, b| {
-                b.0.cmp(&a.0)
-                    .then_with(|| src.items[a.1].1.cmp(&src.items[b.1].1))
+                b.0.cmp(&a.0).then_with(|| {
+                    nexa_ctl::natural::cmp_names(&src.items[a.1].1, &src.items[b.1].1)
+                })
             });
             scored.into_iter().map(|(_, i)| i).collect()
         };

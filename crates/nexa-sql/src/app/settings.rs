@@ -357,6 +357,12 @@ impl App {
             | "ui.busy_ring_hold_ms"
             | "ui.busy_ring_done_ms" => self.apply_busy_style(),
             "ui.tooltip_above" => nexa_ctl::set_tooltip_above(self.settings.flag(key)),
+            // ★ 자연 정렬 전역 스위치(10-09): 걸린 그리드 정렬은 바로 다시 · 트리·목록은 다음 읽기 때.
+            "ui.sort_natural" => {
+                nexa_ctl::natural::set_enabled(self.settings.flag(key));
+                self.all_grids().for_each(|g| g.resort());
+                self.project_panel.refresh();
+            }
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
             "ui.toast_ms" | "ui.toast_alpha" => {
                 self.toasts.configure(
@@ -1225,6 +1231,7 @@ impl App {
     ///   툴팁 기본 자리(`ui.tooltip_above`)도 여기서 같이 전역에(시작 때 한 번).
     pub(crate) fn apply_busy_style(&mut self) {
         nexa_ctl::set_tooltip_above(self.settings.flag("ui.tooltip_above"));
+        nexa_ctl::natural::set_enabled(self.settings.flag("ui.sort_natural"));
         let color = self
             .settings
             .get("ui.busy_ring_color")

@@ -178,6 +178,19 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 - 설정(REGISTRY · 라벨 = Msg): `grid.result_tabs`(on) · `grid.result_tabbar`(auto|always) · `grid.result_tab_evict`(on) · `grid.max_rows`(있음 · 200) · `grid.fetch_mode`(cursor|offset|off) · `grid.auto_fetch`(on) · `grid.fetch_all_max`(0) · `grid.memory_budget_mb`(256) · `grid.result_tabs_max`(8) · `grid.offset_warn`(on) · `grid.script_results_tabs`(off) · `db.fetch_size`(200 · HIDDEN) · `cli.max_rows`(200) · `cli.auto_more`(off).
 - 문구: 상태 `StRowsMore` 갱신(`처음 {0}행 · 더 있음 · {1}s`) · 예산 안내 · 정렬 없는 재질의 경고 · 탭 이름 등 — 전부 `Msg`.
 
+### 4-3b. 결과 점진 표시 — 증분 기본(10-09 · 65eab8d · 352123b)
+
+- **사용자 요구(10-09)** = "결과가 조회 가능한 시점에 바로 화면에 append" · "최초 조회 건수 표시 후 전체/증분 중 증분 기본 · 설정 그룹".
+- **설정** `grid.fetch_display` = `incremental`(기본) | `whole`. 설정 분류 **결과 조회**(`CatFetch`)에 `grid.max_rows`·`grid.auto_fetch`·`grid.memory_budget_mb`·`grid.fetch_mode`·`db.fetch_size`·`db.fetch_all_size`와 함께 모았다.
+- **러너** `Runner::fetch_all_with(h, budget, on_batch)` = 배치마다 싱크(러너가 모으지 않음 · 메모리 = 배치 하나). `fetch_all`은 이것을 모아 주는 꼴.
+- **워커** `ConnOutcome::Batch{key, rs, rows, bytes}` = 전체 조회(커서 이어 받기 · 재실행 건너뛰기)의 배치마다 바로 전송 · 마지막 `Page{all}`는 빈 행. 엄격 교체·OFFSET 경로는 종전(한 번에).
+- **호스트** `Grid::append_live` = 진행·■ 상태 유지 · 열 너비 = 첫 세그먼트 · 정렬·필터 재투영(이어 붙어도 정렬 유지) · 빈 세그먼트 보호(`push_segment` 공용) · 상태줄 "지금까지 N행 · MB" · 실행 카드 진행.
+- **행 수 0(전체) + incremental** = 첫 세그먼트 `db.fetch_size`만 받아 바로 보이고, 실행이 끝나면(Done · 오류 아님) ⇊와 같은 길로 나머지를 자동으로 이어 받는다 → ■·진행률·예산이 배치 경계에서 동작(종전 행 수 0 = 드라이버 한 호출로 전부 = 진행률·배치 중지·예산 없음 · 300만 행 70 s).
+- **bin119 결함 → 352123b**: 결과 도착(Rows) 시점은 실행이 아직 busy라 `Grid::request_fetch_all`의 `session_blocked` 가드가 자동 요청을 버려 첫 200행에서 멈췄다(3-DBMS 공통 · maxrows-stop 5/11). 수정 = 결과 도착 = 예약(`arm_auto_fetch_all`) → Done 뒤 거두어 `request_fetch_all_force`(세션 가드 없이 · 문지기는 제출 때) · 새 결과(`set_result`)는 예약 비움.
+- **중지 뒤 상태**(§3-5 T-48b 규칙 그대로 · 개발 세션 확인 10-09): **실행 자체의 ■** = 부분 결과 · more=false · **이어 받기(⇊·자동 전체 조회)의 ■** = 받은 행까지 남김("가져오기 중지 - N행까지 남김") + **more=true 유지**(남은 것이 늘 연속된 앞부분이라 ⇊로 이어 받을 수 있음). 증분 표시의 ■는 첫 세그먼트 뒤 이어 받기 구간에 걸리므로 more=true.
+- **자체 시험 훅** `grid.fetch_all`(⇊) · `grid.sort:<열>`(열 머리 토글).
+- **협업 V1 bin120(10-09 · Release · BISCM)**: 30만 행 = +1.5 s 85,200 → +3 s 185,200 → +5 s 300,000 · more=false ✓ · 300만 행 3 s 뒤 ■ = 취소 요청 뒤 39 ms에 중지 · 190,200행 남김 ✓ · 첫 세그먼트 뒤 정렬(내림차순) = 배치가 붙은 뒤에도 유지 ✓ · 행 수 200 → ⇊ = +1.2 s 80,200 → +8.7 s 300,000 ✓ · SQL Server(M4PLAN) 행 수 0(OFFSET 경로) = 20,000 한 번에 more=false ✓ · `whole` = 종전 동작 ✓ · 회귀 maxrows-stop 11/11 · output-result 5/0 · grid-edit SQLite 46/0 ✓.
+
 ## 5. 설계 — CLI(`nsql shell`)
 
 - **shell만 상한**(D-68): `cli.max_rows`(200) · `set max_rows N` · `show`에 표시. `nsql run`/`export`/`-o`/파이프는 무제한(`--max-rows`를 주면 그 값 — 종전).

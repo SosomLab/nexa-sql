@@ -2156,7 +2156,7 @@ fn search_hits(
 ) -> Vec<(String, ObjectKind, String)> {
     let mut out = Vec::new();
     let mut schemas: Vec<&String> = names.keys().collect();
-    schemas.sort();
+    schemas.sort_by(|a, b| nexa_ctl::natural::cmp_names(a, b));
     'outer: for sc in schemas {
         for e in &names[sc] {
             let kind = format!("{:?}", e.kind).to_lowercase();
@@ -5565,7 +5565,7 @@ impl Explorer {
             .into_iter()
             .map(|h| names.get(h.name).to_string())
             .collect();
-        v.sort_by_key(|a| a.to_lowercase());
+        v.sort_by(|a, b| nexa_ctl::natural::cmp_names(a, b));
         v
     }
 
@@ -7081,7 +7081,8 @@ impl Explorer {
                     NodeKind::Object(o) => o.name.as_str(),
                     _ => "",
                 };
-                na.cmp(nb)
+                // 자연 정렬 부품(전역 `ui.sort_natural` · 사용자 10-09): `M4E_I30102 < M4E_I301010`.
+                nexa_ctl::natural::cmp_names(na, nb)
             });
             self.nodes[fi].children = kids;
         }

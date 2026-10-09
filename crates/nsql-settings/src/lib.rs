@@ -2466,6 +2466,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 자연 정렬(사용자 10-09 · 전역 하나 = 그리드 글자 열 · 객체/프로젝트/북마크 트리 · 접속 창 · 팔레트 동점 · nexa-ctl `natural`).
+    Entry {
+        key: "ui.sort_natural",
+        cat: Msg::CatAppearance,
+        label: Msg::LblSortNatural,
+        desc: Msg::DescSortNatural,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.busy_ring",
         cat: Msg::CatAppearance,

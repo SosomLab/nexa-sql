@@ -773,7 +773,9 @@ fn cmp_value(a: &Value, b: &Value) -> std::cmp::Ordering {
         (_, Value::Null) => Ordering::Less,
         _ => match (num(a), num(b)) {
             (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
-            _ => a.display().to_lowercase().cmp(&b.display().to_lowercase()),
+            // ★ 글자 값 = 자연 정렬 부품(nexa-ctl `natural::cmp_names` · 전역 `ui.sort_natural` · 사용자 10-09): 켜짐 = 숫자 구간은 수로
+            //   (`ITEM2 < ITEM10`) · 꺼짐 = 대소문자 무시 글자 순(종전).
+            _ => nexa_ctl::natural::cmp_names(&a.display(), &b.display()),
         },
     }
 }
@@ -5351,6 +5353,13 @@ impl Grid {
     }
 
     /// 결합 정렬 적용(인덱스 벡터만 재배열 · 안정 정렬이라 같은 값은 원본 순서).
+    /// 정렬 규칙이 바뀌었을 때(설정 `ui.sort_natural`) 걸린 정렬을 다시 적용.
+    pub(crate) fn resort(&mut self) {
+        if !self.sort_keys.is_empty() || !self.filters.is_empty() {
+            self.apply_sort();
+        }
+    }
+
     fn apply_sort(&mut self) {
         // 편집 중(변경 집합이 비어 있지 않음)에는 정렬하지 않는다 — 추가 행의 자리를 잃는다(87 §3).
         //   필터는 기존 행에 그대로 건다(사용자 09-29 "정규식과 다른 행이 보인다" = 편집 중이라 투영을 건너뛰던 결함) ·
@@ -10001,6 +10010,57 @@ mod tests {
         assert_eq!(g.sort_keys, vec![(0, false), (1, true)]);
         click(&mut g, 80, false);
         assert_eq!(g.sort_keys, vec![(0, true)], "일반 클릭 = 단일 키로");
+    }
+
+    /// ★ 자연 정렬(사용자 10-09 · 전역 `ui.sort_natural` = nexa-ctl `natural`): 글자 열은 숫자 구간을 수로(`ITEM2 < ITEM10`) · 끄면 글자 순 ·
+    /// 숫자형 열은 어느 쪽이든 수 비교 · NULL은 늘 뒤 · `resort`가 걸린 정렬을 새 규칙으로 다시 적용.
+    #[test]
+    fn natural_sort_on_text_columns_follows_global_switch() {
+        let mut g = Grid::default();
+        let rs = ResultSet {
+            columns: vec![
+                Column {
+                    name: "CODE".into(),
+                    type_name: "VARCHAR2(10)".into(),
+                },
+                Column {
+                    name: "N".into(),
+                    type_name: "NUMBER".into(),
+                },
+            ],
+            rows: vec![
+                vec![Value::Str("ITEM10".into()), Value::Int(10)],
+                vec![Value::Str("ITEM2".into()), Value::Int(2)],
+                vec![Value::Null, Value::Null],
+                vec![Value::Str("item3".into()), Value::Int(3)],
+            ],
+        };
+        g.set_result(rs);
+        let codes = |g: &Grid| -> Vec<String> {
+            let rs = g.rs.as_ref().expect("result");
+            (0..g.rows())
+                .map(|di| match rs.cell(g.row_order[di], 0) {
+                    Value::Null => "NULL".to_string(),
+                    v => v.display(),
+                })
+                .collect()
+        };
+        nexa_ctl::natural::set_enabled(true);
+        g.toggle_sort(0, false);
+        assert_eq!(
+            codes(&g),
+            ["ITEM2", "item3", "ITEM10", "NULL"],
+            "자연 정렬 · NULL 뒤"
+        );
+        nexa_ctl::natural::set_enabled(false);
+        g.resort();
+        assert_eq!(codes(&g), ["ITEM10", "ITEM2", "item3", "NULL"], "글자 순");
+        nexa_ctl::natural::set_enabled(true);
+        g.resort();
+        assert_eq!(codes(&g), ["ITEM2", "item3", "ITEM10", "NULL"]);
+        // 숫자형 열은 규칙과 무관하게 수 비교.
+        g.toggle_sort(1, false);
+        assert_eq!(codes(&g), ["ITEM2", "item3", "ITEM10", "NULL"]);
     }
 }
 

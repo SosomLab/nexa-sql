@@ -400,7 +400,7 @@ impl BookmarksPanel {
                     None => docs.push((b.doc.clone(), name, vec![b.clone()])),
                 }
             }
-            docs.sort_by_key(|d| d.1.to_lowercase());
+            docs.sort_by(|x, y| nexa_ctl::natural::cmp_names(&x.1, &y.1));
             let count: usize = docs.iter().map(|d| d.2.len()).sum();
             if count == 0 && filtering {
                 continue;

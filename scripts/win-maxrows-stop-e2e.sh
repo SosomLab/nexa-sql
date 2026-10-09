@@ -30,8 +30,8 @@ WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n < 4000),
  w(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM w WHERE n < 12000)
 SELECT c.n, (SELECT sum(w.n) FROM w WHERE w.n > c.n % 7) AS s FROM c;
 EOF
-  local hook=""; [ -n "$pg" ] && hook="@after:1200:grid.page:$pg,"
-  local cmd="@connected:open:$(w "$OUT/$name.sql"),${hook}@after:1500:run.all,@after:2300:run.stop,@after:7000:grid.dump:$(w "$OUT/$name.d1"),@after:8000:run.all,@after:30000:grid.dump:$(w "$OUT/$name.d2"),@after:30100:result.dump:$(w "$OUT/$name.r2"),@after:30300:log.dump:$(w "$OUT/$name.log")"
+  local hook=""; [ -n "$pg" ] && hook="@after:1500:grid.page:$pg,"
+  local cmd="@connected:open:$(w "$OUT/$name.sql"),${hook}@after:1800:run.all,@after:2600:run.stop,@after:7000:grid.dump:$(w "$OUT/$name.d1"),@after:8000:run.all,@after:30000:grid.dump:$(w "$OUT/$name.d2"),@after:30100:result.dump:$(w "$OUT/$name.r2"),@after:30300:log.dump:$(w "$OUT/$name.log")"
   rm -f "$OUT/$name.d1" "$OUT/$name.d2"
   NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 40 "$EXE" Local > "$OUT/$name.stdout" 2> "$OUT/$name.stderr"
 }

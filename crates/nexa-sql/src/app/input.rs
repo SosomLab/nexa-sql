@@ -332,7 +332,10 @@ impl App {
         // ★ 툴바·상태바 우클릭 메뉴 = 토글(사용자 10-09 "한 번 클릭하면 펼쳐지고 한 번 더 누르면 닫히도록"): 그 띠의 메뉴가 열린
         //   채 **같은 띠**를 다시 우클릭하면 닫기만(배타·통과 규칙보다 먼저 — 통과가 켜져 있으면 닫힌 자리에 바로 다시 열렸다).
         if let InputEvent::RightDown { x, y } = ev {
+            // 좌클릭 항목 메뉴(`status_menu_item` 있음)가 열린 채의 우클릭은 토글이 아니라 종전 배타·통과 규칙(통과 켬 = 다른 항목의
+            //   우클릭 메뉴가 바로 뜬다 · 사용자 10-09 "탭: 4 메뉴 열린 채 UTF-8 우클릭 = 바로 떠야").
             if self.status_menu.is_open()
+                && self.status_menu_item.is_none()
                 && self.toolbar_band_at(Point { x, y }) == self.status_menu_band
             {
                 self.status_menu.close();

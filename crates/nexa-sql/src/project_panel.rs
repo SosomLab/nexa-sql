@@ -1027,7 +1027,7 @@ impl ProjectPanel {
                 entries.sort_by(|a, b| {
                     b.is_dir
                         .cmp(&a.is_dir)
-                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        .then_with(|| nexa_ctl::natural::cmp_names(&a.name, &b.name))
                 });
                 let mut kids = Vec::with_capacity(entries.len());
                 for e in entries {
@@ -1375,10 +1375,7 @@ impl ProjectPanel {
                     .is_dir
                     .cmp(&self.nodes[a].is_dir)
                     .then_with(|| {
-                        self.nodes[a]
-                            .name
-                            .to_lowercase()
-                            .cmp(&self.nodes[b].name.to_lowercase())
+                        nexa_ctl::natural::cmp_names(&self.nodes[a].name, &self.nodes[b].name)
                     })
             });
             self.nodes[cur].children = kids;
