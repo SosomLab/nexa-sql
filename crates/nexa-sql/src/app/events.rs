@@ -351,6 +351,27 @@ impl App {
                     self.sess.status = line;
                     self.redraw();
                 }
+                // ★ 증분 표시(사용자 10-09): 배치를 바로 이어 붙인다(진행·■ 상태는 유지 · 열 너비는 첫 세그먼트 기준 · 정렬·필터는 재투영).
+                ConnOutcome::Batch {
+                    key,
+                    rs,
+                    rows,
+                    bytes,
+                } => {
+                    let n = rs.rows.len();
+                    if let Some(g) = self.grid_for(key) {
+                        g.append_live(rs);
+                        g.set_fetch_progress(rows, bytes);
+                    }
+                    if n > 0 {
+                        self.run_toast.progress(self.sess.run_card, rows, bytes);
+                        self.sess.status = tf(
+                            Msg::StFetchLive,
+                            &[&rows.to_string(), &nsql_core::fmt_bytes(bytes)],
+                        );
+                    }
+                    self.redraw();
+                }
                 ConnOutcome::FetchProgress { key, rows, bytes } => {
                     if let Some(g) = self.grid_for(key) {
                         g.set_fetch_progress(rows, bytes);
@@ -1017,12 +1038,18 @@ impl App {
                     //   일괄로 넣어, 뒤이어 다른 방언으로 `CONNECT`하면 옛 결과 그리드의 방언까지 덮어써졌다 → Oracle 결과에
                     //   SQL Server 문법(`[열]`)으로 UPDATE를 만들어 ORA-00936. 결과의 방언은 결과의 속성이다 · DR-33).
                     let dial = self.sess.dialect;
+                    // ★ 증분 표시(사용자 10-09): 탭의 행 수가 0(전체)이고 더 있으면 첫 세그먼트를 보인 채 **나머지를 자동으로 이어 받는다**
+                    //   (⇊와 같은 길 · 배치마다 `Batch` · ■/진행률/예산은 배치 경계) — `whole`이면 종전대로(드라이버가 전부 읽은 뒤 표시).
+                    let live = self.settings.get("grid.fetch_display") != Some("whole");
                     if let Some(g) = self.grid_for(k) {
                         g.set_result(rs);
                         g.set_dialect(dial);
                         g.set_more(more);
                         if let Some(s) = stmt.as_deref() {
                             g.set_result_origin(s, is_query);
+                        }
+                        if live && more && g.page_rows() == 0 && is_query {
+                            g.request_fetch_all();
                         }
                     }
                     // 외래 키 열 표시(T-180 ⑥) — 활성 그리드 기준(다른 탭의 결과면 탭 전환 때 drain이 다시 맞춘다).

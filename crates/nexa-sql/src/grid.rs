@@ -932,7 +932,7 @@ impl Grid {
 
     /// 전체 조회 요청(도구줄 ⇊ · 09-17 "나머지 이어 받기"): 더 있을 때만 · 자동 페치가 나가 있으면 **큐에 두었다가** 그 세그먼트가
     /// 붙은 뒤 정확한 offset으로 보낸다([`Self::take_fetch_request`]) — 종전엔 교체라 늦은 세그먼트를 버렸다.
-    fn request_fetch_all(&mut self) {
+    pub(crate) fn request_fetch_all(&mut self) {
         if self.session_blocked || self.fetch_all_pending || self.rs.is_none() || !self.more {
             return;
         }
@@ -2663,9 +2663,30 @@ impl Grid {
                 self.status(tf(Msg::StFilterFillStopped, &[&n]));
             }
         }
+        self.push_segment(page);
+        // 로컬 채움 연쇄(T-285 · D-258): 아직 상한 안이고 화면이 덜 찼으면 다음 페이지를 바로(이벤트 없이 · 협업 bin49 b1).
+        if !self.filters.is_empty() && more && self.fill_pages_left > 0 {
+            self.clamp();
+        }
+    }
+
+    /// ★ 증분 표시 배치(사용자 10-09): 진행·■ 상태(`fetch_all_pending`)는 **그대로** 두고 행만 이어 붙인다 — 열 너비는 첫 세그먼트 기준
+    /// (늦게 온 긴 값에 흔들리지 않음) · 정렬·필터가 있으면 새 행만 재투영 · 마지막 빈 `append_all`이 상태를 닫는다.
+    pub(crate) fn append_live(&mut self, page: ResultSet) {
+        if page.rows.is_empty() || self.rs.is_none() {
+            return;
+        }
+        self.push_segment(page);
+    }
+
+    /// 세그먼트 덧붙이기(복사 0 · DR-33 · 빈 세그먼트는 넣지 않음) + 정렬·필터 재투영 + 텍스트 보기 재파생.
+    fn push_segment(&mut self, page: ResultSet) {
         let Some(rs) = self.rs.as_mut() else {
             return;
         };
+        if page.rows.is_empty() {
+            return;
+        }
         let start = rs.len();
         // 세그먼트 덧붙이기 = 이동(복사 0 · DR-33) — 변환 스레드가 옛 세그먼트를 공유 중이어도 서로 간섭 없음.
         rs.push(page);
@@ -2674,10 +2695,6 @@ impl Grid {
         // 정렬 **또는 필터**가 있으면 새 행에 다시 투영(필터만 있을 때 새 페이지가 걸러지지 않던 결함 · 사용자 09-29).
         if !self.sort_keys.is_empty() || !self.filters.is_empty() {
             self.apply_sort();
-        }
-        // 로컬 채움 연쇄(T-285 · D-258): 아직 상한 안이고 화면이 덜 찼으면 다음 페이지를 바로(이벤트 없이 · 협업 bin49 b1).
-        if !self.filters.is_empty() && more && self.fill_pages_left > 0 {
-            self.clamp();
         }
         self.perf_report = true;
         if self.view != ResultView::Grid {
@@ -9568,6 +9585,18 @@ mod tests {
             (false, true),
             "나가 있는 동안 = ■만"
         );
+        // ★ 증분 표시(사용자 10-09): 배치는 진행·■ 상태를 **유지한 채** 행만 이어 붙는다 · 빈 배치는 무시 · 열 수 그대로.
+        g.append_live(ResultSet {
+            columns: vec![],
+            rows: vec![vec![Value::Int(5)], vec![Value::Int(6)]],
+        });
+        g.append_live(ResultSet {
+            columns: vec![],
+            rows: vec![],
+        });
+        assert_eq!(g.rows(), 3, "배치 2행 이어 붙음 · 빈 배치 무시");
+        assert!(g.fetch_all_active(), "배치 뒤에도 전체 조회 진행 중");
+        assert_eq!(g.fetch_tools_enabled(), (false, true), "배치 중에도 ■만");
         g.cancel_req = true;
         // 완료(나머지 도착 · 이어 붙임) — 늦게 눌린 취소 요청도 함께 버린다 · 스크롤은 그대로.
         g.scroll_y = 40;
@@ -9578,7 +9607,7 @@ mod tests {
             },
             false,
         );
-        assert_eq!((g.rows(), g.scroll_y), (2, 40), "이어 붙고 위치 유지");
+        assert_eq!((g.rows(), g.scroll_y), (4, 40), "이어 붙고 위치 유지");
         assert_eq!(
             g.fetch_tools_enabled(),
             (false, false),
@@ -9613,7 +9642,7 @@ mod tests {
             },
             true,
         );
-        assert_eq!(g.rows(), 3, "늦은 세그먼트를 버리지 않는다");
+        assert_eq!(g.rows(), 5, "늦은 세그먼트를 버리지 않는다");
         assert_eq!(g.take_fetch_request(), Some(FetchReq::All));
         // 큐에만 있는 전체 조회의 중지 = 요청 취소(워커 깃발 없이).
         g.fetch_failed();

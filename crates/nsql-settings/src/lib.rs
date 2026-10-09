@@ -1748,7 +1748,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "grid.auto_fetch",
-        cat: Msg::CatGrid,
+        cat: Msg::CatFetch,
         label: Msg::LblGridAutoFetch,
         desc: Msg::DescGridAutoFetch,
         kind: SettingKind::Bool,
@@ -1771,9 +1771,19 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(REFETCH_OPTS),
         default: "strict",
     },
+    // ★ 결과 표시 방식(사용자 10-09 "최초 조회 건수 표시 후 전체 / 증분 — 증분 기본"): incremental = 첫 세그먼트를 바로 보이고 나머지는
+    //   배치마다 이어 붙임(■·진행률·예산 = 배치 경계 · 열 너비 = 첫 세그먼트) · whole = 종전(전부 받은 뒤 표시).
+    Entry {
+        key: "grid.fetch_display",
+        cat: Msg::CatFetch,
+        label: Msg::LblGridFetchDisplay,
+        desc: Msg::DescGridFetchDisplay,
+        kind: SettingKind::Choice(FETCH_DISPLAY_OPTS),
+        default: "incremental",
+    },
     Entry {
         key: "grid.max_rows",
-        cat: Msg::CatGrid,
+        cat: Msg::CatFetch,
         label: Msg::LblGridMaxRows,
         desc: Msg::DescGridMaxRows,
         kind: SettingKind::Int {
@@ -1838,7 +1848,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "grid.memory_budget_mb",
-        cat: Msg::CatGrid,
+        cat: Msg::CatFetch,
         label: Msg::LblGridMemoryBudget,
         desc: Msg::DescGridMemoryBudget,
         kind: SettingKind::Int {
@@ -6336,7 +6346,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── T-48a/T-48d 페치 모델(docs/43 §3·§5 · 09-17): 왕복당 행수 · 추가 페치 방식 · 커서 유휴 상한 · 셸 상한/자동 이어 보기.
     Entry {
         key: "db.fetch_size",
-        cat: Msg::CatSession,
+        cat: Msg::CatFetch,
         label: Msg::LblFetchSize,
         desc: Msg::DescFetchSize,
         kind: SettingKind::Int {
@@ -6347,7 +6357,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "db.fetch_all_size",
-        cat: Msg::CatSession,
+        cat: Msg::CatFetch,
         label: Msg::LblFetchAllSize,
         desc: Msg::DescFetchAllSize,
         kind: SettingKind::Int {
@@ -6358,7 +6368,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "grid.fetch_mode",
-        cat: Msg::CatGrid,
+        cat: Msg::CatFetch,
         label: Msg::LblFetchMode,
         desc: Msg::DescFetchMode,
         kind: SettingKind::Choice(FETCH_MODE_OPTS),
@@ -6720,6 +6730,11 @@ const OUTPUT_ACT_OPTS: &[(&str, Msg)] = &[
     ("no_results", Msg::ValOutputActNoResults),
     ("always", Msg::ValOutputActAlways),
 ];
+const FETCH_DISPLAY_OPTS: &[(&str, Msg)] = &[
+    ("incremental", Msg::ValFetchDisplayIncremental),
+    ("whole", Msg::ValFetchDisplayWhole),
+];
+
 const COMPARE_VIEW_OPTS: &[(&str, Msg)] = &[
     ("diff", Msg::ValCompareViewDiff),
     ("inline", Msg::ValCompareViewInline),

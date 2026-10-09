@@ -206,10 +206,16 @@ impl App {
     /// 본문 실행의 공통 경로 — 편집기 실행(`run_sql`)과 **디스크에서 바로 실행**(docs/59 §4 3단계 · 편집기에 싣지 않는다)이 같이 쓴다.
     /// ★ 실행이 서버에 보낼 세그먼트 크기 = **결과가 갈 결과 탭**의 그리드 값(탭마다 푸터 입력란 · 0 = 전체) · 탭이 없으면 활성 그리드.
     pub(crate) fn run_page_rows(&mut self, tab: u64) -> usize {
-        match self.grid_for(tab) {
+        let n = match self.grid_for(tab) {
             Some(g) => g.page_rows(),
             None => self.grid.page_rows(),
+        };
+        // ★ 증분 표시(사용자 10-09 · `grid.fetch_display = incremental` 기본): 행 수 0(전체)은 드라이버가 한 호출로 전부 읽는 대신
+        //   **첫 세그먼트(`db.fetch_size`)만** 받아 바로 보이고, 나머지는 결과 도착 때 자동으로 이어 받는다(배치마다 append · ■/진행률/예산).
+        if n == 0 && self.settings.get("grid.fetch_display") != Some("whole") {
+            return self.settings.int("db.fetch_size").max(1) as usize;
         }
+        n
     }
 
     pub(crate) fn run_text(&mut self, src: String, line_base: usize, all: bool) {

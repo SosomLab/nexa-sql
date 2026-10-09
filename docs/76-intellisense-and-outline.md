@@ -219,3 +219,17 @@
 - **★ 식 자리 사용자 정의 함수** = 현재 스키마의 함수·패키지가 접두 없이(종전 = 내장 함수만 · `스키마.` 뒤에만) · 메타 버킷이 없으면 채움 요청 + "불러오는 중"(레이어 2).
 - **실측(협업 V1 bin116 · 10-09 · 기동 명령 `editor.caret:end` · `intel.probe` · `intel.dump`)**: Oracle BISCM 자료형 자리 9곳 = 내장 44 + 스키마 28 · SQL Server M4PLAN 4곳 = 40 · PG Repository 2곳 = 60 · 반례 4 = 자료형 0 · `SELECT `·`WHERE x = ` = 사용자 함수 12(FN_BOM_KEY …) + 사용자 패키지 4(NSQL_DEMO_PKG · SP_MPS_PEGGING_PKG · SP_MRP_MAIN_PKG · SP_MRP_SNAPSHOT_PKG) · `intel.types=off` = 내장 0 · 회귀 `win-intel-args-e2e.sh` 22/0 · `win-intel-3part-e2e.sh` 7/0. BISCM에는 사용자 정의 TYPE 객체가 없어 사용자 타입 후보는 실서버 미확인(단위 시험 `data_type_position_offers_builtin_and_user_types`).
 - **한계** = PG `$$ … $$` 본문 안(문자열로 분류 · DECLARE 판정 안 됨) · Oracle `%TYPE`/`%ROWTYPE` 키워드 완성 없음.
+- **10-09 사용자 정의 타입 적재 = 종류 지정 요청**(d6f3f3b · 사용자 "SQL Server ALTER TABLE 자료형 팝업에서 ↓·클릭이 바로 풀림"): 종전 `request_objects`가 관계 넷(+루틴)만 읽어 `Type` 버킷이 영영 Missing → "객체 불러오는 중…"이 남은 채 메타가 올 때마다 팝업 재조립 = 선택 불가 → `Explorer::request_object_kind`(Missing/Stale/Names만 · SQL Server `DB.스키마` 복합 열쇠 · 회수 대상 등록) + `Intel::note_coverage_kind`/`need_kinds` → 완성이 `(스키마, 종류)`로 청함(식 자리의 Function/Package도 같은 길). 협업 V1 bin118 = M4PLAN `alter TABLE LOT_BRAND add ( c1 va` → Type 4 · 불러오는 중 0 · 1 s 간격 dump 동일 · meta Type 요청 1회 ✓.
+
+## 18. 자동 별칭 허용 자리 · COLLATE 정렬 이름(10-09 · d6f3f3b · d437361)
+
+- **자동 별칭**(사용자 "ALTER TABLE t A") = `Context::alias_ok` + 순수 `alias_allowed`(시험 `alias_allowed_rules` 23단언) · 호스트는 `alias_ok`일 때만 별칭을 붙인다.
+
+| 자리 | 별칭 | 방언 차 |
+|---|---|---|
+| FROM · JOIN · 목록 콤마 · MERGE INTO/USING | 붙임 | — |
+| UPDATE · DELETE 대상 | 붙임 | **SQL Server는 안 붙임**(T-SQL `UPDATE t SET`에 별칭 꼴이 다름) |
+| INSERT INTO · ALTER/CREATE/DROP/TRUNCATE/LOCK TABLE · CREATE INDEX … ON · GRANT … ON · COMMENT ON · DESC | 안 붙임 | — |
+
+- **COLLATE**(사용자 "COALESCE/JOIN/UNION/열 정의/WHERE의 COLLATE 예약어 및 값 유형") = `Want::Collation`(`COLLATE |` 뒤 · 식·열 정의·ORDER BY 어디서든 · 메타 없이) · 표 `builtins::collations(d)` = SQL Server 24(DATABASE_DEFAULT · Korean_Wansung_* · Korean_100_* · SQL_Latin1_General_CP1_* · Latin1_General_* …) · PG 13 · MySQL 14 · Oracle 11(BINARY_CI/AI · KOREAN_M · GENERIC_M · USING_NLS_COMP) · SQLite 3 · 한 줄 설명 · 문법 `.sqlg` 4방언 절 `next`에 COLLATE.
+- **협업 V1 bin118(10-09)**: COLLATE = SQL Server `SELECT a COLLATE `·열 정의 `COLLATE ` 24 ✓ · 열 정의 자료형 뒤 = 키워드 `COLLATE`·`COLLATE DATABASE_DEFAULT` ✓ · PG 13 ✓ · Oracle 11 ✓ · 회귀 intel-args 22/0 · intel-3part 7/0 ✓ · 자동 별칭 = 완성 확정 시험 훅이 없어 자동 확인 못 함(사용자 실기).

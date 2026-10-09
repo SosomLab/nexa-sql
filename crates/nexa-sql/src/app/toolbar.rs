@@ -46,6 +46,7 @@ impl App {
         self.status_menu
             .open_at(x, y, items, host, px(220.0, self.scale));
         self.status_menu_band = 1;
+        self.status_menu_item = None;
     }
 
     /// 우클릭 메뉴 항목(순수에 가깝게 — 위치만 받는다 · 시험·덤프용으로 분리).
@@ -100,6 +101,7 @@ impl App {
         self.status_menu
             .open_at(x, y, items, host, px(220.0, self.scale));
         self.status_menu_band = 2;
+        self.status_menu_item = None;
     }
 
     pub(crate) fn statusbar_menu_items(

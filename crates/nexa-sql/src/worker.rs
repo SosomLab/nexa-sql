@@ -192,6 +192,14 @@ pub(crate) enum ConnOutcome {
         rows: u64,
         bytes: u64,
     },
+    /// ★ 전체 조회의 **배치 하나**(사용자 10-09 증분 표시 · `grid.fetch_display = incremental`): 호스트가 바로 그리드에 이어 붙인다 ·
+    /// `rows`/`bytes` = 누적(기존 행 포함) · 마지막엔 빈 `Page { all: true }`가 닫는다.
+    Batch {
+        key: u64,
+        rs: nsql_core::ResultSet,
+        rows: u64,
+        bytes: u64,
+    },
     /// `Cmd::Count` 결과.
     Count {
         key: u64,
@@ -939,6 +947,9 @@ pub(crate) fn spawn(
                                         .unwrap_or(5000);
                                     let batch = page_fs.max(all_fs);
                                     runner.set_fetch_size(batch);
+                                    // ★ 증분 표시(사용자 10-09): 배치마다 `Batch`로 바로 보낸다(러너가 모으지 않음 · 마지막 Page는 빈 행).
+                                    let live = nsql_settings::Settings::open_default()
+                                        .is_ok_and(|s| s.get("grid.fetch_display") != Some("whole"));
                                     let cursor_h = if runner.cursor_matches(&sql, offset) {
                                         runner.cursor().map(|(h, _)| h)
                                     } else {
@@ -1013,11 +1024,29 @@ pub(crate) fn spawn(
                                             )
                                         }
                                     } else if let Some(h) = cursor_h {
-                                        // ① 커서 이어 받기.
+                                        // ① 커서 이어 받기 — 증분이면 배치마다 `Batch`(진행률은 100 ms 간격 그대로).
                                         let t0 = std::time::Instant::now();
-                                        runner
-                                            .fetch_all(h, budget_bytes, &mut progress)
-                                            .map(|(rest, stopped, _)| (rest, stopped, t0.elapsed()))
+                                        if live {
+                                            let mut sink = |rs: nsql_core::ResultSet, rows: u64, bytes: u64| {
+                                                let _ = ctx_tx.send(ConnOutcome::Batch {
+                                                    key,
+                                                    rs,
+                                                    rows: rows0 + rows,
+                                                    bytes,
+                                                });
+                                                wake_now();
+                                                progress(rows, bytes)
+                                            };
+                                            runner
+                                                .fetch_all_with(h, budget_bytes, &mut sink)
+                                                .map(|(stopped, _)| {
+                                                    (nsql_core::ResultSet::default(), stopped, t0.elapsed())
+                                                })
+                                        } else {
+                                            runner
+                                                .fetch_all(h, budget_bytes, &mut progress)
+                                                .map(|(rest, stopped, _)| (rest, stopped, t0.elapsed()))
+                                        }
                                     } else if runner.cursor_supported() {
                                         // ② 원문을 커서로 다시 실행 → 앞 offset행은 버리고 이어 받기.
                                         let t0 = std::time::Instant::now();
@@ -1046,6 +1075,35 @@ pub(crate) fn spawn(
                                                             return Ok((rs, false, t0.elapsed()));
                                                         }
                                                     }
+                                                }
+                                                if live {
+                                                    // 첫 배치의 남은 부분도 배치로 · 그 뒤는 싱크.
+                                                    let head = rs.rows.len() as u64;
+                                                    if head > 0 {
+                                                        let _ = ctx_tx.send(ConnOutcome::Batch {
+                                                            key,
+                                                            rs: std::mem::take(&mut rs),
+                                                            rows: rows0 + head,
+                                                            bytes: 0,
+                                                        });
+                                                        wake_now();
+                                                    }
+                                                    let mut sink = |b: nsql_core::ResultSet, rows: u64, bytes: u64| {
+                                                        let _ = ctx_tx.send(ConnOutcome::Batch {
+                                                            key,
+                                                            rs: b,
+                                                            rows: rows0 + head + rows,
+                                                            bytes,
+                                                        });
+                                                        wake_now();
+                                                        progress(head + rows, bytes)
+                                                    };
+                                                    let (stopped, _) = runner.fetch_all_with(
+                                                        h,
+                                                        budget_bytes,
+                                                        &mut sink,
+                                                    )?;
+                                                    return Ok((nsql_core::ResultSet::default(), stopped, t0.elapsed()));
                                                 }
                                                 let (rest, stopped, _) = runner.fetch_all(
                                                     h,

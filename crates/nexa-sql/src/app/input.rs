@@ -337,9 +337,32 @@ impl App {
             {
                 self.status_menu.close();
                 self.status_menu_band = 0;
+                self.status_menu_item = None;
                 self.redraw();
                 return;
             }
+        }
+        // ★ 상태바 **항목 좌클릭** 메뉴도 토글(사용자 10-09): 그 항목의 메뉴가 열린 채 **같은 항목**을 다시 누르면 닫기만 — 누름에서
+        //   닫고 놓음은 삼킨다(놓을 때 동작이 다시 열지 않게 · 61 §2-2-b 9항). 다른 항목 누름은 종전 배타 규칙(닫고 그 항목 열림).
+        if let InputEvent::MouseDown { x, y, .. } = ev {
+            let p = Point { x, y };
+            if self.status_menu.is_open()
+                && self.status_menu_band == 2
+                && self.status_menu_item.is_some()
+                && self.status_item_at(p) == self.status_menu_item
+            {
+                self.status_menu.close();
+                self.status_menu_band = 0;
+                self.status_menu_item = None;
+                self.menu_toggle_swallow_up = true;
+                self.redraw();
+                return;
+            }
+        }
+        if matches!(ev, InputEvent::MouseUp { .. })
+            && std::mem::take(&mut self.menu_toggle_swallow_up)
+        {
+            return;
         }
         let before = self.open_menus();
         // ★ 영역 간 배타(사용자 10-08 · `ui.ctxmenu_exclusive`): 열린 우클릭 메뉴 **밖**의 좌/우 클릭 = 그 메뉴들을 먼저 닫는다 ·
@@ -1345,6 +1368,15 @@ impl App {
 
     /// 상태줄 항목 동작(놓을 때): 구문 = 팔레트(Set Syntax) · 들여쓰기/줄끝/트랜잭션/인코딩/자동 저장 = 팝업 · 메모리 = 창 토글 · 라이선스 = 창.
     fn status_item_act(&mut self, i: u8) {
+        self.status_item_act_inner(i);
+        // 열린 메뉴를 그 항목과 묶는다(같은 항목 다시 누름 = 토글 닫기).
+        if self.status_menu.is_open() {
+            self.status_menu_band = 2;
+            self.status_menu_item = Some(i);
+        }
+    }
+
+    fn status_item_act_inner(&mut self, i: u8) {
         match i {
             0 => {
                 let prefill = format!("{}: ", t(Msg::PalSetSyntax));

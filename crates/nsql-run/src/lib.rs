@@ -1467,30 +1467,49 @@ impl Runner {
         budget_bytes: u64,
         progress: &mut dyn FnMut(u64, u64) -> bool,
     ) -> Result<(ResultSet, bool, Timeline), DbError> {
-        let batch = self.fetch_size.max(2000);
         let mut acc = ResultSet::default();
+        let (stopped, timeline) =
+            self.fetch_all_with(h, budget_bytes, &mut |mut rs, rows, bytes| {
+                if acc.columns.is_empty() {
+                    acc.columns = std::mem::take(&mut rs.columns);
+                }
+                acc.rows.append(&mut rs.rows);
+                progress(rows, bytes)
+            })?;
+        Ok((acc, stopped, timeline))
+    }
+
+    /// ★ 배치 **싱크** 판(사용자 10-09 "결과가 조회 가능한 상태가 되는 시점에 바로 화면에 append"): 배치마다 `on_batch(배치, 누적 행 수,
+    /// 누적 바이트)`에 **넘겨 준다**(러너가 모으지 않는다 · 메모리 = 배치 하나) · 거짓을 돌려주면 중지. 반환 = (중지됨, Timeline).
+    /// 예산(`budget_bytes`)·마지막 배치 뒤에는 콜백의 반환과 무관하게 끝난다. [`Self::fetch_all`]은 이것을 모아 주는 꼴.
+    pub fn fetch_all_with(
+        &mut self,
+        h: CursorHandle,
+        budget_bytes: u64,
+        on_batch: &mut dyn FnMut(ResultSet, u64, u64) -> bool,
+    ) -> Result<(bool, Timeline), DbError> {
+        let batch = self.fetch_size.max(2000);
+        let mut rows: u64 = 0;
         let mut bytes: u64 = 0;
         let mut timeline = Timeline::new();
         let t0 = Instant::now();
         let mut stopped = false;
         loop {
-            let (mut rs, more, _) = self.fetch_next(h, batch)?;
+            let (rs, more, _) = self.fetch_next(h, batch)?;
             bytes += rs.approx_bytes();
-            if acc.columns.is_empty() {
-                acc.columns = std::mem::take(&mut rs.columns);
-            }
-            acc.rows.append(&mut rs.rows);
+            rows += rs.rows.len() as u64;
+            let go = on_batch(rs, rows, bytes);
             if !more {
                 break;
             }
             let over_budget = budget_bytes > 0 && bytes >= budget_bytes;
-            if over_budget || !progress(acc.rows.len() as u64, bytes) {
+            if over_budget || !go {
                 stopped = true;
                 break;
             }
         }
         let span = timeline.push(Stage::Navigate, t0.elapsed());
-        span.rows = Some(acc.rows.len() as u64);
+        span.rows = Some(rows);
         span.bytes = Some(bytes);
         span.note = Some(
             if stopped {
@@ -1500,7 +1519,7 @@ impl Runner {
             }
             .into(),
         );
-        Ok((acc, stopped, timeline))
+        Ok((stopped, timeline))
     }
 
     /// `SELECT COUNT(*) FROM (질의) x` — 같은 세션에서 곁가지로(열린 커서는 그대로). 반환 = (건수, Navigate 스팬).
