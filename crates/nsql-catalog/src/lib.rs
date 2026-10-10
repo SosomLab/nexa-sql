@@ -2223,26 +2223,52 @@ pub fn package_members(
     s: &mut dyn Session,
     owner: &str,
     package: &str,
-) -> Result<Vec<ColumnInfo>, DbError> {
+) -> Result<Vec<PackageMember>, DbError> {
     if s.dialect() != Dialect::Oracle {
         return Ok(Vec::new());
     }
+    // ★ `p.overload`(10-10 사용자 "오버로드된 PRC_RUN_ALL 둘이 같은 인자로 보인다"): 같은 이름의 멤버는 `subprogram_id`와 `overload`
+    //   ('1' · '2' …)로 갈린다 — `ALL_ARGUMENTS.overload`와 같은 번호라 멤버별 인자는 이 값으로 고른다(`tree.rs` Arguments).
     let sql = format!(
-        "SELECT p.procedure_name, CASE WHEN a.data_type IS NULL THEN 'PROCEDURE' WHEN p.pipelined = 'YES' OR a.data_type IN ('TABLE', 'PL/SQL TABLE', 'VARRAY') THEN 'TABLE FUNCTION → ' || a.data_type ELSE 'FUNCTION → ' || a.data_type END, p.subprogram_id FROM all_procedures p LEFT JOIN all_arguments a ON a.owner = p.owner AND a.package_name = p.object_name AND a.subprogram_id = p.subprogram_id AND a.position = 0 AND a.argument_name IS NULL WHERE p.owner = {} AND p.object_name = {} AND p.object_type = 'PACKAGE' AND p.procedure_name IS NOT NULL ORDER BY p.subprogram_id",
+        "SELECT p.procedure_name, CASE WHEN a.data_type IS NULL THEN 'PROCEDURE' WHEN p.pipelined = 'YES' OR a.data_type IN ('TABLE', 'PL/SQL TABLE', 'VARRAY') THEN 'TABLE FUNCTION → ' || a.data_type ELSE 'FUNCTION → ' || a.data_type END, p.subprogram_id, NVL(p.overload, ' ') FROM all_procedures p LEFT JOIN all_arguments a ON a.owner = p.owner AND a.package_name = p.object_name AND a.subprogram_id = p.subprogram_id AND a.position = 0 AND a.argument_name IS NULL WHERE p.owner = {} AND p.object_name = {} AND p.object_type = 'PACKAGE' AND p.procedure_name IS NOT NULL ORDER BY p.subprogram_id",
         lit(owner),
         lit(package)
     );
     Ok(query(s, &sql)?
         .rows
         .iter()
-        .map(|r| ColumnInfo {
+        .map(|r| PackageMember {
             name: col(r, 0),
             data_type: col(r, 1),
-            nullable: false,
-            position: r.get(2).map(cell_i64).unwrap_or(0),
-            default: String::new(),
+            subprogram_id: r.get(2).map(cell_i64).unwrap_or(0),
+            overload: col(r, 3).trim().to_string(),
         })
         .collect())
+}
+
+/// Oracle 패키지 공개 멤버 하나(`package_members`). `overload` = `ALL_PROCEDURES.OVERLOAD`('1' · '2' … · 오버로드가 아니면 빈 글) —
+/// 같은 이름 멤버를 가르는 열쇠(`ALL_ARGUMENTS.overload`와 같은 번호).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageMember {
+    pub name: String,
+    /// `PROCEDURE` · `FUNCTION → 타입` · `TABLE FUNCTION → 타입`.
+    pub data_type: String,
+    pub subprogram_id: i64,
+    pub overload: String,
+}
+
+impl PackageMember {
+    /// 메타(인텔리센스 "패키지의 컬럼")용 모양 — 순번 = `subprogram_id`.
+    #[must_use]
+    pub fn as_column(&self) -> ColumnInfo {
+        ColumnInfo {
+            name: self.name.clone(),
+            data_type: self.data_type.clone(),
+            nullable: false,
+            position: self.subprogram_id,
+            default: String::new(),
+        }
+    }
 }
 
 // ───────────────────────────────────────────── 소스(DDL)
@@ -3371,7 +3397,18 @@ fn mssql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<Routin
 /// `pg_temp` = 이 세션의 임시 스키마). 인자마다 한 줄: (오버로드 = 함수 oid · 자리 1부터 · 이름 · 타입 · 방향).
 /// `proargmodes`가 NULL이면 전부 IN이다(`unnest`가 모자란 배열을 NULL로 채운다). `t`(TABLE 열) = OUT · `v`(VARIADIC) = IN.
 fn pg_routine_args_sql(call_name: &str) -> Option<String> {
-    let parts: Vec<String> = call_name
+    // ★ `schema.f(a integer, b text)` = 탐색기 Arguments 잎이 주는 **서명 포함** 이름(tree.rs · `pg_get_function_identity_arguments` 원문) —
+    //   종전엔 `f(a integer, b text)`를 통째로 `proname`과 비교해 인자 있는 PG 함수의 Arguments가 늘 비었다(협업 코드 감사 10-10 #15).
+    //   괄호를 먼저 떼고(타입 이름의 `.`보다 먼저) 서명은 같은 함수 원문과 등호로 맞춘다 = 오버로드 중 그 하나.
+    let (head, sig) = match call_name.split_once('(') {
+        // 닫는 괄호는 **하나만** 뗀다(서명이 `)`로 끝나는 형이 있어도 깨지지 않게 · 협업 10-10).
+        Some((h, rest)) => {
+            let rest = rest.trim_end();
+            (h, Some(rest.strip_suffix(')').unwrap_or(rest).trim().to_string()))
+        }
+        None => (call_name, None),
+    };
+    let parts: Vec<String> = head
         .split('.')
         .map(|p| p.trim().trim_matches('"').to_lowercase())
         .filter(|p| !p.is_empty())
@@ -3381,11 +3418,17 @@ fn pg_routine_args_sql(call_name: &str) -> Option<String> {
         [s, n] => (Some(s.clone()), n.clone()),
         _ => return None,
     };
-    let scope = match schema.as_deref() {
+    let mut scope = match schema.as_deref() {
         None => "pg_function_is_visible(p.oid)".to_string(),
         Some("pg_temp") => "p.pronamespace = pg_my_temp_schema()".to_string(),
         Some(s) => format!("n.nspname = {}", lit(s)),
     };
+    if let Some(sig) = sig {
+        scope.push_str(&format!(
+            " AND pg_get_function_identity_arguments(p.oid) = {}",
+            lit(&sig)
+        ));
+    }
     Some(format!(
         "SELECT p.oid::text, a.ord, COALESCE(a.name, ''), format_type(a.typ, NULL), \
          CASE a.mode WHEN 'o' THEN 'OUT' WHEN 't' THEN 'OUT' WHEN 'b' THEN 'IN/OUT' ELSE 'IN' END \
@@ -3584,6 +3627,23 @@ mod tests {
 
     /// PostgreSQL 서명 조회문: 이름만 = 검색 경로 · `스키마.이름` = 그 스키마 · `pg_temp` = 이 세션의 임시 스키마 · 인용·대소문자 ·
     /// 점이 셋 이상이면 조회하지 않는다 · 값은 글자 상수로 인용된다(주입 방지).
+    /// 협업 코드 감사 10-10 #15: 서명 포함 이름(`schema.f(a integer, b text)`)은 이름과 서명을 갈라 `proname = 'f'` + 서명 등호 조건 ·
+    /// 서명이 없으면 종전과 같다 · 서명 안의 `.`(스키마 한정 타입)은 이름 조각을 가르지 않는다.
+    #[test]
+    fn pg_routine_args_sql_splits_signature() {
+        let sql = pg_routine_args_sql("public.f(a integer, b public.mytype)").expect("sql");
+        assert!(sql.contains("p.proname = 'f'"), "{sql}");
+        assert!(sql.contains("n.nspname = 'public'"), "{sql}");
+        assert!(
+            sql.contains("pg_get_function_identity_arguments(p.oid) = 'a integer, b public.mytype'"),
+            "{sql}"
+        );
+        let plain = pg_routine_args_sql("public.f").expect("sql");
+        assert!(plain.contains("p.proname = 'f'") && !plain.contains("identity_arguments"));
+        let noargs = pg_routine_args_sql("f()").expect("sql");
+        assert!(noargs.contains("identity_arguments(p.oid) = ''"), "{noargs}");
+    }
+
     #[test]
     fn pg_routine_args_sql_scopes() {
         let q = super::pg_routine_args_sql("My_Proc").expect("sql");

@@ -10,7 +10,7 @@
 
 use super::{
     col, lit, package_members, qualified, query, quote_ident, routine_args, table_detail, Dialect,
-    ObjectInfo, ObjectKind, Session,
+    ObjectInfo, ObjectKind, Session, RoutineArg,
 };
 use nsql_core::DbError;
 
@@ -377,6 +377,17 @@ pub fn sub_items(
                 format!("{schema}.{name}")
             };
             let args = routine_args(s, &call)?;
+            // ★ Oracle 패키지 멤버는 **그 멤버의 오버로드 번호**(`member_detail`이 흐린 글에 적은 `#n` → `member_overload`)의 인자만 —
+            //   종전엔 이름이 같은 두 멤버(`PRC_RUN_ALL` ×2)가 두 오버로드의 인자를 합쳐 똑같이 보였다(사용자 10-10).
+            let want_ov = if d == Dialect::Oracle {
+                member_overload(&owner.extra).map(str::to_string)
+            } else {
+                None
+            };
+            let args: Vec<RoutineArg> = args
+                .into_iter()
+                .filter(|a| want_ov.as_deref().is_none_or(|w| a.overload == w))
+                .collect();
             // 오버로드 꼬리 `#n`은 **오버로드가 둘 이상일 때만**(Oracle 번호) — PG `overload` = oid · SQL Server = object_id라 늘 붙던 꼬리
             //   `#718165`/`#1760061356`(E2E 10-08).
             let overloads: std::collections::HashSet<&str> =
@@ -384,15 +395,23 @@ pub fn sub_items(
             let multi = overloads.len() > 1;
             Ok(args
                 .into_iter()
-                .filter(|a| !a.name.is_empty())
+                // 거르는 것은 **함수 반환값 행**(Oracle `position 0` · 이름 없음)뿐 — 종전 "이름 없으면 버림"은 PG의 무명 인자
+                //   (`CREATE FUNCTION f(int)` · `abs(bigint)`)까지 지워 Arguments (0)으로 보였다(협업 V1 10-10 #15-b).
+                .filter(|a| !(a.position == 0 && a.name.is_empty()))
                 .map(|a| {
                     let ov = if multi && !matches!(a.overload.as_str(), "" | "0" | "1") {
                         format!(" #{}", a.overload)
                     } else {
                         String::new()
                     };
+                    // 무명 인자 = `$n`(PG 관례 · 자리 번호).
+                    let name = if a.name.is_empty() {
+                        format!("${}", a.position)
+                    } else {
+                        a.name
+                    };
                     item(
-                        a.name,
+                        name,
                         format!("{} {}{ov}", a.in_out, a.data_type),
                         SubIcon::Argument,
                     )
@@ -417,17 +436,32 @@ pub fn sub_items(
                     };
                     item(
                         m.name,
-                        if want_proc {
-                            String::new()
-                        } else {
-                            m.data_type
-                        },
+                        member_detail(want_proc, &m.data_type, &m.overload),
                         icon,
                     )
                 })
                 .collect())
         }
     }
+}
+
+/// 패키지 멤버 잎의 흐린 글(10-10): 프로시저 = 빈 글 또는 `#n` · 함수 = `FUNCTION → T`[` #n`]. `#n`은 오버로드일 때만(ALL_PROCEDURES
+/// `overload`). [`member_overload`]가 되읽는다 — 둘은 한 쌍(시험 `member_detail_overload_round_trip`).
+pub(super) fn member_detail(is_proc: bool, data_type: &str, overload: &str) -> String {
+    let base = if is_proc { "" } else { data_type };
+    match (base.is_empty(), overload.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => format!("#{overload}"),
+        (false, true) => base.to_string(),
+        (false, false) => format!("{base} #{overload}"),
+    }
+}
+
+/// [`member_detail`]이 적은 오버로드 번호(`#n` 끝 조각 · 숫자만) — 없으면 `None`.
+pub(super) fn member_overload(detail: &str) -> Option<&str> {
+    let tail = detail.rsplit(' ').next().unwrap_or(detail);
+    let n = tail.strip_prefix('#')?;
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(n)
 }
 
 fn rows_to_items(s: &mut dyn Session, sql: &str, icon: SubIcon) -> Result<Vec<SubItem>, DbError> {
@@ -671,6 +705,21 @@ fn methods(
 mod tests {
     use super::*;
 
+    /// `member_detail` ↔ `member_overload` 왕복(프로시저·함수 · 오버로드 유무).
+    #[test]
+    fn member_detail_overload_round_trip() {
+        assert_eq!(member_detail(true, "PROCEDURE", ""), "");
+        assert_eq!(member_detail(true, "PROCEDURE", "2"), "#2");
+        assert_eq!(member_detail(false, "FUNCTION → NUMBER", ""), "FUNCTION → NUMBER");
+        assert_eq!(member_detail(false, "FUNCTION → NUMBER", "3"), "FUNCTION → NUMBER #3");
+        assert_eq!(member_overload(""), None);
+        assert_eq!(member_overload("#2"), Some("2"));
+        assert_eq!(member_overload("FUNCTION → NUMBER #3"), Some("3"));
+        assert_eq!(member_overload("FUNCTION → NUMBER"), None, "타입 글자는 번호가 아니다");
+        assert_eq!(member_overload("#"), None);
+        assert_eq!(member_overload("#x1"), None);
+    }
+
     /// 83 §1 표 — 방언별 테이블 하위 폴더 · 없는 조합은 빈 목록 · 모든 하위 종류는 코드로 왕복.
     #[test]
     fn sub_kinds_follow_the_dbeaver_table() {
@@ -716,6 +765,14 @@ mod tests {
         .expect("member");
         assert_eq!((m.name.as_str(), m.kind), ("PKG.F", ObjectKind::Function));
         assert!(member_object(&pkg, SubKind::Columns, &item("X", "", SubIcon::Column)).is_none());
+        // 오버로드 번호는 멤버의 흐린 글로 실려 `extra`가 되고, Arguments 잎이 되읽어 그 오버로드의 인자만 고른다(10-10).
+        let m2 = member_object(
+            &pkg,
+            SubKind::Procedures,
+            &item("PRC_RUN_ALL", member_detail(true, "PROCEDURE", "2"), SubIcon::Procedure),
+        )
+        .expect("member");
+        assert_eq!(member_overload(&m2.extra), Some("2"));
         for k in SubKind::ALL {
             assert_eq!(SubKind::parse(k.code()), Some(k));
             assert_eq!(SubKind::parse(k.label()), Some(k));

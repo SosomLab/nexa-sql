@@ -552,6 +552,15 @@ impl ExplorerSet {
         }
     }
 
+    /// Shift 상태(메뉴 "이름 복사" ↔ "전체 이름 복사" 즉시 전환 · 10-10) — 다시 그릴 것이 있으면 `true`.
+    pub(crate) fn set_shift(&mut self, on: bool) -> bool {
+        let mut redraw = false;
+        for p in &mut self.panes {
+            redraw |= p.ex.set_shift(on);
+        }
+        redraw
+    }
+
     /// 그 서버 칸으로 객체 하나의 Generate SQL 요청(삭제 백업 DDL · 10-01) — 칸이 없으면 false.
     pub(crate) fn gen_object_on(
         &mut self,

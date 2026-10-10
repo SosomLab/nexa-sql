@@ -321,7 +321,7 @@ struct App {
     toasts: toast::Toasts,
     /// ★ 서버 건강 레지스트리(docs/107 · T-313 ② · 끝점 단위 · `app/health.rs`).
     health: app::health::ServerHealth,
-    /// ★ L0 네트워크 신호 감시(⑤ · `net.watch` · Windows) — 깃발은 `about_to_wait`에서 읽는다 · 없음 = 미지원 OS/끔.
+    /// ★ L0 네트워크 신호 감시(⑤ · `net.watch` · Windows iphlpapi · macOS SystemConfiguration · Linux = 없음) — 깃발은 `about_to_wait`에서 읽는다 · 없음 = 미지원 OS/끔.
     netwatch: Option<nexa_sys::netwatch::NetWatch>,
     /// 마지막 네트워크 신호 처리 시각(1초 합치기).
     net_last: Option<Instant>,

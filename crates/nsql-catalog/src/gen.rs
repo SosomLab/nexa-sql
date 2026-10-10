@@ -238,8 +238,11 @@ impl GenOpts {
 pub struct GenSpec {
     pub owner: ObjectInfo,
     pub what: GenWhat,
-    /// 하위 항목(제약·인덱스·트리거)의 DDL이면 `(폴더, 이름)`.
+    /// 하위 항목(제약·인덱스·트리거)의 DDL이면 `(폴더, 이름)` · Oracle 패키지 멤버(Procedures/Functions)의 CALL이면 `(폴더, 멤버 이름)`(10-10).
     pub sub: Option<(SubKind, String)>,
+    /// 하위 항목의 흐린 글(탐색기 `SubItem.detail`) — 패키지 멤버의 오버로드 번호 `#n`을 실어 그 오버로드의 인자로 CALL을 만든다
+    /// (`tree::member_overload` · 10-10). 그 밖은 빈 글.
+    pub sub_extra: String,
     pub opts: GenOpts,
 }
 
@@ -276,6 +279,12 @@ pub fn gen_whats(dialect: Dialect, kind: ObjectKind, sub: Option<SubKind>) -> Ve
     use GenWhat::*;
     if let Some(sk) = sub {
         return match sk {
+            // ★ Oracle 패키지 안의 프로시저·함수(사용자 10-10): CALL만 — 멤버 단독 DDL은 없다(스펙·본문은 패키지 단위).
+            SubKind::Procedures | SubKind::Functions
+                if dialect == Dialect::Oracle && kind == ObjectKind::Package =>
+            {
+                vec![Call]
+            }
             SubKind::Constraints
             | SubKind::UniqueKeys
             | SubKind::CheckConstraints
@@ -353,7 +362,11 @@ pub fn generate(s: &mut dyn Session, spec: &GenSpec) -> Result<String, DbError> 
         };
     });
     let out = if let Some((sk, name)) = &spec.sub {
-        sub_ddl(s, d, o, *sk, name)
+        if matches!(sk, SubKind::Procedures | SubKind::Functions) {
+            member_call(s, d, o, *sk, name, &spec.sub_extra)
+        } else {
+            sub_ddl(s, d, o, *sk, name)
+        }
     } else {
         match spec.what {
             GenWhat::Select => select_sql(s, d, o),
@@ -720,7 +733,7 @@ fn oracle_var_type(data_type: &str) -> &'static str {
     }
 }
 
-/// 루틴 하나의 CALL 문(한 오버로드 = 첫 것 · 인자 = `routine_args`).
+/// 루틴 하나의 CALL 문(인자 = `routine_args` · 오버로드 = `overload`가 있으면 그것 · 없으면 첫 것).
 fn call_one(
     s: &mut dyn Session,
     d: Dialect,
@@ -728,14 +741,18 @@ fn call_one(
     display: &str,
     is_function: bool,
     extra: &str,
+    overload: Option<&str>,
 ) -> Result<String, DbError> {
     let all = routine_args(s, call_name)?;
-    let first_ov = all
-        .iter()
-        .map(|a| a.overload.clone())
-        .min()
-        .unwrap_or_default();
-    let args: Vec<_> = all.into_iter().filter(|a| a.overload == first_ov).collect();
+    let want_ov = match overload {
+        Some(ov) => ov.to_string(),
+        None => all
+            .iter()
+            .map(|a| a.overload.clone())
+            .min()
+            .unwrap_or_default(),
+    };
+    let args: Vec<_> = all.into_iter().filter(|a| a.overload == want_ov).collect();
     let ret = args
         .iter()
         .find(|a| a.position == 0 || a.name.is_empty())
@@ -842,6 +859,29 @@ fn call_one(
     Ok(out)
 }
 
+/// ★ Oracle 패키지 멤버 하나의 CALL(사용자 10-10 "패키지 안 프로시저 우클릭에도 Call 스크립트") — 이름 = `SCHEMA.PKG.MEMBER` ·
+/// 오버로드 = 탐색기 흐린 글의 `#n`(`sub_extra`)로 그 오버로드의 인자만.
+fn member_call(
+    s: &mut dyn Session,
+    d: Dialect,
+    pkg: &ObjectInfo,
+    sk: SubKind,
+    name: &str,
+    extra: &str,
+) -> Result<String, DbError> {
+    let display = q(d, pkg);
+    let ov = crate::tree::member_overload(extra);
+    call_one(
+        s,
+        d,
+        &format!("{}.{}.{}", pkg.schema, pkg.name, name),
+        &format!("{display}.{}", ident(d, name)),
+        sk == SubKind::Functions,
+        "",
+        ov,
+    )
+}
+
 fn call_sql(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String, DbError> {
     let display = q(d, o);
     let call_name = format!("{}.{}", o.schema, o.name);
@@ -854,7 +894,13 @@ fn call_sql(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String, D
         let mut out = String::new();
         for m in members {
             let is_fn = !m.data_type.eq_ignore_ascii_case("PROCEDURE");
-            out.push_str(&format!("-- ── {}.{}\n", display, m.name));
+            // 오버로드 멤버는 **각 오버로드마다** 한 블록(10-10 · 종전 = 첫 오버로드만 두 번).
+            let ov_note = if m.overload.is_empty() {
+                String::new()
+            } else {
+                format!(" #{}", m.overload)
+            };
+            out.push_str(&format!("-- ── {}.{}{ov_note}\n", display, m.name));
             let block = call_one(
                 s,
                 d,
@@ -862,6 +908,7 @@ fn call_sql(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String, D
                 &format!("{display}.{}", ident(d, &m.name)),
                 is_fn,
                 "",
+                (!m.overload.is_empty()).then_some(m.overload.as_str()),
             )?;
             out.push_str(&block);
             out.push('\n');
@@ -874,7 +921,7 @@ fn call_sql(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String, D
     } else {
         call_name
     };
-    call_one(s, d, &call, &display, is_fn, &o.extra)
+    call_one(s, d, &call, &display, is_fn, &o.extra, None)
 }
 
 /// Oracle `DBMS_METADATA` 객체 타입.
@@ -1796,12 +1843,28 @@ mod tests {
         assert!(none.starts_with("-- MERGE needs") && none.contains("INSERT INTO HR.EMP"));
     }
 
+    /// Oracle 패키지 멤버 = CALL만(DDL 없음) · 다른 DBMS·다른 주인은 그대로 없음(10-10).
+    #[test]
+    fn package_member_offers_call_only() {
+        assert_eq!(
+            gen_whats(Dialect::Oracle, ObjectKind::Package, Some(SubKind::Procedures)),
+            vec![GenWhat::Call]
+        );
+        assert_eq!(
+            gen_whats(Dialect::Oracle, ObjectKind::Package, Some(SubKind::Functions)),
+            vec![GenWhat::Call]
+        );
+        assert!(gen_whats(Dialect::Postgres, ObjectKind::Package, Some(SubKind::Functions)).is_empty());
+        assert!(gen_whats(Dialect::Oracle, ObjectKind::Table, Some(SubKind::Procedures)).is_empty());
+    }
+
     #[test]
     fn spec_title_and_bind_names() {
         let sp = GenSpec {
             owner: info(ObjectKind::Table),
             what: GenWhat::Ddl,
             sub: Some((SubKind::Indexes, "EMP_PK".into())),
+            sub_extra: String::new(),
             opts: GenOpts::default(),
         };
         assert_eq!(sp.title(), "EMP.EMP_PK_ddl");
@@ -1810,6 +1873,7 @@ mod tests {
                 owner: info(ObjectKind::Table),
                 what: GenWhat::Select,
                 sub: None,
+                sub_extra: String::new(),
                 opts: GenOpts::default(),
             }
             .title(),

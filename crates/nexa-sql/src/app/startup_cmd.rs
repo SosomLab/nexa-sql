@@ -402,7 +402,41 @@ impl App {
             let _ = std::fs::write(path, self.grid.dump_edit());
             return;
         }
+        // ★ 자체 시험(10-10 118차 mac 크래시 회귀 · 기능 점검 S95): `grid.vdrag:<dy>` = 활성 그리드 세로 스크롤바 **썸을 잡고** dy(장치 px ·
+        //   음수 = 위)만큼 끌어 놓는다 — 좌표는 그리드가 셈하므로 OS·배율·창 크기와 무관 · 사건은 `ui.*`와 같은 `route` 경로(OS 입력 주입 아님).
+        //   내용 높이가 수천만 px(수십만 행)이면 종전 nexa-ctl `scroll.rs`의 i32 곱이 넘쳐 Debug = abort · Release = 감김이었다 →
+        //   뒤이은 `grid.dump`의 `scroll_end=true`로 판정한다.
+        if let Some(dy) = id
+            .strip_prefix("grid.vdrag:")
+            .and_then(|v| v.trim().parse::<i32>().ok())
+        {
+            let scale = self.scale;
+            if let Some((x, y)) = self.grid.test_vthumb_center(scale) {
+                self.cursor = (x, y);
+                self.route(InputEvent::MouseMove { x, y });
+                self.route(InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift: false,
+                    primary: false,
+                });
+                self.route(InputEvent::MouseMove { x, y: y + dy });
+                self.route(InputEvent::MouseUp { x, y: y + dy });
+                self.redraw();
+            } else {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    "[test] grid.vdrag: no result grid or no vertical scrollbar".to_string(),
+                ));
+            }
+            return;
+        }
         // 자체 시험(10-01 ㉘): 활성 패널의 결과 탭 상태 — 첫 줄 `active=<제목>|output=<Output 탭인가>|rows=<활성 그리드 행 수>` · 둘째 줄부터 탭 제목.
+        // 자체 시험(10-10 · D-272 E2E `scripts/define-e2e.sh`): 변수 입력 창 상태 — 열렸는가 · 묻는 이름들.
+        if let Some(path) = id.strip_prefix("input.dump:") {
+            let _ = std::fs::write(path, self.input_win.dump_text());
+            return;
+        }
         if let Some(path) = id.strip_prefix("result.dump:") {
             let mut out = format!(
                 "active={}|output={}|rows={}\n",

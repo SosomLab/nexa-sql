@@ -722,6 +722,12 @@ const HANGUL_COMPOSE_OPTS: &[(&str, Msg)] = &[
 const VARS_EXPAND_OPTS: &[(&str, Msg)] =
     &[("assign", Msg::OptExpandAssign), ("use", Msg::OptExpandUse)];
 
+const SCRIPT_DEFINE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::OptDefineAuto),
+    ("on", Msg::OptDefineOn),
+    ("off", Msg::OptDefineOff),
+];
+
 const VARS_INTO_OPTS: &[(&str, Msg)] =
     &[("oracle", Msg::OptIntoOracle), ("first", Msg::OptIntoFirst)];
 
@@ -5159,6 +5165,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ D-272(10-10): `&이름` 치환 = 전 방언 · auto = Oracle만 미정의면 묻기 · 다른 방언은 정의된 이름만(미정의 = 글자 그대로 `'R&D'`) ·
+    //   on = 전 방언 묻기 고정 · off = 치환 없음.
+    Entry {
+        key: "script.define",
+        cat: Msg::CatScriptVars,
+        label: Msg::LblScriptDefine,
+        desc: Msg::DescScriptDefine,
+        kind: SettingKind::Choice(SCRIPT_DEFINE_OPTS),
+        default: "auto",
+    },
     Entry {
         key: "settings.json_editor",
         cat: Msg::CatSession,
@@ -5385,6 +5401,16 @@ pub const REGISTRY: &[Entry] = &[
         // ★ 09-24 기본 = IOSurface(D-133 ② 전환 · 100차 실측: Debug(의존 최적화) 프레임 48 → 13.9 ms · present 36 → 3.1 ms). 만들기에
         //   실패하면 `present.rs`가 조용히 softbuffer로 돌아간다 · 빈 창이 보이면 `softbuffer`로 되돌린다(86차 Intel+AMD 사례는 87차에 수정).
         default: "iosurface",
+    },
+    // ★ IOSurface 유휴 해제(118차 mac · nexa-ui 193차 `LayerPresenter::trim_idle` · HIDDEN): 마지막 프레임 뒤 이 시간(ms) 프레임이 없으면
+    //   메인 창 표면 풀을 앞 장만 남긴다(0 = 끔). 10초 이하 기본값 = ms 단위 규칙(94 §6-5).
+    Entry {
+        key: "gfx.mac_present_trim_ms",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMacPresentTrim,
+        desc: Msg::DescMacPresentTrim,
+        kind: SettingKind::Int { min: 0, max: 600_000 },
+        default: "1500",
     },
     Entry {
         key: "perf.boost",
@@ -6991,6 +7017,7 @@ pub const HIDDEN: &[&str] = &[
     "scroll.fast_hud_hold_ms",
     "meta.call_timeout_secs",
     "scroll.fast_window_ms",
+    "gfx.mac_present_trim_ms",
 ];
 
 /// 비노출 설정인가.

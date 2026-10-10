@@ -160,6 +160,14 @@ fn has_word_into(text: &str) -> bool {
 
 /// 실행 전에 빠진 입력을 찾는다. `vars` = 지금 표(탭 + 공유 + 프로필) · `defines` = 지금 치환 변수 · `define_char` = `SET DEFINE`
 /// (`None` = 치환 끔) · `args` = `&1..`로 넘어온 인자 수.
+/// 대소문자 무시 부분 문자열(할당 없음 · 빠른 길용).
+fn contains_ci(hay: &str, needle: &[u8]) -> bool {
+    let h = hay.as_bytes();
+    needle.len() <= h.len()
+        && h.windows(needle.len())
+            .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
 #[must_use]
 pub fn missing_inputs(
     src: &str,
@@ -178,7 +186,10 @@ pub fn missing_inputs(
     };
     // ★ 빠른 길(docs/63 §4 계측): 바인드 글자(`:`)도 치환 글자도 없는 스크립트는 나눌 필요조차 없다(덤프·DDL 묶음).
     let has_colon = src.as_bytes().contains(&b':');
-    let has_macro = define_char.is_some_and(|c| src.contains(c));
+    // 접두가 꺼져 있어도(`SET DEFINE OFF` · D-272 너그러운 방언) 스크립트가 `SET DEFINE …`으로 켤 수 있다 → `&`와 `DEFINE` 낱말이 함께
+    //   있으면 훑는다(아래 262행이 명령을 따라간다 · 118차 mac E2E: MSSQL `SET DEFINE ON` + `'R&D'`가 입력 창 없이 지나갔다).
+    let may_turn_on = define_char.is_none() && src.contains('&') && contains_ci(src, b"DEFINE");
+    let has_macro = define_char.is_some_and(|c| src.contains(c)) || may_turn_on;
     if !has_colon && !has_macro && !has_accept_word(src) {
         return Vec::new();
     }
@@ -343,6 +354,19 @@ pub fn missing_inputs(
 #[cfg(test)]
 mod tests {
     /// `${이름:형식}`의 형식 접미(`:q` · `:lower`)는 바인드가 아니다 — 묻지 않는다(사용자 10-03) · 진짜 바인드는 그대로 묻는다.
+    /// D-272: 접두를 끄고 넘겨도(너그러운 방언) 스크립트의 `SET DEFINE ON` 뒤 `&D`는 빠진 입력이다 · `SET DEFINE`이 없으면 비어 있다.
+    #[test]
+    fn set_define_on_inside_script_is_followed_even_when_prefix_off() {
+        let vars = VarStore::new();
+        let defs = BTreeMap::new();
+        let src = "SET DEFINE ON\nSELECT 'R&D' AS x;\n";
+        let needs = missing_inputs(src, Some(Dialect::Mssql), &vars, &defs, None);
+        assert_eq!(needs.len(), 1, "{needs:?}");
+        assert_eq!(needs[0].name, "D");
+        assert!(missing_inputs("SELECT 'R&D' AS x;\n", Some(Dialect::Mssql), &vars, &defs, None).is_empty());
+        assert!(contains_ci("set define on", b"DEFINE") && !contains_ci("undefined", b"SET DEFINE"));
+    }
+
     #[test]
     fn brace_format_suffix_is_not_a_bind() {
         let vars = VarStore::new();

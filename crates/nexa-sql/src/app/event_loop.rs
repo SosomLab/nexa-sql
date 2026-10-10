@@ -244,6 +244,16 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
             }
         }
+        // ★ IOSurface 유휴 해제(118차 mac · nexa-ui 193 · `gfx.mac_present_trim_ms` · 0 = 끔): 메인 창에 한동안 프레임이 없으면 풀을 앞 장만
+        //   남긴다(레티나 장당 ≈16 MB · 메모리 창 "표면" 줄에서 보인다). 다른 OS·softbuffer = `trim_if_idle`가 0.
+        let trim_idle = Duration::from_millis(
+            self.settings.int("gfx.mac_present_trim_ms").clamp(0, 600_000) as u64,
+        );
+        if let Some(s) = self.surface.as_mut() {
+            if s.trim_if_idle(now, trim_idle) > 0 {
+                self.tmark("present trim_idle");
+            }
+        }
         // 오버레이 스크롤바 페이드(편집기·그리드·로그 창) — 보이는 동안만 ≈30ms 타이머.
         let now_ms = self.started.elapsed().as_millis() as u64;
         self.tx_tick();
@@ -423,6 +433,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.project_panel.flash_deadline() {
             next = next.min(t);
         }
+        // IOSurface 유휴 해제가 남아 있으면 그 시각에 한 번 깨운다(위 `trim_if_idle`).
+        if let Some(t) = self.surface.as_ref().and_then(|s| s.idle_deadline(trim_idle)) {
+            next = next.min(t);
+        }
         // 서버 신호등 재시도 예약(접속 창이 열려 있을 때만).
         if let Some(t) = self.conn_win.tick(now) {
             next = next.min(t);
@@ -577,7 +591,10 @@ impl ApplicationHandler<Wake> for App {
                 let shown_before = memstat::fmt(self.mem_status.0);
                 self.mem_status = (s.sys.footprint, Some(now));
                 self.mem_win.set_sample(s, every.as_millis() as u64);
-                let status_changed = memstat::fmt(s.sys.footprint) != shown_before;
+                // 상태줄 메모리 글이 꺼져 있으면(`mem.statusbar=off`) 글이 바뀌어도 다시 그릴 것이 없다(118차 mac E2E: 기동 직후 풋프린트가
+                //   흔들려 메인 창이 매초 다시 그려지고 IOSurface 유휴 해제가 오지 않았다).
+                let status_changed = self.settings.flag("mem.statusbar")
+                    && memstat::fmt(s.sys.footprint) != shown_before;
                 if status_changed {
                     self.redraw();
                 }
@@ -772,6 +789,10 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.shift = m.state().shift_key();
+                // 탐색기 메뉴가 열려 있으면 Shift에 따라 "이름 복사" ↔ "전체 이름 복사"(10-10).
+                if self.explorer.set_shift(self.shift) {
+                    self.redraw();
+                }
                 self.primary = if cfg!(target_os = "macos") {
                     m.state().super_key()
                 } else {

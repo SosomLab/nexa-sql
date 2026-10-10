@@ -276,7 +276,7 @@ impl App {
     }
 
     /// ★ 폴더 변경 감시 동기화(T-293 · 틱마다 열쇠 비교 하나): 설정 `project.watch` · 프로젝트 폴더 · 제외 이름 · 디바운스가 바뀌면 감시를
-    /// 다시 시작(없애거나) — 백엔드가 없는 OS(지금 macOS·Linux)는 시작하지 않고 TTL로 폴백(상태줄 안내 1회).
+    /// 다시 시작(없애거나) — 백엔드가 없는 OS(지금 Linux · Windows·macOS는 nexa-fs 백엔드)는 시작하지 않고 TTL로 폴백(상태줄 안내 1회).
     pub(crate) fn dir_watch_sync(&mut self) {
         let on = self.settings.flag("project.watch");
         let folders = self.project.folders.clone();

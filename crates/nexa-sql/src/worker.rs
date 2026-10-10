@@ -359,6 +359,10 @@ fn apply_fetch_settings(runner: &mut Runner) {
     runner.engine.settings.brace_subst = s.get("vars.brace_subst").is_none_or(|v| v == "on");
     runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
     runner.engine.settings.expand_at_use = s.get("vars.expand_at") == Some("use");
+    // D-272: `&` 치환 접두 = auto(Oracle만) | on | off.
+    runner
+        .engine
+        .set_define_mode(s.get("script.define").unwrap_or("auto"));
     runner.engine.settings.max_value_bytes =
         (s.int("vars.max_value_kb").max(0) as usize).saturating_mul(1024);
 }

@@ -1082,6 +1082,11 @@ pub(crate) struct Explorer {
     source_qualify: bool,
     /// ★ SELECT 템플릿의 스키마·테이블 인용 = 늘(`editor.quote_idents` = always) · 아니면 필요할 때만(`identq` · 사용자 10-08).
     quote_always: bool,
+    /// Shift가 눌려 있는가(호스트가 수식키 사건마다 준다) — 우클릭 메뉴 "이름 복사" ↔ "전체 이름 복사"(10-10).
+    shift: bool,
+    /// 열린 우클릭 메뉴의 항목(Shift 전환 때 라벨만 바꿔 다시 넣는다) + 그때의 글 폭.
+    menu_items: Vec<CtxItem>,
+    menu_text_w: i32,
     /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
     schema_opts: SchemaOpts,
     /// ★ 카탈로그 공유(docs/54 §10): 이 칸에 붙은 연결들의 계정(루트 행 라벨) — `ExplorerSet`이 준다.
@@ -1956,7 +1961,9 @@ fn meta_thread(
                 switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     if pkg {
-                        nsql_catalog::package_members(s, &schema, &table).map_err(err_s)
+                        nsql_catalog::package_members(s, &schema, &table)
+                            .map(|v| v.iter().map(nsql_catalog::PackageMember::as_column).collect())
+                            .map_err(err_s)
                     } else {
                         nsql_catalog::columns(s, &schema, &table).map_err(err_s)
                     }
@@ -2498,6 +2505,9 @@ impl Explorer {
             gen_opts: GenOpts::default(),
             source_qualify: true,
             quote_always: false,
+            shift: false,
+            menu_items: Vec::new(),
+            menu_text_w: 0,
             schema_opts: SchemaOpts::default(),
             users: Vec::new(),
             rebinding: false,
@@ -6134,6 +6144,7 @@ impl Explorer {
                 owner: o.clone(),
                 what,
                 sub: None,
+                sub_extra: String::new(),
                 opts: self.gen_opts,
             },
             NodeKind::Item(it) => {
@@ -6145,6 +6156,8 @@ impl Explorer {
                     owner: (**owner).clone(),
                     what,
                     sub: Some((*sub, it.name.clone())),
+                    // 패키지 멤버의 오버로드 번호(`#n`)가 여기 실려 그 오버로드의 CALL이 된다(10-10).
+                    sub_extra: it.detail.clone(),
                     opts: self.gen_opts,
                 }
             }
@@ -6159,6 +6172,41 @@ impl Explorer {
 
     pub(crate) fn set_quote_always(&mut self, on: bool) {
         self.quote_always = on;
+    }
+
+    /// Shift 상태 갱신(10-10): 메뉴가 열려 있으면 "이름 복사" ↔ "전체 이름 복사" 라벨만 바꿔 **열린 채** 다시 넣는다(위치·hover 유지).
+    /// 돌려주는 값 = 다시 그릴 것.
+    pub(crate) fn set_shift(&mut self, on: bool) -> bool {
+        if self.shift == on {
+            return false;
+        }
+        self.shift = on;
+        if !self.menu.is_open() || self.menu_items.is_empty() {
+            return false;
+        }
+        let items = relabel_copy(self.menu_items.clone(), on);
+        self.menu.replace_items(items, self.menu_text_w);
+        true
+    }
+
+    /// ★ 전체 이름(사용자 10-10 · Shift + 이름 복사): 조각 = [`full_name_parts`] · 조각마다 `identq::quote`(`editor.quote_idents`).
+    fn full_name_of(&self, i: usize) -> Option<String> {
+        let d = self.dialect?;
+        let parent = self.parent_of(i).and_then(|p| match &self.nodes[p].kind {
+            NodeKind::Sub { owner, sub } => Some(((**owner).clone(), *sub)),
+            _ => None,
+        });
+        let parts = full_name_parts(d, &self.nodes[i].kind, parent.as_ref().map(|(o, s)| (o, *s)));
+        if parts.is_empty() {
+            return None;
+        }
+        Some(
+            parts
+                .iter()
+                .map(|p| crate::identq::quote(d, p, self.quote_always))
+                .collect::<Vec<_>>()
+                .join("."),
+        )
     }
 
     pub(crate) fn set_gen_opts(&mut self, opts: GenOpts) {
@@ -6425,6 +6473,7 @@ impl Explorer {
             owner,
             what,
             sub: None,
+            sub_extra: String::new(),
             opts,
         });
     }
@@ -7695,6 +7744,10 @@ impl Explorer {
                     _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
                 }
                 let text_w = (160.0 * self.scale).round() as i32;
+                // ★ 아이콘(사용자 10-10) + Shift 라벨(이름 복사 ↔ 전체 이름 복사).
+                let items = decorate_menu(items, self.shift);
+                self.menu_items = items.clone();
+                self.menu_text_w = text_w;
                 self.menu.set_scale(self.scale);
                 let host = if self.menu_host.h > 0 {
                     self.menu_host
@@ -8143,7 +8196,14 @@ impl Explorer {
             "newtab" => self.actions.push(ExplorerAction::NewTabHere(None)),
             "copy" => {
                 // ㉞(사용자 10-02): 메뉴에 "이름 복사"가 있는 노드는 전부 여기서 이름이 나와야 한다(`copy_name_of` 한 자리).
-                if let Some(name) = copy_name_of(&self.nodes[i].kind) {
+                // ★ Shift(사용자 10-10) = 전체 이름(Oracle `스키마.객체`·`스키마.패키지.멤버` · SQL Server `DB.스키마.객체` · 인용 =
+                //   `editor.quote_idents` 정책 = `identq` 한 자리).
+                let name = if self.shift {
+                    self.full_name_of(i)
+                } else {
+                    copy_name_of(&self.nodes[i].kind)
+                };
+                if let Some(name) = name {
                     self.actions.push(ExplorerAction::Copy(name));
                 }
             }
@@ -8617,6 +8677,132 @@ mod blockers_tests {
 
 /// ★ 우클릭 ▸ "이름 복사"가 넣을 글자(㉞ · 10-02): 메뉴가 그 항목을 보이는 종류(스키마 · 객체 · 컬럼 · 잎 · **SQL Server DB**)는
 ///   전부 Some — 종전엔 DB 노드가 빠져 빈 이름 = 무동작이었다. 묶음·폴더·루트는 None(메뉴에도 없음).
+/// 전체 이름 조각(순수 · 10-10): 객체 = [DB(SQL Server · 알 때)] · 스키마 · 이름 · 컬럼/하위 항목 = 주인 객체 조각 + 이름(패키지 멤버 =
+/// `스키마.패키지.멤버`) · 스키마/DB = 그 하나 · 그 밖 = 없음. 인용은 호출자가 조각마다.
+fn full_name_parts(d: Dialect, kind: &NodeKind, parent: Option<(&ObjectInfo, SubKind)>) -> Vec<String> {
+    fn obj(d: Dialect, o: &ObjectInfo) -> Vec<String> {
+        let mut v = Vec::new();
+        if d == Dialect::Mssql && !o.db.is_empty() {
+            v.push(o.db.clone());
+        }
+        if !o.schema.is_empty() {
+            v.push(o.schema.clone());
+        }
+        // 패키지 멤버를 주인으로 가진 잎(Arguments)은 이름이 `PKG.MEMBER` — 조각으로 가른다.
+        v.extend(o.name.split('.').map(str::to_string));
+        v
+    }
+    match kind {
+        NodeKind::Schema(s) => vec![s.clone()],
+        NodeKind::Database(db) => vec![db.clone()],
+        NodeKind::Object(o) => obj(d, o),
+        NodeKind::Column(c) => match parent {
+            Some((o, _)) => {
+                let mut v = obj(d, o);
+                v.push(c.name.clone());
+                v
+            }
+            None => vec![c.name.clone()],
+        },
+        NodeKind::Item(it) => match parent {
+            Some((o, _)) => {
+                let mut v = obj(d, o);
+                v.push(it.name.clone());
+                v
+            }
+            None => vec![it.name.clone()],
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// 메뉴 항목에 아이콘을 붙이고(id → 그림) "이름 복사" 라벨을 Shift에 맞춘다(10-10). 아이콘 설정이 꺼져 있으면 그림을 만들지 않는다.
+fn decorate_menu(items: Vec<CtxItem>, shift: bool) -> Vec<CtxItem> {
+    let icons_on = nexa_ctl::controls::ctxmenu::menu_icons_enabled();
+    relabel_copy(items, shift)
+        .into_iter()
+        .map(|it| {
+            let id = match &it {
+                CtxItem::Item { id, .. } if icons_on => Some(id.clone()),
+                _ => None,
+            };
+            match id {
+                Some(id) => {
+                    let ic = menu_icon_for(&id);
+                    it.with_icon(ic)
+                }
+                None => it,
+            }
+        })
+        .collect()
+}
+
+/// "copy" 항목의 라벨 = Shift면 전체 이름 복사.
+fn relabel_copy(items: Vec<CtxItem>, shift: bool) -> Vec<CtxItem> {
+    items
+        .into_iter()
+        .map(|it| match it {
+            CtxItem::Item {
+                id,
+                enabled,
+                icon,
+                shortcut,
+                sub,
+                emph,
+                marks,
+                children,
+                checked,
+                active,
+                mark,
+                ..
+            } if id == "copy" => CtxItem::Item {
+                id,
+                label: t(if shift { Msg::ExpCopyFullName } else { Msg::ExpCopyName }).to_string(),
+                enabled,
+                icon,
+                shortcut,
+                sub,
+                emph,
+                marks,
+                children,
+                checked,
+                active,
+                mark,
+            },
+            other => other,
+        })
+        .collect()
+}
+
+/// 메뉴 id → 아이콘(탐색기 도형 또는 툴바·Material 글리프 · 없으면 `None`).
+fn menu_icon_for(id: &str) -> Option<nexa_ctl::controls::ctxmenu::MenuIcon> {
+    use crate::toolicons as ti;
+    let kind_icon = |k: IconKind| {
+        let img = exp_icons::image(k, k.color());
+        let alpha: Vec<u8> = img.rgba.chunks(4).map(|p| p[3]).collect();
+        nexa_ctl::controls::ctxmenu::MenuIcon {
+            w: img.w,
+            h: img.h,
+            alpha: alpha.into(),
+            rgba: Some(img.rgba.into()),
+        }
+    };
+    Some(match id {
+        "select" => kind_icon(IconKind::Table),
+        "import" => ti::mi_upload(),
+        "source" | "body" => ti::mi_code(),
+        "gen" => ti::mi_data_object(),
+        "copy" => ti::mi_copy(),
+        "drop" | "remove" => ti::mi_delete(),
+        "refresh" | "refresh_meta" => ti::mi_refresh(),
+        "sizes" => ti::mi_db(),
+        "connect" => ti::mi_connect(),
+        "disconnect" => ti::mi_disconnect(),
+        "newtab" => ti::mi_add(),
+        _ => return None,
+    })
+}
+
 fn copy_name_of(kind: &NodeKind) -> Option<String> {
     match kind {
         NodeKind::Schema(s) => Some(s.clone()),
@@ -8633,6 +8819,68 @@ mod refresh_tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use nsql_core::{DdlKind, DdlTarget, DdlVerb};
+
+    /// ★ 전체 이름 조각(10-10): Oracle 객체 = 스키마.이름 · 패키지 멤버 = 스키마.패키지.멤버 · SQL Server = DB.스키마.이름 · 컬럼 = 주인 + 컬럼 ·
+    /// Arguments 주인(`PKG.MEMBER`)은 조각으로 갈린다 · 루트·묶음 = 없음.
+    #[test]
+    fn full_name_parts_per_kind_and_dialect() {
+        let pkg = ObjectInfo {
+            db: String::new(),
+            schema: "BISCM_SB".into(),
+            name: "PKG_STAT_GATHER_BSY".into(),
+            kind: ObjectKind::Package,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        assert_eq!(
+            full_name_parts(Dialect::Oracle, &NodeKind::Object(pkg.clone()), None),
+            vec!["BISCM_SB", "PKG_STAT_GATHER_BSY"]
+        );
+        let member = nsql_catalog::SubItem {
+            name: "PRC_RUN_ALL".into(),
+            detail: "#2".into(),
+            icon: nsql_catalog::SubIcon::Procedure,
+            status: String::new(),
+        };
+        assert_eq!(
+            full_name_parts(
+                Dialect::Oracle,
+                &NodeKind::Item(member),
+                Some((&pkg, SubKind::Procedures))
+            ),
+            vec!["BISCM_SB", "PKG_STAT_GATHER_BSY", "PRC_RUN_ALL"]
+        );
+        let ms = ObjectInfo {
+            db: "M4PLAN_MS".into(),
+            schema: "dbo".into(),
+            name: "SP_RUN".into(),
+            kind: ObjectKind::Procedure,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        assert_eq!(
+            full_name_parts(Dialect::Mssql, &NodeKind::Object(ms.clone()), None),
+            vec!["M4PLAN_MS", "dbo", "SP_RUN"]
+        );
+        // 다른 방언은 DB 조각을 쓰지 않는다.
+        assert_eq!(
+            full_name_parts(Dialect::Postgres, &NodeKind::Object(ms), None),
+            vec!["dbo", "SP_RUN"]
+        );
+        assert!(full_name_parts(Dialect::Oracle, &NodeKind::Root, None).is_empty());
+        // 라벨 전환: Shift = 전체 이름 복사 · 아니면 이름 복사 · 다른 항목은 그대로.
+        let items = vec![CtxItem::item("copy", "x"), CtxItem::item("refresh", "r")];
+        let on = relabel_copy(items.clone(), true);
+        let CtxItem::Item { label, .. } = &on[0] else { panic!() };
+        assert_eq!(label, &t(Msg::ExpCopyFullName).to_string());
+        let off = relabel_copy(items, false);
+        let CtxItem::Item { label, .. } = &off[0] else { panic!() };
+        assert_eq!(label, &t(Msg::ExpCopyName).to_string());
+        let CtxItem::Item { label, .. } = &off[1] else { panic!() };
+        assert_eq!(label, "r");
+    }
 
     /// ㉞(사용자 10-02): SSMS DB 노드의 "이름 복사" = DB 이름 · 메뉴에 그 항목이 있는 종류는 전부 Some · 묶음·루트는 None.
     #[test]

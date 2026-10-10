@@ -726,6 +726,17 @@ impl Runner {
     #[must_use]
     pub fn with_strict(mut self, on: bool) -> Self {
         self.strict = on;
+        // 엄격 모드 = 미정의 `&var`는 오류(T-9) → 너그러운 방언 기본(D-272)보다 우선: 전 방언 SQL*Plus식으로 고정.
+        if on {
+            self.engine.set_define_mode("on");
+        }
+        self
+    }
+
+    /// 치환 접두 모드(체이닝 · 설정 `script.define` = auto|on|off · D-272).
+    #[must_use]
+    pub fn with_define_mode(mut self, mode: &str) -> Self {
+        self.engine.set_define_mode(mode);
         self
     }
 
@@ -922,12 +933,18 @@ impl Runner {
     /// 정의되지 않은 치환 변수. 빈 목록 = 바로 실행해도 된다.
     #[must_use]
     pub fn missing_inputs(&self, src: &str) -> Vec<nsql_script::InputNeed> {
+        // D-272: 너그러운 방언(Oracle 밖 기본)은 미정의 `&x`를 묻지 않는다 → 훑기에 치환 글자를 넘기지 않는다(정의된 것은 어차피 빠진 입력이 아니다).
+        let define_char = if self.engine.settings.define_lenient {
+            None
+        } else {
+            self.engine.settings.define_char
+        };
         nsql_script::missing_inputs(
             src,
             self.dialect(),
             &self.engine.vars,
             &self.engine.defines,
-            self.engine.settings.define_char,
+            define_char,
         )
     }
 
@@ -3772,8 +3789,8 @@ SELECT * FROM t;
             "DEFINE n = 3\nVARIABLE v NUMBER = 4\nSELECT :v + &n AS x;\n",
         );
         assert_eq!(errs, 0, "{ev:?}");
-        // 느슨한 기본은 그대로 프롬프트.
-        let mut loose = runner();
+        // 엄격이 아니면 프롬프트(D-272 뒤 SQLite 기본은 미정의 `&`를 묻지 않으므로 `on`으로 고정해 프롬프트 기법만 본다).
+        let mut loose = runner().with_define_mode("on");
         let mut ev = Vec::new();
         let errs = loose.run_script("SELECT &N AS n;\n", &mut prompt, &mut |e| ev.push(e));
         assert_eq!(errs, 0);
@@ -3890,7 +3907,8 @@ SELECT * FROM t;
     /// D-137: 빠진 입력 찾기 → 넣기 → 실행(바인드 = 타입 있는 값 · 치환 = 글자) · 다시 물을 것이 없다.
     #[test]
     fn missing_inputs_then_apply() {
-        let mut r = runner();
+        // D-272: SQLite 기본은 미정의 `&`를 묻지 않는다 → 입력 창 기법 자체를 보는 이 시험은 `on`으로 고정.
+        let mut r = runner().with_define_mode("on");
         let src = "SELECT :N + 1 AS n, '&WHO' AS who;\n";
         let needs = r.missing_inputs(src);
         assert_eq!(needs.len(), 2, "{needs:?}");
@@ -4220,7 +4238,7 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
 
     #[test]
     fn connect_via_opener_and_substitution_prompt() {
-        let mut r = runner();
+        let mut r = runner().with_define_mode("on");
         let mut ev = Vec::new();
         let mut prompt = |name: &str| {
             Some(if name == "N" {

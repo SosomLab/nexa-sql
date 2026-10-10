@@ -102,12 +102,25 @@ pub struct Settings {
     pub feedback: bool,
     /// 치환 변수 접두 문자. `None` = `SET DEFINE OFF`.
     pub define_char: Option<char>,
+    /// ★ 너그러운 치환(D-272 · 10-10): `true` = **정의된 이름만** 바꾸고 미정의 `&x`는 글자 그대로(묻지도 오류도 아님 — `'R&D'`) ·
+    /// `false` = SQL*Plus처럼 미정의면 묻는다(Oracle 기본 · `SET DEFINE`/설정 on으로 고정하면 전 방언).
+    pub define_lenient: bool,
     pub verify: bool,
     pub echo: bool,
     pub fetch_size: u32,
     pub sqlformat: String,
     pub exit_on_error: bool,
     pub other: BTreeMap<String, String>,
+}
+
+impl Settings {
+    /// ★ D-272(10-10 · 협업 코드 감사 #19 "`&` 치환이 방언과 무관하게 켜져 MS·PG 탭의 `'R&D'`에서 입력 창"): `&이름` 치환은 모든 방언에서
+    /// 하되 **Oracle(SQL*Plus 계열)만 미정의면 묻고**, 다른 방언은 **정의된 이름만**(`:setvar`·`DEFINE`으로 만든 것) 바꾸고 미정의는 글자
+    /// 그대로 — 문서화된 `:setvar Env` → `&Env` 흐름은 그대로 살고 `'R&D'`의 거짓 입력 창만 사라진다. 돌려주는 값 = (접두, 너그러움).
+    #[must_use]
+    pub fn default_define(dialect: Dialect) -> (Option<char>, bool) {
+        (Some('&'), dialect != Dialect::Oracle)
+    }
 }
 
 impl Default for Settings {
@@ -125,6 +138,7 @@ impl Default for Settings {
             autoprint: false,
             feedback: true,
             define_char: Some('&'),
+            define_lenient: false,
             verify: true,
             echo: false,
             fetch_size: 500,
@@ -163,6 +177,9 @@ pub struct Engine {
     subst_stack: Vec<String>,
     /// 치환 변수가 바뀌었다(`DEFINE`/`UNDEFINE`/호스트 전달 · 실행 끝에 변수 창으로 알리고 지운다 · 09-23).
     pub defines_dirty: bool,
+    /// ★ 치환 접두가 **고정**됐는가(스크립트 `SET DEFINE …` 또는 설정 `script.define` = on/off · D-272 10-10): 고정이 아니면(auto)
+    /// 방언이 바뀔 때(`set_dialect`/`set_caps`) [`Settings::default_define_char`]로 돌아간다.
+    define_fixed: bool,
 }
 
 impl Engine {
@@ -177,23 +194,62 @@ impl Engine {
             column_new: BTreeMap::new(),
             vars: VarStore::new(),
             defines: BTreeMap::new(),
-            settings: Settings::default(),
+            settings: {
+                let (define_char, define_lenient) = Settings::default_define(dialect);
+                Settings {
+                    define_char,
+                    define_lenient,
+                    ..Settings::default()
+                }
+            },
             diagnostics: Vec::new(),
             subst_stack: Vec::new(),
             defines_dirty: false,
+            define_fixed: false,
         }
     }
 
-    /// 방언을 바꾼다 — 능력표도 그 방언의 내장 표로.
+    /// 방언을 바꾼다 — 능력표도 그 방언의 내장 표로 · 치환 접두가 고정이 아니면 방언 기본으로(D-272).
     pub fn set_dialect(&mut self, dialect: Dialect) {
         self.dialect = dialect;
         self.caps = nsql_core::Caps::of(dialect);
+        self.sync_define_default();
+    }
+
+    /// ★ 치환 접두 모드(설정 `script.define` · D-272): `on` = 모든 방언에서 SQL*Plus식(미정의 = 묻기) 고정 · `off` = 치환 없음 고정 ·
+    /// 그 밖(`auto`) = 방언 기본(Oracle = 묻기 · 다른 방언 = 정의된 이름만).
+    pub fn set_define_mode(&mut self, mode: &str) {
+        match mode.trim().to_ascii_lowercase().as_str() {
+            "on" => {
+                self.settings.define_char = Some('&');
+                self.settings.define_lenient = false;
+                self.define_fixed = true;
+            }
+            "off" => {
+                self.settings.define_char = None;
+                self.settings.define_lenient = false;
+                self.define_fixed = true;
+            }
+            _ => {
+                self.define_fixed = false;
+                self.sync_define_default();
+            }
+        }
+    }
+
+    fn sync_define_default(&mut self) {
+        if !self.define_fixed {
+            let (c, lenient) = Settings::default_define(self.dialect);
+            self.settings.define_char = c;
+            self.settings.define_lenient = lenient;
+        }
     }
 
     /// 접속한 세션의 방언 + **그 세션이 말한 능력표**(확장 드라이버는 내장 표와 다를 수 있다).
     pub fn set_caps(&mut self, dialect: Dialect, caps: nsql_core::Caps) {
         self.dialect = dialect;
         self.caps = caps;
+        self.sync_define_default();
     }
 
     pub fn define(&mut self, name: &str, value: &str) {
@@ -671,6 +727,11 @@ impl Engine {
     }
 
     fn apply_set(&mut self, opt: &SetOption) {
+        // 스크립트가 `SET DEFINE …`을 말하면 그때부터 방언이 바뀌어도 그 값 = SQL*Plus식(미정의 = 묻기)(D-272).
+        if matches!(opt, SetOption::Define(_)) {
+            self.define_fixed = true;
+            self.settings.define_lenient = false;
+        }
         let s = &mut self.settings;
         match opt {
             SetOption::ServerOutput { on } => s.serveroutput = *on,
@@ -788,6 +849,12 @@ impl Engine {
                             if j < b.len() && b[j] == b'.' {
                                 j += 1;
                             }
+                            i = j;
+                            continue;
+                        }
+                        None if self.settings.define_lenient => {
+                            // D-272: 너그러운 방언(Oracle 밖)은 미정의 `&x`를 글자 그대로 둔다(`'R&D'`).
+                            out.push_str(&text[i..j]);
                             i = j;
                             continue;
                         }
@@ -991,6 +1058,43 @@ fn after_command_word(text: &str) -> String {
 mod tests {
     /// 내장 변수 층(사용자 09-23): `${workspaceFolder}` · `${workspaceFolder:이름}` · `${config:키}` · 형식 접미(`:q`) ·
     /// `${env:NSQL_PROJECT_DIR}` = 내장 별칭이 OS보다 먼저 · DEFINE 이름이 같으면 DEFINE이 이긴다 · 모르는 이름 = 글자 그대로.
+    /// D-272(10-10): `&` 치환 기본 = Oracle만 · 다른 방언은 없음 · `set_define_mode` on/off = 고정(방언이 바뀌어도) · auto = 방언 기본 ·
+    /// 스크립트 `SET DEFINE`도 고정.
+    #[test]
+    fn define_char_defaults_per_dialect_and_fixing() {
+        let lenient = |e: &Engine| (e.settings.define_char, e.settings.define_lenient);
+        assert_eq!(lenient(&Engine::new(Dialect::Oracle)), (Some('&'), false), "Oracle = 미정의면 묻기");
+        assert_eq!(lenient(&Engine::new(Dialect::Mssql)), (Some('&'), true), "MSSQL = 정의된 이름만");
+        assert_eq!(lenient(&Engine::new(Dialect::Postgres)), (Some('&'), true));
+        // 너그러운 방언: 미정의 `&D`는 글자 그대로 · 정의된 `&Env`는 바뀐다 · Oracle은 미정의 = Err.
+        let mut e = Engine::new(Dialect::Mssql);
+        assert_eq!(e.substitute("SELECT 'R&D'").as_deref(), Ok("SELECT 'R&D'"));
+        e.define("Env", "prod");
+        assert_eq!(e.substitute("SELECT 'R&D', '&Env'").as_deref(), Ok("SELECT 'R&D', 'prod'"));
+        let mut o = Engine::new(Dialect::Oracle);
+        assert_eq!(o.substitute("SELECT 'R&D'"), Err("D".into()));
+        // on = 전 방언 SQL*Plus식 고정(방언이 바뀌어도) · auto = 방언 기본 · off = 치환 없음 고정.
+        let mut e = Engine::new(Dialect::Mssql);
+        e.set_define_mode("on");
+        assert_eq!(lenient(&e), (Some('&'), false));
+        e.set_dialect(Dialect::Postgres);
+        assert_eq!(lenient(&e), (Some('&'), false), "고정은 방언 변경에도 남는다");
+        e.set_define_mode("auto");
+        assert_eq!(lenient(&e), (Some('&'), true), "auto = PG 기본 = 너그러움");
+        e.set_dialect(Dialect::Oracle);
+        assert_eq!(lenient(&e), (Some('&'), false));
+        e.set_define_mode("off");
+        e.set_dialect(Dialect::Oracle);
+        assert_eq!(lenient(&e), (None, false), "off 고정");
+        // 스크립트 SET DEFINE = 고정 + SQL*Plus식.
+        let mut e = Engine::new(Dialect::Mssql);
+        let items = split_script("SET DEFINE ON\nSELECT 1;\n");
+        e.plan(&items[0]);
+        assert_eq!(lenient(&e), (Some('&'), false));
+        e.set_dialect(Dialect::Postgres);
+        assert_eq!(lenient(&e), (Some('&'), false));
+    }
+
     #[test]
     fn intrinsic_layer_between_defines_and_env() {
         let mut e = Engine::new(Dialect::Oracle);

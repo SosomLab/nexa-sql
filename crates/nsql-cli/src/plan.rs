@@ -3,8 +3,15 @@
 use nsql_core::Dialect;
 use nsql_script::{Action, Engine, ItemKind};
 
-pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i32 {
+pub(crate) fn run_plan(
+    dialect: Dialect,
+    src: &str,
+    script_args: &[String],
+    define_mode: &str,
+) -> i32 {
     let mut engine = Engine::new(dialect);
+    // D-272: 실행 미리보기도 설정 `script.define`(auto|on|off)을 따른다(러너를 안 거치는 길 · 협업 V1 10-10).
+    engine.set_define_mode(define_mode);
     engine.set_args(script_args);
     let items = nsql_script::split_script_in(src, Some(dialect));
     println!("# dialect={dialect} items={}", items.len());

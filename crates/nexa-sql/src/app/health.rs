@@ -357,6 +357,8 @@ impl App {
         }
         out.push('\n');
         out.push_str(&self.explorer.health_dump());
+        // L0 OS 신호 감시가 살아 있는가(Windows·macOS = true · Linux·끔 = false · 118차 mac V1).
+        out.push_str(&format!("\nnetwatch={}", self.netwatch.is_some()));
         out
     }
 }

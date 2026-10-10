@@ -148,10 +148,11 @@ impl App {
             _ => None,
         };
         let grids: Vec<(u64, u64)> = self.all_grids().map(|g| g.mem_parts()).collect();
+        // 메인 창 표면 = 픽셀 × 4 × **쥔 장수**(IOSurface 풀 ≤3 · 유휴 해제 뒤 1 · softbuffer 1 — 118차 mac).
         let main_surface = self.window.as_ref().map_or(0, |w| {
             let s = w.inner_size();
             u64::from(s.width) * u64::from(s.height) * 4
-        });
+        }) * self.surface.as_ref().map_or(1, |s| s.surface_count());
         let surfaces = main_surface + self.mem_win.surface_bytes();
         let logs = self.log_win.approx_bytes() + self.txlog.len() as u64 * 256;
         let s = memstat::sample(

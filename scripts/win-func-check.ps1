@@ -74,6 +74,12 @@ Set-Content -LiteralPath $q500 -Encoding UTF8 -Value @"
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
 SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
 "@
+# S95(10-10 118차 mac 크래시 회귀): 30만 행(10만 행 이상이면 됨) × 행 높이 → 썸 드래그 3000 px의 i32 곱이 넘치던 크기(임계 ≈ 72만 px).
+$qBig = Join-Path $DataDir "q_big.sql"
+Set-Content -LiteralPath $qBig -Encoding UTF8 -Value @"
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 300000)
+SELECT i AS id, i * 2 AS twice FROM n;
+"@
 $qErr = Join-Path $DataDir "q_err.sql"
 Set-Content -LiteralPath $qErr -Encoding UTF8 -Value "SELECT * FROM no_such_table_zz;"
 $qTwo = Join-Path $DataDir "q_two.sql"
@@ -475,5 +481,22 @@ Run-Scenario -Id S94 -Title "부분 결과 + 필터 = 서버 승격 · 승격 �
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S94")) {
     $t = if (Test-Path -LiteralPath $s94dump) { (Get-Content -LiteralPath $s94dump -TotalCount 3) -join " ¦ " } else { "" }
     Say ("  file: " + $t)
+}
+# ★ 10-10 118차 mac 크래시 회귀(nexa-ctl scroll.rs 썸 드래그 i32 넘침 · nexa-ui 197차): 행 수 0(전체) 30만 행 → `grid.vdrag:1000`(썸을 잡고 1000 px ·
+#   좌표는 그리드가 셈) → 살아 있고(Debug면 종전 abort) grid.dump `scroll_end=true`(Release면 종전 감겨서 false). 자동 판정 = 파일 검사.
+# ★ 폴더 변경 감시(T-293 · Windows ReadDirectoryChangesW): 프로젝트 열고 `fs.write`로 새 파일 → 패널 플래시 "Folder change applied".
+$s96dump = Join-Path $Out "s96_flash.txt"
+$s96new = Join-Path $DataDir "s96_new.sql"
+Run-Scenario -Id S96 -Title "폴더 변경 감시 = 플래시 '폴더 변경 반영'(T-293)" -Cmd ("project.load:" + $projFile + ",@after:1200:project.panel:on,@after:3500:fs.write:" + $s96new + "|SELECT 96;,@after:5000:flash.dump:" + $s96dump) -WaitMs 11000 -Expect "프로젝트 패널 플래시 'Folder change applied: …'"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S96")) {
+    $t = if (Test-Path -LiteralPath $s96dump) { (Get-Content -LiteralPath $s96dump -TotalCount 2) -join " ¦ " } else { "" }
+    Say ("  S96 check: " + $(if ($t -match "Folder change applied") { "PASS" } else { "FAIL" }) + " · " + $t)
+}
+$s95dump = Join-Path $Out "s95_grid.txt"
+Run-Scenario -Id S95 -Title "큰 결과 썸 드래그 = i32 넘침 없음(10-10 크래시 회귀)" -Cmd ("open:" + $qBig + ",@after:1200:grid.page:0,@after:1500:run.all,@after:8000:grid.vdrag:3000,@after:9000:grid.dump:" + $s95dump) -WaitMs 14000 -Expect "살아 있음 · 그리드가 맨 아래(scroll_end=true)"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S95")) {
+    $t = if (Test-Path -LiteralPath $s95dump) { (Get-Content -LiteralPath $s95dump -TotalCount 2) -join " ¦ " } else { "" }
+    $ok = ($t -match "rows=[0-9]{6}") -and ($t -match "scroll_end=true")
+    Say ("  S95 check: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " · " + $t)
 }
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

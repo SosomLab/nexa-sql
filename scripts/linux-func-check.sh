@@ -50,6 +50,12 @@ WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
 SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
 SQL
 echo "SELECT * FROM no_such_table_zz;" > "$D/q_err.sql"
+# S95(10-10 118차 mac 크래시 회귀): 30만 행(받는 중이라도 10만 행 이상이면 됨) × 행 높이 20~39 px = 내용 200만~1,170만 px → 썸 드래그 3000 px의
+#   i32 곱(≥ 6e9)이 넘치던 크기(임계 = 2^31 ÷ 3000 ≈ 72만 px). 10만 행 이상·3000 px이면 3-OS 어느 배율에서도 재현된다.
+cat > "$D/q_big.sql" <<'SQL'
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 300000)
+SELECT i AS id, i * 2 AS twice FROM n;
+SQL
 cat > "$D/q_two.sql" <<'SQL'
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 300)
 SELECT i AS id, 'a_' || i AS name FROM n;
@@ -144,7 +150,7 @@ say "exe=$APP  home=$H"
 say "| id | 시나리오 | 판정 | 창 | 비고 |"
 say "|---|---|---|---|---|"
 
-A="$D/a.sql"; B="$D/b.sql"; C="$D/c.sql"; Q5="$D/q500.sql"; QE="$D/q_err.sql"; QT="$D/q_two.sql"
+A="$D/a.sql"; B="$D/b.sql"; C="$D/c.sql"; Q5="$D/q500.sql"; QE="$D/q_err.sql"; QT="$D/q_two.sql"; QBIG="$D/q_big.sql"
 QW="$D/q_word.sql"; QM="$D/q_many.sql"; QL="$D/q_lines.sql"; QO="$D/q_outline.sql"; QI="$D/q_intel.sql"
 PROJ="$D/fc.nsql-project"
 
@@ -227,6 +233,19 @@ run_s S78 "사전 뷰 = FROM 뒤 sqlite_m(§129)"            "open:$QI,@after:10
 run_s S67 "Goto Symbol 팔레트(§117)"                    "open:$QO,@after:1200:goto.symbol"
 run_s S68 "아웃라인 패널(§117)"                         "open:$QO,@after:1200:view.outline,@after:2500:mem.dump:$OUT/s68.txt" Local 4.5 "" "s68.txt:."
 run_s S74 "이진 파일 아웃라인 = 무시 + 안내(§125)"      "open:$SKIP/bin.dat,@after:1200:view.outline,@after:1800:goto.symbol" Local 4
+# ★ 10-10 118차 mac 크래시 회귀(nexa-ctl scroll.rs i32 넘침 · nexa-ui 197차): 행 수 0(전체) 30만 행 → 썸을 잡고 1000 px 끌기(좌표 = 그리드가 셈)
+#   → 살아 있고(Debug면 종전 abort) 세로 끝에 닿아야 한다(Release면 종전 감겨서 0 근처 = scroll_end=false). 판정 = 행 ≥ 10만(Debug는 30만 행
+#   수신에 18 s 걸려 부분 결과로 판정 · Release는 끝까지) + scroll_end=true. 드래그 3000 px = 창 밖까지(끝 클램프). 대기 = 마지막 @after + 5 s(61 §4 ·
+#   비활성 앱은 App Nap으로 타이머가 늦게 깬다 — 10 s로는 덤프 직전에 종료됐다 · 협업 10-10).
+# ★ 폴더 변경 감시(T-293 · Windows ReadDirectoryChangesW · macOS FSEvents(118차) · Linux = TTL 폴백이라 플래시 대신 미지원 안내): 프로젝트를 열고 앱 밖에서
+#   파일을 만든 것처럼(`fs.write` = 앱 프로세스가 쓰지만 감시 경로는 같다) → 패널 플래시 "Folder change applied". Linux는 생존·창만(판정 없음).
+if [ "$(uname -s)" = Darwin ]; then
+  # 플래시는 사건(FSEvents 0.2 s + 묶음 0.4 s) 뒤 유지 시간 안에 덤프(5.0 s) · 대기 = 마지막 @after + 5 s · 판정 패턴에 공백 불가(`.`).
+  run_s S96 "폴더 변경 감시 = 플래시 '폴더 변경 반영'(T-293 macOS)" "project.load:$PROJ,@after:1200:view.project,@after:3500:fs.write:$D/s96_new.sql|SELECT 96;,@after:5000:flash.dump:$OUT/s96.txt" Local 11 "" "s96.txt:Folder.change.applied"
+else
+  run_s S96 "폴더 변경 감시(Linux = TTL 폴백 · 생존만)" "project.load:$PROJ,@after:1200:view.project,@after:3500:fs.write:$D/s96_new.sql|SELECT 96;,@after:5000:flash.dump:$OUT/s96.txt" Local 11
+fi
+run_s S95 "큰 결과 썸 드래그 = i32 넘침 없음(10-10 크래시 회귀)" "open:$QBIG,@after:1200:grid.page:0,@after:1500:run.all,@after:8000:grid.vdrag:3000,@after:9000:grid.dump:$OUT/s95.txt" Local 14 "" "s95.txt:rows=[0-9]{6} s95.txt:scroll_end=true"
 
 # ── 8. 91차 이후 신기능(Linux 첫 확인) ─────────────────────────────────────
 run_s L01 "메모리 모니터 창 + 덤프(docs/80 · T-197)"    "@after:1200:view.memory,@after:2500:mem.dump:$OUT/L01.txt" Local 4 "" "L01.txt:."

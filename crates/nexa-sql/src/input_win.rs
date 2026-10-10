@@ -253,6 +253,24 @@ impl InputWin {
         self.window.is_some()
     }
 
+    /// 자체 시험 덤프(기동 명령 `input.dump:<파일>` · 10-10 D-272 E2E): 첫 줄 `open=<열림>|password=<비밀번호 모드>` · 둘째 줄부터
+    /// `bind|이름` / `macro|이름`(스크립트 표기 · 줄 번호).
+    pub(crate) fn dump_text(&self) -> String {
+        let mut out = format!(
+            "open={}|password={}\n",
+            self.is_open(),
+            self.password_for.is_some()
+        );
+        for r in &self.rows {
+            let kind = match r.need.kind {
+                InputKind::Bind => "bind",
+                InputKind::Macro => "macro",
+            };
+            out.push_str(&format!("{kind}|{}|line={}\n", r.need.name, r.need.line));
+        }
+        out
+    }
+
     pub(crate) fn is(&self, id: WindowId) -> bool {
         self.window.as_ref().is_some_and(|w| w.id() == id)
     }

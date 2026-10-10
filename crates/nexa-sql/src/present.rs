@@ -6,11 +6,16 @@
 //!
 //! 모양은 `softbuffer::Surface`와 같다(`resize` → `buffer_mut` → 그리기 → `present`) — 창 코드가 뒷단을 모른다.
 //! 방식은 **창을 만들 때** 정해진다(설정을 바꾸면 새로 여는 창부터 · 메인 창은 재시작 뒤).
+//!
+//! ★ **유휴 해제**(118차 mac · nexa-ui 193차 `LayerPresenter::trim_idle`): IOSurface 풀(≤3장)은 레티나 메인 창에서 장당 ≈16 MB다.
+//! 마지막 프레임 뒤 `gfx.mac_present_trim_ms`(1500 · 0 = 끔) 동안 프레임이 없으면 호스트 틱이 [`Presenter::trim_if_idle`]로 앞 장(+잠긴 장)만
+//! 남긴다 — 다음 프레임은 새 장을 만든다(유휴 메모리 ↔ 첫 프레임 `IOSurfaceCreate` 1회의 거래). softbuffer = 할 일 없음(0).
 
 use std::num::NonZeroU32;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use winit::window::Window;
 
@@ -44,6 +49,15 @@ enum Kind {
 /// 창 하나의 내보내기.
 pub(crate) struct Presenter {
     kind: Kind,
+    /// 마지막으로 프레임 버퍼를 빌린 시각(유휴 판정의 기준).
+    last_frame: Instant,
+    /// 마지막 프레임 뒤 유휴 해제를 이미 했는가(한 번만 · 다음 프레임이 되돌린다).
+    trimmed: bool,
+}
+
+/// 유휴 해제를 **지금** 할 것인가(순수 판정 · MC/DC 테스트): IOSurface 뒷단이고 · 아직 안 했고 · 끄지 않았고(0) · 마지막 프레임 뒤 `idle_ms`가 지났다.
+pub(crate) fn trim_due(layer: bool, trimmed: bool, idle_ms: u64, since_frame_ms: u64) -> bool {
+    layer && !trimmed && idle_ms > 0 && since_frame_ms >= idle_ms
 }
 
 /// 그릴 버퍼(`[u32]` = `0x00RRGGBB` · 폭 × 높이). 다 그린 뒤 [`Buffer::present`].
@@ -59,6 +73,8 @@ impl Presenter {
             if let Some(p) = layer_for(&win) {
                 return Ok(Presenter {
                     kind: Kind::Layer { p, win },
+                    last_frame: Instant::now(),
+                    trimmed: false,
                 });
             }
         }
@@ -68,7 +84,36 @@ impl Presenter {
             .map_err(|e| format!("softbuffer surface failed: {e}"))?;
         Ok(Presenter {
             kind: Kind::Soft { surface, _ctx: ctx },
+            last_frame: Instant::now(),
+            trimmed: false,
         })
+    }
+
+    /// ★ 유휴 해제(위 머리말): 마지막 프레임 뒤 `idle` 동안 프레임이 없었고 아직 안 했으면 IOSurface 풀을 앞 장만 남긴다.
+    /// 돌려주는 값 = 놓은 장 수(0 = 할 일 없음 · softbuffer · 끔 · 이미 함 · 아직 이르다).
+    pub(crate) fn trim_if_idle(&mut self, now: Instant, idle: Duration) -> usize {
+        let since = now.saturating_duration_since(self.last_frame).as_millis() as u64;
+        if !trim_due(
+            matches!(self.kind, Kind::Layer { .. }),
+            self.trimmed,
+            idle.as_millis() as u64,
+            since,
+        ) {
+            return 0;
+        }
+        self.trimmed = true;
+        match &mut self.kind {
+            Kind::Layer { p, .. } => p.trim_idle(),
+            Kind::Soft { .. } => 0,
+        }
+    }
+
+    /// 유휴 해제가 **남아 있으면** 그 시각(호스트가 다음 깨움을 여기에 맞춘다) · 없으면 `None`(softbuffer · 끔 · 이미 함).
+    pub(crate) fn idle_deadline(&self, idle: Duration) -> Option<Instant> {
+        if idle.is_zero() || self.trimmed || !matches!(self.kind, Kind::Layer { .. }) {
+            return None;
+        }
+        Some(self.last_frame + idle)
     }
 
     /// 픽셀 크기를 맞춘다.
@@ -85,8 +130,10 @@ impl Presenter {
         }
     }
 
-    /// 이번 프레임의 버퍼.
+    /// 이번 프레임의 버퍼(= 프레임 시각 갱신 · 유휴 해제 상태 초기화).
     pub(crate) fn buffer_mut(&mut self) -> Result<Buffer<'_>, ()> {
+        self.last_frame = Instant::now();
+        self.trimmed = false;
         match &mut self.kind {
             Kind::Soft { surface, .. } => surface.buffer_mut().map(Buffer::Soft).map_err(|_| ()),
             Kind::Layer { p, .. } => p.frame().map(Buffer::Layer).ok_or(()),
@@ -99,6 +146,14 @@ impl Presenter {
         let (w, h) = (NonZeroU32::new(size.width)?, NonZeroU32::new(size.height)?);
         self.resize(w, h).ok()?;
         self.buffer_mut().ok()
+    }
+
+    /// 지금 쥔 표면(프레임 버퍼) 장수 — IOSurface = 풀 길이(0~3 · 유휴 해제 뒤 1) · softbuffer = 1. 메모리 창 "표면" = 창 픽셀 × 4 × 이 값.
+    pub(crate) fn surface_count(&self) -> u64 {
+        match &self.kind {
+            Kind::Soft { .. } => 1,
+            Kind::Layer { p, .. } => p.pool_len() as u64,
+        }
     }
 
     /// 진단용 이름(`NSQL_TRACE_FRAMES`).
@@ -165,5 +220,17 @@ mod tests {
         assert!(f(true, true));
         assert!(!f(false, true), "macOS가 아니면 끔");
         assert!(!f(true, false), "설정이 softbuffer면 끔");
+    }
+
+    /// MC/DC — 네 조건이 각각 혼자 결과를 바꾼다(유휴 해제 판정).
+    #[test]
+    fn trim_due_mcdc() {
+        use super::trim_due as f;
+        assert!(f(true, false, 1500, 1500), "기준");
+        assert!(!f(false, false, 1500, 1500), "softbuffer = 할 일 없음");
+        assert!(!f(true, true, 1500, 1500), "이미 했다");
+        assert!(!f(true, false, 0, 1500), "0 = 끔");
+        assert!(!f(true, false, 1500, 1499), "아직 이르다");
+        assert!(f(true, false, 1500, 99_999), "오래 지났어도 한 번");
     }
 }

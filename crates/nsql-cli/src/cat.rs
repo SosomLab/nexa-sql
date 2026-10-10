@@ -295,6 +295,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     },
                     what,
                     sub,
+                    sub_extra: String::new(),
                     opts,
                 };
                 let text = nsql_catalog::generate(s, &spec)?;

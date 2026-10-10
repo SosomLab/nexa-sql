@@ -2424,7 +2424,7 @@ impl Grid {
         // 페치 상태(T-285 진단 · 협업 bin50 b1): 자동 페치 조건의 재료 전부.
         let (_, my) = self.max_scroll();
         out.push_str(&format!(
-            "fetch more={} fetching={} req={} auto={} at={:?} fill_left={} filters={} promoted={} my={} scroll_y={} row_h={} view_h={} page={}\n",
+            "fetch more={} fetching={} req={} auto={} at={:?} fill_left={} filters={} promoted={} my={} scroll_y={} row_h={} view_h={} page={} scroll_end={}\n",
             self.more,
             self.fetching,
             self.fetch_req.is_some(),
@@ -2437,7 +2437,9 @@ impl Grid {
             self.scroll_y,
             self.row_h,
             self.bounds.h - self.footer_h,
-            self.page_rows
+            self.page_rows,
+            // 세로 끝에 닿았나(S95 = 큰 결과 썸 드래그 뒤 참이어야 · 넘침이면 0 근처라 거짓) · 스크롤할 것이 없으면 거짓.
+            my > 0 && self.scroll_y >= my
         ));
         out.push_str(&format!(
             "tools add={} dup={} del={} save={} cancel={} sel={:?}\n",
@@ -6025,6 +6027,43 @@ impl Grid {
         (w, h)
     }
 
+    /// 스크롤바에 넘기는 (뷰포트 · 내용 폭 · 내용 높이) — **한 자리**(입력 처리와 자체 시험 훅이 같은 값을 쓴다 · 10-10).
+    /// ★ 뷰포트 = 행번호 열(고정)·헤더(고정) 제외 — 바는 데이터 영역에만(09-16: 세로 바가 헤더까지 걸쳤다) · 가로 바의 끝이
+    ///   키보드 `max_scroll`과 같은 자리. 내용은 뷰포트보다 작아도 뷰포트 크기로(바 없음 판정은 ScrollBars가).
+    fn bars_geom(&self) -> (Rect, i32, i32) {
+        let (cw, ch) = self.content_size();
+        let b = self.bounds;
+        let b = Rect::new(
+            b.x + self.gutter_w,
+            b.y + self.header_h,
+            b.w - self.gutter_w,
+            b.h - self.header_h - self.footer_h,
+        );
+        let ch = ch - self.header_h;
+        (b, cw.max(b.w), ch.max(b.h))
+    }
+
+    /// ★ 자체 시험(기동 명령 `grid.vdrag:<dy>` · 10-10 118차 mac 크래시 회귀 = nexa-ctl `scroll.rs` 썸 드래그 i32 넘침): 세로
+    /// 바를 깨우고(휠 0 = 스크롤 없이 깨움) **지금 썸의 가운데**(창 좌표)를 돌려준다 — 호스트가 그 자리에 MouseDown → dy만큼 MouseMove →
+    /// MouseUp을 실제 `route` 경로로 넣는다. 결과가 없거나 바가 필요 없으면 `None`. 좌표 하드코딩 없이 어느 OS·배율에서든 같은 시험.
+    pub(crate) fn test_vthumb_center(&mut self, scale: f32) -> Option<(i32, i32)> {
+        if self.row_h <= 0 || self.rs.is_none() {
+            return None;
+        }
+        let (b, cw, ch) = self.bars_geom();
+        let _ = self.bars.on_event(
+            &InputEvent::Wheel { delta: 0 },
+            b,
+            cw,
+            ch,
+            self.scroll_x,
+            self.scroll_y,
+            scale,
+        );
+        let t = ScrollBars::v_thumb_for_test(b, ch, self.scroll_y, scale)?;
+        Some((t.x + t.w / 2, t.y + t.h / 2))
+    }
+
     /// 그릴 때 쓰는 세로 오프셋 — 행 단위 모드면 행 경계로 내림(맨 아래는 마지막 행이 다 보이도록 그대로).
     fn view_y(&self) -> i32 {
         if self.row_snap && self.row_h > 0 {
@@ -6279,26 +6318,10 @@ impl Grid {
         // ★ 스크롤바가 **선택보다 먼저**(휠 = 픽셀 · 썸/트랙 클릭 · 드래그 · 호버). 소비되면 셀 선택·키 처리로 흘리지 않는다
         //   (09-16: 가로 바 트랙을 눌렀는데 뒤의 셀이 선택됐다 — 선택 판정이 먼저 return했다).
         if self.row_h > 0 && self.rs.is_some() {
-            let (cw, ch) = self.content_size();
-            let b = self.bounds;
-            // ★ 뷰포트 = 행번호 열(고정)·헤더(고정) 제외 — 바는 데이터 영역에만(09-16: 세로 바가 헤더까지 걸쳤다) ·
-            //   가로 바의 끝이 키보드 `max_scroll`과 같은 자리.
-            let b = Rect::new(
-                b.x + self.gutter_w,
-                b.y + self.header_h,
-                b.w - self.gutter_w,
-                b.h - self.header_h - self.footer_h,
-            );
-            let ch = ch - self.header_h;
-            let (nx, ny, consumed) = self.bars.on_event(
-                ev,
-                b,
-                cw.max(b.w),
-                ch.max(b.h),
-                self.scroll_x,
-                self.scroll_y,
-                scale,
-            );
+            let (b, cw, ch) = self.bars_geom();
+            let (nx, ny, consumed) =
+                self.bars
+                    .on_event(ev, b, cw, ch, self.scroll_x, self.scroll_y, scale);
             self.scroll_x = nx;
             self.scroll_y = ny;
             self.clamp();
