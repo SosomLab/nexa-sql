@@ -323,6 +323,17 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 | `ACCEPT v [NUMBER\|CHAR\|DATE] [DEFAULT d] [PROMPT 글\|NOPROMPT] [HIDE]` | 물어서 치환 변수로(GUI 입력 창 · CLI 터미널 · `--no-prompt` = 기본값) | HIDE = 비밀(D-140) · 값 없는 **바인드**를 읽으면 실행당 한 번 입력 창(D-137 · `vars.undeclared`) |
 | `SET DEFINE OFF\|ON` | `&`를 글자로 | D-141 |
 
+**방언별 기본(D-272 · 10-10)** — `&`는 Oracle 밖에서 흔한 글자(`'R&D'` · 비트 연산 `a & b`)라 미정의 `&x`를 늘 묻던 종전 동작은 SQL Server·PG·MySQL 사용자에게 뜻밖의 입력 창이었다(108 §11 #19).
+
+| 방언 | 정의된 `&v`(`DEFINE` · `:setvar`) | 미정의 `&x` | 근거 |
+|---|---|---|---|
+| Oracle | 치환 | **묻는다**(GUI 입력 창 · CLI 터미널 · `plan` = 빈 값 경고) | SQL*Plus 관례 |
+| SQL Server · PostgreSQL · SQLite · MySQL | 치환(sqlcmd `:setvar Env` → `&Env` 흐름 유지) | **글자 그대로**(묻지도 오류도 아님) | `&`가 그 DBMS 문법·데이터에 흔함 |
+
+- 고정: 스크립트 `SET DEFINE ON`(전 방언 = Oracle처럼 묻기) · `SET DEFINE OFF`(전부 글자) · 설정 **`script.define`** = `auto`(위 표 · 기본) · `on` · `off` · `script.strict`(엄격 모드)는 `on`으로 덮는다.
+- 구현: nsql-script `Settings.define_lenient` · `Settings::default_define(dialect)` · `Engine::set_define_mode`(방언 전환 때 고정이 아니면 그 방언 기본으로 복귀) · nsql-run `Runner::with_define_mode`(너그러운 모드에서는 `missing_inputs`가 `&`를 훑지 않음) · GUI `worker.rs` · CLI `run`/`shell`/`plan`/`query`/`export`/`import`.
+- 확인(10-10 협업 V1): `-d mssql` `SELECT 'R&D'` = 그대로 · `-d oracle` = `&D` 미정의 경고 · `:setvar Env prod` + `'&Env'` = `'prod'` · `SET DEFINE ON` + mssql = 경고 · `script.define=off` + `DEFINE x = 7` = `'&x'` 그대로 · GUI M4PLAN `SELECT 'R&D'` = 입력 창 없이 결과. `nsql plan`(실행 미리보기)도 같은 설정을 따른다(10-10 · `plan::run_plan`에 `define_mode`). **검증 = `scripts/define-e2e.sh` 47/0**(CLI plan 4방언 17 · 실서버 run 4곳 8 · GUI 입력 창 22).
+
 ### 12-5. 살펴보기 · 로그
 
 `PRINT 이름…`(값 · GUI 로그 = 값 · 비밀 ******) · `VARIABLE`(선언 목록) · `SHOW VARIABLES`(결과 표 Name·Type·Value·Layer·Declared·Active) · `DEFINE`(치환 목록 · use 모드 = `원문 → 현재 값`) · View ▸ Variables 창(탭·공유·글로벌·치환 한 표 · 제자리 편집 · 층 버튼 · 바뀐 줄 강조 · 가려진 줄 흐림) · 실행 로그 = 바뀐 값만(`RunEvent::Vars`). SQL Server의 `PRINT 'text'`·`PRINT @v`는 서버 문장.

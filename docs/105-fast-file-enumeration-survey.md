@@ -70,7 +70,7 @@
 
 ### 3-3. 단계 2(감시 증분 · 디스크 캐시 · OS별 어댑터)
 
-1. **폴더 감시 포트** `DirWatch`(nexa-fs · 포트 + OS 어댑터 · DR-3 격리): Windows `ReadDirectoryChangesW`(재귀 플래그 · 버퍼 넘침 = 전체 재열거) · macOS FSEvents(`MustScanSubDirs` = 그 하위만 재열거 · `sinceWhen`으로 앱 재시작 사이 변경) · Linux inotify(폴더마다 watch · 상한 접근 시 폴링 폴백 + 상태줄 안내 · JetBrains와 같은 처리). 이벤트 = "이 폴더 다시 읽기" 요청으로 바꿔 `parwalk`에 넣음(폴더 단위 재열거 = 단순·안전).
+1. **폴더 감시 포트** `DirWatch`(nexa-fs · 포트 + OS 어댑터 · DR-3 격리): Windows `ReadDirectoryChangesW`(재귀 플래그 · 버퍼 넘침 = 전체 재열거) · macOS FSEvents(`MustScanSubDirs` = 그 하위만 재열거 · `sinceWhen` 재생은 쓰지 않음 = SinceNow · 앱 재시작 사이 변경은 TTL/첫 열거가 덮는다) · Linux inotify(폴더마다 watch · 상한 접근 시 폴링 폴백 + 상태줄 안내 · JetBrains와 같은 처리). 이벤트 = "이 폴더 다시 읽기" 요청으로 바꿔 `parwalk`에 넣음(폴더 단위 재열거 = 단순·안전).
 2. **디스크 캐시**(선택 · D-261): 위치 = 프로젝트 모드 `NSQL_HOME/cache/projects/<해시>.idx`(프로젝트 폴더를 더럽히지 않음 · 폴더 모드는 `.nsql/`) · 내용 = 폴더 표 + 이름 + 폴더 mtime · 열 때 = 캐시 즉시 표시 → 뒤에서 폴더 mtime 비교 재열거(바뀐 폴더만) · 10k~100k에서는 **이득이 작아 미룸 권장**(§0-1 = 100k도 ~150 ms · 추정).
 3. **Windows 대량 열거**(선택 · D-262): `GetFileInformationByHandleEx(FileIdBothDirectoryInfo)` 어댑터 — 콜드·네트워크에서 이득(Go −31.6 % · VA 5,000개 2.8×) · 웜 로컬에선 이미 ms 단위라 우선순위 낮음 · `LARGE_FETCH`는 네트워크 경로일 때만.
 4. **하지 않음**: MFT/USN(관리자) · Spotlight · Windows Search · plocate · fanotify — 가용성·권한이 보장되지 않는다.
@@ -102,7 +102,7 @@
 | **T-290** | 제외 규칙 `project.exclude` + 기본값(D-259) + 최상위 `.gitignore` 간이 해석 · `parwalk` 적용 | 1 |
 | **T-291** | `nexa_fs::list_names`(이름 + `file_type()`만 · `DT_UNKNOWN`/링크만 stat) → Goto·파일 검색 | 1 |
 | **T-292** | 목록 저장 = 폴더 표 + 이름(arena) · 퍼지 대상 문자열 공유 | 1 |
-| **T-293** | nexa-ui `DirWatch` 포트 + 3-OS 어댑터(D-263) → "폴더 다시 읽기"를 `parwalk`에 | 2 |
+| **T-293** | nexa-ui `DirWatch` 포트 + 3-OS 어댑터(D-263) → "폴더 다시 읽기"를 `parwalk`에 · Windows ✅ bin50 · macOS ✅ 10-10(FSEvents · 실제 경로 매핑) · Linux inotify 남음 | 2 |
 | **T-294** | 콜드 캐시·네트워크 폴더 측정(Windows 대기 목록 비우기 = 관리자 → 사용자 실행 또는 재부팅 직후) → D-262 판단 | 2 |
 
 ## 출처

@@ -116,6 +116,8 @@
 - ★ **결과 조회 분류 `CatFetch` · 점진 표시 `grid.fetch_display`(10-09 · 65eab8d · 352123b)**: `incremental`(기본 · 첫 세그먼트를 바로 보이고 나머지는 배치마다 이어 붙임 · 행 수 0이면 실행 뒤 전체 조회 자동) | `whole`(종전 · 다 받은 뒤 한 번에) · 같은 분류로 옮긴 키 = `grid.max_rows` · `grid.auto_fetch` · `grid.memory_budget_mb` · `grid.fetch_mode` · `db.fetch_size` · `db.fetch_all_size` · 설계 = [43 §4-3b](43-fetch-model-and-result-tabs.md).
 - ★ **자연 정렬 `ui.sort_natural`(10-09 · 5fda818 · 9484472 · 설정 ▸ 모양 · 기본 켬)**: 켬 = 이름 속 숫자를 값으로(T1 · T2 · t3 · T10) · 끔 = 대소문자 무시 글자 순(T1 · T10 · T2 · t3) · **전역 하나**(영역별 키 없음) = 그리드 글자 열 · 객체 탐색기 · 프로젝트 탐색기 · 북마크 · 로그인 목록 · 팔레트 동점 · 부품 = nexa-ctl `natural`([30 §2](30-architecture-patterns.md)).
 - ★ **서버 연결 끊김(T-313 · 10-08~09)**: `net.notify_quiet_secs`(60 · 같은 끝점 끊김 토스트 억제 창) · `net.watch`(켬 · OS 네트워크 변경 감시 · Windows · 다음 시작부터) · HIDDEN `meta.call_timeout_secs`(0 = `explorer.timeout`) · 107.
+- ★ **HIDDEN `gfx.mac_present_trim_ms`(10-10 · 118차 · 기본 1500 · 0 = 끔 · `nsql config list all`)**: macOS IOSurface 내보내기에서 프레임이 그 시간 없으면 메인 창 표면 풀을 앞 장만 남긴다([62 §2-1](62-macos-input-and-present.md)).
+- ★ **`script.define`(10-10 · D-272 · 분류 스크립트·변수 · 기본 `auto`)**: `&이름` 치환 — `auto` = Oracle만 미정의면 묻고 다른 방언은 정의된 이름만 바꾸며 미정의 `&x`는 글자 그대로 · `on` = 전 방언 묻기 · `off` = `&`를 늘 글자로 · 스크립트 `SET DEFINE ON/OFF`가 실행 안에서 덮음 · `script.strict`는 `on`으로 덮음 · CLI = `run`·`shell`·`plan`·`query`·`export`·`import` · [63 §12-4](63-variable-management.md).
 
 ### 3-2. 남은 것
 

@@ -48,7 +48,7 @@ about_to_wait     ── mem_win 열림 ─▶ now ≥ mem_next ? mem_sample() �
 |---|---|
 | 창 닫힘 | 스레드 0 · 타이머 0 · 그릴 때 OS 조회 1회/5 s(≈ 3 µs) · 상주 +0 |
 | 창 열림 | 1 s마다 `mem_sample()` — 편집기 탭 N + 결과 탭 M + 탐색기 서버 K 순회(각 O(1) 어림 · 총 < 50 µs) + OS 요약 **`sys_lite`**(힙 걷기 없음) + 창 그리기 1회(표 20행) · **힙 통계(`HeapSummary` = 힙 걷기 · 결과 10만 행 상태에서 10~21 ms)는 `mem.heap_refresh_ms`(5 s)마다만**(10-08 T-310 · 종전 매초 걷기 = 유휴 CPU 초당 18~26 ms → ≈ 3 ms) · 진단 = 환경 변수 `NSQL_TRACE_MEMWIN=1`(stderr에 `[memwin] parts: sources · extra · sys(lite|full+heap) · private_ws µs`) |
-| 메모리 | `Sample` 하나(≈ 200 B) · 창 표면(w×h×4 · 닫으면 해제) · 이력 없음(이력이 필요하면 `VecDeque<u64>` 60칸 = 480 B) |
+| 메모리 | `Sample` 하나(≈ 200 B) · 창 표면(픽셀×4×**쥔 장수** · macOS IOSurface 풀 ≤ 3 · 유휴 해제 뒤 1 · softbuffer 1 · 닫으면 해제 · 10-10 `Presenter::surface_count`) · 이력 없음(이력이 필요하면 `VecDeque<u64>` 60칸 = 480 B) |
 | 상한 키 | `mem.statusbar`(끄면 조회 0) · `mem.refresh_ms` · `mem.status_refresh_ms`(HIDDEN 5000) · **`mem.heap_refresh_ms`(5000 · 1~60 s · 힙 통계 간격)** · `mem.always_on_top` |
 | 네트워크 | 없음 |
 

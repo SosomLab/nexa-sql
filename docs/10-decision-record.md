@@ -396,6 +396,7 @@
 | D-269 | 커밋/롤백의 끊김 안내 (10-08) | ✅ 10-08 권장안 채택 = 커밋/롤백은 재접속 없이 막고 "서버 쪽 롤백 가능성" 경고 + 트랜잭션 로그 Lost(53 D-109 유지)(사용자 "진행해줘" · 개발 세션 전달) | 107-server-health-propagation.md §7 · T-313 ④ |
 | D-270 | 세션 층 Broken(그 접속 하나만 끊김)의 전용 탭 복귀 안내 기본 표시 (10-08) | ✅ 10-08 권장안 채택 = 세션 층 Broken의 전용 탭 복귀 안내 표시(사용자 "진행해줘" · 개발 세션 전달) | 107-server-health-propagation.md §9-6 · T-313 |
 | D-271 | 일회성 비밀번호 세션의 [다시 연결] (10-08) | ✅ 10-08 권장안 채택 = 일회성 비밀번호 세션의 [다시 연결] = 비밀번호 창을 띄움(사용자 "진행해줘" · 개발 세션 전달) | 107-server-health-propagation.md §9-6 · T-313 ③ |
+| D-272 | `&이름` 치환 변수의 방언별 기본 (10-10) | ✅ 10-10 권장안 채택(개발 세션 · 한 줄 고지) = `&이름` 치환은 전 방언에서 동작하되 **Oracle(SQL*Plus)만 미정의면 묻고**, SQL Server·PostgreSQL·SQLite·MySQL은 **정의된 이름만**(`DEFINE` · `:setvar`) 바꾸고 미정의 `&x`는 글자 그대로(`'R&D'` = 묻지도 오류도 아님) · 고정 = 스크립트 `SET DEFINE ON/OFF` · 설정 `script.define`(auto\|on\|off · 기본 auto) · `script.strict` = on으로 덮음 · 대안 = 전 방언 묻기(종전 · `R&D` 입력 창) / Oracle만 켬(sqlcmd `:setvar` → `&Env` 흐름 깨짐) · 근거 = 108 §11 #19 · 번호 메모 = 10-07 journal의 "D-272 후보"는 사용자 취소로 발급되지 않았음 | 63-variable-management.md §12-4 · 108-dbms-syntax-and-objects-survey.md §9 · T-327 |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |
 | L-3 | 라이선스 ID 체계 `NSL-2026-000001` · 대장은 발급 PC 로컬(비공개 저장소에도 안 올림) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:452 §12-7 · journal/2026-09-27.md:205 |

@@ -41,6 +41,7 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 
 - `${v:q}` = SQL 글자 상수로 감싸기 · `${v:id}` = 식별자 인용 · `${env:PATH}` = OS 환경 변수.
 - `SET DEFINE OFF` = `&`를 글자로.
+- **`'R&D'`가 SQL Server · PostgreSQL · MySQL · SQLite 탭에서는 입력 창 없이 그대로 가는 이유**(10-10): `&`는 그 DBMS들에서 문자열과 비트 연산(`a & b`)에 흔히 쓰이는 글자입니다. 그래서 Oracle이 아닌 탭에서는 `DEFINE v = …` · `:setvar v …`로 **정의한 이름만** `&v`로 바꾸고, 정의하지 않은 `&x`는 손대지 않습니다. Oracle 탭은 SQL*Plus처럼 정의 안 된 이름을 묻습니다. 모든 DBMS에서 묻게 하려면 스크립트 첫 줄에 `SET DEFINE ON`을 쓰거나 설정 `script.define = on`으로 바꿉니다([Settings](Settings.md)).
 - 스크립트 인자 `&1 &2 …` = `nsql run file.sql arg1 arg2`.
 
 > **같은 변수를 다른 프로시저에**(10-08): 선언 없이 생긴 변수(예: `EXEC SP_TEST1(:RET, 'SSS')`로 생긴 `:RET`)를 다른 프로시저의 OUT 자리에 다시 넘기면(`EXEC SP_TEST2(:RET, 'SSS')` · REF CURSOR OUT) 그 프로시저의 인자 타입으로 자동으로 바뀝니다. 타입을 바꾸고 싶지 않으면 `VAR RET NUMBER`처럼 타입을 적어 선언하세요.

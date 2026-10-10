@@ -2,7 +2,17 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-10](journal/2026-10-10.md)**(§1 최신화·분석 회귀 없음 · §2 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어" + 적용분 · 남음 = **T-320** README 영어 주판·NOTICE.md·위키 영어판 결정 · 커밋 = 117차 분) → 그 전 = [journal 2026-10-07](journal/2026-10-07.md)(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-10-10](journal/2026-10-10.md)**(§7 118차 mac = 맥 점검 개발(netwatch macOS · dirwatch FSEvents · IOSurface 유휴 해제 −41 MB) · 협업 V1 전부 ✓ · 남음 = T-321 Linux 감시 둘 · T-322 CLI 링크 · §1 최신화·분석 회귀 없음 · §2 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어" + 적용분 · 남음 = **T-320** README 영어 주판·NOTICE.md·위키 영어판 결정 · 커밋 = 117차 분) → 그 전 = [journal 2026-10-07](journal/2026-10-07.md)(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+
+## 2026-10-10 (118차 · mac · [journal 10-10 §7](journal/2026-10-10.md))
+
+- 맥 점검 = 비어 있던 자리 넷 → ★ nexa-sys `netwatch` macOS(SystemConfiguration · 전용 스레드 CFRunLoop · nexa-ui 195차) · ★ nexa-fs `dirwatch` macOS FSEvents(실제 경로 → 루트 모양 매핑 · nexa-ui 196차) · ★ IOSurface 유휴 해제 소비(HIDDEN `gfx.mac_present_trim_ms` 1500 · 표면 3장 → 1장 · footprint −41 MB) · `caret_asked` = 적용 안 함(이미 메인 창 하나만 깨움).
+- 검증(협업 세션) = nexa-ui 29 ✓ · nexa-sql 405 ✓ · clippy 둘 ✓ · Release 17.9/8.3 MB · V1 (a) `netwatch=true` (b) `/tmp` 경로 프로젝트 반영 · 제외 무반응 (c) 20,790,000 vs 62,370,000 B (d) 유휴 CPU 0 · 연관 11 ok.
+- 🔧 **크래시 = 큰 결과 스크롤바 드래그 i32 넘침**(nexa-ui 197차 `ScrollBars::mul_div` i64 · 회귀 시험 · V1 30만 행 끝까지 드래그 생존) + 자동 시험 **S95**(`grid.vdrag:3000` · 1차 = 대기 경주 → 14 s · mac Release·Debug ✓ · Windows = T-323) · journal §7-1.
+- 오후 지시 5건(오버로드 인자 · 한글 조합 되돌리기 · 메뉴 아이콘 · Copy full name · 멤버 Call) = **사용자 실기 ✓ 5/5**(10-10 저녁) · 협업 V1 ✓(406/0 · 442/0 · clippy 둘 · BISCM `PRC_RUN_ALL` #1 2인자 · #2 3인자 · 시나리오 10/10) · 📐 조사 문서 **[108](108-dbms-syntax-and-objects-survey.md)**(DBMS 6장 · 교차 비교 · 코드 감사 결함 27) · **[109](109-ansi-sql-syntax-survey.md)**(SQL:2016/2023 전수 · 예약어 398/409 · 대조 · 개선 7순위) → **T-324~T-327**([journal §7-2·§7-3](journal/2026-10-10.md)).
+- 🔧 조사 문서 첫 수확 = **#15** PG 루틴 Arguments 0건(서명 분리) · **#19** `&` 치환 방언 기본 **D-272**(Oracle만 묻기 · `script.define`) · 협업 V1 ✓(861/0 · 실서버 pg_temp · GUI M4PLAN `'R&D'`) · 새 발견 #15-b(이름 없는 인자 필터) · `nsql plan` 미반영 → T-327([journal §7-4](journal/2026-10-10.md)).
+- ★ 자동화 E2E(사용자 "점검 항목이 너무 많아 자동화" · "저장된 연결로 직접") = `define-e2e.sh` **47/0** · `mac-trim-e2e.sh` **3/0**(유휴 69.8 → 28.2 MB) · `pkg-overload-e2e.sh` **14/0** · 기능 점검 **S96** mac ok · E2E가 찾은 결함 2 수정(`SET DEFINE ON` 빠른 길 · 메모리 창 재그리기) · V2 862/0 · clippy ✓ · 사용자 실기 ✓ 폴더 감시 · ✓ 유휴 해제(Window surfaces −20 MB) · 남음 = Wi-Fi/VPN 토글([journal §7-5](journal/2026-10-10.md)).
+- 후속 = **T-321** Linux netlink·inotify · **T-322** CLI 프레임워크 링크(워크스페이스 feature 통합) · **T-323** Windows S95 첫 실행.
 
 ## 2026-10-10 (117차 · mac · [journal 10-10](journal/2026-10-10.md))
 

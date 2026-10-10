@@ -109,7 +109,15 @@ pwsh -NoProfile -File scripts/win-perf-all.ps1 -HomeDir ... -DataDir ... -Out ..
 
 각 시나리오에서 Private·WS·피크·핸들·GDI·USER·스레드·유휴 CPU(6초)를 찍는다.
 
-**기능 전수(V3 · 102 §5-7)와 짝**: `scripts/win-func-check.ps1` S01~S94(10-07 S80~S94 신설 = 메모리 창 · 플래시/폴더 감시/향상 모드 · 삭제 탭·디스크 보기 · Plain Text 폴백 · 확장 뷰 탭 표식 · 탭 툴팁 · 색인 재열거 · T-305 기동 명령 창 셋 · T-285 승격) + E2E 넷(`conn-cmd` · `mac-grid-edit` · `mac-bulk` · **`win-vars-e2e.sh`**(10-07 신설 · 변수 Scope/층/CLEAR/자동 타입/글로벌 파일 · SQLite 메모리 DB)). 시나리오 **설계·갱신 = 개발 세션 · 수행·기록 = 협업 세션**(사용자 10-07).
+**기능 전수(V3 · 102 §5-7)와 짝**: `scripts/win-func-check.ps1` S01~S96(10-10 **S96** = 폴더 변경 감시 플래시 `Folder change applied` · mac ok · Linux = TTL 폴백 생존만 · **S95** = 큰 결과 썸 드래그 i32 넘침 회귀 · `grid.vdrag:3000` · mac·Linux = `linux-func-check.sh` 같은 S95 · 10-07 S80~S94 신설 = 메모리 창 · 플래시/폴더 감시/향상 모드 · 삭제 탭·디스크 보기 · Plain Text 폴백 · 확장 뷰 탭 표식 · 탭 툴팁 · 색인 재열거 · T-305 기동 명령 창 셋 · T-285 승격) + E2E 넷(`conn-cmd` · `mac-grid-edit` · `mac-bulk` · **`win-vars-e2e.sh`**(10-07 신설 · 변수 Scope/층/CLEAR/자동 타입/글로벌 파일 · SQLite 메모리 DB)). 시나리오 **설계·갱신 = 개발 세션 · 수행·기록 = 협업 세션**(사용자 10-07).
+
+**기능별 E2E(10-10 · 실서버는 `-P <실제 설정 폴더>` = 프로필을 격리 홈으로 복사 · 읽기만 · 키 주입 0)**:
+
+| 스크립트 | 무엇 | 실행 | 10-10 mac |
+|---|---|---|---|
+| `scripts/define-e2e.sh` | `&` 치환 방언 기본(D-272) — ① CLI plan 4방언 ② 실서버 CLI run ③ GUI 입력 창 덤프(`input.dump`) + 결과 값 | `scripts/define-e2e.sh -o <출력> -P "$HOME/Library/Application Support/nexa-sql" -d oracle:BISCM,mssql:M4PLAN,postgres:Repository,sqlite:Demo` | 47/0 |
+| `scripts/mac-trim-e2e.sh` | macOS IOSurface 유휴 해제(`gfx.mac_present_trim_ms`) — `mem.dump` `Surfaces=` 4시점 + 메모리 창 캡처 · 비교군 trim=0 | `scripts/mac-trim-e2e.sh -o <출력>` | 3/0(유휴 69.8 → 28.2 MB · 끔 69.8 유지) |
+| `scripts/pkg-overload-e2e.sh` | Oracle 패키지 오버로드 멤버 `#n` · Arguments 분리 · 멤버/패키지 Call · `net.changed` 로그 | `scripts/pkg-overload-e2e.sh -o <출력> -P <실제 설정 폴더> [-p BISCM -s BISCM_SB -k PKG_STAT_GATHER_BSY -m PRC_RUN_ALL]` | 14/0 |
 
 ### C-2. 메모리 **회수** 시험(D7) — 규정 대상(사용자 09-22 "편집기·결과 그리드·대용량·다중 결과 그리드·커서 회수 시험이 없었다")
 

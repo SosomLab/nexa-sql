@@ -61,6 +61,8 @@
 
 메인 · 로그인 · 로그 창 캡처로 표시 확인. 기본값을 바꾸지 않은 까닭: 이 기기 한 대에서만 확인했고(Apple Silicon 미확인) 실패 모양이 "빈 창"이라 치명적이다 → **D-133 = 기본 전환 여부**로 남긴다. 남은 것: `nexa-gfx::Surface` 행 간격(stride) → 중간 버퍼·복사 제거 · 유휴 때 풀 줄이기 · 크기 조절 중 실기.
 
+- ★ **유휴 해제(10-10 · 118차 · nexa-ui 193 `trim_idle` 소비)**: HIDDEN `gfx.mac_present_trim_ms`(기본 1500 · 0 = 끔) — 마지막 프레임 뒤 그 시간 동안 프레임이 없으면 메인 창 풀을 앞 장만 남긴다(`Presenter::trim_if_idle` · 순수 판정 `trim_due` · `idle_deadline`로 한 번은 깨어 해제) · 거래 = 다음 프레임에서 `IOSurfaceCreate` 1회 · 실측(Debug · 메모리 창 없음 · 6 s) = 표면 3장 62,370,000 B → **1장 20,790,000 B** · footprint **100.8 → 59.6 MB(−41.2 MB)** · 유휴 CPU 0 유지(mac-probe 12 s) · 보조 창 = 후속(작음).
+
 ## 3. 메모리 (Release · 격리 폴더 · SQLite 접속 · `footprint`/`ps` 3회 표본)
 
 | # | 상태 | footprint | RSS | 피크 footprint | Windows Private(26 §7-3) |
