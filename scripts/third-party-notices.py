@@ -53,29 +53,30 @@ def main() -> int:
         p = pkgs[pid]
         if pid in members:
             continue
-        row = (p["name"], p["version"], p.get("license") or p.get("license_file") or "(미기재)", p.get("repository") or "")
+        row = (p["name"], p["version"], p.get("license") or p.get("license_file") or "(unspecified)", p.get("repository") or "")
         # path 의존(source == None)이면서 멤버가 아니면 형제 저장소(nexa-ui) 크레이트.
         (own if p.get("source") is None else third)[pid] = row
 
     lines = [
-        "THIRD-PARTY NOTICES — Nexa SQL",
+        "THIRD-PARTY NOTICES - Nexa SQL",
         "",
-        "Nexa SQL 자체는 PolyForm Noncommercial 1.0.0(LICENSE.md)이다. 이 파일은 정적으로 링크된 제3자 Rust crate의",
-        "목록과 각 라이선스 식별자(SPDX)를 적는다. 목록은 `cargo metadata`(Cargo.lock 고정)에서 생성한다 —",
-        "scripts/third-party-notices.py · 라이선스 전문 동봉·정책 게이트는 T-10(cargo-deny).",
+        "Nexa SQL itself is licensed under PolyForm Noncommercial 1.0.0 (see LICENSE.md). This file lists the",
+        "third-party Rust crates statically linked into the binaries together with their SPDX license",
+        "identifiers. The list is generated from `cargo metadata` (pinned by Cargo.lock) by",
+        "scripts/third-party-notices.py.",
         "",
-        "== SosomLab 자체 크레이트(형제 저장소 · path 의존) ==",
+        "== SosomLab crates (sibling repositories, path dependencies) ==",
     ]
     for name, ver, lic, repo in own.values():
         lines.append(f"  {name} {ver}  [{lic}]  {repo}")
-    lines += ["", f"== 제3자 crate ({len(third)}개) ==", ""]
+    lines += ["", f"== Third-party crates ({len(third)}) ==", ""]
     for name, ver, lic, repo in third.values():
         lines.append(f"  {name} {ver}  [{lic}]  {repo}")
     # 라이선스별 집계 — 정책 검토(NC와 양립 · copyleft 유무)를 한눈에.
     tally = OrderedDict()
     for _, _, lic, _ in third.values():
         tally[lic] = tally.get(lic, 0) + 1
-    lines += ["", "== 라이선스별 개수 =="]
+    lines += ["", "== Count by license =="]
     for lic, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         lines.append(f"  {n:4d}  {lic}")
     lines.append("")
@@ -84,7 +85,7 @@ def main() -> int:
     if os.path.isfile(notice):
         with open(notice, encoding="utf-8") as f:
             body = f.read().rstrip("\n")
-        lines += ["== DBMS 로고(crates/nexa-sql/assets/dbms/NOTICE.md) ==", "", body, ""]
+        lines += ["== DBMS logos (crates/nexa-sql/assets/dbms/NOTICE.md) ==", "", body, ""]
     else:
         print(f"경고: DBMS 로고 고지 없음 — {notice}", file=sys.stderr)
     with open(out, "w", encoding="utf-8", newline="\n") as f:

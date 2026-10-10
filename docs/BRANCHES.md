@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-10-english-pkg-text | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | ★ 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어"(CLAUDE §3 · 61 §2 · 33 §5-6 · T-320) + 적용(Cargo description · deb/rpm 설명 · pkg 환영문 · postinstall/uninstall · THIRD-PARTY-NOTICES 머리글) · `scripts/pkg-text-english-check.sh` · 맥 시험 전수(기능 점검 Darwin 분기 · E2E 실서버 3) · `.gitattributes` eol=lf · journal 10-10(117차 mac) |
 | work/2026-10-08-115aa | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | `editor.quote_idents` = needed → SELECT 템플릿의 스키마·테이블도 필요할 때만 인용(`identq::qualified/select_template` · nsql-catalog `select_template_q` · 탐색기 칸 `quote_always` · 행 조회·hover 200행·`obj.rows` 세 길 · 시험 +1 · 사용자 10-08) · 메모리 창 기본 758 + `fit` 양방향(이미지 맞춤) · 🔧 CI clippy 1.99 `needless_borrows_for_generic_args`(objlink `&sig` → `sig` · 5연속 빨강 복구) |
 | work/2026-10-08-115z | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | docs(협업 세션 작성): journal 10-07 bin73~75(T-310 재수정 · 새 결함 T-312 · V1 측정 ⚠ 표본 비용) · TODO(T-309 종결 · T-310 ⚠ 비고 · T-311 종결 · T-312 신규) · 26 §7-15 · 63 §11-5 CLI 글로벌 · wiki Variables/Settings |
 | work/2026-10-08-115y | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | 행 조회 DB 전환 보강: SELECT 템플릿 탭도 그 칸의 서버 세션에 먼저 묶고(`OpenSql.server` · `ExplorerSet` 채움 · `bind_tab_to_server`) DB를 심는다 — 활성 세션이 다른 서버(Oracle)일 때 열쇠 어긋남 방지(사용자 캡처 1→3) |

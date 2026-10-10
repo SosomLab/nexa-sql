@@ -13,17 +13,17 @@ LINK="/usr/local/bin/nsql"
 PKG_ID="com.sosomlab.nexa-sql"
 PURGE=0; [ "${1:-}" = "--purge" ] && PURGE=1
 
-if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$APP/Contents/MacOS/nsql" ]; then rm -f "$LINK"; echo "제거: $LINK"; fi
-[ -d "$APP" ] && { rm -rf "$APP"; echo "제거: $APP"; }
-pkgutil --pkgs 2>/dev/null | grep -q "^$PKG_ID\$" && { pkgutil --forget "$PKG_ID" >/dev/null && echo "영수증 삭제: $PKG_ID"; }
+if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$APP/Contents/MacOS/nsql" ]; then rm -f "$LINK"; echo "Removed: $LINK"; fi
+[ -d "$APP" ] && { rm -rf "$APP"; echo "Removed: $APP"; }
+pkgutil --pkgs 2>/dev/null | grep -q "^$PKG_ID\$" && { pkgutil --forget "$PKG_ID" >/dev/null && echo "Receipt forgotten: $PKG_ID"; }
 
 if [ "$PURGE" = 1 ]; then
     # sudo로 돌리면 $HOME이 root라 실제 사용자 홈을 찾는다.
     U="${SUDO_USER:-$(id -un)}"; H="$(dscl . -read "/Users/$U" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"; H="${H:-$HOME}"
     for d in "$H/Library/Application Support/nexa-sql" "$H/Library/Logs/nexa-sql" "$H/Library/Caches/nexa-sql"; do
-        [ -e "$d" ] && { rm -rf "$d"; echo "제거(사용자 데이터): $d"; }
+        [ -e "$d" ] && { rm -rf "$d"; echo "Removed (user data): $d"; }
     done
 else
-    echo "사용자 데이터는 보존했다(~/Library/Application Support/nexa-sql 등) — 함께 지우려면 --purge"
+    echo "User data kept (~/Library/Application Support/nexa-sql etc.) - pass --purge to remove it as well"
 fi
-echo "완료"
+echo "Done"

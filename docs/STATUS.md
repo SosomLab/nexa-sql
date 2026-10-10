@@ -2,7 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-07](journal/2026-10-07.md)**(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-10-10](journal/2026-10-10.md)**(§1 최신화·분석 회귀 없음 · §2 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어" + 적용분 · 남음 = **T-320** README 영어 주판·NOTICE.md·위키 영어판 결정 · 커밋 = 117차 분) → 그 전 = [journal 2026-10-07](journal/2026-10-07.md)(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+
+## 2026-10-10 (117차 · mac · [journal 10-10](journal/2026-10-10.md))
+
+- 최신화·분석 **회귀 없음**(세 저장소 = origin/main · nexa-sql 커밋 153 · nexa-ui 145~194 중 nexa-sql 미소비 = 190~194 추가만 · nexa-license = 발급기만 · 시험 853/0 · 624/0 · check ✓).
+- ★ **맥 시험 전수(V3)** = 기능 점검 **82/82**(저장소 `linux-func-check.sh`에 Darwin 창 수 분기 → 맥 기능 점검 스크립트 = 같은 파일) · grid-edit E2E **96/0** · bulk E2E **28/0**(실서버 Oracle·PG·SQL Server 포함 · 14.7k/19.2k/5.2k행/s) · 블록 주석 3/3 · `nsql plan` errors 0 · macOS pkg 내용(환영문·postinstall·uninstall·고지 머리글) 영어 ✓ · 🔧 시험 자산 결함 2 = `mac-bulk-e2e.sh` CRLF → LF + **`.gitattributes`**(`*.sh`·`*.py`·패키지 스크립트 = eol=lf) · 111차 swift 창 수 사본 미커밋 → 저장소 분기.
+- ★ **규칙 확장 — 패키지 게시물 + 프로그램 내부 정보 = 전부 영어**(사용자 10-10 "기본 문서와 설명, 버전 등" · 범위 셋 = 제출물 · 프로그램/패키지 안 정보 · 동봉·링크 기본 문서 · 한국어 = i18n 층으로 덧붙이기만 · CLAUDE.md §3 · 61 §2 · 33 §5-6 · 메모리) · 적용 = Cargo description 2 · deb/rpm 설명 본문 · pkg 환영문 · postinstall/uninstall 출력 · THIRD-PARTY-NOTICES 머리글 · 점검 스크립트 `scripts/pkg-text-english-check.sh`(모두 ✓) · 남음 **T-320**(README 영어 주판 + `README.ko.md` · 패키지 안 스크립트 주석 · `assets/dbms/NOTICE.md` · CI 배선 · 위키 영어판 = 사용자 결정).
 
 ## 2026-10-09 밤 (🚀 **v0.1.8 릴리스** · 패치 · [journal 10-07 §31~§32](journal/2026-10-07.md))
 

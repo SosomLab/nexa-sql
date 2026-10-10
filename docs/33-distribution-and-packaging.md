@@ -115,6 +115,11 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | macOS Info.plist | CFBundleVersion · CFBundleShortVersionString(빌드가 @VERSION@ 치환) · CFBundleIdentifier · NSHumanReadableCopyright · LSMinimumSystemVersion 11.0 | ✅ |
 | Cask | version · sha256(워크플로가 실제 dmg로) · desc(영문 한 줄) · homepage · zap | ✅ |
 | winget 매니페스트(10-05 v0.1.5 · `packaging/winget/`) | **글 필드 전부 영어**(Publisher · PackageName · ShortDescription · Description · Tags · ReleaseNotes · 기본 로캘 en-US · 사용자 10-04) · ManifestVersion 세 파일 동일(1.12.0) + 스키마 헤더 · Publisher · License · ShortDescription · ReleaseNotesUrl · **DisplayVersion은 PackageVersion과 같으면 넣지 않는다**(dir2 반려) · MSI면 InstallerType `wix`·Scope `machine`·UpgradeCode | ✅ `SosomLab.NexaSQL` · version/locale/installer 3종 · ManifestVersion 1.12.0 · 기본 로캘 en-US · 글 전부 영어 · DisplayVersion 없음 · InstallerType wix · Scope machine · x64 · ProductCode = 렌더 때 MSI에서 읽음 · UpgradeCode 고정 · ASCII 밖 글자 0(렌더 게이트) |
+| Linux deb `control` · rpm `.spec`(10-10) | `Description`/`Summary`·`%description` **영어**(사용자 10-10) · Maintainer · Homepage · Depends/Recommends | ✅ 10-10 영어로 바꿈(종전 본문 한국어) |
+| macOS pkg 환영문 · `postinstall` · `uninstall.sh`(10-10) | 사용자에게 보이는 글 전부 영어(welcome.txt heredoc · echo 출력) | ✅ 10-10 영어로 바꿈 |
+| Cargo `description`(바이너리 크레이트 `nexa-sql` · `nsql-cli`) · THIRD-PARTY-NOTICES 머리글(10-10) | 영어 · `cargo metadata`/고지 생성 스크립트 리터럴 | ✅ 10-10 영어로 바꿈 · DBMS 로고 `NOTICE.md` 본문은 T-320 |
+| 동봉·링크 기본 문서(README · LICENSE · 릴리스 노트) | README 영어 주판 + `README.ko.md` · LICENSE.md(영어) + `LICENSE.ko.md` ✅ · 릴리스 노트 영어 절 먼저 ✅ | ☐ README = T-320 ① |
+| **점검 스크립트** `scripts/pkg-text-english-check.sh`(10-10) | 위 자리 전부에서 한글 줄 = 실패(주석 · `[ko]` 지역화 키 제외 · `--notices <파일>` = 생성한 고지 전체) · 릴리스 전 1회 | ✅ 10-10 · CI 배선은 T-320 ④ |
 | choco nuspec(10-05 v0.1.5 · `packaging/choco/`) | **전부 영어**(title · summary · description · releaseNotes · tags · 스크립트 주석/출력 · VERIFICATION.txt · 사용자 10-04) · 영문 summary·description(이메일 금지 — dir2 반려) · `<copyright>`(beep·coffee 반려) · iconUrl = jsDelivr 태그 고정(raw.githubusercontent 불가) · owners=kiros33 / authors=SosomLab · 다운로드형이면 VERIFICATION.txt 없음 · tags 남용 금지 · ps1 = 영문 + UTF-8 BOM + `${var}:` | ✅ `nexa-sql.nuspec` 영어 · `<copyright>` · owners=`kiros33`(Chocolatey 계정) ≠ authors=`SosomLab`(CPMR0068 · dir2 교훈) · iconUrl = jsDelivr 태그 고정(`packaging/branding/nexa-sql-256.png`) · 설명에 이메일 없음 · `tools/chocolateyinstall.ps1`(msi · `/qn /norestart` · 성공 코드 0/3010/1641) · `chocolateyuninstall.ps1`(ProductCode) · ps1 = 영어(ASCII) + UTF-8 BOM(CPMR0010 지침) · 다운로드 전용 = VERIFICATION.txt 없음 |
 
 ### 5-3. winget·choco(10-05 v0.1.5부터 열림)
@@ -180,3 +185,28 @@ sudo dnf install nexa-sql
 **공개 뒤 확인(릴리스마다 · `homebrew.yml` ✓ 옆에)**: `linux-repo.yml` ✓ → linux-repo `publish` ✓ → <https://pkg.sosomlab.com/repo.json>의 nexa-sql 버전이 새 태그와 같은지.
 
 **지금 없는 것**: arm64 자산(deb `arm64` · rpm `aarch64`) · RPM 생성 경로는 linux-repo에서도 아직 실행된 적 없음(linux-repo `docs/SETUP.md` 8단계 진행 중).
+
+
+### 5-6. 패키지 게시물 + 프로그램 내부 정보 = 영어(사용자 10-04 → 10-10 확장)
+
+사용자 10-10: "패키지 게시에 대한 작업은 기본 문서와 설명, 버전 등 프로그램 내부의 정보들이 영어로 작성되도록 규칙에 반영". §5-3의 "제출물 영어" 규칙을 **프로그램·패키지 안에 박히는 정보와 동봉·링크되는 기본 문서**까지 넓힌다. 원칙 = **기본 언어(영어)는 하나 · 한국어는 i18n 층으로 덧붙이기만**.
+
+**범위 셋**
+
+| 급 | 무엇 | 자리(원장) | 상태 10-10 |
+|---|---|---|---|
+| ① 제출물 | winget 매니페스트 글 필드 · choco nuspec·스크립트 · PR/검수 코멘트 | §5-3 그대로 | ✅ |
+| ② 프로그램·패키지 안의 정보 | Cargo `description`(바이너리 크레이트) · exe VERSIONINFO(`*.rc`) · MSI(`Package`·`SummaryInformation`·ARP) · `Info.plist` · deb `control` · rpm `.spec` · `.desktop` 기본 키 · cask `desc` · `--version`/`--help`·About 창의 **기본** 출력(`Msg` 영어 열) · pkg 환영문 · `postinstall`/`uninstall.sh` 출력 · THIRD-PARTY-NOTICES 머리글 · 동봉 고지(`assets/dbms/NOTICE.md`) · **버전 표기** = SemVer 숫자 + 영어 접미(`-dev.<sha>` · `-rc`) | ✅ 전부 영어(10-10 바꾼 자리 = §5-2 표) · NOTICE.md 본문만 한국어 → T-320 ③ |
+| ③ 기본 문서 | 패키지가 동봉하는 문서(`packaging/lib.sh` 공통 = LICENSE 2종 · README · THIRD-PARTY-NOTICES) + 메타데이터 URL이 가리키는 문서(Homepage/ProjectUrl = GitHub README · ReleaseNotesUrl = 릴리스 노트) | LICENSE.md 영어 + `LICENSE.ko.md` ✅ · 릴리스 노트 영어 절 먼저 ✅ · **README 한국어** → T-320 ① |
+
+**규칙**
+
+1. **기본 = 영어 하나.** 위 자리의 원문(소스·템플릿·리터럴)은 영어로 쓴다. 한국어는 **덧붙이는 층**으로만 — GUI/CLI 문구 = `nsql-i18n::Msg` 한국어 열 · `.desktop` `Comment[ko]`/`GenericName[ko]` · `LICENSE.ko.md` · `README.ko.md`. 영어를 지우고 한국어로 바꾸는 변경은 없다.
+2. **버전·식별 정보에 한글 없음.** 버전은 SemVer 숫자(+ 영어 접미) · 제품명 `Nexa SQL`/`nsql` · 제조사 `SosomLab` · 저작권 줄 `Copyright (c) 2026 SosomLab - PolyForm Noncommercial 1.0.0`를 모든 OS 메타가 같은 글로.
+3. **한국어로 남겨도 되는 것** = 저장소 내부 문서(docs/ · journal) · 빌드 스크립트·워크플로의 **주석**과 CI 로그 문구(`note`/`die` · `::error::`) · 코드 주석 · 사용자와의 대화·보고(CLAUDE.md "모든 답은 한글로" 그대로). 패키지 안에 **파일로 들어가는** 스크립트(choco `tools/*.ps1` · pkg `postinstall`/`uninstall.sh`)는 주석까지 영어가 바람직하되, 지금은 **사용자에게 보이는 출력**을 필수로 한다(주석은 T-320 ②).
+4. **점검 = `scripts/pkg-text-english-check.sh`** — 위 자리에서 한글 줄을 찾으면 실패(주석 · `[ko]` 키 제외 · `--notices <생성 파일>`로 THIRD-PARTY-NOTICES 전체까지). 릴리스 절차(§3 · 태그 전)에서 1회 · 새 패키지 자리(새 OS · 새 채널 · 새 exe)가 생기면 이 스크립트에 `check` 줄 하나 + §5-2 표 한 줄.
+5. **보고는 종전 규칙대로** — 사용자에게는 영어 원문 + 한글 요약.
+
+**10-10 적용분**(117차 mac): Cargo `description` 2(`crates/nexa-sql` · `crates/nsql-cli` — 종전 "지금은 dry-run 플래너"는 낡은 글이기도 했다) · deb `control` 설명 본문 · rpm `%description` · pkg `welcome.txt` · `uninstall.sh`/`postinstall` echo · `scripts/third-party-notices.py` 머리글·절 제목·`(unspecified)` · 점검 스크립트 신설 → 실행 결과 전부 ✓.
+
+**남은 적용 = T-320** ① README 영어 주판(`README.md` 영어 · 지금 글은 `README.ko.md`로 — 패키지 동봉 + GitHub 첫 화면 · 위키 링크는 그대로) ② 패키지 안 스크립트 주석 영어 ③ `crates/nexa-sql/assets/dbms/NOTICE.md` 영어(상표·출처 고지 = THIRD-PARTY-NOTICES에 그대로 실림 · 법적 문구라 번역 뒤 사용자 확인) ④ 점검 스크립트를 `release.yml` 포장 전 단계에 배선 ⑤ **위키(docs/wiki · 사용자 설명서) 영어판** = 분량이 커 사용자 결정(영어 주판 + 한국어 병행 / 한국어 유지 중 택일 · 결정 대기).

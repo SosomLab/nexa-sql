@@ -40,12 +40,12 @@ note "$(basename "$COMPONENT") $(du -h "$COMPONENT" | cut -f1)"
 step "product archive (productbuild)"
 cp "$ROOT/LICENSE.md" "$WORK/res/LICENSE.md"
 cat > "$WORK/res/welcome.txt" <<EOF
-Nexa SQL $VERSION — 크로스플랫폼 경량 SQL 클라이언트 + CLI nsql
+Nexa SQL $VERSION - cross-platform lightweight SQL client + CLI nsql
 
-설치 위치: /Applications/Nexa SQL.app
-CLI: 설치 후 /usr/local/bin/nsql → Nexa SQL.app/Contents/MacOS/nsql 링크가 만들어집니다.
-제거: sudo "/Applications/Nexa SQL.app/Contents/Resources/uninstall.sh"  (사용자 데이터까지: --purge)
-설정·프로필: ~/Library/Application Support/nexa-sql/
+Install location: /Applications/Nexa SQL.app
+CLI: after installation, /usr/local/bin/nsql is linked to Nexa SQL.app/Contents/MacOS/nsql.
+Uninstall: sudo "/Applications/Nexa SQL.app/Contents/Resources/uninstall.sh"  (add --purge to remove user data too)
+Settings and profiles: ~/Library/Application Support/nexa-sql/
 EOF
 sed -e "s/@VERSION@/$VERSION/g" -e "s|@PKG@|$(basename "$COMPONENT")|g" \
     "$ROOT/packaging/macos/distribution.xml" > "$WORK/distribution.xml"

@@ -1,0 +1,8 @@
+# 줄 끝 규칙(10-10 · 117차 mac): Windows 세션이 커밋한 `scripts/mac-bulk-e2e.sh`가 CRLF로 들어와 맥에서 `env: bash\r` 실행 불가 → 셸·파이썬·패키지 스크립트는 LF 고정.
+*.sh text eol=lf
+*.py text eol=lf
+*.rb text eol=lf
+packaging/macos/scripts/* text eol=lf
+packaging/linux/control text eol=lf
+packaging/linux/*.spec text eol=lf
+packaging/linux/*.desktop text eol=lf

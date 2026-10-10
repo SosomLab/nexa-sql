@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # linux-func-check.sh — 기능 점검 자동화 **Linux판**(win-func-check.ps1 이식 · 사용자 09-26 "전체 개발 기능 리눅스 동작 전수 검사").
+#   ★ macOS에서도 그대로 돈다(10-10 · 창 수 = CGWindowList PID 계수 · 나머지 판정 동일) — 맥 기능 점검 = 이 스크립트.
 #   시나리오마다 앱을 격리 홈으로 띄우고(`NSQL_STARTUP_CMD`로만 몬다 · OS 키·마우스 주입 0 · docs/61 §4) **자동 판정**한다.
 #   Windows판과 다른 점: 이 VM에는 창 캡처 도구가 없다(import·scrot·xdotool 전부 없음) → 캡처 대신
 #     ① 프로세스 생존 ② 창 수(`xwininfo -root -tree`의 WM_CLASS `nexa-sql`) ③ stderr 패닉 없음
@@ -19,7 +20,29 @@ say() { echo "$*"; echo "$*" >> "$REPORT"; }
 pass=0; fail=0; warn=0
 
 # ── 창 수 = 이 앱이 만든 X11 최상위 창(WM_CLASS nexa-sql · mutter 프레임은 제외) ───────────
-wins_now() { xwininfo -root -tree 2>/dev/null | grep -c '("nexa-sql" "nexa-sql")'; }
+# macOS(10-10 · 117차): xwininfo가 없다 → CGWindowList로 **내가 띄운 PID의 창만** 센다(접근성 권한 불필요 · swiftc 1회 컴파일 →
+#   target/func-check-tools/wincount · 111차 협업 세션의 미커밋 사본을 저장소로 올림). Linux = 종전 xwininfo(WM_CLASS nexa-sql).
+WINCOUNT="$ROOT/target/func-check-tools/wincount"
+if [ "$(uname -s)" = Darwin ] && [ ! -x "$WINCOUNT" ]; then
+  mkdir -p "$(dirname "$WINCOUNT")"
+  cat > "$WINCOUNT.swift" <<'SWIFT'
+import CoreGraphics
+import Foundation
+let pid = Int32(CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "0") ?? 0
+var n = 0
+if let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+    for w in list {
+        if let p = w[kCGWindowOwnerPID as String] as? Int32, p == pid,
+           let layer = w[kCGWindowLayer as String] as? Int, layer == 0 { n += 1 }
+    }
+}
+print(n)
+SWIFT
+  xcrun swiftc -O -o "$WINCOUNT" "$WINCOUNT.swift" || { echo "wincount 컴파일 실패(swiftc 필요)"; exit 2; }
+fi
+wins_now() { # $1 = 앱 PID(맥) · Linux는 전체 WM_CLASS 수
+  if [ "$(uname -s)" = Darwin ]; then "$WINCOUNT" "${1:-0}"; else xwininfo -root -tree 2>/dev/null | grep -c '("nexa-sql" "nexa-sql")'; fi
+}
 
 # ── 시험 자료 ──────────────────────────────────────────────────────────────
 cat > "$D/q500.sql" <<'SQL'
@@ -92,7 +115,7 @@ run_s() {
   local p=$!
   sleep "$secs"
   local alive=0 wins=0
-  if kill -0 "$p" 2>/dev/null; then alive=1; wins=$(wins_now); fi
+  if kill -0 "$p" 2>/dev/null; then alive=1; wins=$(wins_now "$p"); fi
   kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
   local panic=0; grep -qE "panicked|RUST_BACKTRACE" "$err" 2>/dev/null && panic=1
   local verdict="ok" detail=""

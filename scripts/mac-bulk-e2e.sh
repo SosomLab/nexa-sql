@@ -4,7 +4,7 @@
 #   -P <실제 설정 폴더> -d 프로필:방언,… = 실서버(임시 표 생성 → 5,000행 적재 → 건수 → DROP · 61 §2-4 ⑤) · rows/s 출력(89 실측).
 # 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS]
 #   `프로필:방언[:DB]` — 셋째 조각(선택) = SQL Server 임시 표를 만들 DB(로그인 기본 DB가 master일 때 · T-309 ④) · 파이썬 = `NSQL_PYTHON` 우선(T-309 ③).
-set -u
+set -u
 # 파이썬 인터프리터(T-309 · 10-07): Windows Git Bash의 `python`·`python3`는 pyenv 셸 래퍼(`pyenv exec`)라 heredoc/stdin 코드를 배치로 읽어
 #   IndentationError → **실제 실행 파일**을 찾는다: `NSQL_PYTHON` → `pyenv which python` → `py -3` → `python` · 그 밖 OS = `python3`.
 #   파이썬 코드는 heredoc stdin이 아니라 **임시 .py 파일**로 실행한다(래퍼가 섞여도 안전 · 102 §12 "인라인/heredoc 파이썬 금지").
@@ -53,7 +53,7 @@ with open(os.path.join(d,'nohdr.tsv'),'w') as f:
     for i in range(1,11): f.write(f'{5000+i}\tt{i}\t{i}\t2026-01-0{(i%9)+1} 09:00:00\n')
 with open(os.path.join(d,'mapped.csv'),'w') as f:
     f.write('code,label\n'); f.write('7001,seven\n7002,\n')
-PY
+PY
 pyrun "$D/_gen_sqlite.py" "$D"
 cat > "$D/setup.sql" <<'SQL'
 DROP TABLE IF EXISTS bulk_t;
@@ -93,7 +93,7 @@ with open(os.path.join(d,'gui.csv'),'w') as f:
 with open(os.path.join(d,'guidup.csv'),'w') as f:
     f.write('id,name,amt,dt\n')
     for i in range(1,21): f.write(f'{(9001 if i==15 else 9500+i)},d{i},1,2026-03-01 00:00:00\n')
-PYG
+PYG
   pyrun "$D/_gen_gui.py" "$D"
   run_gui 14 Local "import.open:bulk_t;$D/gui.csv,@after:2500:import.start,@after:8000:import.dump:$O/imp1.txt"
   d1=$(cat "$O/imp1.txt" 2>/dev/null)

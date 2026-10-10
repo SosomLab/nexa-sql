@@ -18,11 +18,13 @@ Recommends:     libxkbcommon
 Recommends:     google-noto-sans-cjk-fonts
 
 %description
-Nexa SQL은 Windows · macOS · Linux에서 같은 화면으로 동작하는 경량 SQL 클라이언트(IDE)와
-명령줄 도구 nsql입니다. 전부 Rust로 만든 정적 링크 실행 파일이며 자체 래스터라이저로 그려
-Qt·WebView·Electron을 쓰지 않습니다. SQLite · Oracle · SQL Server · PostgreSQL 드라이버를 내장하고
-SQL*Plus식 스크립트(세션 변수·바인드·EXEC)를 GUI와 CLI가 같은 코어로 실행합니다.
-사용자 데이터는 ~/.config/nexa-sql 에 둡니다.
+Nexa SQL is a lightweight SQL client (IDE) and a command-line tool (nsql) that look
+and work the same on Windows, macOS and Linux. It is a statically linked executable
+written entirely in Rust and drawn with its own rasterizer - no Qt, WebView or
+Electron. Drivers for SQLite, Oracle, SQL Server and PostgreSQL are built in, and
+SQL*Plus-style scripts (session variables, binds, EXEC) run on the same core in both
+the GUI and the CLI.
+User data lives in ~/.config/nexa-sql.
 
 %prep
 # 소스 없음 — 스테이징 복사만.
