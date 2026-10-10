@@ -10,7 +10,7 @@
 
 use super::{
     col, lit, package_members, qualified, query, quote_ident, routine_args, table_detail, Dialect,
-    ObjectInfo, ObjectKind, Session, RoutineArg,
+    ObjectInfo, ObjectKind, RoutineArg, Session,
 };
 use nsql_core::DbError;
 
@@ -710,12 +710,22 @@ mod tests {
     fn member_detail_overload_round_trip() {
         assert_eq!(member_detail(true, "PROCEDURE", ""), "");
         assert_eq!(member_detail(true, "PROCEDURE", "2"), "#2");
-        assert_eq!(member_detail(false, "FUNCTION → NUMBER", ""), "FUNCTION → NUMBER");
-        assert_eq!(member_detail(false, "FUNCTION → NUMBER", "3"), "FUNCTION → NUMBER #3");
+        assert_eq!(
+            member_detail(false, "FUNCTION → NUMBER", ""),
+            "FUNCTION → NUMBER"
+        );
+        assert_eq!(
+            member_detail(false, "FUNCTION → NUMBER", "3"),
+            "FUNCTION → NUMBER #3"
+        );
         assert_eq!(member_overload(""), None);
         assert_eq!(member_overload("#2"), Some("2"));
         assert_eq!(member_overload("FUNCTION → NUMBER #3"), Some("3"));
-        assert_eq!(member_overload("FUNCTION → NUMBER"), None, "타입 글자는 번호가 아니다");
+        assert_eq!(
+            member_overload("FUNCTION → NUMBER"),
+            None,
+            "타입 글자는 번호가 아니다"
+        );
         assert_eq!(member_overload("#"), None);
         assert_eq!(member_overload("#x1"), None);
     }
@@ -769,7 +779,11 @@ mod tests {
         let m2 = member_object(
             &pkg,
             SubKind::Procedures,
-            &item("PRC_RUN_ALL", member_detail(true, "PROCEDURE", "2"), SubIcon::Procedure),
+            &item(
+                "PRC_RUN_ALL",
+                member_detail(true, "PROCEDURE", "2"),
+                SubIcon::Procedure,
+            ),
         )
         .expect("member");
         assert_eq!(member_overload(&m2.extra), Some("2"));

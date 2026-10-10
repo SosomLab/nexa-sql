@@ -3404,7 +3404,10 @@ fn pg_routine_args_sql(call_name: &str) -> Option<String> {
         // 닫는 괄호는 **하나만** 뗀다(서명이 `)`로 끝나는 형이 있어도 깨지지 않게 · 협업 10-10).
         Some((h, rest)) => {
             let rest = rest.trim_end();
-            (h, Some(rest.strip_suffix(')').unwrap_or(rest).trim().to_string()))
+            (
+                h,
+                Some(rest.strip_suffix(')').unwrap_or(rest).trim().to_string()),
+            )
         }
         None => (call_name, None),
     };
@@ -3635,13 +3638,18 @@ mod tests {
         assert!(sql.contains("p.proname = 'f'"), "{sql}");
         assert!(sql.contains("n.nspname = 'public'"), "{sql}");
         assert!(
-            sql.contains("pg_get_function_identity_arguments(p.oid) = 'a integer, b public.mytype'"),
+            sql.contains(
+                "pg_get_function_identity_arguments(p.oid) = 'a integer, b public.mytype'"
+            ),
             "{sql}"
         );
         let plain = pg_routine_args_sql("public.f").expect("sql");
         assert!(plain.contains("p.proname = 'f'") && !plain.contains("identity_arguments"));
         let noargs = pg_routine_args_sql("f()").expect("sql");
-        assert!(noargs.contains("identity_arguments(p.oid) = ''"), "{noargs}");
+        assert!(
+            noargs.contains("identity_arguments(p.oid) = ''"),
+            "{noargs}"
+        );
     }
 
     #[test]

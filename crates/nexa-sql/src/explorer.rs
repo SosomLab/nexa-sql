@@ -1962,7 +1962,11 @@ fn meta_thread(
                 let r = with_session(&mut session, |s| {
                     if pkg {
                         nsql_catalog::package_members(s, &schema, &table)
-                            .map(|v| v.iter().map(nsql_catalog::PackageMember::as_column).collect())
+                            .map(|v| {
+                                v.iter()
+                                    .map(nsql_catalog::PackageMember::as_column)
+                                    .collect()
+                            })
                             .map_err(err_s)
                     } else {
                         nsql_catalog::columns(s, &schema, &table).map_err(err_s)
@@ -6196,7 +6200,11 @@ impl Explorer {
             NodeKind::Sub { owner, sub } => Some(((**owner).clone(), *sub)),
             _ => None,
         });
-        let parts = full_name_parts(d, &self.nodes[i].kind, parent.as_ref().map(|(o, s)| (o, *s)));
+        let parts = full_name_parts(
+            d,
+            &self.nodes[i].kind,
+            parent.as_ref().map(|(o, s)| (o, *s)),
+        );
         if parts.is_empty() {
             return None;
         }
@@ -8679,7 +8687,11 @@ mod blockers_tests {
 ///   전부 Some — 종전엔 DB 노드가 빠져 빈 이름 = 무동작이었다. 묶음·폴더·루트는 None(메뉴에도 없음).
 /// 전체 이름 조각(순수 · 10-10): 객체 = [DB(SQL Server · 알 때)] · 스키마 · 이름 · 컬럼/하위 항목 = 주인 객체 조각 + 이름(패키지 멤버 =
 /// `스키마.패키지.멤버`) · 스키마/DB = 그 하나 · 그 밖 = 없음. 인용은 호출자가 조각마다.
-fn full_name_parts(d: Dialect, kind: &NodeKind, parent: Option<(&ObjectInfo, SubKind)>) -> Vec<String> {
+fn full_name_parts(
+    d: Dialect,
+    kind: &NodeKind,
+    parent: Option<(&ObjectInfo, SubKind)>,
+) -> Vec<String> {
     fn obj(d: Dialect, o: &ObjectInfo) -> Vec<String> {
         let mut v = Vec::new();
         if d == Dialect::Mssql && !o.db.is_empty() {
@@ -8757,7 +8769,12 @@ fn relabel_copy(items: Vec<CtxItem>, shift: bool) -> Vec<CtxItem> {
                 ..
             } if id == "copy" => CtxItem::Item {
                 id,
-                label: t(if shift { Msg::ExpCopyFullName } else { Msg::ExpCopyName }).to_string(),
+                label: t(if shift {
+                    Msg::ExpCopyFullName
+                } else {
+                    Msg::ExpCopyName
+                })
+                .to_string(),
                 enabled,
                 icon,
                 shortcut,
@@ -8873,12 +8890,18 @@ mod refresh_tests {
         // 라벨 전환: Shift = 전체 이름 복사 · 아니면 이름 복사 · 다른 항목은 그대로.
         let items = vec![CtxItem::item("copy", "x"), CtxItem::item("refresh", "r")];
         let on = relabel_copy(items.clone(), true);
-        let CtxItem::Item { label, .. } = &on[0] else { panic!() };
+        let CtxItem::Item { label, .. } = &on[0] else {
+            panic!()
+        };
         assert_eq!(label, &t(Msg::ExpCopyFullName).to_string());
         let off = relabel_copy(items, false);
-        let CtxItem::Item { label, .. } = &off[0] else { panic!() };
+        let CtxItem::Item { label, .. } = &off[0] else {
+            panic!()
+        };
         assert_eq!(label, &t(Msg::ExpCopyName).to_string());
-        let CtxItem::Item { label, .. } = &off[1] else { panic!() };
+        let CtxItem::Item { label, .. } = &off[1] else {
+            panic!()
+        };
         assert_eq!(label, "r");
     }
 

@@ -247,7 +247,9 @@ impl ApplicationHandler<Wake> for App {
         // ★ IOSurface 유휴 해제(118차 mac · nexa-ui 193 · `gfx.mac_present_trim_ms` · 0 = 끔): 메인 창에 한동안 프레임이 없으면 풀을 앞 장만
         //   남긴다(레티나 장당 ≈16 MB · 메모리 창 "표면" 줄에서 보인다). 다른 OS·softbuffer = `trim_if_idle`가 0.
         let trim_idle = Duration::from_millis(
-            self.settings.int("gfx.mac_present_trim_ms").clamp(0, 600_000) as u64,
+            self.settings
+                .int("gfx.mac_present_trim_ms")
+                .clamp(0, 600_000) as u64,
         );
         if let Some(s) = self.surface.as_mut() {
             if s.trim_if_idle(now, trim_idle) > 0 {
@@ -434,7 +436,11 @@ impl ApplicationHandler<Wake> for App {
             next = next.min(t);
         }
         // IOSurface 유휴 해제가 남아 있으면 그 시각에 한 번 깨운다(위 `trim_if_idle`).
-        if let Some(t) = self.surface.as_ref().and_then(|s| s.idle_deadline(trim_idle)) {
+        if let Some(t) = self
+            .surface
+            .as_ref()
+            .and_then(|s| s.idle_deadline(trim_idle))
+        {
             next = next.min(t);
         }
         // 서버 신호등 재시도 예약(접속 창이 열려 있을 때만).

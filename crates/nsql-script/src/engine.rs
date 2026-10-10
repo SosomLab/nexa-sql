@@ -1063,14 +1063,25 @@ mod tests {
     #[test]
     fn define_char_defaults_per_dialect_and_fixing() {
         let lenient = |e: &Engine| (e.settings.define_char, e.settings.define_lenient);
-        assert_eq!(lenient(&Engine::new(Dialect::Oracle)), (Some('&'), false), "Oracle = 미정의면 묻기");
-        assert_eq!(lenient(&Engine::new(Dialect::Mssql)), (Some('&'), true), "MSSQL = 정의된 이름만");
+        assert_eq!(
+            lenient(&Engine::new(Dialect::Oracle)),
+            (Some('&'), false),
+            "Oracle = 미정의면 묻기"
+        );
+        assert_eq!(
+            lenient(&Engine::new(Dialect::Mssql)),
+            (Some('&'), true),
+            "MSSQL = 정의된 이름만"
+        );
         assert_eq!(lenient(&Engine::new(Dialect::Postgres)), (Some('&'), true));
         // 너그러운 방언: 미정의 `&D`는 글자 그대로 · 정의된 `&Env`는 바뀐다 · Oracle은 미정의 = Err.
         let mut e = Engine::new(Dialect::Mssql);
         assert_eq!(e.substitute("SELECT 'R&D'").as_deref(), Ok("SELECT 'R&D'"));
         e.define("Env", "prod");
-        assert_eq!(e.substitute("SELECT 'R&D', '&Env'").as_deref(), Ok("SELECT 'R&D', 'prod'"));
+        assert_eq!(
+            e.substitute("SELECT 'R&D', '&Env'").as_deref(),
+            Ok("SELECT 'R&D', 'prod'")
+        );
         let mut o = Engine::new(Dialect::Oracle);
         assert_eq!(o.substitute("SELECT 'R&D'"), Err("D".into()));
         // on = 전 방언 SQL*Plus식 고정(방언이 바뀌어도) · auto = 방언 기본 · off = 치환 없음 고정.
@@ -1078,7 +1089,11 @@ mod tests {
         e.set_define_mode("on");
         assert_eq!(lenient(&e), (Some('&'), false));
         e.set_dialect(Dialect::Postgres);
-        assert_eq!(lenient(&e), (Some('&'), false), "고정은 방언 변경에도 남는다");
+        assert_eq!(
+            lenient(&e),
+            (Some('&'), false),
+            "고정은 방언 변경에도 남는다"
+        );
         e.set_define_mode("auto");
         assert_eq!(lenient(&e), (Some('&'), true), "auto = PG 기본 = 너그러움");
         e.set_dialect(Dialect::Oracle);

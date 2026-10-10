@@ -363,8 +363,17 @@ mod tests {
         let needs = missing_inputs(src, Some(Dialect::Mssql), &vars, &defs, None);
         assert_eq!(needs.len(), 1, "{needs:?}");
         assert_eq!(needs[0].name, "D");
-        assert!(missing_inputs("SELECT 'R&D' AS x;\n", Some(Dialect::Mssql), &vars, &defs, None).is_empty());
-        assert!(contains_ci("set define on", b"DEFINE") && !contains_ci("undefined", b"SET DEFINE"));
+        assert!(missing_inputs(
+            "SELECT 'R&D' AS x;\n",
+            Some(Dialect::Mssql),
+            &vars,
+            &defs,
+            None
+        )
+        .is_empty());
+        assert!(
+            contains_ci("set define on", b"DEFINE") && !contains_ci("undefined", b"SET DEFINE")
+        );
     }
 
     #[test]

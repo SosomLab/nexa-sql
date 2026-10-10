@@ -5409,7 +5409,10 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatPerformance,
         label: Msg::LblMacPresentTrim,
         desc: Msg::DescMacPresentTrim,
-        kind: SettingKind::Int { min: 0, max: 600_000 },
+        kind: SettingKind::Int {
+            min: 0,
+            max: 600_000,
+        },
         default: "1500",
     },
     Entry {

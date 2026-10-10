@@ -1847,15 +1847,33 @@ mod tests {
     #[test]
     fn package_member_offers_call_only() {
         assert_eq!(
-            gen_whats(Dialect::Oracle, ObjectKind::Package, Some(SubKind::Procedures)),
+            gen_whats(
+                Dialect::Oracle,
+                ObjectKind::Package,
+                Some(SubKind::Procedures)
+            ),
             vec![GenWhat::Call]
         );
         assert_eq!(
-            gen_whats(Dialect::Oracle, ObjectKind::Package, Some(SubKind::Functions)),
+            gen_whats(
+                Dialect::Oracle,
+                ObjectKind::Package,
+                Some(SubKind::Functions)
+            ),
             vec![GenWhat::Call]
         );
-        assert!(gen_whats(Dialect::Postgres, ObjectKind::Package, Some(SubKind::Functions)).is_empty());
-        assert!(gen_whats(Dialect::Oracle, ObjectKind::Table, Some(SubKind::Procedures)).is_empty());
+        assert!(gen_whats(
+            Dialect::Postgres,
+            ObjectKind::Package,
+            Some(SubKind::Functions)
+        )
+        .is_empty());
+        assert!(gen_whats(
+            Dialect::Oracle,
+            ObjectKind::Table,
+            Some(SubKind::Procedures)
+        )
+        .is_empty());
     }
 
     #[test]
