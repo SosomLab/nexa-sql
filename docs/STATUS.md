@@ -2,7 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-10](journal/2026-10-10.md)**(§7 118차 mac = 맥 점검 개발(netwatch macOS · dirwatch FSEvents · IOSurface 유휴 해제 −41 MB) · 협업 V1 전부 ✓ · 남음 = T-321 Linux 감시 둘 · T-322 CLI 링크 · §1 최신화·분석 회귀 없음 · §2 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어" + 적용분 · 남음 = **T-320** README 영어 주판·NOTICE.md·위키 영어판 결정 · 커밋 = 117차 분) → 그 전 = [journal 2026-10-07](journal/2026-10-07.md)(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-10-10](journal/2026-10-10.md)**(**§8 🚀 v0.1.9 릴리스 진행 중**(태그 f856b1a · release.yml 38055032146 · 공개 대기 · 2차 = 공개 결과 기입) · §7 118차 mac = 맥 점검 개발(netwatch macOS · dirwatch FSEvents · IOSurface 유휴 해제 −41 MB) · 협업 V1 전부 ✓ · 남음 = T-321 Linux 감시 둘 · T-322 CLI 링크 · §1 최신화·분석 회귀 없음 · §2 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어" + 적용분 · 남음 = **T-320** README 영어 주판·NOTICE.md·위키 영어판 결정 · 커밋 = 117차 분) → 그 전 = [journal 2026-10-07](journal/2026-10-07.md)(§32 = 🚀 v0.1.8 릴리스 10-09 13:41 UTC · §31 = 전용 세션 재접속 원천 bin125~126 · §30 = v0.1.7 · 열린 작업 0 · 대기 = 실 VPN 복구 사용자 실기 · winget/choco 재개 시점 · T-318 · T-319) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+
+## 2026-10-10 (🚀 v0.1.9 릴리스 · 진행 중 · [journal 10-10 §8](journal/2026-10-10.md))
+
+- 버전 0.1.9(a545c51) · 담긴 것 = 117~118차 전부 · 풀 테스트 V3 = 기능 84/84 · 그리드 편집 96/0 · 대량 적재 28/0 · define 47/0 · mac-trim 3/0 · pkg-overload 14/0 · 패키지 글 영어 ✓ · check-3os(fmt 보정 f856b1a/57a4198 뒤) ✓ · 시험 862/0 + 629/0.
+- CI 1차 = Linux·Windows E0599(비-macOS 스텁 `pool_len` 누락) → nexa-ui 199차 65dff29 → 재실행 ✓ 3 OS · integration ✓.
+- 태그 v0.1.9 = f856b1a · release.yml 38055032146 진행 중 · 노트 합성 `scripts/release-notes-merge.py`(T-319 ✅) · winget·choco = false 유지(답 없음) · 공개 결과 = 2차.
 
 ## 2026-10-10 (118차 · mac · [journal 10-10 §7](journal/2026-10-10.md))
 

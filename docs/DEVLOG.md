@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-10 (🚀 v0.1.9 릴리스 · 진행 중)** — a545c51 버전 · 풀 테스트 V3 전부 ✓(fmt 보정 f856b1a/57a4198) · CI 1차 E0599 → nexa-ui 199차 스텁 → 재실행 ✓ · 태그 f856b1a · release.yml 38055032146 · 노트 합성 스크립트(T-319 ✅) · winget·choco false 유지 · 공개 결과 = 2차.
 - **2026-10-10 (118차 저녁 · mac)** — 조사 문서 첫 수확 = PG 루틴 Arguments(#15 · #15-b `$n`) · `&` 치환 방언 기본 D-272(`script.define` · CLI 전 경로) · 자동화 E2E 3(`define-e2e` 47/0 · `mac-trim-e2e` 3/0 · `pkg-overload-e2e` 14/0) + S96 · E2E가 찾은 결함 2 수정 · V2 862/0 · 사용자 실기 ✓ 5/5 + 폴더 감시.
 - **2026-10-10 (118차 후반 · mac · 협업)** — 오후 지시 5건 V1 ✓(nexa-sql 406/0 · nexa-ctl 442/0 · clippy 둘 · BISCM 오버로드 인자·Call 생성 실서버 대조 · 메뉴 아이콘 켬/끔 캡처 · 시나리오 10/10) · 📐 조사 문서 108(DBMS 6장 T-1~T-15 · 교차 비교 · 코드 감사 결함 27) · 109(ANSI SQL:2016/2023 전수 · 예약어 398/409 · nexa-sql 대조 · 완성 개선 7순위) · TODO T-324~T-327.
 - **2026-10-10 (118차 · mac)** — 맥 점검 개발(협업 쌍): nexa-sys `netwatch` macOS(SystemConfiguration · nexa-ui 195차) · nexa-fs `dirwatch` macOS FSEvents(실제 경로 매핑 · 196차) · IOSurface 유휴 해제 `gfx.mac_present_trim_ms`(표면 3 → 1장 · footprint −41 MB) · `caret_asked` 적용 안 함 · 협업 V1 전부 ✓ · 🔧 크래시 = 큰 결과 스크롤바 드래그 i32 넘침(nexa-ui 197차 · S95 자동 시험 · mac ✓) · T-321 · T-322 · T-323 — [journal 10-10 §7](journal/2026-10-10.md).
