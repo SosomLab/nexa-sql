@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/v0.1.9-release-2 | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | 🚀 v0.1.9 공개 결과 2차(journal §8 자산·노트·공개 13:28:59Z·Homebrew 48a202b·pkg publish 38055885433·guard · 33 §5-3 · STATUS 완료 · DEVLOG · CLAUDE.md) |
 | docs/v0.1.9-release | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | 🚀 v0.1.9 릴리스 기록 1차(journal §8 준비·풀 테스트·CI 1차 실패·태그 · STATUS · DEVLOG · TODO T-319 ✅·T-328 · 33 §5-3 · 102 원장 · CLAUDE.md) + `scripts/release-notes-merge.py`(T-319) |
 | feat/118-mac | 2026-10-10 | 2026-10-10 → main(삭제) | 3 | 118차 mac(협업 쌍 · nexa-ui 195~198차): 맥 netwatch·dirwatch 소비 · IOSurface 유휴 해제 · 스크롤바 i32 넘침 회귀 S95 · Oracle 패키지 오버로드 · 탐색기 메뉴 아이콘·Shift 전체 이름·멤버 Call · PG Arguments · D-272 `script.define` · 자동화 E2E 3편 · 조사 문서 108·109 · 버전 0.1.9 |
 | work/2026-10-10-english-pkg-text | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | ★ 규칙 "패키지 게시물 + 프로그램 내부 정보 = 영어"(CLAUDE §3 · 61 §2 · 33 §5-6 · T-320) + 적용(Cargo description · deb/rpm 설명 · pkg 환영문 · postinstall/uninstall · THIRD-PARTY-NOTICES 머리글) · `scripts/pkg-text-english-check.sh` · 맥 시험 전수(기능 점검 Darwin 분기 · E2E 실서버 3) · `.gitattributes` eol=lf · journal 10-10(117차 mac) |
