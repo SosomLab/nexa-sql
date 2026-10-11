@@ -25,11 +25,14 @@ pub(crate) fn set_cache_ms(ms: u64) {
     CACHE_MS.store(ms, Ordering::Relaxed);
 }
 
+// Linux `imp`만 읽는다(Windows = 레지스트리 · macOS = winit 판정 우선) — 다른 OS 빌드에서는 호출자가 없다(시험은 3-OS).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn cache_ms() -> u64 {
     CACHE_MS.load(Ordering::Relaxed)
 }
 
 /// 캐시를 쓸지(순수 · MC/DC): TTL 0 = 늘 새로 조회 · 캐시 없음 = 조회 · 나이 < TTL = 캐시 · 아니면 조회.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn use_cached(ttl_ms: u64, age_ms: Option<u64>) -> bool {
     ttl_ms > 0 && age_ms.is_some_and(|a| a < ttl_ms)
 }
