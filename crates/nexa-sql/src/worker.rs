@@ -107,6 +107,9 @@ pub(crate) enum Cmd {
         strict: bool,
         /// `strict_all`(43 §9-3): ORDER BY가 있어도 커서를 잃으면 교체(동점 정렬 대비).
         strict_all: bool,
+        /// ★ 재질의 확인(10-12 사용자 결정 ④ · 설정 `grid.refetch_confirm`): 엄격 교체가 될 참이면 서버에 가지 않고
+        ///   `FetchStop::AskRefetch`로 돌려보낸다 — 호스트가 토스트로 묻고 [계속]이면 `confirm: false`로 같은 요청을 다시 보낸다.
+        confirm: bool,
     },
     /// `SELECT COUNT(*) FROM (질의) x`.
     Count {
@@ -435,6 +438,20 @@ pub(crate) enum FetchStop {
     Cancelled,
     /// 커서 결과(REF CURSOR · T-202)의 커서가 이미 닫혔다(유휴·다른 실행·커밋) — 재질의가 없으므로 "더 없음"으로 끝낸다.
     CursorGone,
+    /// ★ 엄격 교체(docs/43 §9-2)가 될 참이라 서버에 가기 전에 멈췄다(10-12 ④ · `Cmd::FetchPage.confirm`) — 호스트가 묻는다.
+    AskRefetch,
+}
+
+/// 재질의 확인을 물을지(순수 · MC/DC 시험): 확인 켬 · 엄격 · 커서 없음 · (strict_all 또는 ORDER BY 없음) — 워커의 두 엄격 교체 길과
+/// **같은 조건**이어야 한다(한쪽만 바꾸면 묻지 않고 교체하거나, 묻고도 교체하지 않는다).
+pub(crate) fn ask_refetch(
+    confirm: bool,
+    strict: bool,
+    have_cursor: bool,
+    strict_all: bool,
+    has_order_by: bool,
+) -> bool {
+    confirm && strict && !have_cursor && (strict_all || !has_order_by)
 }
 
 /// 입력 창의 답(D-137) — 워커는 `RunEvent::InputNeeded`를 낸 뒤 이것을 기다린다(그동안 세션은 "바쁨").
@@ -924,10 +941,15 @@ pub(crate) fn spawn(
                         budget_bytes,
                         strict,
                         strict_all,
+                        confirm,
                     } => {
                         let mut stop: Option<FetchStop> = None;
                         let mut replace = false;
                         let mut via_cursor = false;
+                        // ★ 페치 중 ■(10-11): 서버 취소 핸들을 **이 페치**에 맞춘다(종전엔 앞선 실행의 핸들이 남아 있었다).
+                        if let Ok(mut g) = cancel_slot.lock() {
+                            *g = runner.cancel_handle();
+                        }
                         let alive = ensure_alive(
                             &mut runner,
                             &active_spec,
@@ -954,6 +976,17 @@ pub(crate) fn spawn(
                                     // ★ T-202: 커서 결과인데 커서가 없다 — 프로시저를 다시 돌리지 않고 빈 페이지 + 더 없음.
                                     stop = Some(FetchStop::CursorGone);
                                     Ok((nsql_core::ResultSet::default(), false, Duration::ZERO))
+                                } else if ask_refetch(
+                                    confirm,
+                                    strict,
+                                    runner.cursor_matches(&sql, offset),
+                                    strict_all,
+                                    nsql_io::paging::has_order_by(&sql),
+                                ) {
+                                    // ★ 재질의 확인(10-12 ④): 아래 두 길(전체 조회·페이지)의 엄격 교체 조건과 같을 때 서버에 가기 전에
+                                    //   멈춘다 — 행은 그대로(`more` 유지) · 호스트가 토스트로 묻는다.
+                                    stop = Some(FetchStop::AskRefetch);
+                                    Ok((nsql_core::ResultSet::default(), true, Duration::ZERO))
                                 } else if limit == 0 {
                                     // ★ 전체 조회 = **나머지 이어 받기**(사용자 09-17 "현재 위치 유지"): 재실행·교체가 아니라 `offset`
                                     //   (= 그리드가 이미 든 행 수)부터 끝까지 받아 이어 붙인다 → 스크롤·정렬·텍스트 보기 위치가 그대로.
@@ -1182,22 +1215,48 @@ pub(crate) fn spawn(
                                     });
                                     wake_now();
                                     let t0 = std::time::Instant::now();
+                                    // ★ 10-11(사용자 Linux 실기 · 10만 행): 종전엔 첫 배치를 `need`행(= 전부)으로 청해 40 s 동안 진행도
+                                    //   취소도 없었다 → 배치(`db.fetch_all_size`) 단위로 받으며 100 ms마다 진행을 알리고 취소 깃발을 본다.
+                                    //   취소 = **기존 행 유지**(부분 결과로 교체하지 않는다 · 오류 줄 "추가 페치 실패: 취소") · `more`는 그대로.
+                                    cancel_flag.store(false, Ordering::Relaxed);
+                                    let page_fs = runner.fetch_size;
+                                    let all_fs = nsql_settings::Settings::open_default()
+                                        .map(|s| s.int("db.fetch_all_size").max(1) as usize)
+                                        .unwrap_or(5000);
+                                    let batch = page_fs.max(all_fs).min(need.max(1));
+                                    let mut last = std::time::Instant::now();
+                                    let mut cancelled = false;
                                     let r: Result<
                                         (nsql_core::ResultSet, bool, Duration),
                                         nsql_core::DbError,
                                     > = if runner.cursor_supported() {
-                                        runner.query_stream(&sql, need.max(1)).and_then(
+                                        runner.query_stream(&sql, batch).and_then(
                                             |(mut rs, h, _)| {
                                                 let mut more = h.is_some();
                                                 if let Some(h) = h {
                                                     while rs.rows.len() < need && more {
-                                                        let (chunk, m, _) = runner
-                                                            .fetch_next(h, need - rs.rows.len())?;
+                                                        if cancel_flag.load(Ordering::Relaxed) {
+                                                            cancelled = true;
+                                                            break;
+                                                        }
+                                                        let (chunk, m, _) = runner.fetch_next(
+                                                            h,
+                                                            (need - rs.rows.len()).min(batch),
+                                                        )?;
                                                         more = m;
                                                         if chunk.rows.is_empty() {
                                                             break;
                                                         }
                                                         rs.rows.extend(chunk.rows);
+                                                        if last.elapsed() >= Duration::from_millis(100) {
+                                                            last = std::time::Instant::now();
+                                                            let _ = ctx_tx.send(ConnOutcome::FetchProgress {
+                                                                key,
+                                                                rows: rs.rows.len() as u64,
+                                                                bytes: rs.approx_bytes(),
+                                                            });
+                                                            wake_now();
+                                                        }
                                                     }
                                                 }
                                                 Ok((rs, more, t0.elapsed()))
@@ -1208,7 +1267,14 @@ pub(crate) fn spawn(
                                             .fetch_offset(&sql, 0, need)
                                             .map(|(rs, more, tl)| (rs, more, tl.total()))
                                     };
-                                    r.map_err(|e| e.message)
+                                    if cancelled {
+                                        // 취소됨 = 교체하지 않는다(그리드는 그대로 · 로그 한 줄).
+                                        replace = false;
+                                        stop = Some(FetchStop::Cancelled);
+                                        Err(t(Msg::StRunCancelled).to_string())
+                                    } else {
+                                        r.map_err(|e| e.message)
+                                    }
                                 } else {
                                     // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
                                     if !(runner.cursor_matches(&sql, offset)
@@ -1752,6 +1818,36 @@ pub(crate) fn spawn_test(
 
 #[cfg(test)]
 mod tests {
+    /// 재질의 확인 판정(10-12 ④ · MC/DC): 다섯 조건이 각각 독립으로 답을 뒤집는다.
+    #[test]
+    fn ask_refetch_mcdc() {
+        use super::ask_refetch as f;
+        assert!(
+            f(true, true, false, false, false),
+            "기준: 확인·엄격·커서 없음·ORDER BY 없음 = 묻는다"
+        );
+        assert!(
+            !f(false, true, false, false, false),
+            "확인 끔 = 안 묻고 교체"
+        );
+        assert!(
+            !f(true, false, false, false, false),
+            "offset 모드 = 교체 자체가 없음"
+        );
+        assert!(
+            !f(true, true, true, false, false),
+            "커서 있음 = 이어 읽기 = 안 묻는다"
+        );
+        assert!(
+            !f(true, true, false, false, true),
+            "ORDER BY 있음 = 이어 붙임 = 안 묻는다"
+        );
+        assert!(
+            f(true, true, false, true, true),
+            "strict_all = ORDER BY 있어도 교체 = 묻는다"
+        );
+    }
+
     /// docs/56 L4 — 서버 안전망 세션 파라미터: 0 = 아무것도 안 보냄 · 방언별 문장 · 세션 식별자 질의.
     #[test]
     fn server_guard_and_session_id_sql() {

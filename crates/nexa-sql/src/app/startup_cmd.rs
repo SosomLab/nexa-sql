@@ -10,6 +10,16 @@ impl App {
         // `conn.edit:<프로필>` = 로그인 창의 상세 폼을 그 프로필로 열고 두 칸을 바꾼 상태로(필수·바뀜 표식 캡처).
         // 자체 캡처용: 이름 바꾸기 입력 상자를 키 없이 연다(`tab.rename` = 편집기 탭 · `result.rename` = 결과 탭).
         // 자체 캡처용: 설정의 "찾아보기…"를 키·마우스 없이 누른다(`prefs.browse:<폴더 설정 키>`).
+        // 자체 시험(10-11): 설정 창 "변경" 보기 켜기/끄기 · 카드 키 덤프(`prefs.filter:changed|all` · `prefs.dump:<파일>`).
+        if let Some(mode) = id.strip_prefix("prefs.filter:") {
+            self.prefs_win.set_changed_only(mode == "changed");
+            self.prefs_win.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("prefs.dump:") {
+            let _ = std::fs::write(path, self.prefs_win.dump_text());
+            return;
+        }
         if let Some(key) = id.strip_prefix("prefs.browse:") {
             if let Some(k) = nsql_settings::entry(key).map(|e| e.key) {
                 self.file_purpose = FilePurpose::SettingFolder(k);
@@ -408,6 +418,55 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("grid.chips:") {
             let _ = std::fs::write(path, self.grid.dump_chips());
+            return;
+        }
+        // 자체 시험(10-11 페치 일관성 E2E): 원본 세트의 한 열 값 전부 → 파일(`grid.col:<파일>|<열 이름>`).
+        if let Some(rest) = id.strip_prefix("grid.col:") {
+            if let Some((path, col)) = rest.split_once('|') {
+                let _ = std::fs::write(path, self.grid.dump_column(col).unwrap_or_default());
+            }
+            return;
+        }
+        // 자체 시험(10-12 스크롤 점검): 썸 중심 좌표 `grid.thumbs:<파일>`(`v=x,y` · `h=x,y` · 없으면 `-`) · 휠 사건 주입
+        //   `ui.wheel:x/y/delta` · `ui.hwheel:x/y/delta`(창 좌표 · 커서를 그 자리로 옮긴 뒤 휠 = 커서 아래 영역 라우팅 그대로).
+        if let Some(path) = id.strip_prefix("grid.thumbs:") {
+            let scale = self.scale;
+            let v = self.grid.test_vthumb_center(scale);
+            let h = self.grid.test_hthumb_center(scale);
+            let f = |p: Option<(i32, i32)>| p.map_or("-".to_string(), |(x, y)| format!("{x},{y}"));
+            let b = self.grid.outer_bounds();
+            let _ = std::fs::write(
+                path,
+                format!(
+                    "v={}\nh={}\nbounds={},{},{},{}\nscroll_x={}\n",
+                    f(v),
+                    f(h),
+                    b.x,
+                    b.y,
+                    b.w,
+                    b.h,
+                    self.grid.scroll_x_for_test()
+                ),
+            );
+            return;
+        }
+        if let Some((kind, rest)) = id
+            .strip_prefix("ui.")
+            .and_then(|r| r.split_once(':'))
+            .filter(|(k, _)| matches!(*k, "wheel" | "hwheel"))
+        {
+            let mut it = rest.split('/');
+            let x: i32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let y: i32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let d: i32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            self.route(InputEvent::MouseMove { x, y });
+            let ev = if kind == "wheel" {
+                InputEvent::Wheel { delta: d }
+            } else {
+                InputEvent::HWheel { delta: d }
+            };
+            self.route(ev);
+            self.redraw();
             return;
         }
         if let Some(path) = id.strip_prefix("grid.dump:") {
@@ -862,6 +921,18 @@ impl App {
             return;
         }
         // ★ 자체 시험(㉗-k · 메뉴 경로): `objlink.menu:<이름>`(우클릭처럼 열기) · `objlink.resync`(열린 채 재분석 강제) · `objlink.pick:<id>`(항목 확정).
+        // 자체 시험(10-12 ④ 재질의 확인): 토스트 덤프 · 버튼 누름(키 주입 없이 실제 동작 id 경로).
+        if let Some(path) = id.strip_prefix("toast.dump:") {
+            let _ = std::fs::write(path, self.toasts.dump_text());
+            return;
+        }
+        if id == "toast.action" {
+            if let Some(a) = self.toasts.test_press_button() {
+                self.menu_action(&a);
+            }
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("log.dump:") {
             let _ = std::fs::write(path, self.log_win.dump_text());
             return;

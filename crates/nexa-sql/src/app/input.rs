@@ -211,6 +211,20 @@ impl App {
 
     pub(crate) fn ctl_event(&mut self, event: &WindowEvent) -> Option<InputEvent> {
         let (x, y) = self.cursor;
+        // 진단(10-12 · 사용자 "가로 스크롤이 안 된다"): `NSQL_TRACE_INPUT=1`이면 OS가 준 휠·버튼 사건을 그대로 stderr에(변환 전 ·
+        //   수식키 상태 포함) — 가로 휠(틸트·Shift+휠·트랙패드)이 어떤 delta로 오는지, 놓임이 오는지 실기 로그로 가린다. 평소 비용 0.
+        if trace_input() {
+            match event {
+                WindowEvent::MouseWheel { delta, phase, .. } => eprintln!(
+                    "[input] wheel {delta:?} phase={phase:?} shift={} at={x},{y}",
+                    self.shift
+                ),
+                WindowEvent::MouseInput { state, button, .. } => {
+                    eprintln!("[input] button {button:?} {state:?} at={x},{y}")
+                }
+                _ => {}
+            }
+        }
         let key = |k: CtlKey, shift: bool, primary: bool| InputEvent::Key {
             key: k,
             shift,
@@ -2256,6 +2270,12 @@ pub(crate) fn ctxmenu_exclusive_step(
         }),
         _ => None,
     }
+}
+
+/// `NSQL_TRACE_INPUT` 스위치(한 번만 읽는다 · 사건마다 환경 조회 없음).
+fn trace_input() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NSQL_TRACE_INPUT").is_some())
 }
 
 #[cfg(test)]

@@ -550,6 +550,8 @@ struct App {
     ext_view_key: String,
     /// ★ 포인터 캡처(사용자 09-30 "드래그 컨트롤은 영역 밖에서 놓아도 기본 처리"): 누른 영역 — MouseUp까지 그 영역이 이동·놓임을 받는다.
     press_capture: Option<Focus>,
+    /// 재질의 확인 토스트 [계속] 뒤 **한 번**은 확인 없이 보낸다(10-12 ④ · `send_fetch`가 소비).
+    refetch_force: bool,
     /// ★ hover 이탈 통지(사용자 09-30 "마우스가 없는데 탐색기 툴팁이 남는다"): 커서가 마지막으로 든 영역 — 떠나면 그 영역에
     ///   영역 밖 MouseMove(-1,-1)를 한 번 보내 hover·툴팁을 걷는다(커서 아래 라우팅은 떠남을 알리지 못한다).
     hover_area: Option<Focus>,
@@ -1851,6 +1853,7 @@ fn main() {
         ext_details: HashMap::new(),
         ext_view_key: String::new(),
         press_capture: None,
+        refetch_force: false,
         hover_area: None,
         format_preview: None,
         meta_refresh_next: None,

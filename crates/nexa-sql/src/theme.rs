@@ -14,6 +14,25 @@
 
 use nexa_ctl::theme::Theme;
 use nsql_settings::ThemeMode;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Linux `gsettings` 조회 결과를 재사용하는 시간(ms · 설정 `ui.theme_cache_ms` · 0 = 매번 조회) — 사용자 결정 10-12 ②:
+/// 풀다운 메뉴를 열 때마다·설정 창 카드마다 외부 프로세스(4~5 ms · UI 스레드)를 띄우던 것을 짧은 TTL 안에서는 되쓴다.
+/// "메뉴마다 최신 상태"(10-07) 규칙은 TTL(1.5 s)이 지나면 다시 조회하므로 유지된다. Windows(레지스트리)·macOS는 쓰지 않는다.
+static CACHE_MS: AtomicU64 = AtomicU64::new(1500);
+
+pub(crate) fn set_cache_ms(ms: u64) {
+    CACHE_MS.store(ms, Ordering::Relaxed);
+}
+
+pub(crate) fn cache_ms() -> u64 {
+    CACHE_MS.load(Ordering::Relaxed)
+}
+
+/// 캐시를 쓸지(순수 · MC/DC): TTL 0 = 늘 새로 조회 · 캐시 없음 = 조회 · 나이 < TTL = 캐시 · 아니면 조회.
+pub(crate) fn use_cached(ttl_ms: u64, age_ms: Option<u64>) -> bool {
+    ttl_ms > 0 && age_ms.is_some_and(|a| a < ttl_ms)
+}
 
 /// OS가 다크를 선호하면 `Some(true)`, 라이트면 `Some(false)`, 모르면 `None`.
 pub(crate) fn system_prefers_dark() -> Option<bool> {
@@ -151,7 +170,25 @@ mod imp {
 
 #[cfg(target_os = "linux")]
 mod imp {
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    /// 마지막 조회(시각 · 답) — [`super::use_cached`] 판정으로 되쓴다.
+    static LAST: Mutex<Option<(Instant, Option<bool>)>> = Mutex::new(None);
+
     pub(super) fn prefers_dark() -> Option<bool> {
+        let ttl = super::cache_ms();
+        let mut g = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        let age = g.as_ref().map(|(t, _)| t.elapsed().as_millis() as u64);
+        if super::use_cached(ttl, age) {
+            return g.as_ref().and_then(|(_, v)| *v);
+        }
+        let v = probe();
+        *g = Some((Instant::now(), v));
+        v
+    }
+
+    fn probe() -> Option<bool> {
         let out = std::process::Command::new("gsettings")
             .args(["get", "org.gnome.desktop.interface", "color-scheme"])
             .output()
@@ -180,6 +217,16 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Linux gsettings 캐시 판정(10-12 ② · MC/DC): TTL · 캐시 유무 · 나이 각각이 독립으로 결과를 뒤집는다.
+    #[test]
+    fn theme_probe_cache_rules() {
+        assert!(use_cached(1500, Some(100)), "TTL 안 = 캐시");
+        assert!(!use_cached(0, Some(100)), "TTL 0 = 늘 조회");
+        assert!(!use_cached(1500, None), "캐시 없음 = 조회");
+        assert!(!use_cached(1500, Some(1500)), "나이 = TTL = 조회");
+        assert!(!use_cached(1500, Some(9000)), "오래됨 = 조회");
+    }
 
     #[test]
     fn explicit_mode_ignores_os() {

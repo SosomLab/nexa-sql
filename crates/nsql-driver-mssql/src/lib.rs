@@ -855,6 +855,42 @@ fn cell(row: &Row, i: usize, data: &ColumnData<'_>) -> Value {
     }
 }
 
+/// 결과 집합 메타데이터(COLMETADATA) → 컬럼 — 행이 0개라도 컬럼은 안다(10-11 · 사용자 "0건이면 결과1에 옛 데이터가 남는다").
+fn meta_columns(cols: &[tiberius::Column]) -> Vec<Column> {
+    cols.iter()
+        .map(|c| Column {
+            name: c.name().to_string(),
+            type_name: format!("{:?}", c.column_type()),
+        })
+        .collect()
+}
+
+/// 행 0개 결과 집합 보충: 드라이버는 `into_results`가 **행이 없는 집합을 버리므로**(tiberius) 첫 결과의 메타데이터를 미리 읽어 두었다가
+/// 데이터 집합이 하나도 없으면 컬럼만 있는 빈 집합을 넣는다(DBeaver처럼 헤더만 있는 결과 · 호스트 = 결과 있음으로 판정). `skip`(OUT 트레일러의
+/// 컬럼 이름)과 같으면 데이터 결과가 아니라 넣지 않는다.
+fn ensure_empty_set(
+    result_sets: &mut Vec<ResultSet>,
+    first_cols: Option<Vec<Column>>,
+    skip: Option<&[String]>,
+) {
+    if !result_sets.is_empty() {
+        return;
+    }
+    let Some(cols) = first_cols.filter(|c| !c.is_empty()) else {
+        return;
+    };
+    if let Some(sk) = skip {
+        let names: Vec<String> = cols.iter().map(|c| c.name.to_ascii_uppercase()).collect();
+        if names == sk {
+            return;
+        }
+    }
+    result_sets.push(ResultSet {
+        columns: cols,
+        rows: Vec::new(),
+    });
+}
+
 fn rows_to_result_set(rows: &[Row]) -> ResultSet {
     let columns: Vec<Column> = rows
         .first()
@@ -1203,17 +1239,29 @@ impl MssqlSession {
         let mut result = ExecResult::default();
         match route(&req.sql, !values.is_empty(), !outs.is_empty()) {
             Route::Rpc => {
-                let sets: Vec<Vec<Row>> = self.rt.block_on(async {
-                    let stream = client.query(sql.as_str(), &refs).await.map_err(err)?;
-                    stream.into_results().await.map_err(err)
-                })?;
+                // ★ 첫 결과의 메타데이터를 먼저 본다(행 0개 집합은 `into_results`가 버린다 · 10-11).
+                let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) =
+                    self.rt.block_on(async {
+                        let mut stream = client.query(sql.as_str(), &refs).await.map_err(err)?;
+                        let cols = stream.columns().await.map_err(err)?.map(meta_columns);
+                        let sets = stream.into_results().await.map_err(err)?;
+                        Ok::<_, DbError>((cols, sets))
+                    })?;
                 let mut result_sets: Vec<ResultSet> = sets
                     .iter()
                     .filter(|s| !s.is_empty())
                     .map(|s| rows_to_result_set(s))
                     .collect();
+                let mut trailer_names: Option<Vec<String>> = None;
                 if !outs.is_empty() {
                     if let Some(trailer) = result_sets.pop() {
+                        trailer_names = Some(
+                            trailer
+                                .columns
+                                .iter()
+                                .map(|c| c.name.to_ascii_uppercase())
+                                .collect(),
+                        );
                         if let Some(row) = trailer.rows.first() {
                             let cols: Vec<(String, Value)> = trailer
                                 .columns
@@ -1224,9 +1272,10 @@ impl MssqlSession {
                             result.out_params.extend(outs_from_trailer(&cols));
                         }
                     }
-                    if result_sets.is_empty() {
-                        result.rows_affected = Some(0);
-                    }
+                }
+                ensure_empty_set(&mut result_sets, first_cols, trailer_names.as_deref());
+                if !outs.is_empty() && result_sets.is_empty() {
+                    result.rows_affected = Some(0);
                 }
                 result.result_sets = result_sets;
             }
@@ -1244,15 +1293,20 @@ impl MssqlSession {
             }
             Route::Batch => {
                 // SQL 배치(sp_executesql 아님) — `#temp`·SET·USE 같은 세션 상태가 남는다. 파라미터 없음.
-                let sets: Vec<Vec<Row>> = self.rt.block_on(async {
-                    let stream = client.simple_query(sql.as_str()).await.map_err(err)?;
-                    stream.into_results().await.map_err(err)
-                })?;
-                result.result_sets = sets
+                let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) =
+                    self.rt.block_on(async {
+                        let mut stream = client.simple_query(sql.as_str()).await.map_err(err)?;
+                        let cols = stream.columns().await.map_err(err)?.map(meta_columns);
+                        let sets = stream.into_results().await.map_err(err)?;
+                        Ok::<_, DbError>((cols, sets))
+                    })?;
+                let mut result_sets: Vec<ResultSet> = sets
                     .iter()
                     .filter(|s| !s.is_empty())
                     .map(|s| rows_to_result_set(s))
                     .collect();
+                ensure_empty_set(&mut result_sets, first_cols, None);
+                result.result_sets = result_sets;
                 if result.result_sets.is_empty() {
                     result.rows_affected = None;
                 }
@@ -1264,6 +1318,45 @@ impl MssqlSession {
 
 #[cfg(test)]
 mod tests {
+    /// ★ 10-11: 행 0개 결과 보충 — 데이터 집합이 없을 때만 · 컬럼이 있을 때만 · OUT 트레일러 컬럼과 같으면 안 넣는다(조건 3 독립 영향).
+    #[test]
+    fn ensure_empty_set_rules() {
+        use super::ensure_empty_set;
+        use nsql_core::{Column, ResultSet};
+        let cols = || {
+            vec![Column {
+                name: "A".into(),
+                type_name: "Int4".into(),
+            }]
+        };
+        let mut v: Vec<ResultSet> = Vec::new();
+        ensure_empty_set(&mut v, Some(cols()), None);
+        assert_eq!(v.len(), 1, "데이터 집합 없음 + 컬럼 있음 = 빈 집합 하나");
+        assert!(v[0].rows.is_empty() && v[0].columns[0].name == "A");
+        let mut w: Vec<ResultSet> = vec![ResultSet {
+            columns: cols(),
+            rows: vec![vec![]],
+        }];
+        ensure_empty_set(&mut w, Some(cols()), None);
+        assert_eq!(w.len(), 1, "데이터 집합이 있으면 그대로");
+        let mut x: Vec<ResultSet> = Vec::new();
+        ensure_empty_set(&mut x, None, None);
+        assert!(x.is_empty(), "메타데이터 없음(비조회) = 그대로");
+        let mut y: Vec<ResultSet> = Vec::new();
+        ensure_empty_set(
+            &mut y,
+            Some(vec![Column {
+                name: "o1".into(),
+                type_name: String::new(),
+            }]),
+            Some(&["O1".to_string()]),
+        );
+        assert!(
+            y.is_empty(),
+            "첫 메타데이터가 OUT 트레일러면 데이터 결과가 아니다"
+        );
+    }
+
     /// T-309: 3부 이름 = `[DB].` 접두(대괄호/따옴표 벗김 · `]` 이스케이프) · 1·2부 = 빈 글.
     #[test]
     fn db_prefix_only_for_three_part_names() {

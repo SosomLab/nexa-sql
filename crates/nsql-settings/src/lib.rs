@@ -1777,6 +1777,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(REFETCH_OPTS),
         default: "strict",
     },
+    // ★ 재질의 확인(10-12 사용자 결정 ④): 엄격 교체가 될 참이면 서버에 가기 전에 토스트로 묻는다([계속] = 보냄 · 닫음 = 유지).
+    Entry {
+        key: "grid.refetch_confirm",
+        cat: Msg::CatGrid,
+        label: Msg::LblRefetchConfirm,
+        desc: Msg::DescRefetchConfirm,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 결과 표시 방식(사용자 10-09 "최초 조회 건수 표시 후 전체 / 증분 — 증분 기본"): incremental = 첫 세그먼트를 바로 보이고 나머지는
     //   배치마다 이어 붙임(■·진행률·예산 = 배치 경계 · 열 너비 = 첫 세그먼트) · whole = 종전(전부 받은 뒤 표시).
     Entry {
@@ -2383,6 +2392,18 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescPrefsAdvanced,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // ★ Linux 시스템 테마 조회(gsettings 외부 프로세스) 캐시(10-12 사용자 결정 ② · HIDDEN): 0 = 매번.
+    Entry {
+        key: "ui.theme_cache_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblThemeCacheMs,
+        desc: Msg::DescThemeCacheMs,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 60_000,
+        },
+        default: "1500",
     },
     Entry {
         key: "ui.flash_ms",
@@ -6952,6 +6973,7 @@ pub const HIDDEN: &[&str] = &[
     // D-256(10-07): 값 목록 상한 폐지 — 키는 옛 설정 파일 호환으로만 남긴다(효과 없음).
     "grid.filter_values_max",
     "ui.prefs_advanced",
+    "ui.theme_cache_ms",
     "probe.dns_cache_secs",
     "license.gates",
     "ui.toast_fade_to",

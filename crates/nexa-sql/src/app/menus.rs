@@ -420,6 +420,17 @@ impl App {
             self.reconnect_endpoint(ep);
             return;
         }
+        // ★ 재질의 확인 토스트 [계속](10-12 ④) = `grid.refetch:<탭>:<offset>:<limit>`.
+        if let Some(rest) = id.strip_prefix("grid.refetch:") {
+            let mut it = rest
+                .split(':')
+                .map(|v| v.trim().parse::<usize>().unwrap_or(0));
+            let key = it.next().unwrap_or(0) as u64;
+            let offset = it.next().unwrap_or(0);
+            let limit = it.next().unwrap_or(0);
+            self.refetch_confirmed(key, offset, limit);
+            return;
+        }
         if id.starts_with("project.") {
             self.project_cmd(id);
             return;

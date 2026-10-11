@@ -1448,7 +1448,13 @@ impl App {
     }
 
     pub(crate) fn stop_run(&mut self) {
-        if !self.sess.busy && !self.grid.fetch_all_active() {
+        // ★ 10-11(사용자 Linux 실기): 스크롤 끝 자동 페치(페이지 · 커서 없으면 엄격 재질의 = 서버에 새 SQL)도 ■의 대상 — 종전엔 실행 중도
+        //   전체 조회 중도 아니라 바로 돌아가 토스트 ■가 아무 일도 안 했다(로그에 "취소하는 중" 줄조차 없음).
+        if !sessions::stop_applies(
+            self.sess.busy,
+            self.grid.fetch_all_active(),
+            self.grid.fetching(),
+        ) {
             return;
         }
         // 입력 창이 답을 기다리는 중이면 ■ = 입력 취소(워커는 입력을 기다리며 멈춰 있다 — DB로 간 것이 없다).

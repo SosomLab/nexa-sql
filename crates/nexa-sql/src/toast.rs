@@ -156,6 +156,32 @@ impl Toasts {
         self.taken.take()
     }
 
+    /// 자체 시험용(10-12 재질의 확인 E2E): 카드마다 `종류|제목|본문|버튼|동작` 한 줄.
+    pub(crate) fn dump_text(&self) -> String {
+        self.items
+            .iter()
+            .map(|t| {
+                let kind = match t.kind {
+                    ToastKind::Error => "error",
+                    ToastKind::Warn => "warn",
+                    ToastKind::Info => "info",
+                };
+                let (label, action) = t
+                    .button
+                    .as_ref()
+                    .map_or(("", ""), |(l, a)| (l.as_str(), a.as_str()));
+                format!("{kind}|{}|{}|{label}|{action}\n", t.title, t.body)
+            })
+            .collect()
+    }
+
+    /// 자체 시험용: 버튼이 있는 첫 카드의 버튼을 누른 것과 같게 — 동작 id를 돌려주고 카드를 닫는다.
+    pub(crate) fn test_press_button(&mut self) -> Option<String> {
+        let i = self.items.iter().position(|t| t.button.is_some())?;
+        let t = self.items.remove(i);
+        t.button.map(|(_, a)| a)
+    }
+
     /// 만료 제거 — 남은 카드가 있으면(페이드 애니메이션) true = 30ms 틱 유지.
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
         let ttl = self.ttl;

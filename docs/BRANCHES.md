@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/120-linux-scroll-refetch | 2026-10-12 | 2026-10-12 → main(삭제) | 1 | ★ 120차(Linux · 협업 쌍): 설정 창 "변경" 토글 · 🔧 페이지 재조회 중 ■ 무반응(`stop_applies`) · 🔧 SQL Server 0건 집합(`ensure_empty_set`) · 그리드 32 px 축소 · 🔧 썸 드래그 잔존(`bars_drag_event` · 단위 2 · scroll E2E 8/0) · 사용자 결정 D-273~276(`Local` 삭제 · Linux gsettings TTL 캐시 `ui.theme_cache_ms` · 아이콘 유지 · 재질의 확인 토스트 `grid.refetch_confirm`) · 페치 일관성 E2E 10/0(실서버) · 진단 `NSQL_TRACE_INPUT` · 훅 `grid.thumbs/col` `ui.wheel/hwheel/down/up` `toast.dump/action` · T-329 종결(VM 가로 휠 없음) · 📚 journal 10-11·10-12 · 10 · 22 · 43 · 44 · 61 · 71 · STATUS · DEVLOG · TODO · 위키 Settings · CLAUDE |
 | fix/119-linux-sweep | 2026-10-11 | 2026-10-11 → main(삭제) | 1 | ★ 119차(Linux · 협업 쌍): 최신화·전수·성능 회귀 0 · T-321 소비(S96 승격·S97) · 🔧 탐색기 현재 스키마 연속 전환 경주(`soft_again`) · 🔧 기동 명령 select/menu 라벨·콜론 · scripts 실행 비트 18 · E2E 시험 자산 6 · 하네스 linux-perf-all 개편 · [detail] 추적 · 📚 journal 10-10 §9 · 26 §7-16 · 39·105·107 · STATUS · DEVLOG · TODO · CLAUDE |
 | docs/v0.1.9-release-2 | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | 🚀 v0.1.9 공개 결과 2차(journal §8 자산·노트·공개 13:28:59Z·Homebrew 48a202b·pkg publish 38055885433·guard · 33 §5-3 · STATUS 완료 · DEVLOG · CLAUDE.md) |
 | docs/v0.1.9-release | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | 🚀 v0.1.9 릴리스 기록 1차(journal §8 준비·풀 테스트·CI 1차 실패·태그 · STATUS · DEVLOG · TODO T-319 ✅·T-328 · 33 §5-3 · 102 원장 · CLAUDE.md) + `scripts/release-notes-merge.py`(T-319) |

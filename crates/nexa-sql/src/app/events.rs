@@ -626,6 +626,37 @@ impl App {
                 self.sess.fetch_card = None;
             }
         }
+        // ★ 재질의 확인(10-12 사용자 결정 ④): 워커가 엄격 교체 직전에 멈췄다 — 행은 그대로 · 토스트 [계속]으로만 다시 보낸다
+        //   (`grid.refetch:<탭>:<offset>:<limit>` → `refetch_confirmed`). 자동 페치는 같은 행 수에서 다시 묻지 않는다(`auto_fetch_at`).
+        if matches!(stop, Some(worker::FetchStop::AskRefetch)) {
+            let (rows, page) = match self.grid_for(key) {
+                Some(g) => {
+                    g.fetch_failed();
+                    (g.row_count(), g.page_rows())
+                }
+                None => (0, 0),
+            };
+            let limit = if all { 0 } else { page };
+            if card || all {
+                self.sess.fetch_card = None;
+                self.run_toast.finish(
+                    self.sess.run_card,
+                    runtoast::Phase::Stopped { rows: rows as u64 },
+                );
+            }
+            let body = tf(Msg::ToastRefetchBody, &[&rows.to_string()]);
+            self.toasts.push_button(
+                crate::toast::ToastKind::Warn,
+                t(Msg::ToastRefetchTitle),
+                body.clone(),
+                t(Msg::BtnContinue),
+                &format!("grid.refetch:{key}:{offset}:{limit}"),
+            );
+            self.sess.status = t(Msg::StRefetchAsked).into();
+            self.log_win.push(LogEntry::new(LogKind::Info, body));
+            self.redraw();
+            return;
+        }
         match result {
             Ok((rs, more, elapsed)) => {
                 let n = rs.rows.len().to_string();
@@ -694,6 +725,8 @@ impl App {
                     });
                 }
                 match stop {
+                    // 재질의 확인은 위에서 이미 돌려보냈다(여기 오지 않는다).
+                    Some(worker::FetchStop::AskRefetch) => {}
                     Some(worker::FetchStop::CursorGone) => {
                         // 커서 결과의 커서가 닫혔다(T-202) — 그리드는 빈 페이지로 `more=false`가 됐다 · 안내 한 줄.
                         self.sess.status = t(Msg::StCursorGone).into();

@@ -937,8 +937,28 @@ impl App {
         self.offset_warned.remove(&self.grid_tab);
     }
 
+    /// 재질의 확인 토스트의 [계속](10-12 ④): 같은 요청을 **확인 없이** 다시 보낸다 — 평소 경로(요청 → 펌프 → `send_fetch` = 문지기·
+    /// 예산·카드) 그대로 · 그 결과 탭이 더는 활성이 아니면 보내지 않는다(상태줄 안내).
+    pub(crate) fn refetch_confirmed(&mut self, key: u64, offset: usize, limit: usize) {
+        if self.grid_tab != key {
+            self.sess.status = t(Msg::StRefetchTabGone).into();
+            self.redraw();
+            return;
+        }
+        self.refetch_force = true;
+        if limit == 0 {
+            self.grid.request_fetch_all_force();
+        } else {
+            self.grid.request_next(offset, limit);
+        }
+        self.redraw();
+    }
+
     /// 추가 페치·전체 조회·건수를 워커에(같은 세션 · docs/43 §3-4 OFFSET 폴백).
     fn send_fetch(&mut self, req: grid::FetchReq) {
+        // ★ 재질의 확인(10-12 ④): 설정이 켜져 있으면 워커가 엄격 교체 직전에 멈춰 묻는다 · 토스트 [계속]의 재전송 1회만 확인 없이.
+        let confirm =
+            self.settings.flag("grid.refetch_confirm") && !std::mem::take(&mut self.refetch_force);
         let sql = self.grid.source_sql().to_string();
         if sql.trim().is_empty() {
             self.grid.fetch_failed();
@@ -987,6 +1007,7 @@ impl App {
                         budget_bytes: 0,
                         strict: self.settings.get("grid.refetch_mode") != Some("offset"),
                         strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
+                        confirm,
                     },
                 );
             }
@@ -1006,6 +1027,7 @@ impl App {
                         budget_bytes: remain,
                         strict: self.settings.get("grid.refetch_mode") != Some("offset"),
                         strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
+                        confirm,
                     },
                 );
             }

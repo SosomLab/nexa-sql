@@ -1043,6 +1043,11 @@ pub(crate) fn is_conntype_cmd(sql: &str) -> bool {
 }
 
 /// 작업 단위 전환 문장인가(방언 무관 · 순수): `USE` · `ALTER SESSION SET CURRENT_SCHEMA` · `SET search_path`.
+/// ■(중지)가 할 일이 있는가(순수 · MC/DC): 실행 중 · 전체 조회 중 · **페이지 페치 진행 중**(스크롤 끝 자동 페치 · 엄격 재질의) 가운데 하나면 true.
+pub(crate) fn stop_applies(busy: bool, fetch_all: bool, fetching: bool) -> bool {
+    busy || fetch_all || fetching
+}
+
 pub(crate) fn is_context_switch(sql: &str) -> bool {
     [Dialect::Mssql, Dialect::Oracle, Dialect::Postgres]
         .iter()
@@ -1385,6 +1390,19 @@ mod tests {
     }
 
     /// ★ 툴바 작업 단위(10-01 ⑫): 방언별 값·편집 가능 여부 · USE 문장 인용.
+    /// ★ 10-11 ■ 문지기 — 조건 3의 독립 영향 쌍(페이지 페치만 진행 중이어도 ■가 동작해야 한다).
+    #[test]
+    fn stop_applies_covers_page_fetch() {
+        use super::stop_applies;
+        assert!(!stop_applies(false, false, false), "아무것도 없으면 무시");
+        assert!(stop_applies(true, false, false), "실행 중");
+        assert!(stop_applies(false, true, false), "전체 조회 중");
+        assert!(
+            stop_applies(false, false, true),
+            "페이지 페치 중(스크롤 끝 자동 · 엄격 재질의)"
+        );
+    }
+
     #[test]
     fn db_unit_by_dialect() {
         use super::{db_unit, use_sql};

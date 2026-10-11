@@ -278,6 +278,10 @@ impl App {
             "ui.click_guard_ms" => {
                 nexa_ctl::set_default_click_guard_ms(self.settings.int(key).clamp(0, 2000) as u64)
             }
+            // Linux gsettings 테마 조회 캐시(10-12 ②) — 다른 OS는 값만 보관.
+            "ui.theme_cache_ms" => {
+                crate::theme::set_cache_ms(self.settings.int(key).clamp(0, 60_000) as u64)
+            }
             "ui.fade_fast_ms" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Fast,
                 fade_ms(&self.settings, key, 5000),

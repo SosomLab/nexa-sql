@@ -57,6 +57,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 - **왜 cdylib이 아닌가**: Rust ABI 불안정 · 크래시 격리 없음 · **한 프로세스에 Oracle 클라이언트 하나만**(§4-1) → 프로세스여야 SxS가 된다. 언어 무관(Java JDBC 래퍼도 확장이 된다). 라이선스 격리(GPL 드라이버도 본체 오염 없음).
 - WASM(`wasmi` · DR-16)은 **소켓·네이티브 라이브러리 로드가 안 되므로 드라이버에는 부적합** — 코드 플러그인(TextCommand 등)에만 쓴다.
 - 내장 드라이버와 확장 드라이버는 **같은 `Box<dyn Session>`** — `nsql-drivers` 레지스트리가 `Dialect`/`driver=` 값으로 내장 vs `nsql-driver-rpc`(프록시 세션)를 고른다. UI·CLI는 차이를 모른다(DR-7).
+- **포트 계약 체크(새 드라이버·확장 드라이버 공통 · 10-11 추가)**: ⓐ **0건 결과도 컬럼 메타가 있는 빈 `ResultSet` 하나를 낸다**(43 §3-1 · SQL Server tiberius처럼 빈 집합 메타를 안 주는 라이브러리는 드라이버 안에서 보충 · journal 10-11 §4) ⓑ 페치는 배치 단위로 취소 깃발을 본다(43 §3-4) ⓒ `Caps`로 능력을 말한다(61 §1-6).
 
 ### 2-3. 배포 저장소·자산 이름·매니페스트
 ```text

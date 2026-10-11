@@ -784,7 +784,9 @@ impl Grid {
     /// 결과·선택·스크롤은 비우고 **설정만**(영역 · 행번호 · 스크롤 단위 · 단축키 문구 · 방언) 물려받은 새 그리드 — 새 편집기 탭의 짝(사용자 09-16).
     pub(crate) fn fresh_like(&self) -> Grid {
         let mut g = Grid {
-            bounds: self.bounds,
+            // ★ 바깥 사각형(조건 바·칩 줄 포함)을 물려준다(10-11 사용자 실기 "조건 바 위 공백"): 새 그리드는 `strip_h = 0`으로 시작해
+            //   결과가 오면 `sync_strip`이 조건 바 높이를 **다시 뺀다** — 안쪽 bounds를 물려주면 새 탭마다 그만큼(32 px) 줄어들어 누적됐다.
+            bounds: self.outer_bounds(),
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
             row_focus: self.row_focus,
@@ -936,6 +938,29 @@ impl Grid {
         std::mem::take(&mut self.cancel_req)
     }
 
+    /// 페치 요청이 워커에 나가 있는가(페이지·전체 공통 · ■ 문지기 `sessions::stop_applies`).
+    pub(crate) fn fetching(&self) -> bool {
+        self.fetching
+    }
+
+    /// 자체 시험용(`grid.col:<파일>|<열 이름>` · 10-11 페치 일관성 E2E): **원본 세트**의 한 열 값을 세트 순서대로 한 줄씩(투영·정렬 무관) —
+    ///   ROWID 열을 쓰면 중복(겹침)·누락을 `sort | uniq -d`·행 수로 가린다. 열이 없거나 결과가 없으면 None.
+    pub(crate) fn dump_column(&self, name: &str) -> Option<String> {
+        let rs = self.rs.as_ref()?;
+        let ci = rs
+            .columns()
+            .iter()
+            .position(|c| c.name.eq_ignore_ascii_case(name))?;
+        let mut out = String::new();
+        for row in rs.rows() {
+            if let Some(v) = row.get(ci) {
+                out.push_str(&nsql_io::cell_text(v, ""));
+            }
+            out.push('\n');
+        }
+        Some(out)
+    }
+
     /// 전체 조회 요청(도구줄 ⇊ · 09-17 "나머지 이어 받기"): 더 있을 때만 · 자동 페치가 나가 있으면 **큐에 두었다가** 그 세그먼트가
     /// 붙은 뒤 정확한 offset으로 보낸다([`Self::take_fetch_request`]) — 종전엔 교체라 늦은 세그먼트를 버렸다.
     pub(crate) fn request_fetch_all(&mut self) {
@@ -943,6 +968,15 @@ impl Grid {
             return;
         }
         self.request_fetch_all_force();
+    }
+
+    /// 다음 세그먼트 요청(재질의 확인 토스트 [계속]의 재전송 · 10-12 ④): 페치 중·요청 대기·더 없음이면 무시.
+    pub(crate) fn request_next(&mut self, offset: usize, limit: usize) {
+        if self.session_blocked || self.fetching || self.fetch_req.is_some() || !self.more {
+            return;
+        }
+        self.auto_fetch_at = Some(offset);
+        self.fetch_req = Some(FetchReq::Next { offset, limit });
     }
 
     /// 세션 가드 없이 전체 조회 요청(증분 자동 이어 받기 · 호스트가 Done 뒤 세션이 빈 것을 확인하고 부른다 · 문지기는 제출 때 다시 본다).
@@ -6030,6 +6064,26 @@ impl Grid {
     /// 스크롤바에 넘기는 (뷰포트 · 내용 폭 · 내용 높이) — **한 자리**(입력 처리와 자체 시험 훅이 같은 값을 쓴다 · 10-10).
     /// ★ 뷰포트 = 행번호 열(고정)·헤더(고정) 제외 — 바는 데이터 영역에만(09-16: 세로 바가 헤더까지 걸쳤다) · 가로 바의 끝이
     ///   키보드 `max_scroll`과 같은 자리. 내용은 뷰포트보다 작아도 뷰포트 크기로(바 없음 판정은 ScrollBars가).
+    /// 드래그 중인 스크롤바에 이동·놓임을 바로 전달(그리드 보기 = `bars_geom` · 텍스트 보기 = 본문 사각형 — 각 보기의 평소 경로와 같은
+    /// 기하와 후속 처리). 소비 여부와 무관하게 호출자가 끝낸다(놓임이 다른 컨트롤의 클릭이 되면 안 된다).
+    fn bars_drag_event(&mut self, ev: &InputEvent, scale: f32) {
+        if self.row_h <= 0 || self.rs.is_none() {
+            return;
+        }
+        if self.view != ResultView::Grid {
+            self.text_view_event(ev, scale);
+            return;
+        }
+        let (b, cw, ch) = self.bars_geom();
+        let (nx, ny, _) = self
+            .bars
+            .on_event(ev, b, cw, ch, self.scroll_x, self.scroll_y, scale);
+        self.scroll_x = nx;
+        self.scroll_y = ny;
+        self.clamp();
+        self.dirty = true;
+    }
+
     fn bars_geom(&self) -> (Rect, i32, i32) {
         let (cw, ch) = self.content_size();
         let b = self.bounds;
@@ -6046,6 +6100,30 @@ impl Grid {
     /// ★ 자체 시험(기동 명령 `grid.vdrag:<dy>` · 10-10 118차 mac 크래시 회귀 = nexa-ctl `scroll.rs` 썸 드래그 i32 넘침): 세로
     /// 바를 깨우고(휠 0 = 스크롤 없이 깨움) **지금 썸의 가운데**(창 좌표)를 돌려준다 — 호스트가 그 자리에 MouseDown → dy만큼 MouseMove →
     /// MouseUp을 실제 `route` 경로로 넣는다. 결과가 없거나 바가 필요 없으면 `None`. 좌표 하드코딩 없이 어느 OS·배율에서든 같은 시험.
+    /// 자체 시험용: 가로 스크롤 오프셋(px).
+    pub(crate) fn scroll_x_for_test(&self) -> i32 {
+        self.scroll_x
+    }
+
+    /// 자체 시험용(10-12 가로 스크롤·드래그 해제 점검): 가로 썸 중심(창 좌표) — 가로 바가 없으면 None.
+    pub(crate) fn test_hthumb_center(&mut self, scale: f32) -> Option<(i32, i32)> {
+        if self.row_h <= 0 || self.rs.is_none() {
+            return None;
+        }
+        let (b, cw, ch) = self.bars_geom();
+        let _ = self.bars.on_event(
+            &InputEvent::Wheel { delta: 0 },
+            b,
+            cw,
+            ch,
+            self.scroll_x,
+            self.scroll_y,
+            scale,
+        );
+        let t = ScrollBars::h_thumb_for_test(b, cw, self.scroll_x, scale)?;
+        Some((t.x + t.w / 2, t.y + t.h / 2))
+    }
+
     pub(crate) fn test_vthumb_center(&mut self, scale: f32) -> Option<(i32, i32)> {
         if self.row_h <= 0 || self.rs.is_none() {
             return None;
@@ -6266,6 +6344,19 @@ impl Grid {
         if matches!(ev, InputEvent::MouseUp { .. }) && self.drag_sel.is_some() {
             self.drag_sel = None;
             self.dirty = true;
+        }
+        // ★ 스크롤바 썸/트랙을 끄는 중이면 이동·놓임은 **어디서든 스크롤바 몫**(사용자 10-12 "스크롤을 클릭하고 움직이면 릴리즈가
+        //   안 돼 놓은 뒤에도 스크롤이 움직인다") — 아래의 조건 줄·칩 줄(`strip_event` = 줄 안 MouseMove/Up 소비) · 푸터 도구줄
+        //   (`footer_event` = 푸터 안 MouseUp 소비) · 셀 편집기(`live_event` = MouseUp 전부)가 자기 영역의 놓임을 먹어 `ScrollBars`가
+        //   MouseUp을 못 받았다. 세로 바는 위로 끌면 조건 줄에, 가로 바는 아래로 끌면 푸터에 닿는다(바가 그 경계에 붙어 있다).
+        if self.bars.is_dragging()
+            && matches!(
+                ev,
+                InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+            )
+        {
+            self.bars_drag_event(ev, scale);
+            return;
         }
         // 필터 줄(칩·조건 바)이 먼저 — 줄 안의 클릭은 셀·머리로 흘리지 않는다. 단 **열 머리를 끌는 중**이면 이동·놓임은 끌기
         //   몫(조건 바 위로 끌어 놓기 · 협업 V1 C 10-06 = 조건 바가 이동을 먹어 고스트가 머리 줄에 머물렀다).
@@ -9392,6 +9483,10 @@ mod tests {
     }
 
     fn grid_with(cols: &[i32]) -> Grid {
+        grid_with_rows(cols, 1)
+    }
+
+    fn grid_with_rows(cols: &[i32], n: usize) -> Grid {
         let mut g = Grid::default();
         let rs = ResultSet {
             columns: cols
@@ -9402,7 +9497,7 @@ mod tests {
                     type_name: String::new(),
                 })
                 .collect(),
-            rows: vec![vec![Value::Int(1); cols.len()]],
+            rows: vec![vec![Value::Int(1); cols.len()]; n],
         };
         g.set_result(rs);
         g.bounds = Rect::new(0, 0, 400, 300);
@@ -9411,6 +9506,88 @@ mod tests {
         g.gutter_w = 30;
         g.col_w = cols.to_vec();
         g
+    }
+
+    /// 썸을 끌다 **푸터 도구줄 위에서 놓음** = 드래그 끝(사용자 10-12 · 가로 바는 푸터에 붙어 있어 손이 쉽게 내려간다).
+    /// 종전에는 `footer_event`가 푸터 안 MouseUp을 먹어 `ScrollBars`가 놓임을 못 받았고, 버튼 없이 움직여도 스크롤이 따라왔다.
+    #[test]
+    fn scrollbar_drag_released_over_footer_ends_drag() {
+        let mut g = grid_with(&[300, 300, 300, 300]);
+        g.footer_h = 30;
+        g.cond_on = false;
+        // 가로 바 깨움(휠 0 = 스크롤 없이) → 썸 자리.
+        g.on_event(&InputEvent::HWheel { delta: 0 }, 1.0);
+        let (b, cw, _) = g.bars_geom();
+        let t = ScrollBars::h_thumb_for_test(b, cw, g.scroll_x, 1.0).expect("가로 썸");
+        let (x, y) = (t.x + t.w / 2, t.y + t.h / 2);
+        g.on_event(
+            &InputEvent::MouseDown {
+                x,
+                y,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert!(g.bars.is_dragging(), "썸 누름 = 드래그 시작");
+        g.on_event(&InputEvent::MouseMove { x: x + 20, y }, 1.0);
+        let during = g.scroll_x;
+        assert!(during > 0, "끌면 따라온다 ({during})");
+        // 푸터 안에서 놓음.
+        let f = g.footer_rect();
+        assert!(
+            f.h > 0
+                && !b.contains(Point {
+                    x: x + 25,
+                    y: f.y + 5
+                })
+        );
+        g.on_event(
+            &InputEvent::MouseUp {
+                x: x + 25,
+                y: f.y + 5,
+            },
+            1.0,
+        );
+        assert!(!g.bars.is_dragging(), "푸터 위에서 놓아도 드래그 끝");
+        // 버튼 없이 움직여도 더는 안 움직인다.
+        g.on_event(&InputEvent::MouseMove { x: x + 80, y }, 1.0);
+        assert_eq!(g.scroll_x, during, "놓은 뒤 이동 = 스크롤 없음");
+    }
+
+    /// 세로 썸을 **조건 줄(그리드 위 띠)로 끌어 올려 놓음** = 드래그 끝(조건 줄은 줄 안 MouseMove/Up을 먹는다).
+    #[test]
+    fn scrollbar_drag_released_over_strip_ends_drag() {
+        let mut g = grid_with_rows(&[100], 200);
+        g.footer_h = 0;
+        // 필터 칩 줄 24px = bounds 위에 붙는다(`outer_bounds` · 줄 안 MouseMove/Up은 `strip_event`가 소비).
+        g.strip_h = 24;
+        g.chip_h = 24;
+        g.bounds = Rect::new(0, 24, 400, 276);
+        g.on_event(&InputEvent::Wheel { delta: 0 }, 1.0);
+        let (b, _, ch) = g.bars_geom();
+        let t = ScrollBars::v_thumb_for_test(b, ch, g.scroll_y, 1.0).expect("세로 썸");
+        let (x, y) = (t.x + t.w / 2, t.y + t.h / 2);
+        g.on_event(
+            &InputEvent::MouseDown {
+                x,
+                y,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert!(g.bars.is_dragging());
+        g.on_event(&InputEvent::MouseMove { x, y: y + 40 }, 1.0);
+        let during = g.scroll_y;
+        assert!(during > 0, "끌면 따라온다 ({during})");
+        // 칩 줄 안(그리드 bounds 위)으로 올려 놓음 — 이동도 줄이 먹지 않고 바가 받는다.
+        g.on_event(&InputEvent::MouseMove { x, y: 10 }, 1.0);
+        assert_eq!(g.scroll_y, 0, "줄 위로 끌어 올림 = 맨 위");
+        g.on_event(&InputEvent::MouseUp { x, y: 10 }, 1.0);
+        assert!(!g.bars.is_dragging(), "칩 줄 위에서 놓아도 드래그 끝");
+        g.on_event(&InputEvent::MouseMove { x, y: y + 120 }, 1.0);
+        assert_eq!(g.scroll_y, 0, "놓은 뒤 이동 = 스크롤 없음");
     }
 
     fn text_grid() -> Grid {

@@ -63,6 +63,7 @@ Close(handle)             → 새 실행 · 커밋/롤백 · 탭 닫기 · 접�
 ```
 
 - **상한 두 축**: `max_rows`(표시 세그먼트 · D-69) vs `fetch_size`(왕복당 행수 · 세션 옵션 `fetch_size` · Oracle ARRAYSIZE 격 · 기본 200 · 전체 페치 때 `db.fetch_all_size` 기본 **5000**으로 상향 — 실측 09-17 WAN 155k행: 200 = 34.3s · 5000 = 4.6s).
+- ★ **0건 결과 = 컬럼 메타가 있는 빈 `ResultSet` 하나**(포트 계약 · 10-11 [journal 10-11 §4](journal/2026-10-11.md)): 행이 없어도 `ResultSet{rows: 0, cols}`를 낸다 — 호스트는 이것으로 새 결과 탭(헤더만)을 만들고 Output으로 가지 않는다. Oracle·PG·SQLite는 원래 그렇고, SQL Server(tiberius)는 빈 집합의 메타를 안 주므로 드라이버가 `QueryStream::columns()`를 먼저 읽어 `ensure_empty_set`으로 채운다(OUT 트레일러 컬럼은 제외).
 - **Timeline**: FetchNext/FetchAll은 `Stage::Navigate` 스팬으로 덧붙인다([26 §2](26-performance-architecture.md) 표 "Navigate" ☐ → 여기서 채움).
 
 ### 3-2. 포트(nsql-core) — 확장점 세 조각([30 §1-2](30-architecture-patterns.md))
@@ -96,6 +97,7 @@ pub struct ExecResult { …, pub pending: Option<CursorHandle> }   // 마지막 
 - 방언별 래핑: PG/SQLite/MySQL `SELECT * FROM (q) x LIMIT n OFFSET k` · Oracle 12c+ `OFFSET k ROWS FETCH NEXT n ROWS ONLY` · MSSQL `… ORDER BY (SELECT NULL) OFFSET k ROWS FETCH NEXT n ROWS ONLY`(ORDER BY 필수).
 - **정렬(ORDER BY) 없는 질의**는 페이지가 겹칠 수 있다 → 상태줄·로그 `perf` 1줄 경고("정렬 없는 재질의 — 결과가 겹칠 수 있음 · 커서 유지 권장") · 설정 `grid.offset_warn`(기본 켬).
 - 세션 변수(DR-8)·임시 테이블에 기대는 질의는 **같은 세션**에서 재질의(메타 세션 X).
+- ★ 10-11: 엄격 모드의 OFFSET 재질의(페이지 1장 → 처음부터 offset+limit 재수신)도 **배치 단위 `fetch_next` + 100 ms 진행 + 취소 깃발**로 돈다 — ■가 듣고, 취소하면 **기존 행 유지**(부분 교체 없음). 재질의 시작 때 취소 핸들을 그 페치로 다시 등록한다(앞 실행의 핸들이 남던 결함 · journal 10-11 §2).
 
 ### 3-5. 메모리·해제 규칙(D-72 · [39](39-resource-governance.md))
 
@@ -258,10 +260,13 @@ cancel_all() ─▶ waiting.clear()(running 제외)
 | 첫 세그먼트(200) 자체 | 실행 | 예 | ✅ | 이후 ①이면 계속 같은 실행 |
 | 예산 절단(D-72) | 전체 조회가 메모리 예산에 걸림 | — | 의도된 부분(표시·`more`) | 행 수는 예산만큼 · 값은 일치 |
 | 실행 중지(부분 · 09-17) | ■ | 예 | 앞부분으로는 일치 · `more=false`로 이어 받기 차단 | 전체는 재실행 |
+| **페이지 페치 중 ■(10-11)** | ③ OFFSET 재질의가 전체 재수신으로 커졌을 때(커서 없음 · ORDER BY 없음 · [journal 10-11 §2](journal/2026-10-11.md)) | — | **기존 행 그대로 유지**(부분 교체 없음 · `more=true` 유지) | 종전 = 문지기가 페이지 페치를 몰라 ■ 무반응 → `stop_applies(busy, fetch_all, fetching)` MC/DC · 배치 단위 + 진행 + 취소 깃발 · 취소 핸들 = 이 페치 |
 
 ### 9-2. 결정 — 엄격 모드(기본 · `grid.refetch_mode=strict`)
 
 ②·③이 필요한 순간에 **최상위 ORDER BY가 없으면 이어 붙이지 않는다**. 대신 **처음부터 다시 받아 교체**한다(offset 0 · 한 번의 실행이 결과를 정의) — 세그먼트 페치는 `offset+limit`행까지 한 실행으로 받고(커서 드라이버는 그 자리에 커서를 남겨 다음부터 ①로) · 전체 조회는 전부 다시 받아 교체(진행률·취소·예산 그대로). 그리드는 `replace_rows`로 **스크롤·정렬·컬럼 폭·보기 모드를 유지**한 채 행만 바꾸고 로그에 "일관성: 커서 없음 · ORDER BY 없음 — 처음부터 다시 받아 교체(n행)" 한 줄. ORDER BY가 있으면 종전대로 ②/③(전순서면 안전 · 아니면 `grid.offset_warn` 경고는 그대로). `offset` 모드 = 종전 동작(빠름 · 사용자 책임).
+
+★ **확인 토스트(10-12 · D-276 · `grid.refetch_confirm` 기본 on)**: 교체가 일어날 조건(= 워커 순수 함수 `ask_refetch(confirm, strict, have_cursor, strict_all, has_order_by)` · MC/DC 6)이면 **서버에 가기 전에** 묻는다 — Warn 토스트 "처음부터 다시 받을까요?"(행 수 안내 · [계속] = `grid.refetch:<탭>:<offset>:<limit>` · limit 0 = 전체 조회) · 묻는 동안 그리드는 행 그대로(`fetch_failed` = fetching 해제 · `more` 유지) · [계속]은 `refetch_force`로 **한 번만** 확인 없이 평소 경로(문지기·예산·카드) · 탭이 바뀌었으면 `StRefetchTabGone` · 자동 페치는 `auto_fetch_at == src_rows` 가드로 **재질문하지 않음**(토스트를 닫으면 도구줄 버튼으로만).
 
 비용: 커서를 잃은 경우에만 앞 `offset`행을 다시 받는다(네트워크 · 26 §8 규칙 안 · 사용자 동작으로만 발생). ORDER BY 판정은 `nsql_io::paging::has_order_by`(최상위 휴리스틱 · 서브쿼리 안 ORDER BY는 무시).
 
