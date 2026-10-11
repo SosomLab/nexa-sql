@@ -13,6 +13,9 @@ OUT=""; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; P=BISCM; FROM="M4S_I002040 A 
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/release/nsql"; WAIT=70; ONLY=""
 while getopts "o:P:p:t:e:n:w:O:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; p) P=$OPTARG;; t) FROM=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; w) WAIT=$OPTARG;; O) ONLY=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-P real-config] [-p profile] [-t \"<FROM … WHERE …>\"] [-e app] [-n nsql] [-w secs] [-O A,B,C]"; exit 2; }
+# Windows(Git Bash)에서는 기본 경로에 `.exe`가 붙는다(121차 win · 협업 실측 = 인자만 주면 수정 없이 돈다).
+[ -x "$APP" ] || { [ -x "$APP.exe" ] && APP="$APP.exe"; }
+[ -x "$NSQL" ] || { [ -x "$NSQL.exe" ] && NSQL="$NSQL.exe"; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
 [ -d "$PROF/profiles" ] && cp -R "$PROF/profiles" "$H/" && cp "$PROF/device.key" "$H/" 2>/dev/null
 printf 'ui.lang=ko\ndemo.prompted=on\nexplorer.details=off\n' > "$H/settings.conf"

@@ -1266,6 +1266,34 @@ pub use ddl::{ddl_target, DdlKind, DdlTarget, DdlVerb};
 mod tests {
     use super::*;
 
+    /// 바이트 추정은 **가법적**(121차 win · 워커 전체 조회 진행 보고가 조각마다 더해 쓴다): 조각들의 `approx_bytes` 합 = 이어 붙인
+    /// 전체의 `approx_bytes`. 바깥 벡터 머리(`size_of_val`)는 항목 수 기준이라 조각 경계에서 빠지거나 겹치지 않는다.
+    #[test]
+    fn approx_bytes_is_additive_over_chunks() {
+        let rs = |rows: Vec<Vec<Value>>| ResultSet {
+            columns: vec![],
+            rows,
+        };
+        let a = rs(vec![
+            vec![Value::Int(1), Value::Str("ab".repeat(7))],
+            vec![Value::Null, Value::Bytes(vec![0u8; 33])],
+        ]);
+        let b = rs(vec![vec![
+            Value::Decimal("12.5".into()),
+            Value::Str(String::new()),
+        ]]);
+        let c = rs(vec![]);
+        let mut whole = rs(Vec::new());
+        whole.rows.extend(a.rows.iter().cloned());
+        whole.rows.extend(b.rows.iter().cloned());
+        whole.rows.extend(c.rows.iter().cloned());
+        assert_eq!(
+            a.approx_bytes() + b.approx_bytes() + c.approx_bytes(),
+            whole.approx_bytes()
+        );
+        assert_eq!(c.approx_bytes(), 0, "빈 조각 = 0");
+    }
+
     /// 행 단위 교체·추가·제거(87 §12-4 · T-230) — 세그먼트 경계를 넘어 번호가 맞고, 공유 세그먼트는 그쪽만 복사된다.
     #[test]
     fn result_data_set_push_remove_rows() {

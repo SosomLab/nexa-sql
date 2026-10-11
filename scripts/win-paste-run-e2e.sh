@@ -5,11 +5,14 @@
 #   키·마우스 주입 0(docs/61 §4) · 실서버 임시 객체는 끝에 지운다(§2-4 ⑤).
 #
 # 사용: scripts/win-paste-run-e2e.sh -o <출력폴더> [-e target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-P <실제 설정 폴더>]
-#        [-p "BISCM:oracle,Repository:postgres,M4PLAN:mssql"]
+#        [-p "BISCM:oracle,Repository:postgres,M4PLAN:mssql[:DB]"]
+#   셋째 조각(선택 · mssql) = 임시 객체를 만들 데이터베이스 — 로그인 기본 DB가 master처럼 CREATE 권한이 없는 곳이면 지정
+#   (grid-edit의 `-d 프로필:mssql:DB` 규칙과 같음 · 121차 win). 지정하면 CLI 스크립트·붙여넣기 파일 앞에 `USE [DB]` + `GO`를 두고,
+#   `nsql cat source`는 3부 이름 `DB..객체`로 읽는다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; OUT=""; PROF="${APPDATA:-}/nexa-sql"
-PROFILES="BISCM:oracle,Repository:postgres,M4PLAN:mssql"
+PROFILES="BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS"
 while getopts "o:e:n:P:p:" o; do case $o in o) OUT=$OPTARG;; e) EXE=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;; p) PROFILES=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; mkdir -p "$H"; REPORT="$OUT/paste-run-e2e.txt"; : > "$REPORT"
@@ -20,8 +23,14 @@ say() { echo "$*"; echo "$*" >> "$REPORT"; }
 pass=0; fail=0
 ok()  { say "  PASS  $1"; pass=$((pass+1)); }
 bad() { say "  FAIL  $1"; fail=$((fail+1)); [ -n "${2:-}" ] && echo "$2" | head -12 | sed 's/^/        /' | tee -a "$REPORT" >/dev/null; }
-run() { printf '%s\n' "$3" > "$OUT/$1_$2.sql"; "$NSQL" run -c "$1" --no-prompt -f csv "$OUT/$1_$2.sql" > "$OUT/$1_$2.out" 2>&1; RC=$?; cat "$OUT/$1_$2.out"; return 0; }
-src() { "$NSQL" cat source "$2" "$3" -c "$1" 2>&1; }
+# run <프로필> <번호> <sql> — 결과는 $OUT/<프로필>_<번호>.out · 종료 코드는 전역 RC(★ `o=$(run …)` 서브셸에서는 RC가 사라진다 → 호출 뒤 cat).
+#   mssql + DB 지정 = 앞에 `USE [DB]` + `GO`.
+run() {
+  { if [ -n "${DB:-}" ] && [ "${DIA:-}" = mssql ]; then printf 'USE [%s];\nGO\n' "$DB"; fi; printf '%s\n' "$3"; } > "$OUT/$1_$2.sql"
+  "$NSQL" run -c "$1" --no-prompt -f csv "$OUT/$1_$2.sql" > "$OUT/$1_$2.out" 2>&1; RC=$?; cat "$OUT/$1_$2.out"; return 0
+}
+# src <프로필> <종류> <이름> — mssql + DB 지정 = 3부 이름 `DB..이름`(CLI가 USE 뒤 기본 스키마로 찾는다).
+src() { local n="$3"; if [ -n "${DB:-}" ] && [ "${DIA:-}" = mssql ]; then n="$DB..$3"; fi; "$NSQL" cat source "$2" "$n" -c "$1" 2>&1; }
 gui() { # <프로필> <붙여넣기 파일> <덤프 파일>
   local f; f=$(cygpath -w "$2" 2>/dev/null || echo "$2")
   NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$f,@after:6000:run.all,@after:14000:output.dump:$3,@after:14500:editor.dump:$3.editor" \
@@ -38,8 +47,8 @@ judge() { # <라벨> <덤프> <기대 완료 줄 수> [compiled 기대 수]
 }
 
 for ENTRY in ${PROFILES//,/ }; do
-  P="${ENTRY%%:*}"; DIA="${ENTRY##*:}"
-  say ""; say "=== $P ($DIA) · $(date '+%F %T') ======================================================"
+  P="${ENTRY%%:*}"; rest="${ENTRY#*:}"; DIA="${rest%%:*}"; DB=""; case "$rest" in *:*) DB="${rest#*:}";; esac
+  say ""; say "=== $P ($DIA${DB:+ · DB=$DB}) · $(date '+%F %T') ======================================================"
   PASTE="$OUT/paste_$P.sql"; DUMP="$OUT/dump_$P.txt"; : > "$PASTE"
   case "$DIA" in
     oracle)
@@ -50,14 +59,14 @@ for ENTRY in ${PROFILES//,/ }; do
   BEGIN EXECUTE IMMEDIATE '"'"'DROP TABLE NSQLT_T PURGE'"'"'; EXCEPTION WHEN OTHERS THEN NULL; END;
 END;
 /' >/dev/null
-      o=$(run "$P" 10 'CREATE TABLE NSQLT_T (ID NUMBER, NAME VARCHAR2(50));
+      run "$P" 10 'CREATE TABLE NSQLT_T (ID NUMBER, NAME VARCHAR2(50));
 CREATE OR REPLACE FUNCTION NSQLT_F (P_N IN NUMBER) RETURN NUMBER IS BEGIN RETURN P_N * 2; END NSQLT_F;
 /
 CREATE OR REPLACE PROCEDURE NSQLT_P (P_N IN NUMBER, P_OUT OUT NUMBER) AS BEGIN P_OUT := NSQLT_F(P_N); END NSQLT_P;
 /
 CREATE OR REPLACE VIEW NSQLT_V AS SELECT ID, NAME AS NM FROM NSQLT_T;
 CREATE OR REPLACE TRIGGER NSQLT_TRG BEFORE INSERT ON NSQLT_T FOR EACH ROW BEGIN :NEW.NAME := UPPER(:NEW.NAME); END;
-/'); [ "$RC" -eq 0 ] && ok "임시 객체 생성" || bad "임시 객체 생성" "$o"
+/' >/dev/null; o=$(cat "$OUT/${P}_10.out"); [ "$RC" -eq 0 ] && ok "임시 객체 생성" || bad "임시 객체 생성(종료 $RC)" "$o"
       for k in "function NSQLT_F" "procedure NSQLT_P" "view NSQLT_V" "trigger NSQLT_TRG"; do src "$P" $k >> "$PASTE"; printf '\n' >> "$PASTE"; done
       gui "$P" "$PASTE" "$DUMP"
       judge "$P 붙여넣기 F5(함수·프로시저·뷰·트리거)" "$DUMP" 4 4
@@ -69,12 +78,12 @@ DROP TABLE NSQLT_T PURGE;' >/dev/null; [ "$RC" -eq 0 ] && ok "정리" || bad "�
       ;;
     postgres)
       run "$P" 00 'DROP TABLE IF EXISTS nsqlt_t CASCADE; DROP FUNCTION IF EXISTS nsqlt_f(int); DROP FUNCTION IF EXISTS nsqlt_tf(); DROP PROCEDURE IF EXISTS nsqlt_p(int);' >/dev/null
-      o=$(run "$P" 10 'CREATE TABLE nsqlt_t (id int PRIMARY KEY, name text);
+      run "$P" 10 'CREATE TABLE nsqlt_t (id int PRIMARY KEY, name text);
 CREATE FUNCTION nsqlt_f(p int) RETURNS int LANGUAGE sql AS $$ SELECT p * 2 $$;
 CREATE PROCEDURE nsqlt_p(p int) LANGUAGE plpgsql AS $$ BEGIN PERFORM 1; END $$;
 CREATE VIEW nsqlt_v AS SELECT id, name AS nm FROM nsqlt_t;
 CREATE FUNCTION nsqlt_tf() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.name := upper(NEW.name); RETURN NEW; END $$;
-CREATE TRIGGER nsqlt_trg BEFORE INSERT ON nsqlt_t FOR EACH ROW EXECUTE FUNCTION nsqlt_tf();'); [ "$RC" -eq 0 ] && ok "임시 객체 생성" || bad "임시 객체 생성" "$o"
+CREATE TRIGGER nsqlt_trg BEFORE INSERT ON nsqlt_t FOR EACH ROW EXECUTE FUNCTION nsqlt_tf();' >/dev/null; o=$(cat "$OUT/${P}_10.out"); [ "$RC" -eq 0 ] && ok "임시 객체 생성" || bad "임시 객체 생성(종료 $RC)" "$o"
       for k in "function nsqlt_f" "procedure nsqlt_p" "view nsqlt_v"; do src "$P" $k >> "$PASTE"; printf '\n' >> "$PASTE"; done
       printf 'DROP TRIGGER IF EXISTS nsqlt_trg ON nsqlt_t;\n' >> "$PASTE"; src "$P" trigger nsqlt_trg >> "$PASTE"; printf '\n' >> "$PASTE"
       gui "$P" "$PASTE" "$DUMP"
@@ -83,7 +92,7 @@ CREATE TRIGGER nsqlt_trg BEFORE INSERT ON nsqlt_t FOR EACH ROW EXECUTE FUNCTION 
       ;;
     mssql)
       run "$P" 00 "IF OBJECT_ID(N'nsqlt_trg', N'TR') IS NOT NULL DROP TRIGGER nsqlt_trg; IF OBJECT_ID(N'nsqlt_v', N'V') IS NOT NULL DROP VIEW nsqlt_v; IF OBJECT_ID(N'nsqlt_p', N'P') IS NOT NULL DROP PROCEDURE nsqlt_p; IF OBJECT_ID(N'nsqlt_f', N'FN') IS NOT NULL DROP FUNCTION nsqlt_f; IF OBJECT_ID(N'nsqlt_t', N'U') IS NOT NULL DROP TABLE nsqlt_t;" >/dev/null
-      o=$(run "$P" 10 'CREATE TABLE nsqlt_t (id int PRIMARY KEY, name nvarchar(50));
+      run "$P" 10 'CREATE TABLE nsqlt_t (id int PRIMARY KEY, name nvarchar(50));
 GO
 CREATE FUNCTION nsqlt_f(@p int) RETURNS int AS BEGIN RETURN @p * 2; END;
 GO
@@ -92,7 +101,9 @@ GO
 CREATE VIEW nsqlt_v AS SELECT id, name AS nm FROM nsqlt_t;
 GO
 CREATE TRIGGER nsqlt_trg ON nsqlt_t AFTER INSERT AS BEGIN SET NOCOUNT ON; END;
-GO'); [ "$RC" -eq 0 ] && ok "임시 객체 생성" || bad "임시 객체 생성" "$o"
+GO' >/dev/null; o=$(cat "$OUT/${P}_10.out"); [ "$RC" -eq 0 ] && ok "임시 객체 생성" || bad "임시 객체 생성(종료 $RC)" "$o"
+      # DB 지정 = 붙여넣기 파일도 그 DB에서 실행(일반 탭의 세션은 로그인 기본 DB에 있다).
+      [ -n "$DB" ] && printf 'USE [%s];\nGO\n' "$DB" >> "$PASTE"
       for k in "function nsqlt_f" "procedure nsqlt_p" "view nsqlt_v" "trigger nsqlt_trg"; do src "$P" $k >> "$PASTE"; printf '\n' >> "$PASTE"; done
       gui "$P" "$PASTE" "$DUMP"
       judge "$P 붙여넣기 F5(함수·프로시저·뷰·트리거)" "$DUMP" 4

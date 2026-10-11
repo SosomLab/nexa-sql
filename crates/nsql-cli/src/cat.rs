@@ -89,7 +89,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                 let Some(obj) = o.positional.get(1) else {
                     return Ok(usage());
                 };
-                let (sc, name) = split_name(obj, &schema);
+                let (sc, name) = split_name_db(s, obj, &schema)?;
                 let kind = o
                     .positional
                     .get(2)
@@ -309,7 +309,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     eprintln!("알 수 없는 종류: {kind}");
                     return Ok(2);
                 };
-                let (sc, name) = split_name(name, &schema);
+                let (sc, name) = split_name_db(s, name, &schema)?;
                 // `qualify=off` = 머리 줄 스키마 한정 끔(GUI `explorer.source_schema`와 같은 뜻 · 기본 켬 · 10-01).
                 let qualify = !o
                     .positional
@@ -329,7 +329,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                 let Some(name) = o.positional.get(1) else {
                     return Ok(usage());
                 };
-                let (sc, name) = split_name(name, &schema);
+                let (sc, name) = split_name_db(s, name, &schema)?;
                 let errs = nsql_catalog::compile_errors(s, &sc, &name)?;
                 if errs.is_empty() {
                     println!("No errors.");
@@ -371,12 +371,79 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
 
 /// `schema.name` 또는 `name`(기본 스키마).
 fn split_name(obj: &str, default_schema: &str) -> (String, String) {
-    let clean = |s: &str| {
-        s.trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`')
-            .to_string()
-    };
     match obj.split_once('.') {
-        Some((sc, n)) => (clean(sc), clean(n)),
-        None => (default_schema.to_string(), clean(obj)),
+        Some((sc, n)) => (clean_ident(sc), clean_ident(n)),
+        None => (default_schema.to_string(), clean_ident(obj)),
+    }
+}
+
+fn clean_ident(s: &str) -> String {
+    s.trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`')
+        .to_string()
+}
+
+/// ★ 3부 이름 `DB.schema.name` / `DB..name`(121차 win · T-309 `nsql import -t DB.s.t`와 같은 규칙): 데이터베이스 층이 있는 방언
+/// (SQL Server · MySQL)에서 첫 조각이 DB면 `(db, schema, name)` — 스키마 조각이 비면 `None`(= 전환 뒤의 기본 스키마). 2부 이하 =
+/// `None`(기존 `split_name` 길). 순수 함수.
+fn split_three(obj: &str) -> Option<(String, Option<String>, String)> {
+    let parts: Vec<&str> = obj.split('.').collect();
+    if parts.len() != 3 || parts[0].is_empty() || parts[2].is_empty() {
+        return None;
+    }
+    let sc = (!parts[1].is_empty()).then(|| clean_ident(parts[1]));
+    Some((clean_ident(parts[0]), sc, clean_ident(parts[2])))
+}
+
+/// `split_name` + **DB 전환**: 3부 이름이면 그 DB로 `USE`를 먼저 보내고(SQL Server `[db]` · MySQL `` `db` ``) 스키마·이름을 돌려준다.
+/// 로그인 기본 DB(예 master)에 없는 객체를 `nsql cat source DB..name`으로 바로 읽기 위함 — GUI의 "표의 DB" 규칙(T-312)과 같은 뜻.
+/// 다른 방언·2부 이하 = 전환 없이 `split_name`.
+fn split_name_db(
+    s: &mut dyn Session,
+    obj: &str,
+    default_schema: &str,
+) -> Result<(String, String), nsql_core::DbError> {
+    let dialect = s.dialect();
+    let Some((db, sc, name)) = split_three(obj) else {
+        return Ok(split_name(obj, default_schema));
+    };
+    let use_sql = match dialect {
+        Dialect::Mssql => format!("USE [{}]", db.replace(']', "]]")),
+        Dialect::Mysql => format!("USE `{}`", db.replace('`', "``")),
+        // DB 층이 없는 방언 = 첫 조각을 스키마로 보지 않고 전부 돌려 준다(종전과 같이 `split_once`).
+        _ => return Ok(split_name(obj, default_schema)),
+    };
+    s.execute(&nsql_core::ExecRequest {
+        sql: use_sql,
+        params: vec![],
+    })?;
+    let sc = match sc {
+        Some(sc) => sc,
+        // 전환 뒤의 기본 스키마(종전 값은 옛 DB 기준).
+        None => nsql_catalog::current_schema(s).unwrap_or_default(),
+    };
+    Ok((sc, name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{split_name, split_three};
+
+    /// 3부 이름 판정(121차 · 순수): DB 조각·스키마 비움·2부·따옴표 정리.
+    #[test]
+    fn split_three_rules() {
+        assert_eq!(
+            split_three("M4PLAN_MS.dbo.nsqlt_f"),
+            Some(("M4PLAN_MS".into(), Some("dbo".into()), "nsqlt_f".into()))
+        );
+        assert_eq!(
+            split_three("[M4PLAN_MS]..[nsqlt_f]"),
+            Some(("M4PLAN_MS".into(), None, "nsqlt_f".into()))
+        );
+        assert_eq!(split_three("dbo.nsqlt_f"), None, "2부 = 기존 길");
+        assert_eq!(split_three("nsqlt_f"), None);
+        assert_eq!(split_three(".dbo.x"), None, "빈 DB = 3부 아님");
+        assert_eq!(split_three("a.b.c.d"), None, "4부 = 모름");
+        assert_eq!(split_name("S.N", "D"), ("S".into(), "N".into()));
+        assert_eq!(split_name("N", "D"), ("D".into(), "N".into()));
     }
 }

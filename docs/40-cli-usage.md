@@ -425,8 +425,11 @@ nsql cat -c "sqlite:t1.db" columns emp
 nsql cat -c prod -s HR tables            # 스키마 지정
 nsql cat -c prod source procs MY_PROC    # 원본 소스
 nsql cat -c prod errors MY_PROC          # 컴파일 오류(Oracle)
+nsql cat -c M4PLAN source procs M4PLAN_MS.dbo.MY_PROC   # 3부 이름(SQL Server·MySQL) = 그 DB로 USE 전환 뒤 읽음
 nsql cat -c prod -f json tables          # 형식 지정
 ```
+
+`source` · `ddl` · `detail` · `errors`는 **3부 이름**(`DB.schema.name` · `DB..name` = 기본 스키마)을 받는다(SQL Server·MySQL · 10-12 121차) — 접속한 DB와 다르면 `USE [DB]`로 바꾼 뒤 읽는다(`nsql import -t DB.s.t`와 같은 규칙).
 
 ### Step 9 — 실행 계획 (`explain`)
 

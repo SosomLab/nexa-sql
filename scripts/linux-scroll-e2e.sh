@@ -11,7 +11,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 OUT=""; APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
 while getopts "o:e:n:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-e app] [-n nsql]"; exit 2; }
+# Windows(Git Bash)에서는 기본 경로에 `.exe`가 붙는다(121차 win · 협업 실측 = 인자만 주면 수정 없이 돈다).
+[ -x "$APP" ] || { [ -x "$APP.exe" ] && APP="$APP.exe"; }
+[ -x "$NSQL" ] || { [ -x "$NSQL.exe" ] && NSQL="$NSQL.exe"; }
 [ -x "$NSQL" ] || NSQL="$ROOT/target/release/nsql"
+[ -x "$NSQL" ] || { [ -x "$NSQL.exe" ] && NSQL="$NSQL.exe"; }
 OUT=$(realpath -m "$OUT")
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "${H:?}"; mkdir -p "$H"
 printf 'ui.lang=ko\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=1375x945\n' > "$H/settings.conf"

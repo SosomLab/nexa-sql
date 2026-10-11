@@ -1233,6 +1233,10 @@ pub(crate) fn spawn(
                                         runner.query_stream(&sql, batch).and_then(
                                             |(mut rs, h, _)| {
                                                 let mut more = h.is_some();
+                                                // 바이트 추정은 **증분 합산**(121차 win · 성능): 받은 조각만 더한다 — 모인 `rs` 전체를
+                                                //   100 ms마다 걷으면(종전 `rs.approx_bytes()`) 행 수에 비례해 호출마다 비용이 늘어
+                                                //   100만 행급 전체 조회에서 워커 시간이 2차로 불었다(`fetch_all_with`와 같은 방식).
+                                                let mut bytes = rs.approx_bytes();
                                                 if let Some(h) = h {
                                                     while rs.rows.len() < need && more {
                                                         if cancel_flag.load(Ordering::Relaxed) {
@@ -1247,13 +1251,14 @@ pub(crate) fn spawn(
                                                         if chunk.rows.is_empty() {
                                                             break;
                                                         }
+                                                        bytes += chunk.approx_bytes();
                                                         rs.rows.extend(chunk.rows);
                                                         if last.elapsed() >= Duration::from_millis(100) {
                                                             last = std::time::Instant::now();
                                                             let _ = ctx_tx.send(ConnOutcome::FetchProgress {
                                                                 key,
                                                                 rows: rs.rows.len() as u64,
-                                                                bytes: rs.approx_bytes(),
+                                                                bytes,
                                                             });
                                                             wake_now();
                                                         }
