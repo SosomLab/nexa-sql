@@ -9,6 +9,7 @@
 - 최신화 = nexa-sql b4f41b7(117~120차 14 커밋) · nexa-ui 10de0e8(194~202차) → **Windows 전수 V3**: fmt·clippy 0 · test 869/0 · 기능 점검 **96/96**(S95·S96 Windows 첫 실행 ✓ = T-323 ✅) · E2E 22종 실패 0(시험 자산 결함 1 = paste-run → 수정 뒤 13/0) · 맥·Linux 새 자산(linux-scroll 8 · fetch-consistency 10) ✓.
 - 보강(`fix/121-win`): 워커 전체 조회 루프 바이트 증분 합산 · **`nsql cat source|ddl|detail|errors` 3부 이름 `DB.schema.name`/`DB..name`** · 시험 자산 셋.
 - **성능 전수**([26 §7-17](26-performance-architecture.md)) = 회귀 없음(기동 62 ms · GUI 17.54 MiB · 회수 R1~R6 OK) · L2 10만 행 반복 = 30주기 0.117 → `mem.dump` 원장 평탄·other만 → 60주기 평탄 = **할당자 힙 보유 · 누수 아님**(71 §8 보강 2).
+- **CI ✓** = `49eeb2d`(fix/121-win → main ff · check-3os --quick ✓) → ci **38166796256 ✓**(3m37s) · integration **38166796302 ✓**(2m16s · 10-11 19:09 UTC 시작).
 
 ## 2026-10-12 (120차 ⑤ · **Linux**) — 🔧 그리드 스크롤 결함 둘([journal 10-12](journal/2026-10-12.md))
 
