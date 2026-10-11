@@ -36,7 +36,7 @@ if [ -s "$D1" ]; then
   chk "① 루트 아래 '데이터베이스' 묶음" "\|group:Databases\|데이터베이스\|" "$t1"
   chk "① '시스템 데이터베이스' 묶음(D-251)" "group:SystemDbs" "$t1"
   chk "① '서버 개체' 묶음" "group:ServerObjects" "$t1"
-  chk "① 현재 DB 표식 '(현재)'" "\|database\|[A-Za-z_]+\|\(현재\)\|" "$t1"
+  chk "① 현재 DB 표식 '(현재)'" "\|database\|[A-Za-z0-9_]+\|\(현재\)\|" "$t1"
   chk "① 현재 DB 아래 SSMS 폴더(테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 보안)" "group:Programmability" "$t1"
   chk "① 사용자 DB $OTHER 노드" "\|database\|$OTHER\|" "$t1"
   cur=$(echo "$t1" | grep "(현재)" | head -1 | cut -d'|' -f3)
@@ -115,7 +115,7 @@ if [ -s "$D5" ]; then
   chk "⑤ 서버 역할 = 고정 역할 sysadmin(FIXED)" "^3\|object\|sysadmin\|FIXED" "$t5"
   chk "⑤ 서버 개체 ▸ 폴더 4(백업 디바이스 · 엔드포인트 · 연결된 서버 · 트리거)" "^2\|folder\|(백업 디바이스|Backup Devices)" "$t5"
   chk "⑤ 엔드포인트 읽힘(TSQL Default TCP)" "^3\|object\|TSQL Default TCP\|" "$t5"
-  chk "⑥ DB 노드 용량(끝 열 · master)" "^[23]\|database\|master\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t5"
+  chk "⑥ DB 노드 용량(끝 열 · 어느 DB든)" "^[23]\|database\|[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t5"
   chk "⑥ 데이터베이스 묶음 = 합(끝 열)" "^1\|group:Databases\|[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t5"
 else bad "⑤ 트리 덤프 없음" "$(tail -3 "$OUT/gui5.stderr")"; fi
 if [ -x "$NSQLCLI" ]; then

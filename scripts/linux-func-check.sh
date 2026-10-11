@@ -237,15 +237,16 @@ run_s S74 "이진 파일 아웃라인 = 무시 + 안내(§125)"      "open:$SKIP
 #   → 살아 있고(Debug면 종전 abort) 세로 끝에 닿아야 한다(Release면 종전 감겨서 0 근처 = scroll_end=false). 판정 = 행 ≥ 10만(Debug는 30만 행
 #   수신에 18 s 걸려 부분 결과로 판정 · Release는 끝까지) + scroll_end=true. 드래그 3000 px = 창 밖까지(끝 클램프). 대기 = 마지막 @after + 5 s(61 §4 ·
 #   비활성 앱은 App Nap으로 타이머가 늦게 깬다 — 10 s로는 덤프 직전에 종료됐다 · 협업 10-10).
-# ★ 폴더 변경 감시(T-293 · Windows ReadDirectoryChangesW · macOS FSEvents(118차) · Linux = TTL 폴백이라 플래시 대신 미지원 안내): 프로젝트를 열고 앱 밖에서
-#   파일을 만든 것처럼(`fs.write` = 앱 프로세스가 쓰지만 감시 경로는 같다) → 패널 플래시 "Folder change applied". Linux는 생존·창만(판정 없음).
-if [ "$(uname -s)" = Darwin ]; then
-  # 플래시는 사건(FSEvents 0.2 s + 묶음 0.4 s) 뒤 유지 시간 안에 덤프(5.0 s) · 대기 = 마지막 @after + 5 s · 판정 패턴에 공백 불가(`.`).
-  run_s S96 "폴더 변경 감시 = 플래시 '폴더 변경 반영'(T-293 macOS)" "project.load:$PROJ,@after:1200:view.project,@after:3500:fs.write:$D/s96_new.sql|SELECT 96;,@after:5000:flash.dump:$OUT/s96.txt" Local 11 "" "s96.txt:Folder.change.applied"
-else
-  run_s S96 "폴더 변경 감시(Linux = TTL 폴백 · 생존만)" "project.load:$PROJ,@after:1200:view.project,@after:3500:fs.write:$D/s96_new.sql|SELECT 96;,@after:5000:flash.dump:$OUT/s96.txt" Local 11
-fi
+# ★ 폴더 변경 감시(T-293 · Windows ReadDirectoryChangesW · macOS FSEvents(118차) · Linux inotify(119차 · T-321)): 프로젝트를 열고 앱 밖에서
+#   파일을 만든 것처럼(`fs.write` = 앱 프로세스가 쓰지만 감시 경로는 같다) → 패널 플래시 "Folder change applied"(3-OS 같은 판정).
+# 플래시는 사건(macOS FSEvents 0.2 s · Linux inotify 즉시 + 묶음 0.4 s) 뒤 유지 시간 안에 덤프(5.0 s) · 대기 = 마지막 @after + 5 s · 판정 패턴에 공백 불가(`.`) ·
+# 글은 화면 언어를 따르므로(`ui.lang=system` · 이 VM = ko) 영어·한국어 둘 다 허용(10-11 Linux 첫 실행에서 한국어 글로 빗나갔다).
+# ★ 10-11 119차(T-321 · nexa-ui 201차 inotify): Linux도 macOS와 같은 플래시 판정(종전 "TTL 폴백 · 생존만"은 백엔드가 없던 때).
+run_s S96 "폴더 변경 감시 = 플래시 '폴더 변경 반영'(T-293 · macOS FSEvents · Linux inotify)" "project.load:$PROJ,@after:1200:view.project,@after:3500:fs.write:$D/s96_new.sql|SELECT 96;,@after:5000:flash.dump:$OUT/s96.txt" Local 11 "" "s96.txt:(Folder.change.applied|폴더.변경.반영)"
 run_s S95 "큰 결과 썸 드래그 = i32 넘침 없음(10-10 크래시 회귀)" "open:$QBIG,@after:1200:grid.page:0,@after:1500:run.all,@after:8000:grid.vdrag:3000,@after:9000:grid.dump:$OUT/s95.txt" Local 14 "" "s95.txt:rows=[0-9]{6} s95.txt:scroll_end=true"
+# ★ S97(10-11 119차 · T-321 · nexa-ui 200차): Linux도 OS 네트워크 신호(rtnetlink)가 등록된다 — `health.dump`의 `netwatch=true`(종전 Linux = false · `probe.stale_secs` 폴백).
+#   권한 불필요(AF_NETLINK 멀티캐스트 수신) · 신호 자체(VPN 토글)는 사용자 실기 · 설정 `net.watch` 기본 켬.
+run_s S97 "네트워크 신호 등록(T-321 · Linux rtnetlink · health.dump netwatch=true)" "@after:3000:health.dump:$OUT/s97.txt" Local 6 "" "s97.txt:netwatch=true"
 
 # ── 8. 91차 이후 신기능(Linux 첫 확인) ─────────────────────────────────────
 run_s L01 "메모리 모니터 창 + 덤프(docs/80 · T-197)"    "@after:1200:view.memory,@after:2500:mem.dump:$OUT/L01.txt" Local 4 "" "L01.txt:."

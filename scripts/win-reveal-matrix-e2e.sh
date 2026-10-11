@@ -43,6 +43,7 @@ run_case() {
   local name=$1 start=$2 sql=$3 pre=$4 t0=$5 link=$6 expect=$7 preexp=${8:-}
   if [ -n "$ONLY" ] && [[ "$name" != $ONLY* ]]; then return; fi
   say "--- $name"
+  if [ -z "$link" ]; then sk "$name 대상 객체 없음(프로필 미등록 또는 조회 실패 · 이 PC 볼트에 없는 프로필)"; return; fi
   local d="$OUT/$name"; mkdir -p "$d"; printf '%b' "$sql" > "$d/t.sql"; local fw; fw=$(cygpath -w "$d/t.sql" 2>/dev/null || echo "$d/t.sql")
   local L="$d/links.txt" S="$d/sel.txt"; rm -f "$L" "$S"
   local exp=""; [ -n "$preexp" ] && exp="@after:$((t0-2500)):explorer.expand:$preexp,"
@@ -67,7 +68,9 @@ if [ -n "$O_B_PKGM" ]; then run_case A5-ora-pkg-member BISCM "BEGIN $O_B_PKGM();
 if [ -n "$O_B_COL" ]; then run_case A6-ora-column BISCM "SELECT A.${O_B_COL#*.} FROM $O_B A;\n" "" 7000 "$O_B_COL" "/ $O_B / Columns( \([0-9]+\))? / ${O_B_COL#*.}\$"; else sk "A6 컬럼 없음"; fi
 run_case A7-pg-table Repository "$(printf "$T_O" "$P_T")" "" 7000 "$P_T" "/ Tables( \([0-9]+\))? / $P_T\$"
 if [ -n "$P_F" ]; then run_case A8-pg-function Repository "SELECT $P_F();\n" "" 7000 "$P_F" "/ Functions( \([0-9]+\))? / $P_F\$"; else sk "A8 PG 함수 없음"; fi
-run_case A9-mssql-master-table M4PLAN "$(printf "$T_O" "$M_MASTER")" "" 7000 "$M_MASTER" "/ master / Tables( \([0-9]+\))? / dbo\.$M_MASTER\$"
+# A9 = 로그인 기본 DB가 master일 때만 뜻이 있다(10-11 Linux: 이 PC 프로필은 M4PLAN_MS → 무한정 이름이 master에 닿지 않음 = 환경) · 아니면 건너뜀.
+M_CURDB=$(one M4PLAN "SELECT DB_NAME() AS X")
+if [ "$(echo "$M_CURDB" | tr 'A-Z' 'a-z')" = master ]; then run_case A9-mssql-master-table M4PLAN "$(printf "$T_O" "$M_MASTER")" "" 7000 "$M_MASTER" "/ master / Tables( \([0-9]+\))? / dbo\.$M_MASTER\$"; else say "--- A9-mssql-master-table"; sk "A9 현재 DB = ${M_CURDB:-?}(master 아님 · 프로필 기본 DB 환경)"; fi
 # ── B. 둘 · 같은 서버 다른 계정(C1=2 · C2=같은 서버 · C3 방향)
 run_case B1-same-server-last SQLEDU "$(printf "$T_O" "$O_B")" "@after:4000:connect:BISCM," 9000 "$O_B" "/ BISCM / Tables( \([0-9]+\))? / $O_B\$"
 run_case B2-same-server-back SQLEDU "$(printf "$T_O" "$O_E")" "@after:4000:connect:BISCM,@after:6500:session.bind:SQLEDU," 10000 "$O_E" "/ SQLEDU / Tables( \([0-9]+\))? / $O_E\$"

@@ -43,7 +43,7 @@ check() {
     grep -q "Cancelling the running statement" "$OUT/$name.log" 2>/dev/null && ok "$name 중지가 페치 중간에 걸림" || bad "$name 중지 로그 없음(조회가 너무 빨리 끝남?)" "$(tail -5 "$OUT/$name.log" 2>/dev/null)"
   fi
   echo "$d2" | grep -q "^rows=$want_rows " && ok "$name 재실행 행 수 = $want_rows" || bad "$name 재실행 행 수 ≠ $want_rows" "$d2"
-  echo "$d2" | grep -q " page=$want_page\$" && ok "$name 그리드 page = $want_page" || bad "$name 그리드 page ≠ $want_page" "$d2"
+  echo "$d2" | grep -qE " page=$want_page( |$)" && ok "$name 그리드 page = $want_page" || bad "$name 그리드 page ≠ $want_page" "$d2"
   echo "$d2" | grep -q "^fetch more=$want_more " && ok "$name more = $want_more" || bad "$name more ≠ $want_more" "$d2"
 }
 

@@ -1762,6 +1762,17 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
             .is_some_and(|p| p.ex.capture_select(row))
     }
 
+    /// 자체 시험용(`explorer.select:<라벨>` · 10-11): 보이는 칸에서 라벨로 선택(펼침은 [`Self::capture_expand_label`]).
+    pub(crate) fn capture_select_label(&mut self, path: &str) -> bool {
+        let i = self.shown;
+        self.panes[i].ex.capture_select_label(path)
+    }
+
+    /// 자체 시험용(`explorer.menu:<라벨>` 등 · 10-11): 보이는 칸에서 라벨 경로 → 행 번호(`explorer.expand`와 같은 풀이).
+    pub(crate) fn visible_row_by_label(&self, path: &str) -> Option<usize> {
+        self.panes.get(self.shown)?.ex.visible_row_by_label(path)
+    }
+
     pub(crate) fn schema_kind_counts(
         &self,
         schema: &str,

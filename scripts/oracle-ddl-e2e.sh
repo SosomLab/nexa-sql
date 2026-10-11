@@ -6,7 +6,7 @@
 #   ⚠ 실서버에 **임시 객체**(`NSQLT_*`)를 만들고 **끝에 반드시 지운다**(docs/61 §2-4 ⑤). 기존 객체는 건드리지 않는다.
 #   권한이 없어 못 만드는 유형(MATERIALIZED VIEW · SYNONYM 등)은 N/A로 적는다(오류 아님).
 #
-# 사용: scripts/oracle-ddl-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p biscm]
+# 사용: scripts/oracle-ddl-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p BISCM]
 #   3-OS 공통(bash · Windows는 Git Bash). 종료 코드 = 실패 수(0 = 전부 통과).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

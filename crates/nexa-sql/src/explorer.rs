@@ -1172,6 +1172,8 @@ pub(crate) struct Explorer {
     content_w: i32,
     /// **조용한 갱신**(docs/57 §2-2) 요청 중인 노드 — 응답이 오면 자식을 통째로 갈지 않고 디프로 반영한다.
     soft: HashSet<usize>,
+    /// ★ 조용한 재읽기가 **이미 날아가 있는 동안** 또 요청된 노드 = 응답이 오면 한 번 더(10-11 Linux 전수 E2 · [`Self::request_schemas_soft`]).
+    soft_again: HashSet<usize>,
     /// 방금 생긴 노드(디프로 추가됨) → 강조가 끝나는 시각(ms · `now_hint` 기준).
     fresh: Vec<(usize, u64)>,
     /// 새 객체 강조 시간(설정 `meta.refresh_highlight_ms` · 0 = 없음).
@@ -2534,6 +2536,7 @@ impl Explorer {
             scroll_x: 0,
             content_w: 0,
             soft: HashSet::new(),
+            soft_again: HashSet::new(),
             index_done: HashSet::new(),
             index_q: VecDeque::new(),
             index_inflight: None,
@@ -2565,6 +2568,7 @@ impl Explorer {
 
     fn reset_tree(&mut self) {
         self.soft.clear();
+        self.soft_again.clear();
         self.lower_labels.clear();
         self.index_reset();
         self.complete_q.clear();
@@ -4154,6 +4158,7 @@ impl Explorer {
                             }
                         }
                     }
+                    self.schemas_resp_done(node);
                 }
                 // ★ 101 §2: 루트 = [데이터베이스 ▸ (시스템 DB ▸ …) · 사용자 DB …] + [서버 개체 ▸ 연결된 서버] · 현재 DB 자동 펼침.
                 Resp::Databases { gen, node, r } => {
@@ -5498,12 +5503,32 @@ impl Explorer {
             // Oracle 현재 스키마·PG search_path·MySQL DB(= 스키마) = 같은 서버 안의 **기본 스키마**만 바뀜(⑮) → 스키마 목록(현재 표식)만 조용히
             //   다시 읽는다(메타 세션은 `switch_db`가 같은 문장으로 따라가므로 서버가 말한 현재 스키마가 새 값).
             self.server_schema = None;
-            self.soft.insert(0);
-            let _ = self.tx.send(Req::Schemas {
-                gen: self.gen,
-                node: 0,
-                opts: self.schema_opts,
-            });
+            self.request_schemas_soft(0);
+        }
+    }
+
+    /// ★ 조용한 스키마 목록 재읽기(현재 표식) — 같은 노드의 요청이 **이미 날아가 있으면 끝난 뒤 한 번 더**만 예약한다.
+    ///   10-11 Linux 전수(E2 · `ALTER SESSION SET CURRENT_SCHEMA` 셋을 한 스크립트로): 요청 셋을 그대로 보내면 `soft` 표식은
+    ///   집합이라 첫 응답이 소비하고 둘째·셋째 응답은 **일반 재적재**(`set_children` = 옛 노드 버리고 새로 · 47 → 93)로 처리돼
+    ///   펼쳐진 현재 스키마가 자식 없는 `Loaded`로 남고 "탐색기에서 보기"가 "종류 폴더 없음"으로 실패했다. 마지막 응답이 서버의
+    ///   최종 현재 스키마이므로 "한 번 더"면 충분하다(요청 ≤ 2).
+    fn request_schemas_soft(&mut self, node: usize) {
+        if self.soft.contains(&node) {
+            self.soft_again.insert(node);
+            return;
+        }
+        self.soft.insert(node);
+        let _ = self.tx.send(Req::Schemas {
+            gen: self.gen,
+            node,
+            opts: self.schema_opts,
+        });
+    }
+
+    /// 스키마 응답을 다 처리한 뒤: 예약된 "한 번 더"가 있으면 지금 보낸다.
+    fn schemas_resp_done(&mut self, node: usize) {
+        if self.soft_again.remove(&node) {
+            self.request_schemas_soft(node);
         }
     }
 
@@ -6260,6 +6285,7 @@ impl Explorer {
             }
         }
         self.soft.clear();
+        self.soft_again.clear();
         self.source_pending = false;
         let _ = self.tx.send(Req::Open {
             gen: self.gen,
@@ -8052,6 +8078,23 @@ impl Explorer {
     /// 자체 시험용(기동 명령 `explorer.expand:<라벨>` 또는 `<DB>/<라벨>` · 101): 보이는 행 가운데 라벨이 같은 첫 노드를 펼친다 —
     /// `DB/라벨`이면 그 데이터베이스 노드 아래(더 깊은 행)에서만 찾는다.
     pub(crate) fn capture_expand_label(&mut self, path: &str) -> bool {
+        match self.visible_row_by_label(path) {
+            Some(r) => self.capture_expand(r),
+            None => false,
+        }
+    }
+
+    /// 자체 시험용(기동 명령 `explorer.select:<라벨>` · 10-11 119차): 라벨이 같은 보이는 첫 행을 **선택**한다(펼치지 않음 · 상세 패널 대상).
+    ///   종전엔 행 번호만 받았고 `explorer.select:3`처럼 콜론을 붙이면 조용히 무시돼 성능 s10·s12가 상세를 못 채웠다.
+    pub(crate) fn capture_select_label(&mut self, path: &str) -> bool {
+        match self.visible_row_by_label(path) {
+            Some(r) => self.capture_select(r),
+            None => false,
+        }
+    }
+
+    /// 라벨 경로 → 보이는 행 번호(`라벨` · `DB/라벨` · `/라벨` = 서버 수준만 · 루트 행 제외 · `(수)` 꼬리 무시 · 대소문자 무시).
+    pub(crate) fn visible_row_by_label(&self, path: &str) -> Option<usize> {
         // ★ `/라벨` = 서버 수준(루트 바로 아래)만(10-01 ㉖ · DB 아래 "보안"과 서버 "보안"이 같은 글이라).
         let server_only = path.starts_with('/');
         let path = path.trim_start_matches('/');
@@ -8064,11 +8107,9 @@ impl Explorer {
         let mut min_depth = 0usize;
         let root_depth = rows.first().map(|&i| self.nodes[i].depth).unwrap_or(0);
         if let Some(d) = db {
-            let Some(pos) = rows.iter().position(
+            let pos = rows.iter().position(
                 |&i| matches!(&self.nodes[i].kind, NodeKind::Database(n) if n.eq_ignore_ascii_case(d)),
-            ) else {
-                return false;
-            };
+            )?;
             start = pos + 1;
             min_depth = self.nodes[rows[pos]].depth + 1;
         }
@@ -8086,10 +8127,10 @@ impl Explorer {
             let (l, _) = self.label(i);
             let base = l.split(" (").next().unwrap_or(&l);
             if base.eq_ignore_ascii_case(label) {
-                return self.capture_expand(r);
+                return Some(r);
             }
         }
-        false
+        None
     }
 
     /// 자체 시험용(기동 명령 `explorer.dump:<파일>`): 보이는 줄을 `깊이|종류|라벨|부가|상태` 한 줄씩(트리 구조 자동 점검 · 83 §1).
@@ -9013,6 +9054,67 @@ mod refresh_tests {
             vec![node(obj("A"), 3), node(obj("B"), 3), node(obj("C"), 3)],
         );
         (ex, schema, tables)
+    }
+
+    /// ★ 10-11 Linux 전수 E2: 현재 스키마 전환이 연달아 셋 와도 조용한 재읽기 요청은 겹치지 않는다(진행 중이면 "한 번 더"만 예약 ·
+    ///   응답 뒤 한 번 더 · 그 응답 뒤엔 더 없음). 조건 2(진행 중? · 예약 있음?) = 독립 영향 쌍.
+    #[test]
+    fn schemas_soft_refresh_coalesces_to_at_most_one_more() {
+        let (mut ex, _, _) = sample();
+        ex.set_current_db("SQLEDU");
+        assert!(ex.soft.contains(&0), "첫 전환 = 조용한 요청 1");
+        assert!(ex.soft_again.is_empty());
+        ex.set_current_db("BISCM_SB");
+        ex.set_current_db("BISCM");
+        assert!(ex.soft.contains(&0), "진행 중 표식은 그대로");
+        assert_eq!(ex.soft_again.len(), 1, "둘째·셋째 = 한 번 더 예약 하나");
+        // 첫 응답 처리(조용한 길이 표식을 소비) → 예약분이 새 요청으로.
+        assert!(ex.soft.remove(&0));
+        ex.schemas_resp_done(0);
+        assert!(ex.soft.contains(&0), "예약된 한 번 더 = 다시 조용한 요청");
+        assert!(ex.soft_again.is_empty());
+        // 둘째 응답 처리 → 더는 없다.
+        assert!(ex.soft.remove(&0));
+        ex.schemas_resp_done(0);
+        assert!(
+            !ex.soft.contains(&0) && ex.soft_again.is_empty(),
+            "요청 ≤ 2"
+        );
+        // 진행 중이 아닐 때의 전환 = 바로 요청(예약 아님).
+        ex.set_current_db("SQLEDU");
+        assert!(ex.soft.contains(&0) && ex.soft_again.is_empty());
+    }
+
+    /// ★ 10-11 119차: 기동 명령 `explorer.select:<라벨>`·`explorer.expand:<라벨>`의 라벨 → 행 풀이 한 벌(펼침은 toggle · 선택은 selected만 ·
+    ///   없는 라벨 = false · 루트 라벨은 대상 아님 · `(수)` 꼬리 무시).
+    #[test]
+    fn label_path_selects_and_expands_visible_rows() {
+        let (mut ex, schema, tables) = sample();
+        assert!(
+            ex.capture_select_label("hr"),
+            "스키마 라벨(대소문자 무시) 선택"
+        );
+        assert_eq!(ex.selected, Some(schema));
+        let before = ex.nodes[tables].expanded;
+        assert!(ex.capture_select_label("Tables"));
+        assert_eq!(ex.selected, Some(tables));
+        assert_eq!(
+            ex.nodes[tables].expanded, before,
+            "선택은 펼침 상태를 바꾸지 않는다"
+        );
+        assert!(!ex.capture_select_label("Nope"), "없는 라벨 = false");
+        assert_eq!(ex.selected, Some(tables), "실패해도 선택은 그대로");
+        // 루트(연결 행)는 라벨 대상이 아니다 — 루트 라벨로는 루트가 선택되지 않는다.
+        let (root_label, _) = ex.label(0);
+        if !root_label.is_empty() {
+            let _ = ex.capture_select_label(&root_label);
+            assert_ne!(ex.selected, Some(0));
+        }
+        // 펼침은 같은 풀이 + 펼침(이미 펼쳐져 있으면 그대로 = 멱등).
+        assert!(ex.capture_expand_label("Tables"));
+        assert_eq!(ex.selected, Some(tables));
+        assert!(ex.nodes[tables].expanded);
+        assert!(!ex.capture_expand_label("Nope"));
     }
 
     /// ★ `size>1G`(사용자 09-30 "필터 확인"): 큰 객체만 남고 · 작은 객체는 숨김 · 스키마/폴더 행은 조상으로만 남는다(합계로 일치 아님).

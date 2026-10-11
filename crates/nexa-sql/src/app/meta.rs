@@ -92,10 +92,24 @@ impl App {
     /// ★ 객체 상세 패널(docs/86): 탐색기 선택이 바뀌었으면 대상을 바꾸고 객체면 상세를 청한다(`force` = 켜는 순간).
     pub(crate) fn sync_detail_target(&mut self, force: bool) {
         if !self.objdetail.is_visible() {
+            if std::env::var_os("NSQL_TRACE_META").is_some() {
+                eprintln!(
+                    "[detail] sync skipped: panel hidden (explorer_visible={} flag={})",
+                    self.explorer.is_visible(),
+                    self.settings.flag("explorer.details")
+                );
+            }
             return;
         }
         let t = self.explorer.selected_target();
         let key = t.as_ref().map(explorer::DetailTarget::key);
+        if std::env::var_os("NSQL_TRACE_META").is_some() {
+            eprintln!(
+                "[detail] sync force={force} key={key:?} prev={:?} collapsed={}",
+                self.detail_key,
+                self.objdetail.is_collapsed()
+            );
+        }
         if !force && key == self.detail_key {
             return;
         }

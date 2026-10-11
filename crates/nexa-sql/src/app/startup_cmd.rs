@@ -106,11 +106,23 @@ impl App {
             return;
         }
         if let Some(rest) = id.strip_prefix("explorer.select") {
-            if let Ok(row) = rest.parse::<usize>() {
-                self.explorer.capture_select(row);
+            // 행 번호 또는 라벨 경로(`explorer.expand`와 같은 풀이 · 10-11: 콜론 꼴 `explorer.select:3`이 조용히 무시되던 결함).
+            let arg = rest.trim_start_matches(':');
+            let ok = match arg.parse::<usize>() {
+                Ok(row) => self.explorer.capture_select(row),
+                Err(_) => self.explorer.capture_select_label(arg),
+            };
+            if std::env::var_os("NSQL_TRACE_META").is_some() {
+                eprintln!(
+                    "[detail] explorer.select {arg} ok={ok} target={:?}",
+                    self.explorer.selected_target().map(|t| t.key())
+                );
+            }
+            if ok {
                 self.explorer_actions();
                 self.redraw();
             }
+            self.sess.status = format!("explorer.select row={arg} ok={ok}");
             return;
         }
         if let Some(path) = id.strip_prefix("details.dump:") {
@@ -968,9 +980,14 @@ impl App {
             return;
         }
         if let Some(rest) = id.strip_prefix("explorer.menu") {
-            let row = rest.trim_start_matches(':').parse().unwrap_or(0);
-            let ok = self.explorer.capture_menu(row);
-            self.sess.status = format!("explorer.menu row={row} opened={ok}");
+            // 행 번호 또는 라벨 경로(`explorer.expand/select`와 같은 풀이 · 10-11 119차 성능 s11이 라벨을 쓴다).
+            let arg = rest.trim_start_matches(':');
+            let row = match arg.parse::<usize>() {
+                Ok(r) => Some(r),
+                Err(_) => self.explorer.visible_row_by_label(arg),
+            };
+            let ok = row.is_some_and(|r| self.explorer.capture_menu(r));
+            self.sess.status = format!("explorer.menu row={arg} opened={ok}");
             self.redraw();
             return;
         }

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/119-linux-sweep | 2026-10-11 | 2026-10-11 → main(삭제) | 1 | ★ 119차(Linux · 협업 쌍): 최신화·전수·성능 회귀 0 · T-321 소비(S96 승격·S97) · 🔧 탐색기 현재 스키마 연속 전환 경주(`soft_again`) · 🔧 기동 명령 select/menu 라벨·콜론 · scripts 실행 비트 18 · E2E 시험 자산 6 · 하네스 linux-perf-all 개편 · [detail] 추적 · 📚 journal 10-10 §9 · 26 §7-16 · 39·105·107 · STATUS · DEVLOG · TODO · CLAUDE |
 | docs/v0.1.9-release-2 | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | 🚀 v0.1.9 공개 결과 2차(journal §8 자산·노트·공개 13:28:59Z·Homebrew 48a202b·pkg publish 38055885433·guard · 33 §5-3 · STATUS 완료 · DEVLOG · CLAUDE.md) |
 | docs/v0.1.9-release | 2026-10-10 | 2026-10-10 → main(삭제) | 1 | 🚀 v0.1.9 릴리스 기록 1차(journal §8 준비·풀 테스트·CI 1차 실패·태그 · STATUS · DEVLOG · TODO T-319 ✅·T-328 · 33 §5-3 · 102 원장 · CLAUDE.md) + `scripts/release-notes-merge.py`(T-319) |
 | feat/118-mac | 2026-10-10 | 2026-10-10 → main(삭제) | 3 | 118차 mac(협업 쌍 · nexa-ui 195~198차): 맥 netwatch·dirwatch 소비 · IOSurface 유휴 해제 · 스크롤바 i32 넘침 회귀 S95 · Oracle 패키지 오버로드 · 탐색기 메뉴 아이콘·Shift 전체 이름·멤버 Call · PG Arguments · D-272 `script.define` · 자동화 E2E 3편 · 조사 문서 108·109 · 버전 0.1.9 |

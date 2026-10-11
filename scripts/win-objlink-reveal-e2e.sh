@@ -22,7 +22,10 @@ printf 'ui.lang=ko\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=140
 export NSQL_HOME="$H"
 REPORT="$OUT/objlink-reveal-e2e.txt"; : > "$REPORT"
 say() { echo "$*"; echo "$*" >> "$REPORT"; }
-pass=0; fail=0
+pass=0; fail=0; skip=0
+sk()  { say "  SKIP  $1"; skip=$((skip+1)); }
+# 이 PC 볼트에 그 프로필이 있는가(없으면 그 구간은 건너뜀 · 10-11 Linux 전수에서 SQLEDU·BISCM_SB 부재로 FAIL 하던 것).
+has_prof() { "$NSQL" conn list 2>/dev/null | grep -qE "^$1[[:space:]]"; }
 ok()  { say "  PASS  $1"; pass=$((pass+1)); }
 bad() { say "  FAIL  $1"; fail=$((fail+1)); [ -n "${2:-}" ] && echo "$2" | head -12 | sed 's/^/        /' | tee -a "$REPORT" >/dev/null; }
 chk() { if echo "$3" | grep -qE -- "$2"; then ok "$1"; else bad "$1 (기대 $2)" "$3"; fi; }
@@ -71,6 +74,7 @@ run_gui "$F3" "nsqlt_no_such_table" "$S3" "$D3" 3
 if [ -f "$S3" ]; then
   s3=$(cat "$S3"); say "        > $s3"; echo "$s3" | grep -qE "/ (Tables|Views|Packages|Procedures)" && bad "③ 객체가 선택됐다" "$s3" || ok "③ 미확인 링크 = 객체 선택 없음(기본 선택 = 스키마)"
 else bad "③ 덤프 없음" "$(tail -3 "$OUT/gui3.stderr")"; fi
+if has_prof "$SECOND"; then
 say "--- ④ 두 연결(같은 서버 · $SECOND 먼저 + $PROFILE 추가) = 두 번째 연결 칸에서 찾고 화면 안에 보임(㉗-b)"
 F4="$OUT/t4.sql"; cp "$F1" "$F4"; S4="$OUT/sel4.txt"; D4="$OUT/tree4.txt"; rm -f "$S4" "$D4"; fw4=$(cygpath -w "$F4" 2>/dev/null || echo "$F4")
 NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:connect:$PROFILE,@after:6000:open:$fw4,@after:11000:objlink.reveal:$TABLE,@after:16000:explorer.selpath:$S4,@after:16500:explorer.dump:$D4" \
@@ -80,6 +84,7 @@ if [ -s "$S4" ]; then
   chk "④ 선택 = $PROFILE 칸의 Tables / $TABLE" "/ Tables( \([0-9]+\))? / $TABLE\$" "$s4"
   chk "④ 선택 행이 화면 안(두 번째 칸이라도 스크롤 맞춤)" "^visible=true$" "$s4"
 else bad "④ 선택 경로 없음" "$(tail -3 "$OUT/gui4.stderr")"; fi
+else sk "④ 건너뜀: 프로필 $SECOND 없음(이 PC 볼트)"; fi
 say "--- ⑤ 시스템 객체 링크(㉙ · 메타에 없는 DBMS_XPLAN·ALL_TABLES = 내장 표로 판정 · 툴팁 = 시그니처)"
 F5="$OUT/t5.sql"; printf "SELECT *\nFROM TABLE (DBMS_XPLAN.DISPLAY_CURSOR(NULL, NULL, 'ALLSTATS LAST')) A;\nSELECT owner, table_name FROM all_tables WHERE ROWNUM < 3;\nSELECT nsqlt_no_such_pkg.foo(1) FROM dual;\n" > "$F5"
 L5="$OUT/links5.txt"; rm -f "$L5"; fw5=$(cygpath -w "$F5" 2>/dev/null || echo "$F5")
@@ -89,9 +94,10 @@ if [ -s "$L5" ]; then
   l5=$(cat "$L5"); echo "$l5" | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "⑤ DBMS_XPLAN.DISPLAY_CURSOR = 루틴 링크(known) + 시그니처 설명" "^Routine\|DBMS_XPLAN\.DISPLAY_CURSOR\|true\|DBMS_XPLAN\.DISPLAY_CURSOR\(" "$l5"
   chk "⑤ all_tables = 사전 객체 링크(known)" "^Table\|all_tables\|true\|" "$l5"
-  echo "$l5" | grep -qi "nsqlt_no_such_pkg" && bad "⑤ 없는 패키지가 링크가 됐다" "$l5" || ok "⑤ 모르는 패키지(nsqlt_no_such_pkg.foo · 호출 자리)는 링크 아님"
+  echo "$l5" | grep -qiE "nsqlt_no_such_pkg[^|]*\|true\|" && bad "⑤ 없는 패키지가 known 링크가 됐다" "$l5" || ok "⑤ 모르는 패키지(nsqlt_no_such_pkg.foo · 호출 자리)는 링크 아님"
 else bad "⑤ 링크 덤프 없음" "$(tail -3 "$OUT/gui5.stderr")"; fi
 # ⑥ 사용자 10-01 ㉗-f: SQLEDU 계정으로 접속해 **소문자** `trx_demand`를 첫 시도에 바로가기(Tables 미확장 상태 · 재시도 없음).
+if has_prof "$SECOND"; then
 say "--- ⑥ $SECOND 계정 · 소문자 trx_demand · 첫 시도"
 F6="$OUT/t6.sql"; printf 'SELECT\n\t*\nFROM\n\ttrx_demand A\nWHERE 1=1\n;\n' > "$F6"; S6="$OUT/sel6.txt"; D6="$OUT/tree6.txt"; rm -f "$S6" "$D6"; fw6=$(cygpath -w "$F6" 2>/dev/null || echo "$F6")
 NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw6,@after:7000:objlink.reveal:trx_demand,@after:12500:explorer.selpath:$S6,@after:13000:explorer.dump:$D6" \
@@ -102,7 +108,9 @@ if [ -s "$S6" ]; then
   chk "⑥ 선택 행이 화면 안" "^visible=true$" "$s6"
   t6=$(cat "$D6" 2>/dev/null); chk "⑥ 트리에 TRX_DEMAND 행(Tables 펼쳐짐)" "\|object\|TRX_DEMAND\|" "$t6"
 else bad "⑥ 선택 경로 없음" "$(tail -3 "$OUT/gui6.stderr")"; fi
+else sk "⑥ 건너뜀: 프로필 $SECOND 없음(이 PC 볼트)"; fi
 # ⑦ 사용자 10-01 ㉗-g: BISCM_SB(-b) 접속 뒤 BISCM(-p) 추가 → 첫 시도에 "탐색기에서 보기" 활성(`reveal=true`) + 선택 + 화면 안.
+if has_prof "$THIRD"; then
 say "--- ⑦ $THIRD 접속 뒤 $PROFILE 추가 · 첫 시도 메뉴 활성·바로가기"
 F7="$OUT/t7.sql"; cp "$F1" "$F7"; S7="$OUT/sel7.txt"; L7="$OUT/links7.txt"; rm -f "$S7" "$L7"; fw7=$(cygpath -w "$F7" 2>/dev/null || echo "$F7")
 NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:connect:$PROFILE,@after:6000:open:$fw7,@after:7500:objlink.dump:$L7,@after:8000:objlink.reveal:$TABLE,@after:14000:explorer.selpath:$S7" \
@@ -113,9 +121,11 @@ if [ -s "$L7" ] && [ -s "$S7" ]; then
   chk "⑦ 첫 시도에 선택 = $PROFILE 칸 Tables / $TABLE" "/ Tables( \([0-9]+\))? / $TABLE\$" "$s7"
   chk "⑦ 선택 행이 화면 안" "^visible=true$" "$s7"
 else bad "⑦ 덤프 없음(links $([ -s "$L7" ] && echo o || echo x) · sel $([ -s "$S7" ] && echo o || echo x))" "$(tail -3 "$OUT/gui7.stderr")"; fi
+else sk "⑦ 건너뜀: 프로필 $THIRD 없음(이 PC 볼트)"; fi
 # ⑧ 사용자 10-01 ㉗-k: **메뉴 경로** — SQLEDU 접속 → 새 편집창 → 붙여넣기 → 같은 탭에 BISCM 추가 → 우클릭 메뉴 열기(`objlink.menu`) →
 #    항목으로 가는 동안 선적재 응답으로 재분석되는 상황을 강제(`objlink.resync`) → 항목 확정(`objlink.pick:objlink.reveal`) = 첫 시도에 선택.
 #    (종전엔 재분석이 `menu_link`를 지워 항목을 눌러도 아무 동작도 하지 않았다 — 사용자 로그 `[objlink] menu … reveal=true` 뒤 `[reveal]` 없음)
+if has_prof "$SECOND"; then
 say "--- ⑧ 메뉴 경로(우클릭 → 재분석 → 확정) · $SECOND → $PROFILE 같은 탭 · 5) 시점 탐색기 추종"
 F8="$OUT/t8.sql"; cp "$F1" "$F8"; S8="$OUT/sel8.txt"; P8="$OUT/sel8_pre.txt"; L8="$OUT/log8.txt"; rm -f "$S8" "$P8" "$L8"; fw8=$(cygpath -w "$F8" 2>/dev/null || echo "$F8")
 NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:file.new,@after:4000:editor.paste:$fw8,@after:5000:connect:$PROFILE,@after:8000:explorer.selpath:$P8,@after:9000:objlink.menu:$TABLE,@after:9500:objlink.resync,@after:10000:objlink.pick:objlink.reveal,@after:14500:explorer.selpath:$S8,@after:15000:log.dump:$L8" \
@@ -128,5 +138,6 @@ if [ -s "$S8" ]; then
   chk "⑧ 7) 첫 시도에 선택 = $PROFILE / Tables / $TABLE" "/ $PROFILE / Tables( \([0-9]+\))? / $TABLE\$" "$s8"
   chk "⑧ 선택 행이 화면 안" "^visible=true$" "$s8"
 else bad "⑧ 선택 경로 없음" "$(tail -3 "$OUT/gui8.stderr")"; fi
-say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
+else sk "⑧ 건너뜀: 프로필 $SECOND 없음(이 PC 볼트)"; fi
+say ""; say "== 합계: 통과 $pass · 실패 $fail · 건너뜀 $skip  ($(date '+%F %T'))"
 exit $fail

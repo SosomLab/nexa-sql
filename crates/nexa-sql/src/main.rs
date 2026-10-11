@@ -1049,6 +1049,17 @@ impl App {
         };
         // ★ 객체 상세(docs/86): 탐색기 아래 독립 영역 — 탐색기 높이를 그만큼 줄인다(스크롤 영역이 겹치지 않게).
         let details_on = self.explorer.is_visible() && self.settings.flag("explorer.details");
+        if std::env::var_os("NSQL_TRACE_META").is_some()
+            && self.objdetail.is_visible() != details_on
+        {
+            eprintln!(
+                "[detail] layout: details {} → {} (explorer_visible={} flag={})",
+                self.objdetail.is_visible(),
+                details_on,
+                self.explorer.is_visible(),
+                self.settings.flag("explorer.details")
+            );
+        }
         self.objdetail.set_visible(details_on);
         // 스플리터 띠 = 확장 상태에만(축소 = 머리 줄이 바닥에 붙고 띠 없음 · 사용자 09-26) · 최소 = 머리 줄 + 4줄(`min_h`).
         let collapsed = self.objdetail.is_collapsed();
@@ -1231,6 +1242,9 @@ impl App {
 
     /// 옆 패널은 한 번에 하나 — `keep`만 남기고 닫는다(탐색기·파일 검색·확장·프로젝트).
     fn side_panel_close_others(&mut self, keep: &str) {
+        if std::env::var_os("NSQL_TRACE_META").is_some() {
+            eprintln!("[detail] side_panel_close_others keep={keep}");
+        }
         if keep != "view.explorer" && self.explorer.is_visible() {
             self.explorer.set_visible(false);
             let _ = self.settings.set("explorer.visible", "off");

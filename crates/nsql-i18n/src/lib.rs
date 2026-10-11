@@ -5598,8 +5598,8 @@ impl Msg {
             ],
             Msg::LblNetWatch => ["Watch network changes (OS signal)", "네트워크 변경 감시(OS 신호)"],
             Msg::DescNetWatch => [
-                "When the OS reports a network path change (VPN adapter down, default route changed), every connected server is marked suspect and re-checked before its next action. No polling; Windows only for now. Takes effect at the next start.",
-                "OS가 네트워크 경로 변경(VPN 어댑터 다운 · 기본 라우트 변경)을 알리면 접속된 모든 서버를 의심 상태로 두고 다음 동작 전에 다시 판정합니다. 주기 핑 없음 · 지금은 Windows만 · 다음 시작부터 적용.",
+                "When the OS reports a network path change (VPN adapter down, default route changed), every connected server is marked suspect and re-checked before its next action. No polling; Windows, macOS and Linux. Takes effect at the next start.",
+                "OS가 네트워크 경로 변경(VPN 어댑터 다운 · 기본 라우트 변경)을 알리면 접속된 모든 서버를 의심 상태로 두고 다음 동작 전에 다시 판정합니다. 주기 핑 없음 · Windows·macOS·Linux · 다음 시작부터 적용.",
             ],
             Msg::LogNetChanged => [
                 "Network path changed - {0} server(s) will be re-checked before the next action",
@@ -6455,7 +6455,7 @@ impl Msg {
             Msg::MnGotoLine => ["Go to Line…", "줄로 이동…"],
             Msg::MnGotoAnything => ["Goto Anything…", "Goto Anything(탭·파일·명령·심볼)…"],
             Msg::LblProjectWatch => ["Watch project folders for changes", "프로젝트 폴더 변경 감시"],
-            Msg::DescProjectWatch => ["Watch the project folders with the OS (Windows: ReadDirectoryChangesW) and update the Ctrl+P / filter index and the project tree as soon as files change - only the changed folder is re-read; excluded folders are ignored. Where no backend exists (macOS/Linux for now) the refresh interval applies. Off in the low performance profile", "프로젝트 폴더를 OS 감시(Windows: ReadDirectoryChangesW)로 지켜보다 파일이 바뀌면 Ctrl+P·필터 색인과 프로젝트 트리를 바로 맞춥니다 - 바뀐 폴더만 다시 읽고 제외 폴더는 무시합니다. 백엔드가 없는 OS(지금 macOS·Linux)는 재열거 간격이 대신합니다. 성능 프로필 low에서는 끕니다"],
+            Msg::DescProjectWatch => ["Watch the project folders with the OS (Windows ReadDirectoryChangesW · macOS FSEvents · Linux inotify) and update the Ctrl+P / filter index and the project tree as soon as files change - only the changed folder is re-read; excluded folders are ignored. Where no backend exists the refresh interval applies. Off in the low performance profile", "프로젝트 폴더를 OS 감시(Windows ReadDirectoryChangesW · macOS FSEvents · Linux inotify)로 지켜보다 파일이 바뀌면 Ctrl+P·필터 색인과 프로젝트 트리를 바로 맞춥니다 - 바뀐 폴더만 다시 읽고 제외 폴더는 무시합니다. 백엔드가 없는 OS는 재열거 간격이 대신합니다. 성능 프로필 low에서는 끕니다"],
             Msg::LblProjectWatchDebounce => ["Change batching (ms)", "변경 묶음 시간(ms)"],
             Msg::DescProjectWatchDebounce => ["Changes arriving within this window are applied together (a build writing hundreds of files = one update)", "이 시간 안에 온 변경은 한 번에 반영합니다(빌드가 수백 파일을 쓸 때 = 갱신 1회)"],
             Msg::StDirWatchUnsupported => ["Folder watch is not available on this OS yet - the file index refreshes on its interval", "이 OS에는 아직 폴더 감시가 없습니다 - 파일 색인은 재열거 간격으로 갱신됩니다"],
