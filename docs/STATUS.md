@@ -6,7 +6,8 @@
 
 ## 2026-10-12 (120차 ⑤ · **Linux**) — 🔧 그리드 스크롤 결함 둘([journal 10-12](journal/2026-10-12.md))
 
-- ★ **사용자 결정 4건(§2 · D-273~D-276)**: ① 실제 폴더 `Local` 프로필 **삭제**(실행 완료) ② Linux `gsettings` **TTL 캐시**(HIDDEN `ui.theme_cache_ms` 1500 · 순수 `use_cached` MC/DC) ③ 아이콘 PNG **현행 유지** ④ 엄격 재질의 **확인 토스트**(`grid.refetch_confirm` on · 순수 `ask_refetch` MC/DC 6 · [계속] = `grid.refetch:` 한 번만 강제 · 자동 페치 재질문 없음 · 훅 `toast.dump/action` · E2E B 판정 +1 ⏳) · 43 §9-2 · 10 D-273~276 · 위키 Settings.
+- ★ **사용자 결정 4건(§2 · D-273~D-276)**: ① 실제 폴더 `Local` 프로필 **삭제**(실행 완료) ② Linux `gsettings` **TTL 캐시**(HIDDEN `ui.theme_cache_ms` 1500 · 순수 `use_cached` MC/DC) ③ 아이콘 PNG **현행 유지** ④ 엄격 재질의 **확인 토스트**(`grid.refetch_confirm` on · 순수 `ask_refetch` MC/DC 6 · [계속] = `grid.refetch:` 한 번만 강제 · 자동 페치 재질문 없음 · 훅 `toast.dump/action` · E2E fetch-consistency 10/0 · 415/0) · 43 §9-2 · 10 D-273~276 · 위키 Settings.
+- **커밋·push ✓**(사용자 "자동화 테스트 → push" · §3): nexa-ui `d0192d9`(202차 · ci 38156235617 ✓) · nexa-sql `9421997`(120차 전부 · integration ✓ · ci 1차 ✗ = mac·win clippy Linux 전용 helper dead_code → `2f9a387` cfg_attr + 사유 · 재실행 38156630482/38156630491 ✓ · T-328 P1로) · 문서 2차 = CI 뒤.
 - 사용자 "가로 스크롤 안 됨 · 썸을 놓아도 계속 움직임": 원인 = `grid.rs` 사건 순서에서 필터 줄·푸터·셀 편집기가 MouseUp을 먼저 소비 → 경계 맞댄 썸 드래그가 그 위에서 놓이면 `ScrollBars.drag` 잔존(10-07 `drag_sel`과 같은 꼴) → nexa-ui 202차 `ScrollBars::is_dragging()` + `bars_drag_event`(드래그 중이면 어디서든 스크롤바 몫) · 단위 2(수정 끄면 실패) · 새 E2E `linux-scroll-e2e.sh` 8/8 · `NSQL_TRACE_INPUT=1` 진단 · 규칙 61 §2-2-c 한 줄. 가로 휠 라우팅은 정상 · **T-329 종결 = VM 한계**(VMware 가상 마우스에 REL_HWHEEL 없음 → 트랙패드 가로 스와이프가 게스트에 안 옴 · 대안 Shift+휠·썸 · 61 §3).
 
 ## 2026-10-11 (120차 · **Linux**) — 설정 창 "변경" 토글 · 🔧 페이지 재조회 중 ■ 무반응([journal 10-11](journal/2026-10-11.md))
