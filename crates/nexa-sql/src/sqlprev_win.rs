@@ -12,7 +12,9 @@ use nexa_ctl::gridedit::RowRef;
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::IconImage;
 use nexa_ctl::theme::{FontPrefs, Theme};
-use nexa_ctl::{Button, Checkbox, Control, InputEvent, Invalidations, TextBox, Widget};
+use nexa_ctl::{
+    Button, Checkbox, Control, InputEvent, Invalidations, RadioGroup, RadioOption, TextBox, Widget,
+};
 use nexa_gfx::image::{self as gfx_image, ImageKind};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::{GenOpts, GenSpec};
@@ -28,11 +30,12 @@ use winit::window::{Window, WindowId};
 pub(crate) enum SqlPrevAction {
     None,
     Paint,
-    /// 값 모드: 본문(글)을 그 셀에 반영(87 §5 · CLOB 편집 → 커밋은 그리드 적용).
+    /// 값 모드: 본문(글)을 그 셀에 반영(87 §5 · CLOB 편집 → 커밋은 그리드 적용). `null` = NULL 상태로 반영(글 무시 · 설계 B).
     ApplyCell {
         row: RowRef,
         col: usize,
         text: String,
+        null: bool,
     },
     /// 값 모드: 파일에서 넣기(호스트가 열기 창 · `FilePurpose::CellValue`).
     LoadFile,
@@ -59,10 +62,21 @@ pub(crate) enum ValueMode {
     Image,
 }
 
+/// ★ 값 창의 값 상태 3택(사용자 10-12 설계 B): NULL · 빈 문자열(길이 0 · NULL과 다름) · 값(본문 글).
+/// 글자 "NULL"을 본문에 쓰지 않는다 — 상태로 보이고 상태로 저장한다(Oracle = 빈 문자열 상태 없음).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Nullness {
+    Null,
+    Empty,
+    Value,
+}
+
 /// 값 모드 상태(87 §5): 셀 하나 · 보기 · 풀어 둔 이미지.
 struct ValueState {
     v: ValueReq,
     mode: ValueMode,
+    /// 값 상태 3택(설계 B).
+    nullness: Nullness,
     kind: ImageKind,
     img: Option<IconImage>,
     img_err: Option<String>,
@@ -110,6 +124,8 @@ pub(crate) struct SqlPrevWin {
     /// ★ 생성 옵션 체크박스(DBeaver "Settings" · 사용자 09-25): 정규화 이름 · 간결 · 전체 DDL · FK 분리 — 바꾸면 다시 생성.
     cbs: Vec<Checkbox>,
     cb_labels: Vec<String>,
+    /// ★ 값 모드 상태 3택 라디오(사용자 10-12: "NULL · 빈 문자열 · 값은 하나만 고르는 라디오 · 버튼 줄 위") — 편집 가능한 글 셀일 때만.
+    radio: Option<RadioGroup>,
     /// 지금 보이는 문장의 생성 사양(새로고침용) · 어느 서버 칸에서 왔는가.
     pub(crate) spec: Option<GenSpec>,
     pub(crate) server: Option<ConnectSpec>,
@@ -140,6 +156,7 @@ impl SqlPrevWin {
                 .map(|m| Checkbox::new(t(*m), false))
                 .collect(),
             cb_labels: CB_MSGS.iter().map(|m| t(*m).to_string()).collect(),
+            radio: None,
             spec: None,
             server: None,
             title: String::new(),
@@ -279,9 +296,18 @@ impl SqlPrevWin {
         } else {
             ValueMode::Text
         };
+        // 처음 상태 = 셀의 지금 값(NULL → NULL · 빈 글 → 빈 문자열 · 그 밖 → 값).
+        let nullness = if v.is_null {
+            Nullness::Null
+        } else if v.text.is_empty() && v.bytes.is_none() {
+            Nullness::Empty
+        } else {
+            Nullness::Value
+        };
         self.value = Some(ValueState {
             v,
             mode,
+            nullness,
             kind,
             img: None,
             img_err: None,
@@ -480,9 +506,18 @@ impl SqlPrevWin {
     /// 보기(글/16진수/이미지)에 맞춰 본문·버튼·안내 줄을 다시 놓는다.
     fn refresh_value_view(&mut self) {
         let Some(s) = self.value.as_ref() else { return };
-        let editable_text = s.v.editable && !s.v.binary && s.mode == ValueMode::Text;
+        let nullness = s.nullness;
+        let empty_is_null = s.v.empty_is_null;
+        let now_kind = s.v.now_kind;
+        // 글 편집은 **값** 상태에서만(NULL·빈 문자열 상태는 본문이 비고 읽기 전용 · 안내 줄이 상태를 말한다 · 설계 B).
+        let editable_text =
+            s.v.editable && !s.v.binary && s.mode == ValueMode::Text && nullness == Nullness::Value;
         let (text, note) = match s.mode {
-            ValueMode::Text => (s.v.text.clone(), String::new()),
+            ValueMode::Text => match nullness {
+                Nullness::Null => (String::new(), t(Msg::SpNoteNull).to_string()),
+                Nullness::Empty => (String::new(), t(Msg::SpNoteEmpty).to_string()),
+                Nullness::Value => (s.v.text.clone(), String::new()),
+            },
             ValueMode::Hex => {
                 let b = s.v.bytes.as_deref().unwrap_or(&[]);
                 let shown = &b[..b.len().min(s.max_bytes)];
@@ -529,14 +564,31 @@ impl SqlPrevWin {
                 acts.push(SqlPrevAction::Mode(ValueMode::Image));
             }
         }
-        if editable_text {
-            msgs.push(Msg::SpBtnApplyCell);
-            acts.push(SqlPrevAction::ApplyCell {
-                row: s.v.row,
-                col: s.v.col,
-                text: String::new(),
-            });
-        }
+        // ★ 상태 3택(설계 B · 사용자 10-12 "하나만 고르는 라디오 · 버튼 줄 위"): 편집 가능한 글 셀에서만 · "빈 문자열"은 그 방언에
+        //   그 상태가 있을 때만(Oracle 제외 + 안내). 라디오는 그릴 때 버튼 줄 위에 가로로 놓인다.
+        let can_pick = editable && !s.v.binary && mode == ValueMode::Text;
+        let note = if can_pick && empty_is_null && note.is_empty() {
+            t(Msg::SpNoteEmptyIsNull).to_string()
+        } else {
+            note
+        };
+        let (row, col) = (s.v.row, s.v.col);
+        self.radio = can_pick.then(|| {
+            let mut opts = vec![RadioOption::new("null", t(Msg::SpBtnNull))];
+            if !empty_is_null {
+                opts.push(RadioOption::new("empty", t(Msg::SpBtnEmpty)));
+            }
+            opts.push(RadioOption::new("value", t(Msg::SpBtnValue)));
+            let sel = match nullness {
+                Nullness::Null => 0,
+                Nullness::Empty => usize::from(!empty_is_null),
+                Nullness::Value => opts.len() - 1,
+            };
+            let mut g = RadioGroup::new(opts, sel);
+            g.set_horizontal(Some(96)); // 폭은 그릴 때 라벨로 다시 잰다.
+            g
+        });
+        // 버튼 순서(사용자 10-12) = 파일에서 넣기 · 파일로 저장 · 복사 · 셀에 반영 · 닫기.
         if editable {
             msgs.push(Msg::SpBtnLoadFile);
             acts.push(SqlPrevAction::LoadFile);
@@ -545,10 +597,43 @@ impl SqlPrevWin {
         acts.push(SqlPrevAction::SaveValue);
         msgs.push(Msg::SpBtnCopy);
         acts.push(SqlPrevAction::Copy);
+        if can_pick {
+            // 반영 = 라디오 상태대로(NULL · '' · 본문 글) — 누를 때 채운다.
+            msgs.push(Msg::SpBtnApplyCell);
+            acts.push(SqlPrevAction::ApplyCell {
+                row,
+                col,
+                text: String::new(),
+                null: false,
+            });
+        }
         msgs.push(Msg::SpBtnClose);
         acts.push(SqlPrevAction::Close);
         self.set_buttons(&msgs, &acts);
         self.cbs.clear();
+        // ★ 우클릭 "지금으로 ▸"(사용자 10-13): 값 상태 + 글 편집 가능 + 날짜류 열에서만 본문 메뉴에 덧붙인다(그리드 메뉴와 같은 5항목).
+        let date_like = matches!(
+            now_kind,
+            nexa_ctl::gridedit::CellKind::Date
+                | nexa_ctl::gridedit::CellKind::Time
+                | nexa_ctl::gridedit::CellKind::DateTime
+        );
+        if editable_text && date_like {
+            use nexa_ctl::controls::ctxmenu::CtxItem;
+            self.tb.set_menu_extras(vec![CtxItem::submenu(
+                "now",
+                t(Msg::MnGeNow),
+                vec![
+                    CtxItem::item("now:date", t(Msg::MnGeNowDate)),
+                    CtxItem::item("now:time", t(Msg::MnGeNowTime)),
+                    CtxItem::item("now:datetime", t(Msg::MnGeNowDateTime)),
+                    CtxItem::item("now:ts", t(Msg::MnGeNowTs)),
+                    CtxItem::item("now:server", t(Msg::MnGeNowServer)),
+                ],
+            )]);
+        } else {
+            self.tb.set_menu_extras(Vec::new());
+        }
         self.tb.set_read_only(!editable_text);
         self.tb.set_text(&text);
         self.tb.goto_line(1);
@@ -561,8 +646,9 @@ impl SqlPrevWin {
     pub(crate) fn dump_value(&self) -> String {
         match self.value.as_ref() {
             Some(s) => format!(
-                "mode={:?} kind={} bytes={} image={} editable={} binary={} note={}\n",
+                "mode={:?} null={:?} kind={} bytes={} image={} editable={} binary={} note={}\n",
                 s.mode,
+                s.nullness,
                 s.kind.name(),
                 s.v.bytes.as_ref().map_or(0, Vec::len),
                 match (&s.img, &s.img_err) {
@@ -575,6 +661,21 @@ impl SqlPrevWin {
                 self.note.0
             ),
             None => "mode=none\n".into(),
+        }
+    }
+
+    /// ★ 값 상태 3택 전환(설계 B · 버튼 · 기동 명령 `cellview.null:`): 값 상태를 떠날 때 본문 편집분은 보관(돌아오면 그대로).
+    pub(crate) fn set_nullness(&mut self, k: Nullness) {
+        let cur = self.tb.text();
+        if let Some(s) = self.value.as_mut() {
+            if s.nullness == Nullness::Value {
+                s.v.text = cur;
+            }
+            if s.nullness == k {
+                return;
+            }
+            s.nullness = k;
+            self.refresh_value_view();
         }
     }
 
@@ -600,10 +701,40 @@ impl SqlPrevWin {
     /// 우클릭 편집 메뉴가 남긴 요청 처리 — 복사만(읽기 전용 · 잘라내기·붙여넣기는 메뉴에 없다).
     fn apply_edit_ctx(&mut self) {
         if let Some(a) = self.tb.take_edit_ctx() {
-            if matches!(a, nexa_ctl::EditCtxAction::Copy) {
-                self.copy_selection_or_all();
+            match a {
+                nexa_ctl::EditCtxAction::Copy => self.copy_selection_or_all(),
+                // ★ 우클릭 "지금으로 ▸"(사용자 10-13 · 값 창에서도): 호스트 항목 id `now:<what>`.
+                nexa_ctl::EditCtxAction::Custom(id) => {
+                    if let Some(what) = id.strip_prefix("now:") {
+                        if self.insert_now(what) {
+                            self.redraw();
+                        }
+                    }
+                }
+                _ => {}
             }
         }
+    }
+
+    /// ★ 값 창에 "지금"(사용자 10-13): 값 상태이고 글 편집이 가능할 때만 · 본문 전체를 그 시각 글로(그리드와 같은 규칙 ·
+    /// `time_or_append`는 지금 본문의 날짜를 살린다). 돌려주는 값 = 넣었는가.
+    fn insert_now(&mut self, what: &str) -> bool {
+        let Some(s) = self.value.as_ref() else {
+            return false;
+        };
+        if s.nullness != Nullness::Value || self.tb.is_read_only() {
+            return false;
+        }
+        let (kind, prec) = (s.v.now_kind, s.v.now_prec);
+        let text = crate::grid::now_text(
+            what,
+            kind,
+            prec,
+            &nsql_log::now_local(),
+            Some(self.tb.text()),
+        );
+        self.tb.set_text(&text);
+        true
     }
 
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> SqlPrevAction {
@@ -648,6 +779,9 @@ impl SqlPrevWin {
                 }
                 for cb in &mut self.cbs {
                     cb.on_event(&mv, &mut inv);
+                }
+                if let Some(g) = self.radio.as_mut() {
+                    g.on_event(&mv, &mut inv);
                 }
                 if !inv.is_empty() {
                     self.redraw();
@@ -704,8 +838,25 @@ impl SqlPrevWin {
                         toggled = true;
                     }
                 }
+                // ★ 값 상태 라디오(설계 B): 고르면 상태 전환(본문·안내·반영 내용이 따라간다).
+                let mut picked: Option<String> = None;
+                if let Some(g) = self.radio.as_mut() {
+                    if up || g.bounds().contains(p) {
+                        g.on_event(&e, &mut inv);
+                    }
+                    g.set_focused(false);
+                    picked = g.take_changed();
+                }
                 self.tb.set_focused(true);
                 self.redraw();
+                if let Some(v) = picked {
+                    self.set_nullness(match v.as_str() {
+                        "null" => Nullness::Null,
+                        "empty" => Nullness::Empty,
+                        _ => Nullness::Value,
+                    });
+                    return SqlPrevAction::None;
+                }
                 if toggled {
                     // 옵션 → 사양에 반영하고 다시 생성.
                     let vals: Vec<bool> = self.cbs.iter().map(|c| c.is_checked()).collect();
@@ -728,10 +879,17 @@ impl SqlPrevWin {
                             return SqlPrevAction::None;
                         }
                         Some(SqlPrevAction::ApplyCell { row, col, .. }) => {
+                            // 상태대로 반영(설계 B): NULL = 글 무시 · 빈 문자열 = '' · 값 = 본문.
+                            let k = self.value.as_ref().map_or(Nullness::Value, |s| s.nullness);
                             return SqlPrevAction::ApplyCell {
                                 row,
                                 col,
-                                text: self.tb.text(),
+                                text: if k == Nullness::Value {
+                                    self.tb.text()
+                                } else {
+                                    String::new()
+                                },
+                                null: k == Nullness::Null,
                             };
                         }
                         Some(a) => return a,
@@ -763,6 +921,18 @@ impl SqlPrevWin {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) => return SqlPrevAction::Close,
+                    // ★ 값 창에서도 지금 날짜/시간(사용자 10-13): Ctrl+; = 열 종류대로 · Ctrl+Shift+;(= `:`) = 지금 시간(날짜 뒤 붙임).
+                    Key::Character(c) if self.primary && (c == ";" || c == ":") => {
+                        let what = if self.shift || c == ":" {
+                            "time_or_append"
+                        } else {
+                            "auto"
+                        };
+                        if self.insert_now(what) {
+                            self.redraw();
+                        }
+                        return SqlPrevAction::None;
+                    }
                     Key::Character(_) if self.primary => {
                         // IME 한글(⌘+자모)에도 물리 키로 맞춘다(09-27).
                         let lower = crate::input::shortcut_letter(kev)
@@ -871,6 +1041,29 @@ impl SqlPrevWin {
                 cb.set_bounds(Rect::new(cx, cb_y, w, cb_h), inv);
                 cb.paint(&mut dc, th);
                 cx += w + px(10.0);
+            }
+            // ★ 값 상태 라디오(설계 B · 사용자 10-12): 체크박스 줄 자리(버튼 줄 위)에 가로 한 줄 — 항목 폭 = 가장 긴 라벨 기준.
+            if let Some(g) = self.radio.as_mut() {
+                g.set_scale(s);
+                // 항목별 폭 = 글리프(12) + 간격(8) + **그 라벨** + 여백(16) → 논리 px(배율로 나눔) — 같은 폭이면 간격이
+                //   불균일해 보였다(협업 관찰 · "NULL"↔"빈 문자열"은 넓고 "빈 문자열"↔"값"은 좁음).
+                let labels: Vec<&str> = if g.is_horizontal() || true {
+                    let mut v = vec![t(Msg::SpBtnNull)];
+                    if self.value.as_ref().is_some_and(|s| !s.v.empty_is_null) {
+                        v.push(t(Msg::SpBtnEmpty));
+                    }
+                    v.push(t(Msg::SpBtnValue));
+                    v
+                } else {
+                    Vec::new()
+                };
+                let widths: Vec<i32> = labels
+                    .iter()
+                    .map(|l| ((px(36.0) + dc.text_width(l)) as f32 / s).ceil() as i32)
+                    .collect();
+                g.set_horizontal_widths(&widths);
+                g.set_bounds(Rect::new(pad, cb_y, wi - pad * 2, cb_h), inv);
+                g.paint(&mut dc, th);
             }
             // 버튼(왼쪽 정렬 · 사용자 순서 = 새로고침 · 파일로 저장 · 편집기에서 열기 · 복사 · 닫기).
             let mut bx = pad;

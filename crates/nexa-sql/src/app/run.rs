@@ -173,10 +173,15 @@ impl App {
         let text = if all {
             None
         } else {
-            let sel = self
-                .ed_mut()
-                .copy_selection()
-                .filter(|s| !s.trim().is_empty());
+            // ★ 선택 판정은 **편집기 포커스와 무관**(사용자 10-13 "그리드 셀을 고른 뒤 Ctrl+Enter가 다른 문장을 실행"):
+            //   `copy_selection()`은 클립보드 보호 때문에 포커스가 없으면 None이라 그리드 포커스에서는 선택이 무시되고
+            //   캐럿(선택 끝 = 주석·빈 줄일 수 있음)의 문장이 돌았다 → 선택 구간을 직접 읽는다.
+            let sel = self.ed_mut().selection().and_then(|(a, b)| {
+                let t = self.ed_mut().text();
+                let (a, b) = (a.min(b), a.max(b));
+                let s: String = t.chars().skip(a).take(b - a).collect();
+                (!s.trim().is_empty()).then_some(s)
+            });
             if sel.is_some() {
                 // 선택 실행: 선택 시작 줄.
                 if let Some((a, _)) = self.ed_mut().selection() {

@@ -212,6 +212,8 @@ pub(crate) struct ExplorerSet {
     /// ★ 칸 단위(사용자 09-25 원복): 끔(기본) = **연결(계정)마다 칸·인텔리센스 분리**(권한이 달라 보이는 객체가 다르다) ·
     /// 켬 = 같은 카탈로그(방언·호스트·포트·DB)의 연결들이 칸을 공유(docs/54 §10 · 설정 `explorer.share_catalog`).
     share_catalog: bool,
+    /// ★ 전용 세션(사용자 10-12 · 설계 A): (스펙, 소유 탭 제목) — 같은 서버의 연결 행에 'P' 칩 + "전용 · 탭" · 헤더 "전용 N".
+    private: Vec<(ConnectSpec, String)>,
     /// ★ 검색창(docs/28 §7 · 09-25): 패널 맨 위 필터 틀(Aa·ab·(.*) · 이력) — 전 서버 트리를 거른다(범위 설정).
     filter: FilterBar,
     filter_scope: FilterScope,
@@ -257,6 +259,7 @@ impl ExplorerSet {
             index_cfg: crate::explorer::IndexCfg::default(),
             filter_expand: false,
             share_catalog: false,
+            private: Vec::new(),
             filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
             filter_scope: FilterScope::All,
             area: Rect::default(),
@@ -501,6 +504,8 @@ impl ExplorerSet {
                 changed = true;
                 let users: Vec<String> = p.conns.iter().filter_map(|c| c.user.clone()).collect();
                 p.ex.set_users(users);
+                let tabs = Self::private_tabs_for(&self.private, &p.conns);
+                p.ex.set_private_tabs(tabs);
             }
             let n = alive.len();
             // ★ 메타 세션의 자격이 사라졌는데 다른 연결이 남았으면 그 자격으로 다시 연다(트리 유지 · docs/54 §10).
@@ -528,6 +533,27 @@ impl ExplorerSet {
             self.remove(i);
         }
         changed
+    }
+
+    /// ★ 전용 세션 목록(사용자 10-12 · 설계 A) — 호스트가 세션 동기화마다 넘긴다 · 각 칸의 연결과 같은 서버인 전용 세션의 탭 제목을 칸에.
+    pub(crate) fn set_private(&mut self, v: Vec<(ConnectSpec, String)>) {
+        if self.private == v {
+            return;
+        }
+        self.private = v;
+        for p in &mut self.panes {
+            let tabs = Self::private_tabs_for(&self.private, &p.conns);
+            p.ex.set_private_tabs(tabs);
+        }
+    }
+
+    /// 칸의 연결들과 같은 서버(방언·호스트·포트·DB·계정)인 전용 세션의 탭 제목(순수).
+    fn private_tabs_for(private: &[(ConnectSpec, String)], conns: &[ConnectSpec]) -> Vec<String> {
+        private
+            .iter()
+            .filter(|(sp, _)| conns.iter().any(|c| same_server(c, sp)))
+            .map(|(_, t)| t.clone())
+            .collect()
     }
 
     pub(crate) fn set_disconnect_pick(&mut self, mode: &str) {
@@ -771,6 +797,15 @@ impl ExplorerSet {
         for p in &mut self.panes {
             p.ex.set_visible(on);
         }
+    }
+
+    /// 끌어 놓기 대상 = 객체 필터 상자(10-12 · 보일 때만).
+    pub(crate) fn drop_box_at(&self, p: Point) -> Option<Rect> {
+        self.visible.then(|| self.filter.drop_box_at(p)).flatten()
+    }
+
+    pub(crate) fn drop_insert(&mut self, p: Point, text: &str) -> bool {
+        self.visible && self.filter.drop_insert(p, text)
     }
 
     pub(crate) fn set_icons(&mut self, on: bool) {
@@ -1235,7 +1270,21 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         }
         self.headers = headers;
         self.pinned = Self::pinned_header(&spans, b);
-        let _ = &laid;
+        // ★ 서버가 하나도 없을 때의 빈 자리("접속 안 됨" · 사용자 10-12): `laid()`는 키 없는 칸 0을 돌려주지만 위 그룹 순회는
+        //   키 있는 칸만 놓는다 → 종전엔 칸 0이 **마지막 연결 때의 bounds·묶음 들여쓰기**를 그대로 써서 안내 행이 헤더 자리보다
+        //   한 단 안쪽·아래에 그려졌고, 탐색기가 숨겨진 동안(프로젝트 탐색기) 해제되면 옛 bounds가 비어 아무것도 안 보였다.
+        //   → 빈 자리는 늘 묶음 없이(들여쓰기 0 = 서버 헤더가 놓이던 자리) 영역 맨 위부터 명시로 놓는다.
+        if self.groups().is_empty() {
+            if let Some(p) = self.panes.get_mut(0) {
+                let ex = &mut p.ex;
+                ex.set_grouped(false);
+                let h = ex.content_height();
+                ex.set_bounds(Rect::new(b.x, b.y - self.scroll, b.w, h), s);
+                ex.set_clip(b);
+                ex.set_menu_host(menu_host);
+                ex.set_scroll_x(self.scroll_x);
+            }
+        }
         // 놓이지 않은 칸(빈 자리)은 영역 0.
         for i in 0..self.panes.len() {
             if !laid.contains(&i) {
@@ -1264,13 +1313,21 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     fn header_sub(&self, first: usize) -> String {
         let n = self.group_conns(first).len();
         let mut sub = tf(Msg::ExpServerConns, &[&n.to_string()]);
+        let members: Vec<usize> = self
+            .groups()
+            .into_iter()
+            .find(|(g, _)| g.first() == Some(&first))
+            .map(|(g, _)| g)
+            .unwrap_or_default();
+        // ★ 전용 세션 수(사용자 10-12 · 설계 A): "연결 N개 · 전용 M".
+        let m: usize = members
+            .iter()
+            .map(|&i| self.panes[i].ex.private_count())
+            .sum();
+        if m > 0 {
+            sub = format!("{sub} · {}", tf(Msg::ExpPrivateN, &[&m.to_string()]));
+        }
         if self.filter_on() {
-            let members: Vec<usize> = self
-                .groups()
-                .into_iter()
-                .find(|(g, _)| g.first() == Some(&first))
-                .map(|(g, _)| g)
-                .unwrap_or_default();
             let hits: usize = members
                 .iter()
                 .map(|&i| self.panes[i].ex.filter_hits())
@@ -2307,6 +2364,48 @@ mod tests {
         set.sync_refs(&live);
         assert_eq!(set.groups()[0].0.len(), 2, "오프라인 행으로 남는다");
         assert_eq!(set.group_online(set.groups()[0].0[0]).len(), 1);
+    }
+
+    /// ★ 서버 0 = 빈 자리("접속 안 됨" · 사용자 10-12): 마지막 연결이 빠져 칸 0의 키가 없어지면 그 칸은 **묶음 없이(들여쓰기 0 =
+    /// 서버 헤더가 놓이던 자리) 영역 맨 위부터** 놓인다 — 종전엔 그룹 순회가 키 있는 칸만 놓아 옛 bounds·묶음 들여쓰기가 남았고,
+    /// 탐색기가 숨겨진 동안 해제되면 옛 bounds가 비어 아무것도 안 그려졌다.
+    #[test]
+    fn empty_set_lays_out_placeholder_at_top_ungrouped() {
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.connect(&spec("s1", "D1", "u"), "p", false, false);
+        let area = Rect::new(10, 40, 300, 600);
+        set.set_bounds(area, 1.0);
+        assert!(
+            set.panes[0].ex.is_grouped(),
+            "연결 중 = 묶음(서버 헤더 아래 한 단)"
+        );
+        assert_eq!(set.headers.len(), 1);
+        // 탐색기가 숨겨진 동안(프로젝트 탐색기) 전부 해제 → 칸 0 = 키 없음.
+        set.set_visible(false);
+        let none: [nsql_script::ConnectSpec; 0] = [];
+        set.sync_refs(&none);
+        assert!(set.groups().is_empty(), "서버 0");
+        assert!(set.panes[0].key.is_none(), "빈 자리 = 키 없는 칸 0");
+        assert_eq!(set.laid(), vec![0]);
+        // 다시 보이며 배치 → 빈 자리가 맨 위 · 묶음 없음 · 높이 > 0.
+        set.set_visible(true);
+        set.set_bounds(area, 1.0);
+        let p = &set.panes[0].ex;
+        assert!(!p.is_grouped(), "빈 자리 = 들여쓰기 0");
+        let b = p.test_bounds();
+        // 트리 영역(`bounds`) = 주어진 영역에서 필터 바를 뺀 아래쪽 — 그 맨 위(= 서버 헤더가 놓이던 자리).
+        let tree = set.bounds;
+        assert!(
+            tree.y > area.y && tree.y < area.y + 80,
+            "필터 바 아래 = 트리 영역"
+        );
+        assert_eq!(
+            (b.x, b.y, b.w),
+            (tree.x, tree.y, tree.w),
+            "트리 영역 맨 위부터"
+        );
+        assert!(b.h > 0, "안내 행 높이");
+        assert!(set.headers.is_empty(), "헤더 없음");
     }
 
     /// ★ 고정 헤더 판정(사용자 09-28): 제자리면 None · 위로 나가고 내용이 걸리면 영역 맨 위 · 다음 헤더가 다가오면 밀림 ·

@@ -427,6 +427,10 @@ struct App {
     /// ★ 다음 탭 동기는 **조용히**(열린 파일 행으로 스크롤하지 않음 · 선택만) — 전환이 프로젝트 패널(열린 파일 행 · 트리 클릭)에서
     /// 비롯됐을 때(사용자 10-07 매트릭스: 패널에서 클릭한 자리에 포커스가 머물러 아래 파일을 이어 고를 수 있게).
     project_sync_quiet: bool,
+    /// ★ 결과 열 머리를 편집 탭 위로 끌 때 놓을 자리(글자 인덱스 · 사용자 10-12) — 캐럿 선으로 보이고 놓으면 그 자리에 열 이름.
+    col_drop_hint: Option<usize>,
+    /// 열 머리를 **글 상자**(패널 필터·찾기 바) 위로 끌 때 놓을 상자(강조 테두리 · 10-12).
+    col_drop_box: Option<Rect>,
     /// 프로젝트 탐색기 색인 펌프의 마지막 전달 열쇠(필터 글 세대 · 파일 수 · 읽는 중 · **열거 세대** `goto_files_at`) — 바뀔 때만 다시 민다(10-07 ·
     /// 세대가 바뀌면 = 재열거로 목록이 교체됨 → 길이가 같아도 전체 재적용).
     project_index_key: (u64, usize, bool, Option<Instant>),
@@ -1774,6 +1778,8 @@ fn main() {
         exit_project_asked: false,
         last_synced_tab: u64::MAX,
         project_sync_quiet: false,
+        col_drop_hint: None,
+        col_drop_box: None,
         project_index_key: (0, 0, false, None),
         goto_reidx_reason: None,
         project_index_last: Instant::now(),

@@ -434,6 +434,27 @@ impl App {
         }
     }
 
+    /// ★ 열 머리 끌어 놓기 대상 글 상자(10-12): 커서 아래의 패널 필터(객체·프로젝트·북마크·아웃라인·확장)·찾기/바꾸기 상자.
+    fn drop_box_at(&self, p: Point) -> Option<Rect> {
+        self.explorer
+            .drop_box_at(p)
+            .or_else(|| self.project_panel.drop_box_at(p))
+            .or_else(|| self.bm_panel.drop_box_at(p))
+            .or_else(|| self.outline_panel.drop_box_at(p))
+            .or_else(|| self.ext_panel.drop_box_at(p))
+            .or_else(|| self.find.drop_box_at(p))
+    }
+
+    /// 그 상자에 넣는다(첫 번째로 받는 상자 하나). 돌려주는 값 = 넣었는가.
+    fn drop_insert_at(&mut self, p: Point, text: &str) -> bool {
+        self.explorer.drop_insert(p, text)
+            || self.project_panel.drop_insert(p, text)
+            || self.bm_panel.drop_insert(p, text)
+            || self.outline_panel.drop_insert(p, text)
+            || self.ext_panel.drop_insert(p, text)
+            || self.find.drop_insert(p, text)
+    }
+
     fn route_dispatch(&mut self, ev: InputEvent) {
         if self.frame_trace.is_some() {
             if let InputEvent::Key { .. } = ev {
@@ -619,6 +640,62 @@ impl App {
                 }
                 self.hover_area = now_area;
             }
+        }
+        // ★ 결과 열 머리 끌기 → **편집 탭**(사용자 10-12): 끌기 중 그리드 밖의 이동·놓임은 아래 포인터 캡처가 그리드에 준다
+        //   (칩은 그리드가 팝업 층에 그린다 · 보류 = 열 순서는 끌기 전) → 그 **앞에서** 편집기 위면 놓을 자리(글자 인덱스)를
+        //   기억해 캐럿 선을 그리고(`paint.rs`), 편집기 위에서 놓으면 인용된 열 이름을 그 자리에 넣고 끌기·캡처를 끝낸다
+        //   (열 순서 그대로). 헤더로 돌아오면 그리드가 다시 이동 미리보기. (협업 V1 ⓑ: 캡처 분기 뒤에 두면 닿지 않는다.)
+        if self.grid.col_dragging() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                // 글 상자(패널 필터 · 찾기/바꾸기 · 10-12 "좌측 패널 검색 상자에도") = 상자 사각형 강조 — **편집기보다 먼저**
+                //   (찾기 바는 편집기 영역 위 오버레이라 뒤에 두면 편집기 판정이 삼킨다 · 협업 V1 ⓐ 찾기 바 ✗).
+                let bx = self.drop_box_at(cur);
+                let over_editor = bx.is_none()
+                    && self.editors.editor_bounds().contains(cur)
+                    && !self.grid.outer_bounds().contains(cur);
+                let hint = over_editor
+                    .then(|| self.editors.box_at_or_cur_mut(cur).index_at_point(cur))
+                    .flatten();
+                if hint != self.col_drop_hint || bx != self.col_drop_box {
+                    self.col_drop_hint = hint;
+                    self.col_drop_box = bx;
+                    self.redraw();
+                }
+            } else if matches!(ev, InputEvent::MouseUp { .. }) {
+                let hint = self.col_drop_hint.take();
+                let bx = self.col_drop_box.take();
+                if let (Some(idx), Some(text)) = (
+                    hint.filter(|_| self.editors.editor_bounds().contains(cur)),
+                    self.grid.col_drag_quoted(),
+                ) {
+                    self.grid.cancel_col_drag();
+                    self.press_capture = None;
+                    if self.editors.activate_pane_at(cur) {
+                        self.sync_gate();
+                    }
+                    self.set_focus(Focus::Editor);
+                    self.ed_mut().replace_range(idx, idx, &text, &mut inv);
+                    self.redraw();
+                    return;
+                }
+                if let (Some(_), Some(text)) = (bx, self.grid.col_drag_quoted()) {
+                    if self.drop_insert_at(cur, &text) {
+                        self.grid.cancel_col_drag();
+                        self.press_capture = None;
+                        self.redraw();
+                        return;
+                    }
+                }
+                self.redraw();
+            }
+        } else if self.col_drop_hint.is_some() || self.col_drop_box.is_some() {
+            self.col_drop_hint = None;
+            self.col_drop_box = None;
+            self.redraw();
         }
         if let InputEvent::MouseDown { x, y, .. } = ev {
             self.press_capture = self.area_at(Point { x, y });

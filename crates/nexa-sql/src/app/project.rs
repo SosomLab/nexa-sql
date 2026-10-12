@@ -983,6 +983,11 @@ impl App {
             .collect();
         if self.project_panel.set_open_files(v) {
             self.project_touch();
+            // ★ 목록이 바뀌면 **바로** 다시 그린다(사용자 10-12 "Release · 프로젝트 없음 · 미저장 탭 3개 · 탭 전환 때 열린 파일 목록이
+            //   0.5 s 늦다"): 프로젝트가 열려 있으면 `project_sync_active`가 뒤에서 `redraw()`를 불러 가려졌지만, 프로젝트가 없으면
+            //   그 함수가 이른 반환이라 다음 그리기 = 캐럿 깜빡임 타이머(500 ms)였다. Debug가 괜찮았던 것은 실제 설정의
+            //   `project.restore_last=on`으로 프로젝트가 열려 있었기 때문(빌드 차이 아님).
+            self.redraw();
         }
     }
 

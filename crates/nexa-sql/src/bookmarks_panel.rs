@@ -218,6 +218,16 @@ impl BookmarksPanel {
     pub(crate) fn is_visible(&self) -> bool {
         self.visible
     }
+
+    /// 끌어 놓기 대상 = 북마크 필터 상자(10-12 · 보일 때만).
+    pub(crate) fn drop_box_at(&self, p: Point) -> Option<Rect> {
+        self.visible.then(|| self.filter.drop_box_at(p)).flatten()
+    }
+
+    pub(crate) fn drop_insert(&mut self, p: Point, text: &str) -> bool {
+        self.visible && self.filter.drop_insert(p, text)
+    }
+
     pub(crate) fn set_visible(&mut self, on: bool) {
         self.visible = on;
         if !on {

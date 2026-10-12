@@ -1041,12 +1041,16 @@ pub(crate) struct Chord {
 /// Ctrl/⌘+D = 다음 같은 낱말 선택(편집기)인데, 그리드 안에서는 표 편집기의 관례(엑셀 F2 = 셀 편집 · DataGrip/TablePlus
 /// Ctrl/⌘+D = 행 복제)가 이긴다. 돌려주는 값 = 그리드 편집 명령 id(`Grid::edit_command`) · 해당 없으면 `None`.
 pub(crate) fn grid_focus_command(ch: &Chord) -> Option<&'static str> {
-    if ch.alt || ch.ctrl || ch.shift {
+    if ch.alt || ch.ctrl {
         return None;
     }
-    match (ch.primary, ch.key.as_str()) {
-        (false, "f2") => Some("grid.edit.begin"),
-        (true, "d") => Some("grid.edit.dup_row"),
+    match (ch.primary, ch.shift, ch.key.as_str()) {
+        (false, false, "f2") => Some("grid.edit.begin"),
+        (true, false, "d") => Some("grid.edit.dup_row"),
+        // ★ 지금 날짜/시간(사용자 10-13 · 엑셀 관례): Ctrl/⌘+; = 열 종류대로 지금(날짜·시간·일시) · Ctrl/⌘+Shift+; = 지금 시간
+        //   (편집 중 날짜만 있으면 뒤에 붙인다). 셀 편집기가 열려 있어도 통한다(호스트가 `now` 명령만 예외).
+        (true, false, ";") => Some("grid.edit.now_date"),
+        (true, true, ";") => Some("grid.edit.now_time"),
         _ => None,
     }
 }

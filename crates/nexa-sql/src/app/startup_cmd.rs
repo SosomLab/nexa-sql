@@ -242,6 +242,16 @@ impl App {
             self.sqlprev_win.set_mode(mode);
             return;
         }
+        // ★ 값 상태 3택(설계 B · 10-12): `cellview.null:<null|empty|value>` — 버튼과 같은 길 · `cellview.apply` = [셀에 반영].
+        if let Some(k) = id.strip_prefix("cellview.null:") {
+            let k = match k {
+                "null" => sqlprev_win::Nullness::Null,
+                "empty" => sqlprev_win::Nullness::Empty,
+                _ => sqlprev_win::Nullness::Value,
+            };
+            self.sqlprev_win.set_nullness(k);
+            return;
+        }
         if let Some(path) = id.strip_prefix("cellview.dump:") {
             let _ = std::fs::write(path, self.sqlprev_win.dump_value());
             return;

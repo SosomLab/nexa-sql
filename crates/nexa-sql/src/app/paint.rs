@@ -691,6 +691,19 @@ impl App {
                         .paint(&mut dc, self.zoom_hud_area, s, &zoom_style);
                 }
                 if !view_mode {
+                    // ★ 열 끌기 → 편집 탭 놓을 자리(사용자 10-12): 글자 인덱스의 캐럿 선(강조색 · 줄 높이) — 칩은 그리드 overlays.
+                    // 글 상자(패널 필터·찾기 바) 위 = 상자 테두리를 강조색으로(10-12).
+                    if let Some(r) = self.col_drop_box {
+                        dc.stroke_round_rect(r, 3, th.accent, 2.0);
+                    }
+                    if let Some(idx) = self.col_drop_hint {
+                        let tb = self.editors.cur();
+                        if let Some(p) = tb.point_at(idx) {
+                            // `point_at`의 y = 줄 **바닥**(top + line_h · 카드 앵커 규칙) → 선은 그 위로 한 줄(협업 V1 ⓑ 관찰).
+                            let lh = tb.line_h().max(2);
+                            dc.fill_rect(Rect::new(p.x - 1, p.y - lh, 2, lh), th.accent);
+                        }
+                    }
                     self.grid.paint_overlays(&mut dc, &th);
                     self.panel.paint_popups(&mut dc, &th);
                 }

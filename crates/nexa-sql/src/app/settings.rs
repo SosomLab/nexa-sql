@@ -584,6 +584,10 @@ impl App {
                 let text = self.settings.get(key).unwrap_or("NULL").to_string();
                 self.all_grids().for_each(|g| g.set_null_text(&text));
             }
+            "grid.empty_text" => {
+                let text = self.settings.get(key).unwrap_or("''").to_string();
+                self.all_grids().for_each(|g| g.set_empty_text(&text));
+            }
             "grid.row_focus" | "grid.row_focus_color" => self.apply_grid_row_focus(),
             "grid.edit"
             | "grid.edit_empty"

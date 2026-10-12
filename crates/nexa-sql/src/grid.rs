@@ -150,6 +150,11 @@ struct HdrDrag {
     grab_dx: i32,
     /// 시작 때 `col_order`(Esc 복원).
     orig: Vec<usize>,
+    /// 지금 커서 y(조건 바 위 칩 미리보기 자리).
+    cur_y: i32,
+    /// ★ 보류(사용자 10-12): 커서가 **조건 바 위**에 있는 동안 열 이동 미리보기를 접고(열 순서 = 시작 때) 끌고 있는 열 이름
+    ///   칩만 커서 옆에 보인다 · 헤더(끌기 영역)로 돌아오면 다시 이동 미리보기.
+    parked: bool,
 }
 
 /// ★ 그리드 편집 설정(호스트가 설정 레지스트리에서 주입 · docs/87 §8).
@@ -227,6 +232,13 @@ pub(crate) struct ValueReq {
     pub editable: bool,
     /// 이진 열(파일에서 넣기 = 늘 바이트).
     pub binary: bool,
+    /// ★ 지금 값이 NULL(사용자 10-12 설계 B) — 값 창은 글자 "NULL" 대신 **상태 3택**(NULL · 빈 문자열 · 값)으로 보인다.
+    pub is_null: bool,
+    /// 이 결과의 방언은 빈 문자열 = NULL(Oracle) — 값 창에서 "빈 문자열" 상태를 내지 않는다.
+    pub empty_is_null: bool,
+    /// ★ "지금" 넣기용 열 종류·소수 초 정밀도(사용자 10-13 · 값 창 Ctrl+; / 우클릭 "지금으로") — 날짜류가 아니면 `Text`.
+    pub now_kind: CellKind,
+    pub now_prec: usize,
 }
 
 /// 주입 재조회 계획 — 결과가 이 문장으로 돌아오면 뒤쪽 `hidden.len()` 열은 숨은 열.
@@ -304,6 +316,8 @@ pub(crate) struct Grid {
     row_numbers: bool,
     /// 설정 `grid.null_text` — NULL 셀 글자(그리드·텍스트 보기·복사 **공통** · 기본 `NULL` · 사용자 09-17).
     null_text: String,
+    /// 설정 `grid.empty_text` — 빈 문자열 셀의 흐린 표식(**그리드만** · 기본 `''` · 비면 없음 · 사용자 10-12 설계 B).
+    empty_text: String,
     /// 설정 `grid.filter_list_max` — 정규식 필터 조회 SQL ③단계 값 목록 상한(기본 1,000 · 사용자 09-30).
     filter_list_max: usize,
     /// 설정 `grid.filter_strip` — 필터가 있을 때 그리드 위에 칩 한 줄(77 §2-2 · T-181).
@@ -408,6 +422,8 @@ pub(crate) struct Grid {
     now_ms: u64,
     /// 헤더 드래그 — 컬럼 이동(고스트 · 라이브 미리보기 · Esc 취소 · 09-19).
     hdr_drag: Option<HdrDrag>,
+    /// ★ Shift+더블클릭 판정(사용자 10-12 · 값 보기): 마지막 Shift+클릭 (셀, 시각) — 400 ms 안 같은 셀이면 값 창.
+    view_click: Option<((usize, usize), std::time::Instant)>,
     /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
     hdr_resize: Option<(usize, i32, i32)>,
     /// 헤더 경계 직전 클릭(컬럼 · 시각) — 400ms 안에 같은 경계면 더블클릭 = 자동 맞춤(사용자 09-16).
@@ -584,6 +600,7 @@ impl Default for Grid {
             top_border: true,
             row_focus_color: (None, None),
             null_text: "NULL".into(),
+            empty_text: "''".into(),
             filter_list_max: 1000,
             filter_strip: true,
             filter_pick_max: 30,
@@ -636,6 +653,7 @@ impl Default for Grid {
             ins_order: Vec::new(),
             now_ms: 0,
             hdr_drag: None,
+            view_click: None,
             hdr_resize: None,
             edge_click: None,
             autofit: None,
@@ -793,6 +811,7 @@ impl Grid {
             top_border: self.top_border,
             row_focus_color: self.row_focus_color,
             null_text: self.null_text.clone(),
+            empty_text: self.empty_text.clone(),
             filter_list_max: self.filter_list_max,
             filter_strip: self.filter_strip,
             filter_pick_max: self.filter_pick_max,
@@ -1605,6 +1624,17 @@ impl Grid {
 
     /// 선택 셀 전부 비움(NULL 또는 빈 문자열 · 설정) — 되돌리기 한 묶음.
     fn clear_selected_cells(&mut self, force_null: bool) {
+        let value = if force_null || self.edit_cfg.empty_as_null {
+            None
+        } else {
+            Some(String::new())
+        };
+        self.clear_selected_cells_with(value);
+    }
+
+    /// ★ 선택 셀을 주어진 값으로(설계 B · 10-12): 우클릭 "빈 문자열로" = `Some("")` — 설정 `grid.edit_empty`(Delete 비움 정책)와
+    /// 무관하게 빈 문자열을 넣는다(빈 문자열 = NULL인 방언(Oracle)은 메뉴 자체가 없다).
+    fn clear_selected_cells_with(&mut self, value: Option<String>) {
         if self.edit.is_none() || self.regions.is_empty() {
             return;
         }
@@ -1625,7 +1655,6 @@ impl Grid {
             }
             v
         };
-        let empty_as_null = self.edit_cfg.empty_as_null;
         let mut rejected = 0;
         let origs: Vec<Option<Option<String>>> = cells
             .iter()
@@ -1638,11 +1667,7 @@ impl Grid {
             e.cs.begin_group();
             for ((rref, ci), orig) in cells.iter().zip(origs.iter()) {
                 let spec = e.cols.get(*ci).map(|c| &c.spec);
-                let value: Option<String> = if force_null || empty_as_null {
-                    None
-                } else {
-                    Some(String::new())
-                };
+                let value = value.clone();
                 let ok = spec.is_none_or(|sp| sp.validate(value.as_deref()).is_ok());
                 if !ok {
                     rejected += 1;
@@ -2270,11 +2295,17 @@ impl Grid {
             .edit
             .as_ref()
             .and_then(|e| e.cs.cell(rref, ci).cloned());
+        // ★ NULL은 글자("NULL")가 아니라 **상태**로 넘긴다(사용자 10-12 설계 B · 값 창 3택) — 덧그림 NULL 또는 원본 NULL(덧그림 없음).
+        let is_null = matches!(
+            (&pending_blob, &orig, &over),
+            (None, _, Some(None)) | (None, Some(Value::Null), None)
+        );
         let (text, bytes) = match (pending_blob, &orig, over) {
             (Some(b), _, _) => (String::new(), Some(b)),
             (None, Some(Value::Bytes(b)), None) => (String::new(), Some(b.clone())),
             (None, _, Some(Some(s))) => (s, None),
             (None, _, Some(None)) => (String::new(), None),
+            (None, Some(Value::Null), None) => (String::new(), None),
             (None, Some(v), None) => (cell_text(v, &self.null_text), None),
             (None, None, None) => (self.cur_text(rref, ci).unwrap_or_default(), None),
         };
@@ -2288,6 +2319,7 @@ impl Grid {
             }
             None => (false, bytes.is_some()),
         };
+        let (now_kind, now_prec) = self.now_kind_at(ci);
         self.edit_reqs.push(EditRequest::ViewCell(ValueReq {
             row: rref,
             col: ci,
@@ -2296,6 +2328,11 @@ impl Grid {
             bytes,
             editable,
             binary,
+            is_null,
+            // 빈 문자열 = NULL은 **방언**의 성질(Oracle) — 설정 `grid.edit_empty`(Delete 비움 정책)와 섞지 않는다(협업 V1 ✗ 정정).
+            empty_is_null: self.dialect == Dialect::Oracle,
+            now_kind,
+            now_prec,
         }));
     }
 
@@ -2379,6 +2416,7 @@ impl Grid {
             EditAction::BeginEditWith(c) => self.begin_edit(Some(c), false),
             EditAction::ClearCells => self.clear_selected_cells(false),
             EditAction::SetNull => self.clear_selected_cells(true),
+            EditAction::SetEmpty => self.clear_selected_cells_with(Some(String::new())),
             EditAction::DuplicateRow => self.duplicate_row_here(),
             EditAction::InsertRow => self.insert_row_here(),
             EditAction::DeleteRow => self.delete_rows_here(),
@@ -2525,6 +2563,16 @@ impl Grid {
         if id == "grid.edit.identify" || id == "row.identify" {
             return self.edit_identify();
         }
+        // ★ 지금 날짜/시간(사용자 10-13): 메뉴 `grid.edit.now:<what>` · 키 Ctrl+; = `now_date`(열 종류대로) · Ctrl+Shift+; = `now_time`.
+        if let Some(what) = id.strip_prefix("grid.edit.now:") {
+            return self.edit_now(what);
+        }
+        if id == "grid.edit.now_date" {
+            return self.edit_now("auto");
+        }
+        if id == "grid.edit.now_time" {
+            return self.edit_now("time_or_append");
+        }
         match gridedit::action_for_command(id) {
             Some(a) => {
                 self.edit_action(a);
@@ -2532,6 +2580,84 @@ impl Grid {
             }
             None => false,
         }
+    }
+
+    /// ★ 날짜/시간 셀에 "지금"(사용자 10-13 · 엑셀 `Ctrl+;`/`Ctrl+Shift+;` 관례 + 우클릭 "지금으로 ▸"): `what` = `date` · `time` ·
+    /// `datetime` · `ts`(소수 초 = 열 정밀도 · 최소 ms) · `server`(`now` 토큰 → 커밋 때 방언 함수 · 87 §4) · `auto`(Ctrl+; = 열 종류대로:
+    /// Date = 날짜 · Time = 시간 · 그 밖 = 일시) · `time_or_append`(Ctrl+Shift+; = 편집 중 글이 날짜만이면 뒤에 시간을 붙인다 = 엑셀식).
+    /// 값은 **클라이언트 로컬 시각을 글자로**(사용자가 보고 고칠 수 있게 · 저장은 날짜 바인드) · 편집 중이면 편집 상자 글을 바꾸고
+    /// 아니면 셀 값으로 바로(검증 = 셀 종류 · 틀리면 상태줄).
+    pub(crate) fn edit_now(&mut self, what: &str) -> bool {
+        let Some((di, pos)) = self.sel_cur else {
+            return false;
+        };
+        let Some(&ci) = self.col_order.get(pos) else {
+            return false;
+        };
+        let Some(rref) = self.rref_at(di) else {
+            return false;
+        };
+        let (kind, prec) = self.now_kind_at(ci);
+        let now = nsql_log::now_local();
+        // 편집 중이 아니면 지금 셀 글을 넘긴다(`time_or_append`가 날짜 부분을 살린다 · 협업 V1 관찰 ③).
+        let cur = self.live_text().or_else(|| self.cur_text(rref, ci));
+        let text = now_text(what, kind, prec, &now, cur);
+        self.apply_now_text(rref, ci, text)
+    }
+
+    /// 편집 중인 상자의 글(열려 있을 때만).
+    fn live_text(&self) -> Option<String> {
+        self.edit
+            .as_ref()
+            .filter(|e| e.live.is_open())
+            .map(|e| e.live.text())
+    }
+
+    fn apply_now_text(&mut self, rref: RowRef, ci: usize, text: String) -> bool {
+        if let Some(e) = self.edit.as_mut() {
+            if e.live.is_open() {
+                e.live.textbox_mut().set_text(&text);
+                self.dirty = true;
+                return true;
+            }
+        }
+        match self.set_cell_value(rref, ci, Some(text)) {
+            Ok(()) => {
+                self.dirty = true;
+                true
+            }
+            Err(m) => {
+                self.status(m);
+                false
+            }
+        }
+    }
+
+    /// 열의 셀 종류와 소수 초 정밀도(`type_name`의 괄호 숫자 · 없으면 timestamp/datetime2 = 6 · datetime = 3 · 그 밖 0 · 상한 6).
+    fn now_kind_at(&self, ci: usize) -> (CellKind, usize) {
+        let mut kind = self
+            .edit
+            .as_ref()
+            .and_then(|e| e.cols.get(ci))
+            .map_or(CellKind::DateTime, |c| c.spec.kind);
+        let tn = self
+            .rs
+            .as_ref()
+            .and_then(|rs| rs.columns().get(ci))
+            .map(|c| c.type_name.to_ascii_lowercase())
+            .unwrap_or_default();
+        // ★ 편집 명세가 글(Text)이어도 **선언 타입 이름**이 날짜류면 그 종류로(SQLite = 타입 친화성이라 명세가 Text · 협업 V1 관찰 ②
+        //   · 헤더 배지와 같은 판정).
+        if kind == CellKind::Text {
+            let by_name = CellKind::from_type_name(&tn);
+            if matches!(
+                by_name,
+                CellKind::Date | CellKind::Time | CellKind::DateTime
+            ) {
+                kind = by_name;
+            }
+        }
+        (kind, type_precision(&tn))
     }
 
     /// 편집 상자의 메뉴/단축키가 남긴 클립보드 요청 — 복사·잘라내기는 그리드의 복사 통로(`pending_copy`)로 · 붙여넣기는 호스트에.
@@ -3065,6 +3191,8 @@ impl Grid {
 
     /// 도구줄 툴팁·우클릭 메뉴 — 호스트가 최상위 패스(UI 글꼴)에서 그린다.
     pub(crate) fn paint_overlays(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        // ★ 열 끌기 칩(조건 바·편집 탭 위 · 사용자 10-12) = 팝업 층(편집기 위에도 보이게).
+        self.paint_drag_chip(dc, th);
         for tb in [
             &self.tb_view,
             &self.tb_refresh,
@@ -3617,6 +3745,14 @@ impl Grid {
     ) {
         self.row_focus = on;
         self.row_focus_color = (color, alpha);
+    }
+
+    /// 빈 문자열 표식(설정 `grid.empty_text` · 그리기뿐이라 폭·텍스트 보기는 안 건드린다).
+    pub(crate) fn set_empty_text(&mut self, text: &str) {
+        if self.empty_text != text {
+            self.empty_text = text.to_string();
+            self.dirty = true;
+        }
     }
 
     pub(crate) fn set_null_text(&mut self, text: &str) {
@@ -4231,6 +4367,65 @@ impl Grid {
         self.cond.set_host(host);
         self.cond.set_rect(self.cond_rect(), s);
         self.cond.paint(dc, th, std::time::Instant::now());
+    }
+
+    /// ★ 열 끌기 보류 중(조건 바·그리드 밖 · 사용자 10-12)의 칩 = (열 이름, 커서) — 호스트가 팝업 층에서 그린다
+    /// ([`Self::paint_overlays`]) · 편집기 놓기 판정에도 쓴다.
+    pub(crate) fn col_drag_chip(&self) -> Option<(String, Point)> {
+        let d = self.hdr_drag.as_ref().filter(|d| d.active && d.parked)?;
+        let ci = *self.col_order.get(d.pos)?;
+        let name = self.rs.as_ref()?.columns().get(ci)?.name.clone();
+        Some((
+            name,
+            Point {
+                x: d.cur_x,
+                y: d.cur_y,
+            },
+        ))
+    }
+
+    /// 끌고 있는 열의 **인용된 이름**(조건 바 놓기·조건 메뉴와 같은 정책 `identq::quote`) — 편집기에 놓을 때 호스트가 넣는다.
+    pub(crate) fn col_drag_quoted(&self) -> Option<String> {
+        let (name, _) = self.col_drag_chip()?;
+        Some(crate::identq::quote(
+            self.dialect,
+            &name,
+            self.cond_quote_always,
+        ))
+    }
+
+    /// 보류 중 칩 그리기(팝업 층 · 창 안으로 밀어 넣음 · 헤더 고스트와 같은 모양) — 조건 바·편집 탭 어디서든 어떤 열인지 보인다.
+    fn paint_drag_chip(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        let Some((name, p)) = self.col_drag_chip() else {
+            return;
+        };
+        let s = self.live_scale;
+        let host = dc
+            .surface_size()
+            .map_or(self.menu_host(), |(w, h)| Rect::new(0, 0, w, h));
+        let pad = (8.0 * s).round() as i32;
+        dc.select_font(FontSlot::Base, false);
+        let tw = dc.text_width(&name);
+        let h = (22.0 * s).round() as i32;
+        let w = tw + pad * 2;
+        let mut r = Rect::new(p.x + (14.0 * s).round() as i32, p.y - h / 2, w, h);
+        if r.right() > host.right() {
+            r.x = (p.x - w - (6.0 * s).round() as i32).max(host.x);
+        }
+        r.y = r.y.clamp(host.y, (host.bottom() - h).max(host.y));
+        dc.fill_rect(r, th.chrome_bg);
+        dc.fill_rect(Rect::new(r.x, r.y, r.w, 1), th.accent);
+        dc.fill_rect(Rect::new(r.x, r.bottom() - 1, r.w, 1), th.accent);
+        dc.fill_rect(Rect::new(r.x, r.y, 1, r.h), th.accent);
+        dc.fill_rect(Rect::new(r.right() - 1, r.y, 1, r.h), th.accent);
+        let ty = dc.text_center_y(r.y, r.h);
+        dc.text(
+            r.x + pad,
+            ty,
+            Rect::new(r.x + 1, r.y + 1, (r.w - 2).max(0), (r.h - 2).max(0)),
+            &name,
+            th.text,
+        );
     }
 
     /// 호스트가 조건 바를 따로 그린다고 알린다(`paint_cond` · 매 프레임 그리기 전에).
@@ -5257,6 +5452,36 @@ impl Grid {
                 "grid.edit.set_null",
                 t(Msg::MnGeSetNull),
                 can && has,
+            ));
+            // ★ "빈 문자열로"(사용자 10-12 설계 B) = 설정과 무관하게 '' · 빈 문자열이 NULL인 방언(Oracle)에서는 숨김.
+            if self.dialect != Dialect::Oracle {
+                items.push(CtxItem::maybe(
+                    "grid.edit.set_empty",
+                    t(Msg::MnGeSetEmpty),
+                    can && has,
+                ));
+            }
+            // ★ "지금으로 ▸"(사용자 10-13): 날짜·시간·일시 열에서만 활성 · 값은 클라이언트 로컬 시각 글자 · 서버 시각 = `now` 토큰.
+            let date_col = self
+                .sel_cur
+                .and_then(|(_, pos)| self.col_order.get(pos).copied())
+                .is_some_and(|ci| {
+                    matches!(
+                        self.now_kind_at(ci).0,
+                        CellKind::Date | CellKind::Time | CellKind::DateTime
+                    )
+                });
+            let en = can && has && date_col;
+            items.push(CtxItem::submenu(
+                "grid.edit.now",
+                t(Msg::MnGeNow),
+                vec![
+                    CtxItem::maybe("grid.edit.now:date", t(Msg::MnGeNowDate), en),
+                    CtxItem::maybe("grid.edit.now:time", t(Msg::MnGeNowTime), en),
+                    CtxItem::maybe("grid.edit.now:datetime", t(Msg::MnGeNowDateTime), en),
+                    CtxItem::maybe("grid.edit.now:ts", t(Msg::MnGeNowTs), en),
+                    CtxItem::maybe("grid.edit.now:server", t(Msg::MnGeNowServer), en),
+                ],
             ));
             items.push(CtxItem::maybe(
                 "grid.edit.dup_row",
@@ -6390,6 +6615,22 @@ impl Grid {
             self.move_sel(0, dx, false, false);
             return;
         }
+        // ★ Shift+Enter = 값 보기(사용자 10-12 · LOB = LOB 창 · 일반 셀 = 값 미리보기): 편집 켬/끔·읽기 전용과 **무관**하게 —
+        //   아래 편집 동작 분기는 편집이 켜진 결과에서만 돌므로 여기서 먼저 받는다(값 창은 편집이 아니다 · 마우스 짝 = Shift+더블클릭).
+        if self.rs.is_some()
+            && self.sel_cur.is_some()
+            && matches!(
+                ev,
+                InputEvent::Key {
+                    key: Key::Enter,
+                    shift: true,
+                    ..
+                }
+            )
+        {
+            self.request_view_value();
+            return;
+        }
         // 편집 동작(편집기가 닫혀 있을 때): Enter/타이핑 = 진입 · Delete/Backspace = 비움 · Undo/Redo.
         if self.edit.is_some() && self.sel_cur.is_some() && self.rs.is_some() {
             if let Some(a) = gridedit::action_for_event(ev, false) {
@@ -6471,6 +6712,24 @@ impl Grid {
                     primary,
                 } if !hdr.contains(Point { x, y }) => {
                     if let Some(cell) = self.cell_at_point(x, y) {
+                        // ★ Shift+더블클릭(400 ms · 같은 셀) = 값 보기(사용자 10-12 · LOB = LOB 창 · 일반 셀 = 값 미리보기 ·
+                        //   키보드 짝 = Shift+Enter). 첫 Shift+클릭은 종전대로 범위 확장이고, 둘째가 오면 그 셀만 선택하고 연다.
+                        if shift && !primary {
+                            let now = std::time::Instant::now();
+                            let dbl = self.view_click.is_some_and(|(c, t0)| {
+                                c == cell && now.duration_since(t0).as_millis() < 400
+                            });
+                            self.view_click = Some((cell, now));
+                            if dbl {
+                                self.view_click = None;
+                                self.select_only(cell);
+                                self.drag_sel = None;
+                                self.request_view_value();
+                                return;
+                            }
+                        } else {
+                            self.view_click = None;
+                        }
                         // 더블클릭(400 ms · 같은 셀 · 수식키 없음) = 편집 진입(엑셀 · 87 §6).
                         if !shift && !primary && self.edit.is_some() {
                             let now = std::time::Instant::now();
@@ -6694,6 +6953,8 @@ impl Grid {
                             shift,
                             grab_dx: x - self.col_x(pos),
                             orig: self.col_order.clone(),
+                            cur_y: y,
+                            parked: false,
                         });
                     }
                     return;
@@ -6731,6 +6992,7 @@ impl Grid {
                 InputEvent::MouseMove { x, y } if self.hdr_drag.is_some() => {
                     if let Some(d) = self.hdr_drag.as_mut() {
                         d.cur_x = x;
+                        d.cur_y = y;
                         if (x - d.press_x).abs() > 4 {
                             d.active = true;
                         }
@@ -6742,7 +7004,36 @@ impl Grid {
                     if self.cond.set_drop_hot(over_cond) {
                         self.dirty = true;
                     }
-                    self.preview_col_drag();
+                    // ★ 조건 바 위 = 열 이동 미리보기 **보류**(사용자 10-12): 열 순서를 시작 때로 되돌리고(= 끌기 전 모양) 커서 옆에
+                    //   끌고 있는 열 이름 칩만 보인다 · 헤더로 돌아오면 보류를 풀어 다시 이동 미리보기(`preview_col_drag`가 커서
+                    //   위치로 자리를 다시 잡는다). `pos`는 되돌린 순서에서 그 열의 자리로 맞춘다(놓기가 `col_order[pos]`를 읽는다).
+                    //   그리드 **밖**(편집 탭 등 · 호스트가 드래그 중엔 밖의 이동도 넘겨 준다)도 같은 보류 — 칩은 호스트 팝업 층에.
+                    let over_cond = over_cond
+                        || (self.col_dragging() && !self.outer_bounds().contains(Point { x, y }));
+                    let parked = self.hdr_drag.as_ref().is_some_and(|d| d.parked);
+                    if over_cond && !parked {
+                        if let Some(d) = self.hdr_drag.as_mut() {
+                            let ci = self.col_order.get(d.pos).copied();
+                            if d.orig.len() == self.col_order.len() {
+                                self.col_order = d.orig.clone();
+                            }
+                            if let Some(p) =
+                                ci.and_then(|ci| self.col_order.iter().position(|&c| c == ci))
+                            {
+                                d.pos = p;
+                            }
+                            d.parked = true;
+                        }
+                        self.dirty = true;
+                    } else if !over_cond && parked {
+                        if let Some(d) = self.hdr_drag.as_mut() {
+                            d.parked = false;
+                        }
+                        self.dirty = true;
+                    }
+                    if !self.hdr_drag.as_ref().is_some_and(|d| d.parked) {
+                        self.preview_col_drag();
+                    }
                     return;
                 }
                 InputEvent::MouseUp { x, y } if self.hdr_drag.is_some() => {
@@ -7080,10 +7371,18 @@ impl Grid {
                         ),
                         (None, None) => (String::new(), false, true),
                     };
+                    // ★ 빈 문자열(길이 0 · NULL 아님)은 흐린 표식 `grid.empty_text`로(사용자 10-12 설계 B · 그리기뿐 · 복사·텍스트
+                    //   보기는 빈 채로) — NULL과 눈으로 구분된다(SQL Server·PG는 둘이 다른 값).
+                    let is_empty = !is_null && txt.is_empty() && !self.empty_text.is_empty();
+                    let txt = if is_empty {
+                        self.empty_text.clone()
+                    } else {
+                        txt
+                    };
                     // NULL은 흐린 글자보다 **더 흐리게**(배경 쪽으로 45 % · 사용자 09-22) · 삭제 행은 전체 흐림.
                     let color = if changed {
                         th.warn
-                    } else if is_null {
+                    } else if is_null || is_empty {
                         th.text_dim.lerp(th.panel_bg, 0.45)
                     } else if status == RowStatus::Deleted {
                         th.text_dim
@@ -7201,7 +7500,8 @@ impl Grid {
         let mut x = gx0 - self.scroll_x;
         self.mark_rects.clear();
         self.funnel_rects.clear();
-        let dragging = self.hdr_drag.as_ref().filter(|d| d.active);
+        // 보류 중(조건 바 위)에는 헤더에 자리 표시·고스트를 그리지 않는다(열은 제자리 · 칩은 `paint_cond`가 커서 옆에).
+        let dragging = self.hdr_drag.as_ref().filter(|d| d.active && !d.parked);
         let mut ghost: Option<(Rect, String)> = None;
         // ★ 표식(깔때기·정렬 ▲/▼·순번)이 뒤에 생겨 열 이름이 잘리면 열을 **그만큼 넓힌다**(늘리기만 · 상한 안 · 협업 V1 ③d 10-06).
         let mut grow: Vec<(usize, i32)> = Vec::new();
@@ -8701,6 +9001,75 @@ fn cell_text(v: &Value, null: &str) -> String {
     }
 }
 
+/// ★ 타입 이름의 소수 초 정밀도(순수 · 10-13): 괄호 첫 숫자(`timestamp(6)` · `datetime2(3)` · `time(0)`) · 없으면 timestamp/datetime2 = 6 ·
+/// datetime = 3 · 그 밖 0 · 상한 6(로컬 시각은 ms까지라 그 뒤는 0으로 채운다).
+pub(crate) fn type_precision(type_name_lower: &str) -> usize {
+    let from_paren = type_name_lower
+        .split_once('(')
+        .and_then(|(_, r)| r.split([',', ')']).next())
+        .and_then(|d| d.trim().parse::<usize>().ok());
+    let p = from_paren.unwrap_or(
+        if type_name_lower.contains("timestamp") || type_name_lower.contains("datetime2") {
+            6
+        } else if type_name_lower.contains("datetime") {
+            3
+        } else {
+            0
+        },
+    );
+    p.min(6)
+}
+
+/// ★ "지금" 글자(순수 · 10-13): `what`별 형식 — 날짜 `YYYY-MM-DD` · 시간 `HH:MM:SS[.fff…]` · 일시 = 둘 합침 · ts = 일시 + 소수 초
+/// (정밀도 · 최소 3) · server = `now` 토큰 · auto = 열 종류대로 · time_or_append = 편집 글이 날짜만이면 뒤에 시간(엑셀식).
+pub(crate) fn now_text(
+    what: &str,
+    kind: CellKind,
+    prec: usize,
+    now: &nsql_log::LocalTime,
+    live: Option<String>,
+) -> String {
+    let date = now.date_only();
+    let time = |p: usize| {
+        let mut s = format!("{:02}:{:02}:{:02}", now.hour, now.min, now.sec);
+        if p > 0 {
+            let ms = format!("{:03}", now.ms);
+            let digits: String = ms.chars().chain(std::iter::repeat('0')).take(p).collect();
+            s.push('.');
+            s.push_str(&digits);
+        }
+        s
+    };
+    match what {
+        "date" => date,
+        "time" => time(0),
+        "datetime" => format!("{date} {}", time(0)),
+        "ts" => format!("{date} {}", time(prec.max(3))),
+        "server" => "now".to_string(),
+        // 글의 머리 10자가 `YYYY-MM-DD` 꼴이면(편집 중 날짜만 · 또는 셀의 기존 일시) 그 날짜 + 지금 시간 · 아니면 시간만.
+        // ★ 날짜만 있는 열(Date)에는 시간이 들어갈 자리가 없다 → Ctrl+Shift+;도 날짜(Ctrl+;와 같음 · 사용자 10-13 "DATE 열에서
+        //   Ctrl+Shift+;가 안 된다" = 종전엔 시간 글이 검증에서 거부돼 아무 일도 없어 보였다).
+        "time_or_append" if kind == CellKind::Date => date,
+        "time_or_append" => match live.as_deref().map(str::trim) {
+            Some(t)
+                if kind != CellKind::Time
+                    && t.len() >= 10
+                    && t.as_bytes()[4] == b'-'
+                    && t.as_bytes()[7] == b'-'
+                    && t.chars().take(10).all(|c| c.is_ascii_digit() || c == '-') =>
+            {
+                format!("{} {}", &t[..10], time(prec))
+            }
+            _ => time(prec),
+        },
+        _ => match kind {
+            CellKind::Date => date,
+            CellKind::Time => time(prec),
+            _ => format!("{date} {}", time(prec)),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9484,6 +9853,102 @@ mod tests {
 
     fn grid_with(cols: &[i32]) -> Grid {
         grid_with_rows(cols, 1)
+    }
+
+    /// ★ "지금" 글자(10-13 · 순수): what별 형식 · 정밀도 · auto = 열 종류 · time_or_append = 편집 글이 날짜만이면 뒤에 시간.
+    #[test]
+    fn now_text_formats_by_what_kind_and_precision() {
+        let now = nsql_log::LocalTime {
+            year: 2026,
+            month: 10,
+            day: 13,
+            hour: 1,
+            min: 2,
+            sec: 3,
+            ms: 45,
+        };
+        use super::{now_text, type_precision};
+        assert_eq!(
+            now_text("date", CellKind::DateTime, 0, &now, None),
+            "2026-10-13"
+        );
+        assert_eq!(now_text("time", CellKind::Time, 3, &now, None), "01:02:03");
+        assert_eq!(
+            now_text("datetime", CellKind::DateTime, 6, &now, None),
+            "2026-10-13 01:02:03"
+        );
+        assert_eq!(
+            now_text("ts", CellKind::DateTime, 6, &now, None),
+            "2026-10-13 01:02:03.045000",
+            "소수 초 = 정밀도(ms 뒤는 0)"
+        );
+        assert_eq!(
+            now_text("ts", CellKind::DateTime, 0, &now, None),
+            "2026-10-13 01:02:03.045",
+            "ts 최소 ms"
+        );
+        assert_eq!(now_text("server", CellKind::Date, 0, &now, None), "now");
+        assert_eq!(
+            now_text("auto", CellKind::Date, 6, &now, None),
+            "2026-10-13",
+            "Date 열 = 날짜만"
+        );
+        assert_eq!(now_text("auto", CellKind::Time, 0, &now, None), "01:02:03");
+        assert_eq!(
+            now_text("auto", CellKind::DateTime, 3, &now, None),
+            "2026-10-13 01:02:03.045"
+        );
+        assert_eq!(
+            now_text(
+                "time_or_append",
+                CellKind::DateTime,
+                0,
+                &now,
+                Some("2026-01-01".into())
+            ),
+            "2026-01-01 01:02:03",
+            "편집 중 날짜만 = 뒤에 시간(엑셀식)"
+        );
+        assert_eq!(
+            now_text(
+                "time_or_append",
+                CellKind::DateTime,
+                0,
+                &now,
+                Some("abc".into())
+            ),
+            "01:02:03"
+        );
+        assert_eq!(
+            now_text(
+                "time_or_append",
+                CellKind::DateTime,
+                0,
+                &now,
+                Some("2020-01-01 09:09:09".into())
+            ),
+            "2020-01-01 01:02:03",
+            "편집 밖 일시 셀 = 기존 날짜 유지 + 지금 시간(협업 V1 관찰 ③)"
+        );
+        assert_eq!(
+            now_text(
+                "time_or_append",
+                CellKind::Date,
+                0,
+                &now,
+                Some("2020-01-01".into())
+            ),
+            "2026-10-13",
+            "Date 열 = Ctrl+Shift+;도 날짜(시간 자리 없음 · 사용자 10-13)"
+        );
+        assert_eq!(type_precision("timestamp(6)"), 6);
+        assert_eq!(type_precision("datetime2(3)"), 3);
+        assert_eq!(type_precision("time(0)"), 0);
+        assert_eq!(type_precision("timestamp"), 6);
+        assert_eq!(type_precision("datetime"), 3);
+        assert_eq!(type_precision("date"), 0);
+        assert_eq!(type_precision("timestamp(9) with time zone"), 6, "상한 6");
+        assert_eq!(type_precision("numeric(10,2)"), 6, "괄호 첫 숫자(상한)");
     }
 
     fn grid_with_rows(cols: &[i32], n: usize) -> Grid {
@@ -10785,7 +11250,8 @@ mod edit_key_path_tests {
             .iter()
             .filter(|it| matches!(it, CtxItem::Item { .. }))
             .count();
-        assert!(n <= 16, "상위 항목 {n}");
+        // 10-12·13 = "빈 문자열로" · "지금으로 ▸" 둘이 늘어 16 → 18(상한은 "한 화면에 스크롤 없이" 기준 · 61 §2-2 ⑤).
+        assert!(n <= 18, "상위 항목 {n}");
     }
 
     /// 88 §3 2(T-232): 포커스 밖 = 비활성 선택색(알파 절반).

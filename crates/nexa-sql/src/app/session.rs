@@ -574,6 +574,23 @@ impl App {
             .filter_map(|s| s.spec.clone())
             .collect();
         self.explorer.sync_refs(&live);
+        // ★ 전용 세션 표식(사용자 10-12 · 설계 A): 탐색기 연결 행에 'P' 칩 + "전용 · <탭 이름>" · 헤더 "전용 N" — 전용 세션의
+        //   (스펙, 소유 탭 제목)을 넘긴다(탭 제목은 바뀔 수 있으니 매 동기화마다).
+        let titles: std::collections::HashMap<u64, String> =
+            self.editors.tab_titles().into_iter().collect();
+        let private: Vec<(ConnectSpec, String)> = self
+            .all_sess()
+            .filter(|s| s.is_private() && (s.connected || s.idle_closed) && !s.closing)
+            .filter_map(|s| {
+                let spec = s.spec.clone()?;
+                let tab = s
+                    .owner
+                    .and_then(|t| titles.get(&t).cloned())
+                    .unwrap_or_default();
+                Some((spec, tab))
+            })
+            .collect();
+        self.explorer.set_private(private);
         let cur = self.sess.spec.clone();
         self.explorer.show_for(cur.as_ref());
         self.sync_gate();

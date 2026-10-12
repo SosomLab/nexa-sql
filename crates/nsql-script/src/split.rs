@@ -42,8 +42,9 @@ pub struct Item {
 /// 캐럿(바이트 오프셋) 위치의 **한 문장** — 편집기 `Ctrl+Enter`(사용자 09-14 · `;`가 끝을 나타낸다는 기본 규칙 =
 /// [`split_script`]와 같은 분리기 · `/` 단독 줄 · PL/SQL 블록도 같은 규칙). GUI와 CLI 셸이 같은 함수를 쓴다.
 ///
-/// 규칙: 캐럿이 문장 안이면 그 문장 · 문장 사이(공백·주석)면 **바로 앞** 문장 · 첫 문장보다 앞이면 첫 문장 ·
-/// 문장이 없으면 `None`. 캐럿이 `;` 바로 뒤(span 끝)도 그 문장으로 본다.
+/// 규칙: 캐럿이 문장 안이면 그 문장 · 문장 사이(공백·주석)면 **줄 거리가 가까운 쪽**(동률 = 바로 앞 문장 · 사용자 10-13
+/// "빈 줄에서 Ctrl+Enter가 14줄 위의 첫 블록을 실행" → 바로 아래 문장) · 첫 문장보다 앞이면 첫 문장 · 문장이 없으면 `None`.
+/// 캐럿이 `;` 바로 뒤(span 끝)도 그 문장으로 본다. 같은 줄의 꼬리 주석(`SELECT 1; -- note`)은 거리 0 = 앞 문장.
 pub fn statement_at(src: &str, byte_pos: usize) -> Option<Item> {
     statement_at_in(src, byte_pos, None)
 }
@@ -53,15 +54,30 @@ pub fn statement_at_in(src: &str, byte_pos: usize, dialect: Option<Dialect>) -> 
     let items = split_script_in(src, dialect);
     let pos = byte_pos.min(src.len());
     let mut chosen: Option<usize> = None;
+    let mut inside = false;
     for (i, it) in items.iter().enumerate() {
         if it.span.start <= pos && pos <= it.span.end {
             chosen = Some(i);
+            inside = true;
             break;
         }
         if it.span.end < pos {
             chosen = Some(i);
         } else {
             break;
+        }
+    }
+    // ★ 문장 사이: 앞 문장 끝 ↔ 캐럿 ↔ 다음 문장 시작의 **줄 거리**를 재어 가까운 쪽(동률 = 앞).
+    if !inside {
+        if let Some(i) = chosen {
+            if let Some(next) = items.get(i + 1) {
+                let prev_end = items[i].span.end.min(pos);
+                let up = src[prev_end..pos].matches('\n').count();
+                let down = src[pos..next.span.start.max(pos)].matches('\n').count();
+                if down < up {
+                    chosen = Some(i + 1);
+                }
+            }
         }
     }
     let i = chosen.or_else(|| (!items.is_empty()).then_some(0))?;
@@ -615,6 +631,30 @@ EXEC :V := 'x';";
             text_at(second + 10),
             "SELECT 2
   FROM dual"
+        );
+    }
+
+    /// ★ 문장 사이 = 줄 거리가 가까운 쪽(사용자 10-13): 블록 뒤 빈 줄 여러 개 아래의 빈 줄에서 = 바로 아래 문장 ·
+    /// 동률(앞뒤 한 줄씩)·같은 줄 꼬리 주석 = 앞 문장(종전).
+    #[test]
+    fn caret_in_gap_picks_nearer_statement_by_lines() {
+        let src = "BEGIN NULL; END;\n/\n\n\n\n-- head\nSELECT 9 FROM dual;";
+        let blank = src.find("\n\n\n\n").unwrap() + 3; // 셋째 빈 줄(위로 3줄 · 아래로 1줄)
+        let it = statement_at_in(src, blank, Some(Dialect::Oracle)).unwrap();
+        assert!(
+            it.text.starts_with("SELECT 9"),
+            "가까운 아래 문장: {}",
+            it.text
+        );
+        let just_after = src.find("/\n").unwrap() + 2; // `/` 바로 다음 줄(위 0 · 아래 4)
+        let it = statement_at_in(src, just_after, Some(Dialect::Oracle)).unwrap();
+        assert!(it.text.starts_with("BEGIN"), "앞이 더 가까움: {}", it.text);
+        let tail = "SELECT 1 FROM dual; -- note\nSELECT 2 FROM dual;";
+        let note = tail.find("note").unwrap();
+        assert_eq!(
+            statement_at(tail, note).unwrap().text,
+            "SELECT 1 FROM dual",
+            "꼬리 주석 = 앞 문장"
         );
     }
 

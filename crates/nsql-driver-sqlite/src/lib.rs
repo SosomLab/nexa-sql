@@ -267,10 +267,18 @@ fn serve_execute(
         let _ = reply.send(r);
         return (None, false);
     }
+    // ★ 선언 타입(사용자 10-13): SQLite는 값마다 형이 다르지만(타입 친화성) 표 열의 **선언 타입**(`DATE` · `TIMESTAMP(6)` …)은
+    //   `sqlite3_column_decltype`로 알 수 있다 → `type_name`에 그대로(식·집계 열은 빈 문자열 = 종전). 그리드가 날짜류 판정·정밀도·
+    //   배지에 쓴다(종전엔 늘 빈 문자열이라 값 표본으로만 추정).
+    let decl: Vec<String> = stmt
+        .columns()
+        .iter()
+        .map(|c| c.decl_type().unwrap_or("").to_string())
+        .collect();
     let columns: Vec<Column> = (0..ncols)
         .map(|i| Column {
             name: stmt.column_name(i).unwrap_or("?").to_string(),
-            type_name: String::new(),
+            type_name: decl.get(i).cloned().unwrap_or_default(),
         })
         .collect();
     let mut rows = match stmt.query(params_from_iter(params.iter())) {

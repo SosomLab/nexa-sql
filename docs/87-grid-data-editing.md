@@ -100,6 +100,20 @@
 
 표시(편집 진입 시 상자에 넣는 값) = 그리드 표시 문자열(41 규칙 · 이미 ISO) → 사용자가 부분만 고쳐도 된다. 서버로 갈 때는 **바인드 파라미터(진짜 날짜 타입 · T-151)** — 문자열 리터럴이 아니다(NLS/지역 설정 무관).
 
+### 4-1. "지금" 넣기(사용자 10-13 "날짜 셀에 지금 일자·시간·일시·타임스탬프" · 조사 = §부록 A · 사용자 "추천대로 우선 구현")
+
+| 입력 | 결과 |
+|---|---|
+| **Ctrl+;**(`grid.edit.now_date`) | 열 종류대로 지금 — Date = `YYYY-MM-DD` · Time = `HH:MM:SS` · DateTime/Timestamp = 일시 + **열 정밀도만큼 소수 초**(TIMESTAMP(3) = `.fff` · (6) = `.ffffff`) |
+| **Ctrl+Shift+;**(`grid.edit.now_time`) | 지금 시간 · 편집 중 글이 날짜만이면 뒤에 붙임(엑셀식) · 편집 밖 일시 셀 = **날짜 유지 + 지금 시간**(머리 10자 `YYYY-MM-DD`) · **Date 열 = 날짜**(시간 글은 검증에서 거부되므로) |
+| 우클릭 **지금으로 ▸** | 날짜 · 시간 · 일시 · 타임스탬프(소수 초) · 서버 시각(`now` 토큰 → 커밋 때 방언 함수) — 날짜류 열에서만 활성(글 열 = 흐림) |
+| 값 창(Shift+Enter) | 본문에서 Ctrl+; / Ctrl+Shift+;(= `:`) · 본문 우클릭 ▸ 지금으로 ▸ 5항목(`TextBox::set_menu_extras` · `EditCtxAction::Custom("now:*")`) · 값 상태·편집 가능일 때(`ValueReq.now_kind/now_prec`) |
+
+- 값 = **클라이언트 로컬 시각 글자**(편집 중 = 상자 글 교체 · 아니면 셀 값 = 검증 경로) · 서버 시계가 필요하면 "서버 시각" = `now` 토큰 · 순수 함수 `now_text`/`type_precision` + 단위 시험 · 셀 편집기 열린 중에도 키가 통함(event_loop 예외).
+- 열 종류 판정 = 편집 명세 형식 → 없으면 **선언 타입 이름 폴백**(`now_kind_at`) · ⚠ SQLite는 편집 명세가 늘 Text라 폴백이 필수인데 1차·2차 빌드는 SQLite 드라이버가 `type_name`을 빈 문자열로 돌려 네 열 모두 일시가 들어갔음 → rusqlite `column_decltype` 기능 + `Column.type_name = 선언 타입`(d=DATE · ts=TIMESTAMP(6))으로 정정(협업 V1 10-13).
+- 남은 것 = 편집기 "지금 ▾" 버튼(T-331) · SQLite 선언 타입으로 열 머리 배지 재검토(T-332).
+- V1(협업 10-13 · Debug 02:10): SQLite `t(d DATE, tm TIME, dt DATETIME, ts TIMESTAMP(6))` = `2026-10-13` · `02:10:51` · `2026-10-13 02:10:52.246` · `2026-10-13 02:10:52.641000` ✓ · d `now_time` = `2026-10-13` ✓ · dt 편집 밖 `now_time` = `2020-01-01 02:04:44` ✓ · Oracle 임시 표 `NSQLT_NOW`(D DATE · TS(6) · TS3) = D 일시 · TS `.244000` · TS3 `.841` ✓ · `now:server` = 셀 `now` ✓ · 글 열 메뉴 흐림 ✓ · 값 창 우클릭 메뉴는 별도 창이라 자동 시험 밖(사용자 실기).
+
 ---
 
 ## 5. 대량 타입(LOB) — 보기 우선
@@ -125,6 +139,34 @@
 
 남음 = 프로그레시브 JPEG(기저는 §242 자체 디코더 ✅ · Adam7 ✅) · CLOB 편집 상자의 큰 파일 모드(59) · 이미지 확대/축소·저장 형식 변환.
 
+### 5-2. 값 보기 바로 열기 = Shift+Enter · Shift+더블클릭(10-12 · 사용자 결정 · 121차)
+
+- 동작 = 선택 셀의 값 창(§5-1)을 편집 진입 없이 바로 연다 · **편집 켬/읽기 전용과 무관**(키 경로 = nexa-ui `gridedit/keymap.rs` Shift+Enter → `EditAction::ViewValue` · 마우스 = `grid.rs` MouseDown Shift+더블클릭 400 ms 판정 `view_click`). 더블클릭(Shift 없음)·Enter·F2 = 종전대로 편집 진입.
+- 업계 조사(공식 문서 · 10-12 협업):
+
+| 제품 | 셀 편집 시작 | 값 뷰어·별도 편집기 | Ctrl/Shift/Alt+클릭 | 출처 |
+|---|---|---|---|---|
+| DBeaver | 더블클릭 · Enter "inline editor" | **Shift+Enter** "Edit cell value in separate dialog/editor" · 도구줄 Edit cell · CLOB/BLOB = 새 탭 | 문서 없음 | dbeaver.com/docs/dbeaver/Shortcuts/ · …/Data-Viewing-and-Editing/ |
+| DataGrip | 더블클릭 · Enter(구판 F2) | **Shift+Enter** "Open in Value Editor"(구판 2021.2 = "Maximize") | 행 머리 Ctrl+클릭 다중 | jetbrains.com/help/datagrip/cells.html · …/2021.2/cells.html |
+| Navicat | 클릭 뒤 타이핑 | **Ctrl+Enter** "Edit Data with Opening Editor" · Text/Hex/Image 보조 편집기 | Ctrl+클릭 개별 · Shift+클릭 범위 | navicat_en.pdf(Hot Keys) |
+| TablePlus | 더블클릭 | Quick Look = 우클릭 · **가운데 버튼 클릭** · Space = 행 상세 | **⌥+클릭 = quick edit 메뉴** | docs.tableplus.com |
+| HeidiSQL | F2 · 길게 클릭 | 문서 없음 | 문서 없음 | heidisql.com/help.php |
+| SSMS | 결과 그리드 편집 불가(Edit Top 200 · F2) | 없음 · Ctrl+0 = NULL | 문서 없음 | learn.microsoft.com/ssms |
+| SQL Developer · PL/SQL Developer · Toad | 더블클릭/직접 | 셀 "…" 버튼(PL/SQL Dev 외부 앱 연결 시 Ctrl+클릭 = 내부 LDE · Toad 우클릭 Popup Editor) · 키 없음 | 문서 없음 | docs.oracle.com · allroundautomations 포럼(추정) · Quest KB(추정) |
+| Excel(기준) | F2 · 더블클릭 · 타이핑 | Alt+Enter 셀 안 줄 바꿈 · Ctrl+Shift+U 수식 줄 · Ctrl+Enter 범위 채우기 | Ctrl+클릭 추가 · Shift+클릭 범위 | support.microsoft.com |
+
+- 관찰 = **조합키+더블클릭은 어느 제품도 문서화 안 함** · 별도 값 편집기 공통 키 = Shift+Enter(DBeaver·DataGrip) · Ctrl/Shift+클릭은 선택(개별/범위)에 쓰이는 것이 업계 공통 → Shift+더블클릭은 첫 클릭이 범위 선택과 겹칠 수 있음(우리 판정은 같은 셀 400 ms 두 번).
+
+### 5-3. NULL · 빈 문자열 구분(사용자 10-12 · 확정 = 값 창 3택 + 그리드 표식)
+
+- **값 창 3택**: 편집 가능한 글 셀(`can_pick`)이면 **[NULL] [빈 문자열] [값]** 버튼 · NULL/빈 문자열 상태 = 본문 비움·읽기 전용 + 안내 줄("NULL - 값이 없습니다…" · "빈 문자열(길이 0) - NULL과 다릅니다…") · **[셀에 반영] = 고른 상태대로**(`ApplyCell.null`) · `ValueReq.is_null/empty_is_null` · 읽기 전용 결과 = 버튼·안내 없음(설계).
+- **Oracle**(`empty_is_null` = **방언 == Oracle** · 빈 문자열을 NULL로 저장) = [빈 문자열] 버튼 없음 + 안내 "이 DBMS는 빈 문자열을 NULL로 저장합니다(Oracle) - 빈 문자열 상태가 없습니다." · 우클릭 "빈 문자열로" 숨김. ⚠ 1차 구현은 `empty_is_null`을 설정 `grid.edit_empty`(Delete 비움 = NULL · 전 DBMS 기본)로 계산해 SQLite에도 Oracle 안내가 뜨고 메뉴가 빠졌음 → 방언 기준으로 정정(협업 V1 10-13).
+- **그리드 표식**: NULL = `grid.null_text`(기본 `NULL` 흐림) · **빈 문자열 = 설정 `grid.empty_text`(기본 `''` 흐림 · 그리기만 · 복사·텍스트 보기는 빈 채로)**.
+- **우클릭 "빈 문자열로"** = 설정 `grid.edit_empty`와 무관하게 `''`를 넣는 전용 동작(`EditAction::SetEmpty` · nexa-ui keymap `grid.edit.set_empty` · `clear_selected_cells_with`) · Oracle 숨김.
+- 자체 시험 = 기동 명령 `cellview.null:<null|empty|value>` · `cellview.dump`의 `null=` 칸.
+- **값 창 UI(사용자 10-13)** = NULL/빈 문자열/값은 **라디오 한 줄(버튼 줄 위)** · 버튼 순서 = 파일에서 넣기 · 파일로 저장 · 복사 · 셀에 반영 · 닫기 · nexa-ctl `RadioGroup` 가로 모드(`set_horizontal` · 항목별 폭 `set_horizontal_widths` = 글리프+간격+라벨+여백 16 → 언어와 무관하게 간격 같음 · Oracle = 2항목) · `SqlPrevAction::Nullness` 변형 제거.
+- V1(협업 10-13): SQLite `t(id, n NULL, e '', v 'x')` = n `null=Null` · e `null=Empty` · v `null=Value · note 빈` · 3택 전환 ✓ · "빈 문자열로" → v 셀 `''` 표식 · `수정 1` ✓ · Oracle 임시 표 `NSQLT_NB` = note Oracle 안내 · 메뉴 "NULL로"만 ✓(표 삭제 확인).
+
 ---
 
 ## 6. 엑셀식 상호작용(키 · 마우스 · 클립보드)
@@ -138,6 +180,8 @@
 | 한 줄 복제 | ⌘D · 우클릭 ▸ Duplicate row | 원본 아래 새 행 · 키 열 비움(자동 증가/DEFAULT) |
 | 행 추가 | ⌘⇧N · 툴바 `+` · 우클릭 ▸ Insert row | 맨 아래(또는 선택 아래) · 기본값 열 = `<default>` |
 | 복사 | ⌘C = 선택 셀/영역 TSV(41 규칙 · 지금 있음) | 줄 복사 = 행 선택 ⌘C |
+| 값 보기 | **Shift+Enter** · **Shift+더블클릭**(10-12 · §5-2) | 편집 켬/읽기 전용 무관 · 값 창(§5-1) |
+| 열 머리 끌기(10-12) | 열 머리 누른 채 끌기 | 헤더 안 = 열 이동 미리보기 · **조건 바 위·그리드 밖 = 보류**(열 순서는 시작 때로 · 커서 옆 열 이름 칩) · 헤더로 돌아오면 미리보기 복귀 · **편집기 위에서 놓기 = 인용한 열 이름 삽입**(놓을 자리 캐럿 선 · `editor.quote_idents`) · 조건 바 위에서 놓기 = 종전 `grid.cond_drop_template` · **필터·찾기 상자에 놓기(10-13)** = 객체/프로젝트/북마크/아웃라인/확장 패널의 필터 상자 + 찾기/바꾸기 상자 → 상자 강조 테두리 · 캐럿 자리에 인용 열 이름(`FilterBar::drop_box_at/drop_insert` · 공용 `drop_into_textbox` · 호스트 `col_drop_box` · 찾기 바는 편집기 위 오버레이라 상자 판정을 편집기보다 먼저) |
 | 붙여넣기 | ⌘V = 앵커 셀부터 행렬 채움 · **아래로 부족하면 행 자동 추가** · 오른쪽으로 넘치면 잘라 내고 안내 | 여러 줄 · 셀 안 줄바꿈(따옴표) · 검증 실패 셀 = 건너뛰고 `PasteReport.rejected` 안내 · 한 묶음 되돌리기 |
 | 채우기 | ⌘↩(2차) 선택 영역을 첫 셀 값으로 | 2차 |
 | 적용 · 취소 | ✓(툴바) / ⌘S(편집 모드) · ✗ = 전부 되돌림 | 미리보기(생성 SQL) → 실행 |
@@ -382,3 +426,21 @@
 | ⑥ 폴백 | ①②가 실패(대상 못 정함 · 메타 없음)하면 as-is 실행 + 온디맨드 `identify` 안내 | D-225 경로 | — |
 
 **기반 자료(요청 시점에 바로 쓰도록)**: 이 절 + `analyze`/`inject`/`classify` 시험 · 4-DBMS 물리 식별자 표(§13-3) · 메타 3층([85](85-metadata-layers.md) L2 컬럼 워머) · 사전 검사 비용 실측(journal 09-26 §8).
+
+## 부록 A. 업계 조사 — 날짜 셀 "지금" 넣기(10-13 협업 · 전문 출처 = 조사 당시 target/date-now-survey-1013.md)
+
+| 제품 | '지금/오늘' 넣는 법 | 근거 |
+|---|---|---|
+| Excel | **Ctrl+;** 날짜 · **Ctrl+Shift+;** 시각 · 일시 = 둘을 공백으로 이어서 · 정적 값(갱신 = TODAY()/NOW()) | support.microsoft.com 키보드 바로 가기(공식) |
+| Google Sheets | Ctrl+; · Ctrl+Shift+; · **Ctrl+Alt+Shift+; = 날짜와 시각** | Google 문서 편집기 도움말(공식) |
+| Access | Date Picker → **Today** · Ctrl+; · Ctrl+Shift+: · 기본값 =Date()/=Now() | support.microsoft.com(공식) |
+| DBeaver | 21.3.3부터 날짜 편집기 달력 UI · "지금으로" 메뉴·키는 문서에 없음(Set to NULL · Set to default뿐) | dbeaver.com/docs/dbeaver/Data-Viewing-and-Editing/ · dbeaver.io 21.3.3 |
+| DataGrip | date picker · '지금' = 우클릭 Edit as SQL Expression(`NOW()`·`CURRENT_TIMESTAMP` DB 계산) · Set DEFAULT Ctrl+Alt+D | jetbrains.com/help/datagrip/cells.html |
+| TablePlus | 우클릭 ▸ Set ▸ NOW() | 공식 GitHub 이슈의 사용자 보고(추정) |
+| Navicat | 열 타입별 Date/Time/DateTime 편집기 · '지금' 메뉴는 매뉴얼에 없음 | Navicat 16 매뉴얼 PDF |
+| HeidiSQL | 우클릭 ▸ Insert value ▸ Date and time · Ctrl+F2 함수 모드 `NOW()` | 개발자 포럼(추정) |
+| Toad | 달력 Now 버튼 · sysdate 버튼 · 셀에 `sysdate` 입력 | Quest 포럼·직원 답변(추정) |
+| PL/SQL Developer | DATE 셀 버튼 → 달력(오늘 강조) · Today/Now 없음 | 12.0 User's Guide |
+| SSMS · SQL Developer | 확인 못 함 | — |
+
+관찰 = 스프레드시트 계열은 Ctrl+;/Ctrl+Shift+; 관례 · DB 도구는 우클릭 메뉴 + 서버 계산 식 · 날짜/시간/타임스탬프 구분은 대부분 열 타입 · 소수 초 전용 키는 어디에도 없음 → 우리 설계 = 엑셀 키 + 열 타입·정밀도 판정 + 메뉴 5항목(서버 시각 포함).

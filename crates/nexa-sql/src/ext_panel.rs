@@ -119,6 +119,15 @@ impl ExtPanel {
         self.visible
     }
 
+    /// 끌어 놓기 대상 = 확장 검색 상자(10-12 · 보일 때만).
+    pub(crate) fn drop_box_at(&self, p: Point) -> Option<Rect> {
+        self.visible.then(|| self.search.drop_box_at(p)).flatten()
+    }
+
+    pub(crate) fn drop_insert(&mut self, p: Point, text: &str) -> bool {
+        self.visible && self.search.drop_insert(p, text)
+    }
+
     /// 검색어 이력 잇기(전역 · `filter.extensions` · 사용자 09-23).
     pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
         self.search.set_history(h, "filter.extensions");

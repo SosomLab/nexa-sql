@@ -1888,6 +1888,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "NULL",
     },
+    // ★ 빈 문자열 표식(사용자 10-12 · 설계 B): 그리드에서만 흐리게 `''` — NULL(위 글자)과 구분 · 복사·텍스트 보기는 빈 채로.
+    Entry {
+        key: "grid.empty_text",
+        cat: Msg::CatGrid,
+        label: Msg::LblEmptyText,
+        desc: Msg::DescEmptyText,
+        kind: SettingKind::Text,
+        default: "''",
+    },
     // ★ 연속 클릭 정책(사용자 09-26 · nexa-ctl `set_click_policy` · 편집기·셀 편집기·패널 공통 · CatEditor).
     Entry {
         key: "editor.dblclick",

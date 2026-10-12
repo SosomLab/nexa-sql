@@ -1027,6 +1027,8 @@ pub(crate) struct Explorer {
     endpoint: String,
     /// ★ 묶음 모드(docs/54 §9 · 09-25): 같은 서버의 연결들이 한 헤더 아래 놓인다 — 루트 행 = **연결(DB · 계정)** 행 · 들여쓰기 +1.
     grouped: bool,
+    /// ★ 이 칸의 연결과 같은 서버에 붙은 **전용 세션의 탭 제목**(사용자 10-12 · 설계 A) — 연결 행 'P' 칩 + "전용 · 탭".
+    private_tabs: Vec<String>,
     /// 연결의 DB(서비스)·계정(묶음 모드 루트 행 라벨).
     conn_db: String,
     conn_user: String,
@@ -2502,6 +2504,7 @@ impl Explorer {
             ssms: true,
             show_system_dbs: true,
             conn_user: String::new(),
+            private_tabs: Vec::new(),
             filter_keep: None,
             filter_hits: 0,
             filter_tokens: Vec::new(),
@@ -3084,6 +3087,12 @@ impl Explorer {
     #[cfg(test)]
     pub(crate) fn is_grouped(&self) -> bool {
         self.grouped
+    }
+
+    /// 시험용 — `ExplorerSet`이 놓아 준 영역(빈 자리 배치 검증 · 10-12).
+    #[cfg(test)]
+    pub(crate) fn test_bounds(&self) -> Rect {
+        self.bounds
     }
 
     pub(crate) fn set_grouped(&mut self, on: bool) {
@@ -6261,6 +6270,18 @@ impl Explorer {
         self.users = users;
     }
 
+    /// ★ 전용 세션 탭 제목(사용자 10-12 · 설계 A) — 바뀌면 행 라벨 캐시를 새로.
+    pub(crate) fn set_private_tabs(&mut self, tabs: Vec<String>) {
+        if self.private_tabs != tabs {
+            self.private_tabs = tabs;
+            self.rows_cache = self.screen_rows();
+        }
+    }
+
+    pub(crate) fn private_count(&self) -> usize {
+        self.private_tabs.len()
+    }
+
     pub(crate) fn bound_user(&self) -> String {
         self.conn_user.clone()
     }
@@ -8317,6 +8338,10 @@ impl Explorer {
                 } else if !self.conn_user.is_empty() {
                     dim.push(self.conn_user.clone());
                 }
+                // ★ 전용 세션(사용자 10-12 · 설계 A): "전용 · <탭 이름>"(세션마다 하나).
+                for tab in &self.private_tabs {
+                    dim.push(tf(Msg::ExpPrivateTab, &[tab]));
+                }
                 if !self.profile_name.is_empty() && self.profile_name != main {
                     // 프로필은 파일 방언에서 앞(폴더보다 먼저 읽히게).
                     if file_dialect {
@@ -8575,7 +8600,18 @@ impl Explorer {
                             Some(rr),
                         );
                     }
-                    let mut x = gx + (16.0 * s).round() as i32;
+                    // ★ 빈 자리 "접속 안 됨"(키 없는 칸의 루트 · 사용자 10-12 "연결됐을 때와 같은 위치"): 서버 헤더
+                    //   (`paint_server_header`)와 **같은 기하** = 셰브론 자리 없이 왼쪽 여백 8 px · 아이콘 슬롯 1.35×sz · 간격 6.
+                    // 루트 여부는 미리(아래 그리기 호출이 `self`를 가변 차용해 `n`을 뒤에서 다시 못 쓴다).
+                    let is_root = matches!(n.kind, NodeKind::Root);
+                    let placeholder = matches!(n.kind, NodeKind::Root)
+                        && !self.grouped
+                        && self.conn_desc.is_empty();
+                    let mut x = if placeholder {
+                        b.x - sx + (8.0 * s).round() as i32
+                    } else {
+                        gx + (16.0 * s).round() as i32
+                    };
                     // 아이콘(설정 켬 · DBMS/스키마/폴더/종류별 · 글꼴 높이 크기) 또는 색 칩(끔).
                     if self.icons_on {
                         if let Some((k, rgb)) = self.icon_for(n) {
@@ -8584,9 +8620,20 @@ impl Explorer {
                                 .max(8.0) as i32;
                             let dst = Rect::new(x, vcy - sz / 2, sz, sz);
                             let mut adv = sz;
-                            if matches!(n.kind, NodeKind::Root) && !self.grouped {
+                            if matches!(n.kind, NodeKind::Root)
+                                && !self.grouped
+                                && !self.conn_desc.is_empty()
+                            {
                                 // ★ 서버 루트 = DBMS 그림(dbms_icons · 64 px 원본 · 사용자 10-04) — 루트만 조금 크게(1.35배).
                                 adv = self.draw_brand(dc, th, x, vcy, sz, rr);
+                            } else if placeholder {
+                                // ★ 빈 자리 "접속 안 됨"(사용자 10-12 "서버 헤더와 같은 레벨 · 같은 위치 · 아이콘은 연결 행 크기"):
+                                //   헤더와 같은 슬롯(1.35×sz → 글자 x가 헤더와 같다) 안에 연결 행 크기(sz)의 작은 그림을 가운데.
+                                let slot = ((sz as f32) * 1.35).round() as i32;
+                                let dst = Rect::new(x + (slot - sz) / 2, vcy - sz / 2, sz, sz);
+                                let img = self.brand_image(th.is_dark, dbms_icons::Src::Small, sz);
+                                dc.image_scaled(dst, &img, rr);
+                                adv = slot;
                             } else if matches!(n.kind, NodeKind::Root) {
                                 // ★ 연결 행(묶음 모드) = 같은 DBMS의 작은 그림(20 px 원본 · 사용자 10-04).
                                 let img = self.brand_image(th.is_dark, dbms_icons::Src::Small, sz);
@@ -8646,13 +8693,28 @@ impl Explorer {
                     let lw = dc.text_width(&label);
                     dc.select_font(FontSlot::Base, false);
                     let mut right = x + lw;
+                    let mut sub_x = x + lw + (8.0 * s).round() as i32;
+                    // ★ 전용 세션 칩 'P'(사용자 10-12 · 설계 A · 편집기 탭 배지 P와 같은 뜻·강조색) — 묶음 모드 연결 행에만.
+                    if is_root && self.grouped && !self.private_tabs.is_empty() {
+                        dc.select_font(FontSlot::Base, true);
+                        let pw = dc.text_width("P");
+                        let ch = th_txt.max(10);
+                        let cw = pw + (6.0 * s).round() as i32;
+                        let cr = Rect::new(sub_x, vcy - ch / 2, cw, ch);
+                        dc.fill_round_rect_alpha(cr, (cw / 4).max(2), th.accent, 0.16);
+                        let cty = dc.text_center_y(cr.y, cr.h);
+                        dc.text(cr.x + (cw - pw) / 2, cty, rr, "P", th.accent);
+                        dc.select_font(FontSlot::Base, false);
+                        right = cr.right();
+                        sub_x = right + (8.0 * s).round() as i32;
+                    }
                     if !sub.is_empty() {
                         let color = if sub == "INVALID" {
                             th.danger
                         } else {
                             th.text_dim
                         };
-                        let sx0 = x + lw + (8.0 * s).round() as i32;
+                        let sx0 = sub_x;
                         dc.text(sx0, ty, rr, &sub, color);
                         right = sx0 + dc.text_width(&sub);
                     }

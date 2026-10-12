@@ -386,6 +386,34 @@ impl FindBar {
         self.visible
     }
 
+    /// 끌어 놓기 대상 = 찾기/바꾸기 상자(10-12 · 보일 때만).
+    pub(crate) fn drop_box_at(&self, p: Point) -> Option<Rect> {
+        if !self.visible {
+            return None;
+        }
+        let q = self.query.bounds();
+        if q.contains(p) {
+            return Some(q);
+        }
+        let r = self.repl.bounds();
+        (self.with_replace && r.contains(p)).then_some(r)
+    }
+
+    pub(crate) fn drop_insert(&mut self, p: Point, text: &str) -> bool {
+        if !self.visible {
+            return false;
+        }
+        if self.query.bounds().contains(p) {
+            crate::filterbar::drop_into_textbox(&mut self.query, text);
+            return true;
+        }
+        if self.with_replace && self.repl.bounds().contains(p) {
+            crate::filterbar::drop_into_textbox(&mut self.repl, text);
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn bounds(&self) -> Rect {
         if self.visible {
             self.bounds

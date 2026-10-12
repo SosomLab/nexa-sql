@@ -994,17 +994,20 @@ impl ApplicationHandler<Wake> for App {
                         }
                         // 결과 그리드 포커스 = 표 편집 키가 전역 키맵보다 먼저(F2 셀 편집 · Ctrl/⌘+D 행 복제 · T-182).
                         // 값 목록 팝업이 떠 있으면 표 편집 키(F2 · Ctrl+D)는 가로채지 않는다(검색 상자에 쳐야 한다 · 10-06).
-                        if self.focus == Focus::Grid
-                            && !self.palette.is_open()
-                            && !self.grid.text_input_active()
-                        {
+                        if self.focus == Focus::Grid && !self.palette.is_open() {
                             if let Some(cmd) = keymap::grid_focus_command(&ch) {
-                                if !kev.repeat {
-                                    self.grid.edit_command(cmd);
-                                    self.after_grid_event();
-                                    self.redraw();
+                                // 글 입력 중(셀 편집기·조건 바)에는 표 편집 키를 가로채지 않는다 — 단 "지금 날짜/시간"(Ctrl+; ·
+                                //   10-13)은 **셀 편집 중에도** 통한다(엑셀처럼 편집 상자 글을 바꾼다).
+                                if !self.grid.text_input_active()
+                                    || cmd.starts_with("grid.edit.now")
+                                {
+                                    if !kev.repeat {
+                                        self.grid.edit_command(cmd);
+                                        self.after_grid_event();
+                                        self.redraw();
+                                    }
+                                    return;
                                 }
-                                return;
                             }
                         }
                         if self.keymap.is_prefix(&ch) {
@@ -1464,8 +1467,15 @@ impl App {
                     self.file_purpose = FilePurpose::CellValue;
                     self.open_file_dlg = Some(PickerMode::Open);
                 }
-                sqlprev_win::SqlPrevAction::ApplyCell { row, col, text } => {
-                    match self.grid.set_cell_value(row, col, Some(text)) {
+                sqlprev_win::SqlPrevAction::ApplyCell {
+                    row,
+                    col,
+                    text,
+                    null,
+                } => {
+                    // 설계 B: NULL 상태 = None(글 무시) · 그 밖 = Some(글 · 빈 문자열이면 '').
+                    let value = if null { None } else { Some(text) };
+                    match self.grid.set_cell_value(row, col, value) {
                         Ok(()) => {
                             self.sqlprev_win.set_note(t(Msg::StCellApplied).to_string());
                             self.after_grid_event();

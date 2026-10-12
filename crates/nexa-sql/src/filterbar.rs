@@ -13,6 +13,13 @@ use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{Control, InputEvent, Invalidations, TextBox, Widget};
+
+/// 글 상자에 끌어 놓기(공용 · 10-12): 선택이 있으면 대체 · 없으면 캐럿 자리에 삽입(되돌리기 기록 = `replace_range`).
+pub(crate) fn drop_into_textbox(tb: &mut TextBox, text: &str) {
+    let (a, b) = tb.selection().unwrap_or((tb.caret(), tb.caret()));
+    let mut inv = Invalidations::default();
+    tb.replace_range(a.min(b), a.max(b), text, &mut inv);
+}
 use nsql_i18n::t;
 
 /// 입력 상자 높이(네 패널 공통).
@@ -350,6 +357,23 @@ impl FilterBar {
     pub(crate) fn set_text(&mut self, s: &str) {
         self.tb.set_text(s);
         self.refresh();
+    }
+
+    /// ★ 끌어 놓기 대상(결과 열 머리 끌기 · 사용자 10-12 "좌측 패널 검색 상자에도"): 점이 입력 상자 안이면 그 사각형
+    /// (호스트가 강조 테두리로 놓을 자리를 보인다).
+    pub(crate) fn drop_box_at(&self, p: Point) -> Option<Rect> {
+        let b = self.tb.bounds();
+        b.contains(p).then_some(b)
+    }
+
+    /// 입력 상자 안에 놓음 = 캐럿 자리에 글 삽입(선택이 있으면 대체) 뒤 거르기 갱신. 돌려주는 값 = 넣었는가.
+    pub(crate) fn drop_insert(&mut self, p: Point, text: &str) -> bool {
+        if !self.tb.bounds().contains(p) {
+            return false;
+        }
+        drop_into_textbox(&mut self.tb, text);
+        self.refresh();
+        true
     }
 
     /// 거르는 글이 비었는가.
