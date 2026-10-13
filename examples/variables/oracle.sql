@@ -214,3 +214,11 @@ SHOW VARIABLES
 --   더 있다: 선언 없는 바인드(Golden 관용 · 진짜 SQL*Plus는 SP2-0552) · 층(SHARE/GLOBAL · DROP/CLEAR) · ${v:q|id|n} 안전 인용형 · 시스템 변수 9종 ·
 --            내장 변수 ${file} ${workspaceFolder} · ${env:} · SHOW VARIABLES 표 · 변수 창 · 파일별 보존 · 확장 시점 설정
 --   다르다 : DATE/TIMESTAMP/BOOLEAN이 **진짜 타입**으로 바인드된다(SQL*Plus는 DATE 바인드가 없어 글자로) · 커서는 결과 탭으로 바로
+
+
+
+-- [§11-4] `VAR CLEAR` = 이 탭 변수 전부(공유·글로벌·프로필은 남음) · `VAR CLEAR GLOBAL` = 글로벌도 · `VAR CLEAR ALL` = 공유까지.
+--   아래는 보여 주기용이라 주석 — 풀면 이 파일의 나머지 절이 쓰는 변수도 지워진다.
+--   VAR CLEAR
+--   VAR CLEAR GLOBAL
+--   VAR CLEAR ALL
