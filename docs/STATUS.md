@@ -9,7 +9,7 @@
 - 최신화 = nexa-sql 87b8321 → **b79db0e**(14커밋 · 119~122차 + `clean_dots` 시험 경로) · nexa-ui → **aebba67**(200~205차) · nexa-license 0 · 전부 ff.
 - 맥 검증(격리 홈) = Debug 3m44s · Release 5m59s 경고 0(Thin aws-lc-rs 빌드 ✓) · 크기 GUI 22,016,976 B(+4.1 MB) · nsql 12,317,200 B(+4.0 MB) = 121·122차 + Thin · clippy 0 둘 · 시험 nexa-sql **894/0** · nexa-ui **629/1** · BISCM CLI Thin ✓ 1.10 s · OCI ✓ 2.38 s.
 - 결함 후보 2 = **T-344** nexa-font `map_font` 잠금 밖 mmap TOCTOU(병렬 시험만 실패 · 중복 매핑 · 기능 0) · **T-345** Thin 접속 제한 시간(서버 미도달 76 s vs OCI 63 s).
-- 커밋 **3260a05**(rebase on cb48d30 · 강제 push 없음) → ci **38411336246 ✓** 3-OS · integration = 경로 필터 밖(실행 안 됨).
+- 커밋 **3260a05**(rebase on cb48d30 · 강제 push 없음) → ci **38411336246 ✓** 3-OS · integration = 경로 필터 밖(실행 안 됨) · CI 결과 커밋 fdfe778 ci 38412170350 ✓ · nexa-ui a76e4e9(문서만) 당김.
 - 다음 = 맥 첫 실기 후보(S97 · Thin GUI · ⌘ 홀드 줄 끝 라벨 · Retina 활동 막대 아이콘 · 이진 안내 탭 등 = journal §30 (a)) · 풀 테스트는 사용자 요청 시.
 
 ## 2026-10-13 (122차 · **win** · 협업 쌍 = 개발 nexa-sql-f4 × 협업 · push ✓ · [journal 10-13](journal/2026-10-13.md))

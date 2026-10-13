@@ -7,6 +7,7 @@
 | docs/122-ci | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | 122차 CI 결과(nexa-ui aebba67 ci 38405206766 ✓ · nexa-sql d268e35 ci 38406037649 ✗ clean_dots → b79db0e ci 38408130076 ✓ 3-OS · integration 38406037740·38408130380 ✓) · journal 10-13 §29 · STATUS · 102 §12 |
 | fix/122-clean-dots-test | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | `clean_dots_tests` 경로 = `Path::join` 조립(백슬래시 리터럴 = Unix 한 이름 · ci ubuntu·macos ✗ → ✓) · b79db0e |
 | style/122-fmt | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | cargo fmt 35파일(check-3os 호스트 fmt ✗ → 적용) · d268e35 |
+| docs/123-ci | 2026-10-13 | 2026-10-13 → main(삭제 · fdfe778) | 1 | 123차 CI 결과 기록(3260a05 ci 38411336246 ✓ · fdfe778 ci 38412170350 ✓ · integration 경로 밖) |
 | docs/123-mac-sync | 2026-10-13 | 2026-10-13 → main(삭제 · 3260a05 · rebase on cb48d30) | 1 | 123차 mac 최신화·분석 기록(ci 38411336246 ✓ · journal 10-13 §30 · STATUS · DEVLOG · TODO T-344·T-345 · 110 §11 ①·§6 #9 · 102 원장 2) |
 | feat/122-win-afternoon | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | ★ 122차 win de31cab = Oracle Thin(110) · 줄 끝 라벨 Ctrl(111) · 활동 막대 아이콘(112) · 입력창 팝업 묶음 · Where 대소문자 Aa(D-287) · 탐색기 헤더/전용 P 칩 · 상태줄 전용 접두(D-289) · 이진 안내(D-288)·ro 복원 · nexa-ui 203~205차(a21d6e6) |
 | docs/121-afternoon-ci | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | 121차 오후~새벽 CI 결과(b3dd07e ci 38283589189 ✓ · integration 38283589150 ✓ · nexa-ui 0a650d5 ci 38283494362 ✓) · journal 10-12 §6 · STATUS |
