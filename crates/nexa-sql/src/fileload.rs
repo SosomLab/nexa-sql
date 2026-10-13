@@ -179,6 +179,10 @@ pub(crate) fn read_file(
     limit: Option<u64>,
     prog: Option<&Progress>,
 ) -> Result<FileText, String> {
+    let utf16 = enc
+        .to_ascii_lowercase()
+        .replace('-', "")
+        .starts_with("utf16");
     use std::io::Read;
     let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let total = f.metadata().map(|m| m.len()).unwrap_or(0);
@@ -196,8 +200,9 @@ pub(crate) fn read_file(
         }
         let first = bytes.is_empty();
         bytes.extend_from_slice(&chunk[..n]);
-        // ★ 첫 조각에서 이진이면 바로 끊는다(큰 이미지·압축 파일 전체를 읽고 버리지 않게 · 10-13).
-        if first && looks_binary(&bytes) {
+        // ★ 첫 조각에서 이진이면 바로 끊는다(큰 이미지·압축 파일 전체를 읽고 버리지 않게 · 10-13). 사용자가 UTF-16을 **지정**했으면
+        //   NUL이 글자의 일부라 이진 판정을 건너뛴다(BOM 없는 UTF-16 · 124차 리뷰).
+        if first && !utf16 && looks_binary(&bytes) {
             return Err(BINARY.into());
         }
         if let Some(p) = prog {
@@ -212,8 +217,8 @@ pub(crate) fn read_file(
             bytes.truncate(p + 1);
         }
     }
-    // ★ 이진 파일 = 디코드하지 않고 호출자에게(안내 탭 · 실행 거부 · 10-13).
-    if looks_binary(&bytes) {
+    // ★ 이진 파일 = 디코드하지 않고 호출자에게(안내 탭 · 실행 거부 · 10-13 · UTF-16 지정이면 건너뜀).
+    if !utf16 && looks_binary(&bytes) {
         return Err(BINARY.into());
     }
     if let Some(p) = prog {

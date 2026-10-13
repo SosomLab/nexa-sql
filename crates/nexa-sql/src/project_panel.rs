@@ -2665,9 +2665,16 @@ mod tests {
 
 /// 경로의 `.` 성분만 걷는다(순수 · `..`·심링크는 손대지 않는다 — 디스크 조회 없음 · 10-13).
 pub(crate) fn clean_dots(p: &std::path::Path) -> std::path::PathBuf {
-    p.components()
+    let out: std::path::PathBuf = p
+        .components()
         .filter(|c| !matches!(c, std::path::Component::CurDir))
-        .collect()
+        .collect();
+    // 루트가 글자 그대로 `.`이면 성분이 하나도 안 남아 빈 경로(= `read_dir("")` 실패)가 된다 → 원본 그대로(124차 리뷰).
+    if out.as_os_str().is_empty() {
+        p.to_path_buf()
+    } else {
+        out
+    }
 }
 
 #[cfg(test)]

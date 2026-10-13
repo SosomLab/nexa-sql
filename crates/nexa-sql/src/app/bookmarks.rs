@@ -39,6 +39,7 @@ impl App {
         // ★ 활성 탭의 줄 끝 라벨은 합성기가 최종 결정(docs/111 · 북마크 Ctrl 홀드 · 객체 설명과 합성) — 북마크가 바뀌면 다시.
         if i == self.editors.active() {
             self.inline_key.clear();
+            self.inline_stale_mark(); // 방금 TextBox에 북마크 라벨만 썼다 — 합성 결과가 캐시와 같아도 다시 쓴다(124차 리뷰)
             self.inline_sync();
         }
     }

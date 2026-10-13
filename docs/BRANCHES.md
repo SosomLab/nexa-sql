@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/124-linux-sync | 2026-10-13 | 2026-10-14 → main(삭제) | 1 | ★ 124차 Linux(협업 쌍) — 최신화·변경 분석 회귀 0 · P0 Debug 5m12s/Release 8m43s 경고 0(aws-lc-rs 도구 없이 ✓) · 시험 895/0 · 기능 점검 85/0 · Thin CLI 0.50 s · 동일성 22/0 · Thin DDL 67/0 · ★ 기능별 점검 = 독립 코드 리뷰 12 → **앱 결함 9 수정**(🔧 Thin `wrap_ddl` 트리거 `END;` 유지 · 줄 끝 라벨 탭 전환 캐시·주석 판정·구간 밖·선적재 열쇠 · `binary_notice` 검증/정리 · 프로젝트 저장 뷰 탭 제외 회귀 · 선택 실행 본문 복사 · 통합 시험 드라이버 잠금 · `clean_dots` 루트 `.` · 값 창 죽은 분기 · UTF-16 지정 이진 판정) · 새 E2E `linux-121-122-e2e.sh` 18/0/1 + 훅 `explorer.header:` · parity 06-trigger · 시험 자산 4(실행 비트 · ddl 기본 프로필 BISCM) · journal 10-13 §31 · STATUS · DEVLOG · TODO · 110 §11 ①·§6 #9 · 102 §12 · CLAUDE 현 단계 |
 | docs/122-ci | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | 122차 CI 결과(nexa-ui aebba67 ci 38405206766 ✓ · nexa-sql d268e35 ci 38406037649 ✗ clean_dots → b79db0e ci 38408130076 ✓ 3-OS · integration 38406037740·38408130380 ✓) · journal 10-13 §29 · STATUS · 102 §12 |
 | fix/122-clean-dots-test | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | `clean_dots_tests` 경로 = `Path::join` 조립(백슬래시 리터럴 = Unix 한 이름 · ci ubuntu·macos ✗ → ✓) · b79db0e |
 | style/122-fmt | 2026-10-13 | 2026-10-13 → main(삭제) | 1 | cargo fmt 35파일(check-3os 호스트 fmt ✗ → 적용) · d268e35 |

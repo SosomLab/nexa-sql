@@ -10,7 +10,7 @@
 #   3-OS 공통(bash · Windows는 Git Bash). 종료 코드 = 실패 수(0 = 전부 통과).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NSQL="$ROOT/target/debug/nsql"; OUT=""; PROF="biscm"; OWNER="BISCM"
+NSQL="$ROOT/target/debug/nsql"; OUT=""; PROF="BISCM"; OWNER="BISCM"
 while getopts "o:n:p:s:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROF=$OPTARG;; s) OWNER=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p profile]"; exit 2; }
 [ -x "$NSQL" ] || [ -x "$NSQL.exe" ] || { echo "nsql not found: $NSQL"; exit 2; }

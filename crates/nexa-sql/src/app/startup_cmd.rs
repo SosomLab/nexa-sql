@@ -115,6 +115,11 @@ impl App {
             let _ = std::fs::write(path, self.explorer.dump_rows());
             return;
         }
+        // 서버 헤더 덤프(`explorer.header:<파일>` · `라벨|연결 N개 · 전용 M` 한 줄씩 · 10-13 전용 세션 E2E).
+        if let Some(path) = id.strip_prefix("explorer.header:") {
+            let _ = std::fs::write(path, self.explorer.dump_headers());
+            return;
+        }
         if let Some(rest) = id.strip_prefix("explorer.select") {
             // 행 번호 또는 라벨 경로(`explorer.expand`와 같은 풀이 · 10-11: 콜론 꼴 `explorer.select:3`이 조용히 무시되던 결함).
             let arg = rest.trim_start_matches(':');

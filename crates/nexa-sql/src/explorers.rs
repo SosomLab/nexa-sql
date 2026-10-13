@@ -1120,6 +1120,21 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
             .is_some_and(|p| p.ex.capture_expand(row))
     }
 
+    /// 자체 시험용 — 서버 헤더 한 줄씩(`라벨|부제` · 부제 = "연결 N개 · 전용 M" · 10-13 전용 세션 E2E는 덤프에 근거가 없었다).
+    pub(crate) fn dump_headers(&self) -> String {
+        self.groups()
+            .into_iter()
+            .filter_map(|(g, _)| g.first().copied())
+            .map(|f| {
+                format!(
+                    "{}|{}\n",
+                    self.panes[f].ex.server_label(),
+                    self.header_sub(f)
+                )
+            })
+            .collect()
+    }
+
     /// 자체 시험용 — 첫 칸의 보이는 줄 덤프.
     pub(crate) fn dump_rows(&self) -> String {
         self.panes

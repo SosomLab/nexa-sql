@@ -550,12 +550,15 @@ impl App {
             let tab_id_now = self.editors.tab_id(i);
             // ★ 이진 안내 탭 = 경로가 없으니 **원본 파일 경로**로 담는다(복원 = 다시 열기 → 이진 판정 → 안내 · 읽기 전용 = 같은 기준 ·
             //   사용자 10-13). 그 밖의 경로 없는 읽기 전용 탭("(앞부분)" · 디스크 보기)은 담지 않는다(복원하면 일반 스크래치가 됐다).
+            //   뷰 탭(`ext:`·정보·비교 = 경로 없음 + 읽기 전용)은 `view` 열쇠로 복원되므로 이 거름에서 **제외**(124차 리뷰 · 09-30 복원 회귀).
             let path = match self.editors.path_of(i) {
                 Some(p) => Some(p),
-                None if read_only => match self.binary_notice.get(&tab_id_now) {
-                    Some(p) => Some(p.clone()),
-                    None => continue,
-                },
+                None if read_only && self.editors.view_key_of(i).is_none() => {
+                    match self.binary_notice_live(tab_id_now) {
+                        Some(p) => Some(p),
+                        None => continue,
+                    }
+                }
                 None => None,
             };
             let buf = tb.buf();

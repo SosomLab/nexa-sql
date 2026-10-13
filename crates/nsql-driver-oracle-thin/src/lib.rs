@@ -717,7 +717,20 @@ static NULL_STR: Option<String> = None;
 /// DDL 본문을 `BEGIN EXECUTE IMMEDIATE q'<d>…<d>'; END;`로 감싼다 — 본문에 없는 q-string 구분자를 고른다(쌍 `[] {} <> ()` →
 /// 홑 `! # | ~ ^ @`). 전부 쓰였으면 오류(사실상 없다).
 fn wrap_ddl(sql: &str) -> Result<String, DbError> {
-    let body = sql.trim_end().trim_end_matches(';').trim_end();
+    // ★ PL/SQL 단위(CREATE … TRIGGER/PROCEDURE/FUNCTION/PACKAGE/TYPE/LIBRARY)는 소스가 `END;`로 끝나야 한다 — 동적 SQL 안에서도
+    //   그 `;`는 단위의 일부라 떼면 PLS-00103(end-of-file) = 객체가 INVALID로 생긴다(124차 리뷰). 그 밖의 DDL은 끝 `;`를 뗀다(ORA-00911).
+    let trimmed = sql.trim_end();
+    let body = if is_plsql_unit(trimmed) {
+        let b = trimmed.trim_end_matches('/').trim_end();
+        if b.ends_with(';') {
+            b.to_string()
+        } else {
+            format!("{b};")
+        }
+    } else {
+        trimmed.trim_end_matches(';').trim_end().to_string()
+    };
+    let body = body.as_str();
     const PAIRS: &[(&str, &str)] = &[
         ("[", "]"),
         ("{", "}"),
@@ -743,6 +756,27 @@ fn wrap_ddl(sql: &str) -> Result<String, DbError> {
     Ok(format!(
         "BEGIN EXECUTE IMMEDIATE q'{open}{body}{close}'; END;"
     ))
+}
+
+/// `CREATE [OR REPLACE] [[NON]EDITIONABLE] TRIGGER|PROCEDURE|FUNCTION|PACKAGE|TYPE|LIBRARY …`인가(앞 주석·공백 건너뜀).
+fn is_plsql_unit(sql: &str) -> bool {
+    let mut words = sql
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with("--"))
+        .flat_map(|l| l.split_whitespace())
+        .map(|w| w.to_ascii_uppercase());
+    if words.next().as_deref() != Some("CREATE") {
+        return false;
+    }
+    for w in words.take(5) {
+        match w.as_str() {
+            "OR" | "REPLACE" | "EDITIONABLE" | "NONEDITIONABLE" => continue,
+            "TRIGGER" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "TYPE" | "LIBRARY" => return true,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// OUT 바인드 행에서 이름(대소문자 무시)의 자리.
@@ -1284,7 +1318,21 @@ mod tests {
         let sql = "CREATE OR REPLACE TRIGGER t_bi BEFORE INSERT ON t FOR EACH ROW\nBEGIN :NEW.id := NVL(:NEW.id, 1); END;";
         let w = wrap_ddl(sql).expect("wrap");
         assert!(w.starts_with("BEGIN EXECUTE IMMEDIATE q'["), "{w}");
-        assert!(w.ends_with("END]'; END;"), "{w}");
+        // PL/SQL 단위 = `END;`의 `;`가 남는다(떼면 PLS-00103 · 트리거 INVALID).
+        assert!(w.ends_with("END;]'; END;"), "{w}");
+        // 끝 `/`·`;` 없는 꼴도 `END;`로.
+        let w3 = wrap_ddl(
+            "CREATE TRIGGER x BEFORE INSERT ON t FOR EACH ROW BEGIN :NEW.a := 1; END\n/\n",
+        )
+        .expect("wrap");
+        assert!(w3.ends_with("END;]'; END;"), "{w3}");
+        // PL/SQL 단위가 아닌 DDL은 끝 `;`를 뗀다.
+        let w4 = wrap_ddl("CREATE TABLE t (a VARCHAR2(10) DEFAULT ':x');").expect("wrap");
+        assert!(w4.ends_with("':x')]'; END;"), "{w4}");
+        assert!(is_plsql_unit(
+            "-- 머리\nCREATE OR REPLACE EDITIONABLE PACKAGE BODY p AS END;"
+        ));
+        assert!(!is_plsql_unit("CREATE INDEX i ON t (a)"));
         // 본문에 `]'`가 있으면 다음 구분자.
         let w2 = wrap_ddl(
             "CREATE TRIGGER x BEFORE INSERT ON t FOR EACH ROW BEGIN :NEW.a := q'[a]'; END;",

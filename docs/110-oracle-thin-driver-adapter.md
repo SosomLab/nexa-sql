@@ -180,7 +180,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | 6 | **10G 검증자를 가진 계정** | ✗(#6) | ORA-01017 → 안내(DBA 쪽 비밀번호 재설정) · `11G 12C` 계정은 스파이크로 확인 |
 | 7 | **대량 적재 최속 경로**(`nsql import`·Import 창 = Oracle 배열 DML 32.5k행/s) | △(1차 Err) | 다중 행 INSERT 폴백으로 동작하나 느려짐 · #41 해결 뒤 `execute_batch`로 복귀 |
 | 8 | `sqlnet.ora` 고급 옵션 · 클라이언트 문자셋 ≠ UTF-8 · Windows 레지스트리 TNS | ✗ | `oracle.info_sqlnet` 칸 비움 · 문자셋은 UTF-8 고정 |
-| 9 | TCP 접속 시간 제한(드라이버 자체) | △(beta.4 미적용) | 호스트 TCP SYN 선검사로 같은 결과(사용자 차이 없음) · (10-13 mac 실측 CLI 서버 미도달 Thin 76 s vs OCI 63 s · T-345) |
+| 9 | TCP 접속 시간 제한(드라이버 자체) | △(beta.4 미적용) | 호스트 TCP SYN 선검사로 같은 결과(사용자 차이 없음) · (10-13 mac 실측 CLI 서버 미도달 Thin 76 s vs OCI 63 s · T-345 · Linux 124차 도달 상태 connect Thin 0.50 s / OCI 0.62~0.74 s · 미도달 미측정) |
 | 10 | LOB 스트리밍 읽기 | △(#18 한글) | 인라인 페치로 대체(LOB 값 창 16 MB 상한 그대로 · 사용자 차이 없음 예상) |
 | 11 | REF CURSOR 페이지 이어 받기(T-202) | △(스파이크 확인) | 안 되면 "전체 조회 + ⚠"(이미 있는 처리) |
 | 12 | 설정 창 Instant Client 정보(라이브러리·버전) | 해당 없음 | Thin이면 값 비움 · 대신 `oracle.info_driver` |
@@ -224,7 +224,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 
 | # | 항목 | 결과 | 메모 |
 |---|---|---|---|
-| ① | 3-OS 빌드 · 크기 | Windows ✓ | 개발 세션: oracledb + aws-lc-rs가 cmake·nasm 없이 빌드(2분 6초) · feature 조합 3(기본 oci+thin · 경량판 C sqlite+oracle-thin · sqlite+oracle) check ✓ · mac ✓ 10-13(Debug 3m44s 경고 0 · cmake 4.4.3·nasm 있음 · Release GUI 22,016,976 B = +4.1 MB · nsql 12,317,200 B = +4.0 MB · 121·122차 합산이라 Thin 단독 미분리) · Linux = CI |
+| ① | 3-OS 빌드 · 크기 | Windows ✓ | 개발 세션: oracledb + aws-lc-rs가 cmake·nasm 없이 빌드(2분 6초) · feature 조합 3(기본 oci+thin · 경량판 C sqlite+oracle-thin · sqlite+oracle) check ✓ · mac ✓ 10-13(Debug 3m44s 경고 0 · cmake 4.4.3·nasm 있음 · Release GUI 22,016,976 B = +4.1 MB · nsql 12,317,200 B = +4.0 MB · 121·122차 합산이라 Thin 단독 미분리) · **Linux ✓ 10-13 124차**(Ubuntu 26.04 VM 2코어 · **cmake·clang·nasm 없음**에서 Debug `-p nexa-sql -p nsql-cli` 5m12s 경고 0 · Release 8m43s 경고 0 · 크기 GUI 25,693,912 B(119차 20.40 MB 대비 +5.3 MB · 맥보다 +3.7 MB = ELF) · nsql 13,480,344 B(+4.5 MB)) |
 | ② | BISCM 로그인(11G 12C) | ✓ | BISCM 19c · `11G 12C` 검증자 계정 Thin 접속 성공(CLI·GUI·통합 시험) |
 | ③ | OUT/IN OUT · REF CURSOR 페이지 | ✓ | REF CURSOR `PRINT` · OUT · 1200행 페이지 같음 · PL/SQL 블록 읽기 전용 변수 초기값 NULL 결함 → 고침(재검증 ✓) |
 | ④ | DBMS_OUTPUT | ✓ | `hello nexa 한글` 두 드라이버 같음 |

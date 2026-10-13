@@ -1047,15 +1047,13 @@ impl SqlPrevWin {
                 g.set_scale(s);
                 // 항목별 폭 = 글리프(12) + 간격(8) + **그 라벨** + 여백(16) → 논리 px(배율로 나눔) — 같은 폭이면 간격이
                 //   불균일해 보였다(협업 관찰 · "NULL"↔"빈 문자열"은 넓고 "빈 문자열"↔"값"은 좁음).
-                let labels: Vec<&str> = if g.is_horizontal() || true {
+                let labels: Vec<&str> = {
                     let mut v = vec![t(Msg::SpBtnNull)];
                     if self.value.as_ref().is_some_and(|s| !s.v.empty_is_null) {
                         v.push(t(Msg::SpBtnEmpty));
                     }
                     v.push(t(Msg::SpBtnValue));
                     v
-                } else {
-                    Vec::new()
                 };
                 let widths: Vec<i32> = labels
                     .iter()

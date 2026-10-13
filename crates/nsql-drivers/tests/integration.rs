@@ -71,7 +71,11 @@ fn oracle_drivers() -> Vec<nsql_drivers::OracleDriver> {
 }
 
 /// 같은 시험 본문을 Oracle 드라이버마다 한 번씩(건너뛰면 한 번만 알린다).
+/// Oracle 드라이버 선택은 **프로세스 전역**(`set_oracle_driver`) — 병렬 시험이 겹치면 OCI 반복이 Thin으로 붙을 수 있어 직렬화(124차 리뷰).
+static ORACLE_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn for_each_oracle(body: impl Fn(Runner)) {
+    let _guard = ORACLE_DRIVER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for d in oracle_drivers() {
         nsql_drivers::set_oracle_driver(d);
         eprintln!("[oracle driver] {}", d.as_str());

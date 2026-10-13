@@ -135,9 +135,17 @@ pub(crate) fn widen_comment_lines(
         let raw = line_at(l);
         let t = raw.trim();
         if in_block {
-            top = l;
-            if t.contains("/*") {
+            // 여는 줄: `/*`로 **시작**하는 줄만 주석 줄 · 코드 뒤에 붙은 `… /* x`는 코드 줄이라 거기서 멈춘다(124차 리뷰).
+            if let Some(p) = t.find("/*") {
+                if p == 0 {
+                    top = l;
+                }
                 in_block = false;
+                if p != 0 {
+                    break;
+                }
+            } else {
+                top = l;
             }
             continue;
         }
@@ -146,12 +154,13 @@ pub(crate) fn widen_comment_lines(
         }
         if t.starts_with("--") {
             top = l;
-        } else if t.ends_with("*/") {
+        } else if t.starts_with("/*") && t.ends_with("*/") {
+            // 한 줄짜리 블록 주석.
             top = l;
-            // 한 줄짜리 블록 주석(`/* … */`)이면 닫힘 · 아니면 여는 줄까지 올라간다.
-            if !t.contains("/*") {
-                in_block = true;
-            }
+        } else if t.ends_with("*/") && !t.contains("/*") {
+            // 블록 주석의 닫는 줄 → 여는 줄까지 올라간다(여는 줄이 코드 뒤 `/*`면 그 줄은 제외).
+            top = l;
+            in_block = true;
         } else {
             break;
         }
@@ -250,7 +259,13 @@ impl App {
                     Some(r) => (r.0, tb.buf().slice(r.0, r.1.min(len)).into_owned()),
                     None => (0, tb.text()),
                 };
-                let caret = tb.caret().saturating_sub(base);
+                let caret_abs = tb.caret();
+                if let Some(r) = region {
+                    if caret_abs < r.0 || caret_abs > r.1 {
+                        return None; // 분석 구간 밖(124차 리뷰 · `saturating_sub` = 구간 첫 문장으로 오판)
+                    }
+                }
+                let caret = caret_abs - base;
                 let byte_pos = text
                     .char_indices()
                     .nth(caret)
@@ -304,6 +319,13 @@ impl App {
             self.objlinks.links.len()
         );
         if key != self.inline_key {
+            // 탭이 바뀌면 "마지막으로 쓴 라벨"은 **다른 탭의 것** → 비교 캐시를 비워 이 탭에 반드시 다시 쓴다(124차 리뷰:
+            //   A에서 Ctrl 라벨 → B로 → 뗌 → A 복귀 때 합성 `[]` == 캐시 `[]`라 A의 옛 라벨이 남았다).
+            let tab_changed = self.inline_key.split('|').next()
+                != Some(self.editors.active_id().to_string().as_str());
+            if tab_changed {
+                self.inline_last = inline_stale();
+            }
             self.inline_key = key;
             self.inline_sync();
         }
@@ -351,8 +373,15 @@ impl App {
                     }
                     // D-284: 코멘트가 아직 없는 객체만 **1회** 선적재(같은 탭·같은 이름은 다시 묻지 않는다) · 응답 = stamp 변화 → 다시 합성.
                     let tab = self.editors.active_id();
+                    // 열쇠 = (탭, 접속 문자열 + 이름) — 같은 탭이 다른 서버에 붙으면 같은 이름도 다시 1회(124차 리뷰).
+                    let conn = self
+                        .sess
+                        .spec
+                        .as_ref()
+                        .map(|s| s.connection_string())
+                        .unwrap_or_default();
                     for k in need {
-                        let name = self.objlinks.links[k].qualified(true);
+                        let name = format!("{conn}\u{1}{}", self.objlinks.links[k].qualified(true));
                         if self.inline_prefetched.insert((tab, name)) {
                             self.objlink_prefetch(k);
                         }
@@ -374,14 +403,24 @@ impl App {
         }
     }
 
+    /// 비교 캐시 무효 표식 — 어떤 합성 결과와도 같지 않다(탭 전환 · 북마크 쪽이 TextBox 라벨을 직접 바꾼 뒤).
+    pub(crate) fn inline_stale_mark(&mut self) {
+        self.inline_last = inline_stale();
+    }
+
     /// 자체 시험 덤프(`editor.inline_dump:<경로>`): `줄\t라벨` 한 줄씩(줄 번호 0 기준).
     pub(crate) fn inline_dump_text(&self) -> String {
         let mut s = String::new();
-        for (l, lab) in &self.inline_last {
+        for (l, lab) in self.inline_last.iter().filter(|(l, _)| *l != usize::MAX) {
             s.push_str(&format!("{l}\t{lab}\n"));
         }
         s
     }
+}
+
+/// 비교 캐시 무효 값(줄 번호 `usize::MAX` = 실제 합성에 나올 수 없다).
+fn inline_stale() -> Vec<(usize, String)> {
+    vec![(usize::MAX, String::new())]
 }
 
 #[cfg(test)]
@@ -622,6 +661,18 @@ mod tests {
         let doc2: Vec<&str> = vec!["x;", "/* a */", "SELECT 2;"];
         let line_at2 = |n: usize| doc2.get(n).map_or(String::new(), |s| (*s).to_string());
         assert_eq!(widen_comment_lines(&line_at2, 2, 2), (1, 2));
+        // 코드 줄 끝의 블록 주석(`x; /* a */`)은 코드 줄 — 앞 문장이 딸려 오지 않는다(124차 리뷰).
+        let doc3: Vec<&str> = vec!["x; /* a */", "SELECT 2;"];
+        let line_at3 = |n: usize| doc3.get(n).map_or(String::new(), |s| (*s).to_string());
+        assert_eq!(widen_comment_lines(&line_at3, 1, 1), (1, 1));
+        // 여러 줄 블록 주석의 여는 줄이 코드 뒤에 붙은 꼴(`x; /* a` … `b */`) = 닫는 줄까지만.
+        let doc4: Vec<&str> = vec!["x; /* a", " b */", "SELECT 3;"];
+        let line_at4 = |n: usize| doc4.get(n).map_or(String::new(), |s| (*s).to_string());
+        assert_eq!(widen_comment_lines(&line_at4, 2, 2), (1, 2));
+        // 여는 줄이 `/*`로 시작하면 그 줄까지.
+        let doc5: Vec<&str> = vec!["x;", "/* a", " b */", "SELECT 4;"];
+        let line_at5 = |n: usize| doc5.get(n).map_or(String::new(), |s| (*s).to_string());
+        assert_eq!(widen_comment_lines(&line_at5, 3, 3), (1, 3));
     }
 
     #[test]

@@ -877,10 +877,40 @@ impl App {
         self.binary_notice
             .iter()
             .filter(|(_, p)| p.as_path() == path)
-            .find_map(|(id, _)| self.editors.index_of_id(*id))
+            .find_map(|(id, _)| self.binary_notice_live_idx(*id))
+    }
+
+    /// 표의 탭이 **아직 이진 안내**인가(탭 번호) — 미리보기 슬롯은 같은 탭 id를 다른 파일로 재사용하므로 표만 믿지 않는다
+    /// (124차 리뷰: a.png 미리보기 → readme.txt 미리보기 뒤 a.png 클릭이 readme 탭으로 갔다): 탭이 있고 · 경로 없음 · 읽기 전용 · 뷰 탭 아님.
+    fn binary_notice_live_idx(&self, id: u64) -> Option<usize> {
+        let i = self.editors.index_of_id(id)?;
+        (self.editors.path_of(i).is_none()
+            && self.editors.is_read_only(i)
+            && self.editors.view_key_of(i).is_none())
+        .then_some(i)
+    }
+
+    /// 탭 id의 이진 안내 원본 경로 — 탭이 아직 이진 안내일 때만(프로젝트 저장이 쓴다).
+    pub(crate) fn binary_notice_live(&self, id: u64) -> Option<PathBuf> {
+        let p = self.binary_notice.get(&id)?;
+        self.binary_notice_live_idx(id).map(|_| p.clone())
+    }
+
+    /// 닫혔거나 다른 파일로 바뀐 탭의 표 항목을 걷는다(열기·저장 길에서 한 번씩 · 비용 = 표 크기).
+    pub(crate) fn prune_binary_notice(&mut self) {
+        let dead: Vec<u64> = self
+            .binary_notice
+            .keys()
+            .copied()
+            .filter(|id| self.binary_notice_live_idx(*id).is_none())
+            .collect();
+        for id in dead {
+            self.binary_notice.remove(&id);
+        }
     }
 
     fn open_binary_notice_in(&mut self, tab: u64, path: &Path, name: &str, preview: bool) {
+        self.prune_binary_notice();
         self.binary_notice.insert(tab, path.to_path_buf());
         let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let body = tf(

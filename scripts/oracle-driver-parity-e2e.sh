@@ -86,6 +86,20 @@ SELECT * FROM no_such_table_nsqlt;
 SELECT TO_NUMBER('abc') FROM dual;
 SELECT 'after errors' AS x FROM dual;
 SQL
+cat > "$D/06-trigger.sql" <<'SQL'
+BEGIN EXECUTE IMMEDIATE 'DROP TABLE NSQLT_PARITY_TG'; EXCEPTION WHEN OTHERS THEN NULL; END;
+/
+CREATE TABLE NSQLT_PARITY_TG (id NUMBER(5), n NUMBER(5));
+CREATE OR REPLACE TRIGGER NSQLT_PARITY_TG_BI BEFORE INSERT ON NSQLT_PARITY_TG FOR EACH ROW
+BEGIN
+  :NEW.n := NVL(:NEW.n, 7);
+END;
+/
+INSERT INTO NSQLT_PARITY_TG (id, n) VALUES (1, NULL);
+SELECT id, n FROM NSQLT_PARITY_TG;
+SELECT o.status, (SELECT COUNT(*) FROM user_errors e WHERE e.name = o.object_name) AS errs FROM user_objects o WHERE o.object_name = 'NSQLT_PARITY_TG_BI';
+DROP TABLE NSQLT_PARITY_TG;
+SQL
 cat > "$D/05-pages.sql" <<'SQL'
 SELECT * FROM (SELECT LEVEL AS lv FROM dual CONNECT BY LEVEL <= 1200) ORDER BY lv;
 SQL
@@ -123,6 +137,8 @@ for drv in oci thin; do
   if grep -q "^1,홍길동,25" "$OUT/$drv/03-write.out"; then ok "$drv: 쓰기 왕복(바인드·UPDATE·COMMIT)"; else bad "$drv: 쓰기 왕복 실패" "$(cat "$OUT/$drv/03-write.err")"; fi
   if grep -q "ORA-00942" "$OUT/$drv/04-errors.err" && grep -q "ORA-01722" "$OUT/$drv/04-errors.err"; then ok "$drv: 오류 코드 ORA-00942·ORA-01722"; else bad "$drv: 오류 코드 누락" "$(cat "$OUT/$drv/04-errors.err")"; fi
   n=$(grep -c "^[0-9]" "$OUT/$drv/05-pages.out"); if [ "$n" -ge 1200 ]; then ok "$drv: 1200행 페치"; else bad "$drv: 1200행 아님($n)"; fi
+  # ⑧ 트리거(:NEW 바인드 꼴 · Thin = EXECUTE IMMEDIATE 감싸기) = VALID · 컴파일 오류 0 · 트리거가 실제로 돈다(NULL → 7).
+  if grep -q "^VALID,0" "$OUT/$drv/06-trigger.out" && grep -q "^1,7" "$OUT/$drv/06-trigger.out"; then ok "$drv: :NEW 트리거 VALID · 동작"; else bad "$drv: 트리거 INVALID/미동작" "$(cat "$OUT/$drv/06-trigger.out" "$OUT/$drv/06-trigger.err")"; fi
 done
 # 오류 문구(stderr)도 같은가 — 드라이버가 다르면 문구가 다를 수 있어 **코드 줄만** 비교.
 e1=$(grep -o "ORA-[0-9]*" "$OUT/oci/04-errors.err" | sort); e2=$(grep -o "ORA-[0-9]*" "$OUT/thin/04-errors.err" | sort)
