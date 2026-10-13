@@ -319,7 +319,11 @@ impl ApplicationHandler<Wake> for App {
         if self.explorer.tick(now_ms) {
             self.redraw();
         }
-        if self.search.tick(now_ms) || self.search.poll() {
+        // ★ 둘 다 늘 부른다(10-13): `tick || poll`은 혜성이 도는 동안 `tick`이 늘 참이라 `poll`(결과 수신)이 한 번도 안 불려
+        //   검색이 영영 "검색 중…"이었다(협업 V1 comet_15s · 단락 평가 결함).
+        let search_tick = self.search.tick(now_ms);
+        let search_poll = self.search.poll();
+        if search_tick || search_poll {
             self.redraw();
         }
         if self.project_panel.tick(now_ms) {
@@ -367,6 +371,13 @@ impl ApplicationHandler<Wake> for App {
         self.project_autosave_tick();
         self.sync_open_files();
         self.bm_tick();
+        // 탭 제목 세대가 바뀌면(이름 바꾸기·저장·열기/닫기) 전용 세션 탭 이름 목록도(탐색기 연결 행 툴팁 · 10-13).
+        if self.priv_titles_rev != self.editors.titles_rev() {
+            self.sync_private_tabs();
+            self.redraw();
+        }
+        // 줄 끝 라벨 합성(docs/111) — 열쇠가 바뀐 틱에만.
+        self.inline_tick();
         self.tab_obj_tick();
         self.project_pump();
         if self.editors.poll_preview() {
@@ -409,6 +420,7 @@ impl ApplicationHandler<Wake> for App {
             || self.file_win.animating()
             || self.explorer.bars_visible()
             || self.explorer.background_pending()
+            || self.explorer.tooltip_pending()
             || self.objdetail.is_animating(Instant::now())
             || self.find.animating()
             || self.search.animating()
@@ -843,15 +855,20 @@ impl ApplicationHandler<Wake> for App {
                         || self.intel.is_open()
                         || self.editors.cur().popup_open();
                     let over_text = !covered && text_area.contains(cur);
-                    // 스플리터 위/드래그 중 = ↔ · ↕ (그리드 헤더 경계보다 우선).
+                    // 스플리터 위/드래그 중 = ↔ · ↕ (그리드 헤더 경계보다 우선) · 열린 팝업(우클릭 메뉴) 아래의 스플리터는 커서를 바꾸지 않는다
+                    // (사용자 10-13 · 라우팅과 같은 규칙 · 드래그 중만 예외).
+                    let menus = self.open_menus() != 0;
                     w.set_cursor(
-                        if self.split_v.is_dragging() || self.split_v.rect().contains(cur) {
+                        if self.split_v.is_dragging()
+                            || (!menus && self.split_v.rect().contains(cur))
+                        {
                             winit::window::CursorIcon::ColResize
                         } else if self.split_h.is_dragging()
-                            || self.split_h.rect().contains(cur)
                             || self.split_d.is_dragging()
-                            || (!self.split_d.rect().is_empty()
-                                && self.split_d.rect().contains(cur))
+                            || (!menus
+                                && (self.split_h.rect().contains(cur)
+                                    || (!self.split_d.rect().is_empty()
+                                        && self.split_d.rect().contains(cur))))
                         {
                             winit::window::CursorIcon::RowResize
                         } else if over_edge {

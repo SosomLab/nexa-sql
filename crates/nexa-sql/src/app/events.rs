@@ -1204,6 +1204,43 @@ impl App {
                     // 눈에 띄게(T-202): 상태줄 + 로그(`log_entries`가 이미 넣었다).
                     self.sess.status = m;
                 }
+                // ★ 드라이버 제약(docs/110 §6 · 사용자 10-13 "Warning 토스트") — 접속 직후 한 번 · 제약 기능이 요청됐을 때마다.
+                RunEvent::DriverLimits {
+                    driver,
+                    limits,
+                    at_connect,
+                } => {
+                    let title = tf(
+                        if at_connect {
+                            Msg::ToastDriverLimitsTitle
+                        } else {
+                            Msg::ToastDriverLimitsHit
+                        },
+                        &[&driver],
+                    );
+                    // ★ 토스트 = 핵심 낱말만 한 줄 + "자세한 내용은 로그 창"(사용자 10-13 "경고가 너무 길다") · 상세(• 줄 + 전환 안내)는 로그 창에.
+                    let short = limits
+                        .iter()
+                        .map(|l| t(crate::app::output::limit_short(*l)))
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    self.toasts.push(
+                        toast::ToastKind::Warn,
+                        title.clone(),
+                        tf(Msg::ToastLimitsShort, &[&short]),
+                    );
+                    self.log_win.push(LogEntry::new(LogKind::Info, title));
+                    for l in &limits {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            format!("  • {}", t(crate::app::output::limit_msg(*l))),
+                        ));
+                    }
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("  {}", t(Msg::LimitHintOracle)),
+                    ));
+                }
                 // ★ 편집기 스크립트 명령(10-01): `CONNTYPE x` → 이 탭 세션의 유형 · `SHOW CONN` → 접속 정보 Output.
                 RunEvent::ConnType(v) => {
                     let env = if v == "none" {

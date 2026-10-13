@@ -71,6 +71,9 @@ pub struct SearchOpts {
     pub threads: usize,
     /// `.gitignore` 적용(D-55 기본 예).
     pub gitignore: bool,
+    /// ★ 포함/제외 **패턴**의 대소문자 구분(사용자 10-13 "OS를 구분하지 않고 Where는 대소문자를 구별하지 않게"): 기본 `false` =
+    ///   OS 무관 ASCII 접기(`*.gwf` ↔ `.GWF`) · `true` = 바이트 그대로. `.gitignore`는 이 값과 무관(git 의미론).
+    pub pattern_case: bool,
 }
 
 impl Default for SearchOpts {
@@ -86,6 +89,7 @@ impl Default for SearchOpts {
             max_file_kb: 1024,
             threads: 0,
             gitignore: true,
+            pattern_case: false,
         }
     }
 }
@@ -274,6 +278,7 @@ fn run(opts: SearchOpts, matcher: Matcher, tx: Sender<Batch>, shared: Arc<Shared
         gitignore: opts.gitignore,
         excludes: opts.excludes.clone(),
         includes: opts.includes.clone(),
+        pattern_case: opts.pattern_case,
     };
     let max_bytes = (opts.max_file_kb as u64).saturating_mul(1024);
     let send = |b: Batch| {
@@ -389,13 +394,20 @@ fn search_file(
 /// (사용자 09-23 "필터가 잘 동작하는지" — 범위 `+*.yaml`인데 열린 `.sql` 탭이 결과에 남던 결함). `rel`은 `/`·`\` 어느 구분자든 · 파일로 본다.
 #[must_use]
 pub fn path_allowed(includes: &[String], excludes: &[String], rel: &str) -> bool {
+    path_allowed_case(includes, excludes, rel, false)
+}
+
+/// [`path_allowed`] + 패턴 대소문자 구분 여부(`pattern_case` · [`SearchOpts::pattern_case`]와 같은 뜻 · 10-13).
+#[must_use]
+pub fn path_allowed_case(includes: &[String], excludes: &[String], rel: &str, pattern_case: bool) -> bool {
+    let fold = !pattern_case;
     let norm = rel.replace('\\', "/");
     let comps: Vec<&str> = norm.split('/').filter(|c| !c.is_empty()).collect();
     if comps.is_empty() {
         return includes.is_empty();
     }
     if !includes.is_empty() {
-        let inc = ignore::IgnoreNode::from_lines(includes.iter().map(String::as_str), 0, None);
+        let inc = ignore::IgnoreNode::from_lines_fold(includes.iter().map(String::as_str), 0, None, fold);
         // 루트 기준 패턴(`docs/**/*.md`)은 절대 경로 성분과 안 맞을 수 있어 **이름만**으로도 한 번 더 본다.
         let name = [*comps.last().unwrap_or(&"")];
         if !(inc.is_ignored(&comps, false) || inc.is_ignored(&name, false)) {
@@ -403,7 +415,7 @@ pub fn path_allowed(includes: &[String], excludes: &[String], rel: &str) -> bool
         }
     }
     if !excludes.is_empty() {
-        let exc = ignore::IgnoreNode::from_lines(excludes.iter().map(String::as_str), 0, None);
+        let exc = ignore::IgnoreNode::from_lines_fold(excludes.iter().map(String::as_str), 0, None, fold);
         let name = [*comps.last().unwrap_or(&"")];
         if exc.is_ignored(&comps, false) || exc.is_ignored(&name, false) {
             return false;
@@ -579,6 +591,9 @@ mod tests {
         assert!(path_allowed(&inc, &exc, "/proj/b.txt"));
         assert!(!path_allowed(&inc, &exc, "/proj/c.log"));
         assert!(!path_allowed(&inc, &exc, "/proj/d_test.sql"));
+        // ★ 패턴 대소문자(10-13): 기본 = 접기(`*.sql` ↔ `.SQL`) · 구분 켬 = 안 맞음.
+        assert!(path_allowed(&inc, &exc, "/proj/E.SQL"));
+        assert!(!path_allowed_case(&inc, &exc, "/proj/E.SQL", true));
         assert!(
             !path_allowed(&inc, &exc, "Script_2"),
             "이름 없는 탭 = 패턴에 안 맞으면 제외"

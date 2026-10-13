@@ -49,6 +49,7 @@ const ICON_WORKER_IDLE_MS: u64 = 5_000;
 /// 행을 열라는 요청(1회성).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpenReq {
+    /// 정규화된 경로(`.` 성분 제거 · `clean_path` · 10-13 협업 관찰 `proj\.\x.png`).
     pub path: PathBuf,
     /// 정식 탭으로(더블클릭 · Enter) · 아니면 미리보기.
     pub permanent: bool,
@@ -198,6 +199,11 @@ const PAD: f32 = 8.0;
 const INDENT: f32 = 14.0;
 
 impl ProjectPanel {
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        self.filter.set_placeholder(t(Msg::PhProjectFilter));
+    }
+
     pub(crate) fn new() -> Self {
         // 필터 틀(부품) + 오른쪽 부가 토글: 숨김 파일 · 점 파일(Windows만 · 사용자 09-22).
         let mut side: Vec<SideBtn> = vec![(BtnKind::Hidden, toolicons::mi_visibility)];
@@ -666,7 +672,8 @@ impl ProjectPanel {
                 .unwrap_or_else(|| nexa_fs::path::display(f));
             let i = self.nodes.len();
             self.nodes.push(Node {
-                path: f.clone(),
+                // 루트 경로의 `.` 성분 제거(프로젝트 폴더 "." → 자식 경로가 `proj\\.\\x`로 보이던 관찰 · 10-13) — 자식은 이 경로를 잇는다.
+                path: clean_dots(f),
                 name: label,
                 is_dir: true,
                 depth: 0,
@@ -920,7 +927,8 @@ impl ProjectPanel {
             scale,
         );
         let list_top = y1 + ih + px(GAP_Y);
-        self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
+        // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 구역 머리·선택 행 배경이 스플리터 선을 덮었다(사용자 10-13 · 확장 패널과 같다).
+        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
         self.clamp_scroll();
         self.relayout_open_rows();
     }
@@ -941,13 +949,17 @@ impl ProjectPanel {
         self.menu.is_open() || self.filter.popup_open()
     }
 
-    /// 열린 우클릭 메뉴 영역(필터 이력 드롭다운은 제 규칙으로 닫히므로 제외).
+    /// 열린 우클릭 메뉴 영역(필터 상자 팝업 포함 · 10-13 배타 규칙 전수).
     pub(crate) fn menu_bounds(&self) -> Rect {
-        self.menu.bounds()
+        if self.menu.is_open() {
+            return self.menu.bounds();
+        }
+        self.filter.popup_bounds()
     }
 
     pub(crate) fn close_menu(&mut self) {
         self.menu.close();
+        self.filter.close_popups();
     }
 
     /// 메뉴(팝업 층 · 창의 맨 마지막에).
@@ -985,7 +997,7 @@ impl ProjectPanel {
         let text_w = (self.row_h * 10).max(180);
         // host = 아는 한 창 전체(팝업 배치 규칙 ③) — 패널은 창 높이를 모르므로 폭만 clamp · 세로는 그리는 시점의 표면 크기 안전망.
         let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
-        self.menu.open_at(p.x, p.y, items, host, text_w);
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
     }
 
     fn menu_pick(&mut self, id: &str) {
@@ -1681,7 +1693,8 @@ impl ProjectPanel {
             self.toggle(n);
         } else {
             self.open = Some(OpenReq {
-                path: self.nodes[n].path.clone(),
+                // `.` 성분 제거(프로젝트 폴더 "."가 결합돼 `Downloads\\.\\x.jpg`로 보이던 관찰 · 같은 파일 탭 판정·안내 본문 경로 일관).
+                path: clean_dots(&self.nodes[n].path),
                 permanent,
             });
         }
@@ -1715,6 +1728,12 @@ impl ProjectPanel {
         }
         // ★ 필터 틀의 팝업(이력 드롭다운 · 편집 메뉴)이 떠 있으면 마우스는 틀이 먼저(목록 행 위에 겹쳐 그려짐 · 사용자 10-07 "클릭으로
         //   검색어가 안 들어감") · 바깥 누름은 닫고 아래로 통과(팝업 UX 규칙 · 객체 탐색기와 같은 규칙).
+        // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
+        if self.name.is_some() && self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+            let fe = self.filter.on_event(ev, &mut inv);
+            self.on_filter_event(fe);
+            return true;
+        }
         if self.name.is_some() && self.filter.popup_takes(ev) {
             let fe = self.filter.on_event(ev, &mut inv);
             self.on_filter_event(fe);
@@ -2310,11 +2329,12 @@ impl ProjectPanel {
         // 🔧 행 y = 목록 위 + (앞부분 행 = 열린 파일 블록 + 폴더 머리글 + 트리 행 번호) × 행 높이 − 스크롤 — `row_at`의 역산
         //   (종전엔 앞부분 행을 빼먹어 열린 파일이 있으면 그만큼 위에 찍혔다 · 사용자 10-07).
         let y = self.list_rect.y - self.scroll_y + (r + self.prefix_rows()) as i32 * self.row_h;
+        // 앵커 = 행 사각형(공용 규칙이 "항목 위"로 · 종전 행 아래 점 앵커는 행을 덮었다 · 10-13).
         let anchor = Rect::new(
             self.list_rect.x + (8.0 * self.scale).round() as i32,
-            y + self.row_h,
+            y,
             0,
-            0,
+            self.row_h,
         );
         nexa_ctl::draw::draw_tooltip_in(dc, th, anchor, (0, self.clamp_w), &text, self.scale);
     }
@@ -2632,5 +2652,25 @@ mod tests {
         // 프로젝트 없는 상태에서 행 활성화는 아무것도 내지 않는다.
         p.activate_row(0, true);
         assert!(p.take_open().is_none());
+    }
+}
+
+/// 경로의 `.` 성분만 걷는다(순수 · `..`·심링크는 손대지 않는다 — 디스크 조회 없음 · 10-13).
+pub(crate) fn clean_dots(p: &std::path::Path) -> std::path::PathBuf {
+    p.components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .collect()
+}
+
+#[cfg(test)]
+mod clean_dots_tests {
+    use super::clean_dots;
+
+    #[test]
+    fn removes_only_curdir_components() {
+        let p = std::path::Path::new("C:\\Users\\k\\Downloads\\.\\x.jpg");
+        assert_eq!(clean_dots(p), std::path::PathBuf::from("C:\\Users\\k\\Downloads\\x.jpg"));
+        let q = std::path::Path::new("a/./b/../c");
+        assert_eq!(clean_dots(q), std::path::PathBuf::from("a/b/../c"));
     }
 }

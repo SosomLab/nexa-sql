@@ -11,6 +11,34 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{IconImage, InputEvent, MenuIcon};
 
+/// 알파 마스크를 `dst`×`dst`로 **영역 평균** 축소(순수) — 원본 픽셀을 목적 픽셀 상자에 모두 넣어 평균(가는 획 보존 · 계단 없음).
+pub(crate) fn box_downsample(alpha: &[u8], w: u32, h: u32, dst: u32) -> Vec<u8> {
+    if w == 0 || h == 0 || dst == 0 {
+        return Vec::new();
+    }
+    if w == dst && h == dst {
+        return alpha.to_vec();
+    }
+    let mut out = vec![0u8; (dst * dst) as usize];
+    for j in 0..dst {
+        let y0 = (j * h / dst) as usize;
+        let y1 = (((j + 1) * h).div_ceil(dst) as usize).max(y0 + 1).min(h as usize);
+        for i in 0..dst {
+            let x0 = (i * w / dst) as usize;
+            let x1 = (((i + 1) * w).div_ceil(dst) as usize).max(x0 + 1).min(w as usize);
+            let mut sum = 0u32;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    sum += u32::from(alpha[y * w as usize + x]);
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as u32;
+            out[(j * dst + i) as usize] = (sum / n.max(1)) as u8;
+        }
+    }
+    out
+}
+
 /// 활동 막대 폭(논리 px · VS Code 48).
 pub(crate) const BAR_W: f32 = 48.0;
 const ICON_PX: f32 = 24.0;
@@ -46,21 +74,21 @@ impl ActivityBar {
             items: vec![
                 ActItem {
                     id: "view.explorer",
-                    icon: toolicons::mi_files(),
+                    icon: toolicons::mi_act_explorer(),
                     panel: true,
                     bottom: false,
                     hidden: false,
                 },
                 ActItem {
                     id: "view.search",
-                    icon: toolicons::mi_search(),
+                    icon: toolicons::mi_act_search(),
                     panel: true,
                     bottom: false,
                     hidden: false,
                 },
                 ActItem {
                     id: "view.project",
-                    icon: toolicons::mi_project(),
+                    icon: toolicons::mi_act_project(),
                     panel: true,
                     bottom: false,
                     hidden: false,
@@ -68,7 +96,7 @@ impl ActivityBar {
                 // 북마크 관리자(docs/69 §6-3 · `bookmark.enabled`가 꺼지면 숨김).
                 ActItem {
                     id: "view.bookmarks",
-                    icon: toolicons::mi_bookmark(),
+                    icon: toolicons::mi_act_bookmarks(),
                     panel: true,
                     bottom: false,
                     hidden: false,
@@ -76,7 +104,7 @@ impl ActivityBar {
                 // 문서 아웃라인(docs/76 · 문장·변수·서브프로그램 · `intel.enabled`가 꺼지면 숨김).
                 ActItem {
                     id: "view.outline",
-                    icon: toolicons::mi_outline(),
+                    icon: toolicons::mi_act_outline(),
                     panel: true,
                     bottom: false,
                     hidden: false,
@@ -229,8 +257,11 @@ impl ActivityBar {
                 );
             }
             let (r, g, bb) = color.rgb();
-            let img =
-                IconImage::from_alpha_tinted(it.icon.w, it.icon.h, &it.icon.alpha, (r, g, bb));
+            // ★ 표시 크기로 먼저 **영역 평균 축소**(64 → 24·36 px)한 뒤 1:1로 그린다 — 바로 축소 그리기(이웃 4점 bilinear)는 2.7배
+            //   축소에서 가는 획이 계단져 보였다(사용자 10-13 "DB 아이콘이 깨져 보인다"). 7개 × 24² = 매 그리기 수만 연산(틱 비용 0).
+            let side = isz.max(1) as u32;
+            let small = box_downsample(&it.icon.alpha, it.icon.w, it.icon.h, side);
+            let img = IconImage::from_alpha_tinted(side, side, &small, (r, g, bb));
             let dy = i32::from(self.pressed == Some(i));
             let dst = Rect::new(
                 slot.x + (slot.w - isz) / 2,

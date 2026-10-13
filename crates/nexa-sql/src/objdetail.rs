@@ -237,7 +237,12 @@ impl DetailPanel {
         self.tb.popup_open()
     }
     pub(crate) fn menu_bounds(&self) -> Rect {
-        self.tb.popup_bounds()
+        if self.tb.popup_open() {
+            // 소유 상자 포함(상자 클릭 = 다른 영역이 아니다 · 10-13).
+            self.tb.popup_bounds().union(&self.tb.bounds())
+        } else {
+            Rect::default()
+        }
     }
     pub(crate) fn close_menu(&mut self) {
         self.tb.close_menu();

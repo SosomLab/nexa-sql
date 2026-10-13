@@ -1622,7 +1622,7 @@ impl Intel {
         // 클릭 = 선택(카드) · 더블 클릭/Enter = 확정(사용자 09-24).
         self.menu.set_click_selects(true);
         self.text_w = (280.0 * scale) as i32;
-        self.menu.open_at(p.x, p.y, items, host, self.text_w);
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, self.text_w);
         // ★ 건너편 컬럼이 있으면 그 행을 **선택 상태**로(사용자 09-29 "순서만 말고 바로 선택") — Enter/Tab 한 번에 확정 · 카드도 그 항목.
         if peer_hit {
             let i = self

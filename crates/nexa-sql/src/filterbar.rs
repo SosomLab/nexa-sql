@@ -219,6 +219,13 @@ pub(crate) struct FilterBar {
 
 impl FilterBar {
     /// `side` = 틀 오른쪽에 붙는 부가 토글(없으면 빈 슬라이스).
+    /// 언어 전환 뒤 플레이스홀더 재라벨(사용자 10-13 "플레이스홀더 다국어") — 글은 그대로.
+    pub(crate) fn set_placeholder(&mut self, placeholder: &str) {
+        self.tb.set_placeholder(placeholder);
+        // 틀이 직접 그리는 길(경로 토글 등 · `paint`)도 이 필드를 본다 — 프로젝트 탐색기만 한국어로 남던 원인(협업 V1 10-13).
+        self.placeholder = placeholder.to_string();
+    }
+
     pub(crate) fn new(placeholder: &str, side: &[SideBtn]) -> Self {
         // × 지우기 = 검색 입력란 공통(글이 있을 때만 · 사용자 09-23) — 네 패널이 함께 얻는다.
         let mut tb = TextBox::new(placeholder).with_clearable();
@@ -299,15 +306,25 @@ impl FilterBar {
 
     /// 열린 팝업의 영역(이력 드롭다운 · 텍스트박스 편집 메뉴) — 호스트의 `menu_bounds`에 합쳐 바깥 클릭 판정이 맞게(같은 클릭을 두 번 보내지 않게).
     pub(crate) fn popup_bounds(&self) -> Rect {
+        // ★ 소유 상자를 합친다(10-13): 배타 규칙이 "상자 자체 클릭"을 다른 영역으로 보고 먼저 닫으면(통과 기본 켬) 그 클릭이 다시
+        //   열어 이력 토글이 안 됐다 — 상자 클릭은 팝업 소유자의 몫(토글·캐럿)이지 다른 영역이 아니다.
         if let Some((_, r)) = &self.history {
             if r.is_open() {
-                return r.bounds();
+                return r.bounds().union(&self.tb.bounds());
             }
         }
         if self.tb.popup_open() {
-            return self.tb.popup_bounds();
+            return self.tb.popup_bounds().union(&self.tb.bounds());
         }
         Rect::default()
+    }
+
+    /// 팝업 전부 닫기(편집 메뉴 · 이력 드롭다운) — 우클릭 메뉴 영역 간 배타(`ui.ctxmenu_exclusive` · 사용자 10-13 "입력창의 우클릭은 반영이 안 됨").
+    pub(crate) fn close_popups(&mut self) {
+        self.tb.close_menu();
+        if let Some((_, r)) = &mut self.history {
+            r.close();
+        }
     }
 
     /// 팝업(텍스트박스 편집 메뉴 · 이력 드롭다운)이 열려 있는가 — 패널의 `menu_open`에 합친다.
@@ -476,19 +493,49 @@ impl FilterBar {
                     self.tb.set_focused(true);
                     self.drag_out = false;
                     to_tb = true;
-                } else if self.history_open() {
+                } else if self.history_open() || self.tb.popup_open() {
                     // ★ 열린 이력 드롭다운(상자 아래) 클릭 = 항목 고르기 · 그 밖 = 닫기(사용자 09-25 "클릭으로는 선택이 안 된다").
+                    //   편집 메뉴(우클릭)도 같다 — 상자 밖에 그려지므로 상자가 받아야 항목이 눌린다(사용자 10-13 "표시는 되지만 선택이 안 됨").
                     to_tb = true;
                 }
             }
             // 우클릭 = 드롭다운이 열려 있으면 닫힘 판정을 받게(바깥 우클릭 = 즉시 감춤 · 사용자 09-25).
-            InputEvent::RightDown { .. } => to_tb = self.history_open(),
+            InputEvent::RightDown { x, y } => {
+                if self.tb.bounds().contains(Point { x, y }) {
+                    // ★ 상자 안 우클릭 = 포커스 + 편집 메뉴(먼저 클릭할 필요 없이 · 사용자 10-13 "우클릭이 안 되거나 다시 안 열림").
+                    for b in &mut self.btns {
+                        b.focused = false;
+                    }
+                    self.tb.set_focused(true);
+                    to_tb = true;
+                } else {
+                    to_tb = self.history_open() || self.tb.popup_open();
+                }
+            }
             InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. } => to_tb = true,
+            // 휠 = 열린 팝업(이력 드롭다운·편집 메뉴)이 먼저 · 닫혀 있으면 포커스일 때만(단일행 가로 스크롤).
+            InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => {
+                to_tb = self.tb.is_focused() || self.history_open() || self.tb.popup_open();
+            }
             InputEvent::Key { .. }
             | InputEvent::Char { .. }
             | InputEvent::Undo
             | InputEvent::Redo => to_tb = self.tb.is_focused(),
             _ => to_tb = self.tb.is_focused(),
+        }
+        if crate::app::input::trace_input()
+            && matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::MouseUp { .. } | InputEvent::RightDown { .. }
+            )
+        {
+            eprintln!(
+                "[filterbar] ev={ev:?} to_tb={to_tb} tb_popup={} hist={} tb_bounds={:?} popup={:?}",
+                self.tb.popup_open(),
+                self.history_open(),
+                self.tb.bounds(),
+                self.tb.popup_bounds()
+            );
         }
         let clicked: Vec<BtnKind> = self
             .btns
@@ -538,7 +585,8 @@ impl FilterBar {
             // 이력(드롭다운/Flat)이 먼저 — 열린 드롭다운의 이동/고르기 · 닫힌 채 ↑/↓ · 끝에서 ↓/Tab = 목록으로(사용자 09-23).
             let clicked_tb = matches!(ev, InputEvent::MouseDown { x, y, .. } if self.tb.bounds().contains(Point { x: *x, y: *y }));
             if let Some((h, r)) = &mut self.history {
-                if self.tb.is_focused() || r.is_open() {
+                // 편집 메뉴가 떠 있으면 키(↓ 등)는 메뉴(상자) 몫 — 이력이 먼저 받으면 메뉴 위로 드롭다운이 열렸다(사용자 10-13).
+                if !self.tb.popup_open() && (self.tb.is_focused() || r.is_open()) {
                     match r.on_event(ev, &mut self.tb, h, inv) {
                         RecallEvent::Consumed => return FilterEvent::Consumed,
                         RecallEvent::Changed => {
@@ -624,6 +672,7 @@ impl FilterBar {
     /// 담는 쪽이 행 클릭을 먼저 처리하면 "클릭으로 검색어가 안 들어간다"(사용자 10-07 · 프로젝트 탐색기·북마크·아웃라인·확장 4곳 ·
     /// 객체 탐색기·파일 검색은 이미 이 규칙). 담는 쪽 = `if popup_takes(ev) { 사건 넣기; if popup_keeps(ev) { return true } }`.
     pub(crate) fn popup_takes(&self, ev: &InputEvent) -> bool {
+        // ★ 휠도 포함(사용자 10-13 "이력 위에서 스크롤하면 뒤 목록도 스크롤") — 담는 쪽 목록 스크롤바보다 먼저 팝업이 받는다.
         self.popup_open()
             && matches!(
                 ev,
@@ -631,17 +680,26 @@ impl FilterBar {
                     | InputEvent::MouseUp { .. }
                     | InputEvent::MouseMove { .. }
                     | InputEvent::RightDown { .. }
+                    | InputEvent::Wheel { .. }
+                    | InputEvent::HWheel { .. }
             )
     }
 
     /// 사건을 넣은 **뒤**: 팝업이 아직 열려 있거나(항목 위 누름 · 이동) 놓임이면 담는 쪽은 끝 · 바깥 누름으로 닫혔으면 그 클릭은 통과(`false`
     /// · 팝업 UX 규칙 "바깥 클릭은 닫고 그대로 진행").
     pub(crate) fn popup_keeps(&self, ev: &InputEvent) -> bool {
-        self.popup_open()
-            || !matches!(
-                ev,
-                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
-            )
+        if self.popup_open() {
+            return true;
+        }
+        match *ev {
+            // ★ 상자 자체 누름 = 틀이 처리했다(이력 토글로 닫힘 · 캐럿) → 담는 쪽은 끝. 종전엔 "닫혔으면 통과"라 담는 쪽의 일반 경로가
+            //   같은 MouseDown을 상자에 한 번 더 넣어 드롭다운이 다시 열렸다(사용자 10-13 "4개 패널에서 토글이 안 됨" · 탐색기·파일
+            //   검색은 한 번만 넣어 됐음). 상자 밖 누름 = 닫고 그 클릭은 통과(팝업 UX 규칙).
+            InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
+                self.tb.bounds().contains(Point { x, y })
+            }
+            _ => true,
+        }
     }
 
     #[cfg(test)]
@@ -701,6 +759,12 @@ impl FilterBar {
         let fb = self.frame;
         let r = px(6.0);
         dc.fill_round_rect(fb, r, th.field_bg);
+        // ★ 상자의 hover/포커스 덧칠을 **틀 전체**에(토글 자리 포함) — 상자만 회색이 되고 토글 쪽은 흰색이라 갈라져 보였다(사용자 10-13).
+        let hov = if enabled { self.tb.hover_overlay_alpha() } else { 0.0 };
+        if hov > 0.0 {
+            dc.fill_round_rect_alpha(fb, r, th.text, hov);
+        }
+        let bg = th.field_bg.lerp(th.text, hov);
         dc.stroke_round_rect(
             fb,
             r,
@@ -722,16 +786,13 @@ impl FilterBar {
             //   (틀의 위·아래 테두리 줄은 남기고 그 안쪽만).
             dc.fill_rect(
                 Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)),
-                th.field_bg,
+                bg,
             );
             let cw = r + 3;
-            dc.fill_rect(
-                Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r),
-                th.field_bg,
-            );
+            dc.fill_rect(Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r), bg);
             dc.fill_rect(
                 Rect::new(tbb.right() - r - 1, tbb.bottom() - r - 1, cw, r),
-                th.field_bg,
+                bg,
             );
         }
         if self.tb.is_focused() {
@@ -758,6 +819,15 @@ impl FilterBar {
 
     /// 팝업 층 — 텍스트박스 편집 메뉴 + 토글 툴팁(지연 뒤 · 버튼 아래).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if crate::app::input::trace_input() && self.tb.popup_open() {
+            eprintln!(
+                "[filterbar paint_popup] tb_bounds={:?} popup={:?} frame={:?} surface={:?}",
+                self.tb.bounds(),
+                self.tb.popup_bounds(),
+                self.frame,
+                dc.surface_size()
+            );
+        }
         self.tb.paint_popup(dc, th);
         if let Some((_, r)) = &self.history {
             r.paint_popup(dc, th);
@@ -766,11 +836,12 @@ impl FilterBar {
             b.hover_since
                 .is_some_and(|t0| t0.elapsed().as_millis() >= self.tooltip_ms)
         }) {
-            let anchor = Rect::new(b.rect.x, b.rect.bottom() + (2.0 * self.scale) as i32, 0, 0);
+            // ★ 앵커 = 버튼 사각형 그대로(공용 규칙 `ui.tooltip_above`가 "항목 위"에 놓는다 · nexa-ui 171): 종전 "버튼 아래 +2 · 높이 0"
+            //   앵커는 그 점 위에 놓여 **버튼을 덮었다**(사용자 10-13 "파일 검색 빼고 전부 기능 버튼을 가린다").
             draw_tooltip_in(
                 dc,
                 th,
-                anchor,
+                b.rect,
                 (0, self.clamp_w),
                 t(b.kind.tip()),
                 self.scale,
@@ -871,6 +942,19 @@ mod search_anim_tests {
         assert!(f.popup_takes(&out));
         f.on_event(&out, &mut inv);
         assert!(!f.popup_keeps(&out), "바깥 누름 = 닫고 그 클릭은 통과");
+        // ★ 토글(사용자 10-13): 열린 채 상자 재클릭 = 닫힘 · keeps = true(담는 쪽이 같은 클릭을 다시 넣지 않게) · 다음 클릭 = 열림.
+        f.on_event(&click(ix, iy), &mut inv);
+        f.on_event(&InputEvent::MouseUp { x: ix, y: iy }, &mut inv);
+        assert!(f.popup_open());
+        let again = click(ix, iy);
+        assert!(f.popup_takes(&again));
+        f.on_event(&again, &mut inv);
+        assert!(!f.popup_open(), "상자 재클릭 = 닫힘(토글)");
+        assert!(f.popup_keeps(&again), "상자 누름은 틀이 처리했다 = 담는 쪽 끝");
+        f.on_event(&InputEvent::MouseUp { x: ix, y: iy }, &mut inv);
+        assert!(!f.popup_open(), "놓임에 다시 열리지 않는다");
+        f.on_event(&click(ix, iy), &mut inv);
+        assert!(f.popup_open(), "다음 클릭 = 다시 열림");
     }
 
     /// Running → Done = 두 번 깜빡임(4 위상 × 130 ms) 뒤 완료 테두리 · Idle로 가면 깜빡임 취소 · Running 동안은 늘 애니메이션.

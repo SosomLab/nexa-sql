@@ -599,8 +599,8 @@ impl OrderWin {
                         }
                     }
                     if !up {
-                        // 입력란 클릭 = 포커스(다른 데 클릭 = 끔 · 포커스 링 하나).
-                        let hit = self.input.bounds().contains(p);
+                        // 입력란 클릭 = 포커스(다른 데 클릭 = 끔 · 포커스 링 하나) · 편집 메뉴 열림 중은 상자로(10-13).
+                        let hit = self.input.bounds().contains(p) || self.input.popup_open();
                         self.input.set_focused(hit);
                         if hit {
                             self.input.on_event(&ev, &mut inv);

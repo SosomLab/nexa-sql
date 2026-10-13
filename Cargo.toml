@@ -15,6 +15,7 @@ members = [
   "crates/nsql-vault",    # ★ 연결 프로필 저장소 — 사용자 폴더에 비밀번호 봉투(ChaCha20-Poly1305 · 기기 키 DPAPI) · CLI·GUI 공용 (DR-22)
   "crates/nsql-driver-sqlite", # ① 어댑터 — rusqlite(bundled) · 실DB 검증용
   "crates/nsql-driver-oracle", # ① 어댑터 — oracle(kubo · ODPI-C · Instant Client 런타임 로드)
+  "crates/nsql-driver-oracle-thin", # ① 어댑터 — oracledb(Oracle 공식 순수 Rust · Thin · Instant Client 불필요 · docs/110)
   "crates/nsql-driver-mssql",  # ① 어댑터 — tiberius(TDS) · DECLARE @v = @Pn 배치 + 트레일러 SELECT로 OUT 회수
   "crates/nsql-driver-pg",     # ① 어댑터 — rust-postgres(동기) · $n 바인드 · 단순 질의 텍스트 폴백 (사용자 09-15)
   "crates/nsql-drivers",  # 접속 문자열 → Box<dyn Session> 레지스트리(feature로 어댑터 선택)
@@ -54,6 +55,7 @@ nsql-io = { path = "crates/nsql-io" }
 nsql-run = { path = "crates/nsql-run" }
 nsql-driver-sqlite = { path = "crates/nsql-driver-sqlite" }
 nsql-driver-oracle = { path = "crates/nsql-driver-oracle" }
+nsql-driver-oracle-thin = { path = "crates/nsql-driver-oracle-thin" }
 nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
 nsql-driver-pg = { path = "crates/nsql-driver-pg" }
 nsql-drivers = { path = "crates/nsql-drivers" }

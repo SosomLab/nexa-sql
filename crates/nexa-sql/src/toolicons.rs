@@ -1249,6 +1249,104 @@ material!(/// `data_object` — Generate SQL.
     mi_data_object, "M560-160v-80h120q17 0 28.5-11.5T720-280v-80q0-38 22-69t58-44v-14q-36-13-58-44t-22-69v-80q0-17-11.5-28.5T680-720H560v-80h120q50 0 85 35t35 85v80q0 17 11.5 28.5T840-560h40v160h-40q-17 0-28.5 11.5T800-360v80q0 50-35 85t-85 35H560Zm-280 0q-50 0-85-35t-35-85v-80q0-17-11.5-28.5T120-400H80v-160h40q17 0 28.5-11.5T160-600v-80q0-50 35-85t85-35h120v80H280q-17 0-28.5 11.5T240-680v80q0 38-22 69t-58 44v14q36 13 58 44t22 69v80q0 17 11.5 28.5T280-240h120v80H280Z");
 material!(/// `add` — 새 탭(여기 서버로).
     mi_add, "M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z");
+// ── 모든 우클릭 메뉴 공용 아이콘(사용자 10-13 "모든 우클릭 메뉴에 이미지 영역" · `menu_icons.rs`) — Material Symbols 글리프.
+material!(/// `edit` — 이름 바꾸기.
+    mi_edit, "M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z");
+material!(/// `folder_open` — 열기 · 파일 위치 열기.
+    mi_folder_open, "M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640H447l-80-80H160v480l96-320h684L837-217q-8 26-29.5 41.5T760-160H160Zm84-80h516l72-240H316l-72 240Zm0 0 72-240-72 240Zm-84-400v-80 80Z");
+material!(/// `my_location` — 탐색기에서 보기.
+    mi_my_location, "M440-42v-80q-125-14-214.5-103.5T122-440H42v-80h80q14-125 103.5-214.5T440-838v-80h80v80q125 14 214.5 103.5T838-520h80v80h-80q-14 125-103.5 214.5T520-122v80h-80Zm40-158q116 0 198-82t82-198q0-116-82-198t-198-82q-116 0-198 82t-82 198q0 116 82 198t198 82Zm0-120q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47Z");
+material!(/// `push_pin` — 계속 열어 두기.
+    mi_push_pin, "m640-480 80 80v80H520v240l-40 40-40-40v-240H240v-80l80-80v-280h-40v-80h400v80h-40v280Zm-286 80h252l-46-46v-314H400v314l-46 46Zm126 0Z");
+material!(/// `visibility_off` — 숨기기.
+    mi_visibility_off, "m644-428-58-58q9-47-27-88t-93-32l-58-58q17-8 34.5-12t37.5-4q75 0 127.5 52.5T660-500q0 20-4 37.5T644-428Zm128 126-58-56q38-29 67.5-63.5T829-500q-50-101-143.5-160.5T480-720q-29 0-57 4t-55 12l-62-62q41-17 84-25.5t90-8.5q151 0 269 83.5T920-500q-23 59-60.5 109.5T772-302Zm20 246L624-222q-35 11-70.5 16.5T480-200q-151 0-269-83.5T40-500q21-53 53-98.5t73-81.5L56-792l56-56 736 736-56 56ZM222-624q-29 26-53 57t-41 67q50 101 143.5 160.5T480-280q20 0 39-2.5t39-5.5l-36-38q-11 3-21 4.5t-21 1.5q-75 0-127.5-52.5T300-500q0-11 1.5-21t4.5-21l-84-82Zm319 93Zm-151 75Z");
+material!(/// `filter_alt` — 필터 · 조건.
+    mi_filter, "M440-160q-17 0-28.5-11.5T400-200v-240L168-736q-15-20-4.5-42t36.5-22h560q26 0 36.5 22t-4.5 42L560-440v240q0 17-11.5 28.5T520-160h-80Zm40-308 198-252H282l198 252Zm0 0Z");
+material!(/// `label` — 북마크 라벨.
+    mi_label, "M160-200q-33 0-56.5-23.5T80-280v-400q0-33 23.5-56.5T160-760h440q20 0 37.5 8.5T666-728l200 248-200 248q-11 15-28.5 23.5T600-200H160Zm0-80h440l160-200-160-200H160v400Zm220-200Z");
+material!(/// `terminal` — Output.
+    mi_terminal, "M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H160v400Zm140-40-56-56 103-104-104-104 57-56 160 160-160 160Zm180 0v-80h240v80H480Z");
+material!(/// `first_page` — 맨 앞으로.
+    mi_first_page, "M240-240v-480h80v480h-80Zm440 0L440-480l240-240 56 56-184 184 184 184-56 56Z");
+material!(/// `last_page` — 맨 뒤로.
+    mi_last_page, "M640-240v-480h80v480h-80Zm-440 0-56-56 184-184-184-184 56-56 240 240-240 240Z");
+material!(/// `restart_alt` — 기본값 · 초기화.
+    mi_restart, "M440-122q-121-15-200.5-105.5T160-440q0-66 26-126.5T260-672l57 57q-38 34-57.5 79T240-440q0 88 56 155.5T440-204v82Zm80 0v-82q87-16 143.5-83T720-440q0-100-70-170t-170-70h-3l44 44-56 56-140-140 140-140 56 56-44 44h3q134 0 227 93t93 227q0 121-79.5 211.5T520-122Z");
+material!(/// `save` — 저장.
+    mi_save, "M840-680v480q0 33-23.5 56.5T760-120H200q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h480l160 160Zm-80 34L646-760H200v560h560v-446ZM480-240q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35ZM240-560h360v-160H240v160Zm-40-86v446-560 114Z");
+material!(/// `link` — 경로 복사.
+    mi_link, "M440-280H280q-83 0-141.5-58.5T80-480q0-83 58.5-141.5T280-680h160v80H280q-50 0-85 35t-35 85q0 50 35 85t85 35h160v80ZM320-440v-80h320v80H320Zm200 160v-80h160q50 0 85-35t35-85q0-50-35-85t-85-35H520v-80h160q83 0 141.5 58.5T880-480q0 83-58.5 141.5T680-280H520Z");
+material!(/// `description` — 파일 이름 복사.
+    mi_description, "M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z");
+/// 툴바 아이콘(마스크)을 메뉴 아이콘으로 — 편집 ▸ 실행 취소/다시 실행 등 같은 그림을 메뉴에도.
+fn mi_from_tool(t: ToolIcon) -> Option<MenuIcon> {
+    match t {
+        ToolIcon::Mask { w, h, alpha } => Some(MenuIcon::from_alpha(w, h, alpha)),
+        _ => None,
+    }
+}
+pub(crate) fn mi_undo() -> Option<MenuIcon> {
+    mi_from_tool(undo())
+}
+pub(crate) fn mi_run() -> Option<MenuIcon> {
+    mi_from_tool(run_statement())
+}
+pub(crate) fn mi_run_all() -> Option<MenuIcon> {
+    mi_from_tool(run_all())
+}
+pub(crate) fn mi_stop() -> Option<MenuIcon> {
+    mi_from_tool(fetch_stop())
+}
+pub(crate) fn mi_commit() -> Option<MenuIcon> {
+    mi_from_tool(commit())
+}
+pub(crate) fn mi_rollback() -> Option<MenuIcon> {
+    mi_from_tool(rollback())
+}
+pub(crate) fn mi_redo() -> Option<MenuIcon> {
+    mi_from_tool(redo())
+}
+// ── 활동 막대 아이콘(docs/112 · D-285 사용자 10-13 = 1안 Material Symbols · 검색 = 1안-대안 Fluent Regular · 확장 = 현행 유지).
+// ★ 크기 = 현행 확장 아이콘(도형 범위 40..216 / 256 = 여백 15.6 %)에 맞춘다(사용자 10-13 "마지막 확장에 맞춰") — Material 글리프(잉크 120..840 / 960)는
+//   viewBox를 1047로 넓혀 같은 여백이 되게 · Fluent(잉크 3..22 / 24)는 27.6.
+const VB_ACT_MATERIAL: [f32; 4] = [-44.0, -1004.0, 1048.0, 1048.0];
+const VB_ACT_FLUENT: [f32; 4] = [-1.8, -1.8, 27.6, 27.6];
+macro_rules! act_material {
+    ($(#[$m:meta])* $name:ident, $d:expr) => {
+        $(#[$m])*
+        pub(crate) fn $name() -> MenuIcon {
+            thread_local! {
+                static CELL: std::cell::RefCell<Option<MenuIcon>> = const { std::cell::RefCell::new(None) };
+            }
+            CELL.with(|c| c.borrow_mut().get_or_insert_with(|| svg_glyph_vb($d, VB_ACT_MATERIAL, false)).clone())
+        }
+    };
+}
+act_material!(/// `database` — 객체 탐색기.
+    mi_act_explorer, "M480-120q-151 0-255.5-46.5T120-280v-400q0-66 104.5-113T480-840q151 0 255.5 47T840-680v400q0 67-104.5 113.5T480-120Zm0-479q89 0 179-25.5T760-679q-11-29-100.5-55T480-760q-91 0-178.5 25.5T200-679q14 30 101.5 55T480-599Zm0 199q42 0 81-4t74.5-11.5q35.5-7.5 67-18.5t57.5-25v-120q-26 14-57.5 25t-67 18.5Q600-528 561-524t-81 4q-42 0-82-4t-75.5-11.5Q367-543 336-554t-56-25v120q25 14 56 25t66.5 18.5Q438-408 478-404t82 4Zm0 200q46 0 93.5-7t87.5-18.5q40-11.5 67-26t32-29.5v-98q-26 14-57.5 25t-67 18.5Q600-328 561-324t-81 4q-42 0-82-4t-75.5-11.5Q367-343 336-354t-56-25v99q5 15 31.5 29t66.5 25.5q40 11.5 88 18.5t94 7Z");
+act_material!(/// `bookmarks` — 북마크(리본 두 장).
+    mi_act_bookmarks, "M120-40v-700q0-33 23.5-56.5T200-820h400q33 0 56.5 23.5T680-740v700L400-160 120-40Zm80-122 200-86 200 86v-578H200v578Zm560 2v-740H240v-80h520q33 0 56.5 23.5T840-900v740h-80ZM200-740h400-400Z");
+act_material!(/// 아웃라인 — 자체 그림(사용자 10-13 "선 5개 · 1·5번 = 맨 위·맨 아래 · 2~4번 균등 · 가운데는 계층 들여쓰기").
+    mi_act_outline, "M120-840h720v80H120Zm120 160h600v80H240Zm120 160h480v80H360Zm-120 160h600v80H240Zm-120 160h720v80H120Z");
+/// Fluent UI System Icons `search_24_regular`(MIT · viewBox 0 0 24 24) — 검색(1안-대안 · 사용자 10-13).
+pub(crate) fn mi_act_search() -> MenuIcon {
+    thread_local! {
+        static CELL: std::cell::RefCell<Option<MenuIcon>> = const { std::cell::RefCell::new(None) };
+    }
+    CELL.with(|c| {
+        c.borrow_mut()
+            .get_or_insert_with(|| {
+                svg_glyph_vb(
+                    "M16.1017 17.1624C14.717 18.3101 12.9391 19 11 19C6.58172 19 3 15.4183 3 11C3 6.58172 6.58172 3 11 3C15.4183 3 19 6.58172 19 11C19 12.9391 18.3101 14.717 17.1624 16.1018L21.7803 20.7197C22.0732 21.0126 22.0732 21.4874 21.7803 21.7803C21.4874 22.0732 21.0125 22.0732 20.7196 21.7803L16.1017 17.1624ZM17.5 11C17.5 7.41015 14.5899 4.5 11 4.5C7.41015 4.5 4.5 7.41015 4.5 11C4.5 14.5899 7.41015 17.5 11 17.5C14.5899 17.5 17.5 14.5899 17.5 11Z",
+                    VB_ACT_FLUENT,
+                    true,
+                )
+            })
+            .clone()
+    })
+}
+act_material!(/// `folder_open` — 프로젝트 탐색기(활동 막대 크기 규칙 · 메뉴용 `mi_folder_open`과 그림은 같다).
+    mi_act_project, "M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640H447l-80-80H160v480l96-320h684L837-217q-8 26-29.5 41.5T760-160H160Zm84-80h516l72-240H316l-72 240Zm0 0 72-240-72 240Zm-84-400v-80 80Z");
 /// 툴바 도형을 메뉴 아이콘으로(새로 고침 · 접속 · 해제 — 같은 그림이 메뉴에도).
 pub(crate) fn mi_refresh() -> MenuIcon {
     menu_icon(shape_refresh)
@@ -1391,4 +1489,33 @@ pub(crate) fn prewarm() {
     let _ = mi_preserve_case();
     let _ = mi_search();
     let _ = mi_in_selection();
+}
+
+#[cfg(test)]
+mod act_icon_tests {
+    use super::*;
+
+    /// 활동 막대 새 아이콘(D-285) 모양 자체 확인 — `cargo test -p nexa-sql --bin nexa-sql act_icons_ascii -- --nocapture`.
+    #[test]
+    fn act_icons_ascii() {
+        // ★ 활동 막대 새 아이콘(D-285) 모양 자체 확인 — `cargo test ... act_icons_ascii -- --nocapture`로 ASCII 미리보기.
+        for (name, ic) in [
+            ("explorer", mi_act_explorer()),
+            ("search", mi_act_search()),
+            ("project", mi_act_project()),
+            ("bookmarks", mi_act_bookmarks()),
+            ("outline", mi_act_outline()),
+        ] {
+            let step = (ic.w / 32).max(1);
+            let mut art = String::new();
+            for y in (0..ic.h).step_by(step as usize) {
+                for x in (0..ic.w).step_by(step as usize) {
+                    let a = ic.alpha[(y * ic.w + x) as usize];
+                    art.push(if a > 128 { '#' } else if a > 32 { '+' } else { '.' });
+                }
+                art.push('\n');
+            }
+            eprintln!("== {name}\n{art}");
+        }
+    }
 }

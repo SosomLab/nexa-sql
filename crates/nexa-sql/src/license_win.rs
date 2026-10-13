@@ -70,6 +70,17 @@ pub(crate) struct LicenseWin {
 }
 
 impl LicenseWin {
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinLicense)));
+        }
+        self.btn_copy.set_label(t(Msg::LicBtnCopyReq));
+        self.btn_open.set_label(t(Msg::LicBtnOpen));
+        self.btn_remove.set_label(t(Msg::LicBtnRemove));
+        self.btn_close.set_label(t(Msg::LicBtnClose));
+    }
+
     pub(crate) fn new() -> Self {
         LicenseWin {
             window: None,

@@ -133,6 +133,43 @@ pub(crate) fn blocked_while_loading(id: &str) -> bool {
 
 /// 취소된 적재의 오류 글(호스트는 이 값이면 오류 안내 대신 "취소됨"만 알린다).
 pub(crate) const CANCELLED: &str = "\u{0}cancelled";
+/// 이진 파일(사용자 10-13 "바이너리는 본문을 보여 주지 않는다 · 뷰어는 확장으로") — 호출자가 안내 탭으로 바꾼다.
+pub(crate) const BINARY: &str = "\u{0}binary";
+
+/// 파일 앞 8 KiB만 읽어 이진 판정(미리보기 요청 머리 · 크기 게이트보다 먼저 · 10-13 "8 MB 넘는 이미지가 정식 탭으로"). 못 읽으면 `false`.
+pub(crate) fn sniff_binary(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = vec![0u8; 8192];
+    let mut got = 0usize;
+    while got < head.len() {
+        match f.read(&mut head[got..]) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(_) => return false,
+        }
+    }
+    looks_binary(&head[..got])
+}
+
+/// 이진 파일 판정(순수 · 앞 8 KiB): NUL 바이트가 있거나 제어 문자(탭·줄 바꿈·CR·FF·ESC·BS 제외)가 10 %를 넘으면 이진.
+/// UTF-16 BOM(`FF FE`/`FE FF`)은 글이므로 제외(디코더가 푼다). 빈 파일 = 글.
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(8192)];
+    if head.is_empty() || head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
+        return false;
+    }
+    if head.contains(&0) {
+        return true;
+    }
+    let ctl = head
+        .iter()
+        .filter(|&&b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0c | 0x1b | 0x08))
+        .count();
+    ctl * 10 > head.len()
+}
 
 /// 파일 읽기 + 인코딩 풀기 + 줄끝 판정(스레드에서도 부른다 · `limit` = 앞부분만 — 마지막 줄바꿈에서 자른다).
 /// `prog`가 있으면 덩어리마다 읽은 양을 올리고 취소를 본다.
@@ -157,7 +194,12 @@ pub(crate) fn read_file(
         if n == 0 {
             break; // 읽는 사이 파일이 줄었다 — 읽은 데까지만.
         }
+        let first = bytes.is_empty();
         bytes.extend_from_slice(&chunk[..n]);
+        // ★ 첫 조각에서 이진이면 바로 끊는다(큰 이미지·압축 파일 전체를 읽고 버리지 않게 · 10-13).
+        if first && looks_binary(&bytes) {
+            return Err(BINARY.into());
+        }
         if let Some(p) = prog {
             p.read.store(bytes.len() as u64, Ordering::Relaxed);
         }
@@ -169,6 +211,10 @@ pub(crate) fn read_file(
         if let Some(p) = bytes.iter().rposition(|b| *b == b'\n') {
             bytes.truncate(p + 1);
         }
+    }
+    // ★ 이진 파일 = 디코드하지 않고 호출자에게(안내 탭 · 실행 거부 · 10-13).
+    if looks_binary(&bytes) {
+        return Err(BINARY.into());
     }
     if let Some(p) = prog {
         p.set_stage(Stage::Decoding);
@@ -304,6 +350,28 @@ pub(crate) fn paint(dc: &mut dyn DrawCtx, th: &Theme, area: Rect, scale: f32, v:
     y += lh + sc(10.0);
     let hw = dc.text_width(hint);
     dc.text(card.x + (card.w - hw) / 2, y, clip, hint, th.text_dim);
+}
+
+#[cfg(test)]
+mod binary_tests {
+    use super::looks_binary;
+
+    #[test]
+    fn binary_detection_rules() {
+        assert!(!looks_binary(b""));
+        assert!(!looks_binary(b"SELECT 1;\r\n-- ok\t"));
+        assert!(!looks_binary("한글 글\n".as_bytes()));
+        assert!(looks_binary(b"MZ\x90\x00\x03\x00"), "NUL = 이진");
+        assert!(looks_binary(b"PK\x03\x04\x14\x00\x06\x00"), "zip 머리");
+        assert!(looks_binary(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), "png 머리");
+        assert!(!looks_binary(&[0xFF, 0xFE, b'a', 0, b'b', 0]), "UTF-16 LE BOM = 글");
+        assert!(!looks_binary(&[0xFE, 0xFF, 0, b'a', 0, b'b']), "UTF-16 BE BOM = 글");
+        // 제어 문자 비율: 10 % 초과면 이진.
+        let mut v = b"abcdefghij".to_vec();
+        v.extend_from_slice(&[0x01, 0x02]);
+        assert!(looks_binary(&v));
+        assert!(!looks_binary(b"abcdefghijklmnopqrst\x01"));
+    }
 }
 
 #[cfg(test)]

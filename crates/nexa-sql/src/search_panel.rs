@@ -165,6 +165,8 @@ pub(crate) struct SearchPanel {
     query: TextBox,
     where_box: TextBox,
     btns: Vec<FindBtn>,
+    /// 위치(Where) 상자의 토글 = Aa 하나(패턴 대소문자 구분 · 기본 끔 = OS 무관 무시 · 사용자 10-13).
+    where_btns: Vec<FindBtn>,
     files: Vec<FileEntry>,
     rows: Vec<Row>,
     job: Option<(Receiver<Batch>, CancelHandle, Instant)>,
@@ -191,6 +193,8 @@ pub(crate) struct SearchPanel {
     history: Option<SharedHistory>,
     rq: Recall,
     rw: Recall,
+    /// 상자 드래그가 상자 밖으로 나갔다(놓임 = 드롭다운 항목 선택이 아니라 닫기 · FilterBar `drag_out`과 같은 규칙).
+    drag_out: bool,
     /// ★ 검색 로그 = 건너뛴 파일(표시 경로 · 이유 글) — 워커가 여럿이어도 채널 하나로 **도착 순 병합**(사용자 09-23
     ///   "용량이 크거나 텍스트 검색이 불가능한 대상은 건너뛰고 로그에 제외 파일과 이유"). 결과 아래 접이식 절.
     skipped: Vec<(String, String)>,
@@ -204,11 +208,80 @@ const ROW_H: f32 = 22.0;
 const INPUT_H: f32 = 25.0;
 const PAD: f32 = 8.0;
 
+/// 틀 하나 + 안쪽 상자(토글 자리는 호출자가 그린다): 바탕 · 상자의 hover 덧칠을 틀 전체에 · 테두리 · 상자 · 상자 오른쪽 테두리를 합성
+/// 배경으로 덮기(곧은 부분 + 위·아래 모서리 호 — 필터 틀 09-28 · 10-13) · 포커스 테두리. 검색어·위치 상자가 같은 그림을 쓴다.
+fn paint_box_frame(dc: &mut dyn DrawCtx, th: &Theme, frame: Rect, tb: &TextBox, r: i32) {
+    dc.fill_round_rect(frame, r, th.field_bg);
+    let hov = tb.hover_overlay_alpha();
+    if hov > 0.0 {
+        dc.fill_round_rect_alpha(frame, r, th.text, hov);
+    }
+    let bg = th.field_bg.lerp(th.text, hov);
+    dc.stroke_round_rect(frame, r, th.border, 1.0);
+    tb.paint(dc, th);
+    let tbb = tb.bounds();
+    if tbb.w > 0 {
+        dc.fill_rect(Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)), bg);
+        let cw = r + 3;
+        dc.fill_rect(Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r), bg);
+        dc.fill_rect(
+            Rect::new(tbb.right() - r - 1, tbb.bottom() - r - 1, cw, r),
+            bg,
+        );
+    }
+    if tb.is_focused() {
+        dc.stroke_round_rect(frame, r, th.accent, 1.0);
+    }
+}
+
 impl SearchPanel {
+    /// 상자 팝업(검색어·위치 편집 메뉴 · 이력 드롭다운)이 열려 있는가 — 우클릭 메뉴 배타 규칙(10-13).
+    pub(crate) fn popup_open(&self) -> bool {
+        self.query.popup_open() || self.where_box.popup_open() || self.rq.is_open() || self.rw.is_open()
+    }
+    pub(crate) fn popup_bounds(&self) -> nexa_ctl::geom::Rect {
+        let mut r = nexa_ctl::geom::Rect::default();
+        let mut add = |x: nexa_ctl::geom::Rect| {
+            if x.w > 0 && x.h > 0 {
+                r = if r.w > 0 { r.union(&x) } else { x };
+            }
+        };
+        // 소유 상자 포함(상자 클릭 = 다른 영역이 아니다 · 10-13).
+        if self.query.popup_open() || self.rq.is_open() {
+            add(self.query.popup_bounds());
+            add(self.query.bounds());
+        }
+        if self.where_box.popup_open() || self.rw.is_open() {
+            add(self.where_box.popup_bounds());
+            add(self.where_box.bounds());
+        }
+        if self.rq.is_open() {
+            add(self.rq.bounds());
+        }
+        if self.rw.is_open() {
+            add(self.rw.bounds());
+        }
+        r
+    }
+    pub(crate) fn close_popups(&mut self) {
+        self.query.close_menu();
+        self.where_box.close_menu();
+        self.rq.close();
+        self.rw.close();
+    }
+
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        self.query.set_placeholder(t(Msg::PhSearchQuery));
+        self.where_box.set_placeholder(t(Msg::PhSearchWhere));
+    }
+
     pub(crate) fn new() -> Self {
         // × 지우기 = 검색 입력란 공통(글이 있을 때만 · 사용자 09-23).
         let mut query = TextBox::new(t(Msg::PhSearchQuery)).with_clearable();
         query.set_focus_ring(false);
+        // ★ 진행 표시 링(혜성)은 상자 속성이되 **틀 둘레**에 그린다(필터 틀과 같은 모양 · 사용자 10-13 "입력창 일부만 탄다").
+        query.set_busy_host_painted(true);
         let mut where_box = TextBox::new(t(Msg::PhSearchWhere)).with_clearable();
         where_box.set_focus_ring(false);
         SearchPanel {
@@ -222,6 +295,7 @@ impl SearchPanel {
                 FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
                 FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
             ],
+            where_btns: vec![FindBtn::new(BtnKind::Case, toolicons::mi_match_case)],
             files: Vec::new(),
             rows: Vec::new(),
             job: None,
@@ -243,6 +317,7 @@ impl SearchPanel {
             history: None,
             rq: Recall::new("search.query"),
             rw: Recall::new("search.where"),
+            drag_out: false,
             skipped: Vec::new(),
             skipped_expanded: false,
             scroll_x: 0,
@@ -342,7 +417,7 @@ impl SearchPanel {
         } else {
             self.query.set_focused(false);
             self.where_box.set_focused(false);
-            for b in &mut self.btns {
+            for b in self.btns.iter_mut().chain(self.where_btns.iter_mut()) {
                 b.focused = false;
             }
         }
@@ -394,12 +469,21 @@ impl SearchPanel {
         );
         // 위·아래 여백 = 다른 패널과 같은 부품 상수(사용자 09-22 "모두 동일하게").
         let y2 = y1 + ih + px(crate::filterbar::GAP_Y);
+        // 위치 상자 = 같은 틀 · 안쪽 오른쪽 Aa 토글(사용자 10-13).
+        let mut wx = frame.right() - px(2.0) - tg;
+        for btn in &mut self.where_btns {
+            btn.rect = Rect::new(wx, y2 + px(3.0), tg, tg);
+            wx -= tg + tgap;
+        }
         self.where_box.set_scale(s);
-        self.where_box
-            .set_bounds(Rect::new(frame.x, y2, frame.w, ih), &mut inv);
+        self.where_box.set_bounds(
+            Rect::new(frame.x, y2, (wx + tg + tgap - frame.x).max(px(40.0)), ih),
+            &mut inv,
+        );
         self.row_h = px(ROW_H);
         let list_top = y2 + ih + px(crate::filterbar::GAP_Y) + self.row_h; // 상태 한 줄
-        self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
+        // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 머리·선택 행 배경이 스플리터 선을 덮지 않게(사용자 10-13 · 패널 공통).
+        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
     }
 
     /// 사용자가 Enter로 검색을 요청했다(1회성).
@@ -413,6 +497,12 @@ impl SearchPanel {
 
     fn case(&self) -> bool {
         self.btns
+            .iter()
+            .any(|b| b.kind == BtnKind::Case && b.checked)
+    }
+    /// 위치(Where) 패턴의 대소문자 구분(Aa 토글 · 기본 끔 = 접기 · 사용자 10-13).
+    fn where_case(&self) -> bool {
+        self.where_btns
             .iter()
             .any(|b| b.kind == BtnKind::Case && b.checked)
     }
@@ -466,7 +556,7 @@ impl SearchPanel {
                     .map_or_else(|| label.clone(), |p| p.to_string_lossy().into_owned());
                 let mut exc = ctx.excludes.clone();
                 exc.extend(spec.excludes.iter().cloned());
-                if !nsql_search::path_allowed(&spec.includes, &exc, &rel) {
+                if !nsql_search::path_allowed_case(&spec.includes, &exc, &rel, self.where_case()) {
                     continue;
                 }
                 let ms = search_text(text, label, &matcher);
@@ -522,15 +612,20 @@ impl SearchPanel {
             max_file_kb: ctx.max_file_kb,
             threads: ctx.threads,
             gitignore: ctx.gitignore,
+            pattern_case: self.where_case(),
         };
         match Search::spawn(opts) {
             Ok((rx, cancel)) => {
                 self.job = Some((rx, cancel, t0));
                 self.status = t(Msg::StSearching).into();
+                // ★ 진행 표시(혜성) = 검색어 상자의 속성(nexa-ctl 170 · 객체/프로젝트 탐색기·팔레트와 같은 부품) — 파일 검색만 상태를
+                //   안 올리고 있었다(사용자 10-13 "파일 검색의 검색창에서 혜성 꼬리가 동작하지 않아").
+                self.query.set_busy(nexa_ctl::BusyState::Running);
             }
             Err(e) => {
                 self.error = Some(e.to_string());
                 self.status = tf(Msg::StSearchError, &[&e.to_string()]);
+                self.query.set_busy(nexa_ctl::BusyState::Idle);
             }
         }
         self.rebuild_rows();
@@ -539,6 +634,8 @@ impl SearchPanel {
     pub(crate) fn cancel(&mut self) {
         if let Some((_, c, _)) = self.job.take() {
             c.cancel();
+            // 취소 = 완료 표시 없이 원복.
+            self.query.set_busy(nexa_ctl::BusyState::Idle);
         }
     }
 
@@ -619,6 +716,10 @@ impl SearchPanel {
                 ));
             }
             self.job = None;
+            // 다 끝남 = 완료 시그니처(두 번 깜빡임 뒤 완료 테두리 · 글을 바꾸면 원복 = 부품 규칙).
+            if self.query.busy_state() == nexa_ctl::BusyState::Running {
+                self.query.set_busy(nexa_ctl::BusyState::Done);
+            }
         } else if changed {
             if let Some((_, c, _)) = self.job.as_ref() {
                 let p = c.progress();
@@ -666,7 +767,7 @@ impl SearchPanel {
         }
         let mut any =
             self.query.tick(now_ms) | self.where_box.tick(now_ms) | self.bars.tick(now_ms);
-        for b in &mut self.btns {
+        for b in self.btns.iter_mut().chain(self.where_btns.iter_mut()) {
             any |= b.hover.tick(now_ms);
         }
         any
@@ -725,6 +826,28 @@ impl SearchPanel {
             return false;
         }
         let mut inv = Invalidations::default();
+        // ★ 휠 = 열린 팝업(이력 드롭다운·편집 메뉴)이 먼저(사용자 10-13 "이력 위 스크롤이 뒤 결과 목록도 스크롤 · 속도 HUD") —
+        //   아래 목록 스크롤바보다 앞에서 끝낸다(필터 틀 `popup_takes`와 같은 규칙).
+        if matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. }) {
+            if let Some(h) = self.history.clone() {
+                if self.rq.is_open() {
+                    let _ = self.rq.on_event(ev, &mut self.query, &h, &mut inv);
+                    return true;
+                }
+                if self.rw.is_open() {
+                    let _ = self.rw.on_event(ev, &mut self.where_box, &h, &mut inv);
+                    return true;
+                }
+            }
+            if self.query.popup_open() {
+                self.query.on_event(ev, &mut inv);
+                return true;
+            }
+            if self.where_box.popup_open() {
+                self.where_box.on_event(ev, &mut inv);
+                return true;
+            }
+        }
         // 목록 스크롤바(휠 포함).
         let content_h = self.rows.len() as i32 * self.row_h;
         let (nx, ny, consumed) = self.bars.on_event(
@@ -744,10 +867,81 @@ impl SearchPanel {
         if consumed {
             return true;
         }
+        // ★ 상자의 우클릭 편집 메뉴가 떠 있으면 마우스는 **그 상자에만**(팝업 최상위 · 61 §2-2-b 5항): 종전엔 두 상자에 다 넘겨 메뉴
+        //   (아래 상자 위에 그려짐)의 "잘라내기" 클릭이 위치 상자에도 들어가 이력 드롭다운이 열렸다(사용자 10-13). 바깥 누름으로 닫혔으면
+        //   그 클릭은 통과(팝업 UX 규칙) · 놓임·이동은 여기서 끝.
+        if matches!(
+            ev,
+            InputEvent::MouseDown { .. }
+                | InputEvent::MouseUp { .. }
+                | InputEvent::MouseMove { .. }
+                | InputEvent::RightDown { .. }
+                | InputEvent::Key { .. }
+                | InputEvent::Char { .. }
+        ) {
+            // 우클릭 = 열린 이력 드롭다운(어느 상자든)은 즉시 닫는다(사용자 09-25 규칙 · 10-13 "우클릭이 눌리면 History는 닫혀야").
+            if matches!(ev, InputEvent::RightDown { .. }) {
+                self.rq.close();
+                self.rw.close();
+            }
+            let owner = if self.query.popup_open() {
+                Some(&mut self.query)
+            } else if self.where_box.popup_open() {
+                Some(&mut self.where_box)
+            } else {
+                None
+            };
+            if let Some(tb) = owner {
+                tb.on_event(ev, &mut inv);
+                // 키(Esc·Enter·↑↓·글자)는 메뉴 몫 — 닫혔어도 다른 컨트롤로 흘리지 않는다(사용자 10-13).
+                if tb.popup_open()
+                    || matches!(
+                        ev,
+                        InputEvent::MouseUp { .. }
+                            | InputEvent::MouseMove { .. }
+                            | InputEvent::Key { .. }
+                            | InputEvent::Char { .. }
+                    )
+                {
+                    return true;
+                }
+            }
+        }
+        // ★ 상자가 드래그 선택 중이면 이동·놓임은 **상자가 먼저**(사용자 10-13 "검색에서 마우스가 놓이지 않는다" · FilterBar의 09-30 규칙과
+        //   같다): 클릭으로 연 이력 드롭다운이 MouseMove/MouseUp을 `Consumed`로 먹어 상자가 놓임을 못 받고 드래그가 남았다(이 패널은
+        //   FilterBar를 안 써서 그 수정이 빠졌다). 상자 밖으로 끌어 놓은 것은 항목 선택이 아니라 드롭다운 닫기 · 단순 클릭은 종전대로.
+        let mut tb_done: Option<bool> = None; // Some(true) = query · Some(false) = where
+        if matches!(ev, InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }) {
+            let (dq, dw) = (self.query.is_dragging(), self.where_box.is_dragging());
+            if dq || dw {
+                let (tb, rc) = if dq {
+                    (&mut self.query, &mut self.rq)
+                } else {
+                    (&mut self.where_box, &mut self.rw)
+                };
+                if let InputEvent::MouseMove { x, y } = *ev {
+                    if !tb.bounds().contains(Point { x, y }) {
+                        self.drag_out = true;
+                    }
+                }
+                tb.on_event(ev, &mut inv);
+                tb_done = Some(dq);
+                if self.drag_out {
+                    if matches!(ev, InputEvent::MouseUp { .. }) {
+                        if rc.is_open() {
+                            rc.close();
+                        }
+                        self.drag_out = false;
+                    }
+                    return true;
+                }
+            }
+        }
         // 검색어 이력(드롭다운/Flat)이 먼저 · 끝에서 ↓/Tab = 결과 목록 첫 행으로(사용자 09-23).
         if let Some(h) = &self.history {
             let mut leave = false;
-            if self.query.is_focused() || self.rq.is_open() {
+            // 편집 메뉴가 떠 있으면 키(↓ 등)는 메뉴(상자) 몫 — 이력이 먼저 받으면 메뉴 위로 드롭다운이 열렸다(사용자 10-13).
+            if !self.query.popup_open() && (self.query.is_focused() || self.rq.is_open()) {
                 match self.rq.on_event(ev, &mut self.query, h, &mut inv) {
                     RecallEvent::Consumed => return true,
                     RecallEvent::Changed => {
@@ -758,7 +952,10 @@ impl SearchPanel {
                     RecallEvent::Pass => {}
                 }
             }
-            if !leave && (self.where_box.is_focused() || self.rw.is_open()) {
+            if !leave
+                && !self.where_box.popup_open()
+                && (self.where_box.is_focused() || self.rw.is_open())
+            {
                 match self.rw.on_event(ev, &mut self.where_box, h, &mut inv) {
                     RecallEvent::Consumed => return true,
                     RecallEvent::Changed => {
@@ -823,13 +1020,22 @@ impl SearchPanel {
             }
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
+                self.drag_out = false;
                 let in_q = self.query.bounds().contains(p);
                 let in_w = self.where_box.bounds().contains(p);
-                self.query.set_focused(in_q);
-                self.where_box.set_focused(in_w);
+                // 상자 편집 메뉴가 떠 있으면(메뉴 항목 클릭) 포커스는 그대로 — 메뉴 동작(잘라내기·붙여넣기)의 대상이 포커스 상자라서
+                // (`focused_textbox` → `clip_action` · 사용자 10-13 "파일 검색에서 동작 안 함").
+                if !(self.query.popup_open() || self.where_box.popup_open()) {
+                    self.query.set_focused(in_q);
+                    self.where_box.set_focused(in_w);
+                }
                 let hit = self.btns.iter().position(|b| b.rect.contains(p));
                 for (i, b) in self.btns.iter_mut().enumerate() {
                     b.focused = Some(i) == hit;
+                }
+                let whit = self.where_btns.iter().position(|b| b.rect.contains(p));
+                for (i, b) in self.where_btns.iter_mut().enumerate() {
+                    b.focused = Some(i) == whit;
                 }
                 if let Some(i) = self.row_at(p) {
                     self.sel = Some(i);
@@ -849,8 +1055,12 @@ impl SearchPanel {
             }
             _ => {}
         }
-        self.query.on_event(ev, &mut inv);
-        self.where_box.on_event(ev, &mut inv);
+        if tb_done != Some(true) {
+            self.query.on_event(ev, &mut inv);
+        }
+        if tb_done != Some(false) {
+            self.where_box.on_event(ev, &mut inv);
+        }
         // 상자 클릭 = 이력 드롭다운(보기 방식 Dropdown · 이력 있을 때 · 사용자 09-23).
         if let (InputEvent::MouseDown { x, y, .. }, Some(h)) = (ev, &self.history) {
             let p = Point { x: *x, y: *y };
@@ -861,7 +1071,7 @@ impl SearchPanel {
                 self.rw.on_click(&self.where_box, h, host, self.scale);
             }
         }
-        for b in &mut self.btns {
+        for b in self.btns.iter_mut().chain(self.where_btns.iter_mut()) {
             b.on_event(ev);
         }
         // 검색어를 ×(또는 전부 지움)로 비우면 결과·제외 로그·상태도 비운다(VS Code와 같음 · 사용자 09-23 "×로 제거해도 결과가 안 바뀜").
@@ -887,7 +1097,7 @@ impl SearchPanel {
             }
         }
         let mut redraw = true;
-        for b in &mut self.btns {
+        for b in self.btns.iter_mut().chain(self.where_btns.iter_mut()) {
             if b.take_clicked() {
                 b.checked = !b.checked;
                 // 토글을 바꾸면 결과가 있을 때 다시 검색(다음 Enter 없이).
@@ -923,20 +1133,19 @@ impl SearchPanel {
         let qb = self.query.bounds();
         let frame = Rect::new(qb.x, qb.y, b.w - px(PAD) * 2, qb.h);
         let r = px(6.0);
-        dc.fill_round_rect(frame, r, th.field_bg);
-        dc.stroke_round_rect(frame, r, th.border, 1.0);
-        self.query.paint(dc, th);
-        dc.fill_rect(
-            Rect::new(qb.right() - 2, qb.y + r, 3, (qb.h - r * 2).max(0)),
-            th.field_bg,
-        );
-        if self.query.is_focused() {
-            dc.stroke_round_rect(frame, r, th.accent, 1.0);
-        }
+        paint_box_frame(dc, th, frame, &self.query, r);
+        // 진행 표시 링 = 틀 둘레(상자는 `set_busy_host_painted`로 생략 · 필터 틀과 같다).
+        self.query.busy_ring().paint(dc, th, frame, r, s);
         for btn in &self.btns {
             btn.paint(dc, th, s);
         }
-        self.where_box.paint(dc, th);
+        // 위치 상자 = 같은 틀 + Aa 토글(사용자 10-13).
+        let wb = self.where_box.bounds();
+        let wframe = Rect::new(wb.x, wb.y, frame.w, wb.h);
+        paint_box_frame(dc, th, wframe, &self.where_box, r);
+        for btn in &self.where_btns {
+            btn.paint(dc, th, s);
+        }
         // 상태 한 줄.
         dc.select_font(FontSlot::Status, false);
         let sy = self.where_box.bounds().bottom() + px(4.0);
@@ -1136,23 +1345,29 @@ impl SearchPanel {
         if !self.visible {
             return;
         }
-        let Some(btn) = self.btns.iter().find(|b| {
+        // 검색어 토글 + 위치(Where) 토글(사용자 10-13 "Where의 기능 버튼에도 툴팁") — 위치 Aa는 단축키가 없어 제 문구(협업 V1 관찰).
+        let hot = |b: &&FindBtn| {
             b.hover_on
                 && b.hover_since
                     .is_some_and(|t0| t0.elapsed().as_millis() >= self.tooltip_ms)
-        }) else {
+        };
+        let (btn, tip) = if let Some(b) = self.btns.iter().find(hot) {
+            (b, b.kind.tip())
+        } else if let Some(b) = self.where_btns.iter().find(hot) {
+            (b, Msg::TipSearchWhereCase)
+        } else {
             return;
         };
-        let s = self.scale;
-        dc.select_font(FontSlot::Status, false);
-        let h = dc.text_height() + (8.0 * s).round() as i32;
-        let anchor = Rect::new(
-            btn.rect.x,
-            btn.rect.y - h - (12.0 * s).round() as i32,
-            btn.rect.w,
-            0,
+        // ★ 앵커 = 버튼 사각형 그대로(공용 규칙이 "항목 위"로 올린다 · nexa-ui 171): 종전엔 캡슐 높이만큼 미리 올린 앵커를 넘겨
+        //   **두 번** 올라가 툴바에 묻혔다(사용자 10-13 "툴바 상단에 잘려 보임").
+        nexa_ctl::draw::draw_tooltip_in(
+            dc,
+            th,
+            btn.rect,
+            (0, self.clamp_w),
+            t(tip),
+            self.scale,
         );
-        nexa_ctl::draw::draw_tooltip_in(dc, th, anchor, (0, self.clamp_w), t(btn.kind.tip()), s);
     }
 }
 

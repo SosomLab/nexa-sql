@@ -531,6 +531,31 @@ impl App {
     }
 
     /// 세션 상태가 바뀌었을 때 화면의 세 층을 한 번에 맞춘다: 탭 표식·설명 · 통제(툴바) · 트랜잭션 · 해제 버튼.
+    /// 전용 세션의 (스펙, 소유 탭 제목)을 탐색기에(연결 행 P 칩 · 툴팁의 탭 이름 목록 = **연결 순서**). 세션 동기화 때와
+    /// **탭 제목 세대가 바뀔 때**(이름 바꾸기·저장·열기/닫기 · `Editors::titles_rev` · 10-13 "탭 이름이 변경되면 같이")마다.
+    pub(crate) fn sync_private_tabs(&mut self) {
+        self.priv_titles_rev = self.editors.titles_rev();
+        let titles: std::collections::HashMap<u64, String> =
+            self.editors.tab_titles().into_iter().collect();
+        // ★ 연결 순서(세션 id 오름차순) — `all_sess()`는 활성 세션을 앞에 두므로 그대로 쓰면 나중 연결이 먼저였다(협업 V1 10-13).
+        let mut rows: Vec<(u64, ConnectSpec, String)> = self
+            .all_sess()
+            .filter(|s| s.is_private() && (s.connected || s.idle_closed) && !s.closing)
+            .filter_map(|s| {
+                let spec = s.spec.clone()?;
+                let tab = s
+                    .owner
+                    .and_then(|t| titles.get(&t).cloned())
+                    .unwrap_or_default();
+                Some((s.id, spec, tab))
+            })
+            .collect();
+        rows.sort_by_key(|(id, _, _)| *id);
+        let private: Vec<(ConnectSpec, String)> =
+            rows.into_iter().map(|(_, spec, tab)| (spec, tab)).collect();
+        self.explorer.set_private(private);
+    }
+
     pub(crate) fn sync_sess_ui(&mut self) {
         // 설정 창이 열려 있으면 활성 탭 덧말·미리보기도 따라온다(탭 전환 · 사용자 09-29).
         self.prefs_format_preview_refresh();
@@ -576,21 +601,7 @@ impl App {
         self.explorer.sync_refs(&live);
         // ★ 전용 세션 표식(사용자 10-12 · 설계 A): 탐색기 연결 행에 'P' 칩 + "전용 · <탭 이름>" · 헤더 "전용 N" — 전용 세션의
         //   (스펙, 소유 탭 제목)을 넘긴다(탭 제목은 바뀔 수 있으니 매 동기화마다).
-        let titles: std::collections::HashMap<u64, String> =
-            self.editors.tab_titles().into_iter().collect();
-        let private: Vec<(ConnectSpec, String)> = self
-            .all_sess()
-            .filter(|s| s.is_private() && (s.connected || s.idle_closed) && !s.closing)
-            .filter_map(|s| {
-                let spec = s.spec.clone()?;
-                let tab = s
-                    .owner
-                    .and_then(|t| titles.get(&t).cloned())
-                    .unwrap_or_default();
-                Some((spec, tab))
-            })
-            .collect();
-        self.explorer.set_private(private);
+        self.sync_private_tabs();
         let cur = self.sess.spec.clone();
         self.explorer.show_for(cur.as_ref());
         self.sync_gate();
@@ -1511,6 +1522,7 @@ impl App {
                 return;
             }
         }
+        let first_request = self.sess.busy && !self.sess.run_cancel_requested;
         self.sess.run_cancel_requested = self.sess.busy;
         // 첫 요청 시각은 재전송에도 유지(연타해도 강제 중지 창이 뒤로 밀리지 않게).
         self.sess.run_cancel_at = if self.sess.busy {
@@ -1542,6 +1554,15 @@ impl App {
             self.sess.worker.cancel_run()
         };
         self.sess.run_cancel_drops = drops;
+        // ★ 취소 핸들이 없는 드라이버(Oracle Thin · docs/110 §6 #1)에 첫 ■ = 안내 토스트(사용자 10-13): 배치 경계에서 멈춤 · 다시 ■ = 강제 중지.
+        if first_request && !sent && !muted {
+            let body = tf(Msg::StNoCancelDriver, &[&self.sess.desc]);
+            self.toasts.push(
+                crate::toast::ToastKind::Warn,
+                t(Msg::StRunCancelling).to_string(),
+                body,
+            );
+        }
         self.sess.status = t(if sent && drops {
             Msg::StRunCancellingDrop
         } else if sent {

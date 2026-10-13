@@ -3425,7 +3425,8 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerWidth,
         desc: Msg::DescExplorerWidth,
-        kind: SettingKind::Int { min: 160, max: 800 },
+        // 최소 200(사용자 10-13 · 종전 160 = 확장 패널 버튼 행이 밖으로 나갔다).
+        kind: SettingKind::Int { min: 200, max: 800 },
         default: "260",
     },
     // ★ 편집기 · 결과 영역 최소 높이(사용자 10-09): 분할 비율·스플리터가 이 아래로 내려가지 않는다(논리 px · 창이 더 작으면 비례).
@@ -4468,6 +4469,25 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ Oracle 클라이언트(Instant Client · 사용자 09-21): 자동 = 지금 환경에서 찾아 **읽기 전용**으로 보여 준다 · 직접 지정 = 폴더와
     //   TNS_ADMIN만 바꿀 수 있고(`DEPENDS`) 거기서 나오는 파일 경로들은 읽기 전용(`INFO_KEYS` — 저장하지 않는 계산 값).
+    // ★ Oracle 드라이버(docs/110 · D-277/D-278 · 10-13): 고르기 = `oracle.driver`(기본 **thin** = 사용자 10-13 결정 · 설치 없이 바로) ·
+    //   지금 쓰일 드라이버와 못 하는 것 =
+    //   `oracle.info_driver`(읽기 전용). Instant Client 설정(`client_mode` 이하)은 OCI를 골랐을 때만 열린다(`DEPENDS` 연쇄 · `locked_by_chain`).
+    Entry {
+        key: "oracle.driver",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraDriver,
+        desc: Msg::DescOraDriver,
+        kind: SettingKind::Choice(ORA_DRIVER_OPTS),
+        default: "thin",
+    },
+    Entry {
+        key: "oracle.info_driver",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraInfoDriver,
+        desc: Msg::DescOraInfoDriver,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "oracle.client_mode",
         cat: Msg::CatDbmsOracle,
@@ -5009,6 +5029,65 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescQuoteIdents,
         kind: SettingKind::Choice(QUOTE_IDENTS_OPTS),
         default: "needed",
+    },
+    // ★ 줄 끝 객체 설명(docs/111 · T-338 · D-281~D-284 · 사용자 10-13): 상시 / Ctrl 홀드 · 대상 · 길이 · Ctrl 범위(북마크 라벨과 공유).
+    Entry {
+        key: "editor.desc_inline",
+        cat: Msg::CatEditor,
+        label: Msg::LblDescInline,
+        desc: Msg::DescDescInline,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "editor.desc_inline_ctrl",
+        cat: Msg::CatEditor,
+        label: Msg::LblDescInlineCtrl,
+        desc: Msg::DescDescInlineCtrl,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.desc_inline_what",
+        cat: Msg::CatEditor,
+        label: Msg::LblDescInlineWhat,
+        desc: Msg::DescDescInlineWhat,
+        kind: SettingKind::Choice(DESC_WHAT_OPTS),
+        default: "both",
+    },
+    Entry {
+        key: "editor.desc_inline_chars",
+        cat: Msg::CatEditor,
+        label: Msg::LblDescInlineChars,
+        desc: Msg::DescDescInlineChars,
+        kind: SettingKind::Int { min: 8, max: 200 },
+        default: "40",
+    },
+    Entry {
+        key: "editor.inline_ctrl_scope",
+        cat: Msg::CatEditor,
+        label: Msg::LblInlineCtrlScope,
+        desc: Msg::DescInlineCtrlScope,
+        kind: SettingKind::Choice(INLINE_SCOPE_OPTS),
+        default: "statement",
+    },
+    // ★ 문서 용량 단계(사용자 10-13 "문서 전체 범위는 용량이 크면 문제 → 용량별 차등"): ≤ full = 설정대로 · full < 용량 ≤ off = `document` → 보이는
+    //   영역 · > off(또는 큰 파일 모드) = Ctrl 표시 끔. 북마크 라벨·객체 설명 공통.
+    Entry {
+        key: "editor.inline_ctrl_full_kb",
+        cat: Msg::CatEditor,
+        label: Msg::LblInlineCtrlFullKb,
+        desc: Msg::DescInlineCtrlFullKb,
+        kind: SettingKind::Int { min: 0, max: 65536 },
+        default: "256",
+    },
+    Entry {
+        key: "editor.inline_ctrl_off_kb",
+        cat: Msg::CatEditor,
+        label: Msg::LblInlineCtrlOffKb,
+        desc: Msg::DescInlineCtrlOffKb,
+        kind: SettingKind::Int { min: 0, max: 65536 },
+        default: "2048",
     },
     Entry {
         key: "editor.close_unsaved",
@@ -6033,6 +6112,25 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 8, max: 200 },
         default: "40",
     },
+    // ★ Ctrl을 누른 동안 줄 끝 라벨(docs/111 · T-337 · D-281 · 사용자 10-13): 상시(`inline_label`)가 꺼져 있어도 · 범위 = `editor.inline_ctrl_scope` ·
+    //   향상 모드 = FORCED off.
+    Entry {
+        key: "bookmark.inline_label_ctrl",
+        cat: Msg::CatBookmarkDisplay,
+        label: Msg::LblBmInlineCtrl,
+        desc: Msg::DescBmInlineCtrl,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 북마크 Ctrl 범위는 **따로**(사용자 10-13 · D-282 뒤집음) · 기본 = 보이는 영역 · 현재 문장은 딸린 주석 줄까지(111 §3-1).
+    Entry {
+        key: "bookmark.inline_label_ctrl_scope",
+        cat: Msg::CatBookmarkDisplay,
+        label: Msg::LblBmInlineCtrlScope,
+        desc: Msg::DescBmInlineCtrlScope,
+        kind: SettingKind::Choice(INLINE_SCOPE_OPTS),
+        default: "visible",
+    },
     Entry {
         key: "bookmark.statusbar",
         cat: Msg::CatBookmarkDisplay,
@@ -6760,10 +6858,28 @@ const ORA_CLIENT_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValOraClientAuto),
     ("manual", Msg::ValOraClientManual),
 ];
+/// 줄 끝 설명 대상(docs/111).
+const DESC_WHAT_OPTS: &[(&str, Msg)] = &[
+    ("table", Msg::ValDescWhatTable),
+    ("column", Msg::ValDescWhatColumn),
+    ("both", Msg::ValDescWhatBoth),
+];
+/// Ctrl 표시 범위(docs/111 §3 · 북마크 라벨·설명 공유).
+const INLINE_SCOPE_OPTS: &[(&str, Msg)] = &[
+    ("statement", Msg::ValInlineScopeStatement),
+    ("visible", Msg::ValInlineScopeVisible),
+    ("document", Msg::ValInlineScopeDocument),
+];
+/// Oracle 드라이버(docs/110 · D-277): OCI(Instant Client) | Thin(순수 Rust).
+const ORA_DRIVER_OPTS: &[(&str, Msg)] = &[
+    ("oci", Msg::ValOraDriverOci),
+    ("thin", Msg::ValOraDriverThin),
+];
 
 /// ★ **읽기 전용 정보 키**(사용자 09-21): 저장하지 않는 계산 값 — 호스트가 그때그때 채워 설정 창에 잠긴 칸으로 보여 준다
 /// (자동 탐지 결과 · 설정에서 파생된 파일 경로 · 내장 드라이버 안내). `set`은 거부한다 · 설정 파일에 적히지 않는다.
 pub const INFO_KEYS: &[&str] = &[
+    "oracle.info_driver",
     "oracle.info_library",
     "oracle.info_version",
     "oracle.info_tnsnames",
@@ -6868,6 +6984,8 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("grid.result_tabbar_single", "grid.result_tabs", Dep::On),
     ("vars.env_subst", "vars.brace_subst", Dep::On),
     // Oracle 클라이언트: 직접 지정일 때만 폴더·TNS_ADMIN을 바꿀 수 있다(자동이면 탐지 결과가 읽기 전용으로 보인다).
+    // Oracle 드라이버 트리(docs/110 §4-3): driver = oci → client_mode → (manual) → client_dir · tns_admin. 연쇄 = `locked_by_chain`.
+    ("oracle.client_mode", "oracle.driver", Dep::Eq("oci")),
     ("oracle.client_dir", "oracle.client_mode", Dep::Eq("manual")),
     ("oracle.tns_admin", "oracle.client_mode", Dep::Eq("manual")),
     ("vars.persist_days", "vars.persist", Dep::On),
@@ -6976,6 +7094,24 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
         .iter()
         .find(|(c, _, _)| *c == child)
         .map(|(_, p, d)| (*p, *d))
+}
+
+/// ★ 연쇄 잠금(docs/110 §4-3 · 10-13): 자식은 **조상 중 하나라도** 조건을 못 채우면 잠긴다 — `oracle.driver = thin`이면 `client_mode`가
+/// 잠기고 그 아래 `client_dir`·`tns_admin`도 함께(종전 = 부모 **값**만 봐서 잠긴 부모 밑의 손자가 열려 있었다 · 3단 `scroll.fast_hud_pos`도
+/// 같은 결함). 순수 함수(설정 창 `apply_deps`·`refresh` 둘 다 이것 하나) · 깊이 상한 8 = 순환 방어.
+#[must_use]
+pub fn locked_by_chain(key: &str, value_of: &dyn Fn(&str) -> String) -> bool {
+    let mut cur = key;
+    for _ in 0..8 {
+        let Some((parent, dep)) = dependency(cur) else {
+            return false;
+        };
+        if !dep.satisfied(&value_of(parent)) {
+            return true;
+        }
+        cur = parent;
+    }
+    false
 }
 
 pub const HIDDEN: &[&str] = &[
@@ -8062,6 +8198,45 @@ mod tests {
         assert!(s
             .set("oracle.client_dir", "C:/oracle/instantclient_19_20")
             .is_ok());
+    }
+
+    /// ★ 연쇄 잠금 MC/DC(docs/110 §4-3 · 10-13): (driver, client_mode) 두 조건이 각각 **독립적으로** 결과를 뒤집는다.
+    #[test]
+    fn oracle_driver_chain_locks_instant_client_settings() {
+        let v = |driver: &str, mode: &str| {
+            let (d, m) = (driver.to_string(), mode.to_string());
+            move |k: &str| -> String {
+                match k {
+                    "oracle.driver" => d.clone(),
+                    "oracle.client_mode" => m.clone(),
+                    _ => String::new(),
+                }
+            }
+        };
+        // 기준: oci + manual = 전부 열림.
+        let f = v("oci", "manual");
+        assert!(!locked_by_chain("oracle.client_mode", &f));
+        assert!(!locked_by_chain("oracle.client_dir", &f));
+        // driver만 뒤집음 → client_mode 잠김 · 손자도 잠김(값은 manual 그대로인데도 = 연쇄).
+        let f = v("thin", "manual");
+        assert!(locked_by_chain("oracle.client_mode", &f));
+        assert!(locked_by_chain("oracle.client_dir", &f));
+        assert!(locked_by_chain("oracle.tns_admin", &f));
+        // mode만 뒤집음 → client_mode는 열림 · 손자만 잠김.
+        let f = v("oci", "auto");
+        assert!(!locked_by_chain("oracle.client_mode", &f));
+        assert!(locked_by_chain("oracle.client_dir", &f));
+        // 맨 위 키·종속 없는 키 = 안 잠김 · info 키는 종속이 아니라 `INFO_KEYS`로 잠긴다 · 기본값 = thin(D-278 · 사용자 10-13).
+        assert!(!locked_by_chain("oracle.driver", &f));
+        assert!(is_info("oracle.info_driver"));
+        assert_eq!(
+            dependency("oracle.client_mode").map(|(p, _)| p),
+            Some("oracle.driver")
+        );
+        let mut s = Settings::from_text(std::path::PathBuf::from("x"), "_schema=1\n");
+        assert_eq!(s.get("oracle.driver"), Some("thin"));
+        assert!(s.set("oracle.driver", "oci").is_ok());
+        assert!(s.set("oracle.driver", "fat").is_err());
     }
 
     /// 결과가 1개일 때의 탭 줄 설정은 결과 탭(다중) **바로 밑**에 있고 그 설정에 종속된다(사용자 09-21).

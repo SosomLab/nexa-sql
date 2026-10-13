@@ -53,6 +53,36 @@ fn run(r: &mut Runner, src: &str) -> Vec<RunEvent> {
     ev
 }
 
+/// ★ Oracle 시험은 **두 드라이버로**(docs/110 · T-336 · 사용자 10-13 "두 실행의 기능/결과 동일"): `NSQL_ORACLE_DRIVERS=oci,thin`
+/// (기본 = 이 빌드에 든 것 전부). 드라이버 선택은 레지스트리 전역이라 접속 전에 바꾼다(ODPI-C는 OCI를 처음 쓸 때만 초기화).
+fn oracle_drivers() -> Vec<nsql_drivers::OracleDriver> {
+    use nsql_drivers::OracleDriver as D;
+    match std::env::var("NSQL_ORACLE_DRIVERS") {
+        Ok(v) => v
+            .split(',')
+            .map(|x| D::parse(x.trim()))
+            .filter(|d| d.included())
+            .collect(),
+        Err(_) => [D::Oci, D::Thin]
+            .into_iter()
+            .filter(|d| d.included())
+            .collect(),
+    }
+}
+
+/// 같은 시험 본문을 Oracle 드라이버마다 한 번씩(건너뛰면 한 번만 알린다).
+fn for_each_oracle(body: impl Fn(Runner)) {
+    for d in oracle_drivers() {
+        nsql_drivers::set_oracle_driver(d);
+        eprintln!("[oracle driver] {}", d.as_str());
+        let Some(r) = runner_for("NSQL_ORACLE_URL", Dialect::Oracle) else {
+            return;
+        };
+        body(r);
+    }
+    nsql_drivers::set_oracle_driver(nsql_drivers::OracleDriver::Thin);
+}
+
 fn first_rs(ev: &[RunEvent]) -> Option<&nsql_core::ResultSet> {
     ev.iter().find_map(|e| {
         if let RunEvent::ResultSet { rs, .. } = e {
@@ -65,9 +95,7 @@ fn first_rs(ev: &[RunEvent]) -> Option<&nsql_core::ResultSet> {
 
 #[test]
 fn oracle_session_variables_refcursor_and_dbms_output() {
-    let Some(mut r) = runner_for("NSQL_ORACLE_URL", Dialect::Oracle) else {
-        return;
-    };
+    for_each_oracle(|mut r| {
     let ev = run(
         &mut r,
         "VARIABLE rc REFCURSOR\nEXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM ALL_OBJECTS WHERE ROWNUM <= 3\nPRINT V_CNT\nSELECT :V_NAME AS n, :V_CNT AS c FROM DUAL;\nEXEC OPEN :rc FOR SELECT :V_NAME AS n FROM DUAL\nPRINT rc\nSET SERVEROUTPUT ON\nEXEC DBMS_OUTPUT.PUT_LINE('hello ' || :V_NAME)\n",
@@ -96,13 +124,12 @@ fn oracle_session_variables_refcursor_and_dbms_output() {
             .any(|e| matches!(e, RunEvent::Message(m) if m == "hello nexa")),
         "{ev:#?}"
     );
+    });
 }
 
 #[test]
 fn oracle_plsql_block_out_binds_and_dml() {
-    let Some(mut r) = runner_for("NSQL_ORACLE_URL", Dialect::Oracle) else {
-        return;
-    };
+    for_each_oracle(|mut r| {
     run(&mut r, "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nexa_it'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nexa_it (id NUMBER, name VARCHAR2(30));\nINSERT INTO nexa_it VALUES (1, '홍길동');\nBEGIN\n  SELECT name INTO :V_NM FROM nexa_it WHERE id = 1;\n  :V_TWICE := :V_NM || :V_NM;\nEND;\n/\nCOMMIT;\n");
     assert_eq!(
         r.engine.vars.get("V_NM").unwrap().value,
@@ -118,6 +145,7 @@ fn oracle_plsql_block_out_binds_and_dml() {
     );
     let rs = first_rs(&ev).unwrap();
     assert_eq!(rs.rows[0], vec![Value::Int(1), Value::Str("홍길동".into())]);
+    });
 }
 
 #[test]
@@ -347,9 +375,7 @@ EXEC #nsql_it_io 3, :X, :Y
 /// 시각이 잘리고 다시 쓰면 ORA-01722였다 · PL/SQL BOOLEAN은 글자로 바인드할 수 없다. 서버에 객체를 만들지 않는다.
 #[test]
 fn oracle_date_timestamp_boolean_binds_are_native() {
-    let Some(mut r) = runner_for("NSQL_ORACLE_URL", Dialect::Oracle) else {
-        return;
-    };
+    for_each_oracle(|mut r| {
     run(
         &mut r,
         "VAR d DATE
@@ -372,11 +398,13 @@ EXEC :ts := TO_TIMESTAMP('2026-09-21 13:45:10.123456','YYYY-MM-DD HH24:MI:SS.FF'
     );
     let rs = first_rs(&ev).expect("rs");
     assert_eq!(rs.rows[0][0].display(), "2026-09-21 13:45:10");
-    assert_eq!(
-        rs.rows[0][1].display(),
-        "Typ=12",
-        "글자가 아니라 DATE로 바인드된다"
-    );
+    // OCI = DATE(Typ=12) · Thin = TIMESTAMP(Typ=18 · oracledb beta.4는 DATE IN 바인드 타입이 없다 · 값은 같다 · docs/110 §6).
+    let typ = rs.rows[0][1].display();
+    if nsql_drivers::oracle_driver() == nsql_drivers::OracleDriver::Thin {
+        assert!(typ == "Typ=12" || typ == "Typ=18", "{typ}");
+    } else {
+        assert_eq!(typ, "Typ=12", "글자가 아니라 DATE로 바인드된다");
+    }
     run(&mut r, "EXEC :d := :d + 1\n");
     assert_eq!(get(&r, "D").as_deref(), Some("2026-09-22 13:45:10"));
     run(&mut r, "BEGIN :b := (1 = 1); END;\n/\n");
@@ -386,6 +414,7 @@ EXEC :ts := TO_TIMESTAMP('2026-09-21 13:45:10.123456','YYYY-MM-DD HH24:MI:SS.FF'
     // 서명 추론: SYS 패키지의 OUT 인자(VARCHAR2 · INTEGER) — 선언 없는 바인드로 받는다.
     run(&mut r, "EXEC DBMS_OUTPUT.GET_LINE(:LINE, :STATUS)\n");
     assert_eq!(get(&r, "STATUS").as_deref(), Some("1"));
+    });
 }
 
 /// T-151 — PostgreSQL `EXEC proc(…)`의 OUT/INOUT 값은 **서명이 말한 자리의 바인드**가 받는다: 바인드 이름이 형식 인자 이름과
@@ -516,4 +545,62 @@ fn sqlite_always_runs() {
     assert!(r.connect(&spec, &mut |e| ev.push(e)));
     let ev = run(&mut r, "EXEC :A := 41\nSELECT :A + 1 AS b;\n");
     assert_eq!(first_rs(&ev).unwrap().rows[0][0], Value::Int(42));
+}
+
+/// ★ OCI ↔ Thin 동일성(docs/110 §3-3 · T-336): 같은 조회의 **열 이름·타입 글·값**이 두 드라이버에서 같다(그리드·복사·편집 판정이 읽는 것).
+/// 읽기 전용(dual) — 실서버 프로필로도 돈다. 두 드라이버가 다 빌드에 있을 때만.
+#[test]
+fn oracle_driver_parity_columns_and_values() {
+    use nsql_core::ExecRequest;
+    use nsql_drivers::OracleDriver as D;
+    if !(D::Oci.included() && D::Thin.included()) {
+        eprintln!("[skip] 두 드라이버가 다 들어 있지 않음");
+        return;
+    }
+    let profile = std::env::var("NSQL_ORACLE_PROFILE").ok();
+    let spec = match (std::env::var("NSQL_ORACLE_URL"), profile) {
+        (Ok(url), _) => nsql_drivers::parse_target(&url, Dialect::Oracle).expect("접속 문자열"),
+        (Err(_), Some(name)) => nsql_vault::Vault::open_default()
+            .and_then(|v| v.get(&name))
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| panic!("프로필 없음: {name}")),
+        _ => {
+            eprintln!("[skip] NSQL_ORACLE_URL 없음");
+            return;
+        }
+    };
+    const SQLS: &[&str] = &[
+        "SELECT 1 AS n, 1.5 AS d, -0.5 AS neg, 1E20 AS big, 123456789012345678901234567890 AS huge, CAST(12345.678 AS NUMBER(10,2)) AS fixed FROM dual",
+        "SELECT CAST(1.25 AS BINARY_DOUBLE) AS bd, CAST(1.5 AS BINARY_FLOAT) AS bf, CAST(3 AS FLOAT) AS fl, CAST(7 AS NUMBER(5)) AS n5 FROM dual",
+        // `VARCHAR2(10 CHAR)`는 뺀다 = 알려진 타입 글 차이(OCI 바이트 40 · Thin 선언 10 · docs/110 §6).
+        "SELECT 'abc' AS s, N'한글' AS ns, CAST('x' AS CHAR(3)) AS c3, CAST('가' AS VARCHAR2(10)) AS v10, CAST(NULL AS VARCHAR2(10)) AS nul FROM dual",
+        "SELECT DATE '2026-09-21' AS dt, TIMESTAMP '2026-09-21 13:45:10.123456' AS ts, CAST(TIMESTAMP '2026-09-21 13:45:10.5' AS TIMESTAMP(3)) AS ts3, TIMESTAMP '2026-09-21 13:45:10.5 +09:00' AS tstz FROM dual",
+        "SELECT INTERVAL '1 02:03:04.5' DAY TO SECOND AS ids, INTERVAL '1-2' YEAR TO MONTH AS iym, HEXTORAW('DEADBEEF') AS rw, ROWID AS rid, TO_CLOB('clob 한글') AS cl FROM dual",
+        "SELECT * FROM (SELECT LEVEL AS lv FROM dual CONNECT BY LEVEL <= 1200) ORDER BY lv",
+    ];
+    let mut per_driver: Vec<(D, Vec<nsql_core::ResultSet>)> = Vec::new();
+    for d in [D::Oci, D::Thin] {
+        nsql_drivers::set_oracle_driver(d);
+        let mut s = nsql_drivers::open(&spec, Dialect::Oracle)
+            .unwrap_or_else(|e| panic!("{} 접속 실패: {}", d.as_str(), e.message));
+        assert_eq!(s.dialect(), Dialect::Oracle);
+        let mut sets = Vec::new();
+        for sql in SQLS {
+            let r = s
+                .execute(&ExecRequest {
+                    sql: (*sql).to_string(),
+                    params: Vec::new(),
+                })
+                .unwrap_or_else(|e| panic!("{} 실행 실패: {} — {}", d.as_str(), e.message, sql));
+            sets.push(r.result_sets.into_iter().next().expect("결과"));
+        }
+        per_driver.push((d, sets));
+    }
+    nsql_drivers::set_oracle_driver(D::Thin);
+    let (oci, thin) = (&per_driver[0].1, &per_driver[1].1);
+    for (i, sql) in SQLS.iter().enumerate() {
+        assert_eq!(oci[i].columns, thin[i].columns, "열(이름·타입 글)이 다르다: {sql}");
+        assert_eq!(oci[i].rows, thin[i].rows, "값이 다르다: {sql}");
+    }
 }

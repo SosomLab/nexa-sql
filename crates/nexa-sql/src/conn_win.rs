@@ -855,6 +855,9 @@ impl ConnWin {
 
     /// 언어 전환 — 라벨 재생성.
     pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinLogin)));
+        }
         self.panel.relabel();
         let text = self.filter.text();
         self.filter = TextBox::new(t(Msg::PhFilter))
@@ -1646,7 +1649,7 @@ impl ConnWin {
             };
             let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
             self.menu.set_scale(self.scale);
-            self.menu.open_at(
+            crate::menu_icons::open_at(&mut self.menu, 
                 x,
                 y,
                 vec![
@@ -2203,7 +2206,7 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                self.menu.open_at(
+                crate::menu_icons::open_at(&mut self.menu, 
                     x,
                     y,
                     vec![
@@ -2251,7 +2254,7 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                self.menu.open_at(
+                crate::menu_icons::open_at(&mut self.menu, 
                     x,
                     y,
                     vec![CtxItem::item("new", t(Msg::BtnNew))],
@@ -2274,7 +2277,7 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                self.menu.open_at(
+                crate::menu_icons::open_at(&mut self.menu, 
                     x,
                     y,
                     {

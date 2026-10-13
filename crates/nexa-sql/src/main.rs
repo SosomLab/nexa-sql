@@ -101,6 +101,7 @@ mod theme;
 mod toast;
 mod toolfloat;
 mod toolicons;
+mod menu_icons;
 mod txlog_win;
 mod txwarn;
 mod undofile;
@@ -535,6 +536,12 @@ struct App {
     bm_panel: bookmarks_panel::BookmarksPanel,
     /// 북마크 패널에 마지막으로 준 탭 제목 세대(`Editors::titles_rev`) — 바뀐 틱에만 id → 제목 표를 다시 준다(사용자 09-23).
     bm_titles_rev: u64,
+    /// 전용 세션 탭 이름 목록(탐색기 툴팁)이 본 탭 제목 세대(10-13).
+    priv_titles_rev: u64,
+    /// ★ 줄 끝 라벨 합성(docs/111): 마지막으로 넣은 라벨(탭 덤프·변화 비교) · 다시 합성 열쇠 · 코멘트 선적재를 한 (탭, 객체).
+    inline_last: Vec<(usize, String)>,
+    inline_key: String,
+    inline_prefetched: std::collections::HashSet<(u64, String)>,
     /// 검색어 이력(전역 한 파일 · 상자 이름별 · `search.history_max` · 사용자 09-23) — 찾기/파일 검색/필터/설정 검색이 공유.
     search_history: search_history::SharedHistory,
     /// 코드 완성(docs/76 · 팝업 · 문서 아웃라인 캐시 · MRU).
@@ -581,6 +588,8 @@ struct App {
     /// 스레드 적재 중인 파일들(앞 = 막에 보이는 것) — 하나라도 있으면 메인 창 입력을 받지 않는다(`fileload.rs`).
     file_loads: Vec<LoadJob>,
     big_pending: Option<(PathBuf, String, u64)>,
+    /// 이진 파일 안내 탭(경로 없음 · 읽기 전용) id → 원본 파일 경로(10-13): 더블클릭 = 미리보기 승격 · 같은 파일 탭 중복 방지.
+    binary_notice: std::collections::HashMap<u64, PathBuf>,
     /// 이 실행에서 오래된 되돌리기 기록 파일을 이미 치웠는가(처음 저장할 때 한 번).
     undo_pruned: bool,
     /// 메모리 회수(`memtrim.rs`): 큰 것을 놓은 뒤의 1회 회수 예정 시각 · 다음 주기 회수 · 직전 틱의 탭 수(닫힘 감지).
@@ -1848,6 +1857,10 @@ fn main() {
         bookmarks: bookmarks::Bookmarks::new(),
         bm_panel,
         bm_titles_rev: u64::MAX,
+        priv_titles_rev: u64::MAX,
+        inline_last: Vec::new(),
+        inline_key: String::new(),
+        inline_prefetched: std::collections::HashSet::new(),
         search_history,
         intel,
         outline_panel,
@@ -1877,6 +1890,7 @@ fn main() {
         startup_timed: Vec::new(),
         file_loads: Vec::new(),
         big_pending: None,
+        binary_notice: std::collections::HashMap::new(),
         undo_pruned: false,
         mem_trim_due: None,
         mem_trim_next: None,
@@ -2004,6 +2018,8 @@ fn main() {
     let bm_on = app.bookmarks.enabled;
     app.act_bar.set_item_visible("view.bookmarks", bm_on);
     nexa_ctl::controls::set_menu_icons(app.settings.flag("ui.menu_icons"));
+    // ★ 모든 우클릭 메뉴에 아이콘 칸을 늘 예약(사용자 10-13) — 그리기는 `ui.menu_icons`(향상 모드 = 끔 · 칸만 남음).
+    nexa_ctl::controls::ctxmenu::set_icon_col_always(true);
     app.log_win
         .set_on_top(app.settings.flag("log.always_on_top"));
     app.editors.set_rulers(rulers);
@@ -2434,6 +2450,10 @@ fn apply_oracle_client(s: &Settings) {
         &nsql_script::intrinsic::expand(s.get("oracle.client_dir").unwrap_or(""), &m),
         &nsql_script::intrinsic::expand(s.get("oracle.tns_admin").unwrap_or(""), &m),
     );
+    // ★ Oracle 드라이버 선택(docs/110 · `oracle.driver` · D-277): 접속마다 레지스트리가 읽는다 → 재시작 없이 다음 접속부터.
+    nsql_drivers::set_oracle_driver(nsql_drivers::OracleDriver::parse(
+        s.get("oracle.driver").unwrap_or("thin"),
+    ));
 }
 
 /// 설정 창 DBMS 그룹의 **읽기 전용 정보 값**(`nsql_settings::INFO_KEYS`) — 파일 시스템만 읽는다(네트워크 0 · 라이브러리 로드 0).
@@ -2502,7 +2522,28 @@ fn dbms_info_values() -> Vec<(String, String)> {
             t(Msg::ValDbmsNotIncluded).to_string()
         }
     };
+    // ★ Oracle 드라이버 정보(docs/110 §4-2): 지금 쓰일 드라이버 + 못 하는 것 · 빌드에 한쪽만 있으면 "선택지 없음" 안내.
+    //   Thin이 쓰일 때 Instant Client 칸(라이브러리·버전·sqlnet)은 "쓰지 않음"(tnsnames는 Thin도 읽는다).
+    let thin = o.driver == "thin";
+    let driver_info = {
+        let chosen_thin = o.chosen == "thin";
+        match (o.included, o.thin_included) {
+            (false, false) => t(Msg::ValDbmsNotIncluded).to_string(),
+            (true, true) => t(if thin {
+                Msg::ValOraDrvThin
+            } else {
+                Msg::ValOraDrvOci
+            })
+            .to_string(),
+            (false, true) if chosen_thin => t(Msg::ValOraDrvThin).to_string(),
+            (false, true) => tf(Msg::ValOraDrvOnlyThin, &[t(Msg::ValOraDrvThin)]),
+            (true, false) if chosen_thin => tf(Msg::ValOraDrvOnlyOci, &[t(Msg::ValOraDrvOci)]),
+            (true, false) => t(Msg::ValOraDrvOci).to_string(),
+        }
+    };
+    let unused = || t(Msg::ValOraThinUnused).to_string();
     vec![
+        ("oracle.info_driver".into(), driver_info),
         // 자동 탐지 방식에서 **잠긴 입력 칸**에 보여 줄 값(탐지된 폴더 · 없으면 공백) — 설정 창이 종속 조건이 안 맞을 때만 쓴다.
         ("oracle.client_dir".into(), path(&o.dir)),
         ("oracle.tns_admin".into(), path(&o.tns_admin)),
@@ -2517,24 +2558,36 @@ fn dbms_info_values() -> Vec<(String, String)> {
         ),
         (
             "oracle.info_library".into(),
-            match &o.library {
-                Some(p) => found(p),
-                None if o.included => missing_in(o.library_name, &o.dir),
-                None => String::new(),
+            if thin {
+                unused()
+            } else {
+                match &o.library {
+                    Some(p) => found(p),
+                    None if o.included => missing_in(o.library_name, &o.dir),
+                    None => String::new(),
+                }
             },
         ),
         (
             "oracle.info_version".into(),
-            o.version
-                .clone()
-                .unwrap_or_else(|| t(Msg::ValOraNotLoaded).to_string()),
+            if thin {
+                unused()
+            } else {
+                o.version
+                    .clone()
+                    .unwrap_or_else(|| t(Msg::ValOraNotLoaded).to_string())
+            },
         ),
         ("oracle.info_tnsnames".into(), tnsnames),
         (
             "oracle.info_sqlnet".into(),
-            match &o.sqlnet {
-                Some(p) => found(p),
-                None => missing_in("sqlnet.ora", &o.tns_admin),
+            if thin {
+                unused()
+            } else {
+                match &o.sqlnet {
+                    Some(p) => found(p),
+                    None => missing_in("sqlnet.ora", &o.tns_admin),
+                }
             },
         ),
         (

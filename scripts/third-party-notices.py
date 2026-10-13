@@ -88,6 +88,14 @@ def main() -> int:
         lines += ["== DBMS logos (crates/nexa-sql/assets/dbms/NOTICE.md) ==", "", body, ""]
     else:
         print(f"경고: DBMS 로고 고지 없음 — {notice}", file=sys.stderr)
+    # UI 아이콘 글리프(Material Symbols Apache-2.0 · Fluent UI System Icons MIT · 자체 도형) 고지 — 저장소의 NOTICE.md를 그대로(D-285 · 10-13).
+    icons = os.path.join(meta["workspace_root"], "crates", "nexa-sql", "assets", "icons", "NOTICE.md")
+    if os.path.isfile(icons):
+        with open(icons, encoding="utf-8") as f:
+            body = f.read().rstrip("\n")
+        lines += ["== UI icons (crates/nexa-sql/assets/icons/NOTICE.md) ==", "", body, ""]
+    else:
+        print(f"경고: UI 아이콘 고지 없음 — {icons}", file=sys.stderr)
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines))
     print(f"{out}: 제3자 {len(third)}개 · 자체 {len(own)}개")

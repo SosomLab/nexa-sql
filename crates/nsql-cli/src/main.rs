@@ -370,6 +370,10 @@ fn apply_load_switches(runner: &mut Runner) {
             s.get("oracle.client_dir").unwrap_or(""),
             s.get("oracle.tns_admin").unwrap_or(""),
         );
+        // Oracle 드라이버 선택(docs/110 · `oracle.driver` · 접속마다 읽는다).
+        nsql_drivers::set_oracle_driver(nsql_drivers::OracleDriver::parse(
+            s.get("oracle.driver").unwrap_or("thin"),
+        ));
         runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
         runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
         runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
@@ -1274,6 +1278,24 @@ impl Printer {
             }
             RunEvent::Warning(m) => {
                 let _ = writeln!(out, "{m}");
+            }
+            // 드라이버 제약(docs/110 §6) — CLI는 stderr 한 줄(영어 꼬리표).
+            RunEvent::DriverLimits {
+                driver,
+                limits,
+                at_connect,
+            } => {
+                let what = limits
+                    .iter()
+                    .map(|l| l.code())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let head = if *std::borrow::Borrow::<bool>::borrow(&at_connect) {
+                    "driver limitations"
+                } else {
+                    "not available with this driver"
+                };
+                eprintln!("{driver}: {head}: {what}");
             }
             // 서버 유형은 GUI 세션의 임시 속성 — CLI는 알려만 준다(저장 프로필 = 영속 = `nsql conn env`).
             RunEvent::ConnType(v) => {

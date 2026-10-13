@@ -22,6 +22,8 @@ pub(crate) struct WalkOpts {
     pub excludes: Vec<String>,
     /// 포함 패턴(파일에만 · 비어 있으면 전부) — 같은 글롭 매처로 "무시된다 = 포함된다"로 읽는다.
     pub includes: Vec<String>,
+    /// 사용자 패턴(포함·제외)의 대소문자 구분(기본 `false` = 접기 · [`crate::SearchOpts::pattern_case`]).
+    pub pattern_case: bool,
 }
 
 /// 걷기 중 호출되는 훅(워커 스레드에서 실행).
@@ -132,7 +134,14 @@ pub(crate) fn walk(roots: &[PathBuf], opts: &WalkOpts, cancel: &AtomicBool, hook
         .collect();
     // 포함 패턴(사용자 09-23 "특정 확장자만 조회") — 파일에만 · 하나라도 맞아야 읽는다.
     let include: Option<IgnoreNode> = (!opts.includes.is_empty())
-        .then(|| IgnoreNode::from_lines(opts.includes.iter().map(String::as_str), 0, None));
+        .then(|| {
+            IgnoreNode::from_lines_fold(
+                opts.includes.iter().map(String::as_str),
+                0,
+                None,
+                !opts.pattern_case,
+            )
+        });
     let included = |comps: &[&str]| include.as_ref().is_none_or(|n| n.is_ignored(comps, false));
 
     for root in roots {
@@ -150,7 +159,13 @@ pub(crate) fn walk(roots: &[PathBuf], opts: &WalkOpts, cancel: &AtomicBool, hook
             }
             continue;
         }
-        let mut ignore = Arc::new(IgnoreNode::from_lines(base_rules.iter().copied(), 0, None));
+        // 사용자 패턴(기본 제외 + 설정 제외 + Where `-패턴`) = 접기 기본(사용자 10-13) · 아래 `.gitignore` 자식은 git 의미론(접기 없음).
+        let mut ignore = Arc::new(IgnoreNode::from_lines_fold(
+            base_rules.iter().copied(),
+            0,
+            None,
+            !opts.pattern_case,
+        ));
         if opts.gitignore {
             if let Some(child) = IgnoreNode::load_child(root, 0, &ignore) {
                 ignore = child;

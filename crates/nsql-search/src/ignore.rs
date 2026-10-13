@@ -13,6 +13,8 @@ struct Rule {
     segs: Vec<String>,
     negate: bool,
     dir_only: bool,
+    /// ★ 대소문자 접기(ASCII · 사용자 10-13 "OS 무관 Where 대소문자 무시"): `*.gwf`가 `.GWF`에도 맞는다. `.gitignore`는 git 의미론 그대로(끔).
+    fold: bool,
 }
 
 /// `.gitignore` 한 파일(또는 합성 규칙 묶음) — 상위 노드로 이어지는 사슬.
@@ -27,8 +29,8 @@ pub(crate) struct IgnoreNode {
 /// 기본 무시 폴더(어느 깊이든 · 폴더만).
 pub const DEFAULT_EXCLUDES: &[&str] = &[".git/", "node_modules/", "target/", ".nexa-sql/"];
 
-/// 한 줄을 규칙으로(주석·빈 줄은 `None`).
-fn parse_line(line: &str) -> Option<Rule> {
+/// 한 줄을 규칙으로(주석·빈 줄은 `None`) · `fold` = 대소문자 접기.
+fn parse_line(line: &str, fold: bool) -> Option<Rule> {
     let mut l = line.trim_end();
     if l.is_empty() || l.starts_with('#') {
         return None;
@@ -59,16 +61,24 @@ fn parse_line(line: &str) -> Option<Rule> {
         segs,
         negate,
         dir_only,
+        fold,
     })
 }
 
-/// 성분 하나의 글롭(`*` `?` · `/`는 넘지 않는다).
+/// 성분 하나의 글롭(`*` `?` · `/`는 넘지 않는다) — 대소문자 구분.
+#[cfg(test)]
 fn seg_match(pat: &[u8], name: &[u8]) -> bool {
+    seg_match_fold(pat, name, false)
+}
+
+/// 성분 하나의 글롭(`*` `?` · `/`는 넘지 않는다) · `fold` = ASCII 대소문자 접기.
+fn seg_match_fold(pat: &[u8], name: &[u8], fold: bool) -> bool {
     // 고전 백트래킹 와일드카드 — 패턴이 짧아 충분히 빠르다.
+    let same = |a: u8, b: u8| a == b || (fold && a.eq_ignore_ascii_case(&b));
     let (mut p, mut n) = (0, 0);
     let (mut star_p, mut star_n) = (usize::MAX, 0);
     while n < name.len() {
-        if p < pat.len() && (pat[p] == b'?' || pat[p] == name[n]) {
+        if p < pat.len() && (pat[p] == b'?' || same(pat[p], name[n])) {
             p += 1;
             n += 1;
         } else if p < pat.len() && pat[p] == b'*' {
@@ -90,15 +100,15 @@ fn seg_match(pat: &[u8], name: &[u8]) -> bool {
 }
 
 /// 패턴 성분열 vs 경로 성분열(`**` = 0개 이상의 성분).
-fn path_match(segs: &[String], comps: &[&str]) -> bool {
+fn path_match(segs: &[String], comps: &[&str], fold: bool) -> bool {
     match segs.split_first() {
         None => comps.is_empty(),
         Some((first, rest)) if first == "**" => {
-            (0..=comps.len()).any(|skip| path_match(rest, &comps[skip..]))
+            (0..=comps.len()).any(|skip| path_match(rest, &comps[skip..], fold))
         }
         Some((first, rest)) => match comps.split_first() {
             Some((c, crest)) => {
-                seg_match(first.as_bytes(), c.as_bytes()) && path_match(rest, crest)
+                seg_match_fold(first.as_bytes(), c.as_bytes(), fold) && path_match(rest, crest, fold)
             }
             None => false,
         },
@@ -110,7 +120,7 @@ impl Rule {
         if self.dir_only && !is_dir {
             return false;
         }
-        path_match(&self.segs, comps)
+        path_match(&self.segs, comps, self.fold)
     }
 }
 
@@ -121,8 +131,21 @@ impl IgnoreNode {
         depth: usize,
         parent: Option<Arc<IgnoreNode>>,
     ) -> IgnoreNode {
+        Self::from_lines_fold(lines, depth, parent, false)
+    }
+
+    /// 같은데 `fold` = 대소문자 접기(사용자 패턴 · 포함/제외 · 10-13). `.gitignore`는 [`Self::from_lines`](접기 없음).
+    pub(crate) fn from_lines_fold<'a>(
+        lines: impl IntoIterator<Item = &'a str>,
+        depth: usize,
+        parent: Option<Arc<IgnoreNode>>,
+        fold: bool,
+    ) -> IgnoreNode {
         IgnoreNode {
-            rules: lines.into_iter().filter_map(parse_line).collect(),
+            rules: lines
+                .into_iter()
+                .filter_map(|l| parse_line(l, fold))
+                .collect(),
             depth,
             parent,
         }
@@ -171,6 +194,14 @@ mod tests {
 
     #[test]
     fn seg_glob() {
+        // ★ 접기(10-13): `*.gwf` ↔ `.GWF` · 접기 없으면 다르다.
+        assert!(seg_match_fold(b"*.gwf", b"2026-sebang-snop.GWF", true));
+        assert!(!seg_match_fold(b"*.gwf", b"2026-sebang-snop.GWF", false));
+        assert!(!seg_match_fold(b"*.gwf", b"x.GWF.bk1", true));
+        let n = IgnoreNode::from_lines_fold(["*.gwf"], 0, None, true);
+        assert!(n.is_ignored(&["a", "B.GWF"], false));
+        let n2 = IgnoreNode::from_lines_fold(["*.gwf"], 0, None, false);
+        assert!(!n2.is_ignored(&["a", "B.GWF"], false));
         assert!(seg_match(b"*.log", b"a.log"));
         assert!(!seg_match(b"*.log", b"a.logx"));
         assert!(seg_match(b"a?c", b"abc"));

@@ -84,6 +84,13 @@ const COLS: [(Msg, i32); 8] = [
 ];
 
 impl TxLogWin {
+    /// 언어 전환 뒤 창 제목 재라벨(열려 있을 때만 · 10-13).
+    pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&self.title());
+        }
+    }
+
     pub(crate) fn new() -> Self {
         TxLogWin {
             window: None,
@@ -303,7 +310,7 @@ impl TxLogWin {
                         let (x, y) = self.cursor;
                         let host = self.table;
                         self.menu.set_scale(self.scale);
-                        self.menu.open_at(
+                        crate::menu_icons::open_at(&mut self.menu, 
                             x,
                             y,
                             vec![
@@ -379,8 +386,8 @@ impl TxLogWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
-                if matches!(e, InputEvent::MouseDown { .. }) {
-                    // 포커스 ≤ 1: 검색 상자는 클릭했을 때만.
+                if matches!(e, InputEvent::MouseDown { .. }) && !self.search.popup_open() {
+                    // 포커스 ≤ 1: 검색 상자는 클릭했을 때만(편집 메뉴 열림 중은 유지 · 10-13).
                     self.search.set_focused(self.search.bounds().contains(p));
                     // 행 클릭 = 선택(3계층 상세) · 같은 행 다시 = 해제 · 빈 곳 = 해제.
                     if self.table.contains(p) {
@@ -389,7 +396,8 @@ impl TxLogWin {
                         self.detail_scroll = 0;
                     }
                 }
-                if up || self.search.bounds().contains(p) {
+                // 편집 메뉴가 떠 있으면(상자 밖) 항목 클릭도 상자로(사용자 10-13 "입력창 우클릭 메뉴 선택이 안 됨").
+                if up || self.search.bounds().contains(p) || self.search.popup_open() {
                     self.search.on_event(&e, &mut inv);
                 }
                 for sw in [&mut self.sw_all, &mut self.sw_prev, &mut self.sw_tab] {

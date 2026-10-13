@@ -107,15 +107,13 @@ impl App {
                 } else {
                     String::new()
                 };
-                let left_text = if self.sess.is_private() {
+                // ★ 접속 설명이 없는 전용 세션(연결 없는 안내 탭 · "(앞부분)" · 개별 모드 접속 전)은 접두를 붙이지 않는다(사용자 10-13 A안 ·
+                //   종전 "[전용: -]" = 정보 없음).
+                let left_text = if self.sess.is_private() && !self.sess.desc.is_empty() {
                     format!(
                         "{busy}{broken}[{}: {}] {}",
                         t(Msg::StSessPrivate),
-                        if self.sess.desc.is_empty() {
-                            "-"
-                        } else {
-                            self.sess.desc.as_str()
-                        },
+                        self.sess.desc.as_str(),
                         self.sess.status
                     )
                 } else {

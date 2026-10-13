@@ -136,6 +136,7 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 - **지금 드라이버로는 불가**: `oracle` 크레이트 = ODPI-C = OCI를 부르는 얇은 층이다. ODPI-C에는 thin 모드가 없다(python-oracledb·node-oracledb의 thin은 각 언어로 프로토콜을 다시 구현한 것).
 - **가능한 길 = Oracle 공식 순수 Rust 드라이버 `oracledb`**(crates.io · Oracle 유지 · "No Oracle Client libraries required" · 지원 서버 12·18·19·21·26). 09-13 스파이크([22 §4-1](22-driver-extensions.md)): 사용자 19c에 Instant Client 없이 157 ms 접속 ✓ — 그러나 **OUT 바인드·REF CURSOR API가 없어** 세션 변수 엔진(DR-8)에 쓸 수 없었다(D-22). 09-21 확인: crates.io 최신 = 여전히 `26.0.0-beta.3`(같은 판) · 소스에 `out_bind_data`가 보여 **다시 스파이크할 가치가 있다**(T-159).
 - 그래서 경량판의 단계: **지금 = A**(Oracle 제외 · 코드 변경 0 · CI 매트릭스 한 줄) → **thin이 OUT 바인드·REF CURSOR를 갖추면 C**. C에서도 OCI 드라이버는 표준판에 남긴다 — thin의 서버 하한(12c) 아래의 11g와 OCI 전용 기능(지갑·Kerberos·`sqlnet.ora` 고급 옵션) 때문이다. 두 드라이버는 같은 `Dialect::Oracle` · 같은 `Caps`를 쓰고 설정 `oracle.driver = oci|thin`(표준판에서만 뜻이 있다)으로 고른다.
+- **10-13 갱신 → [110](110-oracle-thin-driver-adapter.md)**: `oracledb` = `26.0.0-beta.4`(09-23) · OUT/IN OUT 바인드(`out_bind_data`) · REF CURSOR(`DB_TYPE_CURSOR` → `Cursor`) · DBMS_OUTPUT 문서화됨 → 09-13 스파이크의 막힘(D-22)은 풀렸다. 남은 제약 = **실행 중 취소 없음**(#24) · Implicit Result Sets · NNE · OS 인증 · 11g · 10G 검증자 계정 · 배열 DML batch error `todo!()`(#41). 설계 = 선택 자리 `nsql_drivers::open` Oracle 가지 한 곳 · 위층 변경 0 · 설정 `oracle.driver` + 표시 `oracle.info_driver` + 연쇄 잠금 · 단계 T-333~T-336 · 결정 후보 D-277~D-280.
 
 ## 5. 드라이버의 동적 적재·해제(Dynamic Module Loading) 검토 — "쓸 때만 메모리에 · 접속을 끊으면 내린다"(사용자 09-21)
 

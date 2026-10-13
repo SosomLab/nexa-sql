@@ -75,6 +75,13 @@ const COLS: [(Msg, i32); 6] = [
 ];
 
 impl SessionsWin {
+    /// 언어 전환 뒤 창 제목 재라벨(열려 있을 때만 · 10-13).
+    pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinSessions)));
+        }
+    }
+
     pub(crate) fn new() -> Self {
         SessionsWin {
             window: None,
@@ -187,8 +194,8 @@ impl SessionsWin {
         self.menu_row = row;
         let host = self.table;
         self.menu.set_scale(self.scale);
-        self.menu
-            .open_at(x, y, items, host, (240.0 * self.scale) as i32);
+        crate::menu_icons::open_at(
+            &mut self.menu, x, y, items, host, (240.0 * self.scale) as i32);
         self.redraw();
     }
 

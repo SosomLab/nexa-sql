@@ -163,6 +163,7 @@
 | DBMS 아이콘 PNG 디코드 + 축소(10-04) | 처음 보일 때 1회(지연 디코드 · 64/20 원본 → 표시 크기) · 그 뒤 캐시 | (구조 · 키 없음 — 아래 3-6) | — | — | — | `dbms_icons::image` · `explorer.rs` `draw_brand` |
 | HiDPI 배율 | OS | (구조) | — | — | — | `set_scale` |
 | 반투명 선택(D-54) | 미정 | `editor.selection_alpha`(D-54) | — | — | 불투명 | D-54 |
+| 줄 끝 라벨 Ctrl 홀드 합성(10-13 ✅ 구현 · [111](111-inline-labels-and-ctrl-hold.md) §7 · T-337·T-338) | 사건당 1회(Ctrl 누름/뗌·문장 이동·스크롤·메타 갱신·북마크 변경) · 범위 기본 문장 · `document`는 `objlink.max_kb` 공유 · 코멘트 = 캐시만 + Ctrl 순간 워머 1회 | `bookmark.inline_label_ctrl` · `editor.desc_inline_ctrl` · `bookmark.inline_label_ctrl_scope` · `editor.inline_ctrl_scope` | 켬 | 켬 | 끔(향상 모드 FORCED · 큰 파일 모드 끔) | `app/inline_labels.rs` `inline_sync`/`inline_tick` · 순수 `wanted`/`compose` |
 
 ### 3-5. UI(반응·입력)
 
@@ -322,7 +323,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 | 구분 | 키 → 강제값 | 사용자 예시와의 대응 | 비고 |
 |---|---|---|---|
 | 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off · **`ui.flash_hold_ms` 300 · `ui.flash_ms` 200 · `ui.ime_hint_watch` off**(09-27) | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
-| 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(신설 · 우클릭 메뉴 아이콘)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
+| 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(우클릭 메뉴 아이콘 · 10-13 = 아이콘 생성·그리기 0 · 칸은 유지해 글 위치 불변)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off · **`objlink.tooltip` off(10-13 · hover 카드)** · **`bookmark.inline_label_ctrl` off · `editor.desc_inline_ctrl` off(10-13 · 111)** | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
 | 코드 완성(09-24 §187) | `intel.auto_activation` off · `intel.icons` off · `intel.detail_card` off · `intel.document_words` off · `intel.preload` off · `intel.from_routines` off | 팝업은 ⌃Space로만 · 아이콘 래스터·카드 조립·문서 훑기·접속 직후 카탈로그 질의(관계 4 + 함수 3 + 사전 1) 없음 · 수동 완성·시그니처 도움·`intel.match`·상한은 그대로(결과에 닿음) | 72 "코드 완성과 문서 크기" |
 | I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |
 | 메모리 | `file.icon_cache` 128 | 목표 ④ | 아이콘을 껐으므로 캐시도 최소 |

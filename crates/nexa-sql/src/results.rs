@@ -376,8 +376,10 @@ impl ResultPanel {
         let pinned = self.tabs.get(i).is_some_and(|t| t.pinned);
         // 실행한 적이 없는 탭(쿼리 없음)은 복사 항목을 흐리게.
         let has_sql = self.tabs.get(i).is_some_and(|t| !t.sql.trim().is_empty());
+        // Output 탭은 단일 개념(이름을 바꿔도 `Output`으로 돌아온다) → 이름 바꾸기 비활성(사용자 10-13).
+        let is_output = self.tabs.get(i).is_some_and(|t| t.is_output);
         let items = vec![
-            CtxItem::item("rename", t(Msg::MnResultRename)),
+            CtxItem::maybe("rename", t(Msg::MnResultRename), !is_output),
             CtxItem::maybe("copy_sql", t(Msg::MnResultCopySql), has_sql),
             CtxItem::Separator,
             CtxItem::item("close", t(Msg::MnResultCloseTab)),
@@ -402,7 +404,7 @@ impl ResultPanel {
         // 창 크기를 모르는 자리 — 메뉴 부품이 그리는 시점에 표면 안으로 스스로 들어온다(nexa-ctl `place_popup` · 61 §2-2 팝업 규칙).
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;
-        self.menu.open_at(p.x, p.y, items, host, text_w);
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
     }
 
     pub(crate) fn paint_bar(&self, dc: &mut dyn DrawCtx, th: &Theme) {

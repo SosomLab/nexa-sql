@@ -177,3 +177,4 @@ tab=15 len=27
 - **블록** = 마커 줄 `%%NSQL-BLOBS%%` 아래 탭마다 `tab=<id> len=<n>`(일반 텍스트 메타) + 줄바꿈 + **payload n 바이트**(이스케이프 없음 · 어떤 바이트든) + 줄바꿈. 길이로 자르므로 payload 안의 마커·따옴표·줄바꿈이 안전하고 JSON 재파싱 비용이 없다.
 - 부품 = [`nsql-settings::projfile`](../crates/nsql-settings/src/projfile.rs) `split(bytes) → (헤더, 블록들)` · `join(헤더, 블록들) → bytes` — GUI(`Project::load/to_document`)와 CLI(`nsql bookmark --project`: 헤더만 고치고 블록은 되붙임)가 같이 쓴다. 옛 파일(마커 없음 · `text`가 JSON 안)은 그대로 읽힌다.
 - payload는 탭 `id`로 되붙는다 → 본문을 담는 탭은 반드시 `id`가 있다(캡처가 늘 넣는다). 바뀜 비교(`project_last_json`)는 문서 전체 바이트.
+- 탭 필드 `ro`(10-13) = 읽기 전용으로 연 탭(`"ro": true` · 없으면 false) → 복원 때 `LoadMode::ReadOnly` · 이진 안내 탭은 `path` = 원본 파일 + `ro` (+ 미리보기면 `preview`)로 저장되고 복원 때 다시 이진 판정으로 안내 탭이 된다 · "(앞부분)"·디스크 보기 탭은 담지 않는다([70 §6-1](70-autosave-and-restore.md)).

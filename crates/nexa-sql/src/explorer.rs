@@ -1172,6 +1172,9 @@ pub(crate) struct Explorer {
     scroll_x: i32,
     /// 마지막 그리기에서 잰 내용 폭(가장 긴 행의 오른쪽 끝 + 여백 · bounds.x 기준).
     content_w: i32,
+    /// ★ 마지막 그리기에서 잰 **서버 헤더** 폭(아이콘 · 이름 · "연결 N개 · 전용 M" 부가 글까지 · bounds.x 기준 · 사용자 10-13): 가로
+    ///   스크롤 상한은 트리 행 폭만 봤기 때문에 헤더가 트리보다 길면 부가 글 끝까지 못 갔다 → [`Self::content_width`]가 둘 중 큰 쪽.
+    header_w: i32,
     /// **조용한 갱신**(docs/57 §2-2) 요청 중인 노드 — 응답이 오면 자식을 통째로 갈지 않고 디프로 반영한다.
     soft: HashSet<usize>,
     /// ★ 조용한 재읽기가 **이미 날아가 있는 동안** 또 요청된 노드 = 응답이 오면 한 번 더(10-11 Linux 전수 E2 · [`Self::request_schemas_soft`]).
@@ -2538,6 +2541,7 @@ impl Explorer {
             clip: None,
             scroll_x: 0,
             content_w: 0,
+            header_w: 0,
             soft: HashSet::new(),
             soft_again: HashSet::new(),
             index_done: HashSet::new(),
@@ -2980,6 +2984,11 @@ impl Explorer {
             }
             text
         };
+        // 전용 세션 연결 행 = 툴팁에 탭 이름 목록(사용자 10-13 "연결된 탭의 이름은 툴팁에만").
+        if matches!(n.kind, NodeKind::Root) && !self.private_tabs.is_empty() {
+            text.push('\n');
+            text.push_str(&tf(Msg::ExpPrivateTabList, &[&self.private_tabs.join(", ")]));
+        }
         if let LoadState::Error(e) = &n.state {
             text.push('\n');
             text.push_str(e);
@@ -3145,10 +3154,14 @@ impl Explorer {
             &label,
             if broken.is_some() { th.danger } else { th.text },
         );
+        let mut end = x + dc.text_width(&label);
         if !sub.is_empty() {
-            let sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
+            let sx0 = end + (8.0 * s).round() as i32;
             dc.text(sx0, ty, r, sub, th.text_dim);
+            end = sx0 + dc.text_width(sub);
         }
+        // 헤더 폭(스크롤 되돌린 값 · bounds.x 기준 + 여백) — 가로 스크롤 상한에 들어간다(부가 글 끝까지 볼 수 있게).
+        self.header_w = end + self.scroll_x - r.x + (12.0 * s).round() as i32;
     }
 
     /// ★ L0 네트워크 신호(⑤): 두 메타 스레드의 다음 요청은 판정부터.
@@ -3236,7 +3249,7 @@ impl Explorer {
 
     /// 마지막 그리기에서 잰 내용 폭(가로 스크롤 범위용).
     pub(crate) fn content_width(&self) -> i32 {
-        self.content_w
+        self.content_w.max(self.header_w)
     }
 
     /// 실제로 보이는 영역 = bounds ∩ 창.
@@ -5548,10 +5561,25 @@ impl Explorer {
         } else {
             self.endpoint.clone()
         };
-        if self.server_info.version.is_empty() {
-            return base;
-        }
+        // ★ 헤더 = 끝점(또는 프로필 이름)만(사용자 10-13 "(Oracle - BISCM)은 툴팁에 있으니 표시하지 않게") — DBMS·버전·로그인은
+        //   머무름 툴팁 `server_tip`에(필드명 접두).
+        base
+    }
+
+    /// 서버 헤더 머무름 툴팁(사용자 10-13): `DBMS 버전` · 에디션 · 로그인(여럿이면 수) · 현재 DB · 끝점/프로필 — 줄마다 하나.
+    pub(crate) fn server_tip(&self) -> String {
+        // 줄마다 필드명(사용자 10-13 "정보 앞에 필드명") — 값이 없는 줄은 뺀다.
         let dbms = self.dialect.map_or("", Dialect::display_name);
+        let mut lines: Vec<String> = Vec::new();
+        if !dbms.is_empty() {
+            lines.push(tf(Msg::TipSrvDbms, &[dbms]));
+        }
+        if !self.server_info.version.is_empty() {
+            lines.push(tf(Msg::TipSrvVersion, &[&self.server_info.version]));
+        }
+        if !self.server_info.edition.is_empty() {
+            lines.push(tf(Msg::TipSrvEdition, &[&self.server_info.edition]));
+        }
         let who = if self.users.len() > 1 {
             tf(Msg::ExpLogins, &[&self.users.len().to_string()])
         } else if !self.server_info.login.is_empty() {
@@ -5559,11 +5587,19 @@ impl Explorer {
         } else {
             self.conn_user.clone()
         };
-        if who.is_empty() {
-            format!("{base} ({dbms} {})", self.server_info.version)
-        } else {
-            format!("{base} ({dbms} {} - {who})", self.server_info.version)
+        if !who.is_empty() {
+            lines.push(tf(Msg::TipSrvLogin, &[&who]));
         }
+        if !self.server_info.current_db.is_empty() {
+            lines.push(tf(Msg::TipSrvDb, &[&self.server_info.current_db]));
+        }
+        if !self.endpoint.is_empty() {
+            lines.push(tf(Msg::TipSrvEndpoint, &[&self.endpoint]));
+        }
+        if !self.profile_name.is_empty() {
+            lines.push(tf(Msg::TipSrvProfile, &[&self.profile_name]));
+        }
+        lines.join("\n")
     }
 
     /// 설정 `explorer.mssql_tree` · `explorer.mssql_system_dbs`(바뀌면 SQL Server 트리를 다시).
@@ -8338,10 +8374,8 @@ impl Explorer {
                 } else if !self.conn_user.is_empty() {
                     dim.push(self.conn_user.clone());
                 }
-                // ★ 전용 세션(사용자 10-12 · 설계 A): "전용 · <탭 이름>"(세션마다 하나).
-                for tab in &self.private_tabs {
-                    dim.push(tf(Msg::ExpPrivateTab, &[tab]));
-                }
+                // ★ 전용 세션(사용자 10-12 설계 A → 10-13 재지시): 흐린 글은 **공유 행과 같다**(탭 글 없음) · 전용 표시는 행 **맨 뒤** P 칩
+                //   (개수·이름은 툴팁) · 탭 이름은 행 툴팁 줄(`hover_tip`)에.
                 if !self.profile_name.is_empty() && self.profile_name != main {
                     // 프로필은 파일 방언에서 앞(폴더보다 먼저 읽히게).
                     if file_dialect {
@@ -8693,21 +8727,7 @@ impl Explorer {
                     let lw = dc.text_width(&label);
                     dc.select_font(FontSlot::Base, false);
                     let mut right = x + lw;
-                    let mut sub_x = x + lw + (8.0 * s).round() as i32;
-                    // ★ 전용 세션 칩 'P'(사용자 10-12 · 설계 A · 편집기 탭 배지 P와 같은 뜻·강조색) — 묶음 모드 연결 행에만.
-                    if is_root && self.grouped && !self.private_tabs.is_empty() {
-                        dc.select_font(FontSlot::Base, true);
-                        let pw = dc.text_width("P");
-                        let ch = th_txt.max(10);
-                        let cw = pw + (6.0 * s).round() as i32;
-                        let cr = Rect::new(sub_x, vcy - ch / 2, cw, ch);
-                        dc.fill_round_rect_alpha(cr, (cw / 4).max(2), th.accent, 0.16);
-                        let cty = dc.text_center_y(cr.y, cr.h);
-                        dc.text(cr.x + (cw - pw) / 2, cty, rr, "P", th.accent);
-                        dc.select_font(FontSlot::Base, false);
-                        right = cr.right();
-                        sub_x = right + (8.0 * s).round() as i32;
-                    }
+                    let sub_x = x + lw + (8.0 * s).round() as i32;
                     if !sub.is_empty() {
                         let color = if sub == "INVALID" {
                             th.danger
@@ -8717,6 +8737,23 @@ impl Explorer {
                         let sx0 = sub_x;
                         dc.text(sx0, ty, rr, &sub, color);
                         right = sx0 + dc.text_width(&sub);
+                    }
+                    // ★ 전용 세션 칩 'P'(편집기 탭 배지 P와 같은 뜻·강조색) — 묶음 모드 연결 행 **맨 뒤**(사용자 10-13 "정보를 보여 준
+                    //   뒤에 P 아이콘") · 개수·이름은 툴팁.
+                    if is_root && self.grouped && !self.private_tabs.is_empty() {
+                        let chip = "P".to_string();
+                        // 보통 굵기(사용자 10-13 "Bold 해제" · 편집기 탭 배지와 같은 스타일).
+                        dc.select_font(FontSlot::Base, false);
+                        let pw = dc.text_width(&chip);
+                        let ch = th_txt.max(10);
+                        let cw = pw + (6.0 * s).round() as i32;
+                        let cx = right + (8.0 * s).round() as i32;
+                        let cr = Rect::new(cx, vcy - ch / 2, cw, ch);
+                        dc.fill_round_rect_alpha(cr, (cw / 4).max(2), th.accent, 0.16);
+                        let cty = dc.text_center_y(cr.y, cr.h);
+                        dc.text(cr.x + (cw - pw) / 2, cty, rr, &chip, th.accent);
+                        dc.select_font(FontSlot::Base, false);
+                        right = cr.right();
                     }
                     // ★ 용량(사용자 09-30 · DBeaver식): 행 오른쪽 끝에 흐리게 · 라벨과 겹치면 생략.
                     if let Some((sz, unit, partial)) = size_txt {

@@ -936,6 +936,88 @@ impl App {
             let _ = std::fs::write(path, self.toasts.dump_text());
             return;
         }
+        // ★ 자체 시험(docs/111 · T-339): Ctrl 홀드 흉내(`ui.key:ctrl_down`/`ctrl_up` = 수식키 사건과 같은 길) · 줄 끝 라벨 덤프.
+        if let Some(what) = id.strip_prefix("ui.key:") {
+            match what {
+                "ctrl_down" | "ctrl_up" => {
+                    self.primary = what == "ctrl_down";
+                    self.objlink_sync();
+                    self.inline_key.clear();
+                    self.inline_sync();
+                    self.redraw();
+                }
+                // ★ 키 주입(10-13 · 메뉴 열린 채 키 우선권 V1): `ui.key:down|up|left|right|enter|escape|tab|home|end|pageup|pagedown|
+                //   backspace|delete|space` · `ui.key:char:<글자>` · 접두 `shift+`(예 `shift+enter`) — OS 입력이 아니라 앱 안 `route`.
+                _ => {
+                    let (shift, name) = what
+                        .strip_prefix("shift+")
+                        .map_or((false, what), |n| (true, n));
+                    let now_ms = self.started.elapsed().as_millis() as u64;
+                    let key = |k: CtlKey| InputEvent::Key {
+                        key: k,
+                        shift,
+                        primary: false,
+                    };
+                    let ev = match name {
+                        "down" => Some(key(CtlKey::Down)),
+                        "up" => Some(key(CtlKey::Up)),
+                        "left" => Some(key(CtlKey::Left)),
+                        "right" => Some(key(CtlKey::Right)),
+                        "enter" => Some(key(CtlKey::Enter)),
+                        "escape" | "esc" => Some(key(CtlKey::Escape)),
+                        "home" => Some(key(CtlKey::Home)),
+                        "end" => Some(key(CtlKey::End)),
+                        "pageup" => Some(key(CtlKey::PageUp)),
+                        "pagedown" => Some(key(CtlKey::PageDown)),
+                        "delete" => Some(key(CtlKey::Delete)),
+                        "space" => Some(key(CtlKey::Space)),
+                        "tab" => Some(InputEvent::Char { c: '\t', now_ms }),
+                        "backspace" => Some(InputEvent::Char { c: '\u{8}', now_ms }),
+                        other => other
+                            .strip_prefix("char:")
+                            .and_then(|c| c.chars().next())
+                            .map(|c| InputEvent::Char { c, now_ms }),
+                    };
+                    if let Some(ev) = ev {
+                        self.route(ev);
+                        self.redraw();
+                    }
+                }
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("editor.inline_dump:") {
+            let _ = std::fs::write(path, self.inline_dump_text());
+            return;
+        }
+        // ★ 자체 시험(10-13 · Thin 실시간 전환 V1): `config.set:<키>=<값>` = 설정 창에서 값을 바꾼 것과 같은 길(저장 · `apply_setting` ·
+        //   설정 창 갱신) — 설정 창은 별도 창이라 `ui.*` 좌표 명령이 못 닿는다. 빈 값 = 기본값으로.
+        if let Some(kv) = id.strip_prefix("config.set:") {
+            if let Some((k, v)) = kv.split_once('=') {
+                let r = if v.is_empty() {
+                    self.settings.reset(k).map(|_| ())
+                } else {
+                    self.settings.set(k, v).map(|_| ())
+                };
+                match r {
+                    Ok(()) => {
+                        self.persist_settings();
+                        let _ = self.apply_setting(k);
+                        self.prefs_win.refresh(&self.settings);
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            format!("[test] config.set {k} = {v}"),
+                        ));
+                    }
+                    Err(e) => self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("[test] config.set {k} failed: {e}"),
+                    )),
+                }
+            }
+            self.redraw();
+            return;
+        }
         if id == "toast.action" {
             if let Some(a) = self.toasts.test_press_button() {
                 self.menu_action(&a);

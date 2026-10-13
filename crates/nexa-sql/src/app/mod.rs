@@ -24,6 +24,7 @@ mod memory;
 mod menus;
 mod meta;
 pub(crate) mod objlink;
+pub(crate) mod inline_labels;
 mod output;
 mod paint;
 mod project;

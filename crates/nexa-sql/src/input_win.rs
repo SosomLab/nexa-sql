@@ -396,15 +396,16 @@ impl InputWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
-                if !up {
+                let menu_row = self.rows.iter().position(|r| r.tb.popup_open());
+                if !up && menu_row.is_none() {
                     if let Some(i) = self.rows.iter().position(|r| r.tb.bounds().contains(p)) {
                         self.focus = i;
                         self.sync_focus();
                     }
                 }
-                // 마우스 라우팅 규칙: 누름은 커서 아래 컨트롤에만 · 뗌은 전부(눌림 상태 해제).
-                for r in &mut self.rows {
-                    if up || r.tb.bounds().contains(p) {
+                // 마우스 라우팅 규칙: 누름은 커서 아래 컨트롤에만 · 뗌은 전부(눌림 상태 해제) · 편집 메뉴가 뜬 상자는 메뉴 클릭도(10-13).
+                for (i, r) in self.rows.iter_mut().enumerate() {
+                    if up || r.tb.bounds().contains(p) || menu_row == Some(i) {
                         r.tb.on_event(&e, &mut inv);
                     }
                 }

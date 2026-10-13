@@ -65,6 +65,13 @@ const TRIM_HOLD: u8 = 2;
 const TRIM_NOTE_HOLD: u8 = 8;
 
 impl MemWin {
+    /// 언어 전환 뒤 창 제목 재라벨(열려 있을 때만 · 10-13).
+    pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinMemory)));
+        }
+    }
+
     pub(crate) fn new() -> Self {
         MemWin {
             window: None,

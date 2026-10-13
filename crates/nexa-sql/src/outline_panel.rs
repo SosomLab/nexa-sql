@@ -52,6 +52,22 @@ const PAD: f32 = 8.0;
 const INDENT: f32 = 14.0;
 
 impl OutlinePanel {
+    /// 필터 상자 팝업(편집 메뉴 · 이력)이 열려 있는가 — 우클릭 메뉴 배타 규칙(10-13).
+    pub(crate) fn menu_open(&self) -> bool {
+        self.filter.popup_open()
+    }
+    pub(crate) fn menu_bounds(&self) -> nexa_ctl::geom::Rect {
+        self.filter.popup_bounds()
+    }
+    pub(crate) fn close_menu(&mut self) {
+        self.filter.close_popups();
+    }
+
+    /// 언어 전환 뒤 재라벨(플레이스홀더).
+    pub(crate) fn relabel(&mut self) {
+        self.filter.set_placeholder(t(Msg::PhOutlineFilter));
+    }
+
     pub(crate) fn new() -> Self {
         OutlinePanel {
             visible: false,
@@ -161,7 +177,8 @@ impl OutlinePanel {
             scale,
         );
         let list_top = y1 + ih + px(GAP_Y);
-        self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
+        // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 머리·선택 행 배경이 스플리터 선을 덮지 않게(사용자 10-13 · 패널 공통).
+        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
         self.clamp_scroll();
     }
 
@@ -339,6 +356,11 @@ impl OutlinePanel {
         }
         let mut inv = Invalidations::default();
         // ★ 필터 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
+        // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
+        if self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+            let _ = self.filter_feed(ev);
+            return true;
+        }
         if self.filter.popup_takes(ev) {
             let _ = self.filter_feed(ev);
             if self.filter.popup_keeps(ev) {
@@ -353,6 +375,13 @@ impl OutlinePanel {
             self.filter_text = self.filter.display_text();
             self.rebuild();
             return true;
+        }
+        // 필터 상자 우클릭 = 편집 메뉴(틀이 연다 · 10-13).
+        if let InputEvent::RightDown { x, y } = *ev {
+            if self.filter.bounds().contains(Point { x, y }) {
+                let _ = self.filter_feed(ev);
+                return true;
+            }
         }
         let (_, ny, consumed) = self.bars.on_event(
             ev,

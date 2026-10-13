@@ -3229,6 +3229,8 @@ impl Grid {
         if let Some(e) = self.edit.as_ref() {
             e.live.paint_popup(dc, th);
         }
+        // ★ 조회 행수 입력란의 우클릭 편집 메뉴도 팝업 층에(사용자 10-13 "전체조회/중지/Σ 버튼 아래에 그려짐" = 도구줄 그리기 순서에 묻힘).
+        self.page_box.paint_popup(dc, th);
     }
 
     fn footer_rect(&self) -> Rect {
@@ -3244,7 +3246,32 @@ impl Grid {
         let footer = self.footer_rect();
         let mut inv = Invalidations::default();
         let at = |x: i32, y: i32| Point { x, y };
+        // ★ 행수 상자의 편집 메뉴가 떠 있으면(도구줄 밖 위로 펼쳐진다) 마우스 사건은 **상자로**(항목 클릭·확정 · 사용자 10-13 "입력창
+        //   우클릭 메뉴가 표시는 되지만 선택이 안 됨") — 종전엔 도구줄 밖 클릭을 버려 메뉴 항목이 눌리지 않았다.
+        if self.page_box.popup_open()
+            && matches!(
+                ev,
+                InputEvent::MouseMove { .. }
+                    | InputEvent::MouseDown { .. }
+                    | InputEvent::MouseUp { .. }
+                    | InputEvent::RightDown { .. }
+            )
+        {
+            self.page_box.on_event(ev, &mut inv);
+            if let Some(a) = self.page_box.take_edit_ctx() {
+                self.pending_edit_ctx = Some(a);
+            }
+            self.dirty = true;
+            return true;
+        }
         match *ev {
+            // 행수 상자 우클릭 = 편집 메뉴(먼저 클릭해 포커스를 줄 필요 없이 · 10-13).
+            InputEvent::RightDown { x, y } if self.page_box.bounds().contains(at(x, y)) => {
+                self.page_box.set_focused(true);
+                self.page_box.on_event(ev, &mut inv);
+                self.dirty = true;
+                return true;
+            }
             InputEvent::MouseMove { x, y } => {
                 for tb in [
                     &mut self.tb_view,
@@ -3406,7 +3433,10 @@ impl Grid {
         ];
         let text_w = (self.row_h * 8).max(140);
         self.menu_is_view = true;
-        self.menu.open_at(x, y, items, self.menu_host(), text_w);
+        {
+            let host = self.menu_host();
+            crate::menu_icons::open_at(&mut self.menu, x, y, items, host, text_w)
+        };
     }
 
     /// 텍스트 계열 보기의 스크롤·키(그리드 대신).
@@ -4038,6 +4068,9 @@ impl Grid {
             self.vpick.textbox_mut()
         } else if self.cond_on && self.cond.is_focused() {
             Some(self.cond.textbox_mut())
+        } else if self.page_box.is_focused() {
+            // 행수 상자(편집 메뉴 복사/붙여넣기 · Ctrl+C/V 대상 · 10-13).
+            Some(&mut self.page_box)
         } else {
             None
         }
@@ -4626,6 +4659,57 @@ impl Grid {
 
     pub(crate) fn menu_open(&self) -> bool {
         self.menu.is_open()
+    }
+
+    /// ★ 그리드 안 **입력 팝업**(행수 상자 편집 메뉴 · 조건 바 편집 메뉴/완성 · 셀 편집기 편집 메뉴 · 값 고르기 팝업)이 열려 있는가 —
+    /// 우클릭 메뉴 배타 규칙의 별도 비트(사용자 10-13 "입력창의 우클릭은 반영이 안 됨" · 그리드 메뉴와도 배타).
+    pub(crate) fn popups_open(&self) -> bool {
+        self.page_box.popup_open() || self.cond.popup_open() || self.vpick.is_open() || self.live_popup_open()
+    }
+
+    /// 열린 입력 팝업 영역(합집합 · 닫혀 있으면 빈 Rect).
+    pub(crate) fn popups_bounds(&self) -> Rect {
+        let mut r = Rect::default();
+        let mut add = |x: Rect| {
+            if x.w > 0 && x.h > 0 {
+                r = if r.w > 0 { r.union(&x) } else { x };
+            }
+        };
+        if self.page_box.popup_open() {
+            // 소유 상자 포함(상자 클릭 = 다른 영역이 아니다 · 10-13).
+            add(self.page_box.popup_bounds());
+            add(self.page_box.bounds());
+        }
+        add(self.cond.popup_bounds());
+        if self.vpick.is_open() {
+            add(self.vpick.rect());
+        }
+        if let Some(e) = self.edit.as_ref().filter(|e| e.live.is_open()) {
+            if e.live.textbox().popup_open() {
+                add(e.live.textbox().popup_bounds());
+                add(e.live.textbox().bounds());
+            }
+        }
+        r
+    }
+
+    /// 입력 팝업 전부 닫기(배타 규칙).
+    pub(crate) fn close_popups(&mut self) {
+        self.page_box.close_menu();
+        self.cond.close_popups();
+        self.vpick.close();
+        if let Some(e) = self.edit.as_mut() {
+            if e.live.is_open() {
+                e.live.textbox_mut().close_menu();
+            }
+        }
+    }
+
+    fn live_popup_open(&self) -> bool {
+        self.edit
+            .as_ref()
+            .filter(|e| e.live.is_open())
+            .is_some_and(|e| e.live.textbox().popup_open())
     }
 
     /// 열린 우클릭 메뉴 영역(하위 메뉴 포함 · 닫혀 있으면 빈 Rect).
@@ -5253,7 +5337,10 @@ impl Grid {
         ));
         let text_w = (self.row_h * 10).max(180);
         self.menu_is_view = false;
-        self.menu.open_at(x, y, items, self.menu_host(), text_w);
+        {
+            let host = self.menu_host();
+            crate::menu_icons::open_at(&mut self.menu, x, y, items, host, text_w)
+        };
     }
 
     /// 열 머리 → 객체 탐색기의 대상 테이블 — 출처 문장이 **단일 테이블 SELECT**일 때만(편집 판정과 같은 분석
@@ -5351,6 +5438,8 @@ impl Grid {
     /// 우클릭 메뉴가 펼쳐질 수 있는 영역(창 전체 · 호스트가 배치 때).
     pub(crate) fn set_menu_area(&mut self, r: Rect) {
         self.menu_area = r;
+        // 행수 상자의 편집 메뉴도 같은 영역(창 전체) — 도구줄이 창 바닥이라 아래 140px로는 잘렸다(사용자 10-13).
+        self.page_box.set_menu_host(Some(r));
     }
 
     /// 단축키 문구(복사 · 전체 선택) — 호스트 키맵에서 주입(표시 전용).
@@ -5532,7 +5621,10 @@ impl Grid {
         }
         let text_w = (self.row_h * 10).max(180);
         self.menu_is_view = false;
-        self.menu.open_at(x, y, items, self.menu_host(), text_w);
+        {
+            let host = self.menu_host();
+            crate::menu_icons::open_at(&mut self.menu, x, y, items, host, text_w)
+        };
     }
 
     fn menu_pick(&mut self, id: &str) {
@@ -6454,6 +6546,31 @@ impl Grid {
     }
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent, scale: f32) {
+        // ★ 조회 행수 입력란의 우클릭 편집 메뉴가 열려 있으면 마우스 사건은 그 상자(메뉴)가 먼저(팝업 배타 · 사용자 10-13 "메뉴가 버튼 아래에
+        //   그려짐"의 짝 = 그리기는 팝업 층 `paint_overlays` · 사건은 여기). 바깥 클릭 = 상자가 닫고 그대로 진행(TextBox 규칙).
+        if self.page_box.popup_open()
+            && matches!(
+                ev,
+                InputEvent::MouseDown { .. }
+                    | InputEvent::MouseUp { .. }
+                    | InputEvent::MouseMove { .. }
+                    | InputEvent::RightDown { .. }
+            )
+        {
+            let mut inv = Invalidations::default();
+            self.page_box.on_event(ev, &mut inv);
+            if let Some(a) = self.page_box.take_edit_ctx() {
+                self.pending_edit_ctx = Some(a);
+            }
+            self.dirty = true;
+            // 통과는 **바깥 누름**(메뉴를 닫은 MouseDown/RightDown)만 — 항목을 고른 MouseUp까지 통과시키면 도구줄 분기가 같은 MouseUp을
+            // 상자에 한 번 더 넣어(클릭 처리) 방금 한 "전체 선택"이 접혔다(협업 V1 10-13 "선택 칠 없음 · 캐럿만 끝").
+            if self.page_box.popup_open()
+                || matches!(ev, InputEvent::MouseUp { .. } | InputEvent::MouseMove { .. })
+            {
+                return;
+            }
+        }
         // ★ 값 목록 팝업이 떠 있으면 그것이 먼저(바깥 클릭 = 닫고 통과 · 결과 = 그 열 값 필터).
         if self.vpick.is_open() {
             // 팝업이 떠 있는 동안 표식 툴팁은 없다(포인터가 팝업으로 갔는데 툴팁이 남던 잔상 · 협업 V1 10-06).

@@ -221,6 +221,35 @@ fn is_folder_key(k: &str) -> bool {
 }
 
 impl PrefsWin {
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinPreferences)));
+        }
+        self.search.set_placeholder(t(Msg::PhSearchSettings));
+        self.advanced.set_label(t(Msg::LblAdvanced));
+        self.changed.set_label(t(Msg::LblChangedOnly));
+        self.json_btn.set_label(t(Msg::BtnEditJson));
+        self.close_btn.set_label(t(Msg::BtnClose));
+        for c in &mut self.cards {
+            c.reset.set_label(t(Msg::BtnReset));
+            if let Some(b) = &mut c.aux {
+                let k = c.entry.key;
+                b.set_label(if is_color_key(k) {
+                    t(Msg::BtnPick)
+                } else if is_key_key(k) {
+                    t(Msg::BtnCapture)
+                } else if is_folder_key(k) {
+                    t(Msg::BtnBrowseFolder)
+                } else if is_order_key(k) {
+                    t(Msg::BtnEditOrder)
+                } else {
+                    t(Msg::BtnExtSettings)
+                });
+            }
+        }
+    }
+
     /// 보이는 트리(그룹 ▸ 분류) — `CATEGORY_TREE`에서 숨긴 분류(끈/미설치 확장)를 뺀 것.
     /// 트리 = 레지스트리 분류 − 숨긴 분류 − 내부 분류(`INTERNAL_CATEGORIES` · 사용자 10-07) + 확장 그룹 끝에 동적 분류(`extra` ·
     /// 자기 분류가 없는 설치 확장 = 이름 분류 · 사용자 10-07).
@@ -460,8 +489,7 @@ impl PrefsWin {
                     // ★ 종속 조건을 못 채워 **잠긴 칸**에 호스트가 보여 줄 값을 줬으면 그것을(사용자 09-21: 자동 탐지 방식일 때
                     //   "클라이언트 폴더"·"TNS_ADMIN" 칸에 **탐지된 경로를 수정 불가로** · 없으면 공백). 저장값은 그대로다 —
                     //   직접 지정으로 바꾸면 저장해 둔 값이 다시 보인다.
-                    nsql_settings::dependency(e.key)
-                        .is_some_and(|(parent, dep)| !dep.satisfied(s.get(parent).unwrap_or("")))
+                    nsql_settings::locked_by_chain(e.key, &|k| s.get(k).unwrap_or("").to_string())
                 }) {
                     shown.clone()
                 } else if boost {
@@ -748,8 +776,8 @@ impl PrefsWin {
         // ★ 실행 속도 향상(`perf.boost` 켬)이 강제하는 키도 잠근다(값은 강제값 · 저장값은 유지 · 09-17).
         let boost = parent_val("perf.boost") == "on";
         for c in &mut self.cards {
-            c.locked = nsql_settings::dependency(c.entry.key)
-                .is_some_and(|(parent, dep)| !dep.satisfied(&parent_val(parent)))
+            // ★ 연쇄 잠금(docs/110 §4-3): 조상 중 하나라도 조건을 못 채우면 잠김(`refresh`와 같은 함수 하나).
+            c.locked = nsql_settings::locked_by_chain(c.entry.key, &parent_val)
                 || (boost && nsql_settings::perf::boost_value(c.entry.key).is_some())
                 // 읽기 전용 정보(자동 탐지 결과 · 파생 경로)는 늘 잠근다.
                 || nsql_settings::is_info(c.entry.key);
@@ -762,6 +790,8 @@ impl PrefsWin {
                 CardCtl::Pos(pd) if c.locked => pd.set_focused(false),
                 _ => {}
             }
+            // ★ 잠긴 카드는 [초기화]도 잠근다(협업 V1 관찰 · 10-13): 잠김 = 이 값은 지금 쓰이지 않는다 → 되돌릴 것도 없다.
+            nexa_ctl::controls::Control::set_enabled(&mut c.reset, !c.locked);
         }
     }
 
@@ -1812,6 +1842,9 @@ impl PrefsWin {
         for c in &mut self.cards {
             let key = c.entry.key.to_string();
             if c.reset.take_clicked() {
+                if c.locked {
+                    continue;
+                }
                 return PrefsAction::Reset(key);
             }
             if let Some(b) = &mut c.aux {
@@ -2541,9 +2574,13 @@ mod tests {
             "없으면 공백"
         );
         assert!(ro(&w, "oracle.info_library").0, "정보 칸은 늘 읽기 전용");
-        // 직접 지정 = 바로 풀린다 · 저장값(없음 = 빈 칸)이 보인다.
+        // ★ 기본 드라이버 = Thin(D-278 · 10-13)이면 Instant Client 칸은 연쇄 잠금(docs/111 §4-3)이라 manual로 바꿔도 잠긴 채다.
         s.set("oracle.client_mode", "manual").expect("set");
         s.set("oracle.client_dir", "D:/mine").expect("set");
+        w.refresh(&s);
+        assert!(ro(&w, "oracle.client_dir").0, "Thin이면 손자도 잠김(연쇄)");
+        // OCI를 고르면 직접 지정 = 바로 풀린다 · 저장값이 보인다.
+        s.set("oracle.driver", "oci").expect("set");
         w.refresh(&s);
         assert_eq!(ro(&w, "oracle.client_dir"), (false, "D:/mine".into()));
         assert!(ro(&w, "oracle.info_library").0);

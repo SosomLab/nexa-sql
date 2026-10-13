@@ -393,7 +393,7 @@ impl App {
                 nsql_drivers::set_mssql_encryption(self.settings.get(key) == Some("login"))
             }
             // Oracle 클라이언트(자동/직접 지정) — 드라이버에 넘기고 설정 창의 읽기 전용 탐지 결과를 다시 계산한다.
-            "oracle.client_mode" | "oracle.client_dir" | "oracle.tns_admin" => {
+            "oracle.driver" | "oracle.client_mode" | "oracle.client_dir" | "oracle.tns_admin" => {
                 apply_oracle_client(&self.settings);
                 self.prefs_win.set_info(dbms_info_values());
                 self.prefs_win.refresh(&self.settings);
@@ -604,6 +604,15 @@ impl App {
             "grid.fk_follow" => self.grid_fk_sync(),
             "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
                 self.apply_click_policy();
+            }
+            // 줄 끝 설명·Ctrl 범위(docs/111) = 활성 탭 다시 합성.
+            "editor.desc_inline"
+            | "editor.desc_inline_ctrl"
+            | "editor.desc_inline_what"
+            | "editor.desc_inline_chars"
+            | "editor.inline_ctrl_scope" => {
+                self.inline_key.clear();
+                self.inline_sync();
             }
             k if k.starts_with("bookmark.") => {
                 self.bookmarks.apply_settings(&self.settings);
@@ -1043,7 +1052,16 @@ impl App {
     /// 현재 상태 표시 · 사용자 10-07). 상태는 [`Self::refresh_theme_state`]가 메뉴를 열 때마다 새로 읽는다.
     pub(crate) fn theme_menu_entries(&self) -> Vec<nexa_ctl::MenuEntry> {
         let cur = self.settings.theme_mode();
-        let resolved = if self.theme.is_dark {
+        // ★ "시스템 (다크)"의 괄호 = **OS의 설정값**(언어 메뉴 "System (한국어)"와 같은 기준 · 사용자 10-13) — 지금 적용된 테마가 아니라
+        //   OS 조회(Windows 레지스트리 우선 · 그 밖 창 판정 · `theme::system_dark` 순서) · 모르면 지금 테마.
+        let os = theme::system_prefers_dark();
+        let wt = self
+            .window
+            .as_ref()
+            .and_then(|w| w.theme())
+            .map(|t| matches!(t, winit::window::Theme::Dark));
+        let sys_dark = theme::system_dark(os, wt, cfg!(windows)).unwrap_or(self.theme.is_dark);
+        let resolved = if sys_dark {
             nsql_settings::ThemeMode::Dark
         } else {
             nsql_settings::ThemeMode::Light
@@ -1313,6 +1331,19 @@ impl App {
         let _ = self.tool_dock.take_actions();
         self.apply_toolbar_visibility();
         self.conn_win.relabel();
+        // ★ 생성 때 굳힌 글(플레이스홀더 · 버튼 · 스위치)도 전부(사용자 10-13 영어 화면 실기: 패널 필터 · 설정 창 · 로그 창 · 라이선스 창).
+        self.explorer.relabel();
+        self.search.relabel();
+        self.project_panel.relabel();
+        self.bm_panel.relabel();
+        self.outline_panel.relabel();
+        self.ext_panel.relabel();
+        self.prefs_win.relabel();
+        self.log_win.relabel();
+        self.license_win.relabel();
+        self.sessions_win.relabel();
+        self.txlog_win.relabel();
+        self.mem_win.relabel();
         // 편집기 탭은 건드리지 않는다(사용자 10-07 "언어를 바꾸는 행위가 편집기 탭에 변경을 할 필요가 없다") — 종전 `rebuild_boxes`가
         //   TextBox를 새로 만들어 캐럿·스크롤·선택·되돌리기 기록을 잃었다. 편집기 placeholder는 비어 있어 언어에 걸린 글이 없다.
         self.layout();

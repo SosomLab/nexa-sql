@@ -476,6 +476,12 @@ impl App {
 
     /// 파일 → 탭(인코딩 지정). 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
     pub(crate) fn open_file_enc(&mut self, path: &Path, enc: &str) {
+        // ★ 이진 파일은 큰 파일 질문·라이선스 게이트 없이 바로 안내 탭으로(협업 V1 10-13 "10 MB 이미지에 큰 파일 선택 목록이 뜸") —
+        //   적재기가 첫 조각에서 이진이면 끊고 안내로 바꾼다.
+        if fileload::sniff_binary(path) {
+            self.load_file(path, enc, LoadMode::Open);
+            return;
+        }
         let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         // ★ 무료판 편집 용량(D-46 · 25 §13-3): 2 MB 이상은 **읽기 전용**으로 연다(실행·조회는 그대로 · 큰 파일 모드 L2와 같은 길).
         if !self.entitled(nsql_license::Feature::LargeEdit) && size >= (2u64 << 20) {
@@ -733,6 +739,19 @@ impl App {
         let name = editors::file_title(&path);
         let loaded = match l.result {
             Ok(v) => v,
+            Err(e) if e == fileload::BINARY => {
+                // ★ 이진 파일(사용자 10-13): 본문 대신 안내 탭(읽기 전용 · Plain Text · 경로 없음 = 저장 불가) · 실행 모드는 거부.
+                if l.mode == LoadMode::Run {
+                    self.sess.status = tf(Msg::StBinaryFile, &[&name]);
+                } else {
+                    let tab = l.tab.unwrap_or_else(|| self.editors.begin_load_tab(&name));
+                    self.open_binary_notice(tab, &path, &name);
+                }
+                self.mem_released();
+                self.layout();
+                self.redraw();
+                return;
+            }
             Err(e) => {
                 // 자리 탭은 걷는다(빈 탭이 남지 않게).
                 if let Some(i) = l.tab.and_then(|id| self.editors.index_of_id(id)) {
@@ -842,6 +861,53 @@ impl App {
     }
 
     /// 변수 표 보존(D-136 · `varsfile`) — 실행이 그 탭의 변수를 바꿨을 때 · 파일이 있는 탭만.
+    /// 이진 파일 안내 탭(10-13): 제목 `이름 (binary)` · 본문 = 경로·크기·안내 · 읽기 전용 · Plain Text + No connection · 경로 없음.
+    pub(crate) fn open_binary_notice(&mut self, tab: u64, path: &Path, name: &str) {
+        self.open_binary_notice_in(tab, path, name, false);
+    }
+
+    /// 같은 안내를 **미리보기 탭**(슬롯 재사용)에 — 프로젝트 탐색기 한 번 클릭(사용자 10-13 "더블클릭이 아니면 미리보기에").
+    pub(crate) fn open_binary_preview(&mut self, path: &Path, name: &str) {
+        let id = self.editors.preview_slot(name);
+        self.open_binary_notice_in(id, path, name, true);
+    }
+
+    /// 이 파일의 이진 안내 탭(미리보기든 정식이든)이 열려 있으면 그 탭 번호.
+    pub(crate) fn binary_notice_tab(&self, path: &Path) -> Option<usize> {
+        self.binary_notice
+            .iter()
+            .filter(|(_, p)| p.as_path() == path)
+            .find_map(|(id, _)| self.editors.index_of_id(*id))
+    }
+
+    fn open_binary_notice_in(&mut self, tab: u64, path: &Path, name: &str, preview: bool) {
+        self.binary_notice.insert(tab, path.to_path_buf());
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let body = tf(
+            Msg::BinaryFileNotice,
+            &[&path.display().to_string(), &nsql_core::fmt_bytes(size)],
+        );
+        let title = tf(Msg::BinaryTabTitle, &[name]);
+        self.make_unconnected(tab);
+        if let Some(i) = self.editors.fill_loaded(
+            tab,
+            None,
+            &title,
+            "notice.txt",
+            nexa_ctl::PreparedText::new(body),
+            crate::eol::Eol::Lf,
+        ) {
+            self.editors.set_read_only(i, true);
+            if preview {
+                self.editors.switch(i);
+            }
+            if self.editors.active_id() == tab {
+                self.set_focus(Focus::Editor);
+            }
+        }
+        self.sess.status = tf(Msg::StBinaryFile, &[name]);
+    }
+
     pub(crate) fn vars_persist_save(&mut self, tab: u64, vars: &[nsql_script::VarState]) {
         if !self.settings.flag("vars.persist") {
             return;

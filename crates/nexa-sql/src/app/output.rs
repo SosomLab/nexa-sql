@@ -274,6 +274,10 @@ impl App {
             }
             RunEvent::Message(m) => self.output_push(ed, OutKind::Info, m),
             RunEvent::Warning(m) => self.output_push(ed, OutKind::Warn, m),
+            RunEvent::DriverLimits { driver, limits, .. } => {
+                let text = driver_limits_text(driver, limits);
+                self.output_push(ed, OutKind::Warn, &text);
+            }
             RunEvent::Error { line, error, .. } => {
                 let text = tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]);
                 self.output_push(ed, OutKind::Error, &text);
@@ -294,4 +298,38 @@ impl App {
             None => "none".to_string(),
         }
     }
+}
+
+/// ★ 드라이버 제약(docs/110 §6 · 사용자 10-13) → 사용자 문구(i18n). 종류 하나 = 글 하나.
+pub(crate) fn limit_msg(l: nsql_core::DriverLimit) -> Msg {
+    use nsql_core::DriverLimit as L;
+    match l {
+        L::Cancel => Msg::LimitCancel,
+        L::ImplicitResults => Msg::LimitImplicitResults,
+        L::ExternalAuth => Msg::LimitExternalAuth,
+        L::NativeEncryption => Msg::LimitNne,
+        L::BulkLoad => Msg::LimitBulkLoad,
+        L::OldServer => Msg::LimitOldServer,
+    }
+}
+
+/// 짧은 이름(토스트용 · 사용자 10-13 "핵심 낱말만").
+pub(crate) fn limit_short(l: nsql_core::DriverLimit) -> Msg {
+    use nsql_core::DriverLimit as L;
+    match l {
+        L::Cancel => Msg::LimitShortCancel,
+        L::ImplicitResults => Msg::LimitShortImplicitResults,
+        L::ExternalAuth => Msg::LimitShortExternalAuth,
+        L::NativeEncryption => Msg::LimitShortNne,
+        L::BulkLoad => Msg::LimitShortBulkLoad,
+        L::OldServer => Msg::LimitShortOldServer,
+    }
+}
+
+/// 제약 목록 한 덩어리(토스트 본문 · Output 줄): `• 제약` 줄들 + 전환 안내 한 줄.
+pub(crate) fn driver_limits_text(driver: &str, limits: &[nsql_core::DriverLimit]) -> String {
+    let mut lines: Vec<String> = vec![tf(Msg::ToastDriverLimitsTitle, &[driver])];
+    lines.extend(limits.iter().map(|l| format!("• {}", t(limit_msg(*l)))));
+    lines.push(t(Msg::LimitHintOracle).to_string());
+    lines.join("\n")
 }

@@ -128,6 +128,18 @@ pub(crate) struct LogWin {
 }
 
 impl LogWin {
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinLog)));
+        }
+        self.wrap_switch.set_label(t(Msg::LblLogSwWrap));
+        self.newest_switch.set_label(t(Msg::LblLogSwSort));
+        self.auto_switch.set_label(t(Msg::LblLogSwScroll));
+        self.top_switch.set_label(t(Msg::LblLogSwTop));
+        self.dev_switch.set_label(t(Msg::LblLogSwDev));
+    }
+
     pub(crate) fn new(format: &str) -> Self {
         LogWin {
             window: None,
@@ -321,8 +333,8 @@ impl LogWin {
             CtxItem::item("clear", t(Msg::MnLogClear)),
         ];
         let host = self.viewport();
-        self.menu
-            .open_at(x, y, items, host, (self.row_h * 10).max(160));
+        crate::menu_icons::open_at(
+            &mut self.menu, x, y, items, host, (self.row_h * 10).max(160));
         self.redraw();
     }
 
@@ -1470,13 +1482,9 @@ impl LogWin {
                         _ => (self.top_switch.bounds(), Msg::TipLogTop),
                     };
                     let text = t(msg);
-                    dc.select_font(FontSlot::Status, false);
-                    let lines = text.split('\n').count() as i32;
-                    let tip_h = dc.text_height() * lines + (8.0 * s).round() as i32;
-                    let gap = (6.0 * s).round() as i32;
-                    // draw_tooltip은 anchor 아래 gap에 그린다 → 아래가 푸터 위에 닿는 가짜 anchor.
-                    let anchor = Rect::new(b.x, fy - gap - tip_h - gap - 1, b.w, 1);
-                    draw_tooltip(&mut dc, th, anchor, wi, text, s);
+                    // 앵커 = 스위치 사각형 그대로(공용 규칙이 "항목 위"로 · 종전 미리 올린 가짜 앵커 = 이중 올림 · 10-13).
+                    let _ = fy;
+                    draw_tooltip(&mut dc, th, b, wi, text, s);
                     self.tip_shown = true;
                 }
             }

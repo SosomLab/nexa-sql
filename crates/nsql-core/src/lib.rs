@@ -388,6 +388,64 @@ pub struct ExecResult {
     /// **마지막 결과 집합이 페치 상한에서 잘렸고** 드라이버가 서버 커서를 열어 둔 경우만 `Some` —
     /// 호스트는 [`Session::fetch_next`]로 이어 받는다(docs/43 D-70). 커서를 못 여는 드라이버는 항상 `None`.
     pub pending: Option<CursorHandle>,
+    /// ★ 이번 실행이 **이 드라이버의 제약**에 닿았다([`DriverLimit`] · docs/110 §6 · 사용자 10-13 "Warning 토스트로 안내") —
+    /// 호스트가 경고로 보여 준다. 제약이 없는 드라이버는 늘 비어 있다.
+    pub limits_hit: Vec<DriverLimit>,
+}
+
+/// ★ 드라이버 제약(docs/110 §6 · 사용자 10-13): **같은 DBMS의 다른 드라이버로는 되지만 이 드라이버에서는 안 되는** 기능.
+/// 접속 직후([`Session::limits`] = 한 번 안내)와 그 기능이 실제로 요청됐을 때([`ExecResult::limits_hit`])에 호스트가
+/// Warning 토스트·Output·로그로 알린다. 문구는 호스트(i18n) 몫 — 여기에는 종류와 영어 꼬리표만.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum DriverLimit {
+    /// 실행 중 즉시 취소(■)가 없다 — 배치 경계에서 멈추고, 다시 ■ = 강제 중지.
+    Cancel,
+    /// 암묵 결과 집합(`DBMS_SQL.RETURN_RESULT`)을 돌려받지 못한다.
+    ImplicitResults,
+    /// OS/외부 인증(`/ as sysdba` · Kerberos · 지갑)이 안 된다.
+    ExternalAuth,
+    /// 네이티브 네트워크 암호화(NNE)가 안 된다(TLS는 된다).
+    NativeEncryption,
+    /// 드라이버 대량 적재 경로가 없다 — 다중 행 `INSERT` 폴백(느림).
+    BulkLoad,
+    /// 오래된 서버 버전을 지원하지 않는다.
+    OldServer,
+}
+
+impl DriverLimit {
+    pub const ALL: [DriverLimit; 6] = [
+        DriverLimit::Cancel,
+        DriverLimit::ImplicitResults,
+        DriverLimit::ExternalAuth,
+        DriverLimit::NativeEncryption,
+        DriverLimit::BulkLoad,
+        DriverLimit::OldServer,
+    ];
+
+    /// 오류 메시지에 박힌 꼬리표(`driver limitation: <code>`)로 제약을 찾는다 — 드라이버가 **실패한** 실행·접속에서 제약을 알리는 길
+    /// (성공한 실행은 [`ExecResult::limits_hit`]). 러너가 오류 이벤트와 함께 제약 안내 이벤트를 낸다.
+    #[must_use]
+    pub fn find_in(message: &str) -> Option<DriverLimit> {
+        let (_, tail) = message.split_once("driver limitation: ")?;
+        let code: String = tail
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        DriverLimit::ALL.into_iter().find(|l| l.code() == code)
+    }
+
+    /// 로그·CLI용 영어 꼬리표(프로그램 내부 정보 = 영어 · CLAUDE.md §3).
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            DriverLimit::Cancel => "cancel",
+            DriverLimit::ImplicitResults => "implicit-results",
+            DriverLimit::ExternalAuth => "external-auth",
+            DriverLimit::NativeEncryption => "native-encryption",
+            DriverLimit::BulkLoad => "bulk-load",
+            DriverLimit::OldServer => "old-server",
+        }
+    }
 }
 
 // ────────────────────────────────────────────── 성능 계측(docs/26 — 사용자 09-14 "어디가 느린지 단계별로")
@@ -1159,6 +1217,15 @@ pub trait Session {
     /// 뒤의 DBMS처럼 방언 표와 다른 능력을 가진 세션은 덮어쓴다.
     fn caps(&self) -> Caps {
         Caps::of(self.dialect())
+    }
+    /// 드라이버 이름(표시용 · 영어) — 같은 방언에 드라이버가 둘일 때 구별한다(Oracle = "Oracle (OCI)" / "Oracle Thin").
+    /// 기본 = 방언 이름.
+    fn driver_name(&self) -> String {
+        self.dialect().to_string()
+    }
+    /// ★ 이 드라이버의 제약 목록([`DriverLimit`] · docs/110 §6) — 접속 직후 호스트가 한 번 안내한다. 기본 = 없음.
+    fn limits(&self) -> &'static [DriverLimit] {
+        &[]
     }
     /// 실행 취소 핸들 — 지원하지 않으면 `None`(호스트는 전체 조회 배치 경계에서만 멈춘다).
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn CancelHandle>> {

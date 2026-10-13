@@ -271,3 +271,36 @@ Ctrl+P(Goto Anything)와 프로젝트 탐색기 필터는 프로젝트 폴더 �
 | 키 | 기본 | 뜻 |
 |---|---|---|
 | `grid.empty_text` | `''` | 결과 그리드에서 빈 문자열(길이 0) 셀에 흐리게 보이는 글자입니다. NULL(`grid.null_text`)과 구별하려는 표시이며, 복사·텍스트 보기에는 빈 채로 나갑니다. |
+
+## Oracle 드라이버 — Thin / Instant Client(10-13)
+
+설정 ▸ DBMS ▸ Oracle 맨 위(고급 스위치를 켜야 보입니다).
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `oracle.driver` | **thin** | `thin` = 앱에 들어 있는 순수 Rust 드라이버(Oracle Instant Client 설치가 필요 없습니다) · `oci` = Instant Client를 불러 쓰는 드라이버(전체 기능). 바꾸면 **다음 접속부터** 적용됩니다(앱 재시작 없음 · 열린 세션은 그대로). |
+| `oracle.info_driver` | (읽기 전용) | 다음 Oracle 접속에 쓰일 드라이버와 그 드라이버가 못 하는 것. |
+
+- `thin`을 고르면 Instant Client 설정(`oracle.client_mode` · `oracle.client_dir` · `oracle.tns_admin`)이 **함께 잠기고**(값은 남음) 라이브러리·버전·sqlnet 정보 칸은 "Thin 드라이버에서는 쓰지 않습니다"가 됩니다. `tnsnames.ora`는 Thin도 읽습니다.
+- Thin으로 접속하면 한 줄 안내가 뜹니다: "즉시 취소(■) · 암묵 결과 집합 · OS 인증 · 네이티브 암호화 · 배열 적재 · 12c 미만 서버 미지원 - 자세한 내용은 로그 창 확인". 자세한 내용과 전환 방법은 로그 창에 있습니다.
+- Thin에서 다른 점: 실행 중 ■는 다음 배치 경계에서 멈추고 **다시 ■ = 강제 중지**(접속을 끊음) · `DBMS_SQL.RETURN_RESULT` 결과는 받지 못함(REF CURSOR OUT 바인드 + `PRINT`로 대체) · `/ as sysdba`(OS 인증)·Kerberos·지갑 비밀번호 저장소 안 됨 · Oracle 네이티브 네트워크 암호화 안 됨(TLS는 됨) · 대량 적재는 다중 행 INSERT(느림) · Oracle 12c 미만 서버 안 됨.
+- 이런 기능이 필요하면 `oracle.driver = oci`로 바꾸고 Instant Client를 설치하세요.
+
+## 줄 끝 라벨 — Ctrl을 누른 동안 · 테이블/컬럼 설명(10-13)
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `bookmark.inline_label_ctrl` | on | 북마크 줄 끝 라벨(`bookmark.inline_label`)이 꺼져 있어도 **Ctrl(맥 ⌘)을 누른 동안** 라벨(`◆ 이름`)을 보입니다. |
+| `bookmark.inline_label_ctrl_scope` | 보이는 영역 | 북마크 Ctrl 라벨 범위 — 보이는 영역 · 현재 문장 · 문서 전체. |
+| `editor.desc_inline` | off | 테이블·컬럼 설명(DB 코멘트)을 줄 끝에 늘 보입니다(`» 설명`). |
+| `editor.desc_inline_ctrl` | on | Ctrl을 누른 동안 설명을 보입니다. |
+| `editor.desc_inline_what` | 테이블·컬럼 | 무엇의 설명을 보일지(테이블 · 컬럼 · 둘 다). |
+| `editor.desc_inline_chars` | 40 | 한 줄 라벨 글자 수 상한(넘치면 `…`). |
+| `editor.inline_ctrl_scope` | 현재 문장 | 설명 Ctrl 표시 범위 — 현재 문장 · 보이는 영역 · 문서 전체. |
+| `editor.inline_ctrl_full_kb` | 256 | 문서가 이 크기(KB)를 넘으면 "문서 전체" 범위를 보이는 영역으로 낮춥니다(0 = 무제한). |
+| `editor.inline_ctrl_off_kb` | 2048 | 문서가 이 크기(KB)를 넘으면 Ctrl 라벨·설명과 객체 hover 카드를 끕니다(0 = 큰 파일 모드에서만). |
+
+- 한 줄에 북마크와 설명이 함께 있으면 `◆ 북마크 · » 설명 · » 설명` 순서입니다. 컬럼 설명은 이름 없이 설명만 보입니다.
+- "현재 문장" 범위는 문장 바로 위에 붙은 주석 줄(`--` · `/* */` · 사이 빈 줄 포함)까지 셉니다 — 주석 줄에 단 북마크도 보입니다. 앞 문장 끝에 붙은 주석은 앞 문장 몫입니다.
+- 설명은 이미 읽어 둔 코멘트를 씁니다. 없으면 Ctrl을 누른 순간 한 번 읽어 오고, 오면 바로 채워집니다.
+- 실행 속도 향상(`perf.boost`)·큰 파일 모드에서는 Ctrl 표시와 객체 hover 카드(`objlink.tooltip`)가 꺼집니다.

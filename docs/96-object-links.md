@@ -41,7 +41,7 @@
 |---|---|---|
 | `objlink.enabled` | on | Ctrl 동안 링크(향상 모드·큰 파일 모드에서도 켜짐 · 표시만 none) |
 | `objlink.display` | hover | 밑줄 표시 방식 all/hover/none · **`perf::BOOST` = none 강제** · 큰 파일 모드 = none |
-| `objlink.tooltip` | on | 설명 툴팁 표시 |
+| `objlink.tooltip` | on | 설명 툴팁·hover 카드 표시 · **강제 끔 = 향상 모드(`perf` FORCED · 카드 자체 안 뜸 · 10-13 · 종전엔 밑줄만 껐음) · 큰 파일 모드 · 문서 > `editor.inline_ctrl_off_kb`(2048 KB)** · 판정 한 자리 `objlink_tooltip_on()`(머무름·열 머리 카드·툴팁 그리기 4곳 공통) |
 | `objlink.tooltip_pos` | top_right | 툴팁 자리(top_right/top_left/bottom_right/bottom_left) |
 | `objlink.click` | copy | **Ctrl+좌클릭 동작**(10-05 · T-180 ②): `copy` = 설명 복사(Shift = `이름 - 설명`) · `reveal` = 객체 탐색기에서 보기. 우클릭 메뉴·Shift+클릭은 그대로. `reveal`인데 실제 객체로 풀리지 않는 링크(미확인 · 내장 표)는 복사로 돌아간다. 77 §1-3의 `intel.ctrl_click` 자리이나 키는 링크 설정 묶음(`objlink.*`)에 둔다 · `columns` 값은 두지 않는다 |
 | `objlink.hover_ms` | 700 | **머무름 툴팁**(10-05 · T-179 ③ 첫 걸음): Ctrl 없이 포인터가 객체 이름 위에 이만큼 머물면 설명 툴팁만(밑줄·클릭 동작 없음) · 0 = 끔(Ctrl 때만) · 범위 0~5000 · 77 §1-3의 `intel.hover_ms` 자리이나 키는 `objlink.*` 묶음 |
@@ -54,6 +54,8 @@
 | `objlink.bad_width` | 1 | 미확인 객체 밑줄 두께 |
 | `objlink.bad_style` | wavy | 미확인 객체 밑줄 모양 |
 | `objlink.max_kb` | 512 | 이 크기 넘는 문서는 **보이는 부분만** 분석(0 = 무제한) · 큰 파일 모드는 늘 부분 |
+
+- (10-13) Ctrl 홀드 깃발은 줄 끝 설명·북마크 라벨 표시([111](111-inline-labels-and-ctrl-hold.md) · T-337·T-338)와 **공유**한다 — 두 번째 Ctrl 판정을 만들지 않는다.
 
 ## 3. 배선(39 §3 부하원 · 30 §2 부품)
 

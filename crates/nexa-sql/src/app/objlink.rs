@@ -838,6 +838,20 @@ impl App {
         self.settings.flag("objlink.enabled")
     }
 
+    /// ★ hover 카드(설명 툴팁)를 쓸 수 있는가(사용자 10-13): 설정 `objlink.tooltip`(향상 모드 = FORCED off) · 큰 파일 모드 = 끔 ·
+    /// 문서가 `editor.inline_ctrl_off_kb`(줄 끝 라벨과 같은 "끄는 용량" 단계 · 0 = 무제한)보다 크면 끔.
+    pub(crate) fn objlink_tooltip_on(&self) -> bool {
+        if !self.settings.flag("objlink.tooltip") {
+            return false;
+        }
+        let i = self.editors.active();
+        if self.editors.is_large(i) {
+            return false;
+        }
+        let off_kb = self.settings.int("editor.inline_ctrl_off_kb").max(0) as usize;
+        off_kb == 0 || self.editors.cur().buf().len_bytes() / 1024 <= off_kb
+    }
+
     /// 이 탭에 써도 되는가: SQL 구문만(큰 파일·크기 상한은 끄지 않고 **부분 분석**으로 간다).
     fn objlink_suitable(&self) -> bool {
         self.editors.syntax_name() == "SQL"
@@ -860,7 +874,7 @@ impl App {
     }
 
     /// 부분 분석인가: 큰 파일 모드 · 문서가 `objlink.max_kb`(0 = 무제한)보다 클 때.
-    fn objlink_partial(&self) -> bool {
+    pub(crate) fn objlink_partial(&self) -> bool {
         if self.editors.is_large(self.editors.active()) {
             return true;
         }
@@ -888,7 +902,13 @@ impl App {
 
     /// 표시 방식에 따라 편집기에 넣을 밑줄 구간 — 바뀌었으면 true.
     fn objlink_apply_marks(&mut self) -> bool {
-        let marks: Vec<(usize, usize, bool)> = match self.objlinks.display {
+        // 상시 설명 모드로만 분석이 살아 있을 때(Ctrl 없음 · 머무름 없음)는 밑줄·강조 없음(docs/111).
+        let display = if self.primary || self.objlinks.hover {
+            self.objlinks.display
+        } else {
+            Display::None
+        };
+        let marks: Vec<(usize, usize, bool)> = match display {
             Display::All => self
                 .objlinks
                 .links
@@ -903,7 +923,7 @@ impl App {
                 .unwrap_or_default(),
             Display::None => Vec::new(),
         };
-        let hot = match self.objlinks.display {
+        let hot = match display {
             Display::None => None,
             _ => self
                 .objlinks
@@ -944,7 +964,7 @@ impl App {
     }
 
     /// 지금 분석 결과를 그대로 써도 되는가(탭·본문·메타·표시 방식 같고 부분이면 보이는 구간이 안에).
-    fn objlink_fresh(&self) -> bool {
+    pub(crate) fn objlink_fresh(&self) -> bool {
         let o = &self.objlinks;
         if !o.active
             || o.tab != self.editors.active_id()
@@ -975,7 +995,8 @@ impl App {
 
     /// ★ 수식키·탭·본문·설정이 바뀔 때 — Ctrl을 누르고 있고 쓸 수 있으면 링크 목록을 만들고, 아니면 걷는다.
     pub(crate) fn objlink_sync(&mut self) {
-        let want = (self.primary || self.objlinks.hover)
+        // ★ 상시 줄 끝 설명(docs/111 `editor.desc_inline`)도 분석을 유지한다 — 밑줄은 Ctrl/머무름일 때만(`objlink_apply_marks`).
+        let want = (self.primary || self.objlinks.hover || self.inline_desc_always())
             && self.objlink_enabled()
             && self.objlink_suitable();
         let tab = self.editors.active_id();
@@ -1185,7 +1206,7 @@ impl App {
         now: std::time::Instant,
     ) -> Option<std::time::Instant> {
         let ms = self.settings.int("objlink.hover_ms").max(0) as u64;
-        if ms == 0 || !self.settings.flag("objlink.tooltip") || self.primary {
+        if ms == 0 || !self.objlink_tooltip_on() || self.primary {
             return None;
         }
         let hov = if self.focus_allows_hover() {
@@ -1305,7 +1326,7 @@ impl App {
             return;
         }
         let ms = self.settings.int("objlink.hover_ms").max(0) as u64;
-        if ms == 0 || !self.settings.flag("objlink.tooltip") {
+        if ms == 0 || !self.objlink_tooltip_on() {
             self.objlinks.hover_due = None;
             return;
         }
@@ -1551,14 +1572,14 @@ impl App {
                 self.objlink_prefetch(k);
             }
             // `none`이면 밑줄이 없으니 툴팁이 켜져 있을 때만 다시 그린다.
-            if changed || self.settings.flag("objlink.tooltip") {
+            if changed || self.objlink_tooltip_on() {
                 self.redraw();
             }
         }
     }
 
     /// 링크의 설명을 위해 필요한 메타(테이블 상세 = 코멘트 · 컬럼)를 요청한다.
-    fn objlink_prefetch(&mut self, k: usize) {
+    pub(crate) fn objlink_prefetch(&mut self, k: usize) {
         let Some(link) = self.objlinks.links.get(k).cloned() else {
             return;
         };
@@ -1649,7 +1670,7 @@ impl App {
     }
 
     /// 링크의 설명(코멘트) — (종류 라벨, 표시 이름, 설명 · 미확인 = None).
-    fn objlink_describe(&self, k: usize) -> Option<(String, String, Option<String>)> {
+    pub(crate) fn objlink_describe(&self, k: usize) -> Option<(String, String, Option<String>)> {
         let link = self.objlinks.links.get(k)?;
         let cur = self.objlink_cur_schema();
         let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
@@ -2227,8 +2248,8 @@ impl App {
         }
         let host = self.window_rect();
         self.objlink_menu.set_scale(self.scale);
-        self.objlink_menu
-            .open_at(p.x, p.y, items, host, px(100.0, self.scale));
+        crate::menu_icons::open_at(
+            &mut self.objlink_menu, p.x, p.y, items, host, px(100.0, self.scale));
         self.redraw();
     }
 
@@ -2479,7 +2500,7 @@ impl App {
     /// 그릴 툴팁(커서 아래 링크의 설명 · 표시 설정 켜짐) — (본문, 링크 글자 사각형). 페인트가 표면을 빌리기 **전에** 셈한다.
     /// 미확인 객체(메타에 없음)는 "(현재 연결에 없는 객체)".
     pub(crate) fn objlink_tip(&self) -> Option<(String, Rect)> {
-        if !self.objlinks.active || !self.settings.flag("objlink.tooltip") {
+        if !self.objlinks.active || !self.objlink_tooltip_on() {
             return None;
         }
         let k = self.objlinks.hot?;

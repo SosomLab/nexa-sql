@@ -206,7 +206,7 @@ impl ValuePick {
         }
     }
 
-    #[cfg(test)]
+    /// 팝업 영역(열려 있을 때 · 우클릭 메뉴 배타 규칙의 히트 판정 10-13 · 시험).
     pub(crate) fn rect(&self) -> Rect {
         self.rect
     }

@@ -93,6 +93,22 @@ impl Src {
         }
         self.items.extend(items);
     }
+    /// ★ 숨은 검색 키 포함(사용자 10-13 "표시 이름뿐 아니라 기능명(id)·영어 이름·다른 언어로도 검색"): 표시는 `label` 그대로 ·
+    /// 매칭 글 = 라벨 + 키(명령 id + 모든 언어의 라벨 · 소문자). 명령 ≈ 120개 × 언어 수라 비용은 파일 모드(1만 항목)보다 훨씬 작다.
+    fn from_keyed(items: Vec<(String, String, String)>) -> Self {
+        let mut s = Src::default();
+        s.lower.reserve(items.len());
+        for (id, label, key) in items {
+            let mut l = norm_seps(&label.to_lowercase());
+            l.push(' ');
+            l.push_str(&key.to_lowercase());
+            l.push(' ');
+            l.push_str(&id.to_lowercase());
+            s.lower.push(l);
+            s.items.push((id, label));
+        }
+        s
+    }
     fn len(&self) -> usize {
         self.items.len()
     }
@@ -245,14 +261,14 @@ impl Palette {
     pub(crate) fn open_goto(
         &mut self,
         files: Vec<(String, String)>,
-        cmds: Vec<(String, String)>,
+        cmds: Vec<(String, String, String)>,
         syms: Vec<(String, String)>,
         doc_lines: Vec<String>,
         help: Vec<(String, String)>,
         prefill: &str,
     ) {
         self.src_files = Src::from_items(files, false);
-        self.src_cmds = Src::from_items(cmds, true);
+        self.src_cmds = Src::from_keyed(cmds);
         self.src_syms = Src::from_items(syms, false);
         self.doc_lines = doc_lines;
         self.help = help;
@@ -368,6 +384,14 @@ impl Palette {
         self.refilter(true);
     }
 
+    /// 명령 팔레트(숨은 검색 키 포함 · [`Src::from_keyed`]).
+    pub(crate) fn set_commands_keyed(&mut self, cmds: Vec<(String, String, String)>) {
+        self.goto_mode = false;
+        self.cmds = Src::from_keyed(cmds);
+        self.active = Active::Own;
+        self.refilter(true);
+    }
+
     /// 지금 원천.
     fn items(&self) -> &Src {
         match self.active {
@@ -456,7 +480,8 @@ impl Palette {
                 } else {
                     (self.win.1 - h).max(0)
                 };
-                let host = Rect::new(0, 0, self.win.0, self.win.1);
+                // 창 가장자리에서 `gap`만큼 띄운다(오른쪽 끝 탭의 프롬프트가 창에 딱 붙어 테두리가 안 보이던 관찰 · 협업 V1 10-13).
+                let host = Rect::new(gap, 0, (self.win.0 - gap * 2).max(w), self.win.1);
                 nexa_ctl::geom::nudge_into(Rect::new(a.x, y, w, h), host)
             }
             _ => Rect::new(b.x + (b.w - w) / 2, b.y, w, h),
@@ -762,12 +787,14 @@ impl Palette {
             // ★ 마우스(사용자 09-19): 목록 위에서 움직이면 그 행이 선택(키보드 선택과 같은 강조 하나) · 휠 = 목록 굴리기 ·
             //   클릭 = 실행. 같은 자리의 MouseMove는 무시한다(키보드로 옮긴 선택이 커서 아래 행으로 튀지 않게).
             InputEvent::MouseMove { x, y } => {
-                // 입력란이 먼저(드래그 선택 · hover) — 목록 hover는 그 다음(사용자 09-29 "드래그가 안 된다").
+                // 입력란이 먼저(드래그 선택 · hover) — 목록 hover는 그 다음(사용자 09-29 "드래그가 안 된다") · 프롬프트는 목록 없음.
                 self.input.on_event(ev, inv);
                 if (x, y) != self.last_mouse {
                     self.last_mouse = (x, y);
-                    if let Some(i) = self.row_at(Point { x, y }) {
-                        self.sel = i;
+                    if self.prompt.is_none() {
+                        if let Some(i) = self.row_at(Point { x, y }) {
+                            self.sel = i;
+                        }
                     }
                 }
                 return PaletteAction::None;
@@ -802,7 +829,10 @@ impl Palette {
                 if !self.frame().contains(p) {
                     return PaletteAction::Close;
                 }
-                if self.rows_rect().contains(p) {
+                // ★ 목록 판정은 **명령 팔레트일 때만**(사용자 10-13 "1줄 왼쪽 탭들의 이름 바꾸기 창만 마우스가 안 된다"): `rows_rect`는
+                //   창 가운데 기본 상자(x ≈ 408~968) 기준이라 탭 아래에 앵커된 프롬프트 입력란이 그 사각형과 겹치면 클릭이 "목록 클릭"
+                //   으로 먹혀 입력란에 닿지 않았다(오른쪽 탭·왼쪽 가장자리만 됐던 이유).
+                if self.prompt.is_none() && self.rows_rect().contains(p) {
                     if let Some(i) = self.row_at(p) {
                         return PaletteAction::Pick(self.items().items[self.matches[i]].0.clone());
                     }

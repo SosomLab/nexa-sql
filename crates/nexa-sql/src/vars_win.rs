@@ -306,7 +306,8 @@ impl VarsWin {
                         self.edit.set_text("");
                     }
                 }
-                if up || self.edit.bounds().contains(p) {
+                // 편집 메뉴가 떠 있으면(상자 밖) 항목 클릭도 상자로(10-13).
+                if up || self.edit.bounds().contains(p) || self.edit.popup_open() {
                     self.edit.on_event(&e, &mut inv);
                 }
                 for b in self.buttons() {

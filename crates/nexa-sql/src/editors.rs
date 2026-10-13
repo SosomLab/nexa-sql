@@ -609,7 +609,10 @@ impl Editors {
         let buf = tb.buf();
         let caret = tb.caret().min(buf.len());
         let line = buf.line_of(caret);
-        (line + 1, caret - buf.line_start(line) + 1)
+        // ★ 열 = **시각 열**(탭을 탭 정지까지 펼친 폭 · Sublime "Column"과 같다 · 사용자 10-13 "Tab 문자의 Width를 계산해서") —
+        //   종전엔 글자 수라 탭이 1로 셌다(Sublime 42 ↔ 우리 33). 구간 조회만 쓴다(본문 전체를 뜨지 않는다 · 편집기 불변식).
+        let col = visual_col(buf.slice(buf.line_start(line), caret).chars(), usize::from(tb.tab_size().max(1)));
+        (line + 1, col + 1)
     }
 
     /// 설정 화면(T-39)에서 바꿀 때 — 지금은 부팅 값만.
@@ -842,7 +845,7 @@ impl Editors {
         self.menu_is_badge = true;
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (260.0 * self.scale) as i32;
-        self.menu.open_at(x, y, items, host, text_w);
+        crate::menu_icons::open_at(&mut self.menu, x, y, items, host, text_w);
     }
 
     /// 표식 메뉴를 **다른 자리**(툴바 탭 연결정보 항목 아래)에 연다 — 고르기·닫기 흐름은 탭 표식 메뉴와 같다(09-28).
@@ -851,8 +854,8 @@ impl Editors {
         self.menu_is_badge = true;
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (260.0 * self.scale) as i32;
-        self.menu
-            .open_at(anchor.x, anchor.bottom(), items, host, text_w);
+        crate::menu_icons::open_at(
+            &mut self.menu, anchor.x, anchor.bottom(), items, host, text_w);
     }
 
     /// 표식 메뉴에서 고른 항목(탭 id, 항목 id · 1회성).
@@ -1235,6 +1238,20 @@ impl Editors {
 
     /// 미리보기 탭의 본문이 바뀌었으면 **정식 탭으로 승격**(표식 제거 · 다음 미리보기는 새 탭) — 바뀌었으면 true.
     /// 호스트의 틱에서 부른다(세대 비교라 값싸다).
+    /// 미리보기 슬롯의 탭 id(있으면 재사용 · 없으면 새 자리 탭을 미리보기로) — 경로 없는 안내 탭(이진 파일 · 10-13)도 미리보기
+    /// 규칙을 따르게(클릭 = 미리보기 · 더블클릭 = 정식).
+    pub(crate) fn preview_slot(&mut self, name: &str) -> u64 {
+        self.poll_preview();
+        match self.preview_id() {
+            Some(id) => id,
+            None => {
+                let id = self.begin_load_tab(name);
+                self.preview = Some(id);
+                id
+            }
+        }
+    }
+
     pub(crate) fn poll_preview(&mut self) -> bool {
         let Some(id) = self.preview else {
             return false;
@@ -1642,6 +1659,11 @@ impl Editors {
 
     pub(crate) fn active_read_only(&self) -> bool {
         self.read_only.contains(&self.active_id())
+    }
+
+    /// 그 탭이 읽기 전용인가(안내 탭 · 앞부분 탭 · 읽기 전용 열기).
+    pub(crate) fn is_read_only(&self, i: usize) -> bool {
+        self.ids.get(i).is_some_and(|id| self.read_only.contains(id))
     }
 
     /// **뷰 탭 열기** — 같은 열쇠의 탭이 있으면 그 탭으로, 없으면 새 탭(본문은 빈 글 · 저장된 상태라 닫을 때 묻지 않는다).
@@ -2619,7 +2641,7 @@ impl Editors {
         }
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;
-        self.menu.open_at(p.x, p.y, items, host, text_w);
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
     }
 
     /// 우클릭 메뉴(팝업 층 · 호스트가 맨 마지막에).
@@ -3262,5 +3284,35 @@ mod tab_history_tests {
         ed.close_tab_forced(a);
         assert_eq!(ed.active(), a.min(ed.len() - 1), "다음 = 그 자리");
         assert_eq!(ed.tab_id(ed.active()), ed.tab_id(b.min(ed.len() - 1)));
+    }
+}
+
+/// 줄 시작부터 캐럿 앞까지의 글자열 → 시각 열(0 기준): 탭은 다음 탭 정지(`tab`의 배수)까지 · 그 밖 글자는 1(순수 함수 · 시험).
+pub(crate) fn visual_col(chars: impl Iterator<Item = char>, tab: usize) -> usize {
+    let mut col = 0usize;
+    for c in chars {
+        if c == '\t' {
+            col = (col / tab + 1) * tab;
+        } else {
+            col += 1;
+        }
+    }
+    col
+}
+
+#[cfg(test)]
+mod visual_col_tests {
+    use super::visual_col;
+
+    #[test]
+    fn tabs_expand_to_stops_like_sublime() {
+        // 사용자 10-13 캡처: `\t,\tISNULL(T2.ZE_CD,'')\tAS\t\tZE_CD` = Sublime Column 42(탭 4).
+        let line = "\t,\tISNULL(T2.ZE_CD,'')\tAS\t\tZE_CD";
+        assert_eq!(visual_col(line.chars(), 4) + 1, 42);
+        assert_eq!(visual_col("".chars(), 4), 0);
+        assert_eq!(visual_col("abc".chars(), 4), 3);
+        assert_eq!(visual_col("a\tb".chars(), 4), 5);
+        assert_eq!(visual_col("abcd\t".chars(), 4), 8);
+        assert_eq!(visual_col("\t".chars(), 2), 2);
     }
 }

@@ -434,6 +434,30 @@ impl CondBar {
         self.menu.is_open()
     }
 
+    /// 팝업(상자 편집 메뉴 · 완성 팝업)이 열려 있는가 — 배타 규칙 입력(10-13).
+    pub(crate) fn popup_open(&self) -> bool {
+        self.tb.popup_open() || self.menu.is_open()
+    }
+
+    /// 열린 팝업 영역(합집합 · 닫혀 있으면 빈 Rect).
+    pub(crate) fn popup_bounds(&self) -> Rect {
+        let mut r = self.tb.popup_bounds();
+        if self.menu.is_open() {
+            r = if r.w > 0 { r.union(&self.menu.bounds()) } else { self.menu.bounds() };
+        }
+        if r.w > 0 {
+            // 소유 상자 포함(상자 클릭 = 다른 영역이 아니다 · 10-13).
+            r = r.union(&self.tb.bounds());
+        }
+        r
+    }
+
+    /// 팝업 전부 닫기(배타 규칙).
+    pub(crate) fn close_popups(&mut self) {
+        self.tb.close_menu();
+        self.menu.close();
+    }
+
     /// Enter로 확정된 조건(한 번).
     pub(crate) fn take_run(&mut self) -> Option<String> {
         self.run.take()
@@ -597,7 +621,7 @@ impl CondBar {
             .map(|c| CtxItem::item(c.clone(), c.clone()))
             .collect();
         self.menu.set_scale(self.scale);
-        self.menu.open_at(
+        crate::menu_icons::open_at(&mut self.menu, 
             x.max(self.rect.x),
             y,
             entries,

@@ -58,6 +58,8 @@ pub(crate) struct TabState {
     /// ★ 탭별 들여쓰기 재정의(탭 폭, 공백 들여쓰기) — 상태줄 팝업으로 바꾼 값 · None = 설정 기본값(사용자 09-29 "폴더·프로젝트 모드에서는
     ///   탭별 상태를 저장하고 다시 열 때 복원"). 파일 모드(프로젝트 없음)는 저장할 곳이 없어 늘 설정값으로 시작한다.
     pub indent: Option<(u8, bool)>,
+    /// 읽기 전용으로 열린 탭(큰 파일 "읽기 전용" · 라이선스 게이트 · 이진 안내) — 복원도 같은 기준으로(사용자 10-13).
+    pub read_only: bool,
     /// ★ 뷰 탭 열쇠(`ext:<확장 id>` · 본문 없는 호스트 뷰) — 복원 때 같은 뷰를 다시 연다(사용자 09-30 "재시작하면 빈 편집 탭").
     pub view: Option<String>,
 }
@@ -128,6 +130,7 @@ impl Project {
                                 ("before", Json::Str(s)) => t.before = s.clone(),
                                 ("after", Json::Str(s)) => t.after = s.clone(),
                                 ("preview", Json::Bool(b)) => t.preview = *b,
+                                ("ro", Json::Bool(b)) => t.read_only = *b,
                                 // 64비트 해시는 JSON 숫자(f64)로는 정밀도가 깨진다 → 글자열.
                                 ("hash", Json::Str(s)) => t.disk_hash = s.parse().unwrap_or(0),
                                 ("id", Json::Num(n)) => t.id = (*n).max(0.0) as u64,
@@ -292,6 +295,9 @@ impl Project {
                 // 본문(`text`)은 헤더에 넣지 않는다 — 마커 아래 탭별 payload 블록(`projfile` · 사용자 09-23 "메타는 텍스트 · payload는 바이너리").
                 if t.text.is_some() && t.id != 0 {
                     out.push_str(", \"blob\": true");
+                }
+                if t.read_only {
+                    out.push_str(", \"ro\": true");
                 }
                 if t.preview {
                     out.push_str(", \"preview\": true");

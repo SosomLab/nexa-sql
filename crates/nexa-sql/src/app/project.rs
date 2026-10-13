@@ -546,7 +546,18 @@ impl App {
             let Some(tb) = self.editors.tab_box(i) else {
                 continue;
             };
-            let path = self.editors.path_of(i);
+            let read_only = self.editors.is_read_only(i);
+            let tab_id_now = self.editors.tab_id(i);
+            // ★ 이진 안내 탭 = 경로가 없으니 **원본 파일 경로**로 담는다(복원 = 다시 열기 → 이진 판정 → 안내 · 읽기 전용 = 같은 기준 ·
+            //   사용자 10-13). 그 밖의 경로 없는 읽기 전용 탭("(앞부분)" · 디스크 보기)은 담지 않는다(복원하면 일반 스크래치가 됐다).
+            let path = match self.editors.path_of(i) {
+                Some(p) => Some(p),
+                None if read_only => match self.binary_notice.get(&tab_id_now) {
+                    Some(p) => Some(p.clone()),
+                    None => continue,
+                },
+                None => None,
+            };
             let buf = tb.buf();
             let caret = tb.caret();
             let line = buf.line_of(caret);
@@ -560,6 +571,7 @@ impl App {
                 id: self.editors.tab_id(i),
                 indent: self.editors.indent_of(i),
                 view: self.editors.view_key_of(i),
+                read_only,
                 ..project::TabState::default()
             };
             // ★ 캡처 비용 = 바뀐 탭만(사용자 09-30 · 72 §3): 본문 세대(epoch · change_seq)·캐럿이 지난 캡처와 같으면 앵커를 다시
@@ -707,7 +719,16 @@ impl App {
                     if !p.is_file() {
                         None
                     } else {
-                        if t.preview {
+                        if t.read_only {
+                            // 읽기 전용으로 열렸던 탭 = 같은 기준으로(사용자 10-13 · 이진이면 안내 탭 · 글이면 읽기 전용 열기 ·
+                            //   미리보기였으면 미리보기 안내로).
+                            if t.preview && fileload::sniff_binary(p) {
+                                let name = editors::file_title(p);
+                                self.open_binary_preview(p, &name);
+                            } else {
+                                self.load_file(p, "auto", LoadMode::ReadOnly);
+                            }
+                        } else if t.preview {
                             // 미리보기 탭은 미리보기로(북마크·탐색기 한 번 클릭으로 연 것 · 편집하면 승격).
                             self.project_open_req(project_panel::OpenReq {
                                 path: p.clone(),
@@ -1205,6 +1226,25 @@ impl App {
     pub(crate) fn project_open_req(&mut self, req: project_panel::OpenReq) {
         let preview = self.settings.flag("project.preview_tab") && !req.permanent;
         if !preview {
+            // ★ 이진 안내 탭은 경로가 없어 `promote_path`가 못 찾는다 → 안내 표로 찾아 **승격/전환**(협업 V1 10-13 "더블클릭 = 두 탭").
+            if let Some(i) = self.binary_notice_tab(&req.path) {
+                let _ = self.editors.promote_tab(i);
+                self.editors.switch(i);
+                self.set_focus(Focus::Editor);
+                self.layout();
+                self.redraw();
+                return;
+            }
+            // 한 번 클릭인데 정식 탭 = 이유와 경로를 로그에(사용자 10-13 "직접 열리는 이유와 파일 경로를 출력").
+            if !req.permanent {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    tf(
+                        Msg::LogPreviewBypass,
+                        &[&req.path.display().to_string(), t(Msg::LogPreviewOff)],
+                    ),
+                ));
+            }
             if !self.editors.promote_path(&req.path) {
                 self.open_file(&req.path);
             }
@@ -1219,10 +1259,41 @@ impl App {
             self.redraw();
             return;
         }
+        // 같은 파일의 이진 안내 탭이 이미 있으면(미리보기든 정식이든) 그 탭으로(중복 탭 없음 · 10-13).
+        if let Some(i) = self.binary_notice_tab(&req.path) {
+            self.editors.switch(i);
+            self.layout();
+            self.redraw();
+            return;
+        }
         let size = std::fs::metadata(&req.path).map(|m| m.len()).unwrap_or(0);
-        let async_at = (self.settings.int("file.async_load_mb").max(1) as u64) << 20;
+        let async_mb = self.settings.int("file.async_load_mb").max(1);
+        let async_at = (async_mb as u64) << 20;
         if size >= async_at {
+            // 큰 글 파일 = 스레드 적재 길(정식 탭) — 이유·경로 로그(10-13).
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                tf(
+                    Msg::LogPreviewBypass,
+                    &[
+                        &req.path.display().to_string(),
+                        &tf(
+                            Msg::LogPreviewTooBig,
+                            &[&nsql_core::fmt_bytes(size), &async_mb.to_string()],
+                        ),
+                    ],
+                ),
+            ));
             self.open_file(&req.path);
+            return;
+        }
+        // 크기 게이트 아래(= 미리보기 대상)에서만 이진 판정(앞 8 KiB) → 미리보기 안내. ≥ `file.async_load_mb`는 이진이든 글이든
+        // **정식 탭**(위 게이트 · 이진 = 정식 안내 탭 + 우회 로그 · 사용자 10-13 "8 MB 기준이 이미지에도 동작해야").
+        if fileload::sniff_binary(&req.path) {
+            let name = editors::file_title(&req.path);
+            self.open_binary_preview(&req.path, &name);
+            self.layout();
+            self.redraw();
             return;
         }
         match fileload::load(&req.path, "auto", None, true, None) {
@@ -1235,6 +1306,11 @@ impl App {
                     self.sync_grid_tab();
                     self.sync_gate();
                 }
+            }
+            Err(e) if e == fileload::BINARY => {
+                // 이진 파일 = 안내를 **미리보기 탭**에(한 번 클릭 · 더블클릭은 위 `open_file` 길 = 정식 탭 · 10-13).
+                let name = editors::file_title(&req.path);
+                self.open_binary_preview(&req.path, &name);
             }
             Err(e) => {
                 self.sess.status = tf(Msg::StFileReadError, &[&req.path.display().to_string(), &e]);

@@ -54,8 +54,8 @@ impl App {
         // 상태줄 위로 열리도록 세그먼트 상단 기준(팝업 부품이 화면 안에 맞춘다).
         // 배율 전달(빠져 있어 맥 2x에서 항목 간격이 절반이었다 · 09-16).
         self.status_menu.set_scale(self.scale);
-        self.status_menu
-            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
+        crate::menu_icons::open_at(
+            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     /// 상태줄 줄끝 팝업(LF/CRLF · 현재 = ✓) — 고르면 활성 탭 줄끝 변경(저장 때 반영 · docs/38).
@@ -92,8 +92,8 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         // 폭 인자 = **최소 폭**(그릴 때 실측 글 폭이 더 크면 늘어난다) → 작게 주어 언어별 문구 길이에 맞춘다(사용자 09-28).
-        self.status_menu
-            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
+        crate::menu_icons::open_at(
+            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     pub(crate) fn open_eol_menu(&mut self) {
@@ -125,8 +125,8 @@ impl App {
             })
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
-        self.status_menu
-            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
+        crate::menu_icons::open_at(
+            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     /// 상태줄 인코딩 팝업(사용자 09-16 · Sublime 두 메뉴를 한 팝업에): 위 = "다른 인코딩으로 다시 열기 ▸"(파일 탭일 때만 ·
@@ -181,8 +181,8 @@ impl App {
             })
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
-        self.status_menu
-            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
+        crate::menu_icons::open_at(
+            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     pub(crate) fn indent_pick(&mut self, id: &str) {
@@ -446,6 +446,13 @@ impl App {
             "file.exit" => self.request_exit(),
             // ★ 파일 열기/저장(T-74) — 자체 대화상자(nexa-dlg) · 네이티브 0.
             "file.open" => self.open_file_dlg = Some(PickerMode::Open),
+            // 읽기 전용 탭(이진 안내 · 앞부분 · 읽기 전용 열기)은 저장 없음(사용자 10-13 "바이너리로 열린 파일은 저장 기능을 막아") —
+            //   상태줄 안내만.
+            "file.save" | "file.save_as" if self.editors.active_read_only() => {
+                let title = self.editors.title_of(self.editors.active());
+                self.sess.status = tf(Msg::StGeReadOnly, &[&title]);
+                self.redraw();
+            }
             "file.save" => match self.editors.active_path() {
                 Some(p) => self.save_to(&p),
                 None => self.open_file_dlg = Some(PickerMode::Save),
@@ -1049,8 +1056,8 @@ impl App {
             })
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
-        self.status_menu
-            .open_at(r.x, r.y, items, host, px(width, self.scale));
+        crate::menu_icons::open_at(
+            &mut self.status_menu, r.x, r.y, items, host, px(width, self.scale));
     }
 
     /// 미커밋 탭 닫기(설정 `tx.close_action`: ask / commit / rollback).
@@ -1618,10 +1625,18 @@ impl App {
     }
 
     /// 명령 팔레트의 항목 전부(메뉴: 항목 · 구문 · 확장 …) — 명령 팔레트와 Goto Anything `>`가 같이 쓴다(10-07).
-    pub(crate) fn palette_commands(&self) -> Vec<(String, String)> {
-        let mut cmds: Vec<(String, String)> = Vec::new();
-        let m =
-            |id: &str, menu: Msg, item: Msg| (id.to_string(), format!("{}: {}", t(menu), t(item)));
+    /// (id, 표시 라벨 = 현재 언어, 숨은 검색 키 = **모든 언어**의 `메뉴: 항목` · 사용자 10-13 "영어 이름·기능명으로도 · 영어 화면에서 한글로도").
+    /// i18n 표는 정적(바이너리 안)이라 추가 적재 없음 · 명령 ≈ 120개 × 언어 수 = 수십 KB.
+    pub(crate) fn palette_commands(&self) -> Vec<(String, String, String)> {
+        let mut cmds: Vec<(String, String, String)> = Vec::new();
+        let m = |id: &str, menu: Msg, item: Msg| {
+            let key = nsql_i18n::Lang::ALL
+                .iter()
+                .map(|&lang| format!("{}: {}", nsql_i18n::tr(lang, menu), nsql_i18n::tr(lang, item)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (id.to_string(), format!("{}: {}", t(menu), t(item)), key)
+        };
         cmds.push(m("file.new", Msg::MnFile, Msg::MnNew));
         cmds.push(m("file.open", Msg::MnFile, Msg::MnOpen));
         cmds.push(m("file.save", Msg::MnFile, Msg::MnSave));
@@ -1738,8 +1753,23 @@ impl App {
         //   2줄씩 보이지 않게"): 팔레트를 여는 순간 상태를 읽어 라벨만 정한다(평소 비용 0 · 열 때 한 번).
         let tv = |id: &str, item: Msg, on: bool| {
             let label = t(item).to_string();
-            let verb = tf(if on { Msg::PalHide } else { Msg::PalShow }, &[&label]);
-            (id.to_string(), format!("{}: {}", t(Msg::MnView), verb))
+            let verb_msg = if on { Msg::PalHide } else { Msg::PalShow };
+            let verb = tf(verb_msg, &[&label]);
+            // 숨은 검색 키 = 모든 언어의 "보기: 보이기/숨기기 항목"(둘 다 = 상태와 무관하게 이름으로 찾히게).
+            let key = nsql_i18n::Lang::ALL
+                .iter()
+                .map(|&lang| {
+                    let item_l = nsql_i18n::tr(lang, item);
+                    format!(
+                        "{}: {} {}",
+                        nsql_i18n::tr(lang, Msg::MnView),
+                        nsql_i18n::tr(lang, Msg::PalHide).replace("{0}", item_l),
+                        nsql_i18n::tr(lang, Msg::PalShow).replace("{0}", item_l)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            (id.to_string(), format!("{}: {}", t(Msg::MnView), verb), key)
         };
         cmds.push(tv(
             "view.explorer",
@@ -1879,9 +1909,15 @@ impl App {
         cmds.push(m("help.license", Msg::MnHelp, Msg::MnLicense));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {
+            let key = nsql_i18n::Lang::ALL
+                .iter()
+                .map(|&lang| format!("{}: {name}", nsql_i18n::tr(lang, Msg::PalSetSyntax)))
+                .collect::<Vec<_>>()
+                .join(" ");
             cmds.push((
                 format!("syntax.set:{name}"),
                 format!("{}: {name}", t(Msg::PalSetSyntax)),
+                key,
             ));
         }
         cmds
@@ -1890,7 +1926,7 @@ impl App {
     /// 명령 팔레트 열기(prefill = 초기 질의 · 예 "Set Syntax: ").
     pub(crate) fn open_palette(&mut self, prefill: &str) {
         let cmds = self.palette_commands();
-        self.palette.set_commands(cmds);
+        self.palette.set_commands_keyed(cmds);
         self.palette.open(prefill);
         self.ime_refresh();
         self.redraw();
@@ -1939,7 +1975,9 @@ impl App {
     }
 
     /// 열린 팝업 메뉴의 비트 집합(배타 규칙의 입력 · 09-22): 1 풀다운 · 2 편집기 탭 메뉴 · 4 편집기 본문 편집 메뉴 · 8 상태줄/툴바 팝업 ·
-    /// 16 오브젝트 탐색기 · 32 결과 그리드 · 64 결과 탭 줄. 팔레트·툴팁·하위 메뉴(같은 메뉴 안)는 메뉴가 아니다.
+    /// 16 오브젝트 탐색기 · 32 결과 그리드 · 64 결과 탭 줄 · 128 북마크 · 256 프로젝트 · 1024 완성 · 2048 객체 상세 · 4096 Ctrl 링크 ·
+    /// 8192 diff · ★ 입력창 팝업(10-13 "입력창의 우클릭은 반영이 안 됨") = 16384 그리드 입력(행수·조건 바·셀 편집기·값 고르기) ·
+    /// 32768 아웃라인 필터 · 65536 확장 검색 · 131072 파일 검색 · 262144 찾기 바. 팔레트·툴팁·하위 메뉴(같은 메뉴 안)는 메뉴가 아니다.
     pub(crate) fn open_menus(&self) -> u32 {
         let mut m = 0;
         if self.menubar.is_open() {
@@ -1981,6 +2019,21 @@ impl App {
         if self.diff_view.popup_open() {
             m |= 8192;
         }
+        if self.grid.popups_open() {
+            m |= 16384;
+        }
+        if self.outline_panel.menu_open() {
+            m |= 32768;
+        }
+        if self.ext_panel.menu_open() {
+            m |= 65536;
+        }
+        if self.search.popup_open() {
+            m |= 131_072;
+        }
+        if self.find.popup_open() {
+            m |= 262_144;
+        }
         m
     }
 
@@ -2021,6 +2074,21 @@ impl App {
         if self.diff_view.popup_open() && self.diff_view.popup_bounds().contains(p) {
             m |= 8192;
         }
+        if self.grid.popups_open() && self.grid.popups_bounds().contains(p) {
+            m |= 16384;
+        }
+        if self.outline_panel.menu_open() && self.outline_panel.menu_bounds().contains(p) {
+            m |= 32768;
+        }
+        if self.ext_panel.menu_open() && self.ext_panel.menu_bounds().contains(p) {
+            m |= 65536;
+        }
+        if self.search.popup_open() && self.search.popup_bounds().contains(p) {
+            m |= 131_072;
+        }
+        if self.find.popup_open() && self.find.popup_bounds().contains(p) {
+            m |= 262_144;
+        }
         m
     }
 
@@ -2060,6 +2128,21 @@ impl App {
         }
         if bits & 64 != 0 {
             self.panel.close_menu();
+        }
+        if bits & 16384 != 0 {
+            self.grid.close_popups();
+        }
+        if bits & 32768 != 0 {
+            self.outline_panel.close_menu();
+        }
+        if bits & 65536 != 0 {
+            self.ext_panel.close_menu();
+        }
+        if bits & 131_072 != 0 {
+            self.search.close_popups();
+        }
+        if bits & 262_144 != 0 {
+            self.find.close_popups();
         }
     }
 }

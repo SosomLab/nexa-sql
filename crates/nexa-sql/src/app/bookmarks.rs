@@ -36,6 +36,11 @@ impl App {
             tb.set_minimap_marks(mm);
             tb.set_inline_labels(inline);
         }
+        // ★ 활성 탭의 줄 끝 라벨은 합성기가 최종 결정(docs/111 · 북마크 Ctrl 홀드 · 객체 설명과 합성) — 북마크가 바뀌면 다시.
+        if i == self.editors.active() {
+            self.inline_key.clear();
+            self.inline_sync();
+        }
     }
 
     /// 표시 전부(거터 · 패널 · 상태줄) 갱신.

@@ -711,6 +711,40 @@ impl FindBar {
             || self.rr.is_open()
     }
 
+    /// 열린 팝업 영역(합집합 · 배타 규칙 10-13).
+    pub(crate) fn popup_bounds(&self) -> Rect {
+        let mut r = Rect::default();
+        let mut add = |x: Rect| {
+            if x.w > 0 && x.h > 0 {
+                r = if r.w > 0 { r.union(&x) } else { x };
+            }
+        };
+        // 소유 상자 포함(상자 클릭 = 다른 영역이 아니다 · 10-13).
+        if self.query.popup_open() || self.rq.is_open() {
+            add(self.query.popup_bounds());
+            add(self.query.bounds());
+        }
+        if self.with_replace && (self.repl.popup_open() || self.rr.is_open()) {
+            add(self.repl.popup_bounds());
+            add(self.repl.bounds());
+        }
+        if self.rq.is_open() {
+            add(self.rq.bounds());
+        }
+        if self.rr.is_open() {
+            add(self.rr.bounds());
+        }
+        r
+    }
+
+    /// 팝업 전부 닫기(배타 규칙).
+    pub(crate) fn close_popups(&mut self) {
+        self.query.close_menu();
+        self.repl.close_menu();
+        self.rq.close();
+        self.rr.close();
+    }
+
     /// 편집 메뉴에서 고른 클립보드 행동(Copy/Cut/Paste) — 호스트가 실행.
     pub(crate) fn take_edit_ctx(&mut self) -> Option<nexa_ctl::EditCtxAction> {
         self.query
@@ -737,7 +771,8 @@ impl FindBar {
         }
         // 검색어 이력(드롭다운/Flat)이 먼저 — 찾기 상자는 글이 바뀐 것이라 다시 찾는다 · 끝에서 ↓/Tab은 찾기 막대엔 다음 컨트롤이 없어 무시.
         if let Some(h) = &self.history {
-            if self.query.is_focused() || self.rq.is_open() {
+            // 편집 메뉴가 떠 있으면 키(↓ 등)는 메뉴(상자) 몫 — 이력이 먼저 받으면 메뉴 위로 드롭다운이 열렸다(사용자 10-13).
+            if !self.query.popup_open() && (self.query.is_focused() || self.rq.is_open()) {
                 match self.rq.on_event(ev, &mut self.query, h, &mut inv) {
                     RecallEvent::Consumed | RecallEvent::LeaveDown => return FindAction::None,
                     RecallEvent::Changed => {
@@ -747,7 +782,10 @@ impl FindBar {
                     RecallEvent::Pass => {}
                 }
             }
-            if self.with_replace && (self.repl.is_focused() || self.rr.is_open()) {
+            if self.with_replace
+                && !self.repl.popup_open()
+                && (self.repl.is_focused() || self.rr.is_open())
+            {
                 match self.rr.on_event(ev, &mut self.repl, h, &mut inv) {
                     RecallEvent::Pass => {}
                     RecallEvent::Changed => {
@@ -756,6 +794,17 @@ impl FindBar {
                     }
                     _ => return FindAction::None,
                 }
+            }
+        }
+        // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
+        if matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+            if self.query.popup_open() {
+                self.query.on_event(ev, &mut inv);
+                return FindAction::None;
+            }
+            if self.with_replace && self.repl.popup_open() {
+                self.repl.on_event(ev, &mut inv);
+                return FindAction::None;
             }
         }
         // Enter = 다음(Shift = 이전) · Esc = 닫기(Sublime 규약 · 바꾸기 상자에서도 Enter = 다음 · 바꾸기는 Ctrl+Shift+H).
@@ -861,14 +910,24 @@ impl FindBar {
     fn paint_frame(dc: &mut dyn DrawCtx, th: &Theme, frame: Rect, tb: &TextBox, s: f32) {
         let r = (6.0 * s).round() as i32;
         dc.fill_round_rect(frame, r, th.field_bg);
+        // 상자의 hover/포커스 덧칠을 틀 전체에(필터 틀과 같다 · 10-13).
+        let hov = tb.hover_overlay_alpha();
+        if hov > 0.0 {
+            dc.fill_round_rect_alpha(frame, r, th.text, hov);
+        }
+        let bg = th.field_bg.lerp(th.text, hov);
         dc.stroke_round_rect(frame, r, th.border, 1.0);
         tb.paint(dc, th);
         let tbb = tb.bounds();
         if tbb.w > 0 {
-            // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다(둥근 모서리 안쪽만).
+            // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다 — 곧은 부분만 덮으면 반지름 안의 **모서리 호**가 남아 토글 앞에 상자가
+            // 따로 있는 것처럼 보였다(필터 틀 09-28 · 파일 검색 10-13과 같은 수정 · 사용자 "다른 레이아웃도 객체 탐색기와 동일하게").
+            dc.fill_rect(Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)), bg);
+            let cw = r + 3;
+            dc.fill_rect(Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r), bg);
             dc.fill_rect(
-                Rect::new(tbb.right() - 2, tbb.y + r, 3, (tbb.h - r * 2).max(0)),
-                th.field_bg,
+                Rect::new(tbb.right() - r - 1, tbb.bottom() - r - 1, cw, r),
+                bg,
             );
         }
         if tb.is_focused() {
@@ -941,15 +1000,7 @@ impl FindBar {
         };
         let s = self.scale;
         let text = t(btn.kind.tip()).to_string();
-        // 캡슐 높이를 재서 버튼 위에 오도록 앵커를 잡는다(draw_tooltip은 앵커 아래 6px에 그린다).
-        dc.select_font(FontSlot::Status, false);
-        let h = dc.text_height() + (8.0 * s).round() as i32;
-        let anchor = Rect::new(
-            btn.rect.x,
-            btn.rect.y - h - (12.0 * s).round() as i32,
-            btn.rect.w,
-            0,
-        );
-        draw_tooltip_in(dc, th, anchor, (0, self.clamp_w), &text, s);
+        // 앵커 = 버튼 사각형 그대로(공용 규칙이 "항목 위"로 올린다 · nexa-ui 171 · 파일 검색 10-13과 같은 이중 올림 수정).
+        draw_tooltip_in(dc, th, btn.rect, (0, self.clamp_w), &text, s);
     }
 }

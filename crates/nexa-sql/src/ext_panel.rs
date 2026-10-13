@@ -90,7 +90,41 @@ pub(crate) struct ExtPanel {
     actions: Vec<ExtPanelAction>,
 }
 
+/// 끝 줄임(순수 · 글 폭 측정은 `dc`): `max_w` 안에 들어갈 때까지 뒤에서 글자를 떼고 "…"을 붙인다 · 들어가면 그대로.
+fn ellipsize_end(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> String {
+    if dc.text_width(text) <= max_w {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut n = chars.len();
+    while n > 0 {
+        n -= 1;
+        let mut s: String = chars[..n].iter().collect();
+        s.push('…');
+        if dc.text_width(&s) <= max_w {
+            return s;
+        }
+    }
+    "…".to_string()
+}
+
 impl ExtPanel {
+    /// 필터 상자 팝업(편집 메뉴 · 이력)이 열려 있는가 — 우클릭 메뉴 배타 규칙(10-13).
+    pub(crate) fn menu_open(&self) -> bool {
+        self.search.popup_open()
+    }
+    pub(crate) fn menu_bounds(&self) -> nexa_ctl::geom::Rect {
+        self.search.popup_bounds()
+    }
+    pub(crate) fn close_menu(&mut self) {
+        self.search.close_popups();
+    }
+
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        self.search.set_placeholder(t(Msg::PhExtSearch));
+    }
+
     pub(crate) fn new() -> Self {
         ExtPanel {
             visible: false,
@@ -210,7 +244,8 @@ impl ExtPanel {
     fn list_rect(&self) -> Rect {
         let b = self.bounds;
         let top = b.y + self.s(30.0) + self.s(28.0) + self.s(GAP_Y);
-        Rect::new(b.x, top, b.w, (b.bottom() - top).max(0))
+        // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 구역 머리 배경이 스플리터 선을 덮었다(사용자 10-13).
+        Rect::new(b.x, top, (b.w - 1).max(0), (b.bottom() - top).max(0))
     }
 
     fn clamp_scroll(&mut self) {
@@ -239,6 +274,13 @@ impl ExtPanel {
         }
         let mut inv = Invalidations::default();
         // ★ 검색 틀 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
+        // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
+        if self.search.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+            if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
+                self.scroll = 0;
+            }
+            return true;
+        }
         if self.search.popup_takes(ev) {
             if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
                 self.scroll = 0;
@@ -280,6 +322,12 @@ impl ExtPanel {
                 self.hud.note(k, &cfg);
                 self.scroll -= delta / 120 * self.s(48.0) * k;
                 self.clamp_scroll();
+                true
+            }
+            // 검색 상자 우클릭 = 편집 메뉴(틀이 연다 · 10-13).
+            InputEvent::RightDown { x, y } if self.search.bounds().contains(Point { x, y }) => {
+                self.set_focused(true);
+                let _ = self.search.on_event(ev, &mut inv);
                 true
             }
             InputEvent::MouseDown { x, y, .. } => {
@@ -507,20 +555,33 @@ impl ExtPanel {
                 } else if hot {
                     dc.fill_rect_alpha(c, th.text, 0.06);
                 }
-                // 1줄: 이름(굵게) + 버전(오른쪽 · 흐림).
+                // 1줄: 이름(굵게) + 버전(오른쪽 · 흐림). ★ 좁은 패널(사용자 10-13 · 협업 관찰 "이름이 버전/wasm과 겹침"): 종류·버전
+                //   폭을 먼저 재고 남는 폭에 이름을 끝 줄임으로.
+                dc.select_font(FontSlot::Base, false);
+                let ver = format!("v{}", row.version);
+                let ver_w = dc.text_width(&ver)
+                    + row
+                        .latest
+                        .as_ref()
+                        .map_or(0, |nv| self.s(6.0) + dc.text_width(&format!("→ v{nv}")));
+                let kind_w = dc.text_width(&row.kind);
+                let name_budget = (r.right() - pad - kind_w - self.s(8.0))
+                    - (r.x + pad)
+                    - ver_w
+                    - self.s(8.0);
                 dc.select_font(FontSlot::Base, true);
                 let name_color = if row.installed && !row.enabled {
                     th.text_dim
                 } else {
                     th.text
                 };
-                dc.text(r.x + pad, r.y + self.s(5.0), c, &row.name, name_color);
-                let nw = dc.text_width(&row.name);
+                let name = ellipsize_end(dc, &row.name, name_budget.max(self.s(24.0)));
+                dc.text(r.x + pad, r.y + self.s(5.0), c, &name, name_color);
+                let nw = dc.text_width(&name);
                 dc.select_font(FontSlot::Base, false);
                 // ★ 버전은 이름 바로 옆 `v1.2.0`(사용자 09-30 "버전 확인이 어렵다") · 업데이트 대상이면 `→ v1.3.0` 강조색 ·
                 //   오른쪽 끝 = 종류(흐림).
                 let mut vx = r.x + pad + nw + self.s(8.0);
-                let ver = format!("v{}", row.version);
                 dc.text(vx, r.y + self.s(5.0), c, &ver, th.text_dim);
                 vx += dc.text_width(&ver) + self.s(6.0);
                 if let Some(nv) = &row.latest {
@@ -574,6 +635,26 @@ impl ExtPanel {
                 // ★ 버튼 = 보조(Status) 글꼴 · 폭 = 그 언어의 글 폭 + 여백(사용자 09-30 "글자 작게 · i18n에 맞춰").
                 dc.select_font(FontSlot::Status, false);
                 let blh = dc.text_height();
+                // ★ 좁은 패널(사용자 10-13 "버튼이 영역 밖으로"): 버튼 행이 행 폭을 넘으면 라벨을 **끝 줄임**("Set…")으로 줄여
+                //   균등 예산 안에 맞춘다(최소 폭 200은 따로 · 그래도 넘치면 여기서). 히트 영역도 줄인 폭으로.
+                let gap = self.s(5.0);
+                let padw = self.s(10.0);
+                let avail = r.w - pad * 2;
+                let n = labels.len() as i32;
+                let natural: i32 = labels
+                    .iter()
+                    .map(|(_, l, _)| dc.text_width(l) + padw)
+                    .sum::<i32>()
+                    + gap * (n - 1).max(0);
+                let labels: Vec<(Btn, String, bool)> = if n > 0 && natural > avail {
+                    let budget = ((avail - gap * (n - 1).max(0)) / n - padw).max(self.s(14.0));
+                    labels
+                        .into_iter()
+                        .map(|(k, l, e)| (k, ellipsize_end(dc, &l, budget), e))
+                        .collect()
+                } else {
+                    labels
+                };
                 for (kind, label, enabled) in labels.iter().rev() {
                     let bw = dc.text_width(label) + self.s(10.0);
                     bx -= bw;

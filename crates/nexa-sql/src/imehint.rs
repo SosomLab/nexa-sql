@@ -156,9 +156,17 @@ impl ImeHint {
         let Some(a) = self.anchor.filter(|_| self.shown) else {
             return;
         };
-        let s = |v: f32| (v * scale).round() as i32;
-        let anchor = Rect::new(a.x, a.bottom() + s(4.0), 1, 1);
-        nexa_ctl::draw::draw_tooltip_in(dc, th, anchor, (win.x, win.right()), &self.text, scale);
+        // IME 안내는 입력란 **아래**(93차 결정) — 전역 툴팁 방향(`ui.tooltip_above`)과 무관하게 아래로 고정(10-13).
+        let anchor = Rect::new(a.x, a.y, 1, a.h);
+        nexa_ctl::draw::draw_tooltip_in_dir(
+            dc,
+            th,
+            anchor,
+            (win.x, win.right()),
+            &self.text,
+            scale,
+            false,
+        );
     }
 }
 

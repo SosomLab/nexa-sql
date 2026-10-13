@@ -202,6 +202,13 @@ pub enum RunEvent {
     DbChanged(String),
     /// ★ 눈에 띄어야 하는 안내(T-202 · 사용자 09-24 "강제 전체 조회를 눈에 띄게") — GUI 상태줄 + 로그 · CLI stderr. 텍스트에 ⚠.
     Warning(String),
+    /// ★ 드라이버 제약 안내(docs/110 §6 · 사용자 10-13 "Warning 토스트로 안내"): `at_connect` = 접속 직후 한 번(`Session::limits`) ·
+    /// 아니면 이번 실행이 제약에 닿았다(`ExecResult::limits_hit`). 호스트 = Warning 토스트 + Output + 로그 · CLI = stderr.
+    DriverLimits {
+        driver: String,
+        limits: Vec<nsql_core::DriverLimit>,
+        at_connect: bool,
+    },
     Connected {
         description: String,
         dialect: Dialect,
@@ -269,6 +276,13 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             format!("current database → {db}"),
         )],
         RunEvent::Warning(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
+        RunEvent::DriverLimits { driver, limits, .. } => vec![LogEntry::new(
+            LogKind::Info,
+            format!(
+                "{driver}: driver limitations: {}",
+                limits.iter().map(|l| l.code()).collect::<Vec<_>>().join(", ")
+            ),
+        )],
         RunEvent::Connected {
             description,
             dialect,
@@ -1766,11 +1780,30 @@ impl Runner {
                     schema,
                     database,
                 });
+                // ★ 드라이버 제약 안내(docs/110 §6) — 접속 직후 한 번(제약이 없는 드라이버는 조용하다).
+                if let Some(s) = self.session.as_ref() {
+                    let limits = s.limits();
+                    if !limits.is_empty() {
+                        emit(RunEvent::DriverLimits {
+                            driver: s.driver_name(),
+                            limits: limits.to_vec(),
+                            at_connect: true,
+                        });
+                    }
+                }
                 true
             }
             Err(e) => {
                 if closed_first {
                     emit(RunEvent::ConnectionClosed);
+                }
+                // 접속 거부가 드라이버 제약(OS 인증 · 11g · NNE)이면 제약 안내도(세션이 없으므로 드라이버 이름 = 메시지 머리).
+                if let Some(l) = nsql_core::DriverLimit::find_in(&e.message) {
+                    emit(RunEvent::DriverLimits {
+                        driver: e.message.split(':').next().unwrap_or("").trim().to_string(),
+                        limits: vec![l],
+                        at_connect: false,
+                    });
                 }
                 emit(RunEvent::Error {
                     index: 0,
@@ -2486,6 +2519,18 @@ impl Runner {
                 for m in result.messages.drain(..) {
                     emit(RunEvent::Message(m));
                 }
+                // ★ 이번 실행이 드라이버 제약에 닿았다(docs/110 §6 · `ExecResult::limits_hit`) → 호스트가 Warning 토스트.
+                if !result.limits_hit.is_empty() {
+                    let driver = self
+                        .session
+                        .as_ref()
+                        .map_or_else(String::new, |s| s.driver_name());
+                    emit(RunEvent::DriverLimits {
+                        driver,
+                        limits: std::mem::take(&mut result.limits_hit),
+                        at_connect: false,
+                    });
+                }
                 let n_sets = result.result_sets.len();
                 let max_rows = self.max_rows;
                 // 드라이버가 커서를 열어 뒀으면(마지막 결과 집합이 잘림) 유지 모드일 때만 러너가 맡는다 · 아니면 바로 닫는다.
@@ -2640,6 +2685,17 @@ impl Runner {
                 if mode == PrepareMode::DeclarePrepend {
                     e.message
                         .push_str(&format!(" (프리펜드 {line_offset}줄 보정 필요)"));
+                }
+                // ★ 실패한 실행이 드라이버 제약 때문이면(메시지 꼬리표 `driver limitation: …` · docs/110 §6) 오류와 함께 제약 안내도.
+                if let Some(l) = nsql_core::DriverLimit::find_in(&e.message) {
+                    emit(RunEvent::DriverLimits {
+                        driver: self
+                            .session
+                            .as_ref()
+                            .map_or_else(String::new, |s| s.driver_name()),
+                        limits: vec![l],
+                        at_connect: false,
+                    });
                 }
                 emit(RunEvent::Error {
                     index,

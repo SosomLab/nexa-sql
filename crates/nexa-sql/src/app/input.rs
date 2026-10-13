@@ -19,7 +19,7 @@ impl App {
                 let w = ((x + grip / 2 - act_w) as f32 / s).round() as i64;
                 let _ = self
                     .settings
-                    .set("explorer.width", &w.clamp(160, 800).to_string());
+                    .set("explorer.width", &w.clamp(200, 800).to_string());
                 self.layout();
                 self.redraw();
                 return true;
@@ -401,13 +401,23 @@ impl App {
         // ★ 영역 간 배타(사용자 10-08 · `ui.ctxmenu_exclusive`): 열린 우클릭 메뉴 **밖**의 좌/우 클릭 = 그 메뉴들을 먼저 닫는다 ·
         //   메뉴가 안 쓰는 키(글자 등) = 전부 닫는다. 닫은 뒤 그 클릭을 바로 진행할지(`ui.ctxmenu_passthrough` 켬 = 즉시 반응)
         //   닫기만 하고 다음 클릭부터 반응할지는 설정. 메뉴바(1)·완성 팝업(1024)은 제 규칙.
-        if let Some(swallow) = ctxmenu_exclusive_step(
+        let step = ctxmenu_exclusive_step(
             before & !(1 | 1024),
             &ev,
             |p| self.menu_hit_bits(p),
             self.settings.flag("ui.ctxmenu_exclusive"),
             self.settings.flag("ui.ctxmenu_passthrough"),
-        ) {
+        );
+        if trace_input() && before != 0 && !matches!(ev, InputEvent::MouseMove { .. }) {
+            let hit = match ev {
+                InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
+                    self.menu_hit_bits(Point { x, y })
+                }
+                _ => 0,
+            };
+            eprintln!("[route] ev={ev:?} open={before:#x} hit={hit:#x} step={step:?}");
+        }
+        if let Some(swallow) = step {
             self.close_menu_bits(swallow.close);
             self.redraw();
             if swallow.stop {
@@ -415,6 +425,13 @@ impl App {
             }
         }
         self.route_dispatch(ev);
+        // ★ 포커스 상자의 편집 메뉴 동작(복사·잘라내기·붙여넣기) 공통 수거(사용자 10-13 "Cut 메뉴 동작 안 함"): 편집기·찾기 바·
+        //   그리드·diff는 제 자리에서 먼저 가져가고(그 뒤엔 `None`), 패널 필터 상자(탐색기·프로젝트·북마크·아웃라인·확장)처럼 전용
+        //   수거가 없던 상자는 여기서 `clip_action`으로 잇는다(Ctrl+X와 같은 길).
+        if let Some(act) = self.focused_textbox().and_then(|tb| tb.take_edit_ctx()) {
+            self.clip_action(act);
+            self.redraw();
+        }
         let after = self.open_menus();
         let fresh = after & !before;
         if fresh != 0 && after != fresh {
@@ -610,6 +627,12 @@ impl App {
         //   탐색기·툴바의 우클릭 분기가 처음부터 닿지 않는 코드였다(메뉴 코드는 있었지만 실제 입력으로는 열리지 않았다).
         //   우클릭 메뉴가 있는 영역은 `is_ptr`로 판정한다.
         let is_ptr = is_mouse || matches!(ev, InputEvent::RightDown { .. });
+        // ★ 팔레트(명령·프롬프트 = 탭 이름 바꾸기 등)가 열려 있으면 **포인터 사건은 팔레트가 가장 먼저**(사용자 10-13): 종전엔 아래
+        //   `press_capture`(누른 영역 = 팔레트가 덮은 편집기/그리드)가 이동·놓임을 그 영역으로 보내 입력란 드래그가 안 되고(편집기 탭
+        //   프롬프트) 영역 밖 놓임이 팔레트에 안 닿았다(결과 탭 프롬프트). 키는 종전 자리(아래)에서.
+        if is_ptr && self.palette.is_open() && self.route_palette(ev, &mut inv) {
+            return;
+        }
         // ★ 포인터 캡처 부품(사용자 09-30 "글자 선택 드래그가 있는 컨트롤은 영역 밖에서 놓아도 기본 처리" · 61 §2-2-c): 누른
         //   영역을 기억하고, 커서가 그 영역 밖으로 나간 **이동·놓임**은 커서 아래 컨트롤이 아니라 **누른 영역**에 준다(그 영역이
         //   포커스일 때만 — 팝업·메뉴가 누름을 먹은 경우는 제외). 놓임으로 캡처가 끝난다. 개별 컨트롤마다 고치지 않는다.
@@ -729,6 +752,12 @@ impl App {
                 _ => None,
             };
             let inside = at.is_none_or(|p| self.explorer.menu_bounds().contains(p));
+            if trace_input() && !matches!(ev, InputEvent::MouseMove { .. }) {
+                eprintln!(
+                    "[route] explorer-menu block ev={ev:?} inside={inside} bounds={:?}",
+                    self.explorer.menu_bounds()
+                );
+            }
             if self.explorer.on_event(&ev) {
                 self.redraw();
             }
@@ -873,7 +902,11 @@ impl App {
             }
         }
         // ★ 스플리터(탐색기|편집기 · 편집기|결과) — 마우스만 · 드래그 중이면 다른 컨트롤보다 먼저(사용자 09-16).
-        if is_mouse && self.route_splitters(&ev) {
+        //   ★ 열린 팝업(우클릭 메뉴 등)이 있으면 스플리터는 받지 않는다(사용자 10-13 "메뉴 고르는 중 뒤의 스플리터가 같이 움직임" ·
+        //   팝업 배타 61 §2-2-b) — 이미 끌고 있던 스플리터만 예외(놓임까지).
+        let split_dragging =
+            self.split_v.is_dragging() || self.split_h.is_dragging() || self.split_d.is_dragging();
+        if is_mouse && (split_dragging || self.open_menus() == 0) && self.route_splitters(&ev) {
             return;
         }
         // (상태줄 항목 클릭은 위 "놓을 때" 블록이 `OverlayZone::Status`로 받는다 · 동작 = `overlay_act`.)
@@ -960,8 +993,9 @@ impl App {
                 self.redraw();
             }
         }
-        // 확장 패널 — 마우스는 커서 아래 · 키는 포커스일 때(마우스 라우팅 규칙).
-        if self.route_ext_panel(ev, is_mouse) {
+        // 확장 패널 — 마우스는 커서 아래 · 키는 포커스일 때(마우스 라우팅 규칙). ★ 우클릭도 포인터 사건(`is_ptr` · 사용자 10-13
+        //   "확장 검색에서 동작 안 함" = `is_mouse`엔 우클릭이 없어 상자 편집 메뉴가 열리지 않았다 · 탐색기 09-21과 같은 결함).
+        if self.route_ext_panel(ev, is_ptr) {
             return;
         }
         // 북마크 패널의 우클릭 메뉴는 창 위에 뜬다 → 열린 동안 먼저 받는다(탐색기 메뉴와 같은 규칙 · 바깥 클릭은 닫고 통과).
@@ -984,8 +1018,9 @@ impl App {
         if self.route_project_panel(ev, is_ptr) {
             return;
         }
-        // 파일 검색 패널(T-81a) — 마우스는 커서 아래 · 키는 포커스일 때.
-        if self.route_search_panel(ev, is_mouse) {
+        // 파일 검색 패널(T-81a) — 마우스는 커서 아래 · 키는 포커스일 때. ★ 우클릭도 포인터 사건(`is_ptr` · 사용자 10-13 "파일
+        //   검색에서 동작 안 함").
+        if self.route_search_panel(ev, is_ptr) {
             return;
         }
         // ★ 객체 상세 패널(docs/86): 마우스 = 패널 안 · 키 = 포커스일 때 — 탐색기보다 먼저(독립 영역).
@@ -1599,8 +1634,12 @@ impl App {
                 y: self.cursor.1,
             };
             let inside = self.ext_panel.bounds().contains(cur);
-            if (is_mouse && inside) || (is_wheel_ev(&ev) && inside) {
-                if matches!(ev, InputEvent::MouseDown { .. }) {
+            // 상자 팝업(편집 메뉴·이력)이 열려 있으면 패널 밖의 마우스도 패널로(찾기 바·파일 검색과 같은 규칙 · 10-13).
+            if (is_mouse && (inside || self.ext_panel.menu_open())) || (is_wheel_ev(&ev) && inside) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
                     self.set_focus(Focus::Ext);
                 }
                 if self.ext_panel.on_event(&ev) {
@@ -1867,7 +1906,8 @@ impl App {
                 y: self.cursor.1,
             };
             let inside = self.search.bounds().contains(cur);
-            if (is_mouse && inside) || (is_wheel_ev(&ev) && inside) {
+            // 상자 팝업(편집 메뉴·이력)이 열려 있으면 패널 밖의 마우스도 패널로(찾기 바와 같은 규칙 · 10-13).
+            if (is_mouse && (inside || self.search.popup_open())) || (is_wheel_ev(&ev) && inside) {
                 if matches!(
                     ev,
                     InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
@@ -2350,7 +2390,7 @@ pub(crate) fn ctxmenu_exclusive_step(
 }
 
 /// `NSQL_TRACE_INPUT` 스위치(한 번만 읽는다 · 사건마다 환경 조회 없음).
-fn trace_input() -> bool {
+pub(crate) fn trace_input() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("NSQL_TRACE_INPUT").is_some())
 }

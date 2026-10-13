@@ -246,6 +246,9 @@ pub(crate) struct Recall {
     /// 마지막으로 연 자리(글을 치며 다시 거를 때 같은 자리에).
     host: Rect,
     scale: f32,
+    /// ★ 토글(사용자 10-13 "열린 상태에서 상자를 다시 클릭하면 감춰지게"): 열린 드롭다운을 **상자 클릭**으로 닫은 바로 그 사건이면
+    /// 담는 쪽의 `on_click`(= 열기)을 한 번 건너뛴다. 사건마다 MouseDown 머리에서 지우므로 다음 클릭은 다시 연다.
+    toggled_off: bool,
 }
 
 impl Recall {
@@ -259,6 +262,7 @@ impl Recall {
             shown: Vec::new(),
             host: Rect::new(0, 0, i32::MAX / 2, i32::MAX / 4),
             scale: 1.0,
+            toggled_off: false,
         }
     }
 
@@ -297,6 +301,10 @@ impl Recall {
     pub(crate) fn on_click(&mut self, tb: &TextBox, h: &SharedHistory, host: Rect, scale: f32) {
         self.host = host;
         self.scale = scale;
+        // 방금 그 클릭이 열린 드롭다운을 닫은 것이면 다시 열지 않는다(토글 · 모든 이력 상자 공통 = 필터 틀 · 찾기 바 · 파일 검색).
+        if std::mem::take(&mut self.toggled_off) {
+            return;
+        }
         if h.borrow().view() == HistoryView::Dropdown {
             self.open_dropdown(tb, h, false);
         }
@@ -327,8 +335,17 @@ impl Recall {
         let b = tb.bounds();
         self.menu.set_scale(self.scale);
         self.menu.set_max_rows(Some(rows));
+        // ★ 폭 상한 = 상자 x부터 호스트 오른쪽까지(사용자 10-13 "이력이 검색 상자 왼쪽으로 밀려 보인다"): 긴 항목으로 메뉴가 패널
+        //   폭을 넘으면 배치 규칙이 왼쪽으로 밀어 넣어 글 시작이 어긋났다 → 폭을 제한하고 넘치는 라벨은 가로 스크롤/… (nexa-ctl `max_w`).
+        if self.host.w > 0 && self.host.w < i32::MAX / 4 {
+            let avail = self.host.right() - b.x - (4.0 * self.scale) as i32;
+            if avail > 0 {
+                self.menu
+                    .set_max_width(Some(((avail as f32) / self.scale.max(0.01)).floor() as i32));
+            }
+        }
         // 폭 근사 = 상자 폭(첫 그리기가 실측으로 올려친다 · 팝업 규칙 안전망).
-        self.menu.open_at(
+        crate::menu_icons::open_at(&mut self.menu, 
             b.x,
             b.bottom() + (2.0 * self.scale) as i32,
             items,
@@ -365,6 +382,9 @@ impl Recall {
         if let InputEvent::Char { c: '\t', .. } = ev {
             self.menu.close();
             return RecallEvent::LeaveDown;
+        }
+        if matches!(ev, InputEvent::MouseDown { .. }) {
+            self.toggled_off = false;
         }
         if self.menu.is_open() {
             return self.on_event_open(ev, tb, h, inv);
@@ -480,11 +500,13 @@ impl Recall {
                 RecallEvent::Pass
             }
             InputEvent::MouseDown { x, y, .. } => {
-                if self.menu.bounds().contains(Point { x: *x, y: *y }) {
+                let p = Point { x: *x, y: *y };
+                if self.menu.bounds().contains(p) {
                     let _ = self.menu.on_event(ev);
                     return self.apply_pick(tb, h, inv);
                 }
-                // 바깥 클릭 = 닫고 그 클릭은 그대로 진행(팝업 UX 규칙).
+                // 바깥 클릭 = 닫고 그 클릭은 그대로 진행(팝업 UX 규칙). 상자 자체 클릭 = 토글 닫기(이어지는 `on_click`을 건너뜀).
+                self.toggled_off = tb.bounds().contains(p);
                 self.menu.close();
                 RecallEvent::Pass
             }
@@ -710,6 +732,35 @@ mod tests {
         assert!(r.is_open(), "클릭 = 드롭다운");
         assert_eq!(r.shown.len(), 5);
         assert!(r.bounds().y >= 45, "상자 아래");
+        // ★ 토글(사용자 10-13): 열린 채 상자를 다시 클릭 = 닫힘 · 담는 쪽의 `on_click`은 건너뜀 · 다음 클릭 = 다시 열림.
+        let in_box = InputEvent::MouseDown {
+            x: 60,
+            y: 30,
+            shift: false,
+            primary: false,
+        };
+        assert_eq!(r.on_event(&in_box, &mut tb, &h, &mut inv), RecallEvent::Pass);
+        assert!(!r.is_open(), "상자 재클릭 = 닫힘");
+        r.on_click(&tb, &h, host, 1.0);
+        assert!(!r.is_open(), "같은 클릭의 on_click은 다시 열지 않는다");
+        assert_eq!(r.on_event(&in_box, &mut tb, &h, &mut inv), RecallEvent::Pass);
+        r.on_click(&tb, &h, host, 1.0);
+        assert!(r.is_open(), "다음 클릭 = 다시 열림");
+        // 바깥 클릭으로 닫힌 뒤의 상자 클릭도 연다(깃발은 상자 클릭일 때만).
+        let outside = InputEvent::MouseDown {
+            x: 400,
+            y: 400,
+            shift: false,
+            primary: false,
+        };
+        assert_eq!(r.on_event(&outside, &mut tb, &h, &mut inv), RecallEvent::Pass);
+        assert!(!r.is_open());
+        r.on_click(&tb, &h, host, 1.0);
+        assert!(r.is_open());
+        // 닫힌 채 hover 없는 Enter 시험을 위해 원래 상태로.
+        let _ = r.on_event(&outside, &mut tb, &h, &mut inv);
+        r.on_click(&tb, &h, host, 1.0);
+        assert!(r.is_open());
         // hover 없는 Enter = 닫고 Pass.
         assert_eq!(
             r.on_event(&key(CtlKey::Enter), &mut tb, &h, &mut inv),

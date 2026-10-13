@@ -168,6 +168,8 @@ pub(crate) struct ExplorerSet {
     ///   "마지막 사건만 살아남는 큐잉") · 그릴 때 목표가 아직 커서 아래인지 한 번 더 확인.
     tooltip: bool,
     tip: nexa_ctl::LatestIntent<(usize, usize)>,
+    /// 서버 헤더 머무름 툴팁(사용자 10-13 "버전은 툴팁으로"): 목표 = 그룹 첫 칸 · 노드 툴팁과 같은 지연·규칙.
+    head_tip: nexa_ctl::LatestIntent<usize>,
     font_px: f32,
     ta_cfg: crate::explorer::TypeAheadCfg,
     /// `intel.preload`(새 서버 칸에도 적용).
@@ -222,6 +224,11 @@ pub(crate) struct ExplorerSet {
 }
 
 impl ExplorerSet {
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        self.filter.set_placeholder(t(Msg::PhExplorerFilter));
+    }
+
     pub(crate) fn new(wake: Arc<dyn Fn() + Send + Sync>, visible: bool) -> Self {
         let mut s = ExplorerSet {
             menu_area: Rect::default(),
@@ -233,6 +240,7 @@ impl ExplorerSet {
             sizes: true,
             tooltip: true,
             tip: nexa_ctl::LatestIntent::new(700),
+            head_tip: nexa_ctl::LatestIntent::new(700),
             font_px: 17.0,
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
             preload: true,
@@ -827,6 +835,7 @@ impl ExplorerSet {
     pub(crate) fn set_tooltip(&mut self, on: bool) {
         self.tooltip = on;
         self.tip.clear();
+        self.head_tip.clear();
         for p in &mut self.panes {
             p.ex.set_tooltip(on);
         }
@@ -991,6 +1000,7 @@ impl ExplorerSet {
     pub(crate) fn close_menu(&mut self) {
         self.menu.close();
         self.menu_group = None;
+        self.filter.close_popups();
         for p in &mut self.panes {
             p.ex.close_menu();
         }
@@ -1153,6 +1163,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
         // 노드 툴팁(T-249)도 같은 지연.
         self.tip.set_delay_ms(ms.min(u128::from(u64::MAX)) as u64);
+        self.head_tip.set_delay_ms(ms.min(u128::from(u64::MAX)) as u64);
         self.filter.set_tooltip_delay(ms);
     }
 
@@ -1767,6 +1778,14 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.filter.set_search_state(st);
     }
 
+    /// 툴팁(노드·서버 헤더)이 머무름 확정을 기다리는 중인가 — 이벤트 루프가 틱을 돌릴 근거(협업 V1 10-13 "실행 직후 첫 머무름에
+    /// 툴팁이 안 뜬다" = 캐럿 깜빡임 등 다른 틱이 없으면 700 ms가 영영 확정되지 않았다).
+    pub(crate) fn tooltip_pending(&self) -> bool {
+        self.tooltip
+            && ((self.tip.target().is_some() && self.tip.settled().is_none())
+                || (self.head_tip.target().is_some() && self.head_tip.settled().is_none()))
+    }
+
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         self.sync_search_state();
         let mut any = self.bars.tick(now_ms) | self.filter.tick(now_ms);
@@ -1776,6 +1795,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         // 툴팁: 커서 아래 목표가 머문 뒤 확정(확정이 바뀌는 순간만 다시 그림 · T-249 · LatestIntent).
         if self.tooltip {
             any |= self.tip.tick(now_ms);
+            any |= self.head_tip.tick(now_ms);
         }
         any
     }
@@ -1895,10 +1915,23 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         // ★ 검색창(docs/28 §7): 누름 = 틀 안이면 포커스(밖이면 해제) · 포커스 중 키 = 틀로(Enter = 다음 일치 · Shift+Enter = 이전 ·
         //   Esc = 지우고 트리로) · 글/옵션 변경 = 다시 거름.
         let mut inv = Invalidations::default();
+        // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
+        if self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+            let fe = self.filter.on_event(ev, &mut inv);
+            self.on_filter_event(fe);
+            return true;
+        }
         match ev {
             InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
                 let p = Point { x: *x, y: *y };
                 let in_f = self.filter.bounds().contains(p);
+                if crate::app::input::trace_input() {
+                    eprintln!(
+                        "[explorer] ev={ev:?} in_f={in_f} popup_open={} focused={}",
+                        self.filter.popup_open(),
+                        self.filter.is_focused()
+                    );
+                }
                 if self.filter.is_focused() != in_f && !self.filter.popup_open() {
                     self.filter.set_focused(in_f);
                 }
@@ -2037,9 +2070,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                 for i in self.laid() {
                     any |= self.panes[i].ex.on_event(&fwd);
                 }
-                // 툴팁 목표 = 지금 커서 아래 노드(없으면 None → 대기 취소).
+                // 툴팁 목표 = 지금 커서 아래 노드(없으면 None → 대기 취소) · 서버 헤더면 헤더 툴팁 목표.
                 let target = self.tip_target();
                 self.tip.set(target);
+                let hp = Point { x: *x, y: *y };
+                self.head_tip.set(self.header_at(hp));
                 any
             }
             // (휠은 위의 공용 스크롤이 처리한다.)
@@ -2153,6 +2188,36 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                     .surface_size()
                     .map_or(self.area, |(w, h)| Rect::new(0, 0, w, h));
                 nexa_ctl::draw::draw_tooltip_in(dc, th, r, (clamp.x, clamp.w), &text, self.scale);
+            }
+            // ★ 서버 헤더 툴팁(사용자 10-13): 머문 헤더가 지금도 커서 아래일 때만 · 앵커 = 헤더 행(고정 헤더면 그 자리).
+            if let Some(first) = self.head_tip.settled().copied() {
+                // 고정 헤더 위는 `hover_point`가 (-1,-1)로 바꾸므로 원래 커서로 판정.
+                let raw = self.cursor;
+                if self.header_at(raw) == Some(first) {
+                    let r = self
+                        .pinned
+                        .filter(|(f, r)| *f == first && r.contains(raw))
+                        .map(|(_, r)| r)
+                        .or_else(|| self.headers.iter().find(|(f, _)| *f == first).map(|(_, r)| *r));
+                    if let Some(r) = r {
+                        let text = self.panes[first].ex.server_tip();
+                        if !text.is_empty() {
+                            let clamp = dc
+                                .surface_size()
+                                .map_or(self.area, |(w, h)| Rect::new(0, 0, w, h));
+                            // 헤더는 영역 맨 위라 "항목 위" 규칙이면 메뉴줄·툴바 뒤로 들어간다(협업 V1 10-13 · 윗줄 잘림) → **아래**로 고정.
+                            nexa_ctl::draw::draw_tooltip_in_dir(
+                                dc,
+                                th,
+                                r,
+                                (clamp.x, clamp.w),
+                                &text,
+                                self.scale,
+                                false,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -2669,6 +2734,38 @@ mod tests {
             !set.filter.popup_open(),
             "드래그를 끝낸 놓임은 드롭다운 선택이 아니다"
         );
+    }
+
+    /// ★ 필터 상자 우클릭 = 편집 메뉴 · 메뉴 항목(전체 선택) 클릭 = 반영 + 닫힘 · 다시 우클릭 = 다시 열림(사용자 10-13).
+    #[test]
+    fn filter_right_click_menu_pick_and_reopen() {
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        set.filter.set_text("abcdefghij");
+        let fb = set.filter.bounds();
+        let (x, y) = (fb.x + 6, fb.y + fb.h / 2);
+        assert!(set.on_event(&InputEvent::RightDown { x, y }));
+        assert!(set.filter.popup_open(), "우클릭 = 편집 메뉴(먼저 클릭 없이)");
+        let mr = set.filter.tb_mut().popup_bounds();
+        assert!(mr.h > 0);
+        // 마지막 행 = 전체 선택(활성).
+        let (px, py) = (mr.x + 24, mr.bottom() - 10);
+        set.on_event(&InputEvent::MouseMove { x: px, y: py });
+        set.on_event(&InputEvent::MouseDown {
+            x: px,
+            y: py,
+            shift: false,
+            primary: false,
+        });
+        set.on_event(&InputEvent::MouseUp { x: px, y: py });
+        assert!(!set.filter.popup_open(), "항목 클릭 = 메뉴 닫힘");
+        assert_eq!(
+            set.filter.tb_mut().copy_selection().as_deref(),
+            Some("abcdefghij"),
+            "전체 선택 반영"
+        );
+        assert!(set.on_event(&InputEvent::RightDown { x, y }));
+        assert!(set.filter.popup_open(), "다시 우클릭 = 메뉴 다시 열림");
     }
 
     /// ★ 단순 클릭(누르고 같은 자리에서 놓음)은 이력 드롭다운을 연 채 둔다(사용자 09-30 "클릭하면 드롭박스가 잠깐 떴다 사라짐").

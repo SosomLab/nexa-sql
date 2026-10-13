@@ -12,9 +12,11 @@ description = "Nexa SQL 드라이버 레지스트리 — 접속 문자열/Connec
 workspace = true
 
 [features]
-default = ["sqlite", "oracle", "mssql", "pg"]
+default = ["sqlite", "oracle", "oracle-thin", "mssql", "pg"]
 sqlite = ["dep:nsql-driver-sqlite"]
 oracle = ["dep:nsql-driver-oracle"]
+# Oracle Thin(순수 Rust · Instant Client 불필요 · docs/110) — 표준판 = oracle + oracle-thin · 경량판 C = oracle-thin만(64 §4-1).
+oracle-thin = ["dep:nsql-driver-oracle-thin"]
 mssql = ["dep:nsql-driver-mssql"]
 pg = ["dep:nsql-driver-pg"]
 
@@ -23,6 +25,7 @@ nsql-core.workspace = true
 nsql-script.workspace = true
 nsql-driver-sqlite = { workspace = true, optional = true }
 nsql-driver-oracle = { workspace = true, optional = true }
+nsql-driver-oracle-thin = { workspace = true, optional = true }
 nsql-driver-mssql = { workspace = true, optional = true }
 nsql-driver-pg = { workspace = true, optional = true }
 

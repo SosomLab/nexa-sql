@@ -117,6 +117,11 @@ const PAD: f32 = 8.0;
 const INDENT: f32 = 14.0;
 
 impl BookmarksPanel {
+    /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
+    pub(crate) fn relabel(&mut self) {
+        self.filter.set_placeholder(t(Msg::PhBookmarkFilter));
+    }
+
     pub(crate) fn new() -> Self {
         let filter = FilterBar::new(t(Msg::PhBookmarkFilter), &[]);
         BookmarksPanel {
@@ -280,12 +285,16 @@ impl BookmarksPanel {
     pub(crate) fn menu_open(&self) -> bool {
         self.menu.is_open() || self.filter.popup_open()
     }
-    /// 열린 우클릭 메뉴 영역(필터 이력 드롭다운은 제 규칙으로 닫히므로 제외).
+    /// 열린 우클릭 메뉴 영역(필터 상자 팝업 포함 · 10-13 배타 규칙 전수).
     pub(crate) fn menu_bounds(&self) -> Rect {
-        self.menu.bounds()
+        if self.menu.is_open() {
+            return self.menu.bounds();
+        }
+        self.filter.popup_bounds()
     }
     pub(crate) fn close_menu(&mut self) {
         self.menu.close();
+        self.filter.close_popups();
     }
     /// 메뉴(팝업 층 · 창의 맨 마지막에).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
@@ -343,7 +352,8 @@ impl BookmarksPanel {
             scale,
         );
         let list_top = y1 + ih + px(GAP_Y);
-        self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
+        // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 머리·선택 행 배경이 스플리터 선을 덮지 않게(사용자 10-13 · 패널 공통).
+        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
         self.menu.set_scale(scale);
         self.clamp_scroll();
     }
@@ -655,7 +665,7 @@ impl BookmarksPanel {
         let text_w = (self.row_h * 10).max(180);
         // host = 아는 한 창 전체(팝업 배치 규칙 ③) — 패널은 창 높이를 모르므로 폭만 clamp · 세로는 그리는 시점의 표면 안전망에 기댄다.
         let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
-        self.menu.open_at(p.x, p.y, items, host, text_w);
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
     }
 
     fn menu_pick(&mut self, id: &str) {
@@ -752,6 +762,14 @@ impl BookmarksPanel {
         }
         let mut inv = Invalidations::default();
         // ★ 필터 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
+        // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
+        if self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+            if self.filter.on_event(ev, &mut inv) == FilterEvent::Changed {
+                self.filter_text = self.filter.text();
+                self.rebuild();
+            }
+            return true;
+        }
         if self.filter.popup_takes(ev) {
             if self.filter_feed(ev) == FilterEvent::LeaveDown {
                 self.leave_filter_down();
@@ -839,8 +857,15 @@ impl BookmarksPanel {
                 changed
             }
             InputEvent::RightDown { x, y } => {
+                let p = Point { x, y };
+                if self.filter.bounds().contains(p) {
+                    // 필터 상자 우클릭 = 편집 메뉴(틀이 연다 · 10-13).
+                    self.filter.set_focused(true);
+                    let _ = self.filter.on_event(ev, &mut inv);
+                    return true;
+                }
                 self.filter.set_focused(false);
-                self.open_menu(Point { x, y });
+                self.open_menu(p);
                 true
             }
             InputEvent::MouseDown { x, y, .. } => {
