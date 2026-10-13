@@ -2676,11 +2676,17 @@ mod clean_dots_tests {
 
     #[test]
     fn removes_only_curdir_components() {
-        let p = std::path::Path::new("C:\\Users\\k\\Downloads\\.\\x.jpg");
-        assert_eq!(
-            clean_dots(p),
-            std::path::PathBuf::from("C:\\Users\\k\\Downloads\\x.jpg")
-        );
+        // OS 구분자로 조립(백슬래시 리터럴은 Unix·mac에서 한 이름이라 `.` 성분이 안 생긴다 — CI 38406037649 ubuntu/macos ✗).
+        let p = std::path::Path::new("Users")
+            .join("k")
+            .join("Downloads")
+            .join(".")
+            .join("x.jpg");
+        let want = std::path::Path::new("Users")
+            .join("k")
+            .join("Downloads")
+            .join("x.jpg");
+        assert_eq!(clean_dots(&p), want);
         let q = std::path::Path::new("a/./b/../c");
         assert_eq!(clean_dots(q), std::path::PathBuf::from("a/b/../c"));
     }
