@@ -345,7 +345,8 @@ impl Recall {
             }
         }
         // 폭 근사 = 상자 폭(첫 그리기가 실측으로 올려친다 · 팝업 규칙 안전망).
-        crate::menu_icons::open_at(&mut self.menu, 
+        crate::menu_icons::open_at(
+            &mut self.menu,
             b.x,
             b.bottom() + (2.0 * self.scale) as i32,
             items,
@@ -739,11 +740,17 @@ mod tests {
             shift: false,
             primary: false,
         };
-        assert_eq!(r.on_event(&in_box, &mut tb, &h, &mut inv), RecallEvent::Pass);
+        assert_eq!(
+            r.on_event(&in_box, &mut tb, &h, &mut inv),
+            RecallEvent::Pass
+        );
         assert!(!r.is_open(), "상자 재클릭 = 닫힘");
         r.on_click(&tb, &h, host, 1.0);
         assert!(!r.is_open(), "같은 클릭의 on_click은 다시 열지 않는다");
-        assert_eq!(r.on_event(&in_box, &mut tb, &h, &mut inv), RecallEvent::Pass);
+        assert_eq!(
+            r.on_event(&in_box, &mut tb, &h, &mut inv),
+            RecallEvent::Pass
+        );
         r.on_click(&tb, &h, host, 1.0);
         assert!(r.is_open(), "다음 클릭 = 다시 열림");
         // 바깥 클릭으로 닫힌 뒤의 상자 클릭도 연다(깃발은 상자 클릭일 때만).
@@ -753,7 +760,10 @@ mod tests {
             shift: false,
             primary: false,
         };
-        assert_eq!(r.on_event(&outside, &mut tb, &h, &mut inv), RecallEvent::Pass);
+        assert_eq!(
+            r.on_event(&outside, &mut tb, &h, &mut inv),
+            RecallEvent::Pass
+        );
         assert!(!r.is_open());
         r.on_click(&tb, &h, host, 1.0);
         assert!(r.is_open());

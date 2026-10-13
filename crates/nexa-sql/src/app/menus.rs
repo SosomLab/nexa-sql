@@ -55,7 +55,13 @@ impl App {
         // 배율 전달(빠져 있어 맥 2x에서 항목 간격이 절반이었다 · 09-16).
         self.status_menu.set_scale(self.scale);
         crate::menu_icons::open_at(
-            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
+            &mut self.status_menu,
+            r.x,
+            r.y,
+            items,
+            host,
+            px(80.0, self.scale),
+        );
     }
 
     /// 상태줄 줄끝 팝업(LF/CRLF · 현재 = ✓) — 고르면 활성 탭 줄끝 변경(저장 때 반영 · docs/38).
@@ -93,7 +99,13 @@ impl App {
         self.status_menu.set_scale(self.scale);
         // 폭 인자 = **최소 폭**(그릴 때 실측 글 폭이 더 크면 늘어난다) → 작게 주어 언어별 문구 길이에 맞춘다(사용자 09-28).
         crate::menu_icons::open_at(
-            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
+            &mut self.status_menu,
+            r.x,
+            r.y,
+            items,
+            host,
+            px(80.0, self.scale),
+        );
     }
 
     pub(crate) fn open_eol_menu(&mut self) {
@@ -126,7 +138,13 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         crate::menu_icons::open_at(
-            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
+            &mut self.status_menu,
+            r.x,
+            r.y,
+            items,
+            host,
+            px(80.0, self.scale),
+        );
     }
 
     /// 상태줄 인코딩 팝업(사용자 09-16 · Sublime 두 메뉴를 한 팝업에): 위 = "다른 인코딩으로 다시 열기 ▸"(파일 탭일 때만 ·
@@ -182,7 +200,13 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         crate::menu_icons::open_at(
-            &mut self.status_menu, r.x, r.y, items, host, px(80.0, self.scale));
+            &mut self.status_menu,
+            r.x,
+            r.y,
+            items,
+            host,
+            px(80.0, self.scale),
+        );
     }
 
     pub(crate) fn indent_pick(&mut self, id: &str) {
@@ -1057,7 +1081,13 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         crate::menu_icons::open_at(
-            &mut self.status_menu, r.x, r.y, items, host, px(width, self.scale));
+            &mut self.status_menu,
+            r.x,
+            r.y,
+            items,
+            host,
+            px(width, self.scale),
+        );
     }
 
     /// 미커밋 탭 닫기(설정 `tx.close_action`: ask / commit / rollback).
@@ -1632,7 +1662,13 @@ impl App {
         let m = |id: &str, menu: Msg, item: Msg| {
             let key = nsql_i18n::Lang::ALL
                 .iter()
-                .map(|&lang| format!("{}: {}", nsql_i18n::tr(lang, menu), nsql_i18n::tr(lang, item)))
+                .map(|&lang| {
+                    format!(
+                        "{}: {}",
+                        nsql_i18n::tr(lang, menu),
+                        nsql_i18n::tr(lang, item)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
             (id.to_string(), format!("{}: {}", t(menu), t(item)), key)

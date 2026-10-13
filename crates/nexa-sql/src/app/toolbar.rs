@@ -44,7 +44,13 @@ impl App {
         // ★ 메뉴의 좌상단 = 마우스 위치(사용자 10-09 "툴바와 상태바의 우클릭 메뉴는 정확하게 마우스 위치에서 좌상단") — 종전 "띠 바로
         //   아래"(`open_beside`)는 누른 자리와 어긋났다. 창 밖으로 나가면 공용 규칙(반대쪽 → 밀어 넣기)이 안전망.
         crate::menu_icons::open_at(
-            &mut self.status_menu, x, y, items, host, px(220.0, self.scale));
+            &mut self.status_menu,
+            x,
+            y,
+            items,
+            host,
+            px(220.0, self.scale),
+        );
         self.status_menu_band = 1;
         self.status_menu_item = None;
     }
@@ -99,7 +105,13 @@ impl App {
         // ★ 마우스 위치 기준(사용자 10-09 · 툴바와 같음): 상태바는 창 맨 아래라 아래로는 자리가 없다 → 공용 규칙이 **위로 접어**
         //   왼쪽 x = 마우스 x · 아래 변 = 마우스 y(작업 표시줄 우클릭과 같은 꼴) · 종전 "띠 바로 위"는 x만 맞고 y가 띠 높이만큼 떴다.
         crate::menu_icons::open_at(
-            &mut self.status_menu, x, y, items, host, px(220.0, self.scale));
+            &mut self.status_menu,
+            x,
+            y,
+            items,
+            host,
+            px(220.0, self.scale),
+        );
         self.status_menu_band = 2;
         self.status_menu_item = None;
     }

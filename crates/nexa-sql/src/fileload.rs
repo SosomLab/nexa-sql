@@ -363,9 +363,18 @@ mod binary_tests {
         assert!(!looks_binary("한글 글\n".as_bytes()));
         assert!(looks_binary(b"MZ\x90\x00\x03\x00"), "NUL = 이진");
         assert!(looks_binary(b"PK\x03\x04\x14\x00\x06\x00"), "zip 머리");
-        assert!(looks_binary(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), "png 머리");
-        assert!(!looks_binary(&[0xFF, 0xFE, b'a', 0, b'b', 0]), "UTF-16 LE BOM = 글");
-        assert!(!looks_binary(&[0xFE, 0xFF, 0, b'a', 0, b'b']), "UTF-16 BE BOM = 글");
+        assert!(
+            looks_binary(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"),
+            "png 머리"
+        );
+        assert!(
+            !looks_binary(&[0xFF, 0xFE, b'a', 0, b'b', 0]),
+            "UTF-16 LE BOM = 글"
+        );
+        assert!(
+            !looks_binary(&[0xFE, 0xFF, 0, b'a', 0, b'b']),
+            "UTF-16 BE BOM = 글"
+        );
         // 제어 문자 비율: 10 % 초과면 이진.
         let mut v = b"abcdefghij".to_vec();
         v.extend_from_slice(&[0x01, 0x02]);

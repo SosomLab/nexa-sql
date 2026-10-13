@@ -22,10 +22,14 @@ pub(crate) fn box_downsample(alpha: &[u8], w: u32, h: u32, dst: u32) -> Vec<u8> 
     let mut out = vec![0u8; (dst * dst) as usize];
     for j in 0..dst {
         let y0 = (j * h / dst) as usize;
-        let y1 = (((j + 1) * h).div_ceil(dst) as usize).max(y0 + 1).min(h as usize);
+        let y1 = (((j + 1) * h).div_ceil(dst) as usize)
+            .max(y0 + 1)
+            .min(h as usize);
         for i in 0..dst {
             let x0 = (i * w / dst) as usize;
-            let x1 = (((i + 1) * w).div_ceil(dst) as usize).max(x0 + 1).min(w as usize);
+            let x1 = (((i + 1) * w).div_ceil(dst) as usize)
+                .max(x0 + 1)
+                .min(w as usize);
             let mut sum = 0u32;
             for y in y0..y1 {
                 for x in x0..x1 {

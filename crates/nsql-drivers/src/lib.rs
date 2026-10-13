@@ -108,7 +108,10 @@ static ORACLE_DRIVER_THIN: std::sync::atomic::AtomicBool = std::sync::atomic::At
 
 /// 설정 `oracle.driver` → 레지스트리(접속마다 읽는다 · 재시작 불필요).
 pub fn set_oracle_driver(d: OracleDriver) {
-    ORACLE_DRIVER_THIN.store(d == OracleDriver::Thin, std::sync::atomic::Ordering::Relaxed);
+    ORACLE_DRIVER_THIN.store(
+        d == OracleDriver::Thin,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// 사용자가 고른 드라이버(빌드에 없어도 그 값).

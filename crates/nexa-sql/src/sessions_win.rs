@@ -195,7 +195,13 @@ impl SessionsWin {
         let host = self.table;
         self.menu.set_scale(self.scale);
         crate::menu_icons::open_at(
-            &mut self.menu, x, y, items, host, (240.0 * self.scale) as i32);
+            &mut self.menu,
+            x,
+            y,
+            items,
+            host,
+            (240.0 * self.scale) as i32,
+        );
         self.redraw();
     }
 

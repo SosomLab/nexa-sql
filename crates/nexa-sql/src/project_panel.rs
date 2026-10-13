@@ -928,7 +928,12 @@ impl ProjectPanel {
         );
         let list_top = y1 + ih + px(GAP_Y);
         // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 구역 머리·선택 행 배경이 스플리터 선을 덮었다(사용자 10-13 · 확장 패널과 같다).
-        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
+        self.list_rect = Rect::new(
+            b.x,
+            list_top,
+            (b.w - 1).max(0),
+            (b.bottom() - list_top).max(0),
+        );
         self.clamp_scroll();
         self.relayout_open_rows();
     }
@@ -1729,7 +1734,10 @@ impl ProjectPanel {
         // ★ 필터 틀의 팝업(이력 드롭다운 · 편집 메뉴)이 떠 있으면 마우스는 틀이 먼저(목록 행 위에 겹쳐 그려짐 · 사용자 10-07 "클릭으로
         //   검색어가 안 들어감") · 바깥 누름은 닫고 아래로 통과(팝업 UX 규칙 · 객체 탐색기와 같은 규칙).
         // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
-        if self.name.is_some() && self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+        if self.name.is_some()
+            && self.filter.popup_open()
+            && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. })
+        {
             let fe = self.filter.on_event(ev, &mut inv);
             self.on_filter_event(fe);
             return true;
@@ -2669,7 +2677,10 @@ mod clean_dots_tests {
     #[test]
     fn removes_only_curdir_components() {
         let p = std::path::Path::new("C:\\Users\\k\\Downloads\\.\\x.jpg");
-        assert_eq!(clean_dots(p), std::path::PathBuf::from("C:\\Users\\k\\Downloads\\x.jpg"));
+        assert_eq!(
+            clean_dots(p),
+            std::path::PathBuf::from("C:\\Users\\k\\Downloads\\x.jpg")
+        );
         let q = std::path::Path::new("a/./b/../c");
         assert_eq!(clean_dots(q), std::path::PathBuf::from("a/b/../c"));
     }

@@ -611,7 +611,10 @@ impl Editors {
         let line = buf.line_of(caret);
         // ★ 열 = **시각 열**(탭을 탭 정지까지 펼친 폭 · Sublime "Column"과 같다 · 사용자 10-13 "Tab 문자의 Width를 계산해서") —
         //   종전엔 글자 수라 탭이 1로 셌다(Sublime 42 ↔ 우리 33). 구간 조회만 쓴다(본문 전체를 뜨지 않는다 · 편집기 불변식).
-        let col = visual_col(buf.slice(buf.line_start(line), caret).chars(), usize::from(tb.tab_size().max(1)));
+        let col = visual_col(
+            buf.slice(buf.line_start(line), caret).chars(),
+            usize::from(tb.tab_size().max(1)),
+        );
         (line + 1, col + 1)
     }
 
@@ -855,7 +858,13 @@ impl Editors {
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (260.0 * self.scale) as i32;
         crate::menu_icons::open_at(
-            &mut self.menu, anchor.x, anchor.bottom(), items, host, text_w);
+            &mut self.menu,
+            anchor.x,
+            anchor.bottom(),
+            items,
+            host,
+            text_w,
+        );
     }
 
     /// 표식 메뉴에서 고른 항목(탭 id, 항목 id · 1회성).
@@ -1663,7 +1672,9 @@ impl Editors {
 
     /// 그 탭이 읽기 전용인가(안내 탭 · 앞부분 탭 · 읽기 전용 열기).
     pub(crate) fn is_read_only(&self, i: usize) -> bool {
-        self.ids.get(i).is_some_and(|id| self.read_only.contains(id))
+        self.ids
+            .get(i)
+            .is_some_and(|id| self.read_only.contains(id))
     }
 
     /// **뷰 탭 열기** — 같은 열쇠의 탭이 있으면 그 탭으로, 없으면 새 탭(본문은 빈 글 · 저장된 상태라 닫을 때 묻지 않는다).

@@ -1635,7 +1635,8 @@ impl App {
             };
             let inside = self.ext_panel.bounds().contains(cur);
             // 상자 팝업(편집 메뉴·이력)이 열려 있으면 패널 밖의 마우스도 패널로(찾기 바·파일 검색과 같은 규칙 · 10-13).
-            if (is_mouse && (inside || self.ext_panel.menu_open())) || (is_wheel_ev(&ev) && inside) {
+            if (is_mouse && (inside || self.ext_panel.menu_open())) || (is_wheel_ev(&ev) && inside)
+            {
                 if matches!(
                     ev,
                     InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }

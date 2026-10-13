@@ -922,7 +922,10 @@ impl FindBar {
         if tbb.w > 0 {
             // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다 — 곧은 부분만 덮으면 반지름 안의 **모서리 호**가 남아 토글 앞에 상자가
             // 따로 있는 것처럼 보였다(필터 틀 09-28 · 파일 검색 10-13과 같은 수정 · 사용자 "다른 레이아웃도 객체 탐색기와 동일하게").
-            dc.fill_rect(Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)), bg);
+            dc.fill_rect(
+                Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)),
+                bg,
+            );
             let cw = r + 3;
             dc.fill_rect(Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r), bg);
             dc.fill_rect(

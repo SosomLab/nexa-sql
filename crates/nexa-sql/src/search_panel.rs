@@ -221,7 +221,10 @@ fn paint_box_frame(dc: &mut dyn DrawCtx, th: &Theme, frame: Rect, tb: &TextBox, 
     tb.paint(dc, th);
     let tbb = tb.bounds();
     if tbb.w > 0 {
-        dc.fill_rect(Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)), bg);
+        dc.fill_rect(
+            Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)),
+            bg,
+        );
         let cw = r + 3;
         dc.fill_rect(Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r), bg);
         dc.fill_rect(
@@ -237,7 +240,10 @@ fn paint_box_frame(dc: &mut dyn DrawCtx, th: &Theme, frame: Rect, tb: &TextBox, 
 impl SearchPanel {
     /// 상자 팝업(검색어·위치 편집 메뉴 · 이력 드롭다운)이 열려 있는가 — 우클릭 메뉴 배타 규칙(10-13).
     pub(crate) fn popup_open(&self) -> bool {
-        self.query.popup_open() || self.where_box.popup_open() || self.rq.is_open() || self.rw.is_open()
+        self.query.popup_open()
+            || self.where_box.popup_open()
+            || self.rq.is_open()
+            || self.rw.is_open()
     }
     pub(crate) fn popup_bounds(&self) -> nexa_ctl::geom::Rect {
         let mut r = nexa_ctl::geom::Rect::default();
@@ -482,8 +488,13 @@ impl SearchPanel {
         );
         self.row_h = px(ROW_H);
         let list_top = y2 + ih + px(crate::filterbar::GAP_Y) + self.row_h; // 상태 한 줄
-        // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 머리·선택 행 배경이 스플리터 선을 덮지 않게(사용자 10-13 · 패널 공통).
-        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
+                                                                           // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 머리·선택 행 배경이 스플리터 선을 덮지 않게(사용자 10-13 · 패널 공통).
+        self.list_rect = Rect::new(
+            b.x,
+            list_top,
+            (b.w - 1).max(0),
+            (b.bottom() - list_top).max(0),
+        );
     }
 
     /// 사용자가 Enter로 검색을 요청했다(1회성).
@@ -911,7 +922,10 @@ impl SearchPanel {
         //   같다): 클릭으로 연 이력 드롭다운이 MouseMove/MouseUp을 `Consumed`로 먹어 상자가 놓임을 못 받고 드래그가 남았다(이 패널은
         //   FilterBar를 안 써서 그 수정이 빠졌다). 상자 밖으로 끌어 놓은 것은 항목 선택이 아니라 드롭다운 닫기 · 단순 클릭은 종전대로.
         let mut tb_done: Option<bool> = None; // Some(true) = query · Some(false) = where
-        if matches!(ev, InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }) {
+        if matches!(
+            ev,
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+        ) {
             let (dq, dw) = (self.query.is_dragging(), self.where_box.is_dragging());
             if dq || dw {
                 let (tb, rc) = if dq {
@@ -1360,14 +1374,7 @@ impl SearchPanel {
         };
         // ★ 앵커 = 버튼 사각형 그대로(공용 규칙이 "항목 위"로 올린다 · nexa-ui 171): 종전엔 캡슐 높이만큼 미리 올린 앵커를 넘겨
         //   **두 번** 올라가 툴바에 묻혔다(사용자 10-13 "툴바 상단에 잘려 보임").
-        nexa_ctl::draw::draw_tooltip_in(
-            dc,
-            th,
-            btn.rect,
-            (0, self.clamp_w),
-            t(tip),
-            self.scale,
-        );
+        nexa_ctl::draw::draw_tooltip_in(dc, th, btn.rect, (0, self.clamp_w), t(tip), self.scale);
     }
 }
 

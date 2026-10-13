@@ -4664,7 +4664,10 @@ impl Grid {
     /// ★ 그리드 안 **입력 팝업**(행수 상자 편집 메뉴 · 조건 바 편집 메뉴/완성 · 셀 편집기 편집 메뉴 · 값 고르기 팝업)이 열려 있는가 —
     /// 우클릭 메뉴 배타 규칙의 별도 비트(사용자 10-13 "입력창의 우클릭은 반영이 안 됨" · 그리드 메뉴와도 배타).
     pub(crate) fn popups_open(&self) -> bool {
-        self.page_box.popup_open() || self.cond.popup_open() || self.vpick.is_open() || self.live_popup_open()
+        self.page_box.popup_open()
+            || self.cond.popup_open()
+            || self.vpick.is_open()
+            || self.live_popup_open()
     }
 
     /// 열린 입력 팝업 영역(합집합 · 닫혀 있으면 빈 Rect).
@@ -6566,7 +6569,10 @@ impl Grid {
             // 통과는 **바깥 누름**(메뉴를 닫은 MouseDown/RightDown)만 — 항목을 고른 MouseUp까지 통과시키면 도구줄 분기가 같은 MouseUp을
             // 상자에 한 번 더 넣어(클릭 처리) 방금 한 "전체 선택"이 접혔다(협업 V1 10-13 "선택 칠 없음 · 캐럿만 끝").
             if self.page_box.popup_open()
-                || matches!(ev, InputEvent::MouseUp { .. } | InputEvent::MouseMove { .. })
+                || matches!(
+                    ev,
+                    InputEvent::MouseUp { .. } | InputEvent::MouseMove { .. }
+                )
             {
                 return;
             }

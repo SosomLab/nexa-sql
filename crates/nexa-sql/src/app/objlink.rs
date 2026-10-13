@@ -2249,7 +2249,13 @@ impl App {
         let host = self.window_rect();
         self.objlink_menu.set_scale(self.scale);
         crate::menu_icons::open_at(
-            &mut self.objlink_menu, p.x, p.y, items, host, px(100.0, self.scale));
+            &mut self.objlink_menu,
+            p.x,
+            p.y,
+            items,
+            host,
+            px(100.0, self.scale),
+        );
         self.redraw();
     }
 

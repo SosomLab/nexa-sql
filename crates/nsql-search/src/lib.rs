@@ -399,7 +399,12 @@ pub fn path_allowed(includes: &[String], excludes: &[String], rel: &str) -> bool
 
 /// [`path_allowed`] + 패턴 대소문자 구분 여부(`pattern_case` · [`SearchOpts::pattern_case`]와 같은 뜻 · 10-13).
 #[must_use]
-pub fn path_allowed_case(includes: &[String], excludes: &[String], rel: &str, pattern_case: bool) -> bool {
+pub fn path_allowed_case(
+    includes: &[String],
+    excludes: &[String],
+    rel: &str,
+    pattern_case: bool,
+) -> bool {
     let fold = !pattern_case;
     let norm = rel.replace('\\', "/");
     let comps: Vec<&str> = norm.split('/').filter(|c| !c.is_empty()).collect();
@@ -407,7 +412,8 @@ pub fn path_allowed_case(includes: &[String], excludes: &[String], rel: &str, pa
         return includes.is_empty();
     }
     if !includes.is_empty() {
-        let inc = ignore::IgnoreNode::from_lines_fold(includes.iter().map(String::as_str), 0, None, fold);
+        let inc =
+            ignore::IgnoreNode::from_lines_fold(includes.iter().map(String::as_str), 0, None, fold);
         // 루트 기준 패턴(`docs/**/*.md`)은 절대 경로 성분과 안 맞을 수 있어 **이름만**으로도 한 번 더 본다.
         let name = [*comps.last().unwrap_or(&"")];
         if !(inc.is_ignored(&comps, false) || inc.is_ignored(&name, false)) {
@@ -415,7 +421,8 @@ pub fn path_allowed_case(includes: &[String], excludes: &[String], rel: &str, pa
         }
     }
     if !excludes.is_empty() {
-        let exc = ignore::IgnoreNode::from_lines_fold(excludes.iter().map(String::as_str), 0, None, fold);
+        let exc =
+            ignore::IgnoreNode::from_lines_fold(excludes.iter().map(String::as_str), 0, None, fold);
         let name = [*comps.last().unwrap_or(&"")];
         if exc.is_ignored(&comps, false) || exc.is_ignored(&name, false) {
             return false;

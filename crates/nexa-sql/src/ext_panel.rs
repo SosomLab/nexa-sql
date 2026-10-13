@@ -275,7 +275,9 @@ impl ExtPanel {
         let mut inv = Invalidations::default();
         // ★ 검색 틀 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
         // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
-        if self.search.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+        if self.search.popup_open()
+            && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. })
+        {
             if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
                 self.scroll = 0;
             }
@@ -565,10 +567,8 @@ impl ExtPanel {
                         .as_ref()
                         .map_or(0, |nv| self.s(6.0) + dc.text_width(&format!("→ v{nv}")));
                 let kind_w = dc.text_width(&row.kind);
-                let name_budget = (r.right() - pad - kind_w - self.s(8.0))
-                    - (r.x + pad)
-                    - ver_w
-                    - self.s(8.0);
+                let name_budget =
+                    (r.right() - pad - kind_w - self.s(8.0)) - (r.x + pad) - ver_w - self.s(8.0);
                 dc.select_font(FontSlot::Base, true);
                 let name_color = if row.installed && !row.enabled {
                     th.text_dim

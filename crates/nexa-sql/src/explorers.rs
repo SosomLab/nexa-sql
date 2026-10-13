@@ -1163,7 +1163,8 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
         // 노드 툴팁(T-249)도 같은 지연.
         self.tip.set_delay_ms(ms.min(u128::from(u64::MAX)) as u64);
-        self.head_tip.set_delay_ms(ms.min(u128::from(u64::MAX)) as u64);
+        self.head_tip
+            .set_delay_ms(ms.min(u128::from(u64::MAX)) as u64);
         self.filter.set_tooltip_delay(ms);
     }
 
@@ -1916,7 +1917,9 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         //   Esc = 지우고 트리로) · 글/옵션 변경 = 다시 거름.
         let mut inv = Invalidations::default();
         // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
-        if self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+        if self.filter.popup_open()
+            && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. })
+        {
             let fe = self.filter.on_event(ev, &mut inv);
             self.on_filter_event(fe);
             return true;
@@ -2198,7 +2201,12 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                         .pinned
                         .filter(|(f, r)| *f == first && r.contains(raw))
                         .map(|(_, r)| r)
-                        .or_else(|| self.headers.iter().find(|(f, _)| *f == first).map(|(_, r)| *r));
+                        .or_else(|| {
+                            self.headers
+                                .iter()
+                                .find(|(f, _)| *f == first)
+                                .map(|(_, r)| *r)
+                        });
                     if let Some(r) = r {
                         let text = self.panes[first].ex.server_tip();
                         if !text.is_empty() {
@@ -2745,7 +2753,10 @@ mod tests {
         let fb = set.filter.bounds();
         let (x, y) = (fb.x + 6, fb.y + fb.h / 2);
         assert!(set.on_event(&InputEvent::RightDown { x, y }));
-        assert!(set.filter.popup_open(), "우클릭 = 편집 메뉴(먼저 클릭 없이)");
+        assert!(
+            set.filter.popup_open(),
+            "우클릭 = 편집 메뉴(먼저 클릭 없이)"
+        );
         let mr = set.filter.tb_mut().popup_bounds();
         assert!(mr.h > 0);
         // 마지막 행 = 전체 선택(활성).

@@ -96,55 +96,55 @@ fn first_rs(ev: &[RunEvent]) -> Option<&nsql_core::ResultSet> {
 #[test]
 fn oracle_session_variables_refcursor_and_dbms_output() {
     for_each_oracle(|mut r| {
-    let ev = run(
+        let ev = run(
         &mut r,
         "VARIABLE rc REFCURSOR\nEXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM ALL_OBJECTS WHERE ROWNUM <= 3\nPRINT V_CNT\nSELECT :V_NAME AS n, :V_CNT AS c FROM DUAL;\nEXEC OPEN :rc FOR SELECT :V_NAME AS n FROM DUAL\nPRINT rc\nSET SERVEROUTPUT ON\nEXEC DBMS_OUTPUT.PUT_LINE('hello ' || :V_NAME)\n",
     );
-    assert_eq!(
-        r.engine.vars.get("V_CNT").unwrap().value,
-        Value::Int(3),
-        "{ev:#?}"
-    );
-    let rs = first_rs(&ev).unwrap();
-    assert_eq!(rs.rows[0], vec![Value::Str("nexa".into()), Value::Int(3)]);
-    let cursor_rs = ev
-        .iter()
-        .filter_map(|e| {
-            if let RunEvent::ResultSet { rs, .. } = e {
-                Some(rs)
-            } else {
-                None
-            }
-        })
-        .nth(1)
-        .expect("PRINT rc 결과");
-    assert_eq!(cursor_rs.rows[0][0], Value::Str("nexa".into()));
-    assert!(
-        ev.iter()
-            .any(|e| matches!(e, RunEvent::Message(m) if m == "hello nexa")),
-        "{ev:#?}"
-    );
+        assert_eq!(
+            r.engine.vars.get("V_CNT").unwrap().value,
+            Value::Int(3),
+            "{ev:#?}"
+        );
+        let rs = first_rs(&ev).unwrap();
+        assert_eq!(rs.rows[0], vec![Value::Str("nexa".into()), Value::Int(3)]);
+        let cursor_rs = ev
+            .iter()
+            .filter_map(|e| {
+                if let RunEvent::ResultSet { rs, .. } = e {
+                    Some(rs)
+                } else {
+                    None
+                }
+            })
+            .nth(1)
+            .expect("PRINT rc 결과");
+        assert_eq!(cursor_rs.rows[0][0], Value::Str("nexa".into()));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, RunEvent::Message(m) if m == "hello nexa")),
+            "{ev:#?}"
+        );
     });
 }
 
 #[test]
 fn oracle_plsql_block_out_binds_and_dml() {
     for_each_oracle(|mut r| {
-    run(&mut r, "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nexa_it'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nexa_it (id NUMBER, name VARCHAR2(30));\nINSERT INTO nexa_it VALUES (1, '홍길동');\nBEGIN\n  SELECT name INTO :V_NM FROM nexa_it WHERE id = 1;\n  :V_TWICE := :V_NM || :V_NM;\nEND;\n/\nCOMMIT;\n");
-    assert_eq!(
-        r.engine.vars.get("V_NM").unwrap().value,
-        Value::Str("홍길동".into())
-    );
-    assert_eq!(
-        r.engine.vars.get("V_TWICE").unwrap().value,
-        Value::Str("홍길동홍길동".into())
-    );
-    let ev = run(
-        &mut r,
-        "SELECT id, name FROM nexa_it WHERE name = :V_NM;\nDROP TABLE nexa_it;\n",
-    );
-    let rs = first_rs(&ev).unwrap();
-    assert_eq!(rs.rows[0], vec![Value::Int(1), Value::Str("홍길동".into())]);
+        run(&mut r, "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nexa_it'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nexa_it (id NUMBER, name VARCHAR2(30));\nINSERT INTO nexa_it VALUES (1, '홍길동');\nBEGIN\n  SELECT name INTO :V_NM FROM nexa_it WHERE id = 1;\n  :V_TWICE := :V_NM || :V_NM;\nEND;\n/\nCOMMIT;\n");
+        assert_eq!(
+            r.engine.vars.get("V_NM").unwrap().value,
+            Value::Str("홍길동".into())
+        );
+        assert_eq!(
+            r.engine.vars.get("V_TWICE").unwrap().value,
+            Value::Str("홍길동홍길동".into())
+        );
+        let ev = run(
+            &mut r,
+            "SELECT id, name FROM nexa_it WHERE name = :V_NM;\nDROP TABLE nexa_it;\n",
+        );
+        let rs = first_rs(&ev).unwrap();
+        assert_eq!(rs.rows[0], vec![Value::Int(1), Value::Str("홍길동".into())]);
     });
 }
 
@@ -376,44 +376,44 @@ EXEC #nsql_it_io 3, :X, :Y
 #[test]
 fn oracle_date_timestamp_boolean_binds_are_native() {
     for_each_oracle(|mut r| {
-    run(
-        &mut r,
-        "VAR d DATE
+        run(
+            &mut r,
+            "VAR d DATE
 VAR ts TIMESTAMP
 VAR b BOOLEAN
 EXEC :d := TO_DATE('2026-09-21 13:45:10','YYYY-MM-DD HH24:MI:SS')
 EXEC :ts := TO_TIMESTAMP('2026-09-21 13:45:10.123456','YYYY-MM-DD HH24:MI:SS.FF')
 ",
-    );
-    let get = |r: &Runner, n: &str| r.engine.vars.get(n).map(|v| v.value.display());
-    assert_eq!(
-        get(&r, "D").as_deref(),
-        Some("2026-09-21 13:45:10"),
-        "시각이 잘리지 않는다"
-    );
-    assert_eq!(get(&r, "TS").as_deref(), Some("2026-09-21 13:45:10.123456"));
-    let ev = run(
+        );
+        let get = |r: &Runner, n: &str| r.engine.vars.get(n).map(|v| v.value.display());
+        assert_eq!(
+            get(&r, "D").as_deref(),
+            Some("2026-09-21 13:45:10"),
+            "시각이 잘리지 않는다"
+        );
+        assert_eq!(get(&r, "TS").as_deref(), Some("2026-09-21 13:45:10.123456"));
+        let ev = run(
         &mut r,
         "SELECT TO_CHAR(:d,'YYYY-MM-DD HH24:MI:SS') AS a, SUBSTR(DUMP(:d), 1, 6) AS t FROM dual;\n",
     );
-    let rs = first_rs(&ev).expect("rs");
-    assert_eq!(rs.rows[0][0].display(), "2026-09-21 13:45:10");
-    // OCI = DATE(Typ=12) · Thin = TIMESTAMP(Typ=18 · oracledb beta.4는 DATE IN 바인드 타입이 없다 · 값은 같다 · docs/110 §6).
-    let typ = rs.rows[0][1].display();
-    if nsql_drivers::oracle_driver() == nsql_drivers::OracleDriver::Thin {
-        assert!(typ == "Typ=12" || typ == "Typ=18", "{typ}");
-    } else {
-        assert_eq!(typ, "Typ=12", "글자가 아니라 DATE로 바인드된다");
-    }
-    run(&mut r, "EXEC :d := :d + 1\n");
-    assert_eq!(get(&r, "D").as_deref(), Some("2026-09-22 13:45:10"));
-    run(&mut r, "BEGIN :b := (1 = 1); END;\n/\n");
-    assert_eq!(get(&r, "B").as_deref(), Some("true"));
-    run(&mut r, "BEGIN :b := NOT :b; END;\n/\n");
-    assert_eq!(get(&r, "B").as_deref(), Some("false"));
-    // 서명 추론: SYS 패키지의 OUT 인자(VARCHAR2 · INTEGER) — 선언 없는 바인드로 받는다.
-    run(&mut r, "EXEC DBMS_OUTPUT.GET_LINE(:LINE, :STATUS)\n");
-    assert_eq!(get(&r, "STATUS").as_deref(), Some("1"));
+        let rs = first_rs(&ev).expect("rs");
+        assert_eq!(rs.rows[0][0].display(), "2026-09-21 13:45:10");
+        // OCI = DATE(Typ=12) · Thin = TIMESTAMP(Typ=18 · oracledb beta.4는 DATE IN 바인드 타입이 없다 · 값은 같다 · docs/110 §6).
+        let typ = rs.rows[0][1].display();
+        if nsql_drivers::oracle_driver() == nsql_drivers::OracleDriver::Thin {
+            assert!(typ == "Typ=12" || typ == "Typ=18", "{typ}");
+        } else {
+            assert_eq!(typ, "Typ=12", "글자가 아니라 DATE로 바인드된다");
+        }
+        run(&mut r, "EXEC :d := :d + 1\n");
+        assert_eq!(get(&r, "D").as_deref(), Some("2026-09-22 13:45:10"));
+        run(&mut r, "BEGIN :b := (1 = 1); END;\n/\n");
+        assert_eq!(get(&r, "B").as_deref(), Some("true"));
+        run(&mut r, "BEGIN :b := NOT :b; END;\n/\n");
+        assert_eq!(get(&r, "B").as_deref(), Some("false"));
+        // 서명 추론: SYS 패키지의 OUT 인자(VARCHAR2 · INTEGER) — 선언 없는 바인드로 받는다.
+        run(&mut r, "EXEC DBMS_OUTPUT.GET_LINE(:LINE, :STATUS)\n");
+        assert_eq!(get(&r, "STATUS").as_deref(), Some("1"));
     });
 }
 
@@ -600,7 +600,10 @@ fn oracle_driver_parity_columns_and_values() {
     nsql_drivers::set_oracle_driver(D::Thin);
     let (oci, thin) = (&per_driver[0].1, &per_driver[1].1);
     for (i, sql) in SQLS.iter().enumerate() {
-        assert_eq!(oci[i].columns, thin[i].columns, "열(이름·타입 글)이 다르다: {sql}");
+        assert_eq!(
+            oci[i].columns, thin[i].columns,
+            "열(이름·타입 글)이 다르다: {sql}"
+        );
         assert_eq!(oci[i].rows, thin[i].rows, "값이 다르다: {sql}");
     }
 }

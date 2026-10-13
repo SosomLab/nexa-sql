@@ -122,7 +122,11 @@ pub(crate) fn wanted(cfg: &Cfg, ctrl: bool) -> Want {
 /// ★ "현재 문장"의 줄 범위를 **딸린 주석까지** 넓힌다(사용자 10-13 "주석 영역의 북마크가 Ctrl에도 안 보인다"): 문장 바로 위의 연속 주석 줄
 /// (`--` 줄 · `/* … */` 블록 · 사이의 빈 줄은 건너뛰되 끝은 주석 줄에서) · 끝의 같은 줄 꼬리 주석은 이미 그 줄이라 그대로.
 /// 그 위의 문장(`;`로 끝나는 코드 줄)이나 코드 줄을 만나면 멈춘다 — 앞 문장의 꼬리 주석을 가져오지 않는다. 순수(`line_at` = 줄 글).
-pub(crate) fn widen_comment_lines(line_at: &dyn Fn(usize) -> String, la: usize, lb: usize) -> (usize, usize) {
+pub(crate) fn widen_comment_lines(
+    line_at: &dyn Fn(usize) -> String,
+    la: usize,
+    lb: usize,
+) -> (usize, usize) {
     let mut top = la;
     let mut l = la;
     let mut in_block = false;
@@ -198,7 +202,11 @@ impl App {
             bm_ctrl: self.bookmarks.enabled && self.settings.flag("bookmark.inline_label_ctrl"),
             desc_always: self.settings.flag("editor.desc_inline") && self.inline_desc_suitable(),
             desc_ctrl: self.settings.flag("editor.desc_inline_ctrl") && self.inline_desc_suitable(),
-            scope: Scope::parse(self.settings.get("editor.inline_ctrl_scope").unwrap_or("statement")),
+            scope: Scope::parse(
+                self.settings
+                    .get("editor.inline_ctrl_scope")
+                    .unwrap_or("statement"),
+            ),
             bm_scope: Scope::parse(
                 self.settings
                     .get("bookmark.inline_label_ctrl_scope")
@@ -323,8 +331,11 @@ impl App {
             }
             if self.objlinks.active && self.objlinks.tab == self.editors.active_id() {
                 if let Some((a, b)) = self.inline_range(sc) {
-                    let what =
-                        What::parse(self.settings.get("editor.desc_inline_what").unwrap_or("both"));
+                    let what = What::parse(
+                        self.settings
+                            .get("editor.desc_inline_what")
+                            .unwrap_or("both"),
+                    );
                     let mut need: Vec<usize> = Vec::new();
                     for k in 0..self.objlinks.links.len() {
                         let l = &self.objlinks.links[k];
@@ -398,55 +409,210 @@ mod tests {
     fn wanted_each_condition_flips_independently() {
         let c = base();
         // 기준: Ctrl 눌림 = 둘 다 현재 문장.
-        assert_eq!(wanted(&c, true), Want { bookmarks: Some(Scope::Statement), descs: Some(Scope::Statement) });
+        assert_eq!(
+            wanted(&c, true),
+            Want {
+                bookmarks: Some(Scope::Statement),
+                descs: Some(Scope::Statement)
+            }
+        );
         // Ctrl 뗌 = 둘 다 없음.
         assert_eq!(wanted(&c, false), Want::default());
         // 북마크 Ctrl 끔 = 북마크만 없음.
-        assert_eq!(wanted(&Cfg { bm_ctrl: false, ..c }, true).bookmarks, None);
-        assert_eq!(wanted(&Cfg { bm_ctrl: false, ..c }, true).descs, Some(Scope::Statement));
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    bm_ctrl: false,
+                    ..c
+                },
+                true
+            )
+            .bookmarks,
+            None
+        );
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    bm_ctrl: false,
+                    ..c
+                },
+                true
+            )
+            .descs,
+            Some(Scope::Statement)
+        );
         // 설명 Ctrl 끔 = 설명만 없음.
-        assert_eq!(wanted(&Cfg { desc_ctrl: false, ..c }, true).descs, None);
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    desc_ctrl: false,
+                    ..c
+                },
+                true
+            )
+            .descs,
+            None
+        );
         // 북마크 상시 = Ctrl 없이도 문서 전체.
-        assert_eq!(wanted(&Cfg { bm_always: true, ..c }, false).bookmarks, Some(Scope::Document));
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    bm_always: true,
+                    ..c
+                },
+                false
+            )
+            .bookmarks,
+            Some(Scope::Document)
+        );
         // 설명 상시 = Ctrl 없이도 범위 키대로.
-        assert_eq!(wanted(&Cfg { desc_always: true, scope: Scope::Visible, ..c }, false).descs, Some(Scope::Visible));
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    desc_always: true,
+                    scope: Scope::Visible,
+                    ..c
+                },
+                false
+            )
+            .descs,
+            Some(Scope::Visible)
+        );
         // 큰 파일 = Ctrl 표시 없음(상시 북마크는 그대로).
         assert_eq!(wanted(&Cfg { large: true, ..c }, true), Want::default());
-        assert_eq!(wanted(&Cfg { large: true, bm_always: true, ..c }, true).bookmarks, Some(Scope::Document));
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    large: true,
+                    bm_always: true,
+                    ..c
+                },
+                true
+            )
+            .bookmarks,
+            Some(Scope::Document)
+        );
         // document 범위 + 부분 분석 = 보이는 영역으로 낮춤 · 부분 아님 = 문서 전체.
         assert_eq!(
-            wanted(&Cfg { scope: Scope::Document, bm_scope: Scope::Document, partial: true, ..c }, true),
-            Want { bookmarks: Some(Scope::Visible), descs: Some(Scope::Visible) }
+            wanted(
+                &Cfg {
+                    scope: Scope::Document,
+                    bm_scope: Scope::Document,
+                    partial: true,
+                    ..c
+                },
+                true
+            ),
+            Want {
+                bookmarks: Some(Scope::Visible),
+                descs: Some(Scope::Visible)
+            }
         );
-        assert_eq!(wanted(&Cfg { scope: Scope::Document, ..c }, true).descs, Some(Scope::Document));
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    scope: Scope::Document,
+                    ..c
+                },
+                true
+            )
+            .descs,
+            Some(Scope::Document)
+        );
         // ★ 용량 단계(사용자 10-13): ≤ full = 그대로 · > full = document → visible(statement·visible은 그대로) · > off = 끔 · 0 = 제한 없음.
-        let big = Cfg { scope: Scope::Document, bm_scope: Scope::Statement, doc_kb: 300, ..c };
-        assert_eq!(wanted(&big, true), Want { bookmarks: Some(Scope::Statement), descs: Some(Scope::Visible) });
-        assert_eq!(wanted(&Cfg { doc_kb: 256, ..big }, true).descs, Some(Scope::Document));
-        assert_eq!(wanted(&Cfg { full_kb: 0, doc_kb: 5000, off_kb: 0, ..big }, true).descs, Some(Scope::Document));
-        assert_eq!(wanted(&Cfg { doc_kb: 3000, ..big }, true), Want::default());
-        assert_eq!(wanted(&Cfg { doc_kb: 3000, bm_always: true, ..big }, true).bookmarks, Some(Scope::Document));
+        let big = Cfg {
+            scope: Scope::Document,
+            bm_scope: Scope::Statement,
+            doc_kb: 300,
+            ..c
+        };
+        assert_eq!(
+            wanted(&big, true),
+            Want {
+                bookmarks: Some(Scope::Statement),
+                descs: Some(Scope::Visible)
+            }
+        );
+        assert_eq!(
+            wanted(&Cfg { doc_kb: 256, ..big }, true).descs,
+            Some(Scope::Document)
+        );
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    full_kb: 0,
+                    doc_kb: 5000,
+                    off_kb: 0,
+                    ..big
+                },
+                true
+            )
+            .descs,
+            Some(Scope::Document)
+        );
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    doc_kb: 3000,
+                    ..big
+                },
+                true
+            ),
+            Want::default()
+        );
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    doc_kb: 3000,
+                    bm_always: true,
+                    ..big
+                },
+                true
+            )
+            .bookmarks,
+            Some(Scope::Document)
+        );
         assert_eq!(Scope::parse("visible"), Scope::Visible);
         assert_eq!(Scope::parse("x"), Scope::Statement);
         // 북마크 범위는 자기 키(`bm_scope`) · 설명 범위는 `scope` — 서로 독립(사용자 10-13).
-        let two = Cfg { bm_scope: Scope::Visible, ..c };
-        assert_eq!(wanted(&two, true), Want { bookmarks: Some(Scope::Visible), descs: Some(Scope::Statement) });
-        assert_eq!(wanted(&Cfg { bm_scope: Scope::Document, partial: true, ..c }, true).bookmarks, Some(Scope::Visible));
+        let two = Cfg {
+            bm_scope: Scope::Visible,
+            ..c
+        };
+        assert_eq!(
+            wanted(&two, true),
+            Want {
+                bookmarks: Some(Scope::Visible),
+                descs: Some(Scope::Statement)
+            }
+        );
+        assert_eq!(
+            wanted(
+                &Cfg {
+                    bm_scope: Scope::Document,
+                    partial: true,
+                    ..c
+                },
+                true
+            )
+            .bookmarks,
+            Some(Scope::Visible)
+        );
     }
 
     /// 현재 문장 = 딸린 주석 줄까지(위 연속 주석 · 빈 줄 건너뜀 · 블록 주석 · 앞 문장의 꼬리 주석은 안 가져온다).
     #[test]
     fn statement_range_widens_to_attached_comment_lines() {
         let doc: Vec<&str> = vec![
-            "SELECT 1 FROM dual; -- 앞 문장 꼬리",  // 0
-            "",                                  // 1
-            "/* 블록",                            // 2
-            "   주석 */",                         // 3
-            "",                                  // 4
+            "SELECT 1 FROM dual; -- 앞 문장 꼬리", // 0
+            "",                                    // 1
+            "/* 블록",                             // 2
+            "   주석 */",                          // 3
+            "",                                    // 4
             "-- 자재 마스터",                      // 5
-            "SELECT *",                          // 6
-            "FROM t",                            // 7
-            ";",                                 // 8
+            "SELECT *",                            // 6
+            "FROM t",                              // 7
+            ";",                                   // 8
         ];
         let line_at = |n: usize| doc.get(n).map_or(String::new(), |s| (*s).to_string());
         assert_eq!(widen_comment_lines(&line_at, 6, 8), (2, 8));
@@ -461,12 +627,23 @@ mod tests {
     #[test]
     fn compose_joins_bookmark_then_descriptions_and_clips() {
         assert_eq!(compose(None, &[], 40), None);
-        assert_eq!(compose(Some("\u{25c6} 급여"), &[], 40).as_deref(), Some("\u{25c6} 급여"));
         assert_eq!(
-            compose(Some("\u{25c6} 급여"), &["사원 이름".into(), "  ".into(), "급여(원)".into()], 40).as_deref(),
+            compose(Some("\u{25c6} 급여"), &[], 40).as_deref(),
+            Some("\u{25c6} 급여")
+        );
+        assert_eq!(
+            compose(
+                Some("\u{25c6} 급여"),
+                &["사원 이름".into(), "  ".into(), "급여(원)".into()],
+                40
+            )
+            .as_deref(),
             Some("\u{25c6} 급여 \u{b7} \u{bb} 사원 이름 \u{b7} \u{bb} 급여(원)")
         );
-        assert_eq!(compose(None, &["설명".into()], 40).as_deref(), Some("\u{bb} 설명"));
+        assert_eq!(
+            compose(None, &["설명".into()], 40).as_deref(),
+            Some("\u{bb} 설명")
+        );
         let long = compose(None, &["가나다라마바사아자차카타파하".into()], 8).expect("clip");
         assert_eq!(long.chars().count(), 8);
         assert!(long.ends_with('\u{2026}'));

@@ -305,7 +305,12 @@ impl ThinSession {
         if matches!(p.ty, VarType::Date | VarType::Timestamp) && timestamp_of(&p.value).is_some() {
             let ts: Option<oracledb::OracleTimestamp> = row.get(idx).map_err(|e| err(&e))?;
             return Ok(ts.map_or(Value::Null, |t| {
-                Value::Str(timestamp_text(&t, if p.ty == VarType::Date { 0 } else { 9 }, false, true))
+                Value::Str(timestamp_text(
+                    &t,
+                    if p.ty == VarType::Date { 0 } else { 9 },
+                    false,
+                    true,
+                ))
             }));
         }
         if p.ty == VarType::Boolean && bool_of(&p.value).is_some() {
@@ -440,7 +445,11 @@ impl Session for ThinSession {
         // 그 오류를 **제약 안내**로 바꾼다(호스트는 메시지의 `driver limitation: implicit-results`로 Warning 토스트를 올린다).
         let implicit = contains_ci(&req.sql, "RETURN_RESULT");
         let limit_err = |e: DbError| -> DbError {
-            if implicit && e.message.to_ascii_lowercase().contains("unknown ttc message type") {
+            if implicit
+                && e.message
+                    .to_ascii_lowercase()
+                    .contains("unknown ttc message type")
+            {
                 DbError {
                     code: None,
                     message: format!(
@@ -726,10 +735,14 @@ fn wrap_ddl(sql: &str) -> Result<String, DbError> {
         .find(|(_, c)| !body.contains(&format!("{c}'")))
         .ok_or_else(|| DbError {
             code: None,
-            message: format!("{DRIVER_NAME}: cannot wrap DDL - every q-string delimiter appears in the text"),
+            message: format!(
+                "{DRIVER_NAME}: cannot wrap DDL - every q-string delimiter appears in the text"
+            ),
             position: None,
         })?;
-    Ok(format!("BEGIN EXECUTE IMMEDIATE q'{open}{body}{close}'; END;"))
+    Ok(format!(
+        "BEGIN EXECUTE IMMEDIATE q'{open}{body}{close}'; END;"
+    ))
 }
 
 /// OUT 바인드 행에서 이름(대소문자 무시)의 자리.
@@ -818,7 +831,8 @@ fn cell_value(row: &Row, i: usize, m: &Metadata, tz: (i8, i8)) -> Result<Value, 
                 // `CAST(3 AS FLOAT)` OCI Float(3.0) / Thin Int(3)). 제약 없는 NUMBER(precision 0)는 글 그대로(Int/Decimal).
                 Some(n) if m.scale() == -127 && m.precision() > 0 => {
                     let text = n.to_string();
-                    text.parse::<f64>().map_or_else(|_| number_value(&text), Value::Float)
+                    text.parse::<f64>()
+                        .map_or_else(|_| number_value(&text), Value::Float)
                 }
                 Some(n) => number_value(&n.to_string()),
             }
@@ -843,7 +857,11 @@ fn cell_value(row: &Row, i: usize, m: &Metadata, tz: (i8, i8)) -> Result<Value, 
             match row.get::<Option<oracledb::OracleTimestamp>>(i).map_err(e)? {
                 None => Value::Null,
                 Some(ts) => {
-                    let digits = if t == "DB_TYPE_DATE" { 0 } else { m.scale().clamp(0, 9) as u32 };
+                    let digits = if t == "DB_TYPE_DATE" {
+                        0
+                    } else {
+                        m.scale().clamp(0, 9) as u32
+                    };
                     if t == "DB_TYPE_TIMESTAMP_LTZ" {
                         // LTZ = UTC + 오프셋 없음으로 온다 → 세션 시간대로 옮기고 OCI처럼 오프셋 라벨까지.
                         let local = oracledb::OracleTimestamp::new_timestamp_tz(
@@ -859,16 +877,27 @@ fn cell_value(row: &Row, i: usize, m: &Metadata, tz: (i8, i8)) -> Result<Value, 
                         );
                         Value::Str(timestamp_text(&local, digits, true, false))
                     } else {
-                        Value::Str(timestamp_text(&ts, digits, t == "DB_TYPE_TIMESTAMP_TZ", false))
+                        Value::Str(timestamp_text(
+                            &ts,
+                            digits,
+                            t == "DB_TYPE_TIMESTAMP_TZ",
+                            false,
+                        ))
                     }
                 }
             }
         }
-        "DB_TYPE_INTERVAL_DS" => match row.get::<Option<oracledb::OracleIntervalDS>>(i).map_err(e)? {
+        "DB_TYPE_INTERVAL_DS" => match row
+            .get::<Option<oracledb::OracleIntervalDS>>(i)
+            .map_err(e)?
+        {
             None => Value::Null,
             Some(v) => Value::Str(interval_ds_text(&v, m.precision(), m.scale())),
         },
-        "DB_TYPE_INTERVAL_YM" => match row.get::<Option<oracledb::OracleIntervalYM>>(i).map_err(e)? {
+        "DB_TYPE_INTERVAL_YM" => match row
+            .get::<Option<oracledb::OracleIntervalYM>>(i)
+            .map_err(e)?
+        {
             None => Value::Null,
             Some(v) => Value::Str(interval_ym_text(&v, m.precision())),
         },
@@ -914,10 +943,7 @@ fn timestamp_text(t: &oracledb::OracleTimestamp, digits: u32, with_tz: bool, tri
             }
         }
     }
-    let mut s = format!(
-        "{y}-{mo:02}-{d:02} {h:02}:{mi:02}:{:02}",
-        t.second()
-    );
+    let mut s = format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}:{:02}", t.second());
     if trim {
         if t.nanoseconds() != 0 {
             let frac = format!("{:09}", t.nanoseconds());
@@ -977,7 +1003,8 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// `INTERVAL DAY TO SECOND` 글 — ODPI-C `IntervalDS` Display 거울(`+DD HH:MM:SS.ffffff` · 일 자릿수 = 선행 정밀도 · 소수 = 초 정밀도).
 fn interval_ds_text(v: &oracledb::OracleIntervalDS, lfprec: u8, fsprec: i8) -> String {
-    let neg = v.days() < 0 || v.hours() < 0 || v.minutes() < 0 || v.seconds() < 0 || v.nanoseconds() < 0;
+    let neg =
+        v.days() < 0 || v.hours() < 0 || v.minutes() < 0 || v.seconds() < 0 || v.nanoseconds() < 0;
     let mut s = String::from(if neg { "-" } else { "+" });
     let days = v.days().abs();
     s.push_str(&match lfprec {
@@ -1034,11 +1061,13 @@ fn coerce(ty: &VarType, s: Option<String>) -> Value {
     match s {
         None => Value::Null,
         Some(s) => match ty {
-            VarType::Number | VarType::BinaryFloat | VarType::BinaryDouble => match s.parse::<i64>() {
-                Ok(i) => Value::Int(i),
-                Err(_) if s.trim().parse::<f64>().is_ok() => Value::Decimal(s),
-                Err(_) => Value::Str(s),
-            },
+            VarType::Number | VarType::BinaryFloat | VarType::BinaryDouble => {
+                match s.parse::<i64>() {
+                    Ok(i) => Value::Int(i),
+                    Err(_) if s.trim().parse::<f64>().is_ok() => Value::Decimal(s),
+                    Err(_) => Value::Str(s),
+                }
+            }
             VarType::Auto => match s.parse::<i64>() {
                 Ok(i) => Value::Int(i),
                 Err(_) => Value::Str(s),
@@ -1186,8 +1215,14 @@ mod tests {
             Value::Str("Number to String".into())
         );
         assert_eq!(coerce(&VarType::Auto, Some("7".into())), Value::Int(7));
-        assert_eq!(coerce(&VarType::Auto, Some("x".into())), Value::Str("x".into()));
-        assert_eq!(coerce(&VarType::Varchar2(10), Some("5".into())), Value::Str("5".into()));
+        assert_eq!(
+            coerce(&VarType::Auto, Some("x".into())),
+            Value::Str("x".into())
+        );
+        assert_eq!(
+            coerce(&VarType::Varchar2(10), Some("5".into())),
+            Value::Str("5".into())
+        );
         assert_eq!(coerce(&VarType::Number, None), Value::Null);
     }
 
@@ -1195,7 +1230,10 @@ mod tests {
     fn iso_timestamp_text_mirrors_odpi_display() {
         let t = parse_iso_timestamp("2026-09-21 13:45:10.5").expect("iso");
         assert_eq!(timestamp_text(&t, 0, false, false), "2026-09-21 13:45:10");
-        assert_eq!(timestamp_text(&t, 6, false, false), "2026-09-21 13:45:10.500000");
+        assert_eq!(
+            timestamp_text(&t, 6, false, false),
+            "2026-09-21 13:45:10.500000"
+        );
         assert_eq!(timestamp_text(&t, 9, false, true), "2026-09-21 13:45:10.5");
         let d = parse_iso_timestamp("2026-01-02").expect("date");
         assert_eq!(timestamp_text(&d, 0, false, false), "2026-01-02 00:00:00");
@@ -1208,12 +1246,22 @@ mod tests {
     #[test]
     fn timestamp_tz_is_shifted_from_utc_to_local_label() {
         // 서버가 보낸 UTC 04:45 + 오프셋 +09:00 → 지역 13:45(OCI와 같은 글) · 날짜 넘김도.
-        let t = oracledb::OracleTimestamp::new_timestamp_tz(2026, 9, 21, 4, 45, 10, 500_000_000, 9, 0);
-        assert_eq!(timestamp_text(&t, 9, true, false), "2026-09-21 13:45:10.500000000 +09:00");
+        let t =
+            oracledb::OracleTimestamp::new_timestamp_tz(2026, 9, 21, 4, 45, 10, 500_000_000, 9, 0);
+        assert_eq!(
+            timestamp_text(&t, 9, true, false),
+            "2026-09-21 13:45:10.500000000 +09:00"
+        );
         let late = oracledb::OracleTimestamp::new_timestamp_tz(2026, 12, 31, 20, 0, 0, 0, 9, 0);
-        assert_eq!(timestamp_text(&late, 0, true, false), "2027-01-01 05:00:00 +09:00");
+        assert_eq!(
+            timestamp_text(&late, 0, true, false),
+            "2027-01-01 05:00:00 +09:00"
+        );
         let neg = oracledb::OracleTimestamp::new_timestamp_tz(2026, 1, 1, 2, 30, 0, 0, -5, -30);
-        assert_eq!(timestamp_text(&neg, 0, true, false), "2025-12-31 21:00:00 -05:30");
+        assert_eq!(
+            timestamp_text(&neg, 0, true, false),
+            "2025-12-31 21:00:00 -05:30"
+        );
         assert_eq!(civil_from_days(days_from_civil(2024, 2, 29)), (2024, 2, 29));
         assert_eq!(days_from_civil(1970, 1, 1), 0);
         assert_eq!(parse_tz_offset("+09:00"), Some((9, 0)));
@@ -1238,13 +1286,19 @@ mod tests {
         assert!(w.starts_with("BEGIN EXECUTE IMMEDIATE q'["), "{w}");
         assert!(w.ends_with("END]'; END;"), "{w}");
         // 본문에 `]'`가 있으면 다음 구분자.
-        let w2 = wrap_ddl("CREATE TRIGGER x BEFORE INSERT ON t FOR EACH ROW BEGIN :NEW.a := q'[a]'; END;").expect("wrap");
+        let w2 = wrap_ddl(
+            "CREATE TRIGGER x BEFORE INSERT ON t FOR EACH ROW BEGIN :NEW.a := q'[a]'; END;",
+        )
+        .expect("wrap");
         assert!(w2.starts_with("BEGIN EXECUTE IMMEDIATE q'{"), "{w2}");
     }
 
     #[test]
     fn implicit_results_are_detected_by_text() {
-        assert!(contains_ci("begin dbms_sql.return_result(:c); end;", "RETURN_RESULT"));
+        assert!(contains_ci(
+            "begin dbms_sql.return_result(:c); end;",
+            "RETURN_RESULT"
+        ));
         assert!(!contains_ci("select 1 from dual", "RETURN_RESULT"));
     }
 

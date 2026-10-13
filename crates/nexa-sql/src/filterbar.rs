@@ -526,7 +526,9 @@ impl FilterBar {
         if crate::app::input::trace_input()
             && matches!(
                 ev,
-                InputEvent::MouseDown { .. } | InputEvent::MouseUp { .. } | InputEvent::RightDown { .. }
+                InputEvent::MouseDown { .. }
+                    | InputEvent::MouseUp { .. }
+                    | InputEvent::RightDown { .. }
             )
         {
             eprintln!(
@@ -760,7 +762,11 @@ impl FilterBar {
         let r = px(6.0);
         dc.fill_round_rect(fb, r, th.field_bg);
         // ★ 상자의 hover/포커스 덧칠을 **틀 전체**에(토글 자리 포함) — 상자만 회색이 되고 토글 쪽은 흰색이라 갈라져 보였다(사용자 10-13).
-        let hov = if enabled { self.tb.hover_overlay_alpha() } else { 0.0 };
+        let hov = if enabled {
+            self.tb.hover_overlay_alpha()
+        } else {
+            0.0
+        };
         if hov > 0.0 {
             dc.fill_round_rect_alpha(fb, r, th.text, hov);
         }
@@ -950,7 +956,10 @@ mod search_anim_tests {
         assert!(f.popup_takes(&again));
         f.on_event(&again, &mut inv);
         assert!(!f.popup_open(), "상자 재클릭 = 닫힘(토글)");
-        assert!(f.popup_keeps(&again), "상자 누름은 틀이 처리했다 = 담는 쪽 끝");
+        assert!(
+            f.popup_keeps(&again),
+            "상자 누름은 틀이 처리했다 = 담는 쪽 끝"
+        );
         f.on_event(&InputEvent::MouseUp { x: ix, y: iy }, &mut inv);
         assert!(!f.popup_open(), "놓임에 다시 열리지 않는다");
         f.on_event(&click(ix, iy), &mut inv);

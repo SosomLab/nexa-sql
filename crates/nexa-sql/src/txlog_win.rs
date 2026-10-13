@@ -310,7 +310,8 @@ impl TxLogWin {
                         let (x, y) = self.cursor;
                         let host = self.table;
                         self.menu.set_scale(self.scale);
-                        crate::menu_icons::open_at(&mut self.menu, 
+                        crate::menu_icons::open_at(
+                            &mut self.menu,
                             x,
                             y,
                             vec![

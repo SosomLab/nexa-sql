@@ -280,7 +280,11 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             LogKind::Info,
             format!(
                 "{driver}: driver limitations: {}",
-                limits.iter().map(|l| l.code()).collect::<Vec<_>>().join(", ")
+                limits
+                    .iter()
+                    .map(|l| l.code())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         )],
         RunEvent::Connected {

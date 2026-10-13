@@ -10,7 +10,14 @@ use nexa_ctl::controls::ctxmenu::{menu_icons_enabled, ContextMenu, CtxItem, Menu
 use nexa_ctl::geom::Rect;
 
 /// 모든 우클릭 메뉴의 열기 입구 — 아이콘을 붙인 뒤 `ContextMenu::open_at`.
-pub(crate) fn open_at(menu: &mut ContextMenu, x: i32, y: i32, items: Vec<CtxItem>, host: Rect, text_w: i32) {
+pub(crate) fn open_at(
+    menu: &mut ContextMenu,
+    x: i32,
+    y: i32,
+    items: Vec<CtxItem>,
+    host: Rect,
+    text_w: i32,
+) {
     menu.open_at(x, y, decorate(items), host, text_w);
 }
 
@@ -63,8 +70,17 @@ fn decorate_one(it: CtxItem) -> CtxItem {
 pub(crate) fn icon_for(id: &str) -> Option<MenuIcon> {
     let exact = match id {
         // 복사·편집
-        "copy" | "edit.copy" | "copy_cs" | "copy_file" | "copy_bound" | "combo_item" | "combo_list" | "dup"
-        | "objlink.copy_desc" | "objlink.copy_name_desc" | "bookmark.copy" => ti::mi_copy(),
+        "copy"
+        | "edit.copy"
+        | "copy_cs"
+        | "copy_file"
+        | "copy_bound"
+        | "combo_item"
+        | "combo_list"
+        | "dup"
+        | "objlink.copy_desc"
+        | "objlink.copy_name_desc"
+        | "bookmark.copy" => ti::mi_copy(),
         "copy_name" => ti::mi_description(),
         "copy_path" => ti::mi_link(),
         "copy_csv" => ti::mi_csv(),
@@ -73,7 +89,9 @@ pub(crate) fn icon_for(id: &str) -> Option<MenuIcon> {
         "copy_txt" => ti::mi_text(),
         "cut" | "edit.cut" => ti::mi_cut(),
         "paste" | "edit.paste" => ti::mi_paste(),
-        "all" | "select_all" | "edit.select_all" | "bookmark.select_all" | "doc.select" => ti::mi_select_all(),
+        "all" | "select_all" | "edit.select_all" | "bookmark.select_all" | "doc.select" => {
+            ti::mi_select_all()
+        }
         "edit.undo" | "undo" => ti::mi_undo()?,
         "edit.redo" | "redo" => ti::mi_redo()?,
         // 실행(툴바 ▾ 메뉴 · 같은 그림)
@@ -84,24 +102,30 @@ pub(crate) fn icon_for(id: &str) -> Option<MenuIcon> {
         "run.rollback" => ti::mi_rollback()?,
         "run.explain" => ti::mi_data_object(),
         // 탭·창
-        "close" | "close_all" | "close_left" | "close_right" | "close_others" | "file.close_tab" | "guard_discard"
-        | "guard_cancel" => ti::mi_close(),
+        "close" | "close_all" | "close_left" | "close_right" | "close_others"
+        | "file.close_tab" | "guard_discard" | "guard_cancel" => ti::mi_close(),
         "keep_open" => ti::mi_push_pin(),
         "rename" | "grp.rename" | "tab.rename" => ti::mi_edit(),
         "open" | "doc.open" | "file.open" | "open_bound" | "reveal" => ti::mi_folder_open(),
-        "reveal_project" | "reveal_object" | "objlink.reveal" | "project.reveal" => ti::mi_my_location(),
+        "reveal_project" | "reveal_object" | "objlink.reveal" | "project.reveal" => {
+            ti::mi_my_location()
+        }
         "first" | "go_first" => ti::mi_first_page(),
         "last" | "go_last" => ti::mi_last_page(),
         // 지우기·새로 만들기·저장
-        "remove" | "remove_invalid" | "doc.remove" | "drop" | "drop_all" | "delete" | "clear" | "bookmark.clear_doc"
-        | "edit.delete_line" => ti::mi_delete(),
+        "remove" | "remove_invalid" | "doc.remove" | "drop" | "drop_all" | "delete" | "clear"
+        | "bookmark.clear_doc" | "edit.delete_line" => ti::mi_delete(),
         "new" | "new_group" | "file.new" | "newtab" | "tab" => ti::mi_add(),
         "save" | "file.save" | "file.save_as" | "guard_save" => ti::mi_save(),
         // 설정·초기화
         "settings" | "sb.settings" | "tb.settings" | "edit.prefs" => ti::mi_gear(),
-        "sb.reset" | "tb.reset" | "view.layout_reset" | "view.toolbar_reset" | "reset" => ti::mi_restart(),
+        "sb.reset" | "tb.reset" | "view.layout_reset" | "view.toolbar_reset" | "reset" => {
+            ti::mi_restart()
+        }
         // 접속·세션
-        "refresh" | "again" | "intel.refresh" | "intel.refresh_all" | "intel.refresh_server" => ti::mi_refresh(),
+        "refresh" | "again" | "intel.refresh" | "intel.refresh_all" | "intel.refresh_server" => {
+            ti::mi_refresh()
+        }
         "use" => ti::mi_check(),
         "connect" | "conn.toggle" => ti::mi_connect(),
         "disconnect" | "conn.disconnect" => ti::mi_disconnect(),
@@ -109,14 +133,13 @@ pub(crate) fn icon_for(id: &str) -> Option<MenuIcon> {
         "sort.asc" => ti::mi_arrow_up(),
         "sort.desc" => ti::mi_arrow_down(),
         "filter.values" | "filter" | "cond" => ti::mi_filter(),
-        "sql_select" | "sql_insert" | "sql_update" | "sql_delete" | "sql_merge" | "sql" | "copy_sql" | "source"
-        | "body" => ti::mi_code(),
+        "sql_select" | "sql_insert" | "sql_update" | "sql_delete" | "sql_merge" | "sql"
+        | "copy_sql" | "source" | "body" => ti::mi_code(),
         "adv" => ti::mi_copy(),
         "grid.edit.view_value" | "view_value" => ti::mi_visibility(),
         // 북마크
-        "bookmark.toggle" | "bmg.toggle" | "bmg.view" | "bookmark.next" | "bookmark.prev" | "view.bookmarks" => {
-            ti::mi_bookmark()
-        }
+        "bookmark.toggle" | "bmg.toggle" | "bmg.view" | "bookmark.next" | "bookmark.prev"
+        | "view.bookmarks" => ti::mi_bookmark(),
         "bookmark.label" | "label" => ti::mi_label(),
         "view.output" | "output" => ti::mi_terminal(),
         _ => return by_rule(id),
@@ -167,11 +190,28 @@ mod tests {
     #[test]
     fn common_ids_get_icons_and_boost_skips_them() {
         nexa_ctl::controls::set_menu_icons(true);
-        for id in ["copy", "close", "rename", "reveal", "remove", "settings", "sb.reset", "filter.contains", "cond.eq", "sort.asc", "keep_open", "copy_path"] {
+        for id in [
+            "copy",
+            "close",
+            "rename",
+            "reveal",
+            "remove",
+            "settings",
+            "sb.reset",
+            "filter.contains",
+            "cond.eq",
+            "sort.asc",
+            "keep_open",
+            "copy_path",
+        ] {
             assert!(icon_for(id).is_some(), "{id}");
         }
         assert!(icon_for("something.unknown").is_none());
-        let items = vec![CtxItem::item("copy", "복사"), CtxItem::Separator, CtxItem::item("x", "모름")];
+        let items = vec![
+            CtxItem::item("copy", "복사"),
+            CtxItem::Separator,
+            CtxItem::item("x", "모름"),
+        ];
         let d = decorate(items);
         assert!(matches!(&d[0], CtxItem::Item { icon: Some(_), .. }));
         assert!(matches!(&d[2], CtxItem::Item { icon: None, .. }));

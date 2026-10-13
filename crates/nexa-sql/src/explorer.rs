@@ -2987,7 +2987,10 @@ impl Explorer {
         // 전용 세션 연결 행 = 툴팁에 탭 이름 목록(사용자 10-13 "연결된 탭의 이름은 툴팁에만").
         if matches!(n.kind, NodeKind::Root) && !self.private_tabs.is_empty() {
             text.push('\n');
-            text.push_str(&tf(Msg::ExpPrivateTabList, &[&self.private_tabs.join(", ")]));
+            text.push_str(&tf(
+                Msg::ExpPrivateTabList,
+                &[&self.private_tabs.join(", ")],
+            ));
         }
         if let LoadState::Error(e) = &n.state {
             text.push('\n');

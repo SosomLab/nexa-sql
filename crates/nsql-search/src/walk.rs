@@ -133,15 +133,14 @@ pub(crate) fn walk(roots: &[PathBuf], opts: &WalkOpts, cancel: &AtomicBool, hook
         .chain(opts.excludes.iter().map(String::as_str))
         .collect();
     // 포함 패턴(사용자 09-23 "특정 확장자만 조회") — 파일에만 · 하나라도 맞아야 읽는다.
-    let include: Option<IgnoreNode> = (!opts.includes.is_empty())
-        .then(|| {
-            IgnoreNode::from_lines_fold(
-                opts.includes.iter().map(String::as_str),
-                0,
-                None,
-                !opts.pattern_case,
-            )
-        });
+    let include: Option<IgnoreNode> = (!opts.includes.is_empty()).then(|| {
+        IgnoreNode::from_lines_fold(
+            opts.includes.iter().map(String::as_str),
+            0,
+            None,
+            !opts.pattern_case,
+        )
+    });
     let included = |comps: &[&str]| include.as_ref().is_none_or(|n| n.is_ignored(comps, false));
 
     for root in roots {

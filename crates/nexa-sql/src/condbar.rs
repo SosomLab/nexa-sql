@@ -443,7 +443,11 @@ impl CondBar {
     pub(crate) fn popup_bounds(&self) -> Rect {
         let mut r = self.tb.popup_bounds();
         if self.menu.is_open() {
-            r = if r.w > 0 { r.union(&self.menu.bounds()) } else { self.menu.bounds() };
+            r = if r.w > 0 {
+                r.union(&self.menu.bounds())
+            } else {
+                self.menu.bounds()
+            };
         }
         if r.w > 0 {
             // 소유 상자 포함(상자 클릭 = 다른 영역이 아니다 · 10-13).
@@ -621,7 +625,8 @@ impl CondBar {
             .map(|c| CtxItem::item(c.clone(), c.clone()))
             .collect();
         self.menu.set_scale(self.scale);
-        crate::menu_icons::open_at(&mut self.menu, 
+        crate::menu_icons::open_at(
+            &mut self.menu,
             x.max(self.rect.x),
             y,
             entries,

@@ -353,7 +353,12 @@ impl BookmarksPanel {
         );
         let list_top = y1 + ih + px(GAP_Y);
         // 오른쪽 테두리 한 줄(`b.right() - 1`)은 목록 밖 — 머리·선택 행 배경이 스플리터 선을 덮지 않게(사용자 10-13 · 패널 공통).
-        self.list_rect = Rect::new(b.x, list_top, (b.w - 1).max(0), (b.bottom() - list_top).max(0));
+        self.list_rect = Rect::new(
+            b.x,
+            list_top,
+            (b.w - 1).max(0),
+            (b.bottom() - list_top).max(0),
+        );
         self.menu.set_scale(scale);
         self.clamp_scroll();
     }
@@ -763,7 +768,9 @@ impl BookmarksPanel {
         let mut inv = Invalidations::default();
         // ★ 필터 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
         // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
-        if self.filter.popup_open() && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. }) {
+        if self.filter.popup_open()
+            && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. })
+        {
             if self.filter.on_event(ev, &mut inv) == FilterEvent::Changed {
                 self.filter_text = self.filter.text();
                 self.rebuild();

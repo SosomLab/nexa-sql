@@ -1511,7 +1511,13 @@ mod act_icon_tests {
             for y in (0..ic.h).step_by(step as usize) {
                 for x in (0..ic.w).step_by(step as usize) {
                     let a = ic.alpha[(y * ic.w + x) as usize];
-                    art.push(if a > 128 { '#' } else if a > 32 { '+' } else { '.' });
+                    art.push(if a > 128 {
+                        '#'
+                    } else if a > 32 {
+                        '+'
+                    } else {
+                        '.'
+                    });
                 }
                 art.push('\n');
             }

@@ -1649,7 +1649,8 @@ impl ConnWin {
             };
             let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
             self.menu.set_scale(self.scale);
-            crate::menu_icons::open_at(&mut self.menu, 
+            crate::menu_icons::open_at(
+                &mut self.menu,
                 x,
                 y,
                 vec![
@@ -2206,7 +2207,8 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                crate::menu_icons::open_at(&mut self.menu, 
+                crate::menu_icons::open_at(
+                    &mut self.menu,
                     x,
                     y,
                     vec![
@@ -2254,7 +2256,8 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                crate::menu_icons::open_at(&mut self.menu, 
+                crate::menu_icons::open_at(
+                    &mut self.menu,
                     x,
                     y,
                     vec![CtxItem::item("new", t(Msg::BtnNew))],
@@ -2277,7 +2280,8 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                crate::menu_icons::open_at(&mut self.menu, 
+                crate::menu_icons::open_at(
+                    &mut self.menu,
                     x,
                     y,
                     {

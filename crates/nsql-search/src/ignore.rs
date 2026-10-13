@@ -108,7 +108,8 @@ fn path_match(segs: &[String], comps: &[&str], fold: bool) -> bool {
         }
         Some((first, rest)) => match comps.split_first() {
             Some((c, crest)) => {
-                seg_match_fold(first.as_bytes(), c.as_bytes(), fold) && path_match(rest, crest, fold)
+                seg_match_fold(first.as_bytes(), c.as_bytes(), fold)
+                    && path_match(rest, crest, fold)
             }
             None => false,
         },

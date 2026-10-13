@@ -334,7 +334,13 @@ impl LogWin {
         ];
         let host = self.viewport();
         crate::menu_icons::open_at(
-            &mut self.menu, x, y, items, host, (self.row_h * 10).max(160));
+            &mut self.menu,
+            x,
+            y,
+            items,
+            host,
+            (self.row_h * 10).max(160),
+        );
         self.redraw();
     }
 
