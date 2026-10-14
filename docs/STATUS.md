@@ -2,7 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-14](journal/2026-10-14.md)**(125차 win = 최신화 eb433c6/5ca88c8 · V2 ✓ · 배포 전 V3 = 제품 결함 0 · 시험 자산 6 = T-346 · 🚀 v0.2.0 공개 01:57:36Z · Homebrew·pkg 자동 · winget·choco 제외) · 그 전 = [journal 2026-10-13 §31](journal/2026-10-13.md)(124차 Linux).
+> ★ **다음 세션 시작점 = [journal 2026-10-14 §4](journal/2026-10-14.md)**(126차 win = 🔧 PG 연결 아이콘 Db2 오인 = 힌트 부분 문자열 `matrixdb2` → 낱말 경계 + 방언 제품군 제한 · dbms_icons 3/3) · 그 전 = §1~§3(125차 win · 🚀 v0.2.0 공개 · V3 제품 결함 0 · T-346).
+
+## 2026-10-14 저녁 (126차 · **win** · 협업 쌍 = 개발 nexa-sql-99 × 협업 nexa-sql-07 · [journal 10-14 §4](journal/2026-10-14.md))
+
+- 🔧 **PG 연결(Repository · …/matrixdb2) 아이콘이 Db2**(사용자 실기) = `dbms_icons::pick` 힌트가 부분 문자열(`contains("db2")`)이라 DB 이름에 걸리고 방언보다 앞섬 → 낱말 경계 `has_keyword` + 방언 제품군 안에서만 `hint_allowed` · 단언 12 추가 · 3/3.
+- 아이콘 크기 지적 = 그리는 px 동일 · PNG 타일 100 % · 차이는 그림 밀도(Db2 = 전체 칠) → 수정 없음.
+- V2 = clippy 0 · fmt ✓ · Release 6m45s · Debug PID 15404(사용자 실제 설정) · 풀 테스트 = 125차 V3 인정.
 
 ## 2026-10-14 (125차 · **win** · 협업 쌍 = 개발 nexa-sql-c3 × 협업 nexa-sql-e0 · [journal 10-14](journal/2026-10-14.md))
 

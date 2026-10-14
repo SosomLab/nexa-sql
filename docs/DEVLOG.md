@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-14 저녁 (126차 · win · 협업 쌍)** — 🔧 PG 연결 아이콘이 Db2(힌트 `contains("db2")`가 DB 이름 `matrixdb2`에 걸림) → `dbms_icons` 낱말 경계 + 방언 제품군 제한 · 단언 12 · 3/3 · clippy 0 · 아이콘 크기 지적 = 그림 밀도 차이(수정 없음).
 - **2026-10-14 (125차 · win · 협업 쌍 · 🚀 v0.2.0)** — 최신화(eb433c6 · nexa-ui 5ca88c8) · V2 631/0 · 892/0 · clippy 0 · 배포 전 V3 = 제품 결함 0(win-func-check 96/96 · E2E 8종 ✓ · oracle-ddl Thin·OCI 67/0 · 실패 6 = 시험 자산 T-346) · 버전 0.2.0(Thin 기본 = 마이너) · 커밋 b8e16c5 · 태그 v0.2.0 · winget·choco 제외 유지.
 - **2026-10-13 (124차 · Linux · 협업 쌍)** — 저장소 최신화(nexa-sql b4f41b7 → 3260a05 12커밋 · nexa-ui → a76e4e9 203~205차) · P0 Debug 5m12s 경고 0(cmake·nasm 없이 aws-lc-rs ✓ · PID 11565) · Release 8m43s 경고 0 · 시험 895/0 · clippy 0 · 크기 GUI 25.69 MB(+5.3) · nsql 13.48 MB(+4.5) · BISCM CLI Thin 0.50 s / OCI 0.74 s · 동일성 E2E Linux 첫 실행 19/0 · 121·122차 E2E 14/4/1 → 보정 뒤 18/0/1 · 기능별 점검 소스 수정 7묶음(Thin 트리거 `END;` 등) · V2 450/0 · parity 재실행 22/0 · Thin DDL 전수 67/0 · 캡처 4장 · 기능 점검 85/0(Release) · 실행 비트 재발(parity 스크립트 · T-328 메모) · Linux 실기 후보.
 - **2026-10-13 (123차 · mac · 협업 쌍)** — 저장소 최신화(nexa-sql 87b8321 → b79db0e 14커밋 · nexa-ui → aebba67 200~205차) · 맥 검증 = Debug 3m44s · Release 5m59s 경고 0 · 크기 GUI 22.0 MB(+4.1) · nsql 12.3 MB(+4.0) · clippy 0 · 시험 nexa-sql 894/0 · nexa-ui 629/1(nexa-font `map_font` TOCTOU = T-344) · BISCM CLI Thin 1.10 s · OCI 2.38 s(미도달 76 s vs 63 s = T-345) · 변경 분석(맥 첫 실행 후보 · 미소비 API 0 · D-273~289).

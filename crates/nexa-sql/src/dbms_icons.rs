@@ -40,6 +40,43 @@ const HINTS: &[(&str, &str)] = &[
 /// `rds` …)는 프로필 이름과 우연히 겹치기 쉬워 이 길이부터만 본다.
 const WORD_MATCH_MIN: usize = 5;
 
+/// 방언을 아는 연결에서 힌트가 바꿀 수 있는 제품 = **그 방언으로 접속하는 제품군**뿐(사용자 10-14 · PG 접속의 DB 이름
+/// `matrixdb2`가 `db2`에 걸려 Db2 그림이 나오던 결함). 방언이 제품을 확정하면(Oracle · SQL Server · SQLite · PG) 힌트는
+/// 무시하고, MySQL 방언만 MariaDB로 바뀔 수 있다. ODBC · 미접속은 전부 허용.
+fn hint_allowed(dialect: Option<Dialect>, id: &str) -> bool {
+    match dialect {
+        Some(Dialect::Mysql) => matches!(id, "mysql" | "mariadb"),
+        Some(Dialect::Oracle) => id == "oracle",
+        Some(Dialect::Mssql) => id == "sqlserver",
+        Some(Dialect::Postgres) => id == "postgresql",
+        Some(Dialect::Sqlite) => id == "sqlite",
+        Some(Dialect::Odbc) | None => true,
+        #[allow(unreachable_patterns)]
+        Some(_) => true,
+    }
+}
+
+/// 힌트 글(소문자)에 키워드가 **낱말 경계**로 들어 있는가 — 부분 문자열이면 `matrixdb2` ⊃ `db2`처럼 DB 이름 안에서 걸린다.
+/// 키워드 자체는 공백을 품을 수 있다(`sql server`).
+fn has_keyword(h: &str, kw: &str) -> bool {
+    let b = h.as_bytes();
+    let mut from = 0;
+    while let Some(i) = h[from..].find(kw) {
+        let st = from + i;
+        let en = st + kw.len();
+        let before_ok = st == 0 || !b[st - 1].is_ascii_alphanumeric();
+        let after_ok = en >= b.len() || !b[en].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = st + 1;
+        if from >= h.len() {
+            break;
+        }
+    }
+    false
+}
+
 fn entry(id: &str) -> Option<&'static (&'static str, [&'static [u8]; 4])> {
     TABLE
         .binary_search_by(|(n, _)| (*n).cmp(id))
@@ -47,10 +84,14 @@ fn entry(id: &str) -> Option<&'static (&'static str, [&'static [u8]; 4])> {
         .map(|i| &TABLE[i])
 }
 
-/// 방언 + 제품 힌트(프로필 이름 · 접속 설명 · 소문자 비교) → 아이콘 id. 힌트 → 방언 → (ODBC·미접속이면 낱말 = id) → `generic`.
+/// 방언 + 제품 힌트(프로필 이름 · 접속 설명 · 소문자 비교) → 아이콘 id. 힌트(낱말 경계 · 방언의 제품군 안에서만) → 방언 →
+/// (ODBC·미접속이면 낱말 = id) → `generic`.
 pub(crate) fn pick(dialect: Option<Dialect>, hint: &str) -> &'static str {
     let h = hint.to_ascii_lowercase();
-    if let Some((_, n)) = HINTS.iter().find(|(kw, _)| h.contains(kw)) {
+    if let Some((_, n)) = HINTS
+        .iter()
+        .find(|(kw, id)| hint_allowed(dialect, id) && has_keyword(&h, kw))
+    {
         return n;
     }
     match dialect {
@@ -192,6 +233,30 @@ mod tests {
         );
         // 방언을 아는 연결은 낱말 일치로 뒤집히지 않는다(프로필 이름 우연 일치).
         assert_eq!(pick(Some(Dialect::Oracle), "redis cache"), "oracle");
+        // ★ 사용자 10-14: PG 접속의 DB 이름 `matrixdb2`가 `db2`에 걸려 Db2 그림 — 방언이 제품을 확정하면 힌트는 못 뒤집는다.
+        assert_eq!(
+            pick(
+                Some(Dialect::Postgres),
+                "Repository postgres://postgres/***@192.168.0.60:5433/matrixdb2"
+            ),
+            "postgresql"
+        );
+        assert_eq!(pick(Some(Dialect::Postgres), "oracle-repo"), "postgresql");
+        assert_eq!(pick(Some(Dialect::Oracle), "tibero-like"), "oracle");
+        assert_eq!(pick(Some(Dialect::Mssql), "sybase-migrated"), "sqlserver");
+        // MySQL 방언만 같은 제품군(MariaDB)으로 바뀐다.
+        assert_eq!(pick(Some(Dialect::Mysql), "shop"), "mysql");
+        // 힌트는 낱말 경계로만 — ODBC·미접속에서도 DB 이름 안의 `db2`는 Db2가 아니다.
+        assert_eq!(pick(Some(Dialect::Odbc), "matrixdb2"), "odbc");
+        assert_eq!(pick(Some(Dialect::Odbc), "my db2 dsn"), "db2");
+        assert_eq!(pick(Some(Dialect::Odbc), "legacy-db2"), "db2");
+        assert_eq!(pick(None, "SQL Server (DSN)"), "sqlserver");
+        assert_eq!(pick(None, "mysqlx"), GENERIC, "낱말 경계");
+        assert!(has_keyword("a db2 b", "db2"));
+        assert!(has_keyword("db2", "db2"));
+        assert!(!has_keyword("adb2", "db2"));
+        assert!(!has_keyword("db2x db2y", "db2"));
+        assert!(has_keyword("db2x db2", "db2"), "둘째 자리에서 찾는다");
         assert_eq!(pick(None, ""), GENERIC);
         // 고른 id는 전부 표에 있다.
         for (_, id) in HINTS {
