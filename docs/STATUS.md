@@ -9,6 +9,7 @@
 - 🔧 **PG 연결(Repository · …/matrixdb2) 아이콘이 Db2**(사용자 실기) = `dbms_icons::pick` 힌트가 부분 문자열(`contains("db2")`)이라 DB 이름에 걸리고 방언보다 앞섬 → 낱말 경계 `has_keyword` + 방언 제품군 안에서만 `hint_allowed` · 단언 12 추가 · 3/3.
 - 아이콘 크기 지적 = 그리는 px 동일 · PNG 타일 100 % · 차이는 그림 밀도(Db2 = 전체 칠) → 수정 없음.
 - V2 = clippy 0 · fmt ✓ · Release 6m45s · Debug PID 15404(사용자 실제 설정) · 풀 테스트 = 125차 V3 인정.
+- 커밋 **6e42673**(fix/126-dbms-icon-hint → main ff · 삭제) → ci **38544259349 ✓** 3-OS · integration **38544259356 ✓** · 다음 = 사용자 실기(PG 아이콘) · T-346.
 
 ## 2026-10-14 (125차 · **win** · 협업 쌍 = 개발 nexa-sql-c3 × 협업 nexa-sql-e0 · [journal 10-14](journal/2026-10-14.md))
 
