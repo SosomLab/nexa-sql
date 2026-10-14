@@ -36,6 +36,9 @@ def main() -> int:
         print("초안에 이미 변경 절이 있다(두 번 합성 금지)", file=sys.stderr)
         return 2
     out = draft[:cut] + en.split("\n") + [""] + draft[cut:] + ["", ko.strip("\n")]
+    # Windows 콘솔(cp949)에서 '—' 같은 글자가 UnicodeEncodeError → 늘 UTF-8로 쓴다(125차 v0.2.0).
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     sys.stdout.write("\n".join(out) + "\n")
     return 0
 
