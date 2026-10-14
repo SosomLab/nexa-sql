@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/125-release | 2026-10-14 | 2026-10-14 → main(삭제) | 1 | 125차 문서 = journal 10-14(최신화 · V3 · v0.2.0 공개·채널) · STATUS · DEVLOG · TODO T-346 · 102 §12 · 33 §5-3 · CLAUDE.md · release-notes-merge.py utf-8 · 84a9450 · ci 38498791405 ✓ |
 | chore/0.2.0 | 2026-10-14 | 2026-10-14 → main(삭제) | 1 | 버전 0.2.0(사용자 10-14 "새 버전으로 릴리즈 · 패키지 게시" · Thin 기본 = 마이너) · Cargo.toml · Cargo.lock · linux-121-122-e2e.sh Windows 경로(cygpath) · b8e16c5 · 태그 v0.2.0 |
 | docs/124-ci-t344 | 2026-10-14 | 2026-10-14 → main(삭제) | 1 | 124차 CI 결과(b1e6532 ci 38419740945 ✓ 3-OS · integration ✓ · 중복 실행 macOS 잡 cancelled = 러너 대기열) · 102 §12 push 거부·리베이스 행 · T-344 ✅ 문서(nexa-ui 206차 소비) · journal §31 (사)(아) · STATUS · TODO |
 | fix/124-linux-sync | 2026-10-13 | 2026-10-14 → main(삭제) | 1 | ★ 124차 Linux(협업 쌍) — 최신화·변경 분석 회귀 0 · P0 Debug 5m12s/Release 8m43s 경고 0(aws-lc-rs 도구 없이 ✓) · 시험 895/0 · 기능 점검 85/0 · Thin CLI 0.50 s · 동일성 22/0 · Thin DDL 67/0 · ★ 기능별 점검 = 독립 코드 리뷰 12 → **앱 결함 9 수정**(🔧 Thin `wrap_ddl` 트리거 `END;` 유지 · 줄 끝 라벨 탭 전환 캐시·주석 판정·구간 밖·선적재 열쇠 · `binary_notice` 검증/정리 · 프로젝트 저장 뷰 탭 제외 회귀 · 선택 실행 본문 복사 · 통합 시험 드라이버 잠금 · `clean_dots` 루트 `.` · 값 창 죽은 분기 · UTF-16 지정 이진 판정) · 새 E2E `linux-121-122-e2e.sh` 18/0/1 + 훅 `explorer.header:` · parity 06-trigger · 시험 자산 4(실행 비트 · ddl 기본 프로필 BISCM) · journal 10-13 §31 · STATUS · DEVLOG · TODO · 110 §11 ①·§6 #9 · 102 §12 · CLAUDE 현 단계 |
