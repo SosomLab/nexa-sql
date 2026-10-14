@@ -20,7 +20,10 @@ while getopts "o:e:n:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; n) NSQ
 [ -x "$NSQL" ] || { [ -x "$NSQL.exe" ] && NSQL="$NSQL.exe"; }
 [ -x "$NSQL" ] || NSQL="$ROOT/target/release/nsql"
 [ -x "$APP" ] && [ -x "$NSQL" ] || { echo "실행 파일 없음: $APP / $NSQL"; exit 2; }
-OUT=$(realpath -m "$OUT"); mkdir -p "$OUT"; H="$OUT/home"; rm -rf "${H:?}"; mkdir -p "$H"
+OUT=$(realpath -m "$OUT")
+# Windows Git Bash: 기동 명령·훅 안의 경로는 네이티브 앱이 읽으므로 MSYS 꼴(`/d/…`)을 `D:/…`로(125차 · Windows 첫 실행 = 덤프 0개).
+command -v cygpath >/dev/null 2>&1 && OUT=$(cygpath -m "$OUT")
+mkdir -p "$OUT"; H="$OUT/home"; rm -rf "${H:?}"; mkdir -p "$H"
 P="$OUT/proj"; rm -rf "${P:?}"; mkdir -p "$P"
 # 설정: 북마크 상시 라벨 끔(Ctrl 홀드만) · Ctrl 범위 = statement · 큰 파일 질문 1 MB(⑦ · 글 파일은 전부 그 아래) · 프로젝트 복원 끔.
 printf 'ui.lang=ko\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=1375x945\nproject.restore_last=off\n' > "$H/settings.conf"
