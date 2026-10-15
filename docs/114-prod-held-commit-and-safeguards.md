@@ -601,5 +601,6 @@ scripts/prod-mode-scenario.sh -d sqlite -c Local                # 서버 없이 
 | 8(-L) | UPDATE → 85 s 대기 | pending=0 · CLI 원복 | 카운트다운 카드 |
 | 9 | 정리 · `nsql conn env <P> none`(사본) | — | — |
 
+- **쿼리 모음(손으로 따라 할 때)** = [`examples/prod-mode-scenario.sql`](../examples/prod-mode-scenario.sql)(단계별 문장 + 확인 포인트 · Oracle 기본 · SQLite 판 꼬리) · 스크립트가 실제로 돌린 파일 = `<출력 폴더>/s1.sql … s6d.sql`(예 `target/prod-scenario-biscm/`).
 - 판정 원천 = 기동 명령 `tx.dump`(대기·보류·무장) · `toast.dump`(카드) · `status.dump`(상태줄) · `output.dump` · `drop.dump` · `grid.dump` + CLI `nsql run -f csv`.
 - 10-15 검증 = SQLite Local **25/0** · BISCM(협업) **26/0** · 8단계(-L) SQLite 5/0 · BISCM 5/0(L2 가드 결함 수정 뒤 · journal §10).
