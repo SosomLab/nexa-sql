@@ -87,6 +87,7 @@ pub(crate) struct Sess {
     pub broken: bool,
     /// ★ 서버 유형을 이 세션에서 **임시로** 바꿨다(사용자 10-01 · 세션 메뉴·팔레트·편집기 `CONNTYPE`) — 프로필에는 저장하지 않는다.
     ///   새 대상으로 접속하면 풀린다 · 표시 = 칩 외곽선 + 접속 정보 "임시" · 프로필 편집의 변경은 이 세션을 덮지 않는다.
+    ///   ★ 유형(`spec.env`)을 바꾸는 코드는 어디서든 `App::announce_env_change`를 지난다(10-15 게이트 · 캐시 소비자 = 그리드 운영 읽기 전용).
     pub env_temp: bool,
     /// ★ 이 세션의 현재 DB(101 §3 · SQL Server/MySQL `USE` 뒤 · 러너 `RunEvent::DbChanged`) — 상태줄·`SHOW CONN`·탐색기 현재 DB.
     pub current_db: Option<String>,

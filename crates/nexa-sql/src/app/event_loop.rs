@@ -214,6 +214,12 @@ impl ApplicationHandler<Wake> for App {
             self.finish_exit(el);
             return;
         }
+        // ★ T-350: 이 묶음의 사건을 다 처리한 뒤 **지금 상태로 다시 판정하고** IME 허용 값을 한 번만 OS에(끄기 지연 · 켜기는
+        //   `ime_refresh`가 즉시). 다시 판정하는 이유(사용자 10-15 2차 "조건 바에 들어갈 때만"): 조건 바 클릭은 `set_focus(Grid)`가
+        //   "끔"을 예약한 뒤 그리드가 조건 바에 포커스를 주는데 그 마우스 경로 뒤엔 재판정이 없어 예약된 "끔"이 그대로 쓰였다 →
+        //   첫 키가 IME 없이 영문으로 들어가고 그 키 경로에서야 켜졌다(첫 `d` 영문 · 그 뒤 `ㅇ`). 최종 상태 기준이면 경로가 어디든 같다.
+        self.ime_refresh();
+        self.ime_apply();
         // 입력 소스가 바뀌었다(한/영 · 다른 입력기 — macOS 분산 알림) → 한글 조합 방식을 다시 맞춘다.
         if nexa_sys::input_source::take_changed() {
             self.sync_hangul_mode();

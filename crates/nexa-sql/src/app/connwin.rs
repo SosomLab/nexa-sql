@@ -203,6 +203,8 @@ impl App {
                 if let Some(sp) = a.sess.last_spec.as_mut() {
                     sp.env = env;
                 }
+                // ★ 서버 유형 변경 게이트(10-15): 그 세션의 그리드까지(프로필 편집도 한 통로).
+                a.announce_env_change();
             });
         }
         self.sess_ui_dirty = true;

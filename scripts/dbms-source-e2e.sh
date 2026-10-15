@@ -4,7 +4,9 @@
 #   그대로 다시 실행해(CREATE OR REPLACE / CREATE OR ALTER) 오류가 없는지 본다. 끝에 전부 지운다(docs/61 §2-4 ⑤).
 #   Oracle은 `scripts/oracle-ddl-e2e.sh`(67) · MySQL은 프로필이 없어 순수 함수 시험만(`conservative_qualification_helpers`).
 #
-# 사용: scripts/dbms-source-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "Repository:postgres,M4PLAN:mssql"]
+# 사용: scripts/dbms-source-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "Repository:postgres,M4PLAN:mssql:M4PLAN_MS"]
+#   항목 = `프로필:방언[:DB]`(T-346 ⑤ · 10-15) — 셋째 조각 = SQL Server 임시 객체를 만들 DB(로그인 기본 DB가 master면 CREATE 거부 Msg 262 · 125차 V3 7건).
+#   DB가 있으면 모든 실행 파일 머리에 `USE [DB]; GO`를 붙이고 `nsql cat source`는 3부 이름 `DB..이름`(121차 cat.rs `split_three`)으로 읽는다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILES="Repository:postgres,M4PLAN:mssql"
@@ -15,13 +17,13 @@ say() { echo "$*"; echo "$*" >> "$REPORT"; }
 pass=0; fail=0; RC=0
 ok()  { say "  PASS  $1"; pass=$((pass+1)); }
 bad() { say "  FAIL  $1"; fail=$((fail+1)); [ -n "${2:-}" ] && echo "$2" | head -8 | sed 's/^/        /' | tee -a "$REPORT" >/dev/null; }
-run() { printf '%s\n' "$3" > "$OUT/$1_$2.sql"; "$NSQL" run -c "$1" --no-prompt -f csv "$OUT/$1_$2.sql" > "$OUT/$1_$2.out" 2>&1; RC=$?; cat "$OUT/$1_$2.out"; return 0; }
+run() { { [ -n "$DB" ] && printf 'USE [%s];\nGO\n' "$DB"; printf '%s\n' "$3"; } > "$OUT/$1_$2.sql"; "$NSQL" run -c "$1" --no-prompt -f csv "$OUT/$1_$2.sql" > "$OUT/$1_$2.out" 2>&1; RC=$?; cat "$OUT/$1_$2.out"; return 0; }
 rc_ok() { if [ "$RC" -eq 0 ]; then ok "$1"; else bad "$1 (종료 $RC)" "$2"; fi; }
 chk()   { if echo "$3" | grep -qE -- "$2"; then ok "$1"; else bad "$1 (기대 $2)" "$3"; fi; }
-src()   { "$NSQL" cat source "$2" "$3" -c "$1" 2>&1; }
+src()   { "$NSQL" cat source "$2" "${DB:+$DB..}$3" -c "$1" 2>&1; }
 
 for ENTRY in ${PROFILES//,/ }; do
-  P="${ENTRY%%:*}"; DIA="${ENTRY##*:}"
+  P="${ENTRY%%:*}"; rest="${ENTRY#*:}"; DIA="${rest%%:*}"; DB=""; case "$rest" in *:*) DB="${rest#*:}";; esac
   say ""; say "=== $P ($DIA) · $(date '+%F %T') ======================================================"
   case "$DIA" in
     postgres)
@@ -43,7 +45,7 @@ CREATE TRIGGER nsqlt_trg BEFORE INSERT ON nsqlt_t FOR EACH ROW EXECUTE FUNCTION 
       printf '%s\n' "$s" > "$OUT/${P}_src_v.sql"; o=$(run "$P" 22_rerun_v "$(cat "$OUT/${P}_src_v.sql")"); rc_ok "뷰 소스 재실행(CREATE OR REPLACE)" "$o"
       s=$(src "$P" trigger nsqlt_trg); chk "트리거 소스 = ON 표 스키마 한정" 'ON "?public"?\.nsqlt_t' "$s"; chk "트리거 함수 참조 스키마 한정" 'EXECUTE FUNCTION "?public"?\.nsqlt_tf\(' "$s"
       printf 'DROP TRIGGER nsqlt_trg ON nsqlt_t;\n%s\n' "$s" > "$OUT/${P}_src_trg.sql"; o=$(run "$P" 23_rerun_trg "$(cat "$OUT/${P}_src_trg.sql")"); rc_ok "트리거 소스 재실행(DROP 뒤 CREATE)" "$o"
-      s=$("$NSQL" cat source function nsqlt_f qualify=off -c "$P" 2>&1); chk "CLI qualify=off = pg_get_functiondef 그대로(한정 유지 · PG는 늘 한정)" 'nsqlt_f' "$s"
+      s=$("$NSQL" cat source function "${DB:+$DB..}nsqlt_f" qualify=off -c "$P" 2>&1); chk "CLI qualify=off = pg_get_functiondef 그대로(한정 유지 · PG는 늘 한정)" 'nsqlt_f' "$s"
       o=$(run "$P" 50_dml "INSERT INTO nsqlt_t VALUES (1, 'abc'); SELECT name FROM nsqlt_t; SELECT nsqlt_f(21);"); chk "트리거 동작(upper) = ABC" 'ABC' "$o"; chk "함수 = 42" '42' "$o"
       o=$(run "$P" 90_drop 'DROP TABLE nsqlt_t CASCADE;
 DROP FUNCTION nsqlt_f(int);
@@ -67,7 +69,7 @@ CREATE FUNCTION nsqlt_f(@p int) RETURNS int AS BEGIN RETURN @p * 2; END;
 GO
 CREATE TRIGGER nsqlt_trg ON nsqlt_t AFTER INSERT AS BEGIN SET NOCOUNT ON; END;
 GO'); rc_ok "CREATE TABLE · VIEW · PROCEDURE · FUNCTION · TRIGGER" "$o"
-      s=$("$NSQL" cat source procedure nsqlt_p qualify=off -c "$P" 2>&1); chk "CLI qualify=off = 저장 정의 그대로(한정 없음 · 재실행 전)" 'CREATE OR ALTER PROCEDURE nsqlt_p' "$s"
+      s=$("$NSQL" cat source procedure "${DB:+$DB..}nsqlt_p" qualify=off -c "$P" 2>&1); chk "CLI qualify=off = 저장 정의 그대로(한정 없음 · 재실행 전)" 'CREATE OR ALTER PROCEDURE nsqlt_p' "$s"
       s=$(src "$P" procedure nsqlt_p); chk "프로시저 소스 = CREATE OR ALTER + [스키마]. 한정" 'CREATE OR ALTER PROCEDURE \[[A-Za-z_]+\]\.nsqlt_p' "$s"
       printf '%s\n' "$s" > "$OUT/${P}_src_p.sql"; o=$(run "$P" 20_rerun_p "$(cat "$OUT/${P}_src_p.sql")"); rc_ok "프로시저 소스 재실행" "$o"
       s=$(src "$P" function nsqlt_f); chk "함수 소스 = [스키마]. 한정" 'CREATE OR ALTER FUNCTION \[[A-Za-z_]+\]\.nsqlt_f\(' "$s"

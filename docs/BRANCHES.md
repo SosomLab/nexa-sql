@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/127-desc-search-ime-env-gate | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 127차 win(협업 쌍 nexa-sql-11 × nexa-sql-07) — 객체 탐색기 "Include Description" 설명 포함 검색(D-290) · ★ T-351 SQL Server 전 DB 검색 + 검색 범위 설정(`explorer.search_scope` 전체 기본 D-291 · 단위 열쇠 `db:<DB>` · 현재 먼저 점증 Append · Lazy) · SSMS 스키마 목록 폴백(기존 결함) · 🔧 한글 입력 2 + T-350 IME 모드 단일 상태 · 🔧 서버 유형 변경 알림 게이트 `announce_env_change` · 🔧 필터 토글 툴팁 위치 · T-346 시험 자산 6 · E2E `win-explorer-desc-e2e.sh`(PG 15/0 · MSSQL 19/0) · 사용자 ✓ 11 · journal 10-15 §1 · 해시·CI = 기록 커밋에 |
 | fix/126-dbms-icon-hint | 2026-10-14 | 2026-10-14 → main(삭제) | 1 | 🔧 PG 연결 아이콘 Db2 오인 = `dbms_icons` 힌트 낱말 경계(`has_keyword`) + 방언 제품군 제한(`hint_allowed`) · 단언 12 · journal 10-14 §4 · 6e42673 · ci 38544259349 ✓ 3-OS · integration 38544259356 ✓ |
 | docs/125-release | 2026-10-14 | 2026-10-14 → main(삭제) | 1 | 125차 문서 = journal 10-14(최신화 · V3 · v0.2.0 공개·채널) · STATUS · DEVLOG · TODO T-346 · 102 §12 · 33 §5-3 · CLAUDE.md · release-notes-merge.py utf-8 · 84a9450 · ci 38498791405 ✓ |
 | chore/0.2.0 | 2026-10-14 | 2026-10-14 → main(삭제) | 1 | 버전 0.2.0(사용자 10-14 "새 버전으로 릴리즈 · 패키지 게시" · Thin 기본 = 마이너) · Cargo.toml · Cargo.lock · linux-121-122-e2e.sh Windows 경로(cygpath) · b8e16c5 · 태그 v0.2.0 |

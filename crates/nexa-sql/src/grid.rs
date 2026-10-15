@@ -1207,9 +1207,20 @@ impl Grid {
         self.edit_cfg = cfg;
     }
 
-    /// 호스트 주입: 운영 접속 여부(편집 불가).
+    /// 호스트 주입: 운영 접속 여부(편집 불가) — ★ 서버 유형 변경 게이트(`App::announce_env_change` · 10-15)가 부른다.
+    ///   값이 바뀌고 결과가 이미 있으면 **재실행 없이** 편집 가능 여부를 다시 판정한다(사용자 "PRD가 아닌 상태로 바꾸면 바로 가능").
+    ///   미저장 편집이 있으면(비운영 → 운영 전환 중) 변경 집합을 버리지 않고 다음 판정(재조회·재실행)에 맡긴다 — 적용 길은 세션
+    ///   게이트(`run.prod_confirm` · `tx.prod_*`)가 따로 지킨다.
     pub(crate) fn set_prod(&mut self, on: bool) {
+        if self.prod == on {
+            return;
+        }
         self.prod = on;
+        if self.rs.is_some() && !self.edit_dirty() {
+            let src = self.source_sql.clone();
+            let countable = self.countable;
+            self.edit_prepare(&src, countable);
+        }
     }
 
     /// 호스트 주입: 테이블 키(`Cmd::Keys` 답 · 41 규칙) → 결과에 **모든 키 열이 있는** PK → 첫 유니크 → 전체 열(D-198).
@@ -9976,6 +9987,25 @@ mod tests {
 
     fn grid_with(cols: &[i32]) -> Grid {
         grid_with_rows(cols, 1)
+    }
+
+    /// ★ 서버 유형 변경 게이트(10-15): 결과가 있는 그리드는 `set_prod`만으로 재실행 없이 편집 가능 여부가 바뀐다(운영 = 읽기 전용 ·
+    ///   해제 = 즉시 재판정) · 같은 값은 아무것도 안 한다.
+    #[test]
+    fn set_prod_rejudges_existing_result_without_rerun() {
+        let mut g = grid_with(&[1, 2]);
+        g.edit_prepare("SELECT a, b FROM t", true);
+        assert_ne!(g.read_only, Some(ReadOnly::Prod));
+        g.set_prod(true);
+        assert_eq!(
+            g.read_only,
+            Some(ReadOnly::Prod),
+            "운영으로 = 즉시 읽기 전용"
+        );
+        g.set_prod(true);
+        assert_eq!(g.read_only, Some(ReadOnly::Prod), "같은 값 = 그대로");
+        g.set_prod(false);
+        assert_ne!(g.read_only, Some(ReadOnly::Prod), "운영 해제 = 즉시 재판정");
     }
 
     /// ★ "지금" 글자(10-13 · 순수): what별 형식 · 정밀도 · auto = 열 종류 · time_or_append = 편집 글이 날짜만이면 뒤에 시간.

@@ -128,7 +128,8 @@ PYLOB
 cli Local "$D/lob_setup.sql" >/dev/null
 run_gui 26 Local "open:$D/lob_sel.sql,@after:2500:run.all,@after:5500:cellview.open:0;2,@after:7000:cellview.dump:$O/s10a.txt,@after:7500:cellview.save:$O/s10.png,@after:8000:cellview.mode:hex,@after:8500:cellview.dump:$O/s10b.txt,@after:9000:grid.edit.load:0;2;$D/px.bmp,@after:9500:grid.edit.load:0;1;$D/note.txt,@after:10000:grid.dump:$O/s10c.txt,@after:10500:grid.edit.cmd:row.save,@after:15500:cellview.open:0;2,@after:17000:cellview.dump:$O/s10d.txt,@after:17500:grid.dump:$O/s10e.txt"
 d10a=$(cat "$O/s10a.txt" 2>/dev/null); d10b=$(cat "$O/s10b.txt" 2>/dev/null); d10c=$(cat "$O/s10c.txt" 2>/dev/null); d10d=$(cat "$O/s10d.txt" 2>/dev/null); d10e=$(cat "$O/s10e.txt" 2>/dev/null); v=$(cli Local "$D/lob_chk.sql")
-expect_grep "값 창 = PNG 이미지 3x2 미리보기" "$d10a" "mode=Image kind=PNG bytes=74 image=3x2"
+# T-346 ③(10-15): 121차 설계 B가 덤프에 `null=Value` 필드를 끼웠다(`mode=Image null=Value kind=…`) → 벗기고 비교(125차 V3 2건).
+expect_grep "값 창 = PNG 이미지 3x2 미리보기" "$(echo "$d10a" | sed 's/ null=[A-Za-z]*//')" "mode=Image kind=PNG bytes=74 image=3x2"
 if cmp -s "$O/s10.png" "$D/px.png"; then ok "파일로 저장 = 원본과 동일"; else bad "파일로 저장 = 원본과 동일"; fi
 expect_grep "16진수 보기 전환" "$d10b" "mode=Hex"
 expect_grep "파일에서 넣기 = 셀 라벨 <px.bmp · 70 bytes>" "$d10c" "px.bmp · 70 bytes"
@@ -152,7 +153,7 @@ open(os.path.join(d,'jpg_sel.sql'),'w').write("SELECT id, data FROM ge_jpg;\n")
 PYJPG
   cli Local "$D/jpg_setup.sql" >/dev/null
   run_gui 12 Local "open:$D/jpg_sel.sql,@after:2500:run.all,@after:5500:cellview.open:0;1,@after:7500:cellview.dump:$O/s12.txt"
-  expect_grep "값 창 = JPEG 16x16 미리보기(856 bytes)" "$(cat "$O/s12.txt" 2>/dev/null)" "mode=Image kind=JPEG bytes=856 image=16x16"
+  expect_grep "값 창 = JPEG 16x16 미리보기(856 bytes)" "$(cat "$O/s12.txt" 2>/dev/null | sed 's/ null=[A-Za-z]*//')" "mode=Image kind=JPEG bytes=856 image=16x16"
 else
   echo "SKIP  nexa-ui 시험 벡터 없음($JPGHEX)"
 fi

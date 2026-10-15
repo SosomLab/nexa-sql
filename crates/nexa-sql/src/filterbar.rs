@@ -357,6 +357,17 @@ impl FilterBar {
         self.tooltip_ms = ms;
     }
 
+    /// 팝업(툴팁 · 이력 드롭다운)의 **창 좌표** 가로 범위(10-15 · 사용자 "토글 4개 툴팁 위치가 잘못"): 틀이 놓인 자리 `area`가 있으면 그 범위 ·
+    ///   없으면 종전 `(0, clamp_w)`. 종전엔 `clamp_w`(호스트가 준 패널 **폭**)를 x 상한으로 써서 창 왼쪽 끝이 아닌 패널(객체 탐색기 x≈56)의
+    ///   툴팁이 폭 값까지 왼쪽으로 밀렸다.
+    fn clamp_x(&self) -> (i32, i32) {
+        if self.area.w > 0 {
+            (self.area.x, self.area.x + self.area.w)
+        } else {
+            (0, self.clamp_w)
+        }
+    }
+
     pub(crate) fn set_clamp_width(&mut self, w: i32) {
         self.clamp_w = w;
     }
@@ -607,10 +618,11 @@ impl FilterBar {
             if self.tb.take_committed().is_some() {
                 self.history_commit();
             }
+            let (x0, x1) = self.clamp_x();
             if let Some((h, r)) = &mut self.history {
                 if clicked_tb && self.tb.is_focused() {
                     // 상자 클릭 = 드롭다운(보기 방식이 Dropdown일 때 · 이력이 있을 때만).
-                    let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
+                    let host = Rect::new(x0, 0, x1 - x0, i32::MAX / 4);
                     r.on_click(&self.tb, h, host, self.scale);
                 }
             }
@@ -844,14 +856,7 @@ impl FilterBar {
         }) {
             // ★ 앵커 = 버튼 사각형 그대로(공용 규칙 `ui.tooltip_above`가 "항목 위"에 놓는다 · nexa-ui 171): 종전 "버튼 아래 +2 · 높이 0"
             //   앵커는 그 점 위에 놓여 **버튼을 덮었다**(사용자 10-13 "파일 검색 빼고 전부 기능 버튼을 가린다").
-            draw_tooltip_in(
-                dc,
-                th,
-                b.rect,
-                (0, self.clamp_w),
-                t(b.kind.tip()),
-                self.scale,
-            );
+            draw_tooltip_in(dc, th, b.rect, self.clamp_x(), t(b.kind.tip()), self.scale);
         }
     }
 }

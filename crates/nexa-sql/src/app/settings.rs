@@ -464,6 +464,8 @@ impl App {
                 );
             }
             "explorer.search_index"
+            | "explorer.search_desc"
+            | "explorer.search_scope"
             | "explorer.index_max"
             | "explorer.index_hits_max"
             | "explorer.index_prefetch"

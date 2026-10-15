@@ -56,6 +56,7 @@
 | `Sess` | `current_db: Option<String>` · `ExplorerSet::set_current_db(spec, db)` → 칸의 표시 갱신 + `Req::UseDb` + 메타 리셋 |
 | 헤더 | `endpoint` 뒤 `(SQL Server {version} - {login})`(로그인이 여럿 = `- 로그인 N`) · i18n `ExpServerSql` |
 | 상세 패널(86) | Database 노드 = 상태 · 소유자 · 복구 모델 · 호환성 · 생성일 · 용량(2차) · 연결된 서버 노드 = 제품 · 공급자 · 데이터 원본 · 카탈로그 · 옵션(rpc/rpc_out/data access/collation/…) · 로그인 매핑 표 |
+| 검색 인덱스·코멘트의 스키마 원천(10-15 · 127차) | SSMS 골격은 루트 아래가 DB·묶음 노드라 루트의 스키마 노드만 읽던 `Explorer::schema_names()`가 빈 목록 → 서버 전체 이름 인덱스·L1 선적재·설명 코멘트 큐가 SQL Server에서 돌지 않았다 → **폴백 = 메타 스냅숏 `schemas`(현재 DB · `meta_set_schemas` 원천)** · 메타 스레드 `Req::Index`/`Req::SchemaComments`에 `db`(SSMS = 현재 DB) 명시 + `switch_db(db)` · **SSMS = Lazy**(접속 직후 L1 선적재 없음 · 인덱스·코멘트는 검색 시작 때만 · 사용자 10-15) · 현재 DB가 바뀌면(`set_current_db`/`UseDb`) 인덱스·코멘트 사본 비움 · ~~검색 범위 = 현재 DB~~ → **T-351(10-15) = 전 DB**: 단위 열쇠 `db:<DB>`(DB당 스키마 필터 없는 이름·코멘트 질의 1회 · 현재 DB 먼저 · 트리 DB 노드 순 · Lazy) · 일치 `Hit=(db,schema,kind,name)` → 그 DB 노드의 종류 폴더(`ssms_folder_in`) · 범위 설정 `explorer.search_scope` all(기본)/current = 현재 DB만(D-291) |
 
 ## 5. 연결된 서버(Linked Servers) — 확인·수정·삭제
 

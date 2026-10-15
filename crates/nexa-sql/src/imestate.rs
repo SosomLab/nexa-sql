@@ -161,6 +161,65 @@ pub(crate) fn classify(langid: u16, native: bool) -> ImeState {
     }
 }
 
+/// ★ T-350(10-15): 우리 창의 IME **변환 모드 값 그대로**(`IMC_GETCONVERSIONMODE` · 한/영·전각 비트 묶음) — IME를 끄기 직전에 읽어 둔다.
+///   IME 창이 없으면(이미 끔) `None`.
+#[cfg(windows)]
+pub(crate) fn conversion_mode(hwnd: isize) -> Option<isize> {
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+    }
+    #[link(name = "imm32")]
+    extern "system" {
+        fn ImmGetDefaultIMEWnd(hwnd: isize) -> isize;
+    }
+    const WM_IME_CONTROL: u32 = 0x0283;
+    const IMC_GETCONVERSIONMODE: usize = 0x0001;
+    if hwnd == 0 {
+        return None;
+    }
+    // SAFETY: 핸들 조회·메시지 전송뿐 · 실패는 0으로 돌아온다.
+    unsafe {
+        let ime_wnd = ImmGetDefaultIMEWnd(hwnd);
+        if ime_wnd == 0 {
+            return None;
+        }
+        Some(SendMessageW(
+            ime_wnd,
+            WM_IME_CONTROL,
+            IMC_GETCONVERSIONMODE,
+            0,
+        ))
+    }
+}
+
+/// ★ T-350: 변환 모드를 되돌린다(`IMC_SETCONVERSIONMODE`) — IME를 다시 켠 직후(입력 컨텍스트가 다시 붙으면 기본 영문으로 시작하는 Windows 동작 보정).
+#[cfg(windows)]
+pub(crate) fn set_conversion_mode(hwnd: isize, mode: isize) -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+    }
+    #[link(name = "imm32")]
+    extern "system" {
+        fn ImmGetDefaultIMEWnd(hwnd: isize) -> isize;
+    }
+    const WM_IME_CONTROL: u32 = 0x0283;
+    const IMC_SETCONVERSIONMODE: usize = 0x0002;
+    if hwnd == 0 {
+        return false;
+    }
+    // SAFETY: 위와 같다.
+    unsafe {
+        let ime_wnd = ImmGetDefaultIMEWnd(hwnd);
+        if ime_wnd == 0 {
+            return false;
+        }
+        SendMessageW(ime_wnd, WM_IME_CONTROL, IMC_SETCONVERSIONMODE, mode);
+        true
+    }
+}
+
 /// 지금 상태 — `hwnd` = 우리 창(Windows · 없으면 전경 창). 판정 못 하면 `None`.
 #[cfg(windows)]
 pub(crate) fn current(hwnd: Option<isize>) -> Option<ImeState> {

@@ -268,7 +268,14 @@ impl ExplorerSet {
             filter_expand: false,
             share_catalog: false,
             private: Vec::new(),
-            filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
+            // 틀 오른쪽 부가 토글 = "Include Description"(설명 포함 검색 · 사용자 10-15 · 프로젝트 탐색기 숨김 토글과 같은 자리 · 기본 끔).
+            filter: FilterBar::new(
+                t(Msg::PhExplorerFilter),
+                &[(
+                    crate::findbar::BtnKind::DescMatch,
+                    crate::toolicons::mi_description,
+                )],
+            ),
             filter_scope: FilterScope::All,
             area: Rect::default(),
         };
@@ -620,9 +627,14 @@ impl ExplorerSet {
     /// 검색 인덱스 설정(84 §5) — 전 칸에.
     pub(crate) fn set_index_cfg(&mut self, c: crate::explorer::IndexCfg) {
         self.index_cfg = c;
+        // 토글 표시 = 설정 값 하나(10-15 · 켜짐/꺼짐은 호스트의 설정 변경 훅이 여기로 되돌려 준다).
+        self.filter
+            .set_checked(crate::findbar::BtnKind::DescMatch, c.search_desc);
         for p in &mut self.panes {
             p.ex.set_index_cfg(c);
         }
+        self.sync_search_state();
+        self.relayout();
     }
 
     /// ★ 유휴 선적재 틱(84 §7 · 호스트 주기 호출) — 칸마다 한 걸음.
@@ -1204,6 +1216,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.filter.set_text(q);
         self.filter.refresh();
         self.apply_filter();
+    }
+
+    /// 필터 상자가 포커스인가(IME 허용 판정 `ime_allow` · 타입어헤드 제외 · 프로젝트 패널 `wants_ime`와 같은 뜻 · 10-15).
+    pub(crate) fn wants_ime(&self) -> bool {
+        self.filter.is_focused()
     }
 
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
@@ -2124,6 +2141,10 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                 }
                 self.relayout();
                 self.reveal_selection();
+            }
+            // ★ 설명 포함 토글(10-15): 설정 `explorer.search_desc`를 뒤집는 명령 → 호스트가 설정 변경 훅으로 `set_index_cfg`에 되돌려 준다.
+            FilterEvent::Side(crate::findbar::BtnKind::DescMatch) => {
+                self.pending.push(ExplorerAction::ToggleDescSearch);
             }
             FilterEvent::Consumed | FilterEvent::None | FilterEvent::Side(_) => {}
         }

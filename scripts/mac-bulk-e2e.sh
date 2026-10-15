@@ -4,6 +4,7 @@
 #   -P <실제 설정 폴더> -d 프로필:방언,… = 실서버(임시 표 생성 → 5,000행 적재 → 건수 → DROP · 61 §2-4 ⑤) · rows/s 출력(89 실측).
 # 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS]
 #   `프로필:방언[:DB]` — 셋째 조각(선택) = SQL Server 임시 표를 만들 DB(로그인 기본 DB가 master일 때 · T-309 ④) · 파이썬 = `NSQL_PYTHON` 우선(T-309 ③).
+#   Oracle 경로 기대 = 드라이버별(T-346 ④ · 10-15): 기본 Thin(D-278)은 배열 DML 미지원 → `multirow` · OCI = `arraydml`. OCI를 재려면 `NSQL_ORACLE_DRIVER=oci`(격리 홈의 `oracle.driver`).
 set -u
 # 파이썬 인터프리터(T-309 · 10-07): Windows Git Bash의 `python`·`python3`는 pyenv 셸 래퍼(`pyenv exec`)라 heredoc/stdin 코드를 배치로 읽어
 #   IndentationError → **실제 실행 파일**을 찾는다: `NSQL_PYTHON` → `pyenv which python` → `py -3` → `python` · 그 밖 OS = `python3`.
@@ -23,6 +24,7 @@ NSQL="$ROOT/target/debug/nsql"; APP="$ROOT/target/debug/nexa-sql"; H="${TMPDIR:-
 while getopts "n:e:H:P:d:" o; do case $o in n) NSQL=$OPTARG;; e) APP=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
 D="$H/data"; O="$H/out"; rm -rf "$H"; mkdir -p "$D" "$O"
 if [ -n "$PROF" ] && [ -d "$PROF/profiles" ]; then cp -R "$PROF/profiles" "$H/"; cp "$PROF/device.key" "$H/" 2>/dev/null; fi
+if [ -n "${NSQL_ORACLE_DRIVER:-}" ]; then NSQL_HOME="$H" "$NSQL" config set oracle.driver "$NSQL_ORACLE_DRIVER" >/dev/null 2>&1; fi   # T-346 ④
 fail=0; pass=0
 ok() { echo "PASS  $1"; pass=$((pass+1)); }
 bad() { echo "FAIL  $1"; fail=$((fail+1)); }
@@ -131,7 +133,7 @@ PY5
   echo "=== $P($dl) 5,000행 적재"
   local o v; o=$(imp "$P" -t "$tbl" "$D/${P}_5k.csv"); v=$(cli "$P" "$D/${P}_chk.sql")
   expect_grep "$P 적재 보고 5000행" "$o" "5000 rows imported"; echo "      $(echo "$o" | grep 'rows imported')"
-  case $dl in mssql) expect_grep "$P 경로 = TDS bulk" "$o" "driver:tdsbulk";; postgres) expect_grep "$P 경로 = COPY" "$o" "driver:copyin";; oracle) expect_grep "$P 경로 = 배열 DML" "$o" "driver:arraydml";; esac
+  case $dl in mssql) expect_grep "$P 경로 = TDS bulk" "$o" "driver:tdsbulk";; postgres) expect_grep "$P 경로 = COPY" "$o" "driver:copyin";; oracle) if echo "$o" | grep -q "driver:arraydml"; then ok "$P 경로 = 배열 DML(OCI)"; elif echo "$o" | grep -q "multirow"; then ok "$P 경로 = 다중 행 INSERT(Thin · 배열 DML 미지원 · D-278)"; else bad "$P 경로 = arraydml|multirow"; echo "$o" | head -6 | sed 's/^/      /'; fi;; esac
   expect_grep "$P 서버 건수 5000" "$v" "5000"
   if [ "$dl" = postgres ]; then
     NSQL_HOME="$H" "$NSQL" export -c "$P" -t NSQLT_BULK -f csv --fast -o "$D/${P}_out.csv" --no-prompt >/dev/null 2>&1

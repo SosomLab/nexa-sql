@@ -18,6 +18,12 @@ param(
 )
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
+# T-346 ①(10-15): 앱은 `NSQL_STARTUP_CMD` 안의 덤프 경로를 **자기 cwd 기준**으로 푼다 → 상대 -Out이면 다른 폴더에 써 S95 판정이 깨진다(125차 V3).
+#   세 경로를 호출 cwd 기준 절대 경로로 고정한다.
+foreach ($n in @('HomeDir', 'DataDir', 'Out')) {
+    $v = Get-Variable -Name $n -ValueOnly
+    if (-not [System.IO.Path]::IsPathRooted($v)) { Set-Variable -Name $n -Value ([System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $v))) }
+}
 if (-not $Exe) { $Exe = Join-Path $root "target\release\nexa-sql.exe" }
 if (-not $Cli) { $Cli = Join-Path $root "target\release\nsql.exe" }
 foreach ($d in @($HomeDir, $DataDir, $Out)) { if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
@@ -487,10 +493,10 @@ if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains 
 # ★ 폴더 변경 감시(T-293 · Windows ReadDirectoryChangesW): 프로젝트 열고 `fs.write`로 새 파일 → 패널 플래시 "Folder change applied".
 $s96dump = Join-Path $Out "s96_flash.txt"
 $s96new = Join-Path $DataDir "s96_new.sql"
-Run-Scenario -Id S96 -Title "폴더 변경 감시 = 플래시 '폴더 변경 반영'(T-293)" -Cmd ("project.load:" + $projFile + ",@after:1200:project.panel:on,@after:3500:fs.write:" + $s96new + "|SELECT 96;,@after:5000:flash.dump:" + $s96dump) -WaitMs 11000 -Expect "프로젝트 패널 플래시 'Folder change applied: …'"
+Run-Scenario -Id S96 -Title "폴더 변경 감시 = 플래시 '폴더 변경 반영'(T-293)" -Cmd ("project.load:" + $projFile + ",@after:1200:project.panel:on,@after:3500:fs.write:" + $s96new + "|SELECT 96;,@after:5000:flash.dump:" + $s96dump) -WaitMs 11000 -Expect "프로젝트 패널 플래시 'Folder change applied: …'(화면 언어 한국어면 '폴더 변경 반영: …' · T-346 ②)"
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S96")) {
     $t = if (Test-Path -LiteralPath $s96dump) { (Get-Content -LiteralPath $s96dump -TotalCount 2) -join " ¦ " } else { "" }
-    Say ("  S96 check: " + $(if ($t -match "Folder change applied") { "PASS" } else { "FAIL" }) + " · " + $t)
+    Say ("  S96 check: " + $(if ($t -match "Folder change applied|폴더 변경 반영") { "PASS" } else { "FAIL" }) + " · " + $t)
 }
 $s95dump = Join-Path $Out "s95_grid.txt"
 Run-Scenario -Id S95 -Title "큰 결과 썸 드래그 = i32 넘침 없음(10-10 크래시 회귀)" -Cmd ("open:" + $qBig + ",@after:1200:grid.page:0,@after:1500:run.all,@after:8000:grid.vdrag:3000,@after:9000:grid.dump:" + $s95dump) -WaitMs 14000 -Expect "살아 있음 · 그리드가 맨 아래(scroll_end=true)"

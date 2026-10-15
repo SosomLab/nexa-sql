@@ -343,6 +343,15 @@ impl App {
                     );
                     self.sess.status = s;
                 }
+                // ★ 필터 틀 "Include Description" 토글(10-15) = 설정 `explorer.search_desc`를 뒤집는다 → 변경 훅이 `set_index_cfg`로 되돌려 준다.
+                ExplorerAction::ToggleDescSearch => {
+                    let on = !self.settings.flag("explorer.search_desc");
+                    let _ = self
+                        .settings
+                        .set("explorer.search_desc", if on { "on" } else { "off" });
+                    let _ = self.apply_setting("explorer.search_desc");
+                    self.redraw();
+                }
                 // (서버 제거는 `ExplorerSet::take_actions`가 안에서 처리한다.)
                 ExplorerAction::RemoveServer => {}
                 ExplorerAction::DisconnectServer(spec) => {

@@ -616,8 +616,13 @@ struct App {
     autosave_pressed: bool,
     /// 커서가 클릭되는 상태줄 항목 위에 있는가(들어오고 나갈 때 다시 그림 · hover 선택색 · 09-28).
     status_hover: bool,
-    /// 메인 창에 마지막으로 쓴 IME 허용 값(`ime_refresh` · 바뀔 때만 OS 호출).
+    /// 메인 창에 마지막으로 쓴 IME 허용 값(`ime_apply` · 바뀔 때만 OS 호출).
     ime_last: Option<bool>,
+    /// ★ T-350(10-15): 지금 바라는 IME 허용 값 — `ime_refresh`가 적고 `ime_apply`(사건 처리 끝)가 OS에 쓴다(켜기는 즉시).
+    ime_want: Option<bool>,
+    /// ★ T-350(Windows): IME를 끄기 직전 읽어 둔 변환 모드(한/영 · `IMC_GETCONVERSIONMODE`) — 다시 켤 때 되돌린다.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    ime_conv_saved: Option<isize>,
     /// 창이 열려 있을 때 다음 표본 시각.
     mem_next: Instant,
     /// ★ 탭 메뉴 "객체 탐색기에서 보기" 판정 열쇠(탭 id → (본문 세대, 세션 id, 연결 여부)) — 바뀐 탭만 다시 판정(`app/tabobj.rs`).
@@ -1944,6 +1949,8 @@ fn main() {
         autosave_pressed: false,
         status_hover: false,
         ime_last: None,
+        ime_want: None,
+        ime_conv_saved: None,
         view_layout: false,
         mem_next: Instant::now(),
         tab_obj_cache: HashMap::new(),
@@ -2284,6 +2291,8 @@ fn index_cfg_from(settings: &Settings) -> explorer::IndexCfg {
         cols_ttl_secs: settings.int("meta.cols_ttl_secs").max(0) as u64,
         disk_cache: settings.flag("meta.disk_cache"),
         warm_comments: settings.flag("meta.warm_comments"),
+        search_desc: settings.flag("explorer.search_desc"),
+        scope_current: settings.get("explorer.search_scope") == Some("current"),
     }
 }
 

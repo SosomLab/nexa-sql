@@ -1516,6 +1516,11 @@ pub fn schema_comments_raw(s: &mut dyn Session, schema: &str) -> SchemaComments 
             Some(format!("SELECT table_name, comments FROM all_tab_comments WHERE owner = {}", lit(schema))),
             Some(format!("SELECT table_name, column_name, comments FROM all_col_comments WHERE owner = {}", lit(schema))),
         ),
+        // ★ 전 DB 검색(10-15 · T-351): 스키마가 비면 DB 전체 — 이름은 `스키마.이름`(검색 스레드의 DB 단위 사본 열쇠) · 컬럼 코멘트는 읽지 않는다.
+        Dialect::Mssql if schema.is_empty() => (
+            Some("SELECT s.name + '.' + o.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id LEFT JOIN sys.extended_properties ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description' WHERE o.type IN ('U','V')".to_string()),
+            None,
+        ),
         Dialect::Mssql => (
             Some(format!("SELECT o.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id LEFT JOIN sys.extended_properties ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description' WHERE s.name = {} AND o.type IN ('U','V')", lit(schema))),
             Some(format!("SELECT o.name, c.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.columns c JOIN sys.objects o ON o.object_id = c.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id LEFT JOIN sys.extended_properties ep ON ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description' WHERE s.name = {} AND o.type IN ('U','V')", lit(schema))),

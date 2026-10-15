@@ -9,6 +9,8 @@
 #
 # 사용: scripts/linux-func-check.sh -o <출력폴더> [-e target/debug/nexa-sql] [-n target/debug/nsql] [-O S05,S06]
 set -u
+# T-346 ⑥(10-15): Windows(Git Bash)에는 창 수 판정 분기가 없어 0/85가 된다(125차 V3) → Windows판으로 안내.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Windows: use scripts/win-func-check.ps1 (pwsh -NoProfile -File scripts/win-func-check.ps1 -HomeDir … -DataDir … -Out …) — this script counts windows with xwininfo/CGWindowList only"; exit 2;; esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # 기능 점검 = Release(win-func-check.ps1과 같게 · Debug는 기동이 1.5 s라 기동 명령이 밀린다 · 09-26 실측).
 APP="$ROOT/target/release/nexa-sql"; CLI="$ROOT/target/release/nsql"; OUT=""; ONLY=""

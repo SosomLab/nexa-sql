@@ -111,6 +111,16 @@ impl App {
             self.redraw();
             return;
         }
+        // 설명 포함 토글(10-15 · E2E): `explorer.desc:on|off` = 설정 `explorer.search_desc`를 그 값으로(필터 틀 토글과 같은 길).
+        if let Some(v) = id.strip_prefix("explorer.desc:") {
+            let on = matches!(v.trim(), "on" | "true" | "1");
+            let _ = self
+                .settings
+                .set("explorer.search_desc", if on { "on" } else { "off" });
+            let _ = self.apply_setting("explorer.search_desc");
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("explorer.dump:") {
             let _ = std::fs::write(path, self.explorer.dump_rows());
             return;

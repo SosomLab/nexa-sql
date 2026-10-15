@@ -114,11 +114,13 @@ impl App {
     }
 
     /// ★ 지금 키 입력이 **타입어헤드**로 가는 상태인가(사용자 09-28 "객체 탐색기 방식을 프로젝트·북마크·아웃라인에도"):
-    /// 객체 탐색기 포커스 · 또는 프로젝트/북마크/아웃라인 패널 포커스인데 그 패널의 글 입력 상자(필터 · 이름 편집)가 포커스가 아닐 때.
+    /// 객체 탐색기·프로젝트/북마크/아웃라인 패널 포커스인데 그 패널의 글 입력 상자(필터 · 이름 편집)가 포커스가 아닐 때.
     /// 이 상태에서는 IME를 끊고(조합 글자가 새지 않게) Windows 한/영 모드는 앱이 자판→자모로 바꾼다.
+    /// ★ 10-15(사용자 · 릴리스판 동일): 객체 탐색기는 늘 `true`여서 **필터 상자에 포커스가 있어도 IME가 꺼져** 한글이 자모로 갈라졌다 →
+    ///   다른 패널과 같은 규칙(`wants_ime` = 필터 상자 포커스)으로. 판정 표 = `ime_allow`(순수 함수 · MC/DC 시험).
     pub(crate) fn typeahead_target(&self) -> bool {
         match self.focus {
-            Focus::Explorer => true,
+            Focus::Explorer => !self.explorer.wants_ime(),
             Focus::Project => !self.project_panel.wants_ime(),
             Focus::Bookmarks => !self.bm_panel.wants_ime(),
             Focus::Outline => !self.outline_panel.wants_ime(),
@@ -130,24 +132,59 @@ impl App {
     /// 그리드/탐색기인 채 팔레트를 열면 IME가 꺼져 한글이 새고 있었다). 앱 조합 모드(T-139)면 늘 끔.
     /// 패널(프로젝트·북마크·아웃라인)은 **글 입력 상자가 포커스일 때만** 허용 — 목록 포커스 = 타입어헤드(09-28). 값이 바뀔 때만 창에 쓴다.
     pub(crate) fn ime_refresh(&mut self) {
-        let f = self.focus;
-        let palette = self.palette.is_open();
-        let allow = input::system_ime()
-            && (palette
-                || f == Focus::Editor
-                || f == Focus::Find
-                || f == Focus::Search
-                || f == Focus::Ext
-                // 그리드 = 값 목록 팝업의 검색 상자가 열려 있을 때만(한글 자모 검색 · 10-06).
-                || (f == Focus::Grid && self.grid.text_input_wants_ime())
-                || (matches!(f, Focus::Project | Focus::Bookmarks | Focus::Outline)
-                    && !self.typeahead_target()));
-        if self.ime_last == Some(allow) {
-            return;
+        let allow = ime_allow(
+            input::system_ime(),
+            self.palette.is_open(),
+            self.focus,
+            self.grid.text_input_wants_ime(),
+            self.typeahead_target(),
+        );
+        if self.trace_ime && self.ime_want != Some(allow) {
+            eprintln!(
+                "[ime] want={allow} focus={:?} last={:?} grid_wants={} typeahead={}",
+                self.focus,
+                self.ime_last,
+                self.grid.text_input_wants_ime(),
+                self.typeahead_target()
+            );
         }
-        if let Some(w) = &self.window {
-            w.set_ime_allowed(allow);
-            self.ime_last = Some(allow);
+        self.ime_want = Some(allow);
+        // ★ T-350(사용자 10-15 "모든 입력란에 단일 상태"): **켜기는 즉시**(조합 글자가 새지 않게) · **끄기는 사건 처리 끝**(`ime_apply` ·
+        //   `about_to_wait`)에 한 번 — 편집기 → 조건 바 클릭처럼 한 사건 안에서 "그리드 포커스(끔) → 글 상자 포커스(켬)"를 지나는 길이
+        //   OS에 끔→켬으로 가면 입력 컨텍스트가 다시 붙으며 한/영 모드가 영문으로 초기화됐다(첫 글자 영문 · 그 뒤 한글).
+        if allow {
+            self.ime_apply();
+        }
+    }
+
+    /// ★ T-350: 바라는 IME 허용 값을 OS에 쓴다(마지막으로 쓴 값과 다를 때만) — Windows는 끄기 직전 변환 모드(한/영)를 저장하고
+    ///   켠 직후 되돌려, 정말 꺼야 하는 구간(탐색기 트리 타입어헤드)을 지나 돌아와도 사용자가 둔 모드가 유지된다.
+    pub(crate) fn ime_apply(&mut self) {
+        let Some(want) = ime_write_needed(self.ime_last, self.ime_want) else {
+            return;
+        };
+        let Some(w) = &self.window else { return };
+        #[cfg(windows)]
+        let hwnd = crate::winfocus::hwnd(w);
+        #[cfg(windows)]
+        if !want {
+            if let Some(m) = hwnd.and_then(crate::imestate::conversion_mode) {
+                self.ime_conv_saved = Some(m);
+            }
+        }
+        if self.trace_ime {
+            eprintln!(
+                "[ime] apply set_ime_allowed({want}) last={:?}",
+                self.ime_last
+            );
+        }
+        w.set_ime_allowed(want);
+        self.ime_last = Some(want);
+        #[cfg(windows)]
+        if want {
+            if let (Some(h), Some(m)) = (hwnd, self.ime_conv_saved) {
+                crate::imestate::set_conversion_mode(h, m);
+            }
         }
     }
 
@@ -761,6 +798,7 @@ impl App {
             if self.explorer.on_event(&ev) {
                 self.redraw();
             }
+            self.ime_refresh();
             if self.explorer_actions() {
                 self.redraw();
             }
@@ -1160,10 +1198,12 @@ impl App {
             self.grid.on_event(&ev, self.scale);
             self.after_grid_event();
             self.redraw();
+            // IME 갱신은 글 상자가 활성일 때도 — 조건 바·값 목록 상자에 **막 포커스가 들어온 사건**이 여기서 돌아가면 IME가 꺼진 채
+            //   남았다(사용자 10-15 "조건 바 한글이 잠깐 안 됨").
+            self.ime_refresh();
             if self.grid.text_input_active() {
                 return;
             }
-            self.ime_refresh();
         }
         if let InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
@@ -2043,6 +2083,8 @@ impl App {
                 if self.explorer.on_event(&ev) {
                     self.redraw();
                 }
+                // 필터 상자 ↔ 트리 포커스가 바뀌었을 수 있다 → IME 허용 재판정(프로젝트 패널 경로와 같게 · 10-15).
+                self.ime_refresh();
                 if self.explorer_actions() {
                     self.redraw();
                 }
@@ -2055,6 +2097,8 @@ impl App {
                 if self.explorer.on_event(&ev) {
                     self.redraw();
                 }
+                // 필터 상자 ↔ 트리 포커스가 바뀌었을 수 있다 → IME 허용 재판정(프로젝트 패널 경로와 같게 · 10-15).
+                self.ime_refresh();
                 if self.explorer_actions() {
                     self.redraw();
                 }
@@ -2495,5 +2539,77 @@ mod exclusive_tests {
             ),
             None
         );
+    }
+}
+
+/// ★ 메인 창 IME 허용 판정(순수 함수 · 10-15 · 사용자 "객체 탐색기 검색란 한글이 낱자로"): 앱 조합 모드(`system_ime` 거짓)면 늘 끔 ·
+///   팔레트 열림 = 허용 · 편집기/찾기/검색/확장 = 허용 · 그리드 = 글 상자(값 목록 검색 · 조건 바)가 IME를 바랄 때만 ·
+///   **패널(프로젝트·북마크·아웃라인·객체 탐색기) = 글 입력 상자가 포커스일 때만**(목록 포커스 = 타입어헤드 → IME 끊고 앱이 자판→자모).
+///   새 패널에 글 입력 상자를 넣으면 이 표와 시험(`ime_tests`)에 함께 올린다 — 빠뜨리면 그 상자는 조합 없는 자모를 받는다.
+pub(crate) fn ime_allow(
+    system_ime: bool,
+    palette: bool,
+    f: Focus,
+    grid_wants: bool,
+    typeahead: bool,
+) -> bool {
+    system_ime
+        && (palette
+            || matches!(f, Focus::Editor | Focus::Find | Focus::Search | Focus::Ext)
+            || (f == Focus::Grid && grid_wants)
+            || (matches!(
+                f,
+                Focus::Project | Focus::Bookmarks | Focus::Outline | Focus::Explorer
+            ) && !typeahead))
+}
+
+/// ★ T-350: OS에 쓸 값 — 바라는 값이 있고 마지막으로 쓴 값과 다를 때만 `Some(쓸 값)`(순수 함수 · 시험).
+pub(crate) fn ime_write_needed(last: Option<bool>, want: Option<bool>) -> Option<bool> {
+    let want = want?;
+    (last != Some(want)).then_some(want)
+}
+
+#[cfg(test)]
+mod ime_tests {
+    use super::{ime_allow, ime_write_needed};
+    use crate::Focus;
+
+    /// T-350: 바라는 값 없음 = 안 씀 · 같은 값 = 안 씀 · 다른 값 = 그 값 · 처음(None) = 바라는 값.
+    #[test]
+    fn ime_write_only_when_changed() {
+        assert_eq!(ime_write_needed(None, None), None);
+        assert_eq!(ime_write_needed(Some(true), Some(true)), None);
+        assert_eq!(ime_write_needed(Some(true), Some(false)), Some(false));
+        assert_eq!(ime_write_needed(Some(false), Some(true)), Some(true));
+        assert_eq!(ime_write_needed(None, Some(false)), Some(false));
+    }
+
+    /// MC/DC: 조건마다 그것만 뒤집었을 때 결과가 바뀌는 쌍.
+    #[test]
+    fn ime_allow_panels_only_with_text_input_focus() {
+        // 패널 넷 = 글 상자 포커스(타입어헤드 아님)면 허용 · 목록 포커스(타입어헤드)면 끔 — 객체 탐색기 포함(10-15 결함).
+        for f in [
+            Focus::Project,
+            Focus::Bookmarks,
+            Focus::Outline,
+            Focus::Explorer,
+        ] {
+            assert!(ime_allow(true, false, f, false, false), "{f:?} 글 상자");
+            assert!(!ime_allow(true, false, f, false, true), "{f:?} 타입어헤드");
+        }
+        // 앱 조합 모드 = 다른 조건과 무관하게 끔.
+        assert!(!ime_allow(false, true, Focus::Editor, true, false));
+        // 팔레트 열림 = 포커스가 그리드·타입어헤드여도 허용.
+        assert!(ime_allow(true, true, Focus::Grid, false, true));
+        assert!(!ime_allow(true, false, Focus::Grid, false, true));
+        // 편집기류 = 타입어헤드 깃발과 무관.
+        for f in [Focus::Editor, Focus::Find, Focus::Search, Focus::Ext] {
+            assert!(ime_allow(true, false, f, false, true), "{f:?}");
+        }
+        // 그리드 = 글 상자(조건 바·값 목록)가 바랄 때만.
+        assert!(ime_allow(true, false, Focus::Grid, true, false));
+        assert!(!ime_allow(true, false, Focus::Grid, false, false));
+        // 상세 패널 = 글 입력 없음.
+        assert!(!ime_allow(true, false, Focus::Details, false, false));
     }
 }

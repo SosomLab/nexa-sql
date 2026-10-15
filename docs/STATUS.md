@@ -2,7 +2,19 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-14 §4](journal/2026-10-14.md)**(126차 win = 🔧 PG 연결 아이콘 Db2 오인 = 힌트 부분 문자열 `matrixdb2` → 낱말 경계 + 방언 제품군 제한 · dbms_icons 3/3) · 그 전 = §1~§3(125차 win · 🚀 v0.2.0 공개 · V3 제품 결함 0 · T-346).
+> ★ **다음 세션 시작점 = [journal 2026-10-15 §2](journal/2026-10-15.md)**(127차 win 마감 · §1 = T-346 시험 자산 6 ✅ · ★ 객체 탐색기 "Include Description" 설명 포함 검색(D-290) · ★ SQL Server 전 DB 검색 + 범위 설정(T-351 · D-291) · 🔧 한글 입력 2건 + ★ IME 단일 상태(T-350) · 🔧 서버 유형 변경 알림 게이트 `announce_env_change` · 🔧 필터 틀 툴팁 범위 · 사용자 ✓ 10 · 남음 = T-346 ③④ 맥 · T-347~T-349) · 그 전 = [journal 10-14 §4](journal/2026-10-14.md)(126차 · PG 아이콘 Db2 오인) · §1~§3(125차 · 🚀 v0.2.0).
+
+## 2026-10-15 (127차 · **win** · 협업 쌍 = 개발 nexa-sql-11 × 협업 nexa-sql-07 · [journal 10-15 §1](journal/2026-10-15.md))
+
+- **T-346 시험 자산 6 ✅**(win-func-check 경로 절대화·S96 한글 · grid-edit `null=` · bulk Oracle 드라이버별 · dbms-source `프로필:방언:DB` · linux-func-check Windows 안내) · 검증 = dbms-source **33/0** · S95·S96 **PASS** · ③④ = 맥 다음 세션.
+- ★ **객체 탐색기 "Include Description"**(사용자 · D-290) = 필터 틀 오른쪽 토글 = `explorer.search_desc`(기본 off) · 테이블·뷰 코멘트도 일치 · 코멘트는 토글 켬 + 검색어 있을 때만 읽음 · 🔧 2차 = 트리 판정을 UI 사본 `desc_comments`로(메타 등재 전제 0건) · E2E `win-explorer-desc-e2e.sh` **13/0** · 캡처 ✓ · [28 §7-6](28-object-explorer.md) · 후속 T-347·T-348.
+- 🔧 **한글 입력 2건**(사용자 실기) = 탐색기 필터 상자 자모 분리 · 조건 바 한/영 전환 안 됨 → `ime_allow` 순수 함수 + MC/DC · ★ **T-350 ✅ IME 모드 단일 상태**(사용자 지시 · 허용 결정 = 사건 끝 1회 `ime_apply` · Windows 변환 모드 저장·복원 · 61 §2-2-b 13).
+- 🔧 **서버 유형 변경 = 알림 게이트**(사용자 "PRD가 아닌 유형으로 바꾸면 재실행 없이 바로 편집") = `announce_env_change`(그리드 `set_prod` 재판정 · UI · `sync_gate`) · 진입점 넷 · 2차 = 세션 맞바꿈(`sync_sess`)도 게이트 · 결과 도착 때 그 세션의 운영 여부 · 규칙 [61 §1-12](61-core-design-and-working-rules.md).
+- 🔧 **SQL Server(SSMS 골격) 설명 검색 0건**(사용자 실기) = `schema_names()`가 SSMS에서 빈 목록(이름 인덱스·L1·코멘트 큐가 SQL Server에서 전부 정지였음 · 기존 결함) → 메타 스키마 폴백 + `db` 명시 `switch_db` · SSMS = Lazy(선적재 없음 · 사용자 지시) · [101 §4](101-mssql-ssms-explorer-databases-layer.md).
+- ★ **T-351 ✅ SQL Server 전 DB 검색** + 범위 설정 `explorer.search_scope`(all 기본 = 전체 DBMS | current · D-291) · 🔧 접속 직후 필터 = DB 목록 완료 뒤 인덱스 재시작 · E2E SQL Server **19/0** · PG **15/0**(한글 설명 낱말 포함).
+- 🔧 **필터 틀 툴팁·이력 드롭다운 어긋남** = 패널 폭을 x 상한으로 쓰던 결함 → 창 좌표 `clamp_x`(61 §2-2 팝업 배치 ⑥ · 102 §12).
+- 검증 = clippy 0 · 기동 Release app 149~177 ms · 첫 그리기 48~59 ms(Debug 필터 버튼 1.1 s = Debug 전용 · T-349) · E2E dbms-source 33/0 · S95·S96 PASS · desc PG 15/0 · MSSQL 19/0 · 풀 테스트 = 10-14 125차 V3(오늘 = CI 겸함) · V2 = journal §2.
+- **사용자 ✓ 10**(설명 포함 · PRD↔DEV · 조건 바 IME · 필터 한글 · 편집기 한글 유지 · "공급계획" · 범위 현재 · 접속 직후 필터 · 여러 DB · 툴팁) · Debug **PID 42728** · 남음 = T-346 ③④ 맥 · T-347~T-349.
 
 ## 2026-10-14 저녁 (126차 · **win** · 협업 쌍 = 개발 nexa-sql-99 × 협업 nexa-sql-07 · [journal 10-14 §4](journal/2026-10-14.md))
 

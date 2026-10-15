@@ -1071,12 +1071,17 @@ impl App {
                     //   일괄로 넣어, 뒤이어 다른 방언으로 `CONNECT`하면 옛 결과 그리드의 방언까지 덮어써졌다 → Oracle 결과에
                     //   SQL Server 문법(`[열]`)으로 UPDATE를 만들어 ORA-00936. 결과의 방언은 결과의 속성이다 · DR-33).
                     let dial = self.sess.dialect;
+                    // ★ 운영 여부도 같은 이유로 **그 결과를 만든 세션의 것**(10-15 사용자 실기: 전용 NON 세션을 쓰다 공유 PRD로
+                    //   돌아온 탭의 그리드가 옛 `prod=false`를 쥔 채 재실행돼 편집이 열렸다 · 서버 유형 게이트 `announce_env_change`의 짝).
+                    let prod = self.sess.spec.as_ref().and_then(|sp| sp.env)
+                        == Some(nsql_script::ConnEnv::Prod);
                     // ★ 증분 표시(사용자 10-09): 탭의 행 수가 0(전체)이고 더 있으면 첫 세그먼트를 보인 채 **나머지를 자동으로 이어 받는다**
                     //   (⇊와 같은 길 · 배치마다 `Batch` · ■/진행률/예산은 배치 경계) — `whole`이면 종전대로(드라이버가 전부 읽은 뒤 표시).
                     let live = self.settings.get("grid.fetch_display") != Some("whole");
                     if let Some(g) = self.grid_for(k) {
                         g.set_result(rs);
                         g.set_dialect(dial);
+                        g.set_prod(prod);
                         g.set_more(more);
                         if let Some(s) = stmt.as_deref() {
                             g.set_result_origin(s, is_query);

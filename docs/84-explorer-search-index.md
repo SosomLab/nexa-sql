@@ -90,6 +90,8 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 | `explorer.index_hits_max` | 2000 | 한 필터가 서버마다 트리에 올리는 일치 상한('A' 같은 넓은 검색어 보호) |
 | `explorer.index_prefetch` | on | 유휴 선적재(§7) |
 | `explorer.index_idle_ms` | 5000 | 선적재 간격(스키마 하나마다) |
+| `explorer.search_desc` | off | 설명 포함 검색(127차 · 필터 틀 "Include Description" 토글과 한 값) — 켜면 검색어가 있을 때만 스키마별 코멘트를 읽어 이름 또는 설명 일치 · [28 §7-6](28-object-explorer.md) |
+| `explorer.search_scope` | all | 검색 범위(127차 · D-291) — all = 전체 DBMS(서버 전체 스키마 · SQL Server 전 DB) · current = 현재 스키마/데이터베이스만 · [28 §7-6](28-object-explorer.md) |
 
 ## 6. 일관성(인덱스와 트리가 어긋나지 않게)
 

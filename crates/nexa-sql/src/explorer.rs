@@ -223,6 +223,11 @@ pub(crate) struct IndexCfg {
     pub disk_cache: bool,
     /// ★ L2 코멘트 워머(86 §5 · `meta.warm_comments`): 관계 폴더를 읽은 스키마의 테이블·컬럼 코멘트를 뒤에서 채운다.
     pub warm_comments: bool,
+    /// ★ 설명 포함 검색(`explorer.search_desc` · 사용자 10-15 · 127차): 객체 필터가 이름뿐 아니라 **객체 설명(코멘트 · Oracle `ALL_TAB_COMMENTS`)**도
+    ///   본다 — 필터 틀 오른쪽 "Include Description" 토글과 같은 값(기본 끔). 켜면 검색 중인 모든 스키마의 코멘트를 `warm_comments`와 무관하게 읽는다.
+    pub search_desc: bool,
+    /// ★ 검색 범위(`explorer.search_scope` · 사용자 10-15 · 기본 전체): 거짓 = 전체 DBMS(모든 스키마 · SQL Server = 모든 DB) · 참 = 현재 스키마/DB만.
+    pub scope_current: bool,
 }
 
 impl Default for IndexCfg {
@@ -240,6 +245,8 @@ impl Default for IndexCfg {
             cols_ttl_secs: 600,
             disk_cache: true,
             warm_comments: true,
+            search_desc: false,
+            scope_current: false,
         }
     }
 }
@@ -333,6 +340,8 @@ enum Req {
         gen: u64,
         schema: String,
         max: usize,
+        /// SSMS 골격(101 · 10-15) = **현재 DB**(기준 DB가 master인 로그인은 객체가 다른 DB에 있다) · 그 밖 None = 기준 DB.
+        db: Option<String>,
     },
     /// ★ 검색 매칭을 스레드로(85 §6 · 사용자 09-25 "검색과 애니메이션이 엮이지 않게 상태만 교환"): 백그라운드 메타 스레드가 자기가 읽은
     /// L1 이름 사본에 대해 판정하고 일치만 `Resp::Hits`로 — UI 스레드는 스캔 0 · 노드 삽입만.
@@ -341,6 +350,10 @@ enum Req {
         rev: u64,
         matcher: crate::filterbar::Matcher,
         limit: usize,
+        /// 설명(코멘트)도 판정 대상(10-15 · `IndexCfg::search_desc`).
+        desc: bool,
+        /// 검색 범위(10-15 · `explorer.search_scope`): Some(단위 열쇠들) = 그 단위만 · None = 전부.
+        scope: Option<Vec<String>>,
     },
     SearchStop {
         gen: u64,
@@ -394,6 +407,8 @@ enum Req {
     SchemaComments {
         gen: u64,
         schema: String,
+        /// `Index`와 같은 규칙(현재 DB).
+        db: Option<String>,
     },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
     ColumnsMeta {
@@ -702,6 +717,8 @@ enum Resp {
     Index {
         gen: u64,
         schema: String,
+        /// 요청의 DB(SSMS DB 단위 = 스키마 "" + DB · 단위 열쇠 `index_key`).
+        db: Option<String>,
         r: Result<(Vec<nsql_catalog::NameEntry>, bool), String>,
     },
     /// 객체 용량 한 스키마·종류 분(사용자 09-30).
@@ -721,7 +738,7 @@ enum Resp {
     Hits {
         gen: u64,
         rev: u64,
-        hits: Vec<(String, ObjectKind, String)>,
+        hits: Vec<Hit>,
     },
     Columns {
         gen: u64,
@@ -754,6 +771,7 @@ enum Resp {
     SchemaComments {
         gen: u64,
         schema: String,
+        db: Option<String>,
         tables: Vec<(String, Option<String>)>,
         cols: Vec<(String, String, Option<String>)>,
     },
@@ -901,6 +919,8 @@ impl ObjectOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExplorerAction {
+    /// ★ 필터 틀 "Include Description" 토글(10-15) — 호스트가 설정 `explorer.search_desc`를 뒤집는다(프로젝트 탐색기 숨김 토글과 같은 길).
+    ToggleDescSearch,
     /// 새 편집기 탭에 텍스트(SELECT 템플릿 · 소스).
     OpenSql {
         title: String,
@@ -1066,6 +1086,11 @@ pub(crate) struct Explorer {
     /// ★ L2 코멘트 워머(86 §5): 관계 폴더가 읽힌 스키마를 하나씩 · 진행 중 하나.
     comment_q: VecDeque<String>,
     comment_inflight: Option<String>,
+    /// ★ 설명 포함 검색(10-15)이 받은 스키마 코멘트 응답(`enqueue_desc_comments` 재요청 방지 · 세대 리셋 때 비움).
+    desc_comments_done: HashSet<String>,
+    /// ★ 트리 쪽 설명 판정용 코멘트 사본(스키마 → 소문자 이름 → 코멘트 · 10-15 2차): 메타(`set_schema_comments`)는 그 스키마 이름이
+    ///   등재돼 있을 때만 받아 주므로 `refilter`가 메타에만 기대면 일치가 비었다(E2E 1차 = 이름 1건 · 설명 0건) → 응답을 그대로 여기에도.
+    desc_comments: HashMap<String, HashMap<String, String>>,
     /// L1 디스크 캐시 파일(접속 자격 열쇠의 해시 · 85 §9) · 이번 접속에 저장했는가.
     cache_path: Option<std::path::PathBuf>,
     cache_saved: bool,
@@ -1313,6 +1338,7 @@ fn req_label(r: &Req) -> String {
         Req::DbSizes { .. } => "db-sizes".into(),
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
+        Req::SchemaComments { .. } => "schema-comments".into(),
         Req::NamesUpdate { schema, kind, .. } => format!("names-update {schema} {kind:?}"),
         Req::NamesSeed { schema, .. } => format!("names-seed {schema}"),
         Req::SubItems { owner, sub, .. } => format!("sub {} {sub:?}", owner.name),
@@ -1475,7 +1501,9 @@ fn meta_thread(
     let mut pending: std::collections::VecDeque<Req> = std::collections::VecDeque::new();
     // ★ 검색 스레드 몫(85 §6): 이 스레드가 읽은 L1 이름 사본(스키마별) + 살아 있는 검색어 — 판정은 여기서, UI는 일치만 받는다.
     let mut l1_names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::new();
-    let mut search: Option<(u64, crate::filterbar::Matcher, usize)> = None;
+    // ★ 설명 포함 검색(10-15): 이 스레드가 읽은 스키마 코멘트 사본(스키마 → 소문자 이름 → 코멘트) — `Req::SchemaComments`마다 쌓이고 세대가 바뀌면 비운다.
+    let mut l1_comments: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut search: Option<LiveSearch> = None;
     loop {
         if pending.is_empty() {
             match rx.recv() {
@@ -1656,6 +1684,7 @@ fn meta_thread(
                 cur_gen = gen;
                 resume = Some(spec);
                 l1_names.clear();
+                l1_comments.clear();
                 search = None;
                 continue;
             }
@@ -1664,12 +1693,27 @@ fn meta_thread(
                 rev,
                 matcher,
                 limit,
+                desc,
+                scope,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
-                let hits = search_hits(&l1_names, &matcher, limit);
-                search = Some((rev, matcher, limit));
+                let hits = search_hits(
+                    &l1_names,
+                    &l1_comments,
+                    &matcher,
+                    limit,
+                    desc,
+                    scope.as_deref(),
+                );
+                search = Some(LiveSearch {
+                    rev,
+                    m: matcher,
+                    limit,
+                    desc,
+                    scope,
+                });
                 let _ = tx.send(Resp::Hits { gen, rev, hits });
                 wake();
                 continue;
@@ -1684,14 +1728,21 @@ fn meta_thread(
                 if gen != cur_gen || l1_names.contains_key(&schema) {
                     continue;
                 }
-                if let Some((rev, m, limit)) = &search {
+                if let Some(ls) = &search {
                     let one: HashMap<String, Vec<nsql_catalog::NameEntry>> =
                         HashMap::from([(schema.clone(), list.clone())]);
-                    let hits = search_hits(&one, m, *limit);
+                    let hits = search_hits(
+                        &one,
+                        &l1_comments,
+                        &ls.m,
+                        ls.limit,
+                        ls.desc,
+                        ls.scope.as_deref(),
+                    );
                     if !hits.is_empty() {
                         let _ = tx.send(Resp::Hits {
                             gen,
-                            rev: *rev,
+                            rev: ls.rev,
                             hits,
                         });
                         wake();
@@ -1792,33 +1843,55 @@ fn meta_thread(
                     continue;
                 }
                 base_db = Some(db);
+                // 이름·코멘트 사본은 DB의 것(10-15) — 현재 DB가 바뀌면 버린다(UI는 `set_current_db`가 인덱스를 무효화해 다시 읽는다).
+                l1_names.clear();
+                l1_comments.clear();
                 continue;
             }
-            Req::Index { gen, schema, max } => {
+            Req::Index {
+                gen,
+                schema,
+                max,
+                db,
+            } => {
                 if gen != cur_gen {
                     continue;
                 }
-                switch_db(&mut session, &mut meta_db, &base_db, None);
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
+                // SSMS DB 단위(스키마 "") = 스키마 필터 없이 DB 전체(T-351).
+                let scs: &[String] = if schema.is_empty() {
+                    &[]
+                } else {
+                    std::slice::from_ref(&schema)
+                };
                 let r = with_session(&mut session, |s| {
-                    nsql_catalog::name_index(s, std::slice::from_ref(&schema), max).map_err(err_s)
+                    nsql_catalog::name_index(s, scs, max).map_err(err_s)
                 });
-                // 사본 갱신 + 살아 있는 검색어가 있으면 이 스키마 분 일치를 바로(UI는 스캔 없이 삽입만).
+                // 사본 갱신 + 살아 있는 검색어가 있으면 이 단위 분 일치를 바로(UI는 스캔 없이 삽입만).
                 if let Ok((list, _)) = &r {
-                    l1_names.insert(schema.clone(), list.clone());
-                    if let Some((rev, m, limit)) = &search {
+                    let key = index_key(&schema, db.as_deref());
+                    l1_names.insert(key.clone(), list.clone());
+                    if let Some(ls) = &search {
                         let one: HashMap<String, Vec<nsql_catalog::NameEntry>> =
-                            HashMap::from([(schema.clone(), list.clone())]);
-                        let hits = search_hits(&one, m, *limit);
+                            HashMap::from([(key, list.clone())]);
+                        let hits = search_hits(
+                            &one,
+                            &l1_comments,
+                            &ls.m,
+                            ls.limit,
+                            ls.desc,
+                            ls.scope.as_deref(),
+                        );
                         if !hits.is_empty() {
                             let _ = tx.send(Resp::Hits {
                                 gen,
-                                rev: *rev,
+                                rev: ls.rev,
                                 hits,
                             });
                         }
                     }
                 }
-                Resp::Index { gen, schema, r }
+                Resp::Index { gen, schema, db, r }
             }
             Req::Columns {
                 gen,
@@ -1886,17 +1959,51 @@ fn meta_thread(
                 });
                 Resp::Details { gen, owner, col, r }
             }
-            Req::SchemaComments { gen, schema } => {
+            Req::SchemaComments { gen, schema, db } => {
                 if gen != cur_gen {
                     continue;
                 }
+                // 코멘트는 인덱스와 같은 DB에서(SSMS = 현재 DB · 그 밖 기준 DB · 앞 요청이 다른 DB로 `USE`해 두었을 수 있다 · 10-15).
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let (tables, cols) = with_session(&mut session, |s| {
                     Ok(nsql_catalog::schema_comments_raw(s, &schema))
                 })
                 .unwrap_or_default();
+                // ★ 설명 포함 검색(10-15): 사본에 쌓고, 살아 있는 검색이 설명을 보면 이 스키마 분 일치를 바로(이름 일치가 섞여도 UI가
+                //   이미 있는 자식 이름으로 거른다 · `materialize_hits`).
+                let key = index_key(&schema, db.as_deref());
+                let by_name: HashMap<String, String> = tables
+                    .iter()
+                    .filter_map(|(t, c)| c.as_ref().map(|c| (t.to_lowercase(), c.clone())))
+                    .collect();
+                l1_comments.insert(key.clone(), by_name);
+                if let Some(ls) = &search {
+                    if ls.desc {
+                        if let Some(list) = l1_names.get(&key) {
+                            let one: HashMap<String, Vec<nsql_catalog::NameEntry>> =
+                                HashMap::from([(key.clone(), list.clone())]);
+                            let hits = search_hits(
+                                &one,
+                                &l1_comments,
+                                &ls.m,
+                                ls.limit,
+                                true,
+                                ls.scope.as_deref(),
+                            );
+                            if !hits.is_empty() {
+                                let _ = tx.send(Resp::Hits {
+                                    gen,
+                                    rev: ls.rev,
+                                    hits,
+                                });
+                            }
+                        }
+                    }
+                }
                 Resp::SchemaComments {
                     gen,
                     schema,
+                    db,
                     tables,
                     cols,
                 }
@@ -2167,15 +2274,60 @@ fn reachable(spec: &ConnectSpec, timeout: Duration) -> bool {
 }
 
 /// ★ 검색 판정(스레드 · 85 §6): 스키마 사본 전부에서 이름이 매처에 맞는 것(상한 `limit`) — 순수 함수(시험).
+///   `desc`(10-15 · 설명 포함)면 이름이 안 맞는 객체는 `comments`(스키마 → 소문자 이름 → 코멘트)의 설명으로 한 번 더 판정한다 —
+///   종류·용량 술어는 같은 사실로(`type:view 재고` = 뷰이면서 이름 또는 설명에 '재고').
+/// 검색 일치 한 건 = (DB · 스키마 · 종류 · 이름) — DB는 SSMS DB 단위일 때만(그 밖 빈 문자열 · 10-15 T-351).
+pub(crate) type Hit = (String, String, ObjectKind, String);
+
+/// 스레드의 살아 있는 검색(85 §6 · 10-15): 검색어 세대 · 매처 · 상한 · 설명 포함 · 범위(단위 열쇠 · None = 전부).
+struct LiveSearch {
+    rev: u64,
+    m: crate::filterbar::Matcher,
+    limit: usize,
+    desc: bool,
+    scope: Option<Vec<String>>,
+}
+
+/// ★ 인덱스·코멘트 단위 열쇠(10-15 · T-351): 비SSMS = 스키마 · SSMS = `db:<DB>`(스키마 "" + DB · DB당 스키마 필터 없는 질의 1회).
+fn index_key(schema: &str, db: Option<&str>) -> String {
+    if schema.is_empty() {
+        format!("db:{}", db.unwrap_or(""))
+    } else {
+        schema.to_string()
+    }
+}
+
+/// 단위 열쇠가 DB 단위면 그 DB 이름.
+fn unit_db(key: &str) -> Option<&str> {
+    key.strip_prefix("db:")
+}
+
+/// 단위 열쇠 → 요청 인자(스키마 · DB).
+fn unit_parts(key: &str) -> (String, Option<String>) {
+    match unit_db(key) {
+        Some(d) => (String::new(), Some(d.to_string())),
+        None => (key.to_string(), None),
+    }
+}
+
 fn search_hits(
     names: &HashMap<String, Vec<nsql_catalog::NameEntry>>,
+    comments: &HashMap<String, HashMap<String, String>>,
     m: &crate::filterbar::Matcher,
     limit: usize,
-) -> Vec<(String, ObjectKind, String)> {
+    desc: bool,
+    scope: Option<&[String]>,
+) -> Vec<Hit> {
     let mut out = Vec::new();
     let mut schemas: Vec<&String> = names.keys().collect();
     schemas.sort_by(|a, b| nexa_ctl::natural::cmp_names(a, b));
     'outer: for sc in schemas {
+        // 범위(10-15): 단위 열쇠가 범위 밖이면 통째로 건너뛴다(현재 스키마/DB만).
+        if scope.is_some_and(|keys| !keys.iter().any(|k| k == sc)) {
+            continue;
+        }
+        let db = unit_db(sc).unwrap_or("").to_string();
+        let cm = if desc { comments.get(sc) } else { None };
         for e in &names[sc] {
             let kind = format!("{:?}", e.kind).to_lowercase();
             let facts = crate::filterbar::NodeFacts {
@@ -2184,8 +2336,23 @@ fn search_hits(
                 size: None,
                 fields: &[],
             };
-            if m.matches_facts(&facts) {
-                out.push((e.schema.clone(), e.kind, e.name.clone()));
+            // 코멘트 열쇠 = DB 단위면 `스키마.이름`(카탈로그가 그렇게 돌려준다) · 그 밖 이름.
+            let ck = if db.is_empty() {
+                e.name.to_lowercase()
+            } else {
+                format!("{}.{}", e.schema, e.name).to_lowercase()
+            };
+            let hit = m.matches_facts(&facts)
+                || cm.and_then(|c| c.get(&ck)).is_some_and(|d| {
+                    m.matches_facts(&crate::filterbar::NodeFacts {
+                        text: d,
+                        kind: Some(&kind),
+                        size: None,
+                        fields: &[],
+                    })
+                });
+            if hit {
+                out.push((db.clone(), e.schema.clone(), e.kind, e.name.clone()));
                 if out.len() >= limit {
                     break 'outer;
                 }
@@ -2556,6 +2723,8 @@ impl Explorer {
             warm_sent: 0,
             comment_q: VecDeque::new(),
             comment_inflight: None,
+            desc_comments_done: HashSet::new(),
+            desc_comments: HashMap::new(),
             cache_path: None,
             cache_saved: false,
             complete_q: VecDeque::new(),
@@ -2585,6 +2754,8 @@ impl Explorer {
         self.warm_sent = 0;
         self.comment_q.clear();
         self.comment_inflight = None;
+        self.desc_comments_done.clear();
+        self.desc_comments.clear();
         self.sizes.clear();
         self.sizes_loaded.clear();
         self.db_sizes.clear();
@@ -4217,6 +4388,9 @@ impl Explorer {
                             }
                             if !soft {
                                 self.expand_current_db();
+                                // ★ 루트(DB 목록)가 다 읽혔다 = 검색 단위(DB)가 생겼다(T-351 · 10-15 E2E ⑦): 접속 직후 바로 친 필터는
+                                //   루트 미완료로 인덱스를 못 시작했으므로 여기서 다시(스키마 목록 응답의 `index_invalidate`와 같은 역할).
+                                self.index_invalidate();
                             }
                         }
                         Err(e) => {
@@ -4226,40 +4400,67 @@ impl Explorer {
                         }
                     }
                 }
-                Resp::Index { gen, schema, r } => {
+                Resp::Index { gen, schema, db, r } => {
                     if gen != self.gen {
                         continue;
                     }
-                    if self.index_inflight.as_deref() == Some(schema.as_str()) {
+                    let key = index_key(&schema, db.as_deref());
+                    if self.index_inflight.as_deref() == Some(key.as_str()) {
                         self.index_inflight = None;
                     }
                     self.index_last_at = Some(Instant::now());
                     match r {
                         Ok((list, trunc)) => {
                             // ★ L1 = MetaStore 한 곳(85 §2): 스키마의 모든 종류를 한 번에(빈 종류 = 부정 캐시) · 완성·검색이 같은 표를 읽는다 ·
-                            //   일치는 스레드가 `Resp::Hits`로 따로 준다(UI 스캔 0).
+                            //   일치는 스레드가 `Resp::Hits`로 따로 준다(UI 스캔 0). SSMS DB 단위(스키마 "")는 **현재 DB**일 때만 스키마별로 메타에
+                            //   (메타 = 현재 DB 것만 · 101 · 다른 DB 분은 검색 스레드 사본으로 충분).
                             if let Some(d) = self.dialect {
-                                let names: Vec<(ObjectKind, String, String)> = list
-                                    .into_iter()
-                                    .map(|e| (e.kind, e.name, e.extra))
-                                    .collect();
-                                self.meta.load_names_x(
-                                    &schema,
-                                    nsql_catalog::kinds_for(d),
-                                    &names,
-                                    Self::now_secs(),
-                                );
+                                let is_cur = db.as_deref().is_none_or(|x| {
+                                    self.current_db
+                                        .as_deref()
+                                        .is_some_and(|c| c.eq_ignore_ascii_case(x))
+                                });
+                                if !schema.is_empty() {
+                                    let names: Vec<(ObjectKind, String, String)> = list
+                                        .into_iter()
+                                        .map(|e| (e.kind, e.name, e.extra))
+                                        .collect();
+                                    self.meta.load_names_x(
+                                        &schema,
+                                        nsql_catalog::kinds_for(d),
+                                        &names,
+                                        Self::now_secs(),
+                                    );
+                                } else if is_cur {
+                                    let mut by: std::collections::BTreeMap<
+                                        String,
+                                        Vec<(ObjectKind, String, String)>,
+                                    > = std::collections::BTreeMap::new();
+                                    for e in list {
+                                        by.entry(e.schema)
+                                            .or_default()
+                                            .push((e.kind, e.name, e.extra));
+                                    }
+                                    for (sc, names) in by {
+                                        self.meta.load_names_x(
+                                            &sc,
+                                            nsql_catalog::kinds_for(d),
+                                            &names,
+                                            Self::now_secs(),
+                                        );
+                                    }
+                                }
                             }
                             self.index_truncated |= trunc;
-                            self.index_done.insert(schema);
+                            self.index_done.insert(key);
                             if self.l1_complete() {
                                 self.arm_warm();
                                 self.save_cache();
                             }
                         }
-                        // 실패한 스키마 = 트리에 읽힌 것만 검색 대상(다음 무효화 때 다시).
+                        // 실패한 단위 = 트리에 읽힌 것만 검색 대상(다음 무효화 때 다시).
                         Err(_) => {
-                            self.index_done.insert(schema);
+                            self.index_done.insert(key);
                         }
                     }
                     if self.filter.is_some() {
@@ -4349,17 +4550,33 @@ impl Explorer {
                 Resp::SchemaComments {
                     gen,
                     schema,
+                    db,
                     tables,
                     cols,
                 } => {
                     if gen != self.gen {
                         continue;
                     }
-                    if self.comment_inflight.as_deref() == Some(schema.as_str()) {
+                    let key = index_key(&schema, db.as_deref());
+                    if self.comment_inflight.as_deref() == Some(key.as_str()) {
                         self.comment_inflight = None;
                         self.warm_last = Some(Instant::now());
                     }
-                    self.meta.set_schema_comments(&schema, &tables, &cols);
+                    self.desc_comments_done.insert(key.clone());
+                    self.desc_comments.insert(
+                        key,
+                        tables
+                            .iter()
+                            .filter_map(|(t, c)| c.as_ref().map(|c| (t.to_lowercase(), c.clone())))
+                            .collect(),
+                    );
+                    if !schema.is_empty() {
+                        self.meta.set_schema_comments(&schema, &tables, &cols);
+                    }
+                    // ★ 설명 포함 검색(10-15): 트리에 이미 있는 노드도 설명으로 다시 거른다(스레드 일치는 `Resp::Hits`로 따로 온다).
+                    if self.filter.is_some() && self.index_cfg.search_desc {
+                        self.refilter();
+                    }
                     self.actions.push(ExplorerAction::CommentsLoaded { schema });
                 }
                 Resp::Hits { gen, rev, hits } => {
@@ -5401,9 +5618,16 @@ impl Explorer {
         None
     }
 
-    /// ★ 현재 DB의 종류 폴더(검색 일치 삽입 · 101) — 묶음(프로그래밍 기능 …) 안까지 · 없으면 만들어서.
-    fn ssms_folder(&mut self, kind: ObjectKind) -> Option<usize> {
-        let dbn = self.current_db_node()?;
+    /// 이름이 `db`인 DB 노드(Databases·System Databases 묶음 아래 어디든).
+    fn db_node(&self, db: &str) -> Option<usize> {
+        self.nodes
+            .iter()
+            .position(|n| matches!(&n.kind, NodeKind::Database(d) if d.eq_ignore_ascii_case(db)))
+    }
+
+    /// ★ SSMS 골격: `db`의 `kind` 폴더(검색 일치 삽입 · 101) — 묶음(프로그래밍 기능 …) 안까지 · 없으면 DB 노드의 자식을 만들어서 · T-351 = 현재 DB 아닌 DB도.
+    fn ssms_folder_in(&mut self, db: &str, kind: ObjectKind) -> Option<usize> {
+        let dbn = self.db_node(db)?;
         if self.nodes[dbn].children.is_empty() {
             let NodeKind::Database(d) = self.nodes[dbn].kind.clone() else {
                 return None;
@@ -5475,6 +5699,10 @@ impl Explorer {
         }
         self.current_db = Some(db.to_string());
         self.lower_labels.clear();
+        // 인덱스·코멘트는 DB의 것(10-15): 현재 DB가 바뀌면 버리고 검색 중이면 새 DB로 다시 읽는다(스레드 사본은 `UseDb`가 비운다).
+        self.index_invalidate();
+        self.desc_comments.clear();
+        self.desc_comments_done.clear();
         for tx in [&self.tx, &self.tx_bg] {
             let _ = tx.send(Req::UseDb {
                 gen: self.gen,
@@ -6677,6 +6905,7 @@ impl Explorer {
             //   판정은 스레드가(85 §6 · `Req::Search` → `Resp::Hits`) — UI는 일치만 받아 노드로 올린다.
             self.ensure_index();
             self.send_search();
+            self.enqueue_desc_comments();
         } else {
             // 검색이 끝나면 완성 큐·인덱스 읽기는 멈춘다(미사용 즉시 회수 · 진행 중인 하나는 응답을 그대로 받는다).
             self.complete_q.clear();
@@ -6699,9 +6928,26 @@ impl Explorer {
     }
 
     pub(crate) fn set_index_cfg(&mut self, c: IndexCfg) {
-        if self.index_cfg != c {
-            self.index_cfg = c;
+        if self.index_cfg == c {
+            return;
+        }
+        // ★ 설명 포함 토글만 바뀐 경우(10-15) = 인덱스는 그대로(읽은 이름을 버리지 않는다) · 검색어가 있으면 같은 글을 설명까지/이름만으로
+        //   다시 판정(스레드 재전송 = 이미 있는 자식은 `materialize_hits`가 거른다 · 트리 = `refilter`).
+        let only_desc = IndexCfg {
+            search_desc: c.search_desc,
+            scope_current: c.scope_current,
+            ..self.index_cfg
+        } == c;
+        self.index_cfg = c;
+        if !only_desc {
             self.index_invalidate();
+        } else if self.filter.is_some() {
+            // 범위가 넓어졌으면 새 단위를 읽어야 한다(현재 → 전체).
+            self.ensure_index();
+            self.send_search();
+            self.enqueue_desc_comments();
+            self.refilter();
+            self.pump_complete();
         }
     }
 
@@ -6729,7 +6975,7 @@ impl Explorer {
     /// 진단 한 줄(기동 명령 `explorer.stat` · 09-25): 스키마 수 · L1 완료 수 · 진행 중 · 큐 · 완성 · 일치 · 검색 중.
     pub(crate) fn stat_line(&self) -> String {
         format!(
-            "schemas={} l1_done={} inflight={:?} index_q={} completing={:?} complete_q={} hits={} busy={} warm_q={} warm_inflight={:?} offline={} root={:?} filter={} details={}",
+            "schemas={} l1_done={} inflight={:?} index_q={} completing={:?} complete_q={} hits={} busy={} warm_q={} warm_inflight={:?} offline={} root={:?} filter={} details={} desc={} comment_q={} comment_inflight={:?} desc_done={}",
             self.schema_names().len(),
             self.index_done.len(),
             self.index_inflight,
@@ -6743,7 +6989,11 @@ impl Explorer {
             self.offline,
             self.nodes[0].state,
             self.filter.is_some(),
-            self.detail_cache.len()
+            self.detail_cache.len(),
+            self.index_cfg.search_desc,
+            self.comment_q.len(),
+            self.comment_inflight,
+            self.desc_comments_done.len()
         )
     }
 
@@ -6754,7 +7004,10 @@ impl Explorer {
             && (self.index_inflight.is_some()
                 || !self.index_q.is_empty()
                 || self.completing.is_some()
-                || !self.complete_q.is_empty())
+                || !self.complete_q.is_empty()
+                // 설명 포함(10-15) = 코멘트 읽기도 검색의 일부(진행 표시).
+                || (self.index_cfg.search_desc
+                    && (self.comment_inflight.is_some() || !self.comment_q.is_empty())))
     }
 
     /// 인덱스가 상한에서 잘렸는가(헤더 안내용).
@@ -6767,7 +7020,7 @@ impl Explorer {
         if self.filter.is_none() || !self.index_cfg.on || self.offline {
             return None;
         }
-        let total = self.schema_names().len();
+        let total = self.index_units().len();
         let done = self.index_done.len().min(total);
         (done < total).then_some((done, total))
     }
@@ -6824,6 +7077,60 @@ impl Explorer {
         }
     }
 
+    /// ★ 설명 포함 검색(10-15): 필터가 살아 있고 `search_desc`면 트리의 **모든 스키마** 코멘트를 큐에(`meta.warm_comments` 무관 · 이미 읽었거나
+    ///   대기 중이면 0) — 한 번에 하나씩 백그라운드 세션으로(`comment_step`) · 응답은 스레드가 설명 일치를 바로 보낸다(`Resp::Hits`).
+    ///   `desc_comments_done` = 이 칸이 받은 응답(메타가 그 스키마를 모르면 `has_schema_comments`가 영영 거짓이라 따로 센다).
+    fn enqueue_desc_comments(&mut self) {
+        if !self.index_cfg.search_desc || self.filter.is_none() || self.offline {
+            return;
+        }
+        for sc in self.index_units() {
+            if self.desc_comments_done.contains(&sc)
+                || (unit_db(&sc).is_none() && self.meta.has_schema_comments(&sc))
+                || self.comment_inflight.as_deref() == Some(sc.as_str())
+                || self.comment_q.iter().any(|s| *s == sc)
+            {
+                continue;
+            }
+            self.comment_q.push_back(sc);
+        }
+    }
+
+    /// ★ 설명 포함 검색(10-15 · 트리 쪽): 객체 노드의 설명(메타에 읽어 둔 스키마 코멘트 · 왕복 0)이 필터에 맞는가 — 관계 객체만(코멘트가 있는 종류).
+    fn desc_matches(&self, m: &crate::filterbar::Matcher, i: usize) -> bool {
+        let NodeKind::Object(o) = &self.nodes[i].kind else {
+            return false;
+        };
+        // 열쇠 = 비SSMS `스키마`→이름 · SSMS `db:<DB>`(빈 db = 현재 DB)→`스키마.이름`(T-351).
+        let (key, nk) = if self.ssms_mode() {
+            let db = if o.db.is_empty() {
+                self.current_db.clone().unwrap_or_default()
+            } else {
+                o.db.clone()
+            };
+            (
+                format!("db:{db}"),
+                format!("{}.{}", o.schema, o.name).to_lowercase(),
+            )
+        } else {
+            (o.schema.clone(), o.name.to_lowercase())
+        };
+        let d = match self.desc_comments.get(&key).and_then(|m| m.get(&nk)) {
+            Some(d) => d.clone(),
+            None => match self.meta.comments_of(&o.schema, &o.name) {
+                Some((Some(d), _)) => d,
+                _ => return false,
+            },
+        };
+        let kind = Self::kind_name(&self.nodes[i]);
+        m.matches_facts(&crate::filterbar::NodeFacts {
+            text: &d,
+            kind: kind.as_deref(),
+            size: None,
+            fields: &[],
+        })
+    }
+
     /// 스키마 코멘트를 큐에(이미 읽었거나 대기 중이면 0 · `meta.warm_comments`).
     fn enqueue_schema_comments(&mut self, schema: &str) {
         if !self.index_cfg.warm_comments
@@ -6851,13 +7158,15 @@ impl Explorer {
             return false;
         }
         while let Some(sc) = self.comment_q.pop_front() {
-            if self.meta.has_schema_comments(&sc) {
+            if unit_db(&sc).is_none() && self.meta.has_schema_comments(&sc) {
                 continue;
             }
             self.comment_inflight = Some(sc.clone());
+            let (schema, db) = unit_parts(&sc);
             let _ = self.tx_bg.send(Req::SchemaComments {
                 gen: self.gen,
-                schema: sc,
+                schema,
+                db,
             });
             return true;
         }
@@ -6922,8 +7231,11 @@ impl Explorer {
     /// L1 한 걸음(85 §2): 접속 직후부터 스키마 하나씩(간격 `idle_ms`) — 검색 중이면 `pump_index`가 대신 돈다.
     fn l1_step(&mut self, now: Instant) -> bool {
         let c = self.index_cfg;
+        // ★ SSMS 골격 = **Lazy**(사용자 10-15 "최초 실행 시점에 미리 준비하지 말고 필요한 시점에"): 접속 직후 선적재 없음 · 이름 인덱스·
+        //   코멘트는 검색을 시작할 때(`ensure_index`·`enqueue_desc_comments`)만 읽는다. 다른 방언은 종전대로(85 §2).
         if !c.on
             || !c.prefetch
+            || self.ssms_mode()
             || self.offline
             // 끊긴 끝점(docs/107 §4) = 유휴 인덱스 선적재도 정지(협업 V1 bin102 ④ · 복귀 때 재개).
             || self.broken_since.is_some()
@@ -6951,6 +7263,7 @@ impl Explorer {
             gen: self.gen,
             schema: next.clone(),
             max: c.max,
+            db: None,
         });
         self.index_inflight = Some(next);
         true
@@ -7039,6 +7352,7 @@ impl Explorer {
         if self.filter.is_some() {
             self.ensure_index();
             self.send_search();
+            self.enqueue_desc_comments();
         }
     }
 
@@ -7050,10 +7364,51 @@ impl Explorer {
             rev: self.filter_rev,
             matcher: m,
             limit: self.index_cfg.hits_max,
+            desc: self.index_cfg.search_desc,
+            scope: self.search_scope(),
         });
     }
 
-    /// 트리의 스키마 이름(현재 스키마 먼저 · 그다음 트리 순서).
+    /// ★ 인덱스·코멘트 단위(10-15 · T-351 · 설정 `explorer.search_scope`): 비SSMS = 스키마(현재 스키마 먼저 · 현재 범위면 현재 스키마만) ·
+    ///   SSMS = `db:<DB>`(현재 DB 먼저 · 그다음 트리의 DB 노드 순 = 시스템 DB는 표시 설정대로 · 현재 범위면 현재 DB만). Lazy = 검색 시작 때만 읽는다.
+    fn index_units(&self) -> Vec<String> {
+        if self.ssms_mode() {
+            let mut v: Vec<String> = Vec::new();
+            if let Some(cur) = &self.current_db {
+                v.push(format!("db:{cur}"));
+            }
+            if !self.index_cfg.scope_current {
+                for n in &self.nodes {
+                    if let NodeKind::Database(d) = &n.kind {
+                        if !v
+                            .iter()
+                            .any(|k| unit_db(k).is_some_and(|x| x.eq_ignore_ascii_case(d)))
+                        {
+                            v.push(format!("db:{d}"));
+                        }
+                    }
+                }
+            }
+            v
+        } else {
+            let mut v = self.schema_names();
+            if self.index_cfg.scope_current {
+                if let Some(cur) = &self.server_schema {
+                    v.retain(|s| s.eq_ignore_ascii_case(cur));
+                }
+            }
+            v
+        }
+    }
+
+    /// 스레드에 보낼 검색 범위: 현재 범위면 단위 열쇠 목록 · 전체면 None.
+    fn search_scope(&self) -> Option<Vec<String>> {
+        self.index_cfg.scope_current.then(|| self.index_units())
+    }
+
+    /// 트리의 스키마 이름(현재 스키마 먼저 · 그다음 트리 순서) — 인덱스·L1 선적재·설명 포함 검색 코멘트 큐의 원천.
+    /// ★ SSMS 골격(101 · 10-15): 루트 아래는 DB·묶음 노드라 스키마 노드가 없다 → **메타가 받은 스키마 목록**(`meta_set_schemas` · 현재 DB)으로.
+    ///   종전엔 빈 목록이라 SQL Server에선 서버 전체 이름 인덱스도 코멘트 큐도 돌지 않았다(사용자 10-15 "MSSQL은 검색 건수 0").
     fn schema_names(&self) -> Vec<String> {
         let mut v: Vec<String> = self.nodes[0]
             .children
@@ -7063,6 +7418,14 @@ impl Explorer {
                 _ => None,
             })
             .collect();
+        if v.is_empty() && self.ssms_mode() {
+            let snap = self.meta.snapshot();
+            v = snap
+                .schemas
+                .iter()
+                .map(|s| self.meta.names.get(*s).to_string())
+                .collect();
+        }
         if let Some(cur) = &self.server_schema {
             if let Some(p) = v.iter().position(|s| s.eq_ignore_ascii_case(cur)) {
                 let c = v.remove(p);
@@ -7082,7 +7445,7 @@ impl Explorer {
             return;
         }
         if self.index_q.is_empty() {
-            let names = self.schema_names();
+            let names = self.index_units();
             self.index_q = names
                 .into_iter()
                 .filter(|s| {
@@ -7105,10 +7468,12 @@ impl Explorer {
             self.last_used = Instant::now();
             self.suspended = false;
             // 인덱스는 늘 백그라운드 세션(이름 사본이 한 스레드에 모이게 · 사용자 클릭 세션을 막지 않게).
+            let (schema, db) = unit_parts(&s);
             let _ = self.tx_bg.send(Req::Index {
                 gen: self.gen,
-                schema: s.clone(),
+                schema,
                 max: self.index_cfg.max,
+                db,
             });
             self.index_inflight = Some(s);
             return;
@@ -7143,7 +7508,7 @@ impl Explorer {
 
     /// ② 일치를 트리로: 인덱스에서 필터에 맞는 항목을 그 (스키마, 종류) 폴더의 **부분** 자식으로 올린다(이미 전체가 읽힌/읽는 중인 폴더는 건너뜀 ·
     /// 상한 `hits_max`) · 올라간 폴더는 완성 큐에.
-    fn materialize_hits(&mut self, hits: &[(String, ObjectKind, String)]) -> usize {
+    fn materialize_hits(&mut self, hits: &[Hit]) -> usize {
         if self.filter.is_none() {
             return 0;
         }
@@ -7160,17 +7525,27 @@ impl Explorer {
                 _ => None,
             })
             .collect();
-        let picked: Vec<(String, ObjectKind, String)> = hits.to_vec();
+        let picked: Vec<Hit> = hits.to_vec();
         if picked.is_empty() {
             return 0;
         }
         let mut names: HashMap<usize, HashSet<String>> = HashMap::new();
         let ssms = self.ssms_mode();
         self.batching = true;
-        for (schema, kind, name) in picked {
-            // ★ SSMS 골격(101): 일치는 현재 DB의 그 종류 폴더(모든 스키마)로.
+        for (hdb, schema, kind, name) in picked {
+            // ★ SSMS 골격(101 · T-351): 일치는 **그 DB**(빈 db = 현재 DB)의 그 종류 폴더(모든 스키마)로.
+            let is_cur_db = hdb.is_empty()
+                || self
+                    .current_db
+                    .as_deref()
+                    .is_some_and(|c| c.eq_ignore_ascii_case(&hdb));
             let fi = if ssms {
-                match self.ssms_folder(kind) {
+                let target = if is_cur_db {
+                    self.current_db.clone().unwrap_or_default()
+                } else {
+                    hdb.clone()
+                };
+                match self.ssms_folder_in(&target, kind) {
                     Some(f) => f,
                     None => continue,
                 }
@@ -7206,7 +7581,12 @@ impl Explorer {
             }
             let depth = self.nodes[fi].depth + 1;
             let o = ObjectInfo {
-                db: String::new(),
+                // 101 규칙: 빈 db = 연결의 현재 DB · 다른 DB의 일치는 그 DB를 단다(요청·소스·상세가 그 DB로).
+                db: if ssms && !is_cur_db {
+                    hdb.clone()
+                } else {
+                    String::new()
+                },
                 schema: schema.clone(),
                 name,
                 kind,
@@ -7382,6 +7762,9 @@ impl Explorer {
                     m.matches_cached(&lower, || self.label(i).0)
                 }
             };
+            // ★ 설명 포함(10-15): 이름이 안 맞는 객체는 읽어 둔 설명으로 한 번 더(설정이 켜졌을 때만 · 비용 = 메타 조회 1).
+            let direct =
+                direct || (searchable && self.index_cfg.search_desc && self.desc_matches(&m, i));
             let child_strong = node.children.iter().any(|&c| strong[c]);
             hit[i] = direct;
             strong[i] = direct || child_strong;
@@ -9398,8 +9781,8 @@ mod refresh_tests {
         ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
         // 판정은 스레드(85 §6) — 시험은 그 응답(일치)을 직접 넣는다.
         let _ = ex.materialize_hits(&[
-            ("HR".into(), ObjectKind::View, "V_B1".into()),
-            ("HR".into(), ObjectKind::Table, "B".into()),
+            (String::new(), "HR".into(), ObjectKind::View, "V_B1".into()),
+            (String::new(), "HR".into(), ObjectKind::Table, "B".into()),
         ]);
         ex.refilter();
         ex.pump_complete();
@@ -9810,15 +10193,21 @@ mod search_thread_tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// 스레드 판정 = 순수 함수: 스키마 정렬 순 · 상한 · 대소문자 무시(plain 매처).
-    #[test]
-    fn search_hits_matches_across_schemas_with_limit() {
-        let e = |s: &str, k: ObjectKind, n: &str| nsql_catalog::NameEntry {
+    fn e(s: &str, k: ObjectKind, n: &str) -> nsql_catalog::NameEntry {
+        nsql_catalog::NameEntry {
             schema: s.into(),
             kind: k,
             name: n.into(),
             extra: String::new(),
-        };
+        }
+    }
+    fn plain(t: &str) -> crate::filterbar::Matcher {
+        crate::filterbar::Matcher::plain(t)
+    }
+
+    /// 스레드 판정 = 순수 함수: 스키마 정렬 순 · 상한 · 대소문자 무시(plain 매처) · 범위(Some) = 단위 열쇠만.
+    #[test]
+    fn search_hits_matches_across_schemas_with_limit() {
         let names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::from([
             (
                 "HR".to_string(),
@@ -9829,12 +10218,103 @@ mod search_thread_tests {
             ),
             ("B".to_string(), vec![e("B", ObjectKind::Table, "employee")]),
         ]);
-        let m = crate::filterbar::Matcher::plain("emp");
-        let all = search_hits(&names, &m, 10);
+        let none = HashMap::new();
+        let m = plain("emp");
+        let all = search_hits(&names, &none, &m, 10, false, None);
         assert_eq!(all.len(), 3);
-        assert_eq!(all[0].0, "B", "스키마 이름순");
-        assert_eq!(search_hits(&names, &m, 2).len(), 2, "상한");
-        assert!(search_hits(&names, &crate::filterbar::Matcher::plain("zzz"), 10).is_empty());
+        assert_eq!(all[0].1, "B", "스키마 이름순");
+        assert!(all[0].0.is_empty(), "비SSMS = DB 없음");
+        assert_eq!(
+            search_hits(&names, &none, &m, 2, false, None).len(),
+            2,
+            "상한"
+        );
+        assert!(search_hits(&names, &none, &plain("zzz"), 10, false, None).is_empty());
+        let sc = vec!["HR".to_string()];
+        assert_eq!(
+            search_hits(&names, &none, &m, 10, false, Some(&sc)).len(),
+            2,
+            "현재 스키마만"
+        );
+    }
+
+    /// ★ 설명 포함(10-15): 이름이 안 맞아도 코멘트가 맞으면 일치 · 끄면 이름만 · 이름·설명 둘 다 맞아도 한 번 · 한글 설명 · 코멘트 없는 스키마 = 영향 0.
+    #[test]
+    fn search_hits_includes_descriptions_when_asked() {
+        let names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::from([
+            (
+                "HR".to_string(),
+                vec![
+                    e("HR", ObjectKind::Table, "EMP"),
+                    e("HR", ObjectKind::Table, "DEPT"),
+                    e("HR", ObjectKind::View, "V_DEPT"),
+                ],
+            ),
+            ("B".to_string(), vec![e("B", ObjectKind::Table, "T1")]),
+        ]);
+        let comments: HashMap<String, HashMap<String, String>> = HashMap::from([(
+            "HR".to_string(),
+            HashMap::from([
+                (
+                    "dept".to_string(),
+                    "부서 마스터 Department master".to_string(),
+                ),
+                ("v_dept".to_string(), "부서 뷰".to_string()),
+            ]),
+        )]);
+        let m = plain("department");
+        assert!(
+            search_hits(&names, &comments, &m, 10, false, None).is_empty(),
+            "끄면 이름만"
+        );
+        let on = search_hits(&names, &comments, &m, 10, true, None);
+        assert_eq!(on.len(), 1);
+        assert_eq!(on[0].3, "DEPT");
+        // 이름과 설명이 둘 다 맞아도 한 번(DEPT) + 설명만 맞는 것(V_DEPT).
+        assert_eq!(
+            search_hits(&names, &comments, &plain("dept"), 10, true, None).len(),
+            2
+        );
+        assert_eq!(
+            search_hits(&names, &comments, &plain("부서"), 10, true, None).len(),
+            2,
+            "한글 설명"
+        );
+        // 구조 질의의 종류 술어는 설명 일치에도 같은 사실로.
+        let v = search_hits(&names, &comments, &plain("type:view 부서"), 10, true, None);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].3, "V_DEPT");
+        assert!(search_hits(&names, &comments, &plain("zzz"), 10, true, None).is_empty());
+    }
+
+    /// ★ T-351(10-15): SSMS DB 단위 열쇠 `db:<DB>` = 일치에 DB가 실리고 코멘트 열쇠는 `스키마.이름` · 범위(Some)는 단위 열쇠로 거른다.
+    #[test]
+    fn search_hits_db_units_and_scope() {
+        let names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::from([
+            ("db:A".to_string(), vec![e("dbo", ObjectKind::Table, "T1")]),
+            ("db:B".to_string(), vec![e("dbo", ObjectKind::Table, "T2")]),
+        ]);
+        let comments: HashMap<String, HashMap<String, String>> = HashMap::from([(
+            "db:B".to_string(),
+            HashMap::from([("dbo.t2".to_string(), "공급계획 기린".to_string())]),
+        )]);
+        assert_eq!(index_key("", Some("A")), "db:A");
+        assert_eq!(index_key("dbo", None), "dbo");
+        assert_eq!(unit_parts("db:A"), (String::new(), Some("A".to_string())));
+        assert_eq!(unit_parts("HR"), ("HR".to_string(), None));
+        let t = search_hits(&names, &comments, &plain("t"), 10, false, None);
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].0.as_str(), t[0].3.as_str()), ("A", "T1"), "DB 실림");
+        let ko = search_hits(&names, &comments, &plain("기린"), 10, true, None);
+        assert_eq!(ko.len(), 1);
+        assert_eq!(
+            (ko[0].0.as_str(), ko[0].1.as_str(), ko[0].3.as_str()),
+            ("B", "dbo", "T2")
+        );
+        let sc = vec!["db:A".to_string()];
+        let scoped = search_hits(&names, &comments, &plain("t"), 10, false, Some(&sc));
+        assert_eq!(scoped.len(), 1, "현재 범위 = 그 단위만");
+        assert_eq!(scoped[0].0, "A");
     }
 }
 

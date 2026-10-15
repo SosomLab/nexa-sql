@@ -64,6 +64,8 @@ pub(crate) enum BtnKind {
     Hidden,
     DotFiles,
     PathMatch,
+    /// 객체 탐색기 전용(10-15) — 설명(코멘트) 포함 검색(틀 오른쪽 토글 · 기본 끔 · 설정 `explorer.search_desc`).
+    DescMatch,
 }
 
 impl BtnKind {
@@ -76,6 +78,7 @@ impl BtnKind {
             BtnKind::Hidden => Msg::TipProjectHidden,
             BtnKind::DotFiles => Msg::TipProjectDot,
             BtnKind::PathMatch => Msg::TipFilterPath,
+            BtnKind::DescMatch => Msg::TipFilterDesc,
             BtnKind::Prev => Msg::TipFindPrev,
             BtnKind::Next => Msg::TipFindNext,
             BtnKind::Selection => Msg::TipFindSelection,
@@ -96,6 +99,7 @@ impl BtnKind {
                 | BtnKind::Hidden
                 | BtnKind::DotFiles
                 | BtnKind::PathMatch
+                | BtnKind::DescMatch
         )
     }
 }
@@ -902,7 +906,9 @@ impl FindBar {
                 FindAction::ReplaceAll
             }
             // 프로젝트 탐색기 전용 토글 — 찾기 막대에는 없다.
-            BtnKind::Hidden | BtnKind::DotFiles | BtnKind::PathMatch => FindAction::None,
+            BtnKind::Hidden | BtnKind::DotFiles | BtnKind::PathMatch | BtnKind::DescMatch => {
+                FindAction::None
+            }
         }
     }
 

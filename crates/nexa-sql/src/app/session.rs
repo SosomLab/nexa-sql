@@ -315,6 +315,9 @@ impl App {
             if let Some(i) = self.parked.iter().position(|s| s.id == want) {
                 std::mem::swap(&mut self.sess, &mut self.parked[i]);
                 self.sync_sess_ui();
+                // ★ 서버 유형 게이트(10-15): 탭↔세션 결합이 바뀐 것도 "유형이 바뀐 것"이다 — 전용(NON) 세션을 닫고 공유(PRD)로
+                //   돌아온 탭의 그리드가 옛 운영 여부를 쥐고 있었다(사용자 실기) → 지금 세션 기준으로 그 세션의 그리드 전부 재판정.
+                self.announce_env_change();
                 self.redraw();
             }
         }

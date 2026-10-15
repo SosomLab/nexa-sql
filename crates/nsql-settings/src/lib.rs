@@ -434,6 +434,11 @@ const REFETCH_OPTS: &[(&str, Msg)] = &[
 
 const FILTER_SCOPE_OPTS: &[(&str, Msg)] =
     &[("all", Msg::ValFilterAll), ("shown", Msg::ValFilterShown)];
+/// 객체 필터 검색 범위(`explorer.search_scope` · 사용자 10-15 · T-351): 전체 DBMS(기본) · 현재 스키마/데이터베이스.
+const SEARCH_SCOPE_OPTS: &[(&str, Msg)] = &[
+    ("all", Msg::ValSearchScopeAll),
+    ("current", Msg::ValSearchScopeCurrent),
+];
 
 /// 탭 닫기 상자 표시(`editor.tab_close_show`).
 /// 탭 닫힘 뒤 자동 선택된 탭이 탐색기에 미치는 동작(사용자 10-07): keep = 선택만(지금 자리 유지) · move = 탭을 클릭한 것처럼 이동.
@@ -2756,6 +2761,24 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescSearchIndex,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // ★ 설명 포함 검색(10-15 · 127차 · 사용자): 객체 필터가 이름뿐 아니라 객체 설명(코멘트)도 본다 — 필터 틀 오른쪽 "Include Description" 토글과 같은 값.
+    Entry {
+        key: "explorer.search_desc",
+        cat: Msg::CatExplorer,
+        label: Msg::LblSearchDesc,
+        desc: Msg::DescSearchDesc,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // ★ 검색 범위(10-15 · 사용자 · T-351): 전체 DBMS(모든 스키마 · SQL Server = 모든 DB · 기본) · 현재 스키마/DB만.
+    Entry {
+        key: "explorer.search_scope",
+        cat: Msg::CatExplorer,
+        label: Msg::LblSearchScope,
+        desc: Msg::DescSearchScope,
+        kind: SettingKind::Choice(SEARCH_SCOPE_OPTS),
+        default: "all",
     },
     Entry {
         key: "explorer.index_max",

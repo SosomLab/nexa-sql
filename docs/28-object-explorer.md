@@ -186,6 +186,14 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 - 남는 노드 = **자기 일치** 또는 **자손 일치**(조상) 또는 일치 노드의 자손 — 그 밖(미일치 · 아직 안 읽은 폴더 포함)은 모두 숨김. 최소 표시 레벨 = 서버 헤더 + 연결 행(루트) · 일치 0이면 헤더에 "일치 0".
 - 개수 = `일치/전체`(`Tables (3/449)`) · 필터가 대신 펼친 노드는 해제 때 다시 접힘(사용자가 직접 누른 노드는 그대로) · 판정기는 탐색기가 보관하고 자식이 바뀔 때마다 스스로 다시 거른다(새 연결·펼침 포함).
 
+### 7-6. 설명 포함 검색("Include Description" · 사용자 10-15 · 127차 · [journal 10-15 §1](journal/2026-10-15.md))
+- 필터 틀 오른쪽 토글(프로젝트 탐색기 필터 틀과 같은 자리 · `BtnKind::DescMatch` · 툴팁 "Include Description") = 설정 `explorer.search_desc`(Bool · **기본 off**)와 한 값 — 켜면 이름 **또는** 객체 설명(테이블·뷰 코멘트 · Oracle `ALL_TAB_COMMENTS` · PG `obj_description` · SQL Server `MS_Description` · MySQL · SQLite·ODBC = 코멘트 없음)에 일치하는 객체가 남는다.
+- 지연 로딩(61 §1-8): 코멘트는 **토글 켬 + 검색어 있음**일 때만 스키마마다 뒤에서 읽는다(`enqueue_desc_comments` → 메타 스레드 `schema-comments`) · 이미 읽은 스키마는 왕복 없이 바로 판정 · 검색 중 토글을 켜면 같은 글을 다시 판정.
+- 판정 = 인덱스 쪽 `Req::Search{desc}`(`l1_comments`) + 트리 쪽 `desc_matches`(UI 사본 `desc_comments` 우선 · 메타 폴백 — 현재 스키마 Tables가 이미 다 읽힌 경우에도 일치하도록 · 127차 2차 수정).
+- **검색 범위(10-15 · D-291)** = 설정 `explorer.search_scope` = `all`(기본 · **전체 DBMS** = Oracle/PG 서버 전체 스키마 · SQL Server **전 DB**) | `current`(현재 스키마/데이터베이스만) — 이름·설명 검색 둘 다 · SQL Server 단위 = DB(`db:<DB>` · 현재 DB 먼저 · Lazy) · 다른 DB 일치는 그 DB 노드의 종류 폴더 아래([101 §4](101-mssql-ssms-explorer-databases-layer.md)).
+- 자체 시험 = 기동 명령 `explorer.desc:on|off` · 진단 `explorer.stat`(desc · comment_q · comment_inflight · desc_done) · E2E `scripts/win-explorer-desc-e2e.sh`(실서버 임시 표 `nsqlt_desc_probe` · 끝에 DROP).
+- 남음 = T-347(컬럼 코멘트 · PG 함수·Oracle 패키지 설명 · 설명에서 일치한 낱말 표시).
+
 ## 9. 객체 삭제(우클릭 ▸ 삭제… · 10-01 · 사용자)
 
 | 항목 | 내용 |

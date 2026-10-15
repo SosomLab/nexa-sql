@@ -1219,32 +1219,52 @@ impl App {
         self.redraw();
     }
 
-    /// 지금 세션(`self.sess`)의 결과 그리드에 방언을 알린다 — 전용 세션 = 주인 탭의 패널 · 공유 세션 = 전용 탭이 아닌 패널 전부.
-    pub(crate) fn set_dialect_for_sess_grids(&mut self, dialect: Dialect) {
-        let prod =
-            self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
-        let owner = self.sess.owner;
-        let private_tabs: Vec<u64> = self.all_sess().filter_map(|s| s.owner).collect();
-        let mine = |tab: u64| match owner {
-            Some(o) => tab == o,
-            None => !private_tabs.contains(&tab),
-        };
+    /// 지금 세션(`self.sess`)의 결과 그리드 전부에 — 전용 세션 = 주인 탭의 패널 · 공유 세션 = 전용 탭이 아닌 패널 전부.
+    fn for_sess_grids(&mut self, mut f: impl FnMut(&mut crate::grid::Grid)) {
+        // 탭의 세션 = `sess_id_for_tab`(전용 주인 · 공유 묶음 `tab_bind` · 기본 공유) 한 자리 — 종전 "전용 탭이 아니면 전부"는
+        //   공유 연결이 여럿일 때 다른 공유 세션의 탭까지 덮었다(10-15).
+        let me = self.sess.id;
+        let mut tabs: Vec<u64> = self.panels.keys().copied().collect();
+        tabs.push(self.panel_editor);
+        let mine: std::collections::HashSet<u64> = tabs
+            .into_iter()
+            .filter(|&t| self.sess_id_for_tab(t) == me)
+            .collect();
+        let mine = |tab: u64| mine.contains(&tab);
         if mine(self.panel_editor) {
-            self.grid.set_dialect(dialect);
-            self.grid.set_prod(prod);
+            f(&mut self.grid);
             for t in &mut self.panel.tabs {
-                t.grid.set_dialect(dialect);
-                t.grid.set_prod(prod);
+                f(&mut t.grid);
             }
         }
         for (tab, p) in &mut self.panels {
             if mine(*tab) {
                 for t in &mut p.tabs {
-                    t.grid.set_dialect(dialect);
-                    t.grid.set_prod(prod);
+                    f(&mut t.grid);
                 }
             }
         }
+    }
+
+    /// 지금 세션의 결과 그리드에 방언을 알린다(접속 직후) — 유형은 게이트 하나로(`announce_env_change`).
+    pub(crate) fn set_dialect_for_sess_grids(&mut self, dialect: Dialect) {
+        self.for_sess_grids(|g| g.set_dialect(dialect));
+        self.announce_env_change();
+    }
+
+    /// ★ 서버 유형 변경 게이트(사용자 10-15 "서버 타입 변경은 관련 기능 전체에 Announce"): 지금 세션의 유형(`spec.env`)이 바뀌는
+    ///   **모든 진입점**(접속 `events.rs` · 세션 메뉴/팔레트·편집기 `CONNTYPE` = `set_session_env` · 프로필 편집 반영 `apply_profile_env`)은
+    ///   이 함수를 지난다. 유형을 **캐시해 두는** 소비자는 여기서 갱신한다(지금 = 결과 그리드의 운영 읽기 전용 → `Grid::set_prod` 재판정) ·
+    ///   그때그때 세션 값을 읽는 소비자(실행 확인 `run.rs` · 트랜잭션 보호 `tx.rs` · 삭제 백업 `drop.rs` · 상태줄 칩 `paint.rs` ·
+    ///   세션 창·탐색기 헤더)는 `sess_ui_dirty` + 다시 그리기로 · 도구줄·메뉴 활성은 `sync_gate`. **새 소비자가 유형을 캐시하면 여기에 한 줄**
+    ///   (61 §1-12 실행 통제 규칙의 "유형" 항).
+    pub(crate) fn announce_env_change(&mut self) {
+        let prod =
+            self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
+        self.for_sess_grids(|g| g.set_prod(prod));
+        self.sess_ui_dirty = true;
+        self.sync_gate();
+        self.redraw();
     }
 
     /// 행 포커스 배경 설정 → 전 그리드(사용자 09-22).

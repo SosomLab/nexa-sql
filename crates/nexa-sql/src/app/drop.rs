@@ -363,6 +363,8 @@ impl App {
             ls.env = env;
         }
         self.sess.env_temp = true;
+        // ★ 서버 유형 변경 게이트(10-15): 그리드 읽기 전용 재판정 · 상태 표시 · 도구줄 — 한 통로.
+        self.announce_env_change();
         let label = env_label(env);
         let line = tf(Msg::OutSessEnvSet, &[&self.sess.desc, &label]);
         self.sess.status = line.clone();
