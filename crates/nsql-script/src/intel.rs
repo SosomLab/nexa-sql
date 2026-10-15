@@ -898,6 +898,131 @@ pub fn keywords_for(d: Option<Dialect>) -> impl Iterator<Item = &'static str> {
         .chain(extra.iter().copied().filter(|k| !KEYWORDS.contains(k)))
 }
 
+/// ★ 프로그램 내장(클라이언트) 명령 완성(사용자 10-16 "자동 완성에 `SET CONNTYPE` · `SHOW` 같은 내장 예약어가 없다"): 서버로 가지 않는
+/// 명령이라 문법(`.sqlg`)이 아니라 여기 고정 표로 둔다 — 문장 시작 후보([`CLIENT_COMMANDS`]) + 명령 뒤 자리([`client_next`] · `SET |` 옵션 ·
+/// `SET CONNTYPE |`/`CONNTYPE |` 서버 유형 · `SHOW |` 항목 · `VAR 이름 |` 자료형 → 층 · `WHENEVER |`). 오른쪽 설명 = 짧은 영어
+/// (다른 후보의 `detail` 관례와 같음). 표에 없는 명령(`DESC` · `CONNECT` …)은 `None` = 호스트가 평소(객체·키워드) 후보로.
+pub type ClientCand = (&'static str, &'static str);
+
+/// 문장 시작에 올 수 있는 내장 명령(SQL*Plus 관용 + nexa-sql 고유 `CONNTYPE`).
+pub const CLIENT_COMMANDS: &[ClientCand] = &[
+    (
+        "CONNECT",
+        "client: connect <profile | \"url\"> (private session)",
+    ),
+    ("DISCONNECT", "client: back to the shared session"),
+    (
+        "CONNTYPE",
+        "client: server type of this session (= SET CONNTYPE)",
+    ),
+    ("SET", "client: SET <option> <value>"),
+    ("SHOW", "client: SHOW CONN | VARIABLES | ERRORS"),
+    ("VAR", "client: declare a bind variable"),
+    ("VARIABLE", "client: declare a bind variable"),
+    ("DEFINE", "client: substitution variable"),
+    ("UNDEFINE", "client: drop a substitution variable"),
+    ("ACCEPT", "client: prompt for a value"),
+    ("PROMPT", "client: print a line"),
+    ("PRINT", "client: print a bind variable"),
+    ("EXEC", "client: run a PL/SQL call"),
+    ("EXECUTE", "client: run a PL/SQL call"),
+    ("DESCRIBE", "client: describe an object"),
+    ("COLUMN", "client: column format / NEW_VALUE"),
+    ("SPOOL", "client: write output to a file"),
+    ("WHENEVER", "client: WHENEVER SQLERROR EXIT | CONTINUE"),
+    ("REMARK", "client: comment line"),
+    ("GO", "client: batch separator (SQL Server)"),
+];
+const SET_OPTIONS: &[ClientCand] = &[
+    ("CONNTYPE", "server type: NONE | DEV | TEST | PROD"),
+    ("SERVEROUTPUT", "ON | OFF"),
+    ("TIMING", "ON | OFF"),
+    ("AUTOCOMMIT", "ON | OFF"),
+    ("AUTOPRINT", "ON | OFF"),
+    ("FEEDBACK", "ON | OFF | n"),
+    ("DEFINE", "ON | OFF | <char>"),
+    ("VERIFY", "ON | OFF"),
+    ("ECHO", "ON | OFF"),
+    ("ARRAYSIZE", "rows per fetch"),
+    ("SQLFORMAT", "csv | json | ... (CLI output)"),
+];
+const CONN_TYPES: &[ClientCand] = &[
+    ("NONE", "server type: none"),
+    ("DEV", "server type: development"),
+    ("TEST", "server type: test"),
+    ("PROD", "server type: production"),
+];
+const SHOW_WHAT: &[ClientCand] = &[
+    ("CONN", "connection info -> Output"),
+    ("VARIABLES", "variable table"),
+    ("ERRORS", "compile errors of the last unit"),
+];
+const ON_OFF: &[ClientCand] = &[("ON", ""), ("OFF", "")];
+const VAR_TYPES: &[ClientCand] = &[
+    ("NUMBER", "bind type"),
+    ("VARCHAR2(", "bind type VARCHAR2(n)"),
+    ("CHAR(", "bind type CHAR(n)"),
+    ("DATE", "bind type"),
+    ("TIMESTAMP", "bind type"),
+    ("CLOB", "bind type"),
+    ("BLOB", "bind type"),
+    ("BOOLEAN", "bind type"),
+    ("REFCURSOR", "bind type"),
+    ("BINARY_FLOAT", "bind type"),
+    ("BINARY_DOUBLE", "bind type"),
+];
+const VAR_LAYERS: &[ClientCand] = &[
+    ("GLOBAL", "layer: all sessions"),
+    ("SHARE", "layer: shared"),
+    ("LOCAL", "layer: this tab"),
+];
+const WHENEVER_WHAT: &[ClientCand] = &[("SQLERROR", ""), ("OSERROR", "")];
+const WHENEVER_DO: &[ClientCand] = &[("EXIT", ""), ("CONTINUE", "")];
+
+/// 명령 뒤 자리의 후보 — `before`는 문장 첫 낱말부터 접두 앞까지(대문자). 첫 낱말이 내장 명령이 아니거나 표에 없는 명령이면 `None`.
+#[must_use]
+pub fn client_next(before: &[&str]) -> Option<&'static [ClientCand]> {
+    let first = *before.first()?;
+    if !crate::command::is_command_start(first) {
+        return None;
+    }
+    let rest = &before[1..];
+    let on_off_opt = |o: &str| {
+        SET_OPTIONS.iter().any(|(n, _)| *n == o)
+            && !matches!(o, "ARRAYSIZE" | "SQLFORMAT" | "CONNTYPE")
+    };
+    Some(match (first, rest) {
+        ("SET", []) => SET_OPTIONS,
+        ("SET", ["CONNTYPE"]) | ("CONNTYPE", []) => CONN_TYPES,
+        ("SET", [opt]) if on_off_opt(opt) => ON_OFF,
+        ("SHO" | "SHOW", []) => SHOW_WHAT,
+        ("VAR" | "VARIABLE", [_]) => VAR_TYPES,
+        ("VAR" | "VARIABLE", [_, ..]) => VAR_LAYERS,
+        ("WHENEVER", []) => WHENEVER_WHAT,
+        ("WHENEVER", [_]) => WHENEVER_DO,
+        _ => return None,
+    })
+}
+
+/// [`client_next`]를 문맥으로 — 캐럿 문장의 머리(접두 앞)를 낱말로 나눠 묻는다. 문장이 없거나(`Start`) 머리가 비면 `None`.
+#[must_use]
+pub fn client_next_in(doc: &str, ctx: &Context) -> Option<&'static [ClientCand]> {
+    if ctx.statement.is_empty() || ctx.replace.start < ctx.statement.start {
+        return None;
+    }
+    let head = doc.get(ctx.statement.start..ctx.replace.start)?;
+    let words: Vec<String> = head
+        .split(|c: char| c.is_whitespace() || c == ';')
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_uppercase)
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    client_next(&refs)
+}
+
 /// ★ 문법 절 감지(`grammar` · 09-24): `before`를 뒤에서 앞으로 괄호 깊이를 세며 걷는다 — 깊이 0에서 문법의 절 이름(최대 세 낱말 ·
 /// `GROUP BY`·`LEFT OUTER JOIN`)에 맞는 첫 것이 절 · 깊이 0에서 `(`를 만나면(함수 인자·IN 목록 안) `None` · 서브쿼리 안이면 그 안의
 /// `SELECT`/`FROM`…이 먼저 걸린다. 첫 낱말 = 문장 종류.
@@ -1794,6 +1919,53 @@ mod tests {
     use super::*;
 
     /// ★ 문법 절 감지(09-24 `SELECT avg` 자리의 `HAVING`): 마지막 절 · 서브쿼리 안 · 함수 괄호 안 = None · 여러 낱말 절.
+    /// 프로그램 내장 명령 완성(10-16): `SET |` 옵션 · `SET CONNTYPE |`/`CONNTYPE |` 유형 · `SHOW |` 항목 · `VAR x |` 자료형 → 층 ·
+    /// `UPDATE t SET |`는 SQL(None) · `DESC |`도 None(객체 후보는 호스트 몫).
+    /// ★ 규칙(사용자 10-16): 파서가 받는 명령 낱말([`crate::command::COMMAND_WORDS`])은 전부 완성 표에 있어야 한다 — 약어(`CONN`·`SHO`)는
+    /// 정식 낱말의 접두면 된다. 새 명령을 파서에만 넣으면 여기서 실패한다.
+    #[test]
+    fn client_commands_cover_parser_words() {
+        for w in crate::command::COMMAND_WORDS {
+            assert!(
+                CLIENT_COMMANDS
+                    .iter()
+                    .any(|(t, _)| t == w || t.starts_with(w)),
+                "명령 {w}가 완성 표(CLIENT_COMMANDS)에 없다 — 파서·완성 표를 함께 갱신"
+            );
+        }
+        for (t, _) in CLIENT_COMMANDS {
+            assert!(
+                crate::command::is_command_start(t),
+                "완성 표의 {t}는 파서가 명령으로 보지 않는다"
+            );
+        }
+    }
+
+    #[test]
+    fn client_command_completion() {
+        let names = |src: &str| -> Vec<&'static str> {
+            let c = context_at(src, src.len(), None);
+            client_next_in(src, &c)
+                .map(|l| l.iter().map(|(t, _)| *t).collect())
+                .unwrap_or_default()
+        };
+        assert!(names("SET ").contains(&"CONNTYPE"));
+        assert!(names("set conn").contains(&"CONNTYPE"), "접두를 치는 중");
+        assert_eq!(names("SET CONNTYPE "), vec!["NONE", "DEV", "TEST", "PROD"]);
+        assert_eq!(names("CONNTYPE "), vec!["NONE", "DEV", "TEST", "PROD"]);
+        assert_eq!(names("SET TIMING "), vec!["ON", "OFF"]);
+        assert!(names("SHOW ").contains(&"CONN") && names("SHOW ").contains(&"ERRORS"));
+        assert!(names("VAR x ").contains(&"NUMBER"));
+        assert_eq!(names("VAR x NUMBER "), vec!["GLOBAL", "SHARE", "LOCAL"]);
+        assert_eq!(names("WHENEVER SQLERROR "), vec!["EXIT", "CONTINUE"]);
+        assert!(names("UPDATE t SET ").is_empty(), "UPDATE의 SET은 SQL");
+        assert!(names("DESC ").is_empty(), "표에 없는 명령 = 호스트 폴백");
+        assert!(names("SELECT 1 FROM ").is_empty());
+        // 문장 시작 표에 nexa-sql 고유 명령이 있다.
+        assert!(CLIENT_COMMANDS.iter().any(|(t, _)| *t == "CONNTYPE"));
+        assert!(CLIENT_COMMANDS.iter().any(|(t, _)| *t == "SHOW"));
+    }
+
     #[test]
     fn clause_detection_follows_paren_depth() {
         let lite = Some(Dialect::Sqlite);

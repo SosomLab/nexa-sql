@@ -1384,7 +1384,20 @@ impl Runner {
         let Some(p) = self.hold else {
             return;
         };
-        if !self.tx_changed || self.hold_stmts.is_empty() {
+        if !self.tx_changed {
+            return;
+        }
+        // ★ 이번 실행에 새 변경이 없는데 사용자 `COMMIT`을 가로챘다(앞 실행의 보류만 열려 있음 · 10-16 사용자) — 빈 목록으로 알려
+        //   호스트가 "COMMIT 문으로는 처리할 수 없음" 경고를 띄운다(GUI). CLI는 보류 정책을 쓰지 않아 여기 오지 않는다.
+        if self.hold_stmts.is_empty() {
+            if at_commit {
+                emit(RunEvent::Held {
+                    stmts: Vec::new(),
+                    total_rows: 0,
+                    at_commit,
+                    remaining,
+                });
+            }
             return;
         }
         if at_commit || hold_decision(&p, self.hold_total, self.hold_block, self.hold_no_where) {

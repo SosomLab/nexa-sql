@@ -479,6 +479,7 @@ flowchart TD
 | 백업 파일 열기 | 확장자가 **17자리 숫자**면 SQL 구문(모르는 확장자 = Plain Text 규칙의 예외 · D-305) · 시험 3 | `syntax.rs::for_title` |
 | 자체 시험 | 기동 명령 `objbk.dump:<파일>`(진행 상태) · `status.dump:<파일>`(상태줄) · `@connected:@after:<ms>:<명령>`(접속 **뒤** ms · 부하 중 접속 지연에 흔들리지 않게) · `explorer.pick:<id>` = 메뉴가 닫혀도 선택 행으로 + 탐색기 동작 즉시 수거 · **E2E `scripts/win-objbackup-e2e.sh` 12/0**(DROP VIEW 백업 1 · ALTER 백업 1 · 없는 객체 0 + 건너뜀 안내 · 끔 = 0 · keep=1 = 같은 객체 1 · 머리 주석 · 17자리 확장자) · **E2E `scripts/win-drop-prod-e2e.sh`**(G6 = 유형 none/prd 모두 탐색기 삭제 → 표 사라짐 · 창 "전송됨" · 운영 probe ✓ · 협업 재실행 결과 = journal §7) | `app/startup_cmd.rs` · scripts |
 
+- **식별자 접힘(10-16 · 사용자 실기)**: 소문자 `create or replace procedure nsqlt_case_prc …`가 "아직 없음 - 건너뜀"이던 결함 → `fold_ident`(따옴표 없는 이름 = Oracle 대문자 · PostgreSQL 소문자 · 그 밖 그대로 · 따옴표 이름은 그대로)로 서버 사전 조회 이름을 맞춤 · 백업 결과 줄을 Output과 **로그 창**에도 · V1 = BISCM 운영 격리 `BISCM.NSQLT_CASE_PRC (PROCEDURE)` 백업 ✓([journal 10-16](journal/2026-10-16.md) §2).
 - 부하원(39 §3): 정리 틱 = 파일 열거만(기본 60분 · 0 = 끔) · 백업 질의 = 사용자 실행 1회당 대상 객체 수만큼 DDL 생성 1회(탐색기 메타 세션 · 자동 재시도 0).
 - 남은 것(T-357 잔여): 토스트 버튼·`run.prod_confirm_ms`(A3b) · 프로필 영속 유형 변경 2단(G8) · Oracle `ALTER … RENAME TO`의 새 이름 추적(백업은 옛 이름으로 됨 = 의도) · 실서버 4방언 왕복(사용자 "BISCM 운영기 모드 자동화" = journal §7).
 
@@ -572,6 +573,13 @@ flowchart TD
 | **설정 7** | `tx.prod_hold`(켬) · `tx.prod_hold_rows`(0) · `tx.prod_hold_blocks`(켬) · `tx.prod_hold_no_where`(켬) · `tx.prod_commit_confirm_ms`(5000) · `tx.ddl_commit_guard`(켬 · 운영 무시 못 함) · `run.prod_confirm_ms`(3000) — 분류 트랜잭션 보호 | nsql-settings · i18n 24 |
 | **자체 시험** | 기동 명령 `tx.dump:<파일>`(`pending|held=stmts rows at_commit remaining|armed|autocommit`) · 메뉴 동작 `run.commit`/`run.rollback`/`tx.hold_commit_go` · ★ **E2E `scripts/win-prod-hold-e2e.sh`**(SQLite 격리 홈 PRD · 22 검사 = ①~⑦ 위 표의 흐름 전부 · 협업 3차 **22/0**) · 단위 = `hold_decision` · `is_commit_sql` · `dml_without_where`(주석·문자열·서브쿼리) · `hold_blocks_run` · `ddl_guard_blocks` · `commit_armed_ok` · `e3_items` MC/DC | scripts · nsql-run/sessions 시험 |
 
+- **10-16 실기 보강(개발 · [journal 10-16 §1](journal/2026-10-16.md))**:
+  - 수동 커밋 모드 **이중 등재**(대기 6 = 3 × 2) → `tx_on_held`는 자동 모드일 때만 대기 목록 등재(수동 모드는 `tx_on_done`이 이미 등재) · 같은 탭 두 번째 실행 = **보류 누적**(`prod_held.stmts += n`).
+  - **보류 중 `COMMIT;` 문만 실행 = 거부**(D-308): 서버로 보내지 않고 Error 토스트 + Output ✖ + 상태줄 "COMMIT 문으로는 보류된 변경을 반영할 수 없습니다 - 상단 Commit(2단) 또는 카드 [커밋]" · `hold_finish` 빈 목록 Held 사건 · **CLI `nsql`은 보류 정책이 없어 COMMIT 그대로**([115](115-prod-mode-scenario-nsql-guide.md) §0).
+  - **L2 가드 기준 = 가장 오래된 미커밋 문장 뒤 경과**(D-307 · 종전 = 마지막 실행 뒤 유휴): 경고 카드 "미커밋 N문장 · 첫 문장(HH:MM) 뒤 M분 경과"(5 s 틱 제자리 갱신) · 카운트다운 "{1}초 뒤 {2}문장 전부 자동 롤백" · 최근 문장도 함께 처리.
+  - **무장 타이머**: 빨간 카드 버튼 "커밋 (N)" 매초 · 툴바 Commit 아이콘 오른쪽 위 **빨간 배지 = 남은 초**(§5-3 ①의 숫자 표시를 배지로 · 테두리 게이지는 nexa-ui 후속 그대로) · nexa-ui 툴바 `ToolTone::Danger` = hover·pressed에도 빨강 유지.
+  - **자동 커밋 모드 + 보류**: 툴바 tx.log 배지·툴팁 = 수동과 같게 · 상태줄 "자동 ● 보류 N건 · HH:MM부터"(`StTxPendingAuto`).
+  - 검증 = win-prod-hold-e2e 26/0(⑧ COMMIT 문 거부 · ⑨ 수동 대기 1 + 누적 2 추가).
 - **시험 교훈(10-15)**: E2E 홈을 마지막 케이스가 다른 유형(비운영)으로 바꾸면 그 홈으로 돌린 뒤 탐침은 **다른 조건**이다(협업 A 보고 = 비운영 홈의 자동 커밋 = 정상) → 탐침 전 `nsql conn env` 확인 · 스크립트 끝에 홈 상태를 되돌리거나 케이스별 홈을 쓴다.
 - **표현(§5-3)**: 1단계 = 툴바 Commit **빨간 톤** + 토스트 카드(숫자·설명 · [커밋]) · 아이콘 테두리 게이지(ToolItem `Armed`)는 **nexa-ui 후속**(nexa-ctl `ToolItem` 상태 추가 · T-358 후보) · 보류 카드의 [롤백]·[커밋 후 계속] 버튼은 토스트 1버튼 제약 → 롤백 = 상단 Rollback(확인 없음) · 계속 = COMMIT 확인이 곧 계속(D-299 흐름) · 전용 카드 부품 = 2단계.
 - **실서버**: 4 DBMS 왕복(§10 계획)은 협업 V1/E2E 후속 — SQLite 격리 E2E가 흐름 전부를 덮고, Oracle(암묵 트랜잭션)·PG/MSSQL(`BEGIN`)의 시작문 차이는 `manual_begin_sql`(T-146 · CI 통합 시험)이 이미 덮는다.
@@ -602,5 +610,6 @@ scripts/prod-mode-scenario.sh -d sqlite -c Local                # 서버 없이 
 | 9 | 정리 · `nsql conn env <P> none`(사본) | — | — |
 
 - **쿼리 모음(손으로 따라 할 때)** = [`examples/prod-mode-scenario.sql`](../examples/prod-mode-scenario.sql)(단계별 문장 + 확인 포인트 · Oracle 기본 · SQLite 판 꼬리) · 스크립트가 실제로 돌린 파일 = `<출력 폴더>/s1.sql … s6d.sql`(예 `target/prod-scenario-biscm/`).
+- **`nsql` 명령 사용법(10-16)** = [115](115-prod-mode-scenario-nsql-guide.md) — CLI는 보류·2단·백업이 없음(PRD 프로필 `nsql run` = 즉시 커밋) · 유형 전환 `nsql conn env` · 다른 세션 확인 조회 · 정리 · 자동 시나리오 옵션.
 - 판정 원천 = 기동 명령 `tx.dump`(대기·보류·무장) · `toast.dump`(카드) · `status.dump`(상태줄) · `output.dump` · `drop.dump` · `grid.dump` + CLI `nsql run -f csv`.
 - 10-15 검증 = SQLite Local **25/0** · BISCM(협업) **26/0** · 8단계(-L) SQLite 5/0 · BISCM 5/0(L2 가드 결함 수정 뒤 · journal §10).

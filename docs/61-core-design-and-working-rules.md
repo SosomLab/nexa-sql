@@ -93,6 +93,7 @@
 - 테스트 실행 = Debug · 그 전에 **Release도 빌드**(사용자가 `target/release`로 병행 시험) · 끝나면 Debug 창을 **깨끗한 환경 변수로** 다시 띄워 둔다.
 
 ### 2-2. 코드 규칙(원문은 CLAUDE.md §3 · [30](30-architecture-patterns.md) · [39 §3](39-resource-governance.md) · [26 §8](26-performance-architecture.md))
+- ★ **편집기 스크립트 명령을 추가하면 셋을 함께**(사용자 10-16 · [76 §19](76-intellisense-and-outline.md)): nsql-script `COMMAND_WORDS`(파서) · `intel.rs` `CLIENT_COMMANDS`(완성 낱말·설명) · 필요하면 `client_next`(명령 뒤 자리 후보) — 규칙 시험 `client_commands_cover_parser_words`가 어긋남을 잡는다.
 
 사용자 문자열 = `nsql-i18n::Msg` · 설정 키 = `nsql-settings::REGISTRY`(구현 상수도 · 자주 안 바꾸면 HIDDEN) · 스레드·디스크·캐시 = 부하원 원장에 등재 + 끄거나 상한을 둘 설정 · 네트워크 = 26 §8 체크리스트 · DB 진입점 = `gate_open()` · 분기 조건 2개 이상 = 순수 함수 + MC/DC · 포커스 링 ≤ 1 · 마우스는 커서 아래 컨트롤에만 · hover = `IntentFade` · 팝업은 맨 마지막 층.
 

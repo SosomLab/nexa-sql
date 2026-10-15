@@ -76,25 +76,48 @@ impl App {
         let stamp = nsql_log::now_local().stamp();
         let when = stamp.get(11..16).unwrap_or("").to_string();
         let ed = self.sess.run_editor;
-        for h in &stmts {
-            self.txlog
-                .select_session(self.sess.id)
-                .attach_tx(h.index, stamp.clone(), true);
-            self.sess.tx_pending.push(TxItem {
-                editor: ed,
-                at: Instant::now(),
-                when: when.clone(),
-                summary: h.summary.clone(),
-                class: nsql_core::TxClass::of_sql(&h.summary),
-            });
+        // ★ 새 변경 없이 사용자 `COMMIT`만 가로챘다(10-16 사용자 "실행된 것처럼 보이는데 트랜잭션은 그대로 → 처리 불가 경고") —
+        //   GUI에서는 COMMIT 문으로 보류를 풀 수 없다(상단 Commit 2단 · 카드 [커밋]만) · 서버로 보내지 않았다 · 보류는 그대로.
+        //   CLI(`nsql`)는 보류 정책 자체를 쓰지 않으므로 COMMIT 문이 그대로 동작한다.
+        if stmts.is_empty() && at_commit {
+            let msg = t(Msg::StHoldCommitStmtRefused).to_string();
+            self.output_push(ed, crate::output::OutKind::Error, &msg);
+            self.log_win
+                .push(LogEntry::new(LogKind::Error, msg.clone()));
+            self.toasts
+                .push(toast::ToastKind::Error, t(Msg::HoldCardTitle), msg.clone());
+            self.sess.status = msg;
+            self.sync_tx_ui();
+            return;
+        }
+        // 🔧 수동 커밋 모드(10-16 · 사용자 "트랜잭션이 6"): 미커밋 문장은 `tx_on_done`이 이미 등재했다 → 여기서는 자동 모드일 때만 등재(이중 셈 방지).
+        if self.settings.flag("session.autocommit") {
+            for h in &stmts {
+                self.txlog
+                    .select_session(self.sess.id)
+                    .attach_tx(h.index, stamp.clone(), true);
+                self.sess.tx_pending.push(TxItem {
+                    editor: ed,
+                    at: Instant::now(),
+                    when: when.clone(),
+                    summary: h.summary.clone(),
+                    class: nsql_core::TxClass::of_sql(&h.summary),
+                });
+            }
         }
         self.sess.tx_dirty = true;
         self.sess.tx_stale_logged = false;
         self.sess.last_exec = Instant::now();
-        let n = stmts.len();
+        // 같은 탭의 두 번째 실행 = 앞 보류에 **누적**(문장 수·행 수 · 러너는 실행마다 새 목록만 보낸다).
+        let (prev_n, prev_rows) = self
+            .sess
+            .prod_held
+            .as_ref()
+            .map_or((0, 0), |h| (h.stmts, h.total_rows));
+        let n = prev_n + stmts.len();
         self.sess.prod_held = Some(sessions::HeldInfo {
             editor: ed,
-            total_rows,
+            total_rows: prev_rows + total_rows,
             stmts: n,
             remaining,
             at_commit,
@@ -129,6 +152,27 @@ impl App {
             "hold.commit",
         );
         body
+    }
+
+    /// 무장 뒤 남은 초(올림 · 최소 1) — 카드 본문·[커밋 (N)] 버튼·툴바 Commit 배지가 같은 값을 쓴다.
+    fn tx_hold_arm_left_secs(&self) -> u64 {
+        let confirm_ms = self
+            .settings
+            .int("tx.prod_commit_confirm_ms")
+            .clamp(1000, 60_000) as u64;
+        let left = self.sess.commit_armed.map_or(confirm_ms, |t0| {
+            confirm_ms.saturating_sub(t0.elapsed().as_millis() as u64)
+        });
+        left.div_ceil(1000).max(1)
+    }
+
+    /// 무장 카드 버튼 글 "커밋 (N)".
+    fn tx_hold_btn_label(&self) -> String {
+        format!(
+            "{} ({})",
+            t(Msg::HoldBtnCommit),
+            self.tx_hold_arm_left_secs()
+        )
     }
 
     fn tx_hold_arm_body(&self, confirm_ms: u64) -> String {
@@ -194,7 +238,7 @@ impl App {
             toast::ToastKind::Error,
             t(Msg::HoldCommitArmTitle),
             body,
-            t(Msg::HoldBtnCommit),
+            self.tx_hold_btn_label(),
             "hold.commit_go",
         );
         self.sess.status = t(Msg::HoldCommitArmTitle).to_string();
@@ -243,9 +287,21 @@ impl App {
             self.sync_tx_ui();
             None
         } else {
-            // 남은 초를 매초 갱신(협업 V1 ① "초가 줄지 않음").
+            // 남은 초를 매초 갱신(협업 V1 ① "초가 줄지 않음") — 본문 · [커밋 (N)] 버튼 · 툴바 Commit 배지.
             let body = self.tx_hold_arm_body(confirm_ms);
-            if self.toasts.set_body_for_action("hold.commit_go", body) {
+            let label = self.tx_hold_btn_label();
+            let a = self.toasts.set_body_for_action("hold.commit_go", body);
+            let b = self
+                .toasts
+                .set_button_label_for_action("hold.commit_go", label);
+            if a || b {
+                let left = self.tx_hold_arm_left_secs();
+                let mut inv = Invalidations::default();
+                self.tool_dock
+                    .set_item_badge("run.commit", Some(&left.to_string()), &mut inv);
+                for f in &self.tool_floats {
+                    f.redraw();
+                }
                 self.redraw();
             }
             Some(due.min(now + Duration::from_secs(1)))
@@ -484,7 +540,13 @@ impl App {
             let input = sessions::TxGuardIn {
                 pending: true,
                 blocked: s.blocked(),
-                idle: now.saturating_duration_since(s.last_exec),
+                // ★ 기준 = 가장 오래된 미커밋 문장(10-16 사용자) · 없으면 마지막 실행.
+                idle: s
+                    .tx_pending
+                    .first()
+                    .map_or(now.saturating_duration_since(s.last_exec), |f| {
+                        now.saturating_duration_since(f.at)
+                    }),
                 stale_min,
                 remind_min,
                 action,
@@ -513,6 +575,14 @@ impl App {
                 }
                 sessions::TxGuardStep::Fire => self.tx_guard_fire(id, action),
             }
+            // 떠 있는 카드의 "경과 N분"을 제자리에서 갱신(10-16 사용자 "첫 트랜잭션 뒤 경과 시간").
+            if self.tx_warn.sess_id() == Some(id) {
+                if let Some((title, n)) = self.sess_by_id(id).map(tx_warn_title) {
+                    if self.tx_warn.set_title(id, &title, n) {
+                        self.redraw();
+                    }
+                }
+            }
         }
         self.tx_guard_next = now
             + if self.tx_warn.counting() {
@@ -526,18 +596,17 @@ impl App {
     /// 경고/카운트다운 카드를 띄운다(+ 창이 비활성이면 작업 표시줄 깜빡임 · 로그 1줄).
     fn tx_warn_show(&mut self, id: u64, countdown: Option<(Instant, sessions::TxIdleAction)>) {
         let Some(s) = self.sess_by_id(id) else { return };
-        let n = s.tx_pending.len();
-        let idle_min = s.last_exec.elapsed().as_secs() / 60;
-        let title = tf(Msg::TxWarnTitle, &[&n.to_string(), &idle_min.to_string()]);
+        let (title, n) = tx_warn_title(s);
         let first = s
             .tx_pending
             .first()
             .map(|i| i.summary.clone())
             .unwrap_or_default();
+        let note = t(Msg::TxWarnOldestNote);
         let detail = if s.desc.is_empty() {
-            first
+            format!("{first} · {note}")
         } else {
-            format!("{} · {}", s.desc, first)
+            format!("{} · {} · {}", s.desc, first, note)
         };
         let (countdown, buttons) = match countdown {
             Some((deadline, act)) => {
@@ -580,6 +649,7 @@ impl App {
             detail,
             countdown,
             buttons,
+            count: n,
         });
         if let Some(w) = &self.window {
             w.request_user_attention(Some(winit::window::UserAttentionType::Informational));
@@ -646,7 +716,14 @@ impl App {
                 return None;
             }
             let n = a.sess.tx_pending.len();
-            let idle_min = a.sess.last_exec.elapsed().as_secs() / 60;
+            // 기록되는 분 = 가장 오래된 문장 뒤 경과(10-16).
+            let idle_min = a
+                .sess
+                .tx_pending
+                .first()
+                .map_or(a.sess.last_exec.elapsed(), |f| f.at.elapsed())
+                .as_secs()
+                / 60;
             let pass = a.sess.pass()?;
             a.sess.submit(
                 pass,
@@ -720,9 +797,10 @@ impl App {
     /// 트랜잭션 버튼 색·배지·툴팁(docs/44 §5): 자동 커밋 = 기본색·배지 없음 · 수동 = 가장 심각한 문장 종류의 색 + 대기 수.
     fn sync_tx_button(&mut self) {
         use nsql_core::TxClass;
-        let auto = self.settings.flag("session.autocommit");
-        let mut inv = Invalidations::default();
         let n = self.sess.tx_pending.len();
+        // ★ 자동 커밋 모드라도 운영 보류로 대기가 있으면 배지·색·툴팁을 수동 모드처럼(10-16 사용자).
+        let auto = self.settings.flag("session.autocommit") && n == 0;
+        let mut inv = Invalidations::default();
         let top = self
             .sess
             .tx_pending
@@ -848,10 +926,15 @@ impl App {
                 &mut inv,
             );
         }
-        // ★ 운영 Commit 무장(D-300) = 빨강(두 번째 클릭 = 커밋 · 시간 지나면 원래대로).
+        // ★ 운영 Commit 무장(D-300) = 빨강 + **남은 초 배지**(두 번째 클릭 = 커밋 · 시간 지나면 원래대로 · 10-16 사용자 "상단에 시간 제한 표시").
         if self.sess.commit_armed.is_some() {
             self.tool_dock
                 .set_item_tone("run.commit", ToolTone::Danger, &mut inv);
+            let left = self.tx_hold_arm_left_secs();
+            self.tool_dock
+                .set_item_badge("run.commit", Some(&left.to_string()), &mut inv);
+        } else {
+            self.tool_dock.set_item_badge("run.commit", None, &mut inv);
         }
         self.redraw();
     }
@@ -1047,4 +1130,20 @@ impl App {
         self.tx_clear();
         self.txlog_win.redraw();
     }
+}
+
+/// 경고 카드 제목(10-16 사용자 "첫 트랜잭션 뒤 경과 시간") = "미커밋 N문장 · 첫 문장(HH:MM) 뒤 M분 경과" + 문장 수.
+fn tx_warn_title(s: &sessions::Sess) -> (String, usize) {
+    let n = s.tx_pending.len();
+    let (age_min, when) = s.tx_pending.first().map_or_else(
+        || (s.last_exec.elapsed().as_secs() / 60, String::new()),
+        |f| (f.at.elapsed().as_secs() / 60, f.when.clone()),
+    );
+    (
+        tf(
+            Msg::TxWarnTitle,
+            &[&n.to_string(), &age_min.to_string(), &when],
+        ),
+        n,
+    )
 }

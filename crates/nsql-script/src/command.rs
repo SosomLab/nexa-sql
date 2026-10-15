@@ -139,9 +139,45 @@ fn on_off(v: &str) -> bool {
     )
 }
 
+/// ★ 편집기 탭에서 쓸 수 있는 스크립트 명령의 첫 낱말 전부(대문자 · 약어 포함) = **단일 원천**(사용자 10-16 "편집기 탭의 모든 명령은
+/// 자동 완성 대상 · 앞으로 추가되는 명령도 반영되게 규칙으로"). 새 명령을 넣는 자리 셋 = ① 여기 ② [`parse_command`] 분기 ③ 완성 표
+/// [`crate::intel::CLIENT_COMMANDS`](+ 뒤 낱말이 있으면 [`crate::intel::client_next`]) — ③을 빠뜨리면 `intel::tests::client_commands_cover_parser_words`가
+/// 실패한다(약어는 정식 낱말의 접두면 통과). nsql-format `layout::COMMAND_WORDS`는 의존 0 때문에 둔 사본 — 여기를 바꾸면 그쪽도.
+pub const COMMAND_WORDS: &[&str] = &[
+    "VAR",
+    "VARIABLE",
+    "PRINT",
+    "EXEC",
+    "EXECUTE",
+    "CONN",
+    "CONNECT",
+    "DISC",
+    "DISCONNECT",
+    "SET",
+    "DEF",
+    "DEFINE",
+    "ACC",
+    "ACCEPT",
+    "COL",
+    "COLUMN",
+    "UNDEF",
+    "UNDEFINE",
+    "DESC",
+    "DESCRIBE",
+    "SHO",
+    "SHOW",
+    "CONNTYPE",
+    "SPO",
+    "SPOOL",
+    "PROMPT",
+    "REM",
+    "REMARK",
+    "GO",
+    "WHENEVER",
+];
+
 /// 줄의 첫 단어가 스크립트 명령인가 — 문장 분리기가 SQL과 구분할 때 쓴다.
-/// `EXEC`·`SET`·`SHOW`·`DESC` 같은 T-SQL 겹침 단어는 **줄 첫머리에서만** 명령으로 본다.
-/// (단어 목록의 사본이 nsql-format `layout::COMMAND_WORDS`에 있다 — 포맷터가 명령 줄의 끝을 같게 본다 · 여기를 바꾸면 그쪽도.)
+/// `EXEC`·`SET`·`SHOW`·`DESC` 같은 T-SQL 겹침 단어는 **줄 첫머리에서만** 명령으로 본다. 낱말 표 = [`COMMAND_WORDS`].
 pub fn is_command_start(line: &str) -> bool {
     let l = line.trim_start();
     if l.starts_with('@')
@@ -160,39 +196,8 @@ pub fn is_command_start(line: &str) -> bool {
         .take_while(|c| c.is_ascii_alphabetic())
         .collect::<String>()
         .to_ascii_uppercase();
-    matches!(
-        word.as_str(),
-        "VAR"
-            | "VARIABLE"
-            | "PRINT"
-            | "EXEC"
-            | "EXECUTE"
-            | "CONN"
-            | "CONNECT"
-            | "DISC"
-            | "DISCONNECT"
-            | "SET"
-            | "DEF"
-            | "DEFINE"
-            | "ACC"
-            | "ACCEPT"
-            | "COL"
-            | "COLUMN"
-            | "UNDEF"
-            | "UNDEFINE"
-            | "DESC"
-            | "DESCRIBE"
-            | "SHO"
-            | "SHOW"
-            | "CONNTYPE"
-            | "SPO"
-            | "SPOOL"
-            | "PROMPT"
-            | "REM"
-            | "REMARK"
-            | "GO"
-            | "WHENEVER"
-    ) && (l.len() == word.len() || !is_ident_byte(l.as_bytes()[word.len()]))
+    COMMAND_WORDS.contains(&word.as_str())
+        && (l.len() == word.len() || !is_ident_byte(l.as_bytes()[word.len()]))
 }
 
 /// 식별자를 잇는 글자인가 — 명령 단어 뒤에 이것이 오면 명령이 아니라 이름이다(`COLUMN_NAME` · `SET_ID` · `DESC$` …).

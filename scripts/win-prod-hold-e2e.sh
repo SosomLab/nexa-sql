@@ -2,7 +2,7 @@
 # win-prod-hold-e2e.sh — ★ 운영 보류 커밋 1단계(docs/114 §5 · D-295~D-301 · D-304 · T-356 · 10-15) 자체 시험. SQLite 격리 홈 · 프로필 유형 PRD ·
 #   키 주입 0 · 기동 명령(`run.all` · `run.commit`/`run.rollback` = 메뉴 동작 · `hold.commit_go` = 토스트 [커밋] · 덤프 `tx.dump`/`toast.dump`/`status.dump`).
 #   ① 운영 UPDATE(1행) = 커밋 안 됨(보류 · 카드) → Commit 두 번(2단) → 커밋됨 ② 보류 → Rollback → 원복 ③ 스크립트 안 COMMIT = 직전에 멈춤 → [커밋] → 남은 문장 이어 실행(다시 보류)
-#   ④ 보류 중 다른 탭 변경 차단 · 같은 탭 DDL 차단(D-298) ⑤ 영향 0행 = 보류 없음 ⑥ 기준 5행: 3행 = 자동 커밋 · WHERE 없음 = 늘 보류 ⑦ 비운영 = 종전(바로 커밋)
+#   ④ 보류 중 다른 탭 변경 차단 · 같은 탭 DDL 차단(D-298) ⑤ 영향 0행 = 보류 없음 ⑥ 기준 5행: 3행 = 자동 커밋 · WHERE 없음 = 늘 보류 ⑧ COMMIT 문만 = 경고·보류 유지 ⑨ 수동 모드 대기 1·누적 ⑦ 비운영 = 종전(바로 커밋)
 # 사용: scripts/win-prod-hold-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -81,6 +81,19 @@ printf "UPDATE t_h SET v = 'n';\n" > "$OUT/g.sql"
 gui g "@connected:open:$(D g.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D g1.tx)" 11
 has g1.tx "pending=1|held=stmts=1 rows=3" && ok "⑥ WHERE 없는 UPDATE(3행 < 5) = 늘 보류" || bad "⑥ WHERE 없음 보류" "$(cat "$OUT/g1.tx" 2>/dev/null)"
 [ "$(val 2)" = "m" ] && ok "⑥ 보류분은 종료 때 롤백(m 유지)" || bad "⑥ 값 $(val 2)"
+# ⑧ 보류 뒤 COMMIT 문만 실행(10-16 사용자) = 서버로 안 감 · "COMMIT 문으로는 반영 불가" 경고 · 보류 그대로(값 o1 유지).
+mk_home prd ""
+printf "COMMIT;
+" > "$OUT/i.sql"
+gui i "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4000:open:$(D i.sql),@connected:@after:4500:run.all,@connected:@after:6500:tx.dump:$(D i1.tx),@connected:@after:6700:output.dump:$(D i1.out)" 13
+has i1.tx "pending=1|held=stmts=1 rows=1 at_commit=false" && [ "$(val 1)" = "o1" ] && ok "⑧ COMMIT 문만 = 보류 그대로(o1)" || bad "⑧ 보류 상태" "$(cat "$OUT/i1.tx" 2>/dev/null; val 1)"
+has i1.out "COMMIT statement cannot apply held changes" && ok "⑧ 경고 안내(Output)" || bad "⑧ 경고 없음" "$(cat "$OUT/i1.out" 2>/dev/null)"
+# ⑨ 수동 커밋 모드 = 대기 수 이중 등재 없음(10-16 사용자 "트랜잭션이 6") · **같은 탭** 두 번째 실행 = 보류 누적(다른 탭은 D-298 차단).
+mk_home prd "session.autocommit=off
+"
+gui j "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D j1.tx),@connected:@after:5000:run.all,@connected:@after:8000:tx.dump:$(D j2.tx)" 14
+has j1.tx "pending=1|held=stmts=1 rows=1" && has j1.tx "autocommit=false" && ok "⑨ 수동 모드 대기 1(이중 등재 없음)" || bad "⑨ 수동 모드 대기 수" "$(cat "$OUT/j1.tx" 2>/dev/null)"
+has j2.tx "pending=2|held=stmts=2 rows=2" && ok "⑨ 같은 탭 두 번째 실행 = 보류 누적 2" || bad "⑨ 누적" "$(cat "$OUT/j2.tx" 2>/dev/null)"
 # ⑦ 비운영 = 종전(바로 커밋).
 mk_home none ""
 gui h "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D h1.tx)" 11

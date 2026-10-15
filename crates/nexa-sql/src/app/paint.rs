@@ -124,11 +124,17 @@ impl App {
                 let mut segs: Vec<(&'static str, (String, bool))> = Vec::new();
                 // 트랜잭션 모드(자동/수동 · 수동에 미커밋 변경이 있으면 ●).
                 // 트랜잭션 세그먼트(DR-30): Auto / Manual / "Manual ● n pending · since hh:mm" · 클릭 = 팝업.
-                let tx = if self.settings.flag("session.autocommit") {
+                // ★ 자동 커밋 모드라도 운영 보류(D-295)로 대기가 있으면 건수·시각을 보인다(10-16 사용자 "자동 모드에서 카운트가 안 보임").
+                let auto = self.settings.flag("session.autocommit");
+                let tx = if auto && self.sess.tx_pending.is_empty() {
                     t(Msg::StTxAuto).to_string()
                 } else if let Some(first) = self.sess.tx_pending.first() {
                     let base = tf(
-                        Msg::StTxPending,
+                        if auto {
+                            Msg::StTxPendingAuto
+                        } else {
+                            Msg::StTxPending
+                        },
                         &[&self.sess.tx_pending.len().to_string(), &first.when],
                     );
                     // 내 미커밋이 남을 막고 있으면 상태줄에도(docs/56 L3).

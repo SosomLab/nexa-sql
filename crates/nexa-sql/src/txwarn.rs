@@ -34,6 +34,8 @@ pub(crate) struct TxWarnView {
     pub countdown: Option<(Instant, String)>,
     /// 버튼(왼쪽부터 · 동작 + 라벨).
     pub buttons: Vec<(TxWarnHit, String)>,
+    /// 대기 문장 수(카운트다운 줄 "{2}문장 전부" · 10-16).
+    pub count: usize,
 }
 
 #[derive(Default)]
@@ -48,6 +50,18 @@ impl TxWarn {
     pub(crate) fn show(&mut self, view: TxWarnView) {
         self.view = Some(view);
         self.hover = None;
+    }
+
+    /// 제목·문장 수를 제자리에서 바꾼다(경과 분 갱신 · 10-16) — 그 세션의 카드가 떠 있고 값이 달라졌으면 true.
+    pub(crate) fn set_title(&mut self, sess_id: u64, title: &str, count: usize) -> bool {
+        match self.view.as_mut() {
+            Some(v) if v.sess_id == sess_id && (v.title != title || v.count != count) => {
+                v.title = title.to_string();
+                v.count = count;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn hide(&mut self) {
@@ -133,7 +147,10 @@ impl TxWarn {
         y += lh;
         if let Some((deadline, word)) = &v.countdown {
             let left = deadline.saturating_duration_since(Instant::now()).as_secs() + 1;
-            let line = nsql_i18n::tf(nsql_i18n::Msg::TxWarnCountdown, &[word, &left.to_string()]);
+            let line = nsql_i18n::tf(
+                nsql_i18n::Msg::TxWarnCountdown,
+                &[word, &left.to_string(), &v.count.to_string()],
+            );
             dc.text(tx, y, clip, &line, th.danger);
             y += lh;
         }

@@ -171,6 +171,25 @@ impl Toasts {
         }
     }
 
+    /// 그 동작의 카드 **버튼 라벨**을 제자리에서 바꾼다(무장 카드 [커밋 (N)] 타이머 · 10-16 사용자) — 있으면 true.
+    pub(crate) fn set_button_label_for_action(
+        &mut self,
+        action: &str,
+        label: impl Into<String>,
+    ) -> bool {
+        let label = label.into();
+        let mut hit = false;
+        for t in self.items.iter_mut() {
+            if let Some((l, a)) = t.button.as_mut() {
+                if a == action && *l != label {
+                    *l = label.clone();
+                    hit = true;
+                }
+            }
+        }
+        hit
+    }
+
     /// 그 동작의 카드 본문을 제자리에서 바꾼다(무장 카드의 남은 초 · 10-15) — 있으면 true.
     pub(crate) fn set_body_for_action(&mut self, action: &str, body: impl Into<String>) -> bool {
         let body = body.into();

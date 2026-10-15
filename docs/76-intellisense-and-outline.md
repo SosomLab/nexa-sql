@@ -236,3 +236,11 @@
 
 - **COLLATE**(사용자 "COALESCE/JOIN/UNION/열 정의/WHERE의 COLLATE 예약어 및 값 유형") = `Want::Collation`(`COLLATE |` 뒤 · 식·열 정의·ORDER BY 어디서든 · 메타 없이) · 표 `builtins::collations(d)` = SQL Server 24(DATABASE_DEFAULT · Korean_Wansung_* · Korean_100_* · SQL_Latin1_General_CP1_* · Latin1_General_* …) · PG 13 · MySQL 14 · Oracle 11(BINARY_CI/AI · KOREAN_M · GENERIC_M · USING_NLS_COMP) · SQLite 3 · 한 줄 설명 · 문법 `.sqlg` 4방언 절 `next`에 COLLATE.
 - **협업 V1 bin118(10-09)**: COLLATE = SQL Server `SELECT a COLLATE `·열 정의 `COLLATE ` 24 ✓ · 열 정의 자료형 뒤 = 키워드 `COLLATE`·`COLLATE DATABASE_DEFAULT` ✓ · PG 13 ✓ · Oracle 11 ✓ · 회귀 intel-args 22/0 · intel-3part 7/0 ✓ · 자동 별칭 = 완성 확정 시험 훅이 없어 자동 확인 못 함(사용자 실기).
+
+## 19. 프로그램 내장(클라이언트) 명령 완성 + 규칙(10-16 · 사용자 "`SET CONNTYPE`·`SHOW` 같은 명령이 자동 완성에 없다 · 편집기 탭의 모든 명령은 완성 대상 · 앞으로 추가되는 명령도 반영되게 규칙으로")
+
+- **단일 원천** = nsql-script `command.rs` `COMMAND_WORDS`(파서 `is_command_start`가 이 표를 씀) ↔ 완성 표 `intel.rs` `CLIENT_COMMANDS`(문장 시작 19 낱말 · 설명 "client: …" = `CONNECT · DISCONNECT · CONNTYPE · SET · SHOW · VAR · VARIABLE · DEFINE · UNDEFINE · ACCEPT · PROMPT · PRINT · EXEC · EXECUTE · COLUMN · SPOOL · WHENEVER · REMARK · GO`).
+- **명령 뒤 자리** = `client_next`/`client_next_in`: `SET |` = 옵션 11(CONNTYPE · SERVEROUTPUT · TIMING · AUTOCOMMIT · AUTOPRINT · FEEDBACK · DEFINE · VERIFY · ECHO · ARRAYSIZE · SQLFORMAT) · `SET CONNTYPE |`·`CONNTYPE |` = NONE/DEV/TEST/PROD · `SET TIMING |` = ON/OFF · `SHOW |` = CONN/VARIABLES/ERRORS · `VAR x |` 자료형 11 → `VAR x NUMBER |` GLOBAL/SHARE/LOCAL · `WHENEVER |`.
+- **호스트 규칙**: 문장 시작이면 문법 `[start]` 후보 뒤에 명령 낱말을 덧붙임 · 명령 뒤 자리면 **그 명령의 낱말만**(SQL 키워드·객체 걷어냄) · `UPDATE t SET |`(SQL의 SET)는 종전(컬럼).
+- **규칙 시험** `client_commands_cover_parser_words` = 파서 낱말 전부가 완성 표에 있음(약어는 접두) + 완성 표 전부를 파서가 명령으로 봄 → 새 명령을 파서에만 넣으면 시험이 깨진다([61 §2-2](61-core-design-and-working-rules.md) 작업 규칙).
+- V1(협업 10-16 · [journal 10-16 §2](journal/2026-10-16.md)): 빈 줄 51 후보(키워드 32 뒤 client 19) · `SET |` 11개만 · `CONNTYPE |` 4 · `SHOW |` 3 · `UPDATE t_h SET |` 종전 ✓.

@@ -98,6 +98,23 @@ fn truncate_target(stmt: &str) -> Option<(Option<String>, String)> {
     }
 }
 
+/// ★ 식별자 접힘(10-16 · 사용자 "운영 모드 CREATE에 백업이 안 생김"): 따옴표 없는 이름은 Oracle = 대문자 · PostgreSQL = 소문자로 저장된다 —
+/// 쓴 그대로(`nsqlt_x`) 찾으면 카탈로그(`NSQLT_X`)에 없어 "새 객체"로 오판해 백업을 건너뛰었다. 문장 안에서 `"이름"`(또는 `[이름]`·`` `이름` ``)으로
+/// 인용됐으면 그대로 · 아니면 방언 규칙으로 접는다(SQL Server·MySQL·SQLite = 대소문자 무시 카탈로그 → 그대로).
+fn fold_ident(stmt: &str, name: &str, dialect: Dialect) -> String {
+    let quoted = stmt.contains(&format!("\"{name}\""))
+        || stmt.contains(&format!("[{name}]"))
+        || stmt.contains(&format!("`{name}`"));
+    if quoted {
+        return name.to_string();
+    }
+    match dialect {
+        Dialect::Oracle => name.to_uppercase(),
+        Dialect::Postgres => name.to_lowercase(),
+        _ => name.to_string(),
+    }
+}
+
 /// `CREATE OR REPLACE …` / `CREATE OR ALTER …`(SQL Server)인가 — 새 객체만 만드는 보통 `CREATE`는 백업할 원본이 없다.
 fn is_create_replace(stmt: &str) -> bool {
     let head: String = stmt
@@ -149,6 +166,8 @@ pub(crate) fn backup_targets(
     for stmt in items {
         let s = stmt.trim();
         if let Some((schema, name)) = truncate_target(s) {
+            let schema = schema.map(|x| fold_ident(s, &x, dialect));
+            let name = fold_ident(s, &name, dialect);
             push(
                 schema,
                 name,
@@ -170,7 +189,9 @@ pub(crate) fn backup_targets(
         let Some(kind) = super::compare::kind_of(t.kind) else {
             continue;
         };
-        push(t.schema, t.name, kind, action);
+        let schema = t.schema.map(|x| fold_ident(s, &x, dialect));
+        let name = fold_ident(s, &t.name, dialect);
+        push(schema, name, kind, action);
     }
     out
 }
@@ -341,14 +362,13 @@ impl App {
                         if let Some(run) = self.objbk.as_mut() {
                             run.files.push(path.clone());
                         }
-                        self.output_push(
-                            ed,
-                            crate::output::OutKind::Info,
-                            &tf(
-                                Msg::OutObjBackupOk,
-                                &[&label(&cur.owner), &path.display().to_string()],
-                            ),
+                        let line = tf(
+                            Msg::OutObjBackupOk,
+                            &[&label(&cur.owner), &path.display().to_string()],
                         );
+                        self.output_push(ed, crate::output::OutKind::Info, &line);
+                        self.log_win
+                            .push(nsql_log::LogEntry::new(nsql_log::LogKind::Info, line));
                         self.objbk_prune(false);
                     }
                     Err(e) => {
@@ -362,11 +382,10 @@ impl App {
                 if let Some(run) = self.objbk.as_mut() {
                     run.skipped += 1;
                 }
-                self.output_push(
-                    ed,
-                    crate::output::OutKind::Info,
-                    &tf(Msg::OutObjBackupSkipped, &[&label(&cur.owner)]),
-                );
+                let line = tf(Msg::OutObjBackupSkipped, &[&label(&cur.owner)]);
+                self.output_push(ed, crate::output::OutKind::Info, &line);
+                self.log_win
+                    .push(nsql_log::LogEntry::new(nsql_log::LogKind::Info, line));
             }
             Err(e) => {
                 if self.objbk_failed(e.clone()) {
@@ -562,14 +581,46 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("hr".into(), "emp".into(), K::Table, BkAction::Drop),
-                ("hr".into(), "v_sales".into(), K::View, BkAction::Replace),
-                ("dbo".into(), "p_x".into(), K::Procedure, BkAction::Replace),
+                // Oracle = 따옴표 없는 이름은 대문자로 접힘(fold_ident) · 기본 스키마는 세션 값 그대로.
+                ("HR".into(), "EMP".into(), K::Table, BkAction::Drop),
+                ("hr".into(), "V_SALES".into(), K::View, BkAction::Replace),
+                ("DBO".into(), "P_X".into(), K::Procedure, BkAction::Replace),
                 ("HR".into(), "ORDERS".into(), K::Table, BkAction::Truncate),
-                ("hr".into(), "t_plain".into(), K::Table, BkAction::Truncate),
-                ("hr".into(), "old_t".into(), K::Table, BkAction::Rename),
+                ("hr".into(), "T_PLAIN".into(), K::Table, BkAction::Truncate),
+                ("hr".into(), "OLD_T".into(), K::Table, BkAction::Rename),
             ]
         );
+    }
+
+    #[test]
+    fn identifiers_fold_per_dialect_unless_quoted() {
+        let items: Vec<String> = [
+            "create or replace procedure hr.nsqlt_x as begin null; end;",
+            "ALTER TABLE \"MixedCase\" ADD (c int)",
+            "truncate table lower_t",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let ora = names(&backup_targets(&items, Dialect::Oracle, Some("HR"), all()));
+        assert_eq!(ora[0].0, "HR");
+        assert_eq!(ora[0].1, "NSQLT_X");
+        assert_eq!(ora[1].1, "MixedCase", "따옴표 식별자는 그대로");
+        assert_eq!(ora[2].1, "LOWER_T");
+        let pg = names(&backup_targets(
+            &["ALTER TABLE Public.Big_T ADD c int".to_string()],
+            Dialect::Postgres,
+            None,
+            all(),
+        ));
+        assert_eq!((pg[0].0.as_str(), pg[0].1.as_str()), ("public", "big_t"));
+        let ms = names(&backup_targets(
+            &["ALTER TABLE dbo.MyTab ADD c int".to_string()],
+            Dialect::Mssql,
+            None,
+            all(),
+        ));
+        assert_eq!(ms[0].1, "MyTab", "대소문자 무시 카탈로그는 그대로");
     }
 
     #[test]

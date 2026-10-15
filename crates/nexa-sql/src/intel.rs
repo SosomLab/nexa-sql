@@ -1559,6 +1559,35 @@ impl Intel {
                 }
             }
         }
+        // ★ 프로그램 내장 명령(사용자 10-16 "자동 완성에 SET CONNTYPE · SHOW 같은 내장 예약어가 없다" · nsql-script `intel::CLIENT_COMMANDS`):
+        //   문장 시작 = 문법 `[start]` 뒤에 명령 낱말을 덧붙임(키워드 설정에 따름 · 이미 있는 낱말은 건너뜀) · 명령 뒤 자리(`SET |` ·
+        //   `SET CONNTYPE |` · `SHOW |` · `VAR x |` …) = **그 명령의 낱말만**(SQL 키워드·객체는 뜻이 없다 → 전부 걷어냄).
+        let client_cand = |t: &str, d: &str, i: usize| Cand {
+            text: t.to_string(),
+            kind: CandKind::Keyword,
+            detail: d.to_string(),
+            source: 5,
+            tag: 0,
+            mark: String::new(),
+            order: i as u32,
+            qualifier: String::new(),
+            layer: 0,
+        };
+        if ctx.kind == CtxKind::Start {
+            if self.cfg.keywords {
+                let base = cands.len();
+                for (i, (t, d)) in intel::CLIENT_COMMANDS.iter().enumerate() {
+                    if !cands.iter().any(|c| c.text.eq_ignore_ascii_case(t)) {
+                        cands.push(client_cand(t, d, base + i));
+                    }
+                }
+            }
+        } else if let Some(list) = intel::client_next_in(doc, &ctx) {
+            cands.clear();
+            for (i, (t, d)) in list.iter().enumerate() {
+                cands.push(client_cand(t, d, i));
+            }
+        }
         let mru: &[String] = if self.cfg.recent { &self.mru } else { &[] };
         // ★ `*`/`A.*` 뒤는 "모든 컬럼" 조각 말고는 고를 것이 없다(사용자 09-24) — 다른 후보를 전부 걷어낸다.
         if ctx.star.is_some() {
