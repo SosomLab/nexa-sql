@@ -320,11 +320,12 @@ impl App {
                 .is_some_and(|(k, at)| k == key && at.elapsed() <= confirm_window);
             if !armed {
                 self.sess.prod_armed = Some((key, Instant::now()));
-                self.sess.status = t(Msg::StProdConfirm).into();
+                let secs = (confirm_window.as_millis() as f64 / 1000.0).to_string();
+                self.sess.status = tf(Msg::StProdConfirm, &[&secs]);
                 self.toasts.push(
                     toast::ToastKind::Error,
                     t(Msg::StProdConfirmTitle),
-                    t(Msg::StProdConfirm).to_string(),
+                    tf(Msg::StProdConfirm, &[&secs]),
                 );
                 self.redraw();
                 return;

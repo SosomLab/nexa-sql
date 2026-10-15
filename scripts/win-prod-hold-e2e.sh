@@ -36,10 +36,10 @@ has() { grep -q -- "$2" "$OUT/$1" 2>/dev/null; }
 
 say "prod-hold-e2e $(date '+%F %T')"
 mk_home prd ""
-gui warm "@after:1500:ui.move:10/10" 4
+gui warm "@after:1500:ui.move:10/10" 8
 # ① 운영 UPDATE 1행 → 보류(커밋 안 됨) → Commit ×2(2단 · 5 s 안) → 커밋됨.
 printf "UPDATE t_h SET v = 'x1' WHERE id = 1;\n" > "$OUT/a.sql"
-gui a "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D a1.tx),@connected:@after:4700:toast.dump:$(D a1.toast),@connected:@after:5000:run.commit,@connected:@after:5500:tx.dump:$(D a2.tx),@connected:@after:6000:run.commit,@connected:@after:9000:tx.dump:$(D a3.tx)" 12
+gui a "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D a1.tx),@connected:@after:4700:toast.dump:$(D a1.toast),@connected:@after:5000:run.commit,@connected:@after:5500:tx.dump:$(D a2.tx),@connected:@after:6000:run.commit,@connected:@after:9000:tx.dump:$(D a3.tx)" 16
 has a1.tx "pending=1|held=stmts=1 rows=1 at_commit=false" && ok "① 운영 UPDATE = 보류(pending 1 · 1행 · 카드)" || bad "① 보류 상태" "$(cat "$OUT/a1.tx" 2>/dev/null)"
 has a1.toast "commit pending" && has a1.toast "hold.commit" && ok "① 보류 카드(토스트 · [Commit] 버튼)" || bad "① 카드 없음" "$(cat "$OUT/a1.toast" 2>/dev/null)"
 has a2.tx "armed=true" && ok "① Commit 첫 클릭 = 무장(빨강 2단)" || bad "① 무장 안 됨" "$(cat "$OUT/a2.tx" 2>/dev/null)"
@@ -47,12 +47,12 @@ has a3.tx "pending=0|held=none|armed=false" && ok "① 두 번째 클릭 = 커�
 [ "$(val 1)" = "x1" ] && ok "① 서버 값 = x1(커밋 반영)" || bad "① 서버 값 $(val 1)"
 # ② 보류 → Rollback → 원복.
 printf "UPDATE t_h SET v = 'x2' WHERE id = 2;\n" > "$OUT/b.sql"
-gui b "@connected:open:$(D b.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D b1.tx),@connected:@after:5000:run.rollback,@connected:@after:8000:tx.dump:$(D b2.tx)" 11
+gui b "@connected:open:$(D b.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D b1.tx),@connected:@after:5000:run.rollback,@connected:@after:8000:tx.dump:$(D b2.tx)" 15
 has b1.tx "pending=1|held=stmts=1" && has b2.tx "pending=0|held=none" && ok "② 보류 → Rollback = 대기 0" || bad "② 롤백 흐름" "$(cat "$OUT/b1.tx" "$OUT/b2.tx" 2>/dev/null)"
 [ "$(val 2)" = "o2" ] && ok "② 서버 값 원복(o2)" || bad "② 서버 값 $(val 2)"
 # ③ 스크립트 안 COMMIT = 직전 멈춤(남은 문장 보존) → [커밋] → COMMIT + 남은 UPDATE → 다시 보류 → Commit ×2.
 printf "UPDATE t_h SET v = 'a3' WHERE id = 3;\nCOMMIT;\nUPDATE t_h SET v = 'b3' WHERE id = 3;\n" > "$OUT/c.sql"
-gui c "@connected:open:$(D c.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D c1.tx),@connected:@after:4700:toast.dump:$(D c1.toast),@connected:@after:5000:hold.commit_go,@connected:@after:8500:tx.dump:$(D c2.tx),@connected:@after:9000:run.commit,@connected:@after:9800:run.commit,@connected:@after:12500:tx.dump:$(D c3.tx)" 15
+gui c "@connected:open:$(D c.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D c1.tx),@connected:@after:4700:toast.dump:$(D c1.toast),@connected:@after:5000:hold.commit_go,@connected:@after:8500:tx.dump:$(D c2.tx),@connected:@after:9000:run.commit,@connected:@after:9800:run.commit,@connected:@after:12500:tx.dump:$(D c3.tx)" 19
 has c1.tx "at_commit=true" && grep -q "remaining=[1-9]" "$OUT/c1.tx" && ok "③ COMMIT 직전 멈춤(남은 문장 보존)" || bad "③ 멈춤 상태" "$(cat "$OUT/c1.tx" 2>/dev/null)"
 has c1.toast "COMMIT needs your confirmation" && ok "③ COMMIT 확인 토스트" || bad "③ 토스트" "$(cat "$OUT/c1.toast" 2>/dev/null)"
 has c2.tx "pending=1|held=stmts=1 rows=1 at_commit=false" && ok "③ [커밋] 뒤 남은 UPDATE 실행 → 다시 보류" || bad "③ 이어 실행" "$(cat "$OUT/c2.tx" 2>/dev/null)"
@@ -61,7 +61,7 @@ has c3.tx "pending=0" && [ "$(val 3)" = "b3" ] && ok "③ 최종 커밋 = b3" ||
 printf "UPDATE t_h SET v = 'zz' WHERE id = 1;\n" > "$OUT/d2.sql"
 printf "CREATE TABLE t_x (a INTEGER);\n" > "$OUT/d3.sql"
 printf "SELECT COUNT(*) FROM t_h;\n" > "$OUT/d4.sql"
-gui d "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4000:open:$(D d2.sql),@connected:@after:4500:run.all,@connected:@after:5500:status.dump:$(D d1.st),@connected:@after:5700:tx.dump:$(D d1.tx),@connected:@after:6000:open:$(D d3.sql),@connected:@after:6500:run.all,@connected:@after:7500:status.dump:$(D d2.st),@connected:@after:8000:open:$(D d4.sql),@connected:@after:8500:run.all,@connected:@after:10500:grid.dump:$(D d3.grid)" 13
+gui d "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4000:open:$(D d2.sql),@connected:@after:4500:run.all,@connected:@after:5500:status.dump:$(D d1.st),@connected:@after:5700:tx.dump:$(D d1.tx),@connected:@after:6000:open:$(D d3.sql),@connected:@after:6500:run.all,@connected:@after:7500:status.dump:$(D d2.st),@connected:@after:8000:open:$(D d4.sql),@connected:@after:8500:run.all,@connected:@after:10500:grid.dump:$(D d3.grid)" 17
 has d1.st "Production changes are held" && has d1.tx "pending=1" && ok "④ 보류 중 다른 탭 변경 = 차단" || bad "④ 다른 탭 차단" "$(cat "$OUT/d1.st" "$OUT/d1.tx" 2>/dev/null)"
 has d2.st "Production changes are held" && ok "④ 보류 중 DDL = 차단" || bad "④ DDL 차단" "$(cat "$OUT/d2.st" 2>/dev/null)"
 NSQL_HOME="$H" "$NSQL" cat -c Local tables 2>&1 | grep -q "t_x" && bad "④ 차단된 DDL이 실행됨" || ok "④ t_x 없음(DDL 안 감)"
@@ -69,21 +69,21 @@ NSQL_HOME="$H" "$NSQL" cat -c Local tables 2>&1 | grep -q "t_x" && bad "④ 차�
 [ "$(val 1)" = "x1" ] && ok "④ 종료 = 보류분 롤백(x1 그대로)" || bad "④ 값 $(val 1)"
 # ⑤ 영향 0행 = 보류 없음.
 printf "UPDATE t_h SET v = 'q' WHERE id = 99;\n" > "$OUT/e.sql"
-gui e "@connected:open:$(D e.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D e1.tx)" 10
+gui e "@connected:open:$(D e.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D e1.tx)" 11
 has e1.tx "pending=0|held=none" && ok "⑤ 영향 0행 = 보류 없음(B)" || bad "⑤" "$(cat "$OUT/e1.tx" 2>/dev/null)"
 # ⑥ 기준 5행: 3행(WHERE 있음) = 자동 커밋 · WHERE 없음 = 늘 보류.
 mk_home prd "tx.prod_hold_rows=5\n"
 printf "UPDATE t_h SET v = 'm' WHERE id IN (1,2,3);\n" > "$OUT/f.sql"
-gui f "@connected:open:$(D f.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D f1.tx),@connected:@after:4700:output.dump:$(D f1.out)" 10
+gui f "@connected:open:$(D f.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D f1.tx),@connected:@after:4700:output.dump:$(D f1.out)" 11
 has f1.tx "pending=0|held=none" && [ "$(val 2)" = "m" ] && ok "⑥ 기준 5 · 3행 = 자동 커밋(m)" || bad "⑥ 기준 미만 커밋" "$(cat "$OUT/f1.tx" "$OUT/f1.out" 2>/dev/null)"
 has f1.out "below the hold threshold - committed" && ok "⑥ Output 안내(기준 미만 커밋)" || bad "⑥ 안내 없음" "$(cat "$OUT/f1.out" 2>/dev/null)"
 printf "UPDATE t_h SET v = 'n';\n" > "$OUT/g.sql"
-gui g "@connected:open:$(D g.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D g1.tx)" 10
+gui g "@connected:open:$(D g.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D g1.tx)" 11
 has g1.tx "pending=1|held=stmts=1 rows=3" && ok "⑥ WHERE 없는 UPDATE(3행 < 5) = 늘 보류" || bad "⑥ WHERE 없음 보류" "$(cat "$OUT/g1.tx" 2>/dev/null)"
 [ "$(val 2)" = "m" ] && ok "⑥ 보류분은 종료 때 롤백(m 유지)" || bad "⑥ 값 $(val 2)"
 # ⑦ 비운영 = 종전(바로 커밋).
 mk_home none ""
-gui h "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D h1.tx)" 10
+gui h "@connected:open:$(D a.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D h1.tx)" 11
 has h1.tx "pending=0|held=none" && [ "$(val 1)" = "x1" ] && ok "⑦ 비운영 = 바로 커밋(x1)" || bad "⑦ 비운영" "$(cat "$OUT/h1.tx" 2>/dev/null; val 1)"
 say "RESULT PASS $pass FAIL $fail"
 [ "$fail" -eq 0 ]

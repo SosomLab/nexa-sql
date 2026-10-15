@@ -803,6 +803,15 @@ impl App {
 
     /// 탭 배지 · 툴바 Commit/Rollback 활성·색 — 세 층이 같은 사실을 말한다.
     pub(crate) fn sync_tx_ui(&mut self) {
+        // ★ 🔧 L2 가드 깨우기(10-15 · 운영 보류 한도 E2E가 찾은 기존 결함): 대기 문장이 없을 때 `tx_guard_tick`이 다음 점검을 **1시간 뒤**로
+        //   미루는데, 그 뒤 대기 문장이 생겨도 아무도 그 시각을 당기지 않아 경고·카운트다운·한도 롤백이 한 시간 동안 멈췄다(수동 모드도 같음).
+        //   대기 목록이 바뀌는 길은 전부 여기를 지나므로 여기서 5 s 안으로 당긴다.
+        if self.all_sess().any(|s| !s.tx_pending.is_empty()) {
+            let soon = Instant::now() + Duration::from_secs(5);
+            if self.tx_guard_next > soon {
+                self.tx_guard_next = soon;
+            }
+        }
         self.sync_tx_button();
         let stale = self.tx_is_stale();
         // 탭 배지는 **모든 세션**의 대기 문장을 모은다(전용 세션 탭도 자기 배지) · 오래됨은 세션별 첫 문장 기준.

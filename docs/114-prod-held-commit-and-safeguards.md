@@ -563,7 +563,7 @@ flowchart TD
 | **A10 보류 · A11 카드** | `RunEvent::Held{stmts, total_rows, at_commit, remaining}` → 호스트 `tx_on_held` = 대기 목록 `tx_pending`에 문장 등재(배지·툴바·L2 가드·트랜잭션 로그가 그대로 본다) + `Sess.prod_held = HeldInfo{editor, total_rows, stmts, remaining, at_commit}` + **토스트 카드**(Warn · "운영 · 커밋 대기" 또는 "COMMIT 문 확인 필요" · 본문 N문장·M행 · 버튼 [커밋]) + Output ⚠ + 로그 + 상태줄 | `app/tx.rs::tx_on_held` · `app/events.rs` |
 | **A13c · D-300 운영 커밋 확인** | 상단 Commit(보류 또는 운영 대기 문장) · 카드 [커밋] · `hold.commit` = `tx_hold_commit()`(id는 `tx.` 접두를 피한다 — `menu_action`이 `tx.*`를 상태줄 팝업 `tx_pick`으로 먼저 보낸다 · 1차 E2E ③ 재진입 무동작의 원인) → 첫 호출 = **무장**(`Sess.commit_armed` · 툴바 Commit 빨간 톤 · 토스트 Error "운영(PRD) 커밋 - 다시 누르면 반영 · N초" + 버튼 [커밋]) · `tx.prod_commit_confirm_ms`(5000) 안 두 번째 클릭 또는 토스트 버튼 = `tx_hold_commit_go` · 만료 = `tx_hold_tick`이 해제(자동 커밋 금지) · 순수 `commit_armed_ok` | `app/tx.rs` · `app/menus.rs` |
 | **A12 커밋 후 계속** | `tx_hold_commit_go` = `remaining`이 있으면 같은 탭에서 `"COMMIT;\n" + remaining` 재진입(`hold_commit_ok_once` + `prod_confirmed_once`) → 러너가 COMMIT 한 번 통과 · 남은 문장은 다시 보류 판정 · 없으면 `Cmd::Commit` | `tx_hold_commit_go` |
-| **G1 · D-301 한도 롤백** | `tx_guard_fire`: 세션에 `prod_held`가 있으면 `tx.idle_action`과 무관하게 **롤백** · 한도 = 기존 `tx.prod_idle_limit_min`(10) | `app/tx.rs::tx_guard_fire` |
+| **G1 · D-301 한도 롤백** | `tx_guard_fire`: 세션에 `prod_held`가 있으면 `tx.idle_action`과 무관하게 **롤백** · 한도 = 기존 `tx.prod_idle_limit_min`(10) · 🔧 **기존 결함 발견·수정**(시나리오 8단계) = L2 `tx_guard_tick`이 대기 문장 0일 때 다음 점검을 **1시간 뒤**로 미루고 그 뒤 대기가 생겨도 당기지 않아 경고·카운트다운·한도가 한 시간 멈춤(수동 모드 미커밋도 같은 길) → `sync_tx_ui`에서 대기가 있으면 5 s 안으로 당김 | `app/tx.rs::tx_guard_fire` · `sync_tx_ui` |
 | **G2 · D-298 다른 탭** | `run_tx_gate` = `hold_blocks_run(held, same_tab, has_change, has_ddl)` → DDL = 어느 탭이든 · 변경 = 다른 탭만 · 조회 허용 · 막으면 상태줄 + 토스트(서버로 보내지 않음) | `app/tx.rs::run_tx_gate` · `sessions.rs` MC/DC |
 | **W1 · D-304 경계 가드** | 같은 게이트 = `ddl_guard_blocks(guard_on(운영은 늘 켬 · 아니면 tx.ddl_commit_guard), tx_open, implicit_commit(dialect, sql))` → 열린 변경 트랜잭션 + 암묵 커밋 문장 = 차단("먼저 커밋/롤백") · §9-2 C = 자동 실행 안 함 | 같은 자리 |
 | **§9-2 A E3 생략** | `e3_items(hold_on, items)` = 보류가 켜져 있으면 DML(INSERT/UPDATE/DELETE)과 **트랜잭션 통제문**(COMMIT/ROLLBACK/BEGIN · COMMIT은 D-299 보류 흐름이 따로 확인)은 2단 재실행에서 빼고 DDL·블록만 · `run.prod_confirm_ms`(3000 · 종전 3 s 고정) · 🔧 1차 E2E ③ 실패 = COMMIT이 E3에 세어져 첫 실행이 무장만 함 → 이 규칙 | `sessions.rs` · `app/run.rs` |
@@ -575,3 +575,31 @@ flowchart TD
 - **시험 교훈(10-15)**: E2E 홈을 마지막 케이스가 다른 유형(비운영)으로 바꾸면 그 홈으로 돌린 뒤 탐침은 **다른 조건**이다(협업 A 보고 = 비운영 홈의 자동 커밋 = 정상) → 탐침 전 `nsql conn env` 확인 · 스크립트 끝에 홈 상태를 되돌리거나 케이스별 홈을 쓴다.
 - **표현(§5-3)**: 1단계 = 툴바 Commit **빨간 톤** + 토스트 카드(숫자·설명 · [커밋]) · 아이콘 테두리 게이지(ToolItem `Armed`)는 **nexa-ui 후속**(nexa-ctl `ToolItem` 상태 추가 · T-358 후보) · 보류 카드의 [롤백]·[커밋 후 계속] 버튼은 토스트 1버튼 제약 → 롤백 = 상단 Rollback(확인 없음) · 계속 = COMMIT 확인이 곧 계속(D-299 흐름) · 전용 카드 부품 = 2단계.
 - **실서버**: 4 DBMS 왕복(§10 계획)은 협업 V1/E2E 후속 — SQLite 격리 E2E가 흐름 전부를 덮고, Oracle(암묵 트랜잭션)·PG/MSSQL(`BEGIN`)의 시작문 차이는 `manual_begin_sql`(T-146 · CI 통합 시험)이 이미 덮는다.
+
+## 11. 운영기 점검 시나리오 스크립트(사용자 10-15 · `scripts/prod-mode-scenario.sh`)
+
+> "운영기 테스트 스크립트 · 순서대로 실행하며 각 기능 확인 · 운영기로 변경하는 것까지 명령으로" — 실제 프로필은 건드리지 않고 **격리 홈에 프로필 사본**을 만들어 그 사본만 `nsql conn env <프로필> prd`로 바꾼다. 키·마우스 주입 0(기동 명령 + 덤프 + CLI 조회로 판정) · 임시 객체 `NSQLT_HOLD_*`는 끝에 정리.
+
+```
+scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql"            # Oracle BISCM(기본) · 전 단계
+scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" -i -k      # 단계마다 멈춤 + GUI를 띄운 채 직접 보고 Enter
+scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" -s 3       # 3단계(보류 → Commit 2단)만
+scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" -L         # 8단계(한도 1분 롤백)까지
+scripts/prod-mode-scenario.sh -d sqlite -c Local                # 서버 없이 로컬 파일 DB로
+```
+
+| 단계 | 명령/동작 | 확인(자동 판정) | 직접 볼 것(-k) |
+|---|---|---|---|
+| 0 | `nsql conn env <P> prd` → `nsql conn env <P>` | 사본 = Production (PRD) · 임시 표 3행 + 프로시저 | 상태줄 PRD 칩 |
+| 1 | DDL `run.all` ×2 | 첫 실행 = 상태줄 "run again within N s" · 두 번째 = Output done | 빨간 토스트 |
+| 2 | `CREATE OR REPLACE PROCEDURE` 실행 | Output "Object backup: …" · `backups/objects/<P>_<스키마>.NSQLT_HOLD_PRC_PROCEDURE.<17자리>` | 설정 ▸ Object backup |
+| 3 | `UPDATE … WHERE ID=1` → `run.commit` ×2 | `tx.dump` pending=1·held → armed=true → pending=0 · CLI 값 o1 → x1 | 주황 카드 → 빨간 카드(초 감소) → 툴바 Commit 빨강 |
+| 4 | UPDATE → `run.rollback` | pending=0 · CLI o2 | — |
+| 5 | `UPDATE; COMMIT; UPDATE` → `hold.commit_go` → `run.commit` ×2 | at_commit=true → 다시 보류 → b3 | "COMMIT needs your confirmation" 카드 |
+| 6 | 보류 중 다른 탭 UPDATE/DDL/SELECT | 상태줄 "held - commit or roll back first" ×2 · 조회 그리드 있음 · 대기 1 유지 | 토스트 |
+| 7 | 탐색기 ▸ 삭제… → `drop.confirm` | 창 "sent" · 백업 +1 · 서버에서 객체 사라짐(G6) | 삭제 모달 |
+| 8(-L) | UPDATE → 85 s 대기 | pending=0 · CLI 원복 | 카운트다운 카드 |
+| 9 | 정리 · `nsql conn env <P> none`(사본) | — | — |
+
+- 판정 원천 = 기동 명령 `tx.dump`(대기·보류·무장) · `toast.dump`(카드) · `status.dump`(상태줄) · `output.dump` · `drop.dump` · `grid.dump` + CLI `nsql run -f csv`.
+- 10-15 검증 = SQLite Local **25/0** · BISCM(협업) **26/0** · 8단계(-L) SQLite 5/0 · BISCM 5/0(L2 가드 결함 수정 뒤 · journal §10).
