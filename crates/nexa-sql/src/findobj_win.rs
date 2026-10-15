@@ -6,9 +6,9 @@ use crate::exp_icons::{self, IconKind};
 use crate::findbar::{BtnKind, FindBtn};
 use crate::findobj_engine::{EngineMsg, FindHit, FindQuery, FindWhat};
 use crate::toolicons;
-use nexa_ctl::controls::combo::{Combo, ComboItem};
+use nexa_ctl::controls::combo::ComboItem;
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
-use nexa_ctl::controls::{Button, Checkbox, ComboControl};
+use nexa_ctl::controls::{Button, CheckCombo, Checkbox, ComboControl};
 use nexa_ctl::draw::{draw_tooltip_in, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -36,7 +36,8 @@ pub(crate) enum FoAction {
     Paint,
     Close,
     /// 검색 시작(조건 · 서버 하나 또는 전체) — 호스트가 엔진에 넘기고 `started(n)`으로 서버 수를 돌려준다.
-    Search(Box<FindQuery>, Option<ConnectSpec>),
+    /// 검색 시작(질의 · 고른 서버들 = 빈 목록이면 전체).
+    Search(Box<FindQuery>, Vec<ConnectSpec>),
     Stop,
     OpenSource {
         server: Option<ConnectSpec>,
@@ -229,7 +230,8 @@ pub(crate) struct FindObjWin {
     /// ★ SQL Server 전 DB 검색(설정 `findobj.all_dbs` · 탐색기 검색 설정과 독립 · 사용자 10-15).
     all_dbs: Checkbox,
     run_btn: Button,
-    server: Combo,
+    /// ★ 서버 = 체크박스 다중 선택(10-16 사용자 · nexa-ctl `CheckCombo` 208차 · 전부 체크 = 전체).
+    server: CheckCombo,
     servers: Vec<(Option<ConnectSpec>, String)>,
     /// 이번 검색이 엔진에 넘긴 서버(엔진 `server` 번호 = 이 차례).
     run_specs: Vec<ConnectSpec>,
@@ -329,7 +331,13 @@ impl FindObjWin {
             ],
             all_dbs: Checkbox::new(t(Msg::FoAllDbs), true),
             run_btn: Button::new(t(Msg::FoSearch)),
-            server: Combo::new(vec![ComboItem::new("", t(Msg::FoServerAll))], 0),
+            server: CheckCombo::new(
+                Vec::new(),
+                None,
+                t(Msg::FoServerAll),
+                t(Msg::FoServerNone),
+                t(Msg::FoServerMany),
+            ),
             servers: Vec::new(),
             run_specs: Vec::new(),
             targets,
@@ -441,13 +449,12 @@ impl FindObjWin {
     }
 
     pub(crate) fn set_servers(&mut self, servers: Vec<(Option<ConnectSpec>, String)>) {
-        let cur = self.server.selected_value();
-        let mut items = vec![ComboItem::new("", t(Msg::FoServerAll))];
-        for (i, (_, label)) in servers.iter().enumerate() {
-            items.push(ComboItem::new(format!("{i}"), label.clone()));
-        }
-        let idx = items.iter().position(|it| it.value == cur).unwrap_or(0);
-        self.server = Combo::new(items, idx);
+        // 체크 상태는 **라벨(끝점)** 값으로 이어받는다(목록이 바뀌어도 고른 서버 유지 · 새 서버 = 켬).
+        let items: Vec<ComboItem> = servers
+            .iter()
+            .map(|(_, label)| ComboItem::new(label.clone(), label.clone()))
+            .collect();
+        self.server.set_items(items);
         self.servers = servers;
     }
 
@@ -617,21 +624,21 @@ impl FindObjWin {
         })
     }
 
-    fn selected_server(&self) -> Option<ConnectSpec> {
-        let v = self.server.selected_value();
-        v.parse::<usize>()
-            .ok()
-            .and_then(|i| self.servers.get(i))
-            .and_then(|(k, _)| k.clone())
+    /// 고른 서버들(빈 목록 = 전체 · 전부 체크도 전체).
+    fn selected_servers(&self) -> Vec<ConnectSpec> {
+        if self.server.all_checked() {
+            return Vec::new();
+        }
+        let on = self.server.checked_values();
+        self.servers
+            .iter()
+            .filter(|(_, label)| on.iter().any(|v| v == label))
+            .filter_map(|(k, _)| k.clone())
+            .collect()
     }
 
-    fn start(&mut self) -> FoAction {
-        let Some(q) = self.build_query() else {
-            self.prog.notes = vec![t(Msg::FoStatusNeedQuery).to_string()];
-            self.redraw();
-            return FoAction::None;
-        };
-        self.rev += 1;
+    /// 결과·보기·미리보기·진행을 비운다(새 검색 시작 · 검색 거부 때).
+    fn reset_results(&mut self) {
         self.rows.clear();
         self.index.clear();
         self.view.clear();
@@ -640,16 +647,31 @@ impl FindObjWin {
         self.scroll_y = 0;
         self.pre_lines.clear();
         self.pre_head.clear();
-        self.prog = Progress {
-            started_at: Some(SystemTime::now()),
-            started: Some(Instant::now()),
-            ..Progress::default()
+        self.prog = Progress::default();
+    }
+
+    fn start(&mut self) -> FoAction {
+        let Some(q) = self.build_query() else {
+            self.prog.notes = vec![t(Msg::FoStatusNeedQuery).to_string()];
+            self.redraw();
+            return FoAction::None;
         };
+        // 서버를 하나도 안 골랐으면 검색하지 않고 안내(빈 목록 = "전체"와 구분 · T-358) — 이전 결과도 비운다(협업 V1 ② "옛 결과가 남음").
+        if !self.server.is_empty() && self.server.checked_values().is_empty() {
+            self.reset_results();
+            self.prog.notes = vec![t(Msg::FoServerNone).to_string()];
+            self.redraw();
+            return FoAction::None;
+        }
+        self.rev += 1;
+        self.reset_results();
+        self.prog.started_at = Some(SystemTime::now());
+        self.prog.started = Some(Instant::now());
         self.running = true;
         self.ring.set_state(BusyState::Running);
         self.run_btn.set_label(t(Msg::FoStop));
         self.redraw();
-        FoAction::Search(Box::new(q), self.selected_server())
+        FoAction::Search(Box::new(q), self.selected_servers())
     }
 
     /// 호스트가 엔진에 넘긴 서버들(차례 = 엔진 `server` 번호).
@@ -2027,6 +2049,21 @@ impl FindObjWin {
         self.start()
     }
 
+    /// 서버 체크 집합(자체 시험 · T-358): `all` · `none` · `라벨;라벨`(그것만 켬).
+    pub(crate) fn test_servers(&mut self, spec: &str) {
+        match spec.trim() {
+            "all" => self.server.set_all(true),
+            "none" => self.server.set_all(false),
+            list => {
+                self.server.set_all(false);
+                for l in list.split(';').map(str::trim).filter(|l| !l.is_empty()) {
+                    self.server.set_checked(l, true);
+                }
+            }
+        }
+        self.redraw();
+    }
+
     /// 결과 거르기 글을 넣는다(자체 시험).
     pub(crate) fn test_filter(&mut self, text: &str) {
         self.filter.set_text(text);
@@ -2039,7 +2076,7 @@ impl FindObjWin {
         let (l1, l2) = self.progress_lines();
         let p = &self.prog;
         let mut s = format!(
-            "running={}|rows={}|view={}|servers={}/{}|schemas={}|tasks={}/{}|scanned={}|hits={}|notes={}|errors={}|opts={}{}{}|all_dbs={}\n{}\n{}\n",
+            "running={}|rows={}|view={}|servers={}/{}|schemas={}|tasks={}/{}|scanned={}|hits={}|notes={}|errors={}|opts={}{}{}|all_dbs={}|servers_sel={}\n{}\n{}\n",
             self.running,
             self.rows.len(),
             self.view.len(),
@@ -2056,6 +2093,11 @@ impl FindObjWin {
             if self.opt(BtnKind::Word) { 'w' } else { '-' },
             if self.opt(BtnKind::Regex) { 'r' } else { '-' },
             self.all_dbs.is_checked(),
+            if self.server.all_checked() {
+                "all".to_string()
+            } else {
+                self.server.checked_values().len().to_string()
+            },
             l1,
             l2
         );

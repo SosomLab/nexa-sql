@@ -2,7 +2,7 @@
 # win-findobj-e2e.sh — 객체 찾기 창 자체 시험(docs/113 §7 · 10-15). SQLite 격리 홈 · 키 주입 0 · 기동 명령으로 창을 열고 검색 → 덤프 판정.
 #   준비 = 표 2(컬럼에 검색어 · 설명 없음) · 뷰(소스에 검색어) · 트리거(소스에 검색어) · 이름에 검색어가 있는 표.
 #   케이스: ① 이름·컬럼·소스 일치가 각각 행으로 ② 대소문자 구분 켬 = 소문자 검색어는 소스 대문자 줄을 못 봄 ③ 낱말 = `customer_id`는 안 걸림
-#           ④ pick 0 = 소스 탭 열림(editor.dump에 CREATE …) ⑤ 상한 1 = 안내 ⑥ 진행 패널(작업 단위 · 시작·종료·경과) ⑦ 결과 거르기(뷰 투영 · showing n of m).
+#           ④ pick 0 = 소스 탭 열림(editor.dump에 CREATE …) ⑤ 상한 1 = 안내 ⑥ 진행 패널(작업 단위 · 시작·종료·경과) ⑦ 결과 거르기(뷰 투영 · showing n of m) ⑦-b 낱말 AND·이름 퍼지 ⑧ 서버 다중 선택(T-358).
 # 타이밍(10-16): 기동 명령 지연은 **접속 기준**(`@connected:@after:`) · kill = 마지막 명령 + 7 s(Debug 첫 그리기 1.5 s에 밀려 덤프 전에 KILL되던 흔들림).
 # 사용: scripts/win-findobj-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
 set -u
@@ -97,7 +97,16 @@ if [ -f "$OUT/g2.dump" ]; then
   head -1 "$OUT/g1.dump" | grep -Eq "rows=4\|view=2\|" && has g1.dump "Table|main|customer|" && has g1.dump "Table|main|orders|" && ok "⑦-b 낱말 AND(서버+이름 조각) = 2" || bad "⑦-b AND" "$(cat "$OUT/g1.dump")"
   has g2.dump "Table|main|customer|" && ! has g2.dump "Table|main|orders|" && ok "⑦-b 이름 퍼지 cstmr = customer만" || bad "⑦-b 퍼지" "$(cat "$OUT/g2.dump")"
 else
-  bad "⑦ 덤프 없음" "$(tail -4 "$OUT/f.stderr")"
+  bad "⑦-b 덤프 없음" "$(tail -4 "$OUT/g.stderr")"
+fi
+# ⑧ 서버 다중 선택(T-358 · 10-16): 전부 끔 = 검색 안 함 + 안내 · 라벨 하나만 켬 = 그 서버만(servers 1/1) · 덤프 servers_sel.
+mk_home ""
+gui h "$PRE,@connected:@after:4000:findobj.servers:none,@connected:@after:4500:findobj.query:customer,@connected:@after:6000:findobj.dump:$(w "$OUT/h1.dump"),@connected:@after:6300:findobj.servers:local.sqlite,@connected:@after:6800:findobj.query:customer,@connected:@after:10000:findobj.dump:$(w "$OUT/h2.dump")" 17
+if [ -f "$OUT/h2.dump" ]; then
+  head -1 "$OUT/h1.dump" | grep -q "servers=0/0" && has h1.dump "No server selected" && head -1 "$OUT/h1.dump" | grep -q "servers_sel=0" && ok "⑧ 전부 끔 = 검색 안 함 + 안내" || bad "⑧ 전부 끔" "$(head -1 "$OUT/h1.dump")"
+  head -1 "$OUT/h2.dump" | grep -q "servers=1/1" && head -1 "$OUT/h2.dump" | grep -q "servers_sel=all" && has h2.dump "Table|main|customer|" && ok "⑧ 라벨 하나 = 그 서버만(유일 = 전체)" || bad "⑧ 라벨 선택" "$(head -1 "$OUT/h2.dump")"
+else
+  bad "⑧ 덤프 없음" "$(tail -4 "$OUT/h.stderr")"
 fi
 say "RESULT PASS $pass FAIL $fail"
 [ "$fail" -eq 0 ]

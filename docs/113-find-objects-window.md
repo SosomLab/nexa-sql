@@ -217,7 +217,13 @@
 
 - 실제 원인 = 거르기는 동작했고 **목록을 내려 둔 스크롤이 새 길이 밖에 남아 빈 화면** → `apply_view` 끝에 `scroll_y` 클램프 + 선택 행 보이기.
 - 규칙 = 공백으로 나눈 **낱말 AND** · 낱말마다 화면 전 열(종류 · DB · 스키마 · 이름 · 서버 · 일치) + 컬럼 이름 + 설명의 **부분 문자열** 또는 **이름 퍼지**(Ctrl+P `fuzzy_score_lower` 재사용 · 예 `cstmr` → customer) · 힌트 문구 갱신 · E2E ⑦-b(낱말 AND · 퍼지).
-- 서버 다중 선택 = **T-358**(nexa-ctl `CheckCombo` · 설계 확정 · 코드 대기 · [journal 10-16 §4](journal/2026-10-16.md)).
+
+### 5-2. 서버 다중 선택(T-358 · 10-16 · nexa-ui 208차)
+
+- 서버 콤보 = nexa-ctl **`CheckCombo`**(체크박스 목록 · 항목 0 = "(모두)" · 항목 클릭 = 토글하고 목록은 열린 채 · 바깥/Esc = 닫기 → 바뀌었으면 1회 보고).
+- 얼굴 = 전부 "All servers" · 하나 = 그 서버 라벨 · 여럿 = "N servers" · 없음 = "No server selected".
+- 검색 = `FoAction::Search(q, Vec<ConnectSpec>)`(빈 목록 = 전체) · **전부 끔 = 검색하지 않음** + 안내 + 앞 결과·카운터 비움(`reset_results`).
+- 체크 상태 = 서버 라벨로 이어 감(연결 목록이 바뀌어도) · 기동 명령 `findobj.servers:all|none|라벨;라벨` · 덤프 `servers_sel=` · E2E `win-findobj-e2e.sh`.
 
 ## 6. 설정 · 키 · i18n
 

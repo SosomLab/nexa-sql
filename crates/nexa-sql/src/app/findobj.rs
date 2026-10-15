@@ -114,7 +114,7 @@ impl App {
                     .iter()
                     .filter_map(|(k, label)| {
                         let spec = k.clone()?;
-                        if only.as_ref().is_some_and(|o| o != &spec) {
+                        if !only.is_empty() && !only.contains(&spec) {
                             return None;
                         }
                         Some(crate::findobj_engine::ServerTarget {

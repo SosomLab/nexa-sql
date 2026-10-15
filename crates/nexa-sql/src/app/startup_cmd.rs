@@ -967,6 +967,10 @@ impl App {
             self.findobj_win.test_filter(f);
             return;
         }
+        if let Some(f) = id.strip_prefix("findobj.servers:") {
+            self.findobj_win.test_servers(f);
+            return;
+        }
         if let Some(n) = id
             .strip_prefix("findobj.pick:")
             .and_then(|n| n.trim().parse::<usize>().ok())
