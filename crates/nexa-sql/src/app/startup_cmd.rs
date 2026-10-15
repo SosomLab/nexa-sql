@@ -331,6 +331,9 @@ impl App {
             .strip_prefix("grid.page:")
             .and_then(|c| c.trim().parse::<usize>().ok())
         {
+            // ★ 첫 그리기 전에 들어온 훅은 옛 탭 그리드에 쓰인다(127차 V3 · Debug 첫 그리기 1.57 s > 1500 ms) → run_text_in과
+            //   같은 규칙으로 활성 탭의 그리드를 먼저 맞춘다(10-15).
+            self.sync_grid_tab();
             self.grid.set_page_rows(n);
             self.redraw();
             return;
