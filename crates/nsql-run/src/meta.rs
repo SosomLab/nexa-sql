@@ -238,6 +238,17 @@ pub type ColComments = Arc<Vec<(Sym, Option<Sym>)>>;
 /// 객체의 코멘트 묶음(테이블 코멘트, [(컬럼, 코멘트)]) — 값은 문자열로 풀어서.
 pub type CommentsOf = (Option<String>, Vec<(String, Option<String>)>);
 
+/// ★ 스키마 단위 코멘트 지도(T-348 · 10-15): 객체 id가 아니라 **(스키마, 소문자 이름)** 으로 보관해 L1 이름 등재 **순서와 무관**하게 답한다
+/// (종전 = 등재된 객체에만 붙이고 "완료"로 표시 → 뒤에 등재된 객체는 코멘트를 영영 못 받음). 이름이 나중에 등재되면 `load_names_x`가
+/// 여기서 꺼내 `ObjEntry.comment`/`col_comments`에도 붙인다(완성 카드·Ctrl 링크 툴팁 = `o.comment` 소비자).
+#[derive(Clone, Debug, Default)]
+pub struct SchemaComments {
+    /// 소문자 테이블 이름 → 코멘트(None = NULL).
+    pub tables: HashMap<Sym, Option<Sym>>,
+    /// 소문자 테이블 이름 → [(컬럼, 코멘트)].
+    pub cols: HashMap<Sym, ColComments>,
+}
+
 /// 컬럼 채움 상태.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColState {
@@ -263,6 +274,8 @@ pub struct Snapshot {
     pub col_comments: HashMap<ObjId, ColComments>,
     /// 코멘트를 읽어 둔 스키마(여기 있으면 "코멘트 없음"도 알고 있음 = NULL).
     pub comment_schemas: std::collections::HashSet<Sym>,
+    /// ★ 스키마별 코멘트 지도(T-348 · 이름 등재와 무관한 원천 · `comment_schemas`와 함께 채움).
+    pub schema_comments: HashMap<Sym, Arc<SchemaComments>>,
     pub buckets: HashMap<(Sym, ObjectKind), Arc<Bucket>>,
     /// (스키마, 소문자 이름) → 객체(같은 이름이 종류별로 있으면 첫 것 · 종류 지정 조회는 버킷으로).
     exact: HashMap<(Sym, Sym), ObjId>,
@@ -471,6 +484,10 @@ impl MetaStore {
                 }),
             );
         }
+        // ★ T-348: 코멘트 지도가 먼저 와 있던 스키마면 지금 등재한 객체에 붙인다.
+        if let Some(map) = s.schema_comments.get(&sc).cloned() {
+            Self::apply_schema_comments(&self.names, &mut s, sc, &map);
+        }
         // 전역 이름 정렬은 지연(다음 `prefix_any`가 만든다).
         s.by_name = OnceLock::new();
         self.commit(s);
@@ -485,42 +502,51 @@ impl MetaStore {
         tables: &[(String, Option<String>)],
         cols: &[(String, String, Option<String>)],
     ) {
-        let Some(sc) = self.names.find(schema) else {
-            return;
-        };
-        let snap = self.snapshot();
-        // 관계 객체 id(이름 → id · 소문자 키).
-        let mut ids: HashMap<String, ObjId> = HashMap::new();
-        for b in snap.buckets.values() {
-            if b.schema != sc || !b.kind.is_relation() {
-                continue;
-            }
-            for id in &b.objs {
-                ids.insert(
-                    self.names.lower(snap.objs[id.0 as usize].name).to_string(),
-                    *id,
-                );
-            }
-        }
-        let mut s = self.edit();
+        // ★ T-348(10-15): 스키마 이름이 아직 등재되지 않았어도(L1 전) 받는다 — 지도에 먼저 담고, 등재된 객체에는 지금 붙인다.
+        let sc = self.names.intern(schema);
+        let mut map = SchemaComments::default();
         for (t, c) in tables {
-            if let Some(id) = ids.get(&t.to_lowercase()) {
-                s.objs[id.0 as usize].comment = c.as_deref().map(|c| self.names.intern(c));
-            }
+            let sym = self.names.intern(t);
+            let key = self.names.intern_lower(sym);
+            let cm = c.as_deref().map(|c| self.names.intern(c));
+            map.tables.insert(key, cm);
         }
-        let mut by_table: HashMap<ObjId, Vec<(Sym, Option<Sym>)>> = HashMap::new();
+        let mut by_table: HashMap<Sym, Vec<(Sym, Option<Sym>)>> = HashMap::new();
         for (t, c, cm) in cols {
-            if let Some(id) = ids.get(&t.to_lowercase()) {
-                let col = self.names.intern(c);
-                let cm = cm.as_deref().map(|x| self.names.intern(x));
-                by_table.entry(*id).or_default().push((col, cm));
-            }
+            let sym = self.names.intern(t);
+            let key = self.names.intern_lower(sym);
+            let col = self.names.intern(c);
+            let cm = cm.as_deref().map(|x| self.names.intern(x));
+            by_table.entry(key).or_default().push((col, cm));
         }
-        for (id, v) in by_table {
-            s.col_comments.insert(id, Arc::new(v));
+        for (k, v) in by_table {
+            map.cols.insert(k, Arc::new(v));
         }
+        let map = Arc::new(map);
+        let mut s = self.edit();
+        Self::apply_schema_comments(&self.names, &mut s, sc, &map);
+        s.schema_comments.insert(sc, map);
         s.comment_schemas.insert(sc);
         self.commit(s);
+    }
+
+    /// 지도의 코멘트를 **등재된** 관계 객체에 붙인다(`set_schema_comments` 때 + `load_names_x`가 이름을 새로 등재할 때 · T-348).
+    fn apply_schema_comments(names: &Interner, s: &mut Snapshot, sc: Sym, map: &SchemaComments) {
+        let ids: Vec<ObjId> = s
+            .buckets
+            .values()
+            .filter(|b| b.schema == sc && b.kind.is_relation())
+            .flat_map(|b| b.objs.iter().copied())
+            .collect();
+        for id in ids {
+            let lower = names.lower_key(s.objs[id.0 as usize].name);
+            if let Some(cm) = map.tables.get(&lower) {
+                s.objs[id.0 as usize].comment = *cm;
+            }
+            if let Some(v) = map.cols.get(&lower) {
+                s.col_comments.insert(id, Arc::clone(v));
+            }
+        }
     }
 
     /// 스키마의 코멘트를 읽어 두었는가.
@@ -537,6 +563,29 @@ impl MetaStore {
         let sc = self.names.find(schema)?;
         if !self.snap.comment_schemas.contains(&sc) {
             return None;
+        }
+        // ★ T-348: 지도가 있으면 등재 여부와 무관하게 답한다(소문자 이름 Sym은 `set_schema_comments`가 심어 둠).
+        if let Some(map) = self.snap.schema_comments.get(&sc) {
+            let lower = self.names.find(&table.to_lowercase())?;
+            let tc = map
+                .tables
+                .get(&lower)?
+                .map(|c| self.names.get(c).to_string());
+            let cols = map
+                .cols
+                .get(&lower)
+                .map(|v| {
+                    v.iter()
+                        .map(|(c, cm)| {
+                            (
+                                self.names.get(*c).to_string(),
+                                cm.map(|x| self.names.get(x).to_string()),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return Some((tc, cols));
         }
         let id = self.snap.lookup(&self.names, Some(schema), table)?;
         let o = self.snap.objs.get(id.0 as usize)?;
@@ -929,6 +978,10 @@ impl MetaStore {
             + details
             + s.by_name.get().map_or(0, Vec::len) * 12
             + s.exact.len() * 24
+            + s.schema_comments
+                .values()
+                .map(|m| m.tables.len() * 24 + m.cols.values().map(|v| v.len() * 16).sum::<usize>())
+                .sum::<usize>()
     }
 
     /// 층별 대략 메모리(85 §5 · 메모리 창): (L1 이름·목록, L2 컬럼, L3 상세) 바이트.
@@ -1745,5 +1798,66 @@ mod layer_tests {
         ));
         // 상한만(TTL 0) → 남은 상세 1개는 상한 1 안 → 0.
         assert_eq!(m.reclaim(1000, None, 1, 0, 0), (0, 0));
+    }
+
+    /// ★ T-348(10-15): 코멘트가 L1 이름보다 **먼저** 와도 버리지 않고, 뒤에 등재된 객체에 붙는다(종전 = 조용히 버림 + "완료" 표시).
+    #[test]
+    fn schema_comments_survive_names_arriving_later() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(&["HR".into()], Some("HR"));
+        // 1) 이름 등재 전에 코멘트가 온다.
+        m.set_schema_comments(
+            "HR",
+            &[("EMP".into(), Some("사원".into())), ("DEPT".into(), None)],
+            &[("EMP".into(), "ID".into(), Some("사번".into()))],
+        );
+        assert!(m.has_schema_comments("HR"));
+        let (tc, cols) = m.comments_of("HR", "emp").expect("지도만으로 답한다");
+        assert_eq!(tc.as_deref(), Some("사원"));
+        assert_eq!(cols, vec![("ID".to_string(), Some("사번".to_string()))]);
+        assert_eq!(
+            m.comments_of("HR", "DEPT"),
+            Some((None, Vec::new())),
+            "NULL 코멘트도 '앎'"
+        );
+        assert!(m.comments_of("HR", "NOPE").is_none());
+        // 2) 뒤에 이름이 등재되면 ObjEntry.comment에도 붙는다(완성 카드·Ctrl 링크 소비자).
+        m.load_names(
+            "HR",
+            &[ObjectKind::Table],
+            &[
+                (ObjectKind::Table, "EMP".into()),
+                (ObjectKind::Table, "DEPT".into()),
+            ],
+            1,
+        );
+        let s = m.snapshot();
+        let id = s.lookup(&m.names, Some("HR"), "EMP").expect("등재");
+        assert_eq!(
+            s.objs[id.0 as usize]
+                .comment
+                .map(|c| m.names.get(c).to_string()),
+            Some("사원".to_string())
+        );
+        assert_eq!(s.col_comments.get(&id).map(|v| v.len()), Some(1));
+        // 3) 반대 순서(이름 먼저)도 같다.
+        let mut m2 = MetaStore::new(1 << 20);
+        m2.set_schemas(&["HR".into()], Some("HR"));
+        m2.load_names(
+            "HR",
+            &[ObjectKind::Table],
+            &[(ObjectKind::Table, "EMP".into())],
+            1,
+        );
+        m2.set_schema_comments("HR", &[("emp".into(), Some("사원".into()))], &[]);
+        let s2 = m2.snapshot();
+        let id2 = s2.lookup(&m2.names, Some("HR"), "EMP").unwrap();
+        assert_eq!(
+            s2.objs[id2.0 as usize]
+                .comment
+                .map(|c| m2.names.get(c).to_string()),
+            Some("사원".to_string()),
+            "이름 대소문자 무관"
+        );
     }
 }

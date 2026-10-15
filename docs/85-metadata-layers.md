@@ -38,7 +38,7 @@
 ## 3. L2 온디맨드 캐시(백그라운드)
 
 - 시작 = L1 완성(`l1_complete`) → `arm_warm` = 현재 스키마 관계 4종(+`intel.from_routines` 함수·패키지·프로시저) `ObjectsMeta` + 사전(`DictMeta`) — 종전 `preload_meta`와 같은 길(접속 직후 몫은 그대로 · L1 뒤 한 번 더는 `Coverage` 검사로 0).
-- ★ 코멘트(§212 · 86 §5) = 관계 폴더가 읽힌 스키마의 테이블·컬럼 코멘트를 스키마 단위 질의 2로(`schema_comments_raw` → `MetaStore::set_schema_comments` · `meta.warm_comments`) — 객체 상세의 설명이 왕복 0.
+- ★ 코멘트(§212 · 86 §5) = 관계 폴더가 읽힌 스키마의 테이블·컬럼 코멘트를 스키마 단위 질의 2로(`schema_comments_raw` → `MetaStore::set_schema_comments` · `meta.warm_comments`) — 객체 상세의 설명이 왕복 0. ★ **T-348(10-15)** = 코멘트는 객체 id가 아니라 **(스키마, 소문자 이름) 지도** `Snapshot::schema_comments`에 먼저 담는다 → L1 이름 등재 **순서와 무관**(종전 = 이름이 등재된 객체에만 붙이고 "완료" 표시 → 뒤에 등재된 객체는 영영 코멘트 없음 · 스키마 이름 미등재면 조용히 버림) · `comments_of`는 지도에서 답하고 · `load_names_x`가 이름을 새로 등재하면 지도의 코멘트를 `ObjEntry.comment`/`col_comments`에 붙인다(`apply_schema_comments` 한 자리) · 시험 `schema_comments_survive_names_arriving_later`.
 - 컬럼 = 현재 스키마 관계 목록이 오면(`Resp::ObjectsMeta`) 컬럼이 `Unknown`인 것을 이름순으로 `warm_q`에(상한 `meta.warm_columns_max` 200) → `warm_step`이 `meta.warm_idle_ms`(300) 간격 · 한 번에 하나 · `ColumnsMeta{urgent:false}`(백그라운드 세션 · 큐 우선순위 3 = 급한 것 뒤).
 - 효과 = 첫 완성의 `alias.` 컬럼 · 카드 컬럼이 왕복 없이 · 실측 데모 SQLite = 목록 응답 뒤 0.9 s 안에 3 테이블 컬럼 완료(로그 `columns-meta … (bg)`).
 - 끝 = 큐 소진 → 트래픽 0 · 접속 세대 바뀌면 큐 비움(`reset_tree`).
