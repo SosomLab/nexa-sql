@@ -2,7 +2,17 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-15 §2](journal/2026-10-15.md)**(127차 win 마감 · §1 = T-346 시험 자산 6 ✅ · ★ 객체 탐색기 "Include Description" 설명 포함 검색(D-290) · ★ SQL Server 전 DB 검색 + 범위 설정(T-351 · D-291) · 🔧 한글 입력 2건 + ★ IME 단일 상태(T-350) · 🔧 서버 유형 변경 알림 게이트 `announce_env_change` · 🔧 필터 틀 툴팁 범위 · 사용자 ✓ 10 · 남음 = T-346 ③④ 맥 · T-347~T-349) · 그 전 = [journal 10-14 §4](journal/2026-10-14.md)(126차 · PG 아이콘 Db2 오인) · §1~§3(125차 · 🚀 v0.2.0).
+> ★ **다음 세션 시작점 = [journal 2026-10-15 §3](journal/2026-10-15.md)**(🚀 v0.2.1 릴리스 · 128차 win · 협업 쌍 nexa-sql-07 × nexa-sql-17 · 그 앞 = §2 127차 마감 · §1 = T-346 시험 자산 6 ✅ · ★ 객체 탐색기 "Include Description" 설명 포함 검색(D-290) · ★ SQL Server 전 DB 검색 + 범위 설정(T-351 · D-291) · 🔧 한글 입력 2건 + ★ IME 단일 상태(T-350) · 🔧 서버 유형 변경 알림 게이트 `announce_env_change` · 🔧 필터 틀 툴팁 범위 · 사용자 ✓ 10 · 남음 = T-346 ③④ 맥 · T-347~T-349) · 그 전 = [journal 10-14 §4](journal/2026-10-14.md)(126차 · PG 아이콘 Db2 오인) · §1~§3(125차 · 🚀 v0.2.0).
+
+## 2026-10-15 오후 (128차 · **win** · 🚀 **v0.2.1 릴리스** · 협업 쌍 = 개발 nexa-sql-07(Fable) × 협업 nexa-sql-17(Opus) · [journal 10-15 §3](journal/2026-10-15.md))
+
+- **경위** = 사용자 "0.2.1 버전 배포가 안되어 있음" · 앞 쌍(nexa-sql-11)이 배포를 시작했으나 두 세션 재시작으로 V3 9단계에서 끊김 → 새 쌍이 상태 확인 뒤 이어 받음(102 §0-6) · 기록 커밋 **be699cb**(ci 38679174392 ✓).
+- **배포 전 V3(협업 · 8641ef3 · 12:31~13:12)** = **제품 결함 0** · 897/0 · win-func-check 96/96 · grid-edit 96/0 · bulk 28/0 · dbms-source 33/0 · oracle-ddl Thin·OCI 67/0 · parity 22/0 · define 17/0 · pkg-overload 14/0(재실행) · intel-args 22/0 · reconnect 8/0 · conn-cmd 19/0 · mssql-explorer 34/0 · desc PG 15/0 · MSSQL 19/0 · 영어 ✓ · check-3os ✓ · golden ✓ · **maxrows-stop 8/3 = 자체 시험 훅 결함**.
+- 🔧 **훅 `grid.page:`가 첫 그리기 전에 들어오면 옛 탭 그리드에 쓰임**(Debug 필터 버튼 첫 그리기 1.57 s > 1500 ms · `open_file`은 탭만 바꾸고 그리드 동기화는 다음 그리기) → `sync_grid_tab()` 선행 **1bd4052** · 재실행 11/0 · 훅 200 ms 강제 조건 page=0 ✓ · T-349 수치 갱신(1.13~1.72 s).
+- **시험 환경 겹침**(협업 보고) = 재시작 "멈춤" 통지에도 원래 V3 사슬은 끝까지 돌았고 V3b가 겹쳐 실서버 임시 표 간섭 → 102 §12 원장 "stopped 통지 ≠ 프로세스 종료".
+- **버전 커밋 96f591a** · 태그 **v0.2.1** · push 13:26 · 검증 = test 429/0 · clippy 0 · Release 8m07s · winget·choco 변수 false 유지.
+- **워크플로·자산·공개** = release.yml **38681359456 ✓**(12m22s · 자산 6 = rpm 18.14 · dmg 35.58 · pkg 32.55 · msi 13.83 · deb 14.47 MB · 0.2.0 대비 +9~16 KB) · ci 38681353284 ✓ · integration 38681353319 ✓ · 노트 103줄 · **공개 2026-10-15T04:38:37Z · Latest**
+- **채널** = Homebrew = homebrew.yml **38682538832 ✓**(04:38:39→04:39:42Z) → 탭 kiros33/homebrew-tap **e503046**(04:39:13Z "nexa-sql 0.2.1" · cask version 0.2.1 · sha256 c6cfdb53…) · pkg.sosomlab.com = linux-repo.yml **38682538812 ✓**(신호) → SosomLab/linux-repo publish **38682546749 ✓**(repository_dispatch · 04:38:44→04:39:59Z · repo.json nexa-sql = 0.2.1 · 자동) · winget·choco = publish-windows-packages **38682538861 ✓** = guard `vars.WINGET_PUBLISH='false'`·`CHOCO_PUSH='false'` → `choco push`·`winget-pkgs PR` 단계 skipped → **제출 0** · 다음 = 문서 커밋 CI → 사용자 실기(0.2.1 설치본) · T-347~T-349 · T-346 ③④ 맥.
 
 ## 2026-10-15 (127차 · **win** · 협업 쌍 = 개발 nexa-sql-11 × 협업 nexa-sql-07 · [journal 10-15 §1](journal/2026-10-15.md))
 
