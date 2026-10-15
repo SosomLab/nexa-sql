@@ -304,3 +304,11 @@ Ctrl+P(Goto Anything)와 프로젝트 탐색기 필터는 프로젝트 폴더 �
 - "현재 문장" 범위는 문장 바로 위에 붙은 주석 줄(`--` · `/* */` · 사이 빈 줄 포함)까지 셉니다 — 주석 줄에 단 북마크도 보입니다. 앞 문장 끝에 붙은 주석은 앞 문장 몫입니다.
 - 설명은 이미 읽어 둔 코멘트를 씁니다. 없으면 Ctrl을 누른 순간 한 번 읽어 오고, 오면 바로 채워집니다.
 - 실행 속도 향상(`perf.boost`)·큰 파일 모드에서는 Ctrl 표시와 객체 hover 카드(`objlink.tooltip`)가 꺼집니다.
+
+## 10-15에 더해진 설정
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `intel.alias_upper` | on | 자동 완성과 Generate SQL의 테이블 별칭을 대문자로(`A, B` · `SC`). 끄면 소문자(`a, b` · `sc`). 별칭 **방식**은 그대로 `intel.alias_style`(약어 / A, B, C). 두 설정이 자동 완성(FROM 뒤 별칭 삽입)과 객체 탐색기 ▸ Generate SQL(SELECT · MERGE)에 똑같이 적용됩니다. |
+| `gen.format` | on | Generate SQL로 만든 문장(SELECT · INSERT · UPDATE · DELETE · MERGE · CALL)을 **기본 포맷터**(`format.default`와 `format.*` 옵션)로 정리해 SQL Preview에 보입니다. DDL은 만든 그대로입니다. 미리보기 창의 5번째 체크박스 "포맷"과 같은 값입니다. |
+

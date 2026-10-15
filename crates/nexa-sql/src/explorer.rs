@@ -6501,7 +6501,8 @@ impl Explorer {
         }
         self.shift = on;
         if !self.menu.is_open() || self.menu_items.is_empty() {
-            return false;
+            // 끌기 중이면 칩 글(이름 ↔ 전체 이름)이 바뀐다 → 다시 그림(10-15 미비 점검).
+            return self.drag_active();
         }
         let items = relabel_copy(self.menu_items.clone(), on);
         self.menu.replace_items(items, self.menu_text_w);

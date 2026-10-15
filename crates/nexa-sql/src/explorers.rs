@@ -1480,6 +1480,10 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
 
     /// 툴팁 목표 = 커서 아래 (칸, 노드).
     fn tip_target(&self) -> Option<(usize, usize)> {
+        // 노드를 끌고 있는 동안은 툴팁 없음(칩이 커서 옆에 있다 · 10-15).
+        if self.drag_active() {
+            return None;
+        }
         let p = hover_point(self.pinned, self.cursor);
         self.laid()
             .into_iter()
