@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/128-prod-scenario | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 운영기 점검 시나리오 `scripts/prod-mode-scenario.sh`(**2cf4e04** · 114 §11 · 격리 홈 사본 `conn env prd` · 단계 0~9 · SQLite 25/0 · BISCM 26/0) · 🔧 L2 가드 1 h 미룸 결함(`sync_tx_ui` 당김 · 8단계 5/0) · 운영 2단 안내 = 설정 초 · E2E 시간 여유 |
 | fix/128-hold-card | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | 운영 보류 무장 카드 보정(**5085339** · 남은 초 매초 갱신 · 무장 중 주황 카드 숨김 · 만료 되살림 · E2E 22/0 · 협업 캡처 ✓) |
 | feat/128-findobj-hold | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 객체 찾기 보강(**aec74c2** · SQL Server 전 DB 스위치 `findobj.all_dbs` · `FindBtn` 토글 · 종류 열 · 서버 목록 갱신 · Oracle 유지 계정 +27) + ★ **T-356 운영 보류 커밋 1단계**(114 §10-1 · 러너 `HoldPolicy`/`Held` · 고정 카드 · 상단 Commit 빨간 2단 · COMMIT 직전 멈춤 → 이어 실행 · D-298/D-304 게이트 · 설정 7 · E2E `win-prod-hold-e2e.sh` 22/0) |
 | feat/128-object-backup | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 객체 백업 설정 그룹(**e749cc2** · 114 §7-2 · D-302/303/305) = `backup.*` 6키(전역 · 유형 무관) · DROP/REPLACE·ALTER/TRUNCATE·RENAME 실행 전 DDL 백업(D-305 이름 · keep N · 주기 정리) · **G6 ✅**(`prod_confirmed_once`) · 상태바 바로가기 · E2E 12/0 · 4/0 · BISCM 운영 격리 E2E 스크립트 |
