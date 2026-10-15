@@ -261,6 +261,17 @@ struct Node {
     state: LoadState,
 }
 
+/// ★ 트리 노드 끌기(사용자 10-15 "객체 탐색기 객체 DnD" · 결과 열 머리 끌기 121차와 같은 모양): 누른 노드 · 누른 점 · 지금 커서 ·
+/// 문턱(4 px)을 넘어 **끌기**가 되었는가. 칩(커서 옆 이름 · Shift = 전체 이름)은 호스트가 팝업 층에 그린다(`dragchip`) · 놓기는
+/// 호스트(`app/input.rs` 이름 끌기 블록 = 편집기 캐럿 선 · 필터/찾기 상자 · 조건 바).
+#[derive(Clone, Copy, Debug)]
+struct TreeDrag {
+    node: usize,
+    press: Point,
+    cur: Point,
+    active: bool,
+}
+
 /// 탐색기 타입어헤드 설정 한 벌(`explorer.typeahead*` · 호스트가 만들어 전 칸에 준다).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct TypeAheadCfg {
@@ -1111,6 +1122,8 @@ pub(crate) struct Explorer {
     quote_always: bool,
     /// Shift가 눌려 있는가(호스트가 수식키 사건마다 준다) — 우클릭 메뉴 "이름 복사" ↔ "전체 이름 복사"(10-10).
     shift: bool,
+    /// 노드 끌기 상태(10-15).
+    drag: Option<TreeDrag>,
     /// 열린 우클릭 메뉴의 항목(Shift 전환 때 라벨만 바꿔 다시 넣는다) + 그때의 글 폭.
     menu_items: Vec<CtxItem>,
     menu_text_w: i32,
@@ -2685,6 +2698,7 @@ impl Explorer {
             source_qualify: true,
             quote_always: false,
             shift: false,
+            drag: None,
             menu_items: Vec::new(),
             menu_text_w: 0,
             schema_opts: SchemaOpts::default(),
@@ -6509,13 +6523,73 @@ impl Explorer {
         if parts.is_empty() {
             return None;
         }
+        // 식별자 노드만 인용(폴더·묶음 라벨은 식별자가 아니다 · 10-15).
+        let quote = matches!(
+            self.nodes[i].kind,
+            NodeKind::Object(_)
+                | NodeKind::Column(_)
+                | NodeKind::Item(_)
+                | NodeKind::Schema(_)
+                | NodeKind::Database(_)
+        );
         Some(
             parts
                 .iter()
-                .map(|p| crate::identq::quote(d, p, self.quote_always))
+                .map(|p| {
+                    if quote {
+                        crate::identq::quote(d, p, self.quote_always)
+                    } else {
+                        p.clone()
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("."),
         )
+    }
+
+    /// 노드의 "이름"(이름 복사 · 끌기 칩 · 10-15): 식별자 노드 = `copy_name_of` · 그 밖(서버 · 폴더 · 묶음) = 행의 주 글자.
+    fn name_of(&self, i: usize) -> Option<String> {
+        copy_name_of(&self.nodes[i].kind).or_else(|| {
+            let main = self.label(i).0;
+            (!main.is_empty()).then_some(main)
+        })
+    }
+
+    // ── 노드 끌기(10-15) — 호스트가 묻는 API ────────────────────────────────────────────────────────
+    pub(crate) fn drag_active(&self) -> bool {
+        self.drag.as_ref().is_some_and(|d| d.active)
+    }
+
+    /// 끌기 끝(놓음 · Esc · 호스트가 놓기를 처리한 뒤). 돌려주는 값 = 끌기 중이었는가.
+    pub(crate) fn cancel_drag(&mut self) -> bool {
+        self.drag.take().is_some_and(|d| d.active)
+    }
+
+    /// 칩 = (보이는 이름 · 커서). Shift = 전체 이름(우클릭 "전체 이름 복사"와 같은 글).
+    pub(crate) fn drag_chip(&self) -> Option<(String, Point)> {
+        let d = self.drag.as_ref().filter(|d| d.active)?;
+        let name = if self.shift {
+            self.full_name_of(d.node).or_else(|| self.name_of(d.node))
+        } else {
+            self.name_of(d.node)
+        }?;
+        Some((name, d.cur))
+    }
+
+    /// 놓을 글 = 인용 정책을 거친 이름(`editor.quote_idents` · 전체 이름은 이미 인용됨 · 폴더류는 그대로).
+    pub(crate) fn drag_text(&self) -> Option<String> {
+        let d = self.drag.as_ref().filter(|d| d.active)?;
+        if self.shift {
+            if let Some(f) = self.full_name_of(d.node) {
+                return Some(f);
+            }
+        }
+        let name = self.name_of(d.node)?;
+        let ident = copy_name_of(&self.nodes[d.node].kind).is_some();
+        Some(match (self.dialect, ident) {
+            (Some(dl), true) => crate::identq::quote(dl, &name, self.quote_always),
+            _ => name,
+        })
     }
 
     pub(crate) fn set_gen_opts(&mut self, opts: GenOpts) {
@@ -8063,6 +8137,21 @@ impl Explorer {
         }
         match *ev {
             InputEvent::MouseMove { x, y } => {
+                // ★ 노드 끌기(10-15): 누른 채 문턱을 넘으면 끌기 시작(hover 끔) · 끄는 동안 이동은 커서만 기억.
+                if let Some(d) = self.drag.as_mut() {
+                    d.cur = Point { x, y };
+                    if !d.active {
+                        let th = (4.0 * self.scale).round() as i32;
+                        if (x - d.press.x).abs() > th || (y - d.press.y).abs() > th {
+                            d.active = true;
+                            self.hover = None;
+                            self.hover_fade.set(None);
+                        }
+                    }
+                    if d.active {
+                        return true;
+                    }
+                }
                 let h = self.row_at(Point { x, y }).and_then(|(n, _)| n);
                 self.hover_fade.set(h);
                 if h != self.hover {
@@ -8103,9 +8192,19 @@ impl Explorer {
                     self.activate(i);
                 } else if x >= glyph_x && x < glyph_x + glyph_w {
                     self.toggle(i);
+                } else {
+                    // 행 본문 누름 = 끌기 후보(문턱을 넘어야 끌기 · 10-15).
+                    self.drag = Some(TreeDrag {
+                        node: i,
+                        press: p,
+                        cur: p,
+                        active: false,
+                    });
                 }
                 true
             }
+            // 놓음(칸 안) = 끌기 끝(놓기 판정은 호스트가 먼저 했다).
+            InputEvent::MouseUp { .. } => self.cancel_drag(),
             InputEvent::RightDown { x, y } => {
                 let p = Point { x, y };
                 let Some((Some(i), _)) = self.row_at(p) else {
@@ -8186,10 +8285,13 @@ impl Explorer {
                     }
                     // 루트 = 연결 항목(DBeaver 항해자와 같은 자리 · docs/54): 연결됨 → 새 탭 · 새로 고침 · 해제 / 오프라인 → 연결 · 제거.
                     NodeKind::Root if self.offline => {
+                        items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::item("connect", t(Msg::ExpConnectServer)));
                         items.push(CtxItem::item("remove", t(Msg::ExpRemoveServer)));
                     }
                     NodeKind::Root => {
+                        // ★ 모든 노드에 "이름 복사"(사용자 10-15) — 서버 = 연결 행 글자(끝점/DB/로그인) · Shift = 그대로.
+                        items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::item("newtab", t(Msg::ExpNewTabHere)));
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                         items.push(CtxItem::item("refresh_meta", t(Msg::ExpRefreshMeta)));
@@ -8209,16 +8311,18 @@ impl Explorer {
                         group: GroupKind::Databases | GroupKind::SystemDbs,
                         ..
                     } => {
-                        if matches!(self.nodes[i].kind, NodeKind::Database(_)) {
-                            items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
-                        }
+                        items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         if self.sizes_on {
                             items.push(CtxItem::item("sizes", t(Msg::ExpLoadSizes)));
                         }
                         items.push(CtxItem::Separator);
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
-                    _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
+                    // 폴더(종류 · 하위 · 묶음)도 이름 복사(사용자 10-15 "모든 대상") — 전체 이름 = 주인 + 폴더 라벨.
+                    _ => {
+                        items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                    }
                 }
                 let text_w = (160.0 * self.scale).round() as i32;
                 // ★ 아이콘(사용자 10-10) + Shift 라벨(이름 복사 ↔ 전체 이름 복사).
@@ -8355,6 +8459,8 @@ impl Explorer {
                     CtlKey::Escape => {
                         self.typeahead.clear();
                         self.menu.close();
+                        // 끌기 중 Esc = 취소(열 머리 끌기와 같다).
+                        self.drag = None;
                     }
                     _ => return false,
                 }
@@ -8478,6 +8584,31 @@ impl Explorer {
 
     /// 자체 캡처용(기동 명령 `explorer.menu[:<n번째 보이는 줄>]`): 그 줄에서 **우클릭한 것과 같은 사건**을 컨트롤에 직접 준다
     /// (OS 입력 주입 없음) — 메뉴가 뜨는지 · 항목을 골랐을 때 동작하는지 확인하려고.
+    /// 자체 시험용(10-15 노드 DnD E2E) — `row`번째 보이는 줄의 창 좌표(행 왼쪽 1/3 · 세로 가운데 근처). `capture_menu`와 같은 훑기.
+    pub(crate) fn row_point(&self, row: usize) -> Option<Point> {
+        let step = (4.0 * self.scale).max(1.0) as i32;
+        let mut seen: Vec<usize> = Vec::new();
+        let mut y = self.bounds.y + step;
+        while y < self.bounds.bottom() {
+            if let Some((Some(i), _)) = self.row_at(Point {
+                x: self.bounds.x + self.bounds.w / 2,
+                y,
+            }) {
+                if !seen.contains(&i) {
+                    seen.push(i);
+                    if seen.len() == row + 1 {
+                        return Some(Point {
+                            x: self.bounds.x + self.bounds.w / 3,
+                            y: y + self.row_h() / 2 - step,
+                        });
+                    }
+                }
+            }
+            y += step;
+        }
+        None
+    }
+
     pub(crate) fn capture_menu(&mut self, row: usize) -> bool {
         let step = (4.0 * self.scale).max(1.0) as i32;
         let mut seen: Vec<usize> = Vec::new();
@@ -8691,9 +8822,9 @@ impl Explorer {
                 // ★ Shift(사용자 10-10) = 전체 이름(Oracle `스키마.객체`·`스키마.패키지.멤버` · SQL Server `DB.스키마.객체` · 인용 =
                 //   `editor.quote_idents` 정책 = `identq` 한 자리).
                 let name = if self.shift {
-                    self.full_name_of(i)
+                    self.full_name_of(i).or_else(|| self.name_of(i))
                 } else {
-                    copy_name_of(&self.nodes[i].kind)
+                    self.name_of(i)
                 };
                 if let Some(name) = name {
                     self.actions.push(ExplorerAction::Copy(name));
@@ -9250,7 +9381,29 @@ fn full_name_parts(
             }
             None => vec![it.name.clone()],
         },
-        _ => Vec::new(),
+        // ★ 폴더류(10-15 "각 객체별 확장 가능한 형태"): 종류 폴더 = 스키마.라벨 · 하위 폴더 = 주인.라벨 · 묶음 = DB.라벨.
+        NodeKind::Folder { schema, kind } => {
+            let mut v = Vec::new();
+            if !schema.is_empty() {
+                v.push(schema.clone());
+            }
+            v.push(folder_label(Some(d), *kind));
+            v
+        }
+        NodeKind::Sub { owner, sub } => {
+            let mut v = obj(d, owner);
+            v.push(t(sub_msg(*sub)).to_string());
+            v
+        }
+        NodeKind::Group { db, group } => {
+            let mut v = Vec::new();
+            if let Some(db) = db {
+                v.push(db.clone());
+            }
+            v.push(t(group_msg(*group)).to_string());
+            v
+        }
+        NodeKind::Root => Vec::new(),
     }
 }
 
@@ -9413,6 +9566,51 @@ mod refresh_tests {
             vec!["dbo", "SP_RUN"]
         );
         assert!(full_name_parts(Dialect::Oracle, &NodeKind::Root, None).is_empty());
+        // ★ 폴더류(10-15 "각 객체별 확장 가능한 형태"): 종류 폴더 = 스키마.라벨 · 하위 폴더 = 주인.라벨 · 묶음 = DB.라벨.
+        let folder = NodeKind::Folder {
+            schema: "HR".into(),
+            kind: ObjectKind::Table,
+        };
+        assert_eq!(
+            full_name_parts(Dialect::Oracle, &folder, None),
+            vec![
+                "HR".to_string(),
+                folder_label(Some(Dialect::Oracle), ObjectKind::Table)
+            ]
+        );
+        let owner = ObjectInfo {
+            db: "M4PLAN_MS".into(),
+            schema: "dbo".into(),
+            name: "T".into(),
+            kind: ObjectKind::Table,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        let sub = NodeKind::Sub {
+            owner: Box::new(owner),
+            sub: SubKind::Indexes,
+        };
+        assert_eq!(
+            full_name_parts(Dialect::Mssql, &sub, None),
+            vec![
+                "M4PLAN_MS".to_string(),
+                "dbo".to_string(),
+                "T".to_string(),
+                t(sub_msg(SubKind::Indexes)).to_string()
+            ]
+        );
+        let grp = NodeKind::Group {
+            db: Some("M4PLAN_MS".into()),
+            group: GroupKind::Security,
+        };
+        assert_eq!(
+            full_name_parts(Dialect::Mssql, &grp, None),
+            vec![
+                "M4PLAN_MS".to_string(),
+                t(group_msg(GroupKind::Security)).to_string()
+            ]
+        );
         // 라벨 전환: Shift = 전체 이름 복사 · 아니면 이름 복사 · 다른 항목은 그대로.
         let items = vec![CtxItem::item("copy", "x"), CtxItem::item("refresh", "r")];
         let on = relabel_copy(items.clone(), true);

@@ -729,9 +729,13 @@ impl ApplicationHandler<Wake> for App {
         // ★ 접속 창 = 모달: 열려 있는 동안 **메인 창과 그 일부인 로그·색·단축키·설정 창**의 입력은 버리고
         //   (OS 수준은 `winfocus::set_enabled`) 접속 창을 앞으로(사용자 09-15 "로그 창도 메인의 일부").
         if let WindowEvent::DroppedFile(p) = &event {
-            // OS에서 창으로 끌어다 놓기(3-OS 공통 winit 경로) = 열기.
+            // OS에서 창으로 끌어다 놓기(3-OS 공통 winit 경로) = 열기 · `.nsql-project`는 프로젝트로(기동 인자와 같은 규칙 · 10-15).
             let p = p.clone();
-            self.open_file(&p);
+            if p.extension().is_some_and(|e| e == crate::project::EXT) {
+                self.project_load_path(&p);
+            } else {
+                self.open_file(&p);
+            }
             return;
         }
         let modal_open = self.modal_open();
@@ -1463,6 +1467,7 @@ impl App {
                         ("gen.compact", o.compact),
                         ("gen.full_ddl", o.full_ddl),
                         ("gen.separate_fk", o.separate_fk),
+                        ("gen.format", o.format),
                     ] {
                         let cur = self.settings.flag(k);
                         if cur != v {

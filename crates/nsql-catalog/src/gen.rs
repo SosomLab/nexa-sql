@@ -197,6 +197,12 @@ pub struct GenOpts {
     pub separate_fk: bool,
     /// 바인드 변수 목록 주석(머리/꼬리 · 설정 `gen.bind_note` · 09-28).
     pub bind_note: BindNote,
+    /// 별칭 방식(`intel.alias_style` · true = A, B, C · false = 약어) — SELECT·MERGE의 테이블 별칭(사용자 10-15 · nsql-core `alias`).
+    pub alias_letters: bool,
+    /// 별칭 대문자(`intel.alias_upper` · 기본 켬).
+    pub alias_upper: bool,
+    /// 생성 문장을 기본 포맷터로 정리해 보여준다(`gen.format` · GUI 미리보기만 · 문장류만).
+    pub format: bool,
 }
 
 impl Default for GenOpts {
@@ -207,12 +213,15 @@ impl Default for GenOpts {
             full_ddl: false,
             separate_fk: true,
             bind_note: BindNote::Both,
+            alias_letters: false,
+            alias_upper: true,
+            format: true,
         }
     }
 }
 
 impl GenOpts {
-    /// CLI 토큰(`qualified=0` · `compact=1` · `full=1` · `fk=0`)을 기본값 위에 얹는다.
+    /// CLI 토큰(`qualified=0` · `compact=1` · `full=1` · `fk=0` · `alias=letters|abbr` · `upper=0` · `format=0`)을 기본값 위에 얹는다.
     #[must_use]
     pub fn with_tokens(mut self, tokens: &[String]) -> Self {
         for t in tokens {
@@ -226,6 +235,9 @@ impl GenOpts {
                 "full" | "full_ddl" | "f" => self.full_ddl = on,
                 "fk" | "separate_fk" => self.separate_fk = on,
                 "note" | "bind_note" => self.bind_note = BindNote::parse(v),
+                "alias" => self.alias_letters = matches!(v.trim(), "letters" | "abc"),
+                "upper" | "alias_upper" => self.alias_upper = on,
+                "format" => self.format = on,
                 _ => {}
             }
         }
@@ -259,6 +271,12 @@ thread_local! {
 
 fn cx() -> Cx {
     CX.with(|c| c.borrow().clone())
+}
+
+/// 테이블 별칭(설정 `GenOpts.alias_letters`/`alias_upper` · nsql-core `alias` 부품 = 인텔리센스 완성과 같은 규칙 · 10-15).
+fn alias_of(name: &str, taken: &[&str]) -> String {
+    let o = cx().opts;
+    nsql_core::alias::make(name, taken, o.alias_letters, o.alias_upper)
 }
 
 impl GenSpec {
@@ -513,20 +531,22 @@ fn select_sql(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String,
     } else {
         Vec::new()
     };
+    // ★ 테이블 별칭 = 설정(`intel.alias_style` · `intel.alias_upper`)대로(사용자 10-15 · 종전 고정 `t`).
+    let a = alias_of(&o.name, &[]);
     let mut out = String::from("SELECT\n");
     let n = cols.len();
     for (i, c) in cols.iter().enumerate() {
-        out.push_str("    t.");
+        out.push_str(&format!("    {a}."));
         out.push_str(&ident(d, &c.name));
         if i + 1 < n {
             out.push(',');
         }
         out.push('\n');
     }
-    out.push_str(&format!("FROM {} t\n", q(d, o)));
+    out.push_str(&format!("FROM {} {a}\n", q(d, o)));
     for (i, k) in keys.iter().enumerate() {
         out.push_str(if i == 0 { "WHERE " } else { "  AND " });
-        out.push_str(&format!("t.{} = {}\n", ident(d, k), bind(k)));
+        out.push_str(&format!("{a}.{} = {}\n", ident(d, k), bind(k)));
     }
     let trimmed = out.trim_end().to_string();
     Ok(format!("{trimmed};\n"))
@@ -606,7 +626,11 @@ fn dml_sql(
             out.push_str(&where_keys(" "));
             format!("{};\n", out.trim_end())
         }
-        GenWhat::Merge => merge_sql(d, &qn, &names, &binds, &key_idx, &non_key),
+        GenWhat::Merge => {
+            let ta = alias_of(&o.name, &[]);
+            let sa = alias_of("src", &[&ta]);
+            merge_sql(d, &qn, &names, &binds, &key_idx, &non_key, (&ta, &sa))
+        }
         _ => unreachable!("dml_sql only handles DML"),
     };
     Ok(out)
@@ -633,6 +657,7 @@ fn merge_sql(
     binds: &[String],
     key_idx: &[usize],
     non_key: &[usize],
+    aliases: (&str, &str),
 ) -> String {
     if key_idx.is_empty() {
         let mut out = String::from("-- MERGE needs a primary/unique key and this table has none - INSERT is generated instead\n");
@@ -643,6 +668,7 @@ fn merge_sql(
         out.push_str(");\n");
         return out;
     }
+    let (ta, sa) = aliases;
     let set_idx: &[usize] = if non_key.is_empty() { key_idx } else { non_key };
     match d {
         Dialect::Sqlite | Dialect::Mysql => {
@@ -674,7 +700,7 @@ fn merge_sql(
         }
         _ => {
             let alias_as = if d == Dialect::Postgres { " AS" } else { "" };
-            let mut out = format!("MERGE INTO {qn}{alias_as} t\nUSING (\n    SELECT\n");
+            let mut out = format!("MERGE INTO {qn}{alias_as} {ta}\nUSING (\n    SELECT\n");
             let src: Vec<String> = (0..names.len())
                 .map(|i| format!("{} AS {}", binds[i], names[i]))
                 .collect();
@@ -682,10 +708,10 @@ fn merge_sql(
             if d == Dialect::Oracle {
                 out.push_str("    FROM DUAL\n");
             }
-            out.push_str(&format!("){alias_as} s\n"));
+            out.push_str(&format!("){alias_as} {sa}\n"));
             let on: Vec<String> = key_idx
                 .iter()
-                .map(|&i| format!("t.{} = s.{}", names[i], names[i]))
+                .map(|&i| format!("{ta}.{} = {sa}.{}", names[i], names[i]))
                 .collect();
             if d == Dialect::Postgres {
                 out.push_str(&format!("ON {}\n", on.join(" AND ")));
@@ -697,9 +723,9 @@ fn merge_sql(
                 .iter()
                 .map(|&i| {
                     if d == Dialect::Postgres {
-                        format!("{} = s.{}", names[i], names[i])
+                        format!("{} = {sa}.{}", names[i], names[i])
                     } else {
-                        format!("t.{} = s.{}", names[i], names[i])
+                        format!("{ta}.{} = {sa}.{}", names[i], names[i])
                     }
                 })
                 .collect();
@@ -707,7 +733,7 @@ fn merge_sql(
             out.push_str("WHEN NOT MATCHED THEN INSERT (\n");
             out.push_str(&list(names, "    "));
             out.push_str(") VALUES (\n");
-            let vals: Vec<String> = names.iter().map(|n| format!("s.{n}")).collect();
+            let vals: Vec<String> = names.iter().map(|n| format!("{sa}.{n}")).collect();
             out.push_str(&list(&vals, "    "));
             out.push(')');
             format!("{out};\n")
@@ -1819,27 +1845,67 @@ mod tests {
     fn merge_shapes_per_dialect() {
         let names = vec!["ID".to_string(), "NAME".to_string()];
         let binds = vec![":ID".to_string(), ":NAME".to_string()];
-        let ora = merge_sql(Dialect::Oracle, "HR.EMP", &names, &binds, &[0], &[1]);
+        let ora = merge_sql(
+            Dialect::Oracle,
+            "HR.EMP",
+            &names,
+            &binds,
+            &[0],
+            &[1],
+            ("t", "s"),
+        );
         assert!(
             ora.contains("MERGE INTO HR.EMP t")
                 && ora.contains("FROM DUAL")
                 && ora.contains("ON (t.ID = s.ID)")
         );
         assert!(ora.contains("t.NAME = s.NAME") && ora.trim_end().ends_with(';'));
-        let pg = merge_sql(Dialect::Postgres, "hr.emp", &names, &binds, &[0], &[1]);
+        let pg = merge_sql(
+            Dialect::Postgres,
+            "hr.emp",
+            &names,
+            &binds,
+            &[0],
+            &[1],
+            ("t", "s"),
+        );
         assert!(
             pg.contains("MERGE INTO hr.emp AS t")
                 && pg.contains("ON t.ID = s.ID")
                 && pg.contains("    NAME = s.NAME")
         );
-        let lite = merge_sql(Dialect::Sqlite, "emp", &names, &binds, &[0], &[1]);
+        let lite = merge_sql(
+            Dialect::Sqlite,
+            "emp",
+            &names,
+            &binds,
+            &[0],
+            &[1],
+            ("t", "s"),
+        );
         assert!(
             lite.contains("ON CONFLICT (ID) DO UPDATE SET")
                 && lite.contains("NAME = excluded.NAME")
         );
-        let my = merge_sql(Dialect::Mysql, "emp", &names, &binds, &[0], &[1]);
+        let my = merge_sql(
+            Dialect::Mysql,
+            "emp",
+            &names,
+            &binds,
+            &[0],
+            &[1],
+            ("t", "s"),
+        );
         assert!(my.contains("ON DUPLICATE KEY UPDATE") && my.contains("NAME = VALUES(NAME)"));
-        let none = merge_sql(Dialect::Oracle, "HR.EMP", &names, &binds, &[], &[0, 1]);
+        let none = merge_sql(
+            Dialect::Oracle,
+            "HR.EMP",
+            &names,
+            &binds,
+            &[],
+            &[0, 1],
+            ("t", "s"),
+        );
         assert!(none.starts_with("-- MERGE needs") && none.contains("INSERT INTO HR.EMP"));
     }
 
@@ -1910,6 +1976,15 @@ mod tests {
         let o =
             GenOpts::default().with_tokens(&["qualified=0".into(), "fk=0".into(), "full=1".into()]);
         assert!(!o.qualified && !o.separate_fk && o.full_ddl && !o.compact);
+        // 별칭 토큰(10-15): 기본 = 약어 + 대문자 + 포맷 켬.
+        let d = GenOpts::default();
+        assert!(!d.alias_letters && d.alias_upper && d.format);
+        let o = GenOpts::default().with_tokens(&[
+            "alias=letters".into(),
+            "upper=0".into(),
+            "format=0".into(),
+        ]);
+        assert!(o.alias_letters && !o.alias_upper && !o.format);
         assert_eq!(
             compact_sql("-- x\n\nCREATE TABLE t (\n    a int,\n    b int\n);\n"),
             "CREATE TABLE t (\n\ta int,\n\tb int\n);\n"

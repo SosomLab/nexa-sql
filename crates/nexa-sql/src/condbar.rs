@@ -263,6 +263,15 @@ impl CondBar {
     }
 
     /// 조건 바 자리(열 머리 DnD 놓임 판정).
+    /// 끌어온 이름 놓기(탐색기 노드 · 10-15 · 필터 상자 `FilterBar::drop_insert`와 같은 규칙): 사각형 안이면 넣고 true.
+    pub(crate) fn drop_insert(&mut self, p: Point, text: &str) -> bool {
+        if self.rect.w <= 0 || !self.rect.contains(p) {
+            return false;
+        }
+        crate::filterbar::drop_into_textbox(&mut self.tb, text);
+        true
+    }
+
     pub(crate) fn rect(&self) -> Rect {
         self.rect
     }

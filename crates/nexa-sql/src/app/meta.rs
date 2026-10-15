@@ -408,6 +408,8 @@ impl App {
                     changed = true;
                 }
                 ExplorerAction::Preview { spec, r, server } => {
+                    // ★ 사용자 기본 포맷터로 정리(`gen.format` · 문장류만 · 10-15).
+                    let r = self.sqlprev_format(&spec, r);
                     if let Err(e) = &r {
                         self.sess.status = tf(Msg::StGenFailed, &[e]);
                     } else {

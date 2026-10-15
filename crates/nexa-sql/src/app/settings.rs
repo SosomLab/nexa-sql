@@ -486,7 +486,7 @@ impl App {
                 .editors
                 .set_select_all_keep(self.settings.get("editor.select_all_view") != Some("end")),
             "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk"
-            | "gen.bind_note" => {
+            | "gen.bind_note" | "gen.format" => {
                 let o = gen_opts_from(&self.settings);
                 self.explorer.set_gen_opts(o);
             }
@@ -653,6 +653,11 @@ impl App {
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             k if k.starts_with("intel.") => {
                 self.intel.set_cfg(self.intel_cfg());
+                // 별칭 두 설정은 Generate SQL도 쓴다(10-15).
+                if matches!(k, "intel.alias_style" | "intel.alias_upper") {
+                    let o = gen_opts_from(&self.settings);
+                    self.explorer.set_gen_opts(o);
+                }
                 self.explorer
                     .set_preload(self.settings.flag("intel.preload"));
                 self.explorer

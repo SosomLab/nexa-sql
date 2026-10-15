@@ -602,6 +602,34 @@ impl ExplorerSet {
         redraw
     }
 
+    // ── 노드 끌기(10-15) — 어느 칸이든 하나만 끌고 있다 ──────────────────────────────────────────────
+    pub(crate) fn drag_active(&self) -> bool {
+        self.panes.iter().any(|p| p.ex.drag_active())
+    }
+
+    pub(crate) fn cancel_drag(&mut self) -> bool {
+        let mut any = false;
+        for p in &mut self.panes {
+            any |= p.ex.cancel_drag();
+        }
+        any
+    }
+
+    pub(crate) fn drag_chip(&self) -> Option<(String, Point)> {
+        self.panes.iter().find_map(|p| p.ex.drag_chip())
+    }
+
+    pub(crate) fn drag_text(&self) -> Option<String> {
+        self.panes.iter().find_map(|p| p.ex.drag_text())
+    }
+
+    /// 끌기 칩(팝업 층 · 호스트 `paint.rs`가 그리드 오버레이 다음에 부른다).
+    pub(crate) fn paint_drag_chip(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if let Some((name, p)) = self.drag_chip() {
+            crate::dragchip::paint(dc, th, self.scale, &name, p);
+        }
+    }
+
     /// 그 서버 칸으로 객체 하나의 Generate SQL 요청(삭제 백업 DDL · 10-01) — 칸이 없으면 false.
     pub(crate) fn gen_object_on(
         &mut self,
@@ -1123,6 +1151,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes
             .first_mut()
             .is_some_and(|p| p.ex.capture_menu(row))
+    }
+
+    /// 자체 시험용 — 첫 칸의 `row`번째 줄의 창 좌표(10-15 DnD E2E).
+    pub(crate) fn row_point(&self, row: usize) -> Option<Point> {
+        self.panes.first().and_then(|p| p.ex.row_point(row))
     }
 
     /// 자체 시험용 — 첫 칸의 `row`번째 줄 펼치기.

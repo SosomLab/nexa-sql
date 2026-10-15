@@ -85,11 +85,12 @@ struct ValueState {
     image_on: bool,
 }
 
-const CB_MSGS: [Msg; 4] = [
+const CB_MSGS: [Msg; 5] = [
     Msg::GenOptQualified,
     Msg::GenOptCompact,
     Msg::GenOptFull,
     Msg::GenOptSepFk,
+    Msg::GenOptFormat,
 ];
 const BTN_MSGS: [Msg; 5] = [
     Msg::SpBtnRefresh,
@@ -170,7 +171,7 @@ impl SqlPrevWin {
 
     /// 체크박스 ↔ 옵션.
     fn cbs_from_opts(&mut self, o: GenOpts) {
-        let vals = [o.qualified, o.compact, o.full_ddl, o.separate_fk];
+        let vals = [o.qualified, o.compact, o.full_ddl, o.separate_fk, o.format];
         for (cb, v) in self.cbs.iter_mut().zip(vals) {
             cb.set_checked(v);
         }
@@ -866,6 +867,7 @@ impl SqlPrevWin {
                             compact: vals[1],
                             full_ddl: vals[2],
                             separate_fk: vals[3],
+                            format: vals[4],
                             ..sp.opts
                         };
                     }

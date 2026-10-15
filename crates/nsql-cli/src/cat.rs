@@ -258,7 +258,13 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     .skip(3)
                     .cloned()
                     .partition(|t| t.contains('='));
-                let opts = nsql_catalog::GenOpts::default().with_tokens(&opt_tokens);
+                // 별칭 = 설정 두 키(`intel.alias_style` · `intel.alias_upper` · GUI와 같은 규칙 · 10-15) 위에 토큰.
+                let mut base = nsql_catalog::GenOpts::default();
+                if let Ok(st) = crate::settings_cached() {
+                    base.alias_letters = st.get("intel.alias_style") == Some("letters");
+                    base.alias_upper = st.flag("intel.alias_upper");
+                }
+                let opts = base.with_tokens(&opt_tokens);
                 let kind = rest
                     .first()
                     .and_then(|k| ObjectKind::parse(k))

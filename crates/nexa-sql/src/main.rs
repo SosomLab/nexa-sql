@@ -50,6 +50,7 @@ mod ext_view;
 mod output;
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod condbar;
+mod dragchip;
 mod extensions;
 mod extfile;
 mod file_win;
@@ -2304,6 +2305,10 @@ pub(crate) fn gen_opts_from(settings: &Settings) -> nsql_catalog::GenOpts {
         full_ddl: settings.flag("gen.full_ddl"),
         separate_fk: settings.flag("gen.separate_fk"),
         bind_note: nsql_catalog::BindNote::parse(settings.get("gen.bind_note").unwrap_or("both")),
+        // 별칭 = 인텔리센스와 같은 두 설정(사용자 10-15).
+        alias_letters: settings.get("intel.alias_style") == Some("letters"),
+        alias_upper: settings.flag("intel.alias_upper"),
+        format: settings.flag("gen.format"),
     }
 }
 

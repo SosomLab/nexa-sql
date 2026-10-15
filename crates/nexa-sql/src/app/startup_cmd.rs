@@ -1172,6 +1172,23 @@ impl App {
             self.redraw();
             return;
         }
+        // 자체 시험(10-15 노드 DnD): `explorer.rowpt:<라벨|행>:<파일>` = 그 줄의 창 좌표 `x y`(`ui.down/move/up`에 넣는다).
+        if let Some(rest) = id.strip_prefix("explorer.rowpt:") {
+            // 첫 `:`에서 가른다(경로에 `D:`가 있다).
+            let (arg, path) = rest.split_once(':').unwrap_or((rest, ""));
+            let row = match arg.parse::<usize>() {
+                Ok(r) => Some(r),
+                Err(_) => self.explorer.visible_row_by_label(arg),
+            };
+            let pt = row.and_then(|r| self.explorer.row_point(r));
+            let text = pt.map_or("none".to_string(), |p| format!("{} {}", p.x, p.y));
+            if path.is_empty() {
+                self.sess.status = format!("explorer.rowpt {arg} = {text}");
+            } else {
+                let _ = std::fs::write(path, text);
+            }
+            return;
+        }
         if let Some(pick) = id.strip_prefix("explorer.pick:") {
             let ok = self.explorer.capture_pick(pick);
             if !ok {

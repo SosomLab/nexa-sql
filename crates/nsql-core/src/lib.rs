@@ -1318,6 +1318,7 @@ pub trait Session {
 
 pub mod bulk;
 pub use bulk::{BulkLoad, BulkOpts, BulkSink};
+pub mod alias;
 pub mod caps;
 pub mod filterq;
 pub mod hangul;

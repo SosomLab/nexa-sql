@@ -64,8 +64,10 @@ Package Bodies 폴더는 뗀다(DBeaver와 같이 패키지 노드 아래 멤버
 | 간결한 SQL `gen.compact` | 끔 | 빈 줄·주석 줄 제거 · 들여쓰기 = 탭 하나(Oracle = `PRETTY false`) |
 | 전체 DDL `gen.full_ddl` | 끔 | 끔 = 기본(테이블·제약·인덱스) · 켬 = + 설명(SQL Server 확장 속성 · Oracle/PG `COMMENT ON`) + Oracle 저장 절(SEGMENT_ATTRIBUTES · STORAGE · TABLESPACE)(사용자 09-25 정정) |
 | 외래 키 분리 `gen.separate_fk` | 켬 | FK = `ALTER TABLE … ADD CONSTRAINT`로 따로(끄면 CREATE TABLE 안 인라인 · Oracle `REF_CONSTRAINTS`) |
+| **포맷 `gen.format`**(10-15) | 켬 | 만든 **문장**(SELECT · INSERT · UPDATE · DELETE · MERGE · CALL)을 사용자의 **기본 포맷터**(`format.default` + `format.*` 옵션 · Basic/확장)로 정리해 보여줌(`App::sqlprev_format`) · **DDL은 만든 그대로**(보수적 생성 원칙 100 §5 · 저장 절·주석 보존) · 포맷 실패 = 원문 + 로그 한 줄 · CLI `format=0` 토큰은 GUI 미리보기에만 뜻이 있음 |
+| **별칭**(`intel.alias_style` · **`intel.alias_upper`** · 10-15) | 약어 · 켬 | SELECT·MERGE의 테이블 별칭(종전 고정 `t`/`s`) = 인텔리센스 완성과 **같은 두 설정**(nsql-core `alias` 부품 · 약어 = 단어 첫 글자 `sales_customer → SC` · 문자 = `A`(MERGE 원천 = `B`) · 대문자 여부) · CLI 토큰 `alias=letters|abbr` · `upper=0` |
 
-"Format SQL"은 포매터가 아직 없어 뺐다(T-215). 미리보기 창 체크박스를 바꾸면 설정에 남고 즉시 재생성 · CLI = `gen … qualified=0 compact=1 full=1 fk=0`. 테이블 DDL 모양 = 사용자 샘플(헤더 주석 · `-- DROP TABLE` · COLLATE · NULL 명시 · 인라인 CONSTRAINT · 확장 속성/`COMMENT ON`).
+"Format SQL" = 10-15 `gen.format`(위 표 · 기본 켬 · 미리보기 체크박스 5번째). 미리보기 창 체크박스를 바꾸면 설정에 남고 즉시 재생성 · CLI = `gen … qualified=0 compact=1 full=1 fk=0`. 테이블 DDL 모양 = 사용자 샘플(헤더 주석 · `-- DROP TABLE` · COLLATE · NULL 명시 · 인라인 CONSTRAINT · 확장 속성/`COMMENT ON`).
 
 ## 4. SQL Preview 창(2단계)
 

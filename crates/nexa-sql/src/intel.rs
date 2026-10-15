@@ -71,6 +71,8 @@ pub(crate) struct IntelCfg {
     pub insert_alias: bool,
     /// alias 방식(`intel.alias_style` · true = A, B, C 순서 · false = 약어 · 사용자 09-29).
     pub alias_letters: bool,
+    /// 별칭 대문자(`intel.alias_upper` · 기본 켬 · 사용자 10-15) — Generate SQL도 같은 값.
+    pub alias_upper: bool,
     pub insert_space: bool,
     pub insert_columns: bool,
     /// `JOIN 테이블 ON` 뒤 외래 키 조인 조건 조각(`intel.join_fk` · T-178).
@@ -125,6 +127,7 @@ impl IntelCfg {
             types: s.flag("intel.types"),
             insert_alias: s.flag("intel.insert_alias"),
             alias_letters: s.get("intel.alias_style").unwrap_or("abbr") == "letters",
+            alias_upper: s.flag("intel.alias_upper"),
             insert_space: s.flag("intel.insert_space"),
             insert_columns: s.flag("intel.insert_columns"),
             join_fk: s.flag("intel.join_fk"),
@@ -2139,11 +2142,13 @@ impl Intel {
                     })
                     .map(|a| a.alias.as_str())
                     .collect();
-                let alias = if self.cfg.alias_letters {
-                    gen_alias_letter(&taken)
-                } else {
-                    gen_alias(&c.text, &taken)
-                };
+                // ★ 별칭 부품(nsql-core `alias` · Generate SQL과 같은 규칙 · 10-15): 방식 + 대문자 여부.
+                let alias = nsql_core::alias::make(
+                    &c.text,
+                    &taken,
+                    self.cfg.alias_letters,
+                    self.cfg.alias_upper,
+                );
                 text.push(' ');
                 text.push_str(&alias);
             }
@@ -2600,59 +2605,6 @@ fn peer_column(doc: &str, at: usize) -> Option<String> {
     Some(name.to_string())
 }
 
-/// A, B, C … 순서 alias(`intel.alias_style = letters` · 사용자 09-29): 문장 안에서 안 쓰인 첫 대문자 · Z까지 다 쓰였으면 `A2`, `B2` ….
-fn gen_alias_letter(taken: &[&str]) -> String {
-    for round in 0u32.. {
-        for ch in 'A'..='Z' {
-            let cand = if round == 0 {
-                ch.to_string()
-            } else {
-                format!("{ch}{}", round + 1)
-            };
-            if !taken.iter().any(|t| t.eq_ignore_ascii_case(&cand)) {
-                return cand;
-            }
-        }
-    }
-    "A".to_string()
-}
-
-fn gen_alias(name: &str, taken: &[&str]) -> String {
-    let base = name.rsplit('.').next().unwrap_or(name);
-    let mut a = String::new();
-    let mut prev = '_';
-    for ch in base.chars() {
-        if ch.is_alphanumeric()
-            && (prev == '_'
-                || prev == '$'
-                || prev == '#'
-                || (ch.is_uppercase() && prev.is_lowercase()))
-        {
-            a.push(ch.to_ascii_lowercase());
-        }
-        prev = ch;
-    }
-    if a.is_empty() {
-        a = base.chars().take(1).collect::<String>().to_lowercase();
-    }
-    if a.is_empty() {
-        a.push('t');
-    }
-    const KW: &[&str] = &[
-        "in", "as", "or", "on", "by", "is", "if", "to", "at", "do", "go", "no",
-    ];
-    if KW.contains(&a.as_str()) {
-        a.push('1');
-    }
-    let mut out = a.clone();
-    let mut n = 2;
-    while taken.iter().any(|t| t.eq_ignore_ascii_case(&out)) {
-        out = format!("{a}{n}");
-        n += 1;
-    }
-    out
-}
-
 /// 객체 종류 라벨(팝업 오른쪽 열 · 소문자).
 fn kind_label(k: ObjectKind) -> String {
     format!("{k:?}").to_lowercase()
@@ -2748,6 +2700,7 @@ mod tests {
             types: true,
             insert_alias: true,
             alias_letters: false,
+            alias_upper: false,
             insert_space: true,
             insert_columns: true,
             join_fk: true,
@@ -3392,11 +3345,15 @@ mod tests {
         assert_eq!(key_marks(nsql_run::meta::KEY_PK, Some(false)), "PK");
         assert_eq!(key_marks(nsql_run::meta::KEY_FK, Some(false)), "FK");
         assert_eq!(key_marks(0, Some(true)), "");
-        assert_eq!(gen_alias("sales_customer", &[]), "sc");
-        assert_eq!(gen_alias("EMP", &["e"]), "e2");
-        assert_eq!(gen_alias("MyTable", &[]), "mt");
-        assert_eq!(gen_alias("orders", &[]), "o");
-        assert_eq!(gen_alias("sch.item_set", &[]), "is1", "키워드 모양이면 1");
+        assert_eq!(nsql_core::alias::abbr("sales_customer", &[]), "sc");
+        assert_eq!(nsql_core::alias::abbr("EMP", &["e"]), "e2");
+        assert_eq!(nsql_core::alias::abbr("MyTable", &[]), "mt");
+        assert_eq!(nsql_core::alias::abbr("orders", &[]), "o");
+        assert_eq!(
+            nsql_core::alias::abbr("sch.item_set", &[]),
+            "is1",
+            "키워드 모양이면 1"
+        );
         // 건너편 컬럼(사용자 09-29): 연산자 왼쪽의 (한정) 이름 · 없으면 None.
         let d = "ON 1=1\n\tAND\tB.PROJECT_CD\t=\tA.";
         assert_eq!(peer_column(d, d.len()).as_deref(), Some("PROJECT_CD"));
@@ -3409,11 +3366,11 @@ mod tests {
         let d = "SELECT a.";
         assert_eq!(peer_column(d, d.len()), None);
         // A, B, C 방식(사용자 09-29): 쓰인 것을 건너뛰고 첫 빈 문자 · 26개 다 쓰이면 A2.
-        assert_eq!(gen_alias_letter(&[]), "A");
-        assert_eq!(gen_alias_letter(&["a", "B"]), "C");
+        assert_eq!(nsql_core::alias::letter(&[]), "A");
+        assert_eq!(nsql_core::alias::letter(&["a", "B"]), "C");
         let all: Vec<String> = ('A'..='Z').map(|c| c.to_string()).collect();
         let all_ref: Vec<&str> = all.iter().map(String::as_str).collect();
-        assert_eq!(gen_alias_letter(&all_ref), "A2");
+        assert_eq!(nsql_core::alias::letter(&all_ref), "A2");
         assert!(it.take_over_budget().is_none());
     }
 

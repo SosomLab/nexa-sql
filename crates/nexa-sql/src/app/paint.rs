@@ -705,6 +705,8 @@ impl App {
                     self.grid.paint_overlays(&mut dc, &th);
                     self.panel.paint_popups(&mut dc, &th);
                 }
+                // 탐색기 노드 끌기 칩(팝업 층 · 10-15).
+                self.explorer.paint_drag_chip(&mut dc, &th);
                 self.editors.paint_popups(&mut dc, &th);
                 self.ext_view.paint_popup(&mut dc, &th);
                 if diff_tab {

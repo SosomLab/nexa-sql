@@ -2960,6 +2960,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 생성 문장을 기본 포맷터로(사용자 10-15 "사용자가 설정한 Format에 맞춰서") — 문장류만 · DDL은 만든 그대로(100 §5).
+    Entry {
+        key: "gen.format",
+        cat: Msg::CatExplorer,
+        label: Msg::GenOptFormat,
+        desc: Msg::DescGenFormat,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 생성 SQL의 바인드 변수 목록을 머리/꼬리 주석으로(사용자 09-28 "변수들을 직관적으로 식별 가능하게 header/tail에 표시").
     Entry {
         key: "gen.bind_note",
@@ -6008,6 +6017,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(INTEL_ALIAS_STYLE),
         default: "abbr",
     },
+    // ★ 별칭 대문자 여부(사용자 10-15 "alias 대문자 사용 여부 · 기본은 사용") — 완성 · Generate SQL 공통.
+    Entry {
+        key: "intel.alias_upper",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelAliasUpper,
+        desc: Msg::DescIntelAliasUpper,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "intel.insert_space",
         cat: Msg::CatIntel,
@@ -7107,7 +7125,6 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("objlink.max_kb", "objlink.enabled", Dep::On),
     ("intel.star_layout", "intel.insert_columns", Dep::On),
     ("intel.star_comma_space", "intel.insert_columns", Dep::On),
-    ("intel.alias_style", "intel.insert_alias", Dep::On),
 ];
 
 /// 자식 키의 (부모, 조건).

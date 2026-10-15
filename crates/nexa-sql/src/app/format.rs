@@ -177,6 +177,41 @@ impl App {
         v
     }
 
+    /// Generate SQL 결과를 사용자 기본 포맷터로(설정 `gen.format` · 사용자 10-15 "사용자가 설정한 Format에 맞춰서").
+    /// 문장류(SELECT · INSERT · UPDATE · DELETE · MERGE · CALL)만 — DDL은 만든 그대로(보수적 생성 원칙 100 §5 · 저장 절·주석 보존).
+    /// 포맷 실패 = 원문 그대로 + 로그 한 줄(미리보기는 늘 뜬다).
+    pub(crate) fn sqlprev_format(
+        &mut self,
+        spec: &nsql_catalog::GenSpec,
+        r: Result<String, String>,
+    ) -> Result<String, String> {
+        use nsql_catalog::GenWhat;
+        let Ok(text) = r else { return r };
+        let statement = matches!(
+            spec.what,
+            GenWhat::Select
+                | GenWhat::Insert
+                | GenWhat::Update
+                | GenWhat::Delete
+                | GenWhat::Merge
+                | GenWhat::Call
+        );
+        if !spec.opts.format || !statement {
+            return Ok(text);
+        }
+        let engine = self.format_default_engine();
+        match self.format_run(&engine, &text, false) {
+            Ok(f) => Ok(f),
+            Err(e) => {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    format!("[gen] format ({engine}) failed - shown as generated: {e}"),
+                ));
+                Ok(text)
+            }
+        }
+    }
+
     /// 기본 포맷터 id(설정 `format.default` · 지금 쓸 수 없으면 Basic).
     pub(crate) fn format_default_engine(&self) -> String {
         let want = self

@@ -4443,33 +4443,13 @@ impl Grid {
         let Some((name, p)) = self.col_drag_chip() else {
             return;
         };
-        let s = self.live_scale;
-        let host = dc
-            .surface_size()
-            .map_or(self.menu_host(), |(w, h)| Rect::new(0, 0, w, h));
-        let pad = (8.0 * s).round() as i32;
-        dc.select_font(FontSlot::Base, false);
-        let tw = dc.text_width(&name);
-        let h = (22.0 * s).round() as i32;
-        let w = tw + pad * 2;
-        let mut r = Rect::new(p.x + (14.0 * s).round() as i32, p.y - h / 2, w, h);
-        if r.right() > host.right() {
-            r.x = (p.x - w - (6.0 * s).round() as i32).max(host.x);
-        }
-        r.y = r.y.clamp(host.y, (host.bottom() - h).max(host.y));
-        dc.fill_rect(r, th.chrome_bg);
-        dc.fill_rect(Rect::new(r.x, r.y, r.w, 1), th.accent);
-        dc.fill_rect(Rect::new(r.x, r.bottom() - 1, r.w, 1), th.accent);
-        dc.fill_rect(Rect::new(r.x, r.y, 1, r.h), th.accent);
-        dc.fill_rect(Rect::new(r.right() - 1, r.y, 1, r.h), th.accent);
-        let ty = dc.text_center_y(r.y, r.h);
-        dc.text(
-            r.x + pad,
-            ty,
-            Rect::new(r.x + 1, r.y + 1, (r.w - 2).max(0), (r.h - 2).max(0)),
-            &name,
-            th.text,
-        );
+        // 탐색기 노드 끌기와 같은 부품(10-15).
+        crate::dragchip::paint(dc, th, self.live_scale, &name, p);
+    }
+
+    /// ★ 바깥에서 끌어온 이름(탐색기 노드 · 10-15)을 조건 바에 놓기 — 조건 바 사각형 안이면 캐럿/놓은 자리에 넣고 true.
+    pub(crate) fn cond_drop_insert(&mut self, p: Point, text: &str) -> bool {
+        self.cond.drop_insert(p, text)
     }
 
     /// 호스트가 조건 바를 따로 그린다고 알린다(`paint_cond` · 매 프레임 그리기 전에).

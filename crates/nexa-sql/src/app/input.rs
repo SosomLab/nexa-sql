@@ -499,6 +499,18 @@ impl App {
             .or_else(|| self.find.drop_box_at(p))
     }
 
+    /// ★ 이름 끌기 원천 둘(결과 열 머리 · 탐색기 노드 · 10-15) — 놓을 글(인용됨).
+    fn name_drag_text(&self) -> Option<String> {
+        self.grid
+            .col_drag_quoted()
+            .or_else(|| self.explorer.drag_text())
+    }
+
+    fn cancel_name_drag(&mut self) {
+        self.grid.cancel_col_drag();
+        self.explorer.cancel_drag();
+    }
+
     /// 그 상자에 넣는다(첫 번째로 받는 상자 하나). 돌려주는 값 = 넣었는가.
     fn drop_insert_at(&mut self, p: Point, text: &str) -> bool {
         self.explorer.drop_insert(p, text)
@@ -705,7 +717,7 @@ impl App {
         //   (칩은 그리드가 팝업 층에 그린다 · 보류 = 열 순서는 끌기 전) → 그 **앞에서** 편집기 위면 놓을 자리(글자 인덱스)를
         //   기억해 캐럿 선을 그리고(`paint.rs`), 편집기 위에서 놓으면 인용된 열 이름을 그 자리에 넣고 끌기·캡처를 끝낸다
         //   (열 순서 그대로). 헤더로 돌아오면 그리드가 다시 이동 미리보기. (협업 V1 ⓑ: 캡처 분기 뒤에 두면 닿지 않는다.)
-        if self.grid.col_dragging() {
+        if self.grid.col_dragging() || self.explorer.drag_active() {
             let cur = Point {
                 x: self.cursor.0,
                 y: self.cursor.1,
@@ -730,9 +742,9 @@ impl App {
                 let bx = self.col_drop_box.take();
                 if let (Some(idx), Some(text)) = (
                     hint.filter(|_| self.editors.editor_bounds().contains(cur)),
-                    self.grid.col_drag_quoted(),
+                    self.name_drag_text(),
                 ) {
-                    self.grid.cancel_col_drag();
+                    self.cancel_name_drag();
                     self.press_capture = None;
                     if self.editors.activate_pane_at(cur) {
                         self.sync_gate();
@@ -742,13 +754,26 @@ impl App {
                     self.redraw();
                     return;
                 }
-                if let (Some(_), Some(text)) = (bx, self.grid.col_drag_quoted()) {
+                if let (Some(_), Some(text)) = (bx, self.name_drag_text()) {
                     if self.drop_insert_at(cur, &text) {
-                        self.grid.cancel_col_drag();
+                        self.cancel_name_drag();
                         self.press_capture = None;
                         self.redraw();
                         return;
                     }
+                }
+                // ★ 탐색기 노드 → 조건 바(10-15 · 열 머리는 그리드 안에서 스스로 처리).
+                if self.explorer.drag_active() {
+                    if let Some(text) = self.name_drag_text() {
+                        if self.grid.cond_drop_insert(cur, &text) {
+                            self.cancel_name_drag();
+                            self.press_capture = None;
+                            self.redraw();
+                            return;
+                        }
+                    }
+                    // 어디에도 못 놓았다 = 끌기 끝(칩 지움).
+                    self.explorer.cancel_drag();
                 }
                 self.redraw();
             }
