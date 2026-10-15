@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:g:n:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n nsql]"; exit 2; }
-mkdir -p "$OUT"
+mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"   # 절대 경로(프로필 대상 · 협업 V1 지적 10-15)
 REPORT="$OUT/gen-alias-e2e.txt"; : > "$REPORT"
 say() { echo "$*"; echo "$*" >> "$REPORT"; }
 pass=0; fail=0
@@ -27,9 +27,9 @@ run_case() {
   NSQL_HOME="$H" "$NSQL" conn add Local "sqlite:$(m "$H")/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
   printf 'CREATE TABLE sales_customer (id INTEGER PRIMARY KEY, cust_name TEXT, created_at TEXT);\n' > "$OUT/$name.sql"
   NSQL_HOME="$H" "$NSQL" run -c Local --no-prompt "$(m "$OUT/$name.sql")" >/dev/null 2>&1
-  local cmd="@connected:explorer.expand:main,@after:1500:explorer.expand:Tables,@after:3000:explorer.menu:sales_customer,@after:3600:explorer.pick:gen:select,@after:9000:sqlprev.dump:$(w "$OUT/$name.sp")"
+  local cmd="@after:2500:explorer.expand:main,@after:4000:explorer.expand:Tables,@after:5500:explorer.menu:sales_customer,@after:6100:explorer.pick:gen:select,@after:10000:sqlprev.dump:$(w "$OUT/$name.sp")"
   rm -f "$OUT/$name.sp"
-  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 13 "$EXE" Local > "$OUT/$name.stdout" 2> "$OUT/$name.stderr"
+  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 14 "$EXE" Local > "$OUT/$name.stdout" 2> "$OUT/$name.stderr"
   [ -f "$OUT/$name.sp" ] || bad "$name sqlprev.dump 없음" "$(tail -5 "$OUT/$name.stderr")"
 }
 has()  { grep -q -- "$2" "$OUT/$1.sp" 2>/dev/null; }
