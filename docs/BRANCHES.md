@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/128-findobj-hold | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 객체 찾기 보강(**aec74c2** · SQL Server 전 DB 스위치 `findobj.all_dbs` · `FindBtn` 토글 · 종류 열 · 서버 목록 갱신 · Oracle 유지 계정 +27) + ★ **T-356 운영 보류 커밋 1단계**(114 §10-1 · 러너 `HoldPolicy`/`Held` · 고정 카드 · 상단 Commit 빨간 2단 · COMMIT 직전 멈춤 → 이어 실행 · D-298/D-304 게이트 · 설정 7 · E2E `win-prod-hold-e2e.sh` 22/0) |
 | feat/128-object-backup | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 객체 백업 설정 그룹(**e749cc2** · 114 §7-2 · D-302/303/305) = `backup.*` 6키(전역 · 유형 무관) · DROP/REPLACE·ALTER/TRUNCATE·RENAME 실행 전 DDL 백업(D-305 이름 · keep N · 주기 정리) · **G6 ✅**(`prod_confirmed_once`) · 상태바 바로가기 · E2E 12/0 · 4/0 · BISCM 운영 격리 E2E 스크립트 |
 | feat/128-findobj-v2 | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 객체 찾기 v2(**4403566** · D-306 · 사용자 지시 3) = 창 전용 엔진 `findobj_engine.rs`(서버 × 스키마 × 단계 작업 · 워커 `findobj.workers` · 실시간 직접 조회) · 탐색기 Find 경로 제거 · 진행 패널(혜성·범위·대상·결과·시작·종료·경과) · 결과 거르기·정렬 · E2E 19/0 · 🔧 폴더 열기 `explorer.exe` · 협업 docs/114(D-295~D-305 · T-356/357) |
 | feat/128-find-objects | 2026-10-15 | 2026-10-15 → main(삭제) | 1 | ★ 객체 찾기(Find Objects) 모달리스 창([113](113-find-objects-window.md) · 사용자 10-15 · 협업 쌍 nexa-sql-07 × nexa-sql-17) — nsql-catalog `find.rs`(방언 5 LIKE · 줄 가르기 · 시험 6) · 메타 스레드 `Req::Find` 3단계(점증·취소·상한) · `findobj_win.rs` + `app/findobj.rs` · 소스 탭 일치 줄 · Ctrl+Alt+F · 설정 4 · i18n 44 · E2E `win-findobj-e2e.sh` 11/0 · D-292~294 · T-354/T-355 · **6b9dc32** · CI = push 뒤 |
