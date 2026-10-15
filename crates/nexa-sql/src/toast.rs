@@ -171,6 +171,21 @@ impl Toasts {
         }
     }
 
+    /// 그 동작의 카드 본문을 제자리에서 바꾼다(무장 카드의 남은 초 · 10-15) — 있으면 true.
+    pub(crate) fn set_body_for_action(&mut self, action: &str, body: impl Into<String>) -> bool {
+        let body = body.into();
+        let mut hit = false;
+        for t in self
+            .items
+            .iter_mut()
+            .filter(|t| t.button.as_ref().is_some_and(|(_, a)| a == action))
+        {
+            t.body = body.clone();
+            hit = true;
+        }
+        hit
+    }
+
     /// 그 동작의 카드를 지운다(보류가 해결됐을 때 · 무장 만료).
     pub(crate) fn dismiss_action(&mut self, action: &str) {
         self.items

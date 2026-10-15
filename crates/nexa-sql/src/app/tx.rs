@@ -99,10 +99,23 @@ impl App {
             remaining,
             at_commit,
         });
-        let body = tf(
-            Msg::HoldCardBody,
-            &[&n.to_string(), &total_rows.to_string()],
-        );
+        let body = self.tx_hold_card_show();
+        self.output_push(ed, crate::output::OutKind::Warn, &body);
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, body.clone()));
+        self.sess.status = body;
+        self.txlog_win.redraw();
+        self.sync_tx_ui();
+    }
+
+    /// 보류 카드(주황 · 고정 · [커밋])를 띄운다 — 처음 보류될 때 · 무장이 만료돼 빨간 카드가 사라질 때 되살림. 돌려주는 값 = 본문.
+    fn tx_hold_card_show(&mut self) -> String {
+        let (n, rows, at_commit) = self
+            .sess
+            .prod_held
+            .as_ref()
+            .map_or((0, 0, false), |h| (h.stmts, h.total_rows, h.at_commit));
+        let body = tf(Msg::HoldCardBody, &[&n.to_string(), &rows.to_string()]);
         let title = t(if at_commit {
             Msg::HoldCardTitleCommit
         } else {
@@ -115,12 +128,26 @@ impl App {
             t(Msg::HoldBtnCommit),
             "hold.commit",
         );
-        self.output_push(ed, crate::output::OutKind::Warn, &body);
-        self.log_win
-            .push(LogEntry::new(LogKind::Info, body.clone()));
-        self.sess.status = body;
-        self.txlog_win.redraw();
-        self.sync_tx_ui();
+        body
+    }
+
+    fn tx_hold_arm_body(&self, confirm_ms: u64) -> String {
+        let (n, rows) = self
+            .sess
+            .prod_held
+            .as_ref()
+            .map_or((self.sess.tx_pending.len(), 0), |h| (h.stmts, h.total_rows));
+        let left = self.sess.commit_armed.map_or(confirm_ms, |t0| {
+            confirm_ms.saturating_sub(t0.elapsed().as_millis() as u64)
+        });
+        tf(
+            Msg::HoldCommitArmBody,
+            &[
+                &n.to_string(),
+                &rows.to_string(),
+                &left.div_ceil(1000).to_string(),
+            ],
+        )
     }
 
     /// ★ 실행 전 트랜잭션 게이트(D-298 · D-304 · 순수 판정 + MC/DC): 막으면 상태줄 글.
@@ -160,22 +187,13 @@ impl App {
             return;
         }
         self.sess.commit_armed = Some(Instant::now());
-        let (n, rows) = self
-            .sess
-            .prod_held
-            .as_ref()
-            .map_or((self.sess.tx_pending.len(), 0), |h| (h.stmts, h.total_rows));
+        // 무장 중에는 주황 카드를 치워 [커밋] 버튼이 하나만 보이게(협업 V1 ② · 만료되면 되살린다).
+        self.toasts.dismiss_action("hold.commit");
+        let body = self.tx_hold_arm_body(confirm_ms);
         self.toasts.push_button_sticky(
             toast::ToastKind::Error,
             t(Msg::HoldCommitArmTitle),
-            tf(
-                Msg::HoldCommitArmBody,
-                &[
-                    &n.to_string(),
-                    &rows.to_string(),
-                    &(confirm_ms / 1000).to_string(),
-                ],
-            ),
+            body,
             t(Msg::HoldBtnCommit),
             "hold.commit_go",
         );
@@ -219,10 +237,18 @@ impl App {
         if now >= due {
             self.sess.commit_armed = None;
             self.toasts.dismiss_action("hold.commit_go");
+            if self.sess.prod_held.is_some() {
+                self.tx_hold_card_show();
+            }
             self.sync_tx_ui();
             None
         } else {
-            Some(due)
+            // 남은 초를 매초 갱신(협업 V1 ① "초가 줄지 않음").
+            let body = self.tx_hold_arm_body(confirm_ms);
+            if self.toasts.set_body_for_action("hold.commit_go", body) {
+                self.redraw();
+            }
+            Some(due.min(now + Duration::from_secs(1)))
         }
     }
 
