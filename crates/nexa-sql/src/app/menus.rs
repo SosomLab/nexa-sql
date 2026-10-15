@@ -392,6 +392,10 @@ impl App {
             "view.log" => self.toggle_log_window(el),
             "view.txlog" | "tx.log" => self.open_txlog_window(el),
             "view.sessions" => self.open_sessions_window(el),
+            "view.find_objects" => {
+                let preset = self.explorer.filter_text();
+                self.open_findobj_window(el, preset.as_deref());
+            }
             "view.memory" => {
                 if self.mem_win.is_open() {
                     self.mem_win.close();
@@ -1007,6 +1011,10 @@ impl App {
                 }
             }
             "view.memory" => self.toggle_mem_window(),
+            "view.find_objects" => {
+                let preset = self.explorer.filter_text();
+                self.request_findobj(preset);
+            }
             "help.license" => {
                 if self.license_win.is_open() {
                     self.license_win.close();
@@ -1345,6 +1353,7 @@ impl App {
                     item("view.object_details", Msg::MnObjectDetails),
                     item("view.output", Msg::MnOutput),
                     item("view.search", Msg::MnSearchPanel),
+                    item("view.find_objects", Msg::MnFindObjects),
                     item("view.project", Msg::MnProjectPanel),
                     item("view.log", Msg::MnLogWindow),
                     item("view.txlog", Msg::MnTxLogWindow),
@@ -1857,6 +1866,11 @@ impl App {
             "view.memory",
             Msg::MnMemoryWindow,
             self.mem_win.is_open(),
+        ));
+        cmds.push(tv(
+            "view.find_objects",
+            Msg::MnFindObjects,
+            self.findobj_win.is_open(),
         ));
         cmds.push(tv(
             "view.variables",

@@ -1153,6 +1153,73 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
             .is_some_and(|p| p.ex.capture_menu(row))
     }
 
+    // ── 객체 찾기 창(113) ───────────────────────────────────────────────────────────────────────────────
+    /// 필터 틀의 글(비면 None) — 객체 찾기 창에 미리 넣는다.
+    pub(crate) fn filter_text(&self) -> Option<String> {
+        let t = self.filter.text().trim().to_string();
+        (!t.is_empty()).then_some(t)
+    }
+
+    /// 연결된(오프라인 아닌) 서버 칸 = (키, 라벨).
+    pub(crate) fn find_servers(&self) -> Vec<(Option<ConnectSpec>, String)> {
+        self.panes
+            .iter()
+            .filter(|p| !p.ex.is_offline())
+            .map(|p| (p.key.clone(), p.ex.server_label()))
+            .collect()
+    }
+
+    /// 전체(또는 한 서버)에 찾기 요청 · 돌려주는 값 = 요청이 간 서버 수.
+    pub(crate) fn find_objects(
+        &mut self,
+        rev: u64,
+        q: &crate::explorer::FindQuery,
+        only: Option<&ConnectSpec>,
+    ) -> usize {
+        let only_i = only.and_then(|k| self.find(k));
+        let mut n = 0;
+        for (i, p) in self.panes.iter_mut().enumerate() {
+            if only_i.is_some_and(|j| j != i) {
+                continue;
+            }
+            if p.ex.find_objects(rev, q.clone()) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    pub(crate) fn find_stop(&mut self, rev: u64) {
+        for p in &mut self.panes {
+            p.ex.find_stop(rev);
+        }
+    }
+
+    /// 그 서버 칸에서 소스 탭 열기 / SELECT 생성(칸이 없으면 false).
+    pub(crate) fn open_source_for(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        o: &nsql_catalog::ObjectInfo,
+    ) -> bool {
+        let Some(i) = spec.and_then(|s| self.find(s)) else {
+            return false;
+        };
+        self.panes[i].ex.open_source_of(o);
+        true
+    }
+
+    pub(crate) fn gen_select_for(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        o: &nsql_catalog::ObjectInfo,
+    ) -> bool {
+        let Some(i) = spec.and_then(|s| self.find(s)) else {
+            return false;
+        };
+        self.panes[i].ex.gen_select_of(o);
+        true
+    }
+
     /// 자체 시험용 — 첫 칸의 `row`번째 줄의 창 좌표(10-15 DnD E2E).
     pub(crate) fn row_point(&self, row: usize) -> Option<Point> {
         self.panes.first().and_then(|p| p.ex.row_point(row))
@@ -1656,6 +1723,25 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                             spec,
                             r,
                             server: p.key.clone(),
+                        });
+                    }
+                    // 객체 찾기 응답에 이 칸의 서버·라벨을 붙인다(113).
+                    ExplorerAction::Find {
+                        rev,
+                        stage,
+                        hits,
+                        done,
+                        note,
+                        ..
+                    } => {
+                        out.push(ExplorerAction::Find {
+                            server: p.key.clone(),
+                            label: p.ex.server_label(),
+                            rev,
+                            stage,
+                            hits,
+                            done,
+                            note,
                         });
                     }
                     // 소스 열기 탭의 출처에 이 카탈로그의 서버를 채운다(09-30).

@@ -57,6 +57,7 @@ mod file_win;
 mod fileload;
 mod filterbar;
 mod findbar;
+mod findobj_win;
 mod gitstat;
 mod grid;
 mod gridedit_sql;
@@ -280,6 +281,12 @@ struct App {
     status_autosave_rect: Rect,
     /// 메모리 맵 창(docs/80 · 모델리스 · 닫혀 있으면 비용 0).
     mem_win: mem_win::MemWin,
+    /// ★ 객체 찾기 창(docs/113 · 모델리스).
+    findobj_win: findobj_win::FindObjWin,
+    /// 열기 깃발(메뉴·팔레트·키 → 다음 `about_to_wait`) + 미리 넣을 검색어.
+    open_findobj: Option<Option<String>>,
+    /// 소스 탭이 열리면 이 줄로(객체 이름, 줄).
+    findobj_goto: Option<(String, u32)>,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
     /// SQL Preview 모달(탐색기 ▸ Generate SQL · docs/83 §4).
@@ -1711,6 +1718,9 @@ fn main() {
         status_lic_rect: Rect::new(0, 0, 0, 0),
         status_autosave_rect: Rect::new(0, 0, 0, 0),
         mem_win: mem_win::MemWin::new(),
+        findobj_win: findobj_win::FindObjWin::new(),
+        open_findobj: None,
+        findobj_goto: None,
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
         sqlprev_plain: None,

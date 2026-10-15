@@ -294,6 +294,16 @@ impl App {
                     self.editors.cur_mut().set_text(&text);
                     // 캐럿 = 문서 처음(BOF · 사용자 09-26 "Open source 뒤 EOF가 아니라 BOF").
                     self.editors.cur_mut().goto_line(1);
+                    // ★ 객체 찾기 창에서 연 소스 = 일치 줄로(113 §5).
+                    if let Some((name, line)) = self.findobj_goto.take() {
+                        if origin
+                            .as_ref()
+                            .is_some_and(|o| o.name.eq_ignore_ascii_case(&name))
+                            && line > 0
+                        {
+                            self.editors.cur_mut().goto_line(line as usize);
+                        }
+                    }
                     self.set_focus(Focus::Editor);
                     // ★ 객체 소스 탭(09-30): 출처를 기억하고(F5 = 한 단위 실행) 그 객체의 서버 세션에 묶는다 —
                     //   종전에는 활성 공유 세션(다른 서버일 수 있음)에 붙어 방언이 달라지면 분할이 어긋났다.
@@ -402,6 +412,20 @@ impl App {
                 }
                 // DDL 결과가 삭제 백업용이면 미리보기 창 대신 백업 흐름으로(10-01) · 비교용이면 비교 탭으로(T-283).
                 ExplorerAction::Preview { spec, r, .. } if self.drop_take_backup(&spec, &r) => {
+                    changed = true;
+                }
+                // ★ 객체 찾기 창(113): 단계별 응답을 창에 합친다.
+                ExplorerAction::Find {
+                    server,
+                    label,
+                    rev,
+                    stage,
+                    hits,
+                    done,
+                    note,
+                } => {
+                    self.findobj_win
+                        .push_hits(server, label, rev, stage, hits, done, note);
                     changed = true;
                 }
                 ExplorerAction::Preview { spec, r, .. } if self.compare_take(&spec, &r) => {

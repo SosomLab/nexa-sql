@@ -928,6 +928,36 @@ impl App {
             let _ = std::fs::write(path, text);
             return;
         }
+        // ★ 객체 찾기 창 자체 시험(113 §7): `findobj.open` · `findobj.query:[cwr:]<글>` · `findobj.dump:<파일>` · `findobj.pick:<n>` · `findobj.close`.
+        if id == "findobj.open" {
+            self.request_findobj(None);
+            return;
+        }
+        if id == "findobj.close" {
+            self.findobj_action(crate::findobj_win::FoAction::Close);
+            return;
+        }
+        if let Some(q) = id.strip_prefix("findobj.query:") {
+            if !self.findobj_win.is_open() {
+                self.sess.status = "findobj.query: window not open".into();
+                return;
+            }
+            let act = self.findobj_win.test_query(q);
+            self.findobj_action(act);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("findobj.dump:") {
+            let _ = std::fs::write(path, self.findobj_win.dump());
+            return;
+        }
+        if let Some(n) = id
+            .strip_prefix("findobj.pick:")
+            .and_then(|n| n.trim().parse::<usize>().ok())
+        {
+            let act = self.findobj_win.test_pick(n);
+            self.findobj_action(act);
+            return;
+        }
         if let Some(path) = id.strip_prefix("sqlprev.dump:") {
             let text = if self.sqlprev_win.is_open() {
                 format!(

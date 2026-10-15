@@ -89,12 +89,14 @@ impl App {
         let g4 = self.prefs_win.take_last();
         let g5 = self.sessions_win.take_last();
         let g6 = self.mem_win.take_last();
+        let g7 = self.findobj_win.take_last();
         put(&mut self.settings, "login", g1);
         put(&mut self.settings, "log", g2);
         put(&mut self.settings, "txlog", g3);
         put(&mut self.settings, "prefs", g4);
         put(&mut self.settings, "sessions", g5);
         put(&mut self.settings, "mem", g6);
+        put(&mut self.settings, "findobj", g7);
         if main {
             let g = self
                 .window
@@ -132,6 +134,8 @@ impl App {
         self.sessions_win.set_memo(e);
         let f = memo(&self.settings, "mem");
         self.mem_win.set_memo(f);
+        let g = memo(&self.settings, "findobj");
+        self.findobj_win.set_memo(g);
     }
 
     /// 메인 창 항상 위(설정 `window.always_on_top`). 로그 창은 메인 창의 소유 창이라 둘 다 켜도 로그가 위(Windows/mac 소유 규칙 · 사용자 09-16).
@@ -157,6 +161,7 @@ impl App {
             self.drop_win.window(),
             self.vars_win.window(),
             self.mem_win.window(),
+            self.findobj_win.window(),
             self.order_win.window(),
             self.colors_win.window(),
             self.keys_win.window(),

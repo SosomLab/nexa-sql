@@ -602,6 +602,10 @@ impl ApplicationHandler<Wake> for App {
             next = next.min(t);
         }
         // ★ 메모리 맵 창(docs/80): 열려 있을 때만 `mem.refresh_ms`마다 표본 → 창·상태줄 갱신. 닫혀 있으면 깨우지도 않는다.
+        // 객체 찾기 창 진행 중이면 상태줄 시각 갱신(113).
+        if self.findobj_win.tick() {
+            self.findobj_win.redraw();
+        }
         if self.mem_win.is_open() {
             if now >= self.mem_next {
                 let every = self.mem_every();
@@ -1622,6 +1626,17 @@ impl App {
             }
             return true;
         }
+        if self.findobj_win.is(id) {
+            let act = self.findobj_win.handle(event);
+            match act {
+                crate::findobj_win::FoAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    self.findobj_win.paint(&self.ui_font, &self.theme, ui_px);
+                }
+                other => self.findobj_action(other),
+            }
+            return true;
+        }
         if self.mem_win.is(id) {
             match self.mem_win.handle(event) {
                 mem_win::MemWinAction::Paint => {
@@ -1860,6 +1875,9 @@ impl App {
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
         }
+        if let Some(preset) = self.open_findobj.take() {
+            self.open_findobj_window(el, preset.as_deref());
+        }
         if std::mem::take(&mut self.open_order) {
             self.open_order_window(el);
         }
@@ -1982,6 +2000,9 @@ impl App {
         }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
+        }
+        if let Some(preset) = self.open_findobj.take() {
+            self.open_findobj_window(el, preset.as_deref());
         }
         if std::mem::take(&mut self.open_order) {
             self.open_order_window(el);

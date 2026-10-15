@@ -2978,6 +2978,42 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(BIND_NOTE_OPTS),
         default: "both",
     },
+    // ★ 객체 찾기 창(docs/113 §6 · 10-15).
+    Entry {
+        key: "findobj.max_hits",
+        cat: Msg::CatExplorer,
+        label: Msg::LblFoMaxHits,
+        desc: Msg::DescFoMaxHits,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 100000,
+        },
+        default: "2000",
+    },
+    Entry {
+        key: "findobj.lines_per_object",
+        cat: Msg::CatExplorer,
+        label: Msg::LblFoLinesPerObject,
+        desc: Msg::DescFoLinesPerObject,
+        kind: SettingKind::Int { min: 0, max: 1000 },
+        default: "10",
+    },
+    Entry {
+        key: "findobj.targets",
+        cat: Msg::CatExplorer,
+        label: Msg::LblFoTargets,
+        desc: Msg::DescFoTargets,
+        kind: SettingKind::Text,
+        default: "name,comment,column,source",
+    },
+    Entry {
+        key: "findobj.kinds",
+        cat: Msg::CatExplorer,
+        label: Msg::LblFoKinds,
+        desc: Msg::DescFoKinds,
+        kind: SettingKind::Text,
+        default: "relations,routines,triggers,others",
+    },
     Entry {
         key: "explorer.keep_offline",
         cat: Msg::CatExplorer,
@@ -4148,6 +4184,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
+        key: "window.findobj_size",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowSizeMemo,
+        desc: Msg::DescWindowSizeMemo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
         key: "window.txlog_size",
         cat: Msg::CatWindow,
         label: Msg::LblWindowSizeMemo,
@@ -4165,6 +4209,14 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "window.main_pos",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowPosMemo,
+        desc: Msg::DescWindowPosMemo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "window.findobj_pos",
         cat: Msg::CatWindow,
         label: Msg::LblWindowPosMemo,
         desc: Msg::DescWindowPosMemo,

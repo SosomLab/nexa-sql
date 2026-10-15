@@ -251,6 +251,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+shift+f",
         linux: "ctrl+shift+f",
     },
+    // ★ 객체 찾기 창(docs/113 · 10-15).
+    Command {
+        id: "view.find_objects",
+        label: Msg::MnFindObjects,
+        win: "ctrl+alt+f",
+        mac: "cmd+alt+f",
+        linux: "ctrl+alt+f",
+    },
     Command {
         id: "view.explorer",
         label: Msg::MnExplorer,

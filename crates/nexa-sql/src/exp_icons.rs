@@ -398,6 +398,43 @@ pub(crate) fn prewarm() {
     let _ = mask(IconKind::Java);
 }
 
+/// ★ 객체 종류 → 아이콘(탐색기 트리 · 객체 찾기 창 공용 · 10-15 부품화).
+pub(crate) fn object_icon(kind: nsql_catalog::ObjectKind) -> IconKind {
+    use nsql_catalog::ObjectKind;
+    match kind {
+        ObjectKind::Table => IconKind::Table,
+        ObjectKind::View => IconKind::View,
+        ObjectKind::MaterializedView => IconKind::MatView,
+        ObjectKind::Procedure => IconKind::Procedure,
+        ObjectKind::Function => IconKind::Function,
+        ObjectKind::Package => IconKind::Package,
+        ObjectKind::PackageBody => IconKind::PackageBody,
+        ObjectKind::Sequence => IconKind::Sequence,
+        ObjectKind::Trigger => IconKind::Trigger,
+        ObjectKind::Index => IconKind::Index,
+        ObjectKind::Synonym => IconKind::Synonym,
+        ObjectKind::Type => IconKind::Type,
+        ObjectKind::ExternalTable | ObjectKind::ForeignTable => IconKind::Table,
+        ObjectKind::Aggregate => IconKind::Function,
+        ObjectKind::Queue => IconKind::Queue,
+        ObjectKind::DbLink => IconKind::Link,
+        ObjectKind::JavaClass => IconKind::Java,
+        ObjectKind::Job | ObjectKind::SchedulerJob | ObjectKind::SchedulerProgram => IconKind::Job,
+        ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
+        ObjectKind::Extension => IconKind::Package,
+        ObjectKind::Database | ObjectKind::Schema => IconKind::Schema,
+        ObjectKind::DbUser | ObjectKind::DbRole => IconKind::Schema,
+        ObjectKind::LinkedServer | ObjectKind::Endpoint => IconKind::Link,
+        ObjectKind::Login | ObjectKind::ServerRole => IconKind::Schema,
+        ObjectKind::Credential
+        | ObjectKind::CryptoProvider
+        | ObjectKind::ServerAudit
+        | ObjectKind::AuditSpec => IconKind::Property,
+        ObjectKind::BackupDevice => IconKind::Package,
+        ObjectKind::ServerTrigger => IconKind::Trigger,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

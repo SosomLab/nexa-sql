@@ -490,6 +490,7 @@ impl App {
                 let o = gen_opts_from(&self.settings);
                 self.explorer.set_gen_opts(o);
             }
+            "findobj.max_hits" | "findobj.lines_per_object" => self.findobj_apply_settings(),
             "meta.refresh_highlight_ms" => self
                 .explorer
                 .set_highlight_ms(self.settings.int(key).max(0) as u64),
