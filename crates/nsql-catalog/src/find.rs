@@ -653,6 +653,22 @@ pub fn source(
     Ok((out, truncated))
 }
 
+/// ★ 접근 가능한 사용자 DB 목록(SQL Server · 시스템 DB 4 제외 · 객체 찾기 "전 DB" · 10-15) · 그 밖 방언 = 빈 목록.
+pub fn databases(s: &mut dyn Session) -> Result<Vec<String>, DbError> {
+    if s.dialect() != Dialect::Mssql {
+        return Ok(Vec::new());
+    }
+    let rs = query(
+        s,
+        "SELECT name FROM sys.databases WHERE HAS_DBACCESS(name) = 1 AND database_id > 4 AND state_desc = 'ONLINE' ORDER BY name",
+    )?;
+    Ok(rs
+        .rows
+        .iter()
+        .map(|r| col(r, 0))
+        .filter(|v| !v.is_empty())
+        .collect())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

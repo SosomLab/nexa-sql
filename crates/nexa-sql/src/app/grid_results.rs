@@ -1088,6 +1088,7 @@ impl App {
                 defines: self.run_defines(),
                 intrinsic: Some(self.run_intrinsic()),
                 whole: false,
+                hold: None,
             },
         );
         self.live_start();

@@ -288,16 +288,36 @@ impl App {
         }
         // 운영 접속 + 변경 문장(서버로 가는 것) = 2단 실행(같은 본문을 3초 안에 다시 실행하면 진행 · 앱의 2단 확인 관례 · docs/56 §4).
         let prod = cur_env == Some(nsql_script::ConnEnv::Prod);
+        // ★ 운영 보류 커밋(114 §5 · D-295~D-299 · 10-15): 운영 + `tx.prod_hold` → 이번 실행은 명시 트랜잭션 + 보류(러너 정책).
+        let hold_on =
+            prod && self.settings.flag("tx.prod_hold") && !std::mem::take(&mut self.hold_skip_once);
+        // ★ 보류 중 다른 탭의 변경·DDL(D-298) · 열린 트랜잭션 + 암묵 커밋 DDL(D-304 경계 가드)은 서버로 보내지 않는다.
+        if let Some(msg) = self.run_tx_gate(&split_items(&src, self.sess.dialect)) {
+            self.sess.status = msg.clone();
+            self.toasts
+                .push(toast::ToastKind::Error, t(Msg::TxWarnToastTitle), msg);
+            self.redraw();
+            return;
+        }
         // ★ 삭제 창처럼 **이미 모달 2단을 거친** 호출 · 백업 뒤 재진입은 건너뛴다(한 번 · 114 G6 · 10-15).
         let pre_confirmed = std::mem::take(&mut self.prod_confirmed_once);
+        // 114 §9-2 A(권장): 보류가 대신하는 DML은 2단 재실행을 생략 · DDL·블록은 유지(되돌릴 수 없는 것).
+        let e3_items = sessions::e3_items(hold_on, &needed);
+        let confirm_window = Duration::from_millis(
+            self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as u64,
+        );
         if !pre_confirmed
-            && sessions::prod_confirm_needed(prod, self.settings.flag("run.prod_confirm"), &needed)
+            && sessions::prod_confirm_needed(
+                prod,
+                self.settings.flag("run.prod_confirm"),
+                &e3_items,
+            )
         {
             let key = nexa_fs::watch::content_hash(src.as_bytes());
             let armed = self
                 .sess
                 .prod_armed
-                .is_some_and(|(k, at)| k == key && at.elapsed() <= Duration::from_secs(3));
+                .is_some_and(|(k, at)| k == key && at.elapsed() <= confirm_window);
             if !armed {
                 self.sess.prod_armed = Some((key, Instant::now()));
                 self.sess.status = t(Msg::StProdConfirm).into();
@@ -341,6 +361,12 @@ impl App {
         //   중지 오류가 Output 탭을 활성화한 뒤엔 Output 자리표시 그리드(기본 200)라, 결과1에 0을 적어 두고도 200을 보냈다.
         let max_rows = self.run_page_rows(target);
         self.sess.single_run = !all;
+        let hold = hold_on.then(|| nsql_run::HoldPolicy {
+            rows: self.settings.int("tx.prod_hold_rows").max(0) as u64,
+            blocks: self.settings.flag("tx.prod_hold_blocks"),
+            no_where: self.settings.flag("tx.prod_hold_no_where"),
+            commit_ok: std::mem::take(&mut self.hold_commit_ok_once),
+        });
         self.sess.submit(
             pass,
             worker::Cmd::Run {
@@ -351,6 +377,7 @@ impl App {
                 defines: self.run_defines(),
                 intrinsic: Some(self.run_intrinsic()),
                 whole,
+                hold,
             },
         );
         self.live_start();
@@ -404,6 +431,7 @@ impl App {
                 defines: self.run_defines(),
                 intrinsic: Some(self.run_intrinsic()),
                 whole: false,
+                hold: None,
             },
         );
         self.live_start();

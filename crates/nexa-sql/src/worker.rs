@@ -92,6 +92,8 @@ pub(crate) enum Cmd {
         intrinsic: Option<std::sync::Arc<std::collections::BTreeMap<String, String>>>,
         /// ★ 본문 전체를 **한 항목**으로(객체 소스 탭 F5 · 09-30 · `Runner::run_whole`).
         whole: bool,
+        /// ★ 운영 보류 커밋 정책(114 §5 · 10-15) — 운영 접속 + `tx.prod_hold`일 때만 `Some`.
+        hold: Option<nsql_run::HoldPolicy>,
     },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
@@ -1589,6 +1591,7 @@ pub(crate) fn spawn(
                         defines,
                         intrinsic,
                         whole,
+                        hold,
                     } => {
                         if let Some(v) = vars {
                             runner.engine.vars.set_local(v);
@@ -1685,11 +1688,13 @@ pub(crate) fn spawn(
                             }
                             emit(e);
                         };
+                        runner.set_hold(hold);
                         let errs = if whole {
                             runner.run_whole(&src, &mut prompt, &mut on_ev)
                         } else {
                             runner.run_script(&src, &mut prompt, &mut on_ev)
                         };
+                        runner.set_hold(None);
                         run_seq.fetch_add(1, Ordering::Relaxed);
                         // ★ 전용 세션 재접속 원천(사용자 10-09): 스크립트 안 `CONNECT`로 붙은 접속은 워커의 `active_spec`에 없어
                         //   네트워크 복귀 뒤 `ensure_alive`가 재접속할 사양이 없었다(공유 세션은 `Cmd::ConnectSpec`으로 붙어 있었음) →

@@ -4,7 +4,7 @@
 > **사용자 결정(10-15 · 2차)** = §9 표 전부 반영(D-295~D-303) — 운영 기본 보류 기준 **0 = 모든 변경 보류** · 행 수 = 실행 전체 합계 · 블록·EXEC = 행 수 무관 보류 · 보류 중 다른 탭 = 변경·DDL 막고 조회 허용 · 스크립트 안 COMMIT = 직전 판정 · **운영 COMMIT 직접 실행 = 토스트 확인 클릭 · 상단 Commit 버튼 = 빨간 타임아웃 버튼 2단** · 운영 한도 지나면 롤백 · **객체 백업 = 유형 무관 30일 · 실행 중 수시 정리 · 개수 상한 설정(기본 0 = 무제한)** · **상태바 저장 섹션 메뉴에 객체 백업 바로가기**
 > **사용자 지시(10-15 · 3차)** = "특정 DBMS의 경우 DDL이 Commit 처리를 동반하는 등의 특징이 있다면 해당 동작 전에 이 상황을 경고창으로 알려주고 Transaction에 대한 처리를 통해서 잔여 TX가 없는 상태로 먼저 변경하도록 실행을 막는 방식을 도입" → **§5-2 트랜잭션 경계 가드**(D-304 · 운영·개발 모두)
 > **사용자 지시(10-15 · 4차)** = "파일이름은 객체 확장자를 년월일시분초MS로 · nexa-dir3에서 이름 1차 · 확장자 2차 역순 정렬해 이름 기준 상위 5개만 남기면 최신 5개만 남길 수 있을 것" → **§7-1 백업 파일 이름·보관 운영 기준**(D-305 · 검토 결과 = 이름 규칙 채택 · dir3 정렬은 "이름 내림차순 한 키"로 보정)
-> **상태** = 📐 **설계 확정 · 개발 대기**(사용자 지시) · 남은 결정 = §9-2 둘
+> **상태** = 🟧 **1단계 구현(10-15 밤 · 개발 세션 · [§10-1](#10-1-1단계-구현10-15-밤--개발-세션)) · 2단계 객체 백업 = §7-2 구현 ✅** · 남은 결정 = §9-2 A·B·C는 권장값으로 구현(사용자 미답 = 그대로 확정 요청) · 남은 것 = §10-1 끝 표
 > **조사 기준** = main `6f278b9`(10-15) 코드 정적 조사 + 실제 설정 폴더 조회(읽기만) · 실행 확인 안 한 것은 "추론"으로 표기
 > **짝 문서** = [56 수동 커밋 잠금 방지](56-manual-commit-lock-prevention.md) · [34 트랜잭션 UX](34-transaction-ux.md) · [87 §14 데이터 보호 불변식](87-grid-data-editing.md) · [28 §9 객체 삭제](28-object-explorer.md) · [70 자동 저장](70-autosave-and-restore.md) · [100 §5 보수적 생성](100-object-source-run-and-output-tab.md) · [52 세션 모드·실행 통제](52-session-modes.md) · [61 §1-12 실행 통제 순서](61-core-design-and-working-rules.md)
 
@@ -231,7 +231,7 @@ flowchart TD
 | **G1 보류 타이머** | 🟧 1단계 | 가드 | 운영 한도 `tx.prod_idle_limit_min` 지나면 **롤백**(카운트다운 카드 · 커밋 자동 처리 금지) | `tx_guard_tick` · D-301 |
 | **G2 보류 중 다른 탭** | 🟧 1단계 | 문지기 | 같은 연결의 다른 탭 = 변경·DDL 막음 · 조회 허용 · 같은 탭 DDL = A2g 경고창(§5-2) | `gate_open` 확장 · D-298 |
 | **A12 사용자 결정** | 🟧 1단계 | 사용자 | 커밋 · 롤백 · 커밋 후 계속(남은 문장 이어 실행 = 다시 판정) | 카드 · 툴바 · 상태줄 팝업 |
-| **A13c 운영 커밋 확인** | 🟧 1단계 | UI | **상단 Commit 버튼 = 빨간 타임아웃 버튼**(첫 클릭 = 무장 + 남은 시간 · 두 번째 클릭 = 커밋 · 시간 지나면 원래대로) · 보류 카드 [커밋]도 같은 2단 · **편집기 `COMMIT` 문 = 토스트의 빨간 [커밋] 버튼 클릭** | `TimeoutButton`(삭제 모달 부품) · `Toasts::push_button` · 새 `tx.prod_commit_confirm_ms` · D-300 |
+| **A13c 운영 커밋 확인** | 🟧 1단계 | UI | **상단 Commit 버튼 = 빨간 타임아웃 버튼**(첫 클릭 = 무장 + 남은 시간 · 두 번째 클릭 = 커밋 · 시간 지나면 원래대로) · 보류 카드 [커밋]도 같은 2단 · **편집기 `COMMIT` 문 = 토스트의 빨간 [커밋] 버튼 클릭** | `TimeoutButton`(삭제 모달 부품) · `Toasts::push_button` · 새 `tx.prod_commit_confirm_ms` · D-300 · **표현 = §5-3** |
 | A15 확인 클릭 | 🟧 1단계 | 사용자 | 빨간 버튼 두 번째 클릭 또는 토스트 [커밋] 클릭 | — |
 | A13 결정 실행 | ⬜ 기존 | 러너·서버 | COMMIT / ROLLBACK | `run.commit`/`run.rollback` |
 | A14 안내·기록 | ⬜ 기존(+문구) | UI | 상태줄 · Output · 트랜잭션 로그에 "운영 보류 → 사용자 커밋/롤백/한도 롤백" | [44](44-transaction-log.md) |
@@ -315,6 +315,30 @@ flowchart TD
 | 운영 보류(§5) | 보류 = 잔여 TX → 보류 중 DDL은 이 가드로 막힘(D-298의 "같은 탭 DDL") |
 | `tx.smart_commit` | 자동 → 수동 전환 뒤의 DDL도 이 가드를 지남 |
 | 그리드 편집 적용(E8) | 자체 커밋/세이브포인트라 대상 아님 |
+
+### 5-3. 운영 Commit 확인의 표현 — 툴바 아이콘 버튼에는 초가 들어가지 않는다(D-300 보강 · 사용자 질문 10-15)
+
+> 질문 원문: "설계에서 Commit 버튼이 줄어드는 초를 표현할 수 있는 크기가 아닌데 어떻게 구현할 계획인지" → 답 = **버튼은 모양(색·게이지)으로 · 숫자는 버튼 아래 카드로** 나눠 표현한다.
+
+```mermaid
+flowchart LR
+  classDef old fill:#eceff1,stroke:#90a4ae,color:#263238;
+  classDef s1 fill:#ffe0b2,stroke:#e65100,stroke-width:3px,color:#bf360c,font-weight:bold;
+  C1(["⬜ 사용자 · 툴바 Commit 첫 클릭"]):::old --> C2["🟧 버튼 무장 · 빨강 배경<br/>아이콘 테두리 게이지 감소 · 숫자 없음"]:::s1
+  C2 --> C3["🟧 버튼 아래 카드 · place_popup<br/>운영 PRD 커밋 · 보류 n문장 · m행<br/>빨간 [커밋 4초] · [취소]"]:::s1
+  C3 -- "툴바 버튼 두 번째 클릭 · 카드 [커밋]" --> C4[("⬜ COMMIT")]:::old
+  C3 -- "시간 지남 · Esc · 바깥 클릭 · [취소]" --> C5["🟧 해제 · 아무것도 안 보냄"]:::s1
+```
+
+| # | 요소 | 내용 |
+|---|---|---|
+| 1 | **툴바 버튼(아이콘)** | 무장하면 **빨강 배경 + 아이콘 테두리를 따라 남은 시간 게이지가 줄어듦** · 숫자 없음 · nexa-ctl `TimeoutButton`의 "진행형 테두리 채움"을 아이콘 크기로 그림 → `ToolItem` 상태 하나(`Armed{started, total}`) · 시각은 호스트 `tick` 주입(결정적 시험) |
+| 2 | **카드(숫자·설명)** | 버튼 **바로 아래** 붙는 팝업 카드(`geom::place_popup` · 창 밖으로 안 나감 · 툴팁 흉내 금지 61 §2-2) · 본문 "운영(PRD) 커밋 · 다시 누르면 반영 · 보류 n문장 · m행" · 빨간 **`[커밋 4초]`**(글자 들어가는 `TimeoutButton` 그대로 · 초가 줄어듦) + `[취소]` |
+| 3 | **확정** | 툴바 버튼 **두 번째 클릭** 또는 카드 **[커밋]** = COMMIT |
+| 4 | **만료 = 해제** | 시간이 다 되면 **커밋하지 않고 해제** · `TimeoutButton`은 원래 "만료 = 스스로 눌림"이므로 `FiredBy::Timeout`을 **취소로 해석**(삭제 모달 `drop_win`과 같은 쓰임) · 단위 시험 필수 |
+| 5 | **하지 않는 것** | 툴바 폭을 넓혀 "커밋 4초" 글자 넣기 — `ToolDock` 재배치로 옆 버튼이 밀려 오클릭 위험 |
+| 6 | **다른 입구** | 보류 카드·상태줄 커밋 팝업의 [커밋] = 원래 글자가 들어가는 크기 → 숫자 나오는 `TimeoutButton` 그대로 · 편집기 `COMMIT` 문 = 토스트 빨간 [커밋](D-300) |
+| 7 | **조작·접근성** | Esc · 바깥 클릭 = 해제(61 §2-2-b 팝업 규칙) · 색만이 아니라 **글 + 게이지** 함께 · 시간 = `tx.prod_commit_confirm_ms` 5000 |
 
 ## 6. Activity — 보류 상태의 수명
 
@@ -525,3 +549,29 @@ flowchart TD
 - 경계 가드: `tx_boundary_guard`(방언 × 문장 분류 × 잔여 TX × 같은 실행 앞쪽 변경 × 앞쪽 COMMIT/ROLLBACK) MC/DC · 실서버 = Oracle·MySQL `UPDATE`(수동) 뒤 `ALTER` = 경고창·서버 미전송 확인 · PG `BEGIN` 뒤 `VACUUM` = 경고창 · 커밋/롤백 뒤 재실행 통과 · 스크립트 `UPDATE …; COMMIT; ALTER …` = 통과.
 - 백업(2단계): F5 재생성 전 파일 생성 · 같은 ms 두 번 = 1 ms 올린 두 파일 · 객체별 최신 N개 정리 · 백업 폴더 파일이 SQL로 열림 · 30일 지난 파일이 실행 중 정리되는지(파일 시각 조작) · `backup.object_keep` 객체별 상한 · 상태바 메뉴 두 항목 캡처.
 - 기존 E2E 회귀: `conn-cmd-e2e.sh`(운영 2단) · `mac-grid-edit-e2e.sh`(E8) · 트랜잭션 로그.
+
+### 10-1. 1단계 구현(10-15 밤 · 개발 세션)
+
+| 조각 | 구현 | 자리 |
+|---|---|---|
+| **A5 보류 정책** | 호스트가 운영(`spec.env = Prod`) + `tx.prod_hold`(켬)이면 이번 실행에 `HoldPolicy{rows, blocks, no_where, commit_ok}`를 `Cmd::Run.hold`로 넘긴다 · 비운영·설정 끔 = `None`(종전 그대로) | `app/run.rs` · `worker.rs` |
+| **A6 명시 시작문** | 러너 `execute` = `autocommit_eff = autocommit && hold.is_none()` → 수동 모드의 시작문 규칙(`manual_begin_sql` · `caps.tx_begin` · Oracle = 암묵) 재사용 · 자동 COMMIT 블록도 같은 조건 → 보류 모드는 **문장 뒤 커밋 없음** | `nsql-run/lib.rs::execute` |
+| **A7 행 수 수집** | `hold_note` = `tx_effect`가 Change인 문장만(영향 0행 = Clean = 셈 안 함 · §9-2 B) → `HeldStmt{index, summary, rows, block(TxClass::Other), no_where(dml_without_where)}` · 합계 `hold_total` | `nsql-run/lib.rs` |
+| **A7c · D-299 COMMIT 직전 판정** | `run_item` 머리: 보류 모드 + `is_commit_sql` + 변경 있음 → **보내지 않고** `hold_stop` → `run_script_in`이 그 뒤 원문(`items[i+1].span.start..`)을 `remaining`으로 `Held{at_commit: true}` 보내고 멈춤 · `commit_ok`(확인 뒤 재진입)면 첫 COMMIT 한 번은 통과 | `nsql-run/lib.rs::run_item/run_script_in` |
+| **A8 기준 판정** | `hold_decision(p, total, block, no_where)` = `(blocks && block) || (no_where && no_where) || total ≥ rows`(rows 0 = 늘) · 순수 + MC/DC 시험 | `nsql-run::hold_decision` |
+| **A9 자동 COMMIT(기준 미만)** | 가장 바깥 실행 끝(`run_depth == 0` · `run_whole` 포함) `hold_finish` → 보류 아니면 `session.commit()` + `Message` "운영: N행 = 보류 기준 미만 - 커밋됨" | `hold_finish` |
+| **A10 보류 · A11 카드** | `RunEvent::Held{stmts, total_rows, at_commit, remaining}` → 호스트 `tx_on_held` = 대기 목록 `tx_pending`에 문장 등재(배지·툴바·L2 가드·트랜잭션 로그가 그대로 본다) + `Sess.prod_held = HeldInfo{editor, total_rows, stmts, remaining, at_commit}` + **토스트 카드**(Warn · "운영 · 커밋 대기" 또는 "COMMIT 문 확인 필요" · 본문 N문장·M행 · 버튼 [커밋]) + Output ⚠ + 로그 + 상태줄 | `app/tx.rs::tx_on_held` · `app/events.rs` |
+| **A13c · D-300 운영 커밋 확인** | 상단 Commit(보류 또는 운영 대기 문장) · 카드 [커밋] · `hold.commit` = `tx_hold_commit()`(id는 `tx.` 접두를 피한다 — `menu_action`이 `tx.*`를 상태줄 팝업 `tx_pick`으로 먼저 보낸다 · 1차 E2E ③ 재진입 무동작의 원인) → 첫 호출 = **무장**(`Sess.commit_armed` · 툴바 Commit 빨간 톤 · 토스트 Error "운영(PRD) 커밋 - 다시 누르면 반영 · N초" + 버튼 [커밋]) · `tx.prod_commit_confirm_ms`(5000) 안 두 번째 클릭 또는 토스트 버튼 = `tx_hold_commit_go` · 만료 = `tx_hold_tick`이 해제(자동 커밋 금지) · 순수 `commit_armed_ok` | `app/tx.rs` · `app/menus.rs` |
+| **A12 커밋 후 계속** | `tx_hold_commit_go` = `remaining`이 있으면 같은 탭에서 `"COMMIT;\n" + remaining` 재진입(`hold_commit_ok_once` + `prod_confirmed_once`) → 러너가 COMMIT 한 번 통과 · 남은 문장은 다시 보류 판정 · 없으면 `Cmd::Commit` | `tx_hold_commit_go` |
+| **G1 · D-301 한도 롤백** | `tx_guard_fire`: 세션에 `prod_held`가 있으면 `tx.idle_action`과 무관하게 **롤백** · 한도 = 기존 `tx.prod_idle_limit_min`(10) | `app/tx.rs::tx_guard_fire` |
+| **G2 · D-298 다른 탭** | `run_tx_gate` = `hold_blocks_run(held, same_tab, has_change, has_ddl)` → DDL = 어느 탭이든 · 변경 = 다른 탭만 · 조회 허용 · 막으면 상태줄 + 토스트(서버로 보내지 않음) | `app/tx.rs::run_tx_gate` · `sessions.rs` MC/DC |
+| **W1 · D-304 경계 가드** | 같은 게이트 = `ddl_guard_blocks(guard_on(운영은 늘 켬 · 아니면 tx.ddl_commit_guard), tx_open, implicit_commit(dialect, sql))` → 열린 변경 트랜잭션 + 암묵 커밋 문장 = 차단("먼저 커밋/롤백") · §9-2 C = 자동 실행 안 함 | 같은 자리 |
+| **§9-2 A E3 생략** | `e3_items(hold_on, items)` = 보류가 켜져 있으면 DML(INSERT/UPDATE/DELETE)과 **트랜잭션 통제문**(COMMIT/ROLLBACK/BEGIN · COMMIT은 D-299 보류 흐름이 따로 확인)은 2단 재실행에서 빼고 DDL·블록만 · `run.prod_confirm_ms`(3000 · 종전 3 s 고정) · 🔧 1차 E2E ③ 실패 = COMMIT이 E3에 세어져 첫 실행이 무장만 함 → 이 규칙 | `sessions.rs` · `app/run.rs` |
+| **카드 수명** | 보류 카드·무장 토스트 = **고정 카드**(`Toasts::push_button_sticky` · 수명 없음 · 막대 가득 · 버튼 또는 해결(`tx_close`)·만료(`tx_hold_tick`)에 `dismiss_action`) — 일반 토스트 3 s 수명이면 사용자가 보기 전에 사라졌다(협업 E2E B) | `toast.rs` · `app/tx.rs` |
+| **삭제 창 DROP** | 탐색기 ▸ 삭제…(모달 2단 뒤)의 DROP은 `hold_skip_once`로 **보류를 건너뛴다**(운영 확인이 넷 = 삭제 2단 + 커밋 2단이 되지 않게 · 운영 백업 실패 = 삭제 막음은 그대로 · SQLite/PG/MSSQL = DDL 트랜잭션이라 안 걸면 즉시 반영) — **설계 판단 = 사용자 확인 대상**(협업 E2E C) | `app/drop.rs` · `app/run.rs` |
+| **설정 7** | `tx.prod_hold`(켬) · `tx.prod_hold_rows`(0) · `tx.prod_hold_blocks`(켬) · `tx.prod_hold_no_where`(켬) · `tx.prod_commit_confirm_ms`(5000) · `tx.ddl_commit_guard`(켬 · 운영 무시 못 함) · `run.prod_confirm_ms`(3000) — 분류 트랜잭션 보호 | nsql-settings · i18n 24 |
+| **자체 시험** | 기동 명령 `tx.dump:<파일>`(`pending|held=stmts rows at_commit remaining|armed|autocommit`) · 메뉴 동작 `run.commit`/`run.rollback`/`tx.hold_commit_go` · ★ **E2E `scripts/win-prod-hold-e2e.sh`**(SQLite 격리 홈 PRD · 22 검사 = ①~⑦ 위 표의 흐름 전부 · 협업 3차 **22/0**) · 단위 = `hold_decision` · `is_commit_sql` · `dml_without_where`(주석·문자열·서브쿼리) · `hold_blocks_run` · `ddl_guard_blocks` · `commit_armed_ok` · `e3_items` MC/DC | scripts · nsql-run/sessions 시험 |
+
+- **시험 교훈(10-15)**: E2E 홈을 마지막 케이스가 다른 유형(비운영)으로 바꾸면 그 홈으로 돌린 뒤 탐침은 **다른 조건**이다(협업 A 보고 = 비운영 홈의 자동 커밋 = 정상) → 탐침 전 `nsql conn env` 확인 · 스크립트 끝에 홈 상태를 되돌리거나 케이스별 홈을 쓴다.
+- **표현(§5-3)**: 1단계 = 툴바 Commit **빨간 톤** + 토스트 카드(숫자·설명 · [커밋]) · 아이콘 테두리 게이지(ToolItem `Armed`)는 **nexa-ui 후속**(nexa-ctl `ToolItem` 상태 추가 · T-358 후보) · 보류 카드의 [롤백]·[커밋 후 계속] 버튼은 토스트 1버튼 제약 → 롤백 = 상단 Rollback(확인 없음) · 계속 = COMMIT 확인이 곧 계속(D-299 흐름) · 전용 카드 부품 = 2단계.
+- **실서버**: 4 DBMS 왕복(§10 계획)은 협업 V1/E2E 후속 — SQLite 격리 E2E가 흐름 전부를 덮고, Oracle(암묵 트랜잭션)·PG/MSSQL(`BEGIN`)의 시작문 차이는 `manual_begin_sql`(T-146 · CI 통합 시험)이 이미 덮는다.

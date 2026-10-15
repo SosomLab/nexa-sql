@@ -955,6 +955,10 @@ impl App {
             let _ = std::fs::write(path, &self.sess.status);
             return;
         }
+        if let Some(path) = id.strip_prefix("tx.dump:") {
+            let _ = std::fs::write(path, self.tx_dump());
+            return;
+        }
         if let Some(path) = id.strip_prefix("objbk.dump:") {
             let _ = std::fs::write(path, self.objbk_dump());
             return;

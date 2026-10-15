@@ -561,6 +561,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.meta_refresh_tick(now) {
             next = next.min(t);
         }
+        // ★ 운영 Commit 무장 해제(D-300 · 만료 = 해제).
+        if let Some(t) = self.tx_hold_tick(now) {
+            next = next.min(t);
+        }
         // ★ 객체 백업 대기 상한 + 주기 정리(114 §7-2 · `backup.prune_interval_min`).
         if let Some(t) = self.objbk_tick(now) {
             next = next.min(t);

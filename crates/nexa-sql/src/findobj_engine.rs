@@ -28,6 +28,8 @@ pub(crate) struct FindQuery {
     pub schemas: Vec<String>,
     pub max_hits: usize,
     pub lines_per_object: usize,
+    /// ★ SQL Server = 접근 가능한 **모든 DB**(시스템 DB 제외 · 사용자 10-15 · 설정 `findobj.all_dbs` · 탐색기 검색 설정과 독립) · 끔 = 현재 DB.
+    pub all_dbs: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +62,8 @@ struct Task {
     stage: FindStage,
     schema: String,
     kinds: Vec<ObjectKind>,
+    /// SSMS DB 단위(그 밖 None) — 워커는 작업의 DB가 바뀌면 `USE`.
+    db: Option<String>,
 }
 
 /// 엔진 → 창.
@@ -228,70 +232,96 @@ fn plan_and_run(
             return;
         }
     };
-    if let Some(db) = srv.db.as_deref().filter(|d| !d.is_empty()) {
-        let _ = s0.set_option("schema", db);
-    }
-    // 스키마 목록 = 실시간(사용자 필터가 있으면 그것).
-    let schemas: Vec<String> = if !q.schemas.is_empty() {
-        q.schemas.clone()
-    } else if matches!(s0.dialect(), Dialect::Sqlite) {
-        vec!["main".to_string()]
-    } else {
-        match nsql_catalog::schemas_opt(
-            s0.as_mut(),
-            nsql_catalog::SchemaOpts {
-                show_system: false,
-                hide_empty: true,
-            },
-        ) {
-            Ok(v) => v,
+    let is_mssql = matches!(s0.dialect(), Dialect::Mssql);
+    // ★ DB 단위 목록(10-15 · 사용자 "객체 검색 창에서는 전체를 대상으로 하는 스위치"): SQL Server + `all_dbs` = 접근 가능한 사용자 DB 전부 ·
+    //   그 밖 = 현재 DB 하나(SSMS) 또는 DB 개념 없음(None 하나).
+    let dbs: Vec<Option<String>> = if is_mssql && q.all_dbs {
+        match find::databases(s0.as_mut()) {
+            Ok(v) if !v.is_empty() => v.into_iter().map(Some).collect(),
+            Ok(_) => vec![srv.db.clone()],
             Err(e) => {
                 done(Some(e.message));
                 return;
             }
         }
+    } else {
+        vec![srv.db.clone().filter(|d| !d.is_empty())]
     };
     let regex_skip = q.regex && regex_meta(&q.pat.text);
     let mut tasks: VecDeque<Task> = VecDeque::new();
-    for sc in &schemas {
-        if q.names || q.comments {
-            tasks.push_back(Task {
-                stage: FindStage::Names,
-                schema: sc.clone(),
-                kinds: Vec::new(),
-            });
+    let mut n_schemas = 0usize;
+    for db in &dbs {
+        if !alive(&live, rev) {
+            return;
         }
-        if q.columns && !regex_skip {
-            tasks.push_back(Task {
-                stage: FindStage::Columns,
-                schema: sc.clone(),
-                kinds: Vec::new(),
-            });
+        if let Some(d) = db.as_deref() {
+            let _ = s0.set_option("schema", d);
         }
-        if q.source && !regex_skip {
-            for g in source_groups(&q) {
+        // 스키마 목록 = 실시간(사용자 필터가 있으면 그것).
+        let schemas: Vec<String> = if !q.schemas.is_empty() {
+            q.schemas.clone()
+        } else if matches!(s0.dialect(), Dialect::Sqlite) {
+            vec!["main".to_string()]
+        } else {
+            match nsql_catalog::schemas_opt(
+                s0.as_mut(),
+                nsql_catalog::SchemaOpts {
+                    show_system: false,
+                    hide_empty: true,
+                },
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    done(Some(e.message));
+                    return;
+                }
+            }
+        };
+        n_schemas += schemas.len();
+        for sc in &schemas {
+            if q.names || q.comments {
                 tasks.push_back(Task {
-                    stage: FindStage::Source,
+                    stage: FindStage::Names,
                     schema: sc.clone(),
-                    kinds: g,
+                    kinds: Vec::new(),
+                    db: db.clone(),
                 });
+            }
+            if q.columns && !regex_skip {
+                tasks.push_back(Task {
+                    stage: FindStage::Columns,
+                    schema: sc.clone(),
+                    kinds: Vec::new(),
+                    db: db.clone(),
+                });
+            }
+            if q.source && !regex_skip {
+                for g in source_groups(&q) {
+                    tasks.push_back(Task {
+                        stage: FindStage::Source,
+                        schema: sc.clone(),
+                        kinds: g,
+                        db: db.clone(),
+                    });
+                }
             }
         }
     }
+    let schemas_len = n_schemas;
     let note = (regex_skip && (q.columns || q.source))
         .then(|| nsql_i18n::t(nsql_i18n::Msg::FoRegexLocalOnly).to_string());
     let _ = tx.send(EngineMsg::Planned {
         rev,
         server: ix,
         label: label.clone(),
-        schemas: schemas.len(),
+        schemas: schemas_len,
         tasks: tasks.len(),
         note,
     });
     wake();
     let queue = Arc::new(Mutex::new(tasks));
     let remaining = Arc::new(AtomicUsize::new(workers));
-    let db = srv.db.clone();
+    let db = srv.db.clone().filter(|d| !d.is_empty());
     // 추가 워커(세션 각자).
     for w in 1..workers {
         let (tx, live, wake, q, queue, remaining, spec, label, db) = (
@@ -310,7 +340,7 @@ fn plan_and_run(
             .spawn(move || {
                 if alive(&live, rev) && !queue.lock().map(|g| g.is_empty()).unwrap_or(true) {
                     if let Ok(mut s) = crate::explorer::open_meta(&spec, default) {
-                        if let Some(d) = db.as_deref().filter(|d| !d.is_empty()) {
+                        if let Some(d) = db.as_deref() {
                             let _ = s.set_option("schema", d);
                         }
                         work(
@@ -318,7 +348,7 @@ fn plan_and_run(
                             ix,
                             &label,
                             &q,
-                            db.as_deref(),
+                            db.clone(),
                             s.as_mut(),
                             &queue,
                             &tx,
@@ -338,12 +368,14 @@ fn plan_and_run(
                 }
             });
     }
+    // 계획 세션은 마지막 DB에 서 있다 → 워커 루프가 작업의 DB로 맞춘다(`cur_db` = 마지막 계획 DB).
+    let last_db = dbs.last().cloned().flatten();
     work(
         rev,
         ix,
         &label,
         &q,
-        db.as_deref(),
+        last_db,
         s0.as_mut(),
         &queue,
         &tx,
@@ -363,7 +395,7 @@ fn work(
     ix: usize,
     label: &str,
     q: &FindQuery,
-    db: Option<&str>,
+    mut cur_db: Option<String>,
     s: &mut dyn nsql_core::Session,
     queue: &Mutex<VecDeque<Task>>,
     tx: &Sender<EngineMsg>,
@@ -382,7 +414,14 @@ fn work(
             return;
         };
         let t0 = Instant::now();
-        let (hits, scanned, note) = run_task(s, q, &task, db);
+        // 작업의 DB가 세션의 현재 DB와 다르면 전환(SSMS `USE` · 전 DB 검색).
+        if task.db != cur_db {
+            if let Some(d) = task.db.as_deref() {
+                let _ = s.set_option("schema", d);
+            }
+            cur_db = task.db.clone();
+        }
+        let (hits, scanned, note) = run_task(s, q, &task, task.db.as_deref());
         let _ = tx.send(EngineMsg::Task {
             rev,
             server: ix,
@@ -538,6 +577,7 @@ mod tests {
             schemas: Vec::new(),
             max_hits: 0,
             lines_per_object: 0,
+            all_dbs: true,
         }
     }
 

@@ -77,7 +77,7 @@ head -1 "$OUT/e.dump" 2>/dev/null | grep -q "notes=.*limit\|notes=.*상한" && o
 h1=$(head -1 "$OUT/a.dump" 2>/dev/null)
 td=$(echo "$h1" | sed -n 's/.*servers=1\/1|schemas=1|tasks=\([0-9]*\)\/\([0-9]*\)|.*/\1 \2/p')
 if [ -n "$td" ] && [ "${td% *}" = "${td#* }" ] && [ "${td% *}" -gt 0 ]; then ok "⑥ 진행 = 서버 1/1 · 스키마 1 · 작업 ${td% *}/${td#* } 전부 끝"; else bad "⑥ 진행 셈 이상" "$h1"; fi
-sed -n 2p "$OUT/a.dump" 2>/dev/null | grep -q "Done .*servers 1/1 .*tasks .*scanned .*objects .*matches" && ok "⑥ 진행 1줄 = 서버·스키마·작업·조사·객체·일치" || bad "⑥ 진행 1줄 모양" "$(sed -n 2p "$OUT/a.dump" 2>/dev/null)"
+sed -n 2p "$OUT/a.dump" 2>/dev/null | grep -q "Done .*servers 1/1 .*tasks .*matched rows .*objects .*matches" && ok "⑥ 진행 1줄 = 서버·스키마·작업·조사·객체·일치" || bad "⑥ 진행 1줄 모양" "$(sed -n 2p "$OUT/a.dump" 2>/dev/null)"
 sed -n 3p "$OUT/a.dump" 2>/dev/null | grep -Eq "started [0-9]{2}:[0-9]{2}:[0-9]{2}.*ended [0-9]{2}:[0-9]{2}:[0-9]{2}.*elapsed [0-9]+\.[0-9] s" && ok "⑥ 진행 2줄 = 시작·종료·경과" || bad "⑥ 진행 2줄 모양" "$(sed -n 3p "$OUT/a.dump" 2>/dev/null)"
 # ⑦ 결과 거르기(뷰 투영): "orders" → orders 표·trg_orders 트리거만(customer 표·v_big 제외) · view < rows · 둘째 줄 "showing"
 mk_home ""

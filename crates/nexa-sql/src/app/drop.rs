@@ -340,9 +340,11 @@ impl App {
                 }
                 a.prod_confirmed_once = true;
                 a.objbk_skip_once = true;
+                a.hold_skip_once = true;
                 a.run_text_whole(sql.clone());
                 a.prod_confirmed_once = false;
                 a.objbk_skip_once = false;
+                a.hold_skip_once = false;
                 a.sess.busy
             })
             .unwrap_or(false);

@@ -1463,7 +1463,7 @@ impl App {
                 };
             }
             "objbackup" => self.objbk_open_dir(),
-            "objbackup_settings" => {
+            "objbackup.settings" => {
                 self.prefs_query = Some("backup.object".into());
                 self.open_prefs = true;
             }

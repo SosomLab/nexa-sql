@@ -107,6 +107,8 @@ pub(crate) fn icon_for(id: &str) -> Option<MenuIcon> {
         "keep_open" => ti::mi_push_pin(),
         "rename" | "grp.rename" | "tab.rename" => ti::mi_edit(),
         "open" | "doc.open" | "file.open" | "open_bound" | "reveal" => ti::mi_folder_open(),
+        // 상태바 저장 메뉴의 "위치 열기" 셋(프로젝트 폴더 · 파일 스냅숏 · 객체 백업 · 10-15 아이콘 칸 통일).
+        "autosave.project" | "autosave.backups" | "autosave.objbackup" => ti::mi_folder_open(),
         "reveal_project" | "reveal_object" | "objlink.reveal" | "project.reveal" => {
             ti::mi_my_location()
         }

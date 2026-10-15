@@ -34,6 +34,8 @@ struct Toast {
     ///   누르면 그 명령 1회 · 카드 닫힘. 모양 = `TimeoutButton` 무장 상태(위험색 채움 · 밝은 글자).
     button: Option<(String, String)>,
     btn_rect: Rect,
+    /// ★ 고정 카드(10-15 · 운영 보류 "커밋 대기"): 수명이 없고 버튼을 누르거나 호스트가 `dismiss_action`으로 지울 때까지 남는다.
+    sticky: bool,
 }
 
 const MAX_TOASTS: usize = 5;
@@ -117,6 +119,7 @@ impl Toasts {
             action: None,
             button: None,
             btn_rect: Rect::default(),
+            sticky: false,
         });
         while self.items.len() > MAX_TOASTS {
             self.items.remove(0);
@@ -152,6 +155,28 @@ impl Toasts {
         }
     }
 
+    /// ★ 버튼 있는 **고정** 카드(수명 없음 · 운영 보류 D-300/A11): 버튼 또는 [`Self::dismiss_action`]으로만 사라진다 · 같은 동작의 카드는 하나만.
+    pub(crate) fn push_button_sticky(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        label: impl Into<String>,
+        action: &str,
+    ) {
+        self.dismiss_action(action);
+        self.push_button(kind, title, body, label, action);
+        if let Some(t) = self.items.last_mut() {
+            t.sticky = true;
+        }
+    }
+
+    /// 그 동작의 카드를 지운다(보류가 해결됐을 때 · 무장 만료).
+    pub(crate) fn dismiss_action(&mut self, action: &str) {
+        self.items
+            .retain(|t| t.button.as_ref().is_none_or(|(_, a)| a != action));
+    }
+
     pub(crate) fn take_action(&mut self) -> Option<String> {
         self.taken.take()
     }
@@ -185,7 +210,8 @@ impl Toasts {
     /// 만료 제거 — 남은 카드가 있으면(페이드 애니메이션) true = 30ms 틱 유지.
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
         let ttl = self.ttl;
-        self.items.retain(|t| now.duration_since(t.born) < ttl);
+        self.items
+            .retain(|t| t.sticky || now.duration_since(t.born) < ttl);
         !self.items.is_empty()
     }
 
@@ -238,7 +264,12 @@ impl Toasts {
         let ttl_ms = self.ttl.as_millis().max(1) as f32;
         let mut y = bottom - gap;
         for t in self.items.iter_mut().rev() {
-            let age = now.duration_since(t.born);
+            // 고정 카드 = 늘 갓 태어난 것처럼(막대 가득 · 투명해지지 않음).
+            let age = if t.sticky {
+                Duration::ZERO
+            } else {
+                now.duration_since(t.born)
+            };
             let left = self.ttl.saturating_sub(age).as_millis() as u64;
             let fade = if left < FADE_MS {
                 left as f32 / FADE_MS as f32

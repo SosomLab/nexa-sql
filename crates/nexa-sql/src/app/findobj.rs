@@ -45,13 +45,25 @@ impl App {
             .to_string();
         let kd = self.settings.get("findobj.kinds").unwrap_or("").to_string();
         self.findobj_win.set_remembered(&tg, &kd);
+        self.findobj_win
+            .set_all_dbs(self.settings.flag("findobj.all_dbs"));
     }
 
     /// 창의 체크 상태를 설정에 남긴다(검색 때).
     fn findobj_remember(&mut self) {
         let (tg, kd) = self.findobj_win.remembered();
+        let adb = if self.findobj_win.all_dbs() {
+            "on"
+        } else {
+            "off"
+        }
+        .to_string();
         let mut changed = false;
-        for (k, v) in [("findobj.targets", tg), ("findobj.kinds", kd)] {
+        for (k, v) in [
+            ("findobj.targets", tg),
+            ("findobj.kinds", kd),
+            ("findobj.all_dbs", adb),
+        ] {
             if self.settings.get(k) != Some(v.as_str()) {
                 let _ = self.settings.set(k, &v);
                 changed = true;
@@ -68,6 +80,14 @@ impl App {
         while let Some(m) = self.findobj_engine.try_recv() {
             if open {
                 self.findobj_win.push_msg(m);
+            }
+        }
+        // ★ 열린 창의 서버 목록은 접속이 바뀌면 따라간다(협업 V1 ⑤ · 10-15) — 칸 몇 개 비교라 비용 0.
+        if open {
+            let now = self.explorer.find_servers();
+            if now.as_slice() != self.findobj_win.servers() {
+                self.findobj_win.set_servers(now);
+                self.findobj_win.redraw();
             }
         }
     }

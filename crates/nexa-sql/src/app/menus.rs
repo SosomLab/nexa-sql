@@ -83,7 +83,7 @@ impl App {
         items.push(CtxItem::Separator);
         items.push(CtxItem::item("autosave.objbackup", t(Msg::MnObjBackupOpen)));
         items.push(CtxItem::item(
-            "autosave.objbackup_settings",
+            "autosave.objbackup.settings",
             t(Msg::MnObjBackupSettings),
         ));
         // ★ 프로젝트 저장(사용자 09-30) — 풀다운 Project ▸ 저장과 같은 길(`project.save`).
@@ -970,6 +970,17 @@ impl App {
             "obj.refresh" => self.obj_act(Some("refresh")),
             "obj.refresh_meta" => self.obj_act(Some("refresh_meta")),
             "obj.sizes" => self.obj_act(Some("sizes")),
+            // ★ 운영 Commit = 빨간 2단(D-300): 보류가 있거나 운영 접속에 대기 문장이 있으면 확인 길로.
+            "run.commit"
+                if self.sess.prod_held.is_some()
+                    || (!self.sess.tx_pending.is_empty()
+                        && self.sess.spec.as_ref().and_then(|sp| sp.env)
+                            == Some(nsql_script::ConnEnv::Prod)) =>
+            {
+                self.tx_hold_commit();
+            }
+            "hold.commit" => self.tx_hold_commit(),
+            "hold.commit_go" => self.tx_hold_commit_go(),
             "run.commit" | "run.rollback" => {
                 if let Some(pass) = self.gate_pass() {
                     self.sess.busy = true;

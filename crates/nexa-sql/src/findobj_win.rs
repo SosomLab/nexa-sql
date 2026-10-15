@@ -1,13 +1,15 @@
 //! ★ **객체 찾기 창**(docs/113 · 사용자 10-15): 모달리스 · 메인 소유 · 창 **전용 엔진**(`findobj_engine` · 탐색기 메타 스레드와 분리 · D-295 실시간 직접 조회)이
 //! 서버 × 스키마 × 단계로 잘게 쪼갠 작업을 병렬로 돌리고, 이 창은 작업이 끝날 때마다 결과를 **합쳐**(객체 하나 = 한 행) 보여 준다.
-//! 조건 1행(검색어 · Aa · ab · (.*) · 검색/중지) · 범위(서버 · 스키마) · 대상 4 · 종류 4 · ★ 진행 패널(혜성 링 + 서버/스키마/작업 · 조사 행 · 객체/일치 · 시작·종료·경과) ·
+//! 조건 1행(검색어 + 안쪽 토글 Aa · ab · (.*) = 필터 틀 `FindBtn` · 검색/중지) · 범위(서버 · ★ 전 DB(SQL Server) · 스키마) · 대상 4 · 종류 4 · ★ 진행 패널(혜성 링 + 서버/스키마/작업 · 조사 행 · 객체/일치 · 시작·종료·경과) ·
 //! ★ 결과 거르기(글 + 일치 종류 4 · 뷰 투영) · 머리 클릭 정렬 · 미리보기(일치 줄 · 강조) · 더블클릭/Enter = 소스 탭 + 일치 줄 · 우클릭 = 탐색기 메뉴 부분집합.
 use crate::exp_icons::{self, IconKind};
+use crate::findbar::{BtnKind, FindBtn};
 use crate::findobj_engine::{EngineMsg, FindHit, FindQuery, FindWhat};
+use crate::toolicons;
 use nexa_ctl::controls::combo::{Combo, ComboItem};
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{Button, Checkbox, ComboControl};
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::draw::{draw_tooltip_in, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
@@ -141,11 +143,15 @@ enum Focus {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SortKey {
+    Kind,
     Name,
     Schema,
     Server,
     Hits,
 }
+
+/// 토글 툴팁 머무름(ms · 필터 틀과 같은 값).
+const TOOLTIP_MS: u128 = 600;
 
 /// 미리보기 한 줄 = (줄 번호 · 글 · 강조 구간들(바이트)).
 struct PreLine {
@@ -191,9 +197,10 @@ pub(crate) struct FindObjWin {
     // 조건
     query: TextBox,
     schema: TextBox,
-    opt_case: Checkbox,
-    opt_word: Checkbox,
-    opt_regex: Checkbox,
+    /// 검색어 상자 안쪽 토글 Aa · ab · (.*) = 객체 탐색기 필터 틀과 같은 `FindBtn`(사용자 10-15 "체크박스가 아닌 토글 방식").
+    opts: Vec<FindBtn>,
+    /// ★ SQL Server 전 DB 검색(설정 `findobj.all_dbs` · 탐색기 검색 설정과 독립 · 사용자 10-15).
+    all_dbs: Checkbox,
     run_btn: Button,
     server: Combo,
     servers: Vec<(Option<ConnectSpec>, String)>,
@@ -288,9 +295,12 @@ impl FindObjWin {
             epoch: Instant::now(),
             query: TextBox::new(t(Msg::FoQueryHint)),
             schema: TextBox::new(t(Msg::FoSchemaHint)),
-            opt_case: Checkbox::new("Aa", false),
-            opt_word: Checkbox::new("ab", false),
-            opt_regex: Checkbox::new("(.*)", false),
+            opts: vec![
+                FindBtn::new(BtnKind::Case, toolicons::mi_match_case),
+                FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
+                FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
+            ],
+            all_dbs: Checkbox::new(t(Msg::FoAllDbs), true),
             run_btn: Button::new(t(Msg::FoSearch)),
             server: Combo::new(vec![ComboItem::new("", t(Msg::FoServerAll))], 0),
             servers: Vec::new(),
@@ -340,6 +350,25 @@ impl FindObjWin {
 
     fn now_ms(&self) -> u64 {
         self.epoch.elapsed().as_millis() as u64
+    }
+
+    fn opt(&self, k: BtnKind) -> bool {
+        self.opts.iter().any(|b| b.kind == k && b.checked)
+    }
+
+    fn set_opt(&mut self, k: BtnKind, on: bool) {
+        if let Some(b) = self.opts.iter_mut().find(|b| b.kind == k) {
+            b.checked = on;
+        }
+    }
+
+    /// 설정 `findobj.all_dbs` → 창 토글(열 때 · 설정 변경 때).
+    pub(crate) fn set_all_dbs(&mut self, on: bool) {
+        self.all_dbs.set_checked(on);
+    }
+
+    pub(crate) fn all_dbs(&self) -> bool {
+        self.all_dbs.is_checked()
     }
 
     pub(crate) fn set_limits(&mut self, max_hits: usize, lines_per_object: usize) {
@@ -544,10 +573,10 @@ impl FindObjWin {
         Some(FindQuery {
             pat: FindPat {
                 text,
-                case_sensitive: self.opt_case.is_checked(),
-                whole_word: self.opt_word.is_checked(),
+                case_sensitive: self.opt(BtnKind::Case),
+                whole_word: self.opt(BtnKind::Word),
             },
-            regex: self.opt_regex.is_checked(),
+            regex: self.opt(BtnKind::Regex),
             names: tg[0],
             comments: tg[1],
             columns: tg[2],
@@ -557,6 +586,7 @@ impl FindObjWin {
             schemas,
             max_hits: self.max_hits,
             lines_per_object: self.lines_per_object,
+            all_dbs: self.all_dbs.is_checked(),
         })
     }
 
@@ -780,6 +810,11 @@ impl FindObjWin {
         v.sort_by(|&a, &b| {
             let (ra, rb) = (&rows[a], &rows[b]);
             let o = match key {
+                SortKey::Kind => ra
+                    .kind
+                    .code()
+                    .cmp(rb.kind.code())
+                    .then_with(|| nat(&ra.name, &rb.name)),
                 SortKey::Name => nat(&ra.name, &rb.name).then_with(|| nat(&ra.schema, &rb.schema)),
                 SortKey::Schema => {
                     nat(&ra.schema, &rb.schema).then_with(|| nat(&ra.name, &rb.name))
@@ -831,10 +866,10 @@ impl FindObjWin {
 
     fn spans(&self, text: &str) -> Vec<(usize, usize)> {
         let needle = self.query.text().trim().to_string();
-        if needle.is_empty() || self.opt_regex.is_checked() {
+        if needle.is_empty() || self.opt(BtnKind::Regex) {
             return Vec::new();
         }
-        let (hay, nd) = if self.opt_case.is_checked() {
+        let (hay, nd) = if self.opt(BtnKind::Case) {
             (text.to_string(), needle)
         } else {
             (text.to_lowercase(), needle.to_lowercase())
@@ -1021,10 +1056,9 @@ impl FindObjWin {
         }
     }
 
-    /// 체크박스 전부(앞 3 + 대상 4 + 종류 4 + 일치 종류 4 — 마지막 넷은 보기 갱신).
+    /// 체크박스 전부(전 DB 1 + 대상 4 + 종류 4 + 일치 종류 4 — 마지막 넷은 보기 갱신).
     fn all_checks(&mut self) -> Vec<&mut Checkbox> {
-        let mut v: Vec<&mut Checkbox> =
-            vec![&mut self.opt_case, &mut self.opt_word, &mut self.opt_regex];
+        let mut v: Vec<&mut Checkbox> = vec![&mut self.all_dbs];
         v.extend(self.targets.iter_mut());
         v.extend(self.kinds.iter_mut());
         v.extend(self.whats.iter_mut());
@@ -1067,7 +1101,12 @@ impl FindObjWin {
             return false;
         }
         let anim = self.ring.tick(self.now_ms());
-        self.running || anim
+        let btn_anim = self.opts.iter().any(|b| {
+            b.hover.is_animating()
+                || b.hover_since
+                    .is_some_and(|t0| t0.elapsed().as_millis() < TOOLTIP_MS + 50)
+        });
+        self.running || anim || btn_anim
     }
 
     // ── 사건 ───────────────────────────────────────────────────────────────────────────────────────
@@ -1136,6 +1175,9 @@ impl FindObjWin {
                 for b in self.buttons() {
                     b.clear_transient();
                 }
+                for b in &mut self.opts {
+                    b.clear_transient();
+                }
                 self.hover = None;
                 self.redraw();
             }
@@ -1171,6 +1213,9 @@ impl FindObjWin {
                 }
                 for b in self.buttons() {
                     b.on_event(&mv, &mut inv);
+                }
+                for b in &mut self.opts {
+                    b.on_event(&mv);
                 }
                 let h = self.view_at(p);
                 let hover_changed = h != self.hover;
@@ -1243,6 +1288,23 @@ impl FindObjWin {
                     self.split_drag = true;
                     return FoAction::None;
                 }
+                // 안쪽 토글(검색어 상자 위에 겹침) — 먹으면 상자로 가지 않는다.
+                let mut opt_hit = false;
+                for b in &mut self.opts {
+                    if up || b.rect.contains(p) {
+                        b.on_event(&e);
+                        if b.rect.contains(p) {
+                            opt_hit = true;
+                        }
+                        if b.take_clicked() {
+                            b.checked = !b.checked;
+                        }
+                    }
+                }
+                if opt_hit {
+                    self.redraw();
+                    return FoAction::None;
+                }
                 // 머리 클릭 = 정렬.
                 if !up {
                     if let Some((k, _)) = self.hdr_rects.iter().find(|(_, r)| r.contains(p)) {
@@ -1275,7 +1337,7 @@ impl FindObjWin {
                     self.server.take_changed();
                 }
                 let mut what_toggled = false;
-                let n_front = 3 + self.targets.len() + self.kinds.len();
+                let n_front = 1 + self.targets.len() + self.kinds.len();
                 for (k, cb) in self.all_checks().into_iter().enumerate() {
                     if up || cb.bounds().contains(p) {
                         cb.on_event(&e, &mut inv);
@@ -1571,19 +1633,29 @@ impl FindObjWin {
             let inv = &mut Invalidations::default();
             // ── 1행: 검색어 · Aa ab (.*) · 검색/중지
             let btn_w = px(96.0);
-            let opt_w = px(44.0);
-            let mut x = wi - pad - btn_w;
+            let x = wi - pad - btn_w;
             self.run_btn.set_scale(s);
             self.run_btn
                 .set_bounds(Rect::new(x, pad, btn_w, box_h), inv);
-            for cb in [&mut self.opt_regex, &mut self.opt_word, &mut self.opt_case] {
-                x -= opt_w + px(4.0);
-                cb.set_scale(s);
-                cb.set_bounds(Rect::new(x, pad, opt_w, box_h), inv);
+            // 검색어 상자 + 안쪽 토글 Aa · ab · (.*)(필터 틀과 같은 20px · 간격 2 · 오른쪽 끝에서 거꾸로).
+            let qrect = Rect::new(pad, pad, x - gap - pad, box_h);
+            let tg = px(20.0);
+            let tgap = px(2.0);
+            let mut tx = qrect.right() - px(2.0) - tg;
+            for b in self.opts.iter_mut().rev() {
+                b.rect = Rect::new(tx, qrect.y + (box_h - tg) / 2, tg, tg);
+                tx -= tg + tgap;
             }
             self.query.set_scale(s);
-            let qrect = Rect::new(pad, pad, x - gap - pad, box_h);
-            self.query.set_bounds(qrect, inv);
+            self.query.set_bounds(
+                Rect::new(
+                    qrect.x,
+                    qrect.y,
+                    (tx + tg + tgap - qrect.x).max(px(80.0)),
+                    box_h,
+                ),
+                inv,
+            );
             self.ring_rect = qrect;
             // ── 2행: 서버 · 스키마
             let y2 = pad + box_h + gap;
@@ -1591,11 +1663,17 @@ impl FindObjWin {
             self.server.set_scale(s);
             self.server
                 .set_bounds(Rect::new(pad, y2, combo_w, box_h), inv);
+            // 전 DB 토글(SQL Server) — 서버 콤보 오른쪽.
+            let adb_w = px(24.0) + dc.text_width(t(Msg::FoAllDbs)) + px(10.0);
+            self.all_dbs.set_scale(s);
+            self.all_dbs
+                .set_bounds(Rect::new(pad + combo_w + gap, y2, adb_w, box_h), inv);
             let lab = t(Msg::FoSchemaLabel);
             let lab_w = dc.text_width(lab);
             let ly2 = dc.text_center_y(y2, box_h);
-            dc.text(pad + combo_w + gap, ly2, clip, lab, th.text_dim);
-            let sx = pad + combo_w + gap + lab_w + gap;
+            let lx = pad + combo_w + gap + adb_w + gap;
+            dc.text(lx, ly2, clip, lab, th.text_dim);
+            let sx = lx + lab_w + gap;
             self.schema.set_scale(s);
             self.schema
                 .set_bounds(Rect::new(sx, y2, wi - pad - sx, box_h), inv);
@@ -1707,15 +1785,17 @@ impl FindObjWin {
                 th.chrome_bg,
             );
             let col_icon = px(24.0);
-            let w_name = (list_outer.w as f32 * 0.30) as i32;
-            let w_schema = (list_outer.w as f32 * 0.15) as i32;
-            let w_server = (list_outer.w as f32 * 0.20) as i32;
+            let w_kind = px(96.0);
+            let w_name = (list_outer.w as f32 * 0.27) as i32;
+            let w_schema = (list_outer.w as f32 * 0.14) as i32;
+            let w_server = (list_outer.w as f32 * 0.18) as i32;
             let hy = dc.text_center_y(list_outer.y, hdr_h);
             let arrow = if self.sort.1 { " ▲" } else { " ▼" };
             let mut hx = list_outer.x + col_icon;
-            let w_match = list_outer.right() - hx - w_name - w_schema - w_server;
+            let w_match = list_outer.right() - hx - w_kind - w_name - w_schema - w_server;
             self.hdr_rects.clear();
             for (key, msg, w) in [
+                (SortKey::Kind, Msg::FoColKind, w_kind),
                 (SortKey::Name, Msg::FoColName, w_name),
                 (SortKey::Schema, Msg::FoColSchema, w_schema),
                 (SortKey::Server, Msg::FoColServer, w_server),
@@ -1753,9 +1833,14 @@ impl FindObjWin {
                 }
                 let (name, schema, label, summary, kind) = {
                     let row = &self.rows[i];
+                    // SQL Server 전 DB 검색 = 스키마 칸에 `DB.스키마`(어느 DB인지 보이게 · 협업 V1 10-15).
+                    let schema = match row.db.as_deref().filter(|d| !d.is_empty()) {
+                        Some(db) => format!("{db}.{}", row.schema),
+                        None => row.schema.clone(),
+                    };
                     (
                         row.name.clone(),
-                        row.schema.clone(),
+                        schema,
                         row.label.clone(),
                         row.summary(),
                         row.kind,
@@ -1765,6 +1850,14 @@ impl FindObjWin {
                 dc.image(lr.x + px(4.0), y + (self.row_h - icon_px) / 2, &img, lr);
                 let ty = dc.text_center_y(y, self.row_h);
                 let mut tx = lr.x + col_icon;
+                dc.text(
+                    tx,
+                    ty,
+                    Rect::new(tx, y, w_kind - px(6.0), self.row_h),
+                    &kind.code().to_ascii_uppercase().replace('_', " "),
+                    th.text_dim,
+                );
+                tx += w_kind;
                 dc.text(
                     tx,
                     ty,
@@ -1861,7 +1954,16 @@ impl FindObjWin {
                 b.paint(&mut dc, th);
             }
             self.server.paint(&mut dc, th);
+            for b in &self.opts {
+                b.paint(&mut dc, th, s);
+            }
             self.ring.paint(&mut dc, th, self.ring_rect, px(4.0), s);
+            if let Some(b) = self.opts.iter().find(|b| {
+                b.hover_since
+                    .is_some_and(|t0| t0.elapsed().as_millis() >= TOOLTIP_MS)
+            }) {
+                draw_tooltip_in(&mut dc, th, b.rect, (0, wi), t(b.kind.tip()), s);
+            }
             self.query.paint_popup(&mut dc, th);
             self.schema.paint_popup(&mut dc, th);
             self.filter.paint_popup(&mut dc, th);
@@ -1882,9 +1984,9 @@ impl FindObjWin {
             }
             _ => ("", spec),
         };
-        self.opt_case.set_checked(flags.contains('c'));
-        self.opt_word.set_checked(flags.contains('w'));
-        self.opt_regex.set_checked(flags.contains('r'));
+        self.set_opt(BtnKind::Case, flags.contains('c'));
+        self.set_opt(BtnKind::Word, flags.contains('w'));
+        self.set_opt(BtnKind::Regex, flags.contains('r'));
         self.query.set_text(text);
         self.start()
     }
@@ -1901,7 +2003,7 @@ impl FindObjWin {
         let (l1, l2) = self.progress_lines();
         let p = &self.prog;
         let mut s = format!(
-            "running={}|rows={}|view={}|servers={}/{}|schemas={}|tasks={}/{}|scanned={}|hits={}|notes={}|errors={}\n{}\n{}\n",
+            "running={}|rows={}|view={}|servers={}/{}|schemas={}|tasks={}/{}|scanned={}|hits={}|notes={}|errors={}|opts={}{}{}|all_dbs={}\n{}\n{}\n",
             self.running,
             self.rows.len(),
             self.view.len(),
@@ -1914,6 +2016,10 @@ impl FindObjWin {
             p.hits,
             p.notes.join(";"),
             p.errors.join(";"),
+            if self.opt(BtnKind::Case) { 'c' } else { '-' },
+            if self.opt(BtnKind::Word) { 'w' } else { '-' },
+            if self.opt(BtnKind::Regex) { 'r' } else { '-' },
+            self.all_dbs.is_checked(),
             l1,
             l2
         );

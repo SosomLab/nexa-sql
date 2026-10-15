@@ -256,6 +256,10 @@ struct App {
     objbk_prune_next: Option<Instant>,
     /// ★ 운영 2단 확인을 **이미 거친** 실행 한 번(삭제 창 모달 2단 · 백업 뒤 재진입 · 114 G6 · 10-15): `run_text_in`이 소비한다.
     prod_confirmed_once: bool,
+    /// ★ 보류 카드/토스트 [커밋] 뒤 "COMMIT + 남은 문장" 재진입 한 번(러너 `HoldPolicy.commit_ok`).
+    hold_commit_ok_once: bool,
+    /// ★ 삭제 창(모달 2단 뒤)의 DROP 한 번은 운영 보류를 건너뛴다(확인이 넷이 되지 않게 · 114 §10-1).
+    hold_skip_once: bool,
     /// ★ CREATE 문 ↔ 실제 객체 비교(T-283): 서버 DDL을 기다리는 대상 · 마지막 비교(이름 · 서버 DDL · 차이 수 = "서버 DDL 열기"·덤프).
     compare_wait: Option<app::compare::CompareTarget>,
     compare_last: Option<(String, String, usize)>,
@@ -1709,6 +1713,8 @@ fn main() {
         objbk_skip_once: false,
         objbk_prune_next: None,
         prod_confirmed_once: false,
+        hold_commit_ok_once: false,
+        hold_skip_once: false,
         compare_wait: None,
         compare_last: None,
         compare_diff_key: String::new(),

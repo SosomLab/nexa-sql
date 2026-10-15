@@ -132,6 +132,124 @@ fn count_of(r: &ExecResult) -> Option<u64> {
     }
 }
 
+/// ★ 운영 보류 커밋 정책(docs/114 §5 · D-295~D-299 · 10-15): 호스트가 운영 접속 + 설정으로 **이번 실행**에 넘긴다 · `None` = 보통 실행.
+/// 보류 모드 = 자동 커밋 모드여도 변경 문장을 명시 트랜잭션 안에서 돌리고(수동 모드의 시작문 규칙 재사용) 끝에 커밋하지 않는다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct HoldPolicy {
+    /// 실행 합계 영향 행 수 기준(0 = 변경이 있으면 늘 보류 · D-295 · D-296).
+    pub rows: u64,
+    /// PL/SQL 블록·EXEC·CALL = 행 수와 무관하게 보류(D-297).
+    pub blocks: bool,
+    /// WHERE 없는 UPDATE/DELETE = 행 수와 무관하게 보류.
+    pub no_where: bool,
+    /// 스크립트의 **첫** `COMMIT` 문은 이미 확인됐다(보류 카드/토스트 [커밋] 뒤 이어 실행 · 한 번만 · D-299).
+    pub commit_ok: bool,
+}
+
+/// 보류된 문장 하나(카드 · 트랜잭션 로그 · 상태줄).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldStmt {
+    pub index: usize,
+    pub summary: String,
+    pub rows: Option<u64>,
+    /// PL/SQL 블록·EXEC·CALL(행 수 불명 · D-297).
+    pub block: bool,
+    /// WHERE 없는 UPDATE/DELETE.
+    pub no_where: bool,
+}
+
+/// 보류 판정(순수 · D-295~D-297): 블록·WHERE 없음은 그 스위치가 켜져 있으면 무조건 · 아니면 합계 ≥ 기준(기준 0 = 늘).
+#[must_use]
+pub fn hold_decision(p: &HoldPolicy, total_rows: u64, block: bool, no_where: bool) -> bool {
+    (p.blocks && block) || (p.no_where && no_where) || total_rows >= p.rows
+}
+
+/// 사용자 `COMMIT` 문인가(`END`·`COMMIT WORK` 포함 · `ROLLBACK`/`ABORT` 제외 · 순수).
+#[must_use]
+pub fn is_commit_sql(sql: &str) -> bool {
+    if nsql_core::TxControl::of_sql(sql) != nsql_core::TxControl::End {
+        return false;
+    }
+    !matches!(nsql_core::first_keyword(sql).as_str(), "ROLLBACK" | "ABORT")
+}
+
+/// `UPDATE`/`DELETE`에 **깊이 0의 `WHERE`가 없다**(순수 · 주석·문자열·따옴표 식별자 안은 무시 · 서브쿼리 안의 WHERE는 세지 않음 ·
+/// 다른 문장 = false). 운영 보류의 "WHERE 없는 변경" 판정(114 §3-3 · G2).
+#[must_use]
+pub fn dml_without_where(sql: &str) -> bool {
+    let cs: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+    let mut depth: i32 = 0;
+    let mut words: Vec<(String, i32)> = Vec::new();
+    while i < cs.len() {
+        let c = cs[i];
+        if c == '-' && cs.get(i + 1) == Some(&'-') {
+            while i < cs.len() && cs[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && cs.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i + 1 < cs.len() && !(cs[i] == '*' && cs[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        if c == '\'' || c == '"' || c == '`' {
+            let q = c;
+            i += 1;
+            while i < cs.len() {
+                if cs[i] == q {
+                    if q == '\'' && cs.get(i + 1) == Some(&'\'') {
+                        i += 2;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '[' {
+            while i < cs.len() && cs[i] != ']' {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '(' {
+            depth += 1;
+            i += 1;
+            continue;
+        }
+        if c == ')' {
+            depth -= 1;
+            i += 1;
+            continue;
+        }
+        if c.is_alphanumeric() || c == '_' {
+            let st = i;
+            while i < cs.len() && (cs[i].is_alphanumeric() || cs[i] == '_') {
+                i += 1;
+            }
+            let w: String = cs[st..i].iter().collect::<String>().to_ascii_uppercase();
+            words.push((w, depth));
+            continue;
+        }
+        i += 1;
+    }
+    let Some((first, _)) = words.first() else {
+        return false;
+    };
+    if first != "UPDATE" && first != "DELETE" {
+        return false;
+    }
+    !words.iter().any(|(w, d)| *d == 0 && w == "WHERE")
+}
+
 #[derive(Debug)]
 pub enum RunEvent {
     /// 항목 실행 시작(줄 · 종류 요약). `server` = 이 항목이 서버로 가는가([`goes_to_server`]) — 클라이언트 명령(`PRINT` ·
@@ -224,6 +342,14 @@ pub enum RunEvent {
         line: usize,
         error: DbError,
     },
+    /// ★ 운영 보류(114 §5 · D-295 · 10-15): 변경이 **커밋되지 않고 열려 있다** — 호스트는 카드·배지·상단 Commit 확인으로 받는다.
+    ///   `at_commit` = 스크립트의 사용자 `COMMIT` 직전에 멈췄다(D-299 · `remaining` = 그 뒤 남은 원문) · 아니면 실행 끝.
+    Held {
+        stmts: Vec<HeldStmt>,
+        total_rows: u64,
+        at_commit: bool,
+        remaining: Option<String>,
+    },
     /// 항목 하나의 단계별 소요(docs/26) — 결과 이벤트 뒤에 온다. CLI `--timing` · GUI 상태줄.
     Timing {
         index: usize,
@@ -276,6 +402,22 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             format!("current database → {db}"),
         )],
         RunEvent::Warning(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
+        RunEvent::Held {
+            stmts,
+            total_rows,
+            at_commit,
+            ..
+        } => vec![LogEntry::new(
+            LogKind::Info,
+            tf(
+                Msg::LogProdHeld,
+                &[
+                    &stmts.len().to_string(),
+                    &total_rows.to_string(),
+                    if *at_commit { "COMMIT" } else { "end" },
+                ],
+            ),
+        )],
         RunEvent::DriverLimits { driver, limits, .. } => vec![LogEntry::new(
             LogKind::Info,
             format!(
@@ -496,6 +638,13 @@ pub struct Runner {
     /// 읽기 트랜잭션 자동 종료(설정 `tx.read_end` · docs/56 L1).
     pub read_end: ReadEnd,
     /// 열린 트랜잭션에 변경이 있었는가(수동 모드 · 커밋/롤백/암묵 커밋/접속에서 초기화).
+    /// ★ 운영 보류 커밋(114 §5 · 10-15): 이번 실행의 정책(`None` = 보통) + 누적(보류 문장 · 합계 행 · 블록 · WHERE 없음) · COMMIT 직전 멈춤 번호.
+    hold: Option<HoldPolicy>,
+    hold_stmts: Vec<HeldStmt>,
+    hold_total: u64,
+    hold_block: bool,
+    hold_no_where: bool,
+    hold_stop: Option<usize>,
     tx_changed: bool,
     /// 사용자가 직접 트랜잭션을 열었거나 잠금을 잡았는가(자동 종료 제외 근거).
     tx_user: bool,
@@ -708,6 +857,12 @@ impl Runner {
             cursor_idle_secs: 0,
             last_unit: None,
             read_end: ReadEnd::Auto,
+            hold: None,
+            hold_stmts: Vec::new(),
+            hold_total: 0,
+            hold_block: false,
+            hold_no_where: false,
+            hold_stop: None,
             tx_changed: false,
             tx_user: false,
             auto_cursor: true,
@@ -1179,6 +1334,78 @@ impl Runner {
         self.tx_changed = false;
         self.tx_user = false;
         self.tx_open = false;
+        self.hold_stmts.clear();
+        self.hold_total = 0;
+        self.hold_block = false;
+        self.hold_no_where = false;
+    }
+
+    /// ★ 이번 실행의 운영 보류 정책(워커가 실행마다 넘긴다 · 끝나면 `None`) — 누적은 비운다.
+    pub fn set_hold(&mut self, p: Option<HoldPolicy>) {
+        self.hold = p;
+        self.hold_stmts.clear();
+        self.hold_total = 0;
+        self.hold_block = false;
+        self.hold_no_where = false;
+        self.hold_stop = None;
+    }
+
+    /// 보류 모드의 문장 결과 누적(변경이면 기록 · 영향 0행 = 변경 아님 · 114 §9-2 B).
+    fn hold_note(&mut self, index: usize, item: &Item, rows: Option<u64>) {
+        if self.hold.is_none() {
+            return;
+        }
+        if tx_effect(&item.text, rows, self.engine.dialect) != TxEffect::Change {
+            return;
+        }
+        let class = nsql_core::TxClass::of_sql(&item.text);
+        let block = matches!(class, nsql_core::TxClass::Other);
+        let no_where = dml_without_where(&item.text);
+        self.hold_total += rows.unwrap_or(0);
+        self.hold_block |= block;
+        self.hold_no_where |= no_where;
+        self.hold_stmts.push(HeldStmt {
+            index,
+            summary: summary(item),
+            rows,
+            block,
+            no_where,
+        });
+    }
+
+    /// 가장 바깥 실행이 끝났다(또는 사용자 `COMMIT` 직전에 멈췄다) — 보류냐 커밋이냐(D-295~D-297) · 보류 = 사건 + 트랜잭션은 그대로 ·
+    /// 기준 미만(기준을 올린 경우만) = 지금 커밋(A9).
+    fn hold_finish(
+        &mut self,
+        at_commit: bool,
+        remaining: Option<String>,
+        emit: &mut dyn FnMut(RunEvent),
+    ) {
+        let Some(p) = self.hold else {
+            return;
+        };
+        if !self.tx_changed || self.hold_stmts.is_empty() {
+            return;
+        }
+        if at_commit || hold_decision(&p, self.hold_total, self.hold_block, self.hold_no_where) {
+            let stmts = std::mem::take(&mut self.hold_stmts);
+            emit(RunEvent::Held {
+                stmts,
+                total_rows: self.hold_total,
+                at_commit,
+                remaining,
+            });
+            return;
+        }
+        if let Some(sess) = self.session.as_mut() {
+            let _ = sess.commit();
+        }
+        let total = self.hold_total;
+        self.note_tx_ended();
+        emit(RunEvent::Message(tf(
+            Msg::RunHoldAutoCommitted,
+            &[&total.to_string()],
+        )));
     }
 
     /// 기본 자동 커밋 모드인가(설정 · 스크립트 `SET AUTOCOMMIT` 반영).
@@ -1847,6 +2074,9 @@ impl Runner {
         self.run_depth += 1;
         let ok = self.run_item(0, &item, prompt, emit);
         self.run_depth -= 1;
+        if self.run_depth == 0 {
+            self.hold_finish(false, None, emit);
+        }
         usize::from(!ok)
     }
 
@@ -1874,8 +2104,20 @@ impl Runner {
                     break;
                 }
             }
+            // ★ 운영 보류: 사용자 `COMMIT` 직전에 멈췄다 → 남은 원문(그 뒤 첫 문장부터)을 호스트에 넘기고 끝(D-299).
+            if self.hold_stop.take().is_some() {
+                let remaining = items
+                    .get(i + 1)
+                    .map(|it| src[it.span.start..].trim().to_string())
+                    .filter(|r| !r.is_empty());
+                self.hold_finish(true, remaining, emit);
+                break;
+            }
         }
         self.run_depth -= 1;
+        if self.run_depth == 0 {
+            self.hold_finish(false, None, emit);
+        }
         if pushed.is_some() {
             self.script_dirs.pop();
         }
@@ -1994,6 +2236,17 @@ impl Runner {
         prompt: Prompter<'_>,
         emit: &mut dyn FnMut(RunEvent),
     ) -> bool {
+        // ★ 운영 보류(D-299): 스크립트의 사용자 `COMMIT`은 변경이 열려 있으면 **보내지 않고 멈춘다**(호스트 확인 뒤 재진입 = `commit_ok`).
+        if let Some(p) = self.hold.as_mut() {
+            if is_commit_sql(&item.text) {
+                if p.commit_ok {
+                    p.commit_ok = false;
+                } else if self.tx_changed {
+                    self.hold_stop = Some(index);
+                    return true;
+                }
+            }
+        }
         emit(RunEvent::Begin {
             index,
             line: item.line,
@@ -2452,9 +2705,11 @@ impl Runner {
             return false;
         };
         // ★ 수동 커밋 모드: 서버가 문장마다 자동 커밋하는 방언이면 트랜잭션을 먼저 연다(T-146).
+        // ★ 운영 보류(114 §5 A6): 자동 커밋 모드여도 명시 트랜잭션으로(수동 모드의 시작문 규칙 그대로).
+        let autocommit_eff = self.engine.settings.autocommit && self.hold.is_none();
         if let Some(begin) = manual_begin_sql(
             &self.engine.caps,
-            self.engine.settings.autocommit,
+            autocommit_eff,
             self.tx_open,
             self.tx_user,
             nsql_core::TxControl::of_sql(&item.text),
@@ -2591,6 +2846,7 @@ impl Runner {
                         elapsed,
                     });
                 }
+                self.hold_note(index, item, result.rows_affected);
                 // ★ `USE db` 성공(10-01 · 101 §3): 세션의 현재 DB가 바뀌었다 — 호스트에 알린다(파싱만 · 왕복 0).
                 if let Some(d) = self.dialect() {
                     if let Some(db) = nsql_catalog::context_switch_name(d, &item.text) {
@@ -2641,7 +2897,7 @@ impl Runner {
                     self.cursor = kept;
                     return false;
                 }
-                if self.engine.settings.autocommit {
+                if autocommit_eff {
                     let needed = self
                         .engine
                         .caps
@@ -4907,5 +5163,60 @@ mod apply_changes_tests {
             "{l:?}"
         );
         assert!(!l.contains(&"COMMIT".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod hold_tests {
+    use super::*;
+
+    #[test]
+    fn hold_decision_mcdc() {
+        let p = HoldPolicy {
+            rows: 0,
+            blocks: true,
+            no_where: true,
+            commit_ok: false,
+        };
+        // 기준 0 = 변경이 있으면 늘(행 0이어도 — 호출자는 변경 문장이 있을 때만 묻는다).
+        assert!(hold_decision(&p, 0, false, false));
+        let p5 = HoldPolicy { rows: 5, ..p };
+        assert!(!hold_decision(&p5, 4, false, false));
+        assert!(hold_decision(&p5, 5, false, false));
+        // 블록·WHERE 없음은 각자 스위치로만.
+        assert!(hold_decision(&p5, 1, true, false));
+        assert!(hold_decision(&p5, 1, false, true));
+        let off = HoldPolicy {
+            blocks: false,
+            no_where: false,
+            ..p5
+        };
+        assert!(!hold_decision(&off, 1, true, true));
+    }
+
+    #[test]
+    fn commit_sql_and_where_detection() {
+        assert!(is_commit_sql("COMMIT"));
+        assert!(is_commit_sql("commit work;"));
+        assert!(is_commit_sql("END"));
+        assert!(!is_commit_sql("ROLLBACK"));
+        assert!(!is_commit_sql("ROLLBACK TO sp1"));
+        assert!(!is_commit_sql("BEGIN NULL; END;"));
+        assert!(dml_without_where("UPDATE t SET a = 1"));
+        assert!(dml_without_where("DELETE FROM hr.emp"));
+        assert!(!dml_without_where("UPDATE t SET a = 1 WHERE id = 3"));
+        assert!(!dml_without_where(
+            "DELETE FROM t WHERE id IN (SELECT id FROM x)"
+        ));
+        // 서브쿼리 안의 WHERE는 깊이 1 = 세지 않음 · 문자열·주석 안의 WHERE도 무시.
+        assert!(dml_without_where(
+            "UPDATE t SET a = (SELECT MAX(v) FROM x WHERE x.k = 1)"
+        ));
+        assert!(dml_without_where("UPDATE t SET a = 'where' -- where\n"));
+        assert!(!dml_without_where("INSERT INTO t VALUES (1)"));
+        assert!(!dml_without_where("SELECT 1"));
+        assert!(!dml_without_where(
+            "MERGE INTO t USING s ON (1=1) WHEN MATCHED THEN UPDATE SET a = 1"
+        ));
     }
 }

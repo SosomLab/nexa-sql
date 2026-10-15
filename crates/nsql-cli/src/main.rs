@@ -1331,6 +1331,7 @@ impl Printer {
             }
             // 변수 표 사건은 GUI용(패널·탭 표) — CLI는 `PRINT`/`SHOW VARIABLES`로 본다.
             RunEvent::ReadTxEnded { .. }
+            | RunEvent::Held { .. }
             | RunEvent::Vars { .. }
             | RunEvent::InputNeeded { .. }
             | RunEvent::Binds { .. } => {}

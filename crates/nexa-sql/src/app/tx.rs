@@ -64,8 +64,198 @@ impl App {
     }
 
     /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
+    /// ★ 운영 보류 사건(114 §5 A10~A11 · `RunEvent::Held`): 대기 목록에 문장 등재(배지·툴바·L2 가드가 본다) + 보류 정보 + 카드(토스트 ·
+    /// [커밋] = 상단 Commit과 같은 2단) + Output·로그·상태줄. `at_commit` = 사용자 `COMMIT` 직전에 멈춤(그 뒤 원문 = `remaining`).
+    pub(crate) fn tx_on_held(
+        &mut self,
+        stmts: Vec<nsql_run::HeldStmt>,
+        total_rows: u64,
+        at_commit: bool,
+        remaining: Option<String>,
+    ) {
+        let stamp = nsql_log::now_local().stamp();
+        let when = stamp.get(11..16).unwrap_or("").to_string();
+        let ed = self.sess.run_editor;
+        for h in &stmts {
+            self.txlog
+                .select_session(self.sess.id)
+                .attach_tx(h.index, stamp.clone(), true);
+            self.sess.tx_pending.push(TxItem {
+                editor: ed,
+                at: Instant::now(),
+                when: when.clone(),
+                summary: h.summary.clone(),
+                class: nsql_core::TxClass::of_sql(&h.summary),
+            });
+        }
+        self.sess.tx_dirty = true;
+        self.sess.tx_stale_logged = false;
+        self.sess.last_exec = Instant::now();
+        let n = stmts.len();
+        self.sess.prod_held = Some(sessions::HeldInfo {
+            editor: ed,
+            total_rows,
+            stmts: n,
+            remaining,
+            at_commit,
+        });
+        let body = tf(
+            Msg::HoldCardBody,
+            &[&n.to_string(), &total_rows.to_string()],
+        );
+        let title = t(if at_commit {
+            Msg::HoldCardTitleCommit
+        } else {
+            Msg::HoldCardTitle
+        });
+        self.toasts.push_button_sticky(
+            toast::ToastKind::Warn,
+            title,
+            body.clone(),
+            t(Msg::HoldBtnCommit),
+            "hold.commit",
+        );
+        self.output_push(ed, crate::output::OutKind::Warn, &body);
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, body.clone()));
+        self.sess.status = body;
+        self.txlog_win.redraw();
+        self.sync_tx_ui();
+    }
+
+    /// ★ 실행 전 트랜잭션 게이트(D-298 · D-304 · 순수 판정 + MC/DC): 막으면 상태줄 글.
+    pub(crate) fn run_tx_gate(&self, items: &[String]) -> Option<String> {
+        let held = self.sess.prod_held.is_some();
+        let tx_open = held || !self.sess.tx_pending.is_empty() || self.sess.tx_dirty;
+        let has_change = items.iter().any(|s| sessions::is_change_sql(s));
+        let has_ddl = items.iter().any(|s| nsql_core::TxClass::of_sql(s).is_ddl());
+        let implicit = items.iter().any(|s| self.sess.dialect.implicit_commit(s));
+        let same_tab = self
+            .sess
+            .prod_held
+            .as_ref()
+            .is_none_or(|h| h.editor == self.editors.active_id());
+        if sessions::hold_blocks_run(held, same_tab, has_change, has_ddl) {
+            return Some(t(Msg::StHoldBlocksRun).to_string());
+        }
+        let prod =
+            self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
+        let guard_on = prod || self.settings.flag("tx.ddl_commit_guard");
+        if sessions::ddl_guard_blocks(guard_on, tx_open, implicit) {
+            return Some(t(Msg::StDdlGuardBlocked).to_string());
+        }
+        None
+    }
+
+    /// ★ 운영 Commit 2단(D-300 · 상단 Commit · 보류 카드 [커밋] · 상태줄): 첫 클릭 = 무장(빨강 + 토스트 "다시 누르면 반영 · N초") ·
+    /// `tx.prod_commit_confirm_ms` 안 두 번째 클릭 또는 토스트 [커밋] = 커밋. 시간이 지나면 해제(자동 커밋 금지).
+    pub(crate) fn tx_hold_commit(&mut self) {
+        let confirm_ms = self
+            .settings
+            .int("tx.prod_commit_confirm_ms")
+            .clamp(1000, 60_000) as u64;
+        let armed_for = self.sess.commit_armed.map(|t0| t0.elapsed());
+        if sessions::commit_armed_ok(armed_for, confirm_ms) {
+            self.tx_hold_commit_go();
+            return;
+        }
+        self.sess.commit_armed = Some(Instant::now());
+        let (n, rows) = self
+            .sess
+            .prod_held
+            .as_ref()
+            .map_or((self.sess.tx_pending.len(), 0), |h| (h.stmts, h.total_rows));
+        self.toasts.push_button_sticky(
+            toast::ToastKind::Error,
+            t(Msg::HoldCommitArmTitle),
+            tf(
+                Msg::HoldCommitArmBody,
+                &[
+                    &n.to_string(),
+                    &rows.to_string(),
+                    &(confirm_ms / 1000).to_string(),
+                ],
+            ),
+            t(Msg::HoldBtnCommit),
+            "hold.commit_go",
+        );
+        self.sess.status = t(Msg::HoldCommitArmTitle).to_string();
+        self.sync_tx_ui();
+    }
+
+    /// 확인된 운영 커밋: 사용자 `COMMIT` 직전에 멈춘 것이면 "COMMIT + 남은 문장"으로 같은 탭에서 재진입(러너 `commit_ok` 한 번) ·
+    /// 아니면 수동 커밋과 같은 길(`Cmd::Commit`).
+    pub(crate) fn tx_hold_commit_go(&mut self) {
+        self.sess.commit_armed = None;
+        let remaining = self
+            .sess
+            .prod_held
+            .as_ref()
+            .and_then(|h| h.remaining.clone());
+        if let Some(rest) = remaining {
+            self.hold_commit_ok_once = true;
+            self.prod_confirmed_once = true;
+            self.run_text_in(format!("COMMIT;\n{rest}"), 0, true, false);
+            self.sync_tx_ui();
+            return;
+        }
+        if let Some(pass) = self.gate_pass() {
+            self.sess.busy = true;
+            self.sess.touch();
+            self.sess.submit(pass, worker::Cmd::Commit);
+            self.sync_gate();
+        }
+        self.sync_tx_ui();
+    }
+
+    /// 무장 해제 틱(D-300 "만료 = 해제 · 자동 커밋 금지") — 깨울 시각.
+    pub(crate) fn tx_hold_tick(&mut self, now: Instant) -> Option<Instant> {
+        let confirm_ms = self
+            .settings
+            .int("tx.prod_commit_confirm_ms")
+            .clamp(1000, 60_000) as u64;
+        let armed = self.sess.commit_armed?;
+        let due = armed + Duration::from_millis(confirm_ms);
+        if now >= due {
+            self.sess.commit_armed = None;
+            self.toasts.dismiss_action("hold.commit_go");
+            self.sync_tx_ui();
+            None
+        } else {
+            Some(due)
+        }
+    }
+
+    /// 자체 시험 덤프(`tx.dump:<파일>`): 대기 수 · 보류 · 무장 · 자동 커밋 설정.
+    pub(crate) fn tx_dump(&self) -> String {
+        let held = self
+            .sess
+            .prod_held
+            .as_ref()
+            .map_or("none".to_string(), |h| {
+                format!(
+                    "stmts={} rows={} at_commit={} remaining={}",
+                    h.stmts,
+                    h.total_rows,
+                    h.at_commit,
+                    h.remaining.as_ref().map_or(0, |r| r.len())
+                )
+            });
+        format!(
+            "pending={}|held={}|armed={}|autocommit={}\n",
+            self.sess.tx_pending.len(),
+            held,
+            self.sess.commit_armed.is_some(),
+            self.settings.flag("session.autocommit")
+        )
+    }
+
     fn tx_clear(&mut self) {
         self.tx_guard_reset();
+        self.sess.prod_held = None;
+        self.sess.commit_armed = None;
+        self.toasts.dismiss_action("hold.commit");
+        self.toasts.dismiss_action("hold.commit_go");
         self.sess.tx_blockers = 0;
         self.sess.tx_blocker_who.clear();
         self.sess.tx_pending.clear();
@@ -421,7 +611,9 @@ impl App {
 
     /// 카운트다운 만료 — 자동 처리(롤백/커밋) + 트랜잭션 로그·로그 창·토스트·상태줄 기록.
     fn tx_guard_fire(&mut self, id: u64, action: sessions::TxIdleAction) {
-        let commit = action == sessions::TxIdleAction::Commit;
+        // ★ 운영 보류(D-301): 한도가 지나면 설정과 무관하게 **롤백**(커밋 자동 처리 금지).
+        let held = self.sess_by_id(id).is_some_and(|s| s.prod_held.is_some());
+        let commit = action == sessions::TxIdleAction::Commit && !held;
         let done = self.with_sess(id, |a| {
             if a.sess.blocked() || a.sess.tx_pending.is_empty() {
                 a.sess.tx_countdown = None;
@@ -620,6 +812,11 @@ impl App {
                 },
                 &mut inv,
             );
+        }
+        // ★ 운영 Commit 무장(D-300) = 빨강(두 번째 클릭 = 커밋 · 시간 지나면 원래대로).
+        if self.sess.commit_armed.is_some() {
+            self.tool_dock
+                .set_item_tone("run.commit", ToolTone::Danger, &mut inv);
         }
         self.redraw();
     }

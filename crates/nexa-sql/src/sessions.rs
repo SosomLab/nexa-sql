@@ -122,6 +122,10 @@ pub(crate) struct Sess {
     pub tx_blocker_who: Vec<String>,
     /// 운영 접속의 변경 문장 실행 2단 확인(같은 본문을 3초 안에 다시 실행하면 진행 · docs/56 §4).
     pub prod_armed: Option<(u64, std::time::Instant)>,
+    /// ★ 운영 보류(114 §5 · 10-15): 커밋되지 않고 열린 변경(카드 · 상단 Commit 확인 · 다른 탭 차단 · 한도 = 롤백).
+    pub prod_held: Option<HeldInfo>,
+    /// 상단 Commit 빨간 2단(D-300): 첫 클릭 시각 — `tx.prod_commit_confirm_ms` 안 두 번째 클릭 = 커밋.
+    pub commit_armed: Option<Instant>,
     /// 이번 실행에서 성공한 DDL의 대상(docs/57 T1) — 실행이 끝나면 폴더별로 한 번 탐색기에 반영한다.
     pub ddl_now: Vec<nsql_core::DdlTarget>,
     /// 트랜잭션 DDL 방언의 수동 커밋에서 **커밋을 기다리는** DDL 대상(커밋 = 반영 · 롤백·세션 소실 = 버림 · D-107).
@@ -220,6 +224,8 @@ impl Sess {
             tx_warned_at: None,
             tx_snooze_until: None,
             tx_countdown: None,
+            prod_held: None,
+            commit_armed: None,
             tx_blockers: 0,
             tx_block_next: Instant::now(),
             tx_block_off: false,
@@ -799,6 +805,65 @@ pub(crate) fn extra_result_slot(
 /// 사용자가 편집기에서 **직접 실행한** 트랜잭션 종료문인가(09-27 사용자 실기 "ROLLBACK을 쿼리로 실행하면 툴바·pending·로그가 안 바뀐다").
 /// `Some(true)` = 커밋 계열(`COMMIT` · `END`) · `Some(false)` = 되돌림 계열(`ROLLBACK` · `ABORT`) · `None` = 종료문 아님
 /// (`ROLLBACK TO SAVEPOINT …`는 트랜잭션을 끝내지 않으므로 None — `TxControl::of_sql`이 가른다).
+/// ★ 운영 보류 정보(114 §5 A10~A12).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeldInfo {
+    /// 보류를 만든 편집기 탭(같은 탭의 변경은 이어서 허용 · 다른 탭은 차단 · D-298).
+    pub editor: u64,
+    pub total_rows: u64,
+    pub stmts: usize,
+    /// 사용자 `COMMIT` 직전에 멈췄으면 그 뒤 남은 원문(확인 뒤 "COMMIT + 남은 문장" 재진입).
+    pub remaining: Option<String>,
+    pub at_commit: bool,
+}
+
+/// ★ 보류 중 실행 차단 판정(순수 · D-298): 보류가 있고(held) · DDL이면 어느 탭이든 · 변경이면 다른 탭만 막는다 · 조회는 허용.
+pub(crate) fn hold_blocks_run(held: bool, same_tab: bool, has_change: bool, has_ddl: bool) -> bool {
+    held && (has_ddl || (!same_tab && has_change))
+}
+
+/// ★ 트랜잭션 경계 가드(순수 · D-304 · `tx.ddl_commit_guard` · 운영은 늘 켬): 열린 변경 트랜잭션 + 암묵 커밋 문장 = 실행 전 차단.
+pub(crate) fn ddl_guard_blocks(guard_on: bool, tx_open: bool, implicit: bool) -> bool {
+    guard_on && tx_open && implicit
+}
+
+/// ★ 상단 Commit 빨간 2단(순수 · D-300): 무장 뒤 경과가 확인 시간 안이면 두 번째 클릭 = 커밋.
+pub(crate) fn commit_armed_ok(armed_for: Option<Duration>, confirm_ms: u64) -> bool {
+    armed_for.is_some_and(|d| d.as_millis() <= u128::from(confirm_ms))
+}
+
+/// DML(INSERT/UPDATE/DELETE)인가 — 보류가 대신하는 문장(114 §9-2 A).
+pub(crate) fn is_dml_sql(sql: &str) -> bool {
+    matches!(
+        nsql_core::TxClass::of_sql(sql),
+        nsql_core::TxClass::Insert | nsql_core::TxClass::Update | nsql_core::TxClass::Delete
+    )
+}
+
+/// 서버 상태를 바꾸는 문장인가(조회·클라이언트 명령·COMMIT/ROLLBACK 제외 · D-298 "변경").
+pub(crate) fn is_change_sql(sql: &str) -> bool {
+    if is_client_only(sql) || nsql_core::TxControl::of_sql(sql) == nsql_core::TxControl::End {
+        return false;
+    }
+    !matches!(
+        nsql_core::TxClass::of_sql(sql),
+        nsql_core::TxClass::None | nsql_core::TxClass::Read
+    )
+}
+
+/// 운영 2단 재실행(E3)에 셀 문장(순수 · 114 §9-2 A): 보류가 켜져 있으면 DML(보류가 대신)과 트랜잭션 통제문(`COMMIT`/`ROLLBACK`/`BEGIN` ·
+/// COMMIT은 D-299 보류 흐름이 따로 확인한다)은 빼고 DDL·블록만 남긴다.
+pub(crate) fn e3_items(hold_on: bool, items: &[String]) -> Vec<String> {
+    if !hold_on {
+        return items.to_vec();
+    }
+    items
+        .iter()
+        .filter(|s| !is_dml_sql(s) && nsql_core::TxControl::of_sql(s) == nsql_core::TxControl::None)
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn user_tx_end(stmt: &str) -> Option<bool> {
     if nsql_core::TxControl::of_sql(stmt) != nsql_core::TxControl::End {
         return None;
@@ -2285,5 +2350,64 @@ mod fetch_card_tests {
         assert!(fetch_card_policy(false, true, true));
         assert!(!fetch_card_policy(false, false, true));
         assert!(fetch_card_policy(false, false, false));
+    }
+}
+
+#[cfg(test)]
+mod hold_tests {
+    use super::*;
+
+    #[test]
+    fn hold_blocks_run_mcdc() {
+        // held가 거짓이면 아무것도 안 막는다.
+        assert!(!hold_blocks_run(false, false, true, true));
+        // DDL = 같은 탭이든 다른 탭이든.
+        assert!(hold_blocks_run(true, true, false, true));
+        // 변경 = 다른 탭만.
+        assert!(hold_blocks_run(true, false, true, false));
+        assert!(!hold_blocks_run(true, true, true, false));
+        // 조회 = 허용.
+        assert!(!hold_blocks_run(true, false, false, false));
+    }
+
+    #[test]
+    fn ddl_guard_blocks_mcdc() {
+        assert!(ddl_guard_blocks(true, true, true));
+        assert!(!ddl_guard_blocks(false, true, true));
+        assert!(!ddl_guard_blocks(true, false, true));
+        assert!(!ddl_guard_blocks(true, true, false));
+    }
+
+    #[test]
+    fn commit_armed_window() {
+        assert!(!commit_armed_ok(None, 5000));
+        assert!(commit_armed_ok(Some(Duration::from_millis(4999)), 5000));
+        assert!(!commit_armed_ok(Some(Duration::from_millis(5001)), 5000));
+    }
+
+    #[test]
+    fn e3_items_skip_dml_only_when_hold() {
+        let items: Vec<String> = [
+            "UPDATE t SET a=1",
+            "DROP TABLE x",
+            "BEGIN NULL; END;",
+            "DELETE FROM t",
+            "COMMIT",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(e3_items(false, &items).len(), 5);
+        let kept = e3_items(true, &items);
+        assert_eq!(
+            kept,
+            vec!["DROP TABLE x".to_string(), "BEGIN NULL; END;".to_string()]
+        );
+        assert!(is_change_sql("UPDATE t SET a=1") && is_change_sql("DROP TABLE x"));
+        assert!(
+            !is_change_sql("SELECT 1")
+                && !is_change_sql("COMMIT")
+                && !is_change_sql("SET DEFINE OFF")
+        );
     }
 }

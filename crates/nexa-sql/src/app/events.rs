@@ -1392,6 +1392,12 @@ impl App {
                         self.sess.closing = true;
                     }
                 }
+                RunEvent::Held {
+                    stmts,
+                    total_rows,
+                    at_commit,
+                    remaining,
+                } => self.tx_on_held(stmts, total_rows, at_commit, remaining),
                 RunEvent::ReadTxEnded { index, deferred } => self.tx_on_read_ended(index, deferred),
                 RunEvent::Timing { index, timeline } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
