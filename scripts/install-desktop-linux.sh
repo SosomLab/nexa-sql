@@ -7,7 +7,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; EXE="$ROOT/target/release/nexa-sql"; ORA=""; REMOVE=0
 while [ $# -gt 0 ]; do case $1 in -e) EXE=$2; shift;; --oracle) ORA=$2; shift;; --remove) REMOVE=1;; esac; shift; done
 APPS="$HOME/.local/share/applications"; ICONS="$HOME/.local/share/icons/hicolor"
-if [ $REMOVE = 1 ]; then rm -f "$APPS/nexa-sql.desktop"; for s in 16 24 32 48 64 128 256 512; do rm -f "$ICONS/${s}x${s}/apps/nexa-sql.png"; done; echo "removed"; exit 0; fi
+if [ $REMOVE = 1 ]; then rm -f "$APPS/nexa-sql.desktop" "$HOME/.local/share/mime/packages/nexa-sql.xml"; for s in 16 24 32 48 64 128 256 512; do rm -f "$ICONS/${s}x${s}/apps/nexa-sql.png"; done; echo "removed"; exit 0; fi
 mkdir -p "$APPS"
 for s in 16 24 32 48 64 128 256 512; do
   src="$ROOT/packaging/branding/png/nexa-sql-$s.png"; [ -f "$src" ] || continue
@@ -18,6 +18,9 @@ EXEC="\"$EXE\" %F"; [ -n "$ORA" ] && EXEC="env LD_LIBRARY_PATH=\"$ORA\" TNS_ADMI
 sed -e "s|^Exec=.*|Exec=$EXEC|" -e "s|^Icon=.*|Icon=nexa-sql|" "$ROOT/packaging/linux/nexa-sql.desktop" > "$APPS/nexa-sql.desktop"
 chmod 644 "$APPS/nexa-sql.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null
+# MIME(.nsql-project · 10-15): 사용자 영역 shared-mime-info.
+MIME="$HOME/.local/share/mime"; mkdir -p "$MIME/packages"; cp "$ROOT/packaging/linux/nexa-sql.xml" "$MIME/packages/nexa-sql.xml"
+command -v update-mime-database >/dev/null && update-mime-database "$MIME" >/dev/null 2>&1
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -f -t "$ICONS" 2>/dev/null
 command -v xdg-icon-resource >/dev/null && xdg-icon-resource forceupdate 2>/dev/null
 echo "installed: $APPS/nexa-sql.desktop (Exec=$EXEC) · icons $ICONS/*/apps/nexa-sql.png — 실행 중인 앱은 다시 띄워야 app_id로 아이콘이 붙는다"

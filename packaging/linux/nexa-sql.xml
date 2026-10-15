@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- nexa-sql.xml — shared-mime-info package: Nexa SQL project files (.nsql-project).
+     `.sql` is already `application/sql` in shared-mime-info; it is not redefined here (docs/33 §2-4).
+     Installed to /usr/share/mime/packages/ (deb · rpm) or ~/.local/share/mime/packages/ (scripts/install-desktop-linux.sh),
+     followed by `update-mime-database`. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-nexa-sql-project">
+    <comment>Nexa SQL project</comment>
+    <comment xml:lang="ko">Nexa SQL 프로젝트</comment>
+    <sub-class-of type="text/plain"/>
+    <glob pattern="*.nsql-project"/>
+    <icon name="nexa-sql"/>
+  </mime-type>
+</mime-info>

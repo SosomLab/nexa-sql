@@ -40,15 +40,18 @@ cp -a %{_stagedir}/. %{buildroot}%{_prefix}/
 %post
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f %{_datadir}/icons/hicolor 2>/dev/null || :
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q %{_datadir}/applications 2>/dev/null || :
+command -v update-mime-database >/dev/null 2>&1 && update-mime-database %{_datadir}/mime >/dev/null 2>&1 || :
 
 %postun
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f %{_datadir}/icons/hicolor 2>/dev/null || :
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q %{_datadir}/applications 2>/dev/null || :
+command -v update-mime-database >/dev/null 2>&1 && update-mime-database %{_datadir}/mime >/dev/null 2>&1 || :
 
 %files
 %{_bindir}/nexa-sql
 %{_bindir}/nsql
 %{_datadir}/applications/nexa-sql.desktop
+%{_datadir}/mime/packages/nexa-sql.xml
 %{_datadir}/icons/hicolor/*/apps/nexa-sql.png
 %dir %{_datadir}/nexa-sql
 %{_datadir}/nexa-sql/Packages

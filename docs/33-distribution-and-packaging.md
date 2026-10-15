@@ -61,6 +61,16 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 ---
 
+### 2-4. 파일 확장자 연결(3-OS · 10-15 사용자 "default.nsql-project 확장자 등록 · 윈도우 .sql 연결 미동작 · 전체 점검")
+
+| OS | `.sql` | `.nsql-project`(고유 형식) | 반영 · 한계 |
+|---|---|---|---|
+| Windows(MSI `nexa-sql.wxs` Feature `SqlAssoc`) | "다음으로 열기" **후보만**(`HKCR\.sql\OpenWithProgids` → ProgId `NexaSQL.sql` · 기본 앱을 뺏지 않는다 D-49) | **기본 처리기**(`HKCR\.nsql-project` 기본값 = `NexaSQL.project` · Content Type `application/x-nexa-sql-project`) | + `Applications\nexa-sql.exe`(열기 대화상자 목록 · `SupportedTypes`) + Default Programs(`Capabilities` · `RegisteredApplications`) = 설정 ▸ 기본 앱 · 키는 제거 때 삭제 · ★ **종전 결함** = Feature `Level=2`(기본 꺼짐 · UI 기능 트리에서 "사용 안 함" · `/qn`·winget·choco 조용한 설치는 아예 미설치)라 **아무것도 등록되지 않던 것** → `Level=1`(기본 켬 · 후보 등록은 안전) · 실기 = 다음 MSI 설치 뒤 `.sql` 우클릭 ▸ 다른 앱 선택 · `.nsql-project` 더블클릭(T-353) |
+| macOS(`Info.plist`) | `CFBundleDocumentTypes` Alternate(후보) | `UTExportedTypeDeclarations` `com.sosomlab.nexa-sql.project`(Owner) | ⚠ Finder가 넘기는 파일 = Apple Event(`odoc`) · winit/nexa-sys에 받는 길이 **아직 없음** → 등록만으로는 더블클릭 열기가 완성되지 않음(앱은 뜨되 파일은 안 열림) = **T-352**(nexa-sys `application:openFiles:` → 앱 채널) |
+| Linux(deb·rpm) | shared-mime-info의 `application/sql`(재정의 없음) | `packaging/linux/nexa-sql.xml` → `/usr/share/mime/packages/` + `update-mime-database`(postinst/%post · 제거도) | `.desktop` = `Exec=nexa-sql %F` + `MimeType=application/sql;application/x-nexa-sql-project;` · 개발 PC = `scripts/install-desktop-linux.sh`(사용자 영역 mime) · 파일 관리자 "다른 앱으로 열기"/기본 앱 = DE 몫 |
+
+앱 쪽(3-OS 공통) = 인자 `split_file_args`(`.nsql-project` = 프로젝트 · 존재하는 파일 = 열기 · 폴더 = 작업 폴더) · 창에 끌어 놓은 파일(`WindowEvent::DroppedFile`)도 **같은 규칙**(10-15 ⑥ · 종전 = `.nsql-project`가 글 파일로 열림) · 다중 인스턴스 시작 모드라 이미 떠 있어도 새 인스턴스로 연다(09-22).
+
 ## 3. 파이프라인(T-72)
 
 | 단계 | 내용 | 원천 |

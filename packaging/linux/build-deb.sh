@@ -43,6 +43,9 @@ mkdir -p "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications" "$PKG/usr/sh
 install -m 0755 "$BIN/nexa-sql" "$PKG/usr/bin/nexa-sql"
 install -m 0755 "$BIN/nsql" "$PKG/usr/bin/nsql"
 install -m 0644 "$ROOT/packaging/linux/nexa-sql.desktop" "$PKG/usr/share/applications/nexa-sql.desktop"
+# MIME(.nsql-project · docs/33 §2-4) — .sql은 shared-mime-info의 application/sql.
+mkdir -p "$PKG/usr/share/mime/packages"
+install -m 0644 "$ROOT/packaging/linux/nexa-sql.xml" "$PKG/usr/share/mime/packages/nexa-sql.xml"
 for n in 16 24 32 48 64 128 256 512; do
     d="$PKG/usr/share/icons/hicolor/${n}x${n}/apps"; mkdir -p "$d"
     install -m 0644 "$BRANDING/png/nexa-sql-$n.png" "$d/nexa-sql.png"
@@ -61,6 +64,7 @@ cat > "$PKG/DEBIAN/postinst" <<'EOF'
 set -e
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications 2>/dev/null || true
+command -v update-mime-database >/dev/null 2>&1 && update-mime-database /usr/share/mime >/dev/null 2>&1 || true
 exit 0
 EOF
 cp "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/postrm"; chmod 0755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/postrm"
@@ -72,5 +76,5 @@ note "$(basename "$FINAL") $(du -h "$FINAL" | cut -f1) · sha256 $(sha256_of "$F
 
 step "검증(설치 없이)"
 dpkg-deb --info "$FINAL" | sed -n '1,6p' | sed 's/^/    /'
-dpkg-deb --contents "$FINAL" | grep -E 'usr/bin/(nexa-sql|nsql)$|nexa-sql.desktop$|256x256/apps/nexa-sql.png$' | awk '{print "    " $NF}'
+dpkg-deb --contents "$FINAL" | grep -E 'usr/bin/(nexa-sql|nsql)$|nexa-sql.desktop$|mime/packages/nexa-sql.xml$|256x256/apps/nexa-sql.png$' | awk '{print "    " $NF}'
 echo "DEB=$FINAL"

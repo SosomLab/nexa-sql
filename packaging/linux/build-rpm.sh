@@ -36,5 +36,5 @@ note "$(basename "$FINAL") $(du -h "$FINAL" | cut -f1) · sha256 $(sha256_of "$F
 
 step "검증(설치 없이)"
 rpm -qpi "$FINAL" 2>/dev/null | sed -n '1,8p' | sed 's/^/    /'
-rpm -qpl "$FINAL" 2>/dev/null | grep -E 'bin/(nexa-sql|nsql)$|nexa-sql.desktop$|256x256/apps/nexa-sql.png$' | sed 's/^/    /'
+rpm -qpl "$FINAL" 2>/dev/null | grep -E 'bin/(nexa-sql|nsql)$|nexa-sql.desktop$|mime/packages/nexa-sql.xml$|256x256/apps/nexa-sql.png$' | sed 's/^/    /'
 echo "RPM=$FINAL"

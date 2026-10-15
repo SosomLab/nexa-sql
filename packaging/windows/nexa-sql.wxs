@@ -11,7 +11,7 @@
   설계 의도(docs/33 §2)
   - 기계 단위(Program Files\Nexa SQL · HKLM) — 기업 배포·GPO·`msiexec /qn` 조용한 설치. 사용자 데이터는 %APPDATA%\nexa-sql(설치기는 손대지 않는다).
   - 목적별 exe 둘: nexa-sql.exe(GUI) · nsql.exe(CLI). lib\ 는 향후 공유 dll 자리(지금은 빈 폴더 없음).
-  - 기능(Feature): Main(필수) · PathEnv(PATH 추가 · 기본 켬 · `ADDLOCAL`/`REMOVE`로 조정) · SqlAssoc(.sql 연결 · 기본 끔 — GUI 파일 인자 열기가 후속이라 "다음으로 열기" 후보로만).
+  - 기능(Feature): Main(필수) · PathEnv(PATH 추가 · 기본 켬 · `ADDLOCAL`/`REMOVE`로 조정) · SqlAssoc(.sql 후보 + .nsql-project 처리기 · **기본 켬**(10-15 · 종전 Level 2 = 미등록이 결함) — 파일 인자 열기는 `split_file_args` · "다음으로 열기" 후보로만).
   - UpgradeCode 고정 → 같은 코드의 새 버전은 MajorUpgrade로 교체 설치(다운그레이드 차단).
   - 서명은 ps1의 자리(signtool · 시크릿 있을 때만 · DR-20).
 
@@ -115,16 +115,56 @@
       </Component>
     </ComponentGroup>
 
-    <!-- ── 선택: .sql 파일 연결(기본 끔) — "다음으로 열기" 후보. 기본 앱 강탈은 하지 않는다(Advertise 없음 · HKCR 직접 쓰기). ── -->
+    <!-- ── 파일 연결(기본 켬 · 10-15 사용자 "확장자 등록 전체 점검") ──
+         .sql          = "다음으로 열기" 후보만(OpenWithProgids · 기본 앱을 뺏지 않는다 · D-49).
+         .nsql-project = Nexa SQL 고유 형식 → 기본 처리기(HKCR\.nsql-project 기본값 = ProgId).
+         + Applications\nexa-sql.exe(열기 대화상자 목록 · SupportedTypes) + Default Programs(Capabilities · RegisteredApplications)
+           = 설정 ▸ 기본 앱에서 고를 수 있게. 키는 제거 때 지운다(ForceDeleteOnUninstall).
+         종전(≤ 0.2.1) = Level 2(기본 꺼짐 · 기능 트리에서 "사용 안 함")라 아무것도 등록되지 않던 것이 "동작 안 함"의 원인. -->
     <ComponentGroup Id="SqlAssocFiles" Directory="INSTALLFOLDER">
       <Component Id="SqlAssoc" Guid="6C0F3B1E-1B2A-4E7B-9F0C-7A5E2D1C9B44">
         <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="SqlAssoc" Type="integer" Value="1" KeyPath="yes" />
-        <RegistryKey Root="HKCR" Key="NexaSQL.sql">
+        <RegistryKey Root="HKCR" Key="NexaSQL.sql" ForceDeleteOnUninstall="yes">
           <RegistryValue Type="string" Value="SQL Script" />
-          <RegistryValue Key="DefaultIcon" Type="string" Value="[INSTALLFOLDER]nexa-sql.exe,0" />
+          <RegistryValue Name="FriendlyTypeName" Type="string" Value="SQL Script" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot;,0" />
+          <RegistryValue Key="shell\open" Name="FriendlyAppName" Type="string" Value="Nexa SQL" />
           <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot; &quot;%1&quot;" />
         </RegistryKey>
         <RegistryValue Root="HKCR" Key=".sql\OpenWithProgids" Name="NexaSQL.sql" Type="string" Value="" />
+        <!-- 열기 대화상자·"다른 앱 선택" 목록의 앱 항목. -->
+        <RegistryKey Root="HKCR" Key="Applications\nexa-sql.exe" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="FriendlyAppName" Type="string" Value="Nexa SQL" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot;,0" />
+          <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot; &quot;%1&quot;" />
+          <RegistryValue Key="SupportedTypes" Name=".sql" Type="string" Value="" />
+          <RegistryValue Key="SupportedTypes" Name=".nsql-project" Type="string" Value="" />
+        </RegistryKey>
+        <!-- Default Programs(설정 ▸ 기본 앱). -->
+        <RegistryKey Root="HKLM" Key="Software\SosomLab\Nexa SQL\Capabilities" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="ApplicationName" Type="string" Value="Nexa SQL" />
+          <RegistryValue Name="ApplicationDescription" Type="string" Value="Cross-platform lightweight SQL client + CLI nsql" />
+          <RegistryValue Key="FileAssociations" Name=".sql" Type="string" Value="NexaSQL.sql" />
+          <RegistryValue Key="FileAssociations" Name=".nsql-project" Type="string" Value="NexaSQL.project" />
+        </RegistryKey>
+        <RegistryValue Root="HKLM" Key="Software\RegisteredApplications" Name="Nexa SQL" Type="string" Value="Software\SosomLab\Nexa SQL\Capabilities" />
+      </Component>
+      <!-- .nsql-project = 고유 형식(프로젝트 파일 · docs/67 §7) → 기본 처리기. -->
+      <Component Id="ProjectAssoc" Guid="A7E4C2D9-5B31-4F0E-9D62-3C8B1F7E6A55">
+        <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="ProjectAssoc" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryKey Root="HKCR" Key="NexaSQL.project" ForceDeleteOnUninstall="yes">
+          <RegistryValue Type="string" Value="Nexa SQL Project" />
+          <RegistryValue Name="FriendlyTypeName" Type="string" Value="Nexa SQL Project" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot;,0" />
+          <RegistryValue Key="shell\open" Name="FriendlyAppName" Type="string" Value="Nexa SQL" />
+          <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+        <RegistryKey Root="HKCR" Key=".nsql-project" ForceDeleteOnUninstall="yes">
+          <RegistryValue Type="string" Value="NexaSQL.project" />
+          <RegistryValue Name="Content Type" Type="string" Value="application/x-nexa-sql-project" />
+          <RegistryValue Name="PerceivedType" Type="string" Value="text" />
+          <RegistryValue Key="OpenWithProgids" Name="NexaSQL.project" Type="string" Value="" />
+        </RegistryKey>
       </Component>
     </ComponentGroup>
 
@@ -134,7 +174,7 @@
       <Feature Id="PathEnv" Title="Add to PATH" Description="Adds the install folder to the system PATH so 'nsql' works in any console." Level="1" AllowAdvertise="no">
         <ComponentGroupRef Id="PathEnvFiles" />
       </Feature>
-      <Feature Id="SqlAssoc" Title="Associate .sql files" Description="Registers Nexa SQL as an 'Open with' candidate for .sql files." Level="2" AllowAdvertise="no">
+      <Feature Id="SqlAssoc" Title="File associations" Description="Registers Nexa SQL as an 'Open with' candidate for .sql files and as the handler for .nsql-project files (Default apps aware)." Level="1" AllowAdvertise="no">
         <ComponentGroupRef Id="SqlAssocFiles" />
       </Feature>
     </Feature>
