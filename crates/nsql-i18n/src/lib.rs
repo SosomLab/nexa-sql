@@ -6033,7 +6033,7 @@ impl Msg {
             Msg::FoStatusNeedQuery => ["Search text is empty", "검색어가 비어 있습니다"],
             Msg::FoStatusRunningHead => ["Searching", "검색 중"],
             Msg::FoStatusDoneHead => ["Done", "완료"],
-            Msg::FoFilterHint => ["Narrow results (name · schema · server · column)", "결과 좁히기(이름 · 스키마 · 서버 · 컬럼)"],
+            Msg::FoFilterHint => ["Narrow results - words AND · name/schema/server/kind/columns/comment · name fuzzy", "결과 좁히기 - 낱말마다 AND · 이름/스키마/서버/종류/컬럼/설명 · 이름은 퍼지"],
             Msg::FoFilterLabel => ["Filter", "거르기"],
             Msg::FoStopped => ["stopped by user", "사용자가 중지"],
             Msg::FoProgressLine1 => ["{0} · servers {1}/{2} · schemas {3} · tasks {4}/{5} · {6} matched rows · {7} objects · {8} matches", "{0} · 서버 {1}/{2} · 스키마 {3} · 작업 {4}/{5} · 일치 행 {6} · 객체 {7} · 일치 {8}"],

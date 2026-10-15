@@ -157,13 +157,12 @@ impl App {
                     name: obj.name,
                     member: None,
                 };
-                if self.explorer.reveal(server.as_ref(), t) {
-                    self.set_focus(Focus::Explorer);
+                // 패널 전환까지 한 길(`explorer_reveal_show` · 10-16) + 모달리스 창에서 메인 창으로 포커스.
+                if self.explorer_reveal_show(server.as_ref(), t) {
                     if let Some(w) = &self.window {
                         crate::winfocus::focus(w);
                     }
                 }
-                self.redraw();
             }
             FoAction::Copy(s) => {
                 if !clipboard::write_text(&s) {

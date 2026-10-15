@@ -210,6 +210,14 @@
 - 소스 탭 = 탐색기 `open_source`와 **같은 길**(`Req::Source` · `ObjectOrigin{server}` · 작업 단위 = 객체 DB/스키마 · 100 §5 보수적 생성) + 열린 뒤 일치 줄로 캐럿(`goto_line`).
 - 탐색기에서 보기 = `ExplorerSet::reveal(server, RevealTarget)`(96 §7 · 단계별 펼침) · 이름 복사 = 탐색기 `name_of` 규칙 · Shift = `full_name_parts`(28 §11) · SELECT = `GenSpec{Select}` → SQL Preview.
 - 창 ↔ 메인 포커스: 창에서 연 소스 탭은 메인을 앞으로(`winfocus::focus`) · 창은 남는다.
+- ★ **탐색기에서 보기 = 패널 전환까지 한 길**(10-16 · 사용자 실기): `App::explorer_reveal_show` = 왼쪽 패널을 객체 탐색기로 바꾸고 찾기 · 포커스 · 수거 — Ctrl 링크 ×2 · 열 머리 · 탭 메뉴 · 객체 찾기 창이 모두 이 함수를 지난다([30 §2](30-architecture-patterns.md)).
+- **미리보기 줄 = 한 번 클릭**으로 소스 탭 그 줄(10-16 · 종전 더블클릭).
+
+### 5-1. 결과 거르기 규칙(10-16 · 사용자 실기 "`1433` 0건")
+
+- 실제 원인 = 거르기는 동작했고 **목록을 내려 둔 스크롤이 새 길이 밖에 남아 빈 화면** → `apply_view` 끝에 `scroll_y` 클램프 + 선택 행 보이기.
+- 규칙 = 공백으로 나눈 **낱말 AND** · 낱말마다 화면 전 열(종류 · DB · 스키마 · 이름 · 서버 · 일치) + 컬럼 이름 + 설명의 **부분 문자열** 또는 **이름 퍼지**(Ctrl+P `fuzzy_score_lower` 재사용 · 예 `cstmr` → customer) · 힌트 문구 갱신 · E2E ⑦-b(낱말 AND · 퍼지).
+- 서버 다중 선택 = **T-358**(nexa-ctl `CheckCombo` · 설계 확정 · 코드 대기 · [journal 10-16 §4](journal/2026-10-16.md)).
 
 ## 6. 설정 · 키 · i18n
 

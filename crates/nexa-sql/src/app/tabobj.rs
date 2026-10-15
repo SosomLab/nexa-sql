@@ -14,7 +14,7 @@ use nsql_core::{DdlTarget, Dialect};
 use nsql_i18n::{t, Msg};
 
 use crate::explorer::RevealTarget;
-use crate::{App, Focus};
+use crate::App;
 
 /// 판정에 읽는 머리 글자 수 — 머리 주석 블록 + 첫 문장이면 충분하다(이보다 긴 머리 주석 뒤의 첫 문장은 못 본다 · 상수 비용 우선).
 pub(crate) const HEAD_CHARS: usize = 16 * 1024;
@@ -179,15 +179,7 @@ impl App {
         };
         let sid = self.sess_id_for_tab(id);
         let spec = self.sess_by_id(sid).and_then(|s| s.spec.clone());
-        if !self.explorer.is_visible() {
-            self.menu_action("view.explorer");
-        }
-        let ok = self.explorer.reveal(spec.as_ref(), obj.target);
-        if ok {
-            self.set_focus(Focus::Explorer);
-            self.explorer_actions();
-        }
-        self.redraw();
+        self.explorer_reveal_show(spec.as_ref(), obj.target);
     }
 }
 

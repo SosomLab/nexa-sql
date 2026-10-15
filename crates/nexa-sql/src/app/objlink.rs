@@ -1900,15 +1900,8 @@ impl App {
         let Some(t) = self.objlink_reveal_target(k) else {
             return;
         };
-        if !self.explorer.is_visible() {
-            self.menu_action("view.explorer");
-        }
         let spec = self.sess.spec.clone();
-        if self.explorer.reveal(spec.as_ref(), t) {
-            self.set_focus(Focus::Explorer);
-            self.explorer_actions();
-        }
-        self.redraw();
+        self.explorer_reveal_show(spec.as_ref(), t);
     }
 
     /// 테이블 이름(`[스키마.]이름` · 인용 허용)과 멤버(컬럼)로 객체 탐색기에서 찾기 — 결과 그리드 열 머리 메뉴의 길(T-180 ⑤).
@@ -1950,13 +1943,7 @@ impl App {
             name,
             member,
         };
-        let ok = self.explorer.reveal(spec.as_ref(), target);
-        if ok {
-            self.set_focus(Focus::Explorer);
-            self.explorer_actions();
-        }
-        self.redraw();
-        ok
+        self.explorer_reveal_show(spec.as_ref(), target)
     }
 
     /// 테이블 이름(`[스키마.]이름`)을 메타 객체로(세션 현재 스키마 · 접근성 · SQL Server dbo 폴백) → (스키마, 이름, id).
@@ -2405,11 +2392,8 @@ impl App {
             }
             _ => (None, schema),
         };
-        if !self.explorer.is_visible() {
-            self.menu_action("view.explorer");
-        }
         let spec = self.sess.spec.clone();
-        let ok = self.explorer.reveal(
+        self.explorer_reveal_show(
             spec.as_ref(),
             crate::explorer::RevealTarget {
                 db,
@@ -2419,11 +2403,6 @@ impl App {
                 member: None,
             },
         );
-        if ok {
-            self.set_focus(Focus::Explorer);
-            self.explorer_actions();
-        }
-        self.redraw();
     }
 
     /// 자체 시험(㉗-k): 이름으로 링크를 찾아 **우클릭한 것처럼** 메뉴를 연다(Ctrl을 잠시 누른 것으로 치고 분석).

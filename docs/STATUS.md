@@ -9,6 +9,7 @@
 - 🔧 운영 보류 실기 결함·보강(사용자 00:20~01:30): 소문자 객체 백업(`fold_ident`) · 수동 모드 대기 이중 등재(6 → 3) · 같은 탭 보류 누적 · ★ 보류 중 `COMMIT;` 문 = 거부 경고(D-308 · CLI는 그대로) · ★ L2 기준 = 가장 오래된 미커밋 문장 뒤 경과(D-307) · 무장 카드 "커밋 (N)" + 툴바 Commit 남은 초 배지 · 자동 모드 + 보류 상태줄 "자동 ● 보류 N건" · nexa-ui 툴바 Danger hover 빨강 유지.
 - ★ 프로그램 내장 명령 자동 완성 + 규칙: `COMMAND_WORDS`(파서) ↔ `CLIENT_COMMANDS`(완성 19) + `client_next`(SET 11 · CONNTYPE 4 · SHOW 3 · VAR · WHENEVER) · 규칙 시험 `client_commands_cover_parser_words`([76 §19](76-intellisense-and-outline.md) · 61 §2-2).
 - 📐 [115](115-prod-mode-scenario-nsql-guide.md) `examples/prod-mode-scenario.sql`을 nsql로 시험하는 방법(사용자 → 협업 직접) · CLI는 보류·2단·백업 없음(실측).
+- 🔧 객체 찾기 실기 3(사용자): 탐색기에서 보기 = 패널 전환까지 한 길(`explorer_reveal_show` · 입구 5) · 거르기 0건 = 스크롤 클램프 + 규칙(낱말 AND · 전 열 · 이름 퍼지) · 미리보기 한 번 클릭 · 서버 다중 선택 = T-358(설계 확정) · `nsql shell` 설정 조회 결함 = T-359(협업 발견).
 - 검증(협업) = win-prod-hold-e2e **26/0** · objbackup 12/0 · drop-prod 4/0 · objbackup-prod(BISCM) 14/0 · V1 소문자 백업 ✓ · V1 완성 ✓ · Debug·Release 경고 0.
 
 ## 2026-10-15 저녁 (128차 · **win** · ★ 객체 찾기 창 · 협업 쌍 = 개발 nexa-sql-07(Fable) × 협업 nexa-sql-17(Opus) · [journal 10-15 §5](journal/2026-10-15.md))

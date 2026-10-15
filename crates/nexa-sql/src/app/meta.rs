@@ -266,6 +266,25 @@ impl App {
         }
     }
 
+    /// ★ 객체 탐색기에서 보기 = **한 길**(10-16 사용자 "객체 찾기 창의 보기가 왼쪽 패널을 안 바꿈"): 탐색기 패널이 안 보이면(프로젝트·북마크 등이
+    ///   보이는 중) `view.explorer`로 전환 → 찾기 → 성공이면 탐색기 포커스 + 동작 수거. 호출 = Ctrl 링크 메뉴 · 열 머리 · 탭 메뉴 · 객체 찾기 창.
+    pub(crate) fn explorer_reveal_show(
+        &mut self,
+        spec: Option<&nsql_script::ConnectSpec>,
+        t: crate::explorer::RevealTarget,
+    ) -> bool {
+        if !self.explorer.is_visible() {
+            self.menu_action("view.explorer");
+        }
+        let ok = self.explorer.reveal(spec, t);
+        if ok {
+            self.set_focus(Focus::Explorer);
+            self.explorer_actions();
+        }
+        self.redraw();
+        ok
+    }
+
     pub(crate) fn explorer_actions(&mut self) -> bool {
         // 새로 고침 범위 → 상세 패널 코멘트 캐시도 같은 범위로 버리고 보이는 대상은 다시 채운다(T-227 후속 · 사용자 09-26 "변경 요청 누락 없이").
         let inv = self.explorer.take_detail_invalidations();

@@ -12,6 +12,12 @@ COMMIT;
 CREATE OR REPLACE PROCEDURE NSQLT_HOLD_PRC AS BEGIN NULL; END;
 /
 
+SET CONNTYPE DEV;
+
+SHOW CONNECTION;
+
+SET CONNTYPE PRD;
+
 -- ───── 1. 운영 2단 재실행(DDL) ─────
 -- 확인: 첫 실행 = 상태줄 "run again within N s"(빨간 토스트 · 서버로 안 감) → 3 s 안에 다시 실행 = 실행(Output done).
 CREATE TABLE NSQLT_HOLD_T2 (A NUMBER);

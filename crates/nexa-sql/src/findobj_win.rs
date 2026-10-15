@@ -119,6 +119,33 @@ impl Row {
         parts.join(" · ")
     }
 
+    /// ★ 거르기 건초(소문자 · 10-16 사용자 "거르기 동작 모호"): 화면의 모든 열 + 컬럼 이름 + 설명 — 종류 · DB · 스키마 · 이름 · 서버 · 일치 요약.
+    fn hay_lower(&self) -> String {
+        let cols: Vec<&str> = self.cols.iter().map(|(c, _)| c.as_str()).collect();
+        format!(
+            "{}
+{}
+{}
+{}
+{}
+{}
+{}
+{}",
+            self.kind.code(),
+            self.db.as_deref().unwrap_or(""),
+            self.schema,
+            self.name,
+            self.label,
+            self.summary(),
+            cols.join(
+                "
+"
+            ),
+            self.comment.as_deref().unwrap_or("")
+        )
+        .to_lowercase()
+    }
+
     /// 전체 이름(인용 없음 · SQL Server `DB.스키마.이름`).
     fn full_name(&self) -> String {
         let mut v: Vec<&str> = Vec::new();
@@ -776,10 +803,15 @@ impl FindObjWin {
 
     // ── 보기(거름 · 정렬) ───────────────────────────────────────────────────────────────────────────
 
-    /// 결과 거르기(글 = 이름·스키마·서버·요약·컬럼 부분 일치 · 일치 종류 4) + 정렬 → `view`. 선택 행은 유지.
+    /// 결과 거르기 + 정렬 → `view`. 선택 행은 유지.
+    /// ★ 규칙(10-16 사용자 "거르기 동작 모호 · 필요하면 퍼지"): 띄어쓰기로 나눈 **낱말마다 AND** · 낱말은 화면의 모든 열(종류·DB·스키마·이름·서버·일치)
+    ///   그리고 컬럼 이름 · 설명의 **부분 문자열**이거나, **이름의 퍼지 부분열**(`spmpo` → `SP_M4P_MPO_…` · Ctrl+P와 같은 점수 함수)이면 일치.
+    ///   거른 뒤 스크롤을 새 길이 안으로 당긴다(종전 = 내려 둔 스크롤이 남아 **빈 화면** = "1433 입력 시 아무것도 안 보임"의 원인).
     fn apply_view(&mut self) {
         let keep = self.sel.and_then(|v| self.view.get(v).copied());
         let f = self.filter.text().trim().to_lowercase();
+        let words: Vec<String> = f.split_whitespace().map(String::from).collect();
+        let wq: Vec<Vec<char>> = words.iter().map(|w| w.chars().collect()).collect();
         let w: Vec<bool> = self.whats.iter().map(Checkbox::is_checked).collect();
         let all_w = w.iter().all(|x| *x);
         let mut v: Vec<usize> = (0..self.rows.len())
@@ -794,14 +826,15 @@ impl FindObjWin {
                         return false;
                     }
                 }
-                if f.is_empty() {
+                if words.is_empty() {
                     return true;
                 }
-                r.name.to_lowercase().contains(&f)
-                    || r.schema.to_lowercase().contains(&f)
-                    || r.label.to_lowercase().contains(&f)
-                    || r.summary().to_lowercase().contains(&f)
-                    || r.cols.iter().any(|(c, _)| c.to_lowercase().contains(&f))
+                let hay = r.hay_lower();
+                let name_l = r.name.to_lowercase();
+                words.iter().zip(&wq).all(|(w, q)| {
+                    hay.contains(w.as_str())
+                        || crate::palette::fuzzy_score_lower(q, &name_l).is_some()
+                })
             })
             .collect();
         let (key, asc) = self.sort;
@@ -838,6 +871,14 @@ impl FindObjWin {
         if self.sel.is_none() {
             self.pre_lines.clear();
             self.pre_head.clear();
+        }
+        // 스크롤을 새 내용 길이 안으로(빈 화면 방지) · 선택 행이 남았으면 보이게.
+        let content_h = self.view.len() as i32 * self.row_h.max(1);
+        self.scroll_y = self
+            .scroll_y
+            .clamp(0, (content_h - self.list_rect.h).max(0));
+        if let Some(v) = self.sel {
+            self.ensure_visible(v);
         }
     }
 
@@ -1377,16 +1418,11 @@ impl FindObjWin {
                     } else if self.list_rect.contains(p) {
                         self.own_focus(Focus::List);
                     }
+                    // ★ 미리보기 줄 = **한 번 클릭**으로 편집기 그 줄(사용자 10-16 · 종전 더블클릭 450 ms는 "열리지 않는다"로 보임).
                     if self.pre_rect.contains(p) {
                         if let (Some(i), Some(ln)) = (self.sel_row(), self.preview_line_at(p)) {
-                            let now = Instant::now();
-                            let tag = usize::MAX - ln as usize;
-                            let dbl = matches!(self.last_click, Some((j, t)) if j == tag && now.duration_since(t).as_millis() < 450);
-                            self.last_click = Some((tag, now));
-                            if dbl {
-                                self.last_click = None;
-                                return self.activate(i, ln);
-                            }
+                            self.last_click = None;
+                            return self.activate(i, ln);
                         }
                     }
                 }
