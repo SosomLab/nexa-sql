@@ -1,9 +1,9 @@
-//! ★ **객체 찾기 창**(docs/113 · 사용자 10-15): 모달리스 · 메인 소유 · **연결된 전체 서버**(탐색기 칸 = 카탈로그) 대상
-//! 이름 · 설명 · 컬럼 · 소스 본문 검색. 조건 1행(검색어 · Aa · ab · (.*) · 검색/중지) · 범위(서버 · 스키마) · 대상 4 · 종류 4 ·
-//! 결과 목록(객체 하나 = 한 행 · 종류 아이콘 · 일치 요약) · 미리보기(일치 줄 · 강조) · 더블클릭/Enter = 소스 탭 · 우클릭 = 탐색기 메뉴 부분집합.
-//! 엔진은 서버별 메타 스레드(`explorer.rs` `Req::Find` 3단계 · 점증 · 취소) — 이 창은 응답을 **합쳐 보여 주기만** 한다(113 §4).
+//! ★ **객체 찾기 창**(docs/113 · 사용자 10-15): 모달리스 · 메인 소유 · 창 **전용 엔진**(`findobj_engine` · 탐색기 메타 스레드와 분리 · D-295 실시간 직접 조회)이
+//! 서버 × 스키마 × 단계로 잘게 쪼갠 작업을 병렬로 돌리고, 이 창은 작업이 끝날 때마다 결과를 **합쳐**(객체 하나 = 한 행) 보여 준다.
+//! 조건 1행(검색어 · Aa · ab · (.*) · 검색/중지) · 범위(서버 · 스키마) · 대상 4 · 종류 4 · ★ 진행 패널(혜성 링 + 서버/스키마/작업 · 조사 행 · 객체/일치 · 시작·종료·경과) ·
+//! ★ 결과 거르기(글 + 일치 종류 4 · 뷰 투영) · 머리 클릭 정렬 · 미리보기(일치 줄 · 강조) · 더블클릭/Enter = 소스 탭 + 일치 줄 · 우클릭 = 탐색기 메뉴 부분집합.
 use crate::exp_icons::{self, IconKind};
-use crate::explorer::{FindHit, FindQuery, FindStage, FindWhat};
+use crate::findobj_engine::{EngineMsg, FindHit, FindQuery, FindWhat};
 use nexa_ctl::controls::combo::{Combo, ComboItem};
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{Button, Checkbox, ComboControl};
@@ -11,7 +11,9 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
-use nexa_ctl::{Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget};
+use nexa_ctl::{
+    BusyRing, BusyState, Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget,
+};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::find::FindPat;
 use nsql_catalog::{ObjectInfo, ObjectKind};
@@ -19,7 +21,7 @@ use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
@@ -31,9 +33,9 @@ pub(crate) enum FoAction {
     None,
     Paint,
     Close,
-    /// 검색 시작(조건 · 서버 하나 또는 전체) — 호스트가 탐색기에 요청하고 `started(n)`으로 서버 수를 돌려준다.
+    /// 검색 시작(조건 · 서버 하나 또는 전체) — 호스트가 엔진에 넘기고 `started(n)`으로 서버 수를 돌려준다.
     Search(Box<FindQuery>, Option<ConnectSpec>),
-    Stop(u64),
+    Stop,
     OpenSource {
         server: Option<ConnectSpec>,
         obj: ObjectInfo,
@@ -65,8 +67,10 @@ pub(crate) struct Row {
     pub src: Vec<(u32, String)>,
 }
 
+type RowKey = (String, String, String, String, ObjectKind);
+
 impl Row {
-    fn key(&self) -> (String, String, String, String, ObjectKind) {
+    fn key(&self) -> RowKey {
         (
             self.label.clone(),
             self.db.clone().unwrap_or_default(),
@@ -88,6 +92,13 @@ impl Row {
         }
     }
 
+    fn hit_count(&self) -> usize {
+        usize::from(self.name_hit)
+            + usize::from(self.comment.is_some())
+            + self.cols.len()
+            + self.src.len()
+    }
+
     /// "일치" 열 글(이름 · 설명 · 컬럼 N · 소스 N줄).
     fn summary(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
@@ -106,7 +117,7 @@ impl Row {
         parts.join(" · ")
     }
 
-    /// 전체 이름(서버 종류별 · 인용 없음 · 28 §11 규칙의 단순판 = SQL Server `DB.스키마.이름`).
+    /// 전체 이름(인용 없음 · SQL Server `DB.스키마.이름`).
     fn full_name(&self) -> String {
         let mut v: Vec<&str> = Vec::new();
         if let Some(db) = self.db.as_deref().filter(|d| !d.is_empty()) {
@@ -124,7 +135,16 @@ impl Row {
 enum Focus {
     Query,
     Schema,
+    Filter,
     List,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SortKey {
+    Name,
+    Schema,
+    Server,
+    Hits,
 }
 
 /// 미리보기 한 줄 = (줄 번호 · 글 · 강조 구간들(바이트)).
@@ -132,6 +152,30 @@ struct PreLine {
     no: Option<u32>,
     text: String,
     spans: Vec<(usize, usize)>,
+}
+
+/// 진행(작업 단위 · 113 §3 진행 패널).
+#[derive(Default)]
+struct Progress {
+    servers_total: usize,
+    servers_planned: usize,
+    servers_done: usize,
+    schemas: usize,
+    tasks_total: usize,
+    tasks_done: usize,
+    scanned: usize,
+    hits: usize,
+    started_at: Option<SystemTime>,
+    ended_at: Option<SystemTime>,
+    started: Option<Instant>,
+    elapsed_ms: u128,
+    notes: Vec<String>,
+    errors: Vec<String>,
+    /// 서버마다 계획/완료 표식(메시지 중복 방어 · 차례 = 엔진 `server`).
+    planned: Vec<bool>,
+    done: Vec<bool>,
+    /// 마지막으로 끝난 작업(서버 · 스키마 · 단계 · ms) — 진행 둘째 줄.
+    last_task: Option<String>,
 }
 
 pub(crate) struct FindObjWin {
@@ -143,6 +187,7 @@ pub(crate) struct FindObjWin {
     primary: bool,
     memo: crate::wingeom::Memo,
     last: Option<((i32, i32), (f64, f64))>,
+    epoch: Instant,
     // 조건
     query: TextBox,
     schema: TextBox,
@@ -152,13 +197,21 @@ pub(crate) struct FindObjWin {
     run_btn: Button,
     server: Combo,
     servers: Vec<(Option<ConnectSpec>, String)>,
+    /// 이번 검색이 엔진에 넘긴 서버(엔진 `server` 번호 = 이 차례).
+    run_specs: Vec<ConnectSpec>,
     targets: Vec<Checkbox>,
     target_labels: Vec<String>,
     kinds: Vec<Checkbox>,
     kind_labels: Vec<String>,
-    // 결과
+    // 결과(마스터) + 보기(거름·정렬)
     rows: Vec<Row>,
-    index: HashMap<(String, String, String, String, ObjectKind), usize>,
+    index: HashMap<RowKey, usize>,
+    view: Vec<usize>,
+    filter: TextBox,
+    whats: Vec<Checkbox>,
+    what_labels: Vec<String>,
+    sort: (SortKey, bool),
+    hdr_rects: Vec<(SortKey, Rect)>,
     sel: Option<usize>,
     hover: Option<usize>,
     scroll_y: i32,
@@ -169,7 +222,7 @@ pub(crate) struct FindObjWin {
     last_click: Option<(usize, Instant)>,
     // 미리보기
     split: f32,
-    split_drag: Option<i32>,
+    split_drag: bool,
     split_band: Rect,
     pre_rect: Rect,
     pre_lines: Vec<PreLine>,
@@ -178,12 +231,9 @@ pub(crate) struct FindObjWin {
     // 진행
     rev: u64,
     running: bool,
-    servers_total: usize,
-    servers_done: usize,
-    started: Instant,
-    elapsed_ms: u128,
-    notes: Vec<String>,
-    status: String,
+    prog: Progress,
+    ring: BusyRing,
+    ring_rect: Rect,
     // 버튼·메뉴
     open_btn: Button,
     reveal_btn: Button,
@@ -193,6 +243,17 @@ pub(crate) struct FindObjWin {
     icons: HashMap<(IconKind, i32), Rc<IconImage>>,
     max_hits: usize,
     lines_per_object: usize,
+}
+
+/// 시각 → 로컬 `HH:MM:SS`(없으면 `-`).
+fn fmt_clock(t: Option<SystemTime>) -> String {
+    match t {
+        None => "-".to_string(),
+        Some(t) => {
+            let l = nsql_log::local_at(t);
+            format!("{:02}:{:02}:{:02}", l.hour, l.min, l.sec)
+        }
+    }
 }
 
 impl FindObjWin {
@@ -210,9 +271,11 @@ impl FindObjWin {
             Msg::FoKindOthers,
         ];
         let targets = tmsgs.iter().map(|m| Checkbox::new(t(*m), true)).collect();
-        let target_labels = tmsgs.iter().map(|m| t(*m).to_string()).collect();
+        let target_labels: Vec<String> = tmsgs.iter().map(|m| t(*m).to_string()).collect();
         let kinds = kmsgs.iter().map(|m| Checkbox::new(t(*m), true)).collect();
         let kind_labels = kmsgs.iter().map(|m| t(*m).to_string()).collect();
+        let whats = tmsgs.iter().map(|m| Checkbox::new(t(*m), true)).collect();
+        let what_labels = target_labels.clone();
         Self {
             window: None,
             surface: None,
@@ -222,6 +285,7 @@ impl FindObjWin {
             primary: false,
             memo: crate::wingeom::Memo::default(),
             last: None,
+            epoch: Instant::now(),
             query: TextBox::new(t(Msg::FoQueryHint)),
             schema: TextBox::new(t(Msg::FoSchemaHint)),
             opt_case: Checkbox::new("Aa", false),
@@ -230,12 +294,19 @@ impl FindObjWin {
             run_btn: Button::new(t(Msg::FoSearch)),
             server: Combo::new(vec![ComboItem::new("", t(Msg::FoServerAll))], 0),
             servers: Vec::new(),
+            run_specs: Vec::new(),
             targets,
             target_labels,
             kinds,
             kind_labels,
             rows: Vec::new(),
             index: HashMap::new(),
+            view: Vec::new(),
+            filter: TextBox::new(t(Msg::FoFilterHint)),
+            whats,
+            what_labels,
+            sort: (SortKey::Name, true),
+            hdr_rects: Vec::new(),
             sel: None,
             hover: None,
             scroll_y: 0,
@@ -244,8 +315,8 @@ impl FindObjWin {
             row_h: 0,
             focus: Focus::Query,
             last_click: None,
-            split: 0.62,
-            split_drag: None,
+            split: 0.6,
+            split_drag: false,
             split_band: Rect::default(),
             pre_rect: Rect::default(),
             pre_lines: Vec::new(),
@@ -253,12 +324,9 @@ impl FindObjWin {
             pre_head: String::new(),
             rev: 0,
             running: false,
-            servers_total: 0,
-            servers_done: 0,
-            started: Instant::now(),
-            elapsed_ms: 0,
-            notes: Vec::new(),
-            status: t(Msg::FoStatusIdle).to_string(),
+            prog: Progress::default(),
+            ring: BusyRing::default(),
+            ring_rect: Rect::default(),
             open_btn: Button::new(t(Msg::FoOpenEditor)),
             reveal_btn: Button::new(t(Msg::FoReveal)),
             close_btn: Button::new(t(Msg::SpBtnClose)),
@@ -270,13 +338,15 @@ impl FindObjWin {
         }
     }
 
-    /// 설정(`findobj.*`)을 받는다 — 열 때·설정 변경 때.
+    fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
     pub(crate) fn set_limits(&mut self, max_hits: usize, lines_per_object: usize) {
         self.max_hits = max_hits;
         self.lines_per_object = lines_per_object;
     }
 
-    /// 기억된 대상·종류 체크(`findobj.targets`/`kinds` = 쉼표 목록).
     pub(crate) fn set_remembered(&mut self, targets: &str, kinds: &str) {
         let on = |list: &str, key: &str| list.split(',').any(|s| s.trim() == key);
         if !targets.trim().is_empty() {
@@ -299,7 +369,6 @@ impl FindObjWin {
         }
     }
 
-    /// 지금 체크 상태(설정에 남기기).
     pub(crate) fn remembered(&self) -> (String, String) {
         let pick = |cbs: &[Checkbox], keys: [&str; 4]| -> String {
             cbs.iter()
@@ -315,7 +384,6 @@ impl FindObjWin {
         )
     }
 
-    /// 서버 콤보 채우기(연결된 칸 목록 · 열 때·연결 변동 때).
     pub(crate) fn set_servers(&mut self, servers: Vec<(Option<ConnectSpec>, String)>) {
         let cur = self.server.selected_value();
         let mut items = vec![ComboItem::new("", t(Msg::FoServerAll))];
@@ -325,6 +393,11 @@ impl FindObjWin {
         let idx = items.iter().position(|it| it.value == cur).unwrap_or(0);
         self.server = Combo::new(items, idx);
         self.servers = servers;
+    }
+
+    /// 검색 시작 때 창이 아는 서버 목록(엔진 `server` 번호 = 이 목록 차례).
+    pub(crate) fn servers(&self) -> &[(Option<ConnectSpec>, String)] {
+        &self.servers
     }
 
     pub(crate) fn open(
@@ -340,8 +413,7 @@ impl FindObjWin {
         }
         if let Some(w) = &self.window {
             w.focus_window();
-            self.focus = Focus::Query;
-            self.query.set_focused(true);
+            self.own_focus(Focus::Query);
             self.redraw();
             return;
         }
@@ -354,7 +426,7 @@ impl FindObjWin {
                 dy: 40,
                 owner,
                 memo: Some(&self.memo),
-                default_size: (980.0, 680.0),
+                default_size: (1000.0, 720.0),
                 ime: true,
             },
         ) else {
@@ -363,8 +435,7 @@ impl FindObjWin {
         self.scale = o.scale;
         self.surface = o.surface;
         self.window = Some(o.window);
-        self.focus = Focus::Query;
-        self.query.set_focused(true);
+        self.own_focus(Focus::Query);
         self.redraw();
     }
 
@@ -373,6 +444,9 @@ impl FindObjWin {
         self.surface = None;
         self.window = None;
         self.menu.close();
+        self.running = false;
+        self.ring.set_state(BusyState::Idle);
+        self.run_btn.set_label(t(Msg::FoSearch));
     }
 
     pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
@@ -411,7 +485,6 @@ impl FindObjWin {
 
     // ── 검색 ───────────────────────────────────────────────────────────────────────────────────────
 
-    /// 조건 → 질의(비어 있으면 None).
     fn build_query(&self) -> Option<FindQuery> {
         let text = self.query.text().trim().to_string();
         if text.is_empty() {
@@ -495,193 +568,265 @@ impl FindObjWin {
             .and_then(|(k, _)| k.clone())
     }
 
-    /// 검색 시작(Enter · 버튼 · 기동 명령) — 결과 비우고 rev 올림 · 호스트 동작.
     fn start(&mut self) -> FoAction {
         let Some(q) = self.build_query() else {
-            self.status = t(Msg::FoStatusNeedQuery).to_string();
+            self.prog.notes = vec![t(Msg::FoStatusNeedQuery).to_string()];
             self.redraw();
             return FoAction::None;
         };
         self.rev += 1;
         self.rows.clear();
         self.index.clear();
+        self.view.clear();
         self.sel = None;
         self.hover = None;
         self.scroll_y = 0;
         self.pre_lines.clear();
         self.pre_head.clear();
-        self.notes.clear();
+        self.prog = Progress {
+            started_at: Some(SystemTime::now()),
+            started: Some(Instant::now()),
+            ..Progress::default()
+        };
         self.running = true;
-        self.servers_total = 0;
-        self.servers_done = 0;
-        self.started = Instant::now();
-        self.elapsed_ms = 0;
+        self.ring.set_state(BusyState::Running);
         self.run_btn.set_label(t(Msg::FoStop));
-        self.status = tf(Msg::FoStatusRunning, &["0", "?", "0", "0.0"]);
         self.redraw();
         FoAction::Search(Box::new(q), self.selected_server())
     }
 
-    /// 호스트가 요청한 서버 수를 알린다(0 = 연결된 서버 없음).
-    pub(crate) fn started(&mut self, servers: usize) {
-        self.servers_total = servers;
-        if servers == 0 {
-            self.running = false;
-            self.run_btn.set_label(t(Msg::FoSearch));
-            self.status = t(Msg::FoNoServers).to_string();
+    /// 호스트가 엔진에 넘긴 서버들(차례 = 엔진 `server` 번호).
+    pub(crate) fn started(&mut self, specs: Vec<ConnectSpec>) {
+        self.prog.servers_total = specs.len();
+        self.prog.planned = vec![false; specs.len()];
+        self.prog.done = vec![false; specs.len()];
+        self.run_specs = specs;
+        if self.prog.servers_total == 0 {
+            self.finish();
+            self.prog.notes.push(t(Msg::FoNoServers).to_string());
         }
-        self.refresh_status();
         self.redraw();
+    }
+
+    fn finish(&mut self) {
+        if !self.running {
+            return;
+        }
+        self.running = false;
+        self.prog.ended_at = Some(SystemTime::now());
+        self.prog.elapsed_ms = self.prog.started.map_or(0, |s| s.elapsed().as_millis());
+        self.ring.set_state(BusyState::Done);
+        self.run_btn.set_label(t(Msg::FoSearch));
     }
 
     fn stop(&mut self) -> FoAction {
         if !self.running {
             return FoAction::None;
         }
-        self.running = false;
-        self.elapsed_ms = self.started.elapsed().as_millis();
-        self.run_btn.set_label(t(Msg::FoSearch));
-        self.refresh_status();
+        self.finish();
+        self.prog.notes.push(t(Msg::FoStopped).to_string());
         self.redraw();
-        FoAction::Stop(self.rev)
+        FoAction::Stop
     }
 
-    /// 서버 한 곳의 단계 응답을 합친다(rev가 다르면 버림).
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn push_hits(
-        &mut self,
-        server: Option<ConnectSpec>,
-        label: String,
-        rev: u64,
-        _stage: FindStage,
-        hits: Vec<FindHit>,
-        done: bool,
-        note: Option<String>,
-    ) {
-        if rev != self.rev || !self.running {
-            return;
-        }
-        for h in hits {
-            let probe = Row {
-                server: server.clone(),
-                label: label.clone(),
-                db: h.db.clone(),
-                schema: h.schema.clone(),
-                name: h.name.clone(),
-                kind: h.kind,
-                name_hit: false,
-                comment: None,
-                cols: Vec::new(),
-                src: Vec::new(),
-            };
-            let key = probe.key();
-            let i = match self.index.get(&key) {
-                Some(&i) => i,
-                None => {
-                    self.rows.push(probe);
-                    let i = self.rows.len() - 1;
-                    self.index.insert(key, i);
-                    i
+    /// 엔진 메시지를 합친다(rev가 다르면 버림).
+    pub(crate) fn push_msg(&mut self, m: EngineMsg) {
+        match m {
+            EngineMsg::Planned {
+                rev,
+                server,
+                schemas,
+                tasks,
+                note,
+                label,
+            } => {
+                if rev != self.rev || !self.running {
+                    return;
                 }
-            };
-            let row = &mut self.rows[i];
-            match h.what {
-                FindWhat::Name => row.name_hit = true,
-                FindWhat::Comment(c) => row.comment = Some(c),
-                FindWhat::Column { column, data_type } => row.cols.push((column, data_type)),
-                FindWhat::Source { line, text } => row.src.push((line, text)),
+                if self.prog.planned.get(server).copied().unwrap_or(true) {
+                    return;
+                }
+                self.prog.planned[server] = true;
+                self.prog.servers_planned += 1;
+                self.prog.schemas += schemas;
+                self.prog.tasks_total += tasks;
+                if let Some(n) = note {
+                    self.note(format!("{label}: {n}"));
+                }
+            }
+            EngineMsg::Task {
+                rev,
+                server,
+                label,
+                stage,
+                schema,
+                hits,
+                scanned,
+                note,
+                ms,
+            } => {
+                if rev != self.rev || !self.running {
+                    return;
+                }
+                self.prog.tasks_done += 1;
+                self.prog.scanned += scanned;
+                self.prog.last_task = Some(format!("{label} · {schema} · {stage:?} · {ms} ms"));
+                let spec = self.run_specs.get(server).cloned();
+                for h in hits {
+                    self.merge(spec.clone(), &label, h);
+                }
+                if let Some(n) = note {
+                    self.note(format!("{label}: {n}"));
+                }
+                self.apply_view();
+            }
+            EngineMsg::ServerDone {
+                rev,
+                server,
+                label,
+                err,
+            } => {
+                if rev != self.rev || !self.running {
+                    return;
+                }
+                if self.prog.done.get(server).copied().unwrap_or(true) {
+                    return;
+                }
+                self.prog.done[server] = true;
+                self.prog.servers_done += 1;
+                if let Some(e) = err {
+                    self.prog.errors.push(format!("{label}: {e}"));
+                }
+                if self.prog.servers_done >= self.prog.servers_total {
+                    self.finish();
+                }
             }
         }
-        if let Some(n) = note {
-            let n = format!("{label}: {n}");
-            if !self.notes.contains(&n) {
-                self.notes.push(n);
-            }
-        }
-        if done {
-            self.servers_done += 1;
-            if self.servers_total > 0 && self.servers_done >= self.servers_total {
-                self.running = false;
-                self.elapsed_ms = self.started.elapsed().as_millis();
-                self.run_btn.set_label(t(Msg::FoSearch));
-            }
-        }
-        self.sort_rows();
-        self.refresh_status();
         self.redraw();
     }
 
-    /// 자연 정렬(서버 → 스키마 → 이름) · 선택 행 유지.
-    fn sort_rows(&mut self) {
-        let keep = self.sel.map(|i| self.rows[i].key());
-        self.rows.sort_by(|a, b| {
-            nexa_ctl::natural::cmp_names(&a.label, &b.label)
-                .then_with(|| nexa_ctl::natural::cmp_names(&a.schema, &b.schema))
-                .then_with(|| nexa_ctl::natural::cmp_names(&a.name, &b.name))
-        });
-        self.index.clear();
-        for (i, r) in self.rows.iter().enumerate() {
-            self.index.insert(r.key(), i);
-        }
-        if let Some(k) = keep {
-            self.sel = self.index.get(&k).copied();
-            self.rebuild_preview();
+    fn note(&mut self, n: String) {
+        if !self.prog.notes.contains(&n) {
+            self.prog.notes.push(n);
         }
     }
 
-    fn refresh_status(&mut self) {
-        let secs = if self.running {
-            self.started.elapsed().as_millis()
-        } else {
-            self.elapsed_ms
-        } as f64
-            / 1000.0;
-        let mut s = if self.running {
-            tf(
-                Msg::FoStatusRunning,
-                &[
-                    &self.servers_done.to_string(),
-                    &self.servers_total.to_string(),
-                    &self.rows.len().to_string(),
-                    &format!("{secs:.1}"),
-                ],
-            )
-        } else if self.servers_total == 0 && self.rows.is_empty() && self.rev == 0 {
-            t(Msg::FoStatusIdle).to_string()
-        } else {
-            tf(
-                Msg::FoStatusDone,
-                &[
-                    &self.rows.len().to_string(),
-                    &self.servers_total.to_string(),
-                    &format!("{secs:.1}"),
-                ],
-            )
+    fn merge(&mut self, server: Option<ConnectSpec>, label: &str, h: FindHit) {
+        let probe = Row {
+            server,
+            label: label.to_string(),
+            db: h.db.clone(),
+            schema: h.schema.clone(),
+            name: h.name.clone(),
+            kind: h.kind,
+            name_hit: false,
+            comment: None,
+            cols: Vec::new(),
+            src: Vec::new(),
         };
-        if let Some(n) = self.notes.first() {
-            s.push_str(" · ");
-            s.push_str(n);
+        let key = probe.key();
+        let i = match self.index.get(&key) {
+            Some(&i) => i,
+            None => {
+                self.rows.push(probe);
+                let i = self.rows.len() - 1;
+                self.index.insert(key, i);
+                i
+            }
+        };
+        let row = &mut self.rows[i];
+        match h.what {
+            FindWhat::Name => row.name_hit = true,
+            FindWhat::Comment(c) => row.comment = Some(c),
+            FindWhat::Column { column, data_type } => row.cols.push((column, data_type)),
+            FindWhat::Source { line, text } => row.src.push((line, text)),
         }
-        self.status = s;
+        self.prog.hits += 1;
     }
 
-    /// 진행 중이면 상태줄 시각을 갱신(호스트 틱).
-    pub(crate) fn tick(&mut self) -> bool {
-        if self.running && self.window.is_some() {
-            self.refresh_status();
-            return true;
+    // ── 보기(거름 · 정렬) ───────────────────────────────────────────────────────────────────────────
+
+    /// 결과 거르기(글 = 이름·스키마·서버·요약·컬럼 부분 일치 · 일치 종류 4) + 정렬 → `view`. 선택 행은 유지.
+    fn apply_view(&mut self) {
+        let keep = self.sel.and_then(|v| self.view.get(v).copied());
+        let f = self.filter.text().trim().to_lowercase();
+        let w: Vec<bool> = self.whats.iter().map(Checkbox::is_checked).collect();
+        let all_w = w.iter().all(|x| *x);
+        let mut v: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| {
+                let r = &self.rows[i];
+                if !all_w {
+                    let ok = (w[0] && r.name_hit)
+                        || (w[1] && r.comment.is_some())
+                        || (w[2] && !r.cols.is_empty())
+                        || (w[3] && !r.src.is_empty());
+                    if !ok {
+                        return false;
+                    }
+                }
+                if f.is_empty() {
+                    return true;
+                }
+                r.name.to_lowercase().contains(&f)
+                    || r.schema.to_lowercase().contains(&f)
+                    || r.label.to_lowercase().contains(&f)
+                    || r.summary().to_lowercase().contains(&f)
+                    || r.cols.iter().any(|(c, _)| c.to_lowercase().contains(&f))
+            })
+            .collect();
+        let (key, asc) = self.sort;
+        let rows = &self.rows;
+        let nat = nexa_ctl::natural::cmp_names;
+        v.sort_by(|&a, &b| {
+            let (ra, rb) = (&rows[a], &rows[b]);
+            let o = match key {
+                SortKey::Name => nat(&ra.name, &rb.name).then_with(|| nat(&ra.schema, &rb.schema)),
+                SortKey::Schema => {
+                    nat(&ra.schema, &rb.schema).then_with(|| nat(&ra.name, &rb.name))
+                }
+                SortKey::Server => nat(&ra.label, &rb.label)
+                    .then_with(|| nat(&ra.schema, &rb.schema))
+                    .then_with(|| nat(&ra.name, &rb.name)),
+                SortKey::Hits => rb
+                    .hit_count()
+                    .cmp(&ra.hit_count())
+                    .then_with(|| nat(&ra.name, &rb.name)),
+            };
+            if asc {
+                o
+            } else {
+                o.reverse()
+            }
+        });
+        self.view = v;
+        self.sel = keep.and_then(|k| self.view.iter().position(|&i| i == k));
+        if self.sel.is_none() {
+            self.pre_lines.clear();
+            self.pre_head.clear();
         }
-        false
+    }
+
+    fn set_sort(&mut self, key: SortKey) {
+        self.sort = if self.sort.0 == key {
+            (key, !self.sort.1)
+        } else {
+            (key, true)
+        };
+        self.apply_view();
     }
 
     // ── 미리보기 ───────────────────────────────────────────────────────────────────────────────────
 
-    fn select(&mut self, i: Option<usize>) {
-        if self.sel != i {
-            self.sel = i;
+    fn select(&mut self, v: Option<usize>) {
+        if self.sel != v {
+            self.sel = v;
             self.pre_scroll = 0;
             self.rebuild_preview();
         }
+    }
+
+    fn sel_row(&self) -> Option<usize> {
+        self.sel.and_then(|v| self.view.get(v).copied())
     }
 
     fn spans(&self, text: &str) -> Vec<(usize, usize)> {
@@ -695,7 +840,6 @@ impl FindObjWin {
             (text.to_lowercase(), needle.to_lowercase())
         };
         if hay.len() != text.len() {
-            // 소문자화로 길이가 달라지는 글(특수 문자)은 강조 없이.
             return Vec::new();
         }
         let mut out = Vec::new();
@@ -712,21 +856,18 @@ impl FindObjWin {
 
     fn rebuild_preview(&mut self) {
         self.pre_lines.clear();
-        let Some(i) = self.sel else {
+        let Some(i) = self.sel_row() else {
             self.pre_head.clear();
             return;
         };
         let r = self.rows[i].clone();
-        self.pre_head = format!(
-            "{} ({} · {})",
-            r.full_name(),
-            format!("{:?}", r.kind).to_uppercase(),
-            r.label
-        );
+        let kind = format!("{:?}", r.kind).to_uppercase();
+        self.pre_head = format!("{} ({} · {})", r.full_name(), kind, r.label);
+        let mut lines = Vec::new();
         if r.name_hit {
             let text = r.name.clone();
             let spans = self.spans(&text);
-            self.pre_lines.push(PreLine {
+            lines.push(PreLine {
                 no: None,
                 text,
                 spans,
@@ -735,7 +876,7 @@ impl FindObjWin {
         if let Some(c) = &r.comment {
             let text = format!("» {c}");
             let spans = self.spans(&text);
-            self.pre_lines.push(PreLine {
+            lines.push(PreLine {
                 no: None,
                 text,
                 spans,
@@ -744,7 +885,7 @@ impl FindObjWin {
         for (c, ty) in &r.cols {
             let text = format!("{c}  {ty}");
             let spans = self.spans(&text);
-            self.pre_lines.push(PreLine {
+            lines.push(PreLine {
                 no: None,
                 text,
                 spans,
@@ -752,12 +893,13 @@ impl FindObjWin {
         }
         for (ln, text) in &r.src {
             let spans = self.spans(text);
-            self.pre_lines.push(PreLine {
+            lines.push(PreLine {
                 no: Some(*ln),
                 text: text.clone(),
                 spans,
             });
         }
+        self.pre_lines = lines;
     }
 
     // ── 동작 ───────────────────────────────────────────────────────────────────────────────────────
@@ -845,16 +987,16 @@ impl FindObjWin {
         }
     }
 
-    fn row_at(&self, p: Point) -> Option<usize> {
+    fn view_at(&self, p: Point) -> Option<usize> {
         if !self.list_rect.contains(p) || self.row_h <= 0 {
             return None;
         }
         let i = ((p.y - self.list_rect.y + self.scroll_y) / self.row_h) as usize;
-        (i < self.rows.len()).then_some(i)
+        (i < self.view.len()).then_some(i)
     }
 
-    fn ensure_visible(&mut self, i: usize) {
-        let top = i as i32 * self.row_h;
+    fn ensure_visible(&mut self, v: usize) {
+        let top = v as i32 * self.row_h;
         if top < self.scroll_y {
             self.scroll_y = top;
         } else if top + self.row_h > self.scroll_y + self.list_rect.h {
@@ -867,13 +1009,71 @@ impl FindObjWin {
         self.focus = f;
         self.query.set_focused(f == Focus::Query);
         self.schema.set_focused(f == Focus::Schema);
+        self.filter.set_focused(f == Focus::Filter);
+    }
+
+    fn focused_box(&mut self) -> Option<&mut TextBox> {
+        match self.focus {
+            Focus::Query => Some(&mut self.query),
+            Focus::Schema => Some(&mut self.schema),
+            Focus::Filter => Some(&mut self.filter),
+            Focus::List => None,
+        }
+    }
+
+    /// 체크박스 전부(앞 3 + 대상 4 + 종류 4 + 일치 종류 4 — 마지막 넷은 보기 갱신).
+    fn all_checks(&mut self) -> Vec<&mut Checkbox> {
+        let mut v: Vec<&mut Checkbox> =
+            vec![&mut self.opt_case, &mut self.opt_word, &mut self.opt_regex];
+        v.extend(self.targets.iter_mut());
+        v.extend(self.kinds.iter_mut());
+        v.extend(self.whats.iter_mut());
+        v
+    }
+
+    fn buttons(&mut self) -> [&mut Button; 4] {
+        [
+            &mut self.run_btn,
+            &mut self.open_btn,
+            &mut self.reveal_btn,
+            &mut self.close_btn,
+        ]
+    }
+
+    fn preview_line_at(&self, p: Point) -> Option<u32> {
+        let lh = self.row_h.max(1);
+        let head_h = lh + (6.0 * self.scale) as i32;
+        let y = p.y - self.pre_rect.y - head_h + self.pre_scroll;
+        if y < 0 {
+            return None;
+        }
+        self.pre_lines.get((y / lh) as usize).and_then(|l| l.no)
+    }
+
+    fn icon(&mut self, kind: ObjectKind, size: i32) -> Rc<IconImage> {
+        let k = exp_icons::object_icon(kind);
+        self.icons
+            .entry((k, size))
+            .or_insert_with(|| {
+                let base = exp_icons::image(k, k.color());
+                Rc::new(base.resized(size.max(1) as u32, size.max(1) as u32))
+            })
+            .clone()
+    }
+
+    /// 호스트 틱 — 진행 중이면 경과·혜성이 움직인다(돌려주는 값 = 다시 그릴 것).
+    pub(crate) fn tick(&mut self) -> bool {
+        if self.window.is_none() {
+            return false;
+        }
+        let anim = self.ring.tick(self.now_ms());
+        self.running || anim
     }
 
     // ── 사건 ───────────────────────────────────────────────────────────────────────────────────────
 
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> FoAction {
         let mut inv = Invalidations::default();
-        // 열린 우클릭 메뉴가 먼저(바깥 클릭 = 닫고 통과 · 팝업 규칙).
         if self.menu.is_open() {
             let me = match ev {
                 WindowEvent::CursorMoved { position, .. } => {
@@ -922,7 +1122,6 @@ impl FindObjWin {
                     self.redraw();
                     return FoAction::None;
                 }
-                // 바깥 클릭 = 닫고 그대로 진행.
             }
         }
         match ev {
@@ -934,12 +1133,7 @@ impl FindObjWin {
                 self.redraw();
             }
             WindowEvent::Focused(false) => {
-                for b in [
-                    &mut self.run_btn,
-                    &mut self.open_btn,
-                    &mut self.reveal_btn,
-                    &mut self.close_btn,
-                ] {
+                for b in self.buttons() {
                     b.clear_transient();
                 }
                 self.hover = None;
@@ -956,11 +1150,9 @@ impl FindObjWin {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
                 let (x, y) = self.cursor;
-                if let Some(start) = self.split_drag {
-                    let _ = start;
+                if self.split_drag {
                     let total = (self.pre_rect.bottom() - self.list_rect.y).max(1) as f32;
-                    let rel = (y - self.list_rect.y) as f32 / total;
-                    self.split = rel.clamp(0.2, 0.9);
+                    self.split = ((y - self.list_rect.y) as f32 / total).clamp(0.2, 0.9);
                     self.redraw();
                     return FoAction::None;
                 }
@@ -968,7 +1160,8 @@ impl FindObjWin {
                 let p = Point { x, y };
                 self.query.on_event(&mv, &mut inv);
                 self.schema.on_event(&mv, &mut inv);
-                if self.query.popup_open() || self.schema.popup_open() {
+                self.filter.on_event(&mv, &mut inv);
+                if self.query.popup_open() || self.schema.popup_open() || self.filter.popup_open() {
                     self.redraw();
                     return FoAction::None;
                 }
@@ -976,15 +1169,10 @@ impl FindObjWin {
                 for cb in self.all_checks() {
                     cb.on_event(&mv, &mut inv);
                 }
-                for b in [
-                    &mut self.run_btn,
-                    &mut self.open_btn,
-                    &mut self.reveal_btn,
-                    &mut self.close_btn,
-                ] {
+                for b in self.buttons() {
                     b.on_event(&mv, &mut inv);
                 }
-                let h = self.row_at(p);
+                let h = self.view_at(p);
                 let hover_changed = h != self.hover;
                 self.hover = h;
                 if hover_changed || !inv.is_empty() {
@@ -998,7 +1186,7 @@ impl FindObjWin {
                 if self.server.is_open() {
                     self.server.on_event(&e, &mut inv);
                 } else if self.list_rect.contains(p) {
-                    let content_h = (self.rows.len() as i32 * self.row_h).max(self.list_rect.h);
+                    let content_h = (self.view.len() as i32 * self.row_h).max(self.list_rect.h);
                     let (_, ny, _) = self.bars.on_event(
                         &e,
                         self.list_rect,
@@ -1032,20 +1220,19 @@ impl FindObjWin {
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
                 if up {
-                    self.split_drag = None;
+                    self.split_drag = false;
                 }
-                // 상자 팝업(편집 메뉴)이 열려 있으면 그 클릭은 상자에만.
-                if self.query.popup_open() {
-                    self.query.on_event(&e, &mut inv);
+                let mut popup_took = false;
+                for tb in [&mut self.query, &mut self.schema, &mut self.filter] {
+                    if tb.popup_open() {
+                        tb.on_event(&e, &mut inv);
+                        popup_took = true;
+                    }
+                }
+                if popup_took {
                     self.redraw();
                     return FoAction::None;
                 }
-                if self.schema.popup_open() {
-                    self.schema.on_event(&e, &mut inv);
-                    self.redraw();
-                    return FoAction::None;
-                }
-                // 콤보 드롭다운이 열려 있으면 콤보가 먼저.
                 if self.server.is_open() {
                     self.server.on_event(&e, &mut inv);
                     self.server.take_changed();
@@ -1053,10 +1240,18 @@ impl FindObjWin {
                     return FoAction::None;
                 }
                 if !up && self.split_band.contains(p) {
-                    self.split_drag = Some(y);
+                    self.split_drag = true;
                     return FoAction::None;
                 }
-                // 마우스 라우팅 규칙: 누름은 커서 아래 컨트롤에만 · 뗌은 전부.
+                // 머리 클릭 = 정렬.
+                if !up {
+                    if let Some((k, _)) = self.hdr_rects.iter().find(|(_, r)| r.contains(p)) {
+                        let k = *k;
+                        self.set_sort(k);
+                        self.redraw();
+                        return FoAction::None;
+                    }
+                }
                 if up || self.query.bounds().contains(p) {
                     self.query.on_event(&e, &mut inv);
                     if !up {
@@ -1069,27 +1264,32 @@ impl FindObjWin {
                         self.own_focus(Focus::Schema);
                     }
                 }
+                if up || self.filter.bounds().contains(p) {
+                    self.filter.on_event(&e, &mut inv);
+                    if !up {
+                        self.own_focus(Focus::Filter);
+                    }
+                }
                 if up || self.server.bounds().contains(p) {
                     self.server.on_event(&e, &mut inv);
                     self.server.take_changed();
                 }
-                for cb in self.all_checks() {
+                let mut what_toggled = false;
+                let n_front = 3 + self.targets.len() + self.kinds.len();
+                for (k, cb) in self.all_checks().into_iter().enumerate() {
                     if up || cb.bounds().contains(p) {
                         cb.on_event(&e, &mut inv);
                     }
                     cb.set_focused(false);
-                    cb.take_toggled();
+                    if cb.take_toggled().is_some() && k >= n_front {
+                        what_toggled = true;
+                    }
+                }
+                if what_toggled {
+                    self.apply_view();
                 }
                 let mut clicked: Option<usize> = None;
-                for (k, b) in [
-                    &mut self.run_btn,
-                    &mut self.open_btn,
-                    &mut self.reveal_btn,
-                    &mut self.close_btn,
-                ]
-                .into_iter()
-                .enumerate()
-                {
+                for (k, b) in self.buttons().into_iter().enumerate() {
                     if up || b.bounds().contains(p) {
                         b.on_event(&e, &mut inv);
                     }
@@ -1099,26 +1299,28 @@ impl FindObjWin {
                     }
                 }
                 if !up {
-                    if let Some(i) = self.row_at(p) {
+                    if let Some(v) = self.view_at(p) {
                         self.own_focus(Focus::List);
                         let now = Instant::now();
-                        let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.duration_since(t).as_millis() < 450);
-                        self.last_click = Some((i, now));
-                        self.select(Some(i));
+                        let dbl = matches!(self.last_click, Some((j, t)) if j == v && now.duration_since(t).as_millis() < 450);
+                        self.last_click = Some((v, now));
+                        self.select(Some(v));
                         if dbl {
                             self.last_click = None;
                             self.redraw();
-                            return self.activate(i, self.first_line(i));
+                            if let Some(i) = self.sel_row() {
+                                return self.activate(i, self.first_line(i));
+                            }
                         }
                     } else if self.list_rect.contains(p) {
                         self.own_focus(Focus::List);
                     }
-                    // 미리보기 줄 더블클릭 = 그 줄로.
                     if self.pre_rect.contains(p) {
-                        if let (Some(i), Some(ln)) = (self.sel, self.preview_line_at(p)) {
+                        if let (Some(i), Some(ln)) = (self.sel_row(), self.preview_line_at(p)) {
                             let now = Instant::now();
-                            let dbl = matches!(self.last_click, Some((j, t)) if j == usize::MAX - ln as usize && now.duration_since(t).as_millis() < 450);
-                            self.last_click = Some((usize::MAX - ln as usize, now));
+                            let tag = usize::MAX - ln as usize;
+                            let dbl = matches!(self.last_click, Some((j, t)) if j == tag && now.duration_since(t).as_millis() < 450);
+                            self.last_click = Some((tag, now));
                             if dbl {
                                 self.last_click = None;
                                 return self.activate(i, ln);
@@ -1136,12 +1338,12 @@ impl FindObjWin {
                         };
                     }
                     Some(1) => {
-                        if let Some(i) = self.sel {
+                        if let Some(i) = self.sel_row() {
                             return self.activate(i, self.first_line(i));
                         }
                     }
                     Some(2) => {
-                        if let Some(i) = self.sel {
+                        if let Some(i) = self.sel_row() {
                             let r = &self.rows[i];
                             return FoAction::Reveal {
                                 server: r.server.clone(),
@@ -1158,26 +1360,32 @@ impl FindObjWin {
             {
                 let (x, y) = self.cursor;
                 let p = Point { x, y };
+                let rd = InputEvent::RightDown { x, y };
                 if self.query.bounds().contains(p) {
-                    self.query
-                        .on_event(&InputEvent::RightDown { x, y }, &mut inv);
+                    self.query.on_event(&rd, &mut inv);
                 } else if self.schema.bounds().contains(p) {
-                    self.schema
-                        .on_event(&InputEvent::RightDown { x, y }, &mut inv);
-                } else if let Some(i) = self.row_at(p) {
-                    self.select(Some(i));
+                    self.schema.on_event(&rd, &mut inv);
+                } else if self.filter.bounds().contains(p) {
+                    self.filter.on_event(&rd, &mut inv);
+                } else if let Some(v) = self.view_at(p) {
+                    self.select(Some(v));
                     self.own_focus(Focus::List);
-                    self.open_menu(i);
+                    if let Some(i) = self.sel_row() {
+                        self.open_menu(i);
+                    }
                 }
                 self.redraw();
             }
             WindowEvent::Ime(Ime::Commit(text)) => {
-                let tb = self.focused_box();
-                if let Some(tb) = tb {
+                let is_filter = self.focus == Focus::Filter;
+                if let Some(tb) = self.focused_box() {
                     tb.set_preedit("", &mut inv);
                     for c in text.chars().filter(|c| !c.is_control()) {
                         tb.on_event(&InputEvent::Char { c, now_ms: 0 }, &mut inv);
                     }
+                }
+                if is_filter {
+                    self.apply_view();
                 }
                 self.redraw();
             }
@@ -1198,9 +1406,13 @@ impl FindObjWin {
                     }
                     Key::Named(NamedKey::Enter) => {
                         if self.focus == Focus::List {
-                            if let Some(i) = self.sel {
+                            if let Some(i) = self.sel_row() {
                                 return self.activate(i, self.first_line(i));
                             }
+                        } else if self.focus == Focus::Filter {
+                            self.apply_view();
+                            self.redraw();
+                            return FoAction::None;
                         } else {
                             return self.start();
                         }
@@ -1208,7 +1420,8 @@ impl FindObjWin {
                     Key::Named(NamedKey::Tab) => {
                         let next = match self.focus {
                             Focus::Query => Focus::Schema,
-                            Focus::Schema => Focus::List,
+                            Focus::Schema => Focus::Filter,
+                            Focus::Filter => Focus::List,
                             Focus::List => Focus::Query,
                         };
                         self.own_focus(next);
@@ -1217,20 +1430,20 @@ impl FindObjWin {
                     }
                     Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowUp)
                         if self.focus == Focus::List
-                            || !self.rows.is_empty() && self.focus != Focus::Schema =>
+                            || (!self.view.is_empty() && self.focus == Focus::Query) =>
                     {
-                        if self.rows.is_empty() {
+                        if self.view.is_empty() {
                             return FoAction::None;
                         }
                         let down = kev.logical_key == Key::Named(NamedKey::ArrowDown);
-                        let i = match self.sel {
+                        let v = match self.sel {
                             None => 0,
-                            Some(i) if down => (i + 1).min(self.rows.len() - 1),
-                            Some(i) => i.saturating_sub(1),
+                            Some(v) if down => (v + 1).min(self.view.len() - 1),
+                            Some(v) => v.saturating_sub(1),
                         };
                         self.own_focus(Focus::List);
-                        self.select(Some(i));
-                        self.ensure_visible(i);
+                        self.select(Some(v));
+                        self.ensure_visible(v);
                         self.redraw();
                         return FoAction::None;
                     }
@@ -1239,7 +1452,7 @@ impl FindObjWin {
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| c.to_lowercase());
                         if lower == "c" {
-                            if let Some(i) = self.sel {
+                            if let Some(i) = self.sel_row() {
                                 let r = &self.rows[i];
                                 return FoAction::Copy(if self.shift {
                                     r.full_name()
@@ -1257,8 +1470,12 @@ impl FindObjWin {
                     self.primary,
                     crate::input::TextKeys::Line,
                 ) {
+                    let is_filter = self.focus == Focus::Filter;
                     if let Some(tb) = self.focused_box() {
                         tb.on_event(&e, &mut inv);
+                    }
+                    if is_filter {
+                        self.apply_view();
                     }
                     self.redraw();
                 }
@@ -1268,45 +1485,62 @@ impl FindObjWin {
         FoAction::None
     }
 
-    fn focused_box(&mut self) -> Option<&mut TextBox> {
-        match self.focus {
-            Focus::Query => Some(&mut self.query),
-            Focus::Schema => Some(&mut self.schema),
-            Focus::List => None,
-        }
-    }
-
-    fn all_checks(&mut self) -> Vec<&mut Checkbox> {
-        let mut v: Vec<&mut Checkbox> =
-            vec![&mut self.opt_case, &mut self.opt_word, &mut self.opt_regex];
-        v.extend(self.targets.iter_mut());
-        v.extend(self.kinds.iter_mut());
-        v
-    }
-
-    fn preview_line_at(&self, p: Point) -> Option<u32> {
-        let lh = self.row_h.max(1);
-        let head_h = lh + (6.0 * self.scale) as i32;
-        let y = p.y - self.pre_rect.y - head_h + self.pre_scroll;
-        if y < 0 {
-            return None;
-        }
-        let i = (y / lh) as usize;
-        self.pre_lines.get(i).and_then(|l| l.no)
-    }
-
-    fn icon(&mut self, kind: ObjectKind, size: i32) -> Rc<IconImage> {
-        let k = exp_icons::object_icon(kind);
-        self.icons
-            .entry((k, size))
-            .or_insert_with(|| {
-                let base = exp_icons::image(k, k.color());
-                Rc::new(base.resized(size.max(1) as u32, size.max(1) as u32))
-            })
-            .clone()
-    }
-
     // ── 그리기 ─────────────────────────────────────────────────────────────────────────────────────
+
+    /// 진행 패널 두 줄(①: 상태 · 서버 d/T · 스키마 · 작업 d/T · 조사 행 · 객체 · 일치 / ②: 시작 · 종료 · 경과 · 보임 · 안내).
+    fn progress_lines(&self) -> (String, String) {
+        let p = &self.prog;
+        let elapsed = if self.running {
+            p.started.map_or(0, |s| s.elapsed().as_millis())
+        } else {
+            p.elapsed_ms
+        } as f64
+            / 1000.0;
+        let head = if self.running {
+            t(Msg::FoStatusRunningHead).to_string()
+        } else if p.started.is_none() {
+            t(Msg::FoStatusIdle).to_string()
+        } else {
+            t(Msg::FoStatusDoneHead).to_string()
+        };
+        let l1 = tf(
+            Msg::FoProgressLine1,
+            &[
+                &head,
+                &p.servers_done.to_string(),
+                &p.servers_total.to_string(),
+                &p.schemas.to_string(),
+                &p.tasks_done.to_string(),
+                &p.tasks_total.to_string(),
+                &p.scanned.to_string(),
+                &self.rows.len().to_string(),
+                &p.hits.to_string(),
+            ],
+        );
+        let mut l2 = tf(
+            Msg::FoProgressLine2,
+            &[
+                &fmt_clock(p.started_at),
+                &fmt_clock(p.ended_at),
+                &format!("{elapsed:.1}"),
+            ],
+        );
+        if self.view.len() != self.rows.len() {
+            l2.push_str(" · ");
+            l2.push_str(&tf(
+                Msg::FoShownOf,
+                &[&self.view.len().to_string(), &self.rows.len().to_string()],
+            ));
+        }
+        if let Some(n) = p.errors.first().or(p.notes.first()) {
+            l2.push_str(" · ");
+            l2.push_str(n);
+        } else if let Some(lt) = p.last_task.as_deref().filter(|_| self.running) {
+            l2.push_str(" · ");
+            l2.push_str(lt);
+        }
+        (l1, l2)
+    }
 
     pub(crate) fn paint(&mut self, font: &Font, th: &Theme, ui_px: f32) {
         let Some(win) = self.window.clone() else {
@@ -1348,8 +1582,9 @@ impl FindObjWin {
                 cb.set_bounds(Rect::new(x, pad, opt_w, box_h), inv);
             }
             self.query.set_scale(s);
-            self.query
-                .set_bounds(Rect::new(pad, pad, x - gap - pad, box_h), inv);
+            let qrect = Rect::new(pad, pad, x - gap - pad, box_h);
+            self.query.set_bounds(qrect, inv);
+            self.ring_rect = qrect;
             // ── 2행: 서버 · 스키마
             let y2 = pad + box_h + gap;
             let combo_w = px(260.0);
@@ -1387,7 +1622,49 @@ impl FindObjWin {
                 cb.set_bounds(Rect::new(cx, y3, w, box_h), inv);
                 cx += w + px(6.0);
             }
-            // ── 바닥: 상태줄 + 버튼
+            // ── 4행: 진행 패널(두 줄 · 혜성 링은 검색어 상자 둘레)
+            let y4 = y3 + box_h + gap;
+            let prog_h = th_txt * 2 + px(10.0);
+            let prog_rect = Rect::new(pad, y4, wi - pad * 2, prog_h);
+            dc.fill_round_rect(prog_rect, px(4.0), th.chrome_bg);
+            let (l1, l2) = self.progress_lines();
+            let c1 = if self.running { th.text } else { th.text_dim };
+            dc.text(
+                prog_rect.x + px(8.0),
+                prog_rect.y + px(4.0),
+                prog_rect,
+                &l1,
+                c1,
+            );
+            dc.text(
+                prog_rect.x + px(8.0),
+                prog_rect.y + px(6.0) + th_txt,
+                prog_rect,
+                &l2,
+                th.text_dim,
+            );
+            // ── 5행: 결과 거르기(글 + 일치 종류 4)
+            let y5 = y4 + prog_h + gap;
+            let fl = t(Msg::FoFilterLabel);
+            let ly5 = dc.text_center_y(y5, box_h);
+            dc.text(pad, ly5, clip, fl, th.text_dim);
+            let fx = pad + dc.text_width(fl) + gap;
+            let mut wx = wi - pad;
+            let mut what_w = Vec::new();
+            for label in self.what_labels.iter().rev() {
+                let w = px(24.0) + dc.text_width(label) + px(10.0);
+                wx -= w + px(6.0);
+                what_w.push((wx, w));
+            }
+            what_w.reverse();
+            for (cb, (bx, w)) in self.whats.iter_mut().zip(what_w) {
+                cb.set_scale(s);
+                cb.set_bounds(Rect::new(bx, y5, w, box_h), inv);
+            }
+            let fw = (wx - gap - fx).max(px(80.0));
+            self.filter.set_scale(s);
+            self.filter.set_bounds(Rect::new(fx, y5, fw, box_h), inv);
+            // ── 바닥: 버튼
             let btn_h = th_txt + px(14.0);
             let by = hi - pad - btn_h;
             let mut bx = wi - pad;
@@ -1397,13 +1674,13 @@ impl FindObjWin {
                 &mut self.open_btn,
             ] {
                 b.set_scale(s);
-                let w = dc.text_width(&btn_label(b)) + px(28.0);
+                let w = dc.text_width(b.label()) + px(28.0);
                 bx -= w;
                 b.set_bounds(Rect::new(bx, by, w, btn_h), inv);
                 bx -= gap;
             }
             // ── 결과 목록 + 미리보기(스플리터)
-            let top = y3 + box_h + gap;
+            let top = y5 + box_h + gap;
             let bottom = by - gap;
             let total_h = (bottom - top).max(px(80.0));
             let band_h = px(6.0);
@@ -1424,45 +1701,54 @@ impl FindObjWin {
                 wi - pad * 2,
                 (bottom - self.split_band.bottom()).max(0),
             );
-            // 머리글
             dc.fill_rect(list_outer, th.field_bg);
             dc.fill_rect(
                 Rect::new(list_outer.x, list_outer.y, list_outer.w, hdr_h),
                 th.chrome_bg,
             );
             let col_icon = px(24.0);
-            let w_name = (list_outer.w as f32 * 0.32) as i32;
-            let w_schema = (list_outer.w as f32 * 0.16) as i32;
-            let w_server = (list_outer.w as f32 * 0.22) as i32;
+            let w_name = (list_outer.w as f32 * 0.30) as i32;
+            let w_schema = (list_outer.w as f32 * 0.15) as i32;
+            let w_server = (list_outer.w as f32 * 0.20) as i32;
             let hy = dc.text_center_y(list_outer.y, hdr_h);
+            let arrow = if self.sort.1 { " ▲" } else { " ▼" };
             let mut hx = list_outer.x + col_icon;
-            dc.text(hx, hy, clip, t(Msg::FoColName), th.text_dim);
-            hx += w_name;
-            dc.text(hx, hy, clip, t(Msg::FoColSchema), th.text_dim);
-            hx += w_schema;
-            dc.text(hx, hy, clip, t(Msg::FoColServer), th.text_dim);
-            hx += w_server;
-            dc.text(hx, hy, clip, t(Msg::FoColMatch), th.text_dim);
-            // 행
+            let w_match = list_outer.right() - hx - w_name - w_schema - w_server;
+            self.hdr_rects.clear();
+            for (key, msg, w) in [
+                (SortKey::Name, Msg::FoColName, w_name),
+                (SortKey::Schema, Msg::FoColSchema, w_schema),
+                (SortKey::Server, Msg::FoColServer, w_server),
+                (SortKey::Hits, Msg::FoColMatch, w_match),
+            ] {
+                let mut label = t(msg).to_string();
+                if self.sort.0 == key {
+                    label.push_str(arrow);
+                }
+                let r = Rect::new(hx, list_outer.y, w.max(px(40.0)), hdr_h);
+                dc.text(hx, hy, r, &label, th.text_dim);
+                self.hdr_rects.push((key, r));
+                hx += w;
+            }
+            // 행(보기 순서)
             let lr = self.list_rect;
             dc.push_clip(lr);
             let first = (self.scroll_y / self.row_h.max(1)).max(0) as usize;
-            let rows_n = self.rows.len();
             let icon_px = px(16.0);
             let mut y = lr.y - (self.scroll_y % self.row_h.max(1));
-            let mut i = first;
-            while i < rows_n && y < lr.bottom() {
+            let mut v = first;
+            let n_view = self.view.len();
+            while v < n_view && y < lr.bottom() {
+                let i = self.view[v];
                 let r = Rect::new(lr.x, y, lr.w, self.row_h);
-                if self.sel == Some(i) {
-                    dc.fill_rect(
-                        r,
-                        if self.focus == Focus::List {
-                            th.sel_bg
-                        } else {
-                            th.sel_bg_inactive
-                        },
-                    );
-                } else if self.hover == Some(i) {
+                if self.sel == Some(v) {
+                    let c = if self.focus == Focus::List {
+                        th.sel_bg
+                    } else {
+                        th.sel_bg_inactive
+                    };
+                    dc.fill_rect(r, c);
+                } else if self.hover == Some(v) {
                     dc.fill_rect_alpha(r, th.sel_bg, 0.35);
                 }
                 let (name, schema, label, summary, kind) = {
@@ -1511,13 +1797,12 @@ impl FindObjWin {
                     th.text,
                 );
                 y += self.row_h;
-                i += 1;
+                v += 1;
             }
             dc.pop_clip();
-            let content_h = (rows_n as i32 * self.row_h).max(lr.h);
+            let content_h = (n_view as i32 * self.row_h).max(lr.h);
             self.bars
                 .paint(&mut dc, th, lr, lr.w, content_h, 0, self.scroll_y, s);
-            // 스플리터 띠
             dc.fill_rect(self.split_band, th.border);
             // 미리보기
             let pr = self.pre_rect;
@@ -1545,7 +1830,6 @@ impl FindObjWin {
                         dc.fill_rect(Rect::new(pr.x + gutter - px(4.0), ly, 1, lh), th.border);
                     }
                     let tx = pr.x + gutter + px(4.0);
-                    // 강조 구간: 앞 글 폭만큼 띄워 배경을 칠한다.
                     for (a, b) in &l.spans {
                         let before = dc.text_width(&l.text[..*a]);
                         let w = dc.text_width(&l.text[*a..*b]);
@@ -1566,39 +1850,21 @@ impl FindObjWin {
                 ly += lh;
             }
             dc.pop_clip();
-            // 상태줄
-            let sy = dc.text_center_y(by, btn_h);
-            let status_w = (bx - pad - gap).max(0);
-            dc.text(
-                pad,
-                sy,
-                Rect::new(pad, by, status_w, btn_h),
-                &self.status,
-                if self.running { th.text } else { th.text_dim },
-            );
-            // 컨트롤 그리기(팝업은 맨 뒤)
+            // 컨트롤(팝업은 맨 뒤) · 혜성 링 = 검색어 상자 둘레(진행 중 계속 · 끝나면 완료 깜빡임)
             self.query.paint(&mut dc, th);
             self.schema.paint(&mut dc, th);
-            for cb in [&mut self.opt_case, &mut self.opt_word, &mut self.opt_regex] {
+            self.filter.paint(&mut dc, th);
+            for cb in self.all_checks() {
                 cb.paint(&mut dc, th);
             }
-            for cb in &mut self.targets {
-                cb.paint(&mut dc, th);
-            }
-            for cb in &mut self.kinds {
-                cb.paint(&mut dc, th);
-            }
-            for b in [
-                &mut self.run_btn,
-                &mut self.open_btn,
-                &mut self.reveal_btn,
-                &mut self.close_btn,
-            ] {
+            for b in self.buttons() {
                 b.paint(&mut dc, th);
             }
             self.server.paint(&mut dc, th);
+            self.ring.paint(&mut dc, th, self.ring_rect, px(4.0), s);
             self.query.paint_popup(&mut dc, th);
             self.schema.paint_popup(&mut dc, th);
+            self.filter.paint_popup(&mut dc, th);
             if self.menu.is_open() {
                 self.menu.paint(&mut dc, th);
             }
@@ -1609,10 +1875,9 @@ impl FindObjWin {
 
     // ── 자체 시험(키 주입 0 · 113 §7) ──────────────────────────────────────────────────────────────
 
-    /// 검색어·옵션을 넣고 검색 시작(`findobj.query:<글>` · `c`=Aa · `w`=낱말 · `r`=정규식 접두 `[cwr]:`).
     pub(crate) fn test_query(&mut self, spec: &str) -> FoAction {
         let (flags, text) = match spec.split_once(':') {
-            Some((f, t)) if f.chars().all(|c| matches!(c, 'c' | 'w' | 'r')) && !f.is_empty() => {
+            Some((f, t)) if !f.is_empty() && f.chars().all(|c| matches!(c, 'c' | 'w' | 'r')) => {
                 (f, t)
             }
             _ => ("", spec),
@@ -1624,18 +1889,36 @@ impl FindObjWin {
         self.start()
     }
 
-    /// 상태 + 결과 행(`종류|스키마|이름|서버|일치`) + 선택 행 미리보기 줄.
+    /// 결과 거르기 글을 넣는다(자체 시험).
+    pub(crate) fn test_filter(&mut self, text: &str) {
+        self.filter.set_text(text);
+        self.apply_view();
+        self.redraw();
+    }
+
+    /// 상태 + 진행 두 줄 + 결과 행(보기 순서 · `종류|스키마|이름|서버|일치`) + 선택 행 미리보기 줄.
     pub(crate) fn dump(&self) -> String {
+        let (l1, l2) = self.progress_lines();
+        let p = &self.prog;
         let mut s = format!(
-            "status={}|running={}|rows={}|servers={}/{}|notes={}\n",
-            self.status,
+            "running={}|rows={}|view={}|servers={}/{}|schemas={}|tasks={}/{}|scanned={}|hits={}|notes={}|errors={}\n{}\n{}\n",
             self.running,
             self.rows.len(),
-            self.servers_done,
-            self.servers_total,
-            self.notes.join(";")
+            self.view.len(),
+            p.servers_done,
+            p.servers_total,
+            p.schemas,
+            p.tasks_done,
+            p.tasks_total,
+            p.scanned,
+            p.hits,
+            p.notes.join(";"),
+            p.errors.join(";"),
+            l1,
+            l2
         );
-        for r in &self.rows {
+        for &i in &self.view {
+            let r = &self.rows[i];
             s.push_str(&format!(
                 "{:?}|{}|{}|{}|{}\n",
                 r.kind,
@@ -1656,17 +1939,16 @@ impl FindObjWin {
         s
     }
 
-    /// n번째 행을 고르고 더블클릭과 같은 동작.
+    /// 보기 n번째 행을 고르고 더블클릭과 같은 동작.
     pub(crate) fn test_pick(&mut self, n: usize) -> FoAction {
-        if n >= self.rows.len() {
+        if n >= self.view.len() {
             return FoAction::None;
         }
         self.own_focus(Focus::List);
         self.select(Some(n));
-        self.activate(n, self.first_line(n))
+        match self.sel_row() {
+            Some(i) => self.activate(i, self.first_line(i)),
+            None => FoAction::None,
+        }
     }
-}
-
-fn btn_label(b: &Button) -> String {
-    b.label().to_string()
 }

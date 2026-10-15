@@ -12,6 +12,172 @@ pub struct FindPat {
     pub whole_word: bool,
 }
 
+/// 이름·설명 일치 한 건(서버 질의 · 설명 = 테이블/뷰/루틴 코멘트 · 없으면 None).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameHit {
+    pub schema: String,
+    pub name: String,
+    pub kind: ObjectKind,
+    pub comment: Option<String>,
+}
+
+/// 시스템 스키마(스키마 필터가 비었을 때 제외 · 탐색기 `SchemaOpts` 숨김과 같은 뜻).
+fn system_schema_not_in(d: Dialect, expr: &str) -> String {
+    let list: &[&str] = match d {
+        Dialect::Oracle => &[
+            "SYS",
+            "SYSTEM",
+            "XDB",
+            "MDSYS",
+            "CTXSYS",
+            "ORDSYS",
+            "ORDDATA",
+            "OLAPSYS",
+            "WMSYS",
+            "DBSNMP",
+            "OUTLN",
+            "LBACSYS",
+            "DVSYS",
+            "GSMADMIN_INTERNAL",
+            "APPQOSSYS",
+            "AUDSYS",
+            "OJVMSYS",
+            "DBSFWUSER",
+            "REMOTE_SCHEDULER_AGENT",
+            "SYS$UMF",
+            "GGSYS",
+            "ANONYMOUS",
+            "XS$NULL",
+            "ORDPLUGINS",
+            "SI_INFORMTN_SCHEMA",
+        ],
+        Dialect::Postgres => &["pg_catalog", "information_schema"],
+        Dialect::Mssql => &["sys", "INFORMATION_SCHEMA"],
+        Dialect::Mysql => &["mysql", "sys", "information_schema", "performance_schema"],
+        _ => &[],
+    };
+    if list.is_empty() {
+        return String::new();
+    }
+    let q: Vec<String> = list.iter().map(|s| lit(s)).collect();
+    format!(" AND {expr} NOT IN ({})", q.join(", "))
+}
+
+/// 이름·설명 찾기 SQL(순수 · 시험) — 열 = 스키마 · 이름 · 종류 코드 · 설명(NULL 가능). `pat` None = 이름 전부(정규식은 클라이언트).
+/// 설명은 `with_comment`일 때만 LIKE 대상에 넣는다(설명 열은 늘 돌려준다 · 미리보기용).
+pub fn names_sql(
+    d: Dialect,
+    schemas: &[String],
+    pat: Option<&FindPat>,
+    with_comment: bool,
+    max: usize,
+) -> Option<String> {
+    let scope = |expr: &str| {
+        if schemas.is_empty() {
+            system_schema_not_in(d, expr)
+        } else {
+            schema_in(expr, schemas)
+        }
+    };
+    let cond = |name_expr: &str, cmt_expr: Option<&str>| -> String {
+        match pat {
+            None => String::new(),
+            Some(p) => {
+                let mut c = like_pred(d, name_expr, p);
+                if with_comment {
+                    if let Some(ce) = cmt_expr {
+                        c = format!("({c} OR {})", like_pred(d, ce, p));
+                    }
+                }
+                format!(" AND {c}")
+            }
+        }
+    };
+    let sql = match d {
+        Dialect::Oracle => format!(
+            "SELECT o.owner, o.object_name, o.object_type, c.comments FROM all_objects o LEFT JOIN all_tab_comments c ON c.owner = o.owner AND c.table_name = o.object_name WHERE o.object_type IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'TRIGGER', 'SEQUENCE', 'SYNONYM', 'TYPE', 'INDEX'){}{} ORDER BY o.owner, o.object_name",
+            scope("o.owner"),
+            cond("o.object_name", Some("c.comments"))
+        ),
+        Dialect::Postgres => {
+            let rel = format!(
+                "SELECT n.nspname AS s, c.relname AS n, c.relkind::text AS k, obj_description(c.oid, 'pg_class') AS d FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'v', 'm', 'p', 'f', 'S') AND n.nspname NOT LIKE 'pg_toast%'{}{}",
+                scope("n.nspname"),
+                cond("c.relname", Some("obj_description(c.oid, 'pg_class')"))
+            );
+            let proc_ = format!(
+                "SELECT n.nspname, p.proname, CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE 1 = 1{}{}",
+                scope("n.nspname"),
+                cond("p.proname", Some("obj_description(p.oid, 'pg_proc')"))
+            );
+            let trg = format!(
+                "SELECT n.nspname, t.tgname, 'TRIGGER', NULL FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE NOT t.tgisinternal{}{}",
+                scope("n.nspname"),
+                cond("t.tgname", None)
+            );
+            format!("SELECT * FROM ({rel} UNION ALL {proc_} UNION ALL {trg}) x ORDER BY 1, 2")
+        }
+        Dialect::Mssql => format!(
+            "SELECT s.name, o.name, o.type_desc, CAST(ep.value AS NVARCHAR(4000)) FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id LEFT JOIN sys.extended_properties ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.class = 1 AND ep.name = 'MS_Description' WHERE o.type IN ('U', 'V', 'P', 'FN', 'IF', 'TF', 'TR', 'SO', 'SN'){}{} ORDER BY s.name, o.name",
+            scope("s.name"),
+            cond("o.name", Some("CAST(ep.value AS NVARCHAR(4000))"))
+        ),
+        Dialect::Sqlite => format!(
+            "SELECT 'main', name, type, NULL FROM sqlite_master WHERE type IN ('table', 'view', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'{} ORDER BY name",
+            cond("name", None)
+        ),
+        Dialect::Mysql => {
+            let tb = format!(
+                "SELECT table_schema AS s, table_name AS n, table_type AS k, table_comment AS d FROM information_schema.tables WHERE 1 = 1{}{}",
+                scope("table_schema"),
+                cond("table_name", Some("table_comment"))
+            );
+            let rt = format!(
+                "SELECT routine_schema, routine_name, routine_type, routine_comment FROM information_schema.routines WHERE 1 = 1{}{}",
+                scope("routine_schema"),
+                cond("routine_name", Some("routine_comment"))
+            );
+            let tg = format!(
+                "SELECT trigger_schema, trigger_name, 'TRIGGER', NULL FROM information_schema.triggers WHERE 1 = 1{}{}",
+                scope("trigger_schema"),
+                cond("trigger_name", None)
+            );
+            format!("SELECT * FROM ({tb} UNION ALL {rt} UNION ALL {tg}) x ORDER BY 1, 2")
+        }
+        Dialect::Odbc => return None,
+    };
+    Some(cap(d, sql, max))
+}
+
+/// 이름·설명 찾기(서버 질의 1회 · 항상 최신 · D-295). `pat` None = 이름 전부(호출자가 정규식 판정). 반환 = (행, 잘렸는가).
+pub fn names(
+    s: &mut dyn Session,
+    schemas: &[String],
+    pat: Option<&FindPat>,
+    with_comment: bool,
+    max: usize,
+) -> Result<(Vec<NameHit>, bool), DbError> {
+    let d = s.dialect();
+    let Some(sql) = names_sql(d, schemas, pat, with_comment, max) else {
+        return Ok((Vec::new(), false));
+    };
+    let rs = query(s, &sql)?;
+    let val = |v: Option<&Value>| v.filter(|v| !matches!(v, Value::Null)).map(cell_str);
+    let out = rs
+        .rows
+        .iter()
+        .map(|r| NameHit {
+            schema: col(r, 0),
+            name: col(r, 1),
+            kind: kind_of(&col(r, 2)),
+            comment: val(r.get(3)).filter(|c| !c.trim().is_empty()),
+        })
+        .filter(|h| !h.name.is_empty())
+        .collect();
+    let truncated = max > 0 && rs.rows.len() >= max;
+    Ok((out, truncated))
+}
+
 /// 컬럼 일치 한 건.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColHit {
@@ -329,6 +495,10 @@ pub fn kind_of(code: &str) -> ObjectKind {
         "PACKAGE BODY" => ObjectKind::PackageBody,
         "TRIGGER" | "SQL_TRIGGER" => ObjectKind::Trigger,
         "TYPE" | "TYPE BODY" => ObjectKind::Type,
+        "SEQUENCE" | "S" | "SO" | "SEQUENCE_OBJECT" => ObjectKind::Sequence,
+        "SYNONYM" | "SN" => ObjectKind::Synonym,
+        "INDEX" => ObjectKind::Index,
+        "SYSTEM VIEW" => ObjectKind::View,
         _ => ObjectKind::Table,
     }
 }
@@ -549,12 +719,47 @@ mod tests {
     }
 
     #[test]
+    fn names_sql_per_dialect() {
+        let p = pat("cust", false, false);
+        let ora = names_sql(Dialect::Oracle, &[], Some(&p), true, 100).unwrap();
+        assert!(ora.contains("all_objects o LEFT JOIN all_tab_comments c"));
+        assert!(ora.contains(
+            "(UPPER(o.object_name) LIKE UPPER('%cust%') ESCAPE '\\' OR UPPER(c.comments) LIKE"
+        ));
+        assert!(ora.contains("o.owner NOT IN ('SYS'") && ora.contains("ROWNUM <= 100"));
+        let ora2 = names_sql(Dialect::Oracle, &["HR".into()], Some(&p), false, 0).unwrap();
+        assert!(
+            ora2.contains("o.owner IN ('HR')")
+                && !ora2.contains("c.comments) LIKE")
+                && !ora2.contains("ROWNUM")
+        );
+        let all = names_sql(Dialect::Oracle, &[], None, true, 0).unwrap();
+        assert!(!all.contains(" LIKE "), "정규식 = 이름 전부");
+        let pg = names_sql(Dialect::Postgres, &[], Some(&p), true, 10).unwrap();
+        assert!(
+            pg.contains("UNION ALL")
+                && pg.contains("pg_proc")
+                && pg.contains("pg_trigger")
+                && pg.ends_with("LIMIT 10")
+        );
+        let ms = names_sql(Dialect::Mssql, &[], Some(&p), true, 10).unwrap();
+        assert!(ms.starts_with("SELECT TOP (10) ") && ms.contains("MS_Description"));
+        let lite = names_sql(Dialect::Sqlite, &[], Some(&pat("x", true, false)), true, 0).unwrap();
+        assert!(lite.contains("sqlite_master") && lite.contains("instr(name, 'x') > 0"));
+        assert!(names_sql(Dialect::Odbc, &[], None, false, 0).is_none());
+    }
+
+    #[test]
     fn kind_codes() {
         assert_eq!(kind_of("SQL_STORED_PROCEDURE"), ObjectKind::Procedure);
         assert_eq!(kind_of("PACKAGE BODY"), ObjectKind::PackageBody);
         assert_eq!(kind_of("v"), ObjectKind::View);
         assert_eq!(kind_of("m"), ObjectKind::MaterializedView);
         assert_eq!(kind_of("trigger"), ObjectKind::Trigger);
+        assert_eq!(kind_of("SO"), ObjectKind::Sequence);
+        assert_eq!(kind_of("S"), ObjectKind::Sequence);
+        assert_eq!(kind_of("SN"), ObjectKind::Synonym);
+        assert_eq!(kind_of("index"), ObjectKind::Index);
     }
 
     #[test]

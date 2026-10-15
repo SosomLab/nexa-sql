@@ -1,9 +1,10 @@
-//! ★ 객체 찾기 창 호스트 쪽(docs/113 · 10-15): 열기 · 동작(검색 요청 → 탐색기 칸 방송 · 소스 탭 · 탐색기에서 보기 · 복사 · SELECT) ·
-//! 설정 반영. 검색 자체는 `explorer.rs` 메타 스레드(`Req::Find`) · 응답 합치기는 창(`push_hits`).
+//! ★ 객체 찾기 창 호스트 쪽(docs/113 · 10-15): 열기 · 동작(검색 → **전용 엔진** `findobj_engine` · 소스 탭 · 탐색기에서 보기 · 복사 · SELECT) ·
+//! 설정 반영 · 엔진 메시지 펌프(`findobj_pump`). 검색은 창 전용 스레드들(서버마다 계획 + 워커 N · D-295 실시간 직접 조회) · 합치기는 창(`push_msg`).
 use crate::findobj_win::FoAction;
 use crate::*;
 use nsql_i18n::{t, Msg};
 use nsql_log::{LogEntry, LogKind};
+use nsql_script::ConnectSpec;
 use winit::event_loop::ActiveEventLoop;
 
 impl App {
@@ -61,14 +62,23 @@ impl App {
         }
     }
 
+    /// 엔진 메시지를 창에 넘긴다(매 `about_to_wait` · 창이 닫혔으면 버린다).
+    pub(crate) fn findobj_pump(&mut self) {
+        let open = self.findobj_win.is_open();
+        while let Some(m) = self.findobj_engine.try_recv() {
+            if open {
+                self.findobj_win.push_msg(m);
+            }
+        }
+    }
+
     /// 창 동작 처리.
     pub(crate) fn findobj_action(&mut self, act: FoAction) {
         match act {
             FoAction::None | FoAction::Paint => {}
             FoAction::Close => {
                 if self.findobj_win.is_running() {
-                    let rev = self.findobj_win.rev();
-                    self.explorer.find_stop(rev);
+                    self.findobj_engine.cancel();
                 }
                 self.findobj_win.close();
                 self.persist_window_sizes(false);
@@ -77,14 +87,36 @@ impl App {
             FoAction::Search(q, only) => {
                 self.findobj_remember();
                 let rev = self.findobj_win.rev();
-                let n = self.explorer.find_objects(rev, &q, only.as_ref());
-                self.findobj_win.started(n);
+                // 대상 = 연결된 서버 칸(한 서버만이면 그것만) · 엔진 `server` 번호 = 이 목록 차례 → 창에 같은 차례의 키를 알린다.
+                let targets: Vec<crate::findobj_engine::ServerTarget> = self
+                    .findobj_win
+                    .servers()
+                    .iter()
+                    .filter_map(|(k, label)| {
+                        let spec = k.clone()?;
+                        if only.as_ref().is_some_and(|o| o != &spec) {
+                            return None;
+                        }
+                        Some(crate::findobj_engine::ServerTarget {
+                            db: self.explorer.current_db(Some(&spec)),
+                            spec,
+                            label: label.clone(),
+                        })
+                    })
+                    .collect();
+                let specs: Vec<ConnectSpec> = targets.iter().map(|t| t.spec.clone()).collect();
+                let workers = self.settings.int("findobj.workers").clamp(1, 8) as usize;
+                let n = self.findobj_engine.start(rev, *q.clone(), targets, workers);
+                self.findobj_win.started(specs);
                 self.log_win.push(LogEntry::new(
                     LogKind::Info,
-                    format!("[findobj] #{rev} \"{}\" servers={n}", q.pat.text),
+                    format!(
+                        "[findobj] #{rev} \"{}\" servers={n} workers={workers}",
+                        q.pat.text
+                    ),
                 ));
             }
-            FoAction::Stop(rev) => self.explorer.find_stop(rev),
+            FoAction::Stop => self.findobj_engine.cancel(),
             FoAction::OpenSource { server, obj, line } => {
                 if line > 0 {
                     self.findobj_goto = Some((obj.name.clone(), line));

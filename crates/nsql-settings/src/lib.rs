@@ -3015,6 +3015,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "relations,routines,triggers,others",
     },
     Entry {
+        key: "findobj.workers",
+        cat: Msg::CatExplorer,
+        label: Msg::LblFoWorkers,
+        desc: Msg::DescFoWorkers,
+        kind: SettingKind::Int { min: 1, max: 8 },
+        default: "2",
+    },
+    Entry {
         key: "explorer.keep_offline",
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerKeepOffline,

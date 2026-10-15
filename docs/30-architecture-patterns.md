@@ -49,7 +49,8 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
-| **객체 찾기 질의 `nsql_catalog::find`**(10-15 · 113 §4) | nsql-catalog `find.rs`(순수 SQL 조립 `columns_sql`/`source_sqls` + 클라이언트 `match_lines`/`line_matches` · 시험 6) | 컬럼·소스 본문을 방언별 사전 뷰 LIKE 1회로 — 대소문자(UPPER/ILIKE/COLLATE/instr/BINARY) · `ESCAPE '\\'` · 상한(ROWNUM/TOP/LIMIT) · 덩어리 정의는 클라이언트가 줄을 가른다 | 객체 찾기 창(서버별 메타 스레드 `Req::Find`) · CLI 후속 |
+| **객체 찾기 질의 `nsql_catalog::find`**(10-15 · 113 §4) | nsql-catalog `find.rs`(순수 SQL 조립 `names_sql`/`columns_sql`/`source_sqls` + 클라이언트 `match_lines`/`line_matches` · 시험 7) | 이름·설명·컬럼·소스 본문을 방언별 사전 뷰 LIKE 1회로 — 대소문자(UPPER/ILIKE/COLLATE/instr/BINARY) · `ESCAPE '\\'` · 상한(ROWNUM/TOP/LIMIT) · 덩어리 정의는 클라이언트가 줄을 가른다 | 객체 찾기 전용 엔진 `findobj_engine`(v2) · CLI 후속 |
+| **창 전용 작업 엔진 `findobj_engine`**(10-15 · 113 §4 v2) | nexa-sql `findobj_engine.rs`(`Engine{start,cancel,try_recv}` · 계획 스레드 + 워커 N · `EngineMsg{Planned,Task,ServerDone}` · 취소 = `live` rev 비교) | 사용자 동작 하나를 서버 × 단위 × 단계 **작업**으로 쪼개 각자 세션으로 병렬 실행 · 창은 메시지를 합쳐 보여 주기만(메인 창·탐색기 스레드와 분리) · 깨우기는 `ExplorerSet::wake` 하나 | 객체 찾기 창 · (후보) 데이터 값 검색 · 다중 서버 일괄 작업 |
 | **객체 종류 → 아이콘 `exp_icons::object_icon`**(10-15) | nexa-sql `exp_icons.rs` | 탐색기 `icon_for` 안의 매핑을 꺼내 객체 찾기 창이 같은 아이콘을 쓴다 | 탐색기 트리 · 객체 찾기 결과 목록 |
 | **별칭 생성 `alias::{abbr, letter, cased, make}`**(10-15) | nsql-core `alias.rs`(의존 0 · 시험) | 인텔리센스 완성(`intel.rs` 로컬 함수)과 Generate SQL(`gen.rs` 고정 `t`)이 따로 → 순수 부품 하나 = 약어/문자 방식(`intel.alias_style`) + 대문자 여부(`intel.alias_upper`) | 완성 삽입 별칭 · `gen.rs` SELECT·MERGE 별칭(GUI·CLI) |
 | **이름 끌기 칩 `dragchip::paint`**(10-15) | nexa-sql `dragchip.rs` | 결과 열 머리 끌기 칩(121차 `Grid::paint_drag_chip` 안)과 탐색기 노드 끌기 칩이 같은 모양 → 그리기 한 함수(커서 옆 · 팝업 층 · 창 안 밀어 넣기) · 호스트 놓기 판정도 `name_drag_text`/`cancel_name_drag` 한 길 | 그리드 열 머리 · 객체 탐색기 노드(28 §11) |

@@ -602,7 +602,9 @@ impl ApplicationHandler<Wake> for App {
             next = next.min(t);
         }
         // ★ 메모리 맵 창(docs/80): 열려 있을 때만 `mem.refresh_ms`마다 표본 → 창·상태줄 갱신. 닫혀 있으면 깨우지도 않는다.
-        // 객체 찾기 창 진행 중이면 상태줄 시각 갱신(113).
+        // ★ 객체 찾기 엔진 → 창(113 §4 v2 · 작업 단위 메시지 · 창이 닫혔거나 rev가 다르면 버림).
+        self.findobj_pump();
+        // 객체 찾기 창 진행 중이면 진행 패널·혜성 갱신(113).
         if self.findobj_win.tick() {
             self.findobj_win.redraw();
         }

@@ -96,6 +96,15 @@
 | 결과 상한 | DBeaver("max results") · Toad | `explorer.index_hits_max`(84 §5) |
 
 - 소스 본문 검색은 **서버 사전 질의 비용이 이름 검색의 수십 배**다(본문 전송). 이름·컬럼은 우리 L1/L2 메타로 즉시, 본문은 서버 질의(필요할 때만 · 상한 · 취소)로 나누는 것이 지연 로딩 원칙(61 §1-8)과 맞다.
+- **세션·작업 분할 관점(10-15 보강 · 기억 기반)**:
+
+| 관점 | DataGrip | Redgate SQL Search | DBeaver | 시사점(우리) |
+|---|---|---|---|---|
+| 검색 전용 세션 | 인트로스펙션은 데이터 소스별 별도 연결(기억) | SSMS 연결과 별개 연결로 색인(**확인 필요**) | 메타 읽기 = 별도 "메타 연결" 옵션(Separate connection for metadata · 기억) | 창 전용 세션 = 메인 실행 세션의 문지기·트랜잭션과 섞이지 않음 |
+| 작업 단위 | 스키마 단위 인트로스펙션 · 점증(기억) | **DB 단위** 색인(확인 필요) | 연결·스키마 단위 질의(기억) | 서버 × 스키마(DB) × 단계(이름 → 컬럼 → 소스)로 쪼개면 취소·재시도·점증 표시가 자연스러움 |
+| 병렬 | 데이터 소스 사이 병렬(기억) | DB 사이 순차 추정(**확인 필요**) | 작업(Job)별 백그라운드 · 병렬 상한 불명(**확인 필요**) | 서버 사이 병렬 · 한 서버 안은 상한(접속·서버 부하 · 26 §8 `connect.max_concurrent`) |
+| 취소 | 진행 표시줄에서 취소(확신) | 색인 취소 버튼(기억) | 작업 취소(확신) | 작업마다 독립 취소 · 끝난 작업 결과는 남김 |
+| 최신성 | 로컬 인트로스펙션 = 낡을 수 있음(새로 고침 필요 · 확신) | 색인 = 낡을 수 있음 · 증분(확인 필요) | 매번 서버 질의 = 최신(확신) | "항상 최신 = DB 직접 조회" 요구와 맞는 쪽은 DBeaver 방식 · 대신 비용은 분할·병렬·상한으로 |
 
 ### 1-9. 한계(도구별 흔한 불만)
 
@@ -156,32 +165,45 @@
 │  BISCM_SB.PRC_RUN_ALL (PROCEDURE · 61.81.244.214)                        │
 │   12 │   SELECT c.cust_id FROM sales_customer c                           │ ← 일치 강조
 │   47 │   -- customer 재계산                                               │
-├ 상태 ──────────────────────────────────────────────────────────────────┤
-│  검색 중 · 서버 2/3 · 일치 37 · 1.2 s        [편집기에서 열기] [탐색기에서 보기] [닫기] │
+├ 진행(v2) ───────────────────────────────────────────────────────────────┤
+│  검색 중 · 서버 1/3 · 스키마 12 · 작업 17/41 · 조사 8,230행 · 객체 37 · 일치 52   │ ← 혜성 링 = 검색어 상자 둘레
+│  시작 17:44:36 · 종료 - · 경과 1.2 s · BISCM · HR · Source · 412 ms       │
+│ 거르기 [________________________]   ☑이름 ☑설명 ☑컬럼 ☑소스              │ ← 결과 좁히기(뷰 투영)
+│                                           [편집기에서 열기] [탐색기에서 보기] [닫기] │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **v2(10-15 저녁 · 사용자 지시 3)**: ① 늘 **최신 내용 기반 = DB 직접 조회**(사본·캐시 없음 · D-306) ② **작업을 잘게**(서버 × 스키마 × 단계) · 창 **전용 엔진**(메인 창·탐색기 메타 스레드와 분리) · 작업마다 독립 세션 ③ 결과는 **합친 뒤** 거르기·정렬·미리보기·열기·바로가기 · **진행 패널**(혜성 + 범위·대상·결과·시작·종료·경과)로 끝날 때까지 동작이 보인다.
+
 - **진입**: View ▸ Find Objects…(Ctrl+Alt+F · 팔레트 `view.find_objects`) · 객체 탐색기 필터 틀에 글이 있으면 그 글을 검색어로 받아 연다(후속 = 틀 오른쪽 버튼).
-- **조건 1행**: 검색어(이력 = `search_history` 부품 · 상자 `findobj`) · Aa(대소문자) · ab(낱말) · (.*)(정규식 — **이름·설명·컬럼**에 적용 · 본문은 메타 문자 없는 글이면 그대로, 있으면 본문 단계 건너뜀 + 안내) · Enter = 검색 · Esc = 검색 중이면 중지 · 아니면 창 닫기.
+- **조건 1행**: 검색어(이력 = `search_history` 부품 · 상자 `findobj` = 후속) · Aa(대소문자) · ab(낱말) · (.*)(정규식 — **이름·설명**에 적용(클라이언트) · 컬럼·본문은 메타 문자 없는 글이면 그대로, 있으면 그 단계 건너뜀 + 안내) · Enter = 검색 · Esc = 검색 중이면 중지 · 아니면 창 닫기 · Tab = 검색어 → 스키마 → 거르기 → 목록.
 - **범위**: 서버 콤보(전체 | 연결된 서버 각각 · 라벨 = 탐색기 헤더와 같음) · 스키마 글 상자(비면 전부 · 쉼표 여러 개 · 탐색기 필터와 같은 대소문자 무시) · SSMS는 **현재 DB**(v1 · 후속 = DB 체크 트리 1-10 ②).
 - **대상 4**(이름 · 설명 · 컬럼 · 소스) · **종류 4 묶음**(테이블·뷰·MV · 프로시저·함수·패키지 · 트리거 · 그 밖 = 시퀀스·시노님·타입…) — 기본 전부 켬 · 설정에 기억.
 - **결과 목록**(평면 · 자연 정렬 서버 → 스키마 → 이름 · 종류 아이콘 = 탐색기와 같은 `exp_icons`): 한 객체 = 한 행 · "일치" 열 = 무엇이 걸렸는지 요약(이름 · 설명 · 컬럼 N · 소스 N줄) · 선택 = 미리보기 · 더블클릭/Enter = 소스 탭(소스 있는 종류) 또는 탐색기에서 보기(그 밖) · 우클릭 = 탐색기 메뉴의 부분집합(소스 열기 · 탐색기에서 보기 · 이름 복사 · Shift 전체 이름 복사 · Generate SQL ▸ SELECT).
 - **미리보기**(아래 · 스플리터 · 기본 1/3): 머리 = `스키마.이름 (종류 · 서버)` · 본문 = 일치 줄 목록 `줄번호 │ 글`(소스) · 컬럼 표(`컬럼 · 자료형 · 설명`) · 이름/설명 일치는 설명 글 · 일치 구간 강조(찾기 강조색) · 더블클릭 줄 = 그 줄로 소스 탭.
-- **상태줄**: 단계(이름 → 컬럼 → 소스) · 서버 n/N · 일치 수(상한 도달 = `… 이상`) · 경과 · 오류는 행이 아니라 상태줄 + 로그(서버별 한 줄).
+- **진행 패널(v2)**: 두 줄 = ① 상태(검색 중/완료) · 서버 d/T · 스키마 수 · 작업 d/T · 조사한 행 · 객체 수 · 일치 수 ② 시작 시각 · 종료 시각 · 경과(0.1 s) · 보임 n/m(거르기 중) · 안내(상한·정규식 건너뜀·오류) 또는 **마지막으로 끝난 작업**(서버 · 스키마 · 단계 · ms). 혜성 링(nexa-ctl `BusyRing` · 검색어 상자 둘레)은 **종료 전까지** 돌고 끝나면 완료 깜빡임 · 작업이 끝날 때마다 결과 행이 바로 늘어난다(합치기 = 객체 열쇠 `(서버, DB, 스키마, 이름, 종류)`).
+- **결과 거르기(v2)**: 글 상자(이름·스키마·서버·요약·컬럼 이름 부분 일치 · 입력마다 즉시) + **일치 종류 토글 4**(이름·설명·컬럼·소스 중 하나라도) → 마스터 결과는 그대로 두고 **보기(`view`)만 투영**(DR-33과 같은 모양 · 선택 행 유지) · 열 머리 클릭 = 정렬(이름·스키마·서버·일치 수 · 재클릭 = 역순).
 - **창**: 크기·위치 기억(`window.findobj_size`/`_pos` · 다른 창과 같은 `wingeom::Memo`) · 메인이 닫히면 함께 · 메인 활성/비활성과 무관하게 남음(모달리스) · 결과는 다음 검색까지 유지.
 
-## 4. 엔진(서버별 메타 스레드 · 단계 · 점증 · 취소)
+## 4. 엔진(v2 · 창 전용 · 서버 × 스키마 × 단계 작업 · 병렬 · 실시간 직접 조회)
 
-| 단계 | 원천 | 비용 | 비고 |
-|---|---|---|---|
-| ① 이름·설명 | 스레드의 L1 이름 사본 `l1_names` + 코멘트 사본 `l1_comments`(127차) · 비어 있으면 `name_index` 1회 | 즉시(로컬) | 판정 = `filterbar::Matcher`(Aa·낱말·정규식 · 탐색기 필터와 같은 규칙) |
-| ② 컬럼 | `nsql_catalog::find::columns(s, schemas, pat, max)` — 서버 질의 **1회**(사전 뷰 LIKE · 방언별) | 1 왕복 | 결과 = 컬럼 · 자료형 · (코멘트는 사본에서) |
-| ③ 소스 | `nsql_catalog::find::source(s, schemas, kinds, pat, max, lines_per_obj)` — 서버 질의 1~2회 | 1~2 왕복(ALL_SOURCE 전수 = 수 초 가능) | Oracle = 줄 단위라 줄 번호 공짜 · 다른 DBMS = 정의 한 덩어리 → 클라이언트가 줄을 가른다 |
+> v1(10-15 낮) = 탐색기 서버별 메타 스레드에 `Req::Find` 3단계를 실어 보냈고 ① 이름·설명은 **L1 사본**으로 판정했다. 사용자 지시(10-15 저녁) "항상 변경된 최신 내용 기반 · 실시간으로 DB를 직접 조회 · 작업을 최대한 잘게 · 창 자체도 별도로 동작 · 각 작업도 별도로 동작"으로 **v2 = 전용 엔진 `findobj_engine.rs`**로 바꿨다(v1 경로는 제거).
 
-- 요청 `Req::Find{gen, rev, q: FindQuery}` → 응답 `Resp::Find{gen, rev, stage, hits, done, note}`가 단계마다 온다(점증) · 창은 서버·rev로 합친다 · **취소** = `rev` 올림(새 검색) 또는 `Req::FindStop` → 스레드는 단계 사이에서 큐를 들여다봐 더 새 rev가 있으면 중단(`drain_newer`) · 호출 상한 = `meta.call_timeout_secs`(T-313) · 상한 = `findobj.max_hits`(서버·단계마다) · 한 객체의 소스 일치 줄 = `findobj.lines_per_object`.
+| 조각 | 무엇 | 비고 |
+|---|---|---|
+| `Engine`(`App.findobj_engine`) | `start(rev, q, servers, workers_per_server)` → 서버마다 **계획 스레드** `nsql-findobj-{ix}` · `cancel()` = 살아 있는 `rev`를 0으로(워커는 작업 경계에서 멈춤) · `try_recv()` = 메시지 펌프(`about_to_wait` `findobj_pump`) | 메인 창·탐색기 메타 스레드와 **공유하는 것 없음**(깨우기 `wake`만) |
+| 계획(`plan_and_run`) | `explorer::open_meta`(세션 자격 금고로 비밀번호) → SSMS = `set_option("schema", db)` → 스키마 = 조건의 스키마 또는 `schemas_opt`(시스템 스키마 숨김 · 빈 스키마 숨김 · SQLite = main) → **작업 목록** = 스키마마다 `Names` · `Columns` · `Source × 종류 묶음`(루틴·패키지·타입 / 뷰·MV / 트리거) → `Planned{schemas, tasks}` | 작업 = (단계, 스키마, 종류 묶음) · 큐 `VecDeque` + `Mutex` |
+| 워커 | 서버마다 `findobj.workers`(기본 2 · 1~8)개 = 계획 세션 + 추가 세션(각자 `open_meta`) · `work()` = 큐에서 하나씩 → `run_task()` → `Task{stage, schema, hits, scanned, note, ms}` · 마지막 워커가 `ServerDone{err}` | 세션 하나 = 한 번에 한 질의(DR-34 통제 단위와 같은 모양) |
+| ① 이름·설명 | `find::names(s, schemas, pat|None, with_comment, max)` = **서버 질의 1회**(Oracle `ALL_OBJECTS` ⟕ `ALL_TAB_COMMENTS` · PG `pg_class`/`pg_proc`/`pg_trigger` UNION · SQL Server `sys.objects` ⟕ `extended_properties MS_Description` · SQLite `sqlite_master` · MySQL `tables`/`routines`/`triggers`) → 정규식·낱말·종류는 클라이언트 `filter_names` | **L1 사본은 쓰지 않는다**(D-305) |
+| ② 컬럼 | `find::columns(s, schemas, pat, max)` 질의 1회(사전 뷰 LIKE · 방언별) | 정규식(메타 문자) = 건너뜀 + 안내 |
+| ③ 소스 | `find::source(s, schemas, kinds, pat, max, lines_per_obj)` 질의 1~2회 · 종류 묶음마다 작업 하나 | Oracle `ALL_SOURCE` 줄 단위 · 다른 DBMS = 덩어리 → `match_lines` |
+| 창(`push_msg`) | `rev`가 다르면 버림 · `Planned` = 서버/스키마/작업 합산(서버마다 한 번) · `Task` = 합치기(`merge` · 객체 열쇠) + 조사 행 + 마지막 작업 글 → `apply_view` · `ServerDone` = 서버마다 한 번 · 전부 끝 = `finish`(종료 시각 · 혜성 Done) | 결과·보기·미리보기 = 창 안 순수 함수 |
+
+- 취소 = 새 검색(`rev` 올림) · ■ · Esc · 창 닫기 → `Engine::cancel()` · 진행 중 질의는 호출 상한(`meta.call_timeout_secs`)까지.
+- 상한 = `findobj.max_hits`(서버·작업마다 · 상태 안내 "상한") · 한 객체의 소스 일치 줄 = `findobj.lines_per_object`.
 - 방언별 LIKE: 대소문자 무시 = Oracle `UPPER(x) LIKE UPPER(p)` · PG `ILIKE` · SQL Server `COLLATE Latin1_General_CI_AS`(구분 = `_CS_AS`) · SQLite `LIKE`(ASCII 무시 · 구분 = `instr`) · MySQL `LIKE`(구분 = `BINARY`) · 와일드카드 `%_\`는 `ESCAPE '\'`로 이스케이프 · 낱말 경계는 클라이언트 후처리.
-- 원천 표(108 §2~§6): Oracle `ALL_TAB_COLUMNS` · `ALL_SOURCE`(+ 뷰 = `ALL_VIEWS.TEXT_VC` 12c+ · LONG `TEXT`는 LIKE 불가) / PG `pg_attribute` · `pg_proc.prosrc` · `pg_views.definition` · `pg_matviews.definition` · `pg_get_triggerdef` / SQL Server `sys.columns` · `sys.sql_modules.definition` / SQLite `pragma_table_info` · `sqlite_master.sql` / MySQL `information_schema.columns` · `routines.routine_definition` · `views.view_definition` · `triggers.action_statement`.
-- 부하원 등재(39 §3): 스레드 추가 0(기존 메타 스레드) · 네트워크 = 사용자 동작당 서버마다 1~3 질의(자동 재시도 없음 · 26 §8 ✓) · 메모리 = 결과 상한 × 행.
+- 원천 표(108 §2~§6): Oracle `ALL_OBJECTS`·`ALL_TAB_COMMENTS`·`ALL_TAB_COLUMNS`·`ALL_SOURCE`(+ 뷰 = `ALL_VIEWS.TEXT_VC` 12c+) / PG `pg_class`·`pg_proc`·`pg_description`·`pg_attribute`·`prosrc`·`pg_views`·`pg_matviews`·`pg_get_triggerdef` / SQL Server `sys.objects`·`sys.extended_properties`·`sys.columns`·`sys.sql_modules.definition` / SQLite `sqlite_master`·`pragma_table_info` / MySQL `information_schema.tables/routines/triggers/columns/views`.
+- 부하원 등재(39 §3): **스레드 = 검색 중 서버마다 1 + (workers−1)**(끝나면 전부 종료 · 상주 0) · 세션 = 서버마다 workers개(끝나면 닫음) · 네트워크 = 사용자 동작당 서버마다 (스키마 수 × 2~5) 질의(자동 재시도 없음 · 26 §8 ✓) · 메모리 = 결과 상한 × 행 · 끌 수 있는 손잡이 = `findobj.workers` 1 · `findobj.max_hits`.
 
 ## 5. 연계(한 길)
 
@@ -197,15 +219,16 @@
 | `findobj.lines_per_object` | 10 | 한 객체의 소스 일치 줄 상한(미리보기) |
 | `findobj.targets` | name,comment,column,source | 기억된 대상 체크 |
 | `findobj.kinds` | relations,routines,triggers,others | 기억된 종류 묶음 |
+| `findobj.workers` | 2 | 서버당 동시 작업(세션) 수 · 1~8(v2) |
 | `window.findobj_size` / `_pos` | 980×680 | 창 크기·위치 |
 | 키맵 `view.find_objects` | Ctrl+Alt+F(mac ⌥⌘F) | 열기/앞으로 |
 
 ## 7. 자체 시험(키 주입 0)
 
-- 기동 명령 `findobj.open` · `findobj.query:<글>`(조건 반영 + 검색 실행) · `findobj.dump:<파일>`(상태줄 + 결과 행 `종류|스키마|이름|서버|일치`) · `findobj.pick:<n>`(n행 더블클릭 = 소스 탭) · E2E `scripts/win-findobj-e2e.sh`(SQLite 격리 홈 · 표·뷰·트리거 소스 · 컬럼 일치 · 대소문자 · 낱말 · 상한 · 소스 탭 열림 = `editor.dump`).
-- 단위 = `find::columns_sql/source_sql`(방언별 SQL 모양 · 이스케이프) · `find::match_lines`(줄 가르기 · 낱말 경계 · 상한) · 창 상태 순수 함수(합치기 · 정렬 · 요약 글).
+- 기동 명령 `findobj.open` · `findobj.query:[cwr:]<글>`(조건 반영 + 검색 실행) · `findobj.filter:<글>`(결과 거르기 · v2) · `findobj.dump:<파일>`(첫 줄 = `running|rows|view|servers d/T|schemas|tasks d/T|scanned|hits|notes|errors` · 둘째·셋째 줄 = 진행 패널 두 줄 · 결과 행 `종류|스키마|이름|서버|일치`(보기 순서) · 선택 행 미리보기 `pre|줄|글|강조수`) · `findobj.pick:<n>`(보기 n행 더블클릭 = 소스 탭) · E2E `scripts/win-findobj-e2e.sh` **19/0**(SQLite 격리 홈 · ① 이름·컬럼·소스 각 행 ② Aa ③ 낱말 ④ pick = 소스 탭 ⑤ 상한 안내 ⑥ **진행 패널**(작업 d/T 전부 끝 · 서버/스키마/작업/조사/객체/일치 · 시작·종료·경과) ⑦ **결과 거르기**(`orders` → 보기 2/4 · showing 2 of 4)).
+- 단위 = `find::columns_sql/source_sqls/names_sql`(방언별 SQL 모양 · 이스케이프) · `find::match_lines`(줄 가르기 · 낱말 경계 · 상한) · 엔진 `source_groups`/`filter_names`/`regex_meta` · 창 상태 순수 함수(합치기 · 거르기 · 정렬 · 요약 글).
 
 ## 8. 단계 · 결정
 
-- **1단계(10-15)** = §3 창 + §4 엔진 ①②③ + §5 연계 + §6 + §7 · **2단계(후속 T)** = 정규식 서버측(Oracle `REGEXP_LIKE` · PG `~*`) · SSMS DB 체크 트리 · 데이터 값 검색(별도 대상 · 기본 끔 · 1-10 ③) · 저장된 검색 · 결과 내보내기 · 탐색기 필터 틀 "상세 검색" 버튼.
-- 결정 번호(10 §3): **D-292** 창 = 모달리스 · 메인 소유 · 최상위 아님 · **D-293** 본문 검색은 서버 LIKE(정규식은 이름·설명·컬럼만 · 본문은 메타 문자 없을 때만) · **D-294** SSMS 본문·컬럼 범위 = 현재 DB(v1).
+- **1단계(10-15 낮)** = §3 창 + §4 엔진 ①②③(v1 · 탐색기 스레드) + §5 연계 + §6 + §7 · **v2(10-15 저녁 · 사용자 지시 3)** = 전용 엔진 · 작업 분할 · 실시간 직접 조회(D-306) · 진행 패널 · 결과 거르기 · 정렬 · **2단계(후속 T-354)** = 정규식 서버측(Oracle `REGEXP_LIKE` · PG `~*`) · SSMS DB 체크 트리 · 데이터 값 검색(별도 대상 · 기본 끔 · 1-10 ③) · 저장된 검색 · 결과 내보내기 · 탐색기 필터 틀 "상세 검색" 버튼.
+- 결정 번호(10 §3): **D-292** 창 = 모달리스 · 메인 소유 · 최상위 아님 · **D-293** 본문 검색은 서버 LIKE(정규식은 이름·설명·컬럼만 · 본문은 메타 문자 없을 때만) · **D-294** SSMS 본문·컬럼 범위 = 현재 DB(v1) · **D-306** 객체 찾기 = **늘 DB 직접 조회**(L1·코멘트 사본 금지 · 이름·설명도 서버 질의 1회) · 창 전용 엔진 · 서버 × 스키마 × 단계 작업 · 서버당 `findobj.workers` 세션.

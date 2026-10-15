@@ -1160,6 +1160,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         (!t.is_empty()).then_some(t)
     }
 
+    /// 이벤트 루프 깨우기(객체 찾기 엔진 같은 창 전용 스레드가 쓴다).
+    pub(crate) fn wake(&self) -> Arc<dyn Fn() + Send + Sync> {
+        Arc::clone(&self.wake)
+    }
+
     /// 연결된(오프라인 아닌) 서버 칸 = (키, 라벨).
     pub(crate) fn find_servers(&self) -> Vec<(Option<ConnectSpec>, String)> {
         self.panes
@@ -1167,32 +1172,6 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
             .filter(|p| !p.ex.is_offline())
             .map(|p| (p.key.clone(), p.ex.server_label()))
             .collect()
-    }
-
-    /// 전체(또는 한 서버)에 찾기 요청 · 돌려주는 값 = 요청이 간 서버 수.
-    pub(crate) fn find_objects(
-        &mut self,
-        rev: u64,
-        q: &crate::explorer::FindQuery,
-        only: Option<&ConnectSpec>,
-    ) -> usize {
-        let only_i = only.and_then(|k| self.find(k));
-        let mut n = 0;
-        for (i, p) in self.panes.iter_mut().enumerate() {
-            if only_i.is_some_and(|j| j != i) {
-                continue;
-            }
-            if p.ex.find_objects(rev, q.clone()) {
-                n += 1;
-            }
-        }
-        n
-    }
-
-    pub(crate) fn find_stop(&mut self, rev: u64) {
-        for p in &mut self.panes {
-            p.ex.find_stop(rev);
-        }
     }
 
     /// 그 서버 칸에서 소스 탭 열기 / SELECT 생성(칸이 없으면 false).
@@ -1723,25 +1702,6 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                             spec,
                             r,
                             server: p.key.clone(),
-                        });
-                    }
-                    // 객체 찾기 응답에 이 칸의 서버·라벨을 붙인다(113).
-                    ExplorerAction::Find {
-                        rev,
-                        stage,
-                        hits,
-                        done,
-                        note,
-                        ..
-                    } => {
-                        out.push(ExplorerAction::Find {
-                            server: p.key.clone(),
-                            label: p.ex.server_label(),
-                            rev,
-                            stage,
-                            hits,
-                            done,
-                            note,
                         });
                     }
                     // 소스 열기 탭의 출처에 이 카탈로그의 서버를 채운다(09-30).

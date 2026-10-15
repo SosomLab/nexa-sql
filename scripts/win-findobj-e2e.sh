@@ -2,7 +2,7 @@
 # win-findobj-e2e.sh — 객체 찾기 창 자체 시험(docs/113 §7 · 10-15). SQLite 격리 홈 · 키 주입 0 · 기동 명령으로 창을 열고 검색 → 덤프 판정.
 #   준비 = 표 2(컬럼에 검색어 · 설명 없음) · 뷰(소스에 검색어) · 트리거(소스에 검색어) · 이름에 검색어가 있는 표.
 #   케이스: ① 이름·컬럼·소스 일치가 각각 행으로 ② 대소문자 구분 켬 = 소문자 검색어는 소스 대문자 줄을 못 봄 ③ 낱말 = `customer_id`는 안 걸림
-#           ④ pick 0 = 소스 탭 열림(editor.dump에 CREATE …) ⑤ 상한 1 = 상태줄 "상한" 안내.
+#           ④ pick 0 = 소스 탭 열림(editor.dump에 CREATE …) ⑤ 상한 1 = 안내 ⑥ 진행 패널(작업 단위 · 시작·종료·경과) ⑦ 결과 거르기(뷰 투영 · showing n of m).
 # 사용: scripts/win-findobj-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -73,5 +73,23 @@ has d.editor "CREATE VIEW v_big" && ok "④ pick 0 = 뷰 소스 탭 열림(edito
 mk_home "findobj.max_hits=1\n"
 gui e "$PRE,@after:4500:findobj.query:customer,@after:8000:findobj.dump:$(w "$OUT/e.dump")" 10
 head -1 "$OUT/e.dump" 2>/dev/null | grep -q "notes=.*limit\|notes=.*상한" && ok "⑤ 상한 1 = 안내(notes)" || bad "⑤ 상한 안내 없음" "$(head -1 "$OUT/e.dump" 2>/dev/null)"
+# ⑥ 진행 패널(작업 단위 · 113 §3): 덤프 첫 줄 tasks=d/T(d=T>0) · servers=1/1 · 둘째 줄 = 서버/스키마/작업/조사/객체/일치 · 셋째 줄 = 시작/종료/경과
+h1=$(head -1 "$OUT/a.dump" 2>/dev/null)
+td=$(echo "$h1" | sed -n 's/.*servers=1\/1|schemas=1|tasks=\([0-9]*\)\/\([0-9]*\)|.*/\1 \2/p')
+if [ -n "$td" ] && [ "${td% *}" = "${td#* }" ] && [ "${td% *}" -gt 0 ]; then ok "⑥ 진행 = 서버 1/1 · 스키마 1 · 작업 ${td% *}/${td#* } 전부 끝"; else bad "⑥ 진행 셈 이상" "$h1"; fi
+sed -n 2p "$OUT/a.dump" 2>/dev/null | grep -q "Done .*servers 1/1 .*tasks .*scanned .*objects .*matches" && ok "⑥ 진행 1줄 = 서버·스키마·작업·조사·객체·일치" || bad "⑥ 진행 1줄 모양" "$(sed -n 2p "$OUT/a.dump" 2>/dev/null)"
+sed -n 3p "$OUT/a.dump" 2>/dev/null | grep -Eq "started [0-9]{2}:[0-9]{2}:[0-9]{2}.*ended [0-9]{2}:[0-9]{2}:[0-9]{2}.*elapsed [0-9]+\.[0-9] s" && ok "⑥ 진행 2줄 = 시작·종료·경과" || bad "⑥ 진행 2줄 모양" "$(sed -n 3p "$OUT/a.dump" 2>/dev/null)"
+# ⑦ 결과 거르기(뷰 투영): "orders" → orders 표·trg_orders 트리거만(customer 표·v_big 제외) · view < rows · 둘째 줄 "showing"
+mk_home ""
+gui f "$PRE,@after:4500:findobj.query:customer,@after:8000:findobj.filter:orders,@after:8600:findobj.dump:$(w "$OUT/f.dump")" 11
+if [ -f "$OUT/f.dump" ]; then
+  has f.dump "Table|main|orders|" && ok "⑦ 거르기: orders 표 보임" || bad "⑦ orders 표 없음" "$(cat "$OUT/f.dump")"
+  has f.dump "Trigger|main|trg_orders|" && ok "⑦ 거르기: trg_orders 보임" || bad "⑦ trg_orders 없음" "$(cat "$OUT/f.dump")"
+  if has f.dump "Table|main|customer|"; then bad "⑦ 거르기인데 customer 표가 보임" "$(cat "$OUT/f.dump")"; else ok "⑦ 거르기: customer 표 제외"; fi
+  head -1 "$OUT/f.dump" | grep -Eq "rows=4\|view=2\|" && ok "⑦ 마스터 4 · 보기 2" || bad "⑦ rows/view 셈" "$(head -1 "$OUT/f.dump")"
+  sed -n 3p "$OUT/f.dump" | grep -q "showing 2 of 4" && ok "⑦ 둘째 줄 showing 2 of 4" || bad "⑦ showing 없음" "$(sed -n 3p "$OUT/f.dump")"
+else
+  bad "⑦ 덤프 없음" "$(tail -4 "$OUT/f.stderr")"
+fi
 say "RESULT PASS $pass FAIL $fail"
 [ "$fail" -eq 0 ]

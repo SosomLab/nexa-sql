@@ -369,17 +369,6 @@ enum Req {
     SearchStop {
         gen: u64,
     },
-    /// ★ 객체 찾기(113 §4): 단계 ①②③을 순서대로 · 단계 사이에 더 새 `rev`가 큐에 있으면 중단 · `db` = SSMS 현재 DB.
-    Find {
-        gen: u64,
-        rev: u64,
-        q: FindQuery,
-        db: Option<String>,
-    },
-    FindStop {
-        gen: u64,
-        rev: u64,
-    },
     /// 디스크 캐시의 이름을 스레드 사본에 심는다(85 §9 · 서버가 이미 준 스키마는 건너뜀).
     NamesSeed {
         gen: u64,
@@ -762,15 +751,6 @@ enum Resp {
         rev: u64,
         hits: Vec<Hit>,
     },
-    /// ★ 객체 찾기 응답(단계마다 · `done` = 마지막 · `note` = 잘림/오류 안내).
-    Find {
-        gen: u64,
-        rev: u64,
-        stage: FindStage,
-        hits: Vec<FindHit>,
-        done: bool,
-        note: Option<String>,
-    },
     Columns {
         gen: u64,
         node: usize,
@@ -952,16 +932,6 @@ impl ObjectOrigin {
 pub(crate) enum ExplorerAction {
     /// ★ 필터 틀 "Include Description" 토글(10-15) — 호스트가 설정 `explorer.search_desc`를 뒤집는다(프로젝트 탐색기 숨김 토글과 같은 길).
     ToggleDescSearch,
-    /// ★ 객체 찾기 응답(113 · 서버·라벨은 `ExplorerSet::take_actions`가 채운다).
-    Find {
-        server: Option<ConnectSpec>,
-        label: String,
-        rev: u64,
-        stage: FindStage,
-        hits: Vec<FindHit>,
-        done: bool,
-        note: Option<String>,
-    },
     /// 새 편집기 탭에 텍스트(SELECT 템플릿 · 소스).
     OpenSql {
         title: String,
@@ -1325,7 +1295,8 @@ fn err_s(e: DbError) -> String {
 /// 메타 스레드 — 세션 하나 · 순차 처리 · 요청마다 `catch_unwind`(드라이버 패닉이 UI로 번지지 않게).
 /// 메타 세션을 연다 — 비밀번호 자리가 없는 스펙이면 **세션 자격 금고**에서 빌려 그 접속에만 쓰고 지운다. 금고에도 없으면
 /// 서버에 가지 않는다(빈 비밀번호 로그인 시도가 쌓이면 계정이 잠긴다 · docs/26 §8).
-fn open_meta(spec: &ConnectSpec, default: Dialect) -> Result<Box<dyn Session>, DbError> {
+/// 메타·검색용 세션 열기(비밀번호 = 세션 자격 금고 · 객체 찾기 엔진 `findobj_engine`도 같은 길 · 113 §4).
+pub(crate) fn open_meta(spec: &ConnectSpec, default: Dialect) -> Result<Box<dyn Session>, DbError> {
     if !crate::worker::password_required(spec, default) {
         return nsql_drivers::open(spec, default);
     }
@@ -1381,8 +1352,6 @@ fn req_label(r: &Req) -> String {
         Req::DbSizes { .. } => "db-sizes".into(),
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
-        Req::Find { rev, .. } => format!("find #{rev}"),
-        Req::FindStop { rev, .. } => format!("find-stop #{rev}"),
         Req::SchemaComments { .. } => "schema-comments".into(),
         Req::NamesUpdate { schema, kind, .. } => format!("names-update {schema} {kind:?}"),
         Req::NamesSeed { schema, .. } => format!("names-seed {schema}"),
@@ -1424,7 +1393,6 @@ fn req_prio(r: &Req) -> u8 {
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
         Req::Search { .. }
         | Req::SearchStop { .. }
-        | Req::FindStop { .. }
         | Req::NamesUpdate { .. }
         | Req::NamesSeed { .. } => 1,
         Req::Index { .. } => 2,
@@ -1767,121 +1735,6 @@ fn meta_thread(
             Req::SearchStop { gen } => {
                 if gen == cur_gen {
                     search = None;
-                }
-                continue;
-            }
-            Req::FindStop { .. } => continue,
-            // ★ 객체 찾기(113 §4): ① 이름·설명(로컬) → ② 컬럼(질의 1) → ③ 소스(질의 1~2) · 단계마다 응답 · 단계 사이 취소 판정.
-            Req::Find { gen, rev, q, db } => {
-                if gen != cur_gen {
-                    continue;
-                }
-                let send =
-                    |stage: FindStage, hits: Vec<FindHit>, done: bool, note: Option<String>| {
-                        let _ = tx.send(Resp::Find {
-                            gen,
-                            rev,
-                            stage,
-                            hits,
-                            done,
-                            note,
-                        });
-                        wake();
-                    };
-                // 더 새 검색/중지가 큐에 들어왔으면 이 검색은 버린다(단계 사이에서만 본다).
-                let newer = |pending: &mut std::collections::VecDeque<Req>| -> bool {
-                    while let Ok(r) = rx.try_recv() {
-                        pending.push_back(r);
-                    }
-                    pending.iter().any(|r| match r {
-                        Req::Find {
-                            rev: r2, gen: g, ..
-                        } => *g == gen && *r2 > rev,
-                        Req::FindStop { rev: r2, gen: g } => *g == gen && *r2 >= rev,
-                        _ => false,
-                    })
-                };
-                if q.names || q.comments {
-                    let hits = find_names(&l1_names, &l1_comments, &q);
-                    let note = (q.max_hits > 0 && hits.len() >= q.max_hits)
-                        .then(|| t(Msg::FoTruncated).to_string());
-                    send(FindStage::Names, hits, false, note);
-                }
-                if newer(&mut pending) {
-                    continue;
-                }
-                if q.columns && !(q.regex && regex_meta(&q.pat.text)) {
-                    switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
-                    let r = with_session(&mut session, |s| {
-                        nsql_catalog::find::columns(s, &q.schemas, &q.pat, q.max_hits)
-                            .map_err(|e| e.message)
-                    });
-                    match r {
-                        Ok((v, trunc)) => {
-                            let hits = v
-                                .into_iter()
-                                .map(|c| FindHit {
-                                    db: db.clone(),
-                                    schema: c.schema,
-                                    name: c.table,
-                                    kind: c.table_kind,
-                                    what: FindWhat::Column {
-                                        column: c.column,
-                                        data_type: c.data_type,
-                                    },
-                                })
-                                .collect();
-                            let note = trunc.then(|| t(Msg::FoTruncated).to_string());
-                            send(FindStage::Columns, hits, false, note);
-                        }
-                        Err(e) => send(FindStage::Columns, Vec::new(), false, Some(e)),
-                    }
-                }
-                if newer(&mut pending) {
-                    continue;
-                }
-                if q.source && !(q.regex && regex_meta(&q.pat.text)) {
-                    switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
-                    let kinds: Vec<ObjectKind> = if q.kinds_all {
-                        Vec::new()
-                    } else {
-                        q.kinds.clone()
-                    };
-                    let r = with_session(&mut session, |s| {
-                        nsql_catalog::find::source(
-                            s,
-                            &q.schemas,
-                            &kinds,
-                            &q.pat,
-                            q.max_hits,
-                            q.lines_per_object,
-                        )
-                        .map_err(|e| e.message)
-                    });
-                    match r {
-                        Ok((v, trunc)) => {
-                            let hits = v
-                                .into_iter()
-                                .map(|h| FindHit {
-                                    db: db.clone(),
-                                    schema: h.schema,
-                                    name: h.name,
-                                    kind: h.kind,
-                                    what: FindWhat::Source {
-                                        line: h.line,
-                                        text: h.text,
-                                    },
-                                })
-                                .collect();
-                            let note = trunc.then(|| t(Msg::FoTruncated).to_string());
-                            send(FindStage::Source, hits, true, note);
-                        }
-                        Err(e) => send(FindStage::Source, Vec::new(), true, Some(e)),
-                    }
-                } else {
-                    let note = (q.regex && regex_meta(&q.pat.text) && (q.columns || q.source))
-                        .then(|| t(Msg::FoRegexLocalOnly).to_string());
-                    send(FindStage::Source, Vec::new(), true, note);
                 }
                 continue;
             }
@@ -2440,120 +2293,6 @@ fn reachable(spec: &ConnectSpec, timeout: Duration) -> bool {
 /// 검색 일치 한 건 = (DB · 스키마 · 종류 · 이름) — DB는 SSMS DB 단위일 때만(그 밖 빈 문자열 · 10-15 T-351).
 pub(crate) type Hit = (String, String, ObjectKind, String);
 
-/// ★ 객체 찾기 조건(docs/113 §4 · 10-15): 검색어(대소문자·낱말) · 정규식(이름·설명·컬럼에만) · 대상 4 · 종류(소스) · 스키마(비면 전부) · 상한.
-#[derive(Clone, Debug)]
-pub(crate) struct FindQuery {
-    pub pat: nsql_catalog::find::FindPat,
-    pub regex: bool,
-    pub names: bool,
-    pub comments: bool,
-    pub columns: bool,
-    pub source: bool,
-    /// 소스 단계의 종류 필터(비면 소스 있는 종류 전부) · 이름 단계는 `kinds_all`이면 전부.
-    pub kinds: Vec<ObjectKind>,
-    pub kinds_all: bool,
-    pub schemas: Vec<String>,
-    pub max_hits: usize,
-    pub lines_per_object: usize,
-}
-
-/// 무엇이 걸렸는가.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum FindWhat {
-    Name,
-    Comment(String),
-    Column { column: String, data_type: String },
-    Source { line: u32, text: String },
-}
-
-/// 일치 한 건(서버는 `ExplorerSet::take_actions`가 붙인다).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FindHit {
-    pub db: Option<String>,
-    pub schema: String,
-    pub name: String,
-    pub kind: ObjectKind,
-    pub what: FindWhat,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FindStage {
-    Names,
-    Columns,
-    Source,
-}
-
-/// ① 이름·설명 단계(로컬 · L1 이름 사본 + 코멘트 사본) — `search_hits`와 같은 걷기 · 판정 = `FindPat`/정규식.
-fn find_names(
-    names: &HashMap<String, Vec<nsql_catalog::NameEntry>>,
-    comments: &HashMap<String, HashMap<String, String>>,
-    q: &FindQuery,
-) -> Vec<FindHit> {
-    let rx = q.regex.then(|| {
-        let src = if q.pat.case_sensitive {
-            q.pat.text.clone()
-        } else {
-            format!("(?i){}", q.pat.text)
-        };
-        fancy_regex::Regex::new(&src).ok()
-    });
-    if q.regex && rx.as_ref().is_none_or(Option::is_none) {
-        return Vec::new();
-    }
-    let hit = |hay: &str| -> bool {
-        match rx.as_ref().and_then(|r| r.as_ref()) {
-            Some(r) => r.is_match(hay).unwrap_or(false),
-            None => nsql_catalog::find::line_matches(hay, &q.pat),
-        }
-    };
-    let mut out = Vec::new();
-    let mut keys: Vec<&String> = names.keys().collect();
-    keys.sort_by(|a, b| nexa_ctl::natural::cmp_names(a, b));
-    'outer: for sc in keys {
-        let db = unit_db(sc).map(str::to_string);
-        let cm = if q.comments { comments.get(sc) } else { None };
-        for e in &names[sc] {
-            if !q.schemas.is_empty() && !q.schemas.iter().any(|x| x.eq_ignore_ascii_case(&e.schema))
-            {
-                continue;
-            }
-            if !q.kinds_all && !q.kinds.contains(&e.kind) {
-                continue;
-            }
-            if q.names && hit(&e.name) {
-                out.push(FindHit {
-                    db: db.clone(),
-                    schema: e.schema.clone(),
-                    name: e.name.clone(),
-                    kind: e.kind,
-                    what: FindWhat::Name,
-                });
-            } else if let Some(c) = cm.and_then(|c| {
-                let ck = if db.is_some() {
-                    format!("{}.{}", e.schema, e.name).to_lowercase()
-                } else {
-                    e.name.to_lowercase()
-                };
-                c.get(&ck)
-            }) {
-                if hit(c) {
-                    out.push(FindHit {
-                        db: db.clone(),
-                        schema: e.schema.clone(),
-                        name: e.name.clone(),
-                        kind: e.kind,
-                        what: FindWhat::Comment(c.clone()),
-                    });
-                }
-            }
-            if q.max_hits > 0 && out.len() >= q.max_hits {
-                break 'outer;
-            }
-        }
-    }
-    out
-}
-
 /// 스레드의 살아 있는 검색(85 §6 · 10-15): 검색어 세대 · 매처 · 상한 · 설명 포함 · 범위(단위 열쇠 · None = 전부).
 struct LiveSearch {
     rev: u64,
@@ -2564,16 +2303,6 @@ struct LiveSearch {
 }
 
 /// ★ 인덱스·코멘트 단위 열쇠(10-15 · T-351): 비SSMS = 스키마 · SSMS = `db:<DB>`(스키마 "" + DB · DB당 스키마 필터 없는 질의 1회).
-/// 정규식에 메타 문자가 있는가(없으면 본문·컬럼 단계는 글자 그대로 LIKE로 · D-293).
-fn regex_meta(text: &str) -> bool {
-    text.chars().any(|c| {
-        matches!(
-            c,
-            '.' | '*' | '+' | '?' | '[' | ']' | '(' | ')' | '{' | '}' | '|' | '^' | '$' | '\\'
-        )
-    })
-}
-
 fn index_key(schema: &str, db: Option<&str>) -> String {
     if schema.is_empty() {
         format!("db:{}", db.unwrap_or(""))
@@ -5265,27 +4994,6 @@ impl Explorer {
                     }
                     self.blockers_results.push(r);
                 }
-                Resp::Find {
-                    gen,
-                    rev,
-                    stage,
-                    hits,
-                    done,
-                    note,
-                } => {
-                    if gen != self.gen {
-                        continue;
-                    }
-                    self.actions.push(ExplorerAction::Find {
-                        server: None,
-                        label: String::new(),
-                        rev,
-                        stage,
-                        hits,
-                        done,
-                        note,
-                    });
-                }
                 Resp::GenSql { gen, spec, r } => {
                     if gen != self.gen {
                         continue;
@@ -7133,32 +6841,6 @@ impl Explorer {
             sub_extra: String::new(),
             opts,
         });
-    }
-
-    /// ★ 객체 찾기 요청(113 §4 · 백그라운드 메타 스레드 · SSMS = 현재 DB). 오프라인이면 false.
-    pub(crate) fn find_objects(&mut self, rev: u64, q: FindQuery) -> bool {
-        if self.offline {
-            return false;
-        }
-        self.last_used = Instant::now();
-        self.suspended = false;
-        let db = if self.dialect == Some(Dialect::Mssql) {
-            self.current_db.clone()
-        } else {
-            None
-        };
-        self.tx_bg
-            .send(Req::Find {
-                gen: self.gen,
-                rev,
-                q,
-                db,
-            })
-            .is_ok()
-    }
-
-    pub(crate) fn find_stop(&mut self, rev: u64) {
-        let _ = self.tx_bg.send(Req::FindStop { gen: self.gen, rev });
     }
 
     /// 객체 찾기 창에서 소스 탭 열기(탐색기 메뉴 "소스 열기"와 한 길).

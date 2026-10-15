@@ -414,20 +414,6 @@ impl App {
                 ExplorerAction::Preview { spec, r, .. } if self.drop_take_backup(&spec, &r) => {
                     changed = true;
                 }
-                // ★ 객체 찾기 창(113): 단계별 응답을 창에 합친다.
-                ExplorerAction::Find {
-                    server,
-                    label,
-                    rev,
-                    stage,
-                    hits,
-                    done,
-                    note,
-                } => {
-                    self.findobj_win
-                        .push_hits(server, label, rev, stage, hits, done, note);
-                    changed = true;
-                }
                 ExplorerAction::Preview { spec, r, .. } if self.compare_take(&spec, &r) => {
                     changed = true;
                 }

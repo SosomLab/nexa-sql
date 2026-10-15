@@ -57,6 +57,7 @@ mod file_win;
 mod fileload;
 mod filterbar;
 mod findbar;
+mod findobj_engine;
 mod findobj_win;
 mod gitstat;
 mod grid;
@@ -283,6 +284,8 @@ struct App {
     mem_win: mem_win::MemWin,
     /// ★ 객체 찾기 창(docs/113 · 모델리스).
     findobj_win: findobj_win::FindObjWin,
+    /// ★ 객체 찾기 전용 엔진(113 §4 v2 · 서버 × 스키마 × 단계 작업 · 탐색기 스레드와 분리 · D-295).
+    findobj_engine: findobj_engine::Engine,
     /// 열기 깃발(메뉴·팔레트·키 → 다음 `about_to_wait`) + 미리 넣을 검색어.
     open_findobj: Option<Option<String>>,
     /// 소스 탭이 열리면 이 줄로(객체 이름, 줄).
@@ -1323,13 +1326,13 @@ impl App {
     // ───────────── 북마크(docs/69 · T-167) ─────────────
 }
 
-/// OS 연결 프로그램으로 파일 열기(외부 crate 0 · 3-OS).
+/// OS 연결 프로그램으로 파일·폴더 열기(외부 crate 0 · 3-OS).
+/// Windows = `explorer.exe <경로>`(GUI 프로세스 · 폴더 = 탐색기 · 파일 = 연결 프로그램) — 종전 `cmd /C start`는 콘솔 창이
+/// 잠깐 떠서 거슬렸다(사용자 10-15 "자동 저장 폴더 열기 = 중간 명령창 없이").
 fn open_external(path: &std::path::Path) -> Result<(), String> {
     let p = path.display().to_string();
     let r = if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &p])
-            .spawn()
+        std::process::Command::new("explorer.exe").arg(&p).spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(&p).spawn()
     } else {
@@ -1719,6 +1722,7 @@ fn main() {
         status_autosave_rect: Rect::new(0, 0, 0, 0),
         mem_win: mem_win::MemWin::new(),
         findobj_win: findobj_win::FindObjWin::new(),
+        findobj_engine: findobj_engine::Engine::new(explorer.wake()),
         open_findobj: None,
         findobj_goto: None,
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
