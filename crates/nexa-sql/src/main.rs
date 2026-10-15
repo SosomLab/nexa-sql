@@ -248,6 +248,14 @@ struct App {
     drop_req: Option<app::drop::DropReq>,
     open_drop: bool,
     drop_backup_wait: Option<nsql_catalog::ObjectInfo>,
+    /// ★ 객체 변경 전 백업 진행(114 §7-2 · 10-15) + 미뤄 둔 실행.
+    objbk: Option<app::objbackup::ObjBackupRun>,
+    /// 백업 게이트 한 번 건너뜀(재진입 · 삭제 창).
+    objbk_skip_once: bool,
+    /// 주기 정리 다음 시각(`backup.prune_interval_min`).
+    objbk_prune_next: Option<Instant>,
+    /// ★ 운영 2단 확인을 **이미 거친** 실행 한 번(삭제 창 모달 2단 · 백업 뒤 재진입 · 114 G6 · 10-15): `run_text_in`이 소비한다.
+    prod_confirmed_once: bool,
     /// ★ CREATE 문 ↔ 실제 객체 비교(T-283): 서버 DDL을 기다리는 대상 · 마지막 비교(이름 · 서버 DDL · 차이 수 = "서버 DDL 열기"·덤프).
     compare_wait: Option<app::compare::CompareTarget>,
     compare_last: Option<(String, String, usize)>,
@@ -1697,6 +1705,10 @@ fn main() {
         drop_req: None,
         open_drop: false,
         drop_backup_wait: None,
+        objbk: None,
+        objbk_skip_once: false,
+        objbk_prune_next: None,
+        prod_confirmed_once: false,
         compare_wait: None,
         compare_last: None,
         compare_diff_key: String::new(),

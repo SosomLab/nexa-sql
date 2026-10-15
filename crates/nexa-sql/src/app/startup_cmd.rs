@@ -950,6 +950,15 @@ impl App {
             let _ = std::fs::write(path, self.findobj_win.dump());
             return;
         }
+        // 자체 시험(10-15): 상태줄 글 덤프(`status.dump:<파일>` · 기동 명령들이 상태줄에만 남기는 판정 결과를 파일로).
+        if let Some(path) = id.strip_prefix("status.dump:") {
+            let _ = std::fs::write(path, &self.sess.status);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("objbk.dump:") {
+            let _ = std::fs::write(path, self.objbk_dump());
+            return;
+        }
         if let Some(f) = id.strip_prefix("findobj.filter:") {
             self.findobj_win.test_filter(f);
             return;
@@ -1225,8 +1234,12 @@ impl App {
         }
         if let Some(pick) = id.strip_prefix("explorer.pick:") {
             let ok = self.explorer.capture_pick(pick);
-            if !ok {
-                self.sess.status = format!("explorer.pick {pick}: menu not open");
+            if ok {
+                // 메뉴 항목이 만든 동작(삭제 창 요청 · Generate SQL …)을 바로 거둔다 — 실제 클릭 길과 같게(10-15 · 삭제 창 E2E).
+                self.explorer_actions();
+                self.sess.status = format!("explorer.pick {pick}: ok");
+            } else {
+                self.sess.status = format!("explorer.pick {pick}: no menu and no selected row");
             }
             self.redraw();
             return;

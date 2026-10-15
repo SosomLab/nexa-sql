@@ -414,6 +414,10 @@ impl App {
                 ExplorerAction::Preview { spec, r, .. } if self.drop_take_backup(&spec, &r) => {
                     changed = true;
                 }
+                // ★ 객체 변경 전 백업(114 §7-2): 실행 앞에 청한 DDL이면 파일로 쓰고 다음 대상 또는 실행 재진입.
+                ExplorerAction::Preview { spec, r, .. } if self.objbk_take(&spec, &r) => {
+                    changed = true;
+                }
                 ExplorerAction::Preview { spec, r, .. } if self.compare_take(&spec, &r) => {
                     changed = true;
                 }

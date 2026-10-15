@@ -231,7 +231,13 @@ impl App {
         self.run_text_in(src, 0, true, true);
     }
 
-    fn run_text_in(&mut self, mut src: String, line_base: usize, all: bool, whole: bool) {
+    pub(crate) fn run_text_in(
+        &mut self,
+        mut src: String,
+        line_base: usize,
+        all: bool,
+        whole: bool,
+    ) {
         // ★ 결과가 갈 패널은 **활성 편집기 탭**의 것이어야 한다 — 탭 전환(파일 열기) 뒤 첫 그리기 전에 실행이 오면(기동 명령 ·
         //   기동 직후 탐색기 paint 정지로 밀린 사건) 패널 동기화가 아직이라 결과가 **옛 탭의 패널**에 실려 화면은 "No Records"
         //   였다(10-05 · 협업 세션 자체 시험 13회 중 정지 ≥ 2.2 s면 전부). 동기화는 그리기마다 하는 것이라 여기서 한 번 더 해도 비용 0.
@@ -282,7 +288,11 @@ impl App {
         }
         // 운영 접속 + 변경 문장(서버로 가는 것) = 2단 실행(같은 본문을 3초 안에 다시 실행하면 진행 · 앱의 2단 확인 관례 · docs/56 §4).
         let prod = cur_env == Some(nsql_script::ConnEnv::Prod);
-        if sessions::prod_confirm_needed(prod, self.settings.flag("run.prod_confirm"), &needed) {
+        // ★ 삭제 창처럼 **이미 모달 2단을 거친** 호출 · 백업 뒤 재진입은 건너뛴다(한 번 · 114 G6 · 10-15).
+        let pre_confirmed = std::mem::take(&mut self.prod_confirmed_once);
+        if !pre_confirmed
+            && sessions::prod_confirm_needed(prod, self.settings.flag("run.prod_confirm"), &needed)
+        {
             let key = nexa_fs::watch::content_hash(src.as_bytes());
             let armed = self
                 .sess
@@ -300,6 +310,14 @@ impl App {
                 return;
             }
             self.sess.prod_armed = None;
+        }
+        // ★ 객체 변경 전 백업(114 §7-2 · 사용자 10-15): DROP · CREATE OR REPLACE/ALTER · TRUNCATE/RENAME 대상이 있으면 현재 DDL을
+        //   먼저 파일로 받고(탐색기 메타 스레드 · 비동기) 끝나면 같은 인자로 재진입한다(건너뜀 깃발 = 재진입 · 삭제 창).
+        if !std::mem::take(&mut self.objbk_skip_once)
+            && self.objbk.is_none()
+            && self.objbk_plan(&src, line_base, all, whole)
+        {
+            return;
         }
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();

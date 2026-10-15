@@ -1236,10 +1236,13 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
 
     /// 자체 캡처용 — 메뉴가 열린 칸에서 그 항목을 고른다.
     pub(crate) fn capture_pick(&mut self, id: &str) -> bool {
-        self.panes
-            .iter_mut()
-            .find(|p| p.ex.menu_open())
-            .is_some_and(|p| p.ex.capture_pick(id))
+        // 메뉴가 열린 칸 → 없으면 선택 행이 있는 칸(비활성 창에서 메뉴가 바로 닫히는 경우 · 10-15).
+        let i = self
+            .panes
+            .iter()
+            .position(|p| p.ex.menu_open())
+            .or_else(|| self.panes.iter().position(|p| p.ex.has_selected()));
+        i.is_some_and(|i| self.panes[i].ex.capture_pick(id))
     }
 
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {

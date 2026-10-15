@@ -8730,13 +8730,20 @@ impl Explorer {
     }
 
     /// 자체 캡처용(기동 명령 `explorer.pick:<id>`): 열린 메뉴에서 그 항목을 **클릭한 것과 같은 경로**로 고른다.
+    /// 자체 시험용(기동 명령 `explorer.pick:<id>`): 메뉴 항목을 고른 것과 **같은 길**. 메뉴가 닫혀 있어도 선택 행이 있으면
+    /// 그 행으로 고른다(10-15 — 비활성 창에서는 우클릭 직후 메뉴가 닫혀 `menu not open`으로 흔들렸다 · 키·마우스 주입 0 규칙).
     pub(crate) fn capture_pick(&mut self, id: &str) -> bool {
-        if !self.menu.is_open() {
+        if self.menu.is_open() {
+            self.menu.close();
+        } else if self.selected.is_none() {
             return false;
         }
-        self.menu.close();
         self.menu_pick(id);
         true
+    }
+
+    pub(crate) fn has_selected(&self) -> bool {
+        self.selected.is_some()
     }
 
     fn menu_pick(&mut self, id: &str) {

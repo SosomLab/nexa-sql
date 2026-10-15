@@ -79,6 +79,13 @@ impl App {
             "autosave.settings",
             t(Msg::MnAutosaveSettings),
         ));
+        // ★ 객체 백업 바로가기(D-303 · 10-15): 위치 열기 · 설정(`backup.object_*`).
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item("autosave.objbackup", t(Msg::MnObjBackupOpen)));
+        items.push(CtxItem::item(
+            "autosave.objbackup_settings",
+            t(Msg::MnObjBackupSettings),
+        ));
         // ★ 프로젝트 저장(사용자 09-30) — 풀다운 Project ▸ 저장과 같은 길(`project.save`).
         if self.project.is_open() {
             items.push(CtxItem::Separator);

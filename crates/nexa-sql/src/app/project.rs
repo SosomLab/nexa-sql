@@ -1462,6 +1462,11 @@ impl App {
                     },
                 };
             }
+            "objbackup" => self.objbk_open_dir(),
+            "objbackup_settings" => {
+                self.prefs_query = Some("backup.object".into());
+                self.open_prefs = true;
+            }
             "settings" => {
                 self.prefs_query = Some("project.autosave".into());
                 self.open_prefs = true;

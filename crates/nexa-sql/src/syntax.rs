@@ -90,6 +90,12 @@ impl SyntaxRegistry {
             if let Some(s) = self.specs.iter().find(|s| s.extensions.contains(&ext)) {
                 return s.clone();
             }
+            // ★ 객체 백업 파일(D-305 · 10-15) = 확장자가 17자리 시각 `yyyyMMddHHmmssSSS` → SQL(모르는 확장자 규칙의 예외).
+            if ext.len() == 17 && ext.bytes().all(|b| b.is_ascii_digit()) {
+                if let Some(s) = self.get("SQL") {
+                    return s;
+                }
+            }
             return self
                 .get("Plain Text")
                 .unwrap_or_else(|| Rc::new(SyntaxSpec::plain()));
@@ -118,6 +124,13 @@ mod tests {
         assert_eq!(r.for_title("a.sql").name, "SQL");
         assert_eq!(r.for_title("A.SQL").name, "SQL");
         assert_eq!(r.for_title("readme.md").name, "Plain Text");
+        // 객체 백업 파일(D-305) = 17자리 시각 확장자 → SQL · 16자리·글자 섞임 = Plain Text.
+        assert_eq!(
+            r.for_title("BISCM_HR.EMP_TABLE.20261015174436123").name,
+            "SQL"
+        );
+        assert_eq!(r.for_title("x.2026101517443612").name, "Plain Text");
+        assert_eq!(r.for_title("x.2026101517443612a").name, "Plain Text");
         assert_eq!(r.for_title("main.rs").name, "Plain Text");
         assert_eq!(r.for_title("rust-toolchain.toml").name, "Plain Text");
         assert_eq!(

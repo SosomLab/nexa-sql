@@ -148,8 +148,9 @@ impl ApplicationHandler<Wake> for App {
         // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
         self.demo_ready = Self::demo_exists();
         // 오래된 미저장 스냅숏 정리(docs/70 §5 · `project.backup_days`).
-        let pruned = backups::prune(self.settings.int("project.backup_days").max(1) as u64)
-            + backups::prune_drop(self.settings.int("project.backup_days").max(1) as u64);
+        let pruned = backups::prune(self.settings.int("project.backup_days").max(1) as u64);
+        // 객체 백업(114 §7-2 · D-302) = 자기 보관 규칙(`backup.object_days` · `_keep`)으로.
+        self.objbk_prune(true);
         if pruned > 0 {
             self.log_win.push(LogEntry::new(
                 LogKind::Info,
@@ -496,6 +497,13 @@ impl ApplicationHandler<Wake> for App {
         if self.startup_connected && !self.startup_after_connect.is_empty() && !self.sess.blocked()
         {
             for id in std::mem::take(&mut self.startup_after_connect) {
+                // `@connected:@after:<ms>:<명령>` = 접속 **뒤** ms(기동 기준 `@after`는 접속이 늦으면 앞질러 간다 · 10-15 E2E).
+                if let Some((ms, cmd)) = id.strip_prefix("@after:").and_then(|r| r.split_once(':'))
+                {
+                    let at = now + Duration::from_millis(ms.parse().unwrap_or(0));
+                    self.startup_timed.push((at, cmd.to_string()));
+                    continue;
+                }
                 self.startup_cmd(&id);
             }
         }
@@ -551,6 +559,10 @@ impl ApplicationHandler<Wake> for App {
         }
         // 탐색기 유휴 워터마크(docs/57 T2) — `meta.refresh_secs` 간격(기본 300초 · 0 = 끔 · 유휴일 때만 1행 질의).
         if let Some(t) = self.meta_refresh_tick(now) {
+            next = next.min(t);
+        }
+        // ★ 객체 백업 대기 상한 + 주기 정리(114 §7-2 · `backup.prune_interval_min`).
+        if let Some(t) = self.objbk_tick(now) {
             next = next.min(t);
         }
         // 유휴 미커밋 점검(docs/56 L2) — 미커밋 세션이 있을 때만 5초(카운트다운 중 1초) 간격으로 깬다.
@@ -1965,6 +1977,8 @@ impl App {
         );
         // ★ Format 분류의 미리보기 글(사용자 09-29) — 열 때 한 번 · 이후는 값이 바뀔 때마다.
         self.prefs_format_preview_refresh();
+        // ★ 객체 백업 보관 설정 아래 = 파일 스냅숏 보관(`project.backup_days`) 현재 값(사용자 10-15).
+        self.objbk_prefs_note();
     }
 
     /// ★ 이벤트 없이도 열어야 하는 창·대화상자 요청(메뉴·기동 명령·워커의 물음 · 깃발 = `open_*`/`*_pending`) — `about_to_wait`

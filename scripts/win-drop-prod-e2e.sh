@@ -26,9 +26,10 @@ run_case() { # <이름> <유형 none|prd>
   NSQL_HOME="$H" "$NSQL" conn env Local "$env" >/dev/null 2>&1
   printf 'CREATE TABLE t_drop (id INTEGER PRIMARY KEY, v TEXT);\n' > "$OUT/$name.sql"
   NSQL_HOME="$H" "$NSQL" run -c Local --no-prompt "$(m "$OUT/$name.sql")" >/dev/null 2>&1
-  local cmd="@after:2500:explorer.expand:main,@after:4000:explorer.expand:Tables,@after:5500:explorer.menu:t_drop,@after:6100:explorer.pick:drop,@after:7500:drop.confirm,@after:12000:drop.dump:$(w "$OUT/$name.dump"),@after:12200:log.dump:$(w "$OUT/$name.log")"
+  # 접속이 끝난 뒤(`@connected:` · 지연은 `@connected:@after:` = 접속 기준) 펼침 → 행 선택(라벨) → 메뉴 항목 drop(= 삭제 창) → 2단 확인(백업은 비동기 · 넉넉히) → 덤프.
+  local cmd="@connected:explorer.expand:main,@connected:@after:2500:explorer.expand:Tables,@connected:@after:4500:explorer.select:t_drop,@connected:@after:5000:explorer.pick:drop,@connected:@after:6500:drop.confirm,@connected:@after:11000:drop.dump:$(w "$OUT/$name.dump"),@connected:@after:11200:output.dump:$(w "$OUT/$name.out")"
   rm -f "$OUT/$name.dump"
-  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 15 "$EXE" Local > "$OUT/$name.stdout" 2> "$OUT/$name.stderr"
+  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 17 "$EXE" Local > "$OUT/$name.stdout" 2> "$OUT/$name.stderr"
   NSQL_HOME="$H" "$NSQL" cat -c Local tables > "$OUT/$name.tables" 2>&1
 }
 
@@ -39,8 +40,11 @@ run_case none none
 grep -q "t_drop" "$OUT/none.tables" && bad "대조(none): 표가 남음" "$(cat "$OUT/none.dump" 2>/dev/null)" || ok "대조(none): DROP 전송 → 표 사라짐"
 grep -qi "done\|sent\|전송" "$OUT/none.dump" 2>/dev/null && ok "대조(none): 삭제 창 단계 = 전송됨" || bad "대조(none): 창 단계 이상" "$(cat "$OUT/none.dump" 2>/dev/null)"
 run_case prd prd
-if grep -q "t_drop" "$OUT/prd.tables"; then
-  bad "운영(prd): 창은 전송됨인데 표가 남음(= G6 재현)" "$(cat "$OUT/prd.dump" 2>/dev/null; grep -i "prod\|confirm\|운영" "$OUT/prd.log" 2>/dev/null | tail -3)"
+# 판정 순서(협업 제안 10-15): 창이 열리지 않았으면 타이밍 문제(G6 아님) → 그 다음에 G6(창 전송됨 + 표 잔존)를 가른다.
+if ! grep -q "^open=true" "$OUT/prd.dump" 2>/dev/null; then
+  bad "운영(prd): 삭제 창 미개방(타이밍 · G6 판정 불가)" "$(cat "$OUT/prd.dump" 2>/dev/null)"
+elif grep -q "t_drop" "$OUT/prd.tables"; then
+  bad "운영(prd): 창은 전송됨인데 표가 남음(= G6 재현)" "$(cat "$OUT/prd.dump" 2>/dev/null; grep -i "prod\|confirm\|운영\|backup" "$OUT/prd.out" 2>/dev/null | tail -4)"
 else
   ok "운영(prd): DROP 전송 → 표 사라짐(2단 확인은 삭제 창이 대신)"
 fi

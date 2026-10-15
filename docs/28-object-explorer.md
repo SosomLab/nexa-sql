@@ -201,7 +201,7 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 | 진입 | 객체 노드 우클릭 ▸ **삭제…**(`nsql_catalog::drop_sql`이 문장을 만들 수 있는 종류만 · 테이블·뷰·MV·프로시저·함수·패키지(본문)·시퀀스·트리거·인덱스·시노님·타입) |
 | 창 | **모달** `drop_win.rs`(열려 있는 동안 모든 창 잠김 · `App::modal_open`) · 정보 줄(서버 · 접속 유형 · 객체 · 종류 · 상태 · 수정 · 부가 · 실행 문 · 백업 정책) · 단계 안내 |
 | 확인 | 삭제 버튼 = **2단 타임아웃**(`TimeoutButton` · `login.delete_confirm_ms`) — 한 번 누르면 "N초 안에 다시" 무장 · 그 안에 다시 누르면 실행 · 지나면 해제 |
-| 백업 | 설정 `explorer.drop_backup`(기본 켬): 탐색기 메타 세션으로 DDL(Generate SQL ▸ DDL 전체) → `<설정>/backups/drop/<프로필>_<SCHEMA>.<NAME>_<KIND>_<yyyymmdd-HHMMSS>.sql` · 보관 = `project.backup_days`(파일 백업과 같은 보관일) · **파일이 정상 생성됐을 때만** 삭제 |
+| 백업 | 설정 `backup.object_drop`(기본 켬 · 종전 `explorer.drop_backup` → 10-15 RENAMED · 그룹 **Object backup** = [114 §7-2](114-prod-held-commit-and-safeguards.md)): 탐색기 메타 세션으로 DDL(Generate SQL ▸ DDL 전체) → `<설정>/backups/objects/<프로필>_<스키마>.<객체>_<종류>.<yyyyMMddHHmmssSSS>`(D-305) · 보관 = `backup.object_days` 30 + 객체별 `backup.object_keep`(D-302) · **파일이 정상 생성됐을 때만** 삭제 · 편집기 DDL(DROP·CREATE OR REPLACE·ALTER·TRUNCATE·RENAME)도 같은 백업 |
 | 백업 실패 | 운영(Prod) 접속 = **삭제 안 함**(Blocked) · 그 밖 = "백업 없이 삭제" 버튼으로 **다시 타임아웃 재확인** 뒤 삭제(Output ⚠ 기록) |
 | 실행 | 그 서버의 접속된 세션으로 `DROP …`(옵션 없음 · 보통 실행 길 = Output · 트랜잭션 로그 · DDL 감지 → 폴더 갱신) · 세션이 없으면 "먼저 접속" |
 | 자체 시험 | 기동 명령 `explorer.pick:drop` · `drop.confirm`(2단 확인 통과) · `drop.confirm_nobackup` · `drop.dump:<파일>` |

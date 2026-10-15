@@ -491,6 +491,8 @@ impl App {
                 self.explorer.set_gen_opts(o);
             }
             "findobj.max_hits" | "findobj.lines_per_object" => self.findobj_apply_settings(),
+            "backup.prune_interval_min" => self.objbk_prune_next = None,
+            "project.backup_days" => self.objbk_prefs_note(),
             "meta.refresh_highlight_ms" => self
                 .explorer
                 .set_highlight_ms(self.settings.int(key).max(0) as u64),

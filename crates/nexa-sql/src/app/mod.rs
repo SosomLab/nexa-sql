@@ -25,6 +25,7 @@ mod live;
 mod memory;
 mod menus;
 mod meta;
+pub(crate) mod objbackup;
 pub(crate) mod objlink;
 mod output;
 mod paint;

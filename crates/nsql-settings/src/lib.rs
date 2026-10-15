@@ -39,6 +39,8 @@ const OLD_DEFAULTS: &[(&str, &str)] = &[
 /// 버린다) 다음 저장 때 사라진다. `nsql config get/set 옛키`도 새 키로 통한다([`canonical_key`]). 새 키의 접두 = 설정 창 카테고리
 /// (키 이름만 보고 어디 있는지 알게 · 사용자 09-28 "변수 이름이 설정 위치와 연결되지 않아 찾기 어렵다").
 pub const RENAMED: &[(&str, &str)] = &[
+    // 객체 백업 그룹(10-15 · 114 §7-2): 삭제 전 백업 스위치가 `backup.*`로.
+    ("explorer.drop_backup", "backup.object_drop"),
     // 3차(09-30 · 94 §6-4): 확장 설정 키 = `ext.<확장>.<키>`(사용자 "모든 확장 프로그램에 규칙 적용").
     ("grid.fast_scroll", "scroll.fast"),
     ("sqlfmt.strict", "ext.sqlfmt_kiros33.strict"),
@@ -2901,14 +2903,55 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
-    // ★ 객체 삭제 전 DDL 파일 백업(10-01 · 사용자 "기본은 파일로 백업 후 삭제 켬 · 끄면 백업 로직 사용 안 함").
+    // ★ 객체 백업(docs/114 §7 · §7-2 · 10-15 · 사용자 "별도 그룹 · 변경 동작 전체 각각 · 기본 켬 · 전 서버 일괄"): 전역 하나 · 서버 유형 무관.
+    //   종전 `explorer.drop_backup`(10-01) → `backup.object_drop`(RENAMED).
     Entry {
-        key: "explorer.drop_backup",
-        cat: Msg::CatExplorer,
-        label: Msg::LblDropBackup,
-        desc: Msg::DescDropBackup,
+        key: "backup.object_drop",
+        cat: Msg::CatObjectBackup,
+        label: Msg::LblBackupObjectDrop,
+        desc: Msg::DescBackupObjectDrop,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "backup.object_replace",
+        cat: Msg::CatObjectBackup,
+        label: Msg::LblBackupObjectReplace,
+        desc: Msg::DescBackupObjectReplace,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "backup.object_truncate",
+        cat: Msg::CatObjectBackup,
+        label: Msg::LblBackupObjectTruncate,
+        desc: Msg::DescBackupObjectTruncate,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "backup.object_days",
+        cat: Msg::CatObjectBackup,
+        label: Msg::LblBackupObjectDays,
+        desc: Msg::DescBackupObjectDays,
+        kind: SettingKind::Int { min: 1, max: 3650 },
+        default: "30",
+    },
+    Entry {
+        key: "backup.object_keep",
+        cat: Msg::CatObjectBackup,
+        label: Msg::LblBackupObjectKeep,
+        desc: Msg::DescBackupObjectKeep,
+        kind: SettingKind::Int { min: 0, max: 1000 },
+        default: "0",
+    },
+    Entry {
+        key: "backup.prune_interval_min",
+        cat: Msg::CatObjectBackup,
+        label: Msg::LblBackupPruneInterval,
+        desc: Msg::DescBackupPruneInterval,
+        kind: SettingKind::Int { min: 0, max: 1440 },
+        default: "60",
     },
     // ★ 소스 열기 머리 줄에 소유 스키마(09-30 · 사용자 "원본의 스키마를 붙여서 생성하는 걸 기본값으로").
     Entry {
@@ -6800,6 +6843,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatKeys,
             Msg::CatWindow,
             Msg::CatExplorer,
+            // 객체 백업(10-15 · 114 §7-2 · 사용자 "별도 그룹").
+            Msg::CatObjectBackup,
         ],
     ),
     (

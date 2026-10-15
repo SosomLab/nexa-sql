@@ -439,6 +439,25 @@ flowchart TD
 | 수동 정리(dir3) | 상태바 ▸ 저장 ▸ "객체 백업 위치 열기"(D-303) → dir3에서 **이름 내림차순** → 객체 묶음마다 위 5개를 남기고 아래를 선택해 삭제 · 프로그램 자동 규칙과 결과가 같다 |
 | 복원 | 파일을 열어(SQL로 열림) 내용 확인 → 그 접속에서 실행 · 운영은 E3 2단 확인 + 객체 백업이 다시 생긴다(덮어쓰기 전 원본 보존) |
 
+### 7-2. 구현(10-15 저녁 · 개발 세션 · 사용자 추가 지시 = "별도 그룹 · 변경 동작 전체 각각 · 기본 켬 · 서버별 일괄 · 파일명 스키마·객체·년월일시분초ms · `project.backup_days` 현재 값 표시")
+
+> 사용자 확인(10-15 · 질문 셋) = 파일명 **D-305 그대로**(확장자 = 17자리 시각) · 설정은 **전역 하나 · 전 서버 동일**(서버 유형이 수시로 바뀌므로 유형별 값 없음) · 대상 = **DROP(탐색기·편집기 DDL) · CREATE OR REPLACE/ALTER/F5 · TRUNCATE/RENAME** · DML 행 데이터는 제외(트랜잭션 제어 = §5 보류 커밋이 맡음).
+
+| 조각 | 구현 | 자리 |
+|---|---|---|
+| 설정 그룹 **Object backup** | 분류 `CatObjectBackup`(사용자 인터페이스 그룹 · 탐색기 다음) · `backup.object_drop`(켬 · 종전 `explorer.drop_backup` → RENAMED) · `backup.object_replace`(켬 · CREATE OR REPLACE/CREATE OR ALTER/ALTER/F5) · `backup.object_truncate`(켬 · TRUNCATE/RENAME) · `backup.object_days` 30(1~3650 · D-302) · `backup.object_keep` 0(객체별 최신 N · D-305) · `backup.prune_interval_min` 60(0 = 기동·백업 직후만) · **보관 설정 아래 덧말 = 파일 스냅숏 `project.backup_days` 현재 값**(설정 창 `set_note` · 값이 바뀌면 즉시) | nsql-settings · `app/objbackup.rs::objbk_prefs_note` |
+| 대상 판정(순수) | `backup_targets(items, dialect, 기본 스키마, flags)` = 문장마다 `ddl_target`(DROP/ALTER/RENAME · CREATE는 **OR REPLACE/OR ALTER일 때만**) + `TRUNCATE [TABLE] [스키마.]이름` 자체 파서 · 같은 객체 한 번 · 꺼진 동작 제외 · 스키마 없으면 세션 `?schema=` → 탐색기 현재 스키마(SQLite `main`) · 시험 3 | `app/objbackup.rs` |
+| 흐름(비동기) | `run_text_in` 운영 2단 확인 **뒤** 게이트 → `objbk_plan` → 대상마다 탐색기 메타 세션 `gen_object_on(Ddl · full · qualified)` → `ExplorerAction::Preview` 가로채기 `objbk_take` → `backups::write_object` → 다음 대상 → 전부 끝 `objbk_finish` = **같은 세션에서 같은 인자로 재진입**(`objbk_skip_once` + `prod_confirmed_once`) · 없는 객체(`not found`/`not available`/`does not exist`/ORA-31603…) = 건너뜀 · 실패 = **운영 → 실행 막음**(Output ✖ + 토스트) · 그 밖 → ⚠ 기록 + 계속 · 응답 대기 상한 90 s(`objbk_tick`) · Output 줄 = `Object backup: 객체 → 파일` / `… does not exist yet - skipped` / `Object backup done: N file(s) · skipped · warning(s) - running` | `app/run.rs` 게이트 · `app/meta.rs` · `app/objbackup.rs` |
+| 파일(D-305) | `<설정>/backups/objects/<프로필>_<스키마>.<객체>_<종류>.<yyyyMMddHHmmssSSS>` · 같은 이름 = 1 ms 올림(`while exists`) · 원자적(tmp → rename) · 머리 주석 = 시각 · 프로필 · 방언 · 객체 · `action: drop|replace|alter|rename|truncate` · 다시 읽어 0바이트면 실패 · 종전 `backups/drop/*.sql`은 새로 안 쓰고 보관 정리만 같은 규칙 | `backups.rs::write_object(_in)` · 시험 1(이름 · 충돌 · keep) |
+| 보관 정리(D-302) | `prune_objects(days, keep)` = 두 폴더(`objects/` · `drop/`) · 수정 시각 > days 삭제 + keep > 0이면 줄기(`<프로필>_<스키마>.<객체>_<종류>`)별 **이름 내림차순 N개 밖** 삭제 · 호출 = 기동 · 백업 직후 · `backup.prune_interval_min` 틱(유휴 틱 사슬 · 파일 열거만) · 로그 `Pruned N old object backup file(s)` | `backups.rs` · `objbk_tick`/`objbk_prune` |
+| 탐색기 삭제 창 | 설정 키 `backup.object_drop` · 백업 행 "보관 N일" = `backup.object_days` · 파일 = `write_object(… "drop")` · ★ **G6 수정** = 삭제 창의 모달 2단이 이미 확인이므로 `prod_confirmed_once` + `objbk_skip_once`를 켜고 `run_text_whole` → "전송됨" 판정 = 세션 `busy`(종전 = 늘 true · 운영에서 첫 호출은 무장만 하고 창은 "전송됨") | `app/drop.rs` |
+| 바로가기(D-303) | 상태바 저장 섹션 메뉴 ▸ 구분선 ▸ **객체 백업 위치 열기**(없으면 만들고 `explorer.exe`) · **객체 백업 설정…**(설정 창 검색 `backup.object`) | `app/menus.rs` · `app/project.rs::autosave_pick` |
+| 백업 파일 열기 | 확장자가 **17자리 숫자**면 SQL 구문(모르는 확장자 = Plain Text 규칙의 예외 · D-305) · 시험 3 | `syntax.rs::for_title` |
+| 자체 시험 | 기동 명령 `objbk.dump:<파일>`(진행 상태) · `status.dump:<파일>`(상태줄) · `@connected:@after:<ms>:<명령>`(접속 **뒤** ms · 부하 중 접속 지연에 흔들리지 않게) · `explorer.pick:<id>` = 메뉴가 닫혀도 선택 행으로 + 탐색기 동작 즉시 수거 · **E2E `scripts/win-objbackup-e2e.sh` 12/0**(DROP VIEW 백업 1 · ALTER 백업 1 · 없는 객체 0 + 건너뜀 안내 · 끔 = 0 · keep=1 = 같은 객체 1 · 머리 주석 · 17자리 확장자) · **E2E `scripts/win-drop-prod-e2e.sh`**(G6 = 유형 none/prd 모두 탐색기 삭제 → 표 사라짐 · 창 "전송됨" · 운영 probe ✓ · 협업 재실행 결과 = journal §7) | `app/startup_cmd.rs` · scripts |
+
+- 부하원(39 §3): 정리 틱 = 파일 열거만(기본 60분 · 0 = 끔) · 백업 질의 = 사용자 실행 1회당 대상 객체 수만큼 DDL 생성 1회(탐색기 메타 세션 · 자동 재시도 0).
+- 남은 것(T-357 잔여): 토스트 버튼·`run.prod_confirm_ms`(A3b) · 프로필 영속 유형 변경 2단(G8) · Oracle `ALTER … RENAME TO`의 새 이름 추적(백업은 옛 이름으로 됨 = 의도) · 실서버 4방언 왕복(사용자 "BISCM 운영기 모드 자동화" = journal §7).
+
 ## 8. 적용 시점 · 설정 키
 
 ### 8-1. 단계

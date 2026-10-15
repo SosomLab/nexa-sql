@@ -64,7 +64,12 @@ pub(crate) fn write(path: &Path, text: &str) -> bool {
 }
 
 /// 스냅숏 지우기(저장 · 버림).
-/// ★ 객체 삭제 전 DDL 백업 폴더(10-01 · D-233): `<설정 폴더>/backups/drop/`.
+/// ★ 객체 변경 전 DDL 백업 폴더(114 §7 · D-302 · 10-15): `<설정 폴더>/backups/objects/` — DROP·REPLACE/ALTER·TRUNCATE/RENAME 공용.
+pub(crate) fn objects_dir() -> Option<PathBuf> {
+    Some(nsql_settings::config_dir()?.join("backups").join("objects"))
+}
+
+/// 종전(10-01 · D-233) 삭제 백업 폴더 — 새 파일은 안 쓰고 보관 정리만 같은 규칙으로(이주 없음 · 114 §7).
 pub(crate) fn drop_dir() -> Option<PathBuf> {
     Some(nsql_settings::config_dir()?.join("backups").join("drop"))
 }
@@ -72,7 +77,7 @@ pub(crate) fn drop_dir() -> Option<PathBuf> {
 fn safe_name(s: &str) -> String {
     s.chars()
         .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '$' | '#') {
+            if c.is_alphanumeric() || matches!(c, '_' | '-' | '$' | '#') {
                 c
             } else {
                 '_'
@@ -81,52 +86,69 @@ fn safe_name(s: &str) -> String {
         .collect()
 }
 
-/// DDL을 `<프로필>_<SCHEMA>.<NAME>_<KIND>_<yyyymmdd-HHMMSS>.sql`로 쓴다(원자적 · 머리 주석 = 서버 · 객체 · 시각 · 방언).
-/// 실패 = 이유 문자열(호스트가 "백업 실패" 경로로).
-pub(crate) fn write_drop(
-    profile: &str,
-    o: &nsql_catalog::ObjectInfo,
-    dialect: &str,
-    ddl: &str,
-) -> Result<PathBuf, String> {
-    let dir = drop_dir().ok_or_else(|| "no config dir".to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let now = nsql_log::now_local();
-    let stamp = now.stamp(); // YYYY-MM-DD HH:MM:SS.mmm
-    let ymd: String = stamp
-        .get(..10)
-        .unwrap_or("")
-        .chars()
-        .filter(char::is_ascii_digit)
-        .collect();
-    let hms: String = stamp
-        .get(11..19)
-        .unwrap_or("")
-        .chars()
-        .filter(char::is_ascii_digit)
-        .collect();
+/// 로컬 시각 → 17자리 `yyyyMMddHHmmssSSS`(D-305 확장자).
+pub(crate) fn stamp17(t: &nsql_log::LocalTime) -> String {
+    t.stamp().chars().filter(char::is_ascii_digit).collect()
+}
+
+/// 백업 파일 줄기 `<프로필>_<스키마>.<객체>_<종류>`(D-305 · 프로필 비면 `conn`).
+pub(crate) fn object_stem(profile: &str, o: &nsql_catalog::ObjectInfo) -> String {
     let prof = if profile.trim().is_empty() {
         "conn".to_string()
     } else {
         safe_name(profile.trim())
     };
-    let file = dir.join(format!(
-        "{prof}_{}.{}_{}_{ymd}-{hms}.sql",
+    format!(
+        "{prof}_{}.{}_{}",
         safe_name(&o.schema),
         safe_name(&o.name),
         safe_name(&o.kind.code().to_ascii_uppercase())
-    ));
+    )
+}
+
+/// ★ 객체 DDL을 `<줄기>.<yyyyMMddHHmmssSSS>`로 쓴다(D-305 · 사용자 10-15 · 확장자 = 17자리 시각 → 탐색기 이름 내림차순 = 객체별 최신순 ·
+/// 같은 이름이 있으면 1 ms 올림 · 원자적 · 머리 주석 = 시각 · 프로필 · 방언 · 객체 · 동작). 실패 = 이유 문자열.
+pub(crate) fn write_object(
+    profile: &str,
+    o: &nsql_catalog::ObjectInfo,
+    dialect: &str,
+    action: &str,
+    ddl: &str,
+) -> Result<PathBuf, String> {
+    let dir = objects_dir().ok_or_else(|| "no config dir".to_string())?;
+    write_object_in(&dir, profile, o, dialect, action, ddl)
+}
+
+/// [`write_object`]의 폴더 인자 꼴(시험 · 폴더를 바꿔 쓰는 호출자).
+pub(crate) fn write_object_in(
+    dir: &Path,
+    profile: &str,
+    o: &nsql_catalog::ObjectInfo,
+    dialect: &str,
+    action: &str,
+    ddl: &str,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let now = nsql_log::now_local();
+    let stamp = now.stamp();
+    let stem = object_stem(profile, o);
+    let mut ext: u64 = stamp17(&now).parse().unwrap_or(0);
+    let mut file = dir.join(format!("{stem}.{ext:017}"));
+    while file.exists() {
+        ext += 1;
+        file = dir.join(format!("{stem}.{ext:017}"));
+    }
     let body = format!(
-        "-- nexa-sql drop backup · {stamp}\n-- profile: {profile} · dialect: {dialect} · object: {}.{} ({})\n\n{}",
+        "-- nexa-sql object backup · {stamp}\n-- profile: {profile} · dialect: {dialect} · object: {}.{} ({}) · action: {action}\n\n{}\n",
         o.schema,
         o.name,
         o.kind.code().to_ascii_uppercase(),
         ddl.trim_end()
     );
-    let tmp = file.with_extension("sql.tmp");
+    let tmp = dir.join(format!("{stem}.{ext:017}.tmp"));
     std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, &file).map_err(|e| format!("{}: {e}", file.display()))?;
-    // 쓴 것을 다시 읽어 비어 있지 않은지 확인(정상 생성이 확인된 경우에만 삭제가 이어진다).
+    // 쓴 것을 다시 읽어 비어 있지 않은지 확인(정상 생성이 확인된 경우에만 변경이 이어진다).
     let n = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
     if n == 0 {
         return Err(format!("{}: empty", file.display()));
@@ -134,27 +156,67 @@ pub(crate) fn write_drop(
     Ok(file)
 }
 
-/// 삭제 백업 보관(`project.backup_days` · 수정 시각 기준) — 지운 개수.
-pub(crate) fn prune_drop(days: u64) -> usize {
-    let Some(dir) = drop_dir() else {
-        return 0;
-    };
-    let Ok(rd) = std::fs::read_dir(&dir) else {
+/// 백업 파일인가(`<줄기>.<17자리>` 또는 종전 `.sql`).
+fn is_backup_file(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e == "sql" || (e.len() == 17 && e.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// ★ 객체 백업 보관(D-302 · D-305): `days` 지난 파일(수정 시각) 삭제 + `keep` > 0이면 **객체(줄기)별 최신 N**만 남김(이름 내림차순 =
+/// 시각 내림차순) · 두 폴더(`objects/` · 종전 `drop/`) 모두 — 지운 개수.
+pub(crate) fn prune_objects(days: u64, keep: usize) -> usize {
+    let mut n = 0;
+    for dir in [objects_dir(), drop_dir()].into_iter().flatten() {
+        n += prune_dir(&dir, days, keep);
+    }
+    n
+}
+
+pub(crate) fn prune_dir(dir: &Path, days: u64, keep: usize) -> usize {
+    let Ok(rd) = std::fs::read_dir(dir) else {
         return 0;
     };
     let limit = std::time::Duration::from_secs(days.max(1) * 86_400);
     let mut n = 0;
+    let mut by_stem: std::collections::HashMap<String, Vec<(String, PathBuf)>> =
+        std::collections::HashMap::new();
     for e in rd.flatten() {
         let p = e.path();
-        if p.extension().is_some_and(|x| x == "sql") {
-            let old = e
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.elapsed().ok())
-                .is_some_and(|age| age > limit);
-            if old && std::fs::remove_file(&p).is_ok() {
+        if !is_backup_file(&p) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > limit);
+        if old {
+            if std::fs::remove_file(&p).is_ok() {
                 n += 1;
+            }
+            continue;
+        }
+        if keep > 0 {
+            if let (Some(stem), Some(name)) = (
+                p.file_stem().and_then(|s| s.to_str()),
+                p.file_name().and_then(|s| s.to_str()),
+            ) {
+                by_stem
+                    .entry(stem.to_string())
+                    .or_default()
+                    .push((name.to_string(), p.clone()));
+            }
+        }
+    }
+    if keep > 0 {
+        for (_, mut files) in by_stem {
+            files.sort_by(|a, b| b.0.cmp(&a.0));
+            for (_, p) in files.into_iter().skip(keep) {
+                if std::fs::remove_file(&p).is_ok() {
+                    n += 1;
+                }
             }
         }
     }
@@ -270,6 +332,77 @@ mod tests {
         assert!(read_matching(&src).is_err());
         remove(&src);
         assert_eq!(read_matching(&src), Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod object_tests {
+    use super::*;
+
+    fn obj(schema: &str, name: &str) -> nsql_catalog::ObjectInfo {
+        nsql_catalog::ObjectInfo {
+            db: String::new(),
+            schema: schema.into(),
+            name: name.into(),
+            kind: nsql_catalog::ObjectKind::Table,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        }
+    }
+
+    #[test]
+    fn object_backup_name_rule_collision_and_keep() {
+        let dir = std::env::temp_dir().join(format!("nsql-objbk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let o = obj("HR", "EMP");
+        assert_eq!(object_stem("BISCM", &o), "BISCM_HR.EMP_TABLE");
+        assert_eq!(object_stem("", &obj("a b", "x/y")), "conn_a_b.x_y_TABLE");
+        // 같은 ms에 둘 = 뒤 것은 1 ms 올림(이름 다름 · 둘 다 존재).
+        let a = write_object_in(
+            &dir,
+            "BISCM",
+            &o,
+            "oracle",
+            "drop",
+            "CREATE TABLE EMP (A INT)",
+        )
+        .unwrap();
+        let b = write_object_in(
+            &dir,
+            "BISCM",
+            &o,
+            "oracle",
+            "alter",
+            "CREATE TABLE EMP (A INT, B INT)",
+        )
+        .unwrap();
+        assert_ne!(a, b);
+        let ea = a.extension().unwrap().to_str().unwrap().to_string();
+        let eb = b.extension().unwrap().to_str().unwrap().to_string();
+        assert_eq!(ea.len(), 17);
+        assert!(ea.bytes().all(|c| c.is_ascii_digit()));
+        assert!(eb > ea, "{ea} < {eb}");
+        assert!(a
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("BISCM_HR.EMP_TABLE."));
+        let body = std::fs::read_to_string(&b).unwrap();
+        assert!(body.starts_with("-- nexa-sql object backup"));
+        assert!(body.contains("action: alter"));
+        // 다른 객체 1 + 같은 객체 셋째 → keep 2 = EMP 가장 옛 것(a) 하나만 지움.
+        let c = write_object_in(&dir, "BISCM", &o, "oracle", "drop", "x").unwrap();
+        let other =
+            write_object_in(&dir, "BISCM", &obj("HR", "DEPT"), "oracle", "drop", "y").unwrap();
+        assert_eq!(prune_dir(&dir, 365, 2), 1);
+        assert!(!a.exists() && b.exists() && c.exists() && other.exists());
+        // keep 0 = 개수 정리 없음 · 일수만.
+        assert_eq!(prune_dir(&dir, 365, 0), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

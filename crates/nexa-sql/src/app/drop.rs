@@ -1,10 +1,10 @@
 //! App — ★ 객체 삭제 흐름(10-01 · 사용자 "탐색기 우클릭 삭제 · 모달 확인 · 백업 후 삭제 · 운영은 백업 실패 시 삭제 금지"):
 //!
 //! 탐색기 ▸ Delete… → `DropReq`(객체 · 서버 · 프로필 · 유형 · DROP 문) → 모달 `DropWin`(정보 + 2단 타임아웃 삭제 버튼)
-//!   → Proceed → [`explorer.drop_backup` 켬] DDL 생성 요청(탐색기 메타 세션 · `GenWhat::Ddl` 전체) → 파일 백업(`backups::write_drop`)
+//!   → Proceed → [`backup.object_drop` 켬 · 114 §7-2] DDL 생성 요청(탐색기 메타 세션 · `GenWhat::Ddl` 전체) → 파일 백업(`backups::write_drop`)
 //!       → 성공 = DROP 실행 · 실패 = 운영(Prod) 접속이면 Blocked(삭제 안 함) · 아니면 BackupFailed(백업 없이 삭제 = 다시 타임아웃 재확인)
 //!   → DROP = 그 서버의 세션으로 `run_text_whole`(Output · 트랜잭션 로그 · DDL 감지 → 탐색기 갱신 = 보통 실행과 같은 길).
-//! 결정(권장안 · 10-01): D-240 백업 폴더 `<설정>/backups/drop/` · 보관 = `project.backup_days` · D-241 DROP 문은 옵션 없는 보수형(CASCADE/PURGE
+//! 결정(권장안 · 10-01): D-240 백업 폴더 `<설정>/backups/drop/`(10-15 D-302/305 = `backups/objects/` · `backup.object_days`·`_keep`) · D-241 DROP 문은 옵션 없는 보수형(CASCADE/PURGE
 //! 없음 · 종속이 있으면 서버 오류를 그대로) · D-242 삭제 세션 = 그 서버의 공유 세션(없으면 전용) · D-245 타임아웃 = `login.delete_confirm_ms`.
 use crate::drop_win::{DropAction, DropPhase};
 use crate::*;
@@ -35,9 +35,28 @@ impl App {
             .unwrap_or(self.sess.dialect);
         let Some(sql) = nsql_catalog::drop_sql(dialect, &owner) else {
             self.sess.status = tf(Msg::DropUnsupported, &[owner.kind.code()]);
+            self.log_win.push(nsql_log::LogEntry::new(
+                nsql_log::LogKind::Info,
+                format!(
+                    "[drop] unsupported {}.{} ({})",
+                    owner.schema,
+                    owner.name,
+                    owner.kind.code()
+                ),
+            ));
             self.redraw();
             return;
         };
+        // 자체 시험·사고 추적용 한 줄(10-15 · 삭제 창 E2E).
+        self.log_win.push(nsql_log::LogEntry::new(
+            nsql_log::LogKind::Info,
+            format!(
+                "[drop] request {}.{} ({}) sql={sql}",
+                owner.schema,
+                owner.name,
+                owner.kind.code()
+            ),
+        ));
         // 프로필 이름·유형 = 그 서버에 붙은 세션(공유 우선)에서 · 없으면 접속 창 목록의 같은 서버 프로필.
         let (profile, env) = self.server_profile_env(server.as_ref());
         self.drop_req = Some(DropReq {
@@ -137,10 +156,10 @@ impl App {
             v.push((t(Msg::DropRowExtra).to_string(), o.extra.clone()));
         }
         v.push((t(Msg::DropRowStatement).to_string(), r.sql.clone()));
-        let backup = if self.settings.flag("explorer.drop_backup") {
+        let backup = if self.settings.flag("backup.object_drop") {
             tf(
                 Msg::DropRowBackupOn,
-                &[&self.settings.int("project.backup_days").to_string()],
+                &[&self.settings.int("backup.object_days").to_string()],
             )
         } else {
             t(Msg::DropRowBackupOff).to_string()
@@ -181,7 +200,7 @@ impl App {
         let Some(req) = self.drop_req.clone() else {
             return;
         };
-        if !self.settings.flag("explorer.drop_backup") {
+        if !self.settings.flag("backup.object_drop") {
             self.drop_execute();
             return;
         }
@@ -224,8 +243,13 @@ impl App {
                 let Some(req) = self.drop_req.clone() else {
                     return true;
                 };
-                match backups::write_drop(&req.profile, &req.owner, &req.dialect.to_string(), text)
-                {
+                match backups::write_object(
+                    &req.profile,
+                    &req.owner,
+                    &req.dialect.to_string(),
+                    "drop",
+                    text,
+                ) {
                     Ok(path) => {
                         self.drop_win
                             .push_line(t(Msg::DropRowBackupFile), path.display().to_string());
@@ -237,7 +261,7 @@ impl App {
                             crate::output::OutKind::Info,
                             &tf(Msg::DropBackupOk, &[&path.display().to_string()]),
                         );
-                        backups::prune_drop(self.settings.int("project.backup_days").max(1) as u64);
+                        self.objbk_prune(false);
                         self.drop_execute();
                     }
                     Err(e) => self.drop_backup_failed(e),
@@ -306,13 +330,20 @@ impl App {
             crate::output::OutKind::Warn,
             &tf(Msg::DropRunning, &[&kind, &name, &sql]),
         );
+        // ★ 114 G6(10-15): 운영 접속이면 `run_text_in`의 2단 확인이 첫 호출을 **무장만** 하고 돌려보내는데 종전 코드는 늘 true →
+        //   창은 "전송됨"인데 DROP은 안 갔다. 삭제 창의 모달 2단이 이미 확인이므로 한 번짜리 깃발로 건너뛰고(백업도 이 창이 이미
+        //   했으므로 백업 게이트도 건너뜀), 실제 시작 여부는 세션 `busy`로 본다. 깃발은 어느 길이든 여기서 지운다.
         let sent = self
             .with_sess(sid, |a| {
                 if !a.gate_open() {
                     return false;
                 }
+                a.prod_confirmed_once = true;
+                a.objbk_skip_once = true;
                 a.run_text_whole(sql.clone());
-                true
+                a.prod_confirmed_once = false;
+                a.objbk_skip_once = false;
+                a.sess.busy
             })
             .unwrap_or(false);
         if sent {
