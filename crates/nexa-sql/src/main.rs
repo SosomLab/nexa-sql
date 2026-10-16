@@ -303,6 +303,16 @@ struct App {
     /// 소스 탭이 열리면 이 줄로(객체 이름, 줄).
     /// 객체 찾기 창에서 연 소스 = (객체 이름 · 일치 줄 · 미리보기 탭인가) · 소스 도착 때 소비(113 §5 · 10-16).
     findobj_goto: Option<(String, u32, bool)>,
+    /// ★ 객체 찾기 미리보기 **반응 계측 사슬**(10-16 사용자 "클릭·키 반응 차이 · 컨트롤이 받는 사건만 재면 맹점"): ① OS 사건이 창 처리기에
+    ///   닿은 순간(`findobj_window_event` · OS 큐 대기 ms 포함) → ② 의도 확정 → ③ 호스트 수거·처리 → ④ 본문 도착(같은 탭 = 동기 · 새 객체 =
+    ///   `[source]` 뒤) → ⑤ 메인 창 첫 그리기. 세 칸 = 단계 사이에 들고 다니는 시작점.
+    fo_trace: Option<app::findobj::FoTrace>,
+    fo_open_trace: Option<(Instant, &'static str)>,
+    fo_paint: Option<(Instant, &'static str)>,
+    /// 지금 처리 중인 객체 찾기 창 사건이 자체 시험 **합성**인가(OS 큐 대기 값을 찍지 않는다).
+    fo_synth: bool,
+    /// 객체 찾기 창 애니메이션 프레임의 다음 요청 시각(16 ms 간격 · 메인 창 WM_PAINT 굶김 방지 · 10-16).
+    findobj_next_frame: Instant,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
     /// SQL Preview 모달(탐색기 ▸ Generate SQL · docs/83 §4).
@@ -1757,6 +1767,11 @@ fn main() {
         findobj_engine: findobj_engine::Engine::new(explorer.wake()),
         open_findobj: None,
         findobj_goto: None,
+        fo_trace: None,
+        fo_open_trace: None,
+        fo_paint: None,
+        fo_synth: false,
+        findobj_next_frame: Instant::now(),
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
         sqlprev_plain: None,

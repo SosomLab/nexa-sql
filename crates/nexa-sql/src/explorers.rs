@@ -1713,6 +1713,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                         text,
                         origin,
                         db,
+                        took_ms,
                         ..
                     } => {
                         // 소스 탭 = 출처에 · SELECT 템플릿 탭 = `server`에 이 칸의 서버를(둘 다 그 서버 세션에 묶인다 · 10-08).
@@ -1726,6 +1727,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                             origin,
                             db,
                             server: p.key.clone(),
+                            took_ms,
                         });
                     }
                     ExplorerAction::Import { owner, .. } => {

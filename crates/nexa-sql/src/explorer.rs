@@ -943,6 +943,8 @@ pub(crate) enum ExplorerAction {
         db: Option<String>,
         /// 이 칸의 서버(`ExplorerSet`이 채운다) — SELECT 템플릿 탭도 소스 탭처럼 **그 서버 세션에 묶은 뒤** DB를 심는다(활성 세션이 다른 서버일 때).
         server: Option<ConnectSpec>,
+        /// 소스 조회 서버 왕복(ms · 요청→응답 · SELECT 템플릿 = 0) — 상태줄 "소스 열림(서버 N ms)"(협업 10-16: 편집기 적재 0 ms를 왕복으로 읽힘).
+        took_ms: u128,
     },
     /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
     Notice(String),
@@ -5033,6 +5035,7 @@ impl Explorer {
                             origin: Some(origin),
                             db,
                             server: None,
+                            took_ms: took,
                         }),
                         // 실패 = 상태줄 한 줄로 끝내지 않는다(docs/107 §5 · 사건 = "아무 메시지 없음").
                         Err(e) => self.actions.push(ExplorerAction::Fail {
@@ -6430,6 +6433,7 @@ impl Explorer {
                     // 표의 DB/스키마(다른 DB·스키마 표 = 새 탭을 그 작업 단위로 · 사용자 10-08).
                     db: self.unit_of(i, &o.schema),
                     server: None,
+                    took_ms: 0,
                 });
             }
             NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
@@ -9487,6 +9491,7 @@ fn relabel_copy(items: Vec<CtxItem>, shift: bool) -> Vec<CtxItem> {
                 shortcut,
                 sub,
                 emph,
+                danger: false,
                 marks,
                 children,
                 checked,

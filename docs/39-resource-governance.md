@@ -149,6 +149,7 @@
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
 | 애니메이션 프레임 간격 | 33 ms 고정 | `ui.max_fps`(신설 · 60/30/15) | 60 | 30 | 15 | `about_to_wait` `from_millis(33)` |
+| ★ 보조 창 애니메이션 프레임(객체 찾기 검색 중 · 10-16 58) | **16 ms에 한 번**(`findobj_next_frame`) · 종전 = `about_to_wait`마다 → Windows에서 메인 창 WM_PAINT 굶김(57 s) | (구조 · 61 §2-2-b 17) | — | — | — | `app/event_loop.rs` `about_to_wait` |
 | hover 페이드(행·버튼·콤보) | `ui.fade_fast/slow` · 의도 70 ms | `ui.animations`(신설 · auto/on/off · auto = OS 동작 줄이기) | auto | auto | off | `IntentFade` |
 | 스크롤바 페이드·숨김 | `HIDE_MS` | `ui.animations` | — | — | off | nexa-ctl `scroll` |
 | 캐럿 깜빡임 | 500 ms | `editor.caret_blink`(신설) | 켬 | 켬 | 끔 | `next_blink` |

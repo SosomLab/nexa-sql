@@ -30,6 +30,7 @@ impl App {
             active: false,
             mark: None,
             emph: false,
+            danger: false,
             marks: Vec::new(),
         };
         let max = self.settings.int("file.open_max").max(1) as usize;

@@ -346,6 +346,29 @@ fn shape_log(x: f32, y: f32) -> bool {
         .any(|&cy| stroke(x, y, (52.0, cy), (204.0, cy), 22.0))
 }
 
+/// 객체 찾기 — 데이터베이스 원통 + 오른쪽 아래 확대경(사용자 10-16 SVG `db-search` 그대로 · 24 → 256 배율 10.667):
+/// 원통 = 위 타원(12,6 r 8×3) · 옆선 x=4/20(y 6→18) · 가운데·아래 반타원 · **확대경 자리는 마스크로 비움**(원 r 6.9 + 손잡이 폭 3) ·
+/// 확대경 = 원(14.8,14.8 r 5.4) + 손잡이(18.76,18.76 → 22,22).
+fn shape_find(x: f32, y: f32) -> bool {
+    use nexa_ctl::shape::{ellipse, ring};
+    let w = 18.0;
+    let ell_ring = |cy: f32| {
+        ellipse(x, y, 128.0, cy, 85.3 + w / 2.0, 32.0 + w / 2.0)
+            && !ellipse(x, y, 128.0, cy, 85.3 - w / 2.0, 32.0 - w / 2.0)
+    };
+    let db = ell_ring(64.0)
+        || (ell_ring(128.0) && y >= 128.0)
+        || (ell_ring(192.0) && y >= 192.0)
+        || stroke(x, y, (42.7, 64.0), (42.7, 192.0), w)
+        || stroke(x, y, (213.3, 64.0), (213.3, 192.0), w);
+    let (mx, my) = (157.9, 157.9);
+    let handle = ((200.1, 200.1), (234.7, 234.7));
+    let cut = ring(x, y, mx, my, 0.0, 73.6) || stroke(x, y, handle.0, handle.1, 32.0);
+    let glass =
+        ring(x, y, mx, my, 57.6 - 10.0, 57.6 + 10.0) || stroke(x, y, handle.0, handle.1, 20.0);
+    (db && !cut) || glass
+}
+
 // ── 메뉴 아이콘 도형(우클릭 메뉴 · DBeaver식 · 사용자 09-15) ──
 
 /// 복사 — 겹친 사각형 두 장(외곽선).
@@ -698,6 +721,10 @@ pub(crate) fn connect() -> ToolIcon {
 }
 pub(crate) fn log() -> ToolIcon {
     mask(shape_log)
+}
+/// 툴바 [객체 찾기](열기만 · 토글 없음).
+pub(crate) fn find_objects() -> ToolIcon {
+    mask(shape_find)
 }
 /// 결과 도구줄 보기 모드 버튼(▾는 툴바가 붙인다).
 pub(crate) fn view_mode() -> ToolIcon {

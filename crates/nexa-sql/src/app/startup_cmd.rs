@@ -597,14 +597,19 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("editor.dump:") {
             let i = self.editors.active();
-            // 머리 = 제목|종류|읽기전용|구문(10-07 · 모르는 확장자 = Plain Text 판정용).
+            // 머리 = 제목|종류|읽기전용|구문|caret=줄(1부터 · 10-16 미리보기 줄 이동 판정)(10-07 · 모르는 확장자 = Plain Text 판정용).
+            let caret_line = {
+                let tb = self.editors.cur();
+                tb.buf().line_of(tb.caret()) + 1
+            };
             let head = format!(
-                "{}|{:?}|{}|{}
+                "{}|{:?}|{}|{}|caret={}
 ",
                 self.editors.title_of(i),
                 self.editors.tab_kind(i),
                 self.editors.active_read_only(),
-                self.editors.syntax_name()
+                self.editors.syntax_name(),
+                caret_line
             );
             let _ = std::fs::write(path, head + &self.editors.cur().text());
             return;
@@ -948,6 +953,66 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("findobj.dump:") {
             let _ = std::fs::write(path, self.findobj_win.dump());
+            return;
+        }
+        // ★ 미리보기 반응 계측(10-16 사용자 "컨트롤이 받는 사건만 재면 맹점"): 클릭은 **OS 사건과 같은 길**(`findobj_window_event` =
+        //   CursorMoved + Pressed + Released)로 합성해 창 안 모든 분기(스위치·팝업·서버 목록·스플리터·머리·목록)를 지나고(`consumed=`로 누가
+        //   먹었는지 판정) · 키는 ↑/↓ 분기 함수(KeyEvent는 밖에서 못 만든다) · 선택만 `findobj.sel:<n>` · 소스 있는 첫 행 `findobj.selkind:<종류>`.
+        //   좌표 구분자는 `/`(쉼표 = 명령 구분자). 계측 로그 = `[preview] …`(`log.dump`).
+        if let Some(n) = id
+            .strip_prefix("findobj.sel:")
+            .and_then(|n| n.trim().parse::<usize>().ok())
+        {
+            let ok = self.findobj_win.test_select(n);
+            self.sess.status = format!("findobj.sel {n} ok={ok}");
+            return;
+        }
+        if let Some(k) = id.strip_prefix("findobj.selkind:") {
+            // `종류[:최소 소스 줄 수]` — ↓ 연타 판정에는 일치 줄이 넉넉한 행이 필요(협업 16차: 일치 2줄 뷰 = 두 번째 ↓가 못 움직임).
+            let (kind, min_src) = match k.split_once(':') {
+                Some((a, n)) => (a.trim(), n.trim().parse::<usize>().unwrap_or(1)),
+                None => (k.trim(), 1),
+            };
+            let r = self.findobj_win.test_select_kind(kind, min_src);
+            self.sess.status = format!("findobj.selkind {k} row={r:?}");
+            return;
+        }
+        if let Some(k) = id.strip_prefix("findobj.clickpre:") {
+            match self.findobj_win.test_pre_line_point(k) {
+                Some((x, y, no)) => {
+                    self.findobj_synth_click(x, y);
+                    self.sess.status = format!("findobj.clickpre {k} at {x}/{y} line={no}");
+                }
+                None => self.sess.status = format!("findobj.clickpre {k} = no such line"),
+            }
+            return;
+        }
+        if let Some(n) = id
+            .strip_prefix("findobj.clickrow:")
+            .and_then(|n| n.trim().parse::<usize>().ok())
+        {
+            match self.findobj_win.test_row_point(n) {
+                Some((x, y)) => {
+                    self.findobj_synth_click(x, y);
+                    self.sess.status = format!("findobj.clickrow {n} at {x}/{y}");
+                }
+                None => self.sess.status = format!("findobj.clickrow {n} = no such row"),
+            }
+            return;
+        }
+        if let Some((x, y)) = id
+            .strip_prefix("findobj.click:")
+            .and_then(|xy| xy.split_once('/'))
+            .and_then(|(x, y)| Some((x.trim().parse::<i32>().ok()?, y.trim().parse::<i32>().ok()?)))
+        {
+            self.findobj_synth_click(x, y);
+            self.sess.status = format!("findobj.click {x}/{y}");
+            return;
+        }
+        if let Some(d) = id.strip_prefix("findobj.key:") {
+            let down = d.trim().eq_ignore_ascii_case("down");
+            let no = self.findobj_synth_key(down);
+            self.sess.status = format!("findobj.key {d} line={no:?}");
             return;
         }
         // 자체 시험(10-15): 상태줄 글 덤프(`status.dump:<파일>` · 기동 명령들이 상태줄에만 남기는 판정 결과를 파일로).

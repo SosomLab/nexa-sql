@@ -13,7 +13,7 @@ mod events;
 mod extensions;
 mod files;
 mod find;
-mod findobj;
+pub(crate) mod findobj;
 mod format;
 pub(crate) mod goto;
 mod grid_results;

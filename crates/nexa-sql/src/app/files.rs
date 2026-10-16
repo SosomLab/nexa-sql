@@ -80,10 +80,12 @@ impl App {
             "close.discard_all" => {
                 let n = self.dirty_tabs().len();
                 let items = vec![
+                    // ★ 두 번째 질문 = 경고 강조(굵게 + danger 색 · 사용자 10-16 "경고의 느낌으로 보완").
                     CtxItem::item(
                         "close.discard_all_go",
                         tf(Msg::MnCloseDiscardAllGo, &[&n.to_string()]),
-                    ),
+                    )
+                    .with_danger(true),
                     CtxItem::Separator,
                     CtxItem::item("close.cancel", t(Msg::MnCloseCancel)),
                 ];

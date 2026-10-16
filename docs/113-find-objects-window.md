@@ -240,6 +240,7 @@
 - 미리보기 열기 = **최신 의도만**(㊳ · `LatestIntent<(행, 줄)>` 120 ms · 클릭과 ↑/↓가 한 길 · 탐색기 소스 요청은 진행 중이면 최신 하나만 대기 · 늦게 온 옛 소스는 버림) · 소스 조회 시간 = 로그 `[source] <객체> · N ms`(실서버 ≈ 0.2 s) · 소스 없는 결과 = [편집기에서 열기] 비활성(㊶) · 컬럼 줄에서 [객체 탐색기에서 보기] = 컬럼까지(㊷) · 스플리터 hover/드래그 = accent 띠 4 px(㊸).
 - 같은 객체 = 재조회 없음(㊺~㊼) = 미리보기 탭에 같은 객체(서버·스키마·이름)가 떠 있으면 줄만 이동 · 정식 열기면 그 탭 승격 · 같은 (행, 줄) 반복은 요청 없음 · 같은 행 다른 줄은 의도 지연 없이 즉시 · 탐색기 대기열에 같은 객체 중복 없음.
 - 검색 중 결과 추가 = 선택 행을 화면의 같은 자리에 고정(㊽ · `apply_view` anchor) · 진단 로그 `[preview] key|click · queued/handled ms` · `[preview] same tab`(㊼).
+- 소스 도착 = 상태줄 "{객체} 소스 열림({ms} ms)"으로 바로 바꿈(51 · 종전 "읽는 중…"이 남아 느린 것처럼 보임) · 로그 `[source] 객체 · N ms`(서버 왕복) · `[source] tab 객체 · open N ms`(편집기 적재).
 - 색 규칙(㉙~㉛) = 미리보기 선택 = 목록과 같은 `sel_bg` · hover = 탐색기 회색(`hover_alpha` × 글자색) 페이드 · 결과 목록 행 hover도 같은 페이드(`list_hover`).
 
 ### 5-3. 진입 키 비교(10-16 ㉒)
@@ -252,6 +253,27 @@
 | Toad for Oracle | F4 Describe(커서 아래 객체) | **Object Search = 메뉴만(기본 키 없음)** | support.quest.com toad-for-oracle 2025 R2 Getting Started Guide |
 
 - ⚠ **Windows의 Ctrl+Alt = AltGr**: Ctrl+Alt+글자는 배열에 따라 논리 키가 `Unidentified`/`Dead`로 온다 → 키맵은 조합키가 있으면 **물리 키 이름으로 폴백**(`keymap.rs` `physical_name` · [61 §3](61-core-design-and-working-rules.md)) — 이 수정 전에는 Ctrl+Alt+F/C/T/L/R이 Windows에서 동작하지 않았을 수 있다(실기 확인 대기).
+
+### 5-4. 미리보기 반응 계측 사슬 · 자체 시험 훅(10-16 54~55)
+
+- **클릭 = 즉시** · 120 ms 의도 머무름은 키 연타에만(54) — 클릭은 사용자가 한 번 고른 것이라 지연·중복 방지로 막을 이유가 없다.
+- 창 사건은 **한 길** `findobj_window_event`로 들어온다(OS 사건과 자체 시험 합성 사건이 같은 길) → 컨트롤 함수를 직접 부르는 시험은 창 안 분기(다른 컨트롤이 먼저 먹는지)를 놓친다(맹점).
+- 계측 로그(로그 창):
+
+| 줄 | 뜻 |
+|---|---|
+| `[preview] <click\|key> · os-wait N ms · event→intent N · queued N · handled N` | OS 큐 대기(Windows `GetTickCount − GetMessageTime` · nexa-sys `last_message_age_ms`) → 의도 확정 → 호스트 수거 → 처리 |
+| `[preview] … same tab\|new object · event→text N ms` | 사건부터 편집기 본문까지(새 객체 = 서버 왕복 포함) |
+| `[preview] … painted · event→frame N ms` | 사건부터 화면 프레임까지 |
+| `[source] <객체> · N ms` · `[source] tab <객체> · open N ms` | 서버 왕복 · 편집기 적재 |
+
+- 창 dump 4번째 줄 `consumed=<switch|popup|server|splitter|header|list|preview|none>|pre_rect|pre_scroll|row_h|pre_sel|last_opened|sel` = 마지막 왼쪽 누름을 누가 먹었나.
+- 기동 명령: `findobj.sel:<n>`(선택만) · `findobj.selkind:<View|Procedure…>`(소스 줄 있는 첫 행) · `findobj.clickpre:<src|src+N|k>`(미리보기 줄 **클릭 합성** = CursorMoved + Pressed + Released) · `findobj.clickrow:<n>` · `findobj.click:<x>/<y>` · `findobj.key:<down|up>` · `editor.dump` 머리 5열 `caret=<줄>`.
+- E2E = `scripts/win-findobj-preview-e2e.sh -o <out> -P <실제 NSQL_HOME> [-k View|Procedure]`(프로필 **사본** · 실서버 읽기만 · A = 검색 중 · B = 검색 뒤 대조).
+- 측정(10-16 BISCM): 클릭(새 객체) event→text ≈ `[source]` 서버 왕복(58~298 ms) · 키(같은 탭) ≈ 0 ms → 체감 차이의 대부분은 **새 객체 = 서버 왕복** vs **같은 객체 = 왕복 없음**.
+- 소스가 버려지는 길은 모두 로그를 남긴다(55-c) = `[source] dropped stale preview: X` · `[source] dropped: tab limit (X)` · `[source] dropped: no explorer pane for X` · 탭 상한은 **새 탭이 필요할 때만**(미리보기 탭 재사용엔 걸지 않음).
+- ★ **화면 기준 판정 = `painted`**(58) — 검색 중 객체 찾기 창이 `about_to_wait`마다 다시 그리기를 요청하면 Windows에서 메인 창 WM_PAINT가 굶어 미리보기 탭이 화면에 안 나온다(모델은 열림) → 보조 창 애니메이션 프레임은 **16 ms 간격**(`findobj_next_frame`) · E2E A-12 = 클릭 뒤 `painted` < 2500 ms · 측정은 **캡처 없이**(PrintWindow는 WM_PAINT를 강제해 결함을 가린다) · 18차 = 56915 → 42 ms.
+- 한계: 키 사건은 합성 사건으로 만들 수 없어(`findobj.key`는 창 키 처리 함수를 직접 부름) 키 경로의 os-wait은 "-" → [T-361](TODO.md).
 
 ## 6. 설정 · 키 · i18n
 

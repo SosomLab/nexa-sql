@@ -285,6 +285,10 @@ pub(crate) struct FindObjWin {
     pending: Option<(FoAction, Instant, &'static str)>,
     /// 마지막 의도의 입력 종류("key"/"click") — 의도 확정 때 로그에 붙인다.
     intent_src: &'static str,
+    /// 마지막 왼쪽 **누름**을 누가 먹었나(`findobj.dump` `consumed=` · 사용자 10-16 "다른 컨트롤이 먼저 마우스 사건을 처리하는지"):
+    /// 창의 마우스 경로는 스위치 → 팝업 → 서버 목록 → 스플리터 → 머리 → 상자들 → 체크·버튼 → 목록 → 미리보기 순으로 보는데,
+    /// 미리보기 줄에 닿기 전 어느 분기가 돌려보냈는지 이름으로 남긴다(`none` = 아무 데도 안 닿음).
+    consumed: &'static str,
     /// 마지막으로 미리보기를 연 (결과 행 · 줄): 같은 행의 **다른 줄** = 지연 없이 즉시(호스트가 재조회 없이 줄만 옮긴다) ·
     /// **같은 줄** = 요청 자체를 안 낸다(마지막 줄에서 ↓ 연타 → 중복 요청 → 1행 정식 탭이 열리던 결함 · 사용자 10-16).
     last_opened: Option<(usize, u32)>,
@@ -392,6 +396,7 @@ impl FindObjWin {
             preview_intent: LatestIntent::new(120),
             pending: None,
             intent_src: "",
+            consumed: "",
             last_opened: None,
             preview_sw: Switch::new(t(Msg::FoPreviewSwitch), true),
             rev: 0,
@@ -1338,7 +1343,34 @@ impl FindObjWin {
                 _ => {}
             }
         }
+        // ★ 클릭 = **즉시**(사용자 10-16 "좌클릭은 지연·중복 방지 목적으로 제한할 이유가 없다"): 120 ms 머무름은 ↑/↓ **연타**를 거르는
+        //   장치라 한 번의 클릭엔 뜻이 없다 → 의도 단계 없이 바로 pending(같은 틱에 호스트가 수거). 키보드는 종전대로 마지막 목표만.
+        if src == "click" {
+            self.preview_intent.clear();
+            if let Some((i, ln)) = want {
+                self.pending = Some((self.open_at(i, ln, true), Instant::now(), src));
+                self.last_opened = Some((i, ln));
+            }
+            return;
+        }
         self.preview_intent.set(want);
+    }
+
+    /// 미리보기 포커스의 ↑/↓ 한 번 = 줄 이동 + 클릭과 같은 효과(스위치 켬 = 미리보기 · 연타는 마지막 줄만 · 사용자 10-16).
+    fn preview_arrow(&mut self, down: bool) {
+        let n = self.pre_lines.len();
+        if n == 0 {
+            return;
+        }
+        let k = match self.pre_sel {
+            None => 0,
+            Some(k) if down => (k + 1).min(n - 1),
+            Some(k) => k.saturating_sub(1),
+        };
+        self.pre_sel = Some(k);
+        self.ensure_pre_visible(k);
+        self.preview_want("key");
+        self.redraw();
     }
 
     /// 호스트가 틱마다 수거하는 확정 동작(미리보기 열기).
@@ -1557,14 +1589,19 @@ impl FindObjWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
+                if !up {
+                    self.consumed = "none";
+                }
                 // "미리보기" 스위치(머리글 왼쪽) — 토글되면 호스트에 알려 설정에 즉시 저장.
                 if up || self.preview_sw.bounds().contains(p) {
                     self.preview_sw.on_event(&e, &mut inv);
                     if let Some(on) = self.preview_sw.take_toggled() {
+                        self.consumed = "switch";
                         self.redraw();
                         return FoAction::PreviewClick(on);
                     }
                     if !up && self.preview_sw.bounds().contains(p) {
+                        self.consumed = "switch";
                         self.redraw();
                         return FoAction::None;
                     }
@@ -1581,6 +1618,9 @@ impl FindObjWin {
                     }
                 }
                 if popup_took {
+                    if !up {
+                        self.consumed = "popup";
+                    }
                     self.redraw();
                     return FoAction::None;
                 }
@@ -1592,12 +1632,18 @@ impl FindObjWin {
                     self.server.on_event(&e, &mut inv);
                     self.server.take_changed();
                     if inside || up || !self.passthrough {
+                        if !up {
+                            self.consumed = "server";
+                        }
                         self.redraw();
                         return FoAction::None;
                     }
                 }
                 match self.splitter.on_event(&e) {
-                    SplitEvent::Start => return FoAction::None,
+                    SplitEvent::Start => {
+                        self.consumed = "splitter";
+                        return FoAction::None;
+                    }
                     SplitEvent::End => self.redraw(),
                     _ => {}
                 }
@@ -1605,6 +1651,7 @@ impl FindObjWin {
                 if !up {
                     if let Some((k, _)) = self.hdr_rects.iter().find(|(_, r)| r.contains(p)) {
                         let k = *k;
+                        self.consumed = "header";
                         self.set_sort(k);
                         self.redraw();
                         return FoAction::None;
@@ -1658,6 +1705,7 @@ impl FindObjWin {
                 }
                 if !up {
                     if let Some(v) = self.view_at(p) {
+                        self.consumed = "list";
                         self.own_focus(Focus::List);
                         let now = Instant::now();
                         let dbl = matches!(self.last_click, Some((j, t)) if j == v && now.duration_since(t).as_millis() < 450);
@@ -1678,6 +1726,7 @@ impl FindObjWin {
                     //   정식 열기는 [편집기에서 열기](선택 줄 · 없으면 1행) 또는 결과 행 더블클릭.
                     if self.pre_rect.contains(p) {
                         if let Some(k) = self.preview_index_at(p) {
+                            self.consumed = "preview";
                             self.pre_sel = Some(k);
                             self.own_focus(Focus::Preview);
                             self.last_click = None;
@@ -1812,17 +1861,7 @@ impl FindObjWin {
                         if self.focus == Focus::Preview && !self.pre_lines.is_empty() =>
                     {
                         let down = kev.logical_key == Key::Named(NamedKey::ArrowDown);
-                        let n = self.pre_lines.len();
-                        let k = match self.pre_sel {
-                            None => 0,
-                            Some(k) if down => (k + 1).min(n - 1),
-                            Some(k) => k.saturating_sub(1),
-                        };
-                        self.pre_sel = Some(k);
-                        self.ensure_pre_visible(k);
-                        // ↑/↓ 선택 = 클릭과 같은 효과(스위치 켬 = 미리보기 · 연타는 마지막 줄만 · 사용자 10-16).
-                        self.preview_want("key");
-                        self.redraw();
+                        self.preview_arrow(down);
                         return FoAction::None;
                     }
                     Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowUp)
@@ -2395,6 +2434,20 @@ impl FindObjWin {
             l1,
             l2
         );
+        // 반응 계측·소비자 판정 줄(10-16): 마지막 누름을 먹은 분기 · 미리보기 영역 기하 · 선택 줄 · 마지막으로 연 (행 · 줄).
+        s.push_str(&format!(
+            "consumed={}|pre_rect={},{},{},{}|pre_scroll={}|row_h={}|pre_sel={:?}|last_opened={:?}|sel={:?}\n",
+            self.consumed,
+            self.pre_rect.x,
+            self.pre_rect.y,
+            self.pre_rect.w,
+            self.pre_rect.h,
+            self.pre_scroll,
+            self.row_h,
+            self.pre_sel,
+            self.last_opened,
+            self.sel
+        ));
         for &i in &self.view {
             let r = &self.rows[i];
             s.push_str(&format!(
@@ -2428,5 +2481,73 @@ impl FindObjWin {
             Some(i) => self.activate(i, self.first_line(i)),
             None => FoAction::None,
         }
+    }
+
+    // ── 자체 시험(미리보기 반응 계측 · 10-16 사용자 "컨트롤이 받는 사건만 재면 맹점") ─────────────────────────────────────────
+    /// 보기 n번째 행 **선택만**(활성화 없음 · 미리보기 줄 목록이 채워진다) — `findobj.sel:<n>`.
+    pub(crate) fn test_select(&mut self, n: usize) -> bool {
+        if n >= self.view.len() {
+            return false;
+        }
+        self.own_focus(Focus::List);
+        self.select(Some(n));
+        self.redraw();
+        true
+    }
+
+    /// 종류 이름(`View`·`Procedure`…)이 같고 **소스 일치 줄이 `min_src` 이상**인 첫 보기 행을 선택 — `findobj.selkind:<종류>[:<n>]`
+    ///   (검색 중에도 지금 보기 기준 · ↓ 연타 판정은 줄이 넉넉해야 한다).
+    pub(crate) fn test_select_kind(&mut self, kind: &str, min_src: usize) -> Option<usize> {
+        let n = self.view.iter().position(|&i| {
+            let r = &self.rows[i];
+            format!("{:?}", r.kind).eq_ignore_ascii_case(kind) && r.src.len() >= min_src.max(1)
+        })?;
+        self.test_select(n).then_some(n)
+    }
+
+    /// 미리보기 줄 k(`src+N` = N번째 **소스** 줄 · 숫자 = 줄 인덱스)의 **창 좌표**(가운데) — 호스트가 OS 사건과 같은 길로 클릭을 합성한다
+    ///   (`findobj.clickpre:<k>`). 보이게 스크롤한 뒤 `preview_index_at`의 역산(머리글 높이 + k·줄높이 − 스크롤).
+    pub(crate) fn test_pre_line_point(&mut self, k: &str) -> Option<(i32, i32, u32)> {
+        let k = if let Some(n) = k.strip_prefix("src") {
+            let n: usize = n.trim_start_matches('+').trim().parse().unwrap_or(0);
+            self.pre_lines
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.no.is_some())
+                .nth(n)
+                .map(|(i, _)| i)?
+        } else {
+            k.trim().parse::<usize>().ok()?
+        };
+        if k >= self.pre_lines.len() {
+            return None;
+        }
+        self.ensure_pre_visible(k);
+        let lh = self.row_h.max(1);
+        let y = self.pre_rect.y + self.pre_head_h() + k as i32 * lh - self.pre_scroll + lh / 2;
+        let x = self.pre_rect.x + (self.pre_rect.w / 2).max(8);
+        let p = Point { x, y };
+        // 역산 검증 = 같은 점을 되돌려 같은 줄이어야 한다(기하가 바뀌면 시험이 먼저 알도록).
+        (self.preview_index_at(p) == Some(k)).then_some((x, y, self.pre_lines[k].no.unwrap_or(0)))
+    }
+
+    /// 보기 n번째 행의 창 좌표(가운데) — `findobj.clickrow:<n>`(목록 클릭도 합성 사건으로).
+    pub(crate) fn test_row_point(&mut self, n: usize) -> Option<(i32, i32)> {
+        if n >= self.view.len() || self.row_h <= 0 {
+            return None;
+        }
+        self.ensure_visible(n);
+        let y = self.list_rect.y + n as i32 * self.row_h - self.scroll_y + self.row_h / 2;
+        let x = self.list_rect.x + (self.list_rect.w / 2).max(8);
+        (self.view_at(Point { x, y }) == Some(n)).then_some((x, y))
+    }
+
+    /// 미리보기 ↑/↓ 한 번(키 사건은 밖에서 만들 수 없어 분기 함수를 직접 · 창 안 경로는 실제 키와 같다) — `findobj.key:<down|up>`.
+    pub(crate) fn test_preview_key(&mut self, down: bool) -> Option<u32> {
+        self.own_focus(Focus::Preview);
+        self.preview_arrow(down);
+        self.pre_sel
+            .and_then(|k| self.pre_lines.get(k))
+            .and_then(|l| l.no)
     }
 }

@@ -622,19 +622,40 @@ impl ApplicationHandler<Wake> for App {
         self.findobj_pump();
         // 객체 찾기 창 진행 중이면 진행 패널·혜성 갱신(113).
         if self.findobj_win.tick() {
-            self.findobj_win.redraw();
-            // 페이드(스플리터 손잡이 · 버튼 · 행 hover)는 틱이 돌아야 진행된다 — 다음 프레임 예약(사용자 10-16 "스플리터 서서히 = 메인과 동일").
-            next = next.min(now + Duration::from_millis(16));
+            // ★ 프레임 간격(10-16 사용자 "검색 중 미리보기 창이 열리지 않음"의 실체): `about_to_wait`마다 다시 그리기를 요청하면 winit
+            //   Windows는 RedrawRequested 하나를 보낸 뒤 메시지 배분을 끊고 여기로 돌아오고(runner `interrupt_msg_dispatch`), 우리는 또
+            //   요청 → 대기는 즉시 깨고 `PeekMessage`는 **맨 위 창(객체 찾기)의 WM_PAINT**부터 뽑는다 → 검색이 도는 동안 **메인 창
+            //   WM_PAINT가 굶어** 미리보기 탭이 모델엔 열렸는데 화면엔 안 보였다(`[preview] painted` 0건 · 검색 끝나면 보임). 16 ms에
+            //   한 번만 요청하고 그 사이에는 다른 창이 그려진다. 페이드(스플리터·버튼·행 hover)도 이 간격이면 충분하다.
+            if now >= self.findobj_next_frame {
+                self.findobj_win.redraw();
+                self.findobj_next_frame = now + Duration::from_millis(16);
+            }
+            next = next.min(self.findobj_next_frame);
         }
         // ★ 미리보기 의도가 확정됐으면(마지막 선택이 120 ms 머문 뒤) 그때 한 번만 연다(클릭·↑/↓ 연타 = 최신만 · 10-16).
         if let Some((a, t0, src)) = self.findobj_win.take_pending() {
             let t1 = Instant::now();
+            // 계측 사슬(사용자 10-16 "키보드·클릭 반응 속도 다름" · "컨트롤이 받는 사건만 재면 맹점"): OS 큐 대기(Windows) → 사건 도착→의도(창 안
+            //   처리 전부) → 의도→수거 → 수거→처리(같은 탭 이동 = 동기) → 본문(새 객체 = `[source]` 뒤) → 그리기 = `findobj_trace_done`/`findobj_paint_trace`.
+            let tr = self.fo_trace.take().filter(|t| t.src == src);
+            let evt_ms = tr
+                .as_ref()
+                .map_or(0, |t| t0.saturating_duration_since(t.t_evt).as_millis());
+            let os_ms = tr
+                .as_ref()
+                .and_then(|t| t.os_wait_ms)
+                .map_or_else(|| "-".to_string(), |m| m.to_string());
+            self.fo_open_trace = tr.map(|t| (t.t_evt, src));
             self.findobj_action(a);
-            // 지연 계측(사용자 10-16 "키보드·클릭 반응 속도 다름"): 의도 등록 → 수거 · 수거 → 처리(같은 탭 이동은 동기 · 재조회는 `[source]`가 이어 적음).
+            // 소스 요청이 남지 않았으면(같은 탭 = 이미 끝 · 탐색기에서 보기 = 대상 아님) 꼬리를 거둔다.
+            if self.findobj_goto.is_none() {
+                self.fo_open_trace = None;
+            }
             self.log_win.push(nsql_log::LogEntry::new(
                 nsql_log::LogKind::Info,
                 format!(
-                    "[preview] {src} · queued {} ms · handled {} ms",
+                    "[preview] {src} · os-wait {os_ms} ms · event→intent {evt_ms} ms · queued {} ms · handled {} ms",
                     (t1 - t0).as_millis(),
                     t1.elapsed().as_millis()
                 ),
@@ -1104,6 +1125,8 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::RedrawRequested => {
                 self.tmark("RedrawRequested");
                 self.paint();
+                // 객체 찾기 미리보기 계측 사슬의 끝 = 본문이 실린 첫 프레임(10-16).
+                self.findobj_paint_trace();
                 return;
             }
             _ => {}
@@ -1669,14 +1692,8 @@ impl App {
             return true;
         }
         if self.findobj_win.is(id) {
-            let act = self.findobj_win.handle(event);
-            match act {
-                crate::findobj_win::FoAction::Paint => {
-                    let ui_px = self.settings.font_px("ui.font_size");
-                    self.findobj_win.paint(&self.ui_font, &self.theme, ui_px);
-                }
-                other => self.findobj_action(other),
-            }
+            // 한 자리(`findobj_window_event`) = OS 사건과 자체 시험 합성 사건이 **같은 길**(계측 시작점 포함 · 10-16).
+            self.findobj_window_event(event);
             return true;
         }
         if self.mem_win.is(id) {

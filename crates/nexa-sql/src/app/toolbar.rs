@@ -522,7 +522,12 @@ impl App {
         let view = ToolGroup::new(
             "view",
             t(Msg::MnView),
-            vec![ToolItem::new("view.log", toolicons::log()).tip(t(Msg::TipLog))],
+            vec![
+                // ★ [객체 찾기] = 로그 창 왼쪽(사용자 10-16) · 열기만(토글 없음 · 이미 열려 있으면 그 창을 앞으로).
+                ToolItem::new("view.find_objects", toolicons::find_objects())
+                    .tip(t(Msg::TipFindObjects)),
+                ToolItem::new("view.log", toolicons::log()).tip(t(Msg::TipLog)),
+            ],
         )
         .align_right();
         let mut dock = ToolDock::new(vec![file, edit, run, conn, tabconn, view]);
@@ -554,7 +559,7 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
     ),
     ("conn", &["conn.toggle", "conn.disconnect", "conn.sessions"]),
     ("tabconn", &[]),
-    ("view", &["view.log"]),
+    ("view", &["view.find_objects", "view.log"]),
 ];
 
 /// 그룹은 숨기지 않는다(버튼 단위로만) — 편집 창에서 그룹 체크 잠금.

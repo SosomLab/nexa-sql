@@ -308,7 +308,8 @@ impl App {
                     origin,
                     db,
                     server,
-                } if self.tab_room() => {
+                    took_ms,
+                } => {
                     // ★ 미리보기 요청이 더 새 객체로 바뀌었으면(↑/↓ 연타 · 10-16) 앞서 요청한 객체의 소스는 **버린다** — 뜻이 없어진 응답으로
                     //   미리보기 탭을 덮어쓰지 않게(최신 의도만 수행).
                     let stale_preview = self.findobj_goto.as_ref().is_some_and(|(n, _, p)| {
@@ -317,6 +318,14 @@ impl App {
                             .is_some_and(|o| !o.name.eq_ignore_ascii_case(n))
                     });
                     if stale_preview {
+                        // 조용히 버리지 않는다(사용자 10-16 "검색 중 미리보기가 열리지 않음" 추적용) — 어느 길에서 빠졌는지 로그 1줄.
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            format!(
+                                "[source] dropped stale preview: {}",
+                                origin.as_ref().map_or("?", |o| o.name.as_str())
+                            ),
+                        ));
                         continue;
                     }
                     // ★ 객체 찾기 창에서 연 소스(113 §5 · 10-16 "미리보기" 스위치): 깃발 = (이름 · 일치 줄 · 미리보기) · 이 객체 것만 소비.
@@ -346,18 +355,31 @@ impl App {
                         }
                     };
                     if reused.is_none() {
+                        // ★ 탭 상한(무료판 5탭 게이트)은 **새 탭이 실제로 필요할 때만**(종전 = 암 가드라 미리보기 탭 **재사용**도 막혀
+                        //   소스가 조용히 버려졌다 · 10-16) · 막히면 로그 1줄 + 깃발 정리(다음 요청이 같은 객체를 다시 열 수 있게).
+                        if !self.tab_room() {
+                            self.log_win.push(LogEntry::new(
+                                LogKind::Info,
+                                format!(
+                                    "[source] dropped: tab limit ({})",
+                                    origin.as_ref().map_or("?", |o| o.name.as_str())
+                                ),
+                            ));
+                            continue;
+                        }
                         self.editors.new_tab(Some(title));
                         if preview {
                             let id = self.editors.active_id();
                             self.editors.set_preview_id(Some(id));
                         }
                     }
+                    // 본문 적재 시간 계측(사용자 10-16 로그 분석: 조회·처리는 100 ms 안 → 남는 후보 = 편집기 적재 · Debug 빌드 영향 분리).
+                    let t_open = Instant::now();
                     self.editors.cur_mut().set_text(&text);
-                    // ★ 미리보기 탭 = 저장 지점을 찍어 "깨끗"하게(사용자 10-16 "정식 창으로 열림"): 경로 없는 소스 탭은 늘 미저장이라
-                    //   `poll_preview`가 다음 틱에 곧장 승격시켰다 → 사용자가 **편집해야** 더러워져 승격된다.
-                    if preview {
-                        self.editors.cur_mut().mark_saved();
-                    }
+                    // ★ 연 본문 = 저장 지점(`mark_clean` · 사용자 10-16): 수정 전엔 × · 편집하면 ●(미리보기면 승격) · 원복하면 다시 ×.
+                    //   (종전 = 미리보기만 `mark_saved` → 정식 소스 탭은 늘 ●로 보였다.)
+                    let cur = self.editors.active();
+                    self.editors.mark_clean(cur);
                     // 캐럿 = 문서 처음(BOF · 사용자 09-26 "Open source 뒤 EOF가 아니라 BOF").
                     self.editors.cur_mut().goto_line(1);
                     if let Some((_, line, _)) = fo {
@@ -365,6 +387,19 @@ impl App {
                             self.editors.cur_mut().goto_line(line as usize);
                         }
                     }
+                    // 상태줄 "소스 읽는 중…"을 도착 때 바꾼다(종전 = 지워지지 않아 아직 읽는 중처럼 보임 · 사용자 캡처 10-16) — 괄호 안은
+                    //   **서버 왕복**(협업 10-16 "open 0 ms를 왕복으로 읽을 수 있다") · 편집기 적재 ms는 로그에만.
+                    let open_ms = t_open.elapsed().as_millis();
+                    if let Some(o) = origin.as_ref() {
+                        self.sess.status =
+                            tf(Msg::StSourceOpened, &[&o.name, &took_ms.to_string()]);
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            format!("[source] tab {} · open {open_ms} ms", o.name),
+                        ));
+                    }
+                    // 객체 찾기 미리보기 계측 사슬(사건 → 본문) — 새 객체 길.
+                    self.findobj_trace_done("new object");
                     self.set_focus(Focus::Editor);
                     // ★ 객체 소스 탭(09-30): 출처를 기억하고(F5 = 한 단위 실행) 그 객체의 서버 세션에 묶는다 —
                     //   종전에는 활성 공유 세션(다른 서버일 수 있음)에 붙어 방언이 달라지면 분할이 어긋났다.
@@ -391,7 +426,6 @@ impl App {
                         self.apply_tab_unit();
                     }
                 }
-                ExplorerAction::OpenSql { .. } => {}
                 ExplorerAction::Status(s) => self.sess.status = s,
                 ExplorerAction::Log(s) => self.log_win.push(LogEntry::new(LogKind::Info, s)),
                 ExplorerAction::ServerInfo => self.sess_ui_dirty = true,

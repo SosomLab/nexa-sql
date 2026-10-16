@@ -5,9 +5,124 @@ use crate::*;
 use nsql_i18n::{t, Msg};
 use nsql_log::{LogEntry, LogKind};
 use nsql_script::ConnectSpec;
+use std::time::Instant;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 
+/// ★ 미리보기 반응 계측의 시작점(10-16): 객체 찾기 창에 OS 사건(왼쪽 누름 · 키 누름)이 닿은 순간 + 그 메시지가 OS 큐에서 기다린 시간.
+pub(crate) struct FoTrace {
+    pub(crate) t_evt: Instant,
+    pub(crate) src: &'static str,
+    pub(crate) os_wait_ms: Option<u32>,
+}
+
 impl App {
+    /// ★ 객체 찾기 창의 사건 한 건 — OS가 보낸 것이든 자체 시험이 합성한 것이든 **이 한 길**(사용자 10-16 "다른 컨트롤이 먼저 처리하는지"는
+    ///   창 `handle`이 `consumed`로 남기고, 여기는 계측 시작점을 찍는다).
+    pub(crate) fn findobj_window_event(&mut self, event: &WindowEvent) {
+        let kind = match event {
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => Some("click"),
+            WindowEvent::KeyboardInput {
+                event: k,
+                is_synthetic: false,
+                ..
+            } if k.state == ElementState::Pressed => Some("key"),
+            _ => None,
+        };
+        if let Some(src) = kind {
+            // 합성 사건(자체 시험)은 OS 큐를 지나지 않았다 → `GetMessageTime`은 마지막 **실제** 메시지 시각이라 뜻 없는 값(협업 16차 E2E
+            //   16·31·250·2296 ms) → "-".
+            let os_wait_ms = if self.fo_synth {
+                None
+            } else {
+                nexa_sys::last_message_age_ms()
+            };
+            self.fo_trace = Some(FoTrace {
+                t_evt: Instant::now(),
+                src,
+                os_wait_ms,
+            });
+        }
+        match self.findobj_win.handle(event) {
+            FoAction::Paint => {
+                let ui_px = self.settings.font_px("ui.font_size");
+                self.findobj_win.paint(&self.ui_font, &self.theme, ui_px);
+            }
+            other => self.findobj_action(other),
+        }
+    }
+
+    /// 자체 시험(`findobj.click:<x>/<y>` · `findobj.clickpre:<k>`): 창 좌표에 **왼쪽 클릭을 합성**해 OS 사건과 같은 길로 흘린다
+    ///   (CursorMoved → Pressed → Released · 창 안의 모든 분기를 지난다 — 컨트롤 함수를 직접 부르면 보이지 않는 "누가 먼저 먹나"를 함께 잰다).
+    pub(crate) fn findobj_synth_click(&mut self, x: i32, y: i32) {
+        use winit::dpi::PhysicalPosition;
+        use winit::event::DeviceId;
+        let dev = DeviceId::dummy();
+        let evs = [
+            WindowEvent::CursorMoved {
+                device_id: dev,
+                position: PhysicalPosition::new(f64::from(x), f64::from(y)),
+            },
+            WindowEvent::MouseInput {
+                device_id: dev,
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+            },
+            WindowEvent::MouseInput {
+                device_id: dev,
+                state: ElementState::Released,
+                button: MouseButton::Left,
+            },
+        ];
+        self.fo_synth = true;
+        for ev in &evs {
+            self.findobj_window_event(ev);
+        }
+        self.fo_synth = false;
+    }
+
+    /// 자체 시험 `findobj.key:<down|up>`: 키 사건은 밖에서 만들 수 없어 창 분기 함수를 직접 부르되, **계측 시작점은 같은 자리**에 찍는다
+    ///   (종전 = 시작점 없음 → 키 경로의 `event→text`·`painted`가 비었다 · 협업 16차 E2E A-9).
+    pub(crate) fn findobj_synth_key(&mut self, down: bool) -> Option<u32> {
+        self.fo_trace = Some(FoTrace {
+            t_evt: Instant::now(),
+            src: "key",
+            os_wait_ms: None,
+        });
+        self.findobj_win.test_preview_key(down)
+    }
+
+    /// 계측 사슬 ④ = 본문이 편집기에 실렸다(같은 탭 이동 = 동기 · 새 객체 = 소스 도착). 시작점이 있으면 로그 + 그리기 꼬리 예약.
+    pub(crate) fn findobj_trace_done(&mut self, stage: &str) {
+        if let Some((t0, src)) = self.fo_open_trace.take() {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "[preview] {src} · {stage} · event→text {} ms",
+                    t0.elapsed().as_millis()
+                ),
+            ));
+            self.fo_paint = Some((t0, src));
+        }
+    }
+
+    /// 계측 사슬 ⑤ = 메인 창 첫 그리기(RedrawRequested 뒤).
+    pub(crate) fn findobj_paint_trace(&mut self) {
+        if let Some((t0, src)) = self.fo_paint.take() {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "[preview] {src} · painted · event→frame {} ms",
+                    t0.elapsed().as_millis()
+                ),
+            ));
+        }
+    }
+
     /// 창 열기(이미 열려 있으면 앞으로 · `preset` = 미리 넣을 검색어).
     pub(crate) fn open_findobj_window(&mut self, el: &ActiveEventLoop, preset: Option<&str>) {
         let near = self.window.as_ref().and_then(|w| {
@@ -180,6 +295,7 @@ impl App {
                     if line > 0 {
                         self.editors.cur_mut().goto_line(line as usize);
                     }
+                    self.findobj_trace_done("same tab");
                     self.redraw();
                     if !preview {
                         if let Some(w) = &self.window {
@@ -191,6 +307,11 @@ impl App {
                 self.findobj_goto = Some((obj.name.clone(), line, preview));
                 if !self.explorer.open_source_for(server.as_ref(), &obj) {
                     self.sess.status = t(Msg::ExpNotConnected).to_string();
+                    self.findobj_goto = None;
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("[source] dropped: no explorer pane for {}", obj.name),
+                    ));
                 }
                 // 정식 열기만 메인 창으로 포커스 — 미리보기(줄 클릭)는 객체 찾기 창의 미리보기 목록에 포커스를 둔다
                 //   (사용자 10-16 "포커스는 클릭한 목록에 유지" → ↑/↓로 계속 훑기).

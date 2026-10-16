@@ -244,6 +244,9 @@ pub(crate) struct Editors {
     encs: Vec<String>,
     /// 탭 바에 마지막으로 보낸 표시 제목(더러움 `*` 포함) — 바뀔 때만 다시 보낸다.
     shown_titles: Vec<String>,
+    /// 마지막으로 탭바에 올린 미저장 점(●) 상태 — `refresh_dirty`가 제목과 함께 비교(사용자 10-16 "글을 넣는 순간 점이 보여야" · 종전엔
+    /// 제목 글자만 비교해 점 변화는 포커스가 움직여 `sync_tabs`가 불릴 때까지 반영되지 않았다 · 경로 없는 탭 = 늘 ●라 드러나지 않던 결함).
+    shown_dirty: Vec<bool>,
     /// 탭 제목·구성 세대(`sync_tabs`마다 +1) — 탭 이름을 **id로 조회해 표시하는 쪽**(북마크 패널)이 바뀐 때만 다시 만들도록.
     titles_rev: u64,
     /// ★ 탭 메뉴 "객체 탐색기에서 보기"(탭 id → (라벨, 활성)) — 호스트가 판정해 넣는다(`App::tab_obj_tick` · 사용자 10-08).
@@ -369,6 +372,7 @@ impl Editors {
             close_prev: false,
             encs: Vec::new(),
             shown_titles: Vec::new(),
+            shown_dirty: Vec::new(),
             titles_rev: 0,
             tab_obj: HashMap::new(),
             pending_close: None,
@@ -777,6 +781,7 @@ impl Editors {
         self.tabs.set_title_colors(titles, &mut inv);
         // 닫기 상자 자리의 미저장 점(Sublime식 · 09-28) — 새 탭은 늘 · 파일 탭은 저장본과 다를 때.
         let dirty: Vec<bool> = (0..self.titles.len()).map(|i| self.is_unsaved(i)).collect();
+        self.shown_dirty = dirty.clone();
         self.tabs.set_dirty(dirty, &mut inv);
     }
 
@@ -788,8 +793,11 @@ impl Editors {
         }
         match self.tab_kind(i) {
             TabKind::Preview => false,
-            // 읽기 전용 안내 탭(디스크 보기 · 객체 정보)은 고칠 수 없으니 저장할 것도 없다(협업 bin62 ① · 종전 = 경로 없는 탭이면 늘 ●).
-            TabKind::Scratch => !self.read_only.contains(&self.tab_id(i)),
+            // 읽기 전용 안내 탭(디스크 보기 · 객체 정보)은 고칠 수 없으니 저장할 것도 없다(협업 bin62 ①).
+            // ★ 경로 없는 탭도 **내용 기준**(사용자 10-16 "새 탭·수정 없는 탭은 ×, 수정되면 ●, 원복되면 다시 ×"): 저장 지점(새 탭 = 빈 글 ·
+            //   객체 소스 = 연 본문 `mark_clean`)과 다를 때만 ● — 종전 "경로 없는 탭 = 늘 ●"은 폐기. 원복(a 쳤다 지움)은 `is_dirty`의
+            //   내용 비교가 잡는다(파일 탭과 같은 규칙).
+            TabKind::Scratch => !self.read_only.contains(&self.tab_id(i)) && self.is_dirty(i),
             TabKind::File => self.is_dirty(i),
         }
     }
@@ -1138,6 +1146,23 @@ impl Editors {
             .borrow_mut()
             .insert(self.tab_id(i), (rev, differs));
         differs || eol_changed
+    }
+
+    /// ★ 지금 본문을 **저장 지점**으로(경로 없는 탭 · 10-16): 객체 소스 탭을 열 때 = "연 상태와 같으면 ×" · 편집하면 ● · 원복하면 다시 ×.
+    pub(crate) fn mark_clean(&mut self, i: usize) {
+        let Some(b) = self.bufs.get_mut(i) else {
+            return;
+        };
+        let text = b.text();
+        b.mark_saved();
+        if let Some(s) = self.saved.get_mut(i) {
+            *s = text;
+        }
+        if let (Some(e), Some(se)) = (self.eol.get(i).copied(), self.saved_eol.get_mut(i)) {
+            *se = e;
+        }
+        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
+        self.sync_tabs();
     }
 
     /// 활성 탭의 파일 경로.
@@ -1887,7 +1912,9 @@ impl Editors {
         let shown: Vec<String> = (0..self.titles.len())
             .map(|i| self.shown_title(i))
             .collect();
-        if shown == self.shown_titles {
+        // 점(●)도 비교 — `is_unsaved`는 저장 지점이면 O(1) · 편집 뒤엔 세대당 1회 본문 비교(캐시).
+        let dirty: Vec<bool> = (0..self.titles.len()).map(|i| self.is_unsaved(i)).collect();
+        if shown == self.shown_titles && dirty == self.shown_dirty {
             return false;
         }
         self.sync_tabs();
@@ -3187,11 +3214,51 @@ mod split_tests {
         assert!(!ed.is_dirty(0) && !ed.is_split() && ed.preview_id().is_none());
     }
 
+    /// ★ 경로 없는 탭 표식 = 내용 기준(사용자 10-16): 새 탭 × · 글 넣음 ● · 원복(비움) × · `mark_clean` 뒤 그 본문이 저장 지점.
+    #[test]
+    fn scratch_tab_unsaved_follows_content() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        let i = ed.active();
+        assert!(!ed.is_unsaved(i), "new empty tab is clean");
+        ed.cur_mut().set_text("a");
+        assert!(ed.is_unsaved(i), "typed = unsaved");
+        ed.cur_mut().set_text("");
+        assert!(!ed.is_unsaved(i), "reverted to saved point = clean again");
+        ed.cur_mut().set_text("CREATE VIEW v AS SELECT 1");
+        ed.mark_clean(i);
+        assert!(
+            !ed.is_unsaved(i),
+            "mark_clean = opened source is the saved point"
+        );
+        ed.cur_mut().set_text("CREATE VIEW v AS SELECT 2");
+        assert!(ed.is_unsaved(i));
+        ed.cur_mut().set_text("CREATE VIEW v AS SELECT 1");
+        assert!(!ed.is_unsaved(i), "back to opened text = clean");
+    }
+
+    /// ★ 점(●)은 글을 넣은 **다음 틱**에 바로(사용자 10-16 "포커스가 움직여야 반영됨" 결함): 제목이 그대로여도 `refresh_dirty`가 참.
+    #[test]
+    fn refresh_dirty_sees_dot_change_without_title_change() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        let i = ed.active();
+        assert!(!ed.refresh_dirty(), "nothing changed yet");
+        ed.cur_mut().set_text("a");
+        assert!(ed.refresh_dirty(), "typed → dot appears this tick");
+        assert_eq!(ed.shown_dirty.get(i), Some(&true));
+        assert!(!ed.refresh_dirty(), "steady");
+        ed.cur_mut().set_text("");
+        assert!(ed.refresh_dirty(), "reverted → dot gone this tick");
+        assert_eq!(ed.shown_dirty.get(i), Some(&false));
+    }
+
     /// 묶인 탭의 상단 줄 = **각 탭 자기 유형 색**(미저장 = 경고색 · 파일 = 강조색 · 사용자 09-23 "각 탭의 색을 유지").
     #[test]
     fn grouped_tabs_keep_their_own_kind_color() {
         let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
         let base = ed.len() - 1;
+        // ★ 10-16: 경로 없는 탭도 **내용 기준**(새 빈 탭 = 깨끗 = 파일 색 · 사용자 "수정 없는 탭은 ×") → 미저장(경고) 색을 보려면 글을 넣는다.
+        ed.cur_mut().set_text("select 1");
+        assert!(ed.is_unsaved(base), "scratch with text is unsaved");
         let (warn, accent, dim) = (
             nexa_ctl::Color(0xFF8000),
             nexa_ctl::Color(0x0064FF),

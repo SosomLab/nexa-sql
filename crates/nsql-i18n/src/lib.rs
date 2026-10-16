@@ -1637,6 +1637,7 @@ pub enum Msg {
     TipRunAll,
     TipConnect,
     TipLog,
+    TipFindObjects,
     TipColStatus,
     TipColTest,
     TipColConnect,
@@ -1861,6 +1862,7 @@ pub enum Msg {
     ExpNotConnected,
     ExpLoading,
     ExpLoadingSource,
+    StSourceOpened,
     /// ★ T-313 ① 메타 세션 생존·안내(docs/107).
     ExpHealthDownTitle,
     ExpHealthDownBody,
@@ -5575,6 +5577,7 @@ impl Msg {
             Msg::TipRunStatement => ["Run statement (Ctrl+Enter)", "문장 실행(Ctrl+Enter)"],
             Msg::TipRunAll => ["Run all (F5)", "전체 실행(F5)"],
             Msg::TipConnect => ["Connect", "접속"],
+            Msg::TipFindObjects => ["Find Objects", "객체 찾기"],
             Msg::TipLog => ["Log window (Ctrl+Shift+G)", "로그 창(Ctrl+Shift+G)"],
             Msg::TipColStatus => [
                 "Server status - green: port open · yellow: checking · blue: host up, port closed · red: unreachable · gray: not checked",
@@ -5903,6 +5906,7 @@ impl Msg {
             Msg::MnExplorer => ["Object Explorer", "오브젝트 탐색기"],
             Msg::ExpNotConnected => ["Not connected", "접속 안 됨"],
             Msg::ExpLoading => ["Loading…", "읽는 중…"],
+            Msg::StSourceOpened => ["Source of {0} opened (server {1} ms)", "{0} 소스 열림(서버 {1} ms)"],
             Msg::ExpLoadingSource => ["Loading source of {0}…", "{0} 소스 읽는 중…"],
             Msg::ExpHealthDownTitle => ["Server connection lost", "서버 연결 끊김"],
             Msg::ExpHealthDownBody => [
@@ -9392,6 +9396,7 @@ impl Msg {
         Msg::TipRunAll,
         Msg::TipConnect,
         Msg::TipLog,
+        Msg::TipFindObjects,
         Msg::TipColStatus,
         Msg::TipColTest,
         Msg::TipColConnect,
@@ -9615,6 +9620,7 @@ impl Msg {
         Msg::ExpNotConnected,
         Msg::ExpLoading,
         Msg::ExpLoadingSource,
+        Msg::StSourceOpened,
         Msg::ExpHealthDownTitle,
         Msg::ExpHealthDownBody,
         Msg::ExpHealthUpTitle,
