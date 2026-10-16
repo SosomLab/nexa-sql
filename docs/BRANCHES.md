@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/128-findobj-sameobj | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 ㊺~㊿(🔧 마지막 줄 ↓ 연타 → 1행 정식 탭 = 같은 객체 중복 요청 경주 → 같은 객체 = 재조회 없이 줄만 이동 `findobj_same_preview_tab` · 탐색기 같은 객체 대기열 금지 · 같은 줄 반복 무시 · `[preview]` 지연 계측 · 검색 중 선택 행 자리 고정 · 미리보기 탭 복원(`set_preview_id`+`mark_saved`) · "모두 취소" 2단 확인 `close.discard_all_go`) · E2E 23/0 · 99 §3-1 · 61 §2-2-b 15 · 102 §12 · journal 10-16 §6 |
 | fix/128-findobj-intent | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 ㊳~㊹(미리보기 = `LatestIntent` 최신 의도만 · 탐색기 소스 요청 latest-wins `source_queued` · 옛 응답 버림 · `[source] N ms` 로그(BISCM 212 ms) · ↑/↓ = 클릭 효과 · 소스 없는 결과 = [편집기에서 열기] 비활성 · 컬럼 줄 → 탐색기 컬럼까지 `member` · 스플리터 accent 띠 `split_band`) · E2E 23/0 · 99 §3-1 · 30 §2 · journal 10-16 §6 |
 | fix/128-findobj-preview-2 | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 ㉜~㊲(스플리터 ↕ 커서 + 서서히 = 창 tick 다음 프레임 예약 · 미리보기 키보드 `Focus::Preview` ↑/↓·Enter·Tab · 스크롤 상한(마지막 줄) · 미리보기 열 때 포커스 유지 · 줄 클립 = 머리글 아래 · 언어 전환 `relabel`(창 제목 포함)) · E2E 23/0 · 113 §5-2-a · 61 §2-2-b 10-3 · journal 10-16 §6 |
 | feat/128-findobj-preview | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 미리보기 ㉕~㉛(줄 hover 페이드 · 줄 선택 = 목록과 같은 선택색 · "미리보기" 스위치 = `findobj.preview_click` 즉시 저장 · 미리보기 탭 `reuse_preview_tab`/`set_preview_id` · 🔧 경로 없는 탭 즉시 승격 = `mark_saved` · [편집기에서 열기] = 정식 탭/선택 줄/승격 · 목록·미리보기 hover = 탐색기 회색 규칙 `hover_alpha`) · nexa-ui 209차 · 113 §5-2-a · 70 · journal 10-16 §6 |

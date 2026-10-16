@@ -96,6 +96,23 @@ impl App {
         }
     }
 
+    /// 살아 있는 미리보기 탭이 **이 객체**(같은 서버 · 스키마 · 이름)를 보여 주고 있으면 그 탭 인덱스.
+    fn findobj_same_preview_tab(
+        &mut self,
+        server: Option<&ConnectSpec>,
+        obj: &nsql_catalog::ObjectInfo,
+    ) -> Option<usize> {
+        let id = self.editors.preview_id()?;
+        let o = self.object_tabs.get(&id)?;
+        let same = o.name.eq_ignore_ascii_case(&obj.name)
+            && o.schema.eq_ignore_ascii_case(&obj.schema)
+            && o.server.as_ref() == server;
+        if !same {
+            return None;
+        }
+        self.editors.index_of_id(id)
+    }
+
     /// 창 동작 처리.
     pub(crate) fn findobj_action(&mut self, act: FoAction) {
         match act {
@@ -147,6 +164,30 @@ impl App {
                 line,
                 preview,
             } => {
+                // ★ 같은 객체가 이미 미리보기 탭에 떠 있으면 **재조회 없이** 그 탭에서 줄만 이동(사용자 10-16 "동일 객체에서 줄만 바뀌는데
+                //   느릴 이유 없음" · ↓ 연타 때 같은 객체 요청이 두 번 나가 뒤 것이 평범한 열기로 취급돼 1행 정식 탭이 열리던 결함도 함께).
+                if let Some(i) = self.findobj_same_preview_tab(server.as_ref(), &obj) {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("[preview] same tab · {} → line {line}", obj.name),
+                    ));
+                    self.findobj_goto = None;
+                    self.editors.switch(i);
+                    if !preview {
+                        // 정식 열기 = 승격(새 탭을 또 열지 않는다).
+                        self.editors.set_preview_id(None);
+                    }
+                    if line > 0 {
+                        self.editors.cur_mut().goto_line(line as usize);
+                    }
+                    self.redraw();
+                    if !preview {
+                        if let Some(w) = &self.window {
+                            crate::winfocus::focus(w);
+                        }
+                    }
+                    return;
+                }
                 self.findobj_goto = Some((obj.name.clone(), line, preview));
                 if !self.explorer.open_source_for(server.as_ref(), &obj) {
                     self.sess.status = t(Msg::ExpNotConnected).to_string();

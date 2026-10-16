@@ -627,8 +627,18 @@ impl ApplicationHandler<Wake> for App {
             next = next.min(now + Duration::from_millis(16));
         }
         // ★ 미리보기 의도가 확정됐으면(마지막 선택이 120 ms 머문 뒤) 그때 한 번만 연다(클릭·↑/↓ 연타 = 최신만 · 10-16).
-        if let Some(a) = self.findobj_win.take_pending() {
+        if let Some((a, t0, src)) = self.findobj_win.take_pending() {
+            let t1 = Instant::now();
             self.findobj_action(a);
+            // 지연 계측(사용자 10-16 "키보드·클릭 반응 속도 다름"): 의도 등록 → 수거 · 수거 → 처리(같은 탭 이동은 동기 · 재조회는 `[source]`가 이어 적음).
+            self.log_win.push(nsql_log::LogEntry::new(
+                nsql_log::LogKind::Info,
+                format!(
+                    "[preview] {src} · queued {} ms · handled {} ms",
+                    (t1 - t0).as_millis(),
+                    t1.elapsed().as_millis()
+                ),
+            ));
         }
         if self.mem_win.is_open() {
             if now >= self.mem_next {

@@ -6926,7 +6926,12 @@ impl Explorer {
         self.suspended = false;
         if self.source_pending {
             // 진행 중이면 **최신 요청만** 기억(앞서 쌓인 것은 버림 · 99 LatestIntent 사상) → 응답이 오면 `drain` 끝에서 발행.
-            self.source_queued = Some((o.clone(), kind, title));
+            //   단 진행 중인 것과 **같은 객체**면 중복(같은 응답이 올 것) — 넣지 않는다(10-16 ↓ 연타 1행 결함).
+            if self.source_name.eq_ignore_ascii_case(&o.name) {
+                self.source_queued = None;
+            } else {
+                self.source_queued = Some((o.clone(), kind, title));
+            }
             return;
         }
         self.source_pending = true;

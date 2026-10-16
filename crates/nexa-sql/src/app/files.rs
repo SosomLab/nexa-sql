@@ -3,12 +3,12 @@
 //! main.rs의 `impl App`에서 기능별로 옮긴 조각(docs/93 §4). 상태는 `App` 한 곳 · 여기는 동작만.
 
 use crate::*;
+use nexa_ctl::controls::ctxmenu::CtxItem;
 
 impl App {
     /// 저장하지 않은 탭을 닫으려 한다(X · Ctrl+W · 탭 메뉴 · 모두 닫기) — 설정 `editor.close_unsaved`: `ask` = 탭 옆 메뉴로 묻는다 ·
     /// `twice` = 종전의 2단 닫기.
     pub(crate) fn ask_save_close(&mut self, i: usize) {
-        use nexa_ctl::controls::ctxmenu::CtxItem;
         if self.settings.get("editor.close_unsaved") == Some("twice") {
             self.editors.close_tab_two_step(i);
             return;
@@ -76,7 +76,25 @@ impl App {
                 self.save_all_pending = true;
                 self.save_all_step();
             }
+            // ★ 모두 취소 = 한 번 더 확인(사용자 10-16 "재확인 절차") — 같은 자리에 두 번째 팝업(예 / 취소).
             "close.discard_all" => {
+                let n = self.dirty_tabs().len();
+                let items = vec![
+                    CtxItem::item(
+                        "close.discard_all_go",
+                        tf(Msg::MnCloseDiscardAllGo, &[&n.to_string()]),
+                    ),
+                    CtxItem::Separator,
+                    CtxItem::item("close.cancel", t(Msg::MnCloseCancel)),
+                ];
+                let r = self
+                    .editors
+                    .index_of_id(tab)
+                    .and_then(|i| self.editors.tab_rect(i))
+                    .map_or(self.status_tx_rect, |r| Rect::new(r.x, r.bottom(), 0, 0));
+                self.open_status_popup(r, items);
+            }
+            "close.discard_all_go" => {
                 for i in self.dirty_tabs().into_iter().rev() {
                     if let Some(p) = self.editors.path_of(i) {
                         backups::remove(&p);

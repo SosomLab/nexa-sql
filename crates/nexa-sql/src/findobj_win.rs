@@ -281,8 +281,13 @@ pub(crate) struct FindObjWin {
     /// ★ 미리보기 열기 **의도**(결과 행 · 줄 번호 · 10-16 "밀린 요청은 버리고 최신만" · docs/99 `LatestIntent`): 클릭·↑/↓는 목표만 덮어쓰고,
     ///   `tick`이 120 ms 머문 마지막 목표만 `pending`으로 올린다(연타 중간 줄은 요청조차 안 나간다).
     preview_intent: LatestIntent<(usize, u32)>,
-    /// 확정된 의도 → 호스트가 `take_pending`으로 수거해 연다.
-    pending: Option<FoAction>,
+    /// 확정된 의도 → 호스트가 `take_pending`으로 수거해 연다. (등록 시각 · 입력 종류 = 지연 계측 `[preview]` 로그 · 10-16)
+    pending: Option<(FoAction, Instant, &'static str)>,
+    /// 마지막 의도의 입력 종류("key"/"click") — 의도 확정 때 로그에 붙인다.
+    intent_src: &'static str,
+    /// 마지막으로 미리보기를 연 (결과 행 · 줄): 같은 행의 **다른 줄** = 지연 없이 즉시(호스트가 재조회 없이 줄만 옮긴다) ·
+    /// **같은 줄** = 요청 자체를 안 낸다(마지막 줄에서 ↓ 연타 → 중복 요청 → 1행 정식 탭이 열리던 결함 · 사용자 10-16).
+    last_opened: Option<(usize, u32)>,
     /// "미리보기" 스위치(미리보기 머리글 왼쪽 · 설정 `findobj.preview_click`과 같은 값).
     preview_sw: Switch,
     // 진행
@@ -386,6 +391,8 @@ impl FindObjWin {
             list_hover: IntentFade::rows(),
             preview_intent: LatestIntent::new(120),
             pending: None,
+            intent_src: "",
+            last_opened: None,
             preview_sw: Switch::new(t(Msg::FoPreviewSwitch), true),
             rev: 0,
             running: false,
@@ -909,11 +916,19 @@ impl FindObjWin {
                 o.reverse()
             }
         });
+        // ★ 선택 행의 화면 y를 기억 → 검색 중 새 결과가 이름순으로 위에 끼어들어도 **선택한 행은 같은 자리에**(사용자 10-16 "검색 중
+        //   행 클릭 → 버튼 클릭이 안 됨" = 그 사이 목록이 밀려 다른 행이 선택되던 가설 · 협업 재현 = 기동 명령은 정상).
+        let anchor_y = self
+            .sel
+            .map(|v| v as i32 * self.row_h.max(1) - self.scroll_y);
         self.view = v;
         self.sel = keep.and_then(|k| self.view.iter().position(|&i| i == k));
         if self.sel.is_none() {
             self.pre_lines.clear();
             self.pre_head.clear();
+        }
+        if let (Some(v), Some(ay)) = (self.sel, anchor_y) {
+            self.scroll_y = v as i32 * self.row_h.max(1) - ay;
         }
         // 스크롤을 새 내용 길이 안으로(빈 화면 방지) · 선택 행이 남았으면 보이게.
         let content_h = self.view.len() as i32 * self.row_h.max(1);
@@ -1026,6 +1041,10 @@ impl FindObjWin {
         self.pre_sel = None;
         self.pre_hover.jump(None);
         self.preview_intent.clear();
+        // 결과 집합이 비면(새 검색) 행 번호의 뜻이 달라진다 → 빠른 길 해제.
+        if self.rows.is_empty() {
+            self.last_opened = None;
+        }
     }
 
     // ── 동작 ───────────────────────────────────────────────────────────────────────────────────────
@@ -1287,7 +1306,8 @@ impl FindObjWin {
     }
 
     /// 선택된 미리보기 줄을 "열기 의도"로 등록(스위치 켬 · 줄 번호 있는 줄만) — 클릭과 ↑/↓가 같은 길(사용자 10-16 "선택 = 클릭과 같은 효과").
-    fn preview_want(&mut self) {
+    fn preview_want(&mut self, src: &'static str) {
+        self.intent_src = src;
         let want = if self.preview_sw.is_on() {
             match (
                 self.sel_row(),
@@ -1301,11 +1321,28 @@ impl FindObjWin {
         } else {
             None
         };
+        if let Some((i, ln)) = want {
+            match self.last_opened {
+                // 같은 줄 = 이미 열려 있다 → 아무 요청도 안 낸다.
+                Some((li, lln)) if li == i && lln == ln => {
+                    self.preview_intent.clear();
+                    return;
+                }
+                // 같은 행(이미 열린 객체)의 다른 줄 = 서버 왕복이 없으니 **즉시**(연타 걸러 낼 비용이 없다).
+                Some((li, _)) if li == i => {
+                    self.preview_intent.clear();
+                    self.pending = Some((self.open_at(i, ln, true), Instant::now(), src));
+                    self.last_opened = Some((i, ln));
+                    return;
+                }
+                _ => {}
+            }
+        }
         self.preview_intent.set(want);
     }
 
     /// 호스트가 틱마다 수거하는 확정 동작(미리보기 열기).
-    pub(crate) fn take_pending(&mut self) -> Option<FoAction> {
+    pub(crate) fn take_pending(&mut self) -> Option<(FoAction, Instant, &'static str)> {
         self.pending.take()
     }
 
@@ -1339,7 +1376,8 @@ impl FindObjWin {
         // 미리보기 의도: 120 ms 머문 마지막 목표만 확정 → pending(그 사이 바뀐 목표는 버려진다).
         if self.preview_intent.tick(now) {
             if let Some(&(i, ln)) = self.preview_intent.settled() {
-                self.pending = Some(self.open_at(i, ln, true));
+                self.pending = Some((self.open_at(i, ln, true), Instant::now(), self.intent_src));
+                self.last_opened = Some((i, ln));
             }
             self.preview_intent.clear();
         }
@@ -1644,7 +1682,7 @@ impl FindObjWin {
                             self.own_focus(Focus::Preview);
                             self.last_click = None;
                             // 열기는 즉시가 아니라 **의도**로(클릭·키보드 한 길 · 최신만).
-                            self.preview_want();
+                            self.preview_want("click");
                             self.redraw();
                             return FoAction::None;
                         }
@@ -1783,7 +1821,7 @@ impl FindObjWin {
                         self.pre_sel = Some(k);
                         self.ensure_pre_visible(k);
                         // ↑/↓ 선택 = 클릭과 같은 효과(스위치 켬 = 미리보기 · 연타는 마지막 줄만 · 사용자 10-16).
-                        self.preview_want();
+                        self.preview_want("key");
                         self.redraw();
                         return FoAction::None;
                     }

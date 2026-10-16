@@ -786,12 +786,20 @@ impl App {
                         if let Some(txt) = &t.text {
                             tb.set_text(txt);
                         }
+                        // ★ 미리보기였던 경로 없는 탭(객체 찾기 미리보기 · 10-16 사용자 1안) = 미리보기로 복원 · 저장 지점을 찍어
+                        //   곧장 승격되지 않게(편집해야 정식). 정식 탭으로 보이던 종전 결함.
+                        if t.preview {
+                            tb.mark_saved();
+                        }
                     }
                     self.restore_caret(i, t, &opts);
                     if t.indent.is_some() {
                         self.editors.set_indent_of(i, t.indent);
                     }
                     let new_id = self.editors.tab_id(i);
+                    if t.preview {
+                        self.editors.set_preview_id(Some(new_id));
+                    }
                     // 이름 없는 탭의 북마크(`Scratch { tab }`)는 옛 id → 새 id로 재매핑(사용자 09-23 검토 · 본문이 그대로라 줄이 맞는다).
                     if t.id != 0 {
                         scratch_remap.push((t.id, new_id));
