@@ -942,6 +942,17 @@ impl App {
             self.findobj_action(crate::findobj_win::FoAction::Close);
             return;
         }
+        // 닫기 **요청**(X·[닫기]와 같은 길 · 검색 중 = 확인 메뉴 · 10-16) · 상태줄 `confirm=<열림>`.
+        if id == "findobj.closereq" {
+            let a = self.findobj_win.close_requested();
+            self.findobj_action(a);
+            let open = self.findobj_win.close_confirm_open();
+            self.sess.status = format!(
+                "findobj.closereq confirm={open} open={}",
+                self.findobj_win.is_open()
+            );
+            return;
+        }
         if let Some(q) = id.strip_prefix("findobj.query:") {
             if !self.findobj_win.is_open() {
                 self.sess.status = "findobj.query: window not open".into();
@@ -952,7 +963,15 @@ impl App {
             return;
         }
         if let Some(path) = id.strip_prefix("findobj.dump:") {
-            let _ = std::fs::write(path, self.findobj_win.dump());
+            // 끝 줄 = 메모리·스레드(10-16): `mem=<바이트>|threads=<엔진 스레드 수>|open=<창>`.
+            let text = format!(
+                "{}mem={}|threads={}|open={}\n",
+                self.findobj_win.dump(),
+                self.findobj_win.approx_bytes(),
+                self.findobj_engine.threads_alive(),
+                self.findobj_win.is_open()
+            );
+            let _ = std::fs::write(path, text);
             return;
         }
         // ★ 미리보기 반응 계측(10-16 사용자 "컨트롤이 받는 사건만 재면 맹점"): 클릭은 **OS 사건과 같은 길**(`findobj_window_event` =

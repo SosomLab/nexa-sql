@@ -114,6 +114,25 @@ pub(crate) struct Engine {
     /// 살아 있는 검색의 rev(워커는 작업 사이마다 비교 · 다르면 멈춤).
     live: Arc<AtomicU64>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    /// ★ 살아 있는 엔진 스레드 수(계획 + 워커 · `ThreadGuard` Drop이 줄인다 · 10-16 사용자 "중지하고 닫으면 스레드 종료·메모리 회수 확인"):
+    ///   취소는 작업 경계에서 멈추므로 진행 중 질의 하나는 호출 상한까지 남을 수 있다 → 주기 정리가 이 수를 로그로 드러낸다.
+    threads: Arc<AtomicUsize>,
+}
+
+/// 스레드 하나의 생존 표식 — 어떤 길로 끝나든(정상 · 접속 실패 · 취소) Drop에서 수를 줄인다.
+struct ThreadGuard(Arc<AtomicUsize>);
+
+impl ThreadGuard {
+    fn new(n: &Arc<AtomicUsize>) -> Self {
+        n.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(n))
+    }
+}
+
+impl Drop for ThreadGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Engine {
@@ -124,7 +143,13 @@ impl Engine {
             rx,
             live: Arc::new(AtomicU64::new(0)),
             wake,
+            threads: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// 아직 돌고 있는 엔진 스레드 수(0 = 세션도 전부 닫혔다 — 세션은 스레드가 끝나며 Drop).
+    pub(crate) fn threads_alive(&self) -> usize {
+        self.threads.load(Ordering::SeqCst)
     }
 
     /// 지금 살아 있는 검색을 취소한다(워커는 다음 작업 경계에서 멈춤 · 진행 중 질의는 호출 상한까지).
@@ -152,9 +177,14 @@ impl Engine {
             let wake = Arc::clone(&self.wake);
             let q = q.clone();
             let workers = workers_per_server.clamp(1, 8);
+            let guard = ThreadGuard::new(&self.threads);
+            let counter = Arc::clone(&self.threads);
             let _ = std::thread::Builder::new()
                 .name(format!("nsql-findobj-{ix}"))
-                .spawn(move || plan_and_run(rev, ix, srv, q, workers, tx, live, wake));
+                .spawn(move || {
+                    let _g = guard;
+                    plan_and_run(rev, ix, srv, q, workers, tx, live, wake, counter);
+                });
         }
         n
     }
@@ -209,6 +239,7 @@ fn plan_and_run(
     tx: Sender<EngineMsg>,
     live: Arc<AtomicU64>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    counter: Arc<AtomicUsize>,
 ) {
     let label = srv.label.clone();
     let default = srv.spec.dialect.unwrap_or(Dialect::Oracle);
@@ -335,9 +366,11 @@ fn plan_and_run(
             label.clone(),
             db.clone(),
         );
+        let guard = ThreadGuard::new(&counter);
         let _ = std::thread::Builder::new()
             .name(format!("nsql-findobj-{ix}-{w}"))
             .spawn(move || {
+                let _g = guard;
                 if alive(&live, rev) && !queue.lock().map(|g| g.is_empty()).unwrap_or(true) {
                     if let Ok(mut s) = crate::explorer::open_meta(&spec, default) {
                         if let Some(d) = db.as_deref() {

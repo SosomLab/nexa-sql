@@ -1707,6 +1707,11 @@ impl App {
                         .settings
                         .set("mem.always_on_top", if on { "on" } else { "off" });
                 }
+                mem_win::MemWinAction::DetailToggled(on) => {
+                    let _ = self
+                        .settings
+                        .set("mem.detail", if on { "on" } else { "off" });
+                }
                 mem_win::MemWinAction::Trim => self.mem_trim_now(),
                 mem_win::MemWinAction::Close => {
                     self.mem_win.close();

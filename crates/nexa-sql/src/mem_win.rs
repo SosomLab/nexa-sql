@@ -22,6 +22,8 @@ pub(crate) enum MemWinAction {
     Paint,
     /// 최상위 스위치가 바뀌었다(설정 `mem.always_on_top`에 반영은 호스트).
     Toggled(bool),
+    /// "상세" 스위치가 바뀌었다(설정 `mem.detail`에 반영은 호스트 · 10-16).
+    DetailToggled(bool),
     /// "힙 정리" 버튼(호스트가 `memtrim::trim` + 즉시 표본).
     Trim,
     Close,
@@ -37,6 +39,10 @@ pub(crate) struct MemWin {
     cursor: (i32, i32),
     on_top: bool,
     top_switch: Switch,
+    /// ★ "상세" 스위치(사용자 10-16 "메모리 목록이 너무 많고 복잡"): 끔(기본) = **묶음마다 한 줄**(결과·편집기·메타데이터·UI·기타) +
+    ///   시스템 핵심 3줄(풋프린트·전용 워킹 셋·힙 여유) · 켬 = 종전처럼 분류·시스템 줄 전부.
+    detail: bool,
+    detail_switch: Switch,
     /// 힙 정리 버튼(80 §7 · T-197 잔여).
     trim_btn: Button,
     /// 바닥 [닫기](사용자 10-07 · Esc와 같음).
@@ -70,6 +76,7 @@ impl MemWin {
         if let Some(w) = &self.window {
             w.set_title(&format!("Nexa SQL - {}", t(Msg::WinMemory)));
         }
+        self.detail_switch.set_label(t(Msg::LblMemDetail));
     }
 
     pub(crate) fn new() -> Self {
@@ -82,6 +89,9 @@ impl MemWin {
             cursor: (-1, -1),
             on_top: false,
             top_switch: Switch::new(t(Msg::LblLogSwTop), false).with_label_side(LabelSide::Right),
+            detail: false,
+            detail_switch: Switch::new(t(Msg::LblMemDetail), false)
+                .with_label_side(LabelSide::Right),
             trim_btn: Button::new(t(Msg::MemTrim)),
             close_btn: Button::new(t(Msg::BtnClose)),
             hist: VecDeque::with_capacity(60),
@@ -207,6 +217,16 @@ impl MemWin {
     }
 
     /// 항상 위 켬/끔(설정 `mem.always_on_top`) — 열려 있으면 즉시 적용.
+    /// 설정 `mem.detail` → 스위치(열 때 · 설정 창에서 바꿀 때) · 내용 높이가 달라지니 다음 그리기에서 창 높이를 다시 맞춘다.
+    pub(crate) fn set_detail(&mut self, on: bool) {
+        if self.detail != on {
+            self.detail = on;
+            self.detail_switch.set_on(on);
+            self.fit = true;
+            self.redraw();
+        }
+    }
+
     pub(crate) fn set_on_top(&mut self, on: bool) {
         self.on_top = on;
         self.top_switch.set_on(on);
@@ -290,6 +310,7 @@ impl MemWin {
                     y: self.cursor.1,
                 };
                 self.top_switch.on_event(&mv, &mut inv);
+                self.detail_switch.on_event(&mv, &mut inv);
                 self.trim_btn.on_event(&mv, &mut inv);
                 self.close_btn.on_event(&mv, &mut inv);
                 if !inv.is_empty() {
@@ -320,6 +341,9 @@ impl MemWin {
                 if up || self.top_switch.bounds().contains(p) {
                     self.top_switch.on_event(&ev, &mut inv);
                 }
+                if up || self.detail_switch.bounds().contains(p) {
+                    self.detail_switch.on_event(&ev, &mut inv);
+                }
                 if up || self.trim_btn.bounds().contains(p) {
                     self.trim_btn.on_event(&ev, &mut inv);
                 }
@@ -338,6 +362,12 @@ impl MemWin {
                     self.apply_level();
                     self.redraw();
                     return MemWinAction::Toggled(on);
+                }
+                if let Some(on) = self.detail_switch.take_toggled() {
+                    self.detail = on;
+                    self.fit = true;
+                    self.redraw();
+                    return MemWinAction::DetailToggled(on);
                 }
                 if !inv.is_empty() {
                     self.redraw();
@@ -400,9 +430,15 @@ impl MemWin {
                 &mut inv,
             );
             self.top_switch.paint(&mut dc, th);
-            // 힙 정리 버튼(스위치 왼쪽) — 할당자가 들고 있는 빈 조각을 OS에 돌려준다(`memtrim`).
+            // "상세" 스위치(최상위 왼쪽 · 10-16).
+            let dsw_w = px(80.0);
+            let dsx = wi - pad - sw_w - px(10.0) - dsw_w;
+            self.detail_switch
+                .set_bounds(Rect::new(dsx, y - px(2.0), dsw_w, sw_h), &mut inv);
+            self.detail_switch.paint(&mut dc, th);
+            // 힙 정리 버튼(스위치들 왼쪽) — 할당자가 들고 있는 빈 조각을 OS에 돌려준다(`memtrim`).
             let btn_w = px(96.0);
-            let bx = wi - pad - sw_w - px(12.0) - btn_w;
+            let bx = dsx - px(12.0) - btn_w;
             self.trim_btn
                 .set_bounds(Rect::new(bx, y - px(2.0), btn_w, sw_h), &mut inv);
             self.trim_btn.paint(&mut dc, th);
@@ -564,6 +600,7 @@ impl MemWin {
                 dc.fill_rect(Rect::new(pad, y + row_h - 1, wi - pad * 2, 1), th.border);
             };
 
+            let detail = self.detail;
             if let Some(sm) = sample {
                 for g in Group::ALL {
                     let other = sm.other();
@@ -572,6 +609,30 @@ impl MemWin {
                     } else {
                         sm.data.group_sum(g)
                     };
+                    if !detail {
+                        // ★ 묶음 한 줄(사용자 10-16): 칩 = 묶음 첫 분류 색(기타 = 회색) · 변화 = 분류 변화의 합(하나라도 보이면).
+                        let chip = if g == Group::Runtime {
+                            Cat::OTHER_COLOR
+                        } else {
+                            Cat::ALL
+                                .iter()
+                                .find(|c| c.group() == g)
+                                .map_or(Cat::OTHER_COLOR, |c| c.color())
+                        };
+                        let delta = if g == Group::Runtime {
+                            trend.shown(Trend::OTHER)
+                        } else {
+                            let ds: Vec<i64> = Cat::ALL
+                                .iter()
+                                .filter(|c| c.group() == g)
+                                .filter_map(|c| trend.shown(c.idx()))
+                                .collect();
+                            (!ds.is_empty()).then(|| ds.iter().sum())
+                        };
+                        row(&mut dc, y, Some(chip), t(g.label()), sum, foot, delta);
+                        y += row_h;
+                        continue;
+                    }
                     section(&mut dc, y, t(g.label()), Some(sum));
                     y += row_h + px(2.0);
                     for c in Cat::ALL.into_iter().filter(|c| c.group() == g) {
@@ -602,6 +663,11 @@ impl MemWin {
                 }
             } else {
                 for g in Group::ALL {
+                    if !detail {
+                        row(&mut dc, y, None, t(g.label()), 0, 0, None);
+                        y += row_h;
+                        continue;
+                    }
                     section(&mut dc, y, t(g.label()), None);
                     y += row_h + px(2.0);
                     y += row_h * Cat::ALL.iter().filter(|c| c.group() == g).count() as i32
@@ -609,21 +675,21 @@ impl MemWin {
                         + px(6.0);
                 }
             }
-            y += px(4.0);
+            y += px(if detail { 4.0 } else { 10.0 });
             section(&mut dc, y, t(Msg::MemGrpSystem), None);
             y += row_h + px(2.0);
-            // (라벨, 값, 변화 칸 · None = 안 보임, 0이어도 보임)
-            for (label, v, tk, always) in [
-                (Msg::MemSysFootprint, sys.footprint, Some(0), true),
-                (Msg::MemSysPrivateWs, sys.private_ws, Some(4), false),
-                (Msg::MemSysResident, sys.resident, Some(1), true),
-                (Msg::MemSysAnon, sys.anon, None, true),
-                (Msg::MemSysFile, sys.file_backed, None, true),
-                (Msg::MemSysCompressed, sys.compressed, None, true),
-                (Msg::MemHeapUsed, sys.heap_used, Some(2), true),
-                (Msg::MemHeapHeld, sys.heap_held, Some(3), true),
+            // (라벨, 값, 변화 칸 · None = 안 보임, 0이어도 보임, 상세 끔에도 보임)
+            for (label, v, tk, always, core) in [
+                (Msg::MemSysFootprint, sys.footprint, Some(0), true, true),
+                (Msg::MemSysPrivateWs, sys.private_ws, Some(4), false, true),
+                (Msg::MemSysResident, sys.resident, Some(1), true, false),
+                (Msg::MemSysAnon, sys.anon, None, true, false),
+                (Msg::MemSysFile, sys.file_backed, None, true, false),
+                (Msg::MemSysCompressed, sys.compressed, None, true, false),
+                (Msg::MemHeapUsed, sys.heap_used, Some(2), true, false),
+                (Msg::MemHeapHeld, sys.heap_held, Some(3), true, true),
             ] {
-                if !always && v == 0 {
+                if (!always && v == 0) || (!detail && !core) {
                     continue;
                 }
                 row(

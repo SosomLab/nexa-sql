@@ -66,6 +66,7 @@
 |---|---|---|---|---|---|---|
 | 결과 페치 행 수 | 200 | `grid.max_rows` | 200 | 200 | 100 | `Runner::with_max_rows` |
 | ★ 객체 찾기 v2(113 §4 · 10-15) = 검색 중에만 **창 전용 스레드 서버마다 1 + (`findobj.workers`−1)** + 같은 수의 메타 세션(끝나면 전부 종료 · 상주 0) · 사용자 검색 1회당 서버마다 (DB 수(SQL Server `findobj.all_dbs`) × 스키마 수 × 2~5) 질의(이름·설명 1 · 컬럼 1 · 소스 종류 묶음 1~3 · Oracle `ALL_SOURCE` 전수 LIKE는 수 초 가능) · 자동 재시도 0 · 작업 경계 취소 | 동시 작업 = `findobj.workers` · 응답 행 = `findobj.max_hits`/작업 · 호출 시간 = `meta.call_timeout_secs` · 객체당 줄 = `findobj.lines_per_object` | `findobj.workers` | 2 | 2 | 1 | `findobj_engine.rs` · `nsql_catalog::find` |
+| 객체 찾기 결과 메모리(10-16 62·63) = 창이 열려 있는 동안만(실측 1072 객체 ≈ 654 KB) · **닫으면 전부 해제** + 1 s 뒤 힙 정리 · 주기 정리 안전망 · 원장 `Cat::FindObj` · 메모리 창 상세 `mem.detail` | `findobj.max_hits`(상한) | — | — | — | `findobj_win.rs` `release_results` · `app/memory.rs` |
 | 결과 점진 표시(배치마다 이어 붙임 · 행 수 0 = 실행 뒤 자동 전체 조회 · 10-09) | 배치 하나만 메모리에(러너가 모으지 않음) · 탭 예산 | `grid.fetch_display`(whole = 종전) · `grid.memory_budget_mb` | incremental | incremental | incremental | `Runner::fetch_all_with` · `Grid::append_live` |
 | Oracle DBMS_OUTPUT 회수(실행마다 GET_LINES 1회 · 09-30 D-239) | 켬 | `output.serveroutput`(끄면 스크립트 `SET SERVEROUTPUT ON`일 때만) | 켬 | 켬 | 켬 | `Runner::connect` → `set_option("serveroutput")` |
 | Output 탭 보관 줄(편집기 탭마다) | 5000 | `output.max_lines` | 5000 | 5000 | 5000 | `OutputView::trim` |

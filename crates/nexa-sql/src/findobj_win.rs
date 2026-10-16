@@ -320,6 +320,12 @@ fn fmt_clock(t: Option<SystemTime>) -> String {
     }
 }
 
+impl crate::memstat::MemSource for FindObjWin {
+    fn mem_report(&self, acc: &mut crate::memstat::Acc) {
+        acc.add(crate::memstat::Cat::FindObj, self.approx_bytes());
+    }
+}
+
 impl FindObjWin {
     pub(crate) fn new() -> Self {
         let tmsgs = [
@@ -351,7 +357,8 @@ impl FindObjWin {
             last: None,
             epoch: Instant::now(),
             qbar: FilterBar::new(t(Msg::FoQueryHint), &[]),
-            schema: TextBox::new(t(Msg::FoSchemaHint)),
+            // × 지우기 = 글이 있을 때만(검색어 상자와 같은 규칙 · 사용자 10-16 "거르기에도 × 표시·동작").
+            schema: TextBox::new(t(Msg::FoSchemaHint)).with_clearable(),
             all_dbs: Checkbox::new(t(Msg::FoAllDbs), true),
             run_btn: Button::new(t(Msg::FoSearch)),
             server: CheckCombo::new(
@@ -371,7 +378,7 @@ impl FindObjWin {
             rows: Vec::new(),
             index: HashMap::new(),
             view: Vec::new(),
-            filter: TextBox::new(t(Msg::FoFilterHint)),
+            filter: TextBox::new(t(Msg::FoFilterHint)).with_clearable(),
             whats,
             what_labels,
             sort: (SortKey::Name, true),
@@ -543,6 +550,69 @@ impl FindObjWin {
         self.running = false;
         self.qbar.set_search_state(BusyState::Idle);
         self.run_btn.set_label(t(Msg::FoSearch));
+        // ★ 닫히면 결과를 **전부 놓는다**(사용자 10-16 "닫으면 메모리 회수") — 검색어·옵션은 남는다. 다시 열면 빈 창.
+        self.release_results();
+    }
+
+    /// ★ 결과 메모리 어림(바이트 · 원장 `Cat::FindObj`): 행(글자열·컬럼·소스 줄) + 색인 열쇠 + 보기 + 미리보기 줄 + 아이콘 비트맵.
+    pub(crate) fn approx_bytes(&self) -> u64 {
+        let rows: u64 = self
+            .rows
+            .iter()
+            .map(|r| {
+                let strs = r.label.len()
+                    + r.schema.len()
+                    + r.name.len()
+                    + r.db.as_ref().map_or(0, String::len)
+                    + r.comment.as_ref().map_or(0, String::len)
+                    + r.cols
+                        .iter()
+                        .map(|(a, b)| a.len() + b.len() + 48)
+                        .sum::<usize>()
+                    + r.src.iter().map(|(_, t)| t.len() + 32).sum::<usize>();
+                (std::mem::size_of::<Row>() + strs) as u64
+            })
+            .sum();
+        let index: u64 = self
+            .index
+            .keys()
+            .map(|(a, b, c, d, _)| (a.len() + b.len() + c.len() + d.len() + 64) as u64)
+            .sum();
+        let view = (self.view.len() * std::mem::size_of::<usize>()) as u64;
+        let pre: u64 = self
+            .pre_lines
+            .iter()
+            .map(|l| {
+                (std::mem::size_of::<PreLine>()
+                    + l.text.len()
+                    + l.spans.len() * 16
+                    + l.col.as_ref().map_or(0, String::len)) as u64
+            })
+            .sum();
+        let icons: u64 = self
+            .icons
+            .keys()
+            .map(|(_, px)| (*px as u64) * (*px as u64) * 4)
+            .sum();
+        rows + index + view + pre + icons
+    }
+
+    /// 결과를 쥐고 있나(주기 정리의 놓친 대상 판정).
+    pub(crate) fn holds_results(&self) -> bool {
+        !self.rows.is_empty() || !self.pre_lines.is_empty() || !self.icons.is_empty()
+    }
+
+    /// ★ 결과 전부 해제 + 용량 반납(닫힘 · 주기 정리 안전망). 돌려주는 값 = 놓은 바이트 어림.
+    pub(crate) fn release_results(&mut self) -> u64 {
+        let before = self.approx_bytes();
+        self.reset_results();
+        self.rows.shrink_to_fit();
+        self.index.shrink_to_fit();
+        self.view.shrink_to_fit();
+        self.pre_lines.shrink_to_fit();
+        self.icons.clear();
+        self.last_opened = None;
+        before
     }
 
     pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
@@ -1124,7 +1194,54 @@ impl FindObjWin {
         self.redraw();
     }
 
+    /// ★ 닫기 요청(제목줄 X · [닫기] 버튼 · 자체 시험 `findobj.closereq`) — **검색 중이면 한 번 더 묻는다**(사용자 10-16 "양쪽 다 검색 중임을
+    ///   확인"): 메뉴 2항목(검색을 중지하고 닫기 = 경고 강조 · 취소) · 검색이 아니면 바로 닫기. Esc는 종전대로(검색 중 = 중지만).
+    pub(crate) fn close_requested(&mut self) -> FoAction {
+        if !self.running {
+            return FoAction::Close;
+        }
+        let items = vec![
+            CtxItem::item("close.stop", t(Msg::FoCloseStop)).with_danger(true),
+            CtxItem::Separator,
+            // id가 `close`로 시작하면 × 아이콘이 붙는다(menu_icons) → 취소는 다른 접두(협업 20차 V1 관찰).
+            CtxItem::item("fo.keep", t(Msg::MnCloseCancel)),
+        ];
+        self.menu_row = None;
+        self.menu.set_scale(self.scale);
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let s = w.inner_size();
+                Rect::new(0, 0, s.width as i32, s.height as i32)
+            })
+            .unwrap_or(self.list_rect);
+        // 자리 = [닫기] 버튼 아래(X로 닫을 때도 같은 자리 — 두 길이 한 메뉴).
+        let b = self.close_btn.bounds();
+        crate::menu_icons::open_at(
+            &mut self.menu,
+            b.x,
+            b.bottom(),
+            items,
+            host,
+            (240.0 * self.scale) as i32,
+        );
+        self.redraw();
+        FoAction::None
+    }
+
+    /// 닫기 확인 메뉴가 떠 있나(자체 시험).
+    pub(crate) fn close_confirm_open(&self) -> bool {
+        self.menu.is_open() && self.menu_row.is_none()
+    }
+
     fn menu_pick(&mut self, id: &str) -> FoAction {
+        // 닫기 확인 메뉴(행 없음) — 호스트의 Close가 검색을 취소하고 닫는다.
+        match id {
+            "close.stop" => return FoAction::Close,
+            "fo.keep" => return FoAction::None,
+            _ => {}
+        }
         let Some(i) = self.menu_row.take() else {
             return FoAction::None;
         };
@@ -1459,7 +1576,7 @@ impl FindObjWin {
                     return FoAction::None;
                 }
                 WindowEvent::RedrawRequested => return FoAction::Paint,
-                WindowEvent::CloseRequested => return FoAction::Close,
+                WindowEvent::CloseRequested => return self.close_requested(),
                 _ => None,
             };
             if let Some(me) = me {
@@ -1476,7 +1593,7 @@ impl FindObjWin {
             }
         }
         match ev {
-            WindowEvent::CloseRequested => return FoAction::Close,
+            WindowEvent::CloseRequested => return self.close_requested(),
             WindowEvent::RedrawRequested => return FoAction::Paint,
             WindowEvent::Resized(_) => self.redraw(),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -1660,19 +1777,27 @@ impl FindObjWin {
                 if up || self.qbar.bounds().contains(p) {
                     let _ = self.qbar.on_event(&e, &mut inv);
                     if !up {
+                        self.consumed = "query";
                         self.own_focus(Focus::Query);
                     }
                 }
                 if up || self.schema.bounds().contains(p) {
                     self.schema.on_event(&e, &mut inv);
                     if !up {
+                        self.consumed = "schema";
                         self.own_focus(Focus::Schema);
                     }
                 }
                 if up || self.filter.bounds().contains(p) {
+                    // × 클릭 = 상자가 글을 비우고 `changed`를 세운다(MouseDown) → 글이 달라졌으면 보기를 바로 다시(키 입력과 같은 길).
+                    let before = self.filter.text();
                     self.filter.on_event(&e, &mut inv);
                     if !up {
+                        self.consumed = "filter";
                         self.own_focus(Focus::Filter);
+                        if self.filter.text() != before {
+                            self.apply_view();
+                        }
                     }
                 }
                 if up || self.server.bounds().contains(p) {
@@ -1719,7 +1844,10 @@ impl FindObjWin {
                             }
                         }
                     } else if self.list_rect.contains(p) {
+                        // 행이 없는 빈 자리 클릭 = **선택 취소**(사용자 10-16 61: 대상 객체가 없어지면 버튼 둘 다 비활성).
+                        self.consumed = "list-empty";
                         self.own_focus(Focus::List);
+                        self.select(None);
                     }
                     // ★ 미리보기 줄 = **한 번 클릭**으로 편집기 그 줄(사용자 10-16 · 종전 더블클릭 450 ms는 "열리지 않는다"로 보임).
                     // ★ 미리보기 줄 = 줄 단위 선택·강조(사용자 10-16) · "미리보기" 스위치 켬 = 그 줄로 **미리보기 탭** ·
@@ -1768,7 +1896,7 @@ impl FindObjWin {
                             };
                         }
                     }
-                    Some(3) => return FoAction::Close,
+                    Some(3) => return self.close_requested(),
                     _ => {}
                 }
             }
@@ -2346,10 +2474,12 @@ impl FindObjWin {
             for cb in self.all_checks() {
                 cb.paint(&mut dc, th);
             }
-            let can_open = self
-                .sel_row()
-                .is_some_and(|i| self.rows[i].kind.has_source());
+            // ★ 버튼 활성 = 선택 상태의 함수(사용자 10-16 61): 대상 객체가 없으면 둘 다 비활성 · 선택되면 종류별(편집기 = 소스 있는
+            //   객체만 · 탐색기 = 모든 객체) · 선택 취소(빈 자리 클릭 · 새 검색)면 다시 둘 다 비활성 — 그릴 때마다 한 자리에서 맞춘다.
+            let sel = self.sel_row();
+            let can_open = sel.is_some_and(|i| self.rows[i].kind.has_source());
             self.open_btn.set_enabled(can_open);
+            self.reveal_btn.set_enabled(sel.is_some());
             for b in self.buttons() {
                 b.paint(&mut dc, th);
             }
@@ -2436,7 +2566,7 @@ impl FindObjWin {
         );
         // 반응 계측·소비자 판정 줄(10-16): 마지막 누름을 먹은 분기 · 미리보기 영역 기하 · 선택 줄 · 마지막으로 연 (행 · 줄).
         s.push_str(&format!(
-            "consumed={}|pre_rect={},{},{},{}|pre_scroll={}|row_h={}|pre_sel={:?}|last_opened={:?}|sel={:?}\n",
+            "consumed={}|pre_rect={},{},{},{}|pre_scroll={}|row_h={}|pre_sel={:?}|last_opened={:?}|sel={:?}|btn_open={}|btn_reveal={}\n",
             self.consumed,
             self.pre_rect.x,
             self.pre_rect.y,
@@ -2446,7 +2576,9 @@ impl FindObjWin {
             self.row_h,
             self.pre_sel,
             self.last_opened,
-            self.sel
+            self.sel,
+            self.open_btn.is_enabled(),
+            self.reveal_btn.is_enabled()
         ));
         for &i in &self.view {
             let r = &self.rows[i];

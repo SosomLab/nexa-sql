@@ -643,6 +643,7 @@ impl App {
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "mem.always_on_top" => self.mem_win.set_on_top(self.settings.flag(key)),
+            "mem.detail" => self.mem_win.set_detail(self.settings.flag(key)),
             "mem.statusbar" | "mem.status_refresh_ms" => {
                 self.mem_status = (0, None);
                 self.redraw();

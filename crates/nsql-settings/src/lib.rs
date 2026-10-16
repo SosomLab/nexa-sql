@@ -6121,6 +6121,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ 메모리 창 "상세" 스위치(사용자 10-16 "종류가 너무 많고 복잡" → 기본 = 묶음마다 한 줄 · 켜면 분류·시스템 줄 전부) · HIDDEN.
+    Entry {
+        key: "mem.detail",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemDetail,
+        desc: Msg::DescMemDetail,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "intel.key_passthrough",
         cat: Msg::CatIntel,
@@ -7356,6 +7365,7 @@ pub const HIDDEN: &[&str] = &[
     // D-256(10-07): 값 목록 상한 폐지 — 키는 옛 설정 파일 호환으로만 남긴다(효과 없음).
     "grid.filter_values_max",
     "ui.prefs_advanced",
+    "mem.detail",
     "ui.theme_cache_ms",
     "probe.dns_cache_secs",
     "license.gates",

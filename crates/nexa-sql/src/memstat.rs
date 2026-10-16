@@ -21,10 +21,12 @@ pub(crate) enum Cat {
     Logs,
     Surfaces,
     Icons,
+    /// ★ 객체 찾기 결과(행·색인·보기·미리보기 줄·아이콘 · 10-16 사용자 "결과는 어느 부문에?" = 종전 미집계 "기타"에 섞였다).
+    FindObj,
 }
 
 impl Cat {
-    pub(crate) const ALL: [Cat; 12] = [
+    pub(crate) const ALL: [Cat; 13] = [
         Cat::ResultData,
         Cat::ResultText,
         Cat::EditorText,
@@ -37,6 +39,7 @@ impl Cat {
         Cat::Logs,
         Cat::Surfaces,
         Cat::Icons,
+        Cat::FindObj,
     ];
     pub(crate) const N: usize = Self::ALL.len();
 
@@ -49,7 +52,9 @@ impl Cat {
         match self {
             Cat::ResultData | Cat::ResultText => Group::Results,
             Cat::EditorText | Cat::EditorHistory | Cat::EditorCache => Group::Editor,
-            Cat::Meta | Cat::MetaCols | Cat::MetaDetail | Cat::Intel => Group::Metadata,
+            Cat::Meta | Cat::MetaCols | Cat::MetaDetail | Cat::Intel | Cat::FindObj => {
+                Group::Metadata
+            }
             Cat::Logs | Cat::Surfaces | Cat::Icons => Group::Ui,
         }
     }
@@ -68,6 +73,7 @@ impl Cat {
             Cat::Logs => Msg::MemCatLogs,
             Cat::Surfaces => Msg::MemCatSurfaces,
             Cat::Icons => Msg::MemCatIcons,
+            Cat::FindObj => Msg::MemCatFindObj,
         }
     }
 
@@ -86,6 +92,7 @@ impl Cat {
             Cat::Logs => (0x9B, 0x6F, 0xC9),
             Cat::Surfaces => (0xD9, 0x53, 0x53),
             Cat::Icons => (0xE8, 0x9A, 0x9A),
+            Cat::FindObj => (0xC8, 0x7A, 0x2E),
         }
     }
 

@@ -56,16 +56,38 @@ impl App {
     pub(crate) fn mem_trim(&mut self, why: &str) {
         let (before, _) = memtrim::usage();
         let released = self.editors.release_inactive_caches();
+        // ★ 놓친 대상 정리(사용자 10-16): 닫힌 객체 찾기 창이 결과를 쥐고 있으면 놓는다(닫힐 때 이미 놓지만 안전망) · 취소된 검색의
+        //   스레드가 아직 질의 상한을 기다리고 있으면 수를 로그에(세션은 스레드가 끝나며 닫힌다).
+        let fo_bytes = if !self.findobj_win.is_open() && self.findobj_win.holds_results() {
+            self.findobj_win.release_results()
+        } else {
+            0
+        };
+        let fo_threads = if self.findobj_win.is_running() {
+            0
+        } else {
+            self.findobj_engine.threads_alive()
+        };
         let us = memtrim::trim();
         let (after, ws) = memtrim::usage();
         dlog!(self, LogLayer::Load, LogLevel::Timing, {
             LogEntry::new(
                 LogKind::Info,
                 format!(
-                    "memory trim ({why}): private {} → {} · working set {} · {released} tab cache(s) released · {:.1} ms",
+                    "memory trim ({why}): private {} → {} · working set {} · {released} tab cache(s) released{}{} · {:.1} ms",
                     nsql_core::fmt_bytes(before),
                     nsql_core::fmt_bytes(after),
                     nsql_core::fmt_bytes(ws),
+                    if fo_bytes > 0 {
+                        format!(" · findobj results released {}", nsql_core::fmt_bytes(fo_bytes))
+                    } else {
+                        String::new()
+                    },
+                    if fo_threads > 0 {
+                        format!(" · findobj {fo_threads} thread(s) still finishing a query")
+                    } else {
+                        String::new()
+                    },
                     us as f64 / 1000.0
                 ),
             )
@@ -109,6 +131,7 @@ impl App {
         let owner = self.window.clone();
         self.mem_win
             .set_on_top(self.settings.flag("mem.always_on_top"));
+        self.mem_win.set_detail(self.settings.flag("mem.detail"));
         self.mem_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),
@@ -156,7 +179,12 @@ impl App {
         let surfaces = main_surface + self.mem_win.surface_bytes();
         let logs = self.log_win.approx_bytes() + self.txlog.len() as u64 * 256;
         let s = memstat::sample(
-            &[&self.editors, &self.explorer, &self.intel],
+            &[
+                &self.editors,
+                &self.explorer,
+                &self.intel,
+                &self.findobj_win,
+            ],
             |acc| {
                 for (d, tx) in grids {
                     acc.add(Cat::ResultData, d);

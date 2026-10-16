@@ -236,7 +236,9 @@ impl App {
                 if self.findobj_win.is_running() {
                     self.findobj_engine.cancel();
                 }
+                // 창이 결과를 놓는다(`close` 안) → 1초 뒤 힙 정리 예약(큰 것을 놓았을 때와 같은 길 · `mem.trim_on_release`).
                 self.findobj_win.close();
+                self.mem_released();
                 self.persist_window_sizes(false);
                 self.redraw();
             }
