@@ -159,14 +159,18 @@ impl App {
                     }
                 }
             }
-            FoAction::Reveal { server, obj } => {
+            FoAction::Reveal {
+                server,
+                obj,
+                member,
+            } => {
                 let db = (!obj.db.is_empty()).then(|| obj.db.clone());
                 let t = crate::explorer::RevealTarget {
                     db,
                     schema: obj.schema,
                     kind: obj.kind,
                     name: obj.name,
-                    member: None,
+                    member,
                 };
                 // 패널 전환까지 한 길(`explorer_reveal_show` · 10-16) + 모달리스 창에서 메인 창으로 포커스.
                 if self.explorer_reveal_show(server.as_ref(), t) {

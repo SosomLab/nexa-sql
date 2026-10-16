@@ -626,6 +626,10 @@ impl ApplicationHandler<Wake> for App {
             // 페이드(스플리터 손잡이 · 버튼 · 행 hover)는 틱이 돌아야 진행된다 — 다음 프레임 예약(사용자 10-16 "스플리터 서서히 = 메인과 동일").
             next = next.min(now + Duration::from_millis(16));
         }
+        // ★ 미리보기 의도가 확정됐으면(마지막 선택이 120 ms 머문 뒤) 그때 한 번만 연다(클릭·↑/↓ 연타 = 최신만 · 10-16).
+        if let Some(a) = self.findobj_win.take_pending() {
+            self.findobj_action(a);
+        }
         if self.mem_win.is_open() {
             if now >= self.mem_next {
                 let every = self.mem_every();

@@ -9,13 +9,13 @@ use crate::findobj_engine::{EngineMsg, FindHit, FindQuery, FindWhat};
 use nexa_ctl::controls::combo::ComboItem;
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{
-    Button, CheckCombo, Checkbox, ComboControl, SplitAxis, SplitEvent, Splitter, Switch,
+    Button, CheckCombo, Checkbox, ComboControl, SplitAxis, SplitBand, SplitEvent, Splitter, Switch,
 };
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
-use nexa_ctl::tokens::{hover_alpha, IntentFade};
+use nexa_ctl::tokens::{hover_alpha, IntentFade, LatestIntent};
 use nexa_ctl::{BusyState, Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::find::FindPat;
@@ -52,6 +52,8 @@ pub(crate) enum FoAction {
     Reveal {
         server: Option<ConnectSpec>,
         obj: ObjectInfo,
+        /// 선택한 미리보기 줄이 컬럼이면 그 컬럼까지(탐색기 `RevealTarget.member` · 10-16).
+        member: Option<String>,
     },
     Copy(String),
     GenSelect {
@@ -190,6 +192,8 @@ struct PreLine {
     no: Option<u32>,
     text: String,
     spans: Vec<(usize, usize)>,
+    /// 컬럼 일치 줄이면 그 컬럼 이름(탐색기에서 보기 = 컬럼까지 · 10-16).
+    col: Option<String>,
 }
 
 /// 진행(작업 단위 · 113 §3 진행 패널).
@@ -274,6 +278,11 @@ pub(crate) struct FindObjWin {
     pre_hover: IntentFade,
     /// 결과 목록 행 hover 페이드(사용자 10-16 "서서히 밝아짐을 상단 목록에도") — `hover`(즉시 판정)와 별개로 그리기만 페이드.
     list_hover: IntentFade,
+    /// ★ 미리보기 열기 **의도**(결과 행 · 줄 번호 · 10-16 "밀린 요청은 버리고 최신만" · docs/99 `LatestIntent`): 클릭·↑/↓는 목표만 덮어쓰고,
+    ///   `tick`이 120 ms 머문 마지막 목표만 `pending`으로 올린다(연타 중간 줄은 요청조차 안 나간다).
+    preview_intent: LatestIntent<(usize, u32)>,
+    /// 확정된 의도 → 호스트가 `take_pending`으로 수거해 연다.
+    pending: Option<FoAction>,
     /// "미리보기" 스위치(미리보기 머리글 왼쪽 · 설정 `findobj.preview_click`과 같은 값).
     preview_sw: Switch,
     // 진행
@@ -375,6 +384,8 @@ impl FindObjWin {
             pre_sel: None,
             pre_hover: IntentFade::rows(),
             list_hover: IntentFade::rows(),
+            preview_intent: LatestIntent::new(120),
+            pending: None,
             preview_sw: Switch::new(t(Msg::FoPreviewSwitch), true),
             rev: 0,
             running: false,
@@ -979,6 +990,7 @@ impl FindObjWin {
                 no: None,
                 text,
                 spans,
+                col: None,
             });
         }
         if let Some(c) = &r.comment {
@@ -988,6 +1000,7 @@ impl FindObjWin {
                 no: None,
                 text,
                 spans,
+                col: None,
             });
         }
         for (c, ty) in &r.cols {
@@ -997,6 +1010,7 @@ impl FindObjWin {
                 no: None,
                 text,
                 spans,
+                col: Some(c.clone()),
             });
         }
         for (ln, text) in &r.src {
@@ -1005,11 +1019,13 @@ impl FindObjWin {
                 no: Some(*ln),
                 text: text.clone(),
                 spans,
+                col: None,
             });
         }
         self.pre_lines = lines;
         self.pre_sel = None;
         self.pre_hover.jump(None);
+        self.preview_intent.clear();
     }
 
     // ── 동작 ───────────────────────────────────────────────────────────────────────────────────────
@@ -1033,8 +1049,16 @@ impl FindObjWin {
             FoAction::Reveal {
                 server: r.server.clone(),
                 obj: r.obj(),
+                member: self.sel_member(),
             }
         }
+    }
+
+    /// 선택한 미리보기 줄의 컬럼 이름(컬럼 일치 줄일 때만).
+    fn sel_member(&self) -> Option<String> {
+        self.pre_sel
+            .and_then(|k| self.pre_lines.get(k))
+            .and_then(|l| l.col.clone())
     }
 
     fn first_line(&self, i: usize) -> u32 {
@@ -1095,6 +1119,7 @@ impl FindObjWin {
             "reveal" => FoAction::Reveal {
                 server: r.server.clone(),
                 obj: r.obj(),
+                member: self.sel_member(),
             },
             "select" => FoAction::GenSelect {
                 server: r.server.clone(),
@@ -1261,6 +1286,29 @@ impl FindObjWin {
         self.redraw();
     }
 
+    /// 선택된 미리보기 줄을 "열기 의도"로 등록(스위치 켬 · 줄 번호 있는 줄만) — 클릭과 ↑/↓가 같은 길(사용자 10-16 "선택 = 클릭과 같은 효과").
+    fn preview_want(&mut self) {
+        let want = if self.preview_sw.is_on() {
+            match (
+                self.sel_row(),
+                self.pre_sel
+                    .and_then(|k| self.pre_lines.get(k))
+                    .and_then(|l| l.no),
+            ) {
+                (Some(i), Some(ln)) => Some((i, ln)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        self.preview_intent.set(want);
+    }
+
+    /// 호스트가 틱마다 수거하는 확정 동작(미리보기 열기).
+    pub(crate) fn take_pending(&mut self) -> Option<FoAction> {
+        self.pending.take()
+    }
+
     /// 설정 `findobj.preview_click` → 스위치(호스트가 설정 변화 때 부른다).
     pub(crate) fn set_preview_click(&mut self, on: bool) {
         self.preview_sw.set_on(on);
@@ -1288,6 +1336,14 @@ impl FindObjWin {
         anim |= self.splitter.tick(now);
         anim |= self.pre_hover.tick(now);
         anim |= self.list_hover.tick(now);
+        // 미리보기 의도: 120 ms 머문 마지막 목표만 확정 → pending(그 사이 바뀐 목표는 버려진다).
+        if self.preview_intent.tick(now) {
+            if let Some(&(i, ln)) = self.preview_intent.settled() {
+                self.pending = Some(self.open_at(i, ln, true));
+            }
+            self.preview_intent.clear();
+        }
+        anim |= self.preview_intent.target().is_some();
         // 버튼 hover 페이드(nexa-ctl `Button::tick` · 종전엔 안 돌려 hover 하이라이트가 멈춰 있었다 · 사용자 10-16).
         for b in self.buttons() {
             anim |= b.tick(now) || b.is_animating();
@@ -1587,12 +1643,8 @@ impl FindObjWin {
                             self.pre_sel = Some(k);
                             self.own_focus(Focus::Preview);
                             self.last_click = None;
-                            let ln = self.pre_lines[k].no;
-                            if self.preview_sw.is_on() {
-                                if let (Some(i), Some(ln)) = (self.sel_row(), ln) {
-                                    return self.open_at(i, ln, true);
-                                }
-                            }
+                            // 열기는 즉시가 아니라 **의도**로(클릭·키보드 한 길 · 최신만).
+                            self.preview_want();
                             self.redraw();
                             return FoAction::None;
                         }
@@ -1620,10 +1672,12 @@ impl FindObjWin {
                     }
                     Some(2) => {
                         if let Some(i) = self.sel_row() {
+                            let member = self.sel_member();
                             let r = &self.rows[i];
                             return FoAction::Reveal {
                                 server: r.server.clone(),
                                 obj: r.obj(),
+                                member,
                             };
                         }
                     }
@@ -1728,6 +1782,8 @@ impl FindObjWin {
                         };
                         self.pre_sel = Some(k);
                         self.ensure_pre_visible(k);
+                        // ↑/↓ 선택 = 클릭과 같은 효과(스위치 켬 = 미리보기 · 연타는 마지막 줄만 · 사용자 10-16).
+                        self.preview_want();
                         self.redraw();
                         return FoAction::None;
                     }
@@ -2004,6 +2060,12 @@ impl FindObjWin {
             );
             self.splitter
                 .set_rect(Rect::new(pad, list_outer.bottom(), wi - pad * 2, band_h));
+            // 띠 모양 = 메인 창 스플리터와 같은 값(hover/드래그 = accent 띠 4px · 사용자 10-16).
+            self.splitter.set_band(Some(SplitBand {
+                thickness: px(4.0),
+                dim_rest: false,
+                hover_alpha: 1.0,
+            }));
             let band_bottom = list_outer.bottom() + band_h;
             self.pre_rect = Rect::new(
                 pad,
@@ -2207,6 +2269,10 @@ impl FindObjWin {
             for cb in self.all_checks() {
                 cb.paint(&mut dc, th);
             }
+            let can_open = self
+                .sel_row()
+                .is_some_and(|i| self.rows[i].kind.has_source());
+            self.open_btn.set_enabled(can_open);
             for b in self.buttons() {
                 b.paint(&mut dc, th);
             }

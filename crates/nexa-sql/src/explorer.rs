@@ -1173,6 +1173,8 @@ pub(crate) struct Explorer {
     /// ★ 소스 요청 시각·이름(docs/107 ① 호출 상한 · `explorer.timeout`이 지나면 실패 안내 · 늦게 오면 그때 연다).
     source_since: Option<Instant>,
     source_name: String,
+    /// ★ 소스 요청이 진행 중일 때 들어온 **최신** 요청 하나(덮어쓰기 · 10-16 사용자 "밀린 요청은 버리고 최신만") — 진행 중인 것이 끝나면 발행.
+    source_queued: Option<(ObjectInfo, ObjectKind, String)>,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
     row_px: i32,
     /// 로딩 점 애니메이션(300ms 단계) — 로딩 중인 노드가 있을 때만 다시 그린다(nexa-dir2 "Loading…" 자리 · 사용자 09-15).
@@ -2679,6 +2681,7 @@ impl Explorer {
             broken_since: None,
             source_since: None,
             source_name: String::new(),
+            source_queued: None,
             row_px: 0,
             dots_step: 0,
             grouped: false,
@@ -5011,11 +5014,17 @@ impl Explorer {
                     origin,
                     db,
                 } => {
+                    // 소요 시간 로그(10-16 사용자 "줄 클릭 뒤 0.5초 지연 원인" — 서버 왕복인지 보이게).
+                    let took = self.source_since.map_or(0, |t0| t0.elapsed().as_millis());
                     self.source_pending = false;
                     self.source_since = None;
                     if gen != self.gen {
                         continue;
                     }
+                    self.actions.push(ExplorerAction::Log(format!(
+                        "[source] {} · {} ms",
+                        origin.name, took
+                    )));
                     match r {
                         // 소스 탭도 그 객체의 DB로(사용자 10-08 · 행 조회 탭 T-312와 같은 길 = 호스트 `tab_unit` + `apply_tab_unit`).
                         Ok(text) => self.actions.push(ExplorerAction::OpenSql {
@@ -5036,6 +5045,13 @@ impl Explorer {
         }
         if changed && self.reveal.is_some() {
             self.step_reveal();
+        }
+        // 진행 중이던 소스 요청이 끝났으면(응답·끊김·시간 초과 어느 길이든) 대기하던 최신 요청 하나를 발행.
+        if !self.source_pending {
+            if let Some((o, k, title)) = self.source_queued.take() {
+                self.open_source_kind(&o, k, title);
+                changed = true;
+            }
         }
         changed
     }
@@ -6909,6 +6925,8 @@ impl Explorer {
         self.last_used = Instant::now();
         self.suspended = false;
         if self.source_pending {
+            // 진행 중이면 **최신 요청만** 기억(앞서 쌓인 것은 버림 · 99 LatestIntent 사상) → 응답이 오면 `drain` 끝에서 발행.
+            self.source_queued = Some((o.clone(), kind, title));
             return;
         }
         self.source_pending = true;

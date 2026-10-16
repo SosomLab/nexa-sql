@@ -130,7 +130,7 @@ use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
 use license_win::{LicAction, LicView, LicenseWin};
 use log_win::{LogWin, LogWinAction};
-use nexa_ctl::controls::{SplitAxis, SplitEvent, Splitter};
+use nexa_ctl::controls::{SplitAxis, SplitBand, SplitEvent, Splitter};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::{FontSet, RasterCtx};
@@ -1013,6 +1013,16 @@ mod panel_state_tests {
     }
 }
 
+/// ★ 스플리터 띠 모양(사용자 10-16 "VS Code처럼" = 평상시 가는 선 · hover/드래그 = 틈을 채우는 **accent 띠** 4 논리 px · 서서히) — 메인 창
+/// 스플리터 3 + 객체 찾기 창이 같은 값(nexa-ctl `SplitBand`).
+fn split_band(s: f32) -> SplitBand {
+    SplitBand {
+        thickness: px(4.0, s),
+        dim_rest: false,
+        hover_alpha: 1.0,
+    }
+}
+
 fn px(v: f32, s: f32) -> i32 {
     (v * s).round() as i32
 }
@@ -1143,6 +1153,7 @@ impl App {
             } else {
                 Rect::new(act_w, body_top + exp_h, exp_w, grip)
             });
+            self.split_d.set_band(Some(split_band(s)));
             self.objdetail
                 .set_bounds(Rect::new(act_w, body_top + exp_h + grip, exp_w, dh), s);
         } else {
@@ -1223,6 +1234,7 @@ impl App {
         } else {
             Rect::new(0, 0, 0, 0)
         });
+        self.split_v.set_band(Some(split_band(s)));
         // 편집기/결과 상하 비율 = `layout.editor_split_pct`(스플리터 ② 드래그가 갱신 · 자동 기억).
         // ★ 뷰 탭(확장 상세)이 활성이면 결과 영역 없이 편집기 자리가 전체 높이(09-28).
         let view_mode = self.editors.active_view().is_some();
@@ -1251,6 +1263,7 @@ impl App {
         } else {
             Rect::new(rx, body_top + editor_h - pad, rw, pad.max(grip))
         });
+        self.split_h.set_band(Some(split_band(s)));
         let gb = if view_mode {
             Rect::new(0, 0, 0, 0)
         } else {

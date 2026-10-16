@@ -309,6 +309,16 @@ impl App {
                     db,
                     server,
                 } if self.tab_room() => {
+                    // ★ 미리보기 요청이 더 새 객체로 바뀌었으면(↑/↓ 연타 · 10-16) 앞서 요청한 객체의 소스는 **버린다** — 뜻이 없어진 응답으로
+                    //   미리보기 탭을 덮어쓰지 않게(최신 의도만 수행).
+                    let stale_preview = self.findobj_goto.as_ref().is_some_and(|(n, _, p)| {
+                        *p && origin
+                            .as_ref()
+                            .is_some_and(|o| !o.name.eq_ignore_ascii_case(n))
+                    });
+                    if stale_preview {
+                        continue;
+                    }
                     // ★ 객체 찾기 창에서 연 소스(113 §5 · 10-16 "미리보기" 스위치): 깃발 = (이름 · 일치 줄 · 미리보기) · 이 객체 것만 소비.
                     let fo = self.findobj_goto.take().filter(|(name, _, _)| {
                         origin

@@ -103,7 +103,7 @@
 | **ScrollBars(축별)** | nexa-ctl `scroll` | 오버레이 · 축 독립 · 상태 상수 크기 · `set_fast_scroll` | 편집기 · 그리드 · 로그 · 목록 · 상태 메시지 |
 | **FastScroll · ScrollAccel · SpeedHud**(09-30) | nexa-ctl `scroll` | 고속 스크롤 = 전역 설정(핫스왑 · `set_fast_scroll`) + 가속기(같은 방향 사건이 window 안에 이어지면 step번마다 배수 +1 · 상한 max · 사건마다 `factor` 하나 · 큐·타이머·관성 0) + 속도 HUD(×N 캡슐 · hold 뒤 fade · 9자리) · `ScrollBars`가 셋을 품는다(`note_fast` · `set_fast_override`) | 편집기 · 결과(모든 보기) · 객체 탐색기 · 검색 결과 · 프로젝트 · 북마크 · 아웃라인 · 확장 패널(직접) · 설정 `scroll.*` 7키 |
 | **FilterQuery**(09-30) | nsql-core `filterq` + nexa-sql `filterbar::Matcher.query`/`NodeFacts` | 필터 질의 언어(`키:값` 술어 · AND/OR/NOT · 괄호 · 따옴표 · 용량 단위) · `Facts` 포트로 이름·종류·용량 | 모든 필터 상자(객체 탐색기 size/type · 프로젝트 size/ext/path · 그 밖 이름) · docs/98 |
-| **LatestIntent<T>**(09-30) | nexa-ctl `tokens` | "마지막 사건만 뜻 있는" 지연 동작의 표준: 사건 = 목표 덮어쓰기(큐 0) · `tick`이 delay 동안 머문 목표만 확정 · 바뀌면 앞 의도 폐기 · 표시 때 목표 유효성 재확인 | 탐색기 노드 툴팁(확정 = (칸, 노드) · 커서 아래 재확인) · 후보 = 링크 툴팁 · 그리드 표식 툴팁 · 검색어 확정 · docs/99 |
+| **LatestIntent<T>**(09-30) | nexa-ctl `tokens` | "마지막 사건만 뜻 있는" 지연 동작의 표준: 사건 = 목표 덮어쓰기(큐 0) · `tick`이 delay 동안 머문 목표만 확정 · 바뀌면 앞 의도 폐기 · 표시 때 목표 유효성 재확인 | 탐색기 노드 툴팁(확정 = (칸, 노드) · 커서 아래 재확인) · 객체 찾기 미리보기(10-16 · (행, 줄) · 뒤 단계 = 최신 하나 대기) · 후보 = 링크 툴팁 · 그리드 표식 툴팁 · 검색어 확정 · docs/99 |
 | **PointerCapture**(09-30) | nexa-sql `app/input.rs` `press_capture`/`area_at`/`dispatch_captured` | 누른 영역이 MouseUp까지 영역 밖 이동·놓임을 받는다(드래그 선택 컨트롤의 기본 처리 · 커서 아래 라우팅의 예외) | 편집기·그리드·탐색기·패널 7 · 찾기 · 상세 |
 | **DropClick**(09-30) | nexa-ctl `toolbar` | 드롭다운 항목 ▾ 클릭 동작 속성: `Same`(기본 · 본체와 같은 id) · `Separate`(`id#drop`) | 결과 보기 모드 버튼 · 탭 연결정보 |
 | **ContextMenu(id만) · EditMenu** | nexa-ctl | 실행은 호스트 몫 · 컨트롤은 무엇을 할지 모른다 | 목록 · 콤보 · 입력란 |
