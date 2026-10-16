@@ -151,8 +151,12 @@ impl App {
                 if !self.explorer.open_source_for(server.as_ref(), &obj) {
                     self.sess.status = t(Msg::ExpNotConnected).to_string();
                 }
-                if let Some(w) = &self.window {
-                    crate::winfocus::focus(w);
+                // 정식 열기만 메인 창으로 포커스 — 미리보기(줄 클릭)는 객체 찾기 창의 미리보기 목록에 포커스를 둔다
+                //   (사용자 10-16 "포커스는 클릭한 목록에 유지" → ↑/↓로 계속 훑기).
+                if !preview {
+                    if let Some(w) = &self.window {
+                        crate::winfocus::focus(w);
+                    }
                 }
             }
             FoAction::Reveal { server, obj } => {

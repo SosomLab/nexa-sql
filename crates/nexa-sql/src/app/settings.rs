@@ -1357,6 +1357,7 @@ impl App {
         self.sessions_win.relabel();
         self.txlog_win.relabel();
         self.mem_win.relabel();
+        self.findobj_win.relabel();
         // 편집기 탭은 건드리지 않는다(사용자 10-07 "언어를 바꾸는 행위가 편집기 탭에 변경을 할 필요가 없다") — 종전 `rebuild_boxes`가
         //   TextBox를 새로 만들어 캐럿·스크롤·선택·되돌리기 기록을 잃었다. 편집기 placeholder는 비어 있어 언어에 걸린 글이 없다.
         self.layout();

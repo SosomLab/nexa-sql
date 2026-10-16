@@ -172,6 +172,8 @@ enum Focus {
     Schema,
     Filter,
     List,
+    /// 미리보기 줄 목록(10-16 · 키보드 ↑/↓ = 미리보기 줄 · Enter = 정식 열기).
+    Preview,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1134,7 +1136,7 @@ impl FindObjWin {
             Focus::Query => Some(self.qbar.tb_mut()),
             Focus::Schema => Some(&mut self.schema),
             Focus::Filter => Some(&mut self.filter),
-            Focus::List => None,
+            Focus::List | Focus::Preview => None,
         }
     }
 
@@ -1156,6 +1158,30 @@ impl FindObjWin {
         ]
     }
 
+    /// 미리보기 머리글 높이(줄 높이 + 6px).
+    fn pre_head_h(&self) -> i32 {
+        self.row_h.max(1) + (6.0 * self.scale) as i32
+    }
+
+    /// 미리보기 스크롤 상한 = 머리글 + 줄 전부 − 영역 높이(마지막 줄까지 보이게 · 사용자 10-16 "끝 부분이 잘림").
+    fn pre_scroll_max(&self) -> i32 {
+        (self.pre_head_h() + self.pre_lines.len() as i32 * self.row_h.max(1) - self.pre_rect.h)
+            .max(0)
+    }
+
+    /// 미리보기 선택 줄이 보이게 스크롤(키보드 이동).
+    fn ensure_pre_visible(&mut self, k: usize) {
+        let lh = self.row_h.max(1);
+        let view_h = (self.pre_rect.h - self.pre_head_h()).max(lh);
+        let top = k as i32 * lh;
+        if top < self.pre_scroll {
+            self.pre_scroll = top;
+        } else if top + lh > self.pre_scroll + view_h {
+            self.pre_scroll = top + lh - view_h;
+        }
+        self.pre_scroll = self.pre_scroll.clamp(0, self.pre_scroll_max());
+    }
+
     /// 미리보기 줄 인덱스(머리글 아래 · 스크롤 반영).
     fn preview_index_at(&self, p: Point) -> Option<usize> {
         if !self.pre_rect.contains(p) {
@@ -1169,6 +1195,70 @@ impl FindObjWin {
         }
         let k = (y / lh) as usize;
         (k < self.pre_lines.len()).then_some(k)
+    }
+
+    /// ★ 언어 전환 재라벨(사용자 10-16 "영어로 바꿨는데 다국어 처리가 안 된 대상이 많음"): 만들 때 글을 박은 컨트롤 전부 —
+    ///   체크박스(라벨 setter가 없어 **체크 상태를 지키며 다시 만든다**) · 버튼 · 자리 표시 글 · 스위치 · 서버 콤보 라벨 셋(체크 집합 유지).
+    ///   머리글·열 이름·진행 줄처럼 그릴 때 `t()`를 부르는 글은 저절로 바뀐다.
+    pub(crate) fn relabel(&mut self) {
+        let tmsgs = [
+            Msg::FoTargetName,
+            Msg::FoTargetComment,
+            Msg::FoTargetColumn,
+            Msg::FoTargetSource,
+        ];
+        let kmsgs = [
+            Msg::FoKindRelations,
+            Msg::FoKindRoutines,
+            Msg::FoKindTriggers,
+            Msg::FoKindOthers,
+        ];
+        fn remake(cbs: &mut [Checkbox], msgs: &[Msg]) {
+            for (cb, m) in cbs.iter_mut().zip(msgs) {
+                let on = cb.is_checked();
+                *cb = Checkbox::new(t(*m), on);
+            }
+        }
+        remake(&mut self.targets, &tmsgs);
+        remake(&mut self.kinds, &kmsgs);
+        remake(&mut self.whats, &tmsgs);
+        self.target_labels = tmsgs.iter().map(|m| t(*m).to_string()).collect();
+        self.kind_labels = kmsgs.iter().map(|m| t(*m).to_string()).collect();
+        self.what_labels = self.target_labels.clone();
+        let adb = self.all_dbs.is_checked();
+        self.all_dbs = Checkbox::new(t(Msg::FoAllDbs), adb);
+        self.run_btn.set_label(t(if self.running {
+            Msg::FoStop
+        } else {
+            Msg::FoSearch
+        }));
+        self.open_btn.set_label(t(Msg::FoOpenEditor));
+        self.reveal_btn.set_label(t(Msg::FoReveal));
+        self.close_btn.set_label(t(Msg::SpBtnClose));
+        self.qbar.set_placeholder(t(Msg::FoQueryHint));
+        self.schema.set_placeholder(t(Msg::FoSchemaHint));
+        self.filter.set_placeholder(t(Msg::FoFilterHint));
+        self.preview_sw.set_label(t(Msg::FoPreviewSwitch));
+        // 서버 콤보 = 라벨 셋만 바꾸고 체크 집합은 그대로.
+        let on = self.server.checked_values();
+        let checked: Vec<bool> = self.servers.iter().map(|(_, l)| on.contains(l)).collect();
+        let items: Vec<ComboItem> = self
+            .servers
+            .iter()
+            .map(|(_, l)| ComboItem::new(l.clone(), l.clone()))
+            .collect();
+        self.server = CheckCombo::new(
+            items,
+            Some(checked),
+            t(Msg::FoServerAll),
+            t(Msg::FoServerNone),
+            t(Msg::FoServerMany),
+        );
+        // 이미 열린 창의 제목도 즉시(다른 모달리스 창과 같은 길 · 사용자 10-16 "열린 창 제목도 바뀌나").
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinFindObjects)));
+        }
+        self.redraw();
     }
 
     /// 설정 `findobj.preview_click` → 스위치(호스트가 설정 변화 때 부른다).
@@ -1300,6 +1390,13 @@ impl FindObjWin {
                     SplitEvent::Hover => self.redraw(),
                     _ => {}
                 }
+                if let Some(w) = &self.window {
+                    w.set_cursor(if self.splitter.is_dragging() || self.splitter.is_hover() {
+                        winit::window::CursorIcon::RowResize
+                    } else {
+                        winit::window::CursorIcon::Default
+                    });
+                }
                 let p = Point { x, y };
                 let _ = self.qbar.on_event(&mv, &mut inv);
                 self.schema.on_event(&mv, &mut inv);
@@ -1347,7 +1444,7 @@ impl FindObjWin {
                 } else if self.pre_rect.contains(p) {
                     if let InputEvent::Wheel { delta } = e {
                         let lh = self.row_h.max(1);
-                        let max = ((self.pre_lines.len() as i32 + 1) * lh - self.pre_rect.h).max(0);
+                        let max = self.pre_scroll_max();
                         self.pre_scroll = (self.pre_scroll - delta.signum() * lh * 3).clamp(0, max);
                     }
                 }
@@ -1488,6 +1585,7 @@ impl FindObjWin {
                     if self.pre_rect.contains(p) {
                         if let Some(k) = self.preview_index_at(p) {
                             self.pre_sel = Some(k);
+                            self.own_focus(Focus::Preview);
                             self.last_click = None;
                             let ln = self.pre_lines[k].no;
                             if self.preview_sw.is_on() {
@@ -1587,6 +1685,16 @@ impl FindObjWin {
                             if let Some(i) = self.sel_row() {
                                 return self.activate(i, self.first_line(i));
                             }
+                        } else if self.focus == Focus::Preview {
+                            // 미리보기 줄에서 Enter = 정식 열기(선택 줄 · [편집기에서 열기]와 같음).
+                            if let Some(i) = self.sel_row() {
+                                let line = self
+                                    .pre_sel
+                                    .and_then(|k| self.pre_lines.get(k))
+                                    .and_then(|l| l.no)
+                                    .unwrap_or(1);
+                                return self.activate(i, line);
+                            }
                         } else if self.focus == Focus::Filter {
                             self.apply_view();
                             self.redraw();
@@ -1600,9 +1708,26 @@ impl FindObjWin {
                             Focus::Query => Focus::Schema,
                             Focus::Schema => Focus::Filter,
                             Focus::Filter => Focus::List,
-                            Focus::List => Focus::Query,
+                            Focus::List if !self.pre_lines.is_empty() => Focus::Preview,
+                            Focus::List | Focus::Preview => Focus::Query,
                         };
                         self.own_focus(next);
+                        self.redraw();
+                        return FoAction::None;
+                    }
+                    // ★ 미리보기 포커스의 ↑/↓ = 미리보기 줄 이동(사용자 10-16 "하단에서 키보드가 상단 목록을 움직임" → 상·하단 분리).
+                    Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowUp)
+                        if self.focus == Focus::Preview && !self.pre_lines.is_empty() =>
+                    {
+                        let down = kev.logical_key == Key::Named(NamedKey::ArrowDown);
+                        let n = self.pre_lines.len();
+                        let k = match self.pre_sel {
+                            None => 0,
+                            Some(k) if down => (k + 1).min(n - 1),
+                            Some(k) => k.saturating_sub(1),
+                        };
+                        self.pre_sel = Some(k);
+                        self.ensure_pre_visible(k);
                         self.redraw();
                         return FoAction::None;
                     }
@@ -2028,6 +2153,10 @@ impl FindObjWin {
                 inv,
             );
             dc.text(pr.x + px(6.0) + sw_w + px(8.0), hy2, pr, &head, th.text);
+            // ★ 줄은 머리글 **아래 본문**에만 클립(사용자 10-16 "스크롤하면 줄이 머리글(스위치·객체 이름) 위에 그려짐" — 종전 클립 = 머리글 포함 영역).
+            dc.pop_clip();
+            let body = Rect::new(pr.x, pr.y + head_h, pr.w, (pr.h - head_h).max(0));
+            dc.push_clip(body);
             let lh = self.row_h;
             let gutter = px(52.0);
             let mut ly = pr.y + head_h - self.pre_scroll;

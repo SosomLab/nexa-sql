@@ -623,6 +623,8 @@ impl ApplicationHandler<Wake> for App {
         // 객체 찾기 창 진행 중이면 진행 패널·혜성 갱신(113).
         if self.findobj_win.tick() {
             self.findobj_win.redraw();
+            // 페이드(스플리터 손잡이 · 버튼 · 행 hover)는 틱이 돌아야 진행된다 — 다음 프레임 예약(사용자 10-16 "스플리터 서서히 = 메인과 동일").
+            next = next.min(now + Duration::from_millis(16));
         }
         if self.mem_win.is_open() {
             if now >= self.mem_next {
