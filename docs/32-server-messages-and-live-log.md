@@ -10,7 +10,7 @@
 
 1. **SQL Server** `PRINT` · `RAISERROR(...,0,1) WITH NOWAIT`는 TDS Info 토큰으로 **실행 중에 도착**한다 — 도착 즉시 UI 로그/stdout에 흘린다(✅).
 2. **PostgreSQL** `RAISE NOTICE/WARNING/INFO`도 비동기 Notice 메시지로 **실행 중 도착** — 즉시 표시(✅).
-3. **Oracle** `DBMS_OUTPUT`은 **서버 버퍼**다. 호출(프로시저)이 **끝나야** `GET_LINE(S)`로 읽을 수 있다 — 실행 중 flush는 **서버 구조상 불가**. 이것은 도구가 아니라 Oracle의 제약(SQL*Plus·SQL Developer·Toad 모두 같다).
+3. **Oracle** `DBMS_OUTPUT`은 **서버 버퍼**다. 호출(프로시저)이 **끝나야** `GET_LINE(S)`로 읽을 수 있다 — 실행 중 flush는 **서버 구조상 불가**. 이것은 도구가 아니라 Oracle의 제약(SQL*Plus·SQL Developer·Toad 모두 같다). — 실측(10-17 · 130차 mac · [journal 10-16 §11](journal/2026-10-16.md)) = 1 s 간격 5줄 + 2 s 대기 프로시저에서 SQL Server(`RAISERROR … WITH NOWAIT`)·PG(`RAISE NOTICE`)는 1줄씩 누적 · Oracle Thin·OCI는 종료 순간 6줄 일괄.
 4. Oracle에서 "실행 중 로그"를 보려면 **프로시저가 다른 통로로 써야** 한다: ⓐ **자율 트랜잭션 로그 테이블**(가장 흔한 현장 관행) · ⓑ `DBMS_APPLICATION_INFO.SET_CLIENT_INFO/SET_ACTION`(V$SESSION에 즉시 보임) · ⓒ `DBMS_PIPE`(실시간 파이프). 도구는 **두 번째 세션으로 폴링**해 보여 준다 → **라이브 모니터**(T-71).
 5. 프로시저 **OUT 변수 · 결과 집합**은 방언별로 이미 회수된다(§3 표 · 09-15 실서버 확인) — 결과 집합은 여러 개 순서대로 그리드 탭/CLI 연속 출력, OUT은 `PRINT`/변수.
 

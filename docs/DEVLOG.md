@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-17 새벽 (130차 · mac · flush 시험)** — 사용자 직접 지시: 프로시저 `NSQLT_FLUSH_DEMO`(SQL Server NOWAIT · PG NOTICE · Oracle DBMS_OUTPUT) · GUI Output 실시간 누적 = SQL Server·PG ✓ · Oracle = 종료 때 일괄(구조 한계) · SQLite = PROMPT만 · `scripts/output-flush-e2e.sh` · T-367 후보 — journal 10-16 §11.
 - **2026-10-17 새벽 (130차 · mac · 협업 쌍)** — v0.2.2 맥 V3 풀 테스트(전부 통과 · 재실행 포함) · 🔧 T-366 맥 IC 19.16 SERVEROUTPUT 4000 폭 폴백 · D-310 키맵 겹침 2 · T-352 Finder 파일 열기(nexa-ui 212차) · T-355 객체 찾기 실측 · 시험 자산 3(timeout 대역 · prod 단계 7 · S13) — journal 10-16 §10.
 - **2026-10-16 저녁 (129차 · win · 🚀 v0.2.2)** — T-362 한국어 번역 누락 16 · 65 객체 찾기 입력란 클립보드 · 116 nexa-ui 미사용 컨트롤 점검(소비 저장소 4곳) · 배포 전 V3 제품 결함 0 · v0.2.2 공개(dc8e202 · Homebrew 7d9fd36 · pkg.sosomlab.com 0.2.2 · winget·choco 제출 0) · [journal 10-16 §8~§9](journal/2026-10-16.md)
 - **2026-10-16 오전~오후 (128차 이어서 · win · 협업 쌍)** — 객체 찾기 실기 ⑮~58(18차 빌드) · ★ 검색 중 메인 창 WM_PAINT 굶김(56915 → 42 ms) · 미리보기 탭·키보드·의도 합침·같은 객체 재조회 없음 · 클릭 즉시 · 계측 사슬(`[preview]` · `painted`) + 창 사건 한 길 합성 시험 · 탭 ● 내용 기준 · Ctrl+Alt AltGr 폴백 · nexa-ui 207~210차 · 거르기 × · 검색 중 닫기 2단 · 버튼 활성 · 닫으면 결과 해제 · 메모리 창 상세 `mem.detail` · `Cat::FindObj` · 스위치 라벨 폭(64 · nexa-ui 211차) · 사용자 실기 전부 ✓ · 커밋 3f4879e · 97cc586 · 규칙 61 §2-2-b 14~17 · 102 §12 굳힘 3 · [journal 10-16 §6](journal/2026-10-16.md)
