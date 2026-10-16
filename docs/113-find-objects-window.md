@@ -251,7 +251,7 @@
 
 | 도구 | 객체로 이동(이름) | 객체 검색 창(본문·설명 포함) | 출처 |
 |---|---|---|---|
-| **Nexa SQL** | 탐색기 필터(Ctrl+F) · Ctrl+P `@` | **Ctrl+Alt+F**(객체 찾기 창) | 이 문서 §3 |
+| **Nexa SQL** | 탐색기 필터(Ctrl+F) · Ctrl+P `@` | **Ctrl+Alt+F**(객체 찾기 창) · 툴바 [객체 찾기] · **보조 키 없음**(Ctrl+Shift+D = 줄 복제 유지 · D-309 · 사용자 10-16) | 이 문서 §3 |
 | DataGrip | **Ctrl+N**(Go to Class = 테이블·뷰 등) · Shift Shift(Search Everywhere) | Find in Files 계열(본문) | jetbrains.com/help/datagrip 2022.3 "Searching everywhere" |
 | DBeaver | **Ctrl+Shift+D**(메타데이터 객체 열기) · F4(편집기 열기) | Search 뷰(Ctrl+H) | dbeaver.com/docs/dbeaver/25.2 "Shortcuts" |
 | Toad for Oracle | F4 Describe(커서 아래 객체) | **Object Search = 메뉴만(기본 키 없음)** | support.quest.com toad-for-oracle 2025 R2 Getting Started Guide |
