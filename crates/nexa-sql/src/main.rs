@@ -301,7 +301,8 @@ struct App {
     /// 열기 깃발(메뉴·팔레트·키 → 다음 `about_to_wait`) + 미리 넣을 검색어.
     open_findobj: Option<Option<String>>,
     /// 소스 탭이 열리면 이 줄로(객체 이름, 줄).
-    findobj_goto: Option<(String, u32)>,
+    /// 객체 찾기 창에서 연 소스 = (객체 이름 · 일치 줄 · 미리보기 탭인가) · 소스 도착 때 소비(113 §5 · 10-16).
+    findobj_goto: Option<(String, u32, bool)>,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
     /// SQL Preview 모달(탐색기 ▸ Generate SQL · docs/83 §4).

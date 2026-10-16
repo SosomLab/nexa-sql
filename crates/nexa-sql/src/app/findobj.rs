@@ -40,6 +40,8 @@ impl App {
         self.findobj_win.set_limits(max, per);
         self.findobj_win
             .set_passthrough(self.settings.flag("ui.ctxmenu_passthrough"));
+        self.findobj_win
+            .set_preview_click(self.settings.flag("findobj.preview_click"));
         let tg = self
             .settings
             .get("findobj.targets")
@@ -139,10 +141,13 @@ impl App {
                 ));
             }
             FoAction::Stop => self.findobj_engine.cancel(),
-            FoAction::OpenSource { server, obj, line } => {
-                if line > 0 {
-                    self.findobj_goto = Some((obj.name.clone(), line));
-                }
+            FoAction::OpenSource {
+                server,
+                obj,
+                line,
+                preview,
+            } => {
+                self.findobj_goto = Some((obj.name.clone(), line, preview));
                 if !self.explorer.open_source_for(server.as_ref(), &obj) {
                     self.sess.status = t(Msg::ExpNotConnected).to_string();
                 }
@@ -164,6 +169,14 @@ impl App {
                     if let Some(w) = &self.window {
                         crate::winfocus::focus(w);
                     }
+                }
+            }
+            // "미리보기" 스위치 = 설정 `findobj.preview_click`과 같은 값(창에서 바꾸면 즉시 저장 · 설정 창에서 바꾸면 창에 반영).
+            FoAction::PreviewClick(on) => {
+                let v = if on { "on" } else { "off" };
+                if self.settings.get("findobj.preview_click") != Some(v) {
+                    let _ = self.settings.set("findobj.preview_click", v);
+                    let _ = self.settings.save();
                 }
             }
             FoAction::Copy(s) => {

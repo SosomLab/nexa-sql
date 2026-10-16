@@ -309,17 +309,49 @@ impl App {
                     db,
                     server,
                 } if self.tab_room() => {
-                    self.editors.new_tab(Some(title));
+                    // ★ 객체 찾기 창에서 연 소스(113 §5 · 10-16 "미리보기" 스위치): 깃발 = (이름 · 일치 줄 · 미리보기) · 이 객체 것만 소비.
+                    let fo = self.findobj_goto.take().filter(|(name, _, _)| {
+                        origin
+                            .as_ref()
+                            .is_some_and(|o| o.name.eq_ignore_ascii_case(name))
+                    });
+                    let preview = fo.as_ref().is_some_and(|f| f.2);
+                    let reused = if preview {
+                        // 미리보기 = 살아 있는 미리보기 탭을 재사용(없으면 새 탭을 미리보기로).
+                        self.editors.reuse_preview_tab(&title)
+                    } else {
+                        // 정식 열기 = 같은 객체가 미리보기 탭에 떠 있으면 그 탭을 **승격**(새 탭을 또 열지 않는다).
+                        let same = self
+                            .editors
+                            .preview_id()
+                            .and_then(|id| self.object_tabs.get(&id))
+                            .zip(origin.as_ref())
+                            .is_some_and(|(a, b)| a.name.eq_ignore_ascii_case(&b.name));
+                        if same {
+                            let i = self.editors.reuse_preview_tab(&title);
+                            self.editors.set_preview_id(None);
+                            i
+                        } else {
+                            None
+                        }
+                    };
+                    if reused.is_none() {
+                        self.editors.new_tab(Some(title));
+                        if preview {
+                            let id = self.editors.active_id();
+                            self.editors.set_preview_id(Some(id));
+                        }
+                    }
                     self.editors.cur_mut().set_text(&text);
+                    // ★ 미리보기 탭 = 저장 지점을 찍어 "깨끗"하게(사용자 10-16 "정식 창으로 열림"): 경로 없는 소스 탭은 늘 미저장이라
+                    //   `poll_preview`가 다음 틱에 곧장 승격시켰다 → 사용자가 **편집해야** 더러워져 승격된다.
+                    if preview {
+                        self.editors.cur_mut().mark_saved();
+                    }
                     // 캐럿 = 문서 처음(BOF · 사용자 09-26 "Open source 뒤 EOF가 아니라 BOF").
                     self.editors.cur_mut().goto_line(1);
-                    // ★ 객체 찾기 창에서 연 소스 = 일치 줄로(113 §5).
-                    if let Some((name, line)) = self.findobj_goto.take() {
-                        if origin
-                            .as_ref()
-                            .is_some_and(|o| o.name.eq_ignore_ascii_case(&name))
-                            && line > 0
-                        {
+                    if let Some((_, line, _)) = fo {
+                        if line > 0 {
                             self.editors.cur_mut().goto_line(line as usize);
                         }
                     }

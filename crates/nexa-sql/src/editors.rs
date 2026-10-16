@@ -1261,6 +1261,21 @@ impl Editors {
         }
     }
 
+    /// 미리보기 탭 id를 지정/해제(객체 소스 탭을 미리보기로 열거나 승격 · 객체 찾기 창 10-16).
+    pub(crate) fn set_preview_id(&mut self, id: Option<u64>) {
+        self.preview = id;
+        self.sync_tabs();
+    }
+
+    /// 살아 있고 안 바뀐 미리보기 탭을 **재사용**(활성 + 제목 바꿈) — 없으면 None(호출자가 새 탭을 만든다).
+    pub(crate) fn reuse_preview_tab(&mut self, title: &str) -> Option<usize> {
+        self.poll_preview();
+        let i = self.index_of_id(self.preview_id()?)?;
+        self.switch(i);
+        self.rename_tab(i, title);
+        Some(i)
+    }
+
     pub(crate) fn poll_preview(&mut self) -> bool {
         let Some(id) = self.preview else {
             return false;

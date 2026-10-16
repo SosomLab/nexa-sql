@@ -313,3 +313,9 @@ Ctrl+P(Goto Anything)와 프로젝트 탐색기 필터는 프로젝트 폴더 �
 | `intel.alias_upper` | on | 자동 완성과 Generate SQL의 테이블 별칭을 대문자로(`A, B` · `SC`). 끄면 소문자(`a, b` · `sc`). 별칭 **방식**은 그대로 `intel.alias_style`(약어 / A, B, C). 두 설정이 자동 완성(FROM 뒤 별칭 삽입)과 객체 탐색기 ▸ Generate SQL(SELECT · MERGE)에 똑같이 적용됩니다. |
 | `gen.format` | on | Generate SQL로 만든 문장(SELECT · INSERT · UPDATE · DELETE · MERGE · CALL)을 **기본 포맷터**(`format.default`와 `format.*` 옵션)로 정리해 SQL Preview에 보입니다. DDL은 만든 그대로입니다. 미리보기 창의 5번째 체크박스 "포맷"과 같은 값입니다. |
 
+
+## 객체 찾기 — 미리보기 클릭(10-16)
+
+| 키 | 기본 | 설명 |
+|---|---|---|
+| `findobj.preview_click` | on | 객체 찾기 창 아래 미리보기 줄을 누르면 그 객체 소스를 **미리보기 탭**으로 엽니다(같은 미리보기 탭을 다시 씀 · 고치면 정식 탭이 됩니다). 끄면 줄을 눌러도 선택만 됩니다. 창의 "미리보기" 스위치와 같은 설정입니다. [편집기에서 열기] 버튼은 늘 정식 탭으로 엽니다. |

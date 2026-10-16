@@ -229,6 +229,13 @@
 - 메뉴 이름 = "Find Objects"/"객체 찾기"(… 없음 · ㉓) · 이 창으로 포커스가 오면 메인 창의 열린 메뉴가 닫힘(`ui.menus_close_on_blur` · ㉔) · 이 창도 blur 때 서버 드롭다운을 닫는다.
 - 체크 상태 = 서버 라벨로 이어 감(연결 목록이 바뀌어도) · 기동 명령 `findobj.servers:all|none|라벨;라벨` · 덤프 `servers_sel=` · E2E `win-findobj-e2e.sh`.
 
+### 5-2-a. 미리보기 줄 · 미리보기 탭(10-16 ㉕~㉘)
+
+- 미리보기 줄 = hover 페이드(`IntentFade::rows`) · 클릭 = 선택 강조(`pre_sel` · 결과 선택을 바꾸면 해제).
+- 미리보기 머리글 왼쪽 **"미리보기" 스위치**(`findobj.preview_click` · 기본 켬): 켬 = 줄 클릭 → 그 객체 소스를 **미리보기 탭**으로(살아 있는 미리보기 탭 재사용 · 편집하면 정식 탭으로 승격 · 메인 편집기 미리보기 탭과 같은 슬롯) · 끔 = 줄 클릭은 선택만.
+- [편집기에서 열기] = 늘 **정식 탭** · 선택 줄(없으면 1행)로 캐럿 · 같은 객체가 미리보기 탭으로 열려 있으면 그 탭을 승격(새 탭 없음).
+- 창 스위치 = 즉시 설정 저장 · 설정 창에서 바꾸면 창에 반영.
+
 ### 5-3. 진입 키 비교(10-16 ㉒)
 
 | 도구 | 객체로 이동(이름) | 객체 검색 창(본문·설명 포함) | 출처 |
@@ -249,6 +256,7 @@
 | `findobj.targets` | name,comment,column,source | 기억된 대상 체크 |
 | `findobj.kinds` | relations,routines,triggers,others | 기억된 종류 묶음 |
 | `findobj.workers` | 2 | 서버당 동시 작업(세션) 수 · 1~8(v2) |
+| `findobj.preview_click` | on | 미리보기 줄 클릭 = 그 객체를 미리보기 탭으로(끔 = 선택만) · 창 "미리보기" 스위치와 양방향(10-16 ㉗) |
 | `findobj.all_dbs` | on | ★ SQL Server = 접근 가능한 **모든 사용자 DB**(시스템 DB 4 제외 · `HAS_DBACCESS` · ONLINE) · 탐색기 `explorer.search_scope`와 **독립**(사용자 10-15) · 창 토글 "전 DB(SQL Server)"와 양방향 |
 | `window.findobj_size` / `_pos` | 980×680 | 창 크기·위치 |
 | 키맵 `view.find_objects` | Ctrl+Alt+F(mac ⌥⌘F) | 열기/앞으로 |

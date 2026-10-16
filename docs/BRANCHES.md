@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/128-findobj-preview | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 미리보기 ㉕~㉛(줄 hover 페이드 · 줄 선택 = 목록과 같은 선택색 · "미리보기" 스위치 = `findobj.preview_click` 즉시 저장 · 미리보기 탭 `reuse_preview_tab`/`set_preview_id` · 🔧 경로 없는 탭 즉시 승격 = `mark_saved` · [편집기에서 열기] = 정식 탭/선택 줄/승격 · 목록·미리보기 hover = 탐색기 회색 규칙 `hover_alpha`) · nexa-ui 209차 · 113 §5-2-a · 70 · journal 10-16 §6 |
 | fix/128-findobj-feedback-2 | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 실기 ⑮~㉔(검색어 ↔ 토글 여백 → `FilterBar` 통합 · 서버 라벨 = 프로필 이름 · 서버 목록 밖 클릭 = `ui.ctxmenu_passthrough` · 스플리터 = `Splitter` · 버튼 hover 틱 결함 · "서버" 라벨 · 🔧 Ctrl+Alt = Windows AltGr → 물리 키 폴백 · 메뉴 이름 "…" 금지 · `ui.menus_close_on_blur`) · E2E 23/0 · 113 §5-2/§5-3 · 61 §2-2-b 14항 · journal 10-16 §6 |
 | feat/128-check-combo | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | ★ T-358 객체 찾기 서버 = 체크박스 다중 선택(nexa-ctl `CheckCombo` 208차 · `FoAction::Search(q, Vec<ConnectSpec>)` 빈 = 전체 · 전부 끔 = 검색 안 함 + 안내 + 결과 비움 · 훅 `findobj.servers:` · 덤프 `servers_sel` · E2E ⑧ 23/0 · V1 ✓) · 113 §5-2 · 30 §2 · journal 10-16 §5 |
 | fix/128-findobj-feedback | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 실기 3(탐색기에서 보기 = 패널 전환 한 길 `explorer_reveal_show` · 거르기 스크롤 클램프 + 낱말 AND·전 열·이름 퍼지 · 미리보기 한 번 클릭) · E2E 타이밍 접속 기준 21/0 · T-358/T-359 · 113 §5 · journal 10-16 §4 |

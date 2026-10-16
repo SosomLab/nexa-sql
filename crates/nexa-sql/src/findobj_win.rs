@@ -9,12 +9,13 @@ use crate::findobj_engine::{EngineMsg, FindHit, FindQuery, FindWhat};
 use nexa_ctl::controls::combo::ComboItem;
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{
-    Button, CheckCombo, Checkbox, ComboControl, SplitAxis, SplitEvent, Splitter,
+    Button, CheckCombo, Checkbox, ComboControl, SplitAxis, SplitEvent, Splitter, Switch,
 };
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
+use nexa_ctl::tokens::{hover_alpha, IntentFade};
 use nexa_ctl::{BusyState, Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::find::FindPat;
@@ -43,7 +44,11 @@ pub(crate) enum FoAction {
         server: Option<ConnectSpec>,
         obj: ObjectInfo,
         line: u32,
+        /// 미리보기 탭으로(줄 클릭 + "미리보기" 스위치 켬 · 10-16) · false = 정식 탭.
+        preview: bool,
     },
+    /// "미리보기" 스위치가 바뀌었다 → 호스트가 설정 `findobj.preview_click`에 즉시 저장.
+    PreviewClick(bool),
     Reveal {
         server: Option<ConnectSpec>,
         obj: ObjectInfo,
@@ -262,6 +267,13 @@ pub(crate) struct FindObjWin {
     pre_lines: Vec<PreLine>,
     pre_scroll: i32,
     pre_head: String,
+    /// ★ 미리보기 줄 선택(인덱스 · 10-16 "줄 단위 선택·강조") · hover 페이드(행 속도 · 지나가는 줄은 효과에 닿지 않음).
+    pre_sel: Option<usize>,
+    pre_hover: IntentFade,
+    /// 결과 목록 행 hover 페이드(사용자 10-16 "서서히 밝아짐을 상단 목록에도") — `hover`(즉시 판정)와 별개로 그리기만 페이드.
+    list_hover: IntentFade,
+    /// "미리보기" 스위치(미리보기 머리글 왼쪽 · 설정 `findobj.preview_click`과 같은 값).
+    preview_sw: Switch,
     // 진행
     rev: u64,
     running: bool,
@@ -358,6 +370,10 @@ impl FindObjWin {
             pre_lines: Vec::new(),
             pre_scroll: 0,
             pre_head: String::new(),
+            pre_sel: None,
+            pre_hover: IntentFade::rows(),
+            list_hover: IntentFade::rows(),
+            preview_sw: Switch::new(t(Msg::FoPreviewSwitch), true),
             rev: 0,
             running: false,
             prog: Progress::default(),
@@ -990,17 +1006,26 @@ impl FindObjWin {
             });
         }
         self.pre_lines = lines;
+        self.pre_sel = None;
+        self.pre_hover.jump(None);
     }
 
     // ── 동작 ───────────────────────────────────────────────────────────────────────────────────────
 
+    /// 정식 열기(더블클릭 · [편집기에서 열기]).
     fn activate(&self, i: usize, line: u32) -> FoAction {
+        self.open_at(i, line, false)
+    }
+
+    /// 소스 있는 객체 = 그 줄로 열기(미리보기/정식) · 없는 객체 = 탐색기에서 보기.
+    fn open_at(&self, i: usize, line: u32, preview: bool) -> FoAction {
         let r = &self.rows[i];
         if r.kind.has_source() {
             FoAction::OpenSource {
                 server: r.server.clone(),
                 obj: r.obj(),
                 line,
+                preview,
             }
         } else {
             FoAction::Reveal {
@@ -1058,10 +1083,12 @@ impl FindObjWin {
         }
         let r = &self.rows[i];
         match id {
+            // 우클릭 ▸ 소스 열기 = 정식 탭(첫 일치 줄).
             "open" => FoAction::OpenSource {
                 server: r.server.clone(),
                 obj: r.obj(),
                 line: self.first_line(i),
+                preview: false,
             },
             "reveal" => FoAction::Reveal {
                 server: r.server.clone(),
@@ -1129,14 +1156,25 @@ impl FindObjWin {
         ]
     }
 
-    fn preview_line_at(&self, p: Point) -> Option<u32> {
+    /// 미리보기 줄 인덱스(머리글 아래 · 스크롤 반영).
+    fn preview_index_at(&self, p: Point) -> Option<usize> {
+        if !self.pre_rect.contains(p) {
+            return None;
+        }
         let lh = self.row_h.max(1);
         let head_h = lh + (6.0 * self.scale) as i32;
         let y = p.y - self.pre_rect.y - head_h + self.pre_scroll;
         if y < 0 {
             return None;
         }
-        self.pre_lines.get((y / lh) as usize).and_then(|l| l.no)
+        let k = (y / lh) as usize;
+        (k < self.pre_lines.len()).then_some(k)
+    }
+
+    /// 설정 `findobj.preview_click` → 스위치(호스트가 설정 변화 때 부른다).
+    pub(crate) fn set_preview_click(&mut self, on: bool) {
+        self.preview_sw.set_on(on);
+        self.redraw();
     }
 
     fn icon(&mut self, kind: ObjectKind, size: i32) -> Rc<IconImage> {
@@ -1158,6 +1196,8 @@ impl FindObjWin {
         let now = self.now_ms();
         let mut anim = self.qbar.tick(now) || self.qbar.is_animating();
         anim |= self.splitter.tick(now);
+        anim |= self.pre_hover.tick(now);
+        anim |= self.list_hover.tick(now);
         // 버튼 hover 페이드(nexa-ctl `Button::tick` · 종전엔 안 돌려 hover 하이라이트가 멈춰 있었다 · 사용자 10-16).
         for b in self.buttons() {
             anim |= b.tick(now) || b.is_animating();
@@ -1231,6 +1271,8 @@ impl FindObjWin {
                 for b in self.buttons() {
                     b.clear_transient();
                 }
+                self.pre_hover.jump(None);
+                self.list_hover.jump(None);
                 // 다른 창으로 가면 서버 드롭다운도 닫는다(메인 창 `ui.menus_close_on_blur`와 같은 규칙 · 10-16).
                 self.server.close(&mut inv);
                 self.hover = None;
@@ -1273,8 +1315,12 @@ impl FindObjWin {
                 for b in self.buttons() {
                     b.on_event(&mv, &mut inv);
                 }
+                self.preview_sw.on_event(&mv, &mut inv);
+                // 미리보기 줄 hover = 목표만 덮어쓰기(의도 코얼레싱 · 70 ms 머문 마지막 줄만 페이드 · 09-14 규칙).
+                self.pre_hover.set(self.preview_index_at(p));
                 let h = self.view_at(p);
                 let hover_changed = h != self.hover;
+                self.list_hover.set(h);
                 self.hover = h;
                 if hover_changed || !inv.is_empty() {
                     self.redraw();
@@ -1320,6 +1366,18 @@ impl FindObjWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
+                // "미리보기" 스위치(머리글 왼쪽) — 토글되면 호스트에 알려 설정에 즉시 저장.
+                if up || self.preview_sw.bounds().contains(p) {
+                    self.preview_sw.on_event(&e, &mut inv);
+                    if let Some(on) = self.preview_sw.take_toggled() {
+                        self.redraw();
+                        return FoAction::PreviewClick(on);
+                    }
+                    if !up && self.preview_sw.bounds().contains(p) {
+                        self.redraw();
+                        return FoAction::None;
+                    }
+                }
                 let mut popup_took = false;
                 if self.qbar.popup_open() {
                     let _ = self.qbar.on_event(&e, &mut inv);
@@ -1425,10 +1483,20 @@ impl FindObjWin {
                         self.own_focus(Focus::List);
                     }
                     // ★ 미리보기 줄 = **한 번 클릭**으로 편집기 그 줄(사용자 10-16 · 종전 더블클릭 450 ms는 "열리지 않는다"로 보임).
+                    // ★ 미리보기 줄 = 줄 단위 선택·강조(사용자 10-16) · "미리보기" 스위치 켬 = 그 줄로 **미리보기 탭** ·
+                    //   정식 열기는 [편집기에서 열기](선택 줄 · 없으면 1행) 또는 결과 행 더블클릭.
                     if self.pre_rect.contains(p) {
-                        if let (Some(i), Some(ln)) = (self.sel_row(), self.preview_line_at(p)) {
+                        if let Some(k) = self.preview_index_at(p) {
+                            self.pre_sel = Some(k);
                             self.last_click = None;
-                            return self.activate(i, ln);
+                            let ln = self.pre_lines[k].no;
+                            if self.preview_sw.is_on() {
+                                if let (Some(i), Some(ln)) = (self.sel_row(), ln) {
+                                    return self.open_at(i, ln, true);
+                                }
+                            }
+                            self.redraw();
+                            return FoAction::None;
                         }
                     }
                 }
@@ -1442,8 +1510,14 @@ impl FindObjWin {
                         };
                     }
                     Some(1) => {
+                        // [편집기에서 열기] = 정식 탭 · 선택한 미리보기 줄로 · 없으면 1행(사용자 10-16).
                         if let Some(i) = self.sel_row() {
-                            return self.activate(i, self.first_line(i));
+                            let line = self
+                                .pre_sel
+                                .and_then(|k| self.pre_lines.get(k))
+                                .and_then(|l| l.no)
+                                .unwrap_or(1);
+                            return self.activate(i, line);
                         }
                     }
                     Some(2) => {
@@ -1861,8 +1935,12 @@ impl FindObjWin {
                         th.sel_bg_inactive
                     };
                     dc.fill_rect(r, c);
-                } else if self.hover == Some(v) {
-                    dc.fill_rect_alpha(r, th.sel_bg, 0.35);
+                } else {
+                    // hover = 객체 탐색기와 같은 회색 계열 · 서서히(행 페이드 · 10-16).
+                    let ha = hover_alpha(false, self.list_hover.value(v));
+                    if ha > 0.0 {
+                        dc.fill_rect_alpha(r, th.text, ha);
+                    }
                 }
                 let (name, schema, label, summary, kind) = {
                     let row = &self.rows[i];
@@ -1942,13 +2020,30 @@ impl FindObjWin {
                 self.pre_head.clone()
             };
             let hy2 = dc.text_center_y(pr.y, head_h);
-            dc.text(pr.x + px(8.0), hy2, pr, &head, th.text);
+            // "미리보기" 스위치 = 머리글 왼쪽(사용자 10-16) · 머리글 글은 그 오른쪽.
+            let sw_w = dc.text_width(t(Msg::FoPreviewSwitch)) + px(44.0);
+            self.preview_sw.set_scale(s);
+            self.preview_sw.set_bounds(
+                Rect::new(pr.x + px(6.0), pr.y + px(3.0), sw_w, head_h - px(6.0)),
+                inv,
+            );
+            dc.text(pr.x + px(6.0) + sw_w + px(8.0), hy2, pr, &head, th.text);
             let lh = self.row_h;
             let gutter = px(52.0);
             let mut ly = pr.y + head_h - self.pre_scroll;
-            for l in &self.pre_lines {
+            for (k, l) in self.pre_lines.iter().enumerate() {
                 if ly + lh >= pr.y + head_h && ly < pr.bottom() {
                     let ty = dc.text_center_y(ly, lh);
+                    // 선택 줄 = 결과 목록 선택 행과 **같은 색**(`sel_bg` 채움) · hover = 객체 탐색기와 같은 **회색 계열**
+                    //   (글자색을 `hover_alpha`만큼 서서히 · 사용자 10-16).
+                    let row = Rect::new(pr.x, ly, pr.w, lh);
+                    if self.pre_sel == Some(k) {
+                        dc.fill_rect(row, th.sel_bg);
+                    }
+                    let ha = hover_alpha(false, self.pre_hover.value(k));
+                    if ha > 0.0 {
+                        dc.fill_rect_alpha(row, th.text, ha);
+                    }
                     if let Some(n) = l.no {
                         let ns = n.to_string();
                         let nw = dc.text_width(&ns);
@@ -1987,6 +2082,7 @@ impl FindObjWin {
                 b.paint(&mut dc, th);
             }
             self.server.paint(&mut dc, th);
+            self.preview_sw.paint(&mut dc, th);
             self.qbar.paint_popup(&mut dc, th);
             self.schema.paint_popup(&mut dc, th);
             self.filter.paint_popup(&mut dc, th);

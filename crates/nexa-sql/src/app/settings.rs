@@ -490,9 +490,10 @@ impl App {
                 let o = gen_opts_from(&self.settings);
                 self.explorer.set_gen_opts(o);
             }
-            "findobj.max_hits" | "findobj.lines_per_object" | "findobj.all_dbs" => {
-                self.findobj_apply_settings()
-            }
+            "findobj.max_hits"
+            | "findobj.lines_per_object"
+            | "findobj.all_dbs"
+            | "findobj.preview_click" => self.findobj_apply_settings(),
             "backup.prune_interval_min" => self.objbk_prune_next = None,
             "project.backup_days" => self.objbk_prefs_note(),
             "meta.refresh_highlight_ms" => self

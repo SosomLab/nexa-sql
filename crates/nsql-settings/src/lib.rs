@@ -3083,6 +3083,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 객체 찾기 미리보기 줄 클릭 = 미리보기 탭(사용자 10-16 · 창의 "미리보기" 스위치와 같은 값 · 어느 쪽을 바꿔도 함께).
+    Entry {
+        key: "findobj.preview_click",
+        cat: Msg::CatExplorer,
+        label: Msg::LblFoPreviewClick,
+        desc: Msg::DescFoPreviewClick,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "explorer.keep_offline",
         cat: Msg::CatExplorer,
