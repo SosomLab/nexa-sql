@@ -171,7 +171,7 @@ run_s S09 "긴 경로 가운데 축약(§38)"                 "@after:1000:ui.cl
 run_s S10 "실행 카드 스택(§48·50~52)"                "open:$Q5,@after:1500:run.all,@after:3000:run.all,@after:4200:run.all,@after:5500:grid.dump:$OUT/s10.txt" Local 7 "" "s10.txt:rows="
 run_s S11 "오류 5번 = 카드 5장(§50)"                 "open:$QE,@after:1200:run.all,@after:1700:run.all,@after:2200:run.all,@after:2700:run.all,@after:3200:run.all" Local 5.5
 run_s S12 "Σ 건수·전체 조회 = 실행 카드(§43)"         "open:$Q5,@after:1200:run.all,@after:3000:ui.click:667/902,@after:4200:ui.click:619/902,@after:5500:grid.dump:$OUT/s12.txt" Local 7 "" "s12.txt:rows="
-run_s S13 "그리드 셀 선택·NULL 흐림(§44·49)"          "open:$Q5,@after:1200:run.all,@after:3000:ui.click:420/580,@after:4500:grid.dump:$OUT/s13.txt" Local 5.5 "" "s13.txt:rows="
+run_s S13 "그리드 셀 선택·NULL 흐림(§44·49)"          "open:$Q5,@after:1200:run.all,@after:3000:ui.click:420/580,@after:4500:grid.dump:$OUT/s13.txt" Local 9.5 "" "s13.txt:rows="
 run_s S14 "행번호 선택 = 행 배경만(§47)"              "open:$Q5,@after:1200:run.all,@after:3000:ui.click:334/580"
 run_s S15 "카드 SQL 툴팁 = 카드 왼쪽(§53)"            "open:$Q5,@after:1200:run.all,@after:3000:ui.move:1150/432" Local 5.5
 run_s S16 "편집기 우클릭 메뉴 = 카드 위(§54)"          "open:$Q5,@after:1200:run.all,@after:3000:ui.rclick:1000/450" Local 5.5

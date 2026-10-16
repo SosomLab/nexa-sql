@@ -188,6 +188,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | 14 | **`VARCHAR2(n CHAR)` 열 타입 글** | △ | 서버가 보낸 바이트 길이를 드라이버가 버려 BYTE/CHAR 의미를 못 가름 → Thin = 선언 길이(`VARCHAR2(10)`) · OCI = 바이트 길이(`VARCHAR2(40)`) · 그 밖 CHAR/VARCHAR2 길이는 같음 |
 | 15 | 세션 시간대 오프셋 | 접속당 왕복 1 추가 | `TIMESTAMP WITH LOCAL TIME ZONE`을 OCI처럼 세션 시각 + 오프셋으로 보이려고 접속 직후 `SYSTIMESTAMP AT TIME ZONE SESSIONTIMEZONE` 1회(26 §8) |
 | 16 | LOB 열 타입 글(CLOB/BLOB/NCLOB) | 조회당 왕복 1 추가(LOB 열 있을 때만) | 인라인 페치가 메타를 LONG 계열로 바꿔 보고 → LONG 계열 열이 있는 조회만 `fetch_lobs` 문장으로 파싱 1회 해 진짜 타입 글로 보정(값·로케이터 없음 · 값은 인라인 그대로 = #18 회피) · **REF CURSOR 결과는 보정 못 함**(LONG으로 보일 수 있음) |
+| 17 | DBMS_OUTPUT 줄 폭(SERVEROUTPUT) | ✅ Thin = 32767 | **OCI 쪽 차이**(10-17 · 130차 mac · T-366): macOS Instant Client 19.16은 32767 OUT 바인드를 못 읽어(OCI-21500) 켤 때 탐침 → 4000 폭으로 자동 제한 + 고지 1줄 · Windows/Linux IC 23.x = 32767 |
 | — | OUT/IN OUT · DBMS_OUTPUT · PL/SQL · LOB 쓰기 · call timeout · tnsnames · Easy Connect · TLS · 프록시 · SYSDBA(비밀번호) · `CURRENT_SCHEMA` · 세이브포인트(SQL) · 데이터 보호 1행 검사(단건 실행) | ○ | 차이 없음 |
 
 ## §7. 위험 · 대응

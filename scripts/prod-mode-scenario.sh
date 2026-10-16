@@ -77,7 +77,12 @@ fi
 GUI_PID=""
 gui_start() { # <이름> <명령> — 배경 기동 · PID 기억 · 같은 -o 폴더 재사용 때 지난 회차 산출이 판정을 속이지 않게 그 단계 파일을 먼저 지운다.
   local name=$1 cmd=$2
-  rm -f "$OUT/$name".* "$OUT/${name}"[a-z].* 2>/dev/null
+  # ★ T-365(0.2.2 V3): 종전 `rm -f "$OUT/$name".*`는 그 단계의 **입력 `sN.sql`·`sNa.sql`까지** 지워 앱이 빈 파일을 열었다("Nothing to run" · 단계 1~6 연쇄 실패)
+  #   → 산출만 지운다(`.sql` 제외 · 덤프·stdout·stderr 전부).
+  local f
+  for f in "$OUT/$name".* "$OUT/${name}"[a-z].*; do
+    case "$f" in *.sql) ;; *) rm -f "$f" 2>/dev/null ;; esac
+  done
   if [ "$KEEP" = 1 ]; then
     NSQL_HOME="$H" NSQL_STARTUP_CMD="$cmd" "$EXE" "$CONN" > "$OUT/$name.stdout" 2> "$OUT/$name.stderr" &
   else
@@ -214,8 +219,10 @@ if step_on 7; then
 hr; say "▶ 7. 탐색기 ▸ 삭제… — 모달 2단 확인 → DDL 백업 → DROP 전송(운영 · 첫 호출에 실제 전송 = G6) · 보류 생략"
 [ "$DIALECT" = "sqlite" ] && q "CREATE VIEW NSQLT_HOLD_V AS SELECT ID FROM NSQLT_HOLD_T;" >/dev/null 2>&1
 before=$(ls "$BK" 2>/dev/null | grep -c "${OBJ}_${OBJ_KIND}\.")
-gui_start s7 "@connected:explorer.expand:$SCHEMA,@connected:@after:2500:explorer.expand:$FOLDER,@connected:@after:5000:explorer.select:$OBJ,@connected:@after:5500:explorer.pick:drop,@connected:@after:7000:drop.confirm,@connected:@after:13000:drop.dump:$(D s7.dump),@connected:@after:13300:output.dump:$(D s7.out)"
-wait_file s7.dump 30; show "삭제 창" s7.dump
+# 첫 펼침은 접속 **1 s 뒤**(130차 mac · 10-17): 지연 0의 `@connected:explorer.expand`는 SQLite처럼 스키마 행이 아직 안 그려진 순간에 들어가 ok=false →
+#   뒤 단계가 전부 빗나갔다(Oracle은 시점이 달라 통과). 규칙 = 탐색기 명령은 접속 뒤 첫 그리기 이후(61 §4).
+gui_start s7 "@connected:@after:1000:explorer.expand:$SCHEMA,@connected:@after:3500:explorer.expand:$FOLDER,@connected:@after:6000:explorer.select:$OBJ,@connected:@after:6500:explorer.pick:drop,@connected:@after:8000:drop.confirm,@connected:@after:14000:drop.dump:$(D s7.dump),@connected:@after:14300:output.dump:$(D s7.out)"
+wait_file s7.dump 32; show "삭제 창" s7.dump
 has s7.dump "open=true" && (has s7.dump "sent" || has s7.dump "Done") && ok "7 삭제 창 = 전송됨(G6 · 첫 호출에 실제 전송)" || bad "7 창 단계" "$(cat "$OUT/s7.dump" 2>/dev/null)"
 after=$(ls "$BK" 2>/dev/null | grep -c "${OBJ}_${OBJ_KIND}\.")
 [ "$after" -gt "$before" ] && ok "7 DROP 전 백업 파일 +1($before → $after)" || bad "7 백업 파일 안 늘음($before → $after)" "$(ls "$BK" 2>/dev/null)"

@@ -480,6 +480,23 @@ impl App {
     }
 
     /// 파일 → 탭(자동 감지: BOM으로 UTF-8/UTF-16 판별 · 없으면 UTF-8).
+    /// ★ OS가 건네는 경로 한 길(10-15 드롭 규칙 · T-352): `.nsql-project` = 프로젝트로 · 그 밖 = 파일 모드로 연다 — 끌어다 놓기(winit `DroppedFile`) ·
+    ///   macOS Finder/Dock/`open -a`(Apple Event · nexa-sys `open_files`) · 자체 시험 훅 `os.open:<경로>`가 모두 이 함수로 온다.
+    pub(crate) fn open_os_path(&mut self, path: &Path) {
+        if path.extension().is_some_and(|e| e == crate::project::EXT) {
+            self.project_load_path(path);
+        } else {
+            self.open_file(path);
+        }
+    }
+
+    /// ★ T-352: OS 파일 열기 큐를 비워 연다(`resumed` 끝 + `about_to_wait` · 비어 있으면 비용 = 잠금 한 번).
+    pub(crate) fn pump_os_open_files(&mut self) {
+        for p in nexa_sys::open_files::take() {
+            self.open_os_path(&p);
+        }
+    }
+
     pub(crate) fn open_file(&mut self, path: &Path) {
         self.open_file_enc(path, "auto");
         self.folder_title_apply(path);

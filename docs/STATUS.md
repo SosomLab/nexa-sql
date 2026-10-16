@@ -2,7 +2,14 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-16](journal/2026-10-16.md)**(10-16 새벽 = 운영 보류 실기 결함·보강 9 · D-307 L2 기준 = 첫 미커밋 뒤 경과 · D-308 보류 중 COMMIT 문 거부(CLI는 동작) · 프로그램 내장 명령 자동 완성 + 규칙(76 §19) · nsql 시나리오 사용법 [115](115-prod-mode-scenario-nsql-guide.md)) · 그 앞 = [journal 2026-10-15 §5](journal/2026-10-15.md)**(★ 객체 찾기 창 113 · 그 앞 §4 = 128차 오후 사용자 지시 6 = Generate SQL 별칭·포맷 · 탐색기 DnD · 이름 복사 전 노드 · Shift 전체 이름 · 확장자 연결 3-OS · 그 앞 = §3 v0.2.1 릴리스 · §2 127차 마감 · §1 = T-346 시험 자산 6 ✅ · ★ 객체 탐색기 "Include Description" 설명 포함 검색(D-290) · ★ SQL Server 전 DB 검색 + 범위 설정(T-351 · D-291) · 🔧 한글 입력 2건 + ★ IME 단일 상태(T-350) · 🔧 서버 유형 변경 알림 게이트 `announce_env_change` · 🔧 필터 틀 툴팁 범위 · 사용자 ✓ 10 · 남음 = T-346 ③④ 맥 · T-347~T-349) · 그 전 = [journal 10-14 §4](journal/2026-10-14.md)(126차 · PG 아이콘 Db2 오인) · §1~§3(125차 · 🚀 v0.2.0).
+> ★ **다음 세션 시작점 = [journal 2026-10-16 §10](journal/2026-10-16.md)**(130차 mac = v0.2.2 맥 V3 · 제품 결함 1 T-366 수정 · D-310 키맵 · T-352 Finder 파일 열기 · T-355 실측 · 남은 것 = 사용자 실기 14) → 같은 파일 앞쪽(10-16 새벽 = 운영 보류 실기 결함·보강 9 · D-307 L2 기준 = 첫 미커밋 뒤 경과 · D-308 보류 중 COMMIT 문 거부(CLI는 동작) · 프로그램 내장 명령 자동 완성 + 규칙(76 §19) · nsql 시나리오 사용법 [115](115-prod-mode-scenario-nsql-guide.md)) · 그 앞 = [journal 2026-10-15 §5](journal/2026-10-15.md)**(★ 객체 찾기 창 113 · 그 앞 §4 = 128차 오후 사용자 지시 6 = Generate SQL 별칭·포맷 · 탐색기 DnD · 이름 복사 전 노드 · Shift 전체 이름 · 확장자 연결 3-OS · 그 앞 = §3 v0.2.1 릴리스 · §2 127차 마감 · §1 = T-346 시험 자산 6 ✅ · ★ 객체 탐색기 "Include Description" 설명 포함 검색(D-290) · ★ SQL Server 전 DB 검색 + 범위 설정(T-351 · D-291) · 🔧 한글 입력 2건 + ★ IME 단일 상태(T-350) · 🔧 서버 유형 변경 알림 게이트 `announce_env_change` · 🔧 필터 틀 툴팁 범위 · 사용자 ✓ 10 · 남음 = T-346 ③④ 맥 · T-347~T-349) · 그 전 = [journal 10-14 §4](journal/2026-10-14.md)(126차 · PG 아이콘 Db2 오인) · §1~§3(125차 · 🚀 v0.2.0).
+
+## 2026-10-17 새벽 (130차 · **mac** · 협업 쌍 = 개발 nexa-sql-9c(Fable) × 협업 nexa-sql-57(Opus) · [journal 10-16 §10](journal/2026-10-16.md))
+
+- 최신화 = nexa-sql → e8b84e2(v0.2.2 · 125~129차 win 60커밋) · nexa-ui → 9041d12(206~211차) · 사용자 "윈도우 마지막 버전을 맥에서 테스트" → **V3 풀 테스트**(Release 사본 · 격리 홈 · 실서버 읽기/임시 객체).
+- V3 = test 928/0 · 634/0 · clippy 0 · 기능 점검 85 전부(재실행 포함) · grid-edit 96/0 · bulk 28/0 · define 47 · pkg-overload 14 · oracle-ddl 67 · parity 22/0(수정 뒤) · findobj 23 · prod-hold 26 · objbackup 12 · conn-cmd 38 · prod-mode BISCM 26 · SQLite 25 · openfiles 8 · 영어 ✓ · 기동 374 ms · footprint 122 MB.
+- 🔧 **T-366** 맥 Instant Client 19.16 SERVEROUTPUT(32767 OUT 바인드 → OCI-21500) → 탐침·4000 폭 폴백 + 고지 · ★ **D-310** 키맵 겹침 2(객체 찾기 맥 ⌥⌘O · 실행 계획 Ctrl+Alt+X/⌥⌘X · 중복 0 시험) · ★ **T-352** Finder·`open -a` 파일 열기(nexa-ui 212차 `open_files`) · **T-355** 객체 찾기 실서버 실측(본문 0.9~4.6 s · 미리보기 58~300 ms) · 시험 자산 3(`scripts/lib/timeout.sh` · prod 단계 7 시점 · S13 대기) · T-365 ✅ · T-346 ③④ 맥 ✓.
+- 남은 것 = 사용자 실기 14항목(journal §10 · Debug PID 39432 격리 홈) · Instant Client 23.x 권장(64) · Linux = CI.
 
 ## 2026-10-16 저녁 (129차 · **win** · 🚀 v0.2.2 · 협업 쌍 = 개발 nexa-sql-07(Fable) × 협업 nexa-sql-17(Opus) · [journal 10-16 §8~§9](journal/2026-10-16.md))
 

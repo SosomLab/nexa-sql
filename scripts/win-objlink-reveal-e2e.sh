@@ -13,6 +13,7 @@
 # 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-t 테이블(없으면 user_tables 첫 것)] [-s SQLEDU] [-b BISCM_SB] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="BISCM"; TABLE=""; SECOND="SQLEDU"; THIRD="BISCM_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:n:p:t:s:b:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; t) TABLE=$OPTARG;; s) SECOND=$OPTARG;; b) THIRD=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n cli] [-p profile] [-t table] [-P real-config-dir]"; exit 2; }

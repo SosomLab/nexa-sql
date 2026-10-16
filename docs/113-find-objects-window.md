@@ -141,7 +141,7 @@
 | Redgate 로컬 색인·증분 | **확인 필요** | 내부 구현 추정 |
 | TablePlus Open anything = 이름만 | 기억 | |
 | Navicat Find in Database 에디션 · 데이터 검색 | **확인 필요** | |
-| §1-8 성능 수치("수 초~수십 초") | 확인 필요 | 실측 없음 · 우리 실서버(BISCM · M4PLAN)로 재야 함 |
+| §1-8 성능 수치("수 초~수십 초") | **실측 10-17**(130차 mac · T-355) | 본문 검색 = Oracle BISCM 4.6 s(스키마 6 · 작업 30 · 2 객체 10 일치) · SQL Server M4PLAN 현재 DB 0.9 s(6 객체 28 일치) · 전 DB 4.5 s(DB 6 · 309 객체 1,410 일치) · 미리보기 소스 왕복 58~300 ms · PG Repository = 사용자 뷰·함수·트리거 0이라 본문 대조 못 함(1.1 s · 0) |
 | 서버 사전 뷰 이름(§1-4 표) | 확신 | [108](108-dbms-syntax-and-objects-survey.md) §2~§6 |
 
 ## 2. 정의(사용자 10-15) · 목표
@@ -175,7 +175,7 @@
 
 > **v2(10-15 저녁 · 사용자 지시 3)**: ① 늘 **최신 내용 기반 = DB 직접 조회**(사본·캐시 없음 · D-306) ② **작업을 잘게**(서버 × 스키마 × 단계) · 창 **전용 엔진**(메인 창·탐색기 메타 스레드와 분리) · 작업마다 독립 세션 ③ 결과는 **합친 뒤** 거르기·정렬·미리보기·열기·바로가기 · **진행 패널**(혜성 + 범위·대상·결과·시작·종료·경과)로 끝날 때까지 동작이 보인다.
 
-- **진입**: View ▸ Find Objects…(Ctrl+Alt+F · 팔레트 `view.find_objects`) · 객체 탐색기 필터 틀에 글이 있으면 그 글을 검색어로 받아 연다(후속 = 틀 오른쪽 버튼).
+- **진입**: View ▸ Find Objects…(Ctrl+Alt+F · mac ⌥⌘O · D-310 · 팔레트 `view.find_objects`) · 객체 탐색기 필터 틀에 글이 있으면 그 글을 검색어로 받아 연다(후속 = 틀 오른쪽 버튼).
 - **조건 1행**: 검색어(이력 = `search_history` 부품 · 상자 `findobj` = 후속) · ★ **안쪽 토글 Aa · ab · (.*)**(객체 탐색기 필터 틀과 같은 `FindBtn` · 상자 오른쪽 끝 20px · 툴팁 600 ms · 사용자 10-15 "체크박스가 아닌 토글 방식") = 대소문자 · 낱말 · 정규식( — **이름·설명**에 적용(클라이언트) · 컬럼·본문은 메타 문자 없는 글이면 그대로, 있으면 그 단계 건너뜀 + 안내) · Enter = 검색 · Esc = 검색 중이면 중지 · 아니면 창 닫기 · Tab = 검색어 → 스키마 → 거르기 → 목록.
 - **범위**: 서버 콤보(전체 | 연결된 서버 각각 · 라벨 = 탐색기 헤더와 같음) · 스키마 글 상자(비면 전부 · 쉼표 여러 개 · 탐색기 필터와 같은 대소문자 무시) · SSMS = ★ **전 DB 토글**(`findobj.all_dbs` 켬 기본 · 접근 가능한 사용자 DB 전부 · 엔진이 DB마다 `USE` 뒤 스키마 목록 → 작업 · 끔 = 현재 DB · 협업 V1 ① "M4PLAN master 0건"의 답 · 사용자 10-15 "탐색기 검색 설정과 무관하게 전체 스위치") · 열린 창의 서버 목록은 접속이 바뀌면 따라간다(V1 ⑤).
 - **대상 4**(이름 · 설명 · 컬럼 · 소스) · **종류 4 묶음**(테이블·뷰·MV · 프로시저·함수·패키지 · 트리거 · 그 밖 = 시퀀스·시노님·타입…) — 기본 전부 켬 · 설정에 기억.
@@ -251,7 +251,7 @@
 
 | 도구 | 객체로 이동(이름) | 객체 검색 창(본문·설명 포함) | 출처 |
 |---|---|---|---|
-| **Nexa SQL** | 탐색기 필터(Ctrl+F) · Ctrl+P `@` | **Ctrl+Alt+F**(객체 찾기 창) · 툴바 [객체 찾기] · **보조 키 없음**(Ctrl+Shift+D = 줄 복제 유지 · D-309 · 사용자 10-16) | 이 문서 §3 |
+| **Nexa SQL** | 탐색기 필터(Ctrl+F) · Ctrl+P `@` | **Ctrl+Alt+F**(mac ⌥⌘O · D-310)(객체 찾기 창) · 툴바 [객체 찾기] · **보조 키 없음**(Ctrl+Shift+D = 줄 복제 유지 · D-309 · 사용자 10-16) | 이 문서 §3 |
 | DataGrip | **Ctrl+N**(Go to Class = 테이블·뷰 등) · Shift Shift(Search Everywhere) | Find in Files 계열(본문) | jetbrains.com/help/datagrip 2022.3 "Searching everywhere" |
 | DBeaver | **Ctrl+Shift+D**(메타데이터 객체 열기) · F4(편집기 열기) | Search 뷰(Ctrl+H) | dbeaver.com/docs/dbeaver/25.2 "Shortcuts" |
 | Toad for Oracle | F4 Describe(커서 아래 객체) | **Object Search = 메뉴만(기본 키 없음)** | support.quest.com toad-for-oracle 2025 R2 Getting Started Guide |
@@ -291,7 +291,7 @@
 | `findobj.preview_click` | on | 미리보기 줄 클릭 = 그 객체를 미리보기 탭으로(끔 = 선택만) · 창 "미리보기" 스위치와 양방향(10-16 ㉗) |
 | `findobj.all_dbs` | on | ★ SQL Server = 접근 가능한 **모든 사용자 DB**(시스템 DB 4 제외 · `HAS_DBACCESS` · ONLINE) · 탐색기 `explorer.search_scope`와 **독립**(사용자 10-15) · 창 토글 "전 DB(SQL Server)"와 양방향 |
 | `window.findobj_size` / `_pos` | 980×680 | 창 크기·위치 |
-| 키맵 `view.find_objects` | Ctrl+Alt+F(mac ⌥⌘F) | 열기/앞으로 |
+| 키맵 `view.find_objects` | Ctrl+Alt+F(mac ⌥⌘O · D-310) | 열기/앞으로 |
 
 ## 7. 자체 시험(키 주입 0)
 

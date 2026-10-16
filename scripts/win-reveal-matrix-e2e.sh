@@ -9,6 +9,7 @@
 # 사용: scripts/win-reveal-matrix-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-P <실제 설정 폴더>] [-k <케이스 접두 필터>] [-R](원격 PRD 포함)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; ONLY=""; REMOTE=0
 while getopts "o:g:n:P:k:R" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;; k) ONLY=$OPTARG;; R) REMOTE=1;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n cli] [-P real-config-dir] [-k case-prefix] [-R]"; exit 2; }

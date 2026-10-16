@@ -169,9 +169,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     Command {
         id: "run.explain",
         label: Msg::MnExplain,
-        win: "ctrl+shift+x",
-        mac: "cmd+shift+x",
-        linux: "ctrl+shift+x",
+        // ★ Ctrl+Shift+X는 09-19부터 확장 패널(`view.extensions` · VS Code 차용)과 겹쳐 실행 계획 단축키가 죽어 있었다(130차 mac · D-310) → Ctrl+Alt+X.
+        win: "ctrl+alt+x",
+        mac: "cmd+alt+x",
+        linux: "ctrl+alt+x",
     },
     Command {
         id: "run.commit",
@@ -256,7 +257,8 @@ pub(crate) const COMMANDS: &[Command] = &[
         id: "view.find_objects",
         label: Msg::MnFindObjects,
         win: "ctrl+alt+f",
-        mac: "cmd+alt+f",
+        // ★ 맥은 ⌥⌘O(130차 mac · 10-16 · D-310): ⌥⌘F는 Sublime 맥 기본 **바꾸기**(`edit.replace`)라 겹치면 뒤 명령이 이겨 객체 찾기가 안 열렸다.
+        mac: "cmd+alt+o",
         linux: "ctrl+alt+f",
     },
     Command {
@@ -1462,6 +1464,36 @@ mod tests {
             .is_none(),
             "조합키 없는 Unidentified는 타이핑 = 조합 아님"
         );
+    }
+    /// ★ 130차 mac(10-16): 프리셋 기본값끼리 같은 조합을 쓰면 뒤 명령이 앞 명령을 가린다(`from_settings` = `map.insert` 마지막 승자) —
+    ///   맥 ⌥⌘F(객체 찾기 vs 바꾸기) · 3-OS Ctrl+Shift+X(실행 계획 vs 확장 패널 · 09-19부터)가 그렇게 죽어 있었다. 단일 조합·2단 코드 모두
+    ///   프리셋마다 유일해야 한다(`none`은 제외 · `|` 대안 전부).
+    #[test]
+    fn preset_defaults_have_no_duplicate_chords() {
+        use std::collections::HashMap;
+        for p in [Preset::Windows, Preset::Macos, Preset::Linux] {
+            let mut single: HashMap<Chord, &str> = HashMap::new();
+            let mut seq: HashMap<(Chord, Chord), &str> = HashMap::new();
+            for c in COMMANDS {
+                for alt in preset_default(c, p)
+                    .split('|')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"))
+                {
+                    if let Some((a, b)) = split_seq(alt) {
+                        let k = (Chord::parse(a).expect(a), Chord::parse(b).expect(b));
+                        if let Some(prev) = seq.insert(k, c.id) {
+                            panic!("{p:?}: 2단 코드 {alt:?} = {prev} 와 {} 겹침", c.id);
+                        }
+                        continue;
+                    }
+                    let ch = Chord::parse(alt).expect(alt);
+                    if let Some(prev) = single.insert(ch, c.id) {
+                        panic!("{p:?}: 조합 {alt:?} = {prev} 와 {} 겹침", c.id);
+                    }
+                }
+            }
+        }
     }
     /// 그리드 포커스 전용 키(T-182): 수식 키가 더 붙으면 전역 키맵으로 돌아간다(Ctrl+F2 = 북마크 토글 · Ctrl+Shift+D 등).
     #[test]

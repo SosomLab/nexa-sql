@@ -5,6 +5,7 @@
 # 사용: scripts/win-schema-switch-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-s BISCM_SB] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="BISCM"; OTHER="BISCM_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:n:p:s:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; s) OTHER=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n cli] [-p profile] [-s other-schema] [-P real-config-dir]"; exit 2; }

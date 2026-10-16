@@ -181,6 +181,8 @@ impl ApplicationHandler<Wake> for App {
         for f in std::mem::take(&mut self.arg_files) {
             self.open_file(&f);
         }
+        // ★ T-352: 기동 때 OS(Finder)가 넘긴 파일 — 인자 파일 뒤에 같은 규칙으로.
+        self.pump_os_open_files();
         if let Ok(cmds) = std::env::var("NSQL_STARTUP_CMD") {
             for id in cmds.split(',').map(str::trim).filter(|c| !c.is_empty()) {
                 // `@connected:<명령>` = 첫 접속이 된 뒤에 실행(시작 인자로 접속하는 프로필 + 실행 시험 · 메모리 측정).
@@ -229,6 +231,8 @@ impl ApplicationHandler<Wake> for App {
         if self.netwatch.as_ref().is_some_and(|w| w.take_changed()) {
             self.net_changed();
         }
+        // ★ T-352: 떠 있는 동안 OS가 넘긴 파일(Finder 더블클릭 = 이미 뜬 앱에 Apple Event로 온다).
+        self.pump_os_open_files();
         self.persist_window_sizes(false);
         self.pump_window_requests(el);
         // 캐럿 깜빡임 — 0.5초 타이머가 **실제로 만료됐을 때만** 다시 그린다.
@@ -798,11 +802,7 @@ impl ApplicationHandler<Wake> for App {
         if let WindowEvent::DroppedFile(p) = &event {
             // OS에서 창으로 끌어다 놓기(3-OS 공통 winit 경로) = 열기 · `.nsql-project`는 프로젝트로(기동 인자와 같은 규칙 · 10-15).
             let p = p.clone();
-            if p.extension().is_some_and(|e| e == crate::project::EXT) {
-                self.project_load_path(&p);
-            } else {
-                self.open_file(&p);
-            }
+            self.open_os_path(&p);
             return;
         }
         let modal_open = self.modal_open();

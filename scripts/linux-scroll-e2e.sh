@@ -8,6 +8,7 @@
 # 사용: scripts/linux-scroll-e2e.sh -o <출력> [-e target/debug/nexa-sql] [-n target/debug/nsql]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
 while getopts "o:e:n:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-e app] [-n nsql]"; exit 2; }

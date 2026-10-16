@@ -10,6 +10,7 @@
 # 사용: scripts/win-mssql-explorer-e2e.sh -o <출력폴더> -g target/debug/nexa-sql.exe [-p M4PLAN] [-d BISCM_MS] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="M4PLAN"; OTHER="BISCM_MS"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:d:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; d) OTHER=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui-exe] [-p profile] [-d other-db] [-P real-config-dir]"; exit 2; }

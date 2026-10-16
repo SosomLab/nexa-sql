@@ -1433,6 +1433,12 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ T-352 자체 시험 훅: OS 파일 열기 사건 흉내(모든 OS · `about_to_wait`에서 `pump_os_open_files`가 연다 = 실제 경로와 같은 길).
+        if let Some(path) = id.strip_prefix("os.open:") {
+            nexa_sys::open_files::simulate([std::path::PathBuf::from(path)]);
+            self.redraw();
+            return;
+        }
         match id.strip_prefix("open:") {
             Some(path) => self.open_file(Path::new(path)),
             None => self.menu_action(id),

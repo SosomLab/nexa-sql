@@ -9,6 +9,7 @@
 #        [-O BISCM] [-m M4PLAN] [-r Repository] [-w 3000(실행 뒤 ■까지 ms)] [-l 2000(판정선 ms)]   (-O/-m/-r 빈 값 = 건너뜀)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 ORA="BISCM"; MS="M4PLAN"; PG="Repository"; WAIT=3000; LIMIT=2000
 while getopts "o:g:P:O:m:r:w:l:" o; do case $o in

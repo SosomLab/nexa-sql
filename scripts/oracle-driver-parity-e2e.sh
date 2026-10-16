@@ -110,7 +110,10 @@ run_set() { # <drv>
     local b; b=$(basename "$f" .sql)
     "$NSQL" run -c "$CONN" --no-prompt -f csv "$f" > "$OUT/$drv/$b.raw" 2> "$OUT/$drv/$b.err"; echo "rc=$?" >> "$OUT/$drv/$b.raw"
     # 실행 시간 "(0.339s)"는 실행마다 다르다 → 대조 전에 지운다(값·행·메시지만 남긴다).
-    sed -E 's/ *\([0-9.]+s\)//g' "$OUT/$drv/$b.raw" > "$OUT/$drv/$b.out"
+    # `SERVEROUTPUT: this Oracle client cannot read 32767-byte …` = OCI 클라이언트 능력 고지(macOS IC 19.16 · 130차 mac) → 드라이버 차이가 아니라
+    #   클라이언트 차이라 골든 밖(한 줄 기록만).
+    grep -q '^SERVEROUTPUT: ' "$OUT/$drv/$b.raw" && say "  (info) $drv $b: $(grep -m1 '^SERVEROUTPUT: ' "$OUT/$drv/$b.raw")"
+    sed -E 's/ *\([0-9.]+s\)//g' "$OUT/$drv/$b.raw" | grep -v '^SERVEROUTPUT: ' > "$OUT/$drv/$b.out"
   done
 }
 

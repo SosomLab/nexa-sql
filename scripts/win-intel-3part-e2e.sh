@@ -5,6 +5,7 @@
 # 사용: scripts/win-intel-3part-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-p M4PLAN] [-d BISCM_MS] [-t M4E_C300000] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="M4PLAN"; DB="BISCM_MS"; TBL="M4E_C300000"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:d:t:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; d) DB=$OPTARG;; t) TBL=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-p profile] [-d other-db] [-t table] [-P real-config-dir]"; exit 2; }

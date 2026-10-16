@@ -141,6 +141,13 @@ pub struct OracleSession {
     cursors: HashMap<u64, RefCursor>,
     next_cursor: u64,
     serveroutput: bool,
+    /// ★ DBMS_OUTPUT `GET_LINE(:line)` OUT 바인드 폭(바이트) — 기본 32767(10g+ 줄 상한). **macOS Instant Client 19.16**은 PL/SQL
+    ///   VARCHAR2 OUT 32767 바인드 값을 읽다 `OCI-21500 [kolrarfc: locator size is too big]`로 실패해(서버 버퍼는 이미 비워짐 → 줄 유실 ·
+    ///   130차 mac 10-17 · Windows/Linux IC 23.x·Thin은 정상) `SET SERVEROUTPUT ON` 때 **탐침 한 줄**로 32767이 되는지 보고 안 되면 4000으로 내린다
+    ///   (4000자 넘는 줄은 ORA-06502로 그 뒤 줄이 끊긴다 · 고지 = 다음 실행 메시지 한 줄).
+    dbms_line_cap: u32,
+    /// 탐침이 4000으로 내렸을 때 사용자에게 한 번 알릴 글(다음 실행의 `messages` 첫 줄 · 보낸 뒤 비움).
+    dbms_cap_note: Option<String>,
     fetch_size: u32,
     /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`). 커서 지원 세션이므로 호스트는 상한을 그대로 넘긴다(초과 판정은 peek).
     max_rows: usize,
@@ -358,6 +365,8 @@ impl OracleSession {
             cursors: HashMap::new(),
             next_cursor: 1,
             serveroutput: false,
+            dbms_line_cap: 32767,
+            dbms_cap_note: None,
             fetch_size: 500,
             max_rows: 0,
             open: None,
@@ -406,34 +415,70 @@ impl OracleSession {
     }
 
     fn poll_dbms_output(&mut self) -> Vec<String> {
-        let mut lines = Vec::new();
         if !self.serveroutput {
-            return lines;
+            return Vec::new();
         }
-        let Ok(mut stmt) = self
+        let cap = self.dbms_line_cap;
+        let mut lines = self.get_lines_with(cap, 100_000).unwrap_or_default();
+        if let Some(note) = self.dbms_cap_note.take() {
+            lines.insert(0, note);
+        }
+        lines
+    }
+
+    /// `DBMS_OUTPUT.GET_LINE`을 `max`줄까지 — `:line` OUT 폭 = `cap` 바이트. `Err` = 바인드·실행이 클라이언트 쪽에서 실패(그때까지 읽은 줄은 버린다 ·
+    /// 호출자가 폭을 바꿔 다시 판단). 상태 ≠ 0(버퍼 끝) = 정상 종료.
+    fn get_lines_with(&mut self, cap: u32, max: usize) -> Result<Vec<String>, ()> {
+        let mut lines = Vec::new();
+        let mut stmt = self
             .conn
             .statement("BEGIN DBMS_OUTPUT.GET_LINE(:line, :status); END;")
             .build()
-        else {
-            return lines;
-        };
-        for _ in 0..100_000 {
-            if stmt.bind("line", &OracleType::Varchar2(32767)).is_err()
-                || stmt.bind("status", &OracleType::Number(0, 0)).is_err()
-            {
-                break;
-            }
-            if stmt.execute(&[]).is_err() {
-                break;
-            }
+            .map_err(|_| ())?;
+        for _ in 0..max {
+            stmt.bind("line", &OracleType::Varchar2(cap))
+                .map_err(|_| ())?;
+            stmt.bind("status", &OracleType::Number(0, 0))
+                .map_err(|_| ())?;
+            stmt.execute(&[]).map_err(|_| ())?;
             let status: i64 = stmt.bind_value("status").unwrap_or(1);
             if status != 0 {
                 break;
             }
-            let line: Option<String> = stmt.bind_value("line").unwrap_or(None);
+            let line: Option<String> = stmt.bind_value("line").map_err(|_| ())?;
             lines.push(line.unwrap_or_default());
         }
-        lines
+        Ok(lines)
+    }
+
+    /// ★ `SET SERVEROUTPUT ON` 직후 탐침: 줄 하나를 넣고 32767 폭으로 읽어 본다 — 되면 32767 · 안 되면(macOS IC 19.16 `kolrarfc`) 남은
+    ///   탐침 줄을 4000 폭으로 비우고 4000으로 내린 뒤 고지 글을 예약한다. 비용 = 왕복 2(세션당 한 번 · 켤 때마다).
+    fn probe_dbms_line_cap(&mut self) {
+        const PROBE: &str = "nsql-serveroutput-probe";
+        if self
+            .conn
+            .execute(
+                "BEGIN DBMS_OUTPUT.PUT_LINE('nsql-serveroutput-probe'); END;",
+                &[],
+            )
+            .is_err()
+        {
+            return;
+        }
+        match self.get_lines_with(32767, 1) {
+            Ok(v) if v.first().is_some_and(|l| l == PROBE) => self.dbms_line_cap = 32767,
+            _ => {
+                // 실패한 호출이 탐침 줄을 이미 소비했을 수 있다 — 남아 있으면 4000으로 비운다(사용자 줄은 아직 없다).
+                let _ = self.get_lines_with(4000, 4);
+                self.dbms_line_cap = 4000;
+                self.dbms_cap_note = Some(format!(
+                    "SERVEROUTPUT: this Oracle client cannot read 32767-byte output lines (client {}); lines are limited to 4000 bytes",
+                    oracle::Version::client()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| "?".into())
+                ));
+            }
+        }
     }
 
     /// 값 → 바인드할 시각. `Some(None)` = NULL · `None` = ISO 꼴이 아니다(호출자는 글자 바인드로 물러난다).
@@ -605,6 +650,9 @@ impl Session for OracleSession {
                     "BEGIN DBMS_OUTPUT.DISABLE; END;"
                 };
                 self.conn.execute(sql, &[]).map_err(|e| err(&e))?;
+                if on {
+                    self.probe_dbms_line_cap();
+                }
             }
             "fetch_size" => self.fetch_size = value.parse().unwrap_or(500),
             // 기본 스키마 — 세션의 미수식 이름 해석 대상(`?schema=` · 사용자 09-18). 식별자는 따옴표로 감싸 대소문자 그대로.

@@ -17,6 +17,7 @@
 #   CLI 실행 파일 머리에 `USE [DB]; GO` · 탐색기 현재 DB와 같아야 한다 · SSMS 골격은 스키마 노드가 없어 ② 스키마 행 검사는 생략).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; CLI="$ROOT/target/debug/nsql.exe"; ENTRY="Repository:postgres"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:n:p:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) CLI=$OPTARG;; p) ENTRY=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui-exe] [-n cli-exe] [-p profile:dialect] [-P real-config-dir]"; exit 2; }

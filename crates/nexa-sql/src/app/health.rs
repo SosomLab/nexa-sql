@@ -359,6 +359,8 @@ impl App {
         out.push_str(&self.explorer.health_dump());
         // L0 OS 신호 감시가 살아 있는가(Windows·macOS = true · Linux·끔 = false · 118차 mac V1).
         out.push_str(&format!("\nnetwatch={}", self.netwatch.is_some()));
+        // ★ T-352 OS 파일 열기 사건 받기(macOS = true 기대 · 그 밖 OS = false).
+        out.push_str(&format!("\nopenfiles={}", self.os_open_files));
         out
     }
 }

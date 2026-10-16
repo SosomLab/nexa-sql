@@ -9,6 +9,7 @@
 #        [-e target/debug/nexa-sql] [-n target/release/nsql] [-w <전체 조회 대기 s · 기본 70>] [-O A,B,C]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; P=BISCM; FROM="M4S_I002040 A WHERE 1=1 AND A.PROJECT_CD = 'SEBANG'"
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/release/nsql"; WAIT=70; ONLY=""
 while getopts "o:P:p:t:e:n:w:O:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; p) P=$OPTARG;; t) FROM=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; w) WAIT=$OPTARG;; O) ONLY=$OPTARG;; esac; done

@@ -8,6 +8,7 @@
 # 사용: scripts/win-output-result-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-p BISCM] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="BISCM"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui-exe] [-p profile] [-P real-config-dir]"; exit 2; }

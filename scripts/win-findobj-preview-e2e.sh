@@ -8,6 +8,7 @@
 # 사용: scripts/win-findobj-preview-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-c BISCM] [-q ITEM_CD] [-k View] [-g exe] [-n nsql]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; PROF=""; CONN="BISCM"; Q="ITEM_CD"; KIND="View"; MINSRC=2
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:c:q:k:m:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; q) Q=$OPTARG;; k) KIND=$OPTARG;; m) MINSRC=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done

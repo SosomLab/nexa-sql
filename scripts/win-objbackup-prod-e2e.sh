@@ -8,6 +8,7 @@
 # 사용: scripts/win-objbackup-prod-e2e.sh -o <출력폴더> -P <실제 설정 폴더(%APPDATA%/nexa-sql)> [-c BISCM] [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; PROF=""; CONN="BISCM"; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:c:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real settings dir> [-c profile] [-g gui] [-n nsql]"; exit 2; }

@@ -10,6 +10,7 @@
 #   -O/-m/-r 에 빈 값("")을 주면 그 DBMS는 건너뛴다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/release/nsql.exe"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 ORA="BISCM"; ORA_P1="SP_TEST1"; ORA_P2="SP_TEST2"; ORA_ARGS="RET,P_PROJECT_CD"
 MS="M4PLAN"; MS_DB="M4PLAN_MS"; MS_PROC="PROC_TEST"; MS_ARG="VS_PROJECT_CD"

@@ -358,6 +358,8 @@ struct App {
     health: app::health::ServerHealth,
     /// ★ L0 네트워크 신호 감시(⑤ · `net.watch` · Windows iphlpapi · macOS SystemConfiguration · Linux = 없음) — 깃발은 `about_to_wait`에서 읽는다 · 없음 = 미지원 OS/끔.
     netwatch: Option<nexa_sys::netwatch::NetWatch>,
+    /// ★ T-352(130차 mac): OS 파일 열기 사건 받기(macOS Finder Apple Event `odoc` → nexa-sys `open_files`)가 설치됐는가 — 그 밖 OS = false(argv 경로).
+    os_open_files: bool,
     /// 마지막 네트워크 신호 처리 시각(1초 합치기).
     net_last: Option<Instant>,
     /// 유휴 미커밋 경고 카드(docs/56 L2) — 세션 하나를 가리킨다(가장 급한 것).
@@ -1823,6 +1825,7 @@ fn main() {
         click_arm: None,
         health: Default::default(),
         netwatch: None,
+        os_open_files: false,
         net_last: None,
         bm_gutter: None,
         toggle_log: false,
@@ -2104,6 +2107,9 @@ fn main() {
             }
         }));
     }
+    // ★ T-352: Finder 더블클릭·Dock 드롭·`open -a`로 넘어오는 파일(macOS Apple Event) — 이벤트 루프(= 앱 델리게이트)가 생긴 뒤 · `run` 전에 설치해야
+    //   기동 때 넘어온 파일도 받는다. 큐는 `resumed` 끝과 `about_to_wait`에서 비운다(`pump_os_open_files`).
+    app.os_open_files = nexa_sys::open_files::install();
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
     app.toasts.configure(

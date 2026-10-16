@@ -11,6 +11,7 @@
 #   `nsql cat source`는 3부 이름 `DB..객체`로 읽는다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; OUT=""; PROF="${APPDATA:-}/nexa-sql"
 PROFILES="BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS"
 while getopts "o:e:n:P:p:" o; do case $o in o) OUT=$OPTARG;; e) EXE=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;; p) PROFILES=$OPTARG;; esac; done

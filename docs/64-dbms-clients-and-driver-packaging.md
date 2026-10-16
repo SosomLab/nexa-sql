@@ -43,6 +43,7 @@ DBMS
 - **폴더 칸**(09-21 추가): 직접 지정 = 입력란에 **직접 입력**하거나 **"찾아보기…"**(폴더 전용 대화상자 — 파일은 보이지 않는다 · nexa-dlg `PickerMode::Folder`)로 고른다 · 자동 = 그 칸에 **탐지된 경로가 수정 불가(흐림)**로 보이고 없으면 공백(저장값은 그대로 — 직접 지정으로 돌아오면 다시 보인다).
 
 - **Linux 설치(09-22 · Ubuntu 26.04 실측)**: `scripts/install-instantclient-linux.sh` — Oracle의 로그인 없는 "latest" 주소에서 Basic·SQL*Plus zip → `~/oracle/instantclient_<ver>`(sudo 0) · Ubuntu 24.04+는 `libaio.so.1`이 `libaio1t64` 패키지의 `libaio.so.1t64`로만 오므로 **Instant Client 폴더 안에 심볼릭 링크** `libaio.so.1 → …/libaio.so.1t64`(시스템 폴더 무변경 · 패키지 설치만 관리자 권한 = 터미널 sudo가 없으면 `pkexec` GUI 인증). 앱은 자동 탐지 ③(`LD_LIBRARY_PATH`)으로 찾고 데스크톱 런처는 직접 지정(`oracle.client_dir`)이 필요하다 · `oracle_client_manual` 테스트 1/1 · 실서버 통합 Oracle 통과.
+- **권장 판(10-17 · 130차 mac · T-366)**: Instant Client **23.x 권장**. macOS 19.16(x86_64)은 DBMS_OUTPUT 32767 바이트 OUT 바인드를 못 읽어(`OCI-21500 [kolrarfc: locator size is too big]`) 앱이 `SET SERVEROUTPUT ON` 때 탐침해 **줄 폭을 4000 바이트로 자동 제한**하고 고지 1줄을 낸다(Thin = 늘 32767 · 기본 드라이버 D-278).
 
 - **파일 칸은 존재 여부만**(09-21): 라이브러리 파일 · `tnsnames.ora` · `sqlnet.ora` = `있음 — 경로` / `없음 — 어디에 무엇이 없는지`(자동·직접 지정 공통) · 갱신 버튼은 없다 — 설정 창이 다시 활성화될 때 스스로 다시 본다(외부 편집 반영 · 폴링 0).
 

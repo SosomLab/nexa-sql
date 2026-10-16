@@ -11,6 +11,7 @@
 # 사용: scripts/conn-cmd-e2e.sh -o <출력폴더> [-n target/debug/nsql(.exe)] [-p <프로필>] [-P <실제 설정 폴더>] [-g target/debug/nexa-sql.exe]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILE="BISCM"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; EXE=""
 while getopts "o:n:p:P:g:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; P) PROF=$OPTARG;; g) EXE=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p profile] [-P real-config-dir] [-g gui-exe]"; exit 2; }
