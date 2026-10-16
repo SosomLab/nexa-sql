@@ -16,7 +16,9 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
 use nexa_ctl::tokens::{hover_alpha, IntentFade, LatestIntent};
-use nexa_ctl::{BusyState, Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget};
+use nexa_ctl::{
+    BusyState, Control, EditCtxAction, InputEvent, Invalidations, ScrollBars, TextBox, Widget,
+};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::find::FindPat;
 use nsql_catalog::{ObjectInfo, ObjectKind};
@@ -1306,6 +1308,55 @@ impl FindObjWin {
         }
     }
 
+    /// ★ 클립보드 동작(Ctrl/⌘+C·X·V · 입력란 우클릭 메뉴 · 사용자 10-16 "검색어·스키마·거르기 단축키·우클릭 메뉴 미동작"):
+    ///   TextBox는 클립보드를 직접 만지지 않고 호스트에 맡긴다(`take_edit_ctx`) — 종전 이 창은 그 요청을 아무도 읽지 않았다.
+    ///   접속 창 `clip`과 같은 규칙 · 거르기 상자가 바뀌면 보기를 즉시 다시.
+    fn clip(&mut self, act: EditCtxAction) {
+        let mut inv = Invalidations::default();
+        let was_filter = self.focus == Focus::Filter;
+        match act {
+            EditCtxAction::Copy => {
+                if let Some(text) = self.focused_box().and_then(|tb| tb.copy_selection()) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Cut => {
+                if let Some(text) = self.focused_box().and_then(|tb| tb.cut_selection(&mut inv)) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Paste => {
+                if let Some(text) = crate::clipboard::read_text() {
+                    if let Some(tb) = self.focused_box() {
+                        tb.paste(&text, &mut inv);
+                    }
+                }
+            }
+            EditCtxAction::Custom(_) => {}
+        }
+        if was_filter {
+            self.apply_view();
+        }
+        self.redraw();
+    }
+
+    /// 입력란 편집 메뉴에서 고른 동작(있으면 1개) — 메뉴는 그 상자가 포커스일 때 열리므로 포커스 상자 기준으로 실행한다.
+    fn take_box_edit_ctx(&mut self) -> Option<EditCtxAction> {
+        if let Some(a) = self.qbar.tb_mut().take_edit_ctx() {
+            self.own_focus(Focus::Query);
+            return Some(a);
+        }
+        if let Some(a) = self.schema.take_edit_ctx() {
+            self.own_focus(Focus::Schema);
+            return Some(a);
+        }
+        if let Some(a) = self.filter.take_edit_ctx() {
+            self.own_focus(Focus::Filter);
+            return Some(a);
+        }
+        None
+    }
+
     /// 체크박스 전부(전 DB 1 + 대상 4 + 종류 4 + 일치 종류 4 — 마지막 넷은 보기 갱신).
     fn all_checks(&mut self) -> Vec<&mut Checkbox> {
         let mut v: Vec<&mut Checkbox> = vec![&mut self.all_dbs];
@@ -1738,6 +1789,10 @@ impl FindObjWin {
                     if !up {
                         self.consumed = "popup";
                     }
+                    // 편집 메뉴에서 고른 복사·잘라내기·붙여넣기(메뉴 확정 = MouseUp) — 종전엔 여기서 버려져 "우클릭 메뉴 미동작".
+                    if let Some(act) = self.take_box_edit_ctx() {
+                        self.clip(act);
+                    }
                     self.redraw();
                     return FoAction::None;
                 }
@@ -1906,11 +1961,24 @@ impl FindObjWin {
                 let (x, y) = self.cursor;
                 let p = Point { x, y };
                 let rd = InputEvent::RightDown { x, y };
+                // 우클릭 직전 = "붙여넣기" 활성 근거(클립보드 글 유무 · 접속 창과 같은 규칙) · 메뉴는 포커스 상자 기준이라 포커스도 옮긴다.
+                let in_box = self.qbar.bounds().contains(p)
+                    || self.schema.bounds().contains(p)
+                    || self.filter.bounds().contains(p);
+                if in_box {
+                    let has = crate::clipboard::read_text().is_some_and(|t| !t.is_empty());
+                    self.qbar.tb_mut().set_clipboard_has_text(has);
+                    self.schema.set_clipboard_has_text(has);
+                    self.filter.set_clipboard_has_text(has);
+                }
                 if self.qbar.bounds().contains(p) {
+                    self.own_focus(Focus::Query);
                     let _ = self.qbar.on_event(&rd, &mut inv);
                 } else if self.schema.bounds().contains(p) {
+                    self.own_focus(Focus::Schema);
                     self.schema.on_event(&rd, &mut inv);
                 } else if self.filter.bounds().contains(p) {
+                    self.own_focus(Focus::Filter);
                     self.filter.on_event(&rd, &mut inv);
                 } else if let Some(v) = self.view_at(p) {
                     self.select(Some(v));
@@ -1941,6 +2009,19 @@ impl FindObjWin {
                 self.redraw();
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
+                // ★ Ctrl/⌘+C·X·V = 입력란 클립보드(물리 키 · 한글 자판 ⌘C = "ㅊ" 결함 규칙 · 09-19) — 종전 = 상자가 무시해 미동작.
+                if self.primary && self.focused_box().is_some() {
+                    let act = match crate::input::shortcut_letter(kev) {
+                        Some('c') => Some(EditCtxAction::Copy),
+                        Some('x') => Some(EditCtxAction::Cut),
+                        Some('v') => Some(EditCtxAction::Paste),
+                        _ => None,
+                    };
+                    if let Some(act) = act {
+                        self.clip(act);
+                        return FoAction::None;
+                    }
+                }
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) => {
                         return if self.running {
