@@ -100,6 +100,8 @@
 | 층 | 실체 |
 |---|---|
 | 카탈로그 | `nsql-i18n` — `Lang {En(기본), Ko}` · `Msg`(58키) · `tr/t/tf` · 빈 한국어 칸 = 영어 폴백 · 자리표시자 `{0}` |
+
+- ★ **한국어 열의 영어 낱말 규칙(10-16 T-362)**: 한국어 열에 영어를 남겨도 되는 것은 **설정 값 · CLI 옵션 · 키 이름 · 고유 명칭**(예 `hover` · `always` · `csv` · `psql` · Goto Anything)뿐 · **버튼·메뉴·그룹 이름은 그 라벨의 한국어와 똑같이**(안내 글이 "[저장]"을 말하면 버튼도 "저장") · 점검 = 한국어 열 전수 스캔(개발 스크래치 → 저장소 스크립트 `scripts/i18n-ko-scan.py` 후보).
 | 설정 | `nsql-settings` — `REGISTRY` 4항목(`ui.lang` `ui.theme` `ui.font_size` `editor.font_size`) · `Settings::{open_default,get,set,reset,save,is_modified,list}` · `ThemeMode::{System,Light,Dark}::is_dark(os)` |
 | 파일 | `<설정 폴더>/nexa-sql/settings.conf`(`NSQL_HOME` 우선 · vault와 같은 폴더) |
 | CLI | `nsql config list|get|set|reset|path` · 부팅 시 `ui.lang` 적용 |
