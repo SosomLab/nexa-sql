@@ -422,17 +422,17 @@ impl MemWin {
                 t(Msg::WinMemory),
                 th.text,
             );
-            let sw_w = px(96.0);
+            // ★ 두 스위치 = 라벨 글 폭에 맞춘 꼭 맞는 너비로 **오른쪽 끝에 빈틈 없이**(사용자 10-16 · i18n 라벨 길이가 달라도 같은 모양):
+            //   [상세] [최상위]| ← 창 오른쪽 여백. 종전 고정폭(96·80)은 짧은 라벨 뒤에 공백이 남았다.
             let sw_h = th_txt + px(4.0);
             let mut inv = Invalidations::default();
-            self.top_switch.set_bounds(
-                Rect::new(wi - pad - sw_w, y - px(2.0), sw_w, sw_h),
-                &mut inv,
-            );
+            let sw_w = self.top_switch.wanted_width(&mut dc);
+            let tsx = wi - pad - sw_w;
+            self.top_switch
+                .set_bounds(Rect::new(tsx, y - px(2.0), sw_w, sw_h), &mut inv);
             self.top_switch.paint(&mut dc, th);
-            // "상세" 스위치(최상위 왼쪽 · 10-16).
-            let dsw_w = px(80.0);
-            let dsx = wi - pad - sw_w - px(10.0) - dsw_w;
+            let dsw_w = self.detail_switch.wanted_width(&mut dc);
+            let dsx = tsx - px(10.0) - dsw_w;
             self.detail_switch
                 .set_bounds(Rect::new(dsx, y - px(2.0), dsw_w, sw_h), &mut inv);
             self.detail_switch.paint(&mut dc, th);
