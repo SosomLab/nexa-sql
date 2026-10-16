@@ -1291,6 +1291,11 @@ impl Chord {
                 NamedKey::F12 => "f12".into(),
                 _ => return None,
             },
+            // ★ Ctrl+Alt+글자(Windows = AltGr 조합 · 사용자 10-16 "Ctrl+Alt+F가 안 됨"): 배열에 AltGr 글자가 없는 키(한국어·US 등)는
+            //   winit이 논리 키를 `Unidentified`/`Dead`로 주어 조합이 통째로 버려졌다 → 조합키가 하나라도 있으면 **물리 키 이름**으로.
+            Key::Unidentified(_) | Key::Dead(_) if primary || alt || ctrl => {
+                physical_name(physical)?.to_string()
+            }
             _ => return None,
         };
         Some(Chord {
@@ -1427,6 +1432,37 @@ pub(crate) fn repeatable(id: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Ctrl+Alt+F(10-16): AltGr 조합에서 논리 키가 `Unidentified`로 와도 물리 키로 `ctrl+alt+f`가 된다(조합키 없는 Unidentified = None).
+    #[test]
+    fn altgr_unidentified_logical_falls_back_to_physical() {
+        use winit::keyboard::NativeKey;
+        let ev = Chord::from_winit(
+            &Key::Unidentified(NativeKey::Unidentified),
+            &PhysicalKey::Code(KeyCode::KeyF),
+            true,
+            false,
+            true,
+            false,
+        )
+        .expect("물리 키 폴백");
+        assert_eq!(ev.key, "f");
+        assert!(ev.primary && ev.alt && !ev.shift);
+        if !cfg!(target_os = "macos") {
+            assert_eq!(ev, Chord::parse("ctrl+alt+f").unwrap());
+        }
+        assert!(
+            Chord::from_winit(
+                &Key::Unidentified(NativeKey::Unidentified),
+                &PhysicalKey::Code(KeyCode::KeyF),
+                false,
+                false,
+                false,
+                false,
+            )
+            .is_none(),
+            "조합키 없는 Unidentified는 타이핑 = 조합 아님"
+        );
+    }
     /// 그리드 포커스 전용 키(T-182): 수식 키가 더 붙으면 전역 키맵으로 돌아간다(Ctrl+F2 = 북마크 토글 · Ctrl+Shift+D 등).
     #[test]
     fn grid_focus_keys_are_plain_f2_and_primary_d_only() {

@@ -3,19 +3,19 @@
 //! 조건 1행(검색어 + 안쪽 토글 Aa · ab · (.*) = 필터 틀 `FindBtn` · 검색/중지) · 범위(서버 · ★ 전 DB(SQL Server) · 스키마) · 대상 4 · 종류 4 · ★ 진행 패널(혜성 링 + 서버/스키마/작업 · 조사 행 · 객체/일치 · 시작·종료·경과) ·
 //! ★ 결과 거르기(글 + 일치 종류 4 · 뷰 투영) · 머리 클릭 정렬 · 미리보기(일치 줄 · 강조) · 더블클릭/Enter = 소스 탭 + 일치 줄 · 우클릭 = 탐색기 메뉴 부분집합.
 use crate::exp_icons::{self, IconKind};
-use crate::findbar::{BtnKind, FindBtn};
+use crate::filterbar::FilterBar;
+use crate::findbar::BtnKind;
 use crate::findobj_engine::{EngineMsg, FindHit, FindQuery, FindWhat};
-use crate::toolicons;
 use nexa_ctl::controls::combo::ComboItem;
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
-use nexa_ctl::controls::{Button, CheckCombo, Checkbox, ComboControl};
-use nexa_ctl::draw::{draw_tooltip_in, DrawCtx, FontSlot};
+use nexa_ctl::controls::{
+    Button, CheckCombo, Checkbox, ComboControl, SplitAxis, SplitEvent, Splitter,
+};
+use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
-use nexa_ctl::{
-    BusyRing, BusyState, Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget,
-};
+use nexa_ctl::{BusyState, Control, InputEvent, Invalidations, ScrollBars, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::find::FindPat;
 use nsql_catalog::{ObjectInfo, ObjectKind};
@@ -178,9 +178,6 @@ enum SortKey {
     Hits,
 }
 
-/// 토글 툴팁 머무름(ms · 필터 틀과 같은 값).
-const TOOLTIP_MS: u128 = 600;
-
 /// 미리보기 한 줄 = (줄 번호 · 글 · 강조 구간들(바이트)).
 struct PreLine {
     no: Option<u32>,
@@ -223,15 +220,16 @@ pub(crate) struct FindObjWin {
     last: Option<((i32, i32), (f64, f64))>,
     epoch: Instant,
     // 조건
-    query: TextBox,
+    /// ★ 검색어 = 객체 탐색기와 **같은 필터 틀**(사용자 10-16 · `FilterBar` = × 지우기 · 토글 Aa·ab·(.*) 틀 안 · 혜성 링 틀 둘레).
+    qbar: FilterBar,
     schema: TextBox,
-    /// 검색어 상자 안쪽 토글 Aa · ab · (.*) = 객체 탐색기 필터 틀과 같은 `FindBtn`(사용자 10-15 "체크박스가 아닌 토글 방식").
-    opts: Vec<FindBtn>,
     /// ★ SQL Server 전 DB 검색(설정 `findobj.all_dbs` · 탐색기 검색 설정과 독립 · 사용자 10-15).
     all_dbs: Checkbox,
     run_btn: Button,
     /// ★ 서버 = 체크박스 다중 선택(10-16 사용자 · nexa-ctl `CheckCombo` 208차 · 전부 체크 = 전체).
     server: CheckCombo,
+    /// 서버 목록 열린 채 바깥 클릭 = 닫고 통과(`ui.ctxmenu_passthrough` · 호스트가 넣음).
+    passthrough: bool,
     servers: Vec<(Option<ConnectSpec>, String)>,
     /// 이번 검색이 엔진에 넘긴 서버(엔진 `server` 번호 = 이 차례).
     run_specs: Vec<ConnectSpec>,
@@ -258,8 +256,8 @@ pub(crate) struct FindObjWin {
     last_click: Option<(usize, Instant)>,
     // 미리보기
     split: f32,
-    split_drag: bool,
-    split_band: Rect,
+    /// 목록 ↔ 미리보기 스플리터 = 메인 창과 같은 부품(nexa-ctl `Splitter` · 사용자 10-16).
+    splitter: Splitter,
     pre_rect: Rect,
     pre_lines: Vec<PreLine>,
     pre_scroll: i32,
@@ -268,8 +266,6 @@ pub(crate) struct FindObjWin {
     rev: u64,
     running: bool,
     prog: Progress,
-    ring: BusyRing,
-    ring_rect: Rect,
     // 버튼·메뉴
     open_btn: Button,
     reveal_btn: Button,
@@ -322,13 +318,8 @@ impl FindObjWin {
             memo: crate::wingeom::Memo::default(),
             last: None,
             epoch: Instant::now(),
-            query: TextBox::new(t(Msg::FoQueryHint)),
+            qbar: FilterBar::new(t(Msg::FoQueryHint), &[]),
             schema: TextBox::new(t(Msg::FoSchemaHint)),
-            opts: vec![
-                FindBtn::new(BtnKind::Case, toolicons::mi_match_case),
-                FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
-                FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
-            ],
             all_dbs: Checkbox::new(t(Msg::FoAllDbs), true),
             run_btn: Button::new(t(Msg::FoSearch)),
             server: CheckCombo::new(
@@ -338,6 +329,7 @@ impl FindObjWin {
                 t(Msg::FoServerNone),
                 t(Msg::FoServerMany),
             ),
+            passthrough: false,
             servers: Vec::new(),
             run_specs: Vec::new(),
             targets,
@@ -361,8 +353,7 @@ impl FindObjWin {
             focus: Focus::Query,
             last_click: None,
             split: 0.6,
-            split_drag: false,
-            split_band: Rect::default(),
+            splitter: Splitter::new(SplitAxis::Horizontal),
             pre_rect: Rect::default(),
             pre_lines: Vec::new(),
             pre_scroll: 0,
@@ -370,8 +361,6 @@ impl FindObjWin {
             rev: 0,
             running: false,
             prog: Progress::default(),
-            ring: BusyRing::default(),
-            ring_rect: Rect::default(),
             open_btn: Button::new(t(Msg::FoOpenEditor)),
             reveal_btn: Button::new(t(Msg::FoReveal)),
             close_btn: Button::new(t(Msg::SpBtnClose)),
@@ -388,13 +377,11 @@ impl FindObjWin {
     }
 
     fn opt(&self, k: BtnKind) -> bool {
-        self.opts.iter().any(|b| b.kind == k && b.checked)
+        self.qbar.is_on(k)
     }
 
     fn set_opt(&mut self, k: BtnKind, on: bool) {
-        if let Some(b) = self.opts.iter_mut().find(|b| b.kind == k) {
-            b.checked = on;
-        }
+        self.qbar.set_checked(k, on);
     }
 
     /// 설정 `findobj.all_dbs` → 창 토글(열 때 · 설정 변경 때).
@@ -409,6 +396,11 @@ impl FindObjWin {
     pub(crate) fn set_limits(&mut self, max_hits: usize, lines_per_object: usize) {
         self.max_hits = max_hits;
         self.lines_per_object = lines_per_object;
+    }
+
+    /// `ui.ctxmenu_passthrough`(사용자 10-16): 서버 목록이 열린 채 바깥을 누르면 닫고 **그 클릭을 바로 진행**할지.
+    pub(crate) fn set_passthrough(&mut self, on: bool) {
+        self.passthrough = on;
     }
 
     pub(crate) fn set_remembered(&mut self, targets: &str, kinds: &str) {
@@ -472,7 +464,7 @@ impl FindObjWin {
         preset: Option<&str>,
     ) {
         if let Some(q) = preset.filter(|q| !q.trim().is_empty()) {
-            self.query.set_text(q);
+            self.qbar.set_text(q);
         }
         if let Some(w) = &self.window {
             w.focus_window();
@@ -508,7 +500,7 @@ impl FindObjWin {
         self.window = None;
         self.menu.close();
         self.running = false;
-        self.ring.set_state(BusyState::Idle);
+        self.qbar.set_search_state(BusyState::Idle);
         self.run_btn.set_label(t(Msg::FoSearch));
     }
 
@@ -549,7 +541,7 @@ impl FindObjWin {
     // ── 검색 ───────────────────────────────────────────────────────────────────────────────────────
 
     fn build_query(&self) -> Option<FindQuery> {
-        let text = self.query.text().trim().to_string();
+        let text = self.qbar.text().trim().to_string();
         if text.is_empty() {
             return None;
         }
@@ -668,7 +660,7 @@ impl FindObjWin {
         self.prog.started_at = Some(SystemTime::now());
         self.prog.started = Some(Instant::now());
         self.running = true;
-        self.ring.set_state(BusyState::Running);
+        self.qbar.set_search_state(BusyState::Running);
         self.run_btn.set_label(t(Msg::FoStop));
         self.redraw();
         FoAction::Search(Box::new(q), self.selected_servers())
@@ -694,7 +686,7 @@ impl FindObjWin {
         self.running = false;
         self.prog.ended_at = Some(SystemTime::now());
         self.prog.elapsed_ms = self.prog.started.map_or(0, |s| s.elapsed().as_millis());
-        self.ring.set_state(BusyState::Done);
+        self.qbar.set_search_state(BusyState::Done);
         self.run_btn.set_label(t(Msg::FoSearch));
     }
 
@@ -928,7 +920,7 @@ impl FindObjWin {
     }
 
     fn spans(&self, text: &str) -> Vec<(usize, usize)> {
-        let needle = self.query.text().trim().to_string();
+        let needle = self.qbar.text().trim().to_string();
         if needle.is_empty() || self.opt(BtnKind::Regex) {
             return Vec::new();
         }
@@ -1105,14 +1097,14 @@ impl FindObjWin {
 
     fn own_focus(&mut self, f: Focus) {
         self.focus = f;
-        self.query.set_focused(f == Focus::Query);
+        self.qbar.set_focused(f == Focus::Query);
         self.schema.set_focused(f == Focus::Schema);
         self.filter.set_focused(f == Focus::Filter);
     }
 
     fn focused_box(&mut self) -> Option<&mut TextBox> {
         match self.focus {
-            Focus::Query => Some(&mut self.query),
+            Focus::Query => Some(self.qbar.tb_mut()),
             Focus::Schema => Some(&mut self.schema),
             Focus::Filter => Some(&mut self.filter),
             Focus::List => None,
@@ -1163,13 +1155,14 @@ impl FindObjWin {
         if self.window.is_none() {
             return false;
         }
-        let anim = self.ring.tick(self.now_ms());
-        let btn_anim = self.opts.iter().any(|b| {
-            b.hover.is_animating()
-                || b.hover_since
-                    .is_some_and(|t0| t0.elapsed().as_millis() < TOOLTIP_MS + 50)
-        });
-        self.running || anim || btn_anim
+        let now = self.now_ms();
+        let mut anim = self.qbar.tick(now) || self.qbar.is_animating();
+        anim |= self.splitter.tick(now);
+        // 버튼 hover 페이드(nexa-ctl `Button::tick` · 종전엔 안 돌려 hover 하이라이트가 멈춰 있었다 · 사용자 10-16).
+        for b in self.buttons() {
+            anim |= b.tick(now) || b.is_animating();
+        }
+        self.running || anim
     }
 
     // ── 사건 ───────────────────────────────────────────────────────────────────────────────────────
@@ -1238,9 +1231,8 @@ impl FindObjWin {
                 for b in self.buttons() {
                     b.clear_transient();
                 }
-                for b in &mut self.opts {
-                    b.clear_transient();
-                }
+                // 다른 창으로 가면 서버 드롭다운도 닫는다(메인 창 `ui.menus_close_on_blur`와 같은 규칙 · 10-16).
+                self.server.close(&mut inv);
                 self.hover = None;
                 self.redraw();
             }
@@ -1255,18 +1247,22 @@ impl FindObjWin {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
                 let (x, y) = self.cursor;
-                if self.split_drag {
-                    let total = (self.pre_rect.bottom() - self.list_rect.y).max(1) as f32;
-                    self.split = ((y - self.list_rect.y) as f32 / total).clamp(0.2, 0.9);
-                    self.redraw();
-                    return FoAction::None;
-                }
                 let mv = InputEvent::MouseMove { x, y };
+                match self.splitter.on_event(&mv) {
+                    SplitEvent::Drag(top) => {
+                        let total = (self.pre_rect.bottom() - self.list_rect.y).max(1) as f32;
+                        self.split = ((top - self.list_rect.y) as f32 / total).clamp(0.2, 0.9);
+                        self.redraw();
+                        return FoAction::None;
+                    }
+                    SplitEvent::Hover => self.redraw(),
+                    _ => {}
+                }
                 let p = Point { x, y };
-                self.query.on_event(&mv, &mut inv);
+                let _ = self.qbar.on_event(&mv, &mut inv);
                 self.schema.on_event(&mv, &mut inv);
                 self.filter.on_event(&mv, &mut inv);
-                if self.query.popup_open() || self.schema.popup_open() || self.filter.popup_open() {
+                if self.qbar.popup_open() || self.schema.popup_open() || self.filter.popup_open() {
                     self.redraw();
                     return FoAction::None;
                 }
@@ -1276,9 +1272,6 @@ impl FindObjWin {
                 }
                 for b in self.buttons() {
                     b.on_event(&mv, &mut inv);
-                }
-                for b in &mut self.opts {
-                    b.on_event(&mv);
                 }
                 let h = self.view_at(p);
                 let hover_changed = h != self.hover;
@@ -1327,11 +1320,12 @@ impl FindObjWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
-                if up {
-                    self.split_drag = false;
-                }
                 let mut popup_took = false;
-                for tb in [&mut self.query, &mut self.schema, &mut self.filter] {
+                if self.qbar.popup_open() {
+                    let _ = self.qbar.on_event(&e, &mut inv);
+                    popup_took = true;
+                }
+                for tb in [&mut self.schema, &mut self.filter] {
                     if tb.popup_open() {
                         tb.on_event(&e, &mut inv);
                         popup_took = true;
@@ -1342,31 +1336,21 @@ impl FindObjWin {
                     return FoAction::None;
                 }
                 if self.server.is_open() {
+                    // 목록/박스 안 = 목록 몫 · 바깥 누름 = 닫기 → `ui.ctxmenu_passthrough` 켬이면 같은 클릭을 아래 컨트롤로 **통과**
+                    //   (검색 버튼이 바로 반응 · 사용자 10-16) · 끔이면 닫기만.
+                    let inside =
+                        self.server.popup_rect().contains(p) || self.server.bounds().contains(p);
                     self.server.on_event(&e, &mut inv);
                     self.server.take_changed();
-                    self.redraw();
-                    return FoAction::None;
-                }
-                if !up && self.split_band.contains(p) {
-                    self.split_drag = true;
-                    return FoAction::None;
-                }
-                // 안쪽 토글(검색어 상자 위에 겹침) — 먹으면 상자로 가지 않는다.
-                let mut opt_hit = false;
-                for b in &mut self.opts {
-                    if up || b.rect.contains(p) {
-                        b.on_event(&e);
-                        if b.rect.contains(p) {
-                            opt_hit = true;
-                        }
-                        if b.take_clicked() {
-                            b.checked = !b.checked;
-                        }
+                    if inside || up || !self.passthrough {
+                        self.redraw();
+                        return FoAction::None;
                     }
                 }
-                if opt_hit {
-                    self.redraw();
-                    return FoAction::None;
+                match self.splitter.on_event(&e) {
+                    SplitEvent::Start => return FoAction::None,
+                    SplitEvent::End => self.redraw(),
+                    _ => {}
                 }
                 // 머리 클릭 = 정렬.
                 if !up {
@@ -1377,8 +1361,8 @@ impl FindObjWin {
                         return FoAction::None;
                     }
                 }
-                if up || self.query.bounds().contains(p) {
-                    self.query.on_event(&e, &mut inv);
+                if up || self.qbar.bounds().contains(p) {
+                    let _ = self.qbar.on_event(&e, &mut inv);
                     if !up {
                         self.own_focus(Focus::Query);
                     }
@@ -1481,8 +1465,8 @@ impl FindObjWin {
                 let (x, y) = self.cursor;
                 let p = Point { x, y };
                 let rd = InputEvent::RightDown { x, y };
-                if self.query.bounds().contains(p) {
-                    self.query.on_event(&rd, &mut inv);
+                if self.qbar.bounds().contains(p) {
+                    let _ = self.qbar.on_event(&rd, &mut inv);
                 } else if self.schema.bounds().contains(p) {
                     self.schema.on_event(&rd, &mut inv);
                 } else if self.filter.bounds().contains(p) {
@@ -1696,40 +1680,29 @@ impl FindObjWin {
             self.run_btn
                 .set_bounds(Rect::new(x, pad, btn_w, box_h), inv);
             // 검색어 상자 + 안쪽 토글 Aa · ab · (.*)(필터 틀과 같은 20px · 간격 2 · 오른쪽 끝에서 거꾸로).
-            let qrect = Rect::new(pad, pad, x - gap - pad, box_h);
-            let tg = px(20.0);
-            let tgap = px(2.0);
-            let mut tx = qrect.right() - px(2.0) - tg;
-            for b in self.opts.iter_mut().rev() {
-                b.rect = Rect::new(tx, qrect.y + (box_h - tg) / 2, tg, tg);
-                tx -= tg + tgap;
-            }
-            self.query.set_scale(s);
-            self.query.set_bounds(
-                Rect::new(
-                    qrect.x,
-                    qrect.y,
-                    (tx + tg + tgap - qrect.x).max(px(80.0)),
-                    box_h,
-                ),
-                inv,
-            );
-            self.ring_rect = qrect;
+            // 검색어 = 필터 틀(× · 토글 틀 안 · 링 둘레) — 객체 탐색기와 같은 부품(사용자 10-16).
+            self.qbar
+                .set_bounds(Rect::new(pad, pad, x - gap - pad, box_h), s);
+            self.qbar.set_clamp_width(wi);
             // ── 2행: 서버 · 스키마
             let y2 = pad + box_h + gap;
+            let ly2 = dc.text_center_y(y2, box_h);
+            // "서버" 라벨(사용자 10-16) — 스키마 라벨과 같은 모양.
+            let slab = t(Msg::FoServerLabel);
+            dc.text(pad, ly2, clip, slab, th.text_dim);
+            let cx0 = pad + dc.text_width(slab) + gap;
             let combo_w = px(260.0);
             self.server.set_scale(s);
             self.server
-                .set_bounds(Rect::new(pad, y2, combo_w, box_h), inv);
+                .set_bounds(Rect::new(cx0, y2, combo_w, box_h), inv);
             // 전 DB 토글(SQL Server) — 서버 콤보 오른쪽.
             let adb_w = px(24.0) + dc.text_width(t(Msg::FoAllDbs)) + px(10.0);
             self.all_dbs.set_scale(s);
             self.all_dbs
-                .set_bounds(Rect::new(pad + combo_w + gap, y2, adb_w, box_h), inv);
+                .set_bounds(Rect::new(cx0 + combo_w + gap, y2, adb_w, box_h), inv);
             let lab = t(Msg::FoSchemaLabel);
             let lab_w = dc.text_width(lab);
-            let ly2 = dc.text_center_y(y2, box_h);
-            let lx = pad + combo_w + gap + adb_w + gap;
+            let lx = cx0 + combo_w + gap + adb_w + gap;
             dc.text(lx, ly2, clip, lab, th.text_dim);
             let sx = lx + lab_w + gap;
             self.schema.set_scale(s);
@@ -1830,12 +1803,14 @@ impl FindObjWin {
                 list_outer.w,
                 (list_outer.h - hdr_h).max(0),
             );
-            self.split_band = Rect::new(pad, list_outer.bottom(), wi - pad * 2, band_h);
+            self.splitter
+                .set_rect(Rect::new(pad, list_outer.bottom(), wi - pad * 2, band_h));
+            let band_bottom = list_outer.bottom() + band_h;
             self.pre_rect = Rect::new(
                 pad,
-                self.split_band.bottom(),
+                band_bottom,
                 wi - pad * 2,
-                (bottom - self.split_band.bottom()).max(0),
+                (bottom - band_bottom).max(0),
             );
             dc.fill_rect(list_outer, th.field_bg);
             dc.fill_rect(
@@ -1954,7 +1929,7 @@ impl FindObjWin {
             let content_h = (n_view as i32 * self.row_h).max(lr.h);
             self.bars
                 .paint(&mut dc, th, lr, lr.w, content_h, 0, self.scroll_y, s);
-            dc.fill_rect(self.split_band, th.border);
+            self.splitter.paint(&mut dc, th);
             // 미리보기
             let pr = self.pre_rect;
             dc.fill_rect(pr, th.field_bg);
@@ -2002,7 +1977,7 @@ impl FindObjWin {
             }
             dc.pop_clip();
             // 컨트롤(팝업은 맨 뒤) · 혜성 링 = 검색어 상자 둘레(진행 중 계속 · 끝나면 완료 깜빡임)
-            self.query.paint(&mut dc, th);
+            self.qbar.paint(&mut dc, th, true);
             self.schema.paint(&mut dc, th);
             self.filter.paint(&mut dc, th);
             for cb in self.all_checks() {
@@ -2012,17 +1987,7 @@ impl FindObjWin {
                 b.paint(&mut dc, th);
             }
             self.server.paint(&mut dc, th);
-            for b in &self.opts {
-                b.paint(&mut dc, th, s);
-            }
-            self.ring.paint(&mut dc, th, self.ring_rect, px(4.0), s);
-            if let Some(b) = self.opts.iter().find(|b| {
-                b.hover_since
-                    .is_some_and(|t0| t0.elapsed().as_millis() >= TOOLTIP_MS)
-            }) {
-                draw_tooltip_in(&mut dc, th, b.rect, (0, wi), t(b.kind.tip()), s);
-            }
-            self.query.paint_popup(&mut dc, th);
+            self.qbar.paint_popup(&mut dc, th);
             self.schema.paint_popup(&mut dc, th);
             self.filter.paint_popup(&mut dc, th);
             if self.menu.is_open() {
@@ -2045,7 +2010,7 @@ impl FindObjWin {
         self.set_opt(BtnKind::Case, flags.contains('c'));
         self.set_opt(BtnKind::Word, flags.contains('w'));
         self.set_opt(BtnKind::Regex, flags.contains('r'));
-        self.query.set_text(text);
+        self.qbar.set_text(text);
         self.start()
     }
 

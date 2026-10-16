@@ -1170,7 +1170,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes
             .iter()
             .filter(|p| !p.ex.is_offline())
-            .map(|p| (p.key.clone(), p.ex.server_label()))
+            .map(|p| (p.key.clone(), p.ex.find_label()))
             .collect()
     }
 

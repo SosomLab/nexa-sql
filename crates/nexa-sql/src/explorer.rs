@@ -5768,6 +5768,15 @@ impl Explorer {
     }
 
     /// ★ 서버 헤더 라벨(101 · D-253): `호스트:포트 (SQL Server 15.0.4375.4 - BISCM_MS)` · 버전을 모르면 종전대로.
+    /// ★ 객체 찾기 창 서버 목록 라벨(사용자 10-16): **프로필 이름**이 있으면 그것 · 없으면(개별 `CONNECT` 등) 끝점(연결 문자열).
+    pub(crate) fn find_label(&self) -> String {
+        if self.profile_name.is_empty() {
+            self.endpoint.clone()
+        } else {
+            self.profile_name.clone()
+        }
+    }
+
     pub(crate) fn server_label(&self) -> String {
         let base = if self.endpoint.is_empty() {
             self.profile_name.clone()

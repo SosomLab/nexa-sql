@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/128-findobj-feedback-2 | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 실기 ⑮~㉔(검색어 ↔ 토글 여백 → `FilterBar` 통합 · 서버 라벨 = 프로필 이름 · 서버 목록 밖 클릭 = `ui.ctxmenu_passthrough` · 스플리터 = `Splitter` · 버튼 hover 틱 결함 · "서버" 라벨 · 🔧 Ctrl+Alt = Windows AltGr → 물리 키 폴백 · 메뉴 이름 "…" 금지 · `ui.menus_close_on_blur`) · E2E 23/0 · 113 §5-2/§5-3 · 61 §2-2-b 14항 · journal 10-16 §6 |
 | feat/128-check-combo | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | ★ T-358 객체 찾기 서버 = 체크박스 다중 선택(nexa-ctl `CheckCombo` 208차 · `FoAction::Search(q, Vec<ConnectSpec>)` 빈 = 전체 · 전부 끔 = 검색 안 함 + 안내 + 결과 비움 · 훅 `findobj.servers:` · 덤프 `servers_sel` · E2E ⑧ 23/0 · V1 ✓) · 113 §5-2 · 30 §2 · journal 10-16 §5 |
 | fix/128-findobj-feedback | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 객체 찾기 실기 3(탐색기에서 보기 = 패널 전환 한 길 `explorer_reveal_show` · 거르기 스크롤 클램프 + 낱말 AND·전 열·이름 퍼지 · 미리보기 한 번 클릭) · E2E 타이밍 접속 기준 21/0 · T-358/T-359 · 113 §5 · journal 10-16 §4 |
 | fix/128-prod-hold-feedback | 2026-10-16 | 2026-10-16 → main(삭제) | 1 | 운영 보류 실기 결함·보강 9(소문자 객체 백업 `fold_ident` · 수동 모드 대기 이중 등재 · 보류 중 `COMMIT;` 문 거부 D-308 · L2 기준 = 가장 오래된 미커밋 D-307 · 무장 카드 "커밋 (N)"+툴바 남은 초 배지 · 자동 모드 상태줄 · 누적) + ★ 프로그램 내장 명령 자동 완성 + 규칙(`COMMAND_WORDS` ↔ `CLIENT_COMMANDS` 시험) · E2E prod-hold 26/0 · 📐 115 · journal 10-16 |

@@ -2501,6 +2501,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 다른 창(모달리스 객체 찾기 등)으로 포커스가 가면 메인 창의 열린 메뉴를 전부 닫는다(사용자 10-16 · 기본 켬 · 유지를 원하면 끔).
+    Entry {
+        key: "ui.menus_close_on_blur",
+        cat: Msg::CatAppearance,
+        label: Msg::LblMenusCloseOnBlur,
+        desc: Msg::DescMenusCloseOnBlur,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.tooltip_above",
         cat: Msg::CatAppearance,

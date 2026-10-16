@@ -223,7 +223,22 @@
 - 서버 콤보 = nexa-ctl **`CheckCombo`**(체크박스 목록 · 항목 0 = "(모두)" · 항목 클릭 = 토글하고 목록은 열린 채 · 바깥/Esc = 닫기 → 바뀌었으면 1회 보고).
 - 얼굴 = 전부 "All servers" · 하나 = 그 서버 라벨 · 여럿 = "N servers" · 없음 = "No server selected".
 - 검색 = `FoAction::Search(q, Vec<ConnectSpec>)`(빈 목록 = 전체) · **전부 끔 = 검색하지 않음** + 안내 + 앞 결과·카운터 비움(`reset_results`).
+- **서버 라벨 = 프로필 이름 우선**(없으면 끝점 · `Explorer::find_label` · 10-16 ⑯) — 목록 · 얼굴 · 결과 "서버" 열 · 거르기 낱말 · 기동 명령이 같은 라벨.
+- 목록을 연 채 바깥 클릭 = 닫기 + `ui.ctxmenu_passthrough` 켬이면 같은 클릭을 아래 컨트롤로 통과(검색 버튼 즉시 · 끔 = 닫기만 · 10-16 ⑰).
+- 검색어 상자 = 객체 탐색기와 같은 **`FilterBar`**(× 지우기 · Aa/ab/(.*) 틀 안 · 혜성 링 = 틀 둘레 · 10-16 ⑱ — ⑮ 여백 5 px는 이 틀로 대체) · 목록 ↔ 미리보기 = nexa-ctl `Splitter`(⑲) · 서버 콤보 앞 "Server" 라벨(㉑).
+- 메뉴 이름 = "Find Objects"/"객체 찾기"(… 없음 · ㉓) · 이 창으로 포커스가 오면 메인 창의 열린 메뉴가 닫힘(`ui.menus_close_on_blur` · ㉔) · 이 창도 blur 때 서버 드롭다운을 닫는다.
 - 체크 상태 = 서버 라벨로 이어 감(연결 목록이 바뀌어도) · 기동 명령 `findobj.servers:all|none|라벨;라벨` · 덤프 `servers_sel=` · E2E `win-findobj-e2e.sh`.
+
+### 5-3. 진입 키 비교(10-16 ㉒)
+
+| 도구 | 객체로 이동(이름) | 객체 검색 창(본문·설명 포함) | 출처 |
+|---|---|---|---|
+| **Nexa SQL** | 탐색기 필터(Ctrl+F) · Ctrl+P `@` | **Ctrl+Alt+F**(객체 찾기 창) | 이 문서 §3 |
+| DataGrip | **Ctrl+N**(Go to Class = 테이블·뷰 등) · Shift Shift(Search Everywhere) | Find in Files 계열(본문) | jetbrains.com/help/datagrip 2022.3 "Searching everywhere" |
+| DBeaver | **Ctrl+Shift+D**(메타데이터 객체 열기) · F4(편집기 열기) | Search 뷰(Ctrl+H) | dbeaver.com/docs/dbeaver/25.2 "Shortcuts" |
+| Toad for Oracle | F4 Describe(커서 아래 객체) | **Object Search = 메뉴만(기본 키 없음)** | support.quest.com toad-for-oracle 2025 R2 Getting Started Guide |
+
+- ⚠ **Windows의 Ctrl+Alt = AltGr**: Ctrl+Alt+글자는 배열에 따라 논리 키가 `Unidentified`/`Dead`로 온다 → 키맵은 조합키가 있으면 **물리 키 이름으로 폴백**(`keymap.rs` `physical_name` · [61 §3](61-core-design-and-working-rules.md)) — 이 수정 전에는 Ctrl+Alt+F/C/T/L/R이 Windows에서 동작하지 않았을 수 있다(실기 확인 대기).
 
 ## 6. 설정 · 키 · i18n
 

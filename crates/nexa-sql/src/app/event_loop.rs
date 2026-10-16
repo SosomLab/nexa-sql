@@ -738,6 +738,14 @@ impl ApplicationHandler<Wake> for App {
                 if !on {
                     // 비활성 = 마우스 상태(hover·툴팁·캡처·링크 hover) 정리(사용자 09-30).
                     self.pointer_gone();
+                    // ★ 다른 창으로 포커스가 가면 열린 메뉴(풀다운·우클릭·드롭다운·완성 팝업) 전부 닫기(사용자 10-16 · 모달리스 객체 찾기 창이
+                    //   앞에 와도 풀다운이 열린 채 남던 것 · `ui.menus_close_on_blur` 끔 = 유지).
+                    if self.settings.flag("ui.menus_close_on_blur") {
+                        let bits = self.open_menus();
+                        if bits != 0 {
+                            self.close_menu_bits(bits);
+                        }
+                    }
                 }
                 // 위상 초기화: 돌아오면 켜진 채로 깜빡임 재개 · 나가면 켜진 채 한 번 그리고 멈춘다(09-24).
                 self.blink_origin = Instant::now();

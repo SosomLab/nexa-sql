@@ -90,18 +90,18 @@ if [ -f "$OUT/f.dump" ]; then
   head -1 "$OUT/f.dump" | grep -Eq "rows=4\|view=2\|" && ok "⑦ 마스터 4 · 보기 2" || bad "⑦ rows/view 셈" "$(head -1 "$OUT/f.dump")"
   sed -n 3p "$OUT/f.dump" | grep -q "showing 2 of 4" && ok "⑦ 둘째 줄 showing 2 of 4" || bad "⑦ showing 없음" "$(sed -n 3p "$OUT/f.dump")"
 fi
-# ⑦-b 거르기 규칙(10-16): 낱말 AND(서버 글 `sqlite` + 이름 조각 `custo` = customer 표 + orders(컬럼 customer_id)) · 이름 퍼지(`cstmr` = customer).
+# ⑦-b 거르기 규칙(10-16): 낱말 AND(서버 라벨 `Local` + 이름 조각 `custo` = customer 표 + orders(컬럼 customer_id)) · 이름 퍼지(`cstmr` = customer).
 mk_home ""
-gui g "$PRE,@connected:@after:4500:findobj.query:customer,@connected:@after:8000:findobj.filter:sqlite custo,@connected:@after:8600:findobj.dump:$(w "$OUT/g1.dump"),@connected:@after:8900:findobj.filter:cstmr,@connected:@after:9500:findobj.dump:$(w "$OUT/g2.dump")" 16
+gui g "$PRE,@connected:@after:4500:findobj.query:customer,@connected:@after:8000:findobj.filter:local custo,@connected:@after:8600:findobj.dump:$(w "$OUT/g1.dump"),@connected:@after:8900:findobj.filter:cstmr,@connected:@after:9500:findobj.dump:$(w "$OUT/g2.dump")" 16
 if [ -f "$OUT/g2.dump" ]; then
-  head -1 "$OUT/g1.dump" | grep -Eq "rows=4\|view=2\|" && has g1.dump "Table|main|customer|" && has g1.dump "Table|main|orders|" && ok "⑦-b 낱말 AND(서버+이름 조각) = 2" || bad "⑦-b AND" "$(cat "$OUT/g1.dump")"
+  head -1 "$OUT/g1.dump" | grep -Eq "rows=4\|view=2\|" && has g1.dump "Table|main|customer|" && has g1.dump "Table|main|orders|" && ok "⑦-b 낱말 AND(서버 라벨+이름 조각) = 2" || bad "⑦-b AND" "$(cat "$OUT/g1.dump")"
   has g2.dump "Table|main|customer|" && ! has g2.dump "Table|main|orders|" && ok "⑦-b 이름 퍼지 cstmr = customer만" || bad "⑦-b 퍼지" "$(cat "$OUT/g2.dump")"
 else
   bad "⑦-b 덤프 없음" "$(tail -4 "$OUT/g.stderr")"
 fi
 # ⑧ 서버 다중 선택(T-358 · 10-16): 전부 끔 = 검색 안 함 + 안내 · 라벨 하나만 켬 = 그 서버만(servers 1/1) · 덤프 servers_sel.
 mk_home ""
-gui h "$PRE,@connected:@after:4000:findobj.servers:none,@connected:@after:4500:findobj.query:customer,@connected:@after:6000:findobj.dump:$(w "$OUT/h1.dump"),@connected:@after:6300:findobj.servers:local.sqlite,@connected:@after:6800:findobj.query:customer,@connected:@after:10000:findobj.dump:$(w "$OUT/h2.dump")" 17
+gui h "$PRE,@connected:@after:4000:findobj.servers:none,@connected:@after:4500:findobj.query:customer,@connected:@after:6000:findobj.dump:$(w "$OUT/h1.dump"),@connected:@after:6300:findobj.servers:Local,@connected:@after:6800:findobj.query:customer,@connected:@after:10000:findobj.dump:$(w "$OUT/h2.dump")" 17
 if [ -f "$OUT/h2.dump" ]; then
   head -1 "$OUT/h1.dump" | grep -q "servers=0/0" && has h1.dump "No server selected" && head -1 "$OUT/h1.dump" | grep -q "servers_sel=0" && ok "⑧ 전부 끔 = 검색 안 함 + 안내" || bad "⑧ 전부 끔" "$(head -1 "$OUT/h1.dump")"
   head -1 "$OUT/h2.dump" | grep -q "servers=1/1" && head -1 "$OUT/h2.dump" | grep -q "servers_sel=all" && has h2.dump "Table|main|customer|" && ok "⑧ 라벨 하나 = 그 서버만(유일 = 전체)" || bad "⑧ 라벨 선택" "$(head -1 "$OUT/h2.dump")"

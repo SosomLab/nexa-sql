@@ -38,6 +38,8 @@ impl App {
         let max = self.settings.int("findobj.max_hits").max(0) as usize;
         let per = self.settings.int("findobj.lines_per_object").max(0) as usize;
         self.findobj_win.set_limits(max, per);
+        self.findobj_win
+            .set_passthrough(self.settings.flag("ui.ctxmenu_passthrough"));
         let tg = self
             .settings
             .get("findobj.targets")
