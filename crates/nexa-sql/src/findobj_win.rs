@@ -2645,6 +2645,16 @@ impl FindObjWin {
             l1,
             l2
         );
+        // ★ 화면 내보내기 진단(130차 mac · 검색 중 깜빡임): 뒷단 이름 · 표면 수 · 세 장이 다 바빠 건너뛴 프레임 수(많으면 합성기가 못 따라옴).
+        if let Some(sf) = &self.surface {
+            s.push_str(&format!(
+                "present={}|surfaces={}|busy_reuse={}|forced={}\n",
+                sf.backend(),
+                sf.surface_count(),
+                sf.busy_reuse(),
+                sf.forced()
+            ));
+        }
         // 반응 계측·소비자 판정 줄(10-16): 마지막 누름을 먹은 분기 · 미리보기 영역 기하 · 선택 줄 · 마지막으로 연 (행 · 줄).
         s.push_str(&format!(
             "consumed={}|pre_rect={},{},{},{}|pre_scroll={}|row_h={}|pre_sel={:?}|last_opened={:?}|sel={:?}|btn_open={}|btn_reveal={}\n",

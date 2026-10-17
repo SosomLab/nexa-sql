@@ -633,7 +633,10 @@ impl ApplicationHandler<Wake> for App {
             //   한 번만 요청하고 그 사이에는 다른 창이 그려진다. 페이드(스플리터·버튼·행 hover)도 이 간격이면 충분하다.
             if now >= self.findobj_next_frame {
                 self.findobj_win.redraw();
-                self.findobj_next_frame = now + Duration::from_millis(16);
+                // ★ macOS = 33 ms(130차 mac · 검색 중 깜빡임): IOSurface 표면 4장이 16 ms 주기에선 합성기 반납보다 빨라 프레임 1/4이
+                //   건너뛰어졌다(`busy_reuse` 16회/s) → 주기를 반으로 줄여 합성기가 따라오게 한다(혜성·페이드는 30 fps면 충분).
+                let ms = if cfg!(target_os = "macos") { 33 } else { 16 };
+                self.findobj_next_frame = now + Duration::from_millis(ms);
             }
             next = next.min(self.findobj_next_frame);
         }

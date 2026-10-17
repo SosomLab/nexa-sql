@@ -7,7 +7,7 @@
 //! 모양은 `softbuffer::Surface`와 같다(`resize` → `buffer_mut` → 그리기 → `present`) — 창 코드가 뒷단을 모른다.
 //! 방식은 **창을 만들 때** 정해진다(설정을 바꾸면 새로 여는 창부터 · 메인 창은 재시작 뒤).
 //!
-//! ★ **유휴 해제**(118차 mac · nexa-ui 193차 `LayerPresenter::trim_idle`): IOSurface 풀(≤3장)은 레티나 메인 창에서 장당 ≈16 MB다.
+//! ★ **유휴 해제**(118차 mac · nexa-ui 193차 `LayerPresenter::trim_idle`): IOSurface 풀(≤4장 · 213차)은 레티나 메인 창에서 장당 ≈16 MB다.
 //! 마지막 프레임 뒤 `gfx.mac_present_trim_ms`(1500 · 0 = 끔) 동안 프레임이 없으면 호스트 틱이 [`Presenter::trim_if_idle`]로 앞 장(+잠긴 장)만
 //! 남긴다 — 다음 프레임은 새 장을 만든다(유휴 메모리 ↔ 첫 프레임 `IOSurfaceCreate` 1회의 거래). softbuffer = 할 일 없음(0).
 
@@ -148,11 +148,27 @@ impl Presenter {
         self.buffer_mut().ok()
     }
 
-    /// 지금 쥔 표면(프레임 버퍼) 장수 — IOSurface = 풀 길이(0~3 · 유휴 해제 뒤 1) · softbuffer = 1. 메모리 창 "표면" = 창 픽셀 × 4 × 이 값.
+    /// 지금 쥔 표면(프레임 버퍼) 장수 — IOSurface = 풀 길이(0~4 · 213차부터 상한 4 · 유휴 해제 뒤 1) · softbuffer = 1. 메모리 창 "표면" = 창 픽셀 × 4 × 이 값.
     pub(crate) fn surface_count(&self) -> u64 {
         match &self.kind {
             Kind::Soft { .. } => 1,
             Kind::Layer { p, .. } => p.pool_len() as u64,
+        }
+    }
+
+    /// ★ 진단(nexa-ui 213차 · 130차 mac 깜빡임): 세 장이 다 바빠 **프레임을 건너뛴** 횟수(IOSurface만 · 합성기가 쥔 장엔 그리지 않는다 · softbuffer = 0).
+    pub(crate) fn busy_reuse(&self) -> u64 {
+        match &self.kind {
+            Kind::Soft { .. } => 0,
+            Kind::Layer { p, .. } => p.busy_reuse(),
+        }
+    }
+
+    /// ★ 진단: 연속 건너뛰기 상한을 넘어 바쁜 장에 강제로 그린 횟수(0이어야 정상 · 이때만 빈 프레임 가능).
+    pub(crate) fn forced(&self) -> u64 {
+        match &self.kind {
+            Kind::Soft { .. } => 0,
+            Kind::Layer { p, .. } => p.forced(),
         }
     }
 
