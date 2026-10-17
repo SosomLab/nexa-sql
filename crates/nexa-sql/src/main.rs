@@ -1465,6 +1465,8 @@ fn main() {
         )
     });
     nsql_i18n::set_lang(settings.lang());
+    // ★ T-369: 스크립트 엔진 메시지도 화면 언어를 따른다(영어 기본 · nsql-script는 의존 0이라 코드로 전달).
+    nsql_script::set_lang(nsql_script::Lang::from_code(settings.lang().code()));
     // nexa-ctl 내장 메뉴(우클릭 편집) 라벨을 앱 i18n에 잇는다 — 미주입 기본은 영어.
     nexa_ctl::controls::set_ctl_labels(|m| {
         use nexa_ctl::controls::CtlMsg as C;

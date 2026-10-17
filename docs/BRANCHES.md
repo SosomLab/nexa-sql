@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/130-t369-t370 | 2026-10-17 | 2026-10-17 → main(삭제) | 1 | 130차 mac — T-369 엔진 메시지 영어 기본 + 화면 언어(nsql-script lang.rs tr! · 34곳 · 호스트 set_lang) · T-370 health.dump present 진단 · 결정(T-368 제외 · IC 23.x 완료 · NSQLT_FLUSH_DEMO 3곳 제거 · output-flush-e2e pg-drop) · journal §11·§17 · 61 규칙 · TODO |
 | (main 직접) | 2026-10-17 | 2026-10-17 → main | 1 | 🚀 버전 0.2.4 = **b99d23c** · 태그 **v0.2.4**(공개 08:36:36Z · release 39017162902 ✓) |
 | fix/130-flicker | 2026-10-17 | 2026-10-17 → main(삭제) · 01c5be9 | 1 | 130차 mac — 객체 찾기 검색 중 깜빡임(nexa-ui 213차 소비 · 맥 33 ms · findobj.dump 진단) · T-367 사용자 ✓ · journal §15 · 62 · 39 · TODO T-370 |
 | (main 직접) | 2026-10-17 | 2026-10-17 → main | 1 | 🚀 버전 0.2.3 = **cd0037e** · 태그 **v0.2.3**(공개 03:19:20Z · release 38997057540 ✓ = publish 408 → 재실행) |

@@ -414,7 +414,10 @@ impl Engine {
                 }
                 _ => {
                     self.vars.declare(n, nsql_core::VarType::Auto, None);
-                    vec![Action::Nothing(format!("variable {n} 선언 tab"))]
+                    vec![Action::Nothing(tr!(
+                        "variable {n} declared (tab)",
+                        "변수 {n} 선언(탭)"
+                    ))]
                 }
             },
             Command::Variable {
@@ -423,7 +426,10 @@ impl Engine {
                 init,
             } => {
                 self.vars.declare(n, t.clone(), init.clone());
-                vec![Action::Nothing(format!("variable {n} 선언"))]
+                vec![Action::Nothing(tr!(
+                    "variable {n} declared",
+                    "변수 {n} 선언"
+                ))]
             }
             Command::VarScope { name, layer } => {
                 // ★ 없는 이름이면 **그 층에 새로 선언**(사용자 10-07 시나리오 "`VAR A GLOBAL` 뒤 `EXEC :A := 10`" · 종전엔 "변수가 없습니다") —
@@ -439,7 +445,10 @@ impl Engine {
                     let tail = if created { " (new)" } else { "" };
                     vec![Action::Nothing(format!("variable {name} {layer}{tail}"))]
                 } else {
-                    vec![Action::Error(format!("변수 {name}가 없습니다"))]
+                    vec![Action::Error(tr!(
+                        "variable {name} does not exist",
+                        "변수 {name}가 없습니다"
+                    ))]
                 }
             }
             // ★ 범위 제거(사용자 10-07 · docs/63 §11-4): 지운 뒤 가려져 있던 아래 층(글로벌·프로필)이 다시 보인다.
@@ -448,7 +457,10 @@ impl Engine {
                     let scope = if *global { " global" } else { "" };
                     vec![Action::Nothing(format!("variable {name} drop{scope}"))]
                 } else {
-                    vec![Action::Error(format!("변수 {name}가 없습니다"))]
+                    vec![Action::Error(tr!(
+                        "variable {name} does not exist",
+                        "변수 {name}가 없습니다"
+                    ))]
                 }
             }
             Command::VarClear { global, shared } => {
@@ -465,9 +477,13 @@ impl Engine {
                 self.vars.declare(name, ty.clone(), init.clone());
                 if self.vars.set_layer(name, *layer) {
                     let layer = layer.word();
-                    vec![Action::Nothing(format!("variable {name} 선언 {layer}"))]
+                    vec![Action::Nothing(tr!(
+                        "variable {name} declared {layer}",
+                        "변수 {name} 선언 {layer}"
+                    ))]
                 } else {
-                    vec![Action::Error(format!(
+                    vec![Action::Error(tr!(
+                        "variable {name} cannot be moved to {}",
                         "변수 {name}를 {}로 옮길 수 없습니다",
                         layer.word()
                     ))]
@@ -486,7 +502,12 @@ impl Engine {
                 for n in names {
                     match self.vars.get(n) {
                         Some(v) => out.push((n.clone(), v.value.clone())),
-                        None => return vec![Action::Error(format!("변수 {n}가 없습니다"))],
+                        None => {
+                            return vec![Action::Error(tr!(
+                                "variable {n} does not exist",
+                                "변수 {n}가 없습니다"
+                            ))]
+                        }
                     }
                 }
                 vec![Action::Print(out)]
@@ -551,7 +572,10 @@ impl Engine {
                     let shown = self.define_display(n, &v);
                     vec![Action::Print(vec![(n.clone(), Value::Str(shown))])]
                 }
-                None => vec![Action::Error(format!("치환 변수 {n}가 없습니다"))],
+                None => vec![Action::Error(tr!(
+                    "substitution variable {n} is not defined",
+                    "치환 변수 {n}가 없습니다"
+                ))],
             },
             Command::Column {
                 name,

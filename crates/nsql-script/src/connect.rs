@@ -121,7 +121,10 @@ impl ConnectSpec {
     pub fn parse(arg: &str) -> Result<ConnectSpec, String> {
         let mut s = strip_quotes(arg.trim()).trim().to_string();
         if s.is_empty() {
-            return Err("CONNECT: 접속 문자열이 없습니다".into());
+            return Err(tr!(
+                "CONNECT: connection string is missing",
+                "CONNECT: 접속 문자열이 없습니다"
+            ));
         }
         let mut spec = ConnectSpec::default();
         let mut url_form = false;
@@ -151,7 +154,10 @@ impl ConnectSpec {
             let scheme = s[..i].to_string();
             spec.dialect = Dialect::from_name(&scheme);
             if spec.dialect.is_none() {
-                return Err(format!("CONNECT: 알 수 없는 스킴 '{scheme}'"));
+                return Err(tr!(
+                    "CONNECT: unknown scheme '{scheme}'",
+                    "CONNECT: 알 수 없는 스킴 '{scheme}'"
+                ));
             }
             s = s[i + 3..].to_string();
         } else if let Some(i) = s.find(':') {
@@ -179,7 +185,10 @@ impl ConnectSpec {
                     if k.eq_ignore_ascii_case("dialect") || k.eq_ignore_ascii_case("type") {
                         spec.dialect = Dialect::from_name(v);
                         if spec.dialect.is_none() {
-                            return Err(format!("CONNECT: 알 수 없는 방언 '{v}'"));
+                            return Err(tr!(
+                                "CONNECT: unknown dialect '{v}'",
+                                "CONNECT: 알 수 없는 방언 '{v}'"
+                            ));
                         }
                     } else if k.eq_ignore_ascii_case("schema") && !v.trim().is_empty() {
                         spec.schema = Some(percent_decode(v.trim()));
@@ -234,9 +243,13 @@ impl ConnectSpec {
             };
             let (host, port) = match hostport.rfind(':') {
                 Some(i) => {
-                    let p = hostport[i + 1..]
-                        .parse::<u16>()
-                        .map_err(|_| format!("CONNECT: 포트 '{}'", &hostport[i + 1..]))?;
+                    let p = hostport[i + 1..].parse::<u16>().map_err(|_| {
+                        tr!(
+                            "CONNECT: bad port '{}'",
+                            "CONNECT: 포트 '{}'",
+                            &hostport[i + 1..]
+                        )
+                    })?;
                     (&hostport[..i], Some(p))
                 }
                 None => (hostport, None),
@@ -248,7 +261,10 @@ impl ConnectSpec {
             spec.database = db.filter(|d| !d.is_empty()).map(str::to_string);
         }
         if spec.user.is_none() && spec.host.is_none() {
-            return Err("CONNECT: 사용자 또는 대상이 필요합니다".into());
+            return Err(tr!(
+                "CONNECT: a user or a target is required",
+                "CONNECT: 사용자 또는 대상이 필요합니다"
+            ));
         }
         Ok(spec)
     }
@@ -283,14 +299,17 @@ impl ConnectSpec {
         if dialect.is_file_based() {
             let Some(db) = opt(database) else {
                 return Err(match dialect {
-                    Dialect::Sqlite => "SQLite: 파일 경로(또는 :memory:)가 필요합니다".into(),
-                    _ => "ODBC: DSN이 필요합니다".into(),
+                    Dialect::Sqlite => tr!(
+                        "SQLite: a file path (or :memory:) is required",
+                        "SQLite: 파일 경로(또는 :memory:)가 필요합니다"
+                    ),
+                    _ => tr!("ODBC: a DSN is required", "ODBC: DSN이 필요합니다"),
                 });
             };
             spec.database = Some(db);
         } else {
             let Some(h) = opt(host) else {
-                return Err("호스트가 필요합니다".into());
+                return Err(tr!("a host is required", "호스트가 필요합니다"));
             };
             spec.host = Some(h);
             spec.port = port.or_else(|| dialect.default_port());

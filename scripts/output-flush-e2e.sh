@@ -77,7 +77,7 @@ BEGIN
 END $$;
 SQL
 printf 'CALL public.nsqlt_flush_demo();\n' > "$D/pg-run.sql"
-printf 'DROP PROCEDURE IF EXISTS public.nsqlt_flush_demo();\n' > "$D/pg-drop.sql"
+printf 'DROP PROCEDURE IF EXISTS public.nsqlt_flush_demo;\n' > "$D/pg-drop.sql"   # 인자 없이 이름으로(시그니처 (int,int,int) · '()'는 일치 안 함 · 10-17)
 cat > "$D/sqlite-run.sql" <<'SQL'
 PROMPT NSQLT flush 1/2 (client)
 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 3000000) SELECT count(*) FROM c;

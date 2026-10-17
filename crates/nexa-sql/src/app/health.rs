@@ -361,6 +361,16 @@ impl App {
         out.push_str(&format!("\nnetwatch={}", self.netwatch.is_some()));
         // ★ T-352 OS 파일 열기 사건 받기(macOS = true 기대 · 그 밖 OS = false).
         out.push_str(&format!("\nopenfiles={}", self.os_open_files));
+        // ★ T-370(10-17): 메인 창 화면 내보내기 진단 — 뒷단 · 표면 수 · 건너뛴 프레임 · 강제 그리기(0이어야 정상 · nexa-ui 213차).
+        if let Some(sf) = &self.surface {
+            out.push_str(&format!(
+                "\npresent={}|surfaces={}|busy_reuse={}|forced={}",
+                sf.backend(),
+                sf.surface_count(),
+                sf.busy_reuse(),
+                sf.forced()
+            ));
+        }
         out
     }
 }

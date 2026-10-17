@@ -15,6 +15,8 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+#[macro_use]
+pub mod lang;
 pub mod bind;
 pub mod builtins;
 pub mod call;
@@ -40,6 +42,7 @@ pub use connect::{ConnEnv, ConnectSpec, ENV_CHOICES};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine, SYSTEM_VARS};
 pub use inputs::{macro_refs, missing_inputs, InputKind, InputNeed};
+pub use lang::{lang, set_lang, Lang};
 pub use split::{classify_sql, split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};
 pub use vars::{looks_secret, vars_from_script, vars_to_script, Layer, Var, VarState, VarStore};

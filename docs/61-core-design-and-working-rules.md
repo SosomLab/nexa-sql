@@ -162,6 +162,8 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 - ★ **툴바 글자 항목(10-01)**: 글이 바뀌는 항목(`ToolItem::text` + `set_item_label`)은 그룹 사각형이 낡는다 — nexa-ctl `ToolDock`이 paint에서 감지해 `relayout_if_stale`로 재배치하므로 호스트는 paint 뒤 그 함수를 한 번 부른다(`app/paint.rs`). 새 글자 항목을 넣을 때 **글이 길어진 뒤 클릭이 닿는지** 실기 1회.
 
+- ★ **스크립트 엔진 메시지 = `tr!` 영어 기본 + 호스트 `set_lang`(10-17 · T-369)**: nsql-script는 의존 0이라 `nsql-i18n::Msg`를 못 쓴다 → 사용자에게 보이는 엔진 메시지는 `tr!(영어, 한국어)`로 쓰고, 언어는 호스트(GUI 기동·언어 전환 · nsql-cli)가 `nsql_script::set_lang`으로 정한다 · 새 엔진 메시지에 한국어 리터럴만 넣지 않는다.
+
 - ★ **메뉴 항목 id 접두(10-01 ㉔)**: `ContextMenu` 항목 id의 `starts_with` 분기를 더할 때 **같은 메뉴의 기존 접두와 겹치지 않는지** grep 한다(`sess.use:` 둘 = 연결 고르기가 스키마 `"0"`으로 — guard 분기라 컴파일러가 닿지 않는 코드를 못 잡는다).
 
 ### 2-3. 검증 규칙(이번 주에 효과가 있었던 방법)

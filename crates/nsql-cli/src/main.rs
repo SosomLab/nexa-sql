@@ -1997,6 +1997,7 @@ fn main() {
     // 언어는 설정 파일(ui.lang · 기본 영어)에서 — 폴더를 모르면 기본값(T-37).
     if let Ok(s) = settings_cached() {
         nsql_i18n::set_lang(s.lang());
+        nsql_script::set_lang(nsql_script::Lang::from_code(s.lang().code()));
     }
     let t_settings = std::time::Instant::now();
     let o = parse_opts();

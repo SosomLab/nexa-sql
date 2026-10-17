@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-17 저녁 (130차 · mac · T-369/T-370)** — nsql-script 엔진 메시지 i18n(`tr!` 영어 기본 · 34곳) · `health.dump` 화면 진단 · T-368 제외 · 시험 프로시저 제거 — journal 10-16 §17.
 - **2026-10-17 오후 (130차 · mac · 🚀 v0.2.4)** — 맥 객체 찾기 깜빡임 치명 수정 패치 b99d23c · 축소 검증 · 공개 08:36:36Z · Homebrew d623e1e · pkg.sosomlab.com 0.2.4 · winget/choco 제출 0 — journal 10-16 §16.
 - **2026-10-17 오후 (130차 · mac · 깜빡임)** — 🔧 맥 객체 찾기 검색 중 깜빡임 = iosurface 장 선택(nexa-ui 213차 · 건너뛰기 · 풀 4 · forced · 33 ms) · 사용자 ✓ · T-370 후보 — journal 10-16 §15.
 - **2026-10-17 오전 (130차 · mac · 🚀 v0.2.3)** — 패치 릴리스 cd0037e · 축소 검증 · publish HTTP 408 → 재실행 · 공개 03:19:20Z · Homebrew 7a9b1e3 · pkg.sosomlab.com 0.2.3 · winget/choco 제출 0 — journal 10-16 §14.

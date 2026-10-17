@@ -266,6 +266,7 @@ impl App {
             }
             "ui.lang" => {
                 nsql_i18n::set_lang(self.settings.lang());
+                nsql_script::set_lang(nsql_script::Lang::from_code(self.settings.lang().code()));
                 self.relabel();
             }
             "ui.hover_color" | "ui.pressed_color" => {
@@ -1164,6 +1165,7 @@ impl App {
         self.persist_settings();
         let next = self.settings.lang();
         nsql_i18n::set_lang(next);
+        nsql_script::set_lang(nsql_script::Lang::from_code(next.code()));
         self.relabel();
         let shown = if code == nsql_settings::LANG_SYSTEM {
             format!("{} ({})", t(Msg::ValSystem), next.endonym())
@@ -1191,6 +1193,7 @@ impl App {
         self.persist_settings();
         let next = self.settings.lang();
         nsql_i18n::set_lang(next);
+        nsql_script::set_lang(nsql_script::Lang::from_code(next.code()));
         self.relabel();
         let shown = if next_code == nsql_settings::LANG_SYSTEM {
             format!("{} ({})", t(Msg::ValSystem), next.endonym())

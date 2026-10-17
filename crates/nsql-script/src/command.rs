@@ -233,7 +233,8 @@ pub fn print_text_hint(tsql_print: bool, text: &str) -> Option<String> {
     if rest.is_empty() {
         return None;
     }
-    Some(format!(
+    Some(tr!(
+        "PRINT shows bind variable values (PRINT name …) — use PROMPT text to print text · T-SQL `PRINT '…'` is a server statement only on SQL Server (got: {rest})",
         "PRINT는 바인드 변수 값을 표시합니다(PRINT 이름 …) — 글을 표시하려면 PROMPT 글 · T-SQL `PRINT '…'`는 SQL Server 방언에서만 서버 문장입니다 (받은 인자: {rest})"
     ))
 }
@@ -257,7 +258,10 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
     }
     if let Some(rest) = t.strip_prefix(":setvar") {
         let mut it = rest.split_whitespace();
-        let name = it.next().ok_or(":setvar: 이름이 필요합니다")?.to_string();
+        let name = it
+            .next()
+            .ok_or_else(|| tr!(":setvar: a name is required", ":setvar: 이름이 필요합니다"))?
+            .to_string();
         let value = it.collect::<Vec<_>>().join(" ");
         let value = if value.is_empty() {
             None
@@ -438,7 +442,12 @@ fn parse_column(rest: &str) -> Result<Command, String> {
     let mut it = words.into_iter();
     let name = it
         .next()
-        .ok_or_else(|| "COLUMN: 열 이름이 필요합니다".to_string())?
+        .ok_or_else(|| {
+            tr!(
+                "COLUMN: a column name is required",
+                "COLUMN: 열 이름이 필요합니다"
+            )
+        })?
         .to_ascii_uppercase();
     let (mut new_value, mut clear) = (None, false);
     while let Some(w) = it.next() {
@@ -447,7 +456,12 @@ fn parse_column(rest: &str) -> Result<Command, String> {
             new_value = Some(
                 it.next()
                     .filter(|v| v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
-                    .ok_or_else(|| "COLUMN … NEW_VALUE: 변수 이름이 필요합니다".to_string())?
+                    .ok_or_else(|| {
+                        tr!(
+                            "COLUMN … NEW_VALUE: a variable name is required",
+                            "COLUMN … NEW_VALUE: 변수 이름이 필요합니다"
+                        )
+                    })?
                     .to_ascii_uppercase(),
             );
         } else if up == "CLE" || up == "CLEAR" {
@@ -468,7 +482,12 @@ fn parse_accept(rest: &str) -> Result<Command, String> {
     let name = it
         .next()
         .filter(|n| n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
-        .ok_or_else(|| "ACCEPT: 변수 이름이 필요합니다".to_string())?
+        .ok_or_else(|| {
+            tr!(
+                "ACCEPT: a variable name is required",
+                "ACCEPT: 변수 이름이 필요합니다"
+            )
+        })?
         .to_ascii_uppercase();
     let (mut default, mut prompt, mut hide) = (None, None, false);
     while let Some(w) = it.next() {
@@ -481,7 +500,12 @@ fn parse_accept(rest: &str) -> Result<Command, String> {
             "PROMPT" => prompt = it.next(),
             "NOPR" | "NOPROMPT" => prompt = Some(String::new()),
             "HIDE" => hide = true,
-            other => return Err(format!("ACCEPT: 알 수 없는 옵션 {other}")),
+            other => {
+                return Err(tr!(
+                    "ACCEPT: unknown option {other}",
+                    "ACCEPT: 알 수 없는 옵션 {other}"
+                ))
+            }
         }
     }
     Ok(Command::Accept {
@@ -510,10 +534,18 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
                 None => (false, false),
                 Some("GLOBAL") => (true, false),
                 Some("ALL") => (true, true),
-                Some(o) => return Err(format!("VARIABLE CLEAR: 알 수 없는 옵션 {o}")),
+                Some(o) => {
+                    return Err(tr!(
+                        "VARIABLE CLEAR: unknown option {o}",
+                        "VARIABLE CLEAR: 알 수 없는 옵션 {o}"
+                    ))
+                }
             };
             if it.next().is_some() {
-                return Err("VARIABLE CLEAR: 옵션이 너무 많습니다".into());
+                return Err(tr!(
+                    "VARIABLE CLEAR: too many options",
+                    "VARIABLE CLEAR: 옵션이 너무 많습니다"
+                ));
             }
             return Ok(Command::VarClear { global, shared });
         }
@@ -586,7 +618,12 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
     let ty = if ty_text.is_empty() && init_text.is_some() {
         VarType::Auto
     } else {
-        VarType::parse(ty_text).ok_or_else(|| format!("VARIABLE: 알 수 없는 타입 '{ty_text}'"))?
+        VarType::parse(ty_text).ok_or_else(|| {
+            tr!(
+                "VARIABLE: unknown type '{ty_text}'",
+                "VARIABLE: 알 수 없는 타입 '{ty_text}'"
+            )
+        })?
     };
     let init = init_text.map(parse_literal).transpose()?;
     if let Some(layer) = layer_in {
@@ -637,7 +674,7 @@ pub fn parse_literal(s: &str) -> Result<Value, String> {
         let inner = &s[1..s.len() - 1];
         // 홀수 개의 따옴표가 중간에 있으면 리터럴이 아니다('a' || 'b').
         if inner.replace("''", "").contains('\'') {
-            return Err("리터럴이 아님".into());
+            return Err(tr!("not a literal", "리터럴이 아님"));
         }
         return Ok(Value::Str(inner.replace("''", "'")));
     }
@@ -650,7 +687,7 @@ pub fn parse_literal(s: &str) -> Result<Value, String> {
     {
         return Ok(Value::Decimal(s.to_string()));
     }
-    Err("리터럴이 아님".into())
+    Err(tr!("not a literal", "리터럴이 아님"))
 }
 
 /// SQL*Plus 표시·세션 옵션 이름(우리가 먹는 것) — 그 밖의 `SET …`은 서버 문장으로 통과한다(09-15 · T-SQL `SET NOCOUNT ON` 등이
@@ -775,11 +812,14 @@ fn parse_set(rest: &str) -> Result<Option<Command>, String> {
         }
         "VER" | "VERIFY" => SetOption::Verify(on_off(value)),
         "ECHO" => SetOption::Echo(on_off(value)),
-        "ARRAY" | "ARRAYSIZE" | "FETCHROWS" => SetOption::FetchSize(
-            value
-                .parse()
-                .map_err(|_| format!("SET {name}: 숫자가 필요합니다"))?,
-        ),
+        "ARRAY" | "ARRAYSIZE" | "FETCHROWS" => {
+            SetOption::FetchSize(value.parse().map_err(|_| {
+                tr!(
+                    "SET {name}: a number is required",
+                    "SET {name}: 숫자가 필요합니다"
+                )
+            })?)
+        }
         "SQLFORMAT" => SetOption::SqlFormat(value.to_ascii_lowercase()),
         "CONNTYPE" => SetOption::Other {
             name: "CONNTYPE".into(),

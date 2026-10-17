@@ -94,7 +94,11 @@ fn parse(text: &str) -> Result<Raw, String> {
                 cur = Some(("clause".into(), norm(n)));
                 raw.clauses.entry(norm(n)).or_default();
             } else {
-                return Err(format!("{}: 모르는 절 머리 [{body}]", ln + 1));
+                return Err(tr!(
+                    "{}: unknown section header [{body}]",
+                    "{}: 모르는 절 머리 [{body}]",
+                    ln + 1
+                ));
             }
             continue;
         }
@@ -103,7 +107,11 @@ fn parse(text: &str) -> Result<Raw, String> {
         } else if let Some((k, v)) = line.split_once('=') {
             (k.trim(), false, v.trim())
         } else {
-            return Err(format!("{}: `키 = 값`이 아님: {line}", ln + 1));
+            return Err(tr!(
+                "{}: not a `key = value` line: {line}",
+                "{}: `키 = 값`이 아님: {line}",
+                ln + 1
+            ));
         };
         match (&cur, key) {
             (None, "dialect") => raw.dialect = val.to_ascii_lowercase(),
@@ -144,11 +152,20 @@ fn parse(text: &str) -> Result<Raw, String> {
                 let e = raw.clauses.entry(name.clone()).or_default();
                 e.same = Some(norm(val));
             }
-            _ => return Err(format!("{}: 이 자리에 올 수 없는 키 `{key}`", ln + 1)),
+            _ => {
+                return Err(tr!(
+                    "{}: key `{key}` is not allowed here",
+                    "{}: 이 자리에 올 수 없는 키 `{key}`",
+                    ln + 1
+                ))
+            }
         }
     }
     if raw.dialect.is_empty() {
-        return Err("`dialect = 이름` 줄이 없다".into());
+        return Err(tr!(
+            "missing `dialect = name` line",
+            "`dialect = 이름` 줄이 없다"
+        ));
     }
     Ok(raw)
 }
@@ -269,9 +286,13 @@ fn build(reg: &mut Registry, name: &str, depth: usize) -> Result<Arc<Grammar>, S
         return Ok(g.clone());
     }
     if depth > 4 {
-        return Err(format!("{name}: extends 사슬이 너무 깊다"));
+        return Err(tr!(
+            "{name}: extends chain is too deep",
+            "{name}: extends 사슬이 너무 깊다"
+        ));
     }
-    let text = source_text(reg, name).ok_or_else(|| format!("{name}: 문법 파일 없음"))?;
+    let text = source_text(reg, name)
+        .ok_or_else(|| tr!("{name}: grammar file not found", "{name}: 문법 파일 없음"))?;
     let raw = parse(&text).map_err(|e| format!("{name}: {e}"))?;
     let base = match &raw.extends {
         Some(b) if b != name => Some(build(reg, b, depth + 1)?),

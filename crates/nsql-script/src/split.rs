@@ -156,7 +156,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
                 let text = format!("EXEC {}", body.trim());
                 let kind = match parse_command(&text) {
                     Ok(Some(c)) => ItemKind::Command(c),
-                    Ok(None) => ItemKind::Invalid("EXEC 본문 없음".into()),
+                    Ok(None) => ItemKind::Invalid(tr!("EXEC: body is missing", "EXEC 본문 없음")),
                     Err(e) => ItemKind::Invalid(e),
                 };
                 items.push(Item {
