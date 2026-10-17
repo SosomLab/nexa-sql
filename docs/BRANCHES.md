@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-10-17 | 2026-10-17 → main | 1 | 🚀 버전 0.2.3 = **cd0037e** · 태그 **v0.2.3**(공개 03:19:20Z · release 38997057540 ✓ = publish 408 → 재실행) |
+| fix/130-t367-clipboard | 2026-10-17 | 2026-10-17 → main(삭제) · 1af10da | 1 | 130차 mac 2차 — T-367 비-T-SQL `PRINT '글'` 안내 · 맥 클립보드 한글 `?`(pbpaste C 로캘 → `imp::cmd` 로캘 고정) · 규칙 2(그날 풀 테스트 뒤 = V1·V2만 · 재시작 = 실제 설정) · 문서 |
 | test/130-flush-e2e | 2026-10-17 | 2026-10-17 → main(삭제) · 4cc9d93 | 1 | 130차 mac — flush 실시간 Output 시험(사용자 지시 · 협업 수행) = 저장소 자산 `scripts/output-flush-e2e.sh`(생성·실행·판정 · DROP은 -x) · journal 10-16 §11 · 32 §0 실측 · T-367 후보 · STATUS · DEVLOG · CLAUDE.md |
 | fix/130-mac-sync | 2026-10-17 | 2026-10-17 → main(삭제) · d141340 | 1 | 130차 mac — v0.2.2 맥 V3 · T-366 SERVEROUTPUT 탐침·4000 폴백 · D-310 키맵 겹침 2 · T-352 Finder 파일 열기 · T-365 · 시험 자산(`scripts/lib/timeout.sh` · `mac-openfiles-e2e.sh` · prod 단계 7 · S13) · 문서(journal 10-16 §10 · 10 · 113 · 33 · 61 · 64 · 110 · TODO · 102 · STATUS · DEVLOG) |
 | (main 직접) | 2026-10-16 | 2026-10-16 → main | 1 | 🚀 버전 0.2.2 = **dc8e202** · 태그 **v0.2.2**(공개 10:46:20Z · release 38887896872 ✓) |

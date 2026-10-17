@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-17 오전 (130차 · mac · 🚀 v0.2.3)** — 패치 릴리스 cd0037e · 축소 검증 · publish HTTP 408 → 재실행 · 공개 03:19:20Z · Homebrew 7a9b1e3 · pkg.sosomlab.com 0.2.3 · winget/choco 제출 0 — journal 10-16 §14.
 - **2026-10-17 오전 (130차 · mac · 클립보드)** — 🔧 맥 GUI 앱 C 로캘 → pbpaste/pbcopy 한글 `?` → `imp::cmd` 로캘 고정 · 실기용 재시작 = 실제 설정 · 풀 테스트 1일 1회 확인 — journal 10-16 §13.
 - **2026-10-17 오전 (130차 · mac · T-367)** — 비-T-SQL 방언 `PRINT '글'` 안내(`Caps.tsql_print` · `print_text_hint`) · V1 GUI SQLite/M4PLAN ✓ · `EXECUTE ON …` = 설계대로(T-368 후보) · 엔진 메시지 i18n T-369 후보 — journal 10-16 §12.
 - **2026-10-17 새벽 (130차 · mac · flush 시험)** — 사용자 직접 지시: 프로시저 `NSQLT_FLUSH_DEMO`(SQL Server NOWAIT · PG NOTICE · Oracle DBMS_OUTPUT) · GUI Output 실시간 누적 = SQL Server·PG ✓ · Oracle = 종료 때 일괄(구조 한계) · SQLite = PROMPT만 · `scripts/output-flush-e2e.sh` · T-367 후보 — journal 10-16 §11.
