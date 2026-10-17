@@ -97,6 +97,9 @@ pub struct Caps {
     pub ident_fold: IdentFold,
     /// ★ 대량 적재 경로(docs/89 §3-1 · T-236).
     pub bulk_load: crate::bulk::BulkLoad,
+    /// ★ T-367(10-17): `PRINT '글'`·`PRINT @v`·`PRINT (식)`이 **서버 문장**인가(T-SQL PRINT = SQL Server만). 거짓이면 엔진이 서버에 보내지
+    ///   않고 "PRINT = 바인드 변수 표시 · 글은 PROMPT" 안내를 돌려준다(SQLite에서 syntax error · Oracle ORA-00900으로 끝나던 것).
+    pub tsql_print: bool,
 }
 
 const ORACLE: Caps = Caps {
@@ -114,6 +117,7 @@ const ORACLE: Caps = Caps {
     compile_errors: true,
     ident_fold: IdentFold::Upper,
     bulk_load: crate::bulk::BulkLoad::ArrayDml,
+    tsql_print: false,
 };
 
 const MSSQL: Caps = Caps {
@@ -132,6 +136,7 @@ const MSSQL: Caps = Caps {
     ident_fold: IdentFold::Keep,
     // TDS BULK INSERT(89 §1-3 · B-4) · 다중 행 폴백은 sp_executesql 매개변수 둘을 뺀 2000(2100 = 실패 · 09-26).
     bulk_load: crate::bulk::BulkLoad::TdsBulk,
+    tsql_print: true,
 };
 
 const POSTGRES: Caps = Caps {
@@ -149,6 +154,7 @@ const POSTGRES: Caps = Caps {
     compile_errors: false,
     ident_fold: IdentFold::Lower,
     bulk_load: crate::bulk::BulkLoad::CopyIn,
+    tsql_print: false,
 };
 
 /// `?` 자리 바인드 · 1행 결과로 값을 받는 DBMS의 공통 틀(MySQL · SQLite · ODBC가 여기서 갈라진다).
@@ -168,6 +174,7 @@ const QUESTION: Caps = Caps {
         max_rows: 500,
         max_params: 32000,
     },
+    tsql_print: false,
 };
 
 const MYSQL: Caps = Caps {

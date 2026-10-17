@@ -207,6 +207,16 @@ mod imp {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
 
+    /// ★ 외부 클립보드 명령은 **UTF-8 로캘을 고정**해 띄운다(130차 mac · 10-17 · 사용자 "VS Code에서 복사한 한글이 `?`로 붙음"):
+    ///   macOS `pbpaste`/`pbcopy`는 현재 로캘로 변환하는데 Finder·`open`·Dock으로 뜬 GUI 앱은 셸의 `LANG`을 물려받지 않아 C 로캘 =
+    ///   비ASCII가 전부 `?`(읽기) · 바이트 깨짐(쓰기)이 된다(재현 = `env -i pbpaste -pboard find` → `?? ???`). 직접 입력은 멀쩡하고
+    ///   붙여넣기만 깨지는 이유. `en_US.UTF-8`은 macOS 기본 내장 · Linux에 없으면 C로 돌아가지만 xclip/xsel/wl-*은 변환하지 않는다.
+    fn cmd(name: &str) -> Command {
+        let mut c = Command::new(name);
+        c.env("LC_ALL", "en_US.UTF-8");
+        c
+    }
+
     #[cfg(target_os = "macos")]
     const READERS: &[(&str, &[&str])] = &[("pbpaste", &[])];
     #[cfg(target_os = "macos")]
@@ -233,7 +243,7 @@ mod imp {
             }
         }
         for (cmd, args) in READERS {
-            if let Ok(out) = Command::new(cmd).args(*args).output() {
+            if let Ok(out) = self::cmd(cmd).args(*args).output() {
                 if out.status.success() {
                     return Some(String::from_utf8_lossy(&out.stdout).into_owned());
                 }
@@ -250,7 +260,7 @@ mod imp {
             let esc = text.replace('\\', "\\\\").replace('"', "\\\"");
             let script =
                 format!("set the clipboard to {{«class HTML»:«data HTML{hex}», string:\"{esc}\"}}");
-            if Command::new("osascript")
+            if cmd("osascript")
                 .args(["-e", &script])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -276,7 +286,7 @@ mod imp {
             }
         }
         for (cmd, args) in WRITERS {
-            let Ok(mut child) = Command::new(cmd)
+            let Ok(mut child) = self::cmd(cmd)
                 .args(*args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())

@@ -218,6 +218,26 @@ fn is_connect_by(l: &str) -> bool {
 }
 
 /// 한 줄(또는 EXEC 블록 텍스트)을 명령으로 해석한다. SQL이면 `Ok(None)`.
+/// ★ T-367(10-17 · 사용자 "flush 시험" 뒤 판단): `PRINT '글'`·`PRINT @v`·`PRINT (식)`처럼 **바인드 이름 목록이 아닌 PRINT**는 [`parse_command`]가
+///   명령으로 받지 않아 서버로 갔다 — T-SQL PRINT가 서버 문장인 방언(`Caps.tsql_print`)만 그대로 보내고, 그 밖 방언은 보내지 않고 안내 한 줄.
+///   `None` = 안내 없음(보통 문장 · T-SQL 방언 · 인자 없는 PRINT는 명령이라 여기 오지 않는다).
+pub fn print_text_hint(tsql_print: bool, text: &str) -> Option<String> {
+    if tsql_print {
+        return None;
+    }
+    let (word, rest) = split_first_word(text.trim_start());
+    if !word.eq_ignore_ascii_case("PRINT") {
+        return None;
+    }
+    let rest = rest.trim().trim_end_matches(';').trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "PRINT는 바인드 변수 값을 표시합니다(PRINT 이름 …) — 글을 표시하려면 PROMPT 글 · T-SQL `PRINT '…'`는 SQL Server 방언에서만 서버 문장입니다 (받은 인자: {rest})"
+    ))
+}
+
 pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
     let t = text.trim().trim_end_matches(';').trim();
     if t.is_empty() {
@@ -1037,6 +1057,32 @@ mod tests {
         ));
         // 종전 뜻은 그대로: `VAR x GLOBAL` = 층 이동.
         assert!(matches!(p("VAR x GLOBAL"), Command::VarScope { .. }));
+    }
+
+    /// T-367: 이름 목록이 아닌 PRINT는 T-SQL 방언만 서버 문장 · 그 밖은 안내(PROMPT 권유) · 인자 없음·보통 문장 = 안내 없음.
+    #[test]
+    fn print_text_hint_only_outside_tsql() {
+        assert!(
+            super::print_text_hint(true, "PRINT 'hello'").is_none(),
+            "SQL Server = 서버 문장"
+        );
+        let h = super::print_text_hint(false, "print 'hello';").expect("안내");
+        assert!(h.contains("PROMPT") && h.contains("'hello'"), "{h}");
+        assert!(super::print_text_hint(false, "PRINT (1+1)").is_some());
+        assert!(
+            super::print_text_hint(false, "PRINT").is_none(),
+            "인자 없음 = 명령(변수 전부)"
+        );
+        assert!(
+            super::print_text_hint(false, "PRINTER := 1").is_none(),
+            "낱말 경계"
+        );
+        assert!(super::print_text_hint(false, "SELECT 'PRINT' FROM dual").is_none());
+        // 이름 목록은 애초에 명령으로 파싱된다(여기 오지 않음).
+        assert!(matches!(
+            super::parse_command("PRINT V_NAME :V2"),
+            Ok(Some(super::Command::Print { .. }))
+        ));
     }
 
     #[test]

@@ -336,7 +336,7 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 
 ### 12-5. 살펴보기 · 로그
 
-`PRINT 이름…`(값 · GUI 로그 = 값 · 비밀 ******) · `VARIABLE`(선언 목록) · `SHOW VARIABLES`(결과 표 Name·Type·Value·Layer·Declared·Active) · `DEFINE`(치환 목록 · use 모드 = `원문 → 현재 값`) · View ▸ Variables 창(탭·공유·글로벌·치환 한 표 · 제자리 편집 · 층 버튼 · 바뀐 줄 강조 · 가려진 줄 흐림) · 실행 로그 = 바뀐 값만(`RunEvent::Vars`). SQL Server의 `PRINT 'text'`·`PRINT @v`는 서버 문장.
+`PRINT 이름…`(값 · GUI 로그 = 값 · 비밀 ******) · `VARIABLE`(선언 목록) · `SHOW VARIABLES`(결과 표 Name·Type·Value·Layer·Declared·Active) · `DEFINE`(치환 목록 · use 모드 = `원문 → 현재 값`) · View ▸ Variables 창(탭·공유·글로벌·치환 한 표 · 제자리 편집 · 층 버튼 · 바뀐 줄 강조 · 가려진 줄 흐림) · 실행 로그 = 바뀐 값만(`RunEvent::Vars`). SQL Server의 `PRINT 'text'`·`PRINT @v`는 서버 문장. 그 밖 방언(능력표 `Caps.tsql_print` = false)의 `PRINT '글'`/`PRINT (식)` = 서버에 보내지 않고 안내 오류 한 줄("PRINT는 바인드 변수 값을 표시합니다 … 글은 PROMPT" · 다음 문장은 계속 · T-367 · 10-17) — 글 한 줄은 `PROMPT`.
 
 ### 12-6. 수명 · 세션 전환 · 비밀 · 상한
 

@@ -298,6 +298,10 @@ impl Engine {
         match &item.kind {
             ItemKind::Invalid(msg) => vec![Action::Error(msg.clone())],
             ItemKind::Sql(kind) => {
+                // ★ T-367: `PRINT '글'`처럼 이름 목록이 아닌 PRINT = T-SQL 방언만 서버 문장 · 그 밖은 보내지 않고 안내(PROMPT 권유).
+                if let Some(hint) = crate::command::print_text_hint(self.caps.tsql_print, &text) {
+                    return vec![Action::Error(hint)];
+                }
                 // 저장 코드를 만드는 DDL은 바인드 대상이 아니다(본문의 `:NEW`·`:OLD`·`:x`는 서버가 해석한다).
                 if matches!(kind, SqlKind::Block) && is_stored_code_ddl(&text) {
                     return vec![Action::Execute {
@@ -1108,6 +1112,26 @@ mod tests {
         assert_eq!(lenient(&e), (Some('&'), false));
         e.set_dialect(Dialect::Postgres);
         assert_eq!(lenient(&e), (Some('&'), false));
+    }
+
+    /// T-367: `PRINT '글'` = SQL Server만 Execute · 그 밖 방언은 안내(Error · PROMPT 권유) · 이름 목록 PRINT는 명령 경로 그대로.
+    #[test]
+    fn print_text_is_hint_except_tsql() {
+        let item = |s: &str| crate::split::split_script(s).remove(0);
+        let mut o = Engine::new(Dialect::Oracle);
+        match &o.plan(&item("PRINT 'hello';\n"))[0] {
+            Action::Error(m) => assert!(m.contains("PROMPT"), "{m}"),
+            a => panic!("Oracle PRINT '글' = 안내여야 함: {a:?}"),
+        }
+        let mut l = Engine::new(Dialect::Sqlite);
+        assert!(matches!(l.plan(&item("PRINT 'x';\n"))[0], Action::Error(_)));
+        let mut m = Engine::new(Dialect::Mssql);
+        assert!(
+            matches!(m.plan(&item("PRINT 'hello';\n"))[0], Action::Execute { .. }),
+            "SQL Server = T-SQL PRINT 서버 문장"
+        );
+        o.plan(&item("VAR V NUMBER\n"));
+        assert!(matches!(o.plan(&item("PRINT V\n"))[0], Action::Print(_)));
     }
 
     #[test]
