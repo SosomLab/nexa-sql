@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-17 오후 (130차 · mac · 🚀 v0.2.4)** — 맥 객체 찾기 깜빡임 치명 수정 패치 b99d23c · 축소 검증 · 공개 08:36:36Z · Homebrew d623e1e · pkg.sosomlab.com 0.2.4 · winget/choco 제출 0 — journal 10-16 §16.
 - **2026-10-17 오후 (130차 · mac · 깜빡임)** — 🔧 맥 객체 찾기 검색 중 깜빡임 = iosurface 장 선택(nexa-ui 213차 · 건너뛰기 · 풀 4 · forced · 33 ms) · 사용자 ✓ · T-370 후보 — journal 10-16 §15.
 - **2026-10-17 오전 (130차 · mac · 🚀 v0.2.3)** — 패치 릴리스 cd0037e · 축소 검증 · publish HTTP 408 → 재실행 · 공개 03:19:20Z · Homebrew 7a9b1e3 · pkg.sosomlab.com 0.2.3 · winget/choco 제출 0 — journal 10-16 §14.
 - **2026-10-17 오전 (130차 · mac · 클립보드)** — 🔧 맥 GUI 앱 C 로캘 → pbpaste/pbcopy 한글 `?` → `imp::cmd` 로캘 고정 · 실기용 재시작 = 실제 설정 · 풀 테스트 1일 1회 확인 — journal 10-16 §13.
