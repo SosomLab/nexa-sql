@@ -1555,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "nexa-sql"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "encoding_rs",
  "fancy-regex",
@@ -1595,21 +1595,21 @@ version = "0.1.0"
 
 [[package]]
 name = "nsql-bookmarks"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-settings",
 ]
 
 [[package]]
 name = "nsql-catalog"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
 ]
 
 [[package]]
 name = "nsql-cli"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-bookmarks",
  "nsql-catalog",
@@ -1629,11 +1629,11 @@ dependencies = [
 
 [[package]]
 name = "nsql-core"
-version = "0.2.4"
+version = "0.2.5"
 
 [[package]]
 name = "nsql-driver-mssql"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "chrono",
  "nsql-core",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-oracle"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
  "nsql-script",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-oracle-thin"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
  "nsql-script",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-pg"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
  "nsql-script",
@@ -1674,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-sqlite"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
  "rusqlite",
@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-drivers"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
  "nsql-driver-mssql",
@@ -1697,22 +1697,22 @@ dependencies = [
 
 [[package]]
 name = "nsql-format"
-version = "0.2.4"
+version = "0.2.5"
 
 [[package]]
 name = "nsql-i18n"
-version = "0.2.4"
+version = "0.2.5"
 
 [[package]]
 name = "nsql-io"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
 ]
 
 [[package]]
 name = "nsql-license"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "ed25519-dalek",
  "nexa-license",
@@ -1722,11 +1722,11 @@ dependencies = [
 
 [[package]]
 name = "nsql-log"
-version = "0.2.4"
+version = "0.2.5"
 
 [[package]]
 name = "nsql-run"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-catalog",
  "nsql-core",
@@ -1739,14 +1739,14 @@ dependencies = [
 
 [[package]]
 name = "nsql-script"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
 ]
 
 [[package]]
 name = "nsql-search"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nsql-core",
  "regex",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-settings"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nexa-conf",
  "nexa-sys",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-vault"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.2.17",
