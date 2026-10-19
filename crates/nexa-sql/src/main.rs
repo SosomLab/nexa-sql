@@ -522,6 +522,13 @@ struct App {
     find: FindBar,
     /// 선택 범위에서 찾기 — 켤 때의 선택(문자 인덱스 · 편집으로 길이가 바뀌면 그대로 둔다).
     find_scope: Option<(usize, usize)>,
+    /// ★ 찾기를 **열 때** 있던 편집기 선택(131차 · 사용자 10-19 이관 · VS Code): 여러 줄 선택은 열어도 옮기지 않고 지키며,
+    ///   그 뒤 일치 이동으로 선택이 바뀌어도 ≡(Alt+L)을 켤 때 이 구간을 범위로 쓴다 · 닫으면 비움.
+    find_pending_scope: Option<(usize, usize)>,
+    /// ★ 찾기를 **열 때**의 캐럿·선택(131차 · 사용자 10-20): Esc(취소)가 여기로 되돌린다 · × 닫기·열려 있는 동안 재진입은 그대로.
+    find_origin: Option<(usize, Option<(usize, usize)>)>,
+    /// ★ 이번에 연 뒤 찾기가 캐럿을 일치로 **옮긴 적이 있는가**(131차 ⑩ · 사용자 10-20): 없으면 Esc = 원래 자리 · 있으면 Esc = 그 자리 유지.
+    find_moved: bool,
     editors: Editors,
     /// **활성 결과 탭**의 그리드(활성 편집기 탭의 결과 패널 중 활성 탭). 그리기·이벤트는 이것 하나만 만진다(D-71 · T-93).
     grid: grid::Grid,
@@ -1891,6 +1898,9 @@ fn main() {
         open_conn: initial_target.is_none() || arg_fill_only,
         find,
         find_scope: None,
+        find_pending_scope: None,
+        find_origin: None,
+        find_moved: false,
         editors,
         grid: grid::Grid::default(),
         panel: ResultPanel::new(
@@ -2767,6 +2777,15 @@ fn split_items(src: &str, dialect: Dialect) -> Vec<String> {
     nsql_script::split_script_in(src, Some(dialect))
         .into_iter()
         .map(|i| i.text)
+        .collect()
+}
+
+/// ★ T-371: [`split_items`]와 같은 분할의 **실행 텍스트 시작 글자 인덱스**(`src` 기준) — 원문 조각을 다듬은 것(`trim` · 끝 `;`)이
+/// 실행 텍스트와 같을 때만 `Some`(그때 드라이버 오류 위치 = 시작 + 위치) · `EXEC` 정규화 등으로 다르면 `None`.
+fn split_item_starts(src: &str, dialect: Dialect) -> Vec<Option<usize>> {
+    nsql_script::split_script_in(src, Some(dialect))
+        .into_iter()
+        .map(|i| app::run::item_start_char(src, &i.span, &i.text))
         .collect()
 }
 

@@ -1182,8 +1182,38 @@ impl<S: RowSource + ?Sized> RowSource for View<'_, S> {
 pub struct DbError {
     pub code: Option<i64>,
     pub message: String,
-    /// 문장 내 오류 위치(바이트) — 있으면 편집기가 표시.
+    /// ★ 문장 내 오류 위치 = **드라이버에 보낸 문장(`ExecRequest.sql`) 기준 글자 인덱스(0부터)**(T-371 · 131차 win 10-19).
+    ///   드라이버가 서버 값(PG = 1부터 글자 · Oracle = 바이트 · SQLite = 바이트 · SQL Server = 배치 줄 번호)을 이 단위로 맞춘다 ·
+    ///   러너는 원문 문장 기준으로 다시 맞추고(`map_error_position`) · 호스트는 편집기 캐럿을 그 자리로 옮긴다(`editor.error_goto`).
     pub position: Option<usize>,
+}
+
+/// 바이트 오프셋 → 글자 인덱스(T-371 · 글자 경계가 아니면 그 글자 · 끝을 넘으면 글자 수).
+#[must_use]
+pub fn char_index_of_byte(s: &str, byte: usize) -> usize {
+    s.char_indices()
+        .take_while(|(b, c)| b + c.len_utf8() <= byte)
+        .count()
+}
+
+/// 1부터 세는 줄 번호 → 그 줄 첫 글자의 글자 인덱스(T-371 · 줄 수를 넘으면 `None`).
+#[must_use]
+pub fn char_index_of_line(s: &str, line1: usize) -> Option<usize> {
+    if line1 == 0 {
+        return None;
+    }
+    let mut line = 1usize;
+    let mut idx = 0usize;
+    for ch in s.chars() {
+        if line == line1 {
+            return Some(idx);
+        }
+        if ch == '\n' {
+            line += 1;
+        }
+        idx += 1;
+    }
+    (line == line1).then_some(idx)
 }
 
 impl fmt::Display for DbError {
@@ -1618,5 +1648,40 @@ mod tests {
         assert_eq!(super::group_digits(0), "0");
         assert_eq!(super::group_digits(999), "999");
         assert_eq!(super::group_digits(2_043_543_552), "2,043,543,552");
+    }
+}
+
+#[cfg(test)]
+mod errpos_tests {
+    use super::*;
+
+    #[test]
+    fn byte_to_char_index_counts_multibyte_once() {
+        let s = "SELECT 가나 FROM t";
+        assert_eq!(char_index_of_byte(s, 0), 0);
+        assert_eq!(char_index_of_byte(s, 7), 7, "ASCII 구간 = 그대로");
+        assert_eq!(
+            char_index_of_byte(s, 13),
+            9,
+            "한글 2자(6바이트) 뒤 = 글자 9"
+        );
+        assert_eq!(char_index_of_byte(s, 8), 7, "글자 중간 바이트 = 그 글자");
+        assert_eq!(
+            char_index_of_byte(s, 999),
+            s.chars().count(),
+            "끝 넘김 = 글자 수"
+        );
+    }
+
+    #[test]
+    fn line_to_char_index_is_line_start() {
+        let s = "a\n가나\n\nd";
+        assert_eq!(char_index_of_line(s, 1), Some(0));
+        assert_eq!(char_index_of_line(s, 2), Some(2));
+        assert_eq!(char_index_of_line(s, 3), Some(5));
+        assert_eq!(char_index_of_line(s, 4), Some(6));
+        assert_eq!(char_index_of_line(s, 5), None, "줄 수 초과");
+        assert_eq!(char_index_of_line(s, 0), None);
+        assert_eq!(char_index_of_line("x\n", 2), Some(2), "끝 개행 뒤 빈 줄");
     }
 }

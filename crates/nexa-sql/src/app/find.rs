@@ -73,8 +73,46 @@ impl App {
         out
     }
 
+    /// ★ 찾기를 열 때의 편집기 선택을 적어 둔다(131차 · 사용자 10-19 이관) — 반환 = **여러 줄 선택이라 지켜야 하는가**
+    ///   (씨앗으로 쓰지 않는 선택 = 열어도 캐럿·선택을 옮기지 않는다 · VS Code). 한 줄 선택도 범위 후보로는 보관(`always` 설정).
+    pub(crate) fn find_note_open_selection(&mut self) -> bool {
+        let ed = self.ed_mut();
+        let sel = ed.selection().filter(|(a, b)| b > a);
+        let multi = sel.is_some_and(|(a, b)| selection_spans_lines(ed.buf(), a, b));
+        self.find_pending_scope = sel;
+        multi
+    }
+
+    /// 설정 `editor.find_auto_scope`(VS Code `autoFindInSelection`): never = 아무것도 · multiline = 여러 줄 선택이면 켬 ·
+    /// always = 선택이 있으면 켬. 켜는 길은 ≡ 토글과 같은 `ScopeChanged`.
+    pub(crate) fn find_auto_scope(&mut self) {
+        let mode = self
+            .settings
+            .get("editor.find_auto_scope")
+            .unwrap_or("never")
+            .to_string();
+        let Some((a, b)) = self.find_pending_scope else {
+            return;
+        };
+        let multi = selection_spans_lines(self.ed_mut().buf(), a, b);
+        if auto_scope_on(&mode, multi) {
+            self.find.set_in_selection(true);
+            self.find_action(FindAction::ScopeChanged);
+        }
+    }
+
+    /// 일치 표식·개수·버튼 상태만 갱신(캐럿·선택은 그대로) — 여러 줄 선택을 지키며 열 때.
+    pub(crate) fn find_refresh(&mut self) {
+        self.find_step_in(true, false, false);
+    }
+
     /// 다음/이전 일치로 이동(순환) — `advance`면 현재 선택을 지나서, 아니면 캐럿부터.
     pub(crate) fn find_step(&mut self, forward: bool, advance: bool) {
+        self.find_step_in(forward, advance, true);
+    }
+
+    /// `move_caret`가 거짓이면 일치를 고르되 선택은 옮기지 않는다(표식·"n/N"만).
+    fn find_step_in(&mut self, forward: bool, advance: bool, move_caret: bool) {
         if !self.find.is_visible() {
             return;
         }
@@ -109,8 +147,11 @@ impl App {
                 .unwrap_or(matches.len() - 1)
         };
         let (s, e) = matches[idx];
-        let mut inv = Invalidations::default();
-        self.ed_mut().select_range(s, e, &mut inv);
+        if move_caret {
+            let mut inv = Invalidations::default();
+            self.ed_mut().select_range(s, e, &mut inv);
+            self.find_moved = true; // 검색을 수행했다(⑩) → Esc는 이 자리에 남는다.
+        }
         self.find.set_status(tf(
             Msg::StFindCount,
             &[&(idx + 1).to_string(), &matches.len().to_string()],
@@ -197,7 +238,13 @@ impl App {
             FindAction::ReplaceAll => self.find_replace_all(),
             FindAction::ScopeChanged => {
                 if self.find.in_selection() {
-                    match self.ed_mut().selection() {
+                    // ★ 131차: 지금 선택이 여러 줄이면 그것 · 아니면 열 때 보관한 선택(일치 이동으로 선택이 바뀌었어도) · 그것도 없으면 지금 선택.
+                    let cur = self.ed_mut().selection();
+                    let cur_multi = cur.is_some_and(|(a, b)| {
+                        b > a && selection_spans_lines(self.ed_mut().buf(), a, b)
+                    });
+                    let pick = pick_find_scope(cur, cur_multi, self.find_pending_scope);
+                    match pick {
                         Some((a, b)) if b > a => {
                             self.find_scope = Some((a, b));
                             self.ed_mut().set_find_scope(Some((a, b)));
@@ -229,9 +276,24 @@ impl App {
                 }
                 self.redraw();
             }
+            FindAction::Cancel => {
+                // ★ Esc = 취소(131차 · 사용자 10-20): **검색을 한 번도 안 했으면** 열 때 자리로 캐럿·선택 복귀 · 검색으로 일치에
+                //   갔으면(`find_moved`) 그 자리 유지(⑩) → 닫기와 같은 정리.
+                let origin = self.find_origin.take();
+                if let Some((caret, sel)) = origin.filter(|_| cancel_restores(self.find_moved)) {
+                    let mut inv = Invalidations::default();
+                    match sel {
+                        Some((a, b)) => self.ed_mut().select_range(a, b, &mut inv),
+                        None => self.ed_mut().select_range(caret, caret, &mut inv),
+                    }
+                }
+                self.find_action(FindAction::Close);
+            }
             FindAction::Close => {
                 self.find.close();
                 self.find_scope = None;
+                self.find_pending_scope = None;
+                self.find_origin = None;
                 self.ed_mut().set_find_scope(None);
                 self.ed_mut().set_find_marks(Vec::new());
                 self.layout();
@@ -341,5 +403,109 @@ impl App {
             Vec::new()
         };
         self.ed_mut().set_find_marks(marks);
+    }
+}
+
+/// 선택 `[a, b)`가 둘 이상의 줄에 걸치는가(끝이 개행 바로 뒤면 그 개행의 줄까지만 센다 · 131차).
+pub(crate) fn selection_spans_lines(buf: &nexa_ctl::edit::TextBuf, a: usize, b: usize) -> bool {
+    b > a && buf.line_of(a) != buf.line_of(b - 1)
+}
+
+/// ≡(선택 범위에서 찾기)를 켤 때 쓸 범위(131차 · 순수 판정): 지금 선택이 여러 줄이면 그것 · 아니면 열 때 보관한 선택 ·
+/// 그것도 없으면 지금 선택(한 줄이어도).
+pub(crate) fn pick_find_scope(
+    cur: Option<(usize, usize)>,
+    cur_multi: bool,
+    pending: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    if cur_multi {
+        return cur;
+    }
+    pending.or(cur)
+}
+
+/// Esc(취소)가 열 때 자리로 되돌리는가(131차 ⑩ · 순수 판정): 이번에 연 뒤 검색으로 캐럿이 옮겨진 적이 없을 때만.
+pub(crate) fn cancel_restores(moved: bool) -> bool {
+    !moved
+}
+
+/// 찾기를 열 때 캐럿을 첫 일치로 옮기는가(131차 10-20 · 순수 판정): 한 줄 선택을 씨앗으로 넣었을 때만 · 여러 줄 선택(지킴)이나
+/// 선택 없이 연 경우(지난 검색어)는 옮기지 않는다 — 다음 찾기를 눌러야 이동 · Esc = 열 때 자리로.
+pub(crate) fn open_moves_caret(keep_multiline: bool, seeded: bool) -> bool {
+    !keep_multiline && seeded
+}
+
+/// 설정 `editor.find_auto_scope` × 선택이 여러 줄인가 → 자동으로 켜는가(131차 · MC/DC).
+pub(crate) fn auto_scope_on(mode: &str, multi: bool) -> bool {
+    match mode {
+        "always" => true,
+        "multiline" => multi,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[test]
+    fn selection_spans_lines_counts_newline_at_end_only_once() {
+        let buf = nexa_ctl::edit::TextBuf::from_string("ab\ncd\nef".into());
+        assert!(!selection_spans_lines(&buf, 0, 2), "한 줄 안");
+        assert!(selection_spans_lines(&buf, 0, 4), "두 줄에 걸침");
+        assert!(!selection_spans_lines(&buf, 0, 3), "줄 끝 개행까지 = 한 줄");
+        assert!(selection_spans_lines(&buf, 2, 4), "개행부터 다음 줄로");
+        assert!(!selection_spans_lines(&buf, 3, 3), "빈 선택");
+    }
+
+    #[test]
+    fn pick_scope_prefers_multiline_then_pending_then_current() {
+        let cur = Some((10, 12));
+        let pend = Some((0, 40));
+        assert_eq!(
+            pick_find_scope(cur, true, pend),
+            cur,
+            "지금 선택이 여러 줄 = 그것"
+        );
+        assert_eq!(
+            pick_find_scope(cur, false, pend),
+            pend,
+            "한 줄(일치 이동 뒤) = 열 때 보관한 선택"
+        );
+        assert_eq!(
+            pick_find_scope(cur, false, None),
+            cur,
+            "보관 없음 = 지금 선택"
+        );
+        assert_eq!(pick_find_scope(None, false, pend), pend);
+        assert_eq!(pick_find_scope(None, false, None), None);
+    }
+
+    #[test]
+    fn cancel_restores_only_when_no_search_moved_the_caret() {
+        assert!(cancel_restores(false), "열기만 = 원래 자리로");
+        assert!(!cancel_restores(true), "검색으로 이동 = 그 자리 유지");
+    }
+
+    #[test]
+    fn open_moves_caret_only_for_single_line_seed() {
+        assert!(open_moves_caret(false, true), "한 줄 선택 씨앗 = 그 일치로");
+        assert!(
+            !open_moves_caret(false, false),
+            "선택 없음(지난 검색어) = 캐럿 그대로"
+        );
+        assert!(!open_moves_caret(true, false), "여러 줄 선택 = 지킴");
+        assert!(!open_moves_caret(true, true));
+    }
+
+    #[test]
+    fn auto_scope_mc_dc() {
+        assert!(!auto_scope_on("never", true));
+        assert!(!auto_scope_on("never", false));
+        assert!(auto_scope_on("multiline", true));
+        assert!(!auto_scope_on("multiline", false));
+        assert!(auto_scope_on("always", true));
+        assert!(auto_scope_on("always", false));
+        assert!(!auto_scope_on("garbage", true), "모르는 값 = never");
     }
 }

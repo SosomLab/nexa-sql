@@ -597,19 +597,29 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("editor.dump:") {
             let i = self.editors.active();
-            // 머리 = 제목|종류|읽기전용|구문|caret=줄(1부터 · 10-16 미리보기 줄 이동 판정)(10-07 · 모르는 확장자 = Plain Text 판정용).
-            let caret_line = {
+            // 머리 = 제목|종류|읽기전용|구문|caret=줄:열(1부터 · 10-16 미리보기 줄 이동 판정 · 열 = 131차 T-371 오류 위치 판정 ·
+            //   종전 `caret=N` 접두 매치와 호환)(10-07 · 모르는 확장자 = Plain Text 판정용).
+            let (caret_line, caret_col, sel) = {
                 let tb = self.editors.cur();
-                tb.buf().line_of(tb.caret()) + 1
+                let c = tb.caret();
+                let l = tb.buf().line_of(c);
+                // 선택 = `sel=시작-끝`(글자 인덱스 · 없으면 `-`) — 찾기 이동 뒤 일치가 선택돼 있는지 판정(131차 ⑪).
+                let sel = tb
+                    .selection()
+                    .filter(|(a, b)| b > a)
+                    .map_or("-".to_string(), |(a, b)| format!("{a}-{b}"));
+                (l + 1, c - tb.buf().line_start(l) + 1, sel)
             };
             let head = format!(
-                "{}|{:?}|{}|{}|caret={}
+                "{}|{:?}|{}|{}|caret={}:{}|sel={}
 ",
                 self.editors.title_of(i),
                 self.editors.tab_kind(i),
                 self.editors.active_read_only(),
                 self.editors.syntax_name(),
-                caret_line
+                caret_line,
+                caret_col,
+                sel
             );
             let _ = std::fs::write(path, head + &self.editors.cur().text());
             return;
@@ -785,6 +795,15 @@ impl App {
         }
         if id == "mem.trim" {
             self.mem_trim_now();
+            return;
+        }
+        // 찾기 틀 Esc(취소 = 열 때 자리 복귀)·×(닫기) 길(131차 · E2E `win-find-origin-e2e.sh` · 키 주입 없이).
+        if id == "find.cancel" {
+            self.find_action(crate::findbar::FindAction::Cancel);
+            return;
+        }
+        if id == "find.close" {
+            self.find_action(crate::findbar::FindAction::Close);
             return;
         }
         if let Some(path) = id.strip_prefix("tabs.dump:") {

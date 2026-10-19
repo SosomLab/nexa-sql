@@ -301,6 +301,15 @@ impl nsql_core::BulkSink for ArraySink<'_> {
     }
 }
 
+/// T-371: 실행 중 오류의 파스 오프셋(바이트)을 보낸 문장의 글자 인덱스로.
+fn err_at(e: &oracle::Error, sql: &str) -> DbError {
+    let mut d = err(e);
+    if let Some(p) = d.position {
+        d.position = Some(nsql_core::char_index_of_byte(sql, p));
+    }
+    d
+}
+
 fn err(e: &oracle::Error) -> DbError {
     let (code, position) = match e.db_error() {
         Some(d) => (
@@ -695,7 +704,7 @@ impl Session for OracleSession {
             .statement(&req.sql)
             .fetch_array_size(self.fetch_size)
             .build()
-            .map_err(|e| err(&e))?;
+            .map_err(|e| err_at(&e, &req.sql))?;
         // 바인드 — 실제로 문장에 있는 이름만(엔진이 추출한 이름과 OCI 이름은 같아야 하지만 방어).
         let present: Vec<String> = stmt
             .bind_names()
@@ -725,7 +734,7 @@ impl Session for OracleSession {
                 _ => None,
             };
             if let Some(bound) = native {
-                bound.map_err(|e| err(&e))?;
+                bound.map_err(|e| err_at(&e, &req.sql))?;
                 continue;
             }
             match (&p.ty, &p.direction) {
@@ -762,13 +771,15 @@ impl Session for OracleSession {
                     stmt.bind(name, &(&init, &OracleType::Varchar2(4000)))
                 }
             }
-            .map_err(|e| err(&e))?;
+            .map_err(|e| err_at(&e, &req.sql))?;
         }
         let mut result = ExecResult::default();
         if stmt.is_query() {
             // Execute = 첫 응답까지(옵티마이저·실행) · Fetch = 배열 페치 + 디코딩(행 수 기록).
             let t0 = std::time::Instant::now();
-            let mut rs = stmt.into_result_set::<Row>(&[]).map_err(|e| err(&e))?;
+            let mut rs = stmt
+                .into_result_set::<Row>(&[])
+                .map_err(|e| err_at(&e, &req.sql))?;
             let columns = Self::columns(rs.column_info());
             result.timing.push(Stage::Execute, t0.elapsed());
             let t1 = std::time::Instant::now();
@@ -796,7 +807,7 @@ impl Session for OracleSession {
             }
         } else {
             let t0 = std::time::Instant::now();
-            stmt.execute(&[]).map_err(|e| err(&e))?;
+            stmt.execute(&[]).map_err(|e| err_at(&e, &req.sql))?;
             result.timing.push(Stage::Execute, t0.elapsed());
             if stmt.is_dml() {
                 result.rows_affected = stmt.row_count().ok();
@@ -822,20 +833,24 @@ impl Session for OracleSession {
                 } else if matches!(p.ty, VarType::Date | VarType::Timestamp)
                     && Self::timestamp_of(&p.value).is_some()
                 {
-                    let ts: Option<Timestamp> =
-                        stmt.bind_value(p.name.as_str()).map_err(|e| err(&e))?;
+                    let ts: Option<Timestamp> = stmt
+                        .bind_value(p.name.as_str())
+                        .map_err(|e| err_at(&e, &req.sql))?;
                     let v = ts.map_or(Value::Null, |t| {
                         Value::Str(Self::timestamp_text(&t, p.ty == VarType::Date))
                     });
                     result.out_params.push((p.name.clone(), v));
                 } else if p.ty == VarType::Boolean && Self::bool_of(&p.value).is_some() {
-                    let b: Option<bool> = stmt.bind_value(p.name.as_str()).map_err(|e| err(&e))?;
+                    let b: Option<bool> = stmt
+                        .bind_value(p.name.as_str())
+                        .map_err(|e| err_at(&e, &req.sql))?;
                     result
                         .out_params
                         .push((p.name.clone(), b.map_or(Value::Null, Value::Bool)));
                 } else {
-                    let s: Option<String> =
-                        stmt.bind_value(p.name.as_str()).map_err(|e| err(&e))?;
+                    let s: Option<String> = stmt
+                        .bind_value(p.name.as_str())
+                        .map_err(|e| err_at(&e, &req.sql))?;
                     result
                         .out_params
                         .push((p.name.clone(), Self::coerce(&p.ty, s)));

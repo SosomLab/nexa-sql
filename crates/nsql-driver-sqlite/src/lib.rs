@@ -112,6 +112,17 @@ fn closed(h: u32) -> DbError {
     }
 }
 
+/// T-371: 준비/실행 오류의 바이트 오프셋(`sqlite3_error_offset`)을 보낸 문장의 글자 인덱스로(없으면 위치 없음).
+fn err_at(e: rusqlite::Error, sql: &str) -> DbError {
+    let off = match &e {
+        rusqlite::Error::SqlInputError { offset, .. } => usize::try_from(*offset).ok(),
+        _ => None,
+    };
+    let mut d = err(e);
+    d.position = off.map(|b| nsql_core::char_index_of_byte(sql, b));
+    d
+}
+
 fn err(e: rusqlite::Error) -> DbError {
     let code = match &e {
         rusqlite::Error::SqliteFailure(f, _) => Some(f.extended_code as i64),
@@ -251,7 +262,7 @@ fn serve_execute(
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
         Err(e) => {
-            let _ = reply.send(Err(err(e)));
+            let _ = reply.send(Err(err_at(e, sql)));
             return (None, false);
         }
     };
@@ -263,7 +274,7 @@ fn serve_execute(
                 rows_affected: Some(n as u64),
                 ..ExecResult::default()
             })
-            .map_err(err);
+            .map_err(|e| err_at(e, sql));
         let _ = reply.send(r);
         return (None, false);
     }

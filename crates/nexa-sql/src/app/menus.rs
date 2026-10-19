@@ -593,12 +593,31 @@ impl App {
                     self.redraw();
                 } else {
                     let seed = self.editors.cur().copy_selection();
+                    // ★ 131차(사용자 10-19 이관 · VS Code): 열 때의 선택을 보관(`find_pending_scope`) · 여러 줄 선택이면 캐럿·선택을
+                    //   옮기지 않고 일치 표식·개수만 갱신(`find_refresh`) → "선택 범위에서 찾기"가 그 선택을 범위로 쓸 수 있다.
+                    // ★ 10-20: 선택 없이 열면(지난 검색어가 상자에 남은 경우) **캐럿을 옮기지 않는다** — 다음 찾기(Enter·F3)를 눌러야
+                    //   이동 · Esc = 열 때 자리로 복귀(`find_origin`). 한 줄 선택 = 씨앗 → 그 일치를 고른다(종전).
+                    let keep = self.find_note_open_selection();
+                    let seeded = seed
+                        .as_deref()
+                        .is_some_and(|s| !s.is_empty() && !s.contains('\n'));
+                    if !self.find.is_visible() {
+                        let ed = self.editors.cur();
+                        self.find_origin =
+                            Some((ed.caret(), ed.selection().filter(|(a, b)| b > a)));
+                        self.find_moved = false;
+                    }
                     self.find.open(id == "edit.replace", seed);
                     self.find
                         .set_tooltip_delay(self.settings.int("ui.tooltip_delay_ms").max(0) as u128);
                     self.layout();
                     self.set_focus(Focus::Find);
-                    self.find_step(true, false);
+                    if app::find::open_moves_caret(keep, seeded) {
+                        self.find_step(true, false);
+                    } else {
+                        self.find_refresh();
+                    }
+                    self.find_auto_scope();
                 }
             }
             // ★ Sublime Ctrl+D — 캐럿 밑 단어 → 다음 출현을 추가 선택(다중 커서 · 09-15).

@@ -160,8 +160,11 @@ impl nsql_core::BulkSink for CopySink<'_> {
 fn err(e: postgres::Error) -> DbError {
     let (code, message, position) = match e.as_db_error() {
         Some(db) => {
+            // T-371: 서버 위치는 1부터 세는 **글자** 인덱스 → `DbError.position`(0부터 글자).
             let pos = match db.position() {
-                Some(postgres::error::ErrorPosition::Original(p)) => Some(*p as usize),
+                Some(postgres::error::ErrorPosition::Original(p)) => {
+                    Some((*p as usize).saturating_sub(1))
+                }
                 _ => None,
             };
             let mut m = format!("{}: {}", db.code().code(), db.message());

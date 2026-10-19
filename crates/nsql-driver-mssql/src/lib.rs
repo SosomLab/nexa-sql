@@ -537,6 +537,22 @@ impl nsql_core::BulkSink for TdsSink<'_> {
     }
 }
 
+/// T-371: 서버 오류의 줄 번호(렌더된 배치 기준 · `render_batch`가 파라미터마다 `DECLARE …;` 한 줄을 앞에 붙인다)를
+/// 원문 문장(`req.sql`)의 글자 인덱스로 — 프리펜드 안의 줄이거나 줄 수를 넘으면 위치 없음.
+fn err_at(e: tiberius::error::Error, head_lines: usize, sql: &str) -> DbError {
+    let line = match &e {
+        tiberius::error::Error::Server(t) => Some(t.line() as usize),
+        _ => None,
+    };
+    let mut d = err(e);
+    if let Some(l) = line {
+        if l > head_lines {
+            d.position = nsql_core::char_index_of_line(sql, l - head_lines);
+        }
+    }
+    d
+}
+
 fn err(e: tiberius::error::Error) -> DbError {
     match &e {
         tiberius::error::Error::Server(t) => DbError {
@@ -1233,6 +1249,8 @@ impl Session for MssqlSession {
 impl MssqlSession {
     fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
         let (sql, values, outs) = render_batch(req);
+        // T-371: 실행 오류의 줄 번호 → 원문 글자 인덱스(복사 가능한 닫힘 = async 블록 안에서도 그대로).
+        let fix = |e: tiberius::error::Error| err_at(e, req.params.len(), &req.sql);
         let boxed: Vec<Box<dyn ToSql>> = values.iter().map(to_param).collect();
         let refs: Vec<&dyn ToSql> = boxed.iter().map(|b| b.as_ref()).collect();
         let client = &mut self.client;
@@ -1242,9 +1260,9 @@ impl MssqlSession {
                 // ★ 첫 결과의 메타데이터를 먼저 본다(행 0개 집합은 `into_results`가 버린다 · 10-11).
                 let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) =
                     self.rt.block_on(async {
-                        let mut stream = client.query(sql.as_str(), &refs).await.map_err(err)?;
-                        let cols = stream.columns().await.map_err(err)?.map(meta_columns);
-                        let sets = stream.into_results().await.map_err(err)?;
+                        let mut stream = client.query(sql.as_str(), &refs).await.map_err(fix)?;
+                        let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
+                        let sets = stream.into_results().await.map_err(fix)?;
                         Ok::<_, DbError>((cols, sets))
                     })?;
                 let mut result_sets: Vec<ResultSet> = sets
@@ -1282,7 +1300,7 @@ impl MssqlSession {
             Route::Execute => {
                 let n = self
                     .rt
-                    .block_on(async { client.execute(sql.as_str(), &refs).await.map_err(err) })?;
+                    .block_on(async { client.execute(sql.as_str(), &refs).await.map_err(fix) })?;
                 // ★ 파라미터 배치는 `DECLARE @x … = @P1;`마다 DONE 1행이 붙어 `total()`이 부풀린다(3 파라미터 + UPDATE 1행 = 4 ·
                 //   4-DBMS E2E 09-26) → 마지막 문장(실제 DML)의 수만.
                 result.rows_affected = Some(if values.is_empty() {
@@ -1295,9 +1313,9 @@ impl MssqlSession {
                 // SQL 배치(sp_executesql 아님) — `#temp`·SET·USE 같은 세션 상태가 남는다. 파라미터 없음.
                 let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) =
                     self.rt.block_on(async {
-                        let mut stream = client.simple_query(sql.as_str()).await.map_err(err)?;
-                        let cols = stream.columns().await.map_err(err)?.map(meta_columns);
-                        let sets = stream.into_results().await.map_err(err)?;
+                        let mut stream = client.simple_query(sql.as_str()).await.map_err(fix)?;
+                        let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
+                        let sets = stream.into_results().await.map_err(fix)?;
                         Ok::<_, DbError>((cols, sets))
                     })?;
                 let mut result_sets: Vec<ResultSet> = sets

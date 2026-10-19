@@ -148,6 +148,12 @@ pub(crate) struct Sess {
     ///   (사용자 09-28 "실행 오류면 결과 탭을 추가할 필요 없다").
     pub run_fresh_prev: Option<u64>,
     pub last_run_items: Vec<String>,
+    /// ★ T-371: `last_run_items`와 나란히 — 각 문장 **실행 텍스트의 시작**이 `src` 안에서 몇 번째 글자인지(원문 조각을 다듬은 것과
+    ///   실행 텍스트가 같을 때만 `Some` · `EXEC` 정규화 등으로 다르면 `None` = 문장 시작 줄로 폴백).
+    pub last_run_starts: Vec<Option<usize>>,
+    /// ★ T-371: 이번 실행의 `src`가 편집기 본문에서 시작하는 글자 인덱스(전체 = 0 · 선택 = 선택 시작 · 캐럿 문장 = 그 문장 시작) ·
+    ///   편집기 본문이 아니면(디스크 실행 · 실행 계획 래핑) `None`.
+    pub run_src_base: Option<usize>,
     pub run_line_base: usize,
     pub single_run: bool,
     /// 이번 실행에 결과 셋이 하나라도 왔나(Output 탭 전환 정책 `no_results` · 09-30).
@@ -242,6 +248,8 @@ impl Sess {
             run_children: 0,
             run_tracking: false,
             last_run_items: Vec::new(),
+            last_run_starts: Vec::new(),
+            run_src_base: None,
             run_line_base: 0,
             single_run: false,
             run_had_rs: false,

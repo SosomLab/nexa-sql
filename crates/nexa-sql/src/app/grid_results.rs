@@ -1077,6 +1077,9 @@ impl App {
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
+        // 실행 계획 = 래핑한 스크립트라 편집기 좌표와 무관(T-371 폴백 = 줄).
+        self.sess.last_run_starts = Vec::new();
+        self.sess.run_src_base = None;
         let max_rows = self.grid.page_rows();
         self.sess.submit(
             pass,

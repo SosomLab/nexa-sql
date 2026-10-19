@@ -363,6 +363,12 @@ const SELECT_ALL_OPTS: &[(&str, Msg)] = &[
     ("keep", Msg::ValSelectAllKeep),
     ("end", Msg::ValSelectAllEnd),
 ];
+/// 찾기를 열 때 "선택 범위에서 찾기" 자동 켬(VS Code `editor.find.autoFindInSelection` · 131차 · 사용자 10-19 이관).
+const FIND_AUTO_SCOPE_OPTS: &[(&str, Msg)] = &[
+    ("never", Msg::ValFindAutoScopeNever),
+    ("multiline", Msg::ValFindAutoScopeMultiline),
+    ("always", Msg::ValFindAutoScopeAlways),
+];
 const TX_CLOSE_OPTS: &[(&str, Msg)] = &[
     ("ask", Msg::ValTxAsk),
     ("commit", Msg::ValTxCommit),
@@ -3403,6 +3409,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-371(131차 win · 사용자 10-19): 실행 오류 위치로 캐럿 이동.
+    Entry {
+        key: "editor.error_goto",
+        cat: Msg::CatEditor,
+        label: Msg::LblErrorGoto,
+        desc: Msg::DescErrorGoto,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // 편집기 휠 단위(사용자 09-16 · 픽셀 스크롤 도입과 함께 그리드와 같은 선택지).
     Entry {
         key: "editor.scroll",
@@ -5333,6 +5348,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescSelectAllView,
         kind: SettingKind::Choice(SELECT_ALL_OPTS),
         default: "keep",
+    },
+    // ★ 찾기를 열 때 선택 범위 자동(131차 win · 사용자 10-19 이관 "VS Code처럼") — 기본 never = VS Code 기본.
+    Entry {
+        key: "editor.find_auto_scope",
+        cat: Msg::CatEditor,
+        label: Msg::LblFindAutoScope,
+        desc: Msg::DescFindAutoScope,
+        kind: SettingKind::Choice(FIND_AUTO_SCOPE_OPTS),
+        default: "never",
     },
     Entry {
         key: "tx.close_action",

@@ -162,6 +162,8 @@ impl App {
                     }
                 }
                 self.run_text_whole(src);
+                // T-371: 객체 소스 탭 = 편집기 본문 전체가 한 단위(글자 0부터).
+                self.sess.run_src_base = Some(0);
                 if self.sess.busy {
                     self.sess.status = tf(Msg::StRunObject, &[&kind, &name]);
                 }
@@ -170,6 +172,8 @@ impl App {
         }
         // Ctrl/⌘+Enter = 선택 영역 → 없으면 **캐럿 위치의 한 문장**(`;` 종결 · 사용자 09-14) → F5 = 전체.
         let mut line_base = 0usize;
+        // T-371: `src`가 편집기 본문에서 시작하는 글자 인덱스(전체 = 0).
+        let mut src_base = Some(0usize);
         let text = if all {
             None
         } else {
@@ -186,6 +190,7 @@ impl App {
                 // 선택 실행: 선택 시작 줄.
                 if let Some((a, b)) = self.ed_mut().selection() {
                     line_base = self.ed_mut().buf().line_of(a.min(b));
+                    src_base = Some(a.min(b));
                 }
                 sel
             } else {
@@ -199,12 +204,15 @@ impl App {
                 //   Msg 102 · 선택 실행과 같은 길 = 원문 그대로).
                 nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect)).map(|it| {
                     line_base = it.line.saturating_sub(1);
+                    src_base = Some(full[..it.span.start].chars().count());
                     full[it.span].to_string()
                 })
             }
         };
         let src = text.unwrap_or_else(|| self.ed_mut().text());
         self.run_text(src, line_base, all);
+        // `run_text_in`이 `None`으로 되돌린 뒤 편집기 기준값을 적는다(디스크 실행 경로는 `None` 그대로).
+        self.sess.run_src_base = src_base;
     }
 
     /// 본문 실행의 공통 경로 — 편집기 실행(`run_sql`)과 **디스크에서 바로 실행**(docs/59 §4 3단계 · 편집기에 싣지 않는다)이 같이 쓴다.
@@ -253,6 +261,7 @@ impl App {
         self.wake_if_idle();
         self.sess.touch();
         self.sess.run_line_base = line_base;
+        self.sess.run_src_base = None;
         let target = self.run_target_tab();
         if let Some(g) = self.grid_for(target) {
             g.set_source_sql(&src);
@@ -356,6 +365,12 @@ impl App {
         } else {
             split_items(&src, self.sess.dialect)
         };
+        // T-371: 한 단위 실행 = 다듬기 전 앞 공백만큼 · 보통 실행 = 분할 항목마다.
+        self.sess.last_run_starts = if whole {
+            vec![Some(src.chars().take_while(|c| c.is_whitespace()).count())]
+        } else {
+            split_item_starts(&src, self.sess.dialect)
+        };
         // 세션 상태 표식(`stateful`)은 여기서 일괄로 켜지 않는다 — 문장이 **서버로 나가는 순간**(`RunEvent::Begin`) 그때의 세션에 켠다.
         // (실행 전 일괄이면 `CONNECT` 뒤 문장의 상태가 **앞** 세션에 붙어 재접속 직후 헛경고가 났다 · 사용자 09-30.)
         // ★ 행 수는 **결과가 갈 탭**의 그리드에서(사용자 10-09 "행 수 0 → 중지 → 재조회 = 200행" 결함): 종전 `self.grid`(활성 그리드)는
@@ -421,6 +436,9 @@ impl App {
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
+        // 실행 계획 = 래핑한 스크립트라 편집기 좌표와 무관(T-371 폴백 = 줄).
+        self.sess.last_run_starts = Vec::new();
+        self.sess.run_src_base = None;
         let max_rows = self.run_page_rows(self.sess.run_tab);
         self.sess.submit(
             pass,
@@ -538,5 +556,88 @@ impl App {
             );
             self.redraw();
         }
+    }
+}
+
+/// ★ T-371: 분할 항목의 **실행 텍스트 시작**이 `src`에서 몇 번째 글자인지 — 원문 조각(`span`)을 다듬은 것(앞뒤 공백 · 끝 `;`/`/`)이
+/// 실행 텍스트(`text`)와 같을 때만(그때 드라이버 오류 위치 = 시작 + 위치) · `EXEC` 정규화 등으로 다르면 `None`.
+pub(crate) fn item_start_char(
+    src: &str,
+    span: &std::ops::Range<usize>,
+    text: &str,
+) -> Option<usize> {
+    let raw = src.get(span.clone())?;
+    let lead = raw.len() - raw.trim_start().len();
+    let trimmed = raw.trim().trim_end_matches([';', '/']).trim_end();
+    (trimmed == text).then(|| src[..span.start + lead].chars().count())
+}
+
+/// ★ T-371: 오류 사건 → 편집기 캐럿 자리(글자 인덱스) — `base`(실행 `src`의 편집기 시작) + `start`(문장 시작) + `pos`(문장 안 위치 ·
+/// 문장 길이를 넘으면 문장 시작). 셋 중 기준이 없으면 `None`(호출자 = 문장 시작 줄로 폴백).
+pub(crate) fn error_caret(
+    base: Option<usize>,
+    start: Option<usize>,
+    pos: Option<usize>,
+    stmt_len: usize,
+) -> Option<usize> {
+    let b = base?;
+    let s = start?;
+    let p = pos.filter(|p| *p <= stmt_len).unwrap_or(0);
+    Some(b + s + p)
+}
+
+#[cfg(test)]
+mod errpos_tests {
+    use super::*;
+
+    #[test]
+    fn item_start_counts_chars_before_trimmed_text() {
+        let src = "가나;\n  SELECT 1;\n";
+        let items = nsql_script::split_script_in(src, None);
+        let s: Vec<Option<usize>> = items
+            .iter()
+            .map(|i| item_start_char(src, &i.span, &i.text))
+            .collect();
+        assert_eq!(s[0], Some(0));
+        assert_eq!(s[1], Some(6), "개행 + 공백 2 뒤 = 글자 6(한글은 1글자)");
+    }
+
+    #[test]
+    fn item_start_is_none_when_text_was_normalized() {
+        let src = "EXEC\n  BEGIN NULL; END;";
+        let items = nsql_script::split_script_in(src, Some(nsql_core::Dialect::Oracle));
+        let it = &items[0];
+        assert!(
+            it.text != src.trim(),
+            "EXEC 정규화 = 실행 텍스트가 원문과 다르다"
+        );
+        assert_eq!(item_start_char(src, &it.span, &it.text), None);
+    }
+
+    /// MC/DC: base · start · pos(있음/범위 밖) 각각이 결과를 독립적으로 바꾼다.
+    #[test]
+    fn error_caret_mc_dc() {
+        assert_eq!(error_caret(Some(10), Some(5), Some(3), 20), Some(18));
+        assert_eq!(
+            error_caret(None, Some(5), Some(3), 20),
+            None,
+            "편집기 기준 없음"
+        );
+        assert_eq!(
+            error_caret(Some(10), None, Some(3), 20),
+            None,
+            "문장 시작 모름"
+        );
+        assert_eq!(
+            error_caret(Some(10), Some(5), None, 20),
+            Some(15),
+            "위치 없음 = 문장 시작"
+        );
+        assert_eq!(
+            error_caret(Some(10), Some(5), Some(99), 20),
+            Some(15),
+            "범위 밖 = 문장 시작"
+        );
+        assert_eq!(error_caret(Some(0), Some(0), Some(0), 0), Some(0));
     }
 }

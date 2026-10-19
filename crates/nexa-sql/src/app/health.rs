@@ -181,6 +181,11 @@ pub(crate) fn sess_on(sess: &Sess, ep: &str) -> bool {
     sess.connected && ep_text(sess.spec.as_ref()).as_deref() == Some(ep)
 }
 
+/// 🔧 131차: 레지스트리는 멀쩡(`Notify::None`)한데 탐색기 헤더가 아직 "끊김"이면 복귀(`Up`) 사건에 헤더만 걷는다 — 순수 판정.
+pub(crate) fn header_clear_on_quiet_up(ev: &HealthEvent, header_broken: bool) -> bool {
+    matches!(ev, HealthEvent::Up) && header_broken
+}
+
 /// 벽시계 `hh:mm`(헤더 "끊김 hh:mm").
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
     let l = nsql_log::local_at(t);
@@ -211,6 +216,12 @@ impl App {
                     if changed {
                         self.sync_sess_ui();
                     }
+                } else if header_clear_on_quiet_up(&ev, self.explorer.ep_broken(ep)) {
+                    // 🔧 131차 win(사용자 10-19): 끊긴 뒤 **세션을 모두 끊고 다시 접속**하면 레지스트리 기록은 `health_gc`가 이미
+                    //   지웠는데(세션 0) 탐색기 칸의 "끊김 hh:mm"은 `Notify::Up`으로만 걷혀 영영 남았다 → 조용한 복귀(알림 없음)에도
+                    //   헤더만 걷는다.
+                    self.explorer.set_ep_broken(ep, None);
+                    self.explorer.kick_meta_for_ep(ep);
                 }
             }
             Notify::Down => {
@@ -434,6 +445,18 @@ mod tests {
             "의심 해소 = 조용히"
         );
         assert_eq!(health_merge(Alive, &HealthEvent::Up), (Alive, Notify::None));
+    }
+
+    /// 🔧 131차 MC/DC: (Up인가) × (헤더가 끊김인가) — 둘 다 참일 때만 헤더를 걷는다.
+    #[test]
+    fn quiet_up_clears_header_only_when_header_is_broken() {
+        assert!(header_clear_on_quiet_up(&HealthEvent::Up, true));
+        assert!(!header_clear_on_quiet_up(&HealthEvent::Up, false));
+        assert!(!header_clear_on_quiet_up(&HealthEvent::NetChanged, true));
+        assert!(!header_clear_on_quiet_up(
+            &HealthEvent::Down("x".into()),
+            true
+        ));
     }
 
     /// 레지스트리: 사건 적용 · 억제 창 · 수명.

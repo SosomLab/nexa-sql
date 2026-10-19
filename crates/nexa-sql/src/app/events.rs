@@ -222,10 +222,9 @@ impl App {
                     self.sess.connected = true;
                     self.sess.desc = d;
                     self.sess.broken = false;
+                    // 131차: 레지스트리가 멀쩡해도 늘 흘린다(탐색기 헤더 "끊김"만 남은 경우를 `health_event`가 걷는다).
                     if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
-                        if self.health.state(&ep) != app::health::HealthState::Alive {
-                            self.health_event(&ep, app::health::HealthEvent::Up);
-                        }
+                        self.health_event(&ep, app::health::HealthEvent::Up);
                     }
                     self.sync_sess_ui();
                 }
@@ -467,11 +466,10 @@ impl App {
                         ));
                         self.sync_sess_ui();
                     }
-                    // 한 세션이 닿았으면 끝점도 산 것(107 §9-2) — 끊겼던 끝점이면 복귀 전파 · 의심(L0)이었으면 조용히 해소.
+                    // 한 세션이 닿았으면 끝점도 산 것(107 §9-2) — 끊겼던 끝점이면 복귀 전파 · 의심(L0)이었으면 조용히 해소 ·
+                    // 131차: 레지스트리가 멀쩡해도 흘린다(헤더 "끊김"만 남은 경우).
                     if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
-                        if self.health.state(&ep) != app::health::HealthState::Alive {
-                            self.health_event(&ep, app::health::HealthEvent::Up);
-                        }
+                        self.health_event(&ep, app::health::HealthEvent::Up);
                     }
                 }
             }
@@ -1325,11 +1323,10 @@ impl App {
                         self.toasts
                             .push(toast::ToastKind::Warn, description.clone(), m);
                     }
-                    // 접속 성공 = 끝점이 살아 있다(107 §9-2) — 끊겼던 끝점이면 복귀 전파.
+                    // 접속 성공 = 끝점이 살아 있다(107 §9-2) — 끊겼던 끝점이면 복귀 전파 · 131차: 레지스트리가 멀쩡해도 흘린다
+                    // (세션 0 → `health_gc`가 기록을 지운 뒤 다시 접속 = 탐색기 헤더 "끊김"만 남던 결함 · 사용자 10-19).
                     if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
-                        if self.health.is_broken(&ep) {
-                            self.health_event(&ep, app::health::HealthEvent::Up);
-                        }
+                        self.health_event(&ep, app::health::HealthEvent::Up);
                     }
                     self.sess.user_disconnected = false;
                     self.sess.idle_closed = false;
@@ -1511,6 +1508,31 @@ impl App {
                         let ed_line = self.sess.run_line_base + line - 1;
                         self.editors
                             .set_error_line(self.sess.run_editor, Some(ed_line));
+                    }
+                    // ★ T-371(사용자 10-19): 오류 위치로 캐럿 — 드라이버 위치(문장 안 글자)가 있으면 그 자리 · 없으면 문장 시작 줄.
+                    //   실행한 편집기 탭이 지금 활성일 때만(다른 탭·Output 보는 중엔 옮기지 않는다) · 선택은 만들지 않는다.
+                    if self.settings.flag("editor.error_goto")
+                        && self.editors.active_id() == self.sess.run_editor
+                    {
+                        let start = self.sess.last_run_starts.get(index).copied().flatten();
+                        let by_pos = app::run::error_caret(
+                            self.sess.run_src_base,
+                            start,
+                            error.position,
+                            stmt.chars().count(),
+                        );
+                        let target = by_pos.or_else(|| {
+                            (line > 0).then(|| {
+                                let buf = self.editors.cur().buf();
+                                let l = (self.sess.run_line_base + line - 1)
+                                    .min(buf.line_count().saturating_sub(1));
+                                buf.line_start(l)
+                            })
+                        });
+                        if let Some(ch) = target {
+                            let mut inv = Invalidations::default();
+                            self.ed_mut().select_range(ch, ch, &mut inv);
+                        }
                     }
                     self.run_toast
                         .set_phase(self.sess.run_card, runtoast::Phase::Error(summary.clone()));

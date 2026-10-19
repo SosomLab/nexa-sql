@@ -32,7 +32,7 @@ gui() { # <이름> <명령> <초>
 }
 A() { echo "@connected:@after:$1:$2"; } # 접속 기준 지연(ms) 명령
 hdr() { head -1 "$OUT/$1" 2>/dev/null; }
-geom() { sed -n 4p "$OUT/$1" 2>/dev/null; } # consumed=… 줄(머리 3줄 뒤)
+geom() { grep -m1 '^consumed=' "$OUT/$1" 2>/dev/null; } # consumed=… 줄(종전 = 4행 고정 → 10-17 `present=` 줄이 4행에 끼어 131차 V3 A-2/A-3 헛실패 → 접두로 찾는다)
 caret() { head -1 "$OUT/$1" 2>/dev/null | sed -n 's/.*caret=\([0-9]*\).*/\1/p'; }
 field() { echo "$1" | sed -n "s/.*$2 \([0-9-]*\) ms.*/\1/p"; }
 

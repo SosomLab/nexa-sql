@@ -353,6 +353,13 @@ impl ExplorerSet {
             .collect()
     }
 
+    /// 그 끝점의 칸 가운데 헤더가 "끊김"인 칸이 있는가(131차 · 조용한 복귀 때 헤더 걷기 판정).
+    pub(crate) fn ep_broken(&self, ep: &str) -> bool {
+        self.panes_on(ep)
+            .into_iter()
+            .any(|i| self.panes[i].ex.broken_since().is_some())
+    }
+
     /// 끝점 끊김/복귀를 그 끝점의 칸 헤더에 투영("끊김 hh:mm" · 위험색).
     pub(crate) fn set_ep_broken(&mut self, ep: &str, since: Option<std::time::SystemTime>) {
         for i in self.panes_on(ep) {
@@ -374,15 +381,15 @@ impl ExplorerSet {
         }
     }
 
-    /// 진단(기동 명령 `health.dump`): 칸마다 끝점 · 끊김 시각 · 오프라인.
+    /// 진단(기동 명령 `health.dump`): 칸마다 끝점 · 끊김 시각 · 오프라인. 열쇠가 풀린 칸도 `pane -|…`로 찍는다(131차 · 재사용 칸의
+    /// 끊김 잔존을 E2E가 판정 · `scripts/win-health-header-e2e.sh`).
     pub(crate) fn health_dump(&self) -> String {
         self.panes
             .iter()
-            .filter(|p| p.key.is_some())
             .map(|p| {
                 format!(
                     "pane {}|broken={}|offline={}",
-                    crate::app::health::ep_text(p.key.as_ref()).unwrap_or_default(),
+                    crate::app::health::ep_text(p.key.as_ref()).unwrap_or_else(|| "-".into()),
                     p.ex.broken_since()
                         .map_or("-".to_string(), crate::app::health::hhmm),
                     p.ex.is_offline()
@@ -776,6 +783,8 @@ impl ExplorerSet {
             self.panes.remove(i);
         } else {
             self.panes[i].key = None;
+            // 🔧 131차: 열쇠만 풀고 남는 칸 = 끊김 표식도 비운다(다음 접속이 이 칸을 재사용한다 · 협업 V1 ③).
+            self.panes[i].ex.set_broken(None);
         }
         if i < self.shown {
             self.shown -= 1;

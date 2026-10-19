@@ -2955,6 +2955,11 @@ impl Runner {
             Err(mut e) => {
                 let code = e.code.unwrap_or(-1);
                 self.set_statement_sysvars(None, code, started.elapsed());
+                // ★ T-371: 위치는 **보낸 문장** 기준 → 원문 문장(`item.text`) 기준으로. 바인드 재작성(`:x` → `$1`/`@x`)·프리펜드·
+                //   치환으로 그 자리 앞이 달라졌으면 맞출 수 없으니 버린다(호스트 = 문장 시작 줄로 폴백).
+                e.position = e
+                    .position
+                    .and_then(|p| map_error_position(&request.sql, &item.text, p));
                 if mode == PrepareMode::DeclarePrepend {
                     e.message
                         .push_str(&format!(" (프리펜드 {line_offset}줄 보정 필요)"));
@@ -5231,5 +5236,70 @@ mod hold_tests {
         assert!(!dml_without_where(
             "MERGE INTO t USING s ON (1=1) WHEN MATCHED THEN UPDATE SET a = 1"
         ));
+    }
+}
+
+/// T-371: 보낸 문장(`sent`)의 글자 위치 `pos`를 원문 문장(`orig`) 위치로 — 두 문장이 같거나 **`pos` 앞까지 같으면** 그대로 ·
+/// 아니면 `None`(바인드 재작성·프리펜드·치환이 그 앞을 바꿨다). 순수 함수.
+#[must_use]
+pub fn map_error_position(sent: &str, orig: &str, pos: usize) -> Option<usize> {
+    if sent == orig {
+        return Some(pos);
+    }
+    let mut a = sent.chars();
+    let mut b = orig.chars();
+    for _ in 0..pos {
+        match (a.next(), b.next()) {
+            (Some(x), Some(y)) if x == y => {}
+            _ => return None,
+        }
+    }
+    Some(pos)
+}
+
+#[cfg(test)]
+mod errpos_tests {
+    use super::map_error_position;
+
+    #[test]
+    fn position_maps_when_prefix_unchanged() {
+        assert_eq!(
+            map_error_position("SELECT x FROM t", "SELECT x FROM t", 9),
+            Some(9),
+            "같은 문장"
+        );
+        assert_eq!(
+            map_error_position(
+                "SELECT x FROM t WHERE a = $1",
+                "SELECT x FROM t WHERE a = :v",
+                9
+            ),
+            Some(9),
+            "재작성이 위치 뒤 = 그대로"
+        );
+        assert_eq!(
+            map_error_position("DECLARE @v INT;\nSELECT x FROM t", "SELECT x FROM t", 20),
+            None,
+            "프리펜드 = 앞이 다르다 → 버림"
+        );
+        assert_eq!(
+            map_error_position("SELECT 가 FROM t", "SELECT 가 FROM t", 8),
+            Some(8)
+        );
+        assert_eq!(
+            map_error_position("abc", "abd", 3),
+            None,
+            "위치 직전 글자가 다르다"
+        );
+        assert_eq!(
+            map_error_position("abc", "abd", 2),
+            Some(2),
+            "위치 앞까지는 같다"
+        );
+        assert_eq!(
+            map_error_position("ab", "abcd", 3),
+            None,
+            "보낸 문장이 더 짧다"
+        );
     }
 }

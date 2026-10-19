@@ -37,7 +37,11 @@ pub(crate) enum FindAction {
     Prev,
     Replace,
     ReplaceAll,
+    /// × 버튼 = 닫기(캐럿은 지금 자리 그대로).
     Close,
+    /// ★ Esc = **취소**(131차 · 사용자 10-20): 닫되 캐럿·선택을 **열 때 자리로 되돌린다**(Emacs isearch C-g · 열기만 한 상태에서
+    ///   Esc = 아무 일도 없었던 것처럼).
+    Cancel,
     /// 질의·토글이 바뀌었다(호스트가 개수를 다시 센다 · 첫 일치로 이동).
     Changed,
     /// "선택 범위에서 찾기"가 켜지거나 꺼졌다(호스트가 범위를 잡거나 푼다).
@@ -211,8 +215,8 @@ impl FindBtn {
             InputEvent::MouseDown { x, y, .. } => {
                 let inside = self.rect.contains(Point { x, y });
                 self.pressed = inside && self.enabled;
-                // 접기 셰브론은 포커스를 갖지 않는다(클릭만 · 사용자 09-17).
-                self.focused = inside && self.enabled && self.kind != BtnKind::Fold;
+                // ★ 131차(사용자 10-19 이관): 마우스 클릭은 포커스 링을 만들지 않는다(VS Code focus-visible = 키보드 포커스만 ·
+                //   토글을 끈 뒤·접기 셰브론을 누른 뒤 점선이 남던 결함). `focused`는 키보드 순회가 생길 때 쓴다.
             }
             InputEvent::MouseUp { x, y } => {
                 if self.pressed && self.rect.contains(Point { x, y }) {
@@ -499,6 +503,10 @@ impl FindBar {
         }
         self.sync_fold_icon();
         self.focus_query();
+        // ★ 열 때 검색어 **전체 선택**(사용자 10-19): 선택을 씨앗으로 넣었든 지난 검색어가 남아 있든 바로 타이핑으로 덮어 쓸 수
+        //   있게(Sublime · VS Code 동일). `SelectAll`은 포커스된 상자만 받으므로 `focus_query` 뒤.
+        let mut inv = Invalidations::default();
+        self.query.on_event(&InputEvent::SelectAll, &mut inv);
     }
 
     pub(crate) fn close(&mut self) {
@@ -822,7 +830,7 @@ impl FindBar {
                         FindAction::Next
                     };
                 }
-                CtlKey::Escape => return FindAction::Close,
+                CtlKey::Escape => return FindAction::Cancel,
                 _ => {}
             }
         }
@@ -851,14 +859,7 @@ impl FindBar {
         for b in &mut self.btns {
             b.on_event(ev);
         }
-        // 버튼 하나만 포커스(마지막 눌린 것).
-        if let InputEvent::MouseDown { x, y, .. } = *ev {
-            let p = Point { x, y };
-            let hit = self.btns.iter().position(|b| b.rect.contains(p));
-            for (i, b) in self.btns.iter_mut().enumerate() {
-                b.focused = Some(i) == hit;
-            }
-        }
+        // (131차) 마우스 클릭으로 버튼 포커스 링을 세우던 길 제거 — 링은 키보드 포커스 전용(VS Code).
         if self.query.take_changed().is_some() {
             if let Some(h) = &self.history {
                 self.rq.after_edit(&self.query, h);

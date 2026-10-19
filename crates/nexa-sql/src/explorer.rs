@@ -3556,6 +3556,10 @@ impl Explorer {
     pub(crate) fn connect(&mut self, spec: &ConnectSpec, profile_name: &str, once: bool) {
         self.one_time = once;
         self.offline = false;
+        // 🔧 131차 win(사용자 10-19 · 협업 V1 `win-health-header-e2e.sh`): 새 접속은 끊김 표식을 물려받지 않는다 — 열쇠가 풀린 칸을
+        //   다음 접속(같은/다른 프로필)이 재사용하면 "끊김 hh:mm"이 그 칸에 옮겨 붙어 영영 남았다(끝점이 달라 `Up`이 안 옴 · 0.2.2 동일).
+        //   서버가 아직 죽어 있으면 메타 세션 판정이 다시 켠다.
+        self.broken_since = None;
         self.suspended = false;
         self.last_used = Instant::now();
         self.gen += 1;

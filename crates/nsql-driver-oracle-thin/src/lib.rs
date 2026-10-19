@@ -185,6 +185,15 @@ impl ThinSession {
         err(e)
     }
 
+    /// T-371: 실행 오류의 오프셋(서버 보고 = 바이트 · 한글 리터럴 뒤 오류로 실서버 E2E 확인 = 글자 열 19 ✓ `win-error-goto-e2e.sh`)을 보낸 문장의 글자 인덱스로.
+    fn fail_at(&self, e: &oracledb::Error, sql: &str) -> DbError {
+        let mut d = self.fail(e);
+        if let Some(p) = d.position {
+            d.position = Some(nsql_core::char_index_of_byte(sql, p));
+        }
+        d
+    }
+
     /// ★ LOB 열의 진짜 타입 글(CLOB·BLOB·NCLOB · 10-13 실서버 대조): 인라인 LOB 페치는 드라이버가 정의 메타를 `LONG`·`LONG RAW`·
     /// `LONG NVARCHAR`로 바꿔 원래 타입을 잃는다(`Metadata::define_metadata`). LOB을 `Lob`으로 받는 길은 한글 깨짐(#18)이라 쓰지 않고,
     /// **LONG 계열 열이 있을 때만** `fetch_lobs` 문장으로 **파싱만** 1회(왕복 1 · 값·로케이터 없음) 해 열별 타입 글을 얻는다.
@@ -402,11 +411,11 @@ impl Session for ThinSession {
         let build = |sql: &str| -> Result<Statement, DbError> {
             self.conn
                 .statement(sql)
-                .map_err(|e| self.fail(&e))?
+                .map_err(|e| self.fail_at(&e, &req.sql))?
                 .fetch_array_size(self.fetch_size)
                 .exclude_from_cache()
                 .build()
-                .map_err(|e| self.fail(&e))
+                .map_err(|e| self.fail_at(&e, &req.sql))
         };
         let mut stmt = build(&req.sql)?;
         // ★ DDL에 바인드 꼴(`CREATE TRIGGER … :NEW.col` · oracledb #33 · 110 §3-4): 드라이버 파서가 `:NEW`를 바인드로 모아
@@ -465,7 +474,9 @@ impl Session for ThinSession {
         };
         if stmt.is_query() {
             let t0 = std::time::Instant::now();
-            let mut cur = stmt.query_named(&named).map_err(|e| self.fail(&e))?;
+            let mut cur = stmt
+                .query_named(&named)
+                .map_err(|e| self.fail_at(&e, &req.sql))?;
             let mut columns = Self::columns(cur.columns());
             if Self::has_long_like(cur.columns()) {
                 if let Some(real) = self.lob_type_names(&req.sql) {
@@ -504,7 +515,7 @@ impl Session for ThinSession {
             let is_dml = stmt.is_dml();
             let mut r = stmt
                 .execute_named(&named)
-                .map_err(|e| limit_err(self.fail(&e)))?;
+                .map_err(|e| limit_err(self.fail_at(&e, &req.sql)))?;
             result.timing.push(Stage::Execute, t0.elapsed());
             result.rows_affected = Some(if is_dml { r.rows_affected() } else { 0 });
             let mut row = r.out_bind_data();
