@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-20 새벽 (131차 · win · 🚀 v0.2.5)** — 패치 릴리스 be9057c(태그 v0.2.5) · 축소 배포 전 검증(test 942/0 · nexa-ui 640/0 · clippy 0×2 · 영어 ✓) · nexa-ui 218차 a1b60e4(rebase · 다른 세션 ca2b0dd 포함 = V1 이상 없음) · release 39285826040 ✓ · 공개 16:45:41Z · Latest · Homebrew 2ff8b0a · pkg.sosomlab.com 0.2.5 · winget/choco 제출 0 — journal 10-19 §1-6
+- **2026-10-19 저녁~10-20 새벽 (131차 · win · 협업 쌍 "개발"×"협업")** — 최신화·변경 분석(215차 콤보 폭) · 🔧 탐색기 "끊김" 헤더 잔존(조용한 복귀 + 칸 재사용 · E2E 9/9) · ★ T-371 오류 위치로 캐럿(5드라이버 글자 단위 · `editor.error_goto` · E2E 20/20) · 찾기 묶음 6(전체 선택 · 여러 줄 선택 유지 · `editor.find_auto_scope` · 포커스 링 · 열기 = 캐럿 그대로 · Esc 규칙 · 선택 유지 · E2E 12/12) · 열 모드 Home/End(nexa-ui 218 `move_carets`) · V3 제품 결함 0 · 사용자 실기 ✓ 전부 — journal 10-19 §1
 - **2026-10-17 저녁 (130차 · mac · T-369/T-370)** — nsql-script 엔진 메시지 i18n(`tr!` 영어 기본 · 34곳) · `health.dump` 화면 진단 · T-368 제외 · 시험 프로시저 제거 — journal 10-16 §17.
 - **2026-10-17 오후 (130차 · mac · 🚀 v0.2.4)** — 맥 객체 찾기 깜빡임 치명 수정 패치 b99d23c · 축소 검증 · 공개 08:36:36Z · Homebrew d623e1e · pkg.sosomlab.com 0.2.4 · winget/choco 제출 0 — journal 10-16 §16.
 - **2026-10-17 오후 (130차 · mac · 깜빡임)** — 🔧 맥 객체 찾기 검색 중 깜빡임 = iosurface 장 선택(nexa-ui 213차 · 건너뛰기 · 풀 4 · forced · 33 ms) · 사용자 ✓ · T-370 후보 — journal 10-16 §15.
