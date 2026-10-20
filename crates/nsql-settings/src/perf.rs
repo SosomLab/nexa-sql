@@ -286,8 +286,8 @@ pub const BOOST: &[(&str, &str)] = &[
     // hover 카드(사용자 10-13 "objlink.tooltip은 향상 모드·용량 모드에 맞춰 제약"): 향상 모드 = 카드 끔(머무름 분석·카드 그리기 0).
     ("objlink.tooltip", "off"),
     // 줄 끝 라벨·설명 Ctrl 홀드(docs/111 · 사용자 10-13 "향상 모드에서는 Ctrl 기능 꺼짐") — 사건마다 합성·링크 분석을 만든다.
-    ("bookmark.inline_label_ctrl", "off"),
-    ("editor.desc_inline_ctrl", "off"),
+    ("ctrl.bookmark_label", "off"),
+    ("ctrl.desc_inline", "off"),
     ("ext.rainbow_pairs.enabled", "off"),
     // 탐색기 갱신 뒤 새 객체 강조(docs/57) — 강조가 사라질 때까지 다시 그리기가 이어진다.
     ("meta.refresh_highlight_ms", "0"),

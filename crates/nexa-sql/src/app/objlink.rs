@@ -873,7 +873,7 @@ impl App {
     }
 
     /// ★ hover 카드(설명 툴팁)를 쓸 수 있는가(사용자 10-13): 설정 `objlink.tooltip`(향상 모드 = FORCED off) · 큰 파일 모드 = 끔 ·
-    /// 문서가 `editor.inline_ctrl_off_kb`(줄 끝 라벨과 같은 "끄는 용량" 단계 · 0 = 무제한)보다 크면 끔.
+    /// 문서가 `ctrl.off_kb`(줄 끝 라벨과 같은 "끄는 용량" 단계 · 0 = 무제한)보다 크면 끔.
     pub(crate) fn objlink_tooltip_on(&self) -> bool {
         if !self.settings.flag("objlink.tooltip") {
             return false;
@@ -882,7 +882,7 @@ impl App {
         if self.editors.is_large(i) {
             return false;
         }
-        let off_kb = self.settings.int("editor.inline_ctrl_off_kb").max(0) as usize;
+        let off_kb = self.settings.int("ctrl.off_kb").max(0) as usize;
         off_kb == 0 || self.editors.cur().buf().len_bytes() / 1024 <= off_kb
     }
 
@@ -1840,7 +1840,7 @@ impl App {
         Some((kind_label, name_line, desc.filter(|d| !d.trim().is_empty())))
     }
 
-    /// 클릭(좌 = 설정 `objlink.click` — 설명 복사(기본) 또는 객체 탐색기에서 보기 · **Shift+좌** = `이름 - 설명` 복사 ·
+    /// 클릭(좌 = 설정 `ctrl.click` — 캐럿 추가(기본) · 설명 복사 · 객체 탐색기에서 보기 · **Shift+좌** = `ctrl.shift_click` · 우 = `ctrl.right_click` ·
     /// 우 = 메뉴) — 링크 위였으면 true(편집기로 가지 않는다). "보기"인데 실제 객체로 풀리지 않는 링크는 설명 복사로 돌아간다.
     /// 머무름 모드(Ctrl 없음)의 클릭은 링크 동작이 아니다 — 모드를 끝내고 편집기로 보낸다(캐럿 이동).
     pub(crate) fn objlink_click(&mut self, p: Point, right: bool) -> bool {
@@ -1858,15 +1858,24 @@ impl App {
         let Some(k) = self.objlink_at(p) else {
             return false;
         };
+        // ★ Ctrl 키 분류(D-312/D-313): 세 조합이 각각 설정 — 편집기로 보내는 값이면 false(좌 = 캐럿 토글 · 우 = 편집기 메뉴 · Shift = 범위 선택).
         if right {
+            if !ctrl_rclick_links(self.settings.get("ctrl.right_click")) {
+                return false;
+            }
             self.objlink_open_menu(k, p);
         } else if self.shift {
-            self.objlink_copy_name_desc(k);
+            match self.settings.get("ctrl.shift_click") {
+                Some("editor") => return false,
+                Some("desc") => self.objlink_copy_desc(k),
+                _ => self.objlink_copy_name_desc(k),
+            }
         } else {
             let can_reveal = self.objlink_reveal_target(k).is_some();
-            match click_action(self.settings.get("objlink.click"), can_reveal) {
+            match click_action(self.settings.get("ctrl.click"), can_reveal) {
                 ClickAction::Reveal => self.objlink_reveal(k),
                 ClickAction::Copy => self.objlink_copy_desc(k),
+                ClickAction::Caret => return false,
             }
         }
         true
@@ -2679,14 +2688,37 @@ pub(crate) fn paint_tip(
 enum ClickAction {
     Copy,
     Reveal,
+    /// 캐럿 추가(기본 · 사용자 10-20 · D-312) — Ctrl+좌클릭을 편집기로 보낸다(캐럿 추가/제거) · 밑줄·툴팁·hover 카드는 그대로.
+    Caret,
 }
 
-/// 설정값과 "실제 객체로 풀리는가"로 동작을 정한다 — `reveal`이어도 못 푸는 링크(미확인 · 내장 표)는 복사.
-fn click_action(setting: Option<&str>, can_reveal: bool) -> ClickAction {
-    if setting == Some("reveal") && can_reveal {
-        ClickAction::Reveal
+/// Ctrl+좌클릭 **누름**을 링크가 삼키는가(놓을 때 동작 · input.rs) — Shift 없음 = `ctrl.click`이 캐럿이 아닐 때 ·
+/// Shift = `ctrl.shift_click`이 편집기가 아닐 때(순수 · MC/DC · D-313).
+pub(crate) fn ctrl_click_arms_link(
+    click: Option<&str>,
+    shift_click: Option<&str>,
+    shift: bool,
+) -> bool {
+    if shift {
+        shift_click != Some("editor")
     } else {
-        ClickAction::Copy
+        click_action(click, false) != ClickAction::Caret
+    }
+}
+
+/// Ctrl+우클릭이 링크 메뉴를 여는가(`ctrl.right_click` · 기본 = 편집기 메뉴).
+fn ctrl_rclick_links(setting: Option<&str>) -> bool {
+    setting == Some("link_menu")
+}
+
+/// 설정값과 "실제 객체로 풀리는가"로 동작을 정한다 — `reveal`이어도 못 푸는 링크(미확인 · 내장 표)는 복사 ·
+/// `caret`(기본 · D-312)은 풀림과 무관하게 편집기로(캐럿 토글).
+fn click_action(setting: Option<&str>, can_reveal: bool) -> ClickAction {
+    match setting {
+        Some("reveal") if can_reveal => ClickAction::Reveal,
+        Some("copy") | Some("reveal") => ClickAction::Copy,
+        Some("caret") | None => ClickAction::Caret,
+        _ => ClickAction::Copy,
     }
 }
 
@@ -3254,7 +3286,7 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
 
 #[cfg(test)]
 mod click_tests {
-    use super::{click_action, ClickAction};
+    use super::{click_action, ctrl_click_arms_link, ctrl_rclick_links, ClickAction};
 
     /// MC/DC — 설정이 reveal일 때만 · 풀릴 때만 보기(각 조건이 단독으로 결과를 뒤집는다).
     #[test]
@@ -3262,6 +3294,27 @@ mod click_tests {
         assert_eq!(click_action(Some("reveal"), true), ClickAction::Reveal);
         assert_eq!(click_action(Some("copy"), true), ClickAction::Copy);
         assert_eq!(click_action(Some("reveal"), false), ClickAction::Copy);
-        assert_eq!(click_action(None, true), ClickAction::Copy);
+        // D-312: 기본(None)·`caret` = 편집기로(캐럿 토글) · 풀림 여부와 무관.
+        assert_eq!(click_action(None, true), ClickAction::Caret);
+        assert_eq!(click_action(Some("caret"), true), ClickAction::Caret);
+        assert_eq!(click_action(Some("caret"), false), ClickAction::Caret);
+        assert_eq!(click_action(Some("bogus"), true), ClickAction::Copy);
+    }
+
+    #[test]
+    fn ctrl_click_arms_link_mcdc() {
+        // (ctrl.click, ctrl.shift_click, shift) → 누름을 무장(삼킴)하는가 — 조건별 독립 영향(D-313).
+        assert!(!ctrl_click_arms_link(Some("caret"), None, false));
+        assert!(ctrl_click_arms_link(Some("copy"), None, false));
+        assert!(ctrl_click_arms_link(Some("reveal"), None, false));
+        assert!(!ctrl_click_arms_link(None, None, false));
+        assert!(ctrl_click_arms_link(Some("caret"), None, true));
+        assert!(ctrl_click_arms_link(Some("caret"), Some("name_desc"), true));
+        assert!(ctrl_click_arms_link(Some("caret"), Some("desc"), true));
+        assert!(!ctrl_click_arms_link(Some("caret"), Some("editor"), true));
+        assert!(!ctrl_click_arms_link(Some("copy"), Some("editor"), true));
+        assert!(ctrl_rclick_links(Some("link_menu")));
+        assert!(!ctrl_rclick_links(Some("editor")));
+        assert!(!ctrl_rclick_links(None));
     }
 }

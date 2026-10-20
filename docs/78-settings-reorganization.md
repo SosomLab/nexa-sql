@@ -49,6 +49,7 @@
 - **미니맵(Minimap)** *(신설)* — `editor.minimap` ▸ `editor.minimap_width`·`_box_color`·`_border`·`_viewport`·`_click`·`_find`·`_errors` · `bookmark.minimap`(북마크 표시와 중복 등재 — 링크)
 - **코드 완성(Code completion)** — `intel.enabled` ▸ 활성 절: `intel.auto_activation` ▸▸ `intel.delay_ms`·`intel.trigger_chars`·`intel.min_chars` · ▸ 후보 절: `intel.match`·`intel.keywords`·`intel.document_words`·`intel.functions`·`intel.preload`·`intel.recent_boost`·`intel.max_items`·`intel.budget_ms` · ▸ 팝업 절: `intel.popup_rows`·`intel.popup_max_width`·`intel.show_types`·`intel.key_passthrough` · ▸ 삽입 절: `intel.insert_case`·`intel.insert_parens`·`intel.insert_alias`·`intel.insert_space`·`intel.insert_columns` · ▸ `intel.signature_help`
 - **북마크(Bookmarks)** *(그룹 → 카테고리 셋을 이 그룹 아래로)* — 동작·저장 / 표시 / 위치 추적·정리 그대로 · 전부 `bookmark.enabled` ▸
+- **Ctrl 키(Ctrl Key)** *(신설 10-20 · D-313 · `CatCtrl` · 객체 링크 다음)* — 클릭 절: `ctrl.click` · `ctrl.right_click` · `ctrl.shift_click` · 홀드 라벨 절: `ctrl.desc_inline` · `ctrl.desc_scope` · `ctrl.full_kb` · `ctrl.off_kb` · `ctrl.bookmark_label` · `ctrl.bookmark_scope`(옛 `editor.*`/`bookmark.*`/`objlink.click` = RENAMED)
 - **확장(Extensions)** — 관리자 / Rainbow Pairs(`ext.rainbow_pairs.enabled` ▸ 4)
 
 ### 3-3. 파일·프로젝트(Files & Project)

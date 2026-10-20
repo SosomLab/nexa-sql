@@ -9,13 +9,13 @@
 //!   보이는 영역(visible) · 메타 stamp · 북마크 변경(`bm_refresh_tab`).
 //! - 데이터 = 캐시에 있는 코멘트만(왕복 0 · 61 §1-8) · 코멘트가 아직 없는 객체만 1회 선적재(`objlink_prefetch` · D-284 · 응답 = stamp 변화 →
 //!   다시 합성).
-//! - 향상 모드 = `perf` FORCED(`bookmark.inline_label_ctrl`·`editor.desc_inline_ctrl` = off) · 큰 파일 모드 = Ctrl 표시 꺼짐 · `document` 범위 +
+//! - 향상 모드 = `perf` FORCED(`ctrl.bookmark_label`·`ctrl.desc_inline` = off · 종전 `bookmark.inline_label_ctrl`·`editor.desc_inline_ctrl` · D-313) · 큰 파일 모드 = Ctrl 표시 꺼짐 · `document` 범위 +
 //!   부분 분석(`objlink.max_kb` 초과) = 꺼짐.
 
 use crate::*;
 use std::collections::BTreeMap;
 
-/// Ctrl 표시 범위(`editor.inline_ctrl_scope`).
+/// Ctrl 표시 범위(`ctrl.desc_scope` · 종전 `editor.inline_ctrl_scope`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum Scope {
     #[default]
@@ -69,9 +69,9 @@ pub(crate) struct Cfg {
     pub bm_ctrl: bool,
     pub desc_always: bool,
     pub desc_ctrl: bool,
-    /// 객체 설명의 Ctrl 범위(`editor.inline_ctrl_scope`).
+    /// 객체 설명의 Ctrl 범위(`ctrl.desc_scope`).
     pub scope: Scope,
-    /// 북마크 라벨의 Ctrl 범위(`bookmark.inline_label_ctrl_scope` · 사용자 10-13 = 따로 · 기본 visible).
+    /// 북마크 라벨의 Ctrl 범위(`ctrl.bookmark_scope` · 사용자 10-13 = 따로 · 기본 visible).
     pub bm_scope: Scope,
     /// 큰 파일 모드(L1 이상) — Ctrl 표시 둘 다 꺼짐(objlink와 같은 규칙).
     pub large: bool,
@@ -208,24 +208,20 @@ impl App {
         let i = self.editors.active();
         Cfg {
             bm_always: self.bookmarks.enabled && self.settings.flag("bookmark.inline_label"),
-            bm_ctrl: self.bookmarks.enabled && self.settings.flag("bookmark.inline_label_ctrl"),
+            bm_ctrl: self.bookmarks.enabled && self.settings.flag("ctrl.bookmark_label"),
             desc_always: self.settings.flag("editor.desc_inline") && self.inline_desc_suitable(),
-            desc_ctrl: self.settings.flag("editor.desc_inline_ctrl") && self.inline_desc_suitable(),
-            scope: Scope::parse(
-                self.settings
-                    .get("editor.inline_ctrl_scope")
-                    .unwrap_or("statement"),
-            ),
+            desc_ctrl: self.settings.flag("ctrl.desc_inline") && self.inline_desc_suitable(),
+            scope: Scope::parse(self.settings.get("ctrl.desc_scope").unwrap_or("statement")),
             bm_scope: Scope::parse(
                 self.settings
-                    .get("bookmark.inline_label_ctrl_scope")
+                    .get("ctrl.bookmark_scope")
                     .unwrap_or("visible"),
             ),
             large: self.editors.is_large(i),
             partial: self.objlink_partial(),
             doc_kb: self.editors.cur().buf().len_bytes() / 1024,
-            full_kb: self.settings.int("editor.inline_ctrl_full_kb").max(0) as usize,
-            off_kb: self.settings.int("editor.inline_ctrl_off_kb").max(0) as usize,
+            full_kb: self.settings.int("ctrl.full_kb").max(0) as usize,
+            off_kb: self.settings.int("ctrl.off_kb").max(0) as usize,
         }
     }
 
@@ -302,8 +298,8 @@ impl App {
         let stmt_scope = |key: &str, def: &str| {
             Scope::parse(self.settings.get(key).unwrap_or(def)) == Scope::Statement
         };
-        let caret = if stmt_scope("editor.inline_ctrl_scope", "statement")
-            || stmt_scope("bookmark.inline_label_ctrl_scope", "visible")
+        let caret = if stmt_scope("ctrl.desc_scope", "statement")
+            || stmt_scope("ctrl.bookmark_scope", "visible")
         {
             tb.caret()
         } else {

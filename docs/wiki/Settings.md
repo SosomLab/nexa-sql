@@ -291,15 +291,15 @@ Ctrl+P(Goto Anything)와 프로젝트 탐색기 필터는 프로젝트 폴더 �
 
 | 키 | 기본 | 뜻 |
 |---|---|---|
-| `bookmark.inline_label_ctrl` | on | 북마크 줄 끝 라벨(`bookmark.inline_label`)이 꺼져 있어도 **Ctrl(맥 ⌘)을 누른 동안** 라벨(`◆ 이름`)을 보입니다. |
-| `bookmark.inline_label_ctrl_scope` | 보이는 영역 | 북마크 Ctrl 라벨 범위 — 보이는 영역 · 현재 문장 · 문서 전체. |
+| `ctrl.bookmark_label` | on | 북마크 줄 끝 라벨(`bookmark.inline_label`)이 꺼져 있어도 **Ctrl(맥 ⌘)을 누른 동안** 라벨(`◆ 이름`)을 보입니다. |
+| `ctrl.bookmark_scope` | 보이는 영역 | 북마크 Ctrl 라벨 범위 — 보이는 영역 · 현재 문장 · 문서 전체. |
 | `editor.desc_inline` | off | 테이블·컬럼 설명(DB 코멘트)을 줄 끝에 늘 보입니다(`» 설명`). |
-| `editor.desc_inline_ctrl` | on | Ctrl을 누른 동안 설명을 보입니다. |
+| `ctrl.desc_inline` | on | Ctrl을 누른 동안 설명을 보입니다. |
 | `editor.desc_inline_what` | 테이블·컬럼 | 무엇의 설명을 보일지(테이블 · 컬럼 · 둘 다). |
 | `editor.desc_inline_chars` | 40 | 한 줄 라벨 글자 수 상한(넘치면 `…`). |
-| `editor.inline_ctrl_scope` | 현재 문장 | 설명 Ctrl 표시 범위 — 현재 문장 · 보이는 영역 · 문서 전체. |
-| `editor.inline_ctrl_full_kb` | 256 | 문서가 이 크기(KB)를 넘으면 "문서 전체" 범위를 보이는 영역으로 낮춥니다(0 = 무제한). |
-| `editor.inline_ctrl_off_kb` | 2048 | 문서가 이 크기(KB)를 넘으면 Ctrl 라벨·설명과 객체 hover 카드를 끕니다(0 = 큰 파일 모드에서만). |
+| `ctrl.desc_scope` | 현재 문장 | 설명 Ctrl 표시 범위 — 현재 문장 · 보이는 영역 · 문서 전체. |
+| `ctrl.full_kb` | 256 | 문서가 이 크기(KB)를 넘으면 "문서 전체" 범위를 보이는 영역으로 낮춥니다(0 = 무제한). |
+| `ctrl.off_kb` | 2048 | 문서가 이 크기(KB)를 넘으면 Ctrl 라벨·설명과 객체 hover 카드를 끕니다(0 = 큰 파일 모드에서만). |
 
 - 한 줄에 북마크와 설명이 함께 있으면 `◆ 북마크 · » 설명 · » 설명` 순서입니다. 컬럼 설명은 이름 없이 설명만 보입니다.
 - "현재 문장" 범위는 문장 바로 위에 붙은 주석 줄(`--` · `/* */` · 사이 빈 줄 포함)까지 셉니다 — 주석 줄에 단 북마크도 보입니다. 앞 문장 끝에 붙은 주석은 앞 문장 몫입니다.

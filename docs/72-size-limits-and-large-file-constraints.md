@@ -40,8 +40,8 @@
 | 찾기/바꾸기(찾기 막대) | ⭘ | ⭘ | ⭘ | 제한 없음(줄 단위 검색 · 본문 사본 없음) | 65 MB에서 실측 [59 §6-2](59-large-file-handling.md) | `find_in_chars` |
 | **SQL 포맷**(Shift+Alt+F · 우클릭 Format · 09-30) | ⭘(문서 ≤ `format.max_kb` **1,024** KB = 선택 > 캐럿 문장 > 문서 전체) | 선택·캐럿 문장만(캐럿 앞뒤 **256 KB** 창에서 줄 경계로 찾음 · 문장이 창 가장자리에 닿으면 거절) · 문서 전체 ✕ | 같음 | `format.max_kb`(0 = 무제한 · 선택·문장도 이 크기를 넘으면 거절) · 단계 L1 | UI 스레드에서 문서 전체 사본 + 문장 분할 + 포맷(확장은 WASM 인터프리터) — 종전엔 상한 없음 | `app/format.rs format_target`·`format_window` |
 | Ctrl 객체 링크(밑줄·설명 툴팁 · T-256) | ⭘(문서 ≤ `objlink.max_kb`) | 보이는 구간만 분석 · 표시 = none(동작은 유지) | 같음 | `objlink.max_kb`(0 = 무제한) · 향상 모드 `objlink.display`=none | 문서 전체 스캔 | `app/objlink.rs` · [96](96-object-links.md) |
-| **줄 끝 라벨 Ctrl 홀드 · 객체 설명**(10-13 · 111) | ⭘(문서 ≤ `editor.inline_ctrl_full_kb` **256** KB = 고른 범위 · ≤ `editor.inline_ctrl_off_kb` **2048** KB = `document`→보이는 영역 · 넘으면 끔) | ✕ | ✕ | `editor.inline_ctrl_full_kb` · `editor.inline_ctrl_off_kb`(0 = 무제한 / 큰 파일 모드만) | 범위 합성·코멘트 조회가 문서 크기에 비례 | `app/inline_labels.rs` `Cfg` |
-| **hover 카드**(`objlink.tooltip` · 10-13) | ⭘(문서 ≤ `editor.inline_ctrl_off_kb` **2048** KB) | ✕ | ✕ | `editor.inline_ctrl_off_kb` · 향상 모드 강제 끔 | 큰 문서·향상 모드에서 머무름 판정·카드 그리기 0 | `objlink_tooltip_on()` |
+| **줄 끝 라벨 Ctrl 홀드 · 객체 설명**(10-13 · 111) | ⭘(문서 ≤ `ctrl.full_kb` **256** KB = 고른 범위 · ≤ `ctrl.off_kb` **2048** KB = `document`→보이는 영역 · 넘으면 끔) | ✕ | ✕ | `ctrl.full_kb` · `ctrl.off_kb`(0 = 무제한 / 큰 파일 모드만) | 범위 합성·코멘트 조회가 문서 크기에 비례 | `app/inline_labels.rs` `Cfg` |
+| **hover 카드**(`objlink.tooltip` · 10-13) | ⭘(문서 ≤ `ctrl.off_kb` **2048** KB) | ✕ | ✕ | `ctrl.off_kb` · 향상 모드 강제 끔 | 큰 문서·향상 모드에서 머무름 판정·카드 그리기 0 | `objlink_tooltip_on()` |
 | 파일 검색(Find in Files) | — | — | — | `search.max_file_kb` **8,192** KB(SSD 기준 · 향상 모드 2,048 = HDD · §4-1) 넘는 파일은 건너뜀 · 결과 상한 | 디스크·메모리 | `nsql-search` |
 | 다중 캐럿·열 선택 | ⭘ | ⭘ | ⭘ | 구간 수 = 위 `editor.max_occurrences`(열 선택·줄 나누기는 앞에서부터 상한 개만) | — | |
 | 자동 들여쓰기 · 괄호 자동 닫기 | ⭘ | ⭘ | ⭘ | 제한 없음(줄 단위) | | |

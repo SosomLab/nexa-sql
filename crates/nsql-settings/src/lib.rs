@@ -39,6 +39,14 @@ const OLD_DEFAULTS: &[(&str, &str)] = &[
 /// 버린다) 다음 저장 때 사라진다. `nsql config get/set 옛키`도 새 키로 통한다([`canonical_key`]). 새 키의 접두 = 설정 창 카테고리
 /// (키 이름만 보고 어디 있는지 알게 · 사용자 09-28 "변수 이름이 설정 위치와 연결되지 않아 찾기 어렵다").
 pub const RENAMED: &[(&str, &str)] = &[
+    // Ctrl 키 분류(10-20 · D-313 · 사용자 "Ctrl 관련 기능을 별도 설정으로 분리해서 관리"): Ctrl+클릭 동작 + Ctrl 홀드 라벨 키 6.
+    ("objlink.click", "ctrl.click"),
+    ("editor.desc_inline_ctrl", "ctrl.desc_inline"),
+    ("editor.inline_ctrl_scope", "ctrl.desc_scope"),
+    ("editor.inline_ctrl_full_kb", "ctrl.full_kb"),
+    ("editor.inline_ctrl_off_kb", "ctrl.off_kb"),
+    ("bookmark.inline_label_ctrl", "ctrl.bookmark_label"),
+    ("bookmark.inline_label_ctrl_scope", "ctrl.bookmark_scope"),
     // 객체 백업 그룹(10-15 · 114 §7-2): 삭제 전 백업 스위치가 `backup.*`로.
     ("explorer.drop_backup", "backup.object_drop"),
     // 3차(09-30 · 94 §6-4): 확장 설정 키 = `ext.<확장>.<키>`(사용자 "모든 확장 프로그램에 규칙 적용").
@@ -546,10 +554,22 @@ const OBJLINK_LINE_OPTS: &[(&str, Msg)] = &[
     ("wavy_dashed", Msg::ValLineWavyDashed),
 ];
 /// Ctrl 객체 링크 툴팁 위치(T-256 · 기본 = 대상의 우상단).
-/// Ctrl+클릭 동작(`objlink.click` · T-180 ② — 77의 `intel.ctrl_click` 자리 · 키는 링크 설정 묶음에 둔다).
-const OBJLINK_CLICK_OPTS: &[(&str, Msg)] = &[
+/// Ctrl+클릭 동작(`ctrl.click` · 종전 `objlink.click` T-180 ② · 10-20 D-312/D-313 = 기본 캐럿 추가).
+const CTRL_CLICK_OPTS: &[(&str, Msg)] = &[
+    ("caret", Msg::ValCtrlClickCaret),
     ("copy", Msg::ValObjLinkClickCopy),
     ("reveal", Msg::ValObjLinkClickReveal),
+];
+/// Ctrl+우클릭(`ctrl.right_click`): 편집기 메뉴(기본) | 링크 메뉴.
+const CTRL_RCLICK_OPTS: &[(&str, Msg)] = &[
+    ("editor", Msg::ValCtrlRClickEditor),
+    ("link_menu", Msg::ValCtrlRClickLinkMenu),
+];
+/// Ctrl+Shift+클릭(`ctrl.shift_click`): 이름 - 설명 복사(기본) | 설명만 | 편집기.
+const CTRL_SHIFT_OPTS: &[(&str, Msg)] = &[
+    ("name_desc", Msg::ValCtrlShiftNameDesc),
+    ("desc", Msg::ValCtrlShiftDesc),
+    ("editor", Msg::ValCtrlShiftEditor),
 ];
 const OBJLINK_POS_OPTS: &[(&str, Msg)] = &[
     ("top_right", Msg::ValPosTopRight),
@@ -1455,6 +1475,32 @@ pub const REGISTRY: &[Entry] = &[
     // ★ Ctrl 객체 하이퍼링크 + 설명 툴팁(`objlink.*` · docs/96 · T-256 · 사용자 09-29): Ctrl(⌘)을 누르는 동안 SQL의
     //   테이블·컬럼·루틴 참조를 링크로 · 커서 아래 링크의 코멘트 툴팁 · 좌클릭 = 설명 복사 · 우클릭 = 메뉴.
     //   향상 모드(`perf::BOOST`)는 `objlink.enabled`를 끈다 · 큰 파일 모드(L1+)와 `objlink.max_kb` 초과는 자동 끔.
+    // ★ Ctrl 키 분류(10-20 · D-313 · 사용자 "Ctrl 관련 기능을 별도 설정으로 분리해서 관리"): Ctrl(macOS ⌘)을 누른 상태의 클릭 셋 +
+    //   Ctrl 홀드 줄 끝 라벨 6키(종전 editor.*/bookmark.* · RENAMED). 링크 자체(판정·밑줄·툴팁·카드)는 그대로 "객체 링크" 분류.
+    Entry {
+        key: "ctrl.click",
+        cat: Msg::CatCtrl,
+        label: Msg::LblCtrlClick,
+        desc: Msg::DescCtrlClick,
+        kind: SettingKind::Choice(CTRL_CLICK_OPTS),
+        default: "caret",
+    },
+    Entry {
+        key: "ctrl.right_click",
+        cat: Msg::CatCtrl,
+        label: Msg::LblCtrlRightClick,
+        desc: Msg::DescCtrlRightClick,
+        kind: SettingKind::Choice(CTRL_RCLICK_OPTS),
+        default: "editor",
+    },
+    Entry {
+        key: "ctrl.shift_click",
+        cat: Msg::CatCtrl,
+        label: Msg::LblCtrlShiftClick,
+        desc: Msg::DescCtrlShiftClick,
+        kind: SettingKind::Choice(CTRL_SHIFT_OPTS),
+        default: "name_desc",
+    },
     Entry {
         key: "objlink.enabled",
         cat: Msg::CatObjLink,
@@ -1504,14 +1550,6 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescObjLinkTooltipPos,
         kind: SettingKind::Choice(OBJLINK_POS_OPTS),
         default: "top_right",
-    },
-    Entry {
-        key: "objlink.click",
-        cat: Msg::CatObjLink,
-        label: Msg::LblObjLinkClick,
-        desc: Msg::DescObjLinkClick,
-        kind: SettingKind::Choice(OBJLINK_CLICK_OPTS),
-        default: "copy",
     },
     Entry {
         key: "objlink.show_schema",
@@ -5301,8 +5339,8 @@ pub const REGISTRY: &[Entry] = &[
         default: "off",
     },
     Entry {
-        key: "editor.desc_inline_ctrl",
-        cat: Msg::CatEditor,
+        key: "ctrl.desc_inline",
+        cat: Msg::CatCtrl,
         label: Msg::LblDescInlineCtrl,
         desc: Msg::DescDescInlineCtrl,
         kind: SettingKind::Bool,
@@ -5325,8 +5363,8 @@ pub const REGISTRY: &[Entry] = &[
         default: "40",
     },
     Entry {
-        key: "editor.inline_ctrl_scope",
-        cat: Msg::CatEditor,
+        key: "ctrl.desc_scope",
+        cat: Msg::CatCtrl,
         label: Msg::LblInlineCtrlScope,
         desc: Msg::DescInlineCtrlScope,
         kind: SettingKind::Choice(INLINE_SCOPE_OPTS),
@@ -5335,16 +5373,16 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 문서 용량 단계(사용자 10-13 "문서 전체 범위는 용량이 크면 문제 → 용량별 차등"): ≤ full = 설정대로 · full < 용량 ≤ off = `document` → 보이는
     //   영역 · > off(또는 큰 파일 모드) = Ctrl 표시 끔. 북마크 라벨·객체 설명 공통.
     Entry {
-        key: "editor.inline_ctrl_full_kb",
-        cat: Msg::CatEditor,
+        key: "ctrl.full_kb",
+        cat: Msg::CatCtrl,
         label: Msg::LblInlineCtrlFullKb,
         desc: Msg::DescInlineCtrlFullKb,
         kind: SettingKind::Int { min: 0, max: 65536 },
         default: "256",
     },
     Entry {
-        key: "editor.inline_ctrl_off_kb",
-        cat: Msg::CatEditor,
+        key: "ctrl.off_kb",
+        cat: Msg::CatCtrl,
         label: Msg::LblInlineCtrlOffKb,
         desc: Msg::DescInlineCtrlOffKb,
         kind: SettingKind::Int { min: 0, max: 65536 },
@@ -6403,8 +6441,8 @@ pub const REGISTRY: &[Entry] = &[
     // ★ Ctrl을 누른 동안 줄 끝 라벨(docs/111 · T-337 · D-281 · 사용자 10-13): 상시(`inline_label`)가 꺼져 있어도 · 범위 = `editor.inline_ctrl_scope` ·
     //   향상 모드 = FORCED off.
     Entry {
-        key: "bookmark.inline_label_ctrl",
-        cat: Msg::CatBookmarkDisplay,
+        key: "ctrl.bookmark_label",
+        cat: Msg::CatCtrl,
         label: Msg::LblBmInlineCtrl,
         desc: Msg::DescBmInlineCtrl,
         kind: SettingKind::Bool,
@@ -6412,8 +6450,8 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ 북마크 Ctrl 범위는 **따로**(사용자 10-13 · D-282 뒤집음) · 기본 = 보이는 영역 · 현재 문장은 딸린 주석 줄까지(111 §3-1).
     Entry {
-        key: "bookmark.inline_label_ctrl_scope",
-        cat: Msg::CatBookmarkDisplay,
+        key: "ctrl.bookmark_scope",
+        cat: Msg::CatCtrl,
         label: Msg::LblBmInlineCtrlScope,
         desc: Msg::DescBmInlineCtrlScope,
         kind: SettingKind::Choice(INLINE_SCOPE_OPTS),
@@ -7005,6 +7043,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatLargeFiles,
             Msg::CatFormat,
             Msg::CatObjLink,
+            // Ctrl 키(10-20 · D-313): Ctrl+클릭·우클릭·Shift+클릭 동작 + Ctrl 홀드 줄 끝 라벨·설명.
+            Msg::CatCtrl,
             Msg::CatProject,
         ],
     ),

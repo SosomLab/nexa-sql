@@ -940,7 +940,14 @@ impl App {
                     let p = Point { x, y };
                     if self.objlink_card_click(p) {
                         true
-                    } else if self.primary && self.objlink_at(p).is_some() {
+                    } else if self.primary
+                        && self.objlink_at(p).is_some()
+                        && crate::app::objlink::ctrl_click_arms_link(
+                            self.settings.get("ctrl.click"),
+                            self.settings.get("ctrl.shift_click"),
+                            self.shift,
+                        )
+                    {
                         self.click_arm = Some(OverlayZone::Link);
                         true
                     } else {

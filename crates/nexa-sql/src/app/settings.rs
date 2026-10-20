@@ -614,12 +614,16 @@ impl App {
             "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
                 self.apply_click_policy();
             }
-            // 줄 끝 설명·Ctrl 범위(docs/111) = 활성 탭 다시 합성.
+            // 줄 끝 설명·Ctrl 홀드 라벨(docs/111 · Ctrl 키 분류 D-313) = 활성 탭 다시 합성.
             "editor.desc_inline"
-            | "editor.desc_inline_ctrl"
             | "editor.desc_inline_what"
             | "editor.desc_inline_chars"
-            | "editor.inline_ctrl_scope" => {
+            | "ctrl.desc_inline"
+            | "ctrl.desc_scope"
+            | "ctrl.full_kb"
+            | "ctrl.off_kb"
+            | "ctrl.bookmark_label"
+            | "ctrl.bookmark_scope" => {
                 self.inline_key.clear();
                 self.inline_sync();
             }

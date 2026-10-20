@@ -6,7 +6,7 @@
 
 ## §0. 결론
 - 새로 만드는 부품은 **호스트 쪽 합성기 하나**(`app/inline_labels.rs` `InlineLabels`)뿐이다. 그리기(nexa-ctl 줄 끝 라벨) · 객체 판정(`objlink::scan` + `Resolver`) · 설명 원천(MetaStore 코멘트) · Ctrl 상태(objlink 깃발)는 **이미 있는 것을 그대로** 쓴다.
-- 북마크 라벨과 객체 설명은 **같은 개념**(상시 켬 / Ctrl 홀드 켬 / 범위)으로 다루되, **범위 키는 둘**이다 — 북마크 `bookmark.inline_label_ctrl_scope`(기본 `visible`) · 설명 `editor.inline_ctrl_scope`(기본 `statement`)(10-13 사용자 지시로 D-282 "키 하나 공유"를 뒤집음).
+- 북마크 라벨과 객체 설명은 **같은 개념**(상시 켬 / Ctrl 홀드 켬 / 범위)으로 다루되, **범위 키는 둘**이다 — 북마크 `ctrl.bookmark_scope`(기본 `visible`) · 설명 `ctrl.desc_scope`(기본 `statement`)(10-13 사용자 지시로 D-282 "키 하나 공유"를 뒤집음).
 - 라벨은 **캐시에 있는 코멘트만** 쓴다(왕복 0) · Ctrl을 누른 순간 범위 안에 코멘트가 아직 없는 객체만 L2 워머에 1회 요청(D-284).
 - 향상 모드 = Ctrl 기능 두 개를 꺼서 강제(FORCED) · 큰 파일 모드 = 꺼짐.
 
@@ -25,7 +25,7 @@
   - `wanted(cfg, state) -> Scope` — 무엇을(북마크/설명) 어느 범위(없음·문장·보이는 영역·문서)에 그릴지.
   - `compose(line, bookmark: Option<&str>, descs: &[&str], max_chars) -> Option<String>` — 한 줄 합성.
 
-## §3. 범위 셋(북마크 `bookmark.inline_label_ctrl_scope` · 설명 `editor.inline_ctrl_scope` — 값은 같은 셋)
+## §3. 범위 셋(북마크 `ctrl.bookmark_scope` · 설명 `ctrl.desc_scope` — 값은 같은 셋)
 | 값 | 범위 | 비고 |
 |---|---|---|
 | `statement`(**기본**) | 캐럿이 있는 문장(`statement_at` 범위) | 보통 수십 줄 |
@@ -43,8 +43,8 @@
 ### §3-2. 문서 용량 단계(10-13 사용자 추가 지시)
 | 문서 크기 | Ctrl 라벨·설명 범위 | 키 |
 |---|---|---|
-| ≤ `editor.inline_ctrl_full_kb`(**256** KB · 0 = 무제한) | 고른 범위 그대로(`document` 포함) | — |
-| full_kb < 크기 ≤ `editor.inline_ctrl_off_kb`(**2048** KB) | `document` → **보이는 영역으로 낮춤**(`visible`·`statement`는 그대로) | — |
+| ≤ `ctrl.full_kb`(**256** KB · 0 = 무제한) | 고른 범위 그대로(`document` 포함) | — |
+| full_kb < 크기 ≤ `ctrl.off_kb`(**2048** KB) | `document` → **보이는 영역으로 낮춤**(`visible`·`statement`는 그대로) | — |
 | > off_kb(0 = 큰 파일 모드에서만 끔) · 큰 파일 모드 | **끔**(Ctrl 라벨·설명 둘 다) | — |
 - 북마크·설명 공통 · 상시 북마크 라벨(`bookmark.inline_label`)은 영향 없음.
 - 부분 분석(`objlink.max_kb` 초과)도 끔이 아니라 보이는 영역으로 낮춘다.
@@ -58,20 +58,21 @@
 - 설명 없음 = 라벨 없음(빈 글을 그리지 않는다).
 
 ## §5. 설정(키 = 94 규칙)
+> ★ **10-20 D-313**: Ctrl 관련 6키는 새 분류 **"Ctrl 키"**(`ctrl.*`)로 이사(RENAMED · 값 보존) = `editor.desc_inline_ctrl`→`ctrl.desc_inline` · `editor.inline_ctrl_scope`→`ctrl.desc_scope` · `editor.inline_ctrl_full_kb`→`ctrl.full_kb` · `editor.inline_ctrl_off_kb`→`ctrl.off_kb` · `bookmark.inline_label_ctrl`→`ctrl.bookmark_label` · `bookmark.inline_label_ctrl_scope`→`ctrl.bookmark_scope`. 아래 표는 새 이름 · §6 이후 결정 기록은 그때 이름 그대로.
 | 분류 | 키 | 종류 · 기본 | 뜻 |
 |---|---|---|---|
 | Bookmarks | `bookmark.inline_label`(기존) | Bool · on | 상시 줄 끝 라벨 |
-| Bookmarks | **`bookmark.inline_label_ctrl`** | Bool · **on** | 상시가 꺼져 있어도 Ctrl을 누른 동안 라벨 표시 |
+| Bookmarks | **`ctrl.bookmark_label`** | Bool · **on** | 상시가 꺼져 있어도 Ctrl을 누른 동안 라벨 표시 |
 | Editor ▸ 줄 끝 설명(새 소분류) | **`editor.desc_inline`** | Bool · **off** | 테이블/컬럼 설명 상시 표시 |
-| 〃 | **`editor.desc_inline_ctrl`** | Bool · **on** | Ctrl을 누른 동안 설명 표시 |
+| 〃 | **`ctrl.desc_inline`** | Bool · **on** | Ctrl을 누른 동안 설명 표시 |
 | 〃 | **`editor.desc_inline_what`** | Choice `table`\|`column`\|`both` · both | 무엇의 설명을 |
 | 〃 | **`editor.desc_inline_chars`** | Int · 40(8~200) | 한 줄 라벨 총 길이 상한(넘으면 `…`) |
-| Bookmarks | **`bookmark.inline_label_ctrl_scope`** | Choice `document`\|`visible`\|`statement` · **visible** | 북마크 Ctrl 라벨 범위(10-13 사용자 지시 · D-282 뒤집음) |
-| Editor ▸ 줄 끝 설명 | **`editor.inline_ctrl_scope`** | Choice `document`\|`visible`\|`statement` · **statement** | 객체 설명 Ctrl 표시 범위 |
-| Editor ▸ 줄 끝 설명 | **`editor.inline_ctrl_full_kb`** | Int · **256**(0 = 무제한) | 이 용량까지 `document` 범위 그대로 · 넘으면 보이는 영역으로(§3-2) |
-| Editor ▸ 줄 끝 설명 | **`editor.inline_ctrl_off_kb`** | Int · **2048**(0 = 큰 파일 모드만) | 넘으면 Ctrl 라벨·설명·hover 카드 끔(§3-2 · 96 §2) |
+| Bookmarks | **`ctrl.bookmark_scope`** | Choice `document`\|`visible`\|`statement` · **visible** | 북마크 Ctrl 라벨 범위(10-13 사용자 지시 · D-282 뒤집음) |
+| Editor ▸ 줄 끝 설명 | **`ctrl.desc_scope`** | Choice `document`\|`visible`\|`statement` · **statement** | 객체 설명 Ctrl 표시 범위 |
+| Editor ▸ 줄 끝 설명 | **`ctrl.full_kb`** | Int · **256**(0 = 무제한) | 이 용량까지 `document` 범위 그대로 · 넘으면 보이는 영역으로(§3-2) |
+| Editor ▸ 줄 끝 설명 | **`ctrl.off_kb`** | Int · **2048**(0 = 큰 파일 모드만) | 넘으면 Ctrl 라벨·설명·hover 카드 끔(§3-2 · 96 §2) |
 
-- **향상 모드**: `perf` FORCED에 `bookmark.inline_label_ctrl=off` · `editor.desc_inline_ctrl=off`(강제값 > 개별 값 · 39 §4-6 · 설정 창은 FORCED 잠금 그대로). 기존 `bookmark.inline_label`의 강제 off(69 §설정 끝)와 같은 줄.
+- **향상 모드**: `perf` FORCED에 `ctrl.bookmark_label=off` · `ctrl.desc_inline=off`(강제값 > 개별 값 · 39 §4-6 · 설정 창은 FORCED 잠금 그대로). 기존 `bookmark.inline_label`의 강제 off(69 §설정 끝)와 같은 줄.
 - 큰 파일 모드 = Ctrl 표시 둘 다 꺼짐(objlink와 같은 규칙).
 
 ## §6. 표시 모양(88 · 머티리얼)

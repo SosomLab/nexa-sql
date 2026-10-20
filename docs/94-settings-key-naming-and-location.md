@@ -93,6 +93,8 @@
 - 적용: `ui.ime_hint`→`input.ime_hint` · `ui.ime_hint_watch`→`input.ime_hint_watch`(둘 다 Input 카테고리 · 종속) · `editor.tab_line_scratch`→`editor.tab_line_unsaved`(뜻이 "미저장 탭"으로) · `license.gates_dev`→`license.gates`(D-145).
 - 설정 창: `display_order` 정렬 · 키 복사 버튼 · `ADVANCED`/`is_advanced` · 큰 파일 카테고리(`CatLargeFiles`).
 
+- **10-20 3차(D-313)**: Ctrl 관련 7쌍 = `objlink.click`→`ctrl.click` · `editor.desc_inline_ctrl`→`ctrl.desc_inline` · `editor.inline_ctrl_scope`→`ctrl.desc_scope` · `editor.inline_ctrl_full_kb`→`ctrl.full_kb` · `editor.inline_ctrl_off_kb`→`ctrl.off_kb` · `bookmark.inline_label_ctrl`→`ctrl.bookmark_label` · `bookmark.inline_label_ctrl_scope`→`ctrl.bookmark_scope` · 새 분류 Ctrl Key(접두 `ctrl.` ↔ 분류 1:1 · §2 원칙).
+
 ### 6-2. 2차 후보(D-146 결정 뒤 · T-250) — ✅ 09-29 적용(아래 표 그대로 · `RENAMED` 11쌍 · 새 분류 Server status / Transaction safety / Script & variables / Run cards / Undo · 옛 키는 읽기 마이그레이션·CLI `config`에서 그대로 통함)
 | 옛 | 새 | 이유 |
 |---|---|---|

@@ -43,7 +43,7 @@
 | `objlink.display` | hover | 밑줄 표시 방식 all/hover/none · **`perf::BOOST` = none 강제** · 큰 파일 모드 = none |
 | `objlink.tooltip` | on | 설명 툴팁·hover 카드 표시 · **강제 끔 = 향상 모드(`perf` FORCED · 카드 자체 안 뜸 · 10-13 · 종전엔 밑줄만 껐음) · 큰 파일 모드 · 문서 > `editor.inline_ctrl_off_kb`(2048 KB)** · 판정 한 자리 `objlink_tooltip_on()`(머무름·열 머리 카드·툴팁 그리기 4곳 공통) |
 | `objlink.tooltip_pos` | top_right | 툴팁 자리(top_right/top_left/bottom_right/bottom_left) |
-| `objlink.click` | copy | **Ctrl+좌클릭 동작**(10-05 · T-180 ②): `copy` = 설명 복사(Shift = `이름 - 설명`) · `reveal` = 객체 탐색기에서 보기. 우클릭 메뉴·Shift+클릭은 그대로. `reveal`인데 실제 객체로 풀리지 않는 링크(미확인 · 내장 표)는 복사로 돌아간다. 77 §1-3의 `intel.ctrl_click` 자리이나 키는 링크 설정 묶음(`objlink.*`)에 둔다 · `columns` 값은 두지 않는다 |
+| ~~`objlink.click`~~ → **Ctrl 키 분류 `ctrl.*`**(10-20 D-313 · RENAMED `objlink.click`→`ctrl.click` · 옛 값 copy/reveal 1:1) | — | **Ctrl 클릭 3키**: `ctrl.click` = **caret(기본)** 다중 캐럿 추가/제거 \| copy 설명 복사 \| reveal 객체 탐색기에서 보기(못 풀면 복사) · `ctrl.right_click` = **editor(기본)** 편집기 메뉴 \| link_menu 링크 메뉴(설명 복사 · 이름 - 설명 복사 · 탐색기에서 보기) · `ctrl.shift_click` = **name_desc(기본)** `이름 - 설명` 복사 \| desc 설명만 \| editor 편집기로 · 순수 판정 `ctrl_click_arms_link(click, shift_click, shift)` · `ctrl_rclick_links`(MC/DC) · 밑줄·툴팁·hover 카드(설명 복사 버튼)·F4는 그대로 · 경과 = D-312(10-20 `objlink.click` off 기본) → D-313(분류 분리) |
 | `objlink.hover_ms` | 700 | **머무름 툴팁**(10-05 · T-179 ③ 첫 걸음): Ctrl 없이 포인터가 객체 이름 위에 이만큼 머물면 설명 툴팁만(밑줄·클릭 동작 없음) · 0 = 끔(Ctrl 때만) · 범위 0~5000 · 77 §1-3의 `intel.hover_ms` 자리이나 키는 `objlink.*` 묶음 |
 | `objlink.card_buttons` | on | **hover 카드 동작 버튼**(10-06 · T-179 완료): 머무름 툴팁 아래 버튼 셋(객체 탐색기에서 보기 · 데이터 200행 보기 · 설명 복사) · 포인터가 카드로 옮겨 가도 유지 · 버튼 실행 뒤 닫힘 · off = 종전 글만 툴팁 |
 | `objlink.show_schema` | off | 툴팁·상태줄 이름에 스키마 접두(`BISCM.TB_ORDER`) · 끄면 이름만(컬럼 = `테이블.컬럼`) — 사용자 09-29 |
@@ -104,7 +104,7 @@
 
 | 조각 | 자리 | 요지 |
 |---|---|---|
-| 메뉴 | `objlink_click`(우) | 설명 복사 · 이름 - 설명 복사 · ─ · **객체 탐색기에서 보기** = `objlink_reveal_target(k).is_some()`일 때만 활성(미확인 = 흐림) |
+| 메뉴 | `objlink_click`(우 · **`ctrl.right_click` = link_menu일 때만** · 기본 editor = Ctrl+우클릭은 편집기 메뉴 · D-312/D-313) | 설명 복사 · 이름 - 설명 복사 · ─ · **객체 탐색기에서 보기** = `objlink_reveal_target(k).is_some()`일 때만 활성(미확인 = 흐림) |
 | 대상 | `objlink_reveal_target` → `explorer::RevealTarget{db, schema, kind, name, member}` | 판정과 같은 해석(`objlink_resolve`) · 컬럼 = 테이블 + 멤버 · `pkg.proc` = 패키지 + 멤버 · SQL Server `DB.스키마` 열쇠 → db |
 | 찾기 | `Explorer::reveal` → `step_reveal`(단계 기계 · `drain` 끝마다) | 루트가 아직 안 읽혔으면 루트부터(㉗-c) · 앵커(스키마/SSMS DB) → 종류 폴더(묶음 로컬 펼침) → 객체 → 멤버 하위 폴더(Columns/Procedures/Functions) → 선택(조상 펼침 · 보이게) · 못 찾음 = 상태줄 |
 | 실패 | `reveal_fail(t, 단계)` → 상태줄 `찾지 못함: 이름 (단계)` | 단계 = 루트 읽기 실패 · 스키마/DB 노드 없음 · 스키마 노드 읽기 오류 · 종류 폴더 없음 · 폴더 읽기 오류 · 폴더 목록에 없음 · 하위 폴더 없음 · 멤버 폴더 없음 · 멤버 없음(㉗-d) |
