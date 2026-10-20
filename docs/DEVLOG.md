@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-20 저녁 (132차 · win · 🚀 v0.2.6)** — 패치 릴리스 d6db282(태그 v0.2.6) · 축소 검증(956/0 · 640/0 · clippy 0×2 · 영어 ✓) · release 39402115634 ✓ · 공개 09:56:35Z · Latest · digest 5/5 · Homebrew 2ff68bc · pkg.sosomlab.com 0.2.6 · winget/choco 제출 0 — journal 10-20 §4
 - **2026-10-20 저녁 (132차 · win · D-313)** — ★ Ctrl 관련 설정 = 별도 분류 "Ctrl 키"(`ctrl.click`·`ctrl.right_click`·`ctrl.shift_click` + 이사 6키 RENAMED · `objlink.click` 폐지) · V2 455/0 · 이주 격리 7/7 · T-373 ✅ — journal 10-20 §3
 - **2026-10-20 오후 (132차 · win · D-312)** — ★ Ctrl+클릭 = 다중 캐럿 기본(`objlink.click` off 기본 · Ctrl+우클릭 = 편집기 메뉴 · Ctrl+Shift+클릭 `이름 - 설명` 복사 유지 · `ctrl_click_arms_link` MC/DC · 종전 = copy) · 후속 T-373 — journal 10-20 §2
 - **2026-10-20 오전 (132차 · win · 협업 쌍 "개발"×"협업" · T-372)** — ★ 오류 위치 고급 분석(D-311 · [117](117-syntax-error-cause-analysis.md) = 서버 위치 앞 구간 키워드 오타 후보 · 첫 후보로 캐럿 · Output `Suspected typo` · nsql-script `errsuspect` 순수 부품 시험 12 + 호스트 MC/DC · `editor.error_analyze`/`_budget_ms` · BOOST 강제 off) · V1 SQLite ③④⑤ ✓ · 실서버 4방언 = 네트워크 미도달(재실행 대기) · V2 시험 전부 ✓ · clippy 2건 수정 · 시험 자산 ⑤ 16 → 22 — journal 10-20 §1
