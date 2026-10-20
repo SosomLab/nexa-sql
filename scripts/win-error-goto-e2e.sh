@@ -3,8 +3,8 @@
 #   위치 단위 = "보낸 문장 기준 글자 인덱스(0부터)"(nsql-core `DbError.position`) → 드라이버마다 바이트/줄을 글자로 바꿔 준다 → 러너
 #   `map_error_position` → 호스트 `run::error_caret(base, start, pos)` = 편집기 글자 인덱스. 한글 리터럴 **뒤**에 오류 토큰을 둬 바이트/글자
 #   변환을 검증한다(`'가나다'` = 글자 3 · UTF-8 9바이트).
-#   케이스(방언마다 2 + T-372 2 · SQLite +1) = ① 한 문장 `SELECT '가나다' AS x FROMM dual` → 캐럿 = `FROMM` 시작(줄 1 · 열 19) · SQL Server = 줄 번호만 주므로 **줄 시작**(열 1)
-#                     ② 두 문장(첫 문장 정상 · 둘째 문장이 ①) → 캐럿 = 둘째 문장 시작 + 위치(줄 2 · 열 19 · SQL Server 열 1).
+#   케이스(방언마다 2 + T-372 2 · SQLite +1) = ① 한 문장 `SELECT '가나다' AS x FROMM dual` → 캐럿 = `FROMM` 시작(줄 1 · 열 19) · SQL Server = 서버는 줄만 주지만 T-372 분석이 같은 열 19로
+#                     ② 두 문장(첫 문장 정상 · 둘째 문장이 ①) → 캐럿 = 둘째 문장 시작 + 위치(줄 2 · 열 19).
 #   판정 = `editor.dump` 머리 `caret=줄[:열]`(열이 없으면 줄만 판정 + 안내). 실서버 = 읽기 접속만(객체 생성 0) · 키 주입 0 · 격리 홈.
 #   ★ T-372(132차 · 10-20) 고급 분석 = ③ `SELECT DISTINC '가나다' AS x FROM dual` → 서버 위치는 리터럴(열 16 · SQL Server = 줄)인데 캐럿은
 #     **첫 의심 지점** `DISTINC`(열 8 · SQL Server도 열 8) + Output에 "Suspected typo" 한 줄 · ④ 둘째 문장 = 줄 2 열 8 ·
@@ -41,6 +41,10 @@ settings() { # $1 = oracle driver(thin|oci|'') · $2 = 추가 줄(예 perf.boost
 first_stmt() { case $1 in oracle*) echo "SELECT 1 AS a FROM dual;";; *) echo "SELECT 1 AS a;";; esac; }
 BAD="SELECT '가나다' AS x FROMM dual"   # `FROMM` 시작 = 글자 18(0부터) = 열 19
 BAD2="SELECT DISTINC '가나다' AS x FROM dual"   # ③ 오타 `DISTINC` = 열 8 · 서버 위치 = 리터럴 열 16(파서가 멈춘 곳)
+# ★ PostgreSQL은 `DISTINC '가나다'`를 형 지정 리터럴(typename 'literal')로 받아 구문 오류가 아니다 → 오류 = `relation "dual" does not exist`
+#   (의미 오류 · 분석 대상 아님 · 10-20 Linux V3) → PG만 뒤에 진짜 구문 오류 `FROMM`(열 29 · 한글 뒤 = 글자 변환 검증 유지)을 둔다.
+BAD2_PG="SELECT DISTINC '가나다' AS x FROMM dual"
+bad2_for() { case $1 in postgres) echo "$BAD2_PG";; *) echo "$BAD2";; esac; }
 
 # run_case <이름> <프로필> <방언> <파일 본문> <기대 줄> <기대 열>
 run_case() {
@@ -75,17 +79,18 @@ for pair in "${PAIRS[@]}"; do
   drv=""; case $dia in oracle-oci) drv=oci;; oracle) drv=thin;; esac
   settings "$drv"
   tag="${conn}-${dia}"
-  ecol=19; case $dia in mssql) ecol=1;; esac
+  # ①② 캐럿 = `FROMM` 시작 열 19 — SQL Server도(서버는 줄만 주지만 T-372 오타 분석이 `FROMM` 자리로 · 종전 기대 열 1 = T-372 이전 값 · 10-20).
+  ecol=19
   # ① 한 문장
   run_case "$tag-1" "$conn" "$dia" "$BAD" 1 "$ecol"
   # ② 두 문장(둘째가 오류)
   run_case "$tag-2" "$conn" "$dia" "$(first_stmt "$dia")
 $BAD;" 2 "$ecol"
   # ③ ★ T-372 고급 분석: 서버 위치(리터럴) 앞의 오타 `DISTINC` = 열 8 — SQL Server도 열까지(종전 줄만) · Output 한 줄.
-  run_case "$tag-3" "$conn" "$dia" "$BAD2" 1 8 "Suspected typo"
+  run_case "$tag-3" "$conn" "$dia" "$(bad2_for "$dia")" 1 8 "Suspected typo"
   # ④ 둘째 문장의 오타 = 줄 2 열 8.
   run_case "$tag-4" "$conn" "$dia" "$(first_stmt "$dia")
-$BAD2;" 2 8
+$(bad2_for "$dia");" 2 8
   # ⑤ 향상 모드 = 분석 강제 끔 → 서버 위치 그대로 · 서버 없는 SQLite만. SQLite는 문자열 리터럴을 별칭으로 받으므로 멈춘 토큰 = `AS`
   #   (`near "AS"` · 바이트 27 → 글자 21 → 열 22 · ③ Output의 server position 1:22와 같은 값) — 리터럴에서 멈추는 Oracle/PG(열 16)와 다르다.
   if [ "$dia" = sqlite ]; then

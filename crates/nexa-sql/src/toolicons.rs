@@ -1468,6 +1468,14 @@ mod svg_tests {
 /// ★ 시작 때 백그라운드에서 모든 툴·메뉴 아이콘 마스크를 미리 굽는다(09-25 실측: 필터 토글 Aa·ab·(.*) 첫 표시 = Debug 1.26 s 프레임 정지 —
 /// `memo`는 전역 Mutex 캐시라 다른 스레드에서 채워도 UI가 그대로 쓴다). 호스트가 `std::thread::spawn` 안에서 부른다.
 pub(crate) fn prewarm() {
+    // ★ 첫 화면 필터 바(탐색기·프로젝트 패널) 토글 = 가장 비싼 SVG 래스터 → 맨 앞(10-20 Linux 2코어: 목록 뒤쪽이면
+    //   UI 스레드의 첫 그리기가 먼저 닿아 같은 아이콘을 직접 굽느라 btns 313 ms 정지 · 6회 중 1회).
+    let _ = mi_match_case();
+    let _ = mi_match_word();
+    let _ = mi_regex();
+    let _ = mi_visibility();
+    let _ = mi_dot_file();
+    let _ = mi_path_match();
     let _ = new_script();
     let _ = open_file();
     let _ = save_file();
@@ -1500,12 +1508,6 @@ pub(crate) fn prewarm() {
     let _ = mi_braces();
     let _ = mi_db();
     // SVG(material/codicon) 아이콘 — 매크로 정의(thread_local 셀 + 전역 memo).
-    let _ = mi_match_case();
-    let _ = mi_match_word();
-    let _ = mi_regex();
-    let _ = mi_visibility();
-    let _ = mi_dot_file();
-    let _ = mi_path_match();
     let _ = mi_arrow_up();
     let _ = mi_arrow_down();
     let _ = mi_close();

@@ -495,7 +495,9 @@ impl Settings {
                 return Some(v);
             }
         }
-        Some(e.default)
+        // ★ OS별 기본값([`crate::OS_DEFAULTS`])까지 — 종전 `Some(e.default)`는 표를 건너뛰어 `flag`/`int`로 읽는 앱이 늘 레지스트리(Windows)
+        //   값을 받았다(Linux 글자 보정 4키가 OS 열과 무관하게 GDI 흉내 값 · `get`만 OS 값 · 125차 Linux 10-20).
+        Some(crate::default_of(e.key).unwrap_or(e.default))
     }
 
     /// 실효 값의 출처(부하원이 아닌 키는 `None`).

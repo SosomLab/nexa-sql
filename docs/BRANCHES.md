@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/125-linux-sync | 2026-10-20 | 2026-10-20 → main(삭제) | 1 | 133차 Linux — 최신화(nexa-sql 90 · nexa-ui 26) 뒤 V2·V3 기능 전수(앱 결함 0) · 시험 자산 3(실행 비트 4 · `win-drop-prod` 첫 펼침 대기 · `win-error-goto` 기대값·PG 본문) · 필터 바 선굽기 순서(`toolicons.rs` `prewarm`) · 해시·CI = 커밋 뒤 |
 | fix/132-panel-keyboard | 2026-10-20 | 2026-10-20 → main(삭제) | 1 | 132차 win 밤 — 사용자 실기 결함 4: 북마크 ← 접기 선택 보존(`SelKey`) · 파일 검색 ←/→(`fold_step`) · 확장 패널 키보드 이동·포커스 분리 + 머문 행 열기·메타 캐시(협업 지적) · 확장 보기 탭 [RO] 제외 · 시험 +6 · T-374 후보 · **59e5393** · ci 39409822850 ✓ · integration 39409823209 ✓ |
 | feat/132-ctrl-click | 2026-10-20 | 2026-10-20 → main(삭제) | 1 | 132차 win 오후 — D-312 Ctrl+클릭 = 다중 캐럿 기본(링크 클릭 동작 기본 끔 · Ctrl+Shift+클릭 이름-설명 공존) · D-313 Ctrl 설정 분리(분류 "Ctrl 키" · `ctrl.click`/`right_click`/`shift_click` + 이사 6키 RENAMED · `objlink.click` 폐지) · T-373 ✅ · 문서 15 · 사용자 실기 ✓ · **0a03d75** · ci 39397976371 ✓ · integration 39397976465 ✓ |
 | feat/132-error-analyze | 2026-10-20 | 2026-10-20 → main(삭제) | 2 | ★ T-372 오류 위치 고급 분석([117](117-syntax-error-cause-analysis.md) · D-311) = nsql-script `errsuspect` 순수 부품 · 호스트 `app/errsuspect.rs` · 설정 2 + BOOST 강제 끔 · E2E ③④⑤ · 132차 win 협업 쌍 · **a42862f + 문서 3221d34** · ci 39365339968 ✓ · integration 39365340349 ✓ |

@@ -7102,12 +7102,15 @@ pub fn is_internal(key: &str) -> bool {
 
 /// ★ OS별 기본값(사용자 09-17 "OS별 차이를 잘 분석해 기능·UI/UX를 관리"): (키, macOS, Linux). Windows = 레지스트리 `default`.
 /// 텍스트 래스터 5키는 Windows GDI ClearType을 흉내내려 넣은 것(42~44차)이라 macOS에서는 **전부 끈다** — Apple 텍스트는
-/// 힌팅·줄기 스냅 없이 부드러운 AA(1x 모니터에서 특히 차이 · 사용자 09-17 "왼쪽/오른쪽 모니터 차이"). Linux는 FreeType 관례(힌트)라 Windows 값.
+/// 힌팅·줄기 스냅 없이 부드러운 AA(1x 모니터에서 특히 차이 · 사용자 09-17 "왼쪽/오른쪽 모니터 차이").
+/// ★ Linux도 macOS 값(사용자 10-20 "윈도우/맥에 비해 폰트가 너무 깨져 보여" → "변경"): 종전 "FreeType 관례라 Windows 값"은 틀린 가정 —
+///   이 앱은 Linux에서 FreeType이 아니라 내장 ab_glyph 흑백 AA라, GDI 흉내 보정이 그대로 얹혀 힌트 근사(줄기 모으기 + x-높이 크기 보정)가
+///   m·o·0을 뭉개고, 정수 스냅이 자간을 들쭉날쭉하게, 획 보강이 한글 획을 번지게 했다(격리 홈 비교 캡처 · 125차 Linux).
 pub const OS_DEFAULTS: &[(&str, &str, &str)] = &[
-    ("ui.text_hint", "off", "on"),
-    ("ui.text_snap", "off", "on"),
-    ("ui.text_weight", "0", "25"),
-    ("ui.text_contrast", "100", "140"),
+    ("ui.text_hint", "off", "off"),
+    ("ui.text_snap", "off", "off"),
+    ("ui.text_weight", "0", "0"),
+    ("ui.text_contrast", "100", "100"),
     // macOS = CoreText 글리프(T-100 · 파인더와 같은 픽셀) · Linux = 내장 래스터.
     ("ui.text_gdi", "on", "off"),
 ];
@@ -8490,8 +8493,15 @@ mod tests {
         }
         let s = Settings::open(std::env::temp_dir().join("nexa-os-defaults-none.conf"));
         assert_eq!(s.get("ui.text_hint"), default_of("ui.text_hint"));
-        if cfg!(target_os = "macos") {
+        // ★ 앱이 읽는 길(`flag`/`int` = 실효값)도 OS 기본값이어야 한다 — 종전엔 `get`만 OS 값이고 실효값은 레지스트리 값이었다(10-20).
+        for (k, _, _) in OS_DEFAULTS {
+            assert_eq!(s.effective(k), default_of(k), "{k}: 실효값 = 이 OS 기본값");
+        }
+        // macOS·Linux = 보정 전부 끔(내장/CoreText 래스터 · Windows만 GDI 흉내 값 · 10-20).
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
             assert_eq!(s.get("ui.text_hint"), Some("off"));
+            assert_eq!(s.get("ui.text_snap"), Some("off"));
+            assert_eq!(s.get("ui.text_weight"), Some("0"));
             assert_eq!(s.get("ui.text_contrast"), Some("100"));
         }
     }

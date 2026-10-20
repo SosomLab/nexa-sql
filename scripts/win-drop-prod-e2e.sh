@@ -27,8 +27,9 @@ run_case() { # <이름> <유형 none|prd>
   NSQL_HOME="$H" "$NSQL" conn env Local "$env" >/dev/null 2>&1
   printf 'CREATE TABLE t_drop (id INTEGER PRIMARY KEY, v TEXT);\n' > "$OUT/$name.sql"
   NSQL_HOME="$H" "$NSQL" run -c Local --no-prompt "$(m "$OUT/$name.sql")" >/dev/null 2>&1
+  # ★ 첫 펼침도 `@after:1500` — `@connected` 순간 루트가 아직 Loading이면 펼침이 무시돼 뒤 단계가 헛돈다(10-20 Linux V3 · dnd 스크립트는 3000).
   # 접속이 끝난 뒤(`@connected:` · 지연은 `@connected:@after:` = 접속 기준) 펼침 → 행 선택(라벨) → 메뉴 항목 drop(= 삭제 창) → 2단 확인(백업은 비동기 · 넉넉히) → 덤프.
-  local cmd="@connected:explorer.expand:main,@connected:@after:2500:explorer.expand:Tables,@connected:@after:4500:explorer.select:t_drop,@connected:@after:5000:explorer.pick:drop,@connected:@after:6500:drop.confirm,@connected:@after:11000:drop.dump:$(w "$OUT/$name.dump"),@connected:@after:11200:output.dump:$(w "$OUT/$name.out")"
+  local cmd="@connected:@after:1500:explorer.expand:main,@connected:@after:2500:explorer.expand:Tables,@connected:@after:4500:explorer.select:t_drop,@connected:@after:5000:explorer.pick:drop,@connected:@after:6500:drop.confirm,@connected:@after:11000:drop.dump:$(w "$OUT/$name.dump"),@connected:@after:11200:output.dump:$(w "$OUT/$name.out")"
   rm -f "$OUT/$name.dump"
   NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 17 "$EXE" Local > "$OUT/$name.stdout" 2> "$OUT/$name.stderr"
   NSQL_HOME="$H" "$NSQL" cat -c Local tables > "$OUT/$name.tables" 2>&1
