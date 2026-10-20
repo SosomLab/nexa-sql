@@ -60,6 +60,19 @@ enum Row {
     },
 }
 
+/// 다시 만든 목록에서 선택을 되찾는 열쇠(사용자 10-20 "← 로 문서 행을 접으면 선택이 사라짐") — 행 종류별 식별자 ·
+/// 같은 문서가 여러 그룹에 나오므로 문서는 (그룹, 문서) · 항목은 접혀 안 보이면 보이는 가장 가까운 상위(문서 → 그룹)로.
+#[derive(Clone, Debug, PartialEq)]
+enum SelKey {
+    Group(u32),
+    Doc(u32, DocKey),
+    Item {
+        id: u64,
+        group: u32,
+        doc: Option<DocKey>,
+    },
+}
+
 #[derive(Clone, Copy, Debug)]
 enum RenameKind {
     Item(u64),
@@ -405,10 +418,7 @@ impl BookmarksPanel {
     }
 
     fn rebuild(&mut self) {
-        let sel_id = self.sel.and_then(|r| match self.rows.get(r) {
-            Some(Row::Item { id, .. }) => Some(*id),
-            _ => None,
-        });
+        let sel_key = self.sel.and_then(|r| self.sel_key(r));
         let filtering = !self.filter.is_empty();
         let mut rows: Vec<Row> = Vec::new();
         let groups = self.groups.clone();
@@ -466,12 +476,53 @@ impl BookmarksPanel {
             }
         }
         self.rows = rows;
-        self.sel = sel_id.and_then(|id| {
+        self.sel = sel_key.and_then(|k| self.find_sel(&k));
+        self.clamp_scroll();
+    }
+
+    /// 행 `r`의 선택 열쇠(그룹 · (그룹, 문서) · 항목 + 상위).
+    fn sel_key(&self, r: usize) -> Option<SelKey> {
+        let group = self.group_of_row(r);
+        match self.rows.get(r)? {
+            Row::Group { id, .. } => Some(SelKey::Group(*id)),
+            Row::Doc { key, .. } => Some(SelKey::Doc(group, key.clone())),
+            Row::Item { id, .. } => {
+                let doc = (0..r).rev().find_map(|k| match &self.rows[k] {
+                    Row::Doc { key, .. } => Some(key.clone()),
+                    _ => None,
+                });
+                Some(SelKey::Item {
+                    id: *id,
+                    group,
+                    doc,
+                })
+            }
+        }
+    }
+
+    /// 다시 만든 목록에서 열쇠의 행 — 그 행이 없으면(접혀 숨음) 문서 → 그룹 순으로 보이는 상위 행.
+    fn find_sel(&self, k: &SelKey) -> Option<usize> {
+        let group_row = |g: u32| {
             self.rows
                 .iter()
-                .position(|r| matches!(r, Row::Item { id: x, .. } if *x == id))
-        });
-        self.clamp_scroll();
+                .position(|r| matches!(r, Row::Group { id, .. } if *id == g))
+        };
+        let doc_row = |g: u32, d: &DocKey| {
+            (0..self.rows.len()).find(|&i| {
+                matches!(&self.rows[i], Row::Doc { key, .. } if key == d)
+                    && self.group_of_row(i) == g
+            })
+        };
+        match k {
+            SelKey::Group(g) => group_row(*g),
+            SelKey::Doc(g, d) => doc_row(*g, d).or_else(|| group_row(*g)),
+            SelKey::Item { id, group, doc } => self
+                .rows
+                .iter()
+                .position(|r| matches!(r, Row::Item { id: x, .. } if x == id))
+                .or_else(|| doc.as_ref().and_then(|d| doc_row(*group, d)))
+                .or_else(|| group_row(*group)),
+        }
     }
 
     fn item(&self, id: u64) -> Option<&Bookmark> {
@@ -1444,6 +1495,59 @@ mod tests {
             .position(|r| matches!(r, Row::Item { .. }))
             .expect("item row");
         (p, r)
+    }
+
+    /// ← 로 펼친 문서 행을 접으면 그 행이 선택된 채 남고, 한 번 더 ← = 그룹 행으로(사용자 10-20 실기 결함 ·
+    /// 종전 = `rebuild`가 항목 행 선택만 되살려 문서/그룹 행에서 접으면 선택이 사라짐). 그룹 접기도 같은 규칙.
+    #[test]
+    fn left_fold_keeps_selection_on_doc_then_group() {
+        let (mut p, item) = panel_with_one_item();
+        let left = InputEvent::Key {
+            key: CtlKey::Left,
+            shift: false,
+            primary: false,
+        };
+        p.sel = Some(item);
+        p.on_event(&left); // 항목 → 문서 행
+        let doc = p.sel.expect("doc selected");
+        assert!(matches!(p.rows[doc], Row::Doc { expanded: true, .. }));
+        p.on_event(&left); // 문서 접기 — 선택 유지
+        let r = p.sel.expect("selection kept after folding doc");
+        assert_eq!(r, doc);
+        assert!(matches!(
+            p.rows[r],
+            Row::Doc {
+                expanded: false,
+                ..
+            }
+        ));
+        p.on_event(&left); // 접힌 문서 → 그룹 행
+        let g = p.sel.expect("group selected");
+        assert!(matches!(p.rows[g], Row::Group { expanded: true, .. }));
+        p.on_event(&left); // 그룹 접기 — 선택 유지
+        let r = p.sel.expect("selection kept after folding group");
+        assert!(matches!(
+            p.rows[r],
+            Row::Group {
+                expanded: false,
+                ..
+            }
+        ));
+    }
+
+    /// 선택한 항목이 접혀 숨으면 보이는 상위 행으로(문서 → 그룹).
+    #[test]
+    fn hidden_item_selection_moves_to_visible_parent() {
+        let (mut p, item) = panel_with_one_item();
+        p.sel = Some(item);
+        let g = p
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { .. }))
+            .expect("group row");
+        p.toggle_fold(g);
+        let r = p.sel.expect("selection moved, not lost");
+        assert!(matches!(p.rows[r], Row::Group { .. }));
     }
 
     /// 한 번 클릭 = 미리보기(`permanent=false`) · 같은 행을 간격 안에 다시 = 정식 탭(`true`) · 세 번째는 새 시작(사용자 09-23).

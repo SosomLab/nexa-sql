@@ -148,7 +148,7 @@ struct FileEntry {
 }
 
 /// 평탄화한 표시 행.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Row {
     File(usize),
     Match(usize, usize),
@@ -156,6 +156,35 @@ enum Row {
     SkipHeader,
     /// 제외 로그 한 줄(`skipped[i]` = 경로 — 이유).
     Skip(usize),
+}
+
+/// ←/→ 한 번이 할 일(사용자 10-20 "파일 검색에서 키보드 좌/우 접기·펼치기가 안 됨" · 북마크·프로젝트 탐색기와 같은 규칙).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FoldStep {
+    /// 그 행으로 선택 이동.
+    Select(usize),
+    /// 그 행(파일/제외 머리)을 접거나 펼침.
+    Toggle(usize),
+    None,
+}
+
+/// ← = 자식 행 → 부모 행 · 펼친 부모 → 접기 · → = 접힌 부모 → 펼치기(순수 · `expanded` = 그 부모 행이 펼쳐졌는가).
+fn fold_step(rows: &[Row], expanded: &dyn Fn(Row) -> bool, sel: usize, left: bool) -> FoldStep {
+    let Some(&row) = rows.get(sel) else {
+        return FoldStep::None;
+    };
+    let parent_of = |want: &dyn Fn(Row) -> bool| (0..sel).rev().find(|&k| want(rows[k]));
+    match (row, left) {
+        (Row::Match(fi, _), true) => {
+            parent_of(&|r| r == Row::File(fi)).map_or(FoldStep::None, FoldStep::Select)
+        }
+        (Row::Skip(_), true) => {
+            parent_of(&|r| r == Row::SkipHeader).map_or(FoldStep::None, FoldStep::Select)
+        }
+        (Row::File(_) | Row::SkipHeader, true) if expanded(row) => FoldStep::Toggle(sel),
+        (Row::File(_) | Row::SkipHeader, false) if !expanded(row) => FoldStep::Toggle(sel),
+        _ => FoldStep::None,
+    }
 }
 
 pub(crate) struct SearchPanel {
@@ -1028,6 +1057,30 @@ impl SearchPanel {
                             return true;
                         }
                     }
+                    // ★ ←/→ = 접기·펼치기·부모로(사용자 10-20) — 입력 상자 포커스 중엔 글자 캐럿 몫.
+                    CtlKey::Left | CtlKey::Right
+                        if !self.query.is_focused() && !self.where_box.is_focused() =>
+                    {
+                        if let Some(cur) = self.sel {
+                            let files = &self.files;
+                            let skipped_expanded = self.skipped_expanded;
+                            let expanded = |r: Row| match r {
+                                Row::File(fi) => files.get(fi).is_some_and(|f| f.expanded),
+                                Row::SkipHeader => skipped_expanded,
+                                _ => false,
+                            };
+                            match fold_step(&self.rows, &expanded, cur, key == CtlKey::Left) {
+                                FoldStep::Select(r) => {
+                                    self.sel = Some(r);
+                                    self.ensure_visible(r);
+                                }
+                                // 접고 펴도 앞쪽 행 번호는 그대로 = 선택 유지.
+                                FoldStep::Toggle(r) => self.activate_row(r, false),
+                                FoldStep::None => {}
+                            }
+                            return true;
+                        }
+                    }
                     _ => {}
                 }
                 let _ = shift;
@@ -1387,6 +1440,31 @@ fn byte_to_char_col(line: &str, byte: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ←/→ 규칙(사용자 10-20): 일치 행 ← = 부모 파일 · 펼친 파일 ← = 접기 · 접힌 파일 ← = 없음 · 접힌 파일 → = 펼치기 ·
+    /// 펼친 파일 → = 없음 · 제외 줄 ← = 제외 머리 · 제외 머리 접기/펼치기.
+    #[test]
+    fn fold_step_rules() {
+        let rows = [
+            Row::File(0),
+            Row::Match(0, 0),
+            Row::Match(0, 1),
+            Row::File(1),
+            Row::SkipHeader,
+            Row::Skip(0),
+        ];
+        // 파일 0 펼침 · 파일 1 접힘 · 제외 머리 펼침.
+        let exp = |r: Row| matches!(r, Row::File(0) | Row::SkipHeader);
+        assert_eq!(fold_step(&rows, &exp, 2, true), FoldStep::Select(0));
+        assert_eq!(fold_step(&rows, &exp, 0, true), FoldStep::Toggle(0));
+        assert_eq!(fold_step(&rows, &exp, 3, true), FoldStep::None);
+        assert_eq!(fold_step(&rows, &exp, 3, false), FoldStep::Toggle(3));
+        assert_eq!(fold_step(&rows, &exp, 0, false), FoldStep::None);
+        assert_eq!(fold_step(&rows, &exp, 5, true), FoldStep::Select(4));
+        assert_eq!(fold_step(&rows, &exp, 4, true), FoldStep::Toggle(4));
+        assert_eq!(fold_step(&rows, &exp, 1, false), FoldStep::None);
+        assert_eq!(fold_step(&rows, &exp, 9, true), FoldStep::None);
+    }
 
     #[test]
     fn where_parsing_rules() {

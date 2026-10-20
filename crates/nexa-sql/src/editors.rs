@@ -1927,10 +1927,14 @@ impl Editors {
         // 미저장 표시는 닫기 자리의 **점**(Sublime식 · 09-28) — 제목 앞 `*`는 더 붙이지 않는다(사용자 09-28).
         // 미리보기 탭도 제목은 그대로 — 표시는 **색**(상단 줄·닫기 표시 = 미리보기색 · 09-28 사용자 "색으로 대체했으니 앞 표시 제거").
         let base = self.titles[i].clone();
-        // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기).
+        // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기) — ★ 확장 보기 탭(`ext:`)은 늘 읽기 전용이라 표식 없음(사용자 10-20).
+        let ext_view = self
+            .view_tabs
+            .get(&self.tab_id(i))
+            .is_some_and(|k| k.starts_with("ext:"));
         let base = if self.loading.contains(&self.tab_id(i)) {
             format!("{base} …")
-        } else if self.read_only.contains(&self.tab_id(i)) {
+        } else if self.read_only.contains(&self.tab_id(i)) && !ext_view {
             format!("{base} [RO]")
         } else {
             base
@@ -2899,6 +2903,20 @@ fn large_bracket_opts(base: &nexa_ctl::BracketOpts) -> nexa_ctl::BracketOpts {
 #[cfg(test)]
 mod load_tab_tests {
     use super::*;
+
+    /// 확장 보기 탭(`ext:`)은 읽기 전용이어도 제목에 `[RO]`를 붙이지 않는다(사용자 10-20) · 그 밖의 읽기 전용 탭은 그대로.
+    #[test]
+    fn ext_view_tab_has_no_ro_mark() {
+        let mut ed = editors();
+        ed.open_view_tab("ext:hello", "Extension: Hello");
+        let i = ed.active();
+        ed.set_read_only(i, true);
+        assert_eq!(ed.shown_title(i), "Extension: Hello");
+        ed.open_view_tab("info:x", "Info: X");
+        let j = ed.active();
+        ed.set_read_only(j, true);
+        assert_eq!(ed.shown_title(j), "Info: X [RO]");
+    }
 
     /// 큰 파일 단계별 제한(사용자 09-21): 기준 단계 이상에서만 · 0 = 제한 없음 · 확장 효과만 끄고 자동 닫기는 남긴다 ·
     /// 구문 강조는 기본 L2부터 · 기준을 L1로 당기면 L1 탭도 꺼지고, 풀면(0) 돌아온다 · "강제로 켜기"는 되돌린다.

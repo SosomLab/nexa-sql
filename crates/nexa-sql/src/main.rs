@@ -563,6 +563,8 @@ struct App {
     /// 확장 레지스트리(in-process · docs/50 §4) + 매니저 팔레트가 고른 후보(설치 목록 · 저장소 목록).
     extensions: extensions::Registry,
     ext_catalog: Vec<(extensions::manager::Source, extensions::manager::Summary)>,
+    /// 저장소 메타 캐시((저장소, 폴더) → 메타 · 실패도 None으로) — 같은 확장 설명을 다시 열 때 원격 GET 0 · ⟳ 새로 고침 때 비움(협업 지적 10-20).
+    ext_meta_cache: std::collections::HashMap<(String, String), Option<extensions::manager::Meta>>,
     grid_tab: u64,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
     explorer: explorers::ExplorerSet,
@@ -1932,6 +1934,7 @@ fn main() {
         blink_origin: Instant::now(),
         extensions: extensions::Registry::builtin(),
         ext_catalog: Vec::new(),
+        ext_meta_cache: std::collections::HashMap::new(),
         grid_tab: 0,
         explorer,
         search,

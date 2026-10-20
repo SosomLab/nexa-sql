@@ -589,6 +589,8 @@ impl App {
             return;
         }
         let sources = mgr::sources(&self.settings);
+        // ⟳ = 저장소를 다시 읽는다 → 설명 메타 캐시도 비운다.
+        self.ext_meta_cache.clear();
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("ext-index".into())
@@ -719,7 +721,13 @@ impl App {
         let mut tr = mgr::Trace::default();
         let meta = mgr::installed_meta(&row.id, &row.version).or_else(|| {
             let (src, sum) = row.catalog.and_then(|n| self.ext_catalog.get(n))?;
-            mgr::fetch_meta(src, &sum.dir, &mut tr).ok()
+            let key = (src.display(), sum.dir.clone());
+            if let Some(hit) = self.ext_meta_cache.get(&key) {
+                return hit.clone();
+            }
+            let got = mgr::fetch_meta(src, &sum.dir, &mut tr).ok();
+            self.ext_meta_cache.insert(key, got.clone());
+            got
         });
         self.ext_trace(tr);
         let state = t(if !row.installed {
@@ -777,7 +785,9 @@ impl App {
         let created = self
             .editors
             .open_view_tab(&key, &format!("Extension: {}", row.name));
-        self.set_focus(Focus::Editor);
+        // ★ 포커스는 옮기지 않는다(사용자 10-20 "직접 클릭하지 않으면 내용으로 이동하지 않게 · 확장 간 키보드 이동") —
+        //   지금 포커스를 새 활성 탭에 다시 적용만(뷰 탭 본문 캐럿이 켜지지 않게). 본문은 그 탭을 클릭할 때 포커스.
+        self.set_focus(self.focus);
         if created {
             // 읽을거리 탭 = DB 연결이 필요 없다(No connection).
             let tab = self.editors.active_id();

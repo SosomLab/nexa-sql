@@ -668,6 +668,15 @@ impl ApplicationHandler<Wake> for App {
                 ),
             ));
         }
+        // ★ 확장 패널 키보드 이동 = 머문 행만 설명 열기(협업 지적 10-20 · 원격 메타 동기 GET을 키마다 만들지 않게).
+        if let Some(d) = self.ext_panel.open_deadline() {
+            if self.ext_panel.take_due_open(now) {
+                self.ext_panel_actions();
+                self.redraw();
+            } else if now < d {
+                next = next.min(d);
+            }
+        }
         if self.mem_win.is_open() {
             if now >= self.mem_next {
                 let every = self.mem_every();

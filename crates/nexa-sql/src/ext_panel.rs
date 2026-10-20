@@ -87,8 +87,16 @@ pub(crate) struct ExtPanel {
     refresh_rect: Rect,
     /// 그릴 때 잡은 히트 영역: (필터된 행 인덱스 → rows 인덱스, 행 rect, 버튼들).
     hits: Vec<RowHit>,
+    /// 마지막 그리기의 (행 높이, 구역 머리 높이) — 키보드 이동 때 선택 행을 보이게(사용자 10-20).
+    geo: (i32, i32),
+    /// ★ 키보드로 고른 행의 설명 열기 대기(행, 마지막 이동 시각) — 머문 행만 연다(협업 지적 10-20: 설치 안 된 확장의 메타 =
+    ///   원격 저장소 동기 GET · 키 이동마다 열면 느린 망에서 행마다 창이 멈춤 · 99 LatestIntent · 객체 찾기 미리보기와 같은 꼴).
+    pending_open: Option<(ExtRow, std::time::Instant)>,
     actions: Vec<ExtPanelAction>,
 }
+
+/// 키보드 이동 뒤 설명을 열기까지 머무는 시간(ms).
+const OPEN_DWELL_MS: u64 = 200;
 
 /// 끝 줄임(순수 · 글 폭 측정은 `dc`): `max_w` 안에 들어갈 때까지 뒤에서 글자를 떼고 "…"을 붙인다 · 들어가면 그대로.
 fn ellipsize_end(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> String {
@@ -145,6 +153,8 @@ impl ExtPanel {
             selected: None,
             refresh_rect: Rect::default(),
             hits: Vec::new(),
+            geo: (0, 0),
+            pending_open: None,
             actions: Vec::new(),
         }
     }
@@ -197,19 +207,112 @@ impl ExtPanel {
         );
     }
 
+    /// 패널 포커스 — ★ 검색 상자 포커스와 따로(사용자 10-20 "선택하면 키가 검색 상자로 가 확장 간 키보드 이동이 안 됨"):
+    /// 켤 때 검색 상자는 그대로(상자 클릭·`focus_query`만 켬) · 끌 때는 둘 다 끔.
     pub(crate) fn set_focused(&mut self, on: bool) {
         self.focused = on;
-        self.search.set_focused(on);
+        if !on {
+            self.search.set_focused(false);
+        }
     }
 
-    /// 검색 상자에 포커스(패널을 열 때).
+    /// 검색 상자에 포커스(패널을 열 때 · 상자 클릭).
     pub(crate) fn focus_query(&mut self) {
-        self.set_focused(true);
+        self.focused = true;
+        self.search.set_focused(true);
+    }
+
+    /// 화면 순서(설치됨 → 설치 가능)의 rows 인덱스 — 그리기·키보드 이동이 같은 순서를 쓴다.
+    fn display_order(&self) -> (Vec<usize>, Vec<usize>) {
+        self.filtered()
+            .into_iter()
+            .partition(|&i| self.rows[i].installed)
+    }
+
+    /// 목록 키(↑/↓/Home/End/PgUp/PgDn) — 선택을 옮기고 그 확장 설명을 연다(포커스는 패널 그대로 · 사용자 10-20). 처리했으면 true.
+    fn list_key(&mut self, key: CtlKey) -> bool {
+        let (inst, avail) = self.display_order();
+        let order: Vec<usize> = inst.iter().chain(avail.iter()).copied().collect();
+        let n = order.len();
+        if n == 0 {
+            return false;
+        }
+        let cur = self
+            .selected
+            .as_ref()
+            .and_then(|id| order.iter().position(|&i| &self.rows[i].id == id));
+        let page = (self.list_rect().h / self.geo.0.max(1)).max(1) as usize;
+        let next = match (key, cur) {
+            (CtlKey::Down, None) | (CtlKey::Home, _) | (CtlKey::PageUp, None) => 0,
+            (CtlKey::Up, None) | (CtlKey::End, _) | (CtlKey::PageDown, None) => n - 1,
+            (CtlKey::Down, Some(c)) => (c + 1).min(n - 1),
+            (CtlKey::Up, Some(c)) => c.saturating_sub(1),
+            (CtlKey::PageDown, Some(c)) => (c + page).min(n - 1),
+            (CtlKey::PageUp, Some(c)) => c.saturating_sub(page),
+            _ => return false,
+        };
+        if cur == Some(next) {
+            return true; // 끝에서 더 = 그대로(같은 확장 설명을 다시 읽지 않는다)
+        }
+        let ri = order[next];
+        let row = self.rows[ri].clone();
+        self.selected = Some(row.id.clone());
+        self.reveal_pos(next, inst.len());
+        // 선택(강조)은 즉시 · 설명 열기는 머문 뒤 한 번(`take_due_open`).
+        self.pending_open = Some((row, std::time::Instant::now()));
+        true
+    }
+
+    /// 대기 중인 설명 열기의 마감 시각(사건 루프의 다음 깨움 · 없으면 None).
+    pub(crate) fn open_deadline(&self) -> Option<std::time::Instant> {
+        self.pending_open
+            .as_ref()
+            .map(|(_, t)| *t + std::time::Duration::from_millis(OPEN_DWELL_MS))
+    }
+
+    /// 마감이 지났으면 그 행의 열기 동작을 낸다(지금도 선택된 행일 때만) — 냈으면 true.
+    pub(crate) fn take_due_open(&mut self, now: std::time::Instant) -> bool {
+        if self.open_deadline().is_none_or(|d| now < d) {
+            return false;
+        }
+        let Some((row, _)) = self.pending_open.take() else {
+            return false;
+        };
+        if self.selected.as_deref() != Some(row.id.as_str()) {
+            return false;
+        }
+        self.actions.push(ExtPanelAction::Open(row));
+        true
+    }
+
+    /// 화면 순서 `k`번째 행이 목록 안에 보이게 스크롤(구역 머리 둘 · 빈 구역 = 안내 한 줄 · `paint`와 같은 배치).
+    fn reveal_pos(&mut self, k: usize, n_inst: usize) {
+        let (row_h, sec_h) = self.geo;
+        if row_h <= 0 {
+            return;
+        }
+        let top = if k < n_inst {
+            sec_h + k as i32 * row_h
+        } else {
+            let inst_h = if n_inst == 0 {
+                sec_h
+            } else {
+                n_inst as i32 * row_h
+            };
+            sec_h + inst_h + sec_h + (k - n_inst) as i32 * row_h
+        };
+        let h = self.list_rect().h;
+        if top < self.scroll {
+            self.scroll = top;
+        } else if top + row_h > self.scroll + h {
+            self.scroll = top + row_h - h;
+        }
+        self.clamp_scroll();
     }
 
     /// IME·편집 컨텍스트 라우팅용.
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
-        if self.focused {
+        if self.focused && self.search.is_focused() {
             Some(self.search.tb_mut())
         } else {
             None
@@ -328,7 +431,7 @@ impl ExtPanel {
             }
             // 검색 상자 우클릭 = 편집 메뉴(틀이 연다 · 10-13).
             InputEvent::RightDown { x, y } if self.search.bounds().contains(Point { x, y }) => {
-                self.set_focused(true);
+                self.focus_query();
                 let _ = self.search.on_event(ev, &mut inv);
                 true
             }
@@ -339,7 +442,7 @@ impl ExtPanel {
                     return true;
                 }
                 if self.search.bounds().contains(p) {
-                    self.set_focused(true);
+                    self.focus_query();
                     if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
                         self.scroll = 0;
                     }
@@ -360,6 +463,10 @@ impl ExtPanel {
                         return false;
                     };
                     self.selected = Some(row.id.clone());
+                    // 행 클릭 = 목록 포커스(키 = ↑/↓ 이동 · 사용자 10-20) · 클릭은 즉시 열므로 키보드 대기는 버린다.
+                    self.pending_open = None;
+                    self.focused = true;
+                    self.search.set_focused(false);
                     match btn {
                         // 버튼 = 누름 표시만 · 동작은 같은 버튼 위에서 뗄 때(사용자 09-28 "클릭 효과").
                         Some(b) => self.pressed = Some((i, b)),
@@ -420,6 +527,17 @@ impl ExtPanel {
             } if self.focused => {
                 if !self.search.text().is_empty() {
                     self.search.set_text("");
+                    self.scroll = 0;
+                }
+                true
+            }
+            // ★ 목록 포커스(검색 상자 아님) — 이동 키는 목록 · 글자는 검색 상자로 넘겨 바로 거른다(사용자 10-20).
+            InputEvent::Key { key, .. } if self.focused && !self.search.is_focused() => {
+                self.list_key(key)
+            }
+            InputEvent::Char { .. } if self.focused && !self.search.is_focused() => {
+                self.search.set_focused(true);
+                if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
                     self.scroll = 0;
                 }
                 true
@@ -496,12 +614,11 @@ impl ExtPanel {
         self.search.paint(dc, th, true);
         // 목록.
         let list = self.list_rect();
-        let idx = self.filtered();
         let querying = !self.search.display_text().trim().is_empty();
-        let (inst, avail): (Vec<usize>, Vec<usize>) =
-            idx.iter().copied().partition(|&i| self.rows[i].installed);
+        let (inst, avail) = self.display_order();
         let row_h = lh * 2 + self.s(14.0);
         let sec_h = lh + self.s(10.0);
+        self.geo = (row_h, sec_h);
         let mut y = list.y - self.scroll;
         self.hits.clear();
         let updates = inst
@@ -738,6 +855,70 @@ mod tests {
             source: String::new(),
             latest: None,
         }
+    }
+
+    /// ★ 목록 키보드 이동(사용자 10-20): 패널 포커스만 켜면 검색 상자는 꺼진 채 · ↓/↑/End/Home = 화면 순서(설치됨 → 설치 가능)로
+    /// 옮기며 그 확장 설명을 연다 · 끝에서 더 = 다시 열지 않음 · 글자 = 검색 상자로 넘어가 거름.
+    #[test]
+    fn list_keys_move_in_display_order_and_open() {
+        let mut p = ExtPanel::new();
+        p.set_visible(true);
+        p.set_bounds(Rect::new(48, 40, 300, 600), 1.0);
+        p.set_rows(
+            vec![
+                row("csv-tools", false, false, Some(1)),
+                row("rainbow-pairs", true, true, Some(0)),
+                row("sql-snippets", true, false, None),
+            ],
+            String::new(),
+        );
+        p.set_focused(true);
+        assert!(!p.search.is_focused(), "패널 포커스 ≠ 검색 상자 포커스");
+        let key = |k| InputEvent::Key {
+            key: k,
+            shift: false,
+            primary: false,
+        };
+        let opened = |p: &mut ExtPanel| -> Vec<String> {
+            p.take_actions()
+                .into_iter()
+                .filter_map(|a| match a {
+                    ExtPanelAction::Open(r) => Some(r.id),
+                    _ => None,
+                })
+                .collect()
+        };
+        // 머문 뒤 열기 = 마감 시각을 넘긴 시점으로 꺼낸다.
+        let settle = |p: &mut ExtPanel| {
+            let later =
+                std::time::Instant::now() + std::time::Duration::from_millis(OPEN_DWELL_MS + 1);
+            p.take_due_open(later);
+        };
+        assert!(p.on_event(&key(CtlKey::Down)));
+        assert!(opened(&mut p).is_empty(), "키 이동 즉시는 열지 않는다");
+        assert!(!p.take_due_open(std::time::Instant::now()), "마감 전");
+        settle(&mut p);
+        assert_eq!(opened(&mut p), vec!["rainbow-pairs"]); // 설치됨 첫 행
+                                                           // 연타 = 마지막 행만 한 번(설치됨 → 설치 가능 순서).
+        p.on_event(&key(CtlKey::Down));
+        p.on_event(&key(CtlKey::Down));
+        settle(&mut p);
+        assert_eq!(opened(&mut p), vec!["csv-tools"]);
+        p.on_event(&key(CtlKey::Down)); // 끝에서 더 = 대기 없음
+        assert!(p.open_deadline().is_none());
+        p.on_event(&key(CtlKey::Home));
+        settle(&mut p);
+        assert_eq!(opened(&mut p), vec!["rainbow-pairs"]);
+        p.on_event(&key(CtlKey::Up)); // 처음에서 더
+        assert!(p.open_deadline().is_none());
+        p.on_event(&key(CtlKey::End));
+        settle(&mut p);
+        assert_eq!(opened(&mut p), vec!["csv-tools"]);
+        assert!(!p.search.is_focused());
+        // 글자 = 검색 상자로.
+        p.on_event(&InputEvent::Char { c: 's', now_ms: 0 });
+        assert!(p.search.is_focused());
+        assert_eq!(p.search.text(), "s");
     }
 
     /// 검색 거르기(이름·id·설명 · 대소문자 무시) + 클릭 → 동작(행 = 상세 · 버튼 = 켜기/끄기/삭제/설치) + 숨기면 안 받음.
