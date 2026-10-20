@@ -14,8 +14,8 @@
 - 🔧 시험 자산 3 = 실행 비트 4(3회째 · T-328) · `win-drop-prod-e2e.sh` 첫 펼침 Loading 경주 · `win-error-goto-e2e.sh` 기대값(SQL Server 열 19 = T-372 뒤 값 · PG 형 지정 리터럴 → 본문 교체) · 재확인 = drop-prod 4/0 · error-goto 5방언 47/0.
 - 🔧 필터 바 첫 그리기 313 ms(Release 6회 중 1) · 2079 ms(Debug) = 선굽기 경주 → `toolicons.rs` `prewarm()` 필터 토글 SVG 6 맨 앞(V2 462/0) · 재확인 = Release 재빌드 뒤.
 - ★ **D-314 Linux 글자 보정 기본값 = macOS 값**(사용자 "폰트가 너무 깨져 보여" → 변경 · `OS_DEFAULTS` Linux 열 hint off · snap off · weight 0 · contrast 100 · 뿌리 = 내장 ab_glyph 흑백 AA 위에 GDI 흉내 보정) · V2 489/0 · 실제 설정 Debug PID 40870 · 사용자 화면 확인 대기.
-- 성능 전수 = **진행 중**(A~D + E big 완료 · 회귀 없음 · 기동 177 ms · 유휴 0 · 큰 파일·10만 행 메모리 119차와 같음 · 결과 프레임 avg 7.9~9.2 ms = 예산 경계 재측정 후보) · 남은 것 = E(rows·log·mid) · 메타 s8~s12 · CLI · C-2 · F.
-- **커밋 1993fe1 · ci 39435264223 ✓ 3-OS · integration 39435264121 ✓** · 남은 것 = 새 Release 기능 재확인·성능 B~F 재측정(진행 중) · 사용자 글자 화면 확인 · T-375 결정.
+- 성능 전수 **최종(새 Release · [journal §6-9](journal/2026-10-20.md)) = 회귀 없음** · 기동 182 ms · 유휴 0~10 ms/s · 첫 그림 40~158 ms(힌트 끔으로 가벼워짐) · 큰 파일·10만 행 메모리 119차와 같음 · 누수 4종 ≤0.021 MB/주기 · 회수 R1~R6 OK · CLI 실서버 0.63~0.86 s · 필터 바 6회 로그 0 · 기능 재확인 85/0 · 4/0 · 47/0 · 관찰 2 = 결과 프레임 avg 7.9~9.5 ms(top 층 +2 ms · G 후보) · Oracle 메타 유휴 CPU 30~60 ms/s(워머 확인 후보).
+- **커밋 1993fe1 · ci 39435264223 ✓ 3-OS · integration 39435264121 ✓** · 남은 것 = 사용자 글자 화면 확인 · T-375 결정 · 관찰 2(G 병목 · 워머 유휴).
 
 ## 2026-10-20 오후 (132차 · **win** · 협업 쌍 = 개발 "개발"[8cb3fc](Fable) × 협업 "nexa-sql-47"[555b62](Opus) · [journal 10-20 §2](journal/2026-10-20.md))
 - ★ **D-312 Ctrl+클릭 = 다중 캐럿 기본**(사용자 질문 "Ctrl+클릭 두 목적 · 링크 위에서 캐럿 안 됨" → 검토(동시 수행 ✗ = 클립보드 덮임·캐럿 잔존 · Alt 조합 3-OS 충돌) → 지시 3) = `objlink.click` 새 값 **off(기본)** · Ctrl+클릭 = 캐럿 추가/제거 · Ctrl+우클릭 = 편집기 메뉴 · **Ctrl+Shift+클릭 `이름 - 설명` 복사 유지** · 순수 `ctrl_click_arms_link` MC/DC · 종전 = `copy` · 후속 T-373(Shift 클릭 뜻 설정 · 미결).
