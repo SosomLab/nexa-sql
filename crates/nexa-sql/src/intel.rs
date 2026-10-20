@@ -2157,9 +2157,11 @@ impl Intel {
                     text.push(' ');
                 }
             }
-            // ★ 문법이 별칭을 허용하는 자리만(`Context::alias_ok` · 사용자 10-09 "ALTER TABLE t A"·"CREATE INDEX … ON t A" 안 붙게).
+            // ★ 문법이 별칭을 허용하는 자리만(`Context::alias_ok` · 사용자 10-09 "ALTER TABLE t A"·"CREATE INDEX … ON t A" 안 붙게) ·
+            //   한정 이름(`FROM 스키마.|` · `FROM DB.소유자.|` = `Member` + `from_chain`)도 같은 규칙(사용자 10-21 "마지막 테이블에 Alias가
+            //   붙지 않아" — `Schema.Table A` · `Database.owner.Table A`).
             CandKind::Table | CandKind::View | CandKind::Synonym
-                if self.cfg.insert_alias && ctx.kind == CtxKind::Relation && ctx.alias_ok =>
+                if self.cfg.insert_alias && alias_slot(ctx) && ctx.alias_ok =>
             {
                 // 치던 접두 자체가 alias 표에 테이블로 잡혀 있으면(`FROM sc|`) 그것은 제외.
                 let taken: Vec<&str> = ctx
@@ -4314,5 +4316,27 @@ mod tests {
             .expect("EMPNO");
         it.pick_with(&format!("intel:{i}"), true);
         assert_eq!(it.take_accept().expect("a").text, "EMPNO", "Alt = 컬럼만");
+    }
+}
+
+/// 자동 별칭을 붙이는 자리인가(순수 · 10-21): 맨 관계 자리(`FROM |`) 또는 관계 사슬의 한정 이름(`FROM 스키마.|` · `FROM DB.소유자.|`).
+/// 허용 여부(`alias_ok`)는 따로 본다 — 여기는 **자리**만.
+fn alias_slot(ctx: &intel::Context) -> bool {
+    ctx.kind == CtxKind::Relation || (matches!(ctx.kind, CtxKind::Member { .. }) && ctx.from_chain)
+}
+
+#[cfg(test)]
+mod alias_slot_tests {
+    use super::*;
+
+    #[test]
+    fn qualified_relation_names_get_alias() {
+        let o = Some(nsql_core::Dialect::Oracle);
+        let c = |src: &str| intel::context_at(src, src.len(), o);
+        assert!(alias_slot(&c("SELECT * FROM ")));
+        assert!(alias_slot(&c("SELECT * FROM STG.IF_PP")));
+        assert!(alias_slot(&c("SELECT * FROM M4PLAN_MS.dbo.IF_")));
+        assert!(!alias_slot(&c("SELECT a.")), "식 자리의 별칭 멤버 = 아님");
+        assert!(!alias_slot(&c("SELECT ")), "식 자리 = 아님");
     }
 }

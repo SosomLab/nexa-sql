@@ -7,6 +7,13 @@
 - 🔧 **패널 키보드 결함 3 + 확장 키 이동 동기 GET(10-20 밤 · [journal §5](journal/2026-10-20.md))** = 북마크 ← 접기 뒤 선택 보존(`SelKey`) · 파일 검색 ←/→(`fold_step`) · 확장 목록 키보드 이동·포커스 분리 · ⚠ 협업 지적 = 키 이동마다 UI 스레드 동기 curl(≤30 s · 캐시 없음) → 머문 행만 200 ms 뒤 1회 + (저장소, 폴더) 캐시(실패 포함 · ⟳ 비움) · 남은 첫 조회 = T-374 · 확장 보기 탭 [RO] 표시 제외(`shown_title` · 사용자 지시) · **커밋 59e5393 · ci 39409822850 ✓ 3-OS(ubuntu · macos · windows) · integration 39409823209 ✓** · 남은 것 = 사용자 키보드 실기 · T-374.
 - 🚀 **v0.2.6 릴리스(10-20 저녁 · 사용자 "새 버전 릴리즈" · [journal 10-20 §4](journal/2026-10-20.md))** = T-372 · D-312 · D-313 · 축소 검증(956/0 · 640/0 · clippy 0×2 · 영어 ✓) · 버전 **d6db282** = 태그 **v0.2.6** · release **39402115634** ✓ · 노트 87줄(Behaviour change · 정정 3) · **공개 2026-10-20T09:56:35Z · Latest** · 자산 6 digest 5/5(+16~41 KB) · Homebrew 탭 2ff68bc(homebrew.yml 39404354927) · pkg.sosomlab.com 0.2.6 자동(linux-repo signal 39404355158 → publish 39404370005 ✓) · publish-windows-packages 39404354940 = guard ✓ · winget PR skipped · choco push skipped(변수 false · 제출 0)
 
+## 2026-10-21 새벽 (133차 Linux 후속 · 브랜치 `fix/133-linux-followup` · [journal 10-20 §6-10~12](journal/2026-10-20.md))
+- 🔧 **T-376 끝난 실행 카드 재그리기 루프**(기존 결함 · 결과 그리드 프레임 +2 ms의 정체) = 카드 남는 동안 CPU 4~12 s 2.4~3.0 s → 0.43~0.50 s · 카운트다운 막대 유지 ✓.
+- 🔧 **T-377 메타 워머 응답마다 UI 비용** = 스냅숏 복제 0 · 메타 전용 재그리기 조건 · 워머 폴링 제외 → BISCM 유휴 29 → 21 ms/s(UI 스레드 1810 → 1240 ms) · 워머 200 끝까지 ✓.
+- ✅ **T-375** nexa-ui 219차 ff2633b(TTC 얼굴 = 표시 이름) · 直 한국식 캡처 ✓.
+- ★ **T-378 Thin 안내 "다시 보지 않기" + 설정 ▸ 숨겨진 메시지**(협업 V1 결함 1 → 수정 · 재시험 ✓) · ★ **T-379 한정 이름 자동 별칭**(E2E 6/0) · 사용자 실기 ✓ 둘 다.
+- 검증 = V2 966/0 · 642/0 · clippy 0×2 · 회귀 func-check 85/0 · reveal-matrix 57/0 · objlink-reveal 9/0 · intel-3part 7/0 · intel-args 22/0 · explorer-desc 15/0 · 실제 설정 Debug PID 92764 · 남은 것 = 커밋(사용자 지시) · 시험 자산 2(thin 누름 시점 · intel-alias `ui.key:down`) · 후보(drain마다 detail 동기 로그 · 버튼 있는 안내 수명 3 s).
+
 ## 2026-10-20 밤 (133차 · **Linux** · 협업 쌍 = 개발 "development"[952cc1] × 협업 "nexa-sql-13"[b62121] · [journal 10-20 §6](journal/2026-10-20.md))
 - 최신화 = nexa-sql eb433c6 → 38a79f8(90커밋 · 125~132차 · v0.2.0~v0.2.6) · nexa-ui 76f1484 → 75f4cd6(26 · 207~218차) · nexa-license 0 · 외부 의존 변경 0 · 새 OS 분기 = Windows IME 변환 모드 · nexa-sys 스텁(Linux = 스텁 경로만).
 - P0 = Debug 1m51s · Release 5m29s 경고 0 · 실제 설정 Debug PID 11065 · 크기 GUI 26.21 MB(+0.5) · nsql 13.54 MB · V2 = 964/0 · 641/0 · clippy 0×2 · fmt ✓.

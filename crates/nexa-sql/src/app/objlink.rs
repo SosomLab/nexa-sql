@@ -892,7 +892,7 @@ impl App {
     }
 
     /// 실제 표시 방식 — 향상 모드(`perf::BOOST` = none 강제)와 큰 파일 모드는 `none`(다시 그리기 0 · 동작은 유지).
-    fn objlink_display(&self) -> Display {
+    pub(crate) fn objlink_display(&self) -> Display {
         if self.editors.is_large(self.editors.active()) {
             return Display::None;
         }

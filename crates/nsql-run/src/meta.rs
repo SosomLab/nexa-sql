@@ -321,7 +321,12 @@ impl MetaStore {
     }
 
     fn edit(&mut self) -> Snapshot {
-        let mut s = (*self.snap).clone();
+        // ★ 독점이면 복제 0(133차 Linux 10-20): 종전 `(*self.snap).clone()`은 갱신마다 스냅숏 전체(objs · cols · exact · buckets …)를
+        //   복제했다 — BISCM(DBA 전수 ≈ 수만 객체)에서 L2 컬럼 워머 응답 하나(테이블 한 개 컬럼)마다 UI 스레드 수 ms(협업 B 측정 =
+        //   응답당 ≈12 ms의 큰 몫). 읽는 쪽은 `snapshot()`으로 `Arc`를 잠깐 쥐므로 보통은 독점 → `make_mut`가 복제하지 않고,
+        //   누가 쥐고 있을 때만 종전처럼 복제한다(불변 스냅숏 규약 그대로). `take`로 꺼내 두는 동안 `self.snap`은 빈 기본값 —
+        //   `edit` → `commit` 사이에 `snapshot()`을 부르는 길은 없다(쓰기 함수는 `self.names`만 쓴다).
+        let mut s = std::mem::take(Arc::make_mut(&mut self.snap));
         s.stamp += 1;
         s
     }

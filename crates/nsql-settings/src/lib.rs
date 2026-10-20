@@ -5618,6 +5618,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ 숨겨진 메시지(사용자 10-21 "다시 보지 않기 + 설정에서 다시 켜기"): 안내의 [다시 보지 않기] 버튼이 `off`로 적고, 이 분류에서 `on`으로
+    //   되돌린다. 키 이름 = `notice.<안내>` · 새 "다시 보지 않기" 안내는 같은 접두로 여기에 등재한다.
+    Entry {
+        key: "notice.oracle_thin",
+        cat: Msg::CatHiddenMessages,
+        label: Msg::LblNoticeOraThin,
+        desc: Msg::DescNoticeOraThin,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "log.open_at_start",
         cat: Msg::CatLog,
@@ -7010,6 +7020,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatSession,
             // 실행 카드(알림) — 78 §3-4 쪼갬(T-250 · 09-29).
             Msg::CatRunCards,
+            // 숨겨진 메시지(사용자 10-21).
+            Msg::CatHiddenMessages,
             // Output 탭(09-30).
             Msg::CatOutput,
             Msg::CatPerformance,

@@ -437,6 +437,20 @@ impl App {
                 self.redraw();
             }
         }
+        // ★ 안내 토스트의 [다시 보지 않기](사용자 10-21 · 토스트 버튼 → `menu_action` · 1차에 `indent_pick`에 넣어 무동작 = 협업 V1): `notice.<안내>` = off로 적고 되돌리는 자리를 한 줄 알린다.
+        if let Some(rest) = id.strip_prefix("notice.hide:") {
+            let key = format!("notice.{rest}");
+            if self.settings.set(&key, "off").is_ok() {
+                self.persist_settings();
+                self.toasts.push(
+                    toast::ToastKind::Info,
+                    t(Msg::CatHiddenMessages),
+                    t(Msg::ToastNoticeHidden),
+                );
+            }
+            self.redraw();
+            return;
+        }
         // 적재 취소(Esc와 같은 길 · 팔레트/자동화용) — 활성 탭의 적재만.
         if id == "file.load_cancel" {
             self.file_load_cancel_active();

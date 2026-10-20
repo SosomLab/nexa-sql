@@ -1218,6 +1218,9 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
                 || (w.text == "," && in_from_list(chain_head))
         });
         let from_chain = rel_pos;
+        // ★ 한정 이름의 관계 자리(`FROM 스키마.|` · `FROM DB.소유자.|`)도 자동 별칭 대상(사용자 10-21 "Schema.Table A · Database.owner.Table A"):
+        //   별칭 허용 판정은 사슬 **앞** 낱말들(`chain_head` = FROM/JOIN/콤마로 끝남)로 — 관계 자리와 같은 규칙(`alias_allowed`).
+        let alias_ok = from_chain && alias_allowed(chain_head, stmt_kind.as_deref(), dialect);
         // ★ 이름 없는 `.`(`ㅁ.`처럼 식별자가 아닌 글자 뒤 · 사용자 09-24 "별칭이 아니면 아무것도 보이지 않아야") = 고를 것 없음.
         if q.is_empty() {
             return Context {
@@ -1237,7 +1240,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
             from_chain,
             clause,
             stmt_kind,
-            alias_ok: false,
+            alias_ok,
         };
     }
     // ★ `*` / `alias.*` 바로 뒤(접두 없음 · `COUNT(*`는 제외): "모든 컬럼" 조각 자리 — 치환 구간 = 별표(와 별칭) 전체.
@@ -2697,6 +2700,28 @@ mod tests {
         assert_eq!(a("UPDATE ", Dialect::Mssql), (true, false));
         assert_eq!(a("DELETE FROM ", Dialect::Mssql), (true, false));
         assert_eq!(a("SELECT * FROM ", Dialect::Mssql), (true, true));
+        // ★ 한정 이름(사용자 10-21): `FROM 스키마.|` · `FROM DB.소유자.|`도 별칭 허용 · 별칭 불허 문장의 한정 이름은 그대로 불허.
+        let q = |src: &str, d: Dialect| {
+            let c = context_at(src, src.len(), Some(d));
+            (
+                matches!(c.kind, CtxKind::Member { .. }),
+                c.from_chain,
+                c.alias_ok,
+            )
+        };
+        assert_eq!(q("SELECT * FROM STG.", o), (true, true, true));
+        assert_eq!(q("SELECT * FROM STG.IF_PP", o), (true, true, true));
+        assert_eq!(q("SELECT * FROM a, STG.", o), (true, true, true));
+        assert_eq!(q("SELECT * FROM a JOIN STG.", o), (true, true, true));
+        assert_eq!(
+            q("SELECT * FROM M4PLAN_MS.dbo.", Dialect::Mssql),
+            (true, true, true)
+        );
+        assert_eq!(q("UPDATE dbo.", Dialect::Mssql), (true, true, false));
+        assert_eq!(q("ALTER TABLE STG.", o), (true, true, false));
+        assert_eq!(q("CREATE INDEX ix ON STG.", o), (true, false, false));
+        // 식 자리의 한정 이름(`a.`)은 관계 사슬이 아니다.
+        assert_eq!(q("SELECT a.", o), (true, false, false));
         // 불허.
         assert_eq!(a("ALTER TABLE ", o), (true, false));
         assert_eq!(a("CREATE INDEX ix ON ", o), (true, false));

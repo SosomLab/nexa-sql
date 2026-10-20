@@ -1227,11 +1227,24 @@ impl App {
                         .map(|l| t(crate::app::output::limit_short(*l)))
                         .collect::<Vec<_>>()
                         .join(" · ");
-                    self.toasts.push(
-                        toast::ToastKind::Warn,
-                        title.clone(),
-                        tf(Msg::ToastLimitsShort, &[&short]),
-                    );
+                    // ★ 접속 직후 안내는 "다시 보지 않기"(사용자 10-21): `notice.oracle_thin`이 꺼져 있으면 토스트만 생략(로그 창 상세는 그대로) ·
+                    //   켜져 있으면 [다시 보지 않기] 버튼 = `notice.hide:oracle_thin` → 설정 ▸ 숨겨진 메시지에서 다시 켠다. 제약 기능을 실제로
+                    //   요청했을 때의 경고(`at_connect == false`)는 숨기지 않는다.
+                    if !at_connect {
+                        self.toasts.push(
+                            toast::ToastKind::Warn,
+                            title.clone(),
+                            tf(Msg::ToastLimitsShort, &[&short]),
+                        );
+                    } else if self.settings.flag("notice.oracle_thin") {
+                        self.toasts.push_button(
+                            toast::ToastKind::Warn,
+                            title.clone(),
+                            tf(Msg::ToastLimitsShort, &[&short]),
+                            t(Msg::BtnDontShowAgain),
+                            "notice.hide:oracle_thin",
+                        );
+                    }
                     self.log_win.push(LogEntry::new(LogKind::Info, title));
                     for l in &limits {
                         self.log_win.push(LogEntry::new(
@@ -1714,6 +1727,20 @@ impl App {
             // 테이블 제약이 도착했으면 결과 그리드의 외래 키 열도 맞춘다(T-180 ⑥).
             self.grid_fk_sync();
         }
+        // ★ 저장소만 바뀐 응답(L2 컬럼 워머·사전 · 133차 Linux 10-20): 트리는 그대로라 창 전체를 다시 그리지 않는다 — 종전엔 응답마다
+        //   `drain() == true` → 재그리기 → `objlink_sync`가 새 스탬프를 보고 본문 링크 전체 재분석(협업 B = 워머 200응답 × ≈12 ms = UI
+        //   스레드 CPU 30~60 ms/s가 접속 뒤 1분 넘게). 지금 메타를 보고 있는 소비자(완성 팝업 "불러오는 중" · 밑줄 링크 표시 중)가
+        //   있을 때만 다시 그린다 · 나머지는 다음 입력 사건의 재그리기에서 자연히 반영된다.
+        if self.explorer.take_meta_changed() {
+            let links_shown =
+                self.objlinks.active && self.objlink_display() != app::objlink::Display::None;
+            if meta_redraw_wanted(self.intel.is_loading(), links_shown) {
+                if self.intel.is_loading() {
+                    self.intel_request(false);
+                }
+                changed = true;
+            }
+        }
         if self.live_drain() {
             changed = true;
         }
@@ -1726,5 +1753,25 @@ impl App {
         if changed {
             self.redraw();
         }
+    }
+}
+
+/// 저장소만 바뀐 메타 응답(L2 컬럼 워머·사전)에 창을 다시 그릴 조건(순수 · MC/DC): 완성 팝업이 메타를 기다리는 중이거나
+/// 본문 링크가 지금 표시 중일 때만. 둘 다 아니면 다음 입력 사건의 재그리기에서 반영된다(133차 Linux 10-20).
+pub(crate) fn meta_redraw_wanted(intel_loading: bool, links_shown: bool) -> bool {
+    intel_loading || links_shown
+}
+
+#[cfg(test)]
+mod meta_redraw_tests {
+    use super::meta_redraw_wanted;
+
+    /// MC/DC — 조건 둘이 각각 결과를 뒤집는 쌍.
+    #[test]
+    fn meta_redraw_wanted_mc_dc() {
+        assert!(!meta_redraw_wanted(false, false), "기준 = 안 그림");
+        assert!(meta_redraw_wanted(true, false), "완성 팝업 대기만으로 그림");
+        assert!(meta_redraw_wanted(false, true), "링크 표시 중만으로 그림");
+        assert!(meta_redraw_wanted(true, true));
     }
 }

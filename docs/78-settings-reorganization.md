@@ -39,6 +39,7 @@
 - **입력(Input)** — `input.scroll_natural` · `ui.dblclick_ms` · `ui.ime_hint` · `ui.clipboard_probe` *(Appearance에서 이동)*
 - **창(Window)** — `window.monitor` · `window.always_on_top` · 상태줄 절: `statusbar.git` ▸ `statusbar.git_secs` · (`window.*_size/pos` = HIDDEN 그대로)
 - **단축키(Keys)** — 그대로(65 · 키맵 화면 T-53) · 순서 = 메뉴 순(File → Edit → View → Run → Tabs → Bookmarks)
+- **숨겨진 메시지(Hidden messages)** *(신설 10-21 · T-378 · `CatHiddenMessages`)* — 안내 토스트의 [다시 보지 않기]로 끈 안내를 다시 켜는 자리: `notice.oracle_thin`(Oracle Thin 접속 직후 제약 안내 · on 기본) · 새 "다시 보지 않기" 안내는 `notice.<이름>` 키 + 이 분류에 한 줄
 - **성능(Performance)** — `perf.mode` · `perf.boost`(강제 표 §6) · 메모리 절: `mem.trim_on_release` · `mem.trim_secs`(0 = 끔) · `mem.release_results_on_disconnect` · 캐시 절: `ui.glyph_cache` · `file.icon_cache`
   *(되돌리기 예산 5개는 편집기 ▸ 되돌리기로 이동)*
 

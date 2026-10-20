@@ -1094,6 +1094,10 @@ pub(crate) struct Explorer {
     /// ★ L2 워머(85 §3): 현재 스키마 관계의 컬럼을 뒤에서 하나씩(간격 · 상한) — 첫 완성·카드가 즉시 나오게.
     warm_q: VecDeque<nsql_run::meta::ObjId>,
     warm_inflight: Option<nsql_run::meta::ObjId>,
+    /// ★ 저장소만 바뀐 응답(L2 컬럼 워머 `ColumnsMeta` · 사전 `DictMeta`)이 왔다 — 트리 픽셀은 그대로라 `drain`의 `changed`에 넣지 않고
+    ///   따로 알린다(133차 Linux 10-20 · 협업 B 측정 = 응답마다 창 전체 재그리기 + 링크 재분석 ≈ 12 ms × 200). 소비 = 호스트
+    ///   `take_meta_changed`(완성 팝업 "불러오는 중"·링크 표시 중일 때만 다시 그림).
+    meta_only_changed: bool,
     warm_last: Option<Instant>,
     warm_sent: usize,
     /// ★ L2 코멘트 워머(86 §5): 관계 폴더가 읽힌 스키마를 하나씩 · 진행 중 하나.
@@ -2739,6 +2743,7 @@ impl Explorer {
             index_last_at: None,
             warm_q: VecDeque::new(),
             warm_inflight: None,
+            meta_only_changed: false,
             warm_last: None,
             warm_sent: 0,
             comment_q: VecDeque::new(),
@@ -4227,7 +4232,12 @@ impl Explorer {
     pub(crate) fn drain(&mut self) -> bool {
         let mut changed = false;
         while let Ok(resp) = self.rx.try_recv() {
-            changed = true;
+            // 저장소만 바뀌는 응답은 화면 변경으로 세지 않는다(`meta_only_changed` · 위 필드 주석).
+            if matches!(resp, Resp::ColumnsMeta { .. } | Resp::DictMeta { .. }) {
+                self.meta_only_changed = true;
+            } else {
+                changed = true;
+            }
             match resp {
                 Resp::Opened { gen, r } => {
                     if gen != self.gen {
@@ -7056,6 +7066,11 @@ impl Explorer {
 
     /// ★ 뒤에서 할 일이 남았는가(L1 스키마 남음 · L2 컬럼 큐 · 검색 완성) — 호스트가 빠른 타이머를 유지해 `prefetch_step`이 돌게(85 §2 · 09-25 결함:
     /// 유휴면 틱이 멈춰 L1이 진행되지 않았다).
+    /// 저장소만 바뀐 응답(`ColumnsMeta`·`DictMeta`)이 있었는가 — 한 번 읽으면 비운다.
+    pub(crate) fn take_meta_changed(&mut self) -> bool {
+        std::mem::take(&mut self.meta_only_changed)
+    }
+
     pub(crate) fn background_pending(&self) -> bool {
         if self.offline || self.dialect.is_none() || self.nodes[0].state != LoadState::Loaded {
             return false;
@@ -7068,11 +7083,25 @@ impl Explorer {
                     .schema_names()
                     .iter()
                     .any(|s| !self.index_done.contains(s)));
-        l1 || !self.warm_q.is_empty()
-            || self.warm_inflight.is_some()
-            || !self.comment_q.is_empty()
-            || self.comment_inflight.is_some()
-            || self.search_busy()
+        // ★ L2 컬럼·코멘트 워머는 여기서 뺀다(133차 Linux 10-20): 큐가 남아 있는 80 s 내내 호스트 빠른 타이머(≈30 ms)를 켜 두던 것이
+        //   협업 B 측정의 유휴 CPU 25~30 ms/s(워머 끝나면 0)의 정체 — 워머 걸음은 `warm_idle_ms`(300) 간격이고 응답은 Wake로 오므로
+        //   폴링이 필요 없다 → [`Self::background_wake_at`]가 **다음 걸음 시각**만 알려 주고 호스트는 그때 한 번 깬다.
+        l1 || self.search_busy()
+    }
+
+    /// 다음 L2 걸음(컬럼·코멘트 워머)이 올 시각 — 큐가 있고 진행 중이 없을 때만 `warm_last + warm_idle_ms`(지났으면 `now`).
+    /// 진행 중(응답 대기)·오프라인·끊김·빈 큐 = `None`(응답은 Wake로 오고, 그 뒤 다시 묻는다).
+    pub(crate) fn background_wake_at(&self, now: Instant) -> Option<Instant> {
+        if self.offline || self.broken_since.is_some() {
+            return None;
+        }
+        let l2_due = !self.warm_q.is_empty() && self.warm_inflight.is_none();
+        let cm_due = !self.comment_q.is_empty() && self.comment_inflight.is_none();
+        if !(l2_due || cm_due) {
+            return None;
+        }
+        let idle = Duration::from_millis(self.index_cfg.warm_idle_ms);
+        Some(self.warm_last.map_or(now, |t| (t + idle).max(now)))
     }
 
     /// 진단 한 줄(기동 명령 `explorer.stat` · 09-25): 스키마 수 · L1 완료 수 · 진행 중 · 큐 · 완성 · 일치 · 검색 중.

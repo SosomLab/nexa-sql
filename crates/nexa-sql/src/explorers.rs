@@ -1937,6 +1937,23 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                 || self.panes.iter().any(|p| p.ex.bars_visible()))
     }
 
+    /// 어느 칸이든 저장소만 바뀐 응답이 있었는가(각 칸의 표식을 비운다).
+    pub(crate) fn take_meta_changed(&mut self) -> bool {
+        let mut any = false;
+        for p in &mut self.panes {
+            any |= p.ex.take_meta_changed();
+        }
+        any
+    }
+
+    /// 어느 칸이든 다음 L2 걸음 시각(가장 이른 것) — 호스트가 그때 한 번 깬다(빠른 타이머 대신 · 133차).
+    pub(crate) fn background_wake_at(&self, now: std::time::Instant) -> Option<std::time::Instant> {
+        self.panes
+            .iter()
+            .filter_map(|p| p.ex.background_wake_at(now))
+            .min()
+    }
+
     /// 뒤에서 할 일(L1·L2·검색 완성)이 남은 칸이 있는가 — 호스트 빠른 타이머 유지 조건(85 §2).
     pub(crate) fn background_pending(&self) -> bool {
         self.panes.iter().any(|p| p.ex.background_pending())

@@ -358,6 +358,7 @@ impl RunToast {
                 };
             }
             r.ended = Some(Instant::now());
+            r.shown_tick = u64::MAX;
             self.on_new_event();
         }
     }
@@ -373,6 +374,7 @@ impl RunToast {
             }
             r.phase = phase;
             r.ended = Some(Instant::now());
+            r.shown_tick = u64::MAX;
             self.on_new_event();
         }
     }
@@ -420,8 +422,19 @@ impl RunToast {
                     // 남은 시간 막대가 켜져 있으면 카운트다운 내내 틱(막대·투명도가 매 틱 바뀐다) · 꺼져 있으면 마지막 300ms만.
                     let animating = progress || left.as_millis() as u64 <= FADE_MS;
                     if animating {
-                        redraw = true;
-                        bump(now + Duration::from_millis(tick), &mut next);
+                        // ★ 틱 **버킷이 바뀔 때만** 다시 그린다(133차 Linux 10-20 · 실행 중 가지와 같은 규칙). 종전엔 부를 때마다
+                        //   `redraw = true`라 호스트 루프(그리기 → about_to_wait → tick → 그리기…)가 카드가 남은 5초 내내 최대 프레임으로
+                        //   돌았다 — 결과 시나리오 CPU 700 ms/s · `run.toast=off`면 90 ms/8 s · `toast_tick_ms`를 1000으로 올려도 그대로
+                        //   (= 틱이 아니라 호출마다였다는 증거). 버킷 기준 = `ended`(실행 중 버킷은 `started` 기준이라 끝날 때 초기화).
+                        let bucket = now.duration_since(ended).as_millis() as u64 / tick;
+                        if bucket != r.shown_tick {
+                            r.shown_tick = bucket;
+                            redraw = true;
+                        }
+                        bump(
+                            ended + Duration::from_millis((bucket + 1) * tick),
+                            &mut next,
+                        );
                     } else {
                         bump(now + (left - Duration::from_millis(FADE_MS)), &mut next);
                     }
@@ -915,13 +928,17 @@ mod tests {
             rt.hide_progress_of(&rt.runs[0], e + Duration::from_secs(9)),
             Some(1.0)
         );
-        // 켜짐 = 1초 뒤에도 30ms 뒤 다시(막대가 움직인다).
+        // 켜짐 = 1초 뒤에도 다음 틱 경계(30ms 버킷 · ended 기준 정렬)에 다시(막대가 움직인다).
         let (redraw, next) = rt.tick(e + Duration::from_secs(1));
         assert!(redraw);
-        assert_eq!(
-            next,
-            Some(e + Duration::from_secs(1) + Duration::from_millis(30))
-        );
+        assert_eq!(next, Some(e + Duration::from_millis((1000 / 30 + 1) * 30)));
+        // ★ 같은 버킷 안에서 다시 부르면 그리지 않는다(133차 · 호출마다 redraw = 최대 프레임 루프의 뿌리).
+        let (redraw, next2) = rt.tick(e + Duration::from_secs(1) + Duration::from_millis(5));
+        assert!(!redraw, "같은 틱 버킷 = 다시 그리지 않음");
+        assert_eq!(next2, next);
+        // 다음 버킷으로 넘어가면 그린다.
+        let (redraw, _) = rt.tick(e + Duration::from_millis((1000 / 30 + 1) * 30));
+        assert!(redraw);
         // 꺼짐 = 종전: 마지막 300ms 전까지는 한 번에 건너뛴다.
         rt.configure_progress(false, 35, 30);
         let (redraw, next) = rt.tick(e + Duration::from_secs(1));

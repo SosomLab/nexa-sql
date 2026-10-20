@@ -234,6 +234,8 @@
 | UPDATE · DELETE 대상 | 붙임 | **SQL Server는 안 붙임**(T-SQL `UPDATE t SET`에 별칭 꼴이 다름) |
 | INSERT INTO · ALTER/CREATE/DROP/TRUNCATE/LOCK TABLE · CREATE INDEX … ON · GRANT … ON · COMMENT ON · DESC | 안 붙임 | — |
 
+- ★ **한정 이름도 같은 규칙**(10-21 · 133차 Linux · 사용자 지시) = `FROM 스키마.|`·`FROM DB.dbo.|`는 `CtxKind::Member`(+`from_chain`)라 종전엔 `Relation`만 보던 별칭 조건에 걸리지 않았다 → Member 분기 `alias_ok = from_chain && alias_allowed(chain_head…)` + 호스트 순수 `alias_slot(ctx)` · 예 `FROM BISCM_SB.ANTI_KR_ITEM A` · SQL Server `FROM BISCM_MS.dbo.M4E_C300000 M` · 대조군(ALTER TABLE · SQL Server UPDATE) = 없음 · E2E `scripts/intel-alias-e2e.sh`.
+
 - **COLLATE**(사용자 "COALESCE/JOIN/UNION/열 정의/WHERE의 COLLATE 예약어 및 값 유형") = `Want::Collation`(`COLLATE |` 뒤 · 식·열 정의·ORDER BY 어디서든 · 메타 없이) · 표 `builtins::collations(d)` = SQL Server 24(DATABASE_DEFAULT · Korean_Wansung_* · Korean_100_* · SQL_Latin1_General_CP1_* · Latin1_General_* …) · PG 13 · MySQL 14 · Oracle 11(BINARY_CI/AI · KOREAN_M · GENERIC_M · USING_NLS_COMP) · SQLite 3 · 한 줄 설명 · 문법 `.sqlg` 4방언 절 `next`에 COLLATE.
 - **협업 V1 bin118(10-09)**: COLLATE = SQL Server `SELECT a COLLATE `·열 정의 `COLLATE ` 24 ✓ · 열 정의 자료형 뒤 = 키워드 `COLLATE`·`COLLATE DATABASE_DEFAULT` ✓ · PG 13 ✓ · Oracle 11 ✓ · 회귀 intel-args 22/0 · intel-3part 7/0 ✓ · 자동 별칭 = 완성 확정 시험 훅이 없어 자동 확인 못 함(사용자 실기).
 

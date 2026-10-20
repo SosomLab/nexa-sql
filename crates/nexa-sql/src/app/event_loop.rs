@@ -493,6 +493,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.run_toast_next {
             next = next.min(t);
         }
+        // ★ L2 워머 다음 걸음(133차): 빠른 타이머 대신 `warm_idle_ms` 뒤 한 번만 깬다(`Explorer::background_wake_at`).
+        if let Some(t) = self.explorer.background_wake_at(now) {
+            next = next.min(t);
+        }
         // 막힘 감지(docs/56 L3) — 미커밋 세션이 있을 때만 `tx.block_poll_secs` 간격으로 메타 세션에 한 문장.
         if let Some(t) = self.tx_block_tick(now) {
             next = next.min(t);
