@@ -324,6 +324,9 @@ pub const BOOST: &[(&str, &str)] = &[
     ("intel.document_words", "off"),
     ("intel.preload", "off"),
     ("intel.from_routines", "off"),
+    // ── 오류 위치 고급 분석(T-372 · 사용자 10-20 "향상 모드에서는 강제로 꺼지도록 · 별도 설정 없이 일괄 관리"): 구문 오류마다 한 번 ·
+    //    문장 하나 이하 구간이라 비용은 작지만 부가 분석이므로 향상 모드는 서버 위치만 쓴다(`editor.error_goto`는 그대로).
+    ("editor.error_analyze", "off"),
 ];
 
 /// 향상 모드가 이 키를 강제하는 값(등재되지 않은 키 = `None`).

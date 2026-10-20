@@ -3418,6 +3418,24 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-372(132차 win · 사용자 10-20): 구문 오류의 서버 위치(파서가 포기한 지점) **앞 구간**에서 키워드 오타를 찾아 첫 후보로 캐럿.
+    //   별도 부품(nsql-script `errsuspect` · 메타는 캐시만 · 왕복 0) · 향상 모드 = 강제 끔(`perf::BOOST` 한 곳에서 일괄 · 별도 키 없음).
+    Entry {
+        key: "editor.error_analyze",
+        cat: Msg::CatEditor,
+        label: Msg::LblErrorAnalyze,
+        desc: Msg::DescErrorAnalyze,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.error_analyze_budget_ms",
+        cat: Msg::CatEditor,
+        label: Msg::LblErrorAnalyzeBudgetMs,
+        desc: Msg::DescErrorAnalyzeBudgetMs,
+        kind: SettingKind::Int { min: 1, max: 500 },
+        default: "20",
+    },
     // 편집기 휠 단위(사용자 09-16 · 픽셀 스크롤 도입과 함께 그리드와 같은 선택지).
     Entry {
         key: "editor.scroll",
@@ -7490,6 +7508,7 @@ pub const ADVANCED: &[&str] = &[
     "intel.delay_ms",
     "intel.budget_ms",
     "intel.card_settle_ms",
+    "editor.error_analyze_budget_ms",
     "file.external_poll_ms",
     "tx.idle_countdown_secs",
     "tx.block_poll_secs",

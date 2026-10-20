@@ -1515,13 +1515,61 @@ impl App {
                         && self.editors.active_id() == self.sess.run_editor
                     {
                         let start = self.sess.last_run_starts.get(index).copied().flatten();
+                        let stmt_len = stmt.chars().count();
                         let by_pos = app::run::error_caret(
                             self.sess.run_src_base,
                             start,
                             error.position,
-                            stmt.chars().count(),
+                            stmt_len,
                         );
-                        let target = by_pos.or_else(|| {
+                        // ★ T-372(사용자 10-20): 구문 오류면 서버 위치 **앞 구간**에서 키워드 오타 후보를 찾아 **첫 번째**로 캐럿 ·
+                        //   Output에 후보 + 서버 위치 한 줄. 별도 부품(`app/errsuspect.rs` → nsql-script `errsuspect`) · 향상 모드 = 설정 강제 끔.
+                        let by_suspect = if app::errsuspect::analyze_wanted(
+                            self.settings.flag("editor.error_analyze"),
+                            cls.class,
+                            start,
+                        ) {
+                            let t0 = std::time::Instant::now();
+                            let suspects = self.error_suspects(
+                                err_dialect,
+                                &stmt,
+                                error.position,
+                                &error.message,
+                            );
+                            if std::env::var_os("NSQL_TRACE_ERRPOS").is_some() {
+                                self.log_win.push(LogEntry::new(
+                                    LogKind::Info,
+                                    format!(
+                                        "[errpos] suspects={} {:.2} ms pos={:?} {:?}",
+                                        suspects.len(),
+                                        t0.elapsed().as_secs_f64() * 1000.0,
+                                        error.position,
+                                        suspects.iter().map(|s| &s.text).collect::<Vec<_>>()
+                                    ),
+                                ));
+                            }
+                            if let Some(text) = self.error_suspects_text(
+                                &suspects,
+                                self.sess.run_src_base,
+                                start,
+                                error.position,
+                                stmt_len,
+                            ) {
+                                let ed = self.sess.run_editor;
+                                self.output_push(ed, crate::output::OutKind::Warn, &text);
+                            }
+                            suspects.first().and_then(|s| {
+                                app::run::error_caret(
+                                    self.sess.run_src_base,
+                                    start,
+                                    Some(s.start),
+                                    stmt_len,
+                                )
+                            })
+                        } else {
+                            None
+                        };
+                        let target = by_suspect.or(by_pos).or_else(|| {
                             (line > 0).then(|| {
                                 let buf = self.editors.cur().buf();
                                 let l = (self.sess.run_line_base + line - 1)

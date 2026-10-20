@@ -700,7 +700,7 @@ pub(crate) fn builtin_class(
 }
 
 /// 탐색기 스냅숏 위의 해석기 — 없는 컬럼은 `needs`에 모아 호스트가 요청한다(지연 로딩 · 61 §1-8).
-struct SnapResolver<'a> {
+pub(crate) struct SnapResolver<'a> {
     names: &'a Interner,
     snap: &'a Snapshot,
     /// 방언(시스템 객체 폴백 `builtin_class` · ㉙).
@@ -731,6 +731,40 @@ pub(crate) fn schema_visible(
     match (session_user, collector) {
         (Some(u), Some(c)) => u.eq_ignore_ascii_case(c),
         _ => false,
+    }
+}
+
+impl<'a> SnapResolver<'a> {
+    /// ★ T-372: 다른 기능(오류 위치 고급 분석)이 같은 판정 규칙으로 스냅숏을 보게 — 필드는 비공개 그대로.
+    pub(crate) fn new(
+        names: &'a Interner,
+        snap: &'a Snapshot,
+        dialect: Option<nsql_core::Dialect>,
+        cur: Option<String>,
+        session_user: Option<String>,
+        collector: Option<String>,
+    ) -> Self {
+        SnapResolver {
+            names,
+            snap,
+            dialect,
+            needs: std::cell::RefCell::new(Vec::new()),
+            cur,
+            session_user,
+            collector,
+        }
+    }
+}
+
+/// ★ T-372 오류 위치 고급 분석의 메타 포트 — 스냅숏(캐시)만 · 왕복 0. "알려짐"은 느슨하게(어느 스키마든 그 이름이 있으면) — 목적이
+///   오타 후보에서 **빼는** 것이므로 넓게 보는 쪽이 헛후보를 줄인다(접근성 판정은 Ctrl 링크 몫).
+impl nsql_script::errsuspect::Known for SnapResolver<'_> {
+    fn has_object(&self, name: &str) -> bool {
+        self.resolve(None, name).is_some()
+            || !self.snap.lookup_any_schema(self.names, name).is_empty()
+    }
+    fn has_column(&self, schema: Option<&str>, table: &str, col: &str) -> Option<bool> {
+        Resolver::has_column(self, schema, table, col)
     }
 }
 
@@ -1623,7 +1657,7 @@ impl App {
 
     /// 탭 세션의 현재 스키마(접속 `?schema=` → 사용자) — 링크 판정·설명·선적재가 **같은 규칙**으로 이름을 푼다(사용자 09-30
     /// "BISCM으로 접속했는데 SQLEDU 객체 설명이 보인다" = 설명 경로가 전 스키마 조회를 쓰고 있었다).
-    fn objlink_cur_schema(&self) -> Option<String> {
+    pub(crate) fn objlink_cur_schema(&self) -> Option<String> {
         // 서버가 답한 현재 스키마(접속 직후) → 접속 `?schema=` → 사용자 이름.
         self.sess
             .cur_schema
