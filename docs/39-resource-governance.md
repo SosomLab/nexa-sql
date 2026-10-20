@@ -144,6 +144,7 @@
 | 워커 패닉 격리 | `catch_unwind` | (구조) | — | — | — | 워커 |
 | 로그 창 줄 수 | 없음 | `log.max_lines`(신설) | 10000 | 5000 | 1000 | `log_win` |
 | 실행 취소 깊이 | 없음 | `editor.undo_max`(신설 · HIDDEN) | 1000 | 500 | 100 | nexa-ctl `EditState` |
+| ★ 구문 오류 원인 분석(T-372 · 10-20 · [117](117-syntax-error-cause-analysis.md)) | 구문 오류당 1회 · 구간 = 문장 하나 이하 · 낱말 20,000 · 예산 `editor.error_analyze_budget_ms` 20 ms · 서버 왕복 0(메타 캐시만) | `editor.error_analyze`(on/off) · `editor.error_analyze_budget_ms`(1~500 · ADVANCED) · 향상 모드 = `perf::BOOST` 강제 off | on 20 | on 20 | on 20(BOOST = off) | nsql-script `errsuspect::analyze` · `app/errsuspect.rs` |
 
 ### 3-4. GFX(화면 · "GPU")
 
