@@ -159,7 +159,7 @@ fn mssql_session_variables_and_select_into() {
     };
     let ev = run(
         &mut r,
-        "EXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM sys.objects WHERE object_id < 10\nPRINT V_CNT\nSELECT :V_NAME AS n, :V_CNT AS c;\nEXEC SELECT TOP 1 name INTO :V_OBJ FROM sys.objects ORDER BY name\nPRINT V_OBJ\n",
+        "EXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM sys.objects WHERE object_id > 0\nPRINT V_CNT\nSELECT :V_NAME AS n, :V_CNT AS c;\nEXEC SELECT TOP 1 name INTO :V_OBJ FROM sys.objects ORDER BY name\nPRINT V_OBJ\n",
     );
     let cnt = &r.engine.vars.get("V_CNT").unwrap().value;
     assert!(

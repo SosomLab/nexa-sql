@@ -606,6 +606,10 @@ pub(crate) struct ObjLinks {
     pub card_pressed: Option<&'static str>,
     /// ★ 결과 열 머리 hover 카드(사용자 10-07): 머문 열 · 머리 칸(카드 앵커) · 머문 시작 · 띄웠으면 합성 링크 번호(목록 끝).
     pub header: Option<HeaderCard>,
+    /// ★ 카드 영역 안 **다른 링크 위 머무름**(사용자 10-21 "카드가 윗줄을 덮어 `M.PROJECT_CD`로 옮겨도 카드가 안 바뀐다"): 카드 영역에선
+    /// 버튼까지 가는 길에 카드를 지키려고 같은 줄 띠에서만 즉시 바꾸는데(`switch_allowed_in_zone`), 다른 줄의 링크 위에 `objlink.hover_ms`
+    /// 만큼 머무르면 그 링크로 바꾼다(버튼 위는 제외). (링크 번호 · 자리 · 마감).
+    pub zone_switch: Option<(usize, Point, std::time::Instant)>,
 }
 
 /// 열 머리 hover 카드 상태.
@@ -634,6 +638,20 @@ pub(crate) struct CardLayout {
 fn card_zone_contains(card: Rect, anchor: Rect, pad: i32, p: Point) -> bool {
     let u = card.union(&anchor);
     Rect::new(u.x - pad, u.y - pad, u.w + pad * 2, u.h + pad * 2).contains(p)
+}
+
+/// ★ 카드 영역 안 다른 줄의 링크 = **머무름 교체** 대상인가(사용자 10-21 · 순수): 포인터 아래 링크(`other`)가 지금 hot과 다르고 · 카드 영역
+/// 안이며 · 같은 줄 띠가 아니어서 즉시 교체가 막혔을 때 Some((그 링크, 머무름 배수)). 카드 **버튼** 위 = 누르려는 중일 수 있어 **2배**
+/// 머무름(위로 뜬 카드의 버튼 줄은 늘 바로 윗줄을 덮으므로 제외하면 사용자 상황에서 교체가 영영 안 된다 · 협업 V1 관찰).
+fn zone_dwell_target(
+    other: Option<usize>,
+    hot: Option<usize>,
+    in_zone: bool,
+    same_line: bool,
+    over_button: bool,
+) -> Option<(usize, u32)> {
+    let k = other?;
+    (Some(k) != hot && in_zone && !same_line).then_some((k, if over_button { 2 } else { 1 }))
 }
 
 /// 카드 영역 안에서 **다른 링크로 바꿔도 되는가** — 링크와 같은 줄 띠(앵커의 세로 범위)에서만(이웃 단어 위에서는 바뀐다 · 10-06 결함) ·
@@ -1178,6 +1196,15 @@ impl App {
             .and_then(|k| self.objlinks.links.get(k))
             .map(|l| l.range);
         let menu_link = old_menu.and_then(|r| links.iter().position(|l| l.range == r));
+        // ★ 카드 영역 머무름 예약도 구간으로 이어받는다(10-21 · 협업 V1 ✗ = L2 컬럼 워머 응답이 300 ms마다 stamp를 바꿔 재분석 →
+        //   예약이 `hover_ms`(700) 전에 지워져 교체가 한 번도 안 일어났다).
+        let zone_switch = self.objlinks.zone_switch.and_then(|(k, p, due)| {
+            let r = self.objlinks.links.get(k)?.range;
+            links
+                .iter()
+                .position(|l| l.range == r)
+                .map(|k2| (k2, p, due))
+        });
         self.objlinks = ObjLinks {
             active: true,
             tab,
@@ -1197,6 +1224,7 @@ impl App {
             card: None,
             card_pressed: None,
             header: self.objlinks.header.take(),
+            zone_switch,
         };
         // 열 머리 카드의 합성 링크는 재분석에 밀려나므로 다시 끝에 둔다.
         self.objlink_header_restore();
@@ -1396,9 +1424,34 @@ impl App {
         &mut self,
         now: std::time::Instant,
     ) -> Option<std::time::Instant> {
-        let due = self.objlinks.hover_due?;
+        // ★ 카드 영역 안 다른 링크 머무름 교체(사용자 10-21): 마감이 지났고 아직 그 링크 위면 hot을 바꾼다(카드는 다음 그리기에서 새 링크로).
+        let zone_wake = match self.objlinks.zone_switch {
+            Some((k, p, due)) if now >= due => {
+                self.objlinks.zone_switch = None;
+                let at = self.objlink_at(p);
+                let switch = self.objlinks.active && at == Some(k) && self.objlinks.hot != Some(k);
+                if std::env::var_os("NSQL_TRACE_OBJLINK").is_some() {
+                    eprintln!(
+                        "[objlink] zone dwell due: link {k} at={at:?} hot={:?} active={} → switch={switch}",
+                        self.objlinks.hot, self.objlinks.active
+                    );
+                }
+                if switch {
+                    self.objlinks.hot = Some(k);
+                    self.objlink_apply_marks();
+                    self.objlink_prefetch(k);
+                    self.redraw();
+                }
+                None
+            }
+            Some((_, _, due)) => Some(due),
+            None => None,
+        };
+        let Some(due) = self.objlinks.hover_due else {
+            return zone_wake;
+        };
         if now < due {
-            return Some(due);
+            return Some(zone_wake.map_or(due, |z| z.min(due)));
         }
         self.objlinks.hover_due = None;
         let p = self.objlinks.hover_at?;
@@ -1422,6 +1475,7 @@ impl App {
     pub(crate) fn objlink_hover_end(&mut self) {
         self.objlinks.hover_due = None;
         self.objlinks.header = None;
+        self.objlinks.zone_switch = None;
         if self.objlinks.hover {
             self.objlinks.hover = false;
             self.objlink_sync();
@@ -1587,9 +1641,53 @@ impl App {
         // 카드 영역(카드 ∪ 링크 + 여유) 안에서는 링크 판정을 바꾸지 않는다(버튼까지 가는 길에 카드가 사라지지 않게 ·
         // 링크와 카드 사이 틈도 포함) · 버튼 hover 색만 다시 그린다.
         if self.objlink_card_zone(p) && !self.objlink_switch_in_zone(p) {
+            // ★ 다른 줄의 링크 위면 머무름 교체를 예약(사용자 10-21 · `zone_dwell_target`): 같은 링크면 마감 유지 · 다른 링크·빈 곳이면 새로/해제.
+            let other = self.objlink_at(p);
+            let (same_line, over_button) = self
+                .objlinks
+                .card
+                .as_ref()
+                .map(|c| {
+                    (
+                        switch_allowed_in_zone(c.anchor, p),
+                        c.buttons.iter().any(|(_, r, _)| r.contains(p)),
+                    )
+                })
+                .unwrap_or((true, false));
+            match zone_dwell_target(other, self.objlinks.hot, true, same_line, over_button) {
+                Some((k, factor)) => {
+                    let keep = self.objlinks.zone_switch.is_some_and(|(k0, _, _)| k0 == k);
+                    let base = self.settings.int("objlink.hover_ms").clamp(100, 5000) as u64;
+                    let ms = base * u64::from(factor);
+                    if !keep {
+                        self.objlinks.zone_switch = Some((
+                            k,
+                            p,
+                            std::time::Instant::now() + std::time::Duration::from_millis(ms),
+                        ));
+                        if std::env::var_os("NSQL_TRACE_OBJLINK").is_some() {
+                            eprintln!(
+                                "[objlink] zone dwell armed: link {k} ({}) hot={:?} same_line={same_line} over_button={over_button} ms={ms}",
+                                self.objlinks.links[k].name, self.objlinks.hot
+                            );
+                        }
+                    } else if let Some(z) = self.objlinks.zone_switch.as_mut() {
+                        z.1 = p;
+                        // ★ 같은 링크 위라도 **버튼 위**에 들어오면 마감을 지금 + 2배로 늘린다(협업 V1 관찰 = 버튼에 닿기 전 지나간 점에서
+                        //   700 ms 예약이 걸려 버튼을 누르려는 사이 카드가 바뀔 수 있음) — 버튼에서 1.4 s 안에 누르면 그대로.
+                        if over_button {
+                            let later =
+                                std::time::Instant::now() + std::time::Duration::from_millis(ms);
+                            z.2 = z.2.max(later);
+                        }
+                    }
+                }
+                None => self.objlinks.zone_switch = None,
+            }
             self.redraw();
             return;
         }
+        self.objlinks.zone_switch = None;
         // 본문·탭·메타·보이는 구간이 바뀌었으면 다시 분석.
         if !self.objlink_fresh() {
             self.objlink_sync();
@@ -1630,9 +1728,16 @@ impl App {
         };
         if let Some(id) = id {
             let need_detail = {
-                let (_, snap) = self.explorer.meta_view(spec.as_ref());
+                let (names, snap) = self.explorer.meta_view(spec.as_ref());
                 matches!(snap.detail(id), DetailState::Unknown)
-                    && !snap.col_comments.contains_key(&id)
+                    && match link.kind {
+                        // ★ 테이블 링크 = **테이블** 코멘트를 모를 때(10-21 사용자 "탐색기엔 설명이 있는데 카드엔 (설명 없음)" = 스키마 워머가
+                        //   컬럼 코멘트만 채운 테이블을 컬럼 유무로 "다 안다"고 보고 상세를 영영 안 청했다 · `Snapshot::comment_known`).
+                        LinkKind::Table | LinkKind::Routine => !snap.comment_known(names, id),
+                        LinkKind::Column | LinkKind::Constraint => {
+                            !snap.col_comments.contains_key(&id)
+                        }
+                    }
             };
             if need_detail {
                 self.explorer.request_detail(spec.as_ref(), id);
@@ -2864,6 +2969,47 @@ mod tests {
         assert!(!z(200, 260), "아래 멀리");
     }
 
+    /// ★ 10-21(사용자 "카드가 윗줄을 덮어 다른 컬럼으로 옮겨도 안 바뀜"): 카드 영역 안 다른 줄 링크 = 머무름 교체 대상 · 같은 링크·같은 줄(즉시
+    /// 교체 몫)·영역 밖·버튼 위·링크 없음 = 대상 아님(조건별 독립 영향).
+    #[test]
+    fn zone_dwell_target_rules() {
+        use super::zone_dwell_target;
+        assert_eq!(
+            zone_dwell_target(Some(2), Some(1), true, false, false),
+            Some((2, 1))
+        );
+        assert_eq!(
+            zone_dwell_target(Some(1), Some(1), true, false, false),
+            None,
+            "같은 링크"
+        );
+        assert_eq!(
+            zone_dwell_target(Some(2), Some(1), false, false, false),
+            None,
+            "영역 밖"
+        );
+        assert_eq!(
+            zone_dwell_target(Some(2), Some(1), true, true, false),
+            None,
+            "같은 줄 = 즉시 교체 몫"
+        );
+        assert_eq!(
+            zone_dwell_target(Some(2), Some(1), true, false, true),
+            Some((2, 2)),
+            "버튼 위 = 2배 머무름"
+        );
+        assert_eq!(
+            zone_dwell_target(None, Some(1), true, false, false),
+            None,
+            "링크 없음"
+        );
+        assert_eq!(
+            zone_dwell_target(Some(2), None, true, false, false),
+            Some((2, 1)),
+            "hot 없음"
+        );
+    }
+
     /// 카드 영역 안의 링크 교체 = 앵커와 같은 줄 띠에서만(사용자 10-08).
     #[test]
     fn switch_in_zone_only_on_anchor_line() {
@@ -2928,6 +3074,42 @@ mod tests {
                 ("TB_ORDER", "ORD_NO" | "ITEM_CD") | ("TB_ITEM", "ITEM_CD" | "ITEM_NM")
             ))
         }
+    }
+
+    /// ★ 10-21(134차 win · 사용자 "서브쿼리 안 `T1.컬럼`의 설명이 안 보인다" = 협업 진단 Column 링크 0): 바깥 SELECT로 감싼 서브쿼리 안의
+    /// 별칭 컬럼도 링크가 되고(주인 = 그 별칭의 테이블) · 바깥의 서브쿼리 별칭(`S.`)은 local이라 링크 없음.
+    #[test]
+    fn alias_columns_inside_subquery_are_linked() {
+        let text = "SELECT S.ORD_NO, MAX(S.ITEM_NM) FROM ( SELECT T1.ORD_NO, T2.ITEM_NM FROM TB_ORDER T1 JOIN TB_ITEM T2 ON T1.ITEM_CD = T2.ITEM_CD ) S WHERE S.ORD_NO = '1'";
+        let v = scan(text, Some(nsql_core::Dialect::Oracle), &Fake);
+        let cols: Vec<(String, String, bool)> = v
+            .iter()
+            .filter(|l| l.kind == LinkKind::Column)
+            .map(|l| (l.owner.clone().unwrap_or_default(), l.name.clone(), l.known))
+            .collect();
+        assert!(
+            cols.contains(&("TB_ORDER".into(), "ORD_NO".into(), true)),
+            "{cols:?}"
+        );
+        assert!(
+            cols.contains(&("TB_ITEM".into(), "ITEM_NM".into(), true)),
+            "{cols:?}"
+        );
+        assert!(
+            cols.contains(&("TB_ORDER".into(), "ITEM_CD".into(), true)),
+            "{cols:?}"
+        );
+        assert!(
+            cols.contains(&("TB_ITEM".into(), "ITEM_CD".into(), true)),
+            "{cols:?}"
+        );
+        assert_eq!(cols.len(), 4, "바깥 `S.` 컬럼은 링크 아님 {cols:?}");
+        let tables: Vec<&str> = v
+            .iter()
+            .filter(|l| l.kind == LinkKind::Table)
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(tables, vec!["TB_ORDER", "TB_ITEM"]);
     }
 
     /// ★ 적힌 스키마에 없는 한정 이름(사용자 10-08): DDL 머리 자리·호출 꼴은 미확인 링크로 남는다 · 그 밖(`x.y` 컬럼 꼴)은 종전대로 없음.

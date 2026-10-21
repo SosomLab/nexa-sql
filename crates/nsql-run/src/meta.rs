@@ -535,6 +535,113 @@ impl MetaStore {
         self.commit(s);
     }
 
+    /// ★ 테이블 한 개의 코멘트(10-21 · 134차 win): 탐색기 상세 패널이 테이블 단위로 받은 것을 스키마 지도에 **그 항목만** 넣고(스키마
+    /// "다 읽음" 표시는 하지 않음) 등재된 객체에 붙인다 — hover 카드·완성 카드·상세 패널이 같은 원천을 본다(종전 = 패널만 알고
+    /// 메타는 몰라 "탐색기엔 설명이 있는데 카드엔 (설명 없음)").
+    pub fn set_object_comments(
+        &mut self,
+        schema: &str,
+        table: &str,
+        comment: Option<&str>,
+        cols: &[(String, Option<String>)],
+    ) {
+        let sc = self.names.intern(schema);
+        let sym = self.names.intern(table);
+        let key = self.names.intern_lower(sym);
+        let cm = comment.map(|c| self.names.intern(c));
+        let v: Vec<(Sym, Option<Sym>)> = cols
+            .iter()
+            .map(|(c, x)| {
+                let col = self.names.intern(c);
+                (col, x.as_deref().map(|x| self.names.intern(x)))
+            })
+            .collect();
+        let mut s = self.edit();
+        let mut map = s
+            .schema_comments
+            .get(&sc)
+            .map(|m| (**m).clone())
+            .unwrap_or_default();
+        map.tables.insert(key, cm);
+        map.cols.insert(key, Arc::new(v));
+        let map = Arc::new(map);
+        Self::apply_schema_comments(&self.names, &mut s, sc, &map);
+        s.schema_comments.insert(sc, map);
+        self.commit(s);
+    }
+
+    /// ★ 코멘트 잊기(10-21 · 메타 갱신·계층형 새로 고침·DDL `COMMENT ON` 뒤): `schema` None = 전부 · Some = 그 스키마 · `table` Some =
+    /// 그 테이블 항목만(스키마 "다 읽음" 표시는 유지 → 다음 조회가 테이블 단위로 다시 읽는다 = 지연). 반환 = 지운 스키마 수(테이블
+    /// 단위 = 항목이 있었으면 1). `edit`는 스냅숏을 꺼내 가므로 어느 길이든 `commit`한다.
+    pub fn forget_comments(&mut self, schema: Option<&str>, table: Option<&str>) -> usize {
+        let want = schema.and_then(|s| self.names.find(s));
+        if schema.is_some() && want.is_none() {
+            return 0;
+        }
+        let tkey = table.and_then(|t| self.names.find(&t.to_lowercase()));
+        if table.is_some() && tkey.is_none() {
+            return 0;
+        }
+        let mut s = self.edit();
+        let n = match (want, tkey) {
+            (Some(sc), Some(tk)) => {
+                let had = s
+                    .schema_comments
+                    .get(&sc)
+                    .is_some_and(|m| m.tables.contains_key(&tk) || m.cols.contains_key(&tk));
+                if had {
+                    let mut m2 = (**s.schema_comments.get(&sc).expect("had")).clone();
+                    m2.tables.remove(&tk);
+                    m2.cols.remove(&tk);
+                    s.schema_comments.insert(sc, Arc::new(m2));
+                }
+                let ids: Vec<ObjId> = s
+                    .buckets
+                    .values()
+                    .filter(|b| b.schema == sc && b.kind.is_relation())
+                    .flat_map(|b| b.objs.iter().copied())
+                    .filter(|id| self.names.lower_key(s.objs[id.0 as usize].name) == tk)
+                    .collect();
+                for id in ids {
+                    s.objs[id.0 as usize].comment = None;
+                    s.col_comments.remove(&id);
+                }
+                usize::from(had)
+            }
+            (want, None) => {
+                let scs: Vec<Sym> = s
+                    .schema_comments
+                    .keys()
+                    .copied()
+                    .chain(s.comment_schemas.iter().copied())
+                    .filter(|sc| want.is_none_or(|w| w == *sc))
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                for sc in &scs {
+                    s.schema_comments.remove(sc);
+                    s.comment_schemas.remove(sc);
+                }
+                if !scs.is_empty() {
+                    let ids: Vec<ObjId> = s
+                        .buckets
+                        .values()
+                        .filter(|b| b.kind.is_relation() && scs.contains(&b.schema))
+                        .flat_map(|b| b.objs.iter().copied())
+                        .collect();
+                    for id in ids {
+                        s.objs[id.0 as usize].comment = None;
+                        s.col_comments.remove(&id);
+                    }
+                }
+                scs.len()
+            }
+            (None, Some(_)) => 0,
+        };
+        self.commit(s);
+        n
+    }
+
     /// 지도의 코멘트를 **등재된** 관계 객체에 붙인다(`set_schema_comments` 때 + `load_names_x`가 이름을 새로 등재할 때 · T-348).
     fn apply_schema_comments(names: &Interner, s: &mut Snapshot, sc: Sym, map: &SchemaComments) {
         let ids: Vec<ObjId> = s
@@ -566,10 +673,8 @@ impl MetaStore {
     #[must_use]
     pub fn comments_of(&self, schema: &str, table: &str) -> Option<CommentsOf> {
         let sc = self.names.find(schema)?;
-        if !self.snap.comment_schemas.contains(&sc) {
-            return None;
-        }
-        // ★ T-348: 지도가 있으면 등재 여부와 무관하게 답한다(소문자 이름 Sym은 `set_schema_comments`가 심어 둠).
+        // ★ T-348: 지도가 있으면 등재 여부와 무관하게 답한다(소문자 이름 Sym은 `set_schema_comments`가 심어 둠) · ★ 10-21 = 스키마를 다
+        //   읽기 전이라도 테이블 단위로 받아 둔 항목(`set_object_comments`)은 답한다 — 없는 항목은 None(테이블 단위 재조회).
         if let Some(map) = self.snap.schema_comments.get(&sc) {
             let lower = self.names.find(&table.to_lowercase())?;
             let tc = map
@@ -591,6 +696,9 @@ impl MetaStore {
                 })
                 .unwrap_or_default();
             return Some((tc, cols));
+        }
+        if !self.snap.comment_schemas.contains(&sc) {
+            return None;
         }
         let id = self.snap.lookup(&self.names, Some(schema), table)?;
         let o = self.snap.objs.get(id.0 as usize)?;
@@ -1092,6 +1200,21 @@ impl MetaStore {
         n
     }
 
+    /// ★ 객체 **하나**의 컬럼·상세를 `Unknown`으로(테이블 새로 고침 · 10-21 사용자 "테이블 새로 고침 때 그 테이블 메타도 갱신") — 스키마
+    /// 전체(`mark_columns_unknown`)와 달리 다른 객체는 건드리지 않는다. 코멘트는 [`Self::forget_comments`]가. 반환 = 비운 것이 있었는가.
+    pub fn mark_object_unknown(&mut self, id: ObjId) -> bool {
+        let mut s = self.edit();
+        let i = id.0 as usize;
+        let had = i < s.cols.len()
+            && (matches!(s.cols[i], ColState::Loaded { .. }) || s.details.contains_key(&id));
+        if i < s.cols.len() {
+            s.cols[i] = ColState::Unknown;
+        }
+        s.details.remove(&id);
+        self.commit(s);
+        had
+    }
+
     /// 상한 변경.
     pub fn set_max_bytes(&mut self, n: usize) {
         self.max_bytes = n.max(1 << 20);
@@ -1343,6 +1466,22 @@ impl Snapshot {
     #[must_use]
     pub fn object(&self, id: ObjId) -> Option<&ObjEntry> {
         self.objs.get(id.0 as usize)
+    }
+
+    /// ★ 테이블 코멘트를 "알고 있는가"(값이 있거나 스키마 지도에 그 항목이 있음 = NULL도 앎 · 10-21) — Ctrl 링크 선적재가 상세(L3)를
+    /// 청할지 판단(종전 = 컬럼 코멘트 유무로 판정 → 워머가 컬럼만 채운 테이블은 상세를 영영 안 청해 카드가 "(설명 없음)").
+    #[must_use]
+    pub fn comment_known(&self, names: &Interner, id: ObjId) -> bool {
+        let Some(o) = self.objs.get(id.0 as usize) else {
+            return false;
+        };
+        if o.comment.is_some() {
+            return true;
+        }
+        let key = names.lower_key(o.name);
+        self.schema_comments
+            .get(&o.schema)
+            .is_some_and(|m| m.tables.contains_key(&key))
     }
 }
 
@@ -1803,6 +1942,115 @@ mod layer_tests {
         ));
         // 상한만(TTL 0) → 남은 상세 1개는 상한 1 안 → 0.
         assert_eq!(m.reclaim(1000, None, 1, 0, 0), (0, 0));
+    }
+
+    /// ★ 10-21(사용자 "테이블 새로 고침 때 그 테이블 메타도 갱신"): 객체 하나만 컬럼·상세 Unknown · 다른 객체는 그대로 · 두 번째 = false.
+    #[test]
+    fn mark_object_unknown_touches_one_object_only() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(&["HR".into()], Some("HR"));
+        m.load_names(
+            "HR",
+            &[ObjectKind::Table],
+            &[
+                (ObjectKind::Table, "EMP".into()),
+                (ObjectKind::Table, "DEPT".into()),
+            ],
+            1,
+        );
+        let s = m.snapshot();
+        let emp = s.lookup(&m.names, Some("HR"), "EMP").unwrap();
+        let dept = s.lookup(&m.names, Some("HR"), "DEPT").unwrap();
+        let col = |n: &str| NewCol {
+            name: n.into(),
+            data_type: "NUMBER".into(),
+            ..Default::default()
+        };
+        m.set_columns(emp, &[col("EMPNO")], 1);
+        m.set_columns(dept, &[col("DEPTNO")], 1);
+        assert!(m.mark_object_unknown(emp));
+        let s = m.snapshot();
+        assert!(matches!(s.columns(emp), ColState::Unknown));
+        assert!(
+            matches!(s.columns(dept), ColState::Loaded { .. }),
+            "다른 객체는 그대로"
+        );
+        assert!(!m.mark_object_unknown(emp), "이미 비어 있음");
+        assert!(!m.mark_object_unknown(ObjId(999)), "없는 id = 안전");
+    }
+
+    /// ★ 10-21(134차 win · 사용자 "탐색기 상세엔 설명이 있는데 hover 카드엔 없음"): 테이블 단위로 받은 코멘트도 메타에 들어가고(카드가 본다) ·
+    /// 스키마 "다 읽음" 표시는 건드리지 않으며 · 잊기(갱신·`COMMENT ON`)는 테이블/스키마/전체 범위로 지운다.
+    #[test]
+    fn object_comments_feed_meta_and_forget_scopes() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(&["HR".into()], Some("HR"));
+        m.load_names(
+            "HR",
+            &[ObjectKind::Table],
+            &[
+                (ObjectKind::Table, "EMP".into()),
+                (ObjectKind::Table, "DEPT".into()),
+            ],
+            1,
+        );
+        let s = m.snapshot();
+        let emp = s.lookup(&m.names, Some("HR"), "EMP").unwrap();
+        let dept = s.lookup(&m.names, Some("HR"), "DEPT").unwrap();
+        assert!(!s.comment_known(&m.names, emp), "아직 모름");
+        // 1) 테이블 단위 등재 → 객체·지도 둘 다 · 스키마 완료 표시는 없음 · 지도 조회는 그 항목만 답한다.
+        m.set_object_comments(
+            "HR",
+            "EMP",
+            Some("사원"),
+            &[("ID".into(), Some("사번".into()))],
+        );
+        let s = m.snapshot();
+        assert_eq!(
+            s.objs[emp.0 as usize]
+                .comment
+                .map(|c| m.names.get(c).to_string()),
+            Some("사원".to_string())
+        );
+        assert!(s.comment_known(&m.names, emp));
+        assert!(
+            !m.has_schema_comments("HR"),
+            "테이블 단위는 스키마 완료가 아니다"
+        );
+        assert_eq!(
+            m.comments_of("HR", "emp"),
+            Some((
+                Some("사원".to_string()),
+                vec![("ID".to_string(), Some("사번".to_string()))]
+            ))
+        );
+        assert!(
+            m.comments_of("HR", "DEPT").is_none(),
+            "안 받은 테이블 = 테이블 단위 재조회"
+        );
+        // NULL 코멘트도 '앎'.
+        m.set_object_comments("HR", "DEPT", None, &[]);
+        assert!(m.snapshot().comment_known(&m.names, dept));
+        // 2) 테이블 단위 잊기 = 그 항목만.
+        assert_eq!(m.forget_comments(Some("HR"), Some("emp")), 1);
+        let s = m.snapshot();
+        assert!(!s.comment_known(&m.names, emp));
+        assert!(s.comment_known(&m.names, dept), "다른 테이블은 그대로");
+        assert_eq!(m.forget_comments(Some("HR"), Some("NOPE")), 0);
+        assert_eq!(m.snapshot().stamp, s.stamp, "모르는 이름 = 스냅숏 그대로");
+        // 3) 스키마 완료 뒤 전체 잊기 = 완료 표시·지도·객체 코멘트 전부.
+        m.set_schema_comments("HR", &[("EMP".into(), Some("사원".into()))], &[]);
+        assert!(m.has_schema_comments("HR"));
+        assert!(m.snapshot().comment_known(&m.names, emp));
+        assert_eq!(m.forget_comments(None, None), 1);
+        assert!(!m.has_schema_comments("HR"));
+        assert!(!m.snapshot().comment_known(&m.names, emp));
+        assert!(m.comments_of("HR", "EMP").is_none());
+        assert_eq!(m.forget_comments(Some("ZZ"), None), 0, "모르는 스키마 = 0");
+        assert!(
+            m.snapshot().lookup(&m.names, Some("HR"), "EMP").is_some(),
+            "이름 등재는 그대로"
+        );
     }
 
     /// ★ T-348(10-15): 코멘트가 L1 이름보다 **먼저** 와도 버리지 않고, 뒤에 등재된 객체에 붙는다(종전 = 조용히 버림 + "완료" 표시).

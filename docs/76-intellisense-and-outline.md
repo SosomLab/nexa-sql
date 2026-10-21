@@ -31,7 +31,7 @@
 | 후보 출처(29 §6-2 순위) | 무엇 | 범위 | 데이터 |
 |---|---|---|---|
 | 1 alias 컬럼 | `a.` → 그 테이블 컬럼(이름 · 타입 · NULL · PK) | 캐럿 문장의 alias 표 | `MetaStore::columns(id)`(없으면 "불러오는 중" + 즉시 채움 요청) |
-| 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` |
+| 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` · ★ 10-21 `alias_table_deep` = **서브쿼리 안 별칭도 보임**(괄호별 재귀 · 같은 이름 = 바깥이 이김 · `context_at` = 완성·Ctrl 링크 공용) |
 | 3 스키마 객체 | 테이블·뷰·시노님·시퀀스·프로시저·패키지 | 현재 스키마(+ `SCHEMA.` 입력 시 그 스키마 · D-80) | `Snapshot::prefix/prefix_any` |
 | 3' **문서 심볼**(신설) | `DEFINE`/`VARIABLE`/CTE/선언 변수/서브프로그램/라벨 | **현재 문서** 전체 | `outline::Outline::names()` |
 | 4 시스템 객체·내장 함수 | `DBMS_OUTPUT.` · `NVL(` · `ALL_TABLES` · `sys.tables` … | 접속 방언 | 정적 표 `nsql-script::builtins`(T-178 ✅ · 시그니처 도움 `intel.signature_help`) |

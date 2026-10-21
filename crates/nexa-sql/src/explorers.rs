@@ -2021,6 +2021,18 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         }
     }
 
+    /// ★ 테이블 단위 코멘트 → 보이는 칸의 메타에(10-21 · 요청과 같은 칸).
+    pub(crate) fn meta_set_object_comments(
+        &mut self,
+        owner: &nsql_catalog::ObjectInfo,
+        table: Option<&str>,
+        cols: &[(String, Option<String>)],
+    ) {
+        if let Some(p) = self.panes.get_mut(self.shown) {
+            p.ex.meta_set_object_comments(owner, table, cols);
+        }
+    }
+
     pub(crate) fn request_details(
         &mut self,
         owner: nsql_catalog::ObjectInfo,

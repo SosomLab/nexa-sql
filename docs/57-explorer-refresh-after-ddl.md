@@ -91,7 +91,7 @@
 | 파서 | `nsql-core/src/ddl.rs` `ddl_target` → `DdlTarget { verb, kind, schema, name }` | 머리말만 · 모르면 `None` |
 | 디프 | `explorer.rs` `diff_children` · `soft_refresh` · `soft_refresh_subtree` · `fresh`(강조) | 남는 노드 = 인덱스 유지 · 실패 = 옛 트리 유지 |
 | T1 | `main.rs` `meta_on_done` → `Sess.ddl_now`(실행 완료에서 `meta_flush`) / `Sess.ddl_wait`(`tx_close` 커밋 계열에서 · 롤백 = 버림) · `sessions.rs` `ddl_waits_for_commit` | `explorers.rs apply_ddl` = 그 서버 칸만 |
-| T3 | 탐색기 포커스 F5 / Shift+F5 · 우클릭 "새로 고침" → `refresh_selected(hard)` | 읽어 둔 것만 · 디프 |
+| T3 | 탐색기 포커스 F5 / Shift+F5 · 우클릭 "새로 고침" → `refresh_selected(hard)` | 읽어 둔 것만 · 디프 · ★ 테이블·뷰 노드 = 그 객체의 컬럼 + 메타(상세·코멘트) 즉시 재조회(10-21 · 79 §3) |
 | T4 | `RunEvent::Error` + `ErrorClass::NoTable` → `explorer::missing_name` → `note_missing` | 이름이 트리에 있을 때만 · 폴더당 60초 |
 | T2 | `Req::Watermark` · `watermark_sql`(방언별) · `watermark_poll` · 호스트 `meta_refresh_tick` | 유휴로 닫힌 메타 세션은 깨우지 않음 |
 | 스크롤 | `ExplorerSet::drain` `top_anchor` | 위에 행이 생겨도 화면이 밀리지 않음 |

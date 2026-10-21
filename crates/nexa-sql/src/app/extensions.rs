@@ -716,20 +716,29 @@ impl App {
     }
 
     /// 확장 상세 = 읽기용 안내 탭(설치본의 메타 사본 → 없으면 저장소에서 · 없으면 목록 정보만).
+    /// ★ T-374(10-21): 저장소 메타의 **첫 조회는 스레드**(종전 = UI 스레드 동기 curl ≤30 s → 느린 망·오프라인에서 창이 멈춤) — 지금은
+    /// 목록 정보 + "읽는 중" 한 줄로 바로 열고, 답이 오면 그 행이 아직 열려 있을 때만 다시 그린다(`ext_meta_poll` · 최신 의도만 · 99).
     fn ext_open_detail(&mut self, row: &ExtRow) {
         use extensions::manager as mgr;
-        let mut tr = mgr::Trace::default();
-        let meta = mgr::installed_meta(&row.id, &row.version).or_else(|| {
-            let (src, sum) = row.catalog.and_then(|n| self.ext_catalog.get(n))?;
-            let key = (src.display(), sum.dir.clone());
-            if let Some(hit) = self.ext_meta_cache.get(&key) {
-                return hit.clone();
-            }
-            let got = mgr::fetch_meta(src, &sum.dir, &mut tr).ok();
-            self.ext_meta_cache.insert(key, got.clone());
-            got
-        });
-        self.ext_trace(tr);
+        let mut loading = false;
+        let meta = match mgr::installed_meta(&row.id, &row.version) {
+            Some(m) => Some(m),
+            None => match row.catalog.and_then(|n| self.ext_catalog.get(n)) {
+                None => None,
+                Some((src, sum)) => {
+                    let key = (src.display(), sum.dir.clone());
+                    match self.ext_meta_cache.get(&key) {
+                        Some(hit) => hit.clone(),
+                        None => {
+                            let (src, dir) = (src.clone(), sum.dir.clone());
+                            loading = true;
+                            self.ext_meta_start(key, src, dir, row.clone());
+                            None
+                        }
+                    }
+                }
+            },
+        };
         let state = t(if !row.installed {
             Msg::ExtStNotInstalled
         } else if row.enabled {
@@ -771,6 +780,9 @@ impl App {
             field(Msg::ExtDetFiles, &files.join(", "));
             description = m.description.clone();
         }
+        if loading {
+            description = t(Msg::ExtDetLoading).to_string();
+        }
         let mut shown = row.clone();
         shown.summary = summary;
         let key = format!("ext:{}", row.id);
@@ -797,6 +809,63 @@ impl App {
         self.sync_sess_ui();
         self.layout();
         self.redraw();
+    }
+
+    /// ★ T-374: 상세 메타 첫 조회를 스레드로 시작 — 같은 열쇠가 이미 읽는 중이면 기다리는 행만 바꾼다(최신 의도 · 요청은 사용자 동작당
+    /// 1회 · 26 §8). 스레드 생성 실패 = 조용히(목록 정보만 보인다).
+    fn ext_meta_start(
+        &mut self,
+        key: (String, String),
+        src: extensions::manager::Source,
+        dir: String,
+        row: ExtRow,
+    ) {
+        use extensions::manager as mgr;
+        let already = self.ext_meta_inflight.contains(&key);
+        self.ext_meta_wait = Some((key.clone(), row));
+        if already {
+            return;
+        }
+        let tx = self.ext_meta_ch.0.clone();
+        let k2 = key.clone();
+        let spawned = std::thread::Builder::new()
+            .name("ext-meta".into())
+            .spawn(move || {
+                let mut tr = mgr::Trace::default();
+                let got = mgr::fetch_meta(&src, &dir, &mut tr).ok();
+                let _ = tx.send((k2, got, tr));
+            });
+        if spawned.is_ok() {
+            self.ext_meta_inflight.push(key);
+        } else {
+            self.ext_meta_wait = None;
+        }
+    }
+
+    /// ★ T-374: 답 수거(틱 · 읽는 중일 때만 = 닫혀 있으면 비용 0): 캐시에 넣고(실패도 None = 반복 조회 0 · ⟳가 비운다) · 기다리던 행이
+    /// 아직 뷰 탭으로 열려 있으면 다시 그린다(이제 캐시 적중 · 탭을 닫았으면 다시 열지 않는다).
+    pub(crate) fn ext_meta_poll(&mut self) {
+        if self.ext_meta_inflight.is_empty() {
+            return;
+        }
+        while let Ok((key, got, tr)) = self.ext_meta_ch.1.try_recv() {
+            self.ext_meta_inflight.retain(|k| *k != key);
+            self.ext_meta_cache.insert(key.clone(), got);
+            self.ext_trace(tr);
+            let Some((k, row)) = self.ext_meta_wait.take() else {
+                continue;
+            };
+            if k != key {
+                self.ext_meta_wait = Some((k, row));
+                continue;
+            }
+            let view_key = format!("ext:{}", row.id);
+            let still_open = (0..self.editors.len())
+                .any(|i| self.editors.view_key_of(i).as_deref() == Some(view_key.as_str()));
+            if still_open {
+                self.ext_open_detail(&row);
+            }
+        }
     }
 
     /// 매니저 추적 줄 → 로그 창 `ext` 층(개발자 모드 · `log.dev_layers`에 ext · 사용자 09-17 "다운로드 속도·설치 폴더까지").

@@ -3237,7 +3237,11 @@ mod tests {
             names: &m.names,
             snap,
         };
-        let mut it = Intel::new(cfg());
+        // ★ T-381(10-21): 끝의 "예산 안" 단언이 Debug + CPU 경합(동시 clippy 3타깃)에서 30 ms를 넘겨 6회 중 1회 실패 → 이 시험은 기능만
+        //   보므로 예산을 설정 상한(500)으로. 예산 초과·자기 감속은 `budget_overrun_twice_turns_off_doc_words`가 따로 다룬다.
+        let mut c = cfg();
+        c.budget_ms = 500;
+        let mut it = Intel::new(c);
         let host = Rect::new(0, 0, 800, 600);
         let ora = Some(Dialect::Oracle);
         // 식 자리 `nv` → NVL(시그니처) · 확정 = `NVL()` 캐럿 1 뒤로.

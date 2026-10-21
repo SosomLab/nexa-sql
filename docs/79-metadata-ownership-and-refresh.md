@@ -10,7 +10,7 @@
 2. **채움 = 읽은 쪽이 넣는다**: 탐색기 트리(펼침) · 완성(즉시 채움·미리 읽기 · 09-23~24) · (예정) hover 카드·객체 정보 탭(T-179) · `DESC`/실행 결과의 열 메타(§2-3). 소비자는 스냅샷만 읽고 `Coverage`로 "없음/읽는 중/있음/오류"를 안다.
 3. **다른 탭 = 캐시 즉시**: 이미 그렇다(Arc 스냅샷 · 복사 0). 빠진 것 = 탭이 다른 서버로 옮겨 붙을 때(`CONNECT`)의 스냅샷 전환은 자동(스펙으로 칸을 찾음).
 4. **탐색기 갱신 = 하위까지**: 노드 새로 고침(F5·우클릭)이 그 하위 폴더를 다시 읽는 것은 있지만(57 T3), **컬럼·완성 버킷은 그대로**다 → 갱신 범위 규칙(§3)을 정해 `Coverage::Stale`로 표시하고 다음 요청 때 다시 읽게 한다(목록은 그대로 보여 깜빡임 0).
-5. **완성 캐시 갱신 = 명시 명령**(§4): 팔레트/메뉴 `Refresh IntelliSense cache`(SSMS·ADS·VS Code mssql과 같은 이름 · 단축키 Ctrl+Shift+R) — 범위 = 현재 스키마 / 이 서버 / 전 서버 · 탐색기 루트 메뉴에도 같은 항목 · 자동 갱신(DDL 뒤 · 유휴 워터마크)은 지금 것을 유지.
+5. **완성 캐시 갱신 = 명시 명령**(§4): 팔레트/메뉴 `Refresh Metadata Cache`(10-21 개명 · 종전 = SSMS·ADS·VS Code mssql과 같은 이름 `Refresh IntelliSense cache` · 단축키 Ctrl+Shift+R · 코멘트 포함) — 범위 = 현재 스키마 / 이 서버 / 전 서버 · 탐색기 루트 메뉴에도 같은 항목 · 자동 갱신(DDL 뒤 · 유휴 워터마크)은 지금 것을 유지.
 
 ## 1. 타 클라이언트 조사(기억 기반 요약 · 확인 필요 표시 ⚠)
 
@@ -55,14 +55,15 @@
 | 서버 루트 | 스키마 목록 + **열린** 폴더(57 T3 그대로) | 그 서버 전 버킷 `Stale` · 전 컬럼 `Unknown`(목록은 유지 · 다음 요청 때 다시) · 사전 `Stale` |
 | 스키마 노드 | 그 스키마의 열린 폴더 | 그 스키마 전 종류 버킷 `Stale` · 그 스키마 테이블 컬럼 `Unknown` |
 | 종류 폴더 | 그 폴더 | 그 버킷 다시(디프) · 그 종류가 관계면 그 테이블들 컬럼 `Unknown` |
-| 객체 노드 | 그 객체 하위(컬럼 폴더) | 그 테이블 컬럼 다시 |
+| 객체 노드 | 그 객체 하위(컬럼 폴더) | 그 테이블 컬럼 다시 · ★ **테이블·뷰 = 그 객체만 비우고 즉시 재조회**(10-21 · 사용자 "테이블 새로 고침 때 그 테이블 메타도") = `MetaStore::mark_object_unknown`(컬럼·상세) + `invalidate_details`(코멘트·상세 패널) → `request_columns(urgent)` + `request_detail` + `request_comments` · 스키마 버킷·다른 테이블 컬럼은 그대로(종전 = 스키마 전 버킷 `Stale` + 전 컬럼 `Unknown` + 다음 요청 때 지연) · 루틴·폴더·스키마·루트 = 종전 |
 
 구현: `Coverage::Stale { at, n }`(목록은 살아 있고 요청이 오면 다시 읽음 — 완성은 `Loaded`처럼 후보를 내고 동시에 `NeedObjects`를 낸다 = 깜빡임 0 · "갱신 중…" 표식) · `MetaStore::mark_stale(schema|all)` · `mark_columns_unknown(schema|table)` · 탐색기 `refresh_selected`가 위 표대로 호출. 워터마크(57 T2)·DDL 뒤 갱신(57 T1)은 지금처럼 폴더 단위 디프.
 
 ## 4. 명시 갱신 명령(완성 캐시)
 
-- 명령 id `intel.refresh`(팔레트 "Refresh IntelliSense cache" · Edit ▸ IntelliSense ▸ Refresh · 탐색기 루트 우클릭 "Refresh metadata" · 단축키 Ctrl+Shift+R(SSMS와 같음 · 맥 ⌘⇧R) · 범위 = 하위 메뉴: **현재 스키마**(기본) / 이 서버 / 전 서버.
-- 동작 = §3의 `Stale`/`Unknown` 표시 + 현재 스키마·사전은 **바로 다시 읽기**(백그라운드 세션 · 미리 읽기와 같은 길) · 상태줄 "IntelliSense cache refreshed(스키마 N · 객체 M)" · 트리는 열린 폴더만 조용히 디프.
+- 명령 id `intel.refresh`(팔레트 "Refresh Metadata Cache (Current Schema)" = "메타데이터 캐시 새로 고침(현재 스키마)"(10-21 개명 · 종전 "Refresh IntelliSense cache" · id 그대로) · Edit ▸ IntelliSense ▸ Refresh · 탐색기 루트 우클릭 "Refresh metadata" · 단축키 Ctrl+Shift+R(SSMS와 같음 · 맥 ⌘⇧R) · 범위 = 하위 메뉴: **현재 스키마**(기본) / 이 서버 / 전 서버.
+- 동작 = §3의 `Stale`/`Unknown` 표시 + 현재 스키마·사전은 **바로 다시 읽기**(백그라운드 세션 · 미리 읽기와 같은 길) · 상태줄 "Metadata cache refreshed (buckets N · objects M · comments re-read)" = "메타데이터 캐시 새로 고침(버킷 N · 객체 M · 코멘트 다시 읽음)" · 트리는 열린 폴더만 조용히 디프.
+- ★ **10-21(134차 win) 코멘트 포함** = 갱신 길 셋(탐색기 루트/스키마 우클릭 "메타 새로 고침" · F5 계층형 새로 고침 · Ctrl+Shift+R 하위 메뉴 셋)이 모두 `Explorer::invalidate_details`를 지나며 거기서 **같은 범위로 코멘트도 잊는다**(`MetaStore::forget_comments` · 스키마/전체 = 설명 검색 사본 비움 + 관계 폴더를 읽어 둔 스키마는 코멘트 워머 큐에 다시) · DDL `COMMENT ON`·객체 새로 고침 = 그 테이블 항목만 → 다음 조회가 그 테이블만 다시 읽음(지연) · 사용자 "메타를 전체 갱신하는 방법이 없다 · 변경된 내용 다시 캐시" · 85 §3.
 - 자동 갱신은 그대로: DDL 뒤(57 T1) · 유휴 워터마크(T2 · `meta.refresh_secs`) · 못 찾음 신호(T4). 명시 명령은 "밖에서 바뀐 것을 지금 반영"용.
 
 ## 5. 할 일(제안 순서 · TODO 등재)

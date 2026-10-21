@@ -177,6 +177,8 @@ pub(crate) struct Editors {
     scroll_snap: bool,
     /// 미니맵(켬 · 폭 논리 px · T-97).
     minimap: (bool, i32),
+    /// ★ 줄 간격(설정 `editor.line_height_mode`/`editor.line_height` + 글꼴 px · 전 탭 + 새 탭 · 134차 · docs/118).
+    line_spacing: (nexa_ctl::LineSpacing, f32),
     minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
     /// 미니맵 동작(뷰포트 hover만 · 클릭 = 글로 · 찾기 띠).
     minimap_opts: (bool, bool, bool),
@@ -342,6 +344,7 @@ impl Editors {
             tab_stops: true,
             scroll_snap: false,
             minimap: (false, 160),
+            line_spacing: (nexa_ctl::LineSpacing::Auto, 0.0),
             minimap_box: (None, None, false),
             minimap_opts: (false, false, true),
             running: Vec::new(),
@@ -427,6 +430,7 @@ impl Editors {
         tb.set_scroll_snap(self.scroll_snap);
         tb.set_minimap(self.minimap.0);
         tb.set_minimap_width(self.minimap.1);
+        tb.set_line_spacing(self.line_spacing.0, self.line_spacing.1);
         tb.set_minimap_box(self.minimap_box.0, self.minimap_box.1, self.minimap_box.2);
         tb.set_minimap_behavior(self.minimap_opts.0, self.minimap_opts.1);
         tb.set_minimap_find(self.minimap_opts.2);
@@ -645,6 +649,14 @@ impl Editors {
         self.select_all_keep = keep;
         for b in &mut self.bufs {
             b.set_select_all_keep_view(keep);
+        }
+    }
+
+    /// ★ 줄 간격(전 탭 + 새 탭 · docs/118). 글꼴 px가 바뀌어도 다시 부른다(배수 계산).
+    pub(crate) fn set_line_spacing(&mut self, spacing: nexa_ctl::LineSpacing, font_px: f32) {
+        self.line_spacing = (spacing, font_px);
+        for b in &mut self.bufs {
+            b.set_line_spacing(spacing, font_px);
         }
     }
 

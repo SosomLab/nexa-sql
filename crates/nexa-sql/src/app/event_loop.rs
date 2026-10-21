@@ -404,6 +404,7 @@ impl ApplicationHandler<Wake> for App {
             self.redraw();
         }
         self.ext_fetch_poll();
+        self.ext_meta_poll();
         if self.find.tick(now_ms) {
             self.redraw();
         }
@@ -438,6 +439,7 @@ impl ApplicationHandler<Wake> for App {
             || self.project_panel.animating()
             || self.bm_panel.animating()
             || self.ext_fetch_rx.is_some()
+            || !self.ext_meta_inflight.is_empty()
             || !self.file_loads.is_empty()
             || self.editors.tooltip_pending()
             || self.zoom_hud.visible()

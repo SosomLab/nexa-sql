@@ -125,6 +125,11 @@
 - **사용자 인터페이스 ▸ 고속 스크롤**(새 분류 · 종전 입력 분류에서 분리): `scroll.*` 8키(`scroll.fast` · `fast_speed` · `fast_grid_extra` …).
 - 키 이름은 그대로(접두 = 일 · 분류만 나눔 · `RENAMED` 없음). 검색 `filter` · `scroll`로 두 분류가 바로 나온다(journal 10-06 §9 ②).
 
+### 6-7. 편집기 줄 간격 2키(10-21 · 134차 win · [118](118-editor-line-spacing.md) · D-315 확정 대기)
+
+- **편집기 ▸ Editor**(분류 `CatEditor` · `editor.font_size` 다음): `editor.line_height_mode`(Choice multiple \| exact \| at_least · 기본 multiple) · `editor.line_height`(Text · 기본 `1.2` · 방식에 따라 배수 또는 px).
+- 방식과 값을 두 키로 나눈 이유 = VS Code `editor.lineHeight`처럼 값 크기(< 8 = 배수)로 뜻을 가르면 뜻이 숨는다 · 새 키라 `RENAMED` 없음.
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

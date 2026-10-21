@@ -483,6 +483,9 @@ impl App {
                     self.objdetail.set_sections(&owner, col.as_ref(), r);
                 }
                 ExplorerAction::Comments { owner, table, cols } => {
+                    // ★ 메타에도(10-21): hover 카드·완성 카드가 상세 패널과 같은 설명을 본다(종전 = 패널만).
+                    self.explorer
+                        .meta_set_object_comments(&owner, table.as_deref(), &cols);
                     self.objdetail.set_comments(&owner, table, cols);
                 }
                 // 스키마 코멘트가 메타에 들어왔다 → 지금 대상이 그 스키마면 메타에서 채운다(패널 캐시 없을 때).

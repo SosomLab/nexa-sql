@@ -126,9 +126,9 @@
 | 풀다운 ▸ 편집 | SQL 포맷 | `MnFormatSql` / `edit.format` | 없음 | `format_align_left` / 확인 필요 | 추가 |
 | 풀다운 ▸ 편집 | 포맷터 골라 포맷… | `MnFormatWith` / `edit.format_with` | 없음 | `format_align_left` / 확인 필요 | 아이콘 불필요 |
 | 풀다운 ▸ 편집 | 포맷 미리보기 | `MnFormatPreview` / `edit.format_preview` | 없음 | `preview` / `open-preview` | 추가 |
-| 풀다운 ▸ 편집 | 인텔리센스 캐시 새로 고침 | `MnIntelRefresh` / `intel.refresh` | 없음 | `refresh` / `refresh` (재사용 `refresh`) | 추가 |
-| 풀다운 ▸ 편집 | 인텔리센스 캐시 새로 고침(이 서버) | `MnIntelRefreshServer` / `intel.refresh_server` | 없음 | `refresh` / `refresh` | 아이콘 불필요 |
-| 풀다운 ▸ 편집 | 인텔리센스 캐시 새로 고침(전 서버) | `MnIntelRefreshAll` / `intel.refresh_all` | 없음 | `sync` / `sync` | 아이콘 불필요 |
+| 풀다운 ▸ 편집 | 메타데이터 캐시 새로 고침(현재 스키마) | `MnIntelRefresh` / `intel.refresh` | 없음 | `refresh` / `refresh` (재사용 `refresh`) | 추가 |
+| 풀다운 ▸ 편집 | 메타데이터 캐시 새로 고침(이 서버) | `MnIntelRefreshServer` / `intel.refresh_server` | 없음 | `refresh` / `refresh` | 아이콘 불필요 |
+| 풀다운 ▸ 편집 | 메타데이터 캐시 새로 고침(전 서버) | `MnIntelRefreshAll` / `intel.refresh_all` | 없음 | `sync` / `sync` | 아이콘 불필요 |
 | 풀다운 ▸ 편집 | 북마크 ▸ | `MnBookmarks` | 없음 | `bookmark` / `bookmark` (재사용 `mi_bookmark`) | 추가 |
 | 풀다운 ▸ 편집 ▸ 북마크 | 북마크 토글 | `MnBmToggle` / `bookmark.toggle` | 없음 | `bookmark_add` / `bookmark` | 추가 |
 | 풀다운 ▸ 편집 ▸ 북마크 | 다음 북마크 | `MnBmNext` / `bookmark.next` | 없음 | — | 아이콘 불필요 |
@@ -324,7 +324,7 @@
 | 우클릭(객체 탐색기 · 객체/잎/스키마/DB) | 이름 복사 | `ExpCopyName` / `copy` | 없음 | `content_copy` / `copy` (재사용 `mi_copy`) | 추가 |
 | 우클릭(객체 탐색기 · 객체) | 삭제… | `ExpDropObject` / `drop` | 없음 | `delete` / `trash` | 추가 |
 | 우클릭(객체 탐색기 · 전 노드) | 새로 고침 | `ExpRefresh` / `refresh` | 없음 | `refresh` / `refresh` (재사용 `refresh`) | 추가 |
-| 우클릭(객체 탐색기 · 스키마/루트) | 메타 새로 고침(인텔리센스) | `ExpRefreshMeta` / `refresh_meta` | 없음 | `sync` / `sync` | 추가 |
+| 우클릭(객체 탐색기 · 스키마/루트) | 메타데이터 캐시 새로 고침(10-21 · 종전 "메타 새로 고침(인텔리센스)" · 코멘트까지 다시 읽음) | `ExpRefreshMeta` / `refresh_meta` | 없음 | `sync` / `sync` | 추가 |
 | 우클릭(객체 탐색기 · 스키마/DB/묶음) | 용량 확인 | `ExpLoadSizes` / `sizes` | 없음 | `data_usage` / 확인 필요 | 추가 |
 | 우클릭(객체 탐색기 · 오프라인 루트) | 연결 | `ExpConnectServer` / `connect` | 없음 | `power` / `plug` (재사용 `connect`) | 추가 |
 | 우클릭(객체 탐색기 · 오프라인 루트) | 탐색기에서 제거 | `ExpRemoveServer` / `remove` | 없음 | `remove_circle_outline` / `remove` | 추가 |

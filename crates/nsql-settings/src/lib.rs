@@ -5762,6 +5762,24 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Size { min: 8, max: 40 },
         default: "16",
     },
+    // ★ 줄 간격(134차 win 10-21 · 사용자 "16 px 기준 비율 · Word/PPT·Sublime·VS Code·IntelliJ 조사" · docs/118): 방식 = Word/PPT의 셋(배수 ·
+    //   고정 · 최소) · 값 = 방식에 따라 배수(IntelliJ 1.2 · VS Code < 8)나 px. 기본 배수 1.2 = 16 px 글꼴에서 19 px(종전 24의 80 %).
+    Entry {
+        key: "editor.line_height_mode",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorLineHeightMode,
+        desc: Msg::DescEditorLineHeightMode,
+        kind: SettingKind::Choice(LINE_HEIGHT_MODE_OPTS),
+        default: "multiple",
+    },
+    Entry {
+        key: "editor.line_height",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorLineHeight,
+        desc: Msg::DescEditorLineHeight,
+        kind: SettingKind::Text,
+        default: "1.2",
+    },
     // 편집기 고정폭 글꼴(사용자 09-17): 비면 OS별 기본 사슬(D2Coding → Sarasa → Nanum Gothic Coding → OS 고정폭 → 한글 UI 본) ·
     // 이름을 주면 먼저 시도하고 못 찾으면 같은 사슬로 fail-over(nexa-font `mono_font`).
     Entry {
@@ -7210,6 +7228,13 @@ const DESC_WHAT_OPTS: &[(&str, Msg)] = &[
     ("both", Msg::ValDescWhatBoth),
 ];
 /// Ctrl 표시 범위(docs/111 §3 · 북마크 라벨·설명 공유).
+/// 줄 간격 방식(`editor.line_height_mode` · docs/118).
+const LINE_HEIGHT_MODE_OPTS: &[(&str, Msg)] = &[
+    ("multiple", Msg::ValLineHeightMultiple),
+    ("exact", Msg::ValLineHeightExact),
+    ("at_least", Msg::ValLineHeightAtLeast),
+];
+
 const INLINE_SCOPE_OPTS: &[(&str, Msg)] = &[
     ("statement", Msg::ValInlineScopeStatement),
     ("visible", Msg::ValInlineScopeVisible),

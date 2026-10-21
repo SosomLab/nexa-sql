@@ -202,6 +202,13 @@ type ExtFetch = Vec<(
     extensions::manager::Trace,
 )>;
 
+/// ★ T-374: 확장 상세 메타 조회 스레드의 결과 한 벌(열쇠 = (저장소, 폴더) · 메타(실패 = None) · 추적 줄).
+type ExtMetaGot = (
+    (String, String),
+    Option<extensions::manager::Meta>,
+    extensions::manager::Trace,
+);
+
 /// 잃는 순간의 확인(Commit/Rollback) 뒤 이어질 동작(DR-30).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TxAfter {
@@ -598,6 +605,14 @@ struct App {
     ext_panel: ExtPanel,
     /// 저장소 읽기 스레드의 결과(패널을 열거나 ⟳ · 사용자 동작으로만 · 26 §8).
     ext_fetch_rx: Option<std::sync::mpsc::Receiver<ExtFetch>>,
+    /// ★ T-374(10-21): 설치 안 된 확장의 상세 메타(`extension.json`) 첫 조회 스레드 채널(열쇠 · 결과 · 추적) — 종전 = UI 스레드 동기
+    /// curl ≤30 s. 읽는 중인 열쇠 목록(같은 열쇠는 한 번만) · 기다리는 행 = **최신 의도만**(99 · 늦은 답은 캐시에만).
+    ext_meta_ch: (
+        std::sync::mpsc::Sender<ExtMetaGot>,
+        std::sync::mpsc::Receiver<ExtMetaGot>,
+    ),
+    ext_meta_inflight: Vec<(String, String)>,
+    ext_meta_wait: Option<((String, String), ExtRow)>,
     /// 확장 상세 뷰(편집기 자리에 그리는 전용 페이지) · 뷰 열쇠(`ext:<id>`)별 내용 · 마지막으로 그린 열쇠(바뀌면 스크롤 초기화).
     ext_view: ext_view::ExtView,
     /// ★ 비교 탭(`compare:*` 뷰 탭)의 2-pane diff 뷰어(T-283 2단계 · `compare.view = diff`).
@@ -1952,6 +1967,9 @@ fn main() {
         project: project::Project::default(),
         ext_panel,
         ext_fetch_rx: None,
+        ext_meta_ch: std::sync::mpsc::channel(),
+        ext_meta_inflight: Vec::new(),
+        ext_meta_wait: None,
         ext_view: ext_view::ExtView::default(),
         diff_view: diff_view::DiffView::default(),
         ext_details: HashMap::new(),
@@ -2069,6 +2087,7 @@ fn main() {
     app.editors
         .set_scroll_snap(app.settings.get("editor.scroll") == Some("row"));
     app.apply_minimap();
+    app.apply_line_height();
     // 자원 거버너 상한(T-90d · 부팅 1회) — 실효 값(`perf.mode` 반영).
     app.log_win
         .set_max_lines(app.settings.int("log.max_lines").max(100) as usize);

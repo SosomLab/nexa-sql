@@ -1164,7 +1164,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
         return none;
     }
     let ws = words(text, &classes);
-    let mut aliases = alias_table(&ws);
+    let mut aliases = alias_table_deep(&ws);
     if dialect == Some(Dialect::Mssql) {
         add_output_pseudo(&ws, &mut aliases);
     }
@@ -1457,7 +1457,39 @@ fn in_from_list(before: &[&Word<'_>]) -> bool {
     false
 }
 
+/// ★ 서브쿼리 안의 별칭까지(10-21 · 134차 win · 사용자 "서브쿼리 안 `T1.컬럼`의 설명이 안 보인다"): [`alias_table`]은 `( … ) s`를 통째로
+/// 건너뛰어 그 안 `FROM t T1`의 `T1`을 모른다 → 괄호 그룹마다 재귀해 합친다(바깥 먼저 · 같은 이름은 바깥이 이긴다 · 함수 인자 괄호는
+/// FROM이 없어 아무것도 안 보탠다). 문맥([`context_at`]) = 서브쿼리 안 완성 · Ctrl 링크(문장 전체를 한 번에 분석)가 같이 쓴다.
+#[must_use]
+pub fn alias_table_deep(ws: &[Word<'_>]) -> Vec<Alias> {
+    let mut out = alias_table(ws);
+    let mut i = 0;
+    while i < ws.len() {
+        if ws[i].text != "(" {
+            i += 1;
+            continue;
+        }
+        let end = skip_parens(ws, i);
+        // 안쪽 = `(` 다음부터 짝 `)` 앞까지(짝이 없으면 끝까지).
+        let close = if end > i + 1 && ws.get(end - 1).is_some_and(|w| w.text == ")") {
+            end - 1
+        } else {
+            end
+        };
+        if close > i + 1 {
+            for a in alias_table_deep(&ws[i + 1..close]) {
+                if !out.iter().any(|o| o.alias.eq_ignore_ascii_case(&a.alias)) {
+                    out.push(a);
+                }
+            }
+        }
+        i = end.max(i + 1);
+    }
+    out
+}
+
 /// alias 표 — `FROM/JOIN/UPDATE/INTO/DELETE FROM` 뒤 `[schema.]table [AS] alias`(콤마·JOIN 반복) + CTE 이름.
+/// 서브쿼리 안은 보지 않는다(그 안까지 = [`alias_table_deep`]).
 #[must_use]
 pub fn alias_table(ws: &[Word<'_>]) -> Vec<Alias> {
     let mut out: Vec<Alias> = Vec::new();
@@ -2351,6 +2383,37 @@ mod tests {
         );
         let c = ctx("INSERT INTO emp VALUES (|");
         assert_eq!(c.paren_owner, None);
+    }
+
+    /// ★ 10-21(134차 win): 서브쿼리 안 `FROM t T1 JOIN u T2`의 별칭이 바깥 문맥에도 보인다(종전 = `( … ) S`를 통째로 건너뜀 → Ctrl 링크·
+    /// 완성이 `T1.컬럼`을 못 풀어 컬럼 설명 라벨 0개) · 바깥 `S`는 그대로 local · 같은 이름은 바깥이 이김 · 함수 괄호는 영향 없음.
+    #[test]
+    fn aliases_inside_subquery_are_visible() {
+        let src = "SELECT S.PROJECT_CD, MAX(S.INV_QTY) FROM ( SELECT T1.PROJECT_CD, T2.INV_QTY FROM M4E_I301080 T1 JOIN M4S_I002150 T2 ON T1.PROJECT_CD = T2.PROJECT_CD WHERE T2.YYMMDD = (SELECT MAX(X.YYMMDD) FROM M4S_I002150 X) ) S WHERE |";
+        let c = ctx(src);
+        let names: Vec<(&str, &str, bool)> = c
+            .aliases
+            .iter()
+            .map(|a| (a.alias.as_str(), a.table.as_str(), a.local))
+            .collect();
+        assert!(names.contains(&("S", "", true)), "{names:?}");
+        assert!(names.contains(&("T1", "M4E_I301080", false)), "{names:?}");
+        assert!(names.contains(&("T2", "M4S_I002150", false)), "{names:?}");
+        assert!(
+            names.contains(&("X", "M4S_I002150", false)),
+            "두 겹 안쪽도 {names:?}"
+        );
+        assert_eq!(names[0].0, "S", "바깥 먼저");
+        // 같은 이름 = 바깥이 이긴다.
+        let src2 = "SELECT * FROM emp T1, (SELECT 1 FROM dept T1) S WHERE |";
+        let c2 = ctx(src2);
+        let t1: Vec<&str> = c2
+            .aliases
+            .iter()
+            .filter(|a| a.alias == "T1")
+            .map(|a| a.table.as_str())
+            .collect();
+        assert_eq!(t1, vec!["emp"]);
     }
 
     #[test]

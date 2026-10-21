@@ -148,6 +148,23 @@ impl App {
         );
     }
 
+    /// ★ 설정 → 줄 간격(134차 · docs/118): 방식·값·글꼴 px를 한 벌로 전 탭에(글꼴 크기가 바뀔 때도 = 배수 계산).
+    pub(crate) fn apply_line_height(&mut self) {
+        let mode = self
+            .settings
+            .get("editor.line_height_mode")
+            .unwrap_or("multiple")
+            .to_string();
+        let value = self
+            .settings
+            .get("editor.line_height")
+            .unwrap_or("1.2")
+            .to_string();
+        let font_px = self.settings.font_px("editor.font_size");
+        self.editors
+            .set_line_spacing(line_spacing_from(&mode, &value), font_px);
+    }
+
     /// 설정 → 미니맵(T-97).
     pub(crate) fn apply_minimap(&mut self) {
         // 전체 선택 뒤 화면(09-30 · 기동 때 미니맵과 함께 적용).
@@ -780,6 +797,10 @@ impl App {
                 self.apply_extensions(None);
                 self.layout();
             }
+            "editor.line_height_mode" | "editor.line_height" => {
+                self.apply_line_height();
+                self.layout();
+            }
             "editor.minimap"
             | "editor.split_max"
             | "editor.minimap_width"
@@ -929,9 +950,13 @@ impl App {
                 ));
                 self.redraw();
             }
+            "editor.font_size" => {
+                // 글꼴 px가 바뀌면 배수 줄 간격도 다시(docs/118).
+                self.apply_line_height();
+                self.layout();
+            }
             "ui.font_size"
             | "ui.menu_font_size"
-            | "editor.font_size"
             | "grid.font_size"
             | "explorer.width"
             | "explorer.font_size"
@@ -1375,5 +1400,65 @@ impl App {
     /// 다중 선택 구간 수 상한(`editor.max_occurrences` · 최소 100 · docs/72 §2).
     pub(crate) fn occurrence_cap(&self) -> usize {
         self.settings.int("editor.max_occurrences").max(100) as usize
+    }
+}
+
+/// ★ 줄 간격 설정 → `LineSpacing`(순수 · docs/118): 방식 `multiple`(값 0.8~3.0 · 기본 1.2) · `exact`/`at_least`(값 px 6~80 · `19` · `19px`) ·
+/// 잘못된 값·범위 밖·모르는 방식 = 기본(배수 1.2). 글꼴 px는 호출자가 따로 준다(배수 계산 = nexa-ctl `line_h_for`).
+pub(crate) fn line_spacing_from(mode: &str, value: &str) -> nexa_ctl::LineSpacing {
+    use nexa_ctl::LineSpacing as L;
+    let v = value.trim();
+    match mode {
+        "exact" | "at_least" => {
+            let px = v
+                .trim_end_matches("px")
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .map(|f| f.round() as i32)
+                .filter(|p| (6..=80).contains(p));
+            match (mode, px) {
+                ("exact", Some(p)) => L::Exact(p),
+                ("at_least", Some(p)) => L::AtLeast(p),
+                _ => L::Multiple(1.2),
+            }
+        }
+        _ => {
+            let k = v.parse::<f32>().ok().filter(|k| (0.8..=3.0).contains(k));
+            L::Multiple(k.unwrap_or(1.2))
+        }
+    }
+}
+
+#[cfg(test)]
+mod line_height_tests {
+    use super::line_spacing_from;
+    use nexa_ctl::LineSpacing as L;
+
+    /// 방식 셋 + 단위 `px` + 범위 밖·잘못된 값·모르는 방식 = 기본 배수 1.2.
+    #[test]
+    fn parses_modes_and_falls_back() {
+        assert_eq!(line_spacing_from("multiple", "1.2"), L::Multiple(1.2));
+        assert_eq!(line_spacing_from("multiple", " 1.5 "), L::Multiple(1.5));
+        assert_eq!(
+            line_spacing_from("multiple", "9"),
+            L::Multiple(1.2),
+            "범위 밖"
+        );
+        assert_eq!(line_spacing_from("multiple", "abc"), L::Multiple(1.2));
+        assert_eq!(line_spacing_from("exact", "19"), L::Exact(19));
+        assert_eq!(line_spacing_from("exact", "19px"), L::Exact(19));
+        assert_eq!(
+            line_spacing_from("exact", "3"),
+            L::Multiple(1.2),
+            "px 범위 밖 = 기본"
+        );
+        assert_eq!(line_spacing_from("at_least", "24"), L::AtLeast(24));
+        assert_eq!(line_spacing_from("at_least", "x"), L::Multiple(1.2));
+        assert_eq!(
+            line_spacing_from("weird", "1.2"),
+            L::Multiple(1.2),
+            "모르는 방식 = 배수"
+        );
     }
 }

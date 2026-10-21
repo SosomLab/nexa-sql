@@ -1379,6 +1379,8 @@ fn req_label(r: &Req) -> String {
         Req::DictMeta { .. } => "dictionary".into(),
         Req::DetailMeta { schema, table, .. } => format!("detail {schema}.{table}"),
         Req::Args { owner, .. } => format!("args {}.{}", owner.schema, owner.name),
+        // 테이블 단위 코멘트(상세 패널 · 테이블 새로 고침 · 10-21 — 종전엔 `other`로 찍혀 진단에서 구별이 안 됐다).
+        Req::Comments { owner, .. } => format!("comments {}.{}", owner.schema, owner.name),
         Req::Source { name, .. } => format!("source {name}"),
         _ => "other".into(),
     }
@@ -4573,6 +4575,14 @@ impl Explorer {
                     );
                     if !schema.is_empty() {
                         self.meta.set_schema_comments(&schema, &tables, &cols);
+                        // 진단(10-21): 테이블 0 · 컬럼 n이면 테이블 질의가 실패한 것 — 카드는 상세(L3)로 보충한다(`comment_known`).
+                        if std::env::var_os("NSQL_TRACE_META").is_some() {
+                            eprintln!(
+                                "[meta] schema comments {schema}: tables {} · cols {}",
+                                tables.len(),
+                                cols.len()
+                            );
+                        }
                     }
                     // ★ 설명 포함 검색(10-15): 트리에 이미 있는 노드도 설명으로 다시 거른다(스레드 일치는 `Resp::Hits`로 따로 온다).
                     if self.filter.is_some() && self.index_cfg.search_desc {
@@ -6003,6 +6013,25 @@ impl Explorer {
                 let _ = self.meta.mark_stale(None);
                 let _ = self.meta.mark_columns_unknown(None);
             }
+            // ★ 테이블·뷰 한 개 새로 고침(사용자 10-21 "테이블 새로 고침 때 그 테이블 메타도 갱신"): 스키마 전체가 아니라 **그 객체의
+            //   메타만**(컬럼·상세·코멘트) 비우고 **바로 다시 읽는다**(컬럼 = 급한 길 · 상세 = 백그라운드 · 코멘트 = 테이블 단위) →
+            //   완성·Ctrl 카드·줄 끝 라벨·상세 패널이 트리와 같은 시점의 값을 본다(종전 = 스키마 전체 Stale/Unknown + 다음 요청 때 지연).
+            NodeKind::Object(o) if o.kind.is_relation() => {
+                let o = o.clone();
+                let id = self
+                    .meta
+                    .snapshot()
+                    .lookup(&self.meta.names, Some(&o.schema), &o.name);
+                if let Some(id) = id {
+                    let _ = self.meta.mark_object_unknown(id);
+                }
+                self.invalidate_details(Some(&o.schema), Some(&o.name));
+                self.request_columns(Some(&o.schema), &o.name, true);
+                if let Some(id) = id {
+                    self.request_detail(id);
+                }
+                self.request_comments(o);
+            }
             _ => {
                 if let Some(sc) = self.schema_of(i) {
                     let _ = self.meta.mark_stale(Some(&sc));
@@ -6813,6 +6842,47 @@ impl Explorer {
         }
         self.detail_invalidated
             .push((schema.map(str::to_string), name.map(str::to_string)));
+        // ★ 코멘트도 같은 범위로 잊는다(10-21 · 사용자 "메타를 전체 갱신하는 방법이 없다 · 변경된 내용 다시 캐시"): 메타 지도·객체 코멘트
+        //   → 스키마/전체 범위면 설명 검색 사본도 비우고, 관계 폴더를 읽어 둔 스키마는 워머 큐에 다시(완료 표시가 걷혀 `enqueue`가 받는다) ·
+        //   테이블 단위(DDL `COMMENT ON` · 객체 새로 고침)는 다음 조회(상세 패널·Ctrl 링크 선적재)가 그 테이블만 다시 읽는다 = 지연.
+        //   들어오는 길 = 계층형 새로 고침(F5·우클릭) · 메타 새로 고침(`refresh_meta` · Ctrl+Shift+R) · DDL 반영(`apply_ddl`).
+        let forgot = self.meta.forget_comments(schema, name);
+        if name.is_none() {
+            let same = |k: &str| schema.is_none_or(|s| unit_parts(k).0.eq_ignore_ascii_case(s));
+            self.desc_comments.retain(|k, _| !same(k));
+            self.desc_comments_done.retain(|k| !same(k));
+            let scs: Vec<String> = {
+                let snap = self.meta.snapshot();
+                let mut v: Vec<String> = snap
+                    .buckets
+                    .iter()
+                    .filter(|((sc, k), b)| {
+                        k.is_relation()
+                            && matches!(
+                                b.coverage,
+                                nsql_run::meta::Coverage::Loaded { .. }
+                                    | nsql_run::meta::Coverage::Stale { .. }
+                            )
+                            && schema
+                                .is_none_or(|s| self.meta.names.get(*sc).eq_ignore_ascii_case(s))
+                    })
+                    .map(|((sc, _), _)| self.meta.names.get(*sc).to_string())
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            };
+            for sc in scs {
+                self.enqueue_schema_comments(&sc);
+            }
+            if forgot > 0 && std::env::var_os("NSQL_TRACE_META").is_some() {
+                eprintln!(
+                    "[meta] comments forgotten: schema {} · {forgot} schema map(s) · warm queue {}",
+                    schema.unwrap_or("*"),
+                    self.comment_q.len()
+                );
+            }
+        }
     }
 
     /// 호스트가 가져가는 무효화 범위(1회성) — 상세 패널의 테이블 코멘트 캐시를 같은 범위로 버리게.
@@ -7183,6 +7253,10 @@ impl Explorer {
         }
         if let Some(cur) = self.server_schema.clone() {
             self.request_objects(&cur);
+            // ★ 현재 스키마 코멘트도 여기서 큐에(10-21 · 134차 협업 V1 관찰 = 기동 뒤 폴더를 펼치기 전엔 코멘트 워머가 한 번도 안 돌아
+            //   Ctrl 링크 카드·완성 카드가 상세(L3) 왕복에 기댔다): 종전 = 관계 **폴더를 읽었을 때만**(`Resp::Objects`). 비용 = 질의 2 ·
+            //   스위치 = `meta.warm_comments` · 간격 = `warm_idle_ms` · 이미 읽었으면 0(`enqueue`가 거른다).
+            self.enqueue_schema_comments(&cur);
         }
         self.request_objects(nsql_catalog::DICT_SCHEMA);
     }
@@ -7308,6 +7382,19 @@ impl Explorer {
     /// 객체(관계)의 코멘트 그대로 — 메타에 스키마 코멘트가 있을 때만(86 §5 · 왕복 0).
     pub(crate) fn comments_of(&self, owner: &ObjectInfo) -> Option<nsql_run::meta::CommentsOf> {
         self.meta.comments_of(&owner.schema, &owner.name)
+    }
+
+    /// ★ 테이블 단위 코멘트(상세 패널 요청의 응답)를 메타에도(10-21) — hover 카드·완성 카드가 패널과 같은 설명을 본다.
+    pub(crate) fn meta_set_object_comments(
+        &mut self,
+        owner: &ObjectInfo,
+        table: Option<&str>,
+        cols: &[(String, Option<String>)],
+    ) {
+        if owner.kind.is_relation() {
+            self.meta
+                .set_object_comments(&owner.schema, &owner.name, table, cols);
+        }
     }
 
     /// L2 한 걸음: 간격이 지났고 진행 중이 없으면 큐 앞의 컬럼 하나를 백그라운드 세션으로.
