@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/134-meta-linespacing | 2026-10-21 | 2026-10-21 → main(삭제) | 1 | 134차 win — hover 카드 테이블 설명(`comment_known` · `set_object_comments` · `arm_warm` 코멘트 워머) · 메타 전체 갱신 = 코멘트 포함 · 서브쿼리 별칭(`alias_table_deep`) · 줄 간격 `editor.line_height_mode/line_height`(D-315 · nexa-ui 220차 8f81401) · T-374 확장 메타 스레드 · 카드 영역 머무름 교체 · 테이블 새로 고침 = 그 객체만 · 문서 118~121 · **f1a9032** · push = 인증 수단 없어 대기 |
 | fix/133-linux-followup | 2026-10-20 | 2026-10-21 → main(삭제) | 1 | 133차 Linux 후속 — 🔧 T-376 끝난 실행 카드 재그리기 루프 · 🔧 T-377 메타 워머 응답 UI 비용 · ★ T-378 Thin 안내 "다시 보지 않기" + 숨겨진 메시지 분류 · ★ T-379 한정 이름 자동 별칭(`intel-alias-e2e.sh`) · T-375 소비(nexa-ui 219차 ff2633b) · **44a6c89** · push 837ec19 · ci 39455594390 ✓ 3-OS · integration 39455594452 ✓ |
 | fix/125-linux-sync | 2026-10-20 | 2026-10-20 → main(삭제) | 1 | 133차 Linux — 최신화(nexa-sql 90 · nexa-ui 26) 뒤 V2·V3 기능 전수(앱 결함 0) · 시험 자산 3(실행 비트 4 · `win-drop-prod` 첫 펼침 대기 · `win-error-goto` 기대값·PG 본문) · 필터 바 선굽기 순서(`toolicons.rs` `prewarm`) · ★ D-314 Linux 글자 보정 = macOS 값 + 실효값 결함(`perf.rs` `effective`) · **1993fe1** · ci 39435264223 ✓ 3-OS · integration 39435264121 ✓ |
 | fix/132-panel-keyboard | 2026-10-20 | 2026-10-20 → main(삭제) | 1 | 132차 win 밤 — 사용자 실기 결함 4: 북마크 ← 접기 선택 보존(`SelKey`) · 파일 검색 ←/→(`fold_step`) · 확장 패널 키보드 이동·포커스 분리 + 머문 행 열기·메타 캐시(협업 지적) · 확장 보기 탭 [RO] 제외 · 시험 +6 · T-374 후보 · **59e5393** · ci 39409822850 ✓ · integration 39409823209 ✓ |
