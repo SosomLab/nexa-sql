@@ -173,6 +173,36 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--file",
+        arg: "<zip>",
+        desc: Msg::HlpOptDriverFile,
+        setting: None,
+    },
+    Opt {
+        flags: "--pre",
+        arg: "",
+        desc: Msg::HlpOptDriverPre,
+        setting: None,
+    },
+    Opt {
+        flags: "--force",
+        arg: "",
+        desc: Msg::HlpOptDriverForce,
+        setting: None,
+    },
+    Opt {
+        flags: "--refresh",
+        arg: "",
+        desc: Msg::HlpOptDriverRefresh,
+        setting: None,
+    },
+    Opt {
+        flags: "--check",
+        arg: "",
+        desc: Msg::HlpOptDriverCheck,
+        setting: None,
+    },
+    Opt {
         flags: "--log",
         arg: "",
         desc: Msg::HlpOptLog,
@@ -344,7 +374,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "driver",
-        usage: "nsql driver list | path | check <id> | rm <id>[@<ver>]",
+        usage: "nsql driver list | path | check <id> | rm <id>[@<ver>] | search [<text>] | install <id>[@<ver>] | install --file <zip> | update [<id>]",
         brief: Msg::HlpCmdDriver,
         detail: Msg::HlpCmdDriverDetail,
         args: &[
@@ -352,10 +382,19 @@ const CMDS: &[Cmd] = &[
             ("path", Msg::HlpArgDriverPath),
             ("check <id>", Msg::HlpArgDriverCheck),
             ("rm <id>[@<ver>]", Msg::HlpArgDriverRm),
+            ("search [<text>]", Msg::HlpArgDriverSearch),
+            ("install <id>[@<ver>]", Msg::HlpArgDriverInstall),
+            ("update [<id>]", Msg::HlpArgDriverUpdate),
         ],
-        opts: &[],
+        opts: &["--file", "--pre", "--force", "--refresh", "--check"],
         notes: &[],
-        examples: &[],
+        examples: &[
+            "nsql driver search",
+            "nsql driver install duckdb                      # newest release from the driver index",
+            "nsql driver install tibero-odbc@7.0.1 --force",
+            "nsql driver install --file nsql-driver-duckdb-1.2.0-windows-x86_64.zip",
+            "nsql driver update --check",
+        ],
     },
     Cmd {
         name: "license",

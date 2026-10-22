@@ -21,6 +21,7 @@ members = [
   "crates/nsql-driver-mysql",  # ① 어댑터 — mysql(순수 Rust · 동기) · ? 바인드 · CALL OUT = 마지막 결과 집합 · KILL QUERY 취소 (사용자 10-22)
   "crates/nsql-driver-odbc",   # ① 어댑터 — odbc-api(시스템 ODBC 관리자 · Windows 인박스 전용 D-345) · 3급 틀 (T-383 · 사용자 10-22)
   "crates/nsql-json",          # ★ 최소 JSON(의존 0 · 파서+작성기) — 설정 JSON · 확장 매니페스트 · 확장 관리자 공용(136차 부품화)
+  "crates/nsql-net",      # ★ 최소 HTTPS 클라이언트(GET · rustls + webpki-roots · 리다이렉트 · chunked · HTTPS_PROXY) — 확장 드라이버 다운로드(T-29)
   "crates/nsql-abi",           # ★ 확장 드라이버 ABI — 버전 있는 C vtable + 바이너리 코덱 + export_driver! (DR-29 · T-27 ①)
   "crates/nsql-driver-dyn",    # ★ 확장 드라이버 로더 — LoadLibrary/dlopen 지연 로드 + 프록시 세션(외부 crate 0 · T-27 ②)
   "crates/nsql-drivers",  # 접속 문자열 → Box<dyn Session> 레지스트리(feature로 어댑터 선택)
@@ -66,6 +67,7 @@ nsql-driver-pg = { path = "crates/nsql-driver-pg" }
 nsql-driver-mysql = { path = "crates/nsql-driver-mysql" }
 nsql-driver-odbc = { path = "crates/nsql-driver-odbc" }
 nsql-json = { path = "crates/nsql-json" }
+nsql-net = { path = "crates/nsql-net" }
 nsql-abi = { path = "crates/nsql-abi" }
 nsql-driver-dyn = { path = "crates/nsql-driver-dyn" }
 nsql-drivers = { path = "crates/nsql-drivers" }

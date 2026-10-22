@@ -6,6 +6,11 @@
 //!   그 id의 확장을 찾는다(예: macOS/Linux ODBC = D-346 ⓐ · 빌드에서 뺀 드라이버의 cdylib).
 //! - 버전 비교 = `.`으로 나눈 숫자 세그먼트 우선 · 아니면 문자열(semver 대략 · T-28에서 매니페스트로 보강).
 //! - 올린 드라이버는 프로세스 수명 동안 캐시(64 §5: 내리지 않는다).
+pub mod install;
+pub mod keys;
+pub mod sha256;
+pub mod zip;
+
 use nsql_core::{DbError, Session};
 use nsql_driver_dyn::{library_file_name, DynDriver};
 use nsql_script::ConnectSpec;
@@ -81,9 +86,15 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 }
 
 /// 버전 폴더 하나를 본다: 매니페스트(있으면 lib 이름 · protocol 검사) → 라이브러리 파일 존재.
+/// 기본 라이브러리 파일 이름(`nsql_driver_<id>.{dll,so,dylib}`).
+#[must_use]
+pub fn library_file_name_for(id: &str) -> String {
+    library_file_name(&format!("nsql-driver-{id}"))
+}
+
 fn inspect_version_dir(id: &str, dir: &Path) -> Option<ExtInfo> {
     let ver = dir.file_name()?.to_string_lossy().into_owned();
-    let default_lib = library_file_name(&format!("nsql-driver-{id}"));
+    let default_lib = library_file_name_for(id);
     let manifest = std::fs::read_to_string(dir.join(MANIFEST))
         .ok()
         .and_then(|t| parse_manifest(&t).ok());

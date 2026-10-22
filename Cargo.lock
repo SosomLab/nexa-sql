@@ -2030,6 +2030,9 @@ dependencies = [
 name = "nsql-drivers"
 version = "0.2.7"
 dependencies = [
+ "ed25519-dalek",
+ "miniz_oxide",
+ "nexa-license",
  "nsql-abi",
  "nsql-core",
  "nsql-driver-dyn",
@@ -2041,6 +2044,7 @@ dependencies = [
  "nsql-driver-pg",
  "nsql-driver-sqlite",
  "nsql-json",
+ "nsql-net",
  "nsql-run",
  "nsql-script",
  "nsql-vault",
@@ -2078,6 +2082,14 @@ dependencies = [
 [[package]]
 name = "nsql-log"
 version = "0.2.7"
+
+[[package]]
+name = "nsql-net"
+version = "0.2.7"
+dependencies = [
+ "rustls 0.23.45",
+ "webpki-roots",
+]
 
 [[package]]
 name = "nsql-run"

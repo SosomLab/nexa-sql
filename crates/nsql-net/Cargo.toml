@@ -1,0 +1,17 @@
+[package]
+name = "nsql-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL minimal HTTPS client (HTTP/1.1 GET, rustls + webpki-roots, redirects, chunked, HTTPS_PROXY CONNECT) used for extension driver downloads"
+
+[lints]
+workspace = true
+
+[dependencies]
+# DR-3 원장 D-348(docs/10 §4): TLS = rustls 0.23 + aws-lc-rs — mysql·oracle-thin이 이미 끌어오는 판(추가 TLS 스택 0) · 루트 = webpki-roots(Mozilla).
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+webpki-roots = "1"

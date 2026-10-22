@@ -1977,7 +1977,7 @@ static STARTUP_MARKS: std::sync::OnceLock<Vec<(&'static str, std::time::Instant)
 
 /// ★ 설정을 프로세스에서 **한 번만** 읽는다(T-228 · 09-26): 기동 중 13곳이 저마다 `Settings::open_default()`로 파일을 열고
 /// 레지스트리(475 키)를 풀어 200행 조회의 wall이 +50 ms였다. 읽기 전용 자리만 이 길을 쓴다(`config set`은 제 손으로 열어 저장).
-fn settings_cached() -> io::Result<&'static nsql_settings::Settings> {
+pub(crate) fn settings_cached() -> io::Result<&'static nsql_settings::Settings> {
     static CELL: std::sync::OnceLock<io::Result<nsql_settings::Settings>> =
         std::sync::OnceLock::new();
     CELL.get_or_init(nsql_settings::Settings::open_default)
