@@ -949,6 +949,10 @@ fn odbc_target() -> Option<String> {
 #[test]
 fn odbc_select_bind_dml_and_errors() {
     use nsql_core::{BindParam, Direction, ExecRequest, VarType};
+    if !nsql_drivers::available().contains(&Dialect::Odbc) {
+        eprintln!("[skip] 이 빌드에 ODBC 드라이버 없음(D-345 = Windows만)");
+        return;
+    }
     let Some(url) = odbc_target() else {
         eprintln!("[skip] NSQL_ODBC_URL 없음(Windows = NSQL_MSSQL_PROFILE로 대체)");
         return;

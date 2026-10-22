@@ -33,6 +33,9 @@ nsql-driver-oracle-thin = { workspace = true, optional = true }
 nsql-driver-mssql = { workspace = true, optional = true }
 nsql-driver-pg = { workspace = true, optional = true }
 nsql-driver-mysql = { workspace = true, optional = true }
+
+# ★ D-345: ODBC 내장 = Windows만(인박스 odbc32) — mac/Linux는 feature가 켜져도 드라이버가 들어가지 않는다(unixODBC LGPL · 네이티브 의존 0).
+[target.'cfg(windows)'.dependencies]
 nsql-driver-odbc = { workspace = true, optional = true }
 
 [dev-dependencies]

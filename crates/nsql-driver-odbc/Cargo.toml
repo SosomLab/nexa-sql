@@ -16,10 +16,8 @@ nsql-core.workspace = true
 nsql-script.workspace = true
 
 # DR-3 예외(드라이버 · docs/10 §4 원장 · T-383). 시스템 ODBC 드라이버 관리자 위의 순수 Rust 바인딩(MIT) · `prompt`(winit)·`derive` 끔.
-# Windows = 인박스 odbc32.dll(설치 0). 그 밖 = unixODBC를 **정적으로 묶는다**(`vendored-unix-odbc` · 실행 파일이 관리자 런타임을
-# 요구하지 않는다 · 64 §4 "외부 네이티브 의존 0") — 벤더 ODBC 드라이버(.so)와 odbcinst.ini는 사용자 환경 몫.
+# ★ D-345: 내장 ODBC = **Windows만**(인박스 odbc32.dll · 설치 0). macOS/Linux는 이 크레이트가 빈 스텁으로 컴파일된다 —
+#   unixODBC는 LGPL-2.1이라 정적 동봉이 고지·재링크 요건을 부르고, 동적 링크는 실행 파일에 런타임 의존을 만든다
+#   (64 §4 "외부 네이티브 의존 0") → 후속 = 확장 드라이버(cdylib · DR-29) 또는 패키지 의존을 받아들이는 동적 링크(사용자 결정 대기).
 [target.'cfg(windows)'.dependencies]
 odbc-api = { version = "29.2", default-features = false, features = ["odbc_version_3_80"] }
-
-[target.'cfg(not(windows))'.dependencies]
-odbc-api = { version = "29.2", default-features = false, features = ["odbc_version_3_80", "vendored-unix-odbc"] }

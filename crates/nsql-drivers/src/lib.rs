@@ -60,16 +60,17 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Postgres => Ok(Box::new(nsql_driver_pg::PgSession::connect(spec)?)),
         #[cfg(feature = "mysql")]
         Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
-        #[cfg(feature = "odbc")]
+        #[cfg(all(feature = "odbc", windows))]
         Dialect::Odbc => Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?)),
-        // 모든 드라이버 feature가 켜지면 닿지 않는다(기본 빌드) — 경량판처럼 feature를 뺀 빌드만 쓴다.
+        // 모든 드라이버 feature가 켜진 Windows 기본 빌드에서는 닿지 않는다 — 경량판·mac/Linux(ODBC 없음)가 쓴다.
         #[cfg(not(all(
             feature = "sqlite",
             any(feature = "oracle", feature = "oracle-thin"),
             feature = "mssql",
             feature = "pg",
             feature = "mysql",
-            feature = "odbc"
+            feature = "odbc",
+            windows
         )))]
         other => Err(DbError {
             code: None,
@@ -343,7 +344,7 @@ pub fn available() -> Vec<Dialect> {
     if cfg!(feature = "mysql") {
         v.push(Dialect::Mysql);
     }
-    if cfg!(feature = "odbc") {
+    if cfg!(all(feature = "odbc", windows)) {
         v.push(Dialect::Odbc);
     }
     v
@@ -366,7 +367,11 @@ mod tests {
         ] {
             assert!(v.contains(&d), "{d} 빠짐: {v:?}");
         }
-        assert!(v.contains(&Dialect::Odbc), "ODBC 내장(T-383 · 136차)");
+        assert_eq!(
+            v.contains(&Dialect::Odbc),
+            cfg!(windows),
+            "ODBC 내장 = Windows만(T-383 · D-345)"
+        );
     }
 
     #[test]
