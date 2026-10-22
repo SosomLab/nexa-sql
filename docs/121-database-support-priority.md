@@ -41,7 +41,7 @@
 | 순위 | 대상 | 등급 | 왜 | 범위(1차) | 비용 추정 |
 |---|---|---|---|---|---|
 | **P1** | **MySQL / MariaDB 내장 드라이버** `nsql-driver-mysql` | 2급 → 1급 승격 가능 | 세계 수요 최상위 · 방언·카탈로그·문법·완성이 **이미 있음**(108 §6) · 순수 Rust · 경쟁 도구 전부 지원(03) | 접속(TLS 포함) · 질의/페치/취소 · 세션 변수 관용 · 카탈로그 전부 · 그리드 편집(PK 키 규칙) · 벌크(`LOAD DATA LOCAL` 또는 다중행 INSERT) · CLI 동등 · E2E(docker 컨테이너 · integration.yml 추가) | 중(드라이버 어댑터 + 러너 관용 + 시험) · 크기 +1~1.5 MB(120 §3와 함께 검토) |
-| **P2** | **ODBC 일반 드라이버** `nsql-driver-odbc`(**내장** · 사용자 확정 10-21) | 3급 틀 | 한 번에 Tibero·Altibase·CUBRID·Db2·HANA·Access·Excel까지 **읽기·조회·export** 개방 · 고객사 레거시 대응 | 접속 문자열/DSN · 질의/페치 · `SQLTables/SQLColumns/SQLPrimaryKeys` 카탈로그 · 타입 매핑 · 트랜잭션 · 3-OS(unixODBC 패키징 의존 명시) · 그리드 편집 = PK 있을 때만 | 중 · 크기 +0.5 MB |
+| **P2** | **ODBC 일반 드라이버** `nsql-driver-odbc`(**내장** · 사용자 확정 10-21) | 3급 틀 | 한 번에 Tibero·Altibase·CUBRID·Db2·HANA·Access·Excel까지 **읽기·조회·export** 개방 · 고객사 레거시 대응 | 접속 문자열/DSN · 질의/페치 · `SQLTables/SQLColumns/SQLPrimaryKeys` 카탈로그 · 타입 매핑 · 트랜잭션 · 3-OS(unixODBC 패키징 의존 명시) · 그리드 편집 = PK 있을 때만 | 중 · 크기 +0.5 MB · ✅ **1차 10-22(136차 · D-345 · T-383)** = **Windows 전용**(인박스 odbc32) · mac/Linux = 빈 스텁(unixODBC LGPL-2.1 · 런타임 의존 회피 · 8091f8c) → mac/Linux ODBC 길 = D-346 후보(확장 cdylib 또는 패키지 의존 · 사용자 결정 대기) |
 | **P3** | **Tibero**(**확장 드라이버** · 사용자 확정 10-21 · 1차 = 내장 ODBC 위 방언 팩(Oracle 상속 + 차이표) · 2차 = tbCLI cdylib 선택) | 3급 → 2급 | 국내 공공·금융 표준급 · Oracle 방언 90 % 재사용 · 차이표만 | 방언 상속(Oracle) + 카탈로그 뷰 차이 + 문법 차이표 · 실서버 검증 = 사용자 환경 필요 | 낮(ODBC 뒤) |
 | **P4** | **DuckDB**(**확장 드라이버** · 사용자 확정 10-21) | 2급 후보 | 분석 파일(CSV/Parquet) 즉시 질의 · 급성장 | cdylib 확장(22 §0 · 크기 +20 MB를 본체에 안 넣음) · SQLite와 같은 파일-서버 모델 | 중(확장 드라이버 틀 = DR-29 설계 선행) |
 | **P5** | ClickHouse · 클라우드 DW · Db2/HANA 전용 방언 | — | 수요 확인 뒤 · Db2/HANA는 ODBC로 이미 접속 가능 | — | — |

@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-22 (136차 win · ODBC 1차)** — ★ T-383 `nsql-driver-odbc`(odbc-api 29.2 · `?` 바인드 · 블록 페치 · 자동 커밋 끔)(2c6b38b) · ODBC 접속 문자열 `odbc:…`(ffc92f1) · ★ D-345 = Windows 전용 내장(unixODBC LGPL · 네이티브 의존 0 · mac/Linux = D-346 결정 대기)(8091f8c) · 실측 = Windows 인박스 SQL Server 드라이버 × 저장 프로필 ✓. → [journal §9](journal/2026-10-22.md)
 - **2026-10-22 (135차 후속 · MySQL/MariaDB 잔여)** — ★ T-388 TLS(`?tls=` · `mysql.tls` · preferred 폴백 · 20 s 상한)(94f5a80) · MySQL `SHOW` 서버 패스스루(dbba525) · CI mac/linux 경로 결함 2(2b6c8ef) · ★ LOAD DATA LOCAL 벌크 싱크 + E2E MySQL 분기(f73515a) · MariaDB 11.4 실서버(코드스페이스 3307) 통합 전부 ✓ · 취소 실측 ≤ 568 ms · 그리드 편집 E2E 78/0 · CI ✓. → [journal §8](journal/2026-10-22.md)
 - **2026-10-22 (135차 win)** — ★ MySQL/MariaDB 내장 드라이버 1차 T-387(f24fe3a) · 니모닉 3차 T-390(957f2a7) · 간략 접속 T-389(e08586b) · 파일 창 시작 폴더·모드 위치·이름 바꾸기·삭제·Undo/Redo T-391·T-392(b3353d5) · CLAUDE.md 축소·문서(15fba49) · 전원 차단 복구 · nexa-ui 221차. → [journal](journal/2026-10-22.md)
 - **2026-10-20 밤 (132차 · win · 패널 키보드)** — 🔧 북마크 ← 선택 보존 · 파일 검색 ←/→ · 확장 목록 키보드 이동·포커스 · 협업 지적 = 확장 키 이동 동기 GET → 머문 행 200 ms + 메타 캐시 · 후속 T-374 · 확장 보기 탭 [RO] 제외 — journal 10-20 §5

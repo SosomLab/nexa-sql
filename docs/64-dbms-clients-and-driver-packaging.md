@@ -13,7 +13,7 @@
 | PostgreSQL | `postgres`(순수 Rust) | 없음 | `~/.pgpass` · `pg_service.conf` · `sslrootcert`는 **읽지 않는다**(libpq의 기능 — 비밀번호는 볼트가 맡는다) · TLS 미지원(서버가 `hostssl`만 허용하면 접속 불가 → 필요해지면 `rustls` 추가) | ✅ 내장 |
 | SQLite | `rusqlite` `bundled`(SQLite C 소스를 앱에 컴파일) | 없음 | 확장 모듈 로드(`load_extension`)는 꺼 둠 | ✅ 내장 |
 | MySQL · MariaDB | `mysql` 28(순수 Rust · 동기 · `rustls-tls`) | 없음 | TLS = 접속 문자열 `?tls=` 또는 설정 ▸ DBMS ▸ MySQL / MariaDB(`mysql.tls` 기본 preferred · `mysql.tls_ca` = CA PEM · 비우면 시스템 루트 · T-388) · `LOAD DATA LOCAL` 미사용 | ✅ 내장(10-22 · 135차 · D-344) |
-| ODBC(Tibero · Altibase · CUBRID …) | (없음) | ★ **ODBC 드라이버 관리자 + 벤더 ODBC 드라이버 + DSN**(Windows 내장 · macOS/Linux는 unixODBC/iODBC 설치) | 벤더별 클라이언트 설정 파일(`tbdsn.tbr` 등) | ☐ 미구현 — Oracle 다음으로 "따로 설정"이 필요한 후보 |
+| ODBC(Tibero · Altibase · CUBRID · Db2 · HANA · Access/Excel …) | `odbc-api` 29.2(**Windows 전용** = 인박스 odbc32 · macOS/Linux = 미지원 · D-346 후보) | Windows = 앱 쪽 설치 0 — **벤더 ODBC 드라이버 + DSN**(또는 `odbc:Driver={…};…` 접속 문자열)만 | 벤더별 클라이언트 설정 파일(`tbdsn.tbr` 등) · DSN 관리 = Windows `odbcad32` | ✅ 내장 1차 Windows(10-22 · 136차 · D-345 · 8091f8c) — 취소·서버 커서 없음 · 긴 LOB 32K · mac/Linux = unixODBC LGPL·런타임 의존 때문에 보류 |
 
 **결론**: 지금 빌드에서 별도 설치·설정이 필요한 것은 **Oracle 하나**다. 앞으로 같은 틀이 필요한 것은 ODBC 계열(드라이버 관리자·DSN 탐지)이고, 순수 Rust 드라이버(SQL Server · PostgreSQL · MySQL)는 네트워크 보안 옵션(TLS 인증서 · 통합 인증)을 넣을 때 그 DBMS의 분류에 키가 생긴다.
 
