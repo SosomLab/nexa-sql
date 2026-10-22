@@ -26,9 +26,9 @@
 | **SQLite** | 2 | 3(임베디드 1위) | ✅ `rusqlite` | 완료 | ✅ | — | **2급 · 완료** |
 | **MySQL / MariaDB** | 1(지금 고객 없음) | 3(세계 1~2위 · 국내 웹/스타트업) | ✅ 순수 Rust(`mysql` 동기 또는 `mysql_async` · MariaDB 같은 프로토콜) | **낮음** — 방언·카탈로그(`information_schema`)·문법(`mysql.sqlg`)·완성·Caps 이미 있음(108 §6) · 남은 것 = 드라이버 crate 어댑터 + 러너 관용(세션 변수 `SET @x` · `SELECT … INTO @x` · OUT 인자) + E2E | ✅ | **3·6·2·2·1 = 14** | **P1 · 2급 내장** |
 | **ODBC(일반)** | 2(고객사 레거시 접속 요청 가능) | 2 | `odbc-api`(Rust · 시스템 ODBC 관리자 = Windows 내장 · mac/Linux unixODBC) | **중간** — 방언 `Dialect::Odbc`·108 §7 있음 · 드라이버 어댑터 + 카탈로그 = `SQLTables/SQLColumns` 일반 경로 + 타입 매핑 · 3-OS 패키징(unixODBC 의존) | 읽기·조회·export 공통 기능(3급 = 그리드 편집은 키 규칙 한정) | 6·4·3·2·1 = **16**(개방 효과 포함) | **P2 · 3급 틀**(한 번에 여러 DB) |
-| **Tibero**(TmaxSoft) | 1(공공·금융 고객 가능) | 2(국내 공공 표준급) | ODBC/JDBC/tbCLI(C) — 순수 Rust 없음 → **ODBC 위** | 낮음(ODBC 뒤) — **Oracle 호환 방언**이라 Oracle 방언 재사용 + 차이표(108 §1 템플릿) | ✅ | 3·4·2·3·1 = **13** | **P3 · 3급(ODBC + Oracle 호환 방언)** |
+| **Tibero**(TmaxSoft) | 1(공공·금융 고객 가능) | 2(국내 공공 표준급) | ODBC/JDBC/tbCLI(C) — 순수 Rust 없음 → **ODBC 위** | 낮음(ODBC 뒤) — **Oracle 호환 방언**이라 Oracle 방언 재사용 + 차이표(108 §1 템플릿) | ✅ | 3·4·2·3·1 = **13** | **P3 · 3급(ODBC + Oracle 호환 방언)** · ✅ **10-23 접속 프리셋**(`tibero://` → ODBC 문자열 · Altibase·CUBRID 함께 · T-384 · 실서버·벤더 드라이버 확보 전 = 접속 시험 보류) |
 | Altibase · CUBRID · Goldilocks | 0 | 1~2(국내 공공·통신) | ODBC | 낮음(ODBC 뒤 · 방언 차이표만) | ✅ | 0·3·2·3·1 = 9 | 3급 · ODBC 일반으로 자동 커버(전용 방언은 요청 시) |
-| **DuckDB** | 1(분석 파일 · CSV/Parquet) | 2(급성장 · 분석가) | ✅ `duckdb` crate(C 라이브러리 번들 ≈ +20 MB!) 또는 동적 적재 | 중간 — SQLite 자리(파일 = 서버 하나) 재사용 · PG 호환 방언 | ✅ | 3·4·2·2·1 = 12 | **P4 · 2급 후보**(크기 때문에 **확장 드라이버**(22 §0 cdylib) 1호 적합) |
+| **DuckDB** | 1(분석 파일 · CSV/Parquet) | 2(급성장 · 분석가) | ✅ `duckdb` crate(C 라이브러리 번들 ≈ +20 MB!) 또는 동적 적재 | 중간 — SQLite 자리(파일 = 서버 하나) 재사용 · PG 호환 방언 | ✅ | 3·4·2·2·1 = 12 | **P4 · 2급 후보**(크기 때문에 **확장 드라이버**(22 §0 cdylib) 1호 적합) · ✅ **10-23 구현**(D-351 · 확장 전용 · libduckdb 동적 + 런타임 동봉 · zip ≈ 19 MB · `drivers-v0.1.1`) |
 | ClickHouse | 0 | 2(분석 · 로그) | HTTP/native(`clickhouse` crate) | 중간(방언 새로) | 부분(트랜잭션 없음) | 0·4·2·1·0 = 7 | P5 · 수요 확인 뒤 |
 | Snowflake · BigQuery · Redshift(클라우드 DW) | 0 | 2 | HTTP REST(OAuth · 키) | 높음(인증·비동기 작업 모델 다름) | 부분 | 0·4·1·0·0 = 5 | P5 · 보류 |
 | IBM Db2 · SAP HANA | 0 | 1(대기업 레거시) | ODBC/CLI | 낮음(ODBC 뒤) | ✅ | 0·2·2·3·1 = 8 | 3급 · ODBC로 커버 |

@@ -104,6 +104,8 @@ DBMS
 
 > ★ **10-23 D-350** = 모든 드라이버가 이 길(확장)로 간다 · ABI v2(op 17 · 22 §0-1) · 7종 cdylib(심볼 `nsql_driver_vtable_<id>`) · 설치본 = Oracle OCI만.
 
+> ★ **10-23 D-351 = `nsql-driver-duckdb`**(8번째 드라이버 · rlib + cdylib · **확장 전용 = 내장 feature 없음** · duckdb-rs 1.2 + libduckdb 동적 링크 · 런타임 동봉) · 허브 `DRIVER_IDS`에 duckdb(`is_builtin` false).
+
 > 크레이트(10-22) = `nsql-abi`(ABI v1) · `nsql-driver-dyn`(로더) · `nsql_drivers::ext`(레지스트리 · 매니페스트) · **`nsql-json`**(의존 0 · `Json`/`parse`/`dump` · settings에서 분리 = 레지스트리가 settings에 기대지 않게) · **`nsql-net`**(최소 HTTPS GET · rustls 0.23 공유 · 프록시 · 다운로드용 · T-29) · `ext::install`·`ext::zip`·`ext::sha256`·`ext::keys` · CLI `nsql driver`(list·path·check·rm·search·install·update).
 
 ```

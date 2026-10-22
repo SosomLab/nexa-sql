@@ -219,6 +219,7 @@ sudo dnf install nexa-sql
 - **앱 설치본 = 드라이버 없는 판**(D-350) = `release.yml`의 `NSQL_FEATURES = --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` · 포장 스크립트 3이 `NSQL_FEATURES`를 그대로 씀 · 남는 드라이버 = Oracle OCI(Instant Client 의존)뿐 · 나머지 = 첫 접속 때 자동 설치 또는 오프라인 번들.
 - 절대 정식(Latest) 릴리스로 올리지 않는다 — Homebrew 탭·linux-repo 생성기가 `releases/latest`를 본다 · `homebrew.yml` · `linux-repo.yml` · `publish-windows-packages.yml`은 `v*` 태그 릴리스에만 반응(가드 `startsWith(github.event.release.tag_name, 'v')` · `drivers-v*`는 해당 없음).
 - 한 번 공개한 자산은 지우거나 다시 올리지 않는다(색인 sha256이 가리킴) — 고치려면 버전을 올린다.
+- 자산 크기(10-23) = `drivers-v0.1.0`(7종) Windows zip 0.20~2.29 MB · 오프라인 번들 6.75~7.69 MB · ★ `drivers-v0.1.1`(8종 · DuckDB 추가) = DuckDB zip Windows 19.6 MB · Linux 28.0 · macOS aarch64 40.5 · macOS x86_64 40.6 · 오프라인 번들 Windows 26.8 · Linux 35.7 · macOS 47.3/47.9 MB(자산 92).
 
 ### 5-6. 패키지 게시물 + 프로그램 내부 정보 = 영어(사용자 10-04 → 10-10 확장)
 

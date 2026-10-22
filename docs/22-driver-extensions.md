@@ -195,6 +195,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 **결론**: SxS는 **Oracle OCI와 ODBC 계열에 실제로 필요**하고, 그 전제(프로세스 격리)는 §2-2와 일치한다. 나머지는 단일 최신판 + 변종 1~2개면 된다. 따라서 저장소 구조는 **모든 확장에 버전 폴더를 두되**(균일한 관리 UI), `sxs: false`인 확장은 Update 시 구버전을 자동 정리 제안한다.
 
 ### 4-2. 로컬 보관 구조 (Windows SxS 유추 — 버전 폴더 · 참조 카운트 · 고아 정리)
+
+> ★ **동봉 런타임(10-23 · D-351 DuckDB)** = 드라이버 cdylib 옆에 런타임 라이브러리를 같이 둔다(`drivers/duckdb/<ver>/` = `nsql_driver_duckdb.dll` + `duckdb.dll` ≈ 58 MB) · 로더 검색 경로 = Windows `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)`(cdylib 폴더의 DLL 우선 · PATH의 다른 duckdb.dll보다 먼저) · Linux/macOS = rpath `$ORIGIN`/`@loader_path`(build.rs) · 패키징 = `package-drivers.py`의 `BUNDLED` 표(`build/libduckdb-sys-*/out`에서 런타임을 찾아 zip에 넣음) · 시험 도우미·build.rs가 개발 빌드 `target/<profile>`에도 복사.
 ```text
 <사용자 설정 폴더>/nexa-sql/drivers/          ([21]과 같은 뿌리 · 여러 인스턴스 공유 · 원자적 rename 설치)
 ├─ index.json (+ .etag)                        색인 캐시

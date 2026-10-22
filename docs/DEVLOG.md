@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · DuckDB · Tibero 프리셋)** — ★ DuckDB 확장 드라이버(D-351 · 확장 전용 · libduckdb 동적 + 런타임 동봉 · 6154b8a) · Tibero·Altibase·CUBRID URL 프리셋(T-384 · 🔧 e6999bf) · integration.yml MariaDB·`NSQL_TEST_DYN` 전체 · 릴리스 `drivers-v0.1.1` = ✓(자산 92 · 봇 색인 b4e444a · Windows 자동 설치 왕복 ✓).
+
 - **2026-10-23 (137차 · 드라이버 첫 릴리스)** — ★ pre-release `drivers-v0.1.0`(1차 ✗ = macOS bash 3.2 빈 배열 → 38f26f9 · 재실행 ✓ · 자산 80 · 오프라인 번들 4 · 봇 색인 1623f21 · 앱 Latest v0.2.7 유지) · 시험 자동화 `NSQL_TEST_DYN=1` 확장 경로 22/22 + ODBC Text CSV 자동(ffc9704) · GUI [파일에서 설치…] + 갱신 배지 `driver.check_updates`(fbe5001 · V1 ✓).
 
 - **2026-10-23 (137차 · D-350 D + 설정)** — ★ 드라이버 릴리스 워크플로 `drivers.yml`(태그 `drivers-v<ver>` · 4 매트릭스 · 서명 · 오프라인 번들 · pre-release · 색인 갱신 커밋) + 드라이버 없는 설치본(`NSQL_FEATURES` · 경량 CLI 22.0 → 12.4 MB)(b93ca33) · 설정 DBMS ▸ 드라이버 분류(info 3 · [드라이버 관리자…] · DBMS별 드라이버 3상태 · MySQL 행)(542250c) · V1 ✓.
