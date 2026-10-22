@@ -7,6 +7,7 @@ pub(crate) mod compare;
 mod completion;
 mod connwin;
 mod demo;
+pub(crate) mod drivers;
 pub(crate) mod drop;
 mod errsuspect;
 mod event_loop;

@@ -51,6 +51,7 @@ mod output;
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod condbar;
 mod dragchip;
+mod driver_win;
 mod extensions;
 mod extfile;
 mod file_win;
@@ -353,6 +354,10 @@ struct App {
     pw_once: Option<(u64, nsql_core::Secret, Instant)>,
     /// 변수 창(docs/63 V2) · 마지막 실행에서 바뀐 이름(탭 id, 대문자 이름들 — 그 탭의 줄을 강조).
     vars_win: vars_win::VarsWin,
+    /// ★ 드라이버 관리자 창(docs/22 §5-2 · T-29 2차) + 워커 상태.
+    driver_win: driver_win::DriverWin,
+    driver_task: app::drivers::DriverTask,
+    open_drivers: bool,
     vars_changed: (u64, std::collections::HashSet<String>),
     open_sessions: bool,
     open_mem: bool,
@@ -1696,6 +1701,7 @@ fn main() {
     mark(&mut marks, "input_win");
     let vars_win = vars_win::VarsWin::new();
     mark(&mut marks, "vars_win");
+    let driver_win = driver_win::DriverWin::new();
     let git = gitstat::GitWatch::new();
     mark(&mut marks, "git");
     let keys_win = KeysWin::new();
@@ -1820,6 +1826,9 @@ fn main() {
         key_guard: None,
         pw_once: None,
         vars_win,
+        driver_win,
+        driver_task: app::drivers::DriverTask::default(),
+        open_drivers: false,
         vars_changed: (0, std::collections::HashSet::new()),
         open_sessions: false,
         open_mem: false,

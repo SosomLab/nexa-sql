@@ -412,6 +412,7 @@ impl App {
                 }
             }
             "view.variables" => self.open_vars_window(el),
+            "view.drivers" => self.open_drivers_window(el),
             "view.on_top" => {
                 let on = !self.settings.flag("window.always_on_top");
                 let _ = self
@@ -1057,6 +1058,15 @@ impl App {
                 self.disconnect_now();
             }
             // 세션 목록 = 토글(사용자 09-19): 열려 있으면 닫고 · 아니면 연다.
+            // ★ 드라이버 관리자(docs/22 §5-2): 열기만(열려 있으면 앞으로) — 창은 다음 `about_to_wait`에서.
+            "view.drivers" => {
+                if let Some(w) = self.driver_win.window() {
+                    w.focus_window();
+                } else {
+                    self.open_drivers = true;
+                    self.redraw();
+                }
+            }
             "view.variables" => {
                 if self.vars_win.is_open() {
                     self.vars_win.close();
@@ -1416,6 +1426,7 @@ impl App {
                     item("view.sessions", Msg::MnSessManager),
                     item("view.memory", Msg::MnMemoryWindow),
                     item("view.variables", Msg::MnVariables),
+                    item("view.drivers", Msg::MnDrivers),
                     item("vars.show", Msg::MnShowVariables),
                     item("vars.script", Msg::MnVariablesScript),
                     item("view.on_top", Msg::MnAlwaysOnTop),
@@ -1932,6 +1943,11 @@ impl App {
             "view.variables",
             Msg::MnVariables,
             self.vars_win.is_open(),
+        ));
+        cmds.push(tv(
+            "view.drivers",
+            Msg::MnDrivers,
+            self.driver_win.is_open(),
         ));
         cmds.push(tv(
             "view.on_top",

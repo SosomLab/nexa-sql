@@ -246,6 +246,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     Command {
+        id: "view.drivers",
+        label: Msg::MnDrivers,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
         id: "view.search",
         label: Msg::MnSearchPanel,
         win: "ctrl+shift+f",

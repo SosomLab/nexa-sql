@@ -160,6 +160,7 @@ impl App {
             self.about_win.window(),
             self.drop_win.window(),
             self.vars_win.window(),
+            self.driver_win.window(),
             self.mem_win.window(),
             self.findobj_win.window(),
             self.order_win.window(),

@@ -630,6 +630,8 @@ impl ApplicationHandler<Wake> for App {
         // ★ 메모리 맵 창(docs/80): 열려 있을 때만 `mem.refresh_ms`마다 표본 → 창·상태줄 갱신. 닫혀 있으면 깨우지도 않는다.
         // ★ 객체 찾기 엔진 → 창(113 §4 v2 · 작업 단위 메시지 · 창이 닫혔거나 rev가 다르면 버림).
         self.findobj_pump();
+        // ★ 드라이버 관리자 워커(색인·설치) → 상태줄(창이 닫혀도 결과는 거둔다).
+        self.drivers_pump();
         // 객체 찾기 창 진행 중이면 진행 패널·혜성 갱신(113).
         if self.findobj_win.tick() {
             // ★ 프레임 간격(10-16 사용자 "검색 중 미리보기 창이 열리지 않음"의 실체): `about_to_wait`마다 다시 그리기를 요청하면 winit
@@ -1508,6 +1510,18 @@ impl App {
             }
             return true;
         }
+        if self.driver_win.is(id) {
+            match self.driver_win.handle(event) {
+                driver_win::DriverWinAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let rows = self.driver_rows();
+                    self.driver_win
+                        .paint(&rows, &self.ui_font, &self.theme, ui_px);
+                }
+                other => self.drivers_apply(other),
+            }
+            return true;
+        }
         if self.import_win.is(id) {
             match self.import_win.handle(event) {
                 import_win::ImportAction::Paint => {
@@ -1930,6 +1944,9 @@ impl App {
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
         }
+        if std::mem::take(&mut self.open_drivers) {
+            self.open_drivers_window(el);
+        }
         if std::mem::take(&mut self.open_sessions) {
             self.open_sessions_window(el);
         }
@@ -2093,6 +2110,9 @@ impl App {
         }
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
+        }
+        if std::mem::take(&mut self.open_drivers) {
+            self.open_drivers_window(el);
         }
         // 설정 창도 사건 없이(기동 명령 `edit.prefs:<검색어>` · T-305).
         if std::mem::take(&mut self.open_prefs) {
