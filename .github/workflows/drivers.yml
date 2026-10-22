@@ -1,0 +1,188 @@
+# drivers — 태그 `drivers-v*` push → 3-OS 확장 드라이버 패키지(zip + .sha256 + Ed25519 .sig) + 오프라인 번들 → GitHub **pre-release**
+#   + `drivers/index.json` 갱신 커밋(D-350 · docs/22 §2-3·§3 · docs/33 §5-5-1).
+#
+# 원칙: 드라이버 릴리스는 **모두 pre-release**로 올린다(앱의 `releases/latest`를 가로채지 않게 · homebrew/linux-repo 가드) · 자산 이름 =
+#   `nsql-driver-<id>-<ver>-<os>-<arch>.zip` · 한 태그에 전 드라이버(tag_prefix = `drivers-v`) · 서명 없이는 올리지 않는다(본체가 거부).
+# 서명 시크릿(필수): NEXA_DRIVER_KEY_B64 = `nexa-license-tool keygen`이 만든 봉투 파일의 base64 · NEXA_DRIVER_KEY_PASS = 그 암호.
+#   공개키 = drivers/keys/drv-v1.key.pub(저장소) = crates/nsql-drivers/src/ext/keys.rs(본체 내장).
+# ★ nexa-sql은 형제 저장소 ../nexa-ui · ../nexa-license를 path 의존한다 → release.yml과 같이 나란히 체크아웃.
+name: drivers
+
+on:
+  push:
+    tags: ["drivers-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "드라이버 릴리스 태그(예: drivers-v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write # pre-release 생성 · index.json 커밋
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: nexa-sql
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/drivers-v* ]]; then tag="$GITHUB_REF_NAME"; else tag="${{ inputs.tag }}"; fi
+          case "$tag" in drivers-v*) ;; *) echo "::error::태그는 drivers-v<ver> 꼴이어야 한다: $tag"; exit 1 ;; esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"; echo "version=${tag#drivers-v}" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            slug: linux
+            arch: x86_64
+            target: ""
+          - os: windows-latest
+            slug: windows
+            arch: x86_64
+            target: ""
+          - os: macos-latest
+            slug: macos
+            arch: aarch64
+            target: ""
+          - os: macos-latest
+            slug: macos
+            arch: x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      RUSTUP_TOOLCHAIN: stable
+      NEXA_DRIVER_KEY_PASS: ${{ secrets.NEXA_DRIVER_KEY_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-license
+          path: nexa-license
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            nexa-sql
+            nexa-license
+          key: drivers-${{ matrix.slug }}-${{ matrix.arch }}
+      - name: macOS x86_64 타깃
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+      - name: 드라이버 cdylib 빌드
+        shell: bash
+        run: |
+          set -euo pipefail
+          pk=(-p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle)
+          [ "${{ matrix.slug }}" = "windows" ] && pk+=(-p nsql-driver-odbc)
+          tgt=(); [ -n "${{ matrix.target }}" ] && tgt=(--target "${{ matrix.target }}")
+          cargo build --release --locked "${pk[@]}" "${tgt[@]}"
+      - name: 패키지(zip + 매니페스트)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=target/release; [ -n "${{ matrix.target }}" ] && dir="target/${{ matrix.target }}/release"
+          python3 scripts/package-drivers.py --version "$VERSION" --target-dir "$dir" --os "${{ matrix.slug }}" --arch "${{ matrix.arch }}" --out out
+      - name: 서명 도구(nexa-license-tool)
+        shell: bash
+        run: cargo build --release --locked --manifest-path ../nexa-license/Cargo.toml -p nexa-license-tool
+      - name: 서명 + 검증(.sig · .sha256)
+        shell: bash
+        env:
+          KEY_B64: ${{ secrets.NEXA_DRIVER_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY_B64" ] || [ -z "$NEXA_DRIVER_KEY_PASS" ]; then
+            echo "::error::NEXA_DRIVER_KEY_B64 / NEXA_DRIVER_KEY_PASS 시크릿이 없다 — 서명 없는 드라이버는 본체가 거부하므로 올리지 않는다"; exit 1
+          fi
+          key="$RUNNER_TEMP/drv.key"; echo "$KEY_B64" | base64 --decode > "$key"
+          tool=../nexa-license/target/release/nexa-license-tool; [ -x "$tool" ] || tool="$tool.exe"
+          "$tool" sign-file out/nsql-driver-*.zip --key "$key" --pass-env NEXA_DRIVER_KEY_PASS
+          "$tool" verify-file out/nsql-driver-*.zip --pub drivers/keys/drv-v1.key.pub
+          rm -f "$key"
+      - name: 오프라인 번들
+        shell: bash
+        run: python3 scripts/bundle-drivers.py --version "$VERSION" --os "${{ matrix.slug }}" --arch "${{ matrix.arch }}" --dir out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drivers-${{ matrix.slug }}-${{ matrix.arch }}
+          path: nexa-sql/out/*
+          if-no-files-found: error
+
+  publish:
+    needs: [meta, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+          ref: main # index.json 커밋은 main에
+      - uses: actions/download-artifact@v4
+        with:
+          path: nexa-sql/staged
+          pattern: drivers-*
+          merge-multiple: true
+      - name: 릴리스 노트
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          cat > notes.md <<EOF
+          # Nexa SQL extension drivers $VERSION
+
+          Driver packages for Nexa SQL (installed automatically on first connect, or with \`nsql driver install <id>\`).
+          Each \`.zip\` ships with \`.sha256\` and an Ed25519 \`.sig\`; Nexa SQL refuses unsigned packages.
+          Offline: download \`nsql-drivers-all-$VERSION-<os>-<arch>.zip\` and run \`nsql driver install --file <that zip>\` (or View ▸ Drivers).
+
+          Nexa SQL 확장 드라이버 패키지입니다. 처음 접속할 때 자동으로 내려받아 설치되며, \`nsql driver install <id>\`로도 설치합니다.
+          폐쇄망은 \`nsql-drivers-all-$VERSION-<os>-<arch>.zip\` 하나를 받아 \`nsql driver install --file\`로 전부 설치합니다.
+          EOF
+      - name: pre-release 생성/갱신
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          (cd staged && sha256sum * > sha256sums.txt)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" staged/* --clobber
+          else
+            gh release create "$TAG" staged/* --prerelease --title "Nexa SQL drivers ${TAG#drivers-v}" --notes-file notes.md
+          fi
+      - name: drivers/index.json 갱신 커밋
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/update-driver-index.py --version "$VERSION" --assets-dir staged
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add drivers/index.json
+          git diff --cached --quiet && { echo "index.json 변화 없음"; exit 0; }
+          git commit -m "drivers: index.json → latest $VERSION (drivers.yml)"
+          git push origin HEAD:main

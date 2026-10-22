@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""package-drivers.py - 빌드된 드라이버 cdylib → 확장 패키지 zip(D-350 - docs/22 §2-3 - §3).
+
+    python3 scripts/package-drivers.py --version 0.1.0 --target-dir target/release --os windows --arch x86_64 --out out [--ids pg,mysql]
+
+패키지 하나 = `nsql-driver-<id>-<ver>-<os>-<arch>.zip` = { nexa-driver.json(id - version - dialect - protocol=ABI_VERSION - lib) ·
+<cdylib> - LICENSE.md }. 서명(.sig)·해시(.sha256)는 `nexa-license-tool sign-file`이 옆에 만든다(drivers.yml).
+ABI 버전은 crates/nsql-abi/src/lib.rs의 `ABI_VERSION`을 읽는다(어긋남 방지). 라이브러리가 없는 id는 건너뛴다(odbc = Windows만).
+"""
+import argparse, io, json, os, re, sys, zipfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# (id, crate, dialect, name) - crates/nsql-drivers/src/lib.rs `DRIVER_IDS`·`ext_crate_name`과 같은 표.
+DRIVERS = [
+    ("sqlite", "nsql-driver-sqlite", "sqlite", "SQLite"),
+    ("pg", "nsql-driver-pg", "postgres", "PostgreSQL"),
+    ("mysql", "nsql-driver-mysql", "mysql", "MySQL / MariaDB"),
+    ("mssql", "nsql-driver-mssql", "mssql", "SQL Server"),
+    ("oracle-thin", "nsql-driver-oracle-thin", "oracle", "Oracle (Thin, pure Rust)"),
+    ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
+    ("odbc", "nsql-driver-odbc", "odbc", "ODBC (Windows)"),
+]
+WINDOWS_ONLY = {"odbc"}
+
+
+def abi_version():
+    src = io.open(os.path.join(ROOT, "crates", "nsql-abi", "src", "lib.rs"), encoding="utf-8").read()
+    m = re.search(r"pub const ABI_VERSION: u32 = (\d+);", src)
+    if not m:
+        sys.exit("ABI_VERSION not found")
+    return int(m.group(1))
+
+
+def lib_name(crate, os_name):
+    stem = crate.replace("-", "_")
+    if os_name == "windows":
+        return f"{stem}.dll"
+    if os_name == "macos":
+        return f"lib{stem}.dylib"
+    return f"lib{stem}.so"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", required=True)
+    ap.add_argument("--target-dir", required=True, help="cdylib가 있는 폴더(target/<triple>/release)")
+    ap.add_argument("--os", required=True, choices=["windows", "macos", "linux"])
+    ap.add_argument("--arch", required=True, choices=["x86_64", "aarch64"])
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--ids", default="", help="쉼표 구분 - 비면 전부")
+    a = ap.parse_args()
+    want = {i for i in a.ids.split(",") if i} or None
+    abi = abi_version()
+    os.makedirs(a.out, exist_ok=True)
+    license_path = os.path.join(ROOT, "LICENSE.md")
+    made = []
+    for did, crate, dialect, name in DRIVERS:
+        if want and did not in want:
+            continue
+        if did in WINDOWS_ONLY and a.os != "windows":
+            continue
+        lib = lib_name(crate, a.os)
+        src = os.path.join(a.target_dir, lib)
+        if not os.path.isfile(src):
+            print(f"[skip] {did}: {src} 없음", file=sys.stderr)
+            continue
+        asset = f"nsql-driver-{did}-{a.version}-{a.os}-{a.arch}.zip"
+        manifest = {"id": did, "version": a.version, "dialect": dialect, "protocol": abi, "lib": lib, "name": name}
+        path = os.path.join(a.out, asset)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("nexa-driver.json", json.dumps(manifest, indent=2) + "\n")
+            info = zipfile.ZipInfo(lib)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (0o100755 if a.os != "windows" else 0o100644) << 16
+            info.create_system = 3
+            with open(src, "rb") as f:
+                z.writestr(info, f.read())
+            if os.path.isfile(license_path):
+                z.write(license_path, "LICENSE.md")
+        made.append(asset)
+        print(f"{asset}  ({os.path.getsize(path) / 1048576:.1f} MB - {lib})")
+    if not made:
+        sys.exit("no driver packaged")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -36,7 +36,9 @@ for T in $TARGETS; do
         if ! rustup target list --installed 2>/dev/null | grep -q "^$T\$"; then
             note "타깃 std 없음: $T (rustup target add $T) — 건너뜀"; continue
         fi
-        "$CARGO" build --release --locked -p nexa-sql -p nsql-cli --target "$T"
+        # ★ D-350: 설치본 feature(release.yml `NSQL_FEATURES` · 비면 개발 기본 = 드라이버 전부 내장). 단어 분리 의도.
+        # shellcheck disable=SC2086
+        "$CARGO" build --release --locked -p nexa-sql -p nsql-cli --target "$T" ${NSQL_FEATURES:-}
     fi
     if [ -x "$ROOT/target/$T/release/nexa-sql" ] && [ -x "$ROOT/target/$T/release/nsql" ]; then
         BUILT+=("$T"); note "✓ $T"

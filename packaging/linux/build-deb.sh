@@ -31,9 +31,12 @@ BIN="$ROOT/target/$TARGET/release"
 step "빌드 (release · $TARGET)"
 if [ "$SKIP_BUILD" = 0 ]; then
     if [ -n "${NSQL_ZIGBUILD:-}" ]; then
-        "$(cargo_bin)" zigbuild --release --locked -p nexa-sql -p nsql-cli --target "${TARGET}.2.17"
+        # shellcheck disable=SC2086
+        "$(cargo_bin)" zigbuild --release --locked -p nexa-sql -p nsql-cli --target "${TARGET}.2.17" ${NSQL_FEATURES:-}
     else
-        "$(cargo_bin)" build --release --locked -p nexa-sql -p nsql-cli --target "$TARGET"
+        # ★ D-350: 설치본 feature(release.yml `NSQL_FEATURES` · 비면 개발 기본). 단어 분리 의도.
+        # shellcheck disable=SC2086
+        "$(cargo_bin)" build --release --locked -p nexa-sql -p nsql-cli --target "$TARGET" ${NSQL_FEATURES:-}
     fi
 fi
 [ -x "$BIN/nexa-sql" ] && [ -x "$BIN/nsql" ] || die "산출물 없음: $BIN"

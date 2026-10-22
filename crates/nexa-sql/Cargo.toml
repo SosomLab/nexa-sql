@@ -13,11 +13,18 @@ build = "build.rs"
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 개발·시험 = 드라이버 전부 내장(기본) · 설치본(release.yml `NSQL_FEATURES`) = `--no-default-features --features driver-oracle-oci`
+#   → 설치본에는 Oracle OCI(Instant Client 의존)만 남고 나머지는 확장(접속 시 자동 설치 · `nsql driver install` · 오프라인 번들).
+[features]
+default = ["drivers-builtin"]
+drivers-builtin = ["nsql-drivers/default"]
+driver-oracle-oci = ["nsql-drivers/oracle"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
 nsql-run.workspace = true
-nsql-drivers.workspace = true
+nsql-drivers = { workspace = true, default-features = false }
 nsql-catalog.workspace = true
 nsql-vault.workspace = true
 nsql-io.workspace = true

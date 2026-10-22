@@ -79,7 +79,9 @@ if ($exts -notmatch "WixToolset.UI.wixext.*$([regex]::Escape($WixVersion))") {
 # ── 빌드 ──
 Step "빌드 (release · $Target)"
 if (-not $SkipBuild) {
-    & cargo build --release --locked -p nexa-sql -p nsql-cli --target $Target
+    # ★ D-350: 설치본 feature(release.yml이 넣는다 · 비면 개발 기본 = 드라이버 전부 내장).
+    $feat = @($env:NSQL_FEATURES -split ' ' | Where-Object { $_ })
+    & cargo build --release --locked -p nexa-sql -p nsql-cli --target $Target @feat
     if ($LASTEXITCODE -ne 0) { throw "cargo build 실패" }
 }
 $BinDir = Join-Path $Root "target\$Target\release"

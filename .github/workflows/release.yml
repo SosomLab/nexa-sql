@@ -77,6 +77,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       NSQL_VERSION: ${{ needs.meta.outputs.version }}
+      # ★ D-350(10-23): 설치본 = 드라이버 없는 판(Oracle OCI만 · Instant Client가 있으면 접속) — 나머지 드라이버는 처음 접속할 때
+      #   drivers.yml의 pre-release에서 자동 설치(`driver.auto_install`) 또는 오프라인 번들.
+      NSQL_FEATURES: --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci
       # rust-toolchain.toml(5 타깃 목록)을 rustc 프록시가 보고 자동 설치하다 러너의 rust-src와 충돌했다(v0.1.0 첫 실행 macOS ·
       # `detected conflict: lib/rustlib/src/rust/library/.cargo/config.toml`) — 포장은 설치한 stable + 명시적으로 더한 타깃만 쓴다.
       RUSTUP_TOOLCHAIN: stable
@@ -277,6 +280,7 @@ jobs:
           | macOS (Universal) | \`nexa-sql-$VERSION-macos-universal.pkg\` / \`.dmg\` | Installer → \`/Applications/Nexa SQL.app\` + \`/usr/local/bin/nsql\` · \`brew install --cask kiros33/tap/nexa-sql\` |
           | Linux x86_64 | \`.deb\` / \`.rpm\` | \`sudo apt install ./…deb\` / \`sudo dnf install ./…rpm\` · or the signed repository at <https://pkg.sosomlab.com/> (\`apt install nexa-sql\` / \`dnf install nexa-sql\`) |
 
+          Drivers are not bundled (only the Oracle OCI driver, which needs an Instant Client): the first connection to PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Oracle Thin or ODBC downloads the signed driver package from the \`drivers-v*\` pre-release and installs it (\`driver.auto_install\`). Offline: \`nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip\`.
           Verify downloads with \`sha256sums.txt\`. Builds are not code-signed yet (DR-20): macOS Gatekeeper and Windows SmartScreen will warn.
           License: PolyForm Noncommercial 1.0.0 — free for noncommercial use only.
 
