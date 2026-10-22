@@ -604,16 +604,35 @@ pub fn name_index(
                 .collect()
         }
         Dialect::Odbc => {
-            let sql = format!(
-                "SELECT table_schema, table_type, table_name FROM information_schema.tables WHERE table_type IN ('BASE TABLE','VIEW'){}",
-                in_list("table_schema")
-            );
-            query(s, &sql)?
-                .rows
-                .iter()
-                .take(lim)
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
-                .collect()
+            // ★ 드라이버 카탈로그(SQLTables)가 있으면 그것이 원천(스키마 라벨 규칙 = `odbc_schema_label`).
+            if let Some(ts) = s.catalog_tables(None)? {
+                ts.into_iter()
+                    .filter(|t| {
+                        schemas.is_empty()
+                            || schemas.iter().any(|w| *w == odbc_schema_label(&t.schema))
+                    })
+                    .take(lim)
+                    .map(|t| {
+                        let ty = if t.kind.to_ascii_uppercase().contains("VIEW") {
+                            "VIEW"
+                        } else {
+                            "BASE TABLE"
+                        };
+                        (odbc_schema_label(&t.schema), ty.to_string(), t.name)
+                    })
+                    .collect()
+            } else {
+                let sql = format!(
+                    "SELECT table_schema, table_type, table_name FROM information_schema.tables WHERE table_type IN ('BASE TABLE','VIEW'){}",
+                    in_list("table_schema")
+                );
+                query(s, &sql)?
+                    .rows
+                    .iter()
+                    .take(lim)
+                    .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                    .collect()
+            }
         }
     };
     let truncated = rows.len() >= lim && lim != usize::MAX;
@@ -930,11 +949,79 @@ pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, Db
         }
         Dialect::Sqlite => return Ok(vec!["main".into()]),
         Dialect::Odbc => {
+            // ★ 드라이버 카탈로그(SQLTables · T-383 2차): Access·Excel처럼 information_schema가 없는 곳 → 없으면 일반 SQL.
+            if let Some(ts) = s.catalog_tables(None)? {
+                let mut v: Vec<String> = ts.iter().map(|t| odbc_schema_label(&t.schema)).collect();
+                v.sort();
+                v.dedup();
+                return Ok(v);
+            }
             "SELECT DISTINCT table_schema FROM information_schema.tables ORDER BY 1".to_string()
         }
     };
     let rs = query(s, &sql)?;
     Ok(rs.rows.iter().map(|r| col(r, 0)).collect())
+}
+
+/// ★ ODBC(T-383 2차): 스키마가 없는 드라이버(Access · Excel)는 빈 문자열 → 탐색기 라벨 [`ODBC_NO_SCHEMA`] · 되돌릴 때 빈 문자열.
+pub const ODBC_NO_SCHEMA: &str = "(default)";
+
+#[must_use]
+pub fn odbc_schema_label(schema: &str) -> String {
+    if schema.trim().is_empty() {
+        ODBC_NO_SCHEMA.to_string()
+    } else {
+        schema.to_string()
+    }
+}
+
+#[must_use]
+pub fn odbc_schema_arg(label: &str) -> &str {
+    if label == ODBC_NO_SCHEMA {
+        ""
+    } else {
+        label
+    }
+}
+
+/// ★ ODBC 컬럼 타입 표시(`SQLColumns`): 이름 + 크기(문자·이진·소수만 · 정수·날짜·불리언은 이름만) · 소수는 `(p,s)`.
+#[must_use]
+pub fn odbc_type_label(c: &nsql_core::CatalogColumn) -> String {
+    let up = c.type_name.to_ascii_uppercase();
+    let whole = matches!(
+        up.as_str(),
+        "INT"
+            | "INTEGER"
+            | "BIGINT"
+            | "SMALLINT"
+            | "TINYINT"
+            | "BIT"
+            | "BOOLEAN"
+            | "DATE"
+            | "TIME"
+            | "DATETIME"
+            | "DATETIME2"
+            | "TIMESTAMP"
+            | "FLOAT"
+            | "REAL"
+            | "DOUBLE"
+            | "DOUBLE PRECISION"
+            | "TEXT"
+            | "NTEXT"
+            | "IMAGE"
+            | "LONGTEXT"
+            | "COUNTER"
+            | "LONGBINARY"
+            | "LONGCHAR"
+    );
+    match (c.size, c.decimal_digits) {
+        _ if whole || c.type_name.contains('(') => c.type_name.clone(),
+        (Some(p), Some(d)) if d > 0 && (up.contains("DEC") || up.contains("NUM")) => {
+            format!("{}({p},{d})", c.type_name)
+        }
+        (Some(n), _) if n > 0 && n < 1_000_000 => format!("{}({n})", c.type_name),
+        _ => c.type_name.clone(),
+    }
 }
 
 /// ★ 서버 한 줄 정보(101 §2 · D-253 · 접속 직후 1회): 버전 · 로그인 · 현재 DB · 에디션(없으면 빈 문자열).
@@ -2144,15 +2231,28 @@ pub fn objects(
                 ObjectKind::View => "VIEW",
                 _ => return Ok(Vec::new()),
             };
-            let sql = format!(
+            // ★ 드라이버 카탈로그(SQLTables)가 있으면 그것이 원천: `SYSTEM TABLE`도 표로(extra = 드라이버 종류 표기).
+            if let Some(ts) = s.catalog_tables(Some(odbc_schema_arg(schema)))? {
+                let want_view = matches!(kind, ObjectKind::View);
+                let mut rows: Vec<(String, String, String, String)> = ts
+                    .into_iter()
+                    .filter(|t| odbc_schema_label(&t.schema) == schema)
+                    .filter(|t| t.kind.to_ascii_uppercase().contains("VIEW") == want_view)
+                    .map(|t| (t.name, String::new(), String::new(), t.kind))
+                    .collect();
+                rows.sort();
+                rows
+            } else {
+                let sql = format!(
                 "SELECT table_name, '', '', '' FROM information_schema.tables WHERE table_schema = {} AND table_type = '{tt}' ORDER BY table_name",
                 lit(schema)
             );
-            query(s, &sql)?
-                .rows
-                .iter()
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2), col(r, 3)))
-                .collect()
+                query(s, &sql)?
+                    .rows
+                    .iter()
+                    .map(|r| (col(r, 0), col(r, 1), col(r, 2), col(r, 3)))
+                    .collect()
+            }
         }
     };
     Ok(rows
@@ -2205,6 +2305,21 @@ pub fn fmt_type(base: &str, len: &str, prec: &str, scale: &str) -> String {
 
 /// 테이블/뷰의 컬럼(위치 순).
 pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, DbError> {
+    // ★ ODBC 드라이버 카탈로그(SQLColumns · T-383 2차) — 있으면 그것이 원천.
+    if s.dialect() == Dialect::Odbc {
+        if let Some(cs) = s.catalog_columns(Some(odbc_schema_arg(schema)), table)? {
+            return Ok(cs
+                .into_iter()
+                .map(|c| ColumnInfo {
+                    data_type: odbc_type_label(&c),
+                    name: c.name,
+                    nullable: c.nullable.unwrap_or(true),
+                    position: c.position,
+                    default: c.default,
+                })
+                .collect());
+        }
+    }
     let dialect = s.dialect();
     let sql = match dialect {
         Dialect::Oracle => format!(

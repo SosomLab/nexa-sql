@@ -1,12 +1,15 @@
 //! ODBC 어댑터 본문(Windows 전용 · 문서는 `lib.rs`).
 use nsql_core::{
-    Caps, Column, CursorId, DbError, Dialect, DriverLimit, ExecRequest, ExecResult, ResultSet,
-    Session, Value,
+    Caps, CatalogColumn, CatalogTable, Column, CursorId, DbError, Dialect, ExecRequest, ExecResult,
+    ResultSet, Session, Value,
 };
 use nsql_script::ConnectSpec;
 use odbc_api::buffers::{AnyColumnBufferSlice, BufferDesc, ColumnarDynBuffer};
+use odbc_api::handles::{AsStatementRef, Statement};
 use odbc_api::parameter::InputParameter;
-use odbc_api::{Connection, ConnectionOptions, Cursor, DataType, IntoParameter};
+use odbc_api::{Connection, ConnectionOptions, Cursor, DataType, IntoParameter, Nullable};
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::Arc;
 
 /// 블록 페치 행 수(열 버퍼 크기 = 행 수 × 열 폭).
 const FETCH_ROWS: usize = 256;
@@ -50,6 +53,56 @@ pub struct OdbcSession {
     description: String,
     dbms: String,
     max_rows: usize,
+    /// ★ 실행 중인 문장 핸들(T-383 2차 취소): `execute` 동안만 non-null · [`OdbcCancel`]이 다른 스레드에서 `SQLCancel`.
+    active: Arc<AtomicPtr<std::ffi::c_void>>,
+}
+
+/// ★ 실행 취소(ODBC `SQLCancel` · 다른 스레드에서 실행 중 문장 핸들에 · 44 §6): 실행 중이 아니면 조용히 Ok.
+struct OdbcCancel(Arc<AtomicPtr<std::ffi::c_void>>);
+
+impl nsql_core::CancelHandle for OdbcCancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        let p = self.0.load(Ordering::Acquire);
+        if p.is_null() {
+            return Ok(());
+        }
+        // SAFETY: `p`는 `execute_inner`가 실행 중인 문장의 HSTMT · 문장이 끝나면 null로 되돌린다 · SQLCancel은 다른 스레드에서
+        //   실행 중 문장에 부르도록 정의된 호출이다(ODBC 3.x).
+        let rc = unsafe { odbc_api::sys::SQLCancel(odbc_api::sys::HStmt(p.cast())) };
+        if matches!(
+            rc,
+            odbc_api::sys::SqlReturn::SUCCESS | odbc_api::sys::SqlReturn::SUCCESS_WITH_INFO
+        ) {
+            Ok(())
+        } else {
+            Err(DbError {
+                code: None,
+                message: format!("SQLCancel returned {rc:?}"),
+                position: None,
+            })
+        }
+    }
+}
+
+/// 실행 동안 핸들을 공개하고 끝나면(패닉·오류 포함) null로 되돌린다.
+struct ActiveGuard<'a>(&'a AtomicPtr<std::ffi::c_void>);
+
+impl Drop for ActiveGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(std::ptr::null_mut(), Ordering::Release);
+    }
+}
+
+/// `VarCharArray` → 문자열(UTF-8이 아니면 손실 변환).
+fn vc<const N: usize>(v: &odbc_api::parameter::VarCharArray<N>) -> String {
+    match v.as_str() {
+        Ok(Some(s)) => s.to_string(),
+        Ok(None) => String::new(),
+        Err(_) => v
+            .as_bytes()
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default(),
+    }
 }
 
 fn err(e: odbc_api::Error) -> DbError {
@@ -188,6 +241,78 @@ fn cell(col: AnyColumnBufferSlice<'_>, kind: Kind, r: usize) -> Value {
     }
 }
 
+/// ★ 긴 열이 있는가(T-383 2차): 문자열 상한에 닿거나 이진 상한에 닿는 열 = 블록 버퍼 대신 **행 단위 스트리밍**(`SQLGetData` ·
+/// 잘림 없음 · 느리지만 LOB 안전).
+fn has_long_column(kinds: &[Kind], descs: &[BufferDesc]) -> bool {
+    kinds.iter().zip(descs).any(|(k, d)| match (k, d) {
+        (Kind::Text, BufferDesc::WText { max_str_len }) => *max_str_len >= MAX_TEXT_CHARS,
+        (Kind::Bin, BufferDesc::Binary { max_bytes }) => *max_bytes >= MAX_BIN_BYTES,
+        _ => false,
+    })
+}
+
+/// 행 단위 경로(LOB 안전): 셀마다 `SQLGetData` — 숫자는 `Nullable` · 문자열은 wide 텍스트 · 이진은 바이트.
+fn fetch_rows_streaming<C: Cursor>(
+    cur: &mut C,
+    kinds: &[Kind],
+    max_rows: usize,
+) -> Result<Vec<Vec<Value>>, DbError> {
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut wbuf: Vec<u16> = Vec::new();
+    let mut bbuf: Vec<u8> = Vec::new();
+    while let Some(mut row) = cur.next_row().map_err(err)? {
+        let mut out = Vec::with_capacity(kinds.len());
+        for (i, kind) in kinds.iter().enumerate() {
+            let col = (i + 1) as u16;
+            let v = match kind {
+                Kind::I64 => {
+                    let mut t = Nullable::<i64>::null();
+                    row.get_data(col, &mut t).map_err(err)?;
+                    t.into_opt().map_or(Value::Null, Value::Int)
+                }
+                Kind::F64 => {
+                    let mut t = Nullable::<f64>::null();
+                    row.get_data(col, &mut t).map_err(err)?;
+                    t.into_opt().map_or(Value::Null, Value::Float)
+                }
+                Kind::Bit => {
+                    let mut t = Nullable::<odbc_api::Bit>::null();
+                    row.get_data(col, &mut t).map_err(err)?;
+                    t.into_opt()
+                        .map_or(Value::Null, |b| Value::Bool(b.as_bool()))
+                }
+                Kind::Bin => {
+                    bbuf.clear();
+                    if row.get_binary(col, &mut bbuf).map_err(err)? {
+                        Value::Bytes(bbuf.clone())
+                    } else {
+                        Value::Null
+                    }
+                }
+                Kind::Text | Kind::Decimal => {
+                    wbuf.clear();
+                    if row.get_wide_text(col, &mut wbuf).map_err(err)? {
+                        let t = String::from_utf16_lossy(&wbuf);
+                        if *kind == Kind::Decimal {
+                            Value::Decimal(t.trim().to_string())
+                        } else {
+                            Value::Str(t)
+                        }
+                    } else {
+                        Value::Null
+                    }
+                }
+            };
+            out.push(v);
+        }
+        rows.push(out);
+        if max_rows > 0 && rows.len() >= max_rows {
+            break;
+        }
+    }
+    Ok(rows)
+}
+
 /// 커서 하나를 끝까지(또는 `max_rows`까지) 읽어 결과 집합으로 · 커서는 돌려준다(`more_results`용).
 fn fetch_all<C: Cursor>(mut cur: C, max_rows: usize) -> Result<(C, ResultSet), DbError> {
     let n = cur.num_result_cols().map_err(err)?.max(0) as u16;
@@ -205,6 +330,10 @@ fn fetch_all<C: Cursor>(mut cur: C, max_rows: usize) -> Result<(C, ResultSet), D
         });
         descs.push(desc);
         kinds.push(kind);
+    }
+    if has_long_column(&kinds, &descs) {
+        let rows = fetch_rows_streaming(&mut cur, &kinds, max_rows)?;
+        return Ok((cur, ResultSet { columns, rows }));
     }
     let buf = ColumnarDynBuffer::from_descs(FETCH_ROWS, descs);
     let mut block = cur.bind_buffer(buf).map_err(err)?;
@@ -246,6 +375,7 @@ impl OdbcSession {
             description: spec.redacted(),
             dbms,
             max_rows: 0,
+            active: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
         })
     }
 
@@ -253,6 +383,10 @@ impl OdbcSession {
         let params: Vec<Box<dyn InputParameter>> =
             req.params.iter().map(|p| to_param(&p.value)).collect();
         let mut stmt = self.conn.preallocate().map_err(err)?;
+        // ★ 취소 창: 실행 동안 HSTMT를 공개(가드가 끝날 때 null) → 다른 스레드의 `SQLCancel`이 이 문장을 끊는다.
+        let handle = stmt.as_stmt_ref().as_sys();
+        self.active.store(handle.0.cast(), Ordering::Release);
+        let _guard = ActiveGuard(&self.active);
         let mut result = ExecResult::default();
         let mut first = stmt.execute(&req.sql, &params[..]).map_err(err)?;
         if first.is_none() {
@@ -290,8 +424,8 @@ impl Session for OdbcSession {
         }
     }
 
-    fn limits(&self) -> &'static [DriverLimit] {
-        &[DriverLimit::Cancel]
+    fn cancel_handle(&self) -> Option<Arc<dyn nsql_core::CancelHandle>> {
+        Some(Arc::new(OdbcCancel(self.active.clone())))
     }
 
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
@@ -323,6 +457,59 @@ impl Session for OdbcSession {
 
     fn describe(&self) -> String {
         self.description.clone()
+    }
+
+    /// ★ `SQLTables`(T-383 2차): 스키마 없으면 전부 · 종류 = 드라이버 표기(`TABLE` · `VIEW` · `SYSTEM TABLE`).
+    fn catalog_tables(
+        &mut self,
+        schema: Option<&str>,
+    ) -> Result<Option<Vec<CatalogTable>>, DbError> {
+        let it = self
+            .conn
+            .tables("", schema.unwrap_or(""), "", "")
+            .map_err(err)?;
+        let mut v = Vec::new();
+        for row in it {
+            let r = row.map_err(err)?;
+            v.push(CatalogTable {
+                catalog: vc(&r.catalog),
+                schema: vc(&r.schema),
+                name: vc(&r.table),
+                kind: vc(&r.table_type),
+            });
+        }
+        Ok(Some(v))
+    }
+
+    /// ★ `SQLColumns`: 위치 순 · nullable = 0 아니오 · 1 예 · 2 모름.
+    fn catalog_columns(
+        &mut self,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Result<Option<Vec<CatalogColumn>>, DbError> {
+        let it = self
+            .conn
+            .columns("", schema.unwrap_or(""), table, "")
+            .map_err(err)?;
+        let mut v = Vec::new();
+        for row in it {
+            let r = row.map_err(err)?;
+            v.push(CatalogColumn {
+                name: vc(&r.column_name),
+                type_name: vc(&r.type_name),
+                size: r.column_size.into_opt().map(i64::from),
+                decimal_digits: r.decimal_digits.into_opt().map(i64::from),
+                nullable: match r.nullable {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                },
+                position: i64::from(r.ordinal_position),
+                default: vc(&r.column_default),
+            });
+        }
+        v.sort_by_key(|c| c.position);
+        Ok(Some(v))
     }
 
     fn is_alive(&self) -> bool {
@@ -368,6 +555,18 @@ mod tests {
             connection_string(&no_pw),
             "Driver={SQL Server};Server=h;UID=sa"
         );
+    }
+
+    /// ★ 긴 열 판정(T-383 2차): 상한에 닿은 문자열/이진 열이 하나라도 있으면 행 단위 경로.
+    #[test]
+    fn long_columns_switch_to_streaming() {
+        let (d1, k1) = buffer_for(&DataType::WLongVarchar { length: None }, None);
+        let (d2, k2) = buffer_for(&DataType::Integer, None);
+        assert!(has_long_column(&[k2, k1], &[d2, d1]));
+        let (d3, k3) = buffer_for(&DataType::Varchar { length: None }, Some(100));
+        assert!(!has_long_column(&[k2, k3], &[d2, d3]));
+        let (d4, k4) = buffer_for(&DataType::LongVarbinary { length: None }, None);
+        assert!(has_long_column(&[k4], &[d4]));
     }
 
     /// 열 타입 → 버퍼 종류·이름.

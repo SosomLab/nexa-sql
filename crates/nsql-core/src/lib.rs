@@ -1241,6 +1241,30 @@ pub trait CancelHandle: Send + Sync {
     }
 }
 
+/// ★ 드라이버가 직접 내는 카탈로그 표 한 줄(T-383 2차 · ODBC `SQLTables`): `kind` = 드라이버 표기 그대로(`TABLE` · `VIEW` ·
+/// `SYSTEM TABLE` …). information_schema가 없는 곳(Access · Excel · 일부 벤더 드라이버)의 탐색기 원천.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct CatalogTable {
+    pub catalog: String,
+    pub schema: String,
+    pub name: String,
+    pub kind: String,
+}
+
+/// ★ 드라이버가 직접 내는 컬럼 한 줄(ODBC `SQLColumns`).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct CatalogColumn {
+    pub name: String,
+    /// 드라이버 타입 이름(`varchar` · `int` · `DECIMAL` …).
+    pub type_name: String,
+    pub size: Option<i64>,
+    pub decimal_digits: Option<i64>,
+    /// `None` = 드라이버가 모른다.
+    pub nullable: Option<bool>,
+    pub position: i64,
+    pub default: String,
+}
+
 pub trait Session {
     fn dialect(&self) -> Dialect;
     /// ★ 능력표(T-152 · 포트): 엔진·러너는 방언이 아니라 이것을 묻는다. 기본 = 내장 방언의 표([`Caps::of`]) — 확장 드라이버·ODBC
@@ -1331,6 +1355,26 @@ pub trait Session {
     ) -> Result<Box<dyn bulk::BulkSink + 'a>, DbError> {
         let _ = (table, cols, types, opts);
         Err(bulk::unsupported())
+    }
+
+    /// ★ 드라이버 카탈로그 — 표 목록(T-383 2차 · ODBC `SQLTables`): `schema` = 없으면 전부. 기본 = `None`(카탈로그 크레이트가
+    /// 방언 SQL로 조회). `Some`이면 그 목록이 원천이다(Access·Excel처럼 information_schema가 없는 곳).
+    fn catalog_tables(
+        &mut self,
+        schema: Option<&str>,
+    ) -> Result<Option<Vec<CatalogTable>>, DbError> {
+        let _ = schema;
+        Ok(None)
+    }
+
+    /// ★ 드라이버 카탈로그 — 한 표의 컬럼(ODBC `SQLColumns`). 기본 = `None`.
+    fn catalog_columns(
+        &mut self,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Result<Option<Vec<CatalogColumn>>, DbError> {
+        let _ = (schema, table);
+        Ok(None)
     }
 
     /// ★ 서버 형식화 추출(docs/89 §1-2 · B-3): `sql`의 결과를 서버가 CSV(`csv` = 헤더 포함) 또는 탭 텍스트로 만들어 `out`에

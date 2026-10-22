@@ -1048,8 +1048,58 @@ fn odbc_select_bind_dml_and_errors() {
         r.result_sets[0].rows[0],
         vec![Value::Int(7), Value::Str("한글".into())]
     );
+    // ★ 2차: 드라이버 카탈로그(SQLTables/SQLColumns) — 방금 만든 표가 보이고 컬럼 2개가 위치 순.
+    let tables = s
+        .catalog_tables(None)
+        .expect("SQLTables")
+        .expect("ODBC = Some");
+    let mine = tables
+        .iter()
+        .find(|t| t.name.eq_ignore_ascii_case("nsqlt_odbc"))
+        .unwrap_or_else(|| panic!("nsqlt_odbc not in SQLTables: {} rows", tables.len()));
+    assert!(!mine.kind.is_empty(), "{mine:?}");
+    let cols = s
+        .catalog_columns(Some(&mine.schema), "nsqlt_odbc")
+        .expect("SQLColumns")
+        .expect("ODBC = Some");
+    assert_eq!(
+        cols.iter()
+            .map(|c| c.name.to_ascii_lowercase())
+            .collect::<Vec<_>>(),
+        ["id", "name"],
+        "{cols:?}"
+    );
+    assert_eq!(cols[1].size, Some(20), "{:?}", cols[1]);
     exec(&mut s, "DROP TABLE nsqlt_odbc", Vec::new()).expect("drop");
     s.commit().expect("commit 2");
+    // ★ 2차: 긴 LOB = 행 단위 스트리밍(32K 상한 없이) · 취소 = SQLCancel(SQL Server 전용 구문 · 그 밖은 건너뜀).
+    if s.driver_name().contains("SQL Server") {
+        let r = exec(
+            &mut s,
+            "SELECT REPLICATE(CAST('x' AS VARCHAR(MAX)), 100000) AS big, 7 AS n",
+            Vec::new(),
+        )
+        .expect("lob");
+        match &r.result_sets[0].rows[0][0] {
+            Value::Str(t) => assert_eq!(t.len(), 100_000, "LOB 길이"),
+            other => panic!("LOB = Str 기대: {other:?}"),
+        }
+        assert_eq!(r.result_sets[0].rows[0][1], Value::Int(7));
+        let cancel = s.cancel_handle().expect("cancel handle");
+        let t0 = std::time::Instant::now();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            cancel.cancel()
+        });
+        let r = exec(&mut s, "WAITFOR DELAY '00:00:20'", Vec::new());
+        let took = t0.elapsed();
+        canceller.join().expect("join").expect("SQLCancel");
+        assert!(r.is_err(), "취소된 실행 = 오류로 끝남: {r:?}");
+        assert!(took.as_secs() < 10, "취소까지 {took:?}");
+        assert!(s.is_alive(), "취소 뒤 세션 유지");
+        let r = exec(&mut s, "SELECT 1 AS ok", Vec::new()).expect("after cancel");
+        assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
+    }
     // 오류 = 진단 레코드(SQLSTATE + 드라이버 메시지 · 네이티브 코드).
     let e =
         exec(&mut s, "SELECT * FROM nsqlt_odbc_missing", Vec::new()).expect_err("missing table");
