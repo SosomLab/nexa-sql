@@ -5,7 +5,7 @@
       "id": "sqlite",
       "name": "SQLite",
       "dialect": "sqlite",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -20,7 +20,7 @@
       "id": "pg",
       "name": "PostgreSQL",
       "dialect": "postgres",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -35,7 +35,7 @@
       "id": "mysql",
       "name": "MySQL / MariaDB",
       "dialect": "mysql",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -50,7 +50,7 @@
       "id": "mssql",
       "name": "SQL Server",
       "dialect": "mssql",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -65,7 +65,7 @@
       "id": "oracle-thin",
       "name": "Oracle (Thin, pure Rust)",
       "dialect": "oracle",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -80,7 +80,7 @@
       "id": "oracle-oci",
       "name": "Oracle (OCI, Instant Client)",
       "dialect": "oracle",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -95,13 +95,28 @@
       "id": "odbc",
       "name": "ODBC (Windows)",
       "dialect": "odbc",
-      "latest": "0.1.0",
+      "latest": "0.1.1",
       "tag_prefix": "drivers-v",
       "platforms": [
         "windows-x86_64"
       ],
       "license": "PolyForm-Noncommercial-1.0.0",
       "sxs": true
+    },
+    {
+      "id": "duckdb",
+      "name": "DuckDB",
+      "dialect": "duckdb",
+      "latest": "0.1.1",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
     }
   ]
 }
