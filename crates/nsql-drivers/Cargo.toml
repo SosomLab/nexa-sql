@@ -12,7 +12,7 @@ description = "Nexa SQL 드라이버 레지스트리 — 접속 문자열/Connec
 workspace = true
 
 [features]
-default = ["sqlite", "oracle", "oracle-thin", "mssql", "pg", "mysql"]
+default = ["sqlite", "oracle", "oracle-thin", "mssql", "pg", "mysql", "odbc"]
 sqlite = ["dep:nsql-driver-sqlite"]
 oracle = ["dep:nsql-driver-oracle"]
 # Oracle Thin(순수 Rust · Instant Client 불필요 · docs/110) — 표준판 = oracle + oracle-thin · 경량판 C = oracle-thin만(64 §4-1).
@@ -21,6 +21,8 @@ mssql = ["dep:nsql-driver-mssql"]
 pg = ["dep:nsql-driver-pg"]
 # MySQL/MariaDB(순수 Rust · 사용자 10-22 · 135차) — 같은 드라이버 · `mariadb://`는 별칭.
 mysql = ["dep:nsql-driver-mysql"]
+# ODBC 일반(시스템 드라이버 관리자 · 사용자 10-21 확정 P2 · T-383 · 136차) — Tibero·Altibase·CUBRID·Db2·HANA·Access·Excel 3급.
+odbc = ["dep:nsql-driver-odbc"]
 
 [dependencies]
 nsql-core.workspace = true
@@ -31,6 +33,7 @@ nsql-driver-oracle-thin = { workspace = true, optional = true }
 nsql-driver-mssql = { workspace = true, optional = true }
 nsql-driver-pg = { workspace = true, optional = true }
 nsql-driver-mysql = { workspace = true, optional = true }
+nsql-driver-odbc = { workspace = true, optional = true }
 
 [dev-dependencies]
 nsql-run.workspace = true

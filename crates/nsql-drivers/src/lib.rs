@@ -60,6 +60,17 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Postgres => Ok(Box::new(nsql_driver_pg::PgSession::connect(spec)?)),
         #[cfg(feature = "mysql")]
         Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
+        #[cfg(feature = "odbc")]
+        Dialect::Odbc => Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?)),
+        // 모든 드라이버 feature가 켜지면 닿지 않는다(기본 빌드) — 경량판처럼 feature를 뺀 빌드만 쓴다.
+        #[cfg(not(all(
+            feature = "sqlite",
+            any(feature = "oracle", feature = "oracle-thin"),
+            feature = "mssql",
+            feature = "pg",
+            feature = "mysql",
+            feature = "odbc"
+        )))]
         other => Err(DbError {
             code: None,
             message: format!("{other} 드라이버는 이 빌드에 없습니다(M4)"),
@@ -332,6 +343,9 @@ pub fn available() -> Vec<Dialect> {
     if cfg!(feature = "mysql") {
         v.push(Dialect::Mysql);
     }
+    if cfg!(feature = "odbc") {
+        v.push(Dialect::Odbc);
+    }
     v
 }
 
@@ -352,7 +366,7 @@ mod tests {
         ] {
             assert!(v.contains(&d), "{d} 빠짐: {v:?}");
         }
-        assert!(!v.contains(&Dialect::Odbc));
+        assert!(v.contains(&Dialect::Odbc), "ODBC 내장(T-383 · 136차)");
     }
 
     #[test]

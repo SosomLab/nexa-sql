@@ -19,6 +19,10 @@ env:
   NSQL_PG_URL: postgres://nexa:nexa@localhost:5432/nexa
   MYSQL_HOST: localhost
   NSQL_MYSQL_URL: mysql://nexa:nexa@localhost:3306/nexa
+  # ODBC(T-383 · 136차) = PostgreSQL 서비스에 psqlODBC(apt odbc-postgresql)로 · unixODBC는 정적(vendored) → ini 위치를 명시.
+  NSQL_ODBC_URL: "odbc:Driver={PostgreSQL Unicode};Server=localhost;Port=5432;Database=nexa;Uid=nexa;Pwd=nexa"
+  ODBCSYSINI: /etc
+  ODBCINI: /etc/odbc.ini
   LD_LIBRARY_PATH: /opt/oracle/instantclient
 
 defaults:
@@ -100,7 +104,8 @@ jobs:
       - name: Oracle Instant Client (basiclite · linux x64)
         working-directory: .
         run: |
-          sudo apt-get update && sudo apt-get install -y libaio1t64 unzip fonts-noto-cjk
+          sudo apt-get update && sudo apt-get install -y libaio1t64 unzip fonts-noto-cjk odbc-postgresql
+          cat /etc/odbcinst.ini
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true
           sudo mkdir -p /opt/oracle && cd /opt/oracle
           sudo curl -fsSL -o ic.zip https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip

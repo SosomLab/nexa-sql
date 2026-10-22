@@ -919,6 +919,140 @@ fn mysql_bulk_load_local_infile_round_trip() {
     }
 }
 
+/// ★ ODBC 대상(T-383): `NSQL_ODBC_URL`(CI = `odbc:Driver={PostgreSQL Unicode};…`) · 없으면 Windows 로컬에서 저장된 SQL Server
+/// 프로필(`NSQL_MSSQL_PROFILE`)을 인박스 "SQL Server" ODBC 드라이버로 바꿔 쓴다(비밀번호는 금고에서 · 환경 변수에 적지 않는다).
+fn odbc_target() -> Option<String> {
+    if let Ok(u) = std::env::var("NSQL_ODBC_URL") {
+        return Some(u);
+    }
+    if cfg!(windows) {
+        if let Ok(name) = std::env::var("NSQL_MSSQL_PROFILE") {
+            let spec = nsql_vault::Vault::open_default()
+                .and_then(|v| v.get(&name))
+                .ok()
+                .flatten()?;
+            return Some(format!(
+                "odbc:Driver={{SQL Server}};Server={},{};Database={};Uid={};Pwd={}",
+                spec.host.as_deref()?,
+                spec.port.unwrap_or(1433),
+                spec.database.as_deref().unwrap_or("master"),
+                spec.user.as_deref()?,
+                spec.password.as_deref()?
+            ));
+        }
+    }
+    None
+}
+
+/// ★ ODBC 1차(T-383): 접속 · 타입 복원(정수·실수·문자열·NULL) · `?` 바인드(문자열·정수) · DML 영향 행 수 · 커밋 · 오류 진단 코드.
+/// 이식성 = PostgreSQL ODBC(CI)와 SQL Server ODBC(Windows 로컬) 양쪽에서 같은 SQL이 돌게 표준 SQL만 쓴다 · 임시 객체 `nsqlt_odbc`는 끝에 DROP.
+#[test]
+fn odbc_select_bind_dml_and_errors() {
+    use nsql_core::{BindParam, Direction, ExecRequest, VarType};
+    let Some(url) = odbc_target() else {
+        eprintln!("[skip] NSQL_ODBC_URL 없음(Windows = NSQL_MSSQL_PROFILE로 대체)");
+        return;
+    };
+    let spec = nsql_drivers::parse_target(&url, Dialect::Odbc).expect("접속 문자열");
+    assert_eq!(spec.dialect, Some(Dialect::Odbc), "{spec:?}");
+    let mut s = nsql_drivers::open(&spec, Dialect::Odbc)
+        .unwrap_or_else(|e| panic!("ODBC 접속 실패: {}", e.message));
+    assert_eq!(s.dialect(), Dialect::Odbc);
+    assert!(s.is_alive());
+    assert!(
+        s.driver_name().starts_with("odbc-api"),
+        "{}",
+        s.driver_name()
+    );
+    let exec = |s: &mut Box<dyn Session>, sql: &str, params: Vec<BindParam>| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params,
+        })
+    };
+    let r = exec(
+        &mut s,
+        "SELECT CAST(1 AS INTEGER) AS i, CAST(2.5 AS FLOAT) AS f, 'ab' AS t, CAST(NULL AS INTEGER) AS n",
+        Vec::new(),
+    )
+    .expect("select");
+    let rs = &r.result_sets[0];
+    assert_eq!(
+        rs.columns
+            .iter()
+            .map(|c| c.name.to_ascii_lowercase())
+            .collect::<Vec<_>>(),
+        ["i", "f", "t", "n"]
+    );
+    assert_eq!(rs.rows[0][0], Value::Int(1), "{:?}", rs.rows[0]);
+    assert_eq!(rs.rows[0][1], Value::Float(2.5));
+    assert_eq!(rs.rows[0][2], Value::Str("ab".into()));
+    assert_eq!(rs.rows[0][3], Value::Null);
+    // ? 바인드(문자열 · 정수) — 위치 순.
+    let r = exec(
+        &mut s,
+        "SELECT ? AS p1, CAST(? AS INTEGER) + 1 AS p2",
+        vec![
+            BindParam {
+                name: "1".into(),
+                value: Value::Str("xy".into()),
+                ty: VarType::Varchar2(0),
+                direction: Direction::In,
+            },
+            BindParam {
+                name: "2".into(),
+                value: Value::Int(41),
+                ty: VarType::Number,
+                direction: Direction::In,
+            },
+        ],
+    )
+    .expect("bind");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Str("xy".into()));
+    assert_eq!(r.result_sets[0].rows[0][1], Value::Int(42));
+    // DML + 영향 행 수 + 커밋(자동 커밋 끔 = ODBC API로).
+    let _ = exec(&mut s, "DROP TABLE nsqlt_odbc", Vec::new());
+    exec(
+        &mut s,
+        "CREATE TABLE nsqlt_odbc (id INTEGER, name VARCHAR(20))",
+        Vec::new(),
+    )
+    .expect("create");
+    let r = exec(
+        &mut s,
+        "INSERT INTO nsqlt_odbc (id, name) VALUES (?, ?)",
+        vec![
+            BindParam {
+                name: "1".into(),
+                value: Value::Int(7),
+                ty: VarType::Number,
+                direction: Direction::In,
+            },
+            BindParam {
+                name: "2".into(),
+                value: Value::Str("한글".into()),
+                ty: VarType::Varchar2(0),
+                direction: Direction::In,
+            },
+        ],
+    )
+    .expect("insert");
+    assert_eq!(r.rows_affected, Some(1), "{r:?}");
+    s.commit().expect("commit");
+    let r = exec(&mut s, "SELECT id, name FROM nsqlt_odbc", Vec::new()).expect("select back");
+    assert_eq!(
+        r.result_sets[0].rows[0],
+        vec![Value::Int(7), Value::Str("한글".into())]
+    );
+    exec(&mut s, "DROP TABLE nsqlt_odbc", Vec::new()).expect("drop");
+    s.commit().expect("commit 2");
+    // 오류 = 진단 레코드(SQLSTATE + 드라이버 메시지 · 네이티브 코드).
+    let e =
+        exec(&mut s, "SELECT * FROM nsqlt_odbc_missing", Vec::new()).expect_err("missing table");
+    assert!(!e.message.is_empty(), "{e:?}");
+    assert!(s.is_alive(), "오류 뒤에도 세션 유지");
+}
+
 #[test]
 fn mysql_driver_warnings_error_position_and_limits() {
     use nsql_core::ExecRequest;

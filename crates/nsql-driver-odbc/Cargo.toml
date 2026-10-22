@@ -1,0 +1,25 @@
+[package]
+name = "nsql-driver-odbc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL adapter - ODBC (odbc-api). DSN or driver connection strings, ? binds, block fetch, autocommit off"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+
+# DR-3 예외(드라이버 · docs/10 §4 원장 · T-383). 시스템 ODBC 드라이버 관리자 위의 순수 Rust 바인딩(MIT) · `prompt`(winit)·`derive` 끔.
+# Windows = 인박스 odbc32.dll(설치 0). 그 밖 = unixODBC를 **정적으로 묶는다**(`vendored-unix-odbc` · 실행 파일이 관리자 런타임을
+# 요구하지 않는다 · 64 §4 "외부 네이티브 의존 0") — 벤더 ODBC 드라이버(.so)와 odbcinst.ini는 사용자 환경 몫.
+[target.'cfg(windows)'.dependencies]
+odbc-api = { version = "29.2", default-features = false, features = ["odbc_version_3_80"] }
+
+[target.'cfg(not(windows))'.dependencies]
+odbc-api = { version = "29.2", default-features = false, features = ["odbc_version_3_80", "vendored-unix-odbc"] }
