@@ -327,7 +327,7 @@ fn offline_bundle_installs_every_asset_for_this_platform() {
     let sig_c = sign(&c);
     let sha_a = sha(&a, &na);
     let sha_c = sha(&c, &nc);
-    let other = format!("nsql-driver-delta-1.0.0-nowhere-arch.zip");
+    let other = "nsql-driver-delta-1.0.0-nowhere-arch.zip";
     let bundle = zip::build(
         &[
             ("bundle/index.json", b"{\"drivers\":[]}", None),
