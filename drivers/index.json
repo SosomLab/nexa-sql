@@ -1,4 +1,107 @@
 {
   "_comment": "Nexa SQL extension driver index (docs/22 §2-3 · T-29). Read by `nsql driver search/install/update` from raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json. Assets live in this repository's Releases under tag driver-<id>-v<ver>: nsql-driver-<id>-<ver>-<os>-<arch>.zip + .sha256 + .sig (Ed25519, key in crates/nsql-drivers/src/ext/keys.rs). Fields: id, name, dialect, latest, platforms (os-arch list; empty = all), license, sxs, tag_prefix (default driver-<id>-v), repo (default this repo).",
-  "drivers": []
+  "drivers": [
+    {
+      "id": "sqlite",
+      "name": "SQLite",
+      "dialect": "sqlite",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
+    },
+    {
+      "id": "pg",
+      "name": "PostgreSQL",
+      "dialect": "postgres",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
+    },
+    {
+      "id": "mysql",
+      "name": "MySQL / MariaDB",
+      "dialect": "mysql",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
+    },
+    {
+      "id": "mssql",
+      "name": "SQL Server",
+      "dialect": "mssql",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
+    },
+    {
+      "id": "oracle-thin",
+      "name": "Oracle (Thin, pure Rust)",
+      "dialect": "oracle",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
+    },
+    {
+      "id": "oracle-oci",
+      "name": "Oracle (OCI, Instant Client)",
+      "dialect": "oracle",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": true
+    },
+    {
+      "id": "odbc",
+      "name": "ODBC (Windows)",
+      "dialect": "odbc",
+      "latest": "0.1.0",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": true
+    }
+  ]
 }
