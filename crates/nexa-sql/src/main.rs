@@ -2213,6 +2213,8 @@ fn main() {
     }));
     apply_oracle_client(&app.settings);
     app.apply_net_options();
+    // ★ D-350 하루 1회 드라이버 갱신 확인(`driver.check_updates` · 조용히 · 자동 교체 없음).
+    app.drivers_check_updates_at_start();
     // 첫 화면부터 탭 표식(미연결 사선)이 보이게 — 세션 상태 → 화면 3층 동기화 1회.
     app.sync_sess_ui();
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
@@ -2517,6 +2519,8 @@ enum FilePurpose {
     Import,
     /// ★ 라이선스 파일 열기(docs/23 §1-3 · 라이선스 창).
     License,
+    /// ★ 드라이버 패키지/오프라인 번들 zip(드라이버 관리자 [파일에서 설치…] · D-350).
+    DriverPackage,
 }
 
 /// 파일에서 셀에 넣은 결과 = (이진 바이트, 글, 바이트 수).

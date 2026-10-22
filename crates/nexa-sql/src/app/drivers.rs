@@ -16,6 +16,8 @@ pub(crate) enum DriverMsg {
     Progress(String, u64, Option<u64>),
     Installed(Result<InstallReport, String>),
     Index(Result<(Index, bool), String>),
+    /// 오프라인 번들 설치 결과(자산별).
+    Bundle(Result<install::BundleOutcome, String>),
 }
 
 /// 호스트가 드는 드라이버 관리 상태.
@@ -25,6 +27,8 @@ pub(crate) struct DriverTask {
     /// 마지막으로 읽은 색인(캐시 또는 새로 고침).
     index: Option<Index>,
     index_loaded: bool,
+    /// 기동 때의 갱신 확인(`driver.check_updates`)이면 색인 결과로 갱신 수를 상태줄에 알린다.
+    badge_check: bool,
 }
 
 impl std::fmt::Debug for DriverTask {
@@ -117,6 +121,12 @@ impl App {
         match a {
             DriverWinAction::None | DriverWinAction::Paint => {}
             DriverWinAction::Refresh => self.drivers_spawn(None),
+            DriverWinAction::InstallFile => {
+                // 파일 대화상자(열기) → 고르면 `drivers_install_path`.
+                self.file_purpose = crate::FilePurpose::DriverPackage;
+                self.open_file_dlg = Some(crate::PickerMode::Open);
+                self.redraw();
+            }
             DriverWinAction::Install(id) => self.drivers_spawn(Some(id)),
             DriverWinAction::Remove(id) => {
                 let text = match ext::remove_extension(&id, None) {
@@ -199,6 +209,84 @@ impl App {
         self.driver_win.set_status(&status, true);
     }
 
+    /// ★ 파일에서 설치(패키지 zip 또는 오프라인 번들 · 워커 스레드 · 검증은 `install_bytes`가 그대로).
+    pub(crate) fn drivers_install_path(&mut self, path: &std::path::Path) {
+        if self.driver_task.busy() {
+            return;
+        }
+        let Some(root) = self.driver_root() else {
+            self.driver_win.set_status(t(Msg::DrvStatusNoFolder), false);
+            return;
+        };
+        let (tx, rx): (Sender<DriverMsg>, Receiver<DriverMsg>) = std::sync::mpsc::channel();
+        let proxy = std::sync::Mutex::new(self.wake_proxy.clone());
+        let p = path.to_path_buf();
+        let spawned = std::thread::Builder::new()
+            .name("driver-file".into())
+            .spawn(move || {
+                let bytes = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()));
+                match bytes {
+                    Ok(b) if install::is_bundle(&b) => {
+                        let _ = tx.send(DriverMsg::Bundle(install::install_bundle(
+                            &root,
+                            &b,
+                            true,
+                            DRIVER_KEYS,
+                        )));
+                    }
+                    Ok(_) => {
+                        let _ = tx.send(DriverMsg::Installed(install::install_file(
+                            &root,
+                            &p,
+                            true,
+                            DRIVER_KEYS,
+                        )));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(DriverMsg::Installed(Err(e)));
+                    }
+                }
+                if let Ok(px) = proxy.lock() {
+                    let _ = px.send_event(Wake);
+                }
+            });
+        if spawned.is_err() {
+            self.driver_win
+                .set_status(&tf(Msg::DrvStatusError, &["thread"]), false);
+            return;
+        }
+        self.driver_task.rx = Some(rx);
+        self.driver_win.set_status(
+            &tf(Msg::DrvStatusInstalling, &[&path.display().to_string()]),
+            true,
+        );
+        self.driver_win.redraw();
+    }
+
+    /// ★ 기동 때 갱신 확인(설정 `driver.check_updates` · 하루 1회 · 색인 캐시가 24시간보다 오래됐을 때만 · 확장이 하나라도 설치돼 있거나
+    ///   이 빌드에 내장이 아닌 방언이 있을 때 — 조용히 · 실패 무시 · 자동 교체 없음 · 39 §3 부하원 = 끄는 키 `driver.check_updates`).
+    pub(crate) fn drivers_check_updates_at_start(&mut self) {
+        if !self.settings.flag("driver.check_updates") {
+            return;
+        }
+        let Some(root) = self.driver_root() else {
+            return;
+        };
+        let stale = install::cached_index_age(&root).is_none_or(|a| a.as_secs() >= 24 * 3600);
+        if !stale {
+            return;
+        }
+        let any_ext = !ext::list_extensions_in(&root).is_empty()
+            || nsql_drivers::available()
+                .into_iter()
+                .any(|d| !nsql_drivers::is_builtin(d));
+        if !any_ext {
+            return;
+        }
+        self.driver_task.badge_check = true;
+        self.drivers_spawn(None);
+    }
+
     /// 워커 메시지 → 창(매 `about_to_wait` · 창이 닫혀도 결과는 받아 색인을 갱신한다).
     pub(crate) fn drivers_pump(&mut self) {
         let Some(rx) = self.driver_task.rx.as_ref() else {
@@ -224,6 +312,24 @@ impl App {
                     match r {
                         Ok((idx, cached)) => {
                             let n = idx.drivers.len().to_string();
+                            if std::mem::take(&mut self.driver_task.badge_check) {
+                                // 기동 갱신 확인: 설치본보다 새 버전이 있으면 상태줄 + 로그(자동 교체 없음 · 22 §3).
+                                let installed = self
+                                    .driver_root()
+                                    .map(|r| ext::list_extensions_in(&r))
+                                    .unwrap_or_default();
+                                let ups = install::updates(&idx, &installed);
+                                if !ups.is_empty() {
+                                    let list: Vec<String> = ups
+                                        .iter()
+                                        .map(|u| format!("{} {} → {}", u.id, u.installed, u.latest))
+                                        .collect();
+                                    let text = tf(Msg::StDriverUpdates, &[&list.join(", ")]);
+                                    self.sess.status = text.clone();
+                                    self.log_win
+                                        .push(crate::LogEntry::new(crate::LogKind::Info, text));
+                                }
+                            }
                             self.driver_task.index = Some(idx);
                             self.driver_win.set_status(
                                 &tf(
@@ -233,6 +339,32 @@ impl App {
                                         Msg::DrvStatusIndexFetched
                                     },
                                     &[&n],
+                                ),
+                                false,
+                            );
+                        }
+                        Err(e) => self
+                            .driver_win
+                            .set_status(&tf(Msg::DrvStatusError, &[&e]), false),
+                    }
+                }
+                DriverMsg::Bundle(r) => {
+                    done = true;
+                    match r {
+                        Ok(list) => {
+                            let ok = list.iter().filter(|(_, r)| r.is_ok()).count();
+                            let bad: Vec<String> = list
+                                .iter()
+                                .filter_map(|(n, r)| r.as_ref().err().map(|e| format!("{n}: {e}")))
+                                .collect();
+                            for b in &bad {
+                                self.log_win
+                                    .push(crate::LogEntry::new(crate::LogKind::Error, b.clone()));
+                            }
+                            self.driver_win.set_status(
+                                &tf(
+                                    Msg::DrvStatusBundle,
+                                    &[&ok.to_string(), &bad.len().to_string()],
                                 ),
                                 false,
                             );

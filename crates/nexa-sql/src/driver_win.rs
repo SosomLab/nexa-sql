@@ -116,6 +116,8 @@ pub(crate) enum DriverWinAction {
     Remove(String),
     /// 실제로 올려 함수표 확인(id).
     Check(String),
+    /// ★ 파일에서 설치(패키지 zip 또는 오프라인 번들 · 호스트가 파일 대화상자를 연다 · D-350).
+    InstallFile,
 }
 
 const COLS: [(Msg, i32); 6] = [
@@ -138,6 +140,7 @@ pub(crate) struct DriverWin {
     install_btn: Button,
     remove_btn: Button,
     check_btn: Button,
+    file_btn: Button,
     rows: Vec<DriverRow>,
     selected: Option<String>,
     hover: Option<usize>,
@@ -163,6 +166,7 @@ impl DriverWin {
             install_btn: Button::new(t(Msg::BtnDrvInstall)),
             remove_btn: Button::new(t(Msg::BtnDrvRemove)),
             check_btn: Button::new(t(Msg::BtnDrvCheck)),
+            file_btn: Button::new(t(Msg::BtnDrvInstallFile)),
             rows: Vec::new(),
             selected: None,
             hover: None,
@@ -242,12 +246,13 @@ impl DriverWin {
         }
     }
 
-    fn buttons(&mut self) -> [&mut Button; 4] {
+    fn buttons(&mut self) -> [&mut Button; 5] {
         [
             &mut self.refresh_btn,
             &mut self.install_btn,
             &mut self.remove_btn,
             &mut self.check_btn,
+            &mut self.file_btn,
         ]
     }
 
@@ -390,6 +395,9 @@ impl DriverWin {
             if let Some(r) = sel.as_ref().filter(|r| r.installed.is_some()) {
                 return DriverWinAction::Check(r.id.clone());
             }
+        }
+        if self.file_btn.take_clicked() {
+            return DriverWinAction::InstallFile;
         }
         DriverWinAction::None
     }
@@ -565,8 +573,9 @@ impl DriverWin {
             self.install_btn.set_enabled(b_install);
             self.remove_btn.set_enabled(b_remove);
             self.check_btn.set_enabled(b_check);
+            self.file_btn.set_enabled(!self.busy);
             let by = sy + status_h + pad;
-            let bw = ((wi - pad * 2 - px(8.0) * 3) / 4).max(px(60.0));
+            let bw = ((wi - pad * 2 - px(8.0) * 4) / 5).max(px(60.0));
             let mut bx = pad;
             for b in self.buttons() {
                 b.set_scale(s);

@@ -4819,6 +4819,16 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     // ★ DBMS ▸ 드라이버 정보(D-350 · 읽기 전용 · 다운로드 전/후 상태): 폴더 · 색인(개수·나이) · 설치본 목록(+ [드라이버 관리자…] 버튼).
+    // ★ 하루 1회 갱신 확인(docs/22 §3 · 39 §3 부하원 · 끄는 키 = 이것): 기동 때 색인 캐시가 24시간보다 오래됐고 확장을 쓰는 빌드/설치일 때만 색인 1회 GET ·
+    //   새 버전이 있으면 상태줄·로그 안내(자동 교체 없음 · 사용자가 드라이버 관리자에서 갱신).
+    Entry {
+        key: "driver.check_updates",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverCheckUpdates,
+        desc: Msg::DescDriverCheckUpdates,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "driver.info_folder",
         cat: Msg::CatDbmsDrivers,

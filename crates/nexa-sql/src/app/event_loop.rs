@@ -1223,6 +1223,9 @@ impl App {
                             self.cell_load_file(&path);
                         }
                         (PickerMode::Open, FilePurpose::License) => self.license_install(&path),
+                        (PickerMode::Open, FilePurpose::DriverPackage) => {
+                            self.drivers_install_path(&path);
+                        }
                         (PickerMode::Open, FilePurpose::Import) => {
                             if let Some(c) = self.import_ctx.as_mut() {
                                 c.1 = path.to_path_buf();
