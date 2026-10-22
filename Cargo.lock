@@ -2031,6 +2031,7 @@ name = "nsql-drivers"
 version = "0.2.7"
 dependencies = [
  "nsql-core",
+ "nsql-driver-dyn",
  "nsql-driver-mssql",
  "nsql-driver-mysql",
  "nsql-driver-odbc",

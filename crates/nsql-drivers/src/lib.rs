@@ -7,10 +7,13 @@
 //! - `postgres://user:pass@host:5432/db`(`postgresql://` · `pg://`)
 //! - `mysql://user:pass@host:3306/db`(`mariadb://` 별칭 · 같은 드라이버 · 135차)
 
+//! - `odbc:DSN=…` · `odbc:Driver={…};…`(Windows 내장 · D-345) — 내장이 없는 빌드에서는 [`ext`] 확장(`drivers/odbc/<ver>/`)으로 폴백.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use nsql_core::{DbError, Dialect, Session};
 use nsql_script::ConnectSpec;
+
+pub mod ext;
 
 /// `sqlite:` 뒤 경로 — 권한부(`//`)는 **한 번만** 벗긴다. 종전 `trim_start_matches("//")`는 슬래시 쌍을 전부 먹어
 /// `sqlite:////abs/x.db`(SQLAlchemy식 절대 경로)가 상대 경로 `abs/x.db`가 됐다(86차 mac 점검 · T-148).
@@ -72,11 +75,19 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
             feature = "odbc",
             windows
         )))]
-        other => Err(DbError {
-            code: None,
-            message: format!("{other} 드라이버는 이 빌드에 없습니다(M4)"),
-            position: None,
-        }),
+        other => {
+            // ★ 확장 폴백(T-27 ③): `drivers/<방언>/<ver>/` cdylib가 설치돼 있으면 그것으로(첫 접속 때 지연 로드).
+            if let Some(s) = ext::open_ext(&other.to_string(), spec)? {
+                return Ok(s);
+            }
+            Err(DbError {
+                code: None,
+                message: format!(
+                    "{other} 드라이버는 이 빌드에 없습니다(M4) — 확장 드라이버도 없음(NSQL_DRIVER_DIR 또는 <설정 폴더>/drivers/{other}/<ver>/)"
+                ),
+                position: None,
+            })
+        }
     }
 }
 

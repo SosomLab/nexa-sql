@@ -379,6 +379,12 @@ fn apply_load_switches(runner: &mut Runner) {
             s.get("mysql.tls").unwrap_or("preferred"),
             s.get("mysql.tls_ca").unwrap_or(""),
         );
+        // 확장 드라이버 폴더(T-27 ③) = <설정 폴더>/drivers — GUI와 같은 자리.
+        nsql_drivers::ext::set_driver_dir(
+            nsql_settings::config_dir()
+                .map(|d| d.join("drivers"))
+                .as_deref(),
+        );
         runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
         runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
         runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");

@@ -1,0 +1,65 @@
+//! ★ 확장 레지스트리 왕복(T-27 ③): SQLite cdylib 산출물을 `drivers/sqlite/<ver>/`에 두 버전으로 복사 → 최신 선택 →
+//! `open_ext` → 조회. 산출물이 없으면 건너뜀(`cargo build -p nsql-driver-sqlite` 뒤).
+use nsql_core::{ExecRequest, Value};
+use nsql_driver_dyn::library_file_name;
+use std::path::PathBuf;
+
+fn sqlite_cdylib() -> Option<PathBuf> {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(profile)
+        .join(library_file_name("nsql-driver-sqlite"));
+    p.is_file().then_some(p)
+}
+
+#[test]
+fn registry_picks_latest_version_and_opens() {
+    let Some(lib) = sqlite_cdylib() else {
+        eprintln!("[skip] nsql_driver_sqlite cdylib 없음");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("nsql-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let name = library_file_name("nsql-driver-sqlite");
+    for ver in ["1.2.0", "1.10.0", "0.9.9"] {
+        let d = root.join("sqlite").join(ver);
+        std::fs::create_dir_all(&d).expect("mkdir");
+        std::fs::copy(&lib, d.join(&name)).expect("copy");
+    }
+    // 라이브러리 파일이 없는 버전 폴더는 무시.
+    std::fs::create_dir_all(root.join("sqlite").join("9.9.9")).expect("mkdir");
+    let found = nsql_drivers::ext::find_extension_in(&root, "sqlite").expect("found");
+    assert_eq!(found.version, "1.10.0", "{found:?}");
+    assert!(nsql_drivers::ext::find_extension_in(&root, "nope").is_none());
+    // 호스트 값으로 폴더를 지정(환경 변수가 있으면 그쪽이 이기므로 그때는 열기만 건너뜀).
+    nsql_drivers::ext::set_driver_dir(Some(&root));
+    if std::env::var_os("NSQL_DRIVER_DIR").is_none() {
+        let listed = nsql_drivers::ext::list_extensions();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "sqlite");
+        let spec = nsql_script::ConnectSpec::parse("sqlite::memory:").expect("spec");
+        let mut s = nsql_drivers::ext::open_ext("sqlite", &spec)
+            .expect("open_ext")
+            .expect("installed");
+        let r = s
+            .execute(&ExecRequest {
+                sql: "SELECT 41 + 1 AS n".into(),
+                params: Vec::new(),
+            })
+            .expect("select");
+        assert_eq!(r.result_sets[0].rows[0][0], Value::Int(42));
+        assert!(s.driver_name().starts_with("ext:sqlite"));
+        assert!(nsql_drivers::ext::open_ext("nope", &spec)
+            .expect("no error")
+            .is_none());
+    }
+    nsql_drivers::ext::set_driver_dir(None);
+    let _ = std::fs::remove_dir_all(&root);
+}
