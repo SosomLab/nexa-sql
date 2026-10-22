@@ -539,11 +539,13 @@ impl DriverWin {
             // 상태줄 + 버튼.
             let inv = &mut Invalidations::default();
             let sy = table.bottom() + pad;
+            let status =
+                nexa_ctl::draw::ellipsize_middle(&mut dc, &self.status, wi - pad * 2 - px(4.0));
             dc.text(
                 pad + px(2.0),
                 sy + px(3.0),
                 Rect::new(pad, sy, wi - pad * 2, status_h),
-                &self.status,
+                &status,
                 if self.busy { th.accent } else { th.text_dim },
             );
             let sel = self.selected_row().cloned();

@@ -4055,7 +4055,7 @@ impl Msg {
             Msg::BtnVarsShare => ["Share", "공유"],
             Msg::BtnVarsLocal => ["Local", "탭으로"],
             Msg::BtnVarsScript => ["Script", "스크립트"],
-            Msg::MnDrivers => ["Drivers…", "드라이버…"],
+            Msg::MnDrivers => ["Drivers", "드라이버"],
             Msg::DrvColId => ["Id", "ID"],
             Msg::DrvColName => ["Name", "이름"],
             Msg::DrvColDialect => ["Dialect", "방언"],
