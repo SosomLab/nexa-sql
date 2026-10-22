@@ -812,6 +812,113 @@ fn mysql_tls_modes_follow_url_param() {
     }
 }
 
+/// ★ 대량 적재(89 §1-5 · T-387 후속): `LOAD DATA LOCAL INFILE` 싱크 왕복 — 임시 표에 3행(탭·줄바꿈·역슬래시·한글·NULL·바이트) →
+/// `finish` = 3 → 재조회 값 동일. 서버 `local_infile=OFF`면 `bulk_begin` 거절(러너 폴백 경로) = 건너뜀으로 기록.
+/// `NSQL_MARIADB_URL`이 있으면 MariaDB로도 같은 표를 돈다.
+#[test]
+fn mysql_bulk_load_local_infile_round_trip() {
+    use nsql_core::ExecRequest;
+    fn run(url: &str, tag: &str) {
+        let spec = nsql_drivers::parse_target(url, Dialect::Mysql).expect("접속 문자열");
+        let mut s = nsql_drivers::open(&spec, Dialect::Mysql)
+            .unwrap_or_else(|e| panic!("{tag} 접속 실패: {}", e.message));
+        let exec = |s: &mut Box<dyn Session>, sql: &str| {
+            s.execute(&ExecRequest {
+                sql: sql.to_string(),
+                params: Vec::new(),
+            })
+            .unwrap_or_else(|e| panic!("{tag} {sql}: {}", e.message))
+        };
+        exec(
+            &mut s,
+            "CREATE TEMPORARY TABLE nsql_it_bulk (id INT, name VARCHAR(50), memo TEXT NULL, bin VARBINARY(10))",
+        );
+        let cols: Vec<String> = ["id", "name", "memo", "bin"]
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        let types = vec![String::new(); 4];
+        let rows = vec![
+            vec![
+                Value::Int(1),
+                Value::Str("a\tb".into()),
+                Value::Null,
+                Value::Bytes(vec![0, 1, 255]),
+            ],
+            vec![
+                Value::Int(2),
+                Value::Str("line\nbreak".into()),
+                Value::Str("x\\y".into()),
+                Value::Bytes(Vec::new()),
+            ],
+            vec![
+                Value::Int(3),
+                Value::Str("한글".into()),
+                Value::Str("ok".into()),
+                Value::Null,
+            ],
+        ];
+        let total = {
+            let mut sink = match s.bulk_begin(
+                "nsql_it_bulk",
+                &cols,
+                &types,
+                &nsql_core::BulkOpts::default(),
+            ) {
+                Ok(k) => k,
+                Err(e) => {
+                    eprintln!(
+                        "[skip] {tag} LOAD DATA LOCAL 거절(서버 local_infile OFF?): {}",
+                        e.message
+                    );
+                    return;
+                }
+            };
+            for r in &rows {
+                sink.push(r).expect("push");
+            }
+            assert_eq!(sink.flush().expect("flush"), 3, "{tag} flush = 3행");
+            assert!(sink.commit().expect("commit"));
+            sink.finish().expect("finish")
+        };
+        assert_eq!(total, 3, "{tag} finish = 3행");
+        let r = exec(
+            &mut s,
+            "SELECT id, name, memo, bin FROM nsql_it_bulk ORDER BY id",
+        );
+        let got = &r.result_sets[0].rows;
+        assert_eq!(got.len(), 3, "{tag} {got:?}");
+        assert_eq!(got[0][1], Value::Str("a\tb".into()), "{tag} 탭 보존");
+        assert_eq!(got[0][2], Value::Null, "{tag} NULL");
+        assert_eq!(got[0][3], Value::Bytes(vec![0, 1, 255]), "{tag} 바이트");
+        assert_eq!(
+            got[1][1],
+            Value::Str("line\nbreak".into()),
+            "{tag} 줄바꿈 보존"
+        );
+        assert_eq!(got[1][2], Value::Str("x\\y".into()), "{tag} 역슬래시 보존");
+        assert_eq!(
+            got[1][3],
+            Value::Bytes(Vec::new()),
+            "{tag} 빈 바이트 ≠ NULL"
+        );
+        assert_eq!(got[2][1], Value::Str("한글".into()), "{tag} utf8mb4");
+        exec(&mut s, "DROP TEMPORARY TABLE nsql_it_bulk");
+    }
+    let mut any = false;
+    if let Ok(url) = std::env::var("NSQL_MYSQL_URL") {
+        any = true;
+        run(&url, "mysql");
+    }
+    if let Ok(url) = std::env::var("NSQL_MARIADB_URL") {
+        any = true;
+        run(&url, "mariadb");
+    }
+    if !any {
+        eprintln!("[skip] NSQL_MYSQL_URL/NSQL_MARIADB_URL 없음");
+    }
+}
+
 #[test]
 fn mysql_driver_warnings_error_position_and_limits() {
     use nsql_core::ExecRequest;

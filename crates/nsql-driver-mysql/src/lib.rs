@@ -142,7 +142,7 @@ fn tls_timeout_error() -> DbError {
     DbError {
         code: None,
         message: format!(
-            "TLS handshake did not complete within {TLS_CONNECT_TIMEOUT_SECS}s — the server certificate may have failed verification \
+            "TLS handshake did not complete within {TLS_CONNECT_TIMEOUT_SECS}s - the server certificate may have failed verification \
              (set mysql.tls_ca to the server CA file, use tls=verify_ca when the host name does not match, or tls=required to skip verification)"
         ),
         position: None,
@@ -228,6 +228,90 @@ fn line_position(message: &str, sql: &str) -> Option<usize> {
         }
     }
     (line == n).then_some(idx)
+}
+
+/// ★ 대량 적재 싱크(docs/89 §1-5 · T-387 후속 10-22): `LOAD DATA LOCAL INFILE` — 배치를 TSV(`\t`·`\n` · `ESCAPED BY '\\'` ·
+/// NULL = `\N` · `CHARACTER SET binary` = 변환·검증 없이 바이트 그대로 → 문자열은 UTF-8 바이트 · VARBINARY/BLOB은 원본)로 메모리에
+/// 쌓아 `LocalInfileHandler`로 서버에 흘린다. 트랜잭션은 싱크가 다룬다(`START TRANSACTION` → 간격 `COMMIT`).
+/// 서버 `local_infile=OFF`(docker 기본 · 3948)면 [`MysqlSession::bulk_begin`]이 거절해 러너가 다중 행 INSERT로 내려간다.
+struct InfileSink<'a> {
+    conn: &'a mut Conn,
+    sql: String,
+    buf: Vec<u8>,
+    pending: u64,
+    rows: u64,
+}
+
+/// LOAD DATA 기본 이스케이프(`ESCAPED BY '\\'`): `\` `\t` `\n` `\r` `\0`만 바꾸면 바이트 그대로 안전하다.
+fn infile_escape(out: &mut Vec<u8>, bytes: &[u8]) {
+    for &b in bytes {
+        match b {
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            0 => out.extend_from_slice(b"\\0"),
+            _ => out.push(b),
+        }
+    }
+}
+
+/// 값 하나 → 필드(NULL/커서 = `\N` · 불리언 = 1/0 · 바이트 = 그대로 이스케이프 · 그 밖 = 표시 문자열).
+fn infile_value(out: &mut Vec<u8>, v: &Value) {
+    match v {
+        Value::Null | Value::Cursor(_) => out.extend_from_slice(b"\\N"),
+        Value::Bool(b) => out.push(if *b { b'1' } else { b'0' }),
+        Value::Bytes(b) => infile_escape(out, b),
+        other => infile_escape(out, other.display().as_bytes()),
+    }
+}
+
+impl nsql_core::BulkSink for InfileSink<'_> {
+    fn push(&mut self, row: &[Value]) -> Result<(), DbError> {
+        for (i, v) in row.iter().enumerate() {
+            if i > 0 {
+                self.buf.push(b'\t');
+            }
+            infile_value(&mut self.buf, v);
+        }
+        self.buf.push(b'\n');
+        self.pending += 1;
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<u64, DbError> {
+        if self.pending == 0 {
+            return Ok(0);
+        }
+        let data = std::mem::take(&mut self.buf);
+        self.pending = 0;
+        self.conn
+            .set_local_infile_handler(Some(mysql::LocalInfileHandler::new(
+                move |_name: &[u8], w: &mut mysql::LocalInfile<'_>| {
+                    use std::io::Write;
+                    w.write_all(&data)
+                },
+            )));
+        let r = self.conn.query_drop(self.sql.as_str());
+        self.conn.set_local_infile_handler(None);
+        r.map_err(err)?;
+        let sent = self.conn.affected_rows();
+        self.rows += sent;
+        Ok(sent)
+    }
+    fn commit(&mut self) -> Result<bool, DbError> {
+        self.conn.query_drop("COMMIT").map_err(err)?;
+        self.conn.query_drop("START TRANSACTION").map_err(err)?;
+        Ok(true)
+    }
+    fn rollback(&mut self) -> Result<(), DbError> {
+        self.conn.query_drop("ROLLBACK").map_err(err)?;
+        self.conn.query_drop("START TRANSACTION").map_err(err)
+    }
+    fn finish(mut self: Box<Self>) -> Result<u64, DbError> {
+        self.flush()?;
+        self.conn.query_drop("COMMIT").map_err(err)?;
+        Ok(self.rows)
+    }
 }
 
 impl MysqlSession {
@@ -833,6 +917,44 @@ impl Session for MysqlSession {
         !self.broken
     }
 
+    /// ★ 대량 적재(89 §1-5): 서버가 `local_infile`을 켰을 때만 `LOAD DATA LOCAL INFILE` 싱크 · 아니면 거절(러너 = 다중 행 폴백).
+    fn bulk_begin<'a>(
+        &'a mut self,
+        table: &str,
+        cols: &[String],
+        _types: &[String],
+        _opts: &nsql_core::BulkOpts,
+    ) -> Result<Box<dyn nsql_core::BulkSink + 'a>, DbError> {
+        let on: Option<i64> = self
+            .conn
+            .query_first("SELECT @@local_infile")
+            .map_err(err)?;
+        if on.unwrap_or(0) == 0 {
+            return Err(DbError {
+                code: None,
+                message: "LOAD DATA LOCAL: server local_infile is OFF".into(),
+                position: None,
+            });
+        }
+        let list = cols
+            .iter()
+            .map(|c| format!("`{}`", c.replace('`', "``")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "LOAD DATA LOCAL INFILE 'nsql-bulk' INTO TABLE {table} CHARACTER SET binary \
+             FIELDS TERMINATED BY '\\t' ESCAPED BY '\\\\' LINES TERMINATED BY '\\n' ({list})"
+        );
+        self.conn.query_drop("START TRANSACTION").map_err(err)?;
+        Ok(Box::new(InfileSink {
+            conn: &mut self.conn,
+            sql,
+            buf: Vec::with_capacity(1 << 16),
+            pending: 0,
+            rows: 0,
+        }))
+    }
+
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
         Some(std::sync::Arc::new(MysqlCancel {
             opts: self.opts.clone(),
@@ -918,6 +1040,25 @@ mod tests {
             None
         );
         assert_eq!(kill_sql(42), "KILL QUERY 42");
+    }
+
+    /// ★ LOAD DATA 필드 직렬화(89 §1-5): NULL = `\N` · 탭/줄바꿈/역슬래시/NUL 이스케이프 · 불리언 1/0 · 바이트 그대로.
+    #[test]
+    fn infile_fields_escape_like_load_data_defaults() {
+        let mut out = Vec::new();
+        infile_value(&mut out, &Value::Str("a\tb\nc\\d\r".into()));
+        assert_eq!(out, b"a\\tb\\nc\\\\d\\r");
+        out.clear();
+        infile_value(&mut out, &Value::Null);
+        assert_eq!(out, b"\\N");
+        out.clear();
+        infile_value(&mut out, &Value::Bool(true));
+        infile_value(&mut out, &Value::Bytes(vec![0, 1, b'\\']));
+        assert_eq!(out, b"1\\0\x01\\\\");
+        out.clear();
+        infile_value(&mut out, &Value::Int(-7));
+        infile_value(&mut out, &Value::Decimal("1.50".into()));
+        assert_eq!(out, b"-71.50");
     }
 
     /// ★ TLS 모드(T-388): 별칭·대소문자·`-` 정규화 · 모르는 값 None · 모드별 SslOpts(disabled = 평문 · 검증 수준 셋).

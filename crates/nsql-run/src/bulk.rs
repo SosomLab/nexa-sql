@@ -284,7 +284,7 @@ impl Runner {
         let driver_rows = p.batch_rows.max(1);
         let driver_kind = matches!(
             caps.bulk_load,
-            BulkLoad::ArrayDml | BulkLoad::CopyIn | BulkLoad::TdsBulk
+            BulkLoad::ArrayDml | BulkLoad::CopyIn | BulkLoad::TdsBulk | BulkLoad::LocalInfile
         );
         let want_driver = match p.mode {
             BulkMode::Auto => driver_kind,

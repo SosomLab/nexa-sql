@@ -158,7 +158,7 @@ else
   echo "SKIP  nexa-ui 시험 벡터 없음($JPGHEX)"
 fi
 # ── 실서버 스위트(방언 공통 4 시나리오 · 임시 표 NSQLT_GE(PK)·NSQLT_GE2(키 없음) 생성 → 시험 → DROP · 61 §2-4 ⑤)
-#   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql> <라벨> [DB]
+#   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql|mysql> <라벨> [DB]   (mysql = 10-22 T-387 · 키 없는 표 = AllColumns)
 #   DB(선택 · mssql) = 임시 표를 만들 데이터베이스 — 로그인의 기본 DB가 master처럼 CREATE 권한이 없는 곳이면
 #   (10-06 Windows 전수: M4PLAN 로그인 BISCM_MS 기본 DB = master → Msg 262) 모든 문장 앞에 `USE <DB>;`를 둔다.
 dbms_suite() {
@@ -191,6 +191,16 @@ CREATE TABLE NSQLT_GE (ID int PRIMARY KEY, NAME nvarchar(20), DT datetime2(0), M
 INSERT INTO NSQLT_GE VALUES (1, 'kim', '2026-07-01 18:45:00', NULL);
 INSERT INTO NSQLT_GE VALUES (2, 'lee', '2026-07-02 09:00:00', 'x');
 CREATE TABLE NSQLT_GE2 (A nvarchar(10), DT datetime2(0), MEMO nvarchar(50));
+INSERT INTO NSQLT_GE2 VALUES ('k', '2026-07-01 18:45:00', NULL);
+INSERT INTO NSQLT_GE2 VALUES ('z', '2026-07-02 09:00:00', 'x');
+SQL
+      printf "INSERT INTO NSQLT_GE2 SELECT * FROM NSQLT_GE2 WHERE A = 'z';\n" > "$D/${tag}_dup.sql"; kind=AllColumns;;
+    mysql)
+      cat > "$D/${tag}_setup.sql" <<'SQL'
+CREATE TABLE NSQLT_GE (ID INT PRIMARY KEY, NAME VARCHAR(20), DT DATETIME, MEMO VARCHAR(50));
+INSERT INTO NSQLT_GE VALUES (1, 'kim', '2026-07-01 18:45:00', NULL);
+INSERT INTO NSQLT_GE VALUES (2, 'lee', '2026-07-02 09:00:00', 'x');
+CREATE TABLE NSQLT_GE2 (A VARCHAR(10), DT DATETIME, MEMO VARCHAR(50));
 INSERT INTO NSQLT_GE2 VALUES ('k', '2026-07-01 18:45:00', NULL);
 INSERT INTO NSQLT_GE2 VALUES ('z', '2026-07-02 09:00:00', 'x');
 SQL
@@ -252,6 +262,9 @@ PYCLOB
     mssql)
       printf 'CREATE TABLE NSQLT_GE3 (ID int PRIMARY KEY, DOC nvarchar(max));\nINSERT INTO NSQLT_GE3 VALUES (1, %s);\n' "'x'" > "$D/${tag}_lob_setup.sql"
       printf 'SELECT ID, LEN(DOC) AS DLEN FROM NSQLT_GE3;\n' > "$D/${tag}_lob_chk.sql";;
+    mysql)
+      printf 'CREATE TABLE NSQLT_GE3 (ID INT PRIMARY KEY, DOC LONGTEXT);\nINSERT INTO NSQLT_GE3 VALUES (1, %s);\n' "'x'" > "$D/${tag}_lob_setup.sql"
+      printf 'SELECT ID, CHAR_LENGTH(DOC) AS DLEN FROM NSQLT_GE3;\n' > "$D/${tag}_lob_chk.sql";;
   esac
   printf 'SELECT ID, DOC FROM NSQLT_GE3;\n' > "$D/${tag}_lob_sel.sql"
   printf 'DROP TABLE NSQLT_GE3;\n' > "$D/${tag}_lob_drop.sql"

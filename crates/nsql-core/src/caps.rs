@@ -183,6 +183,7 @@ const MYSQL: Caps = Caps {
     tx_begin: Some("START TRANSACTION"),
     server_autocommit: true,
     call_signature: CallSignature::Captures,
+    bulk_load: crate::bulk::BulkLoad::LocalInfile,
     ..QUESTION
 };
 

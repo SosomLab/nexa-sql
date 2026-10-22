@@ -6,16 +6,17 @@
 #   "Execution stopped by user"(모든 DBMS · MSSQL Attention은 오류 없이 끝남) 또는 드라이버 오류(ORA-01013 · PG 57014).
 #   판정선(권장): 각 ≤ 2000 ms. OOB(TCP urgent)가 막힌 망에서는 Oracle break가 서버의 다음 읽기까지 지연될 수 있다(44 §6).
 # 사용: scripts/win-stop-latency-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-P <실제 설정 폴더>]
-#        [-O BISCM] [-m M4PLAN] [-r Repository] [-w 3000(실행 뒤 ■까지 ms)] [-l 2000(판정선 ms)]   (-O/-m/-r 빈 값 = 건너뜀)
+#        [-O BISCM] [-m M4PLAN] [-r Repository] [-y <MySQL 프로필|접속 문자열>] [-w 3000(실행 뒤 ■까지 ms)] [-l 2000(판정선 ms)]
+#        (-O/-m/-r/-y 빈 값 = 건너뜀 · -y 기본 = 건너뜀 · 예 -y 'mysql://nexa:nexa@127.0.0.1:3306/nexa' · 10-22 T-387 취소 실측)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
-ORA="BISCM"; MS="M4PLAN"; PG="Repository"; WAIT=3000; LIMIT=2000
-while getopts "o:g:P:O:m:r:w:l:" o; do case $o in
-  o) OUT=$OPTARG;; g) EXE=$OPTARG;; P) PROF=$OPTARG;; O) ORA=$OPTARG;; m) MS=$OPTARG;; r) PG=$OPTARG;; w) WAIT=$OPTARG;; l) LIMIT=$OPTARG;;
+ORA="BISCM"; MS="M4PLAN"; PG="Repository"; MY=""; WAIT=3000; LIMIT=2000
+while getopts "o:g:P:O:m:r:y:w:l:" o; do case $o in
+  o) OUT=$OPTARG;; g) EXE=$OPTARG;; P) PROF=$OPTARG;; O) ORA=$OPTARG;; m) MS=$OPTARG;; r) PG=$OPTARG;; y) MY=$OPTARG;; w) WAIT=$OPTARG;; l) LIMIT=$OPTARG;;
 esac; done
-[ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-P real-config-dir] [-O oracle] [-m mssql] [-r pg] [-w wait-ms] [-l limit-ms]"; exit 2; }
+[ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-P real-config-dir] [-O oracle] [-m mssql] [-r pg] [-y mysql] [-w wait-ms] [-l limit-ms]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
 [ -d "$PROF/profiles" ] && cp -R "$PROF/profiles" "$H/" && cp "$PROF/device.key" "$H/" 2>/dev/null
 printf 'ui.lang=en\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=1200,800\n' > "$H/settings.conf"
@@ -41,7 +42,7 @@ ms() { awk -F'[:.]' '{ printf "%d", (($1*3600)+($2*60)+$3)*1000+$4 }' <<< "$1"; 
 # 요청 줄 = "Cancelling…" 또는 SQL Server 소켓 닫기 경로의 "Attention needs encryption = login only - closing the socket instead"(44 §6-1).
 REQ_RE="Cancelling the running statement|Attention needs encryption"
 # 확정 줄 = 앱 판정(취소 · 접속 닫기) 또는 드라이버 오류(ORA-01013 · PG 57014).
-FIN_RE="Execution stopped by user|Stopped by user|Execution stopped by closing the connection|ORA-01013|57014|canceling statement"
+FIN_RE="Execution stopped by user|Stopped by user|Execution stopped by closing the connection|ORA-01013|57014|canceling statement|1317|Query execution was interrupted"
 # latency <덤프> → "요청ms 확정ms 지연ms 확정문구" (없으면 빈 값)
 latency() {
   local d=$1 req fin
@@ -118,6 +119,16 @@ END \$\$;")
   judge "P② PL/pgSQL CPU 루프 60 s" "$d"
   d=$(run_stop "p3_join" "$PG" "SELECT COUNT(*) FROM generate_series(1, 100000) a, generate_series(1, 100000) b;")
   judge "P③ 큰 조인 SELECT" "$d"
+fi
+
+# ── MySQL / MariaDB ────────────────────────────────────────────────────────────
+#   취소 = 별도 짧은 접속의 `KILL QUERY <connection_id>`(108 §6 · 드라이버 `MysqlCancel`) → 서버 1317 "Query execution was interrupted".
+if [ -n "$MY" ]; then
+  say "— MySQL/MariaDB · $MY"
+  d=$(run_stop "y1_sleep" "$MY" "SELECT SLEEP(60);")
+  judge "Y① SLEEP 60 s" "$d"
+  d=$(run_stop "y2_join" "$MY" "SELECT COUNT(*) FROM information_schema.columns a, information_schema.columns b, information_schema.columns c;")
+  judge "Y② 큰 조인 SELECT" "$d"
 fi
 
 say "=== 결과: PASS $pass · FAIL $fail · 보고 = $REPORT"

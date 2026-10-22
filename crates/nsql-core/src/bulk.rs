@@ -17,6 +17,8 @@ pub enum BulkLoad {
     CopyIn,
     /// SQL Server TDS BULK INSERT(후속 B-4 — 지금은 MultiRow 폴백).
     TdsBulk,
+    /// ★ MySQL/MariaDB `LOAD DATA LOCAL INFILE`(클라이언트 스트림 · 89 §1-5 · 서버 `local_infile=OFF`면 드라이버가 거절 → MultiRow).
+    LocalInfile,
 }
 
 /// 적재 옵션(설정 `bulk.*` · 89 §3-2).
