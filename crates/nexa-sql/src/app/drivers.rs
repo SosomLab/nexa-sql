@@ -104,6 +104,15 @@ impl App {
         self.driver_win.set_status(&text, false);
     }
 
+    /// ★ 설치·삭제 뒤 설정 창(DBMS ▸ 드라이버 · DBMS별 드라이버 행)의 읽기 전용 정보를 바로 맞춘다(다운로드 전/후 상태 · 사용자 10-23).
+    pub(crate) fn drivers_info_changed(&mut self) {
+        if self.prefs_win.window().is_some() {
+            self.prefs_win.set_info(crate::dbms_info_values());
+            self.prefs_win.refresh(&self.settings);
+            self.prefs_win.redraw();
+        }
+    }
+
     pub(crate) fn drivers_apply(&mut self, a: DriverWinAction) {
         match a {
             DriverWinAction::None | DriverWinAction::Paint => {}
@@ -116,6 +125,7 @@ impl App {
                     Err(e) => tf(Msg::DrvStatusError, &[&e]),
                 };
                 self.driver_win.set_status(&text, false);
+                self.drivers_info_changed();
             }
             DriverWinAction::Check(id) => {
                 let text = match ext::check_extension(&id) {
@@ -258,6 +268,7 @@ impl App {
         if done {
             self.driver_task.rx = None;
             self.driver_win.redraw();
+            self.drivers_info_changed();
         }
     }
 }

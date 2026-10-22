@@ -2664,11 +2664,48 @@ fn dbms_info_values() -> Vec<(String, String)> {
         }
         None => missing_in("tnsnames.ora", &o.tns_admin),
     };
-    let included = |d: Dialect, yes: Msg| {
-        if nsql_drivers::is_builtin(d) {
-            t(yes).to_string()
+    // ★ D-350(사용자 10-23 "다운로드 전/후 상태"): 내장 / 확장 설치됨(id·버전) / 미설치(자동 설치 안내) — 설정 창을 다시 활성화하거나 설치·삭제 뒤 갱신.
+    let included = |d: Dialect, yes: Msg| match nsql_drivers::driver_status(d) {
+        nsql_drivers::DriverStatus::Builtin => t(yes).to_string(),
+        nsql_drivers::DriverStatus::Extension { id, version } => {
+            tf(Msg::ValDriverExtInstalled, &[&id, &version])
+        }
+        nsql_drivers::DriverStatus::Missing { ids } => {
+            tf(Msg::ValDriverMissing, &[ids.first().unwrap_or(&"?")])
+        }
+    };
+    let drv_root = nsql_drivers::ext::driver_dir();
+    let drv_folder = drv_root
+        .as_ref()
+        .map_or_else(String::new, |p| p.display().to_string());
+    let drv_index = drv_root.as_ref().map_or_else(
+        || t(Msg::ValDriverIndexNone).to_string(),
+        |r| match (
+            nsql_drivers::ext::install::cached_index(r),
+            nsql_drivers::ext::install::cached_index_age(r),
+        ) {
+            (Some(idx), Some(age)) => tf(
+                Msg::ValDriverIndexAge,
+                &[
+                    &idx.drivers.len().to_string(),
+                    &(age.as_secs() / 60).to_string(),
+                ],
+            ),
+            _ => t(Msg::ValDriverIndexNone).to_string(),
+        },
+    );
+    let drv_installed = {
+        let list: Vec<String> = drv_root
+            .as_ref()
+            .map(|r| nsql_drivers::ext::list_extensions_in(r))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| format!("{} {}", e.id, e.version))
+            .collect();
+        if list.is_empty() {
+            t(Msg::ValDriverNoneInstalled).to_string()
         } else {
-            t(Msg::ValDbmsNotIncluded).to_string()
+            list.join(" · ")
         }
     };
     // ★ Oracle 드라이버 정보(docs/110 §4-2): 지금 쓰일 드라이버 + 못 하는 것 · 빌드에 한쪽만 있으면 "선택지 없음" 안내.
@@ -2692,7 +2729,14 @@ fn dbms_info_values() -> Vec<(String, String)> {
     };
     let unused = || t(Msg::ValOraThinUnused).to_string();
     vec![
-        ("oracle.info_driver".into(), driver_info),
+        (
+            "oracle.info_driver".into(),
+            if nsql_drivers::is_builtin(Dialect::Oracle) {
+                driver_info
+            } else {
+                included(Dialect::Oracle, Msg::ValDbmsNotIncluded)
+            },
+        ),
         // 자동 탐지 방식에서 **잠긴 입력 칸**에 보여 줄 값(탐지된 폴더 · 없으면 공백) — 설정 창이 종속 조건이 안 맞을 때만 쓴다.
         ("oracle.client_dir".into(), path(&o.dir)),
         ("oracle.tns_admin".into(), path(&o.tns_admin)),
@@ -2751,6 +2795,13 @@ fn dbms_info_values() -> Vec<(String, String)> {
             "sqlite.info_driver".into(),
             included(Dialect::Sqlite, Msg::ValDbmsBuiltinSqlite),
         ),
+        (
+            "mysql.info_driver".into(),
+            included(Dialect::Mysql, Msg::ValDbmsBuiltinMysql),
+        ),
+        ("driver.info_folder".into(), drv_folder),
+        ("driver.info_index".into(), drv_index),
+        ("driver.info_installed".into(), drv_installed),
     ]
 }
 

@@ -41,6 +41,8 @@ pub(crate) enum PrefsAction {
     /// 색 창 열기(어느 색 키를 고르는가).
     OpenColors(String),
     OpenKeys,
+    /// ★ 드라이버 관리자 창 열기(DBMS ▸ 드라이버 ▸ 설치된 드라이버 카드의 버튼 · D-350).
+    OpenDrivers,
     /// 순서/표시 편집 창 열기(어느 설정 키인가 · 사용자 10-04).
     OpenOrder(String),
     /// `format.default` 카드의 "설정" 바로가기 — 그 확장(id)의 설정 분류로(사용자 09-30).
@@ -220,6 +222,11 @@ fn is_folder_key(k: &str) -> bool {
     matches!(k, "oracle.client_dir" | "oracle.tns_admin")
 }
 
+/// 설치된 드라이버 카드(읽기 전용) — 옆에 [드라이버 관리자…](D-350 · 사용자 10-23).
+fn is_drivers_key(k: &str) -> bool {
+    k == "driver.info_installed"
+}
+
 impl PrefsWin {
     /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
     pub(crate) fn relabel(&mut self) {
@@ -243,6 +250,8 @@ impl PrefsWin {
                     t(Msg::BtnBrowseFolder)
                 } else if is_order_key(k) {
                     t(Msg::BtnEditOrder)
+                } else if is_drivers_key(k) {
+                    t(Msg::BtnOpenDrivers)
                 } else {
                     t(Msg::BtnExtSettings)
                 });
@@ -737,6 +746,8 @@ impl PrefsWin {
                     Some(Button::new(t(Msg::BtnBrowseFolder)))
                 } else if is_order_key(sn.entry.key) {
                     Some(Button::new(t(Msg::BtnEditOrder)))
+                } else if is_drivers_key(sn.entry.key) {
+                    Some(Button::new(t(Msg::BtnOpenDrivers)))
                 } else if is_default_formatter_key(sn.entry.key) && sn.value != "basic" {
                     // 기본 포맷터가 확장이면 그 확장의 설정으로 가는 바로가기(사용자 09-30 · "확장 설정").
                     Some(Button::new(t(Msg::BtnExtSettings)))
@@ -1855,6 +1866,8 @@ impl PrefsWin {
                         PrefsAction::OpenExtSettings(c.value.clone())
                     } else if is_order_key(&key) {
                         PrefsAction::OpenOrder(key)
+                    } else if is_drivers_key(&key) {
+                        PrefsAction::OpenDrivers
                     } else if is_folder_key(&key) {
                         // 잠긴 카드(자동 탐지 방식)는 찾아보기도 막는다 — 값이 바뀌어도 쓰이지 않는다.
                         if c.locked {

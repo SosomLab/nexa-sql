@@ -343,6 +343,7 @@ impl App {
                     let name = self.panel_op_name();
                     self.conn_win.veil_phase(&name, &text);
                     if stage == "installed" {
+                        self.drivers_info_changed();
                         self.log_win.push(LogEntry::new(
                             LogKind::Info,
                             format!("driver installed: {id}"),

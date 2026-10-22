@@ -1350,6 +1350,10 @@ impl App {
                     self.open_colors = true;
                 }
                 PrefsAction::OpenKeys => self.open_keys = true,
+                PrefsAction::OpenDrivers => {
+                    self.open_drivers = true;
+                    self.redraw();
+                }
                 PrefsAction::OpenOrder(key) => self.open_order_editor(&key),
                 // 기본 포맷터 카드의 "설정" 바로가기 = 그 확장의 설정 분류로(사용자 09-30).
                 PrefsAction::OpenExtSettings(id) => self.ext_open_settings(&id),

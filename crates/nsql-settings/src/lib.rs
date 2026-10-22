@@ -4810,6 +4810,39 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    Entry {
+        key: "mysql.info_driver",
+        cat: Msg::CatDbmsMysql,
+        label: Msg::LblDbmsInfoDriver,
+        desc: Msg::DescDbmsInfo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    // ★ DBMS ▸ 드라이버 정보(D-350 · 읽기 전용 · 다운로드 전/후 상태): 폴더 · 색인(개수·나이) · 설치본 목록(+ [드라이버 관리자…] 버튼).
+    Entry {
+        key: "driver.info_folder",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoFolder,
+        desc: Msg::DescDbmsInfo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "driver.info_index",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoIndex,
+        desc: Msg::DescDbmsInfo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "driver.info_installed",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoInstalled,
+        desc: Msg::DescDriverInfoInstalled,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ★ MySQL/MariaDB(T-388 · 136차): TLS 모드 + CA 파일 — 접속 문자열 `?tls=`가 이긴다 · 새 접속부터.
     Entry {
         key: "mysql.tls",
@@ -4899,7 +4932,7 @@ pub const REGISTRY: &[Entry] = &[
     //   끄면 "드라이버 없음" 오류 + `nsql driver install` 안내. 네트워크는 사용자의 접속 동작 안에서만(26 §8).
     Entry {
         key: "driver.auto_install",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsDrivers,
         label: Msg::LblDriverAutoInstall,
         desc: Msg::DescDriverAutoInstall,
         kind: SettingKind::Bool,
@@ -5601,12 +5634,12 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 라이선스 게이트(docs/23 §4-2 · T-36 · 09-27 · ★ D-145 09-28): **기본 끔** — 개인 사용은 라이선스 없이 전 기능(사용자 09-28
     //   "개인 사용인 경우 모든 기능 오픈 · 차후 일부 제한으로 바뀔 수 있다"). 켜면 Debug·Release 모두 Pro/Org 게이트 12곳 적용(게이트 시험 =
     //   격리 홈에서 on). 종전 `license.gates_dev`(Debug 전용 · Release 늘 켬)에서 이름·뜻이 바뀌었다(RENAMED). HIDDEN.
-    // ★ 확장 드라이버 다운로드(T-29 · docs/22 §3 · HIDDEN · 사용자 10-22 = 별도 저장소 없이 nexa-sql 저장소): 저장소(owner/name · 색인 = `drivers/index.json` ·
+    // ★ 확장 드라이버 다운로드(T-29 · docs/22 §3 · 사용자 10-22 = 별도 저장소 없이 nexa-sql 저장소 · 10-23 = DBMS ▸ 드라이버 분류로): 저장소(owner/name · 색인 = `drivers/index.json` ·
     //   자산 = Releases `driver-<id>-v<ver>`) · HTTPS 요청 하나의 상한(초 · 10초 초과 = `_secs` 규칙 94 §6-5).
     //   네트워크는 `nsql driver search/install/update`(사용자 동작)에서만 · 토큰은 `NSQL_GITHUB_TOKEN` 환경 변수(설정 파일에 안 적는다).
     Entry {
         key: "driver.repo",
-        cat: Msg::CatInternal,
+        cat: Msg::CatDbmsDrivers,
         label: Msg::LblDriverRepo,
         desc: Msg::DescDriverRepo,
         kind: SettingKind::Text,
@@ -5614,7 +5647,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "driver.http_timeout_secs",
-        cat: Msg::CatInternal,
+        cat: Msg::CatDbmsDrivers,
         label: Msg::LblDriverHttpTimeout,
         desc: Msg::DescDriverHttpTimeout,
         kind: SettingKind::Int { min: 5, max: 600 },
@@ -7158,6 +7191,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     (
         Msg::GrpDbms,
         &[
+            // ★ D-350(사용자 10-23 "DBMS 메인 하위에 Driver 관련 설정"): 드라이버 공통(자동 설치 · 저장소 · 폴더 · 색인 · 설치본 · 관리자).
+            Msg::CatDbmsDrivers,
             Msg::CatDbmsOracle,
             Msg::CatDbmsMssql,
             Msg::CatDbmsPostgres,
@@ -7322,6 +7357,10 @@ pub const INFO_KEYS: &[&str] = &[
     "mssql.info_driver",
     "pg.info_driver",
     "sqlite.info_driver",
+    "mysql.info_driver",
+    "driver.info_folder",
+    "driver.info_index",
+    "driver.info_installed",
 ];
 
 /// 읽기 전용 정보 키인가.
