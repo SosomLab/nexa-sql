@@ -1,5 +1,5 @@
 {
-  "_comment": "Nexa SQL extension driver index (docs/22 §2-3 · T-29). Read by `nsql driver search/install/update` from raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json. Assets live in this repository's Releases under tag driver-<id>-v<ver>: nsql-driver-<id>-<ver>-<os>-<arch>.zip + .sha256 + .sig (Ed25519, key in crates/nsql-drivers/src/ext/keys.rs). Fields: id, name, dialect, latest, platforms (os-arch list; empty = all), license, sxs, tag_prefix (default driver-<id>-v), repo (default this repo).",
+  "_comment": "Nexa SQL extension driver index (docs/22 §2-3 · T-29). Read by `nsql driver search/install/update` from raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json. Assets live in this repository's Releases under the pre-release tag drivers-v<ver> (all drivers at once; D-349/D-350): nsql-driver-<id>-<ver>-<os>-<arch>.zip + .sha256 + .sig (Ed25519, key in crates/nsql-drivers/src/ext/keys.rs). Fields: id, name, dialect, latest, platforms (os-arch list; empty = all), license, sxs, tag_prefix (drivers-v), repo (default this repo).",
   "drivers": [
     {
       "id": "sqlite",

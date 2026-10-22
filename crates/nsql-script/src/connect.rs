@@ -206,7 +206,9 @@ impl ConnectSpec {
         //   `UID=`/`PWD=`는 스펙의 user/password로 **올려** 문자열에서 뺀다(금고 저장 · `redacted` 마스킹 · 드라이버가 다시 붙인다).
         if let Some(i) = s.find(':') {
             let d = Dialect::from_name(&s[..i]);
-            if matches!(d, Some(Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb)) {
+            // 벤더 스킴 URL(`tibero://…` · T-384)은 아래 URL 경로가 ODBC 프리셋으로 바꾼다 — 축약 분기에서 제외.
+            let vendor_url = odbc_preset_for(&s[..i]).is_some() && s[i + 1..].starts_with("//");
+            if matches!(d, Some(Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb)) && !vendor_url {
                 let rest = &s[i + 1..];
                 // 종전 URL 꼴 `sqlite://host/db`(호스트는 무시되고 db만 쓰인다)는 그대로 아래 URL 경로로 — 그 외는 전부 경로.
                 let legacy_url = matches!(d, Some(Dialect::Sqlite | Dialect::Duckdb))
