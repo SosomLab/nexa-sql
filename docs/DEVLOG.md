@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차)** — push fb92bbd(nexa-sql 21) · b302c5e(nexa-license) · 툴바 [변수] 버튼(view 그룹 · 열기만 · 79bfef8) · 🔧 CLI `nsql driver` 폴더(`apply_load_switches` 미경유 → 직접 · f756958) · V1 ✓.
 - **2026-10-23 (136차 이어서 · D-348)** — ✅ 확장 드라이버 배포 공개키 `drv-v1` 내장(사용자 keygen · 지문 `8CFVCNTJ` · `ext/keys.rs` · 시험 = .pub 대조 · 가짜/낯선 키 거부 실기 ✓)(6942993) · 남음 = 실제 서명 설치 왕복(사용자 실기) · 첫 드라이버 pre-release · push 대기 19.
 - **2026-10-22 (136차 win 끝 · T-29 1차)** — ★ 확장 드라이버 다운로드·설치 = 새 크레이트 `nsql-net`(최소 HTTPS GET · rustls 0.23 공유 · 프록시 · 상한) · `ext::install`(색인 `releases/latest/download/index.json` ETag 캐시 · sha256 → Ed25519(키 비면 거부) · `.tmp` 원자적 rename) · 자체 zip/sha256 · CLI `nsql driver search|install|update`(+ `--file` 오프라인)(cf22683) · V2 ✓ · 남음 = D-348 키 생성(사용자) · 서명 도구(✅ b302c5e) · 첫 드라이버 pre-release·파이프라인 · GUI 배지 · push 대기 15.
 - **2026-10-22 (136차 win 끝 · D-349)** — ★ 확장 드라이버 배포 = nexa-sql 저장소 안(사용자 "별도 저장소 생성하지 않도록") · 색인 `drivers/index.json`(raw · 커밋) · 태그 `driver-<id>-v<ver>` = 모두 pre-release · 앱 배포 워크플로 3곳 `v*` 가드(7029d37).
