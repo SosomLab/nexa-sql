@@ -8,7 +8,7 @@
 
 ## 0. 원칙
 
-1. **설치본이 기본.** 사용자 데이터·설정·프로필은 **OS 사용자 폴더**(`%APPDATA%\nexa-sql` · `~/Library/Application Support/nexa-sql` · `~/.config/nexa-sql`). **포터블 모드는 D-78로 재검토(09-17 사용자)** — 설계 조건: exe 옆 `data\`(또는 `NSQL_HOME`)가 있으면 **그 폴더를 사용자 폴더로**(설정·프로필·툴바 배치·최근 파일 = 한 파일 트리 · 코드 경로는 지금의 `NSQL_HOME` 규약 그대로) · 자동 갱신·OS 등록(연결 프로그램·PATH) 없음 · zip 채널은 MSI/pkg와 같은 산출물에서 · 기기 키(DPAPI)·라이선스 기기 ID는 포터블에서 어떻게 할지 결정 필요. **그 전까지 새로 저장하는 상태는 전부 설정 레지스트리/`NSQL_HOME` 아래**에 둔다(exe 옆 파일 금지).
+1. **설치본이 기본.** 사용자 데이터·설정·프로필은 **OS 사용자 폴더**(`%APPDATA%\nexa-sql` · `~/Library/Application Support/nexa-sql` · `~/.config/nexa-sql`). 확장 드라이버도 그 아래 **`<설정 폴더>/drivers/<id>/<ver>/`**(설치본은 비워 둔다 · 환경 변수 `NSQL_DRIVER_DIR`가 있으면 그 폴더 · T-27 ③ 10-22). **포터블 모드는 D-78로 재검토(09-17 사용자)** — 설계 조건: exe 옆 `data\`(또는 `NSQL_HOME`)가 있으면 **그 폴더를 사용자 폴더로**(설정·프로필·툴바 배치·최근 파일 = 한 파일 트리 · 코드 경로는 지금의 `NSQL_HOME` 규약 그대로) · 자동 갱신·OS 등록(연결 프로그램·PATH) 없음 · zip 채널은 MSI/pkg와 같은 산출물에서 · 기기 키(DPAPI)·라이선스 기기 ID는 포터블에서 어떻게 할지 결정 필요. **그 전까지 새로 저장하는 상태는 전부 설정 레지스트리/`NSQL_HOME` 아래**에 둔다(exe 옆 파일 금지).
 2. **실행파일은 목적별로 나눈다** — GUI · CLI · (드라이버 프로세스) · (라이선스 도구). 한 exe에 여러 모드를 욱여넣지 않는다(`nexa-sql --cli` 같은 것 없음).
 3. **공통 코드는 라이브러리로 한 번만** — Rust 크레이트(`nsql-core/script/run/io/catalog/…`)는 **정적**(rlib · 각 exe에 링크). OS/외부 런타임(Oracle Instant Client · 향후 ODBC)은 **공유 라이브러리로 별도 위치**에 두고 실행 시 로드한다. 설치본 안에서 한 사본을 모든 exe가 공유.
 4. **3-OS에서 같은 레이아웃 의미** — 폴더 이름과 역할이 같고, OS 관례(macOS `.app` 번들 · Windows `Program Files` · Linux FHS)에만 맞춘다.

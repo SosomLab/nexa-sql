@@ -194,6 +194,10 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 - 자체 시험 = 기동 명령 `explorer.desc:on|off` · 진단 `explorer.stat`(desc · comment_q · comment_inflight · desc_done) · E2E `scripts/win-explorer-desc-e2e.sh`(실서버 임시 표 `nsqlt_desc_probe` · 끝에 DROP).
 - 남음 = T-347(컬럼 코멘트 · PG 함수·Oracle 패키지 설명 · 설명에서 일치한 낱말 표시).
 
+### 8-1. 드라이버 카탈로그 훅(10-22 · 136차 · T-383 2차)
+
+카탈로그 SQL이 없는 연결(ODBC · Access/Excel 등 information_schema가 없는 드라이버)은 드라이버가 직접 목록을 준다 = nsql-core `Session::catalog_tables` / `catalog_columns`(기본 `None` = 종전 방언 SQL) · ODBC = `SQLTables` / `SQLColumns` · nsql-catalog가 훅을 먼저 묻고 `None`이면 SQL 경로 · 빈 스키마는 "(default)" 노드 · 타입 라벨 = `odbc_type_label`.
+
 ## 9. 객체 삭제(우클릭 ▸ 삭제… · 10-01 · 사용자)
 
 | 항목 | 내용 |

@@ -38,6 +38,8 @@
 
 ## 0. 09-15 개정(DR-29) — 전송은 프로세스가 아니라 **in-process 동적 라이브러리**
 
+> ✅ **구현됨(10-22 · 136차 · T-27 ①② · D-347 · 31cc01b)** = `nsql-abi`(ABI v1 함수 13 + 코덱) · `nsql-driver-dyn`(LoadLibraryW/dlopen 로더 · `DynSession`) · SQLite cdylib 참조 드라이버 · ✅ ③ 레지스트리(9646dcf) = `NSQL_DRIVER_DIR` > `<설정 폴더>/drivers` · `drivers/<id>/<ver>/nsql_driver_<id>.{dll,so,dylib}` · 최신 버전 선택 · 내장 없는 방언 = 확장 폴백(지연 로드) · 남음 = 로그인 콤보 확장 방언 표시 · `?driver=` 명시 · 커서·벌크·카탈로그 ABI · 매니페스트·다운로드(T-28·T-29).
+
 사용자 요구 *"로딩 시간·불필요한 메모리·속도 지연이 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"*. 실측(release · 09-15): `nsql` 기동 ≈ 20ms(sqlite 실행 포함 24ms) · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(MSSQL tokio 런타임·Oracle ODPI-C는 **첫 접속 때** 만들어짐). 정적으로 링크된 드라이버는 OS 요구 페이징 덕에 **쓰지 않으면 RAM에 올라오지 않는다** → 내장 4종은 정적 유지가 최적(분리 = 비용만 추가).
 
 | 방식 | 기동 | 메모리 | 호출 지연 | 격리 | 쓰임 |
