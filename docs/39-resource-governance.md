@@ -122,6 +122,7 @@
 | 접속 테스트·접속 동시 | 4 · FIFO | `connect.max_concurrent` | 4 | 2 | 1 | `dispatch_attempts` |
 | DNS 재풀이 | 프로브마다 | `probe.dns_cache_secs`(신설 · HIDDEN ·✅ 09-29 T-249 구현·재등록) | 0 | 300 | 3600 | T-63 잔여 |
 | 드라이버 확장 다운로드(T-29 1차 · 10-22) | 사용자 명령(`nsql driver search/install/update`)만 · 색인 GET 1(nexa-sql `drivers/index.json` raw · ETag · 1시간 캐시 · D-349) · 자산 GET 3(같은 저장소 Releases `driver-*` pre-release) · API GET 1(필요할 때만) · 동시 1 · 재시도 없음 · 본문 1 GiB | `driver.http_timeout_secs`(30 · HIDDEN) · (자동 갱신 확인 `driver.check_updates` = 2차 · 끄는 키도 그때) | — | — | — | `nsql-net` · `ext::install` · 26 §8 |
+| 접속 시 드라이버 자동 설치(D-350 C단계 · 10-23) | 사용자 접속 동작 안 1회(-1350일 때만) · 색인 1 + 자산 3 GET · 동시 1 · 재시도 = 설치 뒤 접속 1회 | `driver.auto_install`(기본 켬) · `driver.http_timeout_secs` | 켬 | 켬 | 켬 | `open_auto` · 26 §8 |
 | 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |
 | ★ 메타 3층 L1/L2([85](85-metadata-layers.md) · [84](84-explorer-search-index.md)) | L1 접속 직후 스키마당 1 질의(250 ms 간격) · L2 현재 스키마 컬럼 ≤200(300 ms 간격) · L3 회수 30 s 점검(질의 0) | `explorer.search_index` · `explorer.index_prefetch` · `explorer.index_idle_ms` · `meta.warm_columns_max` · `meta.detail_max/detail_ttl_secs/cols_ttl_secs` | on | on | prefetch off · warm 0 | T-219·T-221 |

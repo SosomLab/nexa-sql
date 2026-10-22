@@ -69,7 +69,8 @@
 | `odbc` | nsql-driver-odbc | `#[cfg(windows)]`(D-345) |
 
 - **허브 상태** = `driver_status(id)` = Builtin(이 빌드에 정적 링크) / Extension(드라이버 폴더에 설치됨) / Missing → `open()`은 후보 id를 차례로 시도하고 없으면 `ERR_DRIVER_MISSING`(-1350 · 메시지에 `nsql driver install <id>`) · 보조 = `DRIVER_IDS` · `ext_ids` · `dialect_of_ext` · `ext_crate_name` · `is_builtin`.
-- 남은 단계 = C 자동 설치(`driver.auto_install`) · D 릴리스 워크플로(`drivers.yml` · 태그 `drivers-v<ver>` pre-release) · E 문서(TODO T-396).
+- ✅ **C 자동 설치**(e62752a) = 허브 `open_auto` = 오류 -1350 + 정책 → 첫 후보 id를 색인 → 다운로드 → 검증 → 설치 → 1회 재시도(실패 = 원래 오류 + "auto-install failed: …") · 설정 `driver.auto_install`(기본 켬) · GUI 진행 = 상태줄 + 접속 창 베일 · CLI 진행 = stderr `[driver] id: stage pct` · `available()` = 이 OS의 전 방언(콤보 꼬리 사라짐) · 오프라인 번들 = §5-1.
+- 남은 단계 = D 릴리스 워크플로(`drivers.yml` · 태그 `drivers-v<ver>` pre-release) · E 문서(TODO T-396) · C2 = GUI [파일에서 설치…] 버튼.
 
 
 사용자 요구 *"로딩 시간·불필요한 메모리·속도 지연이 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"*. 실측(release · 09-15): `nsql` 기동 ≈ 20ms(sqlite 실행 포함 24ms) · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(MSSQL tokio 런타임·Oracle ODPI-C는 **첫 접속 때** 만들어짐). 정적으로 링크된 드라이버는 OS 요구 페이징 덕에 **쓰지 않으면 RAM에 올라오지 않는다** → 내장 4종은 정적 유지가 최적(분리 = 비용만 추가).
@@ -160,6 +161,11 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 | **프록시** | `HTTPS_PROXY` 환경변수 존중(CONNECT 터널) — 1차 |
 
 
+### 3-0. 접속 시 자동 설치(10-23 · D-350 C단계 · e62752a)
+
+- 접속하려는 방언의 드라이버가 이 빌드에도 드라이버 폴더에도 없으면(오류 -1350) **사용자의 그 접속 동작 안에서** 색인을 읽고 첫 후보 id를 받아 검증·설치한 뒤 한 번 다시 접속한다 · 실패하면 원래 오류에 "auto-install failed: …"를 붙인다(코드 유지).
+- 끄는 키 = `driver.auto_install`(기본 켬 · 끄면 종전처럼 -1350 + `nsql driver install <id>` 안내) · 저장소 = `driver.repo` · 상한 = `driver.http_timeout_secs`.
+
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 
 - **색인 URL**(D-349) = `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json`(저장소 안 파일 · raw · GitHub **API가 아님** · 익명 한도 없음 · 앱 릴리스와 무관 · 갱신 = 커밋) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간 · 태그 접두 `driver-<id>-v` · 프리릴리스 판정 = 버전 문자열의 `-`).
@@ -202,6 +208,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 ## 5. 관리 — 목록 · 설치 · 갱신 · **삭제** (사용자 요구 ④ UI)
 
 ### 5-1. CLI `nsql driver`
+
+> ★ **오프라인 전체 번들(10-23 · D-350 C단계)** = `nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip` · 번들 = 자산 zip이 든 zip(`is_bundle`) → 이 OS 자산(`-<os>-<arch>.zip`)마다 옆 `.sig`(필수)·`.sha256`로 검증 설치(`install_bundle`) · 자산별 결과 표 · 서명이 틀린 자산만 실패 · 다른 OS 자산은 건너뜀.
 ```text
 nsql driver list [--all]            설치본: ID · 버전 · 방언 · 클라이언트(예 Instant Client 19.25) · 크기 · 사용 프로필 수 · 최신 여부(⬆ x.y.z)
                                     --all = 색인의 미설치 확장까지
