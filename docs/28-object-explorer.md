@@ -196,7 +196,7 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 
 ### 8-1. 드라이버 카탈로그 훅(10-22 · 136차 · T-383 2차)
 
-카탈로그 SQL이 없는 연결(ODBC · Access/Excel 등 information_schema가 없는 드라이버)은 드라이버가 직접 목록을 준다 = nsql-core `Session::catalog_tables` / `catalog_columns`(기본 `None` = 종전 방언 SQL) · ODBC = `SQLTables` / `SQLColumns` · nsql-catalog가 훅을 먼저 묻고 `None`이면 SQL 경로 · 빈 스키마는 "(default)" 노드 · 타입 라벨 = `odbc_type_label`.
+카탈로그 SQL이 없는 연결(ODBC · Access/Excel 등 information_schema가 없는 드라이버)은 드라이버가 직접 목록을 준다 = nsql-core `Session::catalog_tables` / `catalog_columns`(기본 `None` = 종전 방언 SQL) · ODBC = `SQLTables` / `SQLColumns` · nsql-catalog가 훅을 먼저 묻고 `None`이면 SQL 경로 · 빈 스키마는 "(default)" 노드 · 타입 라벨 = `odbc_type_label`. 확장 드라이버 자체의 목록·확인·삭제는 탐색기가 아니라 CLI `nsql driver list|path|check|rm`(22 §2-3-1 · T-28).
 
 ## 9. 객체 삭제(우클릭 ▸ 삭제… · 10-01 · 사용자)
 

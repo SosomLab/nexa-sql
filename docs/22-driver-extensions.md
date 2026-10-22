@@ -85,6 +85,28 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
                             "compat": { "server_min": "11.2.0.4", "server_max": "21c" } }   ← §4 호환 표의 원천
 ```
 
+
+#### 2-3-1. 구현된 매니페스트와 CLI(10-22 · T-28 1차 · 2ff65a8)
+
+위 설계의 `nexa-driver.json` 가운데 **지금 읽는 필드**(그 밖 필드 `exec`·`client`·`compat`는 무시 · 다운로드·호환 표는 T-29 몫):
+
+| 필드 | 뜻 | 필수 |
+|---|---|---|
+| `id` | 드라이버 id(폴더 이름 `<id>`와 같게) | ✅ |
+| `version` | 판(폴더 이름 `<ver>` · 최신 선택 = 숫자 세그먼트 비교 · 프리릴리스 < 정식) | ✅ |
+| `dialect` | 방언 이름(`oracle` · `mysql` · `odbc` …) | ✅ |
+| `protocol` | ABI 버전(= `nsql_abi::ABI_VERSION` · 지금 1) · **호스트와 다르면 목록·최신 선택에서 제외** | ✅ |
+| `lib` | 라이브러리 파일 이름 재지정(선택 · 없으면 `nsql_driver_<id>.{dll,so,dylib}`) | — |
+
+폴더 = `NSQL_DRIVER_DIR` > `<설정 폴더>/drivers` · 레이아웃 = `drivers/<id>/<ver>/{nexa-driver.json, nsql_driver_<id>.dll}` · 매니페스트가 없으면 기본 파일 이름으로 찾는다.
+
+| 명령 | 동작 |
+|---|---|
+| `nsql driver list`(`ls`) | 찾은 확장 표 = id · version · dialect · abi · manifest · path(없으면 `(none)`) |
+| `nsql driver path` | 드라이버 폴더 경로 |
+| `nsql driver check <id>` | 최신 판을 실제로 올려 함수표 확인 → driver_id · version · dialect · abi · path |
+| `nsql driver rm <id>[@<ver>]`(`remove`) | 그 판(또는 그 id 전부)을 지움 · 이 프로세스가 이미 올린 판은 거부 · 휴지통 없음 |
+
 ## 3. "최신 버전" 다운로드 규칙 (사용자 요구 ③)
 
 | 규칙 | 내용 |

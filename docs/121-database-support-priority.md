@@ -107,6 +107,9 @@
 - **ABI** = `nsql-abi`(버전 있는 C vtable: `abi_version · detect · open · execute · fetch_next · commit · rollback · set_option · cancel · caps · catalog_* · close`) + `Value/ExecRequest/ExecResult` 바이너리 코덱(64 §3-4). 호환 규칙 = 주 버전 같을 때만 적재 · 아니면 "드라이버 갱신 필요".
 - **방언** = 매니페스트의 `dialect_base`로 기존 방언(문법 `.sqlg` · 완성 · 카탈로그 질의 틀)을 **상속**하고 차이표(108 §1 템플릿)를 드라이버 안 `dialect.json`으로 덮어쓴다 → Tibero = Oracle 상속 · DuckDB = PostgreSQL 상속 · ODBC 일반 = generic.
 
+
+> 10-22 구현(T-28 1차 · 2ff65a8)과의 차이 = 매니페스트 파일 이름 = **`nexa-driver.json`**(위 `driver.json`은 설계 당시 이름) · 지금 읽는 필드 = `id` · `version` · `dialect` · `protocol`(= abi_version) · `lib` · 나머지(이름 · 설명 · `dialect_base` · OS 목록 · 요구 · Caps · 설정 스키마)는 T-29 다운로드·T-27 후속 ABI 때 · 레이아웃 = `<설정 폴더>/drivers/<id>/<ver>/` · CLI `nsql driver list|path|check|rm`(22 §2-3-1).
+
 ### 7-3. 색인·저장소·보안
 
 | 항목 | 규칙 |
