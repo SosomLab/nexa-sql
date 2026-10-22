@@ -115,6 +115,9 @@ pub struct ConnectSpec {
     pub schema: Option<String>,
     /// 접속 유형(`?env=dev|test|prod` · 프로필 키 `env`) — 없으면 유형 없음(= 개발과 같은 기준).
     pub env: Option<ConnEnv>,
+    /// ★ TLS 모드(`?tls=` · `ssl-mode=` 별칭 · T-388 MySQL/MariaDB · 소문자 · `-` → `_`): disabled · preferred · required ·
+    /// verify_ca · verify_identity. 값의 뜻과 검증은 드라이버 몫 · 없으면 설정(`mysql.tls`)을 따른다.
+    pub tls: Option<String>,
 }
 
 impl ConnectSpec {
@@ -194,6 +197,14 @@ impl ConnectSpec {
                         spec.schema = Some(percent_decode(v.trim()));
                     } else if k.eq_ignore_ascii_case("env") {
                         spec.env = ConnEnv::from_name(v);
+                    } else if k.eq_ignore_ascii_case("tls")
+                        || k.eq_ignore_ascii_case("ssl-mode")
+                        || k.eq_ignore_ascii_case("sslmode")
+                    {
+                        let t = v.trim().to_ascii_lowercase().replace('-', "_");
+                        if !t.is_empty() {
+                            spec.tls = Some(t);
+                        }
                     } else if k.eq_ignore_ascii_case("role") && !v.trim().is_empty() {
                         spec.role = Some(v.trim().to_ascii_uppercase());
                     }
@@ -396,6 +407,9 @@ impl ConnectSpec {
         if let Some(e) = self.env {
             q.push(format!("env={}", e.as_str()));
         }
+        if let Some(t) = &self.tls {
+            q.push(format!("tls={t}"));
+        }
         if !q.is_empty() {
             s.push('?');
             s.push_str(&q.join("&"));
@@ -596,6 +610,17 @@ mod tests {
         assert_eq!(
             ConnectSpec::parse("pg://u@h/db?env=nope").unwrap().env,
             None
+        );
+        // ★ `?tls=`(T-388): 소문자 정규화 · `ssl-mode=` 별칭 · 왕복.
+        let t = ConnectSpec::parse("mysql://u@h/db?tls=REQUIRED").unwrap();
+        assert_eq!(t.tls.as_deref(), Some("required"));
+        assert_eq!(t.connection_string(), "mysql://u@h/db?tls=required");
+        assert_eq!(
+            ConnectSpec::parse("mariadb://u@h/db?ssl-mode=Verify-Identity")
+                .unwrap()
+                .tls
+                .as_deref(),
+            Some("verify_identity")
         );
         let again = ConnectSpec::parse(&c.connection_string()).unwrap();
         assert_eq!(again.schema.as_deref(), Some("HR"));

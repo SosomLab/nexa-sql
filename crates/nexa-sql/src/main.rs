@@ -2185,6 +2185,10 @@ fn main() {
         .set_diff_marks(app.settings.flag("editor.diff_marks"));
     app.sync_run_stmt_button();
     nsql_drivers::set_mssql_encryption(app.settings.get("mssql.encrypt") == Some("login"));
+    nsql_drivers::set_mysql_tls(
+        app.settings.get("mysql.tls").unwrap_or("preferred"),
+        app.settings.get("mysql.tls_ca").unwrap_or(""),
+    );
     apply_oracle_client(&app.settings);
     app.apply_net_options();
     // 첫 화면부터 탭 표식(미연결 사선)이 보이게 — 세션 상태 → 화면 3층 동기화 1회.

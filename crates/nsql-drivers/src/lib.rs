@@ -170,6 +170,20 @@ pub fn set_mssql_encryption(login_only: bool) {
     let _ = login_only;
 }
 
+/// ★ MySQL/MariaDB TLS(T-388 · 설정 `mysql.tls` + `mysql.tls_ca`): 접속 문자열 `?tls=`가 있으면 그쪽이 이긴다 · 다음 접속부터.
+pub fn set_mysql_tls(mode: &str, ca_path: &str) {
+    #[cfg(feature = "mysql")]
+    {
+        let m = nsql_driver_mysql::TlsMode::parse(mode)
+            .unwrap_or(nsql_driver_mysql::TlsMode::Preferred);
+        let ca = ca_path.trim();
+        let ca = (!ca.is_empty()).then(|| std::path::Path::new(ca));
+        nsql_driver_mysql::set_tls(m, ca);
+    }
+    #[cfg(not(feature = "mysql"))]
+    let _ = (mode, ca_path);
+}
+
 /// 네트워크 생존 옵션(docs/53): TCP keepalive 유휴(초 · PG·SQL Server · 0 = 끔) · Oracle 호출 상한(초 · 0 = 없음). 다음 접속부터.
 pub fn set_net_options(keepalive_secs: u64, call_timeout_secs: u64) {
     #[cfg(feature = "pg")]

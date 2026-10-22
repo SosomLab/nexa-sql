@@ -446,6 +446,7 @@ mod tests {
             dialect: Some(Dialect::Oracle),
             schema: None,
             env: None,
+            tls: None,
         }
     }
 

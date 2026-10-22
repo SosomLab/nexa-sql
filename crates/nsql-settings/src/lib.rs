@@ -394,6 +394,15 @@ const MSSQL_ENCRYPT_OPTS: &[(&str, Msg)] = &[
     ("login", Msg::ValMssqlEncryptLogin),
 ];
 
+// ★ MySQL/MariaDB TLS 모드(T-388 · `mysql` crate SslOpts · 접속 문자열 `?tls=`가 이긴다).
+const MYSQL_TLS_OPTS: &[(&str, Msg)] = &[
+    ("preferred", Msg::ValMysqlTlsPreferred),
+    ("disabled", Msg::ValMysqlTlsDisabled),
+    ("required", Msg::ValMysqlTlsRequired),
+    ("verify_ca", Msg::ValMysqlTlsVerifyCa),
+    ("verify_identity", Msg::ValMysqlTlsVerifyIdentity),
+];
+
 const MINIMAP_VIEWPORT_OPTS: &[(&str, Msg)] = &[
     ("always", Msg::ValMinimapVpAlways),
     ("hover", Msg::ValMinimapVpHover),
@@ -4801,6 +4810,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ MySQL/MariaDB(T-388 · 136차): TLS 모드 + CA 파일 — 접속 문자열 `?tls=`가 이긴다 · 새 접속부터.
+    Entry {
+        key: "mysql.tls",
+        cat: Msg::CatDbmsMysql,
+        label: Msg::LblMysqlTls,
+        desc: Msg::DescMysqlTls,
+        kind: SettingKind::Choice(MYSQL_TLS_OPTS),
+        default: "preferred",
+    },
+    Entry {
+        key: "mysql.tls_ca",
+        cat: Msg::CatDbmsMysql,
+        label: Msg::LblMysqlTlsCa,
+        desc: Msg::DescMysqlTlsCa,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "oracle.live.source",
         cat: Msg::CatDbmsOracle,
@@ -7106,6 +7132,7 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatDbmsOracle,
             Msg::CatDbmsMssql,
             Msg::CatDbmsPostgres,
+            Msg::CatDbmsMysql,
             Msg::CatDbmsSqlite,
         ],
     ),

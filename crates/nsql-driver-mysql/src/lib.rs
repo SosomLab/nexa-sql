@@ -13,7 +13,9 @@
 //! - 경고(`warnings > 0`) = `SHOW WARNINGS` 1회 → `ExecResult::messages`(MySQL에는 PRINT가 없다 · Note/Warning 줄).
 //! - 커서 유지 없음(`cursor_supported = false` · 호스트는 LIMIT/OFFSET 재질의 폴백 · `nsql_io::paging`) · `max_rows` = 상한까지만
 //!   담고 나머지는 버린다(결과 집합을 끝까지 읽어야 같은 접속으로 다음 명령을 보낼 수 있다 · 크레이트가 Drop에서 비운다).
-//! - TLS: 기본 없음(MySQL 8 `caching_sha2_password`는 TLS 없이도 RSA 공개키 교환으로 인증된다 · 크레이트가 처리) · `?tls=require`는 T-384.
+//! - TLS(T-388): 모드 = 접속 문자열 `?tls=` > 설정 `mysql.tls`([`set_tls`]) · `preferred`(기본) = TLS 시도 → 서버가 못 하면 평문
+//!   (인증 실패 1045는 재시도 안 함) · `required` = 암호화(인증서 검증 없음) · `verify_ca`/`verify_identity` = CA 파일(`mysql.tls_ca` ·
+//!   없으면 시스템 루트) · `disabled` = 평문. 스택 = rustls + aws-lc-rs(Oracle Thin과 공유).
 //! - 트랜잭션: 서버 자동 커밋(`server_autocommit`) · 수동 커밋은 러너가 `START TRANSACTION`을 먼저 보낸다(`Caps.tx_begin`).
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
@@ -31,6 +33,120 @@ static KEEPALIVE_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 
 pub fn set_keepalive_secs(secs: u64) {
     KEEPALIVE_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// ★ TLS 모드(T-388 · 설정 `mysql.tls` · 접속 문자열 `?tls=`가 이긴다).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TlsMode {
+    /// 평문.
+    Disabled,
+    /// TLS 시도 → 서버가 못 하면 평문(기본).
+    Preferred,
+    /// 암호화만(인증서 검증 없음).
+    Required,
+    /// CA로 인증서 검증(호스트 이름은 안 봄).
+    VerifyCa,
+    /// CA + 호스트 이름 검증.
+    VerifyIdentity,
+}
+
+impl TlsMode {
+    /// 설정값·접속 문자열 값 → 모드(별칭 허용 · 모르면 None).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<TlsMode> {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "disabled" | "disable" | "off" | "none" | "false" => Some(TlsMode::Disabled),
+            "preferred" | "prefer" => Some(TlsMode::Preferred),
+            "required" | "require" | "on" | "true" => Some(TlsMode::Required),
+            "verify_ca" => Some(TlsMode::VerifyCa),
+            "verify_identity" | "verify_full" => Some(TlsMode::VerifyIdentity),
+            _ => None,
+        }
+    }
+
+    fn from_u8(v: u8) -> TlsMode {
+        match v {
+            0 => TlsMode::Disabled,
+            2 => TlsMode::Required,
+            3 => TlsMode::VerifyCa,
+            4 => TlsMode::VerifyIdentity,
+            _ => TlsMode::Preferred,
+        }
+    }
+}
+
+static TLS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+static TLS_CA: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// 전역 TLS 모드 + CA 파일(설정 · 다음 접속부터).
+pub fn set_tls(mode: TlsMode, ca: Option<&std::path::Path>) {
+    TLS_MODE.store(mode as u8, std::sync::atomic::Ordering::Relaxed);
+    *TLS_CA.lock().unwrap_or_else(|e| e.into_inner()) = ca.map(std::path::Path::to_path_buf);
+}
+
+fn global_tls() -> (TlsMode, Option<std::path::PathBuf>) {
+    (
+        TlsMode::from_u8(TLS_MODE.load(std::sync::atomic::Ordering::Relaxed)),
+        TLS_CA.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+    )
+}
+
+/// 모드 → `SslOpts`(`None` = 평문 · 순수).
+fn ssl_opts_for(mode: TlsMode, ca: Option<&std::path::Path>) -> Option<mysql::SslOpts> {
+    let base = mysql::SslOpts::default();
+    let with_ca = |o: mysql::SslOpts| o.with_root_cert_path(ca.map(std::path::Path::to_path_buf));
+    match mode {
+        TlsMode::Disabled => None,
+        TlsMode::Preferred | TlsMode::Required => Some(
+            base.with_danger_accept_invalid_certs(true)
+                .with_danger_skip_domain_validation(true),
+        ),
+        TlsMode::VerifyCa => Some(with_ca(base).with_danger_skip_domain_validation(true)),
+        TlsMode::VerifyIdentity => Some(with_ca(base)),
+    }
+}
+
+/// 인증 실패(1045 · 자격 증명)인가 — `preferred`의 평문 재시도 대상이 아니다.
+fn is_auth_error(e: &mysql::Error) -> bool {
+    matches!(e, mysql::Error::MySqlError(me) if me.code == 1045)
+}
+
+/// ★ 보안 접속(TLS) 상한(초): 인증서 검증이 실패하면(CA 없음 · 호스트 이름 불일치) mysql crate + rustls가 서버 응답을
+/// 기다리며 멈춘다(10-22 실측 25 s+) → 접속을 스레드로 감싸 시간 안에 못 끝나면 원인을 적은 오류로(스레드는 소켓이 닫히면 끝난다).
+const TLS_CONNECT_TIMEOUT_SECS: u64 = 20;
+
+enum TlsConnect {
+    Ok(Conn),
+    Mysql(mysql::Error),
+    Timeout,
+}
+
+fn connect_secure(opts: Opts) -> TlsConnect {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("nsql-mysql-tls-connect".into())
+        .spawn(move || {
+            let _ = tx.send(Conn::new(opts));
+        });
+    if spawned.is_err() {
+        return TlsConnect::Timeout;
+    }
+    match rx.recv_timeout(std::time::Duration::from_secs(TLS_CONNECT_TIMEOUT_SECS)) {
+        Ok(Ok(c)) => TlsConnect::Ok(c),
+        Ok(Err(e)) => TlsConnect::Mysql(e),
+        Err(_) => TlsConnect::Timeout,
+    }
+}
+
+fn tls_timeout_error() -> DbError {
+    DbError {
+        code: None,
+        message: format!(
+            "TLS handshake did not complete within {TLS_CONNECT_TIMEOUT_SECS}s — the server certificate may have failed verification \
+             (set mysql.tls_ca to the server CA file, use tls=verify_ca when the host name does not match, or tls=required to skip verification)"
+        ),
+        position: None,
+    }
 }
 
 #[allow(missing_debug_implementations)]
@@ -135,8 +251,28 @@ impl MysqlSession {
         if ka > 0 {
             b = b.tcp_keepalive_time_ms(Some(u32::try_from(ka * 1000).unwrap_or(u32::MAX)));
         }
-        let opts = Opts::from(b);
-        let conn = Conn::new(opts.clone()).map_err(err)?;
+        // ★ TLS(T-388): 접속 문자열 `?tls=` > 설정 · preferred = TLS 먼저, 서버가 못 하면(핸드셰이크 실패) 평문 한 번 더.
+        let (gmode, gca) = global_tls();
+        let mode = spec
+            .tls
+            .as_deref()
+            .and_then(TlsMode::parse)
+            .unwrap_or(gmode);
+        let plain = Opts::from(b);
+        let (conn, opts) = match ssl_opts_for(mode, gca.as_deref()) {
+            None => (Conn::new(plain.clone()).map_err(err)?, plain),
+            Some(ssl) => {
+                let secure = Opts::from(OptsBuilder::from_opts(plain.clone()).ssl_opts(ssl));
+                match connect_secure(secure.clone()) {
+                    TlsConnect::Ok(c) => (c, secure),
+                    TlsConnect::Mysql(e) if mode == TlsMode::Preferred && !is_auth_error(&e) => {
+                        (Conn::new(plain.clone()).map_err(err)?, plain)
+                    }
+                    TlsConnect::Mysql(e) => return Err(err(e)),
+                    TlsConnect::Timeout => return Err(tls_timeout_error()),
+                }
+            }
+        };
         Ok(MysqlSession {
             conn,
             opts,
@@ -782,6 +918,37 @@ mod tests {
             None
         );
         assert_eq!(kill_sql(42), "KILL QUERY 42");
+    }
+
+    /// ★ TLS 모드(T-388): 별칭·대소문자·`-` 정규화 · 모르는 값 None · 모드별 SslOpts(disabled = 평문 · 검증 수준 셋).
+    #[test]
+    fn tls_mode_parse_and_ssl_opts() {
+        assert_eq!(TlsMode::parse("REQUIRED"), Some(TlsMode::Required));
+        assert_eq!(
+            TlsMode::parse("verify-identity"),
+            Some(TlsMode::VerifyIdentity)
+        );
+        assert_eq!(TlsMode::parse("prefer"), Some(TlsMode::Preferred));
+        assert_eq!(TlsMode::parse("off"), Some(TlsMode::Disabled));
+        assert_eq!(TlsMode::parse("verify_ca"), Some(TlsMode::VerifyCa));
+        assert_eq!(TlsMode::parse("bogus"), None);
+        assert!(ssl_opts_for(TlsMode::Disabled, None).is_none());
+        let ca = std::path::Path::new("C:/certs/ca.pem");
+        let req = ssl_opts_for(TlsMode::Required, Some(ca)).expect("required");
+        assert!(req.accept_invalid_certs() && req.skip_domain_validation());
+        assert!(
+            req.root_cert_path().is_none(),
+            "required = CA를 보지 않는다"
+        );
+        let vca = ssl_opts_for(TlsMode::VerifyCa, Some(ca)).expect("verify_ca");
+        assert!(!vca.accept_invalid_certs() && vca.skip_domain_validation());
+        assert_eq!(
+            vca.root_cert_path().map(|p| p.to_path_buf()),
+            Some(ca.to_path_buf())
+        );
+        let vid = ssl_opts_for(TlsMode::VerifyIdentity, Some(ca)).expect("verify_identity");
+        assert!(!vid.accept_invalid_certs() && !vid.skip_domain_validation());
+        assert_eq!(TlsMode::from_u8(TlsMode::VerifyCa as u8), TlsMode::VerifyCa);
     }
 
     #[test]

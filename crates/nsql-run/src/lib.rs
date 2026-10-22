@@ -1891,6 +1891,7 @@ impl Runner {
                 dialect: None,
                 schema: None,
                 env: _,
+                tls: _,
             } => Some(u.as_str()),
             _ => None,
         }

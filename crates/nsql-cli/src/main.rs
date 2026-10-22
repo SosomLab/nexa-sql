@@ -374,6 +374,11 @@ fn apply_load_switches(runner: &mut Runner) {
         nsql_drivers::set_oracle_driver(nsql_drivers::OracleDriver::parse(
             s.get("oracle.driver").unwrap_or("thin"),
         ));
+        // MySQL/MariaDB TLS(T-388 · `mysql.tls` · `mysql.tls_ca`) — GUI와 같은 값.
+        nsql_drivers::set_mysql_tls(
+            s.get("mysql.tls").unwrap_or("preferred"),
+            s.get("mysql.tls_ca").unwrap_or(""),
+        );
         runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
         runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
         runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");

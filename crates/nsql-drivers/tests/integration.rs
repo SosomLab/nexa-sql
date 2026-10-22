@@ -657,7 +657,9 @@ fn mysql_session_variables_select_into_and_types() {
     assert_eq!(row[4], Value::Int(1));
     assert_eq!(row[5], Value::Null);
     assert_eq!(sets[1].columns[0].type_name, "DECIMAL");
-    assert_eq!(sets[1].columns[4].type_name, "BIGINT UNSIGNED");
+    // 정수 상수 표현식의 타입 이름 = MySQL 8 `BIGINT UNSIGNED` · MariaDB 11.4 `INT UNSIGNED`(서버 차이 · 10-22 실측).
+    let t4 = sets[1].columns[4].type_name.as_str();
+    assert!(matches!(t4, "BIGINT UNSIGNED" | "INT UNSIGNED"), "{t4}");
     // 여러 행 · 0행 정책(D-139).
     let (errs, ev) = run_raw(
         &mut r,
@@ -746,6 +748,70 @@ fn mysql_manual_commit_and_rollback() {
 
 /// 드라이버 직접: 경고 = `SHOW WARNINGS` 메시지 · 문법 오류 `at line N` = 그 줄 머리의 글자 위치(T-371) · 취소 핸들 있음 ·
 /// `max_rows` 상한 · 백틱·`#` 주석이 든 문장.
+/// ★ T-388 TLS 실측(`NSQL_MYSQL_URL` · `NSQL_MARIADB_URL` 둘 다 docker 기본 = 자체 서명 인증서로 TLS 켬): `?tls=required` =
+/// Ssl_cipher 있음 · `?tls=disabled` = 없음 · `?tls=preferred` = 서버가 되면 암호화 · `?tls=verify_identity`(CA 없음) = 실패
+/// (검증 실패 뒤 멈춤은 드라이버의 20 s 상한이 오류로 바꾼다 · MySQL 쪽 한 번만 잰다). `SHOW SESSION STATUS`는 MySQL 방언에서
+/// 서버 문장으로 가는 패스스루(split `command_or_sql`)까지 함께 확인한다.
+#[test]
+fn mysql_tls_modes_follow_url_param() {
+    use nsql_core::ExecRequest;
+    fn cipher(url: &str, tls: &str) -> Result<String, String> {
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let spec = nsql_drivers::parse_target(&format!("{url}{sep}tls={tls}"), Dialect::Mysql)
+            .expect("접속 문자열");
+        let mut s = nsql_drivers::open(&spec, Dialect::Mysql).map_err(|e| e.message)?;
+        let r = s
+            .execute(&ExecRequest {
+                sql: "SHOW SESSION STATUS LIKE 'Ssl_cipher'".to_string(),
+                params: Vec::new(),
+            })
+            .map_err(|e| e.message)?;
+        assert_eq!(r.result_sets.len(), 1, "SHOW … = 결과 집합 하나");
+        Ok(r.result_sets
+            .first()
+            .and_then(|rs| rs.rows.first())
+            .and_then(|row| row.get(1))
+            .map(nsql_core::Value::display)
+            .unwrap_or_default())
+    }
+    let on = |v: &str| !v.is_empty() && v != "NULL";
+    let mut any = false;
+    if let Ok(url) = std::env::var("NSQL_MYSQL_URL") {
+        any = true;
+        let req = cipher(&url, "required").expect("mysql required");
+        assert!(on(&req), "required → Ssl_cipher: {req:?}");
+        let dis = cipher(&url, "disabled").expect("mysql disabled");
+        assert!(!on(&dis), "disabled → 평문: {dis:?}");
+        let pre = cipher(&url, "preferred").expect("mysql preferred");
+        assert!(on(&pre), "preferred → 서버가 되면 암호화: {pre:?}");
+        let started = std::time::Instant::now();
+        let vid = cipher(&url, "verify_identity");
+        assert!(
+            vid.is_err(),
+            "verify_identity(CA 없음 · 자체 서명) = 실패: {vid:?}"
+        );
+        assert!(
+            started.elapsed().as_secs() <= 40,
+            "검증 실패 멈춤은 상한 안에 오류로 끝난다"
+        );
+    }
+    if let Ok(url) = std::env::var("NSQL_MARIADB_URL") {
+        any = true;
+        let req = cipher(&url, "required").expect("mariadb required");
+        assert!(
+            on(&req),
+            "MariaDB(docker 11.4 = TLS 켬) required → Ssl_cipher: {req:?}"
+        );
+        let dis = cipher(&url, "disabled").expect("mariadb disabled");
+        assert!(!on(&dis), "disabled → 평문: {dis:?}");
+        let pre = cipher(&url, "preferred").expect("mariadb preferred");
+        assert!(on(&pre), "preferred → 암호화: {pre:?}");
+    }
+    if !any {
+        eprintln!("[skip] NSQL_MYSQL_URL/NSQL_MARIADB_URL 없음");
+    }
+}
+
 #[test]
 fn mysql_driver_warnings_error_position_and_limits() {
     use nsql_core::ExecRequest;
