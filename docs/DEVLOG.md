@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-22 (136차 win 끝 · T-29 1차)** — ★ 확장 드라이버 다운로드·설치 = 새 크레이트 `nsql-net`(최소 HTTPS GET · rustls 0.23 공유 · 프록시 · 상한) · `ext::install`(색인 `releases/latest/download/index.json` ETag 캐시 · sha256 → Ed25519(키 비면 거부) · `.tmp` 원자적 rename) · 자체 zip/sha256 · CLI `nsql driver search|install|update`(+ `--file` 오프라인)(cf22683) · V2 ✓ · 남음 = D-348 키 생성(사용자) · 서명 도구 · 저장소·파이프라인 · GUI 배지 · push 대기 15.
 - **2026-10-22 (136차 win 끝 · T-28)** — ★ 확장 드라이버 매니페스트 `nexa-driver.json`(id·version·dialect·protocol·lib · protocol ≠ ABI = 제외) + CLI `nsql driver list|path|check|rm` + 새 크레이트 `nsql-json`(settings에서 분리 · 의존 0)(2ff65a8) · V2 = 4크레이트 시험·clippy ✓ · CLI 실기 ✓ · push 대기 13.
 - **2026-10-22 (136차 win 후반 · ODBC 2차 + 확장 드라이버 틀)** — ODBC 2차(SQLCancel · LOB 스트리밍 · SQLTables/SQLColumns 카탈로그 훅)(b4fa4e6) · 🔧 자동 커밋 best-effort(95efc9d) · COMMIT/ROLLBACK 세션 API(30d0cdf) · ★ DR-29 T-27 ①②③ = `nsql-abi` + `nsql-driver-dyn` + SQLite cdylib 왕복(31cc01b) + 확장 레지스트리 `drivers/<id>/<ver>/` 폴백(9646dcf) · Excel/Text ODBC 실기 ✓ · MySQL 코드스페이스 삭제. → [journal §10](journal/2026-10-22.md)
 - **2026-10-22 (136차 win · ODBC 1차)** — ★ T-383 `nsql-driver-odbc`(odbc-api 29.2 · `?` 바인드 · 블록 페치 · 자동 커밋 끔)(2c6b38b) · ODBC 접속 문자열 `odbc:…`(ffc92f1) · ★ D-345 = Windows 전용 내장(unixODBC LGPL · 네이티브 의존 0 · mac/Linux = D-346 결정 대기)(8091f8c) · 실측 = Windows 인박스 SQL Server 드라이버 × 저장 프로필 ✓. → [journal §9](journal/2026-10-22.md)

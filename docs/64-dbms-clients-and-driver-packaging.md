@@ -102,7 +102,7 @@ DBMS
 
 ### 3-4. 확장 드라이버를 만들 때의 설계(22 §0의 구체화 · ✅ 틀 구현 10-22 = T-27 ①②③ · T-28 1차 · D-347 · 다운로드는 후속)
 
-> 크레이트(10-22) = `nsql-abi`(ABI v1) · `nsql-driver-dyn`(로더) · `nsql_drivers::ext`(레지스트리 · 매니페스트) · **`nsql-json`**(의존 0 · `Json`/`parse`/`dump` · settings에서 분리 = 레지스트리가 settings에 기대지 않게) · CLI `nsql driver`.
+> 크레이트(10-22) = `nsql-abi`(ABI v1) · `nsql-driver-dyn`(로더) · `nsql_drivers::ext`(레지스트리 · 매니페스트) · **`nsql-json`**(의존 0 · `Json`/`parse`/`dump` · settings에서 분리 = 레지스트리가 settings에 기대지 않게) · **`nsql-net`**(최소 HTTPS GET · rustls 0.23 공유 · 프록시 · 다운로드용 · T-29) · `ext::install`·`ext::zip`·`ext::sha256`·`ext::keys` · CLI `nsql driver`(list·path·check·rm·search·install·update).
 
 ```
 nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)                         ← 지금

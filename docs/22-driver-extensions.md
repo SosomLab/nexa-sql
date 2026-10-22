@@ -120,6 +120,15 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 | **오프라인 설치** | `nsql driver install --file <zip>` — 폐쇄망(사용자 실무 환경 가능성). 검증 규칙 동일 |
 | **프록시** | `HTTPS_PROXY` 환경변수 존중(CONNECT 터널) — 1차 |
 
+
+### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
+
+- **색인 URL** = `https://github.com/<repo>/releases/latest/download/index.json`(GitHub **API가 아니라** 자산 직링크 · 익명 한도 없음) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간).
+- **검증 순서** = sha256 → Ed25519(`ext::keys::DRIVER_KEYS` · **키 목록이 비면 설치 거부 · 우회 옵션 없음**) → `drivers/.tmp/<pid>-<ns>/pkg`에 풀기(공통 최상위 폴더 1개 벗김) → 매니페스트 `nexa-driver.json` id·version·protocol 대조(ABI 불일치 = 거부) + 라이브러리 존재 → `drivers/<id>/<ver>/`로 **원자적 rename** · 이미 있으면 거부(`--force` = 교체).
+- **HTTPS** = 새 크레이트 `nsql-net`(rustls 0.23 + webpki-roots 1 · 프록시 CONNECT · 상한) — 위 표의 "tiberius가 끌어온 `rustls`·`ring`"은 136차 뒤 rustls 0.23 + aws-lc-rs(MySQL·Oracle Thin과 공유)로 바뀜.
+- **갱신 확인 자동(하루 1회)** = 아직 없음(2차 · `driver.check_updates` + GUI 배지) · 지금은 `nsql driver update --check` 수동만.
+- CLI = `nsql driver search [<text>] [--refresh]` · `install <id>[@<ver>] [--pre] [--force]` · `install --file <zip>` · `update [<id>] [--check]` · 설정 `driver.repo` · `driver.http_timeout_secs` · 토큰 = `NSQL_GITHUB_TOKEN`.
+
 ## 4. DBMS 버전별 호환 — SxS가 필요한가 (사용자 요구 ④ 조사)
 
 ### 4-1. 조사 결과

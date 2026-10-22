@@ -130,6 +130,12 @@
 - **편집기 ▸ Editor**(분류 `CatEditor` · `editor.font_size` 다음): `editor.line_height_mode`(Choice multiple \| exact \| at_least · 기본 multiple) · `editor.line_height`(Text · 기본 `1.2` · 방식에 따라 배수 또는 px).
 - 방식과 값을 두 키로 나눈 이유 = VS Code `editor.lineHeight`처럼 값 크기(< 8 = 배수)로 뜻을 가르면 뜻이 숨는다 · 새 키라 `RENAMED` 없음.
 
+
+### 6-8. 확장 드라이버 다운로드 2키(10-22 · 136차 · T-29 · D-348)
+
+- 분류 = **CatInternal**(설정 창에 안 보임 · HIDDEN) · `driver.repo`(Text · 기본 `SosomLab/nexa-sql-drivers` · 색인·자산을 받을 GitHub 저장소) · `driver.http_timeout_secs`(Int 5~600 · 기본 30 · 10 s 초과라 `_secs` · §6-5).
+- 토큰은 설정 키로 두지 않는다 = 환경 변수 `NSQL_GITHUB_TOKEN`만(설정 파일에 비밀을 남기지 않음) · 자동 갱신 확인 키 `driver.check_updates`는 GUI 배지와 함께 2차.
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).
