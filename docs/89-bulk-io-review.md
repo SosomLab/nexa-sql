@@ -62,11 +62,12 @@
 | 인덱스는 적재 뒤 · 외래 키 검사 잠시 끔(`PRAGMA foreign_keys=OFF`) | | ✅ | 문장 | |
 | `.import`(CLI 셸) | 외부 | — | ✗ | |
 
-### 1-5. MySQL · MariaDB(확장 드라이버 · 미구현)
+### 1-5. MySQL · MariaDB(내장 · 10-22 구현 · D-344 · `mysql` crate 28)
 
 | 기법 | 방식 | 지원 | crate(`mysql_async`) | 비고 |
 |---|---|---|---|---|
-| **`LOAD DATA LOCAL INFILE`** | 클라이언트 파일 스트림 | ✅(서버 `local_infile=ON` 필요) | ✅ `LocalInfileHandler`/`infile_handler` | 최속 · 보안 설정에 자주 막힘 |
+| **`LOAD DATA LOCAL INFILE`** | 클라이언트 파일 스트림 | ✅(서버 `local_infile=ON` 필요) | ✅ `LocalInfileHandler`/`infile_handler` | 최속 · 보안 설정에 자주 막힘 · ✅ **10-22 구현** = `BulkLoad::LocalInfile` · `InfileSink`(TSV `\t`/`\n`/`ESCAPED BY '\\'`/`\N` · `CHARACTER SET binary` · `START TRANSACTION` → 간격 COMMIT) · MySQL 8.4 + MariaDB 11.4 통합 왕복 ✓ |
+| **다중 행 INSERT 폴백**(10-22) | `local_infile=OFF`(docker 기본)면 `bulk_begin` 거절 → 러너 다중 행 VALUES | ✅ | ✅ | ✅ 자동 · 사용자에게 경로 글로 표시 |
 | 다중 행 VALUES(`max_allowed_packet` 안) · `INSERT … ON DUPLICATE KEY` | | ✅ | ✅ | 가장 흔한 대안 · 10~20× ⚠ |
 | `SET unique_checks=0, foreign_key_checks=0` · `innodb_flush_log_at_trx_commit=2` | 서버 | ✅ | 문장 | |
 | `SELECT … INTO OUTFILE` | 서버 파일 | ✅ | ✗(서버 측) | |

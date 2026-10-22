@@ -2191,6 +2191,18 @@ WHEN WHERE WHILE WINDOW WITH WRITE XOR YEAR_MONTH ZEROFILL
 
 방언 열 **MY**(MySQL) — 항목별 ✅/부분/❌와 코드 자리는 §11 표의 `MY` 열 · 한 줄 판정은 §11 끝 "요약" · 결함은 §9.
 
+### §6-MariaDB. MariaDB 11.4와의 차이(10-22 실측 · 통합 시험)
+
+| 항목 | MySQL 8.4 | MariaDB 11.4 | nexa-sql 처리 |
+|---|---|---|---|
+| 부호 없는 정수 결과 타입 이름 | `INT UNSIGNED` | `BIGINT UNSIGNED`(같은 식이라도 넓은 형으로 보고) | 통합 시험에서 차이 1건 허용 · 값 복원은 같음 |
+| TLS 기본 | 이미지 설정에 따름 | docker 공식 이미지 = **TLS 켬** | `mysql.tls` preferred면 둘 다 자동 · 상세 = T-388 |
+| 접속 문자열 | `mysql://` | `mariadb://`(별칭 · 같은 드라이버) | D-344 |
+
+**LOAD DATA(10-22 · f73515a)** = nexa-sql 대량 적재는 `LOAD DATA LOCAL INFILE` 스트림(`CHARACTER SET binary` · TSV) · 서버 `local_infile=OFF`면 다중 행 INSERT로 자동 폴백(89 §1-5).
+
+**`SHOW …` 규칙(10-22 · dbba525)** = MySQL/MariaDB 방언에서 `SHOW STATUS`·`SHOW TABLES`·`SHOW CREATE TABLE`·`SHOW VARIABLES LIKE …` 등은 **서버로 보낸다**. 클라이언트 명령으로 가로채는 것은 `SHOW CONN[ECTION]` · `SHOW CONNINFO` · `SHOW ERR[ORS]` · 단독 `SHOW USER` · 단독 `SHOW VAR[IABLE]S`뿐(§11 결함 #14의 MySQL 몫 해소).
+
 ## §7. ODBC(일반)
 
 > 관점 = **백엔드를 모르는 채 ODBC 드라이버로 붙는 경우**. ODBC가 보장하는 것은 API·이스케이프·카탈로그 함수·SQLSTATE뿐이고 SQL 본문은 드라이버를 거쳐 그대로 백엔드로 간다. 표의 "백엔드 의존" = ODBC가 정하지 않음 → `SQLGetInfo`/`SQLGetTypeInfo`로 런타임에 물어야 함.

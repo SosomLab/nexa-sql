@@ -72,7 +72,7 @@
 
 | # | 내용 |
 |---|---|
-| T-387 ✅ 1차(10-22) | `nsql-driver-mysql`(crate 선택 · 어댑터 · 러너 관용 · 카탈로그 · 벌크 · CLI · E2E · CI 컨테이너) · 시험 서버 = GitHub 코드스페이스 `nsql-mysql-135`(사용자 10-22 = 평소 **중지** · T-387 완료 뒤 **삭제**) |
+| T-387 ✅ 1차(10-22) | `nsql-driver-mysql`(crate 선택 · 어댑터 · 러너 관용 · 카탈로그 · 벌크 · CLI · E2E · CI 컨테이너) · 시험 서버 = GitHub 코드스페이스 `nsql-mysql-135`(MySQL 8.4 :3306 + MariaDB 11.4 :3307 · 사용자 10-22 = 평소 **중지** · T-387 완료 뒤 **삭제**) · 10-22 후속 = TLS(T-388) ✓ · MariaDB 실서버 ✓ · SHOW 패스스루 ✓ |
 | T-383 | `nsql-driver-odbc`(odbc-api · 카탈로그 일반 경로 · 3-OS 패키징 의존) |
 | T-384 | Tibero 방언(Oracle 상속 + 차이표 · 108 §1 템플릿) |
 | T-385 | 확장 드라이버 틀(22 §0 · cdylib · 지연 dlopen) → DuckDB 1호 |
