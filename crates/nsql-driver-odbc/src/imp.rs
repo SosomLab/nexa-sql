@@ -211,6 +211,23 @@ fn type_name(dt: &DataType) -> String {
     }
 }
 
+/// `COMMIT [WORK]` = `Some(true)` · `ROLLBACK [WORK]`/`ABORT` = `Some(false)` · 그 밖(`ROLLBACK TO sp` 포함) = `None`(순수).
+fn tx_control(sql: &str) -> Option<bool> {
+    let words: Vec<String> = sql
+        .trim()
+        .trim_end_matches(';')
+        .split_whitespace()
+        .map(|w| w.to_ascii_uppercase())
+        .collect();
+    match words.as_slice() {
+        [w] | [w, _] if w == "COMMIT" => (words.len() == 1 || words[1] == "WORK").then_some(true),
+        [w] | [w, _] if w == "ROLLBACK" || w == "ABORT" => {
+            (words.len() == 1 || words[1] == "WORK").then_some(false)
+        }
+        _ => None,
+    }
+}
+
 /// 블록 한 칸 → 값.
 fn cell(col: AnyColumnBufferSlice<'_>, kind: Kind, r: usize) -> Value {
     match kind {
@@ -393,6 +410,16 @@ impl OdbcSession {
     }
 
     fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+        // ★ 스크립트의 `COMMIT`/`ROLLBACK` 문 = 세션 API로(협업 V1 10-22: autocommit-only 드라이버(Excel/Access)에 SQL로 보내면
+        //   42000 · 트랜잭션 있는 드라이버도 ODBC 표준은 SQLEndTran). `ROLLBACK TO <sp>`는 그대로 서버로.
+        if let Some(commit) = tx_control(&req.sql) {
+            if commit {
+                self.commit()?;
+            } else {
+                self.rollback()?;
+            }
+            return Ok(ExecResult::default());
+        }
         let params: Vec<Box<dyn InputParameter>> =
             req.params.iter().map(|p| to_param(&p.value)).collect();
         let mut stmt = self.conn.preallocate().map_err(err)?;
@@ -584,6 +611,18 @@ mod tests {
             connection_string(&no_pw),
             "Driver={SQL Server};Server=h;UID=sa"
         );
+    }
+
+    /// ★ COMMIT/ROLLBACK 문 판정(autocommit-only 드라이버 보호): WORK 허용 · 세이브포인트·그 밖은 서버로.
+    #[test]
+    fn tx_control_recognizes_bare_commit_and_rollback() {
+        assert_eq!(tx_control("COMMIT"), Some(true));
+        assert_eq!(tx_control(" commit work ; "), Some(true));
+        assert_eq!(tx_control("ROLLBACK;"), Some(false));
+        assert_eq!(tx_control("abort"), Some(false));
+        assert_eq!(tx_control("ROLLBACK TO sp1"), None);
+        assert_eq!(tx_control("COMMIT TRANSACTION t1"), None);
+        assert_eq!(tx_control("SELECT 1"), None);
     }
 
     /// ★ 긴 열 판정(T-383 2차): 상한에 닿은 문자열/이진 열이 하나라도 있으면 행 단위 경로.
