@@ -201,11 +201,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             };
             if let Some(semi) = semi {
                 let text = src[pos..semi].trim().to_string();
-                let kind = match parse_command(&text) {
-                    Ok(Some(c)) => ItemKind::Command(c),
-                    Ok(None) => ItemKind::Sql(classify_sql(&text)),
-                    Err(e) => ItemKind::Invalid(e),
-                };
+                let kind = command_or_sql(&text, dialect);
                 items.push(Item {
                     kind,
                     text,
@@ -227,11 +223,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
                 text.push_str(src[ns..ne].trim_end_matches('\r').trim());
                 end_off = ne;
             }
-            let kind = match parse_command(&text) {
-                Ok(Some(c)) => ItemKind::Command(c),
-                Ok(None) => ItemKind::Sql(classify_sql(&text)),
-                Err(e) => ItemKind::Invalid(e),
-            };
+            let kind = command_or_sql(&text, dialect);
             items.push(Item {
                 kind,
                 text: text.trim_end_matches(';').trim().to_string(),
@@ -987,5 +979,67 @@ mod mysql_tests {
             texts("SELECT 1 # a;b\n;\nSELECT `x;y`;"),
             vec!["SELECT 1 # a;b", "SELECT `x;y`"]
         );
+    }
+}
+
+/// 명령 또는 SQL — ★ MySQL/MariaDB(T-387 후속 · 10-22 실측 "SHOW STATUS … 미지원"): `SHOW …`는 그 방언의 **서버 문장**
+/// (SHOW STATUS · TABLES · CREATE TABLE · VARIABLES LIKE …)이라 클라이언트 꼴([`client_show`])만 명령으로 남기고 나머지는 서버로.
+fn command_or_sql(text: &str, dialect: Option<Dialect>) -> ItemKind {
+    match parse_command(text) {
+        Ok(Some(crate::command::Command::Show { what }))
+            if dialect == Some(Dialect::Mysql) && !client_show(&what) =>
+        {
+            ItemKind::Sql(SqlKind::Query)
+        }
+        Ok(Some(c)) => ItemKind::Command(c),
+        Ok(None) => ItemKind::Sql(classify_sql(text)),
+        Err(e) => ItemKind::Invalid(e),
+    }
+}
+
+/// 클라이언트 `SHOW` 꼴(SQL*Plus 관용 · docs/63): `CONN[ECTION]`·`CONNINFO`·`ERR[ORS] [이름]` 늘 · `USER`·`VAR[IABLE]S`는
+/// **단독일 때만**(MySQL `SHOW VARIABLES LIKE …`·`SHOW USER …`는 서버 문장).
+pub fn client_show(what: &str) -> bool {
+    let w = what
+        .trim()
+        .trim_end_matches(';')
+        .trim()
+        .to_ascii_uppercase();
+    let mut words = w.split_whitespace();
+    let head = words.next().unwrap_or("");
+    match head {
+        "CONN" | "CONNECTION" | "CONNINFO" | "ERR" | "ERRORS" => true,
+        "USER" | "VARIABLES" | "VAR" | "VARS" => words.next().is_none(),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod show_passthrough_tests {
+    use super::*;
+
+    /// ★ MySQL 방언의 `SHOW`(10-22): 서버 문장은 SQL(Query) · 클라이언트 꼴은 명령 · 다른 방언은 종전처럼 전부 명령.
+    #[test]
+    fn mysql_show_goes_to_server_except_client_forms() {
+        let src = "SHOW SESSION STATUS LIKE 'Ssl_cipher'; SHOW VARIABLES; SHOW VARIABLES LIKE 'x'; SHOW TABLES; SHOW CONN; SHOW ERRORS; SHOW USER;";
+        let kinds: Vec<bool> = split_script_in(src, Some(Dialect::Mysql))
+            .iter()
+            .map(|it| matches!(it.kind, ItemKind::Sql(SqlKind::Query)))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![true, false, true, true, false, false, false],
+            "{kinds:?}"
+        );
+        let oracle: Vec<bool> = split_script_in(src, Some(Dialect::Oracle))
+            .iter()
+            .map(|it| matches!(it.kind, ItemKind::Command(_)))
+            .collect();
+        assert!(
+            oracle.iter().all(|c| *c),
+            "다른 방언 = 전부 클라이언트 명령: {oracle:?}"
+        );
+        assert!(client_show("err pkg_x") && client_show("CONNECTION") && client_show("vars"));
+        assert!(!client_show("STATUS LIKE 'x'") && !client_show("variables like 'x'"));
     }
 }
