@@ -19,7 +19,9 @@ members = [
   "crates/nsql-driver-mssql",  # ① 어댑터 — tiberius(TDS) · DECLARE @v = @Pn 배치 + 트레일러 SELECT로 OUT 회수
   "crates/nsql-driver-pg",     # ① 어댑터 — rust-postgres(동기) · $n 바인드 · 단순 질의 텍스트 폴백 (사용자 09-15)
   "crates/nsql-driver-mysql",  # ① 어댑터 — mysql(순수 Rust · 동기) · ? 바인드 · CALL OUT = 마지막 결과 집합 · KILL QUERY 취소 (사용자 10-22)
-  "crates/nsql-driver-odbc",   # ① 어댑터 — odbc-api(시스템 ODBC 관리자 · Windows 인박스 · 그 밖 unixODBC 정적) · 3급 틀 (T-383 · 사용자 10-22)
+  "crates/nsql-driver-odbc",   # ① 어댑터 — odbc-api(시스템 ODBC 관리자 · Windows 인박스 전용 D-345) · 3급 틀 (T-383 · 사용자 10-22)
+  "crates/nsql-abi",           # ★ 확장 드라이버 ABI — 버전 있는 C vtable + 바이너리 코덱 + export_driver! (DR-29 · T-27 ①)
+  "crates/nsql-driver-dyn",    # ★ 확장 드라이버 로더 — LoadLibrary/dlopen 지연 로드 + 프록시 세션(외부 crate 0 · T-27 ②)
   "crates/nsql-drivers",  # 접속 문자열 → Box<dyn Session> 레지스트리(feature로 어댑터 선택)
   "crates/nsql-search",   # ★ 파일 검색 엔진 — 병렬 폴더 걷기 · .gitignore 부분집합 · SWAR 리터럴/정규식 매칭 · 스트리밍 · 취소 (GUI 파일 검색 · CLI grep 공용 · T-81b)
   "crates/nsql-bookmarks", # ★ 북마크 코어 — 모델 · 줄 보정 · 재탐색(Dice) · JSON · 정리 (GUI·CLI 공용 · docs/69 · T-167)
@@ -62,6 +64,8 @@ nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
 nsql-driver-pg = { path = "crates/nsql-driver-pg" }
 nsql-driver-mysql = { path = "crates/nsql-driver-mysql" }
 nsql-driver-odbc = { path = "crates/nsql-driver-odbc" }
+nsql-abi = { path = "crates/nsql-abi" }
+nsql-driver-dyn = { path = "crates/nsql-driver-dyn" }
 nsql-drivers = { path = "crates/nsql-drivers" }
 nsql-catalog = { path = "crates/nsql-catalog" }
 nsql-vault = { path = "crates/nsql-vault" }

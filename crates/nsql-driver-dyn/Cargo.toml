@@ -1,0 +1,21 @@
+[package]
+name = "nsql-driver-dyn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL extension-driver loader: lazy LoadLibrary/dlopen of nsql-abi cdylib drivers + proxy Session (DR-29 · external crates 0)"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+nsql-abi.workspace = true
+
+[dev-dependencies]
+# 왕복 시험 = SQLite 드라이버를 cdylib로 빌드한 산출물을 로드한다(`cargo build -p nsql-driver-sqlite` 뒤 · 없으면 건너뜀).
+nsql-driver-sqlite.workspace = true

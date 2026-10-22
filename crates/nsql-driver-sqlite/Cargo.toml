@@ -11,8 +11,14 @@ description = "Nexa SQL 어댑터 — SQLite(rusqlite bundled). 실DB로 엔진�
 [lints]
 workspace = true
 
+# ★ DR-29(T-27 ②): rlib(내장) + cdylib(확장 드라이버 왕복 시험 · `nsql-driver-dyn`이 로드) — 같은 코드가 두 꼴로 나간다.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
+nsql-script.workspace = true
+nsql-abi.workspace = true
 # DR-3 예외(드라이버). bundled = SQLite를 정적 링크 — 시스템 의존 0.
 # column_decltype = 결과 컬럼의 **선언 타입**(`DATE`·`TIMESTAMP(6)` …)을 `Column.type_name`으로(10-13 · 그리드 "지금"·배지·편집 종류 판정).
 rusqlite = { version = "0.32", features = ["bundled", "column_decltype"] }

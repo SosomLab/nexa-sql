@@ -451,6 +451,12 @@ impl Session for SqliteSession {
     }
 }
 
+/// ★ 확장 드라이버 내보내기(DR-29 · T-27 ②): 이 크레이트를 cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(스펙 = 파일 경로).
+fn open_from_spec(spec: &nsql_script::ConnectSpec) -> Result<SqliteSession, DbError> {
+    SqliteSession::open(spec.database.as_deref().unwrap_or(":memory:"))
+}
+nsql_abi::export_driver!("sqlite", "sqlite", open_from_spec);
+
 #[cfg(test)]
 mod tests {
     use super::*;

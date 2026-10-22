@@ -1902,6 +1902,14 @@ name = "nexa-sys"
 version = "0.1.0"
 
 [[package]]
+name = "nsql-abi"
+version = "0.2.7"
+dependencies = [
+ "nsql-core",
+ "nsql-script",
+]
+
+[[package]]
 name = "nsql-bookmarks"
 version = "0.2.7"
 dependencies = [
@@ -1938,6 +1946,16 @@ dependencies = [
 [[package]]
 name = "nsql-core"
 version = "0.2.7"
+
+[[package]]
+name = "nsql-driver-dyn"
+version = "0.2.7"
+dependencies = [
+ "nsql-abi",
+ "nsql-core",
+ "nsql-driver-sqlite",
+ "nsql-script",
+]
 
 [[package]]
 name = "nsql-driver-mssql"
@@ -2002,7 +2020,9 @@ dependencies = [
 name = "nsql-driver-sqlite"
 version = "0.2.7"
 dependencies = [
+ "nsql-abi",
  "nsql-core",
+ "nsql-script",
  "rusqlite",
 ]
 
