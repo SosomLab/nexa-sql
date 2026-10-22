@@ -81,6 +81,15 @@ fn source() -> install::Source {
 }
 
 pub(crate) fn cmd_driver(o: &Opts) -> i32 {
+    // ★ 드라이버 폴더 = `NSQL_DRIVER_DIR` > `<설정 폴더>/drivers` — `driver` 명령은 접속 경로(`apply_load_switches`)를 지나지 않으므로
+    //   여기서 직접 잡는다(사용자 10-23 실기: `nsql driver search` = "드라이버 폴더를 알 수 없습니다").
+    if ext::driver_dir().is_none() {
+        ext::set_driver_dir(
+            nsql_settings::config_dir()
+                .map(|d| d.join("drivers"))
+                .as_deref(),
+        );
+    }
     let Some(sub) = o.positional.first() else {
         return usage();
     };
