@@ -284,7 +284,7 @@ fn opener(default_dialect: Dialect) -> Opener {
     Box::new(
         move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
             if !password_missing(spec, default_dialect) {
-                return nsql_drivers::open(spec, default_dialect);
+                return nsql_drivers::open_auto(spec, default_dialect, &mut driver_progress);
             }
             let mut filled = spec.clone();
             let label = spec.redacted();
@@ -296,11 +296,37 @@ fn opener(default_dialect: Dialect) -> Opener {
                     position: None,
                 });
             }
-            let r = nsql_drivers::open(&filled, default_dialect);
+            let r = nsql_drivers::open_auto(&filled, default_dialect, &mut driver_progress);
             nsql_core::secret::wipe_opt(&mut filled.password);
             r
         },
     )
+}
+
+/// ★ D-350 접속 중 드라이버 자동 설치 진행 → stderr 한 줄(단계가 바뀔 때 · 내려받기는 10%마다).
+fn driver_progress(id: &str, stage: &str, done: u64, total: Option<u64>) {
+    use std::io::Write;
+    static LAST: std::sync::Mutex<(String, u64)> = std::sync::Mutex::new((String::new(), u64::MAX));
+    let pct = match total {
+        Some(t) if t > 0 => (done * 100 / t).min(100),
+        _ => 0,
+    };
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.0 == stage && (stage != "download" || pct / 10 == last.1 / 10) {
+        return;
+    }
+    *last = (stage.to_string(), pct);
+    let detail = if stage == "download" {
+        format!("{pct}%")
+    } else {
+        String::new()
+    };
+    let mut err = std::io::stderr();
+    let _ = writeln!(
+        err,
+        "{}",
+        nsql_i18n::tf(Msg::CliDriverInstall, &[id, stage, &detail])
+    );
 }
 
 /// 비밀번호를 채워야 하는 대상인가 — SQLite가 아니고 · 호스트가 있고 · 비밀번호 자리가 없다(`user:@host`의 빈 값은 "있음").
@@ -386,6 +412,13 @@ fn apply_load_switches(runner: &mut Runner) {
                 .map(|d| d.join("drivers"))
                 .as_deref(),
         );
+        // ★ D-350 접속 시 드라이버 자동 설치 정책(GUI와 같은 설정).
+        nsql_drivers::set_auto_install(s.flag("driver.auto_install").then(|| {
+            nsql_drivers::ext::install::Source::from_settings(
+                s.get("driver.repo"),
+                s.int("driver.http_timeout_secs"),
+            )
+        }));
         runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
         runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
         runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");

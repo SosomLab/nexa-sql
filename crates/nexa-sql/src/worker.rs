@@ -142,6 +142,13 @@ impl Cmd {
 pub(crate) enum ConnOutcome {
     Connected(String),
     ConnectFailed(String),
+    /// ★ D-350 접속 중 드라이버 자동 설치 진행(id · 단계 index/download/verify/install/installed · 받은 바이트 · 전체).
+    DriverInstall {
+        id: String,
+        stage: String,
+        done: u64,
+        total: Option<u64>,
+    },
     Disconnected,
     /// 접속 문자열에 비밀번호 자리가 없다 — 입력 창으로 **한 번** 묻는다(`target` = 가린 표시 · 답 = [`PwReply`]).
     PasswordNeeded {
@@ -562,6 +569,20 @@ pub(crate) fn spawn(
                 Box::new(
                     move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
                         let dialect = spec.dialect.unwrap_or(default_dialect);
+                        // ★ D-350: 드라이버가 없으면(내장 ✗ · 확장 ✗) 설정이 허락할 때 내려받아 설치하고 연다 — 진행은 접속 결과 채널로.
+                        let open_auto = |s: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
+                            nsql_drivers::open_auto(s, default_dialect, &mut |id, stage, done, total| {
+                                let _ = ask_tx.send(ConnOutcome::DriverInstall {
+                                    id: id.to_string(),
+                                    stage: stage.to_string(),
+                                    done,
+                                    total,
+                                });
+                                if let Ok(f) = ask_wake.lock() {
+                                    f();
+                                }
+                            })
+                        };
                         vault_trace(
                             match spec.password.as_deref() {
                                 Some("") => "open(spec · password = explicit empty)",
@@ -591,7 +612,7 @@ pub(crate) fn spawn(
                                     );
                                 }
                             }
-                            let r = nsql_drivers::open(spec, default_dialect);
+                            let r = open_auto(spec);
                             if let Err(e) = &r {
                                 if stale_password(dialect, e) {
                                     vault_trace("forget(rejected explicit)", &slot);
@@ -601,7 +622,7 @@ pub(crate) fn spawn(
                             return r;
                         }
                         if !password_required(spec, default_dialect) {
-                            return nsql_drivers::open(spec, default_dialect);
+                            return open_auto(spec);
                         }
                         // ★ 세션 자격 금고(설정 `connect.remember_session_password` · nsql-vault `session`): 이번 실행에서 같은
                         //   서버·계정에 이미 입력한 비밀번호가 있으면 **묻지 않고** 그것으로 연다. 실패하면 바로 잊는다(다음에는 묻는다 —
@@ -617,7 +638,7 @@ pub(crate) fn spawn(
                             let mut once = spec.clone();
                             once.password = Some(secret.expose().to_string());
                             drop(secret);
-                            let r = nsql_drivers::open(&once, default_dialect);
+                            let r = open_auto(&once);
                             nsql_core::secret::wipe_opt(&mut once.password);
                             match r {
                                 // ★ 들고 있던 비밀번호가 **무효**(서버에서 바뀌었다 · 사용자 09-21): 폐기하고 **이 접속 안에서 바로 다시
@@ -659,7 +680,7 @@ pub(crate) fn spawn(
                         // 이 접속에만 쓰는 스펙 사본 — 드라이버가 돌아오면 비밀번호를 0으로 덮어쓴다(성공·실패 공통).
                         let mut once = spec.clone();
                         once.password = Some(secret.expose().to_string());
-                        let r = nsql_drivers::open(&once, default_dialect);
+                        let r = open_auto(&once);
                         nsql_core::secret::wipe_opt(&mut once.password);
                         // 접속에 **성공한** 값만 금고에 든다(봉투 · 평문 아님).
                         if r.is_ok() && remember {

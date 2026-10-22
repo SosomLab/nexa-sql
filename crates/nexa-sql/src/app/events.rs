@@ -328,6 +328,27 @@ impl App {
                     }
                     self.pw_pending = Some((self.sess.id, target, rejected));
                 }
+                ConnOutcome::DriverInstall {
+                    id,
+                    stage,
+                    done,
+                    total,
+                } => {
+                    let pct = match total {
+                        Some(t) if t > 0 => format!("{}%", (done * 100 / t).min(100)),
+                        _ => nsql_core::fmt_bytes(done),
+                    };
+                    let text = tf(Msg::StDriverInstall, &[&id, &stage, &pct]);
+                    self.sess.status = text.clone();
+                    let name = self.panel_op_name();
+                    self.conn_win.veil_phase(&name, &text);
+                    if stage == "installed" {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            format!("driver installed: {id}"),
+                        ));
+                    }
+                }
                 ConnOutcome::SessionId(sid) => {
                     self.sess.live_sid = Some(sid);
                 }

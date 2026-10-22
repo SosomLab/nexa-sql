@@ -1962,6 +1962,7 @@ name = "nsql-driver-mssql"
 version = "0.2.7"
 dependencies = [
  "chrono",
+ "nsql-abi",
  "nsql-core",
  "nsql-script",
  "socket2",
@@ -1976,6 +1977,7 @@ name = "nsql-driver-mysql"
 version = "0.2.7"
 dependencies = [
  "mysql",
+ "nsql-abi",
  "nsql-core",
  "nsql-script",
 ]
@@ -1984,6 +1986,7 @@ dependencies = [
 name = "nsql-driver-odbc"
 version = "0.2.7"
 dependencies = [
+ "nsql-abi",
  "nsql-core",
  "nsql-script",
  "odbc-api",
@@ -1993,6 +1996,7 @@ dependencies = [
 name = "nsql-driver-oracle"
 version = "0.2.7"
 dependencies = [
+ "nsql-abi",
  "nsql-core",
  "nsql-script",
  "oracle",
@@ -2002,6 +2006,7 @@ dependencies = [
 name = "nsql-driver-oracle-thin"
 version = "0.2.7"
 dependencies = [
+ "nsql-abi",
  "nsql-core",
  "nsql-script",
  "oracledb",
@@ -2011,6 +2016,7 @@ dependencies = [
 name = "nsql-driver-pg"
 version = "0.2.7"
 dependencies = [
+ "nsql-abi",
  "nsql-core",
  "nsql-script",
  "postgres",

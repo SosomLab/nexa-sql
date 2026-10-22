@@ -65,6 +65,19 @@ impl Source {
         }
     }
 
+    /// 설정 값에서(`driver.repo` · `driver.http_timeout_secs`) — GUI·CLI 공용.
+    #[must_use]
+    pub fn from_settings(repo: Option<&str>, timeout_secs: i64) -> Source {
+        let repo = repo
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+            .unwrap_or(DEFAULT_REPO);
+        Source {
+            timeout: Duration::from_secs(timeout_secs.clamp(5, 600) as u64),
+            ..Source::new(repo)
+        }
+    }
+
     fn options(&self, api: bool) -> nsql_net::Options {
         let mut o = nsql_net::Options {
             timeout: self.timeout,
@@ -605,6 +618,73 @@ pub fn install_file(
         expect.as_ref().map(|(i, v)| (i.as_str(), v.as_str())),
         force,
     )
+}
+
+/// 오프라인 번들인가 — 항목에 자산 zip(`nsql-driver-*.zip`)이 들어 있는 zip(D-350 · `nsql-drivers-all-<ver>-<os>-<arch>.zip`).
+#[must_use]
+pub fn is_bundle(bytes: &[u8]) -> bool {
+    super::zip::entries(bytes)
+        .map(|list| {
+            list.iter()
+                .any(|e| e.name.ends_with(".zip") && e.name.contains("nsql-driver-"))
+        })
+        .unwrap_or(false)
+}
+
+/// ★ 오프라인 전체 설치(D-350): 번들 안의 자산 zip마다 옆 항목 `.sha256`·`.sig`로 검증해 설치 — 결과는 자산 이름 순 `(이름, 결과)`.
+/// 번들 설치 결과 = 자산 이름 순 `(이름, 결과)`.
+pub type BundleOutcome = Vec<(String, Result<InstallReport, String>)>;
+
+/// 이 OS·아키텍처가 아닌 자산은 건너뛴다(`platform()` 꼬리로 거른다). 하나가 실패해도 나머지는 계속.
+pub fn install_bundle(
+    root: &Path,
+    bytes: &[u8],
+    force: bool,
+    keys: &[RootKey],
+) -> Result<BundleOutcome, String> {
+    let list = super::zip::entries(bytes)?;
+    let plat = format!("-{}.zip", platform());
+    let name_of = |e: &super::zip::Entry| e.name.rsplit('/').next().unwrap_or(&e.name).to_string();
+    let find = |name: &str| list.iter().find(|e| name_of(e) == name);
+    let mut out = Vec::new();
+    let mut assets: Vec<&super::zip::Entry> = list
+        .iter()
+        .filter(|e| {
+            let n = name_of(e);
+            n.starts_with("nsql-driver-") && n.ends_with(&plat)
+        })
+        .collect();
+    assets.sort_by_key(|e| name_of(e));
+    for e in assets {
+        let name = name_of(e);
+        let stem = name.trim_end_matches(".zip").to_string();
+        let r = (|| -> Result<InstallReport, String> {
+            let zip = super::zip::read_entry(bytes, e)?;
+            let sig = find(&format!("{stem}.sig"))
+                .ok_or_else(|| format!("{name}: no .sig in bundle"))
+                .and_then(|s| super::zip::read_entry(bytes, s))?;
+            let sha = find(&format!("{stem}.sha256"))
+                .map(|s| super::zip::read_entry(bytes, s))
+                .transpose()?;
+            let expect = parse_asset_name(&name);
+            install_bytes(
+                root,
+                &zip,
+                sha.as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                    .as_deref(),
+                &String::from_utf8_lossy(&sig),
+                keys,
+                expect.as_ref().map(|(i, v)| (i.as_str(), v.as_str())),
+                force,
+            )
+        })();
+        out.push((name, r));
+    }
+    if out.is_empty() {
+        return Err(format!("bundle has no asset for {}", platform()));
+    }
+    Ok(out)
 }
 
 /// 갱신 후보 하나.

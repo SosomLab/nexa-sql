@@ -4895,6 +4895,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(MSSQL_CANCEL_OPTS),
         default: "attention",
     },
+    // ★ D-350(10-23): 접속할 때 드라이버가 없으면(이 빌드에 없고 확장도 없음) GitHub Releases에서 내려받아 설치하고 연다.
+    //   끄면 "드라이버 없음" 오류 + `nsql driver install` 안내. 네트워크는 사용자의 접속 동작 안에서만(26 §8).
+    Entry {
+        key: "driver.auto_install",
+        cat: Msg::CatConnection,
+        label: Msg::LblDriverAutoInstall,
+        desc: Msg::DescDriverAutoInstall,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "connect.remember_session_password",
         cat: Msg::CatConnection,

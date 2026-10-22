@@ -2204,6 +2204,13 @@ fn main() {
             .map(|d| d.join("drivers"))
             .as_deref(),
     );
+    // ★ D-350 접속 시 드라이버 자동 설치 정책(설정 `driver.auto_install` · `driver.repo` · `driver.http_timeout_secs`).
+    nsql_drivers::set_auto_install(app.settings.flag("driver.auto_install").then(|| {
+        nsql_drivers::ext::install::Source::from_settings(
+            app.settings.get("driver.repo"),
+            app.settings.int("driver.http_timeout_secs"),
+        )
+    }));
     apply_oracle_client(&app.settings);
     app.apply_net_options();
     // 첫 화면부터 탭 표식(미연결 사선)이 보이게 — 세션 상태 → 화면 3층 동기화 1회.
@@ -2658,7 +2665,7 @@ fn dbms_info_values() -> Vec<(String, String)> {
         None => missing_in("tnsnames.ora", &o.tns_admin),
     };
     let included = |d: Dialect, yes: Msg| {
-        if nsql_drivers::available().contains(&d) {
+        if nsql_drivers::is_builtin(d) {
             t(yes).to_string()
         } else {
             t(Msg::ValDbmsNotIncluded).to_string()

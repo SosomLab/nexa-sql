@@ -44,17 +44,10 @@ impl DriverTask {
 
 impl App {
     fn driver_source(&self) -> Source {
-        let repo = self
-            .settings
-            .get("driver.repo")
-            .filter(|r| !r.trim().is_empty())
-            .unwrap_or(install::DEFAULT_REPO)
-            .to_string();
-        let timeout = self.settings.int("driver.http_timeout_secs").clamp(5, 600);
-        Source {
-            timeout: std::time::Duration::from_secs(timeout as u64),
-            ..Source::new(&repo)
-        }
+        Source::from_settings(
+            self.settings.get("driver.repo"),
+            self.settings.int("driver.http_timeout_secs"),
+        )
     }
 
     fn driver_root(&self) -> Option<PathBuf> {

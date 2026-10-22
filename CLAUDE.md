@@ -40,7 +40,7 @@
 | DR-20 | 코드 서명은 **별도 요청 시** |
 | DR-22 | **연결 프로필 = 사용자 폴더 `nsql-vault`**(비밀번호만 봉투 · Windows DPAPI 기기 키 · CLI·GUI·다중 인스턴스 공유) — [21](docs/21-connection-profiles.md) |
 | DR-23·24 | **접속 대화상자 = DBeaver식 + Golden 로그인 리스트** · **드라이버 확장 = GitHub Releases 최신 다운로드 · stdio JSON-RPC 프로세스 · SxS 다중 버전 · 관리자(목록·삭제)** — [22](docs/22-driver-extensions.md) · T-27~31 |
-| DR-27~29 | **배포 = 설치본만**(목적별 exe · [33](docs/33-distribution-and-packaging.md) · **포터블 모드는 D-78 재검토 · 새 상태 저장은 `NSQL_HOME` 규약**) · **PostgreSQL 내장** · **내장 드라이버 정적 링크 유지 · 확장 드라이버 = in-process cdylib(C ABI · 지연 dlopen · IPC 0 · 프로세스는 격리 선택)**([22 §0](docs/22-driver-extensions.md)) |
+| DR-27~29 | **배포 = 설치본만**(목적별 exe · [33](docs/33-distribution-and-packaging.md) · **포터블 모드는 D-78 재검토 · 새 상태 저장은 `NSQL_HOME` 규약**) · **PostgreSQL 내장** · **내장 드라이버 정적 링크 유지 · 확장 드라이버 = in-process cdylib(C ABI · 지연 dlopen · IPC 0 · 프로세스는 격리 선택)**([22 §0](docs/22-driver-extensions.md)) · ★ **10-23 D-350으로 대체(사용자) = 설치본 = Oracle OCI만 · 나머지 드라이버 전부 cdylib 확장(ABI v2 · 접속 시 자동 설치 `driver.auto_install` · 오프라인 번들 · 3-OS)** |
 | DR-33 | ★ **결과 데이터 = 한 세트 + 뷰 투영** — `ResultSet` 덩어리 · GUI `ResultData`(Arc 세그먼트 · 복사 0) · `View`(행·열 인덱스) · 렌더러·그리드·복사·정렬은 `RowSource` 포트 하나 · NULL 글자 = 설정 1(`grid.null_text`) · 컬럼형은 T-102 후보 |
 | DR-34 | ★ **세션 컨텍스트 = 통제의 단위**([52](docs/52-session-modes.md)) — 기본 사상 *1 인스턴스 · 1 서버 · 1 계정* · 한 세션 = 한 번에 한 작업(`Sess::blocked` · 문지기 `gate_open` 하나) · 공유 연결 N(추가 접속 · 중복 금지) · 전용 세션 = 편집기 `CONNECT` · 개별 모드 `session.mode=per-editor` · 유휴 닫기 |
 | DR-25 | **라이선스: 공유 라이브러리 `nexa-license`(형제 저장소) + 인증 서버는 비공개 저장소 `nexa-license-server`** · 티어 4단(Device·User 5대·Team·Org 서버) — [23](docs/23-license-activation.md) · [25](docs/25-license-tiers-and-server.md) · D-23~39 대기 |

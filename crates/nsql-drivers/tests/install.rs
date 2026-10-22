@@ -305,3 +305,84 @@ fn install_round_trip_over_local_server() {
     assert!(install::install_file(&root, &zip_path, true, &keys).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// ★ D-350 오프라인 전체 설치: 번들 zip(자산 zip + .sha256 + .sig · 다른 OS 자산은 건너뜀 · 서명 틀린 자산은 그것만 실패).
+#[test]
+fn offline_bundle_installs_every_asset_for_this_platform() {
+    let root = std::env::temp_dir().join(format!("nsql-bundle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let plat = install::platform();
+    let a = package("alpha", "1.0.0", nsql_abi::ABI_VERSION);
+    let b = package("beta", "2.0.0", nsql_abi::ABI_VERSION);
+    let c = package("gamma", "3.0.0", nsql_abi::ABI_VERSION);
+    let name = |id: &str, ver: &str| format!("nsql-driver-{id}-{ver}-{plat}.zip");
+    let (na, nb, nc) = (
+        name("alpha", "1.0.0"),
+        name("beta", "2.0.0"),
+        name("gamma", "3.0.0"),
+    );
+    let sha = |p: &[u8], n: &str| format!("{}  {n}\n", hex(&sha256(p)));
+    let sig_a = sign(&a);
+    let sig_b = sign(b"tampered");
+    let sig_c = sign(&c);
+    let sha_a = sha(&a, &na);
+    let sha_c = sha(&c, &nc);
+    let other = format!("nsql-driver-delta-1.0.0-nowhere-arch.zip");
+    let bundle = zip::build(
+        &[
+            ("bundle/index.json", b"{\"drivers\":[]}", None),
+            ("bundle/README.txt", b"offline", None),
+            (&format!("bundle/{na}"), &a, None),
+            (
+                &format!("bundle/{}", na.replace(".zip", ".sig")),
+                sig_a.as_bytes(),
+                None,
+            ),
+            (
+                &format!("bundle/{}", na.replace(".zip", ".sha256")),
+                sha_a.as_bytes(),
+                None,
+            ),
+            (&format!("bundle/{nb}"), &b, None),
+            (
+                &format!("bundle/{}", nb.replace(".zip", ".sig")),
+                sig_b.as_bytes(),
+                None,
+            ),
+            (&format!("bundle/{nc}"), &c, None),
+            (
+                &format!("bundle/{}", nc.replace(".zip", ".sig")),
+                sig_c.as_bytes(),
+                None,
+            ),
+            (
+                &format!("bundle/{}", nc.replace(".zip", ".sha256")),
+                sha_c.as_bytes(),
+                None,
+            ),
+            (&format!("bundle/{other}"), &a, None),
+        ],
+        true,
+    );
+    assert!(install::is_bundle(&bundle));
+    assert!(!install::is_bundle(&a), "자산 하나는 번들이 아니다");
+    let out = install::install_bundle(&root, &bundle, false, &keys()).expect("bundle");
+    let names: Vec<&str> = out.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [na.as_str(), nb.as_str(), nc.as_str()],
+        "이 OS 자산만 · 이름 순"
+    );
+    assert!(out[0].1.is_ok(), "{:?}", out[0].1);
+    assert!(out[1]
+        .1
+        .as_ref()
+        .expect_err("bad sig")
+        .contains("signature"));
+    assert_eq!(out[2].1.as_ref().expect("gamma").version, "3.0.0");
+    let listed = nsql_drivers::ext::list_extensions_in(&root);
+    let ids: Vec<&str> = listed.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"alpha") && ids.contains(&"gamma"));
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -62,21 +62,11 @@ fn root() -> Result<PathBuf, i32> {
 }
 
 fn source() -> install::Source {
-    let (repo, timeout) =
-        crate::settings_cached()
-            .ok()
-            .map_or((install::DEFAULT_REPO.to_string(), 30), |s| {
-                (
-                    s.get("driver.repo")
-                        .filter(|r| !r.trim().is_empty())
-                        .unwrap_or(install::DEFAULT_REPO)
-                        .to_string(),
-                    s.int("driver.http_timeout_secs").clamp(5, 600),
-                )
-            });
-    install::Source {
-        timeout: std::time::Duration::from_secs(timeout as u64),
-        ..install::Source::new(&repo)
+    match crate::settings_cached() {
+        Ok(s) => {
+            install::Source::from_settings(s.get("driver.repo"), s.int("driver.http_timeout_secs"))
+        }
+        Err(_) => install::Source::from_settings(None, 30),
     }
 }
 
@@ -308,6 +298,35 @@ fn report(r: &install::InstallReport) {
 fn install_cmd(arg: Option<&str>, a: &Args) -> i32 {
     let Ok(root) = root() else { return 1 };
     if let Some(f) = &a.file {
+        // ★ 오프라인 전체 번들(`nsql-drivers-all-<ver>-<os>-<arch>.zip` · D-350)이면 안의 자산을 전부 설치.
+        let bytes = match std::fs::read(f) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{f}: {e}");
+                return 1;
+            }
+        };
+        if install::is_bundle(&bytes) {
+            return match install::install_bundle(&root, &bytes, a.force, DRIVER_KEYS) {
+                Ok(list) => {
+                    let mut rc = 0;
+                    for (name, r) in list {
+                        match r {
+                            Ok(rep) => report(&rep),
+                            Err(e) => {
+                                eprintln!("{name}: {e}");
+                                rc = 1;
+                            }
+                        }
+                    }
+                    rc
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            };
+        }
         return match install::install_file(&root, Path::new(f), a.force, DRIVER_KEYS) {
             Ok(r) => {
                 report(&r);

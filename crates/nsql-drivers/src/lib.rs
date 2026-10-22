@@ -172,6 +172,67 @@ pub fn driver_missing(dialect: Dialect) -> DbError {
     }
 }
 
+/// ★ 접속 시 자동 설치 정책(D-350 C단계 · 설정 `driver.auto_install` · `driver.repo` · `driver.http_timeout_secs`): 호스트가 기동 때 넣는다 ·
+/// `None` = 끔(없으면 [`driver_missing`] 오류 그대로).
+static AUTO_INSTALL: std::sync::Mutex<Option<ext::install::Source>> = std::sync::Mutex::new(None);
+
+pub fn set_auto_install(src: Option<ext::install::Source>) {
+    *AUTO_INSTALL.lock().unwrap_or_else(|e| e.into_inner()) = src;
+}
+
+#[must_use]
+pub fn auto_install_source() -> Option<ext::install::Source> {
+    AUTO_INSTALL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// 자동 설치 진행 콜백: `(드라이버 id, 단계 = index/download/verify/install/installed, 받은 바이트, 전체)`.
+pub type DriverProgress<'a> = &'a mut dyn FnMut(&str, &str, u64, Option<u64>);
+
+/// ★ 접속 한 자리(D-350): [`open`] → 드라이버 없음([`ERR_DRIVER_MISSING`])이고 자동 설치가 켜져 있으면 **첫 후보 id를 내려받아
+/// 설치한 뒤 한 번 더 연다**. 설치 실패 = 원래 오류 + 설치 오류(코드 유지 · 호출자가 안내). 네트워크는 사용자의 접속 동작 안에서만(26 §8).
+pub fn open_auto(
+    spec: &ConnectSpec,
+    default_dialect: Dialect,
+    progress: DriverProgress<'_>,
+) -> Result<Box<dyn Session>, DbError> {
+    let first = open(spec, default_dialect);
+    let Err(e) = first else { return first };
+    if e.code != Some(ERR_DRIVER_MISSING) {
+        return Err(e);
+    }
+    let Some(src) = auto_install_source() else {
+        return Err(e);
+    };
+    let Some(root) = ext::driver_dir() else {
+        return Err(e);
+    };
+    let dialect = spec.dialect.unwrap_or(default_dialect);
+    let ids = ext_ids(dialect);
+    let Some(id) = ids.first() else {
+        return Err(e);
+    };
+    let rep = ext::install::install(
+        &src,
+        &root,
+        id,
+        None,
+        false,
+        false,
+        ext::keys::DRIVER_KEYS,
+        &mut |stage, n, total| progress(id, stage, n, total),
+    )
+    .map_err(|ie| DbError {
+        code: Some(ERR_DRIVER_MISSING),
+        message: format!("{} — auto-install failed: {ie}", e.message),
+        position: None,
+    })?;
+    progress(id, "installed", rep.bytes, Some(rep.bytes));
+    open(spec, default_dialect)
+}
+
 /// 확장 후보를 차례로 열어 본다 · 전부 없으면 [`driver_missing`].
 fn open_extension(dialect: Dialect, spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
     for id in ext_ids(dialect) {
@@ -428,7 +489,19 @@ pub fn set_mssql_cancel_socket(socket: bool) {
     let _ = socket;
 }
 
+/// ★ D-350: 접속 폼·CLI가 고를 수 있는 방언 = **이 OS에서 쓸 수 있는 전부**(내장이든 확장 자동 설치든 · ODBC는 Windows만).
+#[must_use]
 pub fn available() -> Vec<Dialect> {
+    Dialect::ALL
+        .iter()
+        .copied()
+        .filter(|d| *d != Dialect::Odbc || cfg!(windows))
+        .collect()
+}
+
+/// 이 빌드에 컴파일된 방언(설정 창 DBMS 그룹 · 진단).
+#[must_use]
+pub fn builtin_dialects() -> Vec<Dialect> {
     let mut v = Vec::new();
     if cfg!(feature = "sqlite") {
         v.push(Dialect::Sqlite);
@@ -455,6 +528,31 @@ pub fn available() -> Vec<Dialect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_auto_passes_through_builtin_and_missing_has_code() {
+        let spec = ConnectSpec::parse("sqlite::memory:").expect("spec");
+        let mut calls = 0;
+        let s = open_auto(&spec, Dialect::Sqlite, &mut |_, _, _, _| calls += 1).expect("open");
+        assert_eq!(s.dialect(), Dialect::Sqlite);
+        assert_eq!(calls, 0, "내장이면 설치 진행 콜백이 없다");
+        let e = driver_missing(Dialect::Postgres);
+        assert_eq!(e.code, Some(ERR_DRIVER_MISSING));
+        assert!(
+            e.message.contains("nsql driver install pg"),
+            "{}",
+            e.message
+        );
+        assert_eq!(ext_ids(Dialect::Oracle).len(), 2);
+        assert!(available().contains(&Dialect::Postgres));
+        assert_eq!(available().contains(&Dialect::Odbc), cfg!(windows));
+        assert!(matches!(
+            driver_status(Dialect::Sqlite),
+            DriverStatus::Builtin
+        ));
+        assert_eq!(ext_crate_name("oracle-oci"), "nsql-driver-oracle");
+        assert_eq!(ext_crate_name("pg"), "nsql-driver-pg");
+    }
 
     /// 기본 feature = 내장 드라이버 다섯(135차 MySQL 포함) — 접속 폼 콤보 "(no driver)" 라벨의 원천.
     #[test]
