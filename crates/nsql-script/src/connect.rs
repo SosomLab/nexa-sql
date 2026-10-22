@@ -120,6 +120,71 @@ pub struct ConnectSpec {
     pub tls: Option<String>,
 }
 
+/// ★ ODBC 접속 문자열(T-383)의 `key=value;` 토큰 — `{…}` 안의 `;`는 구분자가 아니다 · `}}` = `}`.
+fn odbc_tokens(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '{' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                cur.push(ch);
+            }
+            ';' if depth == 0 => {
+                if !cur.trim().is_empty() {
+                    out.push(cur.trim().to_string());
+                }
+                cur.clear();
+            }
+            _ => cur.push(ch),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+/// `{value}` 이스케이프 풀기(ODBC 규칙 · `}}` → `}`).
+fn odbc_unescape(v: &str) -> String {
+    let t = v.trim();
+    match t.strip_prefix('{').and_then(|r| r.strip_suffix('}')) {
+        Some(inner) => inner.replace("}}", "}"),
+        None => t.to_string(),
+    }
+}
+
+/// 값에 `;`·`{`·`}`가 있으면 `{…}`로(`}` → `}}`).
+fn odbc_escape(v: &str) -> String {
+    if v.contains([';', '{', '}']) {
+        format!("{{{}}}", v.replace('}', "}}"))
+    } else {
+        v.to_string()
+    }
+}
+
+/// ODBC 문자열에서 `UID=`/`PWD=`를 떼어 (나머지, user, password)로.
+fn odbc_split_logon(s: &str) -> (String, Option<String>, Option<String>) {
+    let mut rest = Vec::new();
+    let (mut user, mut pw) = (None, None);
+    for tok in odbc_tokens(s) {
+        let up = tok.to_ascii_uppercase();
+        if let Some(v) = up.strip_prefix("UID=").map(|_| &tok[4..]) {
+            user = Some(odbc_unescape(v));
+        } else if let Some(v) = up.strip_prefix("PWD=").map(|_| &tok[4..]) {
+            pw = Some(odbc_unescape(v));
+        } else {
+            rest.push(tok);
+        }
+    }
+    (rest.join(";"), user, pw)
+}
+
 impl ConnectSpec {
     pub fn parse(arg: &str) -> Result<ConnectSpec, String> {
         let mut s = strip_quotes(arg.trim()).trim().to_string();
@@ -135,16 +200,30 @@ impl ConnectSpec {
         let mut has_scheme = false;
 
         // 파일 방언 축약: sqlite:경로(나머지 전부가 경로 — `:`·`/`·`\\`를 해석하지 않는다).
+        // ★ ODBC(T-383 · 136차)도 같은 꼴: `odbc:DSN=…` · `odbc:Driver={…};Server=…;Uid=u;Pwd=p` = 나머지 전부가 ODBC 접속 문자열 ·
+        //   `UID=`/`PWD=`는 스펙의 user/password로 **올려** 문자열에서 뺀다(금고 저장 · `redacted` 마스킹 · 드라이버가 다시 붙인다).
         if let Some(i) = s.find(':') {
-            if matches!(Dialect::from_name(&s[..i]), Some(Dialect::Sqlite)) {
+            let d = Dialect::from_name(&s[..i]);
+            if matches!(d, Some(Dialect::Sqlite | Dialect::Odbc)) {
                 let rest = &s[i + 1..];
                 // 종전 URL 꼴 `sqlite://host/db`(호스트는 무시되고 db만 쓰인다)는 그대로 아래 URL 경로로 — 그 외는 전부 경로.
-                let legacy_url = rest
-                    .strip_prefix("//")
-                    .is_some_and(|r| !r.starts_with(['/', ':', '.', '~']) && r.contains('/'));
+                let legacy_url = d == Some(Dialect::Sqlite)
+                    && rest
+                        .strip_prefix("//")
+                        .is_some_and(|r| !r.starts_with(['/', ':', '.', '~']) && r.contains('/'));
                 if !legacy_url {
                     let db = rest.strip_prefix("//").unwrap_or(rest).trim();
-                    spec.dialect = Some(Dialect::Sqlite);
+                    spec.dialect = d;
+                    if d == Some(Dialect::Odbc) {
+                        if db.is_empty() {
+                            return Err(tr!("ODBC: a DSN is required", "ODBC: DSN이 필요합니다"));
+                        }
+                        let (body, user, pw) = odbc_split_logon(db);
+                        spec.database = Some(body);
+                        spec.user = user;
+                        spec.password = pw;
+                        return Ok(spec);
+                    }
                     spec.database = Some(if db.is_empty() { ":memory:" } else { db }.to_string());
                     return Ok(spec);
                 }
@@ -331,6 +410,14 @@ impl ConnectSpec {
 
     /// 표시용(비밀번호 가림).
     pub fn redacted(&self) -> String {
+        // ★ ODBC = 문자열 그대로 + `;UID=u;PWD=***`(비밀번호는 parse 때 스펙으로 올라와 본문에 없다).
+        if self.dialect == Some(Dialect::Odbc) {
+            let mut s = self.connection_string();
+            if self.password.is_some() {
+                s.push_str(";PWD=***");
+            }
+            return s;
+        }
         let mut s = String::new();
         if let Some(d) = self.dialect {
             s.push_str(&format!("{d}://"));
@@ -371,6 +458,14 @@ impl ConnectSpec {
     /// **접속 문자열**(우리 형식 · `dialect://user@host:port/db?schema=x` · 비밀번호 없음) — 접속 창 열 · 복사(사용자 09-18).
     /// `redacted()`와 달리 `/***`를 넣지 않아 그대로 `CONNECT`에 쓸 수 있다(비밀번호는 저장소가 채운다).
     pub fn connection_string(&self) -> String {
+        // ★ ODBC = 짧은 스킴 그대로(`odbc:…;UID=u` · 비밀번호는 다른 방언처럼 뺀다 · 다시 parse하면 같은 스펙).
+        if self.dialect == Some(Dialect::Odbc) {
+            let mut s = format!("odbc:{}", self.database.as_deref().unwrap_or(""));
+            if let Some(u) = &self.user {
+                s.push_str(&format!(";UID={}", odbc_escape(u)));
+            }
+            return s;
+        }
         let mut s = String::new();
         if let Some(d) = self.dialect {
             s.push_str(&format!("{d}://"));
@@ -611,6 +706,33 @@ mod tests {
             ConnectSpec::parse("pg://u@h/db?env=nope").unwrap().env,
             None
         );
+        // ★ ODBC 짧은 스킴(T-383): 나머지 전부 · UID/PWD는 스펙으로(`{…}` 이스케이프 풀어서) · 왕복 = 비밀번호 뺀 문자열 · redacted 마스킹.
+        let o =
+            ConnectSpec::parse("odbc:Driver={SQL Server};Server=h,1433;Database=d;Uid=u;Pwd={p;w}")
+                .unwrap();
+        assert_eq!(o.dialect, Some(Dialect::Odbc));
+        assert_eq!(
+            o.database.as_deref(),
+            Some("Driver={SQL Server};Server=h,1433;Database=d")
+        );
+        assert_eq!(o.user.as_deref(), Some("u"));
+        assert_eq!(o.password.as_deref(), Some("p;w"));
+        assert_eq!(
+            o.connection_string(),
+            "odbc:Driver={SQL Server};Server=h,1433;Database=d;UID=u"
+        );
+        assert_eq!(
+            o.redacted(),
+            "odbc:Driver={SQL Server};Server=h,1433;Database=d;UID=u;PWD=***"
+        );
+        let dsn = ConnectSpec::parse("odbc:Sales").unwrap();
+        assert_eq!(dsn.database.as_deref(), Some("Sales"));
+        assert!(dsn.user.is_none() && dsn.password.is_none());
+        assert_eq!(
+            ConnectSpec::parse(&o.connection_string()).unwrap().database,
+            o.database
+        );
+        assert!(ConnectSpec::parse("odbc:").is_err(), "빈 DSN = 오류");
         // ★ `?tls=`(T-388): 소문자 정규화 · `ssl-mode=` 별칭 · 왕복.
         let t = ConnectSpec::parse("mysql://u@h/db?tls=REQUIRED").unwrap();
         assert_eq!(t.tls.as_deref(), Some("required"));
