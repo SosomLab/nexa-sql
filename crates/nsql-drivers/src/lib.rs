@@ -596,11 +596,9 @@ mod tests {
         ] {
             assert!(v.contains(&d), "{d} 빠짐: {v:?}");
         }
-        assert_eq!(
-            v.contains(&Dialect::Odbc),
-            cfg!(windows),
-            "ODBC 내장 = Windows만(T-383 · D-345)"
-        );
+        // ODBC = 전 OS(10-23 · 3a9f127: Linux/macOS는 unixODBC · 확장 드라이버) — 종전 "Windows만" 단언(T-383 · D-345)은 폐기.
+        assert!(v.contains(&Dialect::Odbc), "ODBC 빠짐: {v:?}");
+        assert!(v.contains(&Dialect::Duckdb), "DuckDB 빠짐: {v:?}");
     }
 
     #[test]
