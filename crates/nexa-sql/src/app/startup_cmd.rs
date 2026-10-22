@@ -1434,6 +1434,15 @@ impl App {
             self.conn_win.redraw();
             return;
         }
+        // `conn.quick:<접속 문자열>` = 간략 접속 칸에 넣고 Enter와 같은 길(사용자 10-22 · 프로필 자동 저장 + 접속 · 자체 시험).
+        if let Some(s) = id.strip_prefix("conn.quick:") {
+            self.conn_win.panel.set_quick_text(s);
+            if let Some(a) = self.conn_win.panel.quick_action() {
+                self.handle_panel_action(a);
+            }
+            self.conn_win.redraw();
+            return;
+        }
         if let Some(name) = id.strip_prefix("conn.edit:") {
             if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
                 self.conn_win.capture_open_detail(name);

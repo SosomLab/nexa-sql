@@ -7,6 +7,35 @@ use crate::*;
 impl App {
     pub(crate) fn handle_panel_action(&mut self, a: PanelAction) {
         match a {
+            PanelAction::QuickConnect(spec) => {
+                // ★ 간략 접속(사용자 10-22): 이름 자동(저장소에 없는 이름) → 폼 채움 → **비밀번호 없이 저장**(문자열의 비밀번호는 세션 보관만
+                //   = Save 처리의 `remember_pw`) → 폼을 저장본으로 → 접속 버튼과 같은 길(비밀번호가 없으면 필수 칸 경고로 직접 입력).
+                let names: Vec<String> = Vault::open_default()
+                    .and_then(|v| v.list())
+                    .map(|l| l.into_iter().map(|p| p.name).collect())
+                    .unwrap_or_default();
+                let name =
+                    crate::connect::quick_profile_name(&spec, |n| names.iter().any(|e| e == n));
+                let typed = spec.password.clone().unwrap_or_default();
+                let mut saved = spec;
+                saved.password = None;
+                self.conn_win.panel.fill(&name, &saved);
+                self.conn_win.panel.set_password_text(&typed);
+                self.handle_panel_action(PanelAction::Save {
+                    name: name.clone(),
+                    spec: saved,
+                    rename_from: None,
+                });
+                if matches!(self.conn_win.panel.state(), ConnState::Failed(_)) {
+                    return;
+                }
+                // Save 뒤 `fill`이 비밀번호 칸을 비웠다 → 입력값 복원 · 저장본으로 삼아 접속이 다시 저장하지 않게.
+                self.conn_win.panel.set_password_text(&typed);
+                self.conn_win.panel.mark_saved();
+                if let Some(a) = self.conn_win.panel.connect_action() {
+                    self.handle_panel_action(a);
+                }
+            }
             PanelAction::Connect(spec) => {
                 // ★ 접속 = [저장] 선수행(사용자 09-30 "접속은 되었지만 미저장 상태로 남는 버그"): 폼이 저장본과 다르면 저장 버튼과
                 //   같은 길(필수 항목 · 이름 규칙 · 이름 변경 · 비밀번호 저장 여부)을 먼저 지나고, 저장이 실패하면 접속하지 않는다.

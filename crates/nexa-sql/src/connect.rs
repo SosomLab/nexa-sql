@@ -23,6 +23,10 @@ use nsql_script::ConnectSpec;
 #[derive(Debug)]
 pub(crate) enum PanelAction {
     Connect(ConnectSpec),
+    /// ★ 간략 접속(사용자 10-22 · 135차): 접속 문자열 한 줄 → 호스트가 **프로필을 만들어 저장**(이름 자동 · 비밀번호는 저장하지 않음 =
+    /// 세션 보관만 · 나중에 그 프로필을 고쳐 "저장" 체크 + Save로 영속) → 그 프로필로 접속. 비밀번호가 문자열에 없으면 폼의
+    /// 비밀번호 칸이 필수 칸 경고로 포커스를 받는다(직접 입력).
+    QuickConnect(ConnectSpec),
     Test(ConnectSpec),
     Disconnect,
     Save {
@@ -62,6 +66,8 @@ pub(crate) enum ConnState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
+    /// 간략 접속 문자열 칸(폼 맨 위 · 저장본·필수 판정 밖 · Enter = 간략 접속).
+    Quick,
     Host,
     Port,
     Database,
@@ -72,7 +78,8 @@ enum Field {
     Name,
 }
 
-const FIELDS: [Field; 7] = [
+const FIELDS: [Field; 8] = [
+    Field::Quick,
     Field::Name,
     Field::Host,
     Field::Port,
@@ -101,6 +108,9 @@ pub(crate) struct ConnectPanel {
     user: TextBox,
     password: TextBox,
     name: TextBox,
+    /// ★ 간략 접속 문자열 칸 + 버튼(사용자 10-22) — 저장본 밖(바뀜 표식 없음).
+    quick: TextBox,
+    quick_btn: Button,
     /// 목록에서 불러온 프로필 이름(New/clear면 None) — 저장 시 이름 변경 판정용(09-16).
     loaded_name: Option<String>,
     /// ★ 서버 유형 콤보(사용자 10-01 · 기본 스키마 줄 오른쪽) — 프로필 편집 = **영속**(Save로 저장) · 목록 우클릭과 같은 값.
@@ -197,6 +207,7 @@ fn required_fields(dialect: Dialect, action: FormAction) -> Vec<Field> {
 /// 빠진 필수 칸(순수 판정 · MC/DC: 방언 × 동작 × 칸별 빈 값) — 폼 순서대로.
 fn missing_fields(dialect: Dialect, action: FormAction, now: &FormSnap) -> Vec<Field> {
     let empty = |f: Field| match f {
+        Field::Quick => false,
         Field::Name => now.name.trim().is_empty(),
         Field::Host => now.host.trim().is_empty(),
         Field::Port => now.port.trim().is_empty(),
@@ -272,6 +283,49 @@ fn env_value(e: Option<nsql_script::ConnEnv>) -> &'static str {
     e.map_or("none", nsql_script::ConnEnv::as_str)
 }
 
+/// ★ 간략 접속의 자동 프로필 이름(순수 · 사용자 10-22): `방언-호스트[-DB]`(파일 방언 = `방언-파일이름`) · 이름 규칙 밖 글자는 `_` ·
+/// 64자 상한 · 이미 있으면 `-2`, `-3`… (`exists` = 저장소 조회).
+pub(crate) fn quick_profile_name(spec: &ConnectSpec, exists: impl Fn(&str) -> bool) -> String {
+    let d = spec.dialect.map_or("db".to_string(), |d| d.to_string());
+    let mut parts: Vec<String> = vec![d];
+    match (&spec.host, &spec.database) {
+        (Some(h), db) => {
+            parts.push(h.clone());
+            if let Some(db) = db {
+                parts.push(db.clone());
+            }
+        }
+        (None, Some(db)) => {
+            let stem = std::path::Path::new(db)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| db.clone());
+            parts.push(stem);
+        }
+        (None, None) => {}
+    }
+    let raw = parts.join("-");
+    let mut base: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    base = base.trim_start_matches('.').to_string();
+    base.truncate(60);
+    if !exists(&base) {
+        return base;
+    }
+    (2..1000)
+        .map(|n| format!("{base}-{n}"))
+        .find(|c| !exists(c))
+        .unwrap_or(base)
+}
+
 fn digits_only(c: char) -> bool {
     c.is_ascii_digit()
 }
@@ -310,6 +364,8 @@ impl ConnectPanel {
             user: TextBox::new(t(Msg::PhUser)),
             password: TextBox::new(t(Msg::PhPassword)),
             name: TextBox::new(t(Msg::PhProfileName)),
+            quick: TextBox::new(t(Msg::PhQuickConnect)),
+            quick_btn: Button::new(t(Msg::BtnQuickConnect)),
             loaded_name: None,
             env: Combo::new(env_items(), 0),
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
@@ -360,6 +416,8 @@ impl ConnectPanel {
         rebuild(&mut self.user, t(Msg::PhUser), false);
         rebuild(&mut self.password, t(Msg::PhPassword), true);
         rebuild(&mut self.name, t(Msg::PhProfileName), false);
+        rebuild(&mut self.quick, t(Msg::PhQuickConnect), false);
+        self.quick_btn.set_label(t(Msg::BtnQuickConnect));
         self.layout_inner();
     }
 
@@ -473,6 +531,7 @@ impl ConnectPanel {
             &mut self.user,
             &mut self.password,
             &mut self.name,
+            &mut self.quick,
         ] {
             tb.set_text("");
         }
@@ -543,6 +602,7 @@ impl ConnectPanel {
         // 경고 띠(빠진 필수 칸) — 글자를 넣으면 즉시 해제 · 경고 > 바뀜.
         let snap = self.snapshot();
         self.warn.retain(|f| match f {
+            Field::Quick => false,
             Field::Name => snap.name.trim().is_empty(),
             Field::Host => snap.host.trim().is_empty(),
             Field::Port => snap.port.trim().is_empty(),
@@ -656,7 +716,17 @@ impl ConnectPanel {
             ctl.set_bounds(Rect::new(x, *y, w, h), inv);
             *y += h + gap;
         };
-        // 접속 명칭(프로필 이름)이 맨 위 — 필수(사용자 09-14).
+        // ★ 간략 접속 줄이 맨 위(사용자 10-22): 접속 문자열 칸 + 버튼(포트 칸 폭).
+        {
+            y += label_h;
+            let bw = self.s(self.port_w);
+            self.quick
+                .set_bounds(Rect::new(x, y, w - bw - gap, field_h), &mut inv);
+            self.quick_btn
+                .set_bounds(Rect::new(x + w - bw, y, bw, field_h), &mut inv);
+            y += field_h + gap;
+        }
+        // 접속 명칭(프로필 이름) — 필수(사용자 09-14).
         place(&mut self.name, &mut inv, &mut y, field_h);
         place(&mut self.dialect, &mut inv, &mut y, field_h);
         let off = Rect::new(0, 0, 0, 0);
@@ -800,6 +870,7 @@ impl ConnectPanel {
         set(&mut self.connect_btn, hit == Some(3));
         set(&mut self.save_btn, hit == Some(4));
         set(&mut self.env, hit == Some(5));
+        set(&mut self.quick_btn, hit == Some(6));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -811,6 +882,7 @@ impl ConnectPanel {
             self.connect_btn.bounds(),
             self.save_btn.bounds(),
             self.env.bounds(),
+            self.quick_btn.bounds(),
         ]
         .iter()
         .position(|b| b.contains(p))
@@ -825,6 +897,7 @@ impl ConnectPanel {
             Field::User => &mut self.user,
             Field::Password => &mut self.password,
             Field::Name => &mut self.name,
+            Field::Quick => &mut self.quick,
         }
     }
 
@@ -840,7 +913,7 @@ impl ConnectPanel {
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         let a = self.test_btn.tick(now_ms);
         let b = self.connect_btn.tick(now_ms);
-        let c = self.save_btn.tick(now_ms);
+        let c = self.save_btn.tick(now_ms) | self.quick_btn.tick(now_ms);
         let d = self.dialect.tick_hover(now_ms) | self.env.tick_hover(now_ms);
         // 입력란 hover 페이드(회색 · Slow).
         let mut e = false;
@@ -862,6 +935,7 @@ impl ConnectPanel {
         self.test_btn.is_animating()
             || self.connect_btn.is_animating()
             || self.save_btn.is_animating()
+            || self.quick_btn.is_animating()
             || self.dialect.hover_animating()
             || self.env.hover_animating()
             || self.copy.next_tick(std::time::Instant::now()).is_some()
@@ -978,6 +1052,7 @@ impl ConnectPanel {
             Field::User => &self.user,
             Field::Password => &self.password,
             Field::Name => &self.name,
+            Field::Quick => &self.quick,
         }
     }
 
@@ -991,6 +1066,7 @@ impl ConnectPanel {
             &self.user,
             &self.password,
             &self.name,
+            &self.quick,
         ] {
             tb.paint_popup(dc, th);
         }
@@ -1113,6 +1189,7 @@ impl ConnectPanel {
             self.test_btn.on_event(ev, inv);
             self.connect_btn.on_event(ev, inv);
             self.save_btn.on_event(ev, inv);
+            self.quick_btn.on_event(ev, inv);
             // 포커스 링은 하나만 — 방금 눌린 컨트롤만 켠다(텍스트박스면 전부 끈다).
             if let InputEvent::MouseDown { x, y, .. } = *ev {
                 let hit = self.ctl_hit(Point { x, y });
@@ -1130,12 +1207,21 @@ impl ConnectPanel {
             if self.save_btn.take_clicked() {
                 return self.act_save();
             }
+            if self.quick_btn.take_clicked() {
+                return self.act_quick();
+            }
         }
         // 키 · 문자 → 포커스 텍스트박스
         match ev {
             InputEvent::Key {
                 key: Key::Enter, ..
-            } if self.field_focus.is_some() => return self.act_connect(),
+            } if self.field_focus.is_some() => {
+                return if self.field_focus == Some(Field::Quick) {
+                    self.act_quick()
+                } else {
+                    self.act_connect()
+                };
+            }
             InputEvent::Char { c: '\t', .. } => {
                 self.focus_next(false);
                 inv.push(self.bounds);
@@ -1202,6 +1288,7 @@ impl ConnectPanel {
     /// 칸 라벨(방언에 따라 Database 칸 이름이 다르다).
     fn field_label(&self, f: Field) -> String {
         match f {
+            Field::Quick => t(Msg::LblQuickConnect).to_string(),
             Field::Name => t(Msg::LblProfileName).to_string(),
             Field::Host => t(Msg::LblHost).to_string(),
             Field::Port => t(Msg::LblPort).to_string(),
@@ -1279,6 +1366,46 @@ impl ConnectPanel {
                 None
             }
         }
+    }
+
+    /// ★ 간략 접속(사용자 10-22): 접속 문자열을 풀어 호스트에 넘긴다(프로필 저장 + 접속은 호스트 `QuickConnect` 한 길).
+    /// 스킴이 없으면 콤보의 DB 종류로. 틀린 문자열 = 상태줄.
+    fn act_quick(&mut self) -> Option<PanelAction> {
+        let text = self.quick.text();
+        if text.trim().is_empty() {
+            self.set_state(ConnState::Failed(t(Msg::ErrQuickEmpty).into()));
+            self.field_focus = Some(Field::Quick);
+            self.focused = true;
+            self.sync_focus();
+            return None;
+        }
+        match ConnectSpec::parse(&text) {
+            Ok(mut spec) => {
+                if spec.dialect.is_none() {
+                    spec.dialect = Some(self.selected_dialect());
+                }
+                Some(PanelAction::QuickConnect(spec))
+            }
+            Err(e) => {
+                self.set_state(ConnState::Failed(e));
+                None
+            }
+        }
+    }
+
+    /// 비밀번호 칸 글자(간략 접속이 문자열의 비밀번호를 세션용으로 넣는다 · 저장과 무관).
+    pub(crate) fn set_password_text(&mut self, pw: &str) {
+        self.password.set_text(pw);
+    }
+
+    /// 간략 접속 칸 글자(자체 시험 `conn.quick:<문자열>`).
+    pub(crate) fn set_quick_text(&mut self, s: &str) {
+        self.quick.set_text(s);
+    }
+
+    /// 간략 접속 실행(기동 명령 · 버튼과 같은 길).
+    pub(crate) fn quick_action(&mut self) -> Option<PanelAction> {
+        self.act_quick()
     }
 
     fn act_save(&mut self) -> Option<PanelAction> {
@@ -1369,6 +1496,13 @@ impl ConnectPanel {
         };
         label(
             dc,
+            self.quick.bounds(),
+            t(Msg::LblQuickConnect),
+            false,
+            Field::Quick,
+        );
+        label(
+            dc,
             self.name.bounds(),
             t(Msg::LblProfileName),
             is(Dirty::Name),
@@ -1452,6 +1586,7 @@ impl ConnectPanel {
             &self.user,
             &self.password,
             &self.name,
+            &self.quick,
         ] {
             if tb.bounds().w > 0 {
                 tb.paint(dc, th);
@@ -1487,6 +1622,7 @@ impl ConnectPanel {
         if is(Dirty::Env) {
             stripe(dc, self.env.bounds());
         }
+        self.quick_btn.paint(dc, th);
         self.test_btn.paint(dc, th);
         self.connect_btn.paint(dc, th);
         // Save = 바뀐 칸이 있으면 강조 + `Save •`(`sync_dirty` · 툴바 Commit 배지와 같은 문법).
@@ -1639,6 +1775,35 @@ mod dirty_tests {
 
     /// 새 패널은 깨끗하다 — 생성자가 준 초기값(첫 방언 · 기본 포트 · 비밀번호 저장 켬)이 저장본이다.
     /// 종전엔 저장본이 빈 `FormSnap`이라 시작 직후 Details가 "바뀜" 팝업을 띄웠다(mac 09-21).
+    /// 간략 접속 자동 이름(사용자 10-22): 방언-호스트-DB · 규칙 밖 글자 `_` · 파일 방언 = 파일 이름 · 중복 = `-2`.
+    #[test]
+    fn quick_profile_names() {
+        let s = |url: &str| ConnectSpec::parse(url).expect("spec");
+        let none = |_: &str| false;
+        assert_eq!(
+            quick_profile_name(&s("mysql://nexa:pw@127.0.0.1:3306/nexa"), none),
+            "mysql-127.0.0.1-nexa"
+        );
+        assert_eq!(
+            quick_profile_name(&s("oracle://u@host"), none),
+            "oracle-host"
+        );
+        assert_eq!(
+            quick_profile_name(&s("sqlite:C:\\data\\my db.db"), none),
+            "sqlite-my_db"
+        );
+        assert_eq!(
+            quick_profile_name(&s("pg://u@h/db"), |n| n == "postgres-h-db"
+                || n == "postgres-h-db-2"),
+            "postgres-h-db-3"
+        );
+        let long = quick_profile_name(&s(&format!("mssql://u@{}/d", "h".repeat(90))), none);
+        assert!(
+            long.len() <= 64 && nsql_vault::is_profile_name(&long),
+            "{long}"
+        );
+    }
+
     #[test]
     fn fresh_panel_is_not_dirty() {
         for avail in [
