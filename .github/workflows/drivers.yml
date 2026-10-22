@@ -111,7 +111,7 @@ jobs:
           python3 scripts/package-drivers.py --version "$VERSION" --target-dir "$dir" --os "${{ matrix.slug }}" --arch "${{ matrix.arch }}" --out out
       - name: 서명 도구(nexa-license-tool)
         shell: bash
-        run: cargo build --release --locked --manifest-path ../nexa-license/Cargo.toml -p nexa-license-tool
+        run: cargo build --release --manifest-path ../nexa-license/Cargo.toml -p nexa-license-tool # nexa-license는 Cargo.lock 미커밋 → --locked 없이
       - name: 서명 + 검증(.sig · .sha256)
         shell: bash
         env:
