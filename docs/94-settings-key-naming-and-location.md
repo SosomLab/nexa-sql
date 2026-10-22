@@ -131,7 +131,9 @@
 - 방식과 값을 두 키로 나눈 이유 = VS Code `editor.lineHeight`처럼 값 크기(< 8 = 배수)로 뜻을 가르면 뜻이 숨는다 · 새 키라 `RENAMED` 없음.
 
 
-### 6-8. 확장 드라이버 다운로드 2키(10-22 · 136차 · T-29 · D-348)
+### 6-8. 확장 드라이버 다운로드 키(10-22 · 136차 · T-29 · D-348 · 10-23 = 분류 DBMS ▸ 드라이버)
+
+> ★ **10-23(542250c) = 새 분류 DBMS ▸ 드라이버**(`CatDbmsDrivers` · DBMS 그룹 맨 앞 · 고급 토글 대상)로 모음 = `driver.auto_install`(접속 → 이동) · `driver.repo` · `driver.http_timeout_secs`(CatInternal HIDDEN → **노출**) + 읽기 전용 info 3(`driver.info_folder` · `driver.info_index` · `driver.info_installed`(+ [드라이버 관리자…] 버튼)) · DBMS별 드라이버 행 `mysql.info_driver` 신설(pg/mssql/sqlite/oracle info 키와 같은 꼴 · 내장/확장 설치됨/미설치 3상태). 아래 줄의 분류 표기(CatInternal · 접속)는 그 전 기록.
 
 - 분류 = **CatInternal**(설정 창에 안 보임 · HIDDEN) · `driver.repo`(Text · 기본 **`SosomLab/nexa-sql`**(D-349 · 10-22 · 별도 드라이버 저장소 없음) · 색인 `drivers/index.json`·자산(Releases `driver-*`)을 받을 GitHub 저장소) · `driver.http_timeout_secs`(Int 5~600 · 기본 30 · 10 s 초과라 `_secs` · §6-5).
 - 토큰은 설정 키로 두지 않는다 = 환경 변수 `NSQL_GITHUB_TOKEN`만(설정 파일에 비밀을 남기지 않음) · 자동 갱신 확인 키 `driver.check_updates`는 GUI 배지와 함께 2차.

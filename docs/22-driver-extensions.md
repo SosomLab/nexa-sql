@@ -70,7 +70,8 @@
 
 - **허브 상태** = `driver_status(id)` = Builtin(이 빌드에 정적 링크) / Extension(드라이버 폴더에 설치됨) / Missing → `open()`은 후보 id를 차례로 시도하고 없으면 `ERR_DRIVER_MISSING`(-1350 · 메시지에 `nsql driver install <id>`) · 보조 = `DRIVER_IDS` · `ext_ids` · `dialect_of_ext` · `ext_crate_name` · `is_builtin`.
 - ✅ **C 자동 설치**(e62752a) = 허브 `open_auto` = 오류 -1350 + 정책 → 첫 후보 id를 색인 → 다운로드 → 검증 → 설치 → 1회 재시도(실패 = 원래 오류 + "auto-install failed: …") · 설정 `driver.auto_install`(기본 켬) · GUI 진행 = 상태줄 + 접속 창 베일 · CLI 진행 = stderr `[driver] id: stage pct` · `available()` = 이 OS의 전 방언(콤보 꼬리 사라짐) · 오프라인 번들 = §5-1.
-- 남은 단계 = D 릴리스 워크플로(`drivers.yml` · 태그 `drivers-v<ver>` pre-release) · E 문서(TODO T-396) · C2 = GUI [파일에서 설치…] 버튼.
+- ✅ **D 릴리스 워크플로**(b93ca33) = `.github/workflows/drivers.yml`(태그 `drivers-v<ver>` → 4 매트릭스 빌드 → 포장 → 서명·자가 검증 → 오프라인 번들 → **pre-release** → `drivers/index.json` 갱신 커밋 · 33 §5-5-1) · 설치본 = 드라이버 없는 판(`--no-default-features --features …/driver-oracle-oci` · 경량 CLI Debug 22.0 → 12.4 MB).
+- 남은 단계 = E 문서(TODO T-396) · C2 = GUI [파일에서 설치…] 버튼 · 첫 릴리스 `drivers-v0.1.0`(사용자 시크릿 `NEXA_DRIVER_KEY_B64`·`NEXA_DRIVER_KEY_PASS` 등록 뒤).
 
 
 사용자 요구 *"로딩 시간·불필요한 메모리·속도 지연이 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"*. 실측(release · 09-15): `nsql` 기동 ≈ 20ms(sqlite 실행 포함 24ms) · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(MSSQL tokio 런타임·Oracle ODPI-C는 **첫 접속 때** 만들어짐). 정적으로 링크된 드라이버는 OS 요구 페이징 덕에 **쓰지 않으면 RAM에 올라오지 않는다** → 내장 4종은 정적 유지가 최적(분리 = 비용만 추가).
@@ -106,7 +107,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 ### 2-3. 배포 저장소·자산 이름·매니페스트
 
-> ★ **10-22 D-349로 바뀜** = 저장소 = **SosomLab/nexa-sql**(별도 드라이버 저장소 없음 · 서드파티는 색인 `repo` 필드로 다른 저장소) · 색인 = 저장소 안 **`drivers/index.json`**(raw URL `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json` · ETag · API 아님 · 앱 릴리스와 무관 · 갱신 = 커밋) · 자산 = 같은 저장소 Releases · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리) · ★ 드라이버 릴리스 = **모두 pre-release**(앱 `releases/latest`를 가로채지 않게) · 아래 블록은 설계 당시(별도 저장소 안) 그대로 둔다(자산 이름 규칙·매니페스트 설계는 유효).
+> ★ **10-22 D-349로 바뀜** = 저장소 = **SosomLab/nexa-sql**(별도 드라이버 저장소 없음 · 서드파티는 색인 `repo` 필드로 다른 저장소) · 색인 = 저장소 안 **`drivers/index.json`**(raw URL `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json` · ETag · API 아님 · 앱 릴리스와 무관 · 갱신 = 커밋) · 자산 = 같은 저장소 Releases · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리 · ★ 10-23 D-350 = 한 태그 `drivers-v<ver>`로 바뀜 · §3-1) · ★ 드라이버 릴리스 = **모두 pre-release**(앱 `releases/latest`를 가로채지 않게) · 아래 블록은 설계 당시(별도 저장소 안) 그대로 둔다(자산 이름 규칙·매니페스트 설계는 유효).
 
 ```text
 저장소  github.com/SosomLab/nexa-sql-drivers            (드라이버 전용 · 태그 = <id>-v<semver> · 확장별 독립 릴리스)
@@ -169,7 +170,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 
 - **색인 URL**(D-349) = `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json`(저장소 안 파일 · raw · GitHub **API가 아님** · 익명 한도 없음 · 앱 릴리스와 무관 · 갱신 = 커밋) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간 · 태그 접두 `driver-<id>-v` · 프리릴리스 판정 = 버전 문자열의 `-`).
-- **자산**(D-349) = 같은 저장소 Releases · 태그 `driver-<id>-v<ver>` · **모두 pre-release**(앱 `releases/latest` 보호) · URL = `https://github.com/SosomLab/nexa-sql/releases/download/driver-<id>-v<ver>/nsql-driver-<id>-<ver>-<os>-<arch>.{zip,sha256,sig}` · 앱 배포 워크플로 3곳은 `v*` 태그 릴리스에만 반응(가드).
+- **자산**(D-349 → D-350) = 같은 저장소 Releases · 태그 **`drivers-v<ver>`** 하나에 전 드라이버(D-350 · D-349의 드라이버별 `driver-<id>-v<ver>`을 대체) · **모두 pre-release**(앱 `releases/latest` 보호) · URL = `https://github.com/SosomLab/nexa-sql/releases/download/drivers-v<ver>/nsql-driver-<id>-<ver>-<os>-<arch>.{zip,sha256,sig}` + 오프라인 번들 `nsql-drivers-all-<ver>-<os>-<arch>.zip` · 앱 배포 워크플로 3곳은 `v*` 태그 릴리스에만 반응(가드 · `drivers-v*`는 `v`로 시작하지 않음).
 - **검증 순서** = sha256 → Ed25519(`ext::keys::DRIVER_KEYS` · **키 목록이 비면 설치 거부 · 우회 옵션 없음**) → `drivers/.tmp/<pid>-<ns>/pkg`에 풀기(공통 최상위 폴더 1개 벗김) → 매니페스트 `nexa-driver.json` id·version·protocol 대조(ABI 불일치 = 거부) + 라이브러리 존재 → `drivers/<id>/<ver>/`로 **원자적 rename** · 이미 있으면 거부(`--force` = 교체).
 - **HTTPS** = 새 크레이트 `nsql-net`(rustls 0.23 + webpki-roots 1 · 프록시 CONNECT · 상한) — 위 표의 "tiberius가 끌어온 `rustls`·`ring`"은 136차 뒤 rustls 0.23 + aws-lc-rs(MySQL·Oracle Thin과 공유)로 바뀜.
 - **갱신 확인 자동(하루 1회)** = 아직 없음(2차 · `driver.check_updates` + GUI 배지) · 지금은 `nsql driver update --check` 수동만.
@@ -252,7 +253,7 @@ nsql driver path                    drivers/ 폴더
 |:--:|---|---|---|
 | 1 | **T-27** | `nsql-driver-rpc` — stdio JSON-RPC 프로토콜 v1(프레임 · 메서드 · Value 인코딩) + 프록시 `Session` + **참조 구현 = 내장 SQLite를 프로세스로 감싼 `nsql-driver-sqlite-rpc`**(테스트용) | 기존 nsql-run 테스트를 RPC 세션으로 그대로 통과 |
 | 2 | **T-28** | `nsql-ext` 크레이트 — `drivers/` 레이아웃 · `nexa-driver.json` · 버전 선택 규칙 · 참조 카운트 · 삭제/휴지통 · `nsql driver list/rm/prune/path` | 단위 테스트(임시 폴더) |
-| 3 | **T-29** | GitHub 다운로드 — 색인 · 최신 태그 해석 · HTTPS(rustls) · sha256 · Ed25519 검증 · 원자적 설치 · `install/update/search` · 갱신 배지 · 오프라인 `--file` | 실기: ~~`SosomLab/nexa-sql-drivers`~~ → nexa-sql 저장소의 첫 드라이버 pre-release(태그 `driver-<id>-v<ver>`) + `drivers/index.json` 커밋(D-349) |
+| 3 | **T-29** | GitHub 다운로드 — 색인 · 최신 태그 해석 · HTTPS(rustls) · sha256 · Ed25519 검증 · 원자적 설치 · `install/update/search` · 갱신 배지 · 오프라인 `--file` | 실기: ~~`SosomLab/nexa-sql-drivers`~~ → nexa-sql 저장소의 첫 드라이버 pre-release **`drivers-v0.1.0`**(D-350 · `drivers.yml` · 사용자 시크릿 2 등록 뒤) + `drivers/index.json` 자동 갱신 커밋 |
 | 4 | **T-30** | Oracle OCI 확장 — 현 `nsql-driver-oracle`(kubo)을 RPC 프로세스로 분리 · Instant Client 19/23 두 판 SxS · 프로필 `driver=` · ORA-28040 힌트 | integration(Oracle Free 23ai) + 구형 서버는 사용자 실기 |
 | 5 | **T-31** | GUI — DBeaver식 접속 대화상자(§1) · 로그인 리스트 · 드라이버 관리자(§5-2) | 사용자 실기 |
 

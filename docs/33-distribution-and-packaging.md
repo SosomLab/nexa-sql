@@ -212,10 +212,13 @@ sudo dnf install nexa-sql
 
 
 
-### 5-5-1. 확장 드라이버 릴리스(10-22 · D-349)
+### 5-5-1. 확장 드라이버 릴리스(10-22 D-349 → 10-23 D-350 · `drivers.yml`)
 
-- 드라이버 릴리스 = **같은 nexa-sql 저장소의 GitHub pre-release** · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리) · 자산 `nsql-driver-<id>-<ver>-<os>-<arch>.zip` + `.sha256` + `.sig` · 색인 = 저장소 파일 `drivers/index.json`(커밋으로 `latest` 갱신).
-- 절대 정식(Latest) 릴리스로 올리지 않는다 — Homebrew 탭·linux-repo 생성기가 `releases/latest`를 본다 · `homebrew.yml`·`linux-repo.yml`·`publish-windows-packages.yml`은 `v*` 태그 릴리스에만 반응(가드 `startsWith(github.event.release.tag_name, 'v')`).
+- 드라이버 릴리스 = **같은 nexa-sql 저장소의 GitHub pre-release** · 태그 **`drivers-v<ver>`** 하나에 전 드라이버(D-350 · D-349의 드라이버별 `driver-<id>-v<ver>`을 대체) · 앱 태그 `v*`와 분리.
+- 흐름(`.github/workflows/drivers.yml`) = 태그 푸시(또는 수동 실행) → 4 매트릭스(windows x86_64 · linux x86_64 · macos aarch64 · macos x86_64) cdylib 빌드 → `scripts/package-drivers.py`(자산 `nsql-driver-<id>-<ver>-<os>-<arch>.zip` = `nexa-driver.json` + cdylib + LICENSE.md) → `nexa-license-tool sign-file`(Actions 시크릿 **`NEXA_DRIVER_KEY_B64`**(봉투 base64) · **`NEXA_DRIVER_KEY_PASS`**(봉투 암호) · 없으면 실패) + `verify-file --pub drivers/keys/drv-v1.key.pub` → `scripts/bundle-drivers.py`(오프라인 번들 **`nsql-drivers-all-<ver>-<os>-<arch>.zip`** = 자산 + sig + sha256 + 색인 스냅샷 + README) → `gh release create --prerelease`(노트 = 영어 먼저 · 오프라인 안내) → `scripts/update-driver-index.py`로 `drivers/index.json` 갱신 커밋.
+- **앱 설치본 = 드라이버 없는 판**(D-350) = `release.yml`의 `NSQL_FEATURES = --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` · 포장 스크립트 3이 `NSQL_FEATURES`를 그대로 씀 · 남는 드라이버 = Oracle OCI(Instant Client 의존)뿐 · 나머지 = 첫 접속 때 자동 설치 또는 오프라인 번들.
+- 절대 정식(Latest) 릴리스로 올리지 않는다 — Homebrew 탭·linux-repo 생성기가 `releases/latest`를 본다 · `homebrew.yml` · `linux-repo.yml` · `publish-windows-packages.yml`은 `v*` 태그 릴리스에만 반응(가드 `startsWith(github.event.release.tag_name, 'v')` · `drivers-v*`는 해당 없음).
+- 한 번 공개한 자산은 지우거나 다시 올리지 않는다(색인 sha256이 가리킴) — 고치려면 버전을 올린다.
 
 ### 5-6. 패키지 게시물 + 프로그램 내부 정보 = 영어(사용자 10-04 → 10-10 확장)
 

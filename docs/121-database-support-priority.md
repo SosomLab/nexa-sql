@@ -114,7 +114,7 @@
 
 | 항목 | 규칙 |
 |---|---|
-| 공식 색인 | ★ **D-349(10-22)로 바뀜** = nexa-sql 저장소 안 파일 `drivers/index.json`(raw URL · 갱신 = 커밋) · 자산 = 같은 저장소 Releases 태그 `driver-<id>-v<ver>`(pre-release) · 설계 당시 = `SosomLab/nexa-drivers` 저장소의 Release 자산 `index.json`(드라이버 id · 저장소 URL · 최신 버전 · OS별 자산 URL · sha256 · 서명 · 등급 · 최소 앱 버전) · **Ed25519 서명**(nexa-license 키 체계 재사용 · 공개키 본체 내장 · 92 R1~R4) |
+| 공식 색인 | ★ **D-349(10-22)로 바뀜** = nexa-sql 저장소 안 파일 `drivers/index.json`(raw URL · 갱신 = 커밋) · 자산 = 같은 저장소 Releases · 태그 = 10-23 D-350부터 한 태그 `drivers-v<ver>`(pre-release · 전 드라이버 · 오프라인 번들 포함 · 그 전 D-349 = `driver-<id>-v<ver>`) · 설계 당시 = `SosomLab/nexa-drivers` 저장소의 Release 자산 `index.json`(드라이버 id · 저장소 URL · 최신 버전 · OS별 자산 URL · sha256 · 서명 · 등급 · 최소 앱 버전) · **Ed25519 서명**(nexa-license 키 체계 재사용 · 공개키 본체 내장 · 92 R1~R4) |
 | 사용자 추가 저장소 | 설정 `drivers.repositories`(= 확장 `extensions.repositories`와 같은 틀 · D-89 ② = 공식 + 사용자 URL · **서명 필수**) · 서명 없는 드라이버 = 개발자 모드(`drivers.dev_dir` 폴더 · 핫 리로드 · 로그 층)에서만 |
 | 검증 | 다운로드 → sha256 → 서명 → zip 풀기 → `driver.json` 읽기 → `abi_version`·OS·최소 앱 버전 검사 → 등록. 실패 = 배치 안 함 + 사유 |
 | 네트워크(26 §8) | 관리자 열기·⟳·설치·갱신 확인(설정 주기 · 기본 하루 1회 · 끌 수 있음)에만 · 접속한 적 없는 서버에 지속 트래픽 0 · 진행률·취소 · 프록시 = OS 설정 |
