@@ -92,7 +92,18 @@ impl App {
                 bookmarks_panel::BmAction::Rename(id, text) => {
                     self.bookmarks.set_label(id, Some(text))
                 }
-                bookmarks_panel::BmAction::Mnemonic(id, n) => self.bookmarks.set_mnemonic(id, n),
+                bookmarks_panel::BmAction::Mnemonic(id, n) => match n {
+                    // ★ 같은 번호 다시 = 니모닉만 해제 · 다른 북마크 것이면 확인 없이 바로 가져오고 [복원하기] 안내
+                    // (사용자 10-22 · 거터·지정 키와 같은 뜻).
+                    Some(n) => {
+                        if let crate::bookmarks::MnSet::Set(Some(r)) =
+                            self.bookmarks.toggle_mnemonic(id, n)
+                        {
+                            self.bm_taken_notice(r);
+                        }
+                    }
+                    None => self.bookmarks.set_mnemonic(id, None),
+                },
                 bookmarks_panel::BmAction::MoveGroup(id, g) => self.bookmarks.move_group(id, g),
                 bookmarks_panel::BmAction::RemoveDoc(doc) => {
                     let n = self.bookmarks.remove_doc(&doc);
@@ -249,9 +260,51 @@ impl App {
         });
         self.bm_gutter = state.map(|(line, bm, _)| (i, line, bm));
         self.close_context_menus();
-        let items = bm_gutter_items(state.map(|(_, bm, mn)| (bm.is_some(), mn)));
+        let used = self.bookmarks.used_mnemonics(&self.editors, i);
+        let items = bm_gutter_items(state.map(|(_, bm, mn)| (bm.is_some(), mn)), &used);
         self.open_status_popup_w(Rect::new(p.x, p.y, 1, 1), items, 170.0);
         true
+    }
+
+    /// ★ 사용 중 니모닉을 가져온 뒤의 안내(사용자 10-22 3차 · 오류처럼 보이지 않게 Info · 상태줄은 보통 지정 문구 그대로):
+    /// 토스트 [복원하기] = `bookmark.restore_mn` → [`Self::bm_restore_pending`]. `bookmark.mnemonic_notice` off = 조용히.
+    fn bm_taken_notice(&mut self, r: crate::bookmarks::MnRestore) {
+        if !self.settings.flag("bookmark.mnemonic_notice") {
+            return;
+        }
+        let from_line = self
+            .bookmarks
+            .store
+            .get(r.from_id)
+            .map_or(0, |b| b.anchor.line as usize)
+            + 1;
+        self.bookmarks.pending_restore = Some(r);
+        self.toasts.push_button(
+            toast::ToastKind::Info,
+            tf(
+                Msg::ToastBmMnemonicTaken,
+                &[&r.n.to_string(), &from_line.to_string()],
+            ),
+            tf(Msg::ToastBmMnemonicTakenBody, &[&from_line.to_string()]),
+            t(Msg::BtnBmRestoreMnemonic),
+            "bookmark.restore_mn",
+        );
+        self.redraw();
+    }
+
+    /// 토스트 [복원하기] — 방금 가져온 니모닉을 원래 북마크로 되돌린다(이번에 만든 북마크는 지우고 · 전 번호는 되돌림).
+    pub(crate) fn bm_restore_pending(&mut self) {
+        let Some(r) = self.bookmarks.pending_restore.take() else {
+            return;
+        };
+        self.sess.status = match self.bookmarks.restore_mnemonic(r) {
+            Some(line) => tf(
+                Msg::StBookmarkMnemonicRestored,
+                &[&r.n.to_string(), &(line + 1).to_string()],
+            ),
+            None => tf(Msg::StBookmarkNoMnemonic, &[&r.n.to_string()]),
+        };
+        self.bm_sync_ui();
     }
 
     /// 거터 메뉴의 답 — `view` = 좌측 북마크 패널 열기 · `toggle` = 토글(캐럿은 이미 그 줄) · `mn:<n>` = 니모닉 지정(없으면 만들어서) · `mn:clear` = 해제.
@@ -298,13 +351,21 @@ impl App {
             .strip_prefix("bookmark.set_")
             .and_then(|n| n.parse::<u8>().ok())
         {
-            match self.bookmarks.set_mnemonic_at_caret(&self.editors, i, n) {
-                Ok(_) => {
+            // ★ 같은 줄·같은 번호 다시 = 니모닉만 해제(북마크 유지) · 다른 줄의 북마크가 쓰는 번호면 확인 없이 바로
+            // 가져오고 [복원하기] 안내(사용자 10-22 · 69 §C-10 · 지정 키·거터 메뉴 같은 길).
+            match self.bookmarks.toggle_mnemonic_at_caret(&self.editors, i, n) {
+                Ok(crate::bookmarks::MnSet::Set(restore)) => {
                     let line = self.editors.caret_line_col().0;
                     self.sess.status = tf(
                         Msg::StBookmarkMnemonic,
                         &[&n.to_string(), &line.to_string()],
                     );
+                    if let Some(r) = restore {
+                        self.bm_taken_notice(r);
+                    }
+                }
+                Ok(crate::bookmarks::MnSet::Cleared) => {
+                    self.sess.status = tf(Msg::StBookmarkMnemonicCleared, &[&n.to_string()]);
                 }
                 Err(k) => self.sess.status = tf(Msg::StBookmarkCap, &[&format!("bookmark.{k}")]),
             }

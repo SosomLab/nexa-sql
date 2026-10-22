@@ -639,23 +639,35 @@ impl BookmarksPanel {
                 items.push(CtxItem::item("open", t(Msg::MnBmOpen)));
                 items.push(CtxItem::Separator);
                 items.push(CtxItem::item("rename", t(Msg::MnBmLabel)));
-                let mut mn: Vec<CtxItem> = (0..10u8)
+                // 같은 문서의 다른 북마크가 쓰는 번호 = "사용 중: N줄" 보조 글(사용자 10-22 · 고르면 호스트가 가져오기 확인).
+                let used: Vec<(u8, u32)> = bm
+                    .as_ref()
+                    .map(|cur| {
+                        self.items
+                            .iter()
+                            .filter(|b| b.doc == cur.doc && b.is_live())
+                            .filter_map(|b| b.mnemonic.map(|m| (m, b.anchor.line)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mn: Vec<CtxItem> = (0..10u8)
                     .map(|n| {
-                        let label = if bm.as_ref().and_then(|b| b.mnemonic) == Some(n) {
-                            format!("{n} ✓")
-                        } else {
-                            n.to_string()
-                        };
-                        CtxItem::item(format!("mn:{n}"), label)
+                        // 사용 중(자기 것 포함) = ✓ + 줄 번호만(사용자 10-22).
+                        let line = used.iter().find(|(m, _)| *m == n).map(|(_, l)| *l);
+                        CtxItem::item(format!("mn:{n}"), n.to_string())
+                            .with_checked(line.is_some())
+                            .with_sub(line.map_or(String::new(), |l| {
+                                format!("  {}", tf(Msg::MnBmMnemonicInUse, &[&(l + 1).to_string()]))
+                            }))
                     })
                     .collect();
-                mn.push(CtxItem::Separator);
-                mn.push(CtxItem::maybe(
+                items.push(CtxItem::submenu("mn", t(Msg::MnBmMnemonic), mn));
+                // ★ "니모닉 지우기" = "니모닉 ▸" 바로 밑 최상위 항목(사용자 10-22 · 거터 메뉴와 같은 배치).
+                items.push(CtxItem::maybe(
                     "mn:clear",
                     t(Msg::MnBmMnemonicClear),
                     bm.as_ref().is_some_and(|b| b.mnemonic.is_some()),
                 ));
-                items.push(CtxItem::submenu("mn", t(Msg::MnBmMnemonic), mn));
                 let cur_g = bm.as_ref().map_or(0, |b| b.group);
                 let mut gs: Vec<CtxItem> = self
                     .groups

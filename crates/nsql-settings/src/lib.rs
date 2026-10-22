@@ -4535,7 +4535,7 @@ pub const REGISTRY: &[Entry] = &[
             min: 300,
             max: 1600,
         },
-        default: "526",
+        default: "580",
     },
     Entry {
         key: "login.panel_w",
@@ -6393,6 +6393,15 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatBookmarkGeneral,
         label: Msg::LblBmEnabled,
         desc: Msg::DescBmEnabled,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 사용 중인 니모닉을 고르면 바로 가져오고 [복원하기] 안내(사용자 10-22 · 69 §C-10) — 끄면 조용히 가져온다.
+    Entry {
+        key: "bookmark.mnemonic_notice",
+        cat: Msg::CatBookmarkGeneral,
+        label: Msg::LblBmMnemonicNotice,
+        desc: Msg::DescBmMnemonicNotice,
         kind: SettingKind::Bool,
         default: "on",
     },

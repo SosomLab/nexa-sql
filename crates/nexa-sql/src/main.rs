@@ -498,6 +498,9 @@ struct App {
     _instance_lock: Option<std::fs::File>,
     /// 폴더 고르기의 시작 폴더(설정의 지금 값).
     folder_start: Option<PathBuf>,
+    /// ★ 파일 열기/저장 창을 마지막으로 연 **작업 모드 열쇠**(사용자 10-22 · `project:<파일>` / `folder:<폴더>` / `file`):
+    /// 모드가 같으면 마지막 위치 · 다르면(기동 직후 · 모드 전환 뒤) 그 모드의 위치에서 연다.
+    file_dialog_mode: Option<String>,
     // 컨트롤
     menubar: MenuBar,
     /// 탭 메뉴를 마지막으로 만든 근거(id·제목·활성) — 바뀌면 메뉴를 다시 만든다.
@@ -1899,6 +1902,7 @@ fn main() {
         first_instance,
         _instance_lock: instance_lock,
         folder_start: None,
+        file_dialog_mode: None,
         menubar,
         tabs_menu_sig: String::new(),
         tool_dock: App::build_tool_dock(),
@@ -2878,9 +2882,14 @@ fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
 
 /// 거터 우클릭 메뉴 항목(순수 함수 · 사용자 09-23 정정 둘):
 /// 맨 위 `bmg.view`(늘 · 좌측 북마크 패널 열기) → 줄 위에서만(`line = Some((북마크 있음, 니모닉))`)
-/// `bmg.toggle`(늘 활성 · 있으면 ✓ · "제거" 항목 없음) · `bmg.mn:1..9`(없으면 만들어 지정 · 지금 것은 ✓) · `bmg.mn:clear`(니모닉이 있을 때만).
-/// 마지막 줄 아래 빈 영역(`line = None`)에서는 "북마크 보기"만.
-fn bm_gutter_items(line: Option<(bool, Option<u8>)>) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
+/// `bmg.toggle`(늘 활성 · 있으면 ✓ · "제거" 항목 없음) · `bmg.mn:1..9`(없으면 만들어 지정 · 지금 것은 ✓ · 같은 번호 다시 = 해제) ·
+/// `bmg.mn:clear`(니모닉이 있을 때만 · ★ 하위 메뉴가 아니라 "니모닉 ▸" **바로 밑** 최상위 항목 · 사용자 10-22).
+/// 마지막 줄 아래 빈 영역(`line = None`)에서는 "북마크 보기"만. `used` = 이 문서에서 쓰는 (니모닉, 줄 0기준) — 다른 북마크 것은
+/// "사용 중: N줄" 보조 글(사용자 10-22 · 고르면 호스트가 가져오기 확인).
+fn bm_gutter_items(
+    line: Option<(bool, Option<u8>)>,
+    used: &[(u8, usize)],
+) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
     use nexa_ctl::controls::ctxmenu::CtxItem;
     let mut out = vec![CtxItem::item("bmg.view", t(Msg::MnBookmarksPanel))];
     let Some((has_bm, mnemonic)) = line else {
@@ -2888,21 +2897,25 @@ fn bm_gutter_items(line: Option<(bool, Option<u8>)>) -> Vec<nexa_ctl::controls::
     };
     let mn: Vec<CtxItem> = (1..=9u8)
         .map(|n| {
+            // 사용 중(자기 것 포함) = ✓ + 줄 번호만(사용자 10-22 "사용중 글씨는 제외 · 00줄만").
+            let line = used.iter().find(|(m, _)| *m == n).map(|(_, l)| *l);
             CtxItem::item(format!("bmg.mn:{n}"), format!("{n}  (Ctrl+{n})"))
-                .with_checked(mnemonic == Some(n))
+                .with_checked(mnemonic == Some(n) || line.is_some())
+                .with_sub(line.map_or(String::new(), |l| {
+                    format!("  {}", tf(Msg::MnBmMnemonicInUse, &[&(l + 1).to_string()]))
+                }))
         })
-        .chain(std::iter::once(CtxItem::Separator))
-        .chain(std::iter::once(CtxItem::maybe(
-            "bmg.mn:clear",
-            t(Msg::MnBmMnemonicClear),
-            mnemonic.is_some(),
-        )))
         .collect();
     // 토글 하나가 추가/제거를 다 하므로 "제거" 항목은 두지 않는다(사용자 09-23 정정) — 상태는 ✓로만 보인다.
     out.extend([
         CtxItem::Separator,
         CtxItem::item("bmg.toggle", t(Msg::MnBmToggle)).with_checked(has_bm),
         CtxItem::submenu("bmg.mn", t(Msg::MnBmMnemonic), mn),
+        CtxItem::maybe(
+            "bmg.mn:clear",
+            t(Msg::MnBmMnemonicClear),
+            mnemonic.is_some(),
+        ),
     ]);
     out
 }
@@ -2929,15 +2942,15 @@ mod bm_gutter_tests {
                 _ => None,
             })
         };
-        let blank = bm_gutter_items(None);
+        let blank = bm_gutter_items(None, &[]);
         assert_eq!(blank.len(), 1, "below text: view only");
         assert_eq!(enabled(&blank, "bmg.view"), Some(true));
-        let none = bm_gutter_items(Some((false, None)));
+        let none = bm_gutter_items(Some((false, None)), &[]);
         assert_eq!(enabled(&none, "bmg.view"), Some(true));
         assert_eq!(enabled(&none, "bmg.toggle"), Some(true));
         assert_eq!(checked(&none, "bmg.toggle"), Some(false));
         assert_eq!(enabled(&none, "bmg.remove"), None, "no remove item");
-        let bm = bm_gutter_items(Some((true, None)));
+        let bm = bm_gutter_items(Some((true, None)), &[]);
         assert_eq!(enabled(&bm, "bmg.toggle"), Some(true));
         assert_eq!(checked(&bm, "bmg.toggle"), Some(true));
         let sub = |items: &[CtxItem]| -> Vec<CtxItem> {
@@ -2951,10 +2964,53 @@ mod bm_gutter_tests {
                 })
                 .expect("mnemonic submenu")
         };
-        assert_eq!(enabled(&sub(&bm), "bmg.mn:clear"), Some(false));
-        let with_mn = bm_gutter_items(Some((true, Some(3))));
-        assert_eq!(enabled(&sub(&with_mn), "bmg.mn:clear"), Some(true));
-        assert_eq!(sub(&with_mn).len(), 11, "1..9 + separator + clear");
+        // ★ "니모닉 지우기"는 하위 메뉴가 아니라 "니모닉 ▸" 바로 밑(사용자 10-22).
+        assert_eq!(enabled(&bm, "bmg.mn:clear"), Some(false));
+        assert_eq!(
+            enabled(&sub(&bm), "bmg.mn:clear"),
+            None,
+            "not inside submenu"
+        );
+        let with_mn = bm_gutter_items(Some((true, Some(3))), &[]);
+        assert_eq!(enabled(&with_mn, "bmg.mn:clear"), Some(true));
+        assert_eq!(sub(&with_mn).len(), 9, "1..9 only");
+        let ids: Vec<&str> = with_mn
+            .iter()
+            .filter_map(|it| match it {
+                CtxItem::Item { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            ["bmg.view", "bmg.toggle", "bmg.mn", "bmg.mn:clear"],
+            "clear right below the mnemonic submenu"
+        );
+        // 사용 중 보조 글(사용자 10-22): 다른 북마크의 번호에만 · 자기 것(✓)에는 없음.
+        let used = bm_gutter_items(Some((true, Some(3))), &[(3, 10), (5, 41)]);
+        let sub_of = |items: &[CtxItem], id: &str| -> Option<String> {
+            items.iter().find_map(|it| match it {
+                CtxItem::Item { id: i, sub, .. } if i == id => sub.clone(),
+                _ => None,
+            })
+        };
+        let line = |n: &str| format!("  {}", tf(Msg::MnBmMnemonicInUse, &[n]));
+        assert_eq!(
+            sub_of(&sub(&used), "bmg.mn:3").as_deref(),
+            Some(line("11").as_str()),
+            "자기 니모닉도 줄 번호"
+        );
+        assert_eq!(
+            sub_of(&sub(&used), "bmg.mn:5").as_deref(),
+            Some(line("42").as_str())
+        );
+        assert_eq!(
+            checked(&sub(&used), "bmg.mn:5"),
+            Some(true),
+            "다른 북마크가 써도 ✓"
+        );
+        assert_eq!(checked(&sub(&used), "bmg.mn:7"), Some(false));
+        assert_eq!(sub_of(&sub(&used), "bmg.mn:7"), None);
     }
 }
 

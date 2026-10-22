@@ -438,6 +438,11 @@ impl App {
             }
         }
         // ★ 안내 토스트의 [다시 보지 않기](사용자 10-21 · 토스트 버튼 → `menu_action` · 1차에 `indent_pick`에 넣어 무동작 = 협업 V1): `notice.<안내>` = off로 적고 되돌리는 자리를 한 줄 알린다.
+        // 니모닉 가져오기 안내 토스트의 [복원하기](사용자 10-22).
+        if id == "bookmark.restore_mn" {
+            self.bm_restore_pending();
+            return;
+        }
         if let Some(rest) = id.strip_prefix("notice.hide:") {
             let key = format!("notice.{rest}");
             if self.settings.set(&key, "off").is_ok() {

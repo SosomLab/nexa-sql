@@ -19,6 +19,27 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const SAVE_DEBOUNCE: Duration = Duration::from_secs(1);
 const SAVE_MAX_WAIT: Duration = Duration::from_secs(5);
 
+/// ★ 방금 가져온 니모닉을 되돌리기 위한 기록(사용자 10-22 · 69 §C-10): 토스트 [복원하기]가 소비한다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MnRestore {
+    pub(crate) n: u8,
+    /// 번호를 뺏긴 북마크 — 복원하면 다시 받는다.
+    pub(crate) from_id: u64,
+    /// 번호를 받은 북마크.
+    pub(crate) to_id: u64,
+    /// 받은 쪽이 이번에 새로 만든 북마크면 복원 때 지운다.
+    pub(crate) to_created: bool,
+    /// 받은 쪽이 전에 갖고 있던 번호 — 복원 때 되돌린다.
+    pub(crate) to_prev: Option<u8>,
+}
+
+/// 니모닉 지정(지정 키 · 거터 메뉴 · 패널 메뉴)의 결과: 같은 번호 다시 = 해제 · 지정(다른 북마크에서 가져왔으면 복원 기록).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MnSet {
+    Cleared,
+    Set(Option<MnRestore>),
+}
+
 pub(crate) struct Bookmarks {
     pub(crate) store: Store,
     pub(crate) opts: RelocateOpts,
@@ -40,6 +61,8 @@ pub(crate) struct Bookmarks {
     docs: HashMap<u64, DocKey>,
     dirty_since: Option<Instant>,
     first_dirty: Option<Instant>,
+    /// ★ 방금 가져온 니모닉의 복원 기록(사용자 10-22 · 69 §C-10): 토스트 [복원하기]가 소비한다 · 다음 가져오기가 덮는다.
+    pub(crate) pending_restore: Option<MnRestore>,
     /// 표시 변경(거터·패널) 1회성 신호.
     changed: bool,
     /// 마지막으로 지운 것들(5초 되돌리기 토스트 · 69 C-28).
@@ -73,6 +96,7 @@ impl Bookmarks {
             docs: HashMap::new(),
             dirty_since: None,
             first_dirty: None,
+            pending_restore: None,
             changed: false,
             last_removed: Vec::new(),
         }
@@ -452,6 +476,58 @@ impl Bookmarks {
         Ok(taken)
     }
 
+    /// ★ 토글(사용자 10-22): 캐럿 줄의 북마크가 이미 `n`이면 **니모닉만 해제**(북마크는 유지) = `Cleared` ·
+    /// 그 밖은 [`Self::set_mnemonic_at_caret`]과 같이 지정(없으면 만들어서) = `Set` — 다른 북마크에서 가져왔으면
+    /// 되돌릴 수 있게 [`MnRestore`]를 함께 돌려준다(확인 없이 바로 적용 · 토스트 [복원하기]).
+    pub(crate) fn toggle_mnemonic_at_caret(
+        &mut self,
+        ed: &Editors,
+        i: usize,
+        n: u8,
+    ) -> Result<MnSet, &'static str> {
+        let line = ed.caret_line_col().0.saturating_sub(1);
+        let doc = Self::doc_key(ed, i);
+        let here = self
+            .store
+            .at_line(&doc, line, CASE_INSENSITIVE)
+            .map(|b| (b.id, b.mnemonic));
+        if let Some((id, Some(m))) = here {
+            if m == n {
+                self.store.set_mnemonic(id, None, CASE_INSENSITIVE);
+                self.touch();
+                return Ok(MnSet::Cleared);
+            }
+        }
+        let to_created = here.is_none();
+        let to_prev = here.and_then(|(_, m)| m);
+        let from = self.set_mnemonic_at_caret(ed, i, n)?;
+        let to_id = self
+            .store
+            .at_line(&doc, line, CASE_INSENSITIVE)
+            .map(|b| b.id);
+        Ok(MnSet::Set(match (from, to_id) {
+            (Some(from_id), Some(to_id)) => Some(MnRestore {
+                n,
+                from_id,
+                to_id,
+                to_created,
+                to_prev,
+            }),
+            _ => None,
+        }))
+    }
+
+    /// 이 문서에서 쓰는 니모닉 (번호, 줄 0기준) — 메뉴의 "사용 중: N줄" 보조 글(사용자 10-22).
+    pub(crate) fn used_mnemonics(&self, ed: &Editors, i: usize) -> Vec<(u8, usize)> {
+        let doc = Self::doc_key(ed, i);
+        self.store
+            .for_doc(&doc, CASE_INSENSITIVE)
+            .into_iter()
+            .filter(|b| b.is_live())
+            .filter_map(|b| b.mnemonic.map(|m| (m, b.anchor.line as usize)))
+            .collect()
+    }
+
     pub(crate) fn mnemonic_line(&self, ed: &Editors, i: usize, n: u8) -> Option<usize> {
         let doc = Self::doc_key(ed, i);
         self.store
@@ -508,6 +584,41 @@ impl Bookmarks {
     pub(crate) fn set_mnemonic(&mut self, id: u64, n: Option<u8>) {
         self.store.set_mnemonic(id, n, CASE_INSENSITIVE);
         self.touch();
+    }
+
+    /// ★ 토글(사용자 10-22): `id`가 이미 `n`이면 니모닉만 해제(북마크 유지 · `Cleared`) · 아니면 지정(`Set` ·
+    /// 다른 북마크에서 가져왔으면 복원 기록).
+    pub(crate) fn toggle_mnemonic(&mut self, id: u64, n: u8) -> MnSet {
+        let prev = self.store.get(id).and_then(|b| b.mnemonic);
+        if prev == Some(n) {
+            self.store.set_mnemonic(id, None, CASE_INSENSITIVE);
+            self.touch();
+            return MnSet::Cleared;
+        }
+        let from = self.store.set_mnemonic(id, Some(n), CASE_INSENSITIVE);
+        self.touch();
+        MnSet::Set(from.map(|from_id| MnRestore {
+            n,
+            from_id,
+            to_id: id,
+            to_created: false,
+            to_prev: prev,
+        }))
+    }
+
+    /// ★ [복원하기](사용자 10-22): 방금 가져온 니모닉을 원래 북마크로 되돌린다 — 받은 쪽은 이번에 만든 것이면 지우고
+    /// 아니면 전 번호로 · 뺏긴 쪽은 번호를 되찾는다. 돌려주는 값 = 되찾은 북마크의 줄(0기준 · 없으면 `None`).
+    pub(crate) fn restore_mnemonic(&mut self, r: MnRestore) -> Option<usize> {
+        if r.to_created {
+            self.store.remove(r.to_id);
+        } else {
+            self.store
+                .set_mnemonic(r.to_id, r.to_prev, CASE_INSENSITIVE);
+        }
+        self.store
+            .set_mnemonic(r.from_id, Some(r.n), CASE_INSENSITIVE);
+        self.touch();
+        self.store.get(r.from_id).map(|b| b.anchor.line as usize)
     }
 
     pub(crate) fn move_group(&mut self, id: u64, gid: u32) {
@@ -937,6 +1048,94 @@ mod tests {
             migrate_target(&file, Some(&DocKey::Scratch { tab: 8 }), 7, false).is_none(),
             "다른 탭 기록"
         );
+    }
+
+    /// ★ 니모닉 토글(사용자 10-22): 같은 번호 다시 = 니모닉만 해제(북마크 유지) · 다른 번호 = 바꿈 · 없을 때 = 지정.
+    #[test]
+    fn toggle_mnemonic_clears_same_number_and_keeps_bookmark() {
+        let mut bm = Bookmarks::new();
+        let a = make_anchor(&["x", "y"], 0, 0, &RelocateOpts::default());
+        let id = bm
+            .store
+            .add(DocKey::Scratch { tab: 1 }, a, 1, true, 100, 1000)
+            .expect("add");
+        assert_eq!(
+            bm.toggle_mnemonic(id, 3),
+            MnSet::Set(None),
+            "없을 때 = 지정"
+        );
+        assert_eq!(bm.store.get(id).and_then(|b| b.mnemonic), Some(3));
+        assert_eq!(
+            bm.toggle_mnemonic(id, 3),
+            MnSet::Cleared,
+            "같은 번호 = 해제"
+        );
+        let kept = bm.store.get(id).expect("북마크는 남는다");
+        assert_eq!(kept.mnemonic, None);
+        assert_eq!(
+            bm.toggle_mnemonic(id, 5),
+            MnSet::Set(None),
+            "다른 번호 = 지정"
+        );
+        assert_eq!(
+            bm.toggle_mnemonic(id, 7),
+            MnSet::Set(None),
+            "번호 바꾸기 = 지정"
+        );
+        assert_eq!(bm.store.get(id).and_then(|b| b.mnemonic), Some(7));
+    }
+
+    /// ★ 사용 중 니모닉 가져오기(사용자 10-22 · 3차): 확인 없이 바로 적용 + 복원 기록 · [복원하기] = 뺏긴 쪽이 되찾고
+    /// 받은 쪽은 전 번호로 · 받은 쪽이 이번에 만든 북마크면 지운다.
+    #[test]
+    fn take_mnemonic_from_other_and_restore() {
+        let mut bm = Bookmarks::new();
+        let lines = ["a", "b", "c", "d", "e", "f"];
+        let doc = DocKey::Scratch { tab: 1 };
+        let opts = RelocateOpts::default();
+        let id1 = bm
+            .store
+            .add(
+                doc.clone(),
+                make_anchor(&lines, 0, 0, &opts),
+                1,
+                true,
+                100,
+                1000,
+            )
+            .expect("add 1");
+        let id2 = bm
+            .store
+            .add(doc, make_anchor(&lines, 4, 0, &opts), 2, true, 100, 1000)
+            .expect("add 2");
+        assert_eq!(bm.toggle_mnemonic(id1, 3), MnSet::Set(None));
+        assert_eq!(bm.toggle_mnemonic(id2, 5), MnSet::Set(None));
+        // id2가 3을 가져감 = 즉시 적용 + 복원 기록.
+        let MnSet::Set(Some(r)) = bm.toggle_mnemonic(id2, 3) else {
+            panic!("restore record expected");
+        };
+        assert_eq!(
+            (r.n, r.from_id, r.to_id, r.to_created, r.to_prev),
+            (3, id1, id2, false, Some(5))
+        );
+        assert_eq!(bm.store.get(id1).and_then(|b| b.mnemonic), None);
+        assert_eq!(bm.store.get(id2).and_then(|b| b.mnemonic), Some(3));
+        // 복원 = id1이 3을 되찾고 id2는 전 번호 5로.
+        assert_eq!(bm.restore_mnemonic(r), Some(0));
+        assert_eq!(bm.store.get(id1).and_then(|b| b.mnemonic), Some(3));
+        assert_eq!(bm.store.get(id2).and_then(|b| b.mnemonic), Some(5));
+        // 받은 쪽이 새로 만든 북마크였다면 복원 때 지운다.
+        bm.store.set_mnemonic(id2, Some(3), CASE_INSENSITIVE);
+        let r2 = MnRestore {
+            n: 3,
+            from_id: id1,
+            to_id: id2,
+            to_created: true,
+            to_prev: None,
+        };
+        assert_eq!(bm.restore_mnemonic(r2), Some(0));
+        assert!(bm.store.get(id2).is_none(), "새로 만든 북마크는 지운다");
+        assert_eq!(bm.store.get(id1).and_then(|b| b.mnemonic), Some(3));
     }
 
     #[test]
