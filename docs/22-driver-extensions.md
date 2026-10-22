@@ -177,6 +177,8 @@ nsql driver prune                   어떤 프로필도 안 쓰고 최신도 아
 nsql driver path                    drivers/ 폴더
 ```
 ### 5-2. GUI 드라이버 관리자 (DBeaver Driver Manager 대응 · 접속 대화상자 `Driver Settings`에서도 열림)
+
+> ✅ **구현 1차(10-23 · d1ffc6d)** = View ▸ Drivers(`view.drivers`) · 표 = ID·이름·방언·설치본·최신·상태 · [색인 새로 고침][설치/갱신][삭제][확인] · 워커 스레드 · 창 열기 = 네트워크 0 · CLI와 같은 `ext::install` 코어 · **남은 것** = 접속 대화상자 [Driver Settings]/[Download…] 버튼 · 갱신 배지(`driver.check_updates`) · 검색 칸 · [Update all]/[Prune] · 참조 카운트 · 휴지통.
 ```text
 ┌ Drivers ───────────────────────────────────────────────────────────────────────────┐
 │ [검색…]                                        [Download…] [Update all] [Prune]    │
