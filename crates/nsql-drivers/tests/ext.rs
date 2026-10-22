@@ -49,7 +49,10 @@ fn registry_picks_latest_version_and_opens() {
     std::fs::copy(&lib, renamed.join("custom.bin")).expect("copy");
     std::fs::write(
         renamed.join(nsql_drivers::ext::MANIFEST),
-        r#"{"id":"sqlite","version":"1.5.0","dialect":"sqlite","protocol":1,"lib":"custom.bin"}"#,
+        format!(
+            r#"{{"id":"sqlite","version":"1.5.0","dialect":"sqlite","protocol":{},"lib":"custom.bin"}}"#,
+            nsql_abi::ABI_VERSION
+        ),
     )
     .expect("write");
     let found = nsql_drivers::ext::find_extension_in(&root, "sqlite").expect("found");
