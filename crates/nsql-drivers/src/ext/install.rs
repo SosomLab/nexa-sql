@@ -1,4 +1,5 @@
-//! ★ 확장 드라이버 **내려받기·설치**(T-29 · docs/22 §2-3·§3): 색인(`releases/latest/download/index.json` · ETag 캐시) →
+//! ★ 확장 드라이버 **내려받기·설치**(T-29 · docs/22 §2-3·§3 · 사용자 10-22 = **별도 저장소 없이 nexa-sql 저장소에서**):
+//! 색인 = 저장소 안 파일 `drivers/index.json`(raw URL · 커밋으로 관리 · ETag 캐시) · 자산 = 같은 저장소 Releases 태그 `driver-<id>-v<ver>` →
 //! 버전 해석(색인 `latest` > GitHub API 태그 접두) → 자산 `nsql-driver-<id>-<ver>-<os>-<arch>.zip` + `.sha256` + `.sig` →
 //! sha256 일치 → Ed25519 검증([`super::keys::DRIVER_KEYS`] · **우회 없음**) → 임시 폴더에 풀기 → 매니페스트·라이브러리 확인 →
 //! `drivers/<id>/<ver>/`로 **원자적 rename**(같은 볼륨 `.tmp/` 아래 · 중단돼도 반쪽 설치 없음).
@@ -16,7 +17,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// 기본 배포 저장소(설정 `driver.repo`).
-pub const DEFAULT_REPO: &str = "SosomLab/nexa-sql-drivers";
+pub const DEFAULT_REPO: &str = "SosomLab/nexa-sql";
+/// 색인 파일이 있는 브랜치.
+pub const DEFAULT_BRANCH: &str = "main";
+/// 저장소 안 색인 경로.
+pub const INDEX_PATH: &str = "drivers/index.json";
+/// 태그 접두 기본(`driver-<id>-v` · 앱 릴리스 태그 `v1.2.3`과 섞이지 않게).
+pub const TAG_PREFIX: &str = "driver-";
 /// 색인 자산 이름 · 캐시 파일 이름(드라이버 폴더 바로 아래).
 pub const INDEX_FILE: &str = "index.json";
 const INDEX_ETAG: &str = "index.etag";
@@ -29,6 +36,8 @@ const INDEX_FRESH: Duration = Duration::from_secs(3600);
 pub struct Source {
     /// `owner/name`.
     pub repo: String,
+    /// 색인 파일을 읽는 브랜치(`main`).
+    pub branch: String,
     /// GitHub 토큰(사설 저장소·한도) — 환경 변수에서만.
     pub token: Option<String>,
     pub timeout: Duration,
@@ -36,6 +45,8 @@ pub struct Source {
     pub base: String,
     /// API 기본 URL(`https://api.github.com`).
     pub api: String,
+    /// raw 파일 기본 URL(`https://raw.githubusercontent.com` · 색인).
+    pub raw: String,
 }
 
 impl Source {
@@ -43,12 +54,14 @@ impl Source {
     pub fn new(repo: &str) -> Source {
         Source {
             repo: repo.to_string(),
+            branch: DEFAULT_BRANCH.to_string(),
             token: std::env::var("NSQL_GITHUB_TOKEN")
                 .ok()
                 .filter(|t| !t.is_empty()),
             timeout: Duration::from_secs(30),
             base: "https://github.com".into(),
             api: "https://api.github.com".into(),
+            raw: "https://raw.githubusercontent.com".into(),
         }
     }
 
@@ -186,7 +199,7 @@ fn repo_of<'a>(src: &'a Source, e: &'a IndexEntry) -> &'a str {
 fn tag_prefix(e: &IndexEntry) -> String {
     e.tag_prefix
         .clone()
-        .unwrap_or_else(|| format!("{}-v", e.id))
+        .unwrap_or_else(|| format!("{TAG_PREFIX}{}-v", e.id))
 }
 
 /// 자산 URL(`<base>/<repo>/releases/download/<tag>/<name>`).
@@ -200,13 +213,10 @@ pub fn asset_url(src: &Source, e: &IndexEntry, ver: &str, name: &str) -> String 
     )
 }
 
-/// 색인 URL(저장소 최신 릴리스의 `index.json` · API 아님).
+/// 색인 URL(`<raw>/<repo>/<branch>/drivers/index.json` · API 아님 · 앱 릴리스와 무관).
 #[must_use]
 pub fn index_url(src: &Source) -> String {
-    format!(
-        "{}/{}/releases/latest/download/{INDEX_FILE}",
-        src.base, src.repo
-    )
+    format!("{}/{}/{}/{INDEX_PATH}", src.raw, src.repo, src.branch)
 }
 
 /// 캐시된 색인(드라이버 폴더의 `index.json`).
@@ -644,11 +654,11 @@ mod tests {
         assert_eq!(t.dialect, "tibero-odbc");
         let src = Source {
             token: None,
-            ..Source::new("SosomLab/nexa-sql-drivers")
+            ..Source::new("SosomLab/nexa-sql")
         };
         assert_eq!(
             asset_url(&src, d, "1.2.0", "a.zip"),
-            "https://github.com/SosomLab/nexa-sql-drivers/releases/download/duckdb-v1.2.0/a.zip"
+            "https://github.com/SosomLab/nexa-sql/releases/download/driver-duckdb-v1.2.0/a.zip"
         );
         assert_eq!(
             asset_url(&src, t, "7.0.1", "b.zip"),
@@ -656,7 +666,7 @@ mod tests {
         );
         assert_eq!(
             index_url(&src),
-            "https://github.com/SosomLab/nexa-sql-drivers/releases/latest/download/index.json"
+            "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json"
         );
         let n = asset_name("tibero-odbc", "7.0.1-rc.1");
         assert_eq!(

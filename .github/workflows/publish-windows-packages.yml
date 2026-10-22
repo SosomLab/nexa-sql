@@ -45,6 +45,8 @@ env:
 
 jobs:
   guard:
+    # ★ 확장 드라이버 릴리스(태그 `driver-<id>-v<ver>` · pre-release · T-29)는 앱 배포가 아니다 — 앱 태그 `v*`만 진행.
+    if: ${{ github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v') }}
     runs-on: ubuntu-latest
     outputs:
       winget_go: ${{ steps.winget.outputs.go }}

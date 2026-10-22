@@ -106,7 +106,7 @@ fn install_round_trip_over_local_server() {
     {
         let mut r = routes.lock().expect("lock");
         r.push((
-            "/SosomLab/t/releases/latest/download/index.json".into(),
+            "/SosomLab/t/main/drivers/index.json".into(),
             format!(
                 r#"{{"drivers":[{{"id":"{id}","name":"Fake DB","dialect":"{id}","latest":"1.2.0","platforms":["{plat}"]}},
                      {{"id":"elsewhere","latest":"1.0.0","platforms":["nowhere-arch"]}}]}}"#
@@ -119,8 +119,9 @@ fn install_round_trip_over_local_server() {
             ("1.0.0", &good, true, false),
             ("2.0.0", &bad_abi, true, true),
         ] {
-            let stem =
-                format!("/SosomLab/t/releases/download/{id}-v{ver}/nsql-driver-{id}-{ver}-{plat}");
+            let stem = format!(
+                "/SosomLab/t/releases/download/driver-{id}-v{ver}/nsql-driver-{id}-{ver}-{plat}"
+            );
             r.push((format!("{stem}.zip"), pkg.clone()));
             let sha = if sha_ok {
                 hex(&sha256(pkg))
@@ -137,10 +138,12 @@ fn install_round_trip_over_local_server() {
     }
     let src = Source {
         repo: "SosomLab/t".into(),
+        branch: "main".into(),
         token: None,
         timeout: std::time::Duration::from_secs(5),
         base: base.clone(),
-        api: base,
+        api: base.clone(),
+        raw: base,
     };
     std::env::set_var("HTTPS_PROXY", "");
     let keys = keys();

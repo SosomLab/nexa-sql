@@ -5591,7 +5591,8 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 라이선스 게이트(docs/23 §4-2 · T-36 · 09-27 · ★ D-145 09-28): **기본 끔** — 개인 사용은 라이선스 없이 전 기능(사용자 09-28
     //   "개인 사용인 경우 모든 기능 오픈 · 차후 일부 제한으로 바뀔 수 있다"). 켜면 Debug·Release 모두 Pro/Org 게이트 12곳 적용(게이트 시험 =
     //   격리 홈에서 on). 종전 `license.gates_dev`(Debug 전용 · Release 늘 켬)에서 이름·뜻이 바뀌었다(RENAMED). HIDDEN.
-    // ★ 확장 드라이버 다운로드(T-29 · docs/22 §3 · HIDDEN): 색인 저장소(owner/name) · HTTPS 요청 하나의 상한(초 · 10초 초과 = `_secs` 규칙 94 §6-5).
+    // ★ 확장 드라이버 다운로드(T-29 · docs/22 §3 · HIDDEN · 사용자 10-22 = 별도 저장소 없이 nexa-sql 저장소): 저장소(owner/name · 색인 = `drivers/index.json` ·
+    //   자산 = Releases `driver-<id>-v<ver>`) · HTTPS 요청 하나의 상한(초 · 10초 초과 = `_secs` 규칙 94 §6-5).
     //   네트워크는 `nsql driver search/install/update`(사용자 동작)에서만 · 토큰은 `NSQL_GITHUB_TOKEN` 환경 변수(설정 파일에 안 적는다).
     Entry {
         key: "driver.repo",
@@ -5599,7 +5600,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblDriverRepo,
         desc: Msg::DescDriverRepo,
         kind: SettingKind::Text,
-        default: "SosomLab/nexa-sql-drivers",
+        default: "SosomLab/nexa-sql",
     },
     Entry {
         key: "driver.http_timeout_secs",

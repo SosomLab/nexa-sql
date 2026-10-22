@@ -5,7 +5,7 @@
 //! nsql driver path                          # 드라이버 폴더
 //! nsql driver check <id>                    # 실제로 올려 함수표를 확인(ABI 버전 · 드라이버 id · 방언)
 //! nsql driver rm <id>[@<ver>]               # 폴더 삭제(이 프로세스가 올린 것은 거부 · 휴지통 없음)
-//! nsql driver search [<text>] [--refresh]   # 색인(GitHub Releases `index.json` · 1시간 캐시) + 설치 표시
+//! nsql driver search [<text>] [--refresh]   # 색인(nexa-sql 저장소 `drivers/index.json` · 1시간 캐시) + 설치 표시
 //! nsql driver install <id>[@<ver>] [--pre] [--force]   # 내려받기 → sha256 → Ed25519 → 원자적 설치
 //! nsql driver install --file <zip> [--force]           # 오프라인(옆의 .sha256·.sig)
 //! nsql driver update [<id>] [--check]       # 색인 latest보다 낮은 설치본을 옆에 설치(SxS · --check = 목록만)
