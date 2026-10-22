@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · T-397 · `?driver=` · ODBC 전 OS)** — 🔧 기동 시 로그인 창 자동 열기(포커스 사건 없는 기동 = 깃발 미소비 · about_to_wait에서도 확인) · 크기 실측 lite `nexa-sql.exe` 16.93 · `nsql.exe` 6.75 MB · ★ 접속 매개변수 `?driver=thin|oci|…`(`ext_ids_for`) · ★ ODBC 확장 Linux/macOS(unixODBC · CI PG ODBC 시험).
+
 - **2026-10-23 (137차 · DuckDB · Tibero 프리셋)** — ★ DuckDB 확장 드라이버(D-351 · 확장 전용 · libduckdb 동적 + 런타임 동봉 · 6154b8a) · Tibero·Altibase·CUBRID URL 프리셋(T-384 · 🔧 e6999bf) · integration.yml MariaDB·`NSQL_TEST_DYN` 전체 · 릴리스 `drivers-v0.1.1` = ✓(자산 92 · 봇 색인 b4e444a · Windows 자동 설치 왕복 ✓).
 
 - **2026-10-23 (137차 · 드라이버 첫 릴리스)** — ★ pre-release `drivers-v0.1.0`(1차 ✗ = macOS bash 3.2 빈 배열 → 38f26f9 · 재실행 ✓ · 자산 80 · 오프라인 번들 4 · 봇 색인 1623f21 · 앱 Latest v0.2.7 유지) · 시험 자동화 `NSQL_TEST_DYN=1` 확장 경로 22/22 + ODBC Text CSV 자동(ffc9704) · GUI [파일에서 설치…] + 갱신 배지 `driver.check_updates`(fbe5001 · V1 ✓).

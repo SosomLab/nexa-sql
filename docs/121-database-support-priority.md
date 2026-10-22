@@ -6,6 +6,8 @@
 
 지금 = **내장 드라이버 4**(Oracle OCI/Thin · SQL Server · PostgreSQL · SQLite) + **방언만 있는 둘**(MySQL · ODBC = 드라이버 없음). 다음 순서 권장 = **P1 MySQL/MariaDB 내장**(방언·카탈로그·문법이 이미 있어 드라이버만 · 순수 Rust · 전 세계 수요 1~2위) → **P2 ODBC 일반 드라이버**(한 번에 Tibero·Altibase·CUBRID·DB2·HANA·Goldilocks = 국산·레거시 전부 3급으로 열림) → **P3 Tibero 전용 방언**(ODBC 위에 Oracle 호환 방언 = 국내 공공·금융) → **P4 DuckDB**(임베디드 분석 · 파일 DB = SQLite와 같은 자리) → **P5 ClickHouse/클라우드 DW**(수요 확인 뒤). NoSQL(Mongo·Redis)은 범위 밖 유지(DR-11).
 
+> ★ **10-23 현황** = D-350으로 전 드라이버 확장(cdylib) · 8종(sqlite · pg · mysql · mssql · oracle-thin · oracle-oci · odbc · **duckdb** ✅ P4) · **ODBC = 전 OS**(Linux/macOS unixODBC · 이전 = Windows만) · Tibero·Altibase·CUBRID = URL 프리셋 ✅(P3 · 실서버 시험 보류 · 코드스페이스 불가).
+
 ## 1. 기준(가중치)
 
 | 기준 | 가중 | 뜻 |

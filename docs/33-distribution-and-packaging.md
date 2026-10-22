@@ -220,6 +220,8 @@ sudo dnf install nexa-sql
 - 절대 정식(Latest) 릴리스로 올리지 않는다 — Homebrew 탭·linux-repo 생성기가 `releases/latest`를 본다 · `homebrew.yml` · `linux-repo.yml` · `publish-windows-packages.yml`은 `v*` 태그 릴리스에만 반응(가드 `startsWith(github.event.release.tag_name, 'v')` · `drivers-v*`는 해당 없음).
 - 한 번 공개한 자산은 지우거나 다시 올리지 않는다(색인 sha256이 가리킴) — 고치려면 버전을 올린다.
 - 자산 크기(10-23) = `drivers-v0.1.0`(7종) Windows zip 0.20~2.29 MB · 오프라인 번들 6.75~7.69 MB · ★ `drivers-v0.1.1`(8종 · DuckDB 추가) = DuckDB zip Windows 19.6 MB · Linux 28.0 · macOS aarch64 40.5 · macOS x86_64 40.6 · 오프라인 번들 Windows 26.8 · Linux 35.7 · macOS 47.3/47.9 MB(자산 92).
+- 앱 실행 파일 실측(Release · 10-23) = lite(설치본 기본) `nexa-sql.exe` 16.93 · `nsql.exe` 6.75 MB · full(`drivers-builtin`) 21.78 · 11.79 MB · 확장 cdylib 0.41(odbc)~4.48(mysql) MB(64 §4).
+- ★ ODBC = 전 OS(10-23 · unixODBC · Linux/macOS 러너 = apt `unixodbc-dev` · brew `unixodbc`) → `drivers-v0.1.2`부터 odbc 자산이 4 OS 모두(그 전 릴리스는 Windows만).
 
 ### 5-6. 패키지 게시물 + 프로그램 내부 정보 = 영어(사용자 10-04 → 10-10 확장)
 

@@ -169,6 +169,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 
+> ★ **10-23 `?driver=` 접속 매개변수**(21 §8) = 접속 문자열로 확장 id를 고른다(`oracle://…?driver=thin|oci`) · 허브 `ext_ids_for(dialect, want)`가 원하는 확장을 후보 맨 앞으로.
+
 > ★ **10-23 첫 릴리스 = `drivers-v0.1.0`**(pre-release · 자산 80 = 7종 × 4 OS zip + `.sig`·`.sha256` + 오프라인 번들 4 + `sha256sums.txt` · 봇 색인 커밋 `1623f21` · 앱 Latest `v0.2.7` 유지) · 하루 1회 갱신 확인 = `driver.check_updates`(색인 캐시 24시간 초과일 때만 GET 1) · journal 10-23 §11·§13.
 
 - **색인 URL**(D-349) = `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json`(저장소 안 파일 · raw · GitHub **API가 아님** · 익명 한도 없음 · 앱 릴리스와 무관 · 갱신 = 커밋) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간 · 태그 접두 `driver-<id>-v` · 프리릴리스 판정 = 버전 문자열의 `-`).
@@ -197,6 +199,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 ### 4-2. 로컬 보관 구조 (Windows SxS 유추 — 버전 폴더 · 참조 카운트 · 고아 정리)
 
 > ★ **동봉 런타임(10-23 · D-351 DuckDB)** = 드라이버 cdylib 옆에 런타임 라이브러리를 같이 둔다(`drivers/duckdb/<ver>/` = `nsql_driver_duckdb.dll` + `duckdb.dll` ≈ 58 MB) · 로더 검색 경로 = Windows `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)`(cdylib 폴더의 DLL 우선 · PATH의 다른 duckdb.dll보다 먼저) · Linux/macOS = rpath `$ORIGIN`/`@loader_path`(build.rs) · 패키징 = `package-drivers.py`의 `BUNDLED` 표(`build/libduckdb-sys-*/out`에서 런타임을 찾아 zip에 넣음) · 시험 도우미·build.rs가 개발 빌드 `target/<profile>`에도 복사.
+
+> ★ **ODBC = 전 OS 확장(10-23)** = `nsql-driver-odbc`의 `cfg(windows)` 게이트 제거 · Linux/macOS는 시스템 **unixODBC**(드라이버 관리자 `libodbc`) · CI = apt `unixodbc-dev`/`odbc-postgresql` · brew `unixodbc`.
 ```text
 <사용자 설정 폴더>/nexa-sql/drivers/          ([21]과 같은 뿌리 · 여러 인스턴스 공유 · 원자적 rename 설치)
 ├─ index.json (+ .etag)                        색인 캐시

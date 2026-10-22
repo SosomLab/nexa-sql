@@ -97,3 +97,15 @@ nexa-sql --help                      # 사용법
 - 탐색기 메타 세션: 둘째 사본을 한 번 빌려 붙고 지운다(못 쓰면 20초 뒤 폐기) · 그 칸은 유휴 회수 안 함 · 비밀번호 자리가 없는 스펙으로는 서버에 가지 않는다(계정 잠김 방지).
 - **한계**: 드라이버 크레이트 내부 사본 · OS 입력 메시지 큐 · 페이지 파일 · 버퍼가 자라며 반환된 옛 할당에는 손이 닿지 않는다. 메모리 덤프에 대한 완전한 방어가 아니라 **노출 시간과 사본 수를 줄이는 것**이다.
 
+
+## 8. 드라이버 지정 `?driver=`(10-23 · 137차 · journal 10-23 §19)
+
+```
+oracle://u:p@h:1521/svc?driver=thin     # Oracle Thin(순수 Rust · oracle-thin 확장)
+oracle://u:p@h:1521/svc?driver=oci      # Oracle OCI(Instant Client · oracle-oci)
+duckdb::memory:?driver=duckdb           # 축약형 꼬리도 같다(?driver= · ?env=)
+```
+
+- `ConnectSpec.driver`(`Option<String>`) = 같은 방언에 드라이버가 여럿일 때 고르는 값.
+- 축약형(`<방언>:<본문>`) 꼬리의 `?driver=`/`?env=`를 파싱 · `connection_string`이 다시 같은 문자열을 만든다(왕복 시험 `driver_param_round_trips`).
+- 허브 `ext_ids_for(dialect, want)` = 원하는 확장 id를 앞으로(thin → `oracle-thin` · oci → `oracle-oci`) · `open_oracle`이 `spec.driver`를 존중.

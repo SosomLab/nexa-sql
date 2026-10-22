@@ -128,6 +128,8 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 
 > ★ **10-23 D-350으로 정의가 바뀜** = 기본 설치본 자체가 "드라이버 없는 판"(남는 것 = Oracle OCI · Instant Client가 있으면 접속) · 그 밖 드라이버 = 접속 시 자동 다운로드 또는 오프라인 번들 · 아래 표(크기·구성)는 D단계(릴리스 워크플로) 뒤 실측으로 갱신한다 · D단계 ✅(10-23 b93ca33) = 설치본 feature = `--no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` · 경량 CLI Debug 실측 22.0 → 12.4 MB · Release·설치본 크기 = 첫 릴리스 산출물로 실측(대기).
 
+> ★ **실측(Release · 10-23 · journal 10-23 §18)** — full(`drivers-builtin`) `nexa-sql.exe` 21.78 · `nsql.exe` 11.79 MB / **lite(설치본 기본 = 드라이버 없음) 16.93 · 6.75 MB** · 확장 cdylib(Windows) = duckdb 0.78 · mssql 1.89 · mysql 4.48 · odbc 0.41 · oracle(oci) 0.74 · oracle_thin 3.07 · pg 0.98 · sqlite 1.91 MB(+ DuckDB 런타임 libduckdb 58 MB · zip 19 MB). 아래 표의 6.x MB 값은 09-21 측정(내장 4종 시절).
+
 ### 4-1. 정의
 **경량 배포판(Lite)** = "내려받아 실행하면 **다른 것을 설치하지 않고** 접속된다"를 보장하는 배포판. 기준 셋:
 1. **외부 네이티브 의존 0** — 실행 파일이 벤더 클라이언트·런타임·ODBC 드라이버 관리자를 요구하지 않는다(들어 있는 드라이버는 전부 순수 Rust이거나 앱에 컴파일돼 있다).
