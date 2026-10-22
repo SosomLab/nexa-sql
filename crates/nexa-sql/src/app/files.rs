@@ -1239,7 +1239,9 @@ mod file_start_tests {
     fn dialog_base_prefers_project_then_folder_then_file_then_home() {
         let proj = Path::new("D:/w/proj/x.nsql-project");
         let folder = Path::new("D:/w/folder");
-        let files = vec![PathBuf::from("D:/w/scripts/a.sql")];
+        // 파일 인자는 절대화되므로 그 OS에서 절대인 경로로(CI mac/linux에서 `D:/…`가 상대 경로로 cwd가 붙던 결함 · 10-22).
+        let scripts = std::env::temp_dir().join("w").join("scripts");
+        let files = vec![scripts.join("a.sql")];
         let home = Path::new("C:/Users/me");
         assert_eq!(
             DialogBase::resolve(Some(proj), Some(folder), &files, Some(home)),
@@ -1252,7 +1254,7 @@ mod file_start_tests {
         );
         assert_eq!(
             DialogBase::resolve(None, None, &files, Some(home)),
-            Some(DialogBase::File(PathBuf::from("D:/w/scripts")))
+            Some(DialogBase::File(scripts))
         );
         // 지정 없이 실행 = 홈 폴더 모드(사용자 10-22).
         assert_eq!(

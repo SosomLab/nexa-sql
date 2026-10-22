@@ -296,11 +296,14 @@ pub(crate) fn quick_profile_name(spec: &ConnectSpec, exists: impl Fn(&str) -> bo
             }
         }
         (None, Some(db)) => {
-            let stem = std::path::Path::new(db)
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| db.clone());
-            parts.push(stem);
+            // 파일 방언 = 파일 이름(확장자 뺌) — `\`·`/` 둘 다 구분자로 잘라 3-OS 같은 결과(CI mac/linux 발견 10-22 ·
+            //   Unix `Path`는 `\`를 구분자로 보지 않는다).
+            let leaf = db.rsplit(['\\', '/']).next().unwrap_or(db);
+            let stem = match leaf.rfind('.') {
+                Some(i) if i > 0 => &leaf[..i],
+                _ => leaf,
+            };
+            parts.push(stem.to_string());
         }
         (None, None) => {}
     }
