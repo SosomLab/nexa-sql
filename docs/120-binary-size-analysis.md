@@ -1,7 +1,7 @@
 # 120 · Release 실행 파일 크기 — 내용 분석과 축소 방안 (134차 win · 2026-10-21 · 검토)
 
 > 요구(사용자 10-21): "현재 Release 실행 파일 크기가 너무 큰데 내용 분석과 줄일 수 있는 방법 검토" + 질문 "심볼/변수/문자열 길이를 익명화하면 .text를 획기적으로 줄일 수 있나?"
-> 상태 = **검토**(측정 = 협업 세션 · 결정 D-330~ 대기). 기준 = v0.2.7 뒤 작업 트리(10-21 12:35 Release) · GUI `nexa-sql.exe` **21.69 MB** · CLI `nsql.exe` **11.27 MB**.
+> 상태 = ⏸ **보류(사용자 10-22 "용량 절감 처리는 보류 업무로 등록 · 분석 정보는 잘 보관") · 측정·결정안은 보관** = TODO **T-382** · 10 §3-1 D-330~D-336a·D-343 보류 등재 · 종전 상태 = 검토(측정 = 협업 세션 · 10-21) · 10-22 cargo-bloat 측정 = §5-5 · tiberius 0.13 사전 검토 = §5-6 · 원자료 = 부록 §A. 기준 = v0.2.7 뒤 작업 트리(10-21 12:35 Release) · GUI `nexa-sql.exe` **21.69 MB** · CLI `nsql.exe` **11.27 MB**.
 
 ## 0. 한 줄 결론
 
@@ -290,6 +290,21 @@
 - → D-331 "ring 통일 우선"은 근거 소멸 · 포크 없이면 **경로 1이 유일**.
 - 출처 = crates.io/api/v1/crates/tiberius · …/tiberius/0.13.0/dependencies · docs.rs/crate/tiberius/0.13.0/features · raw.githubusercontent.com/prisma/tiberius/main/CHANGELOG.md · crates.io/api/v1/crates/tokio-rustls/0.26.4 · crates.io/api/v1/crates/oracledb · docs.rs/rustls/0.23.45/rustls/crypto/struct.CryptoProvider.html · 로컬 레지스트리 원본(oracledb-26.0.0-beta.4/Cargo.toml:33-37·295-296 · rustls-0.23.45/src/crypto/mod.rs:265-286).
 
+### 5-5. 10-22 cargo-bloat 측정(.text · 협업 · 135차 win)
+
+- 조건 = cargo-bloat 0.12.1 · `CARGO_TARGET_DIR=target/bloat` · `CARGO_PROFILE_RELEASE_STRIP=none` · Release 재빌드(GUI 13m51s · CLI 3m24s) · 기준 = HEAD 25dea18(134차 커밋본 · 소스 변경 0). **MSVC는 디버그 정보가 .pdb로 가므로 strip=none이어도 exe 크기 = 배포본과 같음** — dumpbin 섹션: GUI `.text` 16,518,144 · `.rdata` 4,809,216 · `.pdata` 241,152 · `.reloc` 62,464 · `.rsrc` 35,840 · `.data` 32,256 = 20.7 MB(배포 `target/release` 16,523,776 · 4,816,896 · ±0.1 %) / CLI `.text` 8,189,440 · `.rdata` 2,676,224 · `.pdata` 156,160 = 10.6 MB(배포 8,322,560 · 2,692,608). cargo-bloat는 **.text만** 세고 추정치(도구의 Note 그대로) · `.rdata`(아이콘·문자열·표)는 §5-1 맵 측정(10-21)에만 있다.
+- 상위 15 크레이트(.text) **GUI**: nexa_sql 4.0 MiB · std 2.3 · (빈 이름 = C 코드) 1.6 · nexa_ctl 591 KiB · rustls 499(**0.21+0.23 합산 · 도구가 나누지 못함**) · wast 460 · regex_automata 397 · wasmparser 354 · nsql_script 331 · nsql_catalog 330 · wasmi 309 · oracledb 253 · nsql_run 192 · aws_lc_sys 190 · hashbrown 189. **CLI**: C 코드 1.6 MiB · std 1.1 · rustls 500 KiB · nsql_catalog 308 · regex_automata 304 · nsql 273 · oracledb 253 · aws_lc_sys 194 · tiberius 178 · nsql_script 177 · regex_syntax 140 · nsql_run 135 · aho_corasick 131 · nsql_i18n 131 · nsql_format 128.
+- C 코드 1.6 MiB 분해(심볼 접두 · 집계 스크립트 = 협업 scratchpad `bloat_agg.py` · 부록 §A 재생성 절차) = sqlite3 **0.92**(`sqlite3Fts*`·fts3/5 심볼 다수 = libsqlite3-sys bundled 기본 ENABLE) · aws-lc 식별 0.28(`aws_lc_0_*` 0.20 + ML-KEM/ML-DSA 0.07 + jent 0.01) · 미분류 0.59(md·pkey·cipher·common_ = 대부분 aws-lc 추정 · 일부 sqlite) · odpi 0.10 · **ring C/asm 0.02**(44 심볼).
+- 소계(GUI / CLI) = **(a) ring 스택** = ring 0.08/0.07 + tokio_rustls·pemfile 소량 + ring C 0.02 → ≈0.1 MiB + rustls 0.21·webpki 0.101 몫(합산 0.49+0.06 중 미상 · 상한 ≈0.3) → **tiberius 0.13 승격의 .text 절감 ≈ 0.1~0.4 MiB** · **(b) aws-lc 스택** = aws_lc_sys 0.19 + C 0.28~0.87 → ≈0.5~0.9 MiB + rustls 0.23 몫 · **(c-1) WASM** = wast+wasmparser+wasmi+wasmi_ir **1.16 MiB**(GUI만 · CLI 0 · `wast` 460 KiB = wasmi `default` → feature `wat`(텍스트 형식 파서) · `cargo tree -i wast` = wast ← wat ← wasmi "wat" ← wasmi "default" · Cargo.toml `wasmi = "1.1"`) · **(c-2) regex** = regex_automata+regex_syntax+aho_corasick+fancy_regex 0.71/0.57 · **(c-3) encoding_rs** 0.06 · 그 밖 = sqlite3 C+sys 0.98 · std 2.34/1.07 · odpi+oracle 0.24 · Thin(oracledb) 0.31 · tiberius+mssql 0.29 · PG 0.19~0.22. Release 프로필은 이미 `opt-level 3 · lto fat · codegen-units 1 · panic abort · strip symbols`.
+- cargo tree(두 rustls 판의 경로) = rustls 0.21.12 ← tokio-rustls 0.24.1(`dangerous_configuration`) ← tiberius 0.12.3(`chrono`·`rustls`) ← nsql-driver-mssql / rustls 0.23.45 ← oracledb 26.0.0-beta.4 ← nsql-driver-oracle-thin · ring 역의존 = rustls 0.21뿐 · aws-lc-rs 역의존 = rustls 0.23뿐.
+- ★ **두 측정의 차이 메모(10-21 맵 vs 10-22 cargo-bloat)** = 맵(§5-1) = **전 섹션**(.text + .rdata 등) · 심볼 소속으로 집계 · **두 rustls 판을 나눠** ring 0.42 + rustls 0.52 / cargo-bloat(§5-5) = **.text만** · rustls 두 판 **합산** 0.49 · ring 스택 식별분 0.1(+몫 상한 0.3) · C 코드는 접두 추정. → TLS 단일화(손잡이 3)의 절감은 **범위로 표기 = 하한 0.1~0.4 MB(bloat · .text만) ~ 상한 0.6~0.8 MB(맵 · 전 섹션 · §6 표)** · 결론 = 어느 쪽이든 아이콘 외부화(−1.5)·최적화 수준(−4~5)·wat 제거(−0.5~0.6)보다 작다 · 승격의 주된 가치는 크기보다 **보안 권고 해소·덤 패닉 제거**(§5-6).
+
+### 5-6. tiberius 0.13 승격 사전 검토(개발 10-22 · 변경 로그 대조 · 착수 = T-382 때)
+
+- **BREAKING 3** = (1) `command_timeout` 기본 **30 s** · `handshake_timeout` **15 s**(종전 무제한) → 우리 Config에 `command_timeout(None)`(또는 `Session::set_call_timeout` 값) **명시 필수**(안 하면 긴 질의·bulk가 30 s에 끊김) (2) encrypt 기본 **Required** → 우리는 `config.encryption(...)`을 늘 명시(`crates/nsql-driver-mssql/src/lib.rs:976`) → 영향 0 (3) 자격 = `secrecy::SecretString` → `AuthMethod::sql_server` 생성자만 써서 영향 0.
+- 그 밖 = `trust_cert_ca` 누적 규칙(우리는 `trust_cert()`만 · 959행) · async-std 기능 삭제 = 미사용 · 덤 = 디코드 패닉 → 오류 반환(T-309 `todo!()` 부류 해소) · 핸드셰이크 멈춤 감지 · 보안 권고 해소 · thiserror 2.
+- 검증(착수 때 · 협업 V1·V2) = BISCM_MS_DEV(192.168.0.58:1433/M4PLAN_MS · 10-22 등록) 실서버 = grid-edit MSSQL · conn-cmd 38 · tdsbulk(13.9k행/s 기준) · 동일성 E2E · encrypt on/off 접속 · Attention 취소·stop-latency · Linux·mac = CI `integration`(SQL Server 컨테이너) + 세션 실기 1회.
+
 ## 6. 결정안(측정 1·3·4 반영 · 성능(F·B 벤치)은 §5-2 대기)
 
 **묶음 요약(GUI 맵 합계 21.17 MB · §5-1)** = 앱 본체 4.16(20 %) · 무명 상수·문자열 3.70(17 % · 아이콘 1.60 포함) · 표준 라이브러리 단형화 2.67(13 %) · TLS·암호 2.35(11 % = aws-lc C 1.30 · rustls 0.52 · ring 0.42) · SQLite C 1.51(7 %) · nsql 코어 1.46(7 %) · WASM 1.28(6 % · 그중 `wast` 0.50) · UI 1.09(5 %) · regex 0.78(4 %) · Oracle 0.65 · SQL Server 0.31 · PG 0.25 · encoding_rs 0.20.
@@ -359,3 +374,343 @@
 
 **결론** = 안 ①은 "지금 되는 것은 그대로 되고(Oracle·SQLite 0 · SQL Server는 같은 rustls 계열 · PG는 개선), 바뀌는 것은 tiberius 한 판 올림뿐"이라 **실서버·3-OS E2E만 통과하면 사용에 문제없다**. 안 ②는 Windows/mac은 무난하나 **Linux 이식성(libssl 런타임 의존)과 자체 서명 인증서 정책 변화**가 회귀 위험 → **기본으로 쓰지 않고 정책 옵션**으로만. 따라서 D-343 = 안 ①.
 **안 ① 검증 계획(개발 뒤 협업 V1·V2)** = Windows: M4PLAN encrypt=on/off 접속 · `win-grid-edit` MSSQL · conn-cmd 38 · bulk tdsbulk · 동일성 E2E · Linux·mac: CI `integration`(SQL Server 컨테이너) + 맥·리눅스 세션 실기 1회 · 회귀 기준 = 지금과 같은 결과.
+
+## 부록 A. 10-22 cargo-bloat 원자료(협업 · 작은 파일 6 · 전체 함수 목록 2.5 MB·1.3 MB는 제외)
+
+> 재생성 = `$env:CARGO_TARGET_DIR="target/bloat"; $env:CARGO_PROFILE_RELEASE_STRIP="none"; cargo bloat --release -p nexa-sql --crates -n 60` · `… -p nsql-cli --crates -n 60` · 함수 전수 = `… -p nexa-sql -n 0 > gui-fns-all.txt`(CLI 같음) · 접두 집계 = 협업 scratchpad `bloat_agg.py`(빈 크레이트명 = C 코드 → sqlite3/aws_lc/ring/odpi 접두 분류) · 산출물 폴더 `target/bloat/`(자체 관리 · 지워도 됨).
+
+### A-1. GUI 크레이트별(`cargo bloat --release -p nexa-sql --crates -n 60`)
+
+```text
+    Analyzing target/bloat\release\nexa-sql.exe
+ File  .text     Size Crate
+19.1%  25.1%   4.0MiB nexa_sql
+11.3%  14.9%   2.3MiB std
+ 7.9%  10.3%   1.6MiB
+ 2.8%   3.7% 590.8KiB nexa_ctl
+ 2.4%   3.1% 498.9KiB rustls
+ 2.2%   2.9% 459.9KiB wast
+ 1.9%   2.5% 397.2KiB regex_automata
+ 1.7%   2.2% 354.0KiB wasmparser
+ 1.6%   2.1% 330.7KiB nsql_script
+ 1.6%   2.0% 329.6KiB nsql_catalog
+ 1.5%   1.9% 309.4KiB wasmi
+ 1.2%   1.6% 253.0KiB oracledb
+ 0.9%   1.2% 192.0KiB nsql_run
+ 0.9%   1.2% 190.3KiB aws_lc_sys
+ 0.9%   1.2% 189.3KiB hashbrown
+ 0.9%   1.1% 181.0KiB nexa_dlg
+ 0.8%   1.1% 178.1KiB tiberius
+ 0.7%   0.9% 141.6KiB regex_syntax
+ 0.6%   0.8% 132.3KiB [Unknown]
+ 0.6%   0.8% 130.9KiB aho_corasick
+ 0.6%   0.8% 130.8KiB enum2$<nsql_i18n
+ 0.6%   0.8% 129.9KiB winit
+ 0.6%   0.8% 128.0KiB nsql_format
+ 0.6%   0.8% 123.5KiB nsql_driver_mssql
+ 0.6%   0.7% 117.9KiB tokio_postgres
+ 0.5%   0.6%  97.9KiB odpic_sys
+ 0.4%   0.6%  93.2KiB nexa_gfx
+ 0.4%   0.5%  78.7KiB ttf_parser
+ 0.4%   0.5%  78.0KiB nsql_driver_oracle
+ 0.4%   0.5%  78.0KiB ring
+ 0.3%   0.4%  72.3KiB aes
+ 0.3%   0.4%  68.6KiB nsql_driver_pg
+ 0.3%   0.4%  65.0KiB libsqlite3_sys
+ 0.3%   0.4%  63.3KiB nsql_driver_oracle_thin
+ 0.3%   0.4%  61.8KiB nsql_core
+ 0.3%   0.4%  60.8KiB wasmi_ir
+ 0.3%   0.4%  60.7KiB sha2
+ 0.3%   0.4%  60.7KiB oracle
+ 0.3%   0.4%  59.3KiB webpki
+ 0.3%   0.4%  59.1KiB enum2$<encoding_rs
+ 0.3%   0.3%  54.4KiB fancy_regex
+ 0.2%   0.3%  51.4KiB nsql_io
+ 0.2%   0.3%  50.9KiB pkcs5
+ 0.2%   0.3%  49.8KiB chrono
+ 0.2%   0.3%  43.2KiB nsql_settings
+ 0.2%   0.2%  39.7KiB nsql_bookmarks
+ 0.2%   0.2%  39.7KiB nsql_log
+ 0.2%   0.2%  36.5KiB nexa_fs
+ 0.2%   0.2%  35.5KiB tokio
+ 0.1%   0.2%  31.3KiB curve25519_dalek
+ 0.1%   0.2%  29.3KiB nsql_drivers
+ 0.1%   0.2%  28.8KiB nsql_vault
+ 0.1%   0.2%  26.0KiB postgres_protocol
+ 0.1%   0.2%  25.4KiB nsql_search
+ 0.1%   0.1%  22.1KiB bytes
+ 0.1%   0.1%  21.4KiB nexa_license
+ 0.1%   0.1%  19.9KiB nsql_driver_sqlite
+ 0.1%   0.1%  19.0KiB enum2$<wast
+ 0.1%   0.1%  18.2KiB memchr
+ 0.1%   0.1%  16.6KiB nexa_font
+ 1.7%   2.2% 354.7KiB And 123 more crates. Use -n N to show more.
+76.1% 100.0%  15.8MiB .text section size, the file size is 20.7MiB
+Note: numbers above are a result of guesswork. They are not 100% correct and never will be.
+```
+
+### A-2. CLI 크레이트별(`cargo bloat --release -p nsql-cli --crates -n 60`)
+
+```text
+    Analyzing target/bloat\release\nsql.exe
+ File  .text     Size Crate
+15.3%  20.8%   1.6MiB
+10.1%  13.7%   1.1MiB std
+ 4.6%   6.3% 500.1KiB rustls
+ 2.8%   3.9% 308.2KiB nsql_catalog
+ 2.8%   3.8% 304.2KiB regex_automata
+ 2.5%   3.4% 273.1KiB nsql
+ 2.3%   3.2% 252.9KiB oracledb
+ 1.8%   2.4% 193.8KiB aws_lc_sys
+ 1.6%   2.2% 178.4KiB tiberius
+ 1.6%   2.2% 176.8KiB nsql_script
+ 1.3%   1.8% 140.4KiB regex_syntax
+ 1.2%   1.7% 134.9KiB nsql_run
+ 1.2%   1.6% 131.0KiB aho_corasick
+ 1.2%   1.6% 130.8KiB enum2$<nsql_i18n
+ 1.2%   1.6% 127.5KiB nsql_format
+ 1.1%   1.6% 124.0KiB nsql_driver_mssql
+ 1.1%   1.5% 119.4KiB [Unknown]
+ 1.1%   1.5% 118.1KiB tokio_postgres
+ 0.9%   1.2%  98.0KiB odpic_sys
+ 0.8%   1.1%  86.2KiB nsql_driver_oracle
+ 0.7%   0.9%  74.6KiB ring
+ 0.7%   0.9%  72.3KiB aes
+ 0.6%   0.9%  68.9KiB nsql_driver_pg
+ 0.6%   0.8%  65.0KiB libsqlite3_sys
+ 0.6%   0.8%  64.4KiB nsql_driver_oracle_thin
+ 0.6%   0.8%  60.7KiB sha2
+ 0.6%   0.8%  60.1KiB oracle
+ 0.5%   0.7%  59.3KiB webpki
+ 0.5%   0.7%  58.8KiB enum2$<encoding_rs
+ 0.5%   0.6%  50.9KiB pkcs5
+ 0.5%   0.6%  49.8KiB chrono
+ 0.4%   0.6%  48.3KiB nsql_io
+ 0.4%   0.6%  46.9KiB nsql_settings
+ 0.4%   0.5%  41.5KiB hashbrown
+ 0.3%   0.4%  35.5KiB tokio
+ 0.3%   0.4%  34.1KiB nsql_core
+ 0.3%   0.4%  33.6KiB nsql_search
+ 0.3%   0.4%  31.3KiB curve25519_dalek
+ 0.3%   0.4%  30.9KiB nsql_log
+ 0.2%   0.3%  26.1KiB postgres_protocol
+ 0.2%   0.3%  24.7KiB nexa_license
+ 0.2%   0.3%  24.4KiB nsql_vault
+ 0.2%   0.3%  22.1KiB bytes
+ 0.2%   0.3%  21.1KiB nsql_bookmarks
+ 0.2%   0.2%  19.9KiB nsql_driver_sqlite
+ 0.2%   0.2%  19.7KiB nsql_drivers
+ 0.1%   0.2%  15.6KiB postgres_types
+ 0.1%   0.2%  14.5KiB tokio_rustls
+ 0.1%   0.2%  14.4KiB memchr
+ 0.1%   0.2%  14.1KiB postgres
+ 0.1%   0.2%  13.3KiB der
+ 0.1%   0.2%  12.7KiB aws_lc_rs
+ 0.1%   0.1%  11.2KiB rustls_pki_types
+ 0.1%   0.1%  11.2KiB base64ct
+ 0.1%   0.1%  10.3KiB poly1305
+ 0.1%   0.1%  10.3KiB enum2$<oracledb
+ 0.1%   0.1%   9.9KiB encoding_rs
+ 0.1%   0.1%   9.4KiB rusqlite
+ 0.1%   0.1%   8.5KiB nsql_license
+ 0.1%   0.1%   8.3KiB rustls_pemfile
+ 1.2%   1.6% 126.2KiB And 85 more crates. Use -n N to show more.
+73.6% 100.0%   7.8MiB .text section size, the file size is 10.6MiB
+Note: numbers above are a result of guesswork. They are not 100% correct and never will be.
+```
+
+### A-3. GUI 접두 집계(C 코드 분류 · `bloat_agg.py gui-fns-all.txt`)
+
+```text
+rows=18214
+   3.95 MiB  nexa_sql
+   2.34 MiB  std
+   0.92 MiB  <sqlite3>
+   0.59 MiB  <unattributed>
+   0.58 MiB  nexa_ctl
+   0.49 MiB  rustls
+   0.45 MiB  wast
+   0.39 MiB  regex_automata
+   0.35 MiB  wasmparser
+   0.32 MiB  nsql_script
+   0.32 MiB  nsql_catalog
+   0.30 MiB  wasmi
+   0.25 MiB  oracledb
+   0.19 MiB  nsql_run
+   0.19 MiB  aws_lc_sys
+   0.19 MiB  hashbrown
+   0.18 MiB  nexa_dlg
+   0.17 MiB  tiberius
+   0.14 MiB  regex_syntax
+   0.13 MiB  enum2$<nsql_i18n
+   0.13 MiB  aho_corasick
+   0.13 MiB  winit
+   0.12 MiB  nsql_format
+   0.12 MiB  nsql_driver_mssql
+   0.12 MiB  tokio_postgres
+   0.10 MiB  <aws_lc>
+   0.10 MiB  odpic_sys
+   0.09 MiB  [Unknown]
+   0.09 MiB  nexa_gfx
+   0.08 MiB  ttf_parser
+   0.08 MiB  ring
+   0.08 MiB  nsql_driver_oracle
+   0.07 MiB  aes
+   0.07 MiB  nsql_driver_pg
+   0.06 MiB  libsqlite3_sys
+   0.06 MiB  nsql_driver_oracle_thin
+   0.06 MiB  nsql_core
+   0.06 MiB  wasmi_ir
+   0.06 MiB  sha2
+   0.06 MiB  oracle
+   0.06 MiB  webpki
+   0.06 MiB  enum2$<encoding_rs
+   0.05 MiB  fancy_regex
+   0.05 MiB  nsql_io
+   0.05 MiB  pkcs5
+```
+
+### A-4. CLI 접두 집계(`bloat_agg.py cli-fns-all.txt`)
+
+```text
+rows=10256
+   1.07 MiB  std
+   0.92 MiB  <sqlite3>
+   0.58 MiB  <unattributed>
+   0.49 MiB  rustls
+   0.30 MiB  nsql_catalog
+   0.30 MiB  regex_automata
+   0.27 MiB  nsql
+   0.25 MiB  oracledb
+   0.19 MiB  aws_lc_sys
+   0.17 MiB  tiberius
+   0.17 MiB  nsql_script
+   0.14 MiB  regex_syntax
+   0.13 MiB  nsql_run
+   0.13 MiB  enum2$<nsql_i18n
+   0.13 MiB  aho_corasick
+   0.12 MiB  nsql_format
+   0.12 MiB  nsql_driver_mssql
+   0.12 MiB  tokio_postgres
+   0.10 MiB  <aws_lc>
+   0.10 MiB  odpic_sys
+   0.08 MiB  nsql_driver_oracle
+   0.08 MiB  [Unknown]
+   0.07 MiB  ring
+   0.07 MiB  aes
+   0.07 MiB  nsql_driver_pg
+   0.06 MiB  libsqlite3_sys
+   0.06 MiB  nsql_driver_oracle_thin
+   0.06 MiB  sha2
+   0.06 MiB  oracle
+   0.06 MiB  webpki
+   0.06 MiB  enum2$<encoding_rs
+   0.05 MiB  pkcs5
+   0.05 MiB  chrono
+   0.05 MiB  nsql_io
+   0.05 MiB  nsql_settings
+   0.04 MiB  hashbrown
+   0.03 MiB  tokio
+   0.03 MiB  nsql_core
+   0.03 MiB  nsql_search
+   0.03 MiB  curve25519_dalek
+   0.03 MiB  nsql_log
+   0.03 MiB  <std/compiler-rt>
+   0.03 MiB  <odpi(dpi)>
+   0.03 MiB  postgres_protocol
+   0.02 MiB  nexa_license
+```
+
+### A-5. GUI 함수 단위 상위 40(`-n 0` 결과의 머리)
+
+```text
+ 0.9%   1.2% 188.3KiB                                          nexa_sql nexa_sql::app::event_loop::impl$0::about_to_wait
+ 0.7%   0.9% 152.9KiB                                          nexa_sql nexa_sql::App::paint
+ 0.6%   0.8% 130.8KiB                                  enum2$<nsql_i18n enum2$<nsql_i18n::Msg>::row
+ 0.6%   0.7% 117.5KiB                                          nexa_sql nexa_sql::main
+ 0.5%   0.6% 101.0KiB                                          nexa_sql nexa_sql::App::drain_events
+ 0.4%   0.6%  92.1KiB                                    regex_automata regex_automata::meta::strategy::new
+ 0.4%   0.5%  80.5KiB                                          nexa_sql nexa_sql::explorer::meta_thread
+ 0.4%   0.5%  76.6KiB                                          nexa_sql nexa_sql::explorer::Explorer::drain
+ 0.3%   0.3%  55.0KiB                                          wasmi_ir wasmi_ir::enum::impl$5::fmt
+ 0.2%   0.3%  50.4KiB                                              wast wast::core::expr::impl$46::parse::closure$0
+ 0.2%   0.3%  49.9KiB                                          nexa_ctl nexa_ctl::controls::textbox::TextBox::paint_multiline
+ 0.2%   0.3%  49.3KiB                                          nexa_sql nexa_sql::App::aux_window_event
+ 0.2%   0.3%  47.1KiB                                          nexa_sql nexa_sql::App::drain_conn
+ 0.2%   0.3%  46.5KiB                                          nexa_dlg nexa_dlg::FilePicker::open_menu
+ 0.2%   0.3%  46.0KiB                                          nexa_sql nexa_sql::intel::Intel::request
+ 0.2%   0.3%  43.5KiB                                          nexa_sql nexa_sql::App::startup_cmd
+ 0.2%   0.2%  40.0KiB                                          nexa_dlg nexa_dlg::FilePicker::new
+ 0.2%   0.2%  37.3KiB                                               std core::ptr::drop_glue<nexa_sql::App>
+ 0.2%   0.2%  37.1KiB                                          nexa_sql nexa_sql::grid::Grid::paint_inner
+ 0.2%   0.2%  36.8KiB                                             pkcs5 pkcs5::pbes2::encryption::decrypt_in_place<alloc::vec::Vec<u8,alloc::alloc::Global> >
+ 0.2%   0.2%  35.7KiB                                                   sqlite3VdbeExec
+ 0.2%   0.2%  35.4KiB                                          tiberius tiberius::client::connection::impl$1::connect::async_fn$0<tokio_util::compat::Compat<tokio::net::tcp::stream::TcpStream> >
+ 0.2%   0.2%  35.2KiB                                          nexa_sql nexa_sql::worker::spawn::closure$0::closure$7
+ 0.2%   0.2%  34.4KiB                                          nexa_sql nexa_sql::conn_win::ConnWin::paint
+ 0.2%   0.2%  33.2KiB                                          tiberius tiberius::tds::stream::token::impl$0::try_unfold::closure$0::async_block$0<tokio_util::compat::Compat<tokio::net::tcp::stream::TcpStream> >
+ 0.2%   0.2%  33.1KiB                                             wasmi wasmi::engine::executor::instrs::execute_instrs
+ 0.2%   0.2%  32.4KiB                                enum2$<encoding_rs enum2$<encoding_rs::variant::VariantEncoder>::encode_from_utf8_raw
+ 0.1%   0.2%  31.4KiB                                      nsql_catalog nsql_catalog::gen::object_ddl
+ 0.1%   0.2%  30.7KiB                                          nexa_sql nexa_sql::App::apply_extensions
+ 0.1%   0.2%  30.6KiB                                              wast wast::core::binary::encode
+ 0.1%   0.2%  30.5KiB                                          nexa_sql nexa_sql::App::explorer_actions
+ 0.1%   0.2%  29.4KiB                                          oracledb oracledb::client::Client::connect
+ 0.1%   0.2%  29.2KiB                                          nexa_sql nexa_sql::App::build_menus_with
+ 0.1%   0.2%  28.6KiB                                      nsql_drivers nsql_drivers::open
+ 0.1%   0.2%  27.9KiB                                          oracledb oracledb::transport::CustomClientCertResolver::populate
+ 0.1%   0.2%  27.5KiB                                    nsql_driver_pg nsql_driver_pg::PgSession::execute_inner
+ 0.1%   0.2%  26.2KiB                                      nsql_catalog nsql_catalog::source_with
+ 0.1%   0.2%  26.1KiB                                             wasmi wasmi::module::parser::ModuleParser::parse_module
+ 0.1%   0.2%  25.7KiB                                enum2$<encoding_rs enum2$<encoding_rs::variant::VariantDecoder>::decode_to_utf8_raw
+ 0.1%   0.2%  25.1KiB                                 nsql_driver_mssql nsql_driver_mssql::MssqlSession::execute_inner
+```
+
+### A-6. CLI 함수 단위 상위 40(`cargo bloat --release -p nsql-cli -n 40`)
+
+```text
+    Analyzing target/bloat\release\nsql.exe
+ File  .text     Size                   Crate Name
+ 1.2%   1.6% 130.8KiB        enum2$<nsql_i18n enum2$<nsql_i18n::Msg>::row
+ 0.8%   1.0%  83.6KiB                    nsql nsql::main
+ 0.7%   1.0%  79.3KiB          regex_automata regex_automata::meta::strategy::new
+ 0.3%   0.5%  36.8KiB                   pkcs5 pkcs5::pbes2::encryption::decrypt_in_place<alloc::vec::Vec<u8,alloc::alloc::Global> >
+ 0.3%   0.4%  35.7KiB                         sqlite3VdbeExec
+ 0.3%   0.4%  35.5KiB                tiberius tiberius::client::connection::impl$1::connect::async_fn$0<tokio_util::compat::Compat<tokio::net::tcp::stream::TcpStream> >
+ 0.3%   0.4%  33.3KiB                tiberius tiberius::tds::stream::token::impl$0::try_unfold::closure$0::async_block$0<tokio_util::compat::Compat<tokio::net::tcp::stream::TcpStream> >
+ 0.3%   0.4%  32.4KiB      enum2$<encoding_rs enum2$<encoding_rs::variant::VariantEncoder>::encode_from_utf8_raw
+ 0.3%   0.4%  31.6KiB            nsql_catalog nsql_catalog::gen::object_ddl
+ 0.3%   0.4%  29.5KiB                oracledb oracledb::client::Client::connect
+ 0.3%   0.4%  28.3KiB                nsql_run nsql_run::Runner::execute
+ 0.3%   0.4%  28.0KiB                nsql_run nsql_run::Runner::perform
+ 0.3%   0.3%  27.9KiB                oracledb oracledb::transport::CustomClientCertResolver::populate
+ 0.3%   0.3%  27.7KiB          nsql_driver_pg nsql_driver_pg::PgSession::execute_inner
+ 0.2%   0.3%  26.4KiB            nsql_catalog nsql_catalog::source_with
+ 0.2%   0.3%  25.7KiB      enum2$<encoding_rs enum2$<encoding_rs::variant::VariantDecoder>::decode_to_utf8_raw
+ 0.2%   0.3%  25.7KiB                    nsql nsql::cat::cmd_cat::closure$0
+ 0.2%   0.3%  25.1KiB       nsql_driver_mssql nsql_driver_mssql::MssqlSession::execute_inner
+ 0.2%   0.3%  24.2KiB                     std std::sys::process::windows::Command::spawn_with_attributes
+ 0.2%   0.3%  22.8KiB nsql_driver_oracle_thin nsql_driver_oracle_thin::impl$1::execute
+ 0.2%   0.3%  22.4KiB             nsql_format nsql_format::layout::layout
+ 0.2%   0.3%  21.9KiB                nsql_run nsql_run::Runner::import_file
+ 0.2%   0.3%  20.9KiB            nsql_catalog nsql_catalog::gen::generate
+ 0.2%   0.3%  20.9KiB                    nsql nsql::cmd_shell
+ 0.2%   0.3%  20.5KiB                         sqlite3Pragma
+ 0.2%   0.2%  19.7KiB                tiberius tiberius::tds::codec::column_data::impl$0::decode::async_fn$0<tiberius::client::connection::Connection<tokio_util::compat::Compat<tokio::net::tcp::stream::TcpStream> > >
+ 0.2%   0.2%  19.5KiB          regex_automata regex_automata::nfa::thompson::compiler::Compiler::c
+ 0.2%   0.2%  18.9KiB            nsql_drivers nsql_drivers::open
+ 0.2%   0.2%  18.1KiB                    nsql nsql::Printer::handle
+ 0.2%   0.2%  18.1KiB            nsql_catalog nsql_catalog::detail::object_details
+ 0.2%   0.2%  17.7KiB             nsql_script nsql_script::engine::Engine::plan_exec
+ 0.2%   0.2%  17.7KiB      nsql_driver_oracle nsql_driver_oracle::impl$5::execute
+ 0.2%   0.2%  17.6KiB                nsql_run nsql_run::Runner::run_item
+ 0.2%   0.2%  17.1KiB                  rustls rustls::conn::ConnectionCommon<rustls::client::client_conn::ClientConnectionData>::complete_io<rustls::client::client_conn::ClientConnectionData,std::net::tcp::TcpStream>
+ 0.2%   0.2%  17.1KiB                  rustls rustls::client::hs::emit_client_hello_for_retry
+ 0.2%   0.2%  16.8KiB          tokio_postgres tokio_postgres::connect::connect_once::async_fn$0<tokio_postgres::tls::NoTls>
+ 0.2%   0.2%  16.7KiB      nsql_driver_oracle nsql_driver_oracle::OracleSession::connect
+ 0.2%   0.2%  16.5KiB                  rustls rustls::msgs::handshake::impl$89::encode
+ 0.1%   0.2%  16.0KiB                         yy_reduce
+ 0.1%   0.2%  15.6KiB          regex_automata regex_automata::meta::regex::Builder::build
+59.2%  80.5%   6.3MiB                         And 10216 smaller methods. Use -n N to show more.
+73.6% 100.0%   7.8MiB                         .text section size, the file size is 10.6MiB
+```

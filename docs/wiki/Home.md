@@ -2,6 +2,8 @@
 
 Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windows · macOS · Linux · 올 러스트 단일 바이너리).
 
+지원 데이터베이스(내장) = Oracle · SQL Server · PostgreSQL · SQLite · **MySQL/MariaDB**(10-22 추가 · 접속 문자열 `mysql://사용자@호스트:3306/DB` · `mariadb://`도 같음). Oracle만 Instant Client가 따로 필요하고(Thin 모드는 불필요) 나머지는 설치 없이 바로 접속한다.
+
 ![Nexa SQL 메인 화면](images/main-window.png)
 
 *Nexa SQL 메인 화면 — 객체 탐색기 · 편집기 · 결과 그리드(열 머리 타입 배지 · 조건 바)*
@@ -10,6 +12,7 @@ Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windo
 
 | 페이지 | 내용 |
 |---|---|
+| [접속](Connections.md) | 간략 접속(접속 문자열 한 줄 → 바로 접속 · 프로필 자동 저장 · 비밀번호는 저장 안 함) |
 | [프로젝트와 작업 환경](Project-Workspace.md) | 프로젝트 파일에 무엇이 저장되고(탭 · 캐럿 · 북마크 · 미저장 스크립트) 어떻게 복원되는지 · 자동 저장 · 종료 흐름 · OPEN FILES · 탐색기 |
 | [북마크](Bookmarks.md) | 키 · 니모닉 · 표시(거터 · 미니맵 · 줄 끝 라벨) · 패널 · 저장 위치 · CLI `nsql bookmark` |
 | [변수](Variables.md) | 바인드/치환 변수 · 변수 안의 변수 확장 시점(`vars.expand_at`) · 변수 창 |
