@@ -115,7 +115,7 @@ jobs:
       - name: Oracle Instant Client (basiclite · linux x64)
         working-directory: .
         run: |
-          sudo apt-get update && sudo apt-get install -y libaio1t64 unzip fonts-noto-cjk
+          sudo apt-get update && sudo apt-get install -y libaio1t64 unzip fonts-noto-cjk unixodbc-dev odbc-postgresql
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true
           sudo mkdir -p /opt/oracle && cd /opt/oracle
           sudo curl -fsSL -o ic.zip https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
@@ -130,10 +130,11 @@ jobs:
           NSQL_MYSQL_URL: mysql://nexa:nexa@localhost:3307/nexa
         run: cargo test -p nsql-drivers --test integration mysql -- --nocapture --test-threads=1
       - name: extension drivers (cdylib 8종 · duckdb = download-lib)
-        run: cargo build -p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb
-      - name: integration tests (extension path · NSQL_TEST_DYN=1 · ABI v2)
+        run: cargo build -p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb -p nsql-driver-odbc
+      - name: integration tests (extension path · NSQL_TEST_DYN=1 · ABI v2 · ODBC = PostgreSQL ODBC via unixODBC)
         env:
           NSQL_TEST_DYN: "1"
+          NSQL_ODBC_URL: "odbc:Driver={PostgreSQL Unicode};Server=localhost;Port=5432;Database=nexa;Uid=nexa;Pwd=nexa"
         run: cargo test -p nsql-drivers --test integration -- --nocapture --test-threads=1
       - name: integration tests (extension path · MariaDB)
         env:

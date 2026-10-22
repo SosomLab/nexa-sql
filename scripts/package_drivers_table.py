@@ -6,6 +6,6 @@ DRIVERS = [
     ("mssql", "nsql-driver-mssql", "mssql", "SQL Server"),
     ("oracle-thin", "nsql-driver-oracle-thin", "oracle", "Oracle (Thin, pure Rust)"),
     ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
-    ("odbc", "nsql-driver-odbc", "odbc", "ODBC (Windows)"),
+    ("odbc", "nsql-driver-odbc", "odbc", "ODBC"),
     ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
 ]

@@ -11,19 +11,14 @@
 //! - 다중 결과 집합 = `more_results` · 영향 행 수 = 커서 없는 문장의 `SQLRowCount`.
 //! - 트랜잭션 = 접속 때 `SQL_ATTR_AUTOCOMMIT` 끔 → [`Session::commit`]/[`Session::rollback`]이 ODBC API로(Caps ODBC = 시작문 없음).
 //! - 1차 제한 = 실행 취소 없음(`DriverLimit::Cancel`) · 서버 커서(REFCURSOR) 없음 · 벌크 = 러너 다중 행 폴백 · 긴 LOB 스트리밍 없음.
-//! - ★ D-345: **Windows 전용 내장**(인박스 odbc32). macOS/Linux = 빈 크레이트(unixODBC LGPL-2.1 정적 동봉 ✗ · 런타임 의존 ✗ → 후속 결정).
-#![cfg_attr(not(windows), allow(unused))]
-#[cfg(windows)]
+//! - ★ D-345/D-346 ⓐ(10-24): 내장은 **Windows만**(인박스 odbc32) · macOS/Linux는 **확장 cdylib**(unixODBC 동적 링크 · 시스템 `libodbc` 필요 · D-350 자동 설치).
 mod imp;
-#[cfg(windows)]
 pub use imp::{connection_string, OdbcSession};
 
 // ★ 확장 드라이버 내보내기(D-350 · ABI v2): cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(id = 패키지 id · 방언 = 레지스트리 키).
-#[cfg(windows)]
 fn nsql_abi_open_from_spec(
     spec: &nsql_script::ConnectSpec,
 ) -> Result<imp::OdbcSession, nsql_core::DbError> {
     imp::OdbcSession::connect(spec)
 }
-#[cfg(windows)]
 nsql_abi::export_driver!("odbc", "odbc", nsql_abi_open_from_spec);

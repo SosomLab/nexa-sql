@@ -24,5 +24,9 @@ nsql-abi.workspace = true
 # ★ D-345: 내장 ODBC = **Windows만**(인박스 odbc32.dll · 설치 0). macOS/Linux는 이 크레이트가 빈 스텁으로 컴파일된다 —
 #   unixODBC는 LGPL-2.1이라 정적 동봉이 고지·재링크 요건을 부르고, 동적 링크는 실행 파일에 런타임 의존을 만든다
 #   (64 §4 "외부 네이티브 의존 0") → 후속 = 확장 드라이버(cdylib · DR-29) 또는 패키지 의존을 받아들이는 동적 링크(사용자 결정 대기).
-[target.'cfg(windows)'.dependencies]
-odbc-api = { version = "29.2", default-features = false, features = ["odbc_version_3_80"] }
+# ★ D-350(10-24): 모든 OS에서 컴파일 — Windows = 인박스 odbc32(내장도 가능) · Linux/macOS = unixODBC **동적 링크**(LGPL = 동적 OK ·
+#   빌드 = unixodbc-dev/brew unixodbc · 런타임 = 시스템 libodbc · **확장 전용**(허브 내장은 Windows만 · 64 §4 "외부 의존 0" 유지) · D-346 ⓐ 확정).
+[dependencies.odbc-api]
+version = "29.2"
+default-features = false
+features = ["odbc_version_3_80"]

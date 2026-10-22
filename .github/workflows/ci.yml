@@ -41,7 +41,14 @@ jobs:
       # Linux 러너: 한글 폰트(nexa-font 실측) — 빌드 자체는 시스템 라이브러리 불요(Wayland/X11 dlopen).
       - name: fonts (linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-dejavu-core fonts-noto-core
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-dejavu-core fonts-noto-core unixodbc-dev
+        working-directory: .
+      # ODBC 크레이트가 전 OS에서 컴파일된다(10-24 · 확장 전용) — 링크(시험 바이너리)에 unixODBC가 필요.
+      - name: unixODBC (macos)
+        if: runner.os == 'macOS'
+        run: |
+          brew install unixodbc
+          echo "LIBRARY_PATH=$(brew --prefix unixodbc)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
         working-directory: .
 
       - name: fmt

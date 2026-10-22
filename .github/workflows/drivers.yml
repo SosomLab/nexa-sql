@@ -92,6 +92,14 @@ jobs:
             nexa-sql
             nexa-license
           key: drivers-${{ matrix.slug }}-${{ matrix.arch }}
+      - name: unixODBC(Linux · 빌드 링크용 · 런타임 = 사용자 시스템 libodbc)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq unixodbc-dev
+      - name: unixODBC(macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install unixodbc
+          echo "LIBRARY_PATH=$(brew --prefix unixodbc)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
       - name: macOS x86_64 타깃
         if: matrix.target != ''
         run: rustup target add ${{ matrix.target }}
@@ -100,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           pk=(-p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb)
-          [ "${{ matrix.slug }}" = "windows" ] && pk+=(-p nsql-driver-odbc)
+          pk+=(-p nsql-driver-odbc)
           # macOS 기본 bash 3.2는 `set -u`에서 빈 배열 "${a[@]}"를 unbound로 본다(첫 실행 실패) → ${VAR:+…}로.
           TARGET="${{ matrix.target }}"
           cargo build --release --locked "${pk[@]}" ${TARGET:+--target "$TARGET"}
