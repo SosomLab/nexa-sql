@@ -93,6 +93,14 @@ unset NEXA_LICENSE_KEY_PASS
 
 - 기존 라이선스는 **계속 유효**(검증만 하면 되니까). 새 발급만 불가 → §5로 v2 생성·배포 후 v2로 발급. v1 보유자 재발급은 불필요(v1 공개키를 계속 내장).
 
+
+## 7-1. 확장 드라이버 배포 키 `drv-v1`(10-23 · D-348)
+
+- **같은 절차 · 같은 보관 규칙** = 생성 `nexa-license-tool keygen --out <nexa-issuer>/drv-v1.key --id drv-v1`(§1) · 봉투(비밀키)는 라이선스 루트 키와 **별도 파일**로 같은 폴더·같은 백업 규칙(§3) · 공개키는 `keys-rs` 출력을 nexa-sql `crates/nsql-drivers/src/ext/keys.rs` `DRIVER_KEYS`에 붙인다(라이선스 키 `ROOT_KEYS`와 다른 목록) · 지문(base32 앞 8자) = `8CFVCNTJ`.
+- 용도 = 확장 드라이버 패키지(`nsql-driver-<id>-<ver>-<os>-<arch>.zip`) 서명만 · 서명 = `nexa-license-tool sign-file`(`.sig` = `ed25519 <key-id> <hex128>`) · 검증 = 앱의 `nsql driver install`(키 목록이 비면 거부).
+- **회전** = 새 키(`drv-v2`)를 만들어 `DRIVER_KEYS`에 **추가**(옛 키는 이미 배포된 패키지를 위해 남김) → 새 판부터 새 키로 서명 → 옛 키는 그 판을 쓰는 앱 판이 지원 종료된 뒤 뺀다(§5와 같은 순서) · 유출 = §6과 같이 즉시 목록에서 빼고 새 판 배포.
+- 파이프라인 = 첫 드라이버 pre-release 때 nexa-sql Actions 시크릿에 봉투 + 암호(§3의 시크릿 규칙).
+
 ## 8. 점검표(분기)
 
 - [ ] 봉투 3사본 존재 · 오프라인 1의 `verify` 통과 · [ ] 암호 종이 봉인 상태 · [ ] `keys.rs` 지문 = 봉투 지문 · [ ] 저장소에 `*.key` 없음(`git ls-files | grep key`) · [ ] 대장 백업 최신.
