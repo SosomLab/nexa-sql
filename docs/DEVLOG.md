@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · 드라이버 첫 릴리스)** — ★ pre-release `drivers-v0.1.0`(1차 ✗ = macOS bash 3.2 빈 배열 → 38f26f9 · 재실행 ✓ · 자산 80 · 오프라인 번들 4 · 봇 색인 1623f21 · 앱 Latest v0.2.7 유지) · 시험 자동화 `NSQL_TEST_DYN=1` 확장 경로 22/22 + ODBC Text CSV 자동(ffc9704) · GUI [파일에서 설치…] + 갱신 배지 `driver.check_updates`(fbe5001 · V1 ✓).
+
 - **2026-10-23 (137차 · D-350 D + 설정)** — ★ 드라이버 릴리스 워크플로 `drivers.yml`(태그 `drivers-v<ver>` · 4 매트릭스 · 서명 · 오프라인 번들 · pre-release · 색인 갱신 커밋) + 드라이버 없는 설치본(`NSQL_FEATURES` · 경량 CLI 22.0 → 12.4 MB)(b93ca33) · 설정 DBMS ▸ 드라이버 분류(info 3 · [드라이버 관리자…] · DBMS별 드라이버 3상태 · MySQL 행)(542250c) · V1 ✓.
 - **2026-10-23 (137차 · D-350 C)** — ★ 접속 시 드라이버 자동 설치(`open_auto` · -1350 → 색인·다운로드·검증·설치 → 재시도 · `driver.auto_install` 기본 켬 · GUI 베일·CLI stderr 진행) + 오프라인 전체 번들(`install --file` 번들 · 자산별 서명 검증)(e62752a) · V1 = 설정 스위치·CLI·콤보 꼬리 없음(5방언) ✓.
 - **2026-10-23 (137차 · D-350 A·B)** — ★ 모든 드라이버 별도 설치형(사용자) · A = ABI v2(`call` op 17 · 메시지 콜백 · copy_out · 적합성 시험 · 42ac8e0) · B = 드라이버 7종 cdylib(`export_driver!` · 심볼 `nsql_driver_vtable_<id>` = LNK2005 방지 · `driver_status` · -1350 · 441e83a) · 관리자 후속(`…` 제거 · 경로 가운데 줄임 · 8c68d67).

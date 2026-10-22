@@ -169,6 +169,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 
+> ★ **10-23 첫 릴리스 = `drivers-v0.1.0`**(pre-release · 자산 80 = 7종 × 4 OS zip + `.sig`·`.sha256` + 오프라인 번들 4 + `sha256sums.txt` · 봇 색인 커밋 `1623f21` · 앱 Latest `v0.2.7` 유지) · 하루 1회 갱신 확인 = `driver.check_updates`(색인 캐시 24시간 초과일 때만 GET 1) · journal 10-23 §11·§13.
+
 - **색인 URL**(D-349) = `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json`(저장소 안 파일 · raw · GitHub **API가 아님** · 익명 한도 없음 · 앱 릴리스와 무관 · 갱신 = 커밋) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간 · 태그 접두 `driver-<id>-v` · 프리릴리스 판정 = 버전 문자열의 `-`).
 - **자산**(D-349 → D-350) = 같은 저장소 Releases · 태그 **`drivers-v<ver>`** 하나에 전 드라이버(D-350 · D-349의 드라이버별 `driver-<id>-v<ver>`을 대체) · **모두 pre-release**(앱 `releases/latest` 보호) · URL = `https://github.com/SosomLab/nexa-sql/releases/download/drivers-v<ver>/nsql-driver-<id>-<ver>-<os>-<arch>.{zip,sha256,sig}` + 오프라인 번들 `nsql-drivers-all-<ver>-<os>-<arch>.zip` · 앱 배포 워크플로 3곳은 `v*` 태그 릴리스에만 반응(가드 · `drivers-v*`는 `v`로 시작하지 않음).
 - **검증 순서** = sha256 → Ed25519(`ext::keys::DRIVER_KEYS` · **키 목록이 비면 설치 거부 · 우회 옵션 없음**) → `drivers/.tmp/<pid>-<ns>/pkg`에 풀기(공통 최상위 폴더 1개 벗김) → 매니페스트 `nexa-driver.json` id·version·protocol 대조(ABI 불일치 = 거부) + 라이브러리 존재 → `drivers/<id>/<ver>/`로 **원자적 rename** · 이미 있으면 거부(`--force` = 교체).
@@ -223,7 +225,7 @@ nsql driver path                    drivers/ 폴더
 ```
 ### 5-2. GUI 드라이버 관리자 (DBeaver Driver Manager 대응 · 접속 대화상자 `Driver Settings`에서도 열림)
 
-> ✅ **구현 1차(10-23 · d1ffc6d)** = View ▸ Drivers(`view.drivers`) · 표 = ID·이름·방언·설치본·최신·상태 · [색인 새로 고침][설치/갱신][삭제][확인] · 워커 스레드 · 창 열기 = 네트워크 0 · CLI와 같은 `ext::install` 코어 · **남은 것** = 접속 대화상자 [Driver Settings]/[Download…] 버튼 · 갱신 배지(`driver.check_updates`) · 검색 칸 · [Update all]/[Prune] · 참조 카운트 · 휴지통.
+> ✅ **구현 1차(10-23 · d1ffc6d)** = View ▸ Drivers(`view.drivers`) · 표 = ID·이름·방언·설치본·최신·상태 · [색인 새로 고침][설치/갱신][삭제][확인] · 워커 스레드 · 창 열기 = 네트워크 0 · CLI와 같은 `ext::install` 코어 · ★ 10-23 `fbe5001` = [파일에서 설치…](zip·오프라인 번들) ✅ · 갱신 배지(`driver.check_updates` · 하루 1회 · 상태줄 안내 · 자동 교체 없음) ✅ · **남은 것** = 접속 대화상자 [Driver Settings]/[Download…] 버튼 · 검색 칸 · [Update all]/[Prune] · 참조 카운트 · 휴지통.
 ```text
 ┌ Drivers ───────────────────────────────────────────────────────────────────────────┐
 │ [검색…]                                        [Download…] [Update all] [Prune]    │
