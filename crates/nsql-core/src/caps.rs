@@ -177,9 +177,12 @@ const QUESTION: Caps = Caps {
     tsql_print: false,
 };
 
+/// MySQL/MariaDB(135차 · 드라이버 `nsql-driver-mysql`): `CALL p(?, ?)` 준비문의 OUT/INOUT 값은 **마지막 결과 집합 한 행**으로 온다
+/// → 받을 자리는 서명(`information_schema.parameters`)이 정한다(PG와 같은 `Captures`).
 const MYSQL: Caps = Caps {
     tx_begin: Some("START TRANSACTION"),
     server_autocommit: true,
+    call_signature: CallSignature::Captures,
     ..QUESTION
 };
 

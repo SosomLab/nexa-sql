@@ -2,6 +2,7 @@
 //!   NSQL_ORACLE_URL=oracle://nexa:nexa@oracle:1521/FREEPDB1
 //!   NSQL_MSSQL_URL=mssql://sa:Nexa%40Sql2026@mssql:1433/master   (비밀번호의 @는 %40)
 //!   NSQL_PG_URL=postgres://nexa:nexa@postgres:5432/nexa
+//!   NSQL_MYSQL_URL=mysql://nexa:nexa@mysql:3306/nexa   (135차 · `NSQL_MYSQL_PROFILE=<프로필>`도 된다)
 //!   (로컬: `NSQL_PG_PROFILE=<프로필>` — 저장된 프로필로 · 실제 서버이므로 임시 객체만 쓰는 테스트를 이름으로 골라 돌릴 것)
 //! Codespaces devcontainer(.devcontainer) · GitHub Actions(integration.yml)에서 각 DBMS 컨테이너를 띄워 돌린다.
 #![allow(clippy::unwrap_used)]
@@ -610,4 +611,202 @@ fn oracle_driver_parity_columns_and_values() {
         );
         assert_eq!(oci[i].rows, thin[i].rows, "값이 다르다: {sql}");
     }
+}
+
+// ───────────────────────────────────────────── MySQL/MariaDB(135차 · nsql-driver-mysql)
+
+/// 세션 변수 · `SELECT … INTO`(텍스트 프로토콜 = 열 타입으로 값 복원) · 바인드 조회(준비문 = 이진 프로토콜) · 타입 표본.
+#[test]
+fn mysql_session_variables_select_into_and_types() {
+    let Some(mut r) = runner_for("NSQL_MYSQL_URL", Dialect::Mysql) else {
+        return;
+    };
+    let ev = run(
+        &mut r,
+        "EXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) t\nSELECT :V_NAME AS n, :V_CNT AS c;\nSELECT 1234.5 AS d, DATE '2026-07-23' AS dt, TIMESTAMP '2026-07-23 01:02:03' AS ts, 0x414243 AS b, CAST(1 AS UNSIGNED) AS u, NULL AS nul;\n",
+    );
+    assert_eq!(
+        r.engine.vars.get("V_CNT").unwrap().value,
+        Value::Int(3),
+        "{ev:#?}"
+    );
+    let sets: Vec<&nsql_core::ResultSet> = ev
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::ResultSet { rs, .. } => Some(rs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sets.len(), 2, "{ev:#?}");
+    // 바인드 조회 = 준비문(이진) — 글자·정수가 타입 그대로.
+    assert_eq!(
+        sets[0].rows[0],
+        vec![Value::Str("nexa".into()), Value::Int(3)]
+    );
+    assert_eq!(sets[0].columns[0].name, "n");
+    // 텍스트 프로토콜 = 컬럼 타입으로 복원.
+    let row = &sets[1].rows[0];
+    assert_eq!(row[0], Value::Decimal("1234.5".into()), "{row:?}");
+    assert_eq!(row[1], Value::Str("2026-07-23".into()));
+    assert_eq!(row[2], Value::Str("2026-07-23 01:02:03".into()));
+    assert_eq!(
+        row[3],
+        Value::Bytes(b"ABC".to_vec()),
+        "0x… = VARBINARY → 바이트"
+    );
+    assert_eq!(row[4], Value::Int(1));
+    assert_eq!(row[5], Value::Null);
+    assert_eq!(sets[1].columns[0].type_name, "DECIMAL");
+    assert_eq!(sets[1].columns[4].type_name, "BIGINT UNSIGNED");
+    // 여러 행 · 0행 정책(D-139).
+    let (errs, ev) = run_raw(
+        &mut r,
+        "EXEC SELECT n INTO :A FROM (SELECT 1 AS n UNION ALL SELECT 2) t\n",
+    );
+    assert_eq!(errs, 1, "여러 행 = 오류: {ev:#?}");
+    let (errs, ev) = run_raw(
+        &mut r,
+        "EXEC SELECT n INTO :A FROM (SELECT 1 AS n) t WHERE n > 9\n",
+    );
+    assert_eq!(errs, 1, "0행 = 오류: {ev:#?}");
+}
+
+/// `EXEC p(:A, :B)` = `CALL p(?, ?)` 준비문 — INOUT/OUT 값은 **마지막 결과 집합 한 행**으로 돌아오고, 받을 자리는 서명
+/// (`information_schema.parameters` · `CallSignature::Captures`)이 정한다. 프로시저 본문의 `;`는 `BEGIN … END` 짝으로 넘긴다.
+#[test]
+fn mysql_procedure_out_binds_follow_signature() {
+    let Some(mut r) = runner_for("NSQL_MYSQL_URL", Dialect::Mysql) else {
+        return;
+    };
+    run(
+        &mut r,
+        "DROP PROCEDURE IF EXISTS nsql_it_io;
+CREATE PROCEDURE nsql_it_io(IN a INT, INOUT b INT, INOUT msg VARCHAR(100))
+BEGIN
+  IF a > 0 THEN
+    SET b = a * b;
+  END IF;
+  SET msg = CONCAT(msg, ' -> ', b);
+END;
+EXEC :X := 21
+EXEC :Y := 'in'
+EXEC nsql_it_io(3, :X, :Y)
+",
+    );
+    let get = |r: &Runner, n: &str| r.engine.vars.get(n).map(|v| v.value.display());
+    assert_eq!(get(&r, "X").as_deref(), Some("63"));
+    assert_eq!(get(&r, "Y").as_deref(), Some("in -> 63"));
+    run(&mut r, "EXEC :M := 'lit'\nEXEC nsql_it_io(10, 4, :M)\n");
+    assert_eq!(get(&r, "M").as_deref(), Some("lit -> 40"));
+    assert_eq!(
+        get(&r, "X").as_deref(),
+        Some("63"),
+        "상수를 준 INOUT 자리는 변수를 건드리지 않는다"
+    );
+    // 프로시저 안의 SELECT = 결과 집합 · 뒤의 OUT 행은 결과로 남지 않는다(흡수).
+    let ev = run(
+        &mut r,
+        "DROP PROCEDURE IF EXISTS nsql_it_sel;
+CREATE PROCEDURE nsql_it_sel(OUT n INT)
+BEGIN
+  SELECT 'row' AS r;
+  SET n = 7;
+END;
+EXEC nsql_it_sel(:N)
+DROP PROCEDURE nsql_it_sel;
+DROP PROCEDURE nsql_it_io;
+",
+    );
+    assert_eq!(get(&r, "N").as_deref(), Some("7"), "{ev:#?}");
+    let sets: Vec<&nsql_core::ResultSet> = ev
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::ResultSet { rs, .. } => Some(rs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sets.len(), 1, "{ev:#?}");
+    assert_eq!(sets[0].rows[0][0], Value::Str("row".into()));
+}
+
+/// 수동 커밋(러너가 `START TRANSACTION`을 보낸다 · `Caps.tx_begin`) — ROLLBACK은 되돌리고 COMMIT은 남긴다 · 임시 표라 서버에 남지 않는다.
+#[test]
+fn mysql_manual_commit_and_rollback() {
+    let Some(mut r) = runner_for("NSQL_MYSQL_URL", Dialect::Mysql) else {
+        return;
+    };
+    run(
+        &mut r,
+        "CREATE TEMPORARY TABLE nsql_it_t (id INT) ENGINE=InnoDB;\nSET AUTOCOMMIT OFF\nINSERT INTO nsql_it_t VALUES (1);\nROLLBACK;\nEXEC SELECT COUNT(*) INTO :C1 FROM nsql_it_t\nINSERT INTO nsql_it_t VALUES (2);\nCOMMIT;\nEXEC SELECT COUNT(*) INTO :C2 FROM nsql_it_t\nSET AUTOCOMMIT ON\n",
+    );
+    let get = |r: &Runner, n: &str| r.engine.vars.get(n).map(|v| v.value.display());
+    assert_eq!(get(&r, "C1").as_deref(), Some("0"));
+    assert_eq!(get(&r, "C2").as_deref(), Some("1"));
+}
+
+/// 드라이버 직접: 경고 = `SHOW WARNINGS` 메시지 · 문법 오류 `at line N` = 그 줄 머리의 글자 위치(T-371) · 취소 핸들 있음 ·
+/// `max_rows` 상한 · 백틱·`#` 주석이 든 문장.
+#[test]
+fn mysql_driver_warnings_error_position_and_limits() {
+    use nsql_core::ExecRequest;
+    let profile = std::env::var("NSQL_MYSQL_PROFILE").ok();
+    let spec = match (std::env::var("NSQL_MYSQL_URL"), profile) {
+        (Ok(url), _) => nsql_drivers::parse_target(&url, Dialect::Mysql).expect("접속 문자열"),
+        (Err(_), Some(name)) => nsql_vault::Vault::open_default()
+            .and_then(|v| v.get(&name))
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| panic!("프로필 없음: {name}")),
+        _ => {
+            eprintln!("[skip] NSQL_MYSQL_URL 없음");
+            return;
+        }
+    };
+    let mut s = nsql_drivers::open(&spec, Dialect::Mysql)
+        .unwrap_or_else(|e| panic!("접속 실패: {}", e.message));
+    assert_eq!(s.dialect(), Dialect::Mysql);
+    assert!(s.cancel_handle().is_some());
+    assert!(s.is_alive());
+    let exec = |s: &mut Box<dyn Session>, sql: &str| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params: Vec::new(),
+        })
+    };
+    // 경고(1365 Division by 0) → messages.
+    let r = exec(&mut s, "SELECT 1/0 AS z").unwrap();
+    assert!(
+        r.messages.iter().any(|m| m.contains("1365")),
+        "{:?}",
+        r.messages
+    );
+    // 문법 오류 위치 = 2번째 줄 머리(글자 인덱스 9).
+    let e = exec(&mut s, "SELECT 1\nFROM nope_tbl WHERE").unwrap_err();
+    assert_eq!(e.code, Some(1064), "{}", e.message);
+    assert_eq!(e.position, Some(9), "{}", e.message);
+    // 없는 표 = 위치 없음.
+    let e = exec(&mut s, "SELECT * FROM nsql_no_such_table").unwrap_err();
+    assert_eq!(e.code, Some(1146));
+    assert_eq!(e.position, None);
+    // 백틱 식별자 · `#` 주석 · 백슬래시 이스케이프.
+    let r = exec(&mut s, "SELECT 'it\\'s' AS `a b` # tail\n").unwrap();
+    assert_eq!(r.result_sets[0].columns[0].name, "a b");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Str("it's".into()));
+    // 상한: 5행 중 2행만.
+    s.set_option("max_rows", "2").unwrap();
+    let r = exec(
+        &mut s,
+        "SELECT n FROM (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) t",
+    )
+    .unwrap();
+    assert_eq!(
+        r.result_sets[0].rows.len(),
+        2,
+        "상한까지만(나머지는 드라이버가 비운다)"
+    );
+    s.set_option("max_rows", "0").unwrap();
+    // 세션은 그대로 쓸 수 있다(결과를 끝까지 비웠다).
+    let r = exec(&mut s, "SELECT DATABASE() AS d, VERSION() AS v").unwrap();
+    assert_eq!(r.result_sets[0].rows.len(), 1);
+    assert!(s.is_alive());
 }

@@ -3317,6 +3317,9 @@ pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineA
     if s.dialect() == Dialect::Mssql {
         return mssql_routine_args(s, call_name);
     }
+    if s.dialect() == Dialect::Mysql {
+        return mysql_routine_args(s, call_name);
+    }
     if s.dialect() != Dialect::Oracle {
         return Ok(Vec::new());
     }
@@ -3480,6 +3483,44 @@ fn pg_routine_args_sql(call_name: &str) -> Option<String> {
 
 fn pg_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
     let Some(sql) = pg_routine_args_sql(call_name) else {
+        return Ok(Vec::new());
+    };
+    let rs = query(s, &sql)?;
+    Ok(rs
+        .rows
+        .iter()
+        .map(|r| RoutineArg {
+            overload: col(r, 0),
+            position: r.get(1).map(cell_i64).unwrap_or(0),
+            name: col(r, 2).trim().to_ascii_uppercase(),
+            data_type: col(r, 3).trim().to_ascii_uppercase(),
+            in_out: col(r, 4).trim().to_ascii_uppercase(),
+        })
+        .collect())
+}
+
+/// MySQL 서명 조회문(135차) — `information_schema.parameters`: `[db.]이름`(백틱은 벗긴다 · 오버로드 없음 · 같은 이름의
+/// PROCEDURE·FUNCTION이 둘 다 올 수 있어 `routine_type`이 오버로드 키) · 자리 0 = 함수 반환값(뺀다) ·
+/// `parameter_mode` IN/OUT/INOUT → `IN`/`OUT`/`IN/OUT`. db가 없으면 `DATABASE()`.
+fn mysql_routine_args_sql(call_name: &str) -> Option<String> {
+    let bare = |p: &str| p.trim().trim_matches('`').to_string();
+    let parts: Vec<String> = call_name.trim().split('.').map(bare).collect();
+    let (schema, name) = match parts.as_slice() {
+        [n] if !n.is_empty() => ("DATABASE()".to_string(), n.clone()),
+        [s, n] if !n.is_empty() => (lit(s), n.clone()),
+        _ => return None,
+    };
+    Some(format!(
+        "SELECT routine_type, ordinal_position, IFNULL(parameter_name, ''), data_type, \
+         CASE parameter_mode WHEN 'INOUT' THEN 'IN/OUT' ELSE IFNULL(parameter_mode, '') END \
+         FROM information_schema.parameters WHERE specific_schema = {schema} AND specific_name = {} AND ordinal_position >= 1 \
+         ORDER BY routine_type, ordinal_position",
+        lit(&name)
+    ))
+}
+
+fn mysql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
+    let Some(sql) = mysql_routine_args_sql(call_name) else {
         return Ok(Vec::new());
     };
     let rs = query(s, &sql)?;
@@ -3667,6 +3708,23 @@ mod tests {
     /// 점이 셋 이상이면 조회하지 않는다 · 값은 글자 상수로 인용된다(주입 방지).
     /// 협업 코드 감사 10-10 #15: 서명 포함 이름(`schema.f(a integer, b text)`)은 이름과 서명을 갈라 `proname = 'f'` + 서명 등호 조건 ·
     /// 서명이 없으면 종전과 같다 · 서명 안의 `.`(스키마 한정 타입)은 이름 조각을 가르지 않는다.
+    #[test]
+    fn mysql_routine_args_sql_scopes() {
+        let a = mysql_routine_args_sql("p").unwrap();
+        assert!(
+            a.contains("specific_schema = DATABASE() AND specific_name = 'p'"),
+            "{a}"
+        );
+        let b = mysql_routine_args_sql("`shop`.`add_item`").unwrap();
+        assert!(
+            b.contains("specific_schema = 'shop' AND specific_name = 'add_item'"),
+            "{b}"
+        );
+        assert!(b.contains("WHEN 'INOUT' THEN 'IN/OUT'"));
+        assert!(mysql_routine_args_sql("a.b.c").is_none());
+        assert!(mysql_routine_args_sql("").is_none());
+    }
+
     #[test]
     fn pg_routine_args_sql_splits_signature() {
         let sql = pg_routine_args_sql("public.f(a integer, b public.mytype)").expect("sql");

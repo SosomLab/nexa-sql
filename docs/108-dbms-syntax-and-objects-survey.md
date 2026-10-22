@@ -2181,7 +2181,7 @@ WHEN WHERE WHILE WINDOW WITH WRITE XOR YEAR_MONTH ZEROFILL
 | 스트리밍 | 결과 = 서버가 밀어냄 · 다 읽기 전 같은 연결에 다른 명령 불가 |
 | 타임아웃 | `wait_timeout`(28800초 유휴 끊김) · `net_read_timeout`/`net_write_timeout` |
 | 마지막 정보 | OK 패킷 = 영향 행 수 · `last_insert_id` · 경고 수 · 상태 플래그(트랜잭션 중 `SERVER_STATUS_IN_TRANS` = 열린 트랜잭션 판정에 사용 가능) |
-| Rust crate | `mysql`(동기 · 순수 Rust) · `mysql_async`(tokio) · `sqlx`(mysql feature) — 셋 다 MIT/Apache · **nexa-sql 현재 미사용**(워크스페이스에 MySQL 드라이버 크레이트 없음 · 2026-10-10 확인) · crate별 `LOAD DATA LOCAL` 처리기·KILL 지원 정도는 **추정**(미확인) |
+| Rust crate | `mysql`(동기 · 순수 Rust) · `mysql_async`(tokio) · `sqlx`(mysql feature) — 셋 다 MIT/Apache · **10-22 채택 = `mysql` 28.0.4**(동기 · `rustls-tls` · `nsql-driver-mysql` · D-344 · 2026-10-10 시점엔 미사용) · crate별 `LOAD DATA LOCAL` 처리기·KILL 지원 정도는 **추정**(미확인) |
 
 출처: https://dev.mysql.com/doc/dev/mysql-server/latest/PAGE_PROTOCOL.html · https://dev.mysql.com/doc/refman/8.0/en/c-api-multiple-queries.html · https://dev.mysql.com/doc/refman/8.0/en/kill.html · https://dev.mysql.com/doc/refman/8.0/en/load-data-local-security.html · https://dev.mysql.com/doc/refman/8.0/en/caching-sha2-pluggable-authentication.html · https://docs.rs/mysql/latest/mysql/ · https://docs.rs/mysql_async/latest/mysql_async/
 
@@ -2556,7 +2556,7 @@ WHERE WITH WORK WRITE YEAR ZONE
 | 완성 문법(절 → 다음 낱말) | `.sqlg` 6개(ansi 위에 덧입힘 · **빼기 연산 없음**) | `crates/nsql-script/grammar/*.sqlg` · `grammar.rs:101-146, 288-297` |
 | 내장 함수·자료형·정렬·사전 객체 | 방언 표 | `crates/nsql-script/src/builtins.rs` |
 | 카탈로그·트리·소스·생성 | 방언 `match` | `crates/nsql-catalog/src/{lib,tree,gen}.rs` |
-| 드라이버 | ORA·MS·PG·LT 내장 / **MY·ODBC 없음** | `crates/nsql-drivers/src/lib.rs:44-66, 178-192` |
+| 드라이버 | ORA·MS·PG·LT·**MY**(10-22 · D-344) 내장 / **ODBC 없음** | `crates/nsql-drivers/src/lib.rs:44-66, 178-192` |
 
 ---
 
@@ -2837,10 +2837,10 @@ WHERE WITH WORK WRITE YEAR ZONE
 
 | # | 대상 | 증상 | 위치 |
 |---|---|---|---|
-| 1 | MY·PG | `E'…\'…'`·MySQL `'…\'…'` 백슬래시 이스케이프 미처리 → 문자열이 일찍 끝나 **문장 분리·바인드·완성 문맥이 전부 어긋남** | `crates/nsql-script/src/lexer.rs:96-111` |
-| 2 | MY | `#` 줄 주석 미인식 → 주석 안 `;`·`'` 가 분리/문자열을 오염 | `lexer.rs:28-80` · 강조 `highlight.rs:434` |
-| 3 | MY | 백틱 `` `name` `` 미인식(분석기·강조기) → `` `db`.`t`. `` 뒤 완성·Ctrl 링크 불가 · 백틱 안 `;` 분리 | `lexer.rs:63-80` · `outline.rs:121-205` · `highlight.rs:436` |
-| 4 | MY | `DELIMITER //` 미지원(완성 키워드에는 제시) → 프로시저 본문이 `;` 에서 잘림 | `split.rs`(부재) · `intel.rs:861` |
+| 1 | MY·PG | **MY ✅ 10-22(135차 `classify_in`) · PG `E''` 남음** — `E'…\'…'`·MySQL `'…\'…'` 백슬래시 이스케이프 미처리 → 문자열이 일찍 끝나 **문장 분리·바인드·완성 문맥이 전부 어긋남** | `crates/nsql-script/src/lexer.rs:96-111` |
+| 2 | MY | **✅ 10-22(135차 어휘 · 강조기는 확인 필요)** — `#` 줄 주석 미인식 → 주석 안 `;`·`'` 가 분리/문자열을 오염 | `lexer.rs:28-80` · 강조 `highlight.rs:434` |
+| 3 | MY | **✅ 10-22(135차 어휘 공통 · 강조기·outline은 확인 필요)** — 백틱 `` `name` `` 미인식(분석기·강조기) → `` `db`.`t`. `` 뒤 완성·Ctrl 링크 불가 · 백틱 안 `;` 분리 | `lexer.rs:63-80` · `outline.rs:121-205` · `highlight.rs:436` |
+| 4 | MY | **✅ 10-22(135차 split `DELIMITER` + `END IF/LOOP/WHILE/REPEAT`)** — `DELIMITER //` 미지원(완성 키워드에는 제시) → 프로시저 본문이 `;` 에서 잘림 | `split.rs`(부재) · `intel.rs:861` |
 | 5 | PG·MS | 중첩 블록 주석 `/* /* */ */` → 첫 `*/` 에서 끝남 | `lexer.rs:35-43` |
 | 6 | PG | `[ … ]` 를 늘 인용 식별자로 분류 → 배열 첨자 `a[1]` · `ARRAY[1,2]` 안이 식별자 취급(완성·바인드 문맥 손실) | `lexer.rs:72-80` |
 | 7 | 전체 | 구문 강조가 방언 무관 1벌(196) · 위 "빠진 것" 목록의 핵심어(`CONNECT BY`·`PIVOT`·`LATERAL`·`ON CONFLICT`·`OUTPUT`·`APPLY`·`ROLLUP`·`INTERVAL`·`COLLATE`·`CALL` …)와 MS/PG 자료형이 강조되지 않음 · `"…"` 가 문자열 색 | `nexa-ui/crates/nexa-ctl/src/highlight.rs:430-448` · `crates/nexa-sql/src/syntax.rs:20` |

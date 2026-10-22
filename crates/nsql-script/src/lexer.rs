@@ -17,8 +17,15 @@ pub enum Class {
     BlockComment,
 }
 
-/// 바이트 오프셋별 [`Class`]를 한 번에 계산한다 — 여러 소비자가 재사용.
+/// 바이트 오프셋별 [`Class`]를 한 번에 계산한다 — 여러 소비자가 재사용(방언 무관 1벌 · 백틱 인용 포함).
 pub fn classify(text: &str) -> Vec<Class> {
+    classify_in(text, None)
+}
+
+/// ★ 방언을 아는 분류(135차 · MySQL): `#` 줄 주석 · 문자열 안 백슬래시 이스케이프(`'it\'s'`)는 **MySQL에서만**(Oracle `#`은
+/// 식별자 글자 · T-SQL `#temp` · PG 표준 문자열은 `\`가 글자). 백틱 `` `…` ``은 어느 방언에서도 다른 뜻이 없어 늘 인용 식별자.
+pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class> {
+    let mysql = dialect == Some(nsql_core::Dialect::Mysql);
     let b = text.as_bytes();
     let n = b.len();
     let mut out = vec![Class::Code; n];
@@ -40,8 +47,13 @@ pub fn classify(text: &str) -> Vec<Class> {
                 out[i..end].fill(Class::BlockComment);
                 i = end;
             }
+            b'#' if mysql => {
+                let end = memchr_nl(b, i);
+                out[i..end].fill(Class::LineComment);
+                i = end;
+            }
             b'\'' => {
-                let end = scan_single_quoted(b, i);
+                let end = scan_single_quoted_in(b, i, mysql);
                 out[i..end].fill(Class::Str);
                 i = end;
             }
@@ -50,8 +62,8 @@ pub fn classify(text: &str) -> Vec<Class> {
                 out[i..end].fill(Class::Str);
                 i = end;
             }
-            // PostgreSQL 달러 인용(`$$ … $$` · `$body$ … $body$`) — 함수/프로시저 본문(사용자 09-15 PG 지원).
-            b'$' if !prev_is_ident(b, i) => {
+            // PostgreSQL 달러 인용(`$$ … $$` · `$body$ … $body$`) — 함수/프로시저 본문(사용자 09-15 PG 지원) · MySQL에는 없다(`DELIMITER $$`가 구분자).
+            b'$' if !prev_is_ident(b, i) && !mysql => {
                 if let Some(end) = scan_dollar_quoted(b, i) {
                     out[i..end].fill(Class::Str);
                     i = end;
@@ -62,6 +74,15 @@ pub fn classify(text: &str) -> Vec<Class> {
             b'"' => {
                 let mut j = i + 1;
                 while j < n && b[j] != b'"' {
+                    j += 1;
+                }
+                let end = (j + 1).min(n);
+                out[i..end].fill(Class::Ident);
+                i = end;
+            }
+            b'`' => {
+                let mut j = i + 1;
+                while j < n && b[j] != b'`' && b[j] != b'\n' {
                     j += 1;
                 }
                 let end = (j + 1).min(n);
@@ -94,11 +115,15 @@ fn memchr_nl(b: &[u8], from: usize) -> usize {
         .map_or(b.len(), |p| from + p)
 }
 
-/// `'…'` — `''`는 이스케이프. 닫히지 않으면 끝까지.
-fn scan_single_quoted(b: &[u8], start: usize) -> usize {
+/// `'…'` — `''`는 이스케이프. 닫히지 않으면 끝까지. `backslash` = MySQL 기본(`NO_BACKSLASH_ESCAPES` 꺼짐)처럼 `\'`·`\\`를 한 글자로 건너뛴다.
+fn scan_single_quoted_in(b: &[u8], start: usize, backslash: bool) -> usize {
     let n = b.len();
     let mut j = start + 1;
     while j < n {
+        if backslash && b[j] == b'\\' {
+            j += 2;
+            continue;
+        }
         if b[j] == b'\'' {
             if j + 1 < n && b[j + 1] == b'\'' {
                 j += 2;
@@ -236,5 +261,43 @@ mod tests {
         let p = find_word_ci(s, &c, "into").unwrap();
         assert_eq!(&s[p..p + 4], "INTO");
         assert_eq!(p, s.find(" INTO :v").unwrap() + 1);
+    }
+}
+
+#[cfg(test)]
+mod mysql_tests {
+    use super::*;
+    use nsql_core::Dialect;
+
+    fn classes_of(text: &str, d: Option<Dialect>) -> String {
+        classify_in(text, d)
+            .iter()
+            .map(|c| match c {
+                Class::Code => '.',
+                Class::Str => 's',
+                Class::Ident => 'i',
+                Class::LineComment => '-',
+                Class::BlockComment => '*',
+            })
+            .collect()
+    }
+
+    /// 135차 · MySQL: `#` 줄 주석 · 백슬래시 이스케이프는 MySQL만 · 백틱은 공통.
+    #[test]
+    fn mysql_lexical_rules() {
+        assert_eq!(
+            classes_of("a # c\nb", Some(Dialect::Mysql)),
+            "..---\n.".replace('\n', ".")
+        );
+        assert_eq!(
+            classes_of("a # c", None),
+            ".....",
+            "Oracle/MSSQL에서 `#`은 식별자 글자"
+        );
+        // `'it\'s'` = 한 문자열(MySQL) · 다른 방언에서는 `'it\'`로 닫히고 `s'`부터 새 문자열.
+        assert_eq!(classes_of("'it\\'s' x", Some(Dialect::Mysql)), "sssssss..");
+        assert_eq!(classes_of("'it\\'s' x", None), "sssss.sss");
+        assert_eq!(classes_of("`a;b`;", None), "iiiii.");
+        assert_eq!(classes_of("`a;b`;", Some(Dialect::Mysql)), "iiiii.");
     }
 }

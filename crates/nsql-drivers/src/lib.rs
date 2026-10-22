@@ -5,6 +5,7 @@
 //! - `oracle://user:pass@host:1521/service` · `user/pass@host:1521/svc`(방언 = 기본값 또는 `?dialect=`)
 //! - `mssql://user:pass@host:1433/db`
 //! - `postgres://user:pass@host:5432/db`(`postgresql://` · `pg://`)
+//! - `mysql://user:pass@host:3306/db`(`mariadb://` 별칭 · 같은 드라이버 · 135차)
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
@@ -57,6 +58,8 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Mssql => Ok(Box::new(nsql_driver_mssql::MssqlSession::connect(spec)?)),
         #[cfg(feature = "pg")]
         Dialect::Postgres => Ok(Box::new(nsql_driver_pg::PgSession::connect(spec)?)),
+        #[cfg(feature = "mysql")]
+        Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
         other => Err(DbError {
             code: None,
             message: format!("{other} 드라이버는 이 빌드에 없습니다(M4)"),
@@ -173,6 +176,8 @@ pub fn set_net_options(keepalive_secs: u64, call_timeout_secs: u64) {
     nsql_driver_pg::set_keepalive_secs(keepalive_secs);
     #[cfg(feature = "mssql")]
     nsql_driver_mssql::set_keepalive_secs(keepalive_secs);
+    #[cfg(feature = "mysql")]
+    nsql_driver_mysql::set_keepalive_secs(keepalive_secs);
     // Oracle 호출 상한 = **두 드라이버 전역에 다**(static · 선택과 무관 · 110 §3-2).
     #[cfg(feature = "oracle")]
     nsql_driver_oracle::set_call_timeout_secs(call_timeout_secs);
@@ -309,12 +314,32 @@ pub fn available() -> Vec<Dialect> {
     if cfg!(feature = "pg") {
         v.push(Dialect::Postgres);
     }
+    // MySQL/MariaDB(135차) — 빠뜨리면 접속 폼 콤보가 "(이 빌드에 드라이버 없음)"을 붙인다(협업 V1 10-22).
+    if cfg!(feature = "mysql") {
+        v.push(Dialect::Mysql);
+    }
     v
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 기본 feature = 내장 드라이버 다섯(135차 MySQL 포함) — 접속 폼 콤보 "(no driver)" 라벨의 원천.
+    #[test]
+    fn available_lists_every_builtin_driver() {
+        let v = available();
+        for d in [
+            Dialect::Sqlite,
+            Dialect::Oracle,
+            Dialect::Mssql,
+            Dialect::Postgres,
+            Dialect::Mysql,
+        ] {
+            assert!(v.contains(&d), "{d} 빠짐: {v:?}");
+        }
+        assert!(!v.contains(&Dialect::Odbc));
+    }
 
     #[test]
     fn sqlite_shorthands() {

@@ -8,7 +8,7 @@
 //! - 항목마다 원문 바이트 범위(`span`)와 시작 줄(1-base)을 남긴다 — 편집기가 오류 위치를 되찾는다.
 
 use crate::command::{is_command_start, parse_command, Command};
-use crate::lexer::{classify, Class};
+use crate::lexer::{classify_in, Class};
 use nsql_core::Dialect;
 use std::ops::Range;
 
@@ -98,7 +98,9 @@ pub fn split_script(src: &str) -> Vec<Item> {
 /// SQLite·MySQL·PostgreSQL = `/` 블록이 없다: 본문에 `BEGIN`이 있으면 짝이 맞는 `END` 뒤의 `;`에서 끝나고(`CASE … END` 중첩 계산),
 /// 없으면 첫 `;`에서 끝난다(PG 함수 본문 `$$…$$`은 문자열이라 안의 `;`를 보지 않는다).
 pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
-    let mut classes = classify(src);
+    let mut classes = classify_in(src, dialect);
+    // ★ MySQL `DELIMITER //`(135차): 그 줄부터 문장 끝 = 그 글자열(코드 영역) · `DELIMITER ;`로 복귀 · 줄 자체는 항목이 아니다.
+    let mut delim: Option<String> = None;
     let b = src.as_bytes();
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(
@@ -136,6 +138,27 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
         if rest == "/" || rest.eq_ignore_ascii_case("GO") {
             pos = le;
             continue;
+        }
+        if dialect == Some(Dialect::Mysql) {
+            if let Some(d) = delimiter_line(rest) {
+                delim = (d != ";").then(|| d.to_string());
+                pos = le;
+                continue;
+            }
+            if let Some(d) = delim.as_deref() {
+                let (text, end_off, next) = collect_delim_stmt(src, &classes, pos, d);
+                if !text.is_empty() {
+                    let kind = ItemKind::Sql(classify_sql(&text));
+                    items.push(Item {
+                        kind,
+                        text,
+                        span: pos..end_off,
+                        line: line_of(pos),
+                    });
+                }
+                pos = next;
+                continue;
+            }
         }
         if is_command_start(rest) {
             let word = rest
@@ -218,7 +241,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             // 한 줄 명령은 줄 끝에서 끝난다 — 짝 없는 따옴표(`DEFINE v = O'Neil`)가 뒤 문장들을 글자 상수로
             // 삼키지 않게, 따옴표가 줄을 넘어갔으면 다음 줄부터 다시 분류한다(T-162 ④ · 드문 길이라 비용은 그때만).
             if end_off < b.len() && matches!(classes[end_off], Class::Str | Class::Ident) {
-                let tail = classify(&src[end_off..]);
+                let tail = classify_in(&src[end_off..], dialect);
                 classes[end_off..].copy_from_slice(&tail);
             }
             pos = end_off;
@@ -338,6 +361,38 @@ fn is_begin_transaction(first_line: &str) -> bool {
 }
 
 /// `;`만으로 끝나는 방언의 문장 끝: 본문에 `BEGIN`이 있으면 짝이 맞는 `END` 뒤의 코드 `;` · 없으면 첫 코드 `;`.
+/// `DELIMITER xx` 줄이면 새 구분자(공백 없는 한 토큰 · `;` 포함).
+fn delimiter_line(line: &str) -> Option<&str> {
+    let rest = line
+        .get(..9)
+        .filter(|w| w.eq_ignore_ascii_case("DELIMITER"))
+        .map(|_| &line[9..])?;
+    if !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
+        return None;
+    }
+    let tok = rest.split_whitespace().next()?;
+    (!tok.is_empty()).then_some(tok)
+}
+
+/// 사용자 구분자(`//` · `$$`)까지 — 코드 영역에서만 찾는다(주석·문자열 안은 아니다). 못 찾으면 끝까지.
+fn collect_delim_stmt(
+    src: &str,
+    classes: &[Class],
+    start: usize,
+    delim: &str,
+) -> (String, usize, usize) {
+    let b = src.as_bytes();
+    let d = delim.as_bytes();
+    let mut i = start;
+    while i + d.len() <= b.len() {
+        if classes[i] == Class::Code && &b[i..i + d.len()] == d {
+            return (src[start..i].trim().to_string(), i, i + d.len());
+        }
+        i += 1;
+    }
+    (src[start..].trim().to_string(), b.len(), b.len())
+}
+
 fn collect_semicolon_stmt(src: &str, classes: &[Class], start: usize) -> (String, usize, usize) {
     let b = src.as_bytes();
     let mut depth = 0i32;
@@ -368,7 +423,17 @@ fn collect_semicolon_stmt(src: &str, classes: &[Class], start: usize) -> (String
             } else if w.eq_ignore_ascii_case("CASE") && seen_begin {
                 depth += 1;
             } else if w.eq_ignore_ascii_case("END") && seen_begin {
-                depth -= 1;
+                // MySQL/MariaDB `END IF` · `END LOOP` · `END WHILE` · `END REPEAT`는 여는 낱말을 세지 않았다 → 짝에서 뺀다(135차).
+                // (`END CASE`는 `CASE`를 셌으니 그대로 -1.)
+                let next = src[i..]
+                    .trim_start()
+                    .split(|c: char| !c.is_ascii_alphabetic())
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_uppercase();
+                if !matches!(next.as_str(), "IF" | "LOOP" | "WHILE" | "REPEAT") {
+                    depth -= 1;
+                }
             }
             continue;
         }
@@ -874,5 +939,53 @@ SELECT 3;
             assert!(matches!(items[0].kind, ItemKind::Command(_)), "{dialect:?}");
             assert!(matches!(items[1].kind, ItemKind::Sql(_)), "{dialect:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod mysql_tests {
+    use super::*;
+
+    fn texts(src: &str) -> Vec<String> {
+        split_script_in(src, Some(Dialect::Mysql))
+            .into_iter()
+            .map(|i| i.text)
+            .collect()
+    }
+
+    /// 135차 · MySQL `DELIMITER //`: 프로시저 본문 안의 `;`를 넘기고 `//`에서 끝난다 · `DELIMITER ;`로 복귀 · 줄 자체는 항목 아님.
+    #[test]
+    fn delimiter_switches_terminator() {
+        let src = "DELIMITER //\nCREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND//\nDELIMITER ;\nSELECT 3;\nCALL p();";
+        let v = texts(src);
+        assert_eq!(v.len(), 3, "{v:?}");
+        assert!(
+            v[0].starts_with("CREATE PROCEDURE p()") && v[0].ends_with("END"),
+            "{}",
+            v[0]
+        );
+        assert_eq!(v[1], "SELECT 3");
+        assert_eq!(v[2], "CALL p()");
+        // 구분자 `$$` · 주석·문자열 안의 구분자는 아니다.
+        let src = "DELIMITER $$\nSELECT '$$' -- $$\n$$\nSELECT 2$$";
+        assert_eq!(texts(src), vec!["SELECT '$$' -- $$", "SELECT 2"]);
+        assert_eq!(delimiter_line("delimiter //"), Some("//"));
+        assert_eq!(delimiter_line("DELIMITER"), None);
+        assert_eq!(delimiter_line("DELIMITERS x"), None);
+    }
+
+    /// `END IF` · `END WHILE` · `END LOOP` · `END REPEAT`는 `BEGIN … END` 짝에서 빠진다(종전엔 depth가 0이 돼 첫 `;`에서 끊겼다).
+    #[test]
+    fn end_if_does_not_close_begin() {
+        let src = "CREATE PROCEDURE p(IN x INT)\nBEGIN\n  IF x > 0 THEN\n    SELECT 1;\n  END IF;\n  WHILE x > 0 DO SET x = x - 1; END WHILE;\n  SELECT CASE WHEN x = 0 THEN 'z' ELSE 'n' END;\nEND;\nSELECT 9;";
+        let v = texts(src);
+        assert_eq!(v.len(), 2, "{v:?}");
+        assert!(v[0].ends_with("END"), "{}", v[0]);
+        assert_eq!(v[1], "SELECT 9");
+        // `#` 주석 안의 `;`는 문장을 끝내지 않는다 · 백틱 식별자 안의 `;`도.
+        assert_eq!(
+            texts("SELECT 1 # a;b\n;\nSELECT `x;y`;"),
+            vec!["SELECT 1 # a;b", "SELECT `x;y`"]
+        );
     }
 }

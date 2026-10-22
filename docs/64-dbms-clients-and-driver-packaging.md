@@ -12,7 +12,7 @@
 | SQL Server | `tiberius`(순수 Rust TDS) | 없음 | 서버가 TLS를 강제하면 인증서 신뢰(지금 = `mssql.encrypt` full/login) · Windows 통합 인증(SSPI)·Kerberos는 **미지원**(쓰려면 OS 구성 요소가 필요해진다) | ✅ 내장 |
 | PostgreSQL | `postgres`(순수 Rust) | 없음 | `~/.pgpass` · `pg_service.conf` · `sslrootcert`는 **읽지 않는다**(libpq의 기능 — 비밀번호는 볼트가 맡는다) · TLS 미지원(서버가 `hostssl`만 허용하면 접속 불가 → 필요해지면 `rustls` 추가) | ✅ 내장 |
 | SQLite | `rusqlite` `bundled`(SQLite C 소스를 앱에 컴파일) | 없음 | 확장 모듈 로드(`load_extension`)는 꺼 둠 | ✅ 내장 |
-| MySQL · MariaDB | (없음) | — | 순수 Rust 드라이버(`mysql`)면 따로 필요한 것이 없다 | ☐ 미구현 — `Dialect::Mysql`과 능력표만 있다 |
+| MySQL · MariaDB | `mysql` 28(순수 Rust · 동기 · `rustls-tls`) | 없음 | TLS 선택은 T-388(지금 = 평문 접속) · `LOAD DATA LOCAL` 미사용 | ✅ 내장(10-22 · 135차 · D-344) |
 | ODBC(Tibero · Altibase · CUBRID …) | (없음) | ★ **ODBC 드라이버 관리자 + 벤더 ODBC 드라이버 + DSN**(Windows 내장 · macOS/Linux는 unixODBC/iODBC 설치) | 벤더별 클라이언트 설정 파일(`tbdsn.tbr` 등) | ☐ 미구현 — Oracle 다음으로 "따로 설정"이 필요한 후보 |
 
 **결론**: 지금 빌드에서 별도 설치·설정이 필요한 것은 **Oracle 하나**다. 앞으로 같은 틀이 필요한 것은 ODBC 계열(드라이버 관리자·DSN 탐지)이고, 순수 Rust 드라이버(SQL Server · PostgreSQL · MySQL)는 네트워크 보안 옵션(TLS 인증서 · 통합 인증)을 넣을 때 그 DBMS의 분류에 키가 생긴다.
