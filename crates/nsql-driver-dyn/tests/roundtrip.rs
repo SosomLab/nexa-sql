@@ -30,8 +30,8 @@ fn sqlite_over_abi_round_trip() {
         );
         return;
     };
-    let drv =
-        DynDriver::load(&lib).unwrap_or_else(|e| panic!("load {}: {}", lib.display(), e.message));
+    let drv = DynDriver::load(&lib, "sqlite")
+        .unwrap_or_else(|e| panic!("load {}: {}", lib.display(), e.message));
     assert_eq!(drv.id(), "sqlite");
     assert_eq!(drv.dialect(), nsql_core::Dialect::Sqlite);
     let spec = nsql_script::ConnectSpec::parse("sqlite::memory:").expect("spec");

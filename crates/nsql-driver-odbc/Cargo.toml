@@ -11,9 +11,14 @@ description = "Nexa SQL adapter - ODBC (odbc-api). DSN or driver connection stri
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 모든 드라이버 = 확장 설치형 — rlib(내장 · 개발·시험) + cdylib(`nsql_driver_<id>` · ABI v2 · 배포).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
+nsql-abi.workspace = true
 
 # DR-3 예외(드라이버 · docs/10 §4 원장 · T-383). 시스템 ODBC 드라이버 관리자 위의 순수 Rust 바인딩(MIT) · `prompt`(winit)·`derive` 끔.
 # ★ D-345: 내장 ODBC = **Windows만**(인박스 odbc32.dll · 설치 0). macOS/Linux는 이 크레이트가 빈 스텁으로 컴파일된다 —

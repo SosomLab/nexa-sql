@@ -17,3 +17,13 @@
 mod imp;
 #[cfg(windows)]
 pub use imp::{connection_string, OdbcSession};
+
+// ★ 확장 드라이버 내보내기(D-350 · ABI v2): cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(id = 패키지 id · 방언 = 레지스트리 키).
+#[cfg(windows)]
+fn nsql_abi_open_from_spec(
+    spec: &nsql_script::ConnectSpec,
+) -> Result<imp::OdbcSession, nsql_core::DbError> {
+    imp::OdbcSession::connect(spec)
+}
+#[cfg(windows)]
+nsql_abi::export_driver!("odbc", "odbc", nsql_abi_open_from_spec);

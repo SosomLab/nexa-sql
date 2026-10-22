@@ -11,9 +11,14 @@ description = "Nexa SQL adapter - Oracle Thin (Oracle's pure-Rust `oracledb` dri
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 모든 드라이버 = 확장 설치형 — rlib(내장 · 개발·시험) + cdylib(`nsql_driver_<id>` · ABI v2 · 배포).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
+nsql-abi.workspace = true
 # DR-3 예외(드라이버 · docs/110 §3-1 · 10-13). Oracle 공식 순수 Rust 드라이버 — TNS/TTC 프로토콜을 직접 말한다(Instant Client 불필요).
 # beta라 **정확한 판에 고정**(beta.3 → beta.4에서 타입이 바뀜 · 110 §7) · 끌려오는 crate = rustls 0.23(aws-lc-rs) · chrono · uuid · whoami · rand 등.
 oracledb = "=26.0.0-beta.4"

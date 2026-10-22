@@ -1250,3 +1250,11 @@ mod tests {
         assert_eq!(to_mysql(&Value::Cursor(CursorId(1))), mysql::Value::NULL);
     }
 }
+
+// ★ 확장 드라이버 내보내기(D-350 · ABI v2): cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(id = 패키지 id · 방언 = 레지스트리 키).
+fn nsql_abi_open_from_spec(
+    spec: &nsql_script::ConnectSpec,
+) -> Result<MysqlSession, nsql_core::DbError> {
+    MysqlSession::connect(spec)
+}
+nsql_abi::export_driver!("mysql", "mysql", nsql_abi_open_from_spec);

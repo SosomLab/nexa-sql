@@ -132,13 +132,13 @@ fn cstr<'a>(p: *const std::os::raw::c_char) -> &'a str {
 
 impl DynDriver {
     /// 라이브러리를 올리고 함수표를 확인한다(버전 불일치 = 거부).
-    pub fn load(path: &Path) -> Result<Arc<DynDriver>, DbError> {
+    pub fn load(path: &Path, id: &str) -> Result<Arc<DynDriver>, DbError> {
         let h = os::load(path).map_err(|e| abi_err(format!("{}: {e}", path.display())))?;
-        let sym = os::symbol(h, nsql_abi::ENTRY_SYMBOL_C).ok_or_else(|| {
+        let sym = os::symbol(h, &nsql_abi::entry_symbol_c(id)).ok_or_else(|| {
             abi_err(format!(
                 "{}: symbol {} not found",
                 path.display(),
-                nsql_abi::ENTRY_SYMBOL
+                nsql_abi::entry_symbol(id)
             ))
         })?;
         // SAFETY: 심볼은 `extern "C" fn() -> *const VTable`(ABI 계약).
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn loading_a_missing_library_is_an_error_not_a_panic() {
-        let e = DynDriver::load(Path::new("no-such-dir/no-such-driver.dll"))
+        let e = DynDriver::load(Path::new("no-such-dir/no-such-driver.dll"), "x")
             .expect_err("missing library");
         assert!(e.message.contains("no-such-driver"), "{e:?}");
     }

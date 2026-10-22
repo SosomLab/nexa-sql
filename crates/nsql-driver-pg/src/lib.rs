@@ -1260,3 +1260,11 @@ mod tests {
         assert_eq!(txn_boundary("SELECT 1"), None);
     }
 }
+
+// ★ 확장 드라이버 내보내기(D-350 · ABI v2): cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(id = 패키지 id · 방언 = 레지스트리 키).
+fn nsql_abi_open_from_spec(
+    spec: &nsql_script::ConnectSpec,
+) -> Result<PgSession, nsql_core::DbError> {
+    PgSession::connect(spec)
+}
+nsql_abi::export_driver!("pg", "postgres", nsql_abi_open_from_spec);

@@ -11,8 +11,13 @@ description = "Nexa SQL 어댑터 — Oracle(kubo `oracle` · ODPI-C · Instant 
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 모든 드라이버 = 확장 설치형 — rlib(내장 · 개발·시험) + cdylib(`nsql_driver_<id>` · ABI v2 · 배포).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
+nsql-abi.workspace = true
 # DR-12. ODPI-C를 vendoring해 빌드 시 Oracle 헤더 불필요 · 실행 시 libclntsh를 dlopen.
 oracle = "0.6"

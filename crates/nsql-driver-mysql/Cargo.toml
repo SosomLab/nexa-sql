@@ -11,9 +11,14 @@ description = "Nexa SQL adapter - MySQL/MariaDB (pure Rust client). ? positional
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 모든 드라이버 = 확장 설치형 — rlib(내장 · 개발·시험) + cdylib(`nsql_driver_<id>` · ABI v2 · 배포).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
+nsql-abi.workspace = true
 # DR-3 예외(드라이버 · docs/10 §4 원장). 동기 순수 Rust 클라이언트(blackbeam/rust-mysql-simple) · TLS = rustls + aws-lc-rs(Oracle Thin과
 # 같은 스택 · 두 번째 TLS 스택을 늘리지 않는다) · 압축 = flate2 rust 백엔드(C 코드 0) · derive·binlog 등 불필요 feature 끔.
 mysql = { version = "28.0", default-features = false, features = ["minimal-rust", "buffer-pool", "rustls-tls"] }

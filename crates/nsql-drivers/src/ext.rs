@@ -292,7 +292,7 @@ fn driver(id: &str) -> Result<Option<Arc<DynDriver>>, DbError> {
     let Some(info) = find_extension(id) else {
         return Ok(None);
     };
-    let d = DynDriver::load(&info.path)?;
+    let d = DynDriver::load(&info.path, id)?;
     map.insert(id.to_string(), Arc::clone(&d));
     Ok(Some(d))
 }

@@ -65,30 +65,121 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
         #[cfg(all(feature = "odbc", windows))]
         Dialect::Odbc => Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?)),
-        // 모든 드라이버 feature가 켜진 Windows 기본 빌드에서는 닿지 않는다 — 경량판·mac/Linux(ODBC 없음)가 쓴다.
-        #[cfg(not(all(
-            feature = "sqlite",
-            any(feature = "oracle", feature = "oracle-thin"),
-            feature = "mssql",
-            feature = "pg",
-            feature = "mysql",
-            feature = "odbc",
-            windows
-        )))]
-        other => {
-            // ★ 확장 폴백(T-27 ③): `drivers/<방언>/<ver>/` cdylib가 설치돼 있으면 그것으로(첫 접속 때 지연 로드).
-            if let Some(s) = ext::open_ext(&other.to_string(), spec)? {
-                return Ok(s);
-            }
-            Err(DbError {
-                code: None,
-                message: format!(
-                    "{other} 드라이버는 이 빌드에 없습니다(M4) — 확장 드라이버도 없음(NSQL_DRIVER_DIR 또는 <설정 폴더>/drivers/{other}/<ver>/)"
-                ),
-                position: None,
-            })
+        // ★ D-350: 내장이 없는 방언 = 확장 드라이버(`drivers/<id>/<ver>/` cdylib · 첫 접속 때 지연 로드) · 없으면
+        //   [`ERR_DRIVER_MISSING`](호출자가 자동 설치로 잇는다 · C단계). 모든 feature가 켜진 빌드에서는 닿지 않는다.
+        #[allow(unreachable_patterns)]
+        other => open_extension(other, spec),
+    }
+}
+
+/// ★ 확장 드라이버 패키지 id(D-350 · 색인·`drivers/<id>/` 폴더 이름) — 방언마다 후보(Oracle = Thin·OCI 둘 · 설정 `oracle.driver` 순).
+pub const DRIVER_IDS: &[(Dialect, &[&str])] = &[
+    (Dialect::Sqlite, &["sqlite"]),
+    (Dialect::Postgres, &["pg"]),
+    (Dialect::Mysql, &["mysql"]),
+    (Dialect::Mssql, &["mssql"]),
+    (Dialect::Oracle, &["oracle-thin", "oracle-oci"]),
+    (Dialect::Odbc, &["odbc"]),
+];
+
+/// 방언의 확장 후보 id(우선순위 순 · Oracle은 설정이 고른 드라이버가 먼저).
+#[must_use]
+pub fn ext_ids(dialect: Dialect) -> Vec<&'static str> {
+    let mut ids: Vec<&'static str> = DRIVER_IDS
+        .iter()
+        .find(|(d, _)| *d == dialect)
+        .map_or(Vec::new(), |(_, ids)| ids.to_vec());
+    if dialect == Dialect::Oracle && oracle_driver() == OracleDriver::Oci {
+        ids.reverse();
+    }
+    ids
+}
+
+/// 확장 id → 이 저장소의 크레이트 이름(cdylib 파일 = `library_file_name(크레이트)` · 패키징이 쓴다 · `oracle-oci`만 다르다).
+#[must_use]
+pub fn ext_crate_name(id: &str) -> String {
+    match id {
+        "oracle-oci" => "nsql-driver-oracle".to_string(),
+        other => format!("nsql-driver-{other}"),
+    }
+}
+
+/// 확장 id → 방언(색인·매니페스트 없이도 폴더 이름만으로).
+#[must_use]
+pub fn dialect_of_ext(id: &str) -> Option<Dialect> {
+    DRIVER_IDS
+        .iter()
+        .find(|(_, ids)| ids.contains(&id))
+        .map(|(d, _)| *d)
+}
+
+/// "이 빌드에 드라이버가 없고 확장도 설치되지 않았다" — 호출자(GUI·CLI)가 자동 설치로 잇는 오류 코드(D-350 C단계).
+pub const ERR_DRIVER_MISSING: i64 = -1350;
+
+/// 방언의 드라이버 상태.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DriverStatus {
+    /// 이 빌드에 컴파일돼 있다.
+    Builtin,
+    /// 확장이 설치돼 있다(첫 접속 때 올린다).
+    Extension { id: String, version: String },
+    /// 둘 다 없다 — 후보 id(설치하면 된다).
+    Missing { ids: Vec<&'static str> },
+}
+
+/// 이 빌드에 내장된 방언인가(Oracle = 설정이 고른 드라이버 기준).
+#[must_use]
+pub fn is_builtin(dialect: Dialect) -> bool {
+    match dialect {
+        Dialect::Sqlite => cfg!(feature = "sqlite"),
+        Dialect::Postgres => cfg!(feature = "pg"),
+        Dialect::Mysql => cfg!(feature = "mysql"),
+        Dialect::Mssql => cfg!(feature = "mssql"),
+        Dialect::Odbc => cfg!(all(feature = "odbc", windows)),
+        Dialect::Oracle => oracle_driver().included(),
+    }
+}
+
+/// 내장 → 확장 설치본 → 없음(폴더 한 번 읽기 · 접속 직전에만 부른다).
+#[must_use]
+pub fn driver_status(dialect: Dialect) -> DriverStatus {
+    if is_builtin(dialect) {
+        return DriverStatus::Builtin;
+    }
+    let ids = ext_ids(dialect);
+    for id in &ids {
+        if let Some(e) = ext::find_extension(id) {
+            return DriverStatus::Extension {
+                id: e.id,
+                version: e.version,
+            };
         }
     }
+    DriverStatus::Missing { ids }
+}
+
+/// 드라이버 없음 오류(코드 [`ERR_DRIVER_MISSING`] · 메시지에 설치 명령).
+#[must_use]
+pub fn driver_missing(dialect: Dialect) -> DbError {
+    let ids = ext_ids(dialect);
+    DbError {
+        code: Some(ERR_DRIVER_MISSING),
+        message: format!(
+            "{dialect} driver is not in this build and no extension is installed — install it: nsql driver install {} (or View ▸ Drivers)",
+            ids.first().unwrap_or(&"<id>")
+        ),
+        position: None,
+    }
+}
+
+/// 확장 후보를 차례로 열어 본다 · 전부 없으면 [`driver_missing`].
+fn open_extension(dialect: Dialect, spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
+    for id in ext_ids(dialect) {
+        if let Some(s) = ext::open_ext(id, spec)? {
+            return Ok(s);
+        }
+    }
+    Err(driver_missing(dialect))
 }
 
 /// ★ Oracle 드라이버 둘(docs/110 · 설정 `oracle.driver` · D-277/D-278): **OCI**(ODPI-C · Instant Client) / **Thin**(순수 Rust).

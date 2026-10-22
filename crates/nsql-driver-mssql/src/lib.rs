@@ -1587,3 +1587,11 @@ DECLARE @P2_ NVARCHAR(4000) = @P4;
         assert!(positional_like("p7") && !positional_like("P") && !positional_like("PX1"));
     }
 }
+
+// ★ 확장 드라이버 내보내기(D-350 · ABI v2): cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(id = 패키지 id · 방언 = 레지스트리 키).
+fn nsql_abi_open_from_spec(
+    spec: &nsql_script::ConnectSpec,
+) -> Result<MssqlSession, nsql_core::DbError> {
+    MssqlSession::connect(spec)
+}
+nsql_abi::export_driver!("mssql", "mssql", nsql_abi_open_from_spec);

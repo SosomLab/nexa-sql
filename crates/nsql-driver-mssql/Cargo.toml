@@ -15,9 +15,14 @@ winauth = ["tiberius/winauth"]
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 모든 드라이버 = 확장 설치형 — rlib(내장 · 개발·시험) + cdylib(`nsql_driver_<id>` · ABI v2 · 배포).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
+nsql-abi.workspace = true
 # DR-13. 런타임 독립 드라이버 — 어댑터 내부에 tokio 현재 스레드 런타임을 둔다(동기 Session 포트).
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls", "chrono"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }

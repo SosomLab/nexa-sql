@@ -1,7 +1,7 @@
 //! ★ 확장 드라이버 ABI(DR-29 · T-27 ① · docs/22 §0 · 64 §3-4) — 본체와 **in-process cdylib** 드라이버가 주고받는 유일한 경계.
 //!
 //! - [`VTable`] = 버전 있는 C 함수표(`#[repr(C)]` · 함수 포인터만 · Rust ABI 0). 드라이버는 `extern "C" fn nsql_driver_vtable()`
-//!   ([`ENTRY_SYMBOL`]) 하나를 내보내고, 본체(`nsql-driver-dyn`)는 `LoadLibrary`/`dlopen` 뒤 그 표로만 부른다.
+//!   ([`entry_symbol`] = `nsql_driver_vtable_<id>`) 하나를 내보내고, 본체(`nsql-driver-dyn`)는 `LoadLibrary`/`dlopen` 뒤 그 표로만 부른다.
 //! - 값·요청·결과는 [`codec`]의 **바이너리 코덱**(길이 접두 · LE · 태그) — 같은 코덱을 RPC 프로세스 전송에도 재사용한다(22 §0).
 //! - 메모리 규칙: 드라이버가 만든 [`Buf`]는 드라이버의 `free_buf`로만 해제(할당자 경계) · 본체가 넘기는 입력 버퍼는 호출 동안만 유효.
 //! - 오류 규칙: 반환 `i32` = [`STATUS_OK`] / [`STATUS_DB_ERROR`](`err` = 코덱 `DbError`) / [`STATUS_PANIC`](`err` = UTF-8 메시지 ·
@@ -21,8 +21,23 @@ use std::os::raw::c_char;
 /// ABI 버전 — 함수표 배치나 코덱이 호환되지 않게 바뀌면 올린다(본체는 다른 버전을 거부).
 pub const ABI_VERSION: u32 = 2;
 /// 드라이버가 내보내는 유일한 심볼: `extern "C" fn() -> *const VTable`.
-pub const ENTRY_SYMBOL: &str = "nsql_driver_vtable";
-pub const ENTRY_SYMBOL_C: &[u8] = b"nsql_driver_vtable\0";
+/// 실제 이름 = `nsql_driver_vtable_<id>`([`entry_symbol`]). 드라이버마다 다르게 해야 여러 드라이버 rlib를 한 바이너리에
+/// 정적으로 넣는 내장 빌드에서 심볼이 겹치지 않는다(LNK2005 · D-350 B단계).
+pub const ENTRY_SYMBOL_PREFIX: &str = "nsql_driver_vtable_";
+
+/// 드라이버 id의 진입 심볼 이름(`-`도 그대로 — 동적 링커 심볼은 C 식별자 규칙을 따르지 않는다).
+#[must_use]
+pub fn entry_symbol(id: &str) -> String {
+    format!("{ENTRY_SYMBOL_PREFIX}{id}")
+}
+
+/// NUL 종료 바이트(dlsym/GetProcAddress용).
+#[must_use]
+pub fn entry_symbol_c(id: &str) -> Vec<u8> {
+    let mut v = entry_symbol(id).into_bytes();
+    v.push(0);
+    v
+}
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_DB_ERROR: i32 = 1;
@@ -1546,9 +1561,9 @@ macro_rules! export_driver {
             set_message_sink: nsql_abi_set_message_sink,
             copy_out: nsql_abi_copy_out,
         };
-        #[no_mangle]
+        #[export_name = concat!("nsql_driver_vtable_", $id)]
         #[allow(unreachable_pub)]
-        pub extern "C" fn nsql_driver_vtable() -> *const $crate::VTable {
+        pub extern "C" fn nsql_abi_driver_vtable_export() -> *const $crate::VTable {
             &NSQL_ABI_VTABLE
         }
         /// 인프로세스 함수표(시험 · 적합성 검사 · 내장 드라이버를 ABI 경로로 돌려 보기).

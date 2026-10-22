@@ -11,8 +11,13 @@ description = "Nexa SQL 어댑터 — PostgreSQL(rust-postgres · 동기 클라�
 [lints]
 workspace = true
 
+# ★ D-350(10-23): 모든 드라이버 = 확장 설치형 — rlib(내장 · 개발·시험) + cdylib(`nsql_driver_<id>` · ABI v2 · 배포).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
+nsql-abi.workspace = true
 # DR-3 예외(드라이버). 동기 래퍼(`postgres`)가 내부에 tokio 현재 스레드 런타임을 둔다 — 동기 Session 포트 그대로.
 postgres = "0.19"

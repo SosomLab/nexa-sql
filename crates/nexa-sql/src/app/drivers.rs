@@ -100,8 +100,7 @@ impl App {
     /// 쉬는 상태줄 = 드라이버 폴더 · 색인 나이.
     fn drivers_idle_status(&mut self) {
         let Some(root) = self.driver_root() else {
-            self.driver_win
-                .set_status(t(Msg::DrvStatusNoFolder), false);
+            self.driver_win.set_status(t(Msg::DrvStatusNoFolder), false);
             return;
         };
         let age = install::cached_index_age(&root).map_or_else(
@@ -144,8 +143,7 @@ impl App {
             return;
         }
         let Some(root) = self.driver_root() else {
-            self.driver_win
-                .set_status(t(Msg::DrvStatusNoFolder), false);
+            self.driver_win.set_status(t(Msg::DrvStatusNoFolder), false);
             return;
         };
         let src = self.driver_source();

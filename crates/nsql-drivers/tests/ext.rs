@@ -95,3 +95,40 @@ fn registry_picks_latest_version_and_opens() {
     nsql_drivers::ext::set_driver_dir(None);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// ★ D-350 B단계: `cargo build -p nsql-driver-<x>`로 나온 cdylib마다 함수표(ABI v2 · id · 방언)를 확인한다(없는 것은 건너뜀 ·
+/// 서버 없이 로드만 · Oracle OCI는 Instant Client 없이도 로드는 된다).
+#[test]
+fn built_driver_cdylibs_export_abi_v2_vtables() {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(profile);
+    let mut seen = 0;
+    for (dialect, ids) in nsql_drivers::DRIVER_IDS {
+        for id in *ids {
+            if *id == "odbc" && !cfg!(windows) {
+                continue;
+            }
+            let p = target.join(library_file_name(&nsql_drivers::ext_crate_name(id)));
+            if !p.is_file() {
+                eprintln!("[skip] {} 없음", p.display());
+                continue;
+            }
+            let d = nsql_driver_dyn::DynDriver::load(&p, id).expect("load");
+            assert_eq!(d.id(), *id, "{}", p.display());
+            assert_eq!(d.dialect(), *dialect, "{}", p.display());
+            assert_eq!(nsql_drivers::dialect_of_ext(id), Some(*dialect));
+            seen += 1;
+        }
+    }
+    eprintln!("cdylib {seen}개 확인");
+    assert_eq!(nsql_drivers::ext_ids(nsql_core::Dialect::Postgres), ["pg"]);
+    assert_eq!(nsql_drivers::dialect_of_ext("nope"), None);
+}
