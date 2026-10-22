@@ -369,6 +369,15 @@ fn shape_find(x: f32, y: f32) -> bool {
     (db && !cut) || glass
 }
 
+/// 툴바 [변수](사용자 10-23): `x=` — 왼쪽 x(사선 둘) + 오른쪽 등호(가로 둘).
+fn shape_vars(x: f32, y: f32) -> bool {
+    let w = 26.0;
+    stroke(x, y, (36.0, 78.0), (122.0, 178.0), w)
+        || stroke(x, y, (122.0, 78.0), (36.0, 178.0), w)
+        || stroke(x, y, (150.0, 104.0), (226.0, 104.0), w)
+        || stroke(x, y, (150.0, 152.0), (226.0, 152.0), w)
+}
+
 // ── 메뉴 아이콘 도형(우클릭 메뉴 · DBeaver식 · 사용자 09-15) ──
 
 /// 복사 — 겹친 사각형 두 장(외곽선).
@@ -726,6 +735,10 @@ pub(crate) fn log() -> ToolIcon {
 pub(crate) fn find_objects() -> ToolIcon {
     mask(shape_find)
 }
+/// 툴바 [변수](사용자 10-23).
+pub(crate) fn variables() -> ToolIcon {
+    mask(shape_vars)
+}
 /// 결과 도구줄 보기 모드 버튼(▾는 툴바가 붙인다).
 pub(crate) fn view_mode() -> ToolIcon {
     mask(shape_view_mode)
@@ -777,6 +790,7 @@ mod tests {
             shape_db,
             shape_files,
             shape_gear,
+            shape_vars,
         ] {
             let (opaque, partial) = coverage(s);
             assert!(opaque > 100, "채워진 픽셀이 있어야 한다: {opaque}");

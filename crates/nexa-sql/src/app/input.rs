@@ -1025,7 +1025,12 @@ impl App {
             }
             self.tool_dock.on_event(&ev, &mut inv);
             if let Some(id) = self.tool_dock.take_clicked() {
-                self.menu_action(&id);
+                // ★ 툴바 [변수]는 열기만(객체 찾기와 같은 동작 · 사용자 10-23) — 메뉴의 토글과 다르다.
+                if id == "view.variables" {
+                    self.show_vars_window();
+                } else {
+                    self.menu_action(&id);
+                }
             }
             self.drain_dock_actions();
             if self.menubar.is_open() {

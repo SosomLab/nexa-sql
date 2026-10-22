@@ -2476,6 +2476,8 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
     ("conn.disconnect", Msg::TipDisconnect),
     ("conn.sessions", Msg::TipSessions),
     // 툴바 [객체 찾기](56 · 10-16) — `TOOLBAR_BLOCKS`와 짝(시험 `toolbar_blocks_cover_every_hideable_item_once`가 둘을 대조).
+    // 툴바 [변수](사용자 10-23 · 객체 찾기 왼쪽 · 열기만).
+    ("view.variables", Msg::TipVariables),
     ("view.find_objects", Msg::TipFindObjects),
     ("view.log", Msg::TipLog),
 ];

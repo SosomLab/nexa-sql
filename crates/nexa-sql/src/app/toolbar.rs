@@ -523,6 +523,9 @@ impl App {
             "view",
             t(Msg::MnView),
             vec![
+                // ★ [변수] = [객체 찾기] 왼쪽(사용자 10-23) · 동작은 객체 찾기와 같다 = 변수 창 열기만(토글 없음 · 열려 있으면 앞으로 ·
+                //   `show_vars_window`) — 메뉴 View ▸ Variables는 그대로 토글.
+                ToolItem::new("view.variables", toolicons::variables()).tip(t(Msg::TipVariables)),
                 // ★ [객체 찾기] = 로그 창 왼쪽(사용자 10-16) · 열기만(토글 없음 · 이미 열려 있으면 그 창을 앞으로).
                 ToolItem::new("view.find_objects", toolicons::find_objects())
                     .tip(t(Msg::TipFindObjects)),
@@ -559,7 +562,7 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
     ),
     ("conn", &["conn.toggle", "conn.disconnect", "conn.sessions"]),
     ("tabconn", &[]),
-    ("view", &["view.find_objects", "view.log"]),
+    ("view", &["view.variables", "view.find_objects", "view.log"]),
 ];
 
 /// 그룹은 숨기지 않는다(버튼 단위로만) — 편집 창에서 그룹 체크 잠금.

@@ -263,6 +263,18 @@ impl App {
         self.vars_win_context();
     }
 
+    /// ★ 변수 창 **보이기**(툴바 [변수] · 사용자 10-23 · 객체 찾기와 같은 동작): 열려 있으면 앞으로 · 아니면 다음 `about_to_wait`에서 연다
+    ///   (이벤트 루프 밖이라 깃발 `open_vars` · 토글 아님 — 토글은 메뉴 `view.variables`).
+    pub(crate) fn show_vars_window(&mut self) {
+        if let Some(w) = self.vars_win.window() {
+            w.focus_window();
+            self.vars_win.redraw();
+            return;
+        }
+        self.open_vars = true;
+        self.redraw();
+    }
+
     /// 변수 창의 제목 = 지금 편집기 탭.
     pub(crate) fn vars_win_context(&mut self) {
         if !self.vars_win.is_open() {

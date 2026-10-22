@@ -1678,6 +1678,7 @@ pub enum Msg {
     TipConnect,
     TipLog,
     TipFindObjects,
+    TipVariables,
     TipColStatus,
     TipColTest,
     TipColConnect,
@@ -5726,6 +5727,7 @@ impl Msg {
             Msg::TipRunAll => ["Run all (F5)", "전체 실행(F5)"],
             Msg::TipConnect => ["Connect", "접속"],
             Msg::TipFindObjects => ["Find Objects", "객체 찾기"],
+            Msg::TipVariables => ["Variables", "변수"],
             Msg::TipLog => ["Log window (Ctrl+Shift+G)", "로그 창(Ctrl+Shift+G)"],
             Msg::TipColStatus => [
                 "Server status - green: port open · yellow: checking · blue: host up, port closed · red: unreachable · gray: not checked",
@@ -9637,6 +9639,7 @@ impl Msg {
         Msg::TipConnect,
         Msg::TipLog,
         Msg::TipFindObjects,
+        Msg::TipVariables,
         Msg::TipColStatus,
         Msg::TipColTest,
         Msg::TipColConnect,
