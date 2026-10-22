@@ -2121,6 +2121,14 @@ impl App {
         if std::mem::take(&mut self.open_drivers) {
             self.open_drivers_window(el);
         }
+        // 🔧 T-397(10-23): 기동 시 로그인 창(`open_conn` 초기값 true)도 사건 없이 — 종전에는 `window_event` 끝에서만 봤는데
+        //   기동 직후 오는 사건(Moved·Resized·ScaleFactorChanged·RedrawRequested)은 전부 그 전에 return이라 **포커스·커서 사건이
+        //   없는 기동**(뒤에서 띄움 · `NSQL_NO_ACTIVATE` · 격리 홈 자동 시험)에서는 로그인 창이 영영 열리지 않았다(137차 관찰 ·
+        //   62e8175에서도 같음 = 회귀 아님). 사용자가 창을 클릭·마우스를 올리면 그제야 열리던 것이 이 흠이다.
+        if std::mem::take(&mut self.open_conn) {
+            self.open_conn_window(el);
+            self.sync_modal();
+        }
         // 설정 창도 사건 없이(기동 명령 `edit.prefs:<검색어>` · T-305).
         if std::mem::take(&mut self.open_prefs) {
             self.open_prefs_now(el);

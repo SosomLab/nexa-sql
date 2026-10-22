@@ -80,6 +80,8 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 /// 창이 호스트에 요청하는 것.
+// `Panel(PanelAction)`이 `ConnectSpec`을 품어 크다(10-23 `driver` 필드로 248 B) — 창 사건 한 번에 하나 · 복사 비용 무시.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ConnWinAction {
     /// `RedrawRequested` — 호스트가 폰트·테마를 넘겨 [`ConnWin::paint`]를 부른다.
     Paint,
