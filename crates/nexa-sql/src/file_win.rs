@@ -88,6 +88,14 @@ pub(crate) fn labels() -> PickerLabels {
         menu_copy_path: t(Msg::MnCopyPath).into(),
         menu_copy_name: t(Msg::ExpCopyName).into(),
         menu_refresh: t(Msg::ExpRefresh).into(),
+        menu_rename: t(Msg::MnRenameItem).into(),
+        err_rename: t(Msg::ErrRename).into(),
+        menu_delete: t(Msg::MnDeleteItem).into(),
+        err_delete: t(Msg::ErrDelete).into(),
+        perm_delete_ask: t(Msg::PermDeleteAsk).into(),
+        menu_undo: t(Msg::MnUndo).into(),
+        menu_redo: t(Msg::MnRedo).into(),
+        err_undo: t(Msg::ErrUndoFileOp).into(),
         multi_selected: t(Msg::MultiOpenHeader).into(),
     }
 }
@@ -189,6 +197,7 @@ impl FileWin {
         start: Option<&Path>,
         default_name: &str,
         recent: Vec<PathBuf>,
+        pinned: Vec<(String, PathBuf)>,
         show_hidden: bool,
         show_dot: bool,
         encoding: &str,
@@ -214,6 +223,7 @@ impl FileWin {
         picker.set_overwrite_confirm_ms(self.overwrite_confirm_ms);
         picker.set_default_name(default_name);
         picker.set_recent(recent);
+        picker.set_pinned(pinned);
         picker.set_show_hidden(show_hidden);
         picker.set_show_dot(show_dot);
         // 하단 인코딩 콤보(Golden/DBeaver 하단 줄 · 세 OS 동일 · 사용자 09-15) — 열기 = 자동 감지 기본 · 저장 = 탭 인코딩.
@@ -335,10 +345,16 @@ impl FileWin {
                         if c.is_control() {
                             return None;
                         }
-                        // 주 수식키 + 글자 = 단축키(Ctrl+A 전체 선택) — 글자로 넣지 않는다.
+                        // 주 수식키 + 글자 = 단축키 — 글자로 넣지 않는다: Ctrl+A 전체 선택 · ★ Ctrl+Z / Ctrl+Y(또는
+                        // Ctrl+Shift+Z) = 파일 작업 되돌리기/다시 실행(사용자 10-22 · nexa-dlg 스택).
                         if self.primary {
-                            return (crate::input::shortcut_letter(kev) == Some('a'))
-                                .then_some(InputEvent::SelectAll);
+                            return match crate::input::shortcut_letter(kev) {
+                                Some('a') => Some(InputEvent::SelectAll),
+                                Some('z') if self.shift => Some(InputEvent::Redo),
+                                Some('z') => Some(InputEvent::Undo),
+                                Some('y') => Some(InputEvent::Redo),
+                                _ => None,
+                            };
                         }
                         InputEvent::Char { c, now_ms: 0 }
                     }

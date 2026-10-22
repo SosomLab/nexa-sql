@@ -376,17 +376,49 @@ impl App {
             Some((p.x, p.y, sz.width, sz.height))
         });
         let owner = self.window.clone();
-        // 시작 폴더 = 활성 탭 파일의 폴더 → 마지막 폴더 → 홈.
-        let start = self
+        // ★ 시작 폴더(사용자 10-22): 기동 뒤 **첫 열기** = 프로젝트 파일의 폴더(프로젝트 모드) / 작업 폴더(폴더 모드) ·
+        //   그 뒤 = 마지막 위치(`file.last_dir` · 창을 닫을 때 기록). 폴더 고르기(설정)는 이 규칙 밖(`folder_start`).
+        //   ★ 파일 창 모드([`DialogBase`] · 사용자 10-22 3차) = 프로젝트 파일의 폴더 > 폴더 인자 > 파일 인자(첫 파일의 폴더) >
+        //   **홈 폴더 모드**(지정 없이 실행) — 기동 인자 기준이라 프로젝트를 닫으면 이전 모드로 돌아간다 · 모드 열쇠가 바뀌면
+        //   다음 열기가 다시 "첫 열기"(새 모드의 위치).
+        let base = DialogBase::resolve(
+            self.project.path.as_deref(),
+            self.arg_folder.as_deref(),
+            &self.arg_files,
+            nexa_fs::home_dir().as_deref(),
+        );
+        let mode_key = base.as_ref().map(DialogBase::key).unwrap_or_default();
+        let first = mode != PickerMode::Folder
+            && self.file_dialog_mode.as_deref() != Some(mode_key.as_str());
+        let base_dir = base.as_ref().map(|b| b.dir().to_path_buf());
+        let active_dir = self
             .editors
             .active_path()
-            .and_then(|p| p.parent().map(Path::to_path_buf))
-            .or_else(|| {
-                self.settings
-                    .get("file.last_dir")
-                    .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
-            });
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+        let last_dir = self
+            .settings
+            .get("file.last_dir")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let start = file_dialog_start(
+            first,
+            base_dir.as_deref(),
+            last_dir.as_deref(),
+            active_dir.as_deref(),
+        );
+        // ★ 사이드바 "최근 폴더" 맨 위 = 현재 모드의 위치("프로젝트 위치 - ~/…" · "폴더 위치 - ~" · "파일 위치 - …" · 사용자 10-22 ·
+        //   홈 폴더 모드까지 늘 하나는 보인다).
+        let pinned: Vec<(String, PathBuf)> = base
+            .as_ref()
+            .map(|b| {
+                let dir = b.dir().to_path_buf();
+                (tf(b.label(), &[&nexa_fs::path::display(&dir)]), dir)
+            })
+            .into_iter()
+            .collect();
+        if mode != PickerMode::Folder {
+            self.file_dialog_mode = Some(mode_key);
+        }
         let default_name = match (mode, self.file_purpose) {
             (PickerMode::Save, FilePurpose::LogExport) => {
                 let ext = match self.settings.get("log.format").unwrap_or("raw") {
@@ -471,6 +503,7 @@ impl App {
             start.as_deref(),
             &default_name,
             recent_dirs,
+            pinned,
             show_hidden,
             show_dot,
             &encoding,
@@ -1117,5 +1150,143 @@ impl App {
             }
         }
         self.redraw();
+    }
+}
+
+/// ★ 파일 창의 작업 모드(사용자 10-22 3차 · 북마크 저장 위치를 정하는 [`project::WorkMode`]와 **별개** · 67 §6 불변):
+/// 프로젝트(프로젝트 파일의 폴더) > 폴더 인자 > 파일 인자(첫 파일의 폴더 = "파일 위치") > **홈 폴더 모드**(지정 없이 실행).
+/// 기동 인자 기준이라 프로젝트를 닫으면 이전 모드로 돌아간다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DialogBase {
+    Project(PathBuf),
+    Folder(PathBuf),
+    File(PathBuf),
+}
+
+impl DialogBase {
+    pub(crate) fn resolve(
+        project: Option<&Path>,
+        folder: Option<&Path>,
+        files: &[PathBuf],
+        home: Option<&Path>,
+    ) -> Option<DialogBase> {
+        if let Some(p) = project {
+            return p.parent().map(|d| DialogBase::Project(d.to_path_buf()));
+        }
+        if let Some(d) = folder {
+            return Some(DialogBase::Folder(d.to_path_buf()));
+        }
+        let file_dir = files.iter().find_map(|f| {
+            let abs = std::path::absolute(f).unwrap_or_else(|_| f.clone());
+            abs.parent()
+                .filter(|d| !d.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+        });
+        if let Some(d) = file_dir {
+            return Some(DialogBase::File(d));
+        }
+        home.map(|h| DialogBase::Folder(h.to_path_buf()))
+    }
+
+    pub(crate) fn dir(&self) -> &Path {
+        match self {
+            DialogBase::Project(d) | DialogBase::Folder(d) | DialogBase::File(d) => d,
+        }
+    }
+
+    /// 모드 열쇠(같으면 "그 뒤 열기" · 다르면 "첫 열기").
+    pub(crate) fn key(&self) -> String {
+        match self {
+            DialogBase::Project(d) => format!("project:{}", d.display()),
+            DialogBase::Folder(d) => format!("folder:{}", d.display()),
+            DialogBase::File(d) => format!("file:{}", d.display()),
+        }
+    }
+
+    /// 사이드바 라벨(호스트가 "{모드} 위치 - ~/…"로 채운다).
+    pub(crate) fn label(&self) -> Msg {
+        match self {
+            DialogBase::Project(_) => Msg::PlaceProjectDir,
+            DialogBase::Folder(_) => Msg::PlaceFolderDir,
+            DialogBase::File(_) => Msg::PlaceFileDir,
+        }
+    }
+}
+
+/// ★ 파일 창 시작 폴더(순수 · 사용자 10-22): `first` = 기동 뒤(또는 모드 전환 뒤) 첫 열기 → 모드의 위치([`DialogBase`]) →
+/// (없으면) 활성 탭 파일의 폴더 → 마지막 위치 · 그 뒤 = **마지막 위치** → 활성 탭 파일의 폴더 · `None` = 창 기본(홈).
+pub(crate) fn file_dialog_start(
+    first: bool,
+    base_dir: Option<&Path>,
+    last_dir: Option<&Path>,
+    active_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    let pick = if first {
+        base_dir.or(active_dir).or(last_dir)
+    } else {
+        last_dir.or(active_dir)
+    };
+    pick.map(Path::to_path_buf)
+}
+
+#[cfg(test)]
+mod file_start_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// ★ 파일 창 모드(사용자 10-22 3차): 프로젝트 > 폴더 인자 > 파일 인자(첫 파일 폴더) > 홈 폴더 모드 · 프로젝트 닫으면 이전 모드.
+    #[test]
+    fn dialog_base_prefers_project_then_folder_then_file_then_home() {
+        let proj = Path::new("D:/w/proj/x.nsql-project");
+        let folder = Path::new("D:/w/folder");
+        let files = vec![PathBuf::from("D:/w/scripts/a.sql")];
+        let home = Path::new("C:/Users/me");
+        assert_eq!(
+            DialogBase::resolve(Some(proj), Some(folder), &files, Some(home)),
+            Some(DialogBase::Project(PathBuf::from("D:/w/proj")))
+        );
+        // 프로젝트를 닫으면 = 기동 인자 기준으로 이전 모드.
+        assert_eq!(
+            DialogBase::resolve(None, Some(folder), &files, Some(home)),
+            Some(DialogBase::Folder(PathBuf::from(folder)))
+        );
+        assert_eq!(
+            DialogBase::resolve(None, None, &files, Some(home)),
+            Some(DialogBase::File(PathBuf::from("D:/w/scripts")))
+        );
+        // 지정 없이 실행 = 홈 폴더 모드(사용자 10-22).
+        assert_eq!(
+            DialogBase::resolve(None, None, &[], Some(home)),
+            Some(DialogBase::Folder(PathBuf::from(home)))
+        );
+        assert_eq!(DialogBase::resolve(None, None, &[], None), None);
+        let b = DialogBase::Folder(PathBuf::from(home));
+        assert!(matches!(b.label(), Msg::PlaceFolderDir));
+        assert_eq!(b.key(), format!("folder:{}", home.display()));
+        assert_ne!(
+            DialogBase::Project(PathBuf::from("D:/w/proj")).key(),
+            DialogBase::Folder(PathBuf::from("D:/w/proj")).key(),
+            "같은 폴더라도 모드가 다르면 다른 열쇠"
+        );
+    }
+
+    /// 조건별 독립 영향(첫 열기 · 모드 위치 · 마지막 위치 · 활성 탭 폴더).
+    #[test]
+    fn first_open_uses_mode_dir_then_last_dir_wins() {
+        let b = Path::new("D:/w/base");
+        let l = Path::new("D:/w/last");
+        let a = Path::new("D:/w/active");
+        let s = |first, bd: Option<&Path>, ld: Option<&Path>, ad: Option<&Path>| {
+            file_dialog_start(first, bd, ld, ad)
+        };
+        // 첫 열기: 모드 위치 > 활성 탭 > 마지막 위치.
+        assert_eq!(s(true, Some(b), Some(l), Some(a)), Some(PathBuf::from(b)));
+        assert_eq!(s(true, None, Some(l), Some(a)), Some(PathBuf::from(a)));
+        assert_eq!(s(true, None, Some(l), None), Some(PathBuf::from(l)));
+        assert_eq!(s(true, None, None, None), None, "창 기본(홈)");
+        // 그 뒤: 마지막 위치 > 활성 탭 — 모드 위치는 더 보지 않는다.
+        assert_eq!(s(false, Some(b), Some(l), Some(a)), Some(PathBuf::from(l)));
+        assert_eq!(s(false, Some(b), None, Some(a)), Some(PathBuf::from(a)));
+        assert_eq!(s(false, Some(b), None, None), None);
     }
 }
