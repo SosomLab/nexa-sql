@@ -81,6 +81,21 @@ services:
       interval: 5s
       retries: 20
 
+  mariadb:
+    profiles: ["mariadb"]
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: nexa
+      MARIADB_USER: nexa
+      MARIADB_PASSWORD: nexa
+      MARIADB_DATABASE: nexa
+    ports: ["3307:3306"]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+
 volumes:
   nexa-ui:
   cargo-registry:

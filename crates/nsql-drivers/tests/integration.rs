@@ -11,6 +11,62 @@ use nsql_core::{DbError, Dialect, Session, Value};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::ConnectSpec;
 
+/// ★ D-350 B단계 적합성: `NSQL_TEST_DYN=1`이면 모든 시험이 **확장 경로**(target의 cdylib를 임시 드라이버 폴더에 깔고 ABI v2로 로드)로
+/// 세션을 연다 — 내장 경로와 같은 시험이 같은 결과를 내야 한다. 없으면 내장(`nsql_drivers::open`).
+fn open_session(spec: &ConnectSpec, dialect: Dialect) -> Result<Box<dyn Session>, DbError> {
+    if std::env::var_os("NSQL_TEST_DYN").is_none() {
+        return nsql_drivers::open(spec, dialect);
+    }
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let target = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join(profile);
+        let root = std::env::temp_dir().join(format!("nsql-dyn-it-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (d, ids) in nsql_drivers::DRIVER_IDS {
+            for id in *ids {
+                let lib = nsql_driver_dyn::library_file_name(&nsql_drivers::ext_crate_name(id));
+                let src = target.join(&lib);
+                if !src.is_file() {
+                    continue;
+                }
+                let dir = root.join(id).join("0.0.0-test");
+                std::fs::create_dir_all(&dir).expect("mkdir");
+                std::fs::copy(&src, dir.join(&lib)).expect("copy cdylib");
+                std::fs::write(
+                    dir.join(nsql_drivers::ext::MANIFEST),
+                    format!(
+                        r#"{{"id":"{id}","version":"0.0.0-test","dialect":"{d}","protocol":{},"lib":"{lib}"}}"#,
+                        nsql_abi::ABI_VERSION
+                    ),
+                )
+                .expect("manifest");
+            }
+        }
+        nsql_drivers::ext::set_driver_dir(Some(&root));
+        eprintln!("[dyn] 확장 경로 시험 · 드라이버 폴더 {}", root.display());
+        root
+    });
+    let real = spec.dialect.unwrap_or(dialect);
+    for id in nsql_drivers::ext_ids(real) {
+        if let Some(s) = nsql_drivers::ext::open_ext(id, spec)? {
+            return Ok(s);
+        }
+    }
+    panic!(
+        "[dyn] {real} 확장 cdylib 없음({} · cargo build -p nsql-driver-* 먼저)",
+        root.display()
+    );
+}
+
 fn runner_for(env: &str, dialect: Dialect) -> Option<Runner> {
     // `<…>_URL` 대신 `<…>_PROFILE=<저장된 프로필 이름>`도 받는다 — 로컬에서 비밀번호를 환경 변수에 적지 않고 돌린다.
     // ⚠ 프로필은 **실제 서버**다: 이름으로 골라(`cargo test … pg_refcursor`) 임시 객체만 쓰는 테스트만 돌린다.
@@ -28,9 +84,7 @@ fn runner_for(env: &str, dialect: Dialect) -> Option<Runner> {
         }
     };
     let opener: Opener = Box::new(
-        move |s: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-            nsql_drivers::open(s, dialect)
-        },
+        move |s: &ConnectSpec| -> Result<Box<dyn Session>, DbError> { open_session(s, dialect) },
     );
     let mut r = Runner::new(dialect, opener);
     let mut ev = Vec::new();
@@ -543,7 +597,7 @@ END $$;
 
 #[test]
 fn sqlite_always_runs() {
-    let opener: Opener = Box::new(|s: &ConnectSpec| nsql_drivers::open(s, Dialect::Sqlite));
+    let opener: Opener = Box::new(|s: &ConnectSpec| open_session(s, Dialect::Sqlite));
     let mut r = Runner::new(Dialect::Sqlite, opener);
     let spec = nsql_drivers::parse_target("sqlite::memory:", Dialect::Sqlite).unwrap();
     let mut ev = Vec::new();
@@ -584,10 +638,16 @@ fn oracle_driver_parity_columns_and_values() {
         "SELECT INTERVAL '1 02:03:04.5' DAY TO SECOND AS ids, INTERVAL '1-2' YEAR TO MONTH AS iym, HEXTORAW('DEADBEEF') AS rw, ROWID AS rid, TO_CLOB('clob 한글') AS cl FROM dual",
         "SELECT * FROM (SELECT LEVEL AS lv FROM dual CONNECT BY LEVEL <= 1200) ORDER BY lv",
     ];
+    // 두 드라이버가 다 있을 때만(`NSQL_ORACLE_DRIVERS` · Instant Client 없는 PC = Thin만 → 건너뜀).
+    let drivers = oracle_drivers();
+    if drivers.len() < 2 {
+        eprintln!("[skip] 패리티는 OCI+Thin 둘 다 필요({drivers:?})");
+        return;
+    }
     let mut per_driver: Vec<(D, Vec<nsql_core::ResultSet>)> = Vec::new();
-    for d in [D::Oci, D::Thin] {
+    for d in drivers {
         nsql_drivers::set_oracle_driver(d);
-        let mut s = nsql_drivers::open(&spec, Dialect::Oracle)
+        let mut s = open_session(&spec, Dialect::Oracle)
             .unwrap_or_else(|e| panic!("{} 접속 실패: {}", d.as_str(), e.message));
         assert_eq!(s.dialect(), Dialect::Oracle);
         let mut sets = Vec::new();
@@ -759,7 +819,7 @@ fn mysql_tls_modes_follow_url_param() {
         let sep = if url.contains('?') { '&' } else { '?' };
         let spec = nsql_drivers::parse_target(&format!("{url}{sep}tls={tls}"), Dialect::Mysql)
             .expect("접속 문자열");
-        let mut s = nsql_drivers::open(&spec, Dialect::Mysql).map_err(|e| e.message)?;
+        let mut s = open_session(&spec, Dialect::Mysql).map_err(|e| e.message)?;
         let r = s
             .execute(&ExecRequest {
                 sql: "SHOW SESSION STATUS LIKE 'Ssl_cipher'".to_string(),
@@ -820,7 +880,7 @@ fn mysql_bulk_load_local_infile_round_trip() {
     use nsql_core::ExecRequest;
     fn run(url: &str, tag: &str) {
         let spec = nsql_drivers::parse_target(url, Dialect::Mysql).expect("접속 문자열");
-        let mut s = nsql_drivers::open(&spec, Dialect::Mysql)
+        let mut s = open_session(&spec, Dialect::Mysql)
             .unwrap_or_else(|e| panic!("{tag} 접속 실패: {}", e.message));
         let exec = |s: &mut Box<dyn Session>, sql: &str| {
             s.execute(&ExecRequest {
@@ -959,15 +1019,11 @@ fn odbc_select_bind_dml_and_errors() {
     };
     let spec = nsql_drivers::parse_target(&url, Dialect::Odbc).expect("접속 문자열");
     assert_eq!(spec.dialect, Some(Dialect::Odbc), "{spec:?}");
-    let mut s = nsql_drivers::open(&spec, Dialect::Odbc)
+    let mut s = open_session(&spec, Dialect::Odbc)
         .unwrap_or_else(|e| panic!("ODBC 접속 실패: {}", e.message));
     assert_eq!(s.dialect(), Dialect::Odbc);
     assert!(s.is_alive());
-    assert!(
-        s.driver_name().starts_with("odbc-api"),
-        "{}",
-        s.driver_name()
-    );
+    assert!(s.driver_name().contains("odbc-api"), "{}", s.driver_name());
     let exec = |s: &mut Box<dyn Session>, sql: &str, params: Vec<BindParam>| {
         s.execute(&ExecRequest {
             sql: sql.to_string(),
@@ -1123,8 +1179,8 @@ fn mysql_driver_warnings_error_position_and_limits() {
             return;
         }
     };
-    let mut s = nsql_drivers::open(&spec, Dialect::Mysql)
-        .unwrap_or_else(|e| panic!("접속 실패: {}", e.message));
+    let mut s =
+        open_session(&spec, Dialect::Mysql).unwrap_or_else(|e| panic!("접속 실패: {}", e.message));
     assert_eq!(s.dialect(), Dialect::Mysql);
     assert!(s.cancel_handle().is_some());
     assert!(s.is_alive());
@@ -1170,4 +1226,111 @@ fn mysql_driver_warnings_error_position_and_limits() {
     let r = exec(&mut s, "SELECT DATABASE() AS d, VERSION() AS v").unwrap();
     assert_eq!(r.result_sets[0].rows.len(), 1);
     assert!(s.is_alive());
+}
+
+/// ★ ODBC 자동화(서버 없음 · 사용자 10-23 "ODBC 연결도 자동화"): Windows 내장 **Text 드라이버**로 임시 폴더의 CSV를 열어 조회·카탈로그·
+/// 자동 커밋 전용 표시를 본다. 드라이버가 없으면(IM002) 건너뜀. 확장 경로(`NSQL_TEST_DYN=1`)로도 같은 결과.
+#[test]
+fn odbc_text_driver_csv_without_server() {
+    use nsql_core::ExecRequest;
+    if !cfg!(windows) || !nsql_drivers::available().contains(&Dialect::Odbc) {
+        eprintln!("[skip] ODBC = Windows만");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("nsql-odbc-text-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(
+        dir.join("t.csv"),
+        "id,name,amount\r\n1,alpha,1.5\r\n2,beta,\r\n3,감마,3\r\n",
+    )
+    .expect("csv");
+    std::fs::write(
+        dir.join("schema.ini"),
+        "[t.csv]\r\nFormat=CSVDelimited\r\nColNameHeader=True\r\nCharacterSet=65001\r\nCol1=id Integer\r\nCol2=name Text Width 50\r\nCol3=amount Double\r\n",
+    )
+    .expect("schema.ini");
+    let url = format!(
+        "odbc:Driver={{Microsoft Text Driver (*.txt; *.csv)}};Dbq={};Extensions=csv",
+        dir.display()
+    );
+    let spec = nsql_drivers::parse_target(&url, Dialect::Odbc).expect("접속 문자열");
+    let mut s = match open_session(&spec, Dialect::Odbc) {
+        Ok(s) => s,
+        Err(e) if e.message.contains("IM002") => {
+            eprintln!("[skip] Text ODBC 드라이버 없음: {}", e.message);
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        Err(e) => panic!("Text ODBC 접속 실패: {e:?}"),
+    };
+    assert!(
+        s.driver_name().contains("autocommit only"),
+        "Text 드라이버 = 트랜잭션 없음 표시: {}",
+        s.driver_name()
+    );
+    let r = s
+        .execute(&ExecRequest {
+            sql: "SELECT id, name, amount FROM [t.csv] ORDER BY id".into(),
+            params: Vec::new(),
+        })
+        .expect("select");
+    let rs = &r.result_sets[0];
+    assert_eq!(rs.columns.len(), 3);
+    assert_eq!(rs.rows.len(), 3, "{rs:?}");
+    assert_eq!(rs.rows[0][0], Value::Int(1));
+    assert_eq!(rs.rows[0][1], Value::Str("alpha".into()));
+    assert!(
+        matches!(rs.rows[0][2], Value::Float(f) if (f - 1.5).abs() < 1e-9),
+        "{:?}",
+        rs.rows[0][2]
+    );
+    assert_eq!(rs.rows[1][2], Value::Null, "빈 칸 = NULL");
+    assert_eq!(
+        rs.rows[2][1],
+        Value::Str("감마".into()),
+        "UTF-8(CharacterSet=65001)"
+    );
+    // 바인드(`?`) · 집계.
+    let r = s
+        .execute(&ExecRequest {
+            sql: "SELECT COUNT(*) AS n FROM [t.csv] WHERE id > ?".into(),
+            params: vec![nsql_core::BindParam {
+                name: "1".into(),
+                value: Value::Int(1),
+                ty: nsql_core::VarType::Number,
+                direction: nsql_core::Direction::In,
+            }],
+        })
+        .expect("bind");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(2));
+    // 카탈로그 훅(SQLTables · SQLColumns).
+    let tables = s
+        .catalog_tables(None)
+        .expect("tables")
+        .expect("odbc catalog");
+    assert!(
+        tables.iter().any(|t| t.name.eq_ignore_ascii_case("t.csv")),
+        "{tables:?}"
+    );
+    let cols = s
+        .catalog_columns(None, "t.csv")
+        .expect("columns")
+        .expect("odbc catalog");
+    let names: Vec<String> = cols.iter().map(|c| c.name.to_ascii_lowercase()).collect();
+    assert_eq!(names, ["id", "name", "amount"]);
+    // 자동 커밋 전용: commit = no-op · rollback = 안내 오류 · 세션 살아 있음.
+    assert!(s.commit().is_ok());
+    assert!(s.rollback().is_err());
+    assert!(s.is_alive());
+    // 오류 = 진단 코드가 메시지에.
+    let e = s
+        .execute(&ExecRequest {
+            sql: "SELECT nope FROM [missing.csv]".into(),
+            params: Vec::new(),
+        })
+        .expect_err("missing file");
+    assert!(!e.message.is_empty());
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
 }
