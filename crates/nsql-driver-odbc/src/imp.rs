@@ -53,6 +53,8 @@ pub struct OdbcSession {
     description: String,
     dbms: String,
     max_rows: usize,
+    /// 드라이버가 트랜잭션을 지원하는가(자동 커밋 끄기 성공) — 아니면 commit = no-op · rollback = 안내 오류.
+    transactions: bool,
     /// ★ 실행 중인 문장 핸들(T-383 2차 취소): `execute` 동안만 non-null · [`OdbcCancel`]이 다른 스레드에서 `SQLCancel`.
     active: Arc<AtomicPtr<std::ffi::c_void>>,
 }
@@ -368,11 +370,22 @@ impl OdbcSession {
                 },
             )
             .map_err(err)?;
-        conn.set_autocommit(false).map_err(err)?;
+        // ★ 자동 커밋 끄기 = best-effort(협업 V1 10-22): Excel·Text·Access(Jet/ACE)처럼 트랜잭션이 없는 드라이버는
+        //   `SQL_ATTR_AUTOCOMMIT=OFF`에 HYC00 "Optional feature not implemented" → 접속을 살리고 "트랜잭션 없음"으로 표시.
+        let transactions = match conn.set_autocommit(false) {
+            Ok(()) => true,
+            Err(odbc_api::Error::Diagnostics { record, .. })
+                if record.state.as_str() == "HYC00" =>
+            {
+                false
+            }
+            Err(e) => return Err(err(e)),
+        };
         let dbms = conn.database_management_system_name().unwrap_or_default();
         Ok(OdbcSession {
             conn,
             description: spec.redacted(),
+            transactions,
             dbms,
             max_rows: 0,
             active: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
@@ -417,11 +430,15 @@ impl Session for OdbcSession {
     }
 
     fn driver_name(&self) -> String {
-        if self.dbms.is_empty() {
+        let mut s = if self.dbms.is_empty() {
             "odbc-api 29".to_string()
         } else {
             format!("odbc-api 29 · {}", self.dbms)
+        };
+        if !self.transactions {
+            s.push_str(" · autocommit only");
         }
+        s
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn nsql_core::CancelHandle>> {
@@ -441,10 +458,22 @@ impl Session for OdbcSession {
     }
 
     fn commit(&mut self) -> Result<(), DbError> {
+        if !self.transactions {
+            return Ok(());
+        }
         self.conn.commit().map_err(err)
     }
 
     fn rollback(&mut self) -> Result<(), DbError> {
+        if !self.transactions {
+            return Err(DbError {
+                code: None,
+                message:
+                    "ODBC: this driver has no transactions (autocommit only) - nothing to roll back"
+                        .into(),
+                position: None,
+            });
+        }
         self.conn.rollback().map_err(err)
     }
 
