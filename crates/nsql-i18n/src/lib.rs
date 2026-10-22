@@ -7374,7 +7374,7 @@ impl Msg {
             Msg::LblThemeCacheMs => ["System theme probe cache (ms)", "시스템 테마 조회 캐시(ms)"],
             Msg::DescThemeCacheMs => ["Linux: reuse the gsettings color-scheme answer for this long (0 = ask every time)", "Linux: gsettings color-scheme 조회 결과를 이 시간 동안 재사용(0 = 매번 조회)"],
             Msg::LblDriverRepo => ["Extension driver repository", "확장 드라이버 저장소"],
-            Msg::DescDriverRepo => ["GitHub owner/name holding drivers/index.json and the driver-<id>-v<ver> releases (nsql driver search/install)", "drivers/index.json과 driver-<id>-v<ver> 릴리스가 있는 GitHub owner/name(nsql driver search/install)"],
+            Msg::DescDriverRepo => ["GitHub owner/name holding drivers/index.json and the drivers-v<ver> pre-releases (nsql driver search/install)", "drivers/index.json과 drivers-v<ver> pre-release가 있는 GitHub owner/name(nsql driver search/install)"],
             Msg::LblDriverHttpTimeout => ["Driver download timeout (secs)", "드라이버 다운로드 타임아웃(초)"],
             Msg::DescDriverHttpTimeout => ["Connect/read/write limit for each HTTPS request while downloading drivers", "드라이버를 내려받는 HTTPS 요청 하나의 접속·읽기·쓰기 상한"],
             Msg::ToastRefetchTitle => ["Re-fetch from the start?", "처음부터 다시 받을까요?"],
