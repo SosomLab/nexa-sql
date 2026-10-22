@@ -40,6 +40,38 @@
 
 > ✅ **구현됨(10-22 · 136차 · T-27 ①② · D-347 · 31cc01b)** = `nsql-abi`(ABI v1 함수 13 + 코덱) · `nsql-driver-dyn`(LoadLibraryW/dlopen 로더 · `DynSession`) · SQLite cdylib 참조 드라이버 · ✅ ③ 레지스트리(9646dcf) = `NSQL_DRIVER_DIR` > `<설정 폴더>/drivers` · `drivers/<id>/<ver>/nsql_driver_<id>.{dll,so,dylib}` · 최신 버전 선택 · 내장 없는 방언 = 확장 폴백(지연 로드) · 남음 = 로그인 콤보 확장 방언 표시 · `?driver=` 명시 · 커서·벌크·카탈로그 ABI · 매니페스트·다운로드(T-28·T-29).
 
+### 0-1. ★ D-350 구현(10-23 · 사용자 "모든 드라이버 별도 설치형") — A ABI v2 · B 7종 cdylib
+
+- 설치본 = 드라이버 없는 판(남는 것 = Oracle OCI만 · Instant Client 의존) · 나머지 = 확장(접속 시 자동 설치 = C단계 · 오프라인 번들 = `nsql-drivers-all-<ver>-<os>-<arch>.zip`) · 개발·시험 빌드 = feature로 내장 유지.
+- **ABI v2**(42ac8e0) = `ABI_VERSION` 2 · v1 함수 13 + `call(op, 코덱 입력 → 코덱 출력)` + `set_message_sink(cb, ctx)` + `copy_out(sql, csv, write_cb, ctx, rows)` · 모르는 op = "unsupported"(함수표 배치 불변 · op 추가로 ABI 버전을 올리지 않음).
+
+| op | 이름 | 뜻 |
+|---|---|---|
+| 1 | CAPS | 능력표(`Caps` 필드 전부 · 열거형 u8 · 드라이버의 `&'static str`은 본체가 세션당 1회 leak) |
+| 2 | DRIVER_NAME | 드라이버 표시 이름 |
+| 3 · 4 | FETCH_CURSOR · FETCH_CURSOR_PAGE | 서버 커서(REF CURSOR) 받기 · 페이지 |
+| 5 | CURSOR_SUPPORTED | 커서 유지 가능 여부 |
+| 6 · 7 | FETCH_NEXT · CLOSE_CURSOR | 다음 페이지 · 커서 닫기 |
+| 8 | SET_CALL_TIMEOUT | 호출 상한 |
+| 9~15 | BULK_BEGIN · PUSH · FLUSH · COMMIT · ROLLBACK · FINISH · DROP | 대량 적재 싱크(세션당 1 · `Slot.bulk` · 본체 `DynBulkSink`) |
+| 16 · 17 | CATALOG_TABLES · CATALOG_COLUMNS | 드라이버 카탈로그 훅(ODBC `SQLTables`/`SQLColumns` 등) |
+
+- **진입 심볼**(441e83a) = 드라이버별 **`nsql_driver_vtable_<id>`**(`#[export_name = concat!]`) — 하나의 공통 심볼이면 내장 빌드(rlib 여러 개 정적 링크)에서 LNK2005 · 로더 = `DynDriver::load(path, id)`.
+
+| id | 크레이트 | 비고 |
+|---|---|---|
+| `sqlite` | nsql-driver-sqlite | |
+| `pg` | nsql-driver-pg | |
+| `mysql` | nsql-driver-mysql | MariaDB 포함 |
+| `mssql` | nsql-driver-mssql | |
+| `oracle-thin` | nsql-driver-oracle-thin | Instant Client 불필요 |
+| `oracle-oci` | nsql-driver-oracle | cdylib 파일 이름 = `nsql_driver_oracle.{dll,so,dylib}` → 매니페스트 `lib`로 적음 · **설치본에 남는 유일한 드라이버**(Instant Client 의존) |
+| `odbc` | nsql-driver-odbc | `#[cfg(windows)]`(D-345) |
+
+- **허브 상태** = `driver_status(id)` = Builtin(이 빌드에 정적 링크) / Extension(드라이버 폴더에 설치됨) / Missing → `open()`은 후보 id를 차례로 시도하고 없으면 `ERR_DRIVER_MISSING`(-1350 · 메시지에 `nsql driver install <id>`) · 보조 = `DRIVER_IDS` · `ext_ids` · `dialect_of_ext` · `ext_crate_name` · `is_builtin`.
+- 남은 단계 = C 자동 설치(`driver.auto_install`) · D 릴리스 워크플로(`drivers.yml` · 태그 `drivers-v<ver>` pre-release) · E 문서(TODO T-396).
+
+
 사용자 요구 *"로딩 시간·불필요한 메모리·속도 지연이 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"*. 실측(release · 09-15): `nsql` 기동 ≈ 20ms(sqlite 실행 포함 24ms) · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(MSSQL tokio 런타임·Oracle ODPI-C는 **첫 접속 때** 만들어짐). 정적으로 링크된 드라이버는 OS 요구 페이징 덕에 **쓰지 않으면 RAM에 올라오지 않는다** → 내장 4종은 정적 유지가 최적(분리 = 비용만 추가).
 
 | 방식 | 기동 | 메모리 | 호출 지연 | 격리 | 쓰임 |
@@ -58,6 +90,8 @@
 - DBeaver는 Maven Central에서 jar를 받아 `%APPDATA%\DBeaverData\drivers\maven\`에 버전별로 둔다([참고](https://dbeaver.com/docs/dbeaver/Driver-Manager/)). 우리는 **GitHub Releases**가 그 자리다(사용자 지정).
 
 ### 2-2. 형태 = stdio JSON-RPC 프로세스 ([09 §4-3](09-editor-and-packages.md) 확정)
+
+> 10-23 현재 = in-process cdylib(§0 · ABI v2 §0-1 · D-350)가 기본 형태 · 아래 프로세스 형태는 격리가 필요할 때의 선택지로 남는다.
 ```text
 nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)   ← 확장 1개 = 실행 파일 1개(+ 동봉 라이브러리)
           ◀── stdin/stdout JSON-RPC 2.0 (길이 접두 프레임) ──▶
@@ -111,6 +145,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 | `nsql driver rm <id>[@<ver>]`(`remove`) | 그 판(또는 그 id 전부)을 지움 · 이 프로세스가 이미 올린 판은 거부 · 휴지통 없음 |
 
 ## 3. "최신 버전" 다운로드 규칙 (사용자 요구 ③)
+
+> D-350(10-23) 뒤 = 내장 드라이버도 이 규칙으로 받는다(설치본 = OCI만) · 1급 드라이버 묶음은 한 태그 `drivers-v<ver>`(3-OS pre-release) + 오프라인 번들 · 접속 시 자동 설치 = `driver.auto_install`(C단계).
 
 | 규칙 | 내용 |
 |---|---|

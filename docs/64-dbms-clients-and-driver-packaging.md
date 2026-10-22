@@ -102,6 +102,8 @@ DBMS
 
 ### 3-4. 확장 드라이버를 만들 때의 설계(22 §0의 구체화 · ✅ 틀 구현 10-22 = T-27 ①②③ · T-28 1차 · D-347 · 다운로드는 후속)
 
+> ★ **10-23 D-350** = 모든 드라이버가 이 길(확장)로 간다 · ABI v2(op 17 · 22 §0-1) · 7종 cdylib(심볼 `nsql_driver_vtable_<id>`) · 설치본 = Oracle OCI만.
+
 > 크레이트(10-22) = `nsql-abi`(ABI v1) · `nsql-driver-dyn`(로더) · `nsql_drivers::ext`(레지스트리 · 매니페스트) · **`nsql-json`**(의존 0 · `Json`/`parse`/`dump` · settings에서 분리 = 레지스트리가 settings에 기대지 않게) · **`nsql-net`**(최소 HTTPS GET · rustls 0.23 공유 · 프록시 · 다운로드용 · T-29) · `ext::install`·`ext::zip`·`ext::sha256`·`ext::keys` · CLI `nsql driver`(list·path·check·rm·search·install·update).
 
 ```
@@ -121,6 +123,8 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 - cdylib에서 `tokio` 런타임·TLS 스택이 드라이버마다 중복된다 → 확장 드라이버 하나의 크기가 내장일 때의 기여분보다 커진다(공유하던 의존성이 복제된다). "용량 절감" 기대치를 낮춰 잡을 것.
 
 ## 4. 경량 배포판 — 정의 · Instant Client 없이 가능한가(사용자 09-21)
+
+> ★ **10-23 D-350으로 정의가 바뀜** = 기본 설치본 자체가 "드라이버 없는 판"(남는 것 = Oracle OCI · Instant Client가 있으면 접속) · 그 밖 드라이버 = 접속 시 자동 다운로드 또는 오프라인 번들 · 아래 표(크기·구성)는 D단계(릴리스 워크플로) 뒤 실측으로 갱신한다.
 
 ### 4-1. 정의
 **경량 배포판(Lite)** = "내려받아 실행하면 **다른 것을 설치하지 않고** 접속된다"를 보장하는 배포판. 기준 셋:

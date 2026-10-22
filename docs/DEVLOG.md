@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · D-350 A·B)** — ★ 모든 드라이버 별도 설치형(사용자) · A = ABI v2(`call` op 17 · 메시지 콜백 · copy_out · 적합성 시험 · 42ac8e0) · B = 드라이버 7종 cdylib(`export_driver!` · 심볼 `nsql_driver_vtable_<id>` = LNK2005 방지 · `driver_status` · -1350 · 441e83a) · 관리자 후속(`…` 제거 · 경로 가운데 줄임 · 8c68d67).
 - **2026-10-23 (137차 · 드라이버 관리자)** — ★ 드라이버 관리자 창 1차(View ▸ Drivers · 표 6열 · 새로 고침/설치/삭제/확인 · 워커 · 창 열기 = 네트워크 0 · d1ffc6d) · V1 ✓ · 관찰 3(메뉴 `…` · 경로 잘림 · 팔레트 라벨).
 - **2026-10-23 (137차)** — push fb92bbd(nexa-sql 21) · b302c5e(nexa-license) · CI ✓ 전부(nexa-sql ci 3-OS · integration · nexa-license 3-OS) · 툴바 [변수] 버튼(view 그룹 · 열기만 · 79bfef8) · 🔧 CLI `nsql driver` 폴더(`apply_load_switches` 미경유 → 직접 · f756958) · V1 ✓.
 - **2026-10-23 (136차 이어서 · D-348)** — ✅ 확장 드라이버 배포 공개키 `drv-v1` 내장(사용자 keygen · 지문 `8CFVCNTJ` · `ext/keys.rs` · 시험 = .pub 대조 · 가짜/낯선 키 거부 실기 ✓)(6942993) · 남음 = 실제 서명 설치 왕복(사용자 실기) · 첫 드라이버 pre-release · push 대기 19.
