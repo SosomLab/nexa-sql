@@ -41,6 +41,7 @@ fn open_session(spec: &ConnectSpec, dialect: Dialect) -> Result<Box<dyn Session>
                 let dir = root.join(id).join("0.0.0-test");
                 std::fs::create_dir_all(&dir).expect("mkdir");
                 std::fs::copy(&src, dir.join(&lib)).expect("copy cdylib");
+                copy_bundled_runtime(&target, id, &dir);
                 std::fs::write(
                     dir.join(nsql_drivers::ext::MANIFEST),
                     format!(
@@ -1333,4 +1334,35 @@ fn odbc_text_driver_csv_without_server() {
     assert!(!e.message.is_empty());
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 동봉 런타임(DuckDB의 duckdb.dll/libduckdb.so/.dylib)을 cdylib 옆으로 — download-lib가 `build/libduckdb-sys-*/out/`에 푼 것을 찾는다.
+fn copy_bundled_runtime(target: &std::path::Path, id: &str, dest_dir: &std::path::Path) {
+    if id != "duckdb" {
+        return;
+    }
+    let name = if cfg!(windows) {
+        "duckdb.dll"
+    } else if cfg!(target_os = "macos") {
+        "libduckdb.dylib"
+    } else {
+        "libduckdb.so"
+    };
+    let Ok(rd) = std::fs::read_dir(target.join("build")) else {
+        return;
+    };
+    for e in rd.flatten() {
+        if !e
+            .file_name()
+            .to_string_lossy()
+            .starts_with("libduckdb-sys-")
+        {
+            continue;
+        }
+        let p = e.path().join("out").join(name);
+        if p.is_file() {
+            let _ = std::fs::copy(&p, dest_dir.join(name));
+            return;
+        }
+    }
 }

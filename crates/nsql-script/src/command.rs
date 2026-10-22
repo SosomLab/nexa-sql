@@ -917,7 +917,7 @@ GO
         ),
         Dialect::Postgres => format!("EXPLAIN (VERBOSE, COSTS) {s};\n"),
         Dialect::Sqlite => format!("EXPLAIN QUERY PLAN {s};\n"),
-        Dialect::Mysql | Dialect::Odbc => format!("EXPLAIN {s};\n"),
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => format!("EXPLAIN {s};\n"),
     }
 }
 

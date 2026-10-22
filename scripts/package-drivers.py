@@ -19,8 +19,11 @@ DRIVERS = [
     ("oracle-thin", "nsql-driver-oracle-thin", "oracle", "Oracle (Thin, pure Rust)"),
     ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC (Windows)"),
+    ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
 ]
 WINDOWS_ONLY = {"odbc"}
+# 드라이버 옆에 동봉하는 런타임 공유 라이브러리(Windows 이름 기준 · 다른 OS는 lib*.so/.dylib로 바꾼다).
+BUNDLED = {"duckdb": ["duckdb.dll"]}
 
 
 def abi_version():
@@ -29,6 +32,21 @@ def abi_version():
     if not m:
         sys.exit("ABI_VERSION not found")
     return int(m.group(1))
+
+
+def find_runtime(target_dir, name):
+    """target/<profile>/<name> 또는 build/libduckdb-sys-*/out/<name>(download-lib가 푼 자리)."""
+    direct = os.path.join(target_dir, name)
+    if os.path.isfile(direct):
+        return direct
+    build = os.path.join(target_dir, "build")
+    if os.path.isdir(build):
+        for d in sorted(os.listdir(build)):
+            if d.startswith("libduckdb-sys-"):
+                for root, _dirs, files in os.walk(os.path.join(build, d, "out")):
+                    if name in files:
+                        return os.path.join(root, name)
+    return None
 
 
 def lib_name(crate, os_name):
@@ -77,6 +95,18 @@ def main():
                 z.writestr(info, f.read())
             if os.path.isfile(license_path):
                 z.write(license_path, "LICENSE.md")
+            # 동봉 런타임(DuckDB = download-lib가 받은 공유 라이브러리 · target/<profile>/에 build.rs가 복사해 둔다).
+            for extra in BUNDLED.get(did, []):
+                e = extra if a.os == "windows" else ("lib" + extra.replace(".dll", ".so" if a.os == "linux" else ".dylib"))
+                src_e = find_runtime(a.target_dir, e)
+                if not src_e:
+                    sys.exit(f"{did}: bundled runtime {e} missing under {a.target_dir}")
+                info_e = zipfile.ZipInfo(e)
+                info_e.compress_type = zipfile.ZIP_DEFLATED
+                info_e.external_attr = (0o100755 if a.os != "windows" else 0o100644) << 16
+                info_e.create_system = 3
+                with open(src_e, "rb") as f:
+                    z.writestr(info_e, f.read())
         made.append(asset)
         print(f"{asset}  ({os.path.getsize(path) / 1048576:.1f} MB - {lib})")
     if not made:

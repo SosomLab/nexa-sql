@@ -150,6 +150,8 @@ pub(crate) fn dbms_color(d: Dialect) -> (u8, u8, u8) {
         Dialect::Mysql => (0x00, 0x75, 0x8F),
         Dialect::Sqlite => (0x00, 0x3B, 0x57),
         Dialect::Odbc => (0x6B, 0x7B, 0x95),
+        // DuckDB 노랑(브랜드 #FFF000 계열을 어둡게).
+        Dialect::Duckdb => (0xB8, 0xA0, 0x00),
     }
 }
 

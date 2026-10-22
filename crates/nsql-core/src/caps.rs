@@ -193,6 +193,13 @@ const SQLITE: Caps = Caps {
     ..QUESTION
 };
 
+/// DuckDB(D-350) = SQLite처럼 `?` 바인드 · 파일/메모리 · 자동 커밋(문장마다) · 수동 커밋 = `BEGIN TRANSACTION`.
+const DUCKDB: Caps = Caps {
+    tx_begin: Some("BEGIN TRANSACTION"),
+    server_autocommit: true,
+    ..QUESTION
+};
+
 /// ODBC = 뒤의 DBMS를 모른다 → 트랜잭션은 드라이버의 자동 커밋 속성 몫(시작문 없음 · `COMMIT`은 늘 보낸다).
 const ODBC: Caps = QUESTION;
 
@@ -207,6 +214,7 @@ impl Caps {
             Dialect::Mysql => MYSQL,
             Dialect::Sqlite => SQLITE,
             Dialect::Odbc => ODBC,
+            Dialect::Duckdb => DUCKDB,
         }
     }
 

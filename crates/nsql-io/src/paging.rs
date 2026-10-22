@@ -35,7 +35,7 @@ pub fn page_sql(dialect: Dialect, sql: &str, offset: usize, limit: usize) -> Str
             };
             format!("SELECT * FROM (\n{q}\n) x ORDER BY (SELECT NULL) OFFSET {offset} ROWS{fetch}")
         }
-        Dialect::Postgres | Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => {
+        Dialect::Postgres | Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => {
             let lim = if limit > 0 {
                 format!("LIMIT {limit} ")
             } else if dialect == Dialect::Sqlite || dialect == Dialect::Mysql {

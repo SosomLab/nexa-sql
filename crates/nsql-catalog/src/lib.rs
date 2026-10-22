@@ -423,7 +423,7 @@ pub fn kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
         ],
         Dialect::Mysql => &[Table, View, Procedure, Function, Trigger],
         Dialect::Sqlite => &[Table, View, Index, Trigger],
-        Dialect::Odbc => &[Table, View],
+        Dialect::Odbc | Dialect::Duckdb => &[Table, View],
     }
 }
 
@@ -603,7 +603,7 @@ pub fn name_index(
                 .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
                 .collect()
         }
-        Dialect::Odbc => {
+        Dialect::Odbc | Dialect::Duckdb => {
             // ★ 드라이버 카탈로그(SQLTables)가 있으면 그것이 원천(스키마 라벨 규칙 = `odbc_schema_label`).
             if let Some(ts) = s.catalog_tables(None)? {
                 ts.into_iter()
@@ -712,7 +712,7 @@ fn index_kind(dialect: Dialect, ty: &str) -> Option<ObjectKind> {
             "trigger" => Trigger,
             _ => return None,
         },
-        Dialect::Odbc => match ty {
+        Dialect::Odbc | Dialect::Duckdb => match ty {
             "BASE TABLE" => Table,
             "VIEW" => View,
             _ => return None,
@@ -948,7 +948,7 @@ pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, Db
             format!("SELECT schema_name FROM information_schema.schemata{wh} ORDER BY schema_name")
         }
         Dialect::Sqlite => return Ok(vec!["main".into()]),
-        Dialect::Odbc => {
+        Dialect::Odbc | Dialect::Duckdb => {
             // ★ 드라이버 카탈로그(SQLTables · T-383 2차): Access·Excel처럼 information_schema가 없는 곳 → 없으면 일반 SQL.
             if let Some(ts) = s.catalog_tables(None)? {
                 let mut v: Vec<String> = ts.iter().map(|t| odbc_schema_label(&t.schema)).collect();
@@ -1040,7 +1040,7 @@ pub fn server_info(s: &mut dyn Session) -> Result<ServerInfo, DbError> {
         Dialect::Postgres => "SELECT current_setting('server_version'), current_user, current_database(), ''",
         Dialect::Mysql => "SELECT VERSION(), CURRENT_USER(), IFNULL(DATABASE(), ''), ''",
         Dialect::Sqlite => "SELECT sqlite_version(), '', 'main', ''",
-        Dialect::Odbc => return Ok(ServerInfo::default()),
+        Dialect::Odbc | Dialect::Duckdb => return Ok(ServerInfo::default()),
     };
     let rs = query(s, sql)?;
     let r = rs.rows.first();
@@ -1115,7 +1115,7 @@ pub fn context_switch_name(dialect: Dialect, sql: &str) -> Option<String> {
             }
             None
         }
-        Dialect::Sqlite | Dialect::Odbc => None,
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => None,
     }
 }
 
@@ -1127,7 +1127,7 @@ pub fn current_schema(s: &mut dyn Session) -> Result<String, DbError> {
         Dialect::Postgres => "SELECT current_schema()",
         Dialect::Mysql => "SELECT DATABASE()",
         Dialect::Sqlite => return Ok("main".into()),
-        Dialect::Odbc => return Ok(String::new()),
+        Dialect::Odbc | Dialect::Duckdb => return Ok(String::new()),
     };
     let rs = query(s, sql)?;
     Ok(rs.rows.first().map(|r| col(r, 0)).unwrap_or_default())
@@ -1197,7 +1197,7 @@ pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
             .map(|n| mk((*n).to_string()))
             .collect());
         }
-        Dialect::Odbc => return Ok(Vec::new()),
+        Dialect::Odbc | Dialect::Duckdb => return Ok(Vec::new()),
     };
     let rs = query(s, sql)?;
     Ok(rs
@@ -1261,7 +1261,7 @@ pub fn keys(s: &mut dyn Session, schema: &str, table: &str) -> Result<KeyInfo, D
             ))?;
             Ok(fold_keys(&rs.rows))
         }
-        Dialect::Mysql | Dialect::Odbc => {
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => {
             let rs = query(s, &format!(
                 "SELECT CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 'P' ELSE 'U' END, tc.constraint_name, kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} AND tc.constraint_type IN ('PRIMARY KEY','UNIQUE') ORDER BY CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 0 ELSE 1 END, tc.constraint_name, kcu.ordinal_position",
                 lit(schema), lit(table)
@@ -1373,7 +1373,7 @@ fn comment_sqls(
             Some(format!("SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}", lit(schema), lit(table))),
             Some(format!("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {} AND a.attnum > 0 AND NOT a.attisdropped{}", lit(schema), lit(table), f("col_description(a.attrelid, a.attnum) IS NOT NULL"))),
         ),
-        Dialect::Mysql | Dialect::Odbc => (
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => (
             Some(format!("SELECT table_comment FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", lit(schema), lit(table))),
             Some(format!("SELECT column_name, column_comment FROM information_schema.columns WHERE table_schema = {} AND table_name = {}{}", lit(schema), lit(table), f("column_comment <> ''"))),
         ),
@@ -1650,7 +1650,7 @@ pub fn schema_comments_raw(s: &mut dyn Session, schema: &str) -> SchemaComments 
             Some(format!("SELECT table_name, table_comment FROM information_schema.tables WHERE table_schema = {}", lit(schema))),
             Some(format!("SELECT table_name, column_name, column_comment FROM information_schema.columns WHERE table_schema = {}", lit(schema))),
         ),
-        Dialect::Sqlite | Dialect::Odbc => (None, None),
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => (None, None),
     };
     let val = |v: Option<&Value>| v.filter(|v| !matches!(v, Value::Null)).map(cell_str);
     let tables = tsql
@@ -1699,7 +1699,7 @@ pub fn comments(
             Some(format!("SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}", lit(schema), lit(table))),
             Some(format!("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {} AND a.attnum > 0 AND NOT a.attisdropped AND col_description(a.attrelid, a.attnum) IS NOT NULL", lit(schema), lit(table))),
         ),
-        Dialect::Mysql | Dialect::Odbc => (
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => (
             Some(format!("SELECT table_comment FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", lit(schema), lit(table))),
             Some(format!("SELECT column_name, column_comment FROM information_schema.columns WHERE table_schema = {} AND table_name = {} AND column_comment <> ''", lit(schema), lit(table))),
         ),
@@ -1865,7 +1865,7 @@ pub fn table_detail(
                 lit(schema), lit(table)
             ),
         ),
-        Dialect::Mysql | Dialect::Odbc => (
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => (
             format!(
                 "SELECT CASE tc.constraint_type WHEN 'PRIMARY KEY' THEN 'P' WHEN 'UNIQUE' THEN 'U' WHEN 'FOREIGN KEY' THEN 'R' ELSE 'C' END, tc.constraint_name, kcu.column_name, IFNULL(kcu.referenced_table_name, ''), IFNULL(kcu.referenced_column_name, '') FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} ORDER BY 1, 2, kcu.ordinal_position",
                 lit(schema), lit(table)
@@ -2225,7 +2225,7 @@ pub fn objects(
                 .map(|r| (col(r, 0), col(r, 1), col(r, 2), col(r, 3)))
                 .collect()
         }
-        Dialect::Odbc => {
+        Dialect::Odbc | Dialect::Duckdb => {
             let tt = match kind {
                 ObjectKind::Table => "BASE TABLE",
                 ObjectKind::View => "VIEW",
@@ -2306,7 +2306,7 @@ pub fn fmt_type(base: &str, len: &str, prec: &str, scale: &str) -> String {
 /// 테이블/뷰의 컬럼(위치 순).
 pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, DbError> {
     // ★ ODBC 드라이버 카탈로그(SQLColumns · T-383 2차) — 있으면 그것이 원천.
-    if s.dialect() == Dialect::Odbc {
+    if matches!(s.dialect(), Dialect::Odbc | Dialect::Duckdb) {
         if let Some(cs) = s.catalog_columns(Some(odbc_schema_arg(schema)), table)? {
             return Ok(cs
                 .into_iter()
@@ -2331,7 +2331,7 @@ pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<Col
             "SELECT c.name, t.name, CASE WHEN t.name IN ('nchar','nvarchar') AND c.max_length > 0 THEN c.max_length / 2 ELSE c.max_length END, c.precision, c.scale, CASE WHEN c.is_nullable = 1 THEN 'Y' ELSE 'N' END, c.column_id, ISNULL(d.definition, '') FROM sys.all_columns c JOIN sys.types t ON t.user_type_id = c.user_type_id LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id WHERE c.object_id = OBJECT_ID({}) ORDER BY c.column_id",
             lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)))
         ),
-        Dialect::Postgres | Dialect::Mysql | Dialect::Odbc => format!(
+        Dialect::Postgres | Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => format!(
             "SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable, ordinal_position, column_default FROM information_schema.columns WHERE table_schema = {} AND table_name = {} ORDER BY ordinal_position",
             lit(schema),
             lit(table)
@@ -3346,7 +3346,7 @@ pub fn source_with(
             }
             Ok(format!("{};\n", body.trim_end()))
         }
-        Dialect::Odbc => Err(no_source(kind)),
+        Dialect::Odbc | Dialect::Duckdb => Err(no_source(kind)),
     }
 }
 

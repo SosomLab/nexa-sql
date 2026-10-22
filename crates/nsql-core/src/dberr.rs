@@ -316,7 +316,7 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
             Some(2002) | Some(2003) | Some(2006) | Some(2013) => mk(ErrorClass::Connection, None),
             _ => mk(ErrorClass::Unknown, None),
         },
-        Dialect::Sqlite | Dialect::Odbc => {
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => {
             if let Some(r) = low.strip_prefix("no such table: ") {
                 mk(ErrorClass::NoTable, Some(r.trim().to_string()))
             } else if let Some(r) = low.strip_prefix("no such column: ") {

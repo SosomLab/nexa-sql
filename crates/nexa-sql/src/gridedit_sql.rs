@@ -623,8 +623,8 @@ fn now_expr(dialect: Dialect, date_only: bool) -> String {
         (Dialect::Mysql, true) => "CURDATE()".into(),
         (Dialect::Sqlite, false) => "datetime('now','localtime')".into(),
         (Dialect::Sqlite, true) => "date('now','localtime')".into(),
-        (Dialect::Odbc, false) => "CURRENT_TIMESTAMP".into(),
-        (Dialect::Odbc, true) => "CURRENT_DATE".into(),
+        (Dialect::Odbc | Dialect::Duckdb, false) => "CURRENT_TIMESTAMP".into(),
+        (Dialect::Odbc | Dialect::Duckdb, true) => "CURRENT_DATE".into(),
     }
 }
 

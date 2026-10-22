@@ -198,16 +198,18 @@ impl ConnectSpec {
         let mut url_form = false;
         // 스킴이 있었는가(`://` · 짧은 `방언:`) — `@`가 없으면 나머지는 logon이 아니라 **대상**이다.
         let mut has_scheme = false;
+        // ★ ODBC 계열 벤더 스킴(T-384 · 사용자 10-23 "tibero 등"): `tibero://u:p@h:8629/db` → ODBC 접속 문자열(드라이버 이름 프리셋).
+        let mut odbc_preset: Option<(&'static str, u16)> = None;
 
         // 파일 방언 축약: sqlite:경로(나머지 전부가 경로 — `:`·`/`·`\\`를 해석하지 않는다).
         // ★ ODBC(T-383 · 136차)도 같은 꼴: `odbc:DSN=…` · `odbc:Driver={…};Server=…;Uid=u;Pwd=p` = 나머지 전부가 ODBC 접속 문자열 ·
         //   `UID=`/`PWD=`는 스펙의 user/password로 **올려** 문자열에서 뺀다(금고 저장 · `redacted` 마스킹 · 드라이버가 다시 붙인다).
         if let Some(i) = s.find(':') {
             let d = Dialect::from_name(&s[..i]);
-            if matches!(d, Some(Dialect::Sqlite | Dialect::Odbc)) {
+            if matches!(d, Some(Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb)) {
                 let rest = &s[i + 1..];
                 // 종전 URL 꼴 `sqlite://host/db`(호스트는 무시되고 db만 쓰인다)는 그대로 아래 URL 경로로 — 그 외는 전부 경로.
-                let legacy_url = d == Some(Dialect::Sqlite)
+                let legacy_url = matches!(d, Some(Dialect::Sqlite | Dialect::Duckdb))
                     && rest
                         .strip_prefix("//")
                         .is_some_and(|r| !r.starts_with(['/', ':', '.', '~']) && r.contains('/'));
@@ -235,6 +237,7 @@ impl ConnectSpec {
             has_scheme = true;
             let scheme = s[..i].to_string();
             spec.dialect = Dialect::from_name(&scheme);
+            odbc_preset = odbc_preset_for(&scheme);
             if spec.dialect.is_none() {
                 return Err(tr!(
                     "CONNECT: unknown scheme '{scheme}'",
@@ -356,6 +359,15 @@ impl ConnectSpec {
                 "CONNECT: 사용자 또는 대상이 필요합니다"
             ));
         }
+        if let (Some((driver, default_port)), Some(Dialect::Odbc)) = (odbc_preset, spec.dialect) {
+            if let Some(host) = spec.host.take() {
+                let port = spec.port.take().unwrap_or(default_port);
+                let db = spec.database.take().unwrap_or_default();
+                spec.database = Some(format!(
+                    "Driver={{{driver}}};Server={host};Port={port};Database={db}"
+                ));
+            }
+        }
         Ok(spec)
     }
 
@@ -392,6 +404,10 @@ impl ConnectSpec {
                     Dialect::Sqlite => tr!(
                         "SQLite: a file path (or :memory:) is required",
                         "SQLite: 파일 경로(또는 :memory:)가 필요합니다"
+                    ),
+                    Dialect::Duckdb => tr!(
+                        "DuckDB: a file path (or :memory:) is required",
+                        "DuckDB: 파일 경로(또는 :memory:)가 필요합니다"
                     ),
                     _ => tr!("ODBC: a DSN is required", "ODBC: DSN이 필요합니다"),
                 });
@@ -540,6 +556,16 @@ pub fn percent_decode(v: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// ODBC 계열 벤더 스킴 → (드라이버 이름, 기본 포트). 벤더 ODBC 드라이버가 설치돼 있어야 한다(docs/22 §4 · 121).
+fn odbc_preset_for(scheme: &str) -> Option<(&'static str, u16)> {
+    match scheme.to_ascii_lowercase().as_str() {
+        "tibero" => Some(("Tibero 7 ODBC Driver", 8629)),
+        "altibase" => Some(("Altibase ODBC Driver", 20300)),
+        "cubrid" => Some(("CUBRID Driver", 33000)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -778,5 +804,38 @@ mod tests {
         let c = ConnectSpec::parse("scott@orcl").unwrap();
         assert_eq!(c.user.as_deref(), Some("scott"));
         assert!(c.password.is_none());
+    }
+    /// ★ T-384 Tibero 등 ODBC 계열 벤더 스킴 = ODBC 접속 문자열 프리셋(드라이버 이름 · 기본 포트) · 자격은 스펙으로 · 왕복.
+    #[test]
+    fn vendor_schemes_become_odbc_presets() {
+        let t = ConnectSpec::parse("tibero://scott:tiger@db.example:8629/TIBERO").expect("tibero");
+        assert_eq!(t.dialect, Some(Dialect::Odbc));
+        assert_eq!(
+            t.database.as_deref(),
+            Some("Driver={Tibero 7 ODBC Driver};Server=db.example;Port=8629;Database=TIBERO")
+        );
+        assert_eq!(
+            (t.user.as_deref(), t.password.as_deref()),
+            (Some("scott"), Some("tiger"))
+        );
+        assert_eq!((t.host.as_deref(), t.port), (None, None));
+        let back = ConnectSpec::parse(&t.connection_string()).expect("round trip");
+        assert_eq!(back.database, t.database);
+        assert_eq!(back.user, t.user);
+        assert!(!t.redacted().contains("tiger"));
+        let a = ConnectSpec::parse("altibase://u:p@h/mydb").expect("altibase");
+        assert!(
+            a.database.as_deref().unwrap().contains("Port=20300"),
+            "{a:?}"
+        );
+        let c = ConnectSpec::parse("cubrid://u:p@h/demodb").expect("cubrid");
+        assert!(c
+            .database
+            .as_deref()
+            .unwrap()
+            .starts_with("Driver={CUBRID Driver}"));
+        // 평범한 odbc: 스킴은 그대로.
+        let o = ConnectSpec::parse("odbc:DSN=Sales").expect("odbc");
+        assert_eq!(o.database.as_deref(), Some("DSN=Sales"));
     }
 }

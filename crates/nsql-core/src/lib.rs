@@ -22,6 +22,8 @@ pub enum Dialect {
     Sqlite,
     /// ODBC 폴백(Tibero · Altibase · CUBRID …) — `?` 위치 바인드.
     Odbc,
+    /// ★ DuckDB(D-350 · 확장 전용 드라이버 · 파일/메모리 DB · `?` 바인드).
+    Duckdb,
 }
 
 /// 로그인 항목(접속 폼의 칸과 1:1 · `Dialect::login_required`).
@@ -45,18 +47,20 @@ impl Dialect {
             "mysql" | "mariadb" => Dialect::Mysql,
             "sqlite" | "sqlite3" => Dialect::Sqlite,
             "odbc" | "tibero" | "altibase" | "cubrid" => Dialect::Odbc,
+            "duckdb" => Dialect::Duckdb,
             _ => return None,
         })
     }
 
     /// 전체(접속 폼의 DB 종류 목록 순서).
-    pub const ALL: [Dialect; 6] = [
+    pub const ALL: [Dialect; 7] = [
         Dialect::Oracle,
         Dialect::Mssql,
         Dialect::Postgres,
         Dialect::Mysql,
         Dialect::Sqlite,
         Dialect::Odbc,
+        Dialect::Duckdb,
     ];
 
     /// 기본 포트(접속 폼·CLI에서 포트를 비우면 이 값). 파일·DSN 기반 방언은 `None`.
@@ -66,7 +70,7 @@ impl Dialect {
             Dialect::Mssql => Some(1433),
             Dialect::Postgres => Some(5432),
             Dialect::Mysql => Some(3306),
-            Dialect::Sqlite | Dialect::Odbc => None,
+            Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => None,
         }
     }
 
@@ -79,6 +83,7 @@ impl Dialect {
             Dialect::Mysql => "MySQL",
             Dialect::Sqlite => "SQLite",
             Dialect::Odbc => "ODBC",
+            Dialect::Duckdb => "DuckDB",
         }
     }
 
@@ -98,13 +103,13 @@ impl Dialect {
                 &[LoginField::Host, LoginField::User, LoginField::Password]
             }
             // 파일 경로 / DSN 하나(자격 없음 · ODBC 자격은 DSN 쪽).
-            Dialect::Sqlite | Dialect::Odbc => &[LoginField::Database],
+            Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => &[LoginField::Database],
         }
     }
 
     /// 호스트·포트 대신 **파일 경로/DSN** 하나로 접속하는 방언인가(폼이 필드를 바꾸는 근거).
     pub fn is_file_based(self) -> bool {
-        matches!(self, Dialect::Sqlite | Dialect::Odbc)
+        matches!(self, Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb)
     }
 }
 
@@ -117,6 +122,7 @@ impl fmt::Display for Dialect {
             Dialect::Mysql => "mysql",
             Dialect::Sqlite => "sqlite",
             Dialect::Odbc => "odbc",
+            Dialect::Duckdb => "duckdb",
         })
     }
 }

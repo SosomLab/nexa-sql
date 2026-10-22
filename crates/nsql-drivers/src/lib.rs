@@ -80,6 +80,8 @@ pub const DRIVER_IDS: &[(Dialect, &[&str])] = &[
     (Dialect::Mssql, &["mssql"]),
     (Dialect::Oracle, &["oracle-thin", "oracle-oci"]),
     (Dialect::Odbc, &["odbc"]),
+    // DuckDB = 확장 전용(내장 feature 없음 · libduckdb ≈ 50 MB).
+    (Dialect::Duckdb, &["duckdb"]),
 ];
 
 /// 방언의 확장 후보 id(우선순위 순 · Oracle은 설정이 고른 드라이버가 먼저).
@@ -136,6 +138,7 @@ pub fn is_builtin(dialect: Dialect) -> bool {
         Dialect::Mysql => cfg!(feature = "mysql"),
         Dialect::Mssql => cfg!(feature = "mssql"),
         Dialect::Odbc => cfg!(all(feature = "odbc", windows)),
+        Dialect::Duckdb => false,
         Dialect::Oracle => oracle_driver().included(),
     }
 }

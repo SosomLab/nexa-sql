@@ -121,6 +121,7 @@ fn built_driver_cdylibs_export_abi_v2_vtables() {
                 eprintln!("[skip] {} 없음", p.display());
                 continue;
             }
+            copy_bundled_runtime(&target, id, &target);
             let d = nsql_driver_dyn::DynDriver::load(&p, id).expect("load");
             assert_eq!(d.id(), *id, "{}", p.display());
             assert_eq!(d.dialect(), *dialect, "{}", p.display());
@@ -131,4 +132,35 @@ fn built_driver_cdylibs_export_abi_v2_vtables() {
     eprintln!("cdylib {seen}개 확인");
     assert_eq!(nsql_drivers::ext_ids(nsql_core::Dialect::Postgres), ["pg"]);
     assert_eq!(nsql_drivers::dialect_of_ext("nope"), None);
+}
+
+/// 동봉 런타임(DuckDB의 duckdb.dll/libduckdb.so/.dylib)을 cdylib 옆으로 — download-lib가 `build/libduckdb-sys-*/out/`에 푼 것을 찾는다.
+fn copy_bundled_runtime(target: &std::path::Path, id: &str, dest_dir: &std::path::Path) {
+    if id != "duckdb" {
+        return;
+    }
+    let name = if cfg!(windows) {
+        "duckdb.dll"
+    } else if cfg!(target_os = "macos") {
+        "libduckdb.dylib"
+    } else {
+        "libduckdb.so"
+    };
+    let Ok(rd) = std::fs::read_dir(target.join("build")) else {
+        return;
+    };
+    for e in rd.flatten() {
+        if !e
+            .file_name()
+            .to_string_lossy()
+            .starts_with("libduckdb-sys-")
+        {
+            continue;
+        }
+        let p = e.path().join("out").join(name);
+        if p.is_file() {
+            let _ = std::fs::copy(&p, dest_dir.join(name));
+            return;
+        }
+    }
 }

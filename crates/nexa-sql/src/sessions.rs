@@ -1178,7 +1178,9 @@ pub(crate) fn db_unit(
                 .unwrap_or_else(|| "-".into()),
             false,
         ),
-        Some(Dialect::Postgres | Dialect::Odbc) => (spec_db.unwrap_or_else(|| "-".into()), false),
+        Some(Dialect::Postgres | Dialect::Odbc | Dialect::Duckdb) => {
+            (spec_db.unwrap_or_else(|| "-".into()), false)
+        }
         None => ("-".into(), false),
     }
 }

@@ -38,15 +38,23 @@ mod os {
     use std::path::Path;
     #[link(name = "kernel32")]
     extern "system" {
-        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
         fn GetLastError() -> u32;
     }
     pub(crate) fn load(path: &Path) -> Result<*mut c_void, String> {
         let mut w: Vec<u16> = path.as_os_str().encode_wide().collect();
         w.push(0);
+        // ★ 동봉 라이브러리(duckdb.dll 등)를 cdylib 폴더에서 먼저 찾는다(LOAD_WITH_ALTERED_SEARCH_PATH = 0x8 · D-350 · 64 §5).
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
         // SAFETY: NUL 종료 UTF-16 경로.
-        let h = unsafe { LoadLibraryW(w.as_ptr()) };
+        let h = unsafe {
+            LoadLibraryExW(
+                w.as_ptr(),
+                std::ptr::null_mut(),
+                LOAD_WITH_ALTERED_SEARCH_PATH,
+            )
+        };
         if h.is_null() {
             Err(format!("LoadLibraryW failed (error {})", unsafe {
                 GetLastError()

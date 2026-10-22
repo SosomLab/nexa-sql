@@ -431,7 +431,7 @@ impl ConnectPanel {
     fn database_placeholder(&self) -> String {
         let d = self.selected_dialect();
         let base = match d {
-            Dialect::Sqlite => t(Msg::PhSqliteFile),
+            Dialect::Sqlite | Dialect::Duckdb => t(Msg::PhSqliteFile),
             Dialect::Odbc => t(Msg::PhDsn),
             Dialect::Oracle => t(Msg::PhService),
             _ => t(Msg::PhDatabase),

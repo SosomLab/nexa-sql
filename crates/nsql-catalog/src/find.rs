@@ -144,7 +144,7 @@ pub fn names_sql(
             );
             format!("SELECT * FROM ({tb} UNION ALL {rt} UNION ALL {tg}) x ORDER BY 1, 2")
         }
-        Dialect::Odbc => return None,
+        Dialect::Odbc | Dialect::Duckdb => return None,
     };
     Some(cap(d, sql, max))
 }
@@ -281,7 +281,7 @@ pub fn columns_sql(d: Dialect, schemas: &[String], pat: &FindPat, max: usize) ->
             like_pred(d, "column_name", pat),
             schema_in("table_schema", schemas)
         ),
-        Dialect::Odbc => return None,
+        Dialect::Odbc | Dialect::Duckdb => return None,
     };
     Some(cap(d, sql, max))
 }
@@ -475,7 +475,7 @@ pub fn source_sqls(
                 ));
             }
         }
-        Dialect::Odbc => {}
+        Dialect::Odbc | Dialect::Duckdb => {}
     }
     out
 }

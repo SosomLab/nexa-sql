@@ -7,4 +7,5 @@ DRIVERS = [
     ("oracle-thin", "nsql-driver-oracle-thin", "oracle", "Oracle (Thin, pure Rust)"),
     ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC (Windows)"),
+    ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
 ]

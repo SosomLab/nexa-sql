@@ -20,6 +20,7 @@ members = [
   "crates/nsql-driver-pg",     # ① 어댑터 — rust-postgres(동기) · $n 바인드 · 단순 질의 텍스트 폴백 (사용자 09-15)
   "crates/nsql-driver-mysql",  # ① 어댑터 — mysql(순수 Rust · 동기) · ? 바인드 · CALL OUT = 마지막 결과 집합 · KILL QUERY 취소 (사용자 10-22)
   "crates/nsql-driver-odbc",   # ① 어댑터 — odbc-api(시스템 ODBC 관리자 · Windows 인박스 전용 D-345) · 3급 틀 (T-383 · 사용자 10-22)
+  "crates/nsql-driver-duckdb", # ① 어댑터 — DuckDB(duckdb-rs · libduckdb 동적 · 확장 전용 cdylib · D-350)
   "crates/nsql-json",          # ★ 최소 JSON(의존 0 · 파서+작성기) — 설정 JSON · 확장 매니페스트 · 확장 관리자 공용(136차 부품화)
   "crates/nsql-net",      # ★ 최소 HTTPS 클라이언트(GET · rustls + webpki-roots · 리다이렉트 · chunked · HTTPS_PROXY) — 확장 드라이버 다운로드(T-29)
   "crates/nsql-abi",           # ★ 확장 드라이버 ABI — 버전 있는 C vtable + 바이너리 코덱 + export_driver! (DR-29 · T-27 ①)
@@ -66,6 +67,7 @@ nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
 nsql-driver-pg = { path = "crates/nsql-driver-pg" }
 nsql-driver-mysql = { path = "crates/nsql-driver-mysql" }
 nsql-driver-odbc = { path = "crates/nsql-driver-odbc" }
+nsql-driver-duckdb = { path = "crates/nsql-driver-duckdb" }
 nsql-json = { path = "crates/nsql-json" }
 nsql-net = { path = "crates/nsql-net" }
 nsql-abi = { path = "crates/nsql-abi" }
