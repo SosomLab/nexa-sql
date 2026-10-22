@@ -70,6 +70,9 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 - **포트 계약 체크(새 드라이버·확장 드라이버 공통 · 10-11 추가)**: ⓐ **0건 결과도 컬럼 메타가 있는 빈 `ResultSet` 하나를 낸다**(43 §3-1 · SQL Server tiberius처럼 빈 집합 메타를 안 주는 라이브러리는 드라이버 안에서 보충 · journal 10-11 §4) ⓑ 페치는 배치 단위로 취소 깃발을 본다(43 §3-4) ⓒ `Caps`로 능력을 말한다(61 §1-6).
 
 ### 2-3. 배포 저장소·자산 이름·매니페스트
+
+> ★ **10-22 D-349로 바뀜** = 저장소 = **SosomLab/nexa-sql**(별도 드라이버 저장소 없음 · 서드파티는 색인 `repo` 필드로 다른 저장소) · 색인 = 저장소 안 **`drivers/index.json`**(raw URL `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json` · ETag · API 아님 · 앱 릴리스와 무관 · 갱신 = 커밋) · 자산 = 같은 저장소 Releases · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리) · ★ 드라이버 릴리스 = **모두 pre-release**(앱 `releases/latest`를 가로채지 않게) · 아래 블록은 설계 당시(별도 저장소 안) 그대로 둔다(자산 이름 규칙·매니페스트 설계는 유효).
+
 ```text
 저장소  github.com/SosomLab/nexa-sql-drivers            (드라이버 전용 · 태그 = <id>-v<semver> · 확장별 독립 릴리스)
        또는 확장별 저장소 nexa-sql-driver-<id>          (서드파티는 자기 저장소 — 색인이 URL을 가리킨다)
@@ -123,7 +126,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 
-- **색인 URL** = `https://github.com/<repo>/releases/latest/download/index.json`(GitHub **API가 아니라** 자산 직링크 · 익명 한도 없음) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간).
+- **색인 URL**(D-349) = `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json`(저장소 안 파일 · raw · GitHub **API가 아님** · 익명 한도 없음 · 앱 릴리스와 무관 · 갱신 = 커밋) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간 · 태그 접두 `driver-<id>-v` · 프리릴리스 판정 = 버전 문자열의 `-`).
+- **자산**(D-349) = 같은 저장소 Releases · 태그 `driver-<id>-v<ver>` · **모두 pre-release**(앱 `releases/latest` 보호) · URL = `https://github.com/SosomLab/nexa-sql/releases/download/driver-<id>-v<ver>/nsql-driver-<id>-<ver>-<os>-<arch>.{zip,sha256,sig}` · 앱 배포 워크플로 3곳은 `v*` 태그 릴리스에만 반응(가드).
 - **검증 순서** = sha256 → Ed25519(`ext::keys::DRIVER_KEYS` · **키 목록이 비면 설치 거부 · 우회 옵션 없음**) → `drivers/.tmp/<pid>-<ns>/pkg`에 풀기(공통 최상위 폴더 1개 벗김) → 매니페스트 `nexa-driver.json` id·version·protocol 대조(ABI 불일치 = 거부) + 라이브러리 존재 → `drivers/<id>/<ver>/`로 **원자적 rename** · 이미 있으면 거부(`--force` = 교체).
 - **HTTPS** = 새 크레이트 `nsql-net`(rustls 0.23 + webpki-roots 1 · 프록시 CONNECT · 상한) — 위 표의 "tiberius가 끌어온 `rustls`·`ring`"은 136차 뒤 rustls 0.23 + aws-lc-rs(MySQL·Oracle Thin과 공유)로 바뀜.
 - **갱신 확인 자동(하루 1회)** = 아직 없음(2차 · `driver.check_updates` + GUI 배지) · 지금은 `nsql driver update --check` 수동만.
@@ -202,14 +206,14 @@ nsql driver path                    drivers/ 폴더
 |:--:|---|---|---|
 | 1 | **T-27** | `nsql-driver-rpc` — stdio JSON-RPC 프로토콜 v1(프레임 · 메서드 · Value 인코딩) + 프록시 `Session` + **참조 구현 = 내장 SQLite를 프로세스로 감싼 `nsql-driver-sqlite-rpc`**(테스트용) | 기존 nsql-run 테스트를 RPC 세션으로 그대로 통과 |
 | 2 | **T-28** | `nsql-ext` 크레이트 — `drivers/` 레이아웃 · `nexa-driver.json` · 버전 선택 규칙 · 참조 카운트 · 삭제/휴지통 · `nsql driver list/rm/prune/path` | 단위 테스트(임시 폴더) |
-| 3 | **T-29** | GitHub 다운로드 — 색인 · 최신 태그 해석 · HTTPS(rustls) · sha256 · Ed25519 검증 · 원자적 설치 · `install/update/search` · 갱신 배지 · 오프라인 `--file` | 실기: `SosomLab/nexa-sql-drivers` 첫 릴리스(sqlite-rpc로 파이프라인 검증) |
+| 3 | **T-29** | GitHub 다운로드 — 색인 · 최신 태그 해석 · HTTPS(rustls) · sha256 · Ed25519 검증 · 원자적 설치 · `install/update/search` · 갱신 배지 · 오프라인 `--file` | 실기: ~~`SosomLab/nexa-sql-drivers`~~ → nexa-sql 저장소의 첫 드라이버 pre-release(태그 `driver-<id>-v<ver>`) + `drivers/index.json` 커밋(D-349) |
 | 4 | **T-30** | Oracle OCI 확장 — 현 `nsql-driver-oracle`(kubo)을 RPC 프로세스로 분리 · Instant Client 19/23 두 판 SxS · 프로필 `driver=` · ORA-28040 힌트 | integration(Oracle Free 23ai) + 구형 서버는 사용자 실기 |
 | 5 | **T-31** | GUI — DBeaver식 접속 대화상자(§1) · 로그인 리스트 · 드라이버 관리자(§5-2) | 사용자 실기 |
 
 **본체에 남는 내장 드라이버**: SQLite · MSSQL(tiberius) · (M4) PG · MySQL · Oracle thin(GA 후). 내장/확장은 사용자에게 같은 "드라이버" 목록에 보이고, 내장은 `built-in` 배지 · 삭제 불가.
 
 ## 8. 열린 결정
-- **D-19** 드라이버 저장소 구성 — 단일 `nexa-sql-drivers`(확장별 태그 접두) vs 확장별 저장소. 권장 = 단일(색인·CI 한 곳) + 서드파티는 별도.
+- **D-19** 드라이버 저장소 구성 — 단일 `nexa-sql-drivers`(확장별 태그 접두) vs 확장별 저장소. 권장 = 단일(색인·CI 한 곳) + 서드파티는 별도. → ✅ **D-349(10-22 · 사용자)로 대체** = 별도 저장소 없이 **nexa-sql 저장소 안**(색인 `drivers/index.json` · 태그 `driver-<id>-v<ver>` pre-release) · 서드파티는 색인 `repo`로 별도 저장소.
 - **D-20** Oracle OCI 확장의 Instant Client 동봉 여부(D-1과 통합) — OTN 조건 확인 후.
 - **D-21** 갱신 확인 기본값(켬 권장 · 폐쇄망 배포는 설정으로 끔).
 

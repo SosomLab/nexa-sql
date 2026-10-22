@@ -133,7 +133,7 @@
 
 ### 6-8. 확장 드라이버 다운로드 2키(10-22 · 136차 · T-29 · D-348)
 
-- 분류 = **CatInternal**(설정 창에 안 보임 · HIDDEN) · `driver.repo`(Text · 기본 `SosomLab/nexa-sql-drivers` · 색인·자산을 받을 GitHub 저장소) · `driver.http_timeout_secs`(Int 5~600 · 기본 30 · 10 s 초과라 `_secs` · §6-5).
+- 분류 = **CatInternal**(설정 창에 안 보임 · HIDDEN) · `driver.repo`(Text · 기본 **`SosomLab/nexa-sql`**(D-349 · 10-22 · 별도 드라이버 저장소 없음) · 색인 `drivers/index.json`·자산(Releases `driver-*`)을 받을 GitHub 저장소) · `driver.http_timeout_secs`(Int 5~600 · 기본 30 · 10 s 초과라 `_secs` · §6-5).
 - 토큰은 설정 키로 두지 않는다 = 환경 변수 `NSQL_GITHUB_TOKEN`만(설정 파일에 비밀을 남기지 않음) · 자동 갱신 확인 키 `driver.check_updates`는 GUI 배지와 함께 2차.
 
 ### 6-3. 설정 창 규칙(구현)

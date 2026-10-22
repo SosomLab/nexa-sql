@@ -114,7 +114,7 @@
 
 | 항목 | 규칙 |
 |---|---|
-| 공식 색인 | `SosomLab/nexa-drivers` 저장소의 Release 자산 `index.json`(드라이버 id · 저장소 URL · 최신 버전 · OS별 자산 URL · sha256 · 서명 · 등급 · 최소 앱 버전) · **Ed25519 서명**(nexa-license 키 체계 재사용 · 공개키 본체 내장 · 92 R1~R4) |
+| 공식 색인 | ★ **D-349(10-22)로 바뀜** = nexa-sql 저장소 안 파일 `drivers/index.json`(raw URL · 갱신 = 커밋) · 자산 = 같은 저장소 Releases 태그 `driver-<id>-v<ver>`(pre-release) · 설계 당시 = `SosomLab/nexa-drivers` 저장소의 Release 자산 `index.json`(드라이버 id · 저장소 URL · 최신 버전 · OS별 자산 URL · sha256 · 서명 · 등급 · 최소 앱 버전) · **Ed25519 서명**(nexa-license 키 체계 재사용 · 공개키 본체 내장 · 92 R1~R4) |
 | 사용자 추가 저장소 | 설정 `drivers.repositories`(= 확장 `extensions.repositories`와 같은 틀 · D-89 ② = 공식 + 사용자 URL · **서명 필수**) · 서명 없는 드라이버 = 개발자 모드(`drivers.dev_dir` 폴더 · 핫 리로드 · 로그 층)에서만 |
 | 검증 | 다운로드 → sha256 → 서명 → zip 풀기 → `driver.json` 읽기 → `abi_version`·OS·최소 앱 버전 검사 → 등록. 실패 = 배치 안 함 + 사유 |
 | 네트워크(26 §8) | 관리자 열기·⟳·설치·갱신 확인(설정 주기 · 기본 하루 1회 · 끌 수 있음)에만 · 접속한 적 없는 서버에 지속 트래픽 0 · 진행률·취소 · 프록시 = OS 설정 |
@@ -143,5 +143,5 @@ nsql-core::Session(포트)
 | # | 결정 | 권장 |
 |---|---|---|
 | D-340 | 드라이버 배포 체계 = 내장(1·2급 주요 DBMS) + GitHub Releases 다운로드 확장(cdylib C ABI · 서명 색인 · 지연 적재 · SxS · 오프라인 설치 · 격리 모드 선택) | ✅ **사용자 확정 10-21**(방식 = DR-24·DR-29 그대로) |
-| D-341 | 공식 색인 저장소 이름 = `SosomLab/nexa-drivers` · 템플릿 = `nexa-driver-template` · 서명 키 = nexa-license 체계 재사용 | 권장 |
+| D-341 | 공식 색인 저장소 이름 = `SosomLab/nexa-drivers` · 템플릿 = `nexa-driver-template` · 서명 키 = nexa-license 체계 재사용 | 권장 → 색인 저장소 = **D-349로 대체**(nexa-sql 저장소 안) |
 | D-342 | **내장 = Oracle · SQL Server · PostgreSQL · SQLite · MySQL/MariaDB · ODBC** / **확장 드라이버 = Tibero · DuckDB**(ClickHouse·클라우드 DW·Db2/HANA 전용 방언도 확장 · ODBC 일반 접속은 내장으로 이미 가능) | ✅ **사용자 확정 10-21**("MySQL/MariaDB ODBC까지 내장 · Tibero · DuckDB를 확장 드라이버로") |

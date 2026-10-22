@@ -211,6 +211,12 @@ sudo dnf install nexa-sql
 **지금 없는 것**: arm64 자산(deb `arm64` · rpm `aarch64`) · RPM 생성 경로는 linux-repo에서도 아직 실행된 적 없음(linux-repo `docs/SETUP.md` 8단계 진행 중).
 
 
+
+### 5-5-1. 확장 드라이버 릴리스(10-22 · D-349)
+
+- 드라이버 릴리스 = **같은 nexa-sql 저장소의 GitHub pre-release** · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리) · 자산 `nsql-driver-<id>-<ver>-<os>-<arch>.zip` + `.sha256` + `.sig` · 색인 = 저장소 파일 `drivers/index.json`(커밋으로 `latest` 갱신).
+- 절대 정식(Latest) 릴리스로 올리지 않는다 — Homebrew 탭·linux-repo 생성기가 `releases/latest`를 본다 · `homebrew.yml`·`linux-repo.yml`·`publish-windows-packages.yml`은 `v*` 태그 릴리스에만 반응(가드 `startsWith(github.event.release.tag_name, 'v')`).
+
 ### 5-6. 패키지 게시물 + 프로그램 내부 정보 = 영어(사용자 10-04 → 10-10 확장)
 
 사용자 10-10: "패키지 게시에 대한 작업은 기본 문서와 설명, 버전 등 프로그램 내부의 정보들이 영어로 작성되도록 규칙에 반영". §5-3의 "제출물 영어" 규칙을 **프로그램·패키지 안에 박히는 정보와 동봉·링크되는 기본 문서**까지 넓힌다. 원칙 = **기본 언어(영어)는 하나 · 한국어는 i18n 층으로 덧붙이기만**.
