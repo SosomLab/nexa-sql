@@ -2030,6 +2030,7 @@ dependencies = [
 name = "nsql-drivers"
 version = "0.2.7"
 dependencies = [
+ "nsql-abi",
  "nsql-core",
  "nsql-driver-dyn",
  "nsql-driver-mssql",
@@ -2039,6 +2040,7 @@ dependencies = [
  "nsql-driver-oracle-thin",
  "nsql-driver-pg",
  "nsql-driver-sqlite",
+ "nsql-json",
  "nsql-run",
  "nsql-script",
  "nsql-vault",
@@ -2058,6 +2060,10 @@ version = "0.2.7"
 dependencies = [
  "nsql-core",
 ]
+
+[[package]]
+name = "nsql-json"
+version = "0.2.7"
 
 [[package]]
 name = "nsql-license"
@@ -2108,6 +2114,7 @@ dependencies = [
  "nexa-conf",
  "nexa-sys",
  "nsql-i18n",
+ "nsql-json",
 ]
 
 [[package]]

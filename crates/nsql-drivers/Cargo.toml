@@ -29,6 +29,9 @@ nsql-core.workspace = true
 nsql-script.workspace = true
 # ★ 확장 드라이버 로더(DR-29 · T-27 ③) — 내장이 없는 방언은 `drivers/<id>/<ver>/` cdylib로 폴백(지연 로드 · 외부 crate 0).
 nsql-driver-dyn.workspace = true
+# 확장 매니페스트 `nexa-driver.json`(T-28) · ABI 버전 검사.
+nsql-json.workspace = true
+nsql-abi.workspace = true
 nsql-driver-sqlite = { workspace = true, optional = true }
 nsql-driver-oracle = { workspace = true, optional = true }
 nsql-driver-oracle-thin = { workspace = true, optional = true }

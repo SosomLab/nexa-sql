@@ -15,6 +15,7 @@ mod bookmark;
 mod cat;
 mod config;
 mod conn;
+mod driver;
 mod grep;
 mod help;
 mod license;
@@ -2041,6 +2042,7 @@ fn main() {
         "explain" => cmd_explain(&o),
         "format" | "fmt" => cmd_format(&o),
         "conn" => conn::cmd_conn(&o),
+        "driver" | "drivers" => driver::cmd_driver(&o),
         "bookmark" | "bm" => bookmark::cmd_bookmark(&o),
         "cat" | "catalog" | "obj" => cat::cmd_cat(&o),
         "config" | "settings" => config::cmd_config(&o),

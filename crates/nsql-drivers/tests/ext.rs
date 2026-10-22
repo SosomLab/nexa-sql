@@ -35,8 +35,37 @@ fn registry_picks_latest_version_and_opens() {
     }
     // 라이브러리 파일이 없는 버전 폴더는 무시.
     std::fs::create_dir_all(root.join("sqlite").join("9.9.9")).expect("mkdir");
+    // ★ 매니페스트(T-28): protocol이 다른 판은 목록에서 빠진다(2.0.0 = ABI 99) · lib 이름을 바꾼 판은 그 이름으로 찾는다(1.5.0).
+    let bad = root.join("sqlite").join("2.0.0");
+    std::fs::create_dir_all(&bad).expect("mkdir");
+    std::fs::copy(&lib, bad.join(&name)).expect("copy");
+    std::fs::write(
+        bad.join(nsql_drivers::ext::MANIFEST),
+        r#"{"id":"sqlite","version":"2.0.0","dialect":"sqlite","protocol":99}"#,
+    )
+    .expect("write");
+    let renamed = root.join("sqlite").join("1.5.0");
+    std::fs::create_dir_all(&renamed).expect("mkdir");
+    std::fs::copy(&lib, renamed.join("custom.bin")).expect("copy");
+    std::fs::write(
+        renamed.join(nsql_drivers::ext::MANIFEST),
+        r#"{"id":"sqlite","version":"1.5.0","dialect":"sqlite","protocol":1,"lib":"custom.bin"}"#,
+    )
+    .expect("write");
     let found = nsql_drivers::ext::find_extension_in(&root, "sqlite").expect("found");
     assert_eq!(found.version, "1.10.0", "{found:?}");
+    assert!(!found.manifest);
+    let inspected = nsql_drivers::ext::list_extensions_in(&root);
+    assert!(
+        inspected
+            .iter()
+            .any(|e| e.version == "1.5.0" && e.manifest && e.path.ends_with("custom.bin")),
+        "{inspected:?}"
+    );
+    assert!(
+        inspected.iter().all(|e| e.version != "2.0.0"),
+        "ABI 99는 제외: {inspected:?}"
+    );
     assert!(nsql_drivers::ext::find_extension_in(&root, "nope").is_none());
     // 호스트 값으로 폴더를 지정(환경 변수가 있으면 그쪽이 이기므로 그때는 열기만 건너뜀).
     nsql_drivers::ext::set_driver_dir(Some(&root));

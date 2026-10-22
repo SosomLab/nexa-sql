@@ -343,6 +343,21 @@ const CMDS: &[Cmd] = &[
         ],
     },
     Cmd {
+        name: "driver",
+        usage: "nsql driver list | path | check <id> | rm <id>[@<ver>]",
+        brief: Msg::HlpCmdDriver,
+        detail: Msg::HlpCmdDriverDetail,
+        args: &[
+            ("list", Msg::HlpArgDriverList),
+            ("path", Msg::HlpArgDriverPath),
+            ("check <id>", Msg::HlpArgDriverCheck),
+            ("rm <id>[@<ver>]", Msg::HlpArgDriverRm),
+        ],
+        opts: &[],
+        notes: &[],
+        examples: &[],
+    },
+    Cmd {
         name: "license",
         usage: "nsql license status | request [<name> [<email>]] | install <file> | remove | path | export <file> | import <file>",
         brief: Msg::HlpCmdLicense,

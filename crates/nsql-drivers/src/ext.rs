@@ -37,7 +37,84 @@ pub fn driver_dir() -> Option<PathBuf> {
 pub struct ExtInfo {
     pub id: String,
     pub version: String,
+    /// 라이브러리 파일(매니페스트 `lib`가 있으면 그 이름 · 없으면 `nsql_driver_<id>.{dll,so,dylib}`).
     pub path: PathBuf,
+    /// 매니페스트가 적은 방언(없으면 None · 실제 방언은 함수표가 말한다).
+    pub dialect: Option<String>,
+    /// 매니페스트 `protocol`(ABI 버전 · 없으면 None).
+    pub abi: Option<u32>,
+    /// `nexa-driver.json`이 있었는가.
+    pub manifest: bool,
+}
+
+/// 매니페스트 파일 이름(docs/22 §2-3).
+pub const MANIFEST: &str = "nexa-driver.json";
+
+/// `nexa-driver.json`에서 쓰는 필드(cdylib 확장): `id` · `version` · `dialect` · `protocol`(ABI 버전) · `lib`(파일 이름 · 선택).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Manifest {
+    pub id: String,
+    pub version: String,
+    pub dialect: String,
+    pub protocol: Option<u32>,
+    pub lib: Option<String>,
+}
+
+/// 매니페스트 본문 → 필드(순수 · 모르는 키 무시 · 숫자는 `protocol`만).
+pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
+    let v = nsql_json::parse(text)?;
+    let nsql_json::Json::Obj(items) = v else {
+        return Err("manifest: not an object".to_string());
+    };
+    let mut m = Manifest::default();
+    for (k, v) in items {
+        match (k.as_str(), v) {
+            ("id", nsql_json::Json::Str(s)) => m.id = s,
+            ("version", nsql_json::Json::Str(s)) => m.version = s,
+            ("dialect", nsql_json::Json::Str(s)) => m.dialect = s,
+            ("lib", nsql_json::Json::Str(s)) => m.lib = Some(s),
+            ("protocol", nsql_json::Json::Num(n)) => m.protocol = Some(n as u32),
+            _ => {}
+        }
+    }
+    Ok(m)
+}
+
+/// 버전 폴더 하나를 본다: 매니페스트(있으면 lib 이름 · protocol 검사) → 라이브러리 파일 존재.
+fn inspect_version_dir(id: &str, dir: &Path) -> Option<ExtInfo> {
+    let ver = dir.file_name()?.to_string_lossy().into_owned();
+    let default_lib = library_file_name(&format!("nsql-driver-{id}"));
+    let manifest = std::fs::read_to_string(dir.join(MANIFEST))
+        .ok()
+        .and_then(|t| parse_manifest(&t).ok());
+    if let Some(m) = &manifest {
+        // ABI가 다른 매니페스트 = 이 본체가 올릴 수 없는 판 → 목록에서 뺀다(설치 도구가 걸러야 할 몫 · T-29).
+        if m.protocol.is_some_and(|p| p != nsql_abi::ABI_VERSION) {
+            return None;
+        }
+    }
+    let lib = manifest
+        .as_ref()
+        .and_then(|m| m.lib.clone())
+        .unwrap_or(default_lib);
+    let path = dir.join(lib);
+    if !path.is_file() {
+        return None;
+    }
+    Some(ExtInfo {
+        id: id.to_string(),
+        version: manifest
+            .as_ref()
+            .filter(|m| !m.version.is_empty())
+            .map_or(ver, |m| m.version.clone()),
+        path,
+        dialect: manifest
+            .as_ref()
+            .filter(|m| !m.dialect.is_empty())
+            .map(|m| m.dialect.clone()),
+        abi: manifest.as_ref().and_then(|m| m.protocol),
+        manifest: manifest.is_some(),
+    })
 }
 
 /// 버전 문자열 비교(순수): 숫자 세그먼트는 값으로 · 그 밖은 문자열로 · 짧은 쪽이 작다.
@@ -74,27 +151,74 @@ pub fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 /// `drivers/<id>/<ver>/<lib>`에서 최신 버전 하나(라이브러리 파일이 있는 버전만).
 #[must_use]
 pub fn find_extension_in(root: &Path, id: &str) -> Option<ExtInfo> {
-    let lib = library_file_name(&format!("nsql-driver-{id}"));
     let dir = root.join(id);
     let mut best: Option<ExtInfo> = None;
     for e in std::fs::read_dir(&dir).ok()?.flatten() {
-        let ver = e.file_name().to_string_lossy().into_owned();
-        let path = e.path().join(&lib);
-        if !path.is_file() {
+        let Some(info) = inspect_version_dir(id, &e.path()) else {
             continue;
-        }
+        };
         let better = best
             .as_ref()
-            .is_none_or(|b| version_cmp(&ver, &b.version) == std::cmp::Ordering::Greater);
+            .is_none_or(|b| version_cmp(&info.version, &b.version) == std::cmp::Ordering::Greater);
         if better {
-            best = Some(ExtInfo {
-                id: id.to_string(),
-                version: ver,
-                path,
-            });
+            best = Some(info);
         }
     }
     best
+}
+
+/// 확장 폴더 삭제(T-28 · 휴지통 없음): `ver` 없으면 id 전체. 이 프로세스가 이미 올린 id는 거부(언로드 불가 · 64 §5).
+pub fn remove_extension(id: &str, ver: Option<&str>) -> Result<Vec<PathBuf>, String> {
+    if LOADED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|m| m.contains_key(id))
+    {
+        return Err(format!(
+            "driver '{id}' is loaded in this process - restart and retry"
+        ));
+    }
+    let root = driver_dir().ok_or_else(|| "driver folder unknown".to_string())?;
+    let target = match ver {
+        Some(v) => root.join(id).join(v),
+        None => root.join(id),
+    };
+    if !target.is_dir() {
+        return Ok(Vec::new());
+    }
+    std::fs::remove_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    Ok(vec![target])
+}
+
+/// 실제로 올려 본 확장 정보(`nsql driver check`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckInfo {
+    pub driver_id: String,
+    pub version: String,
+    pub dialect: String,
+    pub abi: u32,
+    pub path: PathBuf,
+}
+
+pub fn check_extension(id: &str) -> Result<CheckInfo, DbError> {
+    let info = find_extension(id).ok_or_else(|| DbError {
+        code: None,
+        message: format!("extension '{id}' not installed"),
+        position: None,
+    })?;
+    let d = driver(id)?.ok_or_else(|| DbError {
+        code: None,
+        message: format!("extension '{id}' not loadable"),
+        position: None,
+    })?;
+    Ok(CheckInfo {
+        driver_id: d.id().to_string(),
+        version: info.version,
+        dialect: d.dialect().to_string(),
+        abi: nsql_abi::ABI_VERSION,
+        path: info.path,
+    })
 }
 
 #[must_use]
@@ -117,6 +241,33 @@ pub fn list_extensions() -> Vec<ExtInfo> {
         .filter_map(|e| find_extension_in(&root, &e.file_name().to_string_lossy()))
         .collect();
     v.sort_by(|a, b| a.id.cmp(&b.id));
+    v
+}
+
+/// 폴더 안 **모든** (id, 버전) 조합(`nsql driver list` 상세 · 시험) — 매니페스트가 걸러낸 판은 빠진다.
+#[must_use]
+pub fn list_extensions_in(root: &Path) -> Vec<ExtInfo> {
+    let mut v = Vec::new();
+    for id_entry in std::fs::read_dir(root).ok().into_iter().flatten().flatten() {
+        if !id_entry.path().is_dir() {
+            continue;
+        }
+        let id = id_entry.file_name().to_string_lossy().into_owned();
+        for ver_entry in std::fs::read_dir(id_entry.path())
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if let Some(info) = inspect_version_dir(&id, &ver_entry.path()) {
+                v.push(info);
+            }
+        }
+    }
+    v.sort_by(|a, b| {
+        a.id.cmp(&b.id)
+            .then_with(|| version_cmp(&b.version, &a.version))
+    });
     v
 }
 
@@ -159,6 +310,19 @@ mod tests {
             "접미 세그먼트 = 문자열 < 숫자"
         );
         assert_eq!(version_cmp("abc", "abd"), Less);
+    }
+
+    #[test]
+    fn manifest_fields_and_unknown_keys() {
+        let m = parse_manifest(
+            r#"{"id":"duckdb","version":"1.2.0","dialect":"odbc","protocol":1,"lib":"libduck.so","x":{"y":1}}"#,
+        )
+        .expect("manifest");
+        assert_eq!(m.id, "duckdb");
+        assert_eq!(m.protocol, Some(1));
+        assert_eq!(m.lib.as_deref(), Some("libduck.so"));
+        assert!(parse_manifest("[1]").is_err());
+        assert!(parse_manifest("{").is_err());
     }
 
     #[test]
