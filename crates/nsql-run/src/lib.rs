@@ -1893,6 +1893,7 @@ impl Runner {
                 schema: None,
                 env: _,
                 tls: _,
+                driver: _,
             } => Some(u.as_str()),
             _ => None,
         }

@@ -118,6 +118,9 @@ pub struct ConnectSpec {
     /// ★ TLS 모드(`?tls=` · `ssl-mode=` 별칭 · T-388 MySQL/MariaDB · 소문자 · `-` → `_`): disabled · preferred · required ·
     /// verify_ca · verify_identity. 값의 뜻과 검증은 드라이버 몫 · 없으면 설정(`mysql.tls`)을 따른다.
     pub tls: Option<String>,
+    /// ★ `?driver=`(T-27 잔여 · 10-24): 이 접속에 쓸 드라이버 — Oracle `thin`|`oci` · 확장 id(`oracle-thin` · `duckdb` …). 호스트(허브)만 본다 ·
+    ///   ABI 코덱에는 싣지 않는다(드라이버는 자기 id를 안다 · 기존 패키지 호환). 없으면 설정(`oracle.driver`)·후보 순서.
+    pub driver: Option<String>,
 }
 
 /// ★ ODBC 접속 문자열(T-383)의 `key=value;` 토큰 — `{…}` 안의 `;`는 구분자가 아니다 · `}}` = `}`.
@@ -216,7 +219,27 @@ impl ConnectSpec {
                         .strip_prefix("//")
                         .is_some_and(|r| !r.starts_with(['/', ':', '.', '~']) && r.contains('/'));
                 if !legacy_url {
-                    let db = rest.strip_prefix("//").unwrap_or(rest).trim();
+                    let mut db = rest.strip_prefix("//").unwrap_or(rest).trim();
+                    // ★ 축약형의 꼬리 `?driver=…`·`?env=…`(10-24): 알려진 키뿐일 때만 떼어 해석(경로에 `?`가 드물다 · Windows는 금지 문자).
+                    if let Some((path, q)) = db.rsplit_once('?') {
+                        let known = q.split('&').all(|kv| {
+                            kv.split_once('=').is_some_and(|(k, _)| {
+                                matches!(k.to_ascii_lowercase().as_str(), "driver" | "env")
+                            })
+                        });
+                        if known && !q.is_empty() {
+                            for kv in q.split('&') {
+                                if let Some((k, v)) = kv.split_once('=') {
+                                    if k.eq_ignore_ascii_case("driver") && !v.trim().is_empty() {
+                                        spec.driver = Some(v.trim().to_ascii_lowercase());
+                                    } else if k.eq_ignore_ascii_case("env") {
+                                        spec.env = ConnEnv::from_name(v);
+                                    }
+                                }
+                            }
+                            db = path.trim();
+                        }
+                    }
                     spec.dialect = d;
                     if d == Some(Dialect::Odbc) {
                         if db.is_empty() {
@@ -291,6 +314,8 @@ impl ConnectSpec {
                         }
                     } else if k.eq_ignore_ascii_case("role") && !v.trim().is_empty() {
                         spec.role = Some(v.trim().to_ascii_uppercase());
+                    } else if k.eq_ignore_ascii_case("driver") && !v.trim().is_empty() {
+                        spec.driver = Some(v.trim().to_ascii_lowercase());
                     }
                 }
             }
@@ -522,6 +547,9 @@ impl ConnectSpec {
         }
         if let Some(t) = &self.tls {
             q.push(format!("tls={t}"));
+        }
+        if let Some(d) = &self.driver {
+            q.push(format!("driver={d}"));
         }
         if !q.is_empty() {
             s.push('?');
@@ -839,5 +867,21 @@ mod tests {
         // 평범한 odbc: 스킴은 그대로.
         let o = ConnectSpec::parse("odbc:DSN=Sales").expect("odbc");
         assert_eq!(o.database.as_deref(), Some("DSN=Sales"));
+    }
+    /// ★ `?driver=`(10-24): 소문자 · 왕복 · 없으면 None.
+    #[test]
+    fn driver_param_round_trips() {
+        let o = ConnectSpec::parse("oracle://scott:tiger@db:1521/orcl?driver=OCI").unwrap();
+        assert_eq!(o.driver.as_deref(), Some("oci"));
+        assert_eq!(
+            o.connection_string(),
+            "oracle://scott@db:1521/orcl?driver=oci"
+        );
+        let d = ConnectSpec::parse("duckdb:/tmp/x.duckdb?driver=duckdb").unwrap();
+        assert_eq!(d.driver.as_deref(), Some("duckdb"));
+        assert!(ConnectSpec::parse("mysql://u@h/db")
+            .unwrap()
+            .driver
+            .is_none());
     }
 }

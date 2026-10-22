@@ -97,6 +97,24 @@ pub fn ext_ids(dialect: Dialect) -> Vec<&'static str> {
     ids
 }
 
+/// ★ `?driver=`가 가리키는 후보를 맨 앞으로(`thin`/`oci` 별칭 포함) — 모르는 값은 무시(순서 그대로).
+#[must_use]
+pub fn ext_ids_for(dialect: Dialect, want: Option<&str>) -> Vec<&'static str> {
+    let mut ids = ext_ids(dialect);
+    let want = match want {
+        Some("thin") => Some("oracle-thin"),
+        Some("oci") => Some("oracle-oci"),
+        other => other,
+    };
+    if let Some(w) = want {
+        if let Some(pos) = ids.iter().position(|i| *i == w) {
+            let id = ids.remove(pos);
+            ids.insert(0, id);
+        }
+    }
+    ids
+}
+
 /// 확장 id → 이 저장소의 크레이트 이름(cdylib 파일 = `library_file_name(크레이트)` · 패키징이 쓴다 · `oracle-oci`만 다르다).
 #[must_use]
 pub fn ext_crate_name(id: &str) -> String {
@@ -213,7 +231,7 @@ pub fn open_auto(
         return Err(e);
     };
     let dialect = spec.dialect.unwrap_or(default_dialect);
-    let ids = ext_ids(dialect);
+    let ids = ext_ids_for(dialect, spec.driver.as_deref());
     let Some(id) = ids.first() else {
         return Err(e);
     };
@@ -238,7 +256,7 @@ pub fn open_auto(
 
 /// 확장 후보를 차례로 열어 본다 · 전부 없으면 [`driver_missing`].
 fn open_extension(dialect: Dialect, spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
-    for id in ext_ids(dialect) {
+    for id in ext_ids_for(dialect, spec.driver.as_deref()) {
         if let Some(s) = ext::open_ext(id, spec)? {
             return Ok(s);
         }
@@ -323,7 +341,16 @@ pub fn oracle_driver_effective() -> OracleDriver {
 
 #[cfg(any(feature = "oracle", feature = "oracle-thin"))]
 fn open_oracle(spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
-    match oracle_driver_effective() {
+    // ★ `?driver=thin|oci`(접속 하나에만) > 설정(`oracle.driver`).
+    let chosen = match spec.driver.as_deref() {
+        Some("oci") | Some("oracle-oci") => OracleDriver::Oci,
+        Some("thin") | Some("oracle-thin") => OracleDriver::Thin,
+        _ => oracle_driver_effective(),
+    };
+    if !chosen.included() {
+        return open_extension(Dialect::Oracle, spec);
+    }
+    match chosen {
         #[cfg(feature = "oracle")]
         OracleDriver::Oci => Ok(Box::new(nsql_driver_oracle::OracleSession::connect(spec)?)),
         #[cfg(feature = "oracle-thin")]
@@ -495,11 +522,7 @@ pub fn set_mssql_cancel_socket(socket: bool) {
 /// ★ D-350: 접속 폼·CLI가 고를 수 있는 방언 = **이 OS에서 쓸 수 있는 전부**(내장이든 확장 자동 설치든 · ODBC는 Windows만).
 #[must_use]
 pub fn available() -> Vec<Dialect> {
-    Dialect::ALL
-        .iter()
-        .copied()
-        .filter(|d| *d != Dialect::Odbc || cfg!(windows))
-        .collect()
+    Dialect::ALL.to_vec()
 }
 
 /// 이 빌드에 컴파일된 방언(설정 창 DBMS 그룹 · 진단).
@@ -547,8 +570,11 @@ mod tests {
             e.message
         );
         assert_eq!(ext_ids(Dialect::Oracle).len(), 2);
+        assert_eq!(ext_ids_for(Dialect::Oracle, Some("oci"))[0], "oracle-oci");
+        assert_eq!(ext_ids_for(Dialect::Oracle, Some("thin"))[0], "oracle-thin");
+        assert_eq!(ext_ids_for(Dialect::Postgres, Some("nope")), ["pg"]);
         assert!(available().contains(&Dialect::Postgres));
-        assert_eq!(available().contains(&Dialect::Odbc), cfg!(windows));
+        assert!(available().contains(&Dialect::Odbc));
         assert!(matches!(
             driver_status(Dialect::Sqlite),
             DriverStatus::Builtin

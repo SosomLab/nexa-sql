@@ -447,6 +447,7 @@ mod tests {
             schema: None,
             env: None,
             tls: None,
+            driver: None,
         }
     }
 
