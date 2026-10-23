@@ -147,6 +147,23 @@ pub enum DriverStatus {
     Missing { ids: Vec<&'static str> },
 }
 
+/// 확장 id가 **이 빌드에 내장**돼 있으면 그 버전(= 이 크레이트 버전 · 드라이버 크레이트는 워크스페이스 버전을 같이 쓴다) — 드라이버 관리자
+/// 창의 "내장" 열·상태(사용자 10-23 "내장 여부와 내장/확장 버전 차이"). 확장 패키지 버전(`drivers-v*`)과는 번호 체계가 다르다.
+#[must_use]
+pub fn builtin_version(id: &str) -> Option<&'static str> {
+    let yes = match id {
+        "sqlite" => cfg!(feature = "sqlite"),
+        "pg" => cfg!(feature = "pg"),
+        "mysql" => cfg!(feature = "mysql"),
+        "mssql" => cfg!(feature = "mssql"),
+        "odbc" => cfg!(feature = "odbc"),
+        "oracle-thin" => OracleDriver::Thin.included(),
+        "oracle-oci" => OracleDriver::Oci.included(),
+        _ => false, // duckdb = 확장 전용(D-350)
+    };
+    yes.then_some(env!("CARGO_PKG_VERSION"))
+}
+
 /// 이 빌드에 내장된 방언인가(Oracle = 설정이 고른 드라이버 기준).
 #[must_use]
 pub fn is_builtin(dialect: Dialect) -> bool {
@@ -155,7 +172,7 @@ pub fn is_builtin(dialect: Dialect) -> bool {
         Dialect::Postgres => cfg!(feature = "pg"),
         Dialect::Mysql => cfg!(feature = "mysql"),
         Dialect::Mssql => cfg!(feature = "mssql"),
-        Dialect::Odbc => cfg!(all(feature = "odbc", windows)),
+        Dialect::Odbc => cfg!(feature = "odbc"), // 전 OS(10-23 · unixODBC)
         Dialect::Duckdb => false,
         Dialect::Oracle => oracle_driver().included(),
     }
@@ -584,6 +601,24 @@ mod tests {
     }
 
     /// 기본 feature = 내장 드라이버 다섯(135차 MySQL 포함) — 접속 폼 콤보 "(no driver)" 라벨의 원천.
+    /// 내장 버전 표(드라이버 관리자 창용)는 `is_builtin`·DuckDB 확장 전용과 맞는다.
+    #[test]
+    fn builtin_version_matches_is_builtin() {
+        for (d, ids) in DRIVER_IDS {
+            let any = ids.iter().any(|id| builtin_version(id).is_some());
+            if *d == Dialect::Oracle {
+                assert_eq!(any, OracleDriver::Thin.included() || OracleDriver::Oci.included());
+            } else {
+                assert_eq!(any, is_builtin(*d), "{d}");
+            }
+        }
+        assert_eq!(builtin_version("duckdb"), None);
+        assert_eq!(builtin_version("nope"), None);
+        if let Some(v) = builtin_version("sqlite") {
+            assert_eq!(v, env!("CARGO_PKG_VERSION"));
+        }
+    }
+
     #[test]
     fn available_lists_every_builtin_driver() {
         let v = available();

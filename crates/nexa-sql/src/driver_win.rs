@@ -1,7 +1,8 @@
 //! ★ **드라이버 관리자 창**(docs/22 §5-2 · T-29 2차 · 사용자 10-23 "GUI에서는 드라이버 어떻게 확인") — DBeaver Driver Manager 대응.
 //! 설치된 확장 드라이버와 색인(`drivers/index.json`)의 드라이버를 한 표에 보여 주고 [새로 고침][설치/갱신][삭제][확인]을 제공한다.
 //!
-//! - 표: id · 이름 · 방언 · 설치본 · 최신 · 상태(설치됨 · 갱신 있음 · 미설치 · 이 OS 빌드 없음). 줄을 고르면 버튼이 맞춰 켜진다.
+//! - 표: id · 이름 · 방언 · **내장**(이 빌드에 컴파일된 버전 · 사용자 10-23) · 설치본 · 최신 · 상태(설치됨 · 갱신 있음 · 미설치 · 이 OS 빌드 없음 ·
+//!   내장이면 "내장 x ≠ 확장 y"처럼 내장/확장 버전 차이). 줄을 고르면 버튼이 맞춰 켜진다(버튼은 확장 설치 상태 기준 · 내장은 접속에 먼저 쓰인다).
 //! - 데이터는 호스트가 갖고([`crate::app::drivers`] · 색인 + `ext::list_extensions_in`) 창은 그릴 때 받은 줄만 본다(변수 창과 같은 꼴).
 //! - 네트워크는 **버튼을 눌렀을 때만**(26 §8): 창을 열 때는 캐시된 색인만 읽고, [새로 고침]이 조건부 GET · [설치]가 자산 내려받기.
 //!   오래 걸리는 일은 워커 스레드(`DriverTask`)가 하고 진행은 상태줄에 — 창·메인 창 입력을 막지 않는다.
@@ -13,7 +14,7 @@ use nexa_ctl::{Button, Control, InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_drivers::ext::install::Index;
 use nsql_drivers::ext::ExtInfo;
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 use std::rc::Rc;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -41,12 +42,29 @@ impl DriverState {
     }
 }
 
+impl DriverRow {
+    /// 상태 칸 글(순수): 내장이면 내장/확장 버전 차이(사용자 10-23 "내장 여부와 차이값") · 아니면 확장 상태.
+    pub(crate) fn state_text(&self) -> String {
+        match (&self.builtin, &self.installed, &self.latest) {
+            (Some(b), Some(i), _) if b == i => tf(Msg::DrvStateBuiltinExtSame, &[b]),
+            (Some(b), Some(i), _) => tf(Msg::DrvStateBuiltinExtDiff, &[b, i]),
+            (Some(b), None, Some(l)) if self.state != DriverState::NoBuild => {
+                tf(Msg::DrvStateBuiltinLatest, &[b, l])
+            }
+            (Some(b), None, _) => tf(Msg::DrvStateBuiltin, &[b]),
+            (None, _, _) => t(self.state.label()).to_string(),
+        }
+    }
+}
+
 /// 표의 한 줄(호스트가 만든다 · [`build_rows`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DriverRow {
     pub id: String,
     pub name: String,
     pub dialect: String,
+    /// 이 빌드에 내장된 버전(`nsql_drivers::builtin_version`) — 있으면 접속은 이것을 먼저 쓴다.
+    pub builtin: Option<String>,
     pub installed: Option<String>,
     pub latest: Option<String>,
     pub state: DriverState,
@@ -59,6 +77,7 @@ pub(crate) fn build_rows(
     index: Option<&Index>,
     installed: &[ExtInfo],
     plat: &str,
+    builtin: impl Fn(&str) -> Option<&'static str>,
 ) -> Vec<DriverRow> {
     let mut rows: Vec<DriverRow> = Vec::new();
     if let Some(idx) = index {
@@ -81,6 +100,7 @@ pub(crate) fn build_rows(
                 id: d.id.clone(),
                 name: d.name.clone(),
                 dialect: d.dialect.clone(),
+                builtin: builtin(&d.id).map(str::to_string),
                 installed: inst.map(|e| e.version.clone()),
                 latest,
                 state,
@@ -96,6 +116,7 @@ pub(crate) fn build_rows(
             id: e.id.clone(),
             name: e.id.clone(),
             dialect: e.dialect.clone().unwrap_or_else(|| e.id.clone()),
+            builtin: builtin(&e.id).map(str::to_string),
             installed: Some(e.version.clone()),
             latest: None,
             state: DriverState::Installed,
@@ -120,13 +141,14 @@ pub(crate) enum DriverWinAction {
     InstallFile,
 }
 
-const COLS: [(Msg, i32); 6] = [
+const COLS: [(Msg, i32); 7] = [
     (Msg::DrvColId, 110),
     (Msg::DrvColName, 0),
-    (Msg::DrvColDialect, 90),
-    (Msg::DrvColInstalled, 90),
-    (Msg::DrvColLatest, 90),
-    (Msg::DrvColState, 110),
+    (Msg::DrvColDialect, 80),
+    (Msg::DrvColBuiltin, 70),
+    (Msg::DrvColInstalled, 80),
+    (Msg::DrvColLatest, 80),
+    (Msg::DrvColState, 190),
 ];
 
 pub(crate) struct DriverWin {
@@ -527,9 +549,10 @@ impl DriverWin {
                     r.id.clone(),
                     r.name.clone(),
                     r.dialect.clone(),
+                    r.builtin.clone().unwrap_or_else(|| "-".into()),
                     r.installed.clone().unwrap_or_else(|| "-".into()),
                     r.latest.clone().unwrap_or_else(|| "-".into()),
-                    t(r.state.label()).to_string(),
+                    r.state_text(),
                 ];
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
@@ -616,6 +639,11 @@ mod tests {
             Some(&idx),
             &[ext("a", "1.0.0"), ext("c", "1.0.0"), ext("zz", "0.1")],
             "windows-x86_64",
+            |id| match id {
+                "a" | "d" => Some("9.9.9"),
+                "c" => Some("1.0.0"),
+                _ => None,
+            },
         );
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, ["a", "b", "c", "d", "zz"]);
@@ -626,8 +654,19 @@ mod tests {
         assert_eq!(rows[4].state, DriverState::Installed);
         assert_eq!(rows[4].latest, None);
         assert_eq!(rows[4].name, "zz");
+        // ★ 내장 열·상태 문구(사용자 10-23): 내장 ≠ 확장 · 내장 = 확장 · 내장 + 확장 최신 · 내장만 · 비내장은 확장 상태.
+        assert_eq!(rows[0].builtin.as_deref(), Some("9.9.9"));
+        assert_eq!(rows[0].state_text(), "built-in 9.9.9 != extension 1.0.0");
+        assert_eq!(rows[2].state_text(), "built-in = extension 1.0.0");
+        assert_eq!(rows[3].state_text(), "built-in 9.9.9");
+        assert_eq!(rows[1].state_text(), "no build for this OS");
+        assert_eq!(rows[4].builtin, None);
+        assert_eq!(rows[4].state_text(), "installed");
+        let mut d_latest = rows[3].clone();
+        d_latest.latest = Some("0.1.1".into());
+        assert_eq!(d_latest.state_text(), "built-in 9.9.9 - extension 0.1.1 available");
         // 색인 없음 = 설치본만.
-        let only = build_rows(None, &[ext("q", "3")], "x");
+        let only = build_rows(None, &[ext("q", "3")], "x", |_| None);
         assert_eq!(only.len(), 1);
         assert_eq!(only[0].state, DriverState::Installed);
         // 버튼 활성: 미설치 = 설치만 · 설치됨 = 삭제·확인 · 갱신 = 셋 다 · 작업 중 = 전부 끔.

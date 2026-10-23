@@ -91,6 +91,7 @@ impl App {
             self.driver_task.index.as_ref(),
             &installed,
             &install::platform(),
+            nsql_drivers::builtin_version,
         )
     }
 
