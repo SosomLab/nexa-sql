@@ -983,6 +983,7 @@ impl App {
             "run.all" => self.run_sql(true),
             "run.stop" => self.stop_run(),
             "run.explain" => self.run_explain(),
+            "run.explain_analyze" => self.run_explain_analyze(),
             "obj.reveal" => self.objlink_reveal_at_caret(),
             "obj.info" => self.open_info_tab(),
             "obj.rows" => self.open_rows_tab(),
@@ -1447,6 +1448,7 @@ impl App {
                     gated("run.statement_new_tab", Msg::MnRunStatementNewTab),
                     gated("run.all", Msg::MnRunAll),
                     gated("run.explain", Msg::MnExplain),
+                    gated("run.explain_analyze", Msg::MnExplainAnalyze),
                     MenuEntry::Separator,
                     gated("run.commit", Msg::MnCommit),
                     gated("run.rollback", Msg::MnRollback),
@@ -1986,6 +1988,7 @@ impl App {
         cmds.push(m("result.tab.prev", Msg::MnRun, Msg::MnResultPrevTab));
         cmds.push(m("run.all", Msg::MnRun, Msg::MnRunAll));
         cmds.push(m("run.explain", Msg::MnRun, Msg::MnExplain));
+        cmds.push(m("run.explain_analyze", Msg::MnRun, Msg::MnExplainAnalyze));
         cmds.push(m("run.commit", Msg::MnRun, Msg::MnCommit));
         cmds.push(m("run.rollback", Msg::MnRun, Msg::MnRollback));
         cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));

@@ -95,6 +95,12 @@ pub(crate) enum Cmd {
         /// ★ 운영 보류 커밋 정책(114 §5 · 10-15) — 운영 접속 + `tx.prod_hold`일 때만 `Some`.
         hold: Option<nsql_run::HoldPolicy>,
     },
+    /// ★ 실행 계획 검토(docs/122 · 사용자 10-23): 한 문장을 방언별 EXPLAIN으로 돌려 트리·검토 결과를 **결과 집합 둘**로 돌려준다
+    ///   (`RunEvent::ResultSet` 라벨 = 실행 계획 / 검토 · 파싱이 안 되면 원문 집합 하나). `analyze` = 문장을 실제로 실행.
+    Explain {
+        stmt: String,
+        analyze: bool,
+    },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
         /// 결과 탭 키(결과 탭 id).
@@ -224,6 +230,93 @@ pub(crate) enum ConnOutcome {
     },
     /// 끊김이었던 세션이 다시 살아 있음을 확인했다(판정 성공 · 재접속 성공).
     Alive,
+}
+
+/// 실행 계획 보고서 → 결과 집합(실행 계획 트리 · 검토). 트리를 못 풀었으면 원문 한 집합(docs/122).
+fn plan_result_sets(rep: &nsql_script::plan::PlanReport) -> Vec<(nsql_core::ResultSet, String)> {
+    use nsql_core::{Column, ResultSet, Value};
+    let col = |m: Msg, ty: &str| Column {
+        name: t(m).to_string(),
+        type_name: ty.to_string(),
+    };
+    let fnum = |v: Option<f64>| match v {
+        Some(x) if x.fract() == 0.0 && x.abs() < 9.0e15 => Value::Int(x as i64),
+        Some(x) => Value::Float(x),
+        None => Value::Null,
+    };
+    let mut out = Vec::new();
+    if rep.nodes.is_empty() {
+        out.push((
+            ResultSet {
+                columns: vec![col(Msg::PlanTabPlan, "TEXT")],
+                rows: rep
+                    .raw
+                    .iter()
+                    .map(|l| vec![Value::Str(l.clone())])
+                    .collect(),
+            },
+            t(Msg::PlanTabPlan).to_string(),
+        ));
+    } else {
+        let rows = rep
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                vec![
+                    Value::Int(i as i64 + 1),
+                    Value::Str(format!("{}{}", "  ".repeat(n.depth), n.op)),
+                    Value::Str(n.object.clone()),
+                    fnum(n.rows),
+                    fnum(n.actual_rows),
+                    fnum(n.cost),
+                    fnum(n.time_ms),
+                    Value::Str(n.detail.clone()),
+                ]
+            })
+            .collect();
+        out.push((
+            ResultSet {
+                columns: vec![
+                    Column {
+                        name: "#".into(),
+                        type_name: "INT".into(),
+                    },
+                    col(Msg::PlanColOp, "TEXT"),
+                    col(Msg::PlanColObject, "TEXT"),
+                    col(Msg::PlanColRows, "NUMBER"),
+                    col(Msg::PlanColActual, "NUMBER"),
+                    col(Msg::PlanColCost, "NUMBER"),
+                    col(Msg::PlanColTime, "NUMBER"),
+                    col(Msg::PlanColDetail, "TEXT"),
+                ],
+                rows,
+            },
+            t(Msg::PlanTabPlan).to_string(),
+        ));
+    }
+    out.push((
+        ResultSet {
+            columns: vec![
+                col(Msg::PlanColSeverity, "TEXT"),
+                col(Msg::PlanColNode, "INT"),
+                col(Msg::PlanColMessage, "TEXT"),
+            ],
+            rows: rep
+                .findings
+                .iter()
+                .map(|f| {
+                    vec![
+                        Value::Str(f.severity.label().to_string()),
+                        f.node.map_or(Value::Null, |i| Value::Int(i as i64 + 1)),
+                        Value::Str(f.message.clone()),
+                    ]
+                })
+                .collect(),
+        },
+        t(Msg::PlanTabReview).to_string(),
+    ));
+    out
 }
 
 fn err(message: String) -> RunEvent {
@@ -960,6 +1053,75 @@ pub(crate) fn spawn(
                             }
                         }
                         let _ = dtx.send(None);
+                        wake_now();
+                        true
+                    }
+                    Cmd::Explain { stmt, analyze } => {
+                        apply_fetch_settings(&mut runner);
+                        if let Err(m) = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        ) {
+                            if !m.is_empty() {
+                                emit(err(m));
+                            }
+                            let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
+                            wake_now();
+                            return true;
+                        }
+                        let mut conn_err = false;
+                        let t0 = std::time::Instant::now();
+                        emit(RunEvent::Begin {
+                            index: 0,
+                            line: 1,
+                            summary: if analyze { "EXPLAIN ANALYZE".into() } else { "EXPLAIN".into() },
+                            server: true,
+                        });
+                        let errs = match runner.explain(&stmt, nsql_script::plan::PlanOptions { analyze }) {
+                            Ok(rep) => {
+                                for (rs, label) in plan_result_sets(&rep) {
+                                    emit(RunEvent::ResultSet {
+                                        index: 0,
+                                        rs,
+                                        elapsed: t0.elapsed(),
+                                        more: false,
+                                        label: Some(label),
+                                    });
+                                }
+                                emit(RunEvent::Done {
+                                    index: 0,
+                                    rows_affected: None,
+                                    elapsed: t0.elapsed(),
+                                });
+                                0
+                            }
+                            Err(error) => {
+                                conn_err |= probe::is_connection_error(error.code, &error.message);
+                                emit(RunEvent::Error {
+                                    index: 0,
+                                    line: 1,
+                                    error,
+                                });
+                                1
+                            }
+                        };
+                        suspect = conn_err;
+                        if !conn_err {
+                            last_ok = std::time::Instant::now();
+                        }
+                        let _ = dtx.send(if errs > 0 {
+                            Some(tf(Msg::WkErrors, &[&errs.to_string()]))
+                        } else {
+                            None
+                        });
                         wake_now();
                         true
                     }

@@ -400,8 +400,17 @@ impl App {
         self.redraw();
     }
 
-    /// 실행 계획(사용자 09-15 기본 기능) — 캐럿 문장(또는 선택)을 방언별 EXPLAIN 관용으로 감싸 실행.
+    /// 실행 계획(사용자 09-15 기본 기능 · 10-23 검토 기능 = docs/122) — 캐럿 문장(또는 선택)을 워커 `Cmd::Explain`으로(트리 + 검토 탭).
     pub(crate) fn run_explain(&mut self) {
+        self.run_explain_opts(false);
+    }
+
+    /// 실제 실행 계획 — 문장을 실제로 실행한다(DML이면 데이터가 바뀐다 → 상태줄 경고).
+    pub(crate) fn run_explain_analyze(&mut self) {
+        self.run_explain_opts(true);
+    }
+
+    fn run_explain_opts(&mut self, analyze: bool) {
         let Some(pass) = self.gate_pass() else {
             return;
         };
@@ -423,7 +432,11 @@ impl App {
             self.sess.status = t(Msg::ErrNoSql).into();
             return;
         };
-        let src = nsql_script::explain_script(self.sess.dialect, &stmt);
+        let src = nsql_script::plan::explain_script_opts(
+            self.sess.dialect,
+            &stmt,
+            nsql_script::plan::PlanOptions { analyze },
+        );
         self.wake_if_idle();
         self.sess.touch();
         self.sess.run_tab = self.run_target_tab();
@@ -433,26 +446,18 @@ impl App {
         self.sess.run_editor = self.editors.active_id();
         self.sess.run_had_rs = false;
         self.sess.busy = true;
-        self.sess.status = t(Msg::StRunning).into();
+        self.sess.status = if analyze {
+            t(Msg::StExplainActualWarn).into()
+        } else {
+            t(Msg::StRunning).into()
+        };
         self.run_toast_start(&src);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
         // 실행 계획 = 래핑한 스크립트라 편집기 좌표와 무관(T-371 폴백 = 줄).
         self.sess.last_run_starts = Vec::new();
         self.sess.run_src_base = None;
-        let max_rows = self.run_page_rows(self.sess.run_tab);
-        self.sess.submit(
-            pass,
-            worker::Cmd::Run {
-                src,
-                preflight: None,
-                max_rows,
-                vars: self.run_vars(),
-                defines: self.run_defines(),
-                intrinsic: Some(self.run_intrinsic()),
-                whole: false,
-                hold: None,
-            },
-        );
+        self.sess
+            .submit(pass, worker::Cmd::Explain { stmt, analyze });
         self.live_start();
         self.redraw();
     }
