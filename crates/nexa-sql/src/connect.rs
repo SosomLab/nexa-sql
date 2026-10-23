@@ -329,6 +329,48 @@ pub(crate) fn quick_profile_name(spec: &ConnectSpec, exists: impl Fn(&str) -> bo
         .unwrap_or(base)
 }
 
+/// 방언 콤보 항목(순수): 전 방언 + **Oracle 뒤에 드라이버 변형 2**(`Oracle (Thin)` · `Oracle (OCI)` · 사용자 10-23) — 값은 접속 문자열
+/// `?driver=`와 같은 꼴(`oracle?driver=thin`) · 기본 `Oracle` = 설정 `oracle.driver`를 따른다 · 이 빌드에 없는 방언은 "(no driver)"(접속 때 자동 설치).
+fn dialect_items(available: &[Dialect]) -> Vec<ComboItem> {
+    let mut items = Vec::with_capacity(Dialect::ALL.len() + 2);
+    for d in Dialect::ALL {
+        let label = if available.contains(&d) {
+            d.display_name().to_string()
+        } else {
+            format!("{} {}", d.display_name(), t(Msg::ValNoDriver))
+        };
+        items.push(ComboItem::new(d.to_string(), label));
+        if d == Dialect::Oracle {
+            for (drv, name) in [("thin", "Thin"), ("oci", "OCI")] {
+                items.push(ComboItem::new(
+                    dialect_value(d, Some(drv)),
+                    format!("{} ({name})", d.display_name()),
+                ));
+            }
+        }
+    }
+    items
+}
+
+/// 콤보 값 = 방언 이름 (+ `?driver=<변형>`).
+fn dialect_value(d: Dialect, driver: Option<&str>) -> String {
+    match driver.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => format!("{d}?driver={v}"),
+        None => d.to_string(),
+    }
+}
+
+/// 콤보 값 → (방언, 드라이버 변형). 모르는 값 = SQLite(종전과 같다).
+fn split_dialect_value(v: &str) -> (Dialect, Option<String>) {
+    let (name, tail) = v.split_once('?').unwrap_or((v, ""));
+    let d = Dialect::from_name(name).unwrap_or(Dialect::Sqlite);
+    let driver = tail
+        .strip_prefix("driver=")
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    (d, driver)
+}
+
 fn digits_only(c: char) -> bool {
     c.is_ascii_digit()
 }
@@ -346,20 +388,15 @@ impl ConnectPanel {
             status_content_h: std::cell::Cell::new(0),
             port_w: 72.0,
             focused: false,
-            dialect: Combo::new(
-                Dialect::ALL
+            // 초기 선택 = 항목 **값** 기준(Oracle 변형 2개가 끼어 `Dialect::ALL` 위치와 어긋난다 · 10-23).
+            dialect: {
+                let items = dialect_items(&available);
+                let at = items
                     .iter()
-                    .map(|d| {
-                        let label = if available.contains(d) {
-                            d.display_name().to_string()
-                        } else {
-                            format!("{} {}", d.display_name(), t(Msg::ValNoDriver))
-                        };
-                        ComboItem::new(d.to_string(), label)
-                    })
-                    .collect(),
-                Dialect::ALL.iter().position(|d| *d == first).unwrap_or(0),
-            ),
+                    .position(|i| i.value == first.to_string())
+                    .unwrap_or(0);
+                Combo::new(items, at)
+            },
             host: TextBox::new(t(Msg::PhHost)),
             port: TextBox::new(""),
             database: TextBox::new(t(Msg::PhDatabase)),
@@ -425,7 +462,12 @@ impl ConnectPanel {
     }
 
     fn selected_dialect(&self) -> Dialect {
-        Dialect::from_name(&self.dialect.selected_value()).unwrap_or(Dialect::Sqlite)
+        split_dialect_value(&self.dialect.selected_value()).0
+    }
+
+    /// 콤보가 고른 드라이버 변형(`Oracle (Thin)` → "thin" · 기본 항목 = None = 설정 `oracle.driver`).
+    fn selected_driver(&self) -> Option<String> {
+        split_dialect_value(&self.dialect.selected_value()).1
     }
 
     fn database_placeholder(&self) -> String {
@@ -464,7 +506,8 @@ impl ConnectPanel {
         self.loaded_name = Some(name.to_string());
         self.env.select_value(env_value(spec.env));
         if let Some(d) = spec.dialect {
-            self.dialect.select_value(&d.to_string());
+            self.dialect
+                .select_value(&dialect_value(d, spec.driver.as_deref()));
             self.auto_port = d.default_port();
         }
         self.host.set_text(spec.host.as_deref().unwrap_or(""));
@@ -500,6 +543,8 @@ impl ConnectPanel {
         }
         // 서버 유형 = 콤보(Save = 프로필에 영속 · 접속 = 이 값으로 붙는다).
         spec.env = nsql_script::ConnEnv::from_name(&self.env.selected_value());
+        // 드라이버 변형(Oracle Thin/OCI · 사용자 10-23 "접속 폼에 드라이버 선택") = 접속 문자열 `?driver=`와 같은 값.
+        spec.driver = self.selected_driver();
         Ok(spec)
     }
 
@@ -2009,5 +2054,46 @@ mod dirty_tests {
         n.user = "w".into();
         n.host = "z".into();
         assert_eq!(dirty_fields(&b, &n), vec![Dirty::Host, Dirty::User]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ★ 방언 콤보의 Oracle 드라이버 변형(사용자 10-23): 값 왕복 · 항목 순서(Oracle 바로 뒤) · 스펙 driver로 이어진다.
+    #[test]
+    fn oracle_driver_variants_in_dialect_combo() {
+        assert_eq!(
+            dialect_value(Dialect::Oracle, Some("thin")),
+            "oracle?driver=thin"
+        );
+        assert_eq!(dialect_value(Dialect::Oracle, None), "oracle");
+        assert_eq!(dialect_value(Dialect::Oracle, Some("  ")), "oracle");
+        assert_eq!(
+            split_dialect_value("oracle?driver=oci"),
+            (Dialect::Oracle, Some("oci".into()))
+        );
+        assert_eq!(split_dialect_value("postgres"), (Dialect::Postgres, None));
+        assert_eq!(split_dialect_value("nope"), (Dialect::Sqlite, None));
+        let items = dialect_items(&[Dialect::Oracle]);
+        let values: Vec<&str> = items.iter().map(|i| i.value.as_str()).collect();
+        let o = values.iter().position(|v| *v == "oracle").expect("oracle");
+        assert_eq!(
+            &values[o..o + 3],
+            ["oracle", "oracle?driver=thin", "oracle?driver=oci"]
+        );
+        assert_eq!(items.len(), Dialect::ALL.len() + 2);
+        let mut p = ConnectPanel::new(vec![Dialect::Oracle]);
+        let mut spec = ConnectSpec::parse("oracle://u:p@h:1521/svc?driver=thin").expect("spec");
+        p.fill("x", &spec);
+        assert_eq!(p.dialect.selected_value(), "oracle?driver=thin");
+        assert_eq!(p.selected_dialect(), Dialect::Oracle);
+        let built = p.build_spec().expect("spec");
+        assert_eq!(built.driver.as_deref(), Some("thin"));
+        spec.driver = None;
+        p.fill("y", &spec);
+        assert_eq!(p.dialect.selected_value(), "oracle");
+        assert_eq!(p.build_spec().expect("spec").driver, None);
     }
 }
