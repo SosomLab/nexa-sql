@@ -109,8 +109,8 @@ Run-Item -Id R1 -Title "편집기 탭(2 MB)" -Cmd ("@after:6000:open:" + $sql2m 
 Run-Item -Id R2 -Title "결과 그리드(10만 행 × 5열)" -Cmd ("open:" + $rowsSql + ",@after:6000:run.all,@after:16000:" + $closeRes) -TBase 5500 -TRaise 15500 -TRelease 18500 -Allow 3
 # R3 대용량 65 MB: 올림 = open(적재 완료 대기 20 s) · 놓음 = file.close_tab.
 Run-Item -Id R3 -Title "대용량 파일(65 MB · 닫기)" -Cmd ("@after:6000:open:" + $sql65m + ",@after:28000:file.close_tab") -TBase 5500 -TRaise 27000 -TRelease 31000 -Allow 8
-# R3b 대용량 적재 중 취소(Esc = file.load_cancel · 열고 150 ms 뒤).
-Run-Item -Id R3b -Title "대용량 파일(65 MB · 적재 중 취소)" -Cmd ("@after:6000:open:" + $sql65m + ",@after:6150:file.load_cancel") -TBase 5500 -TRaise 6100 -TRelease 12000 -Allow 8 -Note "②는 취소 직전 표본(적재 중)"
+# R3b 대용량 적재 중 취소(Esc = file.load_cancel · 열고 60 ms 뒤 — 10-23 137차: 65 MB가 OS 캐시에 있으면 ≈100 ms 안에 적재가 끝나 150 ms 뒤 취소는 이미 열린 탭에 닿는다(제품 회귀 아님 · 20/80 ms 취소 = 11 MB ✓ · T-407)).
+Run-Item -Id R3b -Title "대용량 파일(65 MB · 적재 중 취소)" -Cmd ("@after:6000:open:" + $sql65m + ",@after:6060:file.load_cancel") -TBase 5500 -TRaise 6100 -TRelease 12000 -Allow 8 -Note "②는 취소 직전 표본(적재 중)"
 # R4 다중 결과 그리드 8탭 × 1만 행: 올림 = 8문장 실행 · 놓음 = × 8번(400 ms 간격).
 $closes = ""; for ($k = 0; $k -lt 8; $k++) { $closes += (",@after:" + (17000 + $k * 400) + ":" + $closeRes) }
 Run-Item -Id R4 -Title "다중 결과 그리드(8탭 × 1만 행)" -Cmd ("open:" + $eightSql + ",@after:6000:run.all" + $closes) -TBase 5500 -TRaise 16000 -TRelease 22000 -Allow 3
