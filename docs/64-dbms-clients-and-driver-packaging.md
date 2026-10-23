@@ -183,3 +183,17 @@ CLI `nsql shell`(Release) 한 프로세스에서 SQLite 기준 → `CONNECT <프
 
 권고: ① 순수 Rust 드라이버는 지금 그대로(동적 적재·해제 없음 — 이미 "쓸 때만" 올라오고 끊으면 돌려준다) ② Oracle은 **선택 모드 `oracle.isolation = process`**(기본 `in_process`)를 확장 드라이버 단계([§3-4](#3-4-확장-드라이버를-만들-때의-설계22-0의-구체화--지금-하지-않는다--순서만-고정)의 ④ 프로세스 모드)에서 만든다 — 같은 모드가 **메모리 회수 · 여러 버전의 Instant Client 나란히 · 드라이버 충돌 격리** 셋을 한 번에 해결한다 ③ 그 전까지의 값싼 개선: Oracle 접속이 0이 된 뒤 유휴 회수(`memtrim`)가 워킹셋을 줄이므로 **RAM 점유는 이미 작다**(남는 Private 9.4 MB가 전부) — 설정 창의 "로드된 클라이언트 버전" 설명에 "앱을 다시 시작하면 내려간다"를 이미 적었다.
 
+## 6. ODBC — macOS·Linux 접속 절차(10-24 · 136차 ODBC 드라이버 · 사용자 안내 · 위키 [Connections](wiki/Connections.md#odbc-on-macos--linux-english) 영어·한국어 판이 사용자용 원문)
+
+| 단계 | 내용 |
+|---|---|
+| ① 전제 | ODBC 내장 = 개발 빌드(기본 feature)만 · 설치본 macOS·Linux = `drivers-builtin-no-odbc`(D-352) → `nsql driver install odbc` 확장 · Intel 맥 `macos-x86_64` 자산 없음(T-401) · unixODBC 필요(`brew install unixodbc` / `apt-get install unixodbc`) · `odbcinst -j` = 쓰는 ini 경로 |
+| ② SQL Server 드라이버 | `brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release` → `HOMEBREW_ACCEPT_EULA=Y brew install msodbcsql18 mssql-tools18` → `odbcinst -q -d` = `[ODBC Driver 18 for SQL Server]` · Homebrew = Intel `/usr/local` · Apple Silicon `/opt/homebrew` |
+| ③ 사전 검증 | `isql -v -k "Driver={ODBC Driver 18 for SQL Server};Server=host,1433;Database=db;UID=u;PWD=p;TrustServerCertificate=yes"` |
+| ④ 앱 입력 | 로그인 창 DSN 칸 = `Driver={…};Server=…;Database=…;TrustServerCertificate=yes` · 간략 접속 `odbc:` 접두 · CLI `nsql conn add <이름> "odbc:…"` · 드라이버 이름 = `odbcinst -q -d` 그대로(`{SQL Server}` = Windows 이름) · 프로필 자동 이름 = `odbc-<Driver>-<host>`/`odbc-<DSN>`(10-23 개발) |
+| ⑤ DSN 방식 | `~/.odbc.ini` `[이름]` + `Driver`·`Server`·`Database`·`TrustServerCertificate` → `odbc:DSN=이름` |
+| ⑥ 다른 벤더 | PostgreSQL psqlodbc(`/usr/local/lib/psqlodbcw.so` 수동 등록) · MariaDB Connector/ODBC · Oracle Instant Client ODBC(`libsqora`) · 공통 = `odbcinst.ini` `[이름]` + `Driver = 경로` |
+| ⑦ 오류 대조 | `Can't open lib`/IM002 = 미등록(앱 = "Installed ODBC drivers: …" + 분류 `Driver` [42](42-db-error-normalization.md)) · 등록됐는데 같은 오류 = 아키텍처(`file` x86_64/arm64) · `Login timeout expired` = 네트워크 · 인증서 = `TrustServerCertificate=yes` · `Login failed` = 계정 |
+
+- ★ **트랜잭션(10-24 수정)** = ODBC 드라이버 자동 커밋은 **ON이 기본**(접속 때 탐침 뒤 복귀) · 러너의 `BEGIN TRANSACTION`(Caps ODBC `tx_begin`)을 어댑터가 가로채 OFF로 · COMMIT/ROLLBACK 뒤 ON 복귀(`in_tx`) · Caps ODBC `server_autocommit=true`. 종전(모든 세션 OFF)은 탐색기 메타 세션의 읽기가 트랜잭션을 열어 둔 채(SQLite 공유 잠금) 실행 세션의 `SQLEndTran`이 sqlite3odbc `busy_handler`에서 영원히 대기 → GUI run.all이 첫 항목 뒤 멈춤(CLI는 연결 1이라 안 걸림).
+- 사용자 실기 = 대기(10-24 · VPN 상태 확인 중 · 이 맥은 Intel이라 설치본 경로로는 T-401 해소 뒤).

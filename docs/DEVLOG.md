@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-24 (131차 · mac · 맥 첫 검증)** — V3 제품 결함 0(기동 +36 % = 환경 · A/B) · 운영 2단 통일 · ODBC 6건(이름·안내·Driver 분류·로캘·자동 커밋 멈춤·SQLSTATE 분류) + 맥 실접속·설치/원복 스크립트 · 설정 내보내기/가져오기 · 맥 시험 Accessory 비활성 · Intel 맥 확장 7종 ✓ · 시험 자산 3 — journal 10-23 §45 · 10-24 §1~§2.
 - **2026-10-23 (137차 · 🚀 v0.2.9)** — 🚀 v0.2.9 패치 공개(Oracle Thin 확장 우선 · CLI explain/import/export/cat 드라이버 설정 · conn test 자동 설치 · 실행 계획 검토 · 관리자·필터·다국어 · 자산 +0.5 % · Homebrew ✓ · winget/choco 제외).
 
 - **2026-10-23 (137차 · 실행 계획 검토 · 성능)** — ★ 실행 계획 검토(방언별 EXPLAIN · 트리 · 검토 규칙 7 · GUI 탭 2 · CLI `--analyze`/`--raw` · docs/122 · a1fdfc5…dbf57ad) · 성능 회귀 시험 회귀 없음(26 §7-18 · R3b 의심) · docs/40 CLI 전체 최신화 · 🔧 explain/export/import/cat 드라이버 설정(b6b7377).

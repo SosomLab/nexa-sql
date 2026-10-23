@@ -144,6 +144,20 @@ VS Code의 "Open Settings (JSON)"과 같은 두 번째 편집 경로. 원천은 
 | CLI | `nsql config export-json [file|-]` · `nsql config import-json <file>` — 같은 코덱(`nsql-settings::json` · 외부 crate 0) |
 | 후속 | T-76 내장 편집기(JSON 구문 강조 · 스키마 힌트) · 프로젝트 스코프 `.nexa/settings.json`(T-39b) |
 
+### 5-1. 설정 내보내기 / 가져오기(10-24 · 사용자 지시 · 개발 = nsql-settings `json.rs` + 호스트 · 협업 V1 ✓)
+
+다른 PC·설치본으로 설정을 옮기는 길. 코덱은 위 settings.json과 같다(`nsql-settings::json`).
+
+| 항목 | 내용 |
+|---|---|
+| 범위 `ExportScope` | `Full`(전부) · **`Portable`(기본 · 옮길 것만)** = 창 상태(`CatWindow`) · 정보 키(`INFO_KEYS`) · 이 PC의 흔적 `STATE_KEYS`(`file.recent` · `file.last_dir` · `project.recent` · `demo.prompted` · `explorer.visible` · `explorer.width` · `explorer.details_collapsed` · `explorer.details_h` · `project.restore_last`)를 뺀다 · 파일 머리 `"_scope"` 줄에 범위 표시 |
+| 함수 | `to_json_scoped(scope)` · `export_json_to(path, scope)` · 가져오기 = 기존 `import_json`(있는 키만 · 모르는 키/틀린 값 보고 · 바뀐 키 수 표시) |
+| GUI | 설정 창 하단 버튼 = **[내보내기…] [가져오기…] [JSON 편집] [닫기]** · 파일 창 목적 `FilePurpose::SettingsFile`(기본 이름 `nexa-sql-settings.json` · 설정 창 위에 뜸) · 메뉴/팔레트 `settings.export` · `settings.import` · 결과 = 상태줄 "Settings imported from … - N key(s) changed" |
+| CLI | `nsql config export [file] [portable]` · `nsql config import <file>` |
+| 기동 명령(자체 시험) | `settings.export:<파일>` · `settings.import:<파일>` |
+| i18n | 9키 |
+| V1(10-24 · 격리 홈 · Debug PID 89777 판) | export = 18,871 B · `"_scope": "portable - window state, machine info and local history are not included"` · `main_size` 없음 · `editor.font_size=17` 홈 → 다른 홈 import = "1 key(s) changed" · `nsql config get editor.font_size` = 17 · 설정 창 하단 버튼 순서 캡처 ✓(`target/v1-1024d/v1-6-prefs.png`) |
+
 ## 4. 카테고리 트리 — DBeaver Preferences 차용 (사용자 09-15)
 
 DBeaver의 Preferences 트리(General / User Interface / Editors / Connections / Data Editor)를 그대로 상위 그룹으로 쓰고, 우리 카테고리를 아래에 배치한다. 단일 원천 = `nsql-settings::CATEGORY_TREE` · **설정 화면(`prefs_win.rs` · 09-15 ✅ 1차)** 사이드바와 `nsql config list` 머리글이 같은 표를 읽는다.

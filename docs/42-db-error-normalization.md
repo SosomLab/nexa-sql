@@ -8,10 +8,10 @@
 ```
 Classified { class: ErrorClass, code: Option<String>, object: Option<String> }   // nsql_core::classify(dialect, code, message, stmt)
 ErrorClass = NoTable · NoColumn · NoObject · Syntax · Permission · Login · Connection · Unique · ForeignKey · NotNull · Check ·
-             Lock · Deadlock · DataType · Resource · Unknown
+             Lock · Deadlock · DataType · Resource · Driver · Unknown
 ```
 
-- **공통(전 방언)**: 분류 16종 · 라벨 i18n(`Msg::ErrCls*`) · 표시 형식 `[코드 · 분류: 대상] 원문`.
+- **공통(전 방언)**: 분류 17종(10-24 `Driver` 추가) · 라벨 i18n(`Msg::ErrCls*`) · 표시 형식 `[코드 · 분류: 대상] 원문`.
 - **개별(방언)**: `code` = 사용자가 아는 표기 그대로 — Oracle `ORA-00942`/`PLS-00201`/`TNS-12541`(메시지 첫머리에서 · 없으면 숫자로 `ORA-%05d`) · SQL Server `Msg 208` · PostgreSQL `SQLSTATE 42P01`(메시지에 있을 때) · MySQL `#1146` · SQLite `SQLITE 1`. 원문 메시지는 항상 뒤에 그대로.
 - **대상 이름**: 메시지의 첫 따옴표 이름(`'x'` · `"x"` · `[x]`) → 없으면(Oracle ORA-00942는 이름을 안 준다) 실패한 **실행문에서 추정**(`FROM/INTO/UPDATE t`).
 - **분류 규칙**: 코드 표(Oracle · SQL Server · MySQL) + 메시지 패턴(PostgreSQL · SQLite — 숫자 코드가 없거나 의미가 약함). 표는 `dberr.rs` 한 곳 · 테스트로 고정.
@@ -28,6 +28,9 @@ ErrorClass = NoTable · NoColumn · NoObject · Syntax · Permission · Login ·
 | Lock / Deadlock | 54 · 30006 / 60 | 1222 / 1205 | could not obtain lock / deadlock detected | 1205 / 1213 | database is locked / — |
 | DataType | 1722 · 1858 · 1861 · 1476 · 12899 | 245 · 8114 · 241 · 8152 | invalid input syntax · out of range · value too long | 1366 · 1292 · 1406 | datatype mismatch |
 | Resource | 1652 · 1653 · 1654 · 4031 | 1105 · 9002 · 701 | no space left · out of memory | 1021 · 1114 | disk full · out of memory |
+| **Driver**(10-24 · 라벨 "Driver or DSN not available"/"드라이버/DSN 없음" · `ErrClsDriver`) | — | — | — | — | — · **ODBC·확장(방언 무관 메시지)**: unixODBC `Can't open lib …` · IM002 `Data source name not found` · `no default driver specified` · 확장 드라이버 "has no build for this OS" — 종전 = 안내문의 "connection string"이 SQLite/ODBC 기본 분기 `has("connection")`에 걸려 **Connection(접속 끊김)** 으로 잘못 분류(10-23 맥 실기 V1 관찰 b) |
+
+**ODBC 연결의 분류(10-24 · `nsql-core dberr::odbc_classify`)** — ODBC는 방언이 `odbc`라 위 방언 표를 바로 못 쓴다 → ① 벤더 꼬리표로 하위 방언 표: 메시지의 `[SQL Server]` → SQL Server 표(예 18456 → `[Msg 18456 · Login failed]`) · `ORA-nnnnn` → Oracle 표 ② 없으면 표준 SQLSTATE 표: `28000` Login · `08xxx`·`HYT00` Connection · `42S02` NoTable · `42S22` NoColumn · `42501` Permission · `42000` Syntax · `23xxx` 제약 세분(Unique/FK/NotNull/Check) · `40001` Deadlock · `22xxx` DataType · `53xxx` Resource · `IM002` Driver ③ 그 밖 = 공용 메시지 규칙. 시험 +1(10단언). V1 = SQL Server ODBC 틀린 비밀번호 → 상태줄 "[Msg 18456 · Login failed] … 사용자 'BISCM_MS'이(가) 로그인하지 못했습니다." ✓.
 
 ## 2. 표시
 
