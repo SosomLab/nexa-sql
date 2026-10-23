@@ -664,7 +664,10 @@ mod tests {
         assert_eq!(rows[4].state_text(), "installed");
         let mut d_latest = rows[3].clone();
         d_latest.latest = Some("0.1.1".into());
-        assert_eq!(d_latest.state_text(), "built-in 9.9.9 - extension 0.1.1 available");
+        assert_eq!(
+            d_latest.state_text(),
+            "built-in 9.9.9 - extension 0.1.1 available"
+        );
         // 색인 없음 = 설치본만.
         let only = build_rows(None, &[ext("q", "3")], "x", |_| None);
         assert_eq!(only.len(), 1);

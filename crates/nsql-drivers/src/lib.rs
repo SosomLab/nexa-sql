@@ -607,7 +607,10 @@ mod tests {
         for (d, ids) in DRIVER_IDS {
             let any = ids.iter().any(|id| builtin_version(id).is_some());
             if *d == Dialect::Oracle {
-                assert_eq!(any, OracleDriver::Thin.included() || OracleDriver::Oci.included());
+                assert_eq!(
+                    any,
+                    OracleDriver::Thin.included() || OracleDriver::Oci.included()
+                );
             } else {
                 assert_eq!(any, is_builtin(*d), "{d}");
             }

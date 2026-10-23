@@ -3,6 +3,7 @@
 //! 본체는 nexa-dlg [`FilePicker`](복합 컨트롤). 이 모듈은 창(winit + softbuffer)과 이벤트 번역만 맡는다 —
 //! 접속 창처럼 **모달**(열려 있는 동안 메인·보조 창 입력 차단 · `winfocus::set_enabled`). Esc = 취소 · Enter = 확정.
 
+use crate::FilePurpose;
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::Rect;
 use nexa_ctl::raster::RasterCtx;
@@ -10,7 +11,6 @@ use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nexa_dlg::{FileFilter, FilePicker, PickerAction, PickerLabels, PickerMode};
 use nexa_gfx::{Font, Surface};
-use crate::FilePurpose;
 use nsql_i18n::{t, tf, Msg};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -550,12 +550,27 @@ mod tests {
         assert!(f[0].label.contains("jsonl"));
         let f = filters_for(FilePurpose::Editor, "log");
         assert_eq!(f[0].exts[0], "sql");
-        assert!(f.iter().any(|x| x.exts.contains(&"nsql-project".to_string())));
-        assert!(filters_for(FilePurpose::CellValue, "log")[0].exts.is_empty());
+        assert!(f
+            .iter()
+            .any(|x| x.exts.contains(&"nsql-project".to_string())));
+        assert!(filters_for(FilePurpose::CellValue, "log")[0]
+            .exts
+            .is_empty());
         assert_eq!(filters_for(FilePurpose::Import, "log")[0].exts[0], "csv");
-        assert_eq!(filters_for(FilePurpose::License, "log")[0].exts, ["license"]);
-        for p in [FilePurpose::Editor, FilePurpose::Import, FilePurpose::SqlPreview, FilePurpose::RunFile] {
-            assert!(filters_for(p, "log").iter().any(|x| x.exts.is_empty()), "{p:?} 전체 없음");
+        assert_eq!(
+            filters_for(FilePurpose::License, "log")[0].exts,
+            ["license"]
+        );
+        for p in [
+            FilePurpose::Editor,
+            FilePurpose::Import,
+            FilePurpose::SqlPreview,
+            FilePurpose::RunFile,
+        ] {
+            assert!(
+                filters_for(p, "log").iter().any(|x| x.exts.is_empty()),
+                "{p:?} 전체 없음"
+            );
         }
     }
 }

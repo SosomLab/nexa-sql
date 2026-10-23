@@ -431,7 +431,9 @@ impl App {
             self.file_dialog_mode = Some(mode_key);
         }
         let default_name = match (mode, self.file_purpose) {
-            (PickerMode::Save, FilePurpose::LogExport) => format!("nexa-sql.{}", self.log_export_ext()),
+            (PickerMode::Save, FilePurpose::LogExport) => {
+                format!("nexa-sql.{}", self.log_export_ext())
+            }
             (
                 PickerMode::Save,
                 FilePurpose::Editor | FilePurpose::RunFile | FilePurpose::SettingFolder(_),
