@@ -4853,6 +4853,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 설정 항목이 없는 방언(ODBC · DuckDB)의 드라이버 상태 행(사용자 10-23 "DBMS 정보 행에 DuckDB/ODBC 없음") — 다른 DBMS의 `*.info_driver`와 같은 3상태.
+    Entry {
+        key: "driver.info_odbc",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoOdbc,
+        desc: Msg::DescDriverInfoDialect,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "driver.info_duckdb",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoDuckdb,
+        desc: Msg::DescDriverInfoDialect,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ★ MySQL/MariaDB(T-388 · 136차): TLS 모드 + CA 파일 — 접속 문자열 `?tls=`가 이긴다 · 새 접속부터.
     Entry {
         key: "mysql.tls",
@@ -7371,6 +7388,8 @@ pub const INFO_KEYS: &[&str] = &[
     "driver.info_folder",
     "driver.info_index",
     "driver.info_installed",
+    "driver.info_odbc",
+    "driver.info_duckdb",
 ];
 
 /// 읽기 전용 정보 키인가.

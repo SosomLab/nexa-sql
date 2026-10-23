@@ -99,6 +99,8 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
             // 비노출 설정은 `list all`에서만.
             let show_all = key.is_some_and(|k| k == "all" || k == "--all");
             let mut rows = if show_all { s.list() } else { s.list_visible() };
+            // 읽기 전용 정보 키(`*.info_*`)는 GUI가 그때그때 계산하는 값이라 CLI엔 빈 칸뿐 → 목록에서 뺀다(사용자 10-23 15번).
+            rows.retain(|(e, _, _)| !nsql_settings::is_info(e.key));
             // DBeaver식 트리 순서(그룹 ▸ 카테고리)로 묶어 보여 준다.
             rows.sort_by_key(|(e, _, _)| nsql_settings::tree_order(e.cat));
             let mut last_cat: Option<Msg> = None;

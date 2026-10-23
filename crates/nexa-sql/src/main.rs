@@ -2808,6 +2808,14 @@ fn dbms_info_values() -> Vec<(String, String)> {
         ("driver.info_folder".into(), drv_folder),
         ("driver.info_index".into(), drv_index),
         ("driver.info_installed".into(), drv_installed),
+        (
+            "driver.info_odbc".into(),
+            included(Dialect::Odbc, Msg::ValDbmsBuiltinOdbc),
+        ),
+        (
+            "driver.info_duckdb".into(),
+            included(Dialect::Duckdb, Msg::ValDbmsBuiltinDuckdb),
+        ),
     ]
 }
 
