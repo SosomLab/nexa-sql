@@ -606,6 +606,19 @@ GUI 설정 창과 **같은 `settings.conf`**를 본다. 새 설정 키는 `nsql-
 
 ---
 
+### Step 13 — 드라이버(`driver`) — 10-23 D-350
+
+```
+nsql driver search --refresh                     # 드라이버 색인(저장소 drivers/index.json) + 설치 버전
+nsql driver install oracle-oci                   # 확장 드라이버 설치(서명·sha256 검증)
+nsql driver install --file nsql-drivers-all-0.1.1-windows-x86_64.zip   # 오프라인 번들(전 드라이버)
+nsql driver list | check duckdb | rm sqlite      # 설치 목록 · 불러오기 점검 · 삭제
+nsql run -c "oracle://scott@db:1521/orcl?driver=oci" q.sql   # 이 접속에만 드라이버 지정
+```
+
+- 접속에 없는 드라이버가 필요하면 **접속 전에 점검해 자동 설치**(설정 `driver.auto_install` · 진행은 stderr `[driver] …`) · 실패 = -1350(없음) / -1351(설치 실패) + 종류별 안내.
+- 출력 문구는 `ui.lang`을 따른다(10-23 d0f311d부터 `nsql driver`도 Msg) · 표 머리글·`key = value`는 영어 고정.
+
 ## 3. 실서버 점검 (Oracle · SQL Server · PostgreSQL)
 
 서버가 준비되면 §2와 같은 순서를 실서버로 반복한다.

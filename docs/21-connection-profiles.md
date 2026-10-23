@@ -109,3 +109,4 @@ duckdb::memory:?driver=duckdb           # 축약형 꼬리도 같다(?driver= ·
 - `ConnectSpec.driver`(`Option<String>`) = 같은 방언에 드라이버가 여럿일 때 고르는 값.
 - 축약형(`<방언>:<본문>`) 꼬리의 `?driver=`/`?env=`를 파싱 · `connection_string`이 다시 같은 문자열을 만든다(왕복 시험 `driver_param_round_trips`).
 - 허브 `ext_ids_for(dialect, want)` = 원하는 확장 id를 앞으로(thin → `oracle-thin` · oci → `oracle-oci`) · `open_oracle`이 `spec.driver`를 존중.
+- ★ **GUI 접속 폼(10-23 cf10a33)** = 방언 콤보에 **Oracle (Thin)** · **Oracle (OCI)** 두 항목(값 `oracle?driver=thin|oci`) → 고르면 `ConnectSpec.driver`에 들어가 저장·왕복 · 프로필을 열면 그 driver 항목이 선택된다.

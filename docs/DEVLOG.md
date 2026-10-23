@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · 문구 2차 · 릴리스 준비)** — ★ 드라이버 문구 2차(용어 고정 · Driver Manager/드라이버 관리자 · 6f7e890) · DRIVER_VERSION 0.1.2(1a9f02f) · lite 판 자동 설치 V1 ✓(sqlite 4.49 s) · 릴리스 계획 `drivers-v0.1.2` → `v0.2.8`(lite만 · winget/choco 제외).
+
+- **2026-10-23 (137차 · 접속 전 점검 · 문구 1차)** — ★ 접속 폼 Oracle (Thin)/(OCI) 콤보(cf10a33) · ★ 접속·테스트 전 드라이버 점검 → 먼저 설치 → 재개(`open_auto` · -1351 · 5179fe7) · ★ 드라이버 다국어 1차(`InstallError` 12종 · 단계 Msg · CLI `nsql driver` Msg · 팔레트 · d0f311d).
+
 - **2026-10-23 (137차 · 드라이버 버전 · 삭제)** — ★ 드라이버 자체 버전 `nsql_abi::DRIVER_VERSION` 0.1.1(앱과 독립 · 패키징 태그 대조 · 4fd25c2) · ★ 올라간 확장 드라이버 삭제 = `.trash` + `.delete-pending` + 기동 `sweep_pending`(언로드 안 함 · FreeLibrary 접근 위반 실측 · a888ae2).
 
 - **2026-10-23 (137차 · 내장 열 · 필터 · D-352)** — ★ 드라이버 창 "내장" 열 + 내장/확장 버전 차이(07cd0d9) · ★ 파일 대화상자 용도별 필터(드라이버 패키지 = *.zip · b47a62d) · 🔧 CI Windows LNK1181 = rust-cache 정확 일치 복원 → libduckdb-sys 산출 삭제(b2dd3a4) · ★ D-352 릴리스 = lite 기본 · full 선택 `-full`(6aa6e0f) · Tibero 코드스페이스 = 조건부 가능(공식 이미지 + 데모 라이선스 · 정정).

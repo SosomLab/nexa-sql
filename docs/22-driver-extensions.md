@@ -109,6 +109,10 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 > ★ **드라이버 버전 = 자체 버전(10-23 · 4fd25c2)** = `nsql_abi::DRIVER_VERSION`(지금 `0.1.1`) · 앱 버전과 독립 · 내장 드라이버의 표시 버전도 이 값 · `package-drivers.py`가 `drivers-v<ver>` 태그와 대조(다르면 중단) → 드라이버 릴리스 전에 상수를 올린다.
 
+> 10-23 1a9f02f = `DRIVER_VERSION` 0.1.1 → **0.1.2**(다음 `drivers-v0.1.2` = Linux/macOS ODBC 첫 공개 · 색인 이름 "ODBC" · "Oracle (Thin)").
+
+> ★ 10-23 d0f311d = 자산 태그 접두 `TAG_PREFIX` 기본값 `drivers-v`(옛 `driver-<id>-v` 잔재 정리) · 설치 오류 = `InstallError { kind, item, detail }`(12종) → 호스트가 종류별 Msg.
+
 > ★ **10-22 D-349로 바뀜** = 저장소 = **SosomLab/nexa-sql**(별도 드라이버 저장소 없음 · 서드파티는 색인 `repo` 필드로 다른 저장소) · 색인 = 저장소 안 **`drivers/index.json`**(raw URL `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json` · ETag · API 아님 · 앱 릴리스와 무관 · 갱신 = 커밋) · 자산 = 같은 저장소 Releases · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리 · ★ 10-23 D-350 = 한 태그 `drivers-v<ver>`로 바뀜 · §3-1) · ★ 드라이버 릴리스 = **모두 pre-release**(앱 `releases/latest`를 가로채지 않게) · 아래 블록은 설계 당시(별도 저장소 안) 그대로 둔다(자산 이름 규칙·매니페스트 설계는 유효).
 
 ```text
@@ -168,10 +172,13 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 - 접속하려는 방언의 드라이버가 이 빌드에도 드라이버 폴더에도 없으면(오류 -1350) **사용자의 그 접속 동작 안에서** 색인을 읽고 첫 후보 id를 받아 검증·설치한 뒤 한 번 다시 접속한다 · 실패하면 원래 오류에 "auto-install failed: …"를 붙인다(코드 유지).
 - 끄는 키 = `driver.auto_install`(기본 켬 · 끄면 종전처럼 -1350 + `nsql driver install <id>` 안내) · 저장소 = `driver.repo` · 상한 = `driver.http_timeout_secs`.
+- ★ **10-23 5179fe7 = 시도 전 점검** — `open_auto`가 먼저 `driver_status_for(dialect, ?driver=)`를 보고 Missing이면 `ensure_driver`로 설치한 뒤 연다(점검 뒤에도 -1350이면 한 번 더) · 설치 실패 = **-1351 `ERR_DRIVER_INSTALL_FAILED`** · **접속 테스트 버튼도 같은 길**(종전 = 자동 설치 없이 실패) · 진행 = `TestResult.stage` 틱 → 상태줄·접속 창 베일 · 캐시 색인에 id가 없으면 색인을 한 번 새로 받는다(d0f311d · 26 §8).
 
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 
 > ★ **10-23 `?driver=` 접속 매개변수**(21 §8) = 접속 문자열로 확장 id를 고른다(`oracle://…?driver=thin|oci`) · 허브 `ext_ids_for(dialect, want)`가 원하는 확장을 후보 맨 앞으로.
+
+> ★ 10-23 cf10a33 = GUI 접속 폼 방언 콤보에 Oracle (Thin)/(OCI) 변형(값 `oracle?driver=thin|oci`) · 5179fe7 = `driver_missing(dialect, want)`가 `?driver=` 대상 id를 안내.
 
 > ★ **10-23 첫 릴리스 = `drivers-v0.1.0`**(pre-release · 자산 80 = 7종 × 4 OS zip + `.sig`·`.sha256` + 오프라인 번들 4 + `sha256sums.txt` · 봇 색인 커밋 `1623f21` · 앱 Latest `v0.2.7` 유지) · 하루 1회 갱신 확인 = `driver.check_updates`(색인 캐시 24시간 초과일 때만 GET 1) · journal 10-23 §11·§13.
 
@@ -250,6 +257,7 @@ nsql driver path                    drivers/ 폴더
 ```
 - **Delete** 규칙 = CLI `rm`과 동일(참조 프로필 있으면 대화상자로 목록 + "프로필을 최신으로 옮기고 삭제" 선택). 열린 세션이 쓰는 버전은 Delete 비활성(툴팁에 세션 이름).
 - ★ **올라간 드라이버 삭제(10-23 · a888ae2)** = 언로드하지 않는다(FreeLibrary 뒤 접근 위반 실측) · 못 지우는 파일은 `<드라이버 폴더>/.trash/<id>-<ver>-<pid>-<n>/`로 옮기고 `.delete-pending`에 기록 · 목록에서 즉시 빠짐 · 올라간 판은 재시작까지 쓰임(상태 "삭제됨 - 올라간 드라이버는 재시작까지 그대로 쓰입니다") · 다음 GUI·CLI 기동 때 `sweep_pending()`이 정리.
+- ★ 문구(10-23 d0f311d) = 진행 단계 Msg(색인 받는 중… · 내려받는 중 · 검증 중… · 설치 중… · 설치됨) · 오류 = 종류별 짧은 Msg + 상세는 로그 · 삭제할 설치본 없음 안내 · 설치 완료 때 같은 id가 올라가 있으면 "재시작하면 새 판" · 창 기본 860×400.
 - 트리·표는 nexa-ctl `Tree` + 컬럼(dir2 `widgets/columns` 이관 U-2 전에는 고정 폭 텍스트).
 
 ## 6. 보안·라이선스
