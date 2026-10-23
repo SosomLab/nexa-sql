@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · 드라이버 버전 · 삭제)** — ★ 드라이버 자체 버전 `nsql_abi::DRIVER_VERSION` 0.1.1(앱과 독립 · 패키징 태그 대조 · 4fd25c2) · ★ 올라간 확장 드라이버 삭제 = `.trash` + `.delete-pending` + 기동 `sweep_pending`(언로드 안 함 · FreeLibrary 접근 위반 실측 · a888ae2).
+
 - **2026-10-23 (137차 · 내장 열 · 필터 · D-352)** — ★ 드라이버 창 "내장" 열 + 내장/확장 버전 차이(07cd0d9) · ★ 파일 대화상자 용도별 필터(드라이버 패키지 = *.zip · b47a62d) · 🔧 CI Windows LNK1181 = rust-cache 정확 일치 복원 → libduckdb-sys 산출 삭제(b2dd3a4) · ★ D-352 릴리스 = lite 기본 · full 선택 `-full`(6aa6e0f) · Tibero 코드스페이스 = 조건부 가능(공식 이미지 + 데모 라이선스 · 정정).
 
 - **2026-10-23 (137차 · T-397 · `?driver=` · ODBC 전 OS)** — 🔧 기동 시 로그인 창 자동 열기(포커스 사건 없는 기동 = 깃발 미소비 · about_to_wait에서도 확인) · 크기 실측 lite `nexa-sql.exe` 16.93 · `nsql.exe` 6.75 MB · ★ 접속 매개변수 `?driver=thin|oci|…`(`ext_ids_for`) · ★ ODBC 확장 Linux/macOS(unixODBC · CI PG ODBC 시험).

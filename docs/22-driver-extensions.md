@@ -107,6 +107,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 ### 2-3. 배포 저장소·자산 이름·매니페스트
 
+> ★ **드라이버 버전 = 자체 버전(10-23 · 4fd25c2)** = `nsql_abi::DRIVER_VERSION`(지금 `0.1.1`) · 앱 버전과 독립 · 내장 드라이버의 표시 버전도 이 값 · `package-drivers.py`가 `drivers-v<ver>` 태그와 대조(다르면 중단) → 드라이버 릴리스 전에 상수를 올린다.
+
 > ★ **10-22 D-349로 바뀜** = 저장소 = **SosomLab/nexa-sql**(별도 드라이버 저장소 없음 · 서드파티는 색인 `repo` 필드로 다른 저장소) · 색인 = 저장소 안 **`drivers/index.json`**(raw URL `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json` · ETag · API 아님 · 앱 릴리스와 무관 · 갱신 = 커밋) · 자산 = 같은 저장소 Releases · 태그 **`driver-<id>-v<ver>`**(앱 태그 `v*`와 분리 · ★ 10-23 D-350 = 한 태그 `drivers-v<ver>`로 바뀜 · §3-1) · ★ 드라이버 릴리스 = **모두 pre-release**(앱 `releases/latest`를 가로채지 않게) · 아래 블록은 설계 당시(별도 저장소 안) 그대로 둔다(자산 이름 규칙·매니페스트 설계는 유효).
 
 ```text
@@ -247,6 +249,7 @@ nsql driver path                    drivers/ 폴더
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 - **Delete** 규칙 = CLI `rm`과 동일(참조 프로필 있으면 대화상자로 목록 + "프로필을 최신으로 옮기고 삭제" 선택). 열린 세션이 쓰는 버전은 Delete 비활성(툴팁에 세션 이름).
+- ★ **올라간 드라이버 삭제(10-23 · a888ae2)** = 언로드하지 않는다(FreeLibrary 뒤 접근 위반 실측) · 못 지우는 파일은 `<드라이버 폴더>/.trash/<id>-<ver>-<pid>-<n>/`로 옮기고 `.delete-pending`에 기록 · 목록에서 즉시 빠짐 · 올라간 판은 재시작까지 쓰임(상태 "삭제됨 - 올라간 드라이버는 재시작까지 그대로 쓰입니다") · 다음 GUI·CLI 기동 때 `sweep_pending()`이 정리.
 - 트리·표는 nexa-ctl `Tree` + 컬럼(dir2 `widgets/columns` 이관 U-2 전에는 고정 폭 텍스트).
 
 ## 6. 보안·라이선스

@@ -132,6 +132,8 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 
 > ★ **실측(Release · 10-23 · journal 10-23 §18)** — full(`drivers-builtin`) `nexa-sql.exe` 21.78 · `nsql.exe` 11.79 MB / **lite(설치본 기본 = 드라이버 없음) 16.93 · 6.75 MB** · 확장 cdylib(Windows) = duckdb 0.78 · mssql 1.89 · mysql 4.48 · odbc 0.41 · oracle(oci) 0.74 · oracle_thin 3.07 · pg 0.98 · sqlite 1.91 MB(+ DuckDB 런타임 libduckdb 58 MB · zip 19 MB). 아래 표의 6.x MB 값은 09-21 측정(내장 4종 시절).
 
+> 드라이버 버전(10-23 4fd25c2) = 표의 드라이버 크기는 `DRIVER_VERSION` 0.1.1 기준 · 드라이버는 앱과 따로 버전을 매긴다(내장 표시도 0.1.1).
+
 ### 4-1. 정의
 **경량 배포판(Lite)** = "내려받아 실행하면 **다른 것을 설치하지 않고** 접속된다"를 보장하는 배포판. 기준 셋:
 1. **외부 네이티브 의존 0** — 실행 파일이 벤더 클라이언트·런타임·ODBC 드라이버 관리자를 요구하지 않는다(들어 있는 드라이버는 전부 순수 Rust이거나 앱에 컴파일돼 있다).
@@ -152,6 +154,8 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 - **10-13 갱신 → [110](110-oracle-thin-driver-adapter.md)**: `oracledb` = `26.0.0-beta.4`(09-23) · OUT/IN OUT 바인드(`out_bind_data`) · REF CURSOR(`DB_TYPE_CURSOR` → `Cursor`) · DBMS_OUTPUT 문서화됨 → 09-13 스파이크의 막힘(D-22)은 풀렸다. 남은 제약 = **실행 중 취소 없음**(#24) · Implicit Result Sets · NNE · OS 인증 · 11g · 10G 검증자 계정 · 배열 DML batch error `todo!()`(#41). 설계 = 선택 자리 `nsql_drivers::open` Oracle 가지 한 곳 · 위층 변경 0 · 설정 `oracle.driver` + 표시 `oracle.info_driver` + 연쇄 잠금 · 단계 T-333~T-336 · 결정 후보 D-277~D-280.
 
 ## 5. 드라이버의 동적 적재·해제(Dynamic Module Loading) 검토 — "쓸 때만 메모리에 · 접속을 끊으면 내린다"(사용자 09-21)
+
+> ★ **10-23 실측 = 내리지 않는다 유지** — Rust cdylib 확장을 `FreeLibrary`로 내린 뒤 접근 위반 `0xc0000005` → 올라간 드라이버 삭제는 휴지통(`.trash`) + `.delete-pending` + 다음 기동 정리로 푼다(a888ae2 · 22 §5-2).
 
 ### 5-1. 실측 — 접속하고 끊을 때 프로세스에 무엇이 남는가
 CLI `nsql shell`(Release) 한 프로세스에서 SQLite 기준 → `CONNECT <프로필>` → 조회 1회 → `DISCONNECT` → 7초 대기. Private = 그 프로세스만의 메모리 · 이미지 = 매핑된 실행 모듈 합(파일 기반 — 쓰는 쪽만 RAM에 올라온다).
