@@ -120,7 +120,7 @@ pub(crate) fn cmd_driver(o: &Opts) -> i32 {
                 }
                 Ok(removed) => {
                     for p in removed {
-                        println!("removed {}", p.display());
+                        println!("{}", tf(Msg::CliDrvRemoved, &[&p.display().to_string()]));
                     }
                     if loaded {
                         println!("{}", tf(Msg::CliDrvRemovedLoaded, &[id]));

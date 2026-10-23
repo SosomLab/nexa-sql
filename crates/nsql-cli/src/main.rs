@@ -325,7 +325,10 @@ fn driver_progress(id: &str, stage: &str, done: u64, total: Option<u64>) {
     let _ = writeln!(
         err,
         "{}",
-        nsql_i18n::tf(Msg::CliDriverInstall, &[id, stage, &detail])
+        nsql_i18n::tf(
+            Msg::CliDriverInstall,
+            &[id, &nsql_i18n::driver_stage_text(stage), &detail],
+        )
     );
 }
 
