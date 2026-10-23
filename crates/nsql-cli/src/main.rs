@@ -39,6 +39,9 @@ struct Opts {
     dialect: Dialect,
     format: Format,
     no_prompt: bool,
+    /// `explain --analyze` = 실제 실행 계획(문장을 실행) · `--raw` = DBMS 원문 그대로(docs/122).
+    analyze: bool,
+    raw: bool,
     /// 비밀번호를 표준 입력의 첫 줄에서 읽는다(T-132 ③).
     password_stdin: bool,
     /// `-v 이름=값`(여러 번) — 스크립트가 돌기 전에 치환 변수(`&이름`)를 정의한다(T-153 · `DEFINE`과 같은 저장소).
@@ -117,6 +120,8 @@ fn parse_opts() -> Opts {
         dialect: Dialect::Oracle,
         format: default_format,
         no_prompt: false,
+        analyze: false,
+        raw: false,
         password_stdin: false,
         defines: Vec::new(),
         no_header: false,
@@ -236,6 +241,8 @@ fn parse_opts() -> Opts {
             }
             "-x" | "--expanded" => o.overflow = Some(Overflow::Expanded),
             "--no-prompt" => o.no_prompt = true,
+            "--analyze" => o.analyze = true,
+            "--raw" => o.raw = true,
             "--password-stdin" => o.password_stdin = true,
             "-v" | "--var" | "--define" => {
                 let v = val("-v");
@@ -1889,7 +1896,24 @@ fn cmd_explain(o: &Opts) -> i32 {
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
-    let src = nsql_script::explain_script(runner.engine.dialect, &sql);
+    let opts = nsql_script::plan::PlanOptions { analyze: o.analyze };
+    if !o.raw {
+        // ★ 트리 + 검토(docs/122). 원문은 `--raw`.
+        if o.analyze {
+            eprintln!("{}", t(Msg::StExplainActualWarn));
+        }
+        return match runner.explain(&sql, opts) {
+            Ok(rep) => {
+                print!("{}", nsql_script::plan::render_text(&rep));
+                0
+            }
+            Err(e) => {
+                eprintln!("ERROR: {}", e.message);
+                1
+            }
+        };
+    }
+    let src = nsql_script::plan::explain_script_opts(runner.engine.dialect, &sql, opts);
     let mut prompt = |_: &str| Some(String::new());
     let errs = runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
     if errs > 0 {

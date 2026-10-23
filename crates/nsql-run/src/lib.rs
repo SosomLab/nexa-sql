@@ -1007,6 +1007,59 @@ impl Runner {
         )
     }
 
+    /// ★ 실행 계획 검토(docs/122 · 사용자 10-23): 방언별 EXPLAIN 스크립트를 돌려 결과 집합을 [`nsql_script::plan::PlanReport`]로.
+    /// `analyze` = 문장을 실제로 실행한다(DML이면 바뀐다 · 호스트가 경고). 결과 집합 선택 = SQL Server는 `StmtText` 열이 있는 것 ·
+    /// 그 밖은 마지막 것(Oracle 실제 계획은 문장 결과 뒤에 DISPLAY_CURSOR가 온다). 첫 오류가 있으면 그 오류.
+    pub fn explain(
+        &mut self,
+        stmt: &str,
+        opts: nsql_script::plan::PlanOptions,
+    ) -> Result<nsql_script::plan::PlanReport, DbError> {
+        let dialect = self.engine.dialect;
+        let src = nsql_script::plan::explain_script_opts(dialect, stmt, opts);
+        let mut sets: Vec<ResultSet> = Vec::new();
+        let mut first_err: Option<DbError> = None;
+        let mut prompt = |_: &str| Some(String::new());
+        let prev = self.max_rows;
+        self.set_max_rows(0);
+        let _ = self.run_script(&src, &mut prompt, &mut |e| match e {
+            RunEvent::ResultSet { rs, .. } => sets.push(rs),
+            RunEvent::Error { error, .. } if first_err.is_none() => first_err = Some(error),
+            _ => {}
+        });
+        self.set_max_rows(prev);
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+        let pick = match dialect {
+            Dialect::Mssql => sets
+                .iter()
+                .find(|rs| {
+                    rs.columns
+                        .iter()
+                        .any(|c| c.name.eq_ignore_ascii_case("StmtText"))
+                })
+                .or(sets.last()),
+            _ => sets.last(),
+        };
+        let (columns, rows): (Vec<String>, Vec<Vec<String>>) = match pick {
+            Some(rs) => (
+                rs.columns.iter().map(|c| c.name.clone()).collect(),
+                rs.rows
+                    .iter()
+                    .map(|r| r.iter().map(Value::display).collect())
+                    .collect(),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        Ok(nsql_script::plan::build_report(
+            dialect,
+            opts.analyze,
+            &columns,
+            &rows,
+        ))
+    }
+
     /// [`Self::query_once`]의 바인드 문장판(그리드 편집 적용 뒤 행 단위 재조회 · 87 §12-4).
     pub fn query_req_once(
         &mut self,

@@ -173,6 +173,18 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--analyze",
+        arg: "",
+        desc: Msg::HlpOptAnalyze,
+        setting: None,
+    },
+    Opt {
+        flags: "--raw",
+        arg: "",
+        desc: Msg::HlpOptRaw,
+        setting: None,
+    },
+    Opt {
         flags: "--file",
         arg: "<zip>",
         desc: Msg::HlpOptDriverFile,
@@ -330,13 +342,18 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "explain",
-        usage: "nsql explain -c <target> (-q <sql> | <file>)",
+        usage: "nsql explain -c <target> (-q <sql> | <file>) [--analyze] [--raw]",
         brief: Msg::HlpCmdExplain,
         detail: Msg::HlpCmdExplainDetail,
         args: &[("<file>", Msg::HlpArgExplainFile)],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q", "--analyze", "--raw"],
         notes: &[],
-        examples: &["nsql explain -c prod -q \"SELECT * FROM emp\"", "nsql explain -c prod slow.sql"],
+        examples: &[
+            "nsql explain -c prod -q \"SELECT * FROM emp\"",
+            "nsql explain -c prod slow.sql",
+            "nsql explain -c prod --analyze -q \"SELECT * FROM emp WHERE deptno = 10\"   # runs the statement",
+            "nsql explain -c prod --raw slow.sql",
+        ],
     },
     Cmd {
         name: "plan",
