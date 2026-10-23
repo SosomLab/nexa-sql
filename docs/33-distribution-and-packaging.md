@@ -79,6 +79,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 ## 3. 파이프라인(T-72)
 
 > ★ **10-23 D-352 릴리스 변형** = 기본 **lite만**(드라이버 없는 설치본 · 채널 brew · apt/dnf · winget/choco 게시) · **full**(모든 드라이버 내장 · DuckDB 제외 · +≈5 MB)은 workflow_dispatch `full_variant=true` 또는 저장소 변수 `RELEASE_FULL=true`일 때만 → 이름 꼬리 `-full`(확장자 앞 · `nexa-sql-<ver>-windows-x64-full.msi`) · **Release 자산에만**(채널 워크플로 정확 이름·패턴에 안 걸림) · 노트 full 절 = 자산 있을 때만 · 매트릭스 = OS × 변형(meta `variants`).
+> 검증(10-23 · journal §36) = dispatch `full_variant=true` 2차 ✓(자산 11 · full = +4.1 MB msi ~ +11.1 MB dmg) · 수동 실행 초안 태그 = `v<Cargo 버전>-dev.<sha>`(a7e29db) · full의 ODBC = Windows만 내장 · macOS/Linux full = `drivers-builtin-no-odbc` · Windows 임포트 게이트 화이트리스트에 `odbc32.dll`(인박스).
 
 | 단계 | 내용 | 원천 |
 |---|---|---|

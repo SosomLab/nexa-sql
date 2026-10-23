@@ -180,6 +180,8 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 
 > ★ 10-23 cf10a33 = GUI 접속 폼 방언 콤보에 Oracle (Thin)/(OCI) 변형(값 `oracle?driver=thin|oci`) · 5179fe7 = `driver_missing(dialect, want)`가 `?driver=` 대상 id를 안내.
 
+> ★ **Oracle 열기 순서(10-23 b4373fa · 사용자 실기 결함)** = ① 고른 드라이버(`?driver=` > 설정 `oracle.driver` 기본 thin)가 **내장**이면 그것 → ② 그 id의 **설치된 확장** → ③ 확장이 없을 때만 **내장된 다른 판**으로 폴백 → ④ 둘 다 없으면 드라이버 없음(-1350 → 자동 설치) · 종전 = 고른 것이 내장이 아니면 내장 OCI로 조용히 폴백(lite 설치본에서 Thin 확장을 두고 DPI-1047) · f18412b = `nsql conn test`도 같은 스위치(`apply_driver_switches`)와 자동 설치.
+
 > ★ **10-23 첫 릴리스 = `drivers-v0.1.0`**(pre-release · 자산 80 = 7종 × 4 OS zip + `.sig`·`.sha256` + 오프라인 번들 4 + `sha256sums.txt` · 봇 색인 커밋 `1623f21` · 앱 Latest `v0.2.7` 유지) · 하루 1회 갱신 확인 = `driver.check_updates`(색인 캐시 24시간 초과일 때만 GET 1) · journal 10-23 §11·§13.
 
 - **색인 URL**(D-349) = `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/drivers/index.json`(저장소 안 파일 · raw · GitHub **API가 아님** · 익명 한도 없음 · 앱 릴리스와 무관 · 갱신 = 커밋) · ETag 조건부 GET · `<드라이버 폴더>/index.json` + `index.etag` 캐시 1시간 · 실패하면 캐시. 위 표의 "`GET /repos/<repo>/releases`"는 색인에 `latest`가 없거나 `--pre`일 때만(익명 60회/시간 · 태그 접두 `driver-<id>-v` · 프리릴리스 판정 = 버전 문자열의 `-`).

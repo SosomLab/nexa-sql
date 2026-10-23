@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · v0.2.8 뒤)** — 🔧 lite 설치본 Oracle Thin 확장을 두고 OCI로 가던 것(사용자 실기 · `open_oracle` 열기 순서 · b4373fa) · 🔧 `nsql conn test` 자동 설치·`oracle.driver`(f18412b) · ★ full 변형 dispatch 검증(1차 ✗ 3원인 → a7e29db → 2차 ✓ 자산 11).
+
 - **2026-10-23 (137차 · 🚀 v0.2.8)** — 🚀 `v0.2.8` 공개(lite 첫 배포 · 설치본 −23~27% · winget/choco 제외 · 노트 수정 2 · f7b1914) · `drivers-v0.1.2`(자산 98 · ODBC Linux/Apple Silicon · 1차 ✗ macOS x86_64 libodbc → e378726) · 🔧 ODBC 의존 전 OS(58b5e2e) · 채널 = Homebrew ✓(a2a3d01) · winget/choco 건너뜀 ✓ · linux-repo 신호 ✓.
 
 - **2026-10-23 (137차 · 문구 2차 · 릴리스 준비)** — ★ 드라이버 문구 2차(용어 고정 · Driver Manager/드라이버 관리자 · 6f7e890) · DRIVER_VERSION 0.1.2(1a9f02f) · lite 판 자동 설치 V1 ✓(sqlite 4.49 s) · 릴리스 계획 `drivers-v0.1.2` → `v0.2.8`(lite만 · winget/choco 제외).
