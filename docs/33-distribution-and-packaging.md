@@ -78,6 +78,8 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 ## 3. 파이프라인(T-72)
 
+> ★ **10-23 D-352 릴리스 변형** = 기본 **lite만**(드라이버 없는 설치본 · 채널 brew · apt/dnf · winget/choco 게시) · **full**(모든 드라이버 내장 · DuckDB 제외 · +≈5 MB)은 workflow_dispatch `full_variant=true` 또는 저장소 변수 `RELEASE_FULL=true`일 때만 → 이름 꼬리 `-full`(확장자 앞 · `nexa-sql-<ver>-windows-x64-full.msi`) · **Release 자산에만**(채널 워크플로 정확 이름·패턴에 안 걸림) · 노트 full 절 = 자산 있을 때만 · 매트릭스 = OS × 변형(meta `variants`).
+
 | 단계 | 내용 | 원천 |
 |---|---|---|
 | build ✅ | `packaging/macos/build-app.sh`(두 타깃 `--locked` + lipo) · `windows/build-msi.ps1` · `linux/build-deb.sh` — 로컬·CI 같은 스크립트 | nexa-clip 이식 |
@@ -222,6 +224,7 @@ sudo dnf install nexa-sql
 - 자산 크기(10-23) = `drivers-v0.1.0`(7종) Windows zip 0.20~2.29 MB · 오프라인 번들 6.75~7.69 MB · ★ `drivers-v0.1.1`(8종 · DuckDB 추가) = DuckDB zip Windows 19.6 MB · Linux 28.0 · macOS aarch64 40.5 · macOS x86_64 40.6 · 오프라인 번들 Windows 26.8 · Linux 35.7 · macOS 47.3/47.9 MB(자산 92).
 - 앱 실행 파일 실측(Release · 10-23) = lite(설치본 기본) `nexa-sql.exe` 16.93 · `nsql.exe` 6.75 MB · full(`drivers-builtin`) 21.78 · 11.79 MB · 확장 cdylib 0.41(odbc)~4.48(mysql) MB(64 §4).
 - ★ ODBC = 전 OS(10-23 · unixODBC · Linux/macOS 러너 = apt `unixodbc-dev` · brew `unixodbc`) → `drivers-v0.1.2`부터 odbc 자산이 4 OS 모두(그 전 릴리스는 Windows만).
+- 🔧 CI 캐시(10-23 b2dd3a4) = 드라이버·앱 워크플로 4(ci · integration · drivers · release)는 rust-cache 복원 뒤 `target/*/build/libduckdb-sys-*`를 지운다(정확 일치 복원에서 `duckdb.lib` 누락 = LNK1181 · ≈60 MB 재다운로드).
 
 ### 5-6. 패키지 게시물 + 프로그램 내부 정보 = 영어(사용자 10-04 → 10-10 확장)
 
