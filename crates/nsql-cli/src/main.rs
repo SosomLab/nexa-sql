@@ -151,7 +151,7 @@ fn parse_opts() -> Opts {
             match it.next() {
                 Some(v) => v,
                 None => {
-                    eprintln!("{name} 값이 없습니다");
+                    eprintln!("{}", tf(Msg::CliErrMissingValue, &[name]));
                     std::process::exit(2);
                 }
             }
@@ -768,13 +768,18 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
     let pager = p.pager;
     let show = |g: &GridOpts| {
         eprintln!(
-            "width {} (0 = 무제한 · set width auto = 터미널 폭) · colwidth {} · overflow {} · format {} · max_rows {} · pager {}",
-            g.line_width,
-            g.max_col,
-            g.overflow.name(),
-            fmt_name,
-            max_rows,
-            if pager { "on" } else { "off" }
+            "{}",
+            tf(
+                Msg::CliShellSettings,
+                &[
+                    &g.line_width.to_string(),
+                    &g.max_col.to_string(),
+                    g.overflow.name(),
+                    &fmt_name.to_string(),
+                    &max_rows.to_string(),
+                    if pager { "on" } else { "off" },
+                ],
+            )
         );
     };
     if low == "\\x" {
@@ -1139,9 +1144,14 @@ impl Printer {
                 };
                 let _ = writeln!(
                     out,
-                    "\n{} rows ({:.3}s){note}\n",
-                    rs.rows.len(),
-                    elapsed.as_secs_f64()
+                    "\n{}{note}\n",
+                    tf(
+                        Msg::CliRows,
+                        &[
+                            &rs.rows.len().to_string(),
+                            &format!("{:.3}", elapsed.as_secs_f64())
+                        ],
+                    )
                 );
             }
         }
@@ -1278,9 +1288,14 @@ impl Printer {
                     };
                     let _ = writeln!(
                         out,
-                        "\n{} rows ({:.3}s){note}",
-                        rs.rows.len(),
-                        elapsed.as_secs_f64()
+                        "\n{}{note}",
+                        tf(
+                            Msg::CliRows,
+                            &[
+                                &rs.rows.len().to_string(),
+                                &format!("{:.3}", elapsed.as_secs_f64())
+                            ],
+                        )
                     );
                     // 셸에서 잘리면 표 뒤 한 줄 안내(grid/markdown일 때만 · docs/43 §5).
                     if more && self.shell {
@@ -1303,8 +1318,14 @@ impl Printer {
                 if self.feedback {
                     match rows_affected {
                         Some(n) => {
-                            let _ =
-                                writeln!(out, "{n} rows affected ({:.3}s)", elapsed.as_secs_f64());
+                            let _ = writeln!(
+                                out,
+                                "{}",
+                                tf(
+                                    Msg::CliRowsAffected,
+                                    &[&n.to_string(), &format!("{:.3}", elapsed.as_secs_f64())],
+                                )
+                            );
                         }
                         None => {
                             let _ = writeln!(out, "OK ({:.3}s)", elapsed.as_secs_f64());
@@ -1347,32 +1368,38 @@ impl Printer {
                     .map(|l| l.code())
                     .collect::<Vec<_>>()
                     .join(", ");
+                // GUI 토스트와 같은 문구(ToastDriverLimits* · {0} = 드라이버 이름).
                 let head = if *std::borrow::Borrow::<bool>::borrow(&at_connect) {
-                    "driver limitations"
+                    tf(Msg::ToastDriverLimitsTitle, &[&driver])
                 } else {
-                    "not available with this driver"
+                    tf(Msg::ToastDriverLimitsHit, &[&driver])
                 };
-                eprintln!("{driver}: {head}: {what}");
+                eprintln!("{head}: {what}");
             }
             // 서버 유형은 GUI 세션의 임시 속성 — CLI는 알려만 준다(저장 프로필 = 영속 = `nsql conn env`).
             RunEvent::ConnType(v) => {
                 let e = nsql_script::ConnEnv::from_name(&v);
                 let _ = writeln!(
                     out,
-                    "conntype: {} ({}) - temporary attribute of the GUI editor session; to save it in a profile use `nsql conn env <name> {}`",
-                    nsql_script::ConnEnv::name_of(e),
-                    nsql_script::ConnEnv::abbr_of(e),
-                    nsql_script::ConnEnv::abbr_of(e).to_ascii_lowercase()
+                    "{}",
+                    tf(
+                        Msg::CliConnTypeNote,
+                        &[
+                            nsql_script::ConnEnv::name_of(e),
+                            nsql_script::ConnEnv::abbr_of(e),
+                            &nsql_script::ConnEnv::abbr_of(e).to_ascii_lowercase(),
+                        ],
+                    )
                 );
             }
             RunEvent::DbChanged(db) => {
-                let _ = writeln!(out, "current database: {db}");
+                let _ = writeln!(out, "{}", tf(Msg::CliCurrentDb, &[&db]));
             }
             RunEvent::ShowConn => {
                 let _ = writeln!(
                     out,
-                    "connection: dialect={} (see the `Connected:` line above for the target)",
-                    self.dialect
+                    "{}",
+                    tf(Msg::CliShowConn, &[&self.dialect.to_string()])
                 );
             }
             RunEvent::Connected {
@@ -1381,10 +1408,17 @@ impl Printer {
                 ..
             } => {
                 self.dialect = dialect;
-                let _ = writeln!(out, "Connected: {description} ({dialect})");
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    tf(
+                        Msg::StConnected,
+                        &[&description.to_string(), &dialect.to_string()]
+                    )
+                );
             }
             RunEvent::Disconnected | RunEvent::ConnectionClosed => {
-                let _ = writeln!(out, "Disconnected");
+                let _ = writeln!(out, "{}", t(Msg::StDisconnected));
             }
             // 변수 표 사건은 GUI용(패널·탭 표) — CLI는 `PRINT`/`SHOW VARIABLES`로 본다.
             RunEvent::ReadTxEnded { .. }
@@ -1479,11 +1513,11 @@ fn prompt_stdin(name: &str) -> Option<String> {
 
 fn cmd_run(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
-        eprintln!("-c <target>가 필요합니다");
+        eprintln!("{}", t(Msg::CliErrNeedTarget));
         return 2;
     };
     let Some(path) = o.positional.first() else {
-        eprintln!("스크립트 경로가 필요합니다(- = stdin)");
+        eprintln!("{}", t(Msg::CliErrNeedScript));
         return 2;
     };
     let src = read_source(path);
@@ -1556,7 +1590,7 @@ fn cmd_run(o: &Opts) -> i32 {
 fn cmd_import(o: &Opts) -> i32 {
     use nsql_i18n::{t, tf, Msg};
     let Some(target) = &o.target else {
-        eprintln!("-c <target>가 필요합니다");
+        eprintln!("{}", t(Msg::CliErrNeedTarget));
         return 2;
     };
     let Some(table) = &o.table else {
@@ -1708,7 +1742,7 @@ fn close_spool(spool: &SpoolHandle) {
 
 fn cmd_shell(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
-        eprintln!("-c <target>가 필요합니다");
+        eprintln!("{}", t(Msg::CliErrNeedTarget));
         return 2;
     };
     let mut printer = Printer::new(o, o.format.clone(), true);
@@ -1823,14 +1857,14 @@ fn cmd_shell(o: &Opts) -> i32 {
 /// `nsql explain -c <target> -q <sql>` — 방언별 실행 계획(GUI Explain과 같은 `explain_script`).
 fn cmd_explain(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
-        eprintln!("-c <target>가 필요합니다");
+        eprintln!("{}", t(Msg::CliErrNeedTarget));
         return 2;
     };
     let sql = match (&o.query, o.positional.first()) {
         (Some(q), _) => q.clone(),
         (None, Some(p)) => read_source(p),
         (None, None) => {
-            eprintln!("-q <sql> 또는 <file>이 필요합니다");
+            eprintln!("{}", t(Msg::CliErrNeedSqlOrFile));
             return 2;
         }
     };
@@ -1896,7 +1930,7 @@ fn cmd_format(o: &Opts) -> i32 {
 
 fn cmd_export(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
-        eprintln!("-c <target>가 필요합니다");
+        eprintln!("{}", t(Msg::CliErrNeedTarget));
         return 2;
     };
     let sql = match (&o.query, &o.table) {
@@ -1972,7 +2006,7 @@ fn cmd_export(o: &Opts) -> i32 {
                 if sql_kind.is_some() {
                     deferred.push(rs);
                 } else if let Err(e) = nsql_io::write_result_set(&mut out, &rs, &format, dialect) {
-                    eprintln!("쓰기 실패: {e}");
+                    eprintln!("{}", tf(Msg::CliWriteFailed, &[&e.to_string()]));
                     errors += 1;
                 }
             }
@@ -1995,7 +2029,7 @@ fn cmd_export(o: &Opts) -> i32 {
                 kind,
             );
             if let Err(e) = out.write_all(text.as_bytes()) {
-                eprintln!("쓰기 실패: {e}");
+                eprintln!("{}", tf(Msg::CliWriteFailed, &[&e.to_string()]));
                 errors += 1;
             }
             for w in warn {
@@ -2005,7 +2039,13 @@ fn cmd_export(o: &Opts) -> i32 {
     }
     let _ = out.flush();
     if o.out.is_some() {
-        eprintln!("{rows} rows → {}", o.out.as_deref().unwrap_or("-"));
+        eprintln!(
+            "{}",
+            tf(
+                Msg::CliExportDone,
+                &[&rows.to_string(), o.out.as_deref().unwrap_or("-")],
+            )
+        );
     }
     if errors > 0 {
         1
@@ -2074,7 +2114,7 @@ fn main() {
     let code = match o.cmd.as_str() {
         "plan" => {
             let Some(path) = o.positional.first() else {
-                eprintln!("스크립트 경로가 필요합니다(- = stdin)");
+                eprintln!("{}", t(Msg::CliErrNeedScript));
                 std::process::exit(2)
             };
             let src = read_source(path);
@@ -2094,7 +2134,7 @@ fn main() {
         "grep" => grep::cmd_grep(&o.positional),
         "license" | "lic" => license::cmd_license(&o),
         other => {
-            eprintln!("알 수 없는 명령: {other}\n");
+            eprintln!("{}\n", tf(Msg::CliErrCommand, &[other]));
             usage()
         }
     };

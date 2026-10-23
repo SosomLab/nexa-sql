@@ -26,7 +26,10 @@ fn usage() -> i32 {
 
 fn open_vault() -> Result<Vault, i32> {
     Vault::open_default().map_err(|e| {
-        eprintln!("프로필 저장소를 열 수 없습니다: {e}");
+        eprintln!(
+            "{}",
+            nsql_i18n::tf(nsql_i18n::Msg::CliConnVaultOpenFailed, &[&e.to_string()])
+        );
         1
     })
 }
@@ -44,7 +47,7 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
                 0
             }
             None => {
-                eprintln!("사용자 설정 폴더를 알 수 없습니다");
+                eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CfgNoConfigDir));
                 1
             }
         },
@@ -89,7 +92,10 @@ fn env(name: &str, value: Option<&str>) -> i32 {
         Err(c) => return c,
     };
     let Ok(Some(mut spec)) = v.get(name) else {
-        eprintln!("프로필 '{name}'이(가) 없습니다");
+        eprintln!(
+            "{}",
+            nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+        );
         return 1;
     };
     let Some(value) = value else {
@@ -100,8 +106,11 @@ fn env(name: &str, value: Option<&str>) -> i32 {
         Ok(e) => e,
         Err(_) => {
             eprintln!(
-                "알 수 없는 서버 유형: {value} ({})",
-                nsql_script::ENV_CHOICES
+                "{}",
+                nsql_i18n::tf(
+                    nsql_i18n::Msg::CliConnUnknownEnv,
+                    &[value, nsql_script::ENV_CHOICES]
+                )
             );
             return 2;
         }
@@ -142,8 +151,11 @@ fn list() -> i32 {
     };
     if list.is_empty() {
         eprintln!(
-            "저장된 프로필이 없습니다 - nsql conn add <name> <target>  ({})",
-            v.dir().display()
+            "{}",
+            nsql_i18n::tf(
+                nsql_i18n::Msg::CliConnNone,
+                &[&v.dir().display().to_string()]
+            )
         );
         return 0;
     }
@@ -188,13 +200,13 @@ fn spec_from_opts(o: &Opts, target: Option<&str>) -> Result<ConnectSpec, String>
             o.user.as_deref().unwrap_or(""),
             o.password.as_deref().unwrap_or(""),
         ),
-        (None, false) => Err("접속 문자열 또는 --host/--db 등 필드가 필요합니다".into()),
+        (None, false) => Err(nsql_i18n::t(nsql_i18n::Msg::CliConnNeedTarget).to_string()),
     }
 }
 
 fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
     if !nsql_vault::is_profile_name(name) {
-        eprintln!("프로필 이름 '{name}': 영문·숫자·`_ - .`만, 64자 이내");
+        eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
         return 2;
     }
     let mut spec = match spec_from_opts(o, target) {
@@ -216,7 +228,7 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
         }
     }
     if needs_pw && !o.no_prompt && io::stdin().is_terminal() {
-        match term::read_password(&format!("Password for {name} (빈 값 = 저장 안 함): ")) {
+        match term::read_password(&nsql_i18n::tf(nsql_i18n::Msg::CliPwPromptSave, &[name])) {
             Some(p) if !p.is_empty() => spec.password = Some(p),
             _ => {}
         }
@@ -226,18 +238,27 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
         Err(c) => return c,
     };
     if let Err(e) = v.save(name, &spec) {
-        eprintln!("저장 실패: {e}");
+        eprintln!(
+            "{}",
+            nsql_i18n::tf(nsql_i18n::Msg::WkProfileSaveFailed, &[&e.to_string()])
+        );
         return 1;
     }
     println!(
-        "저장: {name} = {}{}  ({})",
-        spec.redacted(),
-        if spec.password.is_some() {
-            ""
-        } else {
-            "  (비밀번호 없음 - 접속 시 방언이 요구하면 실패)"
-        },
-        v.dir().display()
+        "{}",
+        nsql_i18n::tf(
+            nsql_i18n::Msg::CliConnSaved,
+            &[
+                name,
+                &spec.redacted(),
+                &if spec.password.is_some() {
+                    String::new()
+                } else {
+                    nsql_i18n::t(nsql_i18n::Msg::CliConnNoPassword).to_string()
+                },
+                &v.dir().display().to_string(),
+            ],
+        )
     );
     0
 }
@@ -250,14 +271,25 @@ fn show(name: &str) -> i32 {
     match v.peek(name) {
         Ok(Some(p)) => {
             println!("{name}: {}", p.describe());
-            println!("  유형: {}", env_label(p.spec.env));
+            println!(
+                "  {}: {}",
+                nsql_i18n::t(nsql_i18n::Msg::OutConnEnv),
+                env_label(p.spec.env)
+            );
             if let Ok(p) = v.path_of(name) {
-                println!("  파일: {}", p.display());
+                println!(
+                    "  {}: {}",
+                    nsql_i18n::t(nsql_i18n::Msg::LicLblFile),
+                    p.display()
+                );
             }
             0
         }
         Ok(None) => {
-            eprintln!("프로필 '{name}'이(가) 없습니다");
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+            );
             1
         }
         Err(e) => {
@@ -274,11 +306,17 @@ fn rm(name: &str) -> i32 {
     };
     match v.remove(name) {
         Ok(true) => {
-            println!("삭제: {name}");
+            println!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::StProfileDeleted, &[name])
+            );
             0
         }
         Ok(false) => {
-            eprintln!("프로필 '{name}'이(가) 없습니다");
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+            );
             1
         }
         Err(e) => {
@@ -299,7 +337,10 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
             match v.get(name) {
                 Ok(Some(s)) => s,
                 Ok(None) => {
-                    eprintln!("프로필 '{name}'이(가) 없습니다");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+                    );
                     return 1;
                 }
                 Err(e) => {
@@ -311,7 +352,10 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
         None => match spec_from_opts(o, None) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("nsql conn test <name>  또는  nsql conn test -d … --host … - {e}");
+                eprintln!(
+                    "{}",
+                    nsql_i18n::tf(nsql_i18n::Msg::CliConnTestUsage, &[&e.to_string()])
+                );
                 return 2;
             }
         },

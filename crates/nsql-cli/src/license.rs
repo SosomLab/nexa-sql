@@ -52,7 +52,7 @@ pub(crate) fn cmd_license(o: &Opts) -> i32 {
                     0
                 }
                 None => {
-                    eprintln!("사용자 설정 폴더를 알 수 없습니다");
+                    eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CfgNoConfigDir));
                     1
                 }
             }
@@ -141,7 +141,7 @@ fn request(name: Option<&str>, email: Option<&str>) -> i32 {
             0
         }
         None => {
-            eprintln!("이 PC의 기기 ID를 얻을 수 없습니다(OS 기기 식별자 없음)");
+            eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::LicNoMachine));
             1
         }
     }
@@ -161,14 +161,22 @@ fn install(file: &Path) -> i32 {
         }
         Err(InstallError::Rejected(s)) => {
             eprintln!(
-                "라이선스를 설치하지 않았습니다: {} (파일은 그대로 · 기기 코드 = {})",
-                state_label(s.as_ref()),
-                Licensing::machine_code().unwrap_or_else(|| "-".to_string())
+                "{}",
+                nsql_i18n::tf(
+                    nsql_i18n::Msg::CliLicRejected,
+                    &[
+                        &state_label(s.as_ref()),
+                        &Licensing::machine_code().unwrap_or_else(|| "-".to_string()),
+                    ],
+                )
             );
             1
         }
         Err(InstallError::Io(e)) => {
-            eprintln!("라이선스를 설치할 수 없습니다: {e}");
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliLicInstallFailed, &[&e.to_string()])
+            );
             1
         }
     }
@@ -182,11 +190,17 @@ fn remove() -> i32 {
             0
         }
         Ok(false) => {
-            println!("nothing to remove · state {}", state_label(l.state()));
+            println!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliLicNothing, &[&state_label(l.state())])
+            );
             0
         }
         Err(e) => {
-            eprintln!("삭제할 수 없습니다: {e}");
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliLicDeleteFailed, &[&e.to_string()])
+            );
             1
         }
     }
@@ -196,7 +210,7 @@ fn remove() -> i32 {
 fn export(dest: &Path) -> i32 {
     let l = Licensing::open_default();
     let Some(src) = l.path() else {
-        eprintln!("설치된 라이선스가 없습니다");
+        eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliLicNone));
         return 1;
     };
     match std::fs::copy(src, dest) {
@@ -209,7 +223,10 @@ fn export(dest: &Path) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("복사할 수 없습니다: {e}");
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliLicExportFailed, &[&e.to_string()])
+            );
             1
         }
     }

@@ -44,7 +44,7 @@ pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bo
     if no_prompt || !io::stdin().is_terminal() {
         return;
     }
-    if let Some(p) = read_password(&format!("Password for {label}: ")) {
+    if let Some(p) = read_password(&nsql_i18n::tf(nsql_i18n::Msg::CliPwPrompt, &[label])) {
         if !p.is_empty() {
             spec.password = Some(p);
         }

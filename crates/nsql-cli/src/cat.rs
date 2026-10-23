@@ -40,7 +40,7 @@ fn print_rs(o: &Opts, dialect: Dialect, set: &ResultSet) {
 
 fn open(o: &Opts) -> Result<Box<dyn Session>, String> {
     let Some(target) = &o.target else {
-        return Err("-c <target>가 필요합니다".into());
+        return Err(nsql_i18n::t(nsql_i18n::Msg::CliErrNeedTarget).to_string());
     };
     let spec = resolve_target(target, o.dialect)?;
     let mut op = opener(o.dialect);
@@ -133,10 +133,18 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     let tn = tables.iter().filter(|(_, c)| c.is_some()).count();
                     let cn = cols.iter().filter(|(_, _, c)| c.is_some()).count();
                     println!(
-                        "schema {schema}: tables {} (with comment {tn}) · columns {} (with comment {cn}) · {} ms",
-                        tables.len(),
-                        cols.len(),
-                        t0.elapsed().as_millis()
+                        "{}",
+                        nsql_i18n::tf(
+                            nsql_i18n::Msg::CliCatCommentSummary,
+                            &[
+                                &schema.to_string(),
+                                &tables.len().to_string(),
+                                &tn.to_string(),
+                                &cols.len().to_string(),
+                                &cn.to_string(),
+                                &t0.elapsed().as_millis().to_string(),
+                            ],
+                        )
                     );
                     return Ok(0);
                 };
@@ -215,7 +223,10 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     return Ok(usage());
                 };
                 let Some(sub) = nsql_catalog::SubKind::parse(sub) else {
-                    eprintln!("알 수 없는 하위 종류: {sub}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliCatUnknownSubKind, &[sub])
+                    );
                     return Ok(2);
                 };
                 let (sc, name) = split_name(obj, &schema);
@@ -247,7 +258,10 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     return Ok(usage());
                 };
                 let Some(what) = nsql_catalog::GenWhat::parse(what) else {
-                    eprintln!("알 수 없는 생성 종류: {what}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliCatUnknownGen, &[what])
+                    );
                     return Ok(2);
                 };
                 let (sc, name) = split_name(obj, &schema);
@@ -273,7 +287,10 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     (Some(sk), Some(sn)) => match nsql_catalog::SubKind::parse(sk) {
                         Some(sk) => Some((sk, sn.clone())),
                         None => {
-                            eprintln!("알 수 없는 하위 종류: {sk}");
+                            eprintln!(
+                                "{}",
+                                nsql_i18n::tf(nsql_i18n::Msg::CliCatUnknownSubKind, &[sk])
+                            );
                             return Ok(2);
                         }
                     },
@@ -312,7 +329,10 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     return Ok(usage());
                 };
                 let Some(kind) = ObjectKind::parse(kind) else {
-                    eprintln!("알 수 없는 종류: {kind}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliCatUnknownKind, &[kind])
+                    );
                     return Ok(2);
                 };
                 let (sc, name) = split_name_db(s, name, &schema)?;
@@ -338,7 +358,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                 let (sc, name) = split_name_db(s, name, &schema)?;
                 let errs = nsql_catalog::compile_errors(s, &sc, &name)?;
                 if errs.is_empty() {
-                    println!("No errors.");
+                    println!("{}", nsql_i18n::t(nsql_i18n::Msg::CliCatNoErrors));
                 } else {
                     let rows = errs
                         .into_iter()

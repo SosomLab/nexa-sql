@@ -182,12 +182,24 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                         println!("{k} = {}", s.get(k).unwrap_or(""));
                     }
                     for k in &r.unknown {
-                        eprintln!("unknown key ignored: {k}");
+                        eprintln!(
+                            "{}",
+                            nsql_i18n::tf(nsql_i18n::Msg::CfgImportUnknownIgnored, &[k])
+                        );
                     }
                     for (k, v) in &r.invalid {
-                        eprintln!("invalid value ignored: {k} = {v}");
+                        eprintln!(
+                            "{}",
+                            nsql_i18n::tf(nsql_i18n::Msg::CfgImportInvalidIgnored, &[k, v])
+                        );
                     }
-                    println!("{} changed", r.changed.len());
+                    println!(
+                        "{}",
+                        nsql_i18n::tf(
+                            nsql_i18n::Msg::CfgImportChanged,
+                            &[&r.changed.len().to_string()]
+                        )
+                    );
                     0
                 }
                 Err(e) => {

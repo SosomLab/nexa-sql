@@ -38,12 +38,15 @@ pub(crate) fn run_plan(
                 for n in names {
                     match engine.vars.get(n) {
                         Some(v) => println!("  → PRINT  {n} = {}", v.value.display()),
-                        None if pending(n) => println!(
-                            "  · PRINT  {n} = (서버가 채우는 값 - 접속 없는 plan에서는 알 수 없음)"
-                        ),
+                        None if pending(n) => {
+                            println!(
+                                "{}",
+                                nsql_i18n::tf(nsql_i18n::Msg::CliPlanServerFilled, &[n])
+                            )
+                        }
                         None => {
                             errors += 1;
-                            println!("  ✗ 변수 {n}가 없습니다");
+                            println!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliPlanNoVar, &[n]));
                         }
                     }
                 }
@@ -54,7 +57,10 @@ pub(crate) fn run_plan(
         loop {
             let acts = engine.plan(item);
             if let [Action::NeedInput { name }] = acts.as_slice() {
-                eprintln!("  ! 치환 변수 &{name} 미정의 → 빈 값으로 진행");
+                eprintln!(
+                    "{}",
+                    nsql_i18n::tf(nsql_i18n::Msg::CliPlanUndefinedSubst, &[name])
+                );
                 engine.define(name, "");
                 guard += 1;
                 if guard > 64 {
@@ -88,7 +94,13 @@ pub(crate) fn run_plan(
                         server_filled
                             .extend(prepared.captures.iter().map(|n| n.to_ascii_uppercase()));
                         if !prepared.implicit.is_empty() {
-                            println!("    ! 암묵 변수: {}", prepared.implicit.join(", "));
+                            println!(
+                                "{}",
+                                nsql_i18n::tf(
+                                    nsql_i18n::Msg::CliPlanImplicitVars,
+                                    &[&prepared.implicit.join(", ")]
+                                )
+                            );
                         }
                     }
                     Action::LocalAssign { name, value } => {

@@ -75,14 +75,14 @@ fn load(path: &Path) -> Result<Store, String> {
         let bytes = match std::fs::read(path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err("project file not found".into())
+                return Err(nsql_i18n::t(nsql_i18n::Msg::CliBmProjectNotFound).to_string())
             }
             Err(e) => return Err(e.to_string()),
         };
         let (text, _blobs) = nsql_settings::projfile::split(&bytes)?;
         let json = nsql_settings::json::parse(&text)?;
         let nsql_settings::json::Json::Obj(fields) = json else {
-            return Err("project file is not a JSON object".into());
+            return Err(nsql_i18n::t(nsql_i18n::Msg::CliBmProjectNotObject).to_string());
         };
         return match fields.iter().find(|(k, _)| k == "bookmarks") {
             Some((_, v)) => Store::from_json(&nsql_settings::json::dump(v)),
@@ -104,7 +104,7 @@ fn save(path: &Path, st: &Store) -> Result<(), String> {
         // 헤더만 바꾸고 탭 payload 블록은 그대로 되붙인다(`projfile` · 09-23).
         let (text, blobs) = nsql_settings::projfile::split(&bytes)?;
         let Json::Obj(mut fields) = parse(&text)? else {
-            return Err("project file is not a JSON object".into());
+            return Err(nsql_i18n::t(nsql_i18n::Msg::CliBmProjectNotObject).to_string());
         };
         let bm = parse(&st.to_json())?;
         match fields.iter_mut().find(|(k, _)| k == "bookmarks") {
@@ -145,7 +145,10 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
         other => workspace_path(other),
     };
     let Some(ws) = ws else {
-        eprintln!("사용자 설정 폴더를 알 수 없습니다(NSQL_HOME)");
+        eprintln!(
+            "{} (NSQL_HOME)",
+            nsql_i18n::t(nsql_i18n::Msg::CfgNoConfigDir)
+        );
         return 1;
     };
     let mut st = match load(&ws) {
@@ -214,9 +217,15 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
             if !md {
                 let (live, inv) = st.counts();
                 eprintln!(
-                    "{} bookmark(s) · {inv} invalid · {}",
-                    live + inv,
-                    ws.display()
+                    "{}",
+                    nsql_i18n::tf(
+                        nsql_i18n::Msg::CliBmSummary,
+                        &[
+                            &(live + inv).to_string(),
+                            &inv.to_string(),
+                            &ws.display().to_string()
+                        ],
+                    )
                 );
             }
             0
@@ -226,7 +235,7 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
                 return usage();
             };
             let Ok(line1) = line.parse::<usize>() else {
-                eprintln!("line must be a number (1-based)");
+                eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliBmBadLine));
                 return 2;
             };
             // 정규화한 절대 경로(GUI가 여는 경로와 같은 표기 · Windows `\\?\` 접두는 뗀다).
@@ -242,7 +251,13 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
             };
             let lines: Vec<&str> = text.lines().collect();
             if line1 == 0 || line1 > lines.len() {
-                eprintln!("line {line1} is out of range (1..={})", lines.len());
+                eprintln!(
+                    "{}",
+                    nsql_i18n::tf(
+                        nsql_i18n::Msg::CliBmLineRange,
+                        &[&line1.to_string(), &lines.len().to_string()]
+                    )
+                );
                 return 2;
             }
             let opts = RelocateOpts::default();
@@ -259,11 +274,24 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
                         eprintln!("{}: {e}", ws.display());
                         return 1;
                     }
-                    println!("added #{id} at line {line1} of {}", path.display());
+                    println!(
+                        "{}",
+                        nsql_i18n::tf(
+                            nsql_i18n::Msg::CliBmAdded,
+                            &[
+                                &id.to_string(),
+                                &line1.to_string(),
+                                &path.display().to_string()
+                            ],
+                        )
+                    );
                     0
                 }
                 Err(e) => {
-                    eprintln!("refused: {e}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliBmRefused, &[&e.to_string()])
+                    );
                     1
                 }
             }
@@ -273,14 +301,20 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
                 return usage();
             };
             if st.remove(id).is_none() {
-                eprintln!("no bookmark #{id}");
+                eprintln!(
+                    "{}",
+                    nsql_i18n::tf(nsql_i18n::Msg::CliBmNotFound, &[&id.to_string()])
+                );
                 return 1;
             }
             if let Err(e) = save(&ws, &st) {
                 eprintln!("{}: {e}", ws.display());
                 return 1;
             }
-            println!("removed #{id}");
+            println!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliBmRemoved, &[&id.to_string()])
+            );
             0
         }
         "prune" => {
@@ -294,7 +328,13 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
                     return 1;
                 }
             }
-            println!("pruned {n} invalid bookmark(s) older than {days} day(s)");
+            println!(
+                "{}",
+                nsql_i18n::tf(
+                    nsql_i18n::Msg::CliBmPruned,
+                    &[&n.to_string(), &days.to_string()]
+                )
+            );
             0
         }
         _ => usage(),

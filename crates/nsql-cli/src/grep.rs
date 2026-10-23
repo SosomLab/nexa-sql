@@ -133,7 +133,13 @@ pub(crate) fn cmd_grep(positional: &[String]) -> i32 {
             }
         }
         let detail: Vec<String> = counts.iter().map(|(c, n)| format!("{c} {n}")).collect();
-        eprintln!("skipped {} file(s): {}", skipped.len(), detail.join(" · "));
+        eprintln!(
+            "{}",
+            nsql_i18n::tf(
+                nsql_i18n::Msg::CliGrepSkipped,
+                &[&skipped.len().to_string(), &detail.join(" · ")]
+            )
+        );
         if std::env::var_os("NSQL_GREP_LOG").is_some() {
             for (p, r) in &skipped {
                 eprintln!("  {} ({})", display(p), r.code());
