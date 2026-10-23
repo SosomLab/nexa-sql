@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · 14·15번)** — ★ CLI 문구 일괄 Msg(새 키 52 · 재사용 16 · d9b95c0) · ★ DBMS ▸ 드라이버 ODBC/DuckDB 정보 행 · config list info 키 제외(389cd74) · 🔧 로그인 목록 ODBC 상태 점(`ConnectSpec::endpoint` · 6561a4e) · 오프라인 번들 실기 ✓.
+
 - **2026-10-23 (137차 마감)** — 🔧 T-401 Intel 맥 ODBC = drivers.yml macOS x86_64를 Intel 러너 `macos-15-intel` 네이티브로(탐침 ✓ · 4062c5c · 검증 = drivers-v0.1.3) · 진행사항 최신화(§38 · 대기 = v0.2.9 결정 · T-398-c · Tibero · T-397 실기).
 
 - **2026-10-23 (137차 · v0.2.8 뒤)** — 🔧 lite 설치본 Oracle Thin 확장을 두고 OCI로 가던 것(사용자 실기 · `open_oracle` 열기 순서 · b4373fa) · 🔧 `nsql conn test` 자동 설치·`oracle.driver`(f18412b) · ★ full 변형 dispatch 검증(1차 ✗ 3원인 → a7e29db → 2차 ✓ 자산 11).
