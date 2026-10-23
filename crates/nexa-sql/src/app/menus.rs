@@ -1944,11 +1944,8 @@ impl App {
             Msg::MnVariables,
             self.vars_win.is_open(),
         ));
-        cmds.push(tv(
-            "view.drivers",
-            Msg::MnDrivers,
-            self.driver_win.is_open(),
-        ));
+        // 드라이버 관리자 = 열기/포커스(토글 아님) → "Hide" 라벨이 붙는 tv가 아니라 m(협업 10-23 지적).
+        cmds.push(m("view.drivers", Msg::MnView, Msg::MnDrivers));
         cmds.push(tv(
             "view.on_top",
             Msg::MnAlwaysOnTop,
@@ -1971,7 +1968,6 @@ impl App {
             Msg::MnProject,
             Msg::MnProjectAddFolder,
         ));
-        cmds.push(m("view.variables", Msg::MnView, Msg::MnVariables));
         cmds.push(m("vars.script", Msg::MnView, Msg::MnVariablesScript));
         cmds.push(m("vars.show", Msg::MnView, Msg::MnShowVariables));
         cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));

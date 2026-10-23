@@ -142,13 +142,13 @@ pub(crate) enum DriverWinAction {
 }
 
 const COLS: [(Msg, i32); 7] = [
-    (Msg::DrvColId, 110),
+    (Msg::DrvColId, 96),
     (Msg::DrvColName, 0),
-    (Msg::DrvColDialect, 80),
-    (Msg::DrvColBuiltin, 70),
-    (Msg::DrvColInstalled, 80),
-    (Msg::DrvColLatest, 80),
-    (Msg::DrvColState, 190),
+    (Msg::DrvColDialect, 76),
+    (Msg::DrvColBuiltin, 64),
+    (Msg::DrvColInstalled, 72),
+    (Msg::DrvColLatest, 64),
+    (Msg::DrvColState, 200),
 ];
 
 pub(crate) struct DriverWin {
@@ -221,7 +221,7 @@ impl DriverWin {
                 dy: 160,
                 owner,
                 memo: None,
-                default_size: (720.0, 380.0),
+                default_size: (860.0, 400.0), // 이름 열이 "Oracle (OCI, Instant Client)"까지 보이게(10-23)
                 ime: false,
             },
         ) else {
@@ -243,10 +243,6 @@ impl DriverWin {
 
     pub(crate) fn window(&self) -> Option<&Window> {
         self.window.as_deref()
-    }
-
-    pub(crate) fn is_open(&self) -> bool {
-        self.window.is_some()
     }
 
     pub(crate) fn is(&self, id: WindowId) -> bool {

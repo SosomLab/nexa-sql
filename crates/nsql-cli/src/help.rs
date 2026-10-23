@@ -374,7 +374,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "driver",
-        usage: "nsql driver list | path | check <id> | rm <id>[@<ver>] | search [<text>] | install <id>[@<ver>] | install --file <zip> | update [<id>]",
+        usage: "nsql driver list | path | check <id> | rm <id>[@<ver>] | search [<text>] [--refresh] | install <id>[@<ver>] [--pre] [--force] | install --file <package.zip|bundle.zip> [--force] | update [<id>] [--check]",
         brief: Msg::HlpCmdDriver,
         detail: Msg::HlpCmdDriverDetail,
         args: &[
@@ -390,10 +390,14 @@ const CMDS: &[Cmd] = &[
         notes: &[],
         examples: &[
             "nsql driver search",
-            "nsql driver install duckdb                      # newest driver-duckdb-v* release of SosomLab/nexa-sql",
-            "nsql driver install tibero-odbc@7.0.1 --force",
-            "nsql driver install --file nsql-driver-duckdb-1.2.0-windows-x86_64.zip",
+            "nsql driver install duckdb                      # latest from drivers/index.json (drivers-v* pre-release)",
+            "nsql driver install oracle-oci@0.1.1 --force",
+            "nsql driver install --file nsql-driver-duckdb-0.1.1-windows-x86_64.zip",
+            "nsql driver install --file nsql-drivers-all-0.1.1-windows-x86_64.zip   # offline bundle (all drivers)",
+            "nsql driver list",
+            "nsql driver check duckdb",
             "nsql driver update --check",
+            "nsql run -c \"oracle://scott@db:1521/orcl?driver=oci\" q.sql   # pick the driver for one connection",
         ],
     },
     Cmd {

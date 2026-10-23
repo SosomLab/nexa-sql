@@ -120,7 +120,7 @@ fn install_round_trip_over_local_server() {
             ("2.0.0", &bad_abi, true, true),
         ] {
             let stem = format!(
-                "/SosomLab/t/releases/download/driver-{id}-v{ver}/nsql-driver-{id}-{ver}-{plat}"
+                "/SosomLab/t/releases/download/drivers-v{ver}/nsql-driver-{id}-{ver}-{plat}"
             );
             r.push((format!("{stem}.zip"), pkg.clone()));
             let sha = if sha_ok {
@@ -190,7 +190,7 @@ fn install_round_trip_over_local_server() {
         &keys,
         &mut |_, _, _| {},
     );
-    assert!(again.expect_err("dup").contains("already installed"));
+    assert!(again.expect_err("dup").detail.contains("already installed"));
     install::install(
         &src,
         &root,
@@ -214,7 +214,7 @@ fn install_round_trip_over_local_server() {
         &mut |_, _, _| {},
     )
     .expect_err("bad sig");
-    assert!(e.contains("signature"), "{e}");
+    assert!(e.detail.contains("signature"), "{e}");
     let e = install::install(
         &src,
         &root,
@@ -226,7 +226,7 @@ fn install_round_trip_over_local_server() {
         &mut |_, _, _| {},
     )
     .expect_err("bad sha");
-    assert!(e.contains("sha256 mismatch"), "{e}");
+    assert!(e.detail.contains("sha256 mismatch"), "{e}");
     let e = install::install(
         &src,
         &root,
@@ -238,7 +238,7 @@ fn install_round_trip_over_local_server() {
         &mut |_, _, _| {},
     )
     .expect_err("bad abi");
-    assert!(e.contains("ABI"), "{e}");
+    assert!(e.detail.contains("ABI"), "{e}");
     assert!(install::install(
         &src,
         &root,
@@ -250,6 +250,7 @@ fn install_round_trip_over_local_server() {
         &mut |_, _, _| {}
     )
     .expect_err("not in index")
+    .detail
     .contains("not in the driver index"));
     assert!(install::install(
         &src,
@@ -262,6 +263,7 @@ fn install_round_trip_over_local_server() {
         &mut |_, _, _| {}
     )
     .expect_err("platform")
+    .detail
     .contains("no build for"));
     assert!(install::install(
         &src,
@@ -274,6 +276,7 @@ fn install_round_trip_over_local_server() {
         &mut |_, _, _| {}
     )
     .expect_err("no keys")
+    .detail
     .contains("no trusted"));
     assert!(!root.join(id).join("1.1.0").exists());
     assert!(!root.join(id).join("2.0.0").exists());
@@ -378,6 +381,7 @@ fn offline_bundle_installs_every_asset_for_this_platform() {
         .1
         .as_ref()
         .expect_err("bad sig")
+        .detail
         .contains("signature"));
     assert_eq!(out[2].1.as_ref().expect("gamma").version, "3.0.0");
     let listed = nsql_drivers::ext::list_extensions_in(&root);

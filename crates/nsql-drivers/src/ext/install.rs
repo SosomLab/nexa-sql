@@ -1,5 +1,5 @@
 //! ★ 확장 드라이버 **내려받기·설치**(T-29 · docs/22 §2-3·§3 · 사용자 10-22 = **별도 저장소 없이 nexa-sql 저장소에서**):
-//! 색인 = 저장소 안 파일 `drivers/index.json`(raw URL · 커밋으로 관리 · ETag 캐시) · 자산 = 같은 저장소 Releases 태그 `driver-<id>-v<ver>` →
+//! 색인 = 저장소 안 파일 `drivers/index.json`(raw URL · 커밋으로 관리 · ETag 캐시) · 자산 = 같은 저장소 Releases 태그 `drivers-v<ver>`(D-349) →
 //! 버전 해석(색인 `latest` > GitHub API 태그 접두) → 자산 `nsql-driver-<id>-<ver>-<os>-<arch>.zip` + `.sha256` + `.sig` →
 //! sha256 일치 → Ed25519 검증([`super::keys::DRIVER_KEYS`] · **우회 없음**) → 임시 폴더에 풀기 → 매니페스트·라이브러리 확인 →
 //! `drivers/<id>/<ver>/`로 **원자적 rename**(같은 볼륨 `.tmp/` 아래 · 중단돼도 반쪽 설치 없음).
@@ -22,14 +22,115 @@ pub const DEFAULT_REPO: &str = "SosomLab/nexa-sql";
 pub const DEFAULT_BRANCH: &str = "main";
 /// 저장소 안 색인 경로.
 pub const INDEX_PATH: &str = "drivers/index.json";
-/// 태그 접두 기본(`driver-<id>-v` · 앱 릴리스 태그 `v1.2.3`과 섞이지 않게).
-pub const TAG_PREFIX: &str = "driver-";
+/// 태그 접두 기본(`drivers-v` · 색인 항목에 `tag_prefix`가 없을 때 · 앱 릴리스 태그 `v1.2.3`과 섞이지 않게 · D-349 전 드라이버 한 태그).
+pub const TAG_PREFIX: &str = "drivers-v";
 /// 색인 자산 이름 · 캐시 파일 이름(드라이버 폴더 바로 아래).
 pub const INDEX_FILE: &str = "index.json";
 const INDEX_ETAG: &str = "index.etag";
 const TMP_DIR: &str = ".tmp";
 /// 색인 캐시를 그대로 쓰는 시간(`--refresh`·install은 조건부 GET으로 확인).
 const INDEX_FRESH: Duration = Duration::from_secs(3600);
+
+/// ★ 설치 오류의 **종류**(호스트가 종류별 Msg로 보여 준다 · 사용자 10-23 "다국어 전반 보완") — 상세(영어)는 로그용.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallErrorKind {
+    /// 색인에 그 id가 없다(`item` = id).
+    NotInIndex,
+    /// 이 OS·아키텍처 빌드가 없다(`item` = id · `detail` = 있는 플랫폼).
+    NoBuild,
+    /// 이미 설치됨(`item` = id@ver).
+    AlreadyInstalled,
+    /// 색인을 받지 못함.
+    Index,
+    /// 자산 내려받기 실패(HTTP · 네트워크).
+    Download,
+    /// sha256 불일치.
+    Checksum,
+    /// 서명 검증 실패 · 신뢰 키 없음.
+    Signature,
+    /// 매니페스트 ABI가 이 빌드와 다름.
+    Abi,
+    /// 패키지 내용 이상(zip · 매니페스트 · 라이브러리 없음 · 이름 불일치).
+    BadPackage,
+    /// 파일계 오류(드라이버 폴더에 쓰기·지우기).
+    Io,
+    /// GitHub API(릴리스 목록) 실패 · 릴리스 없음.
+    Api,
+    /// 그 밖(문자열 오류를 그대로 감쌈).
+    Other,
+}
+
+impl InstallErrorKind {
+    /// 호스트의 메시지 표 키(`nsql_i18n::driver_error_msg`).
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotInIndex => "not_in_index",
+            Self::NoBuild => "no_build",
+            Self::AlreadyInstalled => "already_installed",
+            Self::Index => "index",
+            Self::Download => "download",
+            Self::Checksum => "checksum",
+            Self::Signature => "signature",
+            Self::Abi => "abi",
+            Self::BadPackage => "bad_package",
+            Self::Io => "io",
+            Self::Api => "api",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// 설치 오류 = 종류 + 대상(id · id@ver · URL · 경로 · 비어 있을 수 있음) + 영어 상세.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallError {
+    pub kind: InstallErrorKind,
+    pub item: String,
+    pub detail: String,
+}
+
+impl InstallError {
+    #[must_use]
+    pub fn new(kind: InstallErrorKind, item: impl Into<String>, detail: impl Into<String>) -> Self {
+        InstallError {
+            kind,
+            item: item.into(),
+            detail: detail.into(),
+        }
+    }
+    /// 메시지 틀의 `{0}`·`{1}` 인자 = (대상 또는 상세, 상세).
+    #[must_use]
+    pub fn args(&self) -> [String; 2] {
+        let first = if self.item.is_empty() {
+            self.detail.clone()
+        } else {
+            self.item.clone()
+        };
+        [first, self.detail.clone()]
+    }
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl From<String> for InstallError {
+    fn from(s: String) -> Self {
+        InstallError::new(InstallErrorKind::Other, "", s)
+    }
+}
+
+impl From<&str> for InstallError {
+    fn from(s: &str) -> Self {
+        InstallError::new(InstallErrorKind::Other, "", s)
+    }
+}
+
+fn ie(kind: InstallErrorKind, item: impl Into<String>, detail: impl Into<String>) -> InstallError {
+    InstallError::new(kind, item, detail)
+}
 
 /// 어디서 받는가.
 #[derive(Clone, Debug)]
@@ -212,7 +313,7 @@ fn repo_of<'a>(src: &'a Source, e: &'a IndexEntry) -> &'a str {
 fn tag_prefix(e: &IndexEntry) -> String {
     e.tag_prefix
         .clone()
-        .unwrap_or_else(|| format!("{TAG_PREFIX}{}-v", e.id))
+        .unwrap_or_else(|| TAG_PREFIX.to_string())
 }
 
 /// 자산 URL(`<base>/<repo>/releases/download/<tag>/<name>`).
@@ -250,7 +351,11 @@ pub fn cached_index_age(root: &Path) -> Option<Duration> {
 }
 
 /// 색인 가져오기: 1시간 안 캐시 = 그대로(`refresh` = 조건부 GET) · 304 = 캐시 · 실패 + 캐시 = 캐시(`from_cache` true) · 둘 다 없음 = 오류.
-pub fn fetch_index(src: &Source, root: &Path, refresh: bool) -> Result<(Index, bool), String> {
+pub fn fetch_index(
+    src: &Source,
+    root: &Path,
+    refresh: bool,
+) -> Result<(Index, bool), InstallError> {
     let cache = cached_index(root);
     if !refresh && cache.is_some() && cached_index_age(root).is_some_and(|a| a < INDEX_FRESH) {
         return Ok((cache.unwrap_or_default(), true));
@@ -267,10 +372,16 @@ pub fn fetch_index(src: &Source, root: &Path, refresh: bool) -> Result<(Index, b
     match nsql_net::get_bytes(&index_url(src), &o) {
         Ok((r, body)) if r.status == 200 => {
             let text_ = String::from_utf8_lossy(&body).into_owned();
-            let idx = parse_index(&text_)?;
+            let idx =
+                parse_index(&text_).map_err(|e| ie(InstallErrorKind::Index, index_url(src), e))?;
             let _ = std::fs::create_dir_all(root);
-            std::fs::write(root.join(INDEX_FILE), text_.as_bytes())
-                .map_err(|e| format!("write index cache: {e}"))?;
+            std::fs::write(root.join(INDEX_FILE), text_.as_bytes()).map_err(|e| {
+                ie(
+                    InstallErrorKind::Io,
+                    root.join(INDEX_FILE).display().to_string(),
+                    format!("write index cache: {e}"),
+                )
+            })?;
             let _ = std::fs::write(
                 root.join(INDEX_ETAG),
                 r.header("etag").unwrap_or("").as_bytes(),
@@ -283,33 +394,53 @@ pub fn fetch_index(src: &Source, root: &Path, refresh: bool) -> Result<(Index, b
             if let Ok(t) = std::fs::read(&p) {
                 let _ = std::fs::write(&p, t);
             }
-            Ok((cache.ok_or("304 without cache")?, true))
+            Ok((
+                cache.ok_or_else(|| {
+                    ie(InstallErrorKind::Index, index_url(src), "304 without cache")
+                })?,
+                true,
+            ))
         }
         Ok((r, _)) => match cache {
             Some(c) => Ok((c, true)),
-            None => Err(format!("index: HTTP {} from {}", r.status, index_url(src))),
+            None => Err(ie(
+                InstallErrorKind::Index,
+                index_url(src),
+                format!("HTTP {}", r.status),
+            )),
         },
         Err(e) => match cache {
             Some(c) => Ok((c, true)),
-            None => Err(format!("index: {e} ({})", index_url(src))),
+            None => Err(ie(InstallErrorKind::Index, index_url(src), e.to_string())),
         },
     }
 }
 
 /// GitHub API에서 접두가 맞는 태그 중 최신(순수 부분 = [`pick_latest_tag`]).
-fn api_latest(src: &Source, e: &IndexEntry, pre: bool) -> Result<String, String> {
+fn api_latest(src: &Source, e: &IndexEntry, pre: bool) -> Result<String, InstallError> {
     let url = format!(
         "{}/repos/{}/releases?per_page=100",
         src.api,
         repo_of(src, e)
     );
-    let (r, body) = nsql_net::get_bytes(&url, &src.options(true)).map_err(|er| er.to_string())?;
+    let (r, body) = nsql_net::get_bytes(&url, &src.options(true))
+        .map_err(|er| ie(InstallErrorKind::Api, &url, er.to_string()))?;
     if r.status != 200 {
-        return Err(format!("GitHub API: HTTP {} ({url})", r.status));
+        return Err(ie(
+            InstallErrorKind::Api,
+            &url,
+            format!("GitHub API: HTTP {}", r.status),
+        ));
     }
-    let json = nsql_json::parse(&String::from_utf8_lossy(&body))?;
-    pick_latest_tag(&json, &tag_prefix(e), pre)
-        .ok_or_else(|| format!("no release with tag prefix {:?}", tag_prefix(e)))
+    let json = nsql_json::parse(&String::from_utf8_lossy(&body))
+        .map_err(|er| ie(InstallErrorKind::Api, &url, er))?;
+    pick_latest_tag(&json, &tag_prefix(e), pre).ok_or_else(|| {
+        ie(
+            InstallErrorKind::Api,
+            &e.id,
+            format!("no release with tag prefix {:?}", tag_prefix(e)),
+        )
+    })
 }
 
 /// 릴리스 목록 JSON에서 `prefix`로 시작하는 태그 중 최신 버전(순수): draft 제외 · prerelease는 `pre`일 때만.
@@ -349,7 +480,7 @@ pub fn resolve_version(
     e: &IndexEntry,
     want: Option<&str>,
     pre: bool,
-) -> Result<String, String> {
+) -> Result<String, InstallError> {
     if let Some(v) = want.filter(|v| !v.is_empty() && *v != "latest") {
         return Ok(v.to_string());
     }
@@ -436,11 +567,12 @@ pub fn install_bytes(
     keys: &[RootKey],
     expect: Option<(&str, &str)>,
     force: bool,
-) -> Result<InstallReport, String> {
+) -> Result<InstallReport, InstallError> {
     if let Some(t) = sha_text {
-        verify_sha256_text(t, zip)?;
+        verify_sha256_text(t, zip).map_err(|e| ie(InstallErrorKind::Checksum, "", e))?;
     }
-    let key_id = verify_sig_text(sig_text, zip, keys)?;
+    let key_id =
+        verify_sig_text(sig_text, zip, keys).map_err(|e| ie(InstallErrorKind::Signature, "", e))?;
     let tmp = root.join(TMP_DIR).join(format!(
         "{}-{}",
         std::process::id(),
@@ -450,30 +582,46 @@ pub fn install_bytes(
     ));
     let pkg = tmp.join("pkg");
     let _ = std::fs::remove_dir_all(&tmp);
-    let result = (|| {
-        let ex = super::zip::extract(zip, &pkg, true)?;
+    let result = (|| -> Result<InstallReport, InstallError> {
+        let ex = super::zip::extract(zip, &pkg, true)
+            .map_err(|e| ie(InstallErrorKind::BadPackage, "", e))?;
         let manifest = match std::fs::read_to_string(pkg.join(MANIFEST)) {
-            Ok(t) => Some(parse_manifest(&t)?),
+            Ok(t) => Some(
+                parse_manifest(&t).map_err(|e| ie(InstallErrorKind::BadPackage, MANIFEST, e))?,
+            ),
             Err(_) => None,
         };
         if let Some(m) = &manifest {
             if m.protocol.is_some_and(|p| p != nsql_abi::ABI_VERSION) {
-                return Err(format!(
-                    "manifest protocol {} ≠ this build's ABI {}",
-                    m.protocol.unwrap_or(0),
-                    nsql_abi::ABI_VERSION
+                return Err(ie(
+                    InstallErrorKind::Abi,
+                    format!(
+                        "ABI {} / app {}",
+                        m.protocol.unwrap_or(0),
+                        nsql_abi::ABI_VERSION
+                    ),
+                    format!(
+                        "manifest protocol {} ≠ this build's ABI {}",
+                        m.protocol.unwrap_or(0),
+                        nsql_abi::ABI_VERSION
+                    ),
                 ));
             }
         }
         let (id, ver) = match (expect, &manifest) {
             (Some((id, ver)), Some(m)) => {
                 if !m.id.is_empty() && m.id != id {
-                    return Err(format!("manifest id {:?} ≠ asset id {id:?}", m.id));
+                    return Err(ie(
+                        InstallErrorKind::BadPackage,
+                        id,
+                        format!("manifest id {:?} ≠ asset id {id:?}", m.id),
+                    ));
                 }
                 if !m.version.is_empty() && m.version != ver {
-                    return Err(format!(
-                        "manifest version {:?} ≠ asset version {ver:?}",
-                        m.version
+                    return Err(ie(
+                        InstallErrorKind::BadPackage,
+                        id,
+                        format!("manifest version {:?} ≠ asset version {ver:?}", m.version),
                     ));
                 }
                 (id.to_string(), ver.to_string())
@@ -482,34 +630,65 @@ pub fn install_bytes(
             (None, Some(m)) if !m.id.is_empty() && !m.version.is_empty() => {
                 (m.id.clone(), m.version.clone())
             }
-            (None, _) => return Err(format!("{MANIFEST} with id and version is required")),
+            (None, _) => {
+                return Err(ie(
+                    InstallErrorKind::BadPackage,
+                    MANIFEST,
+                    format!("{MANIFEST} with id and version is required"),
+                ))
+            }
         };
         if id.contains(['/', '\\', '.']) || ver.contains(['/', '\\']) || ver.starts_with('.') {
-            return Err(format!("unsafe id/version: {id}@{ver}"));
+            return Err(ie(
+                InstallErrorKind::BadPackage,
+                format!("{id}@{ver}"),
+                format!("unsafe id/version: {id}@{ver}"),
+            ));
         }
         let lib = manifest
             .as_ref()
             .and_then(|m| m.lib.clone())
             .unwrap_or_else(|| library_file_name_for(&id));
         if !pkg.join(&lib).is_file() {
-            return Err(format!("package has no driver library {lib:?}"));
+            return Err(ie(
+                InstallErrorKind::BadPackage,
+                &lib,
+                format!("package has no driver library {lib:?}"),
+            ));
         }
         let dest = root.join(&id).join(&ver);
         if dest.exists() {
             if !force {
-                return Err(format!(
-                    "{id}@{ver} is already installed ({})",
-                    dest.display()
+                return Err(ie(
+                    InstallErrorKind::AlreadyInstalled,
+                    format!("{id}@{ver}"),
+                    format!("{id}@{ver} is already installed ({})", dest.display()),
                 ));
             }
-            std::fs::remove_dir_all(&dest)
-                .map_err(|e| format!("remove {}: {e}", dest.display()))?;
+            std::fs::remove_dir_all(&dest).map_err(|e| {
+                ie(
+                    InstallErrorKind::Io,
+                    dest.display().to_string(),
+                    format!("remove {}: {e}", dest.display()),
+                )
+            })?;
         }
         if let Some(p) = dest.parent() {
-            std::fs::create_dir_all(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            std::fs::create_dir_all(p).map_err(|e| {
+                ie(
+                    InstallErrorKind::Io,
+                    p.display().to_string(),
+                    format!("{}: {e}", p.display()),
+                )
+            })?;
         }
-        std::fs::rename(&pkg, &dest)
-            .map_err(|e| format!("install {} → {}: {e}", pkg.display(), dest.display()))?;
+        std::fs::rename(&pkg, &dest).map_err(|e| {
+            ie(
+                InstallErrorKind::Io,
+                dest.display().to_string(),
+                format!("install {} → {}: {e}", pkg.display(), dest.display()),
+            )
+        })?;
         Ok(InstallReport {
             id,
             version: ver,
@@ -538,23 +717,42 @@ pub fn install(
     force: bool,
     keys: &[RootKey],
     progress: Progress<'_>,
-) -> Result<InstallReport, String> {
+) -> Result<InstallReport, InstallError> {
     progress("index", 0, None);
-    let (index, _) = fetch_index(src, root, false)?;
-    let entry = index
-        .find(id)
-        .cloned()
-        .ok_or_else(|| format!("{id:?} is not in the driver index (nsql driver search)"))?;
+    let (mut index, cached) = fetch_index(src, root, false)?;
+    let mut entry = index.find(id).cloned();
+    // ★ 캐시 색인(1시간)에 없으면 한 번 새로 받아 본다(막 공개된 드라이버 · 26 §8 GET +1 · 협업 10-23 지적).
+    if entry.is_none() && cached {
+        if let Ok((fresh, _)) = fetch_index(src, root, true) {
+            index = fresh;
+            entry = index.find(id).cloned();
+        }
+    }
+    let entry = entry.ok_or_else(|| {
+        ie(
+            InstallErrorKind::NotInIndex,
+            id,
+            format!("{id:?} is not in the driver index (nsql driver search)"),
+        )
+    })?;
     let plat = platform();
     if !entry.platforms.is_empty() && !entry.platforms.contains(&plat) {
-        return Err(format!(
-            "{id} has no build for {plat} (available: {})",
-            entry.platforms.join(", ")
+        return Err(ie(
+            InstallErrorKind::NoBuild,
+            id,
+            format!(
+                "{id} has no build for {plat} (available: {})",
+                entry.platforms.join(", ")
+            ),
         ));
     }
     let ver = resolve_version(src, &entry, want, pre)?;
     if !force && root.join(id).join(&ver).exists() {
-        return Err(format!("{id}@{ver} is already installed"));
+        return Err(ie(
+            InstallErrorKind::AlreadyInstalled,
+            format!("{id}@{ver}"),
+            format!("{id}@{ver} is already installed"),
+        ));
     }
     let name = asset_name(id, &ver);
     let url = asset_url(src, &entry, &ver, &name);
@@ -562,16 +760,31 @@ pub fn install(
     let o = src.options(false);
     progress("download", 0, None);
     let mut zip = Vec::new();
-    let r = nsql_net::get(&url, &o, &mut zip, &mut |n, t| progress("download", n, t))
-        .map_err(|e| format!("download {url}: {e}"))?;
+    let r =
+        nsql_net::get(&url, &o, &mut zip, &mut |n, t| progress("download", n, t)).map_err(|e| {
+            ie(
+                InstallErrorKind::Download,
+                &url,
+                format!("download {url}: {e}"),
+            )
+        })?;
     if r.status != 200 {
-        return Err(format!("download {url}: HTTP {}", r.status));
+        return Err(ie(
+            InstallErrorKind::Download,
+            &url,
+            format!("download {url}: HTTP {}", r.status),
+        ));
     }
-    let small = |suffix: &str| -> Result<String, String> {
+    let small = |suffix: &str| -> Result<String, InstallError> {
         let u = format!("{stem}.{suffix}");
-        let (r, b) = nsql_net::get_bytes(&u, &o).map_err(|e| format!("{u}: {e}"))?;
+        let (r, b) = nsql_net::get_bytes(&u, &o)
+            .map_err(|e| ie(InstallErrorKind::Download, &u, format!("{u}: {e}")))?;
         if r.status != 200 {
-            return Err(format!("{u}: HTTP {}", r.status));
+            return Err(ie(
+                InstallErrorKind::Download,
+                &u,
+                format!("{u}: HTTP {}", r.status),
+            ));
         }
         Ok(String::from_utf8_lossy(&b).into_owned())
     };
@@ -589,8 +802,14 @@ pub fn install_file(
     zip_path: &Path,
     force: bool,
     keys: &[RootKey],
-) -> Result<InstallReport, String> {
-    let zip = std::fs::read(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
+) -> Result<InstallReport, InstallError> {
+    let zip = std::fs::read(zip_path).map_err(|e| {
+        ie(
+            InstallErrorKind::Io,
+            zip_path.display().to_string(),
+            format!("{}: {e}", zip_path.display()),
+        )
+    })?;
     let sidecar = |suffix: &str| -> Option<String> {
         let s = zip_path.to_string_lossy();
         let a = format!("{}.{suffix}", s.trim_end_matches(".zip"));
@@ -600,9 +819,13 @@ pub fn install_file(
             .ok()
     };
     let sig = sidecar("sig").ok_or_else(|| {
-        format!(
-            "no signature next to {} (expected .sig)",
-            zip_path.display()
+        ie(
+            InstallErrorKind::Signature,
+            zip_path.display().to_string(),
+            format!(
+                "no signature next to {} (expected .sig)",
+                zip_path.display()
+            ),
         )
     })?;
     let sha = sidecar("sha256");
@@ -633,7 +856,7 @@ pub fn is_bundle(bytes: &[u8]) -> bool {
 
 /// ★ 오프라인 전체 설치(D-350): 번들 안의 자산 zip마다 옆 항목 `.sha256`·`.sig`로 검증해 설치 — 결과는 자산 이름 순 `(이름, 결과)`.
 /// 번들 설치 결과 = 자산 이름 순 `(이름, 결과)`.
-pub type BundleOutcome = Vec<(String, Result<InstallReport, String>)>;
+pub type BundleOutcome = Vec<(String, Result<InstallReport, InstallError>)>;
 
 /// 이 OS·아키텍처가 아닌 자산은 건너뛴다(`platform()` 꼬리로 거른다). 하나가 실패해도 나머지는 계속.
 pub fn install_bundle(
@@ -641,8 +864,8 @@ pub fn install_bundle(
     bytes: &[u8],
     force: bool,
     keys: &[RootKey],
-) -> Result<BundleOutcome, String> {
-    let list = super::zip::entries(bytes)?;
+) -> Result<BundleOutcome, InstallError> {
+    let list = super::zip::entries(bytes).map_err(|e| ie(InstallErrorKind::BadPackage, "", e))?;
     let plat = format!("-{}.zip", platform());
     let name_of = |e: &super::zip::Entry| e.name.rsplit('/').next().unwrap_or(&e.name).to_string();
     let find = |name: &str| list.iter().find(|e| name_of(e) == name);
@@ -658,14 +881,17 @@ pub fn install_bundle(
     for e in assets {
         let name = name_of(e);
         let stem = name.trim_end_matches(".zip").to_string();
-        let r = (|| -> Result<InstallReport, String> {
-            let zip = super::zip::read_entry(bytes, e)?;
+        let r = (|| -> Result<InstallReport, InstallError> {
+            let bad = |m: String| ie(InstallErrorKind::BadPackage, &name, m);
+            let zip = super::zip::read_entry(bytes, e).map_err(bad)?;
             let sig = find(&format!("{stem}.sig"))
                 .ok_or_else(|| format!("{name}: no .sig in bundle"))
-                .and_then(|s| super::zip::read_entry(bytes, s))?;
+                .and_then(|s| super::zip::read_entry(bytes, s))
+                .map_err(|m| ie(InstallErrorKind::Signature, &name, m))?;
             let sha = find(&format!("{stem}.sha256"))
                 .map(|s| super::zip::read_entry(bytes, s))
-                .transpose()?;
+                .transpose()
+                .map_err(bad)?;
             let expect = parse_asset_name(&name);
             install_bytes(
                 root,
@@ -682,7 +908,11 @@ pub fn install_bundle(
         out.push((name, r));
     }
     if out.is_empty() {
-        return Err(format!("bundle has no asset for {}", platform()));
+        return Err(ie(
+            InstallErrorKind::NoBuild,
+            platform(),
+            format!("bundle has no asset for {}", platform()),
+        ));
     }
     Ok(out)
 }
@@ -738,7 +968,7 @@ mod tests {
         };
         assert_eq!(
             asset_url(&src, d, "1.2.0", "a.zip"),
-            "https://github.com/SosomLab/nexa-sql/releases/download/driver-duckdb-v1.2.0/a.zip"
+            "https://github.com/SosomLab/nexa-sql/releases/download/drivers-v1.2.0/a.zip"
         );
         assert_eq!(
             asset_url(&src, t, "7.0.1", "b.zip"),

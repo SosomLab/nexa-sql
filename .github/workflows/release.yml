@@ -295,7 +295,7 @@ jobs:
           cat > notes.md <<EOF
           # Nexa SQL $VERSION
 
-          Lightweight cross-platform SQL client (IDE) for Oracle, SQL Server, PostgreSQL and SQLite, with the \`nsql\` CLI.
+          Lightweight cross-platform SQL client (IDE) for Oracle, SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, DuckDB and ODBC sources, with the \`nsql\` CLI.
           Installers only (no portable build). Changes: see [docs/DEVLOG.md](https://github.com/SosomLab/nexa-sql/blob/v$VERSION/docs/DEVLOG.md).
 
           | OS | File | Install |

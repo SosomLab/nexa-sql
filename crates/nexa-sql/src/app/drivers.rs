@@ -4,7 +4,9 @@
 //! 네트워크(26 §8): 창 열기 = 캐시만 · [새로 고침] = 조건부 GET 1 · [설치] = 자산 3 GET — 전부 사용자 동작 · 동시 1(작업 중이면 버튼 잠금).
 use crate::driver_win::{build_rows, DriverRow, DriverWinAction};
 use crate::{theme, App, Wake};
-use nsql_drivers::ext::install::{self, Index, InstallReport, Source};
+use nsql_drivers::ext::install::{
+    self, Index, InstallError, InstallErrorKind, InstallReport, Source,
+};
 use nsql_drivers::ext::{self, keys::DRIVER_KEYS};
 use nsql_i18n::{t, tf, Msg};
 use std::path::PathBuf;
@@ -14,10 +16,10 @@ use winit::event_loop::ActiveEventLoop;
 /// 워커 → UI.
 pub(crate) enum DriverMsg {
     Progress(String, u64, Option<u64>),
-    Installed(Result<InstallReport, String>),
-    Index(Result<(Index, bool), String>),
+    Installed(Result<InstallReport, InstallError>),
+    Index(Result<(Index, bool), InstallError>),
     /// 오프라인 번들 설치 결과(자산별).
-    Bundle(Result<install::BundleOutcome, String>),
+    Bundle(Result<install::BundleOutcome, InstallError>),
 }
 
 /// 호스트가 드는 드라이버 관리 상태.
@@ -82,6 +84,17 @@ impl App {
     }
 
     /// 표의 줄 = 색인 + 설치본(그릴 때마다 · 폴더 읽기 한 번 · 창이 열려 있을 때만 불린다).
+    /// 설치·색인 오류 = 종류별 짧은 Msg를 상태줄에 · 영어 상세는 로그 창에(사용자 10-23 "다국어 전반 보완").
+    fn driver_install_error(&mut self, e: &InstallError) {
+        let [a, b] = e.args();
+        let text = tf(nsql_i18n::driver_error_msg(e.kind.code()), &[&a, &b]);
+        self.driver_win.set_status(&text, false);
+        self.log_win.push(crate::LogEntry::new(
+            crate::LogKind::Error,
+            format!("driver install: {} ({})", e.detail, e.kind.code()),
+        ));
+    }
+
     pub(crate) fn driver_rows(&self) -> Vec<DriverRow> {
         let installed = self
             .driver_root()
@@ -133,7 +146,7 @@ impl App {
                 // 올라간 판도 지운다(파일은 .trash → 다음 시작) — 재시작까지 그 판이 쓰인다고 안내(사용자 10-23).
                 let loaded = ext::is_loaded(&id);
                 let text = match ext::remove_extension(&id, None) {
-                    Ok(paths) if paths.is_empty() => tf(Msg::DrvStatusError, &[&id]),
+                    Ok(paths) if paths.is_empty() => tf(Msg::DrvStatusNothingToRemove, &[&id]),
                     Ok(_) if loaded => tf(Msg::DrvStatusRemovedRestart, &[&id]),
                     Ok(paths) => tf(Msg::DrvStatusRemoved, &[&id, &paths.len().to_string()]),
                     Err(e) => tf(Msg::DrvStatusError, &[&e]),
@@ -206,7 +219,7 @@ impl App {
             });
         if spawned.is_err() {
             self.driver_win
-                .set_status(&tf(Msg::DrvStatusError, &["thread"]), false);
+                .set_status(t(Msg::DrvStatusThreadFailed), false);
             return;
         }
         self.driver_task.rx = Some(rx);
@@ -247,7 +260,11 @@ impl App {
                         )));
                     }
                     Err(e) => {
-                        let _ = tx.send(DriverMsg::Installed(Err(e)));
+                        let _ = tx.send(DriverMsg::Installed(Err(InstallError::new(
+                            InstallErrorKind::Io,
+                            p.display().to_string(),
+                            e,
+                        ))));
                     }
                 }
                 if let Ok(px) = proxy.lock() {
@@ -256,7 +273,7 @@ impl App {
             });
         if spawned.is_err() {
             self.driver_win
-                .set_status(&tf(Msg::DrvStatusError, &["thread"]), false);
+                .set_status(t(Msg::DrvStatusThreadFailed), false);
             return;
         }
         self.driver_task.rx = Some(rx);
@@ -306,10 +323,15 @@ impl App {
                 DriverMsg::Progress(stage, n, total) => {
                     let pct = match total {
                         Some(t) if t > 0 => format!("{}%", (n * 100 / t).min(100)),
-                        _ => format!("{} KB", n / 1024),
+                        _ => nsql_core::fmt_bytes(n),
                     };
-                    self.driver_win
-                        .set_status(&tf(Msg::DrvStatusProgress, &[&stage, &pct]), true);
+                    self.driver_win.set_status(
+                        &tf(
+                            Msg::DrvStatusProgress,
+                            &[&nsql_i18n::driver_stage_text(&stage), &pct],
+                        ),
+                        true,
+                    );
                 }
                 DriverMsg::Index(r) => {
                     done = true;
@@ -347,9 +369,7 @@ impl App {
                                 false,
                             );
                         }
-                        Err(e) => self
-                            .driver_win
-                            .set_status(&tf(Msg::DrvStatusError, &[&e]), false),
+                        Err(e) => self.driver_install_error(&e),
                     }
                 }
                 DriverMsg::Bundle(r) => {
@@ -373,9 +393,7 @@ impl App {
                                 false,
                             );
                         }
-                        Err(e) => self
-                            .driver_win
-                            .set_status(&tf(Msg::DrvStatusError, &[&e]), false),
+                        Err(e) => self.driver_install_error(&e),
                     }
                 }
                 DriverMsg::Installed(r) => {
@@ -386,17 +404,21 @@ impl App {
                             if let Some(root) = self.driver_root() {
                                 self.driver_task.index = install::cached_index(&root);
                             }
+                            // 같은 id가 이미 올라가 있으면 새 판은 재시작 뒤에 쓰인다(올린 드라이버는 내리지 않는다 · 64 §5).
+                            let msg = if ext::is_loaded(&rep.id) {
+                                Msg::DrvStatusInstalledRestart
+                            } else {
+                                Msg::DrvStatusInstalled
+                            };
                             self.driver_win.set_status(
                                 &tf(
-                                    Msg::DrvStatusInstalled,
+                                    msg,
                                     &[&rep.id, &rep.version, &rep.dir.display().to_string()],
                                 ),
                                 false,
                             );
                         }
-                        Err(e) => self
-                            .driver_win
-                            .set_status(&tf(Msg::DrvStatusError, &[&e]), false),
+                        Err(e) => self.driver_install_error(&e),
                     }
                 }
             }

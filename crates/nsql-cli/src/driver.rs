@@ -4,7 +4,7 @@
 //! nsql driver list                          # id · 버전 · 방언 · ABI · 매니페스트 유무 · 경로(id별 최신 하나)
 //! nsql driver path                          # 드라이버 폴더
 //! nsql driver check <id>                    # 실제로 올려 함수표를 확인(ABI 버전 · 드라이버 id · 방언)
-//! nsql driver rm <id>[@<ver>]               # 폴더 삭제(이 프로세스가 올린 것은 거부 · 휴지통 없음)
+//! nsql driver rm <id>[@<ver>]               # 폴더 삭제(올라가 있어도 됨 · 못 지우는 파일은 .trash → 다음 시작 때)
 //! nsql driver search [<text>] [--refresh]   # 색인(nexa-sql 저장소 `drivers/index.json` · 1시간 캐시) + 설치 표시
 //! nsql driver install <id>[@<ver>] [--pre] [--force]   # 내려받기 → sha256 → Ed25519 → 원자적 설치
 //! nsql driver install --file <zip> [--force]           # 오프라인(옆의 .sha256·.sig)
@@ -13,6 +13,7 @@
 //! 네트워크는 search·install·update에서만(26 §8) · 저장소 = 설정 `driver.repo` · 토큰 = `NSQL_GITHUB_TOKEN` · 타임아웃 `driver.http_timeout_secs`.
 use crate::Opts;
 use nsql_drivers::ext::{self, install, keys::DRIVER_KEYS};
+use nsql_i18n::{t, tf, Msg};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -56,7 +57,7 @@ fn parse(positional: &[String]) -> Args {
 
 fn root() -> Result<PathBuf, i32> {
     ext::driver_dir().ok_or_else(|| {
-        eprintln!("드라이버 폴더를 알 수 없습니다(NSQL_DRIVER_DIR 또는 설정 폴더)");
+        eprintln!("{}", t(Msg::DrvStatusNoFolder));
         1
     })
 }
@@ -94,7 +95,7 @@ pub(crate) fn cmd_driver(o: &Opts) -> i32 {
                 0
             }
             None => {
-                eprintln!("드라이버 폴더를 알 수 없습니다(NSQL_DRIVER_DIR 또는 설정 폴더)");
+                eprintln!("{}", t(Msg::DrvStatusNoFolder));
                 1
             }
         },
@@ -111,14 +112,18 @@ pub(crate) fn cmd_driver(o: &Opts) -> i32 {
                 return 2;
             };
             let (id, ver) = split_spec(spec);
+            let loaded = ext::is_loaded(id);
             match ext::remove_extension(id, ver) {
                 Ok(removed) if removed.is_empty() => {
-                    eprintln!("없음: {spec}");
+                    eprintln!("{}", tf(Msg::CliDrvNotInstalled, &[spec]));
                     1
                 }
                 Ok(removed) => {
                     for p in removed {
                         println!("removed {}", p.display());
+                    }
+                    if loaded {
+                        println!("{}", tf(Msg::CliDrvRemovedLoaded, &[id]));
                     }
                     0
                 }
@@ -147,16 +152,20 @@ fn list() -> i32 {
     let items = ext::list_extensions();
     if items.is_empty() {
         println!(
-            "(none) — {}",
-            dir.map_or("드라이버 폴더 없음".to_string(), |d| d
-                .display()
-                .to_string())
+            "{}",
+            tf(
+                Msg::CliDrvNone,
+                &[&dir.map_or_else(
+                    || t(Msg::DrvStatusNoFolder).to_string(),
+                    |d| d.display().to_string()
+                )],
+            )
         );
         return 0;
     }
     println!(
         "{:<14} {:<12} {:<10} {:<5} {:<9} path",
-        "id", "version", "dialect", "abi", "manifest"
+        "id", "version", "dialect", "ABI", "manifest"
     );
     for e in items {
         println!(
@@ -175,6 +184,7 @@ fn list() -> i32 {
 fn check(id: &str) -> i32 {
     match ext::check_extension(id) {
         Ok(c) => {
+            println!("{}", t(Msg::CliDrvCheckOk));
             println!("id       = {}", c.driver_id);
             println!("version  = {}", c.version);
             println!("dialect  = {}", c.dialect);
@@ -195,7 +205,7 @@ fn search(text: Option<&str>, refresh: bool) -> i32 {
     let (idx, cached) = match install::fetch_index(&src, &root, refresh) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("{}", err_text(&e));
             return 1;
         }
     };
@@ -205,7 +215,7 @@ fn search(text: Option<&str>, refresh: bool) -> i32 {
     let mut n = 0;
     println!(
         "{:<14} {:<10} {:<10} {:<10} {:<8} name",
-        "id", "latest", "installed", "dialect", "platform"
+        "id", "latest", "installed", "dialect", "this-os"
     );
     for d in &idx.drivers {
         if let Some(q) = &needle {
@@ -223,7 +233,7 @@ fn search(text: Option<&str>, refresh: bool) -> i32 {
         println!(
             "{:<14} {:<10} {:<10} {:<10} {:<8} {}",
             d.id,
-            d.latest.as_deref().unwrap_or("?"),
+            d.latest.as_deref().unwrap_or("-"),
             inst,
             d.dialect,
             if plat_ok { "yes" } else { "no" },
@@ -231,7 +241,10 @@ fn search(text: Option<&str>, refresh: bool) -> i32 {
         );
     }
     if n == 0 {
-        println!("(no match) — {} drivers in index", idx.drivers.len());
+        println!(
+            "{}",
+            tf(Msg::CliDrvNoMatch, &[&idx.drivers.len().to_string()])
+        );
     }
     eprintln!(
         "index: {} ({})",
@@ -252,7 +265,7 @@ fn progress() -> impl FnMut(&str, u64, Option<u64>) {
             }
             last_stage = stage.to_string();
             last_pct = u64::MAX;
-            let _ = write!(err, "{stage:<9}");
+            let _ = write!(err, "{:<14}", nsql_i18n::driver_stage_text(stage));
         }
         if stage == "download" {
             let shown = match total {
@@ -263,10 +276,21 @@ fn progress() -> impl FnMut(&str, u64, Option<u64>) {
                 last_pct = shown;
                 match total {
                     Some(t) if t > 0 => {
-                        let _ = write!(err, "\r{stage:<9}{:>3}% {}", shown, human(t));
+                        let _ = write!(
+                            err,
+                            "\r{:<14}{:>3}% {}",
+                            nsql_i18n::driver_stage_text(stage),
+                            shown,
+                            human(t)
+                        );
                     }
                     _ => {
-                        let _ = write!(err, "\r{stage:<9}{}", human(n));
+                        let _ = write!(
+                            err,
+                            "\r{:<14}{}",
+                            nsql_i18n::driver_stage_text(stage),
+                            human(n)
+                        );
                     }
                 }
             }
@@ -283,16 +307,32 @@ fn human(b: u64) -> String {
     }
 }
 
+/// 설치 오류 = 종류별 Msg 한 줄 + 영어 상세(괄호).
+fn err_text(e: &install::InstallError) -> String {
+    let [a, b] = e.args();
+    let head = tf(nsql_i18n::driver_error_msg(e.kind.code()), &[&a, &b]);
+    if head.contains(&e.detail) {
+        head
+    } else {
+        format!("{head} ({})", e.detail)
+    }
+}
+
 fn report(r: &install::InstallReport) {
     eprintln!();
     println!(
-        "installed {}@{} → {} ({} files · {} · key {})",
-        r.id,
-        r.version,
-        r.dir.display(),
-        r.files,
-        human(r.bytes),
-        r.key_id
+        "{}",
+        tf(
+            Msg::CliDrvInstalled,
+            &[
+                &r.id,
+                &r.version,
+                &r.dir.display().to_string(),
+                &r.files.to_string(),
+                &human(r.bytes),
+                &r.key_id,
+            ],
+        )
     );
 }
 
@@ -315,7 +355,7 @@ fn install_cmd(arg: Option<&str>, a: &Args) -> i32 {
                         match r {
                             Ok(rep) => report(&rep),
                             Err(e) => {
-                                eprintln!("{name}: {e}");
+                                eprintln!("{name}: {}", err_text(&e));
                                 rc = 1;
                             }
                         }
@@ -323,7 +363,7 @@ fn install_cmd(arg: Option<&str>, a: &Args) -> i32 {
                     rc
                 }
                 Err(e) => {
-                    eprintln!("{e}");
+                    eprintln!("{}", err_text(&e));
                     1
                 }
             };
@@ -334,13 +374,13 @@ fn install_cmd(arg: Option<&str>, a: &Args) -> i32 {
                 0
             }
             Err(e) => {
-                eprintln!("{e}");
+                eprintln!("{}", err_text(&e));
                 1
             }
         };
     }
     let Some(spec) = arg else {
-        eprintln!("nsql driver install <id>[@<ver>] [--pre] [--force] | --file <zip>");
+        eprintln!("nsql driver install <id>[@<ver>] [--pre] [--force] | --file <package.zip|bundle.zip> [--force]");
         return 2;
     };
     let (id, ver) = split_spec(spec);
@@ -352,7 +392,7 @@ fn install_cmd(arg: Option<&str>, a: &Args) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("\n{e}");
+            eprintln!("\n{}", err_text(&e));
             1
         }
     }
@@ -364,7 +404,7 @@ fn update(arg: Option<&str>, a: &Args) -> i32 {
     let (idx, _) = match install::fetch_index(&src, &root, true) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("{}", err_text(&e));
             return 1;
         }
     };
@@ -374,9 +414,13 @@ fn update(arg: Option<&str>, a: &Args) -> i32 {
         .collect();
     let ups = install::updates(&idx, &installed);
     if ups.is_empty() {
-        println!("up to date ({} installed)", installed.len());
+        println!(
+            "{}",
+            tf(Msg::CliDrvUpToDate, &[&installed.len().to_string()])
+        );
         return 0;
     }
+    println!("{}", t(Msg::CliDrvUpdates));
     for u in &ups {
         println!("{:<14} {} → {}", u.id, u.installed, u.latest);
     }
@@ -398,7 +442,7 @@ fn update(arg: Option<&str>, a: &Args) -> i32 {
         ) {
             Ok(r) => report(&r),
             Err(e) => {
-                eprintln!("\n{}: {e}", u.id);
+                eprintln!("\n{}: {}", u.id, err_text(&e));
                 rc = 1;
             }
         }
