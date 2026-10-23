@@ -147,8 +147,8 @@ pub enum DriverStatus {
     Missing { ids: Vec<&'static str> },
 }
 
-/// 확장 id가 **이 빌드에 내장**돼 있으면 그 버전(= 이 크레이트 버전 · 드라이버 크레이트는 워크스페이스 버전을 같이 쓴다) — 드라이버 관리자
-/// 창의 "내장" 열·상태(사용자 10-23 "내장 여부와 내장/확장 버전 차이"). 확장 패키지 버전(`drivers-v*`)과는 번호 체계가 다르다.
+/// 확장 id가 **이 빌드에 내장**돼 있으면 그 버전(= `nsql_abi::DRIVER_VERSION` · 내장·확장 공통 번호 · 앱 버전과 독립) — 드라이버 관리자
+/// 창의 "내장" 열·상태(사용자 10-23 "내장 여부와 내장/확장 버전 차이" · "내장도 자체 버전으로").
 #[must_use]
 pub fn builtin_version(id: &str) -> Option<&'static str> {
     let yes = match id {
@@ -161,7 +161,7 @@ pub fn builtin_version(id: &str) -> Option<&'static str> {
         "oracle-oci" => OracleDriver::Oci.included(),
         _ => false, // duckdb = 확장 전용(D-350)
     };
-    yes.then_some(env!("CARGO_PKG_VERSION"))
+    yes.then_some(nsql_abi::DRIVER_VERSION)
 }
 
 /// 이 빌드에 내장된 방언인가(Oracle = 설정이 고른 드라이버 기준).
@@ -618,7 +618,12 @@ mod tests {
         assert_eq!(builtin_version("duckdb"), None);
         assert_eq!(builtin_version("nope"), None);
         if let Some(v) = builtin_version("sqlite") {
-            assert_eq!(v, env!("CARGO_PKG_VERSION"));
+            assert_eq!(v, nsql_abi::DRIVER_VERSION);
+            assert_ne!(
+                v,
+                env!("CARGO_PKG_VERSION"),
+                "드라이버 버전은 앱 버전과 독립(같아도 되지만 지금은 다르다)"
+            );
         }
     }
 

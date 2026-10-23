@@ -26,6 +26,14 @@ WINDOWS_ONLY: set = set()  # odbc도 전 OS(Linux/mac = unixODBC 동적 · 10-24
 BUNDLED = {"duckdb": ["duckdb.dll"]}
 
 
+def driver_version():
+    src = io.open(os.path.join(ROOT, "crates", "nsql-abi", "src", "lib.rs"), encoding="utf-8").read()
+    m = re.search(r'pub const DRIVER_VERSION: &str = "([^"]+)";', src)
+    if not m:
+        sys.exit("DRIVER_VERSION not found")
+    return m.group(1)
+
+
 def abi_version():
     src = io.open(os.path.join(ROOT, "crates", "nsql-abi", "src", "lib.rs"), encoding="utf-8").read()
     m = re.search(r"pub const ABI_VERSION: u32 = (\d+);", src)
@@ -69,6 +77,10 @@ def main():
     a = ap.parse_args()
     want = {i for i in a.ids.split(",") if i} or None
     abi = abi_version()
+    # ★ 버전 원천 하나(nsql-abi DRIVER_VERSION · 내장 = 확장): 태그(--version)와 어긋나면 멈춘다(앱 release.yml의 태그≠Cargo.toml 검사와 같은 뜻).
+    dv = driver_version()
+    if a.version != dv:
+        sys.exit(f"--version {a.version} != crates/nsql-abi DRIVER_VERSION {dv} - bump the constant (or the tag) so built-in and extension drivers carry the same version")
     os.makedirs(a.out, exist_ok=True)
     license_path = os.path.join(ROOT, "LICENSE.md")
     made = []
