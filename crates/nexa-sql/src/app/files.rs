@@ -369,6 +369,17 @@ impl App {
         self.persist_settings();
     }
 
+    /// 로그 내보내기 파일의 확장자(`log.format`).
+    fn log_export_ext(&self) -> &'static str {
+        match self.settings.get("log.format").unwrap_or("raw") {
+            "markdown" => "md",
+            "jsonl" => "jsonl",
+            "csv" => "csv",
+            "tsv" => "tsv",
+            _ => "log",
+        }
+    }
+
     pub(crate) fn open_file_window(&mut self, el: &ActiveEventLoop, mode: PickerMode) {
         let over = self.window.as_ref().and_then(|w| {
             let p = w.outer_position().ok()?;
@@ -420,16 +431,7 @@ impl App {
             self.file_dialog_mode = Some(mode_key);
         }
         let default_name = match (mode, self.file_purpose) {
-            (PickerMode::Save, FilePurpose::LogExport) => {
-                let ext = match self.settings.get("log.format").unwrap_or("raw") {
-                    "markdown" => "md",
-                    "jsonl" => "jsonl",
-                    "csv" => "csv",
-                    "tsv" => "tsv",
-                    _ => "log",
-                };
-                format!("nexa-sql.{ext}")
-            }
+            (PickerMode::Save, FilePurpose::LogExport) => format!("nexa-sql.{}", self.log_export_ext()),
             (
                 PickerMode::Save,
                 FilePurpose::Editor | FilePurpose::RunFile | FilePurpose::SettingFolder(_),
@@ -492,9 +494,10 @@ impl App {
             PickerMode::Open | PickerMode::Folder => "auto".to_string(),
             PickerMode::Save => self.editors.active_encoding(),
         };
-        self.file_win.set_next_filters(
-            matches!(self.file_purpose, FilePurpose::License).then(file_win::license_filters),
-        );
+        // ★ 용도별 필터(사용자 10-23): 대상 확장자 기본 + 다른 유형 + 전체 — `file_win::filters_for`.
+        let log_ext = self.log_export_ext();
+        self.file_win
+            .set_next_filters(Some(file_win::filters_for(self.file_purpose, log_ext)));
         self.file_win
             .set_overwrite_confirm_ms(self.settings.int("file.overwrite_confirm_ms").max(0) as u64);
         self.file_win.open(

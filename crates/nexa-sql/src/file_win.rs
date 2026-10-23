@@ -10,7 +10,8 @@ use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nexa_dlg::{FileFilter, FilePicker, PickerAction, PickerLabels, PickerMode};
 use nexa_gfx::{Font, Surface};
-use nsql_i18n::{t, Msg};
+use crate::FilePurpose;
+use nsql_i18n::{t, tf, Msg};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -108,16 +109,46 @@ pub(crate) fn license_filters() -> Vec<FileFilter> {
     ]
 }
 
+const SQL_EXTS: [&str; 8] = ["sql", "pls", "plb", "pks", "pkb", "prc", "fnc", "trg"];
+
 /// SQL 편집기용 필터(SQL · 텍스트 · 전체).
 pub(crate) fn sql_filters() -> Vec<FileFilter> {
     vec![
-        FileFilter::new(
-            t(Msg::FilterSql),
-            &["sql", "pls", "plb", "pks", "pkb", "prc", "fnc", "trg"],
-        ),
+        FileFilter::new(t(Msg::FilterSql), &SQL_EXTS),
         FileFilter::new(t(Msg::FilterText), &["txt", "md", "json", "csv"]),
         FileFilter::new(t(Msg::FilterAll), &[]),
     ]
+}
+
+/// ★ 용도별 필터(사용자 10-23 "대상 확장자를 기본으로 · 전체와 다른 유형도 함께"): 첫 줄 = 그 용도의 대상 확장자(기본 선택) ·
+///   이어서 다른 유형(쿼리 · 텍스트 · 프로젝트 · 데이터) · 마지막 = 전체. 폴더 고르기는 호출 쪽이 "폴더" 한 줄로 바꾼다.
+///   `log_ext` = 로그 내보내기의 현재 형식 확장자(`log.format` · 그 밖 용도는 무시).
+pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter> {
+    let sql = || FileFilter::new(t(Msg::FilterSql), &SQL_EXTS);
+    let text = || FileFilter::new(t(Msg::FilterText), &["txt", "md", "json", "csv"]);
+    let project = || FileFilter::new(t(Msg::FilterProject), &["nsql-project"]);
+    let data = || FileFilter::new(t(Msg::FilterData), &["csv", "tsv", "txt", "jsonl", "json"]);
+    let all = || FileFilter::new(t(Msg::FilterAll), &[]);
+    match purpose {
+        FilePurpose::Editor | FilePurpose::RunFile | FilePurpose::SqlPreview => {
+            vec![sql(), text(), project(), all()]
+        }
+        FilePurpose::Project => vec![project(), sql(), all()],
+        FilePurpose::LogExport => vec![
+            FileFilter::new(tf(Msg::FilterLog, &[log_ext]), &[log_ext]),
+            text(),
+            all(),
+        ],
+        // 셀 값 = 어떤 파일이든(이진 포함) → 전체가 기본 · 텍스트·SQL은 좁혀 보기용.
+        FilePurpose::CellValue => vec![all(), text(), sql()],
+        FilePurpose::Import => vec![data(), text(), sql(), all()],
+        FilePurpose::License => license_filters(),
+        FilePurpose::DriverPackage => vec![
+            FileFilter::new(t(Msg::FilterDriverPackage), &["zip"]),
+            all(),
+        ],
+        FilePurpose::SettingFolder(_) => vec![all()],
+    }
 }
 
 impl FileWin {
@@ -498,5 +529,33 @@ impl FileWin {
             }
         }
         let _ = buf.present();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ★ 용도별 필터(사용자 10-23): 첫 줄 = 대상 확장자 · 전체 포함 · 다른 유형도 함께.
+    #[test]
+    fn filters_lead_with_target_and_include_all() {
+        let f = filters_for(FilePurpose::DriverPackage, "log");
+        assert_eq!(f[0].exts, ["zip"]);
+        assert!(f.last().is_some_and(|x| x.exts.is_empty()));
+        let f = filters_for(FilePurpose::Project, "log");
+        assert_eq!(f[0].exts, ["nsql-project"]);
+        assert!(f.iter().any(|x| x.exts.contains(&"sql".to_string())));
+        let f = filters_for(FilePurpose::LogExport, "jsonl");
+        assert_eq!(f[0].exts, ["jsonl"]);
+        assert!(f[0].label.contains("jsonl"));
+        let f = filters_for(FilePurpose::Editor, "log");
+        assert_eq!(f[0].exts[0], "sql");
+        assert!(f.iter().any(|x| x.exts.contains(&"nsql-project".to_string())));
+        assert!(filters_for(FilePurpose::CellValue, "log")[0].exts.is_empty());
+        assert_eq!(filters_for(FilePurpose::Import, "log")[0].exts[0], "csv");
+        assert_eq!(filters_for(FilePurpose::License, "log")[0].exts, ["license"]);
+        for p in [FilePurpose::Editor, FilePurpose::Import, FilePurpose::SqlPreview, FilePurpose::RunFile] {
+            assert!(filters_for(p, "log").iter().any(|x| x.exts.is_empty()), "{p:?} 전체 없음");
+        }
     }
 }
