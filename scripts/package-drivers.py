@@ -5,7 +5,7 @@
 
 패키지 하나 = `nsql-driver-<id>-<ver>-<os>-<arch>.zip` = { nexa-driver.json(id - version - dialect - protocol=ABI_VERSION - lib) ·
 <cdylib> - LICENSE.md }. 서명(.sig)·해시(.sha256)는 `nexa-license-tool sign-file`이 옆에 만든다(drivers.yml).
-ABI 버전은 crates/nsql-abi/src/lib.rs의 `ABI_VERSION`을 읽는다(어긋남 방지). 라이브러리가 없는 id는 건너뛴다(odbc = Windows만).
+ABI 버전은 crates/nsql-abi/src/lib.rs의 `ABI_VERSION`을 읽는다(어긋남 방지). 라이브러리가 없는 id는 건너뛴다(10-23부터 odbc도 전 OS · unixODBC).
 """
 import argparse, io, json, os, re, sys, zipfile
 
@@ -16,7 +16,7 @@ DRIVERS = [
     ("pg", "nsql-driver-pg", "postgres", "PostgreSQL"),
     ("mysql", "nsql-driver-mysql", "mysql", "MySQL / MariaDB"),
     ("mssql", "nsql-driver-mssql", "mssql", "SQL Server"),
-    ("oracle-thin", "nsql-driver-oracle-thin", "oracle", "Oracle (Thin, pure Rust)"),
+    ("oracle-thin", "nsql-driver-oracle-thin", "oracle", "Oracle (Thin)"),
     ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC"),
     ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),

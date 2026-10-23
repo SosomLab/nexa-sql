@@ -652,7 +652,7 @@ mod tests {
         assert_eq!(rows[4].name, "zz");
         // ★ 내장 열·상태 문구(사용자 10-23): 내장 ≠ 확장 · 내장 = 확장 · 내장 + 확장 최신 · 내장만 · 비내장은 확장 상태.
         assert_eq!(rows[0].builtin.as_deref(), Some("9.9.9"));
-        assert_eq!(rows[0].state_text(), "built-in 9.9.9 != extension 1.0.0");
+        assert_eq!(rows[0].state_text(), "built-in 9.9.9 ≠ extension 1.0.0");
         assert_eq!(rows[2].state_text(), "built-in = extension 1.0.0");
         assert_eq!(rows[3].state_text(), "built-in 9.9.9");
         assert_eq!(rows[1].state_text(), "no build for this OS");
@@ -662,7 +662,7 @@ mod tests {
         d_latest.latest = Some("0.1.1".into());
         assert_eq!(
             d_latest.state_text(),
-            "built-in 9.9.9 - extension 0.1.1 available"
+            "built-in 9.9.9 · extension 0.1.1 available"
         );
         // 색인 없음 = 설치본만.
         let only = build_rows(None, &[ext("q", "3")], "x", |_| None);
