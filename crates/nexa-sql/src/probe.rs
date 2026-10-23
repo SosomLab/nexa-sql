@@ -53,18 +53,16 @@ pub(crate) enum Target {
 }
 
 impl Target {
-    /// 접속 스펙에서 대상을 고른다 — 파일 방언(SQLite)은 파일 · 그 외는 호스트:포트가 있을 때만.
+    /// 접속 스펙에서 대상을 고른다 — 파일 방언(SQLite · DuckDB)은 파일 · 그 외는 끝점(host/port · ODBC는 접속 문자열에서 · 사용자 10-23)이 있을 때만.
     pub(crate) fn of(spec: &nsql_script::ConnectSpec) -> Option<Target> {
-        match (spec.dialect, &spec.host, spec.port) {
-            (Some(nsql_core::Dialect::Sqlite), _, _) => {
-                Some(Target::File(spec.database.clone().unwrap_or_default()))
-            }
-            (_, Some(h), Some(p)) => Some(Target::Tcp {
-                host: h.clone(),
-                port: p,
-            }),
-            _ => None,
+        if matches!(
+            spec.dialect,
+            Some(nsql_core::Dialect::Sqlite) | Some(nsql_core::Dialect::Duckdb)
+        ) {
+            return Some(Target::File(spec.database.clone().unwrap_or_default()));
         }
+        spec.endpoint()
+            .map(|(host, port)| Target::Tcp { host, port })
     }
 }
 

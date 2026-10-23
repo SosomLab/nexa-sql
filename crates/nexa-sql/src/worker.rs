@@ -741,7 +741,8 @@ pub(crate) fn spawn(
             // 마지막으로 서버와 성공적으로 주고받은 시각(docs/53 §3-1) · 끊김을 UI에 알렸는가(살아나면 Alive 1회).
             let mut last_ok = std::time::Instant::now();
             let mut broken_told = false;
-            let endpoint = |spec: &ConnectSpec| spec.host.clone().zip(spec.port);
+            // 끝점 = host/port · ODBC는 접속 문자열에서(`ConnectSpec::endpoint` · 10-23).
+            let endpoint = |spec: &ConnectSpec| spec.endpoint();
             // ★ 동작 직전 생존 판정(docs/53 §3): ① UI가 요청했거나(신호등 ≠ 초록) ② 직전 접속성 오류 ③ 드라이버가 끊김을 안다(`is_alive`)
             //   ④ 마지막 성공 뒤 `probe.stale_secs` 지남 → 호스트:포트 TCP 판정(SYN 1 · `probe.timeout_ms`). 죽었으면 Broken + 오류(막힘 0).
             //   살아 있고 ②③이면(설정) 같은 스펙으로 재접속. 반환 = 진행해도 되는가.

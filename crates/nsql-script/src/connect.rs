@@ -189,6 +189,18 @@ fn odbc_split_logon(s: &str) -> (String, Option<String>, Option<String>) {
 }
 
 impl ConnectSpec {
+    /// 서버 끝점(호스트, 포트): 네트워크 방언은 host/port · ODBC는 접속 문자열에서([`odbc_endpoint`]) · 파일 방언·DSN만 = None.
+    #[must_use]
+    pub fn endpoint(&self) -> Option<(String, u16)> {
+        if let (Some(h), Some(p)) = (&self.host, self.port) {
+            return Some((h.clone(), p));
+        }
+        if self.dialect == Some(Dialect::Odbc) {
+            return self.database.as_deref().and_then(odbc_endpoint);
+        }
+        None
+    }
+
     pub fn parse(arg: &str) -> Result<ConnectSpec, String> {
         let mut s = strip_quotes(arg.trim()).trim().to_string();
         if s.is_empty() {
@@ -588,6 +600,66 @@ pub fn percent_decode(v: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// ★ ODBC 접속 문자열에서 서버 끝점(호스트, 포트)을 읽는다(순수 · 사용자 10-23 "ODBC는 서버 상태 점이 회색"): `Server=`·`Host=`·`Hostname=`·
+/// `Address=`·`Addr=`(SQL Server식 `host,port` · `tcp:host,port` · `host:port`) + 따로 `Port=` · 포트가 없으면 `Driver=` 이름으로 기본 포트
+/// (SQL Server 1433 · PostgreSQL 5432 · MySQL/MariaDB 3306 · Tibero 8629 · Altibase 20300 · CUBRID 33000 · Oracle 1521 · Db2 50000).
+/// DSN만 있거나 호스트를 모르면 None(TNS 별칭 같은 것은 호스트가 아니다).
+#[must_use]
+pub fn odbc_endpoint(conn: &str) -> Option<(String, u16)> {
+    let mut host: Option<String> = None;
+    let mut port: Option<u16> = None;
+    let mut driver = String::new();
+    for part in conn.split(';') {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        let k = k.trim().to_ascii_lowercase();
+        let v = v.trim().trim_matches(|c| c == '{' || c == '}').trim();
+        match k.as_str() {
+            "driver" => driver = v.to_ascii_lowercase(),
+            "port" => port = v.parse().ok(),
+            "server" | "host" | "hostname" | "address" | "addr" if host.is_none() => {
+                let v = v
+                    .strip_prefix("tcp:")
+                    .or_else(|| v.strip_prefix("TCP:"))
+                    .unwrap_or(v);
+                // `host,port`(SQL Server) · `host:port`(IPv6 대괄호는 제외)
+                if let Some((h, p)) = v.split_once(',').or_else(|| {
+                    (!v.starts_with('[') && v.matches(':').count() == 1)
+                        .then(|| v.split_once(':'))
+                        .flatten()
+                }) {
+                    host = Some(h.trim().to_string());
+                    if port.is_none() {
+                        port = p.trim().parse().ok();
+                    }
+                } else {
+                    host = Some(v.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    let host = host.filter(|h| !h.is_empty())?;
+    let port = port.or_else(|| {
+        [
+            ("sql server", 1433u16),
+            ("postgres", 5432),
+            ("mysql", 3306),
+            ("mariadb", 3306),
+            ("tibero", 8629),
+            ("altibase", 20300),
+            ("cubrid", 33000),
+            ("oracle", 1521),
+            ("db2", 50000),
+        ]
+        .iter()
+        .find(|(k, _)| driver.contains(k))
+        .map(|(_, p)| *p)
+    })?;
+    Some((host, port))
+}
+
 /// ODBC 계열 벤더 스킴 → (드라이버 이름, 기본 포트). 벤더 ODBC 드라이버가 설치돼 있어야 한다(docs/22 §4 · 121).
 fn odbc_preset_for(scheme: &str) -> Option<(&'static str, u16)> {
     match scheme.to_ascii_lowercase().as_str() {
@@ -883,5 +955,58 @@ mod tests {
             .unwrap()
             .driver
             .is_none());
+    }
+
+    /// ★ ODBC 접속 문자열 → 끝점(사용자 10-23 로그인 목록 서버 상태 점).
+    #[test]
+    fn odbc_endpoint_from_connection_string() {
+        assert_eq!(
+            odbc_endpoint(
+                "Driver={SQL Server};Server=192.168.0.58,1433;Database=M4PLAN;Uid=u;Pwd=p"
+            ),
+            Some(("192.168.0.58".into(), 1433))
+        );
+        assert_eq!(
+            odbc_endpoint("Driver={SQL Server};Server=tcp:db.example,1444"),
+            Some(("db.example".into(), 1444))
+        );
+        assert_eq!(
+            odbc_endpoint("Driver={ODBC Driver 18 for SQL Server};Server=db;Database=x"),
+            Some(("db".into(), 1433))
+        );
+        assert_eq!(
+            odbc_endpoint("Driver={PostgreSQL Unicode};Server=pg;Port=5433;Database=d"),
+            Some(("pg".into(), 5433))
+        );
+        assert_eq!(
+            odbc_endpoint("Driver={Tibero 7 ODBC Driver};Server=t;Port=8629;Database=tb"),
+            Some(("t".into(), 8629))
+        );
+        assert_eq!(
+            odbc_endpoint("Driver={MySQL ODBC 9.0 Unicode Driver};Server=m;Database=d"),
+            Some(("m".into(), 3306))
+        );
+        assert_eq!(odbc_endpoint("DSN=Sales;Uid=u"), None, "DSN만 = 모름");
+        assert_eq!(
+            odbc_endpoint("Driver={Unknown};Server=h"),
+            None,
+            "포트 모름"
+        );
+        let o = ConnectSpec::parse("odbc:Driver={SQL Server};Server=h,1433").expect("odbc");
+        assert_eq!(o.endpoint(), Some(("h".into(), 1433)));
+        let t = ConnectSpec::parse("tibero://u:p@th:8629/db").expect("tibero");
+        assert_eq!(
+            t.endpoint(),
+            Some(("th".into(), 8629)),
+            "프리셋은 ODBC 문자열로 바뀌어도 끝점이 나온다"
+        );
+        let pg = ConnectSpec::parse("postgres://u:p@h:5432/d").expect("pg");
+        assert_eq!(pg.endpoint(), Some(("h".into(), 5432)));
+        assert_eq!(
+            ConnectSpec::parse("sqlite:a.db")
+                .expect("sqlite")
+                .endpoint(),
+            None
+        );
     }
 }
