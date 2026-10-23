@@ -62,10 +62,12 @@ jobs:
             slug: macos
             arch: aarch64
             target: ""
-          - os: macos-latest
+          # ★ T-401(10-23 탐침 39895580517): Intel 러너 `macos-15-intel`(x86_64 · macOS 15.7 · brew /usr/local · libodbc x86_64)에서 네이티브 빌드 —
+          #   arm64 러너 교차 빌드는 brew libodbc가 arm64뿐이라 ODBC를 못 넣었다(drivers-v0.1.2) → 이제 ODBC 4 OS. (macos-13은 더 이상 배정되지 않는다.)
+          - os: macos-15-intel
             slug: macos
             arch: x86_64
-            target: x86_64-apple-darwin
+            target: ""
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.meta.outputs.version }}
@@ -115,13 +117,8 @@ jobs:
           pk=(-p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb)
           # macOS 기본 bash 3.2는 `set -u`에서 빈 배열 "${a[@]}"를 unbound로 본다(첫 실행 실패) → ${VAR:+…}로.
           TARGET="${{ matrix.target }}"
-          # ★ ODBC = macOS x86_64 제외(10-23 drivers-v0.1.2 1차 ✗): arm64 러너의 brew unixodbc는 arm64 libodbc뿐이라 x86_64 교차 링크가
-          #   `Undefined symbols _SQLAllocHandle`로 실패 → 그 매트릭스만 뺀다(색인 platforms는 봇이 자산 기준 3 OS로 적는다 · Intel 맥 ODBC는 후속).
-          if [ "$RUNNER_OS" = "macOS" ] && [ "$TARGET" = "x86_64-apple-darwin" ]; then
-            echo "skip nsql-driver-odbc on macOS x86_64 (no x86_64 libodbc on arm64 runner)"
-          else
-            pk+=(-p nsql-driver-odbc)
-          fi
+          # ODBC = 4 OS(T-401 · x86_64 맥은 Intel 러너 네이티브라 brew libodbc가 x86_64).
+          pk+=(-p nsql-driver-odbc)
           cargo build --release --locked "${pk[@]}" ${TARGET:+--target "$TARGET"}
       - name: 패키지(zip + 매니페스트)
         shell: bash
