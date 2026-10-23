@@ -39,6 +39,11 @@ jobs:
         with:
           workspaces: nexa-sql
       # Linux 러너: 한글 폰트(nexa-font 실측) — 빌드 자체는 시스템 라이브러리 불요(Wayland/X11 dlopen).
+      # ★ libduckdb-sys `download-lib`의 OUT_DIR(duckdb.lib/.dll ≈ 60 MB)이 rust-cache **정확 일치** 복원에서 빠져 링크가 LNK1181로 실패했다
+      #   (10-23 ci 39874763926 Windows · 부분 일치 복원은 빌드 스크립트가 다시 돌아 ✓) → 복원 뒤 그 크레이트 산출만 지워 다시 내려받게 한다.
+      - name: DuckDB 런타임 캐시 비우기(rust-cache 뒤 · LNK1181)
+        shell: bash
+        run: rm -rf target/*/build/libduckdb-sys-* target/*/*/build/libduckdb-sys-* nexa-sql/target/*/build/libduckdb-sys-* nexa-sql/target/*/*/build/libduckdb-sys-*
       - name: fonts (linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-dejavu-core fonts-noto-core unixodbc-dev
