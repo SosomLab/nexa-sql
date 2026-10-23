@@ -120,8 +120,9 @@ impl Vault {
 
     fn check_name(name: &str) -> io::Result<()> {
         if !is_profile_name(name) {
+            // 라이브러리 오류 = 영어(호스트 CLI/GUI가 `is_profile_name`으로 먼저 검사해 Msg로 안내 · 10-23 ui.lang=en 한국어 지적).
             return Err(io::Error::other(format!(
-                "프로필 이름 '{name}': 영문·숫자·`_ - .`만, 64자 이내"
+                "profile name '{name}': letters, digits and `_ - .` only, up to 64 characters"
             )));
         }
         Ok(())

@@ -63,6 +63,10 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
                 eprintln!("nsql conn show <name>");
                 return 2;
             };
+            if !nsql_vault::is_profile_name(name) {
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
+                return 2;
+            }
             show(name)
         }
         "rm" | "remove" | "delete" => {
@@ -70,9 +74,21 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
                 eprintln!("nsql conn rm <name>");
                 return 2;
             };
+            if !nsql_vault::is_profile_name(name) {
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
+                return 2;
+            }
             rm(name)
         }
-        "test" => test(o, name),
+        "test" => {
+            if let Some(n) = name {
+                if !nsql_vault::is_profile_name(n) {
+                    eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[n]));
+                    return 2;
+                }
+            }
+            test(o, name)
+        }
         // ★ 저장 프로필의 서버 유형(10-01 · 영속): `nsql conn env <name>` = 보기 · `… <name> <유형>` = 지정
         //   (정식 · 3자리 약어 · 별칭 모두 받음 · 표시 = 정식 + 3자리 약어).
         "env" | "type" => {
@@ -80,6 +96,10 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
                 eprintln!("nsql conn env <name> [{}]", nsql_script::ENV_CHOICES);
                 return 2;
             };
+            if !nsql_vault::is_profile_name(name) {
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
+                return 2;
+            }
             env(name, o.positional.get(2).map(String::as_str))
         }
         _ => usage(),
