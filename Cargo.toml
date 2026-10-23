@@ -38,7 +38,7 @@ members = [
 exclude = ["extensions/sdk"]
 
 [workspace.package]
-version = "0.2.8"
+version = "0.2.9"
 edition = "2021"
 rust-version = "1.89"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
