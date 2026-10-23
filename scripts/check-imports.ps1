@@ -42,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 $Whitelist = @(
   'advapi32.dll', 'bcrypt.dll', 'bcryptprimitives.dll', 'comdlg32.dll', 'crypt32.dll',
   'dbghelp.dll', 'dwmapi.dll', 'gdi32.dll', 'imm32.dll', 'iphlpapi.dll', 'kernel32.dll',
+  'odbc32.dll', # Windows 인박스 ODBC 드라이버 관리자(full 변형의 내장 ODBC · 10-23)
   'ntdll.dll', 'ole32.dll', 'oleaut32.dll', 'powrprof.dll', 'propsys.dll', 'rpcrt4.dll',
   'shcore.dll', 'shell32.dll', 'shlwapi.dll', 'user32.dll', 'userenv.dll', 'uxtheme.dll',
   'version.dll', 'winmm.dll', 'ws2_32.dll'

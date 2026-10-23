@@ -21,6 +21,15 @@ workspace = true
 [features]
 default = ["drivers-builtin"]
 drivers-builtin = ["nsql-drivers/default"]
+# full 변형의 Linux/macOS(D-352 · 10-23): ODBC만 뺀 내장 — 시스템 unixODBC 런타임 의존을 설치본에 넣지 않는다(ODBC는 확장).
+drivers-builtin-no-odbc = [
+    "nsql-drivers/sqlite",
+    "nsql-drivers/oracle",
+    "nsql-drivers/oracle-thin",
+    "nsql-drivers/mssql",
+    "nsql-drivers/pg",
+    "nsql-drivers/mysql",
+]
 driver-oracle-oci = ["nsql-drivers/oracle"]
 
 [dependencies]
