@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 마감)** — 🔧 T-401 Intel 맥 ODBC = drivers.yml macOS x86_64를 Intel 러너 `macos-15-intel` 네이티브로(탐침 ✓ · 4062c5c · 검증 = drivers-v0.1.3) · 진행사항 최신화(§38 · 대기 = v0.2.9 결정 · T-398-c · Tibero · T-397 실기).
+
 - **2026-10-23 (137차 · v0.2.8 뒤)** — 🔧 lite 설치본 Oracle Thin 확장을 두고 OCI로 가던 것(사용자 실기 · `open_oracle` 열기 순서 · b4373fa) · 🔧 `nsql conn test` 자동 설치·`oracle.driver`(f18412b) · ★ full 변형 dispatch 검증(1차 ✗ 3원인 → a7e29db → 2차 ✓ 자산 11).
 
 - **2026-10-23 (137차 · 🚀 v0.2.8)** — 🚀 `v0.2.8` 공개(lite 첫 배포 · 설치본 −23~27% · winget/choco 제외 · 노트 수정 2 · f7b1914) · `drivers-v0.1.2`(자산 98 · ODBC Linux/Apple Silicon · 1차 ✗ macOS x86_64 libodbc → e378726) · 🔧 ODBC 의존 전 OS(58b5e2e) · 채널 = Homebrew ✓(a2a3d01) · winget/choco 건너뜀 ✓ · linux-repo 신호 ✓.
