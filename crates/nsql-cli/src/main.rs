@@ -1411,10 +1411,7 @@ impl Printer {
                 let _ = writeln!(
                     out,
                     "{}",
-                    tf(
-                        Msg::StConnected,
-                        &[&description.to_string(), &dialect.to_string()]
-                    )
+                    tf(Msg::StConnected, &[&description, &dialect.to_string()])
                 );
             }
             RunEvent::Disconnected | RunEvent::ConnectionClosed => {

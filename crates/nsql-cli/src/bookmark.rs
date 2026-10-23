@@ -288,10 +288,7 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
                     0
                 }
                 Err(e) => {
-                    eprintln!(
-                        "{}",
-                        nsql_i18n::tf(nsql_i18n::Msg::CliBmRefused, &[&e.to_string()])
-                    );
+                    eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliBmRefused, &[&e]));
                     1
                 }
             }

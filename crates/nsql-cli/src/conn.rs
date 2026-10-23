@@ -352,10 +352,7 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
         None => match spec_from_opts(o, None) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    nsql_i18n::tf(nsql_i18n::Msg::CliConnTestUsage, &[&e.to_string()])
-                );
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnTestUsage, &[&e]));
                 return 2;
             }
         },
