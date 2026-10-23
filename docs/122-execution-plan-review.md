@@ -81,7 +81,7 @@ nsql explain -c prod -q "…" --analyze     # 실제 실행 계획(문장을 실
 nsql explain -c prod -q "…" --raw         # DBMS 원문 그대로(파싱·검토 없음)
 ```
 
-실제 출력(SQLite · nsql 0.2.8 · main dbf57ad · `ui.lang=ko` · 접속 줄의 경로는 줄임):
+실제 출력(SQLite · nsql 0.2.8 · main 28c31b3 · `ui.lang=ko` · 접속 줄의 경로는 줄임 · `--raw`·`--analyze`는 dbf57ad 출력과 같은 꼴):
 
 ```
 $ nsql explain -c sqlite:emp.db -q "SELECT e.name, d.dname FROM emp e JOIN dept d ON d.id = e.dept WHERE upper(e.name) LIKE 'K%' ORDER BY e.sal"
@@ -91,7 +91,7 @@ $ nsql explain -c sqlite:emp.db -q "SELECT e.name, d.dname FROM emp e JOIN dept 
      SCAN e
   2  SEARCH [d]
      SEARCH d USING INTEGER PRIMARY KEY (rowid=?)
-  3  USE
+  3  USE TEMP B-TREE FOR ORDER BY
      USE TEMP B-TREE FOR ORDER BY
 검토
   [WARN] #1: e 전체 스캔 - 필터/조인 컬럼 인덱스를 검토하세요(작은 테이블이면 무시해도 됩니다)
@@ -116,7 +116,7 @@ $ nsql explain -c sqlite:emp.db -q "SELECT * FROM emp WHERE dept = 3" --analyze
 실제 실행 계획: 문장을 실제로 실행합니다(DML이면 데이터가 바뀝니다)
 ```
 
-영어(`ui.lang=en`) = "Execution plan" · "Review" · "No issues found by the automatic review". SQLite는 실측이 없어 `--analyze`도 같은 계획이다.
+영어(`ui.lang=en`) = "Execution plan" · "Review" · "No issues found by the automatic review". SQLite는 실측이 없어 `--analyze`도 같은 계획이다. 방언별 관용과 검토 항목 요약은 `nsql explain --help`에도 있다(28c31b3 · 7방언).
 
 ### 5-3. 해석 요령
 
@@ -133,7 +133,6 @@ $ nsql explain -c sqlite:emp.db -q "SELECT * FROM emp WHERE dept = 3" --analyze
 - MariaDB 실제 계획 미지원(`EXPLAIN ANALYZE` 문법 차이).
 - ODBC는 뒤 DBMS를 모르니 원문 행을 노드로만 보여 준다.
 - 트리 파싱은 방언의 대표 출력 꼴 기준이다 — 특수한 출력은 원문 탭(`--raw`)으로 본다.
-- SQLite `USE TEMP B-TREE …` 같은 줄은 연산 이름이 첫 낱말(`USE`)로 잡힌다(상세 열에 원문).
 
 ## 6. 시험
 
