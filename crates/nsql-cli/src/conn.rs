@@ -319,6 +319,8 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
     // 비밀번호가 없으면 env/프롬프트로(빈 비밀번호로 서버에 가서 ORA-01005를 받던 것 · 사용자 09-16).
     let label = name.map_or_else(|| spec.redacted(), str::to_string);
     term::ensure_password(&mut spec, o.no_prompt, &label);
+    // 드라이버 설정·자동 설치 스위치(run과 같은 길 · 🔧 10-23).
+    crate::apply_driver_switches();
     let mut op = opener(o.dialect);
     match nsql_run::test_connection(&spec, &mut op) {
         Ok(r) => {
@@ -332,7 +334,24 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("접속 실패: {}", e.message);
+            // 드라이버 없음/자동 설치 실패 = 짧은 Msg(GUI와 같은 문구) · 그 밖 = 접속 실패 + 서버 메시지.
+            let dn = spec
+                .dialect
+                .or(Some(o.dialect))
+                .map(|d| d.display_name())
+                .unwrap_or("");
+            let text = match e.code {
+                Some(nsql_drivers::ERR_DRIVER_MISSING) => {
+                    nsql_i18n::tf(nsql_i18n::Msg::StDriverMissing, &[dn])
+                }
+                Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED) => format!(
+                    "{} ({})",
+                    nsql_i18n::tf(nsql_i18n::Msg::StDriverInstallFailed, &[dn]),
+                    e.message
+                ),
+                _ => nsql_i18n::tf(nsql_i18n::Msg::StConnectFailed, &[&e.message]),
+            };
+            eprintln!("{text}");
             1
         }
     }

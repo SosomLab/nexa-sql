@@ -236,7 +236,9 @@ pub fn driver_missing(dialect: Dialect, want: Option<&str>) -> DbError {
     DbError {
         code: Some(ERR_DRIVER_MISSING),
         message: format!(
-            "{dialect} driver is not in this build and no extension is installed - install it: nsql driver install {} (or View ▸ Driver Manager)",
+            // 고른 드라이버(예: lite의 Thin) 기준으로 말한다 — "not in this build"는 lite에 내장 OCI가 있어 틀린 말이었다(협업 10-23).
+            "{} driver is not installed - install it: nsql driver install {} (or View ▸ Driver Manager)",
+            ids.first().map_or_else(|| dialect.to_string(), |id| (*id).to_string()),
             ids.first().unwrap_or(&"<id>")
         ),
         position: None,

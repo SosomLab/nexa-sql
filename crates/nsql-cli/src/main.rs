@@ -392,7 +392,9 @@ fn key_mode_setting() -> KeyMode {
 }
 
 /// 설정 `vars.signature_lookup` · `pg.refcursor_expand`(부하원 스위치 · 39 §3)를 러너에 넣는다.
-fn apply_load_switches(runner: &mut Runner) {
+/// ★ 드라이버 쪽 설정 스위치(Oracle 클라이언트·드라이버 선택 · MySQL TLS · 확장 폴더 · 자동 설치) — **접속을 여는 모든 길**(run · conn test ·
+/// cat …)이 먼저 부른다. 🔧 10-23: `conn test`가 이걸 안 거쳐 자동 설치가 안 되고 `oracle.driver` 설정도 무시됐다(협업 lite V1 지적).
+pub(crate) fn apply_driver_switches() {
     if let Ok(s) = settings_cached() {
         // Oracle 클라이언트(설정 ▸ DBMS ▸ Oracle) — GUI와 같은 값을 CLI도 쓴다(첫 접속 전).
         nsql_drivers::set_oracle_client(
@@ -423,6 +425,12 @@ fn apply_load_switches(runner: &mut Runner) {
                 s.int("driver.http_timeout_secs"),
             )
         }));
+    }
+}
+
+fn apply_load_switches(runner: &mut Runner) {
+    apply_driver_switches();
+    if let Ok(s) = settings_cached() {
         runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
         runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
         runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
