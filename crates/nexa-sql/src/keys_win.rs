@@ -180,7 +180,7 @@ impl KeysWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             return;
         }
         let (lw, lh) = (560.0, 620.0);

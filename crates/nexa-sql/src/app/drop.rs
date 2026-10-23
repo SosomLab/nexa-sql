@@ -427,10 +427,14 @@ impl App {
                 .is_some_and(|(k, at)| k == key && at.elapsed() <= Duration::from_secs(3));
             if !armed {
                 self.sess.prod_armed = Some((key, Instant::now()));
+                self.sess.prod_arm_win = Duration::from_secs(3);
+                self.sess.prod_arm_tool = false;
+                self.prod_arm_ui();
                 let line = tf(Msg::StProdEnvConfirm, &[&env_label(cur), &env_label(env)]);
                 self.sess.status = line.clone();
                 // ★ 토스트 안 빨간 [실행] 버튼(사용자 10-08) = 3초 안에 다시 고르는 대신 한 번에 진행(`sess.env_force:<유형>`).
-                self.toasts.push_button(
+                // ★ [실행] 버튼 = 3초 마감 게이지(10-23 2단 통일 · 로그인 Delete 모양).
+                self.toasts.push_button_timed(
                     crate::toast::ToastKind::Error,
                     t(Msg::StProdConfirmTitle),
                     line.clone(),
@@ -439,6 +443,7 @@ impl App {
                         "sess.env_force:{}",
                         env.map_or("none", nsql_script::ConnEnv::as_str)
                     ),
+                    Duration::from_secs(3),
                 );
                 self.output_push(
                     self.editors.active_id(),
@@ -449,6 +454,7 @@ impl App {
                 return;
             }
             self.sess.prod_armed = None;
+            self.prod_arm_ui();
         }
         self.set_session_env(env);
     }

@@ -1872,13 +1872,29 @@ pub(crate) fn spawn(
                                     });
                             }
                         }
+                        let trace_run = std::env::var_os("NSQL_TRACE_RUN").is_some();
                         let mut on_ev = |e: RunEvent| {
                             if let RunEvent::Error { error, .. } = &e {
                                 conn_err |= probe::is_connection_error(error.code, &error.message);
                             }
+                            if trace_run {
+                                let d = format!("{e:?}");
+                                eprintln!("[run] ev {}", &d[..d.len().min(160)]);
+                            }
                             emit(e);
                         };
                         runner.set_hold(hold);
+                        // 진단(10-24 · ODBC GUI 분할 결함 추적): `NSQL_TRACE_RUN=1`이면 러너가 보는 방언·항목 수를 stderr로.
+                        if std::env::var_os("NSQL_TRACE_RUN").is_some() {
+                            let items = nsql_script::split_script_in(&src, runner.dialect());
+                            eprintln!(
+                                "[run] whole={whole} dialect={:?} items={} driver={} src_len={}",
+                                runner.dialect(),
+                                items.len(),
+                                runner.session.as_ref().map_or(String::new(), |s| s.driver_name()),
+                                src.len()
+                            );
+                        }
                         let errs = if whole {
                             runner.run_whole(&src, &mut prompt, &mut on_ev)
                         } else {

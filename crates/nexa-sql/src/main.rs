@@ -1553,6 +1553,15 @@ fn main() {
     // 부모 창·활성화를 지원하지 않는다). 고른 백엔드로 못 만들면(예: XWayland 없음) winit 기본으로 한 번 더.
     let built = {
         let mut b = EventLoop::<Wake>::with_user_event();
+        // ★ macOS 자체 시험(`NSQL_NO_ACTIVATE` · 10-24 사용자 "윈도우처럼 백그라운드로"): winit은 기동 때 앱을 활성화한다
+        //   (`NSApp.activate(ignoringOtherApps:)` + Regular 정책) → 창 속성 `with_active(false)`만으로는 앱이 전경이 되며 창이 올라왔다.
+        //   Accessory 정책(Dock·메뉴 없음 · 스스로 활성화되지 않음) + 다른 앱 무시 활성화 끔 = Windows의 "뒤에서 띄움"과 같은 동작.
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("NSQL_NO_ACTIVATE").is_some() {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS as _};
+            b.with_activation_policy(ActivationPolicy::Accessory)
+                .with_activate_ignoring_other_apps(false);
+        }
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             use winit::platform::wayland::EventLoopBuilderExtWayland as _;
@@ -2519,6 +2528,8 @@ enum FilePurpose {
     CellValue,
     /// ★ Import 창의 원료 파일 고르기(docs/89 §3-3).
     Import,
+    /// ★ 설정 내보내기(Save = Portable JSON)/가져오기(Open = `import_json`)(사용자 10-24 · docs/24 §5).
+    SettingsFile,
     /// ★ 라이선스 파일 열기(docs/23 §1-3 · 라이선스 창).
     License,
     /// ★ 드라이버 패키지/오프라인 번들 zip(드라이버 관리자 [파일에서 설치…] · D-350).

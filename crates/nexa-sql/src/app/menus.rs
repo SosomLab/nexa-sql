@@ -1050,6 +1050,7 @@ impl App {
             // ★ 운영 해제 토스트의 [실행] 버튼(사용자 10-08) = 2단 확인을 지금 통과시킨다.
             x if x.starts_with("sess.env_force:") => {
                 self.sess.prod_armed = None;
+                self.prod_arm_ui();
                 self.set_session_env(nsql_script::ConnEnv::from_name(
                     &x["sess.env_force:".len()..],
                 ));
@@ -1062,7 +1063,7 @@ impl App {
             // ★ 드라이버 관리자(docs/22 §5-2): 열기만(열려 있으면 앞으로) — 창은 다음 `about_to_wait`에서.
             "view.drivers" => {
                 if let Some(w) = self.driver_win.window() {
-                    w.focus_window();
+                    crate::winfocus::focus(w);
                 } else {
                     self.open_drivers = true;
                     self.redraw();
@@ -1115,6 +1116,8 @@ impl App {
             }
             "edit.prefs" => self.open_prefs = true,
             "edit.settings_json" => self.edit_settings_json(),
+            "settings.export" => self.settings_export_dialog(),
+            "settings.import" => self.settings_import_dialog(),
             "help.demo" => self.start_demo_create(),
             "help.about" => {
                 // About 창(종전 = 상태줄 한 줄뿐이라 "미동작"으로 보였다 · 사용자 09-27).
@@ -2027,6 +2030,8 @@ impl App {
         cmds.push(m("view.goto_anything", Msg::MnView, Msg::MnGotoAnything));
         cmds.push(m("edit.prefs", Msg::MnEdit, Msg::MnPreferences));
         cmds.push(m("edit.settings_json", Msg::MnEdit, Msg::MnSettingsJson));
+        cmds.push(m("settings.export", Msg::MnEdit, Msg::MnSettingsExport));
+        cmds.push(m("settings.import", Msg::MnEdit, Msg::MnSettingsImport));
         cmds.push(m("help.license", Msg::MnHelp, Msg::MnLicense));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {

@@ -139,7 +139,7 @@ impl TxLogWin {
         self.title_ctx = title_ctx.to_string();
         if let Some(w) = &self.window {
             w.set_title(&self.title());
-            w.focus_window();
+            crate::winfocus::focus(w);
             self.redraw();
             return;
         }

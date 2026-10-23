@@ -62,7 +62,7 @@ impl App {
             // 파일 창을 띄운 보조 창(라이선스 창 · 설정 창)이 살아 있으면 거기로 · 아니면 메인으로(09-27).
             let back = self.picker_return.take().and_then(|id| self.aux_window(id));
             if let Some(w) = back.or(self.window.as_deref()) {
-                w.focus_window();
+                crate::winfocus::focus(w);
             }
         }
     }
@@ -268,7 +268,7 @@ impl App {
     ///   (이벤트 루프 밖이라 깃발 `open_vars` · 토글 아님 — 토글은 메뉴 `view.variables`).
     pub(crate) fn show_vars_window(&mut self) {
         if let Some(w) = self.vars_win.window() {
-            w.focus_window();
+            crate::winfocus::focus(w);
             self.vars_win.redraw();
             return;
         }

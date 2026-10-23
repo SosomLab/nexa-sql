@@ -34,6 +34,8 @@ struct Toast {
     ///   누르면 그 명령 1회 · 카드 닫힘. 모양 = `TimeoutButton` 무장 상태(위험색 채움 · 밝은 글자).
     button: Option<(String, String)>,
     btn_rect: Rect,
+    /// ★ 버튼의 2단 확인 마감(시작 시각 · 총 길이 · 10-23 2단 통일) — 있으면 버튼 위에 왼쪽부터 차오르는 흰 게이지(`TimeoutButton` 무장 모양).
+    btn_deadline: Option<(Instant, Duration)>,
     /// ★ 고정 카드(10-15 · 운영 보류 "커밋 대기"): 수명이 없고 버튼을 누르거나 호스트가 `dismiss_action`으로 지울 때까지 남는다.
     sticky: bool,
 }
@@ -119,6 +121,7 @@ impl Toasts {
             action: None,
             button: None,
             btn_rect: Rect::default(),
+            btn_deadline: None,
             sticky: false,
         });
         while self.items.len() > MAX_TOASTS {
@@ -153,6 +156,39 @@ impl Toasts {
         if let Some(t) = self.items.last_mut() {
             t.button = Some((label.into(), action.to_string()));
         }
+    }
+
+    /// ★ 마감 게이지가 있는 버튼 카드(10-23 2단 통일): `total` 동안 버튼 위 흰 게이지가 차오른다(만료 = 카드 수명·호스트 틱이 처리).
+    pub(crate) fn push_button_timed(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        label: impl Into<String>,
+        action: &str,
+        total: Duration,
+    ) {
+        self.push_button(kind, title, body, label, action);
+        if let Some(t) = self.items.last_mut() {
+            t.btn_deadline = Some((Instant::now(), total));
+        }
+    }
+
+    /// 그 동작의 카드 버튼에 마감 게이지를 단다(무장 카드 [커밋 (N)] · 10-23) — 있으면 true.
+    pub(crate) fn set_button_deadline_for_action(
+        &mut self,
+        action: &str,
+        at: Instant,
+        total: Duration,
+    ) -> bool {
+        let mut hit = false;
+        for t in self.items.iter_mut() {
+            if t.button.as_ref().is_some_and(|(_, a)| a == action) {
+                t.btn_deadline = Some((at, total));
+                hit = true;
+            }
+        }
+        hit
     }
 
     /// ★ 버튼 있는 **고정** 카드(수명 없음 · 운영 보류 D-300/A11): 버튼 또는 [`Self::dismiss_action`]으로만 사라진다 · 같은 동작의 카드는 하나만.
@@ -369,6 +405,20 @@ impl Toasts {
                 let br = Rect::new(r.right() - pad - bw, r.bottom() - pad - btn_h, bw, btn_h);
                 t.btn_rect = br;
                 dc.fill_round_rect_alpha(br, px(4.0), th.danger, a);
+                // ★ 마감 게이지(10-23 2단 통일) = `TimeoutButton` 경고 톤과 같은 흰 게이지(왼쪽부터 · 28 %).
+                if let Some((at, total)) = t.btn_deadline {
+                    if let Some(ratio) = crate::sessions::arm_ratio(now.duration_since(at), total) {
+                        let gw = (br.w as f32 * ratio).round() as i32;
+                        if gw > 0 {
+                            dc.fill_round_rect_alpha(
+                                Rect::new(br.x, br.y, gw.min(br.w), br.h),
+                                px(4.0),
+                                nexa_ctl::theme::Color(0x00FF_FFFF),
+                                0.28 * a,
+                            );
+                        }
+                    }
+                }
                 let cy = dc.text_center_y(br.y, br.h);
                 dc.text(br.x + px(8.0), cy, br, label, th.panel_bg);
             } else {
@@ -499,6 +549,7 @@ pub(crate) fn class_label(class: nsql_core::ErrorClass) -> Option<&'static str> 
         C::Permission => Msg::ErrClsPermission,
         C::Login => Msg::ErrClsLogin,
         C::Connection => Msg::ErrClsConnection,
+        C::Driver => Msg::ErrClsDriver,
         C::Unique => Msg::ErrClsUnique,
         C::ForeignKey => Msg::ErrClsForeignKey,
         C::NotNull => Msg::ErrClsNotNull,

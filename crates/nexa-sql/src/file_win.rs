@@ -148,6 +148,7 @@ pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter
             all(),
         ],
         FilePurpose::SettingFolder(_) => vec![all()],
+        FilePurpose::SettingsFile => vec![FileFilter::new(t(Msg::FilterJson), &["json"]), all()],
     }
 }
 
@@ -235,7 +236,7 @@ impl FileWin {
         single: bool,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             return;
         }
         self.mode = mode;

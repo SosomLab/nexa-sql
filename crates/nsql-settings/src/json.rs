@@ -4,7 +4,8 @@
 //! - 값 타입: `Int` → 숫자 · `Bool` → true/false · 그 외 → 문자열. `HIDDEN`(비노출)도 함께 내보낸다(`_comment`에 안내).
 //! - 가져오기: JSON에 **있는** 키만 적용(없는 키는 그대로) · 모르는 키·틀린 값은 보고만 하고 나머지는 적용.
 
-use crate::{entry, normalize, SettingKind, Settings, REGISTRY};
+use crate::{entry, is_info, normalize, Entry, SettingKind, Settings, REGISTRY};
+use nsql_i18n::Msg;
 pub use nsql_json::{dump, parse, Json};
 use std::collections::BTreeMap;
 
@@ -78,8 +79,51 @@ fn write_node(out: &mut String, node: &Node, depth: usize) {
 
 /// 전체 설정을 객체 계층 JSON으로(현재 값 · 기본값 포함 · 키 사전순 · 2칸 들여쓰기).
 #[must_use]
+/// ★ 내보내기 범위(10-24 · 사용자 "설정 내보내기/가져오기"): `Full` = 레지스트리 전부(settings.json 편집 뷰 · 종전) ·
+/// `Portable` = 다른 PC/설치본으로 옮길 것만 — **창 상태(`CatWindow`) · 정보 키(`INFO_KEYS`) · 이 PC의 흔적([`STATE_KEYS`])을 뺀다**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportScope {
+    Full,
+    Portable,
+}
+
+/// 이 PC·이 세션의 흔적이라 옮기지 않는 키(경로·최근 목록·한 번 본 안내·패널 치수).
+pub const STATE_KEYS: &[&str] = &[
+    "file.recent",
+    "file.last_dir",
+    "project.recent",
+    "demo.prompted",
+    "explorer.visible",
+    "explorer.width",
+    "explorer.details_collapsed",
+    "explorer.details_h",
+    "project.restore_last",
+];
+
+/// 키가 `Portable` 내보내기에 들어가는가(순수).
+#[must_use]
+pub fn portable_key(e: &Entry) -> bool {
+    e.cat != Msg::CatWindow && !is_info(e.key) && !STATE_KEYS.contains(&e.key)
+}
+
 pub fn to_json(s: &Settings) -> String {
+    to_json_scoped(s, ExportScope::Full)
+}
+
+/// 범위를 지정한 JSON(`_scope` 안내 포함 · `_`로 시작하는 키는 가져올 때 무시된다).
+pub fn to_json_scoped(s: &Settings, scope: ExportScope) -> String {
     let mut root = Node::default();
+    if scope == ExportScope::Portable {
+        root.kids.insert(
+            "_scope".into(),
+            Node {
+                leaf: Some(escape(
+                    "portable - window state, machine info and local history are not included",
+                )),
+                kids: BTreeMap::new(),
+            },
+        );
+    }
     root.kids.insert(
         "_comment".into(),
         Node {
@@ -90,6 +134,9 @@ pub fn to_json(s: &Settings) -> String {
         },
     );
     for e in REGISTRY {
+        if scope == ExportScope::Portable && !portable_key(e) {
+            continue;
+        }
         let v = s.get(e.key).unwrap_or(e.default);
         let mut cur = &mut root;
         for seg in e.key.split('.') {
@@ -168,6 +215,18 @@ impl Settings {
         self.path().with_file_name("settings.json")
     }
 
+    /// ★ 지정한 파일로 내보내기(10-24 · 설정 창 [내보내기…] · CLI `config export <file> [portable]`).
+    pub fn export_json_to(
+        &self,
+        path: &std::path::Path,
+        scope: ExportScope,
+    ) -> std::io::Result<()> {
+        if let Some(d) = path.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(path, to_json_scoped(self, scope))
+    }
+
     /// 현재 설정을 `settings.json`으로 써 낸다(경로 반환).
     pub fn export_json(&self) -> std::io::Result<std::path::PathBuf> {
         let p = self.json_path();
@@ -186,6 +245,22 @@ mod tests {
 
     fn fresh() -> Settings {
         Settings::open(std::path::PathBuf::from("__json_test_nonexistent__.conf"))
+    }
+
+    /// Portable 범위(10-24): 창 상태·정보 키·이 PC 흔적은 빠지고 일반 설정은 들어간다 · `_scope`는 가져올 때 무시.
+    #[test]
+    fn portable_export_skips_window_state_and_local_history() {
+        let mut s = fresh();
+        let text = to_json_scoped(&s, ExportScope::Portable);
+        assert!(text.contains("\"_scope\""), "{text}");
+        assert!(text.contains("\"font_size\""), "{text}");
+        assert!(!text.contains("\"main_size\""), "window.* 제외");
+        assert!(!text.contains("\"recent\":"), "file.recent 제외");
+        assert!(!text.contains("\"info_driver\""), "정보 키 제외");
+        let r = s.import_json(&text).unwrap();
+        assert!(r.unknown.is_empty() && r.changed.is_empty(), "{r:?}");
+        let full = to_json_scoped(&s, ExportScope::Full);
+        assert!(full.contains("\"main_size\"") && !full.contains("\"_scope\""));
     }
 
     #[test]

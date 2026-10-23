@@ -460,7 +460,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "config",
-        usage: "nsql config list [all|perf] | get <key> | set <key> <value> | reset <key> | export-json | path",
+        usage: "nsql config list [all|perf] | get <key> | set <key> <value> | reset <key> | export [file|-] [portable] | import <file> | export-json | path",
         brief: Msg::HlpCmdConfig,
         detail: Msg::HlpCmdConfigDetail,
         args: &[

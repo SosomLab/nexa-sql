@@ -1062,6 +1062,15 @@ impl App {
             let _ = std::fs::write(path, self.tx_dump());
             return;
         }
+        // 자체 시험(10-24): 설정 내보내기/가져오기 = 파일 창 없이 같은 길(`settings.export:<파일>` · `settings.import:<파일>`).
+        if let Some(path) = id.strip_prefix("settings.export:") {
+            self.settings_export_to(Path::new(path));
+            return;
+        }
+        if let Some(path) = id.strip_prefix("settings.import:") {
+            self.settings_import_from(Path::new(path));
+            return;
+        }
         if let Some(path) = id.strip_prefix("objbk.dump:") {
             let _ = std::fs::write(path, self.objbk_dump());
             return;

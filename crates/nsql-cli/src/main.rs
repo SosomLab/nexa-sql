@@ -369,6 +369,7 @@ fn err_head(c: &nsql_core::Classified) -> String {
         C::Permission => Some(M::ErrClsPermission),
         C::Login => Some(M::ErrClsLogin),
         C::Connection => Some(M::ErrClsConnection),
+        C::Driver => Some(M::ErrClsDriver),
         C::Unique => Some(M::ErrClsUnique),
         C::ForeignKey => Some(M::ErrClsForeignKey),
         C::NotNull => Some(M::ErrClsNotNull),

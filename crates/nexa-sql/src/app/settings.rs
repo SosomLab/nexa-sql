@@ -45,51 +45,113 @@ impl App {
         if mtime.is_some() && mtime != last {
             self.json_watch = Some((path.clone(), mtime));
             match std::fs::read_to_string(&path) {
-                Ok(text) => match self.settings.import_json(&text) {
-                    Ok(r) => {
-                        self.persist_settings();
-                        let mut restart = false;
-                        for k in &r.changed {
-                            if !self.apply_setting(k) {
-                                restart = true;
-                            }
-                        }
-                        let mut note = String::new();
-                        if !r.unknown.is_empty() {
-                            note.push_str(&tf(Msg::StUnknownKeys, &[&r.unknown.join(",")]));
-                        }
-                        if !r.invalid.is_empty() {
-                            note.push_str(&format!(
-                                " · invalid {}",
-                                r.invalid
-                                    .iter()
-                                    .map(|(k, _)| k.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            ));
-                        }
-                        if restart {
-                            note.push_str(" · ");
-                            note.push_str(t(Msg::StNeedsRestart));
-                        }
-                        self.sess.status =
-                            tf(Msg::StJsonReloaded, &[&r.changed.len().to_string(), &note]);
-                        self.prefs_win.refresh(&self.settings);
-                        self.prefs_win.redraw();
+                Ok(text) => {
+                    if let Some((changed, note)) = self.apply_settings_json_text(&text) {
+                        self.sess.status = tf(Msg::StJsonReloaded, &[&changed.to_string(), &note]);
                         self.log_win
                             .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                     }
-                    Err(e) => {
-                        self.sess.status = tf(Msg::StJsonError, &[&e]);
-                        self.log_win
-                            .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
-                    }
-                },
+                }
                 Err(e) => self.sess.status = tf(Msg::StJsonError, &[&e.to_string()]),
             }
             self.redraw();
         }
         Some(self.json_next)
+    }
+
+    /// ★ JSON 글을 설정에 적용하는 한 길(settings.json 저장 감시 · [가져오기…] · 기동 명령 `settings.import:` 공용 · 10-24):
+    ///   있는 키만 · 바뀐 키만 `apply_setting` · 저장 · 설정 창 갱신. 반환 = (바뀐 키 수, 꼬리말 = 모르는 키·틀린 값·재시작 필요) ·
+    ///   JSON 자체가 틀리면 상태줄·로그에 적고 None.
+    pub(crate) fn apply_settings_json_text(&mut self, text: &str) -> Option<(usize, String)> {
+        match self.settings.import_json(text) {
+            Ok(r) => {
+                self.persist_settings();
+                let mut restart = false;
+                for k in &r.changed {
+                    if !self.apply_setting(k) {
+                        restart = true;
+                    }
+                }
+                let mut note = String::new();
+                if !r.unknown.is_empty() {
+                    note.push_str(&tf(Msg::StUnknownKeys, &[&r.unknown.join(",")]));
+                }
+                if !r.invalid.is_empty() {
+                    note.push_str(&format!(
+                        " · invalid {}",
+                        r.invalid
+                            .iter()
+                            .map(|(k, _)| k.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ));
+                }
+                if restart {
+                    note.push_str(" · ");
+                    note.push_str(t(Msg::StNeedsRestart));
+                }
+                self.prefs_win.refresh(&self.settings);
+                self.prefs_win.redraw();
+                Some((r.changed.len(), note))
+            }
+            Err(e) => {
+                self.sess.status = tf(Msg::StJsonError, &[&e]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+                None
+            }
+        }
+    }
+
+    /// 설정 내보내기 = 파일 저장 창(기본 이름 `nexa-sql-settings.json` · 사용자 10-24).
+    pub(crate) fn settings_export_dialog(&mut self) {
+        self.file_purpose = FilePurpose::SettingsFile;
+        self.open_file_dlg = Some(PickerMode::Save);
+    }
+
+    /// 설정 가져오기 = 파일 열기 창(JSON).
+    pub(crate) fn settings_import_dialog(&mut self) {
+        self.file_purpose = FilePurpose::SettingsFile;
+        self.open_file_dlg = Some(PickerMode::Open);
+    }
+
+    /// ★ 설정을 파일로(Portable 범위 = 창 상태·이 PC 정보·최근 목록 제외 · docs/24 §5).
+    pub(crate) fn settings_export_to(&mut self, path: &Path) {
+        let n = nsql_settings::REGISTRY
+            .iter()
+            .filter(|e| nsql_settings::portable_key(e))
+            .count();
+        self.sess.status = match self
+            .settings
+            .export_json_to(path, nsql_settings::ExportScope::Portable)
+        {
+            Ok(()) => tf(
+                Msg::StSettingsExported,
+                &[&path.to_string_lossy(), &n.to_string()],
+            ),
+            Err(e) => tf(Msg::StJsonError, &[&e.to_string()]),
+        };
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+        self.redraw();
+    }
+
+    /// ★ 파일에서 설정 가져오기 — 있는 키만 · 바뀐 키만 반영(`apply_settings_json_text` 한 길).
+    pub(crate) fn settings_import_from(&mut self, path: &Path) {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                if let Some((changed, note)) = self.apply_settings_json_text(&text) {
+                    self.sess.status = tf(
+                        Msg::StSettingsImported,
+                        &[&path.to_string_lossy(), &changed.to_string(), &note],
+                    );
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                }
+            }
+            Err(e) => self.sess.status = tf(Msg::StJsonError, &[&e.to_string()]),
+        }
+        self.redraw();
     }
 
     /// 코드가 설정을 바꾼 뒤(확장 켜기/끄기 · 저장소 추가 · 관리자 활성화) 열려 있는 설정 창의 스냅샷을 다시 읽는다

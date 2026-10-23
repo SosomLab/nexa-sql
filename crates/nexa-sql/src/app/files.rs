@@ -453,6 +453,8 @@ impl App {
             (PickerMode::Save, FilePurpose::SqlPreview | FilePurpose::CellValue) => {
                 self.sqlprev_win.file_name()
             }
+            // 설정 내보내기 기본 이름(10-24).
+            (PickerMode::Save, FilePurpose::SettingsFile) => "nexa-sql-settings.json".into(),
             (PickerMode::Open | PickerMode::Folder, _)
             | (
                 PickerMode::Save,
@@ -462,7 +464,7 @@ impl App {
         // ★ 파일 창의 호스트 창(그 위에 뜨고 · 닫히면 **그 창으로** 포커스가 돌아간다): 설정 폴더 = 설정 창 · 라이선스 = 라이선스 창.
         //   메인으로 돌아가면 z-order가 바뀌어 호스트 창이 메인 뒤로 숨는다(사용자 09-27 "라이선스 파일을 고르면 창이 뒤로").
         let host: Option<Rc<Window>> = match (mode, self.file_purpose) {
-            (PickerMode::Folder, _) => self.prefs_win.window_rc(),
+            (PickerMode::Folder, _) | (_, FilePurpose::SettingsFile) => self.prefs_win.window_rc(),
             (_, FilePurpose::License) => self.license_win.window_rc(),
             _ => None,
         };

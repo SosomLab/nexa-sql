@@ -517,7 +517,7 @@ impl FindObjWin {
             self.qbar.set_text(q);
         }
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             self.own_focus(Focus::Query);
             self.redraw();
             return;

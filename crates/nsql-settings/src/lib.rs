@@ -157,7 +157,9 @@ fn unscale_value(v: &str, k: i64) -> String {
 
 pub mod json;
 pub mod projfile;
-pub use json::{to_json, Import as JsonImport, Json};
+pub use json::{
+    portable_key, to_json, to_json_scoped, ExportScope, Import as JsonImport, Json, STATE_KEYS,
+};
 pub mod perf;
 pub use perf::{binding as perf_binding, Domain, PerfBinding, PerfMode, PerfRow, PerfSource, PERF};
 

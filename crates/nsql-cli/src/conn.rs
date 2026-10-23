@@ -190,9 +190,14 @@ fn list() -> i32 {
     for p in &list {
         let dialect = p.spec.dialect.map_or("-".to_string(), |d| d.to_string());
         let mut s = p.spec.clone();
-        s.dialect = None;
         // 유형 열 = 3자리 약어(없음 = `-` · 목록에서 눈에 띄는 것은 지정된 유형뿐).
         s.env = None;
+        // ★ 방언을 지운 채 그리지 않고(ODBC가 `xDriver=…`처럼 사용자와 본문이 붙던 결함 · 10-24 맥) 방언 포함 표시에서 접두만 뗀다.
+        let full = s.redacted();
+        let target = full
+            .strip_prefix(&format!("{dialect}://"))
+            .or_else(|| full.strip_prefix(&format!("{dialect}:")))
+            .unwrap_or(&full);
         let _ = writeln!(
             out,
             "{:<w$}  {:<7}  {:<4}  {:<3}  {}",
@@ -200,7 +205,7 @@ fn list() -> i32 {
             dialect,
             p.spec.env.map_or("-", nsql_script::ConnEnv::abbr),
             if p.has_password { "✓" } else { "-" },
-            s.redacted()
+            target
         );
     }
     0

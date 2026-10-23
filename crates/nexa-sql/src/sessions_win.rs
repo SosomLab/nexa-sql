@@ -110,7 +110,7 @@ impl SessionsWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             self.redraw();
             return;
         }

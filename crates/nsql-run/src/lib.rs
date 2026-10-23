@@ -2167,7 +2167,16 @@ impl Runner {
         let mut errors = 0;
         self.run_depth += 1;
         for (i, item) in items.iter().enumerate() {
-            if !self.run_item(i, item, prompt, emit) {
+            let ok = self.run_item(i, item, prompt, emit);
+            // 진단(10-24 · ODBC GUI 커밋 멈춤 추적에 쓴 것 · `NSQL_TRACE_RUN=1` · 환경은 1회만 읽는다).
+            static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if *TRACE.get_or_init(|| std::env::var_os("NSQL_TRACE_RUN").is_some()) {
+                eprintln!(
+                    "[run] item {i} ok={ok} exit_on_error={} hold_stop={:?} tx_open={} tx_user={}",
+                    self.engine.settings.exit_on_error, self.hold_stop, self.tx_open, self.tx_user
+                );
+            }
+            if !ok {
                 errors += 1;
                 if self.engine.settings.exit_on_error {
                     break;

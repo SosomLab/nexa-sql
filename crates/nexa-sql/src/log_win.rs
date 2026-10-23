@@ -723,7 +723,7 @@ impl LogWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             return;
         }
         // 창 열기 꼬리 = 공통 호스트(T-247 · winhost).

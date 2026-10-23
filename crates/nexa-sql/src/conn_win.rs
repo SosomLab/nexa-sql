@@ -1089,7 +1089,7 @@ impl ConnWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             return;
         }
         // 창 규칙(사용자 09-16/09-17): 메인 창과 같은 모니터에 · 기록(설정 `window.login_pos/_size`)이 **같은 모니터**면

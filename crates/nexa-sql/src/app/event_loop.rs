@@ -575,6 +575,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.tx_hold_tick(now) {
             next = next.min(t);
         }
+        // ★ 운영 실행·유형 해제 2단 무장(10-23 2단 통일) — 게이지 갱신 · 만료 = 원복.
+        if let Some(t) = self.prod_arm_tick(now) {
+            next = next.min(t);
+        }
         // ★ 객체 백업 대기 상한 + 주기 정리(114 §7-2 · `backup.prune_interval_min`).
         if let Some(t) = self.objbk_tick(now) {
             next = next.min(t);
@@ -845,7 +849,7 @@ impl ApplicationHandler<Wake> for App {
             )
         {
             if let Some(w) = self.modal_window() {
-                w.focus_window();
+                winfocus::focus(w);
             }
             return;
         }
@@ -1222,6 +1226,12 @@ impl App {
                         (PickerMode::Open, FilePurpose::CellValue) => {
                             self.cell_load_file(&path);
                         }
+                        (PickerMode::Save, FilePurpose::SettingsFile) => {
+                            self.settings_export_to(&path);
+                        }
+                        (PickerMode::Open, FilePurpose::SettingsFile) => {
+                            self.settings_import_from(&path);
+                        }
                         (PickerMode::Open, FilePurpose::License) => self.license_install(&path),
                         (PickerMode::Open, FilePurpose::DriverPackage) => {
                             self.drivers_install_path(&path);
@@ -1388,6 +1398,8 @@ impl App {
                     }
                 }
                 PrefsAction::EditJson => self.edit_settings_json(),
+                PrefsAction::ExportSettings => self.settings_export_dialog(),
+                PrefsAction::ImportSettings => self.settings_import_dialog(),
                 PrefsAction::None => {}
             }
             return true;
@@ -1848,7 +1860,7 @@ impl App {
                     self.editors.switch_to_id(tab);
                     self.sync_grid_tab();
                     if let Some(w) = &self.window {
-                        w.focus_window();
+                        winfocus::focus(w);
                     }
                     self.redraw();
                 }
@@ -1891,7 +1903,7 @@ impl App {
                         self.editors.cur_mut().set_text(&text);
                         self.set_focus(Focus::Editor);
                         if let Some(w) = &self.window {
-                            w.focus_window();
+                            winfocus::focus(w);
                         }
                         self.redraw();
                     }
@@ -2002,7 +2014,7 @@ impl App {
                 parent,
             );
             if let Some(w) = self.colors_win.window() {
-                w.focus_window();
+                winfocus::focus(w);
             }
         }
         if std::mem::take(&mut self.open_prefs) {
@@ -2024,7 +2036,7 @@ impl App {
                 parent,
             );
             if let Some(w) = self.keys_win.window() {
-                w.focus_window();
+                winfocus::focus(w);
             }
         }
         if std::mem::take(&mut self.open_conn) {

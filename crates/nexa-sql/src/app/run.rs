@@ -329,6 +329,10 @@ impl App {
                 .is_some_and(|(k, at)| k == key && at.elapsed() <= confirm_window);
             if !armed {
                 self.sess.prod_armed = Some((key, Instant::now()));
+                self.sess.prod_arm_win = confirm_window;
+                self.sess.prod_arm_tool = true;
+                // ★ 툴바 Run 두 항목 = 빨간 무장 + 게이지(10-23 2단 통일 · 틱이 갱신·만료).
+                self.prod_arm_ui();
                 let secs = (confirm_window.as_millis() as f64 / 1000.0).to_string();
                 self.sess.status = tf(Msg::StProdConfirm, &[&secs]);
                 self.toasts.push(
@@ -340,6 +344,7 @@ impl App {
                 return;
             }
             self.sess.prod_armed = None;
+            self.prod_arm_ui();
         }
         // ★ 객체 변경 전 백업(114 §7-2 · 사용자 10-15): DROP · CREATE OR REPLACE/ALTER · TRUNCATE/RENAME 대상이 있으면 현재 DDL을
         //   먼저 파일로 받고(탐색기 메타 스레드 · 비동기) 끝나면 같은 인자로 재진입한다(건너뜀 깃발 = 재진입 · 삭제 창).
@@ -492,7 +497,7 @@ impl App {
             });
         }
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
         }
         self.redraw();
     }
@@ -513,7 +518,7 @@ impl App {
             });
         }
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
         }
         self.redraw();
     }

@@ -122,6 +122,10 @@ pub(crate) struct Sess {
     pub tx_blocker_who: Vec<String>,
     /// 운영 접속의 변경 문장 실행 2단 확인(같은 본문을 3초 안에 다시 실행하면 진행 · docs/56 §4).
     pub prod_armed: Option<(u64, std::time::Instant)>,
+    /// `prod_armed`의 확인 창(실행 = `run.prod_confirm_ms` · 유형 해제 = 3 s) — 툴바 게이지·만료 틱이 쓴다(10-23 2단 통일).
+    pub prod_arm_win: Duration,
+    /// `prod_armed`가 툴바 Run 항목(run.statement · run.all)을 무장시키는 종류인가(실행 확인 = true · 유형 해제 = false).
+    pub prod_arm_tool: bool,
     /// ★ 운영 보류(114 §5 · 10-15): 커밋되지 않고 열린 변경(카드 · 상단 Commit 확인 · 다른 탭 차단 · 한도 = 롤백).
     pub prod_held: Option<HeldInfo>,
     /// 상단 Commit 빨간 2단(D-300): 첫 클릭 시각 — `tx.prod_commit_confirm_ms` 안 두 번째 클릭 = 커밋.
@@ -237,6 +241,8 @@ impl Sess {
             tx_block_off: false,
             tx_blocker_who: Vec::new(),
             prod_armed: None,
+            prod_arm_win: Duration::from_secs(3),
+            prod_arm_tool: false,
             ddl_now: Vec::new(),
             ddl_wait: Vec::new(),
             stateful: false,
@@ -836,6 +842,15 @@ pub(crate) fn ddl_guard_blocks(guard_on: bool, tx_open: bool, implicit: bool) ->
 }
 
 /// ★ 상단 Commit 빨간 2단(순수 · D-300): 무장 뒤 경과가 확인 시간 안이면 두 번째 클릭 = 커밋.
+/// ★ 2단 무장 게이지 진척률(순수 · 10-23 "이중 확인 버튼 = 로그인 Delete처럼"): 경과/총 = 0..1 · 만료(경과 ≥ 총) 또는 총 0 = None.
+#[must_use]
+pub(crate) fn arm_ratio(elapsed: Duration, total: Duration) -> Option<f32> {
+    if total.is_zero() || elapsed >= total {
+        return None;
+    }
+    Some((elapsed.as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0))
+}
+
 pub(crate) fn commit_armed_ok(armed_for: Option<Duration>, confirm_ms: u64) -> bool {
     armed_for.is_some_and(|d| d.as_millis() <= u128::from(confirm_ms))
 }
@@ -2387,6 +2402,19 @@ mod hold_tests {
         assert!(!ddl_guard_blocks(false, true, true));
         assert!(!ddl_guard_blocks(true, false, true));
         assert!(!ddl_guard_blocks(true, true, false));
+    }
+
+    #[test]
+    /// 무장 게이지 진척률: 반 = 0.5 · 만료 = None · 총 0 = None.
+    fn arm_ratio_progress_and_expiry() {
+        let r = arm_ratio(Duration::from_millis(1500), Duration::from_millis(3000)).expect("mid");
+        assert!((r - 0.5).abs() < 1e-3, "{r}");
+        assert_eq!(
+            arm_ratio(Duration::from_millis(3000), Duration::from_millis(3000)),
+            None
+        );
+        assert_eq!(arm_ratio(Duration::ZERO, Duration::ZERO), None);
+        assert_eq!(arm_ratio(Duration::ZERO, Duration::from_secs(1)), Some(0.0));
     }
 
     #[test]

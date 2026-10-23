@@ -203,7 +203,7 @@ impl ColorsWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             return;
         }
         let (lw, lh) = (500.0, 340.0);

@@ -7,6 +7,7 @@
 //! nsql config set <key> <value>   # 검증 후 원자적 저장 — 예: ui.lang ko · ui.theme dark
 //! nsql config reset <key>
 //! nsql config export-json [file|-]   # 객체 계층 JSON으로(기본 settings.json 옆 파일) · import-json <file>
+//! nsql config export [file|-] [portable] · import <file>   # 같은 코덱의 짧은 이름(10-24) · portable = 창 상태·PC 정보·최근 목록 제외
 //! nsql config path
 //! ```
 
@@ -124,24 +125,32 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
             }
             0
         }
-        "export-json" | "json" => {
+        "export-json" | "json" | "export" => {
             let s = match open() {
                 Ok(s) => s,
                 Err(c) => return c,
             };
+            // `portable`(세 번째 인자 · 10-24) = 창 상태·이 PC 정보·최근 목록 제외(설정 창 [내보내기…]와 같은 범위).
+            let scope = if o.positional.get(2).is_some_and(|w| w == "portable") {
+                nsql_settings::ExportScope::Portable
+            } else {
+                nsql_settings::ExportScope::Full
+            };
             match key {
-                Some(p) if p != "-" => match std::fs::write(p, nsql_settings::to_json(&s)) {
-                    Ok(()) => {
-                        println!("{p}");
-                        0
+                Some(p) if p != "-" => {
+                    match std::fs::write(p, nsql_settings::to_json_scoped(&s, scope)) {
+                        Ok(()) => {
+                            println!("{p}");
+                            0
+                        }
+                        Err(e) => {
+                            eprintln!("{p}: {e}");
+                            1
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("{p}: {e}");
-                        1
-                    }
-                },
+                }
                 Some(_) => {
-                    print!("{}", nsql_settings::to_json(&s));
+                    print!("{}", nsql_settings::to_json_scoped(&s, scope));
                     0
                 }
                 None => match s.export_json() {
@@ -156,7 +165,7 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                 },
             }
         }
-        "import-json" => {
+        "import-json" | "import" => {
             let Some(p) = key else {
                 eprintln!("nsql config import-json <file>");
                 return 2;

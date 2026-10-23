@@ -201,7 +201,13 @@ const DUCKDB: Caps = Caps {
 };
 
 /// ODBC = 뒤의 DBMS를 모른다 → 트랜잭션은 드라이버의 자동 커밋 속성 몫(시작문 없음 · `COMMIT`은 늘 보낸다).
-const ODBC: Caps = QUESTION;
+/// ★ ODBC(10-24): 드라이버 자동 커밋 ON이 기본(어댑터가 접속 때 되돌림) → 서버가 문장마다 커밋(`server_autocommit`) · 수동 모드는
+///   러너의 `BEGIN TRANSACTION`을 어댑터가 가로채 `SQL_ATTR_AUTOCOMMIT=OFF`(COMMIT/ROLLBACK = SQLEndTran 뒤 ON 복귀).
+const ODBC: Caps = Caps {
+    tx_begin: Some("BEGIN TRANSACTION"),
+    server_autocommit: true,
+    ..QUESTION
+};
 
 impl Caps {
     /// 내장 방언의 능력표(레지스트리). 확장 드라이버는 [`crate::Session::caps`]를 덮어써 자기 표를 낸다.
@@ -293,7 +299,8 @@ mod tests {
         assert_eq!(b(Sqlite), Some("BEGIN"));
         assert_eq!(b(Mssql), Some("BEGIN TRANSACTION"));
         assert_eq!(b(Mysql), Some("START TRANSACTION"));
-        assert_eq!((b(Oracle), b(Odbc)), (None, None));
+        // ODBC(10-24) = 어댑터가 가로채는 `BEGIN TRANSACTION`(자동 커밋 OFF 전환) · Oracle = 암묵 트랜잭션.
+        assert_eq!((b(Oracle), b(Odbc)), (None, Some("BEGIN TRANSACTION")));
         for d in Dialect::ALL {
             let c = Caps::of(d);
             // OUT 바인드가 있는 것 = Oracle · SQL Server뿐(그 외 = 1행 결과를 명시해 받는다).
@@ -306,7 +313,8 @@ mod tests {
             assert_eq!(c.compile_errors, d == Oracle, "{d:?}");
             assert_eq!(c.into_rowcount_guard, d == Mssql, "{d:?}");
             assert_eq!(c.cursor_out == CursorOut::Handle, d == Oracle, "{d:?}");
-            assert_eq!(c.server_autocommit, !matches!(d, Oracle | Odbc), "{d:?}");
+            // ODBC(10-24) = 드라이버 자동 커밋 ON → 서버가 문장마다 커밋(Oracle만 암묵 트랜잭션).
+            assert_eq!(c.server_autocommit, d != Oracle, "{d:?}");
         }
         assert_eq!(Caps::of(Oracle).call_signature, CallSignature::BindTypes);
         assert_eq!(Caps::of(Postgres).call_signature, CallSignature::Captures);
@@ -329,6 +337,8 @@ mod tests {
         );
         assert!(pg.autocommit_needs_commit(true, false), "tx_open 단독");
         assert!(pg.autocommit_needs_commit(false, true), "tx_user 단독");
-        assert!(Caps::of(Dialect::Odbc).autocommit_needs_commit(false, false));
+        // ODBC(10-24) = 드라이버 자동 커밋 ON → 열린 트랜잭션 없으면 클라이언트 COMMIT 불필요.
+        assert!(!Caps::of(Dialect::Odbc).autocommit_needs_commit(false, false));
+        assert!(Caps::of(Dialect::Odbc).autocommit_needs_commit(true, false));
     }
 }

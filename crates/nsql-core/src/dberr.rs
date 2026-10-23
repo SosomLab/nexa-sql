@@ -39,6 +39,9 @@ pub enum ErrorClass {
     DataType,
     /// 자원 부족(테이블스페이스·디스크·메모리).
     Resource,
+    /// ★ 클라이언트 드라이버·DSN 없음(10-24 맥 ODBC 실기 · "Can't open lib" · IM002 · 확장 "no build for this OS") — 서버 쪽이 아니라
+    /// 이 PC의 설치·등록 문제라 "접속 끊김"으로 분류하지 않는다.
+    Driver,
     /// 분류 안 됨(원본만).
     Unknown,
 }
@@ -63,6 +66,7 @@ impl ErrorClass {
             ErrorClass::Deadlock => "deadlock",
             ErrorClass::DataType => "data_type",
             ErrorClass::Resource => "resource",
+            ErrorClass::Driver => "driver",
             ErrorClass::Unknown => "unknown",
         }
     }
@@ -181,6 +185,94 @@ pub fn native_code(dialect: Dialect, code: Option<i64>, message: &str) -> Option
     }
 }
 
+/// ODBC 진단 원문(`State: XXXXX, Native error: n, Message: …`)에서 SQLSTATE(5자)를 뽑는다(순수).
+#[must_use]
+pub fn odbc_sqlstate(message: &str) -> Option<String> {
+    let rest = message.split("State: ").nth(1)?;
+    let st: String = rest.chars().take(5).collect();
+    (st.len() == 5 && st.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| st.to_ascii_uppercase())
+}
+
+/// ★ ODBC 오류 분류(순수 · 10-24): ① 벤더 꼬리표 = `[SQL Server]` → SQL Server 네이티브 코드 표 · `ORA-nnnnn` → Oracle 표 ②
+///   표준 SQLSTATE 표(28000 로그인 · 08xxx/HYT00/HYT01 접속 · 42S02 테이블 없음 · 42S22 컬럼 없음 · 42501 권한 · 42000 구문 · 23xxx
+///   제약(낱말로 세분) · 40001/40P01 교착 · 22xxx 값/형 · 53xxx/HY001 자원 · IM002/IM003/01000+"can't open lib" 드라이버) ③ 모르면 None
+///   (호출자가 공용 메시지 규칙으로). 코드 표시는 네이티브 코드(있으면)로 통일.
+#[must_use]
+pub fn odbc_classify(code: Option<i64>, message: &str, stmt: &str) -> Option<Classified> {
+    let low = message.to_ascii_lowercase();
+    let native = code.filter(|c| *c != 0).map(|c| c.to_string());
+    let with_code = |mut c: Classified| {
+        if c.code.is_none() {
+            c.code = native.clone();
+        }
+        c
+    };
+    if low.contains("[sql server]") {
+        let c = classify(Dialect::Mssql, code, message, stmt);
+        if c.class != ErrorClass::Unknown {
+            return Some(with_code(c));
+        }
+    }
+    if let Some(pos) = low.find("ora-") {
+        let digits: String = low[pos + 4..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(n) = digits.parse::<i64>() {
+            let c = classify(Dialect::Oracle, Some(n), message, stmt);
+            if c.class != ErrorClass::Unknown {
+                return Some(c);
+            }
+        }
+    }
+    let st = odbc_sqlstate(message)?;
+    let has = |s: &str| low.contains(s);
+    let object = || quoted(message).or_else(|| table_of(stmt));
+    let class = match st.as_str() {
+        "28000" => ErrorClass::Login,
+        "08001" | "08S01" | "08003" | "08004" | "08006" | "08007" | "HYT00" | "HYT01" => {
+            ErrorClass::Connection
+        }
+        "42S02" | "42P01" => ErrorClass::NoTable,
+        "42S22" | "42703" => ErrorClass::NoColumn,
+        "42501" => ErrorClass::Permission,
+        "42000" | "42601" => {
+            if has("permission") || has("denied") || has("not authorized") {
+                ErrorClass::Permission
+            } else {
+                ErrorClass::Syntax
+            }
+        }
+        "40001" | "40P01" => ErrorClass::Deadlock,
+        "IM002" | "IM003" | "IM004" => ErrorClass::Driver,
+        "01000" if has("can't open lib") => ErrorClass::Driver,
+        s if s.starts_with("23") => {
+            if has("foreign") {
+                ErrorClass::ForeignKey
+            } else if has("null") {
+                ErrorClass::NotNull
+            } else if has("check") {
+                ErrorClass::Check
+            } else {
+                ErrorClass::Unique
+            }
+        }
+        s if s.starts_with("22") => ErrorClass::DataType,
+        s if s.starts_with("53") || s == "HY001" => ErrorClass::Resource,
+        s if s.starts_with("55") || s == "HY000" && has("lock") => ErrorClass::Lock,
+        _ => return None,
+    };
+    let object = matches!(class, ErrorClass::NoTable | ErrorClass::NoColumn)
+        .then(object)
+        .flatten();
+    Some(Classified {
+        class,
+        code: native,
+        object,
+    })
+}
+
 /// 오류 정규화 — `code` = 드라이버 숫자 코드(없으면 None) · `message` = 원문 · `stmt` = 실패한 문장(테이블 추정용).
 #[must_use]
 pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) -> Classified {
@@ -194,6 +286,13 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
         code: native.clone(),
         object,
     };
+    // ★ ODBC(10-24 맥 실기 "[18456]에 분류 라벨이 없음"): 벤더 꼬리표(`[SQL Server]` · `ORA-nnnnn`)가 있으면 그 방언 표로 ·
+    //   아니면 표준 SQLSTATE(`State: 28000` 등)로 — 둘 다 모르면 아래 공용 메시지 규칙.
+    if dialect == Dialect::Odbc {
+        if let Some(c) = odbc_classify(code, message, stmt) {
+            return c;
+        }
+    }
     match dialect {
         Dialect::Oracle => match code {
             Some(942) => mk(ErrorClass::NoTable, obj_stmt()),
@@ -357,6 +456,13 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
                 mk(ErrorClass::DataType, None)
             } else if has("disk") && has("full") || has("out of memory") {
                 mk(ErrorClass::Resource, None)
+            } else if has("can't open lib")
+                || has("data source name not found")
+                || has("no default driver")
+                || has("has no build for this os")
+            {
+                // ODBC 드라이버 관리자(unixODBC · odbc32)의 "드라이버/DSN 없음" · 확장 드라이버 미지원 OS — 접속 끊김 아님.
+                mk(ErrorClass::Driver, None)
             } else if has("unable to open database") || has("connection") {
                 mk(ErrorClass::Connection, None)
             } else {
@@ -369,6 +475,91 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ODBC 분류(10-24): 벤더 꼬리표(SQL Server 18456 → Login · ORA-00942 → NoTable) · SQLSTATE(28000 · 08001 · 42S02 · IM002 · 23000+unique) ·
+    /// 모르는 상태 = None(공용 규칙으로).
+    #[test]
+    fn odbc_vendor_tag_and_sqlstate() {
+        let c = classify(
+            Dialect::Odbc,
+            Some(18456),
+            "State: 28000, Native error: 18456, Message: [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]사용자 'BISCM_MS'이(가) 로그인하지 못했습니다.",
+            "",
+        );
+        // 코드 표기 = SQL Server 표의 꼴(`Msg 18456`) 그대로.
+        assert_eq!(
+            (c.class, c.code.as_deref()),
+            (ErrorClass::Login, Some("Msg 18456"))
+        );
+        let c = classify(Dialect::Odbc, Some(942), "State: 42S02, Native error: 942, Message: [Oracle][ODBC]ORA-00942: table or view does not exist", "SELECT * FROM HR.X");
+        assert_eq!(c.class, ErrorClass::NoTable);
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                None,
+                "State: 28000, Native error: 0, Message: [Driver]login refused",
+                ""
+            )
+            .class,
+            ErrorClass::Login
+        );
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                None,
+                "State: 08001, Native error: 0, Message: client unable to establish connection",
+                ""
+            )
+            .class,
+            ErrorClass::Connection
+        );
+        let c = classify(
+            Dialect::Odbc,
+            Some(1),
+            "State: 42S02, Native error: 1, Message: no such table: 'T1'",
+            "SELECT 1 FROM T1",
+        );
+        assert_eq!(
+            (c.class, c.object.as_deref()),
+            (ErrorClass::NoTable, Some("T1"))
+        );
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                None,
+                "State: IM002, Native error: 0, Message: data source name not found",
+                ""
+            )
+            .class,
+            ErrorClass::Driver
+        );
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                None,
+                "State: 23000, Native error: 19, Message: UNIQUE constraint failed: t.id",
+                ""
+            )
+            .class,
+            ErrorClass::Unique
+        );
+        assert_eq!(
+            odbc_sqlstate("State: HYT00, Native error: 0, Message: timeout"),
+            Some("HYT00".into())
+        );
+        assert_eq!(odbc_sqlstate("no state here"), None);
+        // 모르는 SQLSTATE + 공용 규칙에도 없음 = Unknown.
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                None,
+                "State: HY010, Native error: 0, Message: function sequence error",
+                ""
+            )
+            .class,
+            ErrorClass::Unknown
+        );
+    }
 
     #[test]
     fn oracle_codes() {
@@ -421,6 +612,27 @@ mod tests {
         assert_eq!(
             classify(Dialect::Oracle, Some(99999), "x", "").class,
             ErrorClass::Unknown
+        );
+        // ★ ODBC 드라이버/DSN 없음 = Driver(10-24 맥 실기 · 안내문에 "connection string"이 있어도 접속 끊김이 아니다).
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                Some(0),
+                "State: 01000, Native error: 0, Message: [unixODBC][Driver Manager]Can't open lib 'SQL Server' : file not found\nInstalled ODBC drivers: none. The driver or DSN in the connection string is not registered",
+                ""
+            )
+            .class,
+            ErrorClass::Driver
+        );
+        assert_eq!(
+            classify(
+                Dialect::Odbc,
+                None,
+                "State: IM002 … Data source name not found and no default driver specified",
+                ""
+            )
+            .class,
+            ErrorClass::Driver
         );
         assert_eq!(c.code.as_deref(), Some("ORA-00904"));
         assert_eq!(

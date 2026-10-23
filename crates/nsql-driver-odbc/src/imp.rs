@@ -53,8 +53,12 @@ pub struct OdbcSession {
     description: String,
     dbms: String,
     max_rows: usize,
-    /// 드라이버가 트랜잭션을 지원하는가(자동 커밋 끄기 성공) — 아니면 commit = no-op · rollback = 안내 오류.
+    /// 드라이버가 트랜잭션을 지원하는가(접속 때 자동 커밋 끄기 탐침 성공) — 아니면 commit = no-op · rollback = 안내 오류.
     transactions: bool,
+    /// ★ 수동 트랜잭션 열림(10-24): 러너의 `BEGIN TRANSACTION`을 받아 `SQL_ATTR_AUTOCOMMIT=OFF` · COMMIT/ROLLBACK(SQLEndTran) 뒤 다시 ON.
+    ///   종전엔 접속 때부터 늘 OFF라 **탐색기 메타 세션의 읽기까지 트랜잭션을 열어 둬**(SQLite 공유 잠금) 실행 세션의 커밋이
+    ///   `SQLEndTran` → sqlite3odbc busy_handler에서 영원히 기다렸다(맥 GUI 실기 · CLI는 연결 1이라 안 걸림).
+    in_tx: bool,
     /// ★ 실행 중인 문장 핸들(T-383 2차 취소): `execute` 동안만 non-null · [`OdbcCancel`]이 다른 스레드에서 `SQLCancel`.
     active: Arc<AtomicPtr<std::ffi::c_void>>,
 }
@@ -105,6 +109,89 @@ fn vc<const N: usize>(v: &odbc_api::parameter::VarCharArray<N>) -> String {
             .map(|b| String::from_utf8_lossy(b).into_owned())
             .unwrap_or_default(),
     }
+}
+
+/// ★ 프로세스 `LC_CTYPE`을 UTF-8 로캘로(유닉스 · 1회 · 10-24 Intel 맥 실기): Rust는 `setlocale`을 부르지 않아 C 로캘이고, 그러면
+///   Microsoft ODBC 드라이버 같은 벤더 드라이버가 좁은(UTF-8) API로 주는 글을 ASCII 기준으로 잘라 **한글 메시지가 깨진다**
+///   (실측 = `사용자` → `ac a9 90` = UTF-16 하위 바이트 · `isql`은 `setlocale(LC_ALL, "")`라 정상). 순서 = 지금 값 → `""`(환경) →
+///   `C.UTF-8`(glibc) → `en_US.UTF-8` → `UTF-8`(macOS) 중 처음 UTF-8인 것. `LC_CTYPE`만 바꾸므로 숫자·날짜 형식에는 영향 없다.
+///   (10-17 맥 클립보드 pbcopy C 로캘 결함과 같은 부류.)
+#[cfg(unix)]
+fn ensure_utf8_ctype() {
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_int};
+    use std::sync::Once;
+    extern "C" {
+        fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
+    }
+    #[cfg(target_os = "macos")]
+    const LC_CTYPE: c_int = 2;
+    #[cfg(not(target_os = "macos"))]
+    const LC_CTYPE: c_int = 0;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: setlocale는 NUL 종료 문자열 또는 null을 돌려준다 · 인자는 CString/null.
+        let name_of = |p: *mut c_char| -> String {
+            if p.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+            }
+        };
+        if is_utf8_locale(&name_of(unsafe { setlocale(LC_CTYPE, std::ptr::null()) })) {
+            return;
+        }
+        for cand in ["", "C.UTF-8", "en_US.UTF-8", "UTF-8"] {
+            let c = CString::new(cand).expect("locale name");
+            if is_utf8_locale(&name_of(unsafe { setlocale(LC_CTYPE, c.as_ptr()) })) {
+                return;
+            }
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn ensure_utf8_ctype() {}
+
+/// 로캘 이름이 UTF-8 코드셋인가(순수): `ko_KR.UTF-8` · `C.UTF-8` · `en_US.utf8` · `UTF-8` = true · `C` · `POSIX` · `ko_KR.eucKR` · 빈 = false.
+#[must_use]
+pub(crate) fn is_utf8_locale(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.contains("utf-8") || n.contains("utf8")
+}
+
+/// 설치된(등록된) ODBC 드라이버 이름 — 오류 안내용 · 조회 실패 = 빈 목록(실패 경로에서만 부른다).
+fn installed_drivers(env: &odbc_api::Environment) -> Vec<String> {
+    env.drivers()
+        .map(|v| v.into_iter().map(|d| d.description).collect())
+        .unwrap_or_default()
+}
+
+/// ★ 드라이버/DSN을 못 찾은 접속 오류에 덧붙이는 안내(순수 · 사용자 10-23 맥 실기): unixODBC `Can't open lib '…' : file not found` ·
+///   IM002 `Data source name not found and no default driver specified` → "Installed ODBC drivers: a, b"(없으면 none) + 등록 방법
+///   (Windows = ODBC Data Sources(odbcad32) · unix = 벤더 드라이버 설치 뒤 odbcinst.ini 등록 · `odbcinst -q -d`). 다른 오류 = None.
+pub(crate) fn connect_hint(message: &str, drivers: &[String]) -> Option<String> {
+    let m = message.to_ascii_lowercase();
+    let missing = m.contains("can't open lib")
+        || m.contains("data source name not found")
+        || m.contains("no default driver")
+        || m.contains("im002");
+    if !missing {
+        return None;
+    }
+    let list = if drivers.is_empty() {
+        "none".to_string()
+    } else {
+        drivers.join(", ")
+    };
+    let how = if cfg!(windows) {
+        "register it in ODBC Data Sources (odbcad32) or use Driver={<installed name>}"
+    } else {
+        "install the vendor ODBC driver and register it in odbcinst.ini (unixODBC: `odbcinst -q -d` lists the names), then use Driver={<registered name>}"
+    };
+    Some(format!(
+        "\nInstalled ODBC drivers: {list}. The driver or DSN in the connection string is not registered on this computer: {how}."
+    ))
 }
 
 fn err(e: odbc_api::Error) -> DbError {
@@ -212,6 +299,34 @@ fn type_name(dt: &DataType) -> String {
 }
 
 /// `COMMIT [WORK]` = `Some(true)` · `ROLLBACK [WORK]`/`ABORT` = `Some(false)` · 그 밖(`ROLLBACK TO sp` 포함) = `None`(순수).
+/// 수동 트랜잭션 시작문인가(순수 · 10-24): `BEGIN` · `BEGIN TRANSACTION|TRAN|WORK` · `START TRANSACTION`(옵션 낱말 뒤 허용) —
+/// PL/SQL 블록 `BEGIN … END`는 여러 낱말이라 걸리지 않는다(한 줄 `BEGIN NULL; END;`도 `NULL`이 뒤따라 제외).
+fn tx_begin_sql(sql: &str) -> bool {
+    let words: Vec<String> = sql
+        .trim()
+        .trim_end_matches(';')
+        .split_whitespace()
+        .map(|w| w.to_ascii_uppercase())
+        .collect();
+    match words.as_slice() {
+        [w] => w == "BEGIN",
+        [w, x, ..] if w == "BEGIN" => matches!(x.as_str(), "TRANSACTION" | "TRAN" | "WORK"),
+        [w, x, ..] if w == "START" => x == "TRANSACTION",
+        _ => false,
+    }
+}
+
+impl OdbcSession {
+    /// 수동 트랜잭션 끝(커밋/롤백 뒤): 자동 커밋 ON 복귀.
+    fn end_manual_tx(&mut self) -> Result<(), DbError> {
+        if self.in_tx {
+            self.in_tx = false;
+            self.conn.set_autocommit(true).map_err(err)?;
+        }
+        Ok(())
+    }
+}
+
 fn tx_control(sql: &str) -> Option<bool> {
     let words: Vec<String> = sql
         .trim()
@@ -377,6 +492,7 @@ impl OdbcSession {
     /// `odbc:DSN=…` / `odbc:Driver={…};…` — [`connection_string`] 규칙 · 로그인 상한 15 s · 자동 커밋 끔.
     pub fn connect(spec: &ConnectSpec) -> Result<Self, DbError> {
         let cs = connection_string(spec);
+        ensure_utf8_ctype();
         let env = odbc_api::environment().map_err(err)?;
         let conn = env
             .connect_with_connection_string(
@@ -386,7 +502,14 @@ impl OdbcSession {
                     ..ConnectionOptions::default()
                 },
             )
-            .map_err(err)?;
+            .map_err(|e| {
+                let mut e = err(e);
+                // ★ 드라이버/DSN 없음 = 설치된 드라이버 목록 + 등록 안내(사용자 10-23 맥 "Can't open lib 'SQL Server'").
+                if let Some(h) = connect_hint(&e.message, &installed_drivers(env)) {
+                    e.message.push_str(&h);
+                }
+                e
+            })?;
         // ★ 자동 커밋 끄기 = best-effort(협업 V1 10-22): Excel·Text·Access(Jet/ACE)처럼 트랜잭션이 없는 드라이버는
         //   `SQL_ATTR_AUTOCOMMIT=OFF`에 HYC00 "Optional feature not implemented" → 접속을 살리고 "트랜잭션 없음"으로 표시.
         let transactions = match conn.set_autocommit(false) {
@@ -398,11 +521,17 @@ impl OdbcSession {
             }
             Err(e) => return Err(err(e)),
         };
+        // ★ 탐침만 하고 **자동 커밋 ON으로 되돌린다**(10-24): 수동 트랜잭션은 러너의 `BEGIN TRANSACTION`(Caps `tx_begin`)이
+        //   오는 순간부터만 OFF — 읽기 전용 세션(탐색기 메타)이 잠금을 쥐지 않게.
+        if transactions {
+            conn.set_autocommit(true).map_err(err)?;
+        }
         let dbms = conn.database_management_system_name().unwrap_or_default();
         Ok(OdbcSession {
             conn,
             description: spec.redacted(),
             transactions,
+            in_tx: false,
             dbms,
             max_rows: 0,
             active: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
@@ -417,6 +546,15 @@ impl OdbcSession {
                 self.commit()?;
             } else {
                 self.rollback()?;
+            }
+            return Ok(ExecResult::default());
+        }
+        // ★ 수동 트랜잭션 시작(러너 `tx_begin` = `BEGIN TRANSACTION` · 사용자 `BEGIN`): 드라이버 자동 커밋 OFF(10-24).
+        //   트랜잭션 없는 드라이버(Excel/Access) = 조용히 무시(자동 커밋만).
+        if tx_begin_sql(&req.sql) {
+            if self.transactions && !self.in_tx {
+                self.conn.set_autocommit(false).map_err(err)?;
+                self.in_tx = true;
             }
             return Ok(ExecResult::default());
         }
@@ -488,7 +626,8 @@ impl Session for OdbcSession {
         if !self.transactions {
             return Ok(());
         }
-        self.conn.commit().map_err(err)
+        self.conn.commit().map_err(err)?;
+        self.end_manual_tx()
     }
 
     fn rollback(&mut self) -> Result<(), DbError> {
@@ -501,7 +640,8 @@ impl Session for OdbcSession {
                 position: None,
             });
         }
-        self.conn.rollback().map_err(err)
+        self.conn.rollback().map_err(err)?;
+        self.end_manual_tx()
     }
 
     fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
@@ -577,6 +717,42 @@ impl Session for OdbcSession {
 mod tests {
     use super::*;
 
+    /// UTF-8 로캘 판정(10-24 Intel 맥 한글 깨짐): UTF-8/utf8 코드셋만 true.
+    #[test]
+    fn utf8_locale_names() {
+        for ok in ["ko_KR.UTF-8", "C.UTF-8", "en_US.utf8", "UTF-8"] {
+            assert!(is_utf8_locale(ok), "{ok}");
+        }
+        for no in ["C", "POSIX", "ko_KR.eucKR", ""] {
+            assert!(!is_utf8_locale(no), "{no}");
+        }
+    }
+
+    /// 드라이버/DSN 없음 안내(순수 · 10-23 맥): unixODBC `Can't open lib` · IM002 = 설치 목록(없으면 none) + 등록 방법 · 그 밖 = None.
+    #[test]
+    fn connect_hint_for_missing_driver_or_dsn() {
+        let m = "State: 01000, Native error: 0, Message: [unixODBC][Driver Manager]Can't open lib 'SQL Server' : file not found";
+        let h = connect_hint(m, &[]).expect("hint");
+        assert!(h.contains("Installed ODBC drivers: none"), "{h}");
+        assert!(h.contains("Driver={"), "{h}");
+        let h2 = connect_hint(
+            "State: IM002, Native error: 0, Message: [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified",
+            &["ODBC Driver 18 for SQL Server".into(), "PostgreSQL Unicode".into()],
+        )
+        .expect("hint");
+        assert!(
+            h2.contains("ODBC Driver 18 for SQL Server, PostgreSQL Unicode"),
+            "{h2}"
+        );
+        assert_eq!(
+            connect_hint(
+                "State: 28000, Native error: 18456, Message: Login failed for user",
+                &[]
+            ),
+            None
+        );
+    }
+
     /// 접속 문자열(순수): DSN 이름 → `DSN=` + UID/PWD · 전체 문자열(`=` 포함)은 그대로 + 빠진 UID/PWD만 · 특수 문자는 `{}`로.
     #[test]
     fn connection_string_from_dsn_or_full_string() {
@@ -614,6 +790,30 @@ mod tests {
     }
 
     /// ★ COMMIT/ROLLBACK 문 판정(autocommit-only 드라이버 보호): WORK 허용 · 세이브포인트·그 밖은 서버로.
+    #[test]
+    /// 수동 트랜잭션 시작문 판정(10-24): BEGIN · BEGIN TRANSACTION/TRAN/WORK · START TRANSACTION = true · PL/SQL 블록·그 밖 = false.
+    fn tx_begin_sql_recognizes_transaction_starts_only() {
+        for ok in [
+            "BEGIN",
+            "begin;",
+            "BEGIN TRANSACTION",
+            "BEGIN TRAN t1",
+            "begin work",
+            "START TRANSACTION READ WRITE",
+        ] {
+            assert!(tx_begin_sql(ok), "{ok}");
+        }
+        for no in [
+            "BEGIN NULL; END;",
+            "BEGIN\n  x := 1;\nEND;",
+            "SELECT 1",
+            "COMMIT",
+            "START",
+        ] {
+            assert!(!tx_begin_sql(no), "{no}");
+        }
+    }
+
     #[test]
     fn tx_control_recognizes_bare_commit_and_rollback() {
         assert_eq!(tx_control("COMMIT"), Some(true));

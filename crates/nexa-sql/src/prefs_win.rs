@@ -59,6 +59,9 @@ pub(crate) enum PrefsAction {
     },
     /// settings.json으로 편집(호스트가 내보내고 열고 감시한다).
     EditJson,
+    /// ★ 설정 내보내기(파일 저장 창 → Portable JSON) · 가져오기(파일 열기 창 → `import_json` 적용)(사용자 10-24).
+    ExportSettings,
+    ImportSettings,
 }
 
 const PAD: f32 = 12.0;
@@ -154,6 +157,8 @@ pub(crate) struct PrefsWin {
     /// 목록 위 안내 한 줄(고급 숨김 수 · 바뀐 설정 없음 · 숨은 키 변경 수).
     note: Option<String>,
     json_btn: Button,
+    export_btn: Button,
+    import_btn: Button,
     close_btn: Button,
     cards: Vec<Card>,
     /// 카드 영역·스크롤.
@@ -237,6 +242,8 @@ impl PrefsWin {
         self.advanced.set_label(t(Msg::LblAdvanced));
         self.changed.set_label(t(Msg::LblChangedOnly));
         self.json_btn.set_label(t(Msg::BtnEditJson));
+        self.export_btn.set_label(t(Msg::BtnExportSettings));
+        self.import_btn.set_label(t(Msg::BtnImportSettings));
         self.close_btn.set_label(t(Msg::BtnClose));
         for c in &mut self.cards {
             c.reset.set_label(t(Msg::BtnReset));
@@ -441,6 +448,8 @@ impl PrefsWin {
             changed_keys: None,
             note: None,
             json_btn: Button::new(t(Msg::BtnEditJson)),
+            export_btn: Button::new(t(Msg::BtnExportSettings)),
+            import_btn: Button::new(t(Msg::BtnImportSettings)),
             close_btn: Button::new(t(Msg::BtnClose)),
             cards: Vec::new(),
             list: Rect::default(),
@@ -834,7 +843,9 @@ impl PrefsWin {
             | self.tree.tick(now_ms)
             | self.search.tick(now_ms)
             | self.close_btn.tick(now_ms)
-            | self.json_btn.tick(now_ms);
+            | self.json_btn.tick(now_ms)
+            | self.export_btn.tick(now_ms)
+            | self.import_btn.tick(now_ms);
         // 분류 선택이 바뀌어 미리보기 표시 여부가 달라졌으면 배치를 다시.
         if self.preview_on != self.preview_wanted() {
             self.layout();
@@ -868,6 +879,8 @@ impl PrefsWin {
                 || self.search.is_animating()
                 || self.close_btn.is_animating()
                 || self.json_btn.is_animating()
+                || self.export_btn.is_animating()
+                || self.import_btn.is_animating()
                 || self
                     .preview_copy
                     .next_tick(std::time::Instant::now())
@@ -996,7 +1009,7 @@ impl PrefsWin {
         owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
-            w.focus_window();
+            crate::winfocus::focus(w);
             return;
         }
         // "변경" 보기는 열 때마다 꺼짐(비영속).
@@ -1142,14 +1155,22 @@ impl PrefsWin {
             ),
             &mut inv,
         );
+        // 오른쪽부터 [닫기] [JSON 편집] [가져오기…] [내보내기…](10-24 · 같은 폭 96 · 틈 8).
+        let bw = self.s(96.0);
+        let gap = self.s(8.0);
         self.json_btn.set_scale(s);
         self.json_btn.set_bounds(
-            Rect::new(
-                w - pad - self.s(96.0) * 2 - self.s(8.0),
-                by,
-                self.s(96.0),
-                bottom_h,
-            ),
+            Rect::new(w - pad - bw * 2 - gap, by, bw, bottom_h),
+            &mut inv,
+        );
+        self.import_btn.set_scale(s);
+        self.import_btn.set_bounds(
+            Rect::new(w - pad - bw * 3 - gap * 2, by, bw, bottom_h),
+            &mut inv,
+        );
+        self.export_btn.set_scale(s);
+        self.export_btn.set_bounds(
+            Rect::new(w - pad - bw * 4 - gap * 3, by, bw, bottom_h),
             &mut inv,
         );
         self.close_btn.set_scale(s);
@@ -1641,6 +1662,11 @@ impl PrefsWin {
         {
             self.json_btn.on_event(&ie, &mut inv);
         }
+        for b in [&mut self.export_btn, &mut self.import_btn] {
+            if route(b.bounds(), b.is_focused()) || matches!(ie, InputEvent::MouseMove { .. }) {
+                b.on_event(&ie, &mut inv);
+            }
+        }
         if let Some(q) = self.search.take_changed() {
             if let Some((h, r)) = &mut self.history {
                 r.after_edit(&self.search, h);
@@ -1670,6 +1696,12 @@ impl PrefsWin {
         }
         if self.json_btn.take_clicked() {
             return PrefsAction::EditJson;
+        }
+        if self.export_btn.take_clicked() {
+            return PrefsAction::ExportSettings;
+        }
+        if self.import_btn.take_clicked() {
+            return PrefsAction::ImportSettings;
         }
         // 트리 선택 변화 → 카테고리 전환(검색 중이면 검색어를 비운다).
         let row = self.tree.selected_row();
@@ -2441,6 +2473,8 @@ impl PrefsWin {
             }
             self.close_btn.paint(&mut dc, th);
             self.json_btn.paint(&mut dc, th);
+            self.export_btn.paint(&mut dc, th);
+            self.import_btn.paint(&mut dc, th);
             // 열린 콤보 = 팝업 층(미리보기 위).
             for c in &self.cards {
                 if let CardCtl::Choice(cb) = &c.ctl {

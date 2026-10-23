@@ -138,10 +138,29 @@ fn cstr<'a>(p: *const std::os::raw::c_char) -> &'a str {
         .unwrap_or("")
 }
 
+/// ★ 적재 실패 안내(순수 · 10-24 Intel 맥 ODBC 보완): 확장 dylib/so가 의존하는 시스템 런타임이 없을 때 설치 방법 한 줄.
+///   ODBC = unixODBC 드라이버 관리자(`libodbc`) — macOS `brew install unixodbc` · Linux `apt install unixodbc` / `dnf install unixODBC`
+///   (Windows = 인박스 odbc32라 해당 없음). 다른 드라이버·다른 오류 = None.
+#[must_use]
+pub fn load_hint(id: &str, err: &str) -> Option<&'static str> {
+    let e = err.to_ascii_lowercase();
+    if id == "odbc" && e.contains("libodbc") {
+        return Some(if cfg!(target_os = "macos") {
+            "the ODBC driver needs the unixODBC runtime: run `brew install unixodbc` (Intel: /usr/local · Apple Silicon: /opt/homebrew) and retry"
+        } else {
+            "the ODBC driver needs the unixODBC runtime: install `unixodbc` (apt) or `unixODBC` (dnf) and retry"
+        });
+    }
+    None
+}
+
 impl DynDriver {
     /// 라이브러리를 올리고 함수표를 확인한다(버전 불일치 = 거부).
     pub fn load(path: &Path, id: &str) -> Result<Arc<DynDriver>, DbError> {
-        let h = os::load(path).map_err(|e| abi_err(format!("{}: {e}", path.display())))?;
+        let h = os::load(path).map_err(|e| {
+            let hint = load_hint(id, &e).map_or(String::new(), |h| format!(" - {h}"));
+            abi_err(format!("{}: {e}{hint}", path.display()))
+        })?;
         let sym = os::symbol(h, &nsql_abi::entry_symbol_c(id)).ok_or_else(|| {
             abi_err(format!(
                 "{}: symbol {} not found",
@@ -685,6 +704,16 @@ pub fn library_file_name(crate_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// 적재 안내: ODBC + libodbc 없음 = unixODBC 설치 한 줄 · 다른 드라이버·다른 오류 = None.
+    #[test]
+    fn load_hint_only_for_missing_libodbc() {
+        let mac = "dlopen(…): Library not loaded: /usr/local/opt/unixodbc/lib/libodbc.2.dylib";
+        let linux = "libodbc.so.2: cannot open shared object file: No such file or directory";
+        assert!(super::load_hint("odbc", mac).is_some_and(|h| h.contains("unixODBC")));
+        assert!(super::load_hint("odbc", linux).is_some());
+        assert_eq!(super::load_hint("pg", mac), None);
+        assert_eq!(super::load_hint("odbc", "symbol not found"), None);
+    }
     use super::*;
 
     #[test]

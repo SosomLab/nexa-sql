@@ -241,6 +241,14 @@ impl App {
             self.tx_hold_btn_label(),
             "hold.commit_go",
         );
+        // ★ 카드 [커밋 (N)]에도 같은 마감 게이지(10-23 2단 통일).
+        if let Some(at) = self.sess.commit_armed {
+            self.toasts.set_button_deadline_for_action(
+                "hold.commit_go",
+                at,
+                Duration::from_millis(confirm_ms),
+            );
+        }
         self.sess.status = t(Msg::HoldCommitArmTitle).to_string();
         self.sync_tx_ui();
     }
@@ -304,8 +312,53 @@ impl App {
                 }
                 self.redraw();
             }
-            Some(due.min(now + Duration::from_secs(1)))
+            // ★ 툴바 Commit 게이지(10-23 2단 통일 · 로그인 Delete 모양) = 100 ms마다 진척률.
+            let ratio =
+                sessions::arm_ratio(now.duration_since(armed), Duration::from_millis(confirm_ms));
+            let mut inv = Invalidations::default();
+            if self.tool_dock.set_item_armed("run.commit", ratio, &mut inv) {
+                for f in &self.tool_floats {
+                    f.redraw();
+                }
+                self.redraw();
+            }
+            Some(due.min(now + Duration::from_millis(100)))
         }
+    }
+
+    /// ★ 운영 실행 2단(`prod_armed`)의 툴바 표시(10-23 2단 통일): 실행 확인이면 Run 두 항목을 빨간 무장 + 게이지 · 아니면(유형 해제 ·
+    ///   무장 없음) 원래대로. 호출 = 무장·해제 직후 + `prod_arm_tick`.
+    pub(crate) fn prod_arm_ui(&mut self) {
+        let ratio = self
+            .sess
+            .prod_armed
+            .filter(|_| self.sess.prod_arm_tool)
+            .and_then(|(_, at)| sessions::arm_ratio(at.elapsed(), self.sess.prod_arm_win));
+        let mut inv = Invalidations::default();
+        let mut hit = false;
+        for id in ["run.statement", "run.all"] {
+            hit |= self.tool_dock.set_item_armed(id, ratio, &mut inv);
+        }
+        if hit {
+            for f in &self.tool_floats {
+                f.redraw();
+            }
+            self.redraw();
+        }
+    }
+
+    /// 운영 실행·유형 해제 2단 무장의 틱: 만료 = 해제 + 원복 · 아니면 게이지 갱신(툴바 · 토스트 버튼) · 100 ms 뒤 다시.
+    pub(crate) fn prod_arm_tick(&mut self, now: Instant) -> Option<Instant> {
+        let (_, at) = self.sess.prod_armed?;
+        if now.duration_since(at) >= self.sess.prod_arm_win {
+            self.sess.prod_armed = None;
+            self.prod_arm_ui();
+            self.redraw();
+            return None;
+        }
+        self.prod_arm_ui();
+        self.redraw();
+        Some(now + Duration::from_millis(100))
     }
 
     /// 자체 시험 덤프(`tx.dump:<파일>`): 대기 수 · 보류 · 무장 · 자동 커밋 설정.
@@ -323,12 +376,22 @@ impl App {
                     h.remaining.as_ref().map_or(0, |r| r.len())
                 )
             });
+        // 툴바 무장 게이지(10-23 2단 통일): 진척률 % 또는 none — E2E가 "빨간 무장 + 게이지"를 모델에서 판정.
+        let arm = |id: &str| {
+            self.tool_dock
+                .item_armed(id)
+                .map_or("none".to_string(), |r| {
+                    format!("{}%", (r * 100.0).round() as i32)
+                })
+        };
         format!(
-            "pending={}|held={}|armed={}|autocommit={}\n",
+            "pending={}|held={}|armed={}|autocommit={}|tool_arm={}|run_arm={}\n",
             self.sess.tx_pending.len(),
             held,
             self.sess.commit_armed.is_some(),
-            self.settings.flag("session.autocommit")
+            self.settings.flag("session.autocommit"),
+            arm("run.commit"),
+            arm("run.all"),
         )
     }
 
@@ -927,14 +990,22 @@ impl App {
             );
         }
         // ★ 운영 Commit 무장(D-300) = 빨강 + **남은 초 배지**(두 번째 클릭 = 커밋 · 시간 지나면 원래대로 · 10-16 사용자 "상단에 시간 제한 표시").
-        if self.sess.commit_armed.is_some() {
+        if let Some(at) = self.sess.commit_armed {
             self.tool_dock
                 .set_item_tone("run.commit", ToolTone::Danger, &mut inv);
             let left = self.tx_hold_arm_left_secs();
             self.tool_dock
                 .set_item_badge("run.commit", Some(&left.to_string()), &mut inv);
+            // ★ 빨간 무장 + 게이지(10-23 2단 통일 · 로그인 Delete 모양).
+            let confirm_ms = self
+                .settings
+                .int("tx.prod_commit_confirm_ms")
+                .clamp(1000, 60_000) as u64;
+            let ratio = sessions::arm_ratio(at.elapsed(), Duration::from_millis(confirm_ms));
+            self.tool_dock.set_item_armed("run.commit", ratio, &mut inv);
         } else {
             self.tool_dock.set_item_badge("run.commit", None, &mut inv);
+            self.tool_dock.set_item_armed("run.commit", None, &mut inv);
         }
         self.redraw();
     }

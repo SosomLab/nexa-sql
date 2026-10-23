@@ -288,7 +288,11 @@ fn env_value(e: Option<nsql_script::ConnEnv>) -> &'static str {
 pub(crate) fn quick_profile_name(spec: &ConnectSpec, exists: impl Fn(&str) -> bool) -> String {
     let d = spec.dialect.map_or("db".to_string(), |d| d.to_string());
     let mut parts: Vec<String> = vec![d];
+    // ★ ODBC(사용자 10-23 맥 실기 "odbc-Driver__SQL_Server__Server_192…"): 접속 문자열 전체가 `database`에 들어오므로
+    //   파일 규칙 대신 `odbc-<DSN>` · `odbc-<Driver>-<host>`(Driver= 값 + `odbc_endpoint` 호스트) · 둘 다 없으면 `odbc`.
+    let odbc = spec.dialect == Some(Dialect::Odbc);
     match (&spec.host, &spec.database) {
+        (_, Some(cs)) if odbc => parts.extend(odbc_name_parts(cs)),
         (Some(h), db) => {
             parts.push(h.clone());
             if let Some(db) = db {
@@ -327,6 +331,24 @@ pub(crate) fn quick_profile_name(spec: &ConnectSpec, exists: impl Fn(&str) -> bo
         .map(|n| format!("{base}-{n}"))
         .find(|c| !exists(c))
         .unwrap_or(base)
+}
+
+/// ODBC 접속 문자열에서 이름 조각(순수): `DSN=x` → `[x]` · 그 밖 = `Driver=` 값(중괄호 뺌) + 호스트(`odbc_endpoint`) 중 있는 것.
+fn odbc_name_parts(cs: &str) -> Vec<String> {
+    let mut driver = None;
+    for part in cs.split(';') {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        let v = v.trim().trim_matches(|c| c == '{' || c == '}').trim();
+        match k.trim().to_ascii_lowercase().as_str() {
+            "dsn" if !v.is_empty() => return vec![v.to_string()],
+            "driver" if !v.is_empty() => driver = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    let host = nsql_script::connect::odbc_endpoint(cs).map(|(h, _)| h);
+    driver.into_iter().chain(host).collect()
 }
 
 /// 방언 콤보 항목(순수): 전 방언 + **Oracle 뒤에 드라이버 변형 2**(`Oracle (Thin)` · `Oracle (OCI)` · 사용자 10-23) — 값은 접속 문자열
@@ -1844,6 +1866,22 @@ mod dirty_tests {
             quick_profile_name(&s("pg://u@h/db"), |n| n == "postgres-h-db"
                 || n == "postgres-h-db-2"),
             "postgres-h-db-3"
+        );
+        // ODBC(10-23 맥): DSN 이름 · Driver + 호스트 · 접속 문자열 전체가 이름이 되지 않는다.
+        assert_eq!(
+            quick_profile_name(&s("odbc:DSN=Sales;UID=scott"), none),
+            "odbc-Sales"
+        );
+        assert_eq!(
+            quick_profile_name(
+                &s("odbc:Driver={SQL Server};Server=192.168.0.58,1433;Database=M4PLAN;UID=u"),
+                none
+            ),
+            "odbc-SQL_Server-192.168.0.58"
+        );
+        assert_eq!(
+            quick_profile_name(&s("odbc:Trusted_Connection=yes"), none),
+            "odbc"
         );
         let long = quick_profile_name(&s(&format!("mssql://u@{}/d", "h".repeat(90))), none);
         assert!(
