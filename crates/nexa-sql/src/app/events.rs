@@ -217,6 +217,12 @@ impl App {
         // 접속 테스트 결과(스레드별) — 이름이 함께 오므로 여러 테스트가 섞여도 각자 자리에.
         while let Ok(r) = self.tests_rx.try_recv() {
             changed = true;
+            // 진행 틱(드라이버 설치 단계) = 상태줄·접속 창 베일 글만 바꾸고 테스트는 계속(사용자 10-23).
+            if let Some(text) = r.stage {
+                self.sess.status = text.clone();
+                self.conn_win.veil_phase(&r.name, &text);
+                continue;
+            }
             self.attempt_done();
             let name = r.name;
             match r.outcome {
@@ -338,7 +344,10 @@ impl App {
                         Some(t) if t > 0 => format!("{}%", (done * 100 / t).min(100)),
                         _ => nsql_core::fmt_bytes(done),
                     };
-                    let text = tf(Msg::StDriverInstall, &[&id, &stage, &pct]);
+                    let text = tf(
+                        Msg::StDriverInstall,
+                        &[&id, &nsql_i18n::driver_stage_text(&stage), &pct],
+                    );
                     self.sess.status = text.clone();
                     let name = self.panel_op_name();
                     self.conn_win.veil_phase(&name, &text);

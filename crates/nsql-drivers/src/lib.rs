@@ -63,7 +63,7 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Postgres => Ok(Box::new(nsql_driver_pg::PgSession::connect(spec)?)),
         #[cfg(feature = "mysql")]
         Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
-        #[cfg(all(feature = "odbc", windows))]
+        #[cfg(feature = "odbc")]
         Dialect::Odbc => Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?)),
         // ★ D-350: 내장이 없는 방언 = 확장 드라이버(`drivers/<id>/<ver>/` cdylib · 첫 접속 때 지연 로드) · 없으면
         //   [`ERR_DRIVER_MISSING`](호출자가 자동 설치로 잇는다 · C단계). 모든 feature가 켜진 빌드에서는 닿지 않는다.
@@ -196,14 +196,47 @@ pub fn driver_status(dialect: Dialect) -> DriverStatus {
     DriverStatus::Missing { ids }
 }
 
-/// 드라이버 없음 오류(코드 [`ERR_DRIVER_MISSING`] · 메시지에 설치 명령).
+/// [`driver_status`]의 `?driver=` 변형(`want` = thin/oci/확장 id): 그 드라이버가 내장이면 Builtin · 설치돼 있으면 Extension · 아니면 Missing.
 #[must_use]
-pub fn driver_missing(dialect: Dialect) -> DbError {
-    let ids = ext_ids(dialect);
+pub fn driver_status_for(dialect: Dialect, want: Option<&str>) -> DriverStatus {
+    let ids = ext_ids_for(dialect, want);
+    let builtin = match want {
+        Some("thin") | Some("oracle-thin") if dialect == Dialect::Oracle => {
+            OracleDriver::Thin.included()
+        }
+        Some("oci") | Some("oracle-oci") if dialect == Dialect::Oracle => {
+            OracleDriver::Oci.included()
+        }
+        Some(id) => {
+            builtin_version(id).is_some() || (dialect_of_ext(id).is_none() && is_builtin(dialect))
+        }
+        None => is_builtin(dialect),
+    };
+    if builtin {
+        return DriverStatus::Builtin;
+    }
+    for id in &ids {
+        if let Some(e) = ext::find_extension(id) {
+            return DriverStatus::Extension {
+                id: e.id,
+                version: e.version,
+            };
+        }
+    }
+    DriverStatus::Missing { ids }
+}
+
+/// 자동 설치가 실패한 오류 코드(호스트가 [`ERR_DRIVER_MISSING`]과 다른 안내를 낸다 · 상세는 message).
+pub const ERR_DRIVER_INSTALL_FAILED: i64 = -1351;
+
+/// 드라이버 없음 오류(코드 [`ERR_DRIVER_MISSING`] · 메시지에 설치 명령 · `want` = `?driver=` 지정이면 그 id를 안내).
+#[must_use]
+pub fn driver_missing(dialect: Dialect, want: Option<&str>) -> DbError {
+    let ids = ext_ids_for(dialect, want);
     DbError {
         code: Some(ERR_DRIVER_MISSING),
         message: format!(
-            "{dialect} driver is not in this build and no extension is installed — install it: nsql driver install {} (or View ▸ Drivers)",
+            "{dialect} driver is not in this build and no extension is installed - install it: nsql driver install {} (or View ▸ Driver Manager)",
             ids.first().unwrap_or(&"<id>")
         ),
         position: None,
@@ -229,28 +262,47 @@ pub fn auto_install_source() -> Option<ext::install::Source> {
 /// 자동 설치 진행 콜백: `(드라이버 id, 단계 = index/download/verify/install/installed, 받은 바이트, 전체)`.
 pub type DriverProgress<'a> = &'a mut dyn FnMut(&str, &str, u64, Option<u64>);
 
-/// ★ 접속 한 자리(D-350): [`open`] → 드라이버 없음([`ERR_DRIVER_MISSING`])이고 자동 설치가 켜져 있으면 **첫 후보 id를 내려받아
-/// 설치한 뒤 한 번 더 연다**. 설치 실패 = 원래 오류 + 설치 오류(코드 유지 · 호출자가 안내). 네트워크는 사용자의 접속 동작 안에서만(26 §8).
+/// ★ 접속 한 자리(D-350 · 사용자 10-23 "시도 전에 점검 → 설치 → 접속"): **먼저** 드라이버 상태를 본다([`driver_status_for`]) — 없으면 접속을
+/// 시작하지 않고 자동 설치(설정이 켜져 있을 때 · 진행은 콜백)를 끝낸 뒤 연다. 점검 뒤에도 [`ERR_DRIVER_MISSING`]이면(설치본 손상 등) 한 번 더 같은
+/// 설치 길을 탄다. 설치 실패 = [`ERR_DRIVER_INSTALL_FAILED`](상세 = 원래 오류 + 설치 오류). 네트워크는 사용자의 접속 동작 안에서만(26 §8).
 pub fn open_auto(
     spec: &ConnectSpec,
     default_dialect: Dialect,
     progress: DriverProgress<'_>,
 ) -> Result<Box<dyn Session>, DbError> {
+    let dialect = spec.dialect.unwrap_or(default_dialect);
+    let want = spec.driver.as_deref();
+    if matches!(
+        driver_status_for(dialect, want),
+        DriverStatus::Missing { .. }
+    ) {
+        ensure_driver(dialect, want, driver_missing(dialect, want), progress)?;
+    }
     let first = open(spec, default_dialect);
     let Err(e) = first else { return first };
     if e.code != Some(ERR_DRIVER_MISSING) {
         return Err(e);
     }
+    ensure_driver(dialect, want, e, progress)?;
+    open(spec, default_dialect)
+}
+
+/// 드라이버 자동 설치(없을 때): 첫 후보 id를 내려받아 설치한다. `base` = 설치하지 않을/못할 때 돌려줄 "드라이버 없음" 오류.
+fn ensure_driver(
+    dialect: Dialect,
+    want: Option<&str>,
+    base: DbError,
+    progress: DriverProgress<'_>,
+) -> Result<(), DbError> {
     let Some(src) = auto_install_source() else {
-        return Err(e);
+        return Err(base);
     };
     let Some(root) = ext::driver_dir() else {
-        return Err(e);
+        return Err(base);
     };
-    let dialect = spec.dialect.unwrap_or(default_dialect);
-    let ids = ext_ids_for(dialect, spec.driver.as_deref());
+    let ids = ext_ids_for(dialect, want);
     let Some(id) = ids.first() else {
-        return Err(e);
+        return Err(base);
     };
     let rep = ext::install::install(
         &src,
@@ -263,12 +315,12 @@ pub fn open_auto(
         &mut |stage, n, total| progress(id, stage, n, total),
     )
     .map_err(|ie| DbError {
-        code: Some(ERR_DRIVER_MISSING),
-        message: format!("{} — auto-install failed: {ie}", e.message),
+        code: Some(ERR_DRIVER_INSTALL_FAILED),
+        message: format!("{} - auto-install failed: {ie}", base.message),
         position: None,
     })?;
     progress(id, "installed", rep.bytes, Some(rep.bytes));
-    open(spec, default_dialect)
+    Ok(())
 }
 
 /// 확장 후보를 차례로 열어 본다 · 전부 없으면 [`driver_missing`].
@@ -278,7 +330,7 @@ fn open_extension(dialect: Dialect, spec: &ConnectSpec) -> Result<Box<dyn Sessio
             return Ok(s);
         }
     }
-    Err(driver_missing(dialect))
+    Err(driver_missing(dialect, spec.driver.as_deref()))
 }
 
 /// ★ Oracle 드라이버 둘(docs/110 · 설정 `oracle.driver` · D-277/D-278): **OCI**(ODPI-C · Instant Client) / **Thin**(순수 Rust).
@@ -579,7 +631,7 @@ mod tests {
         let s = open_auto(&spec, Dialect::Sqlite, &mut |_, _, _, _| calls += 1).expect("open");
         assert_eq!(s.dialect(), Dialect::Sqlite);
         assert_eq!(calls, 0, "내장이면 설치 진행 콜백이 없다");
-        let e = driver_missing(Dialect::Postgres);
+        let e = driver_missing(Dialect::Postgres, None);
         assert_eq!(e.code, Some(ERR_DRIVER_MISSING));
         assert!(
             e.message.contains("nsql driver install pg"),
@@ -601,6 +653,30 @@ mod tests {
     }
 
     /// 기본 feature = 내장 드라이버 다섯(135차 MySQL 포함) — 접속 폼 콤보 "(no driver)" 라벨의 원천.
+    /// ★ `?driver=` 변형별 상태(사용자 10-23 점검 → 설치 → 접속): duckdb = 늘 확장(없으면 Missing · 후보 id duckdb) · Oracle 변형은 feature별.
+    #[test]
+    fn driver_status_for_respects_variant() {
+        let d = driver_status_for(Dialect::Duckdb, None);
+        assert!(
+            matches!(&d, DriverStatus::Missing { ids } if ids == &vec!["duckdb"])
+                || matches!(d, DriverStatus::Extension { .. })
+        );
+        for (want, inc) in [
+            ("thin", OracleDriver::Thin.included()),
+            ("oci", OracleDriver::Oci.included()),
+        ] {
+            let st = driver_status_for(Dialect::Oracle, Some(want));
+            assert_eq!(matches!(st, DriverStatus::Builtin), inc, "{want}");
+        }
+        assert_eq!(
+            matches!(
+                driver_status_for(Dialect::Sqlite, None),
+                DriverStatus::Builtin
+            ),
+            is_builtin(Dialect::Sqlite)
+        );
+    }
+
     /// 내장 버전 표(드라이버 관리자 창용)는 `is_builtin`·DuckDB 확장 전용과 맞는다.
     #[test]
     fn builtin_version_matches_is_builtin() {

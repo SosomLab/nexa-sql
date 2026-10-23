@@ -880,7 +880,13 @@ pub(crate) fn spawn(
                         let ok = reachable
                             && runner.connect(&spec, &mut |e: RunEvent| {
                                 if let RunEvent::Error { error, .. } = &e {
-                                    last_err = Some(error.message.clone());
+                                    // 드라이버 없음/자동 설치 실패(-1350/-1351) = 상태줄엔 짧은 Msg · 영어 상세는 이 사건의 로그에(사용자 10-23).
+                                    let dn = spec.dialect.map(|d| d.display_name()).unwrap_or("");
+                                    last_err = Some(match error.code {
+                                        Some(nsql_drivers::ERR_DRIVER_MISSING) => tf(Msg::StDriverMissing, &[dn]),
+                                        Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED) => tf(Msg::StDriverInstallFailed, &[dn]),
+                                        _ => error.message.clone(),
+                                    });
                                 }
                                 emit(e);
                             });
@@ -1811,6 +1817,8 @@ pub(crate) struct TestResult {
     pub name: String,
     /// Ok = (설명, 소요 초 문자열) · Err = 메시지.
     pub outcome: Result<(String, String), String>,
+    /// ★ 진행 틱(사용자 10-23 "테스트 전에 드라이버 설치"): Some = 아직 결과가 아니라 설치 단계 안내 글(`outcome`은 무시) · None = 결과.
+    pub stage: Option<String>,
 }
 
 /// ★ 접속 테스트는 요청마다 **짧은 스레드 하나**(사용자 09-14) — 순차 워커·`busy`와 무관해서 실패 서버의 긴 타임아웃이
@@ -1825,9 +1833,26 @@ pub(crate) fn spawn_test(
     let _ = std::thread::Builder::new()
         .name(format!("nsql-test:{name}"))
         .spawn(move || {
+            // ★ 드라이버가 없으면 테스트도 먼저 설치하고(진행 틱 → 창 상태줄) 다시 시도한다(사용자 10-23) — 접속 경로의 `open_auto`와 같은 길.
+            let tick_tx = tx.clone();
+            let tick_name = name.clone();
             let mut opener: Opener = Box::new(
                 move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-                    nsql_drivers::open(spec, default_dialect)
+                    nsql_drivers::open_auto(spec, default_dialect, &mut |id, stage, done, total| {
+                        let pct = match total {
+                            Some(t) if t > 0 => format!("{}%", (done * 100 / t).min(100)),
+                            _ => nsql_core::fmt_bytes(done),
+                        };
+                        let text = tf(
+                            Msg::StDriverInstall,
+                            &[id, &nsql_i18n::driver_stage_text(stage), &pct],
+                        );
+                        let _ = tick_tx.send(TestResult {
+                            name: tick_name.clone(),
+                            outcome: Err(String::new()),
+                            stage: Some(text),
+                        });
+                    })
                 },
             );
             let outcome = match nsql_run::test_connection(&spec, &mut opener) {
@@ -1840,9 +1865,28 @@ pub(crate) fn spawn_test(
                     },
                     format!("{:.3}", rep.elapsed.as_secs_f64()),
                 )),
-                Err(e) => Err(e.message),
+                // 드라이버 없음/자동 설치 실패 = 짧은 Msg(상세는 로그 창에 영어로 남긴다 · 사용자 10-23).
+                Err(e) => Err(match e.code {
+                    Some(nsql_drivers::ERR_DRIVER_MISSING) => tf(
+                        Msg::StDriverMissing,
+                        &[spec.dialect.map(|d| d.display_name()).unwrap_or("")],
+                    ),
+                    Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED) => format!(
+                        "{} ({})",
+                        tf(
+                            Msg::StDriverInstallFailed,
+                            &[spec.dialect.map(|d| d.display_name()).unwrap_or("")],
+                        ),
+                        e.message
+                    ),
+                    _ => e.message,
+                }),
             };
-            let _ = tx.send(TestResult { name, outcome });
+            let _ = tx.send(TestResult {
+                name,
+                outcome,
+                stage: None,
+            });
             wake();
         });
 }
