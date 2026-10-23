@@ -412,6 +412,7 @@ fn apply_load_switches(runner: &mut Runner) {
                 .map(|d| d.join("drivers"))
                 .as_deref(),
         );
+        let _ = nsql_drivers::ext::sweep_pending();
         // ★ D-350 접속 시 드라이버 자동 설치 정책(GUI와 같은 설정).
         nsql_drivers::set_auto_install(s.flag("driver.auto_install").then(|| {
             nsql_drivers::ext::install::Source::from_settings(

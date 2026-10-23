@@ -17,45 +17,8 @@ fn open_session(spec: &ConnectSpec, dialect: Dialect) -> Result<Box<dyn Session>
     if std::env::var_os("NSQL_TEST_DYN").is_none() {
         return nsql_drivers::open(spec, dialect);
     }
-    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    let root = ROOT.get_or_init(|| {
-        let profile = if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        };
-        let target = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("target")
-            .join(profile);
-        let root = std::env::temp_dir().join(format!("nsql-dyn-it-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for (d, ids) in nsql_drivers::DRIVER_IDS {
-            for id in *ids {
-                let lib = nsql_driver_dyn::library_file_name(&nsql_drivers::ext_crate_name(id));
-                let src = target.join(&lib);
-                if !src.is_file() {
-                    continue;
-                }
-                let dir = root.join(id).join("0.0.0-test");
-                std::fs::create_dir_all(&dir).expect("mkdir");
-                std::fs::copy(&src, dir.join(&lib)).expect("copy cdylib");
-                copy_bundled_runtime(&target, id, &dir);
-                std::fs::write(
-                    dir.join(nsql_drivers::ext::MANIFEST),
-                    format!(
-                        r#"{{"id":"{id}","version":"0.0.0-test","dialect":"{d}","protocol":{},"lib":"{lib}"}}"#,
-                        nsql_abi::ABI_VERSION
-                    ),
-                )
-                .expect("manifest");
-            }
-        }
-        nsql_drivers::ext::set_driver_dir(Some(&root));
-        eprintln!("[dyn] 확장 경로 시험 · 드라이버 폴더 {}", root.display());
-        root
-    });
+    let root = dyn_root();
+    {}
     let real = spec.dialect.unwrap_or(dialect);
     for id in nsql_drivers::ext_ids(real) {
         if let Some(s) = nsql_drivers::ext::open_ext(id, spec)? {
@@ -66,6 +29,117 @@ fn open_session(spec: &ConnectSpec, dialect: Dialect) -> Result<Box<dyn Session>
         "[dyn] {real} 확장 cdylib 없음({} · cargo build -p nsql-driver-* 먼저)",
         root.display()
     );
+}
+
+/// cdylib가 있는 target/<profile>.
+fn cdylib_target_dir() -> std::path::PathBuf {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(profile)
+}
+
+/// target의 cdylib 하나를 임시 드라이버 폴더에 `<id>/0.0.0-test/`로 깐다(매니페스트 · 동봉 런타임 포함) — 없으면 false.
+fn stage_cdylib(target: &std::path::Path, root: &std::path::Path, d: Dialect, id: &str) -> bool {
+    let lib = nsql_driver_dyn::library_file_name(&nsql_drivers::ext_crate_name(id));
+    let src = target.join(&lib);
+    if !src.is_file() {
+        return false;
+    }
+    let dir = root.join(id).join("0.0.0-test");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::copy(&src, dir.join(&lib)).expect("copy cdylib");
+    copy_bundled_runtime(target, id, &dir);
+    std::fs::write(
+        dir.join(nsql_drivers::ext::MANIFEST),
+        format!(
+            r#"{{"id":"{id}","version":"0.0.0-test","dialect":"{d}","protocol":{},"lib":"{lib}"}}"#,
+            nsql_abi::ABI_VERSION
+        ),
+    )
+    .expect("manifest");
+    true
+}
+
+/// 확장 경로 시험의 드라이버 폴더(프로세스당 하나 · 처음 부를 때 cdylib 전부를 깔고 `set_driver_dir`).
+fn dyn_root() -> &'static std::path::Path {
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let target = cdylib_target_dir();
+        let root = std::env::temp_dir().join(format!("nsql-dyn-it-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (d, ids) in nsql_drivers::DRIVER_IDS {
+            for id in *ids {
+                stage_cdylib(&target, &root, *d, id);
+            }
+        }
+        nsql_drivers::ext::set_driver_dir(Some(&root));
+        eprintln!("[dyn] 확장 경로 시험 · 드라이버 폴더 {}", root.display());
+        root
+    })
+}
+
+/// ★ 올라간 확장 드라이버 삭제(사용자 10-23 "로딩된 대상은 삭제가 불가능?"): 세션이 쥐고 있어도 삭제가 **즉시 성공**한다 — 지울 수 없는
+/// 파일(Windows 매핑 DLL)은 `.trash/`로 옮기고 표식에 적어 다음 시작 때 지운다 · 목록·탐색에서는 바로 빠진다 · 올라간 판은 계속 쓰인다. `NSQL_TEST_DYN=1`일 때만.
+#[test]
+fn dyn_remove_loaded_extension_moves_to_trash() {
+    if std::env::var_os("NSQL_TEST_DYN").is_none() {
+        eprintln!("[dyn] NSQL_TEST_DYN 없음 - 건너뜀");
+        return;
+    }
+    let root = dyn_root();
+    let spec = ConnectSpec::parse("sqlite::memory:").unwrap();
+    let mut held = nsql_drivers::ext::open_ext("sqlite", &spec)
+        .expect("open")
+        .expect("sqlite cdylib 설치됨");
+    assert!(nsql_drivers::ext::is_loaded("sqlite"));
+    let removed =
+        nsql_drivers::ext::remove_extension("sqlite", None).expect("올라가 있어도 삭제 성공");
+    assert_eq!(removed, [root.join("sqlite")]);
+    assert!(
+        nsql_drivers::ext::find_extension("sqlite").is_none(),
+        "목록·탐색에서 즉시 빠진다"
+    );
+    assert!(nsql_drivers::ext::list_extensions_in(root)
+        .iter()
+        .all(|e| e.id != "sqlite"));
+    let pending = nsql_drivers::ext::pending_in(root);
+    if cfg!(windows) {
+        assert!(!root.join("sqlite").exists() || pending.iter().any(|p| p.starts_with("sqlite")));
+        assert!(
+            pending
+                .iter()
+                .any(|p| p.starts_with(nsql_drivers::ext::TRASH_DIR)),
+            "매핑 DLL은 휴지통으로: {pending:?}"
+        );
+    } else {
+        assert!(!root.join("sqlite").exists(), "unix는 바로 지워진다");
+    }
+    // 올라간 세션은 계속 동작한다.
+    let r = held
+        .execute(&nsql_core::ExecRequest {
+            sql: "SELECT 1".to_string(),
+            params: Vec::new(),
+        })
+        .expect("query after remove");
+    assert_eq!(r.result_sets.len(), 1);
+    drop(held);
+    // 다른 시험을 위해 다시 깐다(올라간 판이 캐시돼 있어 바로 열린다).
+    assert!(stage_cdylib(
+        &cdylib_target_dir(),
+        root,
+        Dialect::Sqlite,
+        "sqlite"
+    ));
+    assert!(nsql_drivers::ext::open_ext("sqlite", &spec)
+        .expect("open")
+        .is_some());
 }
 
 fn runner_for(env: &str, dialect: Dialect) -> Option<Runner> {

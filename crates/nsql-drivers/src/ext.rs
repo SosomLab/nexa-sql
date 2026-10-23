@@ -5,7 +5,9 @@
 //! - id = 방언 이름([`nsql_core::Dialect`] Display · `odbc` · `mysql` …) — 내장 드라이버가 없는 방언([`crate::open`]의 폴백)이
 //!   그 id의 확장을 찾는다(예: macOS/Linux ODBC = D-346 ⓐ · 빌드에서 뺀 드라이버의 cdylib).
 //! - 버전 비교 = `.`으로 나눈 숫자 세그먼트 우선 · 아니면 문자열(semver 대략 · T-28에서 매니페스트로 보강).
-//! - 올린 드라이버는 프로세스 수명 동안 캐시(64 §5: 내리지 않는다).
+//! - 올린 드라이버는 프로세스 수명 동안 캐시(64 §5: 내리지 않는다 — Rust cdylib FreeLibrary는 10-23 실측에서 접근 위반). 삭제는
+//!   **올라가 있어도 된다**(사용자 10-23): 지울 수 없는 파일(Windows의 매핑된 DLL)은 `<root>/.trash/`로 옮기고(열린 DLL도 이름 바꾸기는 된다)
+//!   `<root>/.delete-pending`에 적어 다음 시작([`sweep_pending`])에 지운다 · 목록·탐색은 즉시 그 판을 빼고 본다 · 올라간 판은 재시작까지 그대로 쓰인다.
 pub mod install;
 pub mod keys;
 pub mod sha256;
@@ -20,6 +22,8 @@ use std::sync::{Arc, Mutex};
 
 static DRIVER_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 static LOADED: Mutex<Option<HashMap<String, Arc<DynDriver>>>> = Mutex::new(None);
+/// 다음 시작 때 지울 폴더 목록(드라이버 폴더 기준 상대 경로 · 한 줄 하나).
+pub const PENDING_FILE: &str = ".delete-pending";
 
 /// 호스트가 드라이버 폴더를 넣는다(`<설정 폴더>/drivers`). `None` = 환경 변수만.
 pub fn set_driver_dir(dir: Option<&Path>) {
@@ -163,8 +167,12 @@ pub fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 #[must_use]
 pub fn find_extension_in(root: &Path, id: &str) -> Option<ExtInfo> {
     let dir = root.join(id);
+    let pending = pending_in(root);
     let mut best: Option<ExtInfo> = None;
     for e in std::fs::read_dir(&dir).ok()?.flatten() {
+        if is_pending(root, &e.path(), &pending) {
+            continue;
+        }
         let Some(info) = inspect_version_dir(id, &e.path()) else {
             continue;
         };
@@ -178,18 +186,23 @@ pub fn find_extension_in(root: &Path, id: &str) -> Option<ExtInfo> {
     best
 }
 
-/// 확장 폴더 삭제(T-28 · 휴지통 없음): `ver` 없으면 id 전체. 이 프로세스가 이미 올린 id는 거부(언로드 불가 · 64 §5).
-pub fn remove_extension(id: &str, ver: Option<&str>) -> Result<Vec<PathBuf>, String> {
-    if LOADED
+/// 이 프로세스가 이미 올린 id인가(삭제해도 재시작까지 그 판이 쓰인다 — 호스트가 안내한다).
+#[must_use]
+pub fn is_loaded(id: &str) -> bool {
+    LOADED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .is_some_and(|m| m.contains_key(id))
-    {
-        return Err(format!(
-            "driver '{id}' is loaded in this process - restart and retry"
-        ));
-    }
+}
+
+/// 휴지통 폴더 이름(드라이버 폴더 안 · 다음 시작 때 비운다).
+pub const TRASH_DIR: &str = ".trash";
+
+/// 확장 폴더 삭제(T-28): `ver` 없으면 id 전체. **올라가 있어도 된다**(사용자 10-23 "로딩된 대상 삭제"): 파일을 하나씩 지우고, 못 지우는 것
+/// (Windows에 매핑된 DLL · 동봉 런타임)은 `.trash/<id>-<ver>-<pid>-<n>/`로 옮긴 뒤 표식에 적는다(다음 시작 [`sweep_pending`]). 돌려주는 값 =
+/// 지운/옮긴 최상위 폴더. 올라간 판은 재시작까지 그대로 쓰인다([`is_loaded`]로 안내).
+pub fn remove_extension(id: &str, ver: Option<&str>) -> Result<Vec<PathBuf>, String> {
     let root = driver_dir().ok_or_else(|| "driver folder unknown".to_string())?;
     let target = match ver {
         Some(v) => root.join(id).join(v),
@@ -198,8 +211,139 @@ pub fn remove_extension(id: &str, ver: Option<&str>) -> Result<Vec<PathBuf>, Str
     if !target.is_dir() {
         return Ok(Vec::new());
     }
-    std::fs::remove_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    if std::fs::remove_dir_all(&target).is_ok() {
+        return Ok(vec![target]);
+    }
+    // 통째로는 안 됨(열린 파일) → 파일 단위: 지우거나 휴지통으로.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let trash_rel = PathBuf::from(TRASH_DIR).join(format!(
+        "{id}-{}-{}-{stamp}",
+        ver.unwrap_or("all"),
+        std::process::id()
+    ));
+    let trash = root.join(&trash_rel);
+    let mut moved = false;
+    move_or_delete_tree(&target, &target, &trash, &mut moved)?;
+    let _ = std::fs::remove_dir_all(&target);
+    if target.exists() {
+        mark_pending_in(&root, target.strip_prefix(&root).unwrap_or(&target))?;
+    }
+    if moved {
+        mark_pending_in(&root, &trash_rel)?;
+    }
     Ok(vec![target])
+}
+
+/// `dir` 아래를 재귀로: 파일은 지우고, 못 지우면 `trash/<상대>`로 옮긴다(같은 볼륨 rename · 열린 DLL도 된다).
+fn move_or_delete_tree(
+    base: &Path,
+    dir: &Path,
+    trash: &Path,
+    moved: &mut bool,
+) -> Result<(), String> {
+    for e in std::fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .flatten()
+    {
+        let p = e.path();
+        if p.is_dir() {
+            move_or_delete_tree(base, &p, trash, moved)?;
+            let _ = std::fs::remove_dir(&p);
+            continue;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            continue;
+        }
+        let rel = p.strip_prefix(base).unwrap_or(&p);
+        let dest = trash.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::rename(&p, &dest).map_err(|e| format!("{}: {e}", p.display()))?;
+        *moved = true;
+    }
+    Ok(())
+}
+
+/// `.delete-pending`에 상대 경로 한 줄 추가(중복 없이).
+pub fn mark_pending_in(root: &Path, rel: &Path) -> Result<(), String> {
+    let mut set = pending_in(root);
+    if set.iter().any(|p| p == rel) {
+        return Ok(());
+    }
+    set.push(rel.to_path_buf());
+    let text: String = set
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/") + "\n")
+        .collect();
+    std::fs::write(root.join(PENDING_FILE), text)
+        .map_err(|e| format!("{}: {e}", root.join(PENDING_FILE).display()))
+}
+
+/// 다음 시작 때 지울 상대 경로들(파일이 없으면 빈 목록 · 파일 하나만 읽는다 = 기동 비용 stat 1).
+#[must_use]
+pub fn pending_in(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(root.join(PENDING_FILE))
+        .map(|t| {
+            t.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 표식에 적힌 폴더(휴지통 포함)를 지운다(기동 직후 · 이 프로세스는 아직 아무 드라이버도 올리지 않았다). 못 지운 것은 표식에 남긴다.
+pub fn sweep_pending_in(root: &Path) -> Vec<PathBuf> {
+    let list = pending_in(root);
+    if list.is_empty() {
+        return Vec::new();
+    }
+    let mut removed = Vec::new();
+    let mut left = Vec::new();
+    for rel in list {
+        // 안전: 드라이버 폴더 밖으로 나가는 경로는 무시한다.
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            continue;
+        }
+        let target = root.join(&rel);
+        if !target.exists() || std::fs::remove_dir_all(&target).is_ok() {
+            removed.push(target);
+        } else {
+            left.push(rel);
+        }
+    }
+    let f = root.join(PENDING_FILE);
+    if left.is_empty() {
+        let _ = std::fs::remove_file(&f);
+    } else {
+        let text: String = left
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/") + "\n")
+            .collect();
+        let _ = std::fs::write(&f, text);
+    }
+    removed
+}
+
+/// 기동 직후 한 번(GUI·CLI): 지난번에 못 지운 폴더를 지운다 — 표식 파일이 없으면 stat 하나로 끝(docs/61 §1-8 지연 로딩).
+pub fn sweep_pending() -> Vec<PathBuf> {
+    driver_dir()
+        .map(|r| sweep_pending_in(&r))
+        .unwrap_or_default()
+}
+
+/// 삭제 예정(표식)인 경로인가 — 목록·탐색이 그 판을 빼고 본다.
+fn is_pending(root: &Path, path: &Path, pending: &[PathBuf]) -> bool {
+    pending.iter().any(|rel| path.starts_with(root.join(rel)))
 }
 
 /// 실제로 올려 본 확장 정보(`nsql driver check`).
@@ -248,7 +392,7 @@ pub fn list_extensions() -> Vec<ExtInfo> {
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))
         .filter_map(|e| find_extension_in(&root, &e.file_name().to_string_lossy()))
         .collect();
     v.sort_by(|a, b| a.id.cmp(&b.id));
@@ -259,8 +403,9 @@ pub fn list_extensions() -> Vec<ExtInfo> {
 #[must_use]
 pub fn list_extensions_in(root: &Path) -> Vec<ExtInfo> {
     let mut v = Vec::new();
+    let pending = pending_in(root);
     for id_entry in std::fs::read_dir(root).ok().into_iter().flatten().flatten() {
-        if !id_entry.path().is_dir() {
+        if !id_entry.path().is_dir() || id_entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
         let id = id_entry.file_name().to_string_lossy().into_owned();
@@ -270,6 +415,9 @@ pub fn list_extensions_in(root: &Path) -> Vec<ExtInfo> {
             .flatten()
             .flatten()
         {
+            if is_pending(root, &ver_entry.path(), &pending) {
+                continue;
+            }
             if let Some(info) = inspect_version_dir(&id, &ver_entry.path()) {
                 v.push(info);
             }
@@ -308,6 +456,46 @@ pub fn open_ext(id: &str, spec: &ConnectSpec) -> Result<Option<Box<dyn Session>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 삭제 예정 표식(사용자 10-23 "올라간 드라이버 삭제"): 표식에 적힌 판은 목록·탐색에서 빠지고, sweep이 지우며 표식을 정리한다.
+    #[test]
+    fn pending_marker_hides_then_sweep_removes() {
+        let root = std::env::temp_dir().join(format!("nsql-ext-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (id, ver) in [("zz", "1.0.0"), ("zz", "2.0.0"), ("yy", "1.0.0")] {
+            let d = root.join(id).join(ver);
+            std::fs::create_dir_all(&d).expect("mkdir");
+            std::fs::write(d.join(library_file_name_for(id)), b"").expect("lib");
+        }
+        assert_eq!(
+            find_extension_in(&root, "zz").map(|e| e.version),
+            Some("2.0.0".into())
+        );
+        mark_pending_in(&root, Path::new("zz/2.0.0")).expect("mark");
+        mark_pending_in(&root, Path::new("zz/2.0.0")).expect("mark twice = 한 줄");
+        assert_eq!(pending_in(&root).len(), 1);
+        assert_eq!(
+            find_extension_in(&root, "zz").map(|e| e.version),
+            Some("1.0.0".into()),
+            "표식 판 제외"
+        );
+        assert_eq!(list_extensions_in(&root).len(), 2);
+        mark_pending_in(&root, Path::new("yy")).expect("mark id");
+        assert!(find_extension_in(&root, "yy").is_none(), "id 전체 표식");
+        let removed = sweep_pending_in(&root);
+        assert_eq!(removed.len(), 2);
+        assert!(!root.join("zz").join("2.0.0").exists() && !root.join("yy").exists());
+        assert!(root.join("zz").join("1.0.0").is_dir());
+        assert!(
+            !root.join(PENDING_FILE).exists(),
+            "다 지우면 표식 파일도 없앤다"
+        );
+        assert!(sweep_pending_in(&root).is_empty());
+        // 폴더 밖 경로는 무시.
+        mark_pending_in(&root, Path::new("../outside")).expect("mark");
+        assert!(sweep_pending_in(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn version_order_is_numeric_per_segment() {

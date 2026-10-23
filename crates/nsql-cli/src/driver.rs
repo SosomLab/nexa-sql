@@ -80,6 +80,7 @@ pub(crate) fn cmd_driver(o: &Opts) -> i32 {
                 .as_deref(),
         );
     }
+    let _ = ext::sweep_pending();
     let Some(sub) = o.positional.first() else {
         return usage();
     };

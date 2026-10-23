@@ -2204,6 +2204,8 @@ fn main() {
             .map(|d| d.join("drivers"))
             .as_deref(),
     );
+    // 지난번 삭제하지 못한(세션이 쓰던) 확장 폴더 정리 — 표식 파일이 없으면 stat 하나(사용자 10-23).
+    let _ = nsql_drivers::ext::sweep_pending();
     // ★ D-350 접속 시 드라이버 자동 설치 정책(설정 `driver.auto_install` · `driver.repo` · `driver.http_timeout_secs`).
     nsql_drivers::set_auto_install(app.settings.flag("driver.auto_install").then(|| {
         nsql_drivers::ext::install::Source::from_settings(

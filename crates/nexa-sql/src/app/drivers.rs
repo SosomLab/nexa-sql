@@ -130,8 +130,11 @@ impl App {
             }
             DriverWinAction::Install(id) => self.drivers_spawn(Some(id)),
             DriverWinAction::Remove(id) => {
+                // 올라간 판도 지운다(파일은 .trash → 다음 시작) — 재시작까지 그 판이 쓰인다고 안내(사용자 10-23).
+                let loaded = ext::is_loaded(&id);
                 let text = match ext::remove_extension(&id, None) {
                     Ok(paths) if paths.is_empty() => tf(Msg::DrvStatusError, &[&id]),
+                    Ok(_) if loaded => tf(Msg::DrvStatusRemovedRestart, &[&id]),
                     Ok(paths) => tf(Msg::DrvStatusRemoved, &[&id, &paths.len().to_string()]),
                     Err(e) => tf(Msg::DrvStatusError, &[&e]),
                 };
