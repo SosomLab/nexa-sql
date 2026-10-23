@@ -300,11 +300,11 @@ jobs:
 
           | OS | File | Install |
           | --- | --- | --- |
-          | Windows x64 | \`nexa-sql-$VERSION-windows-x64.msi\` | Double-click, or \`msiexec /i … /qn\` (silent; adds nsql to PATH; .sql association optional) · \`winget install SosomLab.NexaSQL\` · \`choco install nexa-sql\` (after moderation) |
+          | Windows x64 | \`nexa-sql-$VERSION-windows-x64.msi\` | Double-click, or \`msiexec /i … /qn\` (silent; adds nsql to PATH; .sql association optional) · \`winget install SosomLab.NexaSQL\` · \`choco install nexa-sql\` (only when this release was pushed to those channels) |
           | macOS (Universal) | \`nexa-sql-$VERSION-macos-universal.pkg\` / \`.dmg\` | Installer → \`/Applications/Nexa SQL.app\` + \`/usr/local/bin/nsql\` · \`brew install --cask kiros33/tap/nexa-sql\` |
           | Linux x86_64 | \`.deb\` / \`.rpm\` | \`sudo apt install ./…deb\` / \`sudo dnf install ./…rpm\` · or the signed repository at <https://pkg.sosomlab.com/> (\`apt install nexa-sql\` / \`dnf install nexa-sql\`) |
 
-          Drivers are not bundled (only the Oracle OCI driver, which needs an Instant Client): the first connection to PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Oracle Thin or ODBC downloads the signed driver package from the \`drivers-v*\` pre-release and installs it (\`driver.auto_install\`). Offline: \`nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip\`.
+          Drivers are not bundled (only the Oracle OCI driver, which needs an Instant Client): the first connection to PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, DuckDB, Oracle Thin or ODBC downloads the signed driver package from the \`drivers-v*\` pre-release and installs it (\`driver.auto_install\`). Offline: \`nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip\`.
           Verify downloads with \`sha256sums.txt\`. Builds are not code-signed yet (DR-20): macOS Gatekeeper and Windows SmartScreen will warn.
           License: PolyForm Noncommercial 1.0.0 — free for noncommercial use only.
 
