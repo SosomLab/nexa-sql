@@ -52,7 +52,7 @@ if [ -s "$D2" ] && [ -s "$D1" ]; then
   echo "$b1" | grep "현재 스키마\|Current schema" | sed 's/^/        tab1> /' | tee -a "$REPORT" >/dev/null
   cur=$(echo "$b2" | grep -m1 "현재 스키마\|Current schema" | sed 's/.*: *//')
   [ -n "$cur" ] && [ "$cur" != "$OTHER" ] && ok "④ 새 탭(탭2) = 연결 기본 스키마($cur)로 조용히 복귀" || bad "④ 새 탭 스키마 = $cur(기본값이어야)" "$b2"
-  echo "$b1" | grep -q "현재 스키마: $OTHER\|Current schema: $OTHER" && ok "④ 탭1로 돌아가면 $OTHER로 조용히 복귀(실행 없이)" || bad "④ 탭1 복귀 스키마" "$b1"
+  echo "$b1" | grep -q "현재 스키마: $OTHER\|Current schema: $OTHER" && ok "④ 탭1로 돌아가면 ${OTHER}로 조용히 복귀(실행 없이)" || bad "④ 탭1 복귀 스키마" "$b1"
 else bad "④ 덤프 없음(tab1 $([ -s "$D1" ] && echo o || echo x) · tab2 $([ -s "$D2" ] && echo o || echo x))" "$(tail -3 "$OUT/gui4.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

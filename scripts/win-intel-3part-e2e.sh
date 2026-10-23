@@ -39,13 +39,13 @@ d=$(probe "p2_objects" "SELECT * FROM $DB.dbo." end)
 if [ -s "$d" ]; then
   c=$(cat "$d"); echo "$c" | head -6 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   echo "$c" | grep -qE "^(Table|View)\|$TBL\|" && ok "② \`$DB.dbo.\` = 그 DB·스키마의 테이블($TBL)" || bad "② \`$DB.dbo.\` 테이블 없음" "$c"
-  n=$(echo "$c" | grep -cE "^(Table|View)\|"); [ "$n" -ge 10 ] && ok "② 관계 객체 $n개" || bad "② 관계 객체 $n개(<10)" "$c"
+  n=$(echo "$c" | grep -cE "^(Table|View)\|"); [ "$n" -ge 10 ] && ok "② 관계 객체 ${n}개" || bad "② 관계 객체 ${n}개(<10)" "$c"
 else bad "② 후보 덤프 없음" "$(tail -3 "$OUT/p2_objects.stderr")"; fi
 body=$'SELECT t.\nFROM '"$DB"'.dbo.'"$TBL"' t'
 d=$(probe "p3_columns" "$body" 9)
 if [ -s "$d" ]; then
   c=$(cat "$d"); echo "$c" | head -6 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
-  n=$(echo "$c" | grep -cE "^Column\|"); [ "$n" -ge 1 ] && ok "③ \`t.\`(FROM $DB.dbo.$TBL t) = 컬럼 $n개" || bad "③ 컬럼 없음" "$c"
+  n=$(echo "$c" | grep -cE "^Column\|"); [ "$n" -ge 1 ] && ok "③ \`t.\`(FROM $DB.dbo.$TBL t) = 컬럼 ${n}개" || bad "③ 컬럼 없음" "$c"
 else bad "③ 후보 덤프 없음" "$(tail -3 "$OUT/p3_columns.stderr")"; fi
 # ④ DB 전환 뒤에도 데이터베이스 목록이 남아 있는가(⑰ · 툴바 메뉴 = 같은 버킷): `USE BISCM_MS` 실행 뒤 `USE |` 완성에 DB 목록.
 f4="$OUT/p4_use.sql"; printf 'USE %s
@@ -55,7 +55,7 @@ fw4=$(cygpath -w "$f4" 2>/dev/null || echo "$f4"); fw5=$(cygpath -w "$f5" 2>/dev
 NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw4,@after:6000:run.all,@after:9500:open:$fw5,@after:10500:editor.caret:end,@after:10800:intel.probe,@after:12500:intel.probe,@after:13500:intel.dump:$d4"   timeout -s KILL 17 "$EXE" "$PROFILE" > "$OUT/p4.stdout" 2> "$OUT/p4.stderr"
 if [ -s "$d4" ]; then
   c=$(cat "$d4"); echo "$c" | head -4 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
-  n=$(echo "$c" | grep -cE "^Database\|"); [ "$n" -ge 2 ] && ok "④ USE $DB 뒤에도 \`USE |\` = 데이터베이스 $n개(목록 버킷 보존)" || bad "④ 전환 뒤 DB 목록 $n개" "$c"
+  n=$(echo "$c" | grep -cE "^Database\|"); [ "$n" -ge 2 ] && ok "④ USE $DB 뒤에도 \`USE |\` = 데이터베이스 ${n}개(목록 버킷 보존)" || bad "④ 전환 뒤 DB 목록 ${n}개" "$c"
   echo "$c" | grep -qE "^Database\|$DB\|" && ok "④ 목록에 $DB" || bad "④ 목록에 $DB 없음" "$c"
 else bad "④ 후보 덤프 없음" "$(tail -3 "$OUT/p4.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"

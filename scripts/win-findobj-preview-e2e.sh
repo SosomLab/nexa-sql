@@ -52,7 +52,7 @@ gui a "$CMD" 43
 s1="$(cat "$OUT/s1.txt" 2>/dev/null)"; s2="$(cat "$OUT/s2.txt" 2>/dev/null)"
 say "  info  selkind → $s1"
 say "  info  clickpre → $s2"
-case "$s1" in *"row=Some"*) ok "A-0 $KIND(소스 줄 있음) 행 선택" ;; *) bad "A-0 $KIND 행 없음(검색 결과에 소스 일치 $KIND가 아직/전혀 없음)" "$(hdr d1.dump)" ;; esac
+case "$s1" in *"row=Some"*) ok "A-0 $KIND(소스 줄 있음) 행 선택" ;; *) bad "A-0 $KIND 행 없음(검색 결과에 소스 일치 ${KIND}가 아직/전혀 없음)" "$(hdr d1.dump)" ;; esac
 # 클릭 줄 = 창 덤프 `last_opened=Some((행, 줄))`(상태줄은 "Source of … opened"로 곧 덮인다 · 협업 16차).
 line1="$(geom d1.dump | sed -n 's/.*last_opened=Some((\([0-9]*\), \([0-9]*\))).*/\2/p')"
 nsrc="$(grep -c '^pre|[1-9]' "$OUT/d1.dump" 2>/dev/null)"; nsrc="${nsrc:-0}"

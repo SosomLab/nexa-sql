@@ -158,8 +158,8 @@ pause; fi
 if step_on 3; then
 hr; say "▶ 3. 운영 보류 — UPDATE 1행은 커밋되지 않고 보류(주황 카드 · 대기 1) → 상단 Commit 첫 클릭 = 빨간 무장 · 두 번째 = 커밋"
 sqlf s3 "UPDATE NSQLT_HOLD_T SET V = 'x1' WHERE ID = 1${FROM_DUAL_END}"
-gui_start s3 "@connected:open:$(D s3.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D s3a.tx),@connected:@after:4700:toast.dump:$(D s3a.toast),@connected:@after:6000:run.commit,@connected:@after:6500:tx.dump:$(D s3b.tx),@connected:@after:6700:toast.dump:$(D s3b.toast),@connected:@after:7500:run.commit,@connected:@after:10500:tx.dump:$(D s3c.tx)"
-wait_file s3a.tx 20; show "보류 상태(tx.dump)" s3a.tx; show "카드(toast.dump)" s3a.toast
+gui_start s3 "@connected:open:$(D s3.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D s3a.tx),@connected:@after:5500:toast.dump:$(D s3a.toast),@connected:@after:6000:run.commit,@connected:@after:6500:tx.dump:$(D s3b.tx),@connected:@after:6700:toast.dump:$(D s3b.toast),@connected:@after:7500:run.commit,@connected:@after:10500:tx.dump:$(D s3c.tx)"
+wait_file s3a.tx 20; show "보류 상태(tx.dump)" s3a.tx; wait_file s3a.toast 8; show "카드(toast.dump)" s3a.toast
 has s3a.tx "pending=1|held=stmts=1 rows=1" && ok "3 UPDATE = 보류(대기 1 · 1행 · 커밋 안 됨)" || bad "3 보류 안 됨" "$(cat "$OUT/s3a.tx" 2>/dev/null)"
 has s3a.toast "commit pending" && ok "3 주황 고정 카드 [Commit]" || bad "3 카드 없음" "$(cat "$OUT/s3a.toast" 2>/dev/null)"
 if [ "$DIALECT" != "sqlite" ]; then v=$(val 1); [ "$v" = "o1" ] && ok "3 다른 세션(CLI)에서는 아직 o1(미커밋)" || bad "3 CLI 값 $v(커밋됐으면 결함)"; fi

@@ -108,7 +108,7 @@ if [ -n "${BX:-}" ] && [ -n "${BY:-}" ]; then
     M0=$(grep '^bounds=' "$OUT/g0.txt" | cut -d= -f2 | cut -d, -f2); M1=$(grep '^bounds=' "$OUT/g1.txt" | cut -d= -f2 | cut -d, -f2)
     say "  ⑧ 메뉴 열린 채 그리드 y: $M0 → $M1"
     [ "$M0" = "$M1" ] && ok "⑧ 우클릭 메뉴 열린 중 스플리터 끌기 = 제자리" || bad "⑧ 메뉴 열린 중에도 스플리터가 움직임($M0 → $M1)"
-  else sk "⑧ 대조군에서 스플리터가 안 움직임(y $SY가 스플리터 아님) — 좌표 보정 필요"; fi
+  else sk "⑧ 대조군에서 스플리터가 안 움직임(y ${SY}가 스플리터 아님) — 좌표 보정 필요"; fi
 else sk "⑧ 그리드 사각형을 못 얻음"; fi
 # ── ⑨ 전용 세션 P 칩 ─────────────────────────────────────────────────────────────────────────────────────
 run_app "@connected:open:$P/b.sql,@after:5000:run.all,@after:7500:explorer.header:$OUT/r9.txt,@after:7700:log.dump:$OUT/r9log.txt" 10 r9 Local

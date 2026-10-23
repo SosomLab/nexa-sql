@@ -41,7 +41,7 @@ run_case() {
   n=$(grep -c '' "$OUT/$id.rid.txt"); dup=$(sort "$OUT/$id.rid.txt" | uniq -d | wc -l); more=$(grep -oE 'more=(true|false)' "$OUT/$id.grid.txt" | head -1)
   say "        행 $n · 중복 ROWID $dup · $more · 로그: $(grep -cE '재질의:|커서에서 .*이어 받음' "$OUT/$id.log.txt") 페이지 줄 · $(grep -c '취소하는 중' "$OUT/$id.log.txt") 취소"
   [ "$n" = "$CNT" ] && ok "$id 행 수 = COUNT(*) ($n)" || bad "$id 행 수 $n ≠ COUNT(*) $CNT (차이 $((n-CNT)))"
-  [ "$dup" = 0 ] && ok "$id 중복 ROWID 없음" || bad "$id 중복 ROWID $dup건" "$(sort "$OUT/$id.rid.txt" | uniq -d | head -3)"
+  [ "$dup" = 0 ] && ok "$id 중복 ROWID 없음" || bad "$id 중복 ROWID ${dup}건" "$(sort "$OUT/$id.rid.txt" | uniq -d | head -3)"
   [ "$more" = "more=false" ] && ok "$id 더 없음(끝까지 받음)" || bad "$id more 상태 = $more"
   # 재질의 확인 토스트(10-12 ④): 덤프 파일이 있으면 버튼 동작 `grid.refetch:<탭>:<offset>:<limit>`이 있어야 한다.
   if [ -f "$OUT/$id.toast.txt" ]; then
