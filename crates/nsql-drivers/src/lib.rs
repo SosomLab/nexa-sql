@@ -408,17 +408,50 @@ pub fn oracle_driver_effective() -> OracleDriver {
     }
 }
 
+/// Oracle 열기 계획(순수 · 시험용): 고른 드라이버가 내장이면 그것 · 아니면 확장 먼저, 그다음 내장된 다른 판.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OraclePlan {
+    Builtin(OracleDriver),
+    ExtensionThenBuiltin { fallback: Option<OracleDriver> },
+}
+
+fn oracle_plan(want: OracleDriver, included: impl Fn(OracleDriver) -> bool) -> OraclePlan {
+    if included(want) {
+        return OraclePlan::Builtin(want);
+    }
+    let other = match want {
+        OracleDriver::Thin => OracleDriver::Oci,
+        OracleDriver::Oci => OracleDriver::Thin,
+    };
+    OraclePlan::ExtensionThenBuiltin {
+        fallback: included(other).then_some(other),
+    }
+}
+
 #[cfg(any(feature = "oracle", feature = "oracle-thin"))]
 fn open_oracle(spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
     // ★ `?driver=thin|oci`(접속 하나에만) > 설정(`oracle.driver`).
-    let chosen = match spec.driver.as_deref() {
+    let want = match spec.driver.as_deref() {
         Some("oci") | Some("oracle-oci") => OracleDriver::Oci,
         Some("thin") | Some("oracle-thin") => OracleDriver::Thin,
-        _ => oracle_driver_effective(),
+        _ => oracle_driver(),
     };
-    if !chosen.included() {
-        return open_extension(Dialect::Oracle, spec);
-    }
+    let chosen = match oracle_plan(want, OracleDriver::included) {
+        OraclePlan::Builtin(d) => d,
+        OraclePlan::ExtensionThenBuiltin { fallback } => {
+            // 🔧 10-23(사용자 "Thin 설치했는데 OCI DPI-1047"): 고른 드라이버가 내장이 아니면 **설치된 확장을 먼저**(종전엔 내장된 다른 판으로
+            //   조용히 폴백해 lite 설치본에서 Thin 확장을 두고도 OCI로 갔다) · 확장이 없을 때만 내장 폴백 · 그것도 없으면 드라이버 없음.
+            for id in ext_ids_for(Dialect::Oracle, Some(want.as_str())) {
+                if let Some(s) = ext::open_ext(id, spec)? {
+                    return Ok(s);
+                }
+            }
+            match fallback {
+                Some(d) => d,
+                None => return Err(driver_missing(Dialect::Oracle, spec.driver.as_deref())),
+            }
+        }
+    };
     match chosen {
         #[cfg(feature = "oracle")]
         OracleDriver::Oci => Ok(Box::new(nsql_driver_oracle::OracleSession::connect(spec)?)),
@@ -674,6 +707,28 @@ mod tests {
                 DriverStatus::Builtin
             ),
             is_builtin(Dialect::Sqlite)
+        );
+    }
+
+    /// 🔧 10-23 lite 설치본(OCI만 내장) + 설정 thin + Thin 확장 설치: 확장을 먼저 쓴다(종전 = OCI 폴백 → DPI-1047).
+    #[test]
+    fn oracle_plan_prefers_extension_when_wanted_driver_not_builtin() {
+        use OracleDriver::{Oci, Thin};
+        // lite: OCI만 내장.
+        let lite = |d: OracleDriver| d == Oci;
+        assert_eq!(
+            oracle_plan(Thin, lite),
+            OraclePlan::ExtensionThenBuiltin {
+                fallback: Some(Oci)
+            }
+        );
+        assert_eq!(oracle_plan(Oci, lite), OraclePlan::Builtin(Oci));
+        // full: 둘 다 내장 → 고른 대로.
+        assert_eq!(oracle_plan(Thin, |_| true), OraclePlan::Builtin(Thin));
+        // 아무것도 내장 아님 → 확장만 · 폴백 없음(없으면 드라이버 없음 오류).
+        assert_eq!(
+            oracle_plan(Thin, |_| false),
+            OraclePlan::ExtensionThenBuiltin { fallback: None }
         );
     }
 
