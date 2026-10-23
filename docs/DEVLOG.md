@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-23 (137차 · 🚀 v0.2.9)** — 🚀 v0.2.9 패치 공개(Oracle Thin 확장 우선 · CLI explain/import/export/cat 드라이버 설정 · conn test 자동 설치 · 실행 계획 검토 · 관리자·필터·다국어 · 자산 +0.5 % · Homebrew ✓ · winget/choco 제외).
+
 - **2026-10-23 (137차 · 실행 계획 검토 · 성능)** — ★ 실행 계획 검토(방언별 EXPLAIN · 트리 · 검토 규칙 7 · GUI 탭 2 · CLI `--analyze`/`--raw` · docs/122 · a1fdfc5…dbf57ad) · 성능 회귀 시험 회귀 없음(26 §7-18 · R3b 의심) · docs/40 CLI 전체 최신화 · 🔧 explain/export/import/cat 드라이버 설정(b6b7377).
 
 - **2026-10-23 (137차 · 14·15번)** — ★ CLI 문구 일괄 Msg(새 키 52 · 재사용 16 · d9b95c0) · ★ DBMS ▸ 드라이버 ODBC/DuckDB 정보 행 · config list info 키 제외(389cd74) · 🔧 로그인 목록 ODBC 상태 점(`ConnectSpec::endpoint` · 6561a4e) · 오프라인 번들 실기 ✓.

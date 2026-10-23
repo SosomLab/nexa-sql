@@ -8,4 +8,4 @@
 - ★ **릴리스 변형(D-352 · 사용자 10-23)** = 기본 **lite만** 만들고 채널에 게시 · **full(통합판)은 기본 미생성** — 릴리스마다 `WINGET_PUBLISH` · `CHOCO_PUSH`와 함께 **"full 변형 여부"(`full_variant` / `RELEASE_FULL`)를 사용자에게 확인** · full 자산은 `-full` 꼬리로 Release에만(채널 게시 없음).
 - ★ **드라이버 릴리스 전 `nsql_abi::DRIVER_VERSION` 올리기**(사용자 10-23 · 4fd25c2) — 드라이버는 앱과 따로 버전을 매긴다 · `drivers-v<ver>` 태그 = 상수 값이어야 한다(`package-drivers.py`가 다르면 중단) · 한 번 공개한 드라이버 버전은 다시 올리지 않으므로 고치려면 상수부터 올린다.
   - 예(10-23 첫 적용) = `drivers-v0.1.2` 전에 1a9f02f에서 `DRIVER_VERSION` 0.1.1 → 0.1.2 · 앱 릴리스 `v0.2.8`과 별개 번호.
-- ★ **10-23 저장소 변수 현재값**(사용자 "winget/choco 제외") = `WINGET_PUBLISH` false · `CHOCO_PUSH` false · `RELEASE_FULL` false — 다음 릴리스 전에도 사용자에게 다시 확인.
+- ★ **10-23 저장소 변수 현재값**(사용자 "winget/choco 제외") = `WINGET_PUBLISH` false · `CHOCO_PUSH` false · `RELEASE_FULL` false — v0.2.8 · **v0.2.9 모두 이 값으로 배포**(값 유지) · 다음 릴리스 전에도 사용자에게 다시 확인.
