@@ -142,6 +142,130 @@ fn dyn_remove_loaded_extension_moves_to_trash() {
         .is_some());
 }
 
+/// ★ 실행 계획 검토(docs/122 · 사용자 10-23 "각 DBMS별 저장 프로필로 자동 시험"): 임시 표 + 조인 조회로 `Runner::explain`(추정 · 가능하면 실제)
+/// → 트리 노드 ≥ 1 · 검토 ≥ 1 · 전체 스캔 지적(작은 표라 Warn)을 확인한다. 서버가 없으면 건너뜀(`runner_for`).
+fn explain_check(r: &mut Runner, dialect: Dialect, setup: &str, stmt: &str, analyze: bool) {
+    use nsql_script::plan::{PlanOptions, Severity};
+    if !setup.is_empty() {
+        run(r, setup);
+    }
+    let rep = r
+        .explain(stmt, PlanOptions { analyze: false })
+        .unwrap_or_else(|e| panic!("[plan] {dialect} 추정 계획 실패: {}", e.message));
+    assert!(!rep.raw.is_empty(), "[plan] {dialect} 원문 없음");
+    assert!(
+        !rep.nodes.is_empty(),
+        "[plan] {dialect} 트리 없음: {:#?}",
+        rep.raw
+    );
+    assert!(!rep.findings.is_empty());
+    assert!(
+        rep.findings
+            .iter()
+            .any(|f| f.severity >= Severity::Warn && f.node.is_some()),
+        "[plan] {dialect} 전체 스캔 지적 기대: {:#?}",
+        rep.findings
+    );
+    let text = nsql_script::plan::render_text(&rep);
+    eprintln!("[plan] {dialect} estimated\n{text}");
+    if analyze {
+        let rep = r
+            .explain(stmt, PlanOptions { analyze: true })
+            .unwrap_or_else(|e| panic!("[plan] {dialect} 실제 계획 실패: {}", e.message));
+        assert!(
+            rep.analyzed && !rep.nodes.is_empty(),
+            "[plan] {dialect} 실제 계획 트리 없음: {:#?}",
+            rep.raw
+        );
+        assert!(
+            rep.nodes.iter().any(|n| n.actual_rows.is_some()),
+            "[plan] {dialect} 실측 행 없음: {:#?}",
+            rep.nodes
+        );
+        eprintln!(
+            "[plan] {dialect} actual\n{}",
+            nsql_script::plan::render_text(&rep)
+        );
+    }
+}
+
+#[test]
+fn explain_review_sqlite() {
+    let spec = ConnectSpec::parse("sqlite::memory:").unwrap();
+    let opener: Opener = Box::new(move |s: &ConnectSpec| open_session(s, Dialect::Sqlite));
+    let mut r = Runner::new(Dialect::Sqlite, opener);
+    run(&mut r, "CONNECT sqlite::memory:\nCREATE TABLE emp (id INTEGER PRIMARY KEY, dept INTEGER, name TEXT);\nCREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT);\nINSERT INTO emp VALUES (1, 10, 'a'), (2, 20, 'b');\nINSERT INTO dept VALUES (10, 'x'), (20, 'y');\n");
+    let _ = spec;
+    explain_check(
+        &mut r,
+        Dialect::Sqlite,
+        "",
+        "SELECT e.name, d.name FROM emp e JOIN dept d ON d.id = e.dept WHERE e.name = 'a'",
+        false,
+    );
+}
+
+#[test]
+fn explain_review_pg() {
+    let Some(mut r) = runner_for("NSQL_PG_URL", Dialect::Postgres) else {
+        return;
+    };
+    explain_check(&mut r, Dialect::Postgres,
+        "DROP TABLE IF EXISTS nsqlt_plan_e; DROP TABLE IF EXISTS nsqlt_plan_d;\nCREATE TABLE nsqlt_plan_d (id INT PRIMARY KEY, name TEXT);\nCREATE TABLE nsqlt_plan_e (id INT PRIMARY KEY, dept INT, name TEXT);\nINSERT INTO nsqlt_plan_d VALUES (10,'x'),(20,'y');\nINSERT INTO nsqlt_plan_e VALUES (1,10,'a'),(2,20,'b');\n",
+        "SELECT e.name, d.name FROM nsqlt_plan_e e JOIN nsqlt_plan_d d ON d.id = e.dept WHERE e.name = 'a'", true);
+    run(
+        &mut r,
+        "DROP TABLE nsqlt_plan_e; DROP TABLE nsqlt_plan_d;\n",
+    );
+}
+
+#[test]
+fn explain_review_mssql() {
+    let Some(mut r) = runner_for("NSQL_MSSQL_URL", Dialect::Mssql) else {
+        return;
+    };
+    explain_check(&mut r, Dialect::Mssql,
+        "IF OBJECT_ID('tempdb..#nsqlt_plan_e') IS NOT NULL DROP TABLE #nsqlt_plan_e\nGO\nIF OBJECT_ID('tempdb..#nsqlt_plan_d') IS NOT NULL DROP TABLE #nsqlt_plan_d\nGO\nCREATE TABLE #nsqlt_plan_d (id INT PRIMARY KEY, name NVARCHAR(20))\nGO\nCREATE TABLE #nsqlt_plan_e (id INT PRIMARY KEY, dept INT, name NVARCHAR(20))\nGO\nINSERT INTO #nsqlt_plan_d VALUES (10,N'x'),(20,N'y');\nINSERT INTO #nsqlt_plan_e VALUES (1,10,N'a'),(2,20,N'b');\n",
+        "SELECT e.name, d.name FROM #nsqlt_plan_e e JOIN #nsqlt_plan_d d ON d.id = e.dept WHERE e.name = N'a'", true);
+}
+
+#[test]
+fn explain_review_mysql() {
+    let Some(mut r) = runner_for("NSQL_MYSQL_URL", Dialect::Mysql) else {
+        return;
+    };
+    // MariaDB는 EXPLAIN ANALYZE 문법이 달라 추정 계획만(docs/122).
+    explain_check(&mut r, Dialect::Mysql,
+        "DROP TABLE IF EXISTS nsqlt_plan_e; DROP TABLE IF EXISTS nsqlt_plan_d;\nCREATE TABLE nsqlt_plan_d (id INT PRIMARY KEY, name VARCHAR(20));\nCREATE TABLE nsqlt_plan_e (id INT PRIMARY KEY, dept INT, name VARCHAR(20));\nINSERT INTO nsqlt_plan_d VALUES (10,'x'),(20,'y');\nINSERT INTO nsqlt_plan_e VALUES (1,10,'a'),(2,20,'b');\n",
+        "SELECT e.name, d.name FROM nsqlt_plan_e e JOIN nsqlt_plan_d d ON d.id = e.dept WHERE e.name = 'a'", false);
+    run(
+        &mut r,
+        "DROP TABLE nsqlt_plan_e; DROP TABLE nsqlt_plan_d;\n",
+    );
+}
+
+#[test]
+fn explain_review_oracle() {
+    for d in oracle_drivers() {
+        nsql_drivers::set_oracle_driver(d);
+        let Some(mut r) = runner_for("NSQL_ORACLE_URL", Dialect::Oracle) else {
+            return;
+        };
+        // 실제 계획(DISPLAY_CURSOR)은 V$SQL_PLAN 권한이 있어야 한다 → 추정만 필수 · 실제는 되면 좋고(실패해도 시험은 통과).
+        explain_check(&mut r, Dialect::Oracle,
+            "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nsqlt_plan_e'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nBEGIN EXECUTE IMMEDIATE 'DROP TABLE nsqlt_plan_d'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nsqlt_plan_d (id NUMBER PRIMARY KEY, name VARCHAR2(20));\nCREATE TABLE nsqlt_plan_e (id NUMBER PRIMARY KEY, dept NUMBER, name VARCHAR2(20));\nINSERT INTO nsqlt_plan_d VALUES (10,'x');\nINSERT INTO nsqlt_plan_d VALUES (20,'y');\nINSERT INTO nsqlt_plan_e VALUES (1,10,'a');\nINSERT INTO nsqlt_plan_e VALUES (2,20,'b');\nCOMMIT;\n",
+            "SELECT e.name, d.name FROM nsqlt_plan_e e JOIN nsqlt_plan_d d ON d.id = e.dept WHERE e.name = 'a'", false);
+        match r.explain("SELECT e.name, d.name FROM nsqlt_plan_e e JOIN nsqlt_plan_d d ON d.id = e.dept WHERE e.name = 'a'", nsql_script::plan::PlanOptions { analyze: true }) {
+            Ok(rep) => eprintln!("[plan] oracle actual({})\n{}", d.as_str(), nsql_script::plan::render_text(&rep)),
+            Err(e) => eprintln!("[plan] oracle actual({}) 생략: {}", d.as_str(), e.message),
+        }
+        run(
+            &mut r,
+            "DROP TABLE nsqlt_plan_e;\nDROP TABLE nsqlt_plan_d;\n",
+        );
+    }
+}
+
 fn runner_for(env: &str, dialect: Dialect) -> Option<Runner> {
     // `<…>_URL` 대신 `<…>_PROFILE=<저장된 프로필 이름>`도 받는다 — 로컬에서 비밀번호를 환경 변수에 적지 않고 돌린다.
     // ⚠ 프로필은 **실제 서버**다: 이름으로 골라(`cargo test … pg_refcursor`) 임시 객체만 쓰는 테스트만 돌린다.
