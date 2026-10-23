@@ -498,8 +498,14 @@ fn parse_sqlite(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
             .map_or(0, |(_, d)| d + 1);
         depth_of.push((id, depth));
         let mut words = detail.split_whitespace();
-        let op = words.next().unwrap_or("").to_string();
-        let object = if op == "SCAN" || op == "SEARCH" {
+        let first = words.next().unwrap_or("").to_string();
+        // `USE TEMP B-TREE FOR ORDER BY` · `MULTI-INDEX OR` · `LIST SUBQUERY n` 같은 줄은 첫 낱말만으로는 뜻이 없다 → 줄 전체가 연산(10-23 협업 지적).
+        let op = if first == "SCAN" || first == "SEARCH" {
+            first.clone()
+        } else {
+            detail.trim().to_string()
+        };
+        let object = if first == "SCAN" || first == "SEARCH" {
             words
                 .next()
                 .filter(|w| !w.eq_ignore_ascii_case("TABLE"))
@@ -1194,6 +1200,17 @@ mod tests {
         assert!(review(Dialect::Sqlite, &s, false)
             .iter()
             .any(|x| x.node == Some(0)));
+        let srows2 = vec![vec![
+            "9".into(),
+            "0".into(),
+            "0".into(),
+            "USE TEMP B-TREE FOR ORDER BY".into(),
+        ]];
+        let s2 = parse_plan(Dialect::Sqlite, &scols, &srows2);
+        assert_eq!(
+            (s2[0].op.as_str(), s2[0].object.as_str()),
+            ("USE TEMP B-TREE FOR ORDER BY", "")
+        );
         // DuckDB
         let d = "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             a             │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         SEQ_SCAN          │\n│    ────────────────────   │\n│             t             │\n│          ~5 Rows          │\n└───────────────────────────┘";
         let dn = parse_plan(Dialect::Duckdb, &[], &rows1(d));
