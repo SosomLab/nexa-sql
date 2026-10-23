@@ -352,6 +352,14 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
                 _ => nsql_i18n::tf(nsql_i18n::Msg::StConnectFailed, &[&e.message]),
             };
             eprintln!("{text}");
+            // CLI엔 로그 창이 없다 → 드라이버 오류의 영어 상세를 한 줄 더(협업 10-23 지적).
+            if matches!(
+                e.code,
+                Some(nsql_drivers::ERR_DRIVER_MISSING)
+                    | Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED)
+            ) {
+                eprintln!("  {}", e.message);
+            }
             1
         }
     }
