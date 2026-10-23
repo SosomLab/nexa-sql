@@ -167,6 +167,10 @@ pub fn native_code(dialect: Dialect, code: Option<i64>, message: &str) -> Option
             return Some(format!("SQLSTATE {rest}"));
         }
     }
+    // 내부 코드(음수 · 드라이버 없음 -1350 · 자동 설치 실패 -1351 등)는 서버 코드가 아니다 → 방언 접두 없이 숫자만(10-23 "ORA--1350").
+    if code.is_some_and(|c| c < 0) {
+        return code.map(|c| c.to_string());
+    }
     match (dialect, code) {
         (Dialect::Oracle, Some(c)) => Some(format!("ORA-{c:05}")),
         (Dialect::Mssql, Some(c)) => Some(format!("Msg {c}")),

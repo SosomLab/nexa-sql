@@ -281,6 +281,9 @@ fn read_source(path: &str) -> String {
 /// `CONNECT user@host`가 빈 비밀번호로 로그인을 시도해 서버에 실패 기록을 남겼다 — 되풀이되면 계정이 잠긴다 · GUI와 같은 규칙).
 /// 빈 비밀번호로 붙으려면 `user:@host`로 명시한다.
 fn opener(default_dialect: Dialect) -> Opener {
+    // ★ 접속을 여는 모든 명령(run·shell·explain·import·export·cat·conn test)이 같은 드라이버 설정·자동 설치 정책을 탄다 —
+    //   🔧 10-23 사용자 실기: explain/import/export/cat은 `apply_load_switches`를 안 거쳐 자동 설치가 꺼진 것처럼 -1350.
+    apply_driver_switches();
     Box::new(
         move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
             if !password_missing(spec, default_dialect) {
@@ -1432,6 +1435,19 @@ impl Printer {
                 self.errors += 1;
                 // 공통 분류 + 코드 부각(docs/42) — `ERROR line n: [ORA-00942 · Table not found: X] 원문`.
                 let stmt = self.stmts.get(index).map(String::as_str).unwrap_or("");
+                // 드라이버 없음/자동 설치 실패 = GUI·conn test와 같은 짧은 Msg + 영어 상세 한 줄(10-23).
+                if let Some(m) = match error.code {
+                    Some(nsql_drivers::ERR_DRIVER_MISSING) => Some(Msg::StDriverMissing),
+                    Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED) => {
+                        Some(Msg::StDriverInstallFailed)
+                    }
+                    _ => None,
+                } {
+                    let dn = self.dialect.display_name();
+                    self.err(&format!("ERROR line {line}: {}", tf(m, &[dn])));
+                    self.err(&format!("  {}", error.message));
+                    return;
+                }
                 let c = nsql_core::classify(self.dialect, error.code, &error.message, stmt);
                 let head = err_head(&c);
                 if head.is_empty() {
