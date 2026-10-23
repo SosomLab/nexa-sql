@@ -31,6 +31,7 @@ pub mod intel;
 pub mod intrinsic;
 pub mod lexer;
 pub mod outline;
+pub mod plan;
 pub mod split;
 pub mod vars;
 /// 글로벌 변수 층 파일(`vars/global.sql`) 읽기/쓰기 — GUI·CLI 공용(T-307 · 10-07).
