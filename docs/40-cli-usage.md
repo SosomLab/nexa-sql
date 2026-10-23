@@ -657,6 +657,14 @@ id  parent  notused  detail
 
 방언별 관용을 알아서 쓴다(Oracle `EXPLAIN PLAN` + `DBMS_XPLAN` · SQL Server `SHOWPLAN` · PostgreSQL `EXPLAIN` · SQLite `EXPLAIN QUERY PLAN`).
 
+> ★ **10-23(137차) 실행 계획 검토** — 위 원문 표는 이제 `--raw`일 때의 출력이다. 기본 출력 = **공통 트리 + 자동 검토**(`실행 계획` · `검토` · `[HIGH]`/`[WARN]`/`[INFO]`) · `--analyze` = 실제 실행 계획(문장을 실행 · stderr 경고) · `--raw` = DBMS 원문 그대로. 방언별 원문·파싱·검토 규칙 7·해석 요령·출력 예 = **[122 실행 계획 검토](122-execution-plan-review.md)**.
+
+```sh
+nsql explain -c "sqlite:t1.db" -q "SELECT * FROM emp WHERE dept='IT'"            # 트리 + 검토
+nsql explain -c "sqlite:t1.db" -q "SELECT * FROM emp WHERE dept='IT'" --raw      # 원문(위 표)
+nsql explain -c prod -q "SELECT …" --analyze                                   # 실제 실행 계획
+```
+
 ### Step 11 — 내보내기 (`export`)
 
 `-q <sql>`과 `-t <table>` 중 하나 · 기본 형식 **csv**(`cli.format`이 grid가 아니면 그 값) · `-o`가 없으면 stdout.
