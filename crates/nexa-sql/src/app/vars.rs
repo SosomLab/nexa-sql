@@ -116,6 +116,12 @@ impl App {
                 } else {
                     full.clone()
                 };
+                // ★ D-355: stale 수식 = `값 ⟳ := 수식`(재계산 전임을 보인다 · 왕복 0).
+                let shown = if v.stale {
+                    format!("{shown} \u{21bb} := {}", v.formula.as_deref().unwrap_or(""))
+                } else {
+                    shown
+                };
                 let shadowed = match layer {
                     nsql_script::Layer::Shared => local_names.contains(&up(&v.name)),
                     nsql_script::Layer::Global => near_names.contains(&up(&v.name)),
@@ -129,6 +135,7 @@ impl App {
                     layer,
                     changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
                     shadowed,
+                    stale: v.stale,
                 }
             })
             // 치환 변수(`&이름` · DEFINE) — 표시값 = 사용 시 모드면 `원문 → 현재 값`(63 §9) · 편집 = 원문.
@@ -145,9 +152,33 @@ impl App {
                         layer: nsql_script::Layer::Local,
                         changed: false,
                         shadowed: false,
+                        stale: false,
                     }),
             )
             .collect()
+    }
+
+    /// ★ D-355(10-24): 변수 창 ⟳ — 사용 시 모드의 stale 수식을 지금 한 묶음으로 재계산(빈 스크립트 실행 + `refresh_vars` · 왕복 = 수식 묶음 1회).
+    ///   DB로 가는 진입점이므로 문지기(`gate_pass`)를 지난다 · 막혔으면 상태줄 안내만.
+    pub(crate) fn vars_refresh_now(&mut self) {
+        let Some(pass) = self.gate_pass() else {
+            return;
+        };
+        self.sess.submit(
+            pass,
+            worker::Cmd::Run {
+                src: String::new(),
+                preflight: None,
+                max_rows: 0,
+                vars: self.run_vars(),
+                defines: self.run_defines(),
+                intrinsic: Some(self.run_intrinsic()),
+                whole: false,
+                hold: None,
+                refresh_vars: true,
+            },
+        );
+        self.redraw();
     }
 
     /// 변수 창의 동작을 표에 반영한다 — 탭 층은 App이 주인(바로 고친다 · 보존 파일도) · 공유 층은 워커에 통째로 알린다.
@@ -159,6 +190,10 @@ impl App {
         let mut global_dirty = false;
         match action {
             A::None | A::Paint => return,
+            A::Refresh => {
+                self.vars_refresh_now();
+                return;
+            }
             A::Script => {
                 self.menu_action("vars.script");
                 return;
@@ -207,6 +242,8 @@ impl App {
                             value: value.clone(),
                             declared: false,
                             layer: nsql_script::Layer::Local,
+                            formula: None,
+                            stale: false,
                         }),
                     }
                 }

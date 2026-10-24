@@ -68,6 +68,8 @@ mod tests {
             declared: true,
             secret: false,
             layer: Layer::Global,
+            formula: None,
+            stale: false,
         }];
         store_global(&dir, &vars);
         let back = load_global(&dir);

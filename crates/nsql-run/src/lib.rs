@@ -2125,6 +2125,29 @@ impl Runner {
         self.run_script_in(src, None, prompt, emit)
     }
 
+    /// ★ D-355(10-24 · 사용자 "변수 창이 조회 시점 값"): 사용 시 모드의 **stale 수식을 지금 한 묶음으로** 재계산 — 변수 창이 열려 있을 때
+    /// 실행 끝(`Cmd::Run.refresh_vars`) 또는 창의 ⟳. `EXEC :이름 := 수식`들을 스크립트 하나로 돌려 `RunEvent::Vars` 한 번 ·
+    /// 연쇄 의존(재계산이 또 다른 수식을 stale로)은 최대 4회 · 오류가 나면 멈춤. 돌려준 값 = 재계산한 수식 수(0 = 왕복 없음).
+    pub fn refresh_stale_vars(&mut self, emit: &mut dyn FnMut(RunEvent)) -> usize {
+        let mut total = 0;
+        for _ in 0..4 {
+            let stale = self.engine.vars.take_all_stale_formulas();
+            if stale.is_empty() {
+                break;
+            }
+            let src: String = stale
+                .iter()
+                .map(|(n, f)| format!("EXEC :{n} := {f}\n"))
+                .collect();
+            total += stale.len();
+            let mut no_prompt = |_: &str| None;
+            if self.run_script(&src, &mut no_prompt, emit) > 0 {
+                break;
+            }
+        }
+        total
+    }
+
     /// ★ **소스 전체를 한 단위로**(09-30 · 사용자 "객체 소스 탭 F5 = CREATE 한 번"): 객체 소스 탭(소스 열기 · DDL 열기)의
     /// F5는 본문을 문장으로 나누지 않고 **한 항목**으로 보낸다 — 분할기가 방언·머리 줄 모양 때문에 잘못 나눠 "줄 단위 실행"이
     /// 되는 일이 없다. 분할이 정확히 1항목이면 그대로(오늘과 같은 길) · 아니면 [`whole_item`]로 합친다(끝의 `/`·`GO`·`;` 제거).

@@ -94,6 +94,9 @@ pub(crate) enum Cmd {
         whole: bool,
         /// ★ 운영 보류 커밋 정책(114 §5 · 10-15) — 운영 접속 + `tx.prod_hold`일 때만 `Some`.
         hold: Option<nsql_run::HoldPolicy>,
+        /// ★ D-355(10-24): 실행이 끝난 뒤 사용 시 모드의 stale 수식을 한 묶음으로 재계산(`Runner::refresh_stale_vars`) — 변수 창이 열려
+        ///   있을 때만 호스트가 켠다 · `src`가 비면 재계산만(창의 ⟳).
+        refresh_vars: bool,
     },
     /// ★ 실행 계획 검토(docs/122 · 사용자 10-23): 한 문장을 방언별 EXPLAIN으로 돌려 트리·검토 결과를 **결과 집합 둘**로 돌려준다
     ///   (`RunEvent::ResultSet` 라벨 = 실행 계획 / 검토 · 파싱이 안 되면 원문 집합 하나). `analyze` = 문장을 실제로 실행.
@@ -1782,6 +1785,7 @@ pub(crate) fn spawn(
                         intrinsic,
                         whole,
                         hold,
+                        refresh_vars,
                     } => {
                         if let Some(v) = vars {
                             runner.engine.vars.set_local(v);
@@ -1900,6 +1904,13 @@ pub(crate) fn spawn(
                         } else {
                             runner.run_script(&src, &mut prompt, &mut on_ev)
                         };
+                        // ★ D-355: 변수 창용 재계산(한 묶음 · 오류 실행 뒤에는 건드리지 않는다).
+                        if refresh_vars && errs == 0 {
+                            let n = runner.refresh_stale_vars(&mut on_ev);
+                            if n > 0 && std::env::var_os("NSQL_TRACE_RUN").is_some() {
+                                eprintln!("[run] refresh_stale_vars = {n}");
+                            }
+                        }
                         runner.set_hold(None);
                         run_seq.fetch_add(1, Ordering::Relaxed);
                         // ★ 전용 세션 재접속 원천(사용자 10-09): 스크립트 안 `CONNECT`로 붙은 접속은 워커의 `active_spec`에 없어

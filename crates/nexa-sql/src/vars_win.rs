@@ -36,6 +36,8 @@ pub(crate) struct VarRow {
     pub changed: bool,
     /// ★ 앞 층에 같은 이름이 있어 **가려진** 줄(글로벌·공유) — 흐리게 그린다(사용자 10-07 "같은 이름의 글로벌·탭을 함께 · 글로벌은 흐릿하게").
     pub shadowed: bool,
+    /// ★ D-355: 사용 시 모드에서 의존이 바뀐 뒤 재계산 전 — 값 칸 흐리게(값에 `⟳ := 수식`이 붙어 온다).
+    pub stale: bool,
 }
 
 pub(crate) enum VarsWinAction {
@@ -49,6 +51,8 @@ pub(crate) enum VarsWinAction {
     Layer(String, nsql_script::Layer),
     Delete(String),
     Script,
+    /// ★ D-355: ⟳ = stale 수식 지금 재계산(호스트가 러너 `refresh_stale_vars`로).
+    Refresh,
 }
 
 const COLS: [(Msg, i32); 4] = [
@@ -71,6 +75,7 @@ pub(crate) struct VarsWin {
     share_btn: Button,
     del_btn: Button,
     script_btn: Button,
+    refresh_btn: Button,
     /// 마지막 페인트의 줄(히트 테스트·선택) · 고른 이름.
     rows: Vec<VarRow>,
     selected: Option<String>,
@@ -96,6 +101,7 @@ impl VarsWin {
             share_btn: Button::new(t(Msg::BtnVarsShare)),
             del_btn: Button::new(t(Msg::BtnDelete)),
             script_btn: Button::new(t(Msg::BtnVarsScript)),
+            refresh_btn: Button::new(t(Msg::BtnVarsRefresh)),
             rows: Vec::new(),
             selected: None,
             hover: None,
@@ -188,13 +194,14 @@ impl VarsWin {
         }
     }
 
-    fn buttons(&mut self) -> [&mut Button; 5] {
+    fn buttons(&mut self) -> [&mut Button; 6] {
         [
             &mut self.set_btn,
             &mut self.null_btn,
             &mut self.share_btn,
             &mut self.del_btn,
             &mut self.script_btn,
+            &mut self.refresh_btn,
         ]
     }
 
@@ -423,6 +430,9 @@ impl VarsWin {
         if self.script_btn.take_clicked() {
             return VarsWinAction::Script;
         }
+        if self.refresh_btn.take_clicked() {
+            return VarsWinAction::Refresh;
+        }
         VarsWinAction::None
     }
 
@@ -537,7 +547,7 @@ impl VarsWin {
                 for (i, w) in widths.iter().enumerate() {
                     let cell = Rect::new(cx, clip.y, *w - px(4.0), clip.h);
                     // 가려진 줄(앞 층에 같은 이름)은 전부 흐리게.
-                    let color = if r.shadowed || !(i == 0 || i == 2) {
+                    let color = if r.shadowed || (r.stale && i == 2) || !(i == 0 || i == 2) {
                         th.text_dim
                     } else {
                         th.text
@@ -562,7 +572,7 @@ impl VarsWin {
                 _ => t(Msg::BtnVarsShare),
             });
             let by = ey + edit_h + pad;
-            let bw = ((wi - pad * 2 - px(8.0) * 4) / 5).max(px(60.0));
+            let bw = ((wi - pad * 2 - px(8.0) * 5) / 6).max(px(56.0));
             let mut bx = pad;
             for b in self.buttons() {
                 b.set_scale(s);

@@ -5630,6 +5630,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(VARS_EXPAND_OPTS),
         default: "assign",
     },
+    // ★ D-355(10-24): 변수 창이 열려 있을 때 실행 끝에 stale 수식(사용 시 모드)을 한 묶음으로 재계산 · 끔 = 표시만 + ⟳ 수동.
+    Entry {
+        key: "vars.refresh_on_run",
+        cat: Msg::CatScriptVars,
+        label: Msg::LblVarsRefreshOnRun,
+        desc: Msg::DescVarsRefreshOnRun,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "vars.max_value_kb",
         cat: Msg::CatScriptVars,

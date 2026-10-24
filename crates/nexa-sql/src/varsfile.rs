@@ -115,6 +115,8 @@ mod tests {
             declared: false,
             secret: false,
             layer: Layer::Local,
+            formula: None,
+            stale: false,
         }];
         store_in(&dir, &file, &vars);
         let back = load_in(&dir, &file);

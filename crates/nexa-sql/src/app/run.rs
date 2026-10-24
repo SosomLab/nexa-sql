@@ -399,6 +399,8 @@ impl App {
                 intrinsic: Some(self.run_intrinsic()),
                 whole,
                 hold,
+                // ★ D-355: 변수 창이 열려 있으면 실행 끝에 stale 수식을 한 묶음으로 재계산(설정 `vars.refresh_on_run`).
+                refresh_vars: self.vars_win.is_open() && self.settings.flag("vars.refresh_on_run"),
             },
         );
         self.live_start();

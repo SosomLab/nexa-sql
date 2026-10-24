@@ -65,6 +65,10 @@ pub struct VarState {
     pub declared: bool,
     pub secret: bool,
     pub layer: Layer,
+    /// ★ D-355(10-24): 사용 시 모드에서 기억한 수식(`:A + 10`) — 변수 창이 `값 ⟳ := 수식`으로 보인다 · 없으면 None.
+    pub formula: Option<String>,
+    /// 의존이 바뀐 뒤 아직 재계산 전(사용 시 모드) — 창은 흐리게 + ⟳ · 러너 `refresh_stale_vars`가 한 묶음으로 푼다.
+    pub stale: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -487,7 +491,8 @@ impl VarStore {
         true
     }
 
-    fn state((_, v): (&String, &Var), layer: Layer) -> VarState {
+    fn state(&self, (k, v): (&String, &Var), layer: Layer) -> VarState {
+        let f = self.formulas.get(k);
         VarState {
             name: v.label.clone(),
             ty: v.ty.clone(),
@@ -495,6 +500,8 @@ impl VarStore {
             declared: v.declared,
             secret: v.secret,
             layer,
+            formula: f.map(|f| f.text.clone()),
+            stale: f.is_some_and(|f| f.stale),
         }
     }
 
@@ -542,7 +549,7 @@ impl VarStore {
     pub fn global_states(&self) -> Vec<VarState> {
         self.global
             .iter()
-            .map(|e| Self::state(e, Layer::Global))
+            .map(|e| self.state(e, Layer::Global))
             .collect()
     }
 
@@ -551,7 +558,7 @@ impl VarStore {
     pub fn local_states(&self) -> Vec<VarState> {
         self.vars
             .iter()
-            .map(|e| Self::state(e, Layer::Local))
+            .map(|e| self.state(e, Layer::Local))
             .collect()
     }
 
@@ -560,7 +567,7 @@ impl VarStore {
     pub fn shared_states(&self) -> Vec<VarState> {
         self.shared
             .iter()
-            .map(|e| Self::state(e, Layer::Shared))
+            .map(|e| self.state(e, Layer::Shared))
             .collect()
     }
 
@@ -666,6 +673,33 @@ mod tests {
 
     /// 글로벌 층(docs/63 §11): 우선순위 tab > shared > global > fixed · `set_layer`로 세 층을 오간다 · 대입은 글로벌을 고치지 않고
     /// 탭 층에 가리는 값을 만든다 · 프로필 층은 옮길 수 없다.
+    /// ★ D-355: 스냅숏에 수식·stale이 실린다 · 걷으면(take_all_stale) stale이 내려간다.
+    #[test]
+    fn snapshot_carries_formula_and_stale() {
+        let mut s = VarStore::default();
+        s.assign("A", Value::Int(50));
+        s.assign("B", Value::Int(60));
+        s.set_formula("B", ":A + 10", vec!["A".into()]);
+        let b = s
+            .local_states()
+            .into_iter()
+            .find(|v| v.name == "B")
+            .unwrap();
+        assert_eq!((b.formula.as_deref(), b.stale), (Some(":A + 10"), false));
+        s.assign("A", Value::Int(40));
+        let b = s
+            .local_states()
+            .into_iter()
+            .find(|v| v.name == "B")
+            .unwrap();
+        assert!(b.stale, "의존 A가 바뀌면 stale");
+        assert_eq!(
+            s.take_all_stale_formulas(),
+            vec![("B".to_string(), ":A + 10".to_string())]
+        );
+        assert!(!s.local_states().iter().any(|v| v.stale));
+    }
+
     #[test]
     fn global_layer_precedence_and_moves() {
         let mut s = VarStore::new();
@@ -676,6 +710,8 @@ mod tests {
             declared: false,
             secret: false,
             layer: Layer::Global,
+            formula: None,
+            stale: false,
         }]);
         assert_eq!(s.layer_of("project"), Some(Layer::Global));
         assert_eq!(
@@ -910,6 +946,8 @@ mod tests {
             declared: true,
             secret: false,
             layer: Layer::Fixed,
+            formula: None,
+            stale: false,
         }]);
         s.assign("a", Value::Int(1));
         assert_eq!(s.layer_of("A"), Some(Layer::Local));

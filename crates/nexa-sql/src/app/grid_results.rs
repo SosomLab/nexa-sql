@@ -1092,6 +1092,7 @@ impl App {
                 intrinsic: Some(self.run_intrinsic()),
                 whole: false,
                 hold: None,
+                refresh_vars: false,
             },
         );
         self.live_start();
