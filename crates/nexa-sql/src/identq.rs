@@ -57,9 +57,12 @@ pub(crate) fn needs_quote(dialect: Dialect, name: &str) -> bool {
         Dialect::Oracle => name.chars().any(|c| c.is_ascii_lowercase()),
         // 소문자로 접힌다 → 대문자가 섞인 이름은 따옴표로 만든 이름.
         Dialect::Postgres => name.chars().any(|c| c.is_ascii_uppercase()),
-        Dialect::Mssql | Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => {
-            false
-        }
+        Dialect::Mssql
+        | Dialect::Mysql
+        | Dialect::Sqlite
+        | Dialect::Odbc
+        | Dialect::Duckdb
+        | Dialect::Clickhouse => false,
     }
 }
 

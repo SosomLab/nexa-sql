@@ -1,0 +1,23 @@
+[package]
+name = "nsql-driver-clickhouse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 어댑터 — ClickHouse(HTTP 인터페이스 · nsql-net/nsql-json · 외부 crate 0 · 확장 전용 cdylib · D-354)"
+
+[lints]
+workspace = true
+
+# ★ 확장 전용(D-350 · 121 P5): 내장 feature 없음 — HTTP 인터페이스라 외부 crate가 없어 크기는 작지만 설치본 정책(드라이버 = 확장)을 따른다. rlib는 시험용.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+nsql-abi.workspace = true
+nsql-net.workspace = true
+nsql-json.workspace = true

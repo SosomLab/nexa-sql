@@ -508,7 +508,7 @@ pub(crate) fn watermark_sql(dialect: Dialect, schema: &str) -> Option<String> {
             "SELECT CONCAT(COUNT(*), ':', COALESCE(MAX(CREATE_TIME), '')) FROM information_schema.tables WHERE table_schema = '{s}'"
         ),
         Dialect::Sqlite => "PRAGMA schema_version".to_string(),
-        Dialect::Odbc | Dialect::Duckdb => return None,
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return None,
     })
 }
 
@@ -609,7 +609,7 @@ pub(crate) fn blockers_sql(dialect: Dialect, sid: &str) -> Option<String> {
         Dialect::Mysql => format!(
             "SELECT CONCAT(waiting_pid, ' ', wait_age_secs, 's') FROM sys.innodb_lock_waits WHERE blocking_pid = {sid}"
         ),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => return None,
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return None,
     })
 }
 
@@ -2419,6 +2419,7 @@ fn switch_db(
     let Some(s) = session.as_mut() else { return };
     // SQL Server = DB(`USE`) · Oracle = 스키마(`ALTER SESSION SET CURRENT_SCHEMA`) · PG = search_path · MySQL = DB —
     // 드라이버 `set_option("schema")`가 방언별로 안다(10-01 ⑮). 파일 방언은 없음.
+    // ClickHouse는 `USE db` = 데이터베이스 전환이 있다(드라이버 `set_option("schema")`) → 파일 방언 목록에 넣지 않는다.
     if matches!(
         s.dialect(),
         Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb

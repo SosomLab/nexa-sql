@@ -4888,6 +4888,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ ClickHouse(10-24 · D-354 · 확장 전용 · HTTP).
+    Entry {
+        key: "driver.info_clickhouse",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoClickhouse,
+        desc: Msg::DescDriverInfoDialect,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ★ MySQL/MariaDB(T-388 · 136차): TLS 모드 + CA 파일 — 접속 문자열 `?tls=`가 이긴다 · 새 접속부터.
     Entry {
         key: "mysql.tls",
@@ -7417,6 +7426,7 @@ pub const INFO_KEYS: &[&str] = &[
     "driver.info_installed",
     "driver.info_odbc",
     "driver.info_duckdb",
+    "driver.info_clickhouse",
 ];
 
 /// 읽기 전용 정보 키인가.

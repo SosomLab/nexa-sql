@@ -215,6 +215,8 @@ impl ConnectSpec {
         let mut has_scheme = false;
         // ★ ODBC 계열 벤더 스킴(T-384 · 사용자 10-23 "tibero 등"): `tibero://u:p@h:8629/db` → ODBC 접속 문자열(드라이버 이름 프리셋).
         let mut odbc_preset: Option<(&'static str, u16)> = None;
+        // ★ PostgreSQL 와이어 호환 스킴(10-24 · `redshift://` 등) = 방언 Postgres + 기본 포트만 다르다.
+        let mut wire_port: Option<u16> = None;
 
         // 파일 방언 축약: sqlite:경로(나머지 전부가 경로 — `:`·`/`·`\\`를 해석하지 않는다).
         // ★ ODBC(T-383 · 136차)도 같은 꼴: `odbc:DSN=…` · `odbc:Driver={…};Server=…;Uid=u;Pwd=p` = 나머지 전부가 ODBC 접속 문자열 ·
@@ -275,6 +277,7 @@ impl ConnectSpec {
             let scheme = s[..i].to_string();
             spec.dialect = Dialect::from_name(&scheme);
             odbc_preset = odbc_preset_for(&scheme);
+            wire_port = wire_preset_port(&scheme);
             if spec.dialect.is_none() {
                 return Err(tr!(
                     "CONNECT: unknown scheme '{scheme}'",
@@ -397,6 +400,9 @@ impl ConnectSpec {
                 "CONNECT: a user or a target is required",
                 "CONNECT: 사용자 또는 대상이 필요합니다"
             ));
+        }
+        if spec.port.is_none() && spec.host.is_some() {
+            spec.port = wire_port;
         }
         if let (Some((driver, default_port)), Some(Dialect::Odbc)) = (odbc_preset, spec.dialect) {
             if let Some(host) = spec.host.take() {
@@ -652,6 +658,8 @@ pub fn odbc_endpoint(conn: &str) -> Option<(String, u16)> {
             ("cubrid", 33000),
             ("oracle", 1521),
             ("db2", 50000),
+            ("hdbodbc", 30015),
+            ("informix", 9088),
         ]
         .iter()
         .find(|(k, _)| driver.contains(k))
@@ -666,6 +674,22 @@ fn odbc_preset_for(scheme: &str) -> Option<(&'static str, u16)> {
         "tibero" => Some(("Tibero 7 ODBC Driver", 8629)),
         "altibase" => Some(("Altibase ODBC Driver", 20300)),
         "cubrid" => Some(("CUBRID Driver", 33000)),
+        // 10-24 추가(121 P5 · ODBC로 커버되는 레거시·대기업 DBMS): 드라이버 이름 = 벤더 배포본의 odbcinst 등록 이름.
+        "db2" => Some(("IBM DB2 ODBC DRIVER", 50000)),
+        "hana" => Some(("HDBODBC", 30015)),
+        "informix" => Some(("IBM INFORMIX ODBC DRIVER", 9088)),
+        _ => None,
+    }
+}
+
+/// ★ PostgreSQL 와이어 호환 스킴 → 기본 포트(10-24 · 121 P5): Redshift 5439 · CockroachDB 26257 · YugabyteDB 5433 · Greenplum·TimescaleDB 5432.
+///   방언은 [`Dialect::from_name`]이 Postgres로 돌린다 — 드라이버·문법·카탈로그 전부 PostgreSQL 것(차이는 서버가 알려 준다).
+fn wire_preset_port(scheme: &str) -> Option<u16> {
+    match scheme.to_ascii_lowercase().as_str() {
+        "redshift" => Some(5439),
+        "cockroach" | "cockroachdb" => Some(26257),
+        "yugabyte" | "yugabytedb" => Some(5433),
+        "greenplum" | "timescale" | "timescaledb" => Some(5432),
         _ => None,
     }
 }
@@ -673,6 +697,48 @@ fn odbc_preset_for(scheme: &str) -> Option<(&'static str, u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 10-24(121 P5): PG 와이어 스킴 = Postgres + 기본 포트 · 새 ODBC 벤더 스킴 3 · ClickHouse URL.
+    #[test]
+    fn wire_odbc_and_clickhouse_presets() {
+        let r = ConnectSpec::parse("redshift://u:p@h/dev").expect("redshift");
+        assert_eq!(
+            (r.dialect, r.port, r.host.as_deref()),
+            (Some(Dialect::Postgres), Some(5439), Some("h"))
+        );
+        let c = ConnectSpec::parse("cockroachdb://u:p@h:9999/db").expect("cockroach");
+        assert_eq!(c.port, Some(9999), "명시한 포트가 이긴다");
+        assert_eq!(
+            ConnectSpec::parse("yugabyte://u:p@h/db").unwrap().port,
+            Some(5433)
+        );
+        assert_eq!(
+            ConnectSpec::parse("timescaledb://u:p@h/db").unwrap().port,
+            Some(5432)
+        );
+        for (url, drv, port) in [
+            ("db2://u:p@h/sample", "IBM DB2 ODBC DRIVER", 50000),
+            ("hana://u:p@h/HXE", "HDBODBC", 30015),
+            ("informix://u:p@h/stores", "IBM INFORMIX ODBC DRIVER", 9088),
+        ] {
+            let s = ConnectSpec::parse(url).expect(url);
+            assert_eq!(s.dialect, Some(Dialect::Odbc));
+            let db = s.database.unwrap();
+            assert!(
+                db.starts_with(&format!("Driver={{{drv}}};Server=h;Port={port};")),
+                "{db}"
+            );
+            assert_eq!(s.user.as_deref(), Some("u"));
+        }
+        let ch = ConnectSpec::parse("clickhouse://u:p@h/db?tls=required").expect("clickhouse");
+        assert_eq!(
+            (ch.dialect, ch.port, ch.tls.as_deref()),
+            (Some(Dialect::Clickhouse), None, Some("required"))
+        );
+        assert_eq!(ch.database.as_deref(), Some("db"));
+        let ch2 = ConnectSpec::parse("clickhouse://h:8124").expect("host only");
+        assert_eq!((ch2.port, ch2.user.is_none()), (Some(8124), true));
+    }
 
     #[test]
     fn ezconnect_form() {

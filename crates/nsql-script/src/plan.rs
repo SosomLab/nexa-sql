@@ -80,6 +80,8 @@ pub struct PlanReport {
 pub fn explain_script_opts(dialect: Dialect, stmt: &str, opts: PlanOptions) -> String {
     let s = stmt.trim().trim_end_matches(';').trim();
     match (dialect, opts.analyze) {
+        // ClickHouse(10-24): `EXPLAIN`(PLAN) 하나 — 실제 실행 통계는 없다(`EXPLAIN PIPELINE`·`ESTIMATE`는 후속).
+        (Dialect::Clickhouse, _) => format!("EXPLAIN {s};\n"),
         // ★ PL/SQL `EXECUTE IMMEDIATE`로 감싼다(10-23 실측): Thin 드라이버(oracledb)는 `EXPLAIN`을 질의·DML·DDL 어디에도 넣지 않아 **파싱만**
         //   하고 실행하지 않는다(PLAN_TABLE 0행 → "cannot fetch last explain plan"). 블록 안에서는 두 드라이버 모두 실행된다. `'`는 `''`로.
         (Dialect::Oracle, false) => format!(
@@ -170,7 +172,7 @@ pub fn parse_plan(dialect: Dialect, columns: &[String], rows: &[Vec<String>]) ->
         Dialect::Mysql => parse_mysql(columns, rows),
         Dialect::Sqlite => parse_sqlite(columns, rows),
         Dialect::Duckdb => parse_duckdb(rows),
-        Dialect::Odbc => parse_generic(columns, rows),
+        Dialect::Odbc | Dialect::Clickhouse => parse_generic(columns, rows),
     }
 }
 
@@ -628,6 +630,8 @@ pub fn review(dialect: Dialect, nodes: &[PlanNode], analyzed: bool) -> Vec<Findi
             }
             Dialect::Sqlite => op == "SCAN",
             Dialect::Duckdb => op == "SEQ_SCAN",
+            // ClickHouse `ReadFromMergeTree`는 키 범위를 쓰는지 한 줄로는 모른다 → 판정 없음.
+            Dialect::Clickhouse => false,
             Dialect::Odbc => op.contains("FULL") || op.contains("SEQ"),
         };
         if full {

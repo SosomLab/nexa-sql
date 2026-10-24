@@ -113,7 +113,7 @@ fn savepoint_sql(
             None,
         ),
         // DuckDB = SAVEPOINT 미지원(1.x).
-        Dialect::Odbc | Dialect::Duckdb => (None, None, None),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => (None, None, None),
         _ => (
             Some("SAVEPOINT nsql_edit"),
             Some("ROLLBACK TO SAVEPOINT nsql_edit"),

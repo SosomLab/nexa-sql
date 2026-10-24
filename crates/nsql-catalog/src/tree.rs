@@ -211,7 +211,7 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
             Rules,
             Policies,
         ],
-        (Dialect::Odbc | Dialect::Duckdb, ObjectKind::Table) => &[Columns],
+        (Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse, ObjectKind::Table) => &[Columns],
         (_, ObjectKind::Table) => &[Columns, Constraints, ForeignKeys, Indexes, Triggers],
         (Dialect::Mssql, ObjectKind::ExternalTable) => &[Columns],
         (Dialect::Postgres, ObjectKind::ForeignTable) => &[Columns, Constraints],
@@ -224,7 +224,7 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
         }
         (Dialect::Postgres, ObjectKind::MaterializedView) => &[Columns, Indexes, Dependencies],
         (_, ObjectKind::MaterializedView) => &[Columns],
-        (Dialect::Odbc | Dialect::Duckdb, ObjectKind::Index) => &[],
+        (Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse, ObjectKind::Index) => &[],
         (_, ObjectKind::Index) => &[Columns],
         (Dialect::Oracle, ObjectKind::Type) => &[Attributes, Methods],
         (Dialect::Postgres, ObjectKind::Type) => &[Attributes],
@@ -506,7 +506,7 @@ pub(super) fn index_columns(
             "SELECT column_name, IFNULL(collation, '') FROM information_schema.statistics WHERE table_schema = {} AND index_name = {} ORDER BY seq_in_index",
             lit(schema), lit(name)
         ),
-        Dialect::Odbc | Dialect::Duckdb => return Ok(Vec::new()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
     };
     rows_to_items(s, &sql, SubIcon::Column)
 }
@@ -534,7 +534,7 @@ fn references(
             "SELECT constraint_name, constraint_schema || '.' || table_name FROM information_schema.referential_constraints WHERE unique_constraint_schema = {} AND referenced_table_name = {} ORDER BY table_name, constraint_name",
             lit(schema), lit(name)
         ),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => return Ok(Vec::new()),
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
     };
     rows_to_items(s, &sql, SubIcon::Reference)
 }
@@ -566,7 +566,7 @@ fn triggers(
             "SELECT name, '', '' FROM sqlite_master WHERE type = 'trigger' AND tbl_name = {} ORDER BY name",
             lit(name)
         ),
-        Dialect::Odbc | Dialect::Duckdb => return Ok(Vec::new()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
     };
     rows_to_items(s, &sql, SubIcon::Trigger)
 }

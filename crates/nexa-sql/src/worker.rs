@@ -506,7 +506,7 @@ fn server_guard_sql(dialect: Dialect, idle_tx_secs: i64, lock_wait_secs: i64) ->
                 ));
             }
         }
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => {}
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {}
     }
     out
 }
@@ -519,7 +519,7 @@ fn session_id_sql(dialect: Dialect) -> Option<&'static str> {
         Dialect::Postgres => Some("SELECT pg_backend_pid()"),
         Dialect::Mssql => Some("SELECT @@SPID"),
         Dialect::Mysql => Some("SELECT CONNECTION_ID()"),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => None,
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => None,
     }
 }
 

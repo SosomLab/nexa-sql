@@ -82,6 +82,8 @@ pub const DRIVER_IDS: &[(Dialect, &[&str])] = &[
     (Dialect::Odbc, &["odbc"]),
     // DuckDB = 확장 전용(내장 feature 없음 · libduckdb ≈ 50 MB).
     (Dialect::Duckdb, &["duckdb"]),
+    // ClickHouse = 확장 전용(D-354 · HTTP 인터페이스 · 외부 crate 0 · 설치본 정책상 확장).
+    (Dialect::Clickhouse, &["clickhouse"]),
 ];
 
 /// 방언의 확장 후보 id(우선순위 순 · Oracle은 설정이 고른 드라이버가 먼저).
@@ -159,7 +161,7 @@ pub fn builtin_version(id: &str) -> Option<&'static str> {
         "odbc" => cfg!(feature = "odbc"),
         "oracle-thin" => OracleDriver::Thin.included(),
         "oracle-oci" => OracleDriver::Oci.included(),
-        _ => false, // duckdb = 확장 전용(D-350)
+        _ => false, // duckdb · clickhouse = 확장 전용(D-350 · D-354)
     };
     yes.then_some(nsql_abi::DRIVER_VERSION)
 }
@@ -173,7 +175,7 @@ pub fn is_builtin(dialect: Dialect) -> bool {
         Dialect::Mysql => cfg!(feature = "mysql"),
         Dialect::Mssql => cfg!(feature = "mssql"),
         Dialect::Odbc => cfg!(feature = "odbc"), // 전 OS(10-23 · unixODBC)
-        Dialect::Duckdb => false,
+        Dialect::Duckdb | Dialect::Clickhouse => false,
         Dialect::Oracle => oracle_driver().included(),
     }
 }

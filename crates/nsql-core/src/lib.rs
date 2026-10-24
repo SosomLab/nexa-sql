@@ -24,6 +24,9 @@ pub enum Dialect {
     Odbc,
     /// ★ DuckDB(D-350 · 확장 전용 드라이버 · 파일/메모리 DB · `?` 바인드).
     Duckdb,
+    /// ★ ClickHouse(10-24 · 138차 · 121 P5 · 확장 전용 드라이버 · HTTP 인터페이스 8123/8443 · `?` 자리 = 드라이버가 리터럴로 치환 ·
+    ///   트랜잭션 없음 · 스키마 = 데이터베이스).
+    Clickhouse,
 }
 
 /// 로그인 항목(접속 폼의 칸과 1:1 · `Dialect::login_required`).
@@ -44,16 +47,23 @@ impl Dialect {
             "oracle" | "ora" | "oci" => Dialect::Oracle,
             "mssql" | "sqlserver" | "tds" => Dialect::Mssql,
             "postgres" | "postgresql" | "pg" => Dialect::Postgres,
+            // ★ PostgreSQL 와이어 호환(10-24 · 138차 · 접속 스킴 프리셋 = 기본 포트만 다름 · `nsql-script::connect::wire_preset_port`).
+            "redshift" | "cockroach" | "cockroachdb" | "yugabyte" | "yugabytedb" | "greenplum"
+            | "timescale" | "timescaledb" => Dialect::Postgres,
             "mysql" | "mariadb" => Dialect::Mysql,
             "sqlite" | "sqlite3" => Dialect::Sqlite,
-            "odbc" | "tibero" | "altibase" | "cubrid" => Dialect::Odbc,
+            // ★ ODBC 벤더 스킴(T-384 · 10-24 추가 = db2 · hana · informix → `odbc_preset_for`).
+            "odbc" | "tibero" | "altibase" | "cubrid" | "db2" | "hana" | "informix" => {
+                Dialect::Odbc
+            }
             "duckdb" => Dialect::Duckdb,
+            "clickhouse" => Dialect::Clickhouse,
             _ => return None,
         })
     }
 
     /// 전체(접속 폼의 DB 종류 목록 순서).
-    pub const ALL: [Dialect; 7] = [
+    pub const ALL: [Dialect; 8] = [
         Dialect::Oracle,
         Dialect::Mssql,
         Dialect::Postgres,
@@ -61,6 +71,7 @@ impl Dialect {
         Dialect::Sqlite,
         Dialect::Odbc,
         Dialect::Duckdb,
+        Dialect::Clickhouse,
     ];
 
     /// 기본 포트(접속 폼·CLI에서 포트를 비우면 이 값). 파일·DSN 기반 방언은 `None`.
@@ -70,6 +81,7 @@ impl Dialect {
             Dialect::Mssql => Some(1433),
             Dialect::Postgres => Some(5432),
             Dialect::Mysql => Some(3306),
+            Dialect::Clickhouse => Some(8123),
             Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => None,
         }
     }
@@ -84,6 +96,7 @@ impl Dialect {
             Dialect::Sqlite => "SQLite",
             Dialect::Odbc => "ODBC",
             Dialect::Duckdb => "DuckDB",
+            Dialect::Clickhouse => "ClickHouse",
         }
     }
 
@@ -104,6 +117,8 @@ impl Dialect {
             }
             // 파일 경로 / DSN 하나(자격 없음 · ODBC 자격은 DSN 쪽).
             Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => &[LoginField::Database],
+            // 기본 사용자 `default`(비밀번호 없음)가 흔하다 → 호스트만 필수.
+            Dialect::Clickhouse => &[LoginField::Host],
         }
     }
 
@@ -123,6 +138,7 @@ impl fmt::Display for Dialect {
             Dialect::Sqlite => "sqlite",
             Dialect::Odbc => "odbc",
             Dialect::Duckdb => "duckdb",
+            Dialect::Clickhouse => "clickhouse",
         })
     }
 }

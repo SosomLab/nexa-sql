@@ -209,6 +209,18 @@ const ODBC: Caps = Caps {
     ..QUESTION
 };
 
+/// ★ ClickHouse(10-24 · 138차): 트랜잭션 없음(문장마다 확정 = `server_autocommit` · 시작문 없음 · COMMIT/ROLLBACK = 드라이버 no-op) ·
+///   `?` 자리는 드라이버가 리터럴로 치환(HTTP 인터페이스에 위치 바인드 없음) · 식별자는 대소문자 구분(Keep) · 다중 행 INSERT 적재.
+const CLICKHOUSE: Caps = Caps {
+    tx_begin: None,
+    server_autocommit: true,
+    bulk_load: crate::bulk::BulkLoad::MultiRow {
+        max_rows: 1000,
+        max_params: 32000,
+    },
+    ..QUESTION
+};
+
 impl Caps {
     /// 내장 방언의 능력표(레지스트리). 확장 드라이버는 [`crate::Session::caps`]를 덮어써 자기 표를 낸다.
     #[must_use]
@@ -221,6 +233,7 @@ impl Caps {
             Dialect::Sqlite => SQLITE,
             Dialect::Odbc => ODBC,
             Dialect::Duckdb => DUCKDB,
+            Dialect::Clickhouse => CLICKHOUSE,
         }
     }
 

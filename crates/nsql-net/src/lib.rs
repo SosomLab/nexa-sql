@@ -153,6 +153,8 @@ pub fn parse_url(s: &str) -> Result<Url, NetError> {
 pub struct Options {
     /// 접속·읽기·쓰기 각각의 상한.
     pub timeout: Duration,
+    /// ★ 읽기·쓰기 상한을 따로(10-24 · 긴 질의를 기다리는 DB 드라이버 = ClickHouse HTTP) — `None` = `timeout`과 같다.
+    pub io_timeout: Option<Duration>,
     /// 추가 헤더(`Authorization` · `If-None-Match` · `Accept` …).
     pub headers: Vec<(String, String)>,
     /// `http://host:port` — `None` = 환경 변수(`HTTPS_PROXY` > `https_proxy`) · 빈 문자열 = 프록시 없음(환경 무시).
@@ -167,6 +169,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             timeout: Duration::from_secs(30),
+            io_timeout: None,
             headers: Vec::new(),
             proxy: None,
             max_redirects: 5,
@@ -261,7 +264,12 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
     .clone()
 }
 
-fn tcp_connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, NetError> {
+fn tcp_connect(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    io: Duration,
+) -> Result<TcpStream, NetError> {
     let addrs = (host, port)
         .to_socket_addrs()
         .map_err(|e| NetError::Io(io::Error::new(e.kind(), format!("resolve {host}: {e}"))))?;
@@ -269,8 +277,8 @@ fn tcp_connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, Ne
     for a in addrs {
         match TcpStream::connect_timeout(&a, timeout) {
             Ok(s) => {
-                s.set_read_timeout(Some(timeout))?;
-                s.set_write_timeout(Some(timeout))?;
+                s.set_read_timeout(Some(io))?;
+                s.set_write_timeout(Some(io))?;
                 s.set_nodelay(true)?;
                 return Ok(s);
             }
@@ -421,7 +429,12 @@ fn connect(u: &Url, o: &Options) -> Result<Conn, NetError> {
     let tcp = match &proxy {
         Some(p) => {
             let pu = parse_url(p).map_err(|e| NetError::Proxy(e.to_string()))?;
-            let mut s = tcp_connect(&pu.host, pu.port, o.timeout)?;
+            let mut s = tcp_connect(
+                &pu.host,
+                pu.port,
+                o.timeout,
+                o.io_timeout.unwrap_or(o.timeout),
+            )?;
             if u.https {
                 let req = format!(
                     "CONNECT {h}:{p} HTTP/1.1\r\nHost: {h}:{p}\r\nUser-Agent: {ua}\r\n\r\n",
@@ -437,7 +450,12 @@ fn connect(u: &Url, o: &Options) -> Result<Conn, NetError> {
             }
             s
         }
-        None => tcp_connect(&u.host, u.port, o.timeout)?,
+        None => tcp_connect(
+            &u.host,
+            u.port,
+            o.timeout,
+            o.io_timeout.unwrap_or(o.timeout),
+        )?,
     };
     if !u.https {
         return Ok(Conn::Plain(tcp));
@@ -456,6 +474,37 @@ pub fn get(
     sink: &mut dyn Write,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<Response, NetError> {
+    request("GET", url, None, o, sink, progress)
+}
+
+/// ★ POST 한 번(10-24 · ClickHouse HTTP 드라이버) — `body`를 `Content-Length`로 보낸다 · 그 밖은 [`get`]과 같다(리다이렉트 때 같은 본문을 다시 보냄).
+///   `Content-Type`은 호출자가 `headers`로.
+pub fn post(
+    url: &str,
+    body: &[u8],
+    o: &Options,
+    sink: &mut dyn Write,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> Result<Response, NetError> {
+    request("POST", url, Some(body), o, sink, progress)
+}
+
+/// POST → 바이트(작은 응답용).
+pub fn post_bytes(url: &str, body: &[u8], o: &Options) -> Result<(Response, Vec<u8>), NetError> {
+    let mut out = Vec::new();
+    let r = post(url, body, o, &mut out, &mut |_, _| {})?;
+    Ok((r, out))
+}
+
+/// 한 요청(리다이렉트 포함) — `method` + 선택 본문.
+pub fn request(
+    method: &str,
+    url: &str,
+    body: Option<&[u8]>,
+    o: &Options,
+    sink: &mut dyn Write,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> Result<Response, NetError> {
     let mut u = parse_url(url)?;
     let mut headers = o.headers.clone();
     let via_proxy_plain = o.effective_proxy().is_some();
@@ -467,7 +516,7 @@ pub fn get(
             u.path.clone()
         };
         let mut req = format!(
-            "GET {target} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: */*\r\nConnection: close\r\n",
+            "{method} {target} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: */*\r\nConnection: close\r\n",
             u.host_header(),
             o.user_agent
         );
@@ -477,8 +526,14 @@ pub fn get(
             req.push_str(v);
             req.push_str("\r\n");
         }
+        if let Some(b) = body {
+            req.push_str(&format!("Content-Length: {}\r\n", b.len()));
+        }
         req.push_str("\r\n");
         conn.write_all(req.as_bytes())?;
+        if let Some(b) = body {
+            conn.write_all(b)?;
+        }
         conn.flush()?;
         let (status, resp_headers, pending) = read_head(&mut conn)?;
         let resp = Response {

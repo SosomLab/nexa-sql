@@ -273,6 +273,25 @@ pub fn odbc_classify(code: Option<i64>, message: &str, stmt: &str) -> Option<Cla
     })
 }
 
+/// ★ ClickHouse 메시지의 객체 이름(10-24): `Table default.t does not exist` · `Database x does not exist` · `Unknown table expression identifier 't'`.
+fn ch_object(message: &str) -> Option<String> {
+    let low = message.to_ascii_lowercase();
+    for key in ["table ", "database "] {
+        if let Some(i) = low.find(key) {
+            let rest = &message[i + key.len()..];
+            let tok: String = rest
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != '(' && *c != ',')
+                .collect();
+            let tok = tok.trim_end_matches('.').trim_matches(['`', '"']);
+            if !tok.is_empty() && !tok.eq_ignore_ascii_case("expression") {
+                return Some(tok.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// 오류 정규화 — `code` = 드라이버 숫자 코드(없으면 None) · `message` = 원문 · `stmt` = 실패한 문장(테이블 추정용).
 #[must_use]
 pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) -> Classified {
@@ -419,6 +438,39 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
             Some(2002) | Some(2003) | Some(2006) | Some(2013) => mk(ErrorClass::Connection, None),
             _ => mk(ErrorClass::Unknown, None),
         },
+        // ★ ClickHouse(10-24 · 138차): 서버 오류 코드(`Code: N.` · 헤더 X-ClickHouse-Exception-Code · 드라이버가 `code`로) → 분류 ·
+        //   객체 = 메시지의 따옴표 토막 또는 `Table x`/`Database x` 다음 낱말.
+        Dialect::Clickhouse => {
+            let obj = || obj_q().or_else(|| ch_object(message));
+            match code {
+                // UNKNOWN_TABLE · UNKNOWN_DATABASE
+                Some(60) | Some(81) => mk(ErrorClass::NoTable, obj()),
+                // UNKNOWN_IDENTIFIER · NOT_FOUND_COLUMN_IN_BLOCK · NO_SUCH_COLUMN_IN_TABLE
+                Some(47) | Some(10) | Some(16) => mk(ErrorClass::NoColumn, obj()),
+                // UNKNOWN_FUNCTION · CANNOT_GET_CREATE_TABLE_QUERY
+                Some(46) | Some(390) => mk(ErrorClass::NoObject, obj()),
+                // SYNTAX_ERROR · NUMBER_OF_ARGUMENTS_DOESNT_MATCH · BAD_ARGUMENTS
+                Some(62) | Some(42) | Some(36) => mk(ErrorClass::Syntax, None),
+                // AUTHENTICATION_FAILED · UNKNOWN_USER · REQUIRED_PASSWORD · WRONG_PASSWORD
+                Some(516) | Some(192) | Some(193) | Some(194) => mk(ErrorClass::Login, None),
+                // ACCESS_DENIED · READONLY · QUERY_IS_PROHIBITED
+                Some(497) | Some(164) | Some(392) => mk(ErrorClass::Permission, None),
+                // NETWORK_ERROR · SOCKET_TIMEOUT · DNS_ERROR · ALL_CONNECTION_TRIES_FAILED
+                Some(210) | Some(209) | Some(198) | Some(279) => mk(ErrorClass::Connection, None),
+                // TYPE_MISMATCH · CANNOT_PARSE_TEXT · CANNOT_CONVERT_TYPE · ILLEGAL_TYPE_OF_ARGUMENT · CANNOT_PARSE_NUMBER
+                Some(53) | Some(6) | Some(70) | Some(43) | Some(72) => {
+                    mk(ErrorClass::DataType, None)
+                }
+                // MEMORY_LIMIT_EXCEEDED · TIMEOUT_EXCEEDED · TOO_MANY_SIMULTANEOUS_QUERIES · TOO_MANY_ROWS_OR_BYTES
+                Some(241) | Some(159) | Some(202) | Some(396) => mk(ErrorClass::Resource, None),
+                // TABLE_IS_READ_ONLY · DEADLOCK_AVOIDED
+                Some(242) => mk(ErrorClass::Lock, None),
+                None if has("connect") || has("network") || has("timed out") => {
+                    mk(ErrorClass::Connection, None)
+                }
+                _ => mk(ErrorClass::Unknown, None),
+            }
+        }
         Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => {
             if let Some(r) = low.strip_prefix("no such table: ") {
                 mk(ErrorClass::NoTable, Some(r.trim().to_string()))

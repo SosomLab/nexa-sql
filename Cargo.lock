@@ -2308,6 +2308,17 @@ name = "nsql-core"
 version = "0.2.9"
 
 [[package]]
+name = "nsql-driver-clickhouse"
+version = "0.2.9"
+dependencies = [
+ "nsql-abi",
+ "nsql-core",
+ "nsql-json",
+ "nsql-net",
+ "nsql-script",
+]
+
+[[package]]
 name = "nsql-driver-duckdb"
 version = "0.2.9"
 dependencies = [
@@ -2411,6 +2422,7 @@ dependencies = [
  "nexa-license",
  "nsql-abi",
  "nsql-core",
+ "nsql-driver-clickhouse",
  "nsql-driver-dyn",
  "nsql-driver-mssql",
  "nsql-driver-mysql",

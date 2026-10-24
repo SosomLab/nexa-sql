@@ -50,7 +50,7 @@ fn hint_allowed(dialect: Option<Dialect>, id: &str) -> bool {
         Some(Dialect::Mssql) => id == "sqlserver",
         Some(Dialect::Postgres) => id == "postgresql",
         Some(Dialect::Sqlite) => id == "sqlite",
-        Some(Dialect::Odbc | Dialect::Duckdb) | None => true,
+        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => true,
         #[allow(unreachable_patterns)]
         Some(_) => true,
     }
@@ -100,7 +100,7 @@ pub(crate) fn pick(dialect: Option<Dialect>, hint: &str) -> &'static str {
         Some(Dialect::Postgres) => "postgresql",
         Some(Dialect::Mysql) => "mysql",
         Some(Dialect::Sqlite) => "sqlite",
-        Some(Dialect::Odbc | Dialect::Duckdb) | None => h
+        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => h
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|w| w.len() >= WORD_MATCH_MIN)
             .find_map(|w| entry(w).map(|e| e.0))

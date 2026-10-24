@@ -314,7 +314,10 @@ pub fn gen_whats(dialect: Dialect, kind: ObjectKind, sub: Option<SubKind>) -> Ve
     }
     if kind == ObjectKind::Table {
         let mut v = vec![Select, Insert, Update, Delete];
-        if !matches!(dialect, Dialect::Odbc | Dialect::Duckdb) {
+        if !matches!(
+            dialect,
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse
+        ) {
             v.push(Merge);
         }
         v.push(Ddl);

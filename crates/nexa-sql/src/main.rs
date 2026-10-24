@@ -2832,6 +2832,10 @@ fn dbms_info_values() -> Vec<(String, String)> {
             "driver.info_duckdb".into(),
             included(Dialect::Duckdb, Msg::ValDbmsBuiltinDuckdb),
         ),
+        (
+            "driver.info_clickhouse".into(),
+            included(Dialect::Clickhouse, Msg::ValDbmsBuiltinClickhouse),
+        ),
     ]
 }
 

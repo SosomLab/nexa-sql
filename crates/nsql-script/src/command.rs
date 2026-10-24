@@ -904,6 +904,8 @@ pub fn explain_script(dialect: Dialect, stmt: &str) -> String {
         Dialect::Oracle => {
             format!("EXPLAIN PLAN FOR {s};\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY());\n")
         }
+        // ClickHouse(10-24): `EXPLAIN`(= PLAN · 한 열 `explain`의 들여쓰기 트리 · 실제 실행 계획은 없다).
+        Dialect::Clickhouse => format!("EXPLAIN {s};\n"),
         // DECLARE로 시작해야 어댑터가 sp_executesql(RPC)이 아닌 배치로 보낸다 — SHOWPLAN 결과 집합은 배치에서만 온다(09-15 실측).
         Dialect::Mssql => format!(
             "SET SHOWPLAN_TEXT ON;
@@ -917,7 +919,9 @@ GO
         ),
         Dialect::Postgres => format!("EXPLAIN (VERBOSE, COSTS) {s};\n"),
         Dialect::Sqlite => format!("EXPLAIN QUERY PLAN {s};\n"),
-        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => format!("EXPLAIN {s};\n"),
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => {
+            format!("EXPLAIN {s};\n")
+        }
     }
 }
 
