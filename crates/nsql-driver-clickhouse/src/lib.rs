@@ -4,6 +4,7 @@
 //!   응답 = `JSONCompact`(`nsql-json`) — 네이티브 TCP 프로토콜 crate를 들이지 않는다(의존 0 지향 · 압축·블록 스트리밍은 후속 후보).
 //! - 세션 = `session_id`(`SET` 설정 유지 · `session_timeout` 1800 s) · **현재 DB는 클라이언트가 기억**(`USE x`를 가로채 `database=` 매개변수로 ·
 //!   HTTP 세션 만료와 무관 · `set_option("schema")`도 같은 자리) · 소켓은 요청마다 새로(`Connection: close`).
+//! - 트랜잭션 문장(`COMMIT` · `ROLLBACK` · `BEGIN` · `SAVEPOINT`)은 보내지 않고 no-op(24.8 실서버 = 649 INVALID_TRANSACTION · CI 10-24).
 //! - 바인드 = `?` 자리에 **리터럴 치환**(DR-8 · ClickHouse HTTP는 `{name:Type}` 서버 매개변수뿐이라 위치 바인드가 없다 · 문자열은
 //!   백슬래시·따옴표 이스케이프 · 이진은 `unhex('…')`) · 트랜잭션 없음(문장마다 확정 = Caps `server_autocommit` · COMMIT/ROLLBACK = no-op).
 //! - 취소 = `KILL QUERY WHERE query_id = '…' ASYNC`(다른 접속 · 44 §6) · 실행 중 `query_id`는 [`Session::cancel_handle`]과 공유.
@@ -198,6 +199,23 @@ fn is_query(sql: &str) -> bool {
         head.as_str(),
         "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "EXISTS" | "CHECK"
     )
+}
+
+/// 단독 트랜잭션 문장인가(CI 10-24 · ClickHouse 24.8 = `COMMIT`에 649 INVALID_TRANSACTION): 트랜잭션이 없는 서버라 스크립트의
+/// `COMMIT` · `ROLLBACK [TO …]` · `BEGIN [TRANSACTION]` · `START TRANSACTION` · `SAVEPOINT x` · `RELEASE SAVEPOINT x`는 보내지 않고 no-op.
+fn is_tx_statement(sql: &str) -> bool {
+    let mut it = sql.split_whitespace();
+    let Some(first) = it.next() else {
+        return false;
+    };
+    let second = it.next().unwrap_or("");
+    match first.to_ascii_uppercase().as_str() {
+        "COMMIT" | "ROLLBACK" | "SAVEPOINT" => true,
+        "BEGIN" => second.is_empty() || second.eq_ignore_ascii_case("TRANSACTION"),
+        "START" => second.eq_ignore_ascii_case("TRANSACTION"),
+        "RELEASE" => second.eq_ignore_ascii_case("SAVEPOINT"),
+        _ => false,
+    }
 }
 
 /// `USE db` → 데이터베이스 이름(클라이언트가 기억 · 서버에 보내지 않는다).
@@ -613,6 +631,9 @@ impl Session for ChSession {
             self.database = db;
             return Ok(ExecResult::default());
         }
+        if is_tx_statement(&trimmed) {
+            return Ok(ExecResult::default());
+        }
         let qid = self.next_query_id();
         *self
             .active
@@ -810,6 +831,20 @@ mod tests {
         assert_eq!(parse_use("use system").as_deref(), Some("system"));
         assert!(parse_use("USE a b").is_none());
         assert!(parse_use("SELECT 1").is_none());
+        for t in [
+            "COMMIT",
+            "commit;",
+            "ROLLBACK TO SAVEPOINT a",
+            "BEGIN",
+            "BEGIN TRANSACTION",
+            "START TRANSACTION",
+            "SAVEPOINT s1",
+            "RELEASE SAVEPOINT s1",
+        ] {
+            assert!(is_tx_statement(t.trim_end_matches(';')), "{t}");
+        }
+        assert!(!is_tx_statement("BEGIN SELECT 1"));
+        assert!(!is_tx_statement("START REPLICA"));
         assert_eq!(
             strip_format("SELECT 1 FORMAT TabSeparated;"),
             ("SELECT 1".to_string(), true)
@@ -1034,6 +1069,17 @@ mod tests {
         *s.active.lock().unwrap() = Some("qid-1".into());
         c.cancel().unwrap();
         assert!(s.commit().is_ok() && s.rollback().is_ok());
+        let r = s
+            .execute(&ExecRequest {
+                sql: "COMMIT;".into(),
+                params: vec![],
+            })
+            .unwrap();
+        assert_eq!(
+            r,
+            ExecResult::default(),
+            "COMMIT 문장 = no-op · 서버 요청 0"
+        );
         let seen = h.join().unwrap();
         assert_eq!(seen.len(), 6);
         assert!(

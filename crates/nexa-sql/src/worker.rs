@@ -514,6 +514,37 @@ fn server_guard_sql(dialect: Dialect, idle_tx_secs: i64, lock_wait_secs: i64) ->
     out
 }
 
+/// ★ D-355 2차: 보류한 `Vars` 둘을 하나로 — 표(local·shared·global·defines)는 나중 것 · `changed`는 합집합(대문자 비교).
+fn merge_vars(prev: RunEvent, next: RunEvent) -> RunEvent {
+    match (prev, next) {
+        (
+            RunEvent::Vars { changed: c1, .. },
+            RunEvent::Vars {
+                local,
+                shared,
+                global,
+                changed: c2,
+                defines,
+            },
+        ) => {
+            let mut changed = c1;
+            for n in c2 {
+                if !changed.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                    changed.push(n);
+                }
+            }
+            RunEvent::Vars {
+                local,
+                shared,
+                global,
+                changed,
+                defines,
+            }
+        }
+        (_, next) => next,
+    }
+}
+
 /// 이 세션의 서버 쪽 식별자를 묻는 문장(Oracle SID · PG backend pid · SQL Server SPID · MySQL connection id) —
 /// 라이브 모니터(Oracle)와 막힘 감지(docs/56 L3)가 메타 세션에서 "이 세션 때문에 기다리는 세션"을 찾는 열쇠.
 fn session_id_sql(dialect: Dialect) -> Option<&'static str> {
@@ -1887,6 +1918,20 @@ pub(crate) fn spawn(
                             }
                             emit(e);
                         };
+                        // ★ D-355 2차(사용자 10-24 "`:A + 10`이 보였다가 값으로 바뀌는 과정이 보인다"): 재계산이 켜진 실행은 스크립트 끝의
+                        //   `Vars`를 **보류**했다가 재계산 묶음 뒤 하나로 합쳐(표 = 마지막 · 변경 이름 = 합집합) 한 번만 보낸다 → 창이 stale
+                        //   글자(`⟳ := 수식`)를 거쳐 가지 않고 계산된 값으로 바로 갱신된다. 재계산이 없는 실행은 종전과 같다(즉시).
+                        let mut held_vars: Option<RunEvent> = None;
+                        let mut ev_hold = |e: RunEvent| {
+                            if refresh_vars && matches!(e, RunEvent::Vars { .. }) {
+                                held_vars = Some(match held_vars.take() {
+                                    Some(prev) => merge_vars(prev, e),
+                                    None => e,
+                                });
+                                return;
+                            }
+                            on_ev(e);
+                        };
                         runner.set_hold(hold);
                         // 진단(10-24 · ODBC GUI 분할 결함 추적): `NSQL_TRACE_RUN=1`이면 러너가 보는 방언·항목 수를 stderr로.
                         if std::env::var_os("NSQL_TRACE_RUN").is_some() {
@@ -1900,16 +1945,20 @@ pub(crate) fn spawn(
                             );
                         }
                         let errs = if whole {
-                            runner.run_whole(&src, &mut prompt, &mut on_ev)
+                            runner.run_whole(&src, &mut prompt, &mut ev_hold)
                         } else {
-                            runner.run_script(&src, &mut prompt, &mut on_ev)
+                            runner.run_script(&src, &mut prompt, &mut ev_hold)
                         };
                         // ★ D-355: 변수 창용 재계산(한 묶음 · 오류 실행 뒤에는 건드리지 않는다).
                         if refresh_vars && errs == 0 {
-                            let n = runner.refresh_stale_vars(&mut on_ev);
+                            let n = runner.refresh_stale_vars(&mut ev_hold);
                             if n > 0 && std::env::var_os("NSQL_TRACE_RUN").is_some() {
                                 eprintln!("[run] refresh_stale_vars = {n}");
                             }
+                        }
+                        drop(ev_hold);
+                        if let Some(e) = held_vars.take() {
+                            on_ev(e);
                         }
                         runner.set_hold(None);
                         run_seq.fetch_add(1, Ordering::Relaxed);
@@ -2083,6 +2132,39 @@ pub(crate) fn spawn_test(
 
 #[cfg(test)]
 mod tests {
+    /// ★ D-355 2차 — 보류한 `Vars` 둘 합치기: 표는 나중 것 · `changed`는 합집합(대소문자 무시 · 순서 = 먼저 온 것부터) ·
+    /// 앞이 `Vars`가 아니면 나중 것 그대로.
+    #[test]
+    fn merge_vars_keeps_last_tables_and_unions_changed() {
+        use nsql_run::RunEvent;
+        let mk = |changed: &[&str], defines: Vec<(String, String, String)>| RunEvent::Vars {
+            local: Vec::new(),
+            shared: Vec::new(),
+            global: Vec::new(),
+            changed: changed.iter().map(|s| s.to_string()).collect(),
+            defines,
+        };
+        let d2 = vec![("X".to_string(), "1".to_string(), "1".to_string())];
+        match super::merge_vars(mk(&["A", "b"], Vec::new()), mk(&["B", "C"], d2.clone())) {
+            RunEvent::Vars {
+                changed, defines, ..
+            } => {
+                assert_eq!(changed, vec!["A", "b", "C"]);
+                assert_eq!(defines, d2);
+            }
+            _ => panic!("Vars 아님"),
+        }
+        let done = RunEvent::Done {
+            index: 0,
+            rows_affected: None,
+            elapsed: std::time::Duration::ZERO,
+        };
+        match super::merge_vars(done, mk(&["Z"], Vec::new())) {
+            RunEvent::Vars { changed, .. } => assert_eq!(changed, vec!["Z"]),
+            _ => panic!("나중 것이어야 함"),
+        }
+    }
+
     /// 재질의 확인 판정(10-12 ④ · MC/DC): 다섯 조건이 각각 독립으로 답을 뒤집는다.
     #[test]
     fn ask_refetch_mcdc() {
