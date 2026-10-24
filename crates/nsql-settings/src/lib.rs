@@ -4897,6 +4897,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ Db2 · Access(10-25 · D-359 · D-360 · ODBC 어댑터 위 방언): 정보 행(런타임 = IBM clidriver / ACE·MDBTools 사용자 설치).
+    Entry {
+        key: "driver.info_db2",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoDb2,
+        desc: Msg::DescDriverInfoDialect,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "driver.info_access",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverInfoAccess,
+        desc: Msg::DescDriverInfoDialect,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ★ MySQL/MariaDB(T-388 · 136차): TLS 모드 + CA 파일 — 접속 문자열 `?tls=`가 이긴다 · 새 접속부터.
     Entry {
         key: "mysql.tls",
@@ -7496,6 +7513,8 @@ pub const INFO_KEYS: &[&str] = &[
     "driver.info_odbc",
     "driver.info_duckdb",
     "driver.info_clickhouse",
+    "driver.info_db2",
+    "driver.info_access",
 ];
 
 /// 읽기 전용 정보 키인가.

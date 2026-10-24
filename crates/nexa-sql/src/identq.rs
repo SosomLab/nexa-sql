@@ -53,8 +53,8 @@ pub(crate) fn needs_quote(dialect: Dialect, name: &str) -> bool {
         return true;
     }
     match dialect {
-        // 따옴표 없는 이름은 대문자로 접힌다 → 소문자가 섞인 이름은 따옴표로 만든 이름.
-        Dialect::Oracle => name.chars().any(|c| c.is_ascii_lowercase()),
+        // 따옴표 없는 이름은 대문자로 접힌다 → 소문자가 섞인 이름은 따옴표로 만든 이름(Db2도 같은 규칙 · D-359).
+        Dialect::Oracle | Dialect::Db2 => name.chars().any(|c| c.is_ascii_lowercase()),
         // 소문자로 접힌다 → 대문자가 섞인 이름은 따옴표로 만든 이름.
         Dialect::Postgres => name.chars().any(|c| c.is_ascii_uppercase()),
         Dialect::Mssql
@@ -62,7 +62,8 @@ pub(crate) fn needs_quote(dialect: Dialect, name: &str) -> bool {
         | Dialect::Sqlite
         | Dialect::Odbc
         | Dialect::Duckdb
-        | Dialect::Clickhouse => false,
+        | Dialect::Clickhouse
+        | Dialect::Access => false,
     }
 }
 

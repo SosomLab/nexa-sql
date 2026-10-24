@@ -46,11 +46,14 @@ const WORD_MATCH_MIN: usize = 5;
 fn hint_allowed(dialect: Option<Dialect>, id: &str) -> bool {
     match dialect {
         Some(Dialect::Mysql) => matches!(id, "mysql" | "mariadb"),
+        Some(Dialect::Db2) => id == "db2",
         Some(Dialect::Oracle) => id == "oracle",
         Some(Dialect::Mssql) => id == "sqlserver",
         Some(Dialect::Postgres) => id == "postgresql",
         Some(Dialect::Sqlite) => id == "sqlite",
-        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => true,
+        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access) | None => {
+            true
+        }
         #[allow(unreachable_patterns)]
         Some(_) => true,
     }
@@ -99,8 +102,9 @@ pub(crate) fn pick(dialect: Option<Dialect>, hint: &str) -> &'static str {
         Some(Dialect::Mssql) => "sqlserver",
         Some(Dialect::Postgres) => "postgresql",
         Some(Dialect::Mysql) => "mysql",
+        Some(Dialect::Db2) => "db2",
         Some(Dialect::Sqlite) => "sqlite",
-        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => h
+        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access) | None => h
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|w| w.len() >= WORD_MATCH_MIN)
             .find_map(|w| entry(w).map(|e| e.0))

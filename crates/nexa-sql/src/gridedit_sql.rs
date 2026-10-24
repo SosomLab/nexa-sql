@@ -625,6 +625,10 @@ fn now_expr(dialect: Dialect, date_only: bool) -> String {
         (Dialect::Sqlite, true) => "date('now','localtime')".into(),
         (Dialect::Clickhouse, false) => "now()".into(),
         (Dialect::Clickhouse, true) => "today()".into(),
+        (Dialect::Db2, false) => "CURRENT TIMESTAMP".into(),
+        (Dialect::Db2, true) => "CURRENT DATE".into(),
+        (Dialect::Access, false) => "Now()".into(),
+        (Dialect::Access, true) => "Date()".into(),
         (Dialect::Odbc | Dialect::Duckdb, false) => "CURRENT_TIMESTAMP".into(),
         (Dialect::Odbc | Dialect::Duckdb, true) => "CURRENT_DATE".into(),
     }

@@ -57,7 +57,9 @@ impl Target {
     pub(crate) fn of(spec: &nsql_script::ConnectSpec) -> Option<Target> {
         if matches!(
             spec.dialect,
-            Some(nsql_core::Dialect::Sqlite) | Some(nsql_core::Dialect::Duckdb)
+            Some(nsql_core::Dialect::Sqlite)
+                | Some(nsql_core::Dialect::Duckdb)
+                | Some(nsql_core::Dialect::Access)
         ) {
             return Some(Target::File(spec.database.clone().unwrap_or_default()));
         }

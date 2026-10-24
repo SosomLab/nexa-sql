@@ -1179,6 +1179,18 @@ pub(crate) fn db_unit(
                 .unwrap_or_else(|| "-".into()),
             true,
         ),
+        // Db2(D-359) = 작업 단위는 스키마(`SET SCHEMA`로 바꿀 수 있다 · 기본 = 접속 계정 대문자).
+        Some(Dialect::Db2) => (
+            nonempty(current_db)
+                .or_else(|| nonempty(current_schema))
+                .or_else(|| spec.and_then(|s| nonempty(s.schema.as_deref())))
+                .or_else(|| {
+                    spec.and_then(|s| nonempty(s.user.as_deref()))
+                        .map(|u| u.to_ascii_uppercase())
+                })
+                .unwrap_or_else(|| "-".into()),
+            true,
+        ),
         Some(Dialect::Mysql) => (
             nonempty(current_db)
                 .or_else(|| nonempty(current_schema))
@@ -1193,9 +1205,13 @@ pub(crate) fn db_unit(
                 .unwrap_or_else(|| "-".into()),
             false,
         ),
-        Some(Dialect::Postgres | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) => {
-            (spec_db.unwrap_or_else(|| "-".into()), false)
-        }
+        Some(
+            Dialect::Postgres
+            | Dialect::Odbc
+            | Dialect::Duckdb
+            | Dialect::Clickhouse
+            | Dialect::Access,
+        ) => (spec_db.unwrap_or_else(|| "-".into()), false),
         None => ("-".into(), false),
     }
 }

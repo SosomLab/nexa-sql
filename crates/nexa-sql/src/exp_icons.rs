@@ -154,6 +154,9 @@ pub(crate) fn dbms_color(d: Dialect) -> (u8, u8, u8) {
         Dialect::Duckdb => (0xB8, 0xA0, 0x00),
         // ClickHouse 노랑(브랜드 #FFCC01)을 어둡게 — DuckDB와 구별되게 주황 쪽으로.
         Dialect::Clickhouse => (0xD4, 0x8A, 0x00),
+        // IBM 파랑 · Access 빨강(브랜드 #A4373A).
+        Dialect::Db2 => (0x05, 0x4A, 0xDA),
+        Dialect::Access => (0xA4, 0x37, 0x3A),
     }
 }
 

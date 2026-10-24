@@ -494,6 +494,12 @@ fn server_guard_sql(dialect: Dialect, idle_tx_secs: i64, lock_wait_secs: i64) ->
                 out.push(format!("SET LOCK_TIMEOUT {}", lock_wait_secs * 1000));
             }
         }
+        // Db2(D-359): 잠금 대기 상한 = 세션 특수 레지스터(초 · 유휴 트랜잭션 시한은 없음).
+        Dialect::Db2 => {
+            if lock_wait_secs > 0 {
+                out.push(format!("SET CURRENT LOCK TIMEOUT {lock_wait_secs}"));
+            }
+        }
         Dialect::Mysql => {
             if lock_wait_secs > 0 {
                 out.push(format!(
@@ -509,7 +515,11 @@ fn server_guard_sql(dialect: Dialect, idle_tx_secs: i64, lock_wait_secs: i64) ->
                 ));
             }
         }
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {}
+        Dialect::Sqlite
+        | Dialect::Odbc
+        | Dialect::Duckdb
+        | Dialect::Clickhouse
+        | Dialect::Access => {}
     }
     out
 }
@@ -553,7 +563,13 @@ fn session_id_sql(dialect: Dialect) -> Option<&'static str> {
         Dialect::Postgres => Some("SELECT pg_backend_pid()"),
         Dialect::Mssql => Some("SELECT @@SPID"),
         Dialect::Mysql => Some("SELECT CONNECTION_ID()"),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => None,
+        // Db2(D-359): 응용 핸들(숫자 · 잠금 모니터 MON_GET_* 열쇠 · 취소 = WLM_CANCEL_ACTIVITY/FORCE APPLICATION 2차).
+        Dialect::Db2 => Some("VALUES MON_GET_APPLICATION_HANDLE()"),
+        Dialect::Sqlite
+        | Dialect::Odbc
+        | Dialect::Duckdb
+        | Dialect::Clickhouse
+        | Dialect::Access => None,
     }
 }
 

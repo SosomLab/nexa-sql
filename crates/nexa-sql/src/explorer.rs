@@ -508,7 +508,11 @@ pub(crate) fn watermark_sql(dialect: Dialect, schema: &str) -> Option<String> {
             "SELECT CONCAT(COUNT(*), ':', COALESCE(MAX(CREATE_TIME), '')) FROM information_schema.tables WHERE table_schema = '{s}'"
         ),
         Dialect::Sqlite => "PRAGMA schema_version".to_string(),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return None,
+        // Db2(D-359): 표 수 + 마지막 ALTER 시각(SYSCAT.TABLES.alter_time).
+        Dialect::Db2 => format!(
+            "SELECT TRIM(CHAR(COUNT(*))) || ':' || COALESCE(VARCHAR_FORMAT(MAX(alter_time), 'YYYYMMDDHH24MISS'), '') FROM SYSCAT.TABLES WHERE tabschema = '{s}'"
+        ),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return None,
     })
 }
 
@@ -609,7 +613,13 @@ pub(crate) fn blockers_sql(dialect: Dialect, sid: &str) -> Option<String> {
         Dialect::Mysql => format!(
             "SELECT CONCAT(waiting_pid, ' ', wait_age_secs, 's') FROM sys.innodb_lock_waits WHERE blocking_pid = {sid}"
         ),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return None,
+        // Db2 = MON_GET_APPL_LOCKWAIT(권한 필요) · 2차.
+        Dialect::Sqlite
+        | Dialect::Odbc
+        | Dialect::Duckdb
+        | Dialect::Clickhouse
+        | Dialect::Db2
+        | Dialect::Access => return None,
     })
 }
 

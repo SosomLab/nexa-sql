@@ -2836,6 +2836,15 @@ fn dbms_info_values() -> Vec<(String, String)> {
             "driver.info_clickhouse".into(),
             included(Dialect::Clickhouse, Msg::ValDbmsBuiltinClickhouse),
         ),
+        // Db2 · Access = ODBC 어댑터 위 방언(D-359 · D-360): 어댑터가 있으면 안내문(벤더 런타임은 사용자 설치).
+        (
+            "driver.info_db2".into(),
+            included(Dialect::Db2, Msg::ValDbmsOdbcDb2),
+        ),
+        (
+            "driver.info_access".into(),
+            included(Dialect::Access, Msg::ValDbmsOdbcAccess),
+        ),
     ]
 }
 
