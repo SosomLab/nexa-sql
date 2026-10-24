@@ -181,6 +181,7 @@
 | hover 의도 판정 | 70 ms | `ui.hover_intent_ms` | 마우스 이동은 목표 덮어쓰기만(큐 0) |
 | 더블클릭·툴팁 지연 | `ui.dblclick_ms` `ui.tooltip_delay_ms` | 기존 | — |
 | 긴 작업 표시·해제 | Loading… · 즉시 Disconnect | (S-13) | 09-16 11차 |
+| 아웃라인 커서 추종(10-24 · T-422 · D-357 · 855b9ad6) | 틱에서 **캐럿이 바뀔 때만** · 심볼 byte 구간 이진 탐색 1회 · 선택·reveal · 패널이 보일 때만 · 재계산 = 기존 rev 비교 | `outline.follow_caret`(on) | 끄면 0 |
 | IME | OS | — | — |
 
 ### 3-6. MEM(캐시 상한)

@@ -265,7 +265,7 @@
 
 ### 20-2. 결정(D-357 · 개발 · 권장안 진행 · 기본값 = 사용자 확인 사항)
 
-1. **노드 두 층** — **심볼**(기본 보임 = CREATE 대상 객체 · 루틴(프로시저·함수·패키지·본문·트리거·타입) · CTE · DEFINE/VARIABLE · 커서 · 라벨 · 선언 변수) / **문장**(기본 숨김 = SELECT · DML · DDL · 명령(EXEC·PRINT·SET·SHOW·COMMIT…)) · 패널 머리 토글 4(Select · DML · DDL · 명령) → 설정 `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_commands`(전부 off) + `outline.show_declared`(on) · 토글 값 = 설정에 저장(창마다 아님).
+1. **노드 두 층** — **심볼**(기본 보임 = CREATE 대상 객체 · 루틴(프로시저·함수·패키지·본문·트리거·타입) · CTE · DEFINE/VARIABLE · 커서 · 라벨 · 선언 변수) / **문장**(기본 숨김 = SELECT · DML · DDL · 명령(EXEC·PRINT·SET·SHOW·COMMIT…)) · 패널 머리 토글 4(Select · DML · DDL · 명령) → 설정 `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_other`(명령·익명 블록·기타 SQL 묶음 = DataGrip "Other" · 전부 off · 구현 때 `show_commands` → `show_other`) + `outline.show_declared`(on) · 토글 값 = 설정에 저장(창마다 아님).
 2. **CREATE 중복 제거** — CREATE 문장은 문장 행을 만들지 않고 **대상 행 하나**(depth 0 · 안의 선언·서브프로그램이 자식) · 블록 CREATE(PROCEDURE/PACKAGE/TRIGGER/TYPE)도 같다.
 3. **결함 수정** — Declared = 서브프로그램 매개변수 괄호 안은 선언부 아님(`P_NAME IN VARCHAR2`) · `CURSOR` = 선언부·패키지 안에서만.
 4. **진짜 트리 + 접기** — `Symbol.parent: Option<usize>`(평면 Vec 유지 · 부모 색인만 · 복사 0) · 패널이 접힘 상태 보유 · 기본 펼침 깊이 `outline.expand_depth`(1 = 루틴 이름은 보이고 안의 변수는 접힘) · 머리 [모두 펼침/접음] · 필터 중 = 일치 행의 부모를 함께 보임.
@@ -278,5 +278,5 @@
 
 | 단계 | 내용 | 고칠 자리 |
 |---|---|---|
-| **T-422(1차 · P1 · 중)** | 20-2의 1~7 | `nsql-script/src/outline.rs`(2 · 3 · 4 parent) · `nexa-sql/src/outline_panel.rs`(토글 · 트리 · 접기 · 추종 · 아이콘) · `app/goto.rs`(6) · nsql-settings REGISTRY `outline.*` 7키(분류 Editors ▸ Outline · 라벨·설명 `Msg`) · i18n · 시험 = outline.rs 단위(CREATE 1행 · 매개변수 비선언 · parent) + 패널 보임 판정 순수 함수 MC/DC · 문서 76 · 94 · 39 |
+| **T-422(1차 · P1 · 중)** ✅ 075ceeca 모델 · 855b9ad6 패널·설정·Goto · 8ee6a791 V1 결함 2 | 20-2의 1~7 · 구현 = `Symbol.parent` 트리 · 열린 서브프로그램 스택(`subs` · 본문 있는 PROCEDURE/FUNCTION만 · `END 이름;`으로 내림 · 명세 선언 = 형제) · 필터 틀 오른쪽 토글 4(아이콘 = 행 셋/연필/표 격자/터미널) · 셰브론 + 탐색기 아이콘 + 접기(←/→ · 머리 [모두 펼침][모두 접음]) · 머리 = 보임/전체 · 설정 분류 Editors ▸ **Outline**(`CatOutline`) · 검증 = V2(개발) = nsql-script 165/0 → 166/0(서브프로그램 스택 시험 3) · nexa-sql 481/0 · nsql-settings 27/0 · nsql-i18n 9/0 · clippy -D warnings 0 · fmt ✓ · check-3os --quick ✓ · V1(협업 · 격리 · 캡처) = 머리 Outline (9/11) · 문장 행 0 · run_report 접힘 셰브론(v_total 숨김) · show_select=on = SELECT 행 + CTE 자식 · Goto Symbol 종류 중복 없음 · CI 855b9ad6 ✓ | `nsql-script/src/outline.rs`(2 · 3 · 4 parent) · `nexa-sql/src/outline_panel.rs`(토글 · 트리 · 접기 · 추종 · 아이콘) · `app/goto.rs`(6) · nsql-settings REGISTRY `outline.*` 7키(분류 Editors ▸ Outline · 라벨·설명 `Msg`) · i18n · 시험 = outline.rs 단위(CREATE 1행 · 매개변수 비선언 · parent) + 패널 보임 판정 순수 함수 MC/DC · 문서 76 · 94 · 39 |
 | **T-423(2차)** | Group by type · 아웃라인에서 문장 실행(우클릭 · `gate_open` 통과) · 정렬 name · **데이터 그리드 Structure**(DataGrip 데이터 편집기의 컬럼 목록·숨김/표시 — 우리 그리드엔 없음 · DR-33 `View` 투영 위 컬럼 선택기 후보) | — |

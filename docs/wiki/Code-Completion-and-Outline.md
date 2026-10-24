@@ -87,6 +87,10 @@
 
 *아웃라인 패널 — 스크립트의 문장 · 객체를 목록으로, 클릭하면 그 줄로*
 
+**Outline = a map of declared names (10-25 · English).** By default the panel shows only *symbols*: objects created by `CREATE`, routines (procedures, functions, packages, bodies, triggers, types), CTEs, `DEFINE`/`VARIABLE`, cursors, labels and declared variables — as a tree (a package body contains its subprograms; a procedure contains its local declarations). Plain statements are hidden; turn them on with the four toggles to the right of the filter box: **Select · DML · DDL · Other** (Other = client commands such as `EXEC`/`PRINT`/`SET`, anonymous blocks and other SQL). The header shows *visible/total*, the chevrons expand or collapse everything, ←/→ fold a row, and the selection follows the caret. Goto Symbol (Ctrl+R) uses the same toggles. Settings: **Preferences ▸ Editors ▸ Outline** — `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_other` (off) · `outline.show_declared` (on) · `outline.expand_depth` (1 = routines visible, their inner declarations folded) · `outline.follow_caret` (on).
+
+**아웃라인 = 선언된 이름의 지도(10-25 · D-357)** — 기본으로는 *심볼*만 트리로 보입니다(CREATE 대상 · 루틴 · CTE · `DEFINE`/`VARIABLE` · 커서 · 라벨 · 선언 변수 · 패키지 본문 ▸ 서브프로그램 ▸ 지역 선언). 일반 문장은 숨김이고 필터 틀 오른쪽 토글 4개(**Select · DML · DDL · Other**)로 켭니다. 머리 = 보임/전체 · 셰브론 = 모두 펼침/접음 · ←/→ = 행 접기 · 선택은 캐럿을 따라갑니다 · Goto Symbol(Ctrl+R)도 같은 토글을 따릅니다. 설정 = **Preferences ▸ Editors ▸ Outline**(위 7키).
+
 활동 막대의 **아웃라인** 아이콘(또는 View ▸ Outline)을 켜면 현재 탭의 심볼이 줄 번호와 함께 나열됩니다: 문장 머리(흐리게) · `DEFINE`/`VARIABLE` · CTE · `CREATE …` 대상 · PL/SQL `PROCEDURE`/`FUNCTION`(굵게 · 패키지 안이면 들여쓰기)/`PACKAGE [BODY]`/`TRIGGER`/`TYPE`/`CURSOR`/`<<라벨>>` · 선언부 변수 · T-SQL `DECLARE @v`. 클릭·Enter = 그 자리로 · 필터 틀은 다른 패널과 같습니다(한글 자모) · **타입어헤드**(목록 포커스에서 글자 = 그 심볼로 · ↑/↓ = 일치하는 것들 사이 · 한글). 편집하면 잠시 뒤(유휴 때) 갱신되고 탭을 바꾸면 그 탭 것으로 바뀝니다.
 
 **주석 — Ctrl+/(맥 ⌘/) = 줄 주석 `--` 토글 · Ctrl+Shift+?(맥 **⌘⌥/**) = 블록 주석 `/* … */` 토글**(선택 영역, 없으면 현재 줄 · 다시 누르면 원복). 맥의 ⌘⇧?는 macOS "도움말 메뉴 검색"이 먼저 가져가므로 시스템 설정 ▸ 키보드 단축키 ▸ 앱 단축키에서 그 항목을 끄면 쓸 수 있습니다.

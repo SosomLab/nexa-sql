@@ -4,6 +4,9 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/138-outline-v1 | 2026-10-25 | 2026-10-25 → main(삭제) · **8ee6a791** | 1 | T-422 V1 결함 2 = 패키지 서브프로그램 지역 선언의 부모(열린 서브프로그램 스택 `subs`) · Goto Symbol 종류 중복 |
+| feat/138-outline-t422 | 2026-10-24 | 2026-10-25 → main(삭제) · **855b9ad6** | 2 | ★ T-422 아웃라인 1차(D-357) = `075ceeca` nsql-script 모델(`Symbol.parent` · CREATE 1행 · 매개변수 오탐 · CURSOR 범위) · `855b9ad6` 패널·설정 7키·Goto Symbol(공용 파일 i18n·settings·findbar 동반) |
+| docs/138-outline-direction | 2026-10-24 | 2026-10-24 → main(삭제) · **69499d1f** | 1 | 138차 문서 = ★ 아웃라인 방향 D-357(76 §20 · 조사 원문 76a) · T-422/T-423 · 94 예정 키 7 · STATUS 시작점 · journal §3-12 |
 | fix/138-clickhouse-tx-noop | 2026-10-24 | 2026-10-24 → main(삭제) · **89795fa1** | 1 | 138차 = 🔧 ClickHouse 단독 COMMIT/ROLLBACK/BEGIN/START TRANSACTION/SAVEPOINT/RELEASE SAVEPOINT no-op(`is_tx_statement` · CI integration 649) · ★ D-355 2차 = 재계산 실행의 `Vars` 보류 → `merge_vars` 한 번만(창이 `⟳ := 수식`을 거치지 않음 · 사용자 10-24) |
 | feat/138-drivers-p5 | 2026-10-24 | 2026-10-24 → main(삭제) · **9a3084fb** | 3 | 138차 Linux 드라이버 P5 = ★ ClickHouse 확장 드라이버(D-354 · HTTP · `nsql-net`/`nsql-json` · T-415) · PG 와이어/ODBC 접속 프리셋 · ★ 변수 창 D-355(T-421) · `is_utf8_locale` cfg(Windows dead_code) |
 | feat/138-linux-gaps | 2026-10-24 | 2026-10-24 → main(삭제) · **b18c3d1f** | 5 | 138차 Linux = ★ T-60 서식 복사(X11 `text/html`) · T-38 테마 실시간 추종(`ui.theme_watch`) `3c7f31d` · 시험 자산 9(ODBC 3 · driver-install · func-check 이식 28 · V3 지적 수정) `1f3a33c`·`b301bef`·`61db394` · 🔧 T-414 ODBC SQLCancel(`odbc.cancel`) `b18c3d1` |
