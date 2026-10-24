@@ -64,8 +64,9 @@ jobs:
           sudo mkdir -p /opt/ibm && cd /opt/ibm
           sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/linuxx64_odbc_cli.tar.gz
           sudo tar xzf cli.tar.gz && sudo rm cli.tar.gz
-          ls -l /opt/ibm/clidriver/lib/libdb2o.so /opt/ibm/clidriver/lib/libdb2.so.1
-          printf '[IBM DB2 ODBC DRIVER]\nDescription=IBM Data Server Driver for ODBC and CLI\nDriver=/opt/ibm/clidriver/lib/libdb2o.so\nFileUsage=1\nDontDLClose=1\n' | sudo tee -a /etc/odbcinst.ini
+          # clidriver v12.1.x linuxx64 = libdb2.so(.1)가 ODBC/CLI 라이브러리(libdb2o.so 없음 · 40108898061).
+          ls -l /opt/ibm/clidriver/lib/libdb2.so /opt/ibm/clidriver/lib/libdb2.so.1
+          printf '[IBM DB2 ODBC DRIVER]\nDescription=IBM Data Server Driver for ODBC and CLI\nDriver=/opt/ibm/clidriver/lib/libdb2.so\nFileUsage=1\nDontDLClose=1\n' | sudo tee -a /etc/odbcinst.ini
           odbcinst -q -d
       - name: wait for Db2 (Setup has completed · 최대 10분)
         run: |
