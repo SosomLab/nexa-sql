@@ -71,8 +71,11 @@ pub struct Symbol {
     pub line: usize,
     /// 바이트 오프셋(이름 시작).
     pub byte: usize,
-    /// 트리 깊이(문장 = 0 · 그 안의 것 = 1 · 패키지 안 서브프로그램 = 2).
+    /// 트리 깊이(뿌리 = 0 · 그 안의 것 = 1 · 패키지 안 서브프로그램 = 2). `parent`가 있으면 그 깊이 + 1.
     pub depth: u8,
+    /// ★ 부모 심볼의 색인(`Outline::symbols` 안 · T-422 · D-357) — 문장/CREATE 대상/패키지가 뿌리 · 평면 Vec에 색인만 더해
+    ///   복사 없이 트리를 이룬다(패널 접기 · 필터 때 부모 함께 보이기 · Goto Symbol 들여쓰기).
+    pub parent: Option<usize>,
 }
 
 /// 문서 아웃라인.
@@ -375,17 +378,17 @@ fn scan_item(src: &str, item: &Item, out: &mut Outline) {
     let Some(first) = ws.first() else {
         return;
     };
-    let push =
-        |out: &mut Outline, kind: SymKind, name: &str, detail: &str, byte: usize, depth: u8| {
-            out.symbols.push(Symbol {
-                kind,
-                name: name.to_string(),
-                detail: detail.to_string(),
-                line: line_of(src, base + byte),
-                byte: base + byte,
-                depth,
-            });
-        };
+    let push = |out: &mut Outline, kind: SymKind, name: &str, detail: &str, byte: usize| {
+        out.symbols.push(Symbol {
+            kind,
+            name: name.to_string(),
+            detail: detail.to_string(),
+            line: line_of(src, base + byte),
+            byte: base + byte,
+            depth: 0,
+            parent: None,
+        });
+    };
     match &item.kind {
         ItemKind::Command(_) => {
             // DEFINE name [= …] · VARIABLE name [TYPE] · 그 밖 명령은 머리만.
@@ -396,13 +399,13 @@ fn scan_item(src: &str, item: &Item, out: &mut Outline) {
                         .strip_prefix('=')
                         .map(|v| head(v.trim()))
                         .unwrap_or_default();
-                    push(out, SymKind::Define, w.text, &val, w.start, 0);
+                    push(out, SymKind::Define, w.text, &val, w.start);
                     return;
                 }
             } else if eq(first, "VARIABLE") || eq(first, "VAR") {
                 if let Some(w) = ws.get(1).filter(|w| is_name(w)) {
                     let ty = ws.get(2).map(|t| t.text.to_string()).unwrap_or_default();
-                    push(out, SymKind::Variable, w.text, &ty, w.start, 0);
+                    push(out, SymKind::Variable, w.text, &ty, w.start);
                     return;
                 }
             }
@@ -412,7 +415,6 @@ fn scan_item(src: &str, item: &Item, out: &mut Outline) {
                 &head(&item.text),
                 "command",
                 first.start,
-                0,
             );
         }
         ItemKind::Invalid(_) => {}
@@ -424,47 +426,102 @@ fn scan_item(src: &str, item: &Item, out: &mut Outline) {
                 SqlKind::Block => "block",
                 SqlKind::Other => "sql",
             };
-            push(
-                out,
-                SymKind::Statement,
-                &head(&item.text),
-                detail,
-                first.start,
-                0,
-            );
-            scan_sql(text, &ws, *kind, base, src, out);
+            // ★ `CREATE … KIND name`으로 시작하는 문장은 문장 행을 만들지 않는다(T-422 · D-357 결정 2) — 대상 행 하나가 뿌리.
+            //   그 밖 문장은 머리 행이 뿌리이고 그 안의 CTE·선언·서브프로그램이 자식.
+            let root = if create_head(&ws).is_some() {
+                None
+            } else {
+                push(
+                    out,
+                    SymKind::Statement,
+                    &head(&item.text),
+                    detail,
+                    first.start,
+                );
+                Some(out.symbols.len() - 1)
+            };
+            scan_sql(text, &ws, *kind, base, src, out, root);
         }
     }
 }
 
-fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, out: &mut Outline) {
-    let push =
-        |out: &mut Outline, kind: SymKind, name: &str, detail: &str, byte: usize, depth: u8| {
-            out.symbols.push(Symbol {
-                kind,
-                name: name.to_string(),
-                detail: detail.to_string(),
-                line: line_of(src, base + byte),
-                byte: base + byte,
-                depth,
-            });
-        };
+/// `CREATE [수식어…] KIND [BODY] [schema.]name` — 낱말 목록의 머리가 CREATE 대상 선언이면 `(KIND 낱말 색인, 이름 낱말 색인)`.
+fn create_head(ws: &[Word<'_>]) -> Option<(usize, usize)> {
+    if !ws.first().is_some_and(|w| eq(w, "CREATE")) {
+        return None;
+    }
+    let mut k = 1;
+    while k < ws.len() && CREATE_SKIP.iter().any(|s| eq(&ws[k], s)) {
+        k += 1;
+    }
+    let (sk, _) = ws.get(k).and_then(|w| create_kind(w.text))?;
+    let mut m = k + 1;
+    if matches!(sk, SymKind::Package | SymKind::Type) && ws.get(m).is_some_and(|w| eq(w, "BODY")) {
+        m += 1;
+    }
+    ws.get(m).filter(|w| is_name(w)).map(|_| (k, m))
+}
+
+/// 문장 본문 걷기 — `root` = 이 문장의 머리 행(없으면 CREATE 대상이 뿌리가 된다).
+fn scan_sql(
+    text: &str,
+    ws: &[Word<'_>],
+    kind: SqlKind,
+    base: usize,
+    src: &str,
+    out: &mut Outline,
+    root: Option<usize>,
+) {
+    let has_stmt_row = root.is_some();
+    // 지금의 뿌리(문장 머리 또는 CREATE 대상) · 패키지(안의 서브프로그램·선언의 부모).
+    let mut root = root;
+    let mut pkg: Option<usize> = None;
+    let push = |out: &mut Outline,
+                kind: SymKind,
+                name: &str,
+                detail: &str,
+                byte: usize,
+                parent: Option<usize>|
+     -> usize {
+        let depth = parent.map_or(0, |p| out.symbols[p].depth.saturating_add(1));
+        out.symbols.push(Symbol {
+            kind,
+            name: name.to_string(),
+            detail: detail.to_string(),
+            line: line_of(src, base + byte),
+            byte: base + byte,
+            depth,
+            parent,
+        });
+        out.symbols.len() - 1
+    };
     let mut i = 0;
-    let mut depth_pkg = 0u8;
     // 선언부 상태: DECLARE / IS / AS 뒤 ~ BEGIN 앞 = 변수 선언 줄.
     let mut in_decl = false;
+    // ★ 괄호 깊이(T-422 결함 수정 · 사용자 10-24 조사): 서브프로그램 매개변수 `(p_name IN VARCHAR2, …)` 줄은 선언이 아니다.
+    let mut paren: u32 = 0;
     while i < ws.len() {
         let w = &ws[i];
         if w.quoted {
             i += 1;
             continue;
         }
-        let inner_depth = 1 + depth_pkg;
+        if w.text == "(" {
+            paren += 1;
+            i += 1;
+            continue;
+        }
+        if w.text == ")" {
+            paren = paren.saturating_sub(1);
+            i += 1;
+            continue;
+        }
+        let inner_parent = pkg.or(root);
         let up = w.text.to_ascii_uppercase();
         match up.as_str() {
             // `CREATE [OR REPLACE] [수식어…] KIND [BODY] [schema.]name` — 문장 머리뿐 아니라 T-SQL 배치(GO 사이)처럼 한 문장 안의
-            //   여러 CREATE도 잡는다.
-            "CREATE" => {
+            //   여러 CREATE도 잡는다. 문장 행이 없으면(CREATE 머리 문장) 대상이 새 뿌리 · 있으면 문장 행의 자식.
+            "CREATE" if paren == 0 => {
                 let mut k = i + 1;
                 while k < ws.len() && CREATE_SKIP.iter().any(|s| eq(&ws[k], s)) {
                     k += 1;
@@ -484,10 +541,13 @@ fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, 
                     }
                     if ws.get(m).is_some_and(is_name) {
                         let (name, _) = dotted_name(ws, m);
-                        push(out, sk, &name, label, ws[m].start, 1);
-                        if matches!(sk, SymKind::Package | SymKind::PackageBody) {
-                            depth_pkg = 1;
+                        let parent = if has_stmt_row { root } else { None };
+                        let idx = push(out, sk, &name, label, ws[m].start, parent);
+                        if !has_stmt_row {
+                            root = Some(idx);
                         }
+                        pkg = matches!(sk, SymKind::Package | SymKind::PackageBody).then_some(idx);
+                        in_decl = false;
                     }
                     i = m + 1;
                     continue;
@@ -522,7 +582,7 @@ fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, 
                     {
                         break;
                     }
-                    push(out, SymKind::Cte, nw.text, "cte", nw.start, inner_depth);
+                    push(out, SymKind::Cte, nw.text, "cte", nw.start, inner_parent);
                     // 괄호 짝까지 건너뛴다.
                     let mut d = 0i32;
                     let mut p = m + 1;
@@ -551,19 +611,22 @@ fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, 
                 continue;
             }
             // 블록 안 · 패키지 안 · 또는 문장 첫 낱말(SQLite 등 `;` 분리 방언에서 패키지 본문이 문장으로 쪼개질 때).
-            "PROCEDURE" | "FUNCTION" if kind == SqlKind::Block || depth_pkg > 0 || i == 0 => {
+            "PROCEDURE" | "FUNCTION"
+                if paren == 0 && (kind == SqlKind::Block || pkg.is_some() || i == 0) =>
+            {
                 if let Some(nw) = ws.get(i + 1).filter(|w| is_name(w)) {
                     let sk = if up == "PROCEDURE" {
                         SymKind::Procedure
                     } else {
                         SymKind::Function
                     };
-                    push(out, sk, nw.text, sk.label(), nw.start, inner_depth);
+                    push(out, sk, nw.text, sk.label(), nw.start, inner_parent);
                     i += 2;
                     continue;
                 }
             }
-            "CURSOR" => {
+            // ★ 커서는 선언부·패키지 안에서만(T-422 · 종전 = 어디서나 → `FOR … IN c` 같은 본문 낱말 오탐 여지).
+            "CURSOR" if paren == 0 && (in_decl || pkg.is_some()) => {
                 if let Some(nw) = ws.get(i + 1).filter(|w| is_name(w)) {
                     push(
                         out,
@@ -571,16 +634,16 @@ fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, 
                         nw.text,
                         "cursor",
                         nw.start,
-                        inner_depth,
+                        inner_parent,
                     );
                     i += 2;
                     continue;
                 }
             }
-            "TYPE" if kind == SqlKind::Block || depth_pkg > 0 => {
+            "TYPE" if paren == 0 && (kind == SqlKind::Block || pkg.is_some()) => {
                 if let Some(nw) = ws.get(i + 1).filter(|w| is_name(w)) {
                     if ws.get(i + 2).is_some_and(|w| eq(w, "IS")) {
-                        push(out, SymKind::Type, nw.text, "type", nw.start, inner_depth);
+                        push(out, SymKind::Type, nw.text, "type", nw.start, inner_parent);
                         i += 2;
                         continue;
                     }
@@ -589,32 +652,39 @@ fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, 
             "<<" => {
                 if let Some(nw) = ws.get(i + 1).filter(|w| is_name(w)) {
                     if ws.get(i + 2).is_some_and(|w| w.text == ">>") {
-                        push(out, SymKind::Label, nw.text, "label", nw.start, inner_depth);
+                        push(
+                            out,
+                            SymKind::Label,
+                            nw.text,
+                            "label",
+                            nw.start,
+                            inner_parent,
+                        );
                         i += 3;
                         continue;
                     }
                 }
             }
-            "DECLARE" => {
+            "DECLARE" if paren == 0 => {
                 // T-SQL `DECLARE @v TYPE` · PL/SQL `DECLARE` 선언부 시작.
                 if let Some(nw) = ws.get(i + 1).filter(|w| w.text.starts_with('@')) {
                     let ty = ws.get(i + 2).map(|t| t.text).unwrap_or("");
-                    push(out, SymKind::Declared, nw.text, ty, nw.start, inner_depth);
+                    push(out, SymKind::Declared, nw.text, ty, nw.start, inner_parent);
                     i += 2;
                     continue;
                 }
                 in_decl = kind == SqlKind::Block;
             }
-            "IS" | "AS" if kind == SqlKind::Block => {
+            "IS" | "AS" if paren == 0 && kind == SqlKind::Block => {
                 // 서브프로그램/패키지 머리 뒤 = 선언부(단, `TYPE x IS`·`CURSOR c IS`는 위에서 처리).
                 in_decl = true;
             }
-            "BEGIN" => in_decl = false,
-            "END" => in_decl = false,
+            "BEGIN" | "END" if paren == 0 => in_decl = false,
             _ => {}
         }
-        // 선언부 변수: 줄 첫 낱말이 이름이고 다음 낱말이 타입(예약어·기호 아님)이며 `;` 로 끝나는 줄.
+        // 선언부 변수: 줄 첫 낱말이 이름이고 다음 낱말이 타입(예약어·기호 아님)이며 `;` 로 끝나는 줄 — 괄호 안(매개변수)은 제외.
         if in_decl
+            && paren == 0
             && is_name(w)
             && !CLAUSE_STOP.iter().any(|s| eq(w, s))
             && at_line_start(text, w.start)
@@ -640,16 +710,14 @@ fn scan_sql(text: &str, ws: &[Word<'_>], kind: SqlKind, base: usize, src: &str, 
                         .map(|p| ty.start + p)
                         .unwrap_or(text.len());
                     let ty_text = head(text[ty.start..end].trim());
-                    if !matches!(ty_up.as_str(), "EXCEPTION") || true {
-                        push(
-                            out,
-                            SymKind::Declared,
-                            w.text,
-                            &ty_text,
-                            w.start,
-                            inner_depth,
-                        );
-                    }
+                    push(
+                        out,
+                        SymKind::Declared,
+                        w.text,
+                        &ty_text,
+                        w.start,
+                        inner_parent,
+                    );
                 }
             }
         }
@@ -724,7 +792,17 @@ mod tests {
             .iter()
             .filter(|s| s.kind == SymKind::Statement)
             .collect();
-        assert!(stmts.len() >= 4, "{stmts:?}");
+        // ★ CREATE 머리 문장(VIEW · INDEX)은 문장 행이 없다(T-422) — WITH…SELECT · SELECT 둘만.
+        assert_eq!(stmts.len(), 2, "{stmts:?}");
+        let vx = o.find("app.v_x").expect("view");
+        assert_eq!((vx.depth, vx.parent), (0, None));
+        // CTE의 부모 = 그 문장 머리 행.
+        let n = o.find("n").expect("cte");
+        assert_eq!(
+            o.symbols[n.parent.expect("parent")].kind,
+            SymKind::Statement
+        );
+        assert_eq!(n.depth, 1);
         assert_eq!(o.find("v_user").map(|s| s.line), Some(1));
         assert_eq!(o.find("m").map(|s| s.line), Some(3));
         let d = o
@@ -747,7 +825,16 @@ mod tests {
         assert_eq!(names(&o, SymKind::Label), vec!["retry"]);
         assert_eq!(names(&o, SymKind::Declared), vec!["g_count", "v_tmp"]);
         let p = o.find("do_it").expect("proc");
-        assert_eq!((p.line, p.depth), (5, 2));
+        // ★ 패키지 본문이 뿌리(깊이 0 · 문장 행 없음) → 서브프로그램 = 깊이 1 · 부모 = 패키지 본문.
+        let body = o.find("pkg_x").expect("body");
+        assert_eq!((body.depth, body.parent), (0, None));
+        assert_eq!((p.line, p.depth), (5, 1));
+        assert_eq!(p.parent.map(|i| o.symbols[i].name.as_str()), Some("pkg_x"));
+        assert!(
+            !o.symbols.iter().any(|s| s.kind == SymKind::Statement),
+            "CREATE 머리 문장에 문장 행이 생겼다: {:?}",
+            o.symbols
+        );
         let n = o.names();
         assert!(n
             .iter()
@@ -764,5 +851,55 @@ mod tests {
         let w = words(src, &cls);
         assert!(w.iter().any(|w| w.quoted && w.text == "Order Id"));
         assert!(w.iter().any(|w| w.text == "@cnt"));
+    }
+
+    /// ★ T-422 결함 수정 — 여러 줄 매개변수 목록은 선언 변수가 아니다 · 진짜 지역 변수만 `Declared` · 매개변수 괄호 뒤 `IS`가 선언부를 연다.
+    #[test]
+    fn parameters_on_their_own_lines_are_not_declared_vars() {
+        let src = "CREATE OR REPLACE PACKAGE BODY pkg_rc AS\n  PROCEDURE open_emp(\n    p_name IN VARCHAR2,\n    p_rc OUT SYS_REFCURSOR\n  ) IS\n    v_pat VARCHAR2(100);\n  BEGIN\n    OPEN p_rc FOR SELECT 1 FROM dual;\n  END open_emp;\nEND pkg_rc;\n/\n";
+        let o = outline(src, Some(Dialect::Oracle));
+        assert_eq!(names(&o, SymKind::Declared), vec!["v_pat"]);
+        assert_eq!(names(&o, SymKind::Procedure), vec!["open_emp"]);
+        // 본문의 `FOR`/`OPEN`은 커서가 아니다 · 선언부 밖 CURSOR 낱말도 심볼이 아니다.
+        assert!(names(&o, SymKind::Cursor).is_empty());
+        let v = o.find("v_pat").expect("var");
+        assert_eq!(v.parent.map(|i| o.symbols[i].name.as_str()), Some("pkg_rc"));
+        assert_eq!(v.depth, 1);
+    }
+
+    /// T-SQL 배치 하나에 CREATE 둘 = 뿌리 둘(문장 행 0) · 일반 문장 안 `CREATE`(동적 SQL 아닌 실제 배치)는 문장 행의 자식.
+    #[test]
+    fn create_targets_are_roots_and_plain_statements_keep_their_row() {
+        let src =
+            "CREATE TABLE dbo.t1 (a INT);\nGO\nCREATE PROC dbo.p1 AS SELECT 1;\nGO\nSELECT * FROM dbo.t1;";
+        let o = outline(src, Some(Dialect::Mssql));
+        let roots: Vec<(&str, SymKind)> = o
+            .symbols
+            .iter()
+            .filter(|s| s.parent.is_none())
+            .map(|s| (s.name.as_str(), s.kind))
+            .collect();
+        assert_eq!(
+            roots,
+            vec![
+                ("dbo.t1", SymKind::Object),
+                ("dbo.p1", SymKind::Procedure),
+                ("SELECT * FROM dbo.t1", SymKind::Statement),
+            ]
+        );
+        assert!(o.symbols.iter().all(|s| s.depth == 0));
+        // 같은 항목 안의 두 번째 CREATE(GO 없는 배치)도 뿌리.
+        let o2 = outline(
+            "CREATE TABLE a (x INT)\nCREATE TABLE b (y INT)\nGO\n",
+            Some(Dialect::Mssql),
+        );
+        let n: Vec<&str> = o2
+            .symbols
+            .iter()
+            .filter(|s| s.kind == SymKind::Object)
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(n, vec!["a", "b"]);
+        assert!(o2.symbols.iter().all(|s| s.parent.is_none()));
     }
 }
