@@ -80,6 +80,20 @@ def main() -> int:
     for lic, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         lines.append(f"  {n:4d}  {lic}")
     lines.append("")
+    # ★ 정적으로 동봉한 네이티브 라이브러리(D-362 · 10-25): crate 목록에는 래퍼 crate만 보이므로 C 라이브러리 자체의 라이선스를 따로 적는다.
+    #   unixODBC = LGPL-2.1-or-later · Linux/macOS의 nsql-driver-odbc(앱 내장 + 확장 cdylib)에 `odbc-sys vendored-unix-odbc`로 정적 링크 ·
+    #   §6 재링크 요건 = 이 저장소의 소스 공개(github.com/SosomLab/nexa-sql)로 충족. Windows는 인박스 odbc32.dll(동봉 없음).
+    lines += [
+        "== Bundled native libraries (statically linked) ==",
+        "",
+        "  unixODBC (Driver Manager)  [LGPL-2.1-or-later]  https://www.unixodbc.org/",
+        "    Linked statically into nsql-driver-odbc on Linux and macOS via the odbc-sys crate",
+        "    (feature vendored-unix-odbc, crate unix-odbc). Not used on Windows (inbox odbc32.dll).",
+        "    Source of the combined work is available at https://github.com/SosomLab/nexa-sql,",
+        "    which satisfies LGPL section 6 (relinking). The unixODBC source and license text:",
+        "    https://github.com/lurcher/unixODBC/blob/master/COPYING",
+        "",
+    ]
     # DBMS 로고(내장 PNG) 출처·라이선스·상표 고지 — 저장소의 NOTICE.md를 그대로 싣는다(T-277 · devicon MIT 고지 포함).
     notice = os.path.join(meta["workspace_root"], "crates", "nexa-sql", "assets", "dbms", "NOTICE.md")
     if os.path.isfile(notice):
