@@ -23,7 +23,7 @@ pub const ABI_VERSION: u32 = 2;
 /// ★ 드라이버 **패키지 버전**(사용자 10-23 "내장 드라이버 버전은 앱 버전이 아니라 자체 버전") — 내장이든 확장(`drivers-v<ver>` 자산)이든
 /// 같은 번호. 원천은 이 상수 하나: 패키징(`scripts/package-drivers.py`)이 읽어 `--version`과 어긋나면 멈추고, 드라이버 관리자 창의
 /// "내장" 열은 `nsql_drivers::builtin_version`이 이 값을 돌려준다. 드라이버 릴리스마다 올린다(앱 버전과 독립).
-pub const DRIVER_VERSION: &str = "0.1.2";
+pub const DRIVER_VERSION: &str = "0.1.3";
 /// 드라이버가 내보내는 유일한 심볼: `extern "C" fn() -> *const VTable`.
 /// 실제 이름 = `nsql_driver_vtable_<id>`([`entry_symbol`]). 드라이버마다 다르게 해야 여러 드라이버 rlib를 한 바이너리에
 /// 정적으로 넣는 내장 빌드에서 심볼이 겹치지 않는다(LNK2005 · D-350 B단계).

@@ -8,4 +8,5 @@ DRIVERS = [
     ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC"),
     ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
+    ("clickhouse", "nsql-driver-clickhouse", "clickhouse", "ClickHouse"),
 ]

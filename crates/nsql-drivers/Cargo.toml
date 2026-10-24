@@ -47,6 +47,8 @@ nsql-driver-odbc = { workspace = true, optional = true }
 
 [dev-dependencies]
 nsql-run.workspace = true
+# ★ ClickHouse(138차 · 확장 전용)는 내장 feature가 없어 통합 시험이 크레이트를 직접 연다(확장 경로 = NSQL_TEST_DYN=1 · cdylib).
+nsql-driver-clickhouse.workspace = true
 # 설치 왕복 시험 전용 서명(발급 코드가 아니다 · nsql-license 시험과 같은 판).
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 # 통합 테스트를 저장된 프로필로도 돌린다(`NSQL_PG_PROFILE=<이름>` — 비밀번호를 환경 변수에 적지 않는다).

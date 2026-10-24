@@ -1639,3 +1639,152 @@ fn copy_bundled_runtime(target: &std::path::Path, id: &str, dest_dir: &std::path
         }
     }
 }
+
+// ───────────────────────────────────────────── ClickHouse(138차 · nsql-driver-clickhouse · D-354 · HTTP 인터페이스)
+
+/// ClickHouse = 확장 전용 → 내장 경로(`NSQL_TEST_DYN` 없음)에서는 크레이트를 직접 연다 · 확장 경로에서는 cdylib(ABI v2 · [`open_session`]).
+fn clickhouse_spec() -> Option<ConnectSpec> {
+    match std::env::var("NSQL_CLICKHOUSE_URL") {
+        Ok(url) => {
+            Some(nsql_drivers::parse_target(&url, Dialect::Clickhouse).expect("접속 문자열"))
+        }
+        Err(_) => {
+            eprintln!("[skip] NSQL_CLICKHOUSE_URL 없음");
+            None
+        }
+    }
+}
+
+fn clickhouse_open(spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
+    if std::env::var_os("NSQL_TEST_DYN").is_some() {
+        return open_session(spec, Dialect::Clickhouse);
+    }
+    Ok(Box::new(nsql_driver_clickhouse::ChSession::open(spec)?))
+}
+
+/// 스크립트 경로(러너 · 세션 변수): DDL(Memory 엔진) · 다중 행 INSERT · `EXEC :V := 리터럴`(로컬) · `?` 자리 = 드라이버 리터럴 치환 · 한글 ·
+/// 타입 복원(UInt64 · String · Nullable(Float64) · Decimal · Date · Array) · 트랜잭션 없음(COMMIT = no-op) · 끝에 DROP.
+#[test]
+fn clickhouse_script_ddl_dml_binds_and_types() {
+    let Some(spec) = clickhouse_spec() else {
+        return;
+    };
+    let opener: Opener = Box::new(|s: &ConnectSpec| clickhouse_open(s));
+    let mut r = Runner::new(Dialect::Clickhouse, opener);
+    let mut ev = Vec::new();
+    assert!(r.connect(&spec, &mut |e| ev.push(e)), "접속 실패: {ev:?}");
+    let _ = run_raw(&mut r, "DROP TABLE IF EXISTS nsqlt_ch;");
+    let ev = run(
+        &mut r,
+        "CREATE TABLE nsqlt_ch (id UInt64, name String, score Nullable(Float64), amt Decimal(10, 2), d Date, tags Array(String)) ENGINE = Memory;\n\
+         INSERT INTO nsqlt_ch VALUES (1, '한글', 1.5, 12.34, '2024-01-02', ['a','b']), (2, 'it''s', NULL, 0.01, '2024-01-03', []);\n\
+         EXEC :V_ID := 2\n\
+         EXEC :V_NAME := 'it''s'\n\
+         SELECT id, name, score, amt, d, tags FROM nsqlt_ch WHERE id <= :V_ID ORDER BY id;\n\
+         SELECT count() AS c FROM nsqlt_ch WHERE name = :V_NAME;\n\
+         COMMIT;\n\
+         DROP TABLE nsqlt_ch;",
+    );
+    let sets: Vec<&nsql_core::ResultSet> = ev
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::ResultSet { rs, .. } => Some(rs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sets.len(), 2, "{ev:#?}");
+    let rs = sets[0];
+    assert_eq!(
+        rs.columns
+            .iter()
+            .map(|c| c.type_name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "UInt64",
+            "String",
+            "Nullable(Float64)",
+            "Decimal(10, 2)",
+            "Date",
+            "Array(String)"
+        ]
+    );
+    assert_eq!(
+        rs.rows[0],
+        vec![
+            Value::Int(1),
+            Value::Str("한글".into()),
+            Value::Float(1.5),
+            Value::Decimal("12.34".into()),
+            Value::Str("2024-01-02".into()),
+            Value::Str("[\"a\",\"b\"]".into()),
+        ]
+    );
+    assert_eq!(rs.rows[1][1], Value::Str("it's".into()));
+    assert_eq!(rs.rows[1][2], Value::Null);
+    assert_eq!(
+        sets[1].rows[0][0],
+        Value::Int(1),
+        "따옴표 이스케이프된 바인드 리터럴"
+    );
+}
+
+/// 직접 세션 경로: 영향 행 수(`X-ClickHouse-Summary`) · `USE`(클라이언트 DB) · 오류(UNKNOWN_TABLE 60 · 구문 62 + 위치) · 카탈로그 훅
+/// (`system.tables`/`system.columns` · Nullable · Decimal 자릿수) · 취소 핸들(실행 밖 = Ok) · is_alive · 임시 표 DROP.
+#[test]
+fn clickhouse_session_rows_affected_use_errors_catalog_and_cancel() {
+    let Some(spec) = clickhouse_spec() else {
+        return;
+    };
+    let db = spec.database.clone().unwrap_or_else(|| "default".into());
+    let mut s = clickhouse_open(&spec).expect("open");
+    assert_eq!(s.dialect(), Dialect::Clickhouse);
+    assert!(s.describe().starts_with("ClickHouse "), "{}", s.describe());
+    let exec = |s: &mut Box<dyn Session>, sql: &str| {
+        s.execute(&nsql_core::ExecRequest {
+            sql: sql.into(),
+            params: Vec::new(),
+        })
+    };
+    let _ = exec(&mut s, "DROP TABLE IF EXISTS nsqlt_ch2");
+    exec(&mut s, "CREATE TABLE nsqlt_ch2 (id UInt32, name Nullable(FixedString(8)), amt Decimal(12, 3)) ENGINE = Memory").expect("create");
+    let r = exec(
+        &mut s,
+        "INSERT INTO nsqlt_ch2 VALUES (1, 'a', 1.5), (2, NULL, 2.25), (3, 'c', 3)",
+    )
+    .expect("insert");
+    assert_eq!(r.rows_affected, Some(3), "{r:?}");
+    // USE = 서버 왕복 없이 현재 DB 교체 → 같은 이름으로 되돌리면 표가 그대로 보인다.
+    exec(&mut s, &format!("USE {db}")).expect("use");
+    let r = exec(&mut s, "SELECT count() FROM nsqlt_ch2").expect("count");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(3));
+    let e = exec(&mut s, "SELECT * FROM nsqlt_nope_zz").expect_err("unknown table");
+    assert_eq!(e.code, Some(60), "{e:?}");
+    let e = exec(&mut s, "SELECT 1 FRM nsqlt_ch2").expect_err("syntax");
+    assert_eq!(e.code, Some(62), "{e:?}");
+    assert!(e.position.is_some(), "구문 오류 위치: {e:?}");
+    let ts = s.catalog_tables(Some(&db)).expect("tables").expect("hook");
+    let t = ts
+        .iter()
+        .find(|t| t.name == "nsqlt_ch2")
+        .expect("nsqlt_ch2 in system.tables");
+    assert_eq!((t.schema.as_str(), t.kind.as_str()), (db.as_str(), "TABLE"));
+    let cs = s
+        .catalog_columns(Some(&db), "nsqlt_ch2")
+        .expect("columns")
+        .expect("hook");
+    assert_eq!(
+        cs.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["id", "name", "amt"]
+    );
+    assert_eq!((cs[1].nullable, cs[1].size), (Some(true), Some(8)));
+    assert_eq!((cs[2].size, cs[2].decimal_digits), (Some(12), Some(3)));
+    assert_eq!(cs[2].position, 3);
+    let c = s.cancel_handle().expect("cancel handle");
+    c.cancel().expect("실행 중이 아니면 Ok");
+    assert!(s.is_alive());
+    assert!(
+        s.commit().is_ok() && s.rollback().is_ok(),
+        "트랜잭션 없음 = no-op"
+    );
+    exec(&mut s, "DROP TABLE nsqlt_ch2").expect("drop");
+}

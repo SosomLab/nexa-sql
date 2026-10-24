@@ -1,5 +1,5 @@
 # 실서버 통합 테스트 — 각 DBMS를 서비스 컨테이너로(사용자 09-12 "각 DBMS별 docker"). main push · PR · 수동.
-# Oracle Free 23ai(gvenzl) + SQL Server 2022 + PostgreSQL 17 + MySQL 8.4(135차 · devcontainer `mysql` 프로필과 같은 정의) + MariaDB 11.4(137차 · 3307).
+# Oracle Free 23ai(gvenzl) + SQL Server 2022 + PostgreSQL 17 + MySQL 8.4(135차 · devcontainer `mysql` 프로필과 같은 정의) + MariaDB 11.4(137차 · 3307) + ClickHouse 24.8(138차 · 8123 HTTP · 확장 전용 드라이버).
 # ★ 137차(D-350 · 사용자 10-23 "테스트 자동화"): 같은 잡에서 **확장 경로**(NSQL_TEST_DYN=1 · cdylib 8종 · ABI v2)로 한 번 더 · MariaDB는 mysql 시험을 3307로 다시.
 name: integration
 on:
@@ -20,6 +20,8 @@ env:
   NSQL_PG_URL: postgres://nexa:nexa@localhost:5432/nexa
   MYSQL_HOST: localhost
   NSQL_MYSQL_URL: mysql://nexa:nexa@localhost:3306/nexa
+  CLICKHOUSE_HOST: localhost
+  NSQL_CLICKHOUSE_URL: clickhouse://nexa:nexa@localhost:8123/nexa
   # ODBC(T-383 · D-345) = 내장 드라이버가 Windows 전용이라 이 Linux 잡에서는 `odbc_` 시험이 건너뛴다(실측 = Windows 로컬 · 저장 프로필).
   LD_LIBRARY_PATH: /opt/oracle/instantclient
 
@@ -96,6 +98,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_USER: nexa
+          CLICKHOUSE_PASSWORD: nexa
+          CLICKHOUSE_DB: nexa
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "clickhouse-client --user nexa --password nexa --query 'SELECT 1' || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -134,8 +149,8 @@ jobs:
         env:
           NSQL_MYSQL_URL: mysql://nexa:nexa@localhost:3307/nexa
         run: cargo test -p nsql-drivers --test integration mysql -- --nocapture --test-threads=1
-      - name: extension drivers (cdylib 8종 · duckdb = download-lib)
-        run: cargo build -p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb -p nsql-driver-odbc
+      - name: extension drivers (cdylib 9종 · duckdb = download-lib · clickhouse = HTTP)
+        run: cargo build -p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb -p nsql-driver-clickhouse -p nsql-driver-odbc
       - name: integration tests (extension path · NSQL_TEST_DYN=1 · ABI v2 · ODBC = PostgreSQL ODBC via unixODBC)
         env:
           NSQL_TEST_DYN: "1"
@@ -146,8 +161,8 @@ jobs:
           NSQL_TEST_DYN: "1"
           NSQL_MYSQL_URL: mysql://nexa:nexa@localhost:3307/nexa
         run: cargo test -p nsql-drivers --test integration mysql -- --nocapture --test-threads=1
-      - name: driver unit tests (duckdb · ext · dyn conformance)
-        run: cargo test -p nsql-driver-duckdb -p nsql-driver-dyn -p nsql-drivers --test ext
+      - name: driver unit tests (duckdb · clickhouse · ext · dyn conformance)
+        run: cargo test -p nsql-driver-duckdb -p nsql-driver-clickhouse -p nsql-driver-dyn -p nsql-drivers --test ext
       - name: nsql run (Oracle · MSSQL · MySQL 실기 스크립트)
         run: |
           cargo run -q -p nsql-cli -- run -c "$NSQL_ORACLE_URL" examples/it-oracle.sql

@@ -119,6 +119,21 @@
       ],
       "license": "PolyForm-Noncommercial-1.0.0",
       "sxs": false
+    },
+    {
+      "id": "clickhouse",
+      "name": "ClickHouse",
+      "dialect": "clickhouse",
+      "latest": "0.1.3",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
     }
   ]
 }

@@ -20,6 +20,7 @@ DRIVERS = [
     ("oracle-oci", "nsql-driver-oracle", "oracle", "Oracle (OCI, Instant Client)"),
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC"),
     ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
+    ("clickhouse", "nsql-driver-clickhouse", "clickhouse", "ClickHouse"),
 ]
 WINDOWS_ONLY: set = set()  # odbc도 전 OS(Linux/mac = unixODBC 동적 · 10-24)
 # 드라이버 옆에 동봉하는 런타임 공유 라이브러리(Windows 이름 기준 · 다른 OS는 lib*.so/.dylib로 바꾼다).

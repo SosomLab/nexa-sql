@@ -13,4 +13,5 @@ rc=0
 [ -n "${NSQL_MSSQL_URL:-}" ]    && { wait_port "${MSSQL_HOST:-mssql}" 1433 mssql || rc=1; }
 [ -n "${NSQL_PG_URL:-}" ] && { wait_port "${POSTGRES_HOST:-postgres}" 5432 postgres || rc=1; }
 [ -n "${NSQL_MYSQL_URL:-}" ]    && { wait_port "${MYSQL_HOST:-mysql}" 3306 mysql || rc=1; }
+[ -n "${NSQL_CLICKHOUSE_URL:-}" ] && { wait_port "${CLICKHOUSE_HOST:-clickhouse}" 8123 clickhouse || rc=1; }
 exit $rc
