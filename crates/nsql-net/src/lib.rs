@@ -290,6 +290,67 @@ fn tcp_connect(
     })))
 }
 
+/// ★ 공개 소켓(10-25 · D-361 · 네이티브 DB 드라이버용): 평문 TCP 또는 TLS(rustls · 시스템 루트) 위 `Read + Write` 하나 —
+///   DRDA(Db2) 등 HTTP가 아닌 프로토콜이 쓴다. 접속·읽기·쓰기 타임아웃 · Nagle 끔. 스스로 재시도하지 않는다(26 §8).
+pub struct Socket(Conn);
+
+impl fmt::Debug for Socket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.0 {
+            Conn::Plain(_) => "Socket(plain)",
+            Conn::Tls(_) => "Socket(tls)",
+        })
+    }
+}
+
+impl Socket {
+    /// `tls` = `Some(서버 이름)`이면 TLS 핸드셰이크까지(인증서 = 시스템 루트 · 이름 검증).
+    pub fn connect(
+        host: &str,
+        port: u16,
+        timeout: Duration,
+        io: Duration,
+        tls: Option<&str>,
+    ) -> Result<Socket, NetError> {
+        let tcp = tcp_connect(host, port, timeout, io)?;
+        match tls {
+            None => Ok(Socket(Conn::Plain(tcp))),
+            Some(name) => {
+                let sn = rustls::pki_types::ServerName::try_from(name.to_string())
+                    .map_err(|e| NetError::Tls(format!("server name {name}: {e}")))?;
+                let cc = rustls::ClientConnection::new(tls_config(), sn)
+                    .map_err(|e| NetError::Tls(e.to_string()))?;
+                Ok(Socket(Conn::Tls(Box::new(rustls::StreamOwned::new(
+                    cc, tcp,
+                )))))
+            }
+        }
+    }
+
+    /// 읽기 타임아웃을 바꾼다(긴 질의 대기 · `None` = 무한).
+    pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
+        match &mut self.0 {
+            Conn::Plain(s) => s.set_read_timeout(d),
+            Conn::Tls(s) => s.sock.set_read_timeout(d),
+        }
+    }
+}
+
+impl Read for Socket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for Socket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// 머리(상태줄 + 헤더)를 `\r\n\r\n`까지 읽는다 — 남은 바이트(본문 앞부분)를 돌려준다.
 /// (상태, 헤더, 머리 뒤에 이미 읽힌 본문 앞부분).
 type Head = (u16, Vec<(String, String)>, Vec<u8>);

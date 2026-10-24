@@ -2319,6 +2319,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nsql-driver-db2"
+version = "0.2.9"
+dependencies = [
+ "nsql-abi",
+ "nsql-core",
+ "nsql-net",
+ "nsql-script",
+]
+
+[[package]]
 name = "nsql-driver-duckdb"
 version = "0.2.9"
 dependencies = [
