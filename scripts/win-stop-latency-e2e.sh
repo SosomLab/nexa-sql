@@ -55,7 +55,11 @@ latency() {
 judge() {
   local label=$1 d=$2 r
   r=$(latency "$d")
-  if [ -z "$r" ]; then bad "$label 중지 요청/확정 줄을 못 찾음" "$(grep -E "Cancel|stop|ORA-|error|Error" "$d" | head -8)"; return; fi
+  if [ -z "$r" ]; then
+    # ★ 10-24(138차 Linux V3 D21): Oracle **Thin**(기본 D-278)은 즉시 취소 핸들이 없어 ■ = "배치 경계 정지"(110 §3 · 두 번째 ■ = 강제) → 지연 측정 대상이 아님 = N/A로 통과.
+    if grep -qE "Stopping after the current batch|이번 배치 뒤에 멈춥니다" "$d"; then ok "$label 배치 경계 정지(Oracle Thin · 즉시 취소 없음 = 설계 · 지연 N/A · OCI 비교는 격리 홈 oracle.driver=oci)"; return; fi
+    bad "$label 중지 요청/확정 줄을 못 찾음" "$(grep -E "Cancel|stop|ORA-|error|Error" "$d" | head -8)"; return
+  fi
   set -- $r
   say "        요청 → 확정 = $3 ms ($4)"
   if [ "$3" -le "$LIMIT" ]; then ok "$label 중지 지연 $3 ms ≤ $LIMIT"; else bad "$label 중지 지연 $3 ms > $LIMIT" "$(grep -E "Cancel|stop|ORA-|error" "$d" | head -6)"; fi

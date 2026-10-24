@@ -24,7 +24,7 @@ say "=== 작업 단위 전환 E2E · 프로필 $PROFILE → 스키마 $OTHER · 
 F="$OUT/switch.sql"; printf 'SHOW CONN\nALTER SESSION SET CURRENT_SCHEMA = %s;\nSHOW CONN\nSELECT SYS_CONTEXT('"'"'USERENV'"'"','"'"'CURRENT_SCHEMA'"'"') AS cs FROM dual;\n' "$OTHER" > "$F"
 echo "--- CLI" | tee -a "$REPORT" >/dev/null
 o=$("$NSQL" run -c "$PROFILE" "$F" 2>&1); echo "$o" | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
-chk "CLI: ALTER SESSION 뒤 current database 안내 = $OTHER" "current database: $OTHER" "$o"
+chk "CLI: ALTER SESSION 뒤 current schema 안내 = $OTHER" "current (database|schema): $OTHER|현재 (데이터베이스|스키마): $OTHER" "$o"   # Oracle 단위 = 스키마 · ko 로캘(10-24 Linux V3 D22)
 chk "CLI: 서버 CURRENT_SCHEMA = $OTHER" "^$OTHER\$|^$OTHER " "$o"
 echo "--- GUI" | tee -a "$REPORT" >/dev/null
 fw=$(cygpath -w "$F" 2>/dev/null || echo "$F"); D="$OUT/output.txt"; rm -f "$D"
