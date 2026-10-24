@@ -23,12 +23,12 @@ pub(crate) fn write_text(text: &str) -> bool {
 
 /// 텍스트 + HTML(서식 · 구문 색) 동시 게시(사용자 09-14 — PPT/Word에 같은 모양으로 붙여넣기).
 /// Windows = `CF_UNICODETEXT` + 등록 형식 `HTML Format`(CF_HTML) · macOS = osascript(«class HTML» + 문자열) ·
-/// Linux = 텍스트만(CLI 도구가 다중 형식을 못 올린다 — 후속). 실패 = `false`.
+/// Linux = X11 소유권에 `text/html`을 함께(10-24 · T-60 · `clipboard_x11::write_rich`) · CLI 도구 폴백은 텍스트만. 실패 = `false`.
 pub(crate) fn write_rich(text: &str, html: &str) -> bool {
     imp::write_rich(text, html)
 }
 
-/// CF_HTML 컨테이너(헤더 오프셋은 UTF-8 바이트 · 10자리 고정). 부르는 쪽 = Windows `imp`뿐(macOS·Linux는 HTML 클립보드 없음).
+/// CF_HTML 컨테이너(헤더 오프셋은 UTF-8 바이트 · 10자리 고정). 부르는 쪽 = Windows `imp`뿐(macOS = «class HTML» · Linux = X11 `text/html` 원문).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn cf_html(fragment: &str) -> Vec<u8> {
     let head_len = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n".len();
@@ -252,7 +252,7 @@ mod imp {
         None
     }
 
-    /// macOS: AppleScript로 HTML + 문자열을 함께 올린다 · 실패/다른 OS = 텍스트만.
+    /// macOS: AppleScript로 HTML + 문자열을 함께 올린다 · Linux: X11 `text/html` 대상(10-24) · 실패/그 밖 = 텍스트만.
     pub(super) fn write_rich(text: &str, html: &str) -> bool {
         #[cfg(target_os = "macos")]
         {
@@ -269,6 +269,11 @@ mod imp {
             {
                 return true;
             }
+        }
+        // ★ Linux(10-24 · T-60): X11 소유권에 `text/html`을 함께 올린다 · 끄거나 실패하면 텍스트만(CLI 경로).
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if crate::settings_clip_native() && crate::clipboard_x11::write_rich(text, html) {
+            return true;
         }
         let _ = html;
         write(text)

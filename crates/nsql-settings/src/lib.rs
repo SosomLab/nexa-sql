@@ -2476,6 +2476,16 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "1500",
     },
+    // ★ Linux 시스템 테마 변경 감시(10-24 · 138차 · T-38 Linux 잔여): dconf 폴더 inotify(nexa-fs dirwatch) → System 모드 즉시 추종.
+    //   부하원 = 스레드 1 + inotify watch 1(39 §3) · 끄면 종전처럼 다음 조회(메뉴 열기 · 재시작) 때 반영. 다른 OS = 값만 보관(winit ThemeChanged).
+    Entry {
+        key: "ui.theme_watch",
+        cat: Msg::CatAppearance,
+        label: Msg::LblThemeWatch,
+        desc: Msg::DescThemeWatch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.flash_ms",
         cat: Msg::CatAppearance,
@@ -7709,6 +7719,8 @@ pub fn is_hidden(key: &str) -> bool {
 pub const ADVANCED: &[&str] = &[
     // 확장 뷰 탭 세션 표식(사용자 10-07 "고급 설정으로")
     "extensions.tab_badge",
+    // Linux 시스템 테마 변경 감시(10-24 · 부하원 스위치)
+    "ui.theme_watch",
     // 시간 상수(ms)
     "ui.fade_slow_ms",
     "ui.fade_fast_ms",

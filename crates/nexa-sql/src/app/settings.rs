@@ -362,6 +362,8 @@ impl App {
             "ui.theme_cache_ms" => {
                 crate::theme::set_cache_ms(self.settings.int(key).clamp(0, 60_000) as u64)
             }
+            // ★ Linux 시스템 테마 변경 감시(10-24 · dconf 폴더 inotify) — 다른 OS no-op.
+            "ui.theme_watch" => crate::theme::set_watch(self.settings.flag(key)),
             "ui.fade_fast_ms" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Fast,
                 fade_ms(&self.settings, key, 5000),

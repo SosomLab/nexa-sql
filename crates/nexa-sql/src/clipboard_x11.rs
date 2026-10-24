@@ -9,6 +9,8 @@
 //! 구조:
 //! - **쓰기** = 전용 스레드가 1×1 InputOnly 창으로 `SetSelectionOwner(CLIPBOARD)`를 잡고 살아 있는 동안 소유권을 유지한다.
 //!   `SelectionRequest`가 오면 `TARGETS`·`UTF8_STRING`·`STRING`·`text/plain;charset=utf-8`에 답한다. 큰 값은 **INCR**로 나눠 보낸다.
+//!   ★ 서식 복사(10-24 · 138차 Linux · T-60)는 같은 소유권에 **`text/html`** 대상을 더 올린다 — Windows CF_HTML · macOS «class HTML»과 격을
+//!   맞춘다(LibreOffice·브라우저·메일이 표를 서식째 받는다 · 글자만 받는 앱은 UTF8_STRING을 고른다).
 //!   → 외부 도구 경로의 고질(넣어 준 `xclip` 프로세스가 죽으면 클립보드가 비는 것)도 같이 사라진다.
 //! - **읽기** = 우리가 소유자면 보관 중인 값을 그대로, 아니면 `ConvertSelection` → `SelectionNotify` → property(필요하면 INCR 수신).
 //! - 스레드는 **처음 복사할 때 한 번** 뜬다(붙여넣기만 하면 안 뜬다 · 부하원 원장 39 §3). 설정 `clipboard.x11_native`로 끄면 종전 CLI 경로.
@@ -37,6 +39,7 @@ struct Atoms {
     targets: Atom,
     utf8: Atom,
     text_plain: Atom,
+    html: Atom,
     incr: Atom,
     prop: Atom,
 }
@@ -45,11 +48,22 @@ fn atoms(conn: &RustConnection) -> Result<Atoms, Box<dyn std::error::Error>> {
     let a = |n: &[u8]| -> Result<Atom, Box<dyn std::error::Error>> {
         Ok(conn.intern_atom(false, n)?.reply()?.atom)
     };
+    // ★ 자체 시험(10-24 · Debug만): `NSQL_CLIP_SELECTION=<이름>`이면 그 selection을 쓴다 — 사용자의 CLIPBOARD를 덮어쓰지 않고
+    //   다른 프로세스(python3 Gtk)가 TARGETS·text/html을 읽어 판정한다(CLAUDE.md §3 "자동 시험에 복사 명령 금지"의 우회 = 사설 selection).
+    let sel_name: Vec<u8> = if cfg!(debug_assertions) {
+        std::env::var("NSQL_CLIP_SELECTION")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map_or_else(|| b"CLIPBOARD".to_vec(), String::into_bytes)
+    } else {
+        b"CLIPBOARD".to_vec()
+    };
     Ok(Atoms {
-        clipboard: a(b"CLIPBOARD")?,
+        clipboard: a(&sel_name)?,
         targets: a(b"TARGETS")?,
         utf8: a(b"UTF8_STRING")?,
         text_plain: a(b"text/plain;charset=utf-8")?,
+        html: a(b"text/html")?,
         incr: a(b"INCR")?,
         prop: a(b"NEXA_SQL_CLIP")?,
     })
@@ -81,12 +95,40 @@ fn helper_window(
 
 // ───────────────────────── 쓰기(소유권 유지 스레드) ─────────────────────────
 
-static OWNER: OnceLock<Option<Sender<Vec<u8>>>> = OnceLock::new();
+/// 소유권 스레드에 넘기는 한 벌 — 글자(UTF8_STRING 계열)와 선택적 HTML(`text/html`).
+struct Payload {
+    text: Vec<u8>,
+    html: Option<Vec<u8>>,
+}
+
+impl Payload {
+    /// 요청 대상(atom)에 맞는 바이트 — 모르는 대상 = None(거절).
+    fn for_target(&self, at: &Atoms, target: Atom) -> Option<&[u8]> {
+        if target == at.utf8 || target == at.text_plain || target == u32::from(AtomEnum::STRING) {
+            Some(&self.text)
+        } else if target == at.html {
+            self.html.as_deref()
+        } else {
+            None
+        }
+    }
+}
+
+static OWNER: OnceLock<Option<Sender<Payload>>> = OnceLock::new();
 /// 지금 우리가 들고 있는 내용 — 우리가 소유자일 때의 읽기는 왕복 없이 여기서.
 static MINE: Mutex<Option<Vec<u8>>> = Mutex::new(None);
 
 /// 텍스트를 CLIPBOARD에 올린다(소유자가 된다). 실패 = `false` → 호출측이 CLI 경로로 폴백.
 pub(crate) fn write(text: &str) -> bool {
+    write_with(text, None)
+}
+
+/// 텍스트 + HTML을 한 소유권으로 올린다(서식 복사 · `text/html` 대상). 실패 = `false`.
+pub(crate) fn write_rich(text: &str, html: &str) -> bool {
+    write_with(text, Some(html))
+}
+
+fn write_with(text: &str, html: Option<&str>) -> bool {
     let tx = OWNER.get_or_init(|| spawn_owner().ok());
     let Some(tx) = tx.as_ref() else {
         if std::env::var_os("NSQL_TRACE_CLIP").is_some() {
@@ -95,15 +137,24 @@ pub(crate) fn write(text: &str) -> bool {
         return false;
     };
     *MINE.lock().unwrap_or_else(|e| e.into_inner()) = Some(text.as_bytes().to_vec());
-    let sent = tx.send(text.as_bytes().to_vec()).is_ok();
+    let sent = tx
+        .send(Payload {
+            text: text.as_bytes().to_vec(),
+            html: html.map(|h| h.as_bytes().to_vec()),
+        })
+        .is_ok();
     if std::env::var_os("NSQL_TRACE_CLIP").is_some() {
-        eprintln!("[clip] x11 write: {} bytes queued={sent}", text.len());
+        eprintln!(
+            "[clip] x11 write: {} bytes html={} queued={sent}",
+            text.len(),
+            html.map_or(0, str::len)
+        );
     }
     sent
 }
 
-fn spawn_owner() -> Result<Sender<Vec<u8>>, Box<dyn std::error::Error>> {
-    let (tx, rx) = channel::<Vec<u8>>();
+fn spawn_owner() -> Result<Sender<Payload>, Box<dyn std::error::Error>> {
+    let (tx, rx) = channel::<Payload>();
     // 연결·창은 스레드 안에서 만든다(RustConnection은 Send가 아니어도 되게).
     let (ready_tx, ready_rx) = channel::<bool>();
     std::thread::Builder::new()
@@ -118,9 +169,12 @@ fn spawn_owner() -> Result<Sender<Vec<u8>>, Box<dyn std::error::Error>> {
                 return;
             };
             let _ = ready_tx.send(true);
-            let mut data: Vec<u8> = Vec::new();
-            // 나눠 보내는 중인 요청들(INCR): (요청자 창, property, 남은 자리)
-            let mut incr: Vec<(Window, Atom, usize)> = Vec::new();
+            let mut data = Payload {
+                text: Vec::new(),
+                html: None,
+            };
+            // 나눠 보내는 중인 요청들(INCR): (요청자 창, property, 대상 atom, 보낸 자리)
+            let mut incr: Vec<(Window, Atom, Atom, usize)> = Vec::new();
             loop {
                 // 새 복사가 있으면 내용 교체 + 소유권(다시) 잡기.
                 while let Ok(v) = rx.try_recv() {
@@ -180,9 +234,9 @@ fn spawn_owner() -> Result<Sender<Vec<u8>>, Box<dyn std::error::Error>> {
 fn serve(
     conn: &RustConnection,
     at: &Atoms,
-    data: &[u8],
+    data: &Payload,
     r: &SelectionRequestEvent,
-    incr: &mut Vec<(Window, Atom, usize)>,
+    incr: &mut Vec<(Window, Atom, Atom, usize)>,
 ) {
     let prop = if r.property == NONE {
         r.target
@@ -190,20 +244,20 @@ fn serve(
         r.property
     };
     let ok = if r.target == at.targets {
-        let list = [
+        let mut list = vec![
             at.targets,
             at.utf8,
             at.text_plain,
             u32::from(AtomEnum::STRING),
         ];
+        if data.html.is_some() {
+            list.push(at.html);
+        }
         conn.change_property32(PropMode::REPLACE, r.requestor, prop, AtomEnum::ATOM, &list)
             .is_ok()
-    } else if r.target == at.utf8
-        || r.target == at.text_plain
-        || r.target == u32::from(AtomEnum::STRING)
-    {
-        if data.len() <= CHUNK {
-            conn.change_property8(PropMode::REPLACE, r.requestor, prop, r.target, data)
+    } else if let Some(bytes) = data.for_target(at, r.target) {
+        if bytes.len() <= CHUNK {
+            conn.change_property8(PropMode::REPLACE, r.requestor, prop, r.target, bytes)
                 .is_ok()
         } else {
             // INCR 시작: 전체 크기를 알리고, 상대가 property를 지울 때마다 한 조각씩.
@@ -212,12 +266,12 @@ fn serve(
                 &x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
                     .event_mask(EventMask::PROPERTY_CHANGE),
             );
-            let total = [data.len() as u32];
+            let total = [bytes.len() as u32];
             let ok = conn
                 .change_property32(PropMode::REPLACE, r.requestor, prop, at.incr, &total)
                 .is_ok();
             if ok {
-                incr.push((r.requestor, prop, 0));
+                incr.push((r.requestor, prop, r.target, 0));
             }
             ok
         }
@@ -241,23 +295,27 @@ fn serve(
 fn step_incr(
     conn: &RustConnection,
     at: &Atoms,
-    data: &[u8],
+    data: &Payload,
     win: Window,
     prop: Atom,
-    incr: &mut Vec<(Window, Atom, usize)>,
+    incr: &mut Vec<(Window, Atom, Atom, usize)>,
 ) {
-    let Some(i) = incr.iter().position(|(w, p, _)| *w == win && *p == prop) else {
+    let Some(i) = incr.iter().position(|(w, p, _, _)| *w == win && *p == prop) else {
         return;
     };
-    let sent = incr[i].2;
-    let end = (sent + CHUNK).min(data.len());
-    let chunk = &data[sent..end];
-    let _ = conn.change_property8(PropMode::REPLACE, win, prop, at.utf8, chunk);
+    let (_, _, target, sent) = incr[i];
+    let Some(bytes) = data.for_target(at, target) else {
+        incr.remove(i); // 그 사이 내용이 바뀌어 대상이 사라졌다 — 전송을 끊는다.
+        return;
+    };
+    let end = (sent + CHUNK).min(bytes.len());
+    let chunk = &bytes[sent..end];
+    let _ = conn.change_property8(PropMode::REPLACE, win, prop, target, chunk);
     let _ = conn.flush();
     if chunk.is_empty() {
         incr.remove(i); // 빈 조각을 보냈다 = 전송 끝
     } else {
-        incr[i].2 = end;
+        incr[i].3 = end;
     }
 }
 
@@ -340,6 +398,47 @@ mod tests {
     //!   NSQL_CLIP_EXPECT = 다른 프로세스가 미리 올려 둔 글(읽기 시험) · NSQL_CLIP_HOLD_MS = 쓰기 뒤 소유권을 유지할 시간.
     use super::*;
 
+    fn fake_atoms() -> Atoms {
+        Atoms {
+            clipboard: 1,
+            targets: 2,
+            utf8: 3,
+            text_plain: 4,
+            html: 5,
+            incr: 6,
+            prop: 7,
+        }
+    }
+
+    /// 대상별 바이트 선택(순수 · X 서버 불필요): 글자 대상 셋 = text · `text/html` = html(없으면 거절) · 모르는 대상 = 거절.
+    #[test]
+    fn payload_picks_bytes_by_target() {
+        let at = fake_atoms();
+        let p = Payload {
+            text: b"a\tb".to_vec(),
+            html: Some(b"<table>".to_vec()),
+        };
+        assert_eq!(p.for_target(&at, at.utf8), Some(&b"a\tb"[..]));
+        assert_eq!(p.for_target(&at, at.text_plain), Some(&b"a\tb"[..]));
+        assert_eq!(
+            p.for_target(&at, u32::from(AtomEnum::STRING)),
+            Some(&b"a\tb"[..])
+        );
+        assert_eq!(p.for_target(&at, at.html), Some(&b"<table>"[..]));
+        assert_eq!(p.for_target(&at, at.targets), None);
+        assert_eq!(p.for_target(&at, 999), None);
+        let plain = Payload {
+            text: b"x".to_vec(),
+            html: None,
+        };
+        assert_eq!(
+            plain.for_target(&at, at.html),
+            None,
+            "HTML 없으면 text/html 요청은 거절"
+        );
+        assert_eq!(plain.for_target(&at, at.utf8), Some(&b"x"[..]));
+    }
+
     #[test]
     #[ignore]
     fn read_what_another_process_put() {
@@ -379,6 +478,22 @@ mod tests {
         )
         .expect("write NSQL_CLIP_OUT");
         assert!(write(&text));
+        let hold: u64 = std::env::var("NSQL_CLIP_HOLD_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4000);
+        std::thread::sleep(Duration::from_millis(hold));
+    }
+
+    /// 서식 복사 왕복(10-24 · T-60): 글자 + HTML을 올리고 유지 — 상대 프로세스가 TARGETS에 `text/html`을 보고 둘을 읽는다
+    /// (`scripts/linux-clip-rich-e2e.sh` · `NSQL_CLIP_SELECTION`으로 사설 selection).
+    #[test]
+    #[ignore]
+    fn write_rich_and_hold_for_another_process() {
+        let text = std::env::var("NSQL_CLIP_TEXT").unwrap_or_else(|_| "id\tname\n1\t한글".into());
+        let html = std::env::var("NSQL_CLIP_HTML")
+            .unwrap_or_else(|_| "<table><tr><td>1</td><td>한글</td></tr></table>".into());
+        assert!(write_rich(&text, &html), "x11 owner thread");
         let hold: u64 = std::env::var("NSQL_CLIP_HOLD_MS")
             .ok()
             .and_then(|v| v.parse().ok())

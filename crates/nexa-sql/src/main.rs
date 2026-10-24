@@ -2277,6 +2277,10 @@ fn main() {
     nexa_ctl::tokens::set_fade_out_ms(fade_ms(&app.settings, "ui.fade_out_ms", 2000));
     nexa_fs::shell::set_os_icons(app.settings.flag("file.os_icons"));
     nexa_dlg::set_probe_chevrons(app.settings.flag("file.probe_chevrons"));
+    // Linux 시스템 테마(10-24 · 138차): gsettings 조회 캐시 TTL(종전엔 기동 때 적용되지 않아 설정 파일 값이 첫 변경까지 무시됐다) +
+    //   dconf 폴더 감시 켬/끔(`ui.theme_watch`) — 다른 OS no-op.
+    theme::set_cache_ms(app.settings.int("ui.theme_cache_ms").clamp(0, 60_000) as u64);
+    theme::set_watch(app.settings.flag("ui.theme_watch"));
     // hover / 눌림 색(설정 · `#RRGGBBAA` · 비우면 테마 기본).
     for tg in ColorTarget::ALL {
         apply_color(tg, color_setting(&app.settings, tg.key()).as_deref());

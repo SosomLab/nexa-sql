@@ -379,6 +379,21 @@ impl ApplicationHandler<Wake> for App {
         if self.dir_watch_pump() {
             self.redraw();
         }
+        // ★ Linux 시스템 테마 실시간 추종(10-24 · dconf 폴더 감시 · `ui.theme_watch`): 사건이 왔고 System 모드면 재판정 —
+        //   Windows·macOS는 `WindowEvent::ThemeChanged`가 같은 일을 한다(아래 window_event).
+        if crate::theme::poll_changed() {
+            if std::env::var_os("NSQL_TRACE_THEME").is_some() {
+                eprintln!(
+                    "[theme] dconf changed → re-probe (mode={:?} · dark={})",
+                    self.settings.theme_mode(),
+                    self.theme.is_dark
+                );
+            }
+            if self.settings.theme_mode() == ThemeMode::System {
+                self.apply_theme();
+                self.redraw();
+            }
+        }
         self.project_autosave_tick();
         self.sync_open_files();
         self.bm_tick();

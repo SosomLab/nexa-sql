@@ -8,7 +8,7 @@
 //! |---|---|---|
 //! | Windows | HKCU `Themes\Personalize\AppsUseLightTheme` DWORD(0 = 다크) · advapi32 직접 | winit `WindowEvent::ThemeChanged` |
 //! | macOS | `defaults read -g AppleInterfaceStyle`(= "Dark" · 키 부재 = 라이트) | winit `ThemeChanged` |
-//! | Linux | `gsettings get org.gnome.desktop.interface color-scheme`(`prefer-dark`/`prefer-light`) | 없음(다음 실행 · 또는 winit Wayland `ThemeChanged`) |
+//! | Linux | `gsettings get org.gnome.desktop.interface color-scheme`(`prefer-dark`/`prefer-light`) | ★ dconf 저장소 폴더(`$XDG_CONFIG_HOME/dconf`) **inotify**(nexa-fs `dirwatch` 재사용 · 10-24 138차 · 설정 `ui.theme_watch`) → 사건마다 조회 캐시를 비우고 System 모드면 재판정(상주 자식 프로세스 0 · 폴링 0 · 39 §3) · winit X11은 `ThemeChanged`를 주지 않는다 |
 //!
 //! 우선순위: **Windows = 레지스트리 → 창 판정**([`system_dark`] `os_first` · T-308) · 다른 OS = winit `Window::theme()` → OS 조회 → `None`(= 다크 · 제품 기본 룩).
 
@@ -38,6 +38,16 @@ pub(crate) fn use_cached(ttl_ms: u64, age_ms: Option<u64>) -> bool {
 }
 
 /// OS가 다크를 선호하면 `Some(true)`, 라이트면 `Some(false)`, 모르면 `None`.
+/// Linux 시스템 테마 변경 감시 켬/끔(설정 `ui.theme_watch` · 다른 OS = no-op · winit `ThemeChanged`가 대신한다).
+pub(crate) fn set_watch(on: bool) {
+    imp::set_watch(on);
+}
+
+/// 감시가 "바뀌었다"고 알렸는가(틱마다 호출 · 비용 = 채널 `try_recv`) — 참이면 조회 캐시는 이미 비워졌다.
+pub(crate) fn poll_changed() -> bool {
+    imp::poll_changed()
+}
+
 pub(crate) fn system_prefers_dark() -> Option<bool> {
     imp::prefers_dark()
 }
@@ -87,6 +97,12 @@ pub(crate) fn window_theme(mode: ThemeMode) -> Option<winit::window::Theme> {
 
 #[cfg(windows)]
 mod imp {
+    /// 변경 감시는 winit `ThemeChanged`가 맡는다(Linux만 dconf 감시) — no-op.
+    pub(super) fn set_watch(_on: bool) {}
+    pub(super) fn poll_changed() -> bool {
+        false
+    }
+
     #[link(name = "advapi32")]
     extern "system" {
         fn RegOpenKeyExW(
@@ -158,6 +174,12 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 mod imp {
+    /// 변경 감시는 winit `ThemeChanged`가 맡는다(Linux만 dconf 감시) — no-op.
+    pub(super) fn set_watch(_on: bool) {}
+    pub(super) fn poll_changed() -> bool {
+        false
+    }
+
     pub(super) fn prefers_dark() -> Option<bool> {
         let out = std::process::Command::new("defaults")
             .args(["read", "-g", "AppleInterfaceStyle"])
@@ -178,6 +200,58 @@ mod imp {
 
     /// 마지막 조회(시각 · 답) — [`super::use_cached`] 판정으로 되쓴다.
     static LAST: Mutex<Option<(Instant, Option<bool>)>> = Mutex::new(None);
+    /// dconf 폴더 감시(10-24 · T-38 Linux 잔여): GNOME은 설정을 `~/.config/dconf/user`에 통째로 다시 쓴다(임시 파일 → rename) →
+    /// 그 폴더의 `IN_MOVED_TO`/`IN_CLOSE_WRITE` 한 번 = "무언가 바뀜" → 다음 조회 때 gsettings 1회. 색상 외 설정 변경에도 깨어나지만
+    /// 비용은 조회 1회(4~5 ms)뿐이고 사용자 동작에 딸린다(39 §3 상주 자식 프로세스 0 원칙 유지 · `gsettings monitor`를 쓰지 않는 이유).
+    static WATCH: Mutex<Option<nexa_fs::dirwatch::DirWatch>> = Mutex::new(None);
+
+    fn dconf_dir() -> Option<std::path::PathBuf> {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+            })?;
+        let d = base.join("dconf");
+        d.is_dir().then_some(d)
+    }
+
+    pub(super) fn set_watch(on: bool) {
+        let mut g = WATCH.lock().unwrap_or_else(|e| e.into_inner());
+        if !on {
+            *g = None; // 떨어뜨리면 스레드·inotify가 닫힌다
+            return;
+        }
+        if g.is_some() || !nexa_fs::dirwatch::DirWatch::supported() {
+            return;
+        }
+        let Some(dir) = dconf_dir() else {
+            return; // dconf를 안 쓰는 데스크톱(KDE 등) = 감시 없음 · 조회는 그대로
+        };
+        *g = nexa_fs::dirwatch::DirWatch::spawn(
+            &[dir],
+            nexa_fs::dirwatch::DirWatchOpts {
+                exclude_names: Vec::new(),
+                debounce_ms: 300,
+            },
+        );
+    }
+
+    pub(super) fn poll_changed() -> bool {
+        let g = WATCH.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(w) = g.as_ref() else {
+            return false;
+        };
+        let mut any = false;
+        while w.try_recv().is_some() {
+            any = true;
+        }
+        drop(g);
+        if any {
+            *LAST.lock().unwrap_or_else(|e| e.into_inner()) = None; // 다음 조회 = 즉시 gsettings
+        }
+        any
+    }
 
     pub(super) fn prefers_dark() -> Option<bool> {
         let ttl = super::cache_ms();
@@ -212,6 +286,12 @@ mod imp {
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 mod imp {
+    /// 변경 감시는 winit `ThemeChanged`가 맡는다(Linux만 dconf 감시) — no-op.
+    pub(super) fn set_watch(_on: bool) {}
+    pub(super) fn poll_changed() -> bool {
+        false
+    }
+
     pub(super) fn prefers_dark() -> Option<bool> {
         None
     }
