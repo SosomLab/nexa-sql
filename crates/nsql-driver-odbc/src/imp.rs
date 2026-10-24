@@ -712,7 +712,30 @@ impl Session for OdbcSession {
     }
 
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
-        self.execute_inner(req)
+        // ★ 드라이버 패닉 → 오류(10-25 · Db2 CI 40109120417): odbc-api는 길이 표시자가 음수면 패닉한다(SQLLEN이 32비트로 빌드된 드라이버 ·
+        //   IBM clidriver `libdb2.so` = 32비트 · `libdb2o.so` = unixODBC용 64비트). 패닉이 워커를 넘어 앱/CLI를 죽이지 않게 오류로 바꾸고
+        //   원인·대처를 붙인다. 문장 핸들은 되감기에서 해제된다(`ActiveGuard`).
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.execute_inner(req)));
+        match r {
+            Ok(r) => r,
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                    .unwrap_or_else(|| "panic".into());
+                let hint = if msg.contains("Length indicator must be non-negative") {
+                    " - the ODBC driver seems to be built with 32-bit SQLLEN; use the 64-bit SQLLEN build (IBM clidriver: register lib/libdb2o.so, not libdb2.so)"
+                } else {
+                    ""
+                };
+                Err(DbError {
+                    code: None,
+                    message: format!("ODBC driver panic: {msg}{hint}"),
+                    position: None,
+                })
+            }
+        }
     }
 
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
