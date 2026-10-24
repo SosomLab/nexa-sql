@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/138-drivers-p5 | 2026-10-24 | 2026-10-24 → main(삭제) · **9a3084fb** | 3 | 138차 Linux 드라이버 P5 = ★ ClickHouse 확장 드라이버(D-354 · HTTP · `nsql-net`/`nsql-json` · T-415) · PG 와이어/ODBC 접속 프리셋 · ★ 변수 창 D-355(T-421) · `is_utf8_locale` cfg(Windows dead_code) |
 | feat/138-linux-gaps | 2026-10-24 | 2026-10-24 → main(삭제) · **b18c3d1f** | 5 | 138차 Linux = ★ T-60 서식 복사(X11 `text/html`) · T-38 테마 실시간 추종(`ui.theme_watch`) `3c7f31d` · 시험 자산 9(ODBC 3 · driver-install · func-check 이식 28 · V3 지적 수정) `1f3a33c`·`b301bef`·`61db394` · 🔧 T-414 ODBC SQLCancel(`odbc.cancel`) `b18c3d1` |
 | feat/131-mac-2step-odbc-settings | 2026-10-24 | 2026-10-24 → main(삭제) · **24ffa2c**(기능) + 319028b(시험 자산) + 기록 | 3 | 131차 mac = 2단 확인 통일 · ODBC 6(이름·안내·Driver/SQLSTATE 분류·로캘·자동 커밋 멈춤·CLI TARGET) · 설정 내보내기/가져오기 · 맥 자체 시험 비활성(Accessory) · 시험 자산(bash 3.2 · prod-mode s3 · ODBC setup/rollback) — journal 10-23 §45 · 10-24 §1~2 |
 | feat/137-plan-review | 2026-10-23 | 2026-10-23 → main(삭제) | 4 | 137차 — ★ 실행 계획 검토(T-409): `a1fdfc5` plan 모듈(nsql-script · 순수) · `17ebac4` `Runner::explain` + CLI `--analyze`/`--raw` · `a567086` GUI 결과 탭 2 + 실제 실행 계획 메뉴 · `dbf57ad` 방언별 통합 시험 · 문서 = main 직접 `2fa7808`(성능 시험 4파일) + 이번 문서(122 신설 · 40 · 문서 지도 · journal §43 · TODO T-409) |

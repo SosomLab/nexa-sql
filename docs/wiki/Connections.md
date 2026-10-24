@@ -6,6 +6,21 @@
 2. 입력한 내용으로 **프로필이 자동 저장**된다(이름 = `방언-호스트-DB` · 같은 이름이 있으면 `-2`가 붙는다). 다음부터는 그 이름만 넣어도 된다.
 3. **비밀번호는 저장되지 않는다.** 문자열에 넣은 비밀번호는 이번 실행 동안만 쓰고, 없으면 비밀번호 칸으로 이동하니 직접 입력한다. 저장하고 싶으면 프로필을 고친 뒤 비밀번호 옆 **저장**을 체크하고 [저장]을 누른다.
 
+## Supported databases (English)
+
+| Database | How | Notes |
+|---|---|---|
+| Oracle · SQL Server · PostgreSQL · MySQL/MariaDB · SQLite · DuckDB · ODBC | built-in or extension drivers | see the sections below |
+| ClickHouse | extension driver `clickhouse` (HTTP 8123 / HTTPS 8443) | `clickhouse://user:pass@host:8123/db[?tls=required]` · no transactions · grid editing not supported · installable from drivers release 0.1.3 |
+| Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB | PostgreSQL driver (wire-compatible) | `redshift://` 5439 · `cockroach://` 26257 · `yugabyte://` 5433 · `greenplum://` / `timescale://` 5432 |
+| Db2 · SAP HANA · Informix | ODBC preset | `db2://` 50000 · `hana://` 30015 · `informix://` 9088 · install the vendor ODBC driver first |
+
+### 지원 데이터베이스(한국어)
+
+- ClickHouse = 확장 드라이버 `clickhouse`(HTTP 8123 / HTTPS 8443) · 트랜잭션 없음 · 그리드 편집 미지원 · 드라이버 릴리스 0.1.3부터 설치.
+- Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB = PostgreSQL 드라이버로 접속(스킴만 쓰면 기본 포트가 채워진다).
+- Db2 · SAP HANA · Informix = ODBC 프리셋(벤더 ODBC 드라이버 설치 필요) · 접속 창 DB 종류 목록에는 없다(PostgreSQL/ODBC로 고르고 포트만 바꾸거나 접속 문자열에 스킴).
+
 ## ODBC로 접속
 
 - DSN이 있으면 `odbc:DSN=이름`(사용자·비밀번호는 칸에 따로) · DSN 없이 드라이버를 바로 쓰면 `odbc:Driver={SQL Server};Server=호스트,1433;Database=DB;Uid=사용자;Pwd=비밀번호`처럼 ODBC 접속 문자열을 그대로 붙인다(비밀번호는 화면·로그에 `***`로 가려진다).

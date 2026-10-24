@@ -2531,6 +2531,7 @@ WHERE WITH WORK WRITE YEAR ZONE
 | **T-326** | `.sqlg` 문법 빼기 연산 + 방언별 누락 절(ORA `INSERT ALL`·`MATCH_RECOGNIZE`·flashback · MS `FOR XML/JSON`·`WAITFOR` · PG `CALL`·`DISTINCT ON`·`COMMENT ON` · ANSI `CALL`·`START TRANSACTION`·`LATERAL`·`GROUPING SETS`) | 9 · 10 · 11 · 12 · 13 | P2 | 완성 기동 명령 `intel.probe`로 ORA `SELECT … ` 뒤 `LIMIT` 후보 존재 확인 |
 | **T-327** | 실행·카탈로그 방언 결함 — PG 루틴 Arguments 0건 의심 · 서버 `SHOW` 가로챔 · `&` 치환 기본값 · 오버로드 선택 · ORA 2조각 이름 · PG 문맥 전환 · 오류 위치 · MY `VALUES()` · 낡은 주석 | 14 · 15 · 16 · 17 · 18 · 19 · 23 · 24 · 25 · 26 | P1(#15·#14·#19) / P2 | #15 = Repository(PG) 함수 펼침 → Arguments 수 · #14 = PG `SHOW search_path` 실행 · #19 = MS 탭 `SELECT 'R&D'` |
 | (기록만) | MySQL·ODBC 드라이버 없음 | 22 | — | M4 범위(드라이버 결정 뒤) |
+| (기록만 · 10-24) | ClickHouse 결함 후보 2 = ① 그리드 편집 미지원(`UPDATE/DELETE` = `ALTER TABLE … UPDATE/DELETE` 뮤테이션 · 비동기 → 87 §14 영향 행 수 보장 불가) ② 서버 커서 없음(큰 결과 = `max_result_rows` 절단 · 더 받기 = OFFSET 재질의) | §12 | — | §12 T-5 · T-9 |
 
 ## §10. 새 DBMS 추가 절차(체크리스트)
 
@@ -2893,3 +2894,28 @@ WHERE WITH WORK WRITE YEAR ZONE
 | T-11 트랜잭션·문맥 | ✅ | ✅ | 부분(`SHOW` 가로챔) | 부분 | 부분(`SHOW` 가로챔) | 부분 |
 | T-13 오류 | ✅ | 부분(위치 없음) | ✅ | 부분 | 부분 | 부분 |
 | T-14 드라이버·적재·취소 | ✅ | ✅ | ✅ | 부분(적재 싱크 없음) | ❌ | ❌ |
+
+## §12. ClickHouse(10-24 · 138차 · T-415 · D-354 · HTTP 인터페이스 기준)
+
+> §1 템플릿 번호를 따른다. 출처 = 드라이버 코드(`crates/nsql-driver-clickhouse`) · 실서버 검증 = 이 PC에 ClickHouse 서버 없음(통합 2 = skip · 단위 = 가짜 HTTP 서버 왕복). §8 교차 비교표 열 대신 아래 "다른 방언과의 차이"로 요약한다.
+
+| T | 항목 | ClickHouse(HTTP 인터페이스) |
+|---|---|---|
+| T-1 | 접속 | HTTP 8123 / HTTPS 8443(`?tls=required`) · 사용자/비밀번호(기본 `default` · 빈 비밀번호 허용 · 로그인 필수 칸 = 호스트만) · 기본 DB `default` · `clickhouse://user:password@host:8123/db` |
+| T-2 | 세션 | `session_id` + `session_timeout=1800`(`SET` 유지) · 소켓은 요청마다(`Connection: close` · 상주 0 · 폴링 0) · `USE db`/`?schema=` = 클라이언트가 `database=` 매개변수로 기억 |
+| T-3 | 트랜잭션 | 없음 = Caps `tx_begin: None` · `server_autocommit: true` · COMMIT/ROLLBACK no-op · SAVEPOINT 없음 |
+| T-4 | 바인드 | 1차 = `?` 자리 **리터럴 치환**(문자열 = 백슬래시·따옴표 이스케이프 · 이진 = `unhex('…')`) · 2차 = 서버 매개변수 `{name:Type}`(T-417 · [123](123-bind-variable-execution-strategy.md)) |
+| T-5 | DML | `INSERT` 정상 · 영향 행 수 = 응답 헤더 `X-ClickHouse-Summary.written_rows` · `UPDATE/DELETE` = `ALTER TABLE … UPDATE/DELETE`(뮤테이션 · 비동기) → **그리드 편집 미지원 안내** |
+| T-6 | 오류 | HTTP 4xx/5xx 본문 `Code: N. DB::Exception: …` → `DbError.code` = N · 꼬리 `(version …)` 제거 · `failed at position N` → 오류 위치(글자 인덱스 · T-371) · 분류 = 60/81 NoTable · 47/10/16 NoColumn · … |
+| T-7 | 카탈로그 | `system.tables`(데이터베이스 = 스키마 · View/MaterializedView/LiveView = VIEW) · `system.columns`(Nullable · FixedString(N) · Decimal(P,S) · `position` · `default_expression`) → 탐색기 = 테이블·뷰·컬럼(소스·인덱스 없음) |
+| T-8 | 취소 | `KILL QUERY WHERE query_id = '…' ASYNC`(다른 접속 · 실행 중 `query_id` 공유) |
+| T-9 | 결과 | 전부 받아 `ResultSet` · 서버 커서 없음 · `max_rows` = `max_result_rows` + `result_overflow_mode=break` + 클라이언트 절단 · 더 받기 = OFFSET 재질의 |
+| T-10 | 실행 계획 | `EXPLAIN`(PLAN · 일반 트리 파서 · 실제 계획 없음 · 전체 스캔 판정 없음) |
+| T-11 | 문법 | 새 `clickhouse.sqlg`(ansi 상속 · PREWHERE · ARRAY JOIN · SAMPLE · LIMIT BY · SETTINGS · FORMAT · WITH TOTALS · ENGINE/ON CLUSTER/MATERIALIZED VIEW · 함수 70여) · 완성 = 공통 + 문법(방언 함수 표 없음) |
+| T-12 | 타입 복원 | Int*/UInt* → Int(UInt64 > i64 = Decimal 글) · Float · Decimal(정밀도 보존) · Bool · String/FixedString/Date*/DateTime*/UUID/Enum/IP → Str · Array/Tuple/Map → JSON 글 · Nullable → NULL |
+
+**다른 방언과의 차이(§8 요약)** = 트랜잭션 없음 · 서버 커서 없음 · 바인드 = 리터럴(1차) · 취소 = 별도 접속 `KILL QUERY` · DML 영향 행 수 = 응답 헤더 · 뮤테이션 = 비동기.
+
+**지원 현황(§11 행)** = 확장 · 접속 ✓ · 실행 ✓ · 탐색기(테이블·뷰·컬럼) ✓ · 소스 ✗ · 그리드 편집 ✗ · 실행 계획 ✓(PLAN) · 오류 위치 ✓ · 취소 ✓.
+
+**접속 프리셋(같은 커밋)** = PG 와이어 호환 `redshift://`(5439) · `cockroach://`/`cockroachdb://`(26257) · `yugabyte://`/`yugabytedb://`(5433) · `greenplum://`/`timescale://`/`timescaledb://`(5432) = PostgreSQL 드라이버·문법·카탈로그 그대로 · ODBC `db2://`(50000 · `IBM DB2 ODBC DRIVER`) · `hana://`(30015 · `HDBODBC`) · `informix://`(9088 · `IBM INFORMIX ODBC DRIVER`) = `Driver={…};Server=…;Port=…;Database=…` 조립(T-384와 같은 길) · 규칙 = `Dialect::from_name` · `nsql-script::connect::wire_preset_port`(명시 포트가 이김) · `odbc_preset_for` · 시험 `wire_odbc_and_clickhouse_presets` · 접속 폼 DB 종류 목록에는 추가하지 않음(스킴 = 접속 문자열·CLI 편의).

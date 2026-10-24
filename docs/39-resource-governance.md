@@ -128,6 +128,7 @@
 | 삭제 대기 드라이버 정리(10-23 · a888ae2) | GUI·CLI 기동 직후 1회 · 표식 파일 `drivers/.delete-pending` stat 1(없으면 끝) · 있으면 적힌 폴더만 삭제 | (끄는 키 없음 = 비용 stat 1 · 사용자 삭제 동작의 뒷정리) | 켬 | 켬 | 켬 | `ext::sweep_pending` |
 | 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |
+| ClickHouse HTTP 드라이버(10-24 · T-415) | 상주 소켓 0 · 스레드 0(요청은 호출 스레드) · 요청마다 연결 | `db.query_timeout`(기존 · 요청 시간 상한) | — | — | — | `nsql-driver-clickhouse` |
 | ★ 메타 3층 L1/L2([85](85-metadata-layers.md) · [84](84-explorer-search-index.md)) | L1 접속 직후 스키마당 1 질의(250 ms 간격) · L2 현재 스키마 컬럼 ≤200(300 ms 간격) · L3 회수 30 s 점검(질의 0) | `explorer.search_index` · `explorer.index_prefetch` · `explorer.index_idle_ms` · `meta.warm_columns_max` · `meta.detail_max/detail_ttl_secs/cols_ttl_secs` | on | on | prefetch off · warm 0 | T-219·T-221 |
 
 ### 3-3. CPU(+ 디스크)

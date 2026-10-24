@@ -6,6 +6,8 @@
 
 지금 = **내장 드라이버 4**(Oracle OCI/Thin · SQL Server · PostgreSQL · SQLite) + **방언만 있는 둘**(MySQL · ODBC = 드라이버 없음). 다음 순서 권장 = **P1 MySQL/MariaDB 내장**(방언·카탈로그·문법이 이미 있어 드라이버만 · 순수 Rust · 전 세계 수요 1~2위) → **P2 ODBC 일반 드라이버**(한 번에 Tibero·Altibase·CUBRID·DB2·HANA·Goldilocks = 국산·레거시 전부 3급으로 열림) → **P3 Tibero 전용 방언**(ODBC 위에 Oracle 호환 방언 = 국내 공공·금융) → **P4 DuckDB**(임베디드 분석 · 파일 DB = SQLite와 같은 자리) → **P5 ClickHouse/클라우드 DW**(수요 확인 뒤). NoSQL(Mongo·Redis)은 범위 밖 유지(DR-11).
 
+> ★ **10-24 138차 갱신** = ClickHouse = **확장 전용 드라이버**(D-354 · HTTP 인터페이스 · 자체 `nsql-net`/`nsql-json` · 외부 crate 0 · `drivers-v0.1.3` 릴리스부터 설치 가능) · PG 와이어 호환(Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB)과 Db2 · HANA · Informix(ODBC) = **접속 프리셋**(스킴 → 방언 · 기본 포트) — P5의 "ODBC로 커버"를 스킴 한 줄로 · T-415.
+
 > ★ **10-23 현황** = D-350으로 전 드라이버 확장(cdylib) · 8종(sqlite · pg · mysql · mssql · oracle-thin · oracle-oci · odbc · **duckdb** ✅ P4) · **ODBC = 전 OS**(Linux/macOS unixODBC · 이전 = Windows만) · Tibero·Altibase·CUBRID = URL 프리셋 ✅(P3 · 실서버 시험 보류 · 코드스페이스 = 공식 이미지 `tiberoofficial/tibero` + 데모 라이선스로 조건부 가능).
 
 ## 1. 기준(가중치)
@@ -31,7 +33,7 @@
 | **Tibero**(TmaxSoft) | 1(공공·금융 고객 가능) | 2(국내 공공 표준급) | ODBC/JDBC/tbCLI(C) — 순수 Rust 없음 → **ODBC 위** | 낮음(ODBC 뒤) — **Oracle 호환 방언**이라 Oracle 방언 재사용 + 차이표(108 §1 템플릿) | ✅ | 3·4·2·3·1 = **13** | **P3 · 3급(ODBC + Oracle 호환 방언)** · ✅ **10-23 접속 프리셋**(`tibero://` → ODBC 문자열 · Altibase·CUBRID 함께 · T-384 · 실서버·벤더 드라이버 확보 전 = 접속 시험 보류) |
 | Altibase · CUBRID · Goldilocks | 0 | 1~2(국내 공공·통신) | ODBC | 낮음(ODBC 뒤 · 방언 차이표만) | ✅ | 0·3·2·3·1 = 9 | 3급 · ODBC 일반으로 자동 커버(전용 방언은 요청 시) |
 | **DuckDB** | 1(분석 파일 · CSV/Parquet) | 2(급성장 · 분석가) | ✅ `duckdb` crate(C 라이브러리 번들 ≈ +20 MB!) 또는 동적 적재 | 중간 — SQLite 자리(파일 = 서버 하나) 재사용 · PG 호환 방언 | ✅ | 3·4·2·2·1 = 12 | **P4 · 2급 후보**(크기 때문에 **확장 드라이버**(22 §0 cdylib) 1호 적합) · ✅ **10-23 구현**(D-351 · 확장 전용 · libduckdb 동적 + 런타임 동봉 · zip ≈ 19 MB · `drivers-v0.1.1`) |
-| ClickHouse | 0 | 2(분석 · 로그) | HTTP/native(`clickhouse` crate) | 중간(방언 새로) | 부분(트랜잭션 없음) | 0·4·2·1·0 = 7 | P5 · 수요 확인 뒤 |
+| ClickHouse | 0 | 2(분석 · 로그) | HTTP/native(`clickhouse` crate) | 중간(방언 새로) | 부분(트랜잭션 없음) | 0·4·2·1·0 = 7 | ✅ 10-24 확장 드라이버(HTTP · D-354 · T-415) |
 | Snowflake · BigQuery · Redshift(클라우드 DW) | 0 | 2 | HTTP REST(OAuth · 키) | 높음(인증·비동기 작업 모델 다름) | 부분 | 0·4·1·0·0 = 5 | P5 · 보류 |
 | IBM Db2 · SAP HANA | 0 | 1(대기업 레거시) | ODBC/CLI | 낮음(ODBC 뒤) | ✅ | 0·2·2·3·1 = 8 | 3급 · ODBC로 커버 |
 | MongoDB · Redis 등 NoSQL | 0 | 3 | — | SQL 클라이언트 범위 밖 | ✗ | — | **범위 밖 유지**(DR-11) |

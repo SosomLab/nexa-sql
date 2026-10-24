@@ -210,6 +210,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 ### 4-2. 로컬 보관 구조 (Windows SxS 유추 — 버전 폴더 · 참조 카운트 · 고아 정리)
 
 > ★ **동봉 런타임(10-23 · D-351 DuckDB)** = 드라이버 cdylib 옆에 런타임 라이브러리를 같이 둔다(`drivers/duckdb/<ver>/` = `nsql_driver_duckdb.dll` + `duckdb.dll` ≈ 58 MB) · 로더 검색 경로 = Windows `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)`(cdylib 폴더의 DLL 우선 · PATH의 다른 duckdb.dll보다 먼저) · Linux/macOS = rpath `$ORIGIN`/`@loader_path`(build.rs) · 패키징 = `package-drivers.py`의 `BUNDLED` 표(`build/libduckdb-sys-*/out`에서 런타임을 찾아 zip에 넣음) · 시험 도우미·build.rs가 개발 빌드 `target/<profile>`에도 복사.
+> ★ **ClickHouse(10-24 · D-354)** = 동봉 런타임 없음(순수 Rust cdylib · `drivers/clickhouse/<ver>/` = 드라이버 하나 + 매니페스트) · id `clickhouse` · `nsql_abi::DRIVER_VERSION` 0.1.2 → **0.1.3** · 색인 `drivers/index.json` latest 0.1.3 · `drivers.yml` 빌드 목록에 추가(자산은 `drivers-v0.1.3` 릴리스가 만든다 — 그 전 `driver install clickhouse` = "자산 없음").
 
 > ★ **ODBC = 전 OS 확장(10-23)** = `nsql-driver-odbc`의 `cfg(windows)` 게이트 제거 · Linux/macOS는 시스템 **unixODBC**(드라이버 관리자 `libodbc`) · CI = apt `unixodbc-dev`/`odbc-postgresql` · brew `unixodbc`.
 ```text
