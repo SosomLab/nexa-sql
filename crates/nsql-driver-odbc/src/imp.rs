@@ -242,6 +242,89 @@ pub(crate) fn is_utf8_locale(name: &str) -> bool {
 }
 
 /// 설치된(등록된) ODBC 드라이버 이름 — 오류 안내용 · 조회 실패 = 빈 목록(실패 경로에서만 부른다).
+/// ★ D-362(10-25 · 정적 동봉 unixODBC): 시스템 unixODBC는 `odbcinst.ini`의 상대 경로 `Driver=libsqlite3odbc.so`를 배포판 기본 드라이버 폴더에서
+///   찾지만, 동봉한 드라이버 관리자는 `dlopen` 기본 경로만 본다 → 접속 전에 `Driver={이름}`을 **절대 경로**로 바꿔 준다(순수 함수 · 시험).
+///   `drivers` = (등록 이름, Driver 속성 값) · `exists` = 파일 존재 판정 · 이미 절대 경로이거나 못 찾으면 그대로.
+pub(crate) fn resolve_driver_path(
+    cs: &str,
+    drivers: &[(String, String)],
+    exists: &dyn Fn(&str) -> bool,
+) -> String {
+    let Some((name, span)) = driver_name_in(cs) else {
+        return cs.to_string();
+    };
+    let Some(lib) = drivers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(&name))
+        .map(|(_, l)| l.trim().to_string())
+    else {
+        return cs.to_string();
+    };
+    if lib.is_empty() || lib.contains('/') || lib.contains('\\') {
+        return cs.to_string();
+    }
+    let Some(abs) = DRIVER_DIRS
+        .iter()
+        .map(|d| format!("{d}/{lib}"))
+        .find(|p| exists(p))
+    else {
+        return cs.to_string();
+    };
+    format!("{}Driver={abs}{}", &cs[..span.0], &cs[span.1..])
+}
+
+/// 배포판·brew의 ODBC 드라이버 폴더(상대 경로 해결 순서).
+const DRIVER_DIRS: &[&str] = &[
+    "/usr/lib/x86_64-linux-gnu/odbc",
+    "/usr/lib/aarch64-linux-gnu/odbc",
+    "/usr/lib64/unixODBC",
+    "/usr/lib64",
+    "/usr/lib/unixODBC",
+    "/usr/local/lib",
+    "/opt/homebrew/lib",
+    "/usr/local/opt/unixodbc/lib",
+];
+
+/// 접속 문자열의 `Driver={이름}`/`Driver=이름` — (이름, 그 항목의 바이트 구간).
+fn driver_name_in(cs: &str) -> Option<(String, (usize, usize))> {
+    let mut at = 0;
+    for part in cs.split(';') {
+        let start = at;
+        at += part.len() + 1;
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        if !k.trim().eq_ignore_ascii_case("driver") {
+            continue;
+        }
+        let v = v.trim();
+        let name = v
+            .strip_prefix('{')
+            .and_then(|x| x.strip_suffix('}'))
+            .unwrap_or(v);
+        return Some((name.to_string(), (start, start + part.len())));
+    }
+    None
+}
+
+fn installed_driver_libs(env: &odbc_api::Environment) -> Vec<(String, String)> {
+    env.drivers()
+        .map(|v| {
+            v.into_iter()
+                .map(|d| {
+                    let lib = d
+                        .attributes
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("driver"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    (d.description, lib)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn installed_drivers(env: &odbc_api::Environment) -> Vec<String> {
     env.drivers()
         .map(|v| v.into_iter().map(|d| d.description).collect())
@@ -575,6 +658,14 @@ impl OdbcSession {
         let cs = connection_string(spec);
         ensure_utf8_ctype();
         let env = odbc_api::environment().map_err(err)?;
+        // ★ D-362: 동봉 드라이버 관리자(unix)에서 상대 경로 드라이버를 절대 경로로.
+        let cs = if cfg!(windows) {
+            cs
+        } else {
+            resolve_driver_path(&cs, &installed_driver_libs(env), &|p| {
+                std::path::Path::new(p).is_file()
+            })
+        };
         let conn = env
             .connect_with_connection_string(
                 &cs,
@@ -844,6 +935,40 @@ impl Session for OdbcSession {
 
 #[cfg(test)]
 mod tests {
+    use super::resolve_driver_path;
+
+    /// D-362 — 상대 `Driver` 속성은 알려진 폴더에서 찾은 절대 경로로 · 절대 경로/미등록/못 찾음 = 그대로 · `{}` 유무 둘 다.
+    #[test]
+    fn resolve_relative_driver_path() {
+        let drivers = vec![
+            ("SQLite3".to_string(), "libsqlite3odbc.so".to_string()),
+            (
+                "PostgreSQL Unicode".to_string(),
+                "/usr/lib/psqlodbcw.so".to_string(),
+            ),
+        ];
+        let exists = |p: &str| p == "/usr/lib/x86_64-linux-gnu/odbc/libsqlite3odbc.so";
+        assert_eq!(
+            resolve_driver_path("Driver={SQLite3};Database=/tmp/x.db", &drivers, &exists),
+            "Driver=/usr/lib/x86_64-linux-gnu/odbc/libsqlite3odbc.so;Database=/tmp/x.db"
+        );
+        assert_eq!(
+            resolve_driver_path("DSN=a;driver=sqlite3;Uid=u", &drivers, &exists),
+            "DSN=a;Driver=/usr/lib/x86_64-linux-gnu/odbc/libsqlite3odbc.so;Uid=u"
+        );
+        let keep = "Driver={PostgreSQL Unicode};Server=h";
+        assert_eq!(resolve_driver_path(keep, &drivers, &exists), keep);
+        let unknown = "Driver={Nope};Server=h";
+        assert_eq!(resolve_driver_path(unknown, &drivers, &exists), unknown);
+        assert_eq!(
+            resolve_driver_path("DSN=only", &drivers, &exists),
+            "DSN=only"
+        );
+        assert_eq!(
+            resolve_driver_path("Driver={SQLite3}", &drivers, &|_| false),
+            "Driver={SQLite3}"
+        );
+    }
 
     /// MC/DC(10-24): 모드(auto/on/off) × unix × 드라이버 이름 — 각 조건이 독립으로 결과를 뒤집는다.
     #[test]

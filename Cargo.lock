@@ -2381,6 +2381,7 @@ dependencies = [
  "nsql-core",
  "nsql-script",
  "odbc-api",
+ "odbc-sys",
 ]
 
 [[package]]
@@ -2909,6 +2910,9 @@ name = "odbc-sys"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245cb4fe8236df4fd352ba96075d754233c6509d654d9f1c1482158b7d6c083d"
+dependencies = [
+ "unix-odbc",
+]
 
 [[package]]
 name = "odpic-sys"
@@ -4405,6 +4409,15 @@ checksum = "f4987bdc12753382e0bec4a65c50738ffaabc998b9cdd1f952fb5f39b0048a96"
 dependencies = [
  "crypto-common 0.2.2",
  "ctutils",
+]
+
+[[package]]
+name = "unix-odbc"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26bdaf2156eebadc0dbabec5b2c2a6f92bff5cface28f3f0a367d2ee9aeca0e2"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

@@ -30,3 +30,10 @@ nsql-abi.workspace = true
 version = "29.2"
 default-features = false
 features = ["odbc_version_3_80"]
+
+# ★ D-361 실험(10-25 · 사용자 "드라이버 파일은 정적으로"): Linux/macOS = unixODBC 드라이버 관리자를 **정적으로 동봉**(`vendored-unix-odbc` =
+#   unix-odbc crate가 소스 빌드 · LGPL-2.1 재링크 요건 = 공개 저장소 소스로 충족 · 고지) → 시스템 libodbc 불필요 · 벤더 드라이버만 사용자 설치.
+[target.'cfg(not(windows))'.dependencies.odbc-sys]
+version = "0.31"
+default-features = false
+features = ["odbc_version_3_80", "vendored-unix-odbc"]
