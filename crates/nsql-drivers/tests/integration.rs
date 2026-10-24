@@ -1792,10 +1792,6 @@ fn clickhouse_session_rows_affected_use_errors_catalog_and_cancel() {
 // ── IBM Db2(138차 · D-359 · 내장 ODBC 어댑터 위 `Dialect::Db2` · CI = `db2.yml` 별도 잡 · 로컬 = `NSQL_DB2_URL` 없으면 skip).
 
 fn db2_spec() -> Option<ConnectSpec> {
-    if !nsql_drivers::available().contains(&Dialect::Odbc) {
-        eprintln!("[skip] 이 빌드에 ODBC 드라이버 없음(Db2는 ODBC 어댑터 위 방언)");
-        return None;
-    }
     match std::env::var("NSQL_DB2_URL") {
         Ok(url) => Some(nsql_drivers::parse_target(&url, Dialect::Db2).expect("접속 문자열")),
         Err(_) => {
@@ -1805,14 +1801,22 @@ fn db2_spec() -> Option<ConnectSpec> {
     }
 }
 
+/// ★ 네이티브 DRDA(D-361): 내장 경로 = 크레이트 직접(`Db2Session::open`) · 확장 경로(NSQL_TEST_DYN=1) = cdylib `db2`.
+fn db2_open(spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
+    if std::env::var_os("NSQL_TEST_DYN").is_some() {
+        return open_session(spec, Dialect::Db2);
+    }
+    Ok(Box::new(nsql_driver_db2::Db2Session::open(spec)?))
+}
+
 /// 스크립트 경로(러너 · 세션 변수): DDL(PK) · 다중 행 INSERT · `EXEC :V := 리터럴`(로컬) · `?` 바인드 · 스칼라 식 = `FROM SYSIBM.SYSDUMMY1`(`EXEC :B := :A + 10`) ·
-/// 세이브포인트(`ON ROLLBACK RETAIN CURSORS`) · `FETCH FIRST` · 한글 · COMMIT(ODBC SQLEndTran) · 끝에 DROP.
+/// 세이브포인트(`ON ROLLBACK RETAIN CURSORS`) · `FETCH FIRST` · 한글 · COMMIT · 끝에 DROP.
 #[test]
 fn db2_script_ddl_dml_binds_savepoint_and_types() {
     let Some(spec) = db2_spec() else {
         return;
     };
-    let opener: Opener = Box::new(|s: &ConnectSpec| open_session(s, Dialect::Db2));
+    let opener: Opener = Box::new(|s: &ConnectSpec| db2_open(s));
     let mut r = Runner::new(Dialect::Db2, opener);
     let mut ev = Vec::new();
     assert!(r.connect(&spec, &mut |e| ev.push(e)), "접속 실패: {ev:?}");
@@ -1860,8 +1864,7 @@ fn db2_session_catalog_schema_and_errors() {
     let Some(spec) = db2_spec() else {
         return;
     };
-    let mut s = open_session(&spec, Dialect::Db2)
-        .unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
     assert_eq!(s.dialect(), Dialect::Db2);
     assert_eq!(s.caps().scalar_from, Some("SYSIBM.SYSDUMMY1"));
     assert!(s.is_alive());

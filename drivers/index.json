@@ -134,6 +134,21 @@
       ],
       "license": "PolyForm-Noncommercial-1.0.0",
       "sxs": false
+    },
+    {
+      "id": "db2",
+      "name": "IBM Db2",
+      "dialect": "db2",
+      "latest": "0.1.4",
+      "tag_prefix": "drivers-v",
+      "platforms": [
+        "linux-x86_64",
+        "macos-aarch64",
+        "macos-x86_64",
+        "windows-x86_64"
+      ],
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "sxs": false
     }
   ]
 }

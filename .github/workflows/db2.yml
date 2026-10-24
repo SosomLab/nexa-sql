@@ -1,6 +1,6 @@
-# IBM Db2 실서버 통합 시험 — 별도 잡(138차 · D-359 · docs/121a §①): Db2 Community 컨테이너(≈2.6 GB · privileged · 기동 1~2분)라 본
-# integration 잡에 넣지 않고 **수동 + 야간 + Db2 관련 경로의 PR**에서만 돈다. 드라이버 = IBM clidriver(공개 HTTP 다운로드 · 사용자 설치와 같은 방식)를
-# unixODBC에 등록(`IBM DB2 ODBC DRIVER`) → `db2://db2inst1:…@localhost:50000/nexa`(내장 ODBC 어댑터 위 `Dialect::Db2`).
+# IBM Db2 실서버 통합 시험 — 별도 잡(138차 · D-361 · docs/121b): Db2 Community 컨테이너(≈2.6 GB · privileged · 기동 1~2분)라 본 integration 잡에
+# 넣지 않고 **수동 + 야간 + Db2 관련 경로의 PR**에서만 돈다. 드라이버 = **네이티브 DRDA**(`nsql-driver-db2` · 순수 Rust) → clidriver·unixODBC 없이
+# `db2://db2inst1:…@localhost:50000/nexa`로 바로 붙는다(1~7차 ODBC 경로 시도 = journal 10-25 · 서버 lib64 없이는 불가 → D-361).
 name: db2
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
     - cron: "17 18 * * *" # 03:17 KST
   pull_request:
     paths:
-      - "crates/nsql-driver-odbc/**"
+      - "crates/nsql-driver-db2/**"
       - "crates/nsql-catalog/**"
       - "crates/nsql-core/src/dberr.rs"
       - "crates/nsql-core/src/caps.rs"
@@ -56,18 +56,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: nexa-sql
-      - name: unixODBC + IBM clidriver(linuxx64 · odbcinst 등록)
-        working-directory: .
-        run: |
-          # ubuntu 24.04: `unixodbc-dev`만으로는 `odbcinst` 실행 파일이 없다(첫 실행 40108437673 exit 127) → unixodbc + odbcinst 함께.
-          sudo apt-get update && sudo apt-get install -y unixodbc-dev unixodbc odbcinst
-          sudo mkdir -p /opt/ibm && cd /opt/ibm
-          # ★ v12.1.4 linuxx64 패키지의 libdb2.so = SQLLEN 32비트 빌드 → odbc-api 길이 표시자 패닉(40109120417) · unixODBC용 64비트 판 = libdb2o.so.
-          #   11.5.9·12.1.4 둘 다 libdb2o.so 없음(4차 확정) → 아래 단계가 서버 컨테이너의 lib64를 꺼낸다 · 여기선 받아 두기만(폴백).
-          # 12.1.4(최신 · 서버 12.1과 같은 계열) — 아래 단계가 서버의 libdb2o.so.1을 이 트리에 끼운다(msg/cfg는 clidriver 것).
-          sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/linuxx64_odbc_cli.tar.gz
-          sudo tar xzf cli.tar.gz && sudo rm cli.tar.gz
-          find /opt/ibm/clidriver -name 'libdb2o*' -o -name 'libdb2.so*' | sort
+      - name: driver unit tests (DRDA 코덱 · FD:OCA · SQLCA)
+        run: cargo test -p nsql-driver-db2
       - name: wait for Db2 (Setup has completed · 최대 10분)
         run: |
           for i in $(seq 1 120); do
@@ -75,47 +65,11 @@ jobs:
             sleep 5
           done
           echo "db2 not ready"; docker logs "${{ job.services.db2.id }}" 2>&1 | tail -50; exit 1
-      # ★ 4차(40109857978)로 확정: Linux clidriver(11.5.9 · 12.1.4)는 libdb2.so(SQLLEN 32비트)만 동봉 → unixODBC(64비트 SQLLEN)와 안 맞아
-      #   길이 표시자 오류. 64비트 판 libdb2o.so는 **전체 Db2 서버/클라이언트 설치본(sqllib/lib64)** 에 있다.
-      #   5차 = lib64만 → msg/cfg 없음(IM004 · SQL10007N) · 6차 = clidriver 트리 + libdb2o.so.1만 → 서버 전용 분할 라이브러리 8개 의존(dlopen 실패)
-      #   → 7차 = 서버 설치본의 **lib64 + msg + cfg**를 꺼내 `DB2_CLI_DRIVER_INSTALL_PATH`로 그 트리를 가리킨다(인스턴스 없는 CLI 모드 · ldd 진단).
-      #   CI 전용 · 사용자는 Db2 클라이언트/dsdriver 설치(docs/wiki/Drivers). clidriver libdb2.so = 폴백(32비트 SQLLEN · 실패 재현용).
-      - name: ODBC driver = 컨테이너 Db2 설치본(lib64 + msg + cfg)의 libdb2o.so (없으면 clidriver libdb2.so 폴백)
-        working-directory: .
-        run: |
-          ID="${{ job.services.db2.id }}"
-          SRV=$(docker exec "$ID" bash -lc 'ls -d /opt/ibm/db2/V* 2>/dev/null | head -1')
-          echo "server install = $SRV"
-          LIB=/opt/ibm/clidriver/lib/libdb2.so
-          LIBDIR=/opt/ibm/clidriver/lib
-          INSTALL=/opt/ibm/clidriver
-          if [ -n "$SRV" ] && docker exec "$ID" test -f "$SRV/lib64/libdb2o.so.1"; then
-            sudo mkdir -p /opt/ibm/db2srv
-            for d in lib64 msg cfg; do
-              docker cp "$ID:$SRV/$d" /tmp/db2srv-$d && sudo cp -a /tmp/db2srv-$d /opt/ibm/db2srv/$d && rm -rf /tmp/db2srv-$d
-            done
-            du -sh /opt/ibm/db2srv/* | cat
-            ls -l /opt/ibm/db2srv/lib64/libdb2o.so /opt/ibm/db2srv/lib64/libdb2o.so.1 /opt/ibm/db2srv/lib64/libdb2.so.1
-            LD_LIBRARY_PATH=/opt/ibm/db2srv/lib64 ldd /opt/ibm/db2srv/lib64/libdb2o.so.1 | grep -i 'not found' || echo "ldd: not found 0"
-            LIB=/opt/ibm/db2srv/lib64/libdb2o.so
-            LIBDIR=/opt/ibm/db2srv/lib64
-            INSTALL=/opt/ibm/db2srv
-          else
-            echo "::warning::libdb2o.so.1 not found in server container; falling back to clidriver libdb2.so (32-bit SQLLEN)"
-          fi
-          echo "ODBC driver lib = $LIB · install path = $INSTALL"
-          echo "DB2_ODBC_LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
-          echo "DB2_CLI_DRIVER_INSTALL_PATH=$INSTALL" >> "$GITHUB_ENV"
-          printf '[IBM DB2 ODBC DRIVER]\nDescription=IBM Data Server Driver for ODBC and CLI\nDriver=%s\nFileUsage=1\nDontDLClose=1\n' "$LIB" | sudo tee -a /etc/odbcinst.ini
-          odbcinst -q -d
-      - name: integration tests (db2 · 내장 ODBC 경로)
-        env:
-          LD_LIBRARY_PATH: ${{ env.DB2_ODBC_LIBDIR }}
+      - name: integration tests (db2 · 네이티브 DRDA · 크레이트 직접)
         run: cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1
-      - name: integration tests (db2 · 확장 경로 · NSQL_TEST_DYN=1)
+      - name: integration tests (db2 · 확장 경로 · NSQL_TEST_DYN=1 · cdylib)
         env:
-          LD_LIBRARY_PATH: ${{ env.DB2_ODBC_LIBDIR }}
           NSQL_TEST_DYN: "1"
         run: |
-          cargo build -p nsql-driver-odbc
+          cargo build -p nsql-driver-db2
           cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1

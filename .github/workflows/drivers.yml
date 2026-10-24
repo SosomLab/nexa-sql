@@ -114,7 +114,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pk=(-p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb -p nsql-driver-clickhouse)
+          pk=(-p nsql-driver-sqlite -p nsql-driver-pg -p nsql-driver-mysql -p nsql-driver-mssql -p nsql-driver-oracle-thin -p nsql-driver-oracle -p nsql-driver-duckdb -p nsql-driver-clickhouse -p nsql-driver-db2)
           # macOS 기본 bash 3.2는 `set -u`에서 빈 배열 "${a[@]}"를 unbound로 본다(첫 실행 실패) → ${VAR:+…}로.
           TARGET="${{ matrix.target }}"
           # ODBC = 4 OS(T-401 · x86_64 맥은 Intel 러너 네이티브라 brew libodbc가 x86_64).

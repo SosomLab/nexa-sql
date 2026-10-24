@@ -86,8 +86,8 @@ pub const DRIVER_IDS: &[(Dialect, &[&str])] = &[
     (Dialect::Duckdb, &["duckdb"]),
     // ClickHouse = 확장 전용(D-354 · HTTP 인터페이스 · 외부 crate 0 · 설치본 정책상 확장).
     (Dialect::Clickhouse, &["clickhouse"]),
-    // Db2 · Access = ODBC 어댑터 위 방언(D-359 · D-360) → 확장 id는 odbc(벤더 ODBC 드라이버는 사용자 설치).
-    (Dialect::Db2, &["odbc"]),
+    // ★ Db2 = 네이티브 DRDA 확장 `db2`(D-361 · 외부 런타임 0)가 먼저 · ODBC 어댑터(D-359 · clidriver 필요)는 폴백.
+    (Dialect::Db2, &["db2", "odbc"]),
     (Dialect::Access, &["odbc"]),
 ];
 

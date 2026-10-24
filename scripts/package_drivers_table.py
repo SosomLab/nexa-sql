@@ -9,4 +9,5 @@ DRIVERS = [
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC"),
     ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
     ("clickhouse", "nsql-driver-clickhouse", "clickhouse", "ClickHouse"),
+    ("db2", "nsql-driver-db2", "db2", "IBM Db2"),
 ]

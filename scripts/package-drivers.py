@@ -21,6 +21,7 @@ DRIVERS = [
     ("odbc", "nsql-driver-odbc", "odbc", "ODBC"),
     ("duckdb", "nsql-driver-duckdb", "duckdb", "DuckDB"),
     ("clickhouse", "nsql-driver-clickhouse", "clickhouse", "ClickHouse"),
+    ("db2", "nsql-driver-db2", "db2", "IBM Db2"),
 ]
 WINDOWS_ONLY: set = set()  # odbc도 전 OS(Linux/mac = unixODBC 동적 · 10-24)
 # 드라이버 옆에 동봉하는 런타임 공유 라이브러리(Windows 이름 기준 · 다른 OS는 lib*.so/.dylib로 바꾼다).

@@ -112,6 +112,10 @@ pub const NBRROW: u16 = 0x213A;
 pub const OUTEXP: u16 = 0x2111;
 pub const SQLCSRHLD: u16 = 0x211F;
 pub const DIAGLVL: u16 = 0x2160;
+pub const TYPSQLDA: u16 = 0x2146;
+pub const DYNDTAFMT: u16 = 0x214B;
+pub const RTNEXTDTA: u16 = 0x2148;
+pub const SRVDGN: u16 = 0x1153;
 
 // ── 보안 메커니즘(SECMEC 값)
 pub const SECMEC_USRIDPWD: u16 = 3;
@@ -120,11 +124,12 @@ pub const SECMEC_USRENCPWD: u16 = 7;
 pub const SECMEC_USRSSBPWD: u16 = 8;
 pub const SECMEC_EUSRIDPWD: u16 = 9;
 
-// ── 매니저 레벨(MGRLVLLS 값 · Derby 클라이언트가 보내는 값)
-pub const MGRLVL_AGENT: u16 = 7;
-pub const MGRLVL_SQLAM: u16 = 7;
-pub const MGRLVL_RDB: u16 = 7;
-pub const MGRLVL_SECMGR: u16 = 7;
+// ── 매니저 레벨(MGRLVLLS 값 · pydrda가 Db2 LUW에 보내는 값 · docs/121b ①(b) · 서버가 지원 수준으로 낮춰 EXCSATRD로 돌려준다)
+pub const MGRLVL_AGENT: u16 = 10;
+pub const MGRLVL_SQLAM: u16 = 11;
+pub const MGRLVL_RDB: u16 = 12;
+pub const MGRLVL_SECMGR: u16 = 9;
 pub const MGRLVL_CMNTCPIP: u16 = 5;
 pub const MGRLVL_UNICODEMGR: u16 = 1208;
 pub const UNICODEMGR: u16 = 0x1C08;
+pub const CCSIDMGR: u16 = 0x14CC;
