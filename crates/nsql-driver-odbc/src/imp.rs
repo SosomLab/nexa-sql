@@ -208,6 +208,7 @@ fn ensure_utf8_ctype() {
 fn ensure_utf8_ctype() {}
 
 /// 로캘 이름이 UTF-8 코드셋인가(순수): `ko_KR.UTF-8` · `C.UTF-8` · `en_US.utf8` · `UTF-8` = true · `C` · `POSIX` · `ko_KR.eucKR` · 빈 = false.
+#[cfg(any(unix, test))] // Windows 비시험 빌드 = 호출 0(ensure_utf8_ctype가 빈 함수) → dead_code(CI windows check 39996810603)
 #[must_use]
 pub(crate) fn is_utf8_locale(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
