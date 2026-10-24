@@ -426,12 +426,11 @@ fn var_name(b: &[u8], at: usize) -> Option<(String, usize)> {
     Some((String::from_utf8_lossy(raw).into_owned(), n2))
 }
 
-/// SQLDARD 객체 → (SQLCA · 열 목록). `has_name` = 첫 바이트 0x00(결과 열 · 이름 있음) / 0xFF(입력 매개변수 기술).
+/// SQLDARD 객체 → (SQLCA · 열 목록). 첫 바이트 0x00 = SQLCA 있음(결과 열) · 0xFF = SQLCA 없음(입력 매개변수 기술 · 이름 = 번호).
 pub fn parse_sqldard(
     obj: &[u8],
     le: bool,
 ) -> Result<(Option<crate::sqlca::Sqlca>, Vec<SqlDaCol>), DbError> {
-    let has_name = obj.first().copied() == Some(0x00);
     let (ca, mut at) = crate::sqlca::parse_sqlca(obj, le)?;
     if ca.as_ref().is_some_and(crate::sqlca::Sqlca::is_error) {
         return Ok((ca, Vec::new()));
@@ -466,39 +465,51 @@ pub fn parse_sqldard(
             ccsid,
             ..SqlDaCol::default()
         };
-        if has_name {
-            // SQLDOPTGRP(pydrda 실측 레이아웃: 6 + 지시자 1 + UNNAMED 2 + 이름·라벨·설명 VCM/VCS + 7). ★ 이름 없는 식 열(`VALUES …` = CI 3차
-            //   40116140922 "truncated sqlname")은 길이 필드가 이 규칙과 어긋난다 → 이름 해석이 막히면 **남은 열은 이름 없이**(호스트가 COLn) 돌려주고
-            //   질의는 살린다(타입·값은 QRYDSC/QRYDTA에서 온다). 정확한 레이아웃은 실서버 덤프로 확정(121b 추정 항목).
-            at += 6;
-            let parsed = (|| {
-                if obj.get(at).copied() != Some(0x00) {
-                    return None;
-                }
-                let (name, n1) = var_name(obj, at + 3)?;
-                let (label, n2) = var_name(obj, n1)?;
-                let (_comments, n3) = var_name(obj, n2)?;
-                Some((name, label, n3 + 7))
-            })();
-            match parsed {
-                Some((name, label, next)) => {
-                    at = next;
-                    col.name = if name.is_empty() { label.clone() } else { name };
-                    col.label = label;
-                    cols.push(col);
-                }
-                None => {
-                    cols.push(col);
-                    // 나머지 열은 메타 없이 빈 이름(개수만 맞춘다).
-                    while cols.len() < count {
-                        cols.push(SqlDaCol::default());
-                    }
-                    break;
-                }
+        // ★ 실측(Db2 12.1 · CI 4차 40116752054 덤프 3벌): 열 하나 = 16B 머리 · 가변 앞머리(0 ×8 + 2B + SQLUNNAMED 2B · 열마다 12~13B) ·
+        //   SQLNAME(VCM 또는 VCS · 길이 2B 큰 끝) · 그 뒤 길이 0인 VCM/VCS 4~5개(= 0 ×10) · 지시자 `FF FF FF` → 다음 열. 앞머리 길이가 열마다
+        //   달라 고정 오프셋 대신 **끝 표식 `FF FF FF`에서 거꾸로** 이름을 찾는다(이름은 UTF-8/ASCII라 0xFF를 품지 않는다). 라벨·설명이 있어
+        //   뒤 10B가 0이 아니면(COMMENT ON COLUMN) 1차는 이름을 비운다(호스트 = COLn).
+        let parsed = (|| {
+            let seg0 = at;
+            let end = obj[seg0..]
+                .windows(3)
+                .position(|w| w == [0xFF, 0xFF, 0xFF])?
+                + seg0;
+            if end < seg0 + 10 {
+                return None;
             }
-        } else {
-            at += 29;
-            cols.push(col);
+            let tail_zero = obj[end - 10..end].iter().all(|&x| x == 0);
+            let mut name = String::new();
+            if tail_zero {
+                let seg = &obj[seg0..end - 10];
+                let mut best: Option<String> = None;
+                for n in 0..=seg.len().saturating_sub(2) {
+                    let lp = seg.len() - 2 - n;
+                    if seg[lp..lp + 2] == (n as u16).to_be_bytes() {
+                        if let Ok(t) = std::str::from_utf8(&seg[lp + 2..]) {
+                            if n == 0 || !t.is_empty() {
+                                best = Some(t.to_string());
+                            }
+                        }
+                    }
+                }
+                name = best?;
+            }
+            Some((name, end + 3))
+        })();
+        match parsed {
+            Some((name, next)) if next <= obj.len() => {
+                at = next;
+                col.name = name;
+                cols.push(col);
+            }
+            _ => {
+                cols.push(col);
+                while cols.len() < count {
+                    cols.push(SqlDaCol::default());
+                }
+                break;
+            }
         }
     }
     Ok((ca, cols))
@@ -807,14 +818,12 @@ mod tests {
         b.extend_from_slice(&20u64.to_le_bytes()); // length
         b.extend_from_slice(&449u16.to_le_bytes()); // NVARCHAR
         b.extend_from_slice(&1208u16.to_be_bytes()); // ccsid
-        b.extend_from_slice(&[0; 6]);
-        b.extend_from_slice(&[0x00, 0x00, 0x00]); // SQLDOPTGRP 지시자 + UNNAMED
+        b.extend_from_slice(&[0; 8]); // 앞머리
+        b.extend_from_slice(&[0x08, 0x00, 0x00, 0x00]); // 2B + UNNAMED
         b.extend_from_slice(&[0x00, 0x04]);
-        b.extend_from_slice(b"NAME"); // name_m
-        b.extend_from_slice(&[0x00, 0x00]); // name_s
-        b.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // label m/s
-        b.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // comments m/s
-        b.extend_from_slice(&[0xFF; 7]);
+        b.extend_from_slice(b"NAME"); // SQLNAME
+        b.extend_from_slice(&[0; 10]); // 나머지 이름·라벨·설명 길이 0
+        b.extend_from_slice(&[0xFF; 3]); // 지시자
         let (ca, cols) = parse_sqldard(&b, true).unwrap();
         assert_eq!(ca.unwrap().code, 0);
         assert_eq!(cols.len(), 1);
@@ -856,5 +865,62 @@ mod tests {
         assert_eq!(&d[1..8], &[0x00, 0x00, 0x04, 0x00, b'a', 0x00, b'b']);
         assert_eq!(&d[8..13], &[0x00, 0xFE, 0xFF, 0xFF, 0xFF]);
         assert_eq!(d[13], 0xFF);
+    }
+
+    /// ★ 실서버 덤프(Db2 12.1.2 · CI 4차 40116752054): (a) `VALUES TRIM(CURRENT SCHEMA)` 식 열 1 · (b) `SELECT ID, NAME, AMT, D …` 이름 4열 ·
+    /// (p) `WHERE ID <= ?` 입력 매개변수 기술(SQLCA 없음 · 0xFF) — 이름·타입·정밀도·CCSID 전부 실측값.
+    #[test]
+    fn sqldard_real_server_dumps() {
+        let hx = |h: &str| -> Vec<u8> {
+            (0..h.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+                .collect()
+        };
+        let a = hx("0000000000303030303053514C3132303132000000000000000000010000000100000021FFFFFF00000000202020202020202020202000124E455841202020202020202020202020202000000000FFFF0100000000008000000000000000C00104B80000000000000000080000010000013100000000000000000000FFFFFF");
+        let (ca, cols) = parse_sqldard(&a, true).unwrap();
+        assert_eq!(ca.unwrap().code, 0);
+        assert_eq!(cols.len(), 1);
+        assert_eq!(
+            (
+                cols[0].name.as_str(),
+                cols[0].sqltype,
+                cols[0].length,
+                cols[0].ccsid
+            ),
+            ("1", 448, 128, 1208)
+        );
+        let b = hx("0000000000303030303053514C313230313200000000000000000001000000070000000000000000000000202020202020202020202000124E455841202020202020202020202020202000000000FFFF0400000000000400000000000000F0010000000000000000000000000000000002494400000000000000000000FFFFFF000000003200000000000000C10104B80000000000000000080000000000044E414D4500000000000000000000FFFFFF0A0002000000000000000000E5010000000000000000000000000000000003414D5400000000000000000000FFFFFF000000000A00000000000000810104B80000000000000000000000000000014400000000000000000000FFFFFF");
+        let (_, cols) = parse_sqldard(&b, true).unwrap();
+        let got: Vec<(String, String)> = cols
+            .iter()
+            .map(|c| (c.name.clone(), c.type_name()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("ID".to_string(), "INTEGER".to_string()),
+                ("NAME".to_string(), "VARCHAR(50)".to_string()),
+                ("AMT".to_string(), "DECIMAL(10,2)".to_string()),
+                ("D".to_string(), "DATE".to_string()),
+            ]
+        );
+        assert_eq!(
+            (
+                cols[1].sqltype,
+                cols[1].ccsid,
+                cols[2].sqltype,
+                cols[3].sqltype
+            ),
+            (449, 1208, 485, 385)
+        );
+        let p = hx("FFFF0100000000000400000000000000F10100000000000000000000000000010000013100000000000000000000FFFFFF");
+        let (ca, params) = parse_sqldard(&p, true).unwrap();
+        assert!(ca.is_none());
+        assert_eq!(params.len(), 1);
+        assert_eq!(
+            (params[0].name.as_str(), params[0].sqltype, params[0].length),
+            ("1", 497, 4)
+        );
     }
 }
