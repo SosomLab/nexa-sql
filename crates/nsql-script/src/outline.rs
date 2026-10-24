@@ -473,9 +473,11 @@ fn scan_sql(
     root: Option<usize>,
 ) {
     let has_stmt_row = root.is_some();
-    // 지금의 뿌리(문장 머리 또는 CREATE 대상) · 패키지(안의 서브프로그램·선언의 부모).
+    // 지금의 뿌리(문장 머리 또는 CREATE 대상) · 패키지(안의 서브프로그램·선언의 부모) · ★ 열린 서브프로그램 스택(V1 10-25 결함 ①:
+    //   프로시저 안 지역 변수가 패키지의 자식으로 보이던 것) — 본문 있는 PROCEDURE/FUNCTION만 올리고 `END 이름`으로 내린다.
     let mut root = root;
     let mut pkg: Option<usize> = None;
+    let mut subs: Vec<usize> = Vec::new();
     let push = |out: &mut Outline,
                 kind: SymKind,
                 name: &str,
@@ -516,7 +518,7 @@ fn scan_sql(
             i += 1;
             continue;
         }
-        let inner_parent = pkg.or(root);
+        let inner_parent = subs.last().copied().or(pkg).or(root);
         let up = w.text.to_ascii_uppercase();
         match up.as_str() {
             // `CREATE [OR REPLACE] [수식어…] KIND [BODY] [schema.]name` — 문장 머리뿐 아니라 T-SQL 배치(GO 사이)처럼 한 문장 안의
@@ -547,6 +549,7 @@ fn scan_sql(
                             root = Some(idx);
                         }
                         pkg = matches!(sk, SymKind::Package | SymKind::PackageBody).then_some(idx);
+                        subs.clear();
                         in_decl = false;
                     }
                     i = m + 1;
@@ -620,7 +623,17 @@ fn scan_sql(
                     } else {
                         SymKind::Function
                     };
-                    push(out, sk, nw.text, sk.label(), nw.start, inner_parent);
+                    // 본문이 있는 선언(`… IS/AS` 가 `;` 앞에 온다)만 스택에 — 명세의 `PROCEDURE a(…);`는 형제로 남는다.
+                    //   선언부 밖에서 새 서브프로그램이 시작되면 앞 것(`END;`만으로 닫힌 것)은 끝난 것으로 본다.
+                    let body = subprogram_has_body(ws, i + 2);
+                    if body && !in_decl {
+                        subs.pop();
+                    }
+                    let parent = subs.last().copied().or(pkg).or(root);
+                    let idx = push(out, sk, nw.text, sk.label(), nw.start, parent);
+                    if body {
+                        subs.push(idx);
+                    }
                     i += 2;
                     continue;
                 }
@@ -679,7 +692,19 @@ fn scan_sql(
                 // 서브프로그램/패키지 머리 뒤 = 선언부(단, `TYPE x IS`·`CURSOR c IS`는 위에서 처리).
                 in_decl = true;
             }
-            "BEGIN" | "END" if paren == 0 => in_decl = false,
+            "BEGIN" if paren == 0 => in_decl = false,
+            "END" if paren == 0 => {
+                in_decl = false;
+                // `END 이름;` = 그 서브프로그램 닫힘(스택 맨 위와 같은 이름일 때만).
+                if let Some(nw) = ws.get(i + 1) {
+                    if subs
+                        .last()
+                        .is_some_and(|&t| out.symbols[t].name.eq_ignore_ascii_case(nw.text))
+                    {
+                        subs.pop();
+                    }
+                }
+            }
             _ => {}
         }
         // 선언부 변수: 줄 첫 낱말이 이름이고 다음 낱말이 타입(예약어·기호 아님)이며 `;` 로 끝나는 줄 — 괄호 안(매개변수)은 제외.
@@ -723,6 +748,22 @@ fn scan_sql(
         }
         i += 1;
     }
+}
+
+/// 서브프로그램 머리 뒤(`from` = 이름 다음 낱말)에 본문이 있는가 — 괄호 밖 첫 `;` 전에 `IS`/`AS`가 오면 본문(`PROCEDURE a IS …`) ·
+/// `;`가 먼저면 명세/전방 선언(`PROCEDURE a(x IN NUMBER);`).
+fn subprogram_has_body(ws: &[Word<'_>], from: usize) -> bool {
+    let mut d: u32 = 0;
+    for w in ws.iter().skip(from) {
+        match w.text {
+            "(" => d += 1,
+            ")" => d = d.saturating_sub(1),
+            ";" if d == 0 => return false,
+            _ if d == 0 && (eq(w, "IS") || eq(w, "AS")) => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn at_line_start(text: &str, byte: usize) -> bool {
@@ -830,6 +871,25 @@ mod tests {
         assert_eq!((body.depth, body.parent), (0, None));
         assert_eq!((p.line, p.depth), (5, 1));
         assert_eq!(p.parent.map(|i| o.symbols[i].name.as_str()), Some("pkg_x"));
+        // ★ 서브프로그램 안 지역 변수·라벨 = 그 서브프로그램의 자식(깊이 2) · 패키지 선언 g_count = 패키지의 자식(깊이 1).
+        let v = o.find("v_tmp").expect("v_tmp");
+        assert_eq!(
+            (v.depth, v.parent.map(|i| o.symbols[i].name.as_str())),
+            (2, Some("do_it"))
+        );
+        let l = o.find("retry").expect("label");
+        assert_eq!(l.parent.map(|i| o.symbols[i].name.as_str()), Some("do_it"));
+        let g = o.find("g_count").expect("g_count");
+        assert_eq!(
+            (g.depth, g.parent.map(|i| o.symbols[i].name.as_str())),
+            (1, Some("pkg_x"))
+        );
+        // `END do_it;` 뒤의 calc는 패키지의 자식(형제).
+        let c = o.find("calc").expect("calc");
+        assert_eq!(
+            (c.depth, c.parent.map(|i| o.symbols[i].name.as_str())),
+            (1, Some("pkg_x"))
+        );
         assert!(
             !o.symbols.iter().any(|s| s.kind == SymKind::Statement),
             "CREATE 머리 문장에 문장 행이 생겼다: {:?}",
@@ -863,8 +923,39 @@ mod tests {
         // 본문의 `FOR`/`OPEN`은 커서가 아니다 · 선언부 밖 CURSOR 낱말도 심볼이 아니다.
         assert!(names(&o, SymKind::Cursor).is_empty());
         let v = o.find("v_pat").expect("var");
-        assert_eq!(v.parent.map(|i| o.symbols[i].name.as_str()), Some("pkg_rc"));
-        assert_eq!(v.depth, 1);
+        assert_eq!(
+            v.parent.map(|i| o.symbols[i].name.as_str()),
+            Some("open_emp")
+        );
+        assert_eq!(v.depth, 2);
+    }
+
+    /// ★ V1 10-25 결함 ① — 명세 선언(본문 없음)은 형제 · `END;`(이름 없음)로 닫힌 뒤 시작하는 다음 서브프로그램도 형제 ·
+    /// 지역(중첩) 서브프로그램은 바깥 것의 자식.
+    #[test]
+    fn spec_declarations_unnamed_end_and_nested_subprograms() {
+        let spec = "CREATE OR REPLACE PACKAGE p AS\n  PROCEDURE a(x IN NUMBER);\n  FUNCTION b RETURN NUMBER;\n  g NUMBER;\nEND p;\n/\n";
+        let o = outline(spec, Some(Dialect::Oracle));
+        for n in ["a", "b", "g"] {
+            let s = o.find(n).expect(n);
+            assert_eq!(
+                (s.depth, s.parent.map(|i| o.symbols[i].name.as_str())),
+                (1, Some("p")),
+                "{n}"
+            );
+        }
+        let body = "CREATE OR REPLACE PACKAGE BODY p AS\n  PROCEDURE a IS\n    va NUMBER;\n    PROCEDURE inner_a IS\n      vi NUMBER;\n    BEGIN\n      NULL;\n    END inner_a;\n  BEGIN\n    NULL;\n  END;\n  FUNCTION b RETURN NUMBER IS\n    vb NUMBER;\n  BEGIN\n    RETURN 1;\n  END;\nEND p;\n/\n";
+        let o = outline(body, Some(Dialect::Oracle));
+        let par = |n: &str| {
+            let s = o.find(n).expect(n);
+            (s.depth, s.parent.map(|i| o.symbols[i].name.to_string()))
+        };
+        assert_eq!(par("a"), (1, Some("p".into())));
+        assert_eq!(par("va"), (2, Some("a".into())));
+        assert_eq!(par("inner_a"), (2, Some("a".into())));
+        assert_eq!(par("vi"), (3, Some("inner_a".into())));
+        assert_eq!(par("b"), (1, Some("p".into())), "`END;` 뒤의 b는 a의 형제");
+        assert_eq!(par("vb"), (2, Some("b".into())));
     }
 
     /// T-SQL 배치 하나에 CREATE 둘 = 뿌리 둘(문장 행 0) · 일반 문장 안 `CREATE`(동적 SQL 아닌 실제 배치)는 문장 행의 자식.

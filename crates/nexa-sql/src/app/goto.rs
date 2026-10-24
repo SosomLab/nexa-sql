@@ -604,7 +604,8 @@ impl App {
             .map(|v| {
                 let s = &ol.symbols[v.idx];
                 let indent = "  ".repeat(v.depth as usize);
-                let detail = if s.detail.is_empty() {
+                // 종류 라벨 + 부가(타입·값) — 부가가 종류와 같으면 한 번만(V1 10-25 결함 ② "cte · cte").
+                let detail = if s.detail.is_empty() || s.detail == s.kind.label() {
                     s.kind.label().to_string()
                 } else {
                     format!("{} · {}", s.kind.label(), s.detail)
