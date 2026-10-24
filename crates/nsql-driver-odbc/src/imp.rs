@@ -29,9 +29,13 @@ pub fn connection_string(spec: &ConnectSpec) -> String {
         db.trim_end_matches(';').to_string()
     } else if spec.dialect == Some(Dialect::Db2) {
         // ★ Db2(10-24 · D-359): 호스트/포트/DB 필드 → IBM CLI 접속 문자열(드라이버 이름 = `?driver=` 또는 `IBM DB2 ODBC DRIVER` · 포트 기본 50000).
+        // `?driver=odbc`/`db2`는 **라우팅 선택자**(허브가 ODBC 경로로 보낸 표식 · 10-25 협업 V1 (c-2) "Driver={odbc}" 결함) → 드라이버 이름이 아니다.
+        //   다른 값은 odbcinst 등록 이름(벤더 드라이버 이름이 다를 때).
         let drv = spec
             .driver
-            .clone()
+            .as_deref()
+            .filter(|d| !matches!(d.trim().to_ascii_lowercase().as_str(), "odbc" | "db2" | ""))
+            .map(str::to_string)
             .unwrap_or_else(|| "IBM DB2 ODBC DRIVER".into());
         format!(
             "Driver={{{drv}}};Database={};Hostname={};Port={};Protocol=TCPIP",
@@ -936,6 +940,23 @@ impl Session for OdbcSession {
 #[cfg(test)]
 mod tests {
     use super::resolve_driver_path;
+
+    /// Db2 접속 문자열 — `?driver=odbc`(라우팅 표식)는 드라이버 이름으로 쓰지 않는다 · 다른 값은 odbcinst 등록 이름.
+    #[test]
+    fn db2_connection_string_ignores_routing_driver_value() {
+        let mut spec = nsql_script::ConnectSpec::parse("db2://u:p@h:50000/SAMPLE").expect("spec");
+        spec.driver = Some("odbc".into());
+        let cs = super::connection_string(&spec);
+        assert!(
+            cs.starts_with(
+                "Driver={IBM DB2 ODBC DRIVER};Database=SAMPLE;Hostname=h;Port=50000;Protocol=TCPIP"
+            ),
+            "{cs}"
+        );
+        assert!(cs.contains("UID=u") && cs.contains("PWD=p"), "{cs}");
+        spec.driver = Some("DB2 ODBC Driver 12".into());
+        assert!(super::connection_string(&spec).starts_with("Driver={DB2 ODBC Driver 12};"));
+    }
 
     /// D-362 — 상대 `Driver` 속성은 알려진 폴더에서 찾은 절대 경로로 · 절대 경로/미등록/못 찾음 = 그대로 · `{}` 유무 둘 다.
     #[test]
