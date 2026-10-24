@@ -480,6 +480,9 @@ impl App {
                 self.prefs_win.set_info(dbms_info_values());
                 self.prefs_win.refresh(&self.settings);
             }
+            "odbc.cancel" => {
+                nsql_drivers::set_odbc_cancel(self.settings.get(key).unwrap_or("auto"))
+            }
             "mssql.cancel" => {
                 nsql_drivers::set_mssql_cancel_socket(self.settings.get(key) == Some("socket"))
             }

@@ -622,6 +622,12 @@ const MSSQL_CANCEL_OPTS: &[(&str, Msg)] = &[
     ("attention", Msg::ValMssqlCancelAttention),
     ("socket", Msg::ValMssqlCancelSocket),
 ];
+// ★ ODBC 취소 방식(10-24 · 138차 Linux): auto = unix Microsoft SQL Server ODBC 드라이버만 끔(msodbcsql18 `SQLCancel` 다른 스레드 경합 SIGSEGV).
+const ODBC_CANCEL_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValOdbcCancelAuto),
+    ("on", Msg::ValOdbcCancelOn),
+    ("off", Msg::ValOdbcCancelOff),
+];
 
 const INDENT_RULES_OPTS: &[(&str, Msg)] = &[
     ("sql", Msg::ValIndentSql),
@@ -4967,6 +4973,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(MSSQL_CANCEL_OPTS),
         default: "attention",
     },
+    // ★ ODBC 취소(10-24 · HIDDEN · 구현 상수 → 설정): auto = unix MS 드라이버 끔 · on = 늘 SQLCancel · off = 늘 배치 경계 정지.
+    Entry {
+        key: "odbc.cancel",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblOdbcCancel,
+        desc: Msg::DescOdbcCancel,
+        kind: SettingKind::Choice(ODBC_CANCEL_OPTS),
+        default: "auto",
+    },
     // ★ D-350(10-23): 접속할 때 드라이버가 없으면(이 빌드에 없고 확장도 없음) GitHub Releases에서 내려받아 설치하고 연다.
     //   끄면 "드라이버 없음" 오류 + `nsql driver install` 안내. 네트워크는 사용자의 접속 동작 안에서만(26 §8).
     Entry {
@@ -7634,6 +7649,7 @@ pub const HIDDEN: &[&str] = &[
     "ui.prefs_advanced",
     "mem.detail",
     "ui.theme_cache_ms",
+    "odbc.cancel",
     "probe.dns_cache_secs",
     "license.gates",
     "ui.toast_fade_to",

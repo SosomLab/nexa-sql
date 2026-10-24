@@ -13,7 +13,7 @@
 //! - 1차 제한 = 실행 취소 없음(`DriverLimit::Cancel`) · 서버 커서(REFCURSOR) 없음 · 벌크 = 러너 다중 행 폴백 · 긴 LOB 스트리밍 없음.
 //! - ★ D-345/D-346 ⓐ(10-24): 내장은 **Windows만**(인박스 odbc32) · macOS/Linux는 **확장 cdylib**(unixODBC 동적 링크 · 시스템 `libodbc` 필요 · D-350 자동 설치).
 mod imp;
-pub use imp::{connection_string, OdbcSession};
+pub use imp::{connection_string, set_cancel_mode, OdbcSession};
 
 // ★ 확장 드라이버 내보내기(D-350 · ABI v2): cdylib로 빌드하면 `nsql_driver_vtable`이 나간다(id = 패키지 id · 방언 = 레지스트리 키).
 fn nsql_abi_open_from_spec(

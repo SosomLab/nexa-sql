@@ -1184,6 +1184,12 @@ fn odbc_target() -> Option<String> {
     if let Ok(u) = std::env::var("NSQL_ODBC_URL") {
         return Some(u);
     }
+    // ★ 10-24(138차 Linux · 사용자 "ODBC 접속 테스트"): 저장 프로필 → ODBC 접속 문자열(3-OS · 비밀번호는 금고에서만 · 환경 변수·로그에 안 남긴다).
+    //   `NSQL_ODBC_FROM_PROFILE=<이름>` (+ 선택 `NSQL_ODBC_DRIVER=<odbcinst 등록 이름>` · 기본 = 방언별: PG "PostgreSQL Unicode" ·
+    //   SQL Server = unix "ODBC Driver 18 for SQL Server"(+TrustServerCertificate=yes) / Windows 인박스 "SQL Server").
+    if let Ok(name) = std::env::var("NSQL_ODBC_FROM_PROFILE") {
+        return odbc_url_from_profile(&name);
+    }
     if cfg!(windows) {
         if let Ok(name) = std::env::var("NSQL_MSSQL_PROFILE") {
             let spec = nsql_vault::Vault::open_default()
@@ -1201,6 +1207,71 @@ fn odbc_target() -> Option<String> {
         }
     }
     None
+}
+
+/// 저장 프로필(기본 금고) → ODBC 접속 문자열(10-24 · 비밀번호는 반환값 안에만 · 호출자가 로그에 찍지 않는다).
+fn odbc_url_from_profile(name: &str) -> Option<String> {
+    let spec = nsql_vault::Vault::open_default()
+        .and_then(|v| v.get(name))
+        .ok()
+        .flatten()?;
+    let (host, user, pw) = (
+        spec.host.as_deref()?,
+        spec.user.as_deref()?,
+        spec.password.as_deref()?,
+    );
+    let drv = std::env::var("NSQL_ODBC_DRIVER").ok();
+    Some(match spec.dialect? {
+        Dialect::Postgres => format!(
+            "odbc:Driver={{{}}};Server={host};Port={};Database={};Uid={user};Pwd={pw}",
+            drv.as_deref().unwrap_or("PostgreSQL Unicode"),
+            spec.port.unwrap_or(5432),
+            spec.database.as_deref().unwrap_or("postgres"),
+        ),
+        Dialect::Mssql => format!(
+            "odbc:Driver={{{}}};Server={host},{};Database={};Uid={user};Pwd={pw};TrustServerCertificate=yes",
+            drv.as_deref().unwrap_or(if cfg!(windows) {
+                "SQL Server"
+            } else {
+                "ODBC Driver 18 for SQL Server"
+            }),
+            spec.port.unwrap_or(1433),
+            spec.database.as_deref().unwrap_or("master"),
+        ),
+        other => {
+            eprintln!("[skip] NSQL_ODBC_FROM_PROFILE: {other:?} 방언은 ODBC 문자열 규칙 없음");
+            return None;
+        }
+    })
+}
+
+/// ★ GUI ODBC 실접속 E2E 준비(10-24 · ignored · `scripts/linux-odbc-e2e.sh` ⑦): 저장 프로필의 자격 증명으로 **격리 홈**(`NSQL_ODBC_TARGET_HOME`)
+/// 금고에 ODBC 프로필(`NSQL_ODBC_PROFILE_NAME` · 기본 `odbc-e2e`)을 쓴다 — 비밀번호는 프로세스 안에서만 · 실제 홈은 읽기만.
+#[test]
+#[ignore = "격리 홈에 프로필을 쓴다 — E2E 스크립트가 부른다"]
+fn odbc_write_profile_into_isolated_home() {
+    let Ok(src) = std::env::var("NSQL_ODBC_FROM_PROFILE") else {
+        eprintln!("[skip] NSQL_ODBC_FROM_PROFILE 없음");
+        return;
+    };
+    let Ok(home) = std::env::var("NSQL_ODBC_TARGET_HOME") else {
+        eprintln!("[skip] NSQL_ODBC_TARGET_HOME 없음");
+        return;
+    };
+    let name = std::env::var("NSQL_ODBC_PROFILE_NAME").unwrap_or_else(|_| "odbc-e2e".into());
+    let url = odbc_url_from_profile(&src).expect("원본 프로필(호스트·사용자·비밀번호·방언)");
+    let spec = nsql_drivers::parse_target(&url, Dialect::Odbc).expect("접속 문자열");
+    assert_eq!(spec.dialect, Some(Dialect::Odbc));
+    assert!(spec.password.is_some(), "Pwd= → 스펙 비밀번호");
+    std::fs::create_dir_all(&home).expect("격리 홈");
+    let v = nsql_vault::Vault::open(&home).expect("격리 금고");
+    v.save(&name, &spec).expect("프로필 저장");
+    let back = v.get(&name).expect("읽기").expect("있음");
+    assert_eq!(
+        back.password, spec.password,
+        "격리 금고 왕복 = 같은 비밀번호"
+    );
+    eprintln!("[ok] wrote odbc profile {name} into {home}");
 }
 
 /// ★ ODBC 1차(T-383): 접속 · 타입 복원(정수·실수·문자열·NULL) · `?` 바인드(문자열·정수) · DML 영향 행 수 · 커밋 · 오류 진단 코드.
@@ -1340,20 +1411,24 @@ fn odbc_select_bind_dml_and_errors() {
             other => panic!("LOB = Str 기대: {other:?}"),
         }
         assert_eq!(r.result_sets[0].rows[0][1], Value::Int(7));
-        let cancel = s.cancel_handle().expect("cancel handle");
-        let t0 = std::time::Instant::now();
-        let canceller = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            cancel.cancel()
-        });
-        let r = exec(&mut s, "WAITFOR DELAY '00:00:20'", Vec::new());
-        let took = t0.elapsed();
-        canceller.join().expect("join").expect("SQLCancel");
-        assert!(r.is_err(), "취소된 실행 = 오류로 끝남: {r:?}");
-        assert!(took.as_secs() < 10, "취소까지 {took:?}");
-        assert!(s.is_alive(), "취소 뒤 세션 유지");
-        let r = exec(&mut s, "SELECT 1 AS ok", Vec::new()).expect("after cancel");
-        assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
+        // ★ 10-24: unix MS 드라이버는 auto에서 취소 핸들 없음(SQLCancel 경합 SIGSEGV 회피 · `odbc.cancel`) → 그 절은 건너뛴다.
+        if let Some(cancel) = s.cancel_handle() {
+            let t0 = std::time::Instant::now();
+            let canceller = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                cancel.cancel()
+            });
+            let r = exec(&mut s, "WAITFOR DELAY '00:00:20'", Vec::new());
+            let took = t0.elapsed();
+            canceller.join().expect("join").expect("SQLCancel");
+            assert!(r.is_err(), "취소된 실행 = 오류로 끝남: {r:?}");
+            assert!(took.as_secs() < 10, "취소까지 {took:?}");
+            assert!(s.is_alive(), "취소 뒤 세션 유지");
+            let r = exec(&mut s, "SELECT 1 AS ok", Vec::new()).expect("after cancel");
+            assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
+        } else {
+            eprintln!("[skip] ODBC cancel handle = None (odbc.cancel auto · unix MS driver = SQLCancel 경합 SIGSEGV 회피) — SQLCancel 절 건너뜀");
+        }
     }
     // 오류 = 진단 레코드(SQLSTATE + 드라이버 메시지 · 네이티브 코드).
     let e =

@@ -417,6 +417,8 @@ pub(crate) fn apply_driver_switches() {
         nsql_drivers::set_oracle_driver(nsql_drivers::OracleDriver::parse(
             s.get("oracle.driver").unwrap_or("thin"),
         ));
+        // ODBC 취소 방식(10-24 · `odbc.cancel`) — GUI와 같은 값(CLI는 ■이 없지만 세션 능력표를 같게).
+        nsql_drivers::set_odbc_cancel(s.get("odbc.cancel").unwrap_or("auto"));
         // MySQL/MariaDB TLS(T-388 · `mysql.tls` · `mysql.tls_ca`) — GUI와 같은 값.
         nsql_drivers::set_mysql_tls(
             s.get("mysql.tls").unwrap_or("preferred"),

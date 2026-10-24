@@ -616,6 +616,14 @@ pub fn set_oracle_client(manual: bool, client_dir: &str, tns_admin: &str) {
 }
 
 /// SQL Server 취소 방식(설정 `mssql.cancel`): `socket` = 소켓 종료(항상) · 아니면 Attention(로그인만 암호화일 때 · 아니면 소켓 종료로 대체).
+/// ★ ODBC 취소 방식(10-24 · `odbc.cancel` = auto|on|off): auto = unix의 Microsoft SQL Server ODBC 드라이버만 끔(SQLCancel 경합 SIGSEGV).
+pub fn set_odbc_cancel(mode: &str) {
+    #[cfg(feature = "odbc")]
+    nsql_driver_odbc::set_cancel_mode(mode);
+    #[cfg(not(feature = "odbc"))]
+    let _ = mode;
+}
+
 pub fn set_mssql_cancel_socket(socket: bool) {
     #[cfg(feature = "mssql")]
     nsql_driver_mssql::set_cancel_socket(socket);

@@ -2229,6 +2229,7 @@ fn main() {
     // 첫 화면부터 탭 표식(미연결 사선)이 보이게 — 세션 상태 → 화면 3층 동기화 1회.
     app.sync_sess_ui();
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
+    nsql_drivers::set_odbc_cancel(app.settings.get("odbc.cancel").unwrap_or("auto"));
     app.apply_tab_accent();
     app.apply_extensions(None);
     app.apply_window_sizes();

@@ -61,19 +61,63 @@ pub struct OdbcSession {
     in_tx: bool,
     /// ★ 실행 중인 문장 핸들(T-383 2차 취소): `execute` 동안만 non-null · [`OdbcCancel`]이 다른 스레드에서 `SQLCancel`.
     active: Arc<AtomicPtr<std::ffi::c_void>>,
+    /// 진행 중인 `SQLCancel` 수(해제 경합 가드 · 10-24).
+    cancel_inflight: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// ★ 취소 방식(10-24 · 138차 Linux · 설정 `odbc.cancel` = auto|on|off · 호스트가 넣는다): 0 = auto · 1 = on · 2 = off.
+///   auto = **unix의 Microsoft SQL Server ODBC 드라이버는 끔** — msodbcsql18(Linux)에서 다른 스레드의 `SQLCancel`이 실행 중 문장과 경합해
+///   드라이버 안에서 SIGSEGV(5회 중 2회 · gdb = libmsodbcsql `SQLCancel` 프레임 · 통합 시험 `odbc_select_bind_dml_and_errors`) → 취소 핸들 없음
+///   = 호스트는 배치 경계 정지 + 두 번째 ■ 강제 중지(44 §6 · Oracle Thin과 같은 꼴). Windows 인박스 드라이버는 그대로 `SQLCancel`.
+static CANCEL_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn set_cancel_mode(mode: &str) {
+    let v = match mode.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" => 1,
+        "off" | "false" | "0" => 2,
+        _ => 0,
+    };
+    CANCEL_MODE.store(v, Ordering::Relaxed);
+}
+
+/// 이 세션(드라이버 이름 · OS)에서 `SQLCancel`을 쓸 것인가 — 순수 판정(시험).
+pub(crate) fn cancel_allowed(mode: u8, dbms: &str, unix: bool) -> bool {
+    match mode {
+        1 => true,
+        2 => false,
+        _ => !(unix && dbms.to_ascii_lowercase().contains("sql server")),
+    }
+}
+
+fn cancel_mode() -> u8 {
+    CANCEL_MODE.load(Ordering::Relaxed)
 }
 
 /// ★ 실행 취소(ODBC `SQLCancel` · 다른 스레드에서 실행 중 문장 핸들에 · 44 §6): 실행 중이 아니면 조용히 Ok.
-struct OdbcCancel(Arc<AtomicPtr<std::ffi::c_void>>);
+///   `inflight` = SQLCancel이 도는 동안 1 이상 — 실행 쪽 [`ActiveGuard`]가 핸들을 비우고 문장을 해제하기 전에 0을 기다린다(해제된 HSTMT에
+///   SQLCancel이 닿는 TOCTOU 방지 · 10-24).
+struct OdbcCancel {
+    active: Arc<AtomicPtr<std::ffi::c_void>>,
+    inflight: Arc<std::sync::atomic::AtomicUsize>,
+}
 
 impl nsql_core::CancelHandle for OdbcCancel {
     fn cancel(&self) -> Result<(), DbError> {
-        let p = self.0.load(Ordering::Acquire);
+        self.inflight.fetch_add(1, Ordering::AcqRel);
+        let r = self.cancel_inner();
+        self.inflight.fetch_sub(1, Ordering::AcqRel);
+        r
+    }
+}
+
+impl OdbcCancel {
+    fn cancel_inner(&self) -> Result<(), DbError> {
+        let p = self.active.load(Ordering::Acquire);
         if p.is_null() {
             return Ok(());
         }
-        // SAFETY: `p`는 `execute_inner`가 실행 중인 문장의 HSTMT · 문장이 끝나면 null로 되돌린다 · SQLCancel은 다른 스레드에서
-        //   실행 중 문장에 부르도록 정의된 호출이다(ODBC 3.x).
+        // SAFETY: `p`는 `execute_inner`가 실행 중인 문장의 HSTMT · 문장이 끝나면 null로 되돌리되 `inflight`가 0이 될 때까지 해제를 미룬다 ·
+        //   SQLCancel은 다른 스레드에서 실행 중 문장에 부르도록 정의된 호출이다(ODBC 3.x).
         let rc = unsafe { odbc_api::sys::SQLCancel(odbc_api::sys::HStmt(p.cast())) };
         if matches!(
             rc,
@@ -90,12 +134,22 @@ impl nsql_core::CancelHandle for OdbcCancel {
     }
 }
 
-/// 실행 동안 핸들을 공개하고 끝나면(패닉·오류 포함) null로 되돌린다.
-struct ActiveGuard<'a>(&'a AtomicPtr<std::ffi::c_void>);
+/// 실행 동안 핸들을 공개하고 끝나면(패닉·오류 포함) null로 되돌린다 — 그 뒤 진행 중인 `SQLCancel`이 있으면 끝날 때까지(상한 2 s) 기다린 뒤
+/// 돌아간다(이 가드가 문장 핸들보다 먼저 떨어지므로 해제 전에 취소가 끝난다).
+struct ActiveGuard<'a> {
+    active: &'a AtomicPtr<std::ffi::c_void>,
+    inflight: &'a std::sync::atomic::AtomicUsize,
+}
 
 impl Drop for ActiveGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(std::ptr::null_mut(), Ordering::Release);
+        self.active.store(std::ptr::null_mut(), Ordering::Release);
+        let t0 = std::time::Instant::now();
+        while self.inflight.load(Ordering::Acquire) != 0
+            && t0.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::yield_now();
+        }
     }
 }
 
@@ -535,6 +589,7 @@ impl OdbcSession {
             dbms,
             max_rows: 0,
             active: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
+            cancel_inflight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -564,7 +619,10 @@ impl OdbcSession {
         // ★ 취소 창: 실행 동안 HSTMT를 공개(가드가 끝날 때 null) → 다른 스레드의 `SQLCancel`이 이 문장을 끊는다.
         let handle = stmt.as_stmt_ref().as_sys();
         self.active.store(handle.0.cast(), Ordering::Release);
-        let _guard = ActiveGuard(&self.active);
+        let _guard = ActiveGuard {
+            active: &self.active,
+            inflight: &self.cancel_inflight,
+        };
         let mut result = ExecResult::default();
         let mut first = stmt.execute(&req.sql, &params[..]).map_err(err)?;
         if first.is_none() {
@@ -607,7 +665,14 @@ impl Session for OdbcSession {
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn nsql_core::CancelHandle>> {
-        Some(Arc::new(OdbcCancel(self.active.clone())))
+        // ★ 10-24: unix MS 드라이버는 auto에서 끔(SQLCancel 경합 SIGSEGV) → None = 배치 경계 정지 + 두 번째 ■ 강제.
+        if !cancel_allowed(cancel_mode(), &self.dbms, cfg!(unix)) {
+            return None;
+        }
+        Some(Arc::new(OdbcCancel {
+            active: self.active.clone(),
+            inflight: self.cancel_inflight.clone(),
+        }))
     }
 
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
@@ -715,6 +780,33 @@ impl Session for OdbcSession {
 
 #[cfg(test)]
 mod tests {
+
+    /// MC/DC(10-24): 모드(auto/on/off) × unix × 드라이버 이름 — 각 조건이 독립으로 결과를 뒤집는다.
+    #[test]
+    fn cancel_allowed_matrix() {
+        use super::cancel_allowed;
+        assert!(
+            !cancel_allowed(0, "Microsoft SQL Server", true),
+            "auto · unix · MS = 끔"
+        );
+        assert!(
+            cancel_allowed(0, "Microsoft SQL Server", false),
+            "auto · Windows · MS = 켬"
+        );
+        assert!(
+            cancel_allowed(0, "PostgreSQL", true),
+            "auto · unix · 다른 드라이버 = 켬"
+        );
+        assert!(
+            cancel_allowed(1, "Microsoft SQL Server", true),
+            "on = 늘 켬"
+        );
+        assert!(!cancel_allowed(2, "PostgreSQL", false), "off = 늘 끔");
+        assert!(
+            !cancel_allowed(0, "microsoft sql server", true),
+            "대소문자 무관"
+        );
+    }
     use super::*;
 
     /// UTF-8 로캘 판정(10-24 Intel 맥 한글 깨짐): UTF-8/utf8 코드셋만 true.

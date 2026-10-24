@@ -5,12 +5,14 @@
 #   ③ PostgreSQL ODBC 로그인 단계 도달(틀린 비밀번호 → 인증 실패 메시지 · 네트워크·드라이버 정상 판정) ④ SQL Server ODBC 같은 꼴(18456/Login failed · 한글 메시지)
 #   ⑤ GUI 격리 홈 = 접속 문자열 인자로 SQLite3 ODBC 접속 → run.all(자동 커밋) → grid rows=1 + DB 실제 값(10-24 §2 ④-a = 자동 커밋 멈춤 결함 회귀)
 #   ⑥ GUI 수동 커밋 = run.all → run.commit → DB 값(§2 ④-b)
-# 사용: scripts/linux-odbc-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-e target/debug/nexa-sql] [--pg host:port/db] [--ms host,port]
+#   ⑦(선택 `--profiles Repository,M4PLAN`) 저장 프로필의 **실제 자격 증명**으로 ODBC 실접속·DML·카탈로그 = 통합 시험 `odbc_select_bind_dml_and_errors` · ⑧ 같은 자격으로 격리 홈 금고에 ODBC 프로필을 써 **GUI** 접속(이름) → SELECT 1 → grid rows=1
+#     (`NSQL_ODBC_FROM_PROFILE` · 비밀번호는 금고 → 프로세스 안 · 로그 0 · 임시 표 nsqlt_odbc 생성·DROP · cargo 빌드 포함).
+# 사용: scripts/linux-odbc-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-e target/debug/nexa-sql] [--pg host:port/db] [--ms host,port] [--profiles 이름,이름]
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="192.168.0.60:5433/matrixdb2"; MS="192.168.0.58,1433"
-while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -n) NSQL=$2; shift 2;; -e) EXE=$2; shift 2;; --pg) PG=$2; shift 2;; --ms) MS=$2; shift 2;; *) echo "usage: $0 -o <out> [-n nsql] [-e gui] [--pg host:port/db] [--ms host,port]"; exit 2;; esac; done
+OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="192.168.0.60:5433/matrixdb2"; MS="192.168.0.58,1433"; PROFILES=""
+while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -n) NSQL=$2; shift 2;; -e) EXE=$2; shift 2;; --pg) PG=$2; shift 2;; --ms) MS=$2; shift 2;; --profiles) PROFILES=$2; shift 2;; *) echo "usage: $0 -o <out> [-n nsql] [-e gui] [--pg host:port/db] [--ms host,port] [--profiles 이름,이름]"; exit 2;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }
 mkdir -p "$OUT"; REPORT="$OUT/odbc-e2e.txt"; : > "$REPORT"
 say() { echo "$*"; echo "$*" >> "$REPORT"; }
@@ -84,5 +86,28 @@ if [ -x "$EXE" ]; then
   pgrep -f "NSQL_HOME=$H" >/dev/null 2>&1 && pkill -f "$H" 2>/dev/null || true
 else skp "GUI 실행 파일 없음($EXE)"; fi
 
+if [ -n "$PROFILES" ]; then
+  say "⑦ 저장 프로필 실자격 ODBC 실접속(통합 시험 · $PROFILES)"
+  IFS=, ; for pr in $PROFILES; do unset IFS
+    o=$(cd "$ROOT" && NSQL_ODBC_FROM_PROFILE="$pr" timeout -s KILL 1200 cargo test -q -p nsql-drivers --test integration odbc_select_bind_dml_and_errors -- --nocapture 2>&1); rc=$?
+    printf '%s\n' "$o" > "$OUT/odbc-profile-$pr.txt"
+    if printf '%s' "$o" | grep -q '\[skip\]'; then skp "⑦ $pr = $(printf '%s' "$o" | grep -m1 '\[skip\]')"
+    elif [ $rc = 0 ] && printf '%s' "$o" | grep -qE 'test result: ok\. 1 passed'; then ok "⑦ $pr ODBC 실접속·바인드·DML·카탈로그·오류 코드"
+    else bad "⑦ $pr" "$(printf '%s' "$o" | grep -E 'panicked|실패|error|FAILED' | head -4)"; fi
+    # ⑧ GUI 실접속 = 격리 홈 금고에 ODBC 프로필을 쓰고(ignored 시험 · 비밀번호는 프로세스 안) 그 이름으로 GUI 접속 → SELECT 1 → grid rows=1.
+    if [ -x "$EXE" ]; then
+      local_home="$OUT/gui-$pr"; rm -rf "$local_home"; mkdir -p "$local_home"
+      printf 'ui.lang=en\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=1100,760\n' > "$local_home/settings.conf"
+      w=$(cd "$ROOT" && NSQL_ODBC_FROM_PROFILE="$pr" NSQL_ODBC_TARGET_HOME="$local_home" NSQL_ODBC_PROFILE_NAME="odbc-$pr" timeout -s KILL 600 cargo test -q -p nsql-drivers --test integration odbc_write_profile_into_isolated_home -- --ignored --nocapture 2>&1)
+      if ! printf '%s' "$w" | grep -q '\[ok\] wrote odbc profile'; then bad "⑧ $pr 격리 금고에 ODBC 프로필 쓰기" "$(printf '%s' "$w" | grep -E 'panicked|skip|error' | head -3)"
+      else
+        printf 'SELECT 1 AS x;\n' > "$OUT/one-gui.sql"
+        cmd="@connected:open:$OUT/one-gui.sql,@after:4000:run.all,@after:9000:grid.dump:$OUT/gui-$pr.grid,@after:9500:status.dump:$OUT/gui-$pr.status"
+        NSQL_HOME="$local_home" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" timeout -s KILL 14 "$EXE" "odbc-$pr" > "$OUT/gui-$pr.stdout" 2> "$OUT/gui-$pr.stderr"
+        if grep -q 'rows=1' "$OUT/gui-$pr.grid" 2>/dev/null; then ok "⑧ $pr GUI ODBC 프로필 접속 → SELECT 1 → grid rows=1"; else bad "⑧ $pr GUI ODBC 접속/실행" "$(cat "$OUT/gui-$pr.grid" 2>/dev/null; tail -3 "$OUT/gui-$pr.stderr")"; fi
+      fi
+    fi
+  done; unset IFS
+fi
 say "결과: PASS $pass · FAIL $fail · SKIP $skip · 보고 = $REPORT"
 [ $fail = 0 ]
