@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/138-clickhouse-tx-noop | 2026-10-24 | 2026-10-24 → main(삭제) · **89795fa1** | 1 | 138차 = 🔧 ClickHouse 단독 COMMIT/ROLLBACK/BEGIN/START TRANSACTION/SAVEPOINT/RELEASE SAVEPOINT no-op(`is_tx_statement` · CI integration 649) · ★ D-355 2차 = 재계산 실행의 `Vars` 보류 → `merge_vars` 한 번만(창이 `⟳ := 수식`을 거치지 않음 · 사용자 10-24) |
 | feat/138-drivers-p5 | 2026-10-24 | 2026-10-24 → main(삭제) · **9a3084fb** | 3 | 138차 Linux 드라이버 P5 = ★ ClickHouse 확장 드라이버(D-354 · HTTP · `nsql-net`/`nsql-json` · T-415) · PG 와이어/ODBC 접속 프리셋 · ★ 변수 창 D-355(T-421) · `is_utf8_locale` cfg(Windows dead_code) |
 | feat/138-linux-gaps | 2026-10-24 | 2026-10-24 → main(삭제) · **b18c3d1f** | 5 | 138차 Linux = ★ T-60 서식 복사(X11 `text/html`) · T-38 테마 실시간 추종(`ui.theme_watch`) `3c7f31d` · 시험 자산 9(ODBC 3 · driver-install · func-check 이식 28 · V3 지적 수정) `1f3a33c`·`b301bef`·`61db394` · 🔧 T-414 ODBC SQLCancel(`odbc.cancel`) `b18c3d1` |
 | feat/131-mac-2step-odbc-settings | 2026-10-24 | 2026-10-24 → main(삭제) · **24ffa2c**(기능) + 319028b(시험 자산) + 기록 | 3 | 131차 mac = 2단 확인 통일 · ODBC 6(이름·안내·Driver/SQLSTATE 분류·로캘·자동 커밋 멈춤·CLI TARGET) · 설정 내보내기/가져오기 · 맥 자체 시험 비활성(Accessory) · 시험 자산(bash 3.2 · prod-mode s3 · ODBC setup/rollback) — journal 10-23 §45 · 10-24 §1~2 |

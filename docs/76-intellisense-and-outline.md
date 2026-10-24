@@ -246,3 +246,37 @@
 - **호스트 규칙**: 문장 시작이면 문법 `[start]` 후보 뒤에 명령 낱말을 덧붙임 · 명령 뒤 자리면 **그 명령의 낱말만**(SQL 키워드·객체 걷어냄) · `UPDATE t SET |`(SQL의 SET)는 종전(컬럼).
 - **규칙 시험** `client_commands_cover_parser_words` = 파서 낱말 전부가 완성 표에 있음(약어는 접두) + 완성 표 전부를 파서가 명령으로 봄 → 새 명령을 파서에만 넣으면 시험이 깨진다([61 §2-2](61-core-design-and-working-rules.md) 작업 규칙).
 - V1(협업 10-16 · [journal 10-16 §2](journal/2026-10-16.md)): 빈 줄 51 후보(키워드 32 뒤 client 19) · `SET |` 11개만 · `CONNTYPE |` 4 · `SHOW |` 3 · `UPDATE t_h SET |` 종전 ✓.
+
+## 20. 아웃라인 방향 — "선언된 이름으로 이동하는 지도"(10-24 · 138차 · D-357 · T-422/T-423 · 사용자 "지금은 너무 많은 내용이 보여서 불편 · 각 DB 클라이언트(특히 DataGrip)의 outline 대상·범위·표시 방법 정리")
+
+> 원칙 = 아웃라인은 **선언된 이름으로 이동하는 지도**(타 제품 공통)이지 문장 나열이 아니다 · **기본은 적게, 필요한 종류만 켠다**(DataGrip Show 토글). 사용자 원문 "datagrid" = DataGrip으로 해석(가정).
+
+### 20-1. 조사 요약(협업 · 원문 = [76a 조사 원문](76a-outline-research.md) · 출처 URL·추정 표시는 원문)
+
+| 제품 | 노드 단위 · 계층 | 표시 · 동작 |
+|---|---|---|
+| **DataGrip** | 1단 = 파일의 **문장**(DDL/DML/SELECT/Other) · Group by type = 2단 · 문장 하위 노드 = 문서에 없음(추정) · 데이터 편집기 Structure = 컬럼 목록 | Structure(Alt+7)/File Structure(Ctrl+F12) · 도구줄 **Show 토글 4** · Sort Alphabetically(끄면 파일 순) · Always Select Opened Element(커서 추종) · Navigate with Single Click · speed search · 우클릭 Execute |
+| DBeaver(24.0+) | **깊은 의미 트리** = 문장 → 절(SELECT/FROM/WHERE…) → 테이블·별칭·JOIN·CTE·서브쿼리·컬럼 · 기본 3단 자동 펼침(소스 `setAutoExpandLevel(3)`) | 커서 추종 늘 · 필터·정렬 없음 → "너무 많이 보임"의 전형 |
+| Sublime | 평면 1단 = CREATE 대상 이름 · 함수/프로시저 · 타입(SELECT·DML 없음) | Goto Symbol 퍼지 검색 · 파일 순 |
+| PL/SQL Developer · Toad · SQL Developer | PL/SQL 단위(패키지 → 서브프로그램 → 선언) 2~3단 | Toad = Sort PL/SQL elements · PL/SQL Dev = Code Contents + Code Hierarchy · SQL 스크립트 범위 = 추정 |
+| SSMS · VS Code 기본 · TablePlus · Beekeeper · Golden | **없음**(SSMS = 접기만) | — |
+
+**nexa-sql 현황(10-24 · 코드 탐색 · 결함 포함)** = `SymKind` 14종 · 평면 `Vec<Symbol>` + depth 들여쓰기(접기·정렬·아이콘·커서 추종 없음) · `outline.*` 설정 0 · 예제 4개 노드 중 **문장 행 45~90 %**(규칙 모사 추정 · prod-mode 30 중 25 · lob/mssql 20 중 18) · SQL*Plus 명령 줄도 1행씩 · **CREATE 같은 줄 2행**(`outline.rs` 427-435 + 487) · **Declared 오탐 = 프로시저 매개변수 줄**(`outline.rs` 606-653 · refcursor-pkg 9 중 6~7) · `CURSOR` 블록 조건 없음 · Goto Symbol(Ctrl+R)도 문장 전부.
+
+### 20-2. 결정(D-357 · 개발 · 권장안 진행 · 기본값 = 사용자 확인 사항)
+
+1. **노드 두 층** — **심볼**(기본 보임 = CREATE 대상 객체 · 루틴(프로시저·함수·패키지·본문·트리거·타입) · CTE · DEFINE/VARIABLE · 커서 · 라벨 · 선언 변수) / **문장**(기본 숨김 = SELECT · DML · DDL · 명령(EXEC·PRINT·SET·SHOW·COMMIT…)) · 패널 머리 토글 4(Select · DML · DDL · 명령) → 설정 `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_commands`(전부 off) + `outline.show_declared`(on) · 토글 값 = 설정에 저장(창마다 아님).
+2. **CREATE 중복 제거** — CREATE 문장은 문장 행을 만들지 않고 **대상 행 하나**(depth 0 · 안의 선언·서브프로그램이 자식) · 블록 CREATE(PROCEDURE/PACKAGE/TRIGGER/TYPE)도 같다.
+3. **결함 수정** — Declared = 서브프로그램 매개변수 괄호 안은 선언부 아님(`P_NAME IN VARCHAR2`) · `CURSOR` = 선언부·패키지 안에서만.
+4. **진짜 트리 + 접기** — `Symbol.parent: Option<usize>`(평면 Vec 유지 · 부모 색인만 · 복사 0) · 패널이 접힘 상태 보유 · 기본 펼침 깊이 `outline.expand_depth`(1 = 루틴 이름은 보이고 안의 변수는 접힘) · 머리 [모두 펼침/접음] · 필터 중 = 일치 행의 부모를 함께 보임.
+5. **커서 추종** — `outline.follow_caret`(on) · 캐럿이 든 심볼(byte 구간 이진 탐색)을 선택·reveal · 틱에서 캐럿이 바뀔 때만 · [39 §3](39-resource-governance.md) 부하원(끄는 키 = 이 키).
+6. **Goto Symbol**(Ctrl+R · `@`)도 같은 종류 토글을 따른다(문장 = 토글 켰을 때만) · 표시 = 종류 아이콘 + 이름 + 줄.
+7. **아이콘** = 탐색기 객체 아이콘 재사용(새 아이콘 0) · 줄 번호 유지 · 머리 개수 = 보이는 수/전체.
+8. **정렬** = 파일 순 고정(1차) · `outline.sort`(position/name) = 2차.
+
+### 20-3. 단계
+
+| 단계 | 내용 | 고칠 자리 |
+|---|---|---|
+| **T-422(1차 · P1 · 중)** | 20-2의 1~7 | `nsql-script/src/outline.rs`(2 · 3 · 4 parent) · `nexa-sql/src/outline_panel.rs`(토글 · 트리 · 접기 · 추종 · 아이콘) · `app/goto.rs`(6) · nsql-settings REGISTRY `outline.*` 7키(분류 Editors ▸ Outline · 라벨·설명 `Msg`) · i18n · 시험 = outline.rs 단위(CREATE 1행 · 매개변수 비선언 · parent) + 패널 보임 판정 순수 함수 MC/DC · 문서 76 · 94 · 39 |
+| **T-423(2차)** | Group by type · 아웃라인에서 문장 실행(우클릭 · `gate_open` 통과) · 정렬 name · **데이터 그리드 Structure**(DataGrip 데이터 편집기의 컬럼 목록·숨김/표시 — 우리 그리드엔 없음 · DR-33 `View` 투영 위 컬럼 선택기 후보) | — |
