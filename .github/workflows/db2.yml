@@ -64,7 +64,8 @@ jobs:
           sudo mkdir -p /opt/ibm && cd /opt/ibm
           # ★ v12.1.4 linuxx64 패키지의 libdb2.so = SQLLEN 32비트 빌드 → odbc-api 길이 표시자 패닉(40109120417) · unixODBC용 64비트 판 = libdb2o.so.
           #   11.5.9·12.1.4 둘 다 libdb2o.so 없음(4차 확정) → 아래 단계가 서버 컨테이너의 lib64를 꺼낸다 · 여기선 받아 두기만(폴백).
-          sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/v11.5.9/linuxx64_odbc_cli.tar.gz
+          # 12.1.4(최신 · 서버 12.1과 같은 계열) — 아래 단계가 서버의 libdb2o.so.1을 이 트리에 끼운다(msg/cfg는 clidriver 것).
+          sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/linuxx64_odbc_cli.tar.gz
           sudo tar xzf cli.tar.gz && sudo rm cli.tar.gz
           find /opt/ibm/clidriver -name 'libdb2o*' -o -name 'libdb2.so*' | sort
       - name: wait for Db2 (Setup has completed · 최대 10분)
@@ -75,22 +76,25 @@ jobs:
           done
           echo "db2 not ready"; docker logs "${{ job.services.db2.id }}" 2>&1 | tail -50; exit 1
       # ★ 4차(40109857978)로 확정: Linux clidriver(11.5.9 · 12.1.4)는 libdb2.so(SQLLEN 32비트)만 동봉 → unixODBC(64비트 SQLLEN)와 안 맞아
-      #   길이 표시자 오류. 64비트 판 libdb2o.so는 **전체 Db2 서버/클라이언트 설치본(sqllib/lib64)** 에 있다 → 서비스 컨테이너의 lib64를
-      #   꺼내(docker cp) 등록한다(CI 전용 · 사용자는 Db2 클라이언트/dsdriver 설치 = docs/wiki/Drivers). clidriver는 폴백.
-      - name: ODBC driver = 컨테이너 sqllib/lib64의 libdb2o.so (clidriver는 폴백)
+      #   길이 표시자 오류. 64비트 판 libdb2o.so는 **전체 Db2 서버/클라이언트 설치본(sqllib/lib64)** 에 있다. 5차(40110495407) = 서버 lib64만
+      #   꺼내 쓰면 msg/cfg·인스턴스 환경이 없어 IM004·SQL10007N → **하이브리드**: clidriver 트리(msg·cfg · 인스턴스 불필요)에 서버의
+      #   libdb2o.so.1 하나만 끼운다(같은 12.1 계열). CI 전용 · 사용자는 Db2 클라이언트/dsdriver 설치(docs/wiki/Drivers).
+      - name: ODBC driver = clidriver 트리 + 컨테이너 lib64의 libdb2o.so.1 (없으면 clidriver libdb2.so 폴백)
         working-directory: .
         run: |
           ID="${{ job.services.db2.id }}"
           SRC=$(docker exec "$ID" bash -lc 'ls -d /opt/ibm/db2/V*/lib64 2>/dev/null | head -1')
           echo "server lib64 = $SRC"
           LIB=/opt/ibm/clidriver/lib/libdb2.so
-          if [ -n "$SRC" ] && docker exec "$ID" test -f "$SRC/libdb2o.so"; then
-            sudo mkdir -p /opt/ibm/db2lib64
-            docker cp "$ID:$SRC/." /tmp/db2lib64 && sudo cp -a /tmp/db2lib64/. /opt/ibm/db2lib64/
-            ls -l /opt/ibm/db2lib64/libdb2o.so /opt/ibm/db2lib64/libdb2.so.1
-            LIB=/opt/ibm/db2lib64/libdb2o.so
+          if [ -n "$SRC" ] && docker exec "$ID" test -f "$SRC/libdb2o.so.1"; then
+            docker cp "$ID:$SRC/libdb2o.so.1" /tmp/libdb2o.so.1
+            sudo cp /tmp/libdb2o.so.1 /opt/ibm/clidriver/lib/libdb2o.so.1
+            sudo ln -sf libdb2o.so.1 /opt/ibm/clidriver/lib/libdb2o.so
+            ls -l /opt/ibm/clidriver/lib/libdb2o.so /opt/ibm/clidriver/lib/libdb2o.so.1 /opt/ibm/clidriver/lib/libdb2.so.1
+            LD_LIBRARY_PATH=/opt/ibm/clidriver/lib ldd /opt/ibm/clidriver/lib/libdb2o.so.1 | grep -i 'not found\|libdb2' || true
+            LIB=/opt/ibm/clidriver/lib/libdb2o.so
           else
-            echo "::warning::libdb2o.so not found in server container; falling back to clidriver libdb2.so (32-bit SQLLEN)"
+            echo "::warning::libdb2o.so.1 not found in server container; falling back to clidriver libdb2.so (32-bit SQLLEN)"
           fi
           echo "ODBC driver lib = $LIB"
           echo "DB2_ODBC_LIBDIR=$(dirname "$LIB")" >> "$GITHUB_ENV"
