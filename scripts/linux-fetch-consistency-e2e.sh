@@ -22,6 +22,9 @@ mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
 printf 'ui.lang=ko\ndemo.prompted=on\nexplorer.details=off\n' > "$H/settings.conf"
 R="$OUT/report.txt"; : > "$R"; say() { echo "$*"; echo "$*" >> "$R"; }
 pass=0; fail=0; ok() { say "  PASS  $1"; pass=$((pass+1)); }; bad() { say "  FAIL  $1"; fail=$((fail+1)); [ -n "${2:-}" ] && echo "$2" | head -6 | sed 's/^/        /' | tee -a "$R" >/dev/null; }
+# ★ 10-24(138차): 서버 쪽 연결 리셋(os error 104 · "서버 연결 끊김")은 제품 판정이 아니라 환경 → ENV로 따로 세고 합계에서 실패로 치지 않는다(V3 D17 첫 회 4/4 오판 방지).
+env=0; envc() { say "  ENV   $1"; env=$((env+1)); [ -n "${2:-}" ] && echo "$2" | head -4 | sed 's/^/        /' | tee -a "$R" >/dev/null; }
+ENV_RE='Connection reset by peer|os error 104|Server connection lost|서버 연결 끊김|Broken pipe'
 say "=== 페치 일관성 E2E · 프로필 $P · FROM $FROM · $(date '+%F %T')"
 # 기대값 = 서버 COUNT(*)(DISTINCT ROWID와 같아야 한다).
 printf 'SELECT COUNT(*) AS CNT, COUNT(DISTINCT ROWID) AS RIDS FROM %s;\n' "$FROM" > "$OUT/cnt.sql"
@@ -36,6 +39,8 @@ run_case() {
   printf '%s\n' "$sql" > "$OUT/$id.sql"; rm -f "$OUT/$id.rid.txt" "$OUT/$id.grid.txt" "$OUT/$id.log.txt"
   NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$OUT/$id.sql,$chain,@after:$((secs*1000-1500)):grid.col:$OUT/$id.rid.txt|RID,@after:$((secs*1000-1000)):grid.dump:$OUT/$id.grid.txt,@after:$((secs*1000-500)):log.dump:$OUT/$id.log.txt" \
     timeout -s KILL "$((secs+4))" "$APP" "$P" > "$OUT/$id.stdout" 2> "$OUT/$id.stderr"
+  # 환경 판정 먼저: 실행 로그·stderr에 연결 리셋이 있으면 이 시나리오는 ENV(재실행 대상) — 행 수·중복 판정은 뜻이 없다.
+  if cat "$OUT/$id.log.txt" "$OUT/$id.stderr" 2>/dev/null | grep -qE "$ENV_RE"; then envc "$id 서버 연결 리셋(환경 · 재실행 대상)" "$(cat "$OUT/$id.log.txt" "$OUT/$id.stderr" 2>/dev/null | grep -E "$ENV_RE" | head -2)"; return; fi
   if [ ! -s "$OUT/$id.rid.txt" ]; then bad "$id ROWID 덤프 없음(결과 없음 또는 시간 부족)" "$(tail -3 "$OUT/$id.stderr")"; return; fi
   local n dup more
   n=$(grep -c '' "$OUT/$id.rid.txt"); dup=$(sort "$OUT/$id.rid.txt" | uniq -d | wc -l); more=$(grep -oE 'more=(true|false)' "$OUT/$id.grid.txt" | head -1)
@@ -58,5 +63,6 @@ run_case A "정상 전체 조회(⇊ 끝까지)" "$Q;" "@after:3000:run.all,@aft
 run_case B "사용자 순서(전체 조회 → ■ → 스크롤 끝 → 확인 토스트 [계속] → 재질의 → ⇊)" "$Q;" "@after:3000:run.all,@after:6000:grid.fetch_all,@after:11000:run.stop,@after:15000:grid.vdrag:3000,@after:17000:toast.dump:$OUT/B.toast.txt,@after:17500:toast.action,@after:30000:grid.fetch_all" "$((WAIT+40))"
 # C: ORDER BY ROWID — 커서 없음이면 OFFSET 페이지(교체 없음).
 run_case C "ORDER BY ROWID(■ → 스크롤 끝 = OFFSET 페이지 → ⇊)" "$QO;" "@after:3000:run.all,@after:6000:grid.fetch_all,@after:11000:run.stop,@after:15000:grid.vdrag:3000,@after:22000:grid.fetch_all" "$((WAIT+30))"
-say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
+say ""; say "== 합계: 통과 $pass · 실패 $fail · 환경 $env  ($(date '+%F %T'))"
+[ "$env" = 0 ] || say "   환경 $env = 서버 연결 리셋 — 제품 판정 아님 · 같은 시나리오를 -O로 재실행"
 [ "$fail" = 0 ]
