@@ -62,11 +62,14 @@ jobs:
           # ubuntu 24.04: `unixodbc-dev`만으로는 `odbcinst` 실행 파일이 없다(첫 실행 40108437673 exit 127) → unixodbc + odbcinst 함께.
           sudo apt-get update && sudo apt-get install -y unixodbc-dev unixodbc odbcinst
           sudo mkdir -p /opt/ibm && cd /opt/ibm
-          sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/linuxx64_odbc_cli.tar.gz
+          # ★ v12.1.4 linuxx64 패키지의 libdb2.so = SQLLEN 32비트 빌드 → odbc-api 길이 표시자 패닉(40109120417) · unixODBC용 64비트 판 = libdb2o.so.
+          #   11.5.9 고정 패키지(libdb2o.so 포함 · 121a ②)를 쓰고, 없으면 find로 진단한 뒤 libdb2.so로 폴백.
+          sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/v11.5.9/linuxx64_odbc_cli.tar.gz
           sudo tar xzf cli.tar.gz && sudo rm cli.tar.gz
-          # clidriver v12.1.x linuxx64 = libdb2.so(.1)가 ODBC/CLI 라이브러리(libdb2o.so 없음 · 40108898061).
-          ls -l /opt/ibm/clidriver/lib/libdb2.so /opt/ibm/clidriver/lib/libdb2.so.1
-          printf '[IBM DB2 ODBC DRIVER]\nDescription=IBM Data Server Driver for ODBC and CLI\nDriver=/opt/ibm/clidriver/lib/libdb2.so\nFileUsage=1\nDontDLClose=1\n' | sudo tee -a /etc/odbcinst.ini
+          find /opt/ibm/clidriver -name 'libdb2o*' -o -name 'libdb2.so*' | sort
+          LIB=/opt/ibm/clidriver/lib/libdb2o.so; [ -f "$LIB" ] || LIB=/opt/ibm/clidriver/lib/libdb2.so
+          echo "ODBC driver lib = $LIB"
+          printf '[IBM DB2 ODBC DRIVER]\nDescription=IBM Data Server Driver for ODBC and CLI\nDriver=%s\nFileUsage=1\nDontDLClose=1\n' "$LIB" | sudo tee -a /etc/odbcinst.ini
           odbcinst -q -d
       - name: wait for Db2 (Setup has completed · 최대 10분)
         run: |
