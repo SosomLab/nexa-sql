@@ -316,7 +316,7 @@ pub fn gen_whats(dialect: Dialect, kind: ObjectKind, sub: Option<SubKind>) -> Ve
         let mut v = vec![Select, Insert, Update, Delete];
         if !matches!(
             dialect,
-            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access
         ) {
             v.push(Merge);
         }

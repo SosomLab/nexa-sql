@@ -423,7 +423,19 @@ pub fn kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
         ],
         Dialect::Mysql => &[Table, View, Procedure, Function, Trigger],
         Dialect::Sqlite => &[Table, View, Index, Trigger],
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => &[Table, View],
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => &[Table, View],
+        // ★ Db2(10-24 · D-359 · SYSCAT): 별칭 = Synonym · MQT = MaterializedView.
+        Dialect::Db2 => &[
+            Table,
+            View,
+            MaterializedView,
+            Procedure,
+            Function,
+            Sequence,
+            Trigger,
+            Index,
+            Synonym,
+        ],
     }
 }
 
@@ -568,6 +580,31 @@ pub fn name_index(
                 .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
                 .collect()
         }
+        // ★ Db2(10-24 · D-359): SYSCAT 다섯 뷰 합집합 · 종류 코드 = TABLES.type(T/V/S/A) · proc:P/F · TRIGGER · SEQUENCE · INDEX.
+        Dialect::Db2 => {
+            let top = if lim == usize::MAX {
+                String::new()
+            } else {
+                format!(" FETCH FIRST {lim} ROWS ONLY")
+            };
+            let sql = format!(
+                "SELECT * FROM (SELECT TRIM(tabschema) AS s, type AS k, TRIM(tabname) AS n FROM SYSCAT.TABLES WHERE type IN ('T','V','S','A'){a} \
+                 UNION ALL SELECT TRIM(routineschema), 'proc:' || routinetype, TRIM(routinename) FROM SYSCAT.ROUTINES WHERE routinetype IN ('P','F') AND routinemodulename IS NULL{b} \
+                 UNION ALL SELECT TRIM(trigschema), 'TRIGGER', TRIM(trigname) FROM SYSCAT.TRIGGERS WHERE 1 = 1{c} \
+                 UNION ALL SELECT TRIM(seqschema), 'SEQUENCE', TRIM(seqname) FROM SYSCAT.SEQUENCES WHERE seqtype = 'S'{d} \
+                 UNION ALL SELECT TRIM(indschema), 'INDEX', TRIM(indname) FROM SYSCAT.INDEXES WHERE 1 = 1{e}) x{top}",
+                a = in_list("tabschema"),
+                b = in_list("routineschema"),
+                c = in_list("trigschema"),
+                d = in_list("seqschema"),
+                e = in_list("indschema")
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .collect()
+        }
         Dialect::Mysql => {
             let top = if lim == usize::MAX {
                 String::new()
@@ -603,7 +640,7 @@ pub fn name_index(
                 .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
                 .collect()
         }
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
             // ★ 드라이버 카탈로그(SQLTables)가 있으면 그것이 원천(스키마 라벨 규칙 = `odbc_schema_label`).
             if let Some(ts) = s.catalog_tables(None)? {
                 ts.into_iter()
@@ -697,6 +734,18 @@ fn index_kind(dialect: Dialect, ty: &str) -> Option<ObjectKind> {
             "type" => Type,
             _ => return None,
         },
+        Dialect::Db2 => match ty {
+            "T" => Table,
+            "V" => View,
+            "S" => MaterializedView,
+            "A" => Synonym,
+            "proc:P" => Procedure,
+            "proc:F" => Function,
+            "TRIGGER" => Trigger,
+            "SEQUENCE" => Sequence,
+            "INDEX" => Index,
+            _ => return None,
+        },
         Dialect::Mysql => match ty {
             "BASE TABLE" => Table,
             "VIEW" => View,
@@ -712,7 +761,7 @@ fn index_kind(dialect: Dialect, ty: &str) -> Option<ObjectKind> {
             "trigger" => Trigger,
             _ => return None,
         },
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => match ty {
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => match ty {
             "BASE TABLE" => Table,
             "VIEW" => View,
             _ => return None,
@@ -926,6 +975,22 @@ pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, Db
             };
             format!("SELECT n.nspname FROM pg_namespace n{wh} ORDER BY n.nspname")
         }
+        // ★ Db2(10-24): SYSCAT.SCHEMATA · 시스템 = SYS*·NULLID·SQLJ.
+        Dialect::Db2 => {
+            let mut w: Vec<String> = Vec::new();
+            if !o.show_system {
+                w.push("schemaname NOT LIKE 'SYS%' AND schemaname NOT IN ('NULLID','SQLJ')".into());
+            }
+            if o.hide_empty {
+                w.push("schemaname IN (SELECT DISTINCT tabschema FROM SYSCAT.TABLES)".into());
+            }
+            let wh = if w.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", w.join(" AND "))
+            };
+            format!("SELECT TRIM(schemaname) FROM SYSCAT.SCHEMATA{wh} ORDER BY 1")
+        }
         Dialect::Mysql => {
             let mut w: Vec<String> = Vec::new();
             if !o.show_system {
@@ -948,7 +1013,7 @@ pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, Db
             format!("SELECT schema_name FROM information_schema.schemata{wh} ORDER BY schema_name")
         }
         Dialect::Sqlite => return Ok(vec!["main".into()]),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
             // ★ 드라이버 카탈로그(SQLTables · T-383 2차): Access·Excel처럼 information_schema가 없는 곳 → 없으면 일반 SQL.
             if let Some(ts) = s.catalog_tables(None)? {
                 let mut v: Vec<String> = ts.iter().map(|t| odbc_schema_label(&t.schema)).collect();
@@ -1039,8 +1104,10 @@ pub fn server_info(s: &mut dyn Session) -> Result<ServerInfo, DbError> {
         Dialect::Oracle => "SELECT (SELECT version FROM product_component_version WHERE product LIKE 'Oracle%' AND ROWNUM = 1), SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','DB_NAME'), '' FROM dual",
         Dialect::Postgres => "SELECT current_setting('server_version'), current_user, current_database(), ''",
         Dialect::Mysql => "SELECT VERSION(), CURRENT_USER(), IFNULL(DATABASE(), ''), ''",
+        // Db2(10-24): 서비스 수준 · 접속 사용자 · 서버(DB) 이름 · 픽스팩.
+        Dialect::Db2 => "SELECT TRIM(service_level), TRIM(CURRENT USER), TRIM(CURRENT SERVER), 'FP' || TRIM(CHAR(fixpack_num)) FROM SYSIBMADM.ENV_INST_INFO",
         Dialect::Sqlite => "SELECT sqlite_version(), '', 'main', ''",
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(ServerInfo::default()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return Ok(ServerInfo::default()),
     };
     let rs = query(s, sql)?;
     let r = rs.rows.first();
@@ -1081,6 +1148,22 @@ pub fn context_switch_name(dialect: Dialect, sql: &str) -> Option<String> {
     let w: Vec<&str> = t.split_whitespace().collect();
     match dialect {
         Dialect::Mssql | Dialect::Mysql => use_db_name(sql),
+        // Db2(10-24): `SET [CURRENT] SCHEMA [=] x`.
+        Dialect::Db2 => {
+            if w.len() >= 3 && w[0].eq_ignore_ascii_case("SET") {
+                let i = if w[1].eq_ignore_ascii_case("CURRENT") {
+                    2
+                } else {
+                    1
+                };
+                if w.get(i).is_some_and(|k| k.eq_ignore_ascii_case("SCHEMA")) {
+                    let rest = w[i + 1..].join(" ");
+                    let name = unq(rest.trim_start_matches('=').split_whitespace().next()?);
+                    return (!name.is_empty()).then_some(name);
+                }
+            }
+            None
+        }
         Dialect::Oracle => {
             // ALTER SESSION SET CURRENT_SCHEMA = x  (`=`가 붙어 있을 수도)
             if w.len() >= 4
@@ -1115,7 +1198,11 @@ pub fn context_switch_name(dialect: Dialect, sql: &str) -> Option<String> {
             }
             None
         }
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => None,
+        Dialect::Sqlite
+        | Dialect::Odbc
+        | Dialect::Duckdb
+        | Dialect::Clickhouse
+        | Dialect::Access => None,
     }
 }
 
@@ -1126,8 +1213,11 @@ pub fn current_schema(s: &mut dyn Session) -> Result<String, DbError> {
         Dialect::Mssql => "SELECT SCHEMA_NAME()",
         Dialect::Postgres => "SELECT current_schema()",
         Dialect::Mysql => "SELECT DATABASE()",
+        Dialect::Db2 => "VALUES TRIM(CURRENT SCHEMA)",
         Dialect::Sqlite => return Ok("main".into()),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(String::new()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
+            return Ok(String::new())
+        }
     };
     let rs = query(s, sql)?;
     Ok(rs.rows.first().map(|r| col(r, 0)).unwrap_or_default())
@@ -1183,6 +1273,7 @@ pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
         Dialect::Mssql => "SELECT s.name + '.' + o.name FROM sys.all_objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE s.name IN ('sys','INFORMATION_SCHEMA') AND o.type IN ('V','U','S','IF','TF') ORDER BY 1",
         Dialect::Postgres => "SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('pg_catalog','information_schema') AND c.relkind IN ('r','v') AND has_table_privilege(c.oid, 'SELECT') ORDER BY 1",
         Dialect::Mysql => "SELECT CONCAT(table_schema, '.', table_name) FROM information_schema.tables WHERE table_schema IN ('information_schema','performance_schema','mysql','sys') ORDER BY 1",
+        Dialect::Db2 => "SELECT TRIM(tabschema) || '.' || TRIM(tabname) FROM SYSCAT.TABLES WHERE tabschema IN ('SYSCAT','SYSIBMADM','SYSSTAT') ORDER BY 1",
         Dialect::Sqlite => {
             return Ok([
                 "sqlite_master",
@@ -1197,7 +1288,7 @@ pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
             .map(|n| mk((*n).to_string()))
             .collect());
         }
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return Ok(Vec::new()),
     };
     let rs = query(s, sql)?;
     Ok(rs
@@ -1261,7 +1352,19 @@ pub fn keys(s: &mut dyn Session, schema: &str, table: &str) -> Result<KeyInfo, D
             ))?;
             Ok(fold_keys(&rs.rows))
         }
-        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {
+        // Db2(10-24): TABCONST(P/U) + KEYCOLUSE.
+        Dialect::Db2 => {
+            let rs = query(s, &format!(
+                "SELECT tc.type, TRIM(tc.constname), TRIM(k.colname) FROM SYSCAT.TABCONST tc JOIN SYSCAT.KEYCOLUSE k ON k.tabschema = tc.tabschema AND k.tabname = tc.tabname AND k.constname = tc.constname WHERE tc.tabschema = {} AND tc.tabname = {} AND tc.type IN ('P','U') ORDER BY tc.constname, k.colseq",
+                lit(schema), lit(table)
+            ))?;
+            Ok(fold_keys(&rs.rows))
+        }
+        Dialect::Mysql
+        | Dialect::Odbc
+        | Dialect::Duckdb
+        | Dialect::Clickhouse
+        | Dialect::Access => {
             let rs = query(s, &format!(
                 "SELECT CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 'P' ELSE 'U' END, tc.constraint_name, kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} AND tc.constraint_type IN ('PRIMARY KEY','UNIQUE') ORDER BY CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 0 ELSE 1 END, tc.constraint_name, kcu.ordinal_position",
                 lit(schema), lit(table)
@@ -1373,7 +1476,11 @@ fn comment_sqls(
             Some(format!("SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}", lit(schema), lit(table))),
             Some(format!("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {} AND a.attnum > 0 AND NOT a.attisdropped{}", lit(schema), lit(table), f("col_description(a.attrelid, a.attnum) IS NOT NULL"))),
         ),
-        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => (
+        Dialect::Db2 => (
+            Some(format!("SELECT remarks FROM SYSCAT.TABLES WHERE tabschema = {} AND tabname = {}", lit(schema), lit(table))),
+            Some(format!("SELECT TRIM(colname), remarks FROM SYSCAT.COLUMNS WHERE tabschema = {} AND tabname = {}{}", lit(schema), lit(table), f("remarks IS NOT NULL"))),
+        ),
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => (
             Some(format!("SELECT table_comment FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", lit(schema), lit(table))),
             Some(format!("SELECT column_name, column_comment FROM information_schema.columns WHERE table_schema = {} AND table_name = {}{}", lit(schema), lit(table), f("column_comment <> ''"))),
         ),
@@ -1650,7 +1757,11 @@ pub fn schema_comments_raw(s: &mut dyn Session, schema: &str) -> SchemaComments 
             Some(format!("SELECT table_name, table_comment FROM information_schema.tables WHERE table_schema = {}", lit(schema))),
             Some(format!("SELECT table_name, column_name, column_comment FROM information_schema.columns WHERE table_schema = {}", lit(schema))),
         ),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => (None, None),
+        Dialect::Db2 => (
+            Some(format!("SELECT TRIM(tabname), remarks FROM SYSCAT.TABLES WHERE tabschema = {}", lit(schema))),
+            Some(format!("SELECT TRIM(tabname), TRIM(colname), remarks FROM SYSCAT.COLUMNS WHERE tabschema = {} AND remarks IS NOT NULL", lit(schema))),
+        ),
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => (None, None),
     };
     let val = |v: Option<&Value>| v.filter(|v| !matches!(v, Value::Null)).map(cell_str);
     let tables = tsql
@@ -1699,7 +1810,11 @@ pub fn comments(
             Some(format!("SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}", lit(schema), lit(table))),
             Some(format!("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {} AND a.attnum > 0 AND NOT a.attisdropped AND col_description(a.attrelid, a.attnum) IS NOT NULL", lit(schema), lit(table))),
         ),
-        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => (
+        Dialect::Db2 => (
+            Some(format!("SELECT remarks FROM SYSCAT.TABLES WHERE tabschema = {} AND tabname = {}", lit(schema), lit(table))),
+            Some(format!("SELECT TRIM(colname), remarks FROM SYSCAT.COLUMNS WHERE tabschema = {} AND tabname = {} AND remarks IS NOT NULL", lit(schema), lit(table))),
+        ),
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => (
             Some(format!("SELECT table_comment FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", lit(schema), lit(table))),
             Some(format!("SELECT column_name, column_comment FROM information_schema.columns WHERE table_schema = {} AND table_name = {} AND column_comment <> ''", lit(schema), lit(table))),
         ),
@@ -1865,7 +1980,18 @@ pub fn table_detail(
                 lit(schema), lit(table)
             ),
         ),
-        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => (
+        // Db2(10-24): TABCONST(P/U/F/K) + KEYCOLUSE + REFERENCES(참조 표) · 인덱스 = INDEXES + INDEXCOLUSE.
+        Dialect::Db2 => (
+            format!(
+                "SELECT CASE tc.type WHEN 'P' THEN 'P' WHEN 'U' THEN 'U' WHEN 'F' THEN 'R' ELSE 'C' END, TRIM(tc.constname), COALESCE(TRIM(k.colname), ''), COALESCE(CASE WHEN r.reftabschema <> tc.tabschema THEN TRIM(r.reftabschema) || '.' ELSE '' END || TRIM(r.reftabname), ''), COALESCE(TRIM(rk.colname), '') FROM SYSCAT.TABCONST tc LEFT JOIN SYSCAT.KEYCOLUSE k ON k.tabschema = tc.tabschema AND k.tabname = tc.tabname AND k.constname = tc.constname LEFT JOIN SYSCAT.REFERENCES r ON r.tabschema = tc.tabschema AND r.tabname = tc.tabname AND r.constname = tc.constname LEFT JOIN SYSCAT.KEYCOLUSE rk ON rk.tabschema = r.reftabschema AND rk.tabname = r.reftabname AND rk.constname = r.refkeyname AND rk.colseq = k.colseq WHERE tc.tabschema = {} AND tc.tabname = {} AND tc.type IN ('P', 'U', 'F', 'K') ORDER BY tc.constname, k.colseq",
+                lit(schema), lit(table)
+            ),
+            format!(
+                "SELECT TRIM(i.indname), CASE WHEN i.uniquerule IN ('P','U') THEN 'Y' ELSE 'N' END, TRIM(c.colname) FROM SYSCAT.INDEXES i JOIN SYSCAT.INDEXCOLUSE c ON c.indschema = i.indschema AND c.indname = i.indname WHERE i.tabschema = {} AND i.tabname = {} AND c.colorder <> 'I' ORDER BY i.indname, c.colseq",
+                lit(schema), lit(table)
+            ),
+        ),
+        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => (
             format!(
                 "SELECT CASE tc.constraint_type WHEN 'PRIMARY KEY' THEN 'P' WHEN 'UNIQUE' THEN 'U' WHEN 'FOREIGN KEY' THEN 'R' ELSE 'C' END, tc.constraint_name, kcu.column_name, IFNULL(kcu.referenced_table_name, ''), IFNULL(kcu.referenced_column_name, '') FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} ORDER BY 1, 2, kcu.ordinal_position",
                 lit(schema), lit(table)
@@ -2194,6 +2320,44 @@ pub fn objects(
                 .map(|r| (col(r, 0), col(r, 1), col(r, 2), col(r, 3)))
                 .collect()
         }
+        // ★ Db2(10-24 · D-359): SYSCAT — 표/뷰/MQT/별칭 = TABLES.type · 루틴 = ROUTINES(상태 valid · 부가 = specificname) · 트리거 · 시퀀스 · 인덱스.
+        Dialect::Db2 => {
+            let tables = |t: &str| {
+                format!(
+                    "SELECT TRIM(tabname), CASE status WHEN 'X' THEN 'INOPERATIVE' WHEN 'C' THEN 'CHECK PENDING' ELSE '' END, VARCHAR_FORMAT(alter_time, 'YYYY-MM-DD HH24:MI:SS'), CASE WHEN type = 'A' THEN TRIM(base_tabschema) || '.' || TRIM(base_tabname) ELSE '' END FROM SYSCAT.TABLES WHERE tabschema = {} AND type = '{t}' ORDER BY tabname",
+                    lit(schema)
+                )
+            };
+            let sql = match kind {
+                ObjectKind::Table => tables("T"),
+                ObjectKind::View => tables("V"),
+                ObjectKind::MaterializedView => tables("S"),
+                ObjectKind::Synonym => tables("A"),
+                ObjectKind::Procedure | ObjectKind::Function => format!(
+                    "SELECT TRIM(routinename), CASE valid WHEN 'N' THEN 'INVALID' WHEN 'X' THEN 'INOPERATIVE' ELSE '' END, VARCHAR_FORMAT(alter_time, 'YYYY-MM-DD HH24:MI:SS'), TRIM(specificname) FROM SYSCAT.ROUTINES WHERE routineschema = {} AND routinetype = {} AND routinemodulename IS NULL ORDER BY routinename, specificname",
+                    lit(schema),
+                    lit(if kind == ObjectKind::Procedure { "P" } else { "F" })
+                ),
+                ObjectKind::Trigger => format!(
+                    "SELECT TRIM(trigname), CASE valid WHEN 'N' THEN 'INVALID' WHEN 'X' THEN 'INOPERATIVE' ELSE '' END, VARCHAR_FORMAT(create_time, 'YYYY-MM-DD HH24:MI:SS'), TRIM(tabname) FROM SYSCAT.TRIGGERS WHERE trigschema = {} ORDER BY trigname",
+                    lit(schema)
+                ),
+                ObjectKind::Sequence => format!(
+                    "SELECT TRIM(seqname), '', VARCHAR_FORMAT(alter_time, 'YYYY-MM-DD HH24:MI:SS'), '' FROM SYSCAT.SEQUENCES WHERE seqschema = {} AND seqtype = 'S' ORDER BY seqname",
+                    lit(schema)
+                ),
+                ObjectKind::Index => format!(
+                    "SELECT TRIM(indname), '', VARCHAR_FORMAT(create_time, 'YYYY-MM-DD HH24:MI:SS'), TRIM(tabname) || CASE uniquerule WHEN 'P' THEN ' · PK' WHEN 'U' THEN ' · UNIQUE' ELSE '' END FROM SYSCAT.INDEXES WHERE indschema = {} ORDER BY indname",
+                    lit(schema)
+                ),
+                _ => return Ok(Vec::new()),
+            };
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2), col(r, 3)))
+                .collect()
+        }
         Dialect::Mysql => {
             let sql = match kind {
                 ObjectKind::Table => format!("SELECT table_name, '', DATE_FORMAT(update_time, '%Y-%m-%d %H:%i:%s'), '' FROM information_schema.tables WHERE table_schema = {} AND table_type = 'BASE TABLE' ORDER BY table_name", lit(schema)),
@@ -2225,7 +2389,7 @@ pub fn objects(
                 .map(|r| (col(r, 0), col(r, 1), col(r, 2), col(r, 3)))
                 .collect()
         }
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
             let tt = match kind {
                 ObjectKind::Table => "BASE TABLE",
                 ObjectKind::View => "VIEW",
@@ -2308,7 +2472,7 @@ pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<Col
     // ★ ODBC 드라이버 카탈로그(SQLColumns · T-383 2차) — 있으면 그것이 원천.
     if matches!(
         s.dialect(),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access
     ) {
         if let Some(cs) = s.catalog_columns(Some(odbc_schema_arg(schema)), table)? {
             return Ok(cs
@@ -2334,7 +2498,13 @@ pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<Col
             "SELECT c.name, t.name, CASE WHEN t.name IN ('nchar','nvarchar') AND c.max_length > 0 THEN c.max_length / 2 ELSE c.max_length END, c.precision, c.scale, CASE WHEN c.is_nullable = 1 THEN 'Y' ELSE 'N' END, c.column_id, ISNULL(d.definition, '') FROM sys.all_columns c JOIN sys.types t ON t.user_type_id = c.user_type_id LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id WHERE c.object_id = OBJECT_ID({}) ORDER BY c.column_id",
             lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)))
         ),
-        Dialect::Postgres | Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => format!(
+        // Db2(10-24): SYSCAT.COLUMNS(length = 문자 길이이자 정밀도 · "DEFAULT"는 예약어라 인용).
+        Dialect::Db2 => format!(
+            "SELECT TRIM(colname), TRIM(typename), length, length, scale, CASE nulls WHEN 'Y' THEN 'YES' ELSE 'NO' END, colno + 1, COALESCE(VARCHAR(\"DEFAULT\", 4000), '') FROM SYSCAT.COLUMNS WHERE tabschema = {} AND tabname = {} ORDER BY colno",
+            lit(schema),
+            lit(table)
+        ),
+        Dialect::Postgres | Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => format!(
             "SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable, ordinal_position, column_default FROM information_schema.columns WHERE table_schema = {} AND table_name = {} ORDER BY ordinal_position",
             lit(schema),
             lit(table)
@@ -3300,6 +3470,43 @@ pub fn source_with(
             }
             _ => Err(no_source(kind)),
         },
+        // ★ Db2(10-24): SYSCAT.VIEWS/ROUTINES/TRIGGERS의 text(= 원문 CREATE 문 · 중복 정의(오버로드)는 specificname 순으로 이어 붙임).
+        Dialect::Db2 => {
+            let sql = match kind {
+                ObjectKind::View => format!(
+                    "SELECT text FROM SYSCAT.VIEWS WHERE viewschema = {} AND viewname = {}",
+                    lit(schema),
+                    lit(name)
+                ),
+                ObjectKind::Procedure | ObjectKind::Function => format!(
+                    "SELECT text FROM SYSCAT.ROUTINES WHERE routineschema = {} AND routinename = {} AND routinetype = {} AND routinemodulename IS NULL ORDER BY specificname",
+                    lit(schema),
+                    lit(name),
+                    lit(if kind == ObjectKind::Procedure { "P" } else { "F" })
+                ),
+                ObjectKind::Trigger => format!(
+                    "SELECT text FROM SYSCAT.TRIGGERS WHERE trigschema = {} AND trigname = {}",
+                    lit(schema),
+                    lit(name)
+                ),
+                _ => return Err(no_source(kind)),
+            };
+            let rs = query(s, &sql)?;
+            let bodies: Vec<String> = rs
+                .rows
+                .iter()
+                .map(|r| col(r, 0))
+                .filter(|t| !t.trim().is_empty())
+                .collect();
+            if bodies.is_empty() {
+                return Err(not_found(schema, name));
+            }
+            Ok(bodies
+                .iter()
+                .map(|b| format!("{}\n", b.trim_end()))
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
         Dialect::Mysql => {
             let what = match kind {
                 ObjectKind::Table => "TABLE",
@@ -3349,7 +3556,9 @@ pub fn source_with(
             }
             Ok(format!("{};\n", body.trim_end()))
         }
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => Err(no_source(kind)),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
+            Err(no_source(kind))
+        }
     }
 }
 

@@ -126,6 +126,25 @@ pub fn names_sql(
             "SELECT 'main', name, type, NULL FROM sqlite_master WHERE type IN ('table', 'view', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'{} ORDER BY name",
             cond("name", None)
         ),
+        // Db2(10-24 · D-359): SYSCAT 표·루틴·트리거 · 설명 = remarks.
+        Dialect::Db2 => {
+            let tb = format!(
+                "SELECT TRIM(tabschema) AS s, TRIM(tabname) AS n, type AS k, remarks AS d FROM SYSCAT.TABLES WHERE type IN ('T','V','S','A'){}{}",
+                scope("tabschema"),
+                cond("tabname", Some("remarks"))
+            );
+            let rt = format!(
+                "SELECT TRIM(routineschema), TRIM(routinename), 'proc:' || routinetype, remarks FROM SYSCAT.ROUTINES WHERE routinetype IN ('P','F') AND routinemodulename IS NULL{}{}",
+                scope("routineschema"),
+                cond("routinename", Some("remarks"))
+            );
+            let tg = format!(
+                "SELECT TRIM(trigschema), TRIM(trigname), 'TRIGGER', remarks FROM SYSCAT.TRIGGERS WHERE 1 = 1{}{}",
+                scope("trigschema"),
+                cond("trigname", None)
+            );
+            format!("SELECT * FROM ({tb} UNION ALL {rt} UNION ALL {tg}) x ORDER BY 1, 2")
+        }
         Dialect::Mysql => {
             let tb = format!(
                 "SELECT table_schema AS s, table_name AS n, table_type AS k, table_comment AS d FROM information_schema.tables WHERE 1 = 1{}{}",
@@ -144,7 +163,7 @@ pub fn names_sql(
             );
             format!("SELECT * FROM ({tb} UNION ALL {rt} UNION ALL {tg}) x ORDER BY 1, 2")
         }
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return None,
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return None,
     };
     Some(cap(d, sql, max))
 }
@@ -217,7 +236,9 @@ pub fn like_pattern(text: &str) -> String {
 fn like_pred(d: Dialect, expr: &str, pat: &FindPat) -> String {
     let p = lit(&like_pattern(&pat.text));
     match (d, pat.case_sensitive) {
-        (Dialect::Oracle, false) => format!("UPPER({expr}) LIKE UPPER({p}) ESCAPE '\\'"),
+        (Dialect::Oracle | Dialect::Db2, false) => {
+            format!("UPPER({expr}) LIKE UPPER({p}) ESCAPE '\\'")
+        }
         (Dialect::Oracle, true) => format!("{expr} LIKE {p} ESCAPE '\\'"),
         (Dialect::Postgres, false) => format!("{expr} ILIKE {p} ESCAPE '\\'"),
         (Dialect::Postgres, true) => format!("{expr} LIKE {p} ESCAPE '\\'"),
@@ -250,6 +271,7 @@ fn cap(d: Dialect, sql: String, max: usize) -> String {
     match d {
         Dialect::Oracle => format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {max}"),
         Dialect::Mssql => sql.replacen("SELECT ", &format!("SELECT TOP ({max}) "), 1),
+        Dialect::Db2 => format!("{sql} FETCH FIRST {max} ROWS ONLY"),
         _ => format!("{sql} LIMIT {max}"),
     }
 }
@@ -276,12 +298,17 @@ pub fn columns_sql(d: Dialect, schemas: &[String], pat: &FindPat, max: usize) ->
             "SELECT 'main', m.name, m.type, p.name, p.type FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite_%' AND {} ORDER BY m.name, p.cid",
             like_pred(d, "p.name", pat)
         ),
+        Dialect::Db2 => format!(
+            "SELECT TRIM(tabschema), TRIM(tabname), 'TABLE', TRIM(colname), TRIM(typename) FROM SYSCAT.COLUMNS WHERE {}{} ORDER BY tabschema, tabname, colno",
+            like_pred(d, "colname", pat),
+            schema_in("tabschema", schemas)
+        ),
         Dialect::Mysql => format!(
             "SELECT table_schema, table_name, 'TABLE', column_name, column_type FROM information_schema.columns WHERE {}{} ORDER BY table_schema, table_name, ordinal_position",
             like_pred(d, "column_name", pat),
             schema_in("table_schema", schemas)
         ),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return None,
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return None,
     };
     Some(cap(d, sql, max))
 }
@@ -337,6 +364,50 @@ pub fn source_sqls(
                         "SELECT owner, view_name, 'VIEW', 0, text_vc FROM all_views WHERE {}{} ORDER BY owner, view_name",
                         like_pred(d, "text_vc", pat),
                         schema_in("owner", schemas)
+                    ),
+                    max,
+                ));
+            }
+        }
+        // Db2(10-24 · D-359): SYSCAT.ROUTINES/VIEWS/TRIGGERS의 text(CLOB · LIKE 가능) · 종류 코드 = proc:P/F · V · TRIGGER · 줄 0(덩어리).
+        Dialect::Db2 => {
+            let mut types: Vec<&str> = Vec::new();
+            if want(ObjectKind::Procedure) {
+                types.push("'P'");
+            }
+            if want(ObjectKind::Function) {
+                types.push("'F'");
+            }
+            if !types.is_empty() {
+                out.push(cap(
+                    d,
+                    format!(
+                        "SELECT TRIM(routineschema), TRIM(routinename), 'proc:' || routinetype, 0, text FROM SYSCAT.ROUTINES WHERE routinetype IN ({}) AND routinemodulename IS NULL AND {}{} ORDER BY routineschema, routinename",
+                        types.join(", "),
+                        like_pred(d, "text", pat),
+                        schema_in("routineschema", schemas)
+                    ),
+                    max,
+                ));
+            }
+            if want(ObjectKind::View) {
+                out.push(cap(
+                    d,
+                    format!(
+                        "SELECT TRIM(viewschema), TRIM(viewname), 'V', 0, text FROM SYSCAT.VIEWS WHERE {}{} ORDER BY viewschema, viewname",
+                        like_pred(d, "text", pat),
+                        schema_in("viewschema", schemas)
+                    ),
+                    max,
+                ));
+            }
+            if want(ObjectKind::Trigger) {
+                out.push(cap(
+                    d,
+                    format!(
+                        "SELECT TRIM(trigschema), TRIM(trigname), 'TRIGGER', 0, text FROM SYSCAT.TRIGGERS WHERE {}{} ORDER BY trigschema, trigname",
+                        like_pred(d, "text", pat),
+                        schema_in("trigschema", schemas)
                     ),
                     max,
                 ));
@@ -475,7 +546,7 @@ pub fn source_sqls(
                 ));
             }
         }
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => {}
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {}
     }
     out
 }

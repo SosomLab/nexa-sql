@@ -211,7 +211,19 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
             Rules,
             Policies,
         ],
-        (Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse, ObjectKind::Table) => &[Columns],
+        (
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access,
+            ObjectKind::Table,
+        ) => &[Columns],
+        // Db2(10-24 · D-359): SYSCAT로 제약·인덱스·참조·트리거까지.
+        (Dialect::Db2, ObjectKind::Table) => &[
+            Columns,
+            Constraints,
+            ForeignKeys,
+            Indexes,
+            References,
+            Triggers,
+        ],
         (_, ObjectKind::Table) => &[Columns, Constraints, ForeignKeys, Indexes, Triggers],
         (Dialect::Mssql, ObjectKind::ExternalTable) => &[Columns],
         (Dialect::Postgres, ObjectKind::ForeignTable) => &[Columns, Constraints],
@@ -224,7 +236,10 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
         }
         (Dialect::Postgres, ObjectKind::MaterializedView) => &[Columns, Indexes, Dependencies],
         (_, ObjectKind::MaterializedView) => &[Columns],
-        (Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse, ObjectKind::Index) => &[],
+        (
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access,
+            ObjectKind::Index,
+        ) => &[],
         (_, ObjectKind::Index) => &[Columns],
         (Dialect::Oracle, ObjectKind::Type) => &[Attributes, Methods],
         (Dialect::Postgres, ObjectKind::Type) => &[Attributes],
@@ -502,11 +517,15 @@ pub(super) fn index_columns(
             let rs = query(s, &format!("PRAGMA index_info({})", quote_ident(d, name)))?;
             return Ok(rs.rows.iter().map(|r| item(col(r, 2), "", SubIcon::Column)).collect());
         }
+        Dialect::Db2 => format!(
+            "SELECT TRIM(colname), CASE colorder WHEN 'D' THEN 'DESC' ELSE '' END FROM SYSCAT.INDEXCOLUSE WHERE indschema = {} AND indname = {} AND colorder <> 'I' ORDER BY colseq",
+            lit(schema), lit(name)
+        ),
         Dialect::Mysql => format!(
             "SELECT column_name, IFNULL(collation, '') FROM information_schema.statistics WHERE table_schema = {} AND index_name = {} ORDER BY seq_in_index",
             lit(schema), lit(name)
         ),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return Ok(Vec::new()),
     };
     rows_to_items(s, &sql, SubIcon::Column)
 }
@@ -530,11 +549,15 @@ fn references(
             "SELECT con.conname, n.nspname || '.' || c.relname FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE con.contype = 'f' AND con.confrelid = {}::regclass ORDER BY n.nspname, c.relname, con.conname",
             lit(&qualified(d, schema, name))
         ),
+        Dialect::Db2 => format!(
+            "SELECT TRIM(constname), TRIM(tabschema) || '.' || TRIM(tabname) FROM SYSCAT.REFERENCES WHERE reftabschema = {} AND reftabname = {} ORDER BY tabname, constname",
+            lit(schema), lit(name)
+        ),
         Dialect::Mysql => format!(
             "SELECT constraint_name, constraint_schema || '.' || table_name FROM information_schema.referential_constraints WHERE unique_constraint_schema = {} AND referenced_table_name = {} ORDER BY table_name, constraint_name",
             lit(schema), lit(name)
         ),
-        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
+        Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return Ok(Vec::new()),
     };
     rows_to_items(s, &sql, SubIcon::Reference)
 }
@@ -558,6 +581,10 @@ fn triggers(
             "SELECT t.tgname, regexp_replace(pg_get_triggerdef(t.oid, true), '^CREATE (CONSTRAINT )?TRIGGER \\S+ ', ''), CASE WHEN t.tgenabled = 'D' THEN 'DISABLED' ELSE '' END FROM pg_trigger t WHERE t.tgrelid = {}::regclass AND NOT t.tgisinternal ORDER BY t.tgname",
             lit(&qualified(d, schema, name))
         ),
+        Dialect::Db2 => format!(
+            "SELECT TRIM(trigname), CASE trigtime WHEN 'A' THEN 'AFTER' WHEN 'B' THEN 'BEFORE' ELSE 'INSTEAD OF' END || ' ' || TRIM(CASE eventinsert WHEN 'Y' THEN 'INSERT ' ELSE '' END || CASE eventupdate WHEN 'Y' THEN 'UPDATE ' ELSE '' END || CASE eventdelete WHEN 'Y' THEN 'DELETE' ELSE '' END), CASE valid WHEN 'N' THEN 'INVALID' WHEN 'X' THEN 'INOPERATIVE' ELSE '' END FROM SYSCAT.TRIGGERS WHERE tabschema = {} AND tabname = {} ORDER BY trigname",
+            lit(schema), lit(name)
+        ),
         Dialect::Mysql => format!(
             "SELECT trigger_name, CONCAT(action_timing, ' ', event_manipulation), '' FROM information_schema.triggers WHERE event_object_schema = {} AND event_object_table = {} ORDER BY trigger_name",
             lit(schema), lit(name)
@@ -566,7 +593,7 @@ fn triggers(
             "SELECT name, '', '' FROM sqlite_master WHERE type = 'trigger' AND tbl_name = {} ORDER BY name",
             lit(name)
         ),
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => return Ok(Vec::new()),
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => return Ok(Vec::new()),
     };
     rows_to_items(s, &sql, SubIcon::Trigger)
 }
