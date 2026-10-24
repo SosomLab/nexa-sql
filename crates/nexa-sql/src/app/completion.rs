@@ -367,8 +367,11 @@ impl App {
         }
         if !self.intel.cfg().enabled || self.intel_unsuitable(i, false).is_some() {
             // 적합하지 않은 파일(큰 파일 · SQL 아님 · 이진) = 빈 아웃라인(사용자 09-23).
-            self.outline_panel
-                .set_symbols((tab, rev), &nsql_script::outline::Outline::default());
+            self.outline_panel.set_symbols(
+                (tab, rev),
+                &nsql_script::outline::Outline::default(),
+                "",
+            );
             return;
         }
         let text = self.editors.cur().text();
@@ -377,13 +380,35 @@ impl App {
             .intel
             .outline_for(tab, rev, &|| text.clone(), dialect)
             .clone();
-        self.outline_panel.set_symbols((tab, rev), &ol);
+        self.outline_panel.set_symbols((tab, rev), &ol, &text);
     }
 
-    /// 아웃라인 패널의 열기 요청 → 그 자리로.
+    /// ★ 커서 추종(T-422 · `outline.follow_caret`) — 틱마다 캐럿(글자 색인)을 패널에 준다(같으면 패널이 바로 돌아온다 · 비용 0).
+    pub(crate) fn outline_follow(&mut self) {
+        if !self.outline_panel.is_visible() || !self.outline_panel.cfg().follow_caret {
+            return;
+        }
+        let caret = self.editors.cur().caret();
+        if self.outline_panel.set_caret(caret) {
+            self.redraw();
+        }
+    }
+
+    /// 아웃라인 패널의 열기 요청 → 그 자리로 · 문장 토글 클릭 → 설정 `outline.show_*`를 뒤집는다(변경 훅이 `set_cfg`로 되돌려 준다).
     pub(crate) fn outline_pump(&mut self) {
         if let Some(b) = self.outline_panel.take_open() {
             self.goto_byte(b);
+        }
+        if let Some(key) = self
+            .outline_panel
+            .take_toggle()
+            .and_then(crate::outline_panel::toggle_key)
+        {
+            let on = !self.settings.flag(key);
+            let _ = self.settings.set(key, if on { "on" } else { "off" });
+            let _ = self.apply_setting(key);
+            self.persist_settings();
+            self.redraw();
         }
     }
 

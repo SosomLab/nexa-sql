@@ -6547,6 +6547,64 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 5, max: 500 },
         default: "30",
     },
+    // ★ 아웃라인(docs/76 §20 · T-422 · D-357 · 사용자 10-24 "너무 많이 보임"): 문장 행 토글 4(기본 끔 · 패널 토글과 같은 값) ·
+    //   선언 변수 · 기본 펼침 깊이 · 커서 추종.
+    Entry {
+        key: "outline.show_select",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineShowSelect,
+        desc: Msg::DescOutlineShowSelect,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "outline.show_dml",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineShowDml,
+        desc: Msg::DescOutlineShowDml,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "outline.show_ddl",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineShowDdl,
+        desc: Msg::DescOutlineShowDdl,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "outline.show_other",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineShowOther,
+        desc: Msg::DescOutlineShowOther,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "outline.show_declared",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineShowDeclared,
+        desc: Msg::DescOutlineShowDeclared,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "outline.expand_depth",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineExpandDepth,
+        desc: Msg::DescOutlineExpandDepth,
+        kind: SettingKind::Int { min: 0, max: 8 },
+        default: "1",
+    },
+    Entry {
+        key: "outline.follow_caret",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineFollowCaret,
+        desc: Msg::DescOutlineFollowCaret,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 북마크(docs/69 §9 · 독립 그룹 `Bookmarks` · 1차 = 동작·저장/표시/위치 추적 핵심 키 · 나머지는 B4b~).
     Entry {
         key: "bookmark.enabled",
@@ -7237,6 +7295,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             // 되돌리기(78 · T-250): 예산·묶음·기록 파일 — 종전 Performance/Editor에 흩어져 있던 `editor.undo_*`.
             Msg::CatUndo,
             Msg::CatIntel,
+            // 아웃라인(T-422 · 10-24): 문장 토글 · 선언 변수 · 펼침 깊이 · 커서 추종.
+            Msg::CatOutline,
             Msg::CatFiles,
             // 큰 파일 처리(docs/59 · 사용자 09-28 "별도 설정 그룹으로") — 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재.
             Msg::CatLargeFiles,

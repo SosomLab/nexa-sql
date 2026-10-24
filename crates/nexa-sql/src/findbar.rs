@@ -70,6 +70,12 @@ pub(crate) enum BtnKind {
     PathMatch,
     /// 객체 탐색기 전용(10-15) — 설명(코멘트) 포함 검색(틀 오른쪽 토글 · 기본 끔 · 설정 `explorer.search_desc`).
     DescMatch,
+    /// ★ 아웃라인 전용(T-422 · D-357 · 10-24) — 문장 행 종류 토글(DataGrip Show …): Select · DML · DDL · 기타(명령·블록) ·
+    ///   기본 끔 · 설정 `outline.show_*`(호스트가 뒤집고 `set_cfg`로 되돌린다).
+    OlSelect,
+    OlDml,
+    OlDdl,
+    OlOther,
 }
 
 impl BtnKind {
@@ -83,6 +89,10 @@ impl BtnKind {
             BtnKind::DotFiles => Msg::TipProjectDot,
             BtnKind::PathMatch => Msg::TipFilterPath,
             BtnKind::DescMatch => Msg::TipFilterDesc,
+            BtnKind::OlSelect => Msg::TipOutlineSelect,
+            BtnKind::OlDml => Msg::TipOutlineDml,
+            BtnKind::OlDdl => Msg::TipOutlineDdl,
+            BtnKind::OlOther => Msg::TipOutlineOther,
             BtnKind::Prev => Msg::TipFindPrev,
             BtnKind::Next => Msg::TipFindNext,
             BtnKind::Selection => Msg::TipFindSelection,
@@ -104,6 +114,10 @@ impl BtnKind {
                 | BtnKind::DotFiles
                 | BtnKind::PathMatch
                 | BtnKind::DescMatch
+                | BtnKind::OlSelect
+                | BtnKind::OlDml
+                | BtnKind::OlDdl
+                | BtnKind::OlOther
         )
     }
 }
@@ -907,9 +921,14 @@ impl FindBar {
                 FindAction::ReplaceAll
             }
             // 프로젝트 탐색기 전용 토글 — 찾기 막대에는 없다.
-            BtnKind::Hidden | BtnKind::DotFiles | BtnKind::PathMatch | BtnKind::DescMatch => {
-                FindAction::None
-            }
+            BtnKind::Hidden
+            | BtnKind::DotFiles
+            | BtnKind::PathMatch
+            | BtnKind::DescMatch
+            | BtnKind::OlSelect
+            | BtnKind::OlDml
+            | BtnKind::OlDdl
+            | BtnKind::OlOther => FindAction::None,
         }
     }
 

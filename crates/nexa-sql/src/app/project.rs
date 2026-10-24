@@ -1159,6 +1159,9 @@ impl App {
         self.project_panel.set_typeahead(ta);
         self.bm_panel.set_typeahead(ta);
         self.outline_panel.set_typeahead(ta);
+        // 아웃라인 표시 설정(T-422) — 기동 때 한 벌(변경은 `apply_setting_editor`).
+        self.outline_panel
+            .set_cfg(crate::outline_panel::outline_cfg(&self.settings));
     }
 
     /// 기동 시작 모드(사용자 09-22 · [`startup_project_plan`]): 기본 = **파일 모드**(프로젝트 없음) · 인자 `.nsql-project` =

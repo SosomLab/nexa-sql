@@ -729,6 +729,10 @@ impl App {
     /// 설정 즉시 반영 — 창 최상위·로그·메모리·스크롤·줄 번호·인텔리센스(`window.` · `log.` · `mem.` · `editor.scroll` · `intel.`). 맞는 키가 없으면 `false`.
     fn apply_setting_editor(&mut self, key: &str) -> bool {
         match key {
+            // ★ 아웃라인 표시(T-422 · `outline.*`) — 패널 토글·트리·추종이 설정 한 벌을 본다.
+            k if k.starts_with("outline.") => self
+                .outline_panel
+                .set_cfg(crate::outline_panel::outline_cfg(&self.settings)),
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "mem.always_on_top" => self.mem_win.set_on_top(self.settings.flag(key)),

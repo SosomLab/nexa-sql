@@ -597,10 +597,13 @@ impl App {
             .intel
             .outline_for(tab, rev, &|| text.clone(), dialect)
             .clone();
-        ol.symbols
-            .iter()
-            .map(|s| {
-                let indent = "  ".repeat(s.depth as usize);
+        // ★ 아웃라인 패널과 같은 종류 토글(T-422 · `outline.show_*`) — 문장은 켰을 때만 · 숨은 조상은 건너뛴 유효 깊이로 들여쓴다.
+        let cfg = self.outline_panel.cfg();
+        crate::outline_panel::visible_tree(&cfg, &ol)
+            .into_iter()
+            .map(|v| {
+                let s = &ol.symbols[v.idx];
+                let indent = "  ".repeat(v.depth as usize);
                 let detail = if s.detail.is_empty() {
                     s.kind.label().to_string()
                 } else {
