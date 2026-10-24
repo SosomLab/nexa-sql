@@ -225,7 +225,11 @@ impl ConnectSpec {
             let d = Dialect::from_name(&s[..i]);
             // 벤더 스킴 URL(`tibero://…` · T-384)은 아래 URL 경로가 ODBC 프리셋으로 바꾼다 — 축약 분기에서 제외.
             let vendor_url = odbc_preset_for(&s[..i]).is_some() && s[i + 1..].starts_with("//");
-            if matches!(d, Some(Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb)) && !vendor_url {
+            if matches!(
+                d,
+                Some(Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Access)
+            ) && !vendor_url
+            {
                 let rest = &s[i + 1..];
                 // 종전 URL 꼴 `sqlite://host/db`(호스트는 무시되고 db만 쓰인다)는 그대로 아래 URL 경로로 — 그 외는 전부 경로.
                 let legacy_url = matches!(d, Some(Dialect::Sqlite | Dialect::Duckdb))
@@ -675,7 +679,6 @@ fn odbc_preset_for(scheme: &str) -> Option<(&'static str, u16)> {
         "altibase" => Some(("Altibase ODBC Driver", 20300)),
         "cubrid" => Some(("CUBRID Driver", 33000)),
         // 10-24 추가(121 P5 · ODBC로 커버되는 레거시·대기업 DBMS): 드라이버 이름 = 벤더 배포본의 odbcinst 등록 이름.
-        "db2" => Some(("IBM DB2 ODBC DRIVER", 50000)),
         "hana" => Some(("HDBODBC", 30015)),
         "informix" => Some(("IBM INFORMIX ODBC DRIVER", 9088)),
         _ => None,
@@ -717,7 +720,6 @@ mod tests {
             Some(5432)
         );
         for (url, drv, port) in [
-            ("db2://u:p@h/sample", "IBM DB2 ODBC DRIVER", 50000),
             ("hana://u:p@h/HXE", "HDBODBC", 30015),
             ("informix://u:p@h/stores", "IBM INFORMIX ODBC DRIVER", 9088),
         ] {
@@ -738,6 +740,19 @@ mod tests {
         assert_eq!(ch.database.as_deref(), Some("db"));
         let ch2 = ConnectSpec::parse("clickhouse://h:8124").expect("host only");
         assert_eq!((ch2.port, ch2.user.is_none()), (Some(8124), true));
+        // Db2(D-359) = 전용 방언 · 호스트/포트/DB 필드 그대로(ODBC 문자열은 드라이버가 조립) · Access(D-360) = 파일 축약.
+        let d = ConnectSpec::parse("db2://db2inst1:pw@h/SAMPLE").expect("db2");
+        assert_eq!(
+            (d.dialect, d.host.as_deref(), d.port, d.database.as_deref()),
+            (Some(Dialect::Db2), Some("h"), None, Some("SAMPLE"))
+        );
+        let a = ConnectSpec::parse("access:/tmp/dir/north wind.accdb").expect("access");
+        assert_eq!(
+            (a.dialect, a.database.as_deref()),
+            (Some(Dialect::Access), Some("/tmp/dir/north wind.accdb"))
+        );
+        let a2 = ConnectSpec::parse("access:C:\\data\\x.mdb").expect("access win");
+        assert_eq!(a2.database.as_deref(), Some("C:\\data\\x.mdb"));
     }
 
     #[test]

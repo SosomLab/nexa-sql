@@ -660,7 +660,10 @@ pub fn functions(d: Option<Dialect>) -> Vec<&'static Builtin> {
         Some(Dialect::Mssql) => MSSQL,
         Some(Dialect::Mysql) => MYSQL,
         Some(Dialect::Sqlite) => SQLITE,
-        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => &[],
+        Some(
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Db2 | Dialect::Access,
+        )
+        | None => &[],
     };
     let mut out: Vec<&'static Builtin> = COMMON.iter().collect();
     for b in extra {
@@ -700,7 +703,10 @@ pub fn system_objects(d: Option<Dialect>) -> &'static [&'static str] {
         Some(Dialect::Mssql) => MSSQL_OBJECTS,
         Some(Dialect::Mysql) => MYSQL_OBJECTS,
         Some(Dialect::Sqlite) => SQLITE_OBJECTS,
-        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => &[],
+        Some(
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Db2 | Dialect::Access,
+        )
+        | None => &[],
     }
 }
 
@@ -1157,7 +1163,10 @@ pub fn types(d: Option<Dialect>) -> Vec<&'static Builtin> {
         Some(Dialect::Mssql) => MSSQL_TYPES,
         Some(Dialect::Mysql) => MYSQL_TYPES,
         Some(Dialect::Sqlite) => SQLITE_TYPES,
-        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => &[],
+        Some(
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Db2 | Dialect::Access,
+        )
+        | None => &[],
     };
     // 방언 표를 앞에(자주 쓰는 순) · 공통은 방언에 없는 이름만 뒤에.
     let mut out: Vec<&'static Builtin> = Vec::new();
@@ -1335,6 +1344,9 @@ pub fn collations(d: Option<Dialect>) -> &'static [Builtin] {
         Some(Dialect::Mysql) => MYSQL_COLLATIONS,
         Some(Dialect::Oracle) => ORACLE_COLLATIONS,
         Some(Dialect::Sqlite) => SQLITE_COLLATIONS,
-        Some(Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse) | None => &[],
+        Some(
+            Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Db2 | Dialect::Access,
+        )
+        | None => &[],
     }
 }

@@ -678,6 +678,7 @@ pub mod codec {
                 ident_fold,
                 bulk_load,
                 tsql_print,
+                scalar_from,
             } = *c;
             self.u8(match marker {
                 Marker::Named => 0,
@@ -730,6 +731,8 @@ pub mod codec {
                 BulkLoad::LocalInfile => self.u8(4),
             }
             self.bool(tsql_print);
+            // ★ 꼬리 필드(10-25 · D-359): 옛 드라이버(drivers-v0.1.3 이하)는 여기서 끝난다 → 읽는 쪽은 버퍼가 끝나면 None.
+            self.opt_str(scalar_from);
         }
         pub fn bulk_opts(&mut self, o: &BulkOpts) {
             self.u64(o.batch_rows as u64);
@@ -836,6 +839,12 @@ pub mod codec {
                 v => return Err(bad("bulk_load", v)),
             };
             let tsql_print = self.bool()?;
+            // 꼬리 필드 = 없으면(옛 ABI 드라이버) None — 호환.
+            let scalar_from = if self.pos >= self.buf.len() {
+                None
+            } else {
+                self.opt_str()?.map(|s| &*Box::leak(s.into_boxed_str()))
+            };
             Ok(Caps {
                 marker,
                 out_values,
@@ -850,6 +859,7 @@ pub mod codec {
                 ident_fold,
                 bulk_load,
                 tsql_print,
+                scalar_from,
             })
         }
         pub fn bulk_opts(&mut self) -> Result<BulkOpts, DecodeError> {
@@ -1739,6 +1749,8 @@ mod tests_v2 {
             Dialect::Sqlite,
             Dialect::Mysql,
             Dialect::Odbc,
+            Dialect::Db2,
+            Dialect::Access,
         ] {
             let c = Caps::of(d);
             let mut w = Writer::default();
@@ -1756,6 +1768,13 @@ mod tests_v2 {
         w.caps(&c);
         assert_eq!(Reader::new(&w.buf).caps().expect("caps"), c);
         assert!(Reader::new(&[9u8]).caps().is_err(), "모르는 marker");
+        // ★ 꼬리 필드 호환(10-25): `scalar_from` 바이트가 없는 옛 인코딩도 읽힌다(None).
+        let mut w = Writer::default();
+        w.caps(&Caps::of(Dialect::Db2));
+        let cut = w.buf.len() - 1 - "SYSIBM.SYSDUMMY1".len() - 4;
+        let old = Reader::new(&w.buf[..cut]).caps().expect("old caps");
+        assert_eq!(old.scalar_from, None);
+        assert_eq!(old.ident_fold, Caps::of(Dialect::Db2).ident_fold);
     }
 
     #[test]

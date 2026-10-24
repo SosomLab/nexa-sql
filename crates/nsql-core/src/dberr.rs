@@ -208,6 +208,20 @@ pub fn odbc_classify(code: Option<i64>, message: &str, stmt: &str) -> Option<Cla
         }
         c
     };
+    // ★ Db2(10-24 · D-359): IBM CLI 꼬리표(`[IBM][CLI Driver][DB2/LINUXX8664] SQL0204N …`) → Db2 표(SQLCODE = 네이티브 코드).
+    if low.contains("[ibm][cli driver]") || low.contains("[db2/") {
+        let c = classify(Dialect::Db2, code, message, stmt);
+        if c.class != ErrorClass::Unknown {
+            return Some(with_code(c));
+        }
+    }
+    // ★ Access(10-24 · D-360): `[Microsoft][ODBC Microsoft Access Driver] …` → Access 표(메시지 규칙).
+    if low.contains("microsoft access driver") || low.contains("access database engine") {
+        let c = classify(Dialect::Access, code, message, stmt);
+        if c.class != ErrorClass::Unknown {
+            return Some(with_code(c));
+        }
+    }
     if low.contains("[sql server]") {
         let c = classify(Dialect::Mssql, code, message, stmt);
         if c.class != ErrorClass::Unknown {
@@ -438,6 +452,92 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
             Some(2002) | Some(2003) | Some(2006) | Some(2013) => mk(ErrorClass::Connection, None),
             _ => mk(ErrorClass::Unknown, None),
         },
+        // ★ Db2(10-24 · D-359): SQLCODE(음수 · ODBC 네이티브 코드 · 메시지 `SQL0204N`) → 분류 · 객체 = 따옴표 토막("SCHEMA.NAME").
+        Dialect::Db2 => {
+            let n = code.map(i64::abs).or_else(|| {
+                let i = low.find("sql")?;
+                let d: String = low[i + 3..]
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                d.parse().ok()
+            });
+            match n {
+                // SQL0204N "name is an undefined name" = 테이블·뷰·별칭·시퀀스·루틴 어느 것이든(협업 검증 10-25 → NoObject · 표만이 아님) ·
+                //   SQL1013N = 데이터베이스 별칭을 못 찾음 = 접속 단계 → Connection.
+                Some(204) => mk(ErrorClass::NoObject, obj_q()),
+                Some(1013) => mk(ErrorClass::Connection, None),
+                // SQL0206N column/variable not defined
+                Some(206) => mk(ErrorClass::NoColumn, obj_q()),
+                // SQL0440N routine not found. SQL0444N = 외부 루틴 라이브러리 접근 실패(서버 설치 문제 · 42724) → Unknown(아래 기본).
+                Some(440) => mk(ErrorClass::NoObject, obj_q()),
+                // SQL0104N syntax · SQL0199N keyword · SQL0010N string not terminated
+                Some(104) | Some(199) | Some(10) => mk(ErrorClass::Syntax, None),
+                // SQL30082N security · SQL1403N invalid user/pw
+                Some(30082) | Some(1403) => mk(ErrorClass::Login, None),
+                // SQL0551N/SQL0552N not authorized
+                Some(551) | Some(552) => mk(ErrorClass::Permission, None),
+                Some(803) => mk(ErrorClass::Unique, obj_stmt()),
+                Some(530) | Some(532) => mk(ErrorClass::ForeignKey, obj_stmt()),
+                Some(407) => mk(ErrorClass::NotNull, obj_q()),
+                Some(545) => mk(ErrorClass::Check, obj_q()),
+                // SQL0911N = 이유 코드로 나뉜다(협업 검증 10-25): 2 = 교착 · 68 = 잠금 시간 초과 — 둘 다 트랜잭션 전체가 롤백된다.
+                Some(911) => {
+                    if has("reason code \"68\"") || has("reason code 68") {
+                        mk(ErrorClass::Lock, obj_stmt())
+                    } else {
+                        mk(ErrorClass::Deadlock, None)
+                    }
+                }
+                // SQL0913N = 잠금 시간 초과(문장만 롤백). SQL0668N(테이블 상태 = REORG/SET INTEGRITY 보류)과 SQL0613N(키·컬럼 한도)은 잠금·타입이
+                //   아니다 → Unknown(원문 그대로 · 이유 코드는 메시지에).
+                Some(913) => mk(ErrorClass::Lock, obj_stmt()),
+                // SQL30081N communication · SQL1224N · SQL1024N not connected · SQL1032N not started
+                Some(30081) | Some(1224) | Some(1024) | Some(1032) => {
+                    mk(ErrorClass::Connection, None)
+                }
+                // SQL0420N/SQL0433N/SQL0613N value/type
+                Some(420) | Some(433) | Some(302) => mk(ErrorClass::DataType, None),
+                None if has("undefined name") => mk(ErrorClass::NoTable, obj_q()),
+                _ => mk(ErrorClass::Unknown, None),
+            }
+        }
+        // ★ MS Access(10-24 · D-360): Jet/ACE 메시지 규칙(코드 없음).
+        Dialect::Access => {
+            let obj = || obj_q().or_else(obj_stmt);
+            if has("cannot find the input table or query") || has("could not find object") {
+                mk(ErrorClass::NoTable, obj())
+            } else if has("too few parameters")
+                || has("no value given for one or more required parameters")
+            {
+                mk(ErrorClass::NoColumn, None)
+            } else if has("syntax error") || has("reserved word") {
+                mk(ErrorClass::Syntax, None)
+            } else if has("not a valid password") || has("password") {
+                mk(ErrorClass::Login, None)
+            } else if has("could not find file")
+                || has("cannot open database")
+                || has("not a valid path")
+            {
+                mk(ErrorClass::Connection, None)
+            } else if has("duplicate") {
+                mk(ErrorClass::Unique, obj_stmt())
+            } else if has("related record is required") || has("relationship") {
+                mk(ErrorClass::ForeignKey, obj_stmt())
+            } else if has("cannot contain a null value") {
+                mk(ErrorClass::NotNull, None)
+            } else if has("validation rule") {
+                mk(ErrorClass::Check, None)
+            } else if has("locked") || has("exclusively") {
+                mk(ErrorClass::Lock, obj_stmt())
+            } else if has("data type mismatch") || has("type conversion") {
+                mk(ErrorClass::DataType, None)
+            } else if has("read-only") || has("permission") {
+                mk(ErrorClass::Permission, None)
+            } else {
+                mk(ErrorClass::Unknown, None)
+            }
+        }
         // ★ ClickHouse(10-24 · 138차): 서버 오류 코드(`Code: N.` · 헤더 X-ClickHouse-Exception-Code · 드라이버가 `code`로) → 분류 ·
         //   객체 = 메시지의 따옴표 토막 또는 `Table x`/`Database x` 다음 낱말.
         Dialect::Clickhouse => {

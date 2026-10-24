@@ -100,6 +100,9 @@ pub struct Caps {
     /// ★ T-367(10-17): `PRINT '글'`·`PRINT @v`·`PRINT (식)`이 **서버 문장**인가(T-SQL PRINT = SQL Server만). 거짓이면 엔진이 서버에 보내지
     ///   않고 "PRINT = 바인드 변수 표시 · 글은 PROMPT" 안내를 돌려준다(SQLite에서 syntax error · Oracle ORA-00900으로 끝나던 것).
     pub tsql_print: bool,
+    /// ★ 스칼라 식 조회에 붙일 `FROM`(10-24 · D-359): `EXEC :B := :A + 10`을 `SELECT … AS "B"`로 보낼 때 FROM 없는 SELECT를
+    ///   거부하는 방언(Db2 = `SYSIBM.SYSDUMMY1`)만 `Some`.
+    pub scalar_from: Option<&'static str>,
 }
 
 const ORACLE: Caps = Caps {
@@ -118,6 +121,7 @@ const ORACLE: Caps = Caps {
     ident_fold: IdentFold::Upper,
     bulk_load: crate::bulk::BulkLoad::ArrayDml,
     tsql_print: false,
+    scalar_from: None,
 };
 
 const MSSQL: Caps = Caps {
@@ -137,6 +141,7 @@ const MSSQL: Caps = Caps {
     // TDS BULK INSERT(89 §1-3 · B-4) · 다중 행 폴백은 sp_executesql 매개변수 둘을 뺀 2000(2100 = 실패 · 09-26).
     bulk_load: crate::bulk::BulkLoad::TdsBulk,
     tsql_print: true,
+    scalar_from: None,
 };
 
 const POSTGRES: Caps = Caps {
@@ -155,6 +160,7 @@ const POSTGRES: Caps = Caps {
     ident_fold: IdentFold::Lower,
     bulk_load: crate::bulk::BulkLoad::CopyIn,
     tsql_print: false,
+    scalar_from: None,
 };
 
 /// `?` 자리 바인드 · 1행 결과로 값을 받는 DBMS의 공통 틀(MySQL · SQLite · ODBC가 여기서 갈라진다).
@@ -175,6 +181,7 @@ const QUESTION: Caps = Caps {
         max_params: 32000,
     },
     tsql_print: false,
+    scalar_from: None,
 };
 
 /// MySQL/MariaDB(135차 · 드라이버 `nsql-driver-mysql`): `CALL p(?, ?)` 준비문의 OUT/INOUT 값은 **마지막 결과 집합 한 행**으로 온다
@@ -221,6 +228,27 @@ const CLICKHOUSE: Caps = Caps {
     ..QUESTION
 };
 
+/// ★ IBM Db2(10-24 · D-359 · ODBC 어댑터 위 전용 방언): `?` 위치 바인드 · 트랜잭션 = ODBC 자동 커밋 속성(ODBC와 같은 꼴) · 식별자 = 대문자 접힘 ·
+///   스칼라 식 = `FROM SYSIBM.SYSDUMMY1` · 다중 행 INSERT.
+const DB2: Caps = Caps {
+    tx_begin: Some("BEGIN TRANSACTION"),
+    server_autocommit: true,
+    ident_fold: IdentFold::Upper,
+    scalar_from: Some("SYSIBM.SYSDUMMY1"),
+    ..QUESTION
+};
+
+/// ★ MS Access(10-24 · D-360 · ODBC 어댑터 위 Jet SQL): `?` 바인드 · 트랜잭션 = 드라이버 best-effort(ODBC와 같음) · 다중 행 VALUES 없음(한 행씩).
+const ACCESS: Caps = Caps {
+    tx_begin: Some("BEGIN TRANSACTION"),
+    server_autocommit: true,
+    bulk_load: crate::bulk::BulkLoad::MultiRow {
+        max_rows: 1,
+        max_params: 255,
+    },
+    ..QUESTION
+};
+
 impl Caps {
     /// 내장 방언의 능력표(레지스트리). 확장 드라이버는 [`crate::Session::caps`]를 덮어써 자기 표를 낸다.
     #[must_use]
@@ -234,6 +262,8 @@ impl Caps {
             Dialect::Odbc => ODBC,
             Dialect::Duckdb => DUCKDB,
             Dialect::Clickhouse => CLICKHOUSE,
+            Dialect::Db2 => DB2,
+            Dialect::Access => ACCESS,
         }
     }
 

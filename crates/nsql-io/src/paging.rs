@@ -27,6 +27,23 @@ pub fn page_sql(dialect: Dialect, sql: &str, offset: usize, limit: usize) -> Str
             };
             format!("SELECT * FROM (\n{q}\n) OFFSET {offset} ROWS{fetch}")
         }
+        // Db2(10-24 · D-359): `OFFSET … ROWS FETCH FIRST … ROWS ONLY`(11.1+ · fullselect에 바로).
+        Dialect::Db2 => {
+            let fetch = if limit > 0 {
+                format!(" FETCH FIRST {limit} ROWS ONLY")
+            } else {
+                String::new()
+            };
+            format!("SELECT * FROM (\n{q}\n) x OFFSET {offset} ROWS{fetch}")
+        }
+        // Access(Jet) = OFFSET 없음 · `TOP n`만 → 첫 페이지만 자를 수 있다(뒷 페이지 = 호스트의 재질의 폴백).
+        Dialect::Access => {
+            if offset == 0 && limit > 0 {
+                format!("SELECT TOP {limit} * FROM (\n{q}\n) x")
+            } else {
+                q.to_string()
+            }
+        }
         Dialect::Mssql => {
             let fetch = if limit > 0 {
                 format!(" FETCH NEXT {limit} ROWS ONLY")

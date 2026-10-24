@@ -24,10 +24,33 @@ const LOGIN_TIMEOUT_SECS: u32 = 15;
 #[must_use]
 pub fn connection_string(spec: &ConnectSpec) -> String {
     let db = spec.database.as_deref().unwrap_or("").trim();
+    let esc = odbc_api::escape_attribute_value;
     let mut s = if db.contains('=') {
         db.trim_end_matches(';').to_string()
+    } else if spec.dialect == Some(Dialect::Db2) {
+        // ★ Db2(10-24 · D-359): 호스트/포트/DB 필드 → IBM CLI 접속 문자열(드라이버 이름 = `?driver=` 또는 `IBM DB2 ODBC DRIVER` · 포트 기본 50000).
+        let drv = spec
+            .driver
+            .clone()
+            .unwrap_or_else(|| "IBM DB2 ODBC DRIVER".into());
+        format!(
+            "Driver={{{drv}}};Database={};Hostname={};Port={};Protocol=TCPIP",
+            esc(db),
+            esc(spec.host.as_deref().unwrap_or("localhost")),
+            spec.port.unwrap_or(50000)
+        )
+    } else if spec.dialect == Some(Dialect::Access) {
+        // ★ Access(10-24 · D-360): 파일 경로 → Windows = ACE 드라이버(`*.mdb, *.accdb`) · unix = MDB Tools(읽기 전용) · `?driver=`로 바꿀 수 있다.
+        let drv = spec.driver.clone().unwrap_or_else(|| {
+            if cfg!(windows) {
+                "Microsoft Access Driver (*.mdb, *.accdb)".into()
+            } else {
+                "MDBTools".into()
+            }
+        });
+        format!("Driver={{{drv}}};DBQ={}", esc(db))
     } else {
-        format!("DSN={}", odbc_api::escape_attribute_value(db))
+        format!("DSN={}", esc(db))
     };
     let has = |key: &str| -> bool {
         s.split(';')
@@ -59,6 +82,8 @@ pub struct OdbcSession {
     ///   종전엔 접속 때부터 늘 OFF라 **탐색기 메타 세션의 읽기까지 트랜잭션을 열어 둬**(SQLite 공유 잠금) 실행 세션의 커밋이
     ///   `SQLEndTran` → sqlite3odbc busy_handler에서 영원히 기다렸다(맥 GUI 실기 · CLI는 연결 1이라 안 걸림).
     in_tx: bool,
+    /// ★ 이 세션이 보고하는 방언(10-24 · D-359/D-360): 접속 사양이 Db2/Access면 그것 · 아니면 DBMS 이름으로 추정(`DB2/…` → Db2 · `ACCESS` → Access) · 그 밖 Odbc.
+    dialect: Dialect,
     /// ★ 실행 중인 문장 핸들(T-383 2차 취소): `execute` 동안만 non-null · [`OdbcCancel`]이 다른 스레드에서 `SQLCancel`.
     active: Arc<AtomicPtr<std::ffi::c_void>>,
     /// 진행 중인 `SQLCancel` 수(해제 경합 가드 · 10-24).
@@ -583,11 +608,20 @@ impl OdbcSession {
             conn.set_autocommit(true).map_err(err)?;
         }
         let dbms = conn.database_management_system_name().unwrap_or_default();
+        let up = dbms.to_ascii_uppercase();
+        let dialect = match spec.dialect {
+            Some(Dialect::Db2) => Dialect::Db2,
+            Some(Dialect::Access) => Dialect::Access,
+            _ if up.starts_with("DB2") => Dialect::Db2,
+            _ if up.contains("ACCESS") => Dialect::Access,
+            _ => Dialect::Odbc,
+        };
         Ok(OdbcSession {
             conn,
             description: spec.redacted(),
             transactions,
             in_tx: false,
+            dialect,
             dbms,
             max_rows: 0,
             active: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
@@ -647,11 +681,11 @@ impl OdbcSession {
 
 impl Session for OdbcSession {
     fn dialect(&self) -> Dialect {
-        Dialect::Odbc
+        self.dialect
     }
 
     fn caps(&self) -> Caps {
-        Caps::of(Dialect::Odbc)
+        Caps::of(self.dialect)
     }
 
     fn driver_name(&self) -> String {
@@ -714,6 +748,11 @@ impl Session for OdbcSession {
     fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
         if name == "max_rows" {
             self.max_rows = value.parse().unwrap_or(0);
+        }
+        // ★ Db2(10-24): 스키마 전환 = `SET SCHEMA`(인용 = 대문자 접힘을 막는다 · 빈 값 = 무시).
+        if name == "schema" && self.dialect == Dialect::Db2 && !value.trim().is_empty() {
+            let q = format!("SET SCHEMA \"{}\"", value.trim().replace('"', "\"\""));
+            self.conn.execute(&q, (), None).map_err(err)?;
         }
         Ok(())
     }

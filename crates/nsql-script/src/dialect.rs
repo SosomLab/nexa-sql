@@ -602,7 +602,14 @@ pub fn wrap_exec_with(caps: &Caps, body: &str) -> String {
         ExecForm::Call => {
             if let Some((lhs, rhs)) = body.split_once(":=") {
                 if let Some(name) = lhs.trim().strip_prefix(':') {
-                    return format!("SELECT {} AS \"{}\"", rhs.trim(), name.to_ascii_uppercase());
+                    let from = caps
+                        .scalar_from
+                        .map_or_else(String::new, |t| format!(" FROM {t}"));
+                    return format!(
+                        "SELECT {} AS \"{}\"{from}",
+                        rhs.trim(),
+                        name.to_ascii_uppercase()
+                    );
                 }
             }
             if body.to_ascii_uppercase().starts_with("SELECT") {

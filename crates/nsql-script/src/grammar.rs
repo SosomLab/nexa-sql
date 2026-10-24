@@ -255,6 +255,8 @@ const BUILTIN: &[(&str, &str)] = &[
     ("sqlite", include_str!("../grammar/sqlite.sqlg")),
     ("mysql", include_str!("../grammar/mysql.sqlg")),
     ("clickhouse", include_str!("../grammar/clickhouse.sqlg")),
+    ("db2", include_str!("../grammar/db2.sqlg")),
+    ("access", include_str!("../grammar/access.sqlg")),
 ];
 
 struct Registry {
@@ -315,6 +317,8 @@ fn dialect_name(d: Option<Dialect>) -> &'static str {
         Some(Dialect::Sqlite) => "sqlite",
         Some(Dialect::Mysql) => "mysql",
         Some(Dialect::Clickhouse) => "clickhouse",
+        Some(Dialect::Db2) => "db2",
+        Some(Dialect::Access) => "access",
         _ => "ansi",
     }
 }

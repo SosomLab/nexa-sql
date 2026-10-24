@@ -27,6 +27,12 @@ pub enum Dialect {
     /// ★ ClickHouse(10-24 · 138차 · 121 P5 · 확장 전용 드라이버 · HTTP 인터페이스 8123/8443 · `?` 자리 = 드라이버가 리터럴로 치환 ·
     ///   트랜잭션 없음 · 스키마 = 데이터베이스).
     Clickhouse,
+    /// ★ IBM Db2(10-24 · 138차 · D-359 · 2급): IBM CLI/ODBC 드라이버 위 전용 방언 — SYSCAT 카탈로그 · `?` 바인드 · 식별자 대문자 접힘 ·
+    ///   `FETCH FIRST` · `SYSIBM.SYSDUMMY1` · 세이브포인트.
+    Db2,
+    /// ★ MS Access(10-24 · 138차 · D-360 · 3급): ODBC(Windows ACE · Linux/mac = MDB Tools) 위 Jet SQL 방언 — 파일 기반(`access:<파일>`) ·
+    ///   카탈로그 = SQLTables/SQLColumns 훅 · `TOP n` · 트랜잭션 = 드라이버 best-effort.
+    Access,
 }
 
 /// 로그인 항목(접속 폼의 칸과 1:1 · `Dialect::login_required`).
@@ -53,9 +59,9 @@ impl Dialect {
             "mysql" | "mariadb" => Dialect::Mysql,
             "sqlite" | "sqlite3" => Dialect::Sqlite,
             // ★ ODBC 벤더 스킴(T-384 · 10-24 추가 = db2 · hana · informix → `odbc_preset_for`).
-            "odbc" | "tibero" | "altibase" | "cubrid" | "db2" | "hana" | "informix" => {
-                Dialect::Odbc
-            }
+            "odbc" | "tibero" | "altibase" | "cubrid" | "hana" | "informix" => Dialect::Odbc,
+            "db2" | "ibmdb2" => Dialect::Db2,
+            "access" | "msaccess" | "accdb" | "mdb" => Dialect::Access,
             "duckdb" => Dialect::Duckdb,
             "clickhouse" => Dialect::Clickhouse,
             _ => return None,
@@ -63,7 +69,7 @@ impl Dialect {
     }
 
     /// 전체(접속 폼의 DB 종류 목록 순서).
-    pub const ALL: [Dialect; 8] = [
+    pub const ALL: [Dialect; 10] = [
         Dialect::Oracle,
         Dialect::Mssql,
         Dialect::Postgres,
@@ -72,6 +78,8 @@ impl Dialect {
         Dialect::Odbc,
         Dialect::Duckdb,
         Dialect::Clickhouse,
+        Dialect::Db2,
+        Dialect::Access,
     ];
 
     /// 기본 포트(접속 폼·CLI에서 포트를 비우면 이 값). 파일·DSN 기반 방언은 `None`.
@@ -82,7 +90,8 @@ impl Dialect {
             Dialect::Postgres => Some(5432),
             Dialect::Mysql => Some(3306),
             Dialect::Clickhouse => Some(8123),
-            Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => None,
+            Dialect::Db2 => Some(50000),
+            Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Access => None,
         }
     }
 
@@ -97,6 +106,8 @@ impl Dialect {
             Dialect::Odbc => "ODBC",
             Dialect::Duckdb => "DuckDB",
             Dialect::Clickhouse => "ClickHouse",
+            Dialect::Db2 => "Db2",
+            Dialect::Access => "MS Access",
         }
     }
 
@@ -119,12 +130,24 @@ impl Dialect {
             Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb => &[LoginField::Database],
             // 기본 사용자 `default`(비밀번호 없음)가 흔하다 → 호스트만 필수.
             Dialect::Clickhouse => &[LoginField::Host],
+            // Db2 = 데이터베이스 이름이 접속 단위(서비스명처럼) · 자격 필수.
+            Dialect::Db2 => &[
+                LoginField::Host,
+                LoginField::Database,
+                LoginField::User,
+                LoginField::Password,
+            ],
+            // Access = 파일 하나(비밀번호는 선택).
+            Dialect::Access => &[LoginField::Database],
         }
     }
 
     /// 호스트·포트 대신 **파일 경로/DSN** 하나로 접속하는 방언인가(폼이 필드를 바꾸는 근거).
     pub fn is_file_based(self) -> bool {
-        matches!(self, Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb)
+        matches!(
+            self,
+            Dialect::Sqlite | Dialect::Odbc | Dialect::Duckdb | Dialect::Access
+        )
     }
 }
 
@@ -139,6 +162,8 @@ impl fmt::Display for Dialect {
             Dialect::Odbc => "odbc",
             Dialect::Duckdb => "duckdb",
             Dialect::Clickhouse => "clickhouse",
+            Dialect::Db2 => "db2",
+            Dialect::Access => "access",
         })
     }
 }
@@ -318,6 +343,7 @@ impl Value {
                 match dialect {
                     Dialect::Mssql => format!("0x{hex}"),
                     Dialect::Postgres => format!("'\\x{hex}'"),
+                    Dialect::Db2 => format!("BX'{hex}'"),
                     _ => format!("'{hex}'"),
                 }
             }

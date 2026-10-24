@@ -112,8 +112,16 @@ fn savepoint_sql(
             Some("ROLLBACK TO nsql_edit"),
             None,
         ),
-        // DuckDB = SAVEPOINT 미지원(1.x).
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse => (None, None, None),
+        // DuckDB = SAVEPOINT 미지원(1.x) · Access(Jet) = 없음.
+        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
+            (None, None, None)
+        }
+        // Db2(10-24): 세이브포인트 = `ON ROLLBACK RETAIN CURSORS` 필수 어절.
+        Dialect::Db2 => (
+            Some("SAVEPOINT nsql_edit ON ROLLBACK RETAIN CURSORS"),
+            Some("ROLLBACK TO SAVEPOINT nsql_edit"),
+            Some("RELEASE SAVEPOINT nsql_edit"),
+        ),
         _ => (
             Some("SAVEPOINT nsql_edit"),
             Some("ROLLBACK TO SAVEPOINT nsql_edit"),

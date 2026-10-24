@@ -64,7 +64,9 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         #[cfg(feature = "mysql")]
         Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
         #[cfg(feature = "odbc")]
-        Dialect::Odbc => Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?)),
+        Dialect::Odbc | Dialect::Db2 | Dialect::Access => {
+            Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?))
+        }
         // ★ D-350: 내장이 없는 방언 = 확장 드라이버(`drivers/<id>/<ver>/` cdylib · 첫 접속 때 지연 로드) · 없으면
         //   [`ERR_DRIVER_MISSING`](호출자가 자동 설치로 잇는다 · C단계). 모든 feature가 켜진 빌드에서는 닿지 않는다.
         #[allow(unreachable_patterns)]
@@ -84,6 +86,9 @@ pub const DRIVER_IDS: &[(Dialect, &[&str])] = &[
     (Dialect::Duckdb, &["duckdb"]),
     // ClickHouse = 확장 전용(D-354 · HTTP 인터페이스 · 외부 crate 0 · 설치본 정책상 확장).
     (Dialect::Clickhouse, &["clickhouse"]),
+    // Db2 · Access = ODBC 어댑터 위 방언(D-359 · D-360) → 확장 id는 odbc(벤더 ODBC 드라이버는 사용자 설치).
+    (Dialect::Db2, &["odbc"]),
+    (Dialect::Access, &["odbc"]),
 ];
 
 /// 방언의 확장 후보 id(우선순위 순 · Oracle은 설정이 고른 드라이버가 먼저).
@@ -174,7 +179,7 @@ pub fn is_builtin(dialect: Dialect) -> bool {
         Dialect::Postgres => cfg!(feature = "pg"),
         Dialect::Mysql => cfg!(feature = "mysql"),
         Dialect::Mssql => cfg!(feature = "mssql"),
-        Dialect::Odbc => cfg!(feature = "odbc"), // 전 OS(10-23 · unixODBC)
+        Dialect::Odbc | Dialect::Db2 | Dialect::Access => cfg!(feature = "odbc"), // 전 OS(10-23 · unixODBC)
         Dialect::Duckdb | Dialect::Clickhouse => false,
         Dialect::Oracle => oracle_driver().included(),
     }
