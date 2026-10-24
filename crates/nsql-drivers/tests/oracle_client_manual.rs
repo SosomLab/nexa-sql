@@ -28,6 +28,10 @@ fn manual_client_folder_is_the_only_one_used() {
             return;
         }
     };
+    // ★ 10-24(138차 Linux V3 B2d): 기본 드라이버가 Thin(D-278 · 10-13)이라 클라이언트 없이도 접속돼 ①이 깨졌다 — 이 시험은 **OCI 경로**의
+    //   클라이언트 폴더 규칙을 보는 것이므로 OCI로 고정하고 끝에 되돌린다(별도 바이너리지만 규약대로).
+    let prev_driver = nsql_drivers::oracle_driver();
+    nsql_drivers::set_oracle_driver(nsql_drivers::OracleDriver::Oci);
     // ① 라이브러리가 없는 폴더를 지정 = 접속 실패 — PATH에 다른 클라이언트가 있어도 조용히 쓰지 않는다.
     let empty = std::env::temp_dir().join(format!("nsql-ora-empty-{}", std::process::id()));
     std::fs::create_dir_all(&empty).expect("임시 폴더");
@@ -60,4 +64,5 @@ fn manual_client_folder_is_the_only_one_used() {
         .version
         .expect("로드된 뒤에는 버전을 안다");
     assert!(v.chars().next().is_some_and(|c| c.is_ascii_digit()), "{v}");
+    nsql_drivers::set_oracle_driver(prev_driver);
 }

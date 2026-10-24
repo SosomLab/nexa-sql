@@ -83,7 +83,7 @@ chk "②-c VAR CLEAR = 글로벌 G1·G2 유지(글로벌 유지 · 사용자 10-
 # `VAR CLEAR GLOBAL` = 탭 층 + 글로벌 층(docs/63 §11-4 "GLOBAL = 글로벌 층도") → T3도 함께 사라진다.
 nchk "②-d VAR CLEAR GLOBAL = 글로벌 G1·G2 없음" "^ *G[12] +" "$seg_c"
 nchk "②-e VAR CLEAR GLOBAL = 탭 T3도 없음(탭 + 글로벌)" "^ *T3 +" "$seg_c"
-chk "②-e' CLEAR GLOBAL 뒤 0 rows" "^ *0 rows" "$seg_c"
+chk "②-e' CLEAR GLOBAL 뒤 0 rows" "^ *0 (rows|행)" "$seg_c"   # 홈이 ui.lang=ko → CLI 행 수 줄 = "0행"(T-369 · 10-24 Linux V3 C 지적)
 nchk "②-f VAR CLEAR ALL = 전부 없음(G3·T4)" "^ *(G3|T4) +" "$seg_d"
 
 # ── 3. 자동 타입 재추론 · 엄격 타입 파싱 ────────────────────────────────────────────────────────

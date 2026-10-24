@@ -4,13 +4,15 @@
 #   재접속해 결과를 내는지 본다. SQLite 격리 홈 · 키 주입 0 · 실서버 없음.
 #   케이스: ① 공유 세션(기동 인자 프로필 · `Cmd::ConnectSpec` 원천) ② 전용 세션(편집기 `CONNECT sqlite:…` 문 = 종전 결함 자리 · 원천 =
 #   러너 `connected_to`) — 둘 다 kill 뒤 `SELECT 7` 결과 1행 + 로그 "다시 접속" 1회.
-# 사용: scripts/win-reconnect-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
+# 사용: scripts/win-reconnect-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]   ★ GUI = Debug 필수(sess.kill 훅)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:g:n:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n nsql]"; exit 2; }
+# ★ 10-24(138차 Linux V3 C19): `sess.kill` 훅은 Debug 전용(startup_cmd.rs) — Release GUI로 돌리면 "kill 로그 없음"으로 5/3이 난다 → 미리 막는다.
+case "$EXE" in */release/*) echo "SKIP: sess.kill hook is Debug-only — pass a Debug GUI (-g target/debug/nexa-sql)"; exit 2;; esac
 mkdir -p "$OUT"
 REPORT="$OUT/reconnect-e2e.txt"; : > "$REPORT"
 say() { echo "$*"; echo "$*" >> "$REPORT"; }

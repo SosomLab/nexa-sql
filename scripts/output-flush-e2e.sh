@@ -26,7 +26,8 @@ say() { echo "$*"; echo "$*" >> "$REPORT"; }
 pass=0; fail=0
 ok()  { say "  PASS  $1"; pass=$((pass+1)); }
 bad() { say "  FAIL  $1"; fail=$((fail+1)); }
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+# ★ 10-24(138차 Linux V3 C6): GNU `stat -f %m`은 실패(rc 1)하면서도 stdout에 파일시스템 표를 찍어 `mt`가 여러 줄 → `-c %Y`(GNU) 먼저 · 맥 BSD stat(`-c` 없음)은 `-f %m` 폴백.
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 # ── 방언별 SQL(생성 · 실행 · 삭제) ────────────────────────────────────────────────────────────────
 cat > "$D/mssql-create.sql" <<'SQL'

@@ -6,6 +6,8 @@
 #     ① 프로세스 생존 ② 창 수(`xwininfo -root -tree`의 WM_CLASS `nexa-sql`) ③ stderr 패닉 없음
 #     ④ **덤프 명령의 산출 파일 검사**(explorer/grid/details/cellview/txlog/mem/import/sqlprev.dump) ⑤ 저장 파일 검사
 #   로 판정한다 — 눈으로 봐야 하는 것(색·툴팁 위치)은 사용자 실기(T-163)로 넘긴다.
+#   ★ 10-24(138차 Linux): Windows판에만 있던 28 시나리오(S36·S37·S40·S49·S51~S55·S57·S58·S60·S79~S94)를 §9로 이식 — 판정은 덤프 파일 검사(checks · 공백으로 나누므로 패턴 안 공백은 `.`) · 창 수 · 첫 실행 27/1(S86 = 패턴 공백 → `.`).
+#     (이 VM 창 캡처는 이제 가능 = `DISPLAY=:0 xdotool search --name Nexa` → `import -window <id>` · 61 §3 · 이 스크립트는 여전히 캡처 없이 판정)
 #
 # 사용: scripts/linux-func-check.sh -o <출력폴더> [-e target/debug/nexa-sql] [-n target/debug/nsql] [-O S05,S06]
 set -u
@@ -272,6 +274,76 @@ run_s L14 "무효 라이선스 파일 = 설치 거부(쓰지 않음)"   "@after:
 run_s L15 "편집 탭 상한 5(게이트 on · D-46)"            "@after:1200:$SIX,@after:3200:bm.stat:$OUT/L15.txt" Local 4.5 $'license.gates=on\n' "L15.txt:^4:.title !L15.txt:^5:.title"
 # L16: 게이트는 기본 끔(D-145 09-28) — Debug·Release 모두 `license.gates=on`일 때만 적용(docs/23 §4-2).
 run_s L16 "게이트 off(기본) = 탭 제한 없음"             "@after:1200:$SIX,@after:3200:bm.stat:$OUT/L16.txt" Local 4.5 "" "L16.txt:^6:.title"
+
+# ── 9. Windows판(win-func-check.ps1)에만 있던 시나리오 이식(10-24 · 138차 Linux · S36·S37·S40·S49·S51~S55·S57·S58·S60·S79~S94) ──
+# 좌표·대기·설정은 Windows판 그대로(BASECONF 창 1375×945 · 2코어 VM이라 +0.5 s). 자동 판정 = 생존·창 수 + 덤프 파일 검사(checks) · 화면 모양은 캡처 몫.
+PSEL="$D/fc-sel.nsql-project"; printf '{ "version": 1, "folders": [ { "path": "." } ], "selected": "q_lines.sql" }' > "$PSEL"
+PBIG="$D/fc-big.nsql-project"; printf '{ "version": 1, "folders": [ { "path": "%s" } ] }' "$ROOT" > "$PBIG"
+PWS="$D/fc-ws.nsql-project"; PSAVE="$D/fc-save.nsql-project"
+write_pws() { cat > "$PWS" <<JSON
+{ "version": 1, "folders": [ { "path": "." } ], "active": 1, "panel": "bookmarks", "profiles": [ "Local" ], "tabs": [ { "path": "$QL", "title": "q_lines.sql", "line": 40, "col": 0, "anchor": "SELECT 41;", "before": "SELECT 40;", "after": "SELECT 42;" }, { "title": "Notes", "line": 1, "col": 0, "text": "-- restored scratch\nSELECT 'ws';" } ], "bookmarks": { "version": 1, "next_id": 2, "next_group": 2, "groups": [ { "id": 1, "name": "", "default": true, "enabled": true } ], "items": [ { "id": 1, "doc": { "file": "$QL" }, "line": 4, "col": 0, "text": "SELECT 5;", "before": "SELECT 4;", "after": "SELECT 6;", "hash": "0", "lines": 150, "group": 1, "shared": false, "state": "live", "created": 0, "visited": 0 } ] } }
+JSON
+}
+write_pws
+run_s S40 "프로젝트 열기 = 마지막 선택 위치 복원(§77)"     "project.load:$PSEL,@after:1200:project.panel:on" Local 4.5
+run_s S49 "필터 안내 글 두 줄(일치 없음 → 상한)(§80)"      "project.load:$PBIG,@after:1200:project.panel:on,@after:2000:project.filter:zzqq" Local 5 $'project.scan_max=100\n'
+run_s S51 "프로젝트 로딩 = 작업 환경 복원 + OPEN FILES(§89)" "project.load:$PWS,@after:1500:project.panel:on,@after:3500:tabs.dump:$OUT/s51_tabs.txt" Local 5 "" "s51_tabs.txt:q_lines.sql s51_tabs.txt:Notes"
+run_s S37 "풀다운 Project ▸ Save New Project… = 파일 저장 창(§75)" "open:$QL,@after:1000:ui.click:75/14,@after:1600:ui.click:120/48" Local 5
+# S36: 워크스페이스를 비운 뒤 CLI로 심고 GUI가 같은 파일을 읽는다(B8 · 미니맵 틱 · 줄 끝 라벨).
+rm -f "$H/workspaces/default.nsql-workspace"
+NSQL_HOME="$H" "$CLI" bookmark add "$QL" 2 --label "monthly totals" >/dev/null 2>&1
+NSQL_HOME="$H" "$CLI" bookmark add "$QL" 5 >/dev/null 2>&1
+NSQL_HOME="$H" "$CLI" bookmark add "$QL" 120 >/dev/null 2>&1
+say "  cli: $(NSQL_HOME="$H" "$CLI" bookmark list 2>/dev/null | grep -c 'q_lines') bookmarks on q_lines.sql"
+run_s S36 "CLI로 심은 북마크 = 거터·미니맵 틱·줄 끝 라벨(§74)" "open:$QL,@after:2500:bm.stat:$OUT/s36_bm.txt" Local 4.5 "" "s36_bm.txt:marks=3"
+printf '{ "version": 1, "folders": [ { "path": "." } ] }' > "$PSAVE"
+run_s S52 "프로젝트 저장 3번 = 탭 그대로 · 파일에 탭 경로(§92)" "project.load:$PSAVE,open:$A,open:$B,@after:1000:project.panel:on,@after:1300:bookmark.set_1,@after:1400:ui.click:400/161,@after:1500:bookmark.set_2,@after:1600:ui.click:460/80,@after:1700:bookmark.set_1,@after:1800:project.save,@after:2600:project.save,@after:3400:project.save,@after:4200:tabs.dump:$OUT/s52_tabs.txt" Local 5.5 "" "s52_tabs.txt:a.sql s52_tabs.txt:b.sql"
+saved=$(cat "$PSAVE" 2>/dev/null)
+say "  file: tabs=$(printf '%s' "$saved" | grep -c '"tabs"') a.sql=$(printf '%s' "$saved" | grep -c '"path": "a\.sql"') b.sql=$(printf '%s' "$saved" | grep -c '"path": "b\.sql"') mn1x2=$(printf '%s' "$saved" | grep -o '"mn": 1' | wc -l) mn2x1=$(printf '%s' "$saved" | grep -o '"mn": 2' | wc -l) blob=$(printf '%s' "$saved" | grep -c 'NSQL-BLOBS') tabs_in_dump=$(grep -c '|' "$OUT/s52_tabs.txt" 2>/dev/null)"
+write_pws
+run_s S53 "프로젝트 로딩 = 옛 탭 닫고 교체 · 패널·접속 표식 복원(§92)" "open:$A,@after:1200:project.load:$PWS,@after:3000:tabs.dump:$OUT/s53_tabs.txt" Local 4 "" "s53_tabs.txt:q_lines.sql !s53_tabs.txt:a.sql"
+run_s S54 "북마크 패널 더블클릭 = 정식 탭(§92)"             "view.bookmarks,@after:1500:ui.dclick:150/182,@after:3000:tabs.dump:$OUT/s54_tabs.txt" Local 4.5 "" "s54_tabs.txt:q_lines"
+run_s S55 "북마크 패널 한 번 클릭 = 미리보기 탭(§92)"       "view.bookmarks,@after:1500:ui.click:150/182,@after:3000:tabs.dump:$OUT/s55_tabs.txt" Local 4.5 "" "s55_tabs.txt:q_lines"
+write_pws
+run_s S57 "프로젝트 닫기 = 처음 실행 상태 + 북마크 초기화(§98)" "open:$A,@after:1000:project.load:$PWS,@after:2500:project.close,@after:3200:view.bookmarks,@after:4000:tabs.dump:$OUT/s57_tabs.txt" Local 5 "" "!s57_tabs.txt:q_lines.sql !s57_tabs.txt:a.sql"
+# S58 폴더 모드 = 두 번째 인자가 폴더 → 북마크는 <폴더>/.nsql/workspaces/에.
+rm -f "$D/.nsql/workspaces/default.nsql-workspace"
+run_s S58 "폴더 모드 = 북마크가 <폴더>/.nsql/에(§99)"        "open:$Q5,@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2200:view.bookmarks" "Local $D" 5.5
+say "  file: folder_ws=$([ -f "$D/.nsql/workspaces/default.nsql-workspace" ] && echo true || echo false)"
+rm -f "$H/workspaces/default.nsql-workspace"
+run_s S60 "파일 모드 북마크 = 사건 없이도 디바운스 저장(§104)" "open:$Q5,@after:800:ui.click:400/141,@after:1000:bookmark.toggle" Local 5
+say "  file: ws_saved=$([ -f "$H/workspaces/default.nsql-workspace" ] && echo true || echo false)"
+# ── 115차 8차 묶음(10-07) · 훅 = fs.write/fs.delete · mem.trim · tabs.dump · ext.view · ext.banner · flash.dump · editor.dump ──
+run_s S79 "Output 탭 = 오류 실행 뒤 자동 표시·전환(108차 · docs/100 §3)" "open:$QE,@after:1200:run.all,@after:3500:output.dump:$OUT/s79_output.txt" Local 5 "" "s79_output.txt:no_such_table_zz"
+run_s S80 "메모리 창 = 묶음 소계 · 전용 WS · [힙 정리] · ▲/▼(115-8 · docs/80 §4)" "open:$Q5,@after:1200:run.all,@after:2500:view.memory,@after:5000:mem.trim,@after:6200:mem.dump:$OUT/s80_mem.txt" Local 7.5 "" "s80_mem.txt:private_ws=[1-9]"
+S81NEW="$D/s81_new_file.sql"; rm -f "$S81NEW"
+run_s S81 "폴더 변경 감시 → 플래시(필터 없음 · 스낵바 · 페이드)(T-293/T-299)" "project.load:$PROJ,@after:1000:project.panel:on,@after:2600:fs.write:$S81NEW|SELECT 81;,@after:3600:flash.dump:$OUT/s81_flash.txt" Local 4.5 "" "s81_flash.txt:Folder.change|폴더.변경"
+rm -f "$S81NEW"
+run_s S82 "향상 모드 = 플래시 즉시 표시·즉시 숨김(페이드 0)(115-8)" "project.load:$PROJ,@after:1000:project.panel:on,@after:2600:fs.write:$S81NEW|SELECT 82;,@after:3400:flash.dump:$OUT/s82_flash.txt" Local 4.2 $'perf.boost=on\n' "s82_flash.txt:instant=true"
+rm -f "$S81NEW"
+run_s S83 "기존 파일 덮어쓰기 = 플래시 없음(실제 변경 때만)(115-8)" "project.load:$PROJ,open:$A,@after:1000:project.panel:on,@after:2600:fs.write:$A|-- file a changed\nSELECT 1;,@after:3600:flash.dump:$OUT/s83_flash.txt" Local 4.5 "" "!s83_flash.txt:Folder.change|폴더.변경"
+printf -- "-- file a\nSELECT 1;\n" > "$A"
+DELF="$D/s84_delete_me.sql"; printf "SELECT 'delete me';\n" > "$DELF"
+run_s S84 "삭제된 파일 탭 = 진빨강 ● · 닫기 확인 팝업이 띠 위(115-8)" "open:$DELF,open:$A,@after:1200:fs.delete:$DELF,@after:2200:tab.prev,@after:4200:tabs.dump:$OUT/s84_tabs.txt,@after:4400:file.close_tab" Local 5.7 $'file.external_poll_ms=500\n' "s84_tabs.txt:s84_delete_me.*deleted=true"
+CHGF="$D/s85_change_me.sql"; printf "SELECT 'before';\n" > "$CHGF"
+run_s S85 "외부 변경 띠 ▸ 디스크 보기 = 읽기 전용 · ● 없음 · 1행 1열(115-8)" "open:$CHGF,@after:1000:ui.click:600/141,@after:1200:fs.write:$CHGF|SELECT 'after';,@after:4000:ext.banner:diff,@after:4800:tabs.dump:$OUT/s85_tabs.txt,@after:4900:editor.dump:$OUT/s85_editor.txt" Local 5.8 $'file.external_poll_ms=500\n' "s85_tabs.txt:ro=true"
+RSF="$D/s86_main.rs"; printf '//! tool keygen --out <env> [--id root-v1] [--pass-env NAME | --pass-stdin]\n//! issue  (--tier trial|pro|org)\nmod ledger;\nfn main() { let x = [1, 2]; }\n' > "$RSF"
+run_s S86 "모르는 확장자 = Plain Text · 괄호 물결 없음(115-8)" "open:$RSF,@after:1200:ui.click:600/141,@after:1800:editor.dump:$OUT/s86_editor.txt" Local 4 "" "s86_editor.txt:Plain.Text"
+# 확장 설치본 흉내 = <홈>/extensions/<id>/installed.json + <id>/<버전>/extension.json(+wasm) — 매니저 `installed_in` 규약.
+EXTSRC="$ROOT/extensions/rainbow-pairs"; EXTVER=$(grep -oE '"version": *"[^"]+"' "$EXTSRC/extension.json" | head -1 | sed -E 's/.*"([^"]+)"$/\1/'); EXTVER=${EXTVER:-1.1.1}
+mkdir -p "$H/extensions/rainbow-pairs/$EXTVER"; cp "$EXTSRC/extension.json" "$H/extensions/rainbow-pairs/$EXTVER/"; [ -f "$EXTSRC/rainbow_pairs.wasm" ] && cp "$EXTSRC/rainbow_pairs.wasm" "$H/extensions/rainbow-pairs/$EXTVER/"
+printf '{\n  "format": 1,\n  "id": "rainbow-pairs",\n  "name": "Rainbow Pairs",\n  "version": "%s",\n  "kind": "wasm",\n  "placed": []\n}\n' "$EXTVER" > "$H/extensions/rainbow-pairs/installed.json"
+run_s S87 "확장 뷰 탭 = 세션 표식 숨김(기본)(extensions.tab_badge)" "view.extensions,@after:1500:ext.view:rainbow-pairs,@after:2800:tabs.dump:$OUT/s87_tabs.txt" Local 4.3 $'extensions.enabled=on\n' "s87_tabs.txt:Extension"
+run_s S88 "확장 뷰 탭 = 표식 켬(extensions.tab_badge=on)"       "view.extensions,@after:1500:ext.view:rainbow-pairs" Local 4 $'extensions.enabled=on\nextensions.tab_badge=on\n'
+run_s S89 "탭 툴팁 저장 일시(ms · 맨 아래 줄)(115-8)"          "open:$A,@after:1200:ui.move:470/80" Local 4.3 $'tabs.tooltip=on\n'
+S90SAVED="$D/s90_saved_new.sql"; rm -f "$S90SAVED"
+run_s S90 "새 파일 저장 = 색인 재열거 플래시 + 트리 추가(T-299)" "project.load:$PROJ,@after:1000:project.panel:on,@after:2000:file.new,@after:2600:file.save_as:$S90SAVED,@after:3300:flash.dump:$OUT/s90_flash.txt" Local 4.2 "" "s90_flash.txt:background_active=true"
+say "  file: saved_exists=$([ -f "$S90SAVED" ] && echo true || echo false)"
+run_s S91 "기동 명령 @after → 설정 창(검색어 flash) 열림(T-305)" "@after:1200:edit.prefs:flash" Local 4.5
+run_s S92 "기동 명령 @after → 라이선스 창 열림(T-305)"          "@after:1200:help.license" Local 4.5
+CSVIMP="$D/s93_import.csv"; printf 'id,name\n1,a\n2,b\n' > "$CSVIMP"
+run_s S93 "기동 명령 @after → Import 창 열림(T-305)"            "@after:1200:import.open:t_s93;$CSVIMP" Local 5
+run_s S94 "부분 결과 + 필터 = 서버 승격(T-285 · grid.filter_server=auto)" "open:$Q5,@after:1200:run.all,@after:3000:grid.addfilter:0;gt;400,@after:5500:grid.dump:$OUT/s94_grid.txt" Local 6.7 "" "s94_grid.txt:promoted=true"
 
 say ""
 say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%T'))"
