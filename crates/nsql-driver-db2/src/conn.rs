@@ -83,24 +83,42 @@ impl Wire {
         self.corr
     }
 
-    /// 요청 DSS 체인 하나를 보낸다 — `parts` = (종류, 객체) · 마지막 전까지 체인 비트 · 같은 상관 번호.
+    /// 요청 DSS 체인 하나를 보낸다 — `parts` = (종류, 객체) · 마지막 전까지 체인 비트 · **요청 DSS마다 상관 번호 1씩 증가**(pydrda · 10-25
+    /// CI 첫 실접속 = 같은 번호 + 0x10으로 보내자 서버가 머리에서 PROTOCOL ERROR) · 객체 DSS는 앞 요청과 같은 번호(앞 요청에 0x10).
     pub fn send(&mut self, parts: &[(DssKind, Ddm)]) -> Result<u16, DbError> {
-        let corr = self.next_corr();
         let mut out = Vec::new();
         let n = parts.len();
+        let mut corr = 0u16;
         for (i, (kind, obj)) in parts.iter().enumerate() {
             let last = i + 1 == n;
-            encode_dss(*kind, !last, !last, corr, obj, &mut out);
+            let next_is_obj = parts.get(i + 1).is_some_and(|(k, _)| *k == DssKind::Object);
+            if *kind == DssKind::Request {
+                corr = self.next_corr();
+            }
+            encode_dss(*kind, !last, next_is_obj, corr, obj, &mut out);
         }
-        self.sock
-            .write_all(&out)
-            .and_then(|()| self.sock.flush())
-            .map_err(|e| io_err("send", e))?;
+        self.send_raw(&out)?;
         Ok(corr)
+    }
+
+    /// `NSQL_TRACE_DRDA=1`이면 송수신 바이트 앞부분을 stderr로(CI 첫 실접속 진단 · 서버 db2diag RECEIVE BUFFER와 대조).
+    fn trace(dir: &str, b: &[u8]) {
+        if std::env::var_os("NSQL_TRACE_DRDA").is_none() {
+            return;
+        }
+        let n = b.len().min(160);
+        let hex: Vec<String> = b[..n].iter().map(|x| format!("{x:02X}")).collect();
+        eprintln!(
+            "[drda {dir} {} B] {}{}",
+            b.len(),
+            hex.join(" "),
+            if b.len() > n { " …" } else { "" }
+        );
     }
 
     /// 이미 인코딩된 DSS 체인을 그대로 보낸다(세션이 상관 번호를 직접 매긴다).
     pub fn send_raw(&mut self, bytes: &[u8]) -> Result<(), DbError> {
+        Self::trace("send", bytes);
         self.sock
             .write_all(bytes)
             .and_then(|()| self.sock.flush())
@@ -133,6 +151,7 @@ impl Wire {
                     if n == 0 {
                         return Err(io_err("recv", "connection closed by server"));
                     }
+                    Self::trace("recv", &chunk[..n]);
                     self.rbuf.extend_from_slice(&chunk[..n]);
                 }
             }

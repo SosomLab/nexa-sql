@@ -65,11 +65,33 @@ jobs:
             sleep 5
           done
           echo "db2 not ready"; docker logs "${{ job.services.db2.id }}" 2>&1 | tail -50; exit 1
-      - name: integration tests (db2 · 네이티브 DRDA · 크레이트 직접)
+      - name: integration tests (db2 · 네이티브 DRDA · 크레이트 직접 · NSQL_TRACE_DRDA 송수신 hexdump)
+        env:
+          NSQL_TRACE_DRDA: "1"
         run: cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1
       - name: integration tests (db2 · 확장 경로 · NSQL_TEST_DYN=1 · cdylib)
         env:
           NSQL_TEST_DYN: "1"
+          NSQL_TRACE_DRDA: "1"
         run: |
           cargo build -p nsql-driver-db2
           cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1
+      # 실패 진단: 서버 db2diag.log 끝 + DRDA 덤프(RECEIVE/SEND BUFFER)를 아티팩트로(10-25 첫 실접속 = sqljcReadHdrAs PROTOCOL ERROR).
+      - name: db2diag (on failure)
+        if: failure()
+        working-directory: .
+        run: |
+          ID="${{ job.services.db2.id }}"
+          docker exec "$ID" bash -lc 'tail -300 /home/db2inst1/sqllib/db2dump/db2diag.log' > db2diag-tail.log 2>&1 || true
+          docker cp "$ID:/home/db2inst1/sqllib/db2dump/." db2dump 2>/dev/null || true
+          grep -n 'sqljc\|PROTOCOL\|DRDA\|RECEIVE BUFFER' db2diag-tail.log | head -40 || true
+          for f in $(ls db2dump/DIAG0000/*.dump.bin 2>/dev/null | head -3); do echo "== $f"; xxd "$f" | head -40; done
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: db2-diag
+          path: |
+            db2diag-tail.log
+            db2dump/DIAG0000/*.dump.bin
+            db2dump/*.log
+          if-no-files-found: ignore

@@ -58,6 +58,8 @@ struct Reply {
     /// QRYDTA 블록 끝에서 잘린 행의 앞부분(다음 블록 앞에 붙인다).
     carry: Vec<u8>,
     qryinsid: Option<[u8; 8]>,
+    /// OPNQRYRM이 온 상관 번호(= OPNQRY의 번호 · CNTQRY/CLSQRY는 같은 번호로 · pydrda).
+    query_corr: u16,
     query_open: bool,
     sqlca: Option<Sqlca>,
     error: Option<DbError>,
@@ -200,12 +202,16 @@ impl Db2Session {
         Ddm::new(cp::SQLSTT, v)
     }
 
-    /// 요청 체인 — `cmds` = (명령, 딸린 객체들). 상관 번호 1부터 · 객체는 명령과 같은 번호.
+    /// 요청 체인 — `cmds` = (명령, 딸린 객체들). 상관 번호 `first`부터 1씩 · 객체는 명령과 같은 번호.
     fn send_chain(&mut self, cmds: &[(Ddm, Vec<Ddm>)]) -> Result<(), DbError> {
+        self.send_chain_from(cmds, 1)
+    }
+
+    fn send_chain_from(&mut self, cmds: &[(Ddm, Vec<Ddm>)], first: u16) -> Result<(), DbError> {
         let mut out = Vec::new();
         let n = cmds.len();
         for (i, (cmd, objs)) in cmds.iter().enumerate() {
-            let corr = (i + 1) as u16;
+            let corr = first.wrapping_add(i as u16);
             let last_cmd = i + 1 == n;
             let chained = !last_cmd || !objs.is_empty();
             crate::dss::encode_dss(
@@ -257,6 +263,7 @@ impl Db2Session {
                 }
                 cp::OPNQRYRM => {
                     r.query_open = true;
+                    r.query_corr = d.corr;
                     if let Some(id) = d.obj.child(cp::QRYINSID) {
                         if id.value.len() == 8 {
                             let mut a = [0u8; 8];
@@ -343,7 +350,8 @@ impl Db2Session {
                     Ddm::new(cp::QRYINSID, r.qryinsid.unwrap_or([0; 8]).to_vec()),
                 ],
             );
-            self.send_chain(&[(cnt, Vec::new())])?;
+            let corr = r.query_corr.max(1);
+            self.send_chain_from(&[(cnt, Vec::new())], corr)?;
         }
         Ok(r)
     }
@@ -356,7 +364,7 @@ impl Db2Session {
                 Ddm::new(cp::QRYINSID, r.qryinsid.unwrap_or([0; 8]).to_vec()),
             ],
         );
-        self.send_chain(&[(cls, Vec::new())])?;
+        self.send_chain_from(&[(cls, Vec::new())], r.query_corr.max(1))?;
         let chain = self.wire()?.recv_chain()?;
         let mut tmp = Reply::default();
         self.absorb(&chain, &mut tmp)?;
