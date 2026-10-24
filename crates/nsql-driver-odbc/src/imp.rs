@@ -725,7 +725,7 @@ impl Session for OdbcSession {
                     .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
                     .unwrap_or_else(|| "panic".into());
                 let hint = if msg.contains("Length indicator must be non-negative") {
-                    " - the ODBC driver seems to be built with 32-bit SQLLEN; use the 64-bit SQLLEN build (IBM clidriver: register lib/libdb2o.so, not libdb2.so)"
+                    " - the ODBC driver seems to be built with 32-bit SQLLEN; use the 64-bit SQLLEN build (IBM Db2: register libdb2o.so from a Db2 client/server install (sqllib/lib64), not clidriver's libdb2.so)"
                 } else {
                     ""
                 };
