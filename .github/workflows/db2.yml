@@ -1,0 +1,86 @@
+# IBM Db2 실서버 통합 시험 — 별도 잡(138차 · D-359 · docs/121a §①): Db2 Community 컨테이너(≈2.6 GB · privileged · 기동 1~2분)라 본
+# integration 잡에 넣지 않고 **수동 + 야간 + Db2 관련 경로의 PR**에서만 돈다. 드라이버 = IBM clidriver(공개 HTTP 다운로드 · 사용자 설치와 같은 방식)를
+# unixODBC에 등록(`IBM DB2 ODBC DRIVER`) → `db2://db2inst1:…@localhost:50000/nexa`(내장 ODBC 어댑터 위 `Dialect::Db2`).
+name: db2
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 18 * * *" # 03:17 KST
+  pull_request:
+    paths:
+      - "crates/nsql-driver-odbc/**"
+      - "crates/nsql-catalog/**"
+      - "crates/nsql-core/src/dberr.rs"
+      - "crates/nsql-core/src/caps.rs"
+      - "crates/nsql-drivers/tests/integration.rs"
+      - ".github/workflows/db2.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  NSQL_DB2_URL: db2://db2inst1:Nexa_Sql2026@localhost:50000/nexa
+
+defaults:
+  run:
+    working-directory: nexa-sql
+
+jobs:
+  db2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      db2:
+        image: icr.io/db2_community/db2:12.1.2.0
+        env:
+          LICENSE: accept
+          DB2INST1_PASSWORD: Nexa_Sql2026
+          DBNAME: nexa
+          ARCHIVE_LOGS: "false"
+          AUTOCONFIG: "false"
+          UPDATEAVAIL: "NO"
+          PERSISTENT_HOME: "false"
+        ports: ["50000:50000"]
+        options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-license
+          path: nexa-license
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexa-sql
+      - name: unixODBC + IBM clidriver(linuxx64 · odbcinst 등록)
+        working-directory: .
+        run: |
+          sudo apt-get update && sudo apt-get install -y unixodbc-dev
+          sudo mkdir -p /opt/ibm && cd /opt/ibm
+          sudo curl -fsSL -o cli.tar.gz https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/linuxx64_odbc_cli.tar.gz
+          sudo tar xzf cli.tar.gz && sudo rm cli.tar.gz
+          ls /opt/ibm/clidriver/lib | head
+          printf '[IBM DB2 ODBC DRIVER]\nDescription=IBM Data Server Driver for ODBC and CLI\nDriver=/opt/ibm/clidriver/lib/libdb2o.so\nFileUsage=1\nDontDLClose=1\n' | sudo tee -a /etc/odbcinst.ini
+          odbcinst -q -d
+      - name: wait for Db2 (Setup has completed · 최대 10분)
+        run: |
+          for i in $(seq 1 120); do
+            if docker logs "${{ job.services.db2.id }}" 2>&1 | grep -q 'Setup has completed'; then echo "db2 ready"; exit 0; fi
+            sleep 5
+          done
+          echo "db2 not ready"; docker logs "${{ job.services.db2.id }}" 2>&1 | tail -50; exit 1
+      - name: integration tests (db2 · 내장 ODBC 경로)
+        env:
+          LD_LIBRARY_PATH: /opt/ibm/clidriver/lib
+        run: cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1
+      - name: integration tests (db2 · 확장 경로 · NSQL_TEST_DYN=1)
+        env:
+          LD_LIBRARY_PATH: /opt/ibm/clidriver/lib
+          NSQL_TEST_DYN: "1"
+        run: |
+          cargo build -p nsql-driver-odbc
+          cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1

@@ -1788,3 +1788,135 @@ fn clickhouse_session_rows_affected_use_errors_catalog_and_cancel() {
     );
     exec(&mut s, "DROP TABLE nsqlt_ch2").expect("drop");
 }
+
+// ── IBM Db2(138차 · D-359 · 내장 ODBC 어댑터 위 `Dialect::Db2` · CI = `db2.yml` 별도 잡 · 로컬 = `NSQL_DB2_URL` 없으면 skip).
+
+fn db2_spec() -> Option<ConnectSpec> {
+    if !nsql_drivers::available().contains(&Dialect::Odbc) {
+        eprintln!("[skip] 이 빌드에 ODBC 드라이버 없음(Db2는 ODBC 어댑터 위 방언)");
+        return None;
+    }
+    match std::env::var("NSQL_DB2_URL") {
+        Ok(url) => Some(nsql_drivers::parse_target(&url, Dialect::Db2).expect("접속 문자열")),
+        Err(_) => {
+            eprintln!("[skip] NSQL_DB2_URL 없음");
+            None
+        }
+    }
+}
+
+/// 스크립트 경로(러너 · 세션 변수): DDL(PK) · 다중 행 INSERT · `EXEC :V := 리터럴`(로컬) · `?` 바인드 · 스칼라 식 = `FROM SYSIBM.SYSDUMMY1`(`EXEC :B := :A + 10`) ·
+/// 세이브포인트(`ON ROLLBACK RETAIN CURSORS`) · `FETCH FIRST` · 한글 · COMMIT(ODBC SQLEndTran) · 끝에 DROP.
+#[test]
+fn db2_script_ddl_dml_binds_savepoint_and_types() {
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let opener: Opener = Box::new(|s: &ConnectSpec| open_session(s, Dialect::Db2));
+    let mut r = Runner::new(Dialect::Db2, opener);
+    let mut ev = Vec::new();
+    assert!(r.connect(&spec, &mut |e| ev.push(e)), "접속 실패: {ev:?}");
+    let _ = run_raw(&mut r, "DROP TABLE NSQLT_DB2;");
+    let ev = run(
+        &mut r,
+        "CREATE TABLE NSQLT_DB2 (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(50), AMT DECIMAL(10, 2), D DATE);\n\
+         INSERT INTO NSQLT_DB2 VALUES (1, '한글', 12.34, '2024-01-02'), (2, 'it''s', 0.01, '2024-01-03'), (3, NULL, NULL, NULL);\n\
+         COMMIT;\n\
+         EXEC :V_ID := 2\n\
+         EXEC :V_SUM := :V_ID + 10\n\
+         SELECT ID, NAME, AMT, D FROM NSQLT_DB2 WHERE ID <= :V_ID ORDER BY ID;\n\
+         SELECT COUNT(*) AS C FROM NSQLT_DB2 WHERE ID <= :V_SUM;\n\
+         SELECT ID FROM NSQLT_DB2 ORDER BY ID OFFSET 1 ROWS FETCH FIRST 1 ROWS ONLY;\n\
+         DROP TABLE NSQLT_DB2;\n\
+         COMMIT;",
+    );
+    let sets: Vec<&nsql_core::ResultSet> = ev
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::ResultSet { rs, .. } => Some(rs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sets.len(), 3, "{ev:#?}");
+    let rs = sets[0];
+    assert_eq!(rs.rows.len(), 2);
+    assert_eq!(rs.rows[0][0], Value::Int(1), "{:?}", rs.rows[0]);
+    assert_eq!(rs.rows[0][1], Value::Str("한글".into()));
+    assert_eq!(rs.rows[0][2], Value::Decimal("12.34".into()));
+    assert_eq!(rs.rows[1][1], Value::Str("it's".into()));
+    assert_eq!(
+        sets[1].rows[0][0],
+        Value::Int(3),
+        "스칼라 식(:V_ID + 10 = 12)은 SYSDUMMY1로 계산"
+    );
+    assert_eq!(sets[2].rows[0][0], Value::Int(2), "OFFSET/FETCH FIRST");
+}
+
+/// 직접 세션 경로: 방언/Caps(Db2 · 대문자 접힘 · SYSDUMMY1) · 영향 행 수 · 카탈로그(현재 스키마 · 스키마 목록 · 컬럼 · PK) ·
+/// `set_option("schema")` = `SET SCHEMA` · 오류 분류(SQL0204N → NoObject · SQL0104N → Syntax) · 임시 표 DROP.
+#[test]
+fn db2_session_catalog_schema_and_errors() {
+    use nsql_core::{dberr, ErrorClass, ExecRequest};
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = open_session(&spec, Dialect::Db2)
+        .unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    assert_eq!(s.dialect(), Dialect::Db2);
+    assert_eq!(s.caps().scalar_from, Some("SYSIBM.SYSDUMMY1"));
+    assert!(s.is_alive());
+    let exec = |s: &mut Box<dyn Session>, sql: &str| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params: Vec::new(),
+        })
+    };
+    let _ = exec(&mut s, "DROP TABLE NSQLT_DB2S");
+    exec(
+        &mut s,
+        "CREATE TABLE NSQLT_DB2S (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(20) DEFAULT 'x')",
+    )
+    .expect("create");
+    let r = exec(&mut s, "INSERT INTO NSQLT_DB2S (ID) VALUES (1), (2)").expect("insert");
+    assert_eq!(r.rows_affected, Some(2), "{r:?}");
+    s.commit().expect("commit");
+    let cur = nsql_catalog::current_schema(&mut *s).expect("current schema");
+    assert!(!cur.is_empty());
+    let schemas = nsql_catalog::schemas(&mut *s).expect("schemas");
+    assert!(schemas.iter().any(|x| x == &cur), "{schemas:?}");
+    let cols = nsql_catalog::columns(&mut *s, &cur, "NSQLT_DB2S").expect("columns");
+    assert_eq!(
+        cols.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["ID", "NAME"],
+        "{cols:?}"
+    );
+    assert!(!cols[0].nullable && cols[1].nullable);
+    assert!(cols[1].default.contains('x'), "{:?}", cols[1].default);
+    assert_eq!(
+        nsql_catalog::keys(&mut *s, &cur, "NSQLT_DB2S")
+            .expect("keys")
+            .pk,
+        vec!["ID".to_string()]
+    );
+    // 스키마 전환 = SET SCHEMA(존재하는 스키마 SYSCAT) → 비한정 이름이 그쪽으로 풀린다 · 되돌림.
+    s.set_option("schema", "SYSCAT").expect("set schema");
+    assert_eq!(
+        nsql_catalog::current_schema(&mut *s).expect("cur"),
+        "SYSCAT"
+    );
+    s.set_option("schema", &cur).expect("set schema back");
+    // 오류 분류(SQLCODE = ODBC 네이티브 코드).
+    let e = exec(&mut s, "SELECT * FROM NSQLT_NO_SUCH_TABLE").expect_err("no table");
+    let c = dberr::classify(
+        Dialect::Db2,
+        e.code,
+        &e.message,
+        "SELECT * FROM NSQLT_NO_SUCH_TABLE",
+    );
+    assert_eq!(c.class, ErrorClass::NoObject, "{e:?}");
+    let e = exec(&mut s, "SELEC 1 FROM SYSIBM.SYSDUMMY1").expect_err("syntax");
+    let c = dberr::classify(Dialect::Db2, e.code, &e.message, "SELEC 1");
+    assert_eq!(c.class, ErrorClass::Syntax, "{e:?}");
+    exec(&mut s, "DROP TABLE NSQLT_DB2S").expect("drop");
+    s.commit().expect("commit");
+}

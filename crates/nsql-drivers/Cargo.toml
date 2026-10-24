@@ -47,6 +47,8 @@ nsql-driver-odbc = { workspace = true, optional = true }
 
 [dev-dependencies]
 nsql-run.workspace = true
+# Db2 통합 시험(138차 · D-359)이 카탈로그 층(SYSCAT 질의)까지 실서버로 검증한다 — nsql-catalog는 nsql-core만 의존(순환 없음).
+nsql-catalog.workspace = true
 # ★ ClickHouse(138차 · 확장 전용)는 내장 feature가 없어 통합 시험이 크레이트를 직접 연다(확장 경로 = NSQL_TEST_DYN=1 · cdylib).
 nsql-driver-clickhouse.workspace = true
 # 설치 왕복 시험 전용 서명(발급 코드가 아니다 · nsql-license 시험과 같은 판).
