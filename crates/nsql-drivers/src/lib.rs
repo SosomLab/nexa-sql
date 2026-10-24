@@ -63,8 +63,14 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Postgres => Ok(Box::new(nsql_driver_pg::PgSession::connect(spec)?)),
         #[cfg(feature = "mysql")]
         Dialect::Mysql => Ok(Box::new(nsql_driver_mysql::MysqlSession::connect(spec)?)),
+        // ★ Db2(D-361 · 10-25): 주 경로 = 네이티브 DRDA 확장 `db2`(아래 확장 분기) · 내장 ODBC 어댑터는 **`?driver=odbc`로 명시할 때만**
+        //   (IBM clidriver가 있는 PC · 모든 OS 같은 규칙 · 협업 V1 (c) "안내 없이 clidriver 경로로 빠짐" 교정).
         #[cfg(feature = "odbc")]
-        Dialect::Odbc | Dialect::Db2 | Dialect::Access => {
+        Dialect::Db2 if spec.driver.as_deref() == Some("odbc") => {
+            Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?))
+        }
+        #[cfg(feature = "odbc")]
+        Dialect::Odbc | Dialect::Access => {
             Ok(Box::new(nsql_driver_odbc::OdbcSession::connect(spec)?))
         }
         // ★ D-350: 내장이 없는 방언 = 확장 드라이버(`drivers/<id>/<ver>/` cdylib · 첫 접속 때 지연 로드) · 없으면
@@ -86,8 +92,8 @@ pub const DRIVER_IDS: &[(Dialect, &[&str])] = &[
     (Dialect::Duckdb, &["duckdb"]),
     // ClickHouse = 확장 전용(D-354 · HTTP 인터페이스 · 외부 crate 0 · 설치본 정책상 확장).
     (Dialect::Clickhouse, &["clickhouse"]),
-    // ★ Db2 = 네이티브 DRDA 확장 `db2`(D-361 · 외부 런타임 0)가 먼저 · ODBC 어댑터(D-359 · clidriver 필요)는 폴백.
-    (Dialect::Db2, &["db2", "odbc"]),
+    // ★ Db2 = 네이티브 DRDA 확장 `db2`(D-361 · 외부 런타임 0) · ODBC 어댑터(D-359 · clidriver)는 `?driver=odbc` 명시일 때만(내장 분기).
+    (Dialect::Db2, &["db2"]),
     (Dialect::Access, &["odbc"]),
 ];
 
@@ -179,8 +185,9 @@ pub fn is_builtin(dialect: Dialect) -> bool {
         Dialect::Postgres => cfg!(feature = "pg"),
         Dialect::Mysql => cfg!(feature = "mysql"),
         Dialect::Mssql => cfg!(feature = "mssql"),
-        Dialect::Odbc | Dialect::Db2 | Dialect::Access => cfg!(feature = "odbc"), // 전 OS(10-23 · unixODBC)
-        Dialect::Duckdb | Dialect::Clickhouse => false,
+        Dialect::Odbc | Dialect::Access => cfg!(feature = "odbc"), // 전 OS(10-23 · unixODBC · 10-25 정적 동봉)
+        // Db2 = 확장 전용(네이티브 DRDA · D-361) · ODBC는 `?driver=odbc`일 때만 내장 경로.
+        Dialect::Duckdb | Dialect::Clickhouse | Dialect::Db2 => false,
         Dialect::Oracle => oracle_driver().included(),
     }
 }

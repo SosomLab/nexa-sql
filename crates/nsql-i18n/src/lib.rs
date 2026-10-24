@@ -4753,7 +4753,7 @@ impl Msg {
             Msg::LblDriverInfoClickhouse => ["ClickHouse driver", "ClickHouse 드라이버"],
             Msg::LblDriverInfoDb2 => ["IBM Db2 driver", "IBM Db2 드라이버"],
             Msg::LblDriverInfoAccess => ["MS Access driver", "MS Access 드라이버"],
-            Msg::ValDbmsOdbcDb2 => ["Via ODBC adapter - install IBM Data Server Driver (clidriver) and register it as \"IBM DB2 ODBC DRIVER\"", "ODBC 어댑터 경유 - IBM Data Server Driver(clidriver)를 설치하고 \"IBM DB2 ODBC DRIVER\"로 등록"],
+            Msg::ValDbmsOdbcDb2 => ["Native DRDA driver (extension \"db2\", auto-installed on first connect, no IBM runtime needed); add ?driver=odbc to use an installed IBM clidriver via ODBC instead", "네이티브 DRDA 드라이버(확장 \"db2\" · 첫 접속 때 자동 설치 · IBM 런타임 불필요) · 설치된 IBM clidriver를 ODBC로 쓰려면 ?driver=odbc"],
             Msg::ValDbmsOdbcAccess => ["Via ODBC adapter - Windows: Access Database Engine (ACE); Linux/macOS: MDBTools ODBC (read-only)", "ODBC 어댑터 경유 - Windows: Access Database Engine(ACE) · Linux/macOS: MDBTools ODBC(읽기 전용)"],
             Msg::DescDriverInfoDialect => ["Read-only - built-in, installed extension, or not installed (installed on first connection when auto-install is on)", "읽기 전용 - 내장 · 설치된 확장 · 미설치(자동 설치가 켜져 있으면 첫 접속 때 설치)"],
             Msg::ValDriverExtInstalled => ["Extension {0} {1} installed - loaded on first connection", "확장 {0} {1} 설치됨 - 첫 접속 때 불러옴"],
