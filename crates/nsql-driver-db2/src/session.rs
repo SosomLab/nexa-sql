@@ -149,8 +149,9 @@ impl Db2Session {
             Duration::from_secs(60),
             tls.then_some(host),
         )?;
+        let db_upper = database.to_ascii_uppercase();
         let login = Login {
-            database,
+            database: &db_upper,
             user,
             password,
             ext_name: "nsql",
@@ -161,7 +162,8 @@ impl Db2Session {
         let mut s = Db2Session {
             wire: Some(wire),
             info,
-            database: format!("{database:<18}"),
+            // Db2 데이터베이스 이름은 대문자(서버가 RDBNAM을 대문자 EBCDIC로 돌려준다).
+            database: format!("{:<18}", database.to_ascii_uppercase()),
             description: spec.redacted(),
             max_rows: 0,
             in_tx: false,
@@ -181,11 +183,12 @@ impl Db2Session {
     }
 
     fn pkgnamcsn(&self) -> Ddm {
-        // 64바이트 = RDBNAM 18 · RDBCOLID 18 · PKGID 18 · PKGCNSTKN 8(ASCII) · PKGSN 2(큰 끝) — pydrda(ASCII · 공백 채움).
+        // 64바이트 = RDBNAM 18 · RDBCOLID 18 · PKGID 18(셋 다 **EBCDIC cp500 · 대문자 · 0x40 채움** — CI 2차 40115496236: ASCII로 보내자
+        //   SQL0805N 패키지 없음 · 서버는 RDBNAM을 EBCDIC 대문자로 돌려준다) · PKGCNSTKN 8(ASCII `SYSLVL01` · pydrda/go-db2) · PKGSN 2(큰 끝).
         let mut v = Vec::with_capacity(64);
-        v.extend_from_slice(self.database.as_bytes());
-        v.extend_from_slice(format!("{:<18}", "NULLID").as_bytes());
-        v.extend_from_slice(format!("{PKGID:<18}").as_bytes());
+        v.extend_from_slice(&crate::ebcdic::padded(self.database.trim(), 18));
+        v.extend_from_slice(&crate::ebcdic::padded("NULLID", 18));
+        v.extend_from_slice(&crate::ebcdic::padded(PKGID, 18));
         v.extend_from_slice(format!("{PKGCNSTKN:>8}").as_bytes());
         v.extend_from_slice(&PKGSN.to_be_bytes());
         Ddm::new(cp::PKGNAMCSN, v)
@@ -652,9 +655,10 @@ mod tests {
         };
         let p = s.pkgnamcsn();
         assert_eq!(p.value.len(), 64);
-        assert_eq!(&p.value[..6], b"SAMPLE");
-        assert_eq!(&p.value[18..24], b"NULLID");
-        assert_eq!(&p.value[36..44], b"SYSSH200");
+        // EBCDIC: S=0xE2 A=0xC1 M=0xD4 P=0xD7 L=0xD3 E=0xC5 · 공백 0x40 · 토큰은 ASCII.
+        assert_eq!(&p.value[..7], &[0xE2, 0xC1, 0xD4, 0xD7, 0xD3, 0xC5, 0x40]);
+        assert_eq!(&p.value[18..24], &crate::ebcdic::from_utf8("NULLID")[..]);
+        assert_eq!(&p.value[36..44], &crate::ebcdic::from_utf8("SYSSH200")[..]);
         assert_eq!(&p.value[54..62], b"SYSLVL01");
         assert_eq!(&p.value[62..], &[0x00, 0x41]);
         let st = Db2Session::sqlstt("VALUES 1");

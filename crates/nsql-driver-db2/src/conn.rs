@@ -97,8 +97,28 @@ impl Wire {
             }
             encode_dss(*kind, !last, next_is_obj, corr, obj, &mut out);
         }
-        self.send_raw(&out)?;
+        // ★ SECCHK(USRID·PASSWORD·SECTKN)는 추적에 찍지 않는다(협업 10-25: 공개 CI 로그에 비밀번호 바이트가 남았다).
+        let secret = parts.iter().any(|(_, o)| o.cp == cp::SECCHK);
+        if secret {
+            Self::trace_note("send: SECCHK chain (credentials masked)");
+            self.send_raw_quiet(&out)?;
+        } else {
+            self.send_raw(&out)?;
+        }
         Ok(corr)
+    }
+
+    fn trace_note(s: &str) {
+        if std::env::var_os("NSQL_TRACE_DRDA").is_some() {
+            eprintln!("[drda {s}]");
+        }
+    }
+
+    fn send_raw_quiet(&mut self, bytes: &[u8]) -> Result<(), DbError> {
+        self.sock
+            .write_all(bytes)
+            .and_then(|()| self.sock.flush())
+            .map_err(|e| io_err("send", e))
     }
 
     /// `NSQL_TRACE_DRDA=1`이면 송수신 바이트 앞부분을 stderr로(CI 첫 실접속 진단 · 서버 db2diag RECEIVE BUFFER와 대조).
