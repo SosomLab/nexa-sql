@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-24 (138차 · Linux · V3 전체 자동화)** — 최신화 121커밋 · V3 Linux 전 단계(단위 1063 · 통합 내장=확장 28 · 기능 점검 84+28 · 격리 E2E 18 · 실서버 E2E 25) = 제품 결함 0 · 시험 자산 9 수정 · 🔧 T-413 nexa-fs EXDEV · 🔧 T-414 ODBC SQLCancel 세그폴트(`odbc.cancel`) · ★ T-60 Linux 서식 복사 · T-38 Linux 테마 실시간 추종 · 📐 D-353 대기 · 12:30 리부팅 → 재개(B3·F 남음) · nexa-sql b18c3d1f(feat/138-linux-gaps 5커밋 ff) · nexa-ui 290c801·97fd950(225차).
 - **2026-10-24 (131차 · mac · 맥 첫 검증)** — V3 제품 결함 0(기동 +36 % = 환경 · A/B) · 운영 2단 통일 · ODBC 6건(이름·안내·Driver 분류·로캘·자동 커밋 멈춤·SQLSTATE 분류) + 맥 실접속·설치/원복 스크립트 · 설정 내보내기/가져오기 · 맥 시험 Accessory 비활성 · Intel 맥 확장 7종 ✓ · 시험 자산 3 — journal 10-23 §45 · 10-24 §1~§2.
 - **2026-10-23 (137차 · 🚀 v0.2.9)** — 🚀 v0.2.9 패치 공개(Oracle Thin 확장 우선 · CLI explain/import/export/cat 드라이버 설정 · conn test 자동 설치 · 실행 계획 검토 · 관리자·필터·다국어 · 자산 +0.5 % · Homebrew ✓ · winget/choco 제외).
 
