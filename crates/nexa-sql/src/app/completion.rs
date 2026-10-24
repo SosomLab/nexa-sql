@@ -399,6 +399,26 @@ impl App {
         if let Some(b) = self.outline_panel.take_open() {
             self.goto_byte(b);
         }
+        // ★ 우클릭 메뉴(T-423): 이동 · 이 문장 실행(캐럿을 심볼로 옮긴 뒤 캐럿 문장 실행 = `run.statement`과 같은 길 · 문지기 통과) · 이름 복사.
+        if let Some(cmd) = self.outline_panel.take_command() {
+            if let Some(b) = cmd.strip_prefix("outline.goto:") {
+                if let Ok(b) = b.parse::<usize>() {
+                    self.goto_byte(b);
+                }
+            } else if let Some(b) = cmd.strip_prefix("outline.run:") {
+                if let Ok(b) = b.parse::<usize>() {
+                    self.goto_byte(b);
+                    self.run_sql(false);
+                }
+            } else if let Some(name) = cmd.strip_prefix("outline.copy:") {
+                self.sess.status = if crate::clipboard::write_text(name) {
+                    tf(Msg::StCopiedText, &[name])
+                } else {
+                    t(Msg::ErrClipboard).into()
+                };
+                self.redraw();
+            }
+        }
         if let Some(key) = self
             .outline_panel
             .take_toggle()

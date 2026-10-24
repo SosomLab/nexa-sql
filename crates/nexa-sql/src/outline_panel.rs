@@ -18,6 +18,7 @@ use crate::exp_icons::{self, IconKind};
 use crate::filterbar::{FilterBar, FilterEvent, GAP_Y};
 use crate::findbar::BtnKind;
 use crate::toolicons;
+use nexa_ctl::controls::{ContextMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::{IconImage, Theme};
@@ -40,6 +41,43 @@ pub(crate) struct OutlineCfg {
     /// 기본 펼침 깊이(0 = 전부 접힘 · 1 = 뿌리만 펼침 · …).
     pub expand_depth: u8,
     pub follow_caret: bool,
+    /// 형제 순서(T-423): 파일 순 · 이름순 · 종류별(종류 순 묶음 → 이름).
+    pub sort: OutlineSort,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum OutlineSort {
+    #[default]
+    Position,
+    Name,
+    Kind,
+}
+
+impl OutlineSort {
+    fn parse(s: &str) -> OutlineSort {
+        match s {
+            "name" => OutlineSort::Name,
+            "kind" => OutlineSort::Kind,
+            _ => OutlineSort::Position,
+        }
+    }
+}
+
+/// 종류별 정렬의 묶음 순서(DataGrip Group by type에 해당): 객체 → 루틴 → CTE → 변수·선언 → 커서·라벨 → 문장.
+fn kind_rank(kind: SymKind) -> u8 {
+    match kind {
+        SymKind::Object => 0,
+        SymKind::Procedure
+        | SymKind::Function
+        | SymKind::Package
+        | SymKind::PackageBody
+        | SymKind::Trigger
+        | SymKind::Type => 1,
+        SymKind::Cte => 2,
+        SymKind::Define | SymKind::Variable | SymKind::Declared => 3,
+        SymKind::Cursor | SymKind::Label => 4,
+        SymKind::Statement => 5,
+    }
 }
 
 impl Default for OutlineCfg {
@@ -52,6 +90,7 @@ impl Default for OutlineCfg {
             show_declared: true,
             expand_depth: 1,
             follow_caret: true,
+            sort: OutlineSort::Position,
         }
     }
 }
@@ -66,7 +105,32 @@ pub(crate) fn outline_cfg(s: &Settings) -> OutlineCfg {
         show_declared: s.flag("outline.show_declared"),
         expand_depth: s.int("outline.expand_depth").clamp(0, 8) as u8,
         follow_caret: s.flag("outline.follow_caret"),
+        sort: OutlineSort::parse(s.get("outline.sort").unwrap_or("position")),
     }
+}
+
+/// 형제 순서를 바꾼다(부모가 자식보다 먼저인 DFS 순서는 유지) — `key(idx)` = 정렬 열쇠(작은 것이 앞) · 파일 순이면 그대로.
+pub(crate) fn reorder(vis: &[VisNode], key: &dyn Fn(usize) -> (u8, String)) -> Vec<VisNode> {
+    use std::collections::BTreeMap;
+    let mut children: BTreeMap<Option<usize>, Vec<VisNode>> = BTreeMap::new();
+    for v in vis {
+        children.entry(v.parent).or_default().push(*v);
+    }
+    for list in children.values_mut() {
+        list.sort_by_cached_key(|v| key(v.idx));
+    }
+    let mut out = Vec::with_capacity(vis.len());
+    let mut stack: Vec<VisNode> = children
+        .get(&None)
+        .map(|r| r.iter().rev().copied().collect())
+        .unwrap_or_default();
+    while let Some(v) = stack.pop() {
+        out.push(v);
+        if let Some(kids) = children.get(&Some(v.idx)) {
+            stack.extend(kids.iter().rev().copied());
+        }
+    }
+    out
 }
 
 /// 토글 종류 ↔ 설정 키(패널 토글 클릭 = 호스트가 그 키를 뒤집는다).
@@ -236,6 +300,10 @@ pub(crate) struct OutlinePanel {
     open: Option<usize>,
     /// 토글 클릭 → 호스트가 설정을 뒤집는다(1회성).
     pending_toggle: Option<BtnKind>,
+    /// 우클릭 메뉴(T-423): 심볼로 이동 · 이 문장 실행 · 이름 복사 → 호스트 명령 `outline.goto:` · `outline.run:` · `outline.copy:`.
+    menu: ContextMenu,
+    menu_row: Option<usize>,
+    command: Option<String>,
     /// 마지막으로 받은 캐럿(글자 색인) — 같으면 아무 일도 없다.
     caret: Option<usize>,
     icon_cache: HashMap<(IconKind, i32), Rc<IconImage>>,
@@ -257,13 +325,53 @@ const ICON_PX: f32 = 16.0;
 impl OutlinePanel {
     /// 필터 상자 팝업(편집 메뉴 · 이력)이 열려 있는가 — 우클릭 메뉴 배타 규칙(10-13).
     pub(crate) fn menu_open(&self) -> bool {
-        self.filter.popup_open()
+        self.filter.popup_open() || self.menu.is_open()
     }
     pub(crate) fn menu_bounds(&self) -> nexa_ctl::geom::Rect {
-        self.filter.popup_bounds()
+        if self.menu.is_open() {
+            self.menu.bounds()
+        } else {
+            self.filter.popup_bounds()
+        }
     }
     pub(crate) fn close_menu(&mut self) {
         self.filter.close_popups();
+        self.menu.close();
+    }
+
+    /// 우클릭 메뉴 선택 → 호스트 명령(1회성).
+    pub(crate) fn take_command(&mut self) -> Option<String> {
+        self.command.take()
+    }
+
+    fn open_menu(&mut self, p: Point) {
+        let Some(r) = self.row_at(p) else {
+            return;
+        };
+        self.sel = Some(r);
+        self.menu_row = Some(r);
+        let items = vec![
+            CtxItem::item("goto", t(Msg::MnOutlineGoto)),
+            CtxItem::item("run", t(Msg::MnOutlineRunHere)),
+            CtxItem::Separator,
+            CtxItem::item("copy_name", t(Msg::MnCopyName)),
+        ];
+        let text_w = (self.row_h * 10).max(180);
+        let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
+    }
+
+    fn menu_pick(&mut self, id: &str) {
+        let Some(&idx) = self.menu_row.and_then(|r| self.rows.get(r)) else {
+            return;
+        };
+        let row = &self.all[idx];
+        self.command = match id {
+            "goto" => Some(format!("outline.goto:{}", row.byte)),
+            "run" => Some(format!("outline.run:{}", row.byte)),
+            "copy_name" => Some(format!("outline.copy:{}", row.name)),
+            _ => None,
+        };
     }
 
     /// 언어 전환 뒤 재라벨(플레이스홀더).
@@ -313,6 +421,9 @@ impl OutlinePanel {
             clamp_w: i32::MAX / 2,
             open: None,
             pending_toggle: None,
+            menu: ContextMenu::new(),
+            menu_row: None,
+            command: None,
             caret: None,
             icon_cache: HashMap::new(),
         }
@@ -340,6 +451,9 @@ impl OutlinePanel {
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         if self.visible {
             self.filter.paint_popup(dc, th);
+            if self.menu.is_open() {
+                self.menu.paint(dc, th);
+            }
         }
     }
 
@@ -536,12 +650,24 @@ impl OutlinePanel {
             .unwrap_or(self.eff_depth[idx] < self.cfg.expand_depth)
     }
 
+    /// 종류 트리에 정렬 적용(설정 `outline.sort` · 파일 순이면 그대로).
+    fn sorted_vis(&self) -> Vec<VisNode> {
+        match self.cfg.sort {
+            OutlineSort::Position => self.vis.clone(),
+            OutlineSort::Name => reorder(&self.vis, &|i| (0, self.all[i].name.to_lowercase())),
+            OutlineSort::Kind => reorder(&self.vis, &|i| {
+                (kind_rank(self.all[i].kind), self.all[i].name.to_lowercase())
+            }),
+        }
+    }
+
     fn rebuild(&mut self) {
         let filtering = !self.filter.is_empty();
+        let vis = self.sorted_vis();
         if filtering {
             // 일치 행 + 그 조상(접힘 무시).
             let mut keep = vec![false; self.all.len()];
-            for v in &self.vis {
+            for v in &vis {
                 let r = &self.all[v.idx];
                 if self
                     .filter
@@ -558,14 +684,9 @@ impl OutlinePanel {
                     }
                 }
             }
-            self.rows = self
-                .vis
-                .iter()
-                .map(|v| v.idx)
-                .filter(|&i| keep[i])
-                .collect();
+            self.rows = vis.iter().map(|v| v.idx).filter(|&i| keep[i]).collect();
         } else {
-            let rows = fold_rows(&self.vis, &|idx, _d| self.expanded(idx));
+            let rows = fold_rows(&vis, &|idx, _d| self.expanded(idx));
             self.rows = rows;
         }
         if self.sel.is_some_and(|s| s >= self.rows.len()) {
@@ -822,6 +943,21 @@ impl OutlinePanel {
         if !self.visible {
             return false;
         }
+        // ★ 우클릭 메뉴가 열려 있으면 메뉴가 먼저(프로젝트 패널과 같은 규칙 · 바깥 클릭 = 닫고 아래로).
+        if self.menu.is_open() {
+            let outside = self.menu.is_outside_click(ev);
+            let consumed = self.menu.on_event(ev) && !outside;
+            if let Some(id) = self.menu.take_picked() {
+                self.menu_pick(&id);
+                return true;
+            }
+            if consumed {
+                return true;
+            }
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                return false;
+            }
+        }
         // ★ 필터 팝업(이력 드롭다운) 열림 중 마우스는 틀이 먼저(사용자 10-07 · 공용 규칙 `popup_takes/keeps`).
         // ★ 상자 팝업(편집 메뉴·이력)이 떠 있으면 키는 **그 상자(메뉴)가 먼저**(팝업 최상위 · 사용자 10-13 "모든 패널에서 다른 컨트롤이 먼저 수신").
         if self.filter.popup_open()
@@ -846,10 +982,15 @@ impl OutlinePanel {
                 return true;
             }
         }
-        // 필터 상자 우클릭 = 편집 메뉴(틀이 연다 · 10-13).
+        // 필터 상자 우클릭 = 편집 메뉴(틀이 연다 · 10-13) · 목록 행 우클릭 = 심볼 메뉴(T-423).
         if let InputEvent::RightDown { x, y } = *ev {
-            if self.filter.bounds().contains(Point { x, y }) {
+            let p = Point { x, y };
+            if self.filter.bounds().contains(p) {
                 let _ = self.filter_feed(ev);
+                return true;
+            }
+            if self.list_rect.contains(p) {
+                self.open_menu(p);
                 return true;
             }
         }
@@ -1296,6 +1437,53 @@ mod tests {
             ..OutlineCfg::default()
         };
         assert_eq!(visible_tree(&nd, &ol).len(), 3);
+    }
+
+    /// 정렬(T-423): 형제끼리만 바뀌고 부모 → 자식 순서는 유지 · 종류별 = 종류 순위 → 이름.
+    #[test]
+    fn reorder_sorts_siblings_and_keeps_tree() {
+        let vis = vec![
+            VisNode {
+                idx: 0,
+                depth: 0,
+                parent: None,
+            },
+            VisNode {
+                idx: 1,
+                depth: 1,
+                parent: Some(0),
+            },
+            VisNode {
+                idx: 2,
+                depth: 1,
+                parent: Some(0),
+            },
+            VisNode {
+                idx: 3,
+                depth: 0,
+                parent: None,
+            },
+        ];
+        let names = ["pkg", "zeta", "alpha", "aaa_table"];
+        let kinds = [
+            SymKind::PackageBody,
+            SymKind::Procedure,
+            SymKind::Declared,
+            SymKind::Object,
+        ];
+        let by_name = reorder(&vis, &|i| (0, names[i].to_string()));
+        assert_eq!(
+            by_name.iter().map(|v| v.idx).collect::<Vec<_>>(),
+            vec![3, 0, 2, 1],
+            "뿌리 aaa_table < pkg · pkg 안 alpha < zeta"
+        );
+        let by_kind = reorder(&vis, &|i| (kind_rank(kinds[i]), names[i].to_string()));
+        assert_eq!(
+            by_kind.iter().map(|v| v.idx).collect::<Vec<_>>(),
+            vec![3, 0, 1, 2],
+            "뿌리 = 객체(0) 먼저 · pkg 안 = 루틴(1) 먼저 선언(3) 뒤"
+        );
+        assert!(kind_rank(SymKind::Statement) > kind_rank(SymKind::Cte));
     }
 
     /// 접기: 기본 펼침 깊이 1 = 뿌리 펼침 · 그 안(깊이 1)의 자식은 접힘 · 펼친 노드의 자식만 보인다.

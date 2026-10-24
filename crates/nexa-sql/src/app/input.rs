@@ -1082,6 +1082,9 @@ impl App {
             return;
         }
         // 아웃라인 패널(docs/76) — 북마크 패널과 같은 규칙(포인터는 안일 때 · 키는 포커스일 때 · 열기 요청은 pump).
+        if self.route_outline_menu(ev) {
+            return;
+        }
         if self.route_outline_panel(ev, is_ptr) {
             return;
         }
@@ -1892,6 +1895,29 @@ impl App {
                     self.redraw();
                 }
                 self.outline_pump();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 아웃라인 패널 우클릭 메뉴(T-423). 가져갔으면 `true`(연쇄 끝) — 프로젝트 패널 메뉴와 같은 규칙.
+    fn route_outline_menu(&mut self, ev: InputEvent) -> bool {
+        if self.outline_panel.is_visible() && self.outline_panel.menu_open() {
+            let outside_click = matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) && !self.outline_panel.bounds().contains(Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            });
+            if self.outline_panel.on_event(&ev) {
+                self.redraw();
+            }
+            self.outline_pump();
+            if (!outside_click || self.outline_panel.menu_open())
+                && !matches!(ev, InputEvent::MouseMove { .. })
+            {
                 return true;
             }
         }

@@ -800,6 +800,13 @@ const MAC_PRESENT_OPTS: &[(&str, Msg)] = &[
     ("softbuffer", Msg::OptMacPresentSoft),
 ];
 
+/// 아웃라인 정렬(T-423 · 10-25): 파일 순 · 이름순(형제끼리) · 종류별(종류 순 묶음 → 이름 · DataGrip "Group by type"에 해당).
+const OUTLINE_SORT_OPTS: &[(&str, Msg)] = &[
+    ("position", Msg::ValOutlineSortPosition),
+    ("name", Msg::ValOutlineSortName),
+    ("kind", Msg::ValOutlineSortKind),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -6621,6 +6628,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescOutlineFollowCaret,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "outline.sort",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineSort,
+        desc: Msg::DescOutlineSort,
+        kind: SettingKind::Choice(OUTLINE_SORT_OPTS),
+        default: "position",
     },
     // ★ 북마크(docs/69 §9 · 독립 그룹 `Bookmarks` · 1차 = 동작·저장/표시/위치 추적 핵심 키 · 나머지는 B4b~).
     Entry {
