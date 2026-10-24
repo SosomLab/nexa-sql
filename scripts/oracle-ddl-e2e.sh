@@ -153,7 +153,7 @@ roundtrip "TYPE NSQLT_TY(스키마 한정)" type NSQLT_TY "${TY_SRC/TYPE NSQLT_T
 o=$("$NSQL" cat source view NSQLT_V -c "$PROF" 2>&1); chk "소스 열기(뷰) = GET_DDL 머리(FORCE … VIEW … NSQLT_V (컬럼) AS)" 'CREATE OR REPLACE .*VIEW .*NSQLT_V"? \(' "$o"; chk "뷰 본문" 'WHERE AMT >= 0' "$o"
 o=$("$NSQL" cat gen ddl NSQLT_P procedure -c "$PROF" 2>&1); chk "Generate SQL ▸ DDL(프로시저) = DBMS_METADATA + /" '^/$' "$o"; chk "DDL(프로시저) 본문" 'DBMS_OUTPUT.PUT_LINE' "$o"
 o=$("$NSQL" cat gen ddl NSQLT_PKG package -c "$PROF" 2>&1); chk "DDL(패키지) = 스펙 + 본문 두 블록(/ 2개)" '^/$' "$o"; n=$(echo "$o" | grep -c '^/$'); [ "$n" -ge 2 ] && ok "DDL(패키지) / 개수 = $n(≥2)" || bad "DDL(패키지) / 개수 = $n(<2)" "$o"
-o=$("$NSQL" cat errors NSQLT_P -c "$PROF" 2>&1); chk "컴파일 오류 없음(NSQLT_P)" 'No errors' "$o"
+o=$("$NSQL" cat errors NSQLT_P -c "$PROF" 2>&1); chk "컴파일 오류 없음(NSQLT_P)" 'No errors|오류 없음' "$o"   # 137차(10-23) CLI 문구 Msg화 → ko 로캘 "오류 없음."(10-24 Linux V3 D4)
 
 # 소스 열기 결과를 F5(전체 실행)로 다시 실행 = 한 항목(분할기 회귀 · 사용자 09-30 "줄 단위 실행")
 "$NSQL" cat source procedure NSQLT_P -c "$PROF" > "$OUT/30_src_p.sql" 2>/dev/null

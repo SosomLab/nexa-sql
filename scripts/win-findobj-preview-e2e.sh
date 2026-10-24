@@ -42,14 +42,15 @@ gui warm "@after:1500:findobj.open" 4
 # ── 시나리오 A: 검색 **중**(현재 스키마 결과가 먼저 들어온 뒤 · 다른 스키마·소스 작업은 아직 진행) 클릭 → 키 ↓ → 키 ↓.
 #   +2.5 s 창 열기 · +4.0 s 검색 · +7.0 s 종류 행 선택(소스 줄 있는 첫 View) · +7.3 s 소스 1번째 줄 **클릭 합성** · +9.0 s 덤프/캐럿
 #   · +9.5 s ↓ · +11.0 s 덤프/캐럿 · +11.5 s ↓ · +13 s 덤프 · +13.2 s 로그 · +35 s 최종(검색 끝 판정).
+# ★ 10-24(138차 Linux V3 D10): 종전 `$D\\s1.txt`(Git Bash 백슬래시)는 Linux에서 글자 그대로 `\`가 돼 덤프가 안 생겼다 → 구분자 `/`(Windows 파일 API도 `/` 허용 · cygpath -w 결과 뒤에 붙여도 된다).
 D="$(w "$OUT")"
-CMD="@connected:open:$(w "$OUT/doc.sql"),$(A 2500 findobj.open),$(A 4000 "findobj.query:$Q"),$(A 7000 "findobj.selkind:$KIND:$MINSRC"),$(A 7200 "status.dump:$D\\s1.txt")"
-CMD="$CMD,$(A 7300 findobj.clickpre:src),$(A 7400 "status.dump:$D\\s2.txt"),$(A 9000 "findobj.dump:$D\\d1.dump"),$(A 9100 "editor.dump:$D\\e1.txt")"
-CMD="$CMD,$(A 9500 findobj.key:down),$(A 11000 "findobj.dump:$D\\d2.dump"),$(A 11100 "editor.dump:$D\\e2.txt"),$(A 11200 "status.dump:$D\\s3.txt")"
-CMD="$CMD,$(A 11500 findobj.key:down),$(A 13000 "editor.dump:$D\\e3.txt"),$(A 13200 "log.dump:$D\\log1.txt"),$(A 35000 "findobj.dump:$D\\d9.dump")"
+CMD="@connected:open:$(w "$OUT/doc.sql"),$(A 2500 findobj.open),$(A 4000 "findobj.query:$Q"),$(A 7000 "findobj.selkind:$KIND:$MINSRC"),$(A 7200 "status.dump:$D/s1.txt")"
+CMD="$CMD,$(A 7300 findobj.clickpre:src),$(A 7400 "status.dump:$D/s2.txt"),$(A 9000 "findobj.dump:$D/d1.dump"),$(A 9100 "editor.dump:$D/e1.txt")"
+CMD="$CMD,$(A 9500 findobj.key:down),$(A 11000 "findobj.dump:$D/d2.dump"),$(A 11100 "editor.dump:$D/e2.txt"),$(A 11200 "status.dump:$D/s3.txt")"
+CMD="$CMD,$(A 11500 findobj.key:down),$(A 13000 "editor.dump:$D/e3.txt"),$(A 13200 "log.dump:$D/log1.txt"),$(A 35000 "findobj.dump:$D/d9.dump")"
 gui a "$CMD" 43
 
-s1="$(cat "$OUT/s1.txt" 2>/dev/null)"; s2="$(cat "$OUT/s2.txt" 2>/dev/null)"
+s1="$(cat "$OUT/s1.txt" 2>/dev/null)"; s2="$(cat "$OUT/s2.txt" 2>/dev/null)"; c1=""   # c1 = A 덤프 없을 때도 정의(set -u · D10 "바인딩 해제한 변수")
 say "  info  selkind → $s1"
 say "  info  clickpre → $s2"
 case "$s1" in *"row=Some"*) ok "A-0 $KIND(소스 줄 있음) 행 선택" ;; *) bad "A-0 $KIND 행 없음(검색 결과에 소스 일치 ${KIND}가 아직/전혀 없음)" "$(hdr d1.dump)" ;; esac
@@ -108,7 +109,7 @@ fi
 
 # ── 시나리오 B(대조): 검색이 **끝난 뒤** 같은 동작 — 같은 객체를 클릭 → ↓ 로 열어 검색 중/뒤 차이를 표로.
 CMD="@connected:open:$(w "$OUT/doc.sql"),$(A 2500 findobj.open),$(A 4000 "findobj.query:$Q"),$(A 30000 "findobj.selkind:$KIND:$MINSRC"),$(A 30300 findobj.clickpre:src)"
-CMD="$CMD,$(A 32000 "editor.dump:$D\\be1.txt"),$(A 32500 findobj.key:down),$(A 34000 "editor.dump:$D\\be2.txt"),$(A 34200 "log.dump:$D\\log2.txt"),$(A 34300 "findobj.dump:$D\\bd.dump")"
+CMD="$CMD,$(A 32000 "editor.dump:$D/be1.txt"),$(A 32500 findobj.key:down),$(A 34000 "editor.dump:$D/be2.txt"),$(A 34200 "log.dump:$D/log2.txt"),$(A 34300 "findobj.dump:$D/bd.dump")"
 gui b "$CMD" 42
 if [ -f "$OUT/log2.txt" ]; then
   hdr bd.dump | grep -q "running=false" && ok "B-0 대조 = 검색 끝난 뒤" || say "  info  B-0 아직 검색 중"
