@@ -126,7 +126,7 @@ impl Wire {
         if std::env::var_os("NSQL_TRACE_DRDA").is_none() {
             return;
         }
-        let n = b.len().min(160);
+        let n = b.len().min(512);
         let hex: Vec<String> = b[..n].iter().map(|x| format!("{x:02X}")).collect();
         eprintln!(
             "[drda {dir} {} B] {}{}",

@@ -467,21 +467,39 @@ pub fn parse_sqldard(
             ..SqlDaCol::default()
         };
         if has_name {
+            // SQLDOPTGRP(pydrda 실측 레이아웃: 6 + 지시자 1 + UNNAMED 2 + 이름·라벨·설명 VCM/VCS + 7). ★ 이름 없는 식 열(`VALUES …` = CI 3차
+            //   40116140922 "truncated sqlname")은 길이 필드가 이 규칙과 어긋난다 → 이름 해석이 막히면 **남은 열은 이름 없이**(호스트가 COLn) 돌려주고
+            //   질의는 살린다(타입·값은 QRYDSC/QRYDTA에서 온다). 정확한 레이아웃은 실서버 덤프로 확정(121b 추정 항목).
             at += 6;
-            if obj.get(at).copied() != Some(0x00) {
-                return Err(bad("sqldoptgrp"));
+            let parsed = (|| {
+                if obj.get(at).copied() != Some(0x00) {
+                    return None;
+                }
+                let (name, n1) = var_name(obj, at + 3)?;
+                let (label, n2) = var_name(obj, n1)?;
+                let (_comments, n3) = var_name(obj, n2)?;
+                Some((name, label, n3 + 7))
+            })();
+            match parsed {
+                Some((name, label, next)) => {
+                    at = next;
+                    col.name = if name.is_empty() { label.clone() } else { name };
+                    col.label = label;
+                    cols.push(col);
+                }
+                None => {
+                    cols.push(col);
+                    // 나머지 열은 메타 없이 빈 이름(개수만 맞춘다).
+                    while cols.len() < count {
+                        cols.push(SqlDaCol::default());
+                    }
+                    break;
+                }
             }
-            at += 3;
-            let (name, n1) = var_name(obj, at).ok_or_else(|| bad("sqlname"))?;
-            let (label, n2) = var_name(obj, n1).ok_or_else(|| bad("sqllabel"))?;
-            let (_comments, n3) = var_name(obj, n2).ok_or_else(|| bad("sqlcomments"))?;
-            at = n3 + 7;
-            col.name = if name.is_empty() { label.clone() } else { name };
-            col.label = label;
         } else {
             at += 29;
+            cols.push(col);
         }
-        cols.push(col);
     }
     Ok((ca, cols))
 }
