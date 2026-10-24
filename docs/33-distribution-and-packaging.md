@@ -30,6 +30,8 @@
 Rust 크레이트를 **동적 라이브러리(cdylib)** 로 나누지 않는 이유: Rust ABI 불안정 · 두 exe가 같은 코어를 정적으로 가져도 합계 수 MB · 갱신은 설치본 단위. "공유 라이브러리 분리"는 **OS 런타임·드라이버 계층**에 적용한다.
 
 
+**★ 10-25 D-362** = Linux/macOS ODBC = unixODBC(LGPL-2.1) **정적 동봉** → THIRD-PARTY-NOTICES에 unixODBC 고지 필요(`scripts/third-party-notices.py` 표 · 소스 = 공개 저장소로 LGPL §6 충족) · 확장 ODBC 패키지(`drivers/odbc/<ver>/`)의 LICENSE에도 같은 고지.
+
 **ODBC(10-22 · 136차 · D-345 · 수정 8091f8c)** = **Windows만** 내장(OS 인박스 `odbc32` · 사용자는 벤더 ODBC 드라이버와 DSN만 설치) · **macOS/Linux = ODBC 없음**(빈 스텁 · unixODBC 동봉·의존 없음 → deb/rpm `Depends`·cask·THIRD-PARTY-NOTICES 변경 없음) · 근거 = unixODBC LGPL-2.1(정적 동봉 요건) + 동적 링크 런타임 의존 · mac/Linux 길 = D-346 후보(확장 cdylib 또는 패키지 의존).
 
 ---

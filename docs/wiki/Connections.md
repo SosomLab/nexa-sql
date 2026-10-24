@@ -13,13 +13,17 @@
 | Oracle · SQL Server · PostgreSQL · MySQL/MariaDB · SQLite · DuckDB · ODBC | built-in or extension drivers | see the sections below |
 | ClickHouse | extension driver `clickhouse` (HTTP 8123 / HTTPS 8443) | `clickhouse://user:pass@host:8123/db[?tls=required]` · no transactions · grid editing not supported · installable from drivers release 0.1.3 |
 | Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB | PostgreSQL driver (wire-compatible) | `redshift://` 5439 · `cockroach://` 26257 · `yugabyte://` 5433 · `greenplum://` / `timescale://` 5432 |
-| Db2 · SAP HANA · Informix | ODBC preset | `db2://` 50000 · `hana://` 30015 · `informix://` 9088 · install the vendor ODBC driver first |
+| IBM Db2 (LUW) | ODBC adapter + Db2 dialect (needs IBM clidriver — see [Drivers](Drivers.md) · a native driver is planned) | `db2://user:pass@host:50000/DB` · catalog = SYSCAT · Database type **Db2** in the login form |
+| Microsoft Access | ODBC adapter + Access dialect (Windows ACE driver · Linux/macOS MDBTools) | `access:C:/path/file.accdb` · Database type **MS Access** |
+| SAP HANA · Informix | ODBC preset | `db2://` 50000 · `hana://` 30015 · `informix://` 9088 · install the vendor ODBC driver first |
 
 ### 지원 데이터베이스(한국어)
 
 - ClickHouse = 확장 드라이버 `clickhouse`(HTTP 8123 / HTTPS 8443) · 트랜잭션 없음 · 그리드 편집 미지원 · 드라이버 릴리스 0.1.3부터 설치.
 - Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB = PostgreSQL 드라이버로 접속(스킴만 쓰면 기본 포트가 채워진다).
-- Db2 · SAP HANA · Informix = ODBC 프리셋(벤더 ODBC 드라이버 설치 필요) · 접속 창 DB 종류 목록에는 없다(PostgreSQL/ODBC로 고르고 포트만 바꾸거나 접속 문자열에 스킴).
+- IBM Db2 = ODBC 어댑터 위 Db2 방언(IBM clidriver 설치 필요 · [드라이버](Drivers.md)) · `db2://사용자:비밀번호@호스트:50000/DB` · 접속 창 DB 종류 **Db2**.
+- MS Access = ODBC 어댑터 위 Access 방언(Windows ACE · Linux/macOS MDBTools) · `access:<파일>` · DB 종류 **MS Access**.
+- SAP HANA · Informix = ODBC 프리셋(벤더 ODBC 드라이버 설치 필요) · 접속 창 DB 종류 목록에는 없다(PostgreSQL/ODBC로 고르고 포트만 바꾸거나 접속 문자열에 스킴).
 
 ## ODBC로 접속
 

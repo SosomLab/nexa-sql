@@ -6,6 +6,9 @@
 
 지금 = **내장 드라이버 4**(Oracle OCI/Thin · SQL Server · PostgreSQL · SQLite) + **방언만 있는 둘**(MySQL · ODBC = 드라이버 없음). 다음 순서 권장 = **P1 MySQL/MariaDB 내장**(방언·카탈로그·문법이 이미 있어 드라이버만 · 순수 Rust · 전 세계 수요 1~2위) → **P2 ODBC 일반 드라이버**(한 번에 Tibero·Altibase·CUBRID·DB2·HANA·Goldilocks = 국산·레거시 전부 3급으로 열림) → **P3 Tibero 전용 방언**(ODBC 위에 Oracle 호환 방언 = 국내 공공·금융) → **P4 DuckDB**(임베디드 분석 · 파일 DB = SQLite와 같은 자리) → **P5 ClickHouse/클라우드 DW**(수요 확인 뒤). NoSQL(Mongo·Redis)은 범위 밖 유지(DR-11).
 
+> ★ **10-25 확정** = D-361 Db2 네이티브 DRDA(T-426 · 1차 구현) · D-362 ODBC 정적 동봉(unixODBC 불필요).
+> ★ **10-25 방향 변경(사용자 "Nexa SQL과 드라이버 파일만 있으면 실행 가능해야" · D-361 후보)** = Db2 = **네이티브 DRDA 확장 드라이버 `nsql-driver-db2`**(순수 Rust · 외부 crate 0 · Oracle Thin과 같은 길 · 방언·SYSCAT·오류표 재사용) 예정 · 아래 ODBC 경로 = **Windows 폴백** · 조사 = [121b](121b-db2-drda-research.md).
+> ★ **10-25 138차 갱신(1차)** = **IBM Db2 = 내장 ODBC 어댑터 위 전용 방언**(D-359 · T-424 · SYSCAT 카탈로그 · SQLCODE 분류 · `db2.sqlg` · CI `db2.yml` · clidriver = 사용자 설치 · 조사 원문 [121a](121a-db2-research.md)) · MS Access 방언(D-360 · 범위 밖 · 사용자 결정 대기).
 > ★ **10-24 138차 갱신** = ClickHouse = **확장 전용 드라이버**(D-354 · HTTP 인터페이스 · 자체 `nsql-net`/`nsql-json` · 외부 crate 0 · `drivers-v0.1.3` 릴리스부터 설치 가능) · PG 와이어 호환(Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB)과 Db2 · HANA · Informix(ODBC) = **접속 프리셋**(스킴 → 방언 · 기본 포트) — P5의 "ODBC로 커버"를 스킴 한 줄로 · T-415.
 
 > ★ **10-23 현황** = D-350으로 전 드라이버 확장(cdylib) · 8종(sqlite · pg · mysql · mssql · oracle-thin · oracle-oci · odbc · **duckdb** ✅ P4) · **ODBC = 전 OS**(Linux/macOS unixODBC · 이전 = Windows만) · Tibero·Altibase·CUBRID = URL 프리셋 ✅(P3 · 실서버 시험 보류 · 코드스페이스 = 공식 이미지 `tiberoofficial/tibero` + 데모 라이선스로 조건부 가능).
@@ -35,7 +38,7 @@
 | **DuckDB** | 1(분석 파일 · CSV/Parquet) | 2(급성장 · 분석가) | ✅ `duckdb` crate(C 라이브러리 번들 ≈ +20 MB!) 또는 동적 적재 | 중간 — SQLite 자리(파일 = 서버 하나) 재사용 · PG 호환 방언 | ✅ | 3·4·2·2·1 = 12 | **P4 · 2급 후보**(크기 때문에 **확장 드라이버**(22 §0 cdylib) 1호 적합) · ✅ **10-23 구현**(D-351 · 확장 전용 · libduckdb 동적 + 런타임 동봉 · zip ≈ 19 MB · `drivers-v0.1.1`) |
 | ClickHouse | 0 | 2(분석 · 로그) | HTTP/native(`clickhouse` crate) | 중간(방언 새로) | 부분(트랜잭션 없음) | 0·4·2·1·0 = 7 | ✅ 10-24 확장 드라이버(HTTP · D-354 · T-415) |
 | Snowflake · BigQuery · Redshift(클라우드 DW) | 0 | 2 | HTTP REST(OAuth · 키) | 높음(인증·비동기 작업 모델 다름) | 부분 | 0·4·1·0·0 = 5 | P5 · 보류 |
-| IBM Db2 · SAP HANA | 0 | 1(대기업 레거시) | ODBC/CLI | 낮음(ODBC 뒤) | ✅ | 0·2·2·3·1 = 8 | 3급 · ODBC로 커버 |
+| IBM Db2 · SAP HANA | 0 | 1(대기업 레거시) | ODBC/CLI | 낮음(ODBC 뒤) | ✅ | 0·2·2·3·1 = 8 | ✅ 10-25 Db2 = ODBC 위 전용 방언(D-359 · T-424) · HANA = ODBC 프리셋 |
 | MongoDB · Redis 등 NoSQL | 0 | 3 | — | SQL 클라이언트 범위 밖 | ✗ | — | **범위 밖 유지**(DR-11) |
 
 합 = A×3 + B×2 + C×2 + D×2 + E×1(완료 항목 제외). 순서 = MySQL 14 → ODBC 16(개방 효과) → Tibero 13 → DuckDB 12 → 그 밖.
@@ -45,10 +48,10 @@
 | 순위 | 대상 | 등급 | 왜 | 범위(1차) | 비용 추정 |
 |---|---|---|---|---|---|
 | **P1** | **MySQL / MariaDB 내장 드라이버** `nsql-driver-mysql` | 2급 → 1급 승격 가능 | 세계 수요 최상위 · 방언·카탈로그·문법·완성이 **이미 있음**(108 §6) · 순수 Rust · 경쟁 도구 전부 지원(03) | 접속(TLS 포함) · 질의/페치/취소 · 세션 변수 관용 · 카탈로그 전부 · 그리드 편집(PK 키 규칙) · 벌크(`LOAD DATA LOCAL` 또는 다중행 INSERT) · CLI 동등 · E2E(docker 컨테이너 · integration.yml 추가) | 중(드라이버 어댑터 + 러너 관용 + 시험) · 크기 +1~1.5 MB(120 §3와 함께 검토) |
-| **P2** | **ODBC 일반 드라이버** `nsql-driver-odbc`(**내장** · 사용자 확정 10-21) | 3급 틀 | 한 번에 Tibero·Altibase·CUBRID·Db2·HANA·Access·Excel까지 **읽기·조회·export** 개방 · 고객사 레거시 대응 | 접속 문자열/DSN · 질의/페치 · `SQLTables/SQLColumns/SQLPrimaryKeys` 카탈로그 · 타입 매핑 · 트랜잭션 · 3-OS(unixODBC 패키징 의존 명시) · 그리드 편집 = PK 있을 때만 | 중 · 크기 +0.5 MB · ✅ **1차 10-22(136차 · D-345 · T-383)** = **Windows 전용**(인박스 odbc32) · mac/Linux = 빈 스텁(unixODBC LGPL-2.1 · 런타임 의존 회피 · 8091f8c) → mac/Linux ODBC 길 = D-346 후보(확장 cdylib 또는 패키지 의존 · 사용자 결정 대기) |
+| **P2** | **ODBC 일반 드라이버** `nsql-driver-odbc`(**내장** · 사용자 확정 10-21 · ★ 10-25 D-362 = Linux/macOS unixODBC 정적 동봉 · 벤더 드라이버만) | 3급 틀 | 한 번에 Tibero·Altibase·CUBRID·Db2·HANA·Access·Excel까지 **읽기·조회·export** 개방 · 고객사 레거시 대응 | 접속 문자열/DSN · 질의/페치 · `SQLTables/SQLColumns/SQLPrimaryKeys` 카탈로그 · 타입 매핑 · 트랜잭션 · 3-OS(unixODBC 패키징 의존 명시) · 그리드 편집 = PK 있을 때만 | 중 · 크기 +0.5 MB · ✅ **1차 10-22(136차 · D-345 · T-383)** = **Windows 전용**(인박스 odbc32) · mac/Linux = 빈 스텁(unixODBC LGPL-2.1 · 런타임 의존 회피 · 8091f8c) → mac/Linux ODBC 길 = D-346 후보(확장 cdylib 또는 패키지 의존 · 사용자 결정 대기) |
 | **P3** | **Tibero**(**확장 드라이버** · 사용자 확정 10-21 · 1차 = 내장 ODBC 위 방언 팩(Oracle 상속 + 차이표) · 2차 = tbCLI cdylib 선택) | 3급 → 2급 | 국내 공공·금융 표준급 · Oracle 방언 90 % 재사용 · 차이표만 | 방언 상속(Oracle) + 카탈로그 뷰 차이 + 문법 차이표 · 실서버 검증 = 사용자 환경 필요 | 낮(ODBC 뒤) |
 | **P4** | **DuckDB**(**확장 드라이버** · 사용자 확정 10-21) | 2급 후보 | 분석 파일(CSV/Parquet) 즉시 질의 · 급성장 | cdylib 확장(22 §0 · 크기 +20 MB를 본체에 안 넣음) · SQLite와 같은 파일-서버 모델 | 중(확장 드라이버 틀 = DR-29 설계 선행) |
-| **P5** | ClickHouse · 클라우드 DW · Db2/HANA 전용 방언 | — | 수요 확인 뒤 · Db2/HANA는 ODBC로 이미 접속 가능 | — | — |
+| **P5** | ClickHouse(✅ 10-24) · 클라우드 DW · Db2(✅ 10-25 · D-359)/HANA 전용 방언 | — | 수요 확인 뒤 · Db2/HANA는 ODBC로 이미 접속 가능 | — | — |
 | 범위 밖 | NoSQL | — | DR-11 유지 | — | — |
 
 **등급 정의 재확인(DR-11)** = 1급: 전 기능(편집·그리드 편집·벌크·탐색기 전수·DDL·운영 가드) · 2급: 편집·그리드·export + 탐색기 주요 폴더 · 3급: 공통 기능(접속·질의·결과·export·탐색기 테이블/컬럼) · 플러그인: 확장 드라이버.

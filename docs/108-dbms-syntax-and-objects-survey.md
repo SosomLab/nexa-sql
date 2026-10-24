@@ -2919,3 +2919,24 @@ WHERE WITH WORK WRITE YEAR ZONE
 **지원 현황(§11 행)** = 확장 · 접속 ✓ · 실행 ✓ · 탐색기(테이블·뷰·컬럼) ✓ · 소스 ✗ · 그리드 편집 ✗ · 실행 계획 ✓(PLAN) · 오류 위치 ✓ · 취소 ✓.
 
 **접속 프리셋(같은 커밋)** = PG 와이어 호환 `redshift://`(5439) · `cockroach://`/`cockroachdb://`(26257) · `yugabyte://`/`yugabytedb://`(5433) · `greenplum://`/`timescale://`/`timescaledb://`(5432) = PostgreSQL 드라이버·문법·카탈로그 그대로 · ODBC `db2://`(50000 · `IBM DB2 ODBC DRIVER`) · `hana://`(30015 · `HDBODBC`) · `informix://`(9088 · `IBM INFORMIX ODBC DRIVER`) = `Driver={…};Server=…;Port=…;Database=…` 조립(T-384와 같은 길) · 규칙 = `Dialect::from_name` · `nsql-script::connect::wire_preset_port`(명시 포트가 이김) · `odbc_preset_for` · 시험 `wire_odbc_and_clickhouse_presets` · 접속 폼 DB 종류 목록에는 추가하지 않음(스킴 = 접속 문자열·CLI 편의).
+
+## §13. IBM Db2 LUW(10-25 · 138차 · T-424 · D-359 · 내장 ODBC 어댑터 위 방언 · ★ 주 경로 = 네이티브 DRDA 예정 D-361 · ODBC = Windows 폴백)
+
+> 조사·검증 원문 = [121a](121a-db2-research.md)(SYSCAT 질의 검증 = ✗ 0 · 주의 8 → 194c7a8f 반영 · SQLCODE 분류 검증 = ✗ 2 · 주의 6 → a8384f65 반영 · 추정 표시는 원문). 실서버 검증 = CI `db2.yml`(Db2 Community 컨테이너).
+
+| T | 항목 | Db2 LUW |
+|---|---|---|
+| T-1 | 접속 | IBM clidriver(사용자 설치) + ODBC · `db2://u:p@h:50000/DB` → `Driver={IBM DB2 ODBC DRIVER};Database;Hostname;Port;Protocol=TCPIP` · 키워드 CurrentSchema · Security=SSL · ConnectTimeout |
+| T-2 | 식별자 | 따옴표 없으면 **대문자 접힘** · `"…"` 그대로 · 이름 열 = VARCHAR(128)(TRIM 불필요 · 재조회 키는 원값) |
+| T-3 | 트랜잭션 | ODBC 자동 커밋 기본 · 수동 = ODBC 트랜잭션 · 세이브포인트 `SAVEPOINT x ON ROLLBACK RETAIN CURSORS`(UNIQUE 안 씀) |
+| T-4 | 더미 표·현재 값 | `SYSIBM.SYSDUMMY1` · `VALUES …` · `CURRENT SCHEMA`/`CURRENT USER`/`CURRENT SERVER` · `SET SCHEMA` |
+| T-5 | 페이징 | `OFFSET n ROWS FETCH FIRST m ROWS ONLY`(11.1+) · 10.5 이하 = `ROW_NUMBER()` 폴백(T-424 남음) · `LIMIT/OFFSET` 11.1+ |
+| T-6 | 카탈로그 | SYSCAT.SCHEMATA(시스템 = SYS*·NULLID·SQLJ) · TABLES(TYPE T/V/S/A · N/G/U/W는 표시 후보) · COLUMNS(STRINGUNITSLENGTH · `"DEFAULT"` CLOB) · TABCONST(P/U/F/K · I = 함수 종속) · KEYCOLUSE · REFERENCES(reftabschema 포함) · INDEXES/INDEXCOLUSE(COLORDER I = INCLUDE) · ROUTINES(P/F · 모듈 루틴 제외 · VALID N/X) · VIEWS/TRIGGERS(TRIGEVENT M = 여러 이벤트) · SEQUENCES(SEQTYPE S) · 소스 = TEXT(입력 그대로 · 스키마 한정 없을 수 있음 = 보수적 생성 원칙 주의) |
+| T-7 | 서버 정보 | `SYSIBMADM.ENV_INST_INFO`(SERVICE_LEVEL · FIXPACK_NUM · 권한 막힌 DB = 대체 경로) |
+| T-8 | 오류 | SQLCODE 1차 · SQLSTATE 2차 · -204/-206/-440 객체·컬럼 없음 · -104 구문 · -803 유일 · -530/-532 FK · -407 NOT NULL · -545 CHECK · -911 이유 2 교착/68 시간 초과(트랜잭션 전체 롤백) · -913 잠금 · -30081 등 접속 · -30082 로그인 · -551 권한 · -668 = 테이블 상태(REORG/SET INTEGRITY 보류 · 잠금 아님) · -613 = 키 길이 한도 · 위치 = 서버가 안 줌 → SQL0104N 토큰 원문 검색 |
+| T-9 | 실행 계획 | `EXPLAIN PLAN SELECTION FOR …`(= ALL) · 표 = SYSTOOLS(`SYSINSTALLOBJECTS('EXPLAIN','C',NULL,NULL)`) · 조회 = 요청자+QUERYTAG로 우리 행 고정 · 트리 = EXPLAIN_STREAM 재귀(T-424 남음) · 실제 계획 = 이벤트 모니터(2차) |
+| T-10 | 취소 | `SQLCancel` 1순위 → `WLM_CANCEL_ACTIVITY`(연결 유지 · 권한) → `FORCE APPLICATION`(연결 끊김 · SYSADM/SYSCTRL/SYSMAINT) |
+| T-11 | 문법 | `db2.sqlg` · SQL PL 블록 `BEGIN … END` · 스크립트 종결자 `@`(CLP `--#SET TERMINATOR @` · T-424 남음) · `CREATE VARIABLE` 전역 변수 · `CALL` 결과 집합 · MERGE · `WITH UR` |
+| T-12 | 그리드 행 식별 | PK/유일 키 · DBeaver = `RID_BIT()`(9.5+) 참고 |
+
+**MS Access(10-25 · D-360 · 범위 밖 · 사용자 결정 대기)** = 같은 ODBC 어댑터 위 방언 · Windows = ACE ODBC(`Microsoft Access Driver (*.mdb, *.accdb)`) · Linux/macOS = MDBTools(읽기 위주) · `access:<파일>` · 문법 `access.sqlg`(`TOP n` · `#날짜#` · `[이름]` · `&` 연결) · 트랜잭션·카탈로그 = ODBC SQLTables/SQLColumns.

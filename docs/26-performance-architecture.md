@@ -1022,6 +1022,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 
 | 경로 | 1회 비용 | 빈도·동시 상한 | 자동 재시도 | 근거 코드 |
 |---|---|---|---|---|
+| **Db2 · Access**(10-25 · D-359/360 · Db2 네이티브 DRDA = D-361 예정 시 이 행 갱신) | 새 트래픽 경로 0 — 내장 ODBC 어댑터 경로 재사용(접속·질의·SQLCancel) | 사용자 동작마다 | 없음 | `nsql-driver-odbc` |
 | **ClickHouse 드라이버 HTTP**(10-24 · T-415) | 요청 1(사용자 실행 · 탐색기 조회 · ■ 취소 = `KILL QUERY` 1) · 소켓 요청마다 새로 | 사용자 동작마다 · 세션당 1 + 취소 1 · 상주 0 · 폴링 0 | 없음 | `nsql-driver-clickhouse` · `nsql-net` |
 | **객체 용량**(09-30) | 사전 질의 1(스키마·종류당 · `object_sizes`) | 테이블·MV·인덱스 폴더가 읽힐 때 한 번(백그라운드 메타 세션 · 우선순위 4) · `explorer.sizes` 끔 = 0 · 향상 모드 = 끔 | 없음(실패 = 표시 없음) | `explorer.rs` `Req::Sizes` · `nsql-catalog::object_sizes` |
 | 신호등 주기 확인 | TCP SYN 1(+ 실패 시 ICMP 1) | 접속 성공 프로필당 `probe.interval`(60s) · **창이 열려 있을 때만** · 동시 `MAX_INFLIGHT` 16 | 없음(주기) | `conn_win::tick` · `probe::ProbePolicy` |

@@ -14,6 +14,7 @@
 | SQLite | `rusqlite` `bundled`(SQLite C 소스를 앱에 컴파일) | 없음 | 확장 모듈 로드(`load_extension`)는 꺼 둠 | ✅ 내장 |
 | MySQL · MariaDB | `mysql` 28(순수 Rust · 동기 · `rustls-tls`) | 없음 | TLS = 접속 문자열 `?tls=` 또는 설정 ▸ DBMS ▸ MySQL / MariaDB(`mysql.tls` 기본 preferred · `mysql.tls_ca` = CA PEM · 비우면 시스템 루트 · T-388) · `LOAD DATA LOCAL` 미사용 | ✅ 내장(10-22 · 135차 · D-344) |
 | ODBC(Tibero · Altibase · CUBRID · Db2 · HANA · Access/Excel …) | `odbc-api` 29.2(**Windows 전용** = 인박스 odbc32 · macOS/Linux = 미지원 · D-346 후보) | Windows = 앱 쪽 설치 0 — **벤더 ODBC 드라이버 + DSN**(또는 `odbc:Driver={…};…` 접속 문자열)만 | 벤더별 클라이언트 설정 파일(`tbdsn.tbr` 등) · DSN 관리 = Windows `odbcad32` | ✅ 내장 1차 Windows(10-22 · 136차 · D-345 · 8091f8c) — 취소·서버 커서 없음 · 긴 LOB 32K · mac/Linux = unixODBC LGPL·런타임 의존 때문에 보류 |
+| IBM Db2 · MS Access(10-25 · D-359 · D-360 · ★ Db2 주 경로 = 네이티브 DRDA 확장 예정 D-361 · 아래 ODBC = Windows 폴백) | 내장 ODBC 어댑터 `nsql-driver-odbc` 위 **방언**(확장 id = `odbc` · 별도 크레이트 없음) | **벤더 런타임 = 사용자 설치** — Db2 = IBM clidriver(v12.1.4 · 익명 다운로드 · unixODBC `odbcinst.ini` `libdb2.so`(v12.1.4에 `libdb2o.so` 없음 · CI 10-25) / Windows `db2cli install -setup` · [121a ②](121a-db2-research.md)) · Access = Windows ACE(Linux/macOS = MDBTools) | `db2://u:p@h:50000/DB` · `access:<파일>` |
 | ClickHouse(10-24 · D-354) | `nsql-driver-clickhouse`(**확장 전용** · HTTP 8123 / TLS 8443 · 자체 `nsql-net`+`nsql-json` · 외부 crate 0) | 없음 — 서버 HTTP 인터페이스만 · `nsql driver install clickhouse`(drivers-v0.1.3부터) · 접속 시 자동 설치 | `clickhouse://user:pass@host:8123/db[?tls=required]` · 트랜잭션 없음 · 그리드 편집 미지원 |
 
 **결론**: 지금 빌드에서 별도 설치·설정이 필요한 것은 **Oracle 하나**다. 앞으로 같은 틀이 필요한 것은 ODBC 계열(드라이버 관리자·DSN 탐지)이고, 순수 Rust 드라이버(SQL Server · PostgreSQL · MySQL)는 네트워크 보안 옵션(TLS 인증서 · 통합 인증)을 넣을 때 그 DBMS의 분류에 키가 생긴다.
@@ -127,6 +128,8 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 - macOS: 내려받은 동적 라이브러리의 격리 속성(quarantine)·공증 — 서명만으로는 로드가 막힐 수 있다 → 확장 드라이버는 macOS에서 먼저 시험.
 - cdylib에서 `tokio` 런타임·TLS 스택이 드라이버마다 중복된다 → 확장 드라이버 하나의 크기가 내장일 때의 기여분보다 커진다(공유하던 의존성이 복제된다). "용량 절감" 기대치를 낮춰 잡을 것.
 
+> ★ **10-25 외부 네이티브 의존 원칙(D-361 · D-362)** = 확장 드라이버는 **드라이버 파일만으로 완결** — Db2 = 네이티브 DRDA(IBM 클라이언트 불필요) · ODBC = unixODBC 정적 동봉(벤더 ODBC 드라이버만) · 예외 = Oracle OCI(Instant Client = 사용자 선택 · Thin이 기본) · DuckDB = 동봉 런타임(D-351 · `bundled` 전환 = T-427).
+
 ## 4. 경량 배포판 — 정의 · Instant Client 없이 가능한가(사용자 09-21)
 
 > ★ **10-23 D-350으로 정의가 바뀜** = 기본 설치본 자체가 "드라이버 없는 판"(남는 것 = Oracle OCI · Instant Client가 있으면 접속) · 그 밖 드라이버 = 접속 시 자동 다운로드 또는 오프라인 번들 · 아래 표(크기·구성)는 D단계(릴리스 워크플로) 뒤 실측으로 갱신한다 · D단계 ✅(10-23 b93ca33) = 설치본 feature = `--no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` · 경량 CLI Debug 실측 22.0 → 12.4 MB · Release·설치본 크기 = 첫 릴리스 산출물로 실측(대기).
@@ -184,7 +187,7 @@ CLI `nsql shell`(Release) 한 프로세스에서 SQLite 기준 → `CONNECT <프
 
 권고: ① 순수 Rust 드라이버는 지금 그대로(동적 적재·해제 없음 — 이미 "쓸 때만" 올라오고 끊으면 돌려준다) ② Oracle은 **선택 모드 `oracle.isolation = process`**(기본 `in_process`)를 확장 드라이버 단계([§3-4](#3-4-확장-드라이버를-만들-때의-설계22-0의-구체화--지금-하지-않는다--순서만-고정)의 ④ 프로세스 모드)에서 만든다 — 같은 모드가 **메모리 회수 · 여러 버전의 Instant Client 나란히 · 드라이버 충돌 격리** 셋을 한 번에 해결한다 ③ 그 전까지의 값싼 개선: Oracle 접속이 0이 된 뒤 유휴 회수(`memtrim`)가 워킹셋을 줄이므로 **RAM 점유는 이미 작다**(남는 Private 9.4 MB가 전부) — 설정 창의 "로드된 클라이언트 버전" 설명에 "앱을 다시 시작하면 내려간다"를 이미 적었다.
 
-## 6. ODBC — macOS·Linux 접속 절차(10-24 · 136차 ODBC 드라이버 · 사용자 안내 · 위키 [Connections](wiki/Connections.md#odbc-on-macos--linux-english) 영어·한국어 판이 사용자용 원문)
+## 6. ODBC — macOS·Linux 접속 절차(★ 10-25 D-362 = unixODBC **정적 동봉** + 상대 경로 해결기 → 사용자는 **벤더 ODBC 드라이버만** 설치 · 아래 ① unixODBC 설치 단계는 D-362 반영 판부터 불필요 · 개발 빌드 전제는 그대로) — (10-24 · 136차 ODBC 드라이버 · 사용자 안내 · 위키 [Connections](wiki/Connections.md#odbc-on-macos--linux-english) 영어·한국어 판이 사용자용 원문)
 
 | 단계 | 내용 |
 |---|---|

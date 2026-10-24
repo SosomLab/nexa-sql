@@ -4,6 +4,10 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/138-outline-t422 | 2026-10-25 | 2026-10-25 → main(삭제) · **b511d95e** | 1 | T-422 문서 = 76 §20 ✅ · 94 구현 키 7(`show_other`) · 39 커서 추종 · D-357 · 61 3-OS · 위키 아웃라인 절 · journal §3-13 · STATUS |
+| feat/138-db2-drda | 2026-10-25 | 2026-10-25 → main(삭제) · **bee909bd** → 이후 main 직접 수정 7864852a · 211427ad · a29897fd · b0bb8729 · 1ead67f7 · 5757e608 | 2(+6) | ★ T-426 Db2 네이티브 DRDA(D-361) = afc62481 뼈대(DSS 코덱 · EBCDIC · 코드포인트 · nsql-net `Socket`) · bee909bd 1차(접속 · 조회 · DML · 바인드 · 블록 · max_rows · 자동 커밋 · SET SCHEMA · TLS · 11/0) |
+| feat/138-static-odbc | 2026-10-25 | 2026-10-25 → main(삭제) · **fac7bc3e** | 2 | ★ D-362 = c4c309a2 unixODBC 정적 동봉(`vendored-unix-odbc`) + 상대 Driver 경로 해결기 · fac7bc3e THIRD-PARTY 고지 절 |
+| feat/138-outline-t423a | 2026-10-25 | 2026-10-25 → main(삭제) · **c9134a63** | 1 | T-423 ① = `outline.sort`(position·name·kind) · 아웃라인 우클릭 메뉴(심볼로 이동 · 이 문장 실행 · 이름 복사) · 라우팅 |
 | fix/138-outline-v1 | 2026-10-25 | 2026-10-25 → main(삭제) · **8ee6a791** | 1 | T-422 V1 결함 2 = 패키지 서브프로그램 지역 선언의 부모(열린 서브프로그램 스택 `subs`) · Goto Symbol 종류 중복 |
 | feat/138-outline-t422 | 2026-10-24 | 2026-10-25 → main(삭제) · **855b9ad6** | 2 | ★ T-422 아웃라인 1차(D-357) = `075ceeca` nsql-script 모델(`Symbol.parent` · CREATE 1행 · 매개변수 오탐 · CURSOR 범위) · `855b9ad6` 패널·설정 7키·Goto Symbol(공용 파일 i18n·settings·findbar 동반) |
 | docs/138-outline-direction | 2026-10-24 | 2026-10-24 → main(삭제) · **69499d1f** | 1 | 138차 문서 = ★ 아웃라인 방향 D-357(76 §20 · 조사 원문 76a) · T-422/T-423 · 94 예정 키 7 · STATUS 시작점 · journal §3-12 |
