@@ -935,7 +935,14 @@ fn fdodta_value(p: &SqlDaCol, v: &Value, le: bool) -> Result<Vec<u8>, DbError> {
     if is_lob_type(t) {
         // 자리표시 = `02` + 길이 u64 큰 끝(9 B · 값은 EXTDTA · jb/Db2 실측). 길이 = **바이트 수**(DBCLOB도 · CI 40182500195: 문자 수로 보내면
         //   DTAMCHRM −30020 · 바이트로 보내면 통과 기대 — 40182063764의 "lob lengths don't match"는 같은 체인의 XML 쪽 · 추정).
-        let len = lob_bytes(p, v).len() as u64;
+        let bytes = lob_bytes(p, v).len() as u64;
+        // ★ 0xCD(NLOBCDBCS · 재판정 손잡이) 길이 단위(CI 40220632451 · 행 지시자 결함 수정 뒤): 바이트 수 = SYNTAXRM 0x124C "lob lengths
+        //   don't match" **거부 확정** → 남은 가설 = 2바이트 문자 수(UTF-16 코드 단위 · DBCLOB 길이 단위)로 1회 판정(정보성 단계).
+        let len = if t == 413 && dbclob_utf16() {
+            bytes / 2
+        } else {
+            bytes
+        };
         out.push(0x02);
         out.extend_from_slice(&len.to_be_bytes());
         return Ok(out);
