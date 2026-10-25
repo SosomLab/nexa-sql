@@ -24,6 +24,81 @@ pub(crate) enum LinkKind {
     Routine,
     /// ★ 제약(PK · UK · FK · CHECK · DEFAULT 이름 · T-315 10-08): `owner` = 테이블 · `name` = 제약 이름.
     Constraint,
+    /// ★ 바인드 변수 `:이름`(T-153 ⑤ · 사용자 10-26 hover 값) — 카탈로그 아님 · `known` = 지금 값이 있는가 · 카드 = 값·타입·층(버튼 없음).
+    Variable,
+    /// ★ 치환 변수 `&이름`(DEFINE · 시스템 변수) — 카드 = 치환될 글.
+    Macro,
+}
+
+/// ★ 본문의 변수 참조를 링크로(T-153 ⑤): `:이름`(`extract_binds` · 문자열·주석 밖) · `define_char`+식별자(`&&`는 둘째 `&`만 이름) —
+/// 바이트 오프셋 → 글자 인덱스(`base` = 분석 구간 시작 글자) · `known` = 호스트가 준 존재 판정.
+pub(crate) fn variable_links(
+    text: &str,
+    base: usize,
+    define_char: Option<char>,
+    has_bind: &dyn Fn(&str) -> bool,
+    has_macro: &dyn Fn(&str) -> bool,
+) -> Vec<Link> {
+    // 바이트 → 글자 인덱스 표(끝 포함).
+    let mut at_byte = vec![0usize; text.len() + 1];
+    let mut ci = 0usize;
+    for (bi, ch) in text.char_indices() {
+        for k in 0..ch.len_utf8() {
+            at_byte[bi + k] = ci;
+        }
+        ci += 1;
+    }
+    at_byte[text.len()] = ci;
+    let mut out = Vec::new();
+    for b in nsql_script::bind::extract_binds(text) {
+        if b.name.is_empty() || b.name.bytes().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        out.push(Link {
+            range: (base + at_byte[b.start], base + at_byte[b.end]),
+            kind: LinkKind::Variable,
+            schema: None,
+            owner: None,
+            known: has_bind(&b.name),
+            name: b.name,
+        });
+    }
+    if let Some(dc) = define_char {
+        let classes = nsql_script::lexer::classify(text);
+        let bytes = text.as_bytes();
+        let dcb = dc as u32;
+        let mut i = 0;
+        while i < bytes.len() {
+            if u32::from(bytes[i]) == dcb
+                && classes.get(i) == Some(&nsql_script::lexer::Class::Code)
+            {
+                let start = i;
+                i += 1;
+                if i < bytes.len() && u32::from(bytes[i]) == dcb {
+                    i += 1; // `&&이름`
+                }
+                let ns = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                if i > ns && !bytes[ns].is_ascii_digit() {
+                    let name = text[ns..i].to_ascii_uppercase();
+                    out.push(Link {
+                        range: (base + at_byte[start], base + at_byte[i]),
+                        kind: LinkKind::Macro,
+                        schema: None,
+                        owner: None,
+                        known: has_macro(&name),
+                        name,
+                    });
+                }
+                continue;
+            }
+            i += 1;
+        }
+    }
+    out.sort_by_key(|l| l.range.0);
+    out
 }
 
 /// 링크 하나(문자 인덱스 구간).
@@ -1122,7 +1197,35 @@ impl App {
                 session_user: spec.as_ref().and_then(|s| s.user.clone()),
                 collector: self.explorer.meta_account(spec.as_ref()),
             };
-            let links = scan(&text, dialect, &res);
+            let mut links = scan(&text, dialect, &res);
+            // ★ T-153 ⑤: 변수 참조(`:이름` · `&이름`)도 링크로 — hover 카드에 지금 값·타입·층(카탈로그 무관 · 버튼 없음).
+            {
+                let tab_id = self.editors.active_id();
+                let up = |s: &str| s.to_ascii_uppercase();
+                let has_bind = |n: &str| {
+                    let is = |v: &nsql_script::VarState| v.name.eq_ignore_ascii_case(n);
+                    self.tab_vars.get(&tab_id).is_some_and(|l| l.iter().any(is))
+                        || self.sess.shared_vars.iter().any(is)
+                        || self.global_vars.iter().any(is)
+                        || self.sess.fixed_vars.iter().any(is)
+                };
+                let has_macro = |n: &str| {
+                    self.tab_defines
+                        .get(&tab_id)
+                        .is_some_and(|l| l.iter().any(|(k, _, _)| up(k) == n))
+                        || nsql_script::engine::SYSTEM_VARS.contains(&n)
+                };
+                let define_char =
+                    (self.settings.get("script.define") != Some("off")).then_some('&');
+                links.extend(variable_links(
+                    &text,
+                    region.0,
+                    define_char,
+                    &has_bind,
+                    &has_macro,
+                ));
+                links.sort_by_key(|l| l.range.0);
+            }
             // ★ 진단(`NSQL_TRACE_OBJLINK` · 09-30): 판정에 쓰인 값 — 세션 · 현재 스키마 · 계정 · 수집 계정 · 스냅숏 현재 스키마 · 링크별 결과.
             if std::env::var_os("NSQL_TRACE_OBJLINK").is_some() {
                 let snap_cur = snap
@@ -1521,6 +1624,14 @@ impl App {
         let Some(k) = self.objlinks.hot else {
             return Vec::new();
         };
+        if self
+            .objlinks
+            .links
+            .get(k)
+            .is_some_and(|l| matches!(l.kind, LinkKind::Variable | LinkKind::Macro))
+        {
+            return Vec::new();
+        }
         let target = self.objlink_reveal_target(k);
         let can_rows = target
             .as_ref()
@@ -1737,6 +1848,7 @@ impl App {
                         LinkKind::Column | LinkKind::Constraint => {
                             !snap.col_comments.contains_key(&id)
                         }
+                        LinkKind::Variable | LinkKind::Macro => false,
                     }
             };
             if need_detail {
@@ -1809,8 +1921,81 @@ impl App {
     }
 
     /// 링크의 설명(코멘트) — (종류 라벨, 표시 이름, 설명 · 미확인 = None).
+    /// ★ 변수 링크의 카드 글(T-153 ⑤): 바인드 = `값 · 타입 · 층[ · := 수식]`(탭 → 공유 → 글로벌 → 프로필 · 비밀 = 가림) · 치환 = 치환될 글(또는 시스템 변수) ·
+    /// 없으면 "미정의". 돌려주는 값 = (종류 라벨 · 표시 이름 · 설명).
+    fn variable_describe(&self, link: &Link) -> (String, String, Option<String>) {
+        let tab_id = self.editors.active_id();
+        match link.kind {
+            LinkKind::Macro => {
+                let up = link.name.to_ascii_uppercase();
+                let shown = self
+                    .tab_defines
+                    .get(&tab_id)
+                    .and_then(|l| l.iter().find(|(k, _, _)| k.to_ascii_uppercase() == up))
+                    .map(|(_, _, shown)| shown.clone())
+                    .or_else(|| {
+                        nsql_script::engine::SYSTEM_VARS
+                            .contains(&up.as_str())
+                            .then(|| t(Msg::VarSystem).to_string())
+                    })
+                    .unwrap_or_else(|| t(Msg::VarUndefined).to_string());
+                (
+                    t(Msg::ObjKindMacro).to_string(),
+                    format!("&{}", link.name),
+                    Some(shown),
+                )
+            }
+            _ => {
+                let is = |v: &&nsql_script::VarState| v.name.eq_ignore_ascii_case(&link.name);
+                let found = self
+                    .tab_vars
+                    .get(&tab_id)
+                    .and_then(|l| l.iter().find(is))
+                    .or_else(|| self.sess.shared_vars.iter().find(is))
+                    .or_else(|| self.global_vars.iter().find(is))
+                    .or_else(|| self.sess.fixed_vars.iter().find(is));
+                let desc = match found {
+                    Some(v) => {
+                        let value = if v.secret {
+                            "******".to_string()
+                        } else {
+                            match &v.value {
+                                nsql_core::Value::Null => "NULL".to_string(),
+                                other => {
+                                    let s = other.display();
+                                    if s.chars().count() > 120 {
+                                        format!("{}…", s.chars().take(120).collect::<String>())
+                                    } else {
+                                        s
+                                    }
+                                }
+                            }
+                        };
+                        let mut d = format!("{value} · {} · {}", v.ty.sql_name(), v.layer.word());
+                        if let Some(f) = &v.formula {
+                            d.push_str(&format!(" · := {f}"));
+                        }
+                        if v.stale {
+                            d.push_str(" \u{21bb}");
+                        }
+                        d
+                    }
+                    None => t(Msg::VarUndefined).to_string(),
+                };
+                (
+                    t(Msg::ObjKindVariable).to_string(),
+                    format!(":{}", link.name),
+                    Some(desc),
+                )
+            }
+        }
+    }
+
     pub(crate) fn objlink_describe(&self, k: usize) -> Option<(String, String, Option<String>)> {
         let link = self.objlinks.links.get(k)?;
+        if matches!(link.kind, LinkKind::Variable | LinkKind::Macro) {
+            return Some(self.variable_describe(link));
+        }
         let cur = self.objlink_cur_schema();
         let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
         let kind_label = t(match link.kind {
@@ -1818,6 +2003,8 @@ impl App {
             LinkKind::Column => Msg::ObjKindColumn,
             LinkKind::Routine => Msg::ObjKindRoutine,
             LinkKind::Constraint => Msg::ObjKindConstraint,
+            LinkKind::Variable => Msg::ObjKindVariable,
+            LinkKind::Macro => Msg::ObjKindMacro,
         })
         .to_string();
         // ★ 컬럼이면 이름 줄에 데이터 타입(+ NOT NULL)을 덧붙인다(사용자 10-07 "컬럼의 경우 데이터 타입을 추가로") — 메타 L2가 있을 때만.
@@ -1952,6 +2139,15 @@ impl App {
         if !self.objlinks.active {
             return false;
         }
+        // 변수 링크(T-153 ⑤)는 hover 카드만 — 클릭·우클릭은 편집기 것.
+        if let Some(k) = self.objlink_at(p) {
+            if matches!(
+                self.objlinks.links[k].kind,
+                LinkKind::Variable | LinkKind::Macro
+            ) {
+                return false;
+            }
+        }
         // hover 카드의 버튼(좌클릭) — Ctrl 유무와 무관.
         if !right && self.objlink_card_click(p) {
             return true;
@@ -2004,6 +2200,8 @@ impl App {
                 })
         };
         let (schema, kind, name, member) = match link.kind {
+            // 변수 링크는 카탈로그 대상이 없다(T-153 ⑤).
+            LinkKind::Variable | LinkKind::Macro => return None,
             LinkKind::Column => {
                 let (s, k, n) = resolve(link.owner.as_deref()?)?;
                 (s, k, n, Some(link.name.clone()))
@@ -2952,6 +3150,23 @@ fn ddl_head_kind(prev_up: &str) -> Option<LinkKind> {
 
 #[cfg(test)]
 mod tests {
+    /// T-153 ⑤: 변수 링크 = `:이름`·`&이름`(문자열·주석 밖 · `&&` · 숫자 바인드 제외) · 글자 인덱스(한글 앞머리) · known = 호스트 판정.
+    #[test]
+    fn variable_links_find_binds_and_macros_in_char_indices() {
+        use super::{variable_links, LinkKind};
+        let text = "한글 SELECT :a, ':x &y' FROM &&tab WHERE c = :B2 AND d = &1 -- :z &q";
+        let links = variable_links(text, 10, Some('&'), &|n| n == "A", &|n| n == "TAB");
+        let got: Vec<(LinkKind, &str, bool, (usize, usize))> = links
+            .iter()
+            .map(|l| (l.kind, l.name.as_str(), l.known, l.range))
+            .collect();
+        // 글자 인덱스: "한글 SELECT " = 10글자 → `:a`는 10..12(+base 10 = 20..22).
+        assert_eq!(got[0], (LinkKind::Variable, "A", true, (20, 22)));
+        assert_eq!(got[1], (LinkKind::Macro, "TAB", true, (10 + 27, 10 + 32)));
+        assert_eq!(got[2], (LinkKind::Variable, "B2", false, (53, 56)));
+        assert_eq!(got.len(), 3, "{got:?} — 문자열·주석 안 · 숫자 인자 &1 제외");
+    }
+
     /// 카드 영역 = 카드 ∪ 링크 둘레 상자 + 여유: 틈·비스듬한 경로는 안 · 멀리는 밖.
     #[test]
     fn card_zone_bridges_link_and_card() {
