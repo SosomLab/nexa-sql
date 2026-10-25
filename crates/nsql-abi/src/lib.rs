@@ -206,6 +206,9 @@ pub mod ops {
     pub const CATALOG_TABLES: u32 = 16;
     /// in = opt_str schema · str table · out = u8 has · u32 n + `catalog_column`….
     pub const CATALOG_COLUMNS: u32 = 17;
+    /// out = u8 — 취소가 **세션을 끊는** 방식인가([`nsql_core::CancelHandle::drops_session`] · SQL Server·Db2 = 소켓 종료).
+    /// 옛 드라이버(모르는 op → 오류)는 거짓(CI 40157404807: 확장 경로에서 늘 거짓이라 취소 뒤 재접속을 안 함).
+    pub const CANCEL_DROPS_SESSION: u32 = 18;
 }
 
 /// `DriverLimit` ↔ 비트(ABI 고정 순서).
@@ -1261,6 +1264,9 @@ pub mod export {
             match op {
                 ops::CAPS => w.caps(&session.caps()),
                 ops::DRIVER_NAME => w.buf = session.driver_name().into_bytes(),
+                ops::CANCEL_DROPS_SESSION => {
+                    w.bool(session.cancel_handle().is_some_and(|h| h.drops_session()))
+                }
                 ops::FETCH_CURSOR => {
                     let id = r.u64().map_err(|e| abi_error(format!("abi: {}", e.0)))?;
                     let rs = session.fetch_cursor(nsql_core::CursorId(id))?;

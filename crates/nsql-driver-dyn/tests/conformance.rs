@@ -27,9 +27,24 @@ fn rs(n: i64) -> ResultSet {
     }
 }
 
+/// 취소 = 세션 끊김(SQL Server·Db2 모델) — `drops_session`이 ABI를 넘는지 본다(CI 40157404807).
+struct MockCancel;
+
+impl nsql_core::CancelHandle for MockCancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn drops_session(&self) -> bool {
+        true
+    }
+}
+
 impl Session for Mock {
     fn dialect(&self) -> Dialect {
         Dialect::Postgres
+    }
+    fn cancel_handle(&self) -> Option<Arc<dyn nsql_core::CancelHandle>> {
+        Some(Arc::new(MockCancel))
     }
     fn caps(&self) -> Caps {
         let mut c = Caps::of(Dialect::Postgres);
@@ -234,6 +249,10 @@ fn every_session_method_round_trips_over_abi_v2() {
     assert_eq!(c.bulk_load, bulk::BulkLoad::CopyIn);
     assert_ne!(c.compile_errors, Caps::of(Dialect::Postgres).compile_errors);
     assert_eq!(s.driver_name(), "ext:mock · mock-pg 9.9");
+    // 취소 핸들: cdylib 경계 너머에서도 `drops_session`이 참으로 온다(ops::CANCEL_DROPS_SESSION).
+    let h = s.cancel_handle().expect("cancel handle");
+    assert!(h.drops_session(), "drops_session over ABI");
+    h.cancel().expect("cancel");
     // 메시지 싱크 → 실행 중 콜백.
     let got: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let g2 = Arc::clone(&got);

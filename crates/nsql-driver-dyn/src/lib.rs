@@ -275,7 +275,12 @@ impl DynDriver {
             caps: Caps::of(self.dialect),
             name: self.id.clone(),
             sink_ctx: None,
+            cancel_drops_session: false,
         };
+        // v2 추가 op(10-25): 취소 = 세션 끊김 플래그(cdylib 경계 너머의 `drops_session` · 모르는 드라이버 = 거짓).
+        if let Ok(bytes) = s.call(ops::CANCEL_DROPS_SESSION, &[]) {
+            s.cancel_drops_session = codec::Reader::new(&bytes).bool().unwrap_or(false);
+        }
         // v2: 드라이버가 말하는 Caps·이름(실패하면 방언 기본값).
         if let Ok(bytes) = s.call(ops::CAPS, &[]) {
             if let Ok(c) = codec::Reader::new(&bytes).caps() {
@@ -302,6 +307,8 @@ pub struct DynSession {
     name: String,
     /// 서버 메시지 싱크의 본체 쪽 컨텍스트(드라이버가 콜백 ctx로 받는다 · 세션보다 오래 산다).
     sink_ctx: Option<Box<SinkCtx>>,
+    /// 취소가 세션을 끊는 드라이버인가(`ops::CANCEL_DROPS_SESSION` · open 때).
+    cancel_drops_session: bool,
 }
 
 /// 드라이버 콜백이 넘겨 받는 ctx — `MessageSink`를 담는다.
@@ -419,6 +426,8 @@ unsafe impl Send for DynSession {}
 struct DynCancel {
     drv: Arc<DynDriver>,
     handle: usize,
+    /// 드라이버가 `ops::CANCEL_DROPS_SESSION`으로 알린 값(open 때 1회 · 옛 드라이버 = 거짓).
+    drops_session: bool,
 }
 
 impl nsql_core::CancelHandle for DynCancel {
@@ -427,6 +436,10 @@ impl nsql_core::CancelHandle for DynCancel {
         // SAFETY: ABI 계약 = cancel은 실행 중 다른 스레드에서 불러도 된다.
         let st = unsafe { (self.drv.vt.cancel)(self.handle as *mut c_void, &mut err) };
         self.drv.status(st, err)
+    }
+
+    fn drops_session(&self) -> bool {
+        self.drops_session
     }
 }
 
@@ -461,6 +474,7 @@ impl Session for DynSession {
         Some(Arc::new(DynCancel {
             drv: Arc::clone(&self.drv),
             handle: self.handle as usize,
+            drops_session: self.cancel_drops_session,
         }))
     }
 
