@@ -1923,7 +1923,7 @@ fn db2_lob_clob_blob_round_trip() {
     .expect("insert lob");
     exec(&mut s, "INSERT INTO NSQLT_DB2L (ID) VALUES (2)", Vec::new()).expect("insert null lob");
     // ★ 2차 ⑥: 32 767 B 초과 = EXTDTA 입력 + DSS 연속(CLOB ≈ 110 000 B UTF-8 · BLOB 200 000 B → DDM 확장 길이).
-    let huge_text: String = "큰 clob 입력 ".repeat(6_000);
+    let huge_text: String = "큰 clob 입력 ".repeat(7_000); // 16 B × 7 000 = 112 000 B(> 32 767 → DSS 연속 4조각)
     let huge_bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 253) as u8).collect();
     assert!(huge_text.len() > 100_000);
     exec(
