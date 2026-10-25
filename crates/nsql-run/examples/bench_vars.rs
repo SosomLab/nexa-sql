@@ -5,7 +5,6 @@
 
 use nsql_core::{Dialect, Value};
 use nsql_script::{missing_inputs, split_script_in, Engine, VarStore};
-use std::collections::BTreeMap;
 use std::time::Instant;
 
 fn script(statements: usize) -> String {
@@ -29,7 +28,7 @@ fn main() {
 
         let mut vars = VarStore::new();
         vars.assign("V_CD", Value::Str("SEBANG".into()));
-        let mut defines = BTreeMap::new();
+        let mut defines = nsql_script::MacroStore::new();
         defines.insert("TAG".to_string(), "x".to_string());
         let t = Instant::now();
         let needs = missing_inputs(&src, Some(Dialect::Oracle), &vars, &defines, Some('&'));
@@ -61,7 +60,7 @@ fn main() {
         &dump,
         Some(Dialect::Oracle),
         &VarStore::new(),
-        &BTreeMap::new(),
+        &nsql_script::MacroStore::new(),
         Some('&'),
     )
     .len();

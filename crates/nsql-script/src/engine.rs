@@ -169,8 +169,8 @@ pub struct Engine {
     /// `COLUMN 열 NEW_VALUE 변수` — 열 이름(대문자) → 치환 변수 이름.
     pub column_new: BTreeMap<String, String>,
     pub vars: VarStore,
-    /// 치환 변수(`DEFINE` · `:setvar` · `&1..&n`).
-    pub defines: BTreeMap<String, String>,
+    /// 치환 변수(`DEFINE` · `:setvar` · `&1..&n`) — ★ T-153 ④ [`MacroStore`](층 = 탭 → 공유 → 글로벌 · 바인드 `vars`와 별개).
+    pub defines: crate::macros::MacroStore,
     pub settings: Settings,
     pub diagnostics: Vec<Diagnostic>,
     /// 사용 시 확장의 재귀 스택(순환·깊이 검출 · 치환 중에만 비어 있지 않다).
@@ -193,7 +193,7 @@ impl Engine {
             sysvars: BTreeMap::new(),
             column_new: BTreeMap::new(),
             vars: VarStore::new(),
-            defines: BTreeMap::new(),
+            defines: crate::macros::MacroStore::new(),
             settings: {
                 let (define_char, define_lenient) = Settings::default_define(dialect);
                 Settings {

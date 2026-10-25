@@ -30,6 +30,7 @@ pub mod inputs;
 pub mod intel;
 pub mod intrinsic;
 pub mod lexer;
+pub mod macros;
 pub mod outline;
 pub mod plan;
 pub mod split;
@@ -48,6 +49,7 @@ pub use inputs::{
     InputNeed,
 };
 pub use lang::{lang, set_lang, Lang};
+pub use macros::{MacroLayer, MacroStore};
 pub use split::{classify_sql, split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};
 pub use vars::{looks_secret, vars_from_script, vars_to_script, Layer, Var, VarState, VarStore};

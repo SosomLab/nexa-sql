@@ -16,7 +16,7 @@ use crate::lexer::{classify, Class};
 use crate::split::{split_script_in, ItemKind, SqlKind};
 use crate::vars::{norm, VarStore};
 use nsql_core::{Dialect, Value, VarType};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// ★ 바인드 전달 모드(docs/123 §4 · T-416 꼬리표 · 입력 창 미리보기 공용) — `:이름`이 서버에 어떻게 가는가.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,7 +266,7 @@ pub fn missing_inputs(
     src: &str,
     dialect: Option<Dialect>,
     vars: &VarStore,
-    defines: &BTreeMap<String, String>,
+    defines: &crate::macros::MacroStore,
     define_char: Option<char>,
 ) -> Vec<InputNeed> {
     // SQLite는 `@x` · `$x`도 이름 매개변수다 → `:x`로 맞춰 본다(같은 길이라 줄·오프셋이 그대로 · T-162 ①).
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn set_define_on_inside_script_is_followed_even_when_prefix_off() {
         let vars = VarStore::new();
-        let defs = BTreeMap::new();
+        let defs = crate::macros::MacroStore::new();
         let src = "SET DEFINE ON\nSELECT 'R&D' AS x;\n";
         let needs = missing_inputs(src, Some(Dialect::Mssql), &vars, &defs, None);
         assert_eq!(needs.len(), 1, "{needs:?}");
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn brace_format_suffix_is_not_a_bind() {
         let vars = VarStore::new();
-        let mut defs = BTreeMap::new();
+        let mut defs = crate::macros::MacroStore::new();
         defs.insert("WHO".to_string(), "O'Neil".to_string());
         defs.insert("OWN".to_string(), "SYS".to_string());
         let src = "SELECT ${who:q} AS quoted, '${own:lower}' AS low FROM DUAL;\n";
@@ -540,7 +540,13 @@ mod tests {
         let src = String::from("COLUMN m NEW_VALUE v_m")
             + &String::from(char::from(10))
             + "SELECT '&_USER', &v_m, &really_missing FROM dual;";
-        let needs = missing_inputs(&src, None, &vars, &BTreeMap::new(), Some('&'));
+        let needs = missing_inputs(
+            &src,
+            None,
+            &vars,
+            &crate::macros::MacroStore::new(),
+            Some('&'),
+        );
         let names: Vec<&str> = needs.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, vec!["REALLY_MISSING"]);
     }
@@ -549,7 +555,7 @@ mod tests {
     #[test]
     fn accept_is_always_asked_once() {
         let vars = VarStore::new();
-        let mut defs = BTreeMap::new();
+        let mut defs = crate::macros::MacroStore::new();
         defs.insert("DEPT".to_string(), "99".to_string());
         let src = "ACCEPT dept NUMBER DEFAULT 10 PROMPT 'Dept: '\nACCEPT pw HIDE\nSELECT &dept, '&pw' FROM dual;\n";
         let needs = missing_inputs(src, None, &vars, &defs, Some('&'));
@@ -568,7 +574,7 @@ mod tests {
             "ACCEPT x\nSELECT 1 FROM dual;\n",
             None,
             &vars,
-            &BTreeMap::new(),
+            &crate::macros::MacroStore::new(),
             Some('&'),
         );
         assert_eq!(only.len(), 1);
@@ -582,7 +588,7 @@ mod tests {
             src,
             Some(Dialect::Oracle),
             vars,
-            &BTreeMap::new(),
+            &crate::macros::MacroStore::new(),
             Some('&'),
         )
         .into_iter()
@@ -630,7 +636,7 @@ mod tests {
             "UPDATE t SET a = :A WHERE id = :ID RETURNING b INTO :B;\n",
             Some(Dialect::Oracle),
             &VarStore::new(),
-            &BTreeMap::new(),
+            &crate::macros::MacroStore::new(),
             None,
         );
         let names: Vec<&str> = got.iter().map(|n| n.name.as_str()).collect();
