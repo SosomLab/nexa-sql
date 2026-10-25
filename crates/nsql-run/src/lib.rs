@@ -1061,12 +1061,29 @@ impl Runner {
         let mut prompt = |_: &str| Some(String::new());
         let prev = self.max_rows;
         self.set_max_rows(0);
+        // ★ 읽기 트랜잭션 자동 종료(docs/56 L1)는 **스크립트가 끝난 뒤 한 번**(CI db2.yml 40219925165 · 10-26): 문장마다 돌면
+        //   Db2 `EXPLAIN`(EXPLAIN 표에 쓰지만 분류 = 읽기)이 남긴 행을 바로 ROLLBACK이 지워 트리 질의가 0행이 된다(Oracle
+        //   PLAN_TABLE도 같은 꼴). 끝에서 되돌리면 EXPLAIN 표 정리까지 겸한다(수동 모드 · 러너가 이 스크립트로 연 깨끗한 트랜잭션만).
+        let read_end = std::mem::replace(&mut self.read_end, ReadEnd::Off);
+        let was_open = self.tx_open || self.tx_changed || self.tx_user;
         let _ = self.run_script(&src, &mut prompt, &mut |e| match e {
             RunEvent::ResultSet { rs, .. } => sets.push(rs),
             RunEvent::Error { error, .. } if first_err.is_none() => first_err = Some(error),
             _ => {}
         });
+        self.read_end = read_end;
         self.set_max_rows(prev);
+        if !was_open
+            && read_end != ReadEnd::Off
+            && self.tx_open
+            && !self.tx_changed
+            && !self.tx_user
+        {
+            if let Some(s) = self.session.as_mut() {
+                let _ = s.rollback();
+            }
+            self.note_tx_ended();
+        }
         if let Some(e) = first_err {
             return Err(e);
         }
@@ -5260,6 +5277,54 @@ mod apply_changes_tests {
             )
             .with_autocommit(autocommit);
         (r, log)
+    }
+
+    /// ★ 수동 모드의 `explain`(CI db2.yml 40219925165 · 10-26): 읽기 트랜잭션 자동 종료(56 L1)가 EXPLAIN 문장과 트리 질의 **사이**에
+    /// 끼면 Db2 EXPLAIN 표 행이 지워져 0행 — 스크립트가 끝난 뒤 ROLLBACK 한 번(= EXPLAIN 표 정리)이어야 한다. 이미 열린 트랜잭션은 건드리지 않는다.
+    #[test]
+    fn explain_defers_read_end_rollback_to_script_end() {
+        let (mut r, log) = runner_of(Dialect::Db2, 0, vec![], false);
+        let _ = r.explain(
+            "SELECT e.ID FROM NSQLT e",
+            nsql_script::plan::PlanOptions { analyze: false },
+        );
+        let got = log.lock().expect("log").clone();
+        let explain_at = got
+            .iter()
+            .position(|s| s.starts_with("EXPLAIN PLAN SELECTION"))
+            .expect("EXPLAIN 문장");
+        let tree_at = got
+            .iter()
+            .position(|s| s.starts_with("WITH k AS"))
+            .expect("트리 질의");
+        assert!(explain_at < tree_at, "{got:#?}");
+        assert!(
+            !got[explain_at..tree_at].iter().any(|s| s == "ROLLBACK"),
+            "EXPLAIN과 트리 질의 사이에 ROLLBACK: {got:#?}"
+        );
+        assert_eq!(got.last().map(String::as_str), Some("ROLLBACK"), "{got:#?}");
+        assert_eq!(
+            got.iter().filter(|s| *s == "ROLLBACK").count(),
+            1,
+            "{got:#?}"
+        );
+        assert!(!r.tx_open(), "러너가 연 읽기 트랜잭션은 끝나 있어야 한다");
+        // 사용자가 이미 변경을 쥔 트랜잭션은 explain이 끝내지 않는다.
+        let (mut r, log) = runner_of(Dialect::Db2, 0, vec![1], false);
+        let _ = r.apply_changes(&[stmt("UPDATE t SET a=1", true)]);
+        let before = log.lock().expect("log").len();
+        let _ = r.explain(
+            "SELECT 1 FROM T",
+            nsql_script::plan::PlanOptions { analyze: false },
+        );
+        let got = log.lock().expect("log").clone();
+        assert!(
+            !got[before..]
+                .iter()
+                .any(|s| s == "ROLLBACK" || s == "COMMIT"),
+            "{got:#?}"
+        );
+        assert!(r.tx_open());
     }
 
     /// ★ 시작문이 없는 방언(Oracle)의 수동 모드: 적용이 성공하면 트랜잭션이 열린 것(`tx_left_open`) · 문장 기록은 사전 검사+실행문 순서.
