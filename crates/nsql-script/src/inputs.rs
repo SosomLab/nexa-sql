@@ -15,8 +15,101 @@ use crate::command::Command;
 use crate::lexer::{classify, Class};
 use crate::split::{split_script_in, ItemKind, SqlKind};
 use crate::vars::{norm, VarStore};
-use nsql_core::Dialect;
+use nsql_core::{Dialect, Value, VarType};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// ★ 바인드 전달 모드(docs/123 §4 · T-416 꼬리표 · 입력 창 미리보기 공용) — `:이름`이 서버에 어떻게 가는가.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// 서버 바인드 변수(기본 · 7방언).
+    Bind,
+    /// SQL Server 배치 첫 문장 DDL + 바인드 참조 = `DECLARE @v = <리터럴>` 프리펜드(문장별 판정 = 러너).
+    DeclarePrepend,
+    /// 리터럴 치환(바인드가 없는 방언 · ClickHouse 1차).
+    Inline,
+}
+
+impl Delivery {
+    /// 로그·미리보기 꼬리표(영어 고정 · `bind` · `declare-prepend` · `inline`).
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Delivery::Bind => "bind",
+            Delivery::DeclarePrepend => "declare-prepend",
+            Delivery::Inline => "inline",
+        }
+    }
+}
+
+/// 방언의 **기본** 전달 모드(문장별 예외 = DeclarePrepend는 러너가 그 문장에서 판정).
+#[must_use]
+pub fn default_delivery(dialect: Dialect) -> Delivery {
+    match dialect {
+        Dialect::Clickhouse => Delivery::Inline,
+        _ => Delivery::Bind,
+    }
+}
+
+/// 입력 창의 친 글을 **고른 타입**으로 해석한다(T-153 · 사용자 10-26 "타입 콤보") — 빈 글·`NULL` = Null ·
+/// `Auto` = 리터럴 추정(`parse_literal` · 실패 = 글자) · 숫자형 = 숫자로 읽히면 숫자 아니면 글자 그대로(서버가 판정) ·
+/// 글자형 = 글자 그대로(`'123'`도 글자) · DATE/TIMESTAMP = 글자(드라이버가 타입으로 바인드) · BOOLEAN = true/false/yes/no/1/0.
+#[must_use]
+pub fn typed_input(text: &str, ty: &VarType) -> Value {
+    let t = text.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("NULL") {
+        return Value::Null;
+    }
+    let guess =
+        || crate::command::parse_literal(t).unwrap_or_else(|_| Value::Str(text.to_string()));
+    match ty {
+        VarType::Auto => guess(),
+        VarType::Number | VarType::BinaryFloat | VarType::BinaryDouble => match guess() {
+            v @ (Value::Int(_) | Value::Float(_) | Value::Decimal(_)) => v,
+            _ => Value::Str(t.to_string()),
+        },
+        VarType::Varchar2(_) | VarType::Char(_) | VarType::Clob => Value::Str(text.to_string()),
+        VarType::Date | VarType::Timestamp => Value::Str(t.to_string()),
+        VarType::Boolean => match t.to_ascii_lowercase().as_str() {
+            "true" | "yes" | "y" | "1" | "on" => Value::Bool(true),
+            "false" | "no" | "n" | "0" | "off" => Value::Bool(false),
+            _ => Value::Str(t.to_string()),
+        },
+        VarType::Blob => guess(),
+        VarType::RefCursor => Value::Null,
+    }
+}
+
+/// 입력 창 **미리보기** 글(서버에 가는 모양 · 영어 고정): 바인드 = `bind NUMBER 42` · 치환 = `inline '…'` · 매크로 = 글자 그대로.
+#[must_use]
+pub fn input_preview(kind: InputKind, text: &str, ty: &VarType, dialect: Dialect) -> String {
+    match kind {
+        InputKind::Macro => {
+            if text.is_empty() {
+                "(empty)".to_string()
+            } else {
+                text.to_string()
+            }
+        }
+        InputKind::Bind => {
+            let v = typed_input(text, ty);
+            let lit = v.to_sql_literal(dialect);
+            match default_delivery(dialect) {
+                Delivery::Inline => format!("inline {lit}"),
+                d => {
+                    let shown = match &v {
+                        Value::Null => "NULL".to_string(),
+                        _ => lit,
+                    };
+                    if *ty == VarType::Auto {
+                        format!("{} {shown}", d.label())
+                    } else {
+                        format!("{} {} {shown}", d.label(), ty.sql_name())
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// 빠진 입력의 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -353,6 +446,54 @@ pub fn missing_inputs(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn typed_input_and_preview_follow_chosen_type() {
+        use nsql_core::{Dialect, Value, VarType};
+        assert_eq!(typed_input(" ", &VarType::Number), Value::Null);
+        assert_eq!(typed_input("null", &VarType::Varchar2(10)), Value::Null);
+        assert_eq!(typed_input("42", &VarType::Auto), Value::Int(42));
+        assert_eq!(
+            typed_input("42", &VarType::Varchar2(10)),
+            Value::Str("42".into())
+        );
+        assert_eq!(
+            typed_input("abc", &VarType::Number),
+            Value::Str("abc".into())
+        );
+        assert_eq!(typed_input("YES", &VarType::Boolean), Value::Bool(true));
+        assert_eq!(
+            typed_input("2026-10-26", &VarType::Date),
+            Value::Str("2026-10-26".into())
+        );
+        assert_eq!(
+            input_preview(InputKind::Bind, "42", &VarType::Auto, Dialect::Oracle),
+            "bind 42"
+        );
+        assert_eq!(
+            input_preview(
+                InputKind::Bind,
+                "a'b",
+                &VarType::Varchar2(4000),
+                Dialect::Mssql
+            ),
+            "bind VARCHAR2(4000) N'a''b'"
+        );
+        assert_eq!(
+            input_preview(InputKind::Bind, "", &VarType::Number, Dialect::Postgres),
+            "bind NUMBER NULL"
+        );
+        assert_eq!(
+            input_preview(InputKind::Bind, "x", &VarType::Auto, Dialect::Clickhouse),
+            "inline 'x'"
+        );
+        assert_eq!(
+            input_preview(InputKind::Macro, "EMP", &VarType::Auto, Dialect::Oracle),
+            "EMP"
+        );
+        assert_eq!(default_delivery(Dialect::Mssql), Delivery::Bind);
+        assert_eq!(Delivery::DeclarePrepend.label(), "declare-prepend");
+    }
     /// `${이름:형식}`의 형식 접미(`:q` · `:lower`)는 바인드가 아니다 — 묻지 않는다(사용자 10-03) · 진짜 바인드는 그대로 묻는다.
     /// D-272: 접두를 끄고 넘겨도(너그러운 방언) 스크립트의 `SET DEFINE ON` 뒤 `&D`는 빠진 입력이다 · `SET DEFINE`이 없으면 비어 있다.
     #[test]

@@ -4,12 +4,14 @@
 //!
 //! 창 골격은 트랜잭션 로그 창과 같다(winit 창 + `Presenter` · 포커스 ≤ 1 · 마우스는 커서 아래 컨트롤에만 · Esc = 닫기).
 
+use nexa_ctl::controls::{Combo, ComboControl, ComboItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::{Button, Control, InputEvent, Invalidations, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
+use nsql_core::{Dialect, VarType};
 use nsql_i18n::{t, Msg};
 use nsql_script::{InputKind, InputNeed};
 use std::rc::Rc;
@@ -22,7 +24,7 @@ pub(crate) enum InputWinAction {
     None,
     Paint,
     /// 값을 넣고 실행((종류, 이름, 친 글)).
-    Run(Vec<(InputKind, String, String)>),
+    Run(Vec<(InputKind, String, String, Option<VarType>)>),
     /// 비밀번호 입력 창의 답 — 값은 [`nsql_core::Secret`](버려질 때 0으로 덮어쓴다) · 입력란은 이미 지웠다.
     Password(nsql_core::Secret),
     /// 값 없이 그대로 실행.
@@ -34,6 +36,39 @@ pub(crate) enum InputWinAction {
 struct Row {
     need: InputNeed,
     tb: TextBox,
+    /// ★ T-153(사용자 10-26): 바인드 행의 타입 콤보(auto · NUMBER · VARCHAR2 · DATE · TIMESTAMP · BOOLEAN · CLOB) — 매크로 행은 없음.
+    ty: Option<Combo>,
+}
+
+/// 타입 콤보 항목(값 = `VarType::parse`가 읽는 토큰 · `auto` = 리터럴 추정).
+const TYPE_ITEMS: [&str; 7] = [
+    "auto",
+    "NUMBER",
+    "VARCHAR2",
+    "DATE",
+    "TIMESTAMP",
+    "BOOLEAN",
+    "CLOB",
+];
+
+fn type_combo() -> Combo {
+    Combo::new(
+        TYPE_ITEMS.iter().map(|t| ComboItem::new(*t, *t)).collect(),
+        0,
+    )
+}
+
+impl Row {
+    fn chosen_type(&self) -> Option<VarType> {
+        self.ty.as_ref().map(|c| {
+            let v = c.selected_value();
+            if v == "auto" {
+                VarType::Auto
+            } else {
+                VarType::parse(&v).unwrap_or(VarType::Auto)
+            }
+        })
+    }
 }
 
 /// 비밀번호 물음의 내용(`open_password`).
@@ -69,6 +104,8 @@ pub(crate) struct InputWin {
     password_rejected: bool,
     /// 세션 자격 금고(`connect.remember_session_password`)가 켜져 있는가 — 안내 문구가 달라진다(사용자 09-22 "설명이 부적합").
     password_remember: bool,
+    /// 미리보기 열의 리터럴 꼴을 정하는 방언(열 때 세션에서 받음 · T-153).
+    dialect: Dialect,
 }
 
 impl InputWin {
@@ -90,6 +127,7 @@ impl InputWin {
             password_for: None,
             password_rejected: false,
             password_remember: true,
+            dialect: Dialect::Oracle,
         }
     }
 
@@ -110,7 +148,7 @@ impl InputWin {
             default: None,
             hide: true,
         };
-        self.open(el, theme, owner, vec![need], sess);
+        self.open(el, theme, owner, vec![need], sess, Dialect::Oracle);
         self.password_for = Some(ask.target);
         self.password_rejected = ask.rejected;
         self.password_remember = ask.remember;
@@ -128,10 +166,11 @@ impl InputWin {
     /// 항목 = 위 여백 12 + 안내 20×L + 10 + 줄 (32+6)×n + 버튼 34 + 아래 여백 12(`paint`의 배치와 같은 수).
     fn desired_size(&self) -> winit::dpi::LogicalSize<f64> {
         let n = self.rows.len().clamp(1, 12) as f64;
+        // 입력 창 = 이름 · 타입 콤보 · 값 · 미리보기 네 칸(T-153) → 종전 520보다 넓게.
         let (w, hint_lines) = if self.password_for.is_some() {
             (440.0, 2.0)
         } else {
-            (520.0, 1.0)
+            (760.0, 1.0)
         };
         winit::dpi::LogicalSize::new(w, 68.0 + 20.0 * hint_lines + 38.0 * n)
     }
@@ -154,10 +193,12 @@ impl InputWin {
         owner: Option<&Window>,
         needs: Vec<InputNeed>,
         sess: u64,
+        dialect: Dialect,
     ) {
         self.wipe_if_password();
         self.run_btn.set_label(t(Msg::BtnRunInputs));
         self.sess = sess;
+        self.dialect = dialect;
         self.rows = needs
             .into_iter()
             .map(|need| {
@@ -170,7 +211,8 @@ impl InputWin {
                     tb.set_text(d);
                 }
                 tb.set_masked(need.hide);
-                Row { tb, need }
+                let ty = (need.kind == InputKind::Bind).then(type_combo);
+                Row { tb, need, ty }
             })
             .collect();
         self.focus = 0;
@@ -266,7 +308,14 @@ impl InputWin {
                 InputKind::Bind => "bind",
                 InputKind::Macro => "macro",
             };
-            out.push_str(&format!("{kind}|{}|line={}\n", r.need.name, r.need.line));
+            let ty = r.chosen_type().unwrap_or(VarType::Auto);
+            let preview = nsql_script::input_preview(r.need.kind, &r.tb.text(), &ty, self.dialect);
+            out.push_str(&format!(
+                "{kind}|{}|line={}|type={}|preview={preview}\n",
+                r.need.name,
+                r.need.line,
+                ty.sql_name()
+            ));
         }
         out
     }
@@ -289,11 +338,37 @@ impl InputWin {
         }
     }
 
-    fn values(&self) -> Vec<(InputKind, String, String)> {
+    fn values(&self) -> Vec<(InputKind, String, String, Option<VarType>)> {
         self.rows
             .iter()
-            .map(|r| (r.need.kind, r.need.name.clone(), r.tb.text()))
+            .map(|r| {
+                (
+                    r.need.kind,
+                    r.need.name.clone(),
+                    r.tb.text(),
+                    r.chosen_type(),
+                )
+            })
             .collect()
+    }
+
+    /// 어떤 타입 콤보가 열려 있는가(열린 콤보가 사건을 먼저 받는다 · 접속 창과 같은 규칙).
+    fn open_combo(&mut self) -> Option<&mut Combo> {
+        self.rows
+            .iter_mut()
+            .filter_map(|r| r.ty.as_mut())
+            .find(|c| c.is_open())
+    }
+
+    /// 자체 시험용: 행 i의 타입 콤보 값을 고른다(기동 명령 · 키 주입 없이).
+    pub(crate) fn pick_type_for_test(&mut self, i: usize, ty: &str) -> bool {
+        match self.rows.get_mut(i).and_then(|r| r.ty.as_mut()) {
+            Some(c) => {
+                c.select_value(ty);
+                true
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn set_ime_hint(&mut self, on: bool) {
@@ -375,6 +450,9 @@ impl InputWin {
                 let mv = InputEvent::MouseMove { x, y };
                 for r in &mut self.rows {
                     r.tb.on_event(&mv, &mut inv);
+                    if let Some(c) = r.ty.as_mut() {
+                        c.on_event(&mv, &mut inv);
+                    }
                 }
                 for b in [&mut self.run_btn, &mut self.skip_btn, &mut self.cancel_btn] {
                     b.on_event(&mv, &mut inv);
@@ -396,6 +474,23 @@ impl InputWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
+                // ★ 열린 타입 콤보가 있으면 그것이 먼저(모달 · 바깥 클릭 = 닫고 그대로).
+                if let Some(c) = self.open_combo() {
+                    c.on_event(&e, &mut inv);
+                    self.redraw();
+                    return InputWinAction::None;
+                }
+                if !up {
+                    for r in &mut self.rows {
+                        if let Some(c) = r.ty.as_mut() {
+                            if c.bounds().contains(p) {
+                                c.on_event(&e, &mut inv);
+                                self.redraw();
+                                return InputWinAction::None;
+                            }
+                        }
+                    }
+                }
                 let menu_row = self.rows.iter().position(|r| r.tb.popup_open());
                 if !up && menu_row.is_none() {
                     if let Some(i) = self.rows.iter().position(|r| r.tb.bounds().contains(p)) {
@@ -475,6 +570,28 @@ impl InputWin {
                         crate::imestate::note_toggle(latin_now);
                     }
                     self.note_hidden_input();
+                    self.redraw();
+                    return InputWinAction::None;
+                }
+                // 열린 타입 콤보 = 키도 그쪽(↑↓ · Enter 확정 · Esc 닫기).
+                if self.open_combo().is_some() {
+                    let ke = match kev.logical_key.as_ref() {
+                        Key::Named(NamedKey::ArrowDown) => Some(nexa_ctl::Key::Down),
+                        Key::Named(NamedKey::ArrowUp) => Some(nexa_ctl::Key::Up),
+                        Key::Named(NamedKey::Enter) => Some(nexa_ctl::Key::Enter),
+                        Key::Named(NamedKey::Escape) => Some(nexa_ctl::Key::Escape),
+                        _ => None,
+                    };
+                    if let (Some(key), Some(c)) = (ke, self.open_combo()) {
+                        c.on_event(
+                            &InputEvent::Key {
+                                key,
+                                shift: false,
+                                primary: false,
+                            },
+                            &mut inv,
+                        );
+                    }
                     self.redraw();
                     return InputWinAction::None;
                 }
@@ -638,11 +755,39 @@ impl InputWin {
                     &text,
                     th.text,
                 );
-                let x = pad + name_w + px(10.0);
+                let mut x = pad + name_w + px(10.0);
+                // 타입 콤보(바인드 행만 · T-153) → 값 → 미리보기(흐린 글 · 서버에 가는 모양).
+                let combo_w = px(120.0);
+                let preview_w = if pw_mode { 0 } else { px(190.0) };
+                if let Some(c) = r.ty.as_mut() {
+                    c.set_scale(s);
+                    c.set_bounds(Rect::new(x, y, combo_w, row_h), inv);
+                    c.paint(&mut dc, th);
+                    x += combo_w + px(6.0);
+                }
                 r.tb.set_scale(s);
-                r.tb.set_bounds(Rect::new(x, y, wi - x - pad, row_h), inv);
+                let tb_w = (wi - x - pad - preview_w - if preview_w > 0 { px(8.0) } else { 0 })
+                    .max(px(80.0));
+                r.tb.set_bounds(Rect::new(x, y, tb_w, row_h), inv);
                 r.tb.paint(&mut dc, th);
+                if preview_w > 0 {
+                    let ty = r.chosen_type().unwrap_or(VarType::Auto);
+                    let preview =
+                        nsql_script::input_preview(r.need.kind, &r.tb.text(), &ty, self.dialect);
+                    dc.select_font(FontSlot::Status, false);
+                    let px0 = x + tb_w + px(8.0);
+                    let clip = Rect::new(px0, y, (wi - pad - px0).max(0), row_h);
+                    let shown = nexa_ctl::draw::ellipsize_middle(&mut dc, &preview, clip.w);
+                    dc.text(px0, y + (row_h - th_txt) / 2, clip, &shown, th.text_dim);
+                    dc.select_font(FontSlot::Base, false);
+                }
                 y += row_h + gap;
+            }
+            // 열린 콤보의 드롭다운은 맨 위에(다른 행을 덮는다).
+            for r in &mut self.rows {
+                if let Some(c) = r.ty.as_ref().filter(|c| c.is_open()) {
+                    c.paint(&mut dc, th);
+                }
             }
             // 버튼(오른쪽 정렬: Cancel · Skip · Run).
             let bw = px(96.0);

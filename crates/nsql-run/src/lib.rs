@@ -1185,19 +1185,36 @@ impl Runner {
 
     /// 호스트가 받은 입력을 넣는다 — 바인드 = 타입 있는 값(`NULL` · 수 · `'글'` · 그 밖 = 글 그대로 · 빈 글 = NULL) ·
     /// 치환 변수 = 글자 그대로.
-    pub fn apply_inputs(&mut self, values: Vec<(nsql_script::InputKind, String, String)>) {
+    /// 입력 창의 답 — `(종류 · 이름 · 친 글 · 고른 타입)`. 타입이 `Auto`가 아니면 그 타입으로 **선언 + 대입**(T-153 · 사용자 10-26 타입 콤보 ·
+    /// 선언된 변수는 타입 고정 → 뒤 대입에서 값을 따라 바뀌지 않는다) · `Auto`/없음 = 종전(리터럴 추정 대입).
+    pub fn apply_inputs(
+        &mut self,
+        values: Vec<(
+            nsql_script::InputKind,
+            String,
+            String,
+            Option<nsql_core::VarType>,
+        )>,
+    ) {
         // 새 실행의 답 — 앞 실행에서 쓰이지 않고 남은 `ACCEPT` 표시는 버린다.
         self.engine.accepted.clear();
-        for (kind, name, text) in values {
+        for (kind, name, text, ty) in values {
             match kind {
                 nsql_script::InputKind::Macro => {
                     self.engine.define(&name, &text);
                     self.engine.accepted.insert(name.to_ascii_uppercase());
                 }
-                nsql_script::InputKind::Bind => {
-                    let v = input_value(&text);
-                    self.engine.vars.assign(&name, v);
-                }
+                nsql_script::InputKind::Bind => match ty.filter(|t| *t != nsql_core::VarType::Auto)
+                {
+                    Some(ty) => {
+                        let v = nsql_script::typed_input(&text, &ty);
+                        self.engine.vars.declare(&name, ty, Some(v));
+                    }
+                    None => {
+                        let v = input_value(&text);
+                        self.engine.vars.assign(&name, v);
+                    }
+                },
             }
         }
     }
@@ -3674,6 +3691,44 @@ fn summary(item: &Item) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-153: 입력 창이 고른 타입은 선언 + 대입(타입 고정) · `auto`/없음 = 종전 대입.
+    #[test]
+    fn apply_inputs_declares_with_chosen_type() {
+        use nsql_core::{Value, VarType};
+        let mut r = runner();
+        r.apply_inputs(vec![
+            (
+                nsql_script::InputKind::Bind,
+                "A".into(),
+                "42".into(),
+                Some(VarType::Varchar2(4000)),
+            ),
+            (
+                nsql_script::InputKind::Bind,
+                "B".into(),
+                "42".into(),
+                Some(VarType::Auto),
+            ),
+            (
+                nsql_script::InputKind::Bind,
+                "C".into(),
+                "yes".into(),
+                Some(VarType::Boolean),
+            ),
+        ]);
+        let a = r.engine.vars.get("A").expect("A");
+        assert_eq!(
+            (a.ty.clone(), a.value.clone(), a.auto_ty),
+            (VarType::Varchar2(4000), Value::Str("42".into()), false)
+        );
+        let b = r.engine.vars.get("B").expect("B");
+        assert_eq!((b.value.clone(), b.auto_ty), (Value::Int(42), true));
+        assert_eq!(
+            r.engine.vars.get("C").map(|v| v.value.clone()),
+            Some(Value::Bool(true))
+        );
+    }
     use nsql_driver_sqlite::SqliteSession;
 
     /// ★ 객체 단위 실행(09-30): 종결 줄 제거 · 블록은 `END;` 유지 · DDL/뷰는 끝 `;` 제거 · `GO`(T-SQL) · 여러 종결 줄.
@@ -4343,8 +4398,13 @@ SELECT * FROM t;
         let needs = r.missing_inputs(src);
         assert_eq!(needs.len(), 2, "{needs:?}");
         r.apply_inputs(vec![
-            (nsql_script::InputKind::Bind, "N".into(), "41".into()),
-            (nsql_script::InputKind::Macro, "WHO".into(), "kim".into()),
+            (nsql_script::InputKind::Bind, "N".into(), "41".into(), None),
+            (
+                nsql_script::InputKind::Macro,
+                "WHO".into(),
+                "kim".into(),
+                None,
+            ),
         ]);
         assert!(r.missing_inputs(src).is_empty());
         let (errs, ev) = collect(&mut r, src);
@@ -4511,6 +4571,7 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             nsql_script::InputKind::Macro,
             "N".into(),
             "5".into(),
+            None,
         )]);
         assert_eq!(value(src, &mut r, Some("999"), &mut asked), "6");
         assert!(asked.is_empty(), "{asked:?}");

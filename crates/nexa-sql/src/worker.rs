@@ -608,8 +608,15 @@ pub(crate) fn ask_refetch(
 
 /// 입력 창의 답(D-137) — 워커는 `RunEvent::InputNeeded`를 낸 뒤 이것을 기다린다(그동안 세션은 "바쁨").
 pub(crate) enum InputReply {
-    /// (종류, 이름, 친 글) — 빈 목록 = "이번엔 건너뛰기"(값 없이 그대로 실행 = 종전 동작).
-    Values(Vec<(nsql_script::InputKind, String, String)>),
+    /// (종류, 이름, 친 글, 고른 타입) — 빈 목록 = "이번엔 건너뛰기"(값 없이 그대로 실행 = 종전 동작) · 타입 = 입력 창 콤보(T-153).
+    Values(
+        Vec<(
+            nsql_script::InputKind,
+            String,
+            String,
+            Option<nsql_core::VarType>,
+        )>,
+    ),
     /// 실행하지 않는다.
     Cancel,
 }

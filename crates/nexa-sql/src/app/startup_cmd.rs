@@ -1452,6 +1452,17 @@ impl App {
             self.conn_win.redraw();
             return;
         }
+        // T-153 자체 시험: 입력 창 i행 타입 콤보 고르기(`inputs.type:<행>:<타입>`) → 덤프의 `type=`·`preview=`로 확인(키 주입 없이).
+        if let Some(rest) = id.strip_prefix("inputs.type:") {
+            if let Some((i, ty)) = rest.split_once(':') {
+                if let Ok(i) = i.parse::<usize>() {
+                    if self.input_win.pick_type_for_test(i, ty) {
+                        self.input_win.redraw();
+                    }
+                }
+            }
+            return;
+        }
         if let Some(name) = id.strip_prefix("conn.edit:") {
             if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
                 self.conn_win.capture_open_detail(name);

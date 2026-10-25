@@ -43,7 +43,10 @@ pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, Spo
 pub use connect::{ConnEnv, ConnectSpec, ENV_CHOICES};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine, SYSTEM_VARS};
-pub use inputs::{macro_refs, missing_inputs, InputKind, InputNeed};
+pub use inputs::{
+    default_delivery, input_preview, macro_refs, missing_inputs, typed_input, Delivery, InputKind,
+    InputNeed,
+};
 pub use lang::{lang, set_lang, Lang};
 pub use split::{classify_sql, split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};
