@@ -654,6 +654,21 @@ impl Db2Session {
             if let Some(e) = prep.error {
                 return Err(e);
             }
+            // ★ XML(988/989) 바인드 = `?`를 `XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))`로 감싸 CLOB 경로(EXTDTA 0xCF)를 재사용 — XML을 LOB으로
+            //   직접 보내면 서버가 SYNTAXRM "lob lengths don't match"(CI 40182063764). 재작성 뒤 서버는 그 매개변수를 CLOB(409)으로 서술한다.
+            const XML_WRAP: &str = "XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))";
+            if let Some(k) = prep
+                .params
+                .iter()
+                .position(|p| p.sqltype | 1 == 989)
+                .filter(|&k| k < values.len() && !sql.contains(XML_WRAP))
+            {
+                let req2 = ExecRequest {
+                    sql: fdoca::replace_placeholder(sql, k, XML_WRAP),
+                    params: req.params.clone(),
+                };
+                return self.execute_inner(&req2);
+            }
             let le = self.le();
             // ★ LOB 매개변수(BLOB 405 · CLOB 409 · DBCLOB 413 · XML 989)는 SQLDTA 안 자리표시 + **EXTDTA 객체**(2차 ⑥ · derby `buildEXTDTA` ·
             //   VARGRAPHIC으로 보내면 DTAMCHRM −30020 · CI 40149862498) — 32 767 B 초과는 DSS 연속으로 쪼개진다(`encode_dss`).

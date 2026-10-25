@@ -378,6 +378,76 @@ pub fn attach_lobs(rows: &mut [Vec<Value>], cols: &[ColDesc], extdta: &[Vec<u8>]
     }
 }
 
+/// `?` 자리(문자열·주석 밖) 가운데 `which`(0 기준)번째를 `repl`로 바꾼다 — XML 바인드 재작성(`XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))` ·
+/// XML(989)을 LOB으로 직접 보내면 서버가 "lob lengths don't match"(SYNTAXRM 0x124C · CI 40182063764) → CLOB 경로를 재사용한다).
+#[must_use]
+pub fn replace_placeholder(sql: &str, which: usize, repl: &str) -> String {
+    let b = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len() + repl.len());
+    let (mut i, mut n) = (0usize, 0usize);
+    while i < b.len() {
+        let c = b[i];
+        match c {
+            b'\'' | b'"' => {
+                let s = i;
+                i += 1;
+                while i < b.len() {
+                    if b[i] == c {
+                        if i + 1 < b.len() && b[i + 1] == c {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                out.push_str(&sql[s..i]);
+            }
+            b'-' if i + 1 < b.len() && b[i + 1] == b'-' => {
+                let s = i;
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                out.push_str(&sql[s..i]);
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                let s = i;
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                out.push_str(&sql[s..i]);
+            }
+            b'?' => {
+                if n == which {
+                    out.push_str(repl);
+                } else {
+                    out.push('?');
+                }
+                n += 1;
+                i += 1;
+            }
+            _ => {
+                let ch_len = if c < 0x80 {
+                    1
+                } else if c >> 5 == 0b110 {
+                    2
+                } else if c >> 4 == 0b1110 {
+                    3
+                } else {
+                    4
+                };
+                let end = (i + ch_len).min(b.len());
+                out.push_str(&sql[i..end]);
+                i = end;
+            }
+        }
+    }
+    out
+}
+
 /// QRYDTA 블록의 행들 — (행 목록 · 소비한 바이트 수 · 끝에 SQLCA 표식(0x00)을 만났는가).
 /// 잘린 행은 소비하지 않는다(호출자가 다음 블록 앞에 붙인다).
 pub fn read_rows(
@@ -854,10 +924,9 @@ fn fdodta_value(p: &SqlDaCol, v: &Value, le: bool) -> Result<Vec<u8>, DbError> {
     let t = p.sqltype | 1;
     let mut out = vec![0x00];
     if is_lob_type(t) {
-        // 자리표시 = `02` + 길이 u64 큰 끝(9 B · 값은 EXTDTA · jb/Db2 실측). ★ DBCLOB(413 · 0xCD · UTF-16BE)는 길이 단위가 **2바이트 문자 수**
-        //   (CI 40182063764: 바이트 6000으로 보내면 SYNTAXRM 0x124C "sqlribniLobCbDrda: lob lengths don't match" · 추정 → CI로 확정).
-        let bytes = lob_bytes(p, v).len() as u64;
-        let len = if t == 413 { bytes / 2 } else { bytes };
+        // 자리표시 = `02` + 길이 u64 큰 끝(9 B · 값은 EXTDTA · jb/Db2 실측). 길이 = **바이트 수**(DBCLOB도 · CI 40182500195: 문자 수로 보내면
+        //   DTAMCHRM −30020 · 바이트로 보내면 통과 기대 — 40182063764의 "lob lengths don't match"는 같은 체인의 XML 쪽 · 추정).
+        let len = lob_bytes(p, v).len() as u64;
         out.push(0x02);
         out.extend_from_slice(&len.to_be_bytes());
         return Ok(out);
@@ -1290,10 +1359,19 @@ mod tests {
         let at = d.len() - 10;
         assert_eq!(
             &d[at..],
-            &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 2],
-            "길이 = 2자"
+            &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 4],
+            "길이 = 4 B(UTF-16BE 2자)"
         );
         assert_eq!(ext[0], vec![0x00, 0xD5, 0x5C, 0x00, 0x61]);
+        // XML 재작성: k번째 `?`만 · 문자열·주석 안 `?`는 세지 않는다.
+        assert_eq!(
+            replace_placeholder(
+                "INSERT INTO t VALUES (?, 'a?b''c', /* ? */ ?) -- ?",
+                1,
+                "XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))"
+            ),
+            "INSERT INTO t VALUES (?, 'a?b''c', /* ? */ XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))) -- ?"
+        );
     }
 
     /// ★ 실서버 덤프(Db2 12.1.2 · CI 4차 40116752054): (a) `VALUES TRIM(CURRENT SCHEMA)` 식 열 1 · (b) `SELECT ID, NAME, AMT, D …` 이름 4열 ·
