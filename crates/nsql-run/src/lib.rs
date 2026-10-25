@@ -1091,9 +1091,12 @@ impl Runner {
             ),
             None => (Vec::new(), Vec::new()),
         };
+        // T-418: 설명한 문장의 바인드 수(고유 이름) → 탭 머리·검토의 "바인드 기준/리터럴 기준".
+        let binds = nsql_script::bind::unique_names(&nsql_script::bind::extract_binds(stmt)).len();
         Ok(nsql_script::plan::build_report(
             dialect,
             opts.analyze,
+            binds,
             &columns,
             &rows,
         ))

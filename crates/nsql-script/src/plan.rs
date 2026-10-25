@@ -69,6 +69,8 @@ pub struct Finding {
 pub struct PlanReport {
     pub dialect: Option<Dialect>,
     pub analyzed: bool,
+    /// ★ T-418: 설명한 문장의 바인드 변수 수(고유 이름) — 0 = 바인드 없음 · 탭 머리·검토의 "바인드 기준/리터럴 기준" 근거.
+    pub binds: usize,
     pub nodes: Vec<PlanNode>,
     /// 원문 줄(방언 결과를 한 줄씩 · 파싱이 안 돼도 보여 준다).
     pub raw: Vec<String>,
@@ -806,11 +808,15 @@ fn fmt_num(v: f64) -> String {
 pub fn build_report(
     dialect: Dialect,
     analyzed: bool,
+    binds: usize,
     columns: &[String],
     rows: &[Vec<String>],
 ) -> PlanReport {
     let nodes = parse_plan(dialect, columns, rows);
-    let findings = review(dialect, &nodes, analyzed);
+    let mut findings = review(dialect, &nodes, analyzed);
+    if let Some(f) = bind_basis_finding(dialect, analyzed, binds) {
+        findings.insert(0, f);
+    }
     let raw = rows
         .iter()
         .map(|r| {
@@ -824,10 +830,46 @@ pub fn build_report(
     PlanReport {
         dialect: Some(dialect),
         analyzed,
+        binds,
         nodes,
         raw,
         findings,
     }
+}
+
+/// ★ T-418(123 §4): 계획이 **바인드 기준인가 리터럴 기준인가** 한 줄(영어/한국어) — 바인드가 없으면 None.
+/// SQL Server = SHOWPLAN이 `DECLARE` 프리펜드 리터럴로 가므로 "값 기준" · Oracle(추정 계획) = EXPLAIN PLAN이 바인드 타입을 VARCHAR2로 가정 →
+/// `--analyze`(실행 뒤 DISPLAY_CURSOR) 안내 · 그 밖 = 바인드 기준(값을 모르는 계획).
+#[must_use]
+pub fn bind_basis(dialect: Dialect, analyzed: bool, binds: usize) -> Option<String> {
+    if binds == 0 {
+        return None;
+    }
+    Some(match dialect {
+        Dialect::Mssql => tr!(
+            "literal basis ({} bind(s) declared as literals - plan reflects these values)",
+            "리터럴 기준(바인드 {}개를 DECLARE 리터럴로 - 이 값 기준 계획)",
+            binds
+        ),
+        Dialect::Oracle if !analyzed => tr!(
+            "bind basis ({} bind(s); EXPLAIN PLAN assumes VARCHAR2 - use --analyze for the actual plan)",
+            "바인드 기준(바인드 {}개 · EXPLAIN PLAN은 VARCHAR2로 가정 - 실제 계획은 --analyze)",
+            binds
+        ),
+        _ => tr!(
+            "bind basis ({} bind(s); values unknown to the planner)",
+            "바인드 기준(바인드 {}개 · 계획기는 값을 모름)",
+            binds
+        ),
+    })
+}
+
+fn bind_basis_finding(dialect: Dialect, analyzed: bool, binds: usize) -> Option<Finding> {
+    bind_basis(dialect, analyzed, binds).map(|message| Finding {
+        severity: Severity::Info,
+        node: None,
+        message,
+    })
 }
 
 /// CLI/로그용 텍스트: 트리(들여쓰기) + 검토 목록.
@@ -837,6 +879,13 @@ pub fn render_text(rep: &PlanReport) -> String {
     s.push_str(&tr!("Execution plan", "실행 계획"));
     if rep.analyzed {
         s.push_str(&tr!(" (actual)", " (실제)"));
+    }
+    if let Some(b) = rep
+        .dialect
+        .and_then(|d| bind_basis(d, rep.analyzed, rep.binds))
+    {
+        s.push_str(" · ");
+        s.push_str(&b);
     }
     s.push('\n');
     for (i, n) in rep.nodes.iter().enumerate() {
@@ -1236,6 +1285,7 @@ mod tests {
         let rep = build_report(
             Dialect::Postgres,
             false,
+            0,
             &[],
             &rows1("Seq Scan on t  (cost=0.00..1.00 rows=5 width=4)"),
         );
@@ -1246,7 +1296,33 @@ mod tests {
             text.contains("Seq Scan [t]") && text.contains("rows=5") && text.contains("[WARN] #1"),
             "{text}"
         );
-        let empty = build_report(Dialect::Odbc, false, &[], &[]);
+        let empty = build_report(Dialect::Odbc, false, 0, &[], &[]);
+        // T-418: 바인드 기준 한 줄 = 바인드 있을 때만 · SQL Server = 리터럴 기준 · Oracle 추정 = --analyze 안내.
+        assert!(bind_basis(Dialect::Oracle, false, 0).is_none());
+        assert!(bind_basis(Dialect::Oracle, false, 2)
+            .unwrap()
+            .contains("--analyze"));
+        assert!(
+            bind_basis(Dialect::Oracle, true, 2)
+                .unwrap()
+                .contains("bind basis")
+                || bind_basis(Dialect::Oracle, true, 2)
+                    .unwrap()
+                    .contains("바인드 기준")
+        );
+        assert!(
+            bind_basis(Dialect::Mssql, false, 1)
+                .unwrap()
+                .contains("literal")
+                || bind_basis(Dialect::Mssql, false, 1)
+                    .unwrap()
+                    .contains("리터럴")
+        );
+        let with = build_report(Dialect::Postgres, false, 1, &[], &[]);
+        assert_eq!(
+            with.findings.first().map(|f| f.severity),
+            Some(Severity::Info)
+        );
         assert_eq!(empty.findings.len(), 1);
         assert_eq!(empty.findings[0].node, None);
         assert_eq!(fmt_num(1234567.0), "1,234,567");

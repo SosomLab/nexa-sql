@@ -241,6 +241,18 @@ pub(crate) enum ConnOutcome {
 /// 실행 계획 보고서 → 결과 집합(실행 계획 트리 · 검토). 트리를 못 풀었으면 원문 한 집합(docs/122).
 fn plan_result_sets(rep: &nsql_script::plan::PlanReport) -> Vec<(nsql_core::ResultSet, String)> {
     use nsql_core::{Column, ResultSet, Value};
+    // ★ T-418: 탭 머리 = "실행 계획 · 바인드 기준(2)" / "· 리터럴 기준(1)"(바인드 없으면 그대로).
+    let plan_label = match rep.binds {
+        0 => t(Msg::PlanTabPlan).to_string(),
+        n => {
+            let basis = if rep.dialect == Some(nsql_core::Dialect::Mssql) {
+                Msg::PlanBasisLiteral
+            } else {
+                Msg::PlanBasisBind
+            };
+            format!("{} · {}", t(Msg::PlanTabPlan), tf(basis, &[&n.to_string()]))
+        }
+    };
     let col = |m: Msg, ty: &str| Column {
         name: t(m).to_string(),
         type_name: ty.to_string(),
@@ -261,7 +273,7 @@ fn plan_result_sets(rep: &nsql_script::plan::PlanReport) -> Vec<(nsql_core::Resu
                     .map(|l| vec![Value::Str(l.clone())])
                     .collect(),
             },
-            t(Msg::PlanTabPlan).to_string(),
+            plan_label,
         ));
     } else {
         let rows = rep
@@ -298,7 +310,7 @@ fn plan_result_sets(rep: &nsql_script::plan::PlanReport) -> Vec<(nsql_core::Resu
                 ],
                 rows,
             },
-            t(Msg::PlanTabPlan).to_string(),
+            plan_label,
         ));
     }
     out.push((
