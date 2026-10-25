@@ -363,8 +363,10 @@ pub fn attach_lobs(rows: &mut [Vec<Value>], cols: &[ColDesc], extdta: &[Vec<u8>]
             row[ci] = if matches!(c.base(), 0x1A | 0xCC) {
                 // DBCLOB(DBCS · CCSID 1200) = UTF-16BE.
                 let units: Vec<u16> = body
-                    .chunks_exact(2)
-                    .map(|b| u16::from_be_bytes([b[0], b[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| u16::from_be_bytes(*b))
                     .collect();
                 Value::Str(String::from_utf16_lossy(&units))
             } else if is_char_lob(c) {
