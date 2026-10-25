@@ -14,8 +14,18 @@
 | SQLCARD | 지시자 · SQLCODE 4B **작은 끝**(`DB FC FF FF` = −805) · SQLSTATE 5 · SQLERRPROC 8 · SQLERRD 영향 행 수 = INSERT 2행 → 2 | 2·3차 |
 | SQLDARD | SQLCARD → SQLDIAGGRP `FF` → SQLDHGRP `FF` → **열 수 2B 작은 끝** → 열마다 PRECISION 2 · SCALE 2(작은 끝 · DECIMAL(10,2) = `0A 00`/`02 00`) · **LENGTH 8B 작은 끝** · **SQLTYPE 2B 작은 끝**(496 INTEGER · 449 VARCHAR null · 485 DECIMAL null · 385 DATE null · 448 VARCHAR) · **CCSID 2B 큰 끝** → 14B(8B 0 · 문자형 `08 00`/그 밖 `00 00` · 이름 없는 식 `00 01`/이름 열 `00 00` · **이름 길이 2B 큰 끝**) → 이름 바이트 → 0 길이 필드들 → `FF FF FF` 끝 표식 | 4차 덤프 3벌(`VALUES TRIM(CURRENT SCHEMA)` · `SELECT ID, NAME, AMT, D …` · 매개변수 질의) → 5757e608(끝 표식에서 역탐색 · 순수 시험) |
 | 트레이스 | `NSQL_TRACE_DRDA=1` = 송수신 hexdump(512 B) · **SECCHK 체인은 통째 가림**("credentials masked") | 2차에 비밀번호 바이트 노출 지적 → b0bb8729 |
+| LOB · 바인드 실행 | 비질의 바인드 실행 명령 = **EXCSQLSTT 0x200B**(0x2009 = ENDBND로 보내면 서버가 **PKGBNARM 0x2206** SVRCOD 8 · SRVDGN "AGENT: Invalid DDM Request" · SUBCODE2 = 2009) | db2.yml 40149213664(25017034) → 0c062e15 |
+| 취소 | 실행 중 소켓 `shutdown(Both)` → 전송 오류 · `is_alive` 거짓 · 재접속 뒤 `VALUES 1` 정상 | 40149327666(f5cd3b83) 내장 ✅ · 확장 미확인 |
+| ACCSECRD SECMEC | **반복 값 목록**(2B씩 · 예 `0008 11A2 0003 0005` = {3, 5}) + `SECCHKCD(0x11A4)` 0x01 = 요청 방식 미지원 → 한 값(`as_u16`)으로 읽으면 안 된다 | 40149595519(0c062e15) 4/4 접속 실패 |
+| 인라인 LOB 자리표시 | QRYDSC 인라인 LOB 형식(0xC8~0xCF · 예 `CF 8009` CLOB · `C9 8009` BLOB)의 길이 `0x8009` 하위 = **QRYDTA 자리표시 9 B**(상태 1 + 길이 8 큰 끝 · 예 `02 0000000000000960` = 2400 B) · NULL = 지시자 `FF`만 · 값은 체인 뒤 EXTDTA 0x146C(상태 1 B + 바이트)로 행·열 순 | 40156275674 2행 누락(자리표시 0 B로 봄) → f57106aa |
+| LOB 입력 | CLOB 바인드(409)를 NVARGRAPHIC 0x39로 보내면 −30020 · 58009 · DTAMCHRM 0x220E("0133") · SRVDGN "CMNMGR Read Failure" → `CLOB('…')`/`BLOB(X'…')` 리터럴 재작성(32 000 B 상한 · EXTDTA 입력은 2차 ⑥) | 40149862498 → 2ed0e60e |
+| 결과 집합 끝 | CALL 집합은 ENDQRYRM 없이 **QRYDTA 행 자리의 SQLCA(지시자 00 · SQLCODE +100 · `02000`)** 로 끝난다 · 끝 뒤 CNTQRY는 SQLCA(+100 `SQLRR036`)만 계속 → 끝 판정 없으면 무한 루프 | 40150244681(로그 2.9 GB · 취소) → 8382bbfb(+ 진전 없는 CNTQRY 2회 중단 · 트레이스 4000줄) |
+| CALL 응답 체인 | 한 체인(corr 같음) = RSLSETRM 0x2219{SVRCOD · PKGSNLST 0x2139 = PKGNAMCSN 68 B × 집합 수 · 집합마다 PKGSN 다름 · PKGID = 프로시저 패키지 `P…` · RDBCOLID = 스키마} → SQLDTARD 0x2413{FDODSC + FDODTA `FF 00 …`} → SQLRSLRD 0x240E(집합 수 2 B 작은 끝) → 집합마다 OPNQRYRM{QRYINSID} → SQLCINRD 0x240B → QRYDSC … · SQLCARD 없음 · 이어 받기 = PKGSNLST[i] + QRYINSID | 40150244681 · 40156275674 |
+| FDODTA 지시자 | 최상위 비트 = 널 · IN 매개변수 자리는 `0x80`(값 없음) · OUT은 `00` + 값 | 40150244681 → 8382bbfb |
+| SQLCINRD 열 레이아웃 | SQLDARD와 다름 = **SQLCA 자리 없음** · SQLDHGRP 지시자 `00`(널 아님) + 24 B(hold · return · scroll · sensitive · fcode `55 00` · keytype · RDBNAM/스키마 VC 길이) → 열 수 2 B 작은 끝 → 열마다 PRECISION·SCALE·LENGTH 8·SQLTYPE·CCSID(SQLDARD와 같음) → 15 B(0 ×8 · 문자형 `08 00` · `00 00` · SQLUNNAMED · 이름 길이 큰 끝) → 이름 → 라벨·설명 VC(0 ×10) → UDT `FF` → **SQLDXGRP `00`** = 12 B(keymem `01 00` = PK 열 …) + RDBNAM VCS + 상관명·기본 테이블·스키마·열 이름 VCM/VCS + 4 B → 꼬리 `FF` | 40156275674 열 이름 = 매개변수 이름(P_MIN·P_CNT)로 폴백 → 50023761 |
+| 취소(확장 경로) | `CancelHandle::drops_session`이 cdylib 경계를 못 넘어 늘 거짓 → ABI v2 추가 op `CANCEL_DROPS_SESSION`(18 · out u8 · 함수표 불변 · 옛 드라이버 = 거짓) · SQL Server 확장도 같은 길 | 40157404807 확장 취소 ✗ → 41e1fe00 |
 
-남은 추정(2차) = INTRDBRQS 취소(LUW 지원) · EXTDTA LOB · CALL 결과 집합(RSLSETRM) · SECMEC 9 · 다중 커서 섹션 · 라벨/설명 있는 열의 SQLDOPTGRP 세부 · UTF-8 DB 문자열 타입 코드(0x30 vs 0x3C) 확인.
+남은 추정(2차 이후 · 10-25 저녁 갱신) = SECMEC 9 실서버(서버 `SERVER_ENCRYPT`) · LOB 입력 EXTDTA · 다중 커서 섹션 · UTF-8 DB 문자열 타입 코드(0x30 vs 0x3C) 확인 · INTRDBRQS(쓰지 않음 · 취소 = 소켓 끊기로 확정). ~~취소 · EXTDTA LOB 조회 · CALL 결과 집합 · 라벨 열~~ = 위 표로 확정.
 
 ## 결론(5줄)
 
@@ -399,3 +409,131 @@ DRDA에는 자동 커밋이 없다 → 문장마다 **RDBCMM을 묶어 보낸다
 - crates.io `db2`(IBM/db2 · 0.0.2)가 향후 IBM 공식 순수 드라이버가 될지 = 추정.
 - justybase-db2 SECMEC 7 표기는 README 요약 기준(일반적으로 7 = 암호화 사용자 ID/패스워드 계열이 아닌 다른 의미일 수 있어 미검증).
 - 취소의 DRDA 인터럽트가 Db2 LUW 12.1에서 별도 소켓을 요구하는지 = go-db2·justybase 주장 기준 · 미검증.
+
+## ⑥·⑦ 머리말
+
+> 원천 경로 = 참고 구현체 로컬 사본(§③ 구현체 표의 저장소 · 참고만 · 코드 복사 없음) 기준 상대 경로 · 줄 번호 = 10-25 사본. `derby/…/client/` = `derby/java/org.apache.derby.client/org/apache/derby/client/` · `jb` = justybase-db2 · `godb2` = go-db2.
+> 원천 4개 중 **CALL 결과 집합을 실제로 구현한 것은 derby와 jb뿐** — go-db2는 OUT 매개변수만(결과 집합 = 빈 Rows) · pydrda `callproc` = `NotSupportedError`.
+> ★ 10-25 실측(db2.yml 40149595519 · 0c062e15) = CI 서버(Db2 12.1 Community · 기본 `AUTHENTICATION=SERVER`)는 ACCSEC(9) 요청에 ACCSECRD `SECMEC` 목록 **{3, 5}** + `SECCHKCD 0x01`(요청 방식 미지원) · SECTKN 없음으로 답한다 = **9 미지원** → 아래 7-3 재협상(목록에서 3 선택)이 실제로 필요한 경로. 9의 실서버 검증은 서버를 `SERVER_ENCRYPT`로 바꾼 별도 단계가 있어야 가능(추정).
+
+## ⑥ CALL 결과 집합 (T-426 2차 ③ · 10-25 조사)
+
+**결론(3줄)**
+1. 요청 = `EXCSQLSTT`(준비된 CALL 섹션) + `OUTEXP 0xF1`(OUT/INOUT이 있을 때) + `QRYBLKSZ` + `MAXRSLCNT 0xFFFF` + `RSLSETFLG 0x04`(확장 SQLDA) [+ `MAXBLKEXT`/`QRYROWSET`] → 이어서 `SQLDTA`(입력 값).
+2. 응답 한 체인 = `RSLSETRM{SVRCOD, PKGSNLST[PKGNAMCSN…]}` → `SQLCARD` **또는** `SQLDTARD{FDODSC, FDODTA}`(OUT 값 · 둘은 서로 배타) → `SQLRSLRD`(결과 집합 수·요약) → 결과 집합마다 `OPNQRYRM{QRYINSID}` [+`SQLCARD`] [+`SQLCINRD`] + `QRYDSC` + `QRYDTA`* [+`ENDQRYRM`+`SQLCARD`] → (OUT LOB이면) `EXTDTA`.
+3. 이어 받기 = 결과 집합 i마다 `PKGSNLST[i]`의 PKGNAMCSN(64B · 섹션 번호 포함) + 그 `OPNQRYRM`의 `QRYINSID`로 `CNTQRY`, 닫기 = 같은 두 값으로 `CLSQRY`. OUT 값의 형식은 `SQLDTARD` 안의 `FDODSC`가 스스로 설명한다(DARD 불필요).
+
+### 6-1. EXCSQLSTT 요청 매개변수 비교
+
+| 매개변수 (코드) | derby `writeExecuteCall` | jb `pack_execute_sql_statement_for_result_sets` | go-db2 `PackEXCSQLSTT` | pydrda |
+|---|---|---|---|---|
+| PKGNAMCSN (0x2113) | 준비된 섹션 | `SYSSH200`/`SYSLVL01`/섹션 | 같음 | (CALL 미지원) |
+| RDBCMTOK (0x2105) | — | `0xF1` | `0xF1` | — |
+| OUTEXP (0x2111) | 매개변수 1개 이상이면 `TRUE=0xF1`, 아니면 생략 | OUT/INOUT 있으면 `0xF1` 아니면 `0xF0` | **보내지 않음** | — |
+| QRYBLKSZ (0x2114) | `MAX_DSS_LEN`(32767) | 세션 블록 크기(4B) | — | — |
+| MAXBLKEXT (0x2141) | `-1`(0xFFFF = 무제한) | 행 집합 크기 줄 때만 `0xFFFF` | — | — |
+| MAXRSLCNT (0x2140) | `0xFFFF`(`MAXRSLCNT_NOLIMIT`) · 배치면 생략 | 호출부가 `u16::MAX` | — | — |
+| RSLSETFLG (0x2142) | `0x04`(`RSLSETFLG_EXTENDED_SQLDA`) | `0x04` | — | — |
+| QRYROWSET (0x2156) | fetchSize(항상) | 선택 | — | — |
+| PRCNAM (0x2138) | 프로시저 이름이 있으면 | — | — | — |
+
+인용: `derby/…/client/net/NetStatementRequest.java:271-304`(writeExecuteCall · `outputExpected = numParameters > 0` 287행) · `:1596-1600`(buildOUTEXP) · `:1667-1669`(QRYBLKSZ) · `:1686-1691`(MAXRSLCNT) · `:1729-1731`(RSLSETFLG) · `:1838-1840`(플래그 0x04) · `net/CodePoint.java:38-48,56`(0xFFFF · 0x04 · TRUE=0xF1) · `jb/src/network/ddm.rs:554-579` · 호출 `jb/src/network/session.rs:5415-5428` · `godb2/network/ddm.go:548-550,310`.
+
+### 6-2. 응답 순서(derby가 규정대로 순서 고정 파싱)
+
+| # | 객체 | 내용 | 근거 |
+|---|---|---|---|
+| 0 | (선택) RDBUPDRM · ENDUOWRM | 트랜잭션 성분 | `NetStatementReply.java:287-296` |
+| 1 | **RSLSETRM 0x2219** | `SVRCOD` + **PKGSNLST 0x2139** = PKGNAMCSN 반복(결과 집합 순) | `:300-301` → `parseRSLSETRM :1160-1200` · `parsePKGSNLST :1766-1776` |
+| 2 | (선택) TYPDEFNAM/TYPDEFOVR | | `:381` |
+| 3 | **SQLCARD** 또는 **SQLDTARD 0x2413** | 매개변수가 있으면 SQLDTARD(안에 SQLCA 포함) — 상호 배타 | `:383-396` |
+| 4 | **SQLRSLRD 0x240E** | `SQLNUMGRP`(2B) + 집합마다 `SQLRSLOCATOR`(4B) · `SQLRSNAME`(VCM+VCS) · `SQLRSNUMROWS`(4B) | `:402` → `parseSQLRSLRDarray :1885-1892` · `parseSQLRSGRP :2279-2285` |
+| 5 | 집합마다: **OPNQRYRM 0x2205**(`QRYINSID 0x215B` 8B) → (선택) SQLCARD(경고) → (선택) **SQLCINRD 0x240B**(열 정보 = 확장 SQLDA) → **QRYDSC** → QRYDTA* → (선택) ENDQRYRM | | `parseResultSetCursor :432-470` · `parseOPNQRYRM :782,874-878` |
+| 6 | (선택) EXTDTA | OUT 매개변수 LOB | `:419-424` |
+
+- 이 전부가 **EXCSQLSTT 한 요청에 대한 한 응답 체인**(같은 상관 번호의 연쇄 DSS)으로 온다. derby는 1~6을 한 번의 읽기 체인에서 연속 파싱한다(`parseResultSetProcedure :362-427`).
+- jb는 순서에 의존하지 않고 코드포인트별로 분기하며(`session.rs:5455-5537`), `SQLRSLRD` 개수 = `PKGSNLST` 개수 = `OPNQRYRM` 개수를 검사한다(`:5568-5573`). jb의 모의 서버는 RSLSETRM → SQLRSLRD → SQLDTARD → OPNQRYRM 순으로 보낸다(`session.rs:13427-13460`) — 실서버 순서(3과 4)와 다르므로 **순서 비의존 파싱이 안전**.
+- jb 주석: Db2 11.5.8은 OUT 매개변수의 EXTDTA를 OPNQRYRM/SQLCINRD/QRYDSC **뒤 · 첫 QRYDTA 앞**에 보낸다(`session.rs:5507-5511`) → 첫 QRYDTA 이전의 EXTDTA는 OUT 값으로 귀속.
+- SQLRSLRD의 `SQLNUMGRP` 바이트 순서 = ACCRDB `TYPDEFNAM`을 따른다: jb(QTDSQLX86) = 리틀 엔디언(`ddm.rs:953-964` · 최소 2+12×n 바이트), derby(QTDSQLJVM) = 빅(`NetConnectionReply.java:2572-2574` readShort).
+- PKGNAMCSN 고정 64B 배치: RDBNAM 18 · RDBCOLID 18 · PKGID 18 · PKGCNSTKN 8 · PKGSN 2(BE) (`jb/src/network/ddm.rs:966-988` 파싱 · `:581-600` 재포장 = 길이 68 헤더 포함). 결과 집합마다 **섹션 번호가 다르다**(모의 65/66 · `session.rs:13416-13424`).
+
+### 6-3. 이어 받기 · 닫기
+
+| 명령 | derby (`NetResultSetRequest.java`) | jb (`ddm.rs`) |
+|---|---|---|
+| CNTQRY | `buildCoreCNTQRY :189-209` = PKGNAMCSN(결과 집합 섹션) · QRYBLKSZ · [MAXBLKEXT -1] · QRYINSID · [QRYROWSET] · LOB 있으면 `RTNEXTDTA=RTNEXTALL` (`:166-186`) | `pack_continue_procedure_result_set :629-642` = PKGNAMCSN · QRYBLKSZ · QRYINSID · `RTNEXTDTA 0x02` · `FREPRVREF 0xF0` |
+| CLSQRY | `buildCLSQRY :156-164` = PKGNAMCSN + QRYINSID | `pack_close_procedure_result_set :644-652` 같음 |
+
+- jb 흐름: 집합 순서대로 `ended`(ENDQRYRM 또는 SQLCODE +100)까지 CNTQRY 반복 → 행 해독 · EXTDTA 붙이기 → CLSQRY → 다음 집합 (`session.rs:5575-5636`). 자동 커밋이면 끝에 커밋(`:5561`).
+- CNTQRY의 QRYINSID는 **그 집합의 OPNQRYRM에서 받은 값**(`session.rs:5482-5487` · derby `:874-878`).
+
+### 6-4. OUT 매개변수 해독
+
+- `SQLDTARD` = `FDODSC`(0x0010 · QRYDSC와 같은 FD:OCA 기술자 · 0x76 = SQLDTAGRP 정의) + `FDODTA`(0x147A). derby `parseSQLDTARD :1211-1246` · `parseFDODSC :1255-1258`(QRYDSC와 같은 `parseSQLDTARDarray`) · `parseFDODTA :1499-1510`.
+- `FDODTA` = 앞머리 SQLCARD 행(널 지시자 `0xFF`면 SQLCA 없음 · 아니면 SQLCA 전체) → 데이터 그룹 널 지시자 `0x00` → 필드마다(널 허용이면 지시자 1B +) 값. go-db2는 첫 바이트가 0xFF면 2B를 건너뜀(`godb2/converters/decoders.go:540-620` · 603-609행 근처) · jb는 0xFF로 시작하지 않으면 `[0xFF,0]`을 앞에 붙여 행 해독기를 재사용(`jb/src/network/session.rs:6963-6967`).
+- 형식은 FDODSC가 담으므로 PRPSQLSTT/DSCSQLSTT의 SQLDARD는 **입력 SQLDTA 작성용**(매개변수 형식 497 등)으로만 필요. go-db2 `ExecWithParams`는 SQLDARD가 먼저 온 체인 뒤 두 번째 체인을 더 읽는다(`godb2/network/session.go:865-887`).
+- jb 모의 예: FDODSC `06 76 D0 03 00 04`(INTEGER 널 허용) · FDODTA `FF 00 00 2A 00 00 00`(LE 42) (`session.rs:13432-13438`).
+
+### 6-5. 추정 항목
+- go-db2가 OUTEXP 없이도 SQLDTARD를 받는다는 것은 코드만으로는 확인 못 함(Db2가 OUT 매개변수가 있으면 무조건 보내는지) — **추정**: 규정대로 `OUTEXP 0xF1`을 보내는 편이 안전.
+- SQLRSLRD 요약의 `SQLRSNAME`이 SQLAM 6/7에서 길이가 다른 점(derby 주석 2282행) — 정확한 차이는 DRDA Vol.1(C112) SQLRSGRP 정의로 확인 필요(**추정**).
+- `RSLSETFLG` 비트 의미(0x04 외 표준/라이트 SQLDA) = derby 주석(`CodePoint.java:47`)뿐 · 원문 미확인.
+
+## ⑦ EUSRIDPWD(SECMEC 9) (T-426 2차 ④ · 10-25 조사 · 구현 a7e599ac)
+
+**결론(3줄)**
+1. DH 256비트: p = `C62112D73EE613F0947AB31F0F6846A1BFF5B3A4CA0D60BC1E4C7A0D8C16B3E3`, g = `4690FA1F7B9E1D4442C86C9114603FDECF071EDCEC5F626E21E256AED9EA34E4` — pydrda · derby · go-db2 · jb **네 곳 모두 일치**.
+2. 클라이언트 공개 키(32B BE)를 **ACCSEC의 SECTKN**에, 서버 공개 키는 **ACCSECRD의 SECTKN**으로 받는다 → 공유 비밀(32B BE)의 `[12..20)` = DES 키 · 서버 SECTKN `[12..20)` = IV · DES-CBC/PKCS5.
+3. SECCHK = `SECMEC=9` · `RDBNAM` · `SECTKN`(암호화 사용자 ID) · `SECTKN`(암호화 비밀번호) 순 · 평문 = 협상된 CCSID(기본 EBCDIC cp500 · derby는 UNICODEMGR 1208 협상 시 UTF-8).
+
+### 7-1. DH 매개변수 대조
+
+| 원천 | p | g | 개인 키 |
+|---|---|---|---|
+| pydrda `drda/secmec9.py:32,34` | 위 hex | 위 hex | `random.randrange(2, prime)`(37-38 · 비암호 난수) |
+| derby `client/am/EncryptionManager.java:70-79,87-96` | 바이트 배열 `C6 21 12 D7 … B3 E3` 동일 | `46 90 FA 1F … 34 E4` 동일 | JCE DH, **지수 길이 255비트**(103, 145) |
+| go-db2 `network/security/secmec9.go:17,19` | 동일 문자열 | 동일 | `[2, p-1)` crypto/rand(23-31) |
+| jb `src/security/mod.rs:40-51` | 리틀 limb로 동일 | 동일 | 32B 난수 · 최상위 비트 0 = 255비트 · 범위 `[2, p-2]`(144-157) |
+
+### 7-2. 절차와 바이트 규칙
+
+| 단계 | 내용 | 근거 |
+|---|---|---|
+| 공개 키 | `g^x mod p` → **32B 빅 엔디언 고정**(33B면 앞 0 제거 · 짧으면 앞 0 채움) | derby `obtainPublicKey :195-233` · pydrda `connection.py:302` · jb `:159-165` |
+| ACCSEC | `SECMEC(0x11A2)=9` · `RDBNAM` · **`SECTKN(0x11DC)` = 클라이언트 공개 키** | pydrda `ddm.py:330-334` · derby `flowKeyExchange NetConnection.java:683-691` · jb `session.rs:4563-4579` |
+| ACCSECRD | `SECMEC` 목록 · (선택) `SECCHKCD` · **`SECTKN` = 서버 공개 키 32B** | pydrda `connection.py:219-238` · derby `setAccessSecurityData NetConnection.java:887-925` |
+| 공유 비밀 | `S^x mod p` → 32B BE 정규화 | derby `generatePrivateKey :299-367` · pydrda `:45-46` |
+| DES 키 | 공유 비밀 **`[12..20)`**(가운데 8B) | derby `:353-362` · pydrda `:60` · jb `:211` |
+| 홀수 패리티 | derby만 각 바이트 LSB를 홀수 패리티로 조정(`keyParityCheck :270-297`) — DES는 패리티 비트를 키 일정에서 버리므로(PC-1) **결과 동일 · 생략 가능**. pydrda·jb·go-db2는 조정 안 함 | |
+| IV | 서버 SECTKN **`[12..20)`** | derby `calculateEncryptionToken :247-268`(secmec 9 → `initVector[i+12]`) · pydrda `:59` · jb `:211` |
+| 암호 | DES/CBC/PKCS5 · 사용자 ID와 비밀번호를 **각각 독립적으로**(둘 다 같은 IV에서 시작) | derby `encryptData :387-430`(`DES/CBC/PKCS5Padding` 421) · jb `des_cbc_encrypt :179-198` |
+| 평문 인코딩 | pydrda = `cp500`(`connection.py:258` → `ddm.py:299-300`) · jb = `encode_cp500`(`session.rs:4719-4733`) · derby = `getCurrentCcsidManager()`(`NetConnection.java:1363-1375`) = 기본 EBCDIC, ACCSECRD 처리 뒤 서버가 UTF-8 CCSID 지원하면 UTF-8로 전환(`NetConnectionReply.java:2039-2044`) | |
+| SECCHK | `SECMEC` · `RDBNAM` · `SECTKN`(사용자 ID) · `SECTKN`(비밀번호) — **순서 = 사용자 → 비밀번호** · USRID/PASSWORD 평문 필드 없음 | pydrda `ddm.py:294-303` · derby `NetConnectionRequest.java:316-334` · jb `ddm.rs:364-379` |
+
+- 검증 벡터(jb 단위 시험 · Derby·OpenSSL 대조라고 적힘): 개인 키 c=`7f3a91c4…b0c9`/s=`1b2c3d4e…f90a` → 공개 키 · 공유 비밀 `303a7d3c…09af53` · `"SecretPass123"`(ASCII) → `a64a5e61af1a35a65d2bc8ec7ae550f4` · `"DB2INST1"` → `e3241d6a67a9646ce5fafe9f9bae7acc` (`jb/src/security/mod.rs:256-300`). 우리 구현의 왕복 시험에 그대로 쓸 수 있다(값 대조만 · 코드 복사 아님).
+
+### 7-3. 서버가 9를 요구할 때(재협상)
+
+| 원천 | 동작 |
+|---|---|
+| jb | 처음 기정(3)으로 ACCSEC → ACCSECRD의 SECMEC 목록이 `[요청값]`이 아니면 거절로 보고, 설정이 자동(0)이면 목록에 있는 **9, 없으면 7**로 **새 키 쌍을 만들어 ACCSEC 재전송**(같은 연결 · 자격 증명은 아직 안 보냄) · 두 번째도 거절이면 오류(`session.rs:4593-4627, 4658-4685`). |
+| pydrda | 처음부터 9로 시작(`connection.py:257`) · ACCSECRD의 SECMEC가 다르면 그 값으로 ACCSEC를 다시 보내지만 **두 번째 ACCSECRD를 읽지 않고** 첫 SECTKN으로 SECCHK를 체인(`:311-331`) — 결함 가능(**추정**). |
+| derby | 목록이 `[요청값]`이 아니면 예외 누적(자동 재시도 없음 · `NetConnection.java:901-935`). |
+| go-db2 | 재시도는 하지만 ACCSEC에 SECTKN을 **넣지 않고** 공개 키를 SECCHK에 넣으며 비밀번호만 UTF-8로 암호화(`session.go:341-405` · `secmec9.go:81-110`) — DRDA 규정과 어긋남 · **참고 금지**. |
+
+권장 흐름: ACCSEC(9, 클라이언트 공개 키) 단독 → ACCSECRD 확인(SECMEC=[9] · SECTKN 32B · SECCHKCD 0) → SECCHK + ACCRDB 체인. 거절 목록에 9가 있으면 새 키로 ACCSEC 재전송.
+
+### 7-4. DES 구현 공개 원천(표는 복사하지 않음)
+
+| 무엇 | 원천 |
+|---|---|
+| DES 알고리즘 전문 | **FIPS 46-3** <https://csrc.nist.gov/files/pubs/fips/46-3/final/docs/fips46-3.pdf> — 본문 "Enciphering"(IP · IP⁻¹ 표) · "The Cipher Function f"(E 비트 선택표 · 선택 함수 S1~S8 · 치환 P) · "Key Schedule"(PC-1 · PC-2 · 왼쪽 회전 횟수표 1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1) · 부록 1 "Primitive Functions"(S-상자 · P) · 부록 2 "Key Schedule Calculation"(PC-1 · PC-2) (절 이름은 **추정** — 원문 목차로 확인) |
+| CBC 모드 | **FIPS 81** "DES Modes of Operation" <https://csrc.nist.gov/pubs/fips/81/final> · 일반 모드 = NIST SP 800-38A <https://csrc.nist.gov/pubs/sp/800/38/a/final> |
+| 알려진 답 시험 | NBS SP 500-20 "Validating the Correctness of Hardware Implementations of the NBS DES" <https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nbsspecialpublication500-20e1980.pdf> · NIST SP 800-17(MOVS · DES 변수 평문/키/치환 시험) <https://csrc.nist.gov/pubs/sp/800/17/final> |
+| 손으로 확인할 벡터(**추정** — 기억 기반, 위 원천으로 재확인) | ECB: 키 `133457799BBCDFF1` · 평문 `0123456789ABCDEF` → `85E813540F0AB405` · FIPS 81 부록 CBC 예: 키 `0123456789ABCDEF` · IV `1234567890ABCDEF` · 평문 `"Now is the time for all "` → `E5C7CDDE872BF27C 43E934008C389C0F 683788499A7C05F6` |
+| SECMEC 9 설명 | Derby 위키 SecurityMechanism <https://cwiki.apache.org/confluence/display/DERBY/SecurityMechanism> · DRDA Vol.3 DDM(ACCSEC/SECCHK/SECTKN) = Open Group <https://publications.opengroup.org/> (요청자 표기 C112/C113/C114 · 권 번호 대응은 **추정**) |
+
+### 7-5. 추정 항목
+- Db2 LUW가 SECCHK 평문을 **항상** cp500으로 기대하는지, UNICODEMGR 1208 협상 시 UTF-8로 받는지 — derby는 전환, pydrda·jb는 cp500 고정. pydrda·jb 모두 실서버에서 동작한다고 표방하므로 **cp500이 안전한 기본**(추정 · 실서버로 확인 필요 — ASCII 글자도 cp500과 UTF-8의 바이트가 달라서 인코딩이 틀리면 SECCHKCD 실패로 바로 드러난다).
+- 비밀번호 길이 상한·SECTKN 최대 길이(DDM 규정)는 미확인.
+- FIPS 문서 절 이름 · 위 DES 벡터 값은 기억 기반(**추정**) — 구현 시 원문으로 대조.
