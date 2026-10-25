@@ -1859,6 +1859,53 @@ fn db2_script_ddl_dml_binds_savepoint_and_types() {
 /// 직접 세션 경로: 방언/Caps(Db2 · 대문자 접힘 · SYSDUMMY1) · 영향 행 수 · 카탈로그(현재 스키마 · 스키마 목록 · 컬럼 · PK) ·
 /// `set_option("schema")` = `SET SCHEMA` · 오류 분류(SQL0204N → NoObject · SQL0104N → Syntax) · 임시 표 DROP.
 #[test]
+/// ★ T-426 2차 ① LOB: CLOB(한글 · 2 KB) · BLOB(5 KB · 바인드 = BLOB(X'…') 재작성) · NULL LOB · 조회 = EXTDTA 붙이기 · 끝에 DROP.
+#[test]
+fn db2_lob_clob_blob_round_trip() {
+    use nsql_core::{BindParam, Direction, ExecRequest, VarType};
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    let exec = |s: &mut Box<dyn Session>, sql: &str, params: Vec<BindParam>| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params,
+        })
+    };
+    let _ = exec(&mut s, "DROP TABLE NSQLT_DB2L", Vec::new());
+    exec(&mut s, "CREATE TABLE NSQLT_DB2L (ID INTEGER NOT NULL PRIMARY KEY, C CLOB(1M), B BLOB(1M))", Vec::new()).expect("create");
+    let big_text: String = "한글 clob ".repeat(200);
+    let big_bytes: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+    let p = |name: &str, v: Value, ty: VarType| BindParam {
+        name: name.into(),
+        value: v,
+        ty,
+        direction: Direction::In,
+    };
+    exec(
+        &mut s,
+        "INSERT INTO NSQLT_DB2L (ID, C, B) VALUES (?, ?, ?)",
+        vec![
+            p("ID", Value::Int(1), VarType::Number),
+            p("C", Value::Str(big_text.clone()), VarType::Clob),
+            p("B", Value::Bytes(big_bytes.clone()), VarType::Blob),
+        ],
+    )
+    .expect("insert lob");
+    exec(&mut s, "INSERT INTO NSQLT_DB2L (ID) VALUES (2)", Vec::new()).expect("insert null lob");
+    s.commit().expect("commit");
+    let r = exec(&mut s, "SELECT ID, C, B FROM NSQLT_DB2L ORDER BY ID", Vec::new()).expect("select lob");
+    let rs = &r.result_sets[0];
+    assert_eq!(rs.rows.len(), 2, "{rs:?}");
+    assert_eq!(rs.rows[0][0], Value::Int(1));
+    assert_eq!(rs.rows[0][1], Value::Str(big_text), "CLOB");
+    assert_eq!(rs.rows[0][2], Value::Bytes(big_bytes), "BLOB");
+    assert_eq!((&rs.rows[1][1], &rs.rows[1][2]), (&Value::Null, &Value::Null), "NULL LOB");
+    exec(&mut s, "DROP TABLE NSQLT_DB2L", Vec::new()).expect("drop");
+    s.commit().expect("commit");
+}
+
 fn db2_session_catalog_schema_and_errors() {
     use nsql_core::{dberr, ErrorClass, ExecRequest};
     let Some(spec) = db2_spec() else {

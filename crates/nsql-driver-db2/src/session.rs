@@ -57,12 +57,32 @@ struct Reply {
     rows: Vec<Vec<Value>>,
     /// QRYDTA 블록 끝에서 잘린 행의 앞부분(다음 블록 앞에 붙인다).
     carry: Vec<u8>,
+    /// LOB 값(EXTDTA · 행·열 순서 · T-426 2차 ①).
+    extdta: Vec<Vec<u8>>,
     qryinsid: Option<[u8; 8]>,
     /// OPNQRYRM이 온 상관 번호(= OPNQRY의 번호 · CNTQRY/CLSQRY는 같은 번호로 · pydrda).
     query_corr: u16,
     query_open: bool,
     sqlca: Option<Sqlca>,
     error: Option<DbError>,
+}
+
+/// 값의 글자 표현(BLOB 리터럴 재작성에 문자열/숫자 값이 왔을 때).
+fn fdoca_text(v: &Value) -> String {
+    match v {
+        Value::Str(s) | Value::Decimal(s) => s.clone(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => {
+            if *b {
+                "1".into()
+            } else {
+                "0".into()
+            }
+        }
+        Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+        Value::Null | Value::Cursor(_) => String::new(),
+    }
 }
 
 fn is_query(sql: &str) -> bool {
@@ -304,13 +324,7 @@ impl Db2Session {
                         r.error = Some(err("DRDA SQLERRRM: SQL error (see SQLCARD)"));
                     }
                 }
-                cp::EXTDTA => {
-                    if r.error.is_none() {
-                        r.error = Some(err(
-                            "DRDA: LOB data (EXTDTA) is not supported yet (phase 2)",
-                        ));
-                    }
-                }
+                cp::EXTDTA => r.extdta.push(d.obj.value.clone()),
                 _ if d.kind == DssKind::Reply => {
                     if let Err(e) = conn::check_reply(std::slice::from_ref(d), &[]) {
                         if r.error.is_none() {
@@ -351,10 +365,15 @@ impl Db2Session {
                     self.pkgnamcsn(),
                     Ddm::u32(cp::QRYBLKSZ, QRYBLKSZ),
                     Ddm::new(cp::QRYINSID, r.qryinsid.unwrap_or([0; 8]).to_vec()),
+                    // LOB 값을 EXTDTA로 함께(pydrda `packCNTQRY` rtnextdta=0x02).
+                    Ddm::new(cp::RTNEXTDTA, vec![0x02]),
                 ],
             );
             let corr = r.query_corr.max(1);
             self.send_chain_from(&[(cnt, Vec::new())], corr)?;
+        }
+        if !r.extdta.is_empty() {
+            fdoca::attach_lobs(&mut r.rows, &r.desc, &r.extdta);
         }
         Ok(r)
     }
@@ -475,6 +494,33 @@ impl Db2Session {
             ])?;
             if let Some(e) = prep.error {
                 return Err(e);
+            }
+            // ★ BLOB 매개변수(SQLTYPE 404/405 · 바이트 값)는 SQLDTA로 보낼 수 없어 `BLOB(X'…')` 리터럴로 문장을 고쳐 다시 준비한다(pydrda).
+            if let Some(k) = prep
+                .params
+                .iter()
+                .position(|p| p.sqltype | 1 == 405)
+                .filter(|&k| k < values.len())
+            {
+                let bytes = match &values[k] {
+                    Value::Bytes(b) => b.clone(),
+                    Value::Null => Vec::new(),
+                    other => fdoca_text(other).into_bytes(),
+                };
+                let lit = if matches!(values[k], Value::Null) {
+                    "CAST(NULL AS BLOB)".to_string()
+                } else {
+                    let hex: String = bytes.iter().map(|x| format!("{x:02X}")).collect();
+                    format!("BLOB(X'{hex}')")
+                };
+                let sql2 = fdoca::replace_placeholder(sql, k, &lit);
+                let mut params2 = req.params.clone();
+                params2.remove(k);
+                let req2 = ExecRequest {
+                    sql: sql2,
+                    params: params2,
+                };
+                return self.execute_inner(&req2);
             }
             let le = self.le();
             let sqldta = Ddm::new(cp::SQLDTA, fdoca::encode_sqldta(&prep.params, &values, le)?);

@@ -289,7 +289,14 @@ pub fn read_value(r: &mut Reader<'_>, c: ColDesc, le: bool) -> Result<Value, Row
         0x22 => Value::Str(text(r.take(n)?).replace('.', ":")),
         0x36 | 0x38 | 0x3A => Value::Str(text(r.take(n)?).trim_end_matches(' ').to_string()),
         0xBE => Value::Bool(r.take(n)?.iter().any(|&x| x != 0)),
-        0x1E | 0x18 | 0x1A | 0x1C => Value::Bytes(r.take(n)?.to_vec()),
+        0x1E => Value::Bytes(r.take(n)?.to_vec()),
+        // ★ LOB(T-426 2차 · pydrda `_parse_response`): 행 안에는 널 지시자(+ 로케이터 바이트)뿐이고 값은 체인의 EXTDTA 객체로 온다 →
+        //   자리표시(빈 Bytes)를 두고 [`attach_lobs`]가 행·열 순서로 채운다. 로케이터 타입(0x18~0x1D)은 로케이터 바이트(길이 = 서술자)를 소비.
+        0x18 | 0x1A | 0x1C => {
+            let _locator = r.take(n)?;
+            Value::Bytes(Vec::new())
+        }
+        0xC8 | 0xCA | 0xCC | 0xCE => Value::Bytes(Vec::new()),
         0x26 | 0xC0 => Value::Bytes(r.take(n & 0x7FFF)?.to_vec()),
         0x28 | 0xC2 => {
             let ln = r.len_be16()?;
@@ -306,6 +313,91 @@ pub fn read_value(r: &mut Reader<'_>, c: ColDesc, le: bool) -> Result<Value, Row
             ))))
         }
     })
+}
+
+/// LOB 열인가(값이 EXTDTA로 따로 온다).
+#[must_use]
+pub fn is_lob(c: ColDesc) -> bool {
+    matches!(c.base(), 0x18 | 0x1A | 0x1C | 0xC8 | 0xCA | 0xCC | 0xCE)
+}
+
+/// 문자 LOB인가(CLOB/DBCLOB · UTF-8로 복원) — 아니면 BLOB(Bytes).
+fn is_char_lob(c: ColDesc) -> bool {
+    matches!(c.base(), 0x1A | 0x1C | 0xCA | 0xCC | 0xCE)
+}
+
+/// 인라인 LOB(0xC8~0xCF)의 EXTDTA는 상태 바이트 1개가 앞에 온다(pydrda · 0x00 = 정상).
+fn inline_lob(c: ColDesc) -> bool {
+    matches!(c.base(), 0xC8 | 0xCA | 0xCC | 0xCE)
+}
+
+/// EXTDTA 객체들을 행·열 순서(NULL 아닌 LOB 칸)로 붙인다 — 모자라면 남은 칸은 자리표시 그대로(빈 값).
+pub fn attach_lobs(rows: &mut [Vec<Value>], cols: &[ColDesc], extdta: &[Vec<u8>]) {
+    let lob_cols: Vec<usize> = cols
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| is_lob(**c))
+        .map(|(i, _)| i)
+        .collect();
+    if lob_cols.is_empty() || extdta.is_empty() {
+        return;
+    }
+    let mut next = 0usize;
+    for row in rows.iter_mut() {
+        for &ci in &lob_cols {
+            if matches!(row.get(ci), Some(Value::Null)) {
+                continue;
+            }
+            let Some(data) = extdta.get(next) else {
+                return;
+            };
+            next += 1;
+            let c = cols[ci];
+            let body: &[u8] = if inline_lob(c) && !data.is_empty() {
+                &data[1..]
+            } else {
+                data
+            };
+            row[ci] = if is_char_lob(c) {
+                Value::Str(String::from_utf8_lossy(body).into_owned())
+            } else {
+                Value::Bytes(body.to_vec())
+            };
+        }
+    }
+}
+
+/// `?` 자리(문자열·주석 밖) 가운데 `which`(0 기준 · 매개변수 순번)번째를 `lit`로 바꾼다 — BLOB 바인드 리터럴 재작성(pydrda `_replace_binary_params`).
+#[must_use]
+pub fn replace_placeholder(sql: &str, which: usize, lit: &str) -> String {
+    let mut out = String::with_capacity(sql.len() + lit.len());
+    let mut in_str = false;
+    let mut idx = 0usize;
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' {
+            out.push(c);
+            if in_str && chars.get(i + 1) == Some(&'\'') {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            in_str = !in_str;
+        } else if c == '?' && !in_str {
+            if idx == which {
+                out.push_str(lit);
+            } else {
+                out.push(c);
+            }
+            idx += 1;
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// QRYDTA 블록의 행들 — (행 목록 · 소비한 바이트 수 · 끝에 SQLCA 표식(0x00)을 만났는가).
@@ -865,6 +957,50 @@ mod tests {
         assert_eq!(&d[1..8], &[0x00, 0x00, 0x04, 0x00, b'a', 0x00, b'b']);
         assert_eq!(&d[8..13], &[0x00, 0xFE, 0xFF, 0xFF, 0xFF]);
         assert_eq!(d[13], 0xFF);
+    }
+
+    /// LOB: 행의 자리표시가 EXTDTA 순서로 채워진다(NULL 건너뜀 · 인라인 상태 바이트 제거 · CLOB = 문자 · BLOB = 바이트) · `?` 재작성.
+    #[test]
+    fn lobs_attach_in_row_order_and_placeholder_rewrite() {
+        let cols = [
+            ColDesc {
+                drda_type: 0x03,
+                len: [0, 4],
+            },
+            ColDesc {
+                drda_type: 0xCF,
+                len: [0x80, 0x02],
+            },
+            ColDesc {
+                drda_type: 0xC9,
+                len: [0x80, 0x02],
+            },
+        ];
+        assert!(is_lob(cols[1]) && is_lob(cols[2]) && !is_lob(cols[0]));
+        // 행 2 = (1, '한', NULL) · (2, NULL, x'0102')
+        let mut b = vec![0xFF, 0x00, 0x00, 1, 0, 0, 0, 0x00, 0xFF];
+        b.extend_from_slice(&[0xFF, 0x00, 0x00, 2, 0, 0, 0, 0xFF, 0x00]);
+        let (mut rows, used, _) = read_rows(&b, &cols, true).unwrap();
+        assert_eq!(used, b.len());
+        assert_eq!(
+            rows[0],
+            vec![Value::Int(1), Value::Bytes(vec![]), Value::Null]
+        );
+        let ext = vec![
+            {
+                let mut v = vec![0x00];
+                v.extend_from_slice("한".as_bytes());
+                v
+            },
+            vec![0x00, 0x01, 0x02],
+        ];
+        attach_lobs(&mut rows, &cols, &ext);
+        assert_eq!(rows[0][1], Value::Str("한".into()));
+        assert_eq!(rows[1][2], Value::Bytes(vec![0x01, 0x02]));
+        assert_eq!(
+            replace_placeholder("INSERT INTO t VALUES (?, 'a?b''c', ?)", 1, "BLOB(X'01')"),
+            "INSERT INTO t VALUES (?, 'a?b''c', BLOB(X'01'))"
+        );
     }
 
     /// ★ 실서버 덤프(Db2 12.1.2 · CI 4차 40116752054): (a) `VALUES TRIM(CURRENT SCHEMA)` 식 열 1 · (b) `SELECT ID, NAME, AMT, D …` 이름 4열 ·
