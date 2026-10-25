@@ -30,7 +30,7 @@
 
 > ★ **보안 메모(10-25)** — SECMEC 9(EUSRIDPWD)는 DH 256비트 + **DES 56비트**라 오늘 기준으로 약하다 · IBM은 `SERVER_ENCRYPT`를 폐지 예고(지원 공지 node/7066501 · 12.1 문서 "deprecated") → **운영 권고 = TLS(`?tls=required`)** · 9는 SERVER_ENCRYPT 서버와의 호환용으로만 둔다.
 
-남은 추정(2차 이후 · 10-25 저녁 갱신) = ~~SECMEC 9 실서버(서버 `SERVER_ENCRYPT`) · LOB 입력 EXTDTA~~(위 표로 확정) · SERVER_ENCRYPT에서 평문 3 거절 여부 · 다중 커서 섹션 · UTF-8 DB 문자열 타입 코드(0x30 vs 0x3C) 확인 · INTRDBRQS(쓰지 않음 · 취소 = 소켓 끊기로 확정). ~~취소 · EXTDTA LOB 조회 · CALL 결과 집합 · 라벨 열~~ = 위 표로 확정.
+남은 추정(2차 이후 · 10-25 저녁 갱신) = ~~SECMEC 9 실서버(서버 `SERVER_ENCRYPT`) · LOB 입력 EXTDTA~~(위 표로 확정) · ~~SERVER_ENCRYPT에서 평문 3 거절 여부~~ = SERVER_ENCRYPT에서 평문 3 = **거절**(ACCSEC 3 → ACCSECRD `000A 11A2 0007 0009 000A` = SECMEC {7, 9, 10} + `0005 11A4 01`(SECCHKCD 1 = 요청 방식 미지원) + `0008 1909 0001 0002` = ENCALG {1 DES, 2 AES} · 자격 증명 보내기 전 ACCSEC 단계에서 끝남 · db2.yml 40167412919 정보성 단계) · 다중 커서 섹션 · UTF-8 DB 문자열 타입 코드(0x30 vs 0x3C) 확인 · INTRDBRQS(쓰지 않음 · 취소 = 소켓 끊기로 확정). ~~취소 · EXTDTA LOB 조회 · CALL 결과 집합 · 라벨 열~~ = 위 표로 확정.
 
 ## 결론(5줄)
 

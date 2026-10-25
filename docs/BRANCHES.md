@@ -5,6 +5,7 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | docs/138-outline-t422 | 2026-10-25 | 2026-10-25 → main(삭제) · **b511d95e** | 1 | T-422 문서 = 76 §20 ✅ · 94 구현 키 7(`show_other`) · 39 커서 추종 · D-357 · 61 3-OS · 위키 아웃라인 절 · journal §3-13 · STATUS |
+| (main 직접) 138-release-t423b | 2026-10-25 | 2026-10-25 · main 직접 · **4d160da9** | 4 | 26cc25c1 T-425 유지 · 763d5d06 drivers-v0.1.4 사전 정비(odbc 고지 · libodbc 검사) · 06a13736 색인 봇(10개 0.1.4) · 4d160da9 T-423 ② 그리드 컬럼 목록 + 평문 3 거절 시험 + dyn 취소 적합성 · 태그 drivers-v0.1.4(763d5d06) |
 | feat/138-db2-drda | 2026-10-25 | 2026-10-25 → main(삭제) · **bee909bd** → 이후 main 직접 수정 7864852a · 211427ad · a29897fd · b0bb8729 · 1ead67f7 · 5757e608 → 문서 ce14d055 → 2차 main 직접 25017034 · f5cd3b83 · a7e599ac · 0c062e15 · 85012ce1 · 2ed0e60e · 8382bbfb · 0c801ff6 · f57106aa · 50023761 · 41e1fe00 → 문서 7f1ea12a → ecc82c5b · 7e21a90e | 2(+6+1+11+1+2) | ★ T-426 Db2 네이티브 DRDA(D-361) = afc62481 뼈대(DSS 코덱 · EBCDIC · 코드포인트 · nsql-net `Socket`) · bee909bd 1차(접속 · 조회 · DML · 바인드 · 블록 · max_rows · 자동 커밋 · SET SCHEMA · TLS · 11/0) |
 | feat/138-static-odbc | 2026-10-25 | 2026-10-25 → main(삭제) · **fac7bc3e** | 2 | ★ D-362 = c4c309a2 unixODBC 정적 동봉(`vendored-unix-odbc`) + 상대 Driver 경로 해결기 · fac7bc3e THIRD-PARTY 고지 절 |
 | feat/138-outline-t423a | 2026-10-25 | 2026-10-25 → main(삭제) · **c9134a63** | 1 | T-423 ① = `outline.sort`(position·name·kind) · 아웃라인 우클릭 메뉴(심볼로 이동 · 이 문장 실행 · 이름 복사) · 라우팅 |

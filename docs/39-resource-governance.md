@@ -182,6 +182,7 @@
 | 더블클릭·툴팁 지연 | `ui.dblclick_ms` `ui.tooltip_delay_ms` | 기존 | — |
 | 긴 작업 표시·해제 | Loading… · 즉시 Disconnect | (S-13) | 09-16 11차 |
 | 아웃라인 커서 추종(10-24 · T-422 · D-357 · 855b9ad6) | 틱에서 **캐럿이 바뀔 때만** · 심볼 byte 구간 이진 탐색 1회 · 선택·reveal · 패널이 보일 때만 · 재계산 = 기존 rev 비교 | `outline.follow_caret`(on) | 끄면 0 |
+| 아웃라인 그리드 컬럼 목록(10-25 · T-423 ② · 4d160da9) | 포커스가 그리드로 바뀌거나 **세대 열쇠(탭 \| GRID_KEY_BIT · `result_gen`)가 바뀔 때만** 열 목록 재구성(열 수 n · 결과 행은 안 읽음) · 같은 열쇠면 비용 0 · 패널이 보일 때만 | `outline.grid_columns`(on) | 끄면 0 |
 | IME | OS | — | — |
 
 ### 3-6. MEM(캐시 상한)
