@@ -143,6 +143,7 @@
 ① 기준 상태 확인(`git status --short`) → ② Debug 증분 빌드(GUI만으로 충분하면 그 패키지만) → ③ `target/` 아래 실행 중인 앱 종료 후 Debug로 재시작(사용자 실제 설정 · 격리 아님 · 포커스를 빼앗지 않는 스크립트 기본 동작) → ④ "재시작됨" 회신 → ⑤ Release 빌드(백그라운드) → ⑥ 멈춘 일 재개.
 ★ **재시작 인스턴스 = 사용자 실기용 → 실제 설정**(`NSQL_HOME` 없이 · 사용자 10-17) · 격리 홈 인스턴스는 **자동 시험(V1·배치) 동안만** 띄우고 끝나면 종료 · 배치/V1 끝마다 `pgrep -f 'target/(debug|release)/nexa-sql'`로 우리 인스턴스 0 확인(사용자 것 = `ps -E`에 `NSQL_HOME` 없음) · 사용자가 쓰는 실제 설정 인스턴스는 건드리지 않고 "새 판 = 재실행 필요"만 알린다 — 10-17 격리 홈 "재시작됨" 창이 프로필 없는 로그인 창으로 남은 사례(§12).
 전체 시험 · clippy는 P0에 넣지 않는다(P1로 뒤에) — 재시작을 늦추지 않기 위해.
+★ **⑤ Release 빌드 꼬리말 — Linux PC Release = lite 판(사용자 10-26)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로.
 ★ **"빌드 + Debug 시작" P0 = Debug 빌드 → 즉시 시작 → Release는 그 뒤**(개발 세션 10-12 재확인 · 사용자가 기다리는 중) — 한 명령 줄에 Debug·Release를 묶어 끝까지 기다린 뒤 띄우지 않는다(10-12 121차: Debug 13:40:58에 끝났는데 Release 5분 50초를 기다려 13:47:02에 시작 = 6분 지연 · §12 원장). Windows 실행 습관(사용자가 Release로 병행 시험)으로 Release 재시작을 요청받은 경우도 Debug가 먼저 나왔으면 Debug부터 띄우고 알린다.
 
 ### 5-6. 개발 세션 쪽 의무
