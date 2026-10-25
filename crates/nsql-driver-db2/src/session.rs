@@ -406,15 +406,17 @@ impl Db2Session {
                     if sqlca_follows {
                         // 행 자리에 SQLCA = 이 집합의 끝(+100 · CI 10-25 CALL = ENDQRYRM 없이 이것만 옴) 또는 오류 · 경고는 ENDQRYRM이 뜻을 준다.
                         let (ca, _) = sqlca::parse_sqlca(&data[used..], le).unwrap_or((None, 0));
-                        match ca {
-                            Some(ca) if ca.is_error() => {
-                                if r.error.is_none() {
-                                    r.error = Some(ca.to_db_error());
-                                }
+                        let err_ca = match ca {
+                            Some(ca) => {
                                 set.open = false;
+                                ca.is_error().then_some(ca)
                             }
-                            Some(_) => set.open = false,
-                            None => {}
+                            None => None,
+                        };
+                        if let Some(ca) = err_ca {
+                            if r.error.is_none() {
+                                r.error = Some(ca.to_db_error());
+                            }
                         }
                     } else if used < data.len() {
                         set.carry = data[used..].to_vec();
