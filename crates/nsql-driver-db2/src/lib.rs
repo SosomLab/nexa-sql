@@ -10,6 +10,8 @@
 
 pub mod codepoint;
 pub mod conn;
+pub mod des;
+pub mod dh;
 pub mod dss;
 pub mod ebcdic;
 pub mod fdoca;

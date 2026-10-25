@@ -303,9 +303,12 @@ fn secchkcd_text(c: u8) -> &'static str {
     }
 }
 
-/// 핸드셰이크 — 성공하면 서버 정보. `secmec` = 시도할 메커니즘(1차 = USRIDPWD).
+/// 핸드셰이크 — 성공하면 서버 정보. 보안 = **EUSRIDPWD(9 · DH 256 + DES/CBC)** 를 먼저 제안하고 서버가 USRIDPWD(3)를 답하면 평문으로
+/// (pydrda · JCC 4.33+ 기본 9 · 실제 보호는 TLS · 121b ②). 서버가 다른 메커니즘을 요구하면 안내 오류.
 pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
     let mut info = ServerInfo::default();
+    let private = crate::dh::random_private();
+    let my_public = crate::dh::public_key(&private);
     // 1. EXCSAT ─ 매니저 레벨 교환.
     let excsat = Ddm::group(
         cp::EXCSAT,
@@ -317,15 +320,21 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
             ebc(cp::SRVRLSLV, PRDID),
         ],
     );
-    // 2. ACCSEC ─ 메커니즘 협상(같은 체인).
+    // 2. ACCSEC ─ 메커니즘 협상(같은 체인) · 9 제안 + 우리 DH 공개키.
     let rdbnam = Ddm::new(cp::RDBNAM, ebcdic::padded(l.database, 18));
     let accsec = Ddm::group(
         cp::ACCSEC,
-        &[Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD), rdbnam.clone()],
+        &[
+            Ddm::u16(cp::SECMEC, cp::SECMEC_EUSRIDPWD),
+            rdbnam.clone(),
+            Ddm::new(cp::SECTKN, my_public.to_vec()),
+        ],
     );
     w.send(&[(DssKind::Request, excsat), (DssKind::Request, accsec)])?;
     let chain = w.recv_chain()?;
     check_reply(&chain, &[cp::EXCSATRD, cp::ACCSECRD])?;
+    let mut secmec = cp::SECMEC_EUSRIDPWD;
+    let mut server_public: Vec<u8> = Vec::new();
     for d in &chain {
         if d.obj.cp == cp::EXCSATRD {
             if let Some(c) = d.obj.child(cp::SRVCLSNM) {
@@ -333,30 +342,67 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
             }
         }
         if d.obj.cp == cp::ACCSECRD {
-            // 서버가 다른 메커니즘을 요구하면(SECMEC ≠ 3) 1차는 중단 · 안내.
             if let Some(m) = d.obj.child(cp::SECMEC).and_then(|c| c.as_u16()) {
-                if m != cp::SECMEC_USRIDPWD {
-                    return Err(DbError {
-                        code: None,
-                        message: format!(
-                            "DRDA: server requires security mechanism {m} (encrypted); only USRIDPWD (3) is supported yet - enable TLS or allow SERVER authentication"
-                        ),
-                        position: None,
-                    });
-                }
+                secmec = m;
+            }
+            if let Some(t) = d.obj.child(cp::SECTKN) {
+                server_public = t.value;
             }
         }
     }
+    let secchk = match secmec {
+        cp::SECMEC_EUSRIDPWD if server_public.len() == 32 => {
+            let shared = crate::dh::shared_secret(&server_public, &private);
+            let mut key = [0u8; 8];
+            key.copy_from_slice(&shared[12..20]);
+            let mut iv = [0u8; 8];
+            iv.copy_from_slice(&server_public[12..20]);
+            Ddm::group(
+                cp::SECCHK,
+                &[
+                    Ddm::u16(cp::SECMEC, cp::SECMEC_EUSRIDPWD),
+                    rdbnam.clone(),
+                    Ddm::new(
+                        cp::SECTKN,
+                        crate::des::encrypt_cbc_pkcs5(key, iv, &ebcdic::from_utf8(l.user)),
+                    ),
+                    Ddm::new(
+                        cp::SECTKN,
+                        crate::des::encrypt_cbc_pkcs5(key, iv, &ebcdic::from_utf8(l.password)),
+                    ),
+                ],
+            )
+        }
+        cp::SECMEC_USRIDPWD => {
+            // 서버가 평문을 답했다 → ACCSEC를 3으로 다시(pydrda) 뒤 평문 SECCHK.
+            let accsec3 = Ddm::group(
+                cp::ACCSEC,
+                &[Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD), rdbnam.clone()],
+            );
+            w.send(&[(DssKind::Request, accsec3)])?;
+            let chain = w.recv_chain()?;
+            check_reply(&chain, &[cp::ACCSECRD])?;
+            Ddm::group(
+                cp::SECCHK,
+                &[
+                    Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD),
+                    rdbnam.clone(),
+                    ebc(cp::USRID, l.user),
+                    ebc(cp::PASSWORD, l.password),
+                ],
+            )
+        }
+        m => {
+            return Err(DbError {
+                code: None,
+                message: format!(
+                    "DRDA: server requires security mechanism {m}; supported = EUSRIDPWD (9) and USRIDPWD (3) - use TLS (?tls=required) for SERVER_ENCRYPT/GSS setups"
+                ),
+                position: None,
+            });
+        }
+    };
     // 3. SECCHK ─ 자격 · 4. ACCRDB ─ 데이터베이스 접근(같은 체인).
-    let secchk = Ddm::group(
-        cp::SECCHK,
-        &[
-            Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD),
-            rdbnam.clone(),
-            ebc(cp::USRID, l.user),
-            ebc(cp::PASSWORD, l.password),
-        ],
-    );
     let typdefovr = Ddm::group(
         cp::TYPDEFOVR,
         &[
