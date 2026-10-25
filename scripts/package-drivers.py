@@ -59,6 +59,21 @@ def find_runtime(target_dir, name):
     return None
 
 
+UNIXODBC_NOTICE = """Third-party notices for nsql-driver-odbc (Linux / macOS build)
+
+== Bundled native libraries (statically linked) ==
+
+  unixODBC (Driver Manager)  [LGPL-2.1-or-later]  https://www.unixodbc.org/
+    Linked statically into nsql-driver-odbc on Linux and macOS via the odbc-sys crate
+    (feature vendored-unix-odbc, crate unix-odbc). Not used on Windows (inbox odbc32.dll).
+    Source of the combined work is available at https://github.com/SosomLab/nexa-sql,
+    which satisfies LGPL section 6 (relinking). The unixODBC source and license text:
+    https://github.com/lurcher/unixODBC/blob/master/COPYING
+
+The driver itself is licensed under PolyForm Noncommercial 1.0.0 (see LICENSE.md).
+"""
+
+
 def lib_name(crate, os_name):
     stem = crate.replace("-", "_")
     if os_name == "windows":
@@ -109,6 +124,10 @@ def main():
                 z.writestr(info, f.read())
             if os.path.isfile(license_path):
                 z.write(license_path, "LICENSE.md")
+            # ★ D-362(10-25): Linux/macOS odbc cdylib에는 unixODBC(LGPL-2.1-or-later)가 정적 링크돼 있다 → 고지문 동봉(LGPL §6 ·
+            #   본문은 scripts/third-party-notices.py의 "Bundled native libraries" 절과 같은 내용 · 영어).
+            if did == "odbc" and a.os != "windows":
+                z.writestr("THIRD-PARTY-NOTICES.txt", UNIXODBC_NOTICE)
             # 동봉 런타임(DuckDB = download-lib가 받은 공유 라이브러리 · target/<profile>/에 build.rs가 복사해 둔다).
             for extra in BUNDLED.get(did, []):
                 e = extra if a.os == "windows" else ("lib" + extra.replace(".dll", ".so" if a.os == "linux" else ".dylib"))

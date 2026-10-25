@@ -99,7 +99,8 @@ jobs:
       - name: DuckDB 런타임 캐시 비우기(rust-cache 뒤 · LNK1181)
         shell: bash
         run: rm -rf target/*/build/libduckdb-sys-* target/*/*/build/libduckdb-sys-* nexa-sql/target/*/build/libduckdb-sys-* nexa-sql/target/*/*/build/libduckdb-sys-*
-      - name: unixODBC(Linux · 빌드 링크용 · 런타임 = 사용자 시스템 libodbc)
+      # D-362(10-25) 뒤 odbc cdylib은 unixODBC를 정적으로 품는다(vendored) — 아래 두 설치는 빌드 보조용으로 남겨 두되, 빌드 뒤 동적 링크가 없는지 검사한다.
+      - name: unixODBC(Linux · 빌드 보조 · 런타임 의존 없음 = 아래 검사)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq unixodbc-dev
       - name: unixODBC(macOS)
@@ -120,6 +121,15 @@ jobs:
           # ODBC = 4 OS(T-401 · x86_64 맥은 Intel 러너 네이티브라 brew libodbc가 x86_64).
           pk+=(-p nsql-driver-odbc)
           cargo build --release --locked "${pk[@]}" ${TARGET:+--target "$TARGET"}
+      - name: odbc cdylib = libodbc 동적 링크 없음 확인(D-362 정적 동봉)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=target/release; [ -n "${{ matrix.target }}" ] && dir="target/${{ matrix.target }}/release"
+          if [ "$RUNNER_OS" = "Linux" ]; then deps=$(ldd "$dir/libnsql_driver_odbc.so"); else deps=$(otool -L "$dir/libnsql_driver_odbc.dylib"); fi
+          echo "$deps"
+          if echo "$deps" | grep -qi 'libodbc'; then echo "::error::odbc cdylib still links libodbc dynamically (vendored-unix-odbc expected)"; exit 1; fi
       - name: 패키지(zip + 매니페스트)
         shell: bash
         run: |
