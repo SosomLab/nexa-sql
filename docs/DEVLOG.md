@@ -2,6 +2,14 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-25 (138차 · Linux · T-145 · 마감)** — ★ T-145 편집기 줄 변경 표시 = 줄 해시 증분(nexa-ui 0750d98 · 4만 줄 입력 11.0 → 7.3 ms · −35 % · 협업 독립 A/B 일치 · bench `BENCH_PARENS` · [journal 10-24 §3-19](journal/2026-10-24.md)) · 잔여 정리(TODO 낡은 ☐/🔧 5행 · CLAUDE.md §4 순서 안내 · 61 §6 머리) · 최종 nexa-sql 29c78570 · nexa-ui 6c66c50.
+
+- **2026-10-25 (138차 · Linux · 미비사항 · drivers-v0.1.5)** — ★ Db2 DBCLOB(0xCF UTF-8 서버 변환)·XML(`XMLPARSE` 재작성) 입력 ✅ + 숨은 결함 **FDODTA 행 지시자를 "홀수 길이 패드"로 오해**(3d3482ad · 그전 바인드는 우연 통과) · 🚀 drivers-v0.1.5 pre-release(자산 125) · 변수 창 Formula 열(d6996ba0 · Layer 잘림 a0f213ef) · 102 원장 +5행 · 121b 진단 손잡이 · wiki Db2 네이티브 절([journal 10-24 §3-18](journal/2026-10-24.md)).
+
+- **2026-10-25 (138차 · Linux · 릴리스 · T-423)** — 🚀 drivers-v0.1.4 pre-release(자산 125 · 색인 10개 · odbc zip unixODBC 고지 · libodbc 검사 단계) · ★ T-423 ② 그리드 컬럼 목록(`outline.grid_columns` · 4d160da9) → **T-423 ✅** · SERVER_ENCRYPT 평문 3 거절 확인 · dyn 취소 적합성([journal 10-24 §3-17](journal/2026-10-24.md)).
+
+- **2026-10-25 (138차 · Linux · Db2 네이티브 2차)** — ★ **T-426 Db2 네이티브 DRDA ✅**(D-361 · 2차 ① LOB 조회·입력 EXTDTA ② 취소 = 소켓 끊기 + ABI op 18(`drops_session` cdylib 경계) ③ CALL 결과 집합·OUT ④ EUSRIDPWD(DES·DH 자체 구현) ⑤ SECMEC 9 실서버(SERVER_ENCRYPT · ENCALG DES) ⑥ LOB 입력 EXTDTA ⑦ 라벨 열 이름) · db2.yml 회차 사슬(EXCSQLSTT 0x2009→0x200B · SECMEC 목록 · CALL 무한 CNTQRY · SQLCINRD 레이아웃 · 인라인 LOB 9 B) → 내장 7/7 · 확장 7/7([journal 10-24 §3-15~16](journal/2026-10-24.md)).
+
 - **2026-10-24 (138차 · Linux · 드라이버 P5)** — ★ ClickHouse 확장 드라이버(D-354 · HTTP · 외부 crate 0 · T-415) · PG 와이어 프리셋 5종 · ODBC 프리셋 3종(Db2 · HANA · Informix) · ★ 변수 창 stale 표시 + 실행당 재계산(D-355 · T-421) · docs/123 바인드 변수 실행 전략(D-356 · T-416~420) · 핫픽스 = Windows dead_code + fmt(e30df1f1 · CI 3-OS ✓) · B3 lite·no-odbc ✓ · F 성능 회귀 없음 — 4fe337a7 · a3d2923c · 9a3084fb(main).
 - **2026-10-24 (138차 · Linux · V3 전체 자동화)** — 최신화 121커밋 · V3 Linux 전 단계(단위 1063 · 통합 내장=확장 28 · 기능 점검 84+28 · 격리 E2E 18 · 실서버 E2E 25) = 제품 결함 0 · 시험 자산 9 수정 · 🔧 T-413 nexa-fs EXDEV · 🔧 T-414 ODBC SQLCancel 세그폴트(`odbc.cancel`) · ★ T-60 Linux 서식 복사 · T-38 Linux 테마 실시간 추종 · 📐 D-353 대기 · 12:30 리부팅 → 재개(B3·F 남음) · nexa-sql b18c3d1f(feat/138-linux-gaps 5커밋 ff) · nexa-ui 290c801·97fd950(225차).
 - **2026-10-24 (131차 · mac · 맥 첫 검증)** — V3 제품 결함 0(기동 +36 % = 환경 · A/B) · 운영 2단 통일 · ODBC 6건(이름·안내·Driver 분류·로캘·자동 커밋 멈춤·SQLSTATE 분류) + 맥 실접속·설치/원복 스크립트 · 설정 내보내기/가져오기 · 맥 시험 Accessory 비활성 · Intel 맥 확장 7종 ✓ · 시험 자산 3 — journal 10-23 §45 · 10-24 §1~§2.

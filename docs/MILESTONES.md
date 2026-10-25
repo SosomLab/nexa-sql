@@ -45,6 +45,7 @@
 | 🚧 | **09-26~27**(Linux 101차): ★ **Linux 전수 검사**(기능 78/78 · 4-DBMS DDL·DML·TCL·DCL 62/62 · 성능·회수 · 도구 4종) · ★ **라이선스 체계 코드 완성** — 라이브러리 nexa-license(형식·검증·기기 ID·`fs`·`issuer`) · **발급기 `nexa-license-tool`**(keygen·issue·reissue·verify·ledger · 봉투 `nxk1`) · 앱 층 `nsql-license`(Feature 21 · `check` 순수 · 빌드일) · CLI `nsql license` · GUI 라이선스 창·상태줄 배지(T-34) · **게이트 12곳**(T-36 · 25 §13-3 확정 · Release 늘 켬) · 📐 [92 디지털 자산 보호](92-digital-asset-protection.md) · 위키 License · ✅ 루트 공개키 `root-v1` 등재(103차 mac · nexa-license 1bc033c · 첫 발급 NSL-2026-000001 설치) |
 | ✅ | **09-28**(win 102차 끝): 🚀 **v0.1.0 첫 공개 릴리스** — 3-OS 설치본 + sha256 · 🍺 Homebrew Cask(kiros33/tap · 자동 반영·실설치 검증) · winget·choco 없음 · 정적 CRT·임포트 게이트·CLI 버전 정보(형제 저장소 교훈 33 §5) |
 | 🚧 | **10-04**(mac 111차): ★ **협업 세션 운영**([102](102-collab-session-operation.md) · Fable 개발 × Opus 협업) · ★ DBMS 아이콘 PNG 173종(전부 + 고지 · T-277 = 설치본 고지 ✅ 10-04 · 원천별 개별 확인 남음) · ★ 화면 언어 `system` 기본 · 🔧 툴바 ▾ 배율 · 파일 DB 표시 · 포맷터 keep `as` · 스플리터 hover · Debug 기능 점검 82/82 + SQLite E2E 63 · ★ 상태바 항목 순서·표시 편집 · 툴바 우클릭·툴바 설정 편집 · 협업 검증 단계 V0~V3([journal 10-04](journal/2026-10-04.md)) |
+| ✅ | **10-24~25**(Linux 138차): ★ **Db2 네이티브 DRDA 확장 드라이버 T-426 ✅**([121b](121b-db2-drda-research.md) · D-361 · IBM 클라이언트 불필요 · LOB·취소·CALL·SECMEC 9 · CI 실서버 내장·확장 7/7) · ★ ClickHouse 확장(T-415) · ODBC 정적 동봉(D-362) · ★ 아웃라인 1·2차 T-422/T-423 ✅([76 §20](76-intellisense-and-outline.md)) · 변수 창 stale·Formula 열(D-355) · ✅ T-145 편집기 줄 해시 증분(−35 %) · 🚀 drivers-v0.1.4·v0.1.5 · V3 Linux 전체 자동화([journal 10-24](journal/2026-10-24.md)) |
 | ✅ | **10-08**(win 115차 끝): 🚀 **v0.1.6 릴리스**([journal 10-07 §23](journal/2026-10-07.md)) — 113~115차 전부(조건 바 · Goto Anything · 결과 필터 두 상한 · 타입 배지 · 폴더 감시 · 변수 Scope · 외부 변경 토스트 · 메모리 창 · T-309 제품 결함 3 · T-310 · T-312 등) · 자산 6 · Homebrew `c3c237e` · pkg.sosomlab.com 0.1.6(APT · RPM) · **winget·choco 제외**(사용자 10-08 · 변수 false) · V2 test 822/0 · V3 전수 실패 0 |
 | ✅ | **10-05**(win 112차 끝): 🚀 **v0.1.5 릴리스** — 112차 전부(T-122 · 객체·데이터 척추 조각 14 · 결함 3) · ★ **네 채널** = Homebrew(탭 780e053) · **pkg.sosomlab.com APT + RPM**(첫 발행) · **Chocolatey**(0.1.5 push · 검수 대기) · **winget**(PR #447007 · 검수 대기) · 공개 14:09 UTC ([journal 10-05 §34](journal/2026-10-05.md)) |
 | ✅ | **10-04**(mac 111차 끝): 🚀 **v0.1.4 릴리스**([journal 10-04 §20](journal/2026-10-04.md)) — 109~111차 전부(HUD HiDPI · `EXEC` 포맷 · DBMS 아이콘 PNG · 언어 `system` · 상태바/툴바 항목 편집 · 툴바/상태바 우클릭) · release.yml 37179044044 ✓ · 공개 05:23 UTC · homebrew.yml 37179733964 ✓(탭 41ea3ae) · brew 0.1.3 → 0.1.4 · winget·choco 없음 |
@@ -73,6 +74,7 @@
 ## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)
 | 상태 | 항목 |
 |:--:|---|
+| ✅ | **10-22~25** 확장 드라이버 = in-process cdylib(ABI v2 · D-350 · 접속 시 자동 설치 · 오프라인 번들 · 서명) · 공개 pre-release `drivers-v0.1.0~0.1.2 · 0.1.4 · 0.1.5`(0.1.3 미발행 · 10종 = sqlite·pg·mysql·mssql·oracle-thin·oracle-oci·odbc·duckdb·clickhouse·db2 · 자산 125) · ABI op 18 `CANCEL_DROPS_SESSION` · [22 §0](22-driver-extensions.md) |
 | 📐 | stdio JSON-RPC 드라이버 프로세스(T-27) · `drivers/<id>/<ver>/` SxS 보관·관리 CLI(T-28) · GitHub 최신 다운로드·서명 검증(T-29) · Oracle OCI 확장 Instant Client 19/23(T-30) · DBeaver식 접속 대화상자·드라이버 관리자(T-31) |
 
 ## M3~M6 — [02](02-roadmap.md)
