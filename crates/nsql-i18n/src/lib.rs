@@ -168,6 +168,8 @@ pub enum Msg {
     VarsColName,
     VarsColType,
     VarsColValue,
+    /// ★ 변수 창 Formula 열(사용자 10-25) — 사용 시 모드 수식(D-355) 표시.
+    VarsColFormula,
     VarsColLayer,
     VarsEditHint,
     VarsEmpty,
@@ -4238,6 +4240,7 @@ impl Msg {
             Msg::VarsColName => ["Name", "이름"],
             Msg::VarsColType => ["Type", "타입"],
             Msg::VarsColValue => ["Value", "값"],
+            Msg::VarsColFormula => ["Formula", "수식"],
             Msg::VarsColLayer => ["Layer", "층"],
             Msg::VarsEditHint => [
                 "Value of the selected variable - or  name = value  to add one (empty / NULL = NULL)",
@@ -8614,6 +8617,7 @@ impl Msg {
         Msg::VarsColName,
         Msg::VarsColType,
         Msg::VarsColValue,
+        Msg::VarsColFormula,
         Msg::VarsColLayer,
         Msg::VarsEditHint,
         Msg::VarsEmpty,

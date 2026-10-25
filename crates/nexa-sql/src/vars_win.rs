@@ -36,8 +36,10 @@ pub(crate) struct VarRow {
     pub changed: bool,
     /// ★ 앞 층에 같은 이름이 있어 **가려진** 줄(글로벌·공유) — 흐리게 그린다(사용자 10-07 "같은 이름의 글로벌·탭을 함께 · 글로벌은 흐릿하게").
     pub shadowed: bool,
-    /// ★ D-355: 사용 시 모드에서 의존이 바뀐 뒤 재계산 전 — 값 칸 흐리게(값에 `⟳ := 수식`이 붙어 온다).
+    /// ★ D-355: 사용 시 모드에서 의존이 바뀐 뒤 재계산 전 — 값 칸 흐리게 + `⟳`(수식은 Formula 열).
     pub stale: bool,
+    /// ★ 수식(사용 시 모드 · `:A + 10`) — 없으면 빈 글(Formula 열 · 사용자 10-25).
+    pub formula: String,
 }
 
 pub(crate) enum VarsWinAction {
@@ -55,10 +57,12 @@ pub(crate) enum VarsWinAction {
     Refresh,
 }
 
-const COLS: [(Msg, i32); 4] = [
+/// 열(폭 0 = 남는 폭) — ★ Formula(사용자 10-25) = 사용 시 모드 수식(D-355 · `:A + 10`) · 값 칸에 섞지 않고 따로 보인다.
+const COLS: [(Msg, i32); 5] = [
     (Msg::VarsColName, 170),
     (Msg::VarsColType, 120),
     (Msg::VarsColValue, 0),
+    (Msg::VarsColFormula, 180),
     (Msg::VarsColLayer, 70),
 ];
 
@@ -541,6 +545,7 @@ impl VarsWin {
                     format!(":{}", r.name),
                     r.ty.clone(),
                     r.value.clone(),
+                    r.formula.clone(),
                     r.layer.word().to_string(),
                 ];
                 let mut cx = body.x;

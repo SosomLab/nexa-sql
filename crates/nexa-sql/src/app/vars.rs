@@ -116,9 +116,9 @@ impl App {
                 } else {
                     full.clone()
                 };
-                // ★ D-355: stale 수식 = `값 ⟳ := 수식`(재계산 전임을 보인다 · 왕복 0).
+                // ★ D-355: stale = 값 뒤 `⟳`(재계산 전임을 보인다 · 왕복 0) · 수식 자체는 Formula 열(사용자 10-25).
                 let shown = if v.stale {
-                    format!("{shown} \u{21bb} := {}", v.formula.as_deref().unwrap_or(""))
+                    format!("{shown} \u{21bb}")
                 } else {
                     shown
                 };
@@ -136,6 +136,11 @@ impl App {
                     changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
                     shadowed,
                     stale: v.stale,
+                    formula: v
+                        .formula
+                        .as_deref()
+                        .map(|f| format!(":= {f}"))
+                        .unwrap_or_default(),
                 }
             })
             // 치환 변수(`&이름` · DEFINE) — 표시값 = 사용 시 모드면 `원문 → 현재 값`(63 §9) · 편집 = 원문.
@@ -153,6 +158,7 @@ impl App {
                         changed: false,
                         shadowed: false,
                         stale: false,
+                        formula: String::new(),
                     }),
             )
             .collect()
