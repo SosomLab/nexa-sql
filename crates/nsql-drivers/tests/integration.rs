@@ -2032,7 +2032,40 @@ fn db2_explain_tree_and_blockers_query() {
             PlanOptions { analyze: false },
         )
         .unwrap_or_else(|e| panic!("[plan] db2 explain 실패: {}", e.message));
-    assert!(rep.nodes.len() >= 2, "{:#?}", rep.raw);
+    if rep.nodes.len() < 2 {
+        // ★ 진단(CI 40219428298 = 트리 질의 0행): EXPLAIN 표가 어느 스키마에 쓰였는지 · 최신 EXPLAIN_STATEMENT 값 · 직접 EXPLAIN 뒤 건수.
+        let mut diag = String::new();
+        let mut probe = |r: &mut Runner, sql: &str| {
+            let (errs, ev) = run_raw(r, sql);
+            let rows = first_rs(&ev)
+                .map(|rs| {
+                    rs.rows
+                        .iter()
+                        .map(|row| row.iter().map(Value::display).collect::<Vec<_>>().join(" | "))
+                        .collect::<Vec<_>>()
+                        .join(" ; ")
+                })
+                .unwrap_or_default();
+            let err = ev
+                .iter()
+                .find_map(|e| match e {
+                    RunEvent::Error { error, .. } => Some(error.message.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            diag.push_str(&format!("\n  {sql}\n    => errs {errs} · [{rows}] {err}"));
+        };
+        probe(&mut r, "VALUES (CURRENT USER, CURRENT SCHEMA, CURRENT SERVER)");
+        for schema in ["", "SYSTOOLS."] {
+            probe(&mut r, &format!("SELECT COUNT(*) FROM {schema}EXPLAIN_INSTANCE"));
+            probe(&mut r, &format!("SELECT explain_requester, querytag, explain_level, explain_time, source_name FROM {schema}EXPLAIN_STATEMENT ORDER BY explain_time DESC FETCH FIRST 5 ROWS ONLY"));
+            probe(&mut r, &format!("SELECT COUNT(*), MIN(operator_type) FROM {schema}EXPLAIN_OPERATOR"));
+        }
+        probe(&mut r, "EXPLAIN PLAN SELECTION SET QUERYTAG = 'NSQLD' FOR SELECT e.ID FROM NSQLT_DB2E e WHERE e.ID = 1");
+        probe(&mut r, "SELECT COUNT(*) FROM EXPLAIN_STATEMENT WHERE querytag = 'NSQLD'");
+        probe(&mut r, "SELECT COUNT(*) FROM SYSTOOLS.EXPLAIN_STATEMENT WHERE querytag = 'NSQLD'");
+        panic!("[plan] db2 트리 0행 · raw {:#?} · 진단:{diag}", rep.raw);
+    }
     assert!(
         rep.nodes.iter().any(|n| n.depth > 0),
         "depth: {:#?}",
