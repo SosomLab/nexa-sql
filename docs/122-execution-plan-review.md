@@ -40,6 +40,7 @@
 | MySQL / MariaDB | `EXPLAIN` 표 | `EXPLAIN ANALYZE`(MySQL 8.0.18+ 트리 · MariaDB는 문법이 달라 오류 → 추정만 권장) | 표: `type`(ALL/index/range/ref…) · `table` · `possible_keys`/`key` · `rows`·`filtered` · `Extra`(Using filesort/temporary) · 트리 텍스트는 PG와 같은 파서 |
 | SQLite | `EXPLAIN QUERY PLAN` | 같음(실측 없음) | `id · parent · detail` → 부모 사슬 깊이 · `SCAN t` / `SEARCH t USING …` |
 | DuckDB | `EXPLAIN` | `EXPLAIN ANALYZE` | 상자 그림: 대문자 연산 줄(`SEQ_SCAN`) · 다음 줄 대상 · `~N Rows` · `EC:` 비용 · 상자 열 위치 = 깊이 |
+| Db2 | 표 준비 `CALL SYSPROC.SYSINSTALLOBJECTS('EXPLAIN','C',NULL,CURRENT USER)`(1회) + `EXPLAIN PLAN SELECTION SET QUERYTAG='NSQL' FOR …` | (actuals = 이벤트 모니터 · 2차) | EXPLAIN_STREAM 재귀 CTE 트리(재귀 쪽 암묵 조인 · SQL0345N) · depth · 대상 스키마.표 · 추정 행 STREAM_COUNT · total/io/cpu cost · RETURN 뿌리 · `parse_db2`(열 이름 기반 · 옛 평면 폴백) · ★ **EXPLAIN 표 정리 = 스크립트 끝 읽기 종료 롤백**(c6154064 · explain 동안 56 L1 read_end Off) · EXPLAIN_INSTANCE DELETE 생략(🚧) (10-26 · b186bdd5 · 1d4cf557) |
 | ODBC | `EXPLAIN` | 같음 | 뒤 DBMS를 모르니 행마다 노드(첫 열 = 연산 · 나머지 = 상세) |
 
 > ★ **Oracle 실측에서 고친 것**(10-23 통합 시험): Thin 드라이버(`oracledb`)가 `EXPLAIN PLAN`을 파싱만 하고 실행하지 않았다 → `EXPLAIN PLAN`을 PL/SQL `EXECUTE IMMEDIATE`로 감싸 보낸다(Thin · OCI 두 드라이버 공통).
@@ -155,3 +156,5 @@ $ nsql explain -c sqlite:emp.db -q "SELECT * FROM emp WHERE dept = 3" --analyze
 - [40 CLI 사용법 Step 10](40-cli-usage.md) — `nsql explain` 기본 사용.
 - [115 운영 모드 시나리오](115-prod-mode-scenario-nsql-guide.md) — 실제 실행 계획에도 보류 정책이 적용된다.
 - [83 SQL Preview·객체 생성](83-object-explorer-dbms-trees-and-generate-sql.md) · [43 결과 탭](43-fetch-model-and-result-tabs.md) — 결과 탭 재사용.
+
+> ★ **T-418(10-26 bb38db67) 바인드 기준 표시** — `PlanReport.binds` · `bind_basis()` = SQL Server "리터럴 기준(DECLARE 리터럴 · 이 값 기준)" · Oracle 추정 "바인드 기준 · EXPLAIN PLAN은 VARCHAR2 가정 → --analyze" · 그 밖 "바인드 기준(값 모름)" → 검토 탭 첫 행 · 계획 탭 머리 "실행 계획 · 바인드 기준 (n)" · CLI 머리 줄.

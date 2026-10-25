@@ -202,3 +202,5 @@ CLI `nsql shell`(Release) 한 프로세스에서 SQLite 기준 → `CONNECT <프
 
 - ★ **트랜잭션(10-24 수정)** = ODBC 드라이버 자동 커밋은 **ON이 기본**(접속 때 탐침 뒤 복귀) · 러너의 `BEGIN TRANSACTION`(Caps ODBC `tx_begin`)을 어댑터가 가로채 OFF로 · COMMIT/ROLLBACK 뒤 ON 복귀(`in_tx`) · Caps ODBC `server_autocommit=true`. 종전(모든 세션 OFF)은 탐색기 메타 세션의 읽기가 트랜잭션을 열어 둔 채(SQLite 공유 잠금) 실행 세션의 `SQLEndTran`이 sqlite3odbc `busy_handler`에서 영원히 대기 → GUI run.all이 첫 항목 뒤 멈춤(CLI는 연결 1이라 안 걸림).
 - 사용자 실기 = 대기(10-24 · VPN 상태 확인 중 · 이 맥은 Intel이라 설치본 경로로는 T-401 해소 뒤).
+
+> ★ **T-427 DuckDB `bundled` 측정(10-26 · 기록만)** — drivers.yml 40215948955(`-f duckdb_bundled=true` · publish skipped · 콜드) vs 40196311144(download-lib): 잡 ubuntu +14m04s · windows **+18m25s** · macos arm64 +10m51s · macos-15-intel **+32m30s** → "+15분 이내" 불충족 = **기록만**(prebuilt 동적 + 런타임 동봉 유지) · 재검토 = 러너 성능 변화 · prebuilt 배포 중단 · bundled는 ICU 없음·parquet/json feature 별도.

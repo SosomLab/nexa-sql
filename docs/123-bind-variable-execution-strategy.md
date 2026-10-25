@@ -49,11 +49,11 @@
 | # | 내용 | 비용 | 우선 |
 |---|---|---|---|
 | D-356 | **규칙 고정**: `:이름`은 바인드 · 리터럴 치환은 (가) 방언/드라이버에 바인드가 없을 때 (나) 배치 구조상 불가능할 때(SQL Server DeclarePrepend)만 · `&이름`은 글자 치환(의도) · 로컬 대입은 우변 리터럴만 — 61 §1 불변식에 한 줄 | 문서 | P1 |
-| T-416 | **가시성** = 실행 로그·트랜잭션 로그 문장 행에 전달 모드 꼬리표(`bind N` · `declare-prepend` · `inline`) + `nsql plan`에 같은 표시 → 사용자가 "치환인지 바인드인지"를 묻지 않아도 보인다(44 §9 3계층에 한 칸) | 소 | P1 |
-| T-417 | **ClickHouse 2차 = 서버 매개변수** `{name:Type}` + URL `param_name=` — 변수 타입 → ClickHouse 타입(VARCHAR2→String · NUMBER→Float64/Int64/Decimal · DATE→Date · TIMESTAMP→DateTime) · 바인드 추출은 지금 `?` 치환 자리와 같음 · 리터럴 치환은 타입을 모르는 값만 | 중 | P2 |
-| T-418 | **실행 계획과 바인드**(122 보강) — Oracle `EXPLAIN PLAN`은 바인드 타입을 VARCHAR2로 가정 → `--analyze`(실행 뒤 DISPLAY_CURSOR) 안내 · SQL Server SHOWPLAN은 `DECLARE` 프리펜드로 가므로 "값 기준 계획" 표시 · 계획 결과 탭 머리에 "바인드 기준/리터럴 기준" 한 줄 | 소 | P2 |
-| T-419 | SQL Server **DeclarePrepend 최소화** — `USE`·`SET 옵션` 단독 문장은 변수 참조가 없으면 프리펜드 생략(이미 params 0이면 머리 비움 = 확인) · `CREATE PROCEDURE` 본문의 `:x`는 서버 코드이므로 바인드 대상 아님(`is_stored_code_ddl` = 이미) → 남는 것 = "배치 첫 문장 DDL + 바인드 참조" 조합뿐 → 경고 토스트("이 문장의 :x는 리터럴로 들어감") | 소 | P3 |
-| T-420 | **암묵 변수 타입** — 선언 없이 처음 쓰는 `:x`(NULL · 타입 Auto)는 서버가 타입을 정한다(Oracle VARCHAR2 · SQL Server sql_variant) → `VARIABLE x NUMBER` 선언 권고 진단(`Diagnostic::ImplicitVariable` = 이미) + 변수 창에서 타입 고정 버튼 | 소 | P3 |
+| T-416(✅ 10-26 0fb26ed9) | **가시성** = 실행 로그·트랜잭션 로그 문장 행에 전달 모드 꼬리표(`bind N` · `declare-prepend` · `inline`) + `nsql plan`에 같은 표시 → 사용자가 "치환인지 바인드인지"를 묻지 않아도 보인다(44 §9 3계층에 한 칸) | 소 | P1 |
+| T-417(✅ 10-26 0476b37c(실서버 ☐)) | **ClickHouse 2차 = 서버 매개변수** `{name:Type}` + URL `param_name=` — 변수 타입 → ClickHouse 타입(VARCHAR2→String · NUMBER→Float64/Int64/Decimal · DATE→Date · TIMESTAMP→DateTime) · 바인드 추출은 지금 `?` 치환 자리와 같음 · 리터럴 치환은 타입을 모르는 값만 | 중 | P2 |
+| T-418(✅ 10-26 bb38db67) | **실행 계획과 바인드**(122 보강) — Oracle `EXPLAIN PLAN`은 바인드 타입을 VARCHAR2로 가정 → `--analyze`(실행 뒤 DISPLAY_CURSOR) 안내 · SQL Server SHOWPLAN은 `DECLARE` 프리펜드로 가므로 "값 기준 계획" 표시 · 계획 결과 탭 머리에 "바인드 기준/리터럴 기준" 한 줄 | 소 | P2 |
+| T-419(✅ 10-26 a2f4bdd7) | SQL Server **DeclarePrepend 최소화** — `USE`·`SET 옵션` 단독 문장은 변수 참조가 없으면 프리펜드 생략(이미 params 0이면 머리 비움 = 확인) · `CREATE PROCEDURE` 본문의 `:x`는 서버 코드이므로 바인드 대상 아님(`is_stored_code_ddl` = 이미) → 남는 것 = "배치 첫 문장 DDL + 바인드 참조" 조합뿐 → 경고 토스트("이 문장의 :x는 리터럴로 들어감") | 소 | P3 |
+| T-420(✅ 10-26 a2f4bdd7(타입 고정 버튼)) | **암묵 변수 타입** — 선언 없이 처음 쓰는 `:x`(NULL · 타입 Auto)는 서버가 타입을 정한다(Oracle VARCHAR2 · SQL Server sql_variant) → `VARIABLE x NUMBER` 선언 권고 진단(`Diagnostic::ImplicitVariable` = 이미) + 변수 창에서 타입 고정 버튼 | 소 | P3 |
 | — | 하지 않을 것 = "전부 리터럴" 옵션(플랜 캐시·안전 후퇴) · 세션 변수의 서버 저장(05 §7 (c) SESSION_CONTEXT)은 명시 옵션으로만(이미 결정) | — | — |
 
 ## 5. 검증 자산(현재 있음)
@@ -61,3 +61,5 @@
 - `nsql-script` 단위 = `prepare_with` 방언별(Named/AtName/DollarN/Question) · `needs_declare_prepend` · `lone_select_items` · `bind_type` 넓힘.
 - 통합 = `integration.rs` 각 방언 `*_bind_*`(Oracle·MSSQL·PG·MySQL·SQLite·ODBC) · 실서버 E2E `win-vars-e2e.sh`(26) · `define-e2e.sh`(변수·DEFINE 왕복).
 - 실기 확인 = 트랜잭션 로그 3계층 · Oracle `V$SQL`/`V$SQL_BIND_CAPTURE` · SQL Server Profiler/XE `rpc_completed`(sp_executesql 매개변수) · PG `log_statement = 'all'`($1 표기).
+
+> ★ **10-26 밤 구현** — 전달 모드 공용 = nsql-script `Delivery{Bind,DeclarePrepend,Inline}` · `default_delivery` · `delivery_tag`(T-416 꼬리표 · T-153 ① 미리보기 공용) · ClickHouse 서버 매개변수 = 조회의 `?` → `{pN:Type}` + URL `param_pN=`(TSV escaped · 협업 조사 (C)② · 비조회·이진·`NSQL_CH_INLINE=1` = 리터럴 폴백) · [journal 10-26 §3](journal/2026-10-26.md).

@@ -110,3 +110,5 @@ duckdb::memory:?driver=duckdb           # 축약형 꼬리도 같다(?driver= ·
 - 축약형(`<방언>:<본문>`) 꼬리의 `?driver=`/`?env=`를 파싱 · `connection_string`이 다시 같은 문자열을 만든다(왕복 시험 `driver_param_round_trips`).
 - 허브 `ext_ids_for(dialect, want)` = 원하는 확장 id를 앞으로(thin → `oracle-thin` · oci → `oracle-oci`) · `open_oracle`이 `spec.driver`를 존중.
 - ★ **GUI 접속 폼(10-23 cf10a33)** = 방언 콤보에 **Oracle (Thin)** · **Oracle (OCI)** 두 항목(값 `oracle?driver=thin|oci`) → 고르면 `ConnectSpec.driver`에 들어가 저장·왕복 · 프로필을 열면 그 driver 항목이 선택된다.
+
+> ★ **프로필 변수(10-26 · T-153 ② · 5e53e376)** — 프로필 파일에 `var.<이름>=값` 줄(이름 = 대문자 식별자 · 스펙 재저장에도 보존 · nsql-vault `vars`/`set_vars`) · CLI `nsql conn var <프로필> [NAME=value …]`(`NAME=` = 삭제) · 접속 뒤 변수 창 `profile` 층(읽기 전용) · 접속 창 폼 편집 UI = 후속.

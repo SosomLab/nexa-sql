@@ -252,3 +252,5 @@ DBeaver 환경설정의 두 페이지를 그대로 카테고리로 쓴다: **편
 - 성능 모드(39 §4 `perf.mode`/`perf.boost`)와의 관계: `perf.boost`는 UI 전용 키만 강제하므로 `intel.*`/`meta.*`는 건드리지 않는다. 대신 `perf.mode=low`(저사양 프리셋)에서 `meta.prefetch=current` · `meta.prefetch_columns=off` · `intel.match=prefix`로 프리셋 값을 낮춘다(사용자가 개별 값을 두면 그 값이 우선 · 39 §4 우선순위).
 - 기존 `explorer.auto_refresh/refresh_secs/timeout`은 `meta.*`로 **통합**(탐색기와 인텔이 같은 저장소를 쓰므로 갱신 정책도 하나 · 마이그레이션 = 옛 키 값이 있으면 새 키로 옮기고 제거).
 - CLI: 같은 키가 `nsql shell` Tab 완성과 `DESC`에도 적용(스레드 없이 동기).
+
+> ★ **10-26 T-153 ⑤** — 객체 링크(T-179) 기반에 `LinkKind::Variable`(`:이름`)·`Macro`(`&이름`) 추가 = 편집기 hover 변수 값 카드(문자열·주석 밖 · 카드 버튼·카탈로그 상세 요청은 변수 링크 제외 · 값 있으면 밑줄 스타일).

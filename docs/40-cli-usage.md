@@ -1705,3 +1705,5 @@ nsql help <명령>         # 같은 내용
 | 성능 계측(`--timing`) | [26 성능 아키텍처](26-performance-architecture.md) |
 | 서버 메시지·로그(`--log`) | [32 서버 메시지·실행 중 로그](32-server-messages-and-live-log.md) |
 | 실서버 테스트 환경 | [20 Codespaces·Docker](20-testing-codespaces.md) |
+
+> ★ **10-26 추가** — `nsql conn var <프로필> [NAME=value …]`(프로필 변수 보기/넣기 · `NAME=` = 삭제 · T-153 ②) · `nsql plan` EXECUTE 줄에 전달 모드(`bind N` · `declare-prepend` · `no params` · T-416) · 계획 출력 머리에 바인드 기준 한 줄(T-418).

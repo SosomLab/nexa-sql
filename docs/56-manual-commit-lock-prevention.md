@@ -68,6 +68,8 @@
 - Oracle은 SELECT가 트랜잭션을 열지 않으므로 사실상 무동작(DB 링크 SELECT만 해당 — Toad KB 사례) · 비용 0.
 - 효과: §1 (B) 전부 해소 — 수동 모드로 하루 종일 조회만 해도 `idle in transaction`이 남지 않는다. 표시도 정직해진다(`Read`만 있던 상태의 초록 배지는 "끝났음"으로 사라진다).
 - 설정: `tx.read_end` = `auto`(기본 · 위 규칙) / `strict`(서버에 물어 확인 뒤) / `off`(종전대로 유지 — 반복 읽기를 습관적으로 쓰는 사용자).
+- ★ **예외 = 실행 계획(explain) 경로는 스크립트 끝 1회**(10-26 c6154064) — `EXPLAIN PLAN`은 분류상 읽기지만 EXPLAIN 표(Db2 · Oracle PLAN_TABLE)에 쓴다 → 문장마다 롤백하면 계획 행이 사라짐(Db2 트리 0행 실측) → `Runner::explain` 동안 `read_end = Off` · 스크립트가 끝난 뒤 **러너가 이 스크립트로 연 깨끗한 트랜잭션만** ROLLBACK 1회(EXPLAIN 표 정리 겸함) · 사용자가 쥔 트랜잭션(변경·BEGIN·잠금)은 불변 · 자동 커밋 모드는 종전과 같음.
+- Db2 막힘 조회(L3) = `MON_GET_APPL_LOCKWAIT(NULL,-2)` + `MON_GET_CONNECTION`(10-26 b186bdd5 · 권한 없으면 −551 → 그 세션에서 끔).
 
 ### L2 · 유휴 미커밋 경고 → (선택) 자동 종료
 

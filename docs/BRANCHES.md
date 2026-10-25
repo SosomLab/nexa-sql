@@ -5,6 +5,8 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | docs/138-outline-t422 | 2026-10-25 | 2026-10-25 → main(삭제) · **b511d95e** | 1 | T-422 문서 = 76 §20 ✅ · 94 구현 키 7(`show_other`) · 39 커서 추종 · D-357 · 61 3-OS · 위키 아웃라인 절 · journal §3-13 · STATUS |
+| (main 직접) 138-night-1026 | 2026-10-26 | 2026-10-26 · main 직접 · **9ec5dbe1** | 18 | 밤 자동 작업 = T-153 ①~⑤ · T-416~T-420 · T-417 · Db2 b186bdd5·12f3e0bf·e0499a2a·1d4cf557·15c70b71·6c3749b4·c6154064·9ec5dbe1 · 문서 61afcb40·5e27501e — journal 10-26 §3 |
+| (nexa-ui main 직접) 236 | 2026-10-26 | 2026-10-26 · nexa-ui **a06600c** | 1 | T-145 괄호 표 증분 재스캔(체크포인트 재개 · finish O(n) 병합) · CONSUMER-CHANGES 236 |
 | (nexa-ui main 직접) 234 | 2026-10-25 | 2026-10-25 · nexa-ui **0750d98** | 1 | T-145 = nexa-ui `TextBox` 줄 변경 표시 줄 해시 증분 + 괄호 표 스냅샷 재사용 + `BENCH_PARENS`(nexa-sql 소스 변경 없음 · CONSUMER-CHANGES 234) |
 | (main 직접) 138-release-t423b | 2026-10-25 | 2026-10-25 · main 직접 · **4d160da9** | 4 | 26cc25c1 T-425 유지 · 763d5d06 drivers-v0.1.4 사전 정비(odbc 고지 · libodbc 검사) · 06a13736 색인 봇(10개 0.1.4) · 4d160da9 T-423 ② 그리드 컬럼 목록 + 평문 3 거절 시험 + dyn 취소 적합성 · 태그 drivers-v0.1.4(763d5d06) |
 | feat/138-db2-drda | 2026-10-25 | 2026-10-25 → main(삭제) · **bee909bd** → 이후 main 직접 수정 7864852a · 211427ad · a29897fd · b0bb8729 · 1ead67f7 · 5757e608 → 문서 ce14d055 → 2차 main 직접 25017034 · f5cd3b83 · a7e599ac · 0c062e15 · 85012ce1 · 2ed0e60e · 8382bbfb · 0c801ff6 · f57106aa · 50023761 · 41e1fe00 → 문서 7f1ea12a → ecc82c5b · 7e21a90e | 2(+6+1+11+1+2) | ★ T-426 Db2 네이티브 DRDA(D-361) = afc62481 뼈대(DSS 코덱 · EBCDIC · 코드포인트 · nsql-net `Socket`) · bee909bd 1차(접속 · 조회 · DML · 바인드 · 블록 · max_rows · 자동 커밋 · SET SCHEMA · TLS · 11/0) |

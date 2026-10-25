@@ -374,3 +374,12 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 | 커서 → 결과 탭 | `PRINT rc`(글) | 결과 집합마다(커서 바인드 없음) | `FETCH ALL IN "n"` | n번째 결과 | — |
 
 우리 쪽 재작성 규칙(같은 글 → 같은 결과)은 [§3-1](#3-1-방언별-구현-기법-같은-글--같은-결과) · 능력표 `Caps`는 [§3](#3-추상-구조--dbms를-가리지-않는-한-벌).
+
+### 10-26 밤 — T-153 잔여 5개 구현(사용자 10-26 결정 · [journal 10-26 §3](journal/2026-10-26.md))
+
+- **V3 입력 창 타입 열·미리보기 ✅**(edb2fba7) — 바인드 행 타입 콤보(auto · NUMBER · VARCHAR2 · DATE · TIMESTAMP · BOOLEAN · CLOB) · 미리보기 열 = 서버에 가는 모양(`bind NUMBER 42` · `inline '…'` · 매크로 = 글자) · 고른 타입 = 선언 + 대입(`auto` = 종전 리터럴 추정) · 창 폭 760 · 기동 명령 `inputs.type:<행>:<타입>`.
+- **§11 프로필 층 ✅**(5e53e376) — 프로필 파일 `var.<이름>=값`(nsql-vault `vars`/`set_vars`) · CLI `nsql conn var <프로필> [NAME=value …]`(`NAME=` = 삭제) · 접속 뒤 `Cmd::FixedVars` → `Layer::Fixed` → 변수 창 `profile` 층(읽기 전용 안내) · 🚧 접속 창 폼 편집 UI는 후속.
+- **V4 이름 없는 탭 ✅**(4e27ff13) — 파일/폴더 모드 = 종료 시 버림(종전) · **프로젝트 모드 = 프로젝트 파일 `TabState.vars`에 보관** · 파일로 저장하면 경로 해시 파일로 인수인계(`save_to`).
+- **§7 MacroStore ✅**(fddd0c86) — 치환 변수(`&이름` · DEFINE · :setvar · 인자) = `Engine.defines: MacroStore`(층 탭 → 공유 → 글로벌 · `DEFINE` = 탭 · `UNDEFINE` = 탭 → 공유) · BTreeMap 호환 표면 · 🚧 공유/글로벌 층 문법(`DEFINE … SHARE`)·보존은 후속.
+- **§14 hover 값 ✅**(960f5191) — 편집기 `:이름`·`&이름` 위 머무름 카드 = 값 · 타입 · 층[ · := 수식][ ⟳](탭 → 공유 → 글로벌 → 프로필 · 비밀 가림 · 120자) · 치환 = 치환될 글 · 없으면 "미정의".
+- 함께: **T-419** 배치 첫 문장 DeclarePrepend 안내 · **T-420** 변수 창 "타입 고정" 버튼(a2f4bdd7 · 버튼 7열).
