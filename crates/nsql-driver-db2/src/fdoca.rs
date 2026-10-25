@@ -360,7 +360,14 @@ pub fn attach_lobs(rows: &mut [Vec<Value>], cols: &[ColDesc], extdta: &[Vec<u8>]
             } else {
                 data
             };
-            row[ci] = if is_char_lob(c) {
+            row[ci] = if matches!(c.base(), 0x1A | 0xCC) {
+                // DBCLOB(DBCS · CCSID 1200) = UTF-16BE.
+                let units: Vec<u16> = body
+                    .chunks_exact(2)
+                    .map(|b| u16::from_be_bytes([b[0], b[1]]))
+                    .collect();
+                Value::Str(String::from_utf16_lossy(&units))
+            } else if is_char_lob(c) {
                 Value::Str(String::from_utf8_lossy(body).into_owned())
             } else {
                 Value::Bytes(body.to_vec())
@@ -845,8 +852,10 @@ fn fdodta_value(p: &SqlDaCol, v: &Value, le: bool) -> Result<Vec<u8>, DbError> {
     let t = p.sqltype | 1;
     let mut out = vec![0x00];
     if is_lob_type(t) {
-        // 자리표시 = `02` + 길이 u64 큰 끝(9 B · 값은 EXTDTA · jb/Db2 실측).
-        let len = lob_bytes(p, v).len() as u64;
+        // 자리표시 = `02` + 길이 u64 큰 끝(9 B · 값은 EXTDTA · jb/Db2 실측). ★ DBCLOB(413 · 0xCD · UTF-16BE)는 길이 단위가 **2바이트 문자 수**
+        //   (CI 40182063764: 바이트 6000으로 보내면 SYNTAXRM 0x124C "sqlribniLobCbDrda: lob lengths don't match" · 추정 → CI로 확정).
+        let bytes = lob_bytes(p, v).len() as u64;
+        let len = if t == 413 { bytes / 2 } else { bytes };
         out.push(0x02);
         out.extend_from_slice(&len.to_be_bytes());
         return Ok(out);
@@ -1265,6 +1274,24 @@ mod tests {
         assert_eq!(ext.len(), 2);
         assert_eq!(ext[0], [&[0x00u8][..], "한".as_bytes()].concat());
         assert_eq!((ext[1][0], ext[1].len()), (0x00, 40_001));
+        // DBCLOB(413) = 0xCD · EXTDTA는 UTF-16BE · 자리표시 길이 = 문자 수(바이트/2).
+        let dp = [SqlDaCol {
+            sqltype: 413,
+            length: 1_048_576,
+            ccsid: 1200,
+            ..SqlDaCol::default()
+        }];
+        let (v, ext) = encode_sqldta(&dp, &[Value::Str("한a".into())], true).unwrap();
+        let objs = crate::dss::parse_objects(&v).unwrap();
+        assert_eq!(&objs[0].value[3..6], &[0xCD, 0x80, 0x09]);
+        let d = &objs[1].value;
+        let at = d.len() - 10;
+        assert_eq!(
+            &d[at..],
+            &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 2],
+            "길이 = 2자"
+        );
+        assert_eq!(ext[0], vec![0x00, 0xD5, 0x5C, 0x00, 0x61]);
     }
 
     /// ★ 실서버 덤프(Db2 12.1.2 · CI 4차 40116752054): (a) `VALUES TRIM(CURRENT SCHEMA)` 식 열 1 · (b) `SELECT ID, NAME, AMT, D …` 이름 4열 ·
