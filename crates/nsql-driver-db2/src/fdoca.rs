@@ -523,10 +523,20 @@ pub fn parse_sqldard(
     obj: &[u8],
     le: bool,
 ) -> Result<(Option<crate::sqlca::Sqlca>, Vec<SqlDaCol>), DbError> {
-    let (ca, mut at) = crate::sqlca::parse_sqlca(obj, le)?;
+    let (ca, at) = crate::sqlca::parse_sqlca(obj, le)?;
     if ca.as_ref().is_some_and(crate::sqlca::Sqlca::is_error) {
         return Ok((ca, Vec::new()));
     }
+    Ok((ca, parse_sqlda_cols(obj, at, le)?))
+}
+
+/// SQLCINRD(0x240B · CALL 결과 집합의 열 정보 = SQLCA 없는 SQLDA · 121b ⑥) → 열 목록.
+pub fn parse_sqlcinrd(obj: &[u8], le: bool) -> Result<Vec<SqlDaCol>, DbError> {
+    parse_sqlda_cols(obj, 0, le)
+}
+
+/// SQLDHGRP 지시자부터 시작하는 SQLDA 열 묶음 해석(SQLDARD·SQLCINRD 공용).
+fn parse_sqlda_cols(obj: &[u8], mut at: usize, le: bool) -> Result<Vec<SqlDaCol>, DbError> {
     let bad = |w: &str| err(format!("DRDA SQLDARD: truncated {w}"));
     // SQLDHGRP: 0x00이면 12바이트 + 지시자 뒤 SQLRDBNAM(VCS) · SQLSCHEMA(VCM+VCS).
     match obj.get(at) {
@@ -604,7 +614,30 @@ pub fn parse_sqldard(
             }
         }
     }
-    Ok((ca, cols))
+    Ok(cols)
+}
+
+/// SQLDTARD의 FDODTA(OUT 매개변수 값 한 행 · 121b ⑥-4): 첫 바이트 0xFF = `FF 00` 뒤 값 · 아니면 SQLCA + 그룹 지시자 1B 뒤 값.
+pub fn read_out_row(fdodta: &[u8], cols: &[ColDesc], le: bool) -> Result<Vec<Value>, DbError> {
+    let start = if fdodta.first() == Some(&0xFF) {
+        2
+    } else {
+        let (_, at) = crate::sqlca::parse_sqlca(fdodta, le)?;
+        at + 1
+    };
+    let mut r = Reader {
+        b: fdodta,
+        pos: start.min(fdodta.len()),
+    };
+    let mut row = Vec::with_capacity(cols.len());
+    for &c in cols {
+        match read_value(&mut r, c, le) {
+            Ok(v) => row.push(v),
+            Err(RowErr::Truncated) => break,
+            Err(RowErr::Bad(e)) => return Err(e),
+        }
+    }
+    Ok(row)
 }
 
 // ── SQLDTA(입력 매개변수) 인코딩 — 서버가 DSCSQLSTT로 알려 준 타입(SqlDaCol)에 맞춰 값을 변환한다.

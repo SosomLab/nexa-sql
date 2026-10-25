@@ -116,6 +116,13 @@ pub const TYPSQLDA: u16 = 0x2146;
 pub const DYNDTAFMT: u16 = 0x214B;
 pub const RTNEXTDTA: u16 = 0x2148;
 pub const SRVDGN: u16 = 0x1153;
+// CALL 결과 집합(T-426 2차 ③ · 121b ⑥)
+pub const RSLSETRM: u16 = 0x2219;
+pub const PKGSNLST: u16 = 0x2139;
+pub const SQLRSLRD: u16 = 0x240E;
+pub const SQLCINRD: u16 = 0x240B;
+pub const FDODSC: u16 = 0x0010;
+pub const FDODTA: u16 = 0x147A;
 
 // ── 보안 메커니즘(SECMEC 값)
 pub const SECMEC_USRIDPWD: u16 = 3;

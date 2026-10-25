@@ -1917,6 +1917,88 @@ fn db2_lob_clob_blob_round_trip() {
     s.commit().expect("commit");
 }
 
+/// ★ T-426 2차 ③ CALL: SQL PL 프로시저(DYNAMIC RESULT SETS 2 · IN · OUT) → 결과 집합 2(열 이름 · 행) + OUT 매개변수 값 · 끝에 DROP.
+#[test]
+fn db2_call_result_sets_and_out_param() {
+    use nsql_core::{BindParam, Direction, ExecRequest, VarType};
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    let exec = |s: &mut Box<dyn Session>, sql: &str, params: Vec<BindParam>| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params,
+        })
+    };
+    let _ = exec(&mut s, "DROP PROCEDURE NSQLP_RS", Vec::new());
+    let _ = exec(&mut s, "DROP TABLE NSQLT_DB2P", Vec::new());
+    exec(
+        &mut s,
+        "CREATE TABLE NSQLT_DB2P (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(20))",
+        Vec::new(),
+    )
+    .expect("create");
+    exec(
+        &mut s,
+        "INSERT INTO NSQLT_DB2P VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        Vec::new(),
+    )
+    .expect("insert");
+    exec(
+        &mut s,
+        "CREATE PROCEDURE NSQLP_RS (IN P_MIN INTEGER, OUT P_CNT INTEGER) DYNAMIC RESULT SETS 2 LANGUAGE SQL BEGIN DECLARE C1 CURSOR WITH RETURN FOR SELECT ID, NAME FROM NSQLT_DB2P WHERE ID >= P_MIN ORDER BY ID; DECLARE C2 CURSOR WITH RETURN FOR SELECT COUNT(*) AS N FROM NSQLT_DB2P; SELECT COUNT(*) INTO P_CNT FROM NSQLT_DB2P WHERE ID >= P_MIN; OPEN C1; OPEN C2; END",
+        Vec::new(),
+    )
+    .expect("create procedure");
+    s.commit().expect("commit");
+    let r = exec(
+        &mut s,
+        "CALL NSQLP_RS(?, ?)",
+        vec![
+            BindParam {
+                name: "P_MIN".into(),
+                value: Value::Int(2),
+                ty: VarType::Number,
+                direction: Direction::In,
+            },
+            BindParam {
+                name: "P_CNT".into(),
+                value: Value::Null,
+                ty: VarType::Number,
+                direction: Direction::Out,
+            },
+        ],
+    )
+    .expect("call");
+    assert_eq!(r.result_sets.len(), 2, "{r:?}");
+    let rs1 = &r.result_sets[0];
+    assert_eq!(
+        rs1.columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["ID", "NAME"],
+        "{rs1:?}"
+    );
+    assert_eq!(
+        rs1.rows,
+        vec![
+            vec![Value::Int(2), Value::Str("b".into())],
+            vec![Value::Int(3), Value::Str("c".into())]
+        ]
+    );
+    assert_eq!(r.result_sets[1].rows, vec![vec![Value::Int(3)]]);
+    assert_eq!(
+        r.out_params,
+        vec![("P_CNT".to_string(), Value::Int(2))],
+        "{r:?}"
+    );
+    exec(&mut s, "DROP PROCEDURE NSQLP_RS", Vec::new()).expect("drop proc");
+    exec(&mut s, "DROP TABLE NSQLT_DB2P", Vec::new()).expect("drop table");
+    s.commit().expect("commit");
+}
+
 /// ★ T-426 2차 ② 취소 = 소켓 끊기(`drops_session`): 긴 질의(SYSCAT 교차곱) 중 다른 스레드에서 취소 → 실행은 전송 오류로 끝나고 `is_alive` = 거짓 →
 /// 새로 열면 정상. 유휴 상태의 취소는 아무 일도 없다.
 #[test]
