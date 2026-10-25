@@ -42,6 +42,8 @@ pub(crate) struct TabState {
     pub title: String,
     /// 미저장 스크립트의 본문(파일 탭은 None — 원본을 만지지 않는다 · docs/70).
     pub text: Option<String>,
+    /// ★ 무제 탭의 변수 표(T-153 ③ · 사용자 10-26 "프로젝트 모드 = 프로젝트 파일에 보관") — `vars_to_script` 글 · 파일 탭은 None(경로 해시 파일이 맡는다).
+    pub vars: Option<String>,
     /// 캐럿(0 기준) + 북마크와 같은 fuzzy 앵커(줄 본문 · 앞뒤 문맥 · 빈 값 = 없음).
     pub line: usize,
     pub col: usize,
@@ -134,6 +136,7 @@ impl Project {
                                 // 64비트 해시는 JSON 숫자(f64)로는 정밀도가 깨진다 → 글자열.
                                 ("hash", Json::Str(s)) => t.disk_hash = s.parse().unwrap_or(0),
                                 ("id", Json::Num(n)) => t.id = (*n).max(0.0) as u64,
+                                ("vars", Json::Str(s)) if !s.is_empty() => t.vars = Some(s.clone()),
                                 ("view", Json::Str(s)) => t.view = Some(s.clone()),
                                 ("tab_size", Json::Num(n)) => {
                                     let sp = t.indent.is_some_and(|x| x.1);
@@ -304,6 +307,14 @@ impl Project {
                 }
                 if t.disk_hash != 0 {
                     out.push_str(&format!(", \"hash\": \"{}\"", t.disk_hash));
+                }
+                // 무제 탭의 변수 표(파일 탭은 경로 해시 파일 · T-153 ③).
+                if let Some(v) = t
+                    .vars
+                    .as_deref()
+                    .filter(|v| !v.is_empty() && t.path.is_none())
+                {
+                    out.push_str(&format!(", \"vars\": \"{}\"", escape(v)));
                 }
                 if t.id != 0 {
                     out.push_str(&format!(", \"id\": {}", t.id));
@@ -495,8 +506,45 @@ pub(crate) fn push_recent(raw: &str, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    /// T-153 ③: 무제 탭의 변수 표는 프로젝트 파일에 실려 왕복한다(파일 탭은 안 실림).
+    #[test]
+    fn untitled_tab_vars_round_trip_in_project_file() {
+        let d = std::env::temp_dir().join(format!("nsql-proj-vars-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let path = d.join("t.nsql-project");
+        let mut p = Project::default().with_path(&path);
+        p.tabs.push(TabState {
+            title: "Untitled-1".into(),
+            text: Some("SELECT :A;".into()),
+            id: 7,
+            vars: Some("VARIABLE A NUMBER\nEXEC :A := 1\n".into()),
+            ..TabState::default()
+        });
+        p.tabs.push(TabState {
+            path: Some(d.join("f.sql")),
+            title: "f.sql".into(),
+            id: 8,
+            vars: Some("should not be written".into()),
+            ..TabState::default()
+        });
+        p.save().unwrap();
+        let back = Project::load(&path).unwrap();
+        assert_eq!(back.tabs.len(), 2);
+        assert_eq!(
+            back.tabs[0].vars.as_deref(),
+            Some("VARIABLE A NUMBER\nEXEC :A := 1\n")
+        );
+        assert_eq!(back.tabs[0].text.as_deref(), Some("SELECT :A;"));
+        assert_eq!(
+            back.tabs[1].vars, None,
+            "파일 탭 변수는 프로젝트에 싣지 않는다"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// 작업 모드 셋(사용자 09-23): 프로젝트 > 폴더 > 파일 · 로컬 상태 폴더 = 전역 / `<폴더>/.nsql` / 없음.
     #[test]

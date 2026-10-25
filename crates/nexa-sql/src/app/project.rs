@@ -621,6 +621,12 @@ impl App {
             } else {
                 mark.over_noticed = false;
             }
+            // ★ T-153 ③(사용자 10-26): 무제 탭의 변수 표는 프로젝트 파일에(파일 탭 = 경로 해시 파일) — 파일/폴더 모드는 프로젝트가 없어 종전대로 버려진다.
+            if path.is_none() {
+                if let Some(list) = self.tab_vars.get(&tab_id).filter(|l| !l.is_empty()) {
+                    t.vars = Some(nsql_script::vars_to_script(list));
+                }
+            }
             tabs.push(t);
         }
         // 닫힌 탭의 캐시는 버린다.
@@ -800,6 +806,15 @@ impl App {
                     let new_id = self.editors.tab_id(i);
                     if t.preview {
                         self.editors.set_preview_id(Some(new_id));
+                    }
+                    // 무제 탭의 변수 표 복원(T-153 ③ · 새 탭 id로).
+                    if t.path.is_none() {
+                        if let Some(v) = &t.vars {
+                            let states = nsql_script::vars_from_script(v);
+                            if !states.is_empty() {
+                                self.tab_vars.insert(new_id, states);
+                            }
+                        }
                     }
                     // 이름 없는 탭의 북마크(`Scratch { tab }`)는 옛 id → 새 id로 재매핑(사용자 09-23 검토 · 본문이 그대로라 줄이 맞는다).
                     if t.id != 0 {

@@ -1107,8 +1107,17 @@ impl App {
         let res = std::fs::write(&tmp, &text).and_then(|()| std::fs::rename(&tmp, path));
         match res {
             Ok(()) => {
+                let was_untitled = self.editors.path_of(self.editors.active()).is_none();
                 self.editors.mark_saved(path);
                 backups::remove(path);
+                // ★ T-153 ③: 무제 탭이 파일이 되면 변수 표를 **그 파일 기준**(경로 해시 파일)으로 인수인계 — 프로젝트의 무제 탭 항목은
+                //   다음 프로젝트 저장 때 경로 탭이 되어 빠진다(사용자 10-26 "저장된 파일 기준에 변수가 인수인계").
+                if was_untitled {
+                    let tab = self.editors.active_id();
+                    if let Some(list) = self.tab_vars.get(&tab).cloned().filter(|l| !l.is_empty()) {
+                        self.vars_persist_save(tab, &list);
+                    }
+                }
                 self.undo_persist_save(path);
                 self.ext_track_active();
                 self.git.refresh(true);
