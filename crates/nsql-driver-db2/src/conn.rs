@@ -140,7 +140,13 @@ impl Wire {
             }
             return;
         }
-        let n = b.len().min(512);
+        // 메시지당 바이트 상한 = `NSQL_TRACE_DRDA=<바이트>`(숫자) · 그 밖(`1`)은 512(협업 10-25: SQLCINRD 263 B가 512 안에서 잘림 → CI는 4096).
+        let cap = std::env::var("NSQL_TRACE_DRDA")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 1)
+            .unwrap_or(512);
+        let n = b.len().min(cap);
         let hex: Vec<String> = b[..n].iter().map(|x| format!("{x:02X}")).collect();
         eprintln!(
             "[drda {dir} {} B] {}{}",

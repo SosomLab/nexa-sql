@@ -67,12 +67,12 @@ jobs:
           echo "db2 not ready"; docker logs "${{ job.services.db2.id }}" 2>&1 | tail -50; exit 1
       - name: integration tests (db2 · 네이티브 DRDA · 크레이트 직접 · NSQL_TRACE_DRDA 송수신 hexdump)
         env:
-          NSQL_TRACE_DRDA: "1"
+          NSQL_TRACE_DRDA: "4096"
         run: cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1
       - name: integration tests (db2 · 확장 경로 · NSQL_TEST_DYN=1 · cdylib)
         env:
           NSQL_TEST_DYN: "1"
-          NSQL_TRACE_DRDA: "1"
+          NSQL_TRACE_DRDA: "4096"
         run: |
           cargo build -p nsql-driver-db2
           cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1

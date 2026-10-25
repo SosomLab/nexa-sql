@@ -538,15 +538,26 @@ pub fn parse_sqlcinrd(obj: &[u8], le: bool) -> Result<Vec<SqlDaCol>, DbError> {
 }
 
 /// SQLDHGRP 지시자부터 시작하는 SQLDA 열 묶음 해석(SQLDARD·SQLCINRD 공용).
+///
+/// ★ 실측 레이아웃(Db2 12.1 · SQLAM 11 · CI 40116752054 SQLDARD 3벌 + 40156275674 SQLCINRD · 네 벌 모두 같은 자리):
+/// - 머리 = SQLDHGRP 지시자(FF = 없음 / 00 = 12 B 고정 + VC 길이들(실측 0 ×12)) → 열 수 2 B(서버 TYPDEF 끝) — SQLCINRD는 SQLCA 없이 여기서 시작.
+/// - 열 하나 = 16 B(정밀도 2 · 소수 2 · 길이 8 · SQLTYPE 2 · CCSID 2 큰 끝) · SQLDOPTGRP 지시자 1 · **10 B**(용도 미상 · VARCHAR 1208이면 `08 00`) ·
+///   SQLUNNAMED 2(LE) · 이름 VCM+VCS · 라벨 VCM+VCS · 설명 VCM+VCS · SQLUDTGRP 지시자(FF) · SQLDXGRP 지시자(FF / 00 = 12 B + RDBNAM VCS +
+///   상관명·기본 테이블·스키마·열 이름 VCM+VCS ×4 + 4 B) · 꼬리 지시자(FF). SQLDARD(FF FF FF)와 SQLCINRD(FF 00 … FF)가 여기서 갈린다.
+/// - 구조 해석이 어긋나면 옛 규칙(끝 표식 `FF FF FF` 역탐색)으로 그 열만 다시 시도 · 그래도 안 되면 남은 열은 이름 없이(호스트 = COLn).
 fn parse_sqlda_cols(obj: &[u8], mut at: usize, le: bool) -> Result<Vec<SqlDaCol>, DbError> {
     let bad = |w: &str| err(format!("DRDA SQLDARD: truncated {w}"));
-    // SQLDHGRP: 0x00이면 12바이트 + 지시자 뒤 SQLRDBNAM(VCS) · SQLSCHEMA(VCM+VCS).
     match obj.get(at) {
         Some(0x00) => {
             at += 13;
-            let (_, n1) = crate::sqlca::var_bytes(obj, at).ok_or_else(|| bad("sqlrdbnam"))?;
-            let (_, n2) = var_name(obj, n1).ok_or_else(|| bad("sqlschema"))?;
-            at = n2;
+            // VC 길이들(RDBNAM VCS · 스키마 VCM/VCS · 실측은 그 밖 0 ×6) — 0은 건너뛰고 ≤255는 문자열로 소비 · 그보다 크면 열 수(LE · 상위 바이트 0).
+            for _ in 0..8 {
+                match u16_at(obj, at, false) {
+                    Some(0) => at += 2,
+                    Some(n) if n <= 255 => at += 2 + n as usize,
+                    _ => break,
+                }
+            }
         }
         Some(_) => at += 1,
         None => return Err(bad("sqldhgrp")),
@@ -569,54 +580,150 @@ fn parse_sqlda_cols(obj: &[u8], mut at: usize, le: bool) -> Result<Vec<SqlDaCol>
             ccsid,
             ..SqlDaCol::default()
         };
-        // ★ 실측(Db2 12.1 · CI 4차 40116752054 덤프 3벌): 열 하나 = 16B 머리 · 가변 앞머리(0 ×8 + 2B + SQLUNNAMED 2B · 열마다 12~13B) ·
-        //   SQLNAME(VCM 또는 VCS · 길이 2B 큰 끝) · 그 뒤 길이 0인 VCM/VCS 4~5개(= 0 ×10) · 지시자 `FF FF FF` → 다음 열. 앞머리 길이가 열마다
-        //   달라 고정 오프셋 대신 **끝 표식 `FF FF FF`에서 거꾸로** 이름을 찾는다(이름은 UTF-8/ASCII라 0xFF를 품지 않는다). 라벨·설명이 있어
-        //   뒤 10B가 0이 아니면(COMMENT ON COLUMN) 1차는 이름을 비운다(호스트 = COLn).
-        let parsed = (|| {
-            let seg0 = at;
-            let end = obj[seg0..]
-                .windows(3)
-                .position(|w| w == [0xFF, 0xFF, 0xFF])?
-                + seg0;
-            if end < seg0 + 10 {
-                return None;
-            }
-            let tail_zero = obj[end - 10..end].iter().all(|&x| x == 0);
-            let mut name = String::new();
-            if tail_zero {
-                let seg = &obj[seg0..end - 10];
-                let mut best: Option<String> = None;
-                for n in 0..=seg.len().saturating_sub(2) {
-                    let lp = seg.len() - 2 - n;
-                    if seg[lp..lp + 2] == (n as u16).to_be_bytes() {
-                        if let Ok(t) = std::str::from_utf8(&seg[lp + 2..]) {
-                            if n == 0 || !t.is_empty() {
-                                best = Some(t.to_string());
-                            }
-                        }
-                    }
-                }
-                name = best?;
-            }
-            Some((name, end + 3))
-        })();
-        match parsed {
-            Some((name, next)) if next <= obj.len() => {
-                at = next;
+        match sqldoptgrp(obj, at) {
+            OptGrp::Done { name, label, next } => {
                 col.name = name;
+                col.label = label;
                 cols.push(col);
+                at = next;
             }
-            _ => {
+            OptGrp::Partial { name, label } => {
+                // 이름까지는 읽었지만 꼬리가 잘림(트레이스 덤프 등) — 이 열은 살리고 나머지는 이름 없이.
+                col.name = name;
+                col.label = label;
                 cols.push(col);
                 while cols.len() < count {
                     cols.push(SqlDaCol::default());
                 }
                 break;
             }
+            OptGrp::Unknown => match legacy_name_scan(obj, at) {
+                Some((name, next)) if next <= obj.len() => {
+                    col.name = name;
+                    cols.push(col);
+                    at = next;
+                }
+                _ => {
+                    cols.push(col);
+                    while cols.len() < count {
+                        cols.push(SqlDaCol::default());
+                    }
+                    break;
+                }
+            },
         }
     }
     Ok(cols)
+}
+
+enum OptGrp {
+    Done {
+        name: String,
+        label: String,
+        next: usize,
+    },
+    Partial {
+        name: String,
+        label: String,
+    },
+    Unknown,
+}
+
+/// SQLDOPTGRP(열 16 B 뒤) 구조 해석 — 위 `parse_sqlda_cols` 주석의 실측 레이아웃.
+fn sqldoptgrp(obj: &[u8], at: usize) -> OptGrp {
+    match obj.get(at) {
+        Some(0xFF) => {
+            return OptGrp::Done {
+                name: String::new(),
+                label: String::new(),
+                next: at + 1,
+            }
+        }
+        Some(0x00) => {}
+        _ => return OptGrp::Unknown,
+    }
+    // 지시자 1 + 미상 10 + SQLUNNAMED 2 → 이름.
+    let p = at + 13;
+    let Some((name, p)) = var_name(obj, p) else {
+        return OptGrp::Unknown;
+    };
+    // 이름은 식별자(0xFF·제어 문자 없음) — 어긋나면 레이아웃이 다른 것.
+    if name.chars().any(|c| c.is_control() || c == '\u{FFFD}') || name.len() > 128 {
+        return OptGrp::Unknown;
+    }
+    let Some((label, p)) = var_name(obj, p) else {
+        return OptGrp::Partial {
+            name,
+            label: String::new(),
+        };
+    };
+    let partial = |name: String, label: String| OptGrp::Partial { name, label };
+    let Some((_comments, p)) = var_name(obj, p) else {
+        return partial(name, label);
+    };
+    // SQLUDTGRP 지시자.
+    let mut p = p;
+    match obj.get(p) {
+        Some(0xFF) => p += 1,
+        _ => return partial(name, label), // UDT 열 = 아직 미지원(크기 미상) → 이 열까지만
+    }
+    // SQLDXGRP 지시자.
+    match obj.get(p) {
+        Some(0xFF) => p += 1,
+        Some(0x00) => {
+            p += 1 + 12;
+            let Some((_, q)) = crate::sqlca::var_bytes(obj, p) else {
+                return partial(name, label);
+            };
+            p = q;
+            for _ in 0..4 {
+                let Some((_, q)) = var_name(obj, p) else {
+                    return partial(name, label);
+                };
+                p = q;
+            }
+            p += 4;
+        }
+        _ => return partial(name, label),
+    }
+    // 꼬리 지시자.
+    match obj.get(p) {
+        Some(0xFF) => OptGrp::Done {
+            name,
+            label,
+            next: p + 1,
+        },
+        _ => partial(name, label),
+    }
+}
+
+/// 옛 규칙(1차 · CI 4차): 끝 표식 `FF FF FF`에서 거꾸로 이름을 찾는다 — 구조 해석이 어긋난 열의 예비 경로.
+fn legacy_name_scan(obj: &[u8], seg0: usize) -> Option<(String, usize)> {
+    let end = obj[seg0..]
+        .windows(3)
+        .position(|w| w == [0xFF, 0xFF, 0xFF])?
+        + seg0;
+    if end < seg0 + 10 {
+        return None;
+    }
+    let tail_zero = obj[end - 10..end].iter().all(|&x| x == 0);
+    let mut name = String::new();
+    if tail_zero {
+        let seg = &obj[seg0..end - 10];
+        let mut best: Option<String> = None;
+        for n in 0..=seg.len().saturating_sub(2) {
+            let lp = seg.len() - 2 - n;
+            if seg[lp..lp + 2] == (n as u16).to_be_bytes() {
+                if let Ok(t) = std::str::from_utf8(&seg[lp + 2..]) {
+                    if n == 0 || !t.is_empty() {
+                        best = Some(t.to_string());
+                    }
+                }
+            }
+        }
+        name = best?;
+    }
+    Some((name, end + 3))
 }
 
 /// SQLDTARD의 FDODTA(OUT 매개변수 값 한 행 · 121b ⑥-4): 첫 바이트 0xFF = `FF 00` 뒤 값 · 아니면 SQLCA + 그룹 지시자 1B 뒤 값.
@@ -1122,6 +1229,29 @@ mod tests {
                 cols[3].sqltype
             ),
             (449, 1208, 485, 385)
+        );
+        // CI 40156275674 SQLCINRD(0x240B · DDM 머리 제외 · 트레이스 512 B 상한으로 열2 SQLDXGRP에서 잘림) = ID INTEGER · NAME VARCHAR(20) 1208 ·
+        // SQLDHGRP 있음(00 + 24 B) · 열마다 SQLDXGRP(기본 테이블 NSQLT_DB2P · 스키마 DB2INST1).
+        let c = hx("000000010000000000550001000000000000000000000000000200000000000400000000000000F0010000000000000000000000000000000002494400000000000000000000FF0001000000000000000000000000044E455841000A4E53514C545F444232500000000A4E53514C545F4442325000000008444232494E535431000000024944000000000000FF000000001400000000000000C10104B80000000000000000080000000000044E414D4500000000000000000000FF0000000000000000000000000000044E45584100");
+        let cin = parse_sqlcinrd(&c, true).unwrap();
+        let got: Vec<(String, String)> = cin
+            .iter()
+            .map(|c| (c.name.clone(), c.type_name()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("ID".to_string(), "INTEGER".to_string()),
+                ("NAME".to_string(), "VARCHAR(20)".to_string())
+            ]
+        );
+        // 라벨이 있는 열(LABEL_m = 'Customer ID')도 이름이 비지 않는다 — 2차 ⑦.
+        let mut lab = hx("FF0100000000000400000000000000F101000000000000000000000000000000000249440000000B437573746F6D6572204944000000000000FFFFFF");
+        lab.insert(0, 0xFF);
+        let (_, lc) = parse_sqldard(&lab, true).unwrap();
+        assert_eq!(
+            (lc[0].name.as_str(), lc[0].label.as_str()),
+            ("ID", "Customer ID")
         );
         let p = hx("FFFF0100000000000400000000000000F10100000000000000000000000000010000013100000000000000000000FFFFFF");
         let (ca, params) = parse_sqldard(&p, true).unwrap();
