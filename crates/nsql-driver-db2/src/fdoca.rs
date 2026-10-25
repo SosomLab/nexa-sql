@@ -809,9 +809,16 @@ fn lob_bytes(p: &SqlDaCol, v: &Value) -> Vec<u8> {
     match (p.sqltype | 1, v) {
         (405, Value::Bytes(b)) => b.clone(),
         (405, other) => value_text(other).into_bytes(),
+        // 재판정 손잡이(10-26): `NSQL_DB2_DBCLOB_UTF16=1`이면 DBCLOB을 0xCD(NLOBCDBCS) + UTF-16BE로(행 지시자 결함 수정 뒤 재확인용 · CI 정보성 단계).
+        (413, Value::Bytes(b)) if dbclob_utf16() => utf16be(&String::from_utf8_lossy(b)),
+        (413, other) if dbclob_utf16() => utf16be(&value_text(other)),
         (_, Value::Bytes(b)) => b.clone(),
         (_, other) => value_text(other).into_bytes(),
     }
+}
+
+fn dbclob_utf16() -> bool {
+    std::env::var_os("NSQL_DB2_DBCLOB_UTF16").is_some()
 }
 
 /// LOB 자리표시 길이 = **9 B 고정**(FDODSC `0x8009` · Db2가 조회 때 보내는 꼴 `CF 8009`/`C9 8009`과 같음 · jb도 늘 9 · derby의 2/4/8 B 가변은
@@ -823,7 +830,13 @@ fn fdodsc_entry(p: &SqlDaCol) -> Result<Vec<u8>, DbError> {
     if is_lob_type(t) {
         // ★ 2차 ⑥(derby `computeProtocolTypesAndLengths`): 행 안에는 길이 자리표시만(널 지시자 + n B) · 값은 EXTDTA 객체로(매개변수 순서).
         //   VARGRAPHIC(0x39)으로 보내면 DTAMCHRM −30020(CI 40149862498).
-        let code = if t == 405 { 0xC9 } else { 0xCF };
+        let code = if t == 405 {
+            0xC9
+        } else if t == 413 && dbclob_utf16() {
+            0xCD
+        } else {
+            0xCF
+        };
         return Ok(vec![code, 0x80, LOB_PLACEHOLDER]);
     }
     Ok(match t {

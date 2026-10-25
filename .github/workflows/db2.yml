@@ -112,6 +112,14 @@ jobs:
           NSQL_DB2_EXPECT_SECMEC9: "1"
           NSQL_TRACE_DRDA: "4096"
         run: cargo test -p nsql-drivers --test integration db2enc_plain_login_rejected_under_server_encrypt -- --nocapture --test-threads=1 --exact
+      # 정보성(10-26 · 밤 결정): DBCLOB 입력을 0xCD(NLOBCDBCS · UTF-16BE)로 보내면 받는지 재판정(행 지시자 결함 수정 뒤) — 실패해도 잡은 계속.
+      - name: integration test (db2 · DBCLOB 0xCD UTF-16 재판정 · 정보성)
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          NSQL_DB2_DBCLOB_UTF16: "1"
+          NSQL_TRACE_DRDA: "4096"
+        run: cargo test -p nsql-drivers --test integration db2_lob_dbclob_round_trip -- --nocapture --test-threads=1 --exact
       # 실패 진단: 서버 db2diag.log 끝 + DRDA 덤프(RECEIVE/SEND BUFFER)를 아티팩트로(10-25 첫 실접속 = sqljcReadHdrAs PROTOCOL ERROR).
       - name: db2diag (on failure)
         if: failure()

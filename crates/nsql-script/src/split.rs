@@ -129,6 +129,15 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
         }
         let le = line_end(pos);
         let rest = src[pos..le].trim_end_matches('\r').trim();
+        // ★ Db2 CLP `--#SET TERMINATOR @`(10-26 · 협업 조사 (C)④): 주석 꼴 지시자 — 그 줄부터 문장 끝 = 그 글자(서버엔 종결자를 떼고 보낸다 ·
+        //   `--#SET TERMINATOR ;` = 복귀). 주석 건너뛰기보다 **먼저** 본다.
+        if dialect == Some(Dialect::Db2) {
+            if let Some(d) = db2_terminator_line(rest) {
+                delim = (d != ";").then(|| d.to_string());
+                pos = le;
+                continue;
+            }
+        }
         if rest.starts_with("--")
             || classes[pos] == Class::BlockComment && is_comment_only_line(src, &classes, pos, le)
         {
@@ -139,7 +148,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             pos = le;
             continue;
         }
-        if dialect == Some(Dialect::Mysql) {
+        if matches!(dialect, Some(Dialect::Mysql | Dialect::Db2)) {
             if let Some(d) = delimiter_line(rest) {
                 delim = (d != ";").then(|| d.to_string());
                 pos = le;
@@ -353,6 +362,21 @@ fn is_begin_transaction(first_line: &str) -> bool {
 }
 
 /// `;`만으로 끝나는 방언의 문장 끝: 본문에 `BEGIN`이 있으면 짝이 맞는 `END` 뒤의 코드 `;` · 없으면 첫 코드 `;`.
+/// Db2 CLP `--#SET TERMINATOR x` 줄이면 새 종결자(한 토큰 · `;` = 복귀 · 대소문자 무관 · `--#SET` 뒤 공백 자유).
+fn db2_terminator_line(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("--#")?.trim_start();
+    let rest = rest
+        .get(..3)
+        .filter(|w| w.eq_ignore_ascii_case("SET"))
+        .map(|_| rest[3..].trim_start())?;
+    let rest = rest
+        .get(..10)
+        .filter(|w| w.eq_ignore_ascii_case("TERMINATOR"))
+        .map(|_| &rest[10..])?;
+    let tok = rest.split_whitespace().next()?;
+    (!tok.is_empty()).then_some(tok)
+}
+
 /// `DELIMITER xx` 줄이면 새 구분자(공백 없는 한 토큰 · `;` 포함).
 fn delimiter_line(line: &str) -> Option<&str> {
     let rest = line
@@ -943,6 +967,31 @@ mod mysql_tests {
             .into_iter()
             .map(|i| i.text)
             .collect()
+    }
+
+    /// 10-26 · Db2 `--#SET TERMINATOR @`: SQL PL 본문 안의 `;`를 넘기고 `@`에서 끝난다 · `--#SET TERMINATOR ;`로 복귀 · 지시자 줄은 항목 아님 ·
+    /// 보내는 문장에는 `@`가 없다 · MySQL이 아닌 다른 방언에서는 보통 주석.
+    #[test]
+    fn db2_set_terminator_switches_terminator() {
+        let src = "--#SET TERMINATOR @\nCREATE PROCEDURE p()\nLANGUAGE SQL\nBEGIN\n  DECLARE v INT;\n  SET v = 1;\nEND@\n--#set terminator ;\nSELECT 3;\nCALL p()";
+        let items = split_script_in(src, Some(Dialect::Db2));
+        let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts.len(), 3, "{texts:#?}");
+        assert!(
+            texts[0].starts_with("CREATE PROCEDURE") && texts[0].ends_with("END"),
+            "{}",
+            texts[0]
+        );
+        assert!(!texts[0].contains('@'));
+        assert_eq!(texts[1], "SELECT 3");
+        assert_eq!(texts[2], "CALL p()");
+        assert_eq!(db2_terminator_line("--#SET TERMINATOR @"), Some("@"));
+        assert_eq!(db2_terminator_line("--# set   terminator   ;"), Some(";"));
+        assert_eq!(db2_terminator_line("-- SET TERMINATOR @"), None);
+        // 다른 방언(Oracle)에서는 그냥 주석 → `END@`가 한 문장에 남는다(동작 변경 없음).
+        let ora = split_script_in("--#SET TERMINATOR @\nSELECT 1@", Some(Dialect::Oracle));
+        assert_eq!(ora.len(), 1);
+        assert!(ora[0].text.contains('@'));
     }
 
     /// 135차 · MySQL `DELIMITER //`: 프로시저 본문 안의 `;`를 넘기고 `//`에서 끝난다 · `DELIMITER ;`로 복귀 · 줄 자체는 항목 아님.
