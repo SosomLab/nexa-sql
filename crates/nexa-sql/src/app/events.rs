@@ -297,6 +297,8 @@ impl App {
                     if relinked || missing {
                         self.explorer_attach();
                     }
+                    // ★ 프로필 층 변수(T-153): 프로필로 붙었으면 `var.*`를 읽어 러너와 변수 창에 준다(인라인 접속 = 비움).
+                    self.load_profile_vars();
                     let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
                     // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).

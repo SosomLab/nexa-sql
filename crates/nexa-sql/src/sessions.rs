@@ -142,6 +142,8 @@ pub(crate) struct Sess {
     pub run_tab: u64,
     /// 이 세션의 **연결 공유 층** 변수(보여 주기용 사본 · 원본은 워커의 러너 · D-135).
     pub shared_vars: Vec<nsql_script::VarState>,
+    /// ★ 프로필 층 변수(읽기 전용 · 접속 프로필 `var.*` · T-153) — 접속 뒤 저장소에서 읽어 워커(`Cmd::FixedVars`)와 창에 같이 준다.
+    pub fixed_vars: Vec<nsql_script::VarState>,
     /// 이번 실행에서 마지막으로 결과를 낸 문장 번호 — 같은 문장이 결과를 또 내면 딸린 결과 탭으로 보낸다([`extra_result_slot`]).
     pub run_set_stmt: Option<usize>,
     /// 이번 실행에서 쓴 딸린 결과 탭 수(실행이 끝나면 이보다 뒤의 것은 걷는다).
@@ -249,6 +251,7 @@ impl Sess {
             run_editor: 0,
             run_tab: 0,
             shared_vars: Vec::new(),
+            fixed_vars: Vec::new(),
             run_set_stmt: None,
             run_fresh_prev: None,
             run_children: 0,

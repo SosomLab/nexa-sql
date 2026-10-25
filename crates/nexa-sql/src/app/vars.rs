@@ -74,6 +74,29 @@ impl App {
         })
     }
 
+    /// ★ T-153: 접속 프로필의 `var.<이름>=값` → 프로필 층(읽기 전용 · `Layer::Fixed`) — 세션 사본 + 워커 러너(`Cmd::FixedVars`).
+    pub(crate) fn load_profile_vars(&mut self) {
+        let pairs: Vec<(String, String)> = if self.sess.profile.is_empty() {
+            Vec::new()
+        } else {
+            Vault::open_default()
+                .and_then(|v| v.vars(&self.sess.profile))
+                .unwrap_or_default()
+        };
+        self.sess.fixed_vars = nsql_run::profile_var_states(pairs.clone());
+        self.sess.control(worker::Cmd::FixedVars(pairs));
+    }
+
+    /// 이름이 **프로필 층에만** 있는 변수인가(탭·공유·글로벌에 같은 이름이 없음) — 창에서 고치기·지우기·층 옮기기를 거절한다.
+    fn is_profile_only_var(&self, name: &str) -> bool {
+        let tab = self.editors.active_id();
+        let is = |v: &nsql_script::VarState| v.name.eq_ignore_ascii_case(name);
+        self.sess.fixed_vars.iter().any(is)
+            && !self.sess.shared_vars.iter().any(is)
+            && !self.global_vars.iter().any(is)
+            && !self.tab_vars.get(&tab).is_some_and(|l| l.iter().any(is))
+    }
+
     pub(crate) fn vars_rows(&self) -> Vec<vars_win::VarRow> {
         const MAX: usize = 200;
         let tab = self.editors.active_id();
@@ -102,6 +125,12 @@ impl App {
                     .iter()
                     .map(|v| (v, nsql_script::Layer::Global)),
             )
+            .chain(
+                self.sess
+                    .fixed_vars
+                    .iter()
+                    .map(|v| (v, nsql_script::Layer::Fixed)),
+            )
             .map(|(v, layer)| {
                 let full = match &v.value {
                     nsql_core::Value::Null => String::new(),
@@ -125,7 +154,11 @@ impl App {
                 let shadowed = match layer {
                     nsql_script::Layer::Shared => local_names.contains(&up(&v.name)),
                     nsql_script::Layer::Global => near_names.contains(&up(&v.name)),
-                    _ => false,
+                    nsql_script::Layer::Fixed => {
+                        near_names.contains(&up(&v.name))
+                            || self.global_vars.iter().any(|g| up(&g.name) == up(&v.name))
+                    }
+                    nsql_script::Layer::Local => false,
                 };
                 vars_win::VarRow {
                     name: v.name.clone(),
@@ -202,6 +235,14 @@ impl App {
             }
             A::Script => {
                 self.menu_action("vars.script");
+                return;
+            }
+            A::Set(name, _) | A::SetNull(name) | A::Delete(name) | A::Layer(name, _)
+                if !name.starts_with('&') && self.is_profile_only_var(&name) =>
+            {
+                // 프로필 층은 읽기 전용(docs/63 §11) — 바꾸려면 프로필(`nsql conn var`).
+                self.sess.status = t(Msg::StVarsProfileReadOnly).into();
+                self.redraw();
                 return;
             }
             A::Set(name, text) if name.starts_with('&') => {

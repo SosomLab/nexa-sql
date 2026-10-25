@@ -386,6 +386,7 @@ const CMDS: &[Cmd] = &[
             "nsql conn add prod -d oracle --host db --port 1521 --db orcl --user scott",
             "nsql conn test prod",
             "nsql conn env prod prod                                  # mark the saved profile as Production",
+            "nsql conn var prod REGION=kr LIMIT=100                   # profile variables (read-only layer; NAME= removes)",
             "nsql conn test -d oracle --host db --port 1521 --db orcl --user scott",
         ],
     },

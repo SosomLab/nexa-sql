@@ -69,6 +69,8 @@ pub(crate) enum Cmd {
     SharedVars(Vec<nsql_script::VarState>),
     /// 앱 전역 층(docs/63 §11)을 통째로 바꾼다(시작 · 변수 창 · 다른 세션의 `VAR x GLOBAL`).
     GlobalVars(Vec<nsql_script::VarState>),
+    /// ★ 프로필 층(읽기 전용 · T-153): 접속 프로필의 `var.<이름>=값` 목록 — 접속 뒤 호스트가 한 번 준다(DB로 가는 것 없음).
+    FixedVars(Vec<(String, String)>),
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
@@ -142,6 +144,7 @@ impl Cmd {
                 | Cmd::Autocommit(_)
                 | Cmd::SharedVars(_)
                 | Cmd::GlobalVars(_)
+                | Cmd::FixedVars(_)
         )
     }
 }
@@ -2025,6 +2028,10 @@ pub(crate) fn spawn(
                     }
                     Cmd::GlobalVars(v) => {
                         runner.engine.vars.set_global(v);
+                        true
+                    }
+                    Cmd::FixedVars(v) => {
+                        runner.set_profile_vars(v);
                         true
                     }
                     Cmd::Quit => {

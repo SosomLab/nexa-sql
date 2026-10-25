@@ -732,6 +732,26 @@ pub fn input_value(text: &str) -> Value {
     }
 }
 
+/// 프로필 변수 `(이름, 글)` → 프로필 층 상태(값 = 리터럴 추정 · 비밀 이름 규칙 적용 · 수식 없음).
+#[must_use]
+pub fn profile_var_states(vars: Vec<(String, String)>) -> Vec<nsql_script::VarState> {
+    vars.into_iter()
+        .map(|(name, text)| {
+            let value = input_value(&text);
+            nsql_script::VarState {
+                ty: nsql_core::VarType::infer(&value),
+                value,
+                declared: false,
+                secret: nsql_script::looks_secret(&name),
+                layer: nsql_script::Layer::Fixed,
+                formula: None,
+                stale: false,
+                name,
+            }
+        })
+        .collect()
+}
+
 /// 변수 타입의 표시 글자(`SHOW VARIABLES` · 패널).
 fn var_type_label(ty: &nsql_core::VarType) -> String {
     use nsql_core::VarType as T;
@@ -1185,6 +1205,11 @@ impl Runner {
 
     /// 호스트가 받은 입력을 넣는다 — 바인드 = 타입 있는 값(`NULL` · 수 · `'글'` · 그 밖 = 글 그대로 · 빈 글 = NULL) ·
     /// 치환 변수 = 글자 그대로.
+    /// ★ 프로필 층 변수(T-153 · docs/63 §11 · 읽기 전용 `Layer::Fixed`): 접속 프로필의 `var.<이름>=값`을 통째로(값 = 리터럴 추정 · 타입 Auto).
+    pub fn set_profile_vars(&mut self, vars: Vec<(String, String)>) {
+        self.engine.vars.set_fixed(profile_var_states(vars));
+    }
+
     /// 입력 창의 답 — `(종류 · 이름 · 친 글 · 고른 타입)`. 타입이 `Auto`가 아니면 그 타입으로 **선언 + 대입**(T-153 · 사용자 10-26 타입 콤보 ·
     /// 선언된 변수는 타입 고정 → 뒤 대입에서 값을 따라 바뀌지 않는다) · `Auto`/없음 = 종전(리터럴 추정 대입).
     pub fn apply_inputs(

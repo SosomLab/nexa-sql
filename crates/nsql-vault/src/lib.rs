@@ -42,6 +42,18 @@ const DEVICE_KEY: &str = "device.key";
 const EXT: &str = "conf";
 
 /// 프로필 이름 규칙 — 접속 문자열에 반드시 들어가는 문자(`:` `@` `/`)를 배제한다.
+/// 프로필 변수 줄의 키 접두(`var.NAME=값`).
+pub const VAR_PREFIX: &str = "var.";
+
+/// 프로필 변수 이름(바인드 변수 이름 규칙 · 식별자).
+#[must_use]
+pub fn is_var_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !s.as_bytes()[0].is_ascii_digit()
+}
+
 #[must_use]
 pub fn is_profile_name(s: &str) -> bool {
     !s.is_empty()
@@ -239,7 +251,17 @@ impl Vault {
             known.push(("secret", hex_encode(&env)));
         }
         let pairs: Vec<(&str, &str)> = known.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        nexa_conf::write_atomic(&path, &nexa_conf::serialize(&pairs, &[]))?;
+        // ★ 프로필 변수(`var.<이름>=값` · T-153 · 사용자 10-26)는 스펙 밖 줄 — 스펙만 다시 저장해도 그대로 남긴다.
+        let keep: Vec<(String, String)> = std::fs::read_to_string(&path)
+            .map(|t| {
+                nexa_conf::parse(&t)
+                    .pairs
+                    .into_iter()
+                    .filter(|(k, _)| k.starts_with(VAR_PREFIX))
+                    .collect()
+            })
+            .unwrap_or_default();
+        nexa_conf::write_atomic(&path, &nexa_conf::serialize(&pairs, &keep))?;
         // 종전 꼴 → 해시 파일로 이관(글자 그대로 같은 이름만 · 자기 자신이면 그대로).
         if let Some(old) = self.legacy_path(name) {
             if old != path {
@@ -247,6 +269,50 @@ impl Vault {
             }
         }
         Ok(())
+    }
+
+    /// ★ 프로필 변수(T-153 · docs/63 §11 프로필 층) — `var.<이름>=값` 줄들(이름 = 파일에 적힌 표기 · 값 = 글자 그대로). 없으면 빈 목록.
+    pub fn vars(&self, name: &str) -> io::Result<Vec<(String, String)>> {
+        let Some(path) = self.read_path(name)? else {
+            return Ok(Vec::new());
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        Ok(nexa_conf::parse(&text)
+            .pairs
+            .into_iter()
+            .filter_map(|(k, v)| k.strip_prefix(VAR_PREFIX).map(|n| (n.to_string(), v)))
+            .collect())
+    }
+
+    /// 프로필 변수를 통째로 바꾼다(스펙·봉투 줄은 그대로 · 원자적). 프로필이 없으면 `NotFound`. 이름은 식별자(`A-Z 0-9 _` · 대문자 정규화).
+    pub fn set_vars(&self, name: &str, vars: &[(String, String)]) -> io::Result<()> {
+        let Some(path) = self.read_path(name)? else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, name.to_string()));
+        };
+        for (k, _) in vars {
+            if !is_var_name(k) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("bad variable name: {k}"),
+                ));
+            }
+        }
+        let text = std::fs::read_to_string(&path)?;
+        let doc = nexa_conf::parse(&text);
+        let mut all: Vec<(String, String)> = doc
+            .pairs
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with(VAR_PREFIX))
+            .collect();
+        all.extend(
+            vars.iter()
+                .map(|(k, v)| (format!("{VAR_PREFIX}{}", k.to_ascii_uppercase()), v.clone())),
+        );
+        nexa_conf::write_atomic(&path, &nexa_conf::serialize(&[], &all))
     }
 
     /// 읽기 — 비밀번호를 풀어 완전한 스펙을 돌려준다. 없으면 `Ok(None)`.
@@ -428,6 +494,43 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-153: 프로필 변수 = `var.<이름>=값` 줄 · 스펙 재저장에도 보존 · 이름 대문자 정규화 · 잘못된 이름 거부.
+    #[test]
+    fn profile_vars_round_trip_and_survive_save() {
+        let d = std::env::temp_dir().join(format!("nsql-vault-vars-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let v = Vault::open(&d).unwrap();
+        let spec = ConnectSpec {
+            dialect: Some(Dialect::Sqlite),
+            database: Some(":memory:".into()),
+            ..ConnectSpec::default()
+        };
+        v.save("dev", &spec).unwrap();
+        assert!(v.vars("dev").unwrap().is_empty());
+        v.set_vars(
+            "dev",
+            &[("env".into(), "prod".into()), ("Limit".into(), "10".into())],
+        )
+        .unwrap();
+        assert_eq!(
+            v.vars("dev").unwrap(),
+            vec![
+                ("ENV".to_string(), "prod".to_string()),
+                ("LIMIT".to_string(), "10".to_string())
+            ]
+        );
+        // 스펙만 다시 저장해도 변수 줄은 남는다.
+        v.save("dev", &spec).unwrap();
+        assert_eq!(v.vars("dev").unwrap().len(), 2);
+        assert_eq!(
+            v.get("dev").unwrap().unwrap().database.as_deref(),
+            Some(":memory:")
+        );
+        assert!(v.set_vars("dev", &[("1bad".into(), "x".into())]).is_err());
+        assert!(v.set_vars("nope", &[]).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let d =

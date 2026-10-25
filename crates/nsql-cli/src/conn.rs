@@ -102,7 +102,74 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
             }
             env(name, o.positional.get(2).map(String::as_str))
         }
+        // ★ 프로필 변수(T-153 · docs/63 §11 프로필 층): `nsql conn var <name>` = 보기 · `… <name> NAME=value …` = 넣기/바꾸기 · `NAME=` = 지우기.
+        "var" | "vars" => {
+            let Some(name) = name else {
+                eprintln!("nsql conn var <name> [NAME=value …] (NAME= removes)");
+                return 2;
+            };
+            if !nsql_vault::is_profile_name(name) {
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
+                return 2;
+            }
+            var(name, &o.positional[2..])
+        }
         _ => usage(),
+    }
+}
+
+fn var(name: &str, args: &[String]) -> i32 {
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    let Ok(Some(_)) = v.get(name) else {
+        eprintln!(
+            "{}",
+            nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+        );
+        return 1;
+    };
+    let mut vars = v.vars(name).unwrap_or_default();
+    if args.is_empty() {
+        if vars.is_empty() {
+            println!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnNoVars, &[name]));
+        }
+        for (k, val) in &vars {
+            println!("{k}={val}");
+        }
+        return 0;
+    }
+    for a in args {
+        let Some((k, val)) = a.split_once('=') else {
+            eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadVar, &[a]));
+            return 2;
+        };
+        let key = k.trim().to_ascii_uppercase();
+        if !nsql_vault::is_var_name(&key) {
+            eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadVar, &[a]));
+            return 2;
+        }
+        vars.retain(|(n, _)| *n != key);
+        if !val.is_empty() {
+            vars.push((key, val.to_string()));
+        }
+    }
+    match v.set_vars(name, &vars) {
+        Ok(()) => {
+            println!(
+                "{}",
+                nsql_i18n::tf(
+                    nsql_i18n::Msg::CliConnVarsSaved,
+                    &[name, &vars.len().to_string()]
+                )
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
     }
 }
 
