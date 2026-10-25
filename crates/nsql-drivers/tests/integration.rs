@@ -1906,6 +1906,43 @@ fn db2_lob_clob_blob_round_trip() {
     s.commit().expect("commit");
 }
 
+/// ★ T-426 2차 ② 취소 = 소켓 끊기(`drops_session`): 긴 질의(SYSCAT 교차곱) 중 다른 스레드에서 취소 → 실행은 전송 오류로 끝나고 `is_alive` = 거짓 →
+/// 새로 열면 정상. 유휴 상태의 취소는 아무 일도 없다.
+#[test]
+fn db2_cancel_drops_session_and_reopen() {
+    use nsql_core::ExecRequest;
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    let h = s.cancel_handle().expect("취소 핸들");
+    assert!(h.drops_session());
+    h.cancel().expect("유휴 취소 = no-op");
+    assert!(s.is_alive());
+    let h2 = s.cancel_handle().expect("취소 핸들");
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        h2.cancel()
+    });
+    let r = s.execute(&ExecRequest {
+        sql: "SELECT COUNT(*) FROM SYSCAT.COLUMNS A, SYSCAT.COLUMNS B, SYSCAT.TABLES C".into(),
+        params: Vec::new(),
+    });
+    t.join().expect("join").expect("cancel");
+    let e = r.expect_err("취소된 실행은 오류");
+    assert!(e.message.starts_with("DRDA recv") || e.message.starts_with("DRDA send"), "{e:?}");
+    assert!(!s.is_alive(), "취소 = 세션 끊김");
+    drop(s);
+    let mut s2 = db2_open(&spec).unwrap_or_else(|e| panic!("재접속 실패: {}", e.message));
+    let r = s2
+        .execute(&ExecRequest {
+            sql: "VALUES 1".into(),
+            params: Vec::new(),
+        })
+        .expect("재접속 뒤 실행");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
+}
+
 fn db2_session_catalog_schema_and_errors() {
     use nsql_core::{dberr, ErrorClass, ExecRequest};
     let Some(spec) = db2_spec() else {

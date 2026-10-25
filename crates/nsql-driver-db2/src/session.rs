@@ -19,7 +19,31 @@ use nsql_core::{
     Session, Value,
 };
 use nsql_script::ConnectSpec;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+
+/// ★ 취소(T-426 2차 ②): DRDA에는 문장 중단이 없다 → **소켓을 끊는다**(SQL Server 어댑터와 같은 모델 · `drops_session` = 참 · 서버가 작업
+///   단위를 롤백 · 호스트는 다음 실행 때 재접속). 실행 중(`active`)일 때만 끊는다(유휴 세션을 죽이지 않게).
+#[derive(Debug)]
+struct Db2Cancel {
+    tcp: std::net::TcpStream,
+    active: Arc<AtomicBool>,
+}
+
+impl nsql_core::CancelHandle for Db2Cancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        if !self.active.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.tcp
+            .shutdown(std::net::Shutdown::Both)
+            .map_err(|e| err(format!("Db2: cancel (socket shutdown): {e}")))
+    }
+    fn drops_session(&self) -> bool {
+        true
+    }
+}
 
 const PKGID: &str = "SYSSH200";
 const PKGCNSTKN: &str = "SYSLVL01";
@@ -46,6 +70,10 @@ pub struct Db2Session {
     max_rows: usize,
     /// 수동 트랜잭션 열림(`BEGIN TRANSACTION` 뒤 · 커밋/롤백까지 자동 커밋 안 함).
     in_tx: bool,
+    /// 실행 중 표식(취소 핸들이 본다).
+    active: Arc<AtomicBool>,
+    /// 취소용 소켓 복제(접속 때 한 번).
+    cancel_tcp: Option<std::net::TcpStream>,
 }
 
 /// 응답 체인 하나를 해석한 결과.
@@ -179,6 +207,7 @@ impl Db2Session {
         let info = conn::handshake(&mut wire, &login)?;
         // 질의는 길 수 있다 → 핸드셰이크 뒤 읽기 상한 해제(강제 중지는 호스트 몫 · 2차 = 취소 접속).
         wire.set_read_timeout(None)?;
+        let cancel_tcp = wire.tcp_clone().ok();
         let mut s = Db2Session {
             wire: Some(wire),
             info,
@@ -187,6 +216,8 @@ impl Db2Session {
             description: spec.redacted(),
             max_rows: 0,
             in_tx: false,
+            active: Arc::new(AtomicBool::new(false)),
+            cancel_tcp,
         };
         if let Some(schema) = spec.schema.as_deref().filter(|x| !x.is_empty()) {
             s.set_schema(schema)?;
@@ -613,7 +644,7 @@ impl Session for Db2Session {
     }
 
     fn limits(&self) -> &'static [DriverLimit] {
-        &[DriverLimit::Cancel]
+        &[]
     }
 
     fn describe(&self) -> String {
@@ -621,7 +652,30 @@ impl Session for Db2Session {
     }
 
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
-        self.execute_inner(req)
+        self.active.store(true, Ordering::Release);
+        let r = self.execute_inner(req);
+        self.active.store(false, Ordering::Release);
+        if let Err(e) = &r {
+            // 전송 오류(취소로 끊김 · 서버 종료)면 세션을 죽은 것으로(호스트 = 다음 실행 때 재접속).
+            if e.code.is_none()
+                && (e.message.starts_with("DRDA recv") || e.message.starts_with("DRDA send"))
+            {
+                self.wire = None;
+            }
+        }
+        r
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn nsql_core::CancelHandle>> {
+        self.cancel_tcp
+            .as_ref()
+            .and_then(|t| t.try_clone().ok())
+            .map(|tcp| {
+                Arc::new(Db2Cancel {
+                    tcp,
+                    active: Arc::clone(&self.active),
+                }) as Arc<dyn nsql_core::CancelHandle>
+            })
     }
 
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
@@ -698,7 +752,10 @@ mod tests {
             description: String::new(),
             max_rows: 0,
             in_tx: false,
+            active: Arc::new(AtomicBool::new(false)),
+            cancel_tcp: None,
         };
+        assert!(s.cancel_handle().is_none(), "소켓 없음 = 취소 핸들 없음");
         let p = s.pkgnamcsn();
         assert_eq!(p.value.len(), 64);
         // EBCDIC: S=0xE2 A=0xC1 M=0xD4 P=0xD7 L=0xD3 E=0xC5 · 공백 0x40 · 토큰은 ASCII.

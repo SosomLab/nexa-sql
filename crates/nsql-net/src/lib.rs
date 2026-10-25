@@ -327,6 +327,14 @@ impl Socket {
         }
     }
 
+    /// 아래 TCP 소켓의 복제 핸들(취소용 · 다른 스레드에서 `shutdown`하면 막힌 읽기가 오류로 끝난다 · TLS여도 평문 소켓을 끊는다).
+    pub fn tcp_clone(&self) -> io::Result<TcpStream> {
+        match &self.0 {
+            Conn::Plain(s) => s.try_clone(),
+            Conn::Tls(s) => s.sock.try_clone(),
+        }
+    }
+
     /// 읽기 타임아웃을 바꾼다(긴 질의 대기 · `None` = 무한).
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         match &mut self.0 {

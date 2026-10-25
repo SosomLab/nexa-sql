@@ -72,6 +72,11 @@ impl Wire {
         })
     }
 
+    /// 취소용 소켓 복제 핸들.
+    pub fn tcp_clone(&self) -> Result<std::net::TcpStream, DbError> {
+        self.sock.tcp_clone().map_err(|e| io_err("clone", e))
+    }
+
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> Result<(), DbError> {
         self.sock
             .set_read_timeout(d)
