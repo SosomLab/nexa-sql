@@ -2014,11 +2014,12 @@ fn db2_explain_tree_and_blockers_query() {
         r.connect(&spec, &mut |e| ev.push(e)),
         "Db2 접속 실패: {ev:?}"
     );
-    let _ = run(
+    // 준비 둘은 실패해도 계속(EXPLAIN 표가 이미 있으면 SYSINSTALLOBJECTS가 오류 · 첫 회차엔 DROP 대상이 없어 −204) → `run`(오류 0 단언)이 아니라 `run_raw`.
+    let _ = run_raw(
         &mut r,
         "CALL SYSPROC.SYSINSTALLOBJECTS('EXPLAIN', 'C', CAST(NULL AS VARCHAR(128)), CURRENT USER)",
     );
-    let _ = run(&mut r, "DROP TABLE NSQLT_DB2E");
+    let _ = run_raw(&mut r, "DROP TABLE NSQLT_DB2E");
     run(
         &mut r,
         "CREATE TABLE NSQLT_DB2E (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(40))",
@@ -2079,7 +2080,7 @@ fn db2_explain_tree_and_blockers_query() {
             e.code
         ),
     }
-    let _ = run(&mut r, "DROP TABLE NSQLT_DB2E");
+    let _ = run_raw(&mut r, "DROP TABLE NSQLT_DB2E");
     run(&mut r, "COMMIT");
 }
 

@@ -26,6 +26,9 @@ DRIVERS = [
 WINDOWS_ONLY: set = set()  # odbc도 전 OS(Linux/mac = unixODBC 동적 · 10-24)
 # 드라이버 옆에 동봉하는 런타임 공유 라이브러리(Windows 이름 기준 · 다른 OS는 lib*.so/.dylib로 바꾼다).
 BUNDLED = {"duckdb": ["duckdb.dll"]}
+# ★ T-427 측정(10-26): `NSQL_DUCKDB_BUNDLED=1` = cdylib가 libduckdb를 정적으로 품은 빌드 → 런타임 공유 라이브러리를 동봉하지 않는다.
+if os.environ.get("NSQL_DUCKDB_BUNDLED") == "1":
+    BUNDLED = {}
 
 
 def driver_version():

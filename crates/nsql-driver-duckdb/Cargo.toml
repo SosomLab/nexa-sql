@@ -15,6 +15,11 @@ workspace = true
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[features]
+# ★ T-427 측정용(10-26 · 기본 off): libduckdb를 cc로 소스 빌드해 cdylib 안에 정적으로 품는다(런타임 공유 라이브러리 동봉 없음).
+#   drivers.yml `workflow_dispatch` 입력 `duckdb_bundled=true`로만 켠다 — CI 시간이 download-lib 대비 +15분 이내면 기본 전환(D-nnn 후보).
+bundled = ["duckdb/bundled"]
+
 [dependencies]
 nsql-core.workspace = true
 nsql-script.workspace = true
