@@ -4,7 +4,7 @@
 //! - QRYDSC = `len(1) 0x76 0xD0 [타입(1) 길이(2)]×열` … (84열 넘으면 트리플릿 여럿 · 0x7F = 이어짐).
 //! - QRYDTA 행 = `0xFF 0x00`(SQLCAGRP 없음 · 행 그룹) + 열 값. 널 허용 타입(홀수) = 지시자 1바이트(0xFF = NULL · 값 생략).
 //! - 정수·실수 = 서버 TYPDEFNAM 순서(x86 LUW = 작은 끝) · **가변 길이의 길이 접두는 큰 끝**(pydrda 실측) · 문자 = UTF-8(CCSID 1208).
-//! - 입력(SQLDTA) = FDODSC(`[(1+n)*3] 76 D0 [타입 길이]×n 06 71 E4 D0 00 01`) + FDODTA(널 지시자 + 값 · 홀수면 앞에 0x00 패드) · 문자열은
+//! - 입력(SQLDTA) = FDODSC(`[(1+n)*3] 76 D0 [타입 길이]×n 06 71 E4 D0 00 01`) + FDODTA(행 지시자 0x00 + 매개변수마다 널 지시자 + 값) · 문자열은
 //!   VARGRAPHIC(0x39 · UTF-16BE · 2B 큰 끝 길이)로 보낸다(pydrda).
 
 use nsql_core::{DbError, Value};
@@ -1052,9 +1052,10 @@ pub fn encode_sqldta(
             ext.push(payload);
         }
     }
-    if (dsc.len() + dta.len()) % 2 == 1 {
-        dta.insert(0, 0x00);
-    }
+    // ★ FDODTA 맨 앞 1 B = 행(그룹) 지시자 `0x00`(derby `buildFDODTA`의 NULL_LID · SQLDTARD 쪽 `read_out_row`와 대칭) — **늘** 넣는다.
+    //   1차는 "총 길이 홀수면 패드"로 알고 있었고 홀수인 경우에만 우연히 맞았다(CI 40183353540: 짝수가 된 DBCLOB·XML 바인드에서 ID 지시자가
+    //   1 B 밀려 DTAMCHRM −30020 · 앞 두 회차 0xCD 판정도 이 버그에 가려짐).
+    dta.insert(0, 0x00);
     dsc.extend_from_slice(&[0x06, 0x71, 0xE4, 0xD0, 0x00, 0x01]);
     let mut out = Vec::new();
     crate::dss::Ddm::new(0x0010, dsc).encode_into(&mut out);
@@ -1187,7 +1188,7 @@ mod tests {
         assert_eq!(&objs[0].value[9..12], &[0x0F, 5, 2]);
         assert_eq!(objs[1].cp, 0x147A);
         let d = &objs[1].value;
-        // 패드 여부: dsc 18 + dta (1+2+4) + (1+4) + 1 = 13 → 31 홀수 → 앞 0x00 패드.
+        // 맨 앞 = 행 지시자 0x00(늘) · 그 뒤 매개변수마다 널 지시자 + 값.
         assert_eq!(d[0], 0x00);
         assert_eq!(&d[1..8], &[0x00, 0x00, 0x04, 0x00, b'a', 0x00, b'b']);
         assert_eq!(&d[8..13], &[0x00, 0xFE, 0xFF, 0xFF, 0xFF]);
@@ -1324,7 +1325,7 @@ mod tests {
         );
         assert_eq!(&dsc[12..15], &[0xC9, 0x80, 0x09], "NULL LOB도 같은 서술");
         let d = &objs[1].value;
-        // dsc 15+6 = 21 · dta = (1+4) + (1+9) + (1+9) + 1 = 26 → 47 홀수 → 패드.
+        // 맨 앞 = 행 지시자 0x00(늘).
         assert_eq!(d[0], 0x00);
         assert_eq!(&d[1..6], &[0x00, 1, 0, 0, 0]);
         assert_eq!(
@@ -1359,6 +1360,15 @@ mod tests {
             "길이 = 4 B(UTF-8 '한a')"
         );
         assert_eq!(ext[0], [&[0x00u8][..], "한a".as_bytes()].concat());
+        // 총 길이가 짝수인 꼴(INTEGER 하나)에서도 행 지시자가 있다(CI 40183353540 회귀).
+        let ip = [SqlDaCol {
+            sqltype: 497,
+            length: 4,
+            ..SqlDaCol::default()
+        }];
+        let (v, _) = encode_sqldta(&ip, &[Value::Int(7)], true).unwrap();
+        let objs = crate::dss::parse_objects(&v).unwrap();
+        assert_eq!(objs[1].value, vec![0x00, 0x00, 7, 0, 0, 0]);
         // XML 재작성: k번째 `?`만 · 문자열·주석 안 `?`는 세지 않는다.
         assert_eq!(
             replace_placeholder(
