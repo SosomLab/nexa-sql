@@ -747,7 +747,8 @@ impl Db2Session {
             if set.desc.is_empty() && set.rows.is_empty() && !query {
                 continue;
             }
-            let fallback: &[SqlDaCol] = if i == 0 { &reply.cols } else { &[] };
+            // 조회의 첫 집합만 PRPSQLSTT SQLDARD로 보강 — CALL의 SQLDARD는 매개변수 서술(P_MIN·P_CNT · CI 40156275674)이라 집합 열 이름이 아니다.
+            let fallback: &[SqlDaCol] = if i == 0 && query { &reply.cols } else { &[] };
             out.result_sets.push(Self::result_set(set, fallback));
             out.result_labels.push(None);
         }

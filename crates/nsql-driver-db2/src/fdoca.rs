@@ -293,11 +293,12 @@ pub fn read_value(r: &mut Reader<'_>, c: ColDesc, le: bool) -> Result<Value, Row
         0x1E => Value::Bytes(r.take(n)?.to_vec()),
         // ★ LOB(T-426 2차 · pydrda `_parse_response`): 행 안에는 널 지시자(+ 로케이터 바이트)뿐이고 값은 체인의 EXTDTA 객체로 온다 →
         //   자리표시(빈 Bytes)를 두고 [`attach_lobs`]가 행·열 순서로 채운다. 로케이터 타입(0x18~0x1D)은 로케이터 바이트(길이 = 서술자)를 소비.
-        0x18 | 0x1A | 0x1C => {
-            let _locator = r.take(n)?;
+        //   ★ 실측(CI 40156275674 · Db2 12.1): QRYDSC 길이 `0x8009` = 최상위 비트(EXTDTA 값) + 행 안 자리표시 **9바이트**(상태 1 + 길이 8 큰 끝 ·
+        //   `02 00 00 00 00 00 00 09 60` = 2400 B) → `len & 0x7FFF`만큼 소비(NULL이면 지시자만). 0바이트로 보면 다음 열·다음 행 경계가 어긋나 2행째가 사라진다.
+        0x18 | 0x1A | 0x1C | 0xC8 | 0xCA | 0xCC | 0xCE => {
+            let _placeholder = r.take(n & 0x7FFF)?;
             Value::Bytes(Vec::new())
         }
-        0xC8 | 0xCA | 0xCC | 0xCE => Value::Bytes(Vec::new()),
         0x26 | 0xC0 => Value::Bytes(r.take(n & 0x7FFF)?.to_vec()),
         0x28 | 0xC2 => {
             let ln = r.len_be16()?;
@@ -1003,19 +1004,44 @@ mod tests {
             },
             ColDesc {
                 drda_type: 0xCF,
-                len: [0x80, 0x02],
+                len: [0x80, 0x09],
             },
             ColDesc {
                 drda_type: 0xC9,
-                len: [0x80, 0x02],
+                len: [0x80, 0x09],
             },
         ];
         assert!(is_lob(cols[1]) && is_lob(cols[2]) && !is_lob(cols[0]));
-        // 행 2 = (1, '한', NULL) · (2, NULL, x'0102')
-        let mut b = vec![0xFF, 0x00, 0x00, 1, 0, 0, 0, 0x00, 0xFF];
-        b.extend_from_slice(&[0xFF, 0x00, 0x00, 2, 0, 0, 0, 0xFF, 0x00]);
-        let (mut rows, used, _) = read_rows(&b, &cols, true).unwrap();
-        assert_eq!(used, b.len());
+        // 행 2 = (1, '한', NULL) · (2, NULL, x'0102') — 자리표시 9 B(상태 + 길이 8 큰 끝 · CI 40156275674 실측 레이아웃).
+        let ph = |n: u8| [0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, n];
+        let mut b = vec![0xFF, 0x00, 0x00, 1, 0, 0, 0];
+        b.extend_from_slice(&ph(3));
+        b.push(0xFF);
+        b.extend_from_slice(&[0xFF, 0x00, 0x00, 2, 0, 0, 0, 0xFF]);
+        b.extend_from_slice(&ph(2));
+        let (mut rows, used, sqlca) = read_rows(&b, &cols, true).unwrap();
+        assert_eq!((used, sqlca, rows.len()), (b.len(), false, 2));
+        // CI 실측 행(ID 1 CLOB 2400 B · BLOB 5000 B / ID 2 NULL·NULL) — 2행째가 살아야 한다.
+        let ci: Vec<u8> = [
+            &[
+                0xFF, 0x00, 0x01, 0, 0, 0, 0x00, 0x02, 0, 0, 0, 0, 0, 0, 0x09, 0x60,
+            ][..],
+            &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0x13, 0x88],
+            &[0xFF, 0x00, 0x02, 0, 0, 0, 0xFF, 0xFF],
+        ]
+        .concat();
+        // 실측 QRYDSC = `02 0004 | CF 8009 | C9 8009`(ID는 NOT NULL → 지시자 없음).
+        let ci_cols = [
+            ColDesc {
+                drda_type: 0x02,
+                len: [0, 4],
+            },
+            cols[1],
+            cols[2],
+        ];
+        let (ci_rows, ci_used, ci_sqlca) = read_rows(&ci, &ci_cols, true).unwrap();
+        assert_eq!((ci_used, ci_sqlca, ci_rows.len()), (ci.len(), false, 2));
+        assert_eq!(ci_rows[1], vec![Value::Int(2), Value::Null, Value::Null]);
         // 지시자 0x80 = 값 없음(NULL) · 뒤 값 없이 다음 열로.
         let c2 = [
             ColDesc {
