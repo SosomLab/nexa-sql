@@ -1998,6 +1998,69 @@ fn db2_lob_clob_blob_round_trip() {
     s.commit().expect("commit");
 }
 
+/// ★ 미비사항(10-25): DBCLOB(413 → 0xCD · UTF-16BE) · XML(989 → 0xCF · UTF-8) **입력** 경로 검증 — CLOB/BLOB만 실측된 EXTDTA 입력의 나머지 두 타입 왕복.
+/// 실패하면 서버가 거부한 타입 코드·오류를 그대로 보고(별도 시험이라 LOB 본 시험은 영향 없음).
+#[test]
+fn db2_lob_dbclob_xml_round_trip() {
+    use nsql_core::{BindParam, Direction, ExecRequest, VarType};
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    let exec = |s: &mut Box<dyn Session>, sql: &str, params: Vec<BindParam>| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params,
+        })
+    };
+    let _ = exec(&mut s, "DROP TABLE NSQLT_DB2X", Vec::new());
+    exec(
+        &mut s,
+        "CREATE TABLE NSQLT_DB2X (ID INTEGER NOT NULL PRIMARY KEY, D DBCLOB(1M), X XML)",
+        Vec::new(),
+    )
+    .expect("create");
+    let p = |name: &str, v: Value, ty: VarType| BindParam {
+        name: name.into(),
+        value: v,
+        ty,
+        direction: Direction::In,
+    };
+    let dtext: String = "한글 dbclob ".repeat(300);
+    let xml = "<doc><item n=\"1\">한글</item><item n=\"2\">two</item></doc>";
+    exec(
+        &mut s,
+        "INSERT INTO NSQLT_DB2X (ID, D, X) VALUES (?, ?, ?)",
+        vec![
+            p("ID", Value::Int(1), VarType::Number),
+            p("D", Value::Str(dtext.clone()), VarType::Clob),
+            p("X", Value::Str(xml.to_string()), VarType::Clob),
+        ],
+    )
+    .expect("insert dbclob+xml");
+    s.commit().expect("commit");
+    // XML은 직렬화해서 읽는다(XMLSERIALIZE → CLOB · 선언부 없이) — 공백·순서는 서버가 정규화할 수 있어 조각으로 비교.
+    let r = exec(
+        &mut s,
+        "SELECT ID, D, XMLSERIALIZE(X AS CLOB(1M)) FROM NSQLT_DB2X",
+        Vec::new(),
+    )
+    .expect("select dbclob+xml");
+    let rs = &r.result_sets[0];
+    assert_eq!(rs.rows.len(), 1);
+    assert_eq!(rs.rows[0][1], Value::Str(dtext), "DBCLOB round trip");
+    let got = match &rs.rows[0][2] {
+        Value::Str(t) => t.clone(),
+        other => panic!("XML serialized as {other:?}"),
+    };
+    assert!(
+        got.contains("<item n=\"1\">한글</item>") && got.contains("<item n=\"2\">two</item>"),
+        "XML round trip: {got}"
+    );
+    exec(&mut s, "DROP TABLE NSQLT_DB2X", Vec::new()).expect("drop");
+    s.commit().expect("commit");
+}
+
 /// ★ T-426 2차 ③ CALL: SQL PL 프로시저(DYNAMIC RESULT SETS 2 · IN · OUT) → 결과 집합 2(열 이름 · 행) + OUT 매개변수 값 · 끝에 DROP.
 #[test]
 fn db2_call_result_sets_and_out_param() {
