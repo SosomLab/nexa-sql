@@ -25,6 +25,8 @@ pub struct ServerInfo {
     pub ccsid_sbc: u16,
     pub ccsid_dbc: u16,
     pub ccsid_mbc: u16,
+    /// 실제로 쓴 보안 방식(ACCSEC 협상 결과 · 9 = EUSRIDPWD 암호화 · 3 = USRIDPWD 평문) — 세션 설명·⑤ 검증 시험이 본다.
+    pub secmec: u16,
 }
 
 impl ServerInfo {
@@ -320,6 +322,9 @@ fn secchkcd_text(c: u8) -> &'static str {
 
 /// 핸드셰이크 — 성공하면 서버 정보. 보안 = **EUSRIDPWD(9 · DH 256 + DES/CBC)** 를 먼저 제안하고 서버가 USRIDPWD(3)를 답하면 평문으로
 /// (pydrda · JCC 4.33+ 기본 9 · 실제 보호는 TLS · 121b ②). 서버가 다른 메커니즘을 요구하면 안내 오류.
+/// `ServerInfo::secmec` 비교용(= [`cp::SECMEC_EUSRIDPWD`]).
+pub const SECMEC_EUSRIDPWD_LABEL_CODE: u16 = cp::SECMEC_EUSRIDPWD;
+
 pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
     let mut info = ServerInfo::default();
     let private = crate::dh::random_private();
@@ -483,6 +488,7 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
     if info.typdef.is_empty() {
         info.typdef = "QTDSQLASC".into();
     }
+    info.secmec = secmec;
     Ok(info)
 }
 

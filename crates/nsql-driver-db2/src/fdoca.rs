@@ -369,39 +369,6 @@ pub fn attach_lobs(rows: &mut [Vec<Value>], cols: &[ColDesc], extdta: &[Vec<u8>]
     }
 }
 
-/// `?` 자리(문자열·주석 밖) 가운데 `which`(0 기준 · 매개변수 순번)번째를 `lit`로 바꾼다 — BLOB 바인드 리터럴 재작성(pydrda `_replace_binary_params`).
-#[must_use]
-pub fn replace_placeholder(sql: &str, which: usize, lit: &str) -> String {
-    let mut out = String::with_capacity(sql.len() + lit.len());
-    let mut in_str = false;
-    let mut idx = 0usize;
-    let chars: Vec<char> = sql.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\'' {
-            out.push(c);
-            if in_str && chars.get(i + 1) == Some(&'\'') {
-                out.push('\'');
-                i += 2;
-                continue;
-            }
-            in_str = !in_str;
-        } else if c == '?' && !in_str {
-            if idx == which {
-                out.push_str(lit);
-            } else {
-                out.push(c);
-            }
-            idx += 1;
-        } else {
-            out.push(c);
-        }
-        i += 1;
-    }
-    out
-}
-
 /// QRYDTA 블록의 행들 — (행 목록 · 소비한 바이트 수 · 끝에 SQLCA 표식(0x00)을 만났는가).
 /// 잘린 행은 소비하지 않는다(호출자가 다음 블록 앞에 붙인다).
 pub fn read_rows(
@@ -751,10 +718,41 @@ pub fn read_out_row(fdodta: &[u8], cols: &[ColDesc], le: bool) -> Result<Vec<Val
 
 // ── SQLDTA(입력 매개변수) 인코딩 — 서버가 DSCSQLSTT로 알려 준 타입(SqlDaCol)에 맞춰 값을 변환한다.
 
+/// LOB 바인드 타입(BLOB 405 · CLOB 409 · DBCLOB 413 · XML 989)인가 — 값은 SQLDTA가 아니라 **EXTDTA**로 간다(2차 ⑥).
+fn is_lob_type(sqltype: u16) -> bool {
+    matches!(sqltype | 1, 405 | 409 | 413 | 989)
+}
+
+/// LOB 값의 전송 바이트 — BLOB = 그대로 · CLOB/XML = UTF-8(CCSID 1208 · 0xCF NLOBCMIXED) · DBCLOB = UTF-16BE(0xCD NLOBCDBCS).
+fn lob_bytes(p: &SqlDaCol, v: &Value) -> Vec<u8> {
+    match (p.sqltype | 1, v) {
+        (405, Value::Bytes(b)) => b.clone(),
+        (405, other) => value_text(other).into_bytes(),
+        (413, Value::Bytes(b)) => utf16be(&String::from_utf8_lossy(b)),
+        (413, other) => utf16be(&value_text(other)),
+        (_, Value::Bytes(b)) => b.clone(),
+        (_, other) => value_text(other).into_bytes(),
+    }
+}
+
+/// LOB 자리표시 길이 = **9 B 고정**(FDODSC `0x8009` · Db2가 조회 때 보내는 꼴 `CF 8009`/`C9 8009`과 같음 · jb도 늘 9 · derby의 2/4/8 B 가변은
+/// Db2 수용 미확인) = 표지 `0x02` + 길이 u64 큰 끝.
+const LOB_PLACEHOLDER: u8 = 9;
+
 fn fdodsc_entry(p: &SqlDaCol) -> Result<Vec<u8>, DbError> {
     let t = p.sqltype | 1; // 전부 널 허용 타입으로 기술(pydrda)
+    if is_lob_type(t) {
+        // ★ 2차 ⑥(derby `computeProtocolTypesAndLengths`): 행 안에는 길이 자리표시만(널 지시자 + n B) · 값은 EXTDTA 객체로(매개변수 순서).
+        //   VARGRAPHIC(0x39)으로 보내면 DTAMCHRM −30020(CI 40149862498).
+        let code = match t {
+            405 => 0xC9,
+            413 => 0xCD,
+            _ => 0xCF,
+        };
+        return Ok(vec![code, 0x80, LOB_PLACEHOLDER]);
+    }
     Ok(match t {
-        449 | 453 | 457 | 409 | 989 | 465 | 469 | 413 => vec![0x39, 0x3F, 0xFF],
+        449 | 453 | 457 | 465 | 469 => vec![0x39, 0x3F, 0xFF],
         485 => vec![0x0F, p.precision as u8, p.scale as u8],
         501 => vec![0x05, 0x00, 2],
         497 => vec![0x03, 0x00, 4],
@@ -768,7 +766,6 @@ fn fdodsc_entry(p: &SqlDaCol) -> Result<Vec<u8>, DbError> {
         389 => vec![0x23, 0x00, 0x08],
         393 => vec![0x25, 0x00, 0x20],
         2437 => vec![0xBF, 0x00, 0x01],
-        405 => vec![0xC9, 0x80, 0x02],
         913 => vec![0x27, (p.length >> 8) as u8, p.length as u8],
         909 => vec![0x29, (p.length >> 8) as u8, p.length as u8],
         997 => vec![0xBB, 0x00, p.length as u8],
@@ -847,6 +844,13 @@ fn fdodta_value(p: &SqlDaCol, v: &Value, le: bool) -> Result<Vec<u8>, DbError> {
     }
     let t = p.sqltype | 1;
     let mut out = vec![0x00];
+    if is_lob_type(t) {
+        // 자리표시 = `02` + 길이 u64 큰 끝(9 B · 값은 EXTDTA · jb/Db2 실측).
+        let len = lob_bytes(p, v).len() as u64;
+        out.push(0x02);
+        out.extend_from_slice(&len.to_be_bytes());
+        return Ok(out);
+    }
     let num = |name: &str| -> Result<i64, DbError> {
         match v {
             Value::Int(i) => Ok(*i),
@@ -866,7 +870,7 @@ fn fdodta_value(p: &SqlDaCol, v: &Value, le: bool) -> Result<Vec<u8>, DbError> {
         }
     };
     match t {
-        449 | 453 | 457 | 409 | 989 | 465 | 469 | 413 => {
+        449 | 453 | 457 | 465 | 469 => {
             let bytes = match v {
                 Value::Bytes(b) => b.clone(),
                 other => utf16be(&value_text(other)),
@@ -946,7 +950,13 @@ fn fdodta_value(p: &SqlDaCol, v: &Value, le: bool) -> Result<Vec<u8>, DbError> {
 }
 
 /// SQLDTA 값(FDODSC 객체 + FDODTA 객체 · 둘을 담은 상위 객체 값) — 호출자가 `Ddm::new(SQLDTA, …)`로 감싼다.
-pub fn encode_sqldta(params: &[SqlDaCol], values: &[Value], le: bool) -> Result<Vec<u8>, DbError> {
+/// 둘째 = **EXTDTA 객체 값들**(NULL 아닌 LOB 매개변수 순서 · 각각 `0x00`(널 지시자) + 바이트 · derby `writeEXTDTA`) — 호출자가 SQLDTA 뒤에
+/// 같은 상관 번호의 객체 DSS로 잇는다(32 767 B 초과 = DSS 연속 · [`crate::dss::encode_dss`]).
+pub fn encode_sqldta(
+    params: &[SqlDaCol],
+    values: &[Value],
+    le: bool,
+) -> Result<(Vec<u8>, Vec<Vec<u8>>), DbError> {
     if params.len() != values.len() {
         return Err(err(format!(
             "DRDA: statement has {} parameter(s) but {} value(s) were bound",
@@ -956,9 +966,15 @@ pub fn encode_sqldta(params: &[SqlDaCol], values: &[Value], le: bool) -> Result<
     }
     let mut dsc = vec![((1 + params.len()) * 3) as u8, 0x76, 0xD0];
     let mut dta = Vec::new();
+    let mut ext = Vec::new();
     for (p, v) in params.iter().zip(values) {
         dsc.extend(fdodsc_entry(p)?);
         dta.extend(fdodta_value(p, v, le)?);
+        if is_lob_type(p.sqltype) && !matches!(v, Value::Null) {
+            let mut payload = vec![0x00];
+            payload.extend(lob_bytes(p, v));
+            ext.push(payload);
+        }
     }
     if (dsc.len() + dta.len()) % 2 == 1 {
         dta.insert(0, 0x00);
@@ -967,7 +983,7 @@ pub fn encode_sqldta(params: &[SqlDaCol], values: &[Value], le: bool) -> Result<
     let mut out = Vec::new();
     crate::dss::Ddm::new(0x0010, dsc).encode_into(&mut out);
     crate::dss::Ddm::new(0x147A, dta).encode_into(&mut out);
-    Ok(out)
+    Ok((out, ext))
 }
 
 #[cfg(test)]
@@ -1080,12 +1096,13 @@ mod tests {
                 ..SqlDaCol::default()
             },
         ];
-        let v = encode_sqldta(
+        let (v, ext) = encode_sqldta(
             &params,
             &[Value::Str("ab".into()), Value::Int(-2), Value::Null],
             true,
         )
         .unwrap();
+        assert!(ext.is_empty());
         let objs = crate::dss::parse_objects(&v).unwrap();
         assert_eq!(objs[0].cp, 0x0010);
         assert_eq!(&objs[0].value[..3], &[12, 0x76, 0xD0]);
@@ -1177,10 +1194,77 @@ mod tests {
         attach_lobs(&mut rows, &cols, &ext);
         assert_eq!(rows[0][1], Value::Str("한".into()));
         assert_eq!(rows[1][2], Value::Bytes(vec![0x01, 0x02]));
+    }
+
+    /// 2차 ⑥ LOB 바인드 = FDODSC `C9/CF 80 n` · FDODTA 자리표시(지시자 + 길이 n B) · EXTDTA 값(0x00 + 바이트 · 매개변수 순서 · NULL 제외).
+    #[test]
+    fn sqldta_lob_binds_go_to_extdta() {
+        let params = [
+            SqlDaCol {
+                sqltype: 497,
+                length: 4,
+                ..SqlDaCol::default()
+            },
+            SqlDaCol {
+                sqltype: 409,
+                length: 1_048_576,
+                ccsid: 1208,
+                ..SqlDaCol::default()
+            },
+            SqlDaCol {
+                sqltype: 405,
+                length: 1_048_576,
+                ..SqlDaCol::default()
+            },
+            SqlDaCol {
+                sqltype: 405,
+                ..SqlDaCol::default()
+            },
+        ];
+        let big = vec![0x7Eu8; 40_000];
+        let (v, ext) = encode_sqldta(
+            &params,
+            &[
+                Value::Int(1),
+                Value::Str("한".into()),
+                Value::Bytes(big),
+                Value::Null,
+            ],
+            true,
+        )
+        .unwrap();
+        let objs = crate::dss::parse_objects(&v).unwrap();
+        let dsc = &objs[0].value;
+        assert_eq!(&dsc[3..6], &[0x03, 0x00, 0x04]);
         assert_eq!(
-            replace_placeholder("INSERT INTO t VALUES (?, 'a?b''c', ?)", 1, "BLOB(X'01')"),
-            "INSERT INTO t VALUES (?, 'a?b''c', BLOB(X'01'))"
+            &dsc[6..9],
+            &[0xCF, 0x80, 0x09],
+            "CLOB = NLOBCMIXED · 자리 9 B"
         );
+        assert_eq!(
+            &dsc[9..12],
+            &[0xC9, 0x80, 0x09],
+            "BLOB = NLOBBYTES · 자리 9 B"
+        );
+        assert_eq!(&dsc[12..15], &[0xC9, 0x80, 0x09], "NULL LOB도 같은 서술");
+        let d = &objs[1].value;
+        // dsc 15+6 = 21 · dta = (1+4) + (1+9) + (1+9) + 1 = 26 → 47 홀수 → 패드.
+        assert_eq!(d[0], 0x00);
+        assert_eq!(&d[1..6], &[0x00, 1, 0, 0, 0]);
+        assert_eq!(
+            &d[6..16],
+            &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 3],
+            "CLOB 길이 3 B(UTF-8 '한')"
+        );
+        assert_eq!(
+            &d[16..26],
+            &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0x9C, 0x40],
+            "BLOB 길이 40 000"
+        );
+        assert_eq!(d[26], 0xFF);
+        assert_eq!(ext.len(), 2);
+        assert_eq!(ext[0], [&[0x00u8][..], "한".as_bytes()].concat());
+        assert_eq!((ext[1][0], ext[1].len()), (0x00, 40_001));
     }
 
     /// ★ 실서버 덤프(Db2 12.1.2 · CI 4차 40116752054): (a) `VALUES TRIM(CURRENT SCHEMA)` 식 열 1 · (b) `SELECT ID, NAME, AMT, D …` 이름 4열 ·

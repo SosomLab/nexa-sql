@@ -76,6 +76,34 @@ jobs:
         run: |
           cargo build -p nsql-driver-db2
           cargo test -p nsql-drivers --test integration db2_ -- --nocapture --test-threads=1
+      # ★ T-426 2차 ⑤: 서버 인증을 SERVER_ENCRYPT로 바꿔(DES 수용 = ALTERNATE_AUTH_ENC NOT_SPECIFIED · 인스턴스 재시작) EUSRIDPWD(SECMEC 9) 실접속을 본다.
+      #   평문 3은 이 뒤 거절될 수 있어 기존 5종 두 단계 **뒤에** 둔다(협업 조사 10-25 · IBM Docs c0005435 · r0053734).
+      - name: switch auth to SERVER_ENCRYPT (SECMEC 9 · 기존 시험 뒤)
+        timeout-minutes: 6
+        run: |
+          ID="${{ job.services.db2.id }}"
+          X() { docker exec "$ID" su - db2inst1 -c "$1"; }
+          X "db2 update dbm cfg using AUTHENTICATION SERVER_ENCRYPT ALTERNATE_AUTH_ENC NOT_SPECIFIED"
+          X "db2 terminate; db2stop force; db2start"
+          for i in $(seq 1 36); do
+            if X "db2 connect to nexa >/dev/null && db2 connect reset >/dev/null"; then echo "db2 back ($i)"; break; fi
+            [ "$i" = 36 ] && { echo "db2 not back"; exit 1; }
+            sleep 5
+          done
+          X "db2 get dbm cfg | grep -Ei 'AUTHENTICATION|ALTERNATE_AUTH_ENC|SRVCON_AUTH'; db2set -all" || true
+      - name: integration test (db2 · SECMEC 9 · SERVER_ENCRYPT · 내장)
+        timeout-minutes: 5
+        env:
+          NSQL_DB2_EXPECT_SECMEC9: "1"
+          NSQL_TRACE_DRDA: "4096"
+        run: cargo test -p nsql-drivers --test integration db2enc_secmec9_encrypted_login -- --nocapture --test-threads=1 --exact
+      - name: integration test (db2 · SECMEC 9 · SERVER_ENCRYPT · 확장 경로)
+        timeout-minutes: 5
+        env:
+          NSQL_DB2_EXPECT_SECMEC9: "1"
+          NSQL_TEST_DYN: "1"
+          NSQL_TRACE_DRDA: "4096"
+        run: cargo test -p nsql-drivers --test integration db2enc_secmec9_encrypted_login -- --nocapture --test-threads=1 --exact
       # 실패 진단: 서버 db2diag.log 끝 + DRDA 덤프(RECEIVE/SEND BUFFER)를 아티팩트로(10-25 첫 실접속 = sqljcReadHdrAs PROTOCOL ERROR).
       - name: db2diag (on failure)
         if: failure()

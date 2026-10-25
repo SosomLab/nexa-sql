@@ -63,9 +63,17 @@ impl Ddm {
 
     /// `len(2) · cp(2) · value`.
     pub fn encode_into(&self, out: &mut Vec<u8>) {
-        let len = (self.value.len() + 4) as u16;
-        out.extend_from_slice(&len.to_be_bytes());
-        out.extend_from_slice(&self.cp.to_be_bytes());
+        if self.value.len() + 4 > 0x7FFF {
+            // DDM 확장 길이(2차 ⑥ · 큰 EXTDTA 입력 · derby `buildLengthAndCodePointForLob` · jb sql_dta.rs): 2 B 필드 = `0x8000 | (4 + 확장 바이트 수)`
+            //   → `80 08` + 코드포인트 + u32 큰 끝 = **머리 4 B를 뺀 본문 길이**(jb 시험: 32 768 B 데이터 + 널 1 B → `80 08 14 6C 00 00 80 01`).
+            out.extend_from_slice(&0x8008u16.to_be_bytes());
+            out.extend_from_slice(&self.cp.to_be_bytes());
+            out.extend_from_slice(&(self.value.len() as u32).to_be_bytes());
+        } else {
+            let len = (self.value.len() + 4) as u16;
+            out.extend_from_slice(&len.to_be_bytes());
+            out.extend_from_slice(&self.cp.to_be_bytes());
+        }
         out.extend_from_slice(&self.value);
     }
 
@@ -152,7 +160,8 @@ impl fmt::Display for DssError {
 /// DSS 본문 상한(머리 포함 32 767) — 넘는 객체는 연속 DSS로 쪼갠다.
 pub const DSS_MAX: usize = 32_767;
 
-/// DSS 인코딩(요청 쪽 · 1차 = 상한 안의 객체만 · 큰 LOB 입력의 연속 분할은 2차).
+/// DSS 인코딩(요청 쪽). 본문이 상한을 넘으면 **연속 DSS**로 쪼갠다(2차 ⑥ · [`decode_dss`]의 거울상 = DSS 길이 `0xFFFF` · 첫 조각 32 767 B(머리 포함) ·
+/// 이후 조각 = 2 B 머리(`0x8000` = 더 있음 | 길이 · 길이는 머리 2 B 포함 · 최대 32 767) + 데이터).
 pub fn encode_dss(
     kind: DssKind,
     chained: bool,
@@ -170,12 +179,29 @@ pub fn encode_dss(
     if same_corr {
         f |= 0x10;
     }
-    let len = (body.len() + 6).min(0xFFFF) as u16;
-    out.extend_from_slice(&len.to_be_bytes());
+    if body.len() + 6 <= DSS_MAX {
+        out.extend_from_slice(&((body.len() + 6) as u16).to_be_bytes());
+        out.push(0xD0);
+        out.push(f);
+        out.extend_from_slice(&corr.to_be_bytes());
+        out.extend_from_slice(&body);
+        return;
+    }
+    out.extend_from_slice(&0xFFFFu16.to_be_bytes());
     out.push(0xD0);
     out.push(f);
     out.extend_from_slice(&corr.to_be_bytes());
-    out.extend_from_slice(&body);
+    let first = DSS_MAX - 6;
+    out.extend_from_slice(&body[..first]);
+    let mut rest = &body[first..];
+    while !rest.is_empty() {
+        let take = rest.len().min(DSS_MAX - 2);
+        let more = take < rest.len();
+        let hdr = ((take + 2) as u16) | if more { 0x8000 } else { 0 };
+        out.extend_from_slice(&hdr.to_be_bytes());
+        out.extend_from_slice(&rest[..take]);
+        rest = &rest[take..];
+    }
 }
 
 /// 버퍼 맨 앞의 DSS 하나(연속 조각 포함)를 해석한다 — 돌려주는 값 = (DSS, 먹은 바이트 수). 부족하면 `None`(더 읽어야 함).
@@ -232,9 +258,16 @@ pub fn decode_dss(buf: &[u8]) -> Result<Option<(Dss, usize)>, DssError> {
     }
     let ddm_len = u16::from_be_bytes([body[0], body[1]]);
     let cp = u16::from_be_bytes([body[2], body[3]]);
-    // DDM 확장 길이: 0x8000 | n = 코드포인트 뒤 n바이트가 실제 길이(값은 그 뒤부터).
+    // DDM 확장 길이(derby `Reply.readLengthAndCodePoint` = `ddmLength - 0x8004` = 확장 바이트 수): `0x8000 | (4 + n)` → 코드포인트 뒤 n(4/6/8)바이트가
+    // 본문 길이(값은 그 뒤부터 · 길이 값 자체는 DSS 연속을 합친 본문이 말해 주므로 쓰지 않는다).
     let start = if ddm_len & 0x8000 != 0 {
-        let n = (ddm_len & 0x7FFF) as usize;
+        let n = ((ddm_len & 0x7FFF) as usize).saturating_sub(4);
+        if !matches!(n, 4 | 6 | 8) {
+            return Err(DssError::BadLength {
+                cp,
+                len: ddm_len as usize,
+            });
+        }
         if body.len() < 4 + n {
             return Err(DssError::Truncated("ddm extended length"));
         }
@@ -303,15 +336,15 @@ mod tests {
 
     #[test]
     fn dss_continuation_segments_and_ddm_extended_length() {
-        // Db2 꼴: DSS 길이 0xFFFF(연속) · 본문 32 761바이트 = DDM 머리 `80 04 24 1B` + 4바이트 실제 길이 + 값 앞부분 · 뒤에 조각 2개(첫 조각 high bit).
+        // Db2/derby 꼴: DSS 길이 0xFFFF(연속) · 본문 32 761바이트 = DDM 머리 `80 08 24 1B`(확장 4 B) + u32 본문 길이 + 값 앞부분 · 뒤에 조각 2개(첫 조각 high bit).
         let total: usize = 40_000;
         let mut val = vec![0xAB; total];
         val[0] = 0x01;
         val[total - 1] = 0x02;
         let mut wire = Vec::new();
         wire.extend_from_slice(&[0xFF, 0xFF, 0xD0, 0x03, 0x00, 0x02]);
-        wire.extend_from_slice(&[0x80, 0x04, 0x24, 0x1B]);
-        wire.extend_from_slice(&((total + 8) as u32).to_be_bytes());
+        wire.extend_from_slice(&[0x80, 0x08, 0x24, 0x1B]);
+        wire.extend_from_slice(&(total as u32).to_be_bytes());
         let first = DSS_MAX - 6 - 4 - 4;
         wire.extend_from_slice(&val[..first]);
         let rest = &val[first..];
@@ -328,5 +361,46 @@ mod tests {
         assert_eq!((d.obj.value[0], d.obj.value[total - 1]), (0x01, 0x02));
         // 조각이 아직 안 왔으면 None.
         assert_eq!(decode_dss(&wire[..wire.len() - 10]).unwrap(), None);
+    }
+
+    #[test]
+    fn encode_dss_splits_large_objects_and_round_trips() {
+        // 작은 객체 = 한 DSS · 32 767 B 넘는 객체(EXTDTA 200 000 B) = 연속 조각 · DDM 확장 길이 → 우리 해독기로 그대로 복원.
+        for total in [10usize, DSS_MAX - 10, DSS_MAX - 9, 70_000, 200_000] {
+            let mut val = vec![0x5A; total];
+            if total > 1 {
+                val[0] = 0x01;
+                val[total - 1] = 0x02;
+            }
+            let obj = Ddm::new(0x146C, val.clone());
+            let mut wire = Vec::new();
+            encode_dss(DssKind::Object, true, false, 7, &obj, &mut wire);
+            if total + 4 + 6 <= DSS_MAX {
+                assert_eq!(wire.len(), total + 10, "{total}");
+            } else {
+                assert_eq!(&wire[..2], &[0xFF, 0xFF], "{total}");
+            }
+            let (d, used) = decode_dss(&wire).unwrap().expect("decoded");
+            assert_eq!(used, wire.len(), "{total}");
+            assert_eq!(
+                (d.kind, d.chained, d.same_corr, d.corr),
+                (DssKind::Object, true, false, 7)
+            );
+            assert_eq!(d.obj.cp, 0x146C);
+            assert_eq!(d.obj.value, val, "{total}");
+        }
+        // 뒤에 다른 DSS가 이어져도 경계가 맞는다.
+        let big = Ddm::new(0x146C, vec![0x33; 50_000]);
+        let small = Ddm::new(0x2113, vec![0x44; 64]);
+        let mut wire = Vec::new();
+        encode_dss(DssKind::Object, true, true, 1, &big, &mut wire);
+        encode_dss(DssKind::Object, false, false, 1, &small, &mut wire);
+        let (d1, u1) = decode_dss(&wire).unwrap().expect("first");
+        assert_eq!(d1.obj.value.len(), 50_000);
+        let (d2, u2) = decode_dss(&wire[u1..]).unwrap().expect("second");
+        assert_eq!(
+            (d2.obj.cp, d2.obj.value.len(), u1 + u2),
+            (0x2113, 64, wire.len())
+        );
     }
 }

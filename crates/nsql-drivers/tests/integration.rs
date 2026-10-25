@@ -1809,6 +1809,32 @@ fn db2_open(spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
     Ok(Box::new(nsql_driver_db2::Db2Session::open(spec)?))
 }
 
+/// ★ T-426 2차 ⑤ EUSRIDPWD(SECMEC 9) 실서버 검증 — db2.yml이 기존 시험 뒤 서버 인증을 `SERVER_ENCRYPT`로 바꾸고 `NSQL_DB2_EXPECT_SECMEC9=1`로
+/// 이 시험만 돌린다(이름이 `db2_`로 시작하지 않아 앞 단계 필터 밖). env가 없으면 생략 · 있으면 **평문 3 폴백은 실패**로 판정(설명 꼬리로 본다).
+#[test]
+fn db2enc_secmec9_encrypted_login() {
+    if std::env::var_os("NSQL_DB2_EXPECT_SECMEC9").is_none() {
+        eprintln!("[skip] NSQL_DB2_EXPECT_SECMEC9 없음");
+        return;
+    }
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 암호화 접속 실패: {}", e.message));
+    let d = s.describe();
+    assert!(
+        d.contains("EUSRIDPWD"),
+        "SECMEC 9(EUSRIDPWD)로 붙어야 한다 — 설명 = {d}"
+    );
+    let r = s
+        .execute(&nsql_core::ExecRequest {
+            sql: "VALUES 1".into(),
+            params: Vec::new(),
+        })
+        .expect("VALUES 1 over encrypted login");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
+}
+
 /// 스크립트 경로(러너 · 세션 변수): DDL(PK) · 다중 행 INSERT · `EXEC :V := 리터럴`(로컬) · `?` 바인드 · 스칼라 식 = `FROM SYSIBM.SYSDUMMY1`(`EXEC :B := :A + 10`) ·
 /// 세이브포인트(`ON ROLLBACK RETAIN CURSORS`) · `FETCH FIRST` · 한글 · COMMIT · 끝에 DROP.
 #[test]
@@ -1896,6 +1922,20 @@ fn db2_lob_clob_blob_round_trip() {
     )
     .expect("insert lob");
     exec(&mut s, "INSERT INTO NSQLT_DB2L (ID) VALUES (2)", Vec::new()).expect("insert null lob");
+    // ★ 2차 ⑥: 32 767 B 초과 = EXTDTA 입력 + DSS 연속(CLOB ≈ 110 000 B UTF-8 · BLOB 200 000 B → DDM 확장 길이).
+    let huge_text: String = "큰 clob 입력 ".repeat(6_000);
+    let huge_bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 253) as u8).collect();
+    assert!(huge_text.len() > 100_000);
+    exec(
+        &mut s,
+        "INSERT INTO NSQLT_DB2L (ID, C, B) VALUES (?, ?, ?)",
+        vec![
+            p("ID", Value::Int(3), VarType::Number),
+            p("C", Value::Str(huge_text.clone()), VarType::Clob),
+            p("B", Value::Bytes(huge_bytes.clone()), VarType::Blob),
+        ],
+    )
+    .expect("insert huge lob");
     s.commit().expect("commit");
     let r = exec(
         &mut s,
@@ -1904,7 +1944,7 @@ fn db2_lob_clob_blob_round_trip() {
     )
     .expect("select lob");
     let rs = &r.result_sets[0];
-    assert_eq!(rs.rows.len(), 2, "{rs:?}");
+    assert_eq!(rs.rows.len(), 3, "rows={}", rs.rows.len());
     assert_eq!(rs.rows[0][0], Value::Int(1));
     assert_eq!(rs.rows[0][1], Value::Str(big_text), "CLOB");
     assert_eq!(rs.rows[0][2], Value::Bytes(big_bytes), "BLOB");
@@ -1912,6 +1952,21 @@ fn db2_lob_clob_blob_round_trip() {
         (&rs.rows[1][1], &rs.rows[1][2]),
         (&Value::Null, &Value::Null),
         "NULL LOB"
+    );
+    assert_eq!(rs.rows[2][0], Value::Int(3));
+    assert!(
+        rs.rows[2][1] == Value::Str(huge_text.clone()),
+        "huge CLOB round trip (len {} ↔ {:?})",
+        huge_text.len(),
+        match &rs.rows[2][1] {
+            Value::Str(t) => t.len(),
+            _ => 0,
+        }
+    );
+    assert!(
+        rs.rows[2][2] == Value::Bytes(huge_bytes.clone()),
+        "huge BLOB round trip (len {})",
+        huge_bytes.len()
     );
     exec(&mut s, "DROP TABLE NSQLT_DB2L", Vec::new()).expect("drop");
     s.commit().expect("commit");

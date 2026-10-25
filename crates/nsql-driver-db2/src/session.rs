@@ -128,24 +128,6 @@ impl Reply {
     }
 }
 
-/// 값의 글자 표현(BLOB 리터럴 재작성에 문자열/숫자 값이 왔을 때).
-fn fdoca_text(v: &Value) -> String {
-    match v {
-        Value::Str(s) | Value::Decimal(s) => s.clone(),
-        Value::Int(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Bool(b) => {
-            if *b {
-                "1".into()
-            } else {
-                "0".into()
-            }
-        }
-        Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
-        Value::Null | Value::Cursor(_) => String::new(),
-    }
-}
-
 /// `CALL …`(프로시저 · 결과 집합·OUT 매개변수 = EXCSQLSTT 경로 · 121b ⑥).
 fn is_call(sql: &str) -> bool {
     let s = sql.trim_start();
@@ -252,12 +234,21 @@ impl Db2Session {
         // 질의는 길 수 있다 → 핸드셰이크 뒤 읽기 상한 해제(강제 중지는 호스트 몫 · 2차 = 취소 접속).
         wire.set_read_timeout(None)?;
         let cancel_tcp = wire.tcp_clone().ok();
+        // 설명 꼬리 = 접속 보안 방식(사람·시험이 본다 · 영어 고정 · ⑤ `db2enc_secmec9_encrypted_login`).
+        let description = format!(
+            "{} · DRDA auth {}",
+            spec.redacted(),
+            match info.secmec {
+                conn::SECMEC_EUSRIDPWD_LABEL_CODE => "EUSRIDPWD (encrypted)",
+                _ => "USRIDPWD (plain)",
+            }
+        );
         let mut s = Db2Session {
             wire: Some(wire),
             info,
             // Db2 데이터베이스 이름은 대문자(서버가 RDBNAM을 대문자 EBCDIC로 돌려준다).
             database: format!("{:<18}", database.to_ascii_uppercase()),
-            description: spec.redacted(),
+            description,
             max_rows: 0,
             in_tx: false,
             active: Arc::new(AtomicBool::new(false)),
@@ -663,59 +654,16 @@ impl Db2Session {
             if let Some(e) = prep.error {
                 return Err(e);
             }
-            // ★ LOB 매개변수(BLOB 404/405 · CLOB 408/409 · DBCLOB 412/413 · XML 988/989)는 SQLDTA로 보낼 수 없어(VARGRAPHIC으로 보내면 DTAMCHRM −30020 ·
-            //   CI 40149862498) 리터럴로 문장을 고쳐 다시 준비한다(pydrda BLOB 방식 · 문자 리터럴 한계 32 672 B = 2차 ⑥ EXTDTA 입력 전 제한).
-            if let Some(k) = prep
-                .params
-                .iter()
-                .position(|p| matches!(p.sqltype | 1, 405 | 409 | 413 | 989))
-                .filter(|&k| k < values.len())
-            {
-                let is_blob = prep.params[k].sqltype | 1 == 405;
-                let lit = if matches!(values[k], Value::Null) {
-                    if is_blob {
-                        "CAST(NULL AS BLOB)"
-                    } else {
-                        "CAST(NULL AS CLOB)"
-                    }
-                    .to_string()
-                } else if is_blob {
-                    let bytes = match &values[k] {
-                        Value::Bytes(b) => b.clone(),
-                        other => fdoca_text(other).into_bytes(),
-                    };
-                    let hex: String = bytes.iter().map(|x| format!("{x:02X}")).collect();
-                    format!("BLOB(X'{hex}')")
-                } else {
-                    let text = match &values[k] {
-                        Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
-                        other => fdoca_text(other),
-                    };
-                    if text.len() > 32_000 {
-                        return Err(err(format!(
-                            "Db2: character LOB bind parameters over 32 000 bytes are not supported yet ({} bytes) - phase 2 (EXTDTA input)",
-                            text.len()
-                        )));
-                    }
-                    format!("CLOB('{}')", text.replace('\'', "''"))
-                };
-                let sql2 = fdoca::replace_placeholder(sql, k, &lit);
-                let mut params2 = req.params.clone();
-                params2.remove(k);
-                let req2 = ExecRequest {
-                    sql: sql2,
-                    params: params2,
-                };
-                return self.execute_inner(&req2);
-            }
             let le = self.le();
+            // ★ LOB 매개변수(BLOB 405 · CLOB 409 · DBCLOB 413 · XML 989)는 SQLDTA 안 자리표시 + **EXTDTA 객체**(2차 ⑥ · derby `buildEXTDTA` ·
+            //   VARGRAPHIC으로 보내면 DTAMCHRM −30020 · CI 40149862498) — 32 767 B 초과는 DSS 연속으로 쪼개진다(`encode_dss`).
             let objs = if values.is_empty() {
                 Vec::new()
             } else {
-                vec![Ddm::new(
-                    cp::SQLDTA,
-                    fdoca::encode_sqldta(&prep.params, &values, le)?,
-                )]
+                let (sqldta, ext) = fdoca::encode_sqldta(&prep.params, &values, le)?;
+                let mut objs = vec![Ddm::new(cp::SQLDTA, sqldta)];
+                objs.extend(ext.into_iter().map(|p| Ddm::new(cp::EXTDTA, p)));
+                objs
             };
             // 2. 실행(DML/CALL) 또는 열기(조회) + 데이터.
             let mut r = if call {
