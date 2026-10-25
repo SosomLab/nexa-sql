@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-26 (Linux · 사용자 실기)** — 사용자 Linux 실기 9건 ✅ · 결함 0(아웃라인 1·2차 · 변수 창 Formula/⟳ · drivers-v0.1.5 자동 설치(Oracle) · 드라이버 관리자 창 · 툴바 [변수] · 4만 줄 타이핑 · 서식 복사 · ODBC 정적 동봉 · 테마 감시) · D-357 기본값 확인 · D-353 보류([journal 10-26 §1](journal/2026-10-26.md)).
+
 - **2026-10-25 (138차 · Linux · T-145 · 마감)** — ★ T-145 편집기 줄 변경 표시 = 줄 해시 증분(nexa-ui 0750d98 · 4만 줄 입력 11.0 → 7.3 ms · −35 % · 협업 독립 A/B 일치 · bench `BENCH_PARENS` · [journal 10-24 §3-19](journal/2026-10-24.md)) · 잔여 정리(TODO 낡은 ☐/🔧 5행 · CLAUDE.md §4 순서 안내 · 61 §6 머리) · 최종 nexa-sql 29c78570 · nexa-ui 6c66c50.
 
 - **2026-10-25 (138차 · Linux · 미비사항 · drivers-v0.1.5)** — ★ Db2 DBCLOB(0xCF UTF-8 서버 변환)·XML(`XMLPARSE` 재작성) 입력 ✅ + 숨은 결함 **FDODTA 행 지시자를 "홀수 길이 패드"로 오해**(3d3482ad · 그전 바인드는 우연 통과) · 🚀 drivers-v0.1.5 pre-release(자산 125) · 변수 창 Formula 열(d6996ba0 · Layer 잘림 a0f213ef) · 102 원장 +5행 · 121b 진단 손잡이 · wiki Db2 네이티브 절([journal 10-24 §3-18](journal/2026-10-24.md)).
