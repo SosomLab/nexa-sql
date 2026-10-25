@@ -333,7 +333,7 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
     w.send(&[(DssKind::Request, excsat), (DssKind::Request, accsec)])?;
     let chain = w.recv_chain()?;
     check_reply(&chain, &[cp::EXCSATRD, cp::ACCSECRD])?;
-    let mut secmec = cp::SECMEC_EUSRIDPWD;
+    let mut offered: Vec<u16> = Vec::new();
     let mut server_public: Vec<u8> = Vec::new();
     for d in &chain {
         if d.obj.cp == cp::EXCSATRD {
@@ -342,14 +342,18 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
             }
         }
         if d.obj.cp == cp::ACCSECRD {
-            if let Some(m) = d.obj.child(cp::SECMEC).and_then(|c| c.as_u16()) {
-                secmec = m;
-            }
-            if let Some(t) = d.obj.child(cp::SECTKN) {
-                server_public = t.value;
-            }
+            let (list, tkn) = accsecrd_parts(&d.obj);
+            offered = list;
+            server_public = tkn.unwrap_or_default();
         }
     }
+    let secmec = pick_secmec(&offered, server_public.len() == 32).ok_or_else(|| DbError {
+        code: None,
+        message: format!(
+            "DRDA: server offers security mechanisms {offered:?}; supported = EUSRIDPWD (9) and USRIDPWD (3) - use TLS (?tls=required) for SERVER_ENCRYPT/GSS setups"
+        ),
+        position: None,
+    })?;
     let secchk = match secmec {
         cp::SECMEC_EUSRIDPWD if server_public.len() == 32 => {
             let shared = crate::dh::shared_secret(&server_public, &private);
@@ -395,9 +399,7 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
         m => {
             return Err(DbError {
                 code: None,
-                message: format!(
-                    "DRDA: server requires security mechanism {m}; supported = EUSRIDPWD (9) and USRIDPWD (3) - use TLS (?tls=required) for SERVER_ENCRYPT/GSS setups"
-                ),
+                message: format!("DRDA: unexpected security mechanism {m}"),
                 position: None,
             });
         }
@@ -469,6 +471,37 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
     Ok(info)
 }
 
+/// ACCSECRD → (서버가 제안하는 SECMEC 목록(2바이트 × N · CI 10-25 실측 = `0008 11A2 0003 0005` = {3, 5} · 요청 9 미지원이면 SECCHKCD 0x01) ·
+/// SECTKN(서버 DH 공개키 · 9일 때만)).
+pub fn accsecrd_parts(obj: &Ddm) -> (Vec<u16>, Option<Vec<u8>>) {
+    let mut list = Vec::new();
+    let mut tkn = None;
+    for c in obj.children() {
+        match c.cp {
+            cp::SECMEC => {
+                for p in c.value.as_chunks::<2>().0 {
+                    list.push(u16::from_be_bytes(*p));
+                }
+            }
+            cp::SECTKN => tkn = Some(c.value),
+            _ => {}
+        }
+    }
+    (list, tkn)
+}
+
+/// 우리가 쓸 메커니즘: 9(서버 공개키 있음) > 3 > 없음.
+#[must_use]
+pub fn pick_secmec(offered: &[u16], has_server_key: bool) -> Option<u16> {
+    if offered.contains(&cp::SECMEC_EUSRIDPWD) && has_server_key {
+        Some(cp::SECMEC_EUSRIDPWD)
+    } else if offered.contains(&cp::SECMEC_USRIDPWD) {
+        Some(cp::SECMEC_USRIDPWD)
+    } else {
+        None
+    }
+}
+
 /// 상관 토큰(CRRTKN · 접속마다 고유 · 서버 모니터의 CLIENT_... 표시) — `nsql.<pid>.<nanos>` EBCDIC.
 fn correlation_token(ext: &str) -> Vec<u8> {
     let nanos = std::time::SystemTime::now()
@@ -527,5 +560,17 @@ mod tests {
             ..ServerInfo::default()
         }
         .little_endian());
+        // ★ CI 10-25 실측 ACCSECRD = SECMEC 목록 {3, 5} + SECCHKCD 1(9 미지원) · SECTKN 없음 → 3 선택 · 9 + 공개키면 9 · 둘 다 없으면 None.
+        let raw = [
+            0x00, 0x11, 0x14, 0xAC, 0x00, 0x08, 0x11, 0xA2, 0x00, 0x03, 0x00, 0x05, 0x00, 0x05,
+            0x11, 0xA4, 0x01,
+        ];
+        let objs = crate::dss::parse_objects(&raw).unwrap();
+        let (list, tkn) = accsecrd_parts(&objs[0]);
+        assert_eq!((list.clone(), tkn.is_none()), (vec![3, 5], true));
+        assert_eq!(pick_secmec(&list, false), Some(3));
+        assert_eq!(pick_secmec(&[9, 3], true), Some(9));
+        assert_eq!(pick_secmec(&[9], false), None, "9인데 서버 공개키 없음");
+        assert_eq!(pick_secmec(&[7, 8], false), None);
     }
 }
