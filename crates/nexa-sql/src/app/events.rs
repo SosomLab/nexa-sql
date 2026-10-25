@@ -623,7 +623,7 @@ impl App {
                 match &it.error {
                     Some(m) => log.error(i, None, m),
                     None => {
-                        log.done(i, it.rows, it.elapsed);
+                        log.done(i, it.rows, it.elapsed, "");
                         if attach && !it.guard {
                             log.attach_tx(i, stamp, true);
                         }
@@ -1195,6 +1195,7 @@ impl App {
                     index,
                     rows_affected,
                     elapsed,
+                    delivery,
                 } => {
                     let secs = format!("{:.3}", elapsed.as_secs_f64());
                     self.sess.status = match rows_affected {
@@ -1207,9 +1208,12 @@ impl App {
                         .get(index)
                         .cloned()
                         .unwrap_or_default();
-                    self.txlog
-                        .select_session(self.sess.id)
-                        .done(index, rows_affected, elapsed);
+                    self.txlog.select_session(self.sess.id).done(
+                        index,
+                        rows_affected,
+                        elapsed,
+                        &delivery,
+                    );
                     self.run_toast.set_phase(
                         self.sess.run_card,
                         runtoast::Phase::Done {

@@ -199,6 +199,8 @@ pub struct TxEntry {
     pub index: usize,
     /// 실제로 매핑된 바인드 변수(실행 직전 러너가 준다 · 없으면 빈 목록 · docs/44 §9).
     pub binds: Vec<TxBind>,
+    /// ★ T-416 전달 모드 꼬리표(`bind N` · `declare-prepend` · `inline N` · 빈 글 = 없음).
+    pub delivery: String,
 }
 
 impl TxEntry {
@@ -367,6 +369,7 @@ impl TxLog {
             tx: None,
             index,
             binds: Vec::new(),
+            delivery: String::new(),
         });
         let cur = self.cur;
         self.current.retain(|(s, i, _)| !(*s == cur && *i == index));
@@ -401,11 +404,18 @@ impl TxLog {
     }
 
     /// DML/DDL 완료.
-    pub fn done(&mut self, index: usize, rows_affected: Option<u64>, elapsed: Duration) {
+    pub fn done(
+        &mut self,
+        index: usize,
+        rows_affected: Option<u64>,
+        elapsed: Duration,
+        delivery: &str,
+    ) {
         if let Some(e) = self.entry_mut(index) {
             e.rows = rows_affected;
             e.duration = Some(elapsed);
             e.result = ExecOutcome::Ok;
+            e.delivery = delivery.to_string();
         }
     }
 
@@ -621,7 +631,7 @@ mod tests {
         let mut l = TxLog::new(100);
         l.begin_batch();
         l.begin(at(1), 7, Purpose::User, 0, "UPDATE t SET a=1");
-        l.done(0, Some(1), Duration::from_millis(15));
+        l.done(0, Some(1), Duration::from_millis(15), "bind 1");
         l.attach_tx(0, at(1), true);
         l.begin(at(2), 7, Purpose::User, 1, "SELECT * FROM t");
         l.result(1, 3, Duration::from_millis(9));
@@ -679,10 +689,10 @@ mod tests {
             .begin(at(2), 8, Purpose::User, 0, "UPDATE b SET y=2");
         // 세션 2가 먼저 끝난다 — 세션 1의 index 0을 건드리지 않는다.
         l.select_session(2)
-            .done(0, Some(5), Duration::from_millis(3));
+            .done(0, Some(5), Duration::from_millis(3), "");
         l.select_session(2).attach_tx(0, at(2), true);
         l.select_session(1)
-            .done(0, Some(1), Duration::from_millis(9));
+            .done(0, Some(1), Duration::from_millis(9), "");
         l.select_session(1).attach_tx(0, at(3), true);
         let all = TxFilter {
             previous: true,

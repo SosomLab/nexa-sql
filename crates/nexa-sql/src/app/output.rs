@@ -254,13 +254,18 @@ impl App {
                 index,
                 rows_affected,
                 elapsed,
+                delivery,
             } => {
                 if done_lines {
                     let n = (index + 1).to_string();
-                    let line = match rows_affected {
+                    let mut line = match rows_affected {
                         Some(r) => tf(Msg::OutStmtDoneRows, &[&n, &r.to_string(), &ms(elapsed)]),
                         None => tf(Msg::OutStmtDone, &[&n, &ms(elapsed)]),
                     };
+                    // 전달 모드 꼬리표(T-416 · 매개변수 있을 때만).
+                    if !delivery.is_empty() {
+                        line.push_str(&format!(" · {delivery}"));
+                    }
                     self.output_push(ed, OutKind::Info, &line);
                 }
             }

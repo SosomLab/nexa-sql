@@ -1160,6 +1160,7 @@ pub(crate) fn spawn(
                                     index: 0,
                                     rows_affected: None,
                                     elapsed: t0.elapsed(),
+                                    delivery: String::new(),
                                 });
                                 0
                             }
@@ -2188,6 +2189,7 @@ mod tests {
             index: 0,
             rows_affected: None,
             elapsed: std::time::Duration::ZERO,
+            delivery: String::new(),
         };
         match super::merge_vars(done, mk(&["Z"], Vec::new())) {
             RunEvent::Vars { changed, .. } => assert_eq!(changed, vec!["Z"]),

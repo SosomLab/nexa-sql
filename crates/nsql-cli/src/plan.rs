@@ -75,9 +75,19 @@ pub(crate) fn run_plan(
                         expect_out,
                         kind,
                     } => {
+                        // 전달 모드 꼬리표(T-416 · 실행 로그와 같은 글 · 매개변수 없으면 `no params`).
+                        let tag = nsql_script::delivery_tag(
+                            prepared.mode,
+                            prepared.params.len(),
+                            Some(dialect),
+                        );
                         println!(
-                            "  → EXECUTE ({kind:?} · {:?} · out={expect_out})",
-                            prepared.mode
+                            "  → EXECUTE ({kind:?} · {} · out={expect_out})",
+                            if tag.is_empty() {
+                                "no params"
+                            } else {
+                                tag.as_str()
+                            }
                         );
                         for l in prepared.sql.lines() {
                             println!("    | {l}");

@@ -670,6 +670,9 @@ impl TxLogWin {
                     e.rows.map(|n| n.to_string()).unwrap_or_default(),
                     match &e.result {
                         ExecOutcome::Running => t(Msg::TxResRunning).to_string(),
+                        ExecOutcome::Ok if !e.delivery.is_empty() => {
+                            format!("{} · {}", t(Msg::TxResOk), e.delivery)
+                        }
                         ExecOutcome::Ok => t(Msg::TxResOk).to_string(),
                         ExecOutcome::Err { code, message } => match code {
                             Some(c) => format!("[{c}] {message}"),

@@ -50,6 +50,24 @@ pub fn default_delivery(dialect: Dialect) -> Delivery {
     }
 }
 
+/// ★ T-416 가시성: 문장 한 건의 **전달 모드 꼬리표**(실행 로그 · 트랜잭션 로그 · `nsql plan` 공용 · 영어 고정) — `bind N` · `declare-prepend` ·
+/// `inline N`(바인드 없는 방언) · 매개변수 0 = 빈 글(꼬리표 없음).
+#[must_use]
+pub fn delivery_tag(
+    mode: crate::dialect::PrepareMode,
+    nparams: usize,
+    dialect: Option<Dialect>,
+) -> String {
+    match mode {
+        crate::dialect::PrepareMode::DeclarePrepend => Delivery::DeclarePrepend.label().to_string(),
+        crate::dialect::PrepareMode::Bind if nparams == 0 => String::new(),
+        crate::dialect::PrepareMode::Bind => {
+            let d = dialect.map_or(Delivery::Bind, default_delivery);
+            format!("{} {nparams}", d.label())
+        }
+    }
+}
+
 /// 입력 창의 친 글을 **고른 타입**으로 해석한다(T-153 · 사용자 10-26 "타입 콤보") — 빈 글·`NULL` = Null ·
 /// `Auto` = 리터럴 추정(`parse_literal` · 실패 = 글자) · 숫자형 = 숫자로 읽히면 숫자 아니면 글자 그대로(서버가 판정) ·
 /// 글자형 = 글자 그대로(`'123'`도 글자) · DATE/TIMESTAMP = 글자(드라이버가 타입으로 바인드) · BOOLEAN = true/false/yes/no/1/0.
@@ -493,6 +511,24 @@ mod tests {
         );
         assert_eq!(default_delivery(Dialect::Mssql), Delivery::Bind);
         assert_eq!(Delivery::DeclarePrepend.label(), "declare-prepend");
+        use crate::dialect::PrepareMode;
+        assert_eq!(
+            delivery_tag(PrepareMode::Bind, 0, Some(Dialect::Oracle)),
+            ""
+        );
+        assert_eq!(
+            delivery_tag(PrepareMode::Bind, 2, Some(Dialect::Oracle)),
+            "bind 2"
+        );
+        assert_eq!(
+            delivery_tag(PrepareMode::Bind, 1, Some(Dialect::Clickhouse)),
+            "inline 1"
+        );
+        assert_eq!(
+            delivery_tag(PrepareMode::DeclarePrepend, 3, Some(Dialect::Mssql)),
+            "declare-prepend"
+        );
+        assert_eq!(delivery_tag(PrepareMode::Bind, 1, None), "bind 1");
     }
     /// `${이름:형식}`의 형식 접미(`:q` · `:lower`)는 바인드가 아니다 — 묻지 않는다(사용자 10-03) · 진짜 바인드는 그대로 묻는다.
     /// D-272: 접두를 끄고 넘겨도(너그러운 방언) 스크립트의 `SET DEFINE ON` 뒤 `&D`는 빠진 입력이다 · `SET DEFINE`이 없으면 비어 있다.

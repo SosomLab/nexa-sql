@@ -45,8 +45,8 @@ pub use connect::{ConnEnv, ConnectSpec, ENV_CHOICES};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine, SYSTEM_VARS};
 pub use inputs::{
-    default_delivery, input_preview, macro_refs, missing_inputs, typed_input, Delivery, InputKind,
-    InputNeed,
+    default_delivery, delivery_tag, input_preview, macro_refs, missing_inputs, typed_input,
+    Delivery, InputKind, InputNeed,
 };
 pub use lang::{lang, set_lang, Lang};
 pub use macros::{MacroLayer, MacroStore};

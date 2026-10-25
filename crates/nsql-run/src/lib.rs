@@ -309,6 +309,8 @@ pub enum RunEvent {
         index: usize,
         rows_affected: Option<u64>,
         elapsed: Duration,
+        /// ★ T-416 전달 모드 꼬리표(`bind N` · `declare-prepend` · `inline N` · 빈 글 = 매개변수 없음 · `nsql_script::delivery_tag`).
+        delivery: String,
     },
     /// `PRINT` — 이름·값.
     Print {
@@ -390,10 +392,19 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         RunEvent::Done {
             rows_affected,
             elapsed,
+            delivery,
             ..
-        } => vec![LogEntry::new(LogKind::Done, t(Msg::LogDone))
-            .rows(*rows_affected)
-            .elapsed(*elapsed)],
+        } => {
+            // 전달 모드 꼬리표(T-416) — 매개변수가 있을 때만 붙는다.
+            let text = if delivery.is_empty() {
+                t(Msg::LogDone).to_string()
+            } else {
+                format!("{} · {delivery}", t(Msg::LogDone))
+            };
+            vec![LogEntry::new(LogKind::Done, &text)
+                .rows(*rows_affected)
+                .elapsed(*elapsed)]
+        }
         // 값까지(mac 09-21 — 종전에는 이름만 이어 붙여 GUI에서는 `PRINT`로 값을 볼 수 없었다) · 비밀 이름은 가림(D-140).
         RunEvent::Print { pairs } => vec![LogEntry::new(
             LogKind::Info,
@@ -2881,6 +2892,7 @@ impl Runner {
         let names: Vec<String> = prepared.params.iter().map(|p| p.name.clone()).collect();
         let captures = std::mem::take(&mut prepared.captures);
         let mode = prepared.mode;
+        let dialect_now = session.dialect();
         let line_offset = prepared.line_offset;
         let started = Instant::now();
         let request = prepared.into_request();
@@ -2995,6 +3007,7 @@ impl Runner {
                         index,
                         rows_affected: result.rows_affected,
                         elapsed,
+                        delivery: nsql_script::delivery_tag(mode, names.len(), Some(dialect_now)),
                     });
                 }
                 self.hold_note(index, item, result.rows_affected);
