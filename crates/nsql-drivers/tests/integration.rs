@@ -1998,10 +1998,59 @@ fn db2_lob_clob_blob_round_trip() {
     s.commit().expect("commit");
 }
 
-/// ★ 미비사항(10-25): DBCLOB(413 → 0xCD · UTF-16BE) · XML(989 → 0xCF · UTF-8) **입력** 경로 검증 — CLOB/BLOB만 실측된 EXTDTA 입력의 나머지 두 타입 왕복.
-/// 실패하면 서버가 거부한 타입 코드·오류를 그대로 보고(별도 시험이라 LOB 본 시험은 영향 없음).
+/// ★ 미비사항(10-25): DBCLOB **입력**(CLOB과 같은 0xCF · UTF-8 · 서버 변환) 왕복 + 읽기(0xCD EXTDTA = UTF-16BE 복원).
 #[test]
-fn db2_lob_dbclob_xml_round_trip() {
+fn db2_lob_dbclob_round_trip() {
+    use nsql_core::{BindParam, Direction, ExecRequest, VarType};
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).unwrap_or_else(|e| panic!("Db2 접속 실패: {}", e.message));
+    let exec = |s: &mut Box<dyn Session>, sql: &str, params: Vec<BindParam>| {
+        s.execute(&ExecRequest {
+            sql: sql.to_string(),
+            params,
+        })
+    };
+    let _ = exec(&mut s, "DROP TABLE NSQLT_DB2D", Vec::new());
+    exec(
+        &mut s,
+        "CREATE TABLE NSQLT_DB2D (ID INTEGER NOT NULL PRIMARY KEY, D DBCLOB(1M))",
+        Vec::new(),
+    )
+    .expect("create");
+    let dtext: String = "한글 dbclob ".repeat(300);
+    exec(
+        &mut s,
+        "INSERT INTO NSQLT_DB2D (ID, D) VALUES (?, ?)",
+        vec![
+            BindParam {
+                name: "ID".into(),
+                value: Value::Int(1),
+                ty: VarType::Number,
+                direction: Direction::In,
+            },
+            BindParam {
+                name: "D".into(),
+                value: Value::Str(dtext.clone()),
+                ty: VarType::Clob,
+                direction: Direction::In,
+            },
+        ],
+    )
+    .expect("insert dbclob");
+    s.commit().expect("commit");
+    let r = exec(&mut s, "SELECT ID, D FROM NSQLT_DB2D", Vec::new()).expect("select dbclob");
+    let rs = &r.result_sets[0];
+    assert_eq!(rs.rows.len(), 1);
+    assert_eq!(rs.rows[0][1], Value::Str(dtext), "DBCLOB round trip");
+    exec(&mut s, "DROP TABLE NSQLT_DB2D", Vec::new()).expect("drop");
+    s.commit().expect("commit");
+}
+
+/// ★ 미비사항(10-25): XML **입력** = `?`를 `XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))`로 재작성(CLOB 경로) → XMLSERIALIZE로 읽어 조각 비교.
+#[test]
+fn db2_lob_xml_round_trip() {
     use nsql_core::{BindParam, Direction, ExecRequest, VarType};
     let Some(spec) = db2_spec() else {
         return;
@@ -2016,49 +2065,40 @@ fn db2_lob_dbclob_xml_round_trip() {
     let _ = exec(&mut s, "DROP TABLE NSQLT_DB2X", Vec::new());
     exec(
         &mut s,
-        "CREATE TABLE NSQLT_DB2X (ID INTEGER NOT NULL PRIMARY KEY, D DBCLOB(1M), X XML)",
+        "CREATE TABLE NSQLT_DB2X (ID INTEGER NOT NULL PRIMARY KEY, X XML)",
         Vec::new(),
     )
     .expect("create");
-    let p = |name: &str, v: Value, ty: VarType| BindParam {
-        name: name.into(),
-        value: v,
-        ty,
-        direction: Direction::In,
-    };
-    let dtext: String = "한글 dbclob ".repeat(300);
     let xml = "<doc><item n=\"1\">한글</item><item n=\"2\">two</item></doc>";
-    // 두 INSERT로 나눠 어느 타입이 막히는지 CI 로그가 가르게(CI 40182063764 = 합쳐 보냈을 때 SYNTAXRM "lob lengths don't match").
-    exec(
-        &mut s,
-        "INSERT INTO NSQLT_DB2X (ID, D) VALUES (?, ?)",
-        vec![
-            p("ID", Value::Int(1), VarType::Number),
-            p("D", Value::Str(dtext.clone()), VarType::Clob),
-        ],
-    )
-    .expect("insert dbclob");
     exec(
         &mut s,
         "INSERT INTO NSQLT_DB2X (ID, X) VALUES (?, ?)",
         vec![
-            p("ID", Value::Int(2), VarType::Number),
-            p("X", Value::Str(xml.to_string()), VarType::Clob),
+            BindParam {
+                name: "ID".into(),
+                value: Value::Int(2),
+                ty: VarType::Number,
+                direction: Direction::In,
+            },
+            BindParam {
+                name: "X".into(),
+                value: Value::Str(xml.to_string()),
+                ty: VarType::Clob,
+                direction: Direction::In,
+            },
         ],
     )
     .expect("insert xml");
     s.commit().expect("commit");
-    // XML은 직렬화해서 읽는다(XMLSERIALIZE → CLOB · 선언부 없이) — 공백·순서는 서버가 정규화할 수 있어 조각으로 비교.
     let r = exec(
         &mut s,
-        "SELECT ID, D, XMLSERIALIZE(X AS CLOB(1M)) FROM NSQLT_DB2X ORDER BY ID",
+        "SELECT ID, XMLSERIALIZE(X AS CLOB(1M)) FROM NSQLT_DB2X",
         Vec::new(),
     )
-    .expect("select dbclob+xml");
+    .expect("select xml");
     let rs = &r.result_sets[0];
-    assert_eq!(rs.rows.len(), 2);
-    assert_eq!(rs.rows[0][1], Value::Str(dtext), "DBCLOB round trip");
-    let got = match &rs.rows[1][2] {
+    assert_eq!(rs.rows.len(), 1);
+    let got = match &rs.rows[0][1] {
         Value::Str(t) => t.clone(),
         other => panic!("XML serialized as {other:?}"),
     };

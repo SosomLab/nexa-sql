@@ -802,13 +802,13 @@ fn is_lob_type(sqltype: u16) -> bool {
     matches!(sqltype | 1, 405 | 409 | 413 | 989)
 }
 
-/// LOB 값의 전송 바이트 — BLOB = 그대로 · CLOB/XML = UTF-8(CCSID 1208 · 0xCF NLOBCMIXED) · DBCLOB = UTF-16BE(0xCD NLOBCDBCS).
+/// LOB 값의 전송 바이트 — BLOB = 그대로 · CLOB/DBCLOB/XML = UTF-8(CCSID 1208 · 0xCF NLOBCMIXED · 서버가 DBCLOB으로 변환).
+/// ★ DBCLOB을 0xCD(NLOBCDBCS · UTF-16BE)로 보내면 길이를 바이트·문자 어느 쪽으로 해도 DTAMCHRM −30020(CI 40182500195 · 40183010063) →
+///   CLOB 경로와 같은 형식으로(추정 ⓐ → CI 확정).
 fn lob_bytes(p: &SqlDaCol, v: &Value) -> Vec<u8> {
     match (p.sqltype | 1, v) {
         (405, Value::Bytes(b)) => b.clone(),
         (405, other) => value_text(other).into_bytes(),
-        (413, Value::Bytes(b)) => utf16be(&String::from_utf8_lossy(b)),
-        (413, other) => utf16be(&value_text(other)),
         (_, Value::Bytes(b)) => b.clone(),
         (_, other) => value_text(other).into_bytes(),
     }
@@ -823,11 +823,7 @@ fn fdodsc_entry(p: &SqlDaCol) -> Result<Vec<u8>, DbError> {
     if is_lob_type(t) {
         // ★ 2차 ⑥(derby `computeProtocolTypesAndLengths`): 행 안에는 길이 자리표시만(널 지시자 + n B) · 값은 EXTDTA 객체로(매개변수 순서).
         //   VARGRAPHIC(0x39)으로 보내면 DTAMCHRM −30020(CI 40149862498).
-        let code = match t {
-            405 => 0xC9,
-            413 => 0xCD,
-            _ => 0xCF,
-        };
+        let code = if t == 405 { 0xC9 } else { 0xCF };
         return Ok(vec![code, 0x80, LOB_PLACEHOLDER]);
     }
     Ok(match t {
@@ -1345,7 +1341,7 @@ mod tests {
         assert_eq!(ext.len(), 2);
         assert_eq!(ext[0], [&[0x00u8][..], "한".as_bytes()].concat());
         assert_eq!((ext[1][0], ext[1].len()), (0x00, 40_001));
-        // DBCLOB(413) = 0xCD · EXTDTA는 UTF-16BE · 자리표시 길이 = 문자 수(바이트/2).
+        // DBCLOB(413) = CLOB과 같은 0xCF · UTF-8(서버 변환) · 자리표시 길이 = 바이트.
         let dp = [SqlDaCol {
             sqltype: 413,
             length: 1_048_576,
@@ -1354,15 +1350,15 @@ mod tests {
         }];
         let (v, ext) = encode_sqldta(&dp, &[Value::Str("한a".into())], true).unwrap();
         let objs = crate::dss::parse_objects(&v).unwrap();
-        assert_eq!(&objs[0].value[3..6], &[0xCD, 0x80, 0x09]);
+        assert_eq!(&objs[0].value[3..6], &[0xCF, 0x80, 0x09]);
         let d = &objs[1].value;
         let at = d.len() - 10;
         assert_eq!(
             &d[at..],
             &[0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 4],
-            "길이 = 4 B(UTF-16BE 2자)"
+            "길이 = 4 B(UTF-8 '한a')"
         );
-        assert_eq!(ext[0], vec![0x00, 0xD5, 0x5C, 0x00, 0x61]);
+        assert_eq!(ext[0], [&[0x00u8][..], "한a".as_bytes()].concat());
         // XML 재작성: k번째 `?`만 · 문자열·주석 안 `?`는 세지 않는다.
         assert_eq!(
             replace_placeholder(
