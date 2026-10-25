@@ -358,6 +358,8 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 ## 6. 이어 받을 일 — 맥 88차(09-21) 끝의 상태와 다음 순서
 
+> ★ **09-21 기준 기록 · 이후 진행은 [STATUS](STATUS.md) 맨 위 "다음 세션 시작점"과 [TODO](TODO.md) 🚧/P1을 본다**(10-25 · T-150·T-151·T-152 ✅ · T-154 = Windows 실기 = 사용자 몫 · 아래 표는 당시 순서 그대로 둔다).
+>
 > 상태: nexa-sql `main` = 88차 마감 · CI `ci` ✅ · `integration` ✅ 9/9(Oracle·SQL Server·PostgreSQL 컨테이너) · nexa-ui `main` = 50차. 설계 SSOT = [63 변수 관리](63-variable-management.md)(단계표 §5 · 결정 §7) · 기록 = [journal 09-21](journal/2026-09-21.md).
 
 | 순서 | 할 일 | 어디를 고치나 · 어떻게 확인하나 |

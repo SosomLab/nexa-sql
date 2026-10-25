@@ -87,5 +87,5 @@
 
 ## 4. 새 세션 오리엔테이션
 
-1. 이 파일 + [docs/61](docs/61-core-design-and-working-rules.md)(규칙·불변식·OS별 차이) + [docs/00](docs/00-foundation-report.md) → 2. [STATUS](docs/STATUS.md) 맨 위 → 3. [TODO](docs/TODO.md)의 🔧/P1부터(지금 = **T-154 Windows 실기 → T-150 PG refcursor → T-151 → T-152 `Caps` → T-153** · 그 밖 T-145 · 순서와 고칠 자리 = [docs/61 §6](docs/61-core-design-and-working-rules.md)).
+1. 이 파일 + [docs/61](docs/61-core-design-and-working-rules.md)(규칙·불변식·OS별 차이) + [docs/00](docs/00-foundation-report.md) → 2. [STATUS](docs/STATUS.md) 맨 위 → 3. [STATUS](docs/STATUS.md) 맨 위 "다음 세션 시작점" + [TODO](docs/TODO.md)의 🚧/P1 순(지금 = T-154 Windows 실기 = 사용자 몫 · 개발 잔여 = **T-145** 편집기 줄 단위 갱신(진행) · T-153 변수 UX 잔여(hover 값 · 입력 창 타입 열 · MacroStore · 프로필 층 연결 · 이름 없는 탭 보존) · T-427 DuckDB bundled · [docs/61 §6](docs/61-core-design-and-working-rules.md)은 09-21 기준 기록).
 2. 새 PC면 형제 저장소 `../nexa-ui`·`../nexa-license`(공개 · 검증 전용 · `nsql-license`가 path 의존)를 **먼저** pull(path 의존) → 세 저장소 `cargo test --workspace` → [docs/61 §3](docs/61-core-design-and-working-rules.md) "맥에서 처음 할 일".
