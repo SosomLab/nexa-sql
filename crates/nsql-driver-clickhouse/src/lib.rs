@@ -117,6 +117,144 @@ fn literal(v: &Value) -> String {
     }
 }
 
+/// ★ T-417(123 §4 · 사용자 10-26): **서버 측 매개변수** — 조회 문장의 `?`를 `{pN:Type}`로 바꾸고 값은 URL `param_pN=`(TSV escaped 꼴)로 보낸다
+/// (ClickHouse HTTP · 주입 차단 · 타입은 서버가 검사). 조회가 아니거나(INSERT·DDL = 공식 보장 없음) 이진 값이 있으면 `None` → 리터럴 치환 폴백.
+/// `NSQL_CH_INLINE=1` = 진단용 강제 폴백.
+fn server_params(sql: &str, params: &[BindParam]) -> Option<(String, Vec<(String, String)>)> {
+    if params.is_empty() || !sql.contains('?') || !is_query(sql) {
+        return None;
+    }
+    if std::env::var_os("NSQL_CH_INLINE").is_some() {
+        return None;
+    }
+    if params
+        .iter()
+        .any(|p| matches!(p.value, Value::Bytes(_) | Value::Cursor(_)))
+    {
+        return None;
+    }
+    let mut pairs: Vec<(String, String)> = Vec::with_capacity(params.len());
+    let mut k = 0usize;
+    let rewritten = replace_placeholders(sql, &mut |_| {
+        let out = match params.get(k) {
+            Some(p) => {
+                let (ty, val) = ch_param(p);
+                pairs.push((format!("param_p{k}"), val));
+                format!("{{p{k}:{ty}}}")
+            }
+            None => "NULL".to_string(),
+        };
+        k += 1;
+        out
+    });
+    Some((rewritten, pairs))
+}
+
+/// 바인드 값 → (ClickHouse 타입 · TSV escaped 값). NULL = `Nullable(String)` + `\N` · 정수 Int64 · 실수 Float64 · 소수 Decimal(38,s) ·
+/// 불리언 Bool · 글자 = 변수 타입이 DATE/TIMESTAMP면 Date32/DateTime64(6) 아니면 String.
+fn ch_param(p: &BindParam) -> (String, String) {
+    match &p.value {
+        Value::Null | Value::Cursor(_) => ("Nullable(String)".into(), "\\N".into()),
+        Value::Int(i) => ("Int64".into(), i.to_string()),
+        Value::Float(f) => ("Float64".into(), format!("{f:?}")),
+        Value::Decimal(d) => {
+            let scale = d.split_once('.').map_or(0, |(_, frac)| frac.len()).min(38);
+            (format!("Decimal(38,{scale})"), d.clone())
+        }
+        Value::Bool(b) => ("Bool".into(), if *b { "true" } else { "false" }.into()),
+        Value::Str(s) => {
+            let ty = match p.ty {
+                nsql_core::VarType::Date => "Date32",
+                nsql_core::VarType::Timestamp => "DateTime64(6)",
+                _ => "String",
+            };
+            (ty.into(), tsv_escape(s))
+        }
+        Value::Bytes(b) => {
+            let hex: String = b.iter().map(|x| format!("{x:02X}")).collect();
+            ("String".into(), hex)
+        }
+    }
+}
+
+/// ClickHouse "escaped"(TSV) 꼴 — `\` · 탭 · 줄바꿈 · CR · NUL(퍼센트 인코딩은 URL 조립이 한다).
+fn tsv_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `?` 자리(문자열·식별자 따옴표·주석 밖)마다 `repl(k)`로 바꾼다 — 리터럴 치환·서버 매개변수 공용 스캐너.
+fn replace_placeholders(sql: &str, repl: &mut dyn FnMut(usize) -> String) -> String {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len() + 32);
+    let (mut i, mut pi) = (0usize, 0usize);
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' | '"' | '`' => {
+                out.push(c);
+                i += 1;
+                while i < chars.len() {
+                    let d = chars[i];
+                    out.push(d);
+                    i += 1;
+                    if d == '\\' && i < chars.len() {
+                        out.push(chars[i]);
+                        i += 1;
+                        continue;
+                    }
+                    if d == c {
+                        if i < chars.len() && chars[i] == c {
+                            out.push(c);
+                            i += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                out.push_str("/*");
+                i += 2;
+                while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    out.push_str("*/");
+                    i += 2;
+                }
+            }
+            '?' => {
+                out.push_str(&repl(pi));
+                pi += 1;
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 /// `?` 자리를 리터럴로 치환(문자열·식별자 따옴표·주석 안은 건너뛴다 · 모자라는 매개변수는 NULL).
 fn inline_params(sql: &str, params: &[BindParam]) -> String {
     if params.is_empty() || !sql.contains('?') {
@@ -568,11 +706,18 @@ impl ChSession {
         parse_compact(&String::from_utf8_lossy(&body), 0)
     }
 
-    fn run(&mut self, sql: &str, qid: &str) -> Result<ExecResult, DbError> {
+    fn run(
+        &mut self,
+        sql: &str,
+        qid: &str,
+        server_params: &[(String, String)],
+    ) -> Result<ExecResult, DbError> {
         let (sql, _stripped) = strip_format(sql);
         let query = is_query(&sql);
         let max = self.max_rows.to_string();
         let mut extra: Vec<(&str, &str)> = vec![("query_id", qid)];
+        // T-417 서버 측 매개변수(`param_pN=값` · 값은 URL 조립이 퍼센트 인코딩).
+        extra.extend(server_params.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         if query {
             extra.push(("default_format", "JSONCompact"));
             if self.max_rows > 0 {
@@ -625,7 +770,11 @@ impl Session for ChSession {
     }
 
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
-        let sql = inline_params(&req.sql, &req.params);
+        // T-417: 조회 = 서버 매개변수(`{pN:Type}` + `param_pN=`) · 그 밖/이진 = 리터럴 치환(종전).
+        let (sql, sp) = match server_params(&req.sql, &req.params) {
+            Some((s, p)) => (s, p),
+            None => (inline_params(&req.sql, &req.params), Vec::new()),
+        };
         let trimmed = sql.trim().trim_end_matches(';').trim().to_string();
         if let Some(db) = parse_use(&trimmed) {
             self.database = db;
@@ -639,7 +788,7 @@ impl Session for ChSession {
             .active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(qid.clone());
-        let r = self.run(&trimmed, &qid);
+        let r = self.run(&trimmed, &qid, &sp);
         *self
             .active
             .lock()
@@ -793,6 +942,51 @@ nsql_abi::export_driver!("clickhouse", "clickhouse", nsql_abi_open_from_spec);
 mod tests {
     use super::*;
     use nsql_core::{Direction, VarType};
+
+    fn bp(name: &str, v: Value, ty: VarType) -> BindParam {
+        BindParam {
+            name: name.into(),
+            value: v,
+            ty,
+            direction: Direction::In,
+        }
+    }
+
+    /// T-417: 조회 = `{pN:Type}` + `param_pN`(TSV escaped) · 타입 매핑 · NULL · 비조회/이진 = None(리터럴 폴백).
+    #[test]
+    fn server_params_rewrite_types_and_fallback() {
+        let ps = vec![
+            bp("A", Value::Int(7), VarType::Number),
+            bp("B", Value::Str("x\ty'z".into()), VarType::Auto),
+            bp("C", Value::Null, VarType::Auto),
+            bp("D", Value::Decimal("12.345".into()), VarType::Number),
+            bp("E", Value::Str("2026-10-26".into()), VarType::Date),
+            bp("F", Value::Bool(true), VarType::Boolean),
+        ];
+        let (sql, pairs) = server_params(
+            "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f FROM t WHERE s = '?' -- ?",
+            &ps,
+        )
+        .expect("query → server params");
+        assert_eq!(
+            sql,
+            "SELECT {p0:Int64} AS a, {p1:String} AS b, {p2:Nullable(String)} AS c, {p3:Decimal(38,3)} AS d, {p4:Date32} AS e, {p5:Bool} AS f FROM t WHERE s = '?' -- ?"
+        );
+        assert_eq!(pairs[0], ("param_p0".to_string(), "7".to_string()));
+        assert_eq!(
+            pairs[1],
+            ("param_p1".to_string(), "x\\ty'z".to_string()),
+            "탭 = \\t · 따옴표 그대로"
+        );
+        assert_eq!(pairs[2], ("param_p2".to_string(), "\\N".to_string()));
+        assert_eq!(pairs[5].1, "true");
+        // INSERT = 폴백(None) · 이진 값 = 폴백 · `NSQL_CH_INLINE` 없음 전제.
+        assert!(server_params("INSERT INTO t VALUES (?)", &ps[..1]).is_none());
+        assert!(
+            server_params("SELECT ?", &[bp("X", Value::Bytes(vec![1]), VarType::Blob)]).is_none()
+        );
+        assert!(server_params("SELECT 1", &[]).is_none());
+    }
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -1087,14 +1281,16 @@ mod tests {
             "{}",
             seen[0]
         );
+        // T-417: 조회의 바인드 = 서버 매개변수(`param_p0=0`) · 본문 `{p0:Int64}`.
         assert!(
-            seen[0].contains("&default_format=JSONCompact&query_id="),
+            seen[0].contains("default_format=JSONCompact") && seen[0].contains("query_id="),
             "{}",
             seen[0]
         );
+        assert!(seen[1].contains("param_p0=0"), "{}", seen[1]);
         assert!(seen[1].contains("max_result_rows") || !seen[1].contains("max_result_rows"));
         assert!(
-            seen[1].ends_with("SELECT n, s FROM t WHERE n > 0"),
+            seen[1].ends_with("SELECT n, s FROM t WHERE n > {p0:Int64}"),
             "{}",
             seen[1]
         );

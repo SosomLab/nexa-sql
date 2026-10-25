@@ -44,10 +44,9 @@ impl Delivery {
 /// 방언의 **기본** 전달 모드(문장별 예외 = DeclarePrepend는 러너가 그 문장에서 판정).
 #[must_use]
 pub fn default_delivery(dialect: Dialect) -> Delivery {
-    match dialect {
-        Dialect::Clickhouse => Delivery::Inline,
-        _ => Delivery::Bind,
-    }
+    // T-417(10-26): ClickHouse 조회는 서버 측 매개변수(`{p:Type}` + `param_`) = 바인드 · 비조회만 드라이버가 리터럴로(폴백).
+    let _ = dialect;
+    Delivery::Bind
 }
 
 /// ★ T-416 가시성: 문장 한 건의 **전달 모드 꼬리표**(실행 로그 · 트랜잭션 로그 · `nsql plan` 공용 · 영어 고정) — `bind N` · `declare-prepend` ·
@@ -503,7 +502,7 @@ mod tests {
         );
         assert_eq!(
             input_preview(InputKind::Bind, "x", &VarType::Auto, Dialect::Clickhouse),
-            "inline 'x'"
+            "bind 'x'"
         );
         assert_eq!(
             input_preview(InputKind::Macro, "EMP", &VarType::Auto, Dialect::Oracle),
@@ -522,7 +521,7 @@ mod tests {
         );
         assert_eq!(
             delivery_tag(PrepareMode::Bind, 1, Some(Dialect::Clickhouse)),
-            "inline 1"
+            "bind 1"
         );
         assert_eq!(
             delivery_tag(PrepareMode::DeclarePrepend, 3, Some(Dialect::Mssql)),
