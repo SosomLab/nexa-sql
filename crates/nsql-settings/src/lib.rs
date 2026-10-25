@@ -6630,6 +6630,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "outline.grid_columns",
+        cat: Msg::CatOutline,
+        label: Msg::LblOutlineGridColumns,
+        desc: Msg::DescOutlineGridColumns,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "outline.sort",
         cat: Msg::CatOutline,
         label: Msg::LblOutlineSort,

@@ -608,6 +608,8 @@ struct App {
     intel: intel::Intel,
     /// 아웃라인 패널(docs/76).
     outline_panel: outline_panel::OutlinePanel,
+    /// ★ T-423 ②: 아웃라인이 그리드 컬럼 목록을 보일 차례인가 — 마지막으로 포커스가 간 곳이 그리드(true)인가 편집기(false)인가(패널 자신·그 밖 포커스는 유지).
+    outline_grid: bool,
     project: project::Project,
     /// 확장 패널(활동 막대 "확장" · 확장 관리자가 켜져 있을 때만 · 사용자 09-19).
     ext_panel: ExtPanel,
@@ -2033,6 +2035,7 @@ fn main() {
         conn_modal: false,
         json_next: Instant::now(),
         focus: Focus::Editor,
+        outline_grid: false,
         txlog: nsql_run::txlog::TxLog::new(txlog_cap),
         sess,
         run_toast: runtoast::RunToast::new(),

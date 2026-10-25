@@ -41,6 +41,8 @@ pub(crate) struct OutlineCfg {
     /// 기본 펼침 깊이(0 = 전부 접힘 · 1 = 뿌리만 펼침 · …).
     pub expand_depth: u8,
     pub follow_caret: bool,
+    /// ★ T-423 ②: 결과 그리드에 포커스가 있으면 그 컬럼 목록을 보여 준다(`outline.grid_columns`).
+    pub grid_columns: bool,
     /// 형제 순서(T-423): 파일 순 · 이름순 · 종류별(종류 순 묶음 → 이름).
     pub sort: OutlineSort,
 }
@@ -90,6 +92,7 @@ impl Default for OutlineCfg {
             show_declared: true,
             expand_depth: 1,
             follow_caret: true,
+            grid_columns: true,
             sort: OutlineSort::Position,
         }
     }
@@ -105,6 +108,7 @@ pub(crate) fn outline_cfg(s: &Settings) -> OutlineCfg {
         show_declared: s.flag("outline.show_declared"),
         expand_depth: s.int("outline.expand_depth").clamp(0, 8) as u8,
         follow_caret: s.flag("outline.follow_caret"),
+        grid_columns: s.flag("outline.grid_columns"),
         sort: OutlineSort::parse(s.get("outline.sort").unwrap_or("position")),
     }
 }
@@ -254,13 +258,26 @@ struct Row {
     byte: usize,
     /// 글자 색인(캐럿 비교용 · `set_symbols`가 본문 한 번 걷어 채움).
     char_idx: usize,
+    /// 그리드 컬럼 모드(T-423 ②): (원본 열 번호 · 표시 중).
+    col: Option<(usize, bool)>,
 }
+
+/// 패널이 보여 주는 것 — 편집기 심볼(기본) 또는 결과 그리드의 컬럼 목록(T-423 ② · 그리드 포커스).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutlineMode {
+    Symbols,
+    GridColumns,
+}
+
+/// 그리드 모드 열쇠의 탭 비트(편집기 열쇠 `(탭, 세대)`와 겹치지 않게 · 접기 기억은 탭 단위로 공유).
+pub(crate) const GRID_KEY_BIT: u64 = 1 << 63;
 
 /// 접기 상태 열쇠 — 심볼 색인은 편집마다 바뀌므로 이름·종류로 기억한다.
 type FoldKey = (String, SymKind);
 
 pub(crate) struct OutlinePanel {
     visible: bool,
+    mode: OutlineMode,
     bounds: Rect,
     scale: f32,
     filter: FilterBar,
@@ -350,12 +367,33 @@ impl OutlinePanel {
         };
         self.sel = Some(r);
         self.menu_row = Some(r);
-        let items = vec![
-            CtxItem::item("goto", t(Msg::MnOutlineGoto)),
-            CtxItem::item("run", t(Msg::MnOutlineRunHere)),
-            CtxItem::Separator,
-            CtxItem::item("copy_name", t(Msg::MnCopyName)),
-        ];
+        let items = if self.mode == OutlineMode::GridColumns {
+            let shown = self
+                .rows
+                .get(r)
+                .and_then(|&i| self.all[i].col)
+                .is_some_and(|c| c.1);
+            vec![
+                CtxItem::item(
+                    "colshow",
+                    t(if shown {
+                        Msg::MnOutlineColHide
+                    } else {
+                        Msg::MnOutlineColShow
+                    }),
+                ),
+                CtxItem::item("colshowall", t(Msg::MnOutlineColShowAll)),
+                CtxItem::Separator,
+                CtxItem::item("copy_name", t(Msg::MnCopyName)),
+            ]
+        } else {
+            vec![
+                CtxItem::item("goto", t(Msg::MnOutlineGoto)),
+                CtxItem::item("run", t(Msg::MnOutlineRunHere)),
+                CtxItem::Separator,
+                CtxItem::item("copy_name", t(Msg::MnCopyName)),
+            ]
+        };
         let text_w = (self.row_h * 10).max(180);
         let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
         crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
@@ -370,6 +408,10 @@ impl OutlinePanel {
             "goto" => Some(format!("outline.goto:{}", row.byte)),
             "run" => Some(format!("outline.run:{}", row.byte)),
             "copy_name" => Some(format!("outline.copy:{}", row.name)),
+            "colshow" => row
+                .col
+                .map(|(ci, shown)| format!("outline.gridshow:{ci}:{}", u8::from(!shown))),
+            "colshowall" => Some("outline.gridshowall".into()),
             _ => None,
         };
     }
@@ -388,6 +430,7 @@ impl OutlinePanel {
             (BtnKind::OlOther, toolicons::mi_ol_other),
         ];
         OutlinePanel {
+            mode: OutlineMode::Symbols,
             visible: false,
             bounds: Rect::default(),
             scale: 1.0,
@@ -556,8 +599,11 @@ impl OutlinePanel {
 
     /// 심볼 전체 교체(활성 탭이 바뀌거나 본문이 바뀌었을 때) — `text` = 그 본문(바이트 → 글자 색인 한 번 걷기).
     pub(crate) fn set_symbols(&mut self, key: (u64, u64), ol: &Outline, text: &str) {
-        let tab_changed = self.key.is_some_and(|k| k.0 != key.0);
+        let tab_changed = self
+            .key
+            .is_some_and(|k| k.0 & !GRID_KEY_BIT != key.0 & !GRID_KEY_BIT);
         self.key = Some(key);
+        self.mode = OutlineMode::Symbols;
         if tab_changed {
             // 다른 문서 = 접기 기억도 다른 것(이름이 우연히 같아도 섞지 않는다).
             self.fold.clear();
@@ -573,6 +619,7 @@ impl OutlinePanel {
                 line: s.line,
                 byte: s.byte,
                 char_idx: 0,
+                col: None,
             })
             .collect();
         self.orig_parent = ol.symbols.iter().map(|s| s.parent).collect();
@@ -600,7 +647,61 @@ impl OutlinePanel {
     }
 
     /// 설정만 바뀐 경우 — 심볼은 그대로, 종류 트리만 다시(`Outline`을 다시 받지 않게 행에서 재구성).
+    /// ★ T-423 ② 결과 그리드의 컬럼 목록(DataGrip Structure) — `(원본 열 · 이름 · 타입 · 표시 중)` 평면 목록 · 열쇠 = (탭 | [`GRID_KEY_BIT`] · 결과·표시 세대).
+    pub(crate) fn set_grid_columns(
+        &mut self,
+        key: (u64, u64),
+        cols: &[(usize, String, String, bool)],
+    ) {
+        let tab_changed = self
+            .key
+            .is_some_and(|k| k.0 & !GRID_KEY_BIT != key.0 & !GRID_KEY_BIT);
+        self.key = Some(key);
+        if tab_changed {
+            self.fold.clear();
+            self.caret = None;
+        }
+        self.mode = OutlineMode::GridColumns;
+        self.all = cols
+            .iter()
+            .enumerate()
+            .map(|(i, (ci, name, ty, shown))| Row {
+                name: name.clone(),
+                detail: ty.clone(),
+                kind: SymKind::Declared,
+                line: i + 1,
+                byte: *ci,
+                char_idx: 0,
+                col: Some((*ci, *shown)),
+            })
+            .collect();
+        self.orig_parent = vec![None; self.all.len()];
+        self.by_char = (0..self.all.len()).collect();
+        self.vis = Self::flat_vis(self.all.len());
+        self.retree_from_vis();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mode(&self) -> OutlineMode {
+        self.mode
+    }
+
+    fn flat_vis(n: usize) -> Vec<VisNode> {
+        (0..n)
+            .map(|idx| VisNode {
+                idx,
+                depth: 0,
+                parent: None,
+            })
+            .collect()
+    }
+
     fn retree(&mut self) {
+        if self.mode == OutlineMode::GridColumns {
+            self.vis = Self::flat_vis(self.all.len());
+            self.retree_from_vis();
+            return;
+        }
         let ol = Outline {
             symbols: self
                 .all
@@ -763,6 +864,9 @@ impl OutlinePanel {
     /// ★ 커서 추종(`outline.follow_caret`) — 호스트가 틱마다 캐럿(글자 색인)을 준다 · 바뀐 틱만 일한다(이진 탐색 1회) ·
     ///   패널에 포커스가 있거나 필터 중이면 선택을 건드리지 않는다. 다시 그려야 하면 `true`.
     pub(crate) fn set_caret(&mut self, caret: usize) -> bool {
+        if self.mode == OutlineMode::GridColumns {
+            return false;
+        }
         if self.caret == Some(caret) {
             return false;
         }
@@ -1035,6 +1139,21 @@ impl OutlinePanel {
                 if let Some(r) = self.row_at(p) {
                     let idx = self.rows[r];
                     let (cx0, cx1) = self.chevron_x(idx);
+                    // ★ 그리드 컬럼 모드(T-423 ②): 체크 칸 = 표시/숨김 토글 · 그 밖 = 그 열로 이동(호스트 명령).
+                    if self.mode == OutlineMode::GridColumns {
+                        self.sel = Some(r);
+                        if let Some((ci, shown)) = self.all[idx].col {
+                            let chev_w = (CHEV_W * self.scale).round() as i32;
+                            let icon_w = (ICON_W * self.scale).round() as i32;
+                            self.command =
+                                Some(if (cx0 + chev_w..cx0 + chev_w + icon_w).contains(&x) {
+                                    format!("outline.gridshow:{ci}:{}", u8::from(!shown))
+                                } else {
+                                    format!("outline.gridcol:{ci}")
+                                });
+                        }
+                        return true;
+                    }
                     if self.has_child[idx] && (cx0..cx1).contains(&x) && self.filter.is_empty() {
                         self.sel = Some(r);
                         self.toggle_fold(idx);
@@ -1136,7 +1255,12 @@ impl OutlinePanel {
                             .sel
                             .or((n > 0 && self.filter.is_focused()).then_some(0))
                         {
-                            self.open = Some(self.all[self.rows[r]].byte);
+                            let row = &self.all[self.rows[r]];
+                            if let Some((ci, _)) = row.col {
+                                self.command = Some(format!("outline.gridcol:{ci}"));
+                            } else {
+                                self.open = Some(row.byte);
+                            }
                         }
                         true
                     }
@@ -1185,12 +1309,21 @@ impl OutlinePanel {
         dc.select_font(FontSlot::Base, true);
         let hr = self.header_rect;
         let hy = dc.text_center_y(hr.y, hr.h);
-        let title = format!(
-            "{} ({}/{})",
-            t(Msg::MnOutlinePanel),
-            self.rows.len(),
-            self.all.len()
-        );
+        let title = if self.mode == OutlineMode::GridColumns {
+            let shown = self
+                .all
+                .iter()
+                .filter(|r| r.col.is_some_and(|c| c.1))
+                .count();
+            format!("{} ({}/{})", t(Msg::OutlineColumns), shown, self.all.len())
+        } else {
+            format!(
+                "{} ({}/{})",
+                t(Msg::MnOutlinePanel),
+                self.rows.len(),
+                self.all.len()
+            )
+        };
         let title_clip = Rect::new(hr.x, hr.y, (self.hdr_btn[0].x - hr.x - pad).max(0), hr.h);
         dc.text(hr.x + pad, hy, title_clip, &title, th.text);
         dc.select_font(FontSlot::Base, false);
@@ -1212,7 +1345,9 @@ impl OutlinePanel {
         let lr = self.list_rect;
         let rh = self.row_h;
         if self.rows.is_empty() {
-            let msg = if self.all.is_empty() {
+            let msg = if self.all.is_empty() && self.mode == OutlineMode::GridColumns {
+                t(Msg::OutlineNoResult).to_string()
+            } else if self.all.is_empty() {
                 t(Msg::OutlineEmpty).to_string()
             } else if !self.filter.is_empty() {
                 tf(Msg::ProjNoMatch, &[])
@@ -1273,7 +1408,17 @@ impl OutlinePanel {
             }
             let mut tx = cx0 + chev_w;
             let (kind, detail_s) = (self.all[idx].kind, self.all[idx].detail.clone());
-            if let Some(ik) = icon_kind(kind, &detail_s) {
+            if let Some((_, shown)) = self.all[idx].col {
+                // 그리드 컬럼 모드: 아이콘 자리에 체크 상자(표시 중 = 강조색 체크 · 숨김 = 빈 상자).
+                let bw = px(12.0);
+                let bx = Rect::new(tx + (icon_w - bw) / 2, y + (rh - bw) / 2, bw, bw);
+                dc.fill_rect(bx, th.text_dim);
+                dc.fill_rect(Rect::new(bx.x + 1, bx.y + 1, bw - 2, bw - 2), th.panel_bg);
+                if shown {
+                    let inner = Rect::new(bx.x + 2, bx.y + 2, bw - 4, bw - 4);
+                    nexa_ctl::controls::draw_check_mark(dc, inner, th.accent);
+                }
+            } else if let Some(ik) = icon_kind(kind, &detail_s) {
                 let img = self.icon_image(ik, icon_px);
                 dc.image(tx, y + (rh - icon_px) / 2, &img, row_rect);
             }
@@ -1300,7 +1445,7 @@ impl OutlinePanel {
                     | SymKind::Trigger
             );
             dc.select_font(FontSlot::Base, bold);
-            let fg = if row.kind == SymKind::Statement {
+            let fg = if row.kind == SymKind::Statement || row.col.is_some_and(|c| !c.1) {
                 th.text_dim
             } else if bold {
                 th.accent
@@ -1487,6 +1632,38 @@ mod tests {
     }
 
     /// 접기: 기본 펼침 깊이 1 = 뿌리 펼침 · 그 안(깊이 1)의 자식은 접힘 · 펼친 노드의 자식만 보인다.
+    #[test]
+    fn grid_columns_mode_lists_flat_and_counts_shown() {
+        let mut p = OutlinePanel::new();
+        let cols = vec![
+            (0usize, "ID".to_string(), "INTEGER".to_string(), true),
+            (1, "NAME".to_string(), "VARCHAR(50)".to_string(), false),
+            (2, "AMT".to_string(), "DECIMAL(10,2)".to_string(), true),
+        ];
+        p.set_grid_columns((7 | GRID_KEY_BIT, 1), &cols);
+        assert_eq!(p.mode(), OutlineMode::GridColumns);
+        assert_eq!(p.rows.len(), 3, "평면 목록 · 접기 없음");
+        assert!(p.has_child.iter().all(|&h| !h));
+        assert_eq!(
+            p.all.iter().filter(|r| r.col.is_some_and(|c| c.1)).count(),
+            2
+        );
+        assert_eq!(
+            (
+                p.all[1].name.as_str(),
+                p.all[1].detail.as_str(),
+                p.all[1].line
+            ),
+            ("NAME", "VARCHAR(50)", 2)
+        );
+        // 그리드 모드에선 캐럿 추종이 아무 일도 하지 않는다.
+        assert!(!p.set_caret(10));
+        // 편집기 심볼로 돌아가면 모드도 돌아온다(같은 탭 = 접기 기억 유지 · 열쇠 비트만 다름).
+        p.set_symbols((7, 3), &Outline::default(), "");
+        assert_eq!(p.mode(), OutlineMode::Symbols);
+        assert!(p.all.is_empty());
+    }
+
     #[test]
     fn fold_rows_respects_expand_depth_and_overrides() {
         let vis = vec![

@@ -1835,6 +1835,32 @@ fn db2enc_secmec9_encrypted_login() {
     assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
 }
 
+/// ★ 서버 정책 확인(사용자 10-25 소작업): `SERVER_ENCRYPT` 서버에 **평문 3만** 제안(`NSQL_DB2_AUTH=plain`)하면 거절돼야 한다 — 정보성(db2.yml은
+/// continue-on-error · 받아 주면 그 사실을 기록). `NSQL_DB2_EXPECT_SECMEC9`가 없으면 생략.
+#[test]
+fn db2enc_plain_login_rejected_under_server_encrypt() {
+    if std::env::var_os("NSQL_DB2_EXPECT_SECMEC9").is_none() {
+        eprintln!("[skip] NSQL_DB2_EXPECT_SECMEC9 없음");
+        return;
+    }
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    std::env::set_var("NSQL_DB2_AUTH", "plain");
+    let r = db2_open(&spec);
+    std::env::remove_var("NSQL_DB2_AUTH");
+    match r {
+        Err(e) => eprintln!(
+            "[ok] plain login rejected under SERVER_ENCRYPT: {}",
+            e.message
+        ),
+        Ok(s) => panic!(
+            "SERVER_ENCRYPT server accepted plain USRIDPWD (3) — describe = {}",
+            s.describe()
+        ),
+    }
+}
+
 /// 스크립트 경로(러너 · 세션 변수): DDL(PK) · 다중 행 INSERT · `EXEC :V := 리터럴`(로컬) · `?` 바인드 · 스칼라 식 = `FROM SYSIBM.SYSDUMMY1`(`EXEC :B := :A + 10`) ·
 /// 세이브포인트(`ON ROLLBACK RETAIN CURSORS`) · `FETCH FIRST` · 한글 · COMMIT · 끝에 DROP.
 #[test]

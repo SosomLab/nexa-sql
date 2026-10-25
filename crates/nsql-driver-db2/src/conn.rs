@@ -341,15 +341,28 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
         ],
     );
     // 2. ACCSEC ─ 메커니즘 협상(같은 체인) · 9 제안 + 우리 DH 공개키.
+    //    진단 손잡이 `NSQL_DB2_AUTH` = `plain`(3만 제안 · 서버 정책 확인 시험용) · `encrypted`(9 아니면 오류) · 그 밖 = 자동(9 → 3 폴백).
+    let auth_mode = std::env::var("NSQL_DB2_AUTH")
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+    let force_plain = auth_mode == "plain";
+    let require_encrypted = auth_mode == "encrypted";
     let rdbnam = Ddm::new(cp::RDBNAM, ebcdic::padded(l.database, 18));
-    let accsec = Ddm::group(
-        cp::ACCSEC,
-        &[
-            Ddm::u16(cp::SECMEC, cp::SECMEC_EUSRIDPWD),
-            rdbnam.clone(),
-            Ddm::new(cp::SECTKN, my_public.to_vec()),
-        ],
-    );
+    let accsec = if force_plain {
+        Ddm::group(
+            cp::ACCSEC,
+            &[Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD), rdbnam.clone()],
+        )
+    } else {
+        Ddm::group(
+            cp::ACCSEC,
+            &[
+                Ddm::u16(cp::SECMEC, cp::SECMEC_EUSRIDPWD),
+                rdbnam.clone(),
+                Ddm::new(cp::SECTKN, my_public.to_vec()),
+            ],
+        )
+    };
     w.send(&[(DssKind::Request, excsat), (DssKind::Request, accsec)])?;
     let chain = w.recv_chain()?;
     check_reply(&chain, &[cp::EXCSATRD, cp::ACCSECRD])?;
@@ -367,7 +380,23 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
             server_public = tkn.unwrap_or_default();
         }
     }
-    let secmec = pick_secmec(&offered, server_public.len() == 32).ok_or_else(|| DbError {
+    let picked = if force_plain {
+        offered
+            .contains(&cp::SECMEC_USRIDPWD)
+            .then_some(cp::SECMEC_USRIDPWD)
+    } else {
+        pick_secmec(&offered, server_public.len() == 32)
+    };
+    if require_encrypted && picked != Some(cp::SECMEC_EUSRIDPWD) {
+        return Err(DbError {
+            code: None,
+            message: format!(
+                "DRDA: NSQL_DB2_AUTH=encrypted but the server did not offer EUSRIDPWD (9) - offered {offered:?}"
+            ),
+            position: None,
+        });
+    }
+    let secmec = picked.ok_or_else(|| DbError {
         code: None,
         message: format!(
             "DRDA: server offers security mechanisms {offered:?}; supported = EUSRIDPWD (9) and USRIDPWD (3) - use TLS (?tls=required) for SERVER_ENCRYPT/GSS setups"
@@ -398,14 +427,16 @@ pub fn handshake(w: &mut Wire, l: &Login<'_>) -> Result<ServerInfo, DbError> {
             )
         }
         cp::SECMEC_USRIDPWD => {
-            // 서버가 평문을 답했다 → ACCSEC를 3으로 다시(pydrda) 뒤 평문 SECCHK.
-            let accsec3 = Ddm::group(
-                cp::ACCSEC,
-                &[Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD), rdbnam.clone()],
-            );
-            w.send(&[(DssKind::Request, accsec3)])?;
-            let chain = w.recv_chain()?;
-            check_reply(&chain, &[cp::ACCSECRD])?;
+            // 서버가 평문을 답했다 → ACCSEC를 3으로 다시(pydrda) 뒤 평문 SECCHK(처음부터 3을 보냈으면 생략).
+            if !force_plain {
+                let accsec3 = Ddm::group(
+                    cp::ACCSEC,
+                    &[Ddm::u16(cp::SECMEC, cp::SECMEC_USRIDPWD), rdbnam.clone()],
+                );
+                w.send(&[(DssKind::Request, accsec3)])?;
+                let chain = w.recv_chain()?;
+                check_reply(&chain, &[cp::ACCSECRD])?;
+            }
             Ddm::group(
                 cp::SECCHK,
                 &[

@@ -361,6 +361,24 @@ impl App {
         }
         let i = self.editors.active();
         let tab = self.editors.tab_id(i);
+        // ★ T-423 ②(DataGrip Structure): 마지막 포커스가 그리드면 그 결과의 컬럼 목록 · 편집기면 심볼(패널 자신에 포커스가 가도 유지).
+        match self.focus {
+            Focus::Grid => self.outline_grid = true,
+            Focus::Editor => self.outline_grid = false,
+            _ => {}
+        }
+        if self.outline_grid && self.outline_panel.cfg().grid_columns {
+            let key = (
+                tab | crate::outline_panel::GRID_KEY_BIT,
+                self.grid.result_gen(),
+            );
+            if self.outline_panel.key() == Some(key) {
+                return;
+            }
+            let cols = self.grid.column_list();
+            self.outline_panel.set_grid_columns(key, &cols);
+            return;
+        }
         let rev = self.editors.cur().rev();
         if self.outline_panel.key() == Some((tab, rev)) {
             return;
@@ -409,6 +427,25 @@ impl App {
                 if let Ok(b) = b.parse::<usize>() {
                     self.goto_byte(b);
                     self.run_sql(false);
+                }
+            } else if let Some(rest) = cmd.strip_prefix("outline.gridshow:") {
+                // ★ T-423 ② 그리드 컬럼 표시/숨김(DR-33 `col_order` 투영) — 세대가 올라 다음 틱에 목록이 새로 그려진다.
+                if let Some((ci, on)) = rest.split_once(':') {
+                    if let (Ok(ci), Ok(on)) = (ci.parse::<usize>(), on.parse::<u8>()) {
+                        if self.grid.set_col_shown(ci, on != 0) {
+                            self.redraw();
+                        }
+                    }
+                }
+            } else if cmd == "outline.gridshowall" {
+                if self.grid.show_all_cols() {
+                    self.redraw();
+                }
+            } else if let Some(ci) = cmd.strip_prefix("outline.gridcol:") {
+                if let Ok(ci) = ci.parse::<usize>() {
+                    if self.grid.focus_col(ci) {
+                        self.redraw();
+                    }
                 }
             } else if let Some(name) = cmd.strip_prefix("outline.copy:") {
                 self.sess.status = if crate::clipboard::write_text(name) {

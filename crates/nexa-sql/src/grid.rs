@@ -60,6 +60,36 @@ pub(crate) type PerfReport = (
 );
 
 /// 결과 보기 모드(사용자 09-16 · DBeaver 결과 패널 그룹 1): 그리드 · 텍스트 표 · Markdown · JSON · TSV · CSV · SQL 5종.
+/// 열 표시/숨김 뒤의 표시 순서(T-423 ②) — 숨김 = 빼기(마지막 한 열은 못 숨김) · 표시 = 더 큰 원본 번호의 첫 열 앞(없으면 끝) · 변화 없음 = None.
+pub(crate) fn col_order_toggled(
+    order: &[usize],
+    ci: usize,
+    on: bool,
+    ncols: usize,
+) -> Option<Vec<usize>> {
+    if ci >= ncols {
+        return None;
+    }
+    let pos = order.iter().position(|&c| c == ci);
+    match (on, pos) {
+        (true, Some(_)) | (false, None) => None,
+        (false, Some(p)) => {
+            if order.len() <= 1 {
+                return None;
+            }
+            let mut o = order.to_vec();
+            o.remove(p);
+            Some(o)
+        }
+        (true, None) => {
+            let mut o = order.to_vec();
+            let at = o.iter().position(|&c| c > ci).unwrap_or(o.len());
+            o.insert(at, ci);
+            Some(o)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResultView {
     Grid,
@@ -349,6 +379,8 @@ pub(crate) struct Grid {
     gutter_w: i32,
     /// 표시 순서 → 원본 컬럼 index(드래그 이동 · 재조회 시 초기화 — 사용자 09-14).
     col_order: Vec<usize>,
+    /// 결과·열 표시 세대(아웃라인 컬럼 목록 동기 열쇠 · T-423 ②) — 새 결과 · 표시/숨김마다 +1.
+    result_gen: u64,
     /// 표시 순서 → 원본 행 index(정렬은 인덱스 벡터 · 행 복제 0 — docs/26 §4-4).
     row_order: Vec<usize>,
     /// 결합 정렬 키(원본 컬럼 · 오름차순) — 클릭 = 단일 키 3단(▲→▼→해제) · Shift+클릭 = 키 추가/토글(dir2 방식).
@@ -614,6 +646,7 @@ impl Default for Grid {
             row_pct: 150,
             gutter_w: 0,
             col_order: Vec::new(),
+            result_gen: 0,
             row_order: Vec::new(),
             sort_keys: Vec::new(),
             filters: Vec::new(),
@@ -3190,6 +3223,94 @@ impl Grid {
 
     /// 표시 순서(정렬·컬럼 이동)대로 복제한 결과 — 텍스트 보기·SQL 보기의 원천.
     /// 전 컬럼 이름(SQL 보기의 키 선택 근거).
+    /// ★ 아웃라인 컬럼 목록(T-423 ② · DataGrip Structure): `(원본 열 · 이름 · 타입 · 표시 중)` — 주입 재조회의 숨은 키 열(뒤쪽)은 제외.
+    pub(crate) fn column_list(&self) -> Vec<(usize, String, String, bool)> {
+        let Some(rs) = self.rs.as_ref() else {
+            return Vec::new();
+        };
+        let cols = rs.columns();
+        let n = cols.len().saturating_sub(self.injected_hidden());
+        (0..n)
+            .map(|ci| {
+                (
+                    ci,
+                    cols[ci].name.clone(),
+                    cols[ci].type_name.clone(),
+                    self.col_order.contains(&ci),
+                )
+            })
+            .collect()
+    }
+
+    /// 결과·열 표시 세대(아웃라인 동기 열쇠).
+    pub(crate) fn result_gen(&self) -> u64 {
+        self.result_gen
+    }
+
+    fn injected_hidden(&self) -> usize {
+        self.edit.as_ref().map_or(0, |e| e.hidden)
+    }
+
+    /// 열 표시/숨김(T-423 ② · DR-33 투영 = `col_order`에서 빼고 넣기 · 마지막 한 열은 숨기지 않는다). 바뀌었으면 true.
+    pub(crate) fn set_col_shown(&mut self, ci: usize, on: bool) -> bool {
+        let n = self
+            .rs
+            .as_ref()
+            .map_or(0, |r| r.columns().len())
+            .saturating_sub(self.injected_hidden());
+        let Some(order) = col_order_toggled(&self.col_order, ci, on, n) else {
+            return false;
+        };
+        self.col_order = order;
+        self.after_cols_changed();
+        true
+    }
+
+    /// 숨긴 열 전부 다시 표시(보이는 열의 순서는 유지 · 빠진 열은 원본 번호 자리로).
+    pub(crate) fn show_all_cols(&mut self) -> bool {
+        let n = self
+            .rs
+            .as_ref()
+            .map_or(0, |r| r.columns().len())
+            .saturating_sub(self.injected_hidden());
+        let mut order = self.col_order.clone();
+        for ci in 0..n {
+            if let Some(o) = col_order_toggled(&order, ci, true, n) {
+                order = o;
+            }
+        }
+        if order == self.col_order {
+            return false;
+        }
+        self.col_order = order;
+        self.after_cols_changed();
+        true
+    }
+
+    fn after_cols_changed(&mut self) {
+        self.result_gen = self.result_gen.wrapping_add(1);
+        self.hdr_drag = None;
+        self.hdr_resize = None;
+        self.sel_anchor = None;
+        self.sel_cur = None;
+        self.regions.clear();
+        self.menu.close();
+    }
+
+    /// 아웃라인에서 열 클릭(T-423 ②) → 그 열(현재 행 또는 첫 행)을 선택하고 보이게 스크롤. 숨긴 열·빈 결과 = false.
+    pub(crate) fn focus_col(&mut self, ci: usize) -> bool {
+        let Some(pos) = self.col_order.iter().position(|&c| c == ci) else {
+            return false;
+        };
+        if self.rows() == 0 {
+            return false;
+        }
+        let di = self.sel_cur.map_or(0, |c| c.0).min(self.rows() - 1);
+        self.select_only((di, pos));
+        self.ensure_cell_visible(di, pos);
+        true
+    }
+
     pub(crate) fn all_col_names(&self) -> Vec<String> {
         let Some(rs) = self.rs.as_ref() else {
             return Vec::new();
@@ -4563,6 +4684,7 @@ impl Grid {
         let t = std::time::Instant::now();
         // 재조회 = 조회 컬럼 순서·정렬 초기화(이동·정렬 결과 무시 — 사용자 09-14).
         self.col_order = (0..rs.columns.len()).collect();
+        self.result_gen = self.result_gen.wrapping_add(1);
         self.row_order = (0..rs.rows.len()).collect();
         self.sort_keys.clear();
         // 새 조회 = 필터도 초기화(사용자 09-29 "모든 컬럼이 초기화") · 자동 페치 잠금 해제.
@@ -9187,6 +9309,22 @@ pub(crate) fn now_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn col_order_toggled_hides_shows_and_keeps_last() {
+        // 숨김 = 빼기 · 다시 표시 = 더 큰 번호 앞 · 마지막 열은 못 숨김 · 범위 밖·변화 없음 = None.
+        assert_eq!(col_order_toggled(&[0, 1, 2], 1, false, 3), Some(vec![0, 2]));
+        assert_eq!(col_order_toggled(&[0, 2], 1, true, 3), Some(vec![0, 1, 2]));
+        assert_eq!(
+            col_order_toggled(&[2, 0], 1, true, 3),
+            Some(vec![1, 2, 0]),
+            "드래그 순서 유지 · 2 앞"
+        );
+        assert_eq!(col_order_toggled(&[0, 1], 2, true, 3), Some(vec![0, 1, 2]));
+        assert_eq!(col_order_toggled(&[1], 1, false, 3), None, "마지막 한 열");
+        assert_eq!(col_order_toggled(&[0, 1], 1, true, 3), None);
+        assert_eq!(col_order_toggled(&[0, 1], 5, false, 3), None);
+    }
     use nsql_core::{Column, ResultSet};
 
     /// 사용자 10-06 — 값에 쉼표가 있어도 값 목록 적용이 그 값에 맞고(인용) 다시 열면 체크돼 있다 · 종속 목록 = 다른 열 필터 통과 행의 값만.
