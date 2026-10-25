@@ -237,7 +237,8 @@ fn decfloat(b: &[u8]) -> String {
 
 /// 열 값 하나 — `le` = 서버 TYPDEF가 작은 끝인가.
 pub fn read_value(r: &mut Reader<'_>, c: ColDesc, le: bool) -> Result<Value, RowErr> {
-    if c.nullable() && r.u8()? == 0xFF {
+    // 널 지시자: 0xFF = NULL · 0x80(CI 10-25 CALL FDODTA의 IN 매개변수 = "값 없음") 등 최상위 비트 = 값 생략 → NULL로.
+    if c.nullable() && r.u8()? & 0x80 != 0 {
         return Ok(Value::Null);
     }
     let n = c.len_u16();
@@ -1015,6 +1016,19 @@ mod tests {
         b.extend_from_slice(&[0xFF, 0x00, 0x00, 2, 0, 0, 0, 0xFF, 0x00]);
         let (mut rows, used, _) = read_rows(&b, &cols, true).unwrap();
         assert_eq!(used, b.len());
+        // 지시자 0x80 = 값 없음(NULL) · 뒤 값 없이 다음 열로.
+        let c2 = [
+            ColDesc {
+                drda_type: 0x03,
+                len: [0, 4],
+            },
+            ColDesc {
+                drda_type: 0x03,
+                len: [0, 4],
+            },
+        ];
+        let (rows2, _, _) = read_rows(&[0xFF, 0x00, 0x80, 0x00, 2, 0, 0, 0], &c2, true).unwrap();
+        assert_eq!(rows2[0], vec![Value::Null, Value::Int(2)]);
         assert_eq!(
             rows[0],
             vec![Value::Int(1), Value::Bytes(vec![]), Value::Null]

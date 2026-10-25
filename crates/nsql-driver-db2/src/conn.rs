@@ -131,6 +131,15 @@ impl Wire {
         if std::env::var_os("NSQL_TRACE_DRDA").is_none() {
             return;
         }
+        // 줄 상한(CI 40150244681: 무한 CNTQRY로 로그 2.9 GB) — 넘으면 한 번만 알리고 침묵.
+        static LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= 4000 {
+            if n == 4000 {
+                eprintln!("[drda trace limit reached (4000 lines) - silenced]");
+            }
+            return;
+        }
         let n = b.len().min(512);
         let hex: Vec<String> = b[..n].iter().map(|x| format!("{x:02X}")).collect();
         eprintln!(

@@ -404,12 +404,17 @@ impl Db2Session {
                     let (rows, used, sqlca_follows) = fdoca::read_rows(&data, &set.desc, le)?;
                     set.rows.extend(rows);
                     if sqlca_follows {
-                        // 행 자리에 SQLCA(끝·경고) — 뒤의 ENDQRYRM/SQLCARD가 뜻을 준다.
+                        // 행 자리에 SQLCA = 이 집합의 끝(+100 · CI 10-25 CALL = ENDQRYRM 없이 이것만 옴) 또는 오류 · 경고는 ENDQRYRM이 뜻을 준다.
                         let (ca, _) = sqlca::parse_sqlca(&data[used..], le).unwrap_or((None, 0));
-                        if let Some(ca) = ca {
-                            if ca.is_error() && r.error.is_none() {
-                                r.error = Some(ca.to_db_error());
+                        match ca {
+                            Some(ca) if ca.is_error() => {
+                                if r.error.is_none() {
+                                    r.error = Some(ca.to_db_error());
+                                }
+                                set.open = false;
                             }
+                            Some(_) => set.open = false,
+                            None => {}
                         }
                     } else if used < data.len() {
                         set.carry = data[used..].to_vec();
@@ -463,6 +468,7 @@ impl Db2Session {
         let chain = self.wire()?.recv_chain()?;
         self.absorb(&chain, &mut r)?;
         let mut i = 0;
+        let mut stalls = 0u32;
         while r.error.is_none() && i < r.sets.len() {
             if !r.sets[i].open {
                 i += 1;
@@ -487,9 +493,21 @@ impl Db2Session {
             );
             let corr = r.sets[i].corr.max(1);
             r.cur = Some(i);
+            let before = r.sets[i].rows.len();
             self.send_chain_from(&[(cnt, Vec::new())], corr)?;
             let chain = self.wire()?.recv_chain()?;
             self.absorb(&chain, &mut r)?;
+            // 안전장치: 진전 없는 CNTQRY가 이어지면 끊는다(끝 표식을 놓친 경우 무한 반복 방지 · CI 40150244681).
+            if r.sets[i].open && r.sets[i].rows.len() == before {
+                stalls += 1;
+                if stalls >= 2 {
+                    r.error = Some(err(
+                        "DRDA: CNTQRY returned no rows twice without end-of-query - giving up",
+                    ));
+                }
+            } else {
+                stalls = 0;
+            }
         }
         if r.error.is_some() {
             for i in 0..r.sets.len() {
@@ -751,18 +769,21 @@ impl Db2Session {
                     fdoca::attach_lobs(&mut rows, &cols, &reply.out_extdta);
                     row = rows.remove(0);
                 }
-                let outs: Vec<&nsql_core::BindParam> = req
-                    .params
-                    .iter()
-                    .filter(|p| !matches!(p.direction, nsql_core::Direction::In))
-                    .collect();
-                let targets: Vec<&nsql_core::BindParam> = if outs.len() == row.len() {
-                    outs
+                // FDODTA = 매개변수 전부 한 행(IN은 지시자 0x80 = NULL · CI 10-25) → OUT/INOUT만 순번으로 · 길이가 다르면 OUT 순서대로.
+                if row.len() == req.params.len() {
+                    for (p, v) in req.params.iter().zip(row) {
+                        if !matches!(p.direction, nsql_core::Direction::In) {
+                            out.out_params.push((p.name.clone(), v));
+                        }
+                    }
                 } else {
-                    req.params.iter().collect()
-                };
-                for (p, v) in targets.into_iter().zip(row) {
-                    out.out_params.push((p.name.clone(), v));
+                    let outs = req
+                        .params
+                        .iter()
+                        .filter(|p| !matches!(p.direction, nsql_core::Direction::In));
+                    for (p, v) in outs.zip(row) {
+                        out.out_params.push((p.name.clone(), v));
+                    }
                 }
             }
         }
