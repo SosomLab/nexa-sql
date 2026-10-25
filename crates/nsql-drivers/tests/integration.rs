@@ -1856,9 +1856,6 @@ fn db2_script_ddl_dml_binds_savepoint_and_types() {
     assert_eq!(sets[2].rows[0][0], Value::Int(2), "OFFSET/FETCH FIRST");
 }
 
-/// 직접 세션 경로: 방언/Caps(Db2 · 대문자 접힘 · SYSDUMMY1) · 영향 행 수 · 카탈로그(현재 스키마 · 스키마 목록 · 컬럼 · PK) ·
-/// `set_option("schema")` = `SET SCHEMA` · 오류 분류(SQL0204N → NoObject · SQL0104N → Syntax) · 임시 표 DROP.
-#[test]
 /// ★ T-426 2차 ① LOB: CLOB(한글 · 2 KB) · BLOB(5 KB · 바인드 = BLOB(X'…') 재작성) · NULL LOB · 조회 = EXTDTA 붙이기 · 끝에 DROP.
 #[test]
 fn db2_lob_clob_blob_round_trip() {
@@ -1874,7 +1871,12 @@ fn db2_lob_clob_blob_round_trip() {
         })
     };
     let _ = exec(&mut s, "DROP TABLE NSQLT_DB2L", Vec::new());
-    exec(&mut s, "CREATE TABLE NSQLT_DB2L (ID INTEGER NOT NULL PRIMARY KEY, C CLOB(1M), B BLOB(1M))", Vec::new()).expect("create");
+    exec(
+        &mut s,
+        "CREATE TABLE NSQLT_DB2L (ID INTEGER NOT NULL PRIMARY KEY, C CLOB(1M), B BLOB(1M))",
+        Vec::new(),
+    )
+    .expect("create");
     let big_text: String = "한글 clob ".repeat(200);
     let big_bytes: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
     let p = |name: &str, v: Value, ty: VarType| BindParam {
@@ -1895,13 +1897,22 @@ fn db2_lob_clob_blob_round_trip() {
     .expect("insert lob");
     exec(&mut s, "INSERT INTO NSQLT_DB2L (ID) VALUES (2)", Vec::new()).expect("insert null lob");
     s.commit().expect("commit");
-    let r = exec(&mut s, "SELECT ID, C, B FROM NSQLT_DB2L ORDER BY ID", Vec::new()).expect("select lob");
+    let r = exec(
+        &mut s,
+        "SELECT ID, C, B FROM NSQLT_DB2L ORDER BY ID",
+        Vec::new(),
+    )
+    .expect("select lob");
     let rs = &r.result_sets[0];
     assert_eq!(rs.rows.len(), 2, "{rs:?}");
     assert_eq!(rs.rows[0][0], Value::Int(1));
     assert_eq!(rs.rows[0][1], Value::Str(big_text), "CLOB");
     assert_eq!(rs.rows[0][2], Value::Bytes(big_bytes), "BLOB");
-    assert_eq!((&rs.rows[1][1], &rs.rows[1][2]), (&Value::Null, &Value::Null), "NULL LOB");
+    assert_eq!(
+        (&rs.rows[1][1], &rs.rows[1][2]),
+        (&Value::Null, &Value::Null),
+        "NULL LOB"
+    );
     exec(&mut s, "DROP TABLE NSQLT_DB2L", Vec::new()).expect("drop");
     s.commit().expect("commit");
 }
@@ -1930,7 +1941,10 @@ fn db2_cancel_drops_session_and_reopen() {
     });
     t.join().expect("join").expect("cancel");
     let e = r.expect_err("취소된 실행은 오류");
-    assert!(e.message.starts_with("DRDA recv") || e.message.starts_with("DRDA send"), "{e:?}");
+    assert!(
+        e.message.starts_with("DRDA recv") || e.message.starts_with("DRDA send"),
+        "{e:?}"
+    );
     assert!(!s.is_alive(), "취소 = 세션 끊김");
     drop(s);
     let mut s2 = db2_open(&spec).unwrap_or_else(|e| panic!("재접속 실패: {}", e.message));
@@ -1943,6 +1957,9 @@ fn db2_cancel_drops_session_and_reopen() {
     assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
 }
 
+/// 직접 세션 경로: 방언/Caps(Db2 · 대문자 접힘 · SYSDUMMY1) · 영향 행 수 · 카탈로그(현재 스키마 · 스키마 목록 · 컬럼 · PK) ·
+/// `set_option("schema")` = `SET SCHEMA` · 오류 분류(SQL0204N → NoObject · SQL0104N → Syntax) · 임시 표 DROP.
+#[test]
 fn db2_session_catalog_schema_and_errors() {
     use nsql_core::{dberr, ErrorClass, ExecRequest};
     let Some(spec) = db2_spec() else {
