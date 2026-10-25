@@ -24,8 +24,13 @@
 | FDODTA 지시자 | 최상위 비트 = 널 · IN 매개변수 자리는 `0x80`(값 없음) · OUT은 `00` + 값 | 40150244681 → 8382bbfb |
 | SQLCINRD 열 레이아웃 | SQLDARD와 다름 = **SQLCA 자리 없음** · SQLDHGRP 지시자 `00`(널 아님) + 24 B(hold · return · scroll · sensitive · fcode `55 00` · keytype · RDBNAM/스키마 VC 길이) → 열 수 2 B 작은 끝 → 열마다 PRECISION·SCALE·LENGTH 8·SQLTYPE·CCSID(SQLDARD와 같음) → 15 B(0 ×8 · 문자형 `08 00` · `00 00` · SQLUNNAMED · 이름 길이 큰 끝) → 이름 → 라벨·설명 VC(0 ×10) → UDT `FF` → **SQLDXGRP `00`** = 12 B(keymem `01 00` = PK 열 …) + RDBNAM VCS + 상관명·기본 테이블·스키마·열 이름 VCM/VCS + 4 B → 꼬리 `FF` | 40156275674 열 이름 = 매개변수 이름(P_MIN·P_CNT)로 폴백 → 50023761 |
 | 취소(확장 경로) | `CancelHandle::drops_session`이 cdylib 경계를 못 넘어 늘 거짓 → ABI v2 추가 op `CANCEL_DROPS_SESSION`(18 · out u8 · 함수표 불변 · 옛 드라이버 = 거짓) · SQL Server 확장도 같은 길 | 40157404807 확장 취소 ✗ → 41e1fe00 |
+| LOB 입력 EXTDTA | 한 체인(corr 같음) = EXCSQLSTT `0x51` → SQLDTA `0x53`(FDODSC `0C 76 D0 | 03 0004 | CF 8009 | C9 8009` + `06 71 E4 D0 0001` · FDODTA LOB 자리 = `00 02` + 길이 u64 큰 끝 · NULL = `FF`만) → NULL 아닌 LOB마다 EXTDTA 0x146C 객체 DSS(본문 = `00` + 바이트 · CLOB = UTF-8 · DBCLOB 0xCD = UTF-16BE) · 32 767 B 초과 = DSS 길이 `FFFF` + 2 B 이어짐 머리 · DDM 확장 길이 `80 08` + u32(4 B 머리 제외 본문 길이 · 우리 해독기의 0x8004 가정 정정 = `ddm_len − 0x8004` = 확장 바이트 수) · 실측 = 312 193 B 체인 `FFFF D0 53 0001 | 8008 146C 0001…` → SQLCODE 0 · 1행 | 40162184058(ecc82c5b·7e21a90e) · 조사 drda-e(derby `buildPlaceholderLength`·`finalizeDssLength`·`updateLengthBytes` · jb `sql_dta.rs`·`dss.rs`) |
+| ACCSECRD(SERVER_ENCRYPT) | ACCSEC(9 + 공개키 32 B) 한 번에 `0006 11A2 0009` + `0024 11DC <서버 공개키 32 B>` + **`0006 1909 0001`(ENCALG = 1 · DES)** → SECCHK(9 · SECTKN 둘) → SECCHKCD 0 + ACCRDBRM · 기본 AUTHENTICATION=SERVER에서는 {3, 5} + SECCHKCD 1(9 미지원) | 40162184058 · 40149595519 |
+| SERVER_ENCRYPT 전환(CI) | `su - db2inst1 -c "db2 update dbm cfg using AUTHENTICATION SERVER_ENCRYPT ALTERNATE_AUTH_ENC NOT_SPECIFIED"` → `db2 terminate; db2stop force; db2start`(재시작 2 s) → `db2 connect to nexa` 첫 시도 성공 · 단계 13 s · cfg = SRVCON_AUTH NOT_SPECIFIED · TRUST_CLNTAUTH CLIENT · DB2AUTH 없음(STRICT_FIPS 아님) · ALTERNATE_AUTH_ENC NOT_SPECIFIED = 클라이언트 제안(DES) 수용 · 기존 5종 뒤 마지막 단계(평문 3이 거절될 수 있어 · 거절 여부 자체는 미확인) | 40162184058 · 조사 drda-f(IBM r0053734 · c0005435) |
 
-남은 추정(2차 이후 · 10-25 저녁 갱신) = SECMEC 9 실서버(서버 `SERVER_ENCRYPT`) · LOB 입력 EXTDTA · 다중 커서 섹션 · UTF-8 DB 문자열 타입 코드(0x30 vs 0x3C) 확인 · INTRDBRQS(쓰지 않음 · 취소 = 소켓 끊기로 확정). ~~취소 · EXTDTA LOB 조회 · CALL 결과 집합 · 라벨 열~~ = 위 표로 확정.
+> ★ **보안 메모(10-25)** — SECMEC 9(EUSRIDPWD)는 DH 256비트 + **DES 56비트**라 오늘 기준으로 약하다 · IBM은 `SERVER_ENCRYPT`를 폐지 예고(지원 공지 node/7066501 · 12.1 문서 "deprecated") → **운영 권고 = TLS(`?tls=required`)** · 9는 SERVER_ENCRYPT 서버와의 호환용으로만 둔다.
+
+남은 추정(2차 이후 · 10-25 저녁 갱신) = ~~SECMEC 9 실서버(서버 `SERVER_ENCRYPT`) · LOB 입력 EXTDTA~~(위 표로 확정) · SERVER_ENCRYPT에서 평문 3 거절 여부 · 다중 커서 섹션 · UTF-8 DB 문자열 타입 코드(0x30 vs 0x3C) 확인 · INTRDBRQS(쓰지 않음 · 취소 = 소켓 끊기로 확정). ~~취소 · EXTDTA LOB 조회 · CALL 결과 집합 · 라벨 열~~ = 위 표로 확정.
 
 ## 결론(5줄)
 
