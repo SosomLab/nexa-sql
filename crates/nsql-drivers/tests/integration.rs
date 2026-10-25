@@ -1998,6 +1998,91 @@ fn db2_lob_clob_blob_round_trip() {
     s.commit().expect("commit");
 }
 
+/// ★ 10-26 Db2 후속: EXPLAIN_STREAM 트리(`Runner::explain` · 노드 ≥ 2 · 대상에 표 이름 · depth > 0 노드 있음) + 막힘 질의(`DB2_BLOCKERS_SQL` ·
+/// 실행 가능 = 빈 결과 또는 권한 −551 · 문법 −104/−204는 실패). EXPLAIN 표는 `SYSINSTALLOBJECTS('EXPLAIN','C',…,CURRENT USER)`로 준비(이미 있으면 무시).
+#[test]
+fn db2_explain_tree_and_blockers_query() {
+    use nsql_script::plan::PlanOptions;
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let opener: Opener =
+        Box::new(|s: &ConnectSpec| -> Result<Box<dyn Session>, DbError> { db2_open(s) });
+    let mut r = Runner::new(Dialect::Db2, opener);
+    let mut ev = Vec::new();
+    assert!(
+        r.connect(&spec, &mut |e| ev.push(e)),
+        "Db2 접속 실패: {ev:?}"
+    );
+    let _ = run(
+        &mut r,
+        "CALL SYSPROC.SYSINSTALLOBJECTS('EXPLAIN', 'C', CAST(NULL AS VARCHAR(128)), CURRENT USER)",
+    );
+    let _ = run(&mut r, "DROP TABLE NSQLT_DB2E");
+    run(
+        &mut r,
+        "CREATE TABLE NSQLT_DB2E (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(40))",
+    );
+    run(&mut r, "INSERT INTO NSQLT_DB2E VALUES (1, 'a'), (2, 'b')");
+    run(&mut r, "COMMIT");
+    let rep = r
+        .explain(
+            "SELECT e.ID, e.NAME FROM NSQLT_DB2E e WHERE e.NAME = 'a'",
+            PlanOptions { analyze: false },
+        )
+        .unwrap_or_else(|e| panic!("[plan] db2 explain 실패: {}", e.message));
+    assert!(rep.nodes.len() >= 2, "{:#?}", rep.raw);
+    assert!(
+        rep.nodes.iter().any(|n| n.depth > 0),
+        "depth: {:#?}",
+        rep.nodes
+    );
+    assert!(
+        rep.nodes
+            .iter()
+            .any(|n| n.object.to_ascii_uppercase().contains("NSQLT_DB2E")),
+        "object: {:#?}",
+        rep.nodes
+    );
+    assert!(rep.nodes.iter().any(|n| n.cost.is_some()));
+    // 막힘 질의 = 내 핸들로 실행(결과 0행 또는 −551).
+    let handle = r
+        .session
+        .as_mut()
+        .expect("session")
+        .execute(&nsql_core::ExecRequest {
+            sql: "VALUES MON_GET_APPLICATION_HANDLE()".into(),
+            params: Vec::new(),
+        })
+        .expect("handle")
+        .result_sets[0]
+        .rows[0][0]
+        .display();
+    let sql = nsql_catalog::DB2_BLOCKERS_SQL.replace("{sid}", handle.trim());
+    match r
+        .session
+        .as_mut()
+        .expect("session")
+        .execute(&nsql_core::ExecRequest {
+            sql,
+            params: Vec::new(),
+        }) {
+        Ok(res) => assert!(
+            res.result_sets[0].rows.is_empty(),
+            "막힌 세션이 없어야 한다"
+        ),
+        Err(e) => assert_eq!(
+            e.code,
+            Some(-551),
+            "권한 밖 오류: {} {:?}",
+            e.message,
+            e.code
+        ),
+    }
+    let _ = run(&mut r, "DROP TABLE NSQLT_DB2E");
+    run(&mut r, "COMMIT");
+}
+
 /// ★ 미비사항(10-25): DBCLOB **입력**(CLOB과 같은 0xCF · UTF-8 · 서버 변환) 왕복 + 읽기(0xCD EXTDTA = UTF-16BE 복원).
 #[test]
 fn db2_lob_dbclob_round_trip() {

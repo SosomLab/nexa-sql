@@ -1029,6 +1029,10 @@ pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, Db
 }
 
 /// ★ ODBC(T-383 2차): 스키마가 없는 드라이버(Access · Excel)는 빈 문자열 → 탐색기 라벨 [`ODBC_NO_SCHEMA`] · 되돌릴 때 빈 문자열.
+/// ★ Db2 막힘 조회(docs/56 · 협업 조사 10-26 · 9.7 FP1~12.1 공통 2인자 호출): `{sid}` = `MON_GET_APPLICATION_HANDLE()` 값 · 한 열
+/// "대기 핸들 사용자 프로그램 N s"(다른 방언 `blockers_sql`과 같은 꼴) · 권한 = EXECUTE/DATAACCESS(없으면 −551 → 그 세션에서 기능 끔).
+pub const DB2_BLOCKERS_SQL: &str = "SELECT TRIM(CHAR(w.REQ_APPLICATION_HANDLE)) || ' ' || COALESCE(c.SESSION_AUTH_ID, '?') || ' ' || COALESCE(c.APPLICATION_NAME, '') || ' ' || TRIM(CHAR(TIMESTAMPDIFF(2, CHAR(CURRENT TIMESTAMP - w.LOCK_WAIT_START_TIME)))) || 's' FROM TABLE(SYSPROC.MON_GET_APPL_LOCKWAIT(NULL, -2)) w LEFT JOIN TABLE(SYSPROC.MON_GET_CONNECTION(NULL, -2)) c ON c.APPLICATION_HANDLE = w.REQ_APPLICATION_HANDLE AND c.MEMBER = w.REQ_MEMBER WHERE w.HLD_APPLICATION_HANDLE = {sid}";
+
 pub const ODBC_NO_SCHEMA: &str = "(default)";
 
 #[must_use]

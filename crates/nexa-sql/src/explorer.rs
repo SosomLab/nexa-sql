@@ -613,12 +613,12 @@ pub(crate) fn blockers_sql(dialect: Dialect, sid: &str) -> Option<String> {
         Dialect::Mysql => format!(
             "SELECT CONCAT(waiting_pid, ' ', wait_age_secs, 's') FROM sys.innodb_lock_waits WHERE blocking_pid = {sid}"
         ),
-        // Db2 = MON_GET_APPL_LOCKWAIT(권한 필요) · 2차.
+        // Db2 = MON_GET_APPL_LOCKWAIT + MON_GET_CONNECTION(10-26 · nsql-catalog `DB2_BLOCKERS_SQL` · 권한 없으면 −551 = 기존 규칙대로 끔).
+        Dialect::Db2 => nsql_catalog::DB2_BLOCKERS_SQL.replace("{sid}", sid),
         Dialect::Sqlite
         | Dialect::Odbc
         | Dialect::Duckdb
         | Dialect::Clickhouse
-        | Dialect::Db2
         | Dialect::Access => return None,
     })
 }

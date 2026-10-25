@@ -85,7 +85,12 @@ pub fn explain_script_opts(dialect: Dialect, stmt: &str, opts: PlanOptions) -> S
         // ClickHouse(10-24): `EXPLAIN`(PLAN) 하나 — 실제 실행 통계는 없다(`EXPLAIN PIPELINE`·`ESTIMATE`는 후속).
         (Dialect::Clickhouse, _) => format!("EXPLAIN {s};\n"),
         // Db2(협업 검증 10-25): QUERYTAG + EXPLAIN_REQUESTER로 우리 계획 1건 고정 · 실제 실행 통계(actuals)는 이벤트 모니터 = 2차.
-        (Dialect::Db2, _) => format!("EXPLAIN PLAN SELECTION SET QUERYTAG = 'NSQL' FOR {s};\nSELECT o.operator_id, o.operator_type, o.total_cost, o.io_cost FROM EXPLAIN_OPERATOR o WHERE o.explain_requester = CURRENT USER AND (o.explain_requester, o.explain_time, o.source_name, o.source_schema, o.explain_level, o.stmtno, o.sectno) IN (SELECT explain_requester, explain_time, source_name, source_schema, explain_level, stmtno, sectno FROM EXPLAIN_STATEMENT WHERE explain_requester = CURRENT USER AND querytag = 'NSQL' AND explain_level = 'P' ORDER BY explain_time DESC FETCH FIRST 1 ROW ONLY) ORDER BY o.operator_id;\n"),
+        // Db2(협업 검증 10-25 · 10-26 트리): QUERYTAG + EXPLAIN_REQUESTER로 우리 계획 1건 고정 → EXPLAIN_STREAM 재귀(자식 SOURCE → 부모 TARGET)로
+        //   depth · 대상(스키마.표) · 추정 행(STREAM_COUNT) · 비용. 표 이름은 비한정(= 권한 ID 스키마 · EXPLAIN이 먼저 쓰는 곳 · SYSTOOLS만 있으면
+        //   SQL0204N → 안내) · 실제 실행 통계(actuals)는 이벤트 모니터 = 2차 · 정리(EXPLAIN_INSTANCE DELETE)는 수동 커밋 트랜잭션에 섞여 생략(밤 결정 10-26).
+        (Dialect::Db2, _) => format!(
+            "EXPLAIN PLAN SELECTION SET QUERYTAG = 'NSQL' FOR {s};\nWITH k AS (SELECT explain_requester, explain_time, source_name, source_schema, source_version, explain_level, stmtno, sectno FROM EXPLAIN_STATEMENT WHERE explain_requester = CURRENT USER AND querytag = 'NSQL' AND explain_level = 'P' ORDER BY explain_time DESC FETCH FIRST 1 ROW ONLY), op AS (SELECT o.* FROM EXPLAIN_OPERATOR o JOIN k ON o.explain_requester = k.explain_requester AND o.explain_time = k.explain_time AND o.source_name = k.source_name AND o.source_schema = k.source_schema AND o.source_version = k.source_version AND o.explain_level = k.explain_level AND o.stmtno = k.stmtno AND o.sectno = k.sectno), st AS (SELECT s.* FROM EXPLAIN_STREAM s JOIN k ON s.explain_requester = k.explain_requester AND s.explain_time = k.explain_time AND s.source_name = k.source_name AND s.source_schema = k.source_schema AND s.source_version = k.source_version AND s.explain_level = k.explain_level AND s.stmtno = k.stmtno AND s.sectno = k.sectno), t (id, parent, lvl, path) AS (SELECT operator_id, CAST(NULL AS INTEGER), 0, CAST(LPAD(VARCHAR(operator_id), 5, '0') AS VARCHAR(1000)) FROM op WHERE operator_type = 'RETURN' UNION ALL SELECT s.source_id, t.id, t.lvl + 1, t.path || '.' || LPAD(VARCHAR(s.stream_id), 5, '0') FROM t JOIN st s ON s.target_type = 'O' AND s.target_id = t.id AND s.source_type = 'O' WHERE t.lvl < 64) SELECT t.lvl AS depth, t.id AS operator_id, t.parent AS parent_id, o.operator_type AS op, (SELECT LISTAGG(RTRIM(d.object_schema) || '.' || d.object_name, ',') FROM st d WHERE d.target_type = 'O' AND d.target_id = t.id AND d.source_type = 'D') AS object, (SELECT MAX(x.stream_count) FROM st x WHERE x.source_type = 'O' AND x.source_id = t.id) AS est_rows, o.total_cost, o.io_cost, o.cpu_cost FROM t JOIN op o ON o.operator_id = t.id ORDER BY t.path;\n"
+        ),
         (Dialect::Access, _) => format!("{s};\n"),
         // ★ PL/SQL `EXECUTE IMMEDIATE`로 감싼다(10-23 실측): Thin 드라이버(oracledb)는 `EXPLAIN`을 질의·DML·DDL 어디에도 넣지 않아 **파싱만**
         //   하고 실행하지 않는다(PLAN_TABLE 0행 → "cannot fetch last explain plan"). 블록 안에서는 두 드라이버 모두 실행된다. `'`는 `''`로.
@@ -177,9 +182,8 @@ pub fn parse_plan(dialect: Dialect, columns: &[String], rows: &[Vec<String>]) ->
         Dialect::Mysql => parse_mysql(columns, rows),
         Dialect::Sqlite => parse_sqlite(columns, rows),
         Dialect::Duckdb => parse_duckdb(rows),
-        Dialect::Odbc | Dialect::Clickhouse | Dialect::Db2 | Dialect::Access => {
-            parse_generic(columns, rows)
-        }
+        Dialect::Db2 => parse_db2(columns, rows),
+        Dialect::Odbc | Dialect::Clickhouse | Dialect::Access => parse_generic(columns, rows),
     }
 }
 
@@ -442,6 +446,46 @@ fn parse_mssql(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
 }
 
 /// MySQL/MariaDB: 표(`id · select_type · table · type · possible_keys · key · rows · filtered · Extra`) 또는 트리 텍스트(`EXPLAIN ANALYZE` · FORMAT=TREE).
+/// Db2 EXPLAIN_STREAM 트리(10-26): 열 = depth · operator_id · parent_id · op · object · est_rows · total_cost · io_cost · cpu_cost —
+/// 열 이름이 없으면(옛 평면 질의 · 다른 꼴) 한 열 텍스트로.
+fn parse_db2(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
+    let idx = |name: &str| columns.iter().position(|c| c.eq_ignore_ascii_case(name));
+    let (Some(depth_i), Some(op_i)) = (idx("depth"), idx("op")) else {
+        return parse_arrow_tree(rows.iter().map(|r| first_cell(r).to_string()));
+    };
+    let obj_i = idx("object");
+    let rows_i = idx("est_rows");
+    let cost_i = idx("total_cost");
+    let io_i = idx("io_cost");
+    let cpu_i = idx("cpu_cost");
+    rows.iter()
+        .map(|r| {
+            let cell =
+                |i: Option<usize>| i.and_then(|i| r.get(i)).map(String::as_str).unwrap_or("");
+            let mut detail = String::new();
+            if let Some(io) = num(cell(io_i)) {
+                detail.push_str(&format!("io={}", fmt_num(io)));
+            }
+            if let Some(cpu) = num(cell(cpu_i)) {
+                if !detail.is_empty() {
+                    detail.push_str(" · ");
+                }
+                detail.push_str(&format!("cpu={}", fmt_num(cpu)));
+            }
+            PlanNode {
+                depth: num(cell(Some(depth_i))).unwrap_or(0.0).max(0.0) as usize,
+                op: cell(Some(op_i)).trim().to_string(),
+                object: cell(obj_i).trim().to_string(),
+                rows: num(cell(rows_i)),
+                actual_rows: None,
+                cost: num(cell(cost_i)),
+                time_ms: None,
+                detail,
+            }
+        })
+        .collect()
+}
+
 fn parse_mysql(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
     let idx = |name: &str| columns.iter().position(|c| c.eq_ignore_ascii_case(name));
     let Some(type_i) = idx("type") else {
@@ -934,6 +978,68 @@ pub fn render_text(rep: &PlanReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Db2 EXPLAIN_STREAM 트리 파서(10-26): 열 이름으로 · depth·대상·추정 행·비용 · TBSCAN = 전체 스캔 지적.
+    #[test]
+    fn db2_tree_parser_reads_named_columns() {
+        let cols: Vec<String> = [
+            "DEPTH",
+            "OPERATOR_ID",
+            "PARENT_ID",
+            "OP",
+            "OBJECT",
+            "EST_ROWS",
+            "TOTAL_COST",
+            "IO_COST",
+            "CPU_COST",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let row = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let rows = vec![
+            row(&["0", "1", "", "RETURN", "", "", "13.6", "1", "70000"]),
+            row(&[
+                "1",
+                "2",
+                "1",
+                "TBSCAN",
+                "DB2INST1.NSQLT",
+                "20000",
+                "13.5",
+                "1",
+                "69000",
+            ]),
+        ];
+        let rep = build_report(Dialect::Db2, false, 0, &cols, &rows);
+        assert_eq!(rep.nodes.len(), 2);
+        assert_eq!(
+            (
+                rep.nodes[1].depth,
+                rep.nodes[1].op.as_str(),
+                rep.nodes[1].object.as_str(),
+                rep.nodes[1].rows
+            ),
+            (1, "TBSCAN", "DB2INST1.NSQLT", Some(20000.0))
+        );
+        assert!(rep.nodes[1].detail.contains("io="));
+        assert!(
+            rep.findings
+                .iter()
+                .any(|f| f.node == Some(1) && f.severity >= Severity::Warn),
+            "{:?}",
+            rep.findings
+        );
+        // 열 이름이 없는 옛 꼴은 한 열 텍스트로.
+        let flat = build_report(
+            Dialect::Db2,
+            false,
+            0,
+            &["PLAN".to_string()],
+            &[row(&["RETURN"]), row(&["  TBSCAN"])],
+        );
+        assert!(!flat.nodes.is_empty());
+    }
 
     fn rows1(text: &str) -> Vec<Vec<String>> {
         text.lines().map(|l| vec![l.to_string()]).collect()
