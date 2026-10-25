@@ -55,6 +55,8 @@ pub(crate) enum VarsWinAction {
     Script,
     /// ★ D-355: ⟳ = stale 수식 지금 재계산(호스트가 러너 `refresh_stale_vars`로).
     Refresh,
+    /// ★ T-420: 암묵(auto) 변수의 타입을 지금 값에서 추론해 고정(선언 변수로).
+    FixType(String),
 }
 
 /// 열(폭 0 = 남는 폭을 나눠 쓰는 유동 열 · Value 60 % · Formula 40 % · 각 최소 폭) — ★ Formula(사용자 10-25) = 사용 시 모드 수식(D-355 · `:A + 10`) ·
@@ -83,6 +85,8 @@ pub(crate) struct VarsWin {
     del_btn: Button,
     script_btn: Button,
     refresh_btn: Button,
+    /// ★ T-420 타입 고정(선택 행이 auto일 때만 활성).
+    fix_btn: Button,
     /// 마지막 페인트의 줄(히트 테스트·선택) · 고른 이름.
     rows: Vec<VarRow>,
     selected: Option<String>,
@@ -109,6 +113,7 @@ impl VarsWin {
             del_btn: Button::new(t(Msg::BtnDelete)),
             script_btn: Button::new(t(Msg::BtnVarsScript)),
             refresh_btn: Button::new(t(Msg::BtnVarsRefresh)),
+            fix_btn: Button::new(t(Msg::BtnVarsFixType)),
             rows: Vec::new(),
             selected: None,
             hover: None,
@@ -201,11 +206,12 @@ impl VarsWin {
         }
     }
 
-    fn buttons(&mut self) -> [&mut Button; 6] {
+    fn buttons(&mut self) -> [&mut Button; 7] {
         [
             &mut self.set_btn,
             &mut self.null_btn,
             &mut self.share_btn,
+            &mut self.fix_btn,
             &mut self.del_btn,
             &mut self.script_btn,
             &mut self.refresh_btn,
@@ -440,6 +446,11 @@ impl VarsWin {
         if self.refresh_btn.take_clicked() {
             return VarsWinAction::Refresh;
         }
+        if self.fix_btn.take_clicked() {
+            if let Some(r) = &sel {
+                return VarsWinAction::FixType(r.name.clone());
+            }
+        }
         VarsWinAction::None
     }
 
@@ -590,8 +601,13 @@ impl VarsWin {
                 Some(nsql_script::Layer::Global) => t(Msg::BtnVarsLocal),
                 _ => t(Msg::BtnVarsShare),
             });
+            // 타입 고정(T-420) = 선택 행이 auto 타입이고 프로필 층이 아닐 때만.
+            let fixable = self
+                .selected_row()
+                .is_some_and(|r| r.ty == "auto" && r.layer != nsql_script::Layer::Fixed);
+            self.fix_btn.set_enabled(fixable);
             let by = ey + edit_h + pad;
-            let bw = ((wi - pad * 2 - px(8.0) * 5) / 6).max(px(56.0));
+            let bw = ((wi - pad * 2 - px(8.0) * 6) / 7).max(px(52.0));
             let mut bx = pad;
             for b in self.buttons() {
                 b.set_scale(s);

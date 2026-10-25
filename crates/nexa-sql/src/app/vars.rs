@@ -237,6 +237,34 @@ impl App {
                 self.menu_action("vars.script");
                 return;
             }
+            // ★ T-420: auto 변수의 타입을 지금 값에서 고정(선언 변수로 · 다음 대입에서 값을 따라 바뀌지 않는다).
+            A::FixType(name) if !name.starts_with('&') => {
+                let is = |v: &nsql_script::VarState| v.name.eq_ignore_ascii_case(&name);
+                let fix = |v: &mut nsql_script::VarState| -> String {
+                    if v.ty == nsql_core::VarType::Auto {
+                        v.ty = nsql_core::VarType::infer(&v.value);
+                    }
+                    v.declared = true;
+                    v.ty.sql_name()
+                };
+                let fixed = if let Some(v) = self.sess.shared_vars.iter_mut().find(|v| is(v)) {
+                    shared_dirty = true;
+                    Some(fix(v))
+                } else if let Some(v) = self.global_vars.iter_mut().find(|v| is(v)) {
+                    global_dirty = true;
+                    Some(fix(v))
+                } else {
+                    self.tab_vars
+                        .get_mut(&tab)
+                        .and_then(|l| l.iter_mut().find(|v| is(v)))
+                        .map(fix)
+                };
+                if let Some(ty) = fixed {
+                    self.sess.status = tf(Msg::StVarTypeFixed, &[&name, &ty]);
+                    self.vars_changed = (tab, std::iter::once(name.to_ascii_uppercase()).collect());
+                }
+            }
+            A::FixType(_) => return,
             A::Set(name, _) | A::SetNull(name) | A::Delete(name) | A::Layer(name, _)
                 if !name.starts_with('&') && self.is_profile_only_var(&name) =>
             {

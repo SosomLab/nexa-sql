@@ -1371,11 +1371,16 @@ impl Runner {
         }
         let diags = std::mem::take(&mut self.engine.diagnostics);
         for d in &diags {
-            if let nsql_script::Diagnostic::Truncated(name, bytes) = d {
-                emit(RunEvent::Message(tf(
-                    Msg::WarnVarTruncated,
-                    &[name, &bytes.to_string()],
-                )));
+            match d {
+                nsql_script::Diagnostic::Truncated(name, bytes) => {
+                    emit(RunEvent::Message(tf(
+                        Msg::WarnVarTruncated,
+                        &[name, &bytes.to_string()],
+                    )));
+                }
+                // 엔진 안내(T-419 DeclarePrepend 등) = 메시지 그대로(엔진이 두 언어로 만든다).
+                nsql_script::Diagnostic::Info(text) => emit(RunEvent::Message(text.clone())),
+                nsql_script::Diagnostic::ImplicitVariable(_) => {}
             }
         }
         let implicit = implicit_names(diags);

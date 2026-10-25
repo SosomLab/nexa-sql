@@ -329,6 +329,22 @@ impl Engine {
                 if !inout {
                     self.note_implicit(&prepared);
                 }
+                // ★ T-419(123 §4): SQL Server 배치 첫 문장(USE · SET 옵션 · CREATE/ALTER PROCEDURE…)에 바인드 참조 → `DECLARE` 리터럴로
+                //   들어간다 — 사용자가 "치환인지 바인드인지" 묻지 않게 한 줄 알린다(매개변수 0이면 머리 비움 = 알림 없음).
+                if prepared.mode == crate::dialect::PrepareMode::DeclarePrepend
+                    && prepared.line_offset > 0
+                {
+                    let names: Vec<String> =
+                        crate::bind::unique_names(&crate::bind::extract_binds(&text))
+                            .into_iter()
+                            .map(|n| format!(":{n}"))
+                            .collect();
+                    self.diagnostics.push(Diagnostic::Info(tr!(
+                        "{} go in as DECLARE literals (this statement must start the batch - the plan and errors reflect the literal values)",
+                        "{}는 DECLARE 리터럴로 들어갑니다(배치 첫 문장이어야 하는 문장 - 계획·오류는 리터럴 값 기준)",
+                        names.join(", ")
+                    )));
+                }
                 vec![Action::Execute {
                     prepared,
                     expect_out: inout,
