@@ -176,7 +176,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | 2 | **Implicit Result Sets**(`DBMS_SQL.RETURN_RESULT` 결과를 결과 탭으로 · OCI 어댑터 lib.rs:797-806 `implicit_result()` 전부 수거) | ✗ | 그 결과 탭이 **오류 없이 조용히 빠짐**(위층 변경 0) → 안내 = "Thin 미지원 · `:cur` REFCURSOR OUT 바인드 + `PRINT`로 대체 또는 OCI" |
 | 3 | **OS 인증 `/ as sysdba`**(사용자·비밀번호 빈칸 = external auth) · Kerberos · SEPS 지갑 | ✗ | 접속 거부 → 안내(사용자/비밀번호 + `AUTH_MODE_SYSDBA`는 됨) |
 | 4 | **NNE(네이티브 암호화·체크섬)** | ✗ | 서버가 NNE 필수면 접속 실패 → "TLS(TCPS) 또는 OCI" 안내 · 사용자 BISCM = NNE 미사용(§1-3) |
-| 5 | **11g 이하 서버** | ✗(12c+) | 접속 오류 안내 |
+| 5 | **11g 이하 서버** | ✗(12c+) | 접속 오류 안내 · ★ **사용자 10-26 = 유지(Thin 11g 구현 안 함)** — 하한 = `oracledb` 26.0.0-beta.4 `messages/connect.rs:94`(`protocol_version < PROTOCOL_VERSION_12`(315) → ServerVersionNotSupported) · 11g는 OCI(`oracle.driver = oci`) + 서버를 지원하는 Instant Client 판(19c 이하 · Oracle 호환 표 기준 · 미실측)으로 |
 | 6 | **10G 검증자를 가진 계정** | ✗(#6) | ORA-01017 → 안내(DBA 쪽 비밀번호 재설정) · `11G 12C` 계정은 스파이크로 확인 |
 | 7 | **대량 적재 최속 경로**(`nsql import`·Import 창 = Oracle 배열 DML 32.5k행/s) | △(1차 Err) | 다중 행 INSERT 폴백으로 동작하나 느려짐 · #41 해결 뒤 `execute_batch`로 복귀 |
 | 8 | `sqlnet.ora` 고급 옵션 · 클라이언트 문자셋 ≠ UTF-8 · Windows 레지스트리 TNS | ✗ | `oracle.info_sqlnet` 칸 비움 · 문자셋은 UTF-8 고정 |
