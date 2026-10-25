@@ -57,14 +57,17 @@ pub(crate) enum VarsWinAction {
     Refresh,
 }
 
-/// 열(폭 0 = 남는 폭) — ★ Formula(사용자 10-25) = 사용 시 모드 수식(D-355 · `:A + 10`) · 값 칸에 섞지 않고 따로 보인다.
+/// 열(폭 0 = 남는 폭을 나눠 쓰는 유동 열 · Value 60 % · Formula 40 % · 각 최소 폭) — ★ Formula(사용자 10-25) = 사용 시 모드 수식(D-355 · `:A + 10`) ·
+/// 값 칸에 섞지 않고 따로 보인다. 고정 폭을 늘리면 기본 창 폭(640)에서 Layer가 잘린다(V1 10-25) → Formula는 유동.
 const COLS: [(Msg, i32); 5] = [
     (Msg::VarsColName, 170),
-    (Msg::VarsColType, 120),
+    (Msg::VarsColType, 100),
     (Msg::VarsColValue, 0),
-    (Msg::VarsColFormula, 180),
+    (Msg::VarsColFormula, 0),
     (Msg::VarsColLayer, 70),
 ];
+/// 유동 열 최소 폭(논리 px) — 값 · 수식.
+const FLEX_MIN: [f32; 2] = [120.0, 90.0];
 
 pub(crate) struct VarsWin {
     window: Option<Rc<Window>>,
@@ -138,7 +141,7 @@ impl VarsWin {
                 dy: 120,
                 owner,
                 memo: None,
-                default_size: (560.0, 360.0),
+                default_size: (640.0, 360.0),
                 ime: true,
             },
         ) else {
@@ -481,10 +484,21 @@ impl VarsWin {
             self.row_h = th_txt + px(6.0);
             let row_h = self.row_h;
             let fixed: i32 = COLS.iter().map(|(_, w)| px(*w as f32)).sum();
-            let value_w = (table.w - fixed - px(2.0)).max(px(120.0));
+            let flex = (table.w - fixed - px(2.0)).max(px(FLEX_MIN[0] + FLEX_MIN[1]));
+            let value_w = (flex * 3 / 5).max(px(FLEX_MIN[0]));
+            let formula_w = (flex - value_w).max(px(FLEX_MIN[1]));
+            let mut flex_i = 0;
             let widths: Vec<i32> = COLS
                 .iter()
-                .map(|(_, w)| if *w == 0 { value_w } else { px(*w as f32) })
+                .map(|(_, w)| {
+                    if *w == 0 {
+                        let fw = if flex_i == 0 { value_w } else { formula_w };
+                        flex_i += 1;
+                        fw
+                    } else {
+                        px(*w as f32)
+                    }
+                })
                 .collect();
             let hdr = Rect::new(table.x + 1, table.y + 1, table.w - 2, row_h);
             dc.fill_rect(hdr, th.chrome_bg);
