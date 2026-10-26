@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-26 §4](journal/2026-10-26.md)**(139차 win = 최신화 ba2a2416 · 사용자 결정 8건 · `feat/139-win-quick` 7커밋 → main(T-430 스캔라인 · txlog 서버 행만 · EXEC 로컬 · T-153 ⓑ · T-429 · T-408 · DRIVER_VERSION 0.1.6) · V1 1차 5/6 → 수정 → 축소판 3/3 · Debug 실제 설정 PID 16704(18:02 판) · Release = lite(`*.full` 보존) · 다음 = **drivers-v0.1.6 push·CI 감시 → 앱 v0.3.0 릴리스 절차** · T-153 ⓐ · 글로벌 치환 변수 보존 · T-431 · 보류 = T-427 · D-353 · Db2 10.5 페이징·다중 커서) →
+> ★ **다음 세션 시작점 = [journal 2026-10-26 §4](journal/2026-10-26.md)**(139차 win = 🚀 **v0.3.0 공개**(10-26 10:31Z · Latest · lite 자산 6 · msi 11.0 MB · Homebrew 0.3.0 설치 검증 ✓ · Chocolatey 0.3.0 제출 = 검수 대기 · winget = 안 냄(첫 등록 검수 중) · linux-repo 신호 ✓) · **drivers-v0.1.6**(pre-release · 자산 125 · Db2 포함 10종) · `feat/139-win-quick` 7커밋(T-430 스캔라인 · txlog 서버 행만 · EXEC 로컬 · T-153 ⓑ · T-429 · T-408) · 변수 = CHOCO_PUSH **true** · WINGET_PUBLISH false · RELEASE_FULL false · Debug 실제 설정 PID 16704 · Release = lite · 다음 = Chocolatey 0.3.0 검수 확인 · pkg.sosomlab.com 0.3.0 색인 확인 · release.yml 템플릿 306·315행 커밋 · T-153 ⓐ · 글로벌 치환 변수 보존 · T-431 · 보류 = T-427 · D-353 · Db2 10.5 페이징·다중 커서) →
 
 ## 2026-10-26 (138차 밤 자동 작업 · **Linux** · 협업 쌍 = 개발 "개발" Fable × 협업 "협업" Opus · [journal 10-26 §1~3](journal/2026-10-26.md))
 - ★ **밤 완료(01:00~06:31)** = T-153 변수 UX 잔여 5개(입력 창 타입·미리보기 · 프로필 층 `var.*`/`nsql conn var` · 무제 탭 보존(프로젝트 모드) · MacroStore · hover 값 카드) · T-416(전달 모드 꼬리표) · T-418(계획 바인드 기준) · T-419/420(DeclarePrepend 안내 · 타입 고정) · T-417(ClickHouse `{pN:Type}` 서버 매개변수 · 실서버 ☐) · Db2 막힘 조회 · EXPLAIN 트리 · `--#SET TERMINATOR` · DBCLOB 0xCD 판정(문자 수 길이 수용 · 바이트 거부 · 운용 0xCF) · T-145 괄호 표 증분(nexa-ui a06600c)

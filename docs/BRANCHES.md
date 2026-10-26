@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| feat/139-win-quick | 2026-10-26 | 2026-10-26 → main ff(삭제) · **f70a6927** | 7 | 139차 win = b8fdddae EXEC 로컬 대입 · eeed2ce9 T-430 스캔라인 래스터 · 08091ac1 txlog 서버 행만 + DISCONNECT 로그 1회 · e4569132 T-429 · 9c5a2cf3 T-408 · a0538bd2 T-153 ⓑ DEFINE 층 · f70a6927 DRIVER_VERSION 0.1.6 |
+| feat/139-win-quick | 2026-10-26 | 2026-10-26 → main ff(삭제) · **f70a6927** + 문서 **ea8a037c** | 8 | 139차 win = b8fdddae EXEC 로컬 대입 · eeed2ce9 T-430 스캔라인 래스터 · 08091ac1 txlog 서버 행만 + DISCONNECT 로그 1회 · e4569132 T-429 · 9c5a2cf3 T-408 · a0538bd2 T-153 ⓑ DEFINE 층 · f70a6927 DRIVER_VERSION 0.1.6 |
 | docs/138-outline-t422 | 2026-10-25 | 2026-10-25 → main(삭제) · **b511d95e** | 1 | T-422 문서 = 76 §20 ✅ · 94 구현 키 7(`show_other`) · 39 커서 추종 · D-357 · 61 3-OS · 위키 아웃라인 절 · journal §3-13 · STATUS |
 | (main 직접) 138-night-1026 | 2026-10-26 | 2026-10-26 · main 직접 · **9ec5dbe1** + 문서 **5415931d**(ci 40222828146 ✓) | 19 | 밤 자동 작업 = T-153 ①~⑤ · T-416~T-420 · T-417 · Db2 b186bdd5·12f3e0bf·e0499a2a·1d4cf557·15c70b71·6c3749b4·c6154064·9ec5dbe1 · 문서 61afcb40·5e27501e — journal 10-26 §3 |
 | (nexa-ui main 직접) 236 | 2026-10-26 | 2026-10-26 · nexa-ui **a06600c** + 문서 **6fdfe1d**(ci 40222821307 ✓) | 2 | T-145 괄호 표 증분 재스캔(체크포인트 재개 · finish O(n) 병합) · CONSUMER-CHANGES 236 |
