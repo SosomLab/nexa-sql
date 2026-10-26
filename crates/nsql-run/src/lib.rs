@@ -3729,8 +3729,10 @@ pub fn goes_to_server(item: &Item) -> bool {
         ItemKind::Sql(_) => true,
         ItemKind::Invalid(_) => false,
         ItemKind::Command(c) => match c {
-            nsql_script::Command::Exec { .. }
-            | nsql_script::Command::Connect(_)
+            // ★ `EXEC :V := 리터럴`은 클라이언트 로컬 대입(DB 왕복 0 · `nsql_script::local_assign` · 139차 win) — 전송 로그 ·
+            //   트랜잭션 로그(Running 잔류) · 세션 상태 표식(docs/52 §6-4 오탐)의 대상이 아니다. 우변이 식이면 서버행 그대로.
+            nsql_script::Command::Exec { body } => nsql_script::local_assign(body).is_none(),
+            nsql_script::Command::Connect(_)
             | nsql_script::Command::Disconnect
             | nsql_script::Command::Describe { .. } => true,
             nsql_script::Command::Show { what } => !what.trim().eq_ignore_ascii_case("VARIABLES"),
@@ -4056,7 +4058,8 @@ SELECT * FROM t;
             "{line}"
         );
         assert!(!line.contains("abc"), "목록에는 값이 없다: {line}");
-        // 서버행 표식: 항목 순서 = VAR · EXEC · PRINT · VARIABLE · SELECT.
+        // 서버행 표식: 항목 순서 = VAR · EXEC · PRINT · VARIABLE · SELECT — `EXEC :V := 'abc'`는 로컬 리터럴 대입이라
+        // 서버행이 아니다(139차 win · `nsql_script::local_assign` · 종전 참은 전송 로그·세션 상태 표식 오탐).
         let flags: Vec<bool> = ev
             .iter()
             .filter_map(|e| match e {
@@ -4064,7 +4067,7 @@ SELECT * FROM t;
                 _ => None,
             })
             .collect();
-        assert_eq!(flags, vec![false, true, false, false, true]);
+        assert_eq!(flags, vec![false, false, false, false, true]);
     }
 
     /// `goes_to_server` 표 — 명령별 독립 확인.
@@ -4082,6 +4085,13 @@ SELECT * FROM t;
             vec![true; 6]
         );
         assert_eq!(kinds("SHOW VARIABLES\nSHOW ERRORS\n"), vec![false, true]);
+        // 로컬 리터럴 대입은 서버행이 아니다(139차 win · 트랜잭션 로그 Running 잔류 · 세션 상태 표식 오탐) · 식 우변 · 호출은 서버행.
+        assert_eq!(
+            kinds("EXEC :a := 1\nEXEC :b := 'x'\nEXEC :c := :a + 1\nEXEC p(:a)\n"),
+            vec![false, false, true, true]
+        );
+    }
+
     }
 
     /// `CONNECT dev` — 사용자명만 있는 스펙은 프로필 해석기를 거친다(T-16b). 해석기가 없으면 그대로 접속.

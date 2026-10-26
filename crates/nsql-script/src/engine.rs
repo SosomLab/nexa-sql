@@ -697,26 +697,18 @@ impl Engine {
             .unwrap_or("")
             .trim();
         let body = body.trim_end_matches(';').trim();
-        if let Some((lhs, rhs)) = body.split_once(":=") {
-            let lhs = lhs.trim();
-            if lhs.starts_with(':')
-                && lhs.len() > 1
-                && lhs[1..].bytes().all(crate::lexer::is_ident_char)
-            {
-                if let Ok(v) = parse_literal(rhs) {
-                    let name = lhs[1..].to_ascii_uppercase();
-                    // 표에는 처음 쓴 표기로(D-142) — 찾기는 대문자 키라 같다.
-                    self.vars.assign(&lhs[1..], v.clone());
-                    let mut acts = vec![Action::LocalAssign {
-                        name: name.clone(),
-                        value: v.clone(),
-                    }];
-                    if self.settings.autoprint {
-                        acts.push(Action::Print(vec![(name, v)]));
-                    }
-                    return acts;
-                }
+        if let Some((raw, v)) = local_assign(body) {
+            let name = raw.to_ascii_uppercase();
+            // 표에는 처음 쓴 표기로(D-142) — 찾기는 대문자 키라 같다.
+            self.vars.assign(raw, v.clone());
+            let mut acts = vec![Action::LocalAssign {
+                name: name.clone(),
+                value: v.clone(),
+            }];
+            if self.settings.autoprint {
+                acts.push(Action::Print(vec![(name, v)]));
             }
+            return acts;
         }
         // 사용 시 모드(D-184): `:V := 식`의 식을 수식으로 기억(의존 = 식 안의 바인드) — 의존이 바뀌면 참조 문장 전에 다시 계산.
         if self.settings.expand_at_use {
@@ -1096,6 +1088,22 @@ fn after_command_word(text: &str) -> String {
         .trim_end_matches(';')
         .trim_end()
         .to_string()
+}
+
+/// ★ `EXEC` 본문이 **리터럴 로컬 대입**(`:V := 리터럴`)이면 `(변수 이름 원문 표기, 값)` — DB 왕복 없이 클라이언트가 처리한다(모든 방언 ·
+/// docs/63). 엔진(EXEC 계획)과 러너("서버로 가는 항목인가" = 전송 로그 · 트랜잭션 로그 · 세션 상태 표식 대상 판정 · 139차 win)가
+/// **같은 판정**을 쓴다. 우변이 리터럴이 아니면(`:A + 10` · 함수 호출) `None` = 서버행.
+pub fn local_assign(body: &str) -> Option<(&str, Value)> {
+    let body = body.trim().trim_end_matches(';').trim();
+    let (lhs, rhs) = body.split_once(":=")?;
+    let lhs = lhs.trim();
+    let is_bind =
+        lhs.starts_with(':') && lhs.len() > 1 && lhs[1..].bytes().all(crate::lexer::is_ident_char);
+    if !is_bind {
+        return None;
+    }
+    let v = parse_literal(rhs).ok()?;
+    Some((&lhs[1..], v))
 }
 
 #[cfg(test)]
