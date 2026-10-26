@@ -5,7 +5,10 @@
 //! 마스크는 **모양마다 프로세스에서 한 번만** 래스터해 `Box::leak`(`memo` · 툴바가 `&'static`을 요구) — 09-22 Linux 기동 계측: 메모 없이
 //! 호출마다 다시 래스터하면 SVG 경로 아이콘이 개당 ≈15 ms(64×64×16 표본 × 다각형 전체 검사)라 찾기 막대 11개 = 166 ms · 결과 탭마다 20개.
 
-use nexa_ctl::shape::{poly, polys_evenodd, polys_nonzero, rrect, stroke, tri};
+use nexa_ctl::shape::{poly, rrect, stroke, tri};
+// 점 샘플링 판정은 스캔라인 래스터(T-430 ②)의 동일성 시험·다각형 시험에서만 쓴다.
+#[cfg(test)]
+use nexa_ctl::shape::{polys_evenodd, polys_nonzero};
 use nexa_ctl::{MenuIcon, ToolIcon};
 
 /// 마스크 한 변(px) — 툴바 슬롯(≈24~32px)에 contain 맞춤이라 64면 어떤 배율에서도 충분하다.
@@ -659,18 +662,20 @@ pub(crate) fn mi_db() -> MenuIcon {
 /// 모양별 메모(키 = 함수 포인터 또는 SVG 경로의 주소·길이·종류). 값은 프로세스 수명 동안 산다.
 fn memo(key: (usize, usize, u8), make: impl FnOnce() -> Vec<u8>) -> &'static [u8] {
     use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    type Cache = Mutex<HashMap<(usize, usize, u8), &'static [u8]>>;
+    use std::sync::{Arc, Mutex, OnceLock};
+    // ★ 칸마다 OnceLock(T-430 · 139차 win): 선굽기 스레드가 굽는 중인 아이콘을 UI 스레드가 또 굽지 않고 **기다린다**
+    //   (종전 = 둘이 같은 마스크를 각자 굽고 뒤의 것이 덮어씀 · 2코어 Linux 첫 그리기 313 ms 정지의 한 원인).
+    //   맵 잠금은 칸을 찾거나 넣을 때만 · 래스터는 잠금 밖에서.
+    type Cell = Arc<OnceLock<&'static [u8]>>;
+    type Cache = Mutex<HashMap<(usize, usize, u8), Cell>>;
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let m = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(a) = m.lock().ok().and_then(|g| g.get(&key).copied()) {
-        return a;
-    }
-    let a: &'static [u8] = Box::leak(make().into_boxed_slice());
-    if let Ok(mut g) = m.lock() {
-        g.insert(key, a);
-    }
-    a
+    let cell: Cell = match m.lock() {
+        Ok(mut g) => g.entry(key).or_default().clone(),
+        // 잠금이 독살됐으면(다른 스레드 패닉) 캐시 없이 직접 굽는다 — 그려지는 것이 우선.
+        Err(_) => return Box::leak(make().into_boxed_slice()),
+    };
+    cell.get_or_init(|| Box::leak(make().into_boxed_slice()))
 }
 
 fn rasterize(shape: fn(f32, f32) -> bool) -> &'static [u8] {
@@ -1169,7 +1174,80 @@ fn svg_polys_vb(d: &str, vb: [f32; 4]) -> Vec<Vec<(f32, f32)>> {
     polys
 }
 
-/// 클로저 도형 → 커버리지(4×4 슈퍼샘플링).
+/// ★ SVG 다각형 → 커버리지(T-430 ② · 139차 win): 서브 스캔라인(64×4)마다 **그 y를 가로지르는 변만** 골라 두고 샘플마다 그 변들만 본다.
+/// 판정식(`nexa_ctl::shape::polys_nonzero`/`polys_evenodd`의 교차·좌우 식)과 샘플 위치가 같아 마스크가 **비트 동일**하다(시험 `scanline_equals_point_sampling`).
+/// 비용 = 변 150개 아이콘에서 샘플 65k × 변 150 → 변 선별 256 × 150 + 샘플 65k × 활성 변 ≈4(Release 활동 막대 5개 84 ms · Debug 1.2 s가 여기였다).
+fn rasterize_polys(polys: &[Vec<(f32, f32)>], evenodd: bool) -> Vec<u8> {
+    let unit = 256.0 / SIDE as f32;
+    let mut out = vec![0u8; (SIDE * SIDE) as usize];
+    let mut hits = vec![0u32; SIDE as usize];
+    // (x0, y0, x1, y1, 방향) — 방향 +1 = 위로 가는 변(y0 <= y < y1) · −1 = 아래로(y1 <= y < y0).
+    let mut active: Vec<(f32, f32, f32, f32, i32)> = Vec::new();
+    for py in 0..SIDE {
+        hits.iter_mut().for_each(|h| *h = 0);
+        for sy in 0..SS {
+            let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * unit / M;
+            active.clear();
+            for p in polys {
+                let n = p.len();
+                if n < 3 {
+                    continue;
+                }
+                for i in 0..n {
+                    let (x0, y0) = p[i];
+                    let (x1, y1) = p[(i + 1) % n];
+                    if y0 <= y {
+                        if y1 > y {
+                            active.push((x0, y0, x1, y1, 1));
+                        }
+                    } else if y1 <= y {
+                        active.push((x0, y0, x1, y1, -1));
+                    }
+                }
+            }
+            if active.is_empty() {
+                continue;
+            }
+            for px in 0..SIDE {
+                for sx in 0..SS {
+                    let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * unit / M;
+                    let inside = if evenodd {
+                        let mut ins = false;
+                        for &(x0, y0, x1, y1, _) in &active {
+                            if x < x0 + (y - y0) * (x1 - x0) / (y1 - y0) {
+                                ins = !ins;
+                            }
+                        }
+                        ins
+                    } else {
+                        let mut wn = 0i32;
+                        for &(x0, y0, x1, y1, dir) in &active {
+                            let c = (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0);
+                            if dir > 0 {
+                                if c > 0.0 {
+                                    wn += 1;
+                                }
+                            } else if c < 0.0 {
+                                wn -= 1;
+                            }
+                        }
+                        wn != 0
+                    };
+                    if inside {
+                        hits[px as usize] += 1;
+                    }
+                }
+            }
+        }
+        for px in 0..SIDE {
+            out[(py * SIDE + px) as usize] = (hits[px as usize] * 255 / (SS * SS)) as u8;
+        }
+    }
+    out
+}
+
+/// 클로저 도형 → 커버리지(4×4 슈퍼샘플링) — 지금은 스캔라인 래스터의 동일성 시험 기준으로만 쓴다.
+#[cfg(test)]
 fn rasterize_dyn(shape: &dyn Fn(f32, f32) -> bool) -> Vec<u8> {
     let unit = 256.0 / SIDE as f32;
     let mut out = Vec::with_capacity((SIDE * SIDE) as usize);
@@ -1195,7 +1273,7 @@ fn rasterize_dyn(shape: &dyn Fn(f32, f32) -> bool) -> Vec<u8> {
 pub(crate) fn svg_glyph(d: &str) -> MenuIcon {
     let alpha = memo((d.as_ptr() as usize, d.len(), 1), || {
         let polys = svg_polys(d);
-        rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
+        rasterize_polys(&polys, false)
     });
     MenuIcon::from_alpha(SIDE, SIDE, alpha)
 }
@@ -1209,11 +1287,7 @@ pub(crate) fn svg_glyph_vb(d: &str, vb: [f32; 4], evenodd: bool) -> MenuIcon {
         (d.as_ptr() as usize, d.len() ^ vbk, 2 + u8::from(evenodd)),
         || {
             let polys = svg_polys_vb(d, vb);
-            if evenodd {
-                rasterize_dyn(&|x, y| polys_evenodd(x / M, y / M, &polys))
-            } else {
-                rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
-            }
+            rasterize_polys(&polys, evenodd)
         },
     );
     MenuIcon::from_alpha(SIDE, SIDE, alpha)
@@ -1424,7 +1498,7 @@ material!(/// `segment` — 선택 범위에서 찾기(≡).
 fn svg_tool(d: &str) -> ToolIcon {
     let alpha = memo((d.as_ptr() as usize, d.len(), 4), || {
         let polys = svg_polys(d);
-        rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
+        rasterize_polys(&polys, false)
     });
     ToolIcon::Mask {
         w: SIDE,
@@ -1491,7 +1565,14 @@ mod svg_tests {
 /// ★ 시작 때 백그라운드에서 모든 툴·메뉴 아이콘 마스크를 미리 굽는다(09-25 실측: 필터 토글 Aa·ab·(.*) 첫 표시 = Debug 1.26 s 프레임 정지 —
 /// `memo`는 전역 Mutex 캐시라 다른 스레드에서 채워도 UI가 그대로 쓴다). 호스트가 `std::thread::spawn` 안에서 부른다.
 pub(crate) fn prewarm() {
-    // ★ 첫 화면 필터 바(탐색기·프로젝트 패널) 토글 = 가장 비싼 SVG 래스터 → 맨 앞(10-20 Linux 2코어: 목록 뒤쪽이면
+    // ★ 활동 막대 5개(첫 화면 왼쪽 · T-430 · 139차 win: Release 84 ms / Debug 1.2 s가 `act_bar` 기동 구간에 동기로 들어 있었다 —
+    //   종전 목록에 없어 UI 스레드가 직접 굽었다) = 맨 앞.
+    let _ = mi_act_explorer();
+    let _ = mi_act_search();
+    let _ = mi_act_project();
+    let _ = mi_act_bookmarks();
+    let _ = mi_act_outline();
+    // ★ 첫 화면 필터 바(탐색기·프로젝트 패널) 토글 = 가장 비싼 SVG 래스터 → 그다음(10-20 Linux 2코어: 목록 뒤쪽이면
     //   UI 스레드의 첫 그리기가 먼저 닿아 같은 아이콘을 직접 굽느라 btns 313 ms 정지 · 6회 중 1회).
     let _ = mi_match_case();
     let _ = mi_match_word();
@@ -1516,6 +1597,10 @@ pub(crate) fn prewarm() {
     let _ = tx_log();
     let _ = sessions();
     let _ = rollback();
+    let _ = find_objects();
+    let _ = variables();
+    let _ = undo();
+    let _ = redo();
     let _ = mi_files();
     let _ = mi_extensions();
     let _ = mi_gear();
@@ -1541,6 +1626,34 @@ pub(crate) fn prewarm() {
     let _ = mi_preserve_case();
     let _ = mi_search();
     let _ = mi_in_selection();
+}
+
+#[cfg(test)]
+mod scanline_tests {
+    use super::*;
+
+    type Case = (Vec<Vec<(f32, f32)>>, bool);
+
+    /// T-430 ②: 스캔라인 래스터 = 점 샘플링과 **비트 동일**(활성 변 선별 조건이 판정식의 y 조건과 같고 x 식도 같다).
+    #[test]
+    fn scanline_equals_point_sampling() {
+        // Material(활동 막대 · 넓은 viewBox) · 짝홀(코디콘 꼴 사각 구멍) · 툴바 Material(기본 viewBox).
+        let cases: Vec<Case> = vec![
+            (svg_polys_vb("M480-120q-151 0-255.5-46.5T120-280v-400q0-66 104.5-113T480-840q151 0 255.5 47T840-680v400q0 67-104.5 113.5T480-120Zm0-479q89 0 179-25.5T760-679q-11-29-100.5-55T480-760q-91 0-178.5 25.5T200-679q14 30 101.5 55T480-599Z", VB_ACT_MATERIAL), false),
+            (svg_polys_vb("M1 1h15v15H1zM3 3v11h11V3z", [0.0, 0.0, 17.0, 17.0]), true),
+            (svg_polys("M382-240 154-468l 57-57 171 171 367-367 57 57-424 424Z"), false),
+        ];
+        for (polys, evenodd) in cases {
+            let fast = rasterize_polys(&polys, evenodd);
+            let slow = if evenodd {
+                rasterize_dyn(&|x, y| polys_evenodd(x / M, y / M, &polys))
+            } else {
+                rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
+            };
+            assert_eq!(fast, slow, "evenodd={evenodd}");
+            assert!(fast.contains(&255), "속이 찬 픽셀이 있어야 한다");
+        }
+    }
 }
 
 #[cfg(test)]

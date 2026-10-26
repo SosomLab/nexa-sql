@@ -1513,6 +1513,18 @@ fn main() {
     });
     // UI 글꼴 = 설정 `ui.font_face`(비면 OS 사슬 · 못 찾으면 사슬로 fail-over · 사용자 09-17 비레티나 모니터 비교용).
     mark(&mut marks, "settings");
+    // ★ 아이콘 마스크 선굽기(09-25 §203 · T-430 10-26 139차 win): 첫 표시 때 UI 스레드가 래스터화로 멎지 않게(Debug 1.26 s) — 별 스레드 ·
+    //   결과는 전역 캐시(`toolicons::memo` = 칸마다 OnceLock · 굽는 중이면 UI 스레드가 기다림). 설정을 읽은 직후 = 글꼴·창·워커보다 앞
+    //   (종전 탐색기 직전 = 활동 막대까지 80줄뿐이라 Release 84 ms / Debug 1.2 s가 `act_bar` 구간에 남았다).
+    //   부하원 = 스레드 1(일회성 · 39 §3) · `ui.icon_prewarm`으로 끔(끄면 각 아이콘을 첫 표시 때 UI 스레드가 굽는다).
+    if settings.flag("ui.icon_prewarm") {
+        let _ = std::thread::Builder::new()
+            .name("nsql-icons".into())
+            .spawn(|| {
+                toolicons::prewarm();
+                exp_icons::prewarm();
+            });
+    }
     let ui_pref = settings.get("ui.font_face").map(str::to_string);
     let ui = nexa_font::ui_font(ui_pref.as_deref()).or_else(|| nexa_font::ui_font(None));
     // 고정폭 = 설정 `editor.font_face`(비면 OS 기본 사슬 · 없는 이름은 fail-over · 사용자 09-17).
@@ -1643,13 +1655,6 @@ fn main() {
     mark(&mut marks, "keymap");
     let explorer = {
         let proxy = std::sync::Mutex::new(wake_proxy.clone());
-        // ★ 아이콘 마스크 선굽기(09-25 §203): 첫 표시 때 UI 스레드가 래스터화로 멎지 않게(Debug 1.26 s) — 별 스레드 · 결과는 전역 캐시.
-        let _ = std::thread::Builder::new()
-            .name("nsql-icons".into())
-            .spawn(|| {
-                toolicons::prewarm();
-                exp_icons::prewarm();
-            });
         let mut e = explorers::ExplorerSet::new(
             std::sync::Arc::new(move || {
                 if let Ok(p) = proxy.lock() {

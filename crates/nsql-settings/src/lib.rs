@@ -2499,6 +2499,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 아이콘 마스크 선굽기 스레드(T-430 · 10-26 139차 win): 설정을 읽은 직후 별 스레드가 활동 막대·툴바·메뉴·탐색기 아이콘을 미리 굽는다
+    //   (일회성 스레드 1 · 39 §3 부하원). 끄면 각 아이콘을 첫 표시 때 UI 스레드가 굽는다(Release 84 ms · Debug 1.2 s 정지).
+    Entry {
+        key: "ui.icon_prewarm",
+        cat: Msg::CatAppearance,
+        label: Msg::LblIconPrewarm,
+        desc: Msg::DescIconPrewarm,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.flash_ms",
         cat: Msg::CatAppearance,
@@ -7858,6 +7868,8 @@ pub const ADVANCED: &[&str] = &[
     "extensions.tab_badge",
     // Linux 시스템 테마 변경 감시(10-24 · 부하원 스위치)
     "ui.theme_watch",
+    // 아이콘 선굽기 스레드(10-26 · 부하원 스위치 · T-430)
+    "ui.icon_prewarm",
     // 시간 상수(ms)
     "ui.fade_slow_ms",
     "ui.fade_fast_ms",
