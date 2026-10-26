@@ -79,7 +79,7 @@
 - **실행 경로의 시간은 `nsql_core::Timeline`에 단계로 덧붙인다**(docs/26 — 각 층은 자기 단계만 · 문자열 포맷은 표시 시점에만). 결과 그리드는 속도·메모리 최우선.
 - ★ **배포·패키지 규칙** = 패키지 게시물과 프로그램 안에 박히는 정보는 전부 영어(한국어는 덧붙이기만) · 릴리스마다 `WINGET_PUBLISH`·`CHOCO_PUSH` 값을 사용자에게 확인 · Linux는 deb와 rpm을 함께 · 한 번 공개한 Release 자산은 지우거나 다시 올리지 않는다. 릴리스·패키지 작업 전에 [docs/claude-release-rules.md](docs/claude-release-rules.md) 전문을 읽는다.
 - **배포 = 설치본만(DR-27)** — 포터블 모드·exe 옆 데이터 없음 · 사용자 데이터는 OS 사용자 폴더 · 새 실행파일은 목적별로(GUI/CLI/드라이버 프로세스) · [33](docs/33-distribution-and-packaging.md).
-- **테스트 실행 = Debug exe · 그 전에 Release도 함께 빌드**(사용자가 `target/release`로 병행 테스트 · 09-15).
+- **테스트 실행 = Debug exe · 그 전에 Release도 함께 빌드**(사용자가 `target/release`로 병행 테스트 · 09-15). ★ **로컬 Release = lite 판 · Debug = 통합(full) 판 — 3-OS 공통(사용자 10-26 밤 · 맥 140차 · D-363)**: `target/release`는 반드시 [61 §3](docs/61-core-design-and-working-rules.md) lite 절차(`CARGO_TARGET_DIR=target/lite … --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 복사)로 만든다 · 기본 `cargo build --release`는 full로 되돌리므로 금지 · 설치본과 같은 확장 드라이버 경로를 Release에서 시험하기 위함(10-26 ABI `pending` 결함이 내장 빌드에서는 안 보였던 교훈).
 - **사용자 문자열은 전부 `nsql-i18n::Msg`**(기본 영어 · 한국어 열) — 리터럴 금지. **설정 키는 `nsql-settings::REGISTRY`에만** 추가(라벨·설명 = `Msg`). ★ **예외 = 의존 0 크레이트 `nsql-script`(T-369 · 10-17)**: 엔진의 안내·오류 메시지는 `tr!("English …", "한국어 …")`로 두 언어를 나란히(영어 기본 · 호스트가 `nsql_script::set_lang(Lang::from_code(ui.lang))`로 켬 · GUI 기동·언어 전환 · CLI) — 새 메시지도 같은 꼴 · 로그·진단 글은 영어 고정.
 - 스크립트 엔진을 고치면 `examples/golden-session-vars.sql`로 `nsql plan` 양 방언을 다시 본다.
 - `.claude/settings.json`은 덮어쓰기 금지, 병합만.
