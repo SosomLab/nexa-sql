@@ -66,7 +66,10 @@ if (-not (Test-Path -LiteralPath $projFile)) {
     $dj = $DataDir.Replace('\', '/')
     Set-Content -LiteralPath $projFile -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `"$dj`" } ] }"
 }
-if (-not (Test-Path -LiteralPath (Join-Path $HomeDir "profiles"))) {
+# T-408(10-26): `profiles` 폴더 유무가 아니라 `nsql conn list`의 Local 존재로 판정 — 워밍업 기동이 빈 폴더를 먼저 만들면 생성이 건너뛰어져
+#   접속 없는 표본이 됐다(71 §12 ①).
+$connList = (& $Cli conn list 2>&1 | Out-String)
+if ($connList -notmatch '(?m)^Local\s') {
     & $Cli conn add Local ("sqlite:" + $sqlite) -d sqlite --no-prompt 2>&1 | Out-Null
 }
 # 결과 시나리오는 상한 때문에 200행에서 멈춘다 — 격리 홈에서만 올린다(향상 모드 강제 대상이 아니라 A/B에 영향 없음).
