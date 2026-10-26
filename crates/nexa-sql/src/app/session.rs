@@ -117,6 +117,7 @@ impl App {
         self.next_sess_id += 1;
         let s = Sess::new(id, None, w, ev, DEFAULT_DIALECT);
         s.control(worker::Cmd::GlobalVars(self.global_vars.clone()));
+        s.control(worker::Cmd::GlobalMacros(self.global_macro_pairs()));
         self.parked.push(s);
         id
     }
@@ -386,6 +387,7 @@ impl App {
         self.next_sess_id += 1;
         let s = Sess::new(id, Some(tab), w, ev, DEFAULT_DIALECT);
         s.control(worker::Cmd::GlobalVars(self.global_vars.clone()));
+        s.control(worker::Cmd::GlobalMacros(self.global_macro_pairs()));
         self.parked.push(s);
         Some(id)
     }

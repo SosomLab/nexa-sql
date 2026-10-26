@@ -567,7 +567,12 @@ impl VarsWin {
                 }
                 let ty = y + (row_h - th_txt) / 2;
                 let cells = [
-                    format!(":{}", r.name),
+                    // 바인드 = `:이름` · 치환 변수 = `&이름` 그대로(139차 win V1 ④ `:&X` 표기 정리).
+                    if r.name.starts_with('&') {
+                        r.name.clone()
+                    } else {
+                        format!(":{}", r.name)
+                    },
                     r.ty.clone(),
                     r.value.clone(),
                     r.formula.clone(),

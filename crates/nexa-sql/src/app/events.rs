@@ -1250,8 +1250,19 @@ impl App {
                     global,
                     changed,
                     defines,
+                    defines_shared,
+                    defines_global,
                 } => {
                     self.tab_defines.insert(self.sess.run_editor, defines);
+                    self.sess.shared_macros = defines_shared;
+                    // 스크립트가 치환 변수 글로벌 층을 바꿨으면(`DEFINE x GLOBAL`) 원천 갱신 + 모든 세션 러너에 전파(T-153 후속 10-26).
+                    if defines_global != self.global_macros {
+                        self.global_macros = defines_global;
+                        let pairs = self.global_macro_pairs();
+                        for s in self.all_sess() {
+                            s.control(worker::Cmd::GlobalMacros(pairs.clone()));
+                        }
+                    }
                     let line = vars_log_line(&changed, &local, &shared, &global);
                     // 스크립트가 글로벌 층을 바꿨으면(`VAR x GLOBAL` · 대입) 단일 원천 갱신 + 저장 + 다른 세션에 전파.
                     if global != self.global_vars {

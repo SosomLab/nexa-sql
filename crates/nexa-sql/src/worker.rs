@@ -69,6 +69,8 @@ pub(crate) enum Cmd {
     SharedVars(Vec<nsql_script::VarState>),
     /// 앱 전역 층(docs/63 §11)을 통째로 바꾼다(시작 · 변수 창 · 다른 세션의 `VAR x GLOBAL`).
     GlobalVars(Vec<nsql_script::VarState>),
+    /// ★ 치환 변수 앱 전역 층(`DEFINE x GLOBAL` · T-153 후속 10-26) — 통째로(시작 · 새 세션 · 다른 세션의 이동). DB로 가는 것 없음.
+    GlobalMacros(Vec<(String, String)>),
     /// ★ 프로필 층(읽기 전용 · T-153): 접속 프로필의 `var.<이름>=값` 목록 — 접속 뒤 호스트가 한 번 준다(DB로 가는 것 없음).
     FixedVars(Vec<(String, String)>),
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
@@ -144,6 +146,7 @@ impl Cmd {
                 | Cmd::Autocommit(_)
                 | Cmd::SharedVars(_)
                 | Cmd::GlobalVars(_)
+                | Cmd::GlobalMacros(_)
                 | Cmd::FixedVars(_)
         )
     }
@@ -550,6 +553,8 @@ fn merge_vars(prev: RunEvent, next: RunEvent) -> RunEvent {
                 global,
                 changed: c2,
                 defines,
+                defines_shared,
+                defines_global,
             },
         ) => {
             let mut changed = c1;
@@ -564,6 +569,8 @@ fn merge_vars(prev: RunEvent, next: RunEvent) -> RunEvent {
                 global,
                 changed,
                 defines,
+                defines_shared,
+                defines_global,
             }
         }
         (_, next) => next,
@@ -1861,7 +1868,11 @@ pub(crate) fn spawn(
                             runner.engine.vars.set_local(v);
                         }
                         if let Some(d) = defines {
-                            runner.engine.defines = d.into_iter().collect();
+                            // 탭 층만 바꾼다(T-153 후속 10-26) — 공유·글로벌 층(`DEFINE x SHARE|GLOBAL`)은 러너가 든 채로 남는다.
+                            runner
+                                .engine
+                                .defines
+                                .set_layer(nsql_script::MacroLayer::Local, d.into_iter().collect());
                             runner.engine.defines_dirty = true;
                         }
                         if let Some(m) = intrinsic {
@@ -2043,6 +2054,14 @@ pub(crate) fn spawn(
                         runner.engine.vars.set_global(v);
                         true
                     }
+                    Cmd::GlobalMacros(v) => {
+                        runner
+                            .engine
+                            .defines
+                            .set_layer(nsql_script::MacroLayer::Global, v.into_iter().collect());
+                        runner.engine.defines_dirty = true;
+                        true
+                    }
                     Cmd::FixedVars(v) => {
                         runner.set_profile_vars(v);
                         true
@@ -2186,6 +2205,8 @@ mod tests {
             global: Vec::new(),
             changed: changed.iter().map(|s| s.to_string()).collect(),
             defines,
+            defines_shared: Vec::new(),
+            defines_global: Vec::new(),
         };
         let d2 = vec![("X".to_string(), "1".to_string(), "1".to_string())];
         match super::merge_vars(mk(&["A", "b"], Vec::new()), mk(&["B", "C"], d2.clone())) {

@@ -34,6 +34,12 @@ pub enum Command {
         name: Option<String>,
         value: Option<String>,
     },
+    /// ★ `DEFINE 이름 SHARE|LOCAL|GLOBAL`(T-153 후속 · 10-26 139차 win): 치환 변수를 다른 층으로 옮긴다(`VAR x SHARE`와 같은 꼴 ·
+    /// docs/63 §7·§11). `&` 접두는 벗긴다. 값을 주면서 층을 지정하는 꼴(`DEFINE x = v SHARE`)은 두지 않는다 — 값은 줄 끝까지라 애매하다.
+    DefineLayer {
+        name: String,
+        layer: crate::macros::MacroLayer,
+    },
     Undefine {
         names: Vec<String>,
     },
@@ -324,9 +330,24 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
                     value: Some(unquote(v.trim())),
                 }
             } else {
-                Command::Define {
-                    name: Some(rest.to_ascii_uppercase()),
-                    value: None,
+                // ★ `DEFINE 이름 SHARE|LOCAL|GLOBAL` = 층 이동(T-153 후속) — 값 없는 두 토큰 · 둘째가 층 낱말일 때만(그 밖 = 조회).
+                let mut it = rest.split_whitespace();
+                let n = it.next().unwrap_or("");
+                let layer = match it.next().map(str::to_ascii_uppercase).as_deref() {
+                    Some("SHARE" | "SHARED") => Some(crate::macros::MacroLayer::Shared),
+                    Some("LOCAL" | "TAB" | "UNSHARE") => Some(crate::macros::MacroLayer::Local),
+                    Some("GLOBAL") => Some(crate::macros::MacroLayer::Global),
+                    _ => None,
+                };
+                match layer {
+                    Some(layer) if it.next().is_none() && !n.is_empty() => Command::DefineLayer {
+                        name: n.trim_start_matches('&').to_ascii_uppercase(),
+                        layer,
+                    },
+                    _ => Command::Define {
+                        name: Some(rest.to_ascii_uppercase()),
+                        value: None,
+                    },
                 }
             }
         }
@@ -1375,5 +1396,54 @@ mod tests {
             "{c:?}"
         );
         assert!(is_command_start("conntype dev"));
+    }
+}
+
+#[cfg(test)]
+mod define_layer_tests {
+    use super::*;
+    use crate::macros::MacroLayer;
+
+    /// T-153 후속(10-26): `DEFINE x SHARE|LOCAL|GLOBAL` = 층 이동 · 그 밖 두 토큰 이상은 종전 조회 · `&` 접두 허용.
+    #[test]
+    fn define_layer_parses_only_layer_words() {
+        let p = |s: &str| parse_command(s).unwrap().unwrap();
+        assert_eq!(
+            p("DEFINE x SHARE"),
+            Command::DefineLayer {
+                name: "X".into(),
+                layer: MacroLayer::Shared
+            }
+        );
+        assert_eq!(
+            p("def &dept global"),
+            Command::DefineLayer {
+                name: "DEPT".into(),
+                layer: MacroLayer::Global
+            }
+        );
+        assert_eq!(
+            p("DEFINE x TAB"),
+            Command::DefineLayer {
+                name: "X".into(),
+                layer: MacroLayer::Local
+            }
+        );
+        // 조회 · 정의는 그대로.
+        assert_eq!(
+            p("DEFINE x"),
+            Command::Define {
+                name: Some("X".into()),
+                value: None
+            }
+        );
+        assert_eq!(
+            p("DEFINE x = SHARE"),
+            Command::Define {
+                name: Some("X".into()),
+                value: Some("SHARE".into())
+            }
+        );
+        assert!(matches!(p("DEFINE x y z"), Command::Define { .. }));
     }
 }

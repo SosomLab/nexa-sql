@@ -296,8 +296,12 @@ pub enum RunEvent {
         /// 앱 전역 층(docs/63 §11 · 스크립트 `VAR x GLOBAL`로 올린 것을 호스트가 받아 저장·전파).
         global: Vec<nsql_script::VarState>,
         changed: Vec<String>,
-        /// 치환 변수(`DEFINE` · 이름 · 원문 · 표시값 = 사용 시 모드면 `원문 → 값` · 09-23).
+        /// 치환 변수 **탭 층**(`DEFINE` · 이름 · 원문 · 표시값 = 사용 시 모드면 `원문 → 값` · 09-23) — 호스트가 탭마다 들고 실행마다 되돌려 준다.
         defines: Vec<(String, String, String)>,
+        /// ★ 치환 변수 **연결 공유 층**(`DEFINE x SHARE` · T-153 후속 10-26) — 원본은 이 러너의 `MacroStore`(세션 수명) · 호스트는 보여 주기만.
+        defines_shared: Vec<(String, String, String)>,
+        /// ★ 치환 변수 **앱 전역 층**(`DEFINE x GLOBAL`) — 호스트가 받아 다른 세션 러너에 `set_layer(Global)`로 전파한다.
+        defines_global: Vec<(String, String, String)>,
     },
     /// 수동 커밋 모드에서 **변경 없는 트랜잭션을 러너가 끝냈다**(docs/56 L1 · `deferred` = 열린 커서가 닫힐 때 끝난다).
     ReadTxEnded {
@@ -2313,25 +2317,35 @@ impl Runner {
             let changed = self.engine.vars.take_dirty();
             let defines_dirty = std::mem::take(&mut self.engine.defines_dirty);
             if !changed.is_empty() || defines_dirty {
-                let pairs: Vec<(String, String)> = self
-                    .engine
-                    .defines
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-                let defines = pairs
-                    .into_iter()
-                    .map(|(k, v)| {
-                        let shown = self.engine.define_display(&k, &v);
-                        (k, v, shown)
-                    })
-                    .collect();
+                // 층별로 따로(T-153 후속 10-26): 탭 층은 호스트가 다음 실행에 되돌려 주고 · 공유 층은 러너가 들고 · 글로벌 층은 호스트가 전파.
+                let mut layered =
+                    |layer: nsql_script::MacroLayer| -> Vec<(String, String, String)> {
+                        let pairs: Vec<(String, String)> = self
+                            .engine
+                            .defines
+                            .layer(layer)
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        pairs
+                            .into_iter()
+                            .map(|(k, v)| {
+                                let shown = self.engine.define_display(&k, &v);
+                                (k, v, shown)
+                            })
+                            .collect()
+                    };
+                let defines = layered(nsql_script::MacroLayer::Local);
+                let defines_shared = layered(nsql_script::MacroLayer::Shared);
+                let defines_global = layered(nsql_script::MacroLayer::Global);
                 emit(RunEvent::Vars {
                     local: self.engine.vars.local_states(),
                     shared: self.engine.vars.shared_states(),
                     global: self.engine.vars.global_states(),
                     changed,
                     defines,
+                    defines_shared,
+                    defines_global,
                 });
             }
         }
@@ -4092,6 +4106,43 @@ SELECT * FROM t;
         );
     }
 
+    /// ★ T-153 후속(10-26): `DEFINE x SHARE|GLOBAL`은 층을 옮기고 `Vars`가 층별로 나뉘어 온다 · 다음 실행의 탭 층 교체(`set_layer(Local)`)는
+    /// 공유·글로벌을 지우지 않는다 · 없는 이름 = 오류 1.
+    #[test]
+    fn define_layer_moves_macro_and_vars_event_is_layered() {
+        let mut r = runner();
+        let (errs, ev) = collect(
+            &mut r,
+            "DEFINE A = 1\nDEFINE B = 2\nDEFINE B SHARE\nDEFINE C = 3\nDEFINE C GLOBAL\n",
+        );
+        assert_eq!(errs, 0);
+        let vars = ev
+            .iter()
+            .rev()
+            .find(|e| matches!(e, RunEvent::Vars { .. }))
+            .expect("Vars");
+        let RunEvent::Vars {
+            defines,
+            defines_shared,
+            defines_global,
+            ..
+        } = vars
+        else {
+            unreachable!()
+        };
+        let names =
+            |v: &Vec<(String, String, String)>| v.iter().map(|d| d.0.clone()).collect::<Vec<_>>();
+        assert_eq!(names(defines), vec!["A"]);
+        assert_eq!(names(defines_shared), vec!["B"]);
+        assert_eq!(names(defines_global), vec!["C"]);
+        r.engine.defines.set_layer(
+            nsql_script::MacroLayer::Local,
+            std::iter::once(("A".to_string(), "9".to_string())).collect(),
+        );
+        assert_eq!(r.engine.defines.get("B").map(String::as_str), Some("2"));
+        assert_eq!(r.engine.defines.get("C").map(String::as_str), Some("3"));
+        let (errs, _) = collect(&mut r, "DEFINE NOPE SHARE\n");
+        assert_eq!(errs, 1);
     }
 
     /// `CONNECT dev` — 사용자명만 있는 스펙은 프로필 해석기를 거친다(T-16b). 해석기가 없으면 그대로 접속.

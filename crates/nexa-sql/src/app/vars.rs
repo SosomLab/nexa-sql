@@ -74,6 +74,14 @@ impl App {
         })
     }
 
+    /// 치환 변수 글로벌 층 → 러너에 보낼 `(이름, 원문)` 쌍(`Cmd::GlobalMacros` · T-153 후속 10-26).
+    pub(crate) fn global_macro_pairs(&self) -> Vec<(String, String)> {
+        self.global_macros
+            .iter()
+            .map(|(n, raw, _)| (n.clone(), raw.clone()))
+            .collect()
+    }
+
     /// ★ T-153: 접속 프로필의 `var.<이름>=값` → 프로필 층(읽기 전용 · `Layer::Fixed`) — 세션 사본 + 워커 러너(`Cmd::FixedVars`).
     pub(crate) fn load_profile_vars(&mut self) {
         let pairs: Vec<(String, String)> = if self.sess.profile.is_empty() {
@@ -182,17 +190,20 @@ impl App {
                     .get(&tab)
                     .into_iter()
                     .flatten()
-                    .map(|(n, raw, shown)| vars_win::VarRow {
-                        name: format!("&{n}"),
-                        ty: "DEFINE".into(),
-                        value: shown.clone(),
-                        edit: raw.clone(),
-                        layer: nsql_script::Layer::Local,
-                        changed: false,
-                        shadowed: false,
-                        stale: false,
-                        formula: String::new(),
-                    }),
+                    .map(|d| macro_row(d, nsql_script::Layer::Local)),
+            )
+            // ★ 공유·글로벌 층 치환 변수(`DEFINE x SHARE|GLOBAL` · T-153 후속 10-26) — 창에서 값을 고치면 탭 층에 그림자가 생긴다(종전 편집 경로) ·
+            //   층 이동은 스크립트 명령으로.
+            .chain(
+                self.sess
+                    .shared_macros
+                    .iter()
+                    .map(|d| macro_row(d, nsql_script::Layer::Shared)),
+            )
+            .chain(
+                self.global_macros
+                    .iter()
+                    .map(|d| macro_row(d, nsql_script::Layer::Global)),
             )
             .collect()
     }
@@ -419,5 +430,23 @@ impl App {
                 .cloned()
                 .unwrap_or_default(),
         )
+    }
+}
+
+/// 치환 변수 한 줄(변수 창) — 표시값 = 사용 시 모드면 `원문 → 현재 값`(63 §9) · 편집 = 원문 · 층 = 탭/공유/글로벌(T-153 후속).
+fn macro_row(
+    (n, raw, shown): &(String, String, String),
+    layer: nsql_script::Layer,
+) -> vars_win::VarRow {
+    vars_win::VarRow {
+        name: format!("&{n}"),
+        ty: "DEFINE".into(),
+        value: shown.clone(),
+        edit: raw.clone(),
+        layer,
+        changed: false,
+        shadowed: false,
+        stale: false,
+        formula: String::new(),
     }
 }

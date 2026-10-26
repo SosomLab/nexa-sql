@@ -228,6 +228,8 @@ struct App {
     tab_vars: std::collections::HashMap<u64, Vec<nsql_script::VarState>>,
     /// ★ 글로벌 변수 층(docs/63 §11 · 앱 전역 · `vars/global.sql` 보존 · 모든 세션에 전파) — 단일 원천.
     global_vars: Vec<nsql_script::VarState>,
+    /// ★ 치환 변수 앱 전역 층(`DEFINE x GLOBAL` · T-153 후속 10-26 · 앱 수명 · 파일 보존은 후속) — 원천 · 모든 세션 러너에 전파.
+    global_macros: Vec<(String, String, String)>,
     /// 오래된 변수 보존 파일 정리를 이번 실행에서 했는가(처음 쓸 때 1회).
     vars_pruned: bool,
     ui_font: Font,
@@ -1766,6 +1768,7 @@ fn main() {
         global_vars: varsfile::dir()
             .map(|d| varsfile::load_global(&d))
             .unwrap_or_default(),
+        global_macros: Vec::new(),
         vars_pruned: false,
         ui_font: ui.font,
         mono_font: mono.font,

@@ -114,6 +114,25 @@ impl MacroStore {
         *self.layer_mut(layer) = map;
     }
 
+    /// ★ 이름을 다른 층으로 옮긴다(`DEFINE 이름 SHARE|LOCAL|GLOBAL` · T-153 후속 · 10-26 139차 win) — 모든 층에서 빼고 목적 층에 넣는다
+    /// (같은 이름이 여러 층에 있으면 옮기는 값 = 보이던 값 = 탭 → 공유 → 글로벌 순 첫 것). 어느 층에도 없으면 `false`.
+    pub fn move_to(&mut self, name: &str, layer: MacroLayer) -> bool {
+        let key = name.to_ascii_uppercase();
+        let mut value: Option<String> = None;
+        for l in [MacroLayer::Local, MacroLayer::Shared, MacroLayer::Global] {
+            if let Some(v) = self.layer_mut(l).remove(&key) {
+                value.get_or_insert(v);
+            }
+        }
+        match value {
+            Some(v) => {
+                self.layer_mut(layer).insert(key, v);
+                true
+            }
+            None => false,
+        }
+    }
+
     fn layer_mut(&mut self, layer: MacroLayer) -> &mut BTreeMap<String, String> {
         match layer {
             MacroLayer::Local => &mut self.local,
@@ -178,5 +197,31 @@ mod tests {
         assert_eq!(c.layer(MacroLayer::Local).len(), 1);
         let names: Vec<&String> = c.iter().map(|(k, _)| k).collect();
         assert_eq!(names, vec!["A"]);
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    /// T-153 후속(10-26): 층 이동 = 모든 층에서 빼고 목적 층에 · 보이던 값이 따라간다 · 없는 이름 = false.
+    #[test]
+    fn move_to_crosses_layers_and_keeps_visible_value() {
+        let mut m = MacroStore::new();
+        m.define_in(MacroLayer::Global, "x", "g");
+        m.define_in(MacroLayer::Local, "x", "l");
+        assert_eq!(m.get("X").map(String::as_str), Some("l"));
+        assert!(m.move_to("x", MacroLayer::Shared));
+        assert_eq!(m.layer(MacroLayer::Local).len(), 0);
+        assert_eq!(
+            m.layer(MacroLayer::Global).len(),
+            0,
+            "글로벌의 같은 이름도 비운다"
+        );
+        assert_eq!(m.layer_of("X"), Some(MacroLayer::Shared));
+        assert_eq!(m.get("X").map(String::as_str), Some("l"));
+        assert!(!m.move_to("nope", MacroLayer::Global));
+        assert!(m.move_to("X", MacroLayer::Local));
+        assert_eq!(m.layer_of("X"), Some(MacroLayer::Local));
     }
 }

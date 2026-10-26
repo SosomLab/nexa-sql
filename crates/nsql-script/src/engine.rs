@@ -593,6 +593,18 @@ impl Engine {
                     "치환 변수 {n}가 없습니다"
                 ))],
             },
+            // ★ `DEFINE 이름 SHARE|LOCAL|GLOBAL` — 층 이동(T-153 후속 · 10-26). 호스트는 `RunEvent::Vars`의 층별 목록으로 보존·전파한다.
+            Command::DefineLayer { name, layer } => {
+                if self.defines.move_to(name, *layer) {
+                    self.defines_dirty = true;
+                    vec![Action::Nothing(format!("define {name} {layer:?}"))]
+                } else {
+                    vec![Action::Error(tr!(
+                        "substitution variable {name} is not defined",
+                        "치환 변수 {name}가 없습니다"
+                    ))]
+                }
+            }
             Command::Column {
                 name,
                 new_value,

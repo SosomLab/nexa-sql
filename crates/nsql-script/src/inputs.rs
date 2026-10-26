@@ -321,7 +321,9 @@ pub fn missing_inputs(
             // `DEFINE x = …`·`UNDEFINE x`·`ACCEPT` 줄의 이름 자리는 참조가 아니다.
             let is_def_cmd = matches!(
                 &item.kind,
-                ItemKind::Command(Command::Define { .. } | Command::Undefine { .. })
+                ItemKind::Command(
+                    Command::Define { .. } | Command::DefineLayer { .. } | Command::Undefine { .. }
+                )
             );
             // 치환 글자가 없는 문장은 분류(토큰화)하지 않는다.
             if !is_def_cmd && item_macro {
