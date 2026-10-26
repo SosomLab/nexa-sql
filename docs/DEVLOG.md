@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-26 (139차 · Windows · 최신화 · 빠른 수정 7)** — 최신화 ba2a2416(138차 91커밋) · 사용자 결정 8건(drivers-v0.1.6 발행 · 앱 v0.3.0 · T-430 진행 · 이 PC Release = lite · VPN · WiX 안 함 = MSI는 CI만 · 보류 T-427/D-353/Db2 10.5 · T-88/T-125 자동화 종결) · ★ T-430 스캔라인 래스터(eeed2ce9 · Debug 아이콘 구간 486~542 → 18~27 ms · resumed 1.1 s → 0.11 s · 픽셀 동일) · txlog 서버 행만 + DISCONNECT 로그 1회(08091ac1) · EXEC 로컬 대입(b8fdddae) · T-153 ⓑ `DEFINE … SHARE|LOCAL|GLOBAL`(a0538bd2) · T-429 func-check(e4569132) · T-408 perf 실행기(9c5a2cf3) · DRIVER_VERSION 0.1.6(f70a6927) · 통합 thin 5/5(Instant Client 없음) · T-88 ✅ · T-125 16 ✓ · 새 T-431 · 문서 정비(README 색인 +60 · MILESTONES +22 · TODO 감사) · [journal 10-26 §4](journal/2026-10-26.md)
+
 - **2026-10-26 (Linux · 밤 자동 작업)** — ★ T-153 변수 UX 잔여 5개(입력 창 타입·미리보기 · 프로필 층 · 무제 탭 보존 · MacroStore · hover 값 카드) · T-416~T-420(전달 모드 꼬리표 · 계획 바인드 기준 · DeclarePrepend 안내 · 타입 고정 · ClickHouse 서버 매개변수) · Db2 막힘 조회·EXPLAIN 트리(러너 read_end 결함 수정)·`@` 종결자·0xCD 판정 · T-145 괄호 표 증분 · T-427 측정 = 기록만 · 풀 테스트 통과([journal 10-26 §3](journal/2026-10-26.md)).
 
 - **2026-10-26 (Linux · 사용자 실기)** — 사용자 Linux 실기 9건 ✅ · 결함 0(아웃라인 1·2차 · 변수 창 Formula/⟳ · drivers-v0.1.5 자동 설치(Oracle) · 드라이버 관리자 창 · 툴바 [변수] · 4만 줄 타이핑 · 서식 복사 · ODBC 정적 동봉 · 테마 감시) · D-357 기본값 확인 · D-353 보류([journal 10-26 §1](journal/2026-10-26.md)).

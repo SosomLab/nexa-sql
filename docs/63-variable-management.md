@@ -234,6 +234,8 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 
 `Declared` 열: `decl` = `VAR`로 선언(타입 고정) · `auto` = 대입·OUT으로 암묵 생성(타입 추론). 우선순위 = tab > shared > fixed(같은 이름이면 앞 층이 이긴다).
 
+> ★ **치환 변수(`&이름` · DEFINE)도 같은 층 꼴**(10-26 139차 win · §7) — MacroStore 층 = **tab**(`DEFINE` 기본) → **shared**(`DEFINE 이름 SHARE`) → **global**(`DEFINE 이름 GLOBAL`) · 되돌리기 = `DEFINE 이름 LOCAL` · 우선순위 = tab > shared > global · 글로벌 = 앱 전체(`App.global_macros`) · 보존 = 아직 없음(후속).
+
 ### 11-2. 빠진 개념 = "글로벌"
 - 요구: 어느 서버·어느 탭에서나 같은 값(예 `:PROJECT_CD` · `:V_USER`) · 앱을 다시 켜도 남음. 지금은 탭마다/연결마다 다시 넣거나 스크립트(`vars.script`)로 옮겨야 한다.
 - 타 도구: SQL Workbench/J = 작업공간 변수(`WbVarDef` · 파일 저장) · DBeaver = 전역 변수 파일(서버끼리 섞임이 단점 · 63 §1) · cbq/usql = 세션 한정.
@@ -380,6 +382,6 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 - **V3 입력 창 타입 열·미리보기 ✅**(edb2fba7) — 바인드 행 타입 콤보(auto · NUMBER · VARCHAR2 · DATE · TIMESTAMP · BOOLEAN · CLOB) · 미리보기 열 = 서버에 가는 모양(`bind NUMBER 42` · `inline '…'` · 매크로 = 글자) · 고른 타입 = 선언 + 대입(`auto` = 종전 리터럴 추정) · 창 폭 760 · 기동 명령 `inputs.type:<행>:<타입>`.
 - **§11 프로필 층 ✅**(5e53e376) — 프로필 파일 `var.<이름>=값`(nsql-vault `vars`/`set_vars`) · CLI `nsql conn var <프로필> [NAME=value …]`(`NAME=` = 삭제) · 접속 뒤 `Cmd::FixedVars` → `Layer::Fixed` → 변수 창 `profile` 층(읽기 전용 안내) · 🚧 접속 창 폼 편집 UI는 후속.
 - **V4 이름 없는 탭 ✅**(4e27ff13) — 파일/폴더 모드 = 종료 시 버림(종전) · **프로젝트 모드 = 프로젝트 파일 `TabState.vars`에 보관** · 파일로 저장하면 경로 해시 파일로 인수인계(`save_to`).
-- **§7 MacroStore ✅**(fddd0c86) — 치환 변수(`&이름` · DEFINE · :setvar · 인자) = `Engine.defines: MacroStore`(층 탭 → 공유 → 글로벌 · `DEFINE` = 탭 · `UNDEFINE` = 탭 → 공유) · BTreeMap 호환 표면 · 🚧 공유/글로벌 층 문법(`DEFINE … SHARE`)·보존은 후속.
+- **§7 MacroStore ✅**(fddd0c86) — 치환 변수(`&이름` · DEFINE · :setvar · 인자) = `Engine.defines: MacroStore`(층 탭 → 공유 → 글로벌 · `DEFINE` = 탭 · `UNDEFINE` = 탭 → 공유) · BTreeMap 호환 표면 · ✅ **10-26 139차 win = 층 이동 문법 `DEFINE 이름 SHARE|LOCAL|GLOBAL`**(`VAR x SHARE` 꼴 · `&` 접두 허용 · 동의어 `SHARED`/`TAB`/`UNSHARE` · 값과 함께 층 지정 `DEFINE x = v SHARE`는 두지 않음 = 값이 줄 끝까지라 애매) · 엔진 `MacroStore::move_to`(모든 층에서 빼고 목적 층에 · 보이던 값이 따라감 · 없는 이름 = "치환 변수 X가 없습니다") · 러너 `RunEvent::Vars` = `defines`(탭 층) + `defines_shared` + `defines_global` · 실행마다 탭 층만 `set_layer(Local)` 교체(공유·글로벌은 러너가 든 채) · 호스트 = `Sess.shared_macros`(표시 사본) · `App.global_macros`(원천 · 바뀌면 모든 세션 러너에 `Cmd::GlobalMacros` · 새 세션 생성 때도) · 변수 창 `&이름` 행 Layer 열 = tab/shared/global(창 편집은 종전처럼 탭 층 그림자 · 층 이동은 명령으로) · 시험 = macros `move_tests` · command `define_layer_tests` · nsql-run `define_layer_moves_macro_and_vars_event_is_layered` · 🚧 남은 것 = **글로벌 층 파일 보존**(바인드 `vars.global_persist`와 짝).
 - **§14 hover 값 ✅**(960f5191) — 편집기 `:이름`·`&이름` 위 머무름 카드 = 값 · 타입 · 층[ · := 수식][ ⟳](탭 → 공유 → 글로벌 → 프로필 · 비밀 가림 · 120자) · 치환 = 치환될 글 · 없으면 "미정의".
 - 함께: **T-419** 배치 첫 문장 DeclarePrepend 안내 · **T-420** 변수 창 "타입 고정" 버튼(a2f4bdd7 · 버튼 7열).

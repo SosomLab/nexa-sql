@@ -1660,7 +1660,7 @@ nsql help <명령>         # 같은 내용
 
 ### 스크립트에서 쓰는 것
 
-- `&1`~`&n` — 명령줄 인자 치환 · `&이름` — `DEFINE`/`-v` 변수
+- `&1`~`&n` — 명령줄 인자 치환 · `&이름` — `DEFINE`/`-v` 변수 · 층 이동 = `DEFINE 이름 SHARE|LOCAL|GLOBAL`(10-26 · 공유 세션·앱 전체로 올리기 · [63 §7](63-variable-management.md))
 - `WHENEVER SQLERROR EXIT` — 오류 시 종료(종료 코드로 CI 판정)
 - `CONNECT <프로필이름|접속 문자열>` — 스크립트 안에서 접속 전환
 - `EXEC :V := 'x'` · `SELECT … INTO :V` · `PRINT` — 세션 변수([08](08-session-variables.md))

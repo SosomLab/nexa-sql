@@ -143,7 +143,9 @@
 ① 기준 상태 확인(`git status --short`) → ② Debug 증분 빌드(GUI만으로 충분하면 그 패키지만) → ③ `target/` 아래 실행 중인 앱 종료 후 Debug로 재시작(사용자 실제 설정 · 격리 아님 · 포커스를 빼앗지 않는 스크립트 기본 동작) → ④ "재시작됨" 회신 → ⑤ Release 빌드(백그라운드) → ⑥ 멈춘 일 재개.
 ★ **재시작 인스턴스 = 사용자 실기용 → 실제 설정**(`NSQL_HOME` 없이 · 사용자 10-17) · 격리 홈 인스턴스는 **자동 시험(V1·배치) 동안만** 띄우고 끝나면 종료 · 배치/V1 끝마다 `pgrep -f 'target/(debug|release)/nexa-sql'`로 우리 인스턴스 0 확인(사용자 것 = `ps -E`에 `NSQL_HOME` 없음) · 사용자가 쓰는 실제 설정 인스턴스는 건드리지 않고 "새 판 = 재실행 필요"만 알린다 — 10-17 격리 홈 "재시작됨" 창이 프로필 없는 로그인 창으로 남은 사례(§12).
 전체 시험 · clippy는 P0에 넣지 않는다(P1로 뒤에) — 재시작을 늦추지 않기 위해.
-★ **⑤ Release 빌드 꼬리말 — Linux PC Release = lite 판(사용자 10-26)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로.
+★ **⑤ Release 빌드 꼬리말 — Linux · Windows PC Release = lite 판(사용자 10-26 · Windows는 10-26 오후 139차 결정)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로.
+
+⚠ **lite 판 Release의 함정** — 이 PC들에서 기본 `cargo build --release`를 돌리면 `target/release`가 다시 **full 판으로 덮인다** → Release를 다시 만들 때는 반드시 lite 절차(`CARGO_TARGET_DIR=target/lite …` 빌드 뒤 `target/release`의 기존 판을 `*.full`로 보존하고 lite 복사)로.
 ★ **"빌드 + Debug 시작" P0 = Debug 빌드 → 즉시 시작 → Release는 그 뒤**(개발 세션 10-12 재확인 · 사용자가 기다리는 중) — 한 명령 줄에 Debug·Release를 묶어 끝까지 기다린 뒤 띄우지 않는다(10-12 121차: Debug 13:40:58에 끝났는데 Release 5분 50초를 기다려 13:47:02에 시작 = 6분 지연 · §12 원장). Windows 실행 습관(사용자가 Release로 병행 시험)으로 Release 재시작을 요청받은 경우도 Debug가 먼저 나왔으면 Debug부터 띄우고 알린다.
 
 ### 5-6. 개발 세션 쪽 의무
@@ -159,6 +161,8 @@
 > ★ **10-06 개정(사용자)**: "풀 테스트는 1일에 1회만 기본 진행하고 버전 배포 등 중요한 기점에 다시 한 번 수행되도록 · 매 빌드마다 테스트를 수행하는 것은 불필요" + "방금 개발한 기능을 테스트하는 목적 · 기능과 관련 있는 연관 기능에 대한 테스트 목적은 허용". → **풀 테스트(워크스페이스 전체 `cargo test` + 기능 전수 점검) = 하루 1회 기본 + 배포 등 중요 기점** · 빌드·재시작·커밋마다는 **바뀐 기능과 그 연관 기능의 시험만**. 아래 표·시점은 이 개정으로 고쳤다(옛 "V3 = 넷뿐"·"V2 = 커밋마다 워크스페이스 전체 시험"은 대체됨).
 
 > ★ **10-21 개정(사용자 · 개발 세션에 직접)**: ① **시험은 간략하게 · 필요할 때 사용자가 요청** — E2E 배치 · 기능 전수 · 실서버 4방언 재실행은 사용자 요청이 없으면 돌리지 않는다(V1 = 바뀐 기능의 덤프 판정 몇 개 · 캡처는 필요할 때만). 하루 1회 풀 테스트 기본(10-06)도 **사용자 요청 때만**으로 바뀐다. ② **빌드 전에 통합 테스트**(이 저장소에서는 = `cargo test -p nsql-drivers --test integration -- --test-threads=1` · integration.yml과 같은 명령 · 로컬은 저장 프로필 `NSQL_PG_PROFILE=Repository` `NSQL_ORACLE_PROFILE=BISCM` `NSQL_MSSQL_PROFILE=M4PLAN`) — 먼저 대상 서버마다 TCP 도달 1회 → 도달하는 방언만 돌림 · 미도달 = "생략(미도달)" · 사용자가 제외를 요청하면 "생략(사용자 제외)"로 회신에 적는다.
+>
+> ★ **Windows PC 통합 시험 = `NSQL_ORACLE_DRIVERS=thin`을 붙인다(10-26 139차 win)** — 이 PC에는 Oracle Instant Client가 없어 기본 명령은 Oracle OCI 시험 5건이 `DPI-1047: Cannot locate a 64-bit Oracle Client library`로 실패한다(OCI+Thin 둘 다 도는 기본값) → `NSQL_ORACLE_DRIVERS=thin cargo test -p nsql-drivers --test integration -- --test-threads=1`(Oracle 5/5 ✓ · 로컬 프로필 = `NSQL_PG_PROFILE=REPOSITORY_DEV` · `NSQL_ORACLE_PROFILE=BISCM_DEV` · `NSQL_MSSQL_PROFILE=BISCM_MS_DEV` · 사내망 = VPN).
 
 위임 메시지에 단계를 적는다(`[P0 · V1]`처럼). **안 적혀 있으면 V1.** 필요한 만큼만 돌린다.
 
@@ -398,3 +402,5 @@
 | 10-25 | 아슬(개발) | 큰 CLOB 시험 데이터 `"큰 clob 입력 ".repeat(6_000)` = 16 B × 6000 = 96 000 B < 단언 100 000 → db2.yml 40161956636이 드라이버가 아니라 시험 데이터에서 실패(7e21a90e로 7 000회) | 한글 UTF-8 바이트 수를 눈으로 계산 | **크기 단언은 계산값을 시험 안에서 출력하거나 상수로 검증**(`len()`을 메시지에 넣기) · 다바이트 문자는 바이트로 셈 | journal 10-24 §3-16 |
 | 10-25 | 아슬(개발) | drivers.yml이 릴리스 끝에 `drivers/index.json` 봇 커밋(06a13736)을 main에 올리는 동안 개발의 push가 거절 → `git rebase origin/main` 뒤 push | 릴리스 워크플로가 main에 직접 커밋한다는 걸 push 시점에 잊음 | **릴리스 워크플로(drivers.yml · 색인 봇)가 도는 동안·직후 push는 fetch + rebase가 기본** · 협업은 봇 커밋을 확인하면 "pull 하세요"를 회신에 넣는다 | journal 10-24 §3-17 |
 | 10-25 | 아슬(개발) | DBCLOB·XML 입력 시험이 4회차 연속 DTAMCHRM/SYNTAXRM → 협업 바이트 대조(통과 행과 비교)로 **SQLDTA FDODTA 맨 앞 행 지시자를 "홀수 길이 패드"로 오해**한 숨은 결함 발견(3d3482ad) — 그전 바인드는 총 길이가 홀수여서 **우연히 통과** · 그 사이 0xCD·문자 수 가설 판정 2회가 이 결함에 가려 무효 | 통과하던 경로가 입력 조합 하나로만 시험됨 · 실패 원인을 형식 가설부터 바꿔 가며 찾음 | **통과하던 기능도 입력 조합(홀/짝 길이 · 열 수 · NULL 유무)에 따라 우연히 통과했을 수 있다 → 새 타입·새 경로 시험은 조합을 바꿔 1회 더** · 같은 오류가 가설을 바꿔도 반복되면 가설을 더 바꾸기 전에 **통과하는 바이트와 실패하는 바이트를 나란히 대조** | journal 10-24 §3-18 |
+| 10-26 | 아슬(개발) | EXEC 로컬 대입을 고친 뒤 V1에서 txlog `Running` 잔류가 드러났고, 보강 시험에서 DEFINE·VARIABLE 등 **클라이언트 명령 전반**이 같은 증상 — 기록 시작 조건(`events.rs` `!conn_cmd`)이 `server`를 보지 않던 **기존 결함**(08091ac1 `server && !conn_cmd`) | 고친 한 명령만 확인하고 같은 계열 명령을 시험하지 않았음 | **증상이 한 명령에서 보이면 같은 계열(서버로 가지 않는 클라이언트 명령 전부)을 한 번에 훑는다** — V1 위임에 "같은 계열 확인"을 넣는다(§5-7) | journal 10-26 §4 · v1-139b ② |
+| 10-26 | 굳힘(개발) | T-430 1차 = 아이콘 선굽기 스레드(선행)만으로는 Debug `prefs_win→act_bar` 0.5 s가 prewarm on/off 모두 그대로(542 ms) — 협업 V1 수치가 "선행과 무관"을 보임 → 래스터 자체를 스캔라인으로 바꿔 18~27 ms(eeed2ce9 · 픽셀 동일) | 비용(래스터 알고리즘)을 재지 않고 숨기기(선행·비동기)부터 택함 | **선행·비동기로 숨기기 전에 비용 자체를 잰다** — 켬/끔 A/B 수치로 효과를 판정하고, 느린 원인이 알고리즘이면 알고리즘을 고친다(71 §G) | journal 10-26 §4 · v1-139b ① · v1-139c ① |

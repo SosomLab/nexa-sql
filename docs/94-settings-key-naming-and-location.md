@@ -97,6 +97,8 @@
 
 - **10-24(138차)** 새 키 = `vars.refresh_on_run`(Script ▸ Variables · Bool · 기본 on · D-355) · `ui.theme_watch`(Appearance · ADVANCED · Linux 테마 감시) · `odbc.cancel`(HIDDEN · DBMS ▸ 드라이버 · auto|on|off · T-414) · `driver.info_clickhouse`(DBMS ▸ 드라이버 정보 행 · T-415) · `driver.info_db2` · `driver.info_access`(10-25 · DBMS ▸ 드라이버 정보 행 · 안내문 · `config list` 제외 = info 키 규칙) · **구현(T-422 · D-357 · 855b9ad6)** = `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_other`(off · 초안 `show_commands`에서 바뀜) · `outline.show_declared`(on) · `outline.expand_depth`(1 · Int 0~8) · `outline.follow_caret`(on) — 분류 Editors ▸ Outline · **`outline.sort`(position|name|kind · 기본 position · 10-25 c9134a63 구현)** · **`outline.grid_columns`(Bool · 기본 on · Editors ▸ Outline · 마지막 포커스가 그리드면 컬럼 목록 · T-423 ② 4d160da9)**.
 
+- **10-26(139차 win)** 새 키 = `ui.icon_prewarm`(Appearance · Bool · 기본 on · HIDDEN · T-430 · 아이콘 마스크 선굽기 스레드 `nsql-icons` 스위치 · 39 §3-3).
+
 ### 6-2. 2차 후보(D-146 결정 뒤 · T-250) — ✅ 09-29 적용(아래 표 그대로 · `RENAMED` 11쌍 · 새 분류 Server status / Transaction safety / Script & variables / Run cards / Undo · 옛 키는 읽기 마이그레이션·CLI `config`에서 그대로 통함)
 | 옛 | 새 | 이유 |
 |---|---|---|

@@ -151,6 +151,7 @@
 | 로그 창 줄 수 | 없음 | `log.max_lines`(신설) | 10000 | 5000 | 1000 | `log_win` |
 | 실행 취소 깊이 | 없음 | `editor.undo_max`(신설 · HIDDEN) | 1000 | 500 | 100 | nexa-ctl `EditState` |
 | ★ 구문 오류 원인 분석(T-372 · 10-20 · [117](117-syntax-error-cause-analysis.md)) | 구문 오류당 1회 · 구간 = 문장 하나 이하 · 낱말 20,000 · 예산 `editor.error_analyze_budget_ms` 20 ms · 서버 왕복 0(메타 캐시만) | `editor.error_analyze`(on/off) · `editor.error_analyze_budget_ms`(1~500 · ADVANCED) · 향상 모드 = `perf::BOOST` 강제 off | on 20 | on 20 | on 20(BOOST = off) | nsql-script `errsuspect::analyze` · `app/errsuspect.rs` |
+| ★ 아이콘 마스크 선굽기 스레드 `nsql-icons`(09-25부터 · 10-26 139차 등재 · T-430) | 기동 직후 일회성 스레드 1(활동 막대 5 + find_objects · variables · undo · redo 등을 먼저 · toolicons `memo` 칸마다 OnceLock = 굽는 중이면 대기 · 중복 래스터 0) · 끝나면 종료 | `ui.icon_prewarm`(Bool · 기본 on · HIDDEN · Appearance · 끄면 각 아이콘을 첫 표시 때 UI 스레드가 굽는다 = Release ≈84 ms · Debug ≈1.2 s) | 켬 | 켬 | 켬 | `main.rs` 스레드 생성(설정 직후) · `toolicons::prewarm` |
 
 ### 3-4. GFX(화면 · "GPU")
 
