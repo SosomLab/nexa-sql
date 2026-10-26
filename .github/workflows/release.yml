@@ -303,7 +303,7 @@ jobs:
           cat > notes.md <<EOF
           # Nexa SQL $VERSION
 
-          Lightweight cross-platform SQL client (IDE) for Oracle, SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, DuckDB and ODBC sources, with the \`nsql\` CLI.
+          Lightweight cross-platform SQL client (IDE) for Oracle, SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, DuckDB, IBM Db2, ClickHouse and ODBC sources, with the \`nsql\` CLI.
           Installers only (no portable build). Changes: see [docs/DEVLOG.md](https://github.com/SosomLab/nexa-sql/blob/v$VERSION/docs/DEVLOG.md).
 
           | OS | File | Install |
@@ -312,7 +312,7 @@ jobs:
           | macOS (Universal) | \`nexa-sql-$VERSION-macos-universal.pkg\` / \`.dmg\` | Installer → \`/Applications/Nexa SQL.app\` + \`/usr/local/bin/nsql\` · \`brew install --cask kiros33/tap/nexa-sql\` |
           | Linux x86_64 | \`.deb\` / \`.rpm\` | \`sudo apt install ./…deb\` / \`sudo dnf install ./…rpm\` · or the signed repository at <https://pkg.sosomlab.com/> (\`apt install nexa-sql\` / \`dnf install nexa-sql\`) |
 
-          Drivers are not bundled (only the Oracle OCI driver, which needs an Instant Client): the first connection to PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, DuckDB, Oracle Thin or ODBC downloads the signed driver package from the \`drivers-v*\` pre-release and installs it (\`driver.auto_install\`). Offline: \`nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip\`.
+          Drivers are not bundled (only the Oracle OCI driver, which needs an Instant Client): the first connection to PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, DuckDB, Oracle Thin, IBM Db2, ClickHouse or ODBC downloads the signed driver package from the \`drivers-v*\` pre-release and installs it (\`driver.auto_install\`). Offline: \`nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip\`. Driver packages are built for Windows x64, Linux x86_64, Apple Silicon and Intel macOS (ODBC included on all four).
           Verify downloads with \`sha256sums.txt\`. Builds are not code-signed yet (DR-20): macOS Gatekeeper and Windows SmartScreen will warn.
           License: PolyForm Noncommercial 1.0.0 — free for noncommercial use only.
 
