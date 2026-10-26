@@ -107,7 +107,7 @@ python3 -c "open('$SKIP/big.sql','w').write('SELECT big;\n' * 110000)"
 python3 -c "open('$SKIP/bin.dat','wb').write(bytes([83,69,76,69,67,84,0,1,2,3]))"
 
 # 기본 설정(Windows판과 같게): 결과 탭 바 항상 · 영어 · 데모 안내 끔 · 창 크기 고정(좌표 시나리오 기준).
-BASECONF=$'lang=en\ngrid.result_tabbar_single=on\ndemo.prompted=on\nwindow.main_size=1375,945\n'
+BASECONF=$'ui.lang=en\ngrid.result_tabbar_single=on\ndemo.prompted=on\nwindow.main_size=1375,945\n'
 
 NSQL_HOME="$H" "$CLI" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
 
@@ -119,6 +119,10 @@ run_s() {
   if [ -n "$ONLY" ] && ! echo ",$ONLY," | grep -q ",$id,"; then return; fi
   local home2="$H"
   case "$arg" in NOPROF) home2="$H/noprof"; mkdir -p "$home2"; arg="";; esac
+  # NOARG = 프로필 홈 + 인자 없음(미접속 메인 창 · 기본 방언 Oracle · S67/S68 패키지 아웃라인 · 139차 win).
+  case "$arg" in NOARG) arg="";; esac
+  # T-429: Debug 기동 ≈2 s가 대기를 먹는다(`@after` 시계는 기동 명령 처리 시점부터) → Debug exe면 대기 ×FC_WAIT_SCALE(기본 2 · Release = 1).
+  case "$APP" in */debug/*) secs=$(awk -v s="$secs" -v k="${FC_WAIT_SCALE:-2}" 'BEGIN{printf "%.2f", s*k}');; esac
   printf '%s%s' "$BASECONF" "$conf" > "$home2/settings.conf"
   local err="$OUT/$id.stderr.txt"
   NSQL_HOME="$home2" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" "$APP" $arg >"$OUT/$id.stdout.txt" 2>"$err" &
@@ -234,8 +238,8 @@ run_s S73 "검색 결과 가로 스크롤 + 열린 탭 필터(§124)"   "open:$Q
 run_s S66 "코드 완성 팝업 = Ctrl+Space(§117)"           "open:$QO,@after:1000:ui.click:432/181,@after:1600:edit.complete"
 run_s S77 "내장 함수 완성 = 시그니처 열(§129)"          "open:$QI,@after:1000:ui.click:700/121,@after:1600:edit.complete"
 run_s S78 "사전 뷰 = FROM 뒤 sqlite_m(§129)"            "open:$QI,@after:1000:ui.click:700/141,@after:1600:edit.complete"
-run_s S67 "Goto Symbol 팔레트(§117)"                    "open:$QO,@after:1200:goto.symbol"
-run_s S68 "아웃라인 패널(§117)"                         "open:$QO,@after:1200:view.outline,@after:2500:mem.dump:$OUT/s68.txt" Local 4.5 "" "s68.txt:."
+run_s S67 "Goto Symbol 팔레트(§117)"                    "open:$QO,@after:1200:goto.symbol" NOARG
+run_s S68 "아웃라인 패널(§117)"                         "open:$QO,@after:1200:view.outline,@after:2500:mem.dump:$OUT/s68.txt" NOARG 4.5 "" "s68.txt:."
 run_s S74 "이진 파일 아웃라인 = 무시 + 안내(§125)"      "open:$SKIP/bin.dat,@after:1200:view.outline,@after:1800:goto.symbol" Local 4
 # ★ 10-10 118차 mac 크래시 회귀(nexa-ctl scroll.rs i32 넘침 · nexa-ui 197차): 행 수 0(전체) 30만 행 → 썸을 잡고 1000 px 끌기(좌표 = 그리드가 셈)
 #   → 살아 있고(Debug면 종전 abort) 세로 끝에 닿아야 한다(Release면 종전 감겨서 0 근처 = scroll_end=false). 판정 = 행 ≥ 10만(Debug는 30만 행

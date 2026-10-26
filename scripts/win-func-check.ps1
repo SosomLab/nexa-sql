@@ -14,7 +14,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Out,
     [string]$Exe = "",
     [string]$Cli = "",
-    [string]$Only = ""
+    [string]$Only = "",
+    [double]$WaitScale = 0
 )
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
@@ -26,6 +27,9 @@ foreach ($n in @('HomeDir', 'DataDir', 'Out')) {
 }
 if (-not $Exe) { $Exe = Join-Path $root "target\release\nexa-sql.exe" }
 if (-not $Cli) { $Cli = Join-Path $root "target\release\nsql.exe" }
+# T-429(10-26 139차): `@after` 시계는 기동 명령 처리 시점부터 · WaitMs는 프로세스 시작부터 → Debug(기동 ≈2 s)는 마지막 @after 뒤 여유가
+#   0.7~1.0 s로 줄어 덤프 전 종료가 난다(S83·S84·S85·S87·S94) → Debug exe면 대기 ×2 기본(명시 -WaitScale 우선 · Release = 1).
+if ($WaitScale -le 0) { $WaitScale = if ($Exe -match '[\\/]debug[\\/]') { 2.0 } else { 1.0 } }
 foreach ($d in @($HomeDir, $DataDir, $Out)) { if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
 $report = Join-Path $Out "func-check.txt"
 if (Test-Path -LiteralPath $report) { Clear-Content -LiteralPath $report }
@@ -111,7 +115,7 @@ $dj = $DataDir.Replace('\', '/')
 Set-Content -LiteralPath $projFile -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `"$dj`" } ] }"
 
 # 기본 설정: 결과 탭 바 항상(결과 탭 우클릭 시나리오) · 영어 · 데모 안내 끔.
-$baseConf = "lang=en`ngrid.result_tabbar_single=on`ndemo.prompted=on`n"   # demo.prompted = 최초 실행 데모 안내 팝업 끔(같은 status 팝업 자리를 뺏는다)
+$baseConf = "ui.lang=en`ngrid.result_tabbar_single=on`ndemo.prompted=on`n"   # demo.prompted = 최초 실행 데모 안내 팝업 끔(같은 status 팝업 자리를 뺏는다)
 
 # ── 시나리오 실행기 ─────────────────────────────────────────────────────────
 function Run-Scenario {
@@ -130,7 +134,7 @@ function Run-Scenario {
     $psi.UseShellExecute = $false; $psi.RedirectStandardError = $true; $psi.RedirectStandardOutput = $true
     $p = [System.Diagnostics.Process]::Start($psi)
     $errTask = $p.StandardError.ReadToEndAsync(); $outTask = $p.StandardOutput.ReadToEndAsync()
-    Start-Sleep -Milliseconds $WaitMs
+    Start-Sleep -Milliseconds ([int]($WaitMs * $WaitScale))
     $alive = -not $p.HasExited
     $wins = 0; $files = @()
     if ($alive) {
@@ -170,7 +174,7 @@ function Run-Scenario {
 }
 
 Say ("== win-func-check " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  commit=" + (& git -C $root rev-parse --short HEAD 2>$null))
-Say ("exe=" + $Exe + "  home=" + $HomeDir)
+Say ("exe=" + $Exe + "  home=" + $HomeDir + "  waitScale=" + $WaitScale)
 Say "| id | 시나리오 | 자동 판정 | 창 | 캡처 | 눈으로 볼 것 |"
 Say "|---|---|---|---|---|---|"
 
@@ -361,8 +365,10 @@ SELECT * FROM sqlite_m
 "@
 Run-Scenario -Id S77 -Title "내장 함수 완성 = 시그니처 열 + 사전 뷰(§129 · T-178)" -Cmd ("open:" + $qIntel + ",@after:1000:ui.click:700/121,@after:1600:edit.complete") -WaitMs 3500 -Expect "1줄 'SELECT coal' 끝에서 Ctrl+Space → 팝업 첫 행 COALESCE · 오른쪽 열 'COALESCE(expr1, expr2, …)' · 문서 단어 coal은 없음(접두 자신) · 아래로 다른 후보(스크롤 표시는 12행 넘을 때)"
 Run-Scenario -Id S78 -Title "사전 뷰 = FROM 뒤 sqlite_m(§129 · T-178)" -Cmd ("open:" + $qIntel + ",@after:1000:ui.click:700/141,@after:1600:edit.complete") -WaitMs 3500 -Expect "2줄 'FROM sqlite_m' 끝에서 Ctrl+Space → sqlite_master · sqlite_schema … (오른쪽 열 system) — 접속 없이도(정적 표)"
-Run-Scenario -Id S67 -Title "Goto Symbol 팔레트(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:goto.symbol") -WaitMs 3500 -Expect "팔레트에 심볼 목록(T-422 = 문장 행은 outline.show_* 토글을 켰을 때만): DEFINE v_user · VARIABLE rc · CTE recent/older · package body pkg_report(뿌리) · declared g_count · cursor c_rows · procedure run_report(깊이 1 들여쓰기) · function total_rows · 각 행 끝 :줄"
-Run-Scenario -Id S68 -Title "아웃라인 패널(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:view.outline") -WaitMs 3500 -Expect "좌측 아웃라인 패널(T-422): 머리 Outline (보임/전체) + [모두 펼침][모두 접음] · 필터 틀 오른쪽 토글 4(Select·DML·DDL·기타 = 기본 끔 · 문장 행 없음) · 트리 = 셰브론 + 탐색기 아이콘 + 줄 번호 + 이름(서브프로그램 굵게 강조색) + 오른쪽 종류/타입 · 패키지 본문 뿌리 펼침·그 안 선언 접힘(expand_depth 1) · 캐럿 추종 · 활동 막대 아웃라인 아이콘 활성"
+# S67·S68 = 인자 없음(프로필 홈 + 인자 없음 = 미접속 메인 창 · 기본 방언 Oracle · 139차 win): SQLite 프로필로 뜨면 `;` 분리로 패키지 본문이 문장으로 쪼개져
+#   c_rows 커서가 빠지고 PROCEDURE/FUNCTION이 뿌리에 붙는다(시험 자산 문제 · 앱 결함 아님).
+Run-Scenario -Id S67 -Title "Goto Symbol 팔레트(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:goto.symbol") -ArgList "" -WaitMs 3500 -Expect "팔레트에 심볼 목록(T-422 = 문장 행은 outline.show_* 토글을 켰을 때만): DEFINE v_user · VARIABLE rc · CTE recent/older · package body pkg_report(뿌리) · declared g_count · cursor c_rows · procedure run_report(깊이 1 들여쓰기) · function total_rows · 각 행 끝 :줄"
+Run-Scenario -Id S68 -Title "아웃라인 패널(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:view.outline") -ArgList "" -WaitMs 3500 -Expect "좌측 아웃라인 패널(T-422): 머리 Outline (보임/전체) + [모두 펼침][모두 접음] · 필터 틀 오른쪽 토글 4(Select·DML·DDL·기타 = 기본 끔 · 문장 행 없음) · 트리 = 셰브론 + 탐색기 아이콘 + 줄 번호 + 이름(서브프로그램 굵게 강조색) + 오른쪽 종류/타입 · 패키지 본문 뿌리 펼침·그 안 선언 접힘(expand_depth 1) · 캐럿 추종 · 활동 막대 아웃라인 아이콘 활성"
 Run-Scenario -Id S69 -Title "북마크 패널 문서 이름 = 탭 id로 지금 이름(§118)" -Cmd ("file.new,@after:800:ui.click:400/141,@after:1000:bookmark.toggle,@after:1400:view.bookmarks,@after:2000:tab.rename_to:NoName1") -WaitMs 3500 -Expect "새 탭 Script_2에 북마크 → 탭 이름을 NoName1로 바꾼 뒤 패널 문서 행이 'NoName1 1'(Script_2가 남지 않음) · 탭 제목도 NoName1"
 $qQuote = Join-Path $DataDir "q_quote.sql"
 Set-Content -LiteralPath $qQuote -Encoding UTF8 -Value "DEFINE who = 'O''Neil'`nSELECT 'it''s' AS v, `"a`"`"b`" AS q FROM DUAL;"
