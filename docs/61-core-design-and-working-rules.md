@@ -259,7 +259,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 ★ **Windows PC 통합 시험 = `NSQL_ORACLE_DRIVERS=thin`을 붙인다(10-26 139차 win)** — 이 PC에는 Oracle Instant Client가 없어 기본 명령은 Oracle OCI 시험 5건이 `DPI-1047: Cannot locate a 64-bit Oracle Client library`로 실패한다(OCI+Thin 둘 다 도는 기본값) → `NSQL_ORACLE_DRIVERS=thin cargo test -p nsql-drivers --test integration -- --test-threads=1`(Oracle 5/5 ✓ · 로컬 프로필 = `NSQL_PG_PROFILE=REPOSITORY_DEV` · `NSQL_ORACLE_PROFILE=BISCM_DEV` · `NSQL_MSSQL_PROFILE=BISCM_MS_DEV` · 사내망 = VPN).
 
-★ **Linux · Windows PC Release = lite 판(사용자 10-26 · Windows는 10-26 오후 139차 결정)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로.
+★ **3-OS(맥 포함 · 사용자 10-26 밤 · D-363) PC Release = lite 판 · Debug = 통합(full)(Linux 10-26 · Windows 10-26 오후 139차 · macOS 10-26 밤 140차)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로.
 
 ⚠ **lite 판 Release의 함정** — 이 PC들에서 기본 `cargo build --release`를 돌리면 `target/release`가 다시 **full 판으로 덮인다** → Release를 다시 만들 때는 반드시 lite 절차(`CARGO_TARGET_DIR=target/lite …` 빌드 뒤 `target/release`의 기존 판을 `*.full`로 보존하고 lite 복사)로.
 

@@ -44,6 +44,9 @@
 
 - 설치본 = 드라이버 없는 판(남는 것 = Oracle OCI만 · Instant Client 의존) · 나머지 = 확장(접속 시 자동 설치 = C단계 · 오프라인 번들 = `nsql-drivers-all-<ver>-<os>-<arch>.zip`) · 개발·시험 빌드 = feature로 내장 유지.
 - **ABI v2**(42ac8e0) = `ABI_VERSION` 2 · v1 함수 13 + `call(op, 코덱 입력 → 코덱 출력)` + `set_message_sink(cb, ctx)` + `copy_out(sql, csv, write_cb, ctx, rows)` · 모르는 op = "unsupported"(함수표 배치 불변 · op 추가로 ABI 버전을 올리지 않음).
+- **코덱 꼬리 필드(10-26 · 140차 mac · [journal 10-26 §5-1](journal/2026-10-26.md))** = 결과(`ExecResult`) 끝에 `pending`(u8 있음 + u32 커서 핸들) · `limits_hit`(u32 비트) — 종전엔 빠져 확장 드라이버는 서버 커서를 늘 잃었다(스크롤 끝마다 엄격 재질의 토스트) · 호환 규칙 = **끝에만 덧붙임** · 리더는 `Reader::at_end()`로 꼬리가 없으면 기본값(옛 드라이버 ≤ 0.1.6 = None · 빈 제약) · 옛 앱은 꼬리를 읽지 않고 무시 · **`ABI_VERSION`은 2 그대로**(적재는 버전 정확 일치 → 올리면 설치된 확장이 전부 거부됨).
+- ★ **규칙: 코덱에 새 결과 필드를 넣을 때는 반드시 꼬리에**(중간 삽입 = 옛 짝과 바이트가 어긋남) + `at_end` 가드 + 왕복 시험에 **"꼬리 없는 옛 페이로드"·"뒤에 모르는 바이트가 더 있는 미래 페이로드"** 케이스 · 확장 경로 실기(V1)는 lite 변형(`--no-default-features --features nexa-sql/driver-oracle-oci` · 별도 `--target-dir`) + `NSQL_DRIVER_DIR`로. 남은 미직렬화 = `timing`(T-432).
+- ★ **혼합 조합(새 앱 + 옛 드라이버) 규칙(10-26 · 2차 결함)** — 꼬리를 읽을 수 있어도 옛 드라이버는 `pending`을 보내지 않는다. 그런데 커서 지원(`cursor_supported`)을 그대로 믿으면 러너가 상한 +1을 하지 않아(`push_max_rows`) **200행에서 "더 없음"으로 조용히 잘린다** → 코덱 기능은 **op로 물어본다**(op 19 `CODEC_FEATURES` · 모르면 거짓 → 커서 미지원으로 = 상한 +1 · OFFSET/재질의 = 종전 설치본 동작). 새 코덱 기능도 같은 비트로 알린다.
 
 | op | 이름 | 뜻 |
 |---|---|---|
@@ -55,6 +58,7 @@
 | 8 | SET_CALL_TIMEOUT | 호출 상한 |
 | 9~15 | BULK_BEGIN · PUSH · FLUSH · COMMIT · ROLLBACK · FINISH · DROP | 대량 적재 싱크(세션당 1 · `Slot.bulk` · 본체 `DynBulkSink`) |
 | 16 · 17 | CATALOG_TABLES · CATALOG_COLUMNS | 드라이버 카탈로그 훅(ODBC `SQLTables`/`SQLColumns` 등) |
+| 19 | CODEC_FEATURES | 코덱 기능 비트(out u32 · bit0 `CODEC_RESULT_TAIL` = 결과 꼬리 필드) · 본체 `DynSession.result_tail`(open 때 1회 · 모르는 op = 거짓) · 거짓이면 `cursor_supported()` 거짓(`cursor_ok` 순수 · MC/DC) — 10-26 140차 |
 
 - **진입 심볼**(441e83a) = 드라이버별 **`nsql_driver_vtable_<id>`**(`#[export_name = concat!]`) — 하나의 공통 심볼이면 내장 빌드(rlib 여러 개 정적 링크)에서 LNK2005 · 로더 = `DynDriver::load(path, id)`.
 

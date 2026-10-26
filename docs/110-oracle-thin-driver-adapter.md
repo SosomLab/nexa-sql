@@ -191,6 +191,8 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | 17 | DBMS_OUTPUT 줄 폭(SERVEROUTPUT) | ✅ Thin = 32767 | **OCI 쪽 차이**(10-17 · 130차 mac · T-366): macOS Instant Client 19.16은 32767 OUT 바인드를 못 읽어(OCI-21500) 켤 때 탐침 → 4000 폭으로 자동 제한 + 고지 1줄 · Windows/Linux IC 23.x = 32767 |
 | — | OUT/IN OUT · DBMS_OUTPUT · PL/SQL · LOB 쓰기 · call timeout · tnsnames · Easy Connect · TLS · 프록시 · SYSDBA(비밀번호) · `CURRENT_SCHEMA` · 세이브포인트(SQL) · 데이터 보호 1행 검사(단건 실행) | ○ | 차이 없음 |
 
+- ★ **제약 경고(`limits_hit`)와 확장 드라이버(10-26 · 140차 mac)** — 실행이 닿은 드라이버 제약(`DriverLimit` · 예 #2 `ImplicitResults` · #1 `Cancel`)은 `ExecResult.limits_hit`로 위층에 간다. 종전엔 ABI 코덱이 이 필드를 직렬화하지 않아 **확장 드라이버(lite 설치본의 `oracle-thin` 등)에서는 제약 경고가 오지 않았다** → 코덱 꼬리 필드로 확장에서도 온다([22 §0-1](22-driver-extensions.md) · 앱·드라이버 둘 다 새 판일 때 · [journal 10-26 §5-1](journal/2026-10-26.md)).
+
 ## §7. 위험 · 대응
 
 | 위험 | 정도 | 대응 |
