@@ -1142,6 +1142,11 @@ impl App {
     /// 경로는 `Sess.disc_path`(진입점이 미리 표시) · 없으면 `fallback`. 워커를 바꾸는 해제는 `Disconnected` 이벤트가 오지
     /// 않으므로 여기서 바로 남기고, 이벤트로 오는 해제(스크립트·서버)는 `drain_events`가 같은 문장으로 남긴다.
     pub(crate) fn log_disconnect(&mut self, fallback: sessions::DiscPath) {
+        // 접속당 한 번(139차 win): 진입점이 남긴 뒤 거두기(`sync_sess` · 폴백 Switch/TabClose)가 또 부르면 건너뛴다.
+        if self.sess.disc_logged {
+            return;
+        }
+        self.sess.disc_logged = true;
         let path = self.sess.disc_path.unwrap_or(fallback);
         self.sess.disc_path = Some(path);
         let kind = match self.sess.owner {
@@ -1173,7 +1178,7 @@ impl App {
     }
 
     /// 세션 `id`에 해제 경로를 표시(진입점이 부른다 · 그 뒤의 해제가 로그에 경로를 남긴다).
-    fn mark_disc(&mut self, id: u64, path: sessions::DiscPath) {
+    pub(crate) fn mark_disc(&mut self, id: u64, path: sessions::DiscPath) {
         self.with_sess(id, |a| a.sess.disc_path = Some(path));
     }
 

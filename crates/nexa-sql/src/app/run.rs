@@ -100,6 +100,14 @@ impl App {
                 true
             }
             sessions::Placement::ClosePrivate => {
+                // 스크립트의 `DISCONNECT`(139차 win): 경로를 먼저 표시해 로그가 "탭 표식 메뉴"가 아니라 "스크립트"로 남게.
+                let private = self
+                    .all_sess()
+                    .find(|s| s.owner == Some(tab) && !s.closing)
+                    .map(|s| s.id);
+                if let Some(id) = private {
+                    self.mark_disc(id, sessions::DiscPath::Script);
+                }
                 self.disconnect_private(tab);
                 false
             }

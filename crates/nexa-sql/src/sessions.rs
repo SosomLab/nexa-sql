@@ -80,6 +80,9 @@ pub(crate) struct Sess {
     pub user_disconnected: bool,
     /// 이 세션의 해제를 시작한 경로(로그 한 줄에 "어느 경로로 어떤 서버를" · 사용자 09-19). 접속되면 비운다.
     pub disc_path: Option<DiscPath>,
+    /// ★ 이 접속의 해제 로그를 이미 남겼다(139차 win · 10-26): typed `DISCONNECT`가 `disconnect_private_as`(1줄) + 거둘 때 `sync_sess`(1줄)로
+    /// 두 번 찍히던 것 → 접속당 한 번. 재접속(`Connected`)에서 `disc_path`와 함께 초기화.
+    pub disc_logged: bool,
     /// 유휴로 끊었다(다음 실행 때 `spec`으로 조용히 다시 붙는다 · §6).
     pub idle_closed: bool,
     /// ★ 끊김을 **확인**했다(docs/53 §3 Broken): 동작 직전 빠른 판정 실패 · 접속성 오류 · 드라이버가 끊김을 앎. 세션 객체·스펙은 그대로 —
@@ -218,6 +221,7 @@ impl Sess {
             attempt_inflight: false,
             user_disconnected: false,
             disc_path: None,
+            disc_logged: false,
             idle_closed: false,
             broken: false,
             env_temp: false,

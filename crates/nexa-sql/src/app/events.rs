@@ -992,7 +992,14 @@ impl App {
             // ★ Output 탭(09-30): 사람이 읽는 메시지(PRINT · 서버 출력 · 컴파일 · 경고 · 오류 · 문장 완료)는 실행한 탭의 Output으로.
             self.output_on_event(&ev);
             match ev {
-                RunEvent::Begin { index, server, .. } => {
+                RunEvent::Begin {
+                    index,
+                    server,
+                    ref summary,
+                    ..
+                } => {
+                    // 접속 명령(`CONNECT`·`DISCONNECT`)은 문장이 아니다 — 트랜잭션 로그에 넣으면 `Done`이 없어 "실행 중"으로 남는다(139차 win).
+                    let conn_cmd = matches!(summary.as_str(), "Connect" | "Disconnect");
                     if index == 0 {
                         self.txlog.select_session(self.sess.id).begin_batch();
                     }
@@ -1039,14 +1046,18 @@ impl App {
                     } else {
                         TxPurpose::User
                     };
-                    self.txlog.select_session(self.sess.id).begin(
-                        nsql_log::now_local().stamp(),
-                        self.sess.run_editor,
-                        purpose,
-                        index,
-                        &stmt,
-                    );
-                    self.txlog_win.redraw();
+                    // 트랜잭션 로그 = **서버로 가는 문장만**(139차 win V1): 클라이언트 명령(`DEFINE`·`VARIABLE`·로컬 `EXEC :A := 5` …)과
+                    // 접속 명령은 `Done`이 오지 않아 "실행 중"으로 남았다.
+                    if server && !conn_cmd {
+                        self.txlog.select_session(self.sess.id).begin(
+                            nsql_log::now_local().stamp(),
+                            self.sess.run_editor,
+                            purpose,
+                            index,
+                            &stmt,
+                        );
+                        self.txlog_win.redraw();
+                    }
                 }
                 RunEvent::ResultSet {
                     index,
@@ -1380,6 +1391,7 @@ impl App {
                     let sid = self.sess.id;
                     self.tab_unit.retain(|(_, s), _| *s != sid);
                     self.sess.disc_path = None;
+                    self.sess.disc_logged = false;
                     self.sess.status = tf(
                         Msg::StConnected,
                         &[
