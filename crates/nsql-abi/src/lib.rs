@@ -209,7 +209,16 @@ pub mod ops {
     /// out = u8 — 취소가 **세션을 끊는** 방식인가([`nsql_core::CancelHandle::drops_session`] · SQL Server·Db2 = 소켓 종료).
     /// 옛 드라이버(모르는 op → 오류)는 거짓(CI 40157404807: 확장 경로에서 늘 거짓이라 취소 뒤 재접속을 안 함).
     pub const CANCEL_DROPS_SESSION: u32 = 18;
+    /// out = u32 비트 — 이 드라이버가 **코덱 꼬리 필드**를 쓰는가([`super::CODEC_RESULT_TAIL`] = `ExecResult.pending`·`limits_hit` ·
+    /// 10-26 140차). 옛 드라이버(≤ drivers 0.1.6 · 모르는 op → 오류)는 0 = 꼬리 없음 → 본체는 **커서 미지원으로 다룬다**
+    /// (상한 +1 · OFFSET/재질의 경로) — 꼬리 없는 드라이버에 상한 그대로 주면 `pending`이 못 와 "더 없음"으로 조용히 잘린다.
+    pub const CODEC_FEATURES: u32 = 19;
 }
+
+/// [`ops::CODEC_FEATURES`] 비트 — 결과 코덱 꼬리 필드(`pending` · `limits_hit`)를 쓴다.
+pub const CODEC_RESULT_TAIL: u32 = 1;
+/// 이 빌드의 드라이버가 알리는 코덱 기능 비트(새 비트는 꼬리 필드를 더할 때 함께 올린다).
+pub const CODEC_FEATURES_BITS: u32 = CODEC_RESULT_TAIL;
 
 /// `DriverLimit` ↔ 비트(ABI 고정 순서).
 const LIMIT_ORDER: &[nsql_core::DriverLimit] = &[
@@ -243,8 +252,8 @@ pub fn bits_to_limits(bits: u32) -> Vec<nsql_core::DriverLimit> {
 pub mod codec {
     //! 바이너리 코덱 — 태그 1바이트 · 정수 LE · 문자열/바이트 = u32 길이 접두. 버전은 [`super::ABI_VERSION`]이 함께 올린다.
     use nsql_core::{
-        BindParam, Column, CursorId, DbError, Direction, ExecRequest, ExecResult, ResultSet, Value,
-        VarType,
+        BindParam, Column, CursorHandle, CursorId, DbError, Direction, ExecRequest, ExecResult,
+        ResultSet, Value, VarType,
     };
     use nsql_script::{ConnEnv, ConnectSpec};
 
@@ -395,6 +404,19 @@ pub mod codec {
             for m in &r.messages {
                 self.str(m);
             }
+            // ★ v2 꼬리 필드(10-26 · 사용자 "200행 뒤 스크롤 자동 조회 안 됨"): 열린 서버 커서 핸들(`pending`)과 이번 실행이 닿은
+            //   드라이버 제약(`limits_hit`). 종전엔 직렬화에서 빠져 **확장 드라이버(lite 설치본의 Thin 등)는 커서를 늘 잃었고**
+            //   (매 페이지 = "커서 없음" → 엄격 재질의 토스트), 제약 경고도 오지 않았다. 끝에 덧붙여 **양방향 호환** —
+            //   꼬리가 없는 옛 드라이버(drivers ≤ 0.1.6)는 `None`/빈 값으로 읽고(리더 `at_end`), 옛 앱은 꼬리를 읽지 않는다
+            //   (리더가 끝을 검사하지 않는다). `ABI_VERSION`은 그대로 2(정확히 일치해야 적재되므로 올리면 설치된 확장이 전부 거부된다).
+            match r.pending {
+                None => self.u8(0),
+                Some(h) => {
+                    self.u8(1);
+                    self.u32(h.0);
+                }
+            }
+            self.u32(crate::limits_to_bits(&r.limits_hit));
         }
         pub fn db_error(&mut self, e: &DbError) {
             match e.code {
@@ -464,6 +486,11 @@ pub mod codec {
         #[must_use]
         pub fn new(buf: &'a [u8]) -> Self {
             Reader { buf, pos: 0 }
+        }
+        /// 더 읽을 바이트가 없는가 — 뒤에 덧붙인 선택 필드(꼬리 필드)를 옛 송신자 페이로드에서 건너뛸 때.
+        #[must_use]
+        pub fn at_end(&self) -> bool {
+            self.pos >= self.buf.len()
         }
         fn take(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
             let end = self
@@ -599,6 +626,13 @@ pub mod codec {
             let n = self.u32()? as usize;
             for _ in 0..n {
                 r.messages.push(self.str()?);
+            }
+            // v2 꼬리 필드(위 `Writer::result` 참고) — 꼬리가 없으면(옛 드라이버) 기본값.
+            if !self.at_end() && self.u8()? != 0 {
+                r.pending = Some(CursorHandle(self.u32()?));
+            }
+            if !self.at_end() {
+                r.limits_hit = crate::bits_to_limits(self.u32()?);
             }
             Ok(r)
         }
@@ -1267,6 +1301,7 @@ pub mod export {
                 ops::CANCEL_DROPS_SESSION => {
                     w.bool(session.cancel_handle().is_some_and(|h| h.drops_session()))
                 }
+                ops::CODEC_FEATURES => w.u32(crate::CODEC_FEATURES_BITS),
                 ops::FETCH_CURSOR => {
                     let id = r.u64().map_err(|e| abi_error(format!("abi: {}", e.0)))?;
                     let rs = session.fetch_cursor(nsql_core::CursorId(id))?;
@@ -1681,16 +1716,37 @@ mod tests {
             ],
             result_labels: vec![Some("first".into()), None],
             messages: vec!["hello".into()],
+            pending: Some(nsql_core::CursorHandle(7)),
+            limits_hit: vec![nsql_core::DriverLimit::Cancel],
             ..ExecResult::default()
         };
-        let back = Reader::new(&codec::encode_result(&res))
-            .result()
-            .expect("codec");
+        let bytes = codec::encode_result(&res);
+        let back = Reader::new(&bytes).result().expect("codec");
         assert_eq!(back.rows_affected, Some(3));
         assert_eq!(back.out_params, res.out_params);
         assert_eq!(back.result_sets, res.result_sets);
         assert_eq!(back.result_labels, res.result_labels);
         assert_eq!(back.messages, res.messages);
+        assert_eq!(
+            back.pending,
+            Some(nsql_core::CursorHandle(7)),
+            "꼬리 필드 pending"
+        );
+        assert_eq!(back.limits_hit, vec![nsql_core::DriverLimit::Cancel]);
+        // ★ 양방향 호환(10-26): 꼬리(1+4+4 바이트)가 없는 옛 드라이버 페이로드 = pending None · 제약 없음 ·
+        //   꼬리 뒤에 모르는 바이트가 더 있어도(미래 필드) 지금 리더는 무시한다.
+        let old = &bytes[..bytes.len() - 9];
+        let back = Reader::new(old).result().expect("old payload");
+        assert_eq!(back.pending, None);
+        assert!(back.limits_hit.is_empty());
+        assert_eq!(back.messages, res.messages);
+        let mut longer = bytes.clone();
+        longer.extend_from_slice(&[9, 9, 9]);
+        let back = Reader::new(&longer).result().expect("future payload");
+        assert_eq!(back.pending, Some(nsql_core::CursorHandle(7)));
+        // 꼬리가 `None`·빈 제약이면 바이트는 0 + 0u32.
+        let none = codec::encode_result(&ExecResult::default());
+        assert_eq!(&none[none.len() - 5..], &[0, 0, 0, 0, 0]);
         let e = DbError {
             code: Some(1317),
             message: "interrupted".into(),

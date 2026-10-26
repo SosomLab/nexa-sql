@@ -60,6 +60,10 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # ★ 확장 드라이버 cdylib 왕복(nsql-driver-dyn roundtrip)은 산출물이 있어야 돈다 — `cargo test`는 cdylib을 내지 않아 3-OS 모두
+      #   조용히 건너뛰고 있었다(10-26 140차 mac · ci 40330077699 "finished in 0.00s") → 먼저 빌드해 실제 ABI 경계를 시험한다.
+      - name: sqlite cdylib (dyn roundtrip)
+        run: cargo build -p nsql-driver-sqlite
       - name: test
         run: cargo test --workspace
       - name: smoke (fonts · drivers)

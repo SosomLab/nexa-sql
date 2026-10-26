@@ -105,6 +105,23 @@ fn sqlite_over_abi_round_trip() {
     assert!(s.is_alive(), "오류 뒤에도 세션 유지");
     s.set_option("max_rows", "1").expect("set_option");
     let r = exec(&mut s, "SELECT 1 UNION ALL SELECT 2", Vec::new()).expect("max_rows");
-    assert!(r.result_sets[0].rows.len() <= 2);
+    assert_eq!(r.result_sets[0].rows.len(), 1);
+    // ★ 10-26: 상한에서 잘린 결과의 **열린 커서 핸들**이 ABI 너머로 와야 한다(종전엔 코덱에서 빠져 확장 드라이버는 늘 None →
+    //   GUI 스크롤 끝마다 "커서 없음 → 처음부터 다시 받을까요?" 토스트). 이어 받기 = fetch_next → 2 · 더 없음 → 핸들 닫힘.
+    assert!(s.cursor_supported(), "SQLite 확장 = 커서 유지 드라이버");
+    let h = r
+        .pending
+        .expect("상한에서 잘렸으면 pending 커서가 ABI 너머로 온다");
+    let (rest, more) = s.fetch_next(h, 10).expect("fetch_next");
+    assert_eq!(rest.rows, vec![vec![Value::Int(2)]]);
+    assert!(!more, "끝까지 받았다");
+    assert!(
+        s.fetch_next(h, 10).is_err(),
+        "끝에 닿은 커서는 닫힌다(옛 핸들 = 오류 → 호스트 폴백)"
+    );
+    s.set_option("max_rows", "0").expect("set_option");
+    let r = exec(&mut s, "SELECT 1 UNION ALL SELECT 2", Vec::new()).expect("no limit");
+    assert_eq!(r.result_sets[0].rows.len(), 2);
+    assert!(r.pending.is_none(), "상한 없음 = 커서 없음");
     drop(s);
 }

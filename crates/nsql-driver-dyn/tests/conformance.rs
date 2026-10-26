@@ -74,9 +74,21 @@ impl Session for Mock {
         if let Some(s) = &self.sink {
             s(format!("notice: {}", req.sql));
         }
+        // "page" = 상한에서 잘린 조회처럼 열린 커서 + 제약 한 건(10-26 꼬리 필드).
+        let (pending, limits_hit) = if req.sql == "page" {
+            self.cursors.push((77, 0));
+            (
+                Some(CursorHandle(77)),
+                vec![nsql_core::DriverLimit::ImplicitResults],
+            )
+        } else {
+            (None, Vec::new())
+        };
         Ok(ExecResult {
             rows_affected: Some(req.params.len() as u64),
             result_sets: vec![rs(1)],
+            pending,
+            limits_hit,
             ..ExecResult::default()
         })
     }
@@ -282,6 +294,30 @@ fn every_session_method_round_trips_over_abi_v2() {
     })
     .expect("exec");
     assert_eq!(got.lock().expect("lock").len(), 1, "싱크 해제 뒤엔 안 온다");
+    // ★ 실행 결과의 꼬리 필드(10-26): 열린 커서 핸들 + 닿은 제약이 ABI 너머로 그대로 · 그 핸들로 fetch_next/close_cursor.
+    let r = s
+        .execute(&ExecRequest {
+            sql: "page".into(),
+            params: Vec::new(),
+        })
+        .expect("exec");
+    assert_eq!(r.pending, Some(CursorHandle(77)), "pending over ABI");
+    assert_eq!(r.limits_hit, vec![nsql_core::DriverLimit::ImplicitResults]);
+    let (page, more) = s
+        .fetch_next(CursorHandle(77), 3)
+        .expect("fetch_next on pending");
+    assert_eq!(page.rows[0][0], Value::Int(30));
+    assert!(more);
+    s.close_cursor(CursorHandle(77)).expect("close");
+    assert!(s.fetch_next(CursorHandle(77), 3).is_err(), "닫힌 뒤엔 오류");
+    let r = s
+        .execute(&ExecRequest {
+            sql: "SELECT 3".into(),
+            params: Vec::new(),
+        })
+        .expect("exec");
+    assert_eq!(r.pending, None);
+    assert!(r.limits_hit.is_empty());
     // 오류 · 패닉 격리.
     let e = s
         .execute(&ExecRequest {

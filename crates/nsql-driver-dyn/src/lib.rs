@@ -276,10 +276,19 @@ impl DynDriver {
             name: self.id.clone(),
             sink_ctx: None,
             cancel_drops_session: false,
+            result_tail: false,
         };
         // v2 추가 op(10-25): 취소 = 세션 끊김 플래그(cdylib 경계 너머의 `drops_session` · 모르는 드라이버 = 거짓).
         if let Ok(bytes) = s.call(ops::CANCEL_DROPS_SESSION, &[]) {
             s.cancel_drops_session = codec::Reader::new(&bytes).bool().unwrap_or(false);
+        }
+        // v2 추가 op(10-26 · 140차): 결과 코덱 꼬리 필드(`pending`·`limits_hit`)를 쓰는 드라이버인가 — 옛 드라이버(≤ 0.1.6)는
+        //   모르는 op라 거짓 → `cursor_supported()`를 거짓으로 보고해 러너가 상한 +1 · OFFSET/재질의 경로로 간다(종전과 같은 동작 ·
+        //   꼬리 없는 드라이버에 커서 지원을 믿고 상한 그대로 주면 `pending`이 못 와 200행에서 "더 없음"으로 조용히 잘린다).
+        if let Ok(bytes) = s.call(ops::CODEC_FEATURES, &[]) {
+            s.result_tail = codec::Reader::new(&bytes)
+                .u32()
+                .is_ok_and(|bits| bits & nsql_abi::CODEC_RESULT_TAIL != 0);
         }
         // v2: 드라이버가 말하는 Caps·이름(실패하면 방언 기본값).
         if let Ok(bytes) = s.call(ops::CAPS, &[]) {
@@ -309,6 +318,15 @@ pub struct DynSession {
     sink_ctx: Option<Box<SinkCtx>>,
     /// 취소가 세션을 끊는 드라이버인가(`ops::CANCEL_DROPS_SESSION` · open 때).
     cancel_drops_session: bool,
+    /// 결과 코덱 꼬리 필드(`pending`·`limits_hit`)를 돌려주는 드라이버인가(`ops::CODEC_FEATURES` · open 때 · 옛 드라이버 = 거짓).
+    result_tail: bool,
+}
+
+/// 러너에 알릴 "서버 커서 유지 가능"(순수 · 10-26): 드라이버가 커서를 지원한다고 해도 **꼬리 필드가 없는 옛 드라이버**면 거짓 —
+/// 핸들(`pending`)이 ABI를 못 넘어 커서를 이어 받을 길이 없으니 러너가 상한 +1 · OFFSET/재질의 경로를 쓰게 한다.
+#[must_use]
+pub fn cursor_ok(result_tail: bool, driver_says: bool) -> bool {
+    result_tail && driver_says
 }
 
 /// 드라이버 콜백이 넘겨 받는 ctx — `MessageSink`를 담는다.
@@ -566,6 +584,9 @@ impl Session for DynSession {
     }
 
     fn cursor_supported(&self) -> bool {
+        if !self.result_tail {
+            return false; // 옛 드라이버 = 커서 핸들이 못 온다(`cursor_ok`).
+        }
         // `&self`라 call을 못 쓴다 — 핸들로 직접(드라이버는 읽기만).
         let mut out = Buf::EMPTY;
         let mut err = Buf::EMPTY;
@@ -735,6 +756,20 @@ mod tests {
         let n = library_file_name("nsql-driver-sqlite");
         assert!(n.contains("nsql_driver_sqlite"));
         assert!(n.ends_with(".dll") || n.ends_with(".so") || n.ends_with(".dylib"));
+    }
+
+    /// 10-26: 꼬리 필드가 없는 옛 드라이버는 커서를 지원한다고 해도 거짓(핸들이 못 온다) — 조건별 독립 영향 쌍.
+    #[test]
+    fn cursor_ok_requires_result_tail() {
+        assert!(super::cursor_ok(true, true));
+        assert!(
+            !super::cursor_ok(false, true),
+            "옛 드라이버 = 커서 없음으로"
+        );
+        assert!(
+            !super::cursor_ok(true, false),
+            "드라이버가 미지원이면 그대로"
+        );
     }
 
     #[test]
