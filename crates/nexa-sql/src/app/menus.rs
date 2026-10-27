@@ -444,6 +444,11 @@ impl App {
             self.bm_restore_pending();
             return;
         }
+        // ★ 드라이버 갱신 알림의 [갱신](사용자 10-27): 설치된 드라이버 중 새 버전만 차례로 설치.
+        if id == crate::app::drivers::UPDATE_INSTALLED_ACTION {
+            self.drivers_update_installed();
+            return;
+        }
         if let Some(rest) = id.strip_prefix("notice.hide:") {
             let key = format!("notice.{rest}");
             if self.settings.set(&key, "off").is_ok() {

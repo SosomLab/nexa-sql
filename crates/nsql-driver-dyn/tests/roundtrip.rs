@@ -25,6 +25,12 @@ fn sqlite_cdylib() -> Option<PathBuf> {
 #[test]
 fn sqlite_over_abi_round_trip() {
     let Some(lib) = sqlite_cdylib() else {
+        // ★ CI에서는 건너뜀 = 실패(10-27): ci.yml이 cdylib을 먼저 빌드하므로 없으면 작업 순서가 깨진 것 · 로컬은 안내만(통과 시 출력이
+        //   삼켜져 로그로는 실행/건너뜀을 가를 수 없었다 = 협업 10-27 지적).
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "nsql_driver_sqlite cdylib 없음 — CI는 `cargo build -p nsql-driver-sqlite` 단계가 선행해야 한다"
+        );
         eprintln!(
             "[skip] nsql_driver_sqlite cdylib 없음 — `cargo build -p nsql-driver-sqlite` 뒤 다시"
         );

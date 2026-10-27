@@ -31,7 +31,38 @@ pub(crate) struct DriverTask {
     index_loaded: bool,
     /// 기동 때의 갱신 확인(`driver.check_updates`)이면 색인 결과로 갱신 수를 상태줄에 알린다.
     badge_check: bool,
+    /// ★ 설치 대기열(사용자 10-27 다중 선택·[갱신] 버튼): 워커는 한 번에 하나 — 끝나면 다음을 띄운다. `batch` = (끝난 수, 실패 수, 전체).
+    queue: std::collections::VecDeque<String>,
+    batch: (usize, usize, usize),
 }
+
+/// ★ 대기열의 다음 설치(순수 · 10-27): 끝난 작업을 세고(`ok`) 다음 id를 꺼낸다. 돌려주는 값 = (다음 id, 이번이 몇 번째인지 1부터, 전체).
+pub(crate) fn batch_next(
+    queue: &mut std::collections::VecDeque<String>,
+    batch: &mut (usize, usize, usize),
+    ok: bool,
+) -> Option<(String, usize, usize)> {
+    batch.0 += 1;
+    if !ok {
+        batch.1 += 1;
+    }
+    let next = queue.pop_front()?;
+    Some((next, batch.0 + 1, batch.2))
+}
+
+/// 설치 묶음의 id 정리(순수): 빈 것 제거 · 순서 유지 중복 제거.
+pub(crate) fn dedup_ids(ids: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in ids {
+        if !id.is_empty() && !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// 토스트 동작 id([갱신] 버튼 · `menu_action`으로 온다).
+pub(crate) const UPDATE_INSTALLED_ACTION: &str = "drivers.update_installed";
 
 impl std::fmt::Debug for DriverTask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -141,30 +172,109 @@ impl App {
                 self.open_file_dlg = Some(crate::PickerMode::Open);
                 self.redraw();
             }
-            DriverWinAction::Install(id) => self.drivers_spawn(Some(id)),
-            DriverWinAction::Remove(id) => {
-                // 올라간 판도 지운다(파일은 .trash → 다음 시작) — 재시작까지 그 판이 쓰인다고 안내(사용자 10-23).
-                let loaded = ext::is_loaded(&id);
-                let text = match ext::remove_extension(&id, None) {
-                    Ok(paths) if paths.is_empty() => tf(Msg::DrvStatusNothingToRemove, &[&id]),
-                    Ok(_) if loaded => tf(Msg::DrvStatusRemovedRestart, &[&id]),
-                    Ok(paths) => tf(Msg::DrvStatusRemoved, &[&id, &paths.len().to_string()]),
-                    Err(e) => tf(Msg::DrvStatusError, &[&e]),
-                };
-                self.driver_win.set_status(&text, false);
+            DriverWinAction::Install(ids) => self.drivers_install_many(ids),
+            DriverWinAction::Remove(ids) => {
+                // 올라간 판도 지운다(파일은 .trash → 다음 시작) — 재시작까지 그 판이 쓰인다고 안내(사용자 10-23) · 여러 개 = 줄마다 결과를 이어 붙인다.
+                let mut texts = Vec::new();
+                for id in dedup_ids(ids) {
+                    let loaded = ext::is_loaded(&id);
+                    texts.push(match ext::remove_extension(&id, None) {
+                        Ok(paths) if paths.is_empty() => tf(Msg::DrvStatusNothingToRemove, &[&id]),
+                        Ok(_) if loaded => tf(Msg::DrvStatusRemovedRestart, &[&id]),
+                        Ok(paths) => tf(Msg::DrvStatusRemoved, &[&id, &paths.len().to_string()]),
+                        Err(e) => tf(Msg::DrvStatusError, &[&e]),
+                    });
+                }
+                self.driver_win.set_status(&texts.join(" · "), false);
                 self.drivers_info_changed();
             }
-            DriverWinAction::Check(id) => {
-                let text = match ext::check_extension(&id) {
-                    Ok(c) => tf(
-                        Msg::DrvStatusCheckOk,
-                        &[&c.driver_id, &c.version, &c.dialect, &c.abi.to_string()],
-                    ),
-                    Err(e) => tf(Msg::DrvStatusError, &[&e.message]),
+            DriverWinAction::Check(ids) => {
+                let ids = dedup_ids(ids);
+                let mut ok = 0usize;
+                let mut texts = Vec::new();
+                for id in &ids {
+                    texts.push(match ext::check_extension(id) {
+                        Ok(c) => {
+                            ok += 1;
+                            tf(
+                                Msg::DrvStatusCheckOk,
+                                &[&c.driver_id, &c.version, &c.dialect, &c.abi.to_string()],
+                            )
+                        }
+                        Err(e) => tf(Msg::DrvStatusError, &[&e.message]),
+                    });
+                }
+                let text = if ids.len() > 1 {
+                    // 여러 개 = 요약을 상태줄에 · 줄마다 결과는 로그 창에.
+                    for t in &texts {
+                        self.log_win
+                            .push(crate::LogEntry::new(crate::LogKind::Info, t.clone()));
+                    }
+                    tf(
+                        Msg::DrvStatusCheckMany,
+                        &[
+                            &ids.len().to_string(),
+                            &ok.to_string(),
+                            &(ids.len() - ok).to_string(),
+                        ],
+                    )
+                } else {
+                    texts.pop().unwrap_or_default()
                 };
                 self.driver_win.set_status(&text, false);
             }
         }
+    }
+
+    /// ★ 여러 드라이버 설치/갱신(사용자 10-27): 워커는 하나씩 — 첫 것을 띄우고 나머지는 대기열([`batch_next`]) · 끝나면 요약 한 줄.
+    pub(crate) fn drivers_install_many(&mut self, ids: Vec<String>) {
+        let mut ids = dedup_ids(ids);
+        if ids.is_empty() || self.driver_task.busy() {
+            return;
+        }
+        let total = ids.len();
+        let first = ids.remove(0);
+        self.driver_task.queue = ids.into_iter().collect();
+        self.driver_task.batch = (0, 0, total);
+        self.drivers_spawn(Some(first.clone()));
+        if total > 1 {
+            self.driver_win.set_status(
+                &tf(Msg::DrvStatusQueued, &[&first, "1", &total.to_string()]),
+                true,
+            );
+        }
+    }
+
+    /// ★ [갱신] 버튼(토스트 · 메뉴 동작 `drivers.update_installed` · 10-27): 범위 = **설치된 드라이버 중 색인에 새 버전이 있는 것만**
+    ///   (사용자 "현재 필요한 드라이버로 축소") · 색인은 캐시(기동 확인이 막 받아 둔 것) · 네트워크는 설치 자산만.
+    pub(crate) fn drivers_update_installed(&mut self) {
+        self.toasts.dismiss_action(UPDATE_INSTALLED_ACTION);
+        let Some(root) = self.driver_root() else {
+            self.sess.status = t(Msg::DrvStatusNoFolder).into();
+            return;
+        };
+        if self.driver_task.index.is_none() {
+            self.driver_task.index = install::cached_index(&root);
+            self.driver_task.index_loaded = true;
+        }
+        let ids: Vec<String> = self
+            .driver_task
+            .index
+            .as_ref()
+            .map(|idx| install::updates(idx, &ext::list_extensions_in(&root)))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|u| u.id)
+            .collect();
+        if ids.is_empty() {
+            self.sess.status = t(Msg::DrvStatusNoUpdates).into();
+            self.redraw();
+            return;
+        }
+        let (first, n) = (ids[0].clone(), ids.len());
+        self.drivers_install_many(ids);
+        self.sess.status = tf(Msg::DrvStatusQueued, &[&first, "1", &n.to_string()]);
+        self.redraw();
     }
 
     /// 워커 시작: `None` = 색인 새로 고침 · `Some(id)` = 설치(색인 최신 · 옆에 설치).
@@ -304,6 +414,11 @@ impl App {
         if !any_ext {
             return;
         }
+        self.drivers_check_updates_now();
+    }
+
+    /// 갱신 확인 지금(조건 없이 · 기동 확인과 자체 시험 `drivers.check_updates`가 같은 길).
+    pub(crate) fn drivers_check_updates_now(&mut self) {
         self.driver_task.badge_check = true;
         self.drivers_spawn(None);
     }
@@ -354,6 +469,14 @@ impl App {
                                     self.sess.status = text.clone();
                                     self.log_win
                                         .push(crate::LogEntry::new(crate::LogKind::Info, text));
+                                    // ★ 알림 + [갱신] 한 번 클릭(사용자 10-27): 사라지지 않는 카드 · 범위 = 설치된 드라이버의 새 버전만.
+                                    self.toasts.push_button_sticky(
+                                        crate::toast::ToastKind::Info,
+                                        t(Msg::ToastDriverUpdatesTitle),
+                                        tf(Msg::ToastDriverUpdatesBody, &[&list.join(", ")]),
+                                        t(Msg::BtnDrvUpdate),
+                                        UPDATE_INSTALLED_ACTION,
+                                    );
                                 }
                             }
                             self.driver_task.index = Some(idx);
@@ -398,6 +521,17 @@ impl App {
                 }
                 DriverMsg::Installed(r) => {
                     done = true;
+                    // 묶음 설치면 줄마다 결과를 로그에(상태줄은 다음 항목·요약이 덮는다).
+                    let in_batch = self.driver_task.batch.2 > 1;
+                    if in_batch {
+                        let line = match &r {
+                            Ok(rep) => format!("driver install: {}@{} ok", rep.id, rep.version),
+                            Err(e) => format!("driver install: {} ({})", e.detail, e.kind.code()),
+                        };
+                        self.log_win
+                            .push(crate::LogEntry::new(crate::LogKind::Info, line));
+                    }
+                    let ok = r.is_ok();
                     match r {
                         Ok(rep) => {
                             // 설치가 색인을 새로 받았을 수 있다 → 캐시 다시 읽기.
@@ -420,13 +554,68 @@ impl App {
                         }
                         Err(e) => self.driver_install_error(&e),
                     }
+                    // ★ 대기열(10-27): 다음 설치를 띄우거나 묶음 요약.
+                    self.driver_task.rx = None;
+                    let next =
+                        batch_next(&mut self.driver_task.queue, &mut self.driver_task.batch, ok);
+                    match next {
+                        Some((id, i, total)) => {
+                            self.drivers_spawn(Some(id.clone()));
+                            self.driver_win.set_status(
+                                &tf(
+                                    Msg::DrvStatusQueued,
+                                    &[&id, &i.to_string(), &total.to_string()],
+                                ),
+                                true,
+                            );
+                        }
+                        None if self.driver_task.batch.2 > 1 => {
+                            let (n, fail, _) = self.driver_task.batch;
+                            let text = tf(
+                                Msg::DrvStatusBatchDone,
+                                &[&(n - fail).to_string(), &fail.to_string()],
+                            );
+                            self.driver_win.set_status(&text, false);
+                            self.sess.status = text.clone();
+                            self.log_win
+                                .push(crate::LogEntry::new(crate::LogKind::Info, text));
+                            self.driver_task.batch = (0, 0, 0);
+                            self.redraw();
+                        }
+                        None => self.driver_task.batch = (0, 0, 0),
+                    }
                 }
             }
         }
         if done {
-            self.driver_task.rx = None;
+            if self.driver_task.queue.is_empty() && self.driver_task.batch.2 == 0 {
+                self.driver_task.rx = None;
+            }
             self.driver_win.redraw();
             self.drivers_info_changed();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    /// ★ 설치 대기열(사용자 10-27): 끝난 수·실패 수를 세고 다음 id와 "n/전체"를 돌려준다 · 비면 None(요약 차례).
+    #[test]
+    fn batch_queue_counts_and_advances() {
+        let mut q: VecDeque<String> = ["b", "c"].into_iter().map(String::from).collect();
+        let mut b = (0, 0, 3);
+        assert_eq!(batch_next(&mut q, &mut b, true), Some(("b".into(), 2, 3)));
+        assert_eq!(b, (1, 0, 3));
+        assert_eq!(batch_next(&mut q, &mut b, false), Some(("c".into(), 3, 3)));
+        assert_eq!(b, (2, 1, 3), "실패도 끝난 수에 든다");
+        assert_eq!(batch_next(&mut q, &mut b, true), None);
+        assert_eq!(b, (3, 1, 3));
+        // 순서 유지 중복 제거 · 빈 id 제거.
+        let ids = dedup_ids(vec!["pg".into(), "".into(), "sqlite".into(), "pg".into()]);
+        assert_eq!(ids, ["pg", "sqlite"]);
+        assert!(dedup_ids(Vec::new()).is_empty());
     }
 }

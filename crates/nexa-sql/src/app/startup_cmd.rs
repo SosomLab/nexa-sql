@@ -1117,6 +1117,11 @@ impl App {
             let _ = std::fs::write(path, self.toasts.dump_text());
             return;
         }
+        // ★ 자체 시험(10-27 드라이버 갱신 알림): 기동 갱신 확인을 나이·설치 여부와 무관하게 지금(네트워크 1 GET · 격리 홈에서만 쓴다).
+        if id == "drivers.check_updates" {
+            self.drivers_check_updates_now();
+            return;
+        }
         // ★ 자체 시험(docs/111 · T-339): Ctrl 홀드 흉내(`ui.key:ctrl_down`/`ctrl_up` = 수식키 사건과 같은 길) · 줄 끝 라벨 덤프.
         if let Some(what) = id.strip_prefix("ui.key:") {
             match what {

@@ -584,27 +584,29 @@ impl Session for DynSession {
     }
 
     fn cursor_supported(&self) -> bool {
-        if !self.result_tail {
-            return false; // 옛 드라이버 = 커서 핸들이 못 온다(`cursor_ok`).
-        }
-        // `&self`라 call을 못 쓴다 — 핸들로 직접(드라이버는 읽기만).
-        let mut out = Buf::EMPTY;
-        let mut err = Buf::EMPTY;
-        let st = unsafe {
-            (self.drv.vt.call)(
-                self.handle,
-                ops::CURSOR_SUPPORTED,
-                std::ptr::null(),
-                0,
-                &mut out,
-                &mut err,
-            )
+        // 옛 드라이버(꼬리 필드 없음)는 묻지 않는다 — 판정은 순수 함수 `cursor_ok` 한 곳(10-27: 실제 경로도 같은 함수를 지나게).
+        let driver_says = self.result_tail && {
+            // `&self`라 call을 못 쓴다 — 핸들로 직접(드라이버는 읽기만).
+            let mut out = Buf::EMPTY;
+            let mut err = Buf::EMPTY;
+            let st = unsafe {
+                (self.drv.vt.call)(
+                    self.handle,
+                    ops::CURSOR_SUPPORTED,
+                    std::ptr::null(),
+                    0,
+                    &mut out,
+                    &mut err,
+                )
+            };
+            if self.drv.status(st, err).is_err() {
+                false
+            } else {
+                let b = self.drv.take(out);
+                codec::Reader::new(&b).bool().unwrap_or(false)
+            }
         };
-        if self.drv.status(st, err).is_err() {
-            return false;
-        }
-        let b = self.drv.take(out);
-        codec::Reader::new(&b).bool().unwrap_or(false)
+        cursor_ok(self.result_tail, driver_says)
     }
 
     fn fetch_next(&mut self, h: CursorHandle, max: usize) -> Result<(ResultSet, bool), DbError> {
