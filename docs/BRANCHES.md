@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/150-153-defects-approval | 2026-10-28 | 2026-10-28 → main ff(삭제) · **e2ce513d** | 1 | 150~153차 win = 결정 불요 결함 묶음(T-439·T-431·T-432·T-412·T-435·MixedStar) · T-448 능력 요약 · D-90 능력 승인 · T-447 행 고르기 · 뒤이어 fmt 복구 **b498e4ec**(main 직접) |
 | feat/149-ext-settings-keys | 2026-10-28 | 2026-10-28 → main ff(삭제) · **51367c37** | 1 | 149차 win = Insert Sequence 단축키·설정값 확장 영역(D-370) · 확장 명령 단축키 `key.<id>` 동적 등재 · 곱집합 `*` · 메뉴 단축키 표시 결함 |
 | feat/148-insert-sequence-ext | 2026-10-27 | 2026-10-28 → main ff(삭제) · **7867ff09** | 1 | 148차 win = T-446 Insert Sequence 확장화(nsql-seq · SDK ABI v1.2 · 내장 확장 D-368 · 설정 overlay D-369 · hello-ext 0.2.0 · insert-sequence 0.1.0) · 147 마감 복구 9bbd316b 뒤 |
 | feat/147-ext-details-sync | 2026-10-27 | 2026-10-27 → main ff(삭제) · **d1649eaa** | 1 | 147차 win = T-445 확장 상세 탭 업데이트 뒤 미갱신 수정 · docs/124 §7 Insert Sequence 확장화 검토 · 146 마감 CI |
