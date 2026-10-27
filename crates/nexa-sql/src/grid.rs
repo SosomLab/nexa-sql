@@ -142,7 +142,11 @@ pub(crate) enum FetchReq {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CopyKind {
     Tsv,
-    TsvWithHeaders,
+    /// ★ 머리글과 함께(사용자 10-27 · 144차): 구분자 선택(공백 · 콤마 · 탭) — 콤마 = CSV 규칙 · 탭 = TSV · 공백 = 한 칸(값에 공백·따옴표·줄바꿈이
+    /// 있으면 CSV처럼 `"…"` 인용 · `quote_field`) · 첫 구간만 머리글.
+    WithHeaders(Sep),
+    /// ★ 머리글만(사용자 10-27): 선택한 열(선택 없으면 표시 순서의 전체 열) 이름을 구분자로 이어 한 줄.
+    HeadersOnly(Sep),
     Csv,
     /// 고정폭 정렬 텍스트 표(머리글 포함).
     Text,
@@ -150,6 +154,32 @@ pub(crate) enum CopyKind {
     Markdown,
     /// JSON 배열(객체마다 컬럼 = 값 · 숫자/불리언/NULL은 리터럴).
     Json,
+}
+
+/// 복사 구분자(머리글과 함께 · 머리글만).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sep {
+    Space,
+    Comma,
+    Tab,
+}
+
+impl Sep {
+    fn byte(self) -> u8 {
+        match self {
+            Sep::Space => b' ',
+            Sep::Comma => b',',
+            Sep::Tab => b'\t',
+        }
+    }
+    fn parse(id: &str) -> Option<Sep> {
+        match id {
+            "space" => Some(Sep::Space),
+            "comma" => Some(Sep::Comma),
+            "tab" => Some(Sep::Tab),
+            _ => None,
+        }
+    }
 }
 
 /// SQL 문 종류·테이블 추정은 nsql-io(CLI와 공용 · docs/41).
@@ -5034,6 +5064,9 @@ impl Grid {
         if self.view != ResultView::Grid {
             return self.copy_text_selection();
         }
+        if let CopyKind::HeadersOnly(sep) = kind {
+            return self.copy_headers_only(sep);
+        }
         if self.regions.is_empty() {
             return None;
         }
@@ -5054,6 +5087,35 @@ impl Grid {
             }
         }
         (cells > 0).then_some((out, cells))
+    }
+
+    /// ★ 머리글만(144차): 선택 구간들의 열(표시 순서 · 중복 없이) · 선택이 없으면 표시 순서의 모든 열 — 이름을 `sep`로 이어 한 줄(인용 규칙 = `quote_field`).
+    fn copy_headers_only(&self, sep: Sep) -> Option<(String, usize)> {
+        let rs = self.rs.as_ref()?;
+        let mut cols: Vec<usize> = Vec::new();
+        let mut regions = self.regions.clone();
+        regions.sort_unstable();
+        for r in &regions {
+            let (_, cs) = self.region_index(*r);
+            for c in cs {
+                if !cols.contains(&c) {
+                    cols.push(c);
+                }
+            }
+        }
+        if cols.is_empty() {
+            cols = self.col_order.clone();
+        }
+        let names: Vec<String> = cols
+            .iter()
+            .filter_map(|&c| rs.columns().get(c))
+            .map(|c| nsql_io::quote_field(&c.name, sep.byte()))
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        let d = (sep.byte() as char).to_string();
+        Some((names.join(&d), names.len()))
     }
 
     /// 구간 하나를 형식대로(첫 구간만 헤더) — 선택 = 뷰 → 렌더는 nsql-io 하나(텍스트 보기·CLI와 같은 코드 · DR-33). 값 복사 0.
@@ -5128,7 +5190,31 @@ impl Grid {
         };
         let (fmt, header) = match kind {
             CopyKind::Tsv => (Format::Tsv, false),
-            CopyKind::TsvWithHeaders => (Format::Tsv, first),
+            CopyKind::WithHeaders(Sep::Tab) => (Format::Tsv, first),
+            CopyKind::WithHeaders(Sep::Comma) => (Format::Csv, first),
+            // 공백 한 칸 = nsql-io에 형식이 없어 여기서 같은 인용 규칙(`quote_field`)으로 잇는다.
+            CopyKind::WithHeaders(Sep::Space) => {
+                let mut o = String::new();
+                let n = view.ncols();
+                if first {
+                    let h: Vec<String> = (0..n)
+                        .map(|c| nsql_io::quote_field(&view.column(c).name, b' '))
+                        .collect();
+                    o.push_str(&h.join(" "));
+                    o.push('\n');
+                }
+                for r in 0..rows_len {
+                    let cells: Vec<String> = view
+                        .cells(r)
+                        .map(|v| nsql_io::quote_field(&nsql_io::cell_text(v, &opts.null), b' '))
+                        .collect();
+                    o.push_str(&cells.join(" "));
+                    o.push('\n');
+                }
+                let out = o.trim_end_matches(['\n', '\r']).to_string();
+                return Some((out, rows_len * n));
+            }
+            CopyKind::HeadersOnly(_) => return None,
             CopyKind::Csv => (Format::Csv, first),
             // 고정폭 정렬(표시 폭 기준 · 숫자 우측 정렬) — 첫 구간만 머리글.
             CopyKind::Text => (Format::Grid, first),
@@ -5595,12 +5681,31 @@ impl Grid {
         if let CtxItem::Item { enabled, .. } = &mut sql_item {
             *enabled = has;
         }
+        // ★ 머리글과 함께 ▸ / 머리글만 ▸ (사용자 10-27 · 144차): 구분자 = 공백 · 콤마 · 탭 · 1단 하위 메뉴(88 §3 15).
+        let seps = |prefix: &str| {
+            vec![
+                CtxItem::item(format!("{prefix}space"), t(Msg::MnSepSpace)),
+                CtxItem::item(format!("{prefix}comma"), t(Msg::MnSepComma)),
+                CtxItem::item(format!("{prefix}tab"), t(Msg::MnSepTab)),
+            ]
+        };
+        let mut hdr_item = CtxItem::submenu("copy_h", t(Msg::MnCopyWithHeaders), seps("copy_h_"))
+            .with_icon(Some(toolicons::mi_copy()));
+        if let CtxItem::Item { enabled, .. } = &mut hdr_item {
+            *enabled = has;
+        }
+        let mut hdr_only =
+            CtxItem::submenu("copy_hdr", t(Msg::MnCopyHeadersOnly), seps("copy_hdr_"))
+                .with_icon(Some(toolicons::mi_copy()));
+        if let CtxItem::Item { enabled, .. } = &mut hdr_only {
+            *enabled = self.rs.is_some();
+        }
         let mut items = vec![
             CtxItem::maybe("copy", t(Msg::MnCopy), has)
                 .with_icon(Some(toolicons::mi_copy()))
                 .with_shortcut(self.sc_copy.clone()),
-            CtxItem::maybe("copy_h", t(Msg::MnCopyWithHeaders), has)
-                .with_icon(Some(toolicons::mi_copy())),
+            hdr_item,
+            hdr_only,
             adv_item,
             sql_item,
             CtxItem::Separator,
@@ -5743,7 +5848,8 @@ impl Grid {
         };
     }
 
-    fn menu_pick(&mut self, id: &str) {
+    /// 우클릭 메뉴 항목 처리(자체 시험 `grid.copy:<id>:<파일>`도 같은 길 · 10-27).
+    pub(crate) fn menu_pick(&mut self, id: &str) {
         if let Some(v) = id.strip_prefix("view:") {
             let view = match v {
                 "grid" => ResultView::Grid,
@@ -5805,9 +5911,21 @@ impl Grid {
             }
             return;
         }
+        if let Some(k) = id
+            .strip_prefix("copy_h_")
+            .and_then(Sep::parse)
+            .map(CopyKind::WithHeaders)
+            .or_else(|| {
+                id.strip_prefix("copy_hdr_")
+                    .and_then(Sep::parse)
+                    .map(CopyKind::HeadersOnly)
+            })
+        {
+            self.pending_copy = self.copy_selection(k);
+            return;
+        }
         let kind = match id {
             "copy" => CopyKind::Tsv,
-            "copy_h" => CopyKind::TsvWithHeaders,
             "copy_csv" => CopyKind::Csv,
             "copy_txt" => CopyKind::Text,
             "copy_md" => CopyKind::Markdown,
@@ -10693,6 +10811,48 @@ mod tests {
             json,
             "[\n  {\"nm\": \"a|b\", \"id\": 1},\n  {\"nm\": null, \"id\": 2}\n]"
         );
+        // ★ 머리글과 함께 ▸ 구분자 3종(144차 · 10-27): 탭 = TSV + 머리글 · 콤마 = CSV · 공백 = 한 칸(인용 규칙 같음) · 머리글만 ▸ = 선택 열.
+        let (t, n) = g
+            .copy_selection(CopyKind::WithHeaders(Sep::Tab))
+            .expect("tab");
+        assert_eq!((t.as_str(), n), ("nm\tid\na|b\t1\n∅\t2", 4));
+        let (c, _) = g
+            .copy_selection(CopyKind::WithHeaders(Sep::Comma))
+            .expect("comma");
+        assert_eq!(c, csv);
+        let (s, n) = g
+            .copy_selection(CopyKind::WithHeaders(Sep::Space))
+            .expect("space");
+        assert_eq!((s.as_str(), n), ("nm id\na|b 1\n∅ 2", 4));
+        let (h, n) = g
+            .copy_selection(CopyKind::HeadersOnly(Sep::Comma))
+            .expect("headers");
+        assert_eq!((h.as_str(), n), ("nm,id", 2));
+        // 한 열만 고르면 그 열 이름만 · 선택이 없으면 전체 열(표시 순서).
+        g.regions = vec![(0, 1, 1, 1)];
+        let (h1, _) = g
+            .copy_selection(CopyKind::HeadersOnly(Sep::Tab))
+            .expect("one header");
+        assert_eq!(h1, "id");
+        g.regions.clear();
+        let (hall, _) = g
+            .copy_selection(CopyKind::HeadersOnly(Sep::Space))
+            .expect("all headers");
+        assert_eq!(hall, "nm id");
+        // 값에 공백이 있으면 공백 구분 복사는 인용한다.
+        let mut g2 = Grid::default();
+        g2.set_result(ResultSet {
+            columns: vec![Column {
+                name: "desc text".into(),
+                type_name: String::new(),
+            }],
+            rows: vec![vec![Value::Str("생산 1파트".into())]],
+        });
+        g2.select_all();
+        let (sp, _) = g2
+            .copy_selection(CopyKind::WithHeaders(Sep::Space))
+            .expect("quoted");
+        assert_eq!(sp, "\"desc text\"\n\"생산 1파트\"");
         // 예산 회계: 데이터 + 텍스트 캐시(그리드 보기 = 0).
         assert!(g.approx_bytes() > 0 && g.text_bytes == 0);
     }

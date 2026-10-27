@@ -215,6 +215,25 @@ impl App {
             }
             return;
         }
+        // ★ 144차 자체 시험(10-27 · 클립보드를 덮지 않는다): `grid.copy:<메뉴 id>:<파일>` = 우클릭 메뉴 항목(`copy_h_tab` · `copy_hdr_comma` …)을
+        //   고른 것과 같은 길로 복사 글을 만들어 **파일에** 쓴다(OS 클립보드 ✗ · 61 §2-4).
+        if let Some(rest) = id.strip_prefix("grid.copy:") {
+            if let Some((mid, path)) = rest.split_once(':') {
+                self.grid.menu_pick(mid);
+                let (text, n) = self.grid.take_copy().unwrap_or_default();
+                let _ = std::fs::write(
+                    path,
+                    format!(
+                        "id={mid}
+cells={n}
+{text}"
+                    ),
+                );
+                self.sess.status = format!("grid.copy {mid} cells={n}");
+            }
+            self.redraw();
+            return;
+        }
         if let Some(cmd) = id.strip_prefix("grid.edit.cmd:") {
             let ok = self.grid.edit_command(cmd);
             self.sess.status = format!("grid.edit.cmd {cmd} ok={ok}");
