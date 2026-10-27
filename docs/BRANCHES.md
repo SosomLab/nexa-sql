@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/142-format-comments | 2026-10-27 | 2026-10-27 → main ff(삭제) · **be6c7b77** + 문서 **99f07e90** | 2 | 142차 win = T-440 SQL 포맷 SELECT 목록 안 주석 줄(nsql-format layout.rs · 확장 sql-formatter-kiros33 1.3.4 · Basic 재포맷 들여쓰기 소실) |
 | feat/141-profile-vars | 2026-10-27 | 2026-10-27 → main ff(삭제) · **8dccf690** + 문서 **4804e159** | 2 | 141차 win = T-153 후속 2 프로필 변수 UI + 글로벌 치환 보존 · T-433 · T-434 · D-365 · 재시작 스크립트 종료 순서 |
 | fix/140-win-review | 2026-10-27 | 2026-10-27 → main ff(삭제) · **507e0f0a** + 문서 **254c377b** | 2 | 140차 win = 140차 mac 검토 11+3건(문서 정정 · T-436 재시작 스크립트 3-OS · win-restart-debug.ps1 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택(T-437) · ci.yml 주석 · journal 10-27 §1 |
 | fix/140-abi-pending-cursor | 2026-10-27 | 2026-10-27 → main ff(삭제) · **7cd82da** + **d4f119c** + 문서 **3d17f26** · 이어서 main 직접 = 4bf774f DRIVER_VERSION 0.1.7 → drivers-v0.1.7(봇 ad81370) → 9465d36 버전 0.3.1 → 🚀 v0.3.1(Latest 16:54:51Z) + 마감 문서 **faee485c** · 2차 **bc54fbce** | 3 | 140차 mac = ★ 확장 드라이버 ABI `pending` 커서 누락(코덱 꼬리 필드 · 양방향 호환) + 2차 혼합 조합 조용한 절단(op 19 `CODEC_FEATURES`) · ci.yml sqlite cdylib 선빌드 · D-363 로컬 Release = lite(`mac-restart-debug.sh --release` · `lite-dev-drivers.sh`) · 문서(journal 10-26 §5 · 22 · 43 · 110 · 10 · 61 · 102 · TODO T-432~434 · STATUS · DEVLOG) |
