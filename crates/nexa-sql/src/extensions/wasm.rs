@@ -10,9 +10,9 @@
 //! 같은 id의 WASM 확장이 로드되면 내장(builtin) 확장을 **대체**한다(내장 = 로드 실패 때 폴백).
 
 use super::{
-    PromptRow,
     key_matches, Capabilities, Command, EditorOps, Extension, ExtensionEffect, FileOp, Label,
-    MenuContribution, MenuTarget, Prompt, SettingDef, SettingDefKind, TransformOut, TransformReq,
+    MenuContribution, MenuTarget, Prompt, PromptRow, SettingDef, SettingDefKind, TransformOut,
+    TransformReq,
 };
 use nsql_settings::json::{self, Json};
 use nsql_settings::Settings;
@@ -1018,7 +1018,8 @@ mod tests {
             (o.error.as_deref(), o.rows.len(), o.rows[0].warn),
             (Some("e"), 1, true)
         );
-        let c = transform_out_from_json(r#"{"apply":"none","rows":[{"text":"Hi","id":"hi"}]}"#).expect("choice");
+        let c = transform_out_from_json(r#"{"apply":"none","rows":[{"text":"Hi","id":"hi"}]}"#)
+            .expect("choice");
         assert_eq!(c.rows[0].id.as_deref(), Some("hi"));
         assert!(transform_out_from_json("{}").is_err());
     }
@@ -1070,14 +1071,21 @@ mod tests {
         };
         let out = ext.transform(&live, &s).expect("live");
         assert_eq!(out.apply, "none");
-        assert!(out.rows.iter().any(|r| r.id.as_deref() == Some("ko")), "{:?}", out.rows);
+        assert!(
+            out.rows.iter().any(|r| r.id.as_deref() == Some("ko")),
+            "{:?}",
+            out.rows
+        );
         let commit = TransformReq {
             phase: "commit".into(),
             pick: Some("ko".into()),
             ..live
         };
         let out = ext.transform(&commit, &s).expect("commit");
-        assert_eq!((out.apply.as_str(), out.text.as_str()), ("text", "안녕하세요"));
+        assert_eq!(
+            (out.apply.as_str(), out.text.as_str()),
+            ("text", "안녕하세요")
+        );
     }
 
     /// 소스 트리의 공식 패키지 `.wasm`(SDK 샘플로 빌드해 둔 것)을 로드해 메타·설정→효과·명령 큐를 확인한다.
