@@ -116,6 +116,7 @@ FROM MTXRPTY2.MTX_AGENT_LOG A, MTXRPTY2.MTX_DBMS C, MTXRPTY2.MTX_REPORT D, MTXRP
 | 컬럼 선택 | `⇧+우클릭 드래그` · `Ctrl+Alt+↑/↓` · `⌥ 드래그` | 사각 블록 — 짧은 줄은 가상 공간 없이 줄 끝 |
 | 정규식 찾기 → 전부 선택 | 찾기 패널(`Ctrl+F`) 정규식 토글 → **`Alt+Enter`** | 매치 전부 다중 선택 → 편집 · `Ctrl+H` 바꾸기(`$1` 캡처) |
 | 커서 취소 | `Esc` | 첫 커서만 남김 |
+| ★ 순번 삽입(Insert Sequence · 10-27 · T-441) | `Ctrl+Alt+N` · `⌘⌥N` | 캐럿마다 수열 값 — 팔레트 상단 표현식(`1+1` · `a+1` · `09:00+15` · `[A..B]x[1..3] "{1}-{2}"` …) + 실시간 미리보기 · `?` = 도움말 · Enter 넣기 · Esc 취소(원문 복원) · 되돌리기 한 번 = 전부 · 문법 = [124](124-insert-sequence.md) · D-366 |
 
 - 모델: `Selection = Vec<Region{anchor, head}>` **정렬·병합 불변식**(겹치면 합침). 편집 명령은 *모든* 리전에 **뒤에서 앞으로** 적용해 오프셋을 흐트러뜨리지 않는다. 트랜잭션 1개 = Undo 1번([17](17-editor-incremental-plan.md) E1 History).
 - 그리기: 커서마다 캐럿 + 리전 반전(§블록 선택 규칙 — 행 피치 높이 · 줄 넘김 포함 시 오른쪽 끝까지 ✅ nexa-ui 29fe8d7).
