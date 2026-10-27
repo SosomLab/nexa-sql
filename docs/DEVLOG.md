@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
-- **2026-10-27 (141차 · Windows · T-153 후속 2 · T-433 · T-434)** — ★ 접속 폼 [프로필 변수 (n)…] → 프로필 변수 창(폼 단일 원천 · Save 때 `set_vars` · 로그인 창 580 → 614 = D-365) · ★ 글로벌 치환 변수 보존(`vars/global.sql` `DEFINE 이름 = '값'` · `vars.global_persist` · CLI `vars.cli_global`) · T-433 offset 안내 = 워커 결과 · T-434 아웃라인 층 이동 제외 · `win-restart-debug.ps1` 종료 순서 수정 · 통합 40/0 · V1 ✓(1차 = 값 앞뒤 공백 소실 → 따옴표 규칙) · T-439 후보([journal 10-27 §2](journal/2026-10-27.md)).
+- **2026-10-27 (141차 · Windows · T-153 후속 2 · T-433 · T-434)** — ★ 접속 폼 [프로필 변수 (n)…] → 프로필 변수 창(폼 단일 원천 · Save 때 `set_vars` · 로그인 창 580 → 614 = D-365) · ★ 글로벌 치환 변수 보존(`vars/global.sql` `DEFINE 이름 = '값'` · `vars.global_persist` · CLI `vars.cli_global`) · T-433 offset 안내 = 워커 결과 · T-434 아웃라인 층 이동 제외 · `win-restart-debug.ps1` 종료 순서 수정 · 통합 40/0 · V1 ✓(1차 = 값 앞뒤 공백 소실 → 따옴표 규칙) · T-439 후보 · main **4804e159**(8dccf690 + 문서)([journal 10-27 §2](journal/2026-10-27.md)).
 
 - **2026-10-27 (140차 · Windows · 검토 · D-364)** — 최신화 bc54fbce · 검토 11+3건 처리(문서 정정 · T-436 재시작 스크립트 3-OS · `win-restart-debug.ps1` 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택 · 커서 이어 받기 Windows V1 ✓ · main 254c377b · CI ✓ 3-OS([journal 10-27 §1](journal/2026-10-27.md)).
 
