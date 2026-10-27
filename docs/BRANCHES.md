@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/148-insert-sequence-ext | 2026-10-27 | 2026-10-28 → main ff(삭제) · **7867ff09** | 1 | 148차 win = T-446 Insert Sequence 확장화(nsql-seq · SDK ABI v1.2 · 내장 확장 D-368 · 설정 overlay D-369 · hello-ext 0.2.0 · insert-sequence 0.1.0) · 147 마감 복구 9bbd316b 뒤 |
 | feat/147-ext-details-sync | 2026-10-27 | 2026-10-27 → main ff(삭제) · **d1649eaa** | 1 | 147차 win = T-445 확장 상세 탭 업데이트 뒤 미갱신 수정 · docs/124 §7 Insert Sequence 확장화 검토 · 146 마감 CI |
 | feat/146-extensions-wrapup | 2026-10-27 | 2026-10-27 → main ff(삭제) · **2d3d8daf** + 문서 **0d727df7** | 2 | 146차 win = 확장 기능 마무리(T-258 · T-259 PEM 0.2.0 · T-118 잔여 · T-444 SDK 버퍼 결함 · 확장 4종 새 버전) |
 | feat/145-settings-deps | 2026-10-27 | 2026-10-27 → main ff(삭제) · **e94bc3ff** + 문서 **485af4d5** | 2 | 145차 win = T-443 설정 종속 잠금 보완(DEPENDS 231 · `Dep::Ne` · 부정 조건 사슬 · D-367 alias_* 공용 유지) · 144 마감 문서 |
