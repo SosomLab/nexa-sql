@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-27 (144차 · Windows · 결과 그리드 복사 메뉴)** — T-442 = 우클릭 "머리글과 함께 복사 ▸" 공백/콤마/탭 구분자 + "머리글만 복사 ▸" 신설(공백 = 한 칸 · 공백 든 값 인용 · 머리글만 = 선택 열 · 없으면 전체) · 기동 명령 `grid.copy:` = 파일로(클립보드 안 씀) · 88 §3 예외 상위 17 · 41 경로 정정 · V1 ✓ · main **fced7fed**(964aff38 + 문서)([journal 10-27 §5](journal/2026-10-27.md)).
+
 - **2026-10-27 (143차 · Windows · Insert Sequence)** — ★ T-441 Insert Sequence = 다중 캐럿 일괄 생성(Sublime Insert Nums · VS Code Insert Numbers 참고 · [124](124-insert-sequence.md) · D-366 표현식 한 줄 문법 · 정수·소수·진수·문자·시각·날짜·목록·곱집합·틀 · Ctrl+Alt+N · 팔레트 프롬프트 + 실시간 미리보기 + `?` 도움말 · `editor.seq_default` = `1+1`) · nexa-ui `TextBox::regions()`(1480414 · 5e79846) · V1 ✓ 10단계 · 기동 명령 `editor.regions:` 구분자 `;` · main **2f9ab501**(c4ef6354 + 문서)([journal 10-27 §4](journal/2026-10-27.md)).
 
 - **2026-10-27 (142차 · Windows · SQL 포맷 목록 안 주석)** — T-440 = SELECT 목록 안 독립 주석이 항목과 `AS` 사이에 끼고 AS 열이 어긋나던 결함 · nsql-format(꼬리 주석 지연 · 항목 앞 주석 `pending` · 꼬리 콤마) + 확장 sql-formatter-kiros33 **1.3.4**(정렬 블록이 주석 줄 건너뜀) · V1 1차에 Basic 재포맷 들여쓰기 소실(기존)·빈 줄 누적 발견 → 고침 · Basic 3회 멱등 ✓ · wasm32 타깃 설치(사용자 승인) · main **99f07e90**(be6c7b77 + 문서) · 실제 설치본 1.3.4([journal 10-27 §3](journal/2026-10-27.md)).

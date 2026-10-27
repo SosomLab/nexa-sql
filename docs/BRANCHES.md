@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/144-copy-headers | 2026-10-27 | 2026-10-27 → main ff(삭제) · **964aff38** + 문서 **fced7fed** | 2 | 144차 win = T-442 결과 그리드 복사 메뉴(머리글과 함께 복사 ▸ 공백/콤마/탭 · 머리글만 복사 ▸) |
 | feat/143-insert-sequence | 2026-10-27 | 2026-10-27 → main ff(삭제) · **c4ef6354** + 문서 **2f9ab501** | 2 | 143차 win = T-441 Insert Sequence(다중 캐럿 일괄 생성 · docs/124 · D-366 · Ctrl+Alt+N) · `editor.regions:` 구분자 `;` · nexa-ui 1480414 + 5e79846(`TextBox::regions()`) |
 | fix/142-format-comments | 2026-10-27 | 2026-10-27 → main ff(삭제) · **be6c7b77** + 문서 **99f07e90** | 2 | 142차 win = T-440 SQL 포맷 SELECT 목록 안 주석 줄(nsql-format layout.rs · 확장 sql-formatter-kiros33 1.3.4 · Basic 재포맷 들여쓰기 소실) |
 | feat/141-profile-vars | 2026-10-27 | 2026-10-27 → main ff(삭제) · **8dccf690** + 문서 **4804e159** | 2 | 141차 win = T-153 후속 2 프로필 변수 UI + 글로벌 치환 보존 · T-433 · T-434 · D-365 · 재시작 스크립트 종료 순서 |

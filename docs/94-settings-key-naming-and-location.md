@@ -153,3 +153,15 @@
 - 정렬은 카드 재구성 때 한 번(500키 × 튜플 비교 · μs 단위) · 그리기 비용 0 추가(복사 버튼은 카드당 아이콘 하나).
 - 마이그레이션은 파일 읽기 때 `unknown` 목록만 훑는다(옛 키가 없으면 0).
 - 기능: 키 계약은 `RENAMED`로 보존(CLI `config get/set 옛키` = 새 키로 통함 · `canonical_key`).
+
+## 8. 설정 종속(잠금) 규칙(10-27 · 145차 win · T-443 · D-367)
+
+- **원천** = `nsql_settings::DEPENDS: &[(자식, 부모, Dep)]` + `Dep`(`On` · `NotEmpty` · `Eq(값)` · `Ne(값)`) + `locked_by_chain` — 설정 창은 잠긴 카드를 흐리게 그리고 편집을 막는다(`prefs_win.rs`). **CLI `nsql config set`은 잠김과 무관하게 쓴다**(값을 미리 넣어 두는 길 · 종전 규약).
+- **등재 기준** = 마스터가 꺼지거나 특정 값이 아니면 **아무 효과도 없는 키**만 등재한다 — 기능 스위치(`*.enabled` · `*_enabled` · `*.on`) 아래 세부 키 · 모드 값에서만 쓰이는 키(`=값` · `≠값`) · "0 = 끔"인 수치 아래 키(`Ne("0")`).
+- **공용 키는 등재하지 않는다** — 다른 기능도 읽는 키를 한 기능의 스위치에 걸면 그 기능을 쓸 수 없게 된다. 예 = `intel.alias_style`·`alias_upper`(Generate SQL·CLI 공용 · D-367) · `intel.min_chars`·`key_passthrough`(결과 조건 바 완성 공용) · `editor.pair_*`(강조·이동 공용 코어) · `probe.stale_secs`(실행 전 생존 판정) · `connect.reconnect_same`(명시적 접속 규칙) · `vars.cli_global`(CLI가 따로 읽고 씀) · `perf.mode` 아래(개별 값이 프리셋보다 우선 · 강제 잠금은 boost뿐).
+- **부모는 실제로 막는 키** — 같은 접두의 상위가 아니라 그 키를 읽는 코드 분기의 조건이 부모다(예 `objlink.card_buttons`·`hover_ms` ← `objlink.tooltip` · `file.external_poll_ms` ← `file.external_check = focus_poll`) · 확인 = 사용처 grep(`settings.get/flag("키")`가 어느 `if` 안에 있나).
+- **사슬** = 조상 중 하나라도 조건을 못 채우면 잠김(깊이 8) · ★ **부정 조건(`Eq("off")` · `Ne`)은 부모 잠김을 물려받지 않는다** — "부모가 꺼졌을 때 쓰이는" 키가 조부모 때문에 잠기는 모순 방지(예 `tabs.close_select` ← `tabs.close_use_history = off`: `tabs.history`를 꺼도 열림).
+- **값 목록 조건 확인** — `Eq`/`Ne`의 값이 그 키의 선택지(`*_OPTS`)에 실제로 있어야 한다(없으면 절대 안 잠기거나 늘 잠김 · 10-27 `explorer.mssql_system_dbs` ← `Ne("off")` 사례) · Int 부모에 `NotEmpty`는 의미 없음(`Ne("0")`).
+- **표 한계(보류)** = 부모 1개뿐(부모 둘 중 하나 = `editor.desc_inline_*` · `ext.sqlfmt_kiros33.outlier_chars`) · 값 목록 조건 없음(`mysql.tls_ca` ∈ {verify_ca, verify_identity}) — 필요해지면 `Dep::Any(&[..])`·부모 목록으로 확장.
+- **시험** = `depends_table_is_sound_and_locks_alias_style`(모든 자식·부모가 레지스트리에 있음 · 자기 참조·순환 없음 · 사슬 · 부정 조건 · alias_* 열림) — 새 키를 등재하면 이 시험이 같이 지킨다.
+- **새 설정 키를 만들 때** = 마스터 아래 세부 키면 같은 커밋에 `DEPENDS` 한 줄 · 공용이면 등재하지 않고 설명(`Desc*`)에 "~에도 적용"을 적는다.
