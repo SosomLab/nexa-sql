@@ -1338,6 +1338,24 @@ pub(crate) struct Keymap {
     codes: HashMap<&'static str, String>,
 }
 
+/// ★ 동적 명령(확장 메타 `commands[].key` · 146차 · docs/75 §9 ②): `(id, win, mac, linux)` — `set_dynamic`으로 교체 · `from_settings`가 `COMMANDS` 뒤에 더한다.
+static DYNAMIC: std::sync::Mutex<Vec<(&'static str, String, String, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// 동적 명령 표 교체(확장 적용 때마다 · id는 interned `&'static`).
+pub(crate) fn set_dynamic(cmds: Vec<(&'static str, String, String, String)>) {
+    *DYNAMIC
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = cmds;
+}
+
+fn dynamic_commands() -> Vec<(&'static str, String, String, String)> {
+    DYNAMIC
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// 2단 코드 분리 — 쉼표 앞 글자가 `+`이면 그 쉼표는 **키**(`cmd+,` · `ctrl+alt+,`)라 자르지 않는다(사용자 09-17 ⌘, 결함).
 fn split_seq(code: &str) -> Option<(&str, &str)> {
     let b = code.as_bytes();
@@ -1352,12 +1370,29 @@ impl Keymap {
     pub(crate) fn from_settings(s: &Settings) -> Self {
         let preset = Preset::from_settings(s);
         let mut km = Keymap::default();
-        for c in COMMANDS {
+        // 정적 명령 + 동적(확장) 명령 — 같은 바인딩 규칙(`key.<id>` 설정 우선 · 프리셋 기본).
+        let dynamic = dynamic_commands();
+        let all: Vec<(&'static str, String)> = COMMANDS
+            .iter()
+            .map(|c| (c.id, preset_default(c, preset).to_string()))
+            .chain(dynamic.iter().map(|(id, win, mac, linux)| {
+                (
+                    *id,
+                    match preset {
+                        Preset::Windows => win.clone(),
+                        Preset::Macos => mac.clone(),
+                        Preset::Linux => linux.clone(),
+                    },
+                )
+            }))
+            .collect();
+        for (cid, default_code) in all {
+            // `key.<id>` 설정은 등록된 키만 읽힌다 — 동적 명령은 레지스트리에 없어 기본 코드만(사용자 지정은 후속).
             let code = s
-                .get(&setting_key(c.id))
+                .get(&setting_key(cid))
                 .map(str::trim)
                 .filter(|v| !v.is_empty())
-                .map_or_else(|| preset_default(c, preset).to_string(), String::from);
+                .map_or(default_code, String::from);
             for part in code.split('|') {
                 // `none` = 단축키 없음(비우기).
                 if part.trim().eq_ignore_ascii_case("none") {
@@ -1366,15 +1401,15 @@ impl Keymap {
                 if let Some((a, b)) = split_seq(part) {
                     if let (Some(a), Some(b)) = (Chord::parse(a), Chord::parse(b)) {
                         km.prefixes.insert(a.clone());
-                        km.seq.insert((a, b), c.id);
+                        km.seq.insert((a, b), cid);
                     }
                     continue;
                 }
                 if let Some(ch) = Chord::parse(part) {
-                    km.map.insert(ch, c.id);
+                    km.map.insert(ch, cid);
                 }
             }
-            km.codes.insert(c.id, code);
+            km.codes.insert(cid, code);
         }
         km
     }

@@ -2,10 +2,10 @@
   "format": 1,
   "id": "project-explorer-menus",
   "name": "Project Explorer Menus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "wasm",
-  "summary": "Adds commands to the right-click menu of the open file — starter skeleton built on the SDK (docs/97)",
-  "description": "A starter extension for growing the right-click menu of the open file.\nStep 1 (this version): a 'Project Explorer Menus' submenu in the editor context menu with one command, Show file path, which asks the host for the active document's path (nx_host_get / Editor::doc_path) and writes it to the app log (developer mode, ext layer).\nNext steps are listed in docs/97: attaching the menu to the Project Explorer OPEN FILES rows, file operations, and settings under ext.project_explorer_menus.*.",
+  "summary": "Right-click menus for the open file and Project Explorer rows: open in new tab, reveal, copy path, show path (SDK sample · docs/97)",
+  "description": "A starter extension for growing the right-click menu of the open file.\nStep 1 (this version): a 'Project Explorer Menus' submenu in the editor context menu with one command, Show file path, which asks the host for the active document's path (nx_host_get / Editor::doc_path) and writes it to the app log (developer mode, ext layer).\nStep 2 (0.2.0): the submenu also appears when right-clicking a file row in the Project Explorer (commands act on that row's path), plus file actions Open in new tab / Reveal in Project Explorer / Copy file path, a setting ext.project_explorer_menus.log_path (Preferences ▸ Extensions ▸ Project Explorer Menus) and a default shortcut Ctrl+Alt+Shift+P for Show file path.",
   "author": "SosomLab",
   "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/project-explorer-menus",
@@ -16,13 +16,13 @@
   "files": [
     {
       "path": "project_explorer_menus.wasm",
+      "sha256": "054e76e5972c2220f959000ae980812078483fc0f14db82ff81fcf87bda17dab",
       "dest": "",
-      "sha256": "8564ea0835ca185a62a6ed3d166dc0b44b8561695e0caa17db45c344dabd15f6",
       "url": ""
     }
   ],
   "messages": {
-    "install": "Project Explorer Menus is on — right-click in an editor: Project Explorer Menus > Show file path (log window shows the path)."
+    "install": "Project Explorer Menus is on — right-click in an editor or on a Project Explorer file row: Project Explorer Menus > Open / Reveal / Copy path / Show file path."
   },
   "repository": "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions"
 }

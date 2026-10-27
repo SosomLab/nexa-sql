@@ -46,6 +46,10 @@ impl Label {
 pub(crate) struct Command {
     pub(crate) id: String,
     pub(crate) label: Label,
+    /// ★ 기본 단축키(146차 10-27 · docs/75 §9 ②): Windows/Linux 코드(`ctrl+alt+p`) · mac 코드(비면 `key`에서 ctrl → cmd).
+    ///   사용자 설정 `key.<id>`가 있으면 그것이 우선(앱 명령과 같은 규칙).
+    pub(crate) key: Option<String>,
+    pub(crate) key_mac: Option<String>,
 }
 
 impl Command {
@@ -53,16 +57,52 @@ impl Command {
         Command {
             id: id.to_string(),
             label: Label::Msg(label),
+            key: None,
+            key_mac: None,
         }
     }
 }
 
-/// 메뉴 기여 — 우클릭 편집 메뉴에 붙는 서브메뉴(라벨 + 항목 id/라벨/단축키 표시).
+/// 메뉴 기여가 붙는 자리(146차 · docs/97 §5 ①): 편집기 우클릭 · 프로젝트 탐색기 행 우클릭.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MenuTarget {
+    Editor,
+    ProjectExplorer,
+}
+
+/// 메뉴 기여 — 우클릭 메뉴에 붙는 서브메뉴(라벨 + 항목 id/라벨/단축키 표시).
 #[derive(Clone, Debug)]
 pub(crate) struct MenuContribution {
     pub(crate) id: String,
     pub(crate) label: Label,
     pub(crate) items: Vec<Command>,
+    pub(crate) target: MenuTarget,
+}
+
+/// ★ 확장이 선언하는 설정 항목(146차 · T-258 · docs/75 §9 ①): 호스트가 런타임 레지스트리에 등재해 설정 창·`Settings::get`이 안다.
+#[derive(Clone, Debug)]
+pub(crate) struct SettingDef {
+    pub(crate) key: String,
+    pub(crate) label: Label,
+    pub(crate) desc: Label,
+    pub(crate) kind: SettingDefKind,
+    pub(crate) default: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum SettingDefKind {
+    Bool,
+    Int { min: i64, max: i64 },
+    Text,
+    Choice(Vec<(String, Label)>),
+}
+
+/// ★ 확장이 요청하는 파일 동작(146차 · docs/97 §5 ②) — 명령 실행이 끝난 뒤 호스트가 적용(클립보드는 명시적 명령에서만).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FileOp {
+    Open(String),
+    Reveal(String),
+    CopyPath(String),
 }
 
 /// 확장 포트 — 호스트는 이 트레이트로만 부른다(WASM은 같은 이름의 export).
@@ -107,6 +147,14 @@ pub(crate) trait Extension {
     /// 포맷 호출(입력 JSON `{"text","dialect","options","settings","preview"}` → 출력 JSON `{"text"}`/`{"error"}`).
     fn format(&self, _input_json: &str) -> Result<String, String> {
         Err("no formatter".to_string())
+    }
+    /// ★ 선언한 설정 항목(메타 `settings` · 146차) — 내장은 레지스트리에 정적 등록돼 있어 비어 있다.
+    fn settings_defs(&self) -> Vec<SettingDef> {
+        Vec::new()
+    }
+    /// ★ 마지막 명령 실행이 남긴 파일 동작 요청(146차) — 거둬 가면 비운다.
+    fn take_file_ops(&self) -> Vec<FileOp> {
+        Vec::new()
     }
 }
 
@@ -267,11 +315,12 @@ impl Registry {
         notes
     }
 
-    /// 우클릭 편집 메뉴 추가 항목(켜진 확장만 · 서브메뉴로 · `display` = 단축키 표시 조회).
+    /// 우클릭 메뉴 추가 항목(켜진 확장만 · 서브메뉴로 · `display` = 단축키 표시 조회 · `target` = 편집기/프로젝트 탐색기 · 146차).
     pub(crate) fn menu_extras(
         &self,
         disabled: &[String],
         display: &dyn Fn(&str) -> String,
+        target: MenuTarget,
     ) -> Vec<CtxItem> {
         let mut out = Vec::new();
         for i in self.active_indices() {
@@ -279,12 +328,18 @@ impl Registry {
             if disabled.iter().any(|d| d == p.id()) {
                 continue;
             }
-            for m in p.menus() {
+            for m in p.menus().into_iter().filter(|m| m.target == target) {
+                // 하위 메뉴 안에서는 부모(확장) 이름 접두를 벗긴다(146차 · "Project Explorer Menus: 새 탭으로 열기" → "새 탭으로 열기").
+                let parent = m.label.text();
                 let items: Vec<CtxItem> = m
                     .items
                     .iter()
                     .map(|c| {
-                        CtxItem::item(c.id.clone(), c.label.text()).with_shortcut(display(&c.id))
+                        let text = c.label.text();
+                        let text = text
+                            .strip_prefix(&format!("{parent}: "))
+                            .map_or(text.clone(), str::to_string);
+                        CtxItem::item(c.id.clone(), text).with_shortcut(display(&c.id))
                     })
                     .collect();
                 out.push(CtxItem::submenu(m.id.clone(), m.label.text(), items));
@@ -410,6 +465,42 @@ impl Registry {
             }
         }
         out
+    }
+
+    /// ★ 마지막 명령이 남긴 파일 동작 요청 전부(146차 · 호스트가 적용).
+    pub(crate) fn drain_file_ops(&self) -> Vec<FileOp> {
+        let mut out = Vec::new();
+        for p in &self.extensions {
+            out.extend(p.take_file_ops());
+        }
+        out
+    }
+
+    /// ★ 켜진 확장의 명령 전부 `(확장 이름, 명령)`(팔레트 라벨 · 키맵 기본 코드 · 146차).
+    pub(crate) fn commands_all(&self, disabled: &[String]) -> Vec<(String, Command)> {
+        let mut out = Vec::new();
+        for i in self.active_indices() {
+            let p = &self.extensions[i];
+            if disabled.iter().any(|d| d == p.id()) {
+                continue;
+            }
+            for c in p.commands() {
+                out.push((p.name().to_string(), c));
+            }
+        }
+        out
+    }
+
+    /// ★ 활성 확장이 선언한 설정 항목 `(id, 이름, 항목들)`(146차 · T-258).
+    pub(crate) fn settings_defs_all(&self) -> Vec<(String, String, Vec<SettingDef>)> {
+        self.active_indices()
+            .into_iter()
+            .map(|i| {
+                let p = &self.extensions[i];
+                (p.id().to_string(), p.name().to_string(), p.settings_defs())
+            })
+            .filter(|(_, _, d)| !d.is_empty())
+            .collect()
     }
 }
 

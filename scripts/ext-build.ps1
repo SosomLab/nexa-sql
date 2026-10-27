@@ -33,7 +33,8 @@ foreach ($m in $map) {
     $meta = Join-Path $dir "extension.json"
     if (Test-Path -LiteralPath $meta) {
         $text = Get-Content -LiteralPath $meta -Raw -Encoding UTF8
-        $pattern = '("path"\s*:\s*"' + [regex]::Escape($m.file) + '"\s*,\s*"sha256"\s*:\s*")[0-9a-f]*(")'
+        # 같은 객체 안이면 path와 sha256 사이에 다른 키(dest · url)가 와도 잡는다(10-27 PEM 매니페스트 `dest`가 앞에 있어 미갱신이던 결함).
+        $pattern = '("path"\s*:\s*"' + [regex]::Escape($m.file) + '"[^}]*?"sha256"\s*:\s*")[0-9a-f]*(")'
         $new = [regex]::Replace($text, $pattern, ('${1}' + $hash + '${2}'))
         if ($new -ne $text) {
             [System.IO.File]::WriteAllText($meta, $new, (New-Object System.Text.UTF8Encoding($false)))

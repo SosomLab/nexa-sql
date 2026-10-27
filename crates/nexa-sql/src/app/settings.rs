@@ -960,7 +960,8 @@ impl App {
             "extensions.disabled" => self.apply_extensions(None),
             // 확장 공통 "확장 사용"(사용자 10-07) — 목록으로 되돌려 적용.
             k if k.starts_with("ext.") && k.ends_with(".use") => self.ext_use_changed(k),
-            k if k.starts_with("ext.rainbow_pairs.") => self.apply_extensions(Some(k)),
+            // 확장 설정(정적 `ext.rainbow_pairs.*` · 동적 메타 `settings` · 146차) = 그 접두의 확장에만 재적용.
+            k if k.starts_with("ext.") => self.apply_extensions(Some(k)),
             "editor.text_pad_left" => self
                 .editors
                 .set_text_inset(self.settings.int(key).clamp(0, 32) as i32),

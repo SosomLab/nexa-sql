@@ -300,9 +300,11 @@ impl App {
     pub(crate) fn refresh_menu_extras(&mut self) {
         let disabled = self.ext_disabled();
         let km = &self.keymap;
-        let mut extras = self
-            .extensions
-            .menu_extras(&disabled, &|id| km.display_of(id));
+        let mut extras = self.extensions.menu_extras(
+            &disabled,
+            &|id| km.display_of(id),
+            extensions::MenuTarget::Editor,
+        );
         if let Some(group) = self.format_menu_items() {
             extras.push(group);
         }

@@ -22,7 +22,7 @@ place() {
 import io, re, sys
 meta, fname, h = sys.argv[1:4]
 s = io.open(meta, encoding='utf-8').read()
-pat = r'("path"\s*:\s*"' + re.escape(fname) + r'"\s*,\s*"sha256"\s*:\s*")[0-9a-f]*(")'
+pat = r'("path"\s*:\s*"' + re.escape(fname) + r'"[^}]*?"sha256"\s*:\s*")[0-9a-f]*(")'  # 사이에 다른 키(dest·url)가 와도(10-27)
 n = re.sub(pat, lambda m: m.group(1) + h + m.group(2), s)
 if n != s:
     io.open(meta, 'w', encoding='utf-8', newline='\n').write(n)

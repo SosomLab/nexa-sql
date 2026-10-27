@@ -61,14 +61,120 @@ impl Label {
 pub struct Command {
     pub id: String,
     pub label: Label,
+    /// ★ 기본 단축키(146차 · docs/75 §9 ②): Windows/Linux 코드(`ctrl+alt+p`) · mac 코드(비면 호스트가 `ctrl` → `cmd`).
+    pub key: Option<String>,
+    pub key_mac: Option<String>,
 }
 
-/// 우클릭 편집 메뉴에 붙는 서브메뉴.
+impl Command {
+    pub fn new(id: &str, label: Label) -> Command {
+        Command {
+            id: id.into(),
+            label,
+            key: None,
+            key_mac: None,
+        }
+    }
+    pub fn with_key(mut self, key: &str) -> Command {
+        self.key = Some(key.into());
+        self
+    }
+}
+
+/// 메뉴가 붙는 자리(146차 · docs/97 §5 ①): 편집기 우클릭 · 프로젝트 탐색기 파일 행 우클릭(명령은 그 행의 경로를 `doc_path`로 받는다).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MenuTarget {
+    #[default]
+    Editor,
+    ProjectExplorer,
+}
+
+/// 우클릭 메뉴에 붙는 서브메뉴.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Menu {
     pub id: String,
     pub label: Label,
     pub items: Vec<String>,
+    pub target: MenuTarget,
+}
+
+impl Menu {
+    pub fn editor(id: &str, label: Label, items: Vec<String>) -> Menu {
+        Menu {
+            id: id.into(),
+            label,
+            items,
+            target: MenuTarget::Editor,
+        }
+    }
+    pub fn project_explorer(id: &str, label: Label, items: Vec<String>) -> Menu {
+        Menu {
+            id: id.into(),
+            label,
+            items,
+            target: MenuTarget::ProjectExplorer,
+        }
+    }
+}
+
+/// ★ 확장이 선언하는 설정 항목(146차 · T-258): 호스트가 설정 창·`Settings::get`에 등재한다. 키는 `settings_prefix`로 시작해야 한다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingDef {
+    pub key: String,
+    pub label: Label,
+    pub desc: Label,
+    pub kind: SettingKind,
+    pub default: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingKind {
+    Bool,
+    Int {
+        min: i64,
+        max: i64,
+    },
+    Text,
+    /// (값, 라벨) 목록.
+    Choice(Vec<(String, Label)>),
+}
+
+impl SettingDef {
+    pub fn bool(key: &str, label: Label, desc: Label, default: bool) -> SettingDef {
+        SettingDef {
+            key: key.into(),
+            label,
+            desc,
+            kind: SettingKind::Bool,
+            default: if default { "on" } else { "off" }.into(),
+        }
+    }
+    pub fn to_json(&self) -> Json {
+        let kind = match &self.kind {
+            SettingKind::Bool => Json::from("bool"),
+            SettingKind::Text => Json::from("text"),
+            SettingKind::Int { min, max } => {
+                Json::obj().with("int", Json::obj().with("min", *min).with("max", *max))
+            }
+            SettingKind::Choice(items) => Json::obj().with(
+                "choice",
+                items
+                    .iter()
+                    .map(|(v, l)| {
+                        Json::obj()
+                            .with("value", v.as_str())
+                            .with("label", l.to_json())
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        Json::obj()
+            .with("key", self.key.as_str())
+            .with("label", self.label.to_json())
+            .with("desc", self.desc.to_json())
+            .with("kind", kind)
+            .with("default", self.default.as_str())
+    }
 }
 
 /// 포맷터 선언(메타 `formatter`): 팔레트·설정에 보일 이름과 미리보기 예시 SQL(비면 앱의 예시).
@@ -92,6 +198,8 @@ pub struct Meta {
     pub menus: Vec<Menu>,
     /// 이 확장이 SQL 포맷터를 제공한다(ABI v1.1 · `nx_ext_format`).
     pub formatter: Option<Formatter>,
+    /// ★ 설정 항목 선언(146차 · T-258) — 호스트 설정 창에 분류(확장 이름)로 나타난다.
+    pub settings: Vec<SettingDef>,
 }
 
 impl Meta {
@@ -121,9 +229,16 @@ impl Meta {
                 self.commands
                     .iter()
                     .map(|c| {
-                        Json::obj()
+                        let mut o = Json::obj()
                             .with("id", c.id.as_str())
-                            .with("label", c.label.to_json())
+                            .with("label", c.label.to_json());
+                        if let Some(k) = &c.key {
+                            o = o.with("key", k.as_str());
+                        }
+                        if let Some(k) = &c.key_mac {
+                            o = o.with("key_mac", k.as_str());
+                        }
+                        o
                     })
                     .collect::<Vec<_>>(),
             )
@@ -136,6 +251,13 @@ impl Meta {
                             .with("id", m.id.as_str())
                             .with("label", m.label.to_json())
                             .with(
+                                "target",
+                                match m.target {
+                                    MenuTarget::Editor => "editor",
+                                    MenuTarget::ProjectExplorer => "project_explorer",
+                                },
+                            )
+                            .with(
                                 "items",
                                 m.items
                                     .iter()
@@ -143,6 +265,13 @@ impl Meta {
                                     .collect::<Vec<_>>(),
                             )
                     })
+                    .collect::<Vec<_>>(),
+            )
+            .with(
+                "settings",
+                self.settings
+                    .iter()
+                    .map(SettingDef::to_json)
                     .collect::<Vec<_>>(),
             )
     }
@@ -264,9 +393,33 @@ impl Editor {
         host::editor_op(op::CHILD, shift)
     }
 
-    /// ★ 활성 문서의 파일 경로(09-30 · docs/97) — 파일이 아닌 스크립트 탭이면 `None`.
+    /// ★ 활성 문서의 파일 경로(09-30 · docs/97) — 파일이 아닌 스크립트 탭이면 `None`. 프로젝트 탐색기 메뉴에서 불렸으면 그 행의 경로.
     pub fn doc_path(&self) -> Option<String> {
         host::get(query::DOC_PATH).filter(|p| !p.is_empty())
+    }
+}
+
+/// `nx_file_op`의 종류 번호(호스트와 같은 표 · 146차 · docs/97 §5 ②).
+pub mod file_op {
+    pub const OPEN: i32 = 1;
+    pub const REVEAL: i32 = 2;
+    pub const COPY_PATH: i32 = 3;
+}
+
+/// ★ 파일 동작(146차): 명령이 끝난 뒤 호스트가 적용한다 — 열기(새 탭) · 프로젝트 탐색기에서 드러내기 · 경로를 클립보드에(사용자 클립보드를
+/// 덮으므로 **명시적 명령**에서만 부를 것).
+#[derive(Debug, Default)]
+pub struct Files;
+
+impl Files {
+    pub fn open(&self, path: &str) -> bool {
+        host::file_op(file_op::OPEN, path)
+    }
+    pub fn reveal(&self, path: &str) -> bool {
+        host::file_op(file_op::REVEAL, path)
+    }
+    pub fn copy_path(&self, path: &str) -> bool {
+        host::file_op(file_op::COPY_PATH, path)
     }
 }
 
@@ -356,6 +509,21 @@ pub mod host {
         /// ★ 호스트 상황 조회(09-30 · docs/97 §2): `kind`(`query::*`) 값을 `ptr` 버퍼(길이 접두 · `cap` 본문 상한)에 써 준다 ·
         /// 반환 = 쓴 길이(모르는 종류·안 맞음 = -1).
         fn nx_host_get(kind: i32, ptr: i32, cap: i32) -> i32;
+        /// ★ 파일 동작 요청(146차): `kind`(`file_op::*`) · `ptr` = 경로 버퍼(길이 접두) · 반환 1 = 접수.
+        fn nx_file_op(kind: i32, ptr: i32) -> i32;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn file_op(kind: i32, path: &str) -> bool {
+        let buf = super::buf::make(path.as_bytes());
+        // SAFETY: 호스트가 링크한 import · 버퍼는 호출이 끝날 때까지 산다(아래에서 회수).
+        let r = unsafe { nx_file_op(kind, buf as i32) };
+        super::buf::free(buf);
+        r != 0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn file_op(_kind: i32, _path: &str) -> bool {
+        false
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -384,8 +552,9 @@ pub mod host {
         } else {
             None
         };
-        // alloc(len)은 길이 접두 4바이트 자리를 비워 두므로 free가 읽는 길이는 호스트가 쓴 값(≤ CAP) — 못 썼으면 0.
-        super::buf::free(p);
+        // ★ 146차 결함 수정(10-27): `free(p)`는 길이 접두로 용량을 복원하는데 이 버퍼의 접두는 호스트가 쓴 값(≤ CAP · 못 썼으면 0)이라
+        //   실제 할당(CAP + 4)과 달라 해제 때 트랩(`unreachable`)했다 → 마련한 용량 그대로 돌려준다(`free_cap`).
+        super::buf::free_cap(p, CAP + 4);
         out
     }
 
@@ -434,7 +603,14 @@ pub mod buf {
         let s = std::slice::from_raw_parts(p.add(4), len);
         String::from_utf8_lossy(s).into_owned()
     }
-    /// [`make`]가 만든 버퍼 회수(호스트가 읽은 뒤 · 선택).
+    /// [`alloc`]이 만든 버퍼 회수 — 길이 접두가 아니라 **마련한 용량**(`len + 4`)으로(146차 · 접두는 호스트가 바꿔 쓴다).
+    pub fn free_cap(p: *mut u8, cap: usize) {
+        // SAFETY: alloc(cap - 4)이 준 포인터 · 그 용량 그대로.
+        unsafe {
+            drop(Vec::from_raw_parts(p, cap, cap));
+        }
+    }
+    /// [`make`]가 만든 버퍼 회수(호스트가 읽은 뒤 · 선택) — 접두 = 본문 길이 = 용량 − 4이므로 안전. `alloc` 버퍼에는 쓰지 말 것(`free_cap`).
     pub fn free(p: *mut u8) {
         // SAFETY: make/alloc이 준 포인터 — 길이 접두로 원래 길이를 복원한다.
         unsafe {
@@ -498,19 +674,29 @@ mod tests {
             id: "x".into(),
             name: "X".into(),
             settings_prefix: "x.".into(),
-            commands: vec![Command {
-                id: "edit.a".into(),
-                label: Label::new("A", "가"),
-            }],
-            menus: vec![Menu {
-                id: "m".into(),
-                label: Label::en("M"),
-                items: vec!["edit.a".into()],
-            }],
+            commands: vec![Command::new("edit.a", Label::new("A", "가")).with_key("ctrl+alt+a")],
+            menus: vec![Menu::project_explorer(
+                "m",
+                Label::en("M"),
+                vec!["edit.a".into()],
+            )],
             formatter: None,
+            settings: vec![SettingDef::bool(
+                "x.flag",
+                Label::en("Flag"),
+                Label::en("A flag"),
+                true,
+            )],
         };
         let j = json::dump(&m.to_json());
         assert!(j.contains(r#""abi":1"#) && j.contains(r#""ko":"가""#));
+        // 146차: 기본 키 · 메뉴 자리 · 설정 선언.
+        assert!(j.contains(r#""key":"ctrl+alt+a""#), "{j}");
+        assert!(j.contains(r#""target":"project_explorer""#), "{j}");
+        assert!(
+            j.contains(r#""settings":[{"key":"x.flag","label":{"en":"Flag"},"desc":{"en":"A flag"},"kind":"bool","default":"on"}]"#),
+            "{j}"
+        );
         let e = Effect {
             bracket: Some(BracketEffect {
                 rainbow: true,

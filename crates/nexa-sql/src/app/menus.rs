@@ -663,10 +663,17 @@ impl App {
             | "edit.bracket_next"
             | "edit.bracket_parent"
             | "edit.bracket_child" => self.run_extension_cmd(id),
-            "ext.enable_mgr" | "ext.disable_mgr" | "ext.install" | "ext.remove" | "ext.list"
-            | "ext.enable" | "ext.disable" | "ext.repo_add" | "ext.repo_list"
+            "ext.enable_mgr" | "ext.disable_mgr" | "ext.install" | "ext.update" | "ext.remove"
+            | "ext.list" | "ext.enable" | "ext.disable" | "ext.repo_add" | "ext.repo_list"
             | "ext.repo_remove" => self.ext_command(id),
-            x if x.starts_with("ext.") => self.ext_pick(x),
+            // ★ 확장 명령(146차 · 협업 발견 결함): 어느 확장이 소유한 id면 실행 · 아니면 관리자 목록 선택(`ext.<verb>:<key>`).
+            x if x.starts_with("ext.") => {
+                if self.extensions.owner_of(x).is_some() {
+                    self.run_extension_cmd(x);
+                } else {
+                    self.ext_pick(x);
+                }
+            }
             "edit.expand_brackets" => {
                 if self.editors.cur_mut().expand_to_brackets() {
                     self.redraw();
@@ -1802,6 +1809,19 @@ impl App {
             ));
             cmds.push(m("view.extensions", Msg::MnView, Msg::MnExtensionsPanel));
             cmds.push(m("ext.install", Msg::MnExtensions, Msg::MnExtInstall));
+            cmds.push(m("ext.update", Msg::MnExtensions, Msg::MnExtUpdate));
+            // ★ 확장 명령(146차 · docs/75 §9 ②): 라벨 = "<확장 이름>: <명령>" · 검색 키 = 라벨(두 언어는 메타가 준 것뿐).
+            let off = self.ext_disabled();
+            for (ext_name, c) in self.extensions.commands_all(&off) {
+                // 메타 라벨이 이미 "<이름>: …" 꼴이면 그대로(SDK 샘플 관례) · 아니면 확장 이름을 앞에.
+                let text = c.label.text();
+                let label = if text.contains(':') {
+                    text
+                } else {
+                    format!("{ext_name}: {text}")
+                };
+                cmds.push((c.id.clone(), label.clone(), label.to_lowercase()));
+            }
             cmds.push(m("ext.remove", Msg::MnExtensions, Msg::MnExtRemove));
             cmds.push(m("ext.list", Msg::MnExtensions, Msg::MnExtList));
             cmds.push(m("ext.enable", Msg::MnExtensions, Msg::MnExtEnable));

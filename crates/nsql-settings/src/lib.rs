@@ -1183,6 +1183,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 개발 폴더(146차 10-27 · docs/75 §9 ③): 이 폴더의 `*.wasm`을 설치 없이 로드(매니저 설치본과 같은 id면 개발 판이 앞선다).
+    Entry {
+        key: "extensions.dev_dir",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtDevDir,
+        desc: Msg::DescExtDevDir,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "extensions.disabled",
         cat: Msg::CatExtManager,
@@ -7272,17 +7281,28 @@ pub fn dynamic_entries() -> Vec<&'static Entry> {
 /// 확장 id → 공통 설정 키 `ext.<id>.use`(`-` → `_` · interned · 같은 id = 같은 포인터).
 #[must_use]
 pub fn ext_use_key(id: &str) -> &'static str {
+    intern_key(&format!("ext.{}.use", id.replace('-', "_")))
+}
+
+/// ★ 임의 키 interning(146차 10-27 · 확장 메타 `settings`의 키): 같은 글 = 같은 `&'static` 포인터 · 누수 상한 = 서로 다른 키 수.
+#[must_use]
+pub fn intern_key(key: &str) -> &'static str {
     static KEYS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
-    let want = format!("ext.{}.use", id.replace('-', "_"));
     let mut v = KEYS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(k) = v.iter().find(|k| **k == want) {
+    if let Some(k) = v.iter().find(|k| **k == key) {
         return k;
     }
-    let k: &'static str = Box::leak(want.into_boxed_str());
+    let k: &'static str = Box::leak(key.to_string().into_boxed_str());
     v.push(k);
     k
+}
+
+/// 정적 레지스트리 + 동적 항목 전부(확장 게스트에 넘길 접두 키 조회 · 146차).
+#[must_use]
+pub fn entries_all() -> Vec<&'static Entry> {
+    REGISTRY.iter().chain(dynamic_entries()).collect()
 }
 
 /// 동적 확장 분류(확장 이름 분류 · [`Msg::Dyn`]) ↔ 확장 id — [`EXTENSION_CATEGORIES`]와 합쳐 [`extension_categories`]로 본다.

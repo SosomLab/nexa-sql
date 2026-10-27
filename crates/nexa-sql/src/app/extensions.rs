@@ -37,7 +37,7 @@ impl App {
         // 끈 것 + **설치 기록 없는 내장 확장** = 효과 없음(설치해야 켜진다 · 사용자 09-17).
         let installed = extensions::manager::installed();
         // ★ 설치된 WASM 패키지 = 모듈을 로드해 레지스트리에(같은 id의 내장은 대체 · 실패면 내장 폴백 · docs/75).
-        let want: Vec<(String, PathBuf)> = extensions::manager::root_dir()
+        let mut want: Vec<(String, PathBuf)> = extensions::manager::root_dir()
             .map(|root| {
                 installed
                     .iter()
@@ -49,12 +49,19 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
+        // ★ 개발 폴더(146차 · `extensions.dev_dir`): `*.wasm`을 설치 없이 로드 — 같은 id의 설치본은 개발 판이 대체(목록에서 뒤가 이긴다).
+        let dev_ids = self.ext_dev_modules();
+        for (id, p) in &dev_ids {
+            want.retain(|(i, _)| i != id);
+            want.push((id.clone(), p.clone()));
+        }
         for note in self.extensions.sync_wasm(&want) {
             self.log_win.push(LogEntry::new(LogKind::Info, note));
         }
         let mut disabled = self.ext_disabled();
         for (id, _) in self.extensions.ids() {
-            if !installed.iter().any(|r| r.id == id) && !disabled.contains(&id) {
+            let is_dev = dev_ids.iter().any(|(d, _)| *d == id);
+            if !installed.iter().any(|r| r.id == id) && !is_dev && !disabled.contains(&id) {
                 disabled.push(id);
             }
         }
@@ -90,7 +97,83 @@ impl App {
                 default: "on",
             });
         }
+        // ★ 확장 메타 `settings` → 런타임 레지스트리(146차 · T-258): 분류 = 그 확장의 분류(없으면 이름 분류) · 라벨·설명 = 동적 글.
+        for (id, name, defs) in self.extensions.settings_defs_all() {
+            let cat = match nsql_settings::extension_categories()
+                .into_iter()
+                .find(|(_, i)| *i == id)
+            {
+                Some((c, _)) => c,
+                None => {
+                    let c = nsql_i18n::dyn_msg(&name, &name);
+                    nsql_settings::register_extension_category(c, &id);
+                    if !extra_cats.contains(&c) {
+                        extra_cats.push(c);
+                    }
+                    c
+                }
+            };
+            if !nsql_settings::CATEGORY_TREE
+                .iter()
+                .any(|(_, cats)| cats.contains(&cat))
+                && !extra_cats.contains(&cat)
+            {
+                extra_cats.push(cat);
+            }
+            for d in defs {
+                let (en, ko) = label_pair(&d.label);
+                let (den, dko) = label_pair(&d.desc);
+                let kind = match &d.kind {
+                    extensions::SettingDefKind::Bool => nsql_settings::SettingKind::Bool,
+                    extensions::SettingDefKind::Text => nsql_settings::SettingKind::Text,
+                    extensions::SettingDefKind::Int { min, max } => {
+                        nsql_settings::SettingKind::Int {
+                            min: *min,
+                            max: *max,
+                        }
+                    }
+                    extensions::SettingDefKind::Choice(items) => {
+                        let v: Vec<(&'static str, Msg)> = items
+                            .iter()
+                            .map(|(val, l)| {
+                                let (e, k) = label_pair(l);
+                                (nsql_settings::intern_key(val), nsql_i18n::dyn_msg(&e, &k))
+                            })
+                            .collect();
+                        nsql_settings::SettingKind::Choice(Box::leak(v.into_boxed_slice()))
+                    }
+                };
+                dyn_entries.push(nsql_settings::Entry {
+                    key: nsql_settings::intern_key(&d.key),
+                    cat,
+                    label: nsql_i18n::dyn_msg(&en, &ko),
+                    desc: nsql_i18n::dyn_msg(&den, &dko),
+                    kind,
+                    default: nsql_settings::intern_key(&d.default),
+                });
+            }
+        }
         nsql_settings::register_dynamic(dyn_entries);
+        // ★ 확장 명령의 기본 단축키(146차 · docs/75 §9 ②) → 키맵 동적 표 + 재조립.
+        {
+            let off = self.ext_disabled();
+            let dynamic: Vec<(&'static str, String, String, String)> = self
+                .extensions
+                .commands_all(&off)
+                .into_iter()
+                .filter(|(_, c)| c.key.is_some() || c.key_mac.is_some())
+                .map(|(_, c)| {
+                    let win = c.key.clone().unwrap_or_default();
+                    let mac = c
+                        .key_mac
+                        .clone()
+                        .unwrap_or_else(|| win.replace("ctrl+", "cmd+"));
+                    (nsql_settings::intern_key(&c.id), win.clone(), mac, win)
+                })
+                .collect();
+            keymap::set_dynamic(dynamic);
+            self.keymap = Keymap::from_settings(&self.settings);
+        }
         let list_off = self.ext_disabled_list();
         for r in &installed {
             let key = nsql_settings::ext_use_key(&r.id);
@@ -127,6 +210,17 @@ impl App {
             }
         }
         self.refresh_menu_extras();
+        // ★ 프로젝트 탐색기 행 우클릭 메뉴의 확장 항목(146차 · target = project_explorer).
+        {
+            let off = self.ext_disabled();
+            let km = &self.keymap;
+            let items = self.extensions.menu_extras(
+                &off,
+                &|id| km.display_of(id),
+                extensions::MenuTarget::ProjectExplorer,
+            );
+            self.project_panel.set_menu_extras(items);
+        }
         // 설정 창 `format.default` 콤보 = 지금 쓸 수 있는 포맷터(사용자 09-29).
         let choices = self.format_default_choices();
         self.prefs_win.set_dyn_choices("format.default", choices);
@@ -144,22 +238,132 @@ impl App {
 
     /// 확장 명령(짝/형제/상위/하위 이동 등) — 소유 확장에 위임 · 켜져 있을 때만.
     pub(crate) fn run_extension_cmd(&mut self, id: &str) {
-        let disabled = self.ext_disabled();
         // ★ 호스트 상황 = 활성 문서의 파일 경로(docs/97 · 확장이 `Editor::doc_path()`로 읽는다).
         let doc = self
             .editors
             .active_path()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
+        self.run_extension_cmd_for(id, &doc);
+    }
+
+    /// ★ 확장 명령 실행 + 상황 경로 지정(프로젝트 탐색기 행 · 146차) + 파일 동작 요청 적용.
+    pub(crate) fn run_extension_cmd_for(&mut self, id: &str, doc: &str) {
+        let disabled = self.ext_disabled();
         if self
             .extensions
-            .run_with(id, &disabled, self.editors.cur_mut(), &doc)
+            .run_with(id, &disabled, self.editors.cur_mut(), doc)
         {
             self.redraw();
         }
         // WASM 확장의 `nx_log` 줄·오류를 로그 창에(docs/75 §6).
         for note in self.extensions.take_wasm_notes() {
             self.log_win.push(LogEntry::new(LogKind::Info, note));
+        }
+        for op in self.extensions.drain_file_ops() {
+            self.ext_file_op(op);
+        }
+    }
+
+    /// 확장이 요청한 파일 동작(146차 · docs/97 §5 ②): 열기 = 새 탭 · 드러내기 = 프로젝트 탐색기 · 경로 복사 = 클립보드(명시적 명령에서만 온다).
+    fn ext_file_op(&mut self, op: extensions::FileOp) {
+        match op {
+            extensions::FileOp::Open(p) => self.open_file(Path::new(&p)),
+            extensions::FileOp::Reveal(p) => self.reveal_in_project(Path::new(&p)),
+            extensions::FileOp::CopyPath(p) => self.copy_path_text(Path::new(&p), true),
+        }
+        self.redraw();
+    }
+
+    /// ★ 개발 폴더의 `*.wasm` → `(id, 경로)`(146차 · `extensions.dev_dir`): id는 모듈 메타에서(수정 시각 캐시 · 같은 파일은 다시 읽지 않는다).
+    fn ext_dev_modules(&mut self) -> Vec<(String, PathBuf)> {
+        let dir = self
+            .settings
+            .get("extensions.dev_dir")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let Some(dir) = dir else {
+            self.ext_dev_ids.clear();
+            return Vec::new();
+        };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut seen: Vec<PathBuf> = Vec::new();
+        let mut paths: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|x| x.eq_ignore_ascii_case("wasm"))
+            })
+            .collect();
+        paths.sort();
+        for p in paths {
+            let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+            let cached = self
+                .ext_dev_ids
+                .get(&p)
+                .filter(|(t, _)| *t == mtime)
+                .map(|(_, id)| id.clone());
+            let id = match cached {
+                Some(id) => id,
+                None => match extensions::wasm::WasmExtension::load_file(&p) {
+                    Ok(e) => {
+                        let id = extensions::Extension::id(&e).to_string();
+                        self.ext_dev_ids.insert(p.clone(), (mtime, id.clone()));
+                        id
+                    }
+                    Err(e) => {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Error,
+                            format!("dev extension {}: {e}", nexa_fs::path::display(&p)),
+                        ));
+                        continue;
+                    }
+                },
+            };
+            seen.push(p.clone());
+            out.push((id, p));
+        }
+        self.ext_dev_ids.retain(|p, _| seen.contains(p));
+        if !out.is_empty() {
+            let names: Vec<String> = out.iter().map(|(id, _)| id.clone()).collect();
+            self.sess.status = tf(Msg::StExtDevLoaded, &[&names.join(", ")]);
+        }
+        out
+    }
+
+    /// ★ `requires` 자동 설치(146차): 메타가 요구하는 id 중 미설치 = 마지막으로 읽은 카탈로그에서 찾아 설치(한 단계 · 로그 한 줄) · 없으면 안내.
+    fn ext_install_requires(&mut self, meta: &extensions::manager::Meta) {
+        use extensions::manager as mgr;
+        for req in &meta.requires {
+            if mgr::installed().iter().any(|r| &r.id == req) {
+                continue;
+            }
+            let Some(n) = self.ext_catalog.iter().position(|(_, p)| &p.id == req) else {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Error,
+                    tf(Msg::StExtRequiresMissing, &[&meta.name, req]),
+                ));
+                continue;
+            };
+            let (src, sum) = self.ext_catalog[n].clone();
+            let mut tr = mgr::Trace::default();
+            let r = mgr::install(&src, &sum, &mut tr);
+            self.ext_trace(tr);
+            match r {
+                Ok(m) => self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    tf(
+                        Msg::StExtRequiresInstalled,
+                        &[&format!("{} {}", m.name, m.version), &meta.name],
+                    ),
+                )),
+                Err(e) => self.log_win.push(LogEntry::new(LogKind::Error, e)),
+            }
         }
     }
 
@@ -246,6 +450,59 @@ impl App {
                 // 비어도 **목록 창은 연다**(안내 한 줄 · 상태줄 글자만으로는 못 본다 · 사용자 09-19).
                 if cmds.is_empty() {
                     cmds.push(("ext.noop".into(), t(Msg::StExtNoneAvailable).into()));
+                }
+                self.ext_panel_sync();
+            }
+            // ★ 업데이트(146차 · T-118 잔여): 설치본보다 새 버전이 저장소에 있는 것만 · "모두 업데이트"는 차례로 설치.
+            "ext.update" => {
+                self.ext_catalog.clear();
+                for src in mgr::sources(&self.settings) {
+                    let mut tr = mgr::Trace::default();
+                    let r = mgr::fetch_index_traced(&src, &mut tr);
+                    self.ext_trace(tr);
+                    match r {
+                        Ok(idx) => {
+                            for p in idx.packages {
+                                self.ext_catalog.push((src.clone(), p));
+                            }
+                        }
+                        Err(e) => {
+                            self.sess.status = tf(Msg::StExtIndexFailed, &[&src.display(), &e]);
+                            self.log_win
+                                .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+                        }
+                    }
+                }
+                let mut count = 0;
+                for (n, (src, p)) in self.ext_catalog.iter().enumerate() {
+                    if let Some(r) = installed.iter().find(|r| r.id == p.id) {
+                        if mgr::version_newer(&p.version, &r.version) {
+                            count += 1;
+                            cmds.push((
+                                format!("ext.install:{n}"),
+                                format!(
+                                    "{} {} → {} - {} · {}",
+                                    p.name,
+                                    r.version,
+                                    p.version,
+                                    p.summary,
+                                    src.display()
+                                ),
+                            ));
+                        }
+                    }
+                }
+                if count > 1 {
+                    cmds.insert(
+                        0,
+                        (
+                            "ext.update_all:".into(),
+                            tf(Msg::ExtUpdateAll, &[&count.to_string()]),
+                        ),
+                    );
+                }
+                if cmds.is_empty() {
+                    cmds.push(("ext.noop".into(), t(Msg::StExtUpToDate).into()));
                 }
                 self.ext_panel_sync();
             }
@@ -372,6 +629,8 @@ impl App {
                             tf(Msg::StExtInstalled, &[&meta.name, &meta.version, &note]);
                         self.log_win
                             .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                        // ★ `requires` 자동 설치(146차 · T-118 잔여): 카탈로그에 있는 것만 · 한 단계 · 이미 설치됐으면 건너뜀.
+                        self.ext_install_requires(&meta);
                         self.apply_extensions(None);
                     }
                     Err(e) => {
@@ -380,6 +639,26 @@ impl App {
                             .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
                     }
                 }
+            }
+            // ★ 모두 업데이트(146차): 설치본보다 새 버전이 있는 카탈로그 항목을 차례로 설치(각각 `install:n`과 같은 길).
+            "update_all" => {
+                let targets: Vec<usize> = {
+                    let installed = mgr::installed();
+                    self.ext_catalog
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, p))| {
+                            installed
+                                .iter()
+                                .any(|r| r.id == p.id && mgr::version_newer(&p.version, &r.version))
+                        })
+                        .map(|(n, _)| n)
+                        .collect()
+                };
+                for n in targets {
+                    self.ext_pick(&format!("ext.install:{n}"));
+                }
+                return;
             }
             "remove" => {
                 let mut tr = mgr::Trace::default();
@@ -1456,5 +1735,21 @@ impl App {
         self.ext_banner_sync();
         self.redraw();
         false
+    }
+}
+
+/// 확장 라벨 → (영어, 한국어) 글(동적 설정 항목의 라벨·설명 · 146차).
+fn label_pair(l: &extensions::Label) -> (String, String) {
+    match l {
+        extensions::Label::Msg(m) => (
+            nsql_i18n::tr(nsql_i18n::Lang::En, *m).to_string(),
+            nsql_i18n::tr(nsql_i18n::Lang::Ko, *m).to_string(),
+        ),
+        extensions::Label::Text(en, ko) => (
+            en.clone(),
+            ko.clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| en.clone()),
+        ),
     }
 }

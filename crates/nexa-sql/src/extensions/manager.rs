@@ -688,6 +688,13 @@ pub(crate) fn install_traced(
             sum.id, meta.id
         ));
     }
+    // ★ 버전 어긋남(146차 · 협업 발견): index.json이 더 새 버전을 말하는데 extension.json이 옛 버전이면 설치 뒤에도 "업데이트 가능"이 영구로 남는다 → 거부.
+    if !sum.version.is_empty() && meta.version != sum.version {
+        return Err(format!(
+            "{}: index says version {} but package says {} (publish both)",
+            sum.id, sum.version, meta.version
+        ));
+    }
     if !meta.platforms.is_empty() && !meta.platforms.iter().any(|p| p == platform()) {
         return Err(format!("{}: not for {}", meta.id, platform()));
     }

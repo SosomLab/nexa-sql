@@ -1235,6 +1235,12 @@ impl App {
                 if let Err(e) = nexa_fs::shell::reveal_in_file_manager(Path::new(p)) {
                     self.sess.status = tf(Msg::StRevealFailed, &[&e.to_string()]);
                 }
+            } else if let Some(rest) = id.strip_prefix("ext.run:") {
+                // ★ 확장 메뉴(프로젝트 탐색기 행 · 146차): 행의 경로를 상황(doc_path)으로 실행.
+                if let Some((cmd, path)) = rest.split_once(':') {
+                    let (cmd, path) = (cmd.to_string(), path.to_string());
+                    self.run_extension_cmd_for(&cmd, &path);
+                }
             } else {
                 // 열린 파일 행 클릭(`editor.switch:`) = 패널에서 비롯된 전환 → 동기는 조용히(선택만 · 사용자 10-07).
                 if id.starts_with("editor.switch:") {

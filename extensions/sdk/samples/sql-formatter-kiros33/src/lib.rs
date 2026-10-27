@@ -481,6 +481,7 @@ impl Extension for Kiros33 {
                     .map(|(k, m)| (format!("ext.sqlfmt_kiros33.{k}"), (*m).to_string()))
                     .collect(),
             }),
+            settings: vec![],
         }
     }
 

@@ -128,6 +128,8 @@ pub(crate) struct ProjectPanel {
     open: Option<OpenReq>,
     /// 링크·헤더·우클릭 메뉴가 낸 명령 id(`project.*` · 접미 인자가 붙을 수 있어 String).
     command: Option<String>,
+    /// ★ 확장이 붙이는 우클릭 메뉴(146차 · docs/97 §5 ① · 호스트가 `set_menu_extras`).
+    menu_extras: Vec<CtxItem>,
     /// 우클릭 메뉴(루트 = 프로젝트에서 폴더 제거 · 어디서나 폴더 추가 · 팝업 배치 규칙 = `ContextMenu` · 사용자 09-22).
     menu: ContextMenu,
     /// 메뉴를 연 행(루트 노드면 그 폴더 순번 = `roots` 순번).
@@ -239,6 +241,7 @@ impl ProjectPanel {
             row_h: 22,
             open: None,
             command: None,
+            menu_extras: Vec::new(),
             menu: ContextMenu::new(),
             menu_row: None,
             has_recent: false,
@@ -946,6 +949,11 @@ impl ProjectPanel {
         self.has_recent = on;
     }
 
+    /// ★ 확장 우클릭 메뉴 항목(146차 · 호스트가 확장 적용 때마다).
+    pub(crate) fn set_menu_extras(&mut self, items: Vec<CtxItem>) {
+        self.menu_extras = items;
+    }
+
     pub(crate) fn take_command(&mut self) -> Option<String> {
         self.command.take()
     }
@@ -999,6 +1007,11 @@ impl ProjectPanel {
                 t(Msg::MnProjectRemoveFolder),
             ));
         }
+        // ★ 확장 메뉴(target = project_explorer · 146차): 파일 행에만.
+        if !self.menu_extras.is_empty() && !self.nodes[node].is_dir {
+            items.push(CtxItem::Separator);
+            items.extend(self.menu_extras.iter().cloned());
+        }
         let text_w = (self.row_h * 10).max(180);
         // host = 아는 한 창 전체(팝업 배치 규칙 ③) — 패널은 창 높이를 모르므로 폭만 clamp · 세로는 그리는 시점의 표면 크기 안전망.
         let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
@@ -1016,8 +1029,15 @@ impl ProjectPanel {
             "reveal" => Some("path.reveal:"),
             _ => None,
         };
-        if let (Some(pre), Some(p)) = (prefix, path) {
+        if let (Some(pre), Some(p)) = (prefix, path.clone()) {
             self.command = Some(format!("{pre}{p}"));
+            return;
+        }
+        // ★ 확장 명령(146차): `ext.run:<명령 id>:<경로>` — 호스트가 그 경로를 상황으로 실행.
+        if id.starts_with("ext.") {
+            if let Some(p) = path {
+                self.command = Some(format!("ext.run:{id}:{p}"));
+            }
             return;
         }
         if id != "remove_folder" {

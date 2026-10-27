@@ -9,10 +9,7 @@ use nexa_ext_sdk::{
 struct RainbowPairs;
 
 fn cmd(id: &str, en: &str, ko: &str) -> Command {
-    Command {
-        id: id.into(),
-        label: Label::new(en, ko),
-    }
+    Command::new(id, Label::new(en, ko))
 }
 
 /// `ext.rainbow_pairs.colors` = `#RRGGBB, …` → 유효한 항목만(앱이 다시 검증한다).
@@ -52,12 +49,13 @@ impl Extension for RainbowPairs {
             name: "Rainbow Pairs".into(),
             settings_prefix: "ext.rainbow_pairs.".into(),
             commands,
-            menus: vec![Menu {
-                id: "brackets".into(),
-                label: Label::new("Bracket Navigation", "괄호 이동"),
+            menus: vec![Menu::editor(
+                "brackets",
+                Label::new("Bracket Navigation", "괄호 이동"),
                 items,
-            }],
+            )],
             formatter: None,
+            settings: vec![],
         }
     }
 

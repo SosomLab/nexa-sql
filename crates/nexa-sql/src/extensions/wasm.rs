@@ -9,7 +9,10 @@
 //!
 //! 같은 id의 WASM 확장이 로드되면 내장(builtin) 확장을 **대체**한다(내장 = 로드 실패 때 폴백).
 
-use super::{Command, EditorOps, Extension, ExtensionEffect, Label, MenuContribution};
+use super::{
+    Command, EditorOps, Extension, ExtensionEffect, FileOp, Label, MenuContribution, MenuTarget,
+    SettingDef, SettingDefKind,
+};
 use nsql_settings::json::{self, Json};
 use nsql_settings::Settings;
 use std::cell::Cell;
@@ -41,10 +44,16 @@ struct HostCtx {
     logs: Vec<String>,
     /// ★ 호스트 상황(09-30 · docs/97): 활성 문서 경로 — `nx_host_get(DOC_PATH)`가 돌려준다.
     doc_path: String,
+    /// ★ 파일 동작 요청(146차 · `nx_file_op`): (종류, 경로) · 호출당 16개까지.
+    file_ops: Vec<(i32, String)>,
 }
 
 /// `nx_host_get`의 종류 번호(SDK `query::*`와 같은 표).
 const HOST_GET_DOC_PATH: i32 = 1;
+/// `nx_file_op`의 종류 번호(SDK `file_op::*`와 같은 표 · 146차 · docs/97 §5 ②).
+const FILE_OP_OPEN: i32 = 1;
+const FILE_OP_REVEAL: i32 = 2;
+const FILE_OP_COPY_PATH: i32 = 3;
 
 fn host_guard(caller: &mut Caller<'_, HostCtx>, cost: u64) -> Result<(), wasmi::Error> {
     if Instant::now() >= caller.data().deadline {
@@ -112,6 +121,28 @@ fn linker(engine: &Engine) -> Result<Linker<HostCtx>, wasmi::Error> {
             Ok(bytes.len() as i32)
         },
     )?;
+    // ★ nx_file_op(kind, ptr) -> i32 : 파일 동작 요청(큐 · 146차) — 1 열기 · 2 탐색기에서 드러내기 · 3 경로 복사 · 호출이 끝난 뒤 호스트가 적용.
+    l.func_wrap(
+        "env",
+        "nx_file_op",
+        |mut caller: Caller<'_, HostCtx>, kind: i32, ptr: i32| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 20_000)?;
+            if !matches!(kind, FILE_OP_OPEN | FILE_OP_REVEAL | FILE_OP_COPY_PATH)
+                || caller.data().file_ops.len() >= 16
+            {
+                return Ok(0);
+            }
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(0);
+            };
+            let path = read_buf(mem.data(&caller), ptr as u32).unwrap_or_default();
+            if path.trim().is_empty() {
+                return Ok(0);
+            }
+            caller.data_mut().file_ops.push((kind, path));
+            Ok(1)
+        },
+    )?;
     // nx_log(ptr) : 로그 한 줄(호출당 32줄까지).
     l.func_wrap(
         "env",
@@ -145,6 +176,10 @@ pub(crate) struct WasmExtension {
     formatter: Option<(Label, String)>,
     /// ★ 포맷터 미리보기 표식(메타 `formatter.marks` · 09-30): (설정 키, 조각) — 확장 것은 확장이 낸다.
     formatter_marks: Vec<(String, String)>,
+    /// ★ 메타 `settings`(146차 · T-258): 호스트가 런타임 레지스트리에 등재.
+    settings: Vec<SettingDef>,
+    /// ★ 마지막 호출이 남긴 파일 동작 요청(146차).
+    file_ops: std::cell::RefCell<Vec<FileOp>>,
     /// ★ 이번 `run_with` 호출의 호스트 상황(활성 문서 경로 · docs/97) — 호출 동안만.
     doc_path: std::cell::RefCell<String>,
     engine: Engine,
@@ -235,8 +270,9 @@ pub(crate) fn effect_from_json(text: &str) -> Result<ExtensionEffect, String> {
 
 /// 설정 → 게스트 입력 JSON(접두 키만 · 레지스트리가 아는 키 · 값은 원문).
 pub(crate) fn settings_json(s: &Settings, prefix: &str) -> String {
-    let items: Vec<(String, Json)> = nsql_settings::REGISTRY
-        .iter()
+    // 정적 + 동적(확장 메타 `settings` · 146차) 항목 전부.
+    let items: Vec<(String, Json)> = nsql_settings::entries_all()
+        .into_iter()
         .filter(|e| e.key.starts_with(prefix))
         .map(|e| {
             (
@@ -266,6 +302,8 @@ impl WasmExtension {
             menus: Vec::new(),
             formatter: None,
             formatter_marks: Vec::new(),
+            settings: Vec::new(),
+            file_ops: std::cell::RefCell::new(Vec::new()),
             doc_path: std::cell::RefCell::new(String::new()),
             engine,
             module,
@@ -297,9 +335,13 @@ impl WasmExtension {
             .iter()
             .filter_map(|c| {
                 let id = jget(c, "id").and_then(jstr)?.to_string();
+                let key = jget(c, "key").and_then(jstr).map(str::to_string);
+                let key_mac = jget(c, "key_mac").and_then(jstr).map(str::to_string);
                 Some(Command {
                     id,
                     label: label_of(jget(c, "label")),
+                    key,
+                    key_mac,
                 })
             })
             .collect();
@@ -333,10 +375,61 @@ impl WasmExtension {
                     .filter_map(jstr)
                     .filter_map(|cid| ext.commands.iter().find(|c| c.id == cid).cloned())
                     .collect();
+                let target = match jget(m, "target").and_then(jstr) {
+                    Some("project_explorer") => MenuTarget::ProjectExplorer,
+                    _ => MenuTarget::Editor,
+                };
                 Some(MenuContribution {
                     id,
                     label: label_of(jget(m, "label")),
                     items,
+                    target,
+                })
+            })
+            .collect();
+        // ★ 설정 항목(146차 · T-258): `{"key","label","desc","kind","default"}` · kind = "bool" | "text" | {"int":{"min","max"}} | {"choice":[{"value","label"}]}.
+        ext.settings = jget(&v, "settings")
+            .map(jarr)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|d| {
+                let key = jget(d, "key").and_then(jstr)?.to_string();
+                if !key.starts_with(&ext.prefix) || ext.prefix.is_empty() {
+                    return None;
+                }
+                let kind = match jget(d, "kind") {
+                    Some(Json::Str(s)) if s == "bool" => SettingDefKind::Bool,
+                    Some(Json::Str(s)) if s == "text" => SettingDefKind::Text,
+                    Some(o @ Json::Obj(_)) => {
+                        if let Some(i) = jget(o, "int") {
+                            SettingDefKind::Int {
+                                min: jget(i, "min").and_then(jnum).unwrap_or(i64::MIN as f64)
+                                    as i64,
+                                max: jget(i, "max").and_then(jnum).unwrap_or(i64::MAX as f64)
+                                    as i64,
+                            }
+                        } else if let Some(c) = jget(o, "choice") {
+                            SettingDefKind::Choice(
+                                jarr(c)
+                                    .iter()
+                                    .filter_map(|it| {
+                                        let v = jget(it, "value").and_then(jstr)?.to_string();
+                                        Some((v, label_of(jget(it, "label"))))
+                                    })
+                                    .collect(),
+                            )
+                        } else {
+                            SettingDefKind::Text
+                        }
+                    }
+                    _ => SettingDefKind::Text,
+                };
+                Some(SettingDef {
+                    key,
+                    label: label_of(jget(d, "label")),
+                    desc: label_of(jget(d, "desc")),
+                    kind,
+                    default: jget(d, "default").and_then(jstr).unwrap_or("").to_string(),
                 })
             })
             .collect();
@@ -407,6 +500,7 @@ impl WasmExtension {
             ops: Vec::new(),
             logs: Vec::new(),
             doc_path: self.doc_path.borrow().clone(),
+            file_ops: Vec::new(),
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|c| &mut c.limits);
@@ -435,17 +529,29 @@ impl WasmExtension {
             }
             None => None,
         };
-        let ret = match arg {
+        let called = match arg {
             Some(p) => instance
                 .get_typed_func::<i32, i32>(&store, f)
                 .map_err(|_| format!("{f} export missing"))?
                 .call(&mut store, p)
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| e.to_string()),
             None => instance
                 .get_typed_func::<(), i32>(&store, f)
                 .map_err(|_| format!("{f} export missing"))?
                 .call(&mut store, ())
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| e.to_string()),
+        };
+        let ret = match called {
+            Ok(v) => v,
+            Err(e) => {
+                // ★ 트랩·오류 때도 게스트가 그 전에 남긴 `nx_log` 줄은 수거한다(146차 · 종전엔 store와 함께 버려져 원인 추적이 안 됐다).
+                let data = store.into_data();
+                let mut notes = self.notes.borrow_mut();
+                for l in data.logs {
+                    notes.push(format!("[{}] {l}", self.id));
+                }
+                return Err(e);
+            }
         };
         let out = if returns_buf {
             read_buf(mem.data(&store), ret as u32).ok_or("return buffer corrupt")?
@@ -453,6 +559,16 @@ impl WasmExtension {
             ret.to_string()
         };
         let data = store.into_data();
+        if !data.file_ops.is_empty() {
+            let mut ops = self.file_ops.borrow_mut();
+            for (kind, path) in &data.file_ops {
+                ops.push(match *kind {
+                    FILE_OP_OPEN => FileOp::Open(path.clone()),
+                    FILE_OP_REVEAL => FileOp::Reveal(path.clone()),
+                    _ => FileOp::CopyPath(path.clone()),
+                });
+            }
+        }
         if !data.logs.is_empty() {
             let mut notes = self.notes.borrow_mut();
             for l in data.logs {
@@ -514,7 +630,10 @@ impl Extension for WasmExtension {
                 _ => false,
             };
         }
-        handled && any
+        // ★ 반환 = 게스트가 **처리했는가**(146차): 편집기 op가 없는 명령(로그만 · 파일 op)도 처리됐으면 true — 종전 `handled && any`는
+        //   그런 명령을 "미처리"로 돌려줬다(호스트는 다시 그리기 여부에만 쓴다).
+        let _ = any;
+        handled
     }
     fn is_wasm(&self) -> bool {
         true
@@ -527,6 +646,12 @@ impl Extension for WasmExtension {
     }
     fn formatter_marks(&self) -> Vec<(String, String)> {
         self.formatter_marks.clone()
+    }
+    fn settings_defs(&self) -> Vec<SettingDef> {
+        self.settings.clone()
+    }
+    fn take_file_ops(&self) -> Vec<FileOp> {
+        std::mem::take(&mut self.file_ops.borrow_mut())
     }
     fn format(&self, input_json: &str) -> Result<String, String> {
         if input_json.len() > OUT_CAP {
@@ -548,6 +673,47 @@ mod tests {
     use super::*;
 
     /// 소스 트리의 공식 패키지 `.wasm`(SDK 샘플로 빌드해 둔 것)을 로드해 메타·설정→효과·명령 큐를 확인한다.
+    /// ★ 146차(협업 V1 결함 → SDK `host::get` 해제 용량 결함 수정): PEM 0.2.0 명령 4종 = 모르는 명령은 0 · 나머지 처리 · 파일 op 큐 · 트랩 0.
+    #[test]
+    fn pem_wasm_runs_show_path_and_file_ops() {
+        let path = std::env::var_os("NSQL_PEM_WASM")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../extensions/project-explorer-menus/project_explorer_menus.wasm")
+            });
+        let mut ext = WasmExtension::load_file(&path).expect("load wasm");
+        assert_eq!(ext.id(), "project-explorer-menus");
+        let mut tb = nexa_ctl::TextBox::new("");
+        for (cmd, doc) in [
+            ("nope", ""),
+            ("ext.project_explorer_menus.show_path", ""),
+            ("ext.project_explorer_menus.show_path", "C:/tmp/a.sql"),
+            ("ext.project_explorer_menus.reveal", "C:/tmp/a.sql"),
+            ("ext.project_explorer_menus.open", "C:/tmp/a.sql"),
+        ] {
+            let ok = ext.run_with(cmd, &mut tb, doc);
+            let notes: Vec<String> = std::mem::take(&mut *ext.notes.borrow_mut());
+            let ops = ext.take_file_ops();
+            eprintln!("{cmd} doc={doc:?} ok={ok} notes={notes:?} ops={ops:?}");
+            assert!(
+                !notes.iter().any(|n| n.contains("nx_ext_run:")),
+                "{cmd} {doc}: {notes:?}"
+            );
+            if cmd == "nope" {
+                assert!(!ok);
+            } else {
+                assert!(ok, "{cmd} {doc}: {notes:?}");
+            }
+            if cmd.ends_with("reveal") {
+                assert_eq!(ops, vec![FileOp::Reveal("C:/tmp/a.sql".into())]);
+            }
+            if cmd.ends_with(".open") {
+                assert_eq!(ops, vec![FileOp::Open("C:/tmp/a.sql".into())]);
+            }
+        }
+    }
+
     #[test]
     fn loads_rainbow_pairs_wasm_and_round_trips() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
