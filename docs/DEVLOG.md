@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-27 (146차 · Windows · 확장 기능 마무리)** — 확장 명령 실행 결함(메뉴/팔레트 id → `owner_of`) · 팔레트 확장 명령 라벨 + 메타 `commands[].key` 기본 단축키 · T-258 메타 `settings` 동적 등록 · T-259 PEM 0.2.0(프로젝트 탐색기 메뉴 · `nx_file_op`) · Update Extensions · `requires` 자동 설치 · 버전 불일치 거부 · `extensions.dev_dir` · ★ SDK wasm 버퍼 해제 결함(09-30부터 · T-444) · 확장 4종 새 버전 공개 · V1 ✓ · main **0d727df7**(2d3d8daf + 문서)([journal 10-27 §7](journal/2026-10-27.md)).
 - **2026-10-27 (145차 · Windows · 설정 종속 잠금 보완)** — T-443 = `DEPENDS` 전수 점검(협업 분석 · 누락 확실 쌍 추가 · 공용 키 잘못 잠김 제거 · 부모 오선택·값 오류 수정 · 기존 결함 4) · `Dep::Ne` · 부정 조건은 사슬 안 탐 · DEPENDS 231 · D-367 `intel.alias_style`·`alias_upper` = 공용 유지(사용자) · [94 §8](94-settings-key-naming-and-location.md) 종속 규칙 신설 · V1 ✓ · main **485af4d5**(e94bc3ff + 문서)([journal 10-27 §6](journal/2026-10-27.md)).
 
 - **2026-10-27 (144차 · Windows · 결과 그리드 복사 메뉴)** — T-442 = 우클릭 "머리글과 함께 복사 ▸" 공백/콤마/탭 구분자 + "머리글만 복사 ▸" 신설(공백 = 한 칸 · 공백 든 값 인용 · 머리글만 = 선택 열 · 없으면 전체) · 기동 명령 `grid.copy:` = 파일로(클립보드 안 씀) · 88 §3 예외 상위 17 · 41 경로 정정 · V1 ✓ · main **fced7fed**(964aff38 + 문서)([journal 10-27 §5](journal/2026-10-27.md)).
