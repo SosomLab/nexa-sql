@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-27 (145차 · Windows · 설정 종속 잠금 보완)** — T-443 = `DEPENDS` 전수 점검(협업 분석 · 누락 확실 쌍 추가 · 공용 키 잘못 잠김 제거 · 부모 오선택·값 오류 수정 · 기존 결함 4) · `Dep::Ne` · 부정 조건은 사슬 안 탐 · DEPENDS 231 · D-367 `intel.alias_style`·`alias_upper` = 공용 유지(사용자) · [94 §8](94-settings-key-naming-and-location.md) 종속 규칙 신설 · V1 ✓ · main **485af4d5**(e94bc3ff + 문서)([journal 10-27 §6](journal/2026-10-27.md)).
+
 - **2026-10-27 (144차 · Windows · 결과 그리드 복사 메뉴)** — T-442 = 우클릭 "머리글과 함께 복사 ▸" 공백/콤마/탭 구분자 + "머리글만 복사 ▸" 신설(공백 = 한 칸 · 공백 든 값 인용 · 머리글만 = 선택 열 · 없으면 전체) · 기동 명령 `grid.copy:` = 파일로(클립보드 안 씀) · 88 §3 예외 상위 17 · 41 경로 정정 · V1 ✓ · main **fced7fed**(964aff38 + 문서)([journal 10-27 §5](journal/2026-10-27.md)).
 
 - **2026-10-27 (143차 · Windows · Insert Sequence)** — ★ T-441 Insert Sequence = 다중 캐럿 일괄 생성(Sublime Insert Nums · VS Code Insert Numbers 참고 · [124](124-insert-sequence.md) · D-366 표현식 한 줄 문법 · 정수·소수·진수·문자·시각·날짜·목록·곱집합·틀 · Ctrl+Alt+N · 팔레트 프롬프트 + 실시간 미리보기 + `?` 도움말 · `editor.seq_default` = `1+1`) · nexa-ui `TextBox::regions()`(1480414 · 5e79846) · V1 ✓ 10단계 · 기동 명령 `editor.regions:` 구분자 `;` · main **2f9ab501**(c4ef6354 + 문서)([journal 10-27 §4](journal/2026-10-27.md)).

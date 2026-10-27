@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-10-27 §6](journal/2026-10-27.md)**(145차 win = ★ **T-443 설정 종속 잠금 보완**(DEPENDS 231 · `Dep::Ne` · 부정 조건은 사슬 안 탐 · 공용 키 등재 안 함 = [94 §8](94-settings-key-naming-and-location.md) · D-367 alias_* 공용 유지(사용자)) = V1 ✓ · **커밋 전**(사용자 결정) · 144차 = main fced7fed(CI ✓) · 보류 = mysql.tls_ca · desc_inline_* · 추정 쌍 · 다음 = 사용자 실기(설정 창 잠김 · 복사 메뉴 · Ctrl+Alt+N · 프로필 변수 창 · 글로벌 치환 재기동 유지 · 관리자 다중 선택 · 드라이버 0.1.7) · T-439 · T-431~T-435 · T-438)
+> ★ **다음 세션 시작점 = [journal 2026-10-27 §6](journal/2026-10-27.md)**(145차 win = ★ **T-443 설정 종속 잠금 보완**(DEPENDS 231 · `Dep::Ne` · 부정 조건은 사슬 안 탐 · 공용 키 등재 안 함 = [94 §8](94-settings-key-naming-and-location.md) · D-367 alias_* 공용 유지(사용자)) = V1 ✓ · main **485af4d5**(e94bc3ff + 문서 · ci 40489287758 ✓ 3-OS · integration 40489287790 ✓) · 144차 = fced7fed(CI ✓) · 실제 설정 Debug **PID 5676**(19:23 판) · Release = lite(19:27) · 보류 = mysql.tls_ca · desc_inline_* · 추정 쌍 · 다음 = 146차 확장 기능 마무리 · 사용자 실기 141~145(설정 창 잠김 · 복사 메뉴 · Ctrl+Alt+N · 프로필 변수 창 · 글로벌 치환 재기동 유지 · 관리자 다중 선택 · 드라이버 0.1.7) · T-439 · T-431~T-435 · T-438)
 >
 > 이전 시작점 = [journal 2026-10-27 §5](journal/2026-10-27.md)(144차 win = ★ **T-442 결과 그리드 복사 메뉴**(머리글과 함께 복사 ▸ 공백/콤마/탭 · 머리글만 복사 ▸ 신설 · 기동 명령 `grid.copy:`) = V1 ✓ · main **fced7fed**(964aff38 + 문서 · ci 40484796159 ✓ 3-OS · integration 40484796578 ✓) · 143차 = main 9d3e3b78(2f9ab501 + 마감 · CI ✓) · nexa-ui 5e79846 · 실제 설정 Debug **PID 32072**(18:27 판) · Release = lite(18:31) · 다음 = 145차 설정 종속 잠금 보완(`intel.alias_style` ← `intel.insert_alias` 외 전수) · 사용자 실기(복사 메뉴 · Ctrl+Alt+N · 프로필 변수 창 · 글로벌 치환 재기동 유지 · 관리자 다중 선택 · 드라이버 0.1.7) · T-439 · T-431~T-435 · T-438)
 

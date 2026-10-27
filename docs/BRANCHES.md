@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/145-settings-deps | 2026-10-27 | 2026-10-27 → main ff(삭제) · **e94bc3ff** + 문서 **485af4d5** | 2 | 145차 win = T-443 설정 종속 잠금 보완(DEPENDS 231 · `Dep::Ne` · 부정 조건 사슬 · D-367 alias_* 공용 유지) · 144 마감 문서 |
 | feat/144-copy-headers | 2026-10-27 | 2026-10-27 → main ff(삭제) · **964aff38** + 문서 **fced7fed** | 2 | 144차 win = T-442 결과 그리드 복사 메뉴(머리글과 함께 복사 ▸ 공백/콤마/탭 · 머리글만 복사 ▸) |
 | feat/143-insert-sequence | 2026-10-27 | 2026-10-27 → main ff(삭제) · **c4ef6354** + 문서 **2f9ab501** | 2 | 143차 win = T-441 Insert Sequence(다중 캐럿 일괄 생성 · docs/124 · D-366 · Ctrl+Alt+N) · `editor.regions:` 구분자 `;` · nexa-ui 1480414 + 5e79846(`TextBox::regions()`) |
 | fix/142-format-comments | 2026-10-27 | 2026-10-27 → main ff(삭제) · **be6c7b77** + 문서 **99f07e90** | 2 | 142차 win = T-440 SQL 포맷 SELECT 목록 안 주석 줄(nsql-format layout.rs · 확장 sql-formatter-kiros33 1.3.4 · Basic 재포맷 들여쓰기 소실) |
