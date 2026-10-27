@@ -340,19 +340,22 @@ pub fn render_lines(
             }
         })
         .collect();
-    // 콤마 줄 끝 옵션: 다음 줄이 콤마로 시작하면 이 줄 끝으로 옮긴다(인라인 주석 앞에).
+    // 콤마 줄 끝 옵션: 다음 줄이 콤마로 시작하면 이 줄 끝으로 옮긴다(인라인 주석 앞에). ★ 사이의 독립 주석 줄은 건너뛴다(10-27 ·
+    //   `, T2.X` / `-- …` / `, T2.Y` 꼴에서 콤마가 주석 줄에 붙던 것) — 콤마는 항목 줄 끝에 · 주석 줄은 그대로.
     if opts.comma == Comma::Trailing {
         for i in 0..lines.len() {
-            if lines[i].role == Role::Raw {
+            if lines[i].role == Role::Raw || lines[i].role == Role::Comment {
                 continue;
             }
-            let next_comma = lines.get(i + 1).is_some_and(|n| {
-                n.role != Role::Raw && matches!(n.parts.first(), Some(Part::Comma))
-            });
+            let Some(ni) = (i + 1..lines.len()).find(|&n| lines[n].role != Role::Comment) else {
+                continue;
+            };
+            let next_comma =
+                lines[ni].role != Role::Raw && matches!(lines[ni].parts.first(), Some(Part::Comma));
             if next_comma {
-                let mut without: Vec<Part> = lines[i + 1].parts.clone();
+                let mut without: Vec<Part> = lines[ni].parts.clone();
                 without.remove(0);
-                texts[i + 1] = padded(i + 1, &without);
+                texts[ni] = padded(ni, &without);
                 // 이 줄: 주석 앞에 콤마.
                 let cut = lines[i]
                     .parts
@@ -1127,12 +1130,21 @@ impl<'a> Walker<'a> {
                 self.open(ind, role);
             }
         } else {
+            // ★ 항목 **앞** 독립 주석(10-27 · 협업 V1): 현재 줄이 아직 글이 없는 항목 줄(비었거나 줄 앞 콤마만)이면 그 줄을 주석 **뒤로**
+            //   미룬다 — 종전엔 콤마만 든 줄이 그대로 나가고(꼬리 콤마 모드 = 빈 줄 누적) 다음 항목이 들여쓰기 0의 새 줄에 놓였다.
+            let pending = match &self.cur {
+                Some(l) if l.parts.iter().all(|p| matches!(p, Part::Comma)) => self.cur.take(),
+                _ => None,
+            };
             self.flush();
             let mut l = Line::new(indent, Role::Comment);
             l.parts.push(Part::Text(t.text.clone()));
             l.blank_before =
                 (t.nl_before.saturating_sub(1) as usize).min(self.opts.max_blank_lines);
             self.out.push(l);
+            if let Some(l) = pending {
+                self.cur = Some(l);
+            }
         }
     }
 
@@ -2227,37 +2239,56 @@ impl<'a> Walker<'a> {
     }
 
     /// 목록 항목 하나(SELECT 열 · FROM 테이블 · GROUP/ORDER 항목 · 대입) — 콤마·절·`)`·`;`·JOIN 전까지. 별칭·방향을 조각으로.
+    /// 이 토큰에서 목록 항목이 끝나는가(콤마 · 닫는 괄호 · `;` · 절 머리 · 테이블 항목이면 JOIN/ON/USING/PIVOT · WHEN · 집합 연산자).
+    fn item_ends_at(t: &Token, kind: ItemKind) -> bool {
+        if t.is_punct(",") || t.is_punct(")") || t.is_punct(";") {
+            return true;
+        }
+        if t.kind != Kind::Word {
+            return false;
+        }
+        let up = t.up();
+        if is_clause_start(&up) {
+            return true;
+        }
+        if matches!(kind, ItemKind::Table { .. })
+            && (JOIN_HEADS.contains(&up.as_str())
+                || up == "ON"
+                || up == "USING"
+                || up == "PIVOT"
+                || up == "UNPIVOT")
+        {
+            return true;
+        }
+        up == "WHEN" || up == "UNION" || up == "INTERSECT" || up == "MINUS" || up == "EXCEPT"
+    }
+
+    /// 지금 위치가 **꼬리 주석**인가 — 주석(들) 다음의 첫 비주석 토큰에서 항목이 끝난다(또는 입력 끝). 그 주석은 항목의 별칭·테이블 설명
+    /// 처리가 끝난 뒤에 낸다(사용자 10-27: `, T2.X` 다음 줄 `-- , T2.Y`가 `AS X`를 주석 뒤로 밀어내고 정렬 블록을 끊던 결함 ·
+    /// 같은 줄 `-- note`도 별칭 뒤에 와야 한다).
+    fn at_trailing_comment(&self, kind: ItemKind) -> bool {
+        if !self.peek().is_some_and(Token::is_comment) {
+            return false;
+        }
+        match self.peek_at(0) {
+            None => true,
+            Some(n) => Self::item_ends_at(n, kind),
+        }
+    }
+
     fn expr_item(&mut self, indent: usize, kind: ItemKind) {
         let mut between = 0u32;
         let item_start = self.i;
         let mut cmp_done = false;
         while let Some(t) = self.peek() {
-            if t.is_punct(",") || t.is_punct(")") || t.is_punct(";") {
+            if Self::item_ends_at(t, kind) {
+                break;
+            }
+            // 꼬리 주석 = 항목이 끝난 뒤(별칭 뒤)에 낸다 — 여기서는 소비하지 않는다.
+            if self.at_trailing_comment(kind) {
                 break;
             }
             let up = t.up();
-            if t.kind == Kind::Word {
-                if is_clause_start(&up) {
-                    break;
-                }
-                if matches!(kind, ItemKind::Table { .. })
-                    && (JOIN_HEADS.contains(&up.as_str())
-                        || up == "ON"
-                        || up == "USING"
-                        || up == "PIVOT"
-                        || up == "UNPIVOT")
-                {
-                    break;
-                }
-                if up == "WHEN"
-                    || up == "UNION"
-                    || up == "INTERSECT"
-                    || up == "MINUS"
-                    || up == "EXCEPT"
-                {
-                    break;
-                }
-            }
             // ORDER BY 방향.
             if matches!(kind, ItemKind::Order) && (up == "ASC" || up == "DESC" || up == "NULLS") {
                 let mut dir: Vec<String> = Vec::new();
@@ -2367,10 +2398,16 @@ impl<'a> Walker<'a> {
                 _ => {}
             }
         }
-        // ★ 테이블 설명 주석(스킬 2-2 · T-255) — 별칭 뒤 줄 끝. 원문 항목에 주석이 이미 있었으면(지난 포맷의 설명 포함) 안 붙인다(멱등).
-        let had_comment = self.toks[item_start..end].iter().any(Token::is_comment);
+        // ★ 테이블 설명 주석(스킬 2-2 · T-255) — 별칭 뒤 줄 끝. 원문 항목에 주석이 이미 있었으면(지난 포맷의 설명 포함 · 꼬리 주석 포함)
+        //   안 붙인다(멱등).
+        let trailing = self.peek().is_some_and(Token::is_comment);
+        let had_comment = trailing || self.toks[item_start..end].iter().any(Token::is_comment);
         if matches!(kind, ItemKind::Table { .. }) && !had_comment {
             self.table_comment(&toks);
+        }
+        // 꼬리 주석: 같은 줄 주석은 별칭 뒤 조각으로 · 다음 줄 독립 주석은 항목 들여쓰기의 독립 줄로(종전과 같은 자리 · 별칭만 앞으로 온다).
+        if trailing {
+            self.drain_comments(indent);
         }
     }
 
@@ -3156,6 +3193,174 @@ mod tests {
         assert!(out.contains("END grp\t-- tail\n"), "{out}");
         assert!(out.contains("\tAND EXISTS (\n\t\tSELECT\n"), "{out}");
         assert!(out.contains("\ta.k BETWEEN 1 AND 9\n"), "{out}");
+    }
+
+    /// ★ 항목 뒤 주석(사용자 10-27): 항목 다음 줄의 독립 주석(`-- , T2.ITEM_TYPE_NM`)은 그 항목의 `AS 별칭`을 다음 줄로 밀어내지 않는다 —
+    /// 별칭은 항목 줄에, 주석은 그대로 항목 들여쓰기의 독립 줄 · 같은 줄 `-- note`도 별칭 뒤 · 꼬리 콤마 모드는 주석 줄을 건너뛰어 항목 줄 끝에 `,`.
+    #[test]
+    fn trailing_comments_keep_alias_on_item_line() {
+        let o = Options {
+            column_alias_all: true,
+            column_as: AliasAs::Add,
+            as_gap: crate::Gap::Tab,
+            ..tab_opts()
+        };
+        let src = "SELECT 'N' AS CHK
+     , T1.INV_QTY
+     , T2.ITEM_TYPE_CD
+    -- , T2.ITEM_TYPE_NM
+     , T2.ITEM_CTGRI_CD -- note
+     , T2.ITEM_CTGRI_NM
+FROM T1";
+        // 별칭을 덧붙이지 않는 옵션 = 토큰 보존 · 멱등.
+        assert_tokens_kept(src, &tab_opts());
+        let out = format_basic(src, &o);
+        assert_eq!(format_basic(&out, &o), out, "idempotent {out}");
+        assert!(
+            out.contains(
+                ",	T2.ITEM_TYPE_CD	AS	ITEM_TYPE_CD
+	-- , T2.ITEM_TYPE_NM
+,	T2.ITEM_CTGRI_CD	AS	ITEM_CTGRI_CD	-- note
+,	T2.ITEM_CTGRI_NM	AS	ITEM_CTGRI_NM
+"
+            ),
+            "{out}"
+        );
+        // 꼬리 콤마: 주석 줄이 아니라 항목 줄 끝에 콤마 · 주석 줄은 그대로.
+        let t = Options {
+            comma: Comma::Trailing,
+            ..o.clone()
+        };
+        let out = format_basic(src, &t);
+        assert!(
+            out.contains(
+                "	T2.ITEM_TYPE_CD	AS	ITEM_TYPE_CD,
+	-- , T2.ITEM_TYPE_NM
+	T2.ITEM_CTGRI_CD	AS	ITEM_CTGRI_CD,  -- note
+"
+            ),
+            "{out}"
+        );
+        // 마지막 항목 뒤 독립 주석(FROM 앞)도 항목 들여쓰기 줄 · FROM은 제자리.
+        let src2 = "select a.x
+-- tail
+from t a";
+        let out = format_basic(src2, &o);
+        assert!(
+            out.contains(
+                "	a.x	AS	x
+	-- tail
+FROM
+"
+            ),
+            "{out}"
+        );
+    }
+
+    /// ★ 항목 **앞** 독립 주석(협업 V1 10-27 · 기존 결함): 콤마 뒤 줄바꿈 + `-- c` + 다음 항목에서 콤마만 든 빈 줄이 나가고 다음 항목이
+    /// 들여쓰기 0으로 떨어지던 것 — 주석은 항목 사이 독립 줄 · 항목은 제자리 · 꼬리/앞 콤마 둘 다 · 첫 항목 앞 주석도 · 멱등.
+    #[test]
+    fn comment_before_item_keeps_item_indent() {
+        let lead = Options::default(); // 앞 콤마 · 공백 간격
+        let trail = Options {
+            comma: Comma::Trailing,
+            ..Options::default()
+        };
+        for src in [
+            "SELECT A,
+-- c
+B
+FROM T",
+            "SELECT A,
+	-- c
+	B
+FROM T",
+            "SELECT
+	A,
+	-- c
+	B
+FROM
+	T",
+            "SELECT A
+-- c
+, B
+FROM T",
+        ] {
+            assert_tokens_kept(src, &lead);
+            assert_tokens_kept(src, &trail);
+            assert_eq!(
+                format_basic(src, &lead),
+                "SELECT
+	A
+	-- c
+, B
+FROM
+	T
+",
+                "{src:?}"
+            );
+            assert_eq!(
+                format_basic(src, &trail),
+                "SELECT
+	A,
+	-- c
+	B
+FROM
+	T
+",
+                "{src:?}"
+            );
+        }
+        // 첫 항목 앞 주석(SELECT 바로 다음 줄).
+        assert_eq!(
+            format_basic(
+                "SELECT
+-- c
+A, B
+FROM T",
+                &lead
+            ),
+            "SELECT
+	-- c
+	A
+, B
+FROM
+	T
+"
+        );
+        assert_eq!(
+            format_basic(
+                "SELECT
+-- c
+A, B
+FROM T",
+                &trail
+            ),
+            "SELECT
+	-- c
+	A,
+	B
+FROM
+	T
+"
+        );
+        // 앞 콤마 + 탭 간격.
+        assert_eq!(
+            format_basic(
+                "SELECT A,
+-- c
+B
+FROM T",
+                &tab_opts()
+            ),
+            "SELECT
+	A
+	-- c
+,	B
+FROM
+	T
+"
+        );
     }
 
     #[test]

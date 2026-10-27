@@ -319,10 +319,16 @@ fn merged_blocks(lines: &[Line]) -> Vec<(usize, usize)> {
     let raw = blocks(lines);
     let mut out: Vec<(usize, usize)> = Vec::new();
     for (s, e) in raw {
+        // 주석 줄 블록은 정렬 대상이 아니다 — 건너뛰어야 앞뒤 항목 블록이 하나로 이어진다(10-27).
+        if lines[s].role == Role::Comment {
+            continue;
+        }
         if let Some(last) = out.last_mut() {
             let (ls, le) = *last;
             let same = lines[ls].indent == lines[s].indent && lines[ls].role == lines[s].role;
-            let deeper_between = (le..s).all(|i| lines[i].indent > lines[ls].indent);
+            // ★ 독립 주석 줄(SELECT 목록 안 `-- , T2.X` · 사용자 10-27)은 블록을 끊지 않는다 — 주석 앞뒤 항목의 AS가 같은 열에.
+            let deeper_between = (le..s)
+                .all(|i| lines[i].indent > lines[ls].indent || lines[i].role == Role::Comment);
             if same && s > le && deeper_between {
                 *last = (ls, e);
                 continue;
@@ -370,8 +376,8 @@ impl AlignPlan {
                 let mut others: Vec<usize> = Vec::new();
                 for li in s..e {
                     let line = &lines[li];
-                    // 블록 안의 더 깊은 줄(윈도우 절 안 PARTITION BY/ORDER BY/프레임)은 정렬 기준이 아니다.
-                    if line.indent != depth {
+                    // 블록 안의 더 깊은 줄(윈도우 절 안 PARTITION BY/ORDER BY/프레임)과 주석 줄은 정렬 기준이 아니다(10-27).
+                    if line.indent != depth || line.role == Role::Comment {
                         continue;
                     }
                     let leading = opts.comma == Comma::Leading
@@ -513,6 +519,52 @@ mod tests {
             "FROM\n\ttb_order a\nWHERE 1=1\nAND\ta.plant_cd\t=\t'1200'\nAND\ta.stock_qty\t>\t0\nAND\ta.status_cd\t<>\t'X'\n"
         );
         assert_eq!(out, want);
+    }
+
+    /// ★ SELECT 목록 안 주석 줄(사용자 10-27): 항목 다음 줄의 `-- , T2.ITEM_TYPE_NM`은 ① 그 항목의 `AS` 별칭을 밀어내지 않고
+    /// ② 정렬 블록을 끊지 않아 주석 앞뒤 항목의 AS가 같은 탭 열(가장 긴 항목 `T1.ITEM_CD || ' | ' || T2.ITEM_NM` 다음 스톱 40)에 선다 ·
+    /// 주석 줄은 항목 들여쓰기 그대로 · 멱등.
+    #[test]
+    fn comment_lines_inside_select_list_keep_alignment() {
+        let src = "SELECT 'N' AS CHK
+     , T1.PROJECT_CD
+     , T1.ITEM_CD || ' | ' || T2.ITEM_NM AS ITEM_CD
+     , T1.INV_QTY
+     , T2.ITEM_TYPE_CD
+    -- , T2.ITEM_TYPE_NM
+     , T2.ITEM_CTGRI_CD
+     , T2.ITEM_CTGRI_NM
+FROM T1";
+        let out = format(src, &Options::default(), &Cfg::default());
+        let want = concat!(
+            "SELECT
+",
+            "	'N'									AS	CHK
+",
+            ",	T1.PROJECT_CD						AS	PROJECT_CD
+",
+            ",	T1.ITEM_CD || ' | ' || T2.ITEM_NM	AS	ITEM_CD
+",
+            ",	T1.INV_QTY							AS	INV_QTY
+",
+            ",	T2.ITEM_TYPE_CD						AS	ITEM_TYPE_CD
+",
+            "	-- , T2.ITEM_TYPE_NM
+",
+            ",	T2.ITEM_CTGRI_CD					AS	ITEM_CTGRI_CD
+",
+            ",	T2.ITEM_CTGRI_NM					AS	ITEM_CTGRI_NM
+",
+            "FROM
+	T1
+"
+        );
+        assert_eq!(out, want);
+        assert_eq!(
+            format(&out, &Options::default(), &Cfg::default()),
+            out,
+            "idempotent"
+        );
     }
 
     #[test]
