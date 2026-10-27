@@ -930,6 +930,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 1, max: 8 },
         default: "4",
     },
+    // ★ Insert Sequence 기본 표현식(docs/124 · 자리표시자 · 빈 입력 = 이 값).
+    Entry {
+        key: "editor.seq_default",
+        cat: Msg::CatEditor,
+        label: Msg::LblSeqDefault,
+        desc: Msg::DescSeqDefault,
+        kind: SettingKind::Text,
+        default: "1+1",
+    },
     Entry {
         key: "editor.indent_spaces",
         cat: Msg::CatEditor,

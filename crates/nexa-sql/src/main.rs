@@ -71,6 +71,7 @@ mod imewatch;
 mod import_win;
 mod input;
 mod input_win;
+mod insseq;
 mod intel;
 mod intel_card;
 mod keymap;
@@ -357,6 +358,8 @@ struct App {
     pw_once: Option<(u64, nsql_core::Secret, Instant)>,
     /// 변수 창(docs/63 V2) · 마지막 실행에서 바뀐 이름(탭 id, 대문자 이름들 — 그 탭의 줄을 강조).
     vars_win: vars_win::VarsWin,
+    /// ★ Insert Sequence 세션(docs/124 · 다중 캐럿 일괄 생성 · 열려 있는 동안 본문에 미리보기).
+    seq: Option<app::insseq::SeqSession>,
     /// ★ 프로필 변수 창(접속 폼 [프로필 변수 (n)…] · T-153 후속 10-27).
     profvars_win: profvars_win::ProfVarsWin,
     open_profvars: bool,
@@ -1857,6 +1860,7 @@ fn main() {
         key_guard: None,
         pw_once: None,
         vars_win,
+        seq: None,
         profvars_win,
         open_profvars: false,
         driver_win,

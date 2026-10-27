@@ -1468,6 +1468,48 @@ impl App {
             }
             return;
         }
+        // ★ Insert Sequence 자체 시험(docs/124 §3 ⑦ · 키 주입 0): `editor.regions:<a[-b];…>` = 다중 캐럿/구간 지정(구분 `;` · NSQL_STARTUP_CMD가 `,`로 쪼개므로 · ui.click:x/y 선례) · `seq.open` ·
+        //   `seq.set:<식>`(입력란 글 = 식 · 미리보기 갱신) · `seq.commit` · `seq.cancel` · `seq.dump:<파일>`(질의 · 오류 · 값 · 본문).
+        if let Some(spec) = id.strip_prefix("editor.regions:") {
+            let regions: Vec<(usize, usize)> = spec
+                .split(';')
+                .filter_map(|r| {
+                    let (a, b) = r.split_once('-').unwrap_or((r, r));
+                    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+                })
+                .collect();
+            if !regions.is_empty() {
+                self.ed_mut().set_regions_pub(&regions);
+            }
+            self.redraw();
+            return;
+        }
+        if id == "seq.open" {
+            self.insseq_open();
+            return;
+        }
+        if let Some(expr) = id.strip_prefix("seq.set:") {
+            if self.insseq_active() {
+                self.palette.set_query(expr);
+                self.insseq_update(expr);
+            }
+            return;
+        }
+        if id == "seq.commit" {
+            let q = self.palette.query();
+            self.palette.close();
+            self.insseq_commit(&q);
+            return;
+        }
+        if id == "seq.cancel" {
+            self.palette.close();
+            self.insseq_cancel();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("seq.dump:") {
+            self.insseq_dump(path);
+            return;
+        }
         if let Some(name) = id.strip_prefix("conn.edit:") {
             if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
                 self.conn_win.capture_open_detail(name);

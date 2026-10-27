@@ -44,6 +44,9 @@ pub(crate) struct Palette {
     prompt: Option<String>,
     /// 프롬프트 모드의 안내 글(입력란 아래 한 줄 — 입력란에 이미 글이 있어 자리표시자가 보이지 않는다).
     hint: String,
+    /// ★ 라이브 프롬프트(Insert Sequence · docs/124): 빈 입력도 Enter로 확정(= 자리표시자 기본값) · 안내 아래 **미리보기 행**(선택 불가 · (글, 경고색)).
+    prompt_live: bool,
+    prompt_rows: Vec<(String, bool)>,
     /// 프롬프트가 **붙을 대상**(이름을 바꾸는 탭의 rect · 사용자 09-21 "요청한 탭 근처에 · 수정 중인 대상을 식별할 수 있게").
     /// 있으면 상자가 그 바로 아래(자리가 없으면 위)에 붙고 대상에 강조 테두리를 그린다 · 없으면 종전처럼 창 위 가운데.
     anchor: Option<Rect>,
@@ -206,6 +209,8 @@ impl Palette {
             goto: None,
             prompt: None,
             hint: String::new(),
+            prompt_live: false,
+            prompt_rows: Vec::new(),
             anchor: None,
             win: (0, 0),
             goto_mode: false,
@@ -363,9 +368,36 @@ impl Palette {
         self.win = (w, h);
     }
 
+    /// ★ 라이브 프롬프트(docs/124): 자리표시자(= 기본 표현식) · 안내 줄 따로 · 빈 입력 Enter = 확정 · 행은 `set_prompt_rows`로.
+    pub(crate) fn open_prompt_live(
+        &mut self,
+        id: &str,
+        placeholder: &str,
+        hint: &str,
+        initial: &str,
+    ) {
+        self.open_prompt(id, placeholder, initial);
+        self.hint = hint.to_string();
+        self.prompt_live = true;
+    }
+
+    /// 열린 프롬프트의 id(아니면 None).
+    pub(crate) fn prompt_id(&self) -> Option<&str> {
+        self.prompt.as_deref()
+    }
+
+    /// 프롬프트 아래 미리보기 행(글 · 경고색 여부) — 그릴 때 상자가 그만큼 길어진다.
+    pub(crate) fn set_prompt_rows(&mut self, rows: Vec<(String, bool)>) {
+        self.prompt_rows = rows;
+        let mut inv = Invalidations::default();
+        self.layout(&mut inv);
+    }
+
     pub(crate) fn open_prompt(&mut self, id: &str, placeholder: &str, initial: &str) {
         self.open = true;
         self.prompt = Some(id.to_string());
+        self.prompt_live = false;
+        self.prompt_rows.clear();
         self.hint = placeholder.to_string();
         self.input = TextBox::new(placeholder).with_text(initial);
         self.input.set_scale(self.scale);
@@ -407,8 +439,7 @@ impl Palette {
         self.input.set_preedit(text, inv);
     }
 
-    /// 지금 검색어(시험).
-    #[cfg(test)]
+    /// 지금 검색어(시험 · 라이브 프롬프트의 표현식 읽기 · docs/124).
     pub(crate) fn query(&self) -> String {
         self.input.text()
     }
@@ -439,6 +470,8 @@ impl Palette {
     pub(crate) fn close(&mut self) {
         self.open = false;
         self.prompt = None;
+        self.prompt_live = false;
+        self.prompt_rows.clear();
         self.anchor = None;
         self.input.set_focused(false);
     }
@@ -465,8 +498,14 @@ impl Palette {
             return b;
         }
         let pad = (6.0 * self.scale) as i32;
-        let w = ((380.0 * self.scale) as i32).min(b.w);
-        let h = pad + self.row_h + pad / 2 + self.row_h * 3 / 4 + pad;
+        // 미리보기 행이 있으면(라이브 프롬프트) 폭은 팔레트 전체 · 높이는 행 수만큼.
+        let rows = self.prompt_rows.len().min(MAX_ROWS) as i32;
+        let w = if rows > 0 {
+            b.w
+        } else {
+            ((380.0 * self.scale) as i32).min(b.w)
+        };
+        let h = pad + self.row_h + pad / 2 + self.row_h * 3 / 4 + rows * self.row_h + pad;
         match self.anchor {
             // 대상 탭 **바로 아래**(왼쪽 끝을 맞춘다) — 자리가 없으면(결과 탭이 창 아래쪽) **바로 위** · 그래도 안 되면 창 안으로
             // 밀어 넣는다(팝업 배치 규칙 · nexa-ctl `place_popup`과 같은 순서를 세로축에 · 가로는 밀어 넣기).
@@ -732,7 +771,8 @@ impl Palette {
             } => {
                 if let Some(id) = self.prompt.clone() {
                     let text = self.input.text().trim().to_string();
-                    return if text.is_empty() {
+                    // 라이브 프롬프트는 빈 입력도 확정(자리표시자 기본값 · docs/124).
+                    return if text.is_empty() && !self.prompt_live {
                         PaletteAction::Close
                     } else {
                         PaletteAction::Prompt { id, text }
@@ -926,6 +966,21 @@ impl Palette {
                 &self.hint,
                 th.text_dim,
             );
+            // 라이브 프롬프트의 미리보기 행(선택 없음 · 경고색 = 오류).
+            let mut ry = y + self.row_h * 3 / 4;
+            let rpad = (8.0 * self.scale) as i32;
+            for (text, warn) in self.prompt_rows.iter().take(MAX_ROWS) {
+                let r = Rect::new(b.x + pad, ry, b.w - pad * 2, self.row_h);
+                let shown = nexa_ctl::draw::ellipsize_middle(dc, text, r.w - rpad * 2);
+                dc.text(
+                    r.x + rpad,
+                    ry + (self.row_h - th_px) / 2,
+                    r,
+                    &shown,
+                    if *warn { th.warn } else { th.text },
+                );
+                ry += self.row_h;
+            }
             return;
         }
         let rr = self.rows_rect();

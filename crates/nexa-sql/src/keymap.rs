@@ -855,6 +855,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+k,cmd+l",
         linux: "ctrl+k,ctrl+l",
     },
+    // ★ Insert Sequence(docs/124 · 10-27) — Sublime Insert Nums · VS Code Insert Numbers와 같은 키.
+    Command {
+        id: "edit.insert_sequence",
+        label: Msg::MnInsertSequence,
+        win: "ctrl+alt+n",
+        mac: "cmd+alt+n",
+        linux: "ctrl+alt+n",
+    },
     Command {
         id: "edit.goto_line",
         label: Msg::MnGotoLine,

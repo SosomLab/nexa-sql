@@ -22,6 +22,7 @@ mod grid_results;
 pub(crate) mod health;
 pub(crate) mod inline_labels;
 pub(crate) mod input;
+pub(crate) mod insseq;
 mod license;
 mod live;
 mod memory;

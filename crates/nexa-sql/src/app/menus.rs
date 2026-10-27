@@ -736,6 +736,8 @@ impl App {
             "edit.add_caret_down" => self.editor_cmd(EditCommand::AddCaretDown),
             "edit.upper_case" => self.editor_cmd(EditCommand::UpperCase),
             "edit.lower_case" => self.editor_cmd(EditCommand::LowerCase),
+            // ★ Insert Sequence(docs/124): 세션 시작 + 라이브 프롬프트.
+            "edit.insert_sequence" => self.insseq_open(),
             // Goto Anything(T-96): 탭 · 최근 파일 · `:줄`.
             "view.goto_anything" | "tab.find" => self.open_goto_anything(""),
             "edit.goto_line" => self.open_goto_anything(":"),
@@ -1368,6 +1370,7 @@ impl App {
                             item("edit.lower_case", Msg::MnLowerCase),
                         ],
                     ),
+                    item("edit.insert_sequence", Msg::MnInsertSequence),
                     item("edit.toggle_comment", Msg::MnToggleComment),
                     item("edit.toggle_block_comment", Msg::MnToggleBlockComment),
                     MenuEntry::Separator,
@@ -1772,6 +1775,11 @@ impl App {
         cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
         cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
         cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
+        cmds.push(m(
+            "edit.insert_sequence",
+            Msg::MnEdit,
+            Msg::MnInsertSequence,
+        ));
         cmds.push(m(
             "edit.expand_selection",
             Msg::MnEdit,

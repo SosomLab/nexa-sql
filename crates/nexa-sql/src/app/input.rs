@@ -1347,10 +1347,19 @@ impl App {
     fn route_palette(&mut self, ev: InputEvent, inv: &mut Invalidations) -> bool {
         if self.palette.is_open() {
             match self.palette.on_event(&ev, inv) {
-                PaletteAction::None => {}
+                PaletteAction::None => {
+                    // ★ Insert Sequence(docs/124): 표현식이 바뀌면 본문·미리보기 행 갱신(키 입력마다).
+                    if self.palette.prompt_id() == Some("seq") && self.insseq_active() {
+                        let q = self.palette.query();
+                        self.insseq_update(&q);
+                    }
+                }
                 PaletteAction::Close => {
                     self.palette.close();
                     self.ime_refresh();
+                    if self.insseq_active() {
+                        self.insseq_cancel();
+                    }
                 }
                 PaletteAction::Pick(id) => {
                     self.palette.close();
@@ -1359,7 +1368,11 @@ impl App {
                 }
                 PaletteAction::Prompt { id, text } => {
                     self.palette.close();
-                    if let Some(i) = id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok()) {
+                    if id == "seq" {
+                        self.insseq_commit(&text);
+                    } else if let Some(i) =
+                        id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok())
+                    {
                         self.editors.rename_tab(i, &text);
                         self.folder_title_remember(i);
                     } else if let Some(rid) = id
