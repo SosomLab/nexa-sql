@@ -79,6 +79,7 @@
 - CASE = `case_inline_max` 안이면 한 줄, 넘으면 `CASE / WHEN … THEN … / ELSE / END`(END 뒤 별칭 이어짐).
 - INSERT(컬럼 목록·VALUES 행 콤마 목록) · UPDATE(`UPDATE 대상 별칭 SET` 한 줄 + 대입 목록 · `=`는 정렬 조각) · DELETE · MERGE(USING/ON(1=1)/WHEN … THEN/UPDATE SET/INSERT … VALUES) · WITH(CTE 목록 · 각 본문 서브쿼리) · 집합 연산자 = 같은 열.
 - 주석: 같은 줄 `-- …`는 줄 끝 조각 · 같은 줄 `/* */`·힌트는 글의 일부 · 독립 주석은 독립 줄(빈 줄 유지).
+  - ★ **목록 안 독립 주석(10-27 · 142차 win · T-440)**: 항목 **뒤** 주석(같은 줄 `-- note`)은 별칭·AS 처리 **뒤**의 줄 끝 조각(주석이 항목과 `AS` 사이에 끼지 않는다 · `expr_item` `item_ends_at`/`at_trailing_comment` → `drain_comments`) · 다음 줄 독립 주석은 **항목 들여쓰기의 독립 줄** · 항목 **앞** 독립 주석은 아직 글이 없는 항목 줄(비었거나 줄 앞 콤마만)을 주석 뒤로 미룬다(`comment()` `pending` · 다음 항목 들여쓰기 유지) · 꼬리 콤마 모드 = 사이 주석 줄을 건너뛰고 항목 줄 끝에 `,`(`render_lines`) · 앞/꼬리 콤마 · 탭 간격 · 첫 항목 앞 주석 꼴이 모두 같은 결과 · 멱등(종전 = 콤마 뒤 줄바꿈 + 주석 줄이면 다시 포맷할 때 들여쓰기 소실 · 1차 수정 중에는 빈 줄 누적).
 - **불변식 = 토큰 보존**(공백만 바꾼다 · 시드/AS 추가/대소문자는 명시적 옵션) · 멱등(다시 포맷해도 같다) — 시험 `assert_tokens_kept`.
 
 ## 4. 확장 SQL Formatter for kiros33(`ext.sqlfmt_kiros33.*`)
@@ -100,6 +101,7 @@
 구현(1.1.0 · 09-29) = **Basic 확장 API**(§5-1): `strict_options`(공통 옵션 위 덮어쓰기 · `cond_indent` = `and_same_level`) → `nsql_format::prepare` → 구분행 손질 → `AlignPlan`(블록별 탭 스톱 · `line_prefix`/`display_width`/`tabs_to`) → `nsql_format::render(pad)`. 별칭 자동 부여 · 테이블 설명 · 방언 치환 · 괄호 그룹 시드 · AND/OR 뒤 간격 · 연산자 간격은 전부 Basic 몫(확장 코드 0) — 1.0.0의 `AND\t` 후처리·`same_level_conditions`는 지웠다.
 
 - **1.3.2**(10-03): 코드 변경 없이 Basic 코어 재빌드 — `EXEC` 문 · 명령 줄 · 블록 끝 · `${…}`·접두 문자열 토큰 · 단항 부호·`::`(§3-1 · [journal 10-03](journal/2026-10-03.md)).
+- **1.3.4**(10-27 · 142차 win · T-440): SELECT 목록 안 주석 줄 — 정렬 블록(`merged_blocks`)이 주석 줄을 건너뛰고 투명하게 이어 붙임 · `AlignPlan::build`는 주석 줄을 기준 폭에서 제외(주석 뒤 항목도 같은 AS 열) + Basic 코어 §3 "목록 안 독립 주석" · wasm 191,079 B · 시험 `comment_lines_inside_select_list_keep_alignment`.
 
 ## 5. ABI v1.1(포맷터) · SDK API
 

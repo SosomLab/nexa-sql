@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-27 (142차 · Windows · SQL 포맷 목록 안 주석)** — T-440 = SELECT 목록 안 독립 주석이 항목과 `AS` 사이에 끼고 AS 열이 어긋나던 결함 · nsql-format(꼬리 주석 지연 · 항목 앞 주석 `pending` · 꼬리 콤마) + 확장 sql-formatter-kiros33 **1.3.4**(정렬 블록이 주석 줄 건너뜀) · V1 1차에 Basic 재포맷 들여쓰기 소실(기존)·빈 줄 누적 발견 → 고침 · Basic 3회 멱등 ✓ · wasm32 타깃 설치(사용자 승인)([journal 10-27 §3](journal/2026-10-27.md)).
+
 - **2026-10-27 (141차 · Windows · T-153 후속 2 · T-433 · T-434)** — ★ 접속 폼 [프로필 변수 (n)…] → 프로필 변수 창(폼 단일 원천 · Save 때 `set_vars` · 로그인 창 580 → 614 = D-365) · ★ 글로벌 치환 변수 보존(`vars/global.sql` `DEFINE 이름 = '값'` · `vars.global_persist` · CLI `vars.cli_global`) · T-433 offset 안내 = 워커 결과 · T-434 아웃라인 층 이동 제외 · `win-restart-debug.ps1` 종료 순서 수정 · 통합 40/0 · V1 ✓(1차 = 값 앞뒤 공백 소실 → 따옴표 규칙) · T-439 후보 · main **4804e159**(8dccf690 + 문서)([journal 10-27 §2](journal/2026-10-27.md)).
 
 - **2026-10-27 (140차 · Windows · 검토 · D-364)** — 최신화 bc54fbce · 검토 11+3건 처리(문서 정정 · T-436 재시작 스크립트 3-OS · `win-restart-debug.ps1` 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택 · 커서 이어 받기 Windows V1 ✓ · main 254c377b · CI ✓ 3-OS([journal 10-27 §1](journal/2026-10-27.md)).
