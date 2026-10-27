@@ -58,6 +58,7 @@
 | 8 | SET_CALL_TIMEOUT | 호출 상한 |
 | 9~15 | BULK_BEGIN · PUSH · FLUSH · COMMIT · ROLLBACK · FINISH · DROP | 대량 적재 싱크(세션당 1 · `Slot.bulk` · 본체 `DynBulkSink`) |
 | 16 · 17 | CATALOG_TABLES · CATALOG_COLUMNS | 드라이버 카탈로그 훅(ODBC `SQLTables`/`SQLColumns` 등) |
+| 18 | CANCEL_DROPS_SESSION | 취소가 **세션을 끊는** 방식인가(out u8 · `CancelHandle::drops_session` · SQL Server·Db2 = 소켓 종료 → 취소 뒤 재접속) · 옛 드라이버(모르는 op) = 거짓 — 138차(Db2 · CI 40157404807) · 10-27 표 보완 |
 | 19 | CODEC_FEATURES | 코덱 기능 비트(out u32 · bit0 `CODEC_RESULT_TAIL` = 결과 꼬리 필드) · 본체 `DynSession.result_tail`(open 때 1회 · 모르는 op = 거짓) · 거짓이면 `cursor_supported()` 거짓(`cursor_ok` 순수 · MC/DC) — 10-26 140차 |
 
 - **진입 심볼**(441e83a) = 드라이버별 **`nsql_driver_vtable_<id>`**(`#[export_name = concat!]`) — 하나의 공통 심볼이면 내장 빌드(rlib 여러 개 정적 링크)에서 LNK2005 · 로더 = `DynDriver::load(path, id)`.
@@ -249,7 +250,7 @@ nsql driver path                    drivers/ 폴더
 ```
 ### 5-2. GUI 드라이버 관리자 (DBeaver Driver Manager 대응 · 접속 대화상자 `Driver Settings`에서도 열림)
 
-> ✅ **구현 1차(10-23 · d1ffc6d)** = View ▸ Drivers(`view.drivers`) · 표 = ID·이름·방언·**내장**(10-23 07cd0d9 · `builtin_version(id)`)·설치본·최신·상태(내장 있으면 "내장 x ≠ 확장 y" / "내장 = 확장 x" / "내장 x · 확장 최신 y" / "내장 x" · 접속은 내장 우선 · **개발 빌드 = 기본 feature `drivers-builtin`이라 전부 내장 · 설치본(lite)만 확장**) · [파일에서 설치…] 필터 = `*.zip`·전체(b47a62d) · [색인 새로 고침][설치/갱신][삭제][확인] · 워커 스레드 · 창 열기 = 네트워크 0 · CLI와 같은 `ext::install` 코어 · ★ 10-23 `fbe5001` = [파일에서 설치…](zip·오프라인 번들) ✅ · 갱신 배지(`driver.check_updates` · 하루 1회 · 상태줄 안내 · 자동 교체 없음) ✅ · **남은 것** = 접속 대화상자 [Driver Settings]/[Download…] 버튼 · 검색 칸 · [Update all]/[Prune] · 참조 카운트 · 휴지통.
+> ✅ **구현 1차(10-23 · d1ffc6d)** = View ▸ Driver Manager(메뉴 id `view.drivers` · `Msg::MnDrivers` · 10-27 표기 정정) · 표 = ID·이름·방언·**내장**(10-23 07cd0d9 · `builtin_version(id)`)·설치본·최신·상태(내장 있으면 "내장 x ≠ 확장 y" / "내장 = 확장 x" / "내장 x · 확장 최신 y" / "내장 x" · 접속은 내장 우선 · **개발 빌드 = 기본 feature `drivers-builtin`이라 전부 내장 · 설치본(lite)만 확장**) · [파일에서 설치…] 필터 = `*.zip`·전체(b47a62d) · [색인 새로 고침][설치/갱신][삭제][확인] · 워커 스레드 · 창 열기 = 네트워크 0 · CLI와 같은 `ext::install` 코어 · ★ 10-23 `fbe5001` = [파일에서 설치…](zip·오프라인 번들) ✅ · 갱신 배지(`driver.check_updates` · 하루 1회 · 상태줄 안내 · 자동 교체 없음) ✅ · **남은 것** = 접속 대화상자 [Driver Settings]/[Download…] 버튼 · 검색 칸 · [Update all]/[Prune] · 참조 카운트 · 휴지통.
 ```text
 ┌ Drivers ───────────────────────────────────────────────────────────────────────────┐
 │ [검색…]                                        [Download…] [Update all] [Prune]    │
@@ -268,6 +269,8 @@ nsql driver path                    drivers/ 폴더
 - ★ **올라간 드라이버 삭제(10-23 · a888ae2)** = 언로드하지 않는다(FreeLibrary 뒤 접근 위반 실측) · 못 지우는 파일은 `<드라이버 폴더>/.trash/<id>-<ver>-<pid>-<n>/`로 옮기고 `.delete-pending`에 기록 · 목록에서 즉시 빠짐 · 올라간 판은 재시작까지 쓰임(상태 "삭제됨 - 올라간 드라이버는 재시작까지 그대로 쓰입니다") · 다음 GUI·CLI 기동 때 `sweep_pending()`이 정리.
 - ★ 문구(10-23 d0f311d) = 진행 단계 Msg(색인 받는 중… · 내려받는 중 · 검증 중… · 설치 중… · 설치됨) · 오류 = 종류별 짧은 Msg + 상세는 로그 · 삭제할 설치본 없음 안내 · 설치 완료 때 같은 id가 올라가 있으면 "재시작하면 새 판" · 창 기본 860×400.
 - 트리·표는 nexa-ctl `Tree` + 컬럼(dir2 `widgets/columns` 이관 U-2 전에는 고정 폭 텍스트).
+- ★ **다중 선택 + 묶음 동작(10-27 · 140차 win · D-364 · T-437)** = 파일 그리드와 같은 규칙(클릭 = 단일 선택 · Ctrl+클릭 = 토글 · Shift+클릭 = 범위 · ↑↓/Home/End/PageUp·PageDown = 이동 · Shift+이동 = 범위 · Ctrl+이동 = 캐럿만 · Space = 토글 · Ctrl+A = 모두 · 선택 모델 = `driver_win` `Sel` 순수 · 시험 `driver_win::tests`) · 버튼은 **선택 묶음**에 적용 = `[설치/갱신 (n)]` · `[삭제 (n)]` · `[확인 (n)]`(n = 대상 수) · 설치는 **대기열로 하나씩**(`Installing {0} ({1} of {2})…`) · 끝에 요약(`Done - n installed/updated, m failed`).
+- ★ **갱신 알림 + [갱신] 클릭(10-27 · D-364)** = 기동 확인(`driver.check_updates` · 하루 1회 · 색인 캐시 24시간 초과)이 새 버전을 찾으면 고정 토스트 "Driver updates available — {목록} - [Update] installs the newer versions of the installed drivers"(상태줄·로그에도) · [갱신] = 메뉴 동작 id **`drivers.update_installed`** = **설치된 드라이버 중 새 버전이 있는 것만** 대기열로 설치(색인 전체 아님) · 누르기 전엔 교체 없음 · 접속 시 자동 설치(D-350)는 없을 때만 · 자체 시험 기동 명령 **`drivers.check_updates`** = 조건(24시간·하루 1회) 없이 지금 확인.
 
 ## 6. 보안·라이선스
 - 서명 검증은 **필수·우회 불가**(사용자 폴더의 실행 파일을 네트워크에서 받아 실행하는 경로이므로). 배포 키는 본체 소스에 공개키 상수 · 개인키는 릴리스 파이프라인 시크릿(nexa-dir 17 · clip 릴리스 파이프라인 계승). ✅ **구현됨(10-23 · D-348 · 6942993)** = 공개키 `drv-v1`(지문 `8CFVCNTJ`)이 `crates/nsql-drivers/src/ext/keys.rs` `DRIVER_KEYS`에 내장 · 키 목록이 비면 설치 거부(우회 없음) · 비밀키 봉투 = 사용자 PC(91 규약) · 파이프라인 시크릿 = 첫 pre-release 때.
