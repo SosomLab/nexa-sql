@@ -264,6 +264,26 @@ impl App {
         self.vars_win_context();
     }
 
+    /// ★ 프로필 변수 창(T-153 후속 10-27): 접속 창 옆에 · 접속 창이 소유 · 제목 = 폼의 프로필 이름 · 줄은 그릴 때 폼에서 받는다.
+    pub(crate) fn open_profvars_window(&mut self, el: &ActiveEventLoop) {
+        let Some(cw) = self.conn_win.window() else {
+            return;
+        };
+        let near = cw
+            .outer_position()
+            .ok()
+            .map(|p| (p.x, p.y, cw.outer_size().width));
+        let profile = self.conn_win.panel.profile_name();
+        let owner = self.conn_win.window();
+        self.profvars_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner,
+            &profile,
+        );
+    }
+
     /// ★ 변수 창 **보이기**(툴바 [변수] · 사용자 10-23 · 객체 찾기와 같은 동작): 열려 있으면 앞으로 · 아니면 다음 `about_to_wait`에서 연다
     ///   (이벤트 루프 밖이라 깃발 `open_vars` · 토글 아님 — 토글은 메뉴 `view.variables`).
     pub(crate) fn show_vars_window(&mut self) {

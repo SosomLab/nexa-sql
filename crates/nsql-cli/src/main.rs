@@ -1588,6 +1588,13 @@ fn cmd_run(o: &Opts) -> i32 {
                 .engine
                 .vars
                 .set_global(nsql_script::varsfile::load_global(d));
+            // ★ 치환 변수 글로벌 층도 같은 파일(`DEFINE` 줄 · T-153 후속 10-27) — GUI와 같은 층을 읽고 끝에 쓴다.
+            runner.engine.defines.set_layer(
+                nsql_script::MacroLayer::Global,
+                nsql_script::varsfile::load_global_macros(d)
+                    .into_iter()
+                    .collect(),
+            );
         }
     }
     // 파일이면 그 폴더가 `@@`의 기준(T-9) · stdin이면 cwd.
@@ -1597,7 +1604,18 @@ fn cmd_run(o: &Opts) -> i32 {
     runner.commit_at_exit();
     if cli_global {
         if let Some(d) = &vars_dir {
-            nsql_script::varsfile::store_global(d, &runner.engine.vars.global_states());
+            let macros: Vec<(String, String)> = runner
+                .engine
+                .defines
+                .layer(nsql_script::MacroLayer::Global)
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            nsql_script::varsfile::store_global_full(
+                d,
+                &runner.engine.vars.global_states(),
+                &macros,
+            );
         }
     }
     close_spool(&printer.spool);

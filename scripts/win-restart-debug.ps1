@@ -2,7 +2,8 @@
 #   Debug(full · 내장 드라이버) 빌드 → 이 저장소 target\debug\nexa-sql.exe 종료(누가 띄웠든 · docs/61 §2-4 예외) → 실제 설정으로 재기동.
 #   -Release = Release도 함께 = ★ lite 판(D-363 · docs/61 §3): target\lite에 `--no-default-features --features …oracle-oci`로 빌드해
 #   target\release로 복사 · 종전 full 판은 *.full로 보존(판별은 빌드 전 · mac S1 교훈) · 기본 `cargo build --release`는 쓰지 않는다.
-#   빌드 실패($LASTEXITCODE ≠ 0)면 종료·복사·재기동을 하지 않는다(S2 교훈).
+#   빌드 실패($LASTEXITCODE ≠ 0)면 복사·재기동을 하지 않는다(S2 교훈). ★ Windows는 실행 중인 exe가 링크를 막으므로 **Debug 인스턴스는
+#   빌드 전에** 끈다(mac/linux는 빌드 뒤 · 협업 10-27 관찰 = PID 16440이 살아 있어 `failed to remove file …nexa-sql.exe` exit 101).
 # 사용:  pwsh scripts/win-restart-debug.ps1              # Debug 빌드 + 재기동
 #        pwsh scripts/win-restart-debug.ps1 -NoBuild     # 재기동만
 #        pwsh scripts/win-restart-debug.ps1 -Release     # Debug + Release lite
@@ -40,6 +41,7 @@ function Stop-RepoInstances([string]$sub) {
 }
 
 if (-not $NoBuild) {
+    Stop-RepoInstances 'debug'   # 실행 중인 exe는 링크를 막는다(Windows) — 빌드가 실패하면 재기동 없이 멈춘다(옛 exe는 그대로 남는다)
     Build-Filtered @('build', '--workspace') 'debug'
     if ($Release) {
         # ★ full 판 판별은 빌드 전: 마지막으로 복사한 lite의 해시를 부속 파일 `<exe>.lite-sha`에 적어 두고, 지금 target\release가 그 해시와

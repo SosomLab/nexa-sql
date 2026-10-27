@@ -988,15 +988,7 @@ impl App {
         }
         match req {
             grid::FetchReq::Next { offset, limit } => {
-                if self.settings.flag("grid.offset_warn")
-                    && !nsql_io::paging::has_order_by(&sql)
-                    && self.offset_warned.insert(key)
-                {
-                    self.log_win.push(LogEntry::new(
-                        LogKind::Info,
-                        t(Msg::StOffsetWarn).to_string(),
-                    ));
-                }
+                // (`grid.offset_warn` 안내는 워커 결과가 실제로 OFFSET 재질의였을 때만 — `on_conn_page` · T-433 10-27.)
                 self.sess.submit(
                     pass,
                     worker::Cmd::FetchPage {

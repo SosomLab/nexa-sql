@@ -847,6 +847,7 @@ impl ApplicationHandler<Wake> for App {
         }
         let modal_open = self.modal_open();
         let is_modal_win = self.conn_win.is(id)
+            || self.profvars_win.is(id) // 접속 창의 딸린 창(모달 동안 사건을 받는다 · T-153 후속 10-27)
             || self.file_win.is(id)
             || self.sqlprev_win.is(id)
             || self.import_win.is(id)
@@ -1316,6 +1317,46 @@ impl App {
         if self.conn_win.is(id) {
             for a in self.conn_win.handle(event) {
                 self.handle_conn_win_action(a);
+            }
+            // 딸린 프로필 변수 창: 접속 창이 닫히면 함께 · 폼의 프로필이 바뀌면 제목을 따라간다.
+            if self.profvars_win.is_open() {
+                if self.conn_win.is_open() {
+                    let name = self.conn_win.panel.profile_name();
+                    self.profvars_win.set_profile(&name);
+                } else {
+                    self.profvars_win.close();
+                }
+            }
+            return true;
+        }
+        if self.profvars_win.is(id) {
+            match self.profvars_win.handle(event) {
+                profvars_win::ProfVarsAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let rows = self.conn_win.panel.vars().to_vec();
+                    self.profvars_win
+                        .paint(&rows, &self.ui_font, &self.theme, ui_px);
+                }
+                profvars_win::ProfVarsAction::Set(name, value) => {
+                    if !self.conn_win.panel.set_var(&name, &value) {
+                        self.profvars_win
+                            .set_note(profvars_win::bad_name_note(&name));
+                    }
+                    self.profvars_win.redraw();
+                    self.conn_win.redraw();
+                }
+                profvars_win::ProfVarsAction::Delete(name) => {
+                    self.conn_win.panel.remove_var(&name);
+                    self.profvars_win.redraw();
+                    self.conn_win.redraw();
+                }
+                profvars_win::ProfVarsAction::None => {}
+            }
+            if self.profvars_win.take_close_requested() {
+                self.profvars_win.close();
+                if let Some(w) = self.conn_win.window() {
+                    winfocus::focus(w);
+                }
             }
             return true;
         }
@@ -1979,6 +2020,9 @@ impl App {
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
         }
+        if std::mem::take(&mut self.open_profvars) {
+            self.open_profvars_window(el);
+        }
         if std::mem::take(&mut self.open_drivers) {
             self.open_drivers_window(el);
         }
@@ -2145,6 +2189,9 @@ impl App {
         }
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
+        }
+        if std::mem::take(&mut self.open_profvars) {
+            self.open_profvars_window(el);
         }
         if std::mem::take(&mut self.open_drivers) {
             self.open_drivers_window(el);

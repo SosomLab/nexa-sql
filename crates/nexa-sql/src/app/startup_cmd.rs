@@ -1471,8 +1471,38 @@ impl App {
         if let Some(name) = id.strip_prefix("conn.edit:") {
             if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
                 self.conn_win.capture_open_detail(name);
-                self.conn_win.panel.fill(name, &spec);
+                let vars = crate::connect::profile_vars(name);
+                self.conn_win.panel.fill(name, &spec, vars);
                 self.conn_win.panel.capture_touch();
+                self.conn_win.redraw();
+            }
+            return;
+        }
+        // ★ T-153 후속 자체 시험(10-27): `conn.var:<프로필>:<이름>=<값>` = 프로필을 폼에 불러와 변수를 넣고(빈 값 = 삭제) [저장]과 같은 길 —
+        //   결과는 CLI `nsql conn var <프로필>` 또는 프로필 파일의 `var.` 줄로 확인. `conn.vars:<프로필>` = 불러오기 + 프로필 변수 창 열기(캡처).
+        if let Some(rest) = id.strip_prefix("conn.var:") {
+            if let Some((name, kv)) = rest.split_once(':') {
+                if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
+                    self.conn_win.capture_open_detail(name);
+                    let vars = crate::connect::profile_vars(name);
+                    self.conn_win.panel.fill(name, &spec, vars);
+                    let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                    if !self.conn_win.panel.set_var(k, v) {
+                        self.sess.status = crate::profvars_win::bad_name_note(k);
+                    } else if let Some(a) = self.conn_win.panel.save_action() {
+                        self.handle_panel_action(a);
+                    }
+                    self.conn_win.redraw();
+                }
+            }
+            return;
+        }
+        if let Some(name) = id.strip_prefix("conn.vars:") {
+            if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
+                self.conn_win.capture_open_detail(name);
+                let vars = crate::connect::profile_vars(name);
+                self.conn_win.panel.fill(name, &spec, vars);
+                self.open_profvars = true;
                 self.conn_win.redraw();
             }
             return;

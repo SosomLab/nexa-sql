@@ -411,14 +411,28 @@ impl App {
 
     /// 글로벌 층이 바뀌었다(변수 창 · 스크립트 `VAR x GLOBAL`) — 파일에 남기고(`vars.global_persist`) 모든 세션에 전파.
     pub(crate) fn global_vars_changed(&mut self) {
-        if self.settings.flag("vars.global_persist") {
-            if let Some(dir) = varsfile::dir() {
-                varsfile::store_global(&dir, &self.global_vars);
-            }
-        }
+        self.persist_global_layers();
         let v = self.global_vars.clone();
         for s in self.all_sess() {
             s.control(worker::Cmd::GlobalVars(v.clone()));
+        }
+    }
+
+    /// ★ 치환 변수 글로벌 층이 바뀌었다(스크립트 `DEFINE x GLOBAL` · T-153 후속 10-27) — 같은 파일에 `DEFINE` 줄로 남기고 모든 세션 러너에 전파.
+    pub(crate) fn global_macros_changed(&mut self) {
+        self.persist_global_layers();
+        let pairs = self.global_macro_pairs();
+        for s in self.all_sess() {
+            s.control(worker::Cmd::GlobalMacros(pairs.clone()));
+        }
+    }
+
+    /// 글로벌 층 두 가지(바인드 + 치환)를 `vars/global.sql` 한 파일에(`vars.global_persist` · 비밀·커서 값 제외).
+    fn persist_global_layers(&self) {
+        if self.settings.flag("vars.global_persist") {
+            if let Some(dir) = varsfile::dir() {
+                varsfile::store_global(&dir, &self.global_vars, &self.global_macro_pairs());
+            }
         }
     }
 

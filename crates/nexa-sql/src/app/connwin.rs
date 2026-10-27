@@ -166,7 +166,8 @@ impl App {
         match Vault::open_default().and_then(|v| v.get(name)) {
             Ok(Some(spec)) => {
                 let spec = self.conn_win.with_session_pw(name, spec);
-                self.conn_win.panel.fill(name, &spec);
+                let vars = crate::connect::profile_vars(name);
+                self.conn_win.panel.fill(name, &spec, vars);
                 self.conn_win.panel.set_state(ConnState::Idle);
                 if let Some(a) = self.conn_win.panel.connect_action() {
                     self.handle_panel_action(a);
@@ -248,6 +249,11 @@ impl App {
                 return Ok(None);
             }
             v.save(&new, &spec)?;
+            // 프로필 변수도 함께 복제(T-153 후속 10-27).
+            let vars = v.vars(name).unwrap_or_default();
+            if !vars.is_empty() {
+                v.set_vars(&new, &vars)?;
+            }
             Ok(Some(new))
         });
         match r {

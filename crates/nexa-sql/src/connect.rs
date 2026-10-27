@@ -35,13 +35,24 @@ pub(crate) enum PanelAction {
         /// 목록에서 불러온 프로필의 이름을 바꿔 저장한 경우 = 옛 이름(호스트가 옛 항목을 지운다 · 사용자 09-16
         /// "New가 아니면 새 프로필이 아니라 이름 변경"). New(빈 폼)면 None.
         rename_from: Option<String>,
+        /// ★ 프로필 변수(T-153 후속 10-27 · docs/63 §11 프로필 층) — 호스트가 스펙 저장 뒤 `Vault::set_vars`로 쓴다(이름은 대문자 · 값 글자 그대로).
+        vars: Vec<(String, String)>,
     },
+    /// ★ 폼의 [프로필 변수 (n)…] 버튼 — 호스트가 프로필 변수 창을 연다(창의 편집은 `set_var`/`remove_var`로 폼에 돌아온다 = 바뀜 · Save에 실린다).
+    EditVars,
     /// 프로필 콤보에서 이름을 골랐다 — 호스트가 저장소에서 스펙을 읽어 [`ConnectPanel::fill`]로 채운다.
     LoadProfile(String),
     /// 입력란 우클릭 메뉴에서 고른 클립보드 행동 — OS 클립보드는 호스트(창) 몫.
     Edit(EditCtxAction),
     /// 저장 버튼 아래 파일 줄의 복사 버튼 — 접속 창이 목록 우클릭 메뉴와 **같은 진입점**(`ConnWin::copy_profile_file`)으로 처리한다(사용자 09-22).
     CopyFile(ProfileFile),
+}
+
+/// 저장소의 프로필 변수(`var.<이름>=값` 줄 · 없거나 실패 = 빈 목록) — 폼 `fill`의 셋째 인자(T-153 후속 10-27).
+pub(crate) fn profile_vars(name: &str) -> Vec<(String, String)> {
+    nsql_vault::Vault::open_default()
+        .and_then(|v| v.vars(name))
+        .unwrap_or_default()
 }
 
 /// 프로필 설정 파일의 무엇을 복사하는가(상세 보기 버튼 · 목록 우클릭 메뉴 공용).
@@ -119,6 +130,9 @@ pub(crate) struct ConnectPanel {
     test_btn: Button,
     connect_btn: Button,
     save_btn: Button,
+    /// ★ 프로필 변수(T-153 후속 10-27): 폼이 든 목록(저장본과 비교 = `Dirty::Vars`) + 서버 유형 줄 아래 전폭 버튼 [프로필 변수 (n)…].
+    vars: Vec<(String, String)>,
+    vars_btn: Button,
     /// 저장 버튼 아래 한 줄: 프로필 설정 파일 이름(`<해시>.conf` · 사용자 09-22 "해시와 프로필을 연결해 판단할 수 있게") + 복사 버튼.
     file_rect: Rect,
     /// 파일 줄의 복사 버튼(부품 `copybtn` · 눌림 → 체크 → 복귀 · 사용자 09-23).
@@ -152,6 +166,8 @@ pub(crate) struct FormSnap {
     pub save_pw: bool,
     /// 서버 유형 저장 값(`none`·`dev`·`test`·`prod`).
     pub env: String,
+    /// 프로필 변수(이름 대문자 · 값 글자 그대로 · 순서 포함).
+    pub vars: Vec<(String, String)>,
 }
 
 /// 바뀐 칸(순수 판정 · MC/DC: 칸마다 독립).
@@ -167,6 +183,7 @@ pub(crate) enum Dirty {
     Password,
     SavePw,
     Env,
+    Vars,
 }
 
 /// 어느 동작의 필수 검사인가(22 §10): Save는 Password 대신 프로필 이름.
@@ -262,6 +279,9 @@ pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
     }
     if base.env != now.env {
         out.push(Dirty::Env);
+    }
+    if base.vars != now.vars {
+        out.push(Dirty::Vars);
     }
     out
 }
@@ -434,6 +454,8 @@ impl ConnectPanel {
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
+            vars: Vec::new(),
+            vars_btn: Button::new(tf(Msg::BtnProfileVars, &["0"])),
             file_rect: Rect::default(),
             copy: crate::copybtn::CopyBtn::new(),
             copy_armed: false,
@@ -480,6 +502,8 @@ impl ConnectPanel {
         rebuild(&mut self.name, t(Msg::PhProfileName), false);
         rebuild(&mut self.quick, t(Msg::PhQuickConnect), false);
         self.quick_btn.set_label(t(Msg::BtnQuickConnect));
+        self.vars_btn
+            .set_label(tf(Msg::BtnProfileVars, &[&self.vars.len().to_string()]));
         self.layout_inner();
     }
 
@@ -524,8 +548,9 @@ impl ConnectPanel {
     }
 
     /// 저장소에서 읽은 스펙으로 폼을 채운다.
-    pub(crate) fn fill(&mut self, name: &str, spec: &ConnectSpec) {
+    pub(crate) fn fill(&mut self, name: &str, spec: &ConnectSpec, vars: Vec<(String, String)>) {
         self.loaded_name = Some(name.to_string());
+        self.vars = vars;
         self.env.select_value(env_value(spec.env));
         if let Some(d) = spec.dialect {
             self.dialect
@@ -606,9 +631,41 @@ impl ConnectPanel {
             tb.set_text("");
         }
         self.save_pw.set_checked(false);
+        self.vars.clear();
         let d = self.selected_dialect();
         self.apply_dialect(d);
         self.mark_saved();
+    }
+
+    /// ★ 프로필 변수 목록(창이 표로 보인다 · 폼이 단일 원천).
+    pub(crate) fn vars(&self) -> &[(String, String)] {
+        &self.vars
+    }
+
+    /// 프로필 변수 넣기/바꾸기(이름은 대문자 정규화 · 값이 비면 삭제 = CLI `nsql conn var NAME=`와 같은 규칙) — 이름 규칙 밖이면 false.
+    pub(crate) fn set_var(&mut self, name: &str, value: &str) -> bool {
+        let key = name
+            .trim()
+            .trim_start_matches([':', '&'])
+            .to_ascii_uppercase();
+        if !nsql_vault::is_var_name(&key) {
+            return false;
+        }
+        if let Some(v) = self.vars.iter_mut().find(|(n, _)| *n == key) {
+            if value.is_empty() {
+                self.vars.retain(|(n, _)| *n != key);
+            } else {
+                v.1 = value.to_string();
+            }
+        } else if !value.is_empty() {
+            self.vars.push((key, value.to_string()));
+        }
+        true
+    }
+
+    pub(crate) fn remove_var(&mut self, name: &str) {
+        let key = name.trim().to_ascii_uppercase();
+        self.vars.retain(|(n, _)| *n != key);
     }
 
     /// 지금 값의 스냅숏.
@@ -628,6 +685,7 @@ impl ConnectPanel {
             password: self.password.text(),
             save_pw: self.save_pw.is_checked(),
             env: self.env.selected_value(),
+            vars: self.vars.clone(),
         }
     }
 
@@ -693,6 +751,8 @@ impl ConnectPanel {
         });
         // 라벨은 늘 "Save" — 바뀜 표식은 그릴 때 같은 크기의 원으로 붙인다(글리프 `•`는 글꼴마다 크기가 달랐다).
         self.save_btn.set_label(t(Msg::BtnSave).to_string());
+        self.vars_btn
+            .set_label(tf(Msg::BtnProfileVars, &[&self.vars.len().to_string()]));
         self.dirty_now = dirty;
     }
 
@@ -761,6 +821,7 @@ impl ConnectPanel {
         self.test_btn.set_scale(scale);
         self.connect_btn.set_scale(scale);
         self.save_btn.set_scale(scale);
+        self.vars_btn.set_scale(scale);
         self.layout_inner();
     }
 
@@ -851,6 +912,10 @@ impl ConnectPanel {
             }
             y += field_h + gap;
         }
+        // ★ 프로필 변수 버튼 한 줄(전폭 · 라벨 없음 · T-153 후속 10-27 · D-365: 창 기본 높이 580 → 614).
+        self.vars_btn
+            .set_bounds(Rect::new(x, y, w, field_h), &mut inv);
+        y += field_h + gap;
         // 버튼 3개 한 줄 — 동일 너비 · 동일 간격(나머지 px는 양끝에 나눠 중앙 정렬 · 사용자 09-14).
         let bw = (w - gap * 2) / 3;
         let bh = self.s(28.0);
@@ -941,6 +1006,7 @@ impl ConnectPanel {
         set(&mut self.save_btn, hit == Some(4));
         set(&mut self.env, hit == Some(5));
         set(&mut self.quick_btn, hit == Some(6));
+        set(&mut self.vars_btn, hit == Some(7));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -953,6 +1019,7 @@ impl ConnectPanel {
             self.save_btn.bounds(),
             self.env.bounds(),
             self.quick_btn.bounds(),
+            self.vars_btn.bounds(),
         ]
         .iter()
         .position(|b| b.contains(p))
@@ -983,7 +1050,8 @@ impl ConnectPanel {
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         let a = self.test_btn.tick(now_ms);
         let b = self.connect_btn.tick(now_ms);
-        let c = self.save_btn.tick(now_ms) | self.quick_btn.tick(now_ms);
+        let c =
+            self.save_btn.tick(now_ms) | self.quick_btn.tick(now_ms) | self.vars_btn.tick(now_ms);
         let d = self.dialect.tick_hover(now_ms) | self.env.tick_hover(now_ms);
         // 입력란 hover 페이드(회색 · Slow).
         let mut e = false;
@@ -1006,6 +1074,7 @@ impl ConnectPanel {
             || self.connect_btn.is_animating()
             || self.save_btn.is_animating()
             || self.quick_btn.is_animating()
+            || self.vars_btn.is_animating()
             || self.dialect.hover_animating()
             || self.env.hover_animating()
             || self.copy.next_tick(std::time::Instant::now()).is_some()
@@ -1260,6 +1329,7 @@ impl ConnectPanel {
             self.connect_btn.on_event(ev, inv);
             self.save_btn.on_event(ev, inv);
             self.quick_btn.on_event(ev, inv);
+            self.vars_btn.on_event(ev, inv);
             // 포커스 링은 하나만 — 방금 눌린 컨트롤만 켠다(텍스트박스면 전부 끈다).
             if let InputEvent::MouseDown { x, y, .. } = *ev {
                 let hit = self.ctl_hit(Point { x, y });
@@ -1279,6 +1349,9 @@ impl ConnectPanel {
             }
             if self.quick_btn.take_clicked() {
                 return self.act_quick();
+            }
+            if self.vars_btn.take_clicked() {
+                return Some(PanelAction::EditVars);
             }
         }
         // 키 · 문자 → 포커스 텍스트박스
@@ -1498,6 +1571,7 @@ impl ConnectPanel {
                     name,
                     spec,
                     rename_from,
+                    vars: self.vars.clone(),
                 })
             }
             Err(e) => {
@@ -1693,6 +1767,11 @@ impl ConnectPanel {
             stripe(dc, self.env.bounds());
         }
         self.quick_btn.paint(dc, th);
+        // 프로필 변수 버튼 — 바뀜(목록이 저장본과 다름)은 콤보·체크와 같은 왼쪽 띠.
+        self.vars_btn.paint(dc, th);
+        if is(Dirty::Vars) {
+            stripe(dc, self.vars_btn.bounds());
+        }
         self.test_btn.paint(dc, th);
         self.connect_btn.paint(dc, th);
         // Save = 바뀐 칸이 있으면 강조 + `Save •`(`sync_dirty` · 툴바 Commit 배지와 같은 문법).
@@ -1840,6 +1919,7 @@ mod dirty_tests {
             password: "p".into(),
             save_pw: true,
             env: "none".into(),
+            vars: Vec::new(),
         }
     }
 
@@ -1909,13 +1989,13 @@ mod dirty_tests {
         assert!(!p.is_dirty());
     }
 
-    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(10칸 독립) · 같으면 빈 목록.
+    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(11칸 독립) · 같으면 빈 목록.
     #[test]
     fn each_field_independently() {
         let b = base();
         assert!(dirty_fields(&b, &b).is_empty());
         type Mut = fn(&mut FormSnap);
-        let cases: [(Mut, Dirty); 10] = [
+        let cases: [(Mut, Dirty); 11] = [
             (|s| s.name = "B".into(), Dirty::Name),
             (|s| s.dialect = "pg".into(), Dirty::Dialect),
             (|s| s.host = "x".into(), Dirty::Host),
@@ -1926,11 +2006,48 @@ mod dirty_tests {
             (|s| s.password = "q".into(), Dirty::Password),
             (|s| s.save_pw = false, Dirty::SavePw),
             (|s| s.env = "prod".into(), Dirty::Env),
+            (|s| s.vars.push(("X".into(), "1".into())), Dirty::Vars),
         ];
         for (f, want) in cases {
             let mut n = base();
             f(&mut n);
             assert_eq!(dirty_fields(&b, &n), vec![want]);
+        }
+    }
+
+    /// ★ 프로필 변수(T-153 후속 10-27): 이름 대문자·`:`/`&` 벗김 · 잘못된 이름 거절 · 같은 이름 덮어쓰기 · 빈 값 = 삭제 ·
+    /// 목록이 저장본과 다르면 `Dirty::Vars` 하나 · Save 액션에 실린다 · `fill`은 받은 목록을 저장본으로.
+    #[test]
+    fn profile_vars_edit_and_dirty() {
+        let mut p = ConnectPanel::new(vec![Dialect::Oracle]);
+        assert!(p.set_var(":owner", "scott"));
+        assert!(p.set_var("&Proj", "M4PLAN"));
+        assert!(!p.set_var("1bad", "x"));
+        assert!(!p.set_var("a-b", "x"));
+        assert_eq!(
+            p.vars(),
+            &[
+                ("OWNER".to_string(), "scott".to_string()),
+                ("PROJ".to_string(), "M4PLAN".to_string())
+            ]
+        );
+        assert_eq!(p.dirty(), vec![Dirty::Vars]);
+        assert!(p.set_var("owner", "tiger"));
+        assert!(p.set_var("proj", ""));
+        assert_eq!(p.vars(), &[("OWNER".to_string(), "tiger".to_string())]);
+        p.remove_var("owner");
+        assert!(p.vars().is_empty());
+        assert!(p.dirty().is_empty(), "{:?}", p.dirty());
+        // 불러오기 = 저장본 · 그 뒤 고치면 바뀜 · Save에 지금 목록이 실린다.
+        let spec = ConnectSpec::from_parts(Dialect::Oracle, "h", Some(1521), "db", "u", "p")
+            .expect("spec");
+        p.fill("A", &spec, vec![("X".into(), "1".into())]);
+        assert!(!p.is_dirty());
+        p.set_var("Y", "2");
+        assert_eq!(p.dirty(), vec![Dirty::Vars]);
+        match p.act_save() {
+            Some(PanelAction::Save { vars, .. }) => assert_eq!(vars.len(), 2),
+            other => panic!("{other:?}"),
         }
     }
 
@@ -2020,6 +2137,10 @@ mod dirty_tests {
         assert_eq!((sc.y, sc.h), (env.y, env.h));
         assert!(sc.w > 0 && env.x > sc.right(), "{sc:?} {env:?}");
         assert!(sc.y > pw.bottom() && btn.y > sc.bottom());
+        // ★ 프로필 변수 버튼 = 서버 유형 줄 아래 · 저장 버튼 위 · 전폭(10-27).
+        let vb = p.vars_btn.bounds();
+        assert!(vb.y > sc.bottom() && btn.y > vb.bottom(), "{vb:?} {btn:?}");
+        assert_eq!((vb.x, vb.w), (p.user.bounds().x, p.user.bounds().w));
         // SQL Server: 스키마 숨김 · 그 자리에 Database(왼쪽) + 서버 유형(오른쪽) 한 줄 · User는 호스트 바로 아래로 올라온다(사용자 10-01).
         p.dialect.select_value(&Dialect::Mssql.to_string());
         p.apply_dialect(Dialect::Mssql);
@@ -2052,7 +2173,7 @@ mod dirty_tests {
         let mut spec = ConnectSpec::from_parts(Dialect::Oracle, "h", Some(1521), "svc", "u", "pw")
             .expect("spec");
         spec.env = Some(nsql_script::ConnEnv::Test);
-        p.fill("A", &spec);
+        p.fill("A", &spec, Vec::new());
         assert_eq!(p.env.selected_value(), "test");
         assert!(!p.is_dirty());
         p.env.select_value("prod");
@@ -2124,13 +2245,13 @@ mod tests {
         assert_eq!(items.len(), Dialect::ALL.len() + 2);
         let mut p = ConnectPanel::new(vec![Dialect::Oracle]);
         let mut spec = ConnectSpec::parse("oracle://u:p@h:1521/svc?driver=thin").expect("spec");
-        p.fill("x", &spec);
+        p.fill("x", &spec, Vec::new());
         assert_eq!(p.dialect.selected_value(), "oracle?driver=thin");
         assert_eq!(p.selected_dialect(), Dialect::Oracle);
         let built = p.build_spec().expect("spec");
         assert_eq!(built.driver.as_deref(), Some("thin"));
         spec.driver = None;
-        p.fill("y", &spec);
+        p.fill("y", &spec, Vec::new());
         assert_eq!(p.dialect.selected_value(), "oracle");
         assert_eq!(p.build_spec().expect("spec").driver, None);
     }

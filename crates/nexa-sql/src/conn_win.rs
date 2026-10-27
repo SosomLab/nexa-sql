@@ -59,7 +59,7 @@ impl Default for ConnTuning {
             copy_feedback_ms: 2000,
             slide_ms: 200.0,
             window_w: 748.0,
-            window_h: 580.0,
+            window_h: 614.0, // 10-27 D-365: 프로필 변수 버튼 줄(+34)
             panel_w: 292.0,
             button_scale: 1.32,
             port_w: 58.0,

@@ -339,6 +339,19 @@ fn line_of(src: &str, byte: usize) -> usize {
 }
 
 /// 문장 머리 요약(첫 60자 · 공백 접기).
+/// `DEFINE 이름` 뒤가 층 낱말 하나(`SHARE`·`SHARED`·`LOCAL`·`TAB`·`UNSHARE`·`GLOBAL`)로 끝나는가 — command.rs의 층 이동 판정과 같은 낱말(T-434).
+fn is_layer_word(rest: &str) -> bool {
+    let w = rest
+        .trim()
+        .trim_end_matches(';')
+        .trim()
+        .to_ascii_uppercase();
+    matches!(
+        w.as_str(),
+        "SHARE" | "SHARED" | "LOCAL" | "TAB" | "UNSHARE" | "GLOBAL"
+    )
+}
+
 fn head(text: &str) -> String {
     let mut out = String::new();
     let mut last_ws = false;
@@ -395,6 +408,10 @@ fn scan_item(src: &str, item: &Item, out: &mut Outline) {
             if eq(first, "DEFINE") || eq(first, "DEF") {
                 if let Some(w) = ws.get(1).filter(|w| is_name(w)) {
                     let rest = text[w.end..].trim_start();
+                    // ★ T-434(10-27): `DEFINE 이름 SHARE|LOCAL|GLOBAL …`은 층 이동이지 선언이 아니다 → 아웃라인에서 제외(원 선언만 남는다).
+                    if is_layer_word(rest) {
+                        return;
+                    }
                     let val = rest
                         .strip_prefix('=')
                         .map(|v| head(v.trim()))
@@ -822,7 +839,8 @@ mod tests {
 
     #[test]
     fn statements_defines_ctes_and_create_targets() {
-        let src = "DEFINE v_user = 'scott'\nVARIABLE rc REFCURSOR\nWITH RECURSIVE n(i) AS (SELECT 1), m AS (SELECT 2)\nSELECT * FROM n, m;\nCREATE OR REPLACE VIEW app.v_x AS SELECT 1 FROM dual;\nCREATE UNIQUE INDEX ix_a ON t(a);\n-- WITH not_a_cte AS ( in comment\nSELECT 'WITH q AS (' FROM dual;";
+        // ★ T-434: `DEFINE v_user SHARE`(층 이동)·`DEFINE v_user GLOBAL;`은 선언이 아니라 아웃라인에 두 번째 줄로 나오지 않는다.
+        let src = "DEFINE v_user = 'scott'\nDEFINE v_user SHARE\nDEFINE v_user global;\nVARIABLE rc REFCURSOR\nWITH RECURSIVE n(i) AS (SELECT 1), m AS (SELECT 2)\nSELECT * FROM n, m;\nCREATE OR REPLACE VIEW app.v_x AS SELECT 1 FROM dual;\nCREATE UNIQUE INDEX ix_a ON t(a);\n-- WITH not_a_cte AS ( in comment\nSELECT 'WITH q AS (' FROM dual;";
         let o = outline(src, Some(Dialect::Oracle));
         assert_eq!(names(&o, SymKind::Define), vec!["v_user"]);
         assert_eq!(names(&o, SymKind::Variable), vec!["rc"]);
@@ -845,7 +863,7 @@ mod tests {
         );
         assert_eq!(n.depth, 1);
         assert_eq!(o.find("v_user").map(|s| s.line), Some(1));
-        assert_eq!(o.find("m").map(|s| s.line), Some(3));
+        assert_eq!(o.find("m").map(|s| s.line), Some(5));
         let d = o
             .symbols
             .iter()

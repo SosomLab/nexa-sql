@@ -90,6 +90,7 @@ mod parwalk;
 mod prefs_win;
 mod present;
 mod probe;
+mod profvars_win;
 mod project;
 mod project_panel;
 mod results;
@@ -356,6 +357,9 @@ struct App {
     pw_once: Option<(u64, nsql_core::Secret, Instant)>,
     /// 변수 창(docs/63 V2) · 마지막 실행에서 바뀐 이름(탭 id, 대문자 이름들 — 그 탭의 줄을 강조).
     vars_win: vars_win::VarsWin,
+    /// ★ 프로필 변수 창(접속 폼 [프로필 변수 (n)…] · T-153 후속 10-27).
+    profvars_win: profvars_win::ProfVarsWin,
+    open_profvars: bool,
     /// ★ 드라이버 관리자 창(docs/22 §5-2 · T-29 2차) + 워커 상태.
     driver_win: driver_win::DriverWin,
     driver_task: app::drivers::DriverTask,
@@ -1632,7 +1636,8 @@ fn main() {
         .filter(|n| nsql_vault::is_profile_name(n))
     {
         if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
-            panel.fill(name, &spec);
+            let vars = connect::profile_vars(name);
+            panel.fill(name, &spec, vars);
         }
     }
     let status = if profiles.is_empty() {
@@ -1718,6 +1723,7 @@ fn main() {
     let input_win = input_win::InputWin::new();
     mark(&mut marks, "input_win");
     let vars_win = vars_win::VarsWin::new();
+    let profvars_win = profvars_win::ProfVarsWin::new();
     mark(&mut marks, "vars_win");
     let driver_win = driver_win::DriverWin::new();
     let git = gitstat::GitWatch::new();
@@ -1768,7 +1774,13 @@ fn main() {
         global_vars: varsfile::dir()
             .map(|d| varsfile::load_global(&d))
             .unwrap_or_default(),
-        global_macros: Vec::new(),
+        // 치환 변수 글로벌 층 = 같은 파일의 `DEFINE` 줄(표시값 = 원문 · 러너가 실행 때 펼친 값을 돌려준다 · T-153 후속 10-27).
+        global_macros: varsfile::dir()
+            .map(|d| varsfile::load_global_macros(&d))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(n, raw)| (n, raw.clone(), raw))
+            .collect(),
         vars_pruned: false,
         ui_font: ui.font,
         mono_font: mono.font,
@@ -1845,6 +1857,8 @@ fn main() {
         key_guard: None,
         pw_once: None,
         vars_win,
+        profvars_win,
+        open_profvars: false,
         driver_win,
         driver_task: app::drivers::DriverTask::default(),
         open_drivers: false,

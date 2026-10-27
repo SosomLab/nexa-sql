@@ -19,12 +19,13 @@ impl App {
                 let typed = spec.password.clone().unwrap_or_default();
                 let mut saved = spec;
                 saved.password = None;
-                self.conn_win.panel.fill(&name, &saved);
+                self.conn_win.panel.fill(&name, &saved, Vec::new());
                 self.conn_win.panel.set_password_text(&typed);
                 self.handle_panel_action(PanelAction::Save {
                     name: name.clone(),
                     spec: saved,
                     rename_from: None,
+                    vars: Vec::new(),
                 });
                 if matches!(self.conn_win.panel.state(), ConnState::Failed(_)) {
                     return;
@@ -111,6 +112,7 @@ impl App {
                 name,
                 spec,
                 rename_from,
+                vars,
             } => {
                 // 저장하지 않더라도 입력된 비밀번호는 세션에 보관(사용자 09-14).
                 let typed = self.conn_win.panel.password_text();
@@ -120,6 +122,8 @@ impl App {
                 // 이름 변경(사용자 09-16): 새 이름으로 저장이 성공한 뒤에만 옛 항목을 지운다(실패 시 옛 프로필 보존).
                 let res = Vault::open_default().and_then(|v| {
                     v.save(&name, &spec)?;
+                    // ★ 프로필 변수(T-153 후속 10-27) = 스펙 다음에 같은 파일의 `var.` 줄(스펙 저장이 보존한 옛 줄을 통째로 교체).
+                    v.set_vars(&name, &vars)?;
                     if let Some(old) = &rename_from {
                         v.remove(old)?;
                     }
@@ -135,7 +139,7 @@ impl App {
                             self.panel_results.remove(old.trim());
                         }
                         // 폼은 이제 새 이름의 프로필을 "불러온" 상태 — 또 바꿔 저장하면 다시 이름 변경.
-                        self.conn_win.panel.fill(&name, &spec);
+                        self.conn_win.panel.fill(&name, &spec, vars);
                         self.conn_win.refresh_profiles(Some(&name));
                         // 지킴이가 미뤄 둔 동작(다른 프로필 불러오기 · New · 닫기)을 이어간다.
                         for a in self.conn_win.after_save(true) {
@@ -150,13 +154,18 @@ impl App {
                     }
                 }
             }
+            // ★ [프로필 변수 (n)…] = 창은 다음 `about_to_wait`/사건 끝에서 연다(이벤트 루프 밖 · 다른 보조 창과 같은 깃발 펌프).
+            PanelAction::EditVars => {
+                self.open_profvars = true;
+            }
             PanelAction::Edit(_) => {}     // 접속 창이 자체 처리(클립보드)
             PanelAction::CopyFile(_) => {} // 접속 창이 자체 처리(`copy_profile_file` → CopyText)
             PanelAction::LoadProfile(name) => {
                 match Vault::open_default().and_then(|v| v.get(&name)) {
                     Ok(Some(spec)) => {
                         let spec = self.conn_win.with_session_pw(&name, spec);
-                        self.conn_win.panel.fill(&name, &spec);
+                        let vars = crate::connect::profile_vars(&name);
+                        self.conn_win.panel.fill(&name, &spec, vars);
                         // 상태는 한 번에 하나(사용자 09-14): 진행/결과가 이 프로필 것이면 복원, 아니면 프로필별 마지막 결과(09-16).
                         let st = self.panel_state_for(&name);
                         self.conn_win.panel.set_state(st);
@@ -728,6 +737,23 @@ impl App {
                         tf(Msg::StRefetchReplaced, &[&n]),
                     ));
                 }
+                // ★ T-433(10-27): ORDER BY 없는 OFFSET 재질의 안내는 **실제로 그 길을 탔을 때만**(커서 이어 받기·교체·전체 조회·첫 페이지 제외) ·
+                //   탭마다 1회 — 종전엔 `send_fetch`가 커서 유무를 모른 채 미리 찍어 커서 경로에도 한 줄 나왔다(140차 mac V1 관찰).
+                if !all
+                    && !replace
+                    && !via_cursor
+                    && offset > 0
+                    && self.settings.flag("grid.offset_warn")
+                    && self
+                        .grid_for(key)
+                        .is_some_and(|g| !nsql_io::paging::has_order_by(g.source_sql()))
+                    && self.offset_warned.insert(key)
+                {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        t(Msg::StOffsetWarn).to_string(),
+                    ));
+                }
                 let dial = self.sess.dialect; // 이 페치를 돌려준 세션의 방언(결과의 속성 · 09-26)
                 let total = match self.grid_for(key) {
                     Some(g) => {
@@ -1258,10 +1284,7 @@ impl App {
                     // 스크립트가 치환 변수 글로벌 층을 바꿨으면(`DEFINE x GLOBAL`) 원천 갱신 + 모든 세션 러너에 전파(T-153 후속 10-26).
                     if defines_global != self.global_macros {
                         self.global_macros = defines_global;
-                        let pairs = self.global_macro_pairs();
-                        for s in self.all_sess() {
-                            s.control(worker::Cmd::GlobalMacros(pairs.clone()));
-                        }
+                        self.global_macros_changed();
                     }
                     let line = vars_log_line(&changed, &local, &shared, &global);
                     // 스크립트가 글로벌 층을 바꿨으면(`VAR x GLOBAL` · 대입) 단일 원천 갱신 + 저장 + 다른 세션에 전파.

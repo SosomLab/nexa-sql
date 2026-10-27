@@ -48,12 +48,17 @@ pub(crate) fn store_in(dir: &Path, file: &Path, vars: &[VarState]) {
 }
 
 /// ★ 글로벌 층 파일(docs/63 §11): `vars/global.sql` — GUI·CLI 공용 함수(nsql-script `varsfile` · T-307)에 위임.
-pub(crate) fn store_global(dir: &Path, vars: &[VarState]) {
-    nsql_script::varsfile::store_global(dir, vars);
+/// 바인드 글로벌 층 + 치환 변수 글로벌 층(`DEFINE` 줄 · T-153 후속 10-27)을 한 파일에.
+pub(crate) fn store_global(dir: &Path, vars: &[VarState], macros: &[(String, String)]) {
+    nsql_script::varsfile::store_global_full(dir, vars, macros);
 }
 
 pub(crate) fn load_global(dir: &Path) -> Vec<VarState> {
     nsql_script::varsfile::load_global(dir)
+}
+
+pub(crate) fn load_global_macros(dir: &Path) -> Vec<(String, String)> {
+    nsql_script::varsfile::load_global_macros(dir)
 }
 
 /// 읽는다(없거나 너무 크면 빈 목록).
