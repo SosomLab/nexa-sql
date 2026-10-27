@@ -111,4 +111,4 @@ duckdb::memory:?driver=duckdb           # 축약형 꼬리도 같다(?driver= ·
 - 허브 `ext_ids_for(dialect, want)` = 원하는 확장 id를 앞으로(thin → `oracle-thin` · oci → `oracle-oci`) · `open_oracle`이 `spec.driver`를 존중.
 - ★ **GUI 접속 폼(10-23 cf10a33)** = 방언 콤보에 **Oracle (Thin)** · **Oracle (OCI)** 두 항목(값 `oracle?driver=thin|oci`) → 고르면 `ConnectSpec.driver`에 들어가 저장·왕복 · 프로필을 열면 그 driver 항목이 선택된다.
 
-> ★ **프로필 변수(10-26 · T-153 ② · 5e53e376)** — 프로필 파일에 `var.<이름>=값` 줄(이름 = 대문자 식별자 · 스펙 재저장에도 보존 · nsql-vault `vars`/`set_vars`) · CLI `nsql conn var <프로필> [NAME=value …]`(`NAME=` = 삭제) · 접속 뒤 변수 창 `profile` 층(읽기 전용) · 접속 창 폼 편집 UI = 후속.
+> ★ **프로필 변수(10-26 · T-153 ② · 5e53e376)** — 프로필 파일에 `var.<이름>=값` 줄(이름 = 대문자 식별자 · 스펙 재저장에도 보존 · nsql-vault `vars`/`set_vars`) · CLI `nsql conn var <프로필> [NAME=value …]`(`NAME=` = 삭제) · 접속 뒤 변수 창 `profile` 층(읽기 전용) · ✅ **접속 창 폼 편집 UI(10-27 · 141차 win · T-153 후속 2)** = 폼 서버 유형 줄 아래 버튼 [프로필 변수 (n)…] → 창 "프로필 변수 [<프로필>]"(표 Name|Value · 입력란 `이름 = 값` · 값 비면 삭제) · 편집은 폼 변수 목록으로만(바뀜 `Dirty::Vars` · Save •) · 파일 쓰기 = [저장] 때 `Vault::save` 뒤 `set_vars` · 불러오기·복제·`conn.edit`·기동 인자 프로필도 변수 동반 · 기동 명령 `conn.var:<프로필>:<이름>=<값>` · `conn.vars:<프로필>`(창 · `@after:2000:` 필요).

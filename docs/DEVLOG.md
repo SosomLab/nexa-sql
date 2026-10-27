@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-27 (141차 · Windows · T-153 후속 2 · T-433 · T-434)** — ★ 접속 폼 [프로필 변수 (n)…] → 프로필 변수 창(폼 단일 원천 · Save 때 `set_vars` · 로그인 창 580 → 614 = D-365) · ★ 글로벌 치환 변수 보존(`vars/global.sql` `DEFINE 이름 = '값'` · `vars.global_persist` · CLI `vars.cli_global`) · T-433 offset 안내 = 워커 결과 · T-434 아웃라인 층 이동 제외 · `win-restart-debug.ps1` 종료 순서 수정 · 통합 40/0 · V1 ✓(1차 = 값 앞뒤 공백 소실 → 따옴표 규칙) · T-439 후보([journal 10-27 §2](journal/2026-10-27.md)).
+
+- **2026-10-27 (140차 · Windows · 검토 · D-364)** — 최신화 bc54fbce · 검토 11+3건 처리(문서 정정 · T-436 재시작 스크립트 3-OS · `win-restart-debug.ps1` 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택 · 커서 이어 받기 Windows V1 ✓ · main 254c377b · CI ✓ 3-OS([journal 10-27 §1](journal/2026-10-27.md)).
+
 - **2026-10-26 (140차 · macOS · 최신화 · ABI 커서 수정)** — 최신화 364c0d9(119커밋) · nexa-ui d60b8f5 · 🔧 확장 드라이버가 서버 커서를 늘 잃던 결함(`nsql-abi` 결과 코덱 `pending`·`limits_hit` 미직렬화 → lite 설치본 200행 뒤 스크롤마다 재질의 토스트) = 꼬리 필드 + `Reader::at_end`(ABI 2 유지 · 양방향 호환) · V2 ✓ · lite 변형 V1 ✓(커서 이어 받기 400행) · 2차 = 새 앱 + 옛 드라이버 조용한 절단 → ABI op 19 `CODEC_FEATURES`(옛 드라이버 = 커서 미지원) · D-363 로컬 Release = lite 3-OS · 통합 40/0 · CI cdylib 빌드 단계 추가(공백 의심은 정정) · 맥 점검(아웃라인·변수 층·기동 ✓ · T-431 첫 접속 GUI 재현 · T-434 신규) · 🚀 **v0.3.1 공개** + drivers-v0.1.7(Homebrew 설치 검증 ✓ · Chocolatey 제출 = 검수 대기 · pkg 0.3.1 ✓ · winget 안 냄) · 후속 T-432 timing · T-433 offset_warn · T-435 choco guard([journal 10-26 §5](journal/2026-10-26.md)).
 
 - **2026-10-26 (139차 · Windows · 최신화 · 빠른 수정 7)** — 최신화 ba2a2416(138차 91커밋) · 사용자 결정 8건(drivers-v0.1.6 발행 · 앱 v0.3.0 · T-430 진행 · 이 PC Release = lite · VPN · WiX 안 함 = MSI는 CI만 · 보류 T-427/D-353/Db2 10.5 · T-88/T-125 자동화 종결) · ★ T-430 스캔라인 래스터(eeed2ce9 · Debug 아이콘 구간 486~542 → 18~27 ms · resumed 1.1 s → 0.11 s · 픽셀 동일) · txlog 서버 행만 + DISCONNECT 로그 1회(08091ac1) · EXEC 로컬 대입(b8fdddae) · T-153 ⓑ `DEFINE … SHARE|LOCAL|GLOBAL`(a0538bd2) · T-429 func-check(e4569132) · T-408 perf 실행기(9c5a2cf3) · DRIVER_VERSION 0.1.6(f70a6927) · 통합 thin 5/5(Instant Client 없음) · T-88 ✅ · T-125 16 ✓ · 새 T-431 · 문서 정비(README 색인 +60 · MILESTONES +22 · TODO 감사) · [journal 10-26 §4](journal/2026-10-26.md)
