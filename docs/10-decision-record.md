@@ -154,10 +154,10 @@
 | D-10 | hot exit 저널(델타 로그) 도입 시점 — 1차는 스냅샷만(문서 18 안의 열린 결정) | ⏳ 대기 | 18-session-and-projects.md:37 §4 |
 | D-11 | 세션 변수 값 저장 기본값(끔 권장) — 문서 18 안의 열린 결정(뒤에 63·D-136 ✅ 파일별 보존이 같은 주제를 정함) | ⏳ 대기 | 18-session-and-projects.md:38 §4 · 63-variable-management.md:142 |
 | D-12 | `similar` 원장 등재(비교·병합 공용) — 문서 19의 결정 후보 · 결정 기록 D-8과 같은 내용 | ⏳ 대기 | 19-compare-git-and-object-history.md:62 §5 |
-| D-13 | 오브젝트 캐시 기본 위치(앱 데이터 vs 프로젝트 `.nexa/`)와 상한 — 문서 19의 결정 후보 · 결정 기록 D-17과 같은 내용 | ⏳ 대기 | 19-compare-git-and-object-history.md:63 §5 |
-| D-15 | 다음 우선순위(nexa-edit E1~E5 / hot exit / 비교·git / CLI 완성) — 사용자 답 대기인 채 | ⏳ 대기 | 10-decision-record.md:98 §3 · STATUS.md:769 |
-| D-16 | 실기 OS 순서(macOS 먼저 vs Windows 먼저) — 사용자 답 대기인 채 | ⏳ 대기 | 10-decision-record.md:99 §3 · journal/2026-09-12.md:35 |
-| D-17 | 오브젝트 시점 캐시·로컬 히스토리 기본 위치(앱 데이터 폴더 권장) — 사용자 답 대기인 채 | ⏳ 대기 | 10-decision-record.md:100 §3 · journal/2026-09-12.md:35 |
+| D-13 | 오브젝트 캐시 기본 위치(앱 데이터 vs 프로젝트 `.nexa/`)와 상한 — 문서 19의 결정 후보 · 결정 기록 D-17과 같은 내용 | ✅ 사용자 10-28 · D-378(= D-17) | 19-compare-git-and-object-history.md:63 §5 |
+| D-15 | 다음 우선순위(nexa-edit E1~E5 / hot exit / 비교·git / CLI 완성) — 사용자 답 대기인 채 | ✅ 종결(사용자 10-28 · D-377) | 10-decision-record.md:98 §3 · STATUS.md:769 |
+| D-16 | 실기 OS 순서(macOS 먼저 vs Windows 먼저) — 사용자 답 대기인 채 | ✅ 종결(사용자 10-28 · D-377) | 10-decision-record.md:99 §3 · journal/2026-09-12.md:35 |
+| D-17 | 오브젝트 시점 캐시·로컬 히스토리 기본 위치(앱 데이터 폴더 권장) — 사용자 답 대기인 채 | ✅ 사용자 10-28 · D-378 | 10-decision-record.md:100 §3 · journal/2026-09-12.md:35 |
 | D-18 | 기기 키 `device.key`의 macOS Keychain · Linux Secret Service 결합 — 후속(현재 0600 평문) | ⏳ 대기 | 10-decision-record.md:136 §3 · 21-connection-profiles.md:52 §5 |
 | D-19 | 드라이버 확장 저장소 구성 — 단일 `nexa-sql-drivers` + 서드파티 별도(권장) · 답 없음 | ✅ **D-349로 대체(10-22)** = nexa-sql 저장소 안 | 22-driver-extensions.md:170 §8 · TODO.md:52 |
 | D-20 | Oracle OCI 확장의 Instant Client 동봉 여부(D-1과 통합) — OTN 조건 확인 후 | ⏳ 대기 | 22-driver-extensions.md:171 §8 · TODO.md:53 |
@@ -172,7 +172,7 @@
 | D-29 | 온라인 2차(발급 자동화) 착수 시점 — v1.0 이후 · 수동 이메일로 시작(전달 채널은 L-5 확정) | 🚧 권장안 진행 | 23-license-activation.md:241 §6 · 25-license-tiers-and-server.md:434 · 25-license-tiers-and-server.md:454 |
 | D-30 | 게이트 집행 시점(v1.0부터 활성 권장) — 답 없음 · 09-28 D-145로 게이트 기본 끔이 됨 | ⏳ 대기 | 23-license-activation.md:242 §6 · 23-license-activation.md:6 |
 | D-40 | `nexa-license` 서명 알고리즘 포트화(ed25519 + p256) — 답 없음(09-27 구현은 ed25519 · keys) | ⏳ 대기 | 10-decision-record.md:134 §3 · 25-license-tiers-and-server.md:311 §10 · TODO.md:66 |
-| D-41[27] | CLI 짧은 옵션 진영 — ⓐ psql 기본(권장) / ⓑ 현행 / ⓒ 긴 옵션만 — 답 없음(T-51 ☐) | ⏳ 대기 | 27-cli-conventions.md:90 §3 · 27-cli-conventions.md:104 · 10-decision-record.md:121 |
+| D-41[27] | CLI 짧은 옵션 진영 — ⓐ psql 기본(권장) / ⓑ 현행 / ⓒ 긴 옵션만 — 답 없음(T-51 ☐) | ✅ 사용자 10-28 · D-379(ⓑ 현행) | 27-cli-conventions.md:90 §3 · 27-cli-conventions.md:104 · 10-decision-record.md:121 |
 | D-41[25] | 라이선스 게이트 표 §13-3 확정 — 상한식(연결 2/2 · 탭 5 · 2 MB · 결과 탭 2 · 창 1) 도입 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:546 §13-6 · journal/2026-09-27.md:205 · STATUS.md:220 |
 | D-42[25] | Org 전용 기능 우선순위 — 감사 로그 → 중앙 프로필 → 정책 강제 → 좌석 서버 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:547 §13-6 · journal/2026-09-27.md:205 |
 | D-43[25] | 잠긴 기능 UX — 메뉴에 남기고 "Pro · 대체: …" 안내 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:548 §13-6 · journal/2026-09-27.md:205 |
@@ -187,8 +187,8 @@
 | D-48[32] | Oracle 라이브 로그 기본 소스 — 권장 = 테이블 기본 + 세션 세그먼트 병행 · 1차 구현 기본 = session · 답 없음 | ⏳ 대기 | 32-server-messages-and-live-log.md:55 §2 · 32-server-messages-and-live-log.md:5 · 10-decision-record.md:60 |
 | D-48[25] | 라이선스 호환 원칙 — 발급 파일 불변 · `features=*`는 이후 기능 포함 · 큰 개편 = `nxl2` + 재발급 프로세스 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:552 §13-6 · journal/2026-09-27.md:31 |
 | D-52 | `tx.smart_commit` 기본 off(자동 커밋 기본 유지 · 권장) — 설정 키는 off로 존재 · 확정 문구 없음 | 🚧 권장안 진행 | 34-transaction-ux.md:111 §4 · 34-transaction-ux.md:88 · 10-decision-record.md:95 |
-| D-53 | 기본 구문 팔레트 — ⓒ 지금 값 유지 + 프리셋 3종 `editor.color_preset`(권장) — 결정 대기 | ⏳ 대기 | 35-editor-colors-reference.md:132 §4 · journal/2026-09-16.md:94 · TODO.md:117 |
-| D-54 | 선택 렌더링 — 불투명 기본 + Golden식 반투명 워시는 설정으로(권장) — 미정 | ⏳ 대기 | 35-editor-colors-reference.md:133 §4 · 39-resource-governance.md:160 |
+| D-53 | 기본 구문 팔레트 — ⓒ 지금 값 유지 + 프리셋 3종 `editor.color_preset`(권장) — 결정 대기 | ✅ 사용자 10-28 · D-380 | 35-editor-colors-reference.md:132 §4 · journal/2026-09-16.md:94 · TODO.md:117 |
+| D-54 | 선택 렌더링 — 불투명 기본 + Golden식 반투명 워시는 설정으로(권장) — 미정 | ✅ 사용자 10-28 · D-380 | 35-editor-colors-reference.md:133 §4 · 39-resource-governance.md:160 |
 | D-55 | 파일 검색 기본 무시 규칙에 `.gitignore` 자동 적용(끄는 토글) — 옵션으로 구현 · 확정 문구 없음 | 🚧 권장안 진행 | 36-find-in-files-and-project.md:97 §6 · 67-project-workspace.md:116 |
 | D-56 | 메모리 탭 본문 저장 — 프로젝트 파일 평문 vs 별도 `tabs/<id>.txt`(권장) — 답 없음(뒤에 67·D-144 · 70이 같은 주제를 다시 다룸) | ⏳ 대기 | 36-find-in-files-and-project.md:98 §6 · journal/2026-09-16.md:94 |
 | D-57 | 기본 프로젝트(워크스페이스) 자동 생성으로 hot exit 켬 — 채택 (09-22) | ✅ 확정 | 36-find-in-files-and-project.md:99 §6 · 67-project-workspace.md:53 |
@@ -202,10 +202,10 @@
 | D-73 | `grid.result_tabs` 켬(기본)/끔 — 끄면 활성 탭 외 즉시 해제 · T-93으로 구현 · 확정 문구 없음 | 🚧 권장안 진행 | 43-fetch-model-and-result-tabs.md:166 §4-3a · journal/2026-09-16.md:506 |
 | D-74 | 결과 탭 바 표시 `grid.result_tabbar` = auto(2개 이상일 때만 · 기본)/always · T-93 구현 | 🚧 권장안 진행 | 43-fetch-model-and-result-tabs.md:167 §4-3a · journal/2026-09-16.md:506 |
 | D-75 | 결과 탭 바 = 단일 행 고정 + 우클릭 메뉴(닫기·고정·이름·이동) · T-93 구현 | 🚧 권장안 진행 | 43-fetch-model-and-result-tabs.md:168 §4-3a · journal/2026-09-16.md:506 |
-| D-78 | 포터블 배포 모드(exe 옆 `data\` = 사용자 폴더 · zip 채널) — 재검토 중 · T-106 ☐ | ⏳ 대기 | 10-decision-record.md:67 §3 · 33-distribution-and-packaging.md:11 · MILESTONES.md:66 |
+| D-78 | 포터블 배포 모드(exe 옆 `data\` = 사용자 폴더 · zip 채널) — 재검토 중 · T-106 ☐ | ⏸ 보류(사용자 10-28 · D-381) | 10-decision-record.md:67 §3 · 33-distribution-and-packaging.md:11 · MILESTONES.md:66 |
 | D-88 | 확장 Python 지원 범위 — ② 사용자 python3 + 격리 프로세스(권장) — 답 대기 | ⏳ 대기 | 50-extension-system.md:98 §6 · 68-extension-developer-api.md:147 |
-| D-89 | 확장 인덱스 서명·출처 — ② 공식 + 사용자 추가 URL(서명 필수 · 권장) — 답 대기 · 미구현 | ⏳ 대기 | 50-extension-system.md:99 §6 · 75-extension-sdk-and-dynamic-loading.md:144 |
-| D-90 | 확장 능력 승인 시점 — ③ 설치 때 표시 + 위험 능력은 첫 사용 때 재확인(권장) — 답 대기 · 미구현 | ⏳ 대기 | 50-extension-system.md:100 §6 · 75-extension-sdk-and-dynamic-loading.md:144 |
+| D-89 | 확장 인덱스 서명·출처 — ② 공식 + 사용자 추가 URL(서명 필수 · 권장) — 답 대기 · 미구현 | ✅ 사용자 10-28 · D-373 | 50-extension-system.md:99 §6 · 75-extension-sdk-and-dynamic-loading.md:144 |
+| D-90 | 확장 능력 승인 시점 — ③ 설치 때 표시 + 위험 능력은 첫 사용 때 재확인(권장) — 답 대기 · 미구현 | ✅ 사용자 10-28 · D-372 | 50-extension-system.md:100 §6 · 75-extension-sdk-and-dynamic-loading.md:144 |
 | D-91 | 레인보우 괄호 구현 형태 — ① 코어 + in-process 플러그인 층 (09-17) | ✅ 확정 | 51-rainbow-brackets.md:173 §7 · 51-rainbow-brackets.md:181 |
 | D-92 | 쌍 집합 — ① `()[]{}` + 인용부호 · `<>` 제외 (09-17) | ✅ 확정 | 51-rainbow-brackets.md:174 §7 · 51-rainbow-brackets.md:181 |
 | D-93 | 괄호 이동 키 — ① Ctrl+Alt+, / .(형제) · Ctrl+Alt+[ / ](상위/하위) (09-17) | ✅ 확정 | 51-rainbow-brackets.md:175 §7 · 51-rainbow-brackets.md:181 |
@@ -492,6 +492,19 @@
 | D-368 | **내장(builtin) 확장 = 설치 없이 기본 켜짐 · 사용자는 끄기만**(10-27 · 148차 win · Rainbow Pairs 방식) — Insert Sequence를 내장 확장 `insert-sequence`로 확장 패널에 등재 · 같은 id의 wasm 확장을 설치하면 wasm이 앞섬(124 §7-3) · 구현 = 관리자 꺼짐(`extensions.enabled=off`)이어도 동작 · 삭제 = 끄기 · 패널·업데이트 목록 = "builtin → vN (wasm)" | ✅ 사용자 결정 · [124 §7·§8](124-insert-sequence.md) · T-446 |
 | D-369 | **확장의 기본 설정 수정 = 런타임 overlay만**(10-27 · 148차 win · 사용자 세 지시 종합 = "SDK 범용" · "전용 설정 + 기본 설정 읽기/수정" · "확장은 독자 동작 · 본 프로그램 영향 X") — 읽기 = 메타 `settings_read` 선언 키만 · 쓰기 = `settings_write` 선언 + 레지스트리 검증 → overlay 층(파일 저장 0 · 사용자 값 보존) · 확장을 끄거나 내리면 원복 · 호출당 16 · 재귀 3 · 게스트 본문 쓰기 0 | ✅ 사용자 결정 · [75 §3-3](75-extension-sdk-and-dynamic-loading.md) · [94 §9](94-settings-key-naming-and-location.md) · T-446 |
 | D-370 | **Insert Sequence의 단축키·설정값 = 확장 영역**(10-28 · 149차 win · 사용자) — 정적 키맵·Editor 분류에서 빼고 내장 확장이 선언(명령 `edit.insert_sequence` · 설정 `ext.insert_sequence.default` · 옛 `editor.seq_default` 이주) · 확장 명령 단축키 = `key.<명령 id>` 확장 분류 동적 등재(모든 확장 공통) · 곱집합 구분자에 `*` 추가(`]` 뒤에서만 · `x`·`×` 유지 · 숫자 항 `*` = 등비) | ✅ 사용자 결정 · [124 §2·§8-1](124-insert-sequence.md) · [94 §6-4](94-settings-key-naming-and-location.md) |
+| D-371 | **확장 보류 4건 착수**(10-28 · 사용자 · AskUserQuestion) — T-447 프롬프트 행 고르기(pick) · T-448 상세 탭 "읽는/바꾸는 설정" 표시 · D-90 능력 승인(D-372) · 길 A 편집기 쓰기 API(인스턴스 유지 모델 · [124 §7-2](124-insert-sequence.md)) | ✅ 사용자 결정 · T-447 · T-448 · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-372 | **D-90 확장 능력 승인 = ③ 설치 때 표시 + 위험 능력은 첫 사용 때 재확인**(10-28 · 사용자 · 권장안 채택) | ✅ 사용자 결정 · [50 §6](50-extension-system.md) · [75 §9](75-extension-sdk-and-dynamic-loading.md) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-373 | **D-89 확장 인덱스 서명·출처 = ② 공식 + 사용자 추가 URL(서명 필수)**(10-28 · 사용자 · 권장안 채택) | ✅ 사용자 결정 · [50 §6](50-extension-system.md) · [75 §9](75-extension-sdk-and-dynamic-loading.md) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-374 | **T-435 Chocolatey guard = 제출 기록 기준 + 검수 대기 중에는 새 제출 금지**(10-28 · 사용자) | ✅ 사용자 결정 · T-435 · [claude-release-rules](claude-release-rules.md) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-375 | **성능 3건 착수**(10-28 · 사용자) — T-430 기동 아이콘 래스터 비동기화 · T-224/T-298 더티 영역 부분 다시 그리기 · T-191/T-238 시험 바이너리 간헐 SIGSEGV(맥) | ✅ 사용자 결정 · T-430 · T-224 · T-298 · T-191 · T-238 · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-376 | **라이선스 서버 D-23~39 = 계속 보류**(10-28 · 사용자) — 권장안 진행분(🚧)은 그대로 · 새 결정 없음 | ⏸ 보류(사용자) · [25](25-license-tiers-and-server.md) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-377 | **D-15 · D-16 = 사후 종결**(10-28 · 사용자) — 다음 우선순위(nexa-edit E1~E5 · hot exit · 비교·git · CLI 완성)와 실기 OS 순서는 해당 항목이 전부 구현돼 결정할 것이 없음 | ✅ 종결(사용자) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-378 | **D-17(= D-13) 오브젝트 시점 캐시·로컬 히스토리 기본 위치 = 앱 데이터 폴더(`NSQL_HOME`)**(10-28 · 사용자 · 권장안) | ✅ 사용자 결정 · [19 §5](19-compare-git-and-object-history.md) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-379 | **D-41[27] CLI 짧은 옵션 = ⓑ 현행 유지**(10-28 · 사용자 · `-d` 방언 · `-p` 비번) — T-51 범위 축소 = 별칭 · 충돌 안내 · `--help`만 | ✅ 사용자 결정 · [27 §3](27-cli-conventions.md) · T-51 · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-380 | **D-53 · D-54 = 권장안**(10-28 · 사용자) — 구문 팔레트 = 지금 값 유지 + 프리셋 3종 `editor.color_preset` · 선택 렌더링 = 불투명 기본 + 반투명 워시는 설정 | ✅ 사용자 결정 · [35 §4](35-editor-colors-reference.md) · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-381 | **D-78 포터블 배포 모드 = 보류**(10-28 · 사용자) — DR-27 설치본만 유지 · 새 상태 저장은 `NSQL_HOME` 규약 그대로 | ⏸ 보류(사용자) · T-106 · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-382 | **T-3 SSH 터널 = 시스템 `ssh` 프로세스 포트 포워딩**(10-28 · 사용자) — 외부 crate 0(DR-3 예외 늘리지 않음) | ✅ 사용자 결정 · T-3 · [journal 10-27 §11](journal/2026-10-27.md) |
+| D-383 | **T-11 rustybuzz = UI 텍스트 한정 스파이크 뒤 결정**(10-28 · 사용자) — 편집기·그리드 고정폭 경로는 그대로 | ✅ 사용자 결정(조건부) · T-11 · D-77 · [journal 10-27 §11](journal/2026-10-27.md) |
 | D-357 | **아웃라인 = 선언된 이름으로 이동하는 지도**(문장 나열 아님 · 기본은 적게 · 필요한 종류만 켬) — ① 심볼(객체·루틴·CTE·DEFINE/VARIABLE·커서·라벨·선언 변수) 기본 보임 / 문장(SELECT·DML·DDL·명령) 기본 숨김 · 토글 4 = `outline.show_select/dml/ddl/other`(off) + `outline.show_declared`(on) ② CREATE = 대상 행 하나 ③ Declared 매개변수 오탐·CURSOR 범위 수정 ④ 트리(`Symbol.parent`) + 접기(`outline.expand_depth` 1) ⑤ 커서 추종 `outline.follow_caret`(on) ⑥ Goto Symbol도 같은 토글 ⑦ 탐색기 아이콘 재사용 ⑧ 정렬 = 파일 순(1차) (10-24 · 138차 · 사용자 "너무 많이 보여서 불편" · 개발 권장안 진행 · **기본값 = 사용자 확인 사항**) | ✅ 구현 855b9ad6 + 8ee6a791 · **✅ 기본값 사용자 확인(10-26 Linux 실기)** | [76 §20](76-intellisense-and-outline.md) · journal 10-24 §3-12 · T-422/T-423 |
 | — | **번호 예약 규칙(16 §2-9)** — 119·120·121이 10-21에 쓴 D-316~D-343을 10-22에 등재(종전 미등재 = 번호 재사용 위험) · **새 번호는 D-344부터** | 📐 10-22 협업 정합 | journal 10-22 §1-7 |
 | D-272 | `&이름` 치환 변수의 방언별 기본 (10-10) | ✅ 10-10 권장안 채택(개발 세션 · 한 줄 고지) = `&이름` 치환은 전 방언에서 동작하되 **Oracle(SQL*Plus)만 미정의면 묻고**, SQL Server·PostgreSQL·SQLite·MySQL은 **정의된 이름만**(`DEFINE` · `:setvar`) 바꾸고 미정의 `&x`는 글자 그대로(`'R&D'` = 묻지도 오류도 아님) · 고정 = 스크립트 `SET DEFINE ON/OFF` · 설정 `script.define`(auto\|on\|off · 기본 auto) · `script.strict` = on으로 덮음 · 대안 = 전 방언 묻기(종전 · `R&D` 입력 창) / Oracle만 켬(sqlcmd `:setvar` → `&Env` 흐름 깨짐) · 근거 = 108 §11 #19 · 번호 메모 = 10-07 journal의 "D-272 후보"는 사용자 취소로 발급되지 않았음 | 63-variable-management.md §12-4 · 108-dbms-syntax-and-objects-survey.md §9 · T-327 |
