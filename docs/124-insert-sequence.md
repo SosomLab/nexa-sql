@@ -119,6 +119,8 @@
 
 ## 7. 검토 — Insert Sequence를 **확장(wasm)** 으로 개발할 수 있게 SDK를 보완할 수 있는가(사용자 10-27 지시 · 결론 = **가능 · 권장 설계 = "프롬프트 변환" API 한 벌")
 
+> ★ **결정(사용자 10-27 밤)** = 권장안 B **착수** · 내장 확장 기본 켜짐([D-368](10-decision-record.md)) · 설정 접근 = 런타임 overlay만([D-369](10-decision-record.md)) · 구현 = §8 · T-446.
+
 ### 7-1. 지금 못 하는 이유(사실)
 | 필요한 것 | 지금 SDK(ABI v1.1) | 내장 구현이 쓰는 것 |
 |---|---|---|
@@ -146,3 +148,14 @@
 3. 호스트 = `app/insseq.rs` → `app/prompt.rs` 일반화(값 공급자 = 내장 엔진 | 게스트) + 메타 `prompts` 파싱·명령 등록 + 내장 확장 등재 ½일.
 4. 샘플 `insert-sequence` wasm + 패키지(index.json) + V1 ½일.
 - 보류 = 길 A(쓰기 API)는 D-90 능력 승인·인스턴스 유지 모델 결정 뒤.
+
+## 8. 구현 기록(10-27~28 · 148차 win · T-446)
+
+- **엔진** = `crates/nsql-seq`(의존 0 · 앱 내장과 wasm 샘플이 같은 엔진 · 시험 8) — 문법(§2)은 그대로.
+- **SDK ABI v1.2(SDK 0.3)** = 메타 `prompts[{id, label, placeholder, placeholder_key, hint, key, help}]` + export `nx_ext_transform` — 요청 `{id, text, n, regions[(line, text)], selection, phase(live·commit·cancel), lang, doc_path, settings}` → 응답 `{values | text | none, error, rows}`(`apply` = regions · text · none) · 한도 = 연료 2e8 · 500 ms · 요청 ≤ 1 MB · 구간 ≤ 256. 자세히 = [75 §3-2](75-extension-sdk-and-dynamic-loading.md).
+- **호스트** = `app/insseq.rs`가 프롬프트 세션 일반화(`prompt_open(id)` · 값 공급자 = `Registry::transform` = 내장 엔진 또는 wasm) · 구간 저장 · 교체 · Enter 확정(commit 때 한 번 더 묻고 적용) · Esc 원문 복원 + cancel 알림 · 되돌리기 한 단계 — **게스트는 본문에 쓰지 않는다**(값만 낸다).
+- **내장 확장** = `extensions/insert_sequence.rs`(id `insert-sequence` · 프롬프트 `edit.insert_sequence` · 기본 표현식 키 `editor.seq_default`) · D-368 = 설치 없이 켜짐 · 관리자 꺼짐이어도 동작 · 삭제 = 끄기 · 꺼진 채 Ctrl+Alt+N = 상태줄 안내.
+- **wasm 패키지** = `extensions/insert-sequence` 0.1.0(설정 `ext.insert_sequence.default` · 팔레트 "Insert Sequence: Open (WASM)" · Ctrl+Alt+N) — 설치하면 내장을 대체 · 삭제하면 내장 복귀 · 패널·업데이트 목록은 "builtin → 0.1.0 (wasm)"로 교체를 안내.
+- **함께 고친 결함** = 재기동 시 동적 확장 설정 값 유실(`Settings::adopt_unknown`) · `ext.<id>.use` 거울 미저장 · 상세 탭 종류 칸 · 팔레트 목록에 내장 누락 — [journal 10-27 §9](journal/2026-10-27.md).
+- **V1** = 격리 홈 1·2·3차(내장 · 관리자 꺼짐 · 패널/상세 · wasm 교체·폴백 · 기본 표현식 · 회귀 3종) — journal §9.
+- **보류** = 길 A(본문 쓰기 API · D-90 능력 승인 뒤) · 행 고르기 pick·팔레트 UI(T-447) · 상세 탭 "읽는/바꾸는 설정" 표시(T-448).

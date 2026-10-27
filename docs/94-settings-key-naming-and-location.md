@@ -166,3 +166,11 @@
 - **표 한계(보류)** = 부모 1개뿐(부모 둘 중 하나 = `editor.desc_inline_*` · `ext.sqlfmt_kiros33.outlier_chars`) · 값 목록 조건 없음(`mysql.tls_ca` ∈ {verify_ca, verify_identity}) — 필요해지면 `Dep::Any(&[..])`·부모 목록으로 확장.
 - **시험** = `depends_table_is_sound_and_locks_alias_style`(모든 자식·부모가 레지스트리에 있음 · 자기 참조·순환 없음 · 사슬 · 부정 조건 · alias_* 열림) — 새 키를 등재하면 이 시험이 같이 지킨다.
 - **새 설정 키를 만들 때** = 마스터 아래 세부 키면 같은 커밋에 `DEPENDS` 한 줄 · 공용이면 등재하지 않고 설명(`Desc*`)에 "~에도 적용"을 적는다.
+
+## 9. 런타임 overlay 층(10-27 · 148차 win · D-369)
+
+- **무엇** = 확장이 기본 설정을 덮어쓸 때만 쓰는 메모리 층(nsql-settings `overlay`) — `get`/`effective`가 사용자 값보다 **먼저** 본다 · 파일에 저장하지 않는다(`save`·`is_modified` 영향 0) · 설정 창·`settings.conf`의 사용자 값은 그대로 남는다.
+- **들어가는 길은 하나** = `Settings::set_overlay(owner, key, val)` — 레지스트리에 있는 키 · 형식 검증 · 읽기 전용 거절 · 확장 메타 `settings_write` 선언(자기 접두 `ext.<id>.`는 늘 허용) · 호출당 16개 · 재귀 상한 3.
+- **나가는 길** = 확장이 꺼지거나 내려가면 `clear_overlay(owner)` + 그 키 재적용 — 사용자 값으로 즉시 원복("overlay cleared" 로그).
+- **동적 키 승격** = 확장 메타 `settings`로 등재되는 키는 기동 때 아직 레지스트리에 없어 `unknown`에 들어간다 → 등재 직후 `adopt_unknown()`이 값으로 올린다(검증 · 로그 "adopted"). 등재 뒤 메모리로 바꾼 거울 키(`ext.<id>.use`)는 **바로 저장**한다(10-28 결함 B).
+- **금지** = overlay로 파일 값을 바꾸는 우회 · 확장이 레지스트리 밖 키를 쓰는 것 · 사용자 값을 지우는 것.

@@ -1,0 +1,16 @@
+[package]
+name = "insert-sequence-ext"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Insert Sequence — Nexa SQL 프롬프트 변환 확장(ABI v1.2 · nsql-seq 엔진 공용 · 다중 캐럿 순번 삽입 · 설치하면 내장을 대체 · docs/124 §7)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nexa-ext-sdk.workspace = true
+# 앱과 같은 엔진(표현식 → 값 n개 · 의존 0) — 내장 확장 `extensions/insert_sequence.rs`와 같은 동작.
+nsql-seq = { path = "../../../../crates/nsql-seq" }

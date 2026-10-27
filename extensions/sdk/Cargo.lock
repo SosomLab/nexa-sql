@@ -10,11 +10,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "insert-sequence-ext"
+version = "0.1.0"
+dependencies = [
+ "nexa-ext-sdk",
+ "nsql-seq",
+]
+
+[[package]]
 name = "nexa-ext-sdk"
 version = "0.1.0"
 
 [[package]]
 name = "nsql-format"
+version = "0.3.1"
+
+[[package]]
+name = "nsql-seq"
 version = "0.3.1"
 
 [[package]]

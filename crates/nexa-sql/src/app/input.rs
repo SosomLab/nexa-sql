@@ -1349,7 +1349,7 @@ impl App {
             match self.palette.on_event(&ev, inv) {
                 PaletteAction::None => {
                     // ★ Insert Sequence(docs/124): 표현식이 바뀌면 본문·미리보기 행 갱신(키 입력마다).
-                    if self.palette.prompt_id() == Some("seq") && self.insseq_active() {
+                    if self.insseq_live_prompt() {
                         let q = self.palette.query();
                         self.insseq_update(&q);
                     }
@@ -1368,7 +1368,7 @@ impl App {
                 }
                 PaletteAction::Prompt { id, text } => {
                     self.palette.close();
-                    if id == "seq" {
+                    if id.starts_with(super::insseq::PROMPT_PREFIX) {
                         self.insseq_commit(&text);
                     } else if let Some(i) =
                         id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok())

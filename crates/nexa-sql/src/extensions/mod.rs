@@ -11,6 +11,7 @@ use nexa_ctl::controls::ctxmenu::CtxItem;
 use nsql_settings::Settings;
 use std::path::{Path, PathBuf};
 
+pub(crate) mod insert_sequence;
 pub(crate) mod manager;
 pub(crate) mod rainbow_pairs;
 pub(crate) mod sha256;
@@ -105,6 +106,59 @@ pub(crate) enum FileOp {
     CopyPath(String),
 }
 
+/// ★ 프롬프트 선언(148차 · ABI v1.2 · docs/124 §7 권장안 B): 확장이 라이브 프롬프트 하나를 낸다 — 호스트가 세션(구간 읽기 · 값 교체 ·
+/// 복원 · 되돌리기 · 팔레트 UI)을 전부 들고, 확장은 [`Extension::transform`]으로 **값만 제안**한다(본문 쓰기 권한 0).
+#[derive(Clone, Debug)]
+pub(crate) struct Prompt {
+    /// 명령 id(팔레트·키맵·메뉴와 같은 문자열 · wasm은 `commands`에 없으면 호스트가 같은 라벨·키로 등록).
+    pub(crate) id: String,
+    pub(crate) label: Label,
+    /// 자리표시자 = 빈 입력의 뜻 · `placeholder_key` 설정 값이 비어 있지 않으면 그 값이 대신한다.
+    pub(crate) placeholder: String,
+    pub(crate) placeholder_key: Option<String>,
+    /// 입력란 아래 안내(`{0}` = 자리표시자).
+    pub(crate) hint: Label,
+    /// 기본 단축키(wasm 메타 · 명령 병합 때 쓴다).
+    pub(crate) key: Option<String>,
+    /// `?` 치트 시트 = (표현식, 설명).
+    pub(crate) help: Vec<(String, Label)>,
+}
+
+/// 프롬프트 변환 요청(키 입력마다 · 148차): 표현식 · 구간 수 · 구간(줄, 원문 · 상한까지) · 언어 · 문서 경로.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TransformReq {
+    pub(crate) id: String,
+    pub(crate) text: String,
+    pub(crate) n: usize,
+    pub(crate) regions: Vec<(usize, String)>,
+    pub(crate) lang: String,
+    pub(crate) doc_path: String,
+    /// 단계 = `live`(키 입력마다) · `commit`(Enter) · `cancel`(Esc) — 확정 때만 할 일이 있는 플러그인용.
+    pub(crate) phase: String,
+    /// 활성 선택의 글(구간이 여럿이면 첫 구간 시작 ~ 마지막 구간 끝 · 상한 안에서).
+    pub(crate) selection: String,
+}
+
+/// 프롬프트 변환 응답: 값 n개 **또는** 오류 문구(호스트 = 본문 공백 + 경고 행) · `rows` = 미리보기 행 덮어쓰기(비면 호스트가 만든다).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TransformOut {
+    pub(crate) values: Vec<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) rows: Vec<(String, bool)>,
+    /// 적용 방식 = `regions`(기본 · 구간마다 값) · `text`(선택 전체를 글 하나로) · `none`(본문 안 건드림 · 행만).
+    pub(crate) apply: String,
+    /// `apply = text`일 때의 글.
+    pub(crate) text: String,
+}
+
+/// 설정 키 패턴 일치(메타 `settings_read`/`settings_write` · 148차): 정확히 같거나 `prefix*`.
+pub(crate) fn key_matches(pat: &str, key: &str) -> bool {
+    match pat.strip_suffix('*') {
+        Some(p) => key.starts_with(p),
+        None => pat == key,
+    }
+}
+
 /// 확장 포트 — 호스트는 이 트레이트로만 부른다(WASM은 같은 이름의 export).
 pub(crate) trait Extension {
     fn id(&self) -> &str;
@@ -124,7 +178,13 @@ pub(crate) trait Extension {
     fn run(&mut self, id: &str, ed: &mut dyn EditorOps) -> bool;
     /// ★ 명령 실행 + **호스트 상황**(09-30 · docs/97): `doc_path` = 활성 문서의 파일 경로(없으면 빈 글). WASM 확장은 이 값을
     /// 게스트 import `nx_host_get(DOC_PATH)`로 돌려준다. 기본 = 상황 없이 [`Extension::run`].
-    fn run_with(&mut self, id: &str, ed: &mut dyn EditorOps, doc_path: &str) -> bool {
+    fn run_with(
+        &mut self,
+        id: &str,
+        ed: &mut dyn EditorOps,
+        doc_path: &str,
+        _s: &Settings,
+    ) -> bool {
         let _ = doc_path;
         self.run(id, ed)
     }
@@ -154,6 +214,31 @@ pub(crate) trait Extension {
     }
     /// ★ 마지막 명령 실행이 남긴 파일 동작 요청(146차) — 거둬 가면 비운다.
     fn take_file_ops(&self) -> Vec<FileOp> {
+        Vec::new()
+    }
+
+    /// ★ 프롬프트 선언(148차 · docs/124 §7) — 기본 없음.
+    fn prompts(&self) -> Vec<Prompt> {
+        Vec::new()
+    }
+    /// ★ 프롬프트 변환: 표현식 → 값 n개(또는 오류 문구). 기본 = 없음.
+    fn transform(&self, _req: &TransformReq, _s: &Settings) -> Result<TransformOut, String> {
+        Err("no transform".to_string())
+    }
+    /// 설치 기록 없이 **기본 켜지는** 내장 확장(D-368 · Insert Sequence) — 끄기/켜기만 가능.
+    fn default_on(&self) -> bool {
+        false
+    }
+    /// ★ 이 확장이 읽는 **기본 설정** 키 패턴(148차 · 사용자 10-27): 전용 키와 함께 설정 JSON에 실리고, 바뀌면 `on_settings`가 다시 불린다.
+    fn settings_read(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// ★ 이 확장이 덮어쓸 수 있다고 선언한 기본 설정 키 패턴 — 선언 밖은 호스트가 거절(로그).
+    fn settings_write(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// 마지막 호출이 남긴 설정 덮어쓰기 요청 (키, 값) — 호스트가 선언·검증 뒤 overlay 층에 넣는다.
+    fn take_setting_sets(&self) -> Vec<(String, String)> {
         Vec::new()
     }
 }
@@ -199,11 +284,14 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
-    /// 내장 확장(첫 = Rainbow Pairs).
+    /// 내장 확장(Rainbow Pairs · Insert Sequence(148차 · 기본 켜짐 D-368)).
     #[must_use]
     pub(crate) fn builtin() -> Self {
         Registry {
-            extensions: vec![Box::new(rainbow_pairs::RainbowPairs)],
+            extensions: vec![
+                Box::new(rainbow_pairs::RainbowPairs),
+                Box::new(insert_sequence::InsertSequence),
+            ],
             loaded_wasm: Vec::new(),
         }
     }
@@ -241,6 +329,61 @@ impl Registry {
                 let p = &self.extensions[i];
                 (p.id().to_string(), p.name().to_string())
             })
+            .collect()
+    }
+
+    /// ★ 프롬프트 소유자(148차): 활성(wasm이 내장을 대체) + 켜진 확장 중 그 id의 프롬프트 → (확장 id, 프롬프트 사본).
+    pub(crate) fn prompt_owner(&self, id: &str, disabled: &[String]) -> Option<(String, Prompt)> {
+        self.active_indices().into_iter().find_map(|i| {
+            let p = &self.extensions[i];
+            if disabled.iter().any(|d| d == p.id()) {
+                return None;
+            }
+            p.prompts()
+                .into_iter()
+                .find(|x| x.id == id)
+                .map(|x| (p.id().to_string(), x))
+        })
+    }
+
+    /// 그 프롬프트를 선언한 활성 확장의 이름(꺼짐 여부 무관 · "꺼져 있다" 안내용).
+    pub(crate) fn prompt_ext_name(&self, id: &str) -> Option<String> {
+        self.active_indices().into_iter().find_map(|i| {
+            let p = &self.extensions[i];
+            p.prompts()
+                .iter()
+                .any(|x| x.id == id)
+                .then(|| p.name().to_string())
+        })
+    }
+
+    /// 어느 활성 확장이든 그 id의 프롬프트를 선언했는가(메뉴 라우팅 · 꺼짐 포함).
+    pub(crate) fn has_prompt(&self, id: &str) -> bool {
+        self.prompt_ext_name(id).is_some()
+    }
+
+    /// ★ 변환 호출(확장 id로 · wasm 로그·오류는 `take_wasm_notes`로 거둔다).
+    pub(crate) fn transform(
+        &self,
+        ext_id: &str,
+        req: &TransformReq,
+        s: &Settings,
+    ) -> Result<TransformOut, String> {
+        let i = self
+            .active_indices()
+            .into_iter()
+            .find(|&i| self.extensions[i].id() == ext_id)
+            .ok_or_else(|| format!("{ext_id}: not loaded"))?;
+        self.extensions[i].transform(req, s)
+    }
+
+    /// 설치 기록 없이 기본 켜진 **활성** 내장 확장 (id, 이름)(D-368 · 같은 id의 wasm이 설치되면 빠진다).
+    pub(crate) fn default_on_ids(&self) -> Vec<(String, String)> {
+        self.active_indices()
+            .into_iter()
+            .map(|i| &self.extensions[i])
+            .filter(|p| p.default_on())
+            .map(|p| (p.id().to_string(), p.name().to_string()))
             .collect()
     }
 
@@ -359,7 +502,11 @@ impl Registry {
         let mut out = Vec::new();
         for i in active {
             let p = &mut self.extensions[i];
-            if !changed_key.is_none_or(|k| k.starts_with(p.settings_prefix())) {
+            // 바뀐 키가 이 확장 것(접두)이거나 **선언해서 읽는 기본 설정**이면 다시 묻는다(148차).
+            if !changed_key.is_none_or(|k| {
+                k.starts_with(p.settings_prefix())
+                    || p.settings_read().iter().any(|pat| key_matches(pat, k))
+            }) {
                 continue;
             }
             out.push(if disabled.iter().any(|d| d == p.id()) {
@@ -379,6 +526,7 @@ impl Registry {
         disabled: &[String],
         ed: &mut dyn EditorOps,
         doc_path: &str,
+        settings: &Settings,
     ) -> bool {
         let Some(i) = self.owner_of(cmd) else {
             return false;
@@ -386,7 +534,37 @@ impl Registry {
         if disabled.iter().any(|d| d == self.extensions[i].id()) {
             return false;
         }
-        self.extensions[i].run_with(cmd, ed, doc_path)
+        self.extensions[i].run_with(cmd, ed, doc_path, settings)
+    }
+
+    /// ★ 어느 활성 확장이든 이 기본 설정 키를 읽는다고 선언했는가(바뀌면 `apply_extensions(Some(key))` · 148차).
+    pub(crate) fn reads_key(&self, key: &str) -> bool {
+        self.active_indices().into_iter().any(|i| {
+            self.extensions[i]
+                .settings_read()
+                .iter()
+                .any(|pat| key_matches(pat, key))
+        })
+    }
+
+    /// 확장이 그 키를 덮어써도 되는가(메타 `settings_write` 선언 · 자기 접두 키는 늘 허용).
+    pub(crate) fn writable(&self, ext_id: &str, key: &str) -> bool {
+        self.extensions.iter().any(|p| {
+            p.id() == ext_id
+                && (key.starts_with(p.settings_prefix())
+                    || p.settings_write().iter().any(|pat| key_matches(pat, key)))
+        })
+    }
+
+    /// 모든 확장의 설정 덮어쓰기 요청을 거둔다 → (확장 id, 키, 값).
+    pub(crate) fn drain_setting_sets(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for p in &self.extensions {
+            for (k, v) in p.take_setting_sets() {
+                out.push((p.id().to_string(), k, v));
+            }
+        }
+        out
     }
 
     /// ★ 켜진 확장 중 포맷터를 내는 것들: (id, 이름, 예시 SQL).
@@ -430,8 +608,12 @@ impl Registry {
             .find(|&i| self.extensions[i].id() == id && self.extensions[i].formatter().is_some())
             .ok_or_else(|| format!("formatter not available: {id}"))?;
         let p = &self.extensions[i];
-        let own = json::parse(&wasm::settings_json(settings, p.settings_prefix()))
-            .unwrap_or(Json::Obj(Vec::new()));
+        let own = json::parse(&wasm::settings_json(
+            settings,
+            p.settings_prefix(),
+            &p.settings_read(),
+        ))
+        .unwrap_or(Json::Obj(Vec::new()));
         let opts = Json::Obj(
             options
                 .iter()
@@ -536,14 +718,37 @@ mod wasm_registry_tests {
         let path = wasm_module_path(&root, "rainbow-pairs", &meta.version).expect("module path");
         assert!(path.is_file(), "보관 사본 {}", path.display());
 
+        assert!(key_matches("editor.*", "editor.pair_kinds") && key_matches("ui.lang", "ui.lang"));
+        assert!(!key_matches("editor.*", "ui.lang") && !key_matches("ui.lang", "ui.lang2"));
         let mut reg = Registry::builtin();
-        assert_eq!(reg.ids().len(), 1);
+        // 내장 둘(Rainbow Pairs · Insert Sequence = 기본 켜짐 + 프롬프트 · 148차).
+        assert_eq!(reg.ids().len(), 2);
+        assert_eq!(
+            reg.default_on_ids(),
+            vec![("insert-sequence".to_string(), "Insert Sequence".to_string())]
+        );
+        assert!(reg.has_prompt("edit.insert_sequence") && !reg.has_prompt("edit.other"));
+        assert!(reg
+            .prompt_owner("edit.insert_sequence", &["insert-sequence".to_string()])
+            .is_none());
+        let (owner_id, prompt) = reg
+            .prompt_owner("edit.insert_sequence", &[])
+            .expect("prompt");
+        assert_eq!(
+            (owner_id.as_str(), prompt.placeholder.as_str()),
+            ("insert-sequence", "1+1")
+        );
         let notes = reg.sync_wasm(&[("rainbow-pairs".into(), path.clone())]);
         assert!(notes.iter().any(|n| n.contains("loaded")), "{notes:?}");
         // 같은 id 하나 · 명령 소유자 = WASM 쪽.
+        let mut ids = reg.ids();
+        ids.sort();
         assert_eq!(
-            reg.ids(),
-            vec![("rainbow-pairs".to_string(), "Rainbow Pairs".to_string())]
+            ids,
+            vec![
+                ("insert-sequence".to_string(), "Insert Sequence".to_string()),
+                ("rainbow-pairs".to_string(), "Rainbow Pairs".to_string()),
+            ]
         );
         assert_eq!(reg.wasm_ids(), vec!["rainbow-pairs".to_string()]);
         let owner = reg.owner_of("edit.bracket_next").expect("owner");

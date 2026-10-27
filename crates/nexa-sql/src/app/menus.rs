@@ -666,6 +666,8 @@ impl App {
             "ext.enable_mgr" | "ext.disable_mgr" | "ext.install" | "ext.update" | "ext.remove"
             | "ext.list" | "ext.enable" | "ext.disable" | "ext.repo_add" | "ext.repo_list"
             | "ext.repo_remove" => self.ext_command(id),
+            // ★ 확장 프롬프트(148차 · docs/124 §7): wasm 메타 `prompts[].id`면 라이브 프롬프트 세션(값은 확장이 제안 · 적용은 호스트).
+            x if self.extensions.has_prompt(x) => self.prompt_open(x),
             // ★ 확장 명령(146차 · 협업 발견 결함): 어느 확장이 소유한 id면 실행 · 아니면 관리자 목록 선택(`ext.<verb>:<key>`).
             x if x.starts_with("ext.") => {
                 if self.extensions.owner_of(x).is_some() {
@@ -743,8 +745,8 @@ impl App {
             "edit.add_caret_down" => self.editor_cmd(EditCommand::AddCaretDown),
             "edit.upper_case" => self.editor_cmd(EditCommand::UpperCase),
             "edit.lower_case" => self.editor_cmd(EditCommand::LowerCase),
-            // ★ Insert Sequence(docs/124): 세션 시작 + 라이브 프롬프트.
-            "edit.insert_sequence" => self.insseq_open(),
+            // ★ Insert Sequence(docs/124 · 148차 = 내장 확장의 프롬프트 · 같은 id의 wasm이 설치돼 있으면 그쪽): 세션 시작 + 라이브 프롬프트.
+            "edit.insert_sequence" => self.prompt_open(id),
             // Goto Anything(T-96): 탭 · 최근 파일 · `:줄`.
             "view.goto_anything" | "tab.find" => self.open_goto_anything(""),
             "edit.goto_line" => self.open_goto_anything(":"),

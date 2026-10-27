@@ -8435,6 +8435,9 @@ pub struct Settings {
     values: BTreeMap<String, String>,
     /// 레지스트리에 없는 키(보존 재방출).
     unknown: Vec<(String, String)>,
+    /// ★ 런타임 덮어쓰기 층(148차 · 확장 · 사용자 10-27 "기본 설정을 바꿀 수 있되 본 프로그램에 영향 X"): 키 → (소유자 = 확장 id, 정규화 값).
+    ///   [`Settings::get`]이 먼저 보고, 파일에는 저장되지 않으며 소유자가 꺼지면 [`Settings::clear_overlay`]로 통째로 사라진다(자동 원복).
+    overlay: BTreeMap<String, (String, String)>,
 }
 
 impl Settings {
@@ -8470,6 +8473,7 @@ impl Settings {
             path,
             values: BTreeMap::new(),
             unknown: Vec::new(),
+            overlay: BTreeMap::new(),
         };
         let mut seen: Vec<String> = Vec::new();
         for (k, v) in doc.pairs {
@@ -8598,8 +8602,91 @@ impl Settings {
     pub fn get(&self, key: &str) -> Option<&str> {
         let key = canonical_key(key);
         let e = entry(key)?;
+        if let Some((_, v)) = self.overlay.get(key) {
+            return Some(v.as_str());
+        }
         let def = default_of(e.key).unwrap_or(e.default);
         Some(self.values.get(key).map_or(def, String::as_str))
+    }
+
+    /// ★ 덮어쓰기 층에 넣는다(148차 · 확장 `nx_setting_set`): [`Settings::set`]과 같은 검증(모르는 키 · 읽기 전용 · 값 형식) · 저장하지 않는다 ·
+    ///   반환 = 실효 값이 바뀌었는가(같으면 false · 호스트는 그때만 재적용).
+    pub fn set_overlay(&mut self, key: &str, raw: &str, owner: &str) -> Result<bool, SetError> {
+        let key = canonical_key(key);
+        let e = entry(key).ok_or_else(|| SetError::UnknownKey(key.to_string()))?;
+        if is_info(key) {
+            return Err(SetError::InvalidValue(
+                key.to_string(),
+                raw.to_string(),
+                "read-only".to_string(),
+            ));
+        }
+        let n = normalize(e.kind, raw).ok_or_else(|| {
+            SetError::InvalidValue(key.to_string(), raw.to_string(), allowed(e.kind))
+        })?;
+        let before = self.get(key).map(str::to_string);
+        self.overlay
+            .insert(key.to_string(), (owner.to_string(), n.clone()));
+        Ok(before.as_deref() != Some(n.as_str()))
+    }
+
+    /// ★ 동적 등재 뒤 호출(확장 메타 `settings` · 146차 · 148차 V1 결함 A): 파일을 읽을 때 미등록이라 `unknown`에 머물던 키가 지금은 등재돼
+    ///   있으면 검증해 값으로 승격(기본값과 같으면 생략 · 손상 값은 버림) → 승격한 키 목록. 종전엔 재기동 때 동적 키 값이 기본값으로 보였다.
+    pub fn adopt_unknown(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut keep = Vec::new();
+        for (k, v) in std::mem::take(&mut self.unknown) {
+            let ck = canonical_key(&k);
+            match entry(ck) {
+                Some(e) => {
+                    if let Some(n) = normalize(e.kind, &v) {
+                        if n != default_of(e.key).unwrap_or(e.default) {
+                            self.values.insert(e.key.to_string(), n);
+                        }
+                        out.push(e.key.to_string());
+                    }
+                }
+                None => keep.push((k, v)),
+            }
+        }
+        self.unknown = keep;
+        out
+    }
+
+    /// 소유자의 덮어쓰기를 전부 걷는다 → 걷힌 키 목록(호스트가 그 키들을 재적용).
+    pub fn clear_overlay(&mut self, owner: &str) -> Vec<String> {
+        let keys: Vec<String> = self
+            .overlay
+            .iter()
+            .filter(|(_, (o, _))| o == owner)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &keys {
+            self.overlay.remove(k);
+        }
+        keys
+    }
+
+    /// 덮어쓰기 소유자 목록(중복 없이).
+    #[must_use]
+    pub fn overlay_owners(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for (o, _) in self.overlay.values() {
+            if !out.contains(o) {
+                out.push(o.clone());
+            }
+        }
+        out
+    }
+
+    /// 소유자의 덮어쓰기 (키, 값) 목록.
+    #[must_use]
+    pub fn overlay_of(&self, owner: &str) -> Vec<(String, String)> {
+        self.overlay
+            .iter()
+            .filter(|(_, (o, _))| o == owner)
+            .map(|(k, (_, v))| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// 현재 값을 **물은 키의 단위로**: 단위가 바뀐 옛 키([`RESCALED`] · `ui.toast_secs`)면 새 값을 배수로 나눈 문자열(`"3000"` → `"3"` ·
@@ -9430,6 +9517,62 @@ mod tests {
     }
 
     /// 원장 무결성: PERF의 키는 전부 레지스트리에 있고 · full 열 = 기본값(기본 모드 = 지금 동작) · 세 값 모두 자기 검증 통과.
+    /// ★ 결함 A(148차 V1): 파일의 동적 키 값은 등재 전 `unknown` → `adopt_unknown`으로 승격(검증 · 모르는 키는 남김 · 두 번째는 빈 목록).
+    #[test]
+    fn adopt_unknown_promotes_dynamic_keys_after_register() {
+        let mut s = Settings::from_text(
+            PathBuf::from("x"),
+            "ext.demo_adopt.default=5+5\nno.such.key=1\n",
+        );
+        assert_eq!(s.get("ext.demo_adopt.default"), None);
+        register_dynamic(vec![Entry {
+            key: intern_key("ext.demo_adopt.default"),
+            cat: Msg::LblExtUse,
+            label: Msg::LblExtUse,
+            desc: Msg::DescExtUse,
+            kind: SettingKind::Text,
+            default: "1+1",
+        }]);
+        assert_eq!(
+            s.adopt_unknown(),
+            vec!["ext.demo_adopt.default".to_string()]
+        );
+        assert_eq!(s.get("ext.demo_adopt.default"), Some("5+5"));
+        assert!(s.is_modified("ext.demo_adopt.default"));
+        assert!(s.adopt_unknown().is_empty());
+        assert!(
+            s.unknown.iter().any(|(k, _)| k == "no.such.key"),
+            "모르는 키는 남는다"
+        );
+    }
+
+    /// ★ 덮어쓰기 층(148차): get이 먼저 본다 · 파일 값(`is_modified`)은 그대로 · 걷으면 원복 · 모르는 키·잘못된 값·읽기 전용은 거절.
+    #[test]
+    fn overlay_layer_is_runtime_only_and_restores() {
+        let mut s = Settings::from_text(PathBuf::from("x"), "");
+        let key = "editor.auto_close_pairs";
+        let def = s.get(key).expect("key").to_string();
+        let other = if def == "on" { "off" } else { "on" };
+        assert!(s.set_overlay(key, other, "hello-ext").expect("overlay"));
+        assert!(
+            !s.set_overlay(key, other, "hello-ext").expect("overlay"),
+            "같은 값 = 변화 없음"
+        );
+        assert_eq!(s.get(key), Some(other));
+        assert_eq!(s.flag(key), other == "on");
+        assert!(!s.is_modified(key), "파일 값은 그대로");
+        assert_eq!(s.overlay_owners(), vec!["hello-ext".to_string()]);
+        assert_eq!(
+            s.overlay_of("hello-ext"),
+            vec![(key.to_string(), other.to_string())]
+        );
+        assert!(s.set_overlay(key, "maybe", "hello-ext").is_err());
+        assert!(s.set_overlay("no.such.key", "on", "hello-ext").is_err());
+        assert_eq!(s.clear_overlay("hello-ext"), vec![key.to_string()]);
+        assert_eq!(s.get(key), Some(def.as_str()));
+        assert!(s.overlay_owners().is_empty());
+    }
+
     #[test]
     fn perf_ledger_matches_registry() {
         for (k, b) in PERF {

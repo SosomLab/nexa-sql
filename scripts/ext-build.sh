@@ -33,3 +33,5 @@ EOF
 place rainbow_pairs_ext rainbow-pairs rainbow_pairs.wasm
 place hello_ext hello-ext hello_ext.wasm
 place sql_formatter_kiros33 sql-formatter-kiros33 sql_formatter_kiros33.wasm
+place project_explorer_menus project-explorer-menus project_explorer_menus.wasm
+place insert_sequence_ext insert-sequence insert_sequence.wasm

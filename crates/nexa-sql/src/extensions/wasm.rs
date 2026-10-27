@@ -10,8 +10,8 @@
 //! 같은 id의 WASM 확장이 로드되면 내장(builtin) 확장을 **대체**한다(내장 = 로드 실패 때 폴백).
 
 use super::{
-    Command, EditorOps, Extension, ExtensionEffect, FileOp, Label, MenuContribution, MenuTarget,
-    SettingDef, SettingDefKind,
+    key_matches, Command, EditorOps, Extension, ExtensionEffect, FileOp, Label, MenuContribution,
+    MenuTarget, Prompt, SettingDef, SettingDefKind, TransformOut, TransformReq,
 };
 use nsql_settings::json::{self, Json};
 use nsql_settings::Settings;
@@ -29,6 +29,9 @@ const CALL_TIMEOUT_MS: u64 = 200;
 /// ★ 포맷 호출(ABI v1.1 `nx_ext_format`)은 문서 크기에 비례해 일한다 — 연료·시간 상한을 따로 둔다(1 MB 문서 기준).
 const FORMAT_FUEL: u64 = 2_000_000_000;
 const FORMAT_TIMEOUT_MS: u64 = 5_000;
+/// ★ 프롬프트 변환 호출(ABI v1.2 `nx_ext_transform` · 148차)은 키 입력마다 UI 스레드에서 돈다 — 값 n개(다중 선택 상한)라 기본보다 넉넉히 · 0.5초.
+const TRANSFORM_FUEL: u64 = 200_000_000;
+const TRANSFORM_TIMEOUT_MS: u64 = 500;
 /// 반환 버퍼 상한.
 const OUT_CAP: usize = 1 << 20;
 /// 모듈 크기 상한.
@@ -46,6 +49,10 @@ struct HostCtx {
     doc_path: String,
     /// ★ 파일 동작 요청(146차 · `nx_file_op`): (종류, 경로) · 호출당 16개까지.
     file_ops: Vec<(i32, String)>,
+    /// ★ 이번 호출에서 읽을 수 있는 설정(전용 접두 + 메타 `settings_read` 선언 키 · 148차) — `nx_setting_get`이 여기서만 답한다.
+    settings: Vec<(String, String)>,
+    /// ★ 설정 덮어쓰기 요청(148차 · `nx_setting_set`): (키, 값) · 호출당 16개까지 · 호스트가 호출 뒤 선언·검증 후 overlay 층에.
+    setting_sets: Vec<(String, String)>,
 }
 
 /// `nx_host_get`의 종류 번호(SDK `query::*`와 같은 표).
@@ -143,6 +150,64 @@ fn linker(engine: &Engine) -> Result<Linker<HostCtx>, wasmi::Error> {
             Ok(1)
         },
     )?;
+    // ★ nx_setting_get(key, ptr, cap) -> i32 : 설정 값 하나(전용 키 + 선언한 기본 키만 · 148차) → 게스트 버퍼 · 반환 = 길이(-1 = 없음·선언 밖).
+    l.func_wrap(
+        "env",
+        "nx_setting_get",
+        |mut caller: Caller<'_, HostCtx>,
+         key: i32,
+         ptr: i32,
+         cap: i32|
+         -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 20_000)?;
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(-1);
+            };
+            let k = read_buf(mem.data(&caller), key as u32).unwrap_or_default();
+            let Some(value) = caller
+                .data()
+                .settings
+                .iter()
+                .find(|(sk, _)| *sk == k)
+                .map(|(_, v)| v.clone())
+            else {
+                return Ok(-1);
+            };
+            let bytes = value.as_bytes();
+            if bytes.len() > cap.max(0) as usize {
+                return Ok(-1);
+            }
+            let mut buf = Vec::with_capacity(bytes.len() + 4);
+            buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(bytes);
+            if mem.write(&mut caller, ptr as usize, &buf).is_err() {
+                return Ok(-1);
+            }
+            Ok(bytes.len() as i32)
+        },
+    )?;
+    // ★ nx_setting_set(key, val) -> i32 : 설정 덮어쓰기 요청(큐 · 148차) — 호출이 끝난 뒤 호스트가 메타 `settings_write` 선언·레지스트리 검증을
+    //   거쳐 **런타임 overlay 층**에 넣는다(파일에 저장 안 함 · 확장이 꺼지면 원복). 반환 1 = 접수.
+    l.func_wrap(
+        "env",
+        "nx_setting_set",
+        |mut caller: Caller<'_, HostCtx>, key: i32, val: i32| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 20_000)?;
+            if caller.data().setting_sets.len() >= 16 {
+                return Ok(0);
+            }
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(0);
+            };
+            let k = read_buf(mem.data(&caller), key as u32).unwrap_or_default();
+            let v = read_buf(mem.data(&caller), val as u32).unwrap_or_default();
+            if k.trim().is_empty() {
+                return Ok(0);
+            }
+            caller.data_mut().setting_sets.push((k, v));
+            Ok(1)
+        },
+    )?;
     // nx_log(ptr) : 로그 한 줄(호출당 32줄까지).
     l.func_wrap(
         "env",
@@ -178,6 +243,15 @@ pub(crate) struct WasmExtension {
     formatter_marks: Vec<(String, String)>,
     /// ★ 메타 `settings`(146차 · T-258): 호스트가 런타임 레지스트리에 등재.
     settings: Vec<SettingDef>,
+    /// ★ 메타 `prompts`(ABI v1.2 · 148차): 라이브 프롬프트 선언 — 호스트가 명령으로 등록하고 `nx_ext_transform`으로 값을 받는다.
+    prompts: Vec<Prompt>,
+    /// ★ 메타 `settings_read` / `settings_write`(148차): 읽는·덮어쓰는 기본 설정 키 패턴.
+    settings_read: Vec<String>,
+    settings_write: Vec<String>,
+    /// 이번 호출에서 게스트가 읽을 수 있는 설정(전용 + 선언) — 호출 직전에 채운다.
+    call_settings: std::cell::RefCell<Vec<(String, String)>>,
+    /// 마지막 호출이 남긴 설정 덮어쓰기 요청.
+    setting_sets: std::cell::RefCell<Vec<(String, String)>>,
     /// ★ 마지막 호출이 남긴 파일 동작 요청(146차).
     file_ops: std::cell::RefCell<Vec<FileOp>>,
     /// ★ 이번 `run_with` 호출의 호스트 상황(활성 문서 경로 · docs/97) — 호출 동안만.
@@ -269,19 +343,95 @@ pub(crate) fn effect_from_json(text: &str) -> Result<ExtensionEffect, String> {
 }
 
 /// 설정 → 게스트 입력 JSON(접두 키만 · 레지스트리가 아는 키 · 값은 원문).
-pub(crate) fn settings_json(s: &Settings, prefix: &str) -> String {
-    // 정적 + 동적(확장 메타 `settings` · 146차) 항목 전부.
-    let items: Vec<(String, Json)> = nsql_settings::entries_all()
+pub(crate) fn settings_json(s: &Settings, prefix: &str, reads: &[String]) -> String {
+    let items: Vec<(String, Json)> = settings_pairs(s, prefix, reads)
         .into_iter()
-        .filter(|e| e.key.starts_with(prefix))
+        .map(|(k, v)| (k, Json::Str(v)))
+        .collect();
+    json::dump(&Json::Obj(items))
+}
+
+/// 게스트에 주는 설정 (키, 값): 전용 접두 키(정적 + 동적 메타 `settings` · 146차) + 메타 `settings_read` 패턴에 맞는 기본 키(148차).
+pub(crate) fn settings_pairs(
+    s: &Settings,
+    prefix: &str,
+    reads: &[String],
+) -> Vec<(String, String)> {
+    nsql_settings::entries_all()
+        .into_iter()
+        .filter(|e| {
+            (!prefix.is_empty() && e.key.starts_with(prefix))
+                || reads.iter().any(|pat| key_matches(pat, e.key))
+        })
         .map(|e| {
             (
                 e.key.to_string(),
-                Json::Str(s.get(e.key).unwrap_or(e.default).to_string()),
+                s.get(e.key).unwrap_or(e.default).to_string(),
             )
         })
+        .collect()
+}
+
+/// ★ 변환 요청 JSON(ABI v1.2 · 148차): `{"id","text","n","regions":[{"line","text"}],"lang","doc_path","settings":{…}}`.
+pub(crate) fn transform_request_json(req: &TransformReq, settings_json: &str) -> String {
+    let regions: Vec<Json> = req
+        .regions
+        .iter()
+        .map(|(l, t)| {
+            Json::Obj(vec![
+                ("line".into(), Json::Num(*l as f64)),
+                ("text".into(), Json::Str(t.clone())),
+            ])
+        })
         .collect();
-    json::dump(&Json::Obj(items))
+    let settings = json::parse(settings_json).unwrap_or(Json::Obj(Vec::new()));
+    json::dump(&Json::Obj(vec![
+        ("id".into(), Json::Str(req.id.clone())),
+        ("text".into(), Json::Str(req.text.clone())),
+        ("n".into(), Json::Num(req.n as f64)),
+        ("regions".into(), Json::Arr(regions)),
+        ("lang".into(), Json::Str(req.lang.clone())),
+        ("doc_path".into(), Json::Str(req.doc_path.clone())),
+        ("phase".into(), Json::Str(req.phase.clone())),
+        ("selection".into(), Json::Str(req.selection.clone())),
+        ("settings".into(), settings),
+    ]))
+}
+
+/// 변환 응답 JSON → 값/오류/행(`{"values":[…]}` 또는 `{"error":"…"}` · 선택 `"rows":[{"text","warn"}]`).
+pub(crate) fn transform_out_from_json(text: &str) -> Result<TransformOut, String> {
+    let v = json::parse(text).map_err(|e| format!("transform json: {e}"))?;
+    let error = jget(&v, "error").and_then(jstr).map(str::to_string);
+    let values: Vec<String> = jget(&v, "values")
+        .map(jarr)
+        .unwrap_or(&[])
+        .iter()
+        .map(|x| jstr(x).unwrap_or("").to_string())
+        .collect();
+    let rows: Vec<(String, bool)> = jget(&v, "rows")
+        .map(jarr)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|r| {
+            let t = jget(r, "text").and_then(jstr)?.to_string();
+            Some((t, jget(r, "warn").and_then(jbool).unwrap_or(false)))
+        })
+        .collect();
+    let apply = jget(&v, "apply")
+        .and_then(jstr)
+        .unwrap_or("regions")
+        .to_string();
+    let text = jget(&v, "text").and_then(jstr).unwrap_or("").to_string();
+    if error.is_none() && jget(&v, "values").is_none() && apply == "regions" {
+        return Err("transform: neither values nor error".to_string());
+    }
+    Ok(TransformOut {
+        values,
+        error,
+        rows,
+        apply,
+        text,
+    })
 }
 
 impl WasmExtension {
@@ -303,6 +453,11 @@ impl WasmExtension {
             formatter: None,
             formatter_marks: Vec::new(),
             settings: Vec::new(),
+            prompts: Vec::new(),
+            settings_read: Vec::new(),
+            settings_write: Vec::new(),
+            call_settings: std::cell::RefCell::new(Vec::new()),
+            setting_sets: std::cell::RefCell::new(Vec::new()),
             file_ops: std::cell::RefCell::new(Vec::new()),
             doc_path: std::cell::RefCell::new(String::new()),
             engine,
@@ -433,6 +588,59 @@ impl WasmExtension {
                 })
             })
             .collect();
+        // ★ 프롬프트(ABI v1.2 · 148차): `{"id","label","placeholder","placeholder_key","hint","key","help":[{"expr","label"}]}` ·
+        //   `commands`에 없는 id는 같은 라벨·키로 명령에 병합(팔레트·키맵이 그대로 안다).
+        ext.prompts = jget(&v, "prompts")
+            .map(jarr)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|p| {
+                let id = jget(p, "id").and_then(jstr)?.to_string();
+                Some(Prompt {
+                    id,
+                    label: label_of(jget(p, "label")),
+                    placeholder: jget(p, "placeholder")
+                        .and_then(jstr)
+                        .unwrap_or("")
+                        .to_string(),
+                    placeholder_key: jget(p, "placeholder_key")
+                        .and_then(jstr)
+                        .map(str::to_string),
+                    hint: label_of(jget(p, "hint")),
+                    key: jget(p, "key").and_then(jstr).map(str::to_string),
+                    help: jget(p, "help")
+                        .map(jarr)
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(|h| {
+                            let e = jget(h, "expr").and_then(jstr)?.to_string();
+                            Some((e, label_of(jget(h, "label"))))
+                        })
+                        .collect(),
+                })
+            })
+            .collect();
+        let strs = |k: &str| -> Vec<String> {
+            jget(&v, k)
+                .map(jarr)
+                .unwrap_or(&[])
+                .iter()
+                .filter_map(jstr)
+                .map(str::to_string)
+                .collect()
+        };
+        ext.settings_read = strs("settings_read");
+        ext.settings_write = strs("settings_write");
+        for p in &ext.prompts {
+            if !ext.commands.iter().any(|c| c.id == p.id) {
+                ext.commands.push(Command {
+                    id: p.id.clone(),
+                    label: p.label.clone(),
+                    key: p.key.clone(),
+                    key_mac: None,
+                });
+            }
+        }
         Ok(ext)
     }
 
@@ -440,6 +648,13 @@ impl WasmExtension {
     pub(crate) fn load_file(path: &Path) -> Result<WasmExtension, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::load(&bytes)
+    }
+
+    /// 게스트가 읽을 수 있는 기본 설정 패턴 = `settings_read` ∪ `settings_write`(덮어쓸 키는 지금 값도 읽어야 토글할 수 있다 · 148차).
+    fn readable(&self) -> Vec<String> {
+        let mut v = self.settings_read.clone();
+        v.extend(self.settings_write.iter().cloned());
+        v
     }
 
     fn tripped(&self) -> bool {
@@ -501,6 +716,8 @@ impl WasmExtension {
             logs: Vec::new(),
             doc_path: self.doc_path.borrow().clone(),
             file_ops: Vec::new(),
+            settings: self.call_settings.borrow().clone(),
+            setting_sets: Vec::new(),
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|c| &mut c.limits);
@@ -569,6 +786,9 @@ impl WasmExtension {
                 });
             }
         }
+        if !data.setting_sets.is_empty() {
+            self.setting_sets.borrow_mut().extend(data.setting_sets);
+        }
         if !data.logs.is_empty() {
             let mut notes = self.notes.borrow_mut();
             for l in data.logs {
@@ -596,7 +816,8 @@ impl Extension for WasmExtension {
         self.menus.clone()
     }
     fn on_settings(&mut self, settings: &Settings) -> ExtensionEffect {
-        let input = settings_json(settings, &self.prefix);
+        *self.call_settings.borrow_mut() = settings_pairs(settings, &self.prefix, &self.readable());
+        let input = settings_json(settings, &self.prefix, &self.readable());
         self.call_buf("nx_ext_settings", Some(&input))
             .and_then(|t| effect_from_json(&t))
             .unwrap_or_default()
@@ -606,8 +827,9 @@ impl Extension for WasmExtension {
             .and_then(|t| effect_from_json(&t))
             .unwrap_or_default()
     }
-    fn run_with(&mut self, id: &str, ed: &mut dyn EditorOps, doc_path: &str) -> bool {
+    fn run_with(&mut self, id: &str, ed: &mut dyn EditorOps, doc_path: &str, s: &Settings) -> bool {
         *self.doc_path.borrow_mut() = doc_path.to_string();
+        *self.call_settings.borrow_mut() = settings_pairs(s, &self.prefix, &self.readable());
         let r = self.run(id, ed);
         self.doc_path.borrow_mut().clear();
         r
@@ -653,6 +875,36 @@ impl Extension for WasmExtension {
     fn take_file_ops(&self) -> Vec<FileOp> {
         std::mem::take(&mut self.file_ops.borrow_mut())
     }
+    fn prompts(&self) -> Vec<Prompt> {
+        self.prompts.clone()
+    }
+    fn settings_read(&self) -> Vec<String> {
+        self.settings_read.clone()
+    }
+    fn settings_write(&self) -> Vec<String> {
+        self.settings_write.clone()
+    }
+    fn take_setting_sets(&self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.setting_sets.borrow_mut())
+    }
+    /// ★ 프롬프트 변환(ABI v1.2): 요청 JSON(+ 접두 설정) → `nx_ext_transform` → 값/오류/행.
+    fn transform(&self, req: &TransformReq, s: &Settings) -> Result<TransformOut, String> {
+        *self.call_settings.borrow_mut() = settings_pairs(s, &self.prefix, &self.readable());
+        let input = transform_request_json(req, &settings_json(s, &self.prefix, &self.readable()));
+        if input.len() > OUT_CAP {
+            return Err(format!("request over {} KB", OUT_CAP >> 10));
+        }
+        *self.doc_path.borrow_mut() = req.doc_path.clone();
+        let r = self.call_limited(
+            "nx_ext_transform",
+            Some(&input),
+            true,
+            TRANSFORM_FUEL,
+            TRANSFORM_TIMEOUT_MS,
+        );
+        self.doc_path.borrow_mut().clear();
+        transform_out_from_json(&r?.0)
+    }
     fn format(&self, input_json: &str) -> Result<String, String> {
         if input_json.len() > OUT_CAP {
             return Err(format!("text over {} KB", OUT_CAP >> 10));
@@ -672,6 +924,114 @@ impl Extension for WasmExtension {
 mod tests {
     use super::*;
 
+    /// ★ 148차(ABI v1.2): 공식 패키지 `insert-sequence` wasm = 프롬프트 메타(id · 자리표시자 키 · 치트 시트 · 명령 병합 + 키) · 변환 = 값 n개 ·
+    ///   오류(한국어 요청 = 한국어 문구) · 요청/응답 JSON 왕복. 파일이 없으면(아직 안 빌드) 건너뛴다.
+    #[test]
+    fn insert_sequence_wasm_prompts_and_transform() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../extensions/insert-sequence/insert_sequence.wasm");
+        if !path.exists() {
+            eprintln!("skip: {} not built", path.display());
+            return;
+        }
+        let ext = WasmExtension::load_file(&path).expect("load");
+        assert_eq!(ext.id(), "insert-sequence");
+        let p = ext.prompts();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].id, "edit.insert_sequence");
+        assert_eq!(
+            p[0].placeholder_key.as_deref(),
+            Some("ext.insert_sequence.default")
+        );
+        assert!(!p[0].help.is_empty());
+        let c = ext.commands();
+        assert!(c
+            .iter()
+            .any(|c| c.id == "edit.insert_sequence" && c.key.as_deref() == Some("ctrl+alt+n")));
+        let s = Settings::from_text(std::path::PathBuf::from("x"), "");
+        let req = TransformReq {
+            id: "edit.insert_sequence".into(),
+            text: "1+1~03".into(),
+            n: 3,
+            regions: vec![(1, String::new()), (2, "x".into())],
+            lang: "ko".into(),
+            doc_path: String::new(),
+            phase: "live".into(),
+            selection: String::new(),
+        };
+        let out = ext.transform(&req, &s).expect("transform");
+        assert_eq!(out.values, vec!["001", "002", "003"]);
+        assert!(out.error.is_none());
+        let bad = TransformReq {
+            text: "[a]x1".into(),
+            ..req
+        };
+        let out = ext.transform(&bad, &s).expect("transform");
+        assert!(out.values.is_empty());
+        assert!(
+            out.error.as_deref().is_some_and(|e| e.contains("목록")),
+            "{:?}",
+            out.error
+        );
+        let j = transform_request_json(&bad, r#"{"ext.insert_sequence.default":"1+1"}"#);
+        assert!(
+            j.contains("\"n\":3")
+                && j.contains("\"settings\":{\"ext.insert_sequence.default\":\"1+1\"}"),
+            "{j}"
+        );
+        assert!(j.contains("\"phase\":\"live\""));
+        let t = transform_out_from_json(r#"{"apply":"text","text":"T"}"#).expect("text mode");
+        assert_eq!((t.apply.as_str(), t.text.as_str()), ("text", "T"));
+        assert_eq!(
+            transform_out_from_json(r#"{"apply":"none","rows":[]}"#)
+                .expect("none")
+                .apply,
+            "none"
+        );
+        let o = transform_out_from_json(r#"{"error":"e","rows":[{"text":"r","warn":true}]}"#)
+            .expect("out");
+        assert_eq!(
+            (o.error.as_deref(), o.rows.len(), o.rows[0].1),
+            (Some("e"), 1, true)
+        );
+        assert!(transform_out_from_json("{}").is_err());
+    }
+
+    /// ★ 148차(설정 접근): hello-ext 0.2.0 = settings_read ui.lang · settings_write editor.auto_close_pairs · say → 로그에 ui.lang 값(선언 키만
+    ///   읽힌다) · toggle → 덮어쓰기 요청 큐 (editor.auto_close_pairs, 반대 값) · 큐는 한 번 거두면 빈다.
+    #[test]
+    fn hello_wasm_reads_declared_setting_and_queues_overlay() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extensions/hello-ext/hello_ext.wasm");
+        if !path.exists() {
+            eprintln!("skip: {} not built", path.display());
+            return;
+        }
+        let mut ext = WasmExtension::load_file(&path).expect("load");
+        assert_eq!(ext.settings_read(), vec!["ui.lang".to_string()]);
+        assert_eq!(
+            ext.settings_write(),
+            vec!["editor.auto_close_pairs".to_string()]
+        );
+        let s = Settings::from_text(
+            std::path::PathBuf::from("x"),
+            "ui.lang=ko
+",
+        );
+        let mut tb = nexa_ctl::TextBox::new("");
+        assert!(ext.run_with("ext.hello_ext.say", &mut tb, "", &s));
+        let notes: Vec<String> = std::mem::take(&mut *ext.notes.borrow_mut());
+        assert!(notes.iter().any(|n| n.contains("ui.lang=ko")), "{notes:?}");
+        assert!(ext.run_with("ext.hello_ext.toggle_autoclose", &mut tb, "", &s));
+        let def = s.get("editor.auto_close_pairs").expect("key").to_string();
+        let expect = if def == "off" { "on" } else { "off" };
+        assert_eq!(
+            ext.take_setting_sets(),
+            vec![("editor.auto_close_pairs".to_string(), expect.to_string())]
+        );
+        assert!(ext.take_setting_sets().is_empty());
+    }
+
     /// 소스 트리의 공식 패키지 `.wasm`(SDK 샘플로 빌드해 둔 것)을 로드해 메타·설정→효과·명령 큐를 확인한다.
     /// ★ 146차(협업 V1 결함 → SDK `host::get` 해제 용량 결함 수정): PEM 0.2.0 명령 4종 = 모르는 명령은 0 · 나머지 처리 · 파일 op 큐 · 트랩 0.
     #[test]
@@ -685,6 +1045,7 @@ mod tests {
         let mut ext = WasmExtension::load_file(&path).expect("load wasm");
         assert_eq!(ext.id(), "project-explorer-menus");
         let mut tb = nexa_ctl::TextBox::new("");
+        let s = Settings::from_text(std::path::PathBuf::from("x"), "");
         for (cmd, doc) in [
             ("nope", ""),
             ("ext.project_explorer_menus.show_path", ""),
@@ -692,7 +1053,7 @@ mod tests {
             ("ext.project_explorer_menus.reveal", "C:/tmp/a.sql"),
             ("ext.project_explorer_menus.open", "C:/tmp/a.sql"),
         ] {
-            let ok = ext.run_with(cmd, &mut tb, doc);
+            let ok = ext.run_with(cmd, &mut tb, doc, &s);
             let notes: Vec<String> = std::mem::take(&mut *ext.notes.borrow_mut());
             let ops = ext.take_file_ops();
             eprintln!("{cmd} doc={doc:?} ok={ok} notes={notes:?} ops={ops:?}");
@@ -760,7 +1121,7 @@ mod tests {
             .expect("b");
         assert!(e.rainbow && e.unmatched && e.max_chars == 100 && e.colors.len() == 1);
         let s = Settings::from_text(std::path::PathBuf::from("x"), "");
-        let j = settings_json(&s, "ext.rainbow_pairs.");
+        let j = settings_json(&s, "ext.rainbow_pairs.", &[]);
         assert!(j.contains("\"ext.rainbow_pairs.enabled\"") && !j.contains("\"editor."));
     }
 }

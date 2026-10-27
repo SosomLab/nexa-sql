@@ -8,6 +8,7 @@ members = [
   "samples/rainbow-pairs",   # Rainbow Pairs 정책 층을 SDK 위에 옮긴 것(앱의 rainbow_pairs.rs와 같은 동작)
   "samples/sql-formatter-kiros33", # ★ SQL Formatter for kiros33 — 포맷터 확장(ABI v1.1 · nsql-format 공용 · docs/95)
   "samples/project-explorer-menus", # ★ Project Explorer Menus — 열린 파일 우클릭 메뉴 확장 기본 틀(호스트 함수 nx_host_get · docs/97)
+  "samples/insert-sequence",        # ★ Insert Sequence — 프롬프트 변환 확장(ABI v1.2 · nsql-seq 공용 · 내장을 대체 · docs/124 §7)
 ]
 
 [workspace.package]

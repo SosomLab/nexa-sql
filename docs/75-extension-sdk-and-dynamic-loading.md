@@ -67,6 +67,25 @@
 - ★ **미리보기 표식(09-30)**: `"formatter":{…,"marks":[{"key":"ext.<확장>.<키>","mark":"조각"}]}` — 호스트는 그 설정 카드에 "▶ 미리보기 n행"을 붙인다(조각 = 미리보기 결과에서 공백·탭을 지우고 대문자로 바꾼 뒤 처음 포함되는 줄 · `Registry::formatter_marks`). 호스트 내장 표(`app/format.rs PREVIEW_MARKS`)는 **Basic `format.*`만** — 확장 것은 확장이 낸다(사용자 09-30 "kiros33 것은 확장에").
 - ★ **버전 규칙(09-30)**: `.wasm`이 바뀌는 커밋마다 **`version`을 올린다** — 세 곳(`extensions/sdk/samples/<확장>/Cargo.toml` · `extensions/<확장>/extension.json` · `extensions/index.json`) → `pwsh scripts/ext-build.ps1 -Only <확장>`(wasm 재빌드 + sha256) → `pwsh scripts/ext-sync-installed.ps1`(이 PC 설치본). 버전이 그대로면 설치본은 "최신"으로 보여 업데이트 버튼이 뜨지 않는다(패널 판정 = `manager::version_newer`).
 
+### 3-2. ABI v1.2 — 프롬프트 변환(10-27 · 148차 · [124 §7·§8](124-insert-sequence.md) · SDK 0.3)
+
+범용 "입력란 → 결과" 확장 축. 메타 `"prompts":[{"id","label":{en,ko?},"placeholder","placeholder_key","hint","key","help":[{"expr","label"}]}]` → 호스트가 prompt id를 명령으로 등록(팔레트 · 키맵 · 메뉴 · 같은 id가 `commands`에 없으면 같은 라벨·키로 병합). 고르면 **호스트가 세션을 든다**(구간·원문 저장 · 라이브 프롬프트 · 교체 · Enter 확정 · Esc 복원 · 되돌리기 한 단계) — 게스트는 순수 함수만.
+
+- export `nx_ext_transform(ptr) -> ptr`: 요청 `{"id","text","n","regions":[[line,text]…],"selection","phase":"live|commit|cancel","lang","doc_path","settings"}` → 응답 `{"values":[…n]}`(apply = regions) · `{"text":…}`(apply = text · 구간을 하나로 재기준 · 원문일 때만) · none · `"error"` · `"rows"`(미리보기 행 · 없으면 호스트가 만든다). commit 때 한 번 더 묻고 적용 · cancel은 알림만.
+- SDK = `Prompt::new(id, label, placeholder, hint).with_key().with_placeholder_key().with_help()` · `TransformRequest`(`is_commit` · `is_cancel` · `is_ko`) · `TransformResponse::ok/text/none/err` · trait `Extension::transform`(기본 = 없음) · `SettingDef::text`.
+- 한도 = 연료 `TRANSFORM_FUEL` 2e8 · 500 ms · 요청 ≤ 1 MB · 구간 ≤ 256. 게스트 import 추가 없음(필요한 것은 ctx로).
+- 내장 ↔ wasm 공존 = 같은 id면 wasm이 앞섬(D-197) · 내장 확장의 `default_on`(D-368) = 설치 없이 켜짐 · 삭제 = 끄기.
+
+### 3-3. 설정 접근 — 전용 설정 + 기본 설정 읽기/덮어쓰기(10-27 · 148차 · [D-369](10-decision-record.md))
+
+사용자 10-27 세 지시(SDK 범용 · 전용 설정 + 기본 설정 읽기/수정 · **확장은 본 프로그램에 영향 X**)의 계약.
+
+- **전용 설정** = 메타 `settings`(T-258 · 접두 `ext.<id>.`) — 런타임 레지스트리 층 · ★ 재기동 때 파일 값은 등재 직후 `Settings::adopt_unknown()`으로 승격(로그 "settings: adopted <key> from file").
+- **기본 설정 읽기** = 메타 `settings_read:[패턴]`(정확히 · `prefix*`) → 게스트 설정 JSON에 전용 키와 함께 · 그 키가 바뀌면 `on_settings` 재호출(`Registry::reads_key`) · import `nx_setting_get(key, ptr, cap)` = read ∪ write 선언 키만(그 밖 −1).
+- **기본 설정 덮어쓰기** = 메타 `settings_write:[패턴]` + import `nx_setting_set(key, val)`(호출당 16개) → 호스트가 선언(`Registry::writable` · 자기 접두는 늘 허용)·레지스트리 검증(`Settings::set_overlay` · 읽기 전용·형식 거절) 뒤 **런타임 overlay 층**에 넣고 그 키를 즉시 적용 · 로그 "[id] setting overlay: key = v (runtime only …)" / "refused: …".
+- **격리 원칙** = overlay는 **파일에 저장하지 않는다**(`is_modified` 영향 0 · 설정 창의 사용자 값은 그대로) · 확장이 꺼지거나 내려가면 `clear_overlay(owner)` + 재적용("overlay cleared") · 재귀 상한 3(`ext_overlay_depth`) · 게스트 본문 쓰기 0. 규칙 = [94 §9](94-settings-key-naming-and-location.md).
+- 데모 = hello-ext 0.2.0(`settings_read` ui.lang · `settings_write` editor.auto_close_pairs · "Hello: Toggle auto-close pairs (overlay)").
+
 ## 4. SDK 구성(`extensions/sdk/`)
 
 ```
@@ -77,6 +96,8 @@ extensions/sdk/
                              Settings(get/flag/int) · Editor(op) · log · trait Extension · export_extension! · buf)
   samples/hello-ext/         최소 샘플(명령 1 · 로그)
   samples/rainbow-pairs/     Rainbow Pairs 정책 층(앱 rainbow_pairs.rs와 같은 동작 · 시험 1)
+  samples/insert-sequence/   프롬프트 변환 샘플 0.1.0(ABI v1.2 · nsql-seq path 의존 · 내장 Insert Sequence 대체)
+  (hello-ext = 0.2.0 · 설정 읽기/overlay 데모 · SDK = 0.3)
 ```
 
 **새 확장 만들기**(외부 개발자 순서):
@@ -156,3 +177,5 @@ Run(명령) → Registry::run → owner(WASM 우선) → nx_ext_run → op 큐 �
 | D-197 | WASM 확장이 내장 확장과 같은 id면 **WASM이 대체 · 내장은 폴백** | ✅ |
 | D-198 | ABI v1 = 버퍼+JSON(WIT 없음) · 게스트 상태 없음 · 편집기 조작은 op 큐 | ✅ |
 | D-199 | 배포 채널 = 저장소 폴더(기본) + Releases 자산(`files[].url`) · 둘 다 sha256 필수 | ✅ |
+| D-368 | 내장(builtin) 확장 = 설치 없이 기본 켜짐 · 끄기만(Insert Sequence) | ✅ 사용자 10-27 |
+| D-369 | 확장의 기본 설정 수정 = **런타임 overlay만**(선언 · 검증 · 파일 저장 0 · 끄면 원복) | ✅ 사용자 10-27 |

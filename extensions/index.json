@@ -17,7 +17,7 @@
       "id": "hello-ext",
       "dir": "hello-ext",
       "name": "Hello Extension",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "kind": "wasm",
       "summary": "SDK sample — one command that writes a log line (extensions/sdk/samples/hello-ext)"
     },
@@ -36,6 +36,14 @@
       "version": "0.2.0",
       "kind": "wasm",
       "summary": "Right-click menus for the open file and Project Explorer rows: open, reveal, copy path, show path (docs/97)"
+    },
+    {
+      "id": "insert-sequence",
+      "dir": "insert-sequence",
+      "name": "Insert Sequence",
+      "version": "0.1.0",
+      "kind": "wasm",
+      "summary": "Multi-caret sequence insertion (numbers · letters · dates · lists · templates) as a prompt extension — same engine as the built-in, replaces it when installed (WASM · ABI v1.2)"
     }
   ]
 }

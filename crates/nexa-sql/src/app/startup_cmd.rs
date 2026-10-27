@@ -1504,7 +1504,12 @@ cells={n}
             return;
         }
         if id == "seq.open" {
-            self.insseq_open();
+            self.prompt_open(crate::extensions::insert_sequence::CMD);
+            return;
+        }
+        // `seq.open:<프롬프트 id>` = 확장(wasm)의 프롬프트(148차).
+        if let Some(p) = id.strip_prefix("seq.open:") {
+            self.prompt_open(p);
             return;
         }
         if let Some(expr) = id.strip_prefix("seq.set:") {

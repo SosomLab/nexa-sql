@@ -121,6 +121,8 @@
 
 | **타이밍 두 벌 — 트레일링 스로틀 / 트레일링 디바운스**(사용자 09-28 용어 확정) | `app/project.rs` `project_autosave_tick`(스로틀 + 주기 안전망) · `persist_settings`·저장 큐(디바운스 · [70 §3](70-autosave-and-restore.md)) | 잦은 요청을 1회로 접기 — **스로틀** = 창의 기준이 **첫** 사건 · 창이 닫힐 때 쌓인 것을 한 번에(코얼레싱·배치 · 프로젝트/파일 저장) · **디바운스** = 창의 기준이 **마지막** 사건 · 마지막 값이 전체를 대변(latest-wins · 설정 저장 · 잦은 호출) · 새 타이머를 만들 때 둘 중 무엇인지 먼저 정한다([70 §7-1](70-autosave-and-restore.md)) | 프로젝트 자동 저장 · 설정 저장 · 저장 큐 |
 | ⏳ **행 다중 선택 모델**(후보 · 10-27 · T-438) | nexa-dlg(`marks`) · nexa-grid(`SelectOp`) · nexa-sql `driver_win` `Sel`(순수 · 10-27 · 세 번째) | 클릭 단일 · Ctrl 토글 · Shift 범위 · 키 이동 · Space · Ctrl+A를 행 목록마다 따로 구현 → **세 번째 등장 = nexa-ui로 올릴 후보**(요청 시) | 파일 대화상자 · 결과 그리드 · 드라이버 관리자 |
+| **프롬프트 변환 포트 `Extension::prompts`/`transform` + `Registry::transform`**(10-27 · 148차 · [75 §3-2](75-extension-sdk-and-dynamic-loading.md)) | nexa-sql `extensions/mod.rs` · `app/insseq.rs`(세션) · SDK `Prompt`/`TransformRequest`/`TransformResponse` | 입력란 → 값 기능을 확장으로 만들되 본문 쓰기 권한을 주지 않음 → **포트(trait) + 레지스트리 + 설정 `placeholder_key`** · 호스트가 세션(구간·교체·확정·복원·되돌리기)을 들고 게스트는 순수 함수 · 같은 id = wasm 앞섬 | Insert Sequence(내장 · wasm) |
+| **설정 overlay 층 `Settings::set_overlay`/`clear_overlay` + `adopt_unknown`**(10-27 · 148차 · [94 §9](94-settings-key-naming-and-location.md)) | nsql-settings | 확장이 기본 설정을 바꾸되 사용자 파일·값에 영향 0 → 런타임 층(먼저 읽힘 · 저장 0 · 주인별 해제) · 동적 등재 키의 파일 값은 등재 뒤 승격 | hello-ext 0.2.0 · 확장 전용 설정 |
 
 규칙: 같은 문제를 두 번째 만나면 **부품으로 올린다**(nexa-ui면 공용). 창마다 복사한 코드는 이 표의 후보다.
 

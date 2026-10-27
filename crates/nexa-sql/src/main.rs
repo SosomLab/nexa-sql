@@ -71,7 +71,6 @@ mod imewatch;
 mod import_win;
 mod input;
 mod input_win;
-mod insseq;
 mod intel;
 mod intel_card;
 mod keymap;
@@ -362,6 +361,8 @@ struct App {
     ext_dev_ids: std::collections::HashMap<PathBuf, (Option<std::time::SystemTime>, String)>,
     /// ★ Insert Sequence 세션(docs/124 · 다중 캐럿 일괄 생성 · 열려 있는 동안 본문에 미리보기).
     seq: Option<app::insseq::SeqSession>,
+    /// ★ 확장 설정 덮어쓰기 적용의 재귀 깊이(148차 · on_settings → 덮어쓰기 → 재적용 → on_settings 고리 차단).
+    ext_overlay_depth: u32,
     /// ★ 프로필 변수 창(접속 폼 [프로필 변수 (n)…] · T-153 후속 10-27).
     profvars_win: profvars_win::ProfVarsWin,
     open_profvars: bool,
@@ -1863,6 +1864,7 @@ fn main() {
         pw_once: None,
         vars_win,
         seq: None,
+        ext_overlay_depth: 0,
         ext_dev_ids: std::collections::HashMap::new(),
         profvars_win,
         open_profvars: false,

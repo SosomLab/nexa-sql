@@ -315,6 +315,10 @@ impl App {
             || self.apply_setting_grid(key)
             || self.apply_setting_editor(key)
             || self.apply_setting_misc(key);
+        // ★ 어느 확장이 이 기본 설정을 읽는다고 선언했으면(메타 `settings_read` · 148차) 그 확장에 다시 묻는다(`ext.*`는 아래 조각이 이미 처리).
+        if !key.starts_with("ext.") && self.extensions.reads_key(key) {
+            self.apply_extensions(Some(key));
+        }
         if !hit {
             return false;
         }

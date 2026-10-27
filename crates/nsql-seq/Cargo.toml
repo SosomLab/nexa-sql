@@ -1,0 +1,14 @@
+[package]
+name = "nsql-seq"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Insert Sequence engine — one expression line → n values for multi-caret insertion (no deps · used by the app's builtin extension and by WASM extensions · docs/124)"
+
+[dependencies]
+
+[lints]
+workspace = true

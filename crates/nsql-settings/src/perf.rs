@@ -487,6 +487,10 @@ impl Settings {
                 return Some(v);
             }
         }
+        // ★ 확장 덮어쓰기 층(148차 · [`Settings::set_overlay`]) — 개별 값·모드 프리셋보다 앞(향상 모드 강제값만 위).
+        if let Some((_, v)) = self.overlay.get(e.key) {
+            return Some(v.as_str());
+        }
         if self.is_modified(key) {
             return self.get(key);
         }

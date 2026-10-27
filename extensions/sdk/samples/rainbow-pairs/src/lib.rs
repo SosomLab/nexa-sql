@@ -48,6 +48,9 @@ impl Extension for RainbowPairs {
             id: "rainbow-pairs".into(),
             name: "Rainbow Pairs".into(),
             settings_prefix: "ext.rainbow_pairs.".into(),
+            settings_read: vec![],
+            settings_write: vec![],
+            prompts: vec![],
             commands,
             menus: vec![Menu::editor(
                 "brackets",

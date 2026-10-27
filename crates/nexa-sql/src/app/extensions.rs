@@ -10,12 +10,21 @@ impl App {
     pub(crate) fn ext_disabled(&self) -> Vec<String> {
         // 확장 관리자가 꺼져 있으면 **모든 확장이 꺼진 것**(설치 기록·개별 켬/끔과 무관 · 사용자 09-19).
         if !self.settings.flag("extensions.enabled") {
-            return self
+            // ★ 기본 켜진 내장(D-368 · Insert Sequence · 148차)은 관리자가 꺼져 있어도 산다(핵심 편집 기능 · 끄려면 `extensions.disabled`).
+            let default_on = self.extensions.default_on_ids();
+            let mut off: Vec<String> = self
                 .extensions
                 .ids()
                 .into_iter()
                 .map(|(id, _)| id)
+                .filter(|id| !default_on.iter().any(|(d, _)| d == id))
                 .collect();
+            for id in self.ext_disabled_list() {
+                if !off.contains(&id) {
+                    off.push(id);
+                }
+            }
+            return off;
         }
         self.ext_disabled_list()
     }
@@ -59,9 +68,16 @@ impl App {
             self.log_win.push(LogEntry::new(LogKind::Info, note));
         }
         let mut disabled = self.ext_disabled();
+        // ★ 기본 켜진 내장(D-368 · Insert Sequence · 148차)은 설치 기록 없이도 산다 — 끄기만 가능.
+        let default_on = self.extensions.default_on_ids();
         for (id, _) in self.extensions.ids() {
             let is_dev = dev_ids.iter().any(|(d, _)| *d == id);
-            if !installed.iter().any(|r| r.id == id) && !is_dev && !disabled.contains(&id) {
+            let is_default_on = default_on.iter().any(|(d, _)| *d == id);
+            if !installed.iter().any(|r| r.id == id)
+                && !is_dev
+                && !is_default_on
+                && !disabled.contains(&id)
+            {
                 disabled.push(id);
             }
         }
@@ -154,6 +170,13 @@ impl App {
             }
         }
         nsql_settings::register_dynamic(dyn_entries);
+        // ★ 결함 A(148차 V1 · 협업 발견): 파일에서 읽을 때 미등록이라 `unknown`에 머물던 동적 키 값을 등재 뒤 승격(재기동 때 값 유실 방지).
+        for k in self.settings.adopt_unknown() {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!("settings: adopted {k} from file (dynamic key registered by an extension)"),
+            ));
+        }
         // ★ 확장 명령의 기본 단축키(146차 · docs/75 §9 ②) → 키맵 동적 표 + 재조립.
         {
             let off = self.ext_disabled();
@@ -175,6 +198,7 @@ impl App {
             self.keymap = Keymap::from_settings(&self.settings);
         }
         let list_off = self.ext_disabled_list();
+        let mut mirror_dirty = false;
         for r in &installed {
             let key = nsql_settings::ext_use_key(&r.id);
             let v = if list_off.contains(&r.id) {
@@ -184,9 +208,40 @@ impl App {
             };
             if self.settings.get(key) != Some(v) {
                 let _ = self.settings.set(key, v);
+                mirror_dirty = true;
             }
         }
+        // ★ 거울 키가 바뀌었으면 파일에도(148차 V1-b 관찰 · 협업): 종전엔 메모리만 고쳐 `ext.<id>.use=off` 줄이 파일에 남았고, 재기동 때
+        //   `adopt_unknown`이 그 줄을 올려 `extensions.disabled`와 어긋난 값이 보였다(설정 창 "사용" 칸).
+        if mirror_dirty {
+            let _ = self.settings.save();
+        }
         self.prefs_win.set_extra_categories(extra_cats);
+        // ★ 꺼졌거나 내려간 확장의 설정 덮어쓰기는 통째로 걷는다(148차 · 자동 원복) — 걷힌 키는 즉시 재적용.
+        {
+            let live: Vec<String> = self
+                .extensions
+                .ids()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| !disabled.contains(id))
+                .collect();
+            for owner in self.settings.overlay_owners() {
+                if live.contains(&owner) {
+                    continue;
+                }
+                let keys = self.settings.clear_overlay(&owner);
+                if !keys.is_empty() {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("[{owner}] setting overlay cleared: {}", keys.join(", ")),
+                    ));
+                    for k in keys {
+                        self.apply_setting(&k);
+                    }
+                }
+            }
+        }
         let effects = self
             .extensions
             .on_settings(&self.settings, changed_key, &disabled);
@@ -209,6 +264,7 @@ impl App {
                 self.editors.set_bracket_opts(b);
             }
         }
+        self.ext_apply_setting_sets();
         self.refresh_menu_extras();
         // ★ 프로젝트 탐색기 행 우클릭 메뉴의 확장 항목(146차 · target = project_explorer).
         {
@@ -252,7 +308,7 @@ impl App {
         let disabled = self.ext_disabled();
         if self
             .extensions
-            .run_with(id, &disabled, self.editors.cur_mut(), doc)
+            .run_with(id, &disabled, self.editors.cur_mut(), doc, &self.settings)
         {
             self.redraw();
         }
@@ -263,6 +319,51 @@ impl App {
         for op in self.extensions.drain_file_ops() {
             self.ext_file_op(op);
         }
+        self.ext_apply_setting_sets();
+    }
+
+    /// ★ 확장의 설정 덮어쓰기 요청 적용(148차 · 사용자 10-27 "기본 설정을 바꿀 수 있되 본 프로그램에 영향 X"): 메타 `settings_write` 선언 + 레지스트리
+    ///   검증을 지난 것만 **overlay 층**(파일 저장 없음 · 확장이 꺼지면 원복)에 넣고 그 키를 즉시 재적용 · 거절·적용은 로그 한 줄 · 재귀 상한 3.
+    pub(crate) fn ext_apply_setting_sets(&mut self) {
+        let sets = self.extensions.drain_setting_sets();
+        if sets.is_empty() {
+            return;
+        }
+        if self.ext_overlay_depth >= 3 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Error,
+                "extension setting overlay: loop stopped (depth 3)".to_string(),
+            ));
+            return;
+        }
+        self.ext_overlay_depth += 1;
+        for (ext, key, value) in sets {
+            if !self.extensions.writable(&ext, &key) {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Error,
+                    format!(
+                        "[{ext}] setting overlay refused: {key} is not declared in settings_write"
+                    ),
+                ));
+                continue;
+            }
+            match self.settings.set_overlay(&key, &value, &ext) {
+                Ok(changed) => {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("[{ext}] setting overlay: {key} = {value} (runtime only · restored when the extension is off)"),
+                    ));
+                    if changed {
+                        self.apply_setting(&key);
+                    }
+                }
+                Err(e) => self.log_win.push(LogEntry::new(
+                    LogKind::Error,
+                    format!("[{ext}] setting overlay refused: {e}"),
+                )),
+            }
+        }
+        self.ext_overlay_depth -= 1;
     }
 
     /// 확장이 요청한 파일 동작(146차 · docs/97 §5 ②): 열기 = 새 탭 · 드러내기 = 프로젝트 탐색기 · 경로 복사 = 클립보드(명시적 명령에서만 온다).
@@ -367,13 +468,30 @@ impl App {
         }
     }
 
+    /// ★ 설치 기록 + 기본 켜진 내장(D-368 · 설치 기록 없음 · 148차 V1 ③): 팔레트 목록(list·remove·enable·disable·update)에도 내장이 보이게.
+    pub(crate) fn ext_installed_plus_builtin(&self) -> Vec<extensions::manager::Installed> {
+        let mut installed = extensions::manager::installed();
+        for (id, name) in self.extensions.default_on_ids() {
+            if !installed.iter().any(|r| r.id == id) {
+                installed.push(extensions::manager::Installed {
+                    id,
+                    name,
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    kind: extensions::manager::Kind::Builtin,
+                    placed: Vec::new(),
+                });
+            }
+        }
+        installed
+    }
+
     /// Extension Manager 팔레트 명령(Sublime Package Control 방식 · docs/50 §10): 텍스트 목록을 만들어 팔레트에 띄우고,
     /// 고르면 `ext.<verb>:<key>`로 다시 들어온다.
     pub(crate) fn ext_command(&mut self, id: &str) {
         use extensions::manager as mgr;
         let disabled = self.ext_disabled();
         let builtin: Vec<(String, String)> = self.extensions.ids();
-        let installed = mgr::installed();
+        let installed = self.ext_installed_plus_builtin();
         // builtin도 **설치 기록**이 있어야 설치된 것(설치 = 켜기 + 설정 분류 표시 · 삭제 = 끄기 + 숨김 · 사용자 09-17).
         let is_installed = |x: &str| installed.iter().any(|r| r.id == x);
         let _ = &builtin;
@@ -490,6 +608,30 @@ impl App {
                                 ),
                             ));
                         }
+                    }
+                }
+                // ★ 기본 켜진 내장 → 저장소의 wasm 판(148차 V1 ②): 버전 비교가 아니라 "내장을 wasm으로" 교체 대상.
+                for (id, name) in self.extensions.default_on_ids() {
+                    if mgr::installed().iter().any(|r| r.id == id) {
+                        continue;
+                    }
+                    if let Some((n, (src, p))) = self
+                        .ext_catalog
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (_, p))| p.id == id)
+                    {
+                        count += 1;
+                        cmds.push((
+                            format!("ext.install:{n}"),
+                            format!(
+                                "{} builtin → {} (wasm) - {} · {}",
+                                name,
+                                p.version,
+                                p.summary,
+                                src.display()
+                            ),
+                        ));
                     }
                 }
                 if count > 1 {
@@ -644,6 +786,7 @@ impl App {
             "update_all" => {
                 let targets: Vec<usize> = {
                     let installed = mgr::installed();
+                    let default_on = self.extensions.default_on_ids();
                     self.ext_catalog
                         .iter()
                         .enumerate()
@@ -651,6 +794,8 @@ impl App {
                             installed
                                 .iter()
                                 .any(|r| r.id == p.id && mgr::version_newer(&p.version, &r.version))
+                                || (!installed.iter().any(|r| r.id == p.id)
+                                    && default_on.iter().any(|(d, _)| *d == p.id))
                         })
                         .map(|(n, _)| n)
                         .collect()
@@ -661,6 +806,17 @@ impl App {
                 return;
             }
             "remove" => {
+                // ★ 기본 켜진 내장(설치 기록 없음 · D-368)의 삭제 = 끄기(09-17 규칙 "삭제 = 끄기" · 지울 파일이 없다).
+                if !mgr::installed().iter().any(|r| r.id == key)
+                    && self
+                        .extensions
+                        .default_on_ids()
+                        .iter()
+                        .any(|(d, _)| d == key)
+                {
+                    self.ext_pick(&format!("ext.disable:{key}"));
+                    return;
+                }
                 let mut tr = mgr::Trace::default();
                 let r = mgr::remove(key, &mut tr);
                 self.ext_trace(tr);
@@ -696,7 +852,11 @@ impl App {
             // 목록에서 고르면 패널의 행 클릭과 같은 **상세 안내 탭**(종전 = 상태줄 한 줄).
             "list" => {
                 let off = self.ext_disabled_list();
-                if let Some(r) = mgr::installed().into_iter().find(|r| r.id == key) {
+                if let Some(r) = self
+                    .ext_installed_plus_builtin()
+                    .into_iter()
+                    .find(|r| r.id == key)
+                {
                     let cat = self.ext_catalog.iter().position(|(_, p)| p.id == r.id);
                     let latest = cat.and_then(|n| {
                         let v = &self.ext_catalog[n].1.version;
@@ -766,9 +926,12 @@ impl App {
         }
         let installed = extensions::manager::installed();
         let off = self.ext_disabled_list();
+        let default_on = self.extensions.default_on_ids();
         for d in self.ext_details.values_mut() {
             let rec = installed.iter().find(|r| r.id == d.row.id);
-            let inst = rec.is_some();
+            // 기본 켜진 내장(설치 기록 없음 · D-368) = 설치됨 · 카탈로그의 wasm 판은 늘 "업데이트" 대상.
+            let def_on = rec.is_none() && default_on.iter().any(|(x, _)| *x == d.row.id);
+            let inst = rec.is_some() || def_on;
             d.row.installed = inst;
             d.row.enabled = inst && !off.iter().any(|x| x == &d.row.id);
             d.row.catalog = self.ext_catalog.iter().position(|(_, p)| p.id == d.row.id);
@@ -777,10 +940,21 @@ impl App {
             if let Some(r) = rec {
                 d.row.version = r.version.clone();
                 d.row.kind = r.kind.as_str().to_string();
+            } else if def_on {
+                d.row.version = env!("CARGO_PKG_VERSION").to_string();
+                d.row.kind = "builtin".into();
             }
             d.row.latest = d.row.catalog.and_then(|n| {
                 let v = &self.ext_catalog[n].1.version;
-                (inst && extensions::manager::version_newer(v, &d.row.version)).then(|| v.clone())
+                (def_on || (inst && extensions::manager::version_newer(v, &d.row.version))).then(
+                    || {
+                        if def_on {
+                            format!("{v} (wasm)")
+                        } else {
+                            v.clone()
+                        }
+                    },
+                )
             });
             let state = t(if !inst {
                 Msg::ExtStNotInstalled
@@ -802,6 +976,11 @@ impl App {
             let ver_label = t(Msg::ExtDetVersion);
             if let Some(f) = d.fields.iter_mut().find(|(l, _)| l == ver_label) {
                 f.1 = ver;
+            }
+            // 종류 칸도(148차 V1 ① · wasm 설치 뒤 builtin으로 남던 것).
+            let kind_label = t(Msg::ExtDetKind);
+            if let Some(f) = d.fields.iter_mut().find(|(l, _)| l == kind_label) {
+                f.1 = d.row.kind.clone();
             }
         }
     }
@@ -857,6 +1036,26 @@ impl App {
                 }
             })
             .collect();
+        // ★ 설치 기록 없이 기본 켜진 내장 확장(D-368 · 148차) = 설치됨 행(builtin · 앱 버전) · 카탈로그에 같은 id의 wasm 패키지가 있으면
+        //   그 요약 + "업데이트 → wasm 판"(설치 = 내장 대체 · Rainbow Pairs 방식).
+        for (id, name) in self.extensions.default_on_ids() {
+            if rows.iter().any(|r| r.id == id) {
+                continue;
+            }
+            let cat = self.ext_catalog.iter().find(|(_, p)| p.id == id);
+            rows.push(ExtRow {
+                latest: cat.map(|(_, p)| format!("{} (wasm)", p.version)),
+                id: id.clone(),
+                name,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                kind: "builtin".into(),
+                summary: cat.map(|(_, p)| p.summary.clone()).unwrap_or_default(),
+                installed: true,
+                enabled: !off.iter().any(|d| d == &id),
+                catalog: self.ext_catalog.iter().position(|(_, p)| p.id == id),
+                source: cat.map(|(s, _)| s.display()).unwrap_or_default(),
+            });
+        }
         for (n, (src, p)) in self.ext_catalog.iter().enumerate() {
             if installed.iter().any(|r| r.id == p.id) || rows.iter().any(|r| r.id == p.id) {
                 continue;

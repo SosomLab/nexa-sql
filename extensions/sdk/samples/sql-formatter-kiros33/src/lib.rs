@@ -468,6 +468,9 @@ impl Extension for Kiros33 {
             id: "sql-formatter-kiros33".into(),
             name: "SQL Formatter for kiros33".into(),
             settings_prefix: "ext.sqlfmt_kiros33.".into(),
+            settings_read: vec![],
+            settings_write: vec![],
+            prompts: vec![],
             commands: vec![],
             menus: vec![],
             formatter: Some(Formatter {

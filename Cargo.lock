@@ -2246,6 +2246,7 @@ dependencies = [
  "nsql-run",
  "nsql-script",
  "nsql-search",
+ "nsql-seq",
  "nsql-settings",
  "nsql-vault",
  "objc2 0.5.2",
@@ -2520,6 +2521,10 @@ dependencies = [
  "nsql-core",
  "regex",
 ]
+
+[[package]]
+name = "nsql-seq"
+version = "0.3.1"
 
 [[package]]
 name = "nsql-settings"

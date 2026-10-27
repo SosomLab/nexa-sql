@@ -41,6 +41,7 @@ nsql-search.workspace = true
 regex.workspace = true
 nsql-bookmarks.workspace = true
 nsql-format.workspace = true
+nsql-seq.workspace = true
 nsql-i18n.workspace = true
 nsql-settings.workspace = true
 nsql-log.workspace = true

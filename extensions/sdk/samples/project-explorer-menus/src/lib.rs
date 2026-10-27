@@ -31,6 +31,9 @@ impl Extension for ProjectExplorerMenus {
             id: "project-explorer-menus".into(),
             name: "Project Explorer Menus".into(),
             settings_prefix: "ext.project_explorer_menus.".into(),
+            settings_read: vec![],
+            settings_write: vec![],
+            prompts: vec![],
             commands: vec![
                 Command::new(
                     CMD_SHOW_PATH,

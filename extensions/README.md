@@ -49,12 +49,18 @@
 
 | kind | 뜻 | 설치가 하는 일 |
 |---|---|---|
-| `builtin` | 앱에 컴파일된 in-process 확장(예 Rainbow Pairs) | 파일 없음 · **설치 = 켜기 + 설정 분류 표시**(`installed.json` 기록) · 삭제 = 끄기 + 분류 숨김 · 끄기/켜기 = `extensions.disabled` |
+| `builtin` | 앱에 컴파일된 in-process 확장(예 Rainbow Pairs · Insert Sequence) | 파일 없음 · **설치 = 켜기 + 설정 분류 표시**(`installed.json` 기록) · 삭제 = 끄기 + 분류 숨김 · 끄기/켜기 = `extensions.disabled` |
 | `data` | 문법 · 테마 · 스니펫 · 키맵 같은 **파일 패키지** | `files[]`를 sha256 검증 뒤 `<설정 폴더>/extensions/<id>/<version>/`에 보관하고 `dest`에 배치 · `installed.json`에 기록(삭제 때 되감기) |
 | `wasm` | **SDK로 만든 `.wasm` 코드 확장**([docs/75](../docs/75-extension-sdk-and-dynamic-loading.md) · ABI v1) | `files[]`의 `.wasm`을 sha256 검증 뒤 보관하고 `installed.json` 기록 → 앱이 즉시 `wasmi`로 로드(연료·메모리·시간 상한 · 재시작 없음) · **같은 id의 내장 확장을 대체**(로드 실패 = 내장 폴백) · 삭제 = 내림 + 내장 복귀 |
 | `process` | 프로세스 확장(docs/50 §2 · T-118 ④) | **아직 설치 불가**(거부 메시지) |
 
 **포맷터 확장**(ABI v1.1 · docs/95): `kind: "wasm"`이면서 메타에 `formatter`를 내면 앱의 SQL 포맷터 목록에 오른다(Shift+Alt+F 기본 포맷터로 지정 가능 · 미리보기). 예 = `sql-formatter-kiros33`.
+
+**프롬프트 확장**(ABI v1.2 · docs/75 §3-2): 메타에 `prompts`를 내고 `transform`을 구현하면 앱이 입력란(라이브 프롬프트)·구간·교체·확정/취소·되돌리기를 맡고, 확장은 입력 → 값(또는 글)만 돌려준다. 예 = `insert-sequence`(내장 Insert Sequence와 같은 id · 설치하면 대체 · 삭제하면 내장 복귀).
+
+**설정 접근**(docs/75 §3-3 · D-369): 전용 설정 = 메타 `settings`(접두 `ext.<id>.`) · 기본 설정 읽기 = `settings_read:[키 또는 접두*]` · 덮어쓰기 = `settings_write:[…]` + `nx_setting_set` — **실행 중에만 덮어쓰는 overlay**(파일 저장 없음 · 확장을 끄면 원래 값). 예 = `hello-ext` 0.2.0.
+
+**공식 패키지**: `rainbow-pairs` 1.1.2 · `hello-ext` 0.2.0 · `sql-formatter-kiros33` 1.3.5 · `project-explorer-menus` 0.2.0 · `insert-sequence` 0.1.0.
 
 `files[].url`(선택 · `https://` 절대 URL): 있으면 패키지 폴더 대신 그 주소에서 받는다 — **GitHub Releases 자산**에 두는 큰 파일용(`path`는 보관 이름 · sha256은 그대로 필수).
 

@@ -11,7 +11,7 @@
 use std::fmt;
 
 /// 기본 표현식(Placeholder · 설정 `editor.seq_default`의 기본값).
-pub(crate) const DEFAULT_EXPR: &str = "1+1";
+pub const DEFAULT_EXPR: &str = "1+1";
 
 /// 범위 `a..z`·반복·폭의 상한(실수로 거대한 목록을 만들지 않게).
 const MAX_RANGE: usize = 10_000;
@@ -20,7 +20,7 @@ const MAX_WIDTH: usize = 64;
 const MAX_POW: u32 = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SeqErr {
+pub enum SeqErr {
     /// 읽을 수 없는 조각(원문).
     Parse(String),
     /// `x`의 양쪽은 목록이어야 한다.
@@ -253,7 +253,7 @@ struct Term {
 
 /// 파싱된 표현식 — `values(n)`으로 값 n개.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Seq {
+pub struct Seq {
     terms: Vec<Term>,
     template: Option<String>,
 }
@@ -261,7 +261,7 @@ pub(crate) struct Seq {
 // ───────────────────────── 파싱 ─────────────────────────
 
 /// 표현식 → [`Seq`]. 빈 글은 [`DEFAULT_EXPR`].
-pub(crate) fn parse(expr: &str) -> Result<Seq, SeqErr> {
+pub fn parse(expr: &str) -> Result<Seq, SeqErr> {
     let src = expr.trim();
     let src = if src.is_empty() { DEFAULT_EXPR } else { src };
     let (body, template) = split_template(src)?;
@@ -768,7 +768,7 @@ fn parse_fmt(spec: Option<&str>, kind: &Kind) -> Result<Fmt, SeqErr> {
 
 impl Seq {
     /// 값 n개(캐럿 순). 오류(넘침 등)는 그 자리에 빈 글이 아니라 `Err`(호스트 = 전부 공백).
-    pub(crate) fn values(&self, n: usize) -> Result<Vec<String>, SeqErr> {
+    pub fn values(&self, n: usize) -> Result<Vec<String>, SeqErr> {
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
             out.push(self.value_at(i)?);
@@ -1195,7 +1195,7 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 // ───────────────────────── 도움말 ─────────────────────────
 
 /// 치트 시트(표현식 · 영어 · 한국어) — 팔레트 `?` 행 · docs/124 §2 표와 같은 순서.
-pub(crate) const HELP: &[(&str, &str, &str)] = &[
+pub const HELP: &[(&str, &str, &str)] = &[
     ("1+1", "start + step (default)", "시작+증가(기본)"),
     ("10-2", "down by 2", "2씩 내려가기"),
     ("1*2", "geometric (1 2 4 8)", "등비(1 2 4 8)"),
