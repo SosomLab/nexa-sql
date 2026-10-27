@@ -767,10 +767,21 @@ impl App {
         let installed = extensions::manager::installed();
         let off = self.ext_disabled_list();
         for d in self.ext_details.values_mut() {
-            let inst = installed.iter().any(|r| r.id == d.row.id);
+            let rec = installed.iter().find(|r| r.id == d.row.id);
+            let inst = rec.is_some();
             d.row.installed = inst;
             d.row.enabled = inst && !off.iter().any(|x| x == &d.row.id);
             d.row.catalog = self.ext_catalog.iter().position(|(_, p)| p.id == d.row.id);
+            // ★ 버전·업데이트 가능도 지금 값으로(147차 · 사용자 10-27 "업데이트 뒤에도 열린 상세 탭에 업데이트 버튼이 남는다"):
+            //   설치본 버전 = 기록 · latest = 카탈로그가 더 새 버전을 알 때만.
+            if let Some(r) = rec {
+                d.row.version = r.version.clone();
+                d.row.kind = r.kind.as_str().to_string();
+            }
+            d.row.latest = d.row.catalog.and_then(|n| {
+                let v = &self.ext_catalog[n].1.version;
+                (inst && extensions::manager::version_newer(v, &d.row.version)).then(|| v.clone())
+            });
             let state = t(if !inst {
                 Msg::ExtStNotInstalled
             } else if d.row.enabled {
@@ -780,6 +791,17 @@ impl App {
             });
             if let Some(f) = d.fields.first_mut() {
                 f.1 = state.to_string();
+            }
+            let ver = match (&d.row.latest, inst, d.row.catalog) {
+                (Some(v), _, _) => {
+                    format!("{} · {}", d.row.version, tf(Msg::ExtStUpdateAvail, &[v]))
+                }
+                (None, true, Some(_)) => format!("{} · {}", d.row.version, t(Msg::ExtStUpToDate)),
+                _ => d.row.version.clone(),
+            };
+            let ver_label = t(Msg::ExtDetVersion);
+            if let Some(f) = d.fields.iter_mut().find(|(l, _)| l == ver_label) {
+                f.1 = ver;
             }
         }
     }

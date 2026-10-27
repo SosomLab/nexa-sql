@@ -116,3 +116,33 @@
 - 명령 `edit.insert_sequence`(Ctrl+Alt+N · mac Cmd+Alt+N · Edit 메뉴 대소문자 변환 아래 · 팔레트 "Edit: Insert Sequence…") · 설정 `editor.seq_default`(Text · 기본 `1+1`) · i18n 19(`MnInsertSequence` · `SeqHint` · `SeqMore` · `StSeqInserted/Cancelled` · `SeqErr*` 10 · 설정 라벨 2).
 - 기동 명령(자체 시험 · 키 주입 0) = `editor.regions:<a[-b];…>`(구분 `;`) · `seq.open` · `seq.set:<식>` · `seq.commit` · `seq.cancel` · `seq.dump:<파일>`(`query=` `error=` `n=` `v:…` `text:`).
 - 미리보기 행 = 캐럿 11개까지 `L줄: 값` + "…외 n개" · 오류 = 첫 행 경고색 · `?` = `HELP` 20행(언어 = `current_lang`).
+
+## 7. 검토 — Insert Sequence를 **확장(wasm)** 으로 개발할 수 있게 SDK를 보완할 수 있는가(사용자 10-27 지시 · 결론 = **가능 · 권장 설계 = "프롬프트 변환" API 한 벌")
+
+### 7-1. 지금 못 하는 이유(사실)
+| 필요한 것 | 지금 SDK(ABI v1.1) | 내장 구현이 쓰는 것 |
+|---|---|---|
+| 다중 캐럿/구간 읽기 · 값으로 교체 · 확정/취소 복원 · 되돌리기 한 단계 | 없음(편집기 API = 괄호 이동 6개 · `doc_path` 조회 · 파일 op 3) | nexa-ui 239차 `TextBox::regions()` · `replace_many` · `set_regions_pub` · `begin/end_undo_group` |
+| 상단 입력창(라이브 프롬프트) · 키 입력마다 콜백 · 미리보기 행 · Enter/Esc | 없음(게스트는 명령 1회 호출만) | 팔레트 `open_prompt_live` · `set_prompt_rows` · `PaletteAction::None/Close/Prompt` 훅 |
+| 호출 사이의 상태(원문 · 지금 들어간 글) | **호출마다 새 인스턴스**(`call_inner` = `instantiate_and_start`) → 게스트는 상태를 못 든다 | `App.seq: SeqSession` |
+| 도움말 치트 시트 · 오류 문구 | 메타엔 없음 | `insseq::HELP` · `SeqErr` → i18n |
+
+### 7-2. 세 가지 길
+| 길 | 내용 | 평가 |
+|---|---|---|
+| A. 편집기 쓰기 API를 그대로 노출 | `nx_editor_regions` · `nx_editor_replace_many` · `nx_prompt_open/rows/close` + 게스트 이벤트 export(`nx_ext_event`) · 게스트가 세션 상태를 들어야 하므로 **인스턴스 유지 모드**(현재 "호출마다 새 인스턴스" 원칙 = docs/68 §3 · 능력 승인 D-90 전)가 필요 | 가장 범용이나 **능력 승인(D-90) 없이 본문 쓰기 권한을 주는 것** · 실행기 수명 모델 변경 · 위험·규모 큼 |
+| **B. "프롬프트 변환" API(권장)** | 호스트가 세션(구간·원문·교체·복원·되돌리기·프롬프트 UI)을 전부 들고, 게스트는 **순수 함수**만 낸다: `nx_ext_transform(ctx) -> out` · ctx = `{"id","text":표현식,"n":구간 수,"regions":[{"line","text"}…(상한)],"doc_path"}` · out = `{"values":[…n개] 또는 "error":"…","rows":[미리보기 행],"help":[…]}` · 메타 선언 `prompts:[{id,label,placeholder,hint,key}]` → 호스트가 명령·팔레트·키맵에 등록하고 고르면 **지금 Insert Sequence와 같은 세션**을 연다 | 게스트에 쓰기 권한 0(값만 제안 · 적용은 호스트 = 87 §14 데이터 보호 정신과 같다) · 호출마다 새 인스턴스 그대로 · 호스트 코드 = 지금 `app/insseq.rs`를 "값 공급자가 게스트"로 일반화 · **1일 규모** |
+| C. 내장 유지 + 패널 등재만 | `kind=builtin` 확장으로 등재(Rainbow Pairs 내장판과 같은 꼴) | 확장 패널엔 보이지만 "확장으로 개발"은 아님 |
+
+### 7-3. 권장안 B 설계(ABI v1.2 · 요약)
+- 메타: `"prompts":[{"id":"ext.insert_sequence.open","label":{…},"placeholder":"1+1","hint":{…},"key":"ctrl+alt+n","help":[{"expr","en","ko"}…]}]` — 호스트는 prompt id를 명령으로 등록(팔레트·키맵·메뉴 `target` 가능).
+- 흐름: 명령 → 호스트 `prompt_open(ext, prompt)`: 구간·원문 저장 · `begin_undo_group` · 라이브 프롬프트(자리표시자·안내 = 메타) → 키마다 `nx_ext_transform(ctx)` → `values` 있으면 `replace_many`(지금 `insseq_apply`) · `error`면 공백 + 경고 행 · `rows` 있으면 그대로 미리보기(없으면 호스트가 `L줄: 값` 생성) · `?` = 메타 `help` → Enter = 확정(`set_regions_pub` 끝 캐럿 · `end_undo_group`) · Esc = 복원.
+- 게스트 import 추가 없음(ctx로 다 준다) · export 하나 추가(`nx_ext_transform`) · 상한 = 구간 수 ≤ 편집기 다중 선택 상한 · ctx 크기 ≤ 1 MB(`OUT_CAP`) · 연료·시간 상한 그대로.
+- 내장 ↔ 확장 공존 = Rainbow Pairs 방식: 앱에 `insert-sequence` **내장(builtin) 확장**을 두고(엔진 `insseq.rs` 그대로 · 확장 패널에 보임 · 기본 켜짐 여부는 사용자 결정) 같은 id의 wasm 샘플 `extensions/sdk/samples/insert-sequence`(엔진 크레이트를 path 의존 = nsql-format처럼 `nsql-seq`로 분리)를 설치하면 wasm이 앞선다.
+
+### 7-4. 비용·순서(착수 결정 시)
+1. 엔진 분리 `crates/nsql-seq`(의존 0 · insseq.rs 이동 · 시험 8 그대로) ½일.
+2. SDK v1.2 = `Prompt` 메타 + `Transform{Request,Response}` + `export_extension!`에 `nx_ext_transform`(기본 = 없음) ½일.
+3. 호스트 = `app/insseq.rs` → `app/prompt.rs` 일반화(값 공급자 = 내장 엔진 | 게스트) + 메타 `prompts` 파싱·명령 등록 + 내장 확장 등재 ½일.
+4. 샘플 `insert-sequence` wasm + 패키지(index.json) + V1 ½일.
+- 보류 = 길 A(쓰기 API)는 D-90 능력 승인·인스턴스 유지 모델 결정 뒤.
