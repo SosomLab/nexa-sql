@@ -139,8 +139,11 @@ Run(명령) → Registry::run → owner(WASM 우선) → nx_ext_run → op 큐 �
 ## 9. 남은 것(후속 · T-118 갱신)
 
 1. **설정 스키마 동적 등록** — 지금 `ext.rainbow_pairs.*`는 앱 레지스트리에 있어 되지만, 새 확장의 `foo.*` 키는 설정 창에 안 보인다(값은 `settings.conf`에 쓰면 게스트가 받는다). 메타 `settings:[{key,kind,default,label,desc}]` → 런타임 레지스트리 층 + 설정 창 분류.
+   - ✅ **10-27 146차 win(T-258)** = 메타 `settings`(SDK `SettingDef`) → 런타임 레지스트리 층 · 설정 창 분류 = 확장 이름 · `Settings::get`·게스트 설정 JSON에 동적 항목 포함 · `ext.*` 어느 키든 바뀌면 그 확장 재적용 · 한계 = CLI `nsql config`는 동적 키를 모름(`UnknownKey`)
 2. **동적 명령 라벨·키맵** — 앱 키맵 표(`COMMANDS`)에 없는 새 id는 팔레트에 라벨이 없다(우클릭 메뉴는 메타 라벨로 보임). 팔레트/키맵을 레지스트리 조회로.
+   - ✅ **10-27 146차 win** = 팔레트에 확장 명령 "<확장 이름>: <명령>"(메타 라벨에 `:`가 있으면 그대로) + 메타 `commands[].key` 기본 단축키(키맵 동적 표 · 메뉴에 표시) · ★ 함께 고친 결함 = `ext.*` 명령 id가 `ext_pick`으로 빠져 실행 안 되던 것(`owner_of`면 실행) · 후속 = `key.<ext id>` 사용자 지정
 3. **개발 모드** — 설정 `extensions.dev_dir` 폴더의 `.wasm`을 매니저 없이 로드 · 파일 변경 감시 핫 리로드 · `nsql ext check <dir>`(메타·sha256·ABI 검사) · `nsql ext pack`.
+   - ✅ **10-27 146차 win**(일부) = `extensions.dev_dir`의 `*.wasm`을 설치 없이 로드(같은 id 설치본 대체) · 남은 것 = 파일 변경 감시 핫 리로드 · `nsql ext check/pack`(CLI에 wasm 없음)
 4. **서명(D-89) · 능력 승인(D-90)** — 인덱스 서명 · 매니페스트 `capabilities`(지금 표면은 편집기 이동뿐이라 승인 대상이 없다).
 5. **API 확장(50 §12 규칙대로)** — 문서 읽기/데코레이션/결과 후처리는 필요해질 때 `EditorOps`+import 한 쌍씩 · 페인트 때 게스트를 부르지 않는다.
 6. **프로세스 종류**(T-118 ④ · 격리 선택) · `wasm-opt` 크기 축소 · WIT/컴포넌트 모델은 수요 시.

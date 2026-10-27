@@ -90,7 +90,7 @@
 - **✅ 09-23 실제 이름**: SDK 크레이트 = `nexa-ext-sdk`(`extensions/sdk/nexa-ext-sdk` · WIT 대신 버퍼+JSON ABI v1) · 템플릿 = `extensions/sdk/samples/hello-ext` · 첫 공개 샘플 = `samples/rainbow-pairs` · 빌드 = `scripts/ext-build.*` — 상세 [75](75-extension-sdk-and-dynamic-loading.md).
 - **문서**: 호스트 API 레퍼런스(WIT에서 생성) · 능력 목록 · 샘플 3종(데코레이션 · 명령/포매터 · 결과 후처리).
 
-## 6. 의사결정(사용자 답 대기)
+## 6. 의사결정(사용자 답 대기 · ⚠ 10-27 기준 = D-87 ✅ 확정 = WASM `wasmi`([75 §10](75-extension-sdk-and-dynamic-loading.md)) · D-88~D-90 대기)
 
 | # | 질문 | 후보 | 권장 |
 |---|---|---|---|
@@ -163,7 +163,7 @@
 
 **팔레트 명령**(Sublime "Package Control: …" 표기 · 텍스트 메뉴 → 고르면 실행): `Extension Manager: Install Extension`(저장소 전부의 index를 읽어 미설치 목록) · `Remove Extension` · `List Extensions`(고르면 상태줄에 이름·버전·종류·상태) · `Enable/Disable Extension` · `Add Repository`(프롬프트에 URL/폴더 · index.json이 읽혀야 등록) · `List Repositories`(기본 + 사용자) · `Remove Repository`.
 
-**설정 창**: 그룹 **Extensions** 아래 `Manager`(저장소·끈 확장)와 **확장마다 분류 하나**(`Rainbow Pairs` = `ext.rainbow_pairs.*`). `EXTENSION_CATEGORIES`(분류 ↔ 확장 id)로 **끈/미설치 확장의 분류는 트리·검색에서 사라진다**(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다"). 정직한 한계: 설정 레지스트리가 정적이라 **data/wasm 확장이 자기 설정을 가져오는 것(extension.json `settings[]` → 동적 등록)은 후속**(T-118 ②) — 지금은 builtin 확장의 설정만 분류로 있다.
+**설정 창**: 그룹 **Extensions** 아래 `Manager`(저장소·끈 확장)와 **확장마다 분류 하나**(`Rainbow Pairs` = `ext.rainbow_pairs.*`). `EXTENSION_CATEGORIES`(분류 ↔ 확장 id)로 **끈/미설치 확장의 분류는 트리·검색에서 사라진다**(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다"). 정직한 한계: 설정 레지스트리가 정적이라 **data/wasm 확장이 자기 설정을 가져오는 것(extension.json `settings[]` → 동적 등록)은 후속**(T-118 ②) — 지금은 builtin 확장의 설정만 분류로 있다. ✅ **10-27 146차 = 모듈 메타 `settings`(SDK `SettingDef`) → 런타임 레지스트리 · 분류 = 확장 이름(T-258 · 75 §9 ①)**
 
 **활성화·기본 저장소(사용자 09-17)**: Package Control처럼 **`Extension Manager: Enable Extension Manager`** 1회(`extensions.enabled`) 뒤에만 목록/설치가 되고, 저장소는 명령을 실행할 때만 읽는다(26 §8). 기본 저장소 = `extensions.default_repository`(기본 raw 주소 · GitHub 주소 `github.com/O/R/extensions`·`tree/B/P`는 raw로 자동 변환 · 소스 트리에서는 체크아웃 폴더). **builtin 확장도 설치해야 켜진다**(설치 기록 = `installed.json` · 설치 → 효과 on + 설정 분류 표시 · 삭제 → off + 숨김) — 사용자의 "설치되면 보이고 제거하면 사라진다"를 내장 확장에도 그대로. 사용 순서 = [extensions/README.md §사용 순서](../extensions/README.md).
 
@@ -262,19 +262,19 @@
 
 ### 13-6. 저장소 추가(사용자 저장소 · 로컬 폴더로 `data` 패키지 시험)
 
-`data` 패키지는 공식 저장소에 아직 없으므로 파일 내려받기·sha256 검증은 로컬 저장소로 시험한다.
+`data` 패키지는 공식 저장소에 아직 없으므로 파일 내려받기·sha256 검증은 로컬 저장소로 시험한다. (⚠ 09-17 기록 · 지금은 wasm 패키지 4종이 공식 저장소에 있다 = 75)
 
 1. 임의 폴더 `D:\ext-test\`에 `index.json`(format 1 · packages 1개 `{"id":"my-snip","name":"My Snippets","version":"0.1.0","kind":"data","summary":"test"}`)과 `my-snip\extension.json`(같은 id · `files:[{"path":"a.sublime-snippet","sha256":"<Get-FileHash 값 소문자>","dest":"Packages/User/a.sublime-snippet"}]`) · `my-snip\a.sublime-snippet`을 둔다([extensions/README.md](../extensions/README.md) 형식 표).
 2. `Extension Manager: 저장소 추가` → `D:\ext-test` 입력 → "저장소 추가됨".
 3. `확장 설치` → My Snippets 선택 → `%APPDATA%\nexa-sql\extensions\my-snip\0.1.0\`에 보관 + `%APPDATA%\nexa-sql\Packages\User\a.sublime-snippet` 배치 · `installed.json.placed[]`에 기록.
-4. sha256을 일부러 틀리게 고쳐 재시험 → "sha256 mismatch"로 **설치 거부**(파일이 남지 않는다) · `files[].path`에 `..\` → 거부 · `kind: "wasm"` → "아직 설치 불가" 거부.
+4. sha256을 일부러 틀리게 고쳐 재시험 → "sha256 mismatch"로 **설치 거부**(파일이 남지 않는다) · `files[].path`에 `..\` → 거부 · `kind: "wasm"` → "아직 설치 불가" 거부(⚠ 09-17 당시 · 09-28 뒤 wasm은 설치된다 = 75 · 지금 거부되는 것은 `kind: "process"`).
 5. `확장 삭제` → 배치 파일과 보관 폴더가 되감겨 사라진다 · `저장소 삭제`로 저장소 제거.
 
 ### 13-7. 자동 점검(단위 테스트)
 
 `cargo test -p nexa-sql extensions` — 메타 파서(index/extension) · 경로 검증 · sha256 · 설치/삭제 되감기(`install_into`/`remove_from` — 임시 폴더) · 주소 표기 변환(github.com → raw).
 
-### 13-8. 다음 단계(진짜 "내려받은 로직")
+### 13-8. 다음 단계(진짜 "내려받은 로직") — ✅ 구현됨([75](75-extension-sdk-and-dynamic-loading.md) · 아래는 09-17 계획 원문)
 
 T-118 ②: `wasmi` 런타임 + WIT 호스트 API(지금의 `Extension`/`EditorOps` 표면을 그대로 export/import로) → Rainbow Pairs의 정책 층을 **WASM 샘플 패키지**(`kind = wasm` · `files[]`에 `.wasm` + sha256)로 옮겨 "설치 = 코드가 내려와 돈다"를 실증. 결정 D-87~D-90(실행 방식·Python·서명·능력 승인)이 선행.
 

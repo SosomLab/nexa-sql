@@ -88,6 +88,7 @@
 | 일시 | 요청(사용자) | 추가 | 변경 | 삭제 | 비고 |
 |---|---|---|---|---|---|
 | 09-30 | "Project Explorer Menus 기본 틀 · 호스트 함수 → 확장 호출 → wasm 빌드 → 등록 순서" | `extensions/sdk/samples/project-explorer-menus/{Cargo.toml, src/lib.rs}` · `extensions/project-explorer-menus/{extension.json, project_explorer_menus.wasm}` · 이 문서 | `extensions/mod.rs`(`run_with`) · `extensions/wasm.rs`(`nx_host_get` · `HostCtx.doc_path`) · `app/extensions.rs`(경로 전달) · SDK `lib.rs`(`host::get` · `query` · `Editor::doc_path`) · `extensions/sdk/Cargo.toml` · `scripts/ext-build.ps1` · `extensions/index.json` · [75 §3](75-extension-sdk-and-dynamic-loading.md) ABI 표 | — | 호스트 wasm 시험 11 · SDK 5 · 확장 2 통과 · 0.1.0 |
+| 10-27 | "확장 기능 마무리"(146차 win) | SDK `Menu::project_explorer` · `Files::{open,reveal,copy_path}`(호스트 `nx_file_op`) · `SettingDef`(설정 `ext.project_explorer_menus.log_path`) · `Command::with_key`(Ctrl+Alt+Shift+P) · 명령 open · reveal · copy_path | 0.1.0 → **0.2.0** · ★ SDK `host::get` 버퍼 해제 = 마련한 용량으로(`buf::free_cap`) | — | ⚠ **09-30 행의 "show_path 동작"은 네이티브(호스트 타깃) 시험 기준** — wasm에서는 `buf::free`가 길이 접두로 해제해 `unreachable` 트랩이었다(0.1.0도 같음 · 10-27 재현 시험 `pem_wasm_runs_show_path_and_file_ops`로 확인 · 수정 뒤 V1 ✓) |
 
 ## 4. 지금 쓸 수 있는 SDK 표면(0.1.0 시점)
 
@@ -102,7 +103,12 @@
 ## 5. 다음 단계(사용자가 소스를 보며 하나씩 · 각 단계 = §1의 여섯 걸음)
 
 1. **메뉴를 프로젝트 탐색기 OPEN FILES 행에도** — 메타 `menus[].target: "editor" | "project_explorer"`(ABI 추가분) → 호스트 `project_panel.rs` 우클릭 메뉴가 확장 항목을 붙인다 · 대상 파일 경로는 `run_with(doc_path = 그 행의 경로)`.
+   - ✅ 10-27 146차 = `menus[].target = project_explorer` · 탐색기 파일 행 우클릭 "Project Explorer Menus ▸" · 그 행 경로 = `doc_path`
 2. **파일 동작 op** — `EditorOps`/새 포트 `FileOps`(예: `open_in_new_tab(path)` · `reveal_in_project(path)` · `copy_path`) + `nx_editor_op` 번호 또는 새 import.
+   - ✅ 10-27 146차 = `nx_file_op`(열기 · 드러내기 · 경로 복사) · SDK `Files`
 3. **설정** — `ext.project_explorer_menus.*` 키(예: 항목 표시 여부) → 호스트 레지스트리 등록(94 §6-4) → `on_settings`로 반영.
+   - ✅ 10-27 146차 = 메타 `settings`로 동적 등록(T-258 · 75 §9 ①) — 정적 등록 불필요 · `log_path`
 4. **클립보드** — 확장이 글을 클립보드에 넣는 op(호스트 `clipboard::write_text`)는 사용자 클립보드를 건드리므로 **명시적 명령에서만**.
+   - ✅ 10-27 146차 = 경로 복사는 **사용자가 고른 명령에서만**(`copy_path` 메뉴·팔레트 · 자동 시험은 실행하지 않음 = 클립보드 보호)
 5. 버전을 올리고(0.2.0 …) 패키지·인덱스 갱신 → 확장 패널 **업데이트** 버튼으로 교체 확인.
+   - ✅ 10-27 146차 = 0.2.0 · 업데이트 목록 `0.1.0 → 0.2.0` → 교체 확인(협업 V1)

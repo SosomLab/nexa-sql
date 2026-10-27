@@ -115,6 +115,7 @@
 - **확장이 소유한 설정 키 = `ext.<확장>.<키>`** — `<확장>` = 확장을 식별하는 짧은 이름(snake_case · 예 `sqlfmt_kiros33` · `rainbow_pairs` · `hello`) · 매니페스트 `settings_prefix` = `ext.<확장>.` · 호스트는 접두로 그 확장의 설정만 넘긴다.
 - 3차 이름 바꿈(`RENAMED` 13쌍 · 옛 줄은 읽기 이주 · CLI `config`는 옛 키도 통함): `sqlfmt.*` → `ext.sqlfmt_kiros33.*` · `rainbowpair.*` → `ext.rainbow_pairs.*` · 샘플 `hello.say` → `ext.hello.say`.
 - 새 확장은 처음부터 이 규칙으로(30 §2 확장점 규칙 · 68 SDK 문서).
+- ★ **동적 등록(10-27 · 146차 · T-258)** — 확장이 모듈 메타 `settings`(SDK `SettingDef` · 키 = `ext.<확장>.<키>`)로 선언하면 런타임 레지스트리 층에 들어가 설정 창 분류(확장 이름)·`Settings::get`·게스트 설정 JSON에 나온다 · **앱 `REGISTRY`에 정적으로 더하지 않는다**(기존 `ext.sqlfmt_kiros33.*` · `ext.rainbow_pairs.*`는 정적 유지) · 한계 = CLI `nsql config`는 동적 키를 모른다(`UnknownKey`) · 종속 잠금(§8)은 정적 `DEPENDS`만.
 
 ### 6-5. ★ 시간 단위 규칙 + 단위 변환 이주(09-30 · 사용자 "10초를 초과하면 초 OK · 그 이하면 ms · 기존 설정 마이그레이션")
 
