@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-27 (147차 · Windows · 확장 상세 탭 갱신)** — T-445 열린 확장 상세 탭이 업데이트 뒤에도 옛 버전·[업데이트] 버튼을 보이던 결함 = `ext_details_sync`가 버전·종류·`latest`·버전 칸 재계산 · Insert Sequence 확장화 검토 = [124 §7](124-insert-sequence.md)(권장안 B) · V1 ✓ · main **d1649eaa**([journal 10-27 §8](journal/2026-10-27.md)) · 148차 = 확장화 착수(D-368 · T-446).
 - **2026-10-27 (146차 · Windows · 확장 기능 마무리)** — 확장 명령 실행 결함(메뉴/팔레트 id → `owner_of`) · 팔레트 확장 명령 라벨 + 메타 `commands[].key` 기본 단축키 · T-258 메타 `settings` 동적 등록 · T-259 PEM 0.2.0(프로젝트 탐색기 메뉴 · `nx_file_op`) · Update Extensions · `requires` 자동 설치 · 버전 불일치 거부 · `extensions.dev_dir` · ★ SDK wasm 버퍼 해제 결함(09-30부터 · T-444) · 확장 4종 새 버전 공개 · V1 ✓ · main **0d727df7**(2d3d8daf + 문서)([journal 10-27 §7](journal/2026-10-27.md)).
 - **2026-10-27 (145차 · Windows · 설정 종속 잠금 보완)** — T-443 = `DEPENDS` 전수 점검(협업 분석 · 누락 확실 쌍 추가 · 공용 키 잘못 잠김 제거 · 부모 오선택·값 오류 수정 · 기존 결함 4) · `Dep::Ne` · 부정 조건은 사슬 안 탐 · DEPENDS 231 · D-367 `intel.alias_style`·`alias_upper` = 공용 유지(사용자) · [94 §8](94-settings-key-naming-and-location.md) 종속 규칙 신설 · V1 ✓ · main **485af4d5**(e94bc3ff + 문서)([journal 10-27 §6](journal/2026-10-27.md)).
 
