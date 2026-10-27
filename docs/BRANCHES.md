@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/143-insert-sequence | 2026-10-27 | 2026-10-27 → main ff(삭제) · **c4ef6354** + 문서 **2f9ab501** | 2 | 143차 win = T-441 Insert Sequence(다중 캐럿 일괄 생성 · docs/124 · D-366 · Ctrl+Alt+N) · `editor.regions:` 구분자 `;` · nexa-ui 1480414 + 5e79846(`TextBox::regions()`) |
 | fix/142-format-comments | 2026-10-27 | 2026-10-27 → main ff(삭제) · **be6c7b77** + 문서 **99f07e90** | 2 | 142차 win = T-440 SQL 포맷 SELECT 목록 안 주석 줄(nsql-format layout.rs · 확장 sql-formatter-kiros33 1.3.4 · Basic 재포맷 들여쓰기 소실) |
 | feat/141-profile-vars | 2026-10-27 | 2026-10-27 → main ff(삭제) · **8dccf690** + 문서 **4804e159** | 2 | 141차 win = T-153 후속 2 프로필 변수 UI + 글로벌 치환 보존 · T-433 · T-434 · D-365 · 재시작 스크립트 종료 순서 |
 | fix/140-win-review | 2026-10-27 | 2026-10-27 → main ff(삭제) · **507e0f0a** + 문서 **254c377b** | 2 | 140차 win = 140차 mac 검토 11+3건(문서 정정 · T-436 재시작 스크립트 3-OS · win-restart-debug.ps1 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택(T-437) · ci.yml 주석 · journal 10-27 §1 |
