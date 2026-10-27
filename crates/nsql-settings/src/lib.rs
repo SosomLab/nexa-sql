@@ -7492,6 +7492,8 @@ pub enum Dep {
     NotEmpty,
     /// 부모가 이 값.
     Eq(&'static str),
+    /// 부모가 이 값이 **아님**(끄기 값이 따로 있는 선택형 · 145차 10-27 · `editor.whitespace=none` · `file.external_change=off`).
+    Ne(&'static str),
 }
 
 impl Dep {
@@ -7502,6 +7504,7 @@ impl Dep {
             Dep::On => parent_value == "on",
             Dep::NotEmpty => !parent_value.trim().is_empty(),
             Dep::Eq(v) => parent_value == v,
+            Dep::Ne(v) => parent_value != v,
         }
     }
 }
@@ -7697,7 +7700,6 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("editor.ruler_color", "editor.rulers_show", Dep::On),
     ("editor.ruler_alpha", "editor.rulers_show", Dep::On),
     ("probe.max_retries", "probe.enabled", Dep::On),
-    ("probe.timeout_ms", "probe.enabled", Dep::On),
     ("probe.interval", "probe.enabled", Dep::On),
     ("probe.retry_delay_ms", "probe.enabled", Dep::On),
     ("probe.max_inflight", "probe.enabled", Dep::On),
@@ -7707,7 +7709,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     (
         "oracle.live.interval_ms",
         "oracle.live.source",
-        Dep::Eq("table"),
+        Dep::Ne("off"),
     ),
     ("oracle.live.table", "oracle.live.source", Dep::Eq("table")),
     ("oracle.live.ts_col", "oracle.live.source", Dep::Eq("table")),
@@ -7716,7 +7718,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         "oracle.live.source",
         Dep::Eq("table"),
     ),
-    ("ui.toast_alpha", "ui.toast_ms", Dep::NotEmpty),
+    ("ui.toast_alpha", "ui.toast_ms", Dep::Ne("0")),
     ("ui.toast_fade_to", "ui.toast_progress", Dep::On),
     ("ui.toast_bar_spent", "ui.toast_progress", Dep::On),
     ("grid.col_max_chars", "grid.col_max_mode", Dep::Eq("manual")),
@@ -7754,6 +7756,262 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("objlink.max_kb", "objlink.enabled", Dep::On),
     ("intel.star_layout", "intel.insert_columns", Dep::On),
     ("intel.star_comma_space", "intel.insert_columns", Dep::On),
+    // ★ 145차(사용자 10-27 "intel.insert_alias가 꺼지면 intel.alias_style을 못 바꾸게 · 선후/종속/상하 관계로 Enable 종속") — 마스터가 꺼지면
+    //   아무 효과도 없는 키를 전수 등재(docs/94 §8 종속 규칙 · 공용 키(`intel.alias_*` = Generate SQL도 씀)는 등재 안 함 · 사용자 10-27). 인텔리센스 = `intel.enabled` 아래 전부(세부 마스터는 사슬 · `locked_by_chain`).
+    ("intel.delay_ms", "intel.auto_activation", Dep::On),
+    ("intel.trigger_chars", "intel.auto_activation", Dep::On),
+    ("intel.signature_card", "intel.signature_help", Dep::On),
+    ("intel.auto_activation", "intel.enabled", Dep::On),
+    ("intel.match", "intel.enabled", Dep::On),
+    ("intel.recent_boost", "intel.enabled", Dep::On),
+    ("intel.max_items", "intel.enabled", Dep::On),
+    ("intel.max_total", "intel.enabled", Dep::On),
+    ("intel.popup_rows", "intel.enabled", Dep::On),
+    ("intel.popup_max_width", "intel.enabled", Dep::On),
+    ("intel.detail_card", "intel.enabled", Dep::On),
+    ("intel.qualify_columns", "intel.enabled", Dep::On),
+    ("intel.from_routines", "intel.enabled", Dep::On),
+    ("intel.icons", "intel.enabled", Dep::On),
+    ("intel.max_doc_kb", "intel.enabled", Dep::On),
+    ("intel.keywords", "intel.enabled", Dep::On),
+    ("intel.document_words", "intel.enabled", Dep::On),
+    ("intel.insert_case", "intel.enabled", Dep::On),
+    ("intel.show_types", "intel.enabled", Dep::On),
+    ("intel.functions", "intel.enabled", Dep::On),
+    ("intel.types", "intel.enabled", Dep::On),
+    ("intel.preload", "intel.enabled", Dep::On),
+    ("intel.insert_parens", "intel.enabled", Dep::On),
+    ("intel.insert_alias", "intel.enabled", Dep::On),
+    ("intel.insert_space", "intel.enabled", Dep::On),
+    ("intel.insert_columns", "intel.enabled", Dep::On),
+    ("intel.join_fk", "intel.enabled", Dep::On),
+    ("intel.signature_help", "intel.enabled", Dep::On),
+    ("intel.budget_ms", "intel.enabled", Dep::On),
+    // 아웃라인 패널은 `intel.enabled`가 꺼지면 숨는다(activity.rs).
+    ("outline.show_select", "intel.enabled", Dep::On),
+    ("outline.show_dml", "intel.enabled", Dep::On),
+    ("outline.show_ddl", "intel.enabled", Dep::On),
+    ("outline.show_other", "intel.enabled", Dep::On),
+    ("outline.show_declared", "intel.enabled", Dep::On),
+    ("outline.expand_depth", "intel.enabled", Dep::On),
+    ("outline.follow_caret", "intel.enabled", Dep::On),
+    ("outline.grid_columns", "intel.enabled", Dep::On),
+    ("outline.sort", "intel.enabled", Dep::On),
+    // 편집기.
+    (
+        "editor.occurrence_shape",
+        "editor.highlight_selection",
+        Dep::On,
+    ),
+    (
+        "editor.occurrence_line_color",
+        "editor.highlight_selection",
+        Dep::On,
+    ),
+    (
+        "editor.occurrence_line_width",
+        "editor.highlight_selection",
+        Dep::On,
+    ),
+    (
+        "editor.occurrence_fill_color",
+        "editor.highlight_selection",
+        Dep::On,
+    ),
+    (
+        "editor.max_occurrences",
+        "editor.highlight_selection",
+        Dep::On,
+    ),
+    (
+        "editor.whitespace_chars",
+        "editor.whitespace",
+        Dep::Ne("none"),
+    ),
+    (
+        "editor.whitespace_color",
+        "editor.whitespace",
+        Dep::Ne("none"),
+    ),
+    (
+        "editor.whitespace_alpha",
+        "editor.whitespace",
+        Dep::Ne("none"),
+    ),
+    ("editor.undo_persist_mb", "editor.undo_persist", Dep::On),
+    ("editor.undo_persist_days", "editor.undo_persist", Dep::On),
+    (
+        "editor.error_analyze_budget_ms",
+        "editor.error_analyze",
+        Dep::On,
+    ),
+    // 결과 그리드.
+    ("grid.filter_server", "grid.filter_enabled", Dep::On),
+    ("grid.filter_fill_pages", "grid.filter_enabled", Dep::On),
+    ("grid.filter_strip", "grid.filter_enabled", Dep::On),
+    ("grid.filter_pick_max", "grid.filter_enabled", Dep::On),
+    ("grid.filter_funnel", "grid.filter_enabled", Dep::On),
+    ("grid.filter_values_scope", "grid.filter_enabled", Dep::On),
+    ("grid.filter_popup_rows", "grid.filter_enabled", Dep::On),
+    ("grid.filter_list_max", "grid.filter_enabled", Dep::On),
+    ("grid.cond_max_lines", "grid.condition_bar", Dep::On),
+    ("grid.cond_drop_template", "grid.condition_bar", Dep::On),
+    ("grid.edit_empty", "grid.edit", Dep::On),
+    ("grid.edit_refresh", "grid.edit", Dep::On),
+    ("grid.edit_hidden_keys", "grid.edit", Dep::On),
+    ("grid.edit_rowid", "grid.edit", Dep::On),
+    ("grid.edit_all_cols", "grid.edit", Dep::On),
+    ("grid.edit_concurrency", "grid.edit", Dep::On),
+    ("grid.paste_max_rows", "grid.edit", Dep::On),
+    (
+        "grid.refetch_confirm",
+        "grid.refetch_mode",
+        Dep::Ne("offset"),
+    ),
+    // 확장 · 탐색기 · 프로젝트 · 파일 · 실행 · 트랜잭션 · 메모리 · 북마크 · 객체 링크 · 프로브 · 접속.
+    (
+        "extensions.default_repository",
+        "extensions.enabled",
+        Dep::On,
+    ),
+    ("extensions.repositories", "extensions.enabled", Dep::On),
+    ("extensions.disabled", "extensions.enabled", Dep::On),
+    ("extensions.tab_badge", "extensions.enabled", Dep::On),
+    ("explorer.index_max", "explorer.search_index", Dep::On),
+    ("explorer.index_hits_max", "explorer.search_index", Dep::On),
+    ("explorer.index_prefetch", "explorer.search_index", Dep::On),
+    ("explorer.index_idle_ms", "explorer.search_index", Dep::On),
+    ("explorer.details_h", "explorer.details", Dep::On),
+    ("explorer.details_collapsed", "explorer.details", Dep::On),
+    (
+        "explorer.mssql_system_dbs",
+        "explorer.mssql_tree",
+        Dep::Eq("ssms"),
+    ),
+    ("project.autosave_secs", "project.autosave", Dep::On),
+    ("project.autosave_change_ms", "project.autosave", Dep::On),
+    ("project.unsaved_max_mb", "project.autosave", Dep::On),
+    (
+        "file.external_check",
+        "file.external_change",
+        Dep::Ne("off"),
+    ),
+    (
+        "file.external_poll_ms",
+        "file.external_check",
+        Dep::Eq("focus_poll"),
+    ),
+    (
+        "file.external_notify",
+        "file.external_change",
+        Dep::Ne("off"),
+    ),
+    (
+        "file.external_merge_max_kb",
+        "file.external_change",
+        Dep::Ne("off"),
+    ),
+    (
+        "file.external_settle_ms",
+        "file.external_change",
+        Dep::Ne("off"),
+    ),
+    (
+        "file.external_backup_keep",
+        "file.external_change",
+        Dep::Ne("off"),
+    ),
+    ("run.prod_confirm_ms", "run.prod_confirm", Dep::On),
+    ("tx.prod_hold_rows", "tx.prod_hold", Dep::On),
+    ("tx.prod_hold_blocks", "tx.prod_hold", Dep::On),
+    ("tx.prod_hold_no_where", "tx.prod_hold", Dep::On),
+    ("mem.status_refresh_ms", "mem.statusbar", Dep::On),
+    ("bookmark.mnemonic_notice", "bookmark.enabled", Dep::On),
+    ("objlink.card_buttons", "objlink.tooltip", Dep::On),
+    ("objlink.hover_ms", "objlink.tooltip", Dep::On),
+    ("probe.icmp", "probe.enabled", Dep::On),
+    ("probe.dns_cache_secs", "probe.enabled", Dep::On),
+    // 145차 보완(협업 분석 10-27 · 값 조건 · 확장 · 줌 HUD · 스크롤 · 커서 · 메타 · 세션 · 트랜잭션).
+    ("zoom.hud_pos", "zoom.hud", Dep::On),
+    ("zoom.hud_hold_ms", "zoom.hud", Dep::On),
+    ("zoom.hud_fade_ms", "zoom.hud", Dep::On),
+    ("zoom.hud_bg", "zoom.hud", Dep::On),
+    ("zoom.hud_bg_alpha", "zoom.hud", Dep::On),
+    ("zoom.hud_fg", "zoom.hud", Dep::On),
+    ("zoom.hud_fg_alpha", "zoom.hud", Dep::On),
+    ("scroll.fast_window_ms", "scroll.fast", Dep::On),
+    ("scroll.fast_hud_hold_ms", "scroll.fast_hud", Dep::On),
+    ("db.cursor_idle_secs", "grid.fetch_mode", Dep::Eq("cursor")),
+    ("meta.refresh_scope", "meta.refresh_secs", Dep::Ne("0")),
+    ("meta.refresh_idle_ms", "meta.refresh_secs", Dep::Ne("0")),
+    ("session.idle_shared", "session.idle_secs", Dep::Ne("0")),
+    ("tx.idle_countdown_secs", "tx.idle_action", Dep::Ne("warn")),
+    ("ctrl.bookmark_label", "bookmark.enabled", Dep::On),
+    ("vars.refresh_on_run", "vars.expand_at", Dep::Eq("use")),
+    (
+        "gfx.mac_present_trim_ms",
+        "gfx.mac_present",
+        Dep::Eq("iosurface"),
+    ),
+    (
+        "search.history_rows",
+        "search.history_view",
+        Dep::Eq("dropdown"),
+    ),
+    ("ext.rainbow_pairs.enabled", "extensions.enabled", Dep::On),
+    (
+        "ext.rainbow_pairs.unmatched",
+        "ext.rainbow_pairs.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.rainbow_pairs.colors",
+        "ext.rainbow_pairs.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.rainbow_pairs.contrast_order",
+        "ext.rainbow_pairs.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.rainbow_pairs.max_kb",
+        "ext.rainbow_pairs.enabled",
+        Dep::On,
+    ),
+    ("ext.sqlfmt_kiros33.strict", "extensions.enabled", Dep::On),
+    ("ext.sqlfmt_kiros33.align_as", "extensions.enabled", Dep::On),
+    (
+        "ext.sqlfmt_kiros33.align_ops",
+        "extensions.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.sqlfmt_kiros33.align_order",
+        "extensions.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.sqlfmt_kiros33.outlier_chars",
+        "extensions.enabled",
+        Dep::On,
+    ),
+    ("ext.sqlfmt_kiros33.force_as", "extensions.enabled", Dep::On),
+    (
+        "ext.sqlfmt_kiros33.window_break",
+        "extensions.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.sqlfmt_kiros33.and_same_level",
+        "extensions.enabled",
+        Dep::On,
+    ),
+    (
+        "ext.sqlfmt_kiros33.set_op_dashes",
+        "extensions.enabled",
+        Dep::On,
+    ),
 ];
 
 /// 자식 키의 (부모, 조건).
@@ -7777,6 +8035,11 @@ pub fn locked_by_chain(key: &str, value_of: &dyn Fn(&str) -> String) -> bool {
         };
         if !dep.satisfied(&value_of(parent)) {
             return true;
+        }
+        // ★ 부정 조건(`Eq("off")` · `Ne`)은 "부모가 꺼졌을 때 쓰이는" 자식 — 부모 자신의 잠김을 물려받지 않는다(145차 10-27 ·
+        //   종전엔 `tabs.close_select`가 `tabs.history=off`일 때 사슬로 잠겨 정작 쓰이는 때 못 바꿨다).
+        if matches!(dep, Dep::Ne(_) | Dep::Eq("off")) {
+            return false;
         }
         cur = parent;
     }
@@ -8462,6 +8725,83 @@ impl Settings {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    /// ★ 145차(10-27): 종속 표 건전성 — 자식·부모 키가 레지스트리에 있다 · 자식은 한 번만 · 자기 자신/순환 없음(깊이 8 안에 끝) ·
+    /// `intel.alias_style`은 `intel.insert_alias`가 꺼지면 잠기고 `intel.enabled`가 꺼지면 사슬로도 잠긴다 · `Ne` 조건.
+    #[test]
+    fn depends_table_is_sound_and_locks_alias_style() {
+        use std::collections::HashSet;
+        let keys: HashSet<&str> = super::REGISTRY.iter().map(|e| e.key).collect();
+        let mut seen: HashSet<&str> = HashSet::new();
+        for (child, parent, _) in super::DEPENDS {
+            assert!(keys.contains(child), "없는 자식 키 {child}");
+            assert!(keys.contains(parent), "없는 부모 키 {parent}");
+            assert_ne!(child, parent, "자기 자신 {child}");
+            assert!(seen.insert(child), "자식 중복 {child}");
+            // 순환 없음: 부모를 8번 안에 끝까지 따라간다.
+            let mut cur = *child;
+            let mut n = 0;
+            while let Some((p, _)) = super::dependency(cur) {
+                n += 1;
+                assert!(n <= 8, "순환 또는 너무 깊은 사슬 {child}");
+                cur = p;
+            }
+        }
+        let locked = |key: &str, vals: &[(&str, &str)]| {
+            super::locked_by_chain(key, &|k| {
+                vals.iter()
+                    .find(|(n, _)| *n == k)
+                    .map_or("on".to_string(), |(_, v)| (*v).to_string())
+            })
+        };
+        // 사용자 결정(10-27): `intel.alias_style`·`alias_upper`는 Generate SQL·CLI도 쓰는 공용 키 → 종속 등재 안 함.
+        assert!(super::dependency("intel.alias_style").is_none());
+        assert!(super::dependency("intel.alias_upper").is_none());
+        assert!(locked("intel.insert_alias", &[("intel.enabled", "off")]));
+        assert!(
+            locked("intel.delay_ms", &[("intel.enabled", "off")]),
+            "사슬 잠금"
+        );
+        assert!(locked(
+            "intel.delay_ms",
+            &[("intel.auto_activation", "off")]
+        ));
+        // 부정 조건은 사슬을 끊는다: 기록 자체가 꺼졌을 때 쓰이는 `tabs.close_select`는 열려 있다.
+        assert!(!locked(
+            "tabs.close_select",
+            &[("tabs.history", "off"), ("tabs.close_use_history", "off")]
+        ));
+        assert!(locked(
+            "tabs.close_select",
+            &[("tabs.close_use_history", "on")]
+        ));
+        assert!(locked("ui.toast_alpha", &[("ui.toast_ms", "0")]));
+        assert!(!locked("ui.toast_alpha", &[("ui.toast_ms", "3000")]));
+        assert!(locked(
+            "explorer.mssql_system_dbs",
+            &[("explorer.mssql_tree", "schema")]
+        ));
+        assert!(
+            locked(
+                "ext.sqlfmt_kiros33.dup_alias",
+                &[("extensions.enabled", "off")]
+            ),
+            "사슬"
+        );
+        assert!(locked(
+            "editor.whitespace_color",
+            &[("editor.whitespace", "none")]
+        ));
+        assert!(!locked(
+            "editor.whitespace_color",
+            &[("editor.whitespace", "all")]
+        ));
+        assert!(locked(
+            "grid.refetch_confirm",
+            &[("grid.refetch_mode", "offset")]
+        ));
+        assert!(locked("outline.sort", &[("intel.enabled", "off")]));
+    }
+
     use super::*;
 
     /// 옛 `format.indent_from_tab` 폐기(09-29): 꺼져 있던 사용자는 옛 기본(tab·4)을 명시 · 켜짐/없음 = 새 기본(활성 탭 설정) · 옛 줄은 사라진다.
