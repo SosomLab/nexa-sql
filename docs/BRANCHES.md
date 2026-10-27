@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| fix/140-win-review | 2026-10-27 | 2026-10-27 → main ff(삭제) · (아래 커밋) | — | 140차 win = 140차 mac 검토 11+3건(문서 정정 · T-436 재시작 스크립트 3-OS · win-restart-debug.ps1 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택(T-437) · ci.yml 주석 · journal 10-27 §1 |
+| fix/140-win-review | 2026-10-27 | 2026-10-27 → main ff(삭제) · **507e0f0a** + 문서 **254c377b** | 2 | 140차 win = 140차 mac 검토 11+3건(문서 정정 · T-436 재시작 스크립트 3-OS · win-restart-debug.ps1 신설) · ★ D-364 드라이버 갱신 알림 + [갱신] 클릭 · 드라이버 관리자 다중 선택(T-437) · ci.yml 주석 · journal 10-27 §1 |
 | fix/140-abi-pending-cursor | 2026-10-27 | 2026-10-27 → main ff(삭제) · **7cd82da** + **d4f119c** + 문서 **3d17f26** · 이어서 main 직접 = 4bf774f DRIVER_VERSION 0.1.7 → drivers-v0.1.7(봇 ad81370) → 9465d36 버전 0.3.1 → 🚀 v0.3.1(Latest 16:54:51Z) + 마감 문서 **faee485c** · 2차 **bc54fbce** | 3 | 140차 mac = ★ 확장 드라이버 ABI `pending` 커서 누락(코덱 꼬리 필드 · 양방향 호환) + 2차 혼합 조합 조용한 절단(op 19 `CODEC_FEATURES`) · ci.yml sqlite cdylib 선빌드 · D-363 로컬 Release = lite(`mac-restart-debug.sh --release` · `lite-dev-drivers.sh`) · 문서(journal 10-26 §5 · 22 · 43 · 110 · 10 · 61 · 102 · TODO T-432~434 · STATUS · DEVLOG) |
 | feat/139-win-quick | 2026-10-26 | 2026-10-26 → main ff(삭제) · **f70a6927** + 문서 **ea8a037c** | 8 | 139차 win = b8fdddae EXEC 로컬 대입 · eeed2ce9 T-430 스캔라인 래스터 · 08091ac1 txlog 서버 행만 + DISCONNECT 로그 1회 · e4569132 T-429 · 9c5a2cf3 T-408 · a0538bd2 T-153 ⓑ DEFINE 층 · f70a6927 DRIVER_VERSION 0.1.6 |
 | docs/138-outline-t422 | 2026-10-25 | 2026-10-25 → main(삭제) · **b511d95e** | 1 | T-422 문서 = 76 §20 ✅ · 94 구현 키 7(`show_other`) · 39 커서 추종 · D-357 · 61 3-OS · 위키 아웃라인 절 · journal §3-13 · STATUS |
