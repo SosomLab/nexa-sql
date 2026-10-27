@@ -17,7 +17,7 @@
       "id": "hello-ext",
       "dir": "hello-ext",
       "name": "Hello Extension",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "wasm",
       "summary": "SDK sample — one command that writes a log line (extensions/sdk/samples/hello-ext)"
     },

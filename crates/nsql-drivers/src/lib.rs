@@ -37,7 +37,19 @@ pub fn parse_target(s: &str, default_dialect: Dialect) -> Result<ConnectSpec, St
             ..Default::default()
         });
     }
-    let mut spec = ConnectSpec::parse(t)?;
+    // ★ T-439(150차): `-d duckdb D:\x.bin`처럼 기본 방언이 파일형이고 대상이 드라이브·UNC 경로면 그 스킴으로(확장자 추정보다 명시가 먼저).
+    let file_scheme = match default_dialect {
+        Dialect::Sqlite => Some("sqlite"),
+        Dialect::Duckdb => Some("duckdb"),
+        Dialect::Access => Some("access"),
+        _ => None,
+    };
+    let mut spec = match file_scheme {
+        Some(scheme) if nsql_script::connect::is_drive_or_unc_path(t) => {
+            ConnectSpec::parse(&format!("{scheme}:{t}"))?
+        }
+        _ => ConnectSpec::parse(t)?,
+    };
     if spec.dialect.is_none() {
         spec.dialect = Some(default_dialect);
     }

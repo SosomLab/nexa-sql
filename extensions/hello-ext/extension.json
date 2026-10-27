@@ -2,11 +2,11 @@
   "format": 1,
   "id": "hello-ext",
   "name": "Hello Extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "wasm",
   "summary": "SDK sample — a log command plus the base-setting read / overlay-write demo (extensions/sdk/samples/hello-ext)",
   "description": "The smallest possible Nexa SQL extension, built from extensions/sdk/samples/hello-ext with the nexa-ext-sdk crate: it declares one command (hello.say) and a context-menu group; running the command writes 'hello from wasm' to the app log (developer mode, ext layer).\nUse it to check that the WASM runtime, the download/verify path and the command wiring work, and as the starting point for a new extension.
-0.2.0: demonstrates base-setting access — settings_read declares ui.lang (read with host::setting_get, logged by Hello: Say Hi) and settings_write declares editor.auto_close_pairs, toggled by Hello: Toggle auto-close pairs through host::setting_set. Writes go to a runtime overlay only (never saved to settings.conf) and are restored the moment the extension is disabled or removed.",
+0.2.0: demonstrates base-setting access — settings_read declares ui.lang (read with host::setting_get, logged by Hello: Say Hi) and settings_write declares editor.auto_close_pairs, toggled by Hello: Toggle auto-close pairs through host::setting_set. Writes go to a runtime overlay only (never saved to settings.conf) and are restored the moment the extension is disabled or removed.\n0.3.0: adds the prompt 'Hello: Pick a greeting' - a row-picking demo (type to filter, Up/Down to choose, Enter inserts the greeting at the selection).",
   "author": "SosomLab",
   "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/sdk/samples/hello-ext",
@@ -17,7 +17,7 @@
   "files": [
     {
       "path": "hello_ext.wasm",
-      "sha256": "aa154e84871645c681e6d146ebf2674d59c2341c260cd23546c30c8f1aaa6301",
+      "sha256": "f233d316429c5b1b8505580ecdd567eab4a47a50cb3c89fee984d819be9c4635",
       "dest": ""
     }
   ],

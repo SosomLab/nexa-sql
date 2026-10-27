@@ -74,6 +74,7 @@
 - export `nx_ext_transform(ptr) -> ptr`: 요청 `{"id","text","n","regions":[[line,text]…],"selection","phase":"live|commit|cancel","lang","doc_path","settings"}` → 응답 `{"values":[…n]}`(apply = regions) · `{"text":…}`(apply = text · 구간을 하나로 재기준 · 원문일 때만) · none · `"error"` · `"rows"`(미리보기 행 · 없으면 호스트가 만든다). commit 때 한 번 더 묻고 적용 · cancel은 알림만.
 - SDK = `Prompt::new(id, label, placeholder, hint).with_key().with_placeholder_key().with_help()` · `TransformRequest`(`is_commit` · `is_cancel` · `is_ko`) · `TransformResponse::ok/text/none/err` · trait `Extension::transform`(기본 = 없음) · `SettingDef::text`.
 - 한도 = 연료 `TRANSFORM_FUEL` 2e8 · 500 ms · 요청 ≤ 1 MB · 구간 ≤ 256. 게스트 import 추가 없음(필요한 것은 ctx로).
+- ★ **행 고르기(10-28 · 153차 · T-447)** = 응답 `rows[]`에 `id`가 있으면 고를 수 있는 행(SDK `Row{text, warn, id}` · `TransformResponse::with_choices(Vec<(id, text)>)`) — ↑↓/클릭으로 선택(목록 선택색 · id 없는 보기 전용 행은 건너뜀 · 거르기로 고른 행이 사라지면 첫 행) · Enter = commit 요청에 `"pick": "<id>"`(SDK `TransformRequest.pick`) · 예 = hello-ext 0.3.0 "Hello: Pick a greeting"(live = apply none + 행 3 · commit + pick = apply text).
 - 내장 ↔ wasm 공존 = 같은 id면 wasm이 앞섬(D-197) · 내장 확장의 `default_on`(D-368) = 설치 없이 켜짐 · 삭제 = 끄기.
 
 ### 3-3. 설정 접근 — 전용 설정 + 기본 설정 읽기/덮어쓰기(10-27 · 148차 · [D-369](10-decision-record.md))
@@ -85,6 +86,55 @@
 - **기본 설정 덮어쓰기** = 메타 `settings_write:[패턴]` + import `nx_setting_set(key, val)`(호출당 16개) → 호스트가 선언(`Registry::writable` · 자기 접두는 늘 허용)·레지스트리 검증(`Settings::set_overlay` · 읽기 전용·형식 거절) 뒤 **런타임 overlay 층**에 넣고 그 키를 즉시 적용 · 로그 "[id] setting overlay: key = v (runtime only …)" / "refused: …".
 - **격리 원칙** = overlay는 **파일에 저장하지 않는다**(`is_modified` 영향 0 · 설정 창의 사용자 값은 그대로) · 확장이 꺼지거나 내려가면 `clear_overlay(owner)` + 재적용("overlay cleared") · 재귀 상한 3(`ext_overlay_depth`) · 게스트 본문 쓰기 0. 규칙 = [94 §9](94-settings-key-naming-and-location.md).
 - 데모 = hello-ext 0.2.0(`settings_read` ui.lang · `settings_write` editor.auto_close_pairs · "Hello: Toggle auto-close pairs (overlay)").
+- ★ **능력 요약(10-28 · 151차 · T-448)** = 확장 상세 탭 세부 정보에 5칸 — 명령 · 프롬프트 · 읽는 설정 · 바꾸는 설정(런타임 덮어쓰기 · 끄면 원복) · 파일 동작 — 메타 선언에서 만들고(내장 확장도 같은 선언), wasm은 import도 검사한다(`nx_file_op` · `nx_setting_set` · 선언 없이 덮어쓰기 import면 "거절됨"). D-90 능력 승인(D-372)의 표시 바탕.
+
+### 3-4. 능력 승인 — 2단 설치 · 첫 사용 재확인(10-28 · 152차 · D-90 = D-372 ③)
+
+- **2단 설치** = `manager::stage`(메타 검사 · 내려받기 · sha256 → 메모리 `Staged` · **배치 0**) → 상세 탭 승인 상태(머리줄 "설치하려면 승인하세요 - 이 확장은 다음을 할 수 있습니다:" + 능력 칸 + 배치 파일 + [설치(승인)][취소]) → `ext.approve:<n>` = `commit_staged`(보관·배치·기록) · `ext.reject:<n>` = 버림. 설치 · 업데이트 · 모두 업데이트 · `requires` 자동 설치가 모두 이 길.
+- **첫 사용 재확인** = 위험 능력(`nx_setting_set` 설정 덮어쓰기 · `nx_file_op` 파일 동작) 요청은 installed.json `approved`에 그 능력이 없으면 보류 → 상세 탭 "첫 사용 - 이 확장이 지금 다음을 하도록 허용할까요?" + "지금 요청한 동작" + [허용][거부] → `ext.allow_use:<id>` = `approved`에 `settings_write`/`file_ops` 기록 + 보류 요청 적용 · `ext.deny_use:<id>` = 버림.
+- **기억 범위** = 그 버전 동안(같은 버전 재설치 = 유지 · 새 버전 설치 = 비움) · 내장 확장(설치 기록 없음)은 늘 허용 · 위험하지 않은 능력(명령 · 프롬프트 · 읽는 설정)은 설치 승인으로 끝.
+- 능력 칸의 원천 = §3-3 능력 요약(T-448) — 승인 화면은 wasm 메타를 배치 전에 메모리에서 로드해 만든다.
+
+### 3-5. ABI v1.3 — 상태 있는 확장 · 편집기 쓰기(길 A · 10-28 설계 · D-371 · T-450 · 구현 전)
+
+> 설계 = 개발 154차 초안(10-28). 전제 = D-90 ③(§3-4) · 사용자 원칙 3(SDK 범용 · 전용 설정 + 기본 설정 접근 · **확장은 본 프로그램에 영향 X**).
+
+**원칙(바뀌지 않는 것)**
+- **쓰기는 늘 호스트가 적용** — 게스트는 편집 요청을 **큐**에 넣고(호출 안에서는 본문이 바뀌지 않는다) 호출이 끝난 뒤 호스트가 검증(범위 · UTF-8 · 상한)해 **되돌리기 한 묶음**으로 적용(87 §14 데이터 보호 정신 · DB 쓰기는 여전히 0).
+- **옵트인** — 메타 `stateful: true`일 때만 인스턴스를 유지(기본 = 호출마다 새 인스턴스 그대로).
+- **능력 선언 + 승인** — `editor.read`(본문·구간 읽기 = 선언만) · `editor.write`(위험 = 설치 때 표시 + 첫 사용 재확인 · `approved: ["editor_write"]`) · `events`(비용 = 상세 탭 표시) · `stateful`.
+- 상한 = 지금 틀 그대로(호출당 연료·시간 · 인스턴스 메모리 16 MB · 트랩 3회 = 브레이커).
+
+**메타** = `{"abi":1, "stateful":true, "capabilities":["editor.read","editor.write","events"], "events":["edit","caret","doc"], …기존 commands/menus/settings/prompts/settings_read/settings_write}` — `events` 비면 구독 없음 · `edit` = 100 ms 디바운스 + 문서 버전.
+
+**수명(호스트 `WasmExtension`)**
+| 때 | 동작 |
+|---|---|
+| 첫 호출 | `instantiate_and_start` → `nx_ext_init()` 1회(상태 복원 = `nx_storage_get`) · 이후 같은 Store/Instance · 연료는 호출마다 다시 채움 |
+| 트랩·시간 초과 | 인스턴스 버림 + 로그 · 다음 호출 때 다시 만들고 `nx_ext_init()` · 3회 = 브레이커 |
+| 끄기·내리기·새 판 | 인스턴스 버림(상태는 `storage`에 둔 것만 남음) |
+| 유휴 | `extensions.stateful_idle_secs`(기본 300 · 0 = 안 버림 · 39 §3)가 지나면 버림(메모리 회수) |
+
+**import(새 · 전부 `env`)**
+| 이름 | 뜻 | 상한·규칙 |
+|---|---|---|
+| `nx_editor_len() -> i32` | 활성 문서 글자 수 | `editor.read` |
+| `nx_editor_text(from, to, ptr, cap) -> i32` | 구간 글(글자 인덱스) → 게스트 버퍼 · 반환 길이(−1 = cap 부족·범위 밖) | `editor.read` · 1 MB |
+| `nx_editor_regions(ptr, cap) -> i32` | 구간 목록 JSON `[[a,b],…]` | `editor.read` |
+| `nx_editor_replace(from, to, ptr) -> i32` | 교체 요청(큐 · 좌표 = 호출 시작 때 본문 기준 · 호스트가 `replace_many`로 한 번에) · 1 = 접수 | `editor.write` · 호출당 256건 · 총 1 MB · 겹치면 전부 거절 |
+| `nx_editor_set_regions(ptr) -> i32` | 구간/캐럿 설정 요청(큐 · 교체 적용 뒤 좌표) | `editor.write` |
+| `nx_ui_status(ptr)` | 상태줄 글 | 호출당 1 |
+| `nx_storage_get(ptr, cap) -> i32` / `nx_storage_set(ptr) -> i32` | 확장 전용 상태 JSON(`<root>/<id>/state.json` · 64 KB) | `stateful`만 |
+
+**export(새)** = `nx_ext_init()`((재)인스턴스화 뒤 1회) · `nx_ext_event(ptr) -> i32`(구독한 사건 `{"kind":"edit","doc","version"}` · `{"kind":"caret","regions"}` · `{"kind":"doc","what":"open|close|activate","path"}` · 반환 = 처리 여부) · 기존 `nx_ext_run/transform/format/settings/disabled`는 그대로(stateful이면 같은 인스턴스에서).
+
+**SDK 0.4** = `Editor`: `len()` · `text(from, to)` · `regions()` · `replace(from, to, &str)`(큐) · `set_regions(&[…])`(큐) · `status(&str)` / `Extension`: `fn init()` · `fn on_event(&Event) -> bool` · `Meta { stateful, capabilities, events }` / `storage::get()` · `storage::set(&str)` / 샘플 `uppercase-selection` = 명령 "Upper: Uppercase selection"(구간 읽기 → 대문자 교체 한 묶음) · `stateful` 카운터("uppercased N times" 상태줄 · storage 보존) · `events: ["caret"]` 캐럿 사건 수 로그(디바운스 확인).
+
+**호스트 코드 지도** = `wasm.rs`(`stateful` 메타 · 보존 인스턴스 `RefCell<Option<(Store, Instance)>>` · HostCtx는 호출마다 교체 · import 7 · `edit_ops` 큐 · 트랩 때 버림 · `nx_ext_init` · 유휴 = `Registry::reap_idle(now)`) · `mod.rs`(trait `init/on_event/take_edit_ops/stateful/capabilities` · `EditorOps`에 `text/len/regions/replace_many/set_regions` — nexa-ctl `TextBox` 위에 얇게) · `app/extensions.rs`(명령 뒤 `drain_edit_ops` → 검증 → `begin_undo_group` + `replace_many` + `set_regions_pub` + `end_undo_group` · 그 탭 하나에만 · 다른 탭이면 버림 · `editor.write` 첫 사용 = D-90 보류 경로 재사용 · 사건 = 변경 기록(버전) 100 ms 디바운스 · 구독 확장에만) · 상세 탭 능력 칸에 `stateful` · `events` · `editor.write`.
+
+**순서(T-450)** = ① 문서(이 절 · 68 §2 · 50 §4 · 39 §3) ② 호스트 인스턴스 유지 + import/export + 상한 + 유휴 회수 ③ SDK 0.4 + 샘플 + ext-build ④ D-90 연동(`editor.write` 첫 사용) + 상세 탭 칸 ⑤ V1(대문자 변환 · 되돌리기 1단계 · 트랩 복구 · 유휴 회수 · 사건 디바운스).
+
+**보류·위험** = 사건은 구독한 확장에만 · 디바운스(키 입력마다 wasm 호출이 늘면 편집기 지연 · 마스터 스위치 `extensions.events`) · 겹치는/좌표 밖 교체 요청은 **전부 거절**(부분 적용 없음) + 로그 · 상태 파일은 확장 전용 폴더 안(설정·프로필·볼트와 격리).
 
 ## 4. SDK 구성(`extensions/sdk/`)
 

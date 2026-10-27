@@ -166,3 +166,4 @@
 - 정적 키맵·레지스트리·팔레트에서 Insert Sequence를 빼고 **내장 확장이 선언**(명령 `edit.insert_sequence` · Ctrl+Alt+N / Cmd+Alt+N · 설정 `ext.insert_sequence.default`) · 옛 키 `editor.seq_default`는 `RENAMED`로 새 키로 이주.
 - 단축키 = 설정 `key.edit.insert_sequence`(환경 설정 ▸ 확장 ▸ Insert Sequence · 비우면 확장 기본 · `none` = 없음) — 모든 확장 명령 공통 규칙([94 §6-4](94-settings-key-naming-and-location.md)).
 - 곱집합 `*` 별칭(§2) · wasm 패키지 0.1.1 · 편집 메뉴 단축키 표시 결함 수정 — [journal 10-27 §10](journal/2026-10-27.md).
+- 153차(10-28 · T-447) = 프롬프트 응답 행을 고를 수 있게(`Row.id` · ↑↓ · Enter의 `pick`) — Insert Sequence 내장은 행 선택을 쓰지 않는다(dump `pick=` 빈 값 · 동작 변화 없음) · 예 = hello-ext 0.3.0 "Hello: Pick a greeting".

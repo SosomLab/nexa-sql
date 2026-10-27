@@ -619,6 +619,8 @@ pub struct TransformRequest {
     pub phase: String,
     /// 활성 선택의 글(구간이 여럿이면 첫 구간 시작 ~ 마지막 구간 끝).
     pub selection: String,
+    /// ★ 확정 때 사용자가 고른 행의 id(`with_choices`로 낸 행 · T-447 · 없으면 None).
+    pub pick: Option<String>,
 }
 
 impl TransformRequest {
@@ -635,6 +637,7 @@ impl TransformRequest {
                 "doc_path" => r.doc_path = v.as_str().unwrap_or("").to_string(),
                 "phase" => r.phase = v.as_str().unwrap_or("").to_string(),
                 "selection" => r.selection = v.as_str().unwrap_or("").to_string(),
+                "pick" => r.pick = v.as_str().map(str::to_string),
                 "n" => r.n = v.as_f64().unwrap_or(0.0).max(0.0) as usize,
                 "regions" => {
                     for it in v.as_arr().unwrap_or(&[]) {
@@ -682,12 +685,20 @@ impl TransformRequest {
 pub struct TransformResponse {
     pub values: Vec<String>,
     pub error: Option<String>,
-    /// 미리보기 행(글, 경고색) — 비면 호스트가 `L줄: 값`으로 만든다.
-    pub rows: Vec<(String, bool)>,
+    /// 미리보기 행 — 비면 호스트가 `L줄: 값`으로 만든다 · `id`가 있는 행은 사용자가 ↑↓로 골라 Enter = 확정 요청의 `pick`(T-447).
+    pub rows: Vec<Row>,
     /// 적용 방식(기본 [`Apply::Regions`]).
     pub apply: Apply,
     /// [`Apply::Text`]일 때 선택 전체를 대신할 글.
     pub text: String,
+}
+
+/// 프롬프트 미리보기 행(T-447): 글 · 경고색 · 고를 수 있으면 id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Row {
+    pub text: String,
+    pub warn: bool,
+    pub id: Option<String>,
 }
 
 /// 변환 결과를 본문에 어떻게 적용하는가: 구간마다 값 · 선택 전체를 글 하나로 · 본문은 두고 행만(정보 프롬프트).
@@ -724,12 +735,31 @@ impl TransformResponse {
     pub fn none(rows: Vec<(String, bool)>) -> TransformResponse {
         TransformResponse {
             apply: Apply::None,
-            rows,
             ..TransformResponse::default()
         }
+        .with_rows(rows)
+    }
+    /// ★ 고를 수 있는 행(T-447): (id, 글) — 사용자가 고른 id가 commit 요청의 `pick`으로 온다.
+    pub fn with_choices(mut self, choices: Vec<(&str, &str)>) -> TransformResponse {
+        self.rows = choices
+            .into_iter()
+            .map(|(id, t)| Row {
+                text: t.to_string(),
+                warn: false,
+                id: Some(id.to_string()),
+            })
+            .collect();
+        self
     }
     pub fn with_rows(mut self, rows: Vec<(String, bool)>) -> TransformResponse {
-        self.rows = rows;
+        self.rows = rows
+            .into_iter()
+            .map(|(text, warn)| Row {
+                text,
+                warn,
+                id: None,
+            })
+            .collect();
         self
     }
     pub fn to_json(&self) -> String {
@@ -757,7 +787,13 @@ impl TransformResponse {
                 "rows",
                 self.rows
                     .iter()
-                    .map(|(t, w)| Json::obj().with("text", t.as_str()).with("warn", *w))
+                    .map(|r| {
+                        let mut o = Json::obj().with("text", r.text.as_str()).with("warn", r.warn);
+                        if let Some(id) = &r.id {
+                            o = o.with("id", id.as_str());
+                        }
+                        o
+                    })
                     .collect::<Vec<_>>(),
             );
         }
@@ -1145,8 +1181,13 @@ mod tests {
             TransformResponse::none(vec![("42".into(), false)]).to_json(),
             r#"{"apply":"none","rows":[{"text":"42","warn":false}]}"#
         );
-        let r2 = TransformRequest::from_json(r#"{"phase":"commit","selection":"abc"}"#);
+        let r2 = TransformRequest::from_json(r#"{"phase":"commit","selection":"abc","pick":"ko"}"#);
         assert!(r2.is_commit() && !r2.is_cancel() && r2.selection == "abc");
+        assert_eq!(r2.pick.as_deref(), Some("ko"));
+        assert_eq!(
+            TransformResponse::none(vec![]).with_choices(vec![("hi", "Hi")]).to_json(),
+            r#"{"apply":"none","rows":[{"text":"Hi","warn":false,"id":"hi"}]}"#
+        );
         let m2 = Meta {
             settings_read: vec!["ui.lang".into()],
             settings_write: vec!["editor.*".into()],

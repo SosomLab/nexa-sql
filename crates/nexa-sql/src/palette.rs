@@ -16,6 +16,8 @@ pub(crate) enum PaletteAction {
     Prompt {
         id: String,
         text: String,
+        /// ★ 라이브 프롬프트에서 고른 행의 id(T-447 · 없으면 None).
+        pick: Option<String>,
     },
     Close,
 }
@@ -47,6 +49,9 @@ pub(crate) struct Palette {
     /// ★ 라이브 프롬프트(Insert Sequence · docs/124): 빈 입력도 Enter로 확정(= 자리표시자 기본값) · 안내 아래 **미리보기 행**(선택 불가 · (글, 경고색)).
     prompt_live: bool,
     prompt_rows: Vec<(String, bool)>,
+    /// ★ 행 고르기(T-447 · 153차): 행마다 선택 id(없으면 보기 전용) · 지금 고른 행(id 있는 행 중 · ↑↓/클릭) — Enter의 `pick`.
+    prompt_ids: Vec<Option<String>>,
+    prompt_sel: Option<usize>,
     /// 프롬프트가 **붙을 대상**(이름을 바꾸는 탭의 rect · 사용자 09-21 "요청한 탭 근처에 · 수정 중인 대상을 식별할 수 있게").
     /// 있으면 상자가 그 바로 아래(자리가 없으면 위)에 붙고 대상에 강조 테두리를 그린다 · 없으면 종전처럼 창 위 가운데.
     anchor: Option<Rect>,
@@ -211,6 +216,8 @@ impl Palette {
             hint: String::new(),
             prompt_live: false,
             prompt_rows: Vec::new(),
+            prompt_ids: Vec::new(),
+            prompt_sel: None,
             anchor: None,
             win: (0, 0),
             goto_mode: false,
@@ -387,10 +394,73 @@ impl Palette {
     }
 
     /// 프롬프트 아래 미리보기 행(글 · 경고색 여부) — 그릴 때 상자가 그만큼 길어진다.
-    pub(crate) fn set_prompt_rows(&mut self, rows: Vec<(String, bool)>) {
-        self.prompt_rows = rows;
+    /// ★ 고를 수 있는 행(T-447 · 153차): `id`가 있는 행만 ↑↓/클릭으로 고르고 Enter의 `pick`으로 확장에 돌아간다 · 선택 = 이전 선택 id가 아직
+    ///   있으면 유지 · 아니면 첫 고를 수 있는 행.
+    pub(crate) fn set_prompt_choices(&mut self, rows: Vec<(String, bool, Option<String>)>) {
+        let keep = self.prompt_pick();
+        self.prompt_rows = rows.iter().map(|(t, w, _)| (t.clone(), *w)).collect();
+        self.prompt_ids = rows.into_iter().map(|(_, _, id)| id).collect();
+        self.prompt_sel = keep
+            .and_then(|k| {
+                self.prompt_ids
+                    .iter()
+                    .position(|x| x.as_deref() == Some(k.as_str()))
+            })
+            .or_else(|| self.prompt_ids.iter().position(Option::is_some));
         let mut inv = Invalidations::default();
         self.layout(&mut inv);
+    }
+
+    /// 지금 고른 행의 id(라이브 프롬프트 · 기동 명령 `seq.commit`도 쓴다).
+    pub(crate) fn prompt_pick(&self) -> Option<String> {
+        self.prompt_sel
+            .and_then(|i| self.prompt_ids.get(i).cloned().flatten())
+    }
+
+    /// 선택을 id로 지정(기동 명령 `seq.pick:<id>` · 자체 시험).
+    pub(crate) fn set_prompt_pick(&mut self, id: &str) -> bool {
+        match self
+            .prompt_ids
+            .iter()
+            .position(|x| x.as_deref() == Some(id))
+        {
+            Some(i) => {
+                self.prompt_sel = Some(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// ↑↓ = 고를 수 있는 행 사이만 옮긴다(보기 전용 행은 건너뜀).
+    fn prompt_move(&mut self, down: bool) {
+        let cands: Vec<usize> = (0..self.prompt_rows.len().min(MAX_ROWS))
+            .filter(|&i| self.prompt_ids.get(i).is_some_and(Option::is_some))
+            .collect();
+        if cands.is_empty() {
+            return;
+        }
+        let pos = self
+            .prompt_sel
+            .and_then(|s| cands.iter().position(|&c| c == s));
+        let next = match (pos, down) {
+            (None, _) => 0,
+            (Some(p), true) => (p + 1).min(cands.len() - 1),
+            (Some(p), false) => p.saturating_sub(1),
+        };
+        self.prompt_sel = Some(cands[next]);
+    }
+
+    /// 라이브 프롬프트의 미리보기 행 번호(마우스 · 그리기와 같은 좌표).
+    fn prompt_row_at(&self, p: Point) -> Option<usize> {
+        let b = self.frame();
+        let pad = (6.0 * self.scale) as i32;
+        let top = b.y + pad + self.row_h + pad / 2 + self.row_h * 3 / 4;
+        if p.x < b.x + pad || p.x >= b.x + b.w - pad || p.y < top {
+            return None;
+        }
+        let i = ((p.y - top) / self.row_h) as usize;
+        (i < self.prompt_rows.len().min(MAX_ROWS)).then_some(i)
     }
 
     pub(crate) fn open_prompt(&mut self, id: &str, placeholder: &str, initial: &str) {
@@ -398,6 +468,8 @@ impl Palette {
         self.prompt = Some(id.to_string());
         self.prompt_live = false;
         self.prompt_rows.clear();
+        self.prompt_ids.clear();
+        self.prompt_sel = None;
         self.hint = placeholder.to_string();
         self.input = TextBox::new(placeholder).with_text(initial);
         self.input.set_scale(self.scale);
@@ -472,6 +544,8 @@ impl Palette {
         self.prompt = None;
         self.prompt_live = false;
         self.prompt_rows.clear();
+        self.prompt_ids.clear();
+        self.prompt_sel = None;
         self.anchor = None;
         self.input.set_focused(false);
     }
@@ -775,7 +849,11 @@ impl Palette {
                     return if text.is_empty() && !self.prompt_live {
                         PaletteAction::Close
                     } else {
-                        PaletteAction::Prompt { id, text }
+                        PaletteAction::Prompt {
+                            id,
+                            text,
+                            pick: self.prompt_pick(),
+                        }
                     };
                 }
                 if let Some(g) = self.goto {
@@ -799,11 +877,19 @@ impl Palette {
                 };
             }
             InputEvent::Key { key: Key::Up, .. } => {
+                if self.prompt_live {
+                    self.prompt_move(false);
+                    return PaletteAction::None;
+                }
                 self.sel = self.sel.saturating_sub(1);
                 self.reveal_sel();
                 return PaletteAction::None;
             }
             InputEvent::Key { key: Key::Down, .. } => {
+                if self.prompt_live {
+                    self.prompt_move(true);
+                    return PaletteAction::None;
+                }
                 if self.sel + 1 < self.matches.len() {
                     self.sel += 1;
                 }
@@ -868,6 +954,15 @@ impl Palette {
                 let p = Point { x, y };
                 if !self.frame().contains(p) {
                     return PaletteAction::Close;
+                }
+                // ★ 라이브 프롬프트의 고를 수 있는 행 클릭 = 선택(T-447 · 확정은 Enter).
+                if self.prompt_live {
+                    if let Some(i) = self.prompt_row_at(p) {
+                        if self.prompt_ids.get(i).is_some_and(Option::is_some) {
+                            self.prompt_sel = Some(i);
+                        }
+                        return PaletteAction::None;
+                    }
                 }
                 // ★ 목록 판정은 **명령 팔레트일 때만**(사용자 10-13 "1줄 왼쪽 탭들의 이름 바꾸기 창만 마우스가 안 된다"): `rows_rect`는
                 //   창 가운데 기본 상자(x ≈ 408~968) 기준이라 탭 아래에 앵커된 프롬프트 입력란이 그 사각형과 겹치면 클릭이 "목록 클릭"
@@ -969,8 +1064,12 @@ impl Palette {
             // 라이브 프롬프트의 미리보기 행(선택 없음 · 경고색 = 오류).
             let mut ry = y + self.row_h * 3 / 4;
             let rpad = (8.0 * self.scale) as i32;
-            for (text, warn) in self.prompt_rows.iter().take(MAX_ROWS) {
+            for (i, (text, warn)) in self.prompt_rows.iter().take(MAX_ROWS).enumerate() {
                 let r = Rect::new(b.x + pad, ry, b.w - pad * 2, self.row_h);
+                // 고른 행(T-447) = 목록 선택과 같은 바탕.
+                if self.prompt_sel == Some(i) {
+                    dc.fill_rect(r, th.sel_bg);
+                }
                 let shown = nexa_ctl::draw::ellipsize_middle(dc, text, r.w - rpad * 2);
                 dc.text(
                     r.x + rpad,

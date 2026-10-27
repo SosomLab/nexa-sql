@@ -137,6 +137,16 @@ pub(crate) struct TransformReq {
     pub(crate) phase: String,
     /// 활성 선택의 글(구간이 여럿이면 첫 구간 시작 ~ 마지막 구간 끝 · 상한 안에서).
     pub(crate) selection: String,
+    /// ★ 확정(commit) 때 사용자가 고른 행의 id(T-447 · 153차 · 없으면 None).
+    pub(crate) pick: Option<String>,
+}
+
+/// 프롬프트 미리보기 행(T-447): 글 · 경고색 · 고를 수 있으면 id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PromptRow {
+    pub(crate) text: String,
+    pub(crate) warn: bool,
+    pub(crate) id: Option<String>,
 }
 
 /// 프롬프트 변환 응답: 값 n개 **또는** 오류 문구(호스트 = 본문 공백 + 경고 행) · `rows` = 미리보기 행 덮어쓰기(비면 호스트가 만든다).
@@ -144,11 +154,31 @@ pub(crate) struct TransformReq {
 pub(crate) struct TransformOut {
     pub(crate) values: Vec<String>,
     pub(crate) error: Option<String>,
-    pub(crate) rows: Vec<(String, bool)>,
+    pub(crate) rows: Vec<PromptRow>,
     /// 적용 방식 = `regions`(기본 · 구간마다 값) · `text`(선택 전체를 글 하나로) · `none`(본문 안 건드림 · 행만).
     pub(crate) apply: String,
     /// `apply = text`일 때의 글.
     pub(crate) text: String,
+}
+
+/// ★ 첫 사용 확인 전 보류된 위험 요청(D-90 ③ · 152차): 설정 덮어쓰기 · 파일 동작.
+#[derive(Clone, Debug)]
+pub(crate) enum HeldOp {
+    Set(String, String),
+    File(FileOp),
+}
+
+/// ★ 확장의 **능력 요약**(T-448 · 151차 · 사용자 10-28): 상세 탭·승인 창(D-90)이 보여 준다 — 명령·프롬프트·읽는/바꾸는 설정·파일 동작.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Capabilities {
+    pub(crate) commands: Vec<String>,
+    pub(crate) prompts: Vec<String>,
+    pub(crate) settings_read: Vec<String>,
+    pub(crate) settings_write: Vec<String>,
+    /// 파일 동작 import(`nx_file_op` · 열기/드러내기/경로 복사)를 쓰는가.
+    pub(crate) file_ops: bool,
+    /// 설정 덮어쓰기 import(`nx_setting_set`)를 쓰는가(선언 `settings_write`와 별개 · 선언 없이 import만 있으면 거절된다).
+    pub(crate) setting_set: bool,
 }
 
 /// 설정 키 패턴 일치(메타 `settings_read`/`settings_write` · 148차): 정확히 같거나 `prefix*`.
@@ -240,6 +270,17 @@ pub(crate) trait Extension {
     /// 마지막 호출이 남긴 설정 덮어쓰기 요청 (키, 값) — 호스트가 선언·검증 뒤 overlay 층에 넣는다.
     fn take_setting_sets(&self) -> Vec<(String, String)> {
         Vec::new()
+    }
+    /// ★ 능력 요약(T-448): 기본 = 선언(명령·프롬프트·설정 패턴)에서 · wasm은 import 검사로 파일 동작·설정 덮어쓰기 사용 여부를 더한다.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            commands: self.commands().into_iter().map(|c| c.id).collect(),
+            prompts: self.prompts().into_iter().map(|p| p.id).collect(),
+            settings_read: self.settings_read(),
+            settings_write: self.settings_write(),
+            file_ops: false,
+            setting_set: !self.settings_write().is_empty(),
+        }
     }
 }
 
@@ -375,6 +416,15 @@ impl Registry {
             .find(|&i| self.extensions[i].id() == ext_id)
             .ok_or_else(|| format!("{ext_id}: not loaded"))?;
         self.extensions[i].transform(req, s)
+    }
+
+    /// ★ 활성 확장의 능력 요약(T-448 · 상세 탭) — 로드돼 있지 않으면 None(카탈로그만 있는 것 = 설치 때 확인).
+    pub(crate) fn capabilities_of(&self, id: &str) -> Option<Capabilities> {
+        self.active_indices()
+            .into_iter()
+            .map(|i| &self.extensions[i])
+            .find(|p| p.id() == id)
+            .map(|p| p.capabilities())
     }
 
     /// 설치 기록 없이 기본 켜진 **활성** 내장 확장 (id, 이름)(D-368 · 같은 id의 wasm이 설치되면 빠진다).
@@ -650,10 +700,12 @@ impl Registry {
     }
 
     /// ★ 마지막 명령이 남긴 파일 동작 요청 전부(146차 · 호스트가 적용).
-    pub(crate) fn drain_file_ops(&self) -> Vec<FileOp> {
+    pub(crate) fn drain_file_ops(&self) -> Vec<(String, FileOp)> {
         let mut out = Vec::new();
         for p in &self.extensions {
-            out.extend(p.take_file_ops());
+            for op in p.take_file_ops() {
+                out.push((p.id().to_string(), op));
+            }
         }
         out
     }

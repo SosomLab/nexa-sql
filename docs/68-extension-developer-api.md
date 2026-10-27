@@ -49,6 +49,23 @@
 - **장식 모델**(새로 필요한 것): 편집기에 **레이어별 스팬 목록**(`(from, to, style{fg, underline, bold})`)을 확장이 통째로 넘기고 편집기는 그리기 때 합성 — 편집기 내부(쌍 표 · 토큰)는 노출하지 않는다. 쌍 표 계산은 코어가 하고 `editor.pairs(range)`(읽기 전용 조회)로 확장에 준다 → Rainbow Pairs WASM = "쌍 표를 받아 색 스팬을 만든다"로 얇아진다(호출 비용 = 편집당 1회 · 상한 `ext.rainbow_pairs.max_kb`).
 - **이벤트 배달·비용**: 편집 이벤트는 문서 버전 번호만 · 확장이 필요할 때 `text(range)`를 당긴다(복사 최소) · 호출당 연료(fuel)·시간 상한 · 초과 = 그 확장만 비활성 + 로그(50 §4).
 
+**ExtensionApi 표면 ↔ 지금 ABI(10-28 · [75 §3](75-extension-sdk-and-dynamic-loading.md))**
+
+| 표면 | 지금(ABI v1~v1.2) | v1.3 길 A(T-450 · 설계) |
+|---|---|---|
+| editor.text(range) · lines | 없음(프롬프트 ctx의 `regions[(line,text)]`·`selection`만) | `nx_editor_len` · `nx_editor_text` · `nx_editor_regions`(`editor.read`) |
+| editor.caret/selection · set_caret | 괄호 이동 op 6(`nx_editor_op`) | `nx_editor_set_regions`(큐 · `editor.write`) |
+| editor.replace | 없음(프롬프트는 값만 · 호스트 적용) | `nx_editor_replace`(큐 · 호스트가 되돌리기 한 묶음 · `editor.write` 첫 사용 승인) |
+| editor.decorations | Rainbow 색 효과(`Effect`) | 그대로(장식 모델 = 후속) |
+| ui.command · menu.contribute | 메타 `commands` · `menus`(`target` editor/project_explorer) · 키 `key.<id>` | 그대로 |
+| ui.prompt · palette | 메타 `prompts` + `nx_ext_transform`(phase · apply · rows · pick) | 그대로 |
+| ui.status · notify | 로그 `nx_log`만 | `nx_ui_status`(호출당 1) |
+| settings.get · on_change | 전용 `settings` · `settings_read`/`settings_write` · `nx_setting_get/set`(overlay) · `on_settings` | 그대로 |
+| events.on_edit/caret/open | 없음 | `nx_ext_event`(구독 · 100 ms 디바운스 · `events`) |
+| storage | 없음(호출마다 새 인스턴스) | `stateful` + `nx_storage_get/set`(64 KB) · `nx_ext_init` |
+| fs(plugin dir) · 파일 동작 | `nx_file_op`(열기 · 드러내기 · 경로 복사 · 첫 사용 승인) | 그대로 |
+| results · net.fetch | 없음 | 보류 |
+
 ---
 
 ## 3. 동적 로딩 · 해제 · 관리(사용자 09-22 검토 요청)

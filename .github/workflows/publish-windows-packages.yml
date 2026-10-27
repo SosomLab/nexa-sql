@@ -123,7 +123,20 @@ jobs:
                 if ! printf '%s' "$ent" | grep -q '<d:IsApproved m:type="Edm.Boolean">true</d:IsApproved>'; then
                   echo "::warning::choco: 마지막으로 올린 nexa-sql $last 이(가) 아직 승인되지 않았다(모더레이션 대기) — 건너뛴다. 반려 뒤 재제출은 수동 실행 force=true."; go=false
                 else
-                  echo "choco: 마지막으로 올린 $last 승인됨 — 제출."
+                  # ★ T-435(10-28 · 사용자 결정 "제출 기록 기준 + 대기 중 새 제출 금지"): FindPackagesById는 검수 대기 판을 빠뜨릴 수 있어(0.3.0 · 10-26)
+                  #   저장소의 릴리스 태그(= 제출 기록) 중 승인된 마지막 판보다 새 판을 하나씩 Packages(Id,Version)로 물어 대기 중이면 건너뛴다.
+                  cur="${TAG#v}"; pending=""
+                  for v in $(git tag --list 'v[0-9]*' | sed 's/^v//' | grep -v -- '-' | sort -V); do
+                    [ "$v" = "$last" ] && continue; [ "$v" = "$cur" ] && continue
+                    [ "$(printf '%s\n%s\n' "$last" "$v" | sort -V | tail -1)" = "$v" ] || continue
+                    one=$(curl -fsS "https://community.chocolatey.org/api/v2/Packages(Id='nexa-sql',Version='$v')" || true)
+                    if [ -n "$one" ] && ! printf '%s' "$one" | grep -q '<d:IsApproved m:type="Edm.Boolean">true</d:IsApproved>'; then pending="$pending $v"; fi
+                  done
+                  if [ -n "$pending" ]; then
+                    echo "::warning::choco: 검수 대기 중인 판이 있다($pending) — 새 제출을 건너뛴다(T-435). 수동 실행 force=true로 강제."; go=false
+                  else
+                    echo "choco: 마지막으로 올린 $last 승인됨 · 대기 중인 제출 없음 — 제출."
+                  fi
                 fi
               fi
             fi

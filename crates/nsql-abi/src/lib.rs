@@ -217,8 +217,36 @@ pub mod ops {
 
 /// [`ops::CODEC_FEATURES`] 비트 — 결과 코덱 꼬리 필드(`pending` · `limits_hit`)를 쓴다.
 pub const CODEC_RESULT_TAIL: u32 = 1;
+/// ★ 꼬리 2(T-432 · 150차): `ExecResult.timing`(단계별 소요)을 꼬리에 싣는다 — 종전엔 확장 드라이버 결과의 단계가 비어 왔다.
+pub const CODEC_RESULT_TIMING: u32 = 2;
 /// 이 빌드의 드라이버가 알리는 코덱 기능 비트(새 비트는 꼬리 필드를 더할 때 함께 올린다).
-pub const CODEC_FEATURES_BITS: u32 = CODEC_RESULT_TAIL;
+pub const CODEC_FEATURES_BITS: u32 = CODEC_RESULT_TAIL | CODEC_RESULT_TIMING;
+
+/// `Stage` ↔ u8(ABI 고정 순서 · T-432) — 새 단계는 끝에만 더한다 · 모르는 코드는 디코더가 건너뛴다.
+const STAGE_ORDER: &[nsql_core::Stage] = &[
+    nsql_core::Stage::Compose,
+    nsql_core::Stage::Send,
+    nsql_core::Stage::Execute,
+    nsql_core::Stage::Fetch,
+    nsql_core::Stage::Receive,
+    nsql_core::Stage::Load,
+    nsql_core::Stage::Render,
+    nsql_core::Stage::Navigate,
+    nsql_core::Stage::Cleanup,
+    nsql_core::Stage::OutputFlush,
+    nsql_core::Stage::Commit,
+];
+
+fn stage_code(st: nsql_core::Stage) -> u8 {
+    STAGE_ORDER
+        .iter()
+        .position(|x| *x == st)
+        .map_or(u8::MAX, |i| i as u8)
+}
+
+fn stage_from_code(code: u8) -> Option<nsql_core::Stage> {
+    STAGE_ORDER.get(code as usize).copied()
+}
 
 /// `DriverLimit` ↔ 비트(ABI 고정 순서).
 const LIMIT_ORDER: &[nsql_core::DriverLimit] = &[
@@ -417,6 +445,27 @@ pub mod codec {
                 }
             }
             self.u32(crate::limits_to_bits(&r.limits_hit));
+            // ★ 꼬리 2(T-432 · 150차): 단계별 소요 — 개수 + (단계 u8 · ns u64 · rows? · bytes? · note?). 같은 호환 규칙(없으면 빈 Timeline).
+            self.u32(r.timing.spans.len() as u32);
+            for sp in &r.timing.spans {
+                self.u8(crate::stage_code(sp.stage));
+                self.u64(sp.dur.as_nanos().min(u128::from(u64::MAX)) as u64);
+                match sp.rows {
+                    None => self.u8(0),
+                    Some(n) => {
+                        self.u8(1);
+                        self.u64(n);
+                    }
+                }
+                match sp.bytes {
+                    None => self.u8(0),
+                    Some(n) => {
+                        self.u8(1);
+                        self.u64(n);
+                    }
+                }
+                self.opt_str(sp.note.as_deref());
+            }
         }
         pub fn db_error(&mut self, e: &DbError) {
             match e.code {
@@ -633,6 +682,34 @@ pub mod codec {
             }
             if !self.at_end() {
                 r.limits_hit = crate::bits_to_limits(self.u32()?);
+            }
+            // 꼬리 2(T-432): 단계별 소요 — 없으면(drivers ≤ 0.1.7) 빈 Timeline · 모르는 단계 코드는 건너뛴다(미래 단계).
+            if !self.at_end() {
+                let n = self.u32()? as usize;
+                for _ in 0..n {
+                    let code = self.u8()?;
+                    let dur = std::time::Duration::from_nanos(self.u64()?);
+                    let rows = if self.u8()? != 0 {
+                        Some(self.u64()?)
+                    } else {
+                        None
+                    };
+                    let bytes = if self.u8()? != 0 {
+                        Some(self.u64()?)
+                    } else {
+                        None
+                    };
+                    let note = self.opt_str()?;
+                    if let Some(stage) = crate::stage_from_code(code) {
+                        r.timing.spans.push(nsql_core::Span {
+                            stage,
+                            dur,
+                            rows,
+                            bytes,
+                            note,
+                        });
+                    }
+                }
             }
             Ok(r)
         }
@@ -1718,7 +1795,17 @@ mod tests {
             messages: vec!["hello".into()],
             pending: Some(nsql_core::CursorHandle(7)),
             limits_hit: vec![nsql_core::DriverLimit::Cancel],
-            ..ExecResult::default()
+            timing: {
+                let mut t = nsql_core::Timeline::new();
+                t.push(
+                    nsql_core::Stage::Execute,
+                    std::time::Duration::from_millis(12),
+                )
+                .rows = Some(3);
+                t.push(nsql_core::Stage::Fetch, std::time::Duration::from_micros(7))
+                    .note = Some("tds".into());
+                t
+            },
         };
         let bytes = codec::encode_result(&res);
         let back = Reader::new(&bytes).result().expect("codec");
@@ -1733,20 +1820,32 @@ mod tests {
             "꼬리 필드 pending"
         );
         assert_eq!(back.limits_hit, vec![nsql_core::DriverLimit::Cancel]);
-        // ★ 양방향 호환(10-26): 꼬리(1+4+4 바이트)가 없는 옛 드라이버 페이로드 = pending None · 제약 없음 ·
+        // ★ T-432(150차): 단계별 소요도 왕복(단계 · ns · rows · note).
+        assert_eq!(back.timing, res.timing, "timing 꼬리");
+        // ★ 양방향 호환(10-26): 꼬리(1+4+4 바이트 + timing 개수 4)가 없는 옛 드라이버 페이로드 = pending None · 제약 없음 · timing 없음 ·
         //   꼬리 뒤에 모르는 바이트가 더 있어도(미래 필드) 지금 리더는 무시한다.
-        let old = &bytes[..bytes.len() - 9];
+        let no_timing = codec::encode_result(&ExecResult {
+            timing: nsql_core::Timeline::new(),
+            ..res.clone()
+        });
+        let old = &no_timing[..no_timing.len() - 13];
         let back = Reader::new(old).result().expect("old payload");
         assert_eq!(back.pending, None);
         assert!(back.limits_hit.is_empty());
+        assert!(back.timing.spans.is_empty());
         assert_eq!(back.messages, res.messages);
-        let mut longer = bytes.clone();
+        // 꼬리 1만 있는 페이로드(drivers 0.1.7) = timing 없음.
+        let tail1 = &no_timing[..no_timing.len() - 4];
+        let back = Reader::new(tail1).result().expect("tail-1 payload");
+        assert_eq!(back.pending, Some(nsql_core::CursorHandle(7)));
+        assert!(back.timing.spans.is_empty());
+        let mut longer = bytes;
         longer.extend_from_slice(&[9, 9, 9]);
         let back = Reader::new(&longer).result().expect("future payload");
         assert_eq!(back.pending, Some(nsql_core::CursorHandle(7)));
-        // 꼬리가 `None`·빈 제약이면 바이트는 0 + 0u32.
+        // 꼬리가 `None`·빈 제약·빈 timing이면 바이트는 0 + 0u32 + 0u32.
         let none = codec::encode_result(&ExecResult::default());
-        assert_eq!(&none[none.len() - 5..], &[0, 0, 0, 0, 0]);
+        assert_eq!(&none[none.len() - 9..], &[0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let e = DbError {
             code: Some(1317),
             message: "interrupted".into(),

@@ -590,6 +590,10 @@ struct App {
     /// 확장 레지스트리(in-process · docs/50 §4) + 매니저 팔레트가 고른 후보(설치 목록 · 저장소 목록).
     extensions: extensions::Registry,
     ext_catalog: Vec<(extensions::manager::Source, extensions::manager::Summary)>,
+    /// ★ 승인 대기 중인 스테이지 설치(D-90 · 152차): (카탈로그 번호, 내려받아 검증한 패키지).
+    ext_staged: Vec<(usize, extensions::manager::Staged)>,
+    /// ★ 첫 사용 확인 전 보류된 위험 요청(설정 덮어쓰기 · 파일 동작): (확장 id, 요청).
+    ext_held: Vec<(String, extensions::HeldOp)>,
     /// 저장소 메타 캐시((저장소, 폴더) → 메타 · 실패도 None으로) — 같은 확장 설명을 다시 열 때 원격 GET 0 · ⟳ 새로 고침 때 비움(협업 지적 10-20).
     ext_meta_cache: std::collections::HashMap<(String, String), Option<extensions::manager::Meta>>,
     grid_tab: u64,
@@ -2004,6 +2008,8 @@ fn main() {
         blink_origin: Instant::now(),
         extensions: extensions::Registry::builtin(),
         ext_catalog: Vec::new(),
+        ext_staged: Vec::new(),
+        ext_held: Vec::new(),
         ext_meta_cache: std::collections::HashMap::new(),
         grid_tab: 0,
         explorer,

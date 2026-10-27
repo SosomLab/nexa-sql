@@ -102,6 +102,8 @@
 | 탐색기 유휴 워터마크(57 T2 · 스키마당 1행) | 300s · 유휴일 때만 | `meta.refresh_secs`(0 = 끔 · 향상 모드 0) · `meta.refresh_scope` | 300 | 600 | 0 | `App::meta_refresh_tick` |
 | 탐색기 DDL 뒤 갱신(57 T1·T4 · 폴더당 1질의) | 사용자 실행에 딸림 | `meta.refresh_on_ddl` · `meta.refresh_on_missing` | 켬 | 켬 | 켬 | `App::meta_flush` |
 | 확장 저장소 읽기 스레드 `ext-index`(curl 자식 프로세스 · 50 §14) | 진행 중 1 · 사용자 동작(패널 열기·⟳)으로만 | `extensions.enabled`(끄면 패널·아이콘·읽기 전부 없음) | — | — | — | `App::ext_fetch_start` |
+| (설계 · T-450) 상태 있는 확장 인스턴스(`stateful` 메타 · wasm Store 유지 · 메모리 ≤ 16 MB/확장) | 쓰는 확장 수만큼 · 유휴가 지나면 버림 | `extensions.stateful_idle_secs`(신설 · 기본 300 · 0 = 안 버림) | — | — | — | `Registry::reap_idle` |
+| (설계 · T-450) 확장 사건 배달(`nx_ext_event` · edit/caret/doc · 구독 확장에만) | edit = 100 ms 디바운스 + 문서 버전 · caret = 구간 변경 때 | `extensions.events`(신설 · 마스터 스위치) | — | — | — | `app/extensions.rs` 사건 발행 |
 | 공유 연결(서버당 DB 세션 1 + 워커 스레드 1 · DR-34) | 8 | `session.max_shared` | — | — | — | `App::new_shared` |
 | 전용/개별 탭 세션(DB 세션 1 + 워커 스레드 1) | 8 | `session.max_private` · `session.private_connect` | — | — | — | `App::new_private` |
 | 유휴 세션 닫기(서버 자원 회수 · 점검 30s 로컬) | 1800 s · 전용만 | `session.idle_secs`(0 = 끔) · `session.idle_shared` | — | — | — | `App::idle_tick` |

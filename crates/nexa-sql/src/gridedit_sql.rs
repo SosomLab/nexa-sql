@@ -21,6 +21,9 @@ pub(crate) enum ReadOnly {
     Subquery,
     /// 선택 항목이 열 이름이 아니다(식 · 별칭).
     Expression,
+    /// ★ 선택 항목에 `*`와 열 이름이 섞였다(`A.MAX_SPLIT_NO, A.*` · 150차 · 사용자 10-27): 같은 열이 두 번 나와 편집 매핑이 모호하다 —
+    ///   `*` 하나만 쓰거나 열을 전부 적으면 편집 가능.
+    MixedStar,
     /// 설정 `grid.edit` 꺼짐.
     Disabled,
     /// 운영(PROD) 접속 — `tx.prod_*` 규칙.
@@ -40,6 +43,7 @@ impl ReadOnly {
             ReadOnly::SetOp => Msg::GeRoSetOp,
             ReadOnly::Subquery => Msg::GeRoSubquery,
             ReadOnly::Expression => Msg::GeRoExpression,
+            ReadOnly::MixedStar => Msg::GeRoMixedStar,
             ReadOnly::Disabled => Msg::GeRoDisabled,
             ReadOnly::Prod => Msg::GeRoProd,
             ReadOnly::NoKey => Msg::GeRoNoKey,
@@ -150,6 +154,10 @@ pub(crate) fn analyze(sql: &str) -> Result<EditTarget, ReadOnly> {
         }
         for item in sel.split(',') {
             let parts: Vec<&str> = item.split_whitespace().collect();
+            // `*`·`A.*`가 열 이름과 섞이면 이유를 따로(MixedStar · 150차) — 종전엔 "식·별칭"으로 뭉뚱그려 안내했다.
+            if parts.len() == 1 && (parts[0] == "*" || parts[0].ends_with(".*")) {
+                return Err(ReadOnly::MixedStar);
+            }
             if parts.len() != 1 || !is_ident(parts[0]) || parts[0] == "*" {
                 return Err(ReadOnly::Expression);
             }
@@ -1141,6 +1149,13 @@ mod tests {
         );
         assert_eq!(analyze("select count(*) from a"), Err(ReadOnly::Expression));
         assert_eq!(analyze("select x as y from a"), Err(ReadOnly::Expression));
+        // ★ 150차: 열 + `*` 혼합은 MixedStar(이유 안내) · `A.*` 하나는 star 편집 가능.
+        assert_eq!(
+            analyze("select a.max_split_no, a.work_center, a.* from t a"),
+            Err(ReadOnly::MixedStar)
+        );
+        assert_eq!(analyze("select *, x from a"), Err(ReadOnly::MixedStar));
+        assert!(analyze("select a.* from t a").expect("star alias").star);
         assert_eq!(
             analyze("select x from (select 1 x from dual)"),
             Err(ReadOnly::Subquery)

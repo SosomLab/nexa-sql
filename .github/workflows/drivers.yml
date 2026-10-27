@@ -131,6 +131,18 @@ jobs:
           # T-427 측정 모드: DuckDB 정적(bundled) + 빌드 시간 보고서(target/cargo-timings/).
           if [ "${{ inputs.duckdb_bundled }}" = "true" ]; then pk+=(--features nsql-driver-duckdb/bundled --timings); fi
           cargo build --release --locked "${pk[@]}" ${TARGET:+--target "$TARGET"}
+      - name: macOS install name 정리(T-412)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ matrix.target }}"
+          # LC_ID_DYLIB가 CI 빌드 경로(/Users/runner/work/…) 그대로 남던 것(T-412 · 10-24) → @rpath/<이름> · 수정 뒤 ad-hoc 재서명(arm64는 서명이 무효화된다).
+          for f in target/${TARGET:+$TARGET/}release/libnsql_driver_*.dylib; do
+            install_name_tool -id "@rpath/$(basename "$f")" "$f"
+            codesign -s - -f "$f" 2>/dev/null || true
+            echo "$(basename "$f"): $(otool -D "$f" | tail -1)"
+          done
       - name: 빌드 시간 보고서(T-427 측정)
         if: ${{ inputs.duckdb_bundled }}
         uses: actions/upload-artifact@v4

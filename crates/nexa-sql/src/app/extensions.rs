@@ -348,8 +348,20 @@ impl App {
         for note in self.extensions.take_wasm_notes() {
             self.log_win.push(LogEntry::new(LogKind::Info, note));
         }
-        for op in self.extensions.drain_file_ops() {
+        let mut ask: Vec<String> = Vec::new();
+        for (ext, op) in self.extensions.drain_file_ops() {
+            if !self.ext_use_approved(&ext, "file_ops") {
+                self.ext_held
+                    .push((ext.clone(), extensions::HeldOp::File(op)));
+                if !ask.contains(&ext) {
+                    ask.push(ext);
+                }
+                continue;
+            }
             self.ext_file_op(op);
+        }
+        for id in ask {
+            self.ext_request_use(&id);
         }
         self.ext_apply_setting_sets();
     }
@@ -369,33 +381,23 @@ impl App {
             return;
         }
         self.ext_overlay_depth += 1;
+        let mut ask: Vec<String> = Vec::new();
         for (ext, key, value) in sets {
-            if !self.extensions.writable(&ext, &key) {
-                self.log_win.push(LogEntry::new(
-                    LogKind::Error,
-                    format!(
-                        "[{ext}] setting overlay refused: {key} is not declared in settings_write"
-                    ),
-                ));
+            // ★ D-90 ③(152차): 설정 덮어쓰기는 첫 사용 때 사용자 허용이 있어야 — 없으면 보류하고 상세 탭에서 묻는다.
+            if !self.ext_use_approved(&ext, "settings_write") {
+                self.ext_held
+                    .push((ext.clone(), extensions::HeldOp::Set(key, value)));
+                if !ask.contains(&ext) {
+                    ask.push(ext);
+                }
                 continue;
             }
-            match self.settings.set_overlay(&key, &value, &ext) {
-                Ok(changed) => {
-                    self.log_win.push(LogEntry::new(
-                        LogKind::Info,
-                        format!("[{ext}] setting overlay: {key} = {value} (runtime only · restored when the extension is off)"),
-                    ));
-                    if changed {
-                        self.apply_setting(&key);
-                    }
-                }
-                Err(e) => self.log_win.push(LogEntry::new(
-                    LogKind::Error,
-                    format!("[{ext}] setting overlay refused: {e}"),
-                )),
-            }
+            self.ext_apply_one_set(&ext, &key, &value);
         }
         self.ext_overlay_depth -= 1;
+        for id in ask {
+            self.ext_request_use(&id);
+        }
     }
 
     /// 확장이 요청한 파일 동작(146차 · docs/97 §5 ②): 열기 = 새 탭 · 드러내기 = 프로젝트 탐색기 · 경로 복사 = 클립보드(명시적 명령에서만 온다).
@@ -500,6 +502,161 @@ impl App {
         }
     }
 
+    /// 카탈로그 `n`번의 행(패널 행과 같은 규칙 · 설치본이 있으면 그 버전·종류).
+    fn ext_row_for_catalog(&self, n: usize) -> Option<ExtRow> {
+        use extensions::manager as mgr;
+        let (src, p) = self.ext_catalog.get(n)?;
+        let installed = self.ext_installed_plus_builtin();
+        let rec = installed.iter().find(|r| r.id == p.id);
+        let off = self.ext_disabled_list();
+        Some(ExtRow {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            version: rec.map_or_else(|| p.version.clone(), |r| r.version.clone()),
+            kind: rec.map_or_else(
+                || p.kind.as_str().to_string(),
+                |r| r.kind.as_str().to_string(),
+            ),
+            summary: p.summary.clone(),
+            installed: rec.is_some(),
+            enabled: rec.is_some() && !off.iter().any(|d| d == &p.id),
+            catalog: Some(n),
+            source: src.display(),
+            latest: rec.and_then(|r| {
+                mgr::version_newer(&p.version, &r.version).then(|| p.version.clone())
+            }),
+        })
+    }
+
+    /// 설치본(또는 기본 켜진 내장) id의 행.
+    fn ext_row_for_installed(&self, id: &str) -> Option<ExtRow> {
+        use extensions::manager as mgr;
+        let r = self
+            .ext_installed_plus_builtin()
+            .into_iter()
+            .find(|r| r.id == id)?;
+        let cat = self.ext_catalog.iter().position(|(_, p)| p.id == r.id);
+        let off = self.ext_disabled_list();
+        Some(ExtRow {
+            latest: cat.and_then(|n| {
+                let v = &self.ext_catalog[n].1.version;
+                mgr::version_newer(v, &r.version).then(|| v.clone())
+            }),
+            summary: cat
+                .map(|n| self.ext_catalog[n].1.summary.clone())
+                .unwrap_or_default(),
+            source: cat
+                .map(|n| self.ext_catalog[n].0.display())
+                .unwrap_or_default(),
+            enabled: !off.iter().any(|d| d == &r.id),
+            kind: r.kind.as_str().to_string(),
+            id: r.id,
+            name: r.name,
+            version: r.version,
+            installed: true,
+            catalog: cat,
+        })
+    }
+
+    /// 능력 요약 → 상세 탭 칸(T-448 · D-90 승인 창이 같은 칸을 쓴다).
+    fn ext_cap_fields(c: &extensions::Capabilities) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut field = |label: Msg, v: String| {
+            if !v.is_empty() {
+                out.push((t(label).to_string(), v));
+            }
+        };
+        field(Msg::ExtDetCommands, c.commands.join(", "));
+        field(Msg::ExtDetPrompts, c.prompts.join(", "));
+        field(Msg::ExtDetReads, c.settings_read.join(", "));
+        let writes = if c.settings_write.is_empty() && c.setting_set {
+            t(Msg::ExtDetWritesUndeclared).to_string()
+        } else {
+            c.settings_write.join(", ")
+        };
+        field(Msg::ExtDetWrites, writes);
+        if c.file_ops {
+            field(Msg::ExtDetFileOps, t(Msg::ExtDetFileOpsList).to_string());
+        }
+        out
+    }
+
+    /// 위험 능력(`settings_write` · `file_ops`)의 첫 사용이 허용됐는가 — 내장(설치 기록 없음)은 늘 허용.
+    fn ext_use_approved(&self, id: &str, cap: &str) -> bool {
+        match extensions::manager::installed()
+            .into_iter()
+            .find(|r| r.id == id)
+        {
+            None => true,
+            Some(r) => r.approved.iter().any(|c| c == cap),
+        }
+    }
+
+    /// ★ 첫 사용 확인 요청(D-90 ③ · 152차): 보류된 요청을 상세 탭에 보여 주고 [허용][거부]를 기다린다(이미 떠 있으면 줄만 갱신).
+    fn ext_request_use(&mut self, id: &str) {
+        let Some(row) = self.ext_row_for_installed(id) else {
+            return;
+        };
+        let key = format!("ext:{id}");
+        let already = self
+            .ext_details
+            .get(&key)
+            .is_some_and(|d| matches!(&d.pending, Some(p) if matches!(&p.kind, ext_view::PendingKind::FirstUse(x) if x == id)));
+        if !already {
+            self.ext_open_detail(&row);
+        }
+        let held: Vec<String> = self
+            .ext_held
+            .iter()
+            .filter(|(e, _)| e == id)
+            .map(|(_, op)| match op {
+                extensions::HeldOp::Set(k, v) => format!("{} = {v}", k),
+                extensions::HeldOp::File(extensions::FileOp::Open(p)) => format!("open {p}"),
+                extensions::HeldOp::File(extensions::FileOp::Reveal(p)) => format!("reveal {p}"),
+                extensions::HeldOp::File(extensions::FileOp::CopyPath(p)) => {
+                    format!("copy path {p}")
+                }
+            })
+            .collect();
+        if let Some(d) = self.ext_details.get_mut(&key) {
+            d.pending = Some(ext_view::Pending {
+                kind: ext_view::PendingKind::FirstUse(id.to_string()),
+                title: t(Msg::ExtApproveTitleUse).to_string(),
+            });
+            d.fields.retain(|(l, _)| l != t(Msg::ExtDetHeldOps));
+            d.fields
+                .insert(0, (t(Msg::ExtDetHeldOps).to_string(), held.join(" · ")));
+        }
+        self.sess.status = tf(Msg::StExtApprovalPending, &[&row.name, &row.version]);
+        self.redraw();
+    }
+
+    /// 설정 덮어쓰기 요청 하나 적용(선언 · 검증 · overlay · 로그 · 재적용).
+    fn ext_apply_one_set(&mut self, ext: &str, key: &str, value: &str) {
+        if !self.extensions.writable(ext, key) {
+            self.log_win.push(LogEntry::new(
+                LogKind::Error,
+                format!("[{ext}] setting overlay refused: {key} is not declared in settings_write"),
+            ));
+            return;
+        }
+        match self.settings.set_overlay(key, value, ext) {
+            Ok(changed) => {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    format!("[{ext}] setting overlay: {key} = {value} (runtime only · restored when the extension is off)"),
+                ));
+                if changed {
+                    self.apply_setting(key);
+                }
+            }
+            Err(e) => self.log_win.push(LogEntry::new(
+                LogKind::Error,
+                format!("[{ext}] setting overlay refused: {e}"),
+            )),
+        }
+    }
+
     /// ★ 설치 기록 + 기본 켜진 내장(D-368 · 설치 기록 없음 · 148차 V1 ③): 팔레트 목록(list·remove·enable·disable·update)에도 내장이 보이게.
     pub(crate) fn ext_installed_plus_builtin(&self) -> Vec<extensions::manager::Installed> {
         let mut installed = extensions::manager::installed();
@@ -511,6 +668,7 @@ impl App {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     kind: extensions::manager::Kind::Builtin,
                     placed: Vec::new(),
+                    approved: Vec::new(),
                 });
             }
         }
@@ -789,8 +947,64 @@ impl App {
                 else {
                     return;
                 };
+                let n: usize = key.parse().unwrap_or(usize::MAX);
                 let mut tr = mgr::Trace::default();
-                let r = mgr::install(&src, &sum, &mut tr);
+                let r = mgr::stage(&src, &sum, &mut tr);
+                self.ext_trace(tr);
+                match r {
+                    Ok(staged) => {
+                        // ★ D-90 ③(152차): 내려받기·검증까지 하고 **배치 전에** 능력을 보여 승인받는다(상세 탭 승인 상태 · [설치][취소]).
+                        let mut lines: Vec<(String, String)> = Vec::new();
+                        if let Some(bytes) = staged.wasm_bytes() {
+                            match extensions::wasm::WasmExtension::load(bytes) {
+                                Ok(ext) => {
+                                    lines = Self::ext_cap_fields(
+                                        &extensions::Extension::capabilities(&ext),
+                                    )
+                                }
+                                Err(e) => lines
+                                    .push((t(Msg::ExtDetState).to_string(), format!("wasm: {e}"))),
+                            }
+                        }
+                        let placed = staged.placed_files();
+                        if !placed.is_empty() {
+                            lines.push((t(Msg::ExtDetFiles).to_string(), placed.join(", ")));
+                        }
+                        self.ext_staged.retain(|(i, _)| *i != n);
+                        self.ext_staged.push((n, staged));
+                        let Some(row) = self.ext_row_for_catalog(n) else {
+                            return;
+                        };
+                        self.ext_open_detail(&row);
+                        if let Some(d) = self.ext_details.get_mut(&format!("ext:{}", row.id)) {
+                            d.pending = Some(ext_view::Pending {
+                                kind: ext_view::PendingKind::Install(n),
+                                title: t(Msg::ExtApproveTitleInstall).to_string(),
+                            });
+                            let mut fields = lines;
+                            fields.append(&mut d.fields);
+                            d.fields = fields;
+                        }
+                        self.sess.status =
+                            tf(Msg::StExtApprovalPending, &[&row.name, &row.version]);
+                        self.redraw();
+                    }
+                    Err(e) => {
+                        self.sess.status = e;
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+                    }
+                }
+            }
+            // ★ 승인(D-90 ③ · 152차): 스테이지된 패키지를 배치·기록 — 종전 설치 성공 경로.
+            "approve" => {
+                let n: usize = key.parse().unwrap_or(usize::MAX);
+                let Some(pos) = self.ext_staged.iter().position(|(i, _)| *i == n) else {
+                    return;
+                };
+                let (_, staged) = self.ext_staged.remove(pos);
+                let mut tr = mgr::Trace::default();
+                let r = mgr::commit_staged(staged, &mut tr);
                 self.ext_trace(tr);
                 match r {
                     Ok(meta) => {
@@ -806,6 +1020,10 @@ impl App {
                         // ★ `requires` 자동 설치(146차 · T-118 잔여): 카탈로그에 있는 것만 · 한 단계 · 이미 설치됐으면 건너뜀.
                         self.ext_install_requires(&meta);
                         self.apply_extensions(None);
+                        if let Some(row) = self.ext_row_for_installed(&meta.id) {
+                            self.ext_details.remove(&format!("ext:{}", row.id));
+                            self.ext_open_detail(&row);
+                        }
                     }
                     Err(e) => {
                         self.sess.status = e;
@@ -813,6 +1031,67 @@ impl App {
                             .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
                     }
                 }
+            }
+            "reject" => {
+                let n: usize = key.parse().unwrap_or(usize::MAX);
+                self.ext_staged.retain(|(i, _)| *i != n);
+                if let Some(row) = self.ext_row_for_catalog(n) {
+                    self.sess.status = tf(Msg::StExtRejected, &[&row.name]);
+                    self.ext_details.remove(&format!("ext:{}", row.id));
+                    self.ext_open_detail(&row);
+                }
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+            }
+            // ★ 첫 사용 허용/거부(D-90 ③): 보류된 요청을 적용하거나 버린다 · 허용은 설치 기록에 남는다(새 버전 = 다시 확인).
+            "allow_use" => {
+                let held: Vec<extensions::HeldOp> = {
+                    let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.ext_held)
+                        .into_iter()
+                        .partition(|(e, _)| e == key);
+                    self.ext_held = rest;
+                    mine.into_iter().map(|(_, op)| op).collect()
+                };
+                if held
+                    .iter()
+                    .any(|h| matches!(h, extensions::HeldOp::Set(..)))
+                {
+                    if let Err(e) = mgr::approve_use(key, "settings_write") {
+                        self.log_win.push(LogEntry::new(LogKind::Error, e));
+                    }
+                }
+                if held
+                    .iter()
+                    .any(|h| matches!(h, extensions::HeldOp::File(_)))
+                {
+                    if let Err(e) = mgr::approve_use(key, "file_ops") {
+                        self.log_win.push(LogEntry::new(LogKind::Error, e));
+                    }
+                }
+                let id = key.to_string();
+                for h in held {
+                    match h {
+                        extensions::HeldOp::Set(k, v) => self.ext_apply_one_set(&id, &k, &v),
+                        extensions::HeldOp::File(op) => self.ext_file_op(op),
+                    }
+                }
+                self.sess.status = tf(Msg::StExtUseAllowed, &[&id]);
+                if let Some(row) = self.ext_row_for_installed(&id) {
+                    self.ext_details.remove(&format!("ext:{}", row.id));
+                    self.ext_open_detail(&row);
+                }
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+            }
+            "deny_use" => {
+                self.ext_held.retain(|(e, _)| e != key);
+                self.sess.status = tf(Msg::StExtUseDenied, &[key]);
+                if let Some(row) = self.ext_row_for_installed(key) {
+                    self.ext_details.remove(&format!("ext:{}", row.id));
+                    self.ext_open_detail(&row);
+                }
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             }
             // ★ 모두 업데이트(146차): 설치본보다 새 버전이 있는 카탈로그 항목을 차례로 설치(각각 `install:n`과 같은 길).
             "update_all" => {
@@ -995,7 +1274,9 @@ impl App {
             } else {
                 Msg::ExtStDisabled
             });
-            if let Some(f) = d.fields.first_mut() {
+            // 상태 칸은 라벨로 찾아 쓴다(결함 E · 153차 V1-j: 승인 대기 땐 능력 줄이 앞에 붙어 첫 칸이 "명령"이었다).
+            let state_label = t(Msg::ExtDetState);
+            if let Some(f) = d.fields.iter_mut().find(|(l, _)| l == state_label) {
                 f.1 = state.to_string();
             }
             let ver = match (&d.row.latest, inst, d.row.catalog) {
@@ -1033,6 +1314,14 @@ impl App {
                 ext_view::ExtViewAction::Settings(id) => self.ext_open_settings(&id),
                 ext_view::ExtViewAction::Install(n) | ext_view::ExtViewAction::Update(n) => {
                     self.ext_pick(&format!("ext.install:{n}"))
+                }
+                ext_view::ExtViewAction::Approve(n) => self.ext_pick(&format!("ext.approve:{n}")),
+                ext_view::ExtViewAction::Reject(n) => self.ext_pick(&format!("ext.reject:{n}")),
+                ext_view::ExtViewAction::AllowUse(id) => {
+                    self.ext_pick(&format!("ext.allow_use:{id}"))
+                }
+                ext_view::ExtViewAction::DenyUse(id) => {
+                    self.ext_pick(&format!("ext.deny_use:{id}"))
                 }
                 ext_view::ExtViewAction::Remove(id) => self.ext_pick(&format!("ext.remove:{id}")),
                 ext_view::ExtViewAction::Enable(id) => self.ext_pick(&format!("ext.enable:{id}")),
@@ -1308,9 +1597,16 @@ impl App {
             field(Msg::ExtDetHomepage, &m.homepage);
             field(Msg::ExtDetRequires, &m.requires.join(", "));
             field(Msg::ExtDetSettings, &m.settings_prefix);
-            let files: Vec<String> = m.files.iter().map(|f| f.path.clone()).collect();
-            field(Msg::ExtDetFiles, &files.join(", "));
+            // 내장(builtin)인데 카탈로그 메타(wasm 판)에서 온 파일 목록은 보이지 않는다(151차 V1-h 관찰).
+            if row.kind != "builtin" {
+                let files: Vec<String> = m.files.iter().map(|f| f.path.clone()).collect();
+                field(Msg::ExtDetFiles, &files.join(", "));
+            }
             description = m.description.clone();
+        }
+        // ★ 능력 요약(T-448 · 151차 · 사용자 10-28): 로드된 확장만(카탈로그만 있는 것은 설치 때 승인 창 · D-90).
+        if let Some(c) = self.extensions.capabilities_of(&row.id) {
+            fields.extend(Self::ext_cap_fields(&c));
         }
         if loading {
             description = t(Msg::ExtDetLoading).to_string();
@@ -1318,12 +1614,29 @@ impl App {
         let mut shown = row.clone();
         shown.summary = summary;
         let key = format!("ext:{}", row.id);
+        // ★ 결함 D(152차 V1-i · 협업): 저장소 메타를 스레드로 읽은 뒤 `ext_meta_poll`이 여기를 다시 불러 항목을 통째로 바꾸며 **승인 상태와
+        //   능력 줄이 사라졌다** → 기존 항목에 `pending`이 있으면 그것과 앞에 붙인 줄(새 칸에 없는 라벨)을 옮겨 담는다. 승인·거부가 끝난
+        //   길은 항목을 먼저 지우고 다시 연다(`ext_details.remove`).
+        let (pending, fields) = match self.ext_details.get(&key) {
+            Some(prev) if prev.pending.is_some() => {
+                let mut merged: Vec<(String, String)> = prev
+                    .fields
+                    .iter()
+                    .filter(|(l, _)| !fields.iter().any(|(nl, _)| nl == l))
+                    .cloned()
+                    .collect();
+                merged.extend(fields);
+                (prev.pending.clone(), merged)
+            }
+            _ => (None, fields),
+        };
         self.ext_details.insert(
             key.clone(),
             ext_view::ExtDetail {
                 row: shown,
                 fields,
                 description,
+                pending,
             },
         );
         let created = self

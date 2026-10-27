@@ -1521,8 +1521,17 @@ cells={n}
         }
         if id == "seq.commit" {
             let q = self.palette.query();
+            let pick = self.palette.prompt_pick();
             self.palette.close();
-            self.insseq_commit(&q);
+            self.insseq_commit(&q, pick);
+            return;
+        }
+        // `seq.pick:<id>` = 라이브 프롬프트의 고를 수 있는 행을 id로 고른다(T-447 · 자체 시험).
+        if let Some(p) = id.strip_prefix("seq.pick:") {
+            if !self.palette.set_prompt_pick(p) {
+                self.sess.status = format!("seq.pick: no such row {p}");
+            }
+            self.redraw();
             return;
         }
         if id == "seq.cancel" {

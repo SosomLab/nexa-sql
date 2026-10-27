@@ -1089,7 +1089,7 @@ pub(crate) fn spawn(
                             ConnOutcome::ConnectFailed(last_err.unwrap_or_default())
                         });
                         // 접속 직후 1회: ① 서버 안전망 세션 파라미터(docs/56 L4 · 설정 0 = 없음) ② 세션 식별자(라이브 모니터 ·
-                        //   막힘 감지 L3). PG의 SET은 트랜잭션에 묶이므로 **커밋으로** 끝낸다(롤백하면 SET이 되돌아간다).
+                        //   막힘 감지 L3). 커밋은 보내지 않는다(T-431 · 아래 주석).
                         if ok {
                             runner.note_tx_ended();
                             let dialect = runner.engine.dialect;
@@ -1102,7 +1102,8 @@ pub(crate) fn spawn(
                                 })
                                 .unwrap_or((0, 0));
                             if let Some(s) = runner.session.as_mut() {
-                                for sql in server_guard_sql(dialect, idle_tx, lock_wait) {
+                                let guards = server_guard_sql(dialect, idle_tx, lock_wait);
+                                for sql in &guards {
                                     let req = nsql_core::ExecRequest {
                                         sql: sql.clone(),
                                         params: vec![],
@@ -1128,7 +1129,11 @@ pub(crate) fn spawn(
                                         }
                                     }
                                 }
-                                let _ = s.commit();
+                                // ★ T-431(150차 · 협업 V1-g b2): 접속 직후에는 **커밋을 보내지 않는다** — 종전 "PG의 SET은 트랜잭션에 묶이므로 커밋"은
+                                //   전제가 틀렸다(접속 직후엔 열린 트랜잭션이 없어 SET이 자동 커밋으로 바로 끝난다 · 세션 식별자 SELECT는 드라이버가
+                                //   BEGIN/COMMIT으로 닫는다) → 빈 COMMIT이 "WARNING: there is no transaction in progress"로 남았다. Oracle ALTER SESSION ·
+                                //   SQL Server SET LOCK_TIMEOUT도 트랜잭션과 무관(연결 범위). 러너 상태는 위 `note_tx_ended`가 맞춰 둔다.
+                                let _ = &guards;
                             }
                         }
                         let _ = dtx.send(None);

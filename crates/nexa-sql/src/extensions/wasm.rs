@@ -10,8 +10,9 @@
 //! 같은 id의 WASM 확장이 로드되면 내장(builtin) 확장을 **대체**한다(내장 = 로드 실패 때 폴백).
 
 use super::{
-    key_matches, Command, EditorOps, Extension, ExtensionEffect, FileOp, Label, MenuContribution,
-    MenuTarget, Prompt, SettingDef, SettingDefKind, TransformOut, TransformReq,
+    PromptRow,
+    key_matches, Capabilities, Command, EditorOps, Extension, ExtensionEffect, FileOp, Label,
+    MenuContribution, MenuTarget, Prompt, SettingDef, SettingDefKind, TransformOut, TransformReq,
 };
 use nsql_settings::json::{self, Json};
 use nsql_settings::Settings;
@@ -248,6 +249,8 @@ pub(crate) struct WasmExtension {
     /// ★ 메타 `settings_read` / `settings_write`(148차): 읽는·덮어쓰는 기본 설정 키 패턴.
     settings_read: Vec<String>,
     settings_write: Vec<String>,
+    /// ★ 모듈이 import하는 호스트 함수 이름(T-448 · 능력 요약 = 파일 동작·설정 덮어쓰기 사용 여부).
+    imports: Vec<String>,
     /// 이번 호출에서 게스트가 읽을 수 있는 설정(전용 + 선언) — 호출 직전에 채운다.
     call_settings: std::cell::RefCell<Vec<(String, String)>>,
     /// 마지막 호출이 남긴 설정 덮어쓰기 요청.
@@ -394,6 +397,10 @@ pub(crate) fn transform_request_json(req: &TransformReq, settings_json: &str) ->
         ("doc_path".into(), Json::Str(req.doc_path.clone())),
         ("phase".into(), Json::Str(req.phase.clone())),
         ("selection".into(), Json::Str(req.selection.clone())),
+        (
+            "pick".into(),
+            req.pick.clone().map_or(Json::Null, Json::Str),
+        ),
         ("settings".into(), settings),
     ]))
 }
@@ -408,13 +415,17 @@ pub(crate) fn transform_out_from_json(text: &str) -> Result<TransformOut, String
         .iter()
         .map(|x| jstr(x).unwrap_or("").to_string())
         .collect();
-    let rows: Vec<(String, bool)> = jget(&v, "rows")
+    let rows: Vec<PromptRow> = jget(&v, "rows")
         .map(jarr)
         .unwrap_or(&[])
         .iter()
         .filter_map(|r| {
-            let t = jget(r, "text").and_then(jstr)?.to_string();
-            Some((t, jget(r, "warn").and_then(jbool).unwrap_or(false)))
+            let text = jget(r, "text").and_then(jstr)?.to_string();
+            Some(PromptRow {
+                text,
+                warn: jget(r, "warn").and_then(jbool).unwrap_or(false),
+                id: jget(r, "id").and_then(jstr).map(str::to_string),
+            })
         })
         .collect();
     let apply = jget(&v, "apply")
@@ -444,6 +455,7 @@ impl WasmExtension {
         cfg.consume_fuel(true);
         let engine = Engine::new(&cfg);
         let module = Module::new(&engine, bytes).map_err(|e| e.to_string())?;
+        let imports: Vec<String> = module.imports().map(|i| i.name().to_string()).collect();
         let mut ext = WasmExtension {
             id: String::new(),
             name: String::new(),
@@ -456,6 +468,7 @@ impl WasmExtension {
             prompts: Vec::new(),
             settings_read: Vec::new(),
             settings_write: Vec::new(),
+            imports,
             call_settings: std::cell::RefCell::new(Vec::new()),
             setting_sets: std::cell::RefCell::new(Vec::new()),
             file_ops: std::cell::RefCell::new(Vec::new()),
@@ -887,6 +900,16 @@ impl Extension for WasmExtension {
     fn take_setting_sets(&self) -> Vec<(String, String)> {
         std::mem::take(&mut self.setting_sets.borrow_mut())
     }
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            commands: self.commands.iter().map(|c| c.id.clone()).collect(),
+            prompts: self.prompts.iter().map(|p| p.id.clone()).collect(),
+            settings_read: self.settings_read.clone(),
+            settings_write: self.settings_write.clone(),
+            file_ops: self.imports.iter().any(|n| n == "nx_file_op"),
+            setting_set: self.imports.iter().any(|n| n == "nx_setting_set"),
+        }
+    }
     /// ★ 프롬프트 변환(ABI v1.2): 요청 JSON(+ 접두 설정) → `nx_ext_transform` → 값/오류/행.
     fn transform(&self, req: &TransformReq, s: &Settings) -> Result<TransformOut, String> {
         *self.call_settings.borrow_mut() = settings_pairs(s, &self.prefix, &self.readable());
@@ -958,6 +981,7 @@ mod tests {
             doc_path: String::new(),
             phase: "live".into(),
             selection: String::new(),
+            pick: None,
         };
         let out = ext.transform(&req, &s).expect("transform");
         assert_eq!(out.values, vec!["001", "002", "003"]);
@@ -979,7 +1003,7 @@ mod tests {
                 && j.contains("\"settings\":{\"ext.insert_sequence.default\":\"1+1\"}"),
             "{j}"
         );
-        assert!(j.contains("\"phase\":\"live\""));
+        assert!(j.contains("\"phase\":\"live\"") && j.contains("\"pick\":null"));
         let t = transform_out_from_json(r#"{"apply":"text","text":"T"}"#).expect("text mode");
         assert_eq!((t.apply.as_str(), t.text.as_str()), ("text", "T"));
         assert_eq!(
@@ -991,9 +1015,11 @@ mod tests {
         let o = transform_out_from_json(r#"{"error":"e","rows":[{"text":"r","warn":true}]}"#)
             .expect("out");
         assert_eq!(
-            (o.error.as_deref(), o.rows.len(), o.rows[0].1),
+            (o.error.as_deref(), o.rows.len(), o.rows[0].warn),
             (Some("e"), 1, true)
         );
+        let c = transform_out_from_json(r#"{"apply":"none","rows":[{"text":"Hi","id":"hi"}]}"#).expect("choice");
+        assert_eq!(c.rows[0].id.as_deref(), Some("hi"));
         assert!(transform_out_from_json("{}").is_err());
     }
 
@@ -1013,6 +1039,9 @@ mod tests {
             ext.settings_write(),
             vec!["editor.auto_close_pairs".to_string()]
         );
+        let caps = ext.capabilities();
+        assert!(caps.setting_set && !caps.file_ops, "{caps:?}");
+        assert_eq!(caps.commands.len(), 3, "명령 2 + 프롬프트 병합 1(0.3.0)");
         let s = Settings::from_text(
             std::path::PathBuf::from("x"),
             "ui.lang=ko
@@ -1030,6 +1059,25 @@ mod tests {
             vec![("editor.auto_close_pairs".to_string(), expect.to_string())]
         );
         assert!(ext.take_setting_sets().is_empty());
+        // ★ T-447(153차): hello 0.3.0 프롬프트 "Hello: Pick a greeting" = live → 고를 수 있는 행(id) · commit + pick → apply text.
+        assert!(ext.prompts().iter().any(|p| p.id == "ext.hello_ext.pick"));
+        let live = TransformReq {
+            id: "ext.hello_ext.pick".into(),
+            text: String::new(),
+            n: 1,
+            phase: "live".into(),
+            ..TransformReq::default()
+        };
+        let out = ext.transform(&live, &s).expect("live");
+        assert_eq!(out.apply, "none");
+        assert!(out.rows.iter().any(|r| r.id.as_deref() == Some("ko")), "{:?}", out.rows);
+        let commit = TransformReq {
+            phase: "commit".into(),
+            pick: Some("ko".into()),
+            ..live
+        };
+        let out = ext.transform(&commit, &s).expect("commit");
+        assert_eq!((out.apply.as_str(), out.text.as_str()), ("text", "안녕하세요"));
     }
 
     /// 소스 트리의 공식 패키지 `.wasm`(SDK 샘플로 빌드해 둔 것)을 로드해 메타·설정→효과·명령 큐를 확인한다.
@@ -1044,6 +1092,8 @@ mod tests {
             });
         let mut ext = WasmExtension::load_file(&path).expect("load wasm");
         assert_eq!(ext.id(), "project-explorer-menus");
+        let caps = ext.capabilities();
+        assert!(caps.file_ops && !caps.setting_set, "{caps:?}");
         let mut tb = nexa_ctl::TextBox::new("");
         let s = Settings::from_text(std::path::PathBuf::from("x"), "");
         for (cmd, doc) in [

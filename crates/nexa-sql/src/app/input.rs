@@ -1366,10 +1366,10 @@ impl App {
                     self.ime_refresh();
                     self.menu_action(&id);
                 }
-                PaletteAction::Prompt { id, text } => {
+                PaletteAction::Prompt { id, text, pick } => {
                     self.palette.close();
                     if id.starts_with(super::insseq::PROMPT_PREFIX) {
-                        self.insseq_commit(&text);
+                        self.insseq_commit(&text, pick);
                     } else if let Some(i) =
                         id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok())
                     {

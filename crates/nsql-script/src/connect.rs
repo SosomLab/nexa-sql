@@ -188,6 +188,34 @@ fn odbc_split_logon(s: &str) -> (String, Option<String>, Option<String>) {
     (rest.join(";"), user, pw)
 }
 
+/// 드라이브 문자(`C:\…` · `C:/…`) 또는 UNC(`\\서버\…`) 경로인가(T-439) — 스킴 없는 접속 문자열에서만 묻는다.
+pub fn is_drive_or_unc_path(s: &str) -> bool {
+    let b = s.as_bytes();
+    let drive = b.len() >= 3
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b[2] == b'\\' || b[2] == b'/');
+    drive || s.starts_with("\\\\")
+}
+
+/// 드라이브·UNC 경로에 붙일 파일 방언 스킴(확장자 기준 · 모르면 sqlite) — 경로가 아니면 `None`.
+pub fn file_path_scheme(s: &str) -> Option<&'static str> {
+    if !is_drive_or_unc_path(s) {
+        return None;
+    }
+    let ext = s
+        .rsplit(['\\', '/'])
+        .next()
+        .and_then(|name| name.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    Some(match ext.as_str() {
+        "duckdb" | "ddb" => "duckdb",
+        "mdb" | "accdb" => "access",
+        _ => "sqlite",
+    })
+}
+
 impl ConnectSpec {
     /// 서버 끝점(호스트, 포트): 네트워크 방언은 host/port · ODBC는 접속 문자열에서([`odbc_endpoint`]) · 파일 방언·DSN만 = None.
     #[must_use]
@@ -221,6 +249,12 @@ impl ConnectSpec {
         // 파일 방언 축약: sqlite:경로(나머지 전부가 경로 — `:`·`/`·`\\`를 해석하지 않는다).
         // ★ ODBC(T-383 · 136차)도 같은 꼴: `odbc:DSN=…` · `odbc:Driver={…};Server=…;Uid=u;Pwd=p` = 나머지 전부가 ODBC 접속 문자열 ·
         //   `UID=`/`PWD=`는 스펙의 user/password로 **올려** 문자열에서 뺀다(금고 저장 · `redacted` 마스킹 · 드라이버가 다시 붙인다).
+        // ★ 드라이브 문자·UNC 경로(T-439 · 10-27 V1 관찰 · 150차): `C:\data\x.db`가 `user:pass` 꼴로 읽혀 프로필에 `user=C`가 들어갔다 →
+        //   파일 방언 축약형(`sqlite:…` 등)으로 되감아 아래 분기가 처리하게 한다(확장자 = .duckdb/.ddb → duckdb · .mdb/.accdb → access · 그 밖 = sqlite).
+        //   호출자가 기본 방언을 파일형으로 아는 경우(CLI `-d duckdb`)는 nsql-drivers `parse_target`이 먼저 그 스킴을 붙인다.
+        if let Some(scheme) = file_path_scheme(&s) {
+            return Self::parse(&format!("{scheme}:{s}"));
+        }
         if let Some(i) = s.find(':') {
             let d = Dialect::from_name(&s[..i]);
             // 벤더 스킴 URL(`tibero://…` · T-384)은 아래 URL 경로가 ODBC 프리셋으로 바꾼다 — 축약 분기에서 제외.
@@ -1039,6 +1073,22 @@ mod tests {
     }
 
     /// ★ ODBC 접속 문자열 → 끝점(사용자 10-23 로그인 목록 서버 상태 점).
+    /// ★ T-439(150차): 드라이브 문자·UNC 경로는 파일 방언으로(user/pass로 읽지 않는다) · 확장자로 duckdb/access · 스킴이 있으면 종전대로.
+    #[test]
+    fn drive_and_unc_paths_are_file_dialects() {
+        let s = ConnectSpec::parse("C:\\data\\x.db").expect("parse");
+        assert_eq!(s.dialect, Some(Dialect::Sqlite));
+        assert_eq!(s.database.as_deref(), Some("C:\\data\\x.db"));
+        assert!(s.user.is_none() && s.password.is_none());
+        let s = ConnectSpec::parse("D:/w/a.duckdb").expect("parse");
+        assert_eq!(s.dialect, Some(Dialect::Duckdb));
+        let s = ConnectSpec::parse("\\\\srv\\share\\a.accdb").expect("parse");
+        assert_eq!(s.dialect, Some(Dialect::Access));
+        assert_eq!(s.database.as_deref(), Some("\\\\srv\\share\\a.accdb"));
+        assert_eq!(file_path_scheme("scott/tiger@C:\\x"), None);
+        assert_eq!(file_path_scheme("c:"), None);
+    }
+
     #[test]
     fn odbc_endpoint_from_connection_string() {
         assert_eq!(

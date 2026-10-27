@@ -8,10 +8,14 @@
 //!   원인(경고색) + 본문은 공백 · `?`만 치면 미리보기 자리 = 치트 시트(프롬프트 메타 `help`).
 //! - ★ 범용 축(사용자 10-27 "SDK는 범용 구조"): 단계 `phase`(`live` 키마다 · `commit` Enter · `cancel` Esc) · 요청에 `selection` · 응답의
 //!   적용 방식 `apply`(`regions` 구간마다 값 · `text` 선택 전체를 글 하나로 · `none` 본문은 두고 행만).
+//! - ★ 행 고르기(T-447 · 153차): 확장이 준 행에 `id`가 있으면 팔레트가 ↑↓/클릭으로 고르게 하고, Enter의 `pick`이 commit 요청에 실린다.
 //! - 팔레트 프롬프트 id = `seq:<프롬프트 id>`([`PROMPT_PREFIX`] · input.rs · startup_cmd.rs가 접두로 알아본다).
 
 use crate::*;
 use extensions::{Prompt, TransformReq};
+
+/// 미리보기 행 = (글, 경고색, 고를 수 있으면 id).
+type Row = (String, bool, Option<String>);
 
 pub(crate) struct SeqSession {
     /// 시작한 편집기 탭(다른 탭이면 본문을 건드리지 않는다).
@@ -37,7 +41,7 @@ pub(crate) struct SeqSession {
     /// 마지막 값(미리보기 행 · 덤프).
     values: Vec<String>,
     /// 확장이 준 미리보기 행(비면 호스트가 `L줄: 값`으로 만든다).
-    rows: Vec<(String, bool)>,
+    rows: Vec<Row>,
 }
 
 /// 미리보기 행 수(팔레트 행 상한 안에서 · 마지막 한 줄은 "…외 n개").
@@ -112,7 +116,7 @@ impl App {
         self.redraw();
     }
 
-    /// 기본 표현식 = 프롬프트의 `placeholder_key` 설정 값(비면 메타 `placeholder` · 내장 = `editor.seq_default`).
+    /// 기본 표현식 = 프롬프트의 `placeholder_key` 설정 값(비면 메타 `placeholder` · 내장 = `ext.insert_sequence.default`).
     fn insseq_default(&self) -> String {
         let Some(s) = self.seq.as_ref() else {
             return String::new();
@@ -133,11 +137,17 @@ impl App {
 
     /// 질의가 바뀌었다(팔레트 입력란 · 기동 명령) — 확장 변환(`live`) → 본문 교체 → 미리보기 행.
     pub(crate) fn insseq_update(&mut self, query: &str) {
-        self.insseq_run(query, "live", false);
+        self.insseq_run(query, "live", false, None);
     }
 
-    /// 변환 요청 한 벌(단계 · 질의 · 상황).
-    fn insseq_request(&self, s: &SeqSession, text: String, phase: &str) -> TransformReq {
+    /// 변환 요청 한 벌(단계 · 질의 · 상황 · 고른 행).
+    fn insseq_request(
+        &self,
+        s: &SeqSession,
+        text: String,
+        phase: &str,
+        pick: Option<String>,
+    ) -> TransformReq {
         TransformReq {
             id: s.prompt.id.clone(),
             text,
@@ -161,11 +171,12 @@ impl App {
                 .unwrap_or_default(),
             phase: phase.to_string(),
             selection: s.selection.clone(),
+            pick,
         }
     }
 
     /// 변환 한 번(`live`/`commit`) → 적용 방식에 따라 본문 교체 → 상태 갱신 → 미리보기 행. `force` = 같은 질의라도 다시(확정 단계).
-    fn insseq_run(&mut self, query: &str, phase: &str, force: bool) {
+    fn insseq_run(&mut self, query: &str, phase: &str, force: bool, pick: Option<String>) {
         let Some(s) = self.seq.as_ref() else {
             return;
         };
@@ -190,25 +201,30 @@ impl App {
                 false,
             )
         } else {
-            let req = self.insseq_request(s, expr, phase);
+            let req = self.insseq_request(s, expr, phase, pick);
             match self.extensions.transform(&s.ext_id, &req, &self.settings) {
                 Ok(out) => {
+                    let rows: Vec<Row> = out
+                        .rows
+                        .into_iter()
+                        .map(|r| (r.text, r.warn, r.id))
+                        .collect();
                     if let Some(e) = out.error {
-                        (vec![String::new(); n], Some(e), out.rows, true, false)
+                        (vec![String::new(); n], Some(e), rows, true, false)
                     } else if out.apply == "none" {
-                        // 본문은 두고 행만(정보 프롬프트).
-                        (s.values.clone(), None, out.rows, false, false)
+                        // 본문은 두고 행만(정보 프롬프트 · 고르기 목록).
+                        (s.values.clone(), None, rows, false, false)
                     } else if out.apply == "text" {
                         let pristine = s.mode == "regions" && s.cur == s.orig;
                         if s.mode == "text" || pristine {
-                            (vec![out.text], None, out.rows, true, s.mode != "text")
+                            (vec![out.text], None, rows, true, s.mode != "text")
                         } else {
                             (
                                 vec![String::new(); n],
                                 Some(
                                     "transform: apply mode changed during the session".to_string(),
                                 ),
-                                out.rows,
+                                rows,
                                 true,
                                 false,
                             )
@@ -216,7 +232,7 @@ impl App {
                     } else {
                         let mut v = out.values;
                         v.resize(n, String::new());
-                        (v, None, out.rows, true, false)
+                        (v, None, rows, true, false)
                     }
                 }
                 Err(e) => (vec![String::new(); n], Some(e), Vec::new(), true, false),
@@ -240,7 +256,7 @@ impl App {
             s.last_query = Some(query.to_string());
         }
         let rows = self.insseq_rows(help);
-        self.palette.set_prompt_rows(rows);
+        self.palette.set_prompt_choices(rows);
         self.redraw();
     }
 
@@ -290,8 +306,8 @@ impl App {
         }
     }
 
-    /// 미리보기 행(`L줄: 값` · 오류 첫 줄 · `?` = 치트 시트 · 확장이 준 행이 있으면 그것) — (글, 경고색).
-    fn insseq_rows(&self, help: bool) -> Vec<(String, bool)> {
+    /// 미리보기 행(`L줄: 값` · 오류 첫 줄 · `?` = 치트 시트 · 확장이 준 행이 있으면 그것) — (글, 경고색, id).
+    fn insseq_rows(&self, help: bool) -> Vec<Row> {
         let Some(s) = self.seq.as_ref() else {
             return Vec::new();
         };
@@ -300,12 +316,12 @@ impl App {
                 .prompt
                 .help
                 .iter()
-                .map(|(e, l)| (format!("{e}    {}", l.text()), false))
+                .map(|(e, l)| (format!("{e}    {}", l.text()), false, None))
                 .collect();
         }
-        let mut rows = Vec::new();
+        let mut rows: Vec<Row> = Vec::new();
         if let Some(e) = &s.error {
-            rows.push((e.clone(), true));
+            rows.push((e.clone(), true, None));
         }
         if !s.rows.is_empty() {
             rows.extend(s.rows.iter().take(PREVIEW_ROWS).cloned());
@@ -318,22 +334,23 @@ impl App {
                 rows.push((
                     tf(Msg::SeqMore, &[&(s.regions.len() - i).to_string()]),
                     false,
+                    None,
                 ));
                 break;
             }
             let from = (a as isize + shift) as usize;
             let line = tb.buf().line_of(from.min(tb.buf().len())) + 1;
             let v = s.values.get(i).cloned().unwrap_or_default();
-            rows.push((format!("L{line}: {v}"), false));
+            rows.push((format!("L{line}: {v}"), false, None));
             shift += s.cur[i].chars().count() as isize - (b - a) as isize;
         }
         rows
     }
 
-    /// Enter — `commit` 단계로 한 번 더 묻고(확정 때만 할 일이 있는 플러그인) 지금 본문이 곧 결과. 캐럿을 각 값의 끝에(다중 캐럿 유지 ·
-    /// Sublime) · 되돌리기 묶음 닫기 · 상태줄.
-    pub(crate) fn insseq_commit(&mut self, query: &str) {
-        self.insseq_run(query, "commit", true);
+    /// Enter — `commit` 단계로 한 번 더 묻고(고른 행 `pick` 포함 · 확정 때만 할 일이 있는 플러그인) 지금 본문이 곧 결과. 캐럿을 각 값의
+    /// 끝에(다중 캐럿 유지 · Sublime) · 되돌리기 묶음 닫기 · 상태줄.
+    pub(crate) fn insseq_commit(&mut self, query: &str, pick: Option<String>) {
+        self.insseq_run(query, "commit", true, pick);
         let Some(s) = self.seq.take() else {
             return;
         };
@@ -361,7 +378,8 @@ impl App {
             return;
         };
         if let Some(s) = self.seq.as_ref() {
-            let req = self.insseq_request(s, s.last_query.clone().unwrap_or_default(), "cancel");
+            let req =
+                self.insseq_request(s, s.last_query.clone().unwrap_or_default(), "cancel", None);
             let _ = self.extensions.transform(&s.ext_id, &req, &self.settings);
         }
         for note in self.extensions.take_wasm_notes() {
@@ -394,25 +412,31 @@ impl App {
                 .is_some_and(|p| p.starts_with(PROMPT_PREFIX))
     }
 
-    /// 자체 시험 덤프(`seq.dump:<파일>`): 프롬프트·확장·방식 · 질의 · 오류 · 값 n개 · 본문.
+    /// 자체 시험 덤프(`seq.dump:<파일>`): 프롬프트·확장·방식 · 질의 · 오류 · 값 n개 · 고를 수 있는 행 · 본문.
     pub(crate) fn insseq_dump(&self, path: &str) {
         let mut out = String::new();
         match self.seq.as_ref() {
             Some(s) => {
                 out.push_str(&format!(
-                    "prompt={}\next={}\nmode={}\nquery={}\nerror={}\nn={}\n",
+                    "prompt={}\next={}\nmode={}\nquery={}\nerror={}\nn={}\npick={}\n",
                     s.prompt.id,
                     s.ext_id,
                     s.mode,
                     s.last_query.clone().unwrap_or_default(),
                     s.error.clone().unwrap_or_default(),
-                    s.regions.len()
+                    s.regions.len(),
+                    self.palette.prompt_pick().unwrap_or_default()
                 ));
                 for v in &s.values {
                     out.push_str(&format!("v:{v}\n"));
                 }
+                for (text, _, id) in &s.rows {
+                    if let Some(id) = id {
+                        out.push_str(&format!("row:{id}:{text}\n"));
+                    }
+                }
             }
-            None => out.push_str("prompt=\next=\nmode=\nquery=\nerror=\nn=0\n"),
+            None => out.push_str("prompt=\next=\nmode=\nquery=\nerror=\nn=0\npick=\n"),
         }
         out.push_str("text:\n");
         out.push_str(&self.editors.cur().text());

@@ -531,6 +531,8 @@ pub(crate) struct Installed {
     pub(crate) kind: Kind,
     /// 설정 폴더에 배치한 파일(`dest`) — 삭제 때 되감기.
     pub(crate) placed: Vec<String>,
+    /// ★ 첫 사용 때 사용자가 허용한 위험 능력(D-90 ③ · 152차): `settings_write` · `file_ops`. 새 버전 설치 = 비움(다시 확인).
+    pub(crate) approved: Vec<String>,
 }
 
 fn installed_path(root: &Path, id: &str) -> PathBuf {
@@ -541,13 +543,15 @@ fn write_installed(root: &Path, rec: &Installed) -> Result<(), String> {
     let dir = root.join(&rec.id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let placed: Vec<String> = rec.placed.iter().map(|p| json_str(p)).collect();
+    let approved: Vec<String> = rec.approved.iter().map(|p| json_str(p)).collect();
     let text = format!(
-        "{{\n  \"format\": {FORMAT},\n  \"id\": {},\n  \"name\": {},\n  \"version\": {},\n  \"kind\": \"{}\",\n  \"placed\": [{}]\n}}\n",
+        "{{\n  \"format\": {FORMAT},\n  \"id\": {},\n  \"name\": {},\n  \"version\": {},\n  \"kind\": \"{}\",\n  \"placed\": [{}],\n  \"approved\": [{}]\n}}\n",
         json_str(&rec.id),
         json_str(&rec.name),
         json_str(&rec.version),
         rec.kind.as_str(),
-        placed.join(", ")
+        placed.join(", "),
+        approved.join(", ")
     );
     std::fs::write(installed_path(root, &rec.id), text).map_err(|e| e.to_string())
 }
@@ -576,7 +580,22 @@ fn parse_installed(text_in: &str) -> Result<Installed, String> {
         version: text(obj, "version"),
         kind,
         placed: list(obj, "placed"),
+        approved: list(obj, "approved"),
     })
+}
+
+/// ★ 첫 사용 허용 기록(D-90 ③ · 152차): 설치 기록의 `approved`에 능력 이름을 더한다(이미 있으면 그대로).
+pub(crate) fn approve_use(id: &str, cap: &str) -> Result<(), String> {
+    let root = root_dir().ok_or("no config folder")?;
+    let mut rec = std::fs::read_to_string(installed_path(&root, id))
+        .ok()
+        .and_then(|t| parse_installed(&t).ok())
+        .ok_or_else(|| format!("{id}: not installed"))?;
+    if !rec.approved.iter().any(|c| c == cap) {
+        rec.approved.push(cap.to_string());
+        write_installed(&root, &rec)?;
+    }
+    Ok(())
 }
 
 /// 설치된 확장 목록(파일 기록 기준 · builtin은 호스트 레지스트리가 따로 안다).
@@ -666,6 +685,49 @@ pub(crate) fn install_traced(
     config: &Path,
     tr: &mut Trace,
 ) -> Result<Meta, String> {
+    let staged = stage_traced(src, sum, tr)?;
+    commit_traced(staged, root, config, tr)
+}
+
+/// ★ 2단 설치의 1단(D-90 ③ · 152차): 메타 읽기·검사 · 파일 내려받기 · sha256 검증까지 — **아무것도 배치하지 않는다**. 호스트가 능력을 보여
+/// 승인받은 뒤 [`commit_traced`]로 배치·기록한다(거절 = 그냥 버린다).
+pub(crate) struct Staged {
+    pub(crate) meta: Meta,
+    meta_raw: String,
+    files: Vec<(FileSpec, Vec<u8>)>,
+    t0: Instant,
+    total: usize,
+}
+
+impl Staged {
+    /// 패키지의 `.wasm` 바이트(능력 검사용).
+    pub(crate) fn wasm_bytes(&self) -> Option<&[u8]> {
+        self.files
+            .iter()
+            .find(|(f, _)| f.path.ends_with(".wasm"))
+            .map(|(_, b)| b.as_slice())
+    }
+    /// 배치될 파일(`dest`가 있는 것) 목록.
+    pub(crate) fn placed_files(&self) -> Vec<String> {
+        self.files
+            .iter()
+            .filter(|(f, _)| !f.dest.is_empty())
+            .map(|(f, _)| f.dest.clone())
+            .collect()
+    }
+}
+
+pub(crate) fn stage(src: &Source, sum: &Summary, tr: &mut Trace) -> Result<Staged, String> {
+    stage_traced(src, sum, tr)
+}
+
+pub(crate) fn commit_staged(staged: Staged, tr: &mut Trace) -> Result<Meta, String> {
+    let root = root_dir().ok_or("no config folder")?;
+    let config = config_dir().ok_or("no config folder")?;
+    commit_traced(staged, &root, &config, tr)
+}
+
+pub(crate) fn stage_traced(src: &Source, sum: &Summary, tr: &mut Trace) -> Result<Staged, String> {
     let t0 = Instant::now();
     tr.push(format!(
         "install {} {} [{}] from {} ({})",
@@ -709,17 +771,7 @@ pub(crate) fn install_traced(
     if meta.kind == Kind::Wasm && !meta.files.iter().any(|f| f.path.ends_with(".wasm")) {
         return Err(format!("{}: wasm package without a .wasm file", meta.id));
     }
-    // ★ 업데이트(사용자 09-30): 이전 설치 기록 — 성공 뒤 옛 버전 보관 폴더와 새 판에 없는 배치 파일을 치운다.
-    let prev = std::fs::read_to_string(installed_path(root, &meta.id))
-        .ok()
-        .and_then(|t| parse_installed(&t).ok());
-    let keep = root.join(&meta.id).join(&meta.version);
-    tr.push(format!(
-        "store dir {} · place root {}",
-        nexa_fs::path::display(&keep),
-        nexa_fs::path::display(config)
-    ));
-    let mut placed = Vec::new();
+    let mut files = Vec::new();
     let mut total = 0usize;
     for f in &meta.files {
         // 자산 URL이 있으면 그 주소(GitHub Releases 등) · 없으면 패키지 폴더의 상대 경로.
@@ -741,18 +793,60 @@ pub(crate) fn install_traced(
             ));
         }
         tr.push(format!("verify {} - sha256 ok ({}…)", f.path, &got[..12]));
+        files.push((f.clone(), bytes));
+    }
+    tr.push(format!(
+        "staged {} file(s) · {} - awaiting approval",
+        files.len(),
+        nsql_core::fmt_bytes(total as u64)
+    ));
+    Ok(Staged {
+        meta,
+        meta_raw,
+        files,
+        t0,
+        total,
+    })
+}
+
+/// ★ 2단 설치의 2단: 보관 사본 저장 · 배치 · 메타 사본 · 옛 판 정리 · 설치 기록(새 버전 = `approved` 비움 · 같은 버전 재설치 = 유지).
+pub(crate) fn commit_traced(
+    staged: Staged,
+    root: &Path,
+    config: &Path,
+    tr: &mut Trace,
+) -> Result<Meta, String> {
+    let Staged {
+        meta,
+        meta_raw,
+        files,
+        t0,
+        total,
+    } = staged;
+    // ★ 업데이트(사용자 09-30): 이전 설치 기록 — 성공 뒤 옛 버전 보관 폴더와 새 판에 없는 배치 파일을 치운다.
+    let prev = std::fs::read_to_string(installed_path(root, &meta.id))
+        .ok()
+        .and_then(|t| parse_installed(&t).ok());
+    let keep = root.join(&meta.id).join(&meta.version);
+    tr.push(format!(
+        "store dir {} · place root {}",
+        nexa_fs::path::display(&keep),
+        nexa_fs::path::display(config)
+    ));
+    let mut placed = Vec::new();
+    for (f, bytes) in &files {
         let kept = keep.join(&f.path);
         if let Some(d) = kept.parent() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
-        std::fs::write(&kept, &bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&kept, bytes).map_err(|e| e.to_string())?;
         tr.push(format!("store → {}", nexa_fs::path::display(&kept)));
         if !f.dest.is_empty() {
             let target = config.join(&f.dest);
             if let Some(d) = target.parent() {
                 std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
             }
-            std::fs::write(&target, &bytes).map_err(|e| e.to_string())?;
+            std::fs::write(&target, bytes).map_err(|e| e.to_string())?;
             tr.push(format!("place → {}", nexa_fs::path::display(&target)));
             placed.push(f.dest.clone());
         }
@@ -766,6 +860,7 @@ pub(crate) fn install_traced(
             nexa_fs::path::display(&keep.join("extension.json"))
         ));
     }
+    let mut approved = Vec::new();
     if let Some(p) = &prev {
         for d in &p.placed {
             if !placed.contains(d) {
@@ -791,6 +886,8 @@ pub(crate) fn install_traced(
                     "(no old dir)".to_string()
                 }
             ));
+        } else {
+            approved = p.approved.clone();
         }
     }
     write_installed(
@@ -801,6 +898,7 @@ pub(crate) fn install_traced(
             version: meta.version.clone(),
             kind: meta.kind,
             placed,
+            approved,
         },
     )?;
     tr.push(format!(

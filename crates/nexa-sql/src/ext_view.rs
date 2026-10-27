@@ -21,6 +21,23 @@ pub(crate) struct ExtDetail {
     /// (라벨, 값) — 값이 빈 줄은 호스트가 뺀다.
     pub fields: Vec<(String, String)>,
     pub description: String,
+    /// ★ 승인 대기(D-90 ③ · 152차): 설치 승인(내려받기·검증 끝 · 배치 전) 또는 위험 능력 첫 사용 확인 — 버튼이 [승인][취소]로 바뀐다.
+    pub pending: Option<Pending>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Pending {
+    pub kind: PendingKind,
+    /// 머리줄(경고색) — "설치하려면 승인하세요 …" / "첫 사용 …".
+    pub title: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PendingKind {
+    /// 카탈로그 `n`번 패키지의 설치 승인(스테이지됨).
+    Install(usize),
+    /// 확장 id의 위험 능력 첫 사용 확인(보류된 요청이 있다).
+    FirstUse(String),
 }
 
 impl ExtDetail {
@@ -75,6 +92,11 @@ pub(crate) enum ExtViewAction {
     Remove(String),
     Enable(String),
     Disable(String),
+    /// ★ D-90(152차): 스테이지된 카탈로그 `n`번 설치 승인/취소 · 확장 id의 첫 사용 허용/거부.
+    Approve(usize),
+    Reject(usize),
+    AllowUse(String),
+    DenyUse(String),
 }
 
 pub(crate) struct ExtView {
@@ -280,6 +302,13 @@ impl ExtView {
             dc.select_font(FontSlot::Base, false);
             y += lh + self.s(4.0);
         }
+        // ★ 승인 대기 머리줄(D-90 · 152차 · 경고색 · 굵게).
+        if let Some(p) = &d.pending {
+            dc.select_font(FontSlot::Base, true);
+            dc.text(x, y, clip, &p.title, th.warn);
+            dc.select_font(FontSlot::Base, false);
+            y += lh + self.s(4.0);
+        }
         y += self.s(4.0);
         if !d.row.summary.is_empty() {
             for line in wrap(dc, &d.row.summary, w) {
@@ -290,7 +319,35 @@ impl ExtView {
         }
         // ── 동작 버튼
         let mut labels: Vec<(ExtViewAction, String, bool)> = Vec::new();
-        if d.row.installed {
+        if let Some(p) = &d.pending {
+            // ★ 승인 대기 = [승인(주)][취소]만(D-90 · 152차).
+            match &p.kind {
+                PendingKind::Install(n) => {
+                    labels.push((
+                        ExtViewAction::Approve(*n),
+                        t(Msg::ExtBtnApprove).to_string(),
+                        true,
+                    ));
+                    labels.push((
+                        ExtViewAction::Reject(*n),
+                        t(Msg::ExtBtnReject).to_string(),
+                        false,
+                    ));
+                }
+                PendingKind::FirstUse(id) => {
+                    labels.push((
+                        ExtViewAction::AllowUse(id.clone()),
+                        t(Msg::ExtBtnAllow).to_string(),
+                        true,
+                    ));
+                    labels.push((
+                        ExtViewAction::DenyUse(id.clone()),
+                        t(Msg::ExtBtnDeny).to_string(),
+                        false,
+                    ));
+                }
+            }
+        } else if d.row.installed {
             if let (Some(v), Some(n)) = (&d.row.latest, d.row.catalog) {
                 labels.push((
                     ExtViewAction::Update(n),
@@ -449,6 +506,7 @@ mod tests {
                 ("버전".into(), "1.2.0".into()),
             ],
             description: "first para\nsecond para".into(),
+            pending: None,
         }
     }
 
