@@ -116,6 +116,8 @@
 - 3차 이름 바꿈(`RENAMED` 13쌍 · 옛 줄은 읽기 이주 · CLI `config`는 옛 키도 통함): `sqlfmt.*` → `ext.sqlfmt_kiros33.*` · `rainbowpair.*` → `ext.rainbow_pairs.*` · 샘플 `hello.say` → `ext.hello.say`.
 - 새 확장은 처음부터 이 규칙으로(30 §2 확장점 규칙 · 68 SDK 문서).
 - ★ **동적 등록(10-27 · 146차 · T-258)** — 확장이 모듈 메타 `settings`(SDK `SettingDef` · 키 = `ext.<확장>.<키>`)로 선언하면 런타임 레지스트리 층에 들어가 설정 창 분류(확장 이름)·`Settings::get`·게스트 설정 JSON에 나온다 · **앱 `REGISTRY`에 정적으로 더하지 않는다**(기존 `ext.sqlfmt_kiros33.*` · `ext.rainbow_pairs.*`는 정적 유지) · 한계 = CLI `nsql config`는 동적 키를 모른다(`UnknownKey`) · 종속 잠금(§8)은 정적 `DEPENDS`만.
+- ★ **확장 명령 단축키(10-28 · 149차 · D-370)** — 확장이 메타 `commands[].key`로 기본 키를 내면 호스트가 **`key.<명령 id>` 설정을 그 확장 분류에 동적 등재**한다(라벨 "Shortcut: <명령>" · Text · 기본 "" = 확장 기본 키 · `none` = 없음) → 사용자 지정이 키맵·메뉴 표시에 그대로 반영(`Keymap::from_settings` · `sync_menu_shortcuts`가 동적 명령도 돈다). 앱 정적 명령의 `key.*`(정적 레지스트리)와 같은 이름 규칙.
+- ★ **RENAMED의 새 키가 동적 키일 때(10-28)** — 기동 때 새 키가 아직 미등록이면 옛 값을 **새 이름으로 unknown에 보관**(종전 = 폐기) → 확장 등재 직후 `adopt_unknown`이 값으로 올린다. 예 = `editor.seq_default` → `ext.insert_sequence.default`.
 
 ### 6-5. ★ 시간 단위 규칙 + 단위 변환 이주(09-30 · 사용자 "10초를 초과하면 초 OK · 그 이하면 ms · 기존 설정 마이그레이션")
 

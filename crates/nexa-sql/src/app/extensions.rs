@@ -177,15 +177,20 @@ impl App {
                 format!("settings: adopted {k} from file (dynamic key registered by an extension)"),
             ));
         }
-        // ★ 확장 명령의 기본 단축키(146차 · docs/75 §9 ②) → 키맵 동적 표 + 재조립.
+        // ★ 확장 명령의 기본 단축키(146차 · docs/75 §9 ②) → 키맵 동적 표 + 재조립 · ★ 149차(사용자 10-28 "단축키도 확장 영역의 설정으로"):
+        //   명령마다 `key.<명령 id>` 설정을 그 확장 분류에 동적 등재 → 설정 창(Preferences ▸ Extensions ▸ <확장>)에서 바꿀 수 있고
+        //   `Keymap::from_settings`가 등록된 키만 읽으므로 사용자 지정이 먹는다(종전 "동적 명령은 기본 코드만").
         {
             let off = self.ext_disabled();
-            let dynamic: Vec<(&'static str, String, String, String)> = self
+            let cmds: Vec<(String, String, extensions::Command)> = self
                 .extensions
                 .commands_all(&off)
                 .into_iter()
-                .filter(|(_, c)| c.key.is_some() || c.key_mac.is_some())
-                .map(|(_, c)| {
+                .filter(|(_, _, c)| c.key.is_some() || c.key_mac.is_some())
+                .collect();
+            let dynamic: Vec<(&'static str, String, String, String)> = cmds
+                .iter()
+                .map(|(_, _, c)| {
                     let win = c.key.clone().unwrap_or_default();
                     let mac = c
                         .key_mac
@@ -194,8 +199,35 @@ impl App {
                     (nsql_settings::intern_key(&c.id), win.clone(), mac, win)
                 })
                 .collect();
+            let mut key_entries = Vec::new();
+            for (id, name, c) in &cmds {
+                let cat = ext_category(id, name, &mut extra_cats);
+                let (en, ko) = label_pair(&c.label);
+                let code = c.key.clone().unwrap_or_default();
+                key_entries.push(nsql_settings::Entry {
+                    key: nsql_settings::intern_key(&keymap::setting_key(&c.id)),
+                    cat,
+                    label: nsql_i18n::dyn_msg(&format!("Shortcut: {en}"), &format!("단축키: {ko}")),
+                    desc: nsql_i18n::dyn_msg(
+                        &format!("Key chord for '{en}' (extension default {code}) - e.g. ctrl+alt+n · empty = default · none = unbound"),
+                        &format!("'{ko}' 단축키(확장 기본 {code}) - 예 ctrl+alt+n · 비우면 기본 · none = 없음"),
+                    ),
+                    kind: nsql_settings::SettingKind::Text,
+                    default: "",
+                });
+            }
+            nsql_settings::register_dynamic(key_entries);
+            for k in self.settings.adopt_unknown() {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    format!("settings: adopted {k} from file (extension shortcut key)"),
+                ));
+            }
+            self.prefs_win.set_extra_categories(extra_cats.clone());
             keymap::set_dynamic(dynamic);
             self.keymap = Keymap::from_settings(&self.settings);
+            // 메뉴 표시 단축키도 다시(결함 C · 동적 명령의 단축키 글이 메뉴에 없던 것).
+            self.sync_menu_shortcuts();
         }
         let list_off = self.ext_disabled_list();
         let mut mirror_dirty = false;
@@ -216,7 +248,7 @@ impl App {
         if mirror_dirty {
             let _ = self.settings.save();
         }
-        self.prefs_win.set_extra_categories(extra_cats);
+        self.prefs_win.set_extra_categories(extra_cats.clone());
         // ★ 꺼졌거나 내려간 확장의 설정 덮어쓰기는 통째로 걷는다(148차 · 자동 원복) — 걷힌 키는 즉시 재적용.
         {
             let live: Vec<String> = self
@@ -1960,6 +1992,29 @@ impl App {
 }
 
 /// 확장 라벨 → (영어, 한국어) 글(동적 설정 항목의 라벨·설명 · 146차).
+/// 확장의 설정 분류(있으면 그것 · 없으면 확장 이름으로 동적 분류 등재 + `extra_cats`에) — 149차 `key.<id>` 등재가 쓴다.
+fn ext_category(id: &str, name: &str, extra_cats: &mut Vec<Msg>) -> Msg {
+    let cat = match nsql_settings::extension_categories()
+        .into_iter()
+        .find(|(_, i)| *i == id)
+    {
+        Some((c, _)) => c,
+        None => {
+            let c = nsql_i18n::dyn_msg(name, name);
+            nsql_settings::register_extension_category(c, id);
+            c
+        }
+    };
+    if !nsql_settings::CATEGORY_TREE
+        .iter()
+        .any(|(_, cats)| cats.contains(&cat))
+        && !extra_cats.contains(&cat)
+    {
+        extra_cats.push(cat);
+    }
+    cat
+}
+
 fn label_pair(l: &extensions::Label) -> (String, String) {
     match l {
         extensions::Label::Msg(m) => (

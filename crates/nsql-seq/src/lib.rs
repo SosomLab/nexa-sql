@@ -4,7 +4,7 @@
 //! - 시작 = 정수 · `0x`/`0b`/`0o` 정수 · 소수 · 알파벳(`a` `AA` = 엑셀 열) · 글자(유니코드) · 시각(`09:30[:00]`) · 날짜(`2026-10-27`) · 목록(`[a,b,1..5]`)
 //! - 연산 = `+ - * ^`(더하기 · 빼기 · 등비 · 제곱) · 증가 = 수(+ 시각·날짜 단위 `s m h d w M y`)
 //! - `#k` = 값마다 k번 반복 · `~형식` = `[+][0][폭][.소수][b|o|d|x|X]` 또는 시각·날짜 패턴(`HH:mm:ss` `yyyy-MM-dd` …)
-//! - `x` = 곱집합(목록끼리만) · 틀 = `"col_{}"`(`{}` 값 · `{1}` `{2}` 곱집합 항 · `{n}` 1부터 번호 · `{i}` 0부터)
+//! - `*`(또는 `x` `×`) = 곱집합(목록끼리만 · `]` 뒤에서만 곱집합 · 그 밖의 `*`는 등비) · 틀 = `"col_{}"`(`{}` 값 · `{1}` `{2}` 곱집합 항 · `{n}` 1부터 번호 · `{i}` 0부터)
 //!
 //! 순수 함수 · 의존 0 · 소수는 10진 정밀(이진 부동소수 오차 없음) · 오류는 [`SeqErr`](호스트가 i18n 문구로 바꾼다).
 
@@ -300,7 +300,8 @@ fn split_template(src: &str) -> Result<(String, Option<String>), SeqErr> {
     Ok((src.to_string(), None))
 }
 
-/// 곱집합 분리 — 대괄호 밖에서 **`]` 바로 뒤**(공백 허용)의 `x`/`×`만 구분자(`0x1f`·`~x`와 안 섞인다).
+/// 곱집합 분리 — 대괄호 밖에서 **`]` 바로 뒤**(공백 허용)의 `*`/`x`/`×`만 구분자(`0x1f`·`~x`·등비 `1*2`와 안 섞인다 — 목록 항은 연산을
+/// 갖지 않으므로 `]` 뒤의 `*`는 곱집합뿐 · 149차 사용자 10-28 "x 대신 * 기호").
 fn split_product(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -319,7 +320,7 @@ fn split_product(body: &str) -> Vec<String> {
                 cur.push(c);
             }
             ' ' | '\t' => cur.push(c),
-            'x' | 'X' | '×' if depth <= 0 && after_close => {
+            '*' | 'x' | 'X' | '×' if depth <= 0 && after_close => {
                 out.push(std::mem::take(&mut cur));
                 after_close = false;
             }
@@ -1245,9 +1246,13 @@ pub const HELP: &[(&str, &str, &str)] = &[
         "ranges inside a list",
         "목록 안 범위",
     ),
-    ("[A,B]x[1,2]", "product A1 A2 B1 B2", "곱집합 A1 A2 B1 B2"),
     (
-        "[A,B]x[1..3] \"{1}-{2}\"",
+        "[A,B]*[1,2]",
+        "product A1 A2 B1 B2 (x also works)",
+        "곱집합 A1 A2 B1 B2(x도 됨)",
+    ),
+    (
+        "[A,B]*[1..3] \"{1}-{2}\"",
         "template with product parts",
         "틀 + 곱집합 항",
     ),
@@ -1261,6 +1266,35 @@ pub const HELP: &[(&str, &str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 149차: 곱집합 구분자 `*`(사용자 10-28) — `]` 뒤에서만 곱집합 · 숫자 항의 `*`는 등비 그대로 · `x`·`×`도 계속 · 목록이 아닌 쪽은 오류.
+    #[test]
+    fn star_is_product_after_list_and_geometric_elsewhere() {
+        let v = parse("[A,B]*[1,2]")
+            .expect("parse")
+            .values(5)
+            .expect("values");
+        assert_eq!(v, vec!["A1", "A2", "B1", "B2", "A1"]);
+        assert_eq!(
+            parse("[A,B] * [1..3] \"{1}-{2}\"")
+                .expect("parse")
+                .values(2)
+                .expect("values"),
+            vec!["A-1", "A-2"]
+        );
+        assert_eq!(
+            parse("[A,B]x[1,2]")
+                .expect("parse")
+                .values(2)
+                .expect("values"),
+            vec!["A1", "A2"]
+        );
+        assert_eq!(
+            parse("1*2").expect("parse").values(4).expect("values"),
+            vec!["1", "2", "4", "8"]
+        );
+        assert_eq!(parse("[1,2]*3").err(), Some(SeqErr::ProductNeedsLists));
+    }
 
     fn v(expr: &str, n: usize) -> Vec<String> {
         parse(expr)

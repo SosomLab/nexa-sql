@@ -41,7 +41,7 @@
       "id": "insert-sequence",
       "dir": "insert-sequence",
       "name": "Insert Sequence",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "kind": "wasm",
       "summary": "Multi-caret sequence insertion (numbers · letters · dates · lists · templates) as a prompt extension — same engine as the built-in, replaces it when installed (WASM · ABI v1.2)"
     }

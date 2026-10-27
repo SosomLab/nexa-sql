@@ -658,8 +658,8 @@ impl Registry {
         out
     }
 
-    /// ★ 켜진 확장의 명령 전부 `(확장 이름, 명령)`(팔레트 라벨 · 키맵 기본 코드 · 146차).
-    pub(crate) fn commands_all(&self, disabled: &[String]) -> Vec<(String, Command)> {
+    /// ★ 켜진 확장의 명령 전부 `(확장 id, 확장 이름, 명령)`(팔레트 라벨 · 키맵 기본 코드 · `key.<id>` 동적 설정 · 146차 · 149차).
+    pub(crate) fn commands_all(&self, disabled: &[String]) -> Vec<(String, String, Command)> {
         let mut out = Vec::new();
         for i in self.active_indices() {
             let p = &self.extensions[i];
@@ -667,7 +667,7 @@ impl Registry {
                 continue;
             }
             for c in p.commands() {
-                out.push((p.name().to_string(), c));
+                out.push((p.id().to_string(), p.name().to_string(), c));
             }
         }
         out

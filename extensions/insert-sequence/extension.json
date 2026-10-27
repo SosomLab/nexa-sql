@@ -2,10 +2,11 @@
   "format": 1,
   "id": "insert-sequence",
   "name": "Insert Sequence",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "kind": "wasm",
   "summary": "Multi-caret sequence insertion (numbers · letters · dates · lists · templates) as a prompt extension — same engine as the built-in, replaces it when installed (WASM · ABI v1.2)",
-  "description": "The Insert Sequence feature (Edit ▸ Insert Sequence…, Ctrl+Alt+N) as a WASM extension built on the ABI v1.2 'prompt transform' API: the app keeps the live prompt, the multi-caret regions, the replace / restore / undo handling, and this extension only turns the expression you type into n values (same nsql-seq engine as the built-in, so the syntax is identical: start[+-*^step][#repeat][~format] [x list] [\"template\"] — type ? in the prompt for the cheat sheet).\nInstalling it replaces the built-in Insert Sequence (same id); removing it brings the built-in back. ext.insert_sequence.default (Preferences ▸ Extensions ▸ Insert Sequence) is the expression used when the prompt is empty.\nIt is also the reference sample for writing your own prompt extension (extensions/sdk/samples/insert-sequence): declare prompts in the meta and implement transform.",
+  "description": "The Insert Sequence feature (Edit ▸ Insert Sequence…, Ctrl+Alt+N) as a WASM extension built on the ABI v1.2 'prompt transform' API: the app keeps the live prompt, the multi-caret regions, the replace / restore / undo handling, and this extension only turns the expression you type into n values (same nsql-seq engine as the built-in, so the syntax is identical: start[+-*^step][#repeat][~format] [* list] [\"template\"] — type ? in the prompt for the cheat sheet).\nInstalling it replaces the built-in Insert Sequence (same id); removing it brings the built-in back. ext.insert_sequence.default (Preferences ▸ Extensions ▸ Insert Sequence) is the expression used when the prompt is empty.\nIt is also the reference sample for writing your own prompt extension (extensions/sdk/samples/insert-sequence): declare prompts in the meta and implement transform.
+0.1.1: the Cartesian product separator is now * (as in [A,B]*[1,2]); x and × still work.",
   "author": "SosomLab",
   "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/sdk/samples/insert-sequence",
@@ -20,7 +21,7 @@
   "files": [
     {
       "path": "insert_sequence.wasm",
-      "sha256": "c4a7f923ec6743895da10b8a97be1963eac3bd301b1798dee44fb448ea36345a",
+      "sha256": "709ad8762d7d3df4c13a9bec425f2d49a3b352f05cfb37034fbec0d364902ff4",
       "dest": ""
     }
   ],

@@ -1750,6 +1750,12 @@ impl App {
             let text = self.keymap.display_of(c.id);
             self.menubar.set_shortcut(c.id, &text);
         }
+        // ★ 동적(확장) 명령도(149차 V1 결함 C · 협업): 정적 표에서 뺀 `edit.insert_sequence`처럼 메뉴에 있는 확장 명령의 단축키 글 — `apply_extensions`가
+        //   동적 키맵을 조립한 뒤 다시 부른다(기동 순서 = sync → apply_extensions라 처음 호출 때는 동적 표가 비어 있다).
+        for (id, _, _, _) in keymap::dynamic_commands() {
+            let text = self.keymap.display_of(id);
+            self.menubar.set_shortcut(id, &text);
+        }
     }
 
     /// 명령 팔레트의 항목 전부(메뉴: 항목 · 구문 · 확장 …) — 명령 팔레트와 Goto Anything `>`가 같이 쓴다(10-07).
@@ -1785,11 +1791,6 @@ impl App {
         cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
         cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
         cmds.push(m(
-            "edit.insert_sequence",
-            Msg::MnEdit,
-            Msg::MnInsertSequence,
-        ));
-        cmds.push(m(
             "edit.expand_selection",
             Msg::MnEdit,
             Msg::MnExpandSelection,
@@ -1814,7 +1815,7 @@ impl App {
             cmds.push(m("ext.update", Msg::MnExtensions, Msg::MnExtUpdate));
             // ★ 확장 명령(146차 · docs/75 §9 ②): 라벨 = "<확장 이름>: <명령>" · 검색 키 = 라벨(두 언어는 메타가 준 것뿐).
             let off = self.ext_disabled();
-            for (ext_name, c) in self.extensions.commands_all(&off) {
+            for (_, ext_name, c) in self.extensions.commands_all(&off) {
                 // 메타 라벨이 이미 "<이름>: …" 꼴이면 그대로(SDK 샘플 관례) · 아니면 확장 이름을 앞에.
                 let text = c.label.text();
                 let label = if text.contains(':') {

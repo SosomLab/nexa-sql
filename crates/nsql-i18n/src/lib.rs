@@ -3125,6 +3125,7 @@ pub enum Msg {
     MnLowerCase,
     /// ★ Insert Sequence(docs/124 · 10-27): 메뉴 · 안내 · 상태 · 오류 · 설정 라벨.
     MnInsertSequence,
+    ExtSeqCmdOpen,
     SeqHint,
     SeqMore,
     StSeqInserted,
@@ -7603,6 +7604,7 @@ impl Msg {
             Msg::MnUpperCase => ["Upper Case", "대문자로"],
             Msg::MnLowerCase => ["Lower Case", "소문자로"],
             Msg::MnInsertSequence => ["Insert Sequence…", "순번 삽입(Insert Sequence)…"],
+            Msg::ExtSeqCmdOpen => ["Insert Sequence: Open", "Insert Sequence: 열기"],
             Msg::SeqHint => [
                 "Enter = insert · Esc = cancel · ? = help · empty = {0}",
                 "Enter 넣기 · Esc 취소 · ? 도움말 · 비우면 {0}",
@@ -11649,6 +11651,7 @@ impl Msg {
         Msg::MnUpperCase,
         Msg::MnLowerCase,
         Msg::MnInsertSequence,
+        Msg::ExtSeqCmdOpen,
         Msg::SeqHint,
         Msg::SeqMore,
         Msg::StSeqInserted,

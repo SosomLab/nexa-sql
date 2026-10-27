@@ -39,6 +39,8 @@ const OLD_DEFAULTS: &[(&str, &str)] = &[
 /// 버린다) 다음 저장 때 사라진다. `nsql config get/set 옛키`도 새 키로 통한다([`canonical_key`]). 새 키의 접두 = 설정 창 카테고리
 /// (키 이름만 보고 어디 있는지 알게 · 사용자 09-28 "변수 이름이 설정 위치와 연결되지 않아 찾기 어렵다").
 pub const RENAMED: &[(&str, &str)] = &[
+    // 149차(10-28 · 사용자 "Insert Sequence 설정은 확장 영역으로"): 기본 표현식 키 = 확장 설정(내장·wasm 공용 · 동적 등재 = 로드 때는 unknown에 보관 → adopt).
+    ("editor.seq_default", "ext.insert_sequence.default"),
     // Ctrl 키 분류(10-20 · D-313 · 사용자 "Ctrl 관련 기능을 별도 설정으로 분리해서 관리"): Ctrl+클릭 동작 + Ctrl 홀드 라벨 키 6.
     ("objlink.click", "ctrl.click"),
     ("editor.desc_inline_ctrl", "ctrl.desc_inline"),
@@ -929,15 +931,6 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTabSize,
         kind: SettingKind::Int { min: 1, max: 8 },
         default: "4",
-    },
-    // ★ Insert Sequence 기본 표현식(docs/124 · 자리표시자 · 빈 입력 = 이 값).
-    Entry {
-        key: "editor.seq_default",
-        cat: Msg::CatEditor,
-        label: Msg::LblSeqDefault,
-        desc: Msg::DescSeqDefault,
-        kind: SettingKind::Text,
-        default: "1+1",
     },
     Entry {
         key: "editor.indent_spaces",
@@ -8535,7 +8528,11 @@ impl Settings {
                 continue;
             };
             let (_, v) = self.unknown.remove(pos);
-            let Some(e) = entry(new) else { continue };
+            // ★ 새 키가 아직 등재되지 않은 동적 키(확장 설정 · 149차)면 새 이름으로 `unknown`에 보관 → 등재 뒤 `adopt_unknown`이 올린다(종전엔 버렸다).
+            let Some(e) = entry(new) else {
+                self.unknown.push((new.to_string(), v));
+                continue;
+            };
             // 새 키가 파일에 있으면(기본값과 같아 values에 없어도) 사용자가 이미 정한 것 — 옛 값은 버린다.
             if self.values.contains_key(new) || seen.iter().any(|key| key == new) {
                 continue;
@@ -8969,7 +8966,11 @@ mod tests {
                 entry(old).is_none(),
                 "옛 키가 레지스트리에 남아 있다: {old}"
             );
-            assert!(entry(new).is_some(), "새 키가 레지스트리에 없다: {new}");
+            // 149차: 새 키가 확장의 동적 설정(`ext.*` · 런타임 등재)이면 컴파일 때는 없다 — 로드 때 unknown에 보관 → adopt_unknown.
+            assert!(
+                entry(new).is_some() || new.starts_with("ext."),
+                "새 키가 레지스트리에 없다: {new}"
+            );
             assert_eq!(canonical_key(old), new);
         }
     }
@@ -9522,9 +9523,14 @@ mod tests {
     fn adopt_unknown_promotes_dynamic_keys_after_register() {
         let mut s = Settings::from_text(
             PathBuf::from("x"),
-            "ext.demo_adopt.default=5+5\nno.such.key=1\n",
+            "ext.demo_adopt.default=5+5\nno.such.key=1\neditor.seq_default=7+7\n",
         );
         assert_eq!(s.get("ext.demo_adopt.default"), None);
+        // 149차: 이름 바뀐 옛 키의 새 이름이 아직 미등록이면 새 이름으로 unknown에 남는다(버리지 않는다).
+        assert!(s
+            .unknown
+            .iter()
+            .any(|(k, v)| k == "ext.insert_sequence.default" && v == "7+7"));
         register_dynamic(vec![Entry {
             key: intern_key("ext.demo_adopt.default"),
             cat: Msg::LblExtUse,
