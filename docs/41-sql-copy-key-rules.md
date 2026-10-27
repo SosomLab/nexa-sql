@@ -57,7 +57,7 @@ generate(dialect, table, names, rows, kind, key):
 | CLI 1회성 | `nsql run -c prod -f sql:update q.sql` · `-f sql:merge` · `sql`만 쓰면 insert |
 | CLI 기본 | `nsql config set cli.format sql:insert` |
 | 셸 | `set format sql:delete` · `copy sql:merge`(마지막 결과 → 클립보드 · 경고 포함) |
-| GUI | 결과 그리드 우클릭 ▸ Advanced Copy ▸ Copy SQL ▸ SELECT/INSERT/UPDATE/DELETE/MERGE |
+| GUI | 결과 그리드 우클릭 ▸ Copy SQL ▸ SELECT/INSERT/UPDATE/DELETE/MERGE(Advanced Copy ▸와 **같은 층** · 서브메뉴 1단 = T-233 · 10-27 문서 정정) |
 | 유일성 기준 | `nsql config set sql.key_mode all` · GUI 설정 창 ▸ Result Sets ▸ Key columns for generated SQL |
 
 ## 5. 검증(09-16 · SQLite · `scratch/sqlkinds.sql`)

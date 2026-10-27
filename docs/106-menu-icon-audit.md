@@ -191,7 +191,9 @@
 | 위치 | 항목 글(한국어) | Msg/명령 id | 지금 아이콘 | 제안 | 판정 |
 |---|---|---|---|---|---|
 | 우클릭(결과 셀) | 복사 | `MnCopy` / `copy` | `mi_copy` | `content_copy` / `copy` | 맞음 |
-| 우클릭(결과 셀) | 머리글과 함께 복사 | `MnCopyWithHeaders` / `copy_h` | `mi_copy` | `content_copy` / `copy` (구별하려면 `copy_all` · 확인 필요) | 맞음 |
+| 우클릭(결과 셀) | 머리글과 함께 복사 ▸(10-27 하위 메뉴화 · T-442) | `MnCopyWithHeaders` / `copy_h` | `mi_copy` | `content_copy` / `copy` (구별하려면 `copy_all` · 확인 필요) | 맞음 |
+| 우클릭(결과 셀) ▸ 머리글과 함께 복사 | 공백 구분자 · 콤마 구분자 · 탭 구분자(10-27 · T-442) | `MnSepSpace` · `MnSepComma` · `MnSepTab` / `copy_h_space` · `copy_h_comma` · `copy_h_tab` | `mi_copy` | `content_copy` / `copy` | 맞음 |
+| 우클릭(결과 셀) | 머리글만 복사 ▸(10-27 신설 · T-442) | `MnCopyHeadersOnly` / (하위 `copy_hdr_space` · `copy_hdr_comma` · `copy_hdr_tab`) | `mi_copy`(하위 셋도) | `content_copy` / `copy` | 맞음 |
 | 우클릭(결과 셀) | 고급 복사 ▸ | `MnAdvancedCopy` / `adv` | 없음 | `copy_all` / `files` (확인 필요) | 추가 |
 | 우클릭(결과 셀) ▸ 고급 복사 | CSV로 복사 | `MnCopyCsv` / `copy_csv` | `mi_table` | `csv` 또는 `table_chart` / `table` | 교체 |
 | 우클릭(결과 셀) ▸ 고급 복사 | 텍스트로 복사 | `MnCopyText` / `copy_txt` | `mi_table` | `notes` 또는 `short_text` / `note` | 교체 |
