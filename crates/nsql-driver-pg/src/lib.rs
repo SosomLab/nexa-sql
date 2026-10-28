@@ -427,13 +427,30 @@ fn err(e: postgres::Error) -> DbError {
             }
             (sqlstate_code(db.code()), m, pos)
         }
-        None => (None, e.to_string(), None),
+        // ★ 원인 사슬을 ": "로 잇는다(155차 · 협업 제안) — 종전엔 "error connecting to server" 한 줄뿐이라 거부 포트 os error ·
+        //   TLS 핸드셰이크·인증서 오류 원문이 묻혔다(MySQL은 원인까지 보임).
+        None => (None, error_chain(&e), None),
     };
     DbError {
         code,
         message,
         position,
     }
+}
+
+/// `Display` + `source()` 사슬("a: b: c" · 같은 글은 한 번만).
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut m = e.to_string();
+    let mut cur = e.source();
+    while let Some(s) = cur {
+        let t = s.to_string();
+        if !m.contains(&t) {
+            m.push_str(": ");
+            m.push_str(&t);
+        }
+        cur = s.source();
+    }
+    m
 }
 
 /// SQLSTATE 5자(예 `42P01`)를 숫자 코드로 — 상위 2자를 36진으로 읽어 분류만 남긴다(표시는 메시지 앞머리에 문자열 그대로).
@@ -1507,6 +1524,35 @@ mod tests {
     }
 
     /// 커서 유지(T-48a): 어떤 문장을 DECLARE로 감싸는가 · 조립 SQL · 트랜잭션 경계 추적.
+    /// 원인 사슬이 메시지에 이어진다(거부 포트 · TLS 오류 원문이 묻히지 않게).
+    #[test]
+    fn error_chain_joins_sources() {
+        let inner = std::io::Error::other("inner cause");
+        let outer = std::io::Error::other(inner);
+        let m = error_chain(&outer);
+        assert_eq!(
+            m, "inner cause",
+            "io::Error::new(_, inner)는 Display가 안쪽 글과 같아 한 번만"
+        );
+        #[derive(Debug)]
+        struct Outer(std::io::Error);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("error connecting to server")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let o = Outer(std::io::Error::other("os error 10061"));
+        assert_eq!(
+            error_chain(&o),
+            "error connecting to server: os error 10061"
+        );
+    }
+
     /// ★ T-70(155차): 모드 파싱(libpq 이름 포함) · 모드별 rustls 설정 · 없는 CA 파일 = 오류 · 스펙에서 모드/CA 읽기.
     #[test]
     fn tls_mode_parse_and_config() {
