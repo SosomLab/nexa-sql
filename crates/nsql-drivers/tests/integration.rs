@@ -1126,6 +1126,69 @@ fn pg_ssh_tunnel_round_trip() {
     assert!(e.starts_with("SSH:"), "{e}");
 }
 
+/// ★ 실서버 SSH 터널(161차 · 사용자 10-28 · [docs/125](../../../docs/125-ssh-tunnel-real-server-test.md)): 사용자의 **로컬 ssh 설정**
+/// (`~/.ssh/config` 별칭 · 에이전트 · ProxyCommand = cloudflared 포함)으로 실서버에 붙는다 — 방언 무관(접속 문자열 scheme이 정한다).
+/// `NSQL_SSH_URL` = `oracle://u:p@127.0.0.1:1521/SVC?ssh=acct@192.168.0.58&driver=thin` 꼴 · 또는 `NSQL_SSH_PROFILE` = 볼트 프로필 이름
+/// (비밀번호를 환경·셸 기록에 남기지 않는 길). 둘 다 없으면 생략. 판정 = 설명에 " via ssh " 꼬리 · 방언별 확인 조회가 1행 · 세션을 닫으면
+/// ssh 프로세스가 따라 끝난다(두 번째 접속이 새 포트로 다시 성공).
+#[test]
+fn ssh_tunnel_real_server() {
+    use nsql_core::ExecRequest;
+    let spec = match (
+        std::env::var("NSQL_SSH_URL"),
+        std::env::var("NSQL_SSH_PROFILE"),
+    ) {
+        (Ok(url), _) => ConnectSpec::parse(&url).expect("NSQL_SSH_URL 접속 문자열"),
+        (Err(_), Ok(name)) => nsql_vault::Vault::open_default()
+            .and_then(|v| v.get(&name))
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| panic!("프로필 없음: {name}")),
+        _ => {
+            eprintln!("[skip] NSQL_SSH_URL · NSQL_SSH_PROFILE 없음");
+            return;
+        }
+    };
+    let dialect = spec.dialect.expect("접속 문자열의 방언(scheme)");
+    assert!(
+        spec.ssh.as_deref().is_some_and(|s| !s.trim().is_empty()),
+        "ssh= 가 없는 대상: {}",
+        spec.redacted()
+    );
+    let probe = match dialect {
+        Dialect::Oracle => "SELECT USER AS u, SYS_CONTEXT('USERENV','SERVER_HOST') AS h FROM dual",
+        Dialect::Postgres => {
+            "SELECT current_user AS u, COALESCE(inet_server_addr()::text, 'local') AS h"
+        }
+        Dialect::Mssql => "SELECT SUSER_SNAME() AS u, @@SERVERNAME AS h",
+        Dialect::Mysql => "SELECT CURRENT_USER() AS u, @@hostname AS h",
+        _ => "SELECT 1 AS u, 1 AS h",
+    };
+    for round in 1..=2 {
+        let t0 = std::time::Instant::now();
+        let mut s = nsql_drivers::open(&spec, dialect)
+            .unwrap_or_else(|e| panic!("[round {round}] ssh 터널 접속 실패: {}", e.message));
+        let d = s.describe();
+        assert!(d.contains(" via ssh "), "설명 꼬리: {d}");
+        let r = s
+            .execute(&ExecRequest {
+                sql: probe.to_string(),
+                params: Vec::new(),
+            })
+            .unwrap_or_else(|e| panic!("[round {round}] 확인 조회 실패: {}", e.message));
+        let row = &r.result_sets[0].rows[0];
+        assert_eq!(row.len(), 2, "{row:?}");
+        eprintln!(
+            "[ssh real {round}] {d} · 접속+조회 {:?} · user={} host={}",
+            t0.elapsed(),
+            row[0].display(),
+            row[1].display()
+        );
+        assert!(t0.elapsed().as_secs() < 60, "{:?}", t0.elapsed());
+        drop(s); // ssh 프로세스 종료 → 다음 라운드는 새 로컬 포트로 다시 뜬다.
+    }
+}
+
 /// ★ T-70 후속(158차 · 사용자 10-28 결정 ⓐ): CI의 **자체 서명 TLS PG**(`NSQL_PG_TLS_URL` · CA 파일 = `NSQL_PG_TLS_CA`)로 모드 5종 ·
 /// 인증서 오류 원문(사슬) · `tls_ca=` 검증 · preferred의 "(TLS on)" 꼬리 · **TLS 세션의 취소**(같은 TLS로 cancel_query · 57014).
 /// 내장(rlib)·확장(`NSQL_TEST_DYN=1` · cdylib) 두 경로 모두 같은 단언. env가 없으면 생략.
