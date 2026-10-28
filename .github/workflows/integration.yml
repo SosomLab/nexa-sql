@@ -175,8 +175,15 @@ jobs:
             -e PUID=1000 -e PGID=1000 -e USER_NAME=nexa -e PUBLIC_KEY="$(cat sshtun/id_ed25519.pub)" \
             -e SUDO_ACCESS=false -e PASSWORD_ACCESS=false lscr.io/linuxserver/openssh-server:latest
           for i in $(seq 1 30); do ssh-keyscan -p 2222 -T 3 localhost 2>/dev/null | grep -q ed25519 && break; sleep 2; done
+          # linuxserver 이미지는 기본 `AllowTcpForwarding no`(40675906658: 컨테이너 안에서 PG는 닿는데 포워딩 채널이 닫혀 reset) → 켜고 재시작.
+          docker exec sshtun sh -c "grep -nE '^#?AllowTcpForwarding' /config/sshd/sshd_config; sed -i -E 's/^#?AllowTcpForwarding .*/AllowTcpForwarding yes/' /config/sshd/sshd_config"
+          docker restart sshtun >/dev/null
+          for i in $(seq 1 30); do ssh-keyscan -p 2222 -T 3 localhost 2>/dev/null | grep -q ed25519 && break; sleep 2; done
           mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -p 2222 localhost >> ~/.ssh/known_hosts 2>/dev/null
           ssh -o BatchMode=yes -p 2222 -i sshtun/id_ed25519 nexa@localhost true && echo "ssh login ok"
+          # 포워딩 자체 확인(진단): 로컬 15432 → $TARGET:5432
+          ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -p 2222 -i sshtun/id_ed25519 -N -L 127.0.0.1:15432:$TARGET:5432 nexa@localhost &
+          sleep 3; (nc -z 127.0.0.1 15432 && echo "forward ok") || echo "WARN: forward not accepting"; kill %1 2>/dev/null || true
           docker exec sshtun sh -c "nc -z -w 3 $TARGET 5432 && echo 'sshd -> pg reachable'" || echo "WARN: sshd cannot reach $TARGET:5432"
           echo "NSQL_SSH_PG_URL=postgres://nexa:nexa@$TARGET:5432/nexa?ssh=nexa@localhost:2222&ssh_key=$PWD/sshtun/id_ed25519" >> "$GITHUB_ENV"
       - name: wait for DBs
