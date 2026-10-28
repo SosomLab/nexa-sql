@@ -4,13 +4,13 @@
 //! <사용자 설정 폴더>/nexa-sql/           nexa_conf::user_config_dir("nexa-sql")
 //! ├─ device.key                         기기 키(Windows DPAPI 봉투 · 그 외 0600 평문) — devkey.rs
 //! └─ profiles/<해시>.conf               프로필 1개 = 파일 1개(nexa-conf key=value) · 해시 = SHA-256(이름) 앞 16 hex
-//!      name=biscm                       ★ 프로필 이름(파일 이름이 아니라 **이 값**이 이름 · 대/소문자 구별)
+//!      name=appdb                       ★ 프로필 이름(파일 이름이 아니라 **이 값**이 이름 · 대/소문자 구별)
 //!      dialect=oracle · user=scott · host=… · port=1521 · database=orcl · role=SYSDBA
 //!      secret=<hex>                     비밀번호 봉투(ChaCha20-Poly1305 · 도메인 "profile-v1/<이름>")
 //! ```
 //!
 //! ★ **파일 이름 = 이름의 해시**(사용자 09-22): 종전 `profiles/<이름>.conf`는 Windows·macOS의 대/소문자 무시 파일 시스템에서
-//! `biscm`→`BISCM` 이름 변경이 **같은 파일을 덮어쓴 뒤 옛 이름을 지워** 프로필과 파일이 함께 사라졌다. 해시 파일 이름은 OS와 무관하게
+//! `appdb`→`APPDB` 이름 변경이 **같은 파일을 덮어쓴 뒤 옛 이름을 지워** 프로필과 파일이 함께 사라졌다. 해시 파일 이름은 OS와 무관하게
 //! 이름을 대/소문자까지 구별하고, 이름은 파일 안 `name=`에 산다. 종전 꼴(`<이름>.conf` · `name=` 없음)은 **읽기 호환** — 목록·읽기에서
 //! 그대로 보이고, 그 이름으로 다시 저장하면 해시 파일로 옮기며 옛 파일은 **파일 이름이 글자 그대로 같을 때만** 지운다
 //! (`Path::exists`는 대/소문자를 무시하므로 폴더 목록의 실제 이름과 비교한다 · [`Vault::legacy_path`]).
@@ -182,7 +182,7 @@ impl Vault {
     }
 
     /// 종전 꼴 `<이름>.conf`가 **글자 그대로 그 이름으로** 있으면 그 경로. 폴더 목록의 실제 파일 이름과 바이트 비교한다 —
-    /// `Path::exists`/`read_to_string`은 대/소문자 무시 파일 시스템에서 `BISCM.conf`로 `biscm.conf`를 열어 버린다(09-22 결함의 뿌리).
+    /// `Path::exists`/`read_to_string`은 대/소문자 무시 파일 시스템에서 `APPDB.conf`로 `appdb.conf`를 열어 버린다(09-22 결함의 뿌리).
     fn legacy_path(&self, name: &str) -> Option<PathBuf> {
         let want = format!("{name}.{EXT}");
         let rd = std::fs::read_dir(self.dir.join(PROFILES_DIR)).ok()?;
@@ -684,25 +684,25 @@ mod tests {
     }
 
     /// ★ 09-22 결함 재현: 대/소문자만 다른 이름으로 저장 뒤 옛 이름 삭제(GUI의 이름 변경 순서) — 종전 `<이름>.conf`는 Windows·macOS에서
-    /// `BISCM.conf`가 `biscm.conf`를 덮어쓴 뒤 삭제돼 둘 다 사라졌다. 해시 파일 이름은 OS와 무관하게 둘을 구별한다.
+    /// `APPDB.conf`가 `appdb.conf`를 덮어쓴 뒤 삭제돼 둘 다 사라졌다. 해시 파일 이름은 OS와 무관하게 둘을 구별한다.
     #[test]
     fn case_only_rename_keeps_new_profile() {
         let d = tmp("vault-case");
         let v = Vault::open(&d).unwrap();
-        v.save("biscm", &spec(Some("pw"))).unwrap();
-        v.save("BISCM", &spec(Some("pw2"))).unwrap();
-        assert_ne!(Vault::file_name("biscm"), Vault::file_name("BISCM"));
-        assert!(v.remove("biscm").unwrap());
-        let got = v.get("BISCM").unwrap().expect("새 이름은 남는다");
+        v.save("appdb", &spec(Some("pw"))).unwrap();
+        v.save("APPDB", &spec(Some("pw2"))).unwrap();
+        assert_ne!(Vault::file_name("appdb"), Vault::file_name("APPDB"));
+        assert!(v.remove("appdb").unwrap());
+        let got = v.get("APPDB").unwrap().expect("새 이름은 남는다");
         assert_eq!(got.password.as_deref(), Some("pw2"));
-        assert!(v.get("biscm").unwrap().is_none());
+        assert!(v.get("appdb").unwrap().is_none());
         assert_eq!(
             v.list()
                 .unwrap()
                 .iter()
                 .map(|p| p.name.as_str())
                 .collect::<Vec<_>>(),
-            ["BISCM"]
+            ["APPDB"]
         );
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -713,25 +713,25 @@ mod tests {
         let d = tmp("vault-legacy");
         let v = Vault::open(&d).unwrap();
         let legacy = "dialect=oracle\nuser=scott\nhost=h\nport=1521\ndatabase=orcl\n";
-        std::fs::write(d.join("profiles/biscm.conf"), legacy).unwrap();
-        assert_eq!(v.list().unwrap()[0].name, "biscm");
+        std::fs::write(d.join("profiles/appdb.conf"), legacy).unwrap();
+        assert_eq!(v.list().unwrap()[0].name, "appdb");
         assert_eq!(
-            v.get("biscm").unwrap().unwrap().user.as_deref(),
+            v.get("appdb").unwrap().unwrap().user.as_deref(),
             Some("scott")
         );
-        // 대/소문자만 다른 새 이름으로 저장 — 종전 `biscm.conf`는 남아야 한다(대/소문자 무시 FS에서도 글자 비교).
-        v.save("BISCM", &spec(None)).unwrap();
+        // 대/소문자만 다른 새 이름으로 저장 — 종전 `appdb.conf`는 남아야 한다(대/소문자 무시 FS에서도 글자 비교).
+        v.save("APPDB", &spec(None)).unwrap();
         let names: Vec<String> = v.list().unwrap().into_iter().map(|p| p.name).collect();
-        assert_eq!(names, ["BISCM", "biscm"]);
-        assert!(d.join("profiles/biscm.conf").is_file());
+        assert_eq!(names, ["APPDB", "appdb"]);
+        assert!(d.join("profiles/appdb.conf").is_file());
         // 같은 이름으로 다시 저장 = 해시 파일로 이관 · 종전 파일 삭제.
-        v.save("biscm", &spec(None)).unwrap();
-        assert!(v.path_of("biscm").unwrap().is_file());
-        assert!(v.legacy_path("biscm").is_none());
+        v.save("appdb", &spec(None)).unwrap();
+        assert!(v.path_of("appdb").unwrap().is_file());
+        assert!(v.legacy_path("appdb").is_none());
         let names: Vec<String> = v.list().unwrap().into_iter().map(|p| p.name).collect();
-        assert_eq!(names, ["BISCM", "biscm"]);
+        assert_eq!(names, ["APPDB", "appdb"]);
         // 경로 찾기(키 없이): 해시 파일 → 종전 꼴(글자 그대로) → 저장될 해시 경로.
-        assert_eq!(v.locate("biscm"), v.path_of("biscm").unwrap());
+        assert_eq!(v.locate("appdb"), v.path_of("appdb").unwrap());
         std::fs::write(d.join("profiles/Legacy.conf"), legacy).unwrap();
         assert_eq!(v.locate("Legacy"), d.join("profiles/Legacy.conf"));
         assert_eq!(

@@ -84,7 +84,7 @@ pub(crate) fn normalize_ddl(text: &str, ignore_ws: bool, canon: bool) -> Vec<Str
 }
 
 /// 서버 DDL의 꾸밈을 걷는다(순수 · 설정 `compare.canon` · 협업 V1 bin111 (a)): Oracle `DBMS_METADATA`가 붙이는 `EDITIONABLE`/
-/// `NONEDITIONABLE` 낱말을 빼고, 따옴표 식별자 `"BISCM"."SP_TEST1"`은 안이 **대소문자 섞이지 않은 보통 식별자**일 때만 따옴표를
+/// `NONEDITIONABLE` 낱말을 빼고, 따옴표 식별자 `"APPDB"."SP_TEST1"`은 안이 **대소문자 섞이지 않은 보통 식별자**일 때만 따옴표를
 /// 벗긴다(`"MyTab"`처럼 섞인 것은 따옴표가 뜻을 가지므로 그대로). 양쪽(편집기·서버)에 같이 적용하므로 "같은 뜻 = 같은 줄"만 맞춘다.
 pub(crate) fn canon_line(l: &str) -> String {
     let mut out = String::with_capacity(l.len());
@@ -545,8 +545,8 @@ mod tests {
     #[test]
     fn canon_rules() {
         assert_eq!(
-            canon_line("CREATE OR REPLACE NONEDITIONABLE PROCEDURE \"BISCM\".\"SP_TEST1\" ("),
-            "CREATE OR REPLACE PROCEDURE BISCM.SP_TEST1 ("
+            canon_line("CREATE OR REPLACE NONEDITIONABLE PROCEDURE \"APPDB\".\"SP_TEST1\" ("),
+            "CREATE OR REPLACE PROCEDURE APPDB.SP_TEST1 ("
         );
         assert_eq!(
             canon_line("create editionable function \"f1\""),
@@ -559,12 +559,12 @@ mod tests {
         );
         assert_eq!(canon_line("EDITIONABLEX \"A B\""), "EDITIONABLEX \"A B\"");
         let srv = normalize_ddl(
-            "CREATE OR REPLACE NONEDITIONABLE PROCEDURE \"BISCM\".\"SP_TEST1\" AS\nBEGIN\n  NULL;\nEND;\n/",
+            "CREATE OR REPLACE NONEDITIONABLE PROCEDURE \"APPDB\".\"SP_TEST1\" AS\nBEGIN\n  NULL;\nEND;\n/",
             true,
             true,
         );
         let ed = normalize_ddl(
-            "CREATE OR REPLACE PROCEDURE BISCM.SP_TEST1 AS\nBEGIN\n    NULL;\nEND;",
+            "CREATE OR REPLACE PROCEDURE APPDB.SP_TEST1 AS\nBEGIN\n    NULL;\nEND;",
             true,
             true,
         );

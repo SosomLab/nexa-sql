@@ -140,7 +140,7 @@ mod tests {
             stale: false,
         }];
         let macros = vec![
-            ("PROJECT".to_string(), "M4PLAN".to_string()),
+            ("PROJECT".to_string(), "PLANDB".to_string()),
             ("ML".to_string(), "a\nb".to_string()),
             ("OWNER".to_string(), "scott = tiger".to_string()),
             // ★ 앞뒤 공백 · 따옴표가 든 값도 그대로 돌아온다(협업 V1 10-27 결함).
@@ -154,7 +154,7 @@ mod tests {
         assert_eq!(
             load_global_macros(&dir),
             vec![
-                ("PROJECT".to_string(), "M4PLAN".to_string()),
+                ("PROJECT".to_string(), "PLANDB".to_string()),
                 ("OWNER".to_string(), "scott = tiger".to_string()),
                 ("TS".to_string(), " x ".to_string()),
                 ("Q".to_string(), "it's".to_string()),

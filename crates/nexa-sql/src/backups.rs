@@ -359,12 +359,12 @@ mod object_tests {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         let o = obj("HR", "EMP");
-        assert_eq!(object_stem("BISCM", &o), "BISCM_HR.EMP_TABLE");
+        assert_eq!(object_stem("APPDB", &o), "APPDB_HR.EMP_TABLE");
         assert_eq!(object_stem("", &obj("a b", "x/y")), "conn_a_b.x_y_TABLE");
         // 같은 ms에 둘 = 뒤 것은 1 ms 올림(이름 다름 · 둘 다 존재).
         let a = write_object_in(
             &dir,
-            "BISCM",
+            "APPDB",
             &o,
             "oracle",
             "drop",
@@ -373,7 +373,7 @@ mod object_tests {
         .unwrap();
         let b = write_object_in(
             &dir,
-            "BISCM",
+            "APPDB",
             &o,
             "oracle",
             "alter",
@@ -391,14 +391,14 @@ mod object_tests {
             .unwrap()
             .to_str()
             .unwrap()
-            .starts_with("BISCM_HR.EMP_TABLE."));
+            .starts_with("APPDB_HR.EMP_TABLE."));
         let body = std::fs::read_to_string(&b).unwrap();
         assert!(body.starts_with("-- nexa-sql object backup"));
         assert!(body.contains("action: alter"));
         // 다른 객체 1 + 같은 객체 셋째 → keep 2 = EMP 가장 옛 것(a) 하나만 지움.
-        let c = write_object_in(&dir, "BISCM", &o, "oracle", "drop", "x").unwrap();
+        let c = write_object_in(&dir, "APPDB", &o, "oracle", "drop", "x").unwrap();
         let other =
-            write_object_in(&dir, "BISCM", &obj("HR", "DEPT"), "oracle", "drop", "y").unwrap();
+            write_object_in(&dir, "APPDB", &obj("HR", "DEPT"), "oracle", "drop", "y").unwrap();
         assert_eq!(prune_dir(&dir, 365, 2), 1);
         assert!(!a.exists() && b.exists() && c.exists() && other.exists());
         // keep 0 = 개수 정리 없음 · 일수만.

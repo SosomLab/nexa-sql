@@ -41,7 +41,7 @@ const HINTS: &[(&str, &str)] = &[
 const WORD_MATCH_MIN: usize = 5;
 
 /// 방언을 아는 연결에서 힌트가 바꿀 수 있는 제품 = **그 방언으로 접속하는 제품군**뿐(사용자 10-14 · PG 접속의 DB 이름
-/// `matrixdb2`가 `db2`에 걸려 Db2 그림이 나오던 결함). 방언이 제품을 확정하면(Oracle · SQL Server · SQLite · PG) 힌트는
+/// `repodb`가 `db2`에 걸려 Db2 그림이 나오던 결함). 방언이 제품을 확정하면(Oracle · SQL Server · SQLite · PG) 힌트는
 /// 무시하고, MySQL 방언만 MariaDB로 바뀔 수 있다. ODBC · 미접속은 전부 허용.
 fn hint_allowed(dialect: Option<Dialect>, id: &str) -> bool {
     match dialect {
@@ -59,7 +59,7 @@ fn hint_allowed(dialect: Option<Dialect>, id: &str) -> bool {
     }
 }
 
-/// 힌트 글(소문자)에 키워드가 **낱말 경계**로 들어 있는가 — 부분 문자열이면 `matrixdb2` ⊃ `db2`처럼 DB 이름 안에서 걸린다.
+/// 힌트 글(소문자)에 키워드가 **낱말 경계**로 들어 있는가 — 부분 문자열이면 `repodb` ⊃ `db2`처럼 DB 이름 안에서 걸린다.
 /// 키워드 자체는 공백을 품을 수 있다(`sql server`).
 fn has_keyword(h: &str, kw: &str) -> bool {
     let b = h.as_bytes();
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn pick_hint_then_dialect_then_word_then_generic() {
         assert_eq!(pick(Some(Dialect::Oracle), "PROD"), "oracle");
-        assert_eq!(pick(Some(Dialect::Mssql), "BISCM_MS"), "sqlserver");
+        assert_eq!(pick(Some(Dialect::Mssql), "APPDB_MS"), "sqlserver");
         assert_eq!(pick(Some(Dialect::Mysql), "maria-dev"), "mariadb");
         assert_eq!(pick(Some(Dialect::Odbc), "Tibero DEV"), "tibero");
         assert_eq!(pick(Some(Dialect::Odbc), "zeta"), "odbc");
@@ -237,11 +237,11 @@ mod tests {
         );
         // 방언을 아는 연결은 낱말 일치로 뒤집히지 않는다(프로필 이름 우연 일치).
         assert_eq!(pick(Some(Dialect::Oracle), "redis cache"), "oracle");
-        // ★ 사용자 10-14: PG 접속의 DB 이름 `matrixdb2`가 `db2`에 걸려 Db2 그림 — 방언이 제품을 확정하면 힌트는 못 뒤집는다.
+        // ★ 사용자 10-14: PG 접속의 DB 이름 `repodb`가 `db2`에 걸려 Db2 그림 — 방언이 제품을 확정하면 힌트는 못 뒤집는다.
         assert_eq!(
             pick(
                 Some(Dialect::Postgres),
-                "Repository postgres://postgres/***@172.16.1.60:5433/matrixdb2"
+                "Repository postgres://postgres/***@172.16.1.60:5433/repodb"
             ),
             "postgresql"
         );
@@ -251,7 +251,7 @@ mod tests {
         // MySQL 방언만 같은 제품군(MariaDB)으로 바뀐다.
         assert_eq!(pick(Some(Dialect::Mysql), "shop"), "mysql");
         // 힌트는 낱말 경계로만 — ODBC·미접속에서도 DB 이름 안의 `db2`는 Db2가 아니다.
-        assert_eq!(pick(Some(Dialect::Odbc), "matrixdb2"), "odbc");
+        assert_eq!(pick(Some(Dialect::Odbc), "repodb"), "odbc");
         assert_eq!(pick(Some(Dialect::Odbc), "my db2 dsn"), "db2");
         assert_eq!(pick(Some(Dialect::Odbc), "legacy-db2"), "db2");
         assert_eq!(pick(None, "SQL Server (DSN)"), "sqlserver");

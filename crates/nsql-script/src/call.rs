@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn positional_named_and_return() {
-        let s = call_shape("SP_X(:PC_RET, 'SEBANG', f(1, 2), :V_USER);").unwrap();
+        let s = call_shape("SP_X(:PC_RET, 'ACME', f(1, 2), :V_USER);").unwrap();
         assert_eq!(s.name, "SP_X");
         let binds: Vec<Option<&str>> = s.args.iter().map(|a| a.bind.as_deref()).collect();
         assert_eq!(binds, [Some("PC_RET"), None, None, Some("V_USER")]);

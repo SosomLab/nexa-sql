@@ -5569,7 +5569,7 @@ impl Msg {
             Msg::LblBusyRing => ["Progress ring on search boxes", "검색 상자 진행 표시(혜성)"],
             Msg::LblTooltipAbove => ["Show tooltips above the item", "툴팁을 항목 위에 표시"],
             Msg::LblSortNatural => ["Natural sort", "자연 정렬"],
-            Msg::DescSortNatural => ["Compare digit runs by value when sorting names (ITEM2 < ITEM10, M4E_I30102 < M4E_I301010). One switch for result-grid text columns, object/project/bookmark trees, the login list and palette ties. Off = plain case-insensitive character order", "이름을 정렬할 때 숫자 구간은 수의 크기로 비교한다(ITEM2 < ITEM10 · M4E_I30102 < M4E_I301010). 결과 그리드 글자 열 · 객체/프로젝트/북마크 트리 · 로그인 목록 · 팔레트 동점에 한 스위치. 끄면 대소문자 무시 글자 순"],
+            Msg::DescSortNatural => ["Compare digit runs by value when sorting names (ITEM2 < ITEM10, DME_I30102 < DME_I301010). One switch for result-grid text columns, object/project/bookmark trees, the login list and palette ties. Off = plain case-insensitive character order", "이름을 정렬할 때 숫자 구간은 수의 크기로 비교한다(ITEM2 < ITEM10 · DME_I30102 < DME_I301010). 결과 그리드 글자 열 · 객체/프로젝트/북마크 트리 · 로그인 목록 · 팔레트 동점에 한 스위치. 끄면 대소문자 무시 글자 순"],
             Msg::LblCtxmenuExclusive => ["Close a context menu when another area is used", "다른 영역을 쓰면 우클릭 메뉴 닫기"],
             Msg::DescCtxmenuExclusive => [
                 "On: a right-click menu closes as soon as you left/right-click outside it (editor, grid, Output, panels…) or type a key the menu does not use. Off: each area's menu stays until it is closed itself.",
@@ -7227,8 +7227,8 @@ impl Msg {
             Msg::LblCompareIgnoreWs => ["Compare with server object: ignore whitespace", "실제 객체와 비교: 공백 차이 무시"],
             Msg::LblCompareCanon => ["Compare with server object: ignore DDL decorations", "실제 객체와 비교: DDL 꾸밈 무시"],
             Msg::DescCompareCanon => [
-                "Before comparing, drop Oracle EDITIONABLE/NONEDITIONABLE keywords and unquote plain quoted identifiers (\"BISCM\".\"SP_TEST1\" = BISCM.SP_TEST1; mixed-case names such as \"MyTab\" keep their quotes). Applied to both sides; the viewer still shows the original text.",
-                "비교 전에 Oracle EDITIONABLE/NONEDITIONABLE 낱말을 빼고, 대소문자가 섞이지 않은 따옴표 식별자의 따옴표를 벗긴다(\"BISCM\".\"SP_TEST1\" = BISCM.SP_TEST1 · \"MyTab\" 같은 섞인 이름은 그대로). 양쪽에 같이 적용하며 뷰어에는 원문이 보인다.",
+                "Before comparing, drop Oracle EDITIONABLE/NONEDITIONABLE keywords and unquote plain quoted identifiers (\"APPDB\".\"SP_TEST1\" = APPDB.SP_TEST1; mixed-case names such as \"MyTab\" keep their quotes). Applied to both sides; the viewer still shows the original text.",
+                "비교 전에 Oracle EDITIONABLE/NONEDITIONABLE 낱말을 빼고, 대소문자가 섞이지 않은 따옴표 식별자의 따옴표를 벗긴다(\"APPDB\".\"SP_TEST1\" = APPDB.SP_TEST1 · \"MyTab\" 같은 섞인 이름은 그대로). 양쪽에 같이 적용하며 뷰어에는 원문이 보인다.",
             ],
             Msg::DescCompareIgnoreWs => ["When comparing a CREATE statement with the server DDL, collapse runs of spaces/tabs inside lines so indentation differences are not reported (line-end spaces, blank-line runs and the final ;// are always normalized)", "CREATE 문을 서버 DDL과 비교할 때 줄 안 공백·탭 연속을 하나로 접어 들여쓰기 차이를 차이로 세지 않는다(줄 끝 공백 · 빈 줄 연속 · 끝 ;·/는 늘 정규화)"],
             Msg::DescGridCondMaxLines => ["How many lines the condition bar shows when expanded (Shift+Enter adds a line and expands it; the ▴ button collapses to one line while keeping the text; Enter runs)", "조건 입력란을 펼쳤을 때 보이는 줄 수(Shift+Enter = 줄 바꿈 + 펼침 · ▴ = 글은 두고 한 줄 보기 · Enter = 실행)"],
@@ -8283,7 +8283,7 @@ impl Msg {
             Msg::StObjLinkCopiedNameDesc => ["Copied: {0}", "복사됨: {0}"],
             Msg::StObjLinkCopiedNameOnly => ["{0} has no description - name copied", "{0}에 설명이 없어 이름만 복사됨"],
             Msg::LblObjLinkShowSchema => ["Show schema in names", "이름에 스키마 표시"],
-            Msg::DescObjLinkShowSchema => ["Prefix the object name in the tooltip, status bar and \"Name - Description\" copy (Ctrl+Shift+click) with its schema (BISCM.TB_ORDER). Off = name only (TB_ORDER · column = TABLE.COLUMN).", "툴팁·상태줄·\"이름 - 설명\" 복사(Ctrl+Shift+클릭)의 객체 이름 앞에 스키마를 붙입니다(BISCM.TB_ORDER). 끄면 이름만(TB_ORDER · 컬럼 = 테이블.컬럼)."],
+            Msg::DescObjLinkShowSchema => ["Prefix the object name in the tooltip, status bar and \"Name - Description\" copy (Ctrl+Shift+click) with its schema (APPDB.TB_ORDER). Off = name only (TB_ORDER · column = TABLE.COLUMN).", "툴팁·상태줄·\"이름 - 설명\" 복사(Ctrl+Shift+클릭)의 객체 이름 앞에 스키마를 붙입니다(APPDB.TB_ORDER). 끄면 이름만(TB_ORDER · 컬럼 = 테이블.컬럼)."],
             Msg::StCopyFailed => ["Could not write to the clipboard", "클립보드에 쓸 수 없습니다"],
             Msg::FmtBasicName => ["Basic formatter", "Basic 포맷터"],
             Msg::MnFormatSql => ["Format SQL", "SQL 포맷"],

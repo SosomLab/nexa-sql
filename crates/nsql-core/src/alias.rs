@@ -93,8 +93,8 @@ mod tests {
         assert_eq!(abbr("orders", &[]), "o");
         assert_eq!(abbr("sch.item_set", &[]), "is1", "키워드 모양이면 1");
         assert_eq!(
-            abbr("M4S_I002150_261015_BAK", &[]),
-            "mi2b",
+            abbr("DMS_I002150_261015_BAK", &[]),
+            "di2b",
             "숫자로 시작하는 낱말도 첫 글자"
         );
     }

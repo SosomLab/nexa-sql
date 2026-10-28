@@ -7,7 +7,7 @@
 //!   읽혀도 항목이 나타나게).
 //! - ★ **항목은 메타에서 실제로 풀릴 때만**(사용자 10-08 2차 "목록을 확인할 대상이 아니면 표시하지 않도록"): 연결이 없거나 **적힌 스키마**
 //!   (없으면 그 탭 세션의 현재 스키마)에 그 객체가 없으면 항목 자체가 없다 — 다른 스키마는 보지 않는다(사용자 10-08 3차 "해당 DB에 있는지만 ·
-//!   인접 추가 검사 없음" · `BISCM.SP_X`가 BISCM_SB에만 있어도 없는 객체).
+//!   인접 추가 검사 없음" · `APPDB.SP_X`가 APPDB_SB에만 있어도 없는 객체).
 //! - SQL Server `DB.스키마`는 DB와 스키마로(objlink ⑭와 같은 규칙).
 
 use nsql_core::{DdlTarget, Dialect};
@@ -198,13 +198,13 @@ mod tests {
     #[test]
     fn first_executable_statement_decides() {
         // 머리 주석 + CREATE OR REPLACE PROCEDURE = 프로시저(사용자 캡처 모양).
-        let sql = "-- 생성\nCREATE OR REPLACE PROCEDURE BISCM.SP_X (p IN NUMBER) AS\nBEGIN NULL; END;\n/\nSELECT 1 FROM dual;";
+        let sql = "-- 생성\nCREATE OR REPLACE PROCEDURE APPDB.SP_X (p IN NUMBER) AS\nBEGIN NULL; END;\n/\nSELECT 1 FROM dual;";
         let t = first_ddl_target(sql, Some(Dialect::Oracle)).expect("ddl");
         assert_eq!(t.verb, DdlVerb::Create);
         assert_eq!(t.kind, DdlKind::Procedure);
-        assert_eq!(t.schema.as_deref(), Some("BISCM"));
+        assert_eq!(t.schema.as_deref(), Some("APPDB"));
         assert_eq!(t.name, "SP_X");
-        assert_eq!(qualified(&t), "BISCM.SP_X");
+        assert_eq!(qualified(&t), "APPDB.SP_X");
         // 첫 실행 문장이 SELECT면 뒤에 DDL이 있어도 대상 아님.
         assert!(
             first_ddl_target("SELECT 1 FROM dual;\nDROP TABLE t;", Some(Dialect::Oracle)).is_none()

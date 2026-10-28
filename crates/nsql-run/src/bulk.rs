@@ -1052,14 +1052,14 @@ mod tests {
     fn mssql_cols_sql_for_three_part_names() {
         use super::mssql_cols_sql;
         use nsql_core::Dialect;
-        let sql = mssql_cols_sql(Dialect::Mssql, "M4PLAN_MS.dbo.NSQLT_BULK").unwrap_or_default();
+        let sql = mssql_cols_sql(Dialect::Mssql, "PLANDB_MS.dbo.NSQLT_BULK").unwrap_or_default();
         assert!(sql.starts_with("SELECT c.name, t.name, "), "{sql}");
         assert!(
-            sql.contains("c.precision, c.scale FROM [M4PLAN_MS].sys.all_columns c"),
+            sql.contains("c.precision, c.scale FROM [PLANDB_MS].sys.all_columns c"),
             "{sql}"
         );
         assert!(
-            sql.contains("OBJECT_ID(N'[M4PLAN_MS].[dbo].[NSQLT_BULK]')"),
+            sql.contains("OBJECT_ID(N'[PLANDB_MS].[dbo].[NSQLT_BULK]')"),
             "{sql}"
         );
         let sql = mssql_cols_sql(Dialect::Mssql, "[My DB].[dbo].[O'Tbl]").unwrap_or_default();

@@ -5,7 +5,7 @@
 //! [Where: <open files>, D:\a, -*.log ]   ← 비면 열린 탭 + 활성 파일 폴더 · `-` = 제외
 //!  n files · m matches · 0.42s          ← 진행/결과 · 검색 중이면 취소 가능(Esc)
 //!  ▾ Script_3 (메모리 탭)            2  ← 파일 행(접기/펼치기 · 일치 수)
-//!      12:  SELECT * FROM M4S_I002040 A ← 일치 행(줄 번호 · 일치 구간 강조) · 클릭 = 열고 그 자리로
+//!      12:  SELECT * FROM DMS_I002040 A ← 일치 행(줄 번호 · 일치 구간 강조) · 클릭 = 열고 그 자리로
 //! ```
 //! 엔진 = `nsql-search`(스트리밍 배치 · 취소) · 열린 탭은 `search_text`로 즉시(저장 안 된 본문 우선 · 같은 경로 파일은 중복 제외).
 //! 호스트가 하는 것: Enter → [`SearchPanel::take_request`] → 열린 탭·활성 폴더·설정을 모아 [`SearchPanel::start`] ·

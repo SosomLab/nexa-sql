@@ -246,7 +246,7 @@ mod tests {
             app_home: Some(PathBuf::from("/home/me/.nsql")),
             exec: None,
             cwd: Some(PathBuf::from("/w")),
-            profile: Some("BISCM".into()),
+            profile: Some("APPDB".into()),
             dialect: Some("oracle".into()),
             config: vec![("log.file".into(), "${nsqlHome}/log.txt".into())],
             no_file_text: None,
@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(m["relativeFile"], p("sql/a.sql"));
         assert_eq!(m["relativeFileDirname"], "sql");
         assert_eq!(m["lineNumber"], "12");
-        assert_eq!(m["profile"], "BISCM");
+        assert_eq!(m["profile"], "APPDB");
         assert_eq!(m["config:log.file"], "${nsqlHome}/log.txt");
         assert_eq!(m["os"], std::env::consts::OS);
         assert!(m.contains_key("pathSeparator") && m.contains_key("/"));

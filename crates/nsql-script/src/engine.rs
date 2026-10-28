@@ -1440,7 +1440,7 @@ mod tests {
     #[test]
     fn oracle_exec_select_into_round_trip() {
         let mut e = Engine::new(Dialect::Oracle);
-        let src = "EXEC\nSELECT A.PROJECT_CD, A.MP_VRSN_SEQ INTO :V_PROJECT_CD, :V_MP_VRSN_SEQ FROM M4S_O301010 A WHERE A.PROJECT_CD = 'SEBANG'\n\nPRINT V_PROJECT_CD\n";
+        let src = "EXEC\nSELECT A.PROJECT_CD, A.MP_VRSN_SEQ INTO :V_PROJECT_CD, :V_MP_VRSN_SEQ FROM DMS_O301010 A WHERE A.PROJECT_CD = 'ACME'\n\nPRINT V_PROJECT_CD\n";
         let items = split_script(src);
         let acts = e.plan(&items[0]);
         let Action::Execute {
@@ -1456,7 +1456,7 @@ mod tests {
             "{}",
             prepared.sql
         );
-        assert!(prepared.sql.ends_with("'SEBANG'; END;"));
+        assert!(prepared.sql.ends_with("'ACME'; END;"));
         assert_eq!(prepared.params.len(), 2);
         assert!(prepared
             .params
@@ -1467,7 +1467,7 @@ mod tests {
         // 드라이버가 돌려준 OUT 값 흡수
         let res = ExecResult {
             out_params: vec![
-                ("V_PROJECT_CD".into(), Value::Str("SEBANG".into())),
+                ("V_PROJECT_CD".into(), Value::Str("ACME".into())),
                 ("V_MP_VRSN_SEQ".into(), Value::Int(7)),
             ],
             ..Default::default()
@@ -1478,7 +1478,7 @@ mod tests {
             acts,
             vec![Action::Print(vec![(
                 "V_PROJECT_CD".into(),
-                Value::Str("SEBANG".into())
+                Value::Str("ACME".into())
             )])]
         );
         assert_eq!(e.vars.get("v_mp_vrsn_seq").unwrap().ty, VarType::Number);

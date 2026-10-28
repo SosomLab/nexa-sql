@@ -116,7 +116,7 @@ mod tests {
         let vars = vec![VarState {
             name: "V_CD".into(),
             ty: VarType::Varchar2(6),
-            value: Value::Str("SEBANG".into()),
+            value: Value::Str("ACME".into()),
             declared: false,
             secret: false,
             layer: Layer::Local,
@@ -126,7 +126,7 @@ mod tests {
         store_in(&dir, &file, &vars);
         let back = load_in(&dir, &file);
         assert_eq!(back.len(), 1);
-        assert_eq!(back[0].value, Value::Str("SEBANG".into()));
+        assert_eq!(back[0].value, Value::Str("ACME".into()));
         store_in(&dir, &file, &[]);
         assert!(
             load_in(&dir, &file).is_empty(),

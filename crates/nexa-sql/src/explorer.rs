@@ -831,7 +831,7 @@ enum Resp {
         r: Result<String, String>,
         origin: ObjectOrigin,
         /// ★ 객체가 속한 DB(SQL Server/MySQL 트리 · 요청의 `db` 그대로) — 호스트가 소스 탭의 작업 단위를 이 DB로 심는다(사용자 10-08
-        ///   "M4PLAN_MS 프로시저를 열면 탭이 master" · T-312는 행 조회 탭만이었다).
+        ///   "PLANDB_MS 프로시저를 열면 탭이 master" · T-312는 행 조회 탭만이었다).
         db: Option<String>,
     },
     Live {
@@ -929,7 +929,7 @@ pub(crate) struct ObjectOrigin {
 }
 
 impl ObjectOrigin {
-    /// `PROCEDURE BISCM.SP_X` 꼴(메시지 · 상태줄).
+    /// `PROCEDURE APPDB.SP_X` 꼴(메시지 · 상태줄).
     pub(crate) fn label(&self) -> (String, String) {
         (
             self.kind.code().to_ascii_uppercase(),
@@ -2951,7 +2951,7 @@ impl Explorer {
                     sum_of(schema, *kind)?
                 }
             }
-            // 스키마 = 읽힌 종류 전부의 합(테이블 + MV + 인덱스 · 사용자 09-30 "Tables 27G Indexes 18G면 BISCM이 27G인 게 맞아?").
+            // 스키마 = 읽힌 종류 전부의 합(테이블 + MV + 인덱스 · 사용자 09-30 "Tables 27G Indexes 18G면 APPDB이 27G인 게 맞아?").
             NodeKind::Schema(schema) => {
                 let parts: Vec<u64> = [
                     ObjectKind::Table,
@@ -4263,7 +4263,7 @@ impl Explorer {
                         Ok((d, desc, info)) => {
                             self.dialect = Some(d);
                             self.conn_desc = desc;
-                            // 현재 DB는 DB 전환이 있는 방언만(SQL Server·MySQL) — Oracle의 `DB_NAME`은 스키마와 겹쳐(BISCM) 전환 판정을 흐린다(⑮).
+                            // 현재 DB는 DB 전환이 있는 방언만(SQL Server·MySQL) — Oracle의 `DB_NAME`은 스키마와 겹쳐(APPDB) 전환 판정을 흐린다(⑮).
                             self.current_db = (matches!(d, Dialect::Mssql | Dialect::Mysql)
                                 && !info.current_db.is_empty())
                             .then(|| info.current_db.clone());
@@ -4675,7 +4675,7 @@ impl Explorer {
                                     }
                                 }
                                 // ★ SSMS 폴더(스키마 빈 값 · ㉕-c "테이블 옆 용량이 안 보인다"): 그 DB 전 스키마 용량을 한 번(키 = `DB.스키마`).
-                                // 현재 DB가 아니어도(㉕-d · master인 채 BISCM_MS Tables) — DB는 `db_of`로 안다.
+                                // 현재 DB가 아니어도(㉕-d · master인 채 APPDB_MS Tables) — DB는 `db_of`로 안다.
                                 if s.is_empty()
                                     && self.ssms_mode()
                                     && self.sizes_on
@@ -5240,7 +5240,7 @@ impl Explorer {
                 matches!(&self.nodes[i].kind, NodeKind::Schema(s) if s.eq_ignore_ascii_case(&t.schema))
             })
         };
-        // ★ 앵커가 없고 루트가 아직 읽히지 않았으면(재시작 뒤 접힌 연결 칸 · 사용자 10-01 ㉗-c SQLEDU) 루트부터 읽고 다음 응답에서 잇는다.
+        // ★ 앵커가 없고 루트가 아직 읽히지 않았으면(재시작 뒤 접힌 연결 칸 · 사용자 10-01 ㉗-c EDU01) 루트부터 읽고 다음 응답에서 잇는다.
         let a = match anchor {
             Some(a) => a,
             None if !self.nodes.is_empty()
@@ -5824,7 +5824,7 @@ impl Explorer {
         }
     }
 
-    /// ★ 서버 헤더 라벨(101 · D-253): `호스트:포트 (SQL Server 15.0.4375.4 - BISCM_MS)` · 버전을 모르면 종전대로.
+    /// ★ 서버 헤더 라벨(101 · D-253): `호스트:포트 (SQL Server 15.0.4375.4 - APPDB_MS)` · 버전을 모르면 종전대로.
     /// ★ 객체 찾기 창 서버 목록 라벨(사용자 10-16): **프로필 이름**이 있으면 그것 · 없으면(개별 `CONNECT` 등) 끝점(연결 문자열).
     pub(crate) fn find_label(&self) -> String {
         if self.profile_name.is_empty() {
@@ -5840,7 +5840,7 @@ impl Explorer {
         } else {
             self.endpoint.clone()
         };
-        // ★ 헤더 = 끝점(또는 프로필 이름)만(사용자 10-13 "(Oracle - BISCM)은 툴팁에 있으니 표시하지 않게") — DBMS·버전·로그인은
+        // ★ 헤더 = 끝점(또는 프로필 이름)만(사용자 10-13 "(Oracle - APPDB)은 툴팁에 있으니 표시하지 않게") — DBMS·버전·로그인은
         //   머무름 툴팁 `server_tip`에(필드명 접두).
         base
     }
@@ -7858,7 +7858,7 @@ impl Explorer {
                     NodeKind::Object(o) => o.name.as_str(),
                     _ => "",
                 };
-                // 자연 정렬 부품(전역 `ui.sort_natural` · 사용자 10-09): `M4E_I30102 < M4E_I301010`.
+                // 자연 정렬 부품(전역 `ui.sort_natural` · 사용자 10-09): `DME_I30102 < DME_I301010`.
                 nexa_ctl::natural::cmp_names(na, nb)
             });
             self.nodes[fi].children = kids;
@@ -8853,7 +8853,7 @@ impl Explorer {
             if server_only && self.nodes[i].depth != root_depth + 1 {
                 continue;
             }
-            // 루트(연결 행 · 라벨 = 로그인/서비스 이름)는 라벨 펼침 대상이 아니다(SQL Server 로그인 `BISCM_MS` = DB 이름과 같아 DB 노드를 가렸다 · 10-01).
+            // 루트(연결 행 · 라벨 = 로그인/서비스 이름)는 라벨 펼침 대상이 아니다(SQL Server 로그인 `APPDB_MS` = DB 이름과 같아 DB 노드를 가렸다 · 10-01).
             if matches!(self.nodes[i].kind, NodeKind::Root) {
                 continue;
             }
@@ -9689,7 +9689,7 @@ mod refresh_tests {
     fn full_name_parts_per_kind_and_dialect() {
         let pkg = ObjectInfo {
             db: String::new(),
-            schema: "BISCM_SB".into(),
+            schema: "APPDB_SB".into(),
             name: "PKG_STAT_GATHER_BSY".into(),
             kind: ObjectKind::Package,
             status: String::new(),
@@ -9698,7 +9698,7 @@ mod refresh_tests {
         };
         assert_eq!(
             full_name_parts(Dialect::Oracle, &NodeKind::Object(pkg.clone()), None),
-            vec!["BISCM_SB", "PKG_STAT_GATHER_BSY"]
+            vec!["APPDB_SB", "PKG_STAT_GATHER_BSY"]
         );
         let member = nsql_catalog::SubItem {
             name: "PRC_RUN_ALL".into(),
@@ -9712,10 +9712,10 @@ mod refresh_tests {
                 &NodeKind::Item(member),
                 Some((&pkg, SubKind::Procedures))
             ),
-            vec!["BISCM_SB", "PKG_STAT_GATHER_BSY", "PRC_RUN_ALL"]
+            vec!["APPDB_SB", "PKG_STAT_GATHER_BSY", "PRC_RUN_ALL"]
         );
         let ms = ObjectInfo {
-            db: "M4PLAN_MS".into(),
+            db: "PLANDB_MS".into(),
             schema: "dbo".into(),
             name: "SP_RUN".into(),
             kind: ObjectKind::Procedure,
@@ -9725,7 +9725,7 @@ mod refresh_tests {
         };
         assert_eq!(
             full_name_parts(Dialect::Mssql, &NodeKind::Object(ms.clone()), None),
-            vec!["M4PLAN_MS", "dbo", "SP_RUN"]
+            vec!["PLANDB_MS", "dbo", "SP_RUN"]
         );
         // 다른 방언은 DB 조각을 쓰지 않는다.
         assert_eq!(
@@ -9746,7 +9746,7 @@ mod refresh_tests {
             ]
         );
         let owner = ObjectInfo {
-            db: "M4PLAN_MS".into(),
+            db: "PLANDB_MS".into(),
             schema: "dbo".into(),
             name: "T".into(),
             kind: ObjectKind::Table,
@@ -9761,20 +9761,20 @@ mod refresh_tests {
         assert_eq!(
             full_name_parts(Dialect::Mssql, &sub, None),
             vec![
-                "M4PLAN_MS".to_string(),
+                "PLANDB_MS".to_string(),
                 "dbo".to_string(),
                 "T".to_string(),
                 t(sub_msg(SubKind::Indexes)).to_string()
             ]
         );
         let grp = NodeKind::Group {
-            db: Some("M4PLAN_MS".into()),
+            db: Some("PLANDB_MS".into()),
             group: GroupKind::Security,
         };
         assert_eq!(
             full_name_parts(Dialect::Mssql, &grp, None),
             vec![
-                "M4PLAN_MS".to_string(),
+                "PLANDB_MS".to_string(),
                 t(group_msg(GroupKind::Security)).to_string()
             ]
         );
@@ -9800,8 +9800,8 @@ mod refresh_tests {
     #[test]
     fn copy_name_covers_every_kind_that_shows_the_menu_item() {
         assert_eq!(
-            copy_name_of(&NodeKind::Database("MAEIL_SNOP".into())).as_deref(),
-            Some("MAEIL_SNOP")
+            copy_name_of(&NodeKind::Database("CUSTC_DEMO".into())).as_deref(),
+            Some("CUSTC_DEMO")
         );
         assert_eq!(
             copy_name_of(&NodeKind::Schema("HR".into())).as_deref(),
@@ -9911,11 +9911,11 @@ mod refresh_tests {
     #[test]
     fn schemas_soft_refresh_coalesces_to_at_most_one_more() {
         let (mut ex, _, _) = sample();
-        ex.set_current_db("SQLEDU");
+        ex.set_current_db("EDU01");
         assert!(ex.soft.contains(&0), "첫 전환 = 조용한 요청 1");
         assert!(ex.soft_again.is_empty());
-        ex.set_current_db("BISCM_SB");
-        ex.set_current_db("BISCM");
+        ex.set_current_db("APPDB_SB");
+        ex.set_current_db("APPDB");
         assert!(ex.soft.contains(&0), "진행 중 표식은 그대로");
         assert_eq!(ex.soft_again.len(), 1, "둘째·셋째 = 한 번 더 예약 하나");
         // 첫 응답 처리(조용한 길이 표식을 소비) → 예약분이 새 요청으로.
@@ -9931,7 +9931,7 @@ mod refresh_tests {
             "요청 ≤ 2"
         );
         // 진행 중이 아닐 때의 전환 = 바로 요청(예약 아님).
-        ex.set_current_db("SQLEDU");
+        ex.set_current_db("EDU01");
         assert!(ex.soft.contains(&0) && ex.soft_again.is_empty());
     }
 
@@ -10505,17 +10505,17 @@ mod refresh_tests {
         assert!(watermark_sql(Dialect::Odbc, "x").is_none());
     }
 
-    /// 현재 스키마 판정(09-23 사용자 "FROM 뒤 M4S_ 테이블이 안 보인다" — SQL Server는 계정 ≠ 스키마): 서버 값 → 계정 → 기본 → 단일.
+    /// 현재 스키마 판정(09-23 사용자 "FROM 뒤 DMS_ 테이블이 안 보인다" — SQL Server는 계정 ≠ 스키마): 서버 값 → 계정 → 기본 → 단일.
     #[test]
     fn current_schema_prefers_server_then_user_then_default() {
         let l = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
         let mssql = l(&["dbo", "sales", "hr"]);
         assert_eq!(
-            pick_current_schema(&mssql, Some("dbo"), "m4plan"),
+            pick_current_schema(&mssql, Some("dbo"), "plandb"),
             Some("dbo".into())
         );
         assert_eq!(
-            pick_current_schema(&mssql, None, "m4plan"),
+            pick_current_schema(&mssql, None, "plandb"),
             Some("dbo".into()),
             "계정이 스키마가 아니면 dbo"
         );
@@ -10524,10 +10524,10 @@ mod refresh_tests {
             Some("sales".into()),
             "서버 값이 목록에 없으면 계정"
         );
-        let ora = l(&["BISCM", "SYS", "HR"]);
+        let ora = l(&["APPDB", "SYS", "HR"]);
         assert_eq!(
-            pick_current_schema(&ora, Some("BISCM"), "biscm"),
-            Some("BISCM".into())
+            pick_current_schema(&ora, Some("APPDB"), "appdb"),
+            Some("APPDB".into())
         );
         assert_eq!(
             pick_current_schema(&ora, None, "hr"),
@@ -10690,24 +10690,24 @@ mod detail_cache_tests {
     /// 상세 캐시 무효화 범위(09-26): 전부 · 스키마 · 객체(하위/컬럼 포함) — 이름이 접두사인 다른 객체는 건드리지 않는다.
     #[test]
     fn detail_cache_invalidation_scope() {
-        let o = "o:BISCM.EMP:Table";
-        let c = "c:BISCM.EMP.NAME";
-        let i = "i:BISCM.EMP:Indexes:EMP_PK";
-        let other = "o:BISCM.EMP2:Table";
+        let o = "o:APPDB.EMP:Table";
+        let c = "c:APPDB.EMP.NAME";
+        let i = "i:APPDB.EMP:Indexes:EMP_PK";
+        let other = "o:APPDB.EMP2:Table";
         let other_schema = "o:HR.EMP:Table";
         for k in [o, c, i, other, other_schema] {
             assert!(detail_key_hit(k, None, None));
         }
-        assert!(detail_key_hit(o, Some("BISCM"), None));
-        assert!(!detail_key_hit(other_schema, Some("BISCM"), None));
-        assert!(detail_key_hit(o, Some("BISCM"), Some("EMP")));
-        assert!(detail_key_hit(c, Some("BISCM"), Some("EMP")));
-        assert!(detail_key_hit(i, Some("BISCM"), Some("EMP")));
+        assert!(detail_key_hit(o, Some("APPDB"), None));
+        assert!(!detail_key_hit(other_schema, Some("APPDB"), None));
+        assert!(detail_key_hit(o, Some("APPDB"), Some("EMP")));
+        assert!(detail_key_hit(c, Some("APPDB"), Some("EMP")));
+        assert!(detail_key_hit(i, Some("APPDB"), Some("EMP")));
         assert!(
-            !detail_key_hit(other, Some("BISCM"), Some("EMP")),
+            !detail_key_hit(other, Some("APPDB"), Some("EMP")),
             "EMP2는 EMP가 아니다"
         );
-        assert!(!detail_key_hit(other_schema, Some("BISCM"), Some("EMP")));
+        assert!(!detail_key_hit(other_schema, Some("APPDB"), Some("EMP")));
         assert!(!detail_key_hit("x", Some("A"), None));
     }
 
@@ -10715,7 +10715,7 @@ mod detail_cache_tests {
     /// 시스템 DB(`extra == SYSTEM`)는 따로 · 노드 열쇠에 DB 이름.
     #[test]
     fn ssms_tree_shapes() {
-        let kids = super::ssms_db_children("BISCM_MS", 3);
+        let kids = super::ssms_db_children("APPDB_MS", 3);
         assert_eq!(kids.len(), 6);
         assert!(matches!(
             kids[0].kind,
@@ -10726,10 +10726,10 @@ mod detail_cache_tests {
         ));
         assert!(matches!(
             kids[4].kind,
-            super::NodeKind::Group { group: super::GroupKind::Programmability, db: Some(ref d) } if d == "BISCM_MS"
+            super::NodeKind::Group { group: super::GroupKind::Programmability, db: Some(ref d) } if d == "APPDB_MS"
         ));
         let prog =
-            super::ssms_group_children(Some("BISCM_MS"), super::GroupKind::Programmability, 4);
+            super::ssms_group_children(Some("APPDB_MS"), super::GroupKind::Programmability, 4);
         assert_eq!(prog.len(), 5);
         assert!(matches!(
             prog[2].kind,
@@ -10738,7 +10738,7 @@ mod detail_cache_tests {
                 ..
             }
         ));
-        let sec = super::ssms_group_children(Some("BISCM_MS"), super::GroupKind::Security, 4);
+        let sec = super::ssms_group_children(Some("APPDB_MS"), super::GroupKind::Security, 4);
         assert_eq!(sec.len(), 3);
         // ★ 서버 수준(10-01 ㉖): 보안 6(로그인 먼저) · 서버 개체 4(백업 디바이스 · 엔드포인트 · 연결된 서버 · 트리거).
         let ssec = super::ssms_group_children(None, super::GroupKind::ServerSecurity, 2);
@@ -10773,7 +10773,7 @@ mod detail_cache_tests {
         let (user, sys) = super::ssms_split_dbs(
             &[
                 mk("master", "SYSTEM"),
-                mk("BISCM_MS", ""),
+                mk("APPDB_MS", ""),
                 mk("tempdb", "SYSTEM"),
             ],
             2,
@@ -10781,7 +10781,7 @@ mod detail_cache_tests {
         assert_eq!(user.len(), 1);
         assert_eq!(sys.len(), 2);
         assert_eq!(sys[0].depth, 3, "시스템 DB는 묶음 아래 한 단계 더");
-        assert_eq!(super::node_key(&user[0].kind), "d:BISCM_MS");
+        assert_eq!(super::node_key(&user[0].kind), "d:APPDB_MS");
         assert_eq!(
             super::node_key(&super::NodeKind::Group {
                 db: Some("X".into()),

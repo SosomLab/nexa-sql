@@ -636,7 +636,7 @@ mod tests {
     /// 사용자 관용 스크립트(Golden) — 앞에서 대입한 것 · OUT일 수 있는 호출 인자 · INTO 대상은 묻지 않는다.
     #[test]
     fn assigned_before_use_is_not_asked() {
-        let src = "EXEC :V_CD := 'SEBANG';\nEXEC\nSELECT a, b INTO :V_A, :V_B FROM t WHERE cd = :V_CD\n;\n\
+        let src = "EXEC :V_CD := 'ACME';\nEXEC\nSELECT a, b INTO :V_A, :V_B FROM t WHERE cd = :V_CD\n;\n\
                    SELECT :V_A, :V_B, :V_CD FROM DUAL;\nVAR PC REFCURSOR;\nEXEC p(:PC, :V_CD, :PC2);\n";
         assert!(needs(src, &VarStore::new()).is_empty());
     }

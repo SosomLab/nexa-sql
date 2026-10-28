@@ -633,7 +633,7 @@ mod tests {
         p.panel = Some("bookmarks".into());
         p.search = Some("select \"q\"".into());
         p.bm_collapsed = vec![0, 7];
-        p.profiles = vec!["BISCM".into(), "Local".into()];
+        p.profiles = vec!["APPDB".into(), "Local".into()];
         p.save().unwrap();
         let text = p.to_json();
         assert!(text.contains("\"preview\": true"), "{text}");

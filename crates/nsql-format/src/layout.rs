@@ -3953,13 +3953,13 @@ FROM
             comma_gap: crate::Gap::Tab,
             comment_gap: crate::Gap::Tab,
             table_comments: vec![
-                ("BISCM.TB_ORDER".into(), "주문".into()),
+                ("APPDB.TB_ORDER".into(), "주문".into()),
                 ("TB_ITEM".into(), "품목".into()),
             ],
             ..Options::default()
         };
-        let out = format_basic("select 1 from biscm.tb_order a inner join tb_item b on b.k = a.k left join tb_none c on c.k = a.k, (select 1 from dual) d", &o);
-        assert!(out.contains("biscm.tb_order a\t--\t주문\n"), "{out}");
+        let out = format_basic("select 1 from appdb.tb_order a inner join tb_item b on b.k = a.k left join tb_none c on c.k = a.k, (select 1 from dual) d", &o);
+        assert!(out.contains("appdb.tb_order a\t--\t주문\n"), "{out}");
         assert!(out.contains("INNER JOIN tb_item b\t--\t품목\n"), "{out}");
         assert!(out.contains("LEFT JOIN tb_none c\n"), "{out}");
         assert!(!out.contains("d\t--"), "{out}");

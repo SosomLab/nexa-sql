@@ -420,19 +420,19 @@ mod tests {
     #[test]
     fn column_and_table_cards_from_snapshot() {
         let mut m = MetaStore::new(1 << 24);
-        m.set_schemas(&["BISCM".into()], Some("BISCM"));
+        m.set_schemas(&["APPDB".into()], Some("APPDB"));
         m.load_bucket(
-            "BISCM",
+            "APPDB",
             nsql_catalog::ObjectKind::Table,
             &[NewObj {
-                name: "M4S_I002040".into(),
+                name: "DMS_I002040".into(),
                 ..Default::default()
             }],
             1,
         );
         let id = m
             .snapshot()
-            .lookup(&m.names, Some("BISCM"), "M4S_I002040")
+            .lookup(&m.names, Some("APPDB"), "DMS_I002040")
             .expect("card");
         m.set_columns(
             id,
@@ -535,7 +535,7 @@ mod tests {
             && v[0].contains("#1/1")));
         let tcard =
             build(&Target::Object(id), &m.names, &snap, Some(Dialect::Oracle)).expect("card");
-        assert_eq!(tcard.title, "M4S_I002040");
+        assert_eq!(tcard.title, "DMS_I002040");
         assert!(tcard
             .rows
             .iter()

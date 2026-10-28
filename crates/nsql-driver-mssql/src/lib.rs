@@ -9,7 +9,7 @@
 //! SELECT @V_CD AS [V_CD], @V_SEQ AS [V_SEQ];  -- InOut일 때만 트레일러 → 마지막 결과 집합 = OUT 값
 //! ```
 //! ★ 선언 없이 처음 값을 받는 변수(`Auto` · 값 NULL · `EXEC :V := (SELECT COUNT(*) …)`)는 **`sql_variant`**로 선언한다(T-162 ⑤ ·
-//! 10-05 M4PLAN): 종전 `NVARCHAR(4000)`은 서버가 숫자를 글자로 바꿔 돌려줘 변수가 `VARCHAR2(1)`로 남았다(다음 바인드도 글자).
+//! 10-05 PLANDB): 종전 `NVARCHAR(4000)`은 서버가 숫자를 글자로 바꿔 돌려줘 변수가 `VARCHAR2(1)`로 남았다(다음 바인드도 글자).
 //! tiberius는 sql_variant 열을 못 읽으므로 트레일러에서 값은 글자로 · 기저 타입은 `SQL_VARIANT_PROPERTY(…, 'BaseType')`을
 //! `[이름$type]` 열로 함께 받아 클라이언트가 `Int`/`Decimal`/`Float`/`Bool`로 되돌린다(`variant_value`). 한계 = sql_variant는
 //! `(n)varchar(max)`·`xml`·`text` 값을 못 받는다(서버 오류 · 그런 열은 `VARIABLE v VARCHAR2(8000)`로 선언하면 종전 길).
@@ -1378,7 +1378,7 @@ mod tests {
     /// T-309: 3부 이름 = `[DB].` 접두(대괄호/따옴표 벗김 · `]` 이스케이프) · 1·2부 = 빈 글.
     #[test]
     fn db_prefix_only_for_three_part_names() {
-        assert_eq!(super::db_prefix("M4PLAN_MS.dbo.NSQLT_BULK"), "[M4PLAN_MS].");
+        assert_eq!(super::db_prefix("PLANDB_MS.dbo.NSQLT_BULK"), "[PLANDB_MS].");
         assert_eq!(super::db_prefix("[My DB].[dbo].[T]"), "[My DB].");
         assert_eq!(super::db_prefix("\"a]b\".dbo.T"), "[a]]b].");
         assert_eq!(super::db_prefix("dbo.T"), "");

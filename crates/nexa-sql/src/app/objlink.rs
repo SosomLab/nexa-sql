@@ -555,9 +555,9 @@ pub(crate) fn scan(
                             name,
                             known: true,
                         }),
-                        // ★ 적힌 스키마에 없는 한정 이름(사용자 10-08 "`CREATE … BISCM.SP_X`인데 이 서버엔 BISCM_SB에만 있다 ·
+                        // ★ 적힌 스키마에 없는 한정 이름(사용자 10-08 "`CREATE … APPDB.SP_X`인데 이 서버엔 APPDB_SB에만 있다 ·
                         //   Ctrl을 눌러도 링크가 없다"): DDL 머리 자리(`PROCEDURE/TABLE … 뒤`)나 호출 꼴 `(`이면 **미확인 링크**(벽돌색)로
-                        //   남겨 툴팁 "(BISCM에 없음 · BISCM_SB에 있음)"과 우클릭 "다른 스키마의 같은 이름 ▸"이 닿게 한다.
+                        //   남겨 툴팁 "(APPDB에 없음 · APPDB_SB에 있음)"과 우클릭 "다른 스키마의 같은 이름 ▸"이 닿게 한다.
                         _ => {
                             let head = ddl_head_kind(&prev_up);
                             let exec = matches!(prev_up.as_str(), "EXEC" | "EXECUTE" | "CALL");
@@ -657,7 +657,7 @@ pub(crate) struct ObjLinks {
     pub rev: u64,
     /// 분석에 쓴 메타 스냅숏 stamp — 메타가 채워지면(컬럼·상세 도착) 다시 판정한다.
     pub stamp: u64,
-    /// ★ 분석에 쓴 **세션 키**(세션 id · 현재 스키마 · 계정) — 탭의 연결이 바뀌면 다시 판정한다(사용자 09-30 "BISCM/SQLEDU 전환
+    /// ★ 분석에 쓴 **세션 키**(세션 id · 현재 스키마 · 계정) — 탭의 연결이 바뀌면 다시 판정한다(사용자 09-30 "APPDB/EDU01 전환
     ///   뒤 이전 세션의 판정이 남아 있었다").
     pub sess_key: String,
     /// 분석한 문자 구간 — 전체면 `(0, len)` · 부분(큰 파일)이면 보이는 구간을 문장 경계까지 넓힌 것.
@@ -1873,7 +1873,7 @@ impl App {
     }
 
     /// 탭 세션의 현재 스키마(접속 `?schema=` → 사용자) — 링크 판정·설명·선적재가 **같은 규칙**으로 이름을 푼다(사용자 09-30
-    /// "BISCM으로 접속했는데 SQLEDU 객체 설명이 보인다" = 설명 경로가 전 스키마 조회를 쓰고 있었다).
+    /// "APPDB으로 접속했는데 EDU01 객체 설명이 보인다" = 설명 경로가 전 스키마 조회를 쓰고 있었다).
     pub(crate) fn objlink_cur_schema(&self) -> Option<String> {
         // 서버가 답한 현재 스키마(접속 직후) → 접속 `?schema=` → 사용자 이름.
         self.sess
@@ -3331,7 +3331,7 @@ mod tests {
     #[test]
     fn qualified_name_missing_in_schema_is_unknown_link_at_ddl_head() {
         let v = scan(
-            "CREATE OR REPLACE PROCEDURE BISCM.SP_NOPE (p IN NUMBER) AS BEGIN OTHER.FN_NOPE(1); END;",
+            "CREATE OR REPLACE PROCEDURE APPDB.SP_NOPE (p IN NUMBER) AS BEGIN OTHER.FN_NOPE(1); END;",
             Some(nsql_core::Dialect::Oracle),
             &Fake,
         );
@@ -3340,7 +3340,7 @@ mod tests {
             .find(|l| l.name == "SP_NOPE")
             .expect("ddl head link");
         assert_eq!(sp.kind, LinkKind::Routine);
-        assert_eq!(sp.schema.as_deref(), Some("BISCM"));
+        assert_eq!(sp.schema.as_deref(), Some("APPDB"));
         assert!(!sp.known);
         let fn_ = v.iter().find(|l| l.name == "FN_NOPE").expect("call link");
         assert!(!fn_.known && fn_.kind == LinkKind::Routine);
@@ -3435,7 +3435,7 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
 
     #[test]
     fn links_tables_columns_and_routines() {
-        let v = kinds("select a.ord_no, item_nm, nvl(a.qty, 0), fn_calc(1) from biscm.tb_order a inner join tb_item b on b.item_cd = a.item_cd where pkg_x.is_ok(a.ord_no) = 'Y'");
+        let v = kinds("select a.ord_no, item_nm, nvl(a.qty, 0), fn_calc(1) from appdb.tb_order a inner join tb_item b on b.item_cd = a.item_cd where pkg_x.is_ok(a.ord_no) = 'Y'");
         let names: Vec<&str> = v.iter().map(|(n, _, _)| n.as_str()).collect();
         assert!(
             names.contains(&"tb_order") && names.contains(&"tb_item"),
@@ -3474,13 +3474,13 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
         );
         // 스키마 한정 테이블.
         let t = scan(
-            "select 1 from biscm.tb_order x",
+            "select 1 from appdb.tb_order x",
             Some(nsql_core::Dialect::Oracle),
             &Fake,
         );
         assert_eq!(t.len(), 1);
-        assert_eq!(t[0].schema.as_deref(), Some("biscm"));
-        assert_eq!(t[0].qualified(true), "biscm.tb_order");
+        assert_eq!(t[0].schema.as_deref(), Some("appdb"));
+        assert_eq!(t[0].qualified(true), "appdb.tb_order");
         assert_eq!(t[0].qualified(false), "tb_order");
         assert!(t[0].known);
     }
@@ -3604,46 +3604,36 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
     #[test]
     fn schema_visible_rules() {
         use super::schema_visible;
-        // SQLEDU 세션(수집 계정 BISCM): 자기 스키마 O · BISCM 것 X · PUBLIC O.
+        // EDU01 세션(수집 계정 APPDB): 자기 스키마 O · APPDB 것 X · PUBLIC O.
         assert!(schema_visible(
-            "SQLEDU",
-            Some("SQLEDU"),
-            Some("SQLEDU"),
-            Some("BISCM")
+            "EDU01",
+            Some("EDU01"),
+            Some("EDU01"),
+            Some("APPDB")
         ));
         assert!(!schema_visible(
-            "BISCM",
-            Some("SQLEDU"),
-            Some("SQLEDU"),
-            Some("BISCM")
+            "APPDB",
+            Some("EDU01"),
+            Some("EDU01"),
+            Some("APPDB")
         ));
         assert!(schema_visible(
             "PUBLIC",
-            Some("SQLEDU"),
-            Some("SQLEDU"),
-            Some("BISCM")
+            Some("EDU01"),
+            Some("EDU01"),
+            Some("APPDB")
         ));
-        // BISCM 세션(수집 계정 BISCM): SQLEDU 것도 O(권한이 있어 수집됐다) · 계정 모르면 X.
+        // APPDB 세션(수집 계정 APPDB): EDU01 것도 O(권한이 있어 수집됐다) · 계정 모르면 X.
         assert!(schema_visible(
-            "SQLEDU",
-            Some("BISCM"),
-            Some("BISCM"),
-            Some("BISCM")
+            "EDU01",
+            Some("APPDB"),
+            Some("APPDB"),
+            Some("APPDB")
         ));
-        assert!(!schema_visible(
-            "SQLEDU",
-            Some("BISCM"),
-            None,
-            Some("BISCM")
-        ));
-        assert!(!schema_visible(
-            "SQLEDU",
-            Some("BISCM"),
-            Some("BISCM"),
-            None
-        ));
+        assert!(!schema_visible("EDU01", Some("APPDB"), None, Some("APPDB")));
+        assert!(!schema_visible("EDU01", Some("APPDB"), Some("APPDB"), None));
         // 대소문자 무시.
-        assert!(schema_visible("sqledu", Some("SQLEDU"), None, None));
+        assert!(schema_visible("edu01", Some("EDU01"), None, None));
     }
 
     /// ㉙ 시스템 객체 분류(순수): 패키지 · 사전 객체 · 접두 · 모르는 이름.
@@ -3667,7 +3657,7 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
             Some(ObjClass::Relation)
         );
         assert_eq!(
-            builtin_class(Some(Dialect::Oracle), Some("BISCM"), "ALL_TABLES"),
+            builtin_class(Some(Dialect::Oracle), Some("APPDB"), "ALL_TABLES"),
             None
         );
         assert_eq!(

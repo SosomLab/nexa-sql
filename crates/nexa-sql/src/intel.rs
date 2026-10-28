@@ -578,7 +578,7 @@ impl Intel {
                     if a.local {
                     } else if let Some(m) = meta {
                         match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
-                            // ★ 데이터베이스·스키마 같은 "컬럼 없는" 객체가 이름만 같을 때(`FROM BISCM_MS.` · 10-01 ⑭)는 별칭 해석이 아니다 —
+                            // ★ 데이터베이스·스키마 같은 "컬럼 없는" 객체가 이름만 같을 때(`FROM APPDB_MS.` · 10-01 ⑭)는 별칭 해석이 아니다 —
                             //   아래 3부 이름 분기로.
                             Some(id)
                                 if m.snap.object(id).is_some_and(|o| {
@@ -943,7 +943,7 @@ impl Intel {
                 if let Some(m) = meta {
                     if let Some(cur) = m.snap.current_schema {
                         // ★ 현재 스키마의 관계 객체 = 접두 없이 바로(사용자 09-23). 버킷이 아직 없으면 호스트에 채움을 요청하고
-                        //   "불러오는 중"을 보인다 · 상한 없이 다 넣고 랭킹이 자른다(종전 = 이름순 앞 200개만 → `M4S_*`가 잘렸다).
+                        //   "불러오는 중"을 보인다 · 상한 없이 다 넣고 랭킹이 자른다(종전 = 이름순 앞 200개만 → `DMS_*`가 잘렸다).
                         //   ★ 뷰·구체화 뷰·시노님은 테이블과 같은 레이어 · 함수·패키지·프로시저는 낮은 레이어(`from_kinds` · 사용자 09-24).
                         for kind in from_kinds(dialect, self.cfg.routines) {
                             self.note_coverage(m, cur, kind);
@@ -2225,7 +2225,7 @@ fn push_need(v: &mut Vec<String>, name: &str) {
 fn kind_order(k: ObjectKind) -> u32 {
     match k {
         // ★ 같은 층(테이블·뷰·구체화 뷰·시노님)은 종류로 가르지 않는다 — 종류 우선이면 뷰가 테이블 449개 뒤로 밀려 상한(`intel.max_items`)
-        //   밖에서 사라졌다(BISCM 실측 · 사용자 09-24 "V로 시작하는 뷰가 목록 끝에 보이지 않아").
+        //   밖에서 사라졌다(APPDB 실측 · 사용자 09-24 "V로 시작하는 뷰가 목록 끝에 보이지 않아").
         ObjectKind::Table
         | ObjectKind::View
         | ObjectKind::MaterializedView
@@ -2682,9 +2682,9 @@ mod tests {
     /// 이름 지정 인자 도우미(T-317 확장 · 10-08): 인자 시작 = `(`·`,` 뒤 · 이미 적은 `이름 =>` 수집.
     #[test]
     fn named_arg_helpers() {
-        assert!(named_arg_start("EXEC BISCM.SP_X("));
-        assert!(named_arg_start("EXEC BISCM.SP_X(p_a => 1, "));
-        assert!(!named_arg_start("EXEC BISCM.SP_X(p_a => "));
+        assert!(named_arg_start("EXEC APPDB.SP_X("));
+        assert!(named_arg_start("EXEC APPDB.SP_X(p_a => 1, "));
+        assert!(!named_arg_start("EXEC APPDB.SP_X(p_a => "));
         assert!(!named_arg_start("SELECT fn(a"));
         assert_eq!(
             named_args_used("EXEC SP_X(p_pjt_code => 'A', p_result=>:r, "),
@@ -3468,43 +3468,43 @@ mod tests {
         ));
     }
 
-    /// 09-23(사용자 "FROM 뒤 M4S_ 테이블이 안 보인다 · MI40으로도 · 권한 반영 사전 뷰 · 기본 스키마 접속 시 · 스키마. 시점 캐싱"):
+    /// 09-23(사용자 "FROM 뒤 DMS_ 테이블이 안 보인다 · MI40으로도 · 권한 반영 사전 뷰 · 기본 스키마 접속 시 · 스키마. 시점 캐싱"):
     /// 버킷이 없으면 채움 요청 + "불러오는 중" · 채워지면 이름순 상한 없이 전부가 랭킹 대상 · 약어 퍼지 · 사전 버킷 우선 · 스키마. 요청 · 문서 언급 판정.
     /// ★ FROM 자리(사용자 09-24): 뷰·구체화 뷰 = 테이블과 같은 레이어(일치 등급으로 경쟁) · 함수(테이블 함수 먼저)·패키지·
     /// 프로시저 = 낮은 레이어 · `스키마.`에서도 같은 표 · 함수 확정 = `NAME()` 캐럿 안.
-    /// ★ BISCM 실측 재현(사용자 09-24): 테이블 449 + 뷰 1(`VM4S_I002040`) + 프로시저 72 · 페이지 200 → 첫 페이지 200 + "322개 더" ·
+    /// ★ APPDB 실측 재현(사용자 09-24): 테이블 449 + 뷰 1(`VDMS_I002040`) + 프로시저 72 · 페이지 200 → 첫 페이지 200 + "322개 더" ·
     /// 끝에 닿을 때마다 200씩 이어 붙어 전부(76 §13 · T-196).
     #[test]
     fn view_survives_max_items_cut_among_many_tables() {
         let mut m = MetaStore::new(1 << 24);
-        m.set_schemas(&["BISCM".into()], Some("BISCM"));
+        m.set_schemas(&["APPDB".into()], Some("APPDB"));
         let tables: Vec<NewObj> = (0..449)
             .map(|i| NewObj {
-                name: format!("M4S_I{i:06}"),
+                name: format!("DMS_I{i:06}"),
                 ..Default::default()
             })
             .collect();
-        m.load_bucket("BISCM", ObjectKind::Table, &tables, 1);
+        m.load_bucket("APPDB", ObjectKind::Table, &tables, 1);
         m.load_bucket(
-            "BISCM",
+            "APPDB",
             ObjectKind::View,
             &[NewObj {
-                name: "VM4S_I002040".into(),
+                name: "VDMS_I002040".into(),
                 ..Default::default()
             }],
             1,
         );
-        m.load_bucket("BISCM", ObjectKind::MaterializedView, &[], 1);
-        m.load_bucket("BISCM", ObjectKind::Synonym, &[], 1);
-        m.load_bucket("BISCM", ObjectKind::Function, &[], 1);
-        m.load_bucket("BISCM", ObjectKind::Package, &[], 1);
+        m.load_bucket("APPDB", ObjectKind::MaterializedView, &[], 1);
+        m.load_bucket("APPDB", ObjectKind::Synonym, &[], 1);
+        m.load_bucket("APPDB", ObjectKind::Function, &[], 1);
+        m.load_bucket("APPDB", ObjectKind::Package, &[], 1);
         let procs: Vec<NewObj> = (0..72)
             .map(|i| NewObj {
                 name: format!("SP_{i:03}"),
                 ..Default::default()
             })
             .collect();
-        m.load_bucket("BISCM", ObjectKind::Procedure, &procs, 1);
+        m.load_bucket("APPDB", ObjectKind::Procedure, &procs, 1);
         m.load_bucket(nsql_catalog::DICT_SCHEMA, ObjectKind::View, &[], 1);
         let mut c = cfg();
         c.routines = true;
@@ -3533,7 +3533,7 @@ mod tests {
         assert_eq!(ids.len(), 201, "첫 페이지 200 + 안내 1");
         assert!(ids.contains(&"intel:more"), "N개 더 안내: {ids:?}");
         assert!(
-            it.cands[..200].iter().all(|c| c.text.starts_with("M4S_")),
+            it.cands[..200].iter().all(|c| c.text.starts_with("DMS_")),
             "첫 페이지 = 같은 층에서 길이·이름순 앞 200"
         );
         // ★ 페이지 로딩(T-196): End로 끝에 닿으면 200씩 이어 붙는다 · 뷰(길이순 끝)는 셋째 페이지 · 프로시저(아래 층)는 맨 뒤.
@@ -3550,7 +3550,7 @@ mod tests {
         assert_eq!(it.menu.item_ids().len(), 451, "전부 = 안내 없음");
         assert!(!it.extend(), "더 없음");
         let all: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
-        let view_at = all.iter().position(|n| *n == "VM4S_I002040").expect("view");
+        let view_at = all.iter().position(|n| *n == "VDMS_I002040").expect("view");
         assert!(view_at > 200, "{view_at}");
         assert!(
             !all.iter().any(|n| n.starts_with("SP_")),
@@ -4189,7 +4189,7 @@ mod tests {
             texts.contains(&"dbo".to_string()) && texts.contains(&"sys.tables".to_string()),
             "{texts:?}"
         );
-        // 2) 테이블 300개(이름순으로 M4S_*가 200번째 뒤) + 권한 반영 사전 버킷 → 상한 없이 · 퍼지 약어 · 사전은 서버 것.
+        // 2) 테이블 300개(이름순으로 DMS_*가 200번째 뒤) + 권한 반영 사전 버킷 → 상한 없이 · 퍼지 약어 · 사전은 서버 것.
         let mut objs: Vec<NewObj> = (0..300)
             .map(|i| NewObj {
                 name: format!("A{i:03}"),
@@ -4197,11 +4197,11 @@ mod tests {
             })
             .collect();
         objs.push(NewObj {
-            name: "M4S_I002040".into(),
+            name: "DMS_I002040".into(),
             ..Default::default()
         });
         objs.push(NewObj {
-            name: "M4S_I002050".into(),
+            name: "DMS_I002050".into(),
             ..Default::default()
         });
         m.load_bucket("dbo", ObjectKind::Table, &objs, 1);
@@ -4226,17 +4226,17 @@ mod tests {
             ],
             1,
         );
-        let texts = req(&mut it, &m, "SELECT * FROM M4S_");
+        let texts = req(&mut it, &m, "SELECT * FROM DMS_");
         assert!(!it.is_loading());
         assert!(it.take_need_objects().is_empty());
         assert_eq!(
             &texts[..2],
-            &["M4S_I002040".to_string(), "M4S_I002050".to_string()],
+            &["DMS_I002040".to_string(), "DMS_I002050".to_string()],
             "{texts:?}"
         );
         let texts = req(&mut it, &m, "SELECT * FROM MI40");
         assert!(
-            texts.contains(&"M4S_I002040".to_string()),
+            texts.contains(&"DMS_I002040".to_string()),
             "약어 퍼지: {texts:?}"
         );
         let texts = req(&mut it, &m, "SELECT * FROM sys");
@@ -4339,7 +4339,7 @@ mod alias_slot_tests {
         let c = |src: &str| intel::context_at(src, src.len(), o);
         assert!(alias_slot(&c("SELECT * FROM ")));
         assert!(alias_slot(&c("SELECT * FROM STG.IF_PP")));
-        assert!(alias_slot(&c("SELECT * FROM M4PLAN_MS.dbo.IF_")));
+        assert!(alias_slot(&c("SELECT * FROM PLANDB_MS.dbo.IF_")));
         assert!(!alias_slot(&c("SELECT a.")), "식 자리의 별칭 멤버 = 아님");
         assert!(!alias_slot(&c("SELECT ")), "식 자리 = 아님");
     }

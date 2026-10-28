@@ -48,7 +48,7 @@ impl App {
                 if let Some(ConnectIntent::Connect(spec)) = intent {
                     // 전용 탭의 CONNECT가 **같은 서버·계정**이면(동일성 = `same_server`) 설정 `connect.reconnect_same`에 따라:
                     //   끔 = 기존 접속 유지(CONNECT 명령만 지우고 나머지 실행) · 켬 = 명시적 재접속(끊고 다시).
-                    // ★ 프로필 이름(`CONNECT M4PLAN`)은 저장소에서 **완성한 스펙으로 비교**한다 — 이름뿐인 스펙은 어떤 접속과도
+                    // ★ 프로필 이름(`CONNECT PLANDB`)은 저장소에서 **완성한 스펙으로 비교**한다 — 이름뿐인 스펙은 어떤 접속과도
                     //   같지 않아서 되풀이할 때마다 다시 접속했다(사용자 09-21). 세션의 스펙은 접속 뒤 이미 완성본이다(`explorer_attach`).
                     let target = sessions::bare_profile_name(&spec)
                         .and_then(|n| {

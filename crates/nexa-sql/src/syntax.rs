@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(r.for_title("readme.md").name, "Plain Text");
         // 객체 백업 파일(D-305) = 17자리 시각 확장자 → SQL · 16자리·글자 섞임 = Plain Text.
         assert_eq!(
-            r.for_title("BISCM_HR.EMP_TABLE.20261015174436123").name,
+            r.for_title("APPDB_HR.EMP_TABLE.20261015174436123").name,
             "SQL"
         );
         assert_eq!(r.for_title("x.2026101517443612").name, "Plain Text");

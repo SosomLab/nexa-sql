@@ -338,14 +338,14 @@ mod tests {
     #[test]
     fn alter_constraint_member() {
         let d = ddl_target(
-            "ALTER TABLE BISCM.M4S_O400100 ADD CONSTRAINT PK_M4S_O400100 PRIMARY KEY (MP_VRSN_ID)",
+            "ALTER TABLE APPDB.DMS_O400100 ADD CONSTRAINT PK_DMS_O400100 PRIMARY KEY (MP_VRSN_ID)",
             Dialect::Oracle,
         )
         .unwrap();
         assert_eq!((d.verb, d.kind), (DdlVerb::Alter, DdlKind::Table));
-        assert_eq!(d.schema.as_deref(), Some("BISCM"));
-        assert_eq!(d.name, "M4S_O400100");
-        assert_eq!(d.member.as_deref(), Some("PK_M4S_O400100"));
+        assert_eq!(d.schema.as_deref(), Some("APPDB"));
+        assert_eq!(d.name, "DMS_O400100");
+        assert_eq!(d.member.as_deref(), Some("PK_DMS_O400100"));
         let d = ddl_target(
             "ALTER TABLE dbo.SALES_ORDER DROP CONSTRAINT DF_SALES_ORDER_USE_YN",
             Dialect::Mssql,
@@ -353,7 +353,7 @@ mod tests {
         .unwrap();
         assert_eq!(d.member.as_deref(), Some("DF_SALES_ORDER_USE_YN"));
         let d = ddl_target(
-            "ALTER TABLE M4S_O400100 ADD (MP_VRSN_ID VARCHAR2(20))",
+            "ALTER TABLE DMS_O400100 ADD (MP_VRSN_ID VARCHAR2(20))",
             Dialect::Oracle,
         )
         .unwrap();

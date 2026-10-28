@@ -1085,7 +1085,7 @@ impl ExplorerSet {
         true
     }
 
-    /// ★ 탭의 연결이 다른 서버 칸으로 바뀌었다(10-01 ㉗-j · 사용자 "BISCM 추가 접속 뒤에는 탐색기가 BISCM 연결로 옮겨 가야"): 그 칸으로
+    /// ★ 탭의 연결이 다른 서버 칸으로 바뀌었다(10-01 ㉗-j · 사용자 "APPDB 추가 접속 뒤에는 탐색기가 APPDB 연결로 옮겨 가야"): 그 칸으로
     ///   선택을 옮기고 현재 스키마 행이 보이게 스크롤. 칸이 없거나 아직 안 읽혔으면 false(다음 기회).
     pub(crate) fn focus_server(&mut self, spec: Option<&ConnectSpec>) -> bool {
         let Some(i) = spec.and_then(|s| self.find(s)) else {

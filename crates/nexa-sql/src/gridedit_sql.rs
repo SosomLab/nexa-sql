@@ -1327,12 +1327,12 @@ mod tests {
     fn inject_keeps_trailing_line_comment_out_of_the_way() {
         let rid = physical_cols(Dialect::Oracle);
         // 사용자 원문 그대로(탭 · 두 줄 주석 · 조건 주석).
-        let src = "--\t샘플 생성\nSELECT\n\t*\n--\tSELECT DISTINCT A.MP_VRSN_ID\nFROM\n\tDEMO_BSY A\nWHERE 1=1\n-- AND A.MP_VRSN_ID\t=\t'MP_202606_PW26_V01'\nAND A.MP_VRSN_ID\t=\t'MP_202607_W27_V06'\nAND\tA.TIME_INDEX\t=\t1\nAND\tA.IN_ITEM_CD\t=\t'PCC31395@SEBANG'";
+        let src = "--\t샘플 생성\nSELECT\n\t*\n--\tSELECT DISTINCT A.MP_VRSN_ID\nFROM\n\tDEMO_BSY A\nWHERE 1=1\n-- AND A.MP_VRSN_ID\t=\t'MP_202606_PW26_V01'\nAND A.MP_VRSN_ID\t=\t'MP_202607_W27_V06'\nAND\tA.TIME_INDEX\t=\t1\nAND\tA.IN_ITEM_CD\t=\t'PCC31395@ACME'";
         let tg = analyze(src).expect("ok");
         let got = inject(src, &tg, Dialect::Oracle, &rid).expect("inject");
         assert_eq!(
             got,
-            "--\t샘플 생성\nSELECT\n\tA.*, A.ROWID\n--\tSELECT DISTINCT A.MP_VRSN_ID\nFROM\n\tDEMO_BSY A\nWHERE 1=1\n-- AND A.MP_VRSN_ID\t=\t'MP_202606_PW26_V01'\nAND A.MP_VRSN_ID\t=\t'MP_202607_W27_V06'\nAND\tA.TIME_INDEX\t=\t1\nAND\tA.IN_ITEM_CD\t=\t'PCC31395@SEBANG'"
+            "--\t샘플 생성\nSELECT\n\tA.*, A.ROWID\n--\tSELECT DISTINCT A.MP_VRSN_ID\nFROM\n\tDEMO_BSY A\nWHERE 1=1\n-- AND A.MP_VRSN_ID\t=\t'MP_202606_PW26_V01'\nAND A.MP_VRSN_ID\t=\t'MP_202607_W27_V06'\nAND\tA.TIME_INDEX\t=\t1\nAND\tA.IN_ITEM_CD\t=\t'PCC31395@ACME'"
         );
         // 별 아닌 목록이 주석으로 끝나는 경우 · 블록 주석 · 주석 뒤 줄바꿈 없이 FROM이 오는 경우.
         let src = "SELECT a -- c\nFROM t";

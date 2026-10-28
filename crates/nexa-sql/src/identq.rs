@@ -1,7 +1,7 @@
 //! ★ **식별자 인용 정책**(사용자 10-07 "필드 이름을 항상 `"`로 감쌀지 필요한 경우만인지 설정으로 · 두 경로 같은 기준 · DBMS별 표현"):
 //! 조건 바에 열 이름을 넣는 모든 길(열 머리 DnD · 셀 우클릭 ▸ 조건 ▸ · 앞으로 생길 것)이 [`quote`] 하나를 지난다.
 //! `SELECT *` 템플릿(탐색기 행 조회 · hover 카드 "데이터 200행" · 팔레트 `obj.rows`)의 **스키마·테이블 이름도 같은 정책**([`select_template`] ·
-//! 사용자 10-08 "needed면 Database · Owner · Table에도 필요할 때만") — 종전엔 늘 `"BISCM"."T"` · `[dbo].[T]`였다.
+//! 사용자 10-08 "needed면 Database · Owner · Table에도 필요할 때만") — 종전엔 늘 `"APPDB"."T"` · `[dbo].[T]`였다.
 //!
 //! - 인용 문자 = 방언(nsql-catalog `quote_ident`): Oracle · PostgreSQL · SQLite · ODBC = `"…"` · SQL Server = `[…]` · MySQL = `` `…` ``.
 //! - `always` = 늘 감싼다 · 아니면 [`needs_quote`]일 때만: 빈 이름 · 글자/`_`로 시작하지 않음 · 영숫자·`_` 밖의 글자(공백·`-`·`.`·한글 …) ·
@@ -121,12 +121,12 @@ mod tests {
     #[test]
     fn select_template_follows_quote_policy() {
         assert_eq!(
-            select_template(Dialect::Oracle, "BISCM", "APS_SCHE_IN_BOD_PATTERN", false),
-            "SELECT * FROM BISCM.APS_SCHE_IN_BOD_PATTERN WHERE ROWNUM <= 200;"
+            select_template(Dialect::Oracle, "APPDB", "APS_SCHE_IN_BOD_PATTERN", false),
+            "SELECT * FROM APPDB.APS_SCHE_IN_BOD_PATTERN WHERE ROWNUM <= 200;"
         );
         assert_eq!(
-            select_template(Dialect::Oracle, "BISCM", "APS_SCHE_IN_BOD_PATTERN", true),
-            "SELECT * FROM \"BISCM\".\"APS_SCHE_IN_BOD_PATTERN\" WHERE ROWNUM <= 200;"
+            select_template(Dialect::Oracle, "APPDB", "APS_SCHE_IN_BOD_PATTERN", true),
+            "SELECT * FROM \"APPDB\".\"APS_SCHE_IN_BOD_PATTERN\" WHERE ROWNUM <= 200;"
         );
         assert_eq!(
             select_template(Dialect::Mssql, "dbo", "LOT_BRAND", false),
@@ -138,8 +138,8 @@ mod tests {
             "예약어만 인용"
         );
         assert_eq!(
-            select_template(Dialect::Oracle, "biscm", "T", false),
-            "SELECT * FROM \"biscm\".T WHERE ROWNUM <= 200;",
+            select_template(Dialect::Oracle, "appdb", "T", false),
+            "SELECT * FROM \"appdb\".T WHERE ROWNUM <= 200;",
             "Oracle 소문자 스키마 = 접힘 위반"
         );
         assert_eq!(

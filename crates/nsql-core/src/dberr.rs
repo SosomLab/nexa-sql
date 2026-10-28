@@ -635,7 +635,7 @@ mod tests {
         let c = classify(
             Dialect::Odbc,
             Some(18456),
-            "State: 28000, Native error: 18456, Message: [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]사용자 'BISCM_MS'이(가) 로그인하지 못했습니다.",
+            "State: 28000, Native error: 18456, Message: [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]사용자 'APPDB_MS'이(가) 로그인하지 못했습니다.",
             "",
         );
         // 코드 표기 = SQL Server 표의 꼴(`Msg 18456`) 그대로.

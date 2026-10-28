@@ -2138,7 +2138,7 @@ mod dirty_tests {
         );
         assert_eq!(
             quick_profile_name(
-                &s("odbc:Driver={SQL Server};Server=172.16.1.58,1433;Database=M4PLAN;UID=u"),
+                &s("odbc:Driver={SQL Server};Server=172.16.1.58,1433;Database=PLANDB;UID=u"),
                 none
             ),
             "odbc-SQL_Server-172.16.1.58"
@@ -2207,14 +2207,14 @@ mod dirty_tests {
     fn profile_vars_edit_and_dirty() {
         let mut p = ConnectPanel::new(vec![Dialect::Oracle]);
         assert!(p.set_var(":owner", "scott"));
-        assert!(p.set_var("&Proj", "M4PLAN"));
+        assert!(p.set_var("&Proj", "PLANDB"));
         assert!(!p.set_var("1bad", "x"));
         assert!(!p.set_var("a-b", "x"));
         assert_eq!(
             p.vars(),
             &[
                 ("OWNER".to_string(), "scott".to_string()),
-                ("PROJ".to_string(), "M4PLAN".to_string())
+                ("PROJ".to_string(), "PLANDB".to_string())
             ]
         );
         assert_eq!(p.dirty(), vec![Dirty::Vars]);

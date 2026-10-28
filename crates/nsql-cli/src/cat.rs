@@ -458,12 +458,12 @@ mod tests {
     #[test]
     fn split_three_rules() {
         assert_eq!(
-            split_three("M4PLAN_MS.dbo.nsqlt_f"),
-            Some(("M4PLAN_MS".into(), Some("dbo".into()), "nsqlt_f".into()))
+            split_three("PLANDB_MS.dbo.nsqlt_f"),
+            Some(("PLANDB_MS".into(), Some("dbo".into()), "nsqlt_f".into()))
         );
         assert_eq!(
-            split_three("[M4PLAN_MS]..[nsqlt_f]"),
-            Some(("M4PLAN_MS".into(), None, "nsqlt_f".into()))
+            split_three("[PLANDB_MS]..[nsqlt_f]"),
+            Some(("PLANDB_MS".into(), None, "nsqlt_f".into()))
         );
         assert_eq!(split_three("dbo.nsqlt_f"), None, "2부 = 기존 길");
         assert_eq!(split_three("nsqlt_f"), None);

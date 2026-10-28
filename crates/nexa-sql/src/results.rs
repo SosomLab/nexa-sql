@@ -714,8 +714,8 @@ mod tests {
     #[test]
     fn titles_from_sql_and_unique_suffix() {
         assert_eq!(
-            title_from_sql(Some("M4S_I002040"), "select * from x"),
-            "M4S_I002040"
+            title_from_sql(Some("DMS_I002040"), "select * from x"),
+            "DMS_I002040"
         );
         assert_eq!(title_from_sql(None, "  select 1"), "SELECT");
         let mut p = ResultPanel::new(tab(1, 1, false), true, false);

@@ -558,7 +558,7 @@ pub(crate) fn placement(
 }
 
 /// `CONNECT <프로필 이름>`의 스펙인가 — 해석기는 이름 하나를 `user`에만 담는다(호스트·DB·방언·비밀번호 없음). 그 이름을 돌려준다.
-/// 같은 서버 판정·탐색기 붙이기는 이 이름을 저장소에서 **완성한 스펙**으로 해야 한다(사용자 09-21: `CONNECT M4PLAN`을 되풀이하면
+/// 같은 서버 판정·탐색기 붙이기는 이 이름을 저장소에서 **완성한 스펙**으로 해야 한다(사용자 09-21: `CONNECT PLANDB`을 되풀이하면
 /// 이름뿐인 스펙은 어떤 접속과도 "같은 서버"가 아니라서 매번 다시 접속했다).
 /// ★ 탭 연결정보 툴바 글(사용자 09-28): 저장된 **프로필 이름** 우선 · 없으면 `계정@호스트`(포트·DB 없이 최대한 짧게) · 호스트도 없으면 DB · 그것도 없으면 설명 원문.
 #[must_use]
@@ -1334,9 +1334,9 @@ mod tab_conn_label_tests {
     /// 프로필 이름 > 계정@호스트 > 호스트 > 계정 > DB > 설명(09-28).
     #[test]
     fn label_priority() {
-        let s = spec(Some("BISCM"), Some("172.16.1.58"), Some("BISCM"));
+        let s = spec(Some("APPDB"), Some("172.16.1.58"), Some("APPDB"));
         assert_eq!(tab_conn_label("Repository", Some(&s), "x"), "Repository");
-        assert_eq!(tab_conn_label("  ", Some(&s), "x"), "BISCM@172.16.1.58");
+        assert_eq!(tab_conn_label("  ", Some(&s), "x"), "APPDB@172.16.1.58");
         assert_eq!(
             tab_conn_label("", Some(&spec(None, Some("h"), None)), "x"),
             "h"
@@ -1531,30 +1531,30 @@ mod tests {
                 user: user.map(str::to_string),
                 ..Default::default()
             };
-        let o = sp(Some("BISCM"), None, Some("biscm"));
+        let o = sp(Some("APPDB"), None, Some("appdb"));
         assert_eq!(
-            db_unit(Some(Dialect::Oracle), Some(&o), None, Some("BISCM_SB")),
-            ("BISCM_SB".into(), true),
+            db_unit(Some(Dialect::Oracle), Some(&o), None, Some("APPDB_SB")),
+            ("APPDB_SB".into(), true),
             "서버가 말한 스키마 · 바꿀 수 있음(⑮)"
         );
         assert_eq!(
             db_unit(
                 Some(Dialect::Oracle),
                 Some(&o),
-                Some("SQLEDU"),
-                Some("BISCM_SB")
+                Some("EDU01"),
+                Some("APPDB_SB")
             ),
-            ("SQLEDU".into(), true),
+            ("EDU01".into(), true),
             "세션이 전환한 값이 메타보다 먼저(⑳)"
         );
         assert_eq!(
             db_unit(Some(Dialect::Oracle), Some(&o), None, None),
-            ("BISCM".into(), true),
+            ("APPDB".into(), true),
             "없으면 계정 대문자"
         );
         assert_eq!(
-            use_sql(Dialect::Oracle, "BISCM_SB").as_deref(),
-            Some("ALTER SESSION SET CURRENT_SCHEMA = BISCM_SB")
+            use_sql(Dialect::Oracle, "APPDB_SB").as_deref(),
+            Some("ALTER SESSION SET CURRENT_SCHEMA = APPDB_SB")
         );
         assert_eq!(
             use_sql(Dialect::Oracle, "Sb").as_deref(),
@@ -1564,15 +1564,15 @@ mod tests {
             "ALTER SESSION SET CURRENT_SCHEMA = X"
         ));
         assert!(!super::is_context_switch("ALTER TABLE t ADD c INT"));
-        let m = sp(Some("M4PLAN_MS"), None, Some("BISCM_MS"));
+        let m = sp(Some("PLANDB_MS"), None, Some("APPDB_MS"));
         assert_eq!(
-            db_unit(Some(Dialect::Mssql), Some(&m), Some("BISCM_MS"), None),
-            ("BISCM_MS".into(), true),
+            db_unit(Some(Dialect::Mssql), Some(&m), Some("APPDB_MS"), None),
+            ("APPDB_MS".into(), true),
             "USE 뒤 현재 DB"
         );
         assert_eq!(
             db_unit(Some(Dialect::Mssql), Some(&m), None, None),
-            ("M4PLAN_MS".into(), true),
+            ("PLANDB_MS".into(), true),
             "아직 모르면 프로필 DB"
         );
         assert_eq!(
@@ -1596,11 +1596,11 @@ mod tests {
         assert_eq!(
             db_unit(
                 Some(Dialect::Postgres),
-                Some(&sp(Some("matrixdb2"), None, None)),
+                Some(&sp(Some("repodb"), None, None)),
                 None,
                 Some("public")
             ),
-            ("matrixdb2".into(), false),
+            ("repodb".into(), false),
             "PG = DB 고정"
         );
         assert_eq!(
@@ -1810,8 +1810,8 @@ mod tests {
     #[test]
     fn bare_profile_name_is_a_lone_name() {
         let p = |s: &str| nsql_script::ConnectSpec::parse(s).expect("spec");
-        assert_eq!(bare_profile_name(&p("M4PLAN")), Some("M4PLAN"));
-        assert_eq!(bare_profile_name(&p("SNOP-DB")), Some("SNOP-DB"));
+        assert_eq!(bare_profile_name(&p("PLANDB")), Some("PLANDB"));
+        assert_eq!(bare_profile_name(&p("DEMO-DB")), Some("DEMO-DB"));
         assert_eq!(bare_profile_name(&p("scott@orcl")), None, "호스트가 있다");
         assert_eq!(
             bare_profile_name(&p("scott/tiger")),
@@ -2187,7 +2187,7 @@ mod tests {
         for s in [
             "SELECT * FROM emp",
             // 접속 명령 = 클라이언트 지시(비밀번호의 `#`·`:=`는 문장이 아니다 · 사용자 09-30).
-            "CONNECT oracle://SQLEDU:Pw#Demo2026@172.16.1.58:1521/BISCM",
+            "CONNECT oracle://EDU01:Pw#Demo2026@172.16.1.58:1521/APPDB",
             "CONNECT mssql://u:a:=b@h:1433/db",
             "DISCONNECT",
             // `#`이 이름 첫 글자가 아니면 임시 테이블이 아니다.

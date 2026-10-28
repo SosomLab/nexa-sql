@@ -1697,7 +1697,7 @@ pub fn score(candidate: &str, query: &str, mode: MatchMode) -> Option<u32> {
     if is_subsequence(&q.replace('_', ""), &starts_text) {
         return Some(400);
     }
-    // 부분열(약어 · `MI40` → `M4S_I002040`): 연속 일치가 많고(빈틈 적음) · 낱말 시작에 걸리는 글자가 많을수록 · 짧을수록 높게 — 100~399.
+    // 부분열(약어 · `MI40` → `DMS_I002040`): 연속 일치가 많고(빈틈 적음) · 낱말 시작에 걸리는 글자가 많을수록 · 짧을수록 높게 — 100~399.
     fuzzy_quality(&q, &c, &bounds)
 }
 
@@ -2070,7 +2070,7 @@ mod tests {
             layer: 0,
         };
         let cands = vec![
-            tbl("VM4S_I002040"),
+            tbl("VDMS_I002040"),
             tbl("APS_SCHE_IN_BOD"),
             tbl("GTT_PEG_CALC"),
         ];
@@ -2078,11 +2078,11 @@ mod tests {
         let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(
             names,
-            vec!["APS_SCHE_IN_BOD", "GTT_PEG_CALC", "VM4S_I002040"]
+            vec!["APS_SCHE_IN_BOD", "GTT_PEG_CALC", "VDMS_I002040"]
         );
-        let cands = vec![tbl("M4S_I002040_LONG"), tbl("M4S_I002040")];
+        let cands = vec![tbl("DMS_I002040_LONG"), tbl("DMS_I002040")];
         let r = rank(cands, "M4S", MatchMode::Fuzzy, &[], 10);
-        assert_eq!(r[0].text, "M4S_I002040", "접두 = 짧은 것 먼저");
+        assert_eq!(r[0].text, "DMS_I002040", "접두 = 짧은 것 먼저");
     }
 
     /// 정렬 기준(09-24): 접두 없음 = 출처 → 둘러보기 순서(순번·종류·표 순) → 이름 · 접두 있음 = 점수 → 최근 → 출처 → 순서.
@@ -2389,7 +2389,7 @@ mod tests {
     /// 완성이 `T1.컬럼`을 못 풀어 컬럼 설명 라벨 0개) · 바깥 `S`는 그대로 local · 같은 이름은 바깥이 이김 · 함수 괄호는 영향 없음.
     #[test]
     fn aliases_inside_subquery_are_visible() {
-        let src = "SELECT S.PROJECT_CD, MAX(S.INV_QTY) FROM ( SELECT T1.PROJECT_CD, T2.INV_QTY FROM M4E_I301080 T1 JOIN M4S_I002150 T2 ON T1.PROJECT_CD = T2.PROJECT_CD WHERE T2.YYMMDD = (SELECT MAX(X.YYMMDD) FROM M4S_I002150 X) ) S WHERE |";
+        let src = "SELECT S.PROJECT_CD, MAX(S.INV_QTY) FROM ( SELECT T1.PROJECT_CD, T2.INV_QTY FROM DME_I301080 T1 JOIN DMS_I002150 T2 ON T1.PROJECT_CD = T2.PROJECT_CD WHERE T2.YYMMDD = (SELECT MAX(X.YYMMDD) FROM DMS_I002150 X) ) S WHERE |";
         let c = ctx(src);
         let names: Vec<(&str, &str, bool)> = c
             .aliases
@@ -2397,10 +2397,10 @@ mod tests {
             .map(|a| (a.alias.as_str(), a.table.as_str(), a.local))
             .collect();
         assert!(names.contains(&("S", "", true)), "{names:?}");
-        assert!(names.contains(&("T1", "M4E_I301080", false)), "{names:?}");
-        assert!(names.contains(&("T2", "M4S_I002150", false)), "{names:?}");
+        assert!(names.contains(&("T1", "DME_I301080", false)), "{names:?}");
+        assert!(names.contains(&("T2", "DMS_I002150", false)), "{names:?}");
         assert!(
-            names.contains(&("X", "M4S_I002150", false)),
+            names.contains(&("X", "DMS_I002150", false)),
             "두 겹 안쪽도 {names:?}"
         );
         assert_eq!(names[0].0, "S", "바깥 먼저");
@@ -2434,12 +2434,12 @@ mod tests {
     #[test]
     fn scoring_and_ranking() {
         assert_eq!(score("emp", "emp", MatchMode::Fuzzy), Some(1000));
-        // 약어 퍼지(사용자 09-23 "M4S_I002040이라면 MI40으로도"): 부분열이면 낮은 점수로라도 걸린다 · 포함/접두는 아니다.
-        assert!(score("M4S_I002040", "MI40", MatchMode::Fuzzy).is_some());
-        assert_eq!(score("M4S_I002040", "MI40", MatchMode::Contains), None);
+        // 약어 퍼지(사용자 09-23 "DMS_I002040이라면 MI40으로도"): 부분열이면 낮은 점수로라도 걸린다 · 포함/접두는 아니다.
+        assert!(score("DMS_I002040", "MI40", MatchMode::Fuzzy).is_some());
+        assert_eq!(score("DMS_I002040", "MI40", MatchMode::Contains), None);
         assert!(
-            score("M4S_I002040", "M4S_", MatchMode::Fuzzy)
-                > score("M4S_I002040", "MI40", MatchMode::Fuzzy)
+            score("DMS_I002040", "DMS_", MatchMode::Fuzzy)
+                > score("DMS_I002040", "MI40", MatchMode::Fuzzy)
         );
         // 연속 일치가 많을수록 높다(빈틈 적음) · 낱말 시작 일치 가산.
         assert!(
@@ -2454,7 +2454,7 @@ mod tests {
         assert_eq!(match_positions("ITEM_CD", "item"), vec![0, 1, 2, 3]);
         assert_eq!(match_positions("DF_ITEM_CD", "item"), vec![3, 4, 5, 6]);
         assert_eq!(match_positions("SALES_CUSTOMER", "sc"), vec![0, 6]);
-        assert_eq!(match_positions("M4S_I002040", "mi40"), vec![0, 4, 9, 10]);
+        assert_eq!(match_positions("DMS_I002040", "mi40"), vec![0, 4, 9, 10]);
         assert!(match_positions("ABC", "z").is_empty() && match_positions("ABC", "").is_empty());
         assert!(
             score("employee", "emp", MatchMode::Prefix).unwrap()
@@ -2777,7 +2777,7 @@ mod tests {
         assert_eq!(q("SELECT * FROM a, STG.", o), (true, true, true));
         assert_eq!(q("SELECT * FROM a JOIN STG.", o), (true, true, true));
         assert_eq!(
-            q("SELECT * FROM M4PLAN_MS.dbo.", Dialect::Mssql),
+            q("SELECT * FROM PLANDB_MS.dbo.", Dialect::Mssql),
             (true, true, true)
         );
         assert_eq!(q("UPDATE dbo.", Dialect::Mssql), (true, true, false));
@@ -2865,7 +2865,7 @@ mod tests {
             CtxKind::ExecArgs { .. }
         ));
         // 괄호 호출(Oracle) = ExecArgs 아님 · 괄호 주인만(이름 지정 인자 길).
-        let c = context_at("EXEC BISCM.SP_TEST2(RET => :R, ", 31, Some(Dialect::Oracle));
+        let c = context_at("EXEC APPDB.SP_TEST2(RET => :R, ", 31, Some(Dialect::Oracle));
         assert!(
             !matches!(
                 c.kind,
@@ -2874,7 +2874,7 @@ mod tests {
             "{:?}",
             c.kind
         );
-        assert_eq!(c.paren_owner.as_deref(), Some("BISCM.SP_TEST2"));
+        assert_eq!(c.paren_owner.as_deref(), Some("APPDB.SP_TEST2"));
         assert_eq!(k("EXEC ", Dialect::Mssql), CtxKind::Want(Want::Routine));
         let c = context_at("EXEC sp_rename ", 15, Some(Dialect::Mssql));
         assert_eq!(

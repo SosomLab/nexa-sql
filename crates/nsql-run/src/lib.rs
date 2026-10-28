@@ -4552,7 +4552,7 @@ SELECT * FROM t;
         assert_eq!(super::input_value(" "), Value::Null);
         assert_eq!(super::input_value("null"), Value::Null);
         assert_eq!(super::input_value("'a''b'"), Value::Str("a'b".into()));
-        assert_eq!(super::input_value("SEBANG"), Value::Str("SEBANG".into()));
+        assert_eq!(super::input_value("ACME"), Value::Str("ACME".into()));
     }
 
     /// T-151 — SQL Server `OUTPUT` 보충: 서명이 OUTPUT인 자리의 바인드만 · 이미 `OUTPUT`을 쓴 것·IN 자리·상수는 빼고 · 이름 표기.

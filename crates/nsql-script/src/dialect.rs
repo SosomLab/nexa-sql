@@ -627,7 +627,7 @@ mod tests {
 
     fn store() -> VarStore {
         let mut v = VarStore::new();
-        v.assign("V_PROJECT_CD", Value::Str("SEBANG".into()));
+        v.assign("V_PROJECT_CD", Value::Str("ACME".into()));
         v.assign("V_MP_VRSN_SEQ", Value::Int(3));
         v
     }
@@ -646,7 +646,7 @@ mod tests {
             "SELECT :V_PROJECT_CD, :V_MP_VRSN_SEQ, :V_NEW FROM DUAL"
         );
         assert_eq!(p.params.len(), 3);
-        assert_eq!(p.params[0].value, Value::Str("SEBANG".into()));
+        assert_eq!(p.params[0].value, Value::Str("ACME".into()));
         assert_eq!(p.implicit, vec!["V_NEW"]);
         assert_eq!(p.mode, PrepareMode::Bind);
     }
@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(p.mode, PrepareMode::DeclarePrepend);
         assert!(
             p.sql
-                .starts_with("DECLARE @V_PROJECT_CD NVARCHAR(6) = N'SEBANG';\nCREATE PROCEDURE"),
+                .starts_with("DECLARE @V_PROJECT_CD NVARCHAR(6) = N'ACME';\nCREATE PROCEDURE"),
             "{}",
             p.sql
         );
@@ -733,9 +733,9 @@ mod tests {
 
     #[test]
     fn select_into_rewrites_to_assignment_select() {
-        let sql = "SELECT\n\tA.PROJECT_CD\n,\tNVL(A.MP_VRSN_SEQ, 0)\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_SEQ\nFROM\n\tM4S_O301010 A\nWHERE A.PROJECT_CD = 'SEBANG'";
+        let sql = "SELECT\n\tA.PROJECT_CD\n,\tNVL(A.MP_VRSN_SEQ, 0)\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_SEQ\nFROM\n\tDMS_O301010 A\nWHERE A.PROJECT_CD = 'ACME'";
         let t = rewrite_select_into_tsql(sql);
-        assert_eq!(t, "SELECT :V_PROJECT_CD = A.PROJECT_CD, :V_MP_VRSN_SEQ = NVL(A.MP_VRSN_SEQ, 0) FROM\n\tM4S_O301010 A\nWHERE A.PROJECT_CD = 'SEBANG'");
+        assert_eq!(t, "SELECT :V_PROJECT_CD = A.PROJECT_CD, :V_MP_VRSN_SEQ = NVL(A.MP_VRSN_SEQ, 0) FROM\n\tDMS_O301010 A\nWHERE A.PROJECT_CD = 'ACME'");
         assert_eq!(
             rewrite_select_into_tsql("SELECT 1 FROM t"),
             "SELECT 1 FROM t"

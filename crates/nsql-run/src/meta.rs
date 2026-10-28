@@ -322,7 +322,7 @@ impl MetaStore {
 
     fn edit(&mut self) -> Snapshot {
         // ★ 독점이면 복제 0(133차 Linux 10-20): 종전 `(*self.snap).clone()`은 갱신마다 스냅숏 전체(objs · cols · exact · buckets …)를
-        //   복제했다 — BISCM(DBA 전수 ≈ 수만 객체)에서 L2 컬럼 워머 응답 하나(테이블 한 개 컬럼)마다 UI 스레드 수 ms(협업 B 측정 =
+        //   복제했다 — APPDB(DBA 전수 ≈ 수만 객체)에서 L2 컬럼 워머 응답 하나(테이블 한 개 컬럼)마다 UI 스레드 수 ms(협업 B 측정 =
         //   응답당 ≈12 ms의 큰 몫). 읽는 쪽은 `snapshot()`으로 `Arc`를 잠깐 쥐므로 보통은 독점 → `make_mut`가 복제하지 않고,
         //   누가 쥐고 있을 때만 종전처럼 복제한다(불변 스냅숏 규약 그대로). `take`로 꺼내 두는 동안 `self.snap`은 빈 기본값 —
         //   `edit` → `commit` 사이에 `snapshot()`을 부르는 길은 없다(쓰기 함수는 `self.names`만 쓴다).
@@ -1300,7 +1300,7 @@ impl Snapshot {
         self.lookup_resolvable_from(names, schema, None, name)
     }
 
-    /// [`Snapshot::lookup_resolvable`] + **호출자의 현재 스키마**(`cur` · 탭 세션의 접속 스키마 — 같은 서버의 두 연결(BISCM·SQLEDU)이
+    /// [`Snapshot::lookup_resolvable`] + **호출자의 현재 스키마**(`cur` · 탭 세션의 접속 스키마 — 같은 서버의 두 연결(APPDB·EDU01)이
     /// 한 메타를 공유할 때 스냅숏의 현재 스키마는 첫 연결의 것이라 틀린다 · 사용자 09-30). `cur` = None이면 스냅숏 값 · 그것도 없으면
     /// **없음**(전 스키마 폴백 없음).
     pub fn lookup_resolvable_from(
@@ -1495,40 +1495,40 @@ mod tests {
     fn lookup_resolvable_uses_caller_schema() {
         let mut m = MetaStore::new(1 << 20);
         m.set_schemas(
-            &["BISCM".into(), "SQLEDU".into(), "PUBLIC".into()],
-            Some("BISCM"),
+            &["APPDB".into(), "EDU01".into(), "PUBLIC".into()],
+            Some("APPDB"),
         );
-        m.load_bucket("SQLEDU", ObjectKind::Table, &[obj("TRX_DEMAND", 1)], 1);
-        m.load_bucket("BISCM", ObjectKind::Table, &[obj("TB_PLAN", 1)], 1);
+        m.load_bucket("EDU01", ObjectKind::Table, &[obj("TRX_DEMAND", 1)], 1);
+        m.load_bucket("APPDB", ObjectKind::Table, &[obj("TB_PLAN", 1)], 1);
         m.load_bucket("PUBLIC", ObjectKind::Synonym, &[obj("DUAL", 1)], 1);
         let s = m.snapshot();
         let n = &m.names;
         assert!(s
-            .lookup_resolvable_from(n, None, Some("SQLEDU"), "trx_demand")
+            .lookup_resolvable_from(n, None, Some("EDU01"), "trx_demand")
             .is_some());
         assert!(
-            s.lookup_resolvable_from(n, None, Some("BISCM"), "trx_demand")
+            s.lookup_resolvable_from(n, None, Some("APPDB"), "trx_demand")
                 .is_none(),
             "다른 스키마 = 없음"
         );
         assert!(
             s.lookup_resolvable_from(n, None, None, "trx_demand")
                 .is_none(),
-            "스냅숏 현재(BISCM)"
+            "스냅숏 현재(APPDB)"
         );
         assert!(
-            s.lookup_resolvable_from(n, None, Some("BISCM"), "dual")
+            s.lookup_resolvable_from(n, None, Some("APPDB"), "dual")
                 .is_some(),
             "PUBLIC 시노님"
         );
         assert!(
-            s.lookup_resolvable_from(n, Some("SQLEDU"), Some("BISCM"), "trx_demand")
+            s.lookup_resolvable_from(n, Some("EDU01"), Some("APPDB"), "trx_demand")
                 .is_some(),
             "명시 스키마"
         );
         let mut m2 = MetaStore::new(1 << 20);
-        m2.set_schemas(&["SQLEDU".into()], None);
-        m2.load_bucket("SQLEDU", ObjectKind::Table, &[obj("TRX_DEMAND", 1)], 1);
+        m2.set_schemas(&["EDU01".into()], None);
+        m2.load_bucket("EDU01", ObjectKind::Table, &[obj("TRX_DEMAND", 1)], 1);
         assert!(
             m2.snapshot()
                 .lookup_resolvable_from(&m2.names, None, None, "trx_demand")
@@ -1808,7 +1808,7 @@ mod tests {
     #[test]
     fn lookup_finds_objects_in_buckets_outside_schema_list() {
         let mut m = MetaStore::new(1 << 24);
-        m.set_schemas(&["BISCM".into()], Some("BISCM"));
+        m.set_schemas(&["APPDB".into()], Some("APPDB"));
         m.load_bucket(
             "$dict",
             ObjectKind::View,
@@ -1820,7 +1820,7 @@ mod tests {
         );
         let s = m.snapshot();
         assert!(s.lookup(&m.names, Some("$dict"), "all_tables").is_some());
-        assert!(s.lookup(&m.names, Some("BISCM"), "ALL_TABLES").is_none());
+        assert!(s.lookup(&m.names, Some("APPDB"), "ALL_TABLES").is_none());
         assert!(
             s.lookup(&m.names, None, "ALL_TABLES").is_some(),
             "전 스키마 조회에도 든다"

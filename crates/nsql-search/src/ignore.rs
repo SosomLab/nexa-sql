@@ -196,8 +196,8 @@ mod tests {
     #[test]
     fn seg_glob() {
         // ★ 접기(10-13): `*.gwf` ↔ `.GWF` · 접기 없으면 다르다.
-        assert!(seg_match_fold(b"*.gwf", b"2026-sebang-snop.GWF", true));
-        assert!(!seg_match_fold(b"*.gwf", b"2026-sebang-snop.GWF", false));
+        assert!(seg_match_fold(b"*.gwf", b"2026-acme-demo.GWF", true));
+        assert!(!seg_match_fold(b"*.gwf", b"2026-acme-demo.GWF", false));
         assert!(!seg_match_fold(b"*.gwf", b"x.GWF.bk1", true));
         let n = IgnoreNode::from_lines_fold(["*.gwf"], 0, None, true);
         assert!(n.is_ignored(&["a", "B.GWF"], false));

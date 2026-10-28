@@ -9,7 +9,7 @@ use std::time::Instant;
 
 fn script(statements: usize) -> String {
     let mut s = String::with_capacity(statements * 110);
-    s.push_str("EXEC :V_CD := 'SEBANG'\nEXEC :V_SEQ := 1\n");
+    s.push_str("EXEC :V_CD := 'ACME'\nEXEC :V_SEQ := 1\n");
     for i in 0..statements {
         s.push_str(&format!(
             "SELECT a.col_{i}, b.name, '&tag' AS tag FROM big_table_{i} a JOIN other b ON b.id = a.id WHERE a.cd = :V_CD AND a.seq > :V_SEQ + {i} -- note {i}\n;\n"
@@ -27,7 +27,7 @@ fn main() {
         let split = t.elapsed();
 
         let mut vars = VarStore::new();
-        vars.assign("V_CD", Value::Str("SEBANG".into()));
+        vars.assign("V_CD", Value::Str("ACME".into()));
         let mut defines = nsql_script::MacroStore::new();
         defines.insert("TAG".to_string(), "x".to_string());
         let t = Instant::now();

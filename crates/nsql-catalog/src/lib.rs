@@ -479,7 +479,7 @@ pub fn name_index(
     let kinds = kinds_for(dialect);
     let rows: Vec<(String, String, String)> = match dialect {
         Dialect::Oracle => {
-            // ★ 84 §2-1(09-25 실측 BISCM_SB 1,4xx 객체): `ALL_OBJECTS` 3.3 s(행마다 권한 판정) · `DBA_OBJECTS` 0.09 s · 자기 스키마 `USER_OBJECTS` 0.05 s.
+            // ★ 84 §2-1(09-25 실측 APPDB_SB 1,4xx 객체): `ALL_OBJECTS` 3.3 s(행마다 권한 판정) · `DBA_OBJECTS` 0.09 s · 자기 스키마 `USER_OBJECTS` 0.05 s.
             //   → DBA 뷰를 먼저(접근 불가 = 이 스레드에서 한 번만 시도 · 메타 스레드 = 세션 하나) → 자기 스키마는 USER_ → 그 밖 ALL_.
             //   DBA 뷰는 권한 없는 객체도 나오지만(1441 vs 1422) 완성 단계(전체 목록 = ALL_OBJECTS)의 디프가 걸러낸다 — 트리의 권한 반영 규칙은 그대로.
             let types: Vec<String> = kinds
@@ -1253,7 +1253,7 @@ pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
     // Oracle은 질의 둘로(09-23 실측: `ALL_SYNONYMS`가 수 초 — 메타 워커 큐를 막아 컬럼 로딩이 늦어졌다): ① `ALL_VIEWS`(접근 가능한
     //   사전 뷰만) ② `V$FIXED_TABLE`(V$/GV$ 이름 · SELECT ANY DICTIONARY·SELECT_CATALOG_ROLE이 없으면 실패 = 그 계정은 V$도 못 읽는다 → 건너뜀).
     if s.dialect() == Dialect::Oracle {
-        // ★ 09-24 실측(BISCM 19c): `ALL_VIEWS` + LIKE 4개 = **121 s**(앱 로그 `[meta] dictionary`) ↔ `ALL_OBJECTS`(owner SYS · VIEW · LIKE)
+        // ★ 09-24 실측(APPDB 19c): `ALL_VIEWS` + LIKE 4개 = **121 s**(앱 로그 `[meta] dictionary`) ↔ `ALL_OBJECTS`(owner SYS · VIEW · LIKE)
         //   3,078행 ≈ 0.1 s · `V$FIXED_TABLE` 1,518행 ≈ 0.1 s → 그것으로. 둘 다 접근 가능한 것만 보인다(권한 반영 유지).
         let mut out: Vec<ObjectInfo> = query(s, "SELECT object_name FROM all_objects WHERE owner = 'SYS' AND object_type = 'VIEW' AND (object_name LIKE 'ALL\\_%' ESCAPE '\\' OR object_name LIKE 'DBA\\_%' ESCAPE '\\' OR object_name LIKE 'USER\\_%' ESCAPE '\\' OR object_name LIKE 'CDB\\_%' ESCAPE '\\') ORDER BY object_name")?
             .rows
@@ -1651,7 +1651,7 @@ pub fn database_sizes(s: &mut dyn Session) -> Result<Vec<(String, u64, u64)>, Db
             })
             .collect()
     };
-    // ① 한 번에(권한 `VIEW ANY DEFINITION` · 없으면 **0행**이지 오류가 아니다 — 실서버 BISCM_MS 10-01).
+    // ① 한 번에(권한 `VIEW ANY DEFINITION` · 없으면 **0행**이지 오류가 아니다 — 실서버 APPDB_MS 10-01).
     let all = query(
         s,
         &format!("SELECT DB_NAME(database_id), {COLS} FROM sys.master_files GROUP BY database_id"),
@@ -1909,7 +1909,7 @@ pub fn table_detail(
     let dialect = s.dialect();
     let (cons_sql, idx_sql): (String, String) = match dialect {
         Dialect::Oracle => {
-            // ★ 09-24 실측(BISCM · 접속 제외): 제약 + FK 대상 테이블 **자기 조인** ≈ 1,155 ms ↔ 조인 없이 ≈ 315 ms · 인덱스 ≈ 91 ms →
+            // ★ 09-24 실측(APPDB · 접속 제외): 제약 + FK 대상 테이블 **자기 조인** ≈ 1,155 ms ↔ 조인 없이 ≈ 315 ms · 인덱스 ≈ 91 ms →
             //   조인을 빼고, FK가 있을 때만 대상 테이블 이름을 한 번 더 묻는다(보통 0~1회).
             let cons = query(s, &format!(
                 "SELECT c.constraint_type, c.constraint_name, cc.column_name, '', c.r_owner, c.r_constraint_name FROM all_constraints c JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name WHERE c.owner = {} AND c.table_name = {} AND c.constraint_type IN ('P','U','R','C') AND c.generated = 'USER NAME' ORDER BY DECODE(c.constraint_type, 'P', 0, 'U', 1, 'R', 2, 3), c.constraint_name, cc.position",
@@ -2614,7 +2614,7 @@ pub fn source(
 /// 소스 열기 옵션(09-30).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceOpts {
-    /// ★ 머리 줄에 **소유 스키마를 붙인다**(`CREATE OR REPLACE PROCEDURE BISCM_SB.SP_X` · DBeaver와 같음 · 기본 켬 · 사용자 09-30):
+    /// ★ 머리 줄에 **소유 스키마를 붙인다**(`CREATE OR REPLACE PROCEDURE APPDB_SB.SP_X` · DBeaver와 같음 · 기본 켬 · 사용자 09-30):
     /// 같은 이름이 여러 스키마에 있을 때 현재 스키마에 덮어쓰는 사고를 막는다. 끄면 `ALL_SOURCE` 이름 그대로.
     pub qualify: bool,
 }
@@ -2626,7 +2626,7 @@ impl Default for SourceOpts {
 }
 
 /// ★ Oracle PL/SQL 머리 줄 정규화(09-30 · 사용자 "중간 공백 없이 Space 1개 · 원본 스키마를 붙여서"): `ALL_SOURCE` 1행
-/// `PROCEDURE          SP_X(` → `PROCEDURE BISCM_SB.SP_X(`. 종류 단어(`PACKAGE BODY` · `TYPE BODY` 포함)와 이름 사이 공백 = 1칸 ·
+/// `PROCEDURE          SP_X(` → `PROCEDURE APPDB_SB.SP_X(`. 종류 단어(`PACKAGE BODY` · `TYPE BODY` 포함)와 이름 사이 공백 = 1칸 ·
 /// 이름 뒤는 원문 그대로(`(`가 붙어 있으면 붙인 채 · 공백이면 1칸). 이미 `A.B`로 한정돼 있으면 스키마를 덧붙이지 않는다 ·
 /// 순수 함수(시험 대상) — 나머지 줄은 손대지 않는다.
 #[must_use]
@@ -4104,9 +4104,9 @@ mod tests {
     fn create_header_parses_kind_schema_name() {
         assert_eq!(
             parse_create_header(
-                "CREATE OR REPLACE PROCEDURE BISCM.SP_X(p IN NUMBER) AS BEGIN NULL; END;"
+                "CREATE OR REPLACE PROCEDURE APPDB.SP_X(p IN NUMBER) AS BEGIN NULL; END;"
             ),
-            Some((ObjectKind::Procedure, Some("BISCM".into()), "SP_X".into()))
+            Some((ObjectKind::Procedure, Some("APPDB".into()), "SP_X".into()))
         );
         assert_eq!(
             parse_create_header("create or replace package body pkg_a is end;"),
@@ -4128,7 +4128,7 @@ mod tests {
     #[test]
     fn quoting_and_templates() {
         assert_eq!(qualified(Dialect::Mssql, "dbo", "T"), "[dbo].[T]");
-        assert_eq!(qualified(Dialect::Oracle, "BISCM", "T"), "\"BISCM\".\"T\"");
+        assert_eq!(qualified(Dialect::Oracle, "APPDB", "T"), "\"APPDB\".\"T\"");
         assert_eq!(fmt_type("VARCHAR2", "20", "", ""), "VARCHAR2(20)");
         assert_eq!(fmt_type("NUMBER", "22", "10", "2"), "NUMBER(10,2)");
         assert_eq!(fmt_type("DATE", "7", "", ""), "DATE");
@@ -4144,11 +4144,11 @@ mod tests {
     fn plsql_header_is_normalized_and_qualified() {
         let src = "PROCEDURE          SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;";
         assert_eq!(
-            normalize_plsql_header(src, "BISCM_SB", true),
-            "PROCEDURE BISCM_SB.SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;"
+            normalize_plsql_header(src, "APPDB_SB", true),
+            "PROCEDURE APPDB_SB.SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;"
         );
         assert_eq!(
-            normalize_plsql_header(src, "BISCM_SB", false),
+            normalize_plsql_header(src, "APPDB_SB", false),
             "PROCEDURE SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;"
         );
         assert_eq!(
@@ -4192,10 +4192,10 @@ mod tests {
     /// ★ 보수적 생성(09-30): 트리거 `ON 테이블` 한정(Oracle/PG/MySQL) · T-SQL 머리 줄 · MySQL 루틴/트리거.
     #[test]
     fn conservative_qualification_helpers() {
-        let trg = "TRIGGER BISCM.T1\nBEFORE INSERT ON NSQLT_T\nFOR EACH ROW\nBEGIN\n  NULL;\nEND;";
+        let trg = "TRIGGER APPDB.T1\nBEFORE INSERT ON NSQLT_T\nFOR EACH ROW\nBEGIN\n  NULL;\nEND;";
         assert_eq!(
-            qualify_on_table(trg, "BISCM", "NSQLT_T"),
-            "TRIGGER BISCM.T1\nBEFORE INSERT ON BISCM.NSQLT_T\nFOR EACH ROW\nBEGIN\n  NULL;\nEND;"
+            qualify_on_table(trg, "APPDB", "NSQLT_T"),
+            "TRIGGER APPDB.T1\nBEFORE INSERT ON APPDB.NSQLT_T\nFOR EACH ROW\nBEGIN\n  NULL;\nEND;"
         );
         // 이미 한정 · 다른 이름 · 조인 ON은 그대로 · 따옴표 이름 유지.
         assert_eq!(
@@ -4384,17 +4384,17 @@ mod tests {
     fn context_switch_names() {
         use super::context_switch_name as f;
         assert_eq!(
-            f(Dialect::Mssql, "USE [BISCM_MS]").as_deref(),
-            Some("BISCM_MS")
+            f(Dialect::Mssql, "USE [APPDB_MS]").as_deref(),
+            Some("APPDB_MS")
         );
         assert_eq!(f(Dialect::Mysql, "use `shop`;").as_deref(), Some("shop"));
         assert_eq!(
             f(
                 Dialect::Oracle,
-                "ALTER SESSION SET CURRENT_SCHEMA = BISCM_SB"
+                "ALTER SESSION SET CURRENT_SCHEMA = APPDB_SB"
             )
             .as_deref(),
-            Some("BISCM_SB")
+            Some("APPDB_SB")
         );
         assert_eq!(
             f(Dialect::Oracle, "alter session set current_schema=\"Sb\";").as_deref(),

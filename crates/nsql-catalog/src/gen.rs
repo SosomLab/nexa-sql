@@ -1365,7 +1365,7 @@ fn oracle_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErr
                 .unwrap_or_default();
             for stmt in t.split(";\n").map(str::trim).filter(|x| !x.is_empty()) {
                 let up = stmt.to_ascii_uppercase();
-                // 인덱스 이름이 제약 이름과 같으면(스키마 접두 포함 `"BISCM"."X_PK"` · 맨 이름 `X_PK ON`) 키가 만든 인덱스.
+                // 인덱스 이름이 제약 이름과 같으면(스키마 접두 포함 `"APPDB"."X_PK"` · 맨 이름 `X_PK ON`) 키가 만든 인덱스.
                 let dup = det_keys.iter().any(|k| {
                     up.contains(&format!("\"{k}\" ON")) || up.contains(&format!(" {k} ON"))
                 });
@@ -2000,14 +2000,14 @@ mod tests {
     /// ★ 테이블 DDL 본문에 이미 나온 인덱스는 종속 인덱스에서 뺀다(09-30 · PK `USING INDEX "ALCDCM_PG_MSTR_UK01"`).
     #[test]
     fn dependent_index_already_in_table_ddl_is_skipped() {
-        let body = "CREATE TABLE \"BISCM\".\"T\" (\"A\" NUMBER) ;\n  CREATE UNIQUE INDEX \"BISCM\".\"T_UK01\" ON \"BISCM\".\"T\" (\"A\") ;\nALTER TABLE \"BISCM\".\"T\" ADD CONSTRAINT \"PK_T\" PRIMARY KEY (\"A\") USING INDEX \"BISCM\".\"T_UK01\" ENABLE;";
+        let body = "CREATE TABLE \"APPDB\".\"T\" (\"A\" NUMBER) ;\n  CREATE UNIQUE INDEX \"APPDB\".\"T_UK01\" ON \"APPDB\".\"T\" (\"A\") ;\nALTER TABLE \"APPDB\".\"T\" ADD CONSTRAINT \"PK_T\" PRIMARY KEY (\"A\") USING INDEX \"APPDB\".\"T_UK01\" ENABLE;";
         assert!(index_already_in(
             body,
-            "CREATE UNIQUE INDEX \"BISCM\".\"T_UK01\" ON \"BISCM\".\"T\" (\"A\")"
+            "CREATE UNIQUE INDEX \"APPDB\".\"T_UK01\" ON \"APPDB\".\"T\" (\"A\")"
         ));
         assert!(!index_already_in(
             body,
-            "CREATE INDEX \"BISCM\".\"T_IDX01\" ON \"BISCM\".\"T\" (\"A\")"
+            "CREATE INDEX \"APPDB\".\"T_IDX01\" ON \"APPDB\".\"T\" (\"A\")"
         ));
         assert!(index_already_in(
             "create table t (a number); create index t_ix on t (a);",
