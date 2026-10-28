@@ -118,6 +118,9 @@ pub struct ConnectSpec {
     /// ★ TLS 모드(`?tls=` · `ssl-mode=` 별칭 · T-388 MySQL/MariaDB · 소문자 · `-` → `_`): disabled · preferred · required ·
     /// verify_ca · verify_identity. 값의 뜻과 검증은 드라이버 몫 · 없으면 설정(`mysql.tls`)을 따른다.
     pub tls: Option<String>,
+    /// ★ TLS CA 파일(`?tls_ca=` · libpq 별칭 `sslrootcert=` · T-70 · 155차): verify_ca/verify_identity가 쓰는 PEM 경로 · 없으면 설정
+    ///   (`pg.tls_ca`)을 허브가 넣는다.
+    pub tls_ca: Option<String>,
     /// ★ `?driver=`(T-27 잔여 · 10-24): 이 접속에 쓸 드라이버 — Oracle `thin`|`oci` · 확장 id(`oracle-thin` · `duckdb` …). 호스트(허브)만 본다 ·
     ///   ABI 코덱에는 싣지 않는다(드라이버는 자기 id를 안다 · 기존 패키지 호환). 없으면 설정(`oracle.driver`)·후보 순서.
     pub driver: Option<String>,
@@ -365,6 +368,12 @@ impl ConnectSpec {
                         if !t.is_empty() {
                             spec.tls = Some(t);
                         }
+                    } else if (k.eq_ignore_ascii_case("tls_ca")
+                        || k.eq_ignore_ascii_case("tls-ca")
+                        || k.eq_ignore_ascii_case("sslrootcert"))
+                        && !v.trim().is_empty()
+                    {
+                        spec.tls_ca = Some(percent_decode(v.trim()));
                     } else if k.eq_ignore_ascii_case("role") && !v.trim().is_empty() {
                         spec.role = Some(v.trim().to_ascii_uppercase());
                     } else if k.eq_ignore_ascii_case("driver") && !v.trim().is_empty() {
@@ -603,6 +612,9 @@ impl ConnectSpec {
         }
         if let Some(t) = &self.tls {
             q.push(format!("tls={t}"));
+        }
+        if let Some(c) = &self.tls_ca {
+            q.push(format!("tls_ca={c}"));
         }
         if let Some(d) = &self.driver {
             q.push(format!("driver={d}"));
@@ -980,6 +992,16 @@ mod tests {
         let t = ConnectSpec::parse("mysql://u@h/db?tls=REQUIRED").unwrap();
         assert_eq!(t.tls.as_deref(), Some("required"));
         assert_eq!(t.connection_string(), "mysql://u@h/db?tls=required");
+        // ★ T-70(155차): CA 파일 = `tls_ca` · libpq 별칭 `sslrootcert` · 왕복.
+        let pgc =
+            ConnectSpec::parse("postgres://u@h/db?sslmode=verify-full&sslrootcert=/etc/ca.pem")
+                .unwrap();
+        assert_eq!(pgc.tls.as_deref(), Some("verify_full"));
+        assert_eq!(pgc.tls_ca.as_deref(), Some("/etc/ca.pem"));
+        assert_eq!(
+            pgc.connection_string(),
+            "postgres://u@h/db?tls=verify_full&tls_ca=/etc/ca.pem"
+        );
         assert_eq!(
             ConnectSpec::parse("mariadb://u@h/db?ssl-mode=Verify-Identity")
                 .unwrap()

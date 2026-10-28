@@ -2036,6 +2036,7 @@ impl Runner {
                 schema: None,
                 env: _,
                 tls: _,
+                tls_ca: _,
                 driver: _,
             } => Some(u.as_str()),
             _ => None,

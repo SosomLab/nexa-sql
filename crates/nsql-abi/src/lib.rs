@@ -517,6 +517,9 @@ pub mod codec {
             if let Some(v) = &s.tls {
                 kv.push(("tls", v.clone()));
             }
+            if let Some(v) = &s.tls_ca {
+                kv.push(("tls_ca", v.clone()));
+            }
             self.u32(kv.len() as u32);
             for (k, v) in kv {
                 self.str(k);
@@ -748,6 +751,7 @@ pub mod codec {
                     "schema" => s.schema = Some(v),
                     "env" => s.env = ConnEnv::from_name(&v),
                     "tls" => s.tls = Some(v),
+                    "tls_ca" => s.tls_ca = Some(v),
                     _ => {}
                 }
             }
@@ -1857,9 +1861,10 @@ mod tests {
                 .expect("codec"),
             e
         );
-        let spec =
-            nsql_script::ConnectSpec::parse("mysql://u:p@h:3307/db?schema=s&env=prod&tls=required")
-                .expect("codec");
+        let spec = nsql_script::ConnectSpec::parse(
+            "mysql://u:p@h:3307/db?schema=s&env=prod&tls=required&tls_ca=/etc/ca.pem",
+        )
+        .expect("codec");
         let back = Reader::new(&codec::encode_spec(&spec))
             .spec()
             .expect("codec");

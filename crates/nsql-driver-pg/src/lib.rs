@@ -5,7 +5,10 @@
 //! - 파라미터 있는 문장은 확장 프로토콜(바이너리) — 자주 쓰는 타입은 [`Any`] 디코더가 값으로, 모르는 타입은 16진 문자열.
 //! - OUT 파라미터가 없는 방언(함수·프로시저의 OUT은 결과 행으로 온다) — `EXEC :V := expr`는 엔진이 `SELECT expr AS "V"`로
 //!   만들고 호스트가 1행 결과의 컬럼 이름을 변수로 흡수한다. `CALL p(...)`의 OUT도 1행 결과.
-//! - TLS: 현재 `NoTls`(서버가 `hostssl`만 허용하면 접속 오류에 그대로 드러난다) — rustls 연결은 T-70.
+//! - ★ TLS(T-70 · 155차): 모드 = 접속 문자열 `?tls=`/`?sslmode=`(허브가 설정 `pg.tls`를 넣어 준다 · 없으면 preferred) ·
+//!   `disabled` = 평문 · `preferred` = SSLRequest 뒤 서버가 못 하면 평문(인증서 검증 없음) · `required` = 암호화만(검증 없음 · 자체 서명용) ·
+//!   `verify_ca` = 사슬 검증(CA 파일 `tls_ca`/`sslrootcert` · 비면 Mozilla 루트) · `verify_identity`/`verify_full` = 사슬 + 호스트 이름.
+//!   스택 = rustls + aws-lc-rs(MySQL·Oracle Thin·nsql-net과 같은 판). 취소 토큰도 같은 커넥터로.
 //! - ★ 커서 유지(T-48a · docs/43 §3-3): 동기 `postgres` 크레이트의 Portal은 `Transaction<'_>` 수명에 묶여 세션 구조체에 담을 수
 //!   없다(자기 참조). 그래서 psql `FETCH_COUNT`와 같은 **SQL 커서** — `DECLARE nsql_cur NO SCROLL CURSOR WITHOUT HOLD FOR <질의>` +
 //!   `FETCH FORWARD n FROM nsql_cur` + `CLOSE`. 커서는 트랜잭션 안에서만 살므로 명시 트랜잭션이 없으면 드라이버가 `BEGIN`을
@@ -22,6 +25,11 @@ use nsql_script::ConnectSpec;
 use postgres::error::SqlState;
 use postgres::types::{FromSql, IsNull, ToSql, Type};
 use postgres::{Client, NoTls, SimpleQueryMessage};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
+use std::sync::Arc;
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 /// `RAISE NOTICE`/WARNING 수신부 — 접속 시 `notice_callback`에 심는다. 싱크가 있으면 즉시 전달, 없으면 버퍼(실행 뒤 `messages`).
 #[derive(Default)]
@@ -47,6 +55,245 @@ struct PgCursor {
 /// TCP keepalive 유휴 시간(초 · 0 = 끔) — 호스트가 설정에서 넣는다 · 다음 접속부터.
 static KEEPALIVE_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(60);
 
+/// ★ TLS 모드(T-70 · 155차 · MySQL T-388과 같은 다섯 값 · 접속 문자열 `?tls=`/`?sslmode=` · libpq 이름도 받는다).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TlsMode {
+    Disabled,
+    Preferred,
+    Required,
+    VerifyCa,
+    VerifyIdentity,
+}
+
+impl TlsMode {
+    /// `disabled|disable|off|allow` · `preferred|prefer` · `required|require|on` · `verify_ca|verify-ca` · `verify_identity|verify_full|verify-full`.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<TlsMode> {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "disabled" | "disable" | "off" | "none" | "false" | "allow" => Some(TlsMode::Disabled),
+            "preferred" | "prefer" => Some(TlsMode::Preferred),
+            "required" | "require" | "on" | "true" => Some(TlsMode::Required),
+            "verify_ca" => Some(TlsMode::VerifyCa),
+            "verify_identity" | "verify_full" => Some(TlsMode::VerifyIdentity),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TlsMode::Disabled => "disabled",
+            TlsMode::Preferred => "preferred",
+            TlsMode::Required => "required",
+            TlsMode::VerifyCa => "verify_ca",
+            TlsMode::VerifyIdentity => "verify_identity",
+        }
+    }
+}
+
+/// 인증서를 검증하지 않는 검증기(`preferred`·`required` = 암호화만 · 자체 서명 서버) — MySQL `danger_accept_invalid_certs`와 같은 수준.
+#[derive(Debug)]
+struct NoVerify(rustls::crypto::CryptoProvider);
+
+impl ServerCertVerifier for NoVerify {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// 사슬만 검증하고 호스트 이름 불일치는 넘기는 검증기(`verify_ca`) — webpki 검증기를 감싼다.
+#[derive(Debug)]
+struct CaOnly(Arc<rustls::client::WebPkiServerVerifier>);
+
+impl ServerCertVerifier for CaOnly {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        match self
+            .0
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp, now)
+        {
+            Err(rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName)) => {
+                Ok(ServerCertVerified::assertion())
+            }
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::NotValidForNameContext { .. },
+            )) => Ok(ServerCertVerified::assertion()),
+            other => other,
+        }
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls12_signature(message, cert, dss)
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls13_signature(message, cert, dss)
+    }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.supported_verify_schemes()
+    }
+}
+
+/// 루트 저장소 = CA 파일(PEM · 여러 장)이 있으면 그것 · 없으면 Mozilla 루트(webpki-roots).
+fn root_store(ca: Option<&std::path::Path>) -> Result<rustls::RootCertStore, DbError> {
+    let mut roots = rustls::RootCertStore::empty();
+    match ca {
+        Some(p) => {
+            use rustls::pki_types::pem::PemObject;
+            let mut n = 0usize;
+            for c in CertificateDer::pem_file_iter(p).map_err(|e| DbError {
+                code: None,
+                message: format!("TLS CA file {}: {e}", p.display()),
+                position: None,
+            })? {
+                let c = c.map_err(|e| DbError {
+                    code: None,
+                    message: format!("TLS CA file {}: {e}", p.display()),
+                    position: None,
+                })?;
+                roots.add(c).map_err(|e| DbError {
+                    code: None,
+                    message: format!("TLS CA file {}: {e}", p.display()),
+                    position: None,
+                })?;
+                n += 1;
+            }
+            if n == 0 {
+                return Err(DbError {
+                    code: None,
+                    message: format!("TLS CA file {}: no certificate found", p.display()),
+                    position: None,
+                });
+            }
+        }
+        None => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),
+    }
+    Ok(roots)
+}
+
+/// 모드 → rustls 클라이언트 설정(`disabled`는 None = NoTls).
+pub fn client_config(
+    mode: TlsMode,
+    ca: Option<&std::path::Path>,
+) -> Result<Option<rustls::ClientConfig>, DbError> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let builder = rustls::ClientConfig::builder_with_provider(Arc::new(provider.clone()))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| DbError {
+            code: None,
+            message: format!("TLS: {e}"),
+            position: None,
+        })?;
+    let cfg = match mode {
+        TlsMode::Disabled => return Ok(None),
+        TlsMode::Preferred | TlsMode::Required => builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
+            .with_no_client_auth(),
+        TlsMode::VerifyCa => {
+            let roots = root_store(ca)?;
+            let inner = rustls::client::WebPkiServerVerifier::builder_with_provider(
+                Arc::new(roots),
+                Arc::new(provider),
+            )
+            .build()
+            .map_err(|e| DbError {
+                code: None,
+                message: format!("TLS: {e}"),
+                position: None,
+            })?;
+            builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(CaOnly(inner)))
+                .with_no_client_auth()
+        }
+        TlsMode::VerifyIdentity => builder
+            .with_root_certificates(root_store(ca)?)
+            .with_no_client_auth(),
+    };
+    Ok(Some(cfg))
+}
+
+/// 이 백엔드가 TLS로 붙었는지(`pg_stat_ssl` · PG 9.5+ · 없으면 None).
+fn negotiated_tls(client: &mut Client) -> Option<bool> {
+    let msgs = client
+        .simple_query("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
+        .ok()?;
+    msgs.iter().find_map(|m| match m {
+        SimpleQueryMessage::Row(r) => r.get(0).map(|v| v == "t"),
+        _ => None,
+    })
+}
+
+/// 접속 스펙의 TLS 모드·CA(허브가 설정을 넣어 둔다 · 없으면 preferred · 모르는 값 = 오류로 알린다).
+fn tls_of(spec: &ConnectSpec) -> Result<(TlsMode, Option<std::path::PathBuf>), DbError> {
+    let mode = match spec.tls.as_deref() {
+        None => TlsMode::Preferred,
+        Some(v) => TlsMode::parse(v).ok_or_else(|| DbError {
+            code: None,
+            message: format!("TLS: unknown mode '{v}' (disabled · preferred · required · verify_ca · verify_identity)"),
+            position: None,
+        })?,
+    };
+    let ca = spec
+        .tls_ca
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    Ok((mode, ca))
+}
+
 /// 설정 `net.keepalive_secs`(docs/53).
 pub fn set_keepalive_secs(secs: u64) {
     KEEPALIVE_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
@@ -65,6 +312,8 @@ pub struct PgSession {
     in_txn: bool,
     cursor: Option<PgCursor>,
     next_cursor: u32,
+    /// ★ T-70: 이 세션의 TLS 모드·CA(취소 토큰이 같은 커넥터로 붙는다).
+    tls: (TlsMode, Option<std::path::PathBuf>),
 }
 
 /// ★ `COPY … FROM STDIN`(text) 싱크(docs/89 §1-2 · T-236): 한 COPY 문장 = 원자 적재(중간 커밋 없음 · `commit` = false) ·
@@ -237,10 +486,29 @@ impl PgSession {
                 }
             }
         });
-        let client = cfg.connect(NoTls).map_err(err)?;
+        // ★ T-70(155차): 모드별 커넥터 — disabled = NoTls · 그 밖 = rustls(preferred = SSLRequest 거부면 평문 · required 이상 = 거부면 오류).
+        let tls = tls_of(spec)?;
+        cfg.ssl_mode(match tls.0 {
+            TlsMode::Disabled => postgres::config::SslMode::Disable,
+            TlsMode::Preferred => postgres::config::SslMode::Prefer,
+            _ => postgres::config::SslMode::Require,
+        });
+        let mut client = match client_config(tls.0, tls.1.as_deref())? {
+            None => cfg.connect(NoTls).map_err(err)?,
+            Some(c) => cfg.connect(MakeRustlsConnect::new(c)).map_err(err)?,
+        };
+        // `preferred`만 결과가 불확실(서버가 거부하면 평문)하므로 접속 때 한 번 `pg_stat_ssl`로 실제 협상 결과를 설명에 붙인다
+        //   (26 §8: 접속당 1회 · 지속 트래픽 아님 · 와이어 호환 서버에 뷰가 없으면 생략). required 이상은 접속 성공 = TLS 확정.
+        let mut description = spec.redacted();
+        if tls.0 == TlsMode::Preferred {
+            if let Some(on) = negotiated_tls(&mut client) {
+                description.push_str(if on { " (TLS on)" } else { " (TLS off)" });
+            }
+        }
         Ok(PgSession {
             client,
-            description: spec.redacted(),
+            tls,
+            description,
             notices,
             max_rows: 0,
             refcursor_expand: true,
@@ -705,11 +973,15 @@ fn rows_to_result_set(rows: &[postgres::Row]) -> ResultSet {
 }
 
 /// `CancelToken::cancel_query` — 별도 짧은 접속으로 서버에 취소 요청(문장은 `57014`로 끝난다).
-struct PgCancel(postgres::CancelToken);
+struct PgCancel(postgres::CancelToken, (TlsMode, Option<std::path::PathBuf>));
 
 impl nsql_core::CancelHandle for PgCancel {
     fn cancel(&self) -> Result<(), DbError> {
-        self.0.cancel_query(NoTls).map_err(err)
+        // 취소 접속도 세션과 같은 TLS(서버가 hostssl만 허용하면 평문 취소는 거부된다 · T-70).
+        match client_config(self.1 .0, self.1 .1.as_deref())? {
+            None => self.0.cancel_query(NoTls).map_err(err),
+            Some(c) => self.0.cancel_query(MakeRustlsConnect::new(c)).map_err(err),
+        }
     }
 }
 
@@ -763,7 +1035,10 @@ impl Session for PgSession {
     }
 
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
-        Some(std::sync::Arc::new(PgCancel(self.client.cancel_token())))
+        Some(std::sync::Arc::new(PgCancel(
+            self.client.cancel_token(),
+            self.tls.clone(),
+        )))
     }
 
     fn dialect(&self) -> Dialect {
@@ -1232,6 +1507,37 @@ mod tests {
     }
 
     /// 커서 유지(T-48a): 어떤 문장을 DECLARE로 감싸는가 · 조립 SQL · 트랜잭션 경계 추적.
+    /// ★ T-70(155차): 모드 파싱(libpq 이름 포함) · 모드별 rustls 설정 · 없는 CA 파일 = 오류 · 스펙에서 모드/CA 읽기.
+    #[test]
+    fn tls_mode_parse_and_config() {
+        assert_eq!(TlsMode::parse("verify-full"), Some(TlsMode::VerifyIdentity));
+        assert_eq!(TlsMode::parse("prefer"), Some(TlsMode::Preferred));
+        assert_eq!(TlsMode::parse("nope"), None);
+        assert!(client_config(TlsMode::Disabled, None)
+            .expect("cfg")
+            .is_none());
+        assert!(client_config(TlsMode::Required, None)
+            .expect("cfg")
+            .is_some());
+        assert!(client_config(TlsMode::VerifyIdentity, None)
+            .expect("cfg")
+            .is_some());
+        assert!(client_config(
+            TlsMode::VerifyCa,
+            Some(std::path::Path::new("Z:/no/such/ca.pem"))
+        )
+        .is_err());
+        let spec = ConnectSpec::parse("postgres://u@h/db?sslmode=verify-ca&sslrootcert=/x.pem")
+            .expect("spec");
+        let (m, ca) = tls_of(&spec).expect("tls");
+        assert_eq!(m, TlsMode::VerifyCa);
+        assert_eq!(
+            ca.as_deref().map(|p| p.to_string_lossy().into_owned()),
+            Some("/x.pem".to_string())
+        );
+        assert!(tls_of(&ConnectSpec::parse("postgres://u@h/db?tls=weird").expect("spec")).is_err());
+    }
+
     #[test]
     fn cursor_sql_and_rules() {
         assert!(cursorable("select * from t"));

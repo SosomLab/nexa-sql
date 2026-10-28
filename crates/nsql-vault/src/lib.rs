@@ -551,6 +551,7 @@ mod tests {
             schema: None,
             env: None,
             tls: None,
+            tls_ca: None,
             driver: None,
         }
     }

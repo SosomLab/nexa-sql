@@ -343,8 +343,8 @@ pub(crate) struct GatePass(());
 /// 스크립트의 **첫** 접속 명령 — 호스트가 실행 전에 세션 배치를 정할 때 본다(워커로 보내기 전 · 파싱만).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ConnectIntent {
-    /// `CONNECT 대상` — 이 탭에 전용 세션을 만든다(이미 있으면 그 세션이 대상을 바꾼다).
-    Connect(ConnectSpec),
+    /// `CONNECT 대상` — 이 탭에 전용 세션을 만든다(이미 있으면 그 세션이 대상을 바꾼다). Box = 스펙이 커서(155차 tls_ca · clippy).
+    Connect(Box<ConnectSpec>),
     /// `DISCONNECT`가 `CONNECT`보다 먼저 나온다.
     Disconnect,
 }
@@ -353,7 +353,9 @@ pub(crate) fn connect_intent(src: &str) -> Option<ConnectIntent> {
     nsql_script::split_script(src)
         .into_iter()
         .find_map(|it| match it.kind {
-            ItemKind::Command(Command::Connect(spec)) => Some(ConnectIntent::Connect(spec)),
+            ItemKind::Command(Command::Connect(spec)) => {
+                Some(ConnectIntent::Connect(Box::new(spec)))
+            }
             ItemKind::Command(Command::Disconnect) => Some(ConnectIntent::Disconnect),
             _ => None,
         })
@@ -2076,7 +2078,7 @@ mod tests {
     /// D3 MC/DC: intent 종류 · is_private · private_connect.
     #[test]
     fn mcdc_placement() {
-        let c = ConnectIntent::Connect(ConnectSpec::default());
+        let c = ConnectIntent::Connect(Box::default());
         let d = ConnectIntent::Disconnect;
         assert_eq!(
             placement(Some(&c), false, true, false),

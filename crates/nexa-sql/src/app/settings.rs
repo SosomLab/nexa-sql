@@ -478,6 +478,15 @@ impl App {
             "mssql.encrypt" => {
                 nsql_drivers::set_mssql_encryption(self.settings.get(key) == Some("login"))
             }
+            // ★ TLS 설정은 재시작 없이 다음 접속부터(155차 · 종전 MySQL은 기동 때만 읽혀 설정 창 변경이 재시작 전엔 안 먹었다).
+            "pg.tls" | "pg.tls_ca" => nsql_drivers::set_pg_tls(
+                self.settings.get("pg.tls").unwrap_or("preferred"),
+                self.settings.get("pg.tls_ca").unwrap_or(""),
+            ),
+            "mysql.tls" | "mysql.tls_ca" => nsql_drivers::set_mysql_tls(
+                self.settings.get("mysql.tls").unwrap_or("preferred"),
+                self.settings.get("mysql.tls_ca").unwrap_or(""),
+            ),
             // Oracle 클라이언트(자동/직접 지정) — 드라이버에 넘기고 설정 창의 읽기 전용 탐지 결과를 다시 계산한다.
             "oracle.driver" | "oracle.client_mode" | "oracle.client_dir" | "oracle.tns_admin" => {
                 apply_oracle_client(&self.settings);

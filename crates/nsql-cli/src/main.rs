@@ -424,6 +424,11 @@ pub(crate) fn apply_driver_switches() {
             s.get("mysql.tls").unwrap_or("preferred"),
             s.get("mysql.tls_ca").unwrap_or(""),
         );
+        // PostgreSQL TLS(T-70 · 155차) — GUI와 같은 값.
+        nsql_drivers::set_pg_tls(
+            s.get("pg.tls").unwrap_or("preferred"),
+            s.get("pg.tls_ca").unwrap_or(""),
+        );
         // 확장 드라이버 폴더(T-27 ③) = <설정 폴더>/drivers — GUI와 같은 자리.
         nsql_drivers::ext::set_driver_dir(
             nsql_settings::config_dir()

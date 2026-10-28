@@ -4972,6 +4972,23 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     // ★ MySQL/MariaDB(T-388 · 136차): TLS 모드 + CA 파일 — 접속 문자열 `?tls=`가 이긴다 · 새 접속부터.
+    // ★ PostgreSQL TLS(T-70 · 155차): MySQL(T-388)과 같은 다섯 모드 · 접속 문자열 `?tls=`/`sslrootcert=`가 우선 · 다음 접속부터.
+    Entry {
+        key: "pg.tls",
+        cat: Msg::CatDbmsPostgres,
+        label: Msg::LblPgTls,
+        desc: Msg::DescPgTls,
+        kind: SettingKind::Choice(MYSQL_TLS_OPTS),
+        default: "preferred",
+    },
+    Entry {
+        key: "pg.tls_ca",
+        cat: Msg::CatDbmsPostgres,
+        label: Msg::LblPgTlsCa,
+        desc: Msg::DescPgTlsCa,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "mysql.tls",
         cat: Msg::CatDbmsMysql,

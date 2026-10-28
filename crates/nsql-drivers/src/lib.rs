@@ -57,8 +57,39 @@ pub fn parse_target(s: &str, default_dialect: Dialect) -> Result<ConnectSpec, St
 }
 
 /// 스펙으로 세션을 연다.
+/// ★ PostgreSQL TLS(T-70 · 155차 · 설정 `pg.tls` + `pg.tls_ca`): 접속 문자열 `?tls=`/`sslrootcert=`가 있으면 그쪽이 이긴다 · 다음 접속부터 ·
+///   허브가 [`open`]에서 스펙에 넣어 주므로 내장(rlib)·확장(cdylib · ABI kv `tls`/`tls_ca`) 어느 경로든 같다.
+static PG_TLS: std::sync::Mutex<(String, String)> =
+    std::sync::Mutex::new((String::new(), String::new()));
+
+pub fn set_pg_tls(mode: &str, ca_path: &str) {
+    *PG_TLS.lock().unwrap_or_else(|e| e.into_inner()) =
+        (mode.trim().to_string(), ca_path.trim().to_string());
+}
+
+/// 스펙에 PG TLS 기본값을 채운다(명시된 값은 그대로).
+fn with_pg_tls(spec: &ConnectSpec) -> ConnectSpec {
+    let (mode, ca) = PG_TLS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let mut s = spec.clone();
+    if s.tls.is_none() && !mode.is_empty() {
+        s.tls = Some(mode);
+    }
+    if s.tls_ca.is_none() && !ca.is_empty() {
+        s.tls_ca = Some(ca);
+    }
+    s
+}
+
 pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Session>, DbError> {
     let dialect = spec.dialect.unwrap_or(default_dialect);
+    // ★ T-70: PostgreSQL(와이어 호환 포함)은 설정의 TLS 모드·CA를 스펙에 넣어 어느 드라이버 경로든 같은 값을 쓴다.
+    let filled;
+    let spec = if dialect == Dialect::Postgres {
+        filled = with_pg_tls(spec);
+        &filled
+    } else {
+        spec
+    };
     match dialect {
         #[cfg(feature = "sqlite")]
         Dialect::Sqlite => {

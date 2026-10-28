@@ -21,3 +21,8 @@ nsql-script.workspace = true
 nsql-abi.workspace = true
 # DR-3 예외(드라이버). 동기 래퍼(`postgres`)가 내부에 tokio 현재 스레드 런타임을 둔다 — 동기 Session 포트 그대로.
 postgres = "0.19"
+# ★ T-70(155차) TLS = rustls 0.23 + aws-lc-rs(DR-3 원장 D-348 · mysql·oracle-thin·nsql-net과 같은 스택 · 추가 TLS 스택 0) · 루트 = webpki-roots ·
+#   커넥터 = tokio-postgres-rustls(동기 `postgres`의 `MakeTlsConnect<Socket>`을 그대로 받는다).
+tokio-postgres-rustls = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+webpki-roots = "1"

@@ -57,7 +57,7 @@ impl App {
                                 .ok()
                                 .flatten()
                         })
-                        .unwrap_or_else(|| spec.clone());
+                        .unwrap_or_else(|| (*spec).clone());
                     let same = plan == sessions::Placement::Retarget
                         && self.sess.connected
                         && !self.sess.broken
@@ -92,7 +92,7 @@ impl App {
                             LogKind::Info,
                             tf(Msg::StSessRetarget, &[&target.redacted(), t(why)]),
                         ));
-                        self.sess.spec = Some(spec);
+                        self.sess.spec = Some(*spec);
                     }
                 }
                 self.sess.user_disconnected = false;
@@ -119,7 +119,7 @@ impl App {
                 }
                 // `session.private_connect = off`의 CONNECT = 이 세션이 대상을 바꾼다 → 탐색기·재접속이 새 대상을 알게.
                 if let Some(ConnectIntent::Connect(spec)) = intent {
-                    self.sess.spec = Some(spec);
+                    self.sess.spec = Some(*spec);
                     self.sess.profile.clear();
                     self.sess.env_temp = false;
                 }

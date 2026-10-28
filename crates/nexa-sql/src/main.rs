@@ -2253,6 +2253,11 @@ fn main() {
         app.settings.get("mysql.tls").unwrap_or("preferred"),
         app.settings.get("mysql.tls_ca").unwrap_or(""),
     );
+    // PostgreSQL TLS(T-70 · 155차 · `pg.tls` · `pg.tls_ca`).
+    nsql_drivers::set_pg_tls(
+        app.settings.get("pg.tls").unwrap_or("preferred"),
+        app.settings.get("pg.tls_ca").unwrap_or(""),
+    );
     // ★ 확장 드라이버 폴더(DR-29 · T-27 ③) = <설정 폴더>/drivers(`NSQL_DRIVER_DIR`가 있으면 그쪽) — 기동 때 읽지 않고 첫 접속 때 지연 로드.
     nsql_drivers::ext::set_driver_dir(
         nsql_settings::config_dir()
