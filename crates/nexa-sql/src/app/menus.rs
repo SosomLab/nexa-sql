@@ -909,7 +909,11 @@ impl App {
                     .settings
                     .set("explorer.visible", if on { "on" } else { "off" });
                 let _ = self.settings.save();
-                if !on && self.focus == Focus::Explorer {
+                // ★ 켜면 포커스도 탐색기로(163차 · 사용자 10-29 "객체 탐색기를 선택했을 때 포커스가 안 됨") — 프로젝트·북마크·아웃라인·검색
+                //   패널과 같은 규칙(켜기 = 그 패널에 포커스 · 끄기 = 편집기로). 종전엔 끄기만 처리해 사이드바 아이콘·메뉴로 켠 뒤 키보드가 편집기에 남았다.
+                if on {
+                    self.set_focus(Focus::Explorer);
+                } else if self.focus == Focus::Explorer {
                     self.set_focus(Focus::Editor);
                 }
                 self.layout();
