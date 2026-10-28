@@ -1099,7 +1099,7 @@ fn pg_ssh_tunnel_round_trip() {
             params: Vec::new(),
         })
         .expect("select over tunnel");
-    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(2));
+    assert_eq!(r.result_sets[0].rows[0][0].display(), "2");
     eprintln!(
         "[ssh] 접속 {:?} · client addr {}",
         started.elapsed(),
