@@ -339,11 +339,11 @@ nsql plan -d mssql session-vars.sql 2026 Q1        # 위치 인자 → &1 &2
 # dialect=mssql items=6
 
 [1] line 2 · Exec
-  → LOCAL  :V_PRG_NM = N'SP_M4P_MPO_M4E_CREATE_BSY'
+  → LOCAL  :V_PRG_NM = N'SP_DMP_MPO_DME_CREATE_BSY'
 
 [3] line 6 · Exec
   → EXECUTE (Block · Bind · out=true)
-    | EXEC SP_M4P_MP_VERSION_CREATE(@PC_RET, 'ACME', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'user01')
+    | EXEC SP_DMP_MP_VERSION_CREATE(@PC_RET, 'ACME', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'user01')
     · PC_RET Auto InOut = NULL
     ! 암묵 변수: PC_RET
 …
@@ -352,11 +352,11 @@ nsql plan -d mssql session-vars.sql 2026 Q1        # 위치 인자 → &1 &2
 
 # variables=9 defines=0 errors=0
   :PC_RET Auto = 
-  :V_PRG_NM Varchar2(25) = SP_M4P_MPO_M4E_CREATE_BSY
+  :V_PRG_NM Varchar2(25) = SP_DMP_MPO_DME_CREATE_BSY
 …
 ```
 
-같은 줄 3이 `-d oracle`이면 `BEGIN SP_M4P_MP_VERSION_CREATE(:PC_RET, …); END;`로, 줄 10의 `SELECT … INTO`는 MSSQL에서 `SELECT @V_… = …` + `@@ROWCOUNT` 검사(`THROW 51403`/`51422`)로 재작성된다.
+같은 줄 3이 `-d oracle`이면 `BEGIN SP_DMP_MP_VERSION_CREATE(:PC_RET, …); END;`로, 줄 10의 `SELECT … INTO`는 MSSQL에서 `SELECT @V_… = …` + `@@ROWCOUNT` 검사(`THROW 51403`/`51422`)로 재작성된다.
 
 ★ **스크립트 엔진을 고쳤으면 두 방언 모두 다시 볼 것**(CLAUDE.md 규약).
 

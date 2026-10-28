@@ -96,9 +96,9 @@
 
 ## 9. 메타 즉시 채움 · 미리 읽기 · 즉시 회수(100차 mac · 09-23)
 
-사용자 09-23(맥 실기): "FROM 뒤 `M4S_`에 테이블이 안 보인다" → "현재 스키마는 접두 없이 · 다른 스키마는 `스키마.` 뒤" → "권한에 맞는 `ALL_`/`DBA_`(다른 DBMS도)" → "기본 스키마는 접속 시 바로 메모리 · `스키마.` 시점에 캐싱" → "단일 원천 + 유니버설 어댑터 · 중복 0" → "미사용 판정 즉시 회수".
+사용자 09-23(맥 실기): "FROM 뒤 `DMS_`에 테이블이 안 보인다" → "현재 스키마는 접두 없이 · 다른 스키마는 `스키마.` 뒤" → "권한에 맞는 `ALL_`/`DBA_`(다른 DBMS도)" → "기본 스키마는 접속 시 바로 메모리 · `스키마.` 시점에 캐싱" → "단일 원천 + 유니버설 어댑터 · 중복 0" → "미사용 판정 즉시 회수".
 
-**결함 셋(원인)**: ① 현재 스키마 = 접속 계정과 같은 이름의 스키마만 → SQL Server(`dbo`)·PG(`public`)에서 비어 테이블 후보 0 ② 버킷은 탐색기가 폴더를 펼쳐야만 채워짐 ③ `Snapshot::prefix(…, "", 200)`이 이름순 앞 200개만 넘겨 랭킹 전에 `M4S_*`가 잘림.
+**결함 셋(원인)**: ① 현재 스키마 = 접속 계정과 같은 이름의 스키마만 → SQL Server(`dbo`)·PG(`public`)에서 비어 테이블 후보 0 ② 버킷은 탐색기가 폴더를 펼쳐야만 채워짐 ③ `Snapshot::prefix(…, "", 200)`이 이름순 앞 200개만 넘겨 랭킹 전에 `DMS_*`가 잘림.
 
 **구조(단일 원천 위의 어댑터)**: 원천은 `nsql-run::meta::MetaStore` 한 벌(Arc 스냅샷 · 이름 인터닝 · 버킷 = (스키마, 종류) + `Coverage`). 소비자 = 탐색기 트리 · 완성(`MetaView`) · 툴팁 · (예정) hover 카드·객체 정보 탭 — 모두 스냅샷만 읽는다(복사 0 · 77 §1-2). 채우는 길은 둘: 트리 펼침(`Req::Objects`)과 **완성의 즉시 채움**(`Req::ObjectsMeta`/`DictMeta` · 노드 없이).
 
@@ -112,7 +112,7 @@
 
 **사전 뷰 = 권한 반영**: Oracle `ALL_VIEWS`(OWNER=SYS · `ALL_/DBA_/USER_/CDB_`)는 접근 가능한 뷰만 돌려주므로 `DBA_*`는 SELECT ANY DICTIONARY·SELECT_CATALOG_ROLE이 있을 때만 보인다 + PUBLIC 시노님 `V$`/`GV$`(`ALL_SYNONYMS`도 접근 가능한 것만) · PG `pg_catalog`·`information_schema`에서 `has_table_privilege(SELECT)` · SQL Server `sys`·`INFORMATION_SCHEMA`(메타데이터 가시성 규칙) · MySQL 시스템 스키마(`information_schema.tables`는 권한 있는 것만) · SQLite 내장 표. 이름은 Oracle만 맨이름, 그 밖은 `스키마.이름`(FROM 뒤에 그대로).
 
-**약어 퍼지**(`MI40` → `M4S_I002040`): `score`의 마지막 단계(부분열)가 이미 받았다 — 후보가 목록에 들어오지 못한 것(③)이 문제였다. 시험 `relation_requests_missing_buckets_then_lists_all_and_fuzzy_abbrev`(300개 뒤의 `M4S_*` · 약어 · 사전 · `스키마.` 요청 · 문서 언급) · `pick_current_schema` · `drop_bucket`.
+**약어 퍼지**(`MI40` → `DMS_I002040`): `score`의 마지막 단계(부분열)가 이미 받았다 — 후보가 목록에 들어오지 못한 것(③)이 문제였다. 시험 `relation_requests_missing_buckets_then_lists_all_and_fuzzy_abbrev`(300개 뒤의 `DMS_*` · 약어 · 사전 · `스키마.` 요청 · 문서 언급) · `pick_current_schema` · `drop_bucket`.
 
 **남은 중복(T-184)**: 탐색기 트리 노드가 `ObjectInfo`(이름 문자열)를 따로 들고 있다 — 노드가 `ObjId`만 가리키고 이름은 인터너에서 읽게 바꾸면 이름 복사가 0이 된다(탐색기 그리기 경로 수정 · 별도 작업).
 
@@ -144,8 +144,8 @@
 ## 13. 완성 목록 페이지 로딩 — ✅ 구현(§175 · T-196) · 설계(09-24 · 사용자 "제한 200은 좋아 · 끝까지 스크롤하면 결과 그리드처럼 자동 추가 페치 · 끝에 읽는 상태 표시 · 메모리 점검·미사용 정리") — 📐 T-196
 
 ### 13-1. 현상과 원인(APPDB 실측 · CLI `nsql run -c APPDB -`)
-- APPDB = 테이블 449 · 뷰 1(`VM4S_I002040`) · 함수 2 · 패키지 1 · 프로시저 72. FROM 자리 빈 접두에서 뷰가 안 보인 까닭 = ① 동점 정렬이 종류 우선(테이블 → 뷰)이라 뷰가 449개 뒤 ② `intel.max_items`(200)에서 잘림. ①은 같은 층 종류 무구분으로 고쳤고(§163 `kind_order` 0), ②가 이 절.
-- 정렬은 등급 → 레이어 → 점수 → MRU → 출처 → 순서 → **길이 → 이름**이라 `VM4S_I002040`(12자)은 11자 테이블들 뒤 = 목록 끝. 사용자 기대("끝에 보여야")와 같다.
+- APPDB = 테이블 449 · 뷰 1(`VDMS_I002040`) · 함수 2 · 패키지 1 · 프로시저 72. FROM 자리 빈 접두에서 뷰가 안 보인 까닭 = ① 동점 정렬이 종류 우선(테이블 → 뷰)이라 뷰가 449개 뒤 ② `intel.max_items`(200)에서 잘림. ①은 같은 층 종류 무구분으로 고쳤고(§163 `kind_order` 0), ②가 이 절.
+- 정렬은 등급 → 레이어 → 점수 → MRU → 출처 → 순서 → **길이 → 이름**이라 `VDMS_I002040`(12자)은 11자 테이블들 뒤 = 목록 끝. 사용자 기대("끝에 보여야")와 같다.
 
 ### 13-2. 다른 도구
 | 도구 | 긴 목록 |
@@ -183,7 +183,7 @@
 4. **메타 스냅샷 Arc**: 요청 동안만 잡는다(`MetaView`) — 변경 없음.
 
 ### 13-6. 구현 순서(T-196 · 작은 단계 셋)
-① nexa-ctl: `take_reached_end()` · `replace_items()`(first·hover·위치 유지) · `close()`가 항목 해제 · 시험 3 → ② nexa-sql: `Intel.shown` · `extend()` · 끝 항목 글 두 가지("N개 더" / "불러오는 중…") · End = 전부 · 호스트 배선(`intel` 사건 뒤 `take_reached_end`) · 시험(APPDB 재현 = 449+1+72에서 두 페이지 뒤 `VM4S_I002040` 보임) → ③ 설정 `intel.max_total`(HIDDEN) · 39 §3 · 위키 · U-121. 결정 = **D-205**(끝 항목 = 비활성 안내 한 줄 · 그리드와 같은 글) · **D-206**(End = 전부 붙인 뒤 마지막 · 상한 `max_total`).
+① nexa-ctl: `take_reached_end()` · `replace_items()`(first·hover·위치 유지) · `close()`가 항목 해제 · 시험 3 → ② nexa-sql: `Intel.shown` · `extend()` · 끝 항목 글 두 가지("N개 더" / "불러오는 중…") · End = 전부 · 호스트 배선(`intel` 사건 뒤 `take_reached_end`) · 시험(APPDB 재현 = 449+1+72에서 두 페이지 뒤 `VDMS_I002040` 보임) → ③ 설정 `intel.max_total`(HIDDEN) · 39 §3 · 위키 · U-121. 결정 = **D-205**(끝 항목 = 비활성 안내 한 줄 · 그리드와 같은 글) · **D-206**(End = 전부 붙인 뒤 마지막 · 상한 `max_total`).
 
 ## 14. 4-DBMS 절별 대상 검토(09-24 · 사용자 "오라클·MSSQL·Postgres·SQLite 각 clause 별로 정확한 대상이 표시되는지") — 실측 = CLI `nsql cat`/`nsql run`(APPDB · PLANDB · Repository · Demo)
 
@@ -221,7 +221,7 @@
 - ~~**한계** = PG `$$ … $$` 본문 안(문자열로 분류 · DECLARE 판정 안 됨) · Oracle `%TYPE`/`%ROWTYPE` 키워드 완성 없음.~~ → 둘 다 10-09 해소(3af0764 · 아래 두 줄).
 - **달러 본문 = 한 문장 재분석**(10-09 · 3af0764 · PG): 캐럿이 `$$ … $$`·`$tag$ … $tag$` 본문 안이면 그 본문을 PL/pgSQL 문서로 다시 분석한다 → `DECLARE` 구역 자료형(`;` 뒤 둘째 선언도) · 본문 안 `SELECT … FROM |` 관계 · 함수 머리 `AS $body$ DECLARE v |`. 보통 문자열(`'…'`) 안은 종전대로 팝업 없음.
 - **`%` 앵커 속성**(10-09 · 3af0764 · Oracle/PG): `이름%|`·`테이블.열%|`(붙여 씀) = 키워드 `TYPE`·`ROWTYPE` 둘만. 띄어 쓴 `a % |`는 나머지 연산자 = 식 자리(함수·루틴 후보 · TYPE 없음).
-- **협업 V1 bin124(10-09 · Debug · 새 홈)**: PG Repository `DO $$ DECLARE v_a integer; v_b |` = Type 60 · `CREATE FUNCTION f() RETURNS int AS $body$ DECLARE v |` = Type 60 · `DO $$ BEGIN SELECT * FROM |` = Table 178 · View 203 · `DO $$ DECLARE r emp%|` = TYPE·ROWTYPE ✓ · Oracle APPDB `v_name M4S_I002040.ITEM_CD%|` = TYPE·ROWTYPE ✓ · `SELECT a % |` = Function 82 · Routine 12 · Package 26 · TYPE/ROWTYPE 0 ✓ · `SELECT 'DECLARE v |` = 팝업 없음 ✓ · 회귀 intel-args 22/0 · intel-3part 7/0 · 기능 점검 S66·S77 생존.
+- **협업 V1 bin124(10-09 · Debug · 새 홈)**: PG Repository `DO $$ DECLARE v_a integer; v_b |` = Type 60 · `CREATE FUNCTION f() RETURNS int AS $body$ DECLARE v |` = Type 60 · `DO $$ BEGIN SELECT * FROM |` = Table 178 · View 203 · `DO $$ DECLARE r emp%|` = TYPE·ROWTYPE ✓ · Oracle APPDB `v_name DMS_I002040.ITEM_CD%|` = TYPE·ROWTYPE ✓ · `SELECT a % |` = Function 82 · Routine 12 · Package 26 · TYPE/ROWTYPE 0 ✓ · `SELECT 'DECLARE v |` = 팝업 없음 ✓ · 회귀 intel-args 22/0 · intel-3part 7/0 · 기능 점검 S66·S77 생존.
 - **10-09 사용자 정의 타입 적재 = 종류 지정 요청**(d6f3f3b · 사용자 "SQL Server ALTER TABLE 자료형 팝업에서 ↓·클릭이 바로 풀림"): 종전 `request_objects`가 관계 넷(+루틴)만 읽어 `Type` 버킷이 영영 Missing → "객체 불러오는 중…"이 남은 채 메타가 올 때마다 팝업 재조립 = 선택 불가 → `Explorer::request_object_kind`(Missing/Stale/Names만 · SQL Server `DB.스키마` 복합 열쇠 · 회수 대상 등록) + `Intel::note_coverage_kind`/`need_kinds` → 완성이 `(스키마, 종류)`로 청함(식 자리의 Function/Package도 같은 길). 협업 V1 bin118 = PLANDB `alter TABLE LOT_BRAND add ( c1 va` → Type 4 · 불러오는 중 0 · 1 s 간격 dump 동일 · meta Type 요청 1회 ✓.
 
 ## 18. 자동 별칭 허용 자리 · COLLATE 정렬 이름(10-09 · d6f3f3b · d437361)
@@ -234,7 +234,7 @@
 | UPDATE · DELETE 대상 | 붙임 | **SQL Server는 안 붙임**(T-SQL `UPDATE t SET`에 별칭 꼴이 다름) |
 | INSERT INTO · ALTER/CREATE/DROP/TRUNCATE/LOCK TABLE · CREATE INDEX … ON · GRANT … ON · COMMENT ON · DESC | 안 붙임 | — |
 
-- ★ **한정 이름도 같은 규칙**(10-21 · 133차 Linux · 사용자 지시) = `FROM 스키마.|`·`FROM DB.dbo.|`는 `CtxKind::Member`(+`from_chain`)라 종전엔 `Relation`만 보던 별칭 조건에 걸리지 않았다 → Member 분기 `alias_ok = from_chain && alias_allowed(chain_head…)` + 호스트 순수 `alias_slot(ctx)` · 예 `FROM APPDB_SB.ANTI_KR_ITEM A` · SQL Server `FROM APPDB_MS.dbo.M4E_C300000 M` · 대조군(ALTER TABLE · SQL Server UPDATE) = 없음 · E2E `scripts/intel-alias-e2e.sh`.
+- ★ **한정 이름도 같은 규칙**(10-21 · 133차 Linux · 사용자 지시) = `FROM 스키마.|`·`FROM DB.dbo.|`는 `CtxKind::Member`(+`from_chain`)라 종전엔 `Relation`만 보던 별칭 조건에 걸리지 않았다 → Member 분기 `alias_ok = from_chain && alias_allowed(chain_head…)` + 호스트 순수 `alias_slot(ctx)` · 예 `FROM APPDB_SB.ANTI_KR_ITEM A` · SQL Server `FROM APPDB_MS.dbo.DME_C300000 M` · 대조군(ALTER TABLE · SQL Server UPDATE) = 없음 · E2E `scripts/intel-alias-e2e.sh`.
 
 - **COLLATE**(사용자 "COALESCE/JOIN/UNION/열 정의/WHERE의 COLLATE 예약어 및 값 유형") = `Want::Collation`(`COLLATE |` 뒤 · 식·열 정의·ORDER BY 어디서든 · 메타 없이) · 표 `builtins::collations(d)` = SQL Server 24(DATABASE_DEFAULT · Korean_Wansung_* · Korean_100_* · SQL_Latin1_General_CP1_* · Latin1_General_* …) · PG 13 · MySQL 14 · Oracle 11(BINARY_CI/AI · KOREAN_M · GENERIC_M · USING_NLS_COMP) · SQLite 3 · 한 줄 설명 · 문법 `.sqlg` 4방언 절 `next`에 COLLATE.
 - **협업 V1 bin118(10-09)**: COLLATE = SQL Server `SELECT a COLLATE `·열 정의 `COLLATE ` 24 ✓ · 열 정의 자료형 뒤 = 키워드 `COLLATE`·`COLLATE DATABASE_DEFAULT` ✓ · PG 13 ✓ · Oracle 11 ✓ · 회귀 intel-args 22/0 · intel-3part 7/0 ✓ · 자동 별칭 = 완성 확정 시험 훅이 없어 자동 확인 못 함(사용자 실기).

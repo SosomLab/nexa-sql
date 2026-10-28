@@ -45,7 +45,7 @@
 
 ## 2026-10-21 낮 (134차 win · 협업 쌍 = 개발 "개발"[3fb16c] Fable × 협업 "협업"[93e1b3] Opus · [journal 10-21 §2](journal/2026-10-21.md))
 - 아침 P0 = 최신화 nexa-sql 38a79f8 → 8fa6017 · nexa-ui 75f4cd6 → 4514b28 · 통합 13/1(mssql 권한 전제) · Debug 1m41s · Release 6m15s 경고 0 · 133차 Linux Windows 영향 V1 = 별칭 E2E 6/0 · T-378 ✓ · D-314 Windows 기본값 불변 · T-376 유휴 0.
-- 🔧 **hover 카드 테이블 설명 없음**(사용자 · APPDB `M4E_I301080`) = 선적재 판정이 컬럼 코멘트 유무 → 테이블 링크 = `Snapshot::comment_known` · 상세 패널 테이블 단위 코멘트 → 메타 `MetaStore::set_object_comments`(카드·완성 카드·패널 한 원천).
+- 🔧 **hover 카드 테이블 설명 없음**(사용자 · APPDB `DME_I301080`) = 선적재 판정이 컬럼 코멘트 유무 → 테이블 링크 = `Snapshot::comment_known` · 상세 패널 테이블 단위 코멘트 → 메타 `MetaStore::set_object_comments`(카드·완성 카드·패널 한 원천).
 - ★ **메타 전체 갱신 = 코멘트 포함** = 우클릭 "메타 새로 고침" · F5 · Ctrl+Shift+R 셋 다 `invalidate_details` → `forget_comments`(같은 범위 · 설명 검색 사본 · 워머 재등록) · `COMMENT ON` = 그 테이블만 지연 재조회 · 라벨 "인텔리센스 캐시" → "메타데이터 캐시".
 - ★ nexa-ui **220차** `MIN_LINE_H` 20 → 12 → 8(다섯째 P0 · 줄 높이가 작은 글꼴도 따름 · 동작 변경 · 재빌드만) · ★ **T-374 ✅** 확장 상세 첫 조회 스레드(`ext_meta_start`/`ext_meta_poll` · "읽는 중" · 최신 의도만) · 🔧 통합 시험 mssql `object_id > 0`.
 - 둘째 P0 = 통합 14/14 · nexa-ctl 451/0 · Debug 1m47s 경고 0 · 재시작 PID 32284 · Release + V1 진행 중 · 커밋 = `feat/134-meta-linespacing` f1a9032 → main ff + 기록 25dea18 · nexa-ui 8f81401 · 49aaec8 · push 10-21 16:35 · CI ✓(ci 39563058782 · integration 39563058821 · nexa-ui ci 39563051533 · 기록 = 10-22 135차).

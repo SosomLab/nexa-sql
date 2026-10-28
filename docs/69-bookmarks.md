@@ -507,7 +507,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
     "items": [
       { "id": 7, "doc": { "file": "이슈관리/2026-09-01.sql" },          // 프로젝트 상대 경로만
         "line": 39, "col": 4, "text": "AND A.PROJECT_CD = 'ACME'",
-        "before": "FROM M4S_I002040 A", "after": "AND A.PLAN_VER = :V",
+        "before": "FROM DMS_I002040 A", "after": "AND A.PLAN_VER = :V",
         "hash": "9f2a…", "lines": 412,
         "label": "재고 기준", "note": "PLAN_VER 규칙 확인", "mn": 1, "group": 1,
         "created": 1758499200, "visited": 1758502800 },

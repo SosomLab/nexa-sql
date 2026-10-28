@@ -22,11 +22,11 @@
      ☐ 열린 탭만   ☐ 프로젝트 폴더   ☑ 지정 폴더                 ← 범위 토글(체크 = 합집합)
      ─────────────────────────────────────────────
      ▾ Script_3 (메모리 탭)                                 2
-         12:  SELECT * FROM M4S_I002040 A
+         12:  SELECT * FROM DMS_I002040 A
          40:  AND A.PROJECT_CD = 'ACME'
      ▾ 이슈관리/2026-09-01.sql                               1
          7:   -- 1433 포트 …
-     ▸ Oracle/sp_m4p_mp_version_create.sql                  3
+     ▸ Oracle/sp_dmp_mp_version_create.sql                  3
 ```
 
 | 요소 | 동작 |

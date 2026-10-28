@@ -131,7 +131,7 @@
 - **10-06 카드·툴팁 배치 규칙(T-179 2차)**: 기준 = **링크 글자 사각형**(줄 `[top, top+line_h]` · `TextBox::point_at`의 y는 줄 바닥이라 쓰지 않음) · 위치 = 61 §2-2대로 **정방향(`objlink.tooltip_pos`) → 반대쪽**(정방향이 편집기 영역 밖이면 · `flip_vertical` · 판정 host = 편집기 사각형) **→ 밀어 넣기**(창 전체 · `nudge_into`) · 링크 줄과 그 옆 글자를 덮지 않는다 · **카드 영역** = 카드 ∪ 링크 글자 둘레 + 8 px(`card_zone_contains`) — 포인터가 이 안에 있는 동안 카드 유지(틈·비스듬한 경로) · 벗어나면 닫힘. Ctrl 툴팁(`paint_tip`)·시그니처 카드(`sig_card_tip`)도 같은 규칙. 시험 = journal 10-06 §3-1(A 5행 · B 1행 뒤집힘 · C 시그니처 카드).
 - **10-06 카드 버튼 = MouseUp 확정**(사용자 추가 요구 · 값 목록 팝업 버튼과 같은 규칙): 버튼 위에서 누르고 **뗄 때** 실행 · 누른 채 버튼 밖으로 벗어나 떼면 취소 · 기동 명령 `ui.click`(Down+Up) 회귀 = "데이터 200행 보기" → 결과2 rows=4(journal 10-06 §9 ⑤).
 - **10-08 없는 객체 = 카드 없음**(98504fc · bb81c51 · 사용자 캡처): 미확인 이름 = 벽돌색 밑줄만 · Ctrl 툴팁·hover 카드를 띄우지 않는다(종전 "(현재 연결에 없는 객체)" 카드) · ~~다른 스키마에 있으면 안내 카드 유지~~ → bb81c51에서 그 안내도 삭제(`ObjLinkElsewhere` 제거 · §10 엄격 판정).
-- **10-21 선적재 판정 = 테이블 코멘트를 아는가**(134차 win · 사용자 "탐색기 상세엔 설명이 있는데 hover 카드엔 (설명 없음)" · APPDB `M4E_I301080`): `objlink_prefetch`가 상세(L3)를 청하는 조건 = 상세 `Unknown` **그리고** 테이블·루틴 링크면 `!Snapshot::comment_known(names, id)`(테이블 코멘트 값 또는 지도 항목 = NULL도 앎) · 컬럼·제약 링크면 종전대로 `!col_comments.contains_key(id)` — 종전 = 종류 무관 "컬럼 코멘트가 있으면 안 청함" → 스키마 워머(L2)가 컬럼 코멘트만 채운 테이블은 테이블 설명을 영영 못 받았다 · 함께 = 상세 패널의 테이블 단위 코멘트가 메타에도 들어가 카드가 같은 원천을 본다(`MetaStore::set_object_comments` · 85 §3).
+- **10-21 선적재 판정 = 테이블 코멘트를 아는가**(134차 win · 사용자 "탐색기 상세엔 설명이 있는데 hover 카드엔 (설명 없음)" · APPDB `DME_I301080`): `objlink_prefetch`가 상세(L3)를 청하는 조건 = 상세 `Unknown` **그리고** 테이블·루틴 링크면 `!Snapshot::comment_known(names, id)`(테이블 코멘트 값 또는 지도 항목 = NULL도 앎) · 컬럼·제약 링크면 종전대로 `!col_comments.contains_key(id)` — 종전 = 종류 무관 "컬럼 코멘트가 있으면 안 청함" → 스키마 워머(L2)가 컬럼 코멘트만 채운 테이블은 테이블 설명을 영영 못 받았다 · 함께 = 상세 패널의 테이블 단위 코멘트가 메타에도 들어가 카드가 같은 원천을 본다(`MetaStore::set_object_comments` · 85 §3).
 
 - **10-05 `obj.*` 액션(얇은 판 · T-180 ④)**: 77 §1-1 액션 레지스트리를 "id 이관" 대신 **얇게** — 탐색기 우클릭 메뉴의 id 12개(`select` · `source` · `copy` …)는 E2E가 쓰므로 그대로 두고, 호스트 명령 `obj.*`가 **선택 노드에 대해 같은 길(`Explorer::menu_pick`)** 을 부른다(`act_selected` · `open_menu_selected` · `app/meta.rs` `obj_act`). 명령 = `obj.menu`(Shift+F10 · 선택 행 자리에 우클릭 메뉴) · `obj.select_rows` · `obj.source` · `obj.copy_name` · `obj.refresh` · `obj.refresh_meta` · `obj.sizes`(팔레트 "오브젝트 탐색기" 묶음) · 기존 `obj.reveal`(F4) · `obj.info`(Shift+F4) · `obj.rows`. 탐색기가 닫혀 있으면 열고 · 선택 없음 = 상태줄 "객체 탐색기에서 선택한 항목이 없습니다" · 삭제·서버 해제·접속처럼 **묻는 동작은 명령으로 두지 않는다**(메뉴에서만). `ObjectRef` 통일(링크 `Link` · 탐색기 `ObjectInfo` · `RevealTarget`)은 설계 메모로 남김(보류 가능).
 
@@ -176,12 +176,12 @@
 
 ```sql
 -- Oracle
-ALTER TABLE M4S_O400100 ADD (
+ALTER TABLE DMS_O400100 ADD (
 	MP_VRSN_ID	VARCHAR2(20)
 ,	PRGS_STA_CD	VARCHAR2(10)	DEFAULT 'P00'
 );
-COMMENT ON COLUMN M4S_O400100.MP_VRSN_ID  IS 'MP 버전 아이디';
-COMMENT ON COLUMN M4S_O400100.PRGS_STA_CD IS 'FP 진행상태코드(FP_PRGS_STA_CD)';
+COMMENT ON COLUMN DMS_O400100.MP_VRSN_ID  IS 'MP 버전 아이디';
+COMMENT ON COLUMN DMS_O400100.PRGS_STA_CD IS 'FP 진행상태코드(FP_PRGS_STA_CD)';
 
 -- SQL Server ①
 ALTER TABLE dbo.SALES_ORDER ADD ORDER_STATUS VARCHAR(10) NULL;

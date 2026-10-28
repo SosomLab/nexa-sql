@@ -17,7 +17,7 @@
 |---|---|
 | 기기 | Windows 11 Pro 10.0.26200 · 개발 PC(Ryzen/Intel 미기록 · `nexa-sys` CPU 수 미기록) |
 | 빌드 | `target/release`(옵션 그대로 · LTO/strip 미적용 = T-102 전) · nexa-sql 52차 작업 트리(DR-33 · 툴바 도크 · 향상 모드 포함) |
-| Oracle | `DEMODB_19c` = APPDB@**172.16.0.214**:1521/APPDB(WAN) · `M4S_I002040` 155,316행 |
+| Oracle | `DEMODB_19c` = APPDB@**172.16.0.214**:1521/APPDB(WAN) · `DMS_I002040` 155,316행 |
 | SQL Server | `PLANDB` = APPDB_MS@172.16.1.58:1433/PLANDB_MS(LAN) |
 | 방법 | 모드마다 `nsql config set perf.boost off/on` → GUI 3회 기동(창 핸들까지 ms · 4초 뒤 자원 · 유휴 10초 CPU) · CLI 질의 3회(`nsql run --timing`) · **중앙값** |
 | 주의 | GUI 3회 중 1회는 다른 캡처 작업과 겹쳤을 수 있어 중앙값으로 본다 · 유휴 측정은 창에 포커스 없음(백그라운드) |
@@ -39,7 +39,7 @@
 
 | 질의 | 단계 | 끔 | 켬 | 변화 |
 |---|---|---:|---:|---:|
-| Oracle `SELECT COUNT(*) FROM M4S_I002040` | execute | 17.9 ms | 18.1 ms | 0 |
+| Oracle `SELECT COUNT(*) FROM DMS_I002040` | execute | 17.9 ms | 18.1 ms | 0 |
 | Oracle `SELECT * … WHERE ROWNUM <= 200`(498 KB) | execute / fetch | 6.8 / 21.5 ms | 6.2 / 21.8 ms | 0 |
 | Oracle 같은 질의 프로세스 전체(접속 포함) | wall | 227 ms | 237 ms | 0(±10 ms 잡음) |
 | Oracle `WHERE PROJECT_CD='ACME'` 전량(무제한 · 수만 행) | wall | 9.79 s | 10.41 s | 0(±0.6 s 잡음 · WAN) |

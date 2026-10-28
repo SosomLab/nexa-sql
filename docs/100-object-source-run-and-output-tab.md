@@ -3,7 +3,7 @@
 > 사용자 요구(09-30 저녁): ① 소스 열기와 DDL 생성의 차이 분석 ② 소스 열기 뒤 F5가 프로시저를 CREATE하지 않고 줄 단위로 도는 것 →
 > 객체(뷰·패키지·함수·프로시저 …)에서 다르게 동작 ③ 프로시저 편집에서는 결과 그리드보다 "컴파일이 잘 되었는지" 같은 **메시지**가 더
 > 뜻이 있다 → 일반 편집 탭에서도 프로시저 실행·PRINT 메시지를 보는 **Output 탭**(처음엔 없음 · 보기 설정 · 메시지가 오면 자동 · 다른
-> 클라이언트의 기본 기능) ④ APPDB·APPDB_SB의 `SP_M4P_MP_VERSION_CREATE_BSY`를 DDL/소스 열기로 열어 실제 내용과 일치 확인 ⑤ 객체 선언·
+> 클라이언트의 기본 기능) ④ APPDB·APPDB_SB의 `SP_DMP_MP_VERSION_CREATE_BSY`를 DDL/소스 열기로 열어 실제 내용과 일치 확인 ⑤ 객체 선언·
 > 테이블·인덱스·PK/UK·제약 등 **전 유형 DDL 전수 테스트**(appdb 자동 접속 · Debug 직접 실행).
 
 ## 1. 소스 열기(Open source) vs Generate SQL ▸ DDL — 차이 분석
@@ -99,7 +99,7 @@
 
 ## 4. 실기(09-30 · Debug · appdb 자동 접속 · 키 주입 0)
 
-- **`SP_M4P_MP_VERSION_CREATE_BSY` APPDB(69줄) · APPDB_SB(495줄)**: CLI `cat source`/`cat gen ddl` = GUI 소스 열기/DDL 미리보기 덤프와 **글자 단위 일치** ·
+- **`SP_DMP_MP_VERSION_CREATE_BSY` APPDB(69줄) · APPDB_SB(495줄)**: CLI `cat source`/`cat gen ddl` = GUI 소스 열기/DDL 미리보기 덤프와 **글자 단위 일치** ·
   소스 열기 = `CREATE OR REPLACE ` + `ALL_SOURCE`(68/494줄) + `/` 일치 · DDL 본문(2행~) = `ALL_SOURCE`(2행~) 일치(머리 줄만 `NONEDITIONABLE "APPDB"."…"`) ·
   스키마별로 다른 판이 맞게 들어온다(둘 다 서버 상태 INVALID = 탐색기 `object!`).
 - **전 유형 DDL E2E `scripts/oracle-ddl-e2e.sh -o <폴더> -n target/debug/nsql.exe -p appdb`** = **67/67 통과**(임시 객체 `NSQLT_*` · 끝에 0개 남김): 테이블 ×2 · PK · UK · CHECK ·

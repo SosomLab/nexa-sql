@@ -37,7 +37,7 @@
 ┌ 활동 막대 │ 객체 탐색기(검색창 + 트리)                         │ 편집기 …
 │           │ …                                                │
 │           ├──────── split_d(끌기 = explorer.details_h) ────────┤
-│           │ [TABLE] APPDB.M4E_I301030  Description…   ▾  ⧉    │  ← 머리 줄(UI 글꼴 · 26 px)
+│           │ [TABLE] APPDB.DME_I301030  Description…   ▾  ⧉    │  ← 머리 줄(UI 글꼴 · 26 px)
 │           │ == Properties (5) ==                              │  ← 본문(고정폭 · 읽기 전용 · 선택/복사/스크롤)
 │           │ Property  Value                                   │
 │           │ …                                                │
@@ -74,8 +74,8 @@
 
 | 동작 | 결과 | 예 |
 |---|---|---|
-| 복사 버튼 클릭 | 설명(Description) · 없으면 `스키마.이름` | `PIPELINED` / `APPDB.M4E_I301030` |
-| **Shift**+클릭 | `종류 - 스키마.이름 - 설명` | `TABLE - APPDB.M4E_I301030 - …` |
+| 복사 버튼 클릭 | 설명(Description) · 없으면 `스키마.이름` | `PIPELINED` / `APPDB.DME_I301030` |
+| **Shift**+클릭 | `종류 - 스키마.이름 - 설명` | `TABLE - APPDB.DME_I301030 - …` |
 | 본문 선택 + ⌘/Ctrl+C | 선택 글 | 표 일부 · DDL 일부 |
 | 효과 | `CopyBtn` 체크 표시 1 s(다른 복사 버튼과 같음) · 실패 = 상태줄 | |
 
@@ -122,7 +122,7 @@
 
 ## 7. 자체 점검(09-25 · 키 주입 0)
 
-- 단위 = `cargo test -p nsql-catalog detail`(`render_table` 정렬 · 소스 종류) · 실서버 CLI = `nsql cat -c APPDB -s APPDB detail M4E_I301030`(Properties · Columns 9 · Constraints · Indexes · DDL) · `nsql cat -c PLANDB detail <proc> procedure`.
+- 단위 = `cargo test -p nsql-catalog detail`(`render_table` 정렬 · 소스 종류) · 실서버 CLI = `nsql cat -c APPDB -s APPDB detail DME_I301030`(Properties · Columns 9 · Constraints · Indexes · DDL) · `nsql cat -c PLANDB detail <proc> procedure`.
 - GUI(격리 · 데모 SQLite · `explorer.details=on`) = `@after:1500:explorer.expand1,@after:2500:explorer.expand2,@after:3500:explorer.select3,@after:5000:details.dump:<파일>` → `== Properties (4) == … == Columns (3) == … == Constraints (1) ==`(dept) · 기동 명령 `explorer.select<row>` 신설.
 - 실기 U-166 = View ▸ 객체 상세 → 테이블 클릭 = 섹션 · ▾/▴ · 복사 · Shift+복사 · 본문 선택 ⌘C · 스플리터 끌기 · 탐색기 스크롤과 겹치지 않음.
 
