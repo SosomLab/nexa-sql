@@ -117,7 +117,7 @@ scripts\win-ssh-tunnel-test.ps1 -Profile appdb-ssh -AddKnownHost
 
 ### 7-3. 인증 · 프롬프트가 없는 이유
 
-`BatchMode=yes` = ssh가 **아무것도 묻지 않는다**. 그래서 ① 호스트 키는 미리 `known_hosts`에 있어야 하고(스크립트 `-AddKnownHost` 또는 터미널에서 한 번) ② 인증은 키·에이전트·`~/.ssh/config`(IdentityFile · ProxyCommand 포함)만 — 비밀번호 로그인은 실패하고 안내문이 붙는다. 앱이 비밀번호를 받아 ssh에 넣는 길(SSH_ASKPASS 도우미)은 3차 후보(사용자 결정 3번).
+`BatchMode=yes` = ssh가 **아무것도 묻지 않는다**. ① 호스트 키 = **`StrictHostKeyChecking=accept-new`**(사용자 10-29 결정 · D-392): 처음 보는 호스트는 키를 `known_hosts`에 자동 등록하고, 등록된 키와 **다르면** 거절(서버 교체·중간자) → 안내 = 서버 확인 뒤 `ssh-keygen -R <host>`. 스크립트 `-AddKnownHost`는 이제 선택. ② 인증은 키·에이전트·`~/.ssh/config`(IdentityFile · ProxyCommand 포함)만 — 비밀번호 로그인은 실패하고 안내문이 붙는다(사용자 10-29 결정 = **키만 유지** · SSH_ASKPASS 도우미는 채택하지 않음).
 
 ### 7-4. 수명 · 좀비 방지(162차)
 

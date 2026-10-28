@@ -217,6 +217,9 @@ pub fn ssh_args(
         "BatchMode=yes".into(),
         "-o".into(),
         "ExitOnForwardFailure=yes".into(),
+        // ★ 처음 보는 호스트 키 = 자동 등록(사용자 10-29 결정 · D-392) · 등록된 키와 다르면 종전처럼 거절(중간자 방어는 유지).
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
         "-o".into(),
         format!("ConnectTimeout={timeout_secs}"),
         "-o".into(),
@@ -550,7 +553,11 @@ fn exit_message(dest: &str, code: Option<i32>, stderr: &str) -> String {
         .unwrap_or("")
         .to_string();
     let hint = if line.contains("Host key verification failed") {
-        " - accept the host key once from a terminal: ssh ".to_string() + dest
+        // accept-new라 처음 보는 키는 통과한다 → 이 실패 = known_hosts의 키와 **다르다**(서버 교체 또는 중간자).
+        " - the host key differs from ~/.ssh/known_hosts: verify the server, then `ssh-keygen -R <host>` and retry (ssh "
+            .to_string()
+            + dest
+            + ")"
     } else if line.contains("Permission denied") {
         " - BatchMode cannot ask for a password: use a key (ssh_key=) or an agent".to_string()
     } else {
@@ -594,6 +601,8 @@ mod tests {
                 "-o",
                 "ExitOnForwardFailure=yes",
                 "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
                 "ConnectTimeout=7",
                 "-o",
                 "ServerAliveInterval=30",
@@ -618,7 +627,10 @@ mod tests {
             m.starts_with("SSH: Host key verification failed. (ssh exited 255)"),
             "{m}"
         );
-        assert!(m.ends_with("ssh u@h"), "{m}");
+        assert!(
+            m.contains("ssh-keygen -R") && m.ends_with("(ssh u@h)"),
+            "{m}"
+        );
         let m = exit_message(
             "u@h",
             Some(255),
