@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| t3-connect-ssh-fields | 2026-10-28 | 2026-10-28 → main (채움) | 1 | 160차 win = T-3 2차 접속 창 SSH 칸(호스트 줄 아래 SSH 터널 + SSH 키 · 로그인 창 높이 648 D-389) · 1c5b244a |
+| t3-connect-ssh-fields | 2026-10-28 | 2026-10-28 → main ff(삭제) · **b7c398f6** | 3 | 160차 win = T-3 2차 접속 창 SSH 칸(호스트 줄 아래 SSH 터널 + SSH 키 · 로그인 창 높이 648 D-389) · 1c5b244a · e7229654(P3 안내문) · b7c398f6(문서) |
 | feat/159-ssh-tunnel | 2026-10-28 | 2026-10-28 → main ff(삭제) · **bef0e4ab** | 4 | 159차 win = T-3 SSH 터널 1차(시스템 ssh 포워딩 · 허브 `Tunneled` 래퍼 · CI sshd) · abb0d9cf · 70562755 · 44508d99 · bef0e4ab |
 | feat/158-db2-section-pool | 2026-10-28 | 2026-10-28 → main ff(삭제 · c497e82a 위로 rebase) · **ad1bd70c** | 3 | 158차 win = Db2 다중 커서 2단계(섹션 풀 · WITH HOLD) + CI TLS PG(검증 모드 전수) · 4f2cf7a6 · 258514ea · ad1bd70c |
 | feat/157-pg-tls-db2-cursor | 2026-10-28 | 2026-10-28 → main ff(삭제) · **c523dd9d** | 5 | 157차 win = PG TLS 보강(접속 상한 · 옛 확장 TLS 보증) + Db2 서버 커서 · 10.5 페이징 폴백 · DDM 0x8004 (옛 이름 feat/157-pg-tls-guard) |
