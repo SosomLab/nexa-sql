@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-29 (164차 · Windows · SSH accept-new + 브리프 결정 반영)** — SSH 호스트 키 `StrictHostKeyChecking=accept-new` · 인증 = 키만(D-392 · ab9ab290) · 열린 항목 브리프 [126](126-open-items-brief.md) 사용자 결정 11건 = D-393(T-48·T-56·T-57 마감 · T-125 종결 · T-149 P1 · T-166 재작성 · 새 T-453 · 낡은 원장 7곳 정리)([journal 10-27 §26](journal/2026-10-27.md)).
 - **2026-10-29 (163차 · Windows · 포커스·활성화)** — 객체 탐색기를 켤 때 포커스도 탐색기로(fc39d63f) · 객체 찾기 창이 다시 비활성으로 뜨던 원인 = 재시작 스크립트가 실제 설정 인스턴스에 `NSQL_NO_ACTIVATE=1` → 값 `startup`(기동 때 주 창만 비활성) 신설 + 스크립트 변경(e58fc93c)([journal 10-27 §25](journal/2026-10-27.md)).
 - **2026-10-28 밤 (162차 · Windows · 저장소 익명화 + SSH 터널 강화)** — 사용자 지시 = 파일의 IP·도메인·호스트·계정·업무 코드 익명화(1차 b8a72b09 · 2차 4d06f1e9 · crates 7e501de7 · 3차 38ac716a · 이력은 유지 · 실서버 점검 값 파라미터화 T-452) · SSH 터널 = 명령창 숨김 · 대상당 ssh 1 공유 · Job Object · PID 원장 + 기동 정리(D-391 · 441fe3ea) · V1 a~e ✓([journal 10-27 §24](journal/2026-10-27.md)).
 - **2026-10-28 (161차 · Windows · SSH 칸 기본 접힘 + 실서버 SSH 시험 케이스)** — 사용자 "자주 안 쓰니 확장 버튼으로" = 프로필 변수 버튼 줄 반반 [SSH 터널…] 펼침/접기(값 있으면 자동 펼침 · 접어도 값 유지 · D-390) · 실서버 SSH 터널 시험 케이스 `ssh_tunnel_real_server` + `scripts/win-ssh-tunnel-test.ps1` + [125](125-ssh-tunnel-real-server-test.md) · 실행 = 사용자 결정 대기([journal 10-27 §23](journal/2026-10-27.md)).

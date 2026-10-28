@@ -91,6 +91,7 @@ pub struct ExecResult { …, pub pending: Option<CursorHandle> }   // 마지막 
 | **SQLite** | `Statement` + `Rows`를 보관(연결과 수명 결합 → `Box<dyn …>` + unsafe 없이 `rusqlite::Statement`를 `OwnedStatement` 부품으로) | ✅ | 단일 스레드 · 트랜잭션 무관 |
 | **PostgreSQL**(tokio-postgres) | **Portal**: `transaction.bind(stmt) → Portal` · `query_portal(&portal, max_rows)` = 서버가 N행만 보냄 · 트랜잭션 안에서만 살아 있음 | ✅(Portal) | 자동 커밋 모드에선 결과를 다 읽기 전까지 **암묵 트랜잭션 유지** → [34](34-transaction-ux.md) 탭 배지에 "커서 열림" 표시 · `close_cursor`가 커밋 |
 | **SQL Server**(tiberius) | `QueryStream`은 클라이언트를 빌려 쓴다 → 워커 **비동기 태스크 안에 스트림을 잡고** `fetch_next` 요청을 채널로 받아 N행 넘김(태스크 = 세션 소유자 · 요청 없을 땐 대기 · 서버는 TDS 흐름 제어로 멈춤) | ✅(스트림) | 1차는 **OFFSET 폴백**(`cursor_supported=false`)으로 출발 · 스트림 유지는 T-48c |
+| ★ **10-29 확정(D-393 · T-48 마감)** | MySQL · DuckDB · ClickHouse · ODBC · SQL Server = **커서 없음 → OFFSET 폴백(§3-4)이 공식 방침** · 확장 cdylib은 `CURSOR_SUPPORTED`로 신고 · 위 SQL Server 스트림안·`sp_cursor*`는 실사용 요구가 생기면 별건 | — | 커서 유지 = Oracle·PG·SQLite·Db2 |
 
 ### 3-4. OFFSET 재질의 폴백(커서가 없거나 닫혔을 때)
 
@@ -327,7 +328,9 @@ cancel_all() ─▶ waiting.clear()(running 제외)
 | Oracle | ✅ | 같은 문장·같은 위치면 **커서 이어 읽기**(새 SQL 없음) | 유휴 `db.cursor_idle_secs` · 다른 문장 실행 · 접속 해제 |
 | PostgreSQL | ✅(Portal) | 커서 이어 읽기 — **자동 커밋 모드에선 결과를 다 읽을 때까지 암묵 트랜잭션**(탭 배지 "커서 열림" · 34) | 위와 같음 + 커밋/롤백 |
 | SQLite | ✅ | 커서 이어 읽기 | 위와 같음 |
-| SQL Server | ❌(1차 = OFFSET 폴백 · 스트림 유지 T-48c) | **항상 재질의**(`… ORDER BY (SELECT NULL) OFFSET k ROWS FETCH NEXT n ROWS ONLY`) | — |
+| SQL Server | ❌(OFFSET 폴백 = 공식 · D-393) | **항상 재질의**(`… ORDER BY (SELECT NULL) OFFSET k ROWS FETCH NEXT n ROWS ONLY`) | — |
+| Db2(네이티브 DRDA) | ✅(157·158차 · 섹션 풀) | 커서 이어 읽기(OPNQRY/CNTQRY · WITH HOLD) · 10.5 이하 = `ROW_NUMBER` 폴백(`Caps.offset_fetch`) | 롤백 · 끊김 |
+| MySQL · DuckDB · ClickHouse · ODBC | ❌(OFFSET 폴백 = 공식 · D-393) | **항상 재질의**(`LIMIT n OFFSET k` 류) | — |
 
 `fetch_page`(nsql-run)가 이미 "커서였는가"를 돌려주므로 워커 `Page` 이벤트에 `via_cursor`를 실어 호스트가 표시를 가른다.
 

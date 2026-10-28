@@ -34,7 +34,8 @@
 └──────────────────────────────────────────────────┘
 ```
 
-- 컨트롤 = **nexa-grid 계층 그리드**(nexa-ui 21 · FileGrid와 같은 `RowSource` + depth 글리프) · `CatalogSource` 하나 추가. 컬럼 = 이름 · (선택) 종류/행 수/수정 시각(펼친 뒤 채움).
+- ★ **10-29 현행 승격(사용자 · T-56 마감 · D-393)** = 컨트롤 = `explorer.rs` **전용 트리**(nexa-grid `CatalogSource` 이식 **철회**) · 아래 원안은 기록으로 남김.
+- (원안) 컨트롤 = **nexa-grid 계층 그리드**(nexa-ui 21 · FileGrid와 같은 `RowSource` + depth 글리프) · `CatalogSource` 하나 추가. 컬럼 = 이름 · (선택) 종류/행 수/수정 시각(펼친 뒤 채움).
 - 위치 = 접속 패널 아래(왼쪽 사이드바 · 접기 가능) · 폭 조절. 더블클릭 = 테이블이면 편집기에 `SELECT * FROM …` 템플릿 · 프로시저면 `DESC`/소스(후속).
 - 탐색기 노드도 [nexa-ui 21 §3-3](../../nexa-ui/docs/21-grid-family.md)와 같은 **툴팁 카드**(종류 · 스키마 · 소유자 · 행 수 · 마지막 조회 시각 · 설정 `tabs.tooltip`과 같은 토글 `explorer.tooltip`). · **10-08 객체 노드 툴팁 = 한 줄**(`종류 · 스키마.이름 · 상태 · 수정일` · 이름만 있던 첫 줄 제거 · 5a89b7e · 스키마/폴더/DB 노드는 그대로)
 - **멤버 찾기 폴더**(10-08 T-315 · 96 §10): "객체 탐색기에서 보기"가 제약 이름이면 테이블 › Constraints / Keys / Foreign Keys / Indexes 중 그 이름이 든 폴더의 멤버까지 선택(방언마다 폴더 이름이 다름 · 컬럼 = Columns · 패키지 멤버 = Procedures/Functions).
@@ -92,6 +93,8 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 ---
 
 ## 3. 로딩 — 단일 레벨 · 병렬 · 비확산
+
+> ★ **10-29 현행 승격(사용자 · T-56 마감 · D-393)** = 스레드 = **전경 `nsql-explorer` + 배경 `nsql-explorer-bg` 메타 스레드 2개 · 각자 순차 큐**(아래 도식·표의 "풀 ≤ 4 · 요청별 스레드"는 원안 · [26 §8](26-performance-architecture.md) 대상당 동시성 상한에 맞춰 2로 확정) · 취소 = 접히면 **늦게 온 결과를 버림**(취소 토큰·어댑터 `cancel` 없음) · 메타 세션 = 프로필당 **separate 고정**(D-46) · 공유 시 **대기**(D-47).
 
 ```
 사용자: 노드 펼침 ─▶ Explorer::expand(path)

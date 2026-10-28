@@ -20,7 +20,7 @@
 | **DR-12** | Oracle 드라이버 = `oracle`(kubo · ODPI-C) 지금 → 공식 `oracledb` GA 시 어댑터 교체. **09-13 정정**: 교체 조건 = GA **+ OUT/IN OUT 바인드·REF CURSOR·DBMS_OUTPUT 회수 지원**(beta.3 스파이크: 19c 접속 157ms ✓ · OUT API 부재 ✗ — D-22) | DP-3 · 실기 09-13 | ✅ 09-12 · 정정 09-13 |
 | **DR-13** | SQL Server 드라이버 = `tiberius` 계열 → Microsoft `mssql-tds` 성숙 시 재평가 | DP-4 | ✅ 09-12 |
 | **DR-14** | 결과셋 = 자체 모델(Arrow는 export 어댑터에서만) | DP-5 | ✅ 09-12 |
-| **DR-15** | 셰이핑 = `rustybuzz` 도입(원장 등재) — 우선은 nexa-gfx 글리프 폴백으로 한글을 그리고, 조합·합자는 셰이퍼 단계에서 | DP-6 | ✅ 09-12 |
+| **DR-15** | 셰이핑 = `rustybuzz` 도입(원장 등재) — 우선은 nexa-gfx 글리프 폴백으로 한글을 그리고, 조합·합자는 셰이퍼 단계에서 | DP-6 | ⚠ **조건부(D-383)** — 10-29 정정(실제 = 미도입 · UI 텍스트 한정 스파이크 뒤 결정 · T-11 · 종전 "✅ 09-12") |
 | **DR-16** | 플러그인 = 데이터 패키지 → WASM(`wasmi`) → Lua는 수요 시 | DP-7 | ✅ 09-12 |
 | **DR-17** | 예산 게이트 — 기동 < 1s · 유휴 RSS < 80MB · 10만 행 < 150MB · 바이너리 ≤ 30MB | DP-8 | ✅ 09-12 |
 | **DR-18** | **CLI(M1)와 최소 GUI(M2 슬라이스)를 병행** — 같은 코어(`nsql-run`)를 둘이 소비 | DP-9 정정: 사용자 *"GUI 최소 기능 구현을 병행하면서 CLI 함께"* 09-12 | ✅ 09-12 |
@@ -79,7 +79,7 @@
 | **D-144** | ✅ 09-28(사용자) 탐색기 서버 노드 **연결 해제 = 항상 고르기**(`explorer.disconnect_pick` 기본 `always` · 연결이 하나여도 모두/이 연결을 확인) — 옛 기본 `auto`는 새 기본으로 | 확정 |
 | **D-145** | ✅ 09-28(사용자 "라이선스가 없어도 모든 기능이 동작하는 것이 기본 · 개인 사용은 전 기능 오픈 · 차후 일부 제한 가능") **라이선스 기능 게이트 기본 끔** — 숨은 `license.gates`(옛 `license.gates_dev`)를 켤 때만 Debug·Release 동일 적용 · 게이트 12곳·`Feature` 표는 유지(D-43~46은 "켰을 때"의 규칙) · 종전 "Release 늘 켬"은 폐기([journal 09-28 §8-1](journal/2026-09-28.md)) | 확정 |
 | **D-146** | ⏳ 09-28 설정 키 이름 2차 rename([94 §6-2](94-settings-key-naming-and-location.md) · `conn.`→`login.` · `sql.`→`grid.` · 단위 접미 `ui.fade_*_ms` · `editor.tab_accent_color`) + 카테고리 쪼갬(78 §3 · Session → 세션/트랜잭션 보호/스크립트·변수) — 권장 = 둘 다(T-250 · T-186) · 1차 4키는 09-28 적용 | 권장안 |
-| D-139~143 | ⏳ 09-21 변수 관리 부속(권장안으로 진행 · 이의 있으면 바꿈): D-139 `SELECT … INTO` 0행·여러 행 = Oracle식 오류(`vars.into_policy`) · D-140 비밀 값 = `ACCEPT HIDE` + 이름 규칙 → 가림·기록/저장 안 함 · D-141 `&` = Oracle 방언 탭만 기본 켬 · 문자열 안은 선택 · D-142 이름 대소문자 무시(표기 보존) · SQLite `:x @x $x` = 한 변수 · D-143 서버에 비추기(SESSION_CONTEXT 등) = 뒤로 | 권장안 |
+| D-139~143 | ⏳ 09-21 변수 관리 부속(권장안으로 진행 · 이의 있으면 바꿈): D-139 `SELECT … INTO` 0행·여러 행 = Oracle식 오류(`vars.into_policy`) · D-140 비밀 값 = `ACCEPT HIDE` + 이름 규칙 → 가림·기록/저장 안 함 · D-141 `&` = Oracle 방언 탭만 기본 켬 · 문자열 안은 선택 · D-142 이름 대소문자 무시(표기 보존) · SQLite `:x @x $x` = 한 변수 · D-143 서버에 비추기(SESSION_CONTEXT 등) = 뒤로 | 권장안 · ★ D-143(서버에 비추기) = 10-29 "뒤로" 확정(D-393) |
 | (번호 주의) | ★ **D-100~110은 두 번 쓰였다**(맥 09-18과 Windows 09-19 세션이 서로 모르고 같은 구간을 씀 · 09-21 정리): **52·D-96~108**(세션 모드) · **53·D-109~114**(접속 생존) ↔ **56·D-100~105**(수동 커밋 잠금 방지) · **57·D-106~110**(탐색기 갱신). 기록(journal·DEVLOG·커밋)은 역사라 고치지 않는다 — 이 구간을 가리킬 때는 **문서 번호를 앞에**(`56·D-103`). 새 결정은 **이 표의 최댓값 + 1**에서 시작하고(지금 D-135~), 번호를 잡기 전에 `git pull` 뒤 이 표를 먼저 본다([16](16-doc-git-conventions.md)) | 규칙 |
 | D-129~132 | ✅ 09-20 **되돌리기 후속**([60 §7](60-undo-redo-redesign.md) · 사용자 "추천한 대로 · 선행 필요 의견 동의 · T-142 선행" → 구현 84차): D-129 기록 파일 = Vim `undofile` 방식(저장할 때 쓰고 · 열 때 본문 해시가 같으면 복원 · `editor.undo_persist` on) · D-130 거대 편집 = 지우는 동작을 3초 안에 되풀이해야 진행 + 히스토리 비움(`editor.undo_giant_mb` 32 · 권장 "L2에서만" → 바이트 기준으로 어느 탭에나) · D-131 쉬었다 치면 새 묶음 1,500 ms · D-132 재로드 = 최소 줄 편집(`merge3::line_edits`) |
 | D-125~128 | ✅ 09-19~20 **대용량 파일**([59 §5](59-large-file-handling.md) · 사용자 "구현해줘 · 충돌/조정은 효과적인 방향으로" → 권장안): D-125 큰 파일 모드 L1 5 MB/10만 줄 · L2 20 MB/30만 줄 ✅ · D-127 되돌리기 = 개수 + **바이트 예산** ✅([60](60-undo-redo-redesign.md)) · D-128 열기 선택(그대로/앞부분만/읽기 전용/열지 않고 실행) + 비동기 적재 + 탭 격리 진행 막 ✅(스트리밍 분할기 제외) · **D-126 버퍼 = UTF-8 갭 버퍼 + 줄 시작 표 ✅ 84차**([59 §6](59-large-file-handling.md) · nexa-ctl `TextBuf` · 좌표는 글자 인덱스 유지 — 65 MB 상주 348 → 87 MB · 입력 190 → 3 ms) |
@@ -95,9 +95,9 @@
 | D-52 | `tx.smart_commit`(자동 모드라도 DML 실행 시 그 탭을 수동으로 · DBeaver 기본) — 권장 기본 off(자동 커밋 기본 유지) |
 | D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
 | ~~D-14~~ | → **DR-21**(Codespaces + DBMS별 Docker + Actions) |
-| **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) |
-| **D-16** | ★ **실기 OS 순서** — macOS 먼저 vs Windows 먼저(IME 구현 순서에 영향) (사용자 답 대기) |
-| **D-17** | 오브젝트 시점 캐시·로컬 히스토리 기본 위치 — 앱 데이터 폴더(권장) vs 프로젝트 `.nexa/` (사용자 답 대기) |
+| **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) → ✅ 종결 = D-377(10-28) |
+| **D-16** | ★ **실기 OS 순서** — macOS 먼저 vs Windows 먼저(IME 구현 순서에 영향) (사용자 답 대기) → ✅ 종결 = D-377(10-28) |
+| **D-17** | 오브젝트 시점 캐시·로컬 히스토리 기본 위치 — 앱 데이터 폴더(권장) vs 프로젝트 `.nexa/` (사용자 답 대기) → ✅ 결정 = D-378(10-28 · 앱 데이터 폴더 `NSQL_HOME`) |
 | **D-19** | 드라이버 확장 저장소 구성 — 단일 `SosomLab/nexa-sql-drivers`(태그 접두) vs 확장별 저장소(권장 = 단일 + 서드파티 별도) · [22 §8](22-driver-extensions.md) |
 | **D-20** | Oracle OCI 확장의 Instant Client 동봉(OTN 조건 · D-1 통합) vs 사용자 다운로드 안내 |
 | **D-21** | 드라이버 갱신 확인 기본값(켬 권장 · 폐쇄망은 설정으로 끔) |
@@ -123,8 +123,8 @@
 | ~~D-43~~ | → **D-70**(커서 유지 + OFFSET 폴백 확정 · [43 §3](43-fetch-model-and-result-tabs.md)) |
 | **D-44** | 타이밍 로그 파일 기본 — 끔(`NSQL_LOG=timing`으로 켬 · 권장) / 켬 |
 | **D-45** | `CONNECT` 동사 — ⓐ 우리 클라이언트 명령 하나(SQL*Plus 상위 호환 · 별칭 `\c`·`:connect` · 권장) / ⓑ 네이티브·래퍼 분리 / ⓒ 접두 필수([27 §6](27-cli-conventions.md)) |
-| **D-46** | 탐색기 메타 세션 — 프로필당 별도 접속(권장) / 편집기 세션 공유 · 설정 `explorer.session`([28 §6](28-object-explorer.md)) |
-| **D-47** | 세션 공유 시 편집기 실행 중 메타 요청 — 대기(권장) / 거부 |
+| **D-46** | 탐색기 메타 세션 — 프로필당 별도 접속(권장) / 편집기 세션 공유 · 설정 `explorer.session`([28 §6](28-object-explorer.md)) → ✅ 10-29 확정 = **separate 고정**(D-393 · T-56) |
+| **D-47** | 세션 공유 시 편집기 실행 중 메타 요청 — 대기(권장) / 거부 → ✅ 10-29 확정 = **대기**(D-393 · T-56) |
 | ~~D-96~108~~ | 세션 모드([52 §10](52-session-modes.md)) — ✅ 09-18 권장안 확정·구현(사용자 *"결정에 따른 개발도 모두 진행"*): 전용 = 탭 속성 · `CONNECT` 앞 문장 거부 · 활성화 시 접속 · 공유 N 추가(상한 8) · 세션 상태 있는 세션은 유휴 닫기 제외 · 뒤에서 끝난 실행 ✓/✗ · 트랜잭션 로그 세션 열 · 서버별 탐색기(세션 ≥1 유지) · 같은 서버 = 계정까지 · 끊긴 묶음은 표식으로 |
 | **D-117** | 탐색기 루트에 참조 탭 수 표시([54 §8](54-connection-model-and-disconnect.md)) — 권장: 루트 오른쪽 흐린 `· 3 tabs` |
 | **D-118** | 툴바 Disconnect `SharedAsk` 팝업 기본 항목 — 권장: 첫 항목 "N개 탭 모두 해제"(DBeaver 의미) |
@@ -513,6 +513,8 @@
 | D-389 | **로그인 창 기본 높이 614 → 648**(10-28 · 160차 win · T-3 2차) — 접속 폼 호스트 줄 아래 **SSH 터널 · SSH 키** 한 줄(반반 · 26+8) 추가분 · `login.window_h` 기본값 + ConnTuning · 이미 `login.window_h`를 저장한 사용자는 그 값 유지(D-365와 같은 방식) | ✅ 개발 기본값 변경 고지(사용자 결정 아님) · [22 §1-3](22-driver-extensions.md) · [21 §10](21-connection-profiles.md) · [journal 10-27 §22](journal/2026-10-27.md) |
 | D-390 | **접속 창 SSH 칸 = 기본 접힘**(10-28 · 161차 win · 사용자 "자주 안 쓰니 확장 버튼으로") — 프로필 변수 버튼 줄 반반 오른쪽 [SSH 터널…]로 펼침/접기 · 값 있는 프로필 = 자동 펼침 · 접어도 값 유지 · 파일 방언 = 버튼 숨김 · **창 높이 648(D-389) 유지** = 펼친 상태가 들어가야 하므로(접히면 상태줄 칸이 34 px 넓어질 뿐) · 160차 "호스트 줄 아래 상시 한 줄"을 대체 | ✅ 사용자 결정 · [22 §1-3](22-driver-extensions.md) · [journal 10-27 §23](journal/2026-10-27.md) |
 | D-391 | **SSH 터널 강화 = 대상당 ssh 1 + 수명 보증**(10-28 · 162차 · 사용자 "까만 명령창 여러 개") — Windows `CREATE_NO_WINDOW` · 같은 대상(계정·호스트·포트·키·DB 대상) 터널을 세션끼리 **공유**(Arc · 마지막 세션 Drop = ssh 종료) · Windows **Job Object KILL_ON_JOB_CLOSE** · 3-OS **PID 원장** `run/ssh-tunnels.pids` + 기동 때 `cleanup_stale`(소유자 죽음·이름 ssh·포트 열림일 때만 종료 · 다른 인스턴스 보호) · D-388 세션 래퍼 유지 | ✅ 사용자 결정 · [125 §7](125-ssh-tunnel-real-server-test.md) · [journal 10-27 §24](journal/2026-10-27.md) |
+| D-392 | **SSH 터널 인증·호스트 키**(10-29 · 164차 · T-3 · D-382 보강) — 인증 = **키만**(키 파일 · agent · `~/.ssh/config` · 비밀번호·`SSH_ASKPASS` 도우미 **미채택** · `BatchMode=yes` 유지) · 호스트 키 = **`StrictHostKeyChecking=accept-new`**(처음 보는 호스트는 known_hosts에 자동 등록 · 바뀐 키는 거부 · ab9ab290 · 실서버 2라운드 ✓) | ✅ 사용자 결정 · [21 §10](21-connection-profiles.md) · [125](125-ssh-tunnel-real-server-test.md) |
+| D-393 | **열린 항목 브리프 결정 묶음**(10-29 · 164차 · [126 §0](126-open-items-brief.md)) — T-11 = 이번 주 잔여(T-452) 뒤 착수 · DR-15 조건부 · T-14 = Command 레지스트리 먼저 → 파서 · **T-48 마감** = OFFSET 폴백 공식(MySQL·DuckDB·ClickHouse·ODBC·SQL Server) · **T-56 마감** = 현행 승격(전용 트리 · 2스레드 순차 · 늦은 결과 버림 · CatalogSource 철회 · D-46 separate · D-47 대기) · **T-57 마감** = 시스템 오브젝트 코드 표 확정 · CLI Tab = T-453 P2 · **T-125 종결** = 자동 16 · 잔여 → T-154 · T-149 = 잔여 5개 + P1 · D-143 뒤로 · 옆 패널 보류 · T-154 = 릴리스 전 대표 12~15 묶음 + 확인표 합침 · T-166 = 잔여 재작성 + T-118 합침 · D-150~154 현행 확정 · D-155 → D-373 흡수 · T-102 = 다음 릴리스 뒤 71 A~G부터 · T-382 그때 해제 · D-335 실측 뒤 · 라이선스 D-30·D-40 = 출시 뒤 결정(D-376 보류 유지) · T-2 ✅ · T-106 = D-381 보류 유지 | ✅ 사용자 결정 · [journal 10-27 §26](journal/2026-10-27.md) |
 | D-357 | **아웃라인 = 선언된 이름으로 이동하는 지도**(문장 나열 아님 · 기본은 적게 · 필요한 종류만 켬) — ① 심볼(객체·루틴·CTE·DEFINE/VARIABLE·커서·라벨·선언 변수) 기본 보임 / 문장(SELECT·DML·DDL·명령) 기본 숨김 · 토글 4 = `outline.show_select/dml/ddl/other`(off) + `outline.show_declared`(on) ② CREATE = 대상 행 하나 ③ Declared 매개변수 오탐·CURSOR 범위 수정 ④ 트리(`Symbol.parent`) + 접기(`outline.expand_depth` 1) ⑤ 커서 추종 `outline.follow_caret`(on) ⑥ Goto Symbol도 같은 토글 ⑦ 탐색기 아이콘 재사용 ⑧ 정렬 = 파일 순(1차) (10-24 · 138차 · 사용자 "너무 많이 보여서 불편" · 개발 권장안 진행 · **기본값 = 사용자 확인 사항**) | ✅ 구현 855b9ad6 + 8ee6a791 · **✅ 기본값 사용자 확인(10-26 Linux 실기)** | [76 §20](76-intellisense-and-outline.md) · journal 10-24 §3-12 · T-422/T-423 |
 | — | **번호 예약 규칙(16 §2-9)** — 119·120·121이 10-21에 쓴 D-316~D-343을 10-22에 등재(종전 미등재 = 번호 재사용 위험) · **새 번호는 D-344부터** | 📐 10-22 협업 정합 | journal 10-22 §1-7 |
 | D-272 | `&이름` 치환 변수의 방언별 기본 (10-10) | ✅ 10-10 권장안 채택(개발 세션 · 한 줄 고지) = `&이름` 치환은 전 방언에서 동작하되 **Oracle(SQL*Plus)만 미정의면 묻고**, SQL Server·PostgreSQL·SQLite·MySQL은 **정의된 이름만**(`DEFINE` · `:setvar`) 바꾸고 미정의 `&x`는 글자 그대로(`'R&D'` = 묻지도 오류도 아님) · 고정 = 스크립트 `SET DEFINE ON/OFF` · 설정 `script.define`(auto\|on\|off · 기본 auto) · `script.strict` = on으로 덮음 · 대안 = 전 방언 묻기(종전 · `R&D` 입력 창) / Oracle만 켬(sqlcmd `:setvar` → `&Env` 흐름 깨짐) · 근거 = 108 §11 #19 · 번호 메모 = 10-07 journal의 "D-272 후보"는 사용자 취소로 발급되지 않았음 | 63-variable-management.md §12-4 · 108-dbms-syntax-and-objects-survey.md §9 · T-327 |
