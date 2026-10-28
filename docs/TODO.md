@@ -25,7 +25,7 @@
 ## 3. M2 — GUI 관통
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
 |---|:--:|:--:|---|---|:--:|
-| **T-11** | P0 | 중 | 셰이핑 스파이크(DP-6) — `rustybuzz`로 한글 조합·CJK 폭 · `nexa-gfx` 통합 | T-1 | ☐ ★ 10-29(D-393) = 착수 = 이번 주 잔여(T-452) 뒤 · DR-15 "조건부(D-383)"로 정정 · D-77 · rustybuzz 미도입 · DR-15 정리 여부 = 사용자 · ★ 사용자 10-28 = UI 텍스트 한정 스파이크 뒤 결정(D-383) |
+| **T-11** | P0 | 중 | 셰이핑 스파이크(DP-6) — `rustybuzz`로 한글 조합·CJK 폭 · `nexa-gfx` 통합 | T-1 | 🚧 ★ 10-29 166차 = **1단계 ✅**(nexa-gfx feature `shaping` · rustybuzz 0.20 · `ui.text_shaping` 기본 off · UI 비례 글꼴만 · [journal 10-27 §28](journal/2026-10-27.md)) · 2단계 = 크기·시간·육안 A/B 뒤 결정 · 종전: ☐ ★ 10-29(D-393) = 착수 = 이번 주 잔여(T-452) 뒤 · DR-15 "조건부(D-383)"로 정정 · D-77 · rustybuzz 미도입 · DR-15 정리 여부 = 사용자 · ★ 사용자 10-28 = UI 텍스트 한정 스파이크 뒤 결정(D-383) |
 | **T-12** | P0 | 대 | `nexa-edit` Buffer·Transaction·History(soft undo) — 순수 로직·테스트 | — | 대체됨 → T-142(nexa-ctl `TextBuf`) · [60](60-undo-redo-redesign.md) 연산 기록 · soft undo `SoftStep`(10-05 정합 · 코드 확인 · `nexa-edit` 크레이트는 만들지 않음) |
 | **T-13** | P0 | 대 | `nexa-edit` Layout/View/Selections(멀티커서·컬럼) · **IME preedit 오버레이** | T-11 T-12 | ✅ 대체됨(→ nexa-ctl EditState · nexa-ui 31c1aaf · T-142·T-98 · soft undo 18f7c5d · IME `set_preedit`) |
 | **T-14** | P0 | 중 | `.sublime-keymap` 파서 + context 평가기 + Command 레지스트리 | T-12 | ☐ ★ 10-29(D-393) = **Command 레지스트리 먼저**(메뉴·팔레트·툴바·기동 명령 한 표) → `.sublime-keymap` 파서·context · (T-67 흡수) 된 것 = 키맵 코드 표 `keymap.rs::COMMANDS` + `key.<id>` 설정(T-53 · 02ccfad) · 남은 것 = `.sublime-keymap` 파일 파서 · context 평가기 · Command 레지스트리 핸들러(메뉴·팔레트·툴바가 같은 표 읽기) |

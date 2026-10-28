@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t11-shaping-spike | 2026-10-29 | 2026-10-29 → main ff(삭제) · **8e96b170** | 2 | 166차 win = T-11 셰이핑 스파이크 1단계(`ui.text_shaping` · nexa-gfx feature 켬) · nexa-ui b9f4d1a |
 | t452-e2e-params | 2026-10-29 | 2026-10-29 → main ff(삭제) · **a43c6d6f** | 1 | 165차 win = T-452 실서버 점검 스크립트 값 파라미터화 · a43c6d6f |
 | ssh-accept-new | 2026-10-29 | 2026-10-29 → main ff(삭제) · **ab9ab290** | 1 | 164차 win = SSH 호스트 키 accept-new(D-392) · ab9ab290 |
 | aux-activate-startup | 2026-10-29 | 2026-10-29 → main ff(삭제) · **e58fc93c** | 1 | 163차 win = `NSQL_NO_ACTIVATE=startup`(재시작 스크립트 · 보조 창 활성화 복구) · e58fc93c |
