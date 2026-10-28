@@ -1426,7 +1426,12 @@ impl Keymap {
                     Err(e) => eprintln!("[keymap] {}: {e}", path.display()),
                 }
             }
-            if km.file_summary != (0, 0, 0) {
+            // 요약은 프로세스당 한 번만(키맵은 기동·설정 변경·확장 적용 때마다 다시 만들어진다 → 168차 V1 "기동마다 2번" 관찰).
+            static LOGGED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if km.file_summary != (0, 0, 0)
+                && !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
                 let (a, c, u) = km.file_summary;
                 eprintln!("[keymap] user keymap: applied {a} · with context {c} · unknown {u}");
             }
