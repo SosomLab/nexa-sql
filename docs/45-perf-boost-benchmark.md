@@ -2,6 +2,8 @@
 
 > **요청**(사용자 09-17): *"실행속도향상을 켠 상태와 끈 상태에 대한 다양한 측면의 성능 비교 · 실 연결은 172.16.0.214:1521 · MSSQL은 등록된 SQL Server · 별도 문서에 비교표로."*
 > **설계**: [39 §4-6](39-resource-governance.md) · **측정 스크립트**: `scratchpad/bench-boost.ps1`(세션 임시 · 저장소 이식 = T-90e) · 원자료 `target/bench-boost.csv`.
+>
+> ★ **사용법(10-29 · 165차 · T-452)** = `scripts/bench-boost.ps1 -OracleProfile <실제 프로필> -OracleTable <표> -ProjectCd <코드> -MssqlProfile <프로필>`(또는 env `NSQL_E2E_ORACLE_PROFILE` · `NSQL_E2E_ORACLE_TABLE` · `NSQL_E2E_PROJECT_CD` · `NSQL_E2E_MSSQL_PROFILE`) · `$Root` = 스크립트 기준(홈 경로 하드코딩 제거) · 기본값은 익명이라 실서버에선 0행 · 문서의 프로필·표 이름도 익명(162차).
 
 ## 0. 결론 다섯 줄
 
