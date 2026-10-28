@@ -4743,7 +4743,8 @@ impl Msg {
             Msg::ErrClsSyntax => ["Syntax error", "구문 오류"],
             Msg::ErrClsPermission => ["Permission denied", "권한 없음"],
             Msg::ErrClsLogin => ["Login failed", "로그인 실패"],
-            Msg::ErrClsConnection => ["Connection lost", "접속 끊김"],
+            // 159차 P3(협업): 접속 단계 실패(SSH 터널·리스너 없음)에도 붙는 분류 라벨이라 "끊김"만으로 읽히지 않게.
+            Msg::ErrClsConnection => ["Connection error", "접속 오류"],
             Msg::ErrClsDriver => ["Driver or DSN not available", "드라이버/DSN 없음"],
             Msg::ErrClsUnique => ["Unique key violated", "유니크 키 위반"],
             Msg::ErrClsForeignKey => ["Foreign key violated", "외래 키 위반"],
