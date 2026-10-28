@@ -5,7 +5,7 @@
       "id": "sqlite",
       "name": "SQLite",
       "dialect": "sqlite",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -20,7 +20,7 @@
       "id": "pg",
       "name": "PostgreSQL",
       "dialect": "postgres",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -35,7 +35,7 @@
       "id": "mysql",
       "name": "MySQL / MariaDB",
       "dialect": "mysql",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -50,7 +50,7 @@
       "id": "mssql",
       "name": "SQL Server",
       "dialect": "mssql",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -65,7 +65,7 @@
       "id": "oracle-thin",
       "name": "Oracle (Thin)",
       "dialect": "oracle",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -80,7 +80,7 @@
       "id": "oracle-oci",
       "name": "Oracle (OCI, Instant Client)",
       "dialect": "oracle",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -95,7 +95,7 @@
       "id": "odbc",
       "name": "ODBC",
       "dialect": "odbc",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -110,7 +110,7 @@
       "id": "duckdb",
       "name": "DuckDB",
       "dialect": "duckdb",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -125,7 +125,7 @@
       "id": "clickhouse",
       "name": "ClickHouse",
       "dialect": "clickhouse",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
@@ -140,7 +140,7 @@
       "id": "db2",
       "name": "IBM Db2",
       "dialect": "db2",
-      "latest": "0.1.7",
+      "latest": "0.1.8",
       "tag_prefix": "drivers-v",
       "platforms": [
         "linux-x86_64",
