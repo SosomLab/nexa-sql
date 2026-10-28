@@ -36,6 +36,8 @@ nsql-run.workspace = true
 nsql-drivers = { workspace = true, default-features = false }
 nsql-catalog.workspace = true
 nsql-vault.workspace = true
+# ★ T-14 2단계(10-29): .sublime-keymap 파서(JSON · 주석 제거 뒤 nsql-json).
+nsql-json.workspace = true
 nsql-io.workspace = true
 nsql-search.workspace = true
 regex.workspace = true

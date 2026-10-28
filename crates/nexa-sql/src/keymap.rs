@@ -1329,6 +1329,10 @@ pub(crate) struct Keymap {
     prefixes: HashSet<Chord>,
     /// 명령별 현재 코드(표시용 · 설정 or 기본).
     codes: HashMap<&'static str, String>,
+    /// ★ T-14 2단계: 사용자 키맵 파일의 **context 있는** 바인딩(코드 열 · 조건 · 명령) — 3단계에서 `ContextSource`로 평가 · 지금은 보관만.
+    ctx_bindings: Vec<(Vec<Chord>, Vec<crate::keymap_file::Context>, &'static str)>,
+    /// 사용자 키맵 파일 적용 요약(적용 · context 보관 · 모르는 명령) — 진단·로그.
+    file_summary: (usize, usize, usize),
 }
 
 /// ★ 동적 명령(확장 메타 `commands[].key` · 146차 · docs/75 §9 ②): `(id, win, mac, linux)` — `set_dynamic`으로 교체 · `from_settings`가 `COMMANDS` 뒤에 더한다.
@@ -1404,7 +1408,86 @@ impl Keymap {
             }
             km.codes.insert(cid, code);
         }
+        // ★ T-14 2단계: 사용자 키맵 파일(`Packages/User/*.sublime-keymap` · 있을 때만 · 뒤 파일이 앞을 덮음).
+        if let Some(dir) = nsql_settings::config_dir() {
+            for path in crate::keymap_file::user_files(&dir) {
+                match std::fs::read_to_string(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| crate::keymap_file::parse(&t))
+                {
+                    Ok(b) => {
+                        let (a, c, u) = km.apply_bindings(&b);
+                        km.file_summary = (
+                            km.file_summary.0 + a,
+                            km.file_summary.1 + c,
+                            km.file_summary.2 + u,
+                        );
+                    }
+                    Err(e) => eprintln!("[keymap] {}: {e}", path.display()),
+                }
+            }
+            if km.file_summary != (0, 0, 0) {
+                let (a, c, u) = km.file_summary;
+                eprintln!("[keymap] user keymap: applied {a} · with context {c} · unknown {u}");
+            }
+        }
         km
+    }
+
+    /// ★ T-14 3단계(최소): context 있는 파일 바인딩 — 조합이 같고 조건이 지금 참인 것(**뒤 바인딩 우선** · Sublime 규칙) · 단일 조합만.
+    pub(crate) fn lookup_ctx(
+        &self,
+        ch: &Chord,
+        src: &dyn crate::keymap_file::ContextSource,
+    ) -> Option<&'static str> {
+        self.ctx_bindings
+            .iter()
+            .rev()
+            .find(|(chords, ctx, _)| {
+                chords.len() == 1 && chords[0] == *ch && crate::keymap_file::matches(ctx, src)
+            })
+            .map(|(_, _, id)| *id)
+    }
+
+    /// ★ T-14 2단계: 파일 바인딩 적용 — 명령 = 이 앱의 id(`COMMANDS`·동적) 또는 Sublime 이름(별칭) · 코드 1개 = 단일 · 2개 = 시퀀스 ·
+    /// context 있는 것은 보관만(3단계). 반환 = (적용 수 · context 보관 수 · 모르는 명령 수). 같은 조합은 **뒤가 앞을 덮는다**.
+    pub(crate) fn apply_bindings(
+        &mut self,
+        bindings: &[crate::keymap_file::Binding],
+    ) -> (usize, usize, usize) {
+        let (mut applied, mut kept, mut unknown) = (0, 0, 0);
+        let dynamic = dynamic_commands();
+        for b in bindings {
+            let name = crate::keymap_file::sublime_alias(&b.command).unwrap_or(b.command.as_str());
+            let Some(cid) = COMMANDS
+                .iter()
+                .map(|c| c.id)
+                .chain(dynamic.iter().map(|d| d.0))
+                .find(|id| *id == name)
+            else {
+                unknown += 1;
+                continue;
+            };
+            let chords: Vec<Chord> = b.keys.iter().filter_map(|k| Chord::parse(k)).collect();
+            if chords.len() != b.keys.len() || chords.is_empty() || chords.len() > 2 {
+                unknown += 1;
+                continue;
+            }
+            if !b.context.is_empty() {
+                self.ctx_bindings.push((chords, b.context.clone(), cid));
+                kept += 1;
+                continue;
+            }
+            if chords.len() == 2 {
+                self.prefixes.insert(chords[0].clone());
+                self.seq.insert((chords[0].clone(), chords[1].clone()), cid);
+            } else {
+                self.map.insert(chords[0].clone(), cid);
+            }
+            self.codes.insert(cid, b.keys.join(","));
+            applied += 1;
+        }
+        (applied, kept, unknown)
     }
 
     pub(crate) fn lookup(&self, ch: &Chord) -> Option<&'static str> {
@@ -1476,6 +1559,53 @@ pub(crate) fn repeatable(id: &str) -> bool {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// ★ T-14 2단계: 파일 바인딩 적용 — 앱 id·Sublime 별칭 둘 다 · 단일/시퀀스 · 뒤가 앞을 덮음 · context 있는 것은 보관 · 모르는 명령·3단 코드 = 무시.
+    #[test]
+    fn file_bindings_apply_alias_sequence_and_keep_context() {
+        let text = r#"[
+            { "keys": ["ctrl+alt+s"], "command": "save" },
+            { "keys": ["ctrl+k", "ctrl+u"], "command": "edit.upper_case" },
+            { "keys": ["ctrl+alt+s"], "command": "file.save_as" },
+            { "keys": ["f9"], "command": "run.statement", "context": [{ "key": "selection_empty" }] },
+            { "keys": ["ctrl+1"], "command": "no_such_command" },
+            { "keys": ["ctrl+k", "ctrl+l", "ctrl+m"], "command": "file.new" }
+        ]"#;
+        let b = crate::keymap_file::parse(text).unwrap();
+        let mut km = Keymap::default();
+        assert_eq!(km.apply_bindings(&b), (3, 1, 2));
+        // 뒤가 앞을 덮는다: ctrl+alt+s = file.save_as.
+        assert_eq!(
+            km.lookup(&Chord::parse("ctrl+alt+s").unwrap()),
+            Some("file.save_as")
+        );
+        let (a, c) = (
+            Chord::parse("ctrl+k").unwrap(),
+            Chord::parse("ctrl+u").unwrap(),
+        );
+        assert_eq!(km.lookup_seq(&a, &c), Some("edit.upper_case"));
+        assert!(km.prefixes.contains(&a));
+        assert_eq!(km.ctx_bindings.len(), 1);
+        let f9 = Chord::parse("f9").unwrap();
+        assert_eq!(km.lookup(&f9), None, "context 바인딩은 조건 평가로만");
+        // 조건 평가: selection_empty = true일 때만 f9 → run.statement(뒤 바인딩 우선).
+        struct Src(bool);
+        impl crate::keymap_file::ContextSource for Src {
+            fn value(&self, key: &str) -> Option<nsql_json::Json> {
+                (key == "selection_empty").then_some(nsql_json::Json::Bool(self.0))
+            }
+        }
+        assert_eq!(km.lookup_ctx(&f9, &Src(true)), Some("run.statement"));
+        assert_eq!(km.lookup_ctx(&f9, &Src(false)), None);
+        assert_eq!(
+            km.codes.get("file.save_as").map(String::as_str),
+            Some("ctrl+alt+s")
+        );
+        assert_eq!(
+            km.codes.get("edit.upper_case").map(String::as_str),
+            Some("ctrl+k,ctrl+u")
+        );
+    }
 
     /// Ctrl+Alt+F(10-16): AltGr 조합에서 논리 키가 `Unidentified`로 와도 물리 키로 `ctrl+alt+f`가 된다(조합키 없는 Unidentified = None).
     #[test]

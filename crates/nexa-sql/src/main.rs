@@ -74,6 +74,7 @@ mod input_win;
 mod intel;
 mod intel_card;
 mod keymap;
+mod keymap_file;
 mod keys_win;
 mod license_win;
 mod log_win;

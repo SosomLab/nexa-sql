@@ -4,6 +4,35 @@
 
 use crate::*;
 
+/// ★ T-14 3단계(최소): 키맵 파일 context 평가에 앱이 주는 값 — Sublime 키 이름을 따른다(모르는 키 = None = 거짓).
+/// `selection_empty` · `has_selection` · `focus`(editor·grid·explorer·…) · `panel`(= focus) · `setting.<키>`(설정 값 글자).
+impl crate::keymap_file::ContextSource for App {
+    fn value(&self, key: &str) -> Option<nsql_json::Json> {
+        use nsql_json::Json;
+        let focus_name = match self.focus {
+            Focus::Editor => "editor",
+            Focus::Grid => "grid",
+            Focus::Explorer => "explorer",
+            Focus::Find => "find",
+            Focus::Search => "search",
+            Focus::Ext => "extensions",
+            Focus::Project => "project",
+            Focus::Bookmarks => "bookmarks",
+            Focus::Details => "details",
+            Focus::Outline => "outline",
+        };
+        match key {
+            "selection_empty" => Some(Json::Bool(self.editors.cur().selection().is_none())),
+            "has_selection" => Some(Json::Bool(self.editors.cur().selection().is_some())),
+            "focus" | "panel" => Some(Json::Str(focus_name.to_string())),
+            k => k
+                .strip_prefix("setting.")
+                .and_then(|name| self.settings.get(name))
+                .map(|v| Json::Str(v.to_string())),
+        }
+    }
+}
+
 impl App {
     /// 스플리터 두 개에 마우스 사건을 준다. 소비(드래그 시작·중·끝)했으면 `true` — hover만 바뀐 경우는 다시 그리되 통과.
     fn route_splitters(&mut self, ev: &InputEvent) -> bool {

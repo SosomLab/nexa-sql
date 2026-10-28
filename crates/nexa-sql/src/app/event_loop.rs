@@ -1119,7 +1119,12 @@ impl ApplicationHandler<Wake> for App {
                     self.tmark("key");
                     if !plain_char {
                         // `find.*`는 찾기 패널에 포커스일 때만(그 밖에선 가로채지 않는다 — mac Alt+글자 입력 보존).
-                        if let Some(id) = self.keymap.lookup(&ch) {
+                        // ★ T-14 3단계(최소): 사용자 키맵 파일의 context 바인딩이 먼저(조건이 지금 참일 때만) · 없으면 일반 표.
+                        if let Some(id) = self
+                            .keymap
+                            .lookup_ctx(&ch, self)
+                            .or_else(|| self.keymap.lookup(&ch))
+                        {
                             if id.starts_with("find.") {
                                 if self.focus == Focus::Find && self.find.is_visible() {
                                     let a = self.find.command(id);
@@ -1156,7 +1161,11 @@ impl ApplicationHandler<Wake> for App {
                             self.redraw();
                             return;
                         }
-                        if let Some(id) = self.keymap.lookup(&ch) {
+                        if let Some(id) = self
+                            .keymap
+                            .lookup_ctx(&ch, self)
+                            .or_else(|| self.keymap.lookup(&ch))
+                        {
                             // ★ 자동 반복 사건은 편집·이동 명령만 실행(사용자 09-17: Ctrl+T를 누르고 있자 탭 80개 · 릴리스 뒤에도
                             //   밀린 사건이 계속 처리돼 UI가 막혔다). 한 번짜리 명령의 반복은 여기서 즉시 버린다.
                             if kev.repeat && !keymap::repeatable(id) {
