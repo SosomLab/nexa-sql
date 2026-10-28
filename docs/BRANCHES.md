@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/156-aux-window-focus | 2026-10-28 | 2026-10-28 → main ff(삭제) · **aa9b08e2** | 2 | 156차 win = 보조 창 생성 직후 활성화(`winhost::open_window` → `winfocus::focus`) · 사용자 실기 ✓ |
 | feat/155-pg-tls | 2026-10-28 | 2026-10-28 → main ff(삭제) · **9cdf2da5** | 3 | 155차 win = T-70 PostgreSQL TLS(rustls · TlsMode 5종 · `pg.tls`/`pg.tls_ca` · D-384 기본 preferred) |
 | feat/154-stateful-ext | 2026-10-28 | 2026-10-28 → main ff(삭제) · **d0938355** | 1 | 154차(a·b) win = T-450 길 A(상태 있는 확장 · 편집기 읽기/쓰기 · 사건 배달 · ABI v1.3 · SDK 0.4 · uppercase-selection 0.1.0) · 편집기 전용 가드 · 허용 뒤 탭 복귀 |
 | feat/150-153-defects-approval | 2026-10-28 | 2026-10-28 → main ff(삭제) · **e2ce513d** | 1 | 150~153차 win = 결정 불요 결함 묶음(T-439·T-431·T-432·T-412·T-435·MixedStar) · T-448 능력 요약 · D-90 능력 승인 · T-447 행 고르기 · 뒤이어 fmt 복구 **b498e4ec**(main 직접) |
