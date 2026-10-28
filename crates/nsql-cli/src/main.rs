@@ -1125,7 +1125,7 @@ impl Printer {
         }
         self.out_table(&out);
         if self.timing {
-            let line = timing_line(self.timing_json, "statement", &tl);
+            let line = timing_line(self.timing_json, "statement", tl);
             self.err(&line);
         }
     }
@@ -1465,7 +1465,7 @@ impl Printer {
             | RunEvent::Binds { .. } => {}
             RunEvent::Timing { timeline, .. } => {
                 if self.timing {
-                    let line = timing_line(self.timing_json, "statement", timeline);
+                    let line = timing_line(self.timing_json, "statement", &timeline);
                     self.err(&line);
                 }
             }
