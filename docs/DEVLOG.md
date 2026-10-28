@@ -2,6 +2,9 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-29 (170차 · Windows · T-216 + 정리)** — 편집기 `CONNECT` 두 번 = 앞 연결을 닫는다는 로그 안내(D-208 · e16149ed) · 사용자 키맵 요약 로그 프로세스당 1회(e566f557) · nexa-ui nexa-dlg 시험의 `read_dir` 순서 의존 결함 수정(6063203 · ubuntu CI 4연속 ✗ 해소)([journal 10-27 §33](journal/2026-10-27.md)).
+- **2026-10-29 (169차 · Windows · T-47 `--timing=json`)** — CLI 단계 계측을 JSON 한 줄로(`timing_line` 순수 함수 · afa6a16b) · 사고 = e67091f3 컴파일 오류 push → 즉시 정정 · 재발 방지 = 검증 체인 `&&`만([journal 10-27 §32](journal/2026-10-27.md)).
+- **2026-10-29 (168차 · Windows · T-14 2·3단계 + T-10)** — 사용자 `.sublime-keymap`(`Packages/User/Default[ (<OS>)]` · D-395) 파서·context 평가기 최소판(aa6a91cd) · cargo-deny 라이선스 게이트 + CI `deny` 잡(1fa8eb6e · 첫 실행이 LGPL `unix-odbc` 1건을 잡아 crate 예외로)([journal 10-27 §30·§31](journal/2026-10-27.md)).
 - **2026-10-29 (167차 · Windows · T-14 1단계 + T-11 2단계 결정)** — 명령 팔레트 정적 항목 한 표 `commands::PALETTE`(137행 · 시험 3이 중복 3·누락 3·라벨 키 1 찾아 정정 · ad2958b0) · T-11 = D-394 채택 보류(셰이핑 코드는 feature·스위치 뒤 유지 · 조건 3)([journal 10-27 §28-2·§29](journal/2026-10-27.md)).
 - **2026-10-29 (166차 · Windows · T-11 셰이핑 스파이크 1단계)** — nexa-gfx 선택 feature `shaping`(rustybuzz 0.20 · `Font::shape`/`draw_shaped`/`measure_shaped`) · nexa-ctl RasterCtx = UI 비례 글꼴 + 스위치일 때만 · nexa-sql 설정 `ui.text_shaping`(기본 off) · 다음 = 2단계 A/B 측정([journal 10-27 §28](journal/2026-10-27.md)).
 - **2026-10-29 (165차 · Windows · T-452)** — 익명화 뒤 실서버 점검 스크립트 4개(bench-boost · linux-fetch-consistency · intel-alias · win-intel-3part)가 실제 값을 env `NSQL_E2E_*`·인자로 받게(기본값 익명 유지 · a43c6d6f) · 다음 = T-11 셰이핑 스파이크([journal 10-27 §27](journal/2026-10-27.md)).

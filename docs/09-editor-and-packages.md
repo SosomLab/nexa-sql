@@ -30,7 +30,7 @@ nexa-edit
 ├ selection/   Selection{anchor, head, xpos} 정렬 벡터 · 병합 · 컬럼 선택(가상 위치)
 ├ display/     Fold → Tab → Wrap 맵 · gutter · 룰러 · 공백/가이드 · LayoutLine 캐시(가시 범위)
 ├ syntax/      syntect 어댑터 · .sublime-color-scheme JSON · .tmPreferences · scope selector 점수
-├ commands/    Command{name, args} 레지스트리 · .sublime-keymap 파서 · context 평가기(selector · preceding_text · has_next_field · setting.*)
+├ commands/    Command{name, args} 레지스트리 · .sublime-keymap 파서 · context 평가기(selector · preceding_text · has_next_field · setting.*)   ← ✅ 10-29 파서·context(최소) = `keymap_file.rs`(T-14 · D-395)
 ├ complete/    CompletionProvider 트레이트 · .sublime-completions · .sublime-snippet(필드·미러·변환)
 ├ ime/         preedit 오버레이 · 커서 사각형 보고
 └ view.rs      nexa-ctl::Widget 구현 — DrawCtx로 그린다(래스터 호출 0)

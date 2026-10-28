@@ -4,6 +4,11 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접 · 브랜치 미전달) | 2026-10-29 | 2026-10-29 → main · **e566f557** | 2 | 170차 = T-216 CONNECT 두 번 안내 e16149ed · 키맵 로그 1회 e566f557 |
+| (main 직접) | 2026-10-29 | 2026-10-29 → main · **afa6a16b** | 1 | 169차 = e67091f3 컴파일 오류 정정(T-47) |
+| t47-timing-json | 2026-10-29 | 2026-10-29 → main ff(삭제) · **e67091f3** | 1 | 169차 win = T-47 `--timing=json`(⚠ 컴파일 오류 상태로 push · afa6a16b 정정) |
+| t10-cargo-deny | 2026-10-29 | 2026-10-29 → main ff(삭제) · **1fa8eb6e** | 1 | 168차 win = T-10 cargo-deny 라이선스 게이트 · 1fa8eb6e |
+| t14-keymap-file | 2026-10-29 | 2026-10-29 → main ff(삭제) · **aa6a91cd** | 2 | 168차 win = T-14 2·3단계 `.sublime-keymap` 파서·context(D-395) · 93b080e8(문서) · aa6a91cd |
 | t14-command-registry | 2026-10-29 | 2026-10-29 → main ff(삭제) · **ad2958b0** | 1 | 167차 win = T-14 1단계 Command 표 `commands::PALETTE` · ad2958b0 |
 | t11-shaping-spike | 2026-10-29 | 2026-10-29 → main ff(삭제) · **8e96b170** | 2 | 166차 win = T-11 셰이핑 스파이크 1단계(`ui.text_shaping` · nexa-gfx feature 켬) · nexa-ui b9f4d1a |
 | t452-e2e-params | 2026-10-29 | 2026-10-29 → main ff(삭제) · **a43c6d6f** | 1 | 165차 win = T-452 실서버 점검 스크립트 값 파라미터화 · a43c6d6f |

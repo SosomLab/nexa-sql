@@ -49,8 +49,8 @@ crate = "webpki"
 expression = "ISC"
 license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
 
-# ★ 예외 1건 = `unix-odbc`(LGPL-2.1-or-later · D-361 10-25 "드라이버 파일은 정적으로"): Linux/macOS 확장 ODBC 드라이버가 unixODBC 드라이버
-#   관리자를 **정적 동봉**한다 — LGPL 재링크 요건은 공개 저장소 소스 + THIRD-PARTY-NOTICES 고지로 충족(docs/10 D-361 · 64 §4). 전역 허용이 아니라
+# ★ 예외 1건 = `unix-odbc`(LGPL-2.1-or-later · D-362 10-25 "드라이버 파일은 정적으로"): Linux/macOS 확장 ODBC 드라이버가 unixODBC 드라이버
+#   관리자를 **정적 동봉**한다 — LGPL 재링크 요건은 공개 저장소 소스 + THIRD-PARTY-NOTICES 고지로 충족(docs/10 D-362 · 64 §4). 전역 허용이 아니라
 #   이 crate만. 다른 LGPL이 들어오면 여기서 멈춘다.
 [[licenses.exceptions]]
 crate = "unix-odbc"

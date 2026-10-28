@@ -54,7 +54,7 @@
   -q, --quiet                   피드백·배너 끔(psql -q · sqlplus -S)
   -b, --bail                    첫 오류에서 종료(sqlcmd -b · psql ON_ERROR_STOP)
       --no-prompt               치환 변수 프롬프트 끔(배치)
-      --timing                  단계별 소요(docs/26)
+      --timing[=json]           단계별 소요(docs/26) · `=json` = 문장·접속마다 JSON 한 줄(10-29 · T-47)
   -v, --set NAME=VALUE          치환 변수 사전 정의(psql -v · sqlcmd -v · sqlplus DEFINE)
 관리
   nsql conn    list | add <name> [<target>] [필드 옵션] | show | rm | test [<name>] | path

@@ -187,6 +187,8 @@ CLI `nsql shell`(Release) 한 프로세스에서 SQLite 기준 → `CONNECT <프
 
 권고: ① 순수 Rust 드라이버는 지금 그대로(동적 적재·해제 없음 — 이미 "쓸 때만" 올라오고 끊으면 돌려준다) ② Oracle은 **선택 모드 `oracle.isolation = process`**(기본 `in_process`)를 확장 드라이버 단계([§3-4](#3-4-확장-드라이버를-만들-때의-설계22-0의-구체화--지금-하지-않는다--순서만-고정)의 ④ 프로세스 모드)에서 만든다 — 같은 모드가 **메모리 회수 · 여러 버전의 Instant Client 나란히 · 드라이버 충돌 격리** 셋을 한 번에 해결한다 ③ 그 전까지의 값싼 개선: Oracle 접속이 0이 된 뒤 유휴 회수(`memtrim`)가 워킹셋을 줄이므로 **RAM 점유는 이미 작다**(남는 Private 9.4 MB가 전부) — 설정 창의 "로드된 클라이언트 버전" 설명에 "앱을 다시 시작하면 내려간다"를 이미 적었다.
 
+> ★ 라이선스(10-29 · T-10) = 정적 동봉한 unixODBC(`unix-odbc` · LGPL)는 `deny.toml`의 crate 예외 1건 · 재링크 요건 = 공개 소스 + THIRD-PARTY-NOTICES.
+
 ## 6. ODBC — macOS·Linux 접속 절차(★ 10-25 D-362 = unixODBC **정적 동봉** + 상대 경로 해결기 → 사용자는 **벤더 ODBC 드라이버만** 설치 · 아래 ① unixODBC 설치 단계는 D-362 반영 판부터 불필요 · 개발 빌드 전제는 그대로) — (10-24 · 136차 ODBC 드라이버 · 사용자 안내 · 위키 [Connections](wiki/Connections.md#odbc-on-macos--linux-english) 영어·한국어 판이 사용자용 원문)
 
 | 단계 | 내용 |

@@ -110,6 +110,7 @@ release: 0.11.0 승격(컬럼 리사이즈 단독 조절·Ctrl+V 대상 보완) 
 - 병합·green 확인 후 **로컬 브랜치 삭제**, 이력은 `BRANCHES.md` 표 + journal에 보존.
 - 🔴 **push는 사용자가 명시적으로 요청할 때만.** 자동 push 금지.
 - 🔴 ★ **push 전 `scripts/check-3os.sh`**(fmt + 호스트·나머지 두 OS 타깃 clippy `-D warnings` — T-40 · 09-05): 한 OS에서 `cfg` 모듈 경로를 손대면 다른 OS가 깨진다(`super::hotkeys()` 사슬 = CI 16회 빨강). **push 뒤 `gh run watch`** 로 CI green까지 본다.
+- ★ **CI `deny` 잡(10-29 · T-10)** = `cargo-deny check licenses sources`(`deny.toml`) — 새 외부 crate의 라이선스가 허용 목록 밖이면 실패 · 예외는 crate 단위로 `deny.toml`에 근거와 함께.
 - 🔴 **버전 태그 push는 별도 승인.** 태그 = 공개 릴리스 생성 행위이므로 main push와 분리해 다시 확인.
 - 🔴 **파괴적 작업**(파일·브랜치 삭제, reset/revert, force push, 덮어쓰기)은 실행 전 확인.
 - 🟢 그 외 일상 작업은 **사용자 개입 최소화로 자동 진행**. 상태 기록 md 갱신은 묻지 않고 진행.
