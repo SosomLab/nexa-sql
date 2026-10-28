@@ -1857,8 +1857,9 @@ fn db2_server_cursor_and_rownum_paging() {
     assert_eq!(rest.rows[2995][0], Value::Int(3000));
     assert!(s.fetch_next(h, 2).is_err(), "끝난 커서 = 닫힘");
     // 열린 커서 중 새 실행 = 조용히 닫고 진행(옛 핸들은 오류) · 커밋도 닫는다 · close_cursor는 멱등.
+    // (ID만은 3,000행이 ~21 KB라 첫 블록에 ENDQRYRM까지 와 커서가 안 열린다 = 작은 결과의 정상 동작 · CI 40642186831 → PAD 포함)
     let h2 = s
-        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
         .expect("select 2")
         .pending
         .expect("pending 2");
@@ -1868,7 +1869,7 @@ fn db2_server_cursor_and_rownum_paging() {
     assert_eq!(c.result_sets[0].rows[0][0], Value::Int(3000));
     assert!(s.fetch_next(h2, 2).is_err());
     let h3 = s
-        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
         .expect("select 3")
         .pending
         .expect("pending 3");
@@ -1878,10 +1879,17 @@ fn db2_server_cursor_and_rownum_paging() {
     // 상한 없음 = 커서 없이 전부(종전).
     s.set_option("max_rows", "0").expect("max_rows 0");
     let all = s
-        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
         .expect("all");
     assert_eq!(all.result_sets[0].rows.len(), 3000);
     assert!(all.pending.is_none());
+    // 상한 2라도 한 블록에 다 오는 작은 결과(ID만 · ~21 KB)는 커서 없이 끝난다 — 호스트의 상한 자르기는 그대로.
+    s.set_option("max_rows", "2").expect("max_rows 2");
+    let small = s
+        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .expect("small");
+    assert!(small.pending.is_none(), "한 블록 = 커서 없음");
+    s.set_option("max_rows", "0").expect("max_rows 0");
     // 10.5 폴백 페이징 SQL(nsql-io `page_sql_opts(Db2, …, false)`와 같은 꼴) = 번호 열이 끝에 · 호스트가 뗀다.
     let q = "SELECT * FROM (SELECT x.*, ROW_NUMBER() OVER () AS NSQL_RN__ FROM (\nSELECT ID FROM NSQLT_DB2C ORDER BY ID\n) x) y WHERE NSQL_RN__ > 1 AND NSQL_RN__ <= 3";
     let p = s.execute(&req(q)).expect("rownum paging");
