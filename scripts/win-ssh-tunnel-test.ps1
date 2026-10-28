@@ -4,26 +4,26 @@
 #   3) CLI 왕복: nsql run -c <대상> 으로 확인 조회 1건(사용자가 실제로 쓰는 경로).
 # 사용:
 #   scripts/win-ssh-tunnel-test.ps1 -Target "oracle://BISCM:…@127.0.0.1:1521/BISCM?ssh=oracle@192.168.0.58&driver=thin"
-#   scripts/win-ssh-tunnel-test.ps1 -Profile biscm-ssh          # 볼트 프로필(비밀번호를 명령줄에 안 남긴다)
+#   scripts/win-ssh-tunnel-test.ps1 -ProfileName biscm-ssh      # 볼트 프로필(비밀번호를 명령줄에 안 남긴다)
 #   -Jump user@host[:port] 를 주면 1)에서 그 대상으로 로그인 검사(없으면 Target의 ssh= 에서 뽑는다).
 #   -AddKnownHost 는 점프 호스트의 공개 키를 ~/.ssh/known_hosts에 추가한다(사용자 파일 수정 = 명시적으로 켤 때만).
 param(
     [string]$Target = "",
-    [string]$Profile = "",
+    [Alias("Profile")][string]$ProfileName = "",
     [string]$Jump = "",
     [switch]$AddKnownHost,
     [switch]$SkipCargo
 )
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
-if (-not $Target -and -not $Profile) { Write-Host "Target 또는 Profile 하나는 필요"; exit 2 }
+if (-not $Target -and -not $ProfileName) { Write-Host "Target 또는 ProfileName 하나는 필요"; exit 2 }
 
 # ── 점프 대상 추출(Target의 ?ssh= · 프로필은 nsql conn show)
 if (-not $Jump) {
     if ($Target -match '[?&]ssh=([^&]+)') { $Jump = [uri]::UnescapeDataString($Matches[1]) }
-    elseif ($Profile) {
-        $show = & target/debug/nsql.exe conn show $Profile 2>&1 | Out-String
-        if ($show -match 'ssh=([^\r\n]+)') { $Jump = $Matches[1].Trim() }
+    elseif ($ProfileName) {
+        $show = & target/debug/nsql.exe conn show $ProfileName 2>&1 | Out-String
+        if ($show -match 'via ssh (\S+)') { $Jump = $Matches[1].Trim() }
     }
 }
 if (-not $Jump) { Write-Host "점프 대상(ssh=)을 찾지 못함"; exit 2 }
@@ -52,14 +52,14 @@ else {
 if (-not $SkipCargo) {
     Write-Host "== 2) cargo test ssh_tunnel_real_server"
     if ($Target) { $env:NSQL_SSH_URL = $Target; Remove-Item Env:NSQL_SSH_PROFILE -ErrorAction SilentlyContinue }
-    else { $env:NSQL_SSH_PROFILE = $Profile; Remove-Item Env:NSQL_SSH_URL -ErrorAction SilentlyContinue }
+    else { $env:NSQL_SSH_PROFILE = $ProfileName; Remove-Item Env:NSQL_SSH_URL -ErrorAction SilentlyContinue }
     & cargo test -p nsql-drivers --test integration ssh_tunnel_real_server -- --nocapture --test-threads=1
     if ($LASTEXITCODE -ne 0) { Write-Host "   허브 시험 실패"; exit 1 }
 }
 
 # ── 3) CLI 왕복
 Write-Host "== 3) nsql run 왕복"
-$conn = if ($Target) { $Target } else { $Profile }
+$conn = if ($Target) { $Target } else { $ProfileName }
 $sql = "SELECT 1 AS via_ssh FROM dual;"
 if ($conn -match '^(postgres|mysql|mariadb|mssql|sqlserver)://') { $sql = "SELECT 1 AS via_ssh;" }
 $out = $sql | & target/debug/nsql.exe run -c $conn --no-prompt -f csv - 2>&1 | Out-String
