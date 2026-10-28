@@ -260,9 +260,11 @@ pub fn decode_dss(buf: &[u8]) -> Result<Option<(Dss, usize)>, DssError> {
     let cp = u16::from_be_bytes([body[2], body[3]]);
     // DDM 확장 길이(derby `Reply.readLengthAndCodePoint` = `ddmLength - 0x8004` = 확장 바이트 수): `0x8000 | (4 + n)` → 코드포인트 뒤 n(4/6/8)바이트가
     // 본문 길이(값은 그 뒤부터 · 길이 값 자체는 DSS 연속을 합친 본문이 말해 주므로 쓰지 않는다).
+    // ★ `0x8004`(n = 0 · 157차 · CI 40641635510 = Db2 12.1이 32 KB 넘는 QRYDTA를 이 꼴로 보낸다) = 확장 길이 바이트 없음 →
+    //   본문 = 연속 DSS를 합친 나머지 전부(derby `case 0`).
     let start = if ddm_len & 0x8000 != 0 {
         let n = ((ddm_len & 0x7FFF) as usize).saturating_sub(4);
-        if !matches!(n, 4 | 6 | 8) {
+        if !matches!(n, 0 | 4 | 6 | 8) {
             return Err(DssError::BadLength {
                 cp,
                 len: ddm_len as usize,
@@ -332,6 +334,23 @@ mod tests {
         let mut bad = out.clone();
         bad[2] = 0x00;
         assert!(decode_dss(&bad).is_err());
+    }
+
+    /// 157차: `80 04 24 1B` = 확장 길이 바이트 0(본문 = 나머지 전부) — Db2 12.1 큰 QRYDTA(CI 40641635510 실제 바이트 꼴).
+    #[test]
+    fn ddm_extended_length_zero_bytes_means_rest_of_body() {
+        let wire = [
+            0x00, 0x0C, 0xD0, 0x03, 0x00, 0x02, 0x80, 0x04, 0x24, 0x1B, 0xAA, 0xBB,
+        ];
+        let (d, used) = decode_dss(&wire).expect("decode").expect("complete");
+        assert_eq!(used, 12);
+        assert_eq!(d.obj.cp, 0x241B);
+        assert_eq!(d.obj.value, vec![0xAA, 0xBB]);
+        // 모르는 확장 크기(n = 2)는 여전히 거절.
+        let bad = [
+            0x00, 0x0C, 0xD0, 0x03, 0x00, 0x02, 0x80, 0x06, 0x24, 0x1B, 0xAA, 0xBB,
+        ];
+        assert!(matches!(decode_dss(&bad), Err(DssError::BadLength { .. })));
     }
 
     #[test]
