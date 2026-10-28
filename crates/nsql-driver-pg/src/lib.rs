@@ -264,6 +264,41 @@ pub fn client_config(
     Ok(Some(cfg))
 }
 
+/// ★ 보안 접속(TLS) 상한(초 · 157차 · MySQL `TLS_CONNECT_TIMEOUT_SECS`와 같은 틀): tokio-postgres의 `connect_timeout`은 **TCP 접속까지만**
+/// 덮고(0.7.18 `connect_socket`) SSLRequest → TLS 핸드셰이크 → 기동/인증(`connect_raw`)에는 상한이 없다 → 서버가 TCP는 받고
+/// 핸드셰이크에서 침묵하면(중간 장비 · 인증서 검증 대기) 워커가 무한히 막혔다. 동기 `postgres::Client`는 밖에서 감쌀 공개 API가 없어
+/// 접속을 스레드로 감싸 시간 안에 못 끝나면 원인을 적은 오류로(스레드는 소켓이 닫히면 끝난다 · 결과는 버린다).
+const TLS_CONNECT_TIMEOUT_SECS: u64 = 20;
+
+fn connect_secure(cfg: postgres::Config, tls: rustls::ClientConfig) -> Result<Client, DbError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("nsql-pg-tls-connect".into())
+        .spawn(move || {
+            let _ = tx.send(cfg.connect(MakeRustlsConnect::new(tls)));
+        });
+    if spawned.is_err() {
+        return Err(tls_timeout_error());
+    }
+    match rx.recv_timeout(std::time::Duration::from_secs(TLS_CONNECT_TIMEOUT_SECS)) {
+        Ok(Ok(c)) => Ok(c),
+        Ok(Err(e)) => Err(err(e)),
+        Err(_) => Err(tls_timeout_error()),
+    }
+}
+
+fn tls_timeout_error() -> DbError {
+    DbError {
+        code: None,
+        message: format!(
+            "TLS handshake did not complete within {TLS_CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not finish \
+             the TLS negotiation (set pg.tls_ca to the server CA file, use tls=verify_ca when the host name does not match, \
+             or tls=required to skip verification)"
+        ),
+        position: None,
+    }
+}
+
 /// 이 백엔드가 TLS로 붙었는지(`pg_stat_ssl` · PG 9.5+ · 없으면 None).
 fn negotiated_tls(client: &mut Client) -> Option<bool> {
     let msgs = client
@@ -512,7 +547,8 @@ impl PgSession {
         });
         let mut client = match client_config(tls.0, tls.1.as_deref())? {
             None => cfg.connect(NoTls).map_err(err)?,
-            Some(c) => cfg.connect(MakeRustlsConnect::new(c)).map_err(err)?,
+            // TLS 경로 = 핸드셰이크·기동까지 상한(`TLS_CONNECT_TIMEOUT_SECS`).
+            Some(c) => connect_secure(cfg.clone(), c)?,
         };
         // `preferred`만 결과가 불확실(서버가 거부하면 평문)하므로 접속 때 한 번 `pg_stat_ssl`로 실제 협상 결과를 설명에 붙인다
         //   (26 §8: 접속당 1회 · 지속 트래픽 아님 · 와이어 호환 서버에 뷰가 없으면 생략). required 이상은 접속 성공 = TLS 확정.

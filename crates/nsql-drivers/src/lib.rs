@@ -119,7 +119,70 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         // ★ D-350: 내장이 없는 방언 = 확장 드라이버(`drivers/<id>/<ver>/` cdylib · 첫 접속 때 지연 로드) · 없으면
         //   [`ERR_DRIVER_MISSING`](호출자가 자동 설치로 잇는다 · C단계). 모든 feature가 켜진 빌드에서는 닿지 않는다.
         #[allow(unreachable_patterns)]
-        other => open_extension(other, spec),
+        other => {
+            let s = open_extension(other, spec)?;
+            if other == Dialect::Postgres {
+                ensure_pg_tls(s, spec)
+            } else {
+                Ok(s)
+            }
+        }
+    }
+}
+
+/// `pg.tls`(또는 `?tls=`/`?sslmode=`) 값이 **암호화를 요구**하는가(required 이상 · libpq 이름 포함).
+fn pg_tls_required(mode: Option<&str>) -> bool {
+    matches!(
+        mode.map(|m| m.trim().to_ascii_lowercase()).as_deref(),
+        Some(
+            "required" | "require" | "verify_ca" | "verify-ca" | "verify_identity" | "verify-full"
+        )
+    )
+}
+
+/// ★ TLS 요구 보증(157차 · 협업 관찰 P2): 확장 pg 드라이버가 T-70 이전 판(drivers ≤ 0.1.7)이면 ABI kv `tls`를 읽지 않아
+/// `required` 이상을 줘도 **조용히 평문**으로 붙었다 → 허브가 접속 직후 `pg_stat_ssl`로 1회 확인(26 §8 · 접속당 1회 · 지속 트래픽 아님)하고
+/// 평문이면 세션을 버리고 오류로 돌려준다. 뷰가 없는 와이어 호환 서버(확인 불가)는 통과 · 내장(rlib) 드라이버는 스스로 보증하므로 확장 경로만.
+fn ensure_pg_tls(mut s: Box<dyn Session>, spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
+    if !pg_tls_required(spec.tls.as_deref()) {
+        return Ok(s);
+    }
+    let req = nsql_core::ExecRequest {
+        sql: "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()".into(),
+        params: Vec::new(),
+    };
+    let encrypted = match s.execute(&req) {
+        Ok(r) => r
+            .result_sets
+            .first()
+            .and_then(|rs| rs.rows.first())
+            .and_then(|row| row.first())
+            .map(pg_ssl_flag),
+        Err(_) => None,
+    };
+    if encrypted == Some(false) {
+        let driver = s.driver_name();
+        drop(s);
+        return Err(DbError {
+            code: None,
+            message: format!(
+                "TLS: tls={} was requested but the session is not encrypted - the installed PostgreSQL driver ({driver}) \
+                 ignores the TLS setting (older extension build); update it in the driver manager",
+                spec.tls.as_deref().unwrap_or("required")
+            ),
+            position: None,
+        });
+    }
+    Ok(s)
+}
+
+/// `pg_stat_ssl.ssl` 값 → 참/거짓(드라이버마다 Bool 또는 문자열 `t`/`true`로 온다).
+fn pg_ssl_flag(v: &nsql_core::Value) -> bool {
+    match v {
+        nsql_core::Value::Bool(b) => *b,
+        nsql_core::Value::Str(t) => t == "t" || t.eq_ignore_ascii_case("true"),
+        nsql_core::Value::Int(n) => *n != 0,
+        _ => false,
     }
 }
 
@@ -723,6 +786,43 @@ pub fn builtin_dialects() -> Vec<Dialect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 157차: TLS 요구 판정(required 이상 · libpq 이름 포함)과 `pg_stat_ssl.ssl` 값 해석.
+    #[test]
+    fn pg_tls_required_modes_and_ssl_flag() {
+        for m in [
+            "required",
+            "require",
+            "verify_ca",
+            "verify-ca",
+            "verify_identity",
+            "verify-full",
+            " Required ",
+        ] {
+            assert!(pg_tls_required(Some(m)), "{m}");
+        }
+        for m in ["disabled", "disable", "preferred", "prefer", "allow", ""] {
+            assert!(!pg_tls_required(Some(m)), "{m}");
+        }
+        assert!(!pg_tls_required(None));
+        assert!(pg_ssl_flag(&nsql_core::Value::Bool(true)));
+        assert!(pg_ssl_flag(&nsql_core::Value::Str("t".into())));
+        assert!(pg_ssl_flag(&nsql_core::Value::Str("TRUE".into())));
+        assert!(!pg_ssl_flag(&nsql_core::Value::Str("f".into())));
+        assert!(!pg_ssl_flag(&nsql_core::Value::Null));
+        // 평문(확인됨)만 거절 · 뷰 없음(None)은 통과.
+        let mem = open(
+            &ConnectSpec::parse("sqlite::memory:").expect("spec"),
+            Dialect::Sqlite,
+        )
+        .expect("sqlite");
+        let mut spec = ConnectSpec::parse("sqlite::memory:").expect("spec");
+        spec.tls = Some("required".into());
+        assert!(
+            ensure_pg_tls(mem, &spec).is_ok(),
+            "pg_stat_ssl 없는 세션 = 확인 불가 = 통과"
+        );
+    }
 
     #[test]
     fn open_auto_passes_through_builtin_and_missing_has_code() {
