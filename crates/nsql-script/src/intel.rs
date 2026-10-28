@@ -2081,7 +2081,7 @@ mod tests {
             vec!["APS_SCHE_IN_BOD", "GTT_PEG_CALC", "VDMS_I002040"]
         );
         let cands = vec![tbl("DMS_I002040_LONG"), tbl("DMS_I002040")];
-        let r = rank(cands, "M4S", MatchMode::Fuzzy, &[], 10);
+        let r = rank(cands, "DMS", MatchMode::Fuzzy, &[], 10);
         assert_eq!(r[0].text, "DMS_I002040", "접두 = 짧은 것 먼저");
     }
 
@@ -2454,7 +2454,7 @@ mod tests {
         assert_eq!(match_positions("ITEM_CD", "item"), vec![0, 1, 2, 3]);
         assert_eq!(match_positions("DF_ITEM_CD", "item"), vec![3, 4, 5, 6]);
         assert_eq!(match_positions("SALES_CUSTOMER", "sc"), vec![0, 6]);
-        assert_eq!(match_positions("DMS_I002040", "mi40"), vec![0, 4, 9, 10]);
+        assert_eq!(match_positions("DMS_I002040", "mi40"), vec![1, 4, 9, 10]);
         assert!(match_positions("ABC", "z").is_empty() && match_positions("ABC", "").is_empty());
         assert!(
             score("employee", "emp", MatchMode::Prefix).unwrap()

@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(p.mode, PrepareMode::DeclarePrepend);
         assert!(
             p.sql
-                .starts_with("DECLARE @V_PROJECT_CD NVARCHAR(6) = N'ACME';\nCREATE PROCEDURE"),
+                .starts_with("DECLARE @V_PROJECT_CD NVARCHAR(4) = N'ACME';\nCREATE PROCEDURE"),
             "{}",
             p.sql
         );
