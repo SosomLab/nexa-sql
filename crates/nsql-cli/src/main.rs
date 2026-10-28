@@ -59,7 +59,10 @@ struct Opts {
     fast: bool,
     /// `nsql format --in-place`(T-255).
     in_place: bool,
+    /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
     timing: bool,
+    /// `--timing=json` — 같은 내용을 줄마다 JSON 객체로(T-47 · 스크립트·CI가 파싱 · 10-29).
+    timing_json: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
     log: bool,
     /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
@@ -134,6 +137,7 @@ fn parse_opts() -> Opts {
         fast: false,
         in_place: false,
         timing: false,
+        timing_json: false,
         log: false,
         password: None,
         host: None,
@@ -255,6 +259,10 @@ fn parse_opts() -> Opts {
                 }
             }
             "--timing" => o.timing = true,
+            "--timing=json" => {
+                o.timing = true;
+                o.timing_json = true;
+            }
             "--fast" => o.fast = true,
             "--in-place" => o.in_place = true,
             "--log" => o.log = true,
@@ -1002,6 +1010,8 @@ struct Printer {
     feedback: bool,
     /// 단계별 소요 출력(`--timing`).
     timing: bool,
+    /// `--timing=json` = 줄마다 JSON 객체.
+    timing_json: bool,
     /// 실행 로그 허브(`--log` · 별도 스레드 stderr 싱크 · 없으면 None).
     log: Option<nsql_log::LogHub>,
     /// `SPOOL`(T-9) — 이 Printer가 찍는 모든 것(stdout·stderr 오류·타이밍)과 실시간 서버 메시지를 파일에도. Runner와 공유.
@@ -1035,6 +1045,7 @@ impl Printer {
             errors: 0,
             feedback,
             timing: o.timing,
+            timing_json: o.timing_json,
             log: log_hub(o),
             spool: Spool::new_handle(),
             shell: false,
@@ -1114,7 +1125,8 @@ impl Printer {
         }
         self.out_table(&out);
         if self.timing {
-            self.err(&format!("⏱ {}", tl.summary()));
+            let line = timing_line(self.timing_json, "statement", &tl);
+            self.err(&line);
         }
     }
 
@@ -1453,7 +1465,8 @@ impl Printer {
             | RunEvent::Binds { .. } => {}
             RunEvent::Timing { timeline, .. } => {
                 if self.timing {
-                    self.err(&format!("⏱ {}", timeline.summary()));
+                    let line = timing_line(self.timing_json, "statement", timeline);
+                    self.err(&line);
                 }
             }
             RunEvent::Error { index, line, error } => {
@@ -1518,10 +1531,13 @@ fn connect_or_exit(
     let t0 = std::time::Instant::now();
     let ok = runner.connect(&spec, &mut |e| printer.handle(e));
     if printer.timing {
-        printer.err(&format!(
-            "⏱ connect {:.1}ms",
-            t0.elapsed().as_secs_f64() * 1000.0
-        ));
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let line = if printer.timing_json {
+            format!("{{\"timing\":\"connect\",\"total_ms\":{ms:.1}}}")
+        } else {
+            format!("⏱ connect {ms:.1}ms")
+        };
+        printer.err(&line);
     }
     if !ok {
         std::process::exit(1);
@@ -2214,8 +2230,74 @@ fn main() {
     std::process::exit(code);
 }
 
+/// `--timing` 한 줄 — 글(`⏱ …` = `Timeline::summary`) 또는 JSON 객체(`--timing=json` · T-47):
+/// `{"timing":"statement","total_ms":12.3,"stages":[{"stage":"execute","ms":1.2,"rows":10,"bytes":null,"note":null},…]}`.
+fn timing_line(json: bool, label: &str, tl: &nsql_core::Timeline) -> String {
+    if !json {
+        return format!("⏱ {}", tl.summary());
+    }
+    fn esc(s: &str) -> String {
+        let mut o = String::with_capacity(s.len() + 2);
+        o.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => o.push_str("\\\""),
+                '\\' => o.push_str("\\\\"),
+                '\n' => o.push_str("\\n"),
+                '\r' => o.push_str("\\r"),
+                '\t' => o.push_str("\\t"),
+                c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+                c => o.push(c),
+            }
+        }
+        o.push('"');
+        o
+    }
+    let opt = |v: Option<u64>| v.map_or("null".to_string(), |n| n.to_string());
+    let stages: Vec<String> = tl
+        .spans
+        .iter()
+        .map(|sp| {
+            format!(
+                "{{\"stage\":{},\"ms\":{:.1},\"rows\":{},\"bytes\":{},\"note\":{}}}",
+                esc(sp.stage.label()),
+                sp.dur.as_secs_f64() * 1000.0,
+                opt(sp.rows),
+                opt(sp.bytes),
+                sp.note.as_deref().map_or("null".to_string(), esc),
+            )
+        })
+        .collect();
+    format!(
+        "{{\"timing\":{},\"total_ms\":{:.1},\"stages\":[{}]}}",
+        esc(label),
+        tl.total().as_secs_f64() * 1000.0,
+        stages.join(",")
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    /// ★ T-47(10-29): `--timing=json` 한 줄 = 파싱 가능한 JSON 객체(단계 배열 · null · 이스케이프) · 글 모드는 종전 요약.
+    #[test]
+    fn timing_line_json_and_text() {
+        use nsql_core::{Stage, Timeline};
+        use std::time::Duration;
+        let mut tl = Timeline::new();
+        tl.push(Stage::Execute, Duration::from_micros(1234)).note = Some("q\"x\"".into());
+        let s = tl.push(Stage::Fetch, Duration::from_millis(5));
+        s.rows = Some(10);
+        s.bytes = Some(2048);
+        let j = super::timing_line(true, "statement", &tl);
+        assert_eq!(
+            j,
+            "{\"timing\":\"statement\",\"total_ms\":6.2,\"stages\":[{\"stage\":\"execute\",\"ms\":1.2,\"rows\":null,\"bytes\":null,\"note\":\"q\\\"x\\\"\"},{\"stage\":\"fetch\",\"ms\":5.0,\"rows\":10,\"bytes\":2048,\"note\":null}]}"
+        );
+        assert!(nsql_json::parse(&j).is_ok(), "{j}");
+        let t = super::timing_line(false, "statement", &tl);
+        assert!(t.starts_with("⏱ execute") && t.contains("fetch"), "{t}");
+    }
+
     /// T-153 — `-v 이름=값`: 값의 `=`·빈 값 허용 · 이름이 비었거나 글자가 이상하면 거부 · `=`가 없으면 거부.
     #[test]
     fn define_option_parses() {

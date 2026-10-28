@@ -47,3 +47,7 @@ nsql-log.workspace = true
 nsql-search.workspace = true
 nsql-bookmarks.workspace = true
 nsql-license.workspace = true
+
+[dev-dependencies]
+# T-47 `--timing=json` 시험이 출력 JSON을 되읽는다.
+nsql-json.workspace = true

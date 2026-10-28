@@ -7643,7 +7643,7 @@ impl Msg {
             Msg::HlpOptMaxColWidth => ["Widest a single column may be; longer values end with … (0 = unlimited)", "컬럼 하나의 최대 폭 · 긴 값은 …(0 = 무제한)"],
             Msg::HlpOptOverflow => ["When the table is wider than the line: wrap (column groups with a # row number) · truncate (shrink columns) · expanded (one column per line) · none", "표가 줄 폭을 넘을 때: wrap(# 행 번호와 컬럼 묶음) · truncate(컬럼 줄임) · expanded(한 줄에 컬럼 하나) · none"],
             Msg::HlpOptExpanded => ["Record view: `-[ RECORD n ]` then one `column | value` per line (psql \\x)", "레코드 보기: `-[ RECORD n ]` 뒤 `컬럼 | 값` 한 줄씩(psql \\x)"],
-            Msg::HlpOptTiming => ["Print per-stage timings (connect · execute · fetch · render) to stderr", "단계별 소요(접속 · 실행 · 페치 · 렌더)를 stderr에"],
+            Msg::HlpOptTiming => ["Print per-stage timings (connect · execute · fetch · render) to stderr. --timing=json = one JSON object per line", "단계별 소요(접속 · 실행 · 페치 · 렌더)를 stderr에. --timing=json = 줄마다 JSON 객체"],
             Msg::HlpOptLog => ["Write the execution log (timestamped, format = setting log.format) to stderr", "실행 로그(타임스탬프 · 형식 = 설정 log.format)를 stderr에"],
             Msg::HlpOptQuery => ["A single SQL statement given inline", "SQL 문장 하나를 인자로"],
             Msg::HlpOptTable => ["Export a whole table (SELECT * FROM table)", "테이블 전체 내보내기(SELECT * FROM table)"],
