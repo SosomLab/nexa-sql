@@ -5,11 +5,11 @@
 #   ① 값·타입(dual · 숫자/글/시각/간격/RAW/CLOB) ② 세션 변수·REF CURSOR·DBMS_OUTPUT(it-oracle 꼴) ③ 임시 표 쓰기 왕복(날짜·숫자·한글 바인드)
 #   ④ 오류 동일성(ORA-00942 · ORA-01722) ⑤ 1200행 페이지(커서 이어 받기) ⑥ Thin stderr에 "driver limitations" 안내 1줄(접속 직후)
 #   ⑦ 실시간 전환 = 설정 파일만 바꿔 다시 실행(재시작 없음 · CLI는 실행마다 읽는다).
-# 사용: scripts/oracle-driver-parity-e2e.sh -o <출력> -P <실제 설정 폴더> [-c BISCM] [-n target/debug/nsql]
+# 사용: scripts/oracle-driver-parity-e2e.sh -o <출력> -P <실제 설정 폴더> [-c APPDB] [-n target/debug/nsql]
 #   -P = 프로필·device.key를 격리 홈으로 복사(비밀번호는 vault 봉투 그대로 · 환경 변수에 적지 않는다).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NSQL="$ROOT/target/debug/nsql"; OUT=""; PROF=""; CONN="${NSQL_E2E_ORACLE_PROFILE:-BISCM}"
+NSQL="$ROOT/target/debug/nsql"; OUT=""; PROF=""; CONN="${NSQL_E2E_ORACLE_PROFILE:-APPDB}"
 while getopts "o:n:P:c:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <settings dir> [-c profile] [-n cli]"; exit 2; }
 case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) [ -x "$NSQL" ] || NSQL="$NSQL.exe";; esac

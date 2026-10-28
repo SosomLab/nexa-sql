@@ -101,7 +101,7 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 { "version": 2,
   "folders": [...], "vars": {...},                 ← 공유(정의)
   "workspace": { "tabs": [...], "active": 1, "expanded": [...], "panel": "project",
-                 "search": "...", "bm_collapsed": [...], "profiles": ["BISCM"] },   ← 환경(복제 대상)
+                 "search": "...", "bm_collapsed": [...], "profiles": ["APPDB"] },   ← 환경(복제 대상)
   "bookmarks": {...} }
 ```
 

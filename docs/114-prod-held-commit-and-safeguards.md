@@ -434,8 +434,8 @@ flowchart TD
 
 ```
 <프로필>_<스키마>.<객체>_<종류>.<yyyyMMddHHmmssSSS>
-예) BISCM_BISCM_SB.PKG_STAT_GATHER_BSY_PACKAGE_BODY.20261015173012345
-    M4PLAN_dbo.usp_plan_load_PROCEDURE.20261015173012346
+예) APPDB_APPDB_SB.PKG_STAT_GATHER_BSY_PACKAGE_BODY.20261015173012345
+    PLANDB_dbo.usp_plan_load_PROCEDURE.20261015173012346
 ```
 
 | 검토 항목 | 판정 | 근거·처리 |
@@ -479,9 +479,9 @@ flowchart TD
 | 백업 파일 열기 | 확장자가 **17자리 숫자**면 SQL 구문(모르는 확장자 = Plain Text 규칙의 예외 · D-305) · 시험 3 | `syntax.rs::for_title` |
 | 자체 시험 | 기동 명령 `objbk.dump:<파일>`(진행 상태) · `status.dump:<파일>`(상태줄) · `@connected:@after:<ms>:<명령>`(접속 **뒤** ms · 부하 중 접속 지연에 흔들리지 않게) · `explorer.pick:<id>` = 메뉴가 닫혀도 선택 행으로 + 탐색기 동작 즉시 수거 · **E2E `scripts/win-objbackup-e2e.sh` 12/0**(DROP VIEW 백업 1 · ALTER 백업 1 · 없는 객체 0 + 건너뜀 안내 · 끔 = 0 · keep=1 = 같은 객체 1 · 머리 주석 · 17자리 확장자) · **E2E `scripts/win-drop-prod-e2e.sh`**(G6 = 유형 none/prd 모두 탐색기 삭제 → 표 사라짐 · 창 "전송됨" · 운영 probe ✓ · 협업 재실행 결과 = journal §7) | `app/startup_cmd.rs` · scripts |
 
-- **식별자 접힘(10-16 · 사용자 실기)**: 소문자 `create or replace procedure nsqlt_case_prc …`가 "아직 없음 - 건너뜀"이던 결함 → `fold_ident`(따옴표 없는 이름 = Oracle 대문자 · PostgreSQL 소문자 · 그 밖 그대로 · 따옴표 이름은 그대로)로 서버 사전 조회 이름을 맞춤 · 백업 결과 줄을 Output과 **로그 창**에도 · V1 = BISCM 운영 격리 `BISCM.NSQLT_CASE_PRC (PROCEDURE)` 백업 ✓([journal 10-16](journal/2026-10-16.md) §2).
+- **식별자 접힘(10-16 · 사용자 실기)**: 소문자 `create or replace procedure nsqlt_case_prc …`가 "아직 없음 - 건너뜀"이던 결함 → `fold_ident`(따옴표 없는 이름 = Oracle 대문자 · PostgreSQL 소문자 · 그 밖 그대로 · 따옴표 이름은 그대로)로 서버 사전 조회 이름을 맞춤 · 백업 결과 줄을 Output과 **로그 창**에도 · V1 = APPDB 운영 격리 `APPDB.NSQLT_CASE_PRC (PROCEDURE)` 백업 ✓([journal 10-16](journal/2026-10-16.md) §2).
 - 부하원(39 §3): 정리 틱 = 파일 열거만(기본 60분 · 0 = 끔) · 백업 질의 = 사용자 실행 1회당 대상 객체 수만큼 DDL 생성 1회(탐색기 메타 세션 · 자동 재시도 0).
-- 남은 것(T-357 잔여): 토스트 버튼·`run.prod_confirm_ms`(A3b) · 프로필 영속 유형 변경 2단(G8) · Oracle `ALTER … RENAME TO`의 새 이름 추적(백업은 옛 이름으로 됨 = 의도) · 실서버 4방언 왕복(사용자 "BISCM 운영기 모드 자동화" = journal §7).
+- 남은 것(T-357 잔여): 토스트 버튼·`run.prod_confirm_ms`(A3b) · 프로필 영속 유형 변경 2단(G8) · Oracle `ALTER … RENAME TO`의 새 이름 추적(백업은 옛 이름으로 됨 = 의도) · 실서버 4방언 왕복(사용자 "APPDB 운영기 모드 자동화" = journal §7).
 
 ## 8. 적용 시점 · 설정 키
 
@@ -589,7 +589,7 @@ flowchart TD
 > "운영기 테스트 스크립트 · 순서대로 실행하며 각 기능 확인 · 운영기로 변경하는 것까지 명령으로" — 실제 프로필은 건드리지 않고 **격리 홈에 프로필 사본**을 만들어 그 사본만 `nsql conn env <프로필> prd`로 바꾼다. 키·마우스 주입 0(기동 명령 + 덤프 + CLI 조회로 판정) · 임시 객체 `NSQLT_HOLD_*`는 끝에 정리.
 
 ```
-scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql"            # Oracle BISCM(기본) · 전 단계
+scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql"            # Oracle APPDB(기본) · 전 단계
 scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" -i -k      # 단계마다 멈춤 + GUI를 띄운 채 직접 보고 Enter
 scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" -s 3       # 3단계(보류 → Commit 2단)만
 scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" -L         # 8단계(한도 1분 롤백)까지
@@ -609,7 +609,7 @@ scripts/prod-mode-scenario.sh -d sqlite -c Local                # 서버 없이 
 | 8(-L) | UPDATE → 85 s 대기 | pending=0 · CLI 원복 | 카운트다운 카드 |
 | 9 | 정리 · `nsql conn env <P> none`(사본) | — | — |
 
-- **쿼리 모음(손으로 따라 할 때)** = [`examples/prod-mode-scenario.sql`](../examples/prod-mode-scenario.sql)(단계별 문장 + 확인 포인트 · Oracle 기본 · SQLite 판 꼬리) · 스크립트가 실제로 돌린 파일 = `<출력 폴더>/s1.sql … s6d.sql`(예 `target/prod-scenario-biscm/`).
+- **쿼리 모음(손으로 따라 할 때)** = [`examples/prod-mode-scenario.sql`](../examples/prod-mode-scenario.sql)(단계별 문장 + 확인 포인트 · Oracle 기본 · SQLite 판 꼬리) · 스크립트가 실제로 돌린 파일 = `<출력 폴더>/s1.sql … s6d.sql`(예 `target/prod-scenario-appdb/`).
 - **`nsql` 명령 사용법(10-16)** = [115](115-prod-mode-scenario-nsql-guide.md) — CLI는 보류·2단·백업이 없음(PRD 프로필 `nsql run` = 즉시 커밋) · 유형 전환 `nsql conn env` · 다른 세션 확인 조회 · 정리 · 자동 시나리오 옵션.
 - 판정 원천 = 기동 명령 `tx.dump`(대기·보류·무장) · `toast.dump`(카드) · `status.dump`(상태줄) · `output.dump` · `drop.dump` · `grid.dump` + CLI `nsql run -f csv`.
-- 10-15 검증 = SQLite Local **25/0** · BISCM(협업) **26/0** · 8단계(-L) SQLite 5/0 · BISCM 5/0(L2 가드 결함 수정 뒤 · journal §10).
+- 10-15 검증 = SQLite Local **25/0** · APPDB(협업) **26/0** · 8단계(-L) SQLite 5/0 · APPDB 5/0(L2 가드 결함 수정 뒤 · journal §10).

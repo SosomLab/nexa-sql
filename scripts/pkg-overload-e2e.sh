@@ -4,10 +4,10 @@
 #   인자 ④ 패키지 Call = 오버로드마다 블록(`#1`·`#2`) ⑤ 덤으로 `net.changed`(L0 신호 흉내) → 로그 "Network path changed".
 #   방법 = 격리 홈(복사 프로필) · 기동 명령 `explorer.expand:<라벨|행>` · `explorer.dump` · `explorer.menu:<행>` + `explorer.pick:gen:call` · `sqlprev.dump`.
 #   두 번 띄운다: 1차 = 라벨로 펼쳐 멤버 행 번호를 읽고 · 2차 = 행 번호로 Arguments·메뉴(같은 이름 둘은 라벨로 못 가른다).
-# 사용: scripts/pkg-overload-e2e.sh -o <출력> -P <실제 설정 폴더> [-p BISCM] [-s BISCM_SB] [-k PKG_STAT_GATHER_BSY] [-m PRC_RUN_ALL] [-e target/debug/nexa-sql]
+# 사용: scripts/pkg-overload-e2e.sh -o <출력> -P <실제 설정 폴더> [-p APPDB] [-s APPDB_SB] [-k PKG_STAT_GATHER_BSY] [-m PRC_RUN_ALL] [-e target/debug/nexa-sql]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/target/debug/nexa-sql"; OUT=""; PROF=""; PRO="BISCM"; SCH="BISCM_SB"; PKG="PKG_STAT_GATHER_BSY"; MEM="PRC_RUN_ALL"
+APP="$ROOT/target/debug/nexa-sql"; OUT=""; PROF=""; PRO="APPDB"; SCH="APPDB_SB"; PKG="PKG_STAT_GATHER_BSY"; MEM="PRC_RUN_ALL"
 while getopts "o:P:p:s:k:m:e:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; p) PRO=$OPTARG;; s) SCH=$OPTARG;; k) PKG=$OPTARG;; m) MEM=$OPTARG;; e) APP=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out> -P <settings dir> [-p 프로필] [-s 스키마] [-k 패키지] [-m 멤버] [-e app]"; exit 2; }
 case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) [ -x "$APP" ] || APP="$APP.exe";; esac
@@ -30,7 +30,7 @@ row_of() { grep -n -- "$2" "$1" | head -"${3:-1}" | tail -1 | cut -d: -f1 | awk 
 
 say "=== 패키지 오버로드 E2E · $(date '+%F %T') · $PRO $SCH.$PKG.$MEM · $APP"
 # ── 1차: 라벨로 펼쳐 멤버 행 번호 읽기 + net.changed 흉내
-# 현재 스키마(BISCM)가 자동 펼침이라 라벨 `Packages`·`Procedures`는 그쪽에 먼저 걸린다 → 탐색기 필터로 패키지 하나만 보이게 한 뒤 라벨로 펼친다.
+# 현재 스키마(APPDB)가 자동 펼침이라 라벨 `Packages`·`Procedures`는 그쪽에 먼저 걸린다 → 탐색기 필터로 패키지 하나만 보이게 한 뒤 라벨로 펼친다.
 #   필터는 일치 개수만 보이고 자동 펼침은 꺼져 있다(`explorer.filter_expand` 기본 off) → 필터 안에서는 라벨이 유일하니 차례로 펼친다.
 PRE="@after:4000:explorer.filter:$PKG,@after:6500:explorer.expand:$SCH,@after:8000:explorer.expand:Packages,@after:9500:explorer.expand:$PKG,@after:11000:explorer.expand:Procedures"
 run_gui 20 "$PRE,@after:13000:explorer.dump:$O/p1.txt,@after:13500:net.changed,@after:14300:log.dump:$O/log1.txt"

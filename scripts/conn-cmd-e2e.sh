@@ -12,7 +12,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILE="BISCM"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; EXE=""
+NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILE="APPDB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; EXE=""
 while getopts "o:n:p:P:g:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; P) PROF=$OPTARG;; g) EXE=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p profile] [-P real-config-dir] [-g gui-exe]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"

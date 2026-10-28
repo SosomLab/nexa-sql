@@ -303,7 +303,7 @@
 
 - **BREAKING 3** = (1) `command_timeout` 기본 **30 s** · `handshake_timeout` **15 s**(종전 무제한) → 우리 Config에 `command_timeout(None)`(또는 `Session::set_call_timeout` 값) **명시 필수**(안 하면 긴 질의·bulk가 30 s에 끊김) (2) encrypt 기본 **Required** → 우리는 `config.encryption(...)`을 늘 명시(`crates/nsql-driver-mssql/src/lib.rs:976`) → 영향 0 (3) 자격 = `secrecy::SecretString` → `AuthMethod::sql_server` 생성자만 써서 영향 0.
 - 그 밖 = `trust_cert_ca` 누적 규칙(우리는 `trust_cert()`만 · 959행) · async-std 기능 삭제 = 미사용 · 덤 = 디코드 패닉 → 오류 반환(T-309 `todo!()` 부류 해소) · 핸드셰이크 멈춤 감지 · 보안 권고 해소 · thiserror 2.
-- 검증(착수 때 · 협업 V1·V2) = BISCM_MS_DEV(172.16.1.58:1433/M4PLAN_MS · 10-22 등록) 실서버 = grid-edit MSSQL · conn-cmd 38 · tdsbulk(13.9k행/s 기준) · 동일성 E2E · encrypt on/off 접속 · Attention 취소·stop-latency · Linux·mac = CI `integration`(SQL Server 컨테이너) + 세션 실기 1회.
+- 검증(착수 때 · 협업 V1·V2) = APPDB_MS_DEV(172.16.1.58:1433/PLANDB_MS · 10-22 등록) 실서버 = grid-edit MSSQL · conn-cmd 38 · tdsbulk(13.9k행/s 기준) · 동일성 E2E · encrypt on/off 접속 · Attention 취소·stop-latency · Linux·mac = CI `integration`(SQL Server 컨테이너) + 세션 실기 1회.
 
 ## 6. 결정안(측정 1·3·4 반영 · 성능(F·B 벤치)은 §5-2 대기)
 
@@ -353,7 +353,7 @@
 1. **TLS 포트 `TlsPort`**(nsql-core · 의존 0) = `connect(host, stream, opts{verify · ca · sni · min_version}) → TlsStream` · 구현 = ① `tls-native`(기본 · OS) ② `tls-rustls`(선택 · 사내 정책으로 OS 스택을 못 쓸 때) — **드라이버가 포트를 받는 곳(PG · MySQL)에 주입**, tiberius는 기능 플래그 `native-tls`로 같은 스택을 쓰게.
 2. **효과** = ring + rustls 0.21 제거(**−1~1.5 MB** · 측정 5-1 뒤 확정) · TLS 스택 = aws-lc(Thin 전용) + OS 네이티브(그 밖) · Thin을 확장 드라이버로 빼면 aws-lc도 exe에서 빠진다(그러나 Thin = 기본 Oracle 경로 D-278 · 내장 유지 권장 → aws-lc ≈ 2.5~3 MB는 남음 · 수치는 5-1).
 3. **적재·회수 규칙** = 내장 드라이버의 TLS = OS 공유 라이브러리(exe 0 · OS 관리) · 확장 드라이버 = 첫 접속 적재 · 프로세스 끝까지 유지 · 완전 회수 필요 시 격리 프로세스 모드(121 §7-4).
-4. **검증** = SQL Server encrypt=true(M4PLAN) · PG `sslmode=require`(Supabase · T-70 동시 해결) · 3-OS 접속 E2E · Linux deb/rpm `libssl3` 의존 · 사내 CA(OS 저장소) 시나리오.
+4. **검증** = SQL Server encrypt=true(PLANDB) · PG `sslmode=require`(Supabase · T-70 동시 해결) · 3-OS 접속 E2E · Linux deb/rpm `libssl3` 의존 · 사내 CA(OS 저장소) 시나리오.
 5. **영향** = 기동 0(OS DLL은 첫 TLS 접속 때 적재) · 메모리 = OS 공유 페이지(여러 프로세스가 공유) · 보안 갱신 = OS 패치로(장점).
 
 | # | 결정 | 권장 |
@@ -367,13 +367,13 @@
 | Oracle OCI | Instant Client 안(우리 코드 밖) | **영향 0** | 영향 0 |
 | Oracle Thin | rustls 0.23 + aws-lc(고정) | **영향 0**(그대로) | 영향 0(못 바꿈) |
 | SQLite | 없음 | 영향 0 | 영향 0 |
-| **SQL Server** | tiberius 0.12 + rustls 0.21 + ring | **동작 동일한 범위** = 같은 rustls 계열(TLS 1.2/1.3 · 인증서 검증 규칙 같음 · `trust_server_certificate` 그대로) · 바뀌는 것 = tiberius 0.12 → **0.13 API 차이**(`command_timeout` 기본 30 s → `None` 필수 · 시그니처 변경 점검) → **실서버 E2E로 확인**(M4PLAN encrypt · grid-edit 96 · conn-cmd 38 · tdsbulk 28 · 3-OS CI) | Windows = SChannel · mac = Security.framework · **Linux = OpenSSL 동적 링크 → 런타임 `libssl` 의존이 새로 생김**(배포판 soname 차이 libssl1.1/3 · RHEL8·구 배포판에서 **적재 실패 위험** · deb/rpm 의존 선언 필요) · 자체 서명 인증서(SQL Server 기본) = OS 검증 규칙으로 바뀜(`trust_cert` 필요 · mac Security.framework는 일부 자체 서명·약한 해시 거부 사례) |
+| **SQL Server** | tiberius 0.12 + rustls 0.21 + ring | **동작 동일한 범위** = 같은 rustls 계열(TLS 1.2/1.3 · 인증서 검증 규칙 같음 · `trust_server_certificate` 그대로) · 바뀌는 것 = tiberius 0.12 → **0.13 API 차이**(`command_timeout` 기본 30 s → `None` 필수 · 시그니처 변경 점검) → **실서버 E2E로 확인**(PLANDB encrypt · grid-edit 96 · conn-cmd 38 · tdsbulk 28 · 3-OS CI) | Windows = SChannel · mac = Security.framework · **Linux = OpenSSL 동적 링크 → 런타임 `libssl` 의존이 새로 생김**(배포판 soname 차이 libssl1.1/3 · RHEL8·구 배포판에서 **적재 실패 위험** · deb/rpm 의존 선언 필요) · 자체 서명 인증서(SQL Server 기본) = OS 검증 규칙으로 바뀜(`trust_cert` 필요 · mac Security.framework는 일부 자체 서명·약한 해시 거부 사례) |
 | **PostgreSQL** | `NoTls`(TLS 미지원 · T-70) | TLS 추가 = **개선만**(rustls 0.23 + aws-lc 공유 · `sslmode=require` 지원 · Supabase) | 개선이지만 Linux `libssl` 의존 동일 |
 | 3-OS 빌드 | Linux = cmake·clang·nasm 없이 aws-lc 빌드 ✓(124차 실측) | **그대로**(이미 되는 빌드) | Linux CI 이미지의 OpenSSL 헤더·버전에 묶임 |
 | 크기 | — | **−0.6~0.8 MB**(ring + rustls 0.21 제거) | 같음(−0.6~0.8 · Windows SChannel crate는 작음) |
 
 **결론** = 안 ①은 "지금 되는 것은 그대로 되고(Oracle·SQLite 0 · SQL Server는 같은 rustls 계열 · PG는 개선), 바뀌는 것은 tiberius 한 판 올림뿐"이라 **실서버·3-OS E2E만 통과하면 사용에 문제없다**. 안 ②는 Windows/mac은 무난하나 **Linux 이식성(libssl 런타임 의존)과 자체 서명 인증서 정책 변화**가 회귀 위험 → **기본으로 쓰지 않고 정책 옵션**으로만. 따라서 D-343 = 안 ①.
-**안 ① 검증 계획(개발 뒤 협업 V1·V2)** = Windows: M4PLAN encrypt=on/off 접속 · `win-grid-edit` MSSQL · conn-cmd 38 · bulk tdsbulk · 동일성 E2E · Linux·mac: CI `integration`(SQL Server 컨테이너) + 맥·리눅스 세션 실기 1회 · 회귀 기준 = 지금과 같은 결과.
+**안 ① 검증 계획(개발 뒤 협업 V1·V2)** = Windows: PLANDB encrypt=on/off 접속 · `win-grid-edit` MSSQL · conn-cmd 38 · bulk tdsbulk · 동일성 E2E · Linux·mac: CI `integration`(SQL Server 컨테이너) + 맥·리눅스 세션 실기 1회 · 회귀 기준 = 지금과 같은 결과.
 
 ## 부록 A. 10-22 cargo-bloat 원자료(협업 · 작은 파일 6 · 전체 함수 목록 2.5 MB·1.3 MB는 제외)
 

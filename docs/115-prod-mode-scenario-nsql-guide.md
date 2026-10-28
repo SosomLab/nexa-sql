@@ -50,27 +50,27 @@ $NSQL = ".\target\release\nsql.exe"
 확인:
 ```bash
 $NSQL conn path            # → <격리 홈>/profiles  (실제 폴더가 아니면 OK)
-$NSQL conn list            # 프로필 목록(BISCM 등)
+$NSQL conn list            # 프로필 목록(APPDB 등)
 ```
 
 ---
 
 ## 2. 단계별 명령
 
-아래 `BISCM`은 프로필 이름 예(Oracle). 다른 프로필이면 바꿔 쓴다.
+아래 `APPDB`은 프로필 이름 예(Oracle). 다른 프로필이면 바꿔 쓴다.
 
 | 단계 | `nsql`로 하는 일 | 명령 | 확인 |
 |---|---|---|---|
 | 미리 보기 | 파일을 접속 없이 해석(문장 25개 · 종류) | `$NSQL plan -d oracle examples/prod-mode-scenario.sql` | `# dialect=oracle items=25` · 각 문장 `Sql::Ddl/Dml` |
-| ① 유형 = 운영 | 사본 프로필을 PRD로 | `$NSQL conn env BISCM prd` → `$NSQL conn env BISCM` | `BISCM: Production (PRD)` |
-| 0 준비 | 임시 표·프로시저 생성(운영 전환 **전**이나 비운영 프로필로 해도 됨) | 아래 §2-1의 `prep.sql`을 `$NSQL run -c BISCM --no-prompt prep.sql` | `PROCEDURE … compiled · no errors` |
-| GUI 실행 | 같은 격리 홈으로 GUI를 열고 시나리오 파일을 연다 | Git Bash: `NSQL_HOME="$NSQL_HOME" ./target/release/nexa-sql.exe BISCM` · PowerShell: `& .\target\release\nexa-sql.exe BISCM` | 상태줄 PRD 칩 |
+| ① 유형 = 운영 | 사본 프로필을 PRD로 | `$NSQL conn env APPDB prd` → `$NSQL conn env APPDB` | `APPDB: Production (PRD)` |
+| 0 준비 | 임시 표·프로시저 생성(운영 전환 **전**이나 비운영 프로필로 해도 됨) | 아래 §2-1의 `prep.sql`을 `$NSQL run -c APPDB --no-prompt prep.sql` | `PROCEDURE … compiled · no errors` |
+| GUI 실행 | 같은 격리 홈으로 GUI를 열고 시나리오 파일을 연다 | Git Bash: `NSQL_HOME="$NSQL_HOME" ./target/release/nexa-sql.exe APPDB` · PowerShell: `& .\target\release\nexa-sql.exe APPDB` | 상태줄 PRD 칩 |
 | 1~8 | **GUI에서** 파일의 단계 블록을 선택해 실행(Ctrl+Enter = 문장 · F5 = 전체/선택) | — | 파일의 각 "확인:" 주석 · 114 §5 |
-| 3·4·5 확인 | **다른 세션**에서 값 조회(보류 중이면 옛 값이 보여야 함) | `echo "SELECT ID, V FROM NSQLT_HOLD_T ORDER BY ID;" \| $NSQL run -c BISCM --no-prompt -f csv -` | 3단계 보류 중 = `1,o1` → 커밋 뒤 `1,x1` · 4단계 롤백 뒤 `2,o2` · 5단계 최종 `3,b3` |
-| 2·7 확인 | 객체 백업 파일(17자리 시각 확장자) | `ls "$NSQL_HOME/backups/objects"` · PowerShell `Get-ChildItem "$env:NSQL_HOME\backups\objects"` | `BISCM_BISCM.NSQLT_HOLD_PRC_PROCEDURE.<yyyyMMddHHmmssSSS>` |
-| 7 확인 | 삭제한 프로시저가 서버에서 사라졌는지 | `$NSQL cat -c BISCM procs` | `NSQLT_HOLD_PRC` 없음 |
+| 3·4·5 확인 | **다른 세션**에서 값 조회(보류 중이면 옛 값이 보여야 함) | `echo "SELECT ID, V FROM NSQLT_HOLD_T ORDER BY ID;" \| $NSQL run -c APPDB --no-prompt -f csv -` | 3단계 보류 중 = `1,o1` → 커밋 뒤 `1,x1` · 4단계 롤백 뒤 `2,o2` · 5단계 최종 `3,b3` |
+| 2·7 확인 | 객체 백업 파일(17자리 시각 확장자) | `ls "$NSQL_HOME/backups/objects"` · PowerShell `Get-ChildItem "$env:NSQL_HOME\backups\objects"` | `APPDB_APPDB.NSQLT_HOLD_PRC_PROCEDURE.<yyyyMMddHHmmssSSS>` |
+| 7 확인 | 삭제한 프로시저가 서버에서 사라졌는지 | `$NSQL cat -c APPDB procs` | `NSQLT_HOLD_PRC` 없음 |
 | 8 준비(옵션) | 보류 한도 1분으로 줄이기(격리 홈 설정) | `$NSQL config set tx.prod_idle_limit_min 1` · `$NSQL config set tx.idle_countdown_secs 5` | GUI 재시작 뒤 보류 1분 → 카운트다운 → 자동 롤백 |
-| 9 정리 | 임시 객체 삭제 · 유형 되돌림 | §2-2의 `cleanup.sql`을 `$NSQL run -c BISCM --no-prompt cleanup.sql` → `$NSQL conn env BISCM none` | 객체 없음 · `BISCM: None (NON)` |
+| 9 정리 | 임시 객체 삭제 · 유형 되돌림 | §2-2의 `cleanup.sql`을 `$NSQL run -c APPDB --no-prompt cleanup.sql` → `$NSQL conn env APPDB none` | 객체 없음 · `APPDB: None (NON)` |
 
 ### 2-1. `prep.sql`(0단계만 · 파일에서 떼어 씀)
 
@@ -103,7 +103,7 @@ DROP TABLE NSQLT_HOLD_T2;
 
 | 명령 | 뜻 |
 |---|---|
-| `bash scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql"` | Oracle BISCM(기본) · 0~7·9단계 |
+| `bash scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql"` | Oracle APPDB(기본) · 0~7·9단계 |
 | `… -P "$APPDATA/nexa-sql" -c <프로필>` | 다른 Oracle 프로필 |
 | `… -P "$APPDATA/nexa-sql" -i -k` | 단계마다 멈춤(Enter = 다음 · q = 종료) + GUI를 띄운 채 직접 보기 |
 | `… -P "$APPDATA/nexa-sql" -s 3` | 3단계(보류 → Commit 2단)만(0·9는 늘) |
@@ -112,7 +112,7 @@ DROP TABLE NSQLT_HOLD_T2;
 | `-o <폴더>` | 산출 폴더(기본 `target/prod-scenario`) · 단계 산출(`s<n>*.tx/.out/.toast/.dump`)과 보고 `prod-scenario.txt` |
 
 - 실행 파일 = 기본 `target/debug/nexa-sql(.exe)` · `target/debug/nsql(.exe)` → Release로 하려면 `-g target/release/nexa-sql.exe -n target/release/nsql.exe`.
-- 10-15~16 실측: BISCM 26/0 · `-L -s 8` 5/0(SQLite·BISCM).
+- 10-15~16 실측: APPDB 26/0 · `-L -s 8` 5/0(SQLite·APPDB).
 
 ---
 

@@ -4,11 +4,11 @@
 #   기본 abbr · 대문자). 대조군 = 별칭 불허 문장(Oracle `ALTER TABLE 스키마.표` · SQL Server `UPDATE DB.dbo.표`)에는 안 붙음.
 #   길 = 격리 홈 · 실서버 읽기 접속 · `editor.caret:end` → `intel.probe` 두 번(채움 뒤) → `ui.key:enter`(앱 안 route · 키 주입 0) → `editor.dump`.
 # 사용: scripts/intel-alias-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-d 프로필:방언:한정자:표,…] [-g gui] [-n nsql]
-#   기본 -d = BISCM:oracle:BISCM_SB:ANTI_KR_ITEM,M4PLAN:mssql:BISCM_MS.dbo:M4E_C300000 (한정자 = `스키마` 또는 `DB.스키마` · 사용자 예 STG.IF_PP0008은 BISCM 계정 권한 밖이라 읽을 수 있는 표로)
+#   기본 -d = APPDB:oracle:APPDB_SB:ANTI_KR_ITEM,PLANDB:mssql:APPDB_MS.dbo:M4E_C300000 (한정자 = `스키마` 또는 `DB.스키마` · 사용자 예 STG.IF_PP0008은 APPDB 계정 권한 밖이라 읽을 수 있는 표로)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; PROF=""; LIST="BISCM:oracle:BISCM_SB:ANTI_KR_ITEM,M4PLAN:mssql:BISCM_MS.dbo:M4E_C300000"
+OUT=""; PROF=""; LIST="APPDB:oracle:APPDB_SB:ANTI_KR_ITEM,PLANDB:mssql:APPDB_MS.dbo:M4E_C300000"
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:d:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; d) LIST=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real NSQL_HOME> [-d 프로필:방언:한정자:표,…] [-g gui] [-n nsql]"; exit 2; }

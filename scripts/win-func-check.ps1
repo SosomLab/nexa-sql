@@ -82,7 +82,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $HomeDir "profiles"))) {
 $q500 = Join-Path $DataDir "q500.sql"
 Set-Content -LiteralPath $q500 -Encoding UTF8 -Value @"
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
-SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
+SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'ACME' AS project_cd, 'memo ' || i AS memo FROM n;
 "@
 # S95(10-10 118차 mac 크래시 회귀): 30만 행(10만 행 이상이면 됨) × 행 높이 → 썸 드래그 3000 px의 i32 곱이 넘치던 크기(임계 ≈ 72만 px).
 $qBig = Join-Path $DataDir "q_big.sql"

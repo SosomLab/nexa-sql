@@ -5,13 +5,13 @@
 #   ③ PostgreSQL ODBC 로그인 단계 도달(틀린 비밀번호 → 인증 실패 메시지 · 네트워크·드라이버 정상 판정) ④ SQL Server ODBC 같은 꼴(18456/Login failed · 한글 메시지)
 #   ⑤ GUI 격리 홈 = 접속 문자열 인자로 SQLite3 ODBC 접속 → run.all(자동 커밋) → grid rows=1 + DB 실제 값(10-24 §2 ④-a = 자동 커밋 멈춤 결함 회귀)
 #   ⑥ GUI 수동 커밋 = run.all → run.commit → DB 값(§2 ④-b)
-#   ⑦(선택 `--profiles Repository,M4PLAN`) 저장 프로필의 **실제 자격 증명**으로 ODBC 실접속·DML·카탈로그 = 통합 시험 `odbc_select_bind_dml_and_errors` · ⑧ 같은 자격으로 격리 홈 금고에 ODBC 프로필을 써 **GUI** 접속(이름) → SELECT 1 → grid rows=1
+#   ⑦(선택 `--profiles Repository,PLANDB`) 저장 프로필의 **실제 자격 증명**으로 ODBC 실접속·DML·카탈로그 = 통합 시험 `odbc_select_bind_dml_and_errors` · ⑧ 같은 자격으로 격리 홈 금고에 ODBC 프로필을 써 **GUI** 접속(이름) → SELECT 1 → grid rows=1
 #     (`NSQL_ODBC_FROM_PROFILE` · 비밀번호는 금고 → 프로세스 안 · 로그 0 · 임시 표 nsqlt_odbc 생성·DROP · cargo 빌드 포함).
 # 사용: scripts/linux-odbc-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-e target/debug/nexa-sql] [--pg host:port/db] [--ms host,port] [--profiles 이름,이름]
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="172.16.1.60:5433/matrixdb2"; MS="172.16.1.58,1433"; PROFILES=""
+OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="172.16.1.60:5433/repodb"; MS="172.16.1.58,1433"; PROFILES=""
 while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -n) NSQL=$2; shift 2;; -e) EXE=$2; shift 2;; --pg) PG=$2; shift 2;; --ms) MS=$2; shift 2;; --profiles) PROFILES=$2; shift 2;; *) echo "usage: $0 -o <out> [-n nsql] [-e gui] [--pg host:port/db] [--ms host,port] [--profiles 이름,이름]"; exit 2;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }
 mkdir -p "$OUT"; REPORT="$OUT/odbc-e2e.txt"; : > "$REPORT"
@@ -53,12 +53,12 @@ say "④ SQL Server ODBC 로그인 단계(틀린 비밀번호 = 18456 · 한글 
 mh=${MS%%,*}; mp=${MS#*,}
 if timeout 4 bash -c "exec 3<>/dev/tcp/$mh/$mp" 2>/dev/null; then
   for mode in lang nolang; do
-    if [ $mode = lang ]; then o=$(printf 'wrong-password-e2e\n' | LANG=ko_KR.UTF-8 "$NSQL" run -c "odbc:Driver={ODBC Driver 18 for SQL Server};Server=$MS;Database=M4PLAN_MS;TrustServerCertificate=yes;UID=BISCM_MS" --password-stdin "$OUT/one.sql" 2>&1)
-    else o=$(printf 'wrong-password-e2e\n' | env -u LANG -u LC_ALL -u LC_CTYPE "$NSQL" run -c "odbc:Driver={ODBC Driver 18 for SQL Server};Server=$MS;Database=M4PLAN_MS;TrustServerCertificate=yes;UID=BISCM_MS" --password-stdin "$OUT/one.sql" 2>&1); fi
+    if [ $mode = lang ]; then o=$(printf 'wrong-password-e2e\n' | LANG=ko_KR.UTF-8 "$NSQL" run -c "odbc:Driver={ODBC Driver 18 for SQL Server};Server=$MS;Database=PLANDB_MS;TrustServerCertificate=yes;UID=APPDB_MS" --password-stdin "$OUT/one.sql" 2>&1)
+    else o=$(printf 'wrong-password-e2e\n' | env -u LANG -u LC_ALL -u LC_CTYPE "$NSQL" run -c "odbc:Driver={ODBC Driver 18 for SQL Server};Server=$MS;Database=PLANDB_MS;TrustServerCertificate=yes;UID=APPDB_MS" --password-stdin "$OUT/one.sql" 2>&1); fi
     printf '%s\n' "$o" > "$OUT/ms-$mode.out"
     if printf '%s' "$o" | grep -qE '18456|Login failed|로그인하지 못했습니다'; then
       if printf '%s' "$o" | grep -q '로그인하지 못했습니다'; then
-        printf '%s' "$o" | grep -q "'BISCM_MS'" && ok "MSSQL ODBC($mode) 18456 + 한글 메시지 온전" || bad "MSSQL ODBC($mode) 한글 메시지 안 사용자 이름 깨짐(LC_CTYPE?)" "$o"
+        printf '%s' "$o" | grep -q "'APPDB_MS'" && ok "MSSQL ODBC($mode) 18456 + 한글 메시지 온전" || bad "MSSQL ODBC($mode) 한글 메시지 안 사용자 이름 깨짐(LC_CTYPE?)" "$o"
       else ok "MSSQL ODBC($mode) 18456(영어 메시지)"; fi
     else bad "MSSQL ODBC($mode) 예상 밖" "$o"; fi
   done

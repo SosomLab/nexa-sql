@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # win-intel-3part-e2e.sh — SQL Server 3부 이름 자동완성 E2E(10-01 ⑭ · docs/82 §7 · journal §21).
-#   접속 DB(로그인 기본 = master)와 다른 DB `BISCM_MS`를 접두로: `BISCM_MS.` = 그 DB의 스키마 · `BISCM_MS.dbo.` = 그 DB·스키마의 객체 ·
-#   `t.`(FROM BISCM_MS.dbo.T t) = 그 테이블의 컬럼. 기동 명령 `editor.caret` · `intel.probe`(두 번 = 채움 뒤) · `intel.dump` · 키 주입 0.
-# 사용: scripts/win-intel-3part-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-p M4PLAN] [-d BISCM_MS] [-t M4E_C300000] [-P <실제 설정 폴더>]
+#   접속 DB(로그인 기본 = master)와 다른 DB `APPDB_MS`를 접두로: `APPDB_MS.` = 그 DB의 스키마 · `APPDB_MS.dbo.` = 그 DB·스키마의 객체 ·
+#   `t.`(FROM APPDB_MS.dbo.T t) = 그 테이블의 컬럼. 기동 명령 `editor.caret` · `intel.probe`(두 번 = 채움 뒤) · `intel.dump` · 키 주입 0.
+# 사용: scripts/win-intel-3part-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-p PLANDB] [-d APPDB_MS] [-t M4E_C300000] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="M4PLAN"; DB="BISCM_MS"; TBL="M4E_C300000"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="PLANDB"; DB="APPDB_MS"; TBL="M4E_C300000"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:d:t:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; d) DB=$OPTARG;; t) TBL=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-p profile] [-d other-db] [-t table] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
@@ -47,7 +47,7 @@ if [ -s "$d" ]; then
   c=$(cat "$d"); echo "$c" | head -6 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   n=$(echo "$c" | grep -cE "^Column\|"); [ "$n" -ge 1 ] && ok "③ \`t.\`(FROM $DB.dbo.$TBL t) = 컬럼 ${n}개" || bad "③ 컬럼 없음" "$c"
 else bad "③ 후보 덤프 없음" "$(tail -3 "$OUT/p3_columns.stderr")"; fi
-# ④ DB 전환 뒤에도 데이터베이스 목록이 남아 있는가(⑰ · 툴바 메뉴 = 같은 버킷): `USE BISCM_MS` 실행 뒤 `USE |` 완성에 DB 목록.
+# ④ DB 전환 뒤에도 데이터베이스 목록이 남아 있는가(⑰ · 툴바 메뉴 = 같은 버킷): `USE APPDB_MS` 실행 뒤 `USE |` 완성에 DB 목록.
 f4="$OUT/p4_use.sql"; printf 'USE %s
 GO
 ' "$DB" > "$f4"; f5="$OUT/p4_after.sql"; printf 'USE ' > "$f5"; d4="$OUT/p4.cands"; rm -f "$d4"

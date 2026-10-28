@@ -7,11 +7,11 @@
 #   ④ 연결된 서버(T-271): 임시 NSQLT_LNK(권한 없으면 SKIP) → 트리 · CLI 소스/상세 · 삭제 · 권한 없어도 폴더 (0) 읽기
 #   ⑤ 서버 보안·서버 개체(㉖): 루트 묶음 셋 · `/보안` 펼침 · 로그인/서버 역할/엔드포인트 · CLI 상세·목록 · ⑥ DB 용량(㉕ `explorer.dbsizes`)
 #
-# 사용: scripts/win-mssql-explorer-e2e.sh -o <출력폴더> -g target/debug/nexa-sql.exe [-p M4PLAN] [-d BISCM_MS] [-P <실제 설정 폴더>]
+# 사용: scripts/win-mssql-explorer-e2e.sh -o <출력폴더> -g target/debug/nexa-sql.exe [-p PLANDB] [-d APPDB_MS] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="M4PLAN"; OTHER="BISCM_MS"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="PLANDB"; OTHER="APPDB_MS"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:d:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; d) OTHER=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui-exe] [-p profile] [-d other-db] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
@@ -125,7 +125,7 @@ if [ -x "$NSQLCLI" ]; then
   o=$("$NSQLCLI" cat -c "$PROFILE" logins 2>&1); echo "$o" | head -4 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "⑤ CLI 목록 = 로그인(SQL_LOGIN)" "SQL_LOGIN|WINDOWS_LOGIN" "$o"
 fi
-# ⑦ 현재 DB가 master인 채 다른 DB(BISCM_MS)의 Tables를 펼쳐도 용량(㉕-d · `is_cur` 조건 제거).
+# ⑦ 현재 DB가 master인 채 다른 DB(APPDB_MS)의 Tables를 펼쳐도 용량(㉕-d · `is_cur` 조건 제거).
 say "--- ⑦ 현재 DB 아닌 DB의 테이블 용량"
 D7="$OUT/tree7.txt"; rm -f "$D7"
 D7B="$OUT/tree7b.txt"; rm -f "$D7B"
@@ -142,7 +142,7 @@ else bad "⑦ 트리 덤프 없음" "$(tail -3 "$OUT/gui7.stderr")"; fi
 # ⑧ 루틴 세부 타입(10-02 ㉛): 저장 프로시저 라벨 = `dbo.이름`(종전 `(P)` 없음) · CLI 상세 `type` 행 = `SQL_STORED_PROCEDURE`.
 say "--- ⑧ 루틴 세부 타입"
 D8="$OUT/tree8.txt"; rm -f "$D8"
-NSQL_NO_ACTIVATE=1 PROCDB="${PROCDB:-M4PLAN_MS}"
+NSQL_NO_ACTIVATE=1 PROCDB="${PROCDB:-PLANDB_MS}"
 NSQL_STARTUP_CMD="@after:7000:explorer.expand:$PROCDB,@after:8500:explorer.expand:$PROCDB/프로그래밍 기능,@after:10000:explorer.expand:$PROCDB/저장 프로시저,@after:14000:explorer.dump:$D8" \
   timeout -s KILL 17 "$EXE" "$PROFILE" > "$OUT/gui8.stdout" 2> "$OUT/gui8.stderr"
 if [ -s "$D8" ]; then
@@ -156,9 +156,9 @@ if [ -s "$D8" ]; then
     if echo "$o" | grep -qE "SQL_STORED_PROCEDURE|CLR_STORED_PROCEDURE"; then ok "⑧ CLI 상세 type = SQL_STORED_PROCEDURE"; else say "  SKIP  ⑧ CLI 상세(접속 DB가 master라 $PROCDB 프로시저 없음)"; fi
   else sk() { :; }; say "  SKIP  ⑧ 프로시저 없음 또는 CLI 없음"; fi
 else bad "⑧ 트리 덤프 없음" "$(tail -3 "$OUT/gui8.stderr")"; fi
-# ⑨ 테이블 반환 함수 완성(10-02 ㉜): `USE M4PLAN_MS` 뒤 `SELECT * FROM |`에 `FN_TABLE_CO`(SQL_INLINE_TABLE_VALUED_FUNCTION)가 **테이블 함수**로.
+# ⑨ 테이블 반환 함수 완성(10-02 ㉜): `USE PLANDB_MS` 뒤 `SELECT * FROM |`에 `FN_TABLE_CO`(SQL_INLINE_TABLE_VALUED_FUNCTION)가 **테이블 함수**로.
 say "--- ⑨ FROM 자리 테이블 반환 함수 완성"
-TVFDB="${TVFDB:-M4PLAN_MS}"; TVF="${TVF:-FN_TABLE_CO}"
+TVFDB="${TVFDB:-PLANDB_MS}"; TVF="${TVF:-FN_TABLE_CO}"
 # 같은 탭에서(새 탭은 ⑯ 탭별 작업 단위로 연결 기본 DB(master)로 되돌아간다) — USE + SELECT 한 파일 · 캐럿 끝 = `FROM ` 뒤.
 F9="$OUT/use9.sql"; printf 'USE %s\nGO\nSELECT * FROM ' "$TVFDB" > "$F9"; D9="$OUT/cands9.txt"; rm -f "$D9"
 fw9=$(cygpath -w "$F9" 2>/dev/null || echo "$F9")

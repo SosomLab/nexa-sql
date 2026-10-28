@@ -42,13 +42,13 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 ### 2-1. Oracle 사전 뷰 선택(09-25 실측 · T-220 ①)
 
-| 뷰 | BISCM_SB(1,4xx 객체) | 비고 |
+| 뷰 | APPDB_SB(1,4xx 객체) | 비고 |
 |---|---|---|
 | `ALL_OBJECTS` | 3.30 s | 행마다 권한 판정(비 DBA 계정) · 30 스키마 이름만 한 번 = **67 s** |
-| `DBA_OBJECTS` | **0.089 s** | `SELECT ANY DICTIONARY`/`SELECT_CATALOG_ROLE`이 있는 계정(BISCM 가능) · 권한 없는 객체도 나옴(1441 vs 1422) |
+| `DBA_OBJECTS` | **0.089 s** | `SELECT ANY DICTIONARY`/`SELECT_CATALOG_ROLE`이 있는 계정(APPDB 가능) · 권한 없는 객체도 나옴(1441 vs 1422) |
 | `USER_OBJECTS` | 0.050 s | 자기 스키마만 · 권한 판정 없음 |
 
-규칙 = DBA → USER(자기 스키마) → ALL 순 폴백. DBA 뷰가 더 보여 주는 객체는 ③ 완성 응답(`objects()` = `ALL_OBJECTS`)의 디프가 걸러내므로 **트리의 권한 반영 규칙은 그대로**(잠깐 부분 노드로 보였다 사라질 수 있음 · 19/1441 규모). 적용 뒤 `nsql cat -c BISCM -s BISCM_SB index` = 3.59 s → **0.27 s** · BISCM_POC 1.66 → 0.27 s(접속 포함 왕복).
+규칙 = DBA → USER(자기 스키마) → ALL 순 폴백. DBA 뷰가 더 보여 주는 객체는 ③ 완성 응답(`objects()` = `ALL_OBJECTS`)의 디프가 걸러내므로 **트리의 권한 반영 규칙은 그대로**(잠깐 부분 노드로 보였다 사라질 수 있음 · 19/1441 규모). 적용 뒤 `nsql cat -c APPDB -s APPDB_SB index` = 3.59 s → **0.27 s** · APPDB_POC 1.66 → 0.27 s(접속 포함 왕복).
 
 - 잘림 = `max+1`행을 요청해 넘치면 `truncated` · 반환 항목은 `kinds_for(dialect)`에 있는 종류만(트리 폴더와 1:1).
 - **LIKE를 서버에 보내지 않는다** — 대소문자·단어·정규식 판정은 클라이언트 `Matcher` 하나(검색창 옵션 그대로) · 키 입력마다 서버 왕복 0 · 오프라인에서도 읽어 둔 인덱스로 검색.
@@ -58,11 +58,11 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 | 서버 | 범위 | 항목 | 시간 |
 |---|---|---|---|
-| Oracle BISCM(비 DBA) | 보이는 스키마 30개 한 번 | 4,187 | **20.2 s** |
-| Oracle BISCM | 스키마 BISCM 하나 | 937 | 0.35 s |
-| Oracle BISCM | BISCM_POC | 975 | 1.6 s |
-| Oracle BISCM | BISCM_SB | 1,422 | 3.5 s |
-| SQL Server M4PLAN | 전 스키마 | 433 | 63 ms |
+| Oracle APPDB(비 DBA) | 보이는 스키마 30개 한 번 | 4,187 | **20.2 s** |
+| Oracle APPDB | 스키마 APPDB 하나 | 937 | 0.35 s |
+| Oracle APPDB | APPDB_POC | 975 | 1.6 s |
+| Oracle APPDB | APPDB_SB | 1,422 | 3.5 s |
+| SQL Server PLANDB | 전 스키마 | 433 | 63 ms |
 | PostgreSQL Repository | 전 스키마 | 358 | 227 ms |
 
 → Oracle은 `ALL_OBJECTS`의 행별 권한 판정이 비용이라 **스키마 단위 순차**가 맞다(첫 결과 0.35 s · 나머지는 뒤에서). SQL Server·PG는 한 번에 끝나도 같은 길을 쓴다(구조 하나).
@@ -106,7 +106,7 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 - 주기 = 호스트의 유휴 틱(`App::idle_tick` 자리 · `ExplorerSet::prefetch_tick`) → 칸마다 `Explorer::prefetch_step(now)`.
 - 조건 = 켬 · 온라인 · 스키마 목록 있음 · **검색 중 아님** · 진행 중 인덱스 없음 · 마지막 응답 뒤 `idle_ms` 경과 → 안 읽은 스키마 하나를 **백그라운드 메타 세션(`tx_bg`)**으로 읽는다(사용자 클릭 세션을 막지 않는다 · 세션은 첫 요청 때 열린다 = 26 §8의 "미리 읽기 세션"과 같은 것).
 - 끝 = 모든 스키마 `index_done` → 요청 0. 접속한 적 없는 서버·오프라인 칸 = 0(26 §8 원칙).
-- 비용 = Oracle 30 스키마 × 평균 0.7 s = 서버당 총 20 s의 질의가 2.5분에 걸쳐 흩어짐 · 메모리 = 항목 수 × ~60 B(BISCM 4,187 → ≈250 KB).
+- 비용 = Oracle 30 스키마 × 평균 0.7 s = 서버당 총 20 s의 질의가 2.5분에 걸쳐 흩어짐 · 메모리 = 항목 수 × ~60 B(APPDB 4,187 → ≈250 KB).
 
 ## 8. 표시
 

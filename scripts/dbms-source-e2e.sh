@@ -4,12 +4,12 @@
 #   그대로 다시 실행해(CREATE OR REPLACE / CREATE OR ALTER) 오류가 없는지 본다. 끝에 전부 지운다(docs/61 §2-4 ⑤).
 #   Oracle은 `scripts/oracle-ddl-e2e.sh`(67) · MySQL은 프로필이 없어 순수 함수 시험만(`conservative_qualification_helpers`).
 #
-# 사용: scripts/dbms-source-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "Repository:postgres,M4PLAN:mssql:M4PLAN_MS"]
+# 사용: scripts/dbms-source-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "Repository:postgres,PLANDB:mssql:PLANDB_MS"]
 #   항목 = `프로필:방언[:DB]`(T-346 ⑤ · 10-15) — 셋째 조각 = SQL Server 임시 객체를 만들 DB(로그인 기본 DB가 master면 CREATE 거부 Msg 262 · 125차 V3 7건).
 #   DB가 있으면 모든 실행 파일 머리에 `USE [DB]; GO`를 붙이고 `nsql cat source`는 3부 이름 `DB..이름`(121차 cat.rs `split_three`)으로 읽는다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILES="Repository:postgres,M4PLAN:mssql"
+NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILES="Repository:postgres,PLANDB:mssql"
 while getopts "o:n:p:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILES=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p prof:dialect,...]"; exit 2; }
 mkdir -p "$OUT"; REPORT="$OUT/dbms-source-e2e.txt"; : > "$REPORT"

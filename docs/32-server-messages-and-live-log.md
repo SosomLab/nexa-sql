@@ -33,7 +33,7 @@
 | SQL Server | tiberius는 Info 토큰을 public API로 주지 않고 `tracing` **INFO 이벤트**로만 낸다 → 어댑터가 `execute` 동안 **현재 스레드 기본 구독자**(`tracing::subscriber::set_default`)로 캡처. 다른 스레드·크레이트 무영향. 싱크 있으면 즉시 · 없으면 `messages` |
 | PostgreSQL | `Config::notice_callback` — 접속 시 심는 콜백이 `SEVERITY: message`로 만들어 싱크/버퍼로 |
 | 호스트 | `Runner::with_message_sink` → 접속마다 세션에 심는다. GUI = 워커 이벤트 채널(`RunEvent::Message` + 깨우기) · CLI = stdout 즉시 flush |
-| 실측(09-15) | M4PLAN: `PRINT`·`RAISERROR … WITH NOWAIT` — `WAITFOR DELAY 1s` 전후로 각각 도착(+1481ms · +2488ms) · matrixdb2: `RAISE NOTICE` 2건 `pg_sleep(0.5)` 사이로 도착(+141ms · +668ms) |
+| 실측(09-15) | PLANDB: `PRINT`·`RAISERROR … WITH NOWAIT` — `WAITFOR DELAY 1s` 전후로 각각 도착(+1481ms · +2488ms) · repodb: `RAISE NOTICE` 2건 `pg_sleep(0.5)` 사이로 도착(+141ms · +668ms) |
 
 **부작용 0 원칙**: 캡처 구독자는 `target.starts_with("tiberius")` · INFO만 · 실행 스레드 범위. 로그 허브([26 §3](26-performance-architecture.md))와 같은 격리 — 메시지 폭주(수만 줄 PRINT)는 링 버퍼가 감당하고 UI는 이벤트 드레인만.
 
@@ -60,9 +60,9 @@ DBMS_OUTPUT은 못 바꾸지만, **DBA가 이미 쓰는 관행**을 도구가 �
 
 | 방언 | OUT 회수 | 결과 집합 | 메시지 | 확인 |
 |---|---|---|---|---|
-| Oracle | 이름 바인드 InOut(VARCHAR2 4000 · `VarType`) · REF CURSOR 핸들 → `PRINT rc` 1회 소비 | REF CURSOR = 그리드(`PRINT`) | DBMS_OUTPUT 실행 뒤(SERVEROUTPUT ON) · 컴파일 오류 `ALL_ERRORS` → Error 이벤트 | `examples/it-oracle.sql` biscm ✅ |
-| SQL Server | `DECLARE @V 타입 = @Pn; EXEC … @V OUTPUT; SELECT @V AS V` 트레일러 | 프로시저 안 SELECT 여러 개 → 결과 집합 순서대로(트레일러는 OUT으로 흡수) | PRINT/RAISERROR 즉시(§1) | 임시 `NSQL_IT_P` M4PLAN ✅(OUTPUT 42 · 결과 2개) |
-| PostgreSQL | `CALL p(…, NULL)` → OUT이 1행 결과 → 호스트가 변수로 흡수 · 함수는 `SELECT * FROM f()` | `SELECT`/`CALL` 결과 | RAISE NOTICE 즉시(§1) | `examples/it-pg.sql` matrixdb2 ✅ |
+| Oracle | 이름 바인드 InOut(VARCHAR2 4000 · `VarType`) · REF CURSOR 핸들 → `PRINT rc` 1회 소비 | REF CURSOR = 그리드(`PRINT`) | DBMS_OUTPUT 실행 뒤(SERVEROUTPUT ON) · 컴파일 오류 `ALL_ERRORS` → Error 이벤트 | `examples/it-oracle.sql` appdb ✅ |
+| SQL Server | `DECLARE @V 타입 = @Pn; EXEC … @V OUTPUT; SELECT @V AS V` 트레일러 | 프로시저 안 SELECT 여러 개 → 결과 집합 순서대로(트레일러는 OUT으로 흡수) | PRINT/RAISERROR 즉시(§1) | 임시 `NSQL_IT_P` PLANDB ✅(OUTPUT 42 · 결과 2개) |
+| PostgreSQL | `CALL p(…, NULL)` → OUT이 1행 결과 → 호스트가 변수로 흡수 · 함수는 `SELECT * FROM f()` | `SELECT`/`CALL` 결과 | RAISE NOTICE 즉시(§1) | `examples/it-pg.sql` repodb ✅ |
 | SQLite/MySQL | `SELECT expr AS "V"` 별칭 흡수 | 일반 | — | sqlite 테스트 ✅ |
 
 `SELECT … INTO :A, :B FROM …`(SQL*Plus 관용)은 OUT이 없는 방언에서 `SELECT … AS "A", … AS "B" FROM …`으로 재작성해 1행을 흡수한다(09-15 · `rewrite_select_into_alias`).

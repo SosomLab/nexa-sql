@@ -38,7 +38,7 @@
 ## 3. L2 온디맨드 캐시(백그라운드)
 
 - 시작 = L1 완성(`l1_complete`) → `arm_warm` = 현재 스키마 관계 4종(+`intel.from_routines` 함수·패키지·프로시저) `ObjectsMeta` + 사전(`DictMeta`) — 종전 `preload_meta`와 같은 길(접속 직후 몫은 그대로 · L1 뒤 한 번 더는 `Coverage` 검사로 0).
-- ★ 코멘트(§212 · 86 §5) = 관계 폴더가 읽힌 스키마의 테이블·컬럼 코멘트를 스키마 단위 질의 2로(`schema_comments_raw` → `MetaStore::set_schema_comments` · `meta.warm_comments`) — 객체 상세의 설명이 왕복 0. ★ **시작 시점(10-21 · 134차)** = ① 접속 직후 L1 완료 뒤 `arm_warm`이 **현재 스키마**를 큐에 넣음(종전 = 관계 폴더를 펼치기 전에는 한 번도 안 돌아 hover 카드 설명이 L3 왕복에 기댐 · 협업 V1 관찰) ② 관계 폴더가 읽힌 스키마 · 비용 = 질의 2(BISCM 243~256 ms · 테이블 897·컬럼 13878) · 이미 읽었으면 0 · `meta.warm_comments` 끔 = 둘 다 안 함. ★ **T-348(10-15)** = 코멘트는 객체 id가 아니라 **(스키마, 소문자 이름) 지도** `Snapshot::schema_comments`에 먼저 담는다 → L1 이름 등재 **순서와 무관**(종전 = 이름이 등재된 객체에만 붙이고 "완료" 표시 → 뒤에 등재된 객체는 영영 코멘트 없음 · 스키마 이름 미등재면 조용히 버림) · `comments_of`는 지도에서 답하고 · `load_names_x`가 이름을 새로 등재하면 지도의 코멘트를 `ObjEntry.comment`/`col_comments`에 붙인다(`apply_schema_comments` 한 자리) · 시험 `schema_comments_survive_names_arriving_later`.
+- ★ 코멘트(§212 · 86 §5) = 관계 폴더가 읽힌 스키마의 테이블·컬럼 코멘트를 스키마 단위 질의 2로(`schema_comments_raw` → `MetaStore::set_schema_comments` · `meta.warm_comments`) — 객체 상세의 설명이 왕복 0. ★ **시작 시점(10-21 · 134차)** = ① 접속 직후 L1 완료 뒤 `arm_warm`이 **현재 스키마**를 큐에 넣음(종전 = 관계 폴더를 펼치기 전에는 한 번도 안 돌아 hover 카드 설명이 L3 왕복에 기댐 · 협업 V1 관찰) ② 관계 폴더가 읽힌 스키마 · 비용 = 질의 2(APPDB 243~256 ms · 테이블 897·컬럼 13878) · 이미 읽었으면 0 · `meta.warm_comments` 끔 = 둘 다 안 함. ★ **T-348(10-15)** = 코멘트는 객체 id가 아니라 **(스키마, 소문자 이름) 지도** `Snapshot::schema_comments`에 먼저 담는다 → L1 이름 등재 **순서와 무관**(종전 = 이름이 등재된 객체에만 붙이고 "완료" 표시 → 뒤에 등재된 객체는 영영 코멘트 없음 · 스키마 이름 미등재면 조용히 버림) · `comments_of`는 지도에서 답하고 · `load_names_x`가 이름을 새로 등재하면 지도의 코멘트를 `ObjEntry.comment`/`col_comments`에 붙인다(`apply_schema_comments` 한 자리) · 시험 `schema_comments_survive_names_arriving_later`.
 - ★ **10-21(134차 win) 테이블 단위 코멘트도 메타에** = 탐색기 상세 패널이 테이블 하나로 받은 코멘트(`ExplorerAction::Comments`)를 `MetaStore::set_object_comments`로 스키마 지도에 **그 항목만** 넣는다(스키마 "다 읽음" 표시는 안 함 · 관계 종류만) → hover 카드·완성 카드·상세 패널 = 한 원천(종전 = 패널만 알아 "탐색기엔 설명이 있는데 카드엔 (설명 없음)") · **`Snapshot::comment_known(names, id)`** = 테이블 코멘트를 아는가(값 있음 또는 지도에 항목 있음 = NULL도 앎) — Ctrl 링크 선적재가 L3 상세를 청할지 이것으로 판정(96 §7 · 종전 = 컬럼 코멘트 유무 → 워머가 컬럼만 채운 테이블은 상세를 영영 안 청함) · **잊기** `forget_comments(schema, table)` = 메타 새로 고침·F5 계층형·Ctrl+Shift+R이 모두 지나는 `Explorer::invalidate_details`에서 같은 범위로(None = 전부 · 스키마 = 그 스키마 지도 + 설명 검색 사본 + 워머 큐 재등록 · 테이블 = 그 항목만 · "다 읽음" 유지 → 다음 조회가 테이블 단위로 다시 읽음 = 지연 · DDL `COMMENT ON` 길) · 진단 `NSQL_TRACE_META` `[meta] schema comments …` · `[meta] comments forgotten …` · 시험 `object_comments_feed_meta_and_forget_scopes`(79 §4).
 - 컬럼 = 현재 스키마 관계 목록이 오면(`Resp::ObjectsMeta`) 컬럼이 `Unknown`인 것을 이름순으로 `warm_q`에(상한 `meta.warm_columns_max` 200) → `warm_step`이 `meta.warm_idle_ms`(300) 간격 · 한 번에 하나 · `ColumnsMeta{urgent:false}`(백그라운드 세션 · 큐 우선순위 3 = 급한 것 뒤).
 - 효과 = 첫 완성의 `alias.` 컬럼 · 카드 컬럼이 왕복 없이 · 실측 데모 SQLite = 목록 응답 뒤 0.9 s 안에 3 테이블 컬럼 완료(로그 `columns-meta … (bg)`).
@@ -61,7 +61,7 @@
 
 | 항목 | 값 | 근거 |
 |---|---|---|
-| L1 항목 | ≈40 B(`ObjEntry`) + 인터너 문자열 1회 | BISCM 30 스키마 ≈ 20k 객체 → ≈1 MB(스키마 이름·종류는 심볼) |
+| L1 항목 | ≈40 B(`ObjEntry`) + 인터너 문자열 1회 | APPDB 30 스키마 ≈ 20k 객체 → ≈1 MB(스키마 이름·종류는 심볼) |
 | 전역 이름 정렬(`by_name`) | **지연**(`OnceLock` · 첫 `prefix_any`/스키마 없는 조회 때 1회) | 종전 = 버킷 갱신마다 O(N log N) → L1 30 스키마 = 30번 정렬 20k(Debug 수십 ms씩) = 프레임 끊김의 한 축 |
 | 스냅숏 편집 | 편집마다 `Snapshot` 복제(객체 20k × 40 B ≈ 0.8 MB memcpy) | 스키마당 1회(`load_names`는 종류 전부 한 편집) — 종전 종류마다 편집 대비 1/18 |
 | L2 컬럼 | 컬럼당 32 B · 200 테이블 × 20 컬럼 ≈ 128 KB | 상한 설정 |
@@ -109,4 +109,4 @@
 
 - 단위 = `cargo test -p nsql-run layer_tests`(Names → 승격 id 유지 · 빈 종류 부정 캐시 · 회수 TTL/상한/현재 스키마 제외) · `cargo test -p nexa-sql explorer`(부분 → 완성 · 스레드 판정 순수 함수) · 전체 224·44·19·10 통과.
 - GUI(격리 · 데모 SQLite): `@after:2000:explorer.filter:ept,@after:2600:explorer.dump:f1,@after:6000:explorer.dump:f2` → f1 = `Tables (1/3) Loaded / dept`(스레드 일치 → 부분 → 완성) · 로그 `columns-meta main.dept|emp|sales (bg)` = L2 컬럼 워머.
-- 실서버 = `nsql cat -c BISCM -s <스키마> index` 0.27~0.3 s(L1 스키마당) · 실기 U-159(Oracle 검색 애니메이션이 끊기지 않는지 · 접속 뒤 8 s 안 전 스키마 인덱싱 뒤 첫 검색 즉시).
+- 실서버 = `nsql cat -c APPDB -s <스키마> index` 0.27~0.3 s(L1 스키마당) · 실기 U-159(Oracle 검색 애니메이션이 끊기지 않는지 · 접속 뒤 8 s 안 전 스키마 인덱싱 뒤 첫 검색 즉시).

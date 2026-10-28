@@ -68,7 +68,7 @@ Linux `[startup]`(누적 ms · 후): settings 0 → fonts 3~9 → event_loop 8~1
 | PostgreSQL 200행 | — | 110~123 ms | |
 | 프로세스 전체(접속 포함) | Oracle 227 · MSSQL 135 ms | Oracle 840 · MSSQL 550 · PG 440~527 ms | Oracle 접속 0.6 s(OCI) |
 
-⚠ `SELECT COUNT(*) FROM all_objects`(BISCM)는 서버에서 10분 넘게 걸린다(sqlplus도 같음) — 측정 질의로 쓰지 않는다.
+⚠ `SELECT COUNT(*) FROM all_objects`(APPDB)는 서버에서 10분 넘게 걸린다(sqlplus도 같음) — 측정 질의로 쓰지 않는다.
 
 ## 3. 메모리
 

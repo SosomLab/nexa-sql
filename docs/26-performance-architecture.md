@@ -574,8 +574,8 @@ L2가 세 회차에 걸쳐 0.08~0.18로 흔들린다 → 30주기 연장 시험(
 | 대상 | wall | execute+fetch | 비고 |
 |---|---:|---:|---|
 | SQLite 200행 / 10만 행 | 156~168 / 773~807 ms | 0.4 / 85~96 ms | wall의 대부분 = 프로세스 기동 |
-| Oracle(BISCM LAN) 200행 / COUNT | 2,248~2,770 / 2,043~3,050 ms | 248~258 / 143~149 ms | ★ wall − 서버 ≈ **2.0 s = CLI 접속 비용**(GUI 메타 세션 접속 0.36~0.45 s · §7-11 G-3 후보 T-190) |
-| SQL Server(M4PLAN) 200행 | 715~974 ms | 148~190 ms | 접속 ≈ 0.6 s |
+| Oracle(APPDB LAN) 200행 / COUNT | 2,248~2,770 / 2,043~3,050 ms | 248~258 / 143~149 ms | ★ wall − 서버 ≈ **2.0 s = CLI 접속 비용**(GUI 메타 세션 접속 0.36~0.45 s · §7-11 G-3 후보 T-190) |
+| SQL Server(PLANDB) 200행 | 715~974 ms | 148~190 ms | 접속 ≈ 0.6 s |
 | PostgreSQL(Repository) 200행 | 554~617 ms | 125~174 ms | 접속 ≈ 0.4 s |
 
 **G. 병목 추적 — 유휴 CPU 17~23 %**(사용자 "향상/감소 정리"의 핵심)
@@ -598,7 +598,7 @@ A/B(접속 상태 · 9초 · 7~9초 표본 · 설정 하나씩):
 
 ### 7-12. 09-26 100차 후반 전수(macOS · 같은 기기 Intel i9-9980HK · macOS 26.6.2 · Release · commit `51f6988` + 작업 트리 · 사용자 "추가된 기능을 포함해 성능·속도·용량·메모리·회수 실측 전수") — 7-11(09-24) 대비 · 신규 기능 시나리오 8~12 첫 측정
 
-> 7-11과 같은 기기·같은 도구(`scripts/mac-perf-all.sh` · 격리 홈 · 입력 주입 0)라 **직접 비교**가 된다. 그 사이 들어온 것 = D-133 IOSurface 기본 · 비활성 캐럿 정지 · 탐색기 검색 인덱스(84) · 메타 3층 + L1 디스크 캐시(85) · 코멘트 워머 · 객체 상세 패널(86) · SQL Preview 편집기 동일화 · 읽기 전용 일괄(§214). 신규 기능은 실서버 Oracle(BISCM · 28 스키마 · 읽기 접속)로 잰다(`NSQL_PERF_ORACLE_TARGET`). 원자료 = `target/perf-mac-2026-09-26/`(perf.txt · *.stat · *.mem · rerun.log · tail.log).
+> 7-11과 같은 기기·같은 도구(`scripts/mac-perf-all.sh` · 격리 홈 · 입력 주입 0)라 **직접 비교**가 된다. 그 사이 들어온 것 = D-133 IOSurface 기본 · 비활성 캐럿 정지 · 탐색기 검색 인덱스(84) · 메타 3층 + L1 디스크 캐시(85) · 코멘트 워머 · 객체 상세 패널(86) · SQL Preview 편집기 동일화 · 읽기 전용 일괄(§214). 신규 기능은 실서버 Oracle(APPDB · 28 스키마 · 읽기 접속)로 잰다(`NSQL_PERF_ORACLE_TARGET`). 원자료 = `target/perf-mac-2026-09-26/`(perf.txt · *.stat · *.mem · rerun.log · tail.log).
 
 **A. 인벤토리**
 
@@ -635,7 +635,7 @@ A/B(접속 상태 · 9초 · 7~9초 표본 · 설정 하나씩):
 | s7b | 10만 행 → 닫기 | **96.1**(56.4) | 150.5 | 40 | 회수 ✅(120 → 96.1 = s2) |
 | s8 | 향상 모드 | 95.4(56.2) | 134.8 | **0** | — |
 
-**C-신규(Oracle BISCM · 28 스키마 · 첫 측정 · 이 절이 기준선)**
+**C-신규(Oracle APPDB · 28 스키마 · 첫 측정 · 이 절이 기준선)**
 
 | # | 시나리오 | footprint | RSS | CPU/초 | 계측(mem.dump · explorer.stat) | 비고 |
 |---|---|---:|---:|---:|---|---|
@@ -866,7 +866,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 
 **C-보강(10-08 · T-310 뒤 · `0ef636a` Release · 시나리오 2·8만 · Runs 1)**: 2.connected 유휴 0 · **8.memwin 유휴 109 ms/6초**(115차 109~156) = 값이 안 바뀌면 다시 그리지 않는 처리를 넣었는데도 **줄지 않음** — 표본마다 프로세스 메모리 값(풋프린트 · 전용 WS · 힙)이 조금씩 바뀌어 매초 다시 그릴 조건이 늘 참인 것으로 보임 → 개발 판정(표시 단위로 반올림한 값이 바뀔 때만 · 또는 바뀐 줄만 다시 그리기 · 개발 세션 전달).
 
-**기능 · E2E(같은 날 · 같은 bin)**: 기능 점검 S01~S94 **94/94**(자동 판정 + 파일 검사 · 새 S80~S94는 연기 시험 2회로 확정) · 그리드 편집 E2E SQLite **46/0** · 실서버 Oracle(BISCM) · PostgreSQL(Repository) 통과 + SQL Server(M4PLAN · `M4PLAN:mssql:M4PLAN_MS`) **59/0** · 변수 E2E **22/0**(NOTE 1 = T-307) · 접속 명령 E2E **36/2**(시험 자산 낡음 — 기대 글이 `—`인데 UI 문자열은 10-07에 `-`로 바뀜 + 77행 백틱 명령 치환) · 대량 적재 E2E SQLite 18 통과 · 실서버 3개 **실행 안 됨**(Windows `python3` = pyenv 셸 래퍼 → CSV 생성 실패 = 시험 자산 문제) → T-309.
+**기능 · E2E(같은 날 · 같은 bin)**: 기능 점검 S01~S94 **94/94**(자동 판정 + 파일 검사 · 새 S80~S94는 연기 시험 2회로 확정) · 그리드 편집 E2E SQLite **46/0** · 실서버 Oracle(APPDB) · PostgreSQL(Repository) 통과 + SQL Server(PLANDB · `PLANDB:mssql:PLANDB_MS`) **59/0** · 변수 E2E **22/0**(NOTE 1 = T-307) · 접속 명령 E2E **36/2**(시험 자산 낡음 — 기대 글이 `—`인데 UI 문자열은 10-07에 `-`로 바뀜 + 77행 백틱 명령 치환) · 대량 적재 E2E SQLite 18 통과 · 실서버 3개 **실행 안 됨**(Windows `python3` = pyenv 셸 래퍼 → CSV 생성 실패 = 시험 자산 문제) → T-309.
 
 #### 7-15-b. 10-08 **전수 재실행**(Release · `82c5716` · T-310 2차 뒤 · 사용자 "전체 기능/성능 테스트" · rustc **1.99.0** 첫 Release)
 
@@ -961,7 +961,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 
 **F. 벤치**: 70만 줄 입력 끝/처음 **88.9 / 94.0 ms**(7-15 105.3/105.1 · 10-08 재측정 86.7/81.7 → 7-15의 +20 ms는 그때 부하였던 것으로 정리) · 첫 그리기 1,380 ms · 4만 줄 8.9 / 8.3 ms · 되돌리기 0.37 ms/단계 · 변수 계획 1.4 µs/문장.
 
-**기능 V3(같은 날 · 수정 전 `b4f41b7`)**: 기능 점검 **96/96**(S95 30만 행 썸 드래그 · S96 폴더 감시 플래시 = Windows 첫 실행 ✓ · T-323) · E2E 22종 실패 0(시험 자산 결함 1 = paste-run M4PLAN DB 지정 · 수정 뒤 13/0) · 자세히 = [journal 10-12 §4](journal/2026-10-12.md).
+**기능 V3(같은 날 · 수정 전 `b4f41b7`)**: 기능 점검 **96/96**(S95 30만 행 썸 드래그 · S96 폴더 감시 플래시 = Windows 첫 실행 ✓ · T-323) · E2E 22종 실패 0(시험 자산 결함 1 = paste-run PLANDB DB 지정 · 수정 뒤 13/0) · 자세히 = [journal 10-12 §4](journal/2026-10-12.md).
 
 ### 7-18. 10-23 **137차 Windows 전수**(Release **full** = 기본 feature `drivers-builtin` · 소스 = `b6b7377` + 그때 개발 작업 트리 · 측정 시점 HEAD `7abe21f` · nexa-ui 형제 · 사용자 "메모리·속도·용량·체감 속도 전반 회귀 시험" · 수행 = 협업 세션) — 121차(7-17) 대비
 
@@ -1012,7 +1012,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 
 **G. 병목 상위 3**: ① R3b = 시험 시점 문제(제품 정상 · 실행기 조정 264c5a1 · T-407 ✅) ② 실행 파일 +4.29 MiB · crate +90(full 판 · 드라이버·TLS · 30 MB 예산 안 · 설치본은 lite) ③ 기동 화면 +2.0 MB(로그인 창 = T-397 · 설명됨).
 
-**빌드 전 통합 시험**(release · Oracle BISCM_DEV · MSSQL BISCM_MS_DEV · PG REPOSITORY_DEV): 19/23 · Oracle 4건 = `DPI-1047`(이 PC Instant Client 없음 = 환경 · 생략) · mssql·pg·mysql·odbc·sqlite·dyn ✓.
+**빌드 전 통합 시험**(release · Oracle APPDB_DEV · MSSQL APPDB_MS_DEV · PG REPO_DEV): 19/23 · Oracle 4건 = `DPI-1047`(이 PC Instant Client 없음 = 환경 · 생략) · mssql·pg·mysql·odbc·sqlite·dyn ✓.
 
 ## 8. 네트워크 부하 원칙 — 09-14 검토 · 상시 관리 항목(사용자 요청)
 

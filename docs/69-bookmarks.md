@@ -301,7 +301,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 - PG 오버로드 함수는 지금 탐색기가 쓰는 **서명 포함 이름**을 그대로 `name`에 넣는다(`open_source`).
 - **개발/시험/운영이 같은 이름을 쓴다**는 것이 이 선택의 이유다(`ConnectSpec.env` · PROD 칩). dev에서 만든 북마크가 prod 창에서 열리면 오접속이다.
 - 배선: `ExplorerAction::OpenSql`에 `origin: Option<ObjOrigin>`를 더하고, 호스트가 새 탭을 만들 때 `Editors.doc_keys: HashMap<u64, DocKey>`에 넣는다(`view_tabs`와 같은 자리 · 탭 id 열쇠).
-- **재개**(패널에서 무효 아닌 객체 북마크 클릭): 그 서버에 세션이 있으면 바로 조회해 열고, 없으면 **한 지점 확인** — `BISCM에 연결하고 HR.PKG_X(BODY)를 열까요?` → 예일 때만 접속(자동 재접속 금지 · 26 §8 · PROD면 운영 칩 + `tx.prod_*` 규칙과 같은 문구). 조사에서 DbVisualizer Favorites는 **묻지 않고 접속**하는데, 우리 규칙과 충돌하므로 따르지 않는다.
+- **재개**(패널에서 무효 아닌 객체 북마크 클릭): 그 서버에 세션이 있으면 바로 조회해 열고, 없으면 **한 지점 확인** — `APPDB에 연결하고 HR.PKG_X(BODY)를 열까요?` → 예일 때만 접속(자동 재접속 금지 · 26 §8 · PROD면 운영 칩 + `tx.prod_*` 규칙과 같은 문구). 조사에서 DbVisualizer Favorites는 **묻지 않고 접속**하는데, 우리 규칙과 충돌하므로 따르지 않는다.
 
 ### 4-3. 이름 없는 탭
 
@@ -367,9 +367,9 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
      [필터                                            ] [Aa] [⌫]
      ▾ ■ 기본                                            9          ← ■ = 그룹 토글(켬) · 우클릭 = 그룹 메뉴
        ▾ 이슈관리/2026-09-01.sql                          3
-         ⑴  12 │ AND A.PROJECT_CD = 'SEBANG'      재고 기준         ← 니모닉 · 줄 · 줄 원문 · 이름 칩
+         ⑴  12 │ AND A.PROJECT_CD = 'ACME'      재고 기준         ← 니모닉 · 줄 · 줄 원문 · 이름 칩
              40 │ -- 여기부터 검증                                   메모 있음 ▤
-       ▾ BISCM · HR.PKG_M4P (BODY)                        2          ← 객체 DDL 문서(프로필 · 스키마.이름 · 부분)
+       ▾ APPDB · HR.PKG_M4P (BODY)                        2          ← 객체 DDL 문서(프로필 · 스키마.이름 · 부분)
              88 │ PROCEDURE calc_plan(
        ▾ Script_7 (저장 안 함)                            1          ← 이름 없는 탭
        ▾ old/scratch.sql                                  1  파일 없음 ← 무효 = 회색 + 사유 칩
@@ -506,12 +506,12 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
     "groups": [ { "id": 1, "name": "검증 2026-09", "default": false } ],
     "items": [
       { "id": 7, "doc": { "file": "이슈관리/2026-09-01.sql" },          // 프로젝트 상대 경로만
-        "line": 39, "col": 4, "text": "AND A.PROJECT_CD = 'SEBANG'",
+        "line": 39, "col": 4, "text": "AND A.PROJECT_CD = 'ACME'",
         "before": "FROM M4S_I002040 A", "after": "AND A.PLAN_VER = :V",
         "hash": "9f2a…", "lines": 412,
         "label": "재고 기준", "note": "PLAN_VER 규칙 확인", "mn": 1, "group": 1,
         "created": 1758499200, "visited": 1758502800 },
-      { "id": 9, "doc": { "obj": { "profile": "BISCM", "dialect": "oracle",  // ★ 공용엔 프로필 이름만
+      { "id": 9, "doc": { "obj": { "profile": "APPDB", "dialect": "oracle",  // ★ 공용엔 프로필 이름만
                                    "schema": "HR", "kind": "package_body", "name": "PKG_M4P" } },
         "line": 87, "text": "PROCEDURE calc_plan(", "…": "…" }
     ] } }
@@ -520,7 +520,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 { "version": 1, "project": "my.nsql-project", "tabs": [ /* … 67 … */ ],
   "bookmarks": { "groups": [ /* … */ ],
     "items": [
-      { "id": 3, "doc": { "obj": { "profile": "BISCM", "dialect": "oracle",
+      { "id": 3, "doc": { "obj": { "profile": "APPDB", "dialect": "oracle",
                                    "host": "db1.example.lan", "port": 1521, "database": "ORCL",
                                    "schema": "HR", "kind": "package_body", "name": "PKG_M4P" } },
         "…": "…" },

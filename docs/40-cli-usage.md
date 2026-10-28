@@ -71,10 +71,10 @@ nsql -V                # 판올림 → nsql 0.2.8
 
 | 방언 | 형식 | 예 |
 |---|---|---|
-| **Oracle** | `oracle://user:pass@host:port/service` | `oracle://scott:tiger@172.16.1.58:1521/BISCM` |
-| **Oracle**(SQL\*Plus 꼴) | `user/pass@host:port/service` | `BISCM/pw@172.16.1.58:1521/BISCM`(방언은 `-d` · 기본 oracle) |
-| **SQL Server** | `mssql://user:pass@host:port/db` | `mssql://sa:pw@172.16.1.58:1433/M4PLAN_MS` |
-| **PostgreSQL** | `postgres://user:pass@host:port/db` | `postgres://postgres:pw@172.16.1.60:5433/matrixdb2` |
+| **Oracle** | `oracle://user:pass@host:port/service` | `oracle://scott:tiger@172.16.1.58:1521/APPDB` |
+| **Oracle**(SQL\*Plus 꼴) | `user/pass@host:port/service` | `APPDB/pw@172.16.1.58:1521/APPDB`(방언은 `-d` · 기본 oracle) |
+| **SQL Server** | `mssql://user:pass@host:port/db` | `mssql://sa:pw@172.16.1.58:1433/PLANDB_MS` |
+| **PostgreSQL** | `postgres://user:pass@host:port/db` | `postgres://postgres:pw@172.16.1.60:5433/repodb` |
 | **MySQL · MariaDB** | `mysql://user:pass@host:port/db` | `mysql://root:pw@dbhost:3306/shop` |
 | **SQLite(파일)** | `sqlite:<경로>` | `sqlite:C:\data\app.db` · `sqlite:./app.db` |
 | **SQLite(메모리)** | `sqlite::memory:` | 서버 없이 시험할 때 |
@@ -95,10 +95,10 @@ nsql -V                # 판올림 → nsql 0.2.8
 echo "SELECT sysdate FROM dual;" | nsql run -c "oracle://scott:tiger@dbhost:1521/ORCL" -
 
 # 스크립트 실행
-nsql run     -c "mssql://sa:pw@172.16.1.58:1433/M4PLAN_MS" deploy.sql
+nsql run     -c "mssql://sa:pw@172.16.1.58:1433/PLANDB_MS" deploy.sql
 
 # 대화형 셸
-nsql shell   -c "postgres://postgres:pw@172.16.1.60:5433/matrixdb2"
+nsql shell   -c "postgres://postgres:pw@172.16.1.60:5433/repodb"
 
 # 내보내기 · 적재
 nsql export  -c "oracle://scott:tiger@dbhost:1521/ORCL" -t EMP -f csv -o emp.csv
@@ -235,9 +235,9 @@ direct  2
 문자열 조립이 번거로우면 필드로 준다. **`conn` 전용이 아니라 `run` `shell` `export` `import` `explain` `conn`**이 받는다(`--host` `--port` `--db`/`--database` `-u`/`--user` `-p`/`--password`). (출력 생략 · 실서버 필요)
 
 ```sh
-nsql run   -d postgres --host 172.16.1.60 --port 5433 --db matrixdb2 --user postgres migrate.sql
-nsql shell -d oracle   --host 172.16.1.58 --port 1521 --db BISCM --user BISCM
-nsql conn test -d oracle --host 172.16.1.58 --port 1521 --db BISCM --user BISCM   # 비밀번호는 물어봄
+nsql run   -d postgres --host 172.16.1.60 --port 5433 --db repodb --user postgres migrate.sql
+nsql shell -d oracle   --host 172.16.1.58 --port 1521 --db APPDB --user APPDB
+nsql conn test -d oracle --host 172.16.1.58 --port 1521 --db APPDB --user APPDB   # 비밀번호는 물어봄
 ```
 
 포트를 빼면 방언 기본값(1521 · 1433 · 5432 · 3306)이 쓰인다. 파일 방언도 필드로 된다 — `nsql conn test -d sqlite --db t1.db`:
@@ -267,10 +267,10 @@ nsql run -c "duckdb::memory:?driver=duckdb" -                   # 축약형 꼬�
 
 ```sh
 # 접속 문자열로 저장(비밀번호가 없으면 숨김 입력으로 묻는다)
-nsql conn add prod "oracle://BISCM@172.16.1.58:1521/BISCM"
+nsql conn add prod "oracle://APPDB@172.16.1.58:1521/APPDB"
 
 # 필드로 저장
-nsql conn add pg1 -d postgres --host 172.16.1.60 --port 5433 --db matrixdb2 --user postgres
+nsql conn add pg1 -d postgres --host 172.16.1.60 --port 5433 --db repodb --user postgres
 
 # 확인·시험·서버 유형·삭제
 nsql conn list
@@ -343,7 +343,7 @@ nsql plan -d mssql session-vars.sql 2026 Q1        # 위치 인자 → &1 &2
 
 [3] line 6 · Exec
   → EXECUTE (Block · Bind · out=true)
-    | EXEC SP_M4P_MP_VERSION_CREATE(@PC_RET, 'SEBANG', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'sybae0057')
+    | EXEC SP_M4P_MP_VERSION_CREATE(@PC_RET, 'ACME', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'user01')
     · PC_RET Auto InOut = NULL
     ! 암묵 변수: PC_RET
 …
@@ -631,7 +631,7 @@ nsql cat -c prod gen merge EMPLOYEES
 nsql cat -c prod gen call PKG_ORDER package
 nsql cat -c prod source packages PKG_ORDER           # 원본 소스
 nsql cat -c prod errors MY_PROC                      # 컴파일 오류(Oracle)
-nsql cat -c M4PLAN source procs M4PLAN_MS.dbo.MY_PROC   # 3부 이름(SQL Server·MySQL)
+nsql cat -c PLANDB source procs PLANDB_MS.dbo.MY_PROC   # 3부 이름(SQL Server·MySQL)
 nsql cat -c prod -f json tables                      # 형식 지정
 ```
 
@@ -1251,27 +1251,27 @@ nothing to remove · state free
 
 ```sh
 # 1) 붙는지부터(드라이버가 없으면 여기서 자동 설치)
-nsql conn test -d oracle --host 172.16.1.58 --port 1521 --db BISCM --user BISCM
+nsql conn test -d oracle --host 172.16.1.58 --port 1521 --db APPDB --user APPDB
 #    또는 저장해 두고
-nsql conn add biscm "oracle://BISCM@172.16.1.58:1521/BISCM"
-nsql conn test biscm
+nsql conn add appdb "oracle://APPDB@172.16.1.58:1521/APPDB"
+nsql conn test appdb
 
 # 2) 카탈로그가 보이는지
-nsql cat -c biscm schemas
-nsql cat -c biscm tables
+nsql cat -c appdb schemas
+nsql cat -c appdb tables
 
 # 3) 통합 테스트 스크립트
-nsql run -c biscm     examples/it-oracle.sql
-nsql run -c M4PLAN    examples/it-mssql.sql
-nsql run -c matrixdb2 examples/it-pg.sql
+nsql run -c appdb     examples/it-oracle.sql
+nsql run -c PLANDB    examples/it-mssql.sql
+nsql run -c repodb examples/it-pg.sql
 nsql run -c mydb      examples/it-mysql.sql
 
 # 4) 계측·로그를 켜고 한 번 더
-nsql run -c biscm --timing --log examples/it-oracle.sql
+nsql run -c appdb --timing --log examples/it-oracle.sql
 
 # 5) 대량 적재·추출(드라이버 최속 경로: Oracle 배열 DML · PostgreSQL COPY)
-nsql export -c matrixdb2 -t big_table -f csv --fast -o big.csv
-nsql import -c matrixdb2 -t big_copy --commit-every 50000 --timing big.csv
+nsql export -c repodb -t big_table -f csv --fast -o big.csv
+nsql import -c repodb -t big_copy --commit-every 50000 --timing big.csv
 ```
 
 ### 프로필을 전혀 만들지 않고 같은 순서로
@@ -1280,9 +1280,9 @@ nsql import -c matrixdb2 -t big_copy --commit-every 50000 --timing big.csv
 
 ```sh
 # 비밀번호는 묻게 두고 접속만 변수로
-DB="oracle://BISCM@172.16.1.58:1521/BISCM"
+DB="oracle://APPDB@172.16.1.58:1521/APPDB"
 
-nsql conn test -d oracle --host 172.16.1.58 --port 1521 --db BISCM --user BISCM
+nsql conn test -d oracle --host 172.16.1.58 --port 1521 --db APPDB --user APPDB
 nsql cat     -c "$DB" schemas
 nsql cat     -c "$DB" tables
 nsql run     -c "$DB" examples/it-oracle.sql
@@ -1292,7 +1292,7 @@ nsql export  -c "$DB" -t EMP -f csv -o emp.csv
 
 ```powershell
 # PowerShell
-$DB = "mssql://sa:$env:DBPW@172.16.1.58:1433/M4PLAN_MS"
+$DB = "mssql://sa:$env:DBPW@172.16.1.58:1433/PLANDB_MS"
 nsql cat -c $DB tables
 nsql run -c $DB --no-prompt examples\it-mssql.sql
 ```
@@ -1301,7 +1301,7 @@ nsql run -c $DB --no-prompt examples\it-mssql.sql
 
 ```sh
 read -s NSQL_PASSWORD && export NSQL_PASSWORD
-nsql run -c "oracle://BISCM@172.16.1.58:1521/BISCM" --no-prompt examples/it-oracle.sql
+nsql run -c "oracle://APPDB@172.16.1.58:1521/APPDB" --no-prompt examples/it-oracle.sql
 ```
 
 ### Oracle 주의 — Thin과 OCI

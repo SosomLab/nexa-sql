@@ -13,12 +13,12 @@
 #     7 탐색기 ▸ 삭제(모달 2단) = 백업 뒤 DROP 전송(G6) · 보류 생략
 #     8 (옵션 -L) 보류 한도 = 1분 뒤 자동 롤백(설정 tx.prod_idle_limit_min=1 · 카운트다운 5 s)
 #     9 정리 = 임시 객체 삭제 · 격리 홈 유형 되돌림(none)
-# 사용: scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" [-c BISCM] [-d oracle|sqlite] [-o target/prod-scenario] [-i] [-k] [-s N] [-L]
+# 사용: scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" [-c APPDB] [-d oracle|sqlite] [-o target/prod-scenario] [-i] [-k] [-s N] [-L]
 #   -i = 단계마다 멈춤(Enter = 다음 · q = 종료) · -k = GUI를 띄운 채 두고 Enter 뒤 닫음(직접 보기 · 창이 앞으로 옴) · -s N = 그 단계만(0·9는 늘)
 #   -d sqlite -c Local = 서버 없이 로컬 파일 DB로(프로필을 스크립트가 만든다 · -P 불필요)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/target/prod-scenario"; PROF=""; CONN="BISCM"; DIALECT="oracle"; STEP=""; INTER=0; KEEP=0; LIMIT=0
+OUT="$ROOT/target/prod-scenario"; PROF=""; CONN="APPDB"; DIALECT="oracle"; STEP=""; INTER=0; KEEP=0; LIMIT=0
 EXE="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
 while getopts "o:P:c:d:s:g:n:ikL" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; d) DIALECT=$OPTARG;; s) STEP=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; i) INTER=1;; k) KEEP=1;; L) LIMIT=1;; esac; done
 case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) [ -x "$NSQL" ] || NSQL="$NSQL.exe"; [ -x "$EXE" ] || EXE="$EXE.exe";; esac

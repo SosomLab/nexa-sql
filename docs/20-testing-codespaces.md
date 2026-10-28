@@ -150,16 +150,16 @@ mkdir -p ~/lib && ln -sf "$HOME/Oracle/instantclient"/libclntsh*.dylib* ~/lib/ &
 ```sh
 mkdir -p "$INSTANT_CLIENT_PATH/network/admin"
 cat > "$INSTANT_CLIENT_PATH/network/admin/tnsnames.ora" <<'EOF'
-M4PLAN55 =
+PLANDB55 =
   (DESCRIPTION =
     (ADDRESS = (PROTOCOL = TCP)(HOST = 172.16.1.55)(PORT = 1521))
     (CONNECT_DATA = (SERVER = DEDICATED)(SERVICE_NAME = XE))
   )
 
-M4PLAN58 =
+PLANDB58 =
   (DESCRIPTION =
     (ADDRESS = (PROTOCOL = TCP)(HOST = 172.16.1.58)(PORT = 1521))
-    (CONNECT_DATA = (SERVER = DEDICATED)(SERVICE_NAME = BISCM))
+    (CONNECT_DATA = (SERVER = DEDICATED)(SERVICE_NAME = APPDB))
   )
 EOF
 ```
@@ -169,7 +169,7 @@ EOF
 ```sh
 sqlplus -V                                            # 설치 확인
 sqlplus <user>/<pw>@172.16.1.55:1521/XE              # EZConnect
-sqlplus <user>/<pw>@M4PLAN55                          # tnsnames 별칭
+sqlplus <user>/<pw>@PLANDB55                          # tnsnames 별칭
 sqlplus <user>/<pw>@"(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=172.16.1.55)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=XE)))"
 # nexa-sql CLI — 같은 접속을 우리 도구로
 nsql run -c "oracle://<user>:<pw>@172.16.1.55:1521/XE" examples/it-oracle.sql

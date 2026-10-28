@@ -216,7 +216,7 @@ SQL Server는 한 접속으로 서버의 모든 데이터베이스를 볼 수 �
 
 | 적는 것 | 뜻 | 예 |
 |---|---|---|
-| 폴더·파일 경로 | 그 아래(하위 폴더 포함)에서 찾기 · 여러 개 가능 | `D:\Projects\sebang\2026-sebang-snop, D:\Projects\sybae76\sql-formatter` |
+| 폴더·파일 경로 | 그 아래(하위 폴더 포함)에서 찾기 · 여러 개 가능 | `D:\Projects\acme\<프로젝트>, D:\Projects\sybae76\sql-formatter` |
 | `*`·`?`가 든 패턴 또는 `+패턴` | 이것에 맞는 파일만(여러 개 = 하나라도 맞으면) | `*.sql, *.gwf` |
 | `-패턴` | 이것에 맞는 파일은 빼기 | `-*_test.sql` |
 | `<open files>` · `<current file>` | 열린 탭 · 지금 파일의 폴더 | |

@@ -17,7 +17,7 @@
 
 | 기준 | 가중 | 뜻 |
 |---|---|---|
-| A. 사용자 실수요 | 3 | 사용자(SosomLab · BI/SCM 컨설팅)가 실제로 붙는 서버 = Oracle(BISCM) · SQL Server(M4PLAN) · PG(Repository · Supabase) · 고객사 환경 |
+| A. 사용자 실수요 | 3 | 사용자(SosomLab · BI/SCM 컨설팅)가 실제로 붙는 서버 = Oracle(APPDB) · SQL Server(PLANDB) · PG(Repository · Supabase) · 고객사 환경 |
 | B. 시장 수요 | 2 | 국내 기업·공공(Oracle · SQL Server · Tibero · MySQL/MariaDB · PG 증가) · 세계(PG · MySQL · SQL Server · Oracle · SQLite · MongoDB) · 경쟁 도구 공통 지원 집합(03) |
 | C. 드라이버 경로 | 2 | 순수 Rust crate 있음(DR-3 예외 원장) > C 라이브러리 FFI(OCI처럼 지연 적재) > ODBC > HTTP API |
 | D. 구현 비용 | 2 | 방언·카탈로그·문법·완성·Caps가 이미 있나(108) · 러너 관용(세션 변수 · SELECT INTO · OUT) · 시험 자산 |

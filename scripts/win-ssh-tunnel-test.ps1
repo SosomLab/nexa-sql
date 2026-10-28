@@ -3,8 +3,8 @@
 #   2) 허브 시험: cargo test … ssh_tunnel_real_server (NSQL_SSH_URL 또는 NSQL_SSH_PROFILE).
 #   3) CLI 왕복: nsql run -c <대상> 으로 확인 조회 1건(사용자가 실제로 쓰는 경로).
 # 사용:
-#   scripts/win-ssh-tunnel-test.ps1 -Target "oracle://BISCM:…@127.0.0.1:1521/BISCM?ssh=oracle@172.16.1.58&driver=thin"
-#   scripts/win-ssh-tunnel-test.ps1 -ProfileName biscm-ssh      # 볼트 프로필(비밀번호를 명령줄에 안 남긴다)
+#   scripts/win-ssh-tunnel-test.ps1 -Target "oracle://APPDB:…@127.0.0.1:1521/APPDB?ssh=oracle@172.16.1.58&driver=thin"
+#   scripts/win-ssh-tunnel-test.ps1 -ProfileName appdb-ssh      # 볼트 프로필(비밀번호를 명령줄에 안 남긴다)
 #   -Jump user@host[:port] 를 주면 1)에서 그 대상으로 로그인 검사(없으면 Target의 ssh= 에서 뽑는다).
 #   -AddKnownHost 는 점프 호스트의 공개 키를 ~/.ssh/known_hosts에 추가한다(사용자 파일 수정 = 명시적으로 켤 때만).
 param(

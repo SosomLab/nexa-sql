@@ -34,7 +34,7 @@ SQL 편집기에서 **Ctrl(macOS는 ⌘)을 누르고 있는 동안** 문장 속
 
 설명은 객체 탐색기의 메타(코멘트)에서 옵니다. 아직 읽지 않은 코멘트는 처음 hover에서 요청되어 곧 채워집니다.
 
-> **스키마를 적었는데 그 스키마에 없을 때**(10-08): `BISCM.SP_X`처럼 적은 스키마에 그 객체가 없으면 벽돌색 물결(미확인)만 보입니다. 다른 스키마를 대신 찾아 주지 않습니다 — 링크는 **적힌 스키마(없으면 현재 스키마)에 실제로 있는지**만 봅니다.
+> **스키마를 적었는데 그 스키마에 없을 때**(10-08): `APPDB.SP_X`처럼 적은 스키마에 그 객체가 없으면 벽돌색 물결(미확인)만 보입니다. 다른 스키마를 대신 찾아 주지 않습니다 — 링크는 **적힌 스키마(없으면 현재 스키마)에 실제로 있는지**만 봅니다.
 
 > **DDL과 확장 속성에서도**(10-08): `ALTER TABLE … ADD (…)`·`MODIFY`의 컬럼, SQL Server의 괄호 없는 `ADD a T, b T`, `COMMENT ON COLUMN 스키마.테이블.컬럼`, `PRIMARY KEY (…)` 목록이 컬럼 링크가 됩니다. **제약 이름**(`ADD/DROP CONSTRAINT PK_…`, `CONSTRAINT DF_… DEFAULT …`)도 링크이며 hover하면 종류(PK/UK/FK/CHECK)·컬럼·참조가 보이고, 우클릭 ▸ 객체 탐색기에서 보기는 테이블 아래 그 제약을 고릅니다. `EXEC sys.sp_addextendedproperty … @level0name = N'dbo', @level1name = N'TB_ORDER', @level2name = N'ORD_NO'`처럼 **확장 속성 인자 문자열 속 이름**도 스키마·테이블·컬럼 링크가 됩니다.
 
@@ -61,7 +61,7 @@ SQL 편집기에서 **Ctrl(macOS는 ⌘)을 누르고 있는 동안** 문장 속
 | `ctrl.shift_click` | 이름 - 설명 | **Ctrl+Shift+클릭**: `이름 - 설명` 복사 · 설명만 복사 · 편집기로. |
 | `objlink.hover_ms` | 700 | Ctrl 없이 포인터를 객체 이름 위에 이만큼(ms) 머물면 설명 툴팁만 보입니다(밑줄·클릭 동작 없음) · 0 = 끔(Ctrl을 누를 때만) |
 | `objlink.card_buttons` | on | 머물기 툴팁에 동작 버튼 셋(탐색기에서 보기 · 데이터 200행 보기 · 설명 복사)을 붙입니다 · off = 글만 |
-| `objlink.show_schema` | 끔 | 툴팁·상태줄 이름에 스키마를 붙임(`BISCM.TB_ORDER`) · 끄면 `TB_ORDER`(컬럼은 `테이블.컬럼`) |
+| `objlink.show_schema` | 끔 | 툴팁·상태줄 이름에 스키마를 붙임(`APPDB.TB_ORDER`) · 끄면 `TB_ORDER`(컬럼은 `테이블.컬럼`) |
 | `objlink.line_color` · `line_width` · `line_style` | 테마 강조색 · 1 px · 실선 | **정상 객체**(메타에 있음) 밑줄의 색 `#RRGGBB` · 두께(0 = 밑줄 없음) · 모양(실선 · 대시 · 점선 · 물결 · 대시 물결) |
 | `objlink.bad_color` · `bad_width` · `bad_style` | `#B7472A` 벽돌색 · 1 px · 물결 | **미확인 객체**(현재 연결의 메타에 없음) 밑줄의 색 · 두께 · 모양 |
 | `objlink.max_kb` | 512 | 이 크기 넘는 문서는 보이는 부분만 분석(0 = 무제한) |

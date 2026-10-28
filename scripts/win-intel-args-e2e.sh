@@ -2,18 +2,18 @@
 # win-intel-args-e2e.sh — 전달인자 자동완성·EXEC 링크·OUT 재추론 E2E(10-08 · T-316/T-317 · docs/82 §7 · 63 §12-2 · 96 §10).
 #   DBMS별 저장된 연결(사용자 10-08 "저장된 연결을 사용하면 돼")로 설계대로 동작하는지 — 키 주입 0(기동 명령 `editor.caret` ·
 #   `intel.probe`(두 번 = 인자 채움 뒤) · `intel.dump` · `objlink.dump` · `run.all`) + CLI `nsql run`.
-#   · Oracle(BISCM): `EXEC s.proc(` · `, ` 뒤 = `이름 => ` 후보 · 이미 적은 이름 제외 · CLI = `:RET` 두 프로시저 재사용(NUMBER → REF CURSOR OUT)에 PLS-00306 없음
-#   · SQL Server(M4PLAN): `USE DB` 뒤 `EXEC proc ` = `@이름 = ` · 시스템 프로시저 `EXEC sys.sp_addextendedproperty ` = `@name = ` · 이미 쓴 인자 제외 · `EXEC proc …` 루틴 링크
+#   · Oracle(APPDB): `EXEC s.proc(` · `, ` 뒤 = `이름 => ` 후보 · 이미 적은 이름 제외 · CLI = `:RET` 두 프로시저 재사용(NUMBER → REF CURSOR OUT)에 PLS-00306 없음
+#   · SQL Server(PLANDB): `USE DB` 뒤 `EXEC proc ` = `@이름 = ` · 시스템 프로시저 `EXEC sys.sp_addextendedproperty ` = `@name = ` · 이미 쓴 인자 제외 · `EXEC proc …` 루틴 링크
 #   · PostgreSQL(Repository): 임시 함수 `public.nsqlt_args(p_a, p_b)` 생성 → `SELECT nsqlt_args(` = `p_a => ` → 삭제(실서버 임시 객체 · 한 줄 고지)
 # 사용: scripts/win-intel-args-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/release/nsql.exe] [-P <실제 설정 폴더>]
-#        [-O BISCM] [-1 SP_TEST1] [-2 SP_TEST2] [-a RET,P_PROJECT_CD] [-m M4PLAN] [-D M4PLAN_MS] [-s PROC_TEST] [-A VS_PROJECT_CD] [-r Repository]
+#        [-O APPDB] [-1 SP_TEST1] [-2 SP_TEST2] [-a RET,P_PROJECT_CD] [-m PLANDB] [-D PLANDB_MS] [-s PROC_TEST] [-A VS_PROJECT_CD] [-r Repository]
 #   -O/-m/-r 에 빈 값("")을 주면 그 DBMS는 건너뛴다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/release/nsql.exe"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
-ORA="BISCM"; ORA_P1="SP_TEST1"; ORA_P2="SP_TEST2"; ORA_ARGS="RET,P_PROJECT_CD"
-MS="M4PLAN"; MS_DB="M4PLAN_MS"; MS_PROC="PROC_TEST"; MS_ARG="VS_PROJECT_CD"
+ORA="APPDB"; ORA_P1="SP_TEST1"; ORA_P2="SP_TEST2"; ORA_ARGS="RET,P_PROJECT_CD"
+MS="PLANDB"; MS_DB="PLANDB_MS"; MS_PROC="PROC_TEST"; MS_ARG="VS_PROJECT_CD"
 PG="Repository"
 while getopts "o:g:n:P:O:1:2:a:m:D:s:A:r:" o; do case $o in
   o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;;

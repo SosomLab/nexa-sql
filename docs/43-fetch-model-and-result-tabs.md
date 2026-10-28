@@ -191,7 +191,7 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 - **bin119 결함 → 352123b**: 결과 도착(Rows) 시점은 실행이 아직 busy라 `Grid::request_fetch_all`의 `session_blocked` 가드가 자동 요청을 버려 첫 200행에서 멈췄다(3-DBMS 공통 · maxrows-stop 5/11). 수정 = 결과 도착 = 예약(`arm_auto_fetch_all`) → Done 뒤 거두어 `request_fetch_all_force`(세션 가드 없이 · 문지기는 제출 때) · 새 결과(`set_result`)는 예약 비움.
 - **중지 뒤 상태**(§3-5 T-48b 규칙 그대로 · 개발 세션 확인 10-09): **실행 자체의 ■** = 부분 결과 · more=false · **이어 받기(⇊·자동 전체 조회)의 ■** = 받은 행까지 남김("가져오기 중지 - N행까지 남김") + **more=true 유지**(남은 것이 늘 연속된 앞부분이라 ⇊로 이어 받을 수 있음). 증분 표시의 ■는 첫 세그먼트 뒤 이어 받기 구간에 걸리므로 more=true.
 - **자체 시험 훅** `grid.fetch_all`(⇊) · `grid.sort:<열>`(열 머리 토글).
-- **협업 V1 bin120(10-09 · Release · BISCM)**: 30만 행 = +1.5 s 85,200 → +3 s 185,200 → +5 s 300,000 · more=false ✓ · 300만 행 3 s 뒤 ■ = 취소 요청 뒤 39 ms에 중지 · 190,200행 남김 ✓ · 첫 세그먼트 뒤 정렬(내림차순) = 배치가 붙은 뒤에도 유지 ✓ · 행 수 200 → ⇊ = +1.2 s 80,200 → +8.7 s 300,000 ✓ · SQL Server(M4PLAN) 행 수 0(OFFSET 경로) = 20,000 한 번에 more=false ✓ · `whole` = 종전 동작 ✓ · 회귀 maxrows-stop 11/11 · output-result 5/0 · grid-edit SQLite 46/0 ✓.
+- **협업 V1 bin120(10-09 · Release · APPDB)**: 30만 행 = +1.5 s 85,200 → +3 s 185,200 → +5 s 300,000 · more=false ✓ · 300만 행 3 s 뒤 ■ = 취소 요청 뒤 39 ms에 중지 · 190,200행 남김 ✓ · 첫 세그먼트 뒤 정렬(내림차순) = 배치가 붙은 뒤에도 유지 ✓ · 행 수 200 → ⇊ = +1.2 s 80,200 → +8.7 s 300,000 ✓ · SQL Server(PLANDB) 행 수 0(OFFSET 경로) = 20,000 한 번에 more=false ✓ · `whole` = 종전 동작 ✓ · 회귀 maxrows-stop 11/11 · output-result 5/0 · grid-edit SQLite 46/0 ✓.
 
 ## 5. 설계 — CLI(`nsql shell`)
 

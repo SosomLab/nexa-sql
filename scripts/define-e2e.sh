@@ -4,7 +4,7 @@
 #   ③ GUI(격리 홈 · 프로필 탭 · `input.dump` = 변수 입력 창이 떴는가 · `grid.dump` = 결과 값).
 #   기대: Oracle = 미정의 `&D` 묻기 · 다른 DBMS = `'R&D'` 그대로(묻지 않음) · `:setvar Env` → `&Env` = 전 방언 치환 · `SET DEFINE ON` = 전 방언 묻기 ·
 #   `script.define=off` = `&Env`도 글자 그대로 · `script.define=on` = MSSQL도 묻기.
-# 사용: scripts/define-e2e.sh -o <출력> [-e target/debug/nexa-sql] [-n target/debug/nsql] [-P <실제 설정 폴더>] [-d oracle:BISCM,mssql:M4PLAN,postgres:Repository,sqlite:Demo]
+# 사용: scripts/define-e2e.sh -o <출력> [-e target/debug/nexa-sql] [-n target/debug/nsql] [-P <실제 설정 폴더>] [-d oracle:APPDB,mssql:PLANDB,postgres:Repository,sqlite:Demo]
 #   -P 없으면 ①만. GUI는 -P와 -d가 있을 때. 대기 = 마지막 @after + 5 s(App Nap · 61 §4).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

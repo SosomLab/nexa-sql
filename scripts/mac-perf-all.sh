@@ -67,7 +67,7 @@ NSQL_HOME=$H "$NSQL" config set explorer.search_index off >/dev/null 2>&1; NSQL_
 probe s9b.ora.nowarm  24 "@after:22000:explorer.stat:$OUT/s9b.stat,@after:22500:mem.dump:$OUT/s9b.mem" "$ORA"
 NSQL_HOME=$H "$NSQL" config reset explorer.search_index >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config reset meta.warm_comments >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config reset meta.warm_columns_max >/dev/null 2>&1
 probe s10.ora.search  26 "@after:5000:explorer.filter:1171,@after:24000:explorer.stat:$OUT/s10.stat,@after:24500:mem.dump:$OUT/s10.mem" "$ORA"
-# 행 번호(트리 = 0 루트 · 1~ 스키마 알파벳 · 현재 스키마는 자동 펼침 → 그 아래 첫 폴더 Tables) — 서버마다 다르므로 환경 변수로 덮어쓴다(BISCM = Tables 6 · 첫 테이블 7).
+# 행 번호(트리 = 0 루트 · 1~ 스키마 알파벳 · 현재 스키마는 자동 펼침 → 그 아래 첫 폴더 Tables) — 서버마다 다르므로 환경 변수로 덮어쓴다(APPDB = Tables 6 · 첫 테이블 7).
 RT=${NSQL_PERF_ROW_TABLES:-6}; RO=$((RT+1)); RO2=$((RT+2)); RO3=$((RT+3))
 probe s11.ora.details 28 "@after:5000:view.object_details,@after:6000:explorer.expand:$RT,@after:10000:explorer.select$RO,@after:14000:explorer.select$RO2,@after:18000:explorer.expand:$RO,@after:21000:explorer.select$RO2,@after:25000:details.dump:$OUT/s11.details,@after:25500:mem.dump:$OUT/s11.mem" "$ORA"
 probe s12.ora.sqlprev 24 "@after:6000:explorer.expand:$RT,@after:10000:explorer.menu:$RO,@after:11000:explorer.pick:gen:ddl,@after:20000:sqlprev.dump:$OUT/s12.sqlprev,@after:20500:mem.dump:$OUT/s12.mem" "$ORA"

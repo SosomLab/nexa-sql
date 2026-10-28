@@ -1,7 +1,7 @@
 # 110 · Oracle Thin 드라이버 — 어댑터 설계 · 설정 2중 종속 · 기능 변화 (사용자 10-13)
 
 > **요구**(사용자 10-13 · 협업 세션에 직접): ① "Rust 기반으로 Instant Client 없이 Oracle 접속이 가능한지 · 방법 · 관련 기술" ② "드라이버 선택 설정을 신설해 Thin / Instant Client 중 고르게 하고, Instant Client를 골랐을 때만 관련 설정이 동작(이미 `oracle.client_mode`에 종속된 설정이 있으니 2중 종속)" ③ "처음부터 Adaptor 기법을 요청했으니 Thin으로 바뀌어도 하위 로직이 변경되지 않게 — 어디서 어떻게 적용되는지 방식과 변경 범위" ④ "Thin으로 바뀌었을 때 지금 동작하는 기능 중 못 쓰는 것을 표로" ⑤ "개발 요청 전까지는 정보 수집·분석·기초 설계만 · 개발 요청은 개발 세션에서".
-> **상태**: 기초 설계 완료 → **10-13 개발 착수**(사용자 지시 · D-277~D-280 권장안 채택 · journal 10-13 §2) · 이전 = 기초 설계(개발 착수 전) · 협업 세션 조사 3갈래(설정 틀 · 드라이버 경계 · `oracledb` API) + 개발 세션 Deep 검토 A~D(10-13) + 실서버 읽기 전용 조회(BISCM 19c) · 결정 후보 D-277~D-280 · 단계 T-333~T-336(T-159를 쪼갬).
+> **상태**: 기초 설계 완료 → **10-13 개발 착수**(사용자 지시 · D-277~D-280 권장안 채택 · journal 10-13 §2) · 이전 = 기초 설계(개발 착수 전) · 협업 세션 조사 3갈래(설정 틀 · 드라이버 경계 · `oracledb` API) + 개발 세션 Deep 검토 A~D(10-13) + 실서버 읽기 전용 조회(APPDB 19c) · 결정 후보 D-277~D-280 · 단계 T-333~T-336(T-159를 쪼갬).
 > **짝 문서**: [64 §4](64-dbms-clients-and-driver-packaging.md)(경량판 · Instant Client 없이) · [22 §0·§4-1](22-driver-extensions.md)(드라이버 배치 · 09-13 스파이크) · [30](30-architecture-patterns.md)(포트+레지스트리+설정) · [43 §3-6](43-fetch-model-and-result-tabs.md)(REF CURSOR 이어 받기) · [44 §6](44-transaction-log.md)(취소) · [87 §14](87-grid-data-editing.md)(데이터 보호) · [89](89-bulk-io-review.md)(대량 적재).
 
 ## §0. 결론
@@ -47,10 +47,10 @@
 | 오류 | ✓ | `ErrorKind::DbError(DbError{code: ORA 번호, message, offset})` · 끊김 종류 `DeadConnection`/`NotConnected`/`UnableToRecover`/`CallTimeoutExceeded` · `std::error::Error` 미구현 추정 |
 | 의존 | — | rustls 0.23(aws-lc-rs = C/asm 빌드 · Windows는 cmake/nasm이 필요할 수 있음) · webpki-roots · aes/cbc/pbkdf2/sha2 · chrono · uuid · whoami · rand |
 
-### 1-3. 사용자 실서버(10-13 · 읽기 전용 조회 · 운영 SNOPDB_19c 제외)
-- 저장된 Oracle 프로필 6개 = 전부 BISCM 계열 · **Oracle Database 19c EE**(172.16.1.58).
+### 1-3. 사용자 실서버(10-13 · 읽기 전용 조회 · 운영 DEMODB_19c 제외)
+- 저장된 Oracle 프로필 6개 = 전부 APPDB 계열 · **Oracle Database 19c EE**(172.16.1.58).
 - `v$session_connect_info` = Encryption/Crypto-checksumming 서비스 줄만(알고리즘 어댑터 줄 없음) → **NNE 미사용**.
-- 계정 BISCM·SQLEDU·BISCM_SB `PASSWORD_VERSIONS = 11G 12C` · `sec_case_sensitive_logon = TRUE` → #6 위험 "중간"(10G가 없어 확인된 실패 조건은 아님 · **스파이크 첫 확인 항목**).
+- 계정 APPDB·EDU01·APPDB_SB `PASSWORD_VERSIONS = 11G 12C` · `sec_case_sensitive_logon = TRUE` → #6 위험 "중간"(10G가 없어 확인된 실패 조건은 아님 · **스파이크 첫 확인 항목**).
 
 ## §2. 어댑터 경계 — 지금 구조(사실)
 
@@ -175,7 +175,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | 1 | **실행 중 즉시 취소**(■ → ORA-01013 · `break_execution`) | ✗(#24) | 첫 ■ = 다음 배치 경계에서 멈춤 · 긴 단일 문장은 안 멈춤 → 두 번째 ■ = 강제 중지(세션 버림 · 재접속) · 보강 후보 = 별도 접속 `KILL SESSION`(권한 필요) |
 | 2 | **Implicit Result Sets**(`DBMS_SQL.RETURN_RESULT` 결과를 결과 탭으로 · OCI 어댑터 lib.rs:797-806 `implicit_result()` 전부 수거) | ✗ | 그 결과 탭이 **오류 없이 조용히 빠짐**(위층 변경 0) → 안내 = "Thin 미지원 · `:cur` REFCURSOR OUT 바인드 + `PRINT`로 대체 또는 OCI" |
 | 3 | **OS 인증 `/ as sysdba`**(사용자·비밀번호 빈칸 = external auth) · Kerberos · SEPS 지갑 | ✗ | 접속 거부 → 안내(사용자/비밀번호 + `AUTH_MODE_SYSDBA`는 됨) |
-| 4 | **NNE(네이티브 암호화·체크섬)** | ✗ | 서버가 NNE 필수면 접속 실패 → "TLS(TCPS) 또는 OCI" 안내 · 사용자 BISCM = NNE 미사용(§1-3) |
+| 4 | **NNE(네이티브 암호화·체크섬)** | ✗ | 서버가 NNE 필수면 접속 실패 → "TLS(TCPS) 또는 OCI" 안내 · 사용자 APPDB = NNE 미사용(§1-3) |
 | 5 | **11g 이하 서버** | ✗(12c+) | 접속 오류 안내 · ★ **사용자 10-26 = 유지(Thin 11g 구현 안 함)** — 하한 = `oracledb` 26.0.0-beta.4 `messages/connect.rs:94`(`protocol_version < PROTOCOL_VERSION_12`(315) → ServerVersionNotSupported) · 11g는 OCI(`oracle.driver = oci`) + 서버를 지원하는 Instant Client 판(19c 이하 · Oracle 호환 표 기준 · 미실측)으로 |
 | 6 | **10G 검증자를 가진 계정** | ✗(#6) | ORA-01017 → 안내(DBA 쪽 비밀번호 재설정) · `11G 12C` 계정은 스파이크로 확인 |
 | 7 | **대량 적재 최속 경로**(`nsql import`·Import 창 = Oracle 배열 DML 32.5k행/s) | △(1차 Err) | 다중 행 INSERT 폴백으로 동작하나 느려짐 · #41 해결 뒤 `execute_batch`로 복귀 |
@@ -206,7 +206,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | 값·타입 글 형식 차이로 위층 판정(편집 가능 판정·bulk 타입) 흔들림 | 중간 | OCI ↔ Thin **같은 질의 대조 시험**(골든) |
 
 ## §8. 단계(TODO · T-159를 쪼갬)
-- **T-333 스파이크**(확인 순서 = 개발 세션 10-13): ① 3-OS 빌드(툴체인 추가 없이 · aws-lc-rs cmake/nasm 요구 여부 · ring 백엔드 feature 유무 · 크기 증가 = 64 §4-1 "A + 드라이버 몫") ② BISCM 로그인(`11G 12C` 검증자 · #6) ③ OUT/IN OUT · REF CURSOR 페이지(`Cursor` 지연 Iterator) ④ DBMS_OUTPUT ⑤ 강제 중지(세션 버림) 뒤 서버 세션 정리 ⑥ Implicit result 빠짐 확인(예상 손실) ⑦ DATE/TIMESTAMP 바인드 · 한글 CLOB · `type_name`/값 글 대조 · call timeout · 4방언 E2E 회귀(grid-edit · conn-cmd · oracle-ddl) — 항목별 통과/실패를 이 문서 §11 표에.
+- **T-333 스파이크**(확인 순서 = 개발 세션 10-13): ① 3-OS 빌드(툴체인 추가 없이 · aws-lc-rs cmake/nasm 요구 여부 · ring 백엔드 feature 유무 · 크기 증가 = 64 §4-1 "A + 드라이버 몫") ② APPDB 로그인(`11G 12C` 검증자 · #6) ③ OUT/IN OUT · REF CURSOR 페이지(`Cursor` 지연 Iterator) ④ DBMS_OUTPUT ⑤ 강제 중지(세션 버림) 뒤 서버 세션 정리 ⑥ Implicit result 빠짐 확인(예상 손실) ⑦ DATE/TIMESTAMP 바인드 · 한글 CLOB · `type_name`/값 글 대조 · call timeout · 4방언 E2E 회귀(grid-edit · conn-cmd · oracle-ddl) — 항목별 통과/실패를 이 문서 §11 표에.
 - **T-334 어댑터**: `nsql-driver-oracle-thin` · §3-3 계약 · §3-4 흡수 · 레지스트리 분기 · feature.
 - **T-335 설정**: `oracle.driver`·`oracle.info_driver` · `DEPENDS` 1행 · 설정 창 연쇄 잠금(순수 함수 + MC/DC) · 적용 경로·정보 칸 · CLI.
 - **T-336 검증·배포**: 통합 시험(`nsql-drivers/tests/integration.rs` Oracle 3종 · `examples/it-oracle.sql` · `oracle-refcursor-pkg.sql` · `lob/oracle.sql` · `variables/oracle.sql`)을 두 드라이버로 · E2E(`oracle-ddl-e2e` · `pkg-overload-e2e` · `define-e2e` · grid-edit · bulk 폴백 · stop-latency = 취소 차이 확인) · 경량판 C 빌드 조합 · 외부 crate 원장 · 위키.
@@ -228,7 +228,7 @@ oracle.driver ──Eq("oci")──▶ oracle.client_mode ──Eq("manual")─�
 | # | 항목 | 결과 | 메모 |
 |---|---|---|---|
 | ① | 3-OS 빌드 · 크기 | Windows ✓ | 개발 세션: oracledb + aws-lc-rs가 cmake·nasm 없이 빌드(2분 6초) · feature 조합 3(기본 oci+thin · 경량판 C sqlite+oracle-thin · sqlite+oracle) check ✓ · mac ✓ 10-13(Debug 3m44s 경고 0 · cmake 4.4.3·nasm 있음 · Release GUI 22,016,976 B = +4.1 MB · nsql 12,317,200 B = +4.0 MB · 121·122차 합산이라 Thin 단독 미분리) · **Linux ✓ 10-13 124차**(Ubuntu 26.04 VM 2코어 · **cmake·clang·nasm 없음**에서 Debug `-p nexa-sql -p nsql-cli` 5m12s 경고 0 · Release 8m43s 경고 0 · 크기 GUI 25,693,912 B(119차 20.40 MB 대비 +5.3 MB · 맥보다 +3.7 MB = ELF) · nsql 13,480,344 B(+4.5 MB)) |
-| ② | BISCM 로그인(11G 12C) | ✓ | BISCM 19c · `11G 12C` 검증자 계정 Thin 접속 성공(CLI·GUI·통합 시험) |
+| ② | APPDB 로그인(11G 12C) | ✓ | APPDB 19c · `11G 12C` 검증자 계정 Thin 접속 성공(CLI·GUI·통합 시험) |
 | ③ | OUT/IN OUT · REF CURSOR 페이지 | ✓ | REF CURSOR `PRINT` · OUT · 1200행 페이지 같음 · PL/SQL 블록 읽기 전용 변수 초기값 NULL 결함 → 고침(재검증 ✓) |
 | ④ | DBMS_OUTPUT | ✓ | `hello nexa 한글` 두 드라이버 같음 |
 | ⑤ | 강제 중지 뒤 서버 세션 정리 | ✓(클라이언트) | 첫 ■ 안내 토스트 · 둘째 ■ 강제 중지(접속 끊음) ✓ · 서버 쪽 세션 잔존은 미측정 |

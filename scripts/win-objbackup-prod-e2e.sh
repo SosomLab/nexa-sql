@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# win-objbackup-prod-e2e.sh — 실서버(Oracle · 기본 BISCM)를 **운영기(PRD) 모드**로 바꾼 격리 홈에서 객체 백업 + 운영 2단 + G6를 자동 시험
-#   (사용자 10-15 "BISCM을 운영기 모드로 변경해서 자동화 테스트 진행" · docs/114 §7-2 · D-302/D-305). 실제 프로필은 건드리지 않는다 —
+# win-objbackup-prod-e2e.sh — 실서버(Oracle · 기본 APPDB)를 **운영기(PRD) 모드**로 바꾼 격리 홈에서 객체 백업 + 운영 2단 + G6를 자동 시험
+#   (사용자 10-15 "APPDB을 운영기 모드로 변경해서 자동화 테스트 진행" · docs/114 §7-2 · D-302/D-305). 실제 프로필은 건드리지 않는다 —
 #   `-P <실제 설정 폴더>`의 profiles/device.key를 격리 홈에 복사하고 그 사본에만 `nsql conn env <프로필> prd`.
 #   임시 객체 = `NSQLT_BK_PRC`(프로시저 · 61 §2-4 ⑤ 실서버 임시 객체는 묻지 않음 · 끝에 정리).
 #   ① CLI로 만들기(백업 없음) ② GUI 편집기 CREATE OR REPLACE(운영 2단 = run.all 두 번) → 백업 파일 1 + Output 줄 ③ GUI 편집기 DROP(2단) → 백업 2 + 객체 없음
 #   ④ CLI로 다시 만들기 → GUI 탐색기 삭제(G6: 삭제 창 2단 뒤 첫 호출에 전송) → 백업 3 + 객체 없음 ⑤ 파일 이름 = `<프로필>_<스키마>.NSQLT_BK_PRC_PROCEDURE.<17자리>`.
-# 사용: scripts/win-objbackup-prod-e2e.sh -o <출력폴더> -P <실제 설정 폴더(%APPDATA%/nexa-sql)> [-c BISCM] [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
+# 사용: scripts/win-objbackup-prod-e2e.sh -o <출력폴더> -P <실제 설정 폴더(%APPDATA%/nexa-sql)> [-c APPDB] [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; PROF=""; CONN="BISCM"; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
+OUT=""; PROF=""; CONN="APPDB"; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:c:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real settings dir> [-c profile] [-g gui] [-n nsql]"; exit 2; }
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"

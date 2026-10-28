@@ -3,8 +3,8 @@
 > 사용자 요구(09-30 저녁): ① 소스 열기와 DDL 생성의 차이 분석 ② 소스 열기 뒤 F5가 프로시저를 CREATE하지 않고 줄 단위로 도는 것 →
 > 객체(뷰·패키지·함수·프로시저 …)에서 다르게 동작 ③ 프로시저 편집에서는 결과 그리드보다 "컴파일이 잘 되었는지" 같은 **메시지**가 더
 > 뜻이 있다 → 일반 편집 탭에서도 프로시저 실행·PRINT 메시지를 보는 **Output 탭**(처음엔 없음 · 보기 설정 · 메시지가 오면 자동 · 다른
-> 클라이언트의 기본 기능) ④ BISCM·BISCM_SB의 `SP_M4P_MP_VERSION_CREATE_BSY`를 DDL/소스 열기로 열어 실제 내용과 일치 확인 ⑤ 객체 선언·
-> 테이블·인덱스·PK/UK·제약 등 **전 유형 DDL 전수 테스트**(biscm 자동 접속 · Debug 직접 실행).
+> 클라이언트의 기본 기능) ④ APPDB·APPDB_SB의 `SP_M4P_MP_VERSION_CREATE_BSY`를 DDL/소스 열기로 열어 실제 내용과 일치 확인 ⑤ 객체 선언·
+> 테이블·인덱스·PK/UK·제약 등 **전 유형 DDL 전수 테스트**(appdb 자동 접속 · Debug 직접 실행).
 
 ## 1. 소스 열기(Open source) vs Generate SQL ▸ DDL — 차이 분석
 
@@ -13,7 +13,7 @@
 | 진입 | 탐색기 더블클릭/Enter · 우클릭 ▸ 소스 열기(패키지는 Body 항목 따로) | 우클릭 ▸ SQL 생성 ▸ DDL |
 | 원천 함수 | `nsql_catalog::source` | `nsql_catalog::generate(GenWhat::Ddl)` → `object_ddl` |
 | Oracle PL/SQL(프로시저·함수·패키지·본문·트리거·타입) | `ALL_SOURCE` 줄을 이어 붙이고 앞에 `CREATE OR REPLACE `, 끝에 `/` 한 줄 | `DBMS_METADATA.GET_DDL` → `plsql_terminate`(블록마다 `/` · 빈 줄) |
-| 이름 표기 | ~~사용자가 쓴 그대로(스키마 없음 · `PROCEDURE          SP_X`)~~ → **09-30 저녁: `PROCEDURE BISCM_SB.SP_X`**(소유 스키마 한정 · 공백 1칸 · `explorer.source_schema` 기본 켬 · `normalize_plsql_header`) | Oracle 표기 `"BISCM"."SP_X"` + `NONEDITIONABLE` 등 수식어 |
+| 이름 표기 | ~~사용자가 쓴 그대로(스키마 없음 · `PROCEDURE          SP_X`)~~ → **09-30 저녁: `PROCEDURE APPDB_SB.SP_X`**(소유 스키마 한정 · 공백 1칸 · `explorer.source_schema` 기본 켬 · `normalize_plsql_header`) | Oracle 표기 `"APPDB"."SP_X"` + `NONEDITIONABLE` 등 수식어 |
 | 패키지 | 스펙만 · 본문은 별도 탭(`NAME.body.sql`) | 스펙 + 본문을 한 본문에(블록 2개 · `/` 2개) |
 | Oracle 뷰 | `CREATE OR REPLACE VIEW "OWNER"."NAME" AS` + `ALL_VIEWS.TEXT`(종결자 없음) | `GET_DDL('VIEW')` + `;` |
 | Oracle 그 밖(테이블·인덱스·시퀀스 …) | `GET_DDL` 그대로 | `GET_DDL` + `;` · 테이블은 옵션(`qualified` · `compact` · `full` · FK 분리) + 머리 주석 `-- schema.name definition` |
@@ -47,7 +47,7 @@
   (`report_compile_errors`)·탐색기 갱신(`ddl_target`)은 보통 길과 같다. Ctrl+Enter(현재 문장)는 종전대로(부분 실행은 그대로 가능).
 - 객체 유형별 동작 = 종류로 갈린다: 프로시저·함수·패키지(스펙/본문)·트리거·타입 = `Block` 한 번 + 컴파일 검사 → Output에 `PROCEDURE X compiled ·
   no errors` 또는 `Warning: … created with compilation errors` + 줄/열 목록 · 뷰·MV = `Ddl` 한 번(`;` 제거) → 완료 줄 · 그 밖 = `Ddl`.
-- Output 첫 줄 `▶ PROCEDURE BISCM.NSQLT_P2 — 소스 전체를 한 단위로 실행(F5)` · 상태줄 `… 한 단위로 실행 중`.
+- Output 첫 줄 `▶ PROCEDURE APPDB.NSQLT_P2 — 소스 전체를 한 단위로 실행(F5)` · 상태줄 `… 한 단위로 실행 중`.
 - ★ 컴파일 **성공**도 메시지가 된다(`RunEvent::Message` = `Msg::OutCompiledOk` · 종전엔 오류만) — SQL*Plus "Procedure created."에 해당.
 
 ## 3. Output 탭
@@ -97,12 +97,12 @@
   PG `RAISE NOTICE` 레벨 표식 · Output만 있는 실행에서 "결과1" 빈 탭 안 만들기(`grid.result_tabs`와 조율) · 객체 탭 = 탭 줄 색/아이콘(`TabKind::Object`) ·
   객체 탭 F5 뒤 탐색기 상태(VALID/INVALID) 즉시 갱신 확인 · 위키 캡처.
 
-## 4. 실기(09-30 · Debug · biscm 자동 접속 · 키 주입 0)
+## 4. 실기(09-30 · Debug · appdb 자동 접속 · 키 주입 0)
 
-- **`SP_M4P_MP_VERSION_CREATE_BSY` BISCM(69줄) · BISCM_SB(495줄)**: CLI `cat source`/`cat gen ddl` = GUI 소스 열기/DDL 미리보기 덤프와 **글자 단위 일치** ·
-  소스 열기 = `CREATE OR REPLACE ` + `ALL_SOURCE`(68/494줄) + `/` 일치 · DDL 본문(2행~) = `ALL_SOURCE`(2행~) 일치(머리 줄만 `NONEDITIONABLE "BISCM"."…"`) ·
+- **`SP_M4P_MP_VERSION_CREATE_BSY` APPDB(69줄) · APPDB_SB(495줄)**: CLI `cat source`/`cat gen ddl` = GUI 소스 열기/DDL 미리보기 덤프와 **글자 단위 일치** ·
+  소스 열기 = `CREATE OR REPLACE ` + `ALL_SOURCE`(68/494줄) + `/` 일치 · DDL 본문(2행~) = `ALL_SOURCE`(2행~) 일치(머리 줄만 `NONEDITIONABLE "APPDB"."…"`) ·
   스키마별로 다른 판이 맞게 들어온다(둘 다 서버 상태 INVALID = 탐색기 `object!`).
-- **전 유형 DDL E2E `scripts/oracle-ddl-e2e.sh -o <폴더> -n target/debug/nsql.exe -p biscm`** = **67/67 통과**(임시 객체 `NSQLT_*` · 끝에 0개 남김): 테이블 ×2 · PK · UK · CHECK ·
+- **전 유형 DDL E2E `scripts/oracle-ddl-e2e.sh -o <폴더> -n target/debug/nsql.exe -p appdb`** = **67/67 통과**(임시 객체 `NSQLT_*` · 끝에 0개 남김): 테이블 ×2 · PK · UK · CHECK ·
   NOT NULL · FK(ON DELETE CASCADE) · 인덱스 ×2(복합) · 코멘트 ×2 · 시퀀스 · ALTER(ADD/MODIFY/RENAME/DROP COLUMN · DISABLE/ENABLE) · 뷰 · 함수 · 프로시저 · 패키지 스펙+본문(한 스크립트) ·
   트리거 · 타입 · 시노님 · MV · 상태 VALID 9 · **소스 왕복 = 원문 일치 6종** · DDL 생성(테이블·프로시저·패키지 2블록) · 컴파일 오류 보고(`Warning … compilation errors` + 줄/열 · `cat errors` · INVALID) ·
   소스 열기 본문 재실행(1항목) · 스펙+본문 재실행(2항목) · DDL 본문 재실행 · DML(트리거 ID 채움 · 함수 42 · 패키지 8) · DBMS_OUTPUT 2 · PRINT · 제약 위반 3(ORA-02290/00001/02291) · 캐스케이드 · DROP 전부.

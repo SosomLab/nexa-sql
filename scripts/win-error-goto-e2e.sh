@@ -9,12 +9,12 @@
 #   ★ T-372(132차 · 10-20) 고급 분석 = ③ `SELECT DISTINC '가나다' AS x FROM dual` → 서버 위치는 리터럴(열 16 · SQL Server = 줄)인데 캐럿은
 #     **첫 의심 지점** `DISTINC`(열 8 · SQL Server도 열 8) + Output에 "Suspected typo" 한 줄 · ④ 둘째 문장 = 줄 2 열 8 ·
 #     ⑤ 향상 모드(`perf.boost=on` · SQLite만) = 강제 끔 → 서버 위치 그대로(SQLite = `near "AS"` 열 22).
-# 사용: scripts/win-error-goto-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-d Local:sqlite,Repository:postgres,BISCM:oracle,BISCM:oracle-oci,M4PLAN:mssql]
+# 사용: scripts/win-error-goto-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-d Local:sqlite,Repository:postgres,APPDB:oracle,APPDB:oracle-oci,PLANDB:mssql]
 #   `오라클 프로필:oracle-oci` = 같은 프로필을 `oracle.driver=oci`로(격리 홈 설정) · 그 밖은 기본(thin).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; PROF=""; LIST="Local:sqlite,Repository:postgres,BISCM:oracle,BISCM:oracle-oci,M4PLAN:mssql"
+OUT=""; PROF=""; LIST="Local:sqlite,Repository:postgres,APPDB:oracle,APPDB:oracle-oci,PLANDB:mssql"
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:d:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; d) LIST=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real NSQL_HOME> [-d 프로필:방언,…] [-g gui] [-n nsql]"; exit 2; }

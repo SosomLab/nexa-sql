@@ -83,10 +83,10 @@
 
 ### 6-3. Alias 탐지(Smart) — 사용자 예시
 ```sql
-FROM MTXRPTY2.MTX_AGENT_LOG A, MTXRPTY2.MTX_DBMS C, MTXRPTY2.MTX_REPORT D, MTXRPTY2.MTX_SQL E
+FROM RPT012.MTX_AGENT_LOG A, RPT012.MTX_DBMS C, RPT012.MTX_REPORT D, RPT012.MTX_SQL E
 ```
 - `nsql_script::statement_at`으로 **캐럿 문장**만 본다(문서 전체 파싱 없음). 문장 안 `FROM`/`JOIN`/`UPDATE`/`INTO`/`MERGE INTO`/`DELETE FROM` 뒤 `[schema.]table [AS] alias` 패턴을 토큰 단위로 걷어 `alias → (schema, table)` 표를 만든다(콤마 조인 · ANSI JOIN · 서브쿼리 `(SELECT …) X`는 서브쿼리 SELECT 목록을 컬럼으로 · CTE `WITH X AS (…)`도 같은 규칙). 예약어(`WHERE ON AND OR`)는 alias로 잡지 않는다.
-- `A.` 입력 → 표에서 `A`= `MTXRPTY2.MTX_AGENT_LOG` → Catalog 캐시 `columns(schema, table)` → 팝업(컬럼명 · 타입 · NULL 여부 · 코멘트 툴팁). 스키마 생략 시 접속 기본 스키마 → 시노님 → PUBLIC 순.
+- `A.` 입력 → 표에서 `A`= `RPT012.MTX_AGENT_LOG` → Catalog 캐시 `columns(schema, table)` → 팝업(컬럼명 · 타입 · NULL 여부 · 코멘트 툴팁). 스키마 생략 시 접속 기본 스키마 → 시노님 → PUBLIC 순.
 - alias 없이 `MTX_AGENT_LOG.`도 같은 경로. `A.LOG_` 처럼 접두가 있으면 접두 필터(대소문자 무관 · 퍼지 아님 — 컬럼은 접두 일치가 직관적).
 - 표는 **문장 텍스트 해시**로 캐시 — 같은 문장이면 재파싱 0.
 

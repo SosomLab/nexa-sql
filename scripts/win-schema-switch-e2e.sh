@@ -2,11 +2,11 @@
 # win-schema-switch-e2e.sh — 작업 단위 전환 E2E(10-01 ⑮ · 사용자 "오라클도 툴바에서 변경"): Oracle `ALTER SESSION SET CURRENT_SCHEMA`가
 #   편집기에서 성공하면 세션 현재 스키마 → `SHOW CONN` "현재 스키마" 줄 · 운영 2단 확인 없음(문맥 전환 = 데이터 변경 아님) ·
 #   CLI `nsql run`도 `current database:` 안내. 격리 홈 · 실제 프로필 복사 · 키 주입 0.
-# 사용: scripts/win-schema-switch-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-s BISCM_SB] [-P <실제 설정 폴더>]
+# 사용: scripts/win-schema-switch-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p APPDB] [-s APPDB_SB] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="BISCM"; OTHER="BISCM_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="APPDB"; OTHER="APPDB_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:n:p:s:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; s) OTHER=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n cli] [-p profile] [-s other-schema] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
@@ -38,8 +38,8 @@ if [ -s "$D" ]; then
   echo "$first" | grep -q "$OTHER" && bad "GUI: 전환 전 블록이 이미 $OTHER" "$first" || ok "GUI: 전환 전 블록 = 접속 기본 스키마($first)"
   n2=$(echo "$b" | grep -c "현재 스키마\|Current schema"); [ "$n2" -eq 2 ] && ok "GUI: 현재 스키마 줄 = 블록마다 하나(중복 없음)" || bad "GUI: 현재 스키마 줄 수 $n2" "$b"
 else bad "GUI Output 덤프 없음" "$(tail -3 "$OUT/gui.stderr")"; fi
-# ④ 탭별 작업 단위(⑯): 탭1에서 ALTER SESSION(= 탭1 단위 BISCM_SB) → 새 탭2 열림(= 연결 기본 BISCM으로 조용히 복귀) → 탭2 SHOW CONN = BISCM
-#    → 탭1로 돌아감(= BISCM_SB로 조용히 복귀) → 팔레트 session.info = BISCM_SB(실행 없이 세션 상태만).
+# ④ 탭별 작업 단위(⑯): 탭1에서 ALTER SESSION(= 탭1 단위 APPDB_SB) → 새 탭2 열림(= 연결 기본 APPDB으로 조용히 복귀) → 탭2 SHOW CONN = APPDB
+#    → 탭1로 돌아감(= APPDB_SB로 조용히 복귀) → 팔레트 session.info = APPDB_SB(실행 없이 세션 상태만).
 echo "--- ④ 탭별 작업 단위" | tee -a "$REPORT" >/dev/null
 F1="$OUT/t1.sql"; printf 'ALTER SESSION SET CURRENT_SCHEMA = %s;
 ' "$OTHER" > "$F1"; F2="$OUT/t2.sql"; printf 'SHOW CONN

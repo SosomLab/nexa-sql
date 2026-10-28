@@ -86,7 +86,7 @@
 ## 드라이버 — 내장 4종
 | 상태 | 항목 |
 |:--:|---|
-| ✅ | Oracle(ODPI-C · 19c 실서버) · SQL Server(TDS · PRINT 실시간) · **PostgreSQL(09-15 · rust-postgres · matrixdb2 실서버)** · SQLite |
+| ✅ | Oracle(ODPI-C · 19c 실서버) · SQL Server(TDS · PRINT 실시간) · **PostgreSQL(09-15 · rust-postgres · repodb 실서버)** · SQLite |
 | ☐ | MySQL · ODBC(T-23) · PG TLS(T-70) |
 
 ## 배포 — [33](33-distribution-and-packaging.md) (DR-27 · 09-15)

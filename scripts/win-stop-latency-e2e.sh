@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # win-stop-latency-e2e.sh — 실행 중지(■) 지연 측정 E2E(10-09 · 사용자 "프로시저 실행 중 중지가 5~10초 뒤에야 걸린다" · docs/44 §6).
-#   저장된 연결(Oracle BISCM · SQL Server M4PLAN · PostgreSQL Repository)로 오래 도는 문장 셋을 돌리고, 기동 명령으로 N초 뒤 ■(`run.stop`)를
+#   저장된 연결(Oracle APPDB · SQL Server PLANDB · PostgreSQL Repository)로 오래 도는 문장 셋을 돌리고, 기동 명령으로 N초 뒤 ■(`run.stop`)를
 #   눌러 **중지 요청 → 중지 확정** 사이의 시간을 로그 시각(`log.dump_t`)으로 잰다 · 키 주입 0 · 영속 객체 0(블록·조회뿐).
 #   DBMS마다 ① 대기(SLEEP/WAITFOR/pg_sleep) ② CPU 루프 ③ 큰 조인 SELECT. 요청 = "Cancelling the running statement…" · 확정 = 앱 판정
 #   "Execution stopped by user"(모든 DBMS · MSSQL Attention은 오류 없이 끝남) 또는 드라이버 오류(ORA-01013 · PG 57014).
 #   판정선(권장): 각 ≤ 2000 ms. OOB(TCP urgent)가 막힌 망에서는 Oracle break가 서버의 다음 읽기까지 지연될 수 있다(44 §6).
 # 사용: scripts/win-stop-latency-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-P <실제 설정 폴더>]
-#        [-O BISCM] [-m M4PLAN] [-r Repository] [-y <MySQL 프로필|접속 문자열>] [-w 3000(실행 뒤 ■까지 ms)] [-l 2000(판정선 ms)]
+#        [-O APPDB] [-m PLANDB] [-r Repository] [-y <MySQL 프로필|접속 문자열>] [-w 3000(실행 뒤 ■까지 ms)] [-l 2000(판정선 ms)]
 #        (-O/-m/-r/-y 빈 값 = 건너뜀 · -y 기본 = 건너뜀 · 예 -y 'mysql://nexa:nexa@127.0.0.1:3306/nexa' · 10-22 T-387 취소 실측)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
-ORA="BISCM"; MS="M4PLAN"; PG="Repository"; MY=""; WAIT=3000; LIMIT=2000
+ORA="APPDB"; MS="PLANDB"; PG="Repository"; MY=""; WAIT=3000; LIMIT=2000
 while getopts "o:g:P:O:m:r:y:w:l:" o; do case $o in
   o) OUT=$OPTARG;; g) EXE=$OPTARG;; P) PROF=$OPTARG;; O) ORA=$OPTARG;; m) MS=$OPTARG;; r) PG=$OPTARG;; y) MY=$OPTARG;; w) WAIT=$OPTARG;; l) LIMIT=$OPTARG;;
 esac; done

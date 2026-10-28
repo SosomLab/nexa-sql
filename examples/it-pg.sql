@@ -1,4 +1,4 @@
--- PostgreSQL 실기 스크립트(nsql run -c matrixdb2 examples/it-pg.sql) — 세션 변수 · 프로시저 OUT · 타입 표시.
+-- PostgreSQL 실기 스크립트(nsql run -c repodb examples/it-pg.sql) — 세션 변수 · 프로시저 OUT · 타입 표시.
 EXEC :V_NAME := 'nexa'
 EXEC SELECT COUNT(*) INTO :V_CNT FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) t
 PRINT V_CNT

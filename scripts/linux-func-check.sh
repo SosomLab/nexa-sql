@@ -51,7 +51,7 @@ wins_now() { # $1 = 앱 PID(맥) · Linux는 전체 WM_CLASS 수
 # ── 시험 자료 ──────────────────────────────────────────────────────────────
 cat > "$D/q500.sql" <<'SQL'
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
-SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
+SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'ACME' AS project_cd, 'memo ' || i AS memo FROM n;
 SQL
 echo "SELECT * FROM no_such_table_zz;" > "$D/q_err.sql"
 # S95(10-10 118차 mac 크래시 회귀): 30만 행(받는 중이라도 10만 행 이상이면 됨) × 행 높이 20~39 px = 내용 200만~1,170만 px → 썸 드래그 3000 px의

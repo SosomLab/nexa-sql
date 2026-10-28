@@ -143,9 +143,9 @@ $ nsql explain -c sqlite:emp.db -q "SELECT * FROM emp WHERE dept = 3" --analyze
 | 방언 | 추정 | 실제 | 10-23 실측(개발 세션 · Windows) |
 |---|---|---|---|
 | SQLite | ✓ | (실측 없음) | ✓(항상) |
-| PostgreSQL | ✓ | ✓ | ✓ 추정 + 실제(REPOSITORY_DEV) |
-| SQL Server | ✓ | ✓ | ✓ 추정 + 실제(BISCM_MS_DEV) |
-| Oracle | ✓ | ✓(DISPLAY_CURSOR · 권한 되면) | ✓ 추정 + 실제(BISCM_DEV · Thin) — Thin `EXPLAIN PLAN` 파싱만 문제 → `EXECUTE IMMEDIATE` 감싸기 |
+| PostgreSQL | ✓ | ✓ | ✓ 추정 + 실제(REPO_DEV) |
+| SQL Server | ✓ | ✓ | ✓ 추정 + 실제(APPDB_MS_DEV) |
+| Oracle | ✓ | ✓(DISPLAY_CURSOR · 권한 되면) | ✓ 추정 + 실제(APPDB_DEV · Thin) — Thin `EXPLAIN PLAN` 파싱만 문제 → `EXECUTE IMMEDIATE` 감싸기 |
 | MySQL / MariaDB | ✓ | (MariaDB 미지원) | 로컬 = 생략(미도달) · CI integration = MariaDB EXPLAIN 표 |
 
 - CI = `integration.yml`(MariaDB EXPLAIN 표 · sqlite · 확장 경로 dyn).

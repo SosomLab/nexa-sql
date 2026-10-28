@@ -5,16 +5,16 @@
 #   ② 패키지 멤버(`pkg.proc` · 실서버의 첫 패키지 프로시저 · 없으면 SKIP) → 선택 경로 = `… / Packages / PKG / Procedures / PROC`
 #   ③ 없는 이름(`nsqlt_no_such_table`) = 링크가 미확인이라 reveal 안 됨(ok=false · 선택 없음)
 #   ④ 두 연결(-s 두 번째 프로필 먼저 접속 + -p 추가) → 두 번째 칸에서 선택 + `visible=true`(세트 공용 스크롤 · ㉗-b)
-#   ⑥ SQLEDU 계정 · 소문자 trx_demand · 첫 시도 바로가기(㉗-f 사용자 요청)
-#   ⑦ BISCM_SB(-b) 접속 뒤 BISCM(-p) 추가 → 첫 시도 메뉴 활성(reveal=true)·바로가기(㉗-g 사용자 보고 재현)
+#   ⑥ EDU01 계정 · 소문자 trx_demand · 첫 시도 바로가기(㉗-f 사용자 요청)
+#   ⑦ APPDB_SB(-b) 접속 뒤 APPDB(-p) 추가 → 첫 시도 메뉴 활성(reveal=true)·바로가기(㉗-g 사용자 보고 재현)
 #   ⑧ 메뉴 경로(우클릭 → 재분석 → 확정 · ㉗-k) + 5) 시점 탐색기 추종(㉗-j)
 #   ⑤ 시스템 객체(㉙): `DBMS_XPLAN.DISPLAY_CURSOR` 루틴 링크 + 시그니처 · `all_tables` 사전 객체 · 모르는 패키지는 링크 아님(`objlink.dump`)
 #
-# 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-t 테이블(없으면 user_tables 첫 것)] [-s SQLEDU] [-b BISCM_SB] [-P <실제 설정 폴더>]
+# 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p APPDB] [-t 테이블(없으면 user_tables 첫 것)] [-s EDU01] [-b APPDB_SB] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="BISCM"; TABLE=""; SECOND="SQLEDU"; THIRD="BISCM_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="APPDB"; TABLE=""; SECOND="EDU01"; THIRD="APPDB_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:n:p:t:s:b:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; t) TABLE=$OPTARG;; s) SECOND=$OPTARG;; b) THIRD=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n cli] [-p profile] [-t table] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
@@ -25,7 +25,7 @@ REPORT="$OUT/objlink-reveal-e2e.txt"; : > "$REPORT"
 say() { echo "$*"; echo "$*" >> "$REPORT"; }
 pass=0; fail=0; skip=0
 sk()  { say "  SKIP  $1"; skip=$((skip+1)); }
-# 이 PC 볼트에 그 프로필이 있는가(없으면 그 구간은 건너뜀 · 10-11 Linux 전수에서 SQLEDU·BISCM_SB 부재로 FAIL 하던 것).
+# 이 PC 볼트에 그 프로필이 있는가(없으면 그 구간은 건너뜀 · 10-11 Linux 전수에서 EDU01·APPDB_SB 부재로 FAIL 하던 것).
 has_prof() { "$NSQL" conn list 2>/dev/null | grep -qE "^$1[[:space:]]"; }
 ok()  { say "  PASS  $1"; pass=$((pass+1)); }
 bad() { say "  FAIL  $1"; fail=$((fail+1)); [ -n "${2:-}" ] && echo "$2" | head -12 | sed 's/^/        /' | tee -a "$REPORT" >/dev/null; }
@@ -97,7 +97,7 @@ if [ -s "$L5" ]; then
   chk "⑤ all_tables = 사전 객체 링크(known)" "^Table\|all_tables\|true\|" "$l5"
   echo "$l5" | grep -qiE "nsqlt_no_such_pkg[^|]*\|true\|" && bad "⑤ 없는 패키지가 known 링크가 됐다" "$l5" || ok "⑤ 모르는 패키지(nsqlt_no_such_pkg.foo · 호출 자리)는 링크 아님"
 else bad "⑤ 링크 덤프 없음" "$(tail -3 "$OUT/gui5.stderr")"; fi
-# ⑥ 사용자 10-01 ㉗-f: SQLEDU 계정으로 접속해 **소문자** `trx_demand`를 첫 시도에 바로가기(Tables 미확장 상태 · 재시도 없음).
+# ⑥ 사용자 10-01 ㉗-f: EDU01 계정으로 접속해 **소문자** `trx_demand`를 첫 시도에 바로가기(Tables 미확장 상태 · 재시도 없음).
 if has_prof "$SECOND"; then
 say "--- ⑥ $SECOND 계정 · 소문자 trx_demand · 첫 시도"
 F6="$OUT/t6.sql"; printf 'SELECT\n\t*\nFROM\n\ttrx_demand A\nWHERE 1=1\n;\n' > "$F6"; S6="$OUT/sel6.txt"; D6="$OUT/tree6.txt"; rm -f "$S6" "$D6"; fw6=$(cygpath -w "$F6" 2>/dev/null || echo "$F6")
@@ -110,7 +110,7 @@ if [ -s "$S6" ]; then
   t6=$(cat "$D6" 2>/dev/null); chk "⑥ 트리에 TRX_DEMAND 행(Tables 펼쳐짐)" "\|object\|TRX_DEMAND\|" "$t6"
 else bad "⑥ 선택 경로 없음" "$(tail -3 "$OUT/gui6.stderr")"; fi
 else sk "⑥ 건너뜀: 프로필 $SECOND 없음(이 PC 볼트)"; fi
-# ⑦ 사용자 10-01 ㉗-g: BISCM_SB(-b) 접속 뒤 BISCM(-p) 추가 → 첫 시도에 "탐색기에서 보기" 활성(`reveal=true`) + 선택 + 화면 안.
+# ⑦ 사용자 10-01 ㉗-g: APPDB_SB(-b) 접속 뒤 APPDB(-p) 추가 → 첫 시도에 "탐색기에서 보기" 활성(`reveal=true`) + 선택 + 화면 안.
 if has_prof "$THIRD"; then
 say "--- ⑦ $THIRD 접속 뒤 $PROFILE 추가 · 첫 시도 메뉴 활성·바로가기"
 F7="$OUT/t7.sql"; cp "$F1" "$F7"; S7="$OUT/sel7.txt"; L7="$OUT/links7.txt"; rm -f "$S7" "$L7"; fw7=$(cygpath -w "$F7" 2>/dev/null || echo "$F7")
@@ -123,7 +123,7 @@ if [ -s "$L7" ] && [ -s "$S7" ]; then
   chk "⑦ 선택 행이 화면 안" "^visible=true$" "$s7"
 else bad "⑦ 덤프 없음(links $([ -s "$L7" ] && echo o || echo x) · sel $([ -s "$S7" ] && echo o || echo x))" "$(tail -3 "$OUT/gui7.stderr")"; fi
 else sk "⑦ 건너뜀: 프로필 $THIRD 없음(이 PC 볼트)"; fi
-# ⑧ 사용자 10-01 ㉗-k: **메뉴 경로** — SQLEDU 접속 → 새 편집창 → 붙여넣기 → 같은 탭에 BISCM 추가 → 우클릭 메뉴 열기(`objlink.menu`) →
+# ⑧ 사용자 10-01 ㉗-k: **메뉴 경로** — EDU01 접속 → 새 편집창 → 붙여넣기 → 같은 탭에 APPDB 추가 → 우클릭 메뉴 열기(`objlink.menu`) →
 #    항목으로 가는 동안 선적재 응답으로 재분석되는 상황을 강제(`objlink.resync`) → 항목 확정(`objlink.pick:objlink.reveal`) = 첫 시도에 선택.
 #    (종전엔 재분석이 `menu_link`를 지워 항목을 눌러도 아무 동작도 하지 않았다 — 사용자 로그 `[objlink] menu … reveal=true` 뒤 `[reveal]` 없음)
 if has_prof "$SECOND"; then
@@ -134,7 +134,7 @@ NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:file.new,@after:4000:editor.past
 if [ -s "$S8" ]; then
   p8=$(cat "$P8" 2>/dev/null); s8=$(cat "$S8"); l8=$(cat "$L8" 2>/dev/null)
   say "        > 5) $(echo "$p8" | head -1)"; say "        > 7) $(echo "$s8" | head -2 | tr '\n' ' ')"
-  chk "⑧ 5) BISCM 추가 접속 뒤 탐색기 = BISCM 칸 현재 스키마로 이동(㉗-j)" "^BISCM / BISCM$" "$(echo "$p8" | head -1)"
+  chk "⑧ 5) APPDB 추가 접속 뒤 탐색기 = APPDB 칸 현재 스키마로 이동(㉗-j)" "^APPDB / APPDB$" "$(echo "$p8" | head -1)"
   chk "⑧ 메뉴 확정이 동작에 닿음(로그 pick)" "\[objlink\] pick id=objlink.reveal link=" "$l8"
   chk "⑧ 7) 첫 시도에 선택 = $PROFILE / Tables / $TABLE" "/ $PROFILE / Tables( \([0-9]+\))? / $TABLE\$" "$s8"
   chk "⑧ 선택 행이 화면 안" "^visible=true$" "$s8"

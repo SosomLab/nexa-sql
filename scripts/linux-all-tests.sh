@@ -3,7 +3,7 @@
 #   3-OS 검사(check-3os.sh) → 실서버 통합(**저장된 프로필 이름**으로 · 비밀번호는 환경에 안 적음) → CLI 기능 점검. 결과 = <out>/summary.txt + 단계별 로그.
 #
 # 사용:  scripts/linux-all-tests.sh -o /tmp/nsql-tests [-u ../nexa-ui]
-#        실서버: NSQL_ORACLE_PROFILE=BISCM NSQL_MSSQL_PROFILE=M4PLAN NSQL_PG_PROFILE=Repository scripts/linux-all-tests.sh -o …
+#        실서버: NSQL_ORACLE_PROFILE=APPDB NSQL_MSSQL_PROFILE=PLANDB NSQL_PG_PROFILE=Repository scripts/linux-all-tests.sh -o …
 #        (Oracle 수동 지정 테스트는 NSQL_ORACLE_CLIENT_DIR_TEST — 없으면 $ORACLE_IC_HOME · 둘 다 없으면 건너뜀)
 #        IT=0 이면 실서버 단계를 건너뛴다. ⚠ 통합 테스트는 실서버에 임시 객체(`nexa_it` · `nsql_it_*` · `#…` · `pg_temp`)를 만들고 지운다.
 set -u

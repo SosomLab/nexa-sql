@@ -144,7 +144,7 @@ JOIN 조건 완성(FK 대상 정보가 메타에 들어온 뒤) · hover 카드(
 ### 사용자 프로시저 인자(10-08)
 
 - **SQL Server**: `EXEC PROC_TEST ` 뒤(또는 `, ` 뒤)에서 Ctrl+Space를 누르면 그 프로시저의 `@인자`가 타입과 함께 나옵니다(예 `@VS_PROJECT_CD VARCHAR(100)`). 처음 한 번은 서버에서 인자 목록을 읽느라 "불러오는 중"이 잠깐 보이고, 오면 목록이 채워집니다. 이미 쓴 `@인자`는 빠집니다. T-SQL은 괄호 없는 `EXEC proc @a = 1, @b = 2` 꼴이 표준입니다(괄호는 오류).
-- **이름 지정 인자(Oracle · PostgreSQL)**: `EXEC BISCM.SP_TEST1(` 또는 `SELECT fn(`의 인자 시작(`(`·`,` 뒤)에서 Ctrl+Space를 누르면 `p_pjt_code => ` 같은 **이름 지정 인자 조각**이 나옵니다. 이미 `이름 =>`로 적은 인자는 빠집니다.
+- **이름 지정 인자(Oracle · PostgreSQL)**: `EXEC APPDB.SP_TEST1(` 또는 `SELECT fn(`의 인자 시작(`(`·`,` 뒤)에서 Ctrl+Space를 누르면 `p_pjt_code => ` 같은 **이름 지정 인자 조각**이 나옵니다. 이미 `이름 =>`로 적은 인자는 빠집니다.
 - 값을 쓰는 자리(`= ` 뒤 · `=> ` 뒤)에서는 인자 목록이 뜨지 않습니다.
 
 ### SQL Server 3부 이름(10-01)

@@ -2,7 +2,7 @@
 # mac-bulk-e2e.sh — 대량 적재(`nsql import`) E2E(docs/89 · T-236 · 09-26). CLI만(키 주입 0) · 격리 홈 · SQLite ①~③ + 실서버(선택) 임시 표 NSQLT_BULK.
 #   ① 1,000행 csv 적재 → 건수·값 ② 중복 PK로 500번째 행 실패 → "row 500 (line 501)" 지목 · 그 앞 499행 커밋 ③ tsv + --no-header --cols + --map
 #   -P <실제 설정 폴더> -d 프로필:방언,… = 실서버(임시 표 생성 → 5,000행 적재 → 건수 → DROP · 61 §2-4 ⑤) · rows/s 출력(89 실측).
-# 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS]
+# 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d APPDB:oracle,Repository:postgres,PLANDB:mssql:PLANDB_MS]
 #   `프로필:방언[:DB]` — 셋째 조각(선택) = SQL Server 임시 표를 만들 DB(로그인 기본 DB가 master일 때 · T-309 ④) · 파이썬 = `NSQL_PYTHON` 우선(T-309 ③).
 #   Oracle 경로 기대 = 드라이버별(T-346 ④ · 10-15): 기본 Thin(D-278)은 배열 DML 미지원 → `multirow` · OCI = `arraydml`. OCI를 재려면 `NSQL_ORACLE_DRIVER=oci`(격리 홈의 `oracle.driver`).
 set -u

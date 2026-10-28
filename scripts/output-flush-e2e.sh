@@ -9,7 +9,7 @@
 #   | SQLite | 서버 메시지 없음 · 클라이언트 PROMPT만 | 문장 사이 PROMPT 즉시 · 무거운 질의 중엔 수단 없음 |
 #   격리 홈 + 실제 프로필 **사본**(-P · 비밀번호는 봉투 그대로) · 키 주입 0 · NSQL_NO_ACTIVATE · 내가 띄운 PID만 종료 · 실서버 = NSQLT_* 임시 객체만(DROP은 -x).
 # 사용: scripts/output-flush-e2e.sh -o <출력> [-P <실제 설정 폴더>] [-m <SQL Server 프로필>] [-p <PG 프로필>] [-r <Oracle 프로필>] [-s] [-x] [-e app] [-n nsql]
-#   -s = SQLite(프로필을 스크립트가 만든다 · -P 불필요) · 서버 케이스는 -P 필수 · 예: -P ~/Library/Application\ Support/nexa-sql -m M4PLAN -p Repository -r BISCM -s
+#   -s = SQLite(프로필을 스크립트가 만든다 · -P 불필요) · 서버 케이스는 -P 필수 · 예: -P ~/Library/Application\ Support/nexa-sql -m PLANDB -p Repository -r APPDB -s
 #   -x = 끝에 임시 프로시저 DROP(기본 = **남긴다** · 사용자가 직접 실행해 볼 수 있게 · 10-17 협업 세션이 사용자에게 알린 상태와 같게 · NSQLT_* = 61 §2-4 ⑤ 임시 객체)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

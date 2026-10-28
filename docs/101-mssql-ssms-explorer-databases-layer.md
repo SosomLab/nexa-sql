@@ -13,11 +13,11 @@
 ## 2. 목표 골격(SSMS 대조 · SQL Server에만 적용 · Oracle/PG/MySQL/SQLite는 종전 트리)
 
 ```
-[서버 헤더]  172.16.1.58:1433 (SQL Server 15.0.4375.4 - BISCM_MS)        연결 1개
- └ 연결 행    BISCM_MS · M4PLAN                             현재 DB: BISCM_MS
+[서버 헤더]  172.16.1.58:1433 (SQL Server 15.0.4375.4 - APPDB_MS)        연결 1개
+ └ 연결 행    APPDB_MS · PLANDB                             현재 DB: APPDB_MS
     ├ 📁 데이터베이스
     │   ├ 📁 시스템 데이터베이스        master · model · msdb · tempdb
-    │   ├ 🛢 BISCM_MS  (현재)          ← 굵게 + 흐린 "(현재)" · 접속 직후 자동 펼침
+    │   ├ 🛢 APPDB_MS  (현재)          ← 굵게 + 흐린 "(현재)" · 접속 직후 자동 펼침
     │   │   ├ 📁 테이블                 dbo.TB_A · sales.TB_B …(스키마 접두 · 스키마 층 없음)
     │   │   ├ 📁 뷰
     │   │   ├ 📁 외부 리소스 ▸ 외부 테이블
@@ -25,7 +25,7 @@
     │   │   ├ 📁 프로그래밍 기능 ▸ 저장 프로시저 · 함수 · 데이터베이스 트리거 · 형식 · 시퀀스
     │   │   ├ 📁 스토리지 ▸ 파일 그룹 · 파티션 구성표/함수            (2차)
     │   │   └ 📁 보안 ▸ 사용자 · 역할 · 스키마
-    │   ├ 🛢 JPN_POC · LOTTE_SNOP · M4PLAN_MS · …
+    │   ├ 🛢 JPN_POC · CUSTB_DEMO · PLANDB_MS · …
     ├ 📁 보안 ▸ 로그인 · 서버 역할                                  (2차)
     └ 📁 서버 개체 ▸ 연결된 서버 · (백업 장치 · 트리거 = 2차)
 ```
@@ -99,7 +99,7 @@
 | **D-250** | 현재 DB가 바뀌면 메타 = 비우고 다시(L1 → L2) | **그 방식**(= 스키마 바뀜과 같은 길) | 캐시 L1 디스크 키에 DB 포함 |
 | **D-251** | 시스템 DB(master · model · msdb · tempdb) = 하위 폴더로 분리(SSMS) | **분리** · `explorer.mssql_system_dbs` 숨김 가능 | |
 | **D-252** | 연결된 서버 수정 = Open script(재생성 스크립트) · 대화상자 없음 | **스크립트** | 비밀번호 자리표시 |
-| **D-253** | 서버 헤더 = `호스트:포트 (SQL Server 버전 - 로그인)` · 다른 방언도 같은 틀(`Oracle 19c - BISCM` · `PostgreSQL 16 - postgres`) | **전 방언**(버전 질의 1회 · `Resp::Opened`) | 2차는 Oracle/PG 버전 |
+| **D-253** | 서버 헤더 = `호스트:포트 (SQL Server 버전 - 로그인)` · 다른 방언도 같은 틀(`Oracle 19c - APPDB` · `PostgreSQL 16 - postgres`) | **전 방언**(버전 질의 1회 · `Resp::Opened`) | 2차는 Oracle/PG 버전 |
 
 ## 7. 할 일
 

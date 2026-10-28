@@ -5,11 +5,11 @@
 #   ① 첫 F5: SHOW CONN 메시지로 Output 탭이 켜져도(`output.activate = no_results`) 결과 셋이 오면 **결과 탭으로 돌아온다** · 행 수 1
 #   ② 둘째 F5(Output이 활성인 채 실행): 결과는 Output 자리표시가 아니라 **가장 최근 결과 탭**으로 가고 그 탭이 활성(㉘-b "2행 가져옴인데 결과 탭이 비어 있다")
 #
-# 사용: scripts/win-output-result-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-p BISCM] [-P <실제 설정 폴더>]
+# 사용: scripts/win-output-result-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-p APPDB] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="BISCM"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="APPDB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui-exe] [-p profile] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"

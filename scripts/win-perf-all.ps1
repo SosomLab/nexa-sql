@@ -52,14 +52,14 @@ if (-not (Test-Path -LiteralPath $sql2m)) {
     while ($sb.Length -lt 2MB) {
         $i++
         [void]$sb.AppendLine("-- statement $i")
-        [void]$sb.AppendLine("SELECT a.id, a.name, a.amount, a.created_at FROM orders a WHERE a.project_cd = 'SEBANG' AND a.id > $i ORDER BY a.id;")
+        [void]$sb.AppendLine("SELECT a.id, a.name, a.amount, a.created_at FROM orders a WHERE a.project_cd = 'ACME' AND a.id > $i ORDER BY a.id;")
     }
     Set-Content -LiteralPath $sql2m -Value $sb.ToString() -Encoding UTF8
 }
 if (-not (Test-Path -LiteralPath $rowsSql)) {
     Set-Content -LiteralPath $rowsSql -Encoding UTF8 -Value @"
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 100000)
-SELECT i AS id, 'name_' || i AS name, i * 1.5 AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
+SELECT i AS id, 'name_' || i AS name, i * 1.5 AS amount, 'ACME' AS project_cd, 'memo ' || i AS memo FROM n;
 "@
 }
 if (-not (Test-Path -LiteralPath $projFile)) {

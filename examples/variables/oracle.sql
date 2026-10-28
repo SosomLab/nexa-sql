@@ -10,7 +10,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 
---	CONNECT oracle://BISCM@172.16.1.58:1521/BISCM
+--	CONNECT oracle://APPDB@172.16.1.58:1521/APPDB
 
 
 -- ── 1. 선언 · 리터럴 대입 (DB 왕복 0) ──────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ DROP PROCEDURE NSQLT_VARS_DEMO;
 VAR V_OWNER SHARE
 VAR V_OWNER LOCAL
 -- [§11-3] 글로벌 = 모든 서버·탭 공통 · 디스크 보존(vars/global.sql) · 명시 선언으로만 생긴다. 선언 + 층 한 줄(타입·값 포함).
-VAR G_PROJECT VARCHAR2(30) = 'SEBANG' GLOBAL
+VAR G_PROJECT VARCHAR2(30) = 'ACME' GLOBAL
 VAR G_LIMIT GLOBAL
 -- [§11-4 D-264] 대입은 그 이름이 **사는 층**에 — G_LIMIT는 글로벌이라 글로벌 값이 3이 된다(SELECT INTO · OUT도 같다).
 EXEC :G_LIMIT := 3

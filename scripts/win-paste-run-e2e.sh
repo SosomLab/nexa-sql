@@ -5,7 +5,7 @@
 #   키·마우스 주입 0(docs/61 §4) · 실서버 임시 객체는 끝에 지운다(§2-4 ⑤).
 #
 # 사용: scripts/win-paste-run-e2e.sh -o <출력폴더> [-e target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-P <실제 설정 폴더>]
-#        [-p "BISCM:oracle,Repository:postgres,M4PLAN:mssql[:DB]"]
+#        [-p "APPDB:oracle,Repository:postgres,PLANDB:mssql[:DB]"]
 #   셋째 조각(선택 · mssql) = 임시 객체를 만들 데이터베이스 — 로그인 기본 DB가 master처럼 CREATE 권한이 없는 곳이면 지정
 #   (grid-edit의 `-d 프로필:mssql:DB` 규칙과 같음 · 121차 win). 지정하면 CLI 스크립트·붙여넣기 파일 앞에 `USE [DB]` + `GO`를 두고,
 #   `nsql cat source`는 3부 이름 `DB..객체`로 읽는다.
@@ -13,7 +13,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; OUT=""; PROF="${APPDATA:-}/nexa-sql"
-PROFILES="BISCM:oracle,Repository:postgres,M4PLAN:mssql:M4PLAN_MS"
+PROFILES="APPDB:oracle,Repository:postgres,PLANDB:mssql:PLANDB_MS"
 while getopts "o:e:n:P:p:" o; do case $o in o) OUT=$OPTARG;; e) EXE=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;; p) PROFILES=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; mkdir -p "$H"; REPORT="$OUT/paste-run-e2e.txt"; : > "$REPORT"

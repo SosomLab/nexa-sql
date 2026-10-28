@@ -47,7 +47,7 @@
 | DBMS | 서버 | 판정 표 | 걸린 시간 |
 |---|---|---|---|
 | Oracle | 19c · AL32UTF8 | 20/20 OK | 5.8 s |
-| SQL Server | 2019 · `USE M4PLAN_MS` | 22/22 OK | — |
+| SQL Server | 2019 · `USE PLANDB_MS` | 22/22 OK | — |
 | PostgreSQL | Repository | 22/22 OK | — |
 | SQLite | 3.46 | 19/19 OK | 0.16 s |
 

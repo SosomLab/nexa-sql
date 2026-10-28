@@ -11,7 +11,7 @@
 │                                        환경변수 NSQL_HOME이 있으면 그 폴더(테스트 · 개발용 재지정)
 ├─ device.key                            기기 키 32B — Windows: "NSDK"‖ver‖DPAPI 블롭 · 그 외: 평문 0600
 └─ profiles/<해시>.conf                  프로필 1개 = 파일 1개(nexa-conf key=value · 원자적 쓰기) · 해시 = SHA-256(이름) 앞 16 hex · 이름은 안의 `name=`
-                                         (09-22 92차 · 종전 `<이름>.conf`는 읽기 호환 · 저장 시 이관 — 대/소문자 무시 FS에서 `biscm`→`BISCM` 이름 변경이 프로필을 지우던 결함)
+                                         (09-22 92차 · 종전 `<이름>.conf`는 읽기 호환 · 저장 시 이관 — 대/소문자 무시 FS에서 `appdb`→`APPDB` 이름 변경이 프로필을 지우던 결함)
      _schema=1
      dialect=oracle  user=scott  host=db  port=1521  database=orcl  role=SYSDBA
      secret=<hex>                        비밀번호 봉투만 암호화 — 나머지는 평문(목록에 보여야 하는 값)
@@ -78,9 +78,9 @@ nexa-sql --help                      # 사용법
 
 | 쓴 모양 | 뜻 | 동작 |
 |---|---|---|
-| `oracle://BISCM@host:1521/BISCM` | 비밀번호 **없음**(`None`) | GUI = 입력 창으로 한 번 묻는다 · CLI = 숨김 프롬프트(또는 `NSQL_PASSWORD`) |
-| `oracle://BISCM:@host:1521/BISCM` | 빈 비밀번호를 **명시**(`Some("")`) | 묻지 않고 그대로 접속 |
-| `oracle://BISCM:pw@host:1521/BISCM` | 그 값 | 그대로 접속 |
+| `oracle://APPDB@host:1521/APPDB` | 비밀번호 **없음**(`None`) | GUI = 입력 창으로 한 번 묻는다 · CLI = 숨김 프롬프트(또는 `NSQL_PASSWORD`) |
+| `oracle://APPDB:@host:1521/APPDB` | 빈 비밀번호를 **명시**(`Some("")`) | 묻지 않고 그대로 접속 |
+| `oracle://APPDB:pw@host:1521/APPDB` | 그 값 | 그대로 접속 |
 
 **원칙 = 사본 최소 · 쓰자마자 지움 · 디스크 저장 0.** 재사용은 **세션 자격 금고**(아래)가 맡는다 — 평문이 아니라 봉투로, 이번 실행 동안만.
 

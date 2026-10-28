@@ -41,13 +41,13 @@ $sql65m = Join-Path $DataDir "big65m.sql"
 $eightSql = Join-Path $DataDir "rows8x10k.sql"
 if (-not (Test-Path -LiteralPath $sql2m)) {
     $sb = New-Object Text.StringBuilder; $i = 0
-    while ($sb.Length -lt 2MB) { $i++; [void]$sb.AppendLine("-- statement $i"); [void]$sb.AppendLine("SELECT a.id, a.name, a.amount, a.created_at FROM orders a WHERE a.project_cd = 'SEBANG' AND a.id > $i ORDER BY a.id;") }
+    while ($sb.Length -lt 2MB) { $i++; [void]$sb.AppendLine("-- statement $i"); [void]$sb.AppendLine("SELECT a.id, a.name, a.amount, a.created_at FROM orders a WHERE a.project_cd = 'ACME' AND a.id > $i ORDER BY a.id;") }
     Set-Content -LiteralPath $sql2m -Value $sb.ToString() -Encoding UTF8
 }
 if (-not (Test-Path -LiteralPath $rowsSql)) {
     Set-Content -LiteralPath $rowsSql -Encoding UTF8 -Value @"
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 100000)
-SELECT i AS id, 'name_' || i AS name, i * 1.5 AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
+SELECT i AS id, 'name_' || i AS name, i * 1.5 AS amount, 'ACME' AS project_cd, 'memo ' || i AS memo FROM n;
 "@
 }
 if (-not (Test-Path -LiteralPath $sql65m)) {
@@ -61,7 +61,7 @@ if (-not (Test-Path -LiteralPath $eightSql)) {
     $sb = New-Object Text.StringBuilder
     for ($k = 1; $k -le 8; $k++) {
         [void]$sb.AppendLine("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 10000)")
-        [void]$sb.AppendLine("SELECT i AS id, 'q$k' || i AS name, i * 1.5 AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;")
+        [void]$sb.AppendLine("SELECT i AS id, 'q$k' || i AS name, i * 1.5 AS amount, 'ACME' AS project_cd, 'memo ' || i AS memo FROM n;")
     }
     Set-Content -LiteralPath $eightSql -Value $sb.ToString() -Encoding UTF8
 }

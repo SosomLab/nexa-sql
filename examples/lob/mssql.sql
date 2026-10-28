@@ -17,7 +17,7 @@
 --   7 EMPTY      길이 0(빈 값)  ·  8 NULLS  NULL — 둘은 다르게 보여야 한다
 --   9 BIN_1MB    0123456789ABCDEF 반복 1,048,576 bytes(이미지 아닌 큰 이진 = Hex 보기)
 
--- USE M4PLAN_MS;
+-- USE PLANDB_MS;
 
 -- ── 0. 정리(있으면 지움) ─────────────────────────────────────────────────────────────────────
 DROP TABLE IF EXISTS dbo.NSQLT_LOB;

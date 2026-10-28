@@ -23,7 +23,7 @@
      ─────────────────────────────────────────────
      ▾ Script_3 (메모리 탭)                                 2
          12:  SELECT * FROM M4S_I002040 A
-         40:  AND A.PROJECT_CD = 'SEBANG'
+         40:  AND A.PROJECT_CD = 'ACME'
      ▾ 이슈관리/2026-09-01.sql                               1
          7:   -- 1433 포트 …
      ▸ Oracle/sp_m4p_mp_version_create.sql                  3
@@ -60,14 +60,14 @@
 ```json
 { "version": 1,
   "root": ".",                              // project.json이 있는 폴더 기준
-  "folders": ["D:/Projects/sebang/2026-sebang-snop/이슈관리", "../Oracle"],   // ③ 지정 폴더(상대 = root 기준)
+  "folders": ["D:/Projects/acme/<프로젝트>/이슈관리", "../Oracle"],   // ③ 지정 폴더(상대 = root 기준)
   "tabs": [
     { "path": "scripts/a.sql", "caret": 120, "scroll": 3, "encoding": "utf8", "indent": [4, true] },
     { "title": "Script_3", "memory": "SELECT ...", "caret": 0 }            // 메모리 탭 = 본문 자체를 저장
   ],
   "active": 1,
   "search": { "where_history": ["<current file>, ../Oracle"], "queries": ["1433"] },
-  "connection": "biscm"                      // 프로필 이름만(비밀번호는 vault)
+  "connection": "appdb"                      // 프로필 이름만(비밀번호는 vault)
 }
 ```
 - 저장 시점: 탭 열기/닫기/이동 · 5초 디바운스 자동 저장 · 종료 시. 메모리 탭 본문은 `hot exit`처럼 매번 통째로(상한 `project.memory_tab_max_kb` 기본 512 · 넘으면 파일로 저장 권유).

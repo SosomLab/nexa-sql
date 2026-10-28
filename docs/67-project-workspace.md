@@ -38,13 +38,13 @@
 ```jsonc
 // my.nsql-project  (어디에나 · VCS)
 { "version": 1,
-  "folders": [ { "path": "D:/Projects/sebang/2026-sebang-snop/이슈관리", "name": "이슈관리", "exclude": ["target", ".git"] },
+  "folders": [ { "path": "D:/Projects/acme/<프로젝트>/이슈관리", "name": "이슈관리", "exclude": ["target", ".git"] },
                { "path": "../Oracle" } ],                     // 상대 = 이 파일 기준(Sublime·VS Code 규약)
   "settings": { "editor.tab_size": 4 } }                      // 선택 · 이 프로젝트에서만 덮어씀(24 계층 · 2차)
 
 // my.nsql-workspace  (프로젝트 옆 · 개인용 · .gitignore 권장)
 { "version": 1, "project": "my.nsql-project",
-  "tabs": [ { "id": 17, "path": "이슈관리/2026-09-01.sql", "caret": 120, "scroll": 3, "enc": "utf8", "conn": "BISCM" },
+  "tabs": [ { "id": 17, "path": "이슈관리/2026-09-01.sql", "caret": 120, "scroll": 3, "enc": "utf8", "conn": "APPDB" },
             { "id": 18, "title": "Script_3", "backup": true, "caret": 0 } ],   // 메모리 탭 = 본문은 backups/에
   "active": 18, "expanded": ["이슈관리/"], "open_files_h": 5,
   "search": { "where": ["<project>"], "queries": ["1433"] } }

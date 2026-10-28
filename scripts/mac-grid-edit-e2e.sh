@@ -6,7 +6,7 @@
 #   (PK 표 · 키 없는 표 · DATE 열)로 ⑤⑥⑨⑩ 저장 실증 뒤 DROP(실서버 임시 객체 · 61 §2-4 ⑤).
 #   결과 = 표준 출력 PASS/FAIL 줄 + 종료 코드. 앱은 비활성(NSQL_NO_ACTIVATE)으로 띄우고 마지막 명령 + 5 s 여유(App Nap · 61 §4).
 # 사용: scripts/mac-grid-edit-e2e.sh [-e target/debug/nexa-sql] [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d 프로필:방언,…]
-#   4-DBMS 실서버: -P "$HOME/Library/Application Support/nexa-sql" -d BISCM:oracle,Repository:postgres,M4PLAN:mssql (사용자 09-26)
+#   4-DBMS 실서버: -P "$HOME/Library/Application Support/nexa-sql" -d APPDB:oracle,Repository:postgres,PLANDB:mssql (사용자 09-26)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
@@ -16,7 +16,7 @@ case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) H="$(cygpath -m "$ROOT")
 PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
 while getopts "e:n:H:P:d:" o; do case $o in e) APP=$OPTARG;; n) NSQL=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
 D="$H/data"; O="$H/out"; rm -rf "$H"; mkdir -p "$D" "$O"
-# -P <실제 설정 폴더>: 프로필·기기 키를 격리 홈으로 **복사**(실제 폴더는 건드리지 않음) → 이름 접속(BISCM · M4PLAN · Repository)으로 실서버 스위트.
+# -P <실제 설정 폴더>: 프로필·기기 키를 격리 홈으로 **복사**(실제 폴더는 건드리지 않음) → 이름 접속(APPDB · PLANDB · Repository)으로 실서버 스위트.
 if [ -n "$PROF" ] && [ -d "$PROF/profiles" ]; then cp -R "$PROF/profiles" "$H/"; cp "$PROF/device.key" "$H/" 2>/dev/null; fi
 fail=0; pass=0
 ok() { echo "PASS  $1"; pass=$((pass+1)); }
@@ -160,7 +160,7 @@ fi
 # ── 실서버 스위트(방언 공통 4 시나리오 · 임시 표 NSQLT_GE(PK)·NSQLT_GE2(키 없음) 생성 → 시험 → DROP · 61 §2-4 ⑤)
 #   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql|mysql> <라벨> [DB]   (mysql = 10-22 T-387 · 키 없는 표 = AllColumns)
 #   DB(선택 · mssql) = 임시 표를 만들 데이터베이스 — 로그인의 기본 DB가 master처럼 CREATE 권한이 없는 곳이면
-#   (10-06 Windows 전수: M4PLAN 로그인 BISCM_MS 기본 DB = master → Msg 262) 모든 문장 앞에 `USE <DB>;`를 둔다.
+#   (10-06 Windows 전수: PLANDB 로그인 APPDB_MS 기본 DB = master → Msg 262) 모든 문장 앞에 `USE <DB>;`를 둔다.
 dbms_suite() {
   local T=$1 dl=$2 tag=$3 db=${4:-} pk kind
   case $dl in
@@ -283,8 +283,8 @@ PYCLOB
   cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1
 }
 if [ -n "${NSQL_E2E_ORACLE:-}" ]; then NSQL_HOME="$H" "$NSQL" conn add ORA "$NSQL_E2E_ORACLE" -d oracle --no-prompt >/dev/null 2>&1; dbms_suite ORA oracle Oracle; fi
-# -d "BISCM:oracle,Repository:postgres,M4PLAN:mssql[:DB]"(또는 NSQL_E2E_DBMS) = 격리 홈으로 복사한 프로필 이름으로 실서버 스위트.
-#   셋째 조각(선택) = mssql 임시 표를 만들 DB(예 M4PLAN:mssql:M4PLAN_MS).
+# -d "APPDB:oracle,Repository:postgres,PLANDB:mssql[:DB]"(또는 NSQL_E2E_DBMS) = 격리 홈으로 복사한 프로필 이름으로 실서버 스위트.
+#   셋째 조각(선택) = mssql 임시 표를 만들 DB(예 PLANDB:mssql:PLANDB_MS).
 if [ -n "$DBMS" ]; then
   IFS=',' read -ra PAIRS <<< "$DBMS"
   for pr in "${PAIRS[@]}"; do

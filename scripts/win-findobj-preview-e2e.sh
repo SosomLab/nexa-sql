@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # win-findobj-preview-e2e.sh — 객체 찾기 **미리보기 반응**(검색 중 · 마우스 클릭 vs 방향키) 계측 시나리오(docs/113 §5-4 · 10-16).
-#   사용자 지시: "BISCM 프로필로 연결해 ITEM_CD로 조회한 뒤 View/Procedure가 검색 중에 이동되는지 확인하고 마우스 클릭과 방향키 이동의 차이를 확인"
+#   사용자 지시: "APPDB 프로필로 연결해 ITEM_CD로 조회한 뒤 View/Procedure가 검색 중에 이동되는지 확인하고 마우스 클릭과 방향키 이동의 차이를 확인"
 #   맹점 보완(사용자 "컨트롤이 받는 사건만 재면 같게 측정된다"): 클릭은 **OS 사건과 같은 길**(`findobj_window_event` = CursorMoved+Pressed+Released)로
 #   합성해 창 안 모든 분기를 지나고(`consumed=`로 누가 먹었나 판정) · 계측 사슬 = `[preview] <src> · os-wait · event→intent · queued · handled` →
 #   `[preview] <src> · same tab|new object · event→text` → `[preview] <src> · painted · event→frame`(log.dump).
 #   격리 홈 + 실제 프로필 **사본**(-P · 실제 폴더는 건드리지 않음) · 키 주입 0 · 실서버는 읽기만(소스 조회).
-# 사용: scripts/win-findobj-preview-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-c BISCM] [-q ITEM_CD] [-k View] [-g exe] [-n nsql]
+# 사용: scripts/win-findobj-preview-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-c APPDB] [-q ITEM_CD] [-k View] [-g exe] [-n nsql]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; PROF=""; CONN="BISCM"; Q="ITEM_CD"; KIND="View"; MINSRC=2
+OUT=""; PROF=""; CONN="APPDB"; Q="ITEM_CD"; KIND="View"; MINSRC=2
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:c:q:k:m:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; q) Q=$OPTARG;; k) KIND=$OPTARG;; m) MINSRC=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real NSQL_HOME> [-c profile] [-q query] [-k View|Procedure] [-g gui] [-n nsql]"; exit 2; }

@@ -48,7 +48,7 @@
 | ~~`objlink.click`~~ → **Ctrl 키 분류 `ctrl.*`**(10-20 D-313 · RENAMED `objlink.click`→`ctrl.click` · 옛 값 copy/reveal 1:1) | — | **Ctrl 클릭 3키**: `ctrl.click` = **caret(기본)** 다중 캐럿 추가/제거 \| copy 설명 복사 \| reveal 객체 탐색기에서 보기(못 풀면 복사) · `ctrl.right_click` = **editor(기본)** 편집기 메뉴 \| link_menu 링크 메뉴(설명 복사 · 이름 - 설명 복사 · 탐색기에서 보기) · `ctrl.shift_click` = **name_desc(기본)** `이름 - 설명` 복사 \| desc 설명만 \| editor 편집기로 · 순수 판정 `ctrl_click_arms_link(click, shift_click, shift)` · `ctrl_rclick_links`(MC/DC) · 밑줄·툴팁·hover 카드(설명 복사 버튼)·F4는 그대로 · 경과 = D-312(10-20 `objlink.click` off 기본) → D-313(분류 분리) |
 | `objlink.hover_ms` | 700 | **머무름 툴팁**(10-05 · T-179 ③ 첫 걸음): Ctrl 없이 포인터가 객체 이름 위에 이만큼 머물면 설명 툴팁만(밑줄·클릭 동작 없음) · 0 = 끔(Ctrl 때만) · 범위 0~5000 · 77 §1-3의 `intel.hover_ms` 자리이나 키는 `objlink.*` 묶음 |
 | `objlink.card_buttons` | on | **hover 카드 동작 버튼**(10-06 · T-179 완료): 머무름 툴팁 아래 버튼 셋(객체 탐색기에서 보기 · 데이터 200행 보기 · 설명 복사) · 포인터가 카드로 옮겨 가도 유지 · 버튼 실행 뒤 닫힘 · off = 종전 글만 툴팁 |
-| `objlink.show_schema` | off | 툴팁·상태줄 이름에 스키마 접두(`BISCM.TB_ORDER`) · 끄면 이름만(컬럼 = `테이블.컬럼`) — 사용자 09-29 |
+| `objlink.show_schema` | off | 툴팁·상태줄 이름에 스키마 접두(`APPDB.TB_ORDER`) · 끄면 이름만(컬럼 = `테이블.컬럼`) — 사용자 09-29 |
 | `objlink.line_color` | (빈 = 테마 강조색) | 정상 객체 밑줄 색 `#RRGGBB` |
 | `objlink.line_width` | 1 | 정상 객체 밑줄 두께 px(0~4 · 0 = 밑줄 없음) |
 | `objlink.line_style` | solid | 정상 객체 밑줄 모양 solid/dashed/dotted/wavy/wavy_dashed |
@@ -78,9 +78,9 @@
 
 | 상황 | 결과 |
 |---|---|
-| BISCM 세션에서 `trx_demand`(BISCM에 없음 · SQLEDU에 있음) | **미확인**(벽돌색 · "현재 연결에 없는 객체") — 스키마 없는 이름은 세션의 현재 스키마 + PUBLIC에서만 |
-| SQLEDU 세션에서 `trx_demand` | 정상 + 설명 |
-| BISCM 세션에서 `SQLEDU.trx_demand` | BISCM 계정이 그 메타를 수집했다면(= 권한이 있어 보였다) 정상 + 설명 · 다른 계정이 수집한 것이면 미확인 |
+| APPDB 세션에서 `trx_demand`(APPDB에 없음 · EDU01에 있음) | **미확인**(벽돌색 · "현재 연결에 없는 객체") — 스키마 없는 이름은 세션의 현재 스키마 + PUBLIC에서만 |
+| EDU01 세션에서 `trx_demand` | 정상 + 설명 |
+| APPDB 세션에서 `EDU01.trx_demand` | APPDB 계정이 그 메타를 수집했다면(= 권한이 있어 보였다) 정상 + 설명 · 다른 계정이 수집한 것이면 미확인 |
 | DB1·DB2 동시 접속 · DB2가 DB1 스키마를 수집 · DB1 세션이 DB2 스키마를 봄 | 메타에는 있지만 DB1 세션에는 **없는 객체** |
 
 **규칙(`schema_visible` · 순수)** = 객체 스키마가 ① 세션의 현재 스키마(서버 답 `current_schema` → 접속 `?schema=` → 사용자) ② `PUBLIC`
@@ -92,13 +92,13 @@
 기준으로 근사). SQL Server: 스키마 = `SCHEMA_NAME()`(기본 dbo) · DB 간은 `db.schema.obj`(지금은 같은 DB 안 스키마만). PostgreSQL: `current_schema()` +
 `search_path`(지금은 첫 스키마만 · 후속) · `public`. MySQL: 스키마 = 데이터베이스. SQLite: `main`.
 
-**칸 선택** — `explorer.share_catalog`가 꺼져 있으면(기본 · 사용자 "연결별 칸") 계정마다 탐색기 칸·메타가 따로다. 그 연결의 트리를 아직 안 펼쳐 메타가 비었으면 링크·완성·상세는 **같은 카탈로그에서 메타를 가진 칸**을 본다(`ExplorerSet::meta_pane` · 수집 계정 = 그 칸의 계정 · 09-30 진단 = SQLEDU 칸 `schemas=0`이 원인).
+**칸 선택** — `explorer.share_catalog`가 꺼져 있으면(기본 · 사용자 "연결별 칸") 계정마다 탐색기 칸·메타가 따로다. 그 연결의 트리를 아직 안 펼쳐 메타가 비었으면 링크·완성·상세는 **같은 카탈로그에서 메타를 가진 칸**을 본다(`ExplorerSet::meta_pane` · 수집 계정 = 그 칸의 계정 · 09-30 진단 = EDU01 칸 `schemas=0`이 원인).
 
-**한계·후속(T-264)** — 한 서버 칸의 메타 세션은 **첫 연결 계정**으로 수집한다. 둘째 계정(예 SQLEDU)의 자기 스키마는 규칙 ①로 보이지만, 둘째 계정이
+**한계·후속(T-264)** — 한 서버 칸의 메타 세션은 **첫 연결 계정**으로 수집한다. 둘째 계정(예 EDU01)의 자기 스키마는 규칙 ①로 보이지만, 둘째 계정이
 권한을 가진 **다른** 스키마는 수집 계정이 달라 미확인으로 남는다(보수적 = 허용처럼 보이지 않음). 연결별 수집 계정 태그(버킷마다 `collected_by`) +
 세션 계정으로 재수집이 다음 단계.
 
-> **10-08 한정 이름 미확인 링크(bin85 · 97ae995 → bb81c51 엄격 재확정)**: 스키마를 적은 이름(`BISCM.SP_X`)이 그 스키마에서 안 풀려도 링크는 만든다 = **미확인**(벽돌색 밑줄 · DDL 머리·호출 꼴 포함) · ~~툴팁 "(BISCM에 없음 · BISCM_SB에 있음)" + 우클릭 "다른 스키마의 같은 이름 ▸"~~ → **삭제(사용자 10-08 3차 "해당 DB에 있는지만 · 인접 검사 없음")** = 툴팁·카드 없음 · 스키마를 적은 이름은 후보 메뉴 없음(§10).
+> **10-08 한정 이름 미확인 링크(bin85 · 97ae995 → bb81c51 엄격 재확정)**: 스키마를 적은 이름(`APPDB.SP_X`)이 그 스키마에서 안 풀려도 링크는 만든다 = **미확인**(벽돌색 밑줄 · DDL 머리·호출 꼴 포함) · ~~툴팁 "(APPDB에 없음 · APPDB_SB에 있음)" + 우클릭 "다른 스키마의 같은 이름 ▸"~~ → **삭제(사용자 10-08 3차 "해당 DB에 있는지만 · 인접 검사 없음")** = 툴팁·카드 없음 · 스키마를 적은 이름은 후보 메뉴 없음(§10).
 
 > **10-05 후보 메뉴(T-180 ⑦)**: 위 엄격 판정은 그대로다 — 스키마 없이 쓴 이름이 현재 스키마(세션 기준)에서 안 풀리면 **미확인**이고 다른 스키마로 자동 폴백하지 않는다(사용자 09-30). 대신 그 이름이 **다른 접속 스키마**에 있으면(`Snapshot::lookup_any_schema` · 종류 무관) 우클릭 메뉴에 하위 메뉴 **"다른 스키마의 같은 이름 ▸ `SCHEMA.NAME [Kind]`"**(최대 12)를 붙여 사용자가 고르게 하고, 고르면 객체 탐색기에서 그 객체를 찾아 선택한다(`objlink_candidates` · `reveal_obj_id` · 항목 id `objlink.cand:<id>`). **F4**(`obj.reveal`)도 캐럿 아래 링크가 못 풀리면 같은 메뉴를 캐럿 아래에 연다. 고른 것은 그 자리에서만 쓰이고 판정 규칙·링크 색은 바뀌지 않는다.
 
@@ -131,7 +131,7 @@
 - **10-06 카드·툴팁 배치 규칙(T-179 2차)**: 기준 = **링크 글자 사각형**(줄 `[top, top+line_h]` · `TextBox::point_at`의 y는 줄 바닥이라 쓰지 않음) · 위치 = 61 §2-2대로 **정방향(`objlink.tooltip_pos`) → 반대쪽**(정방향이 편집기 영역 밖이면 · `flip_vertical` · 판정 host = 편집기 사각형) **→ 밀어 넣기**(창 전체 · `nudge_into`) · 링크 줄과 그 옆 글자를 덮지 않는다 · **카드 영역** = 카드 ∪ 링크 글자 둘레 + 8 px(`card_zone_contains`) — 포인터가 이 안에 있는 동안 카드 유지(틈·비스듬한 경로) · 벗어나면 닫힘. Ctrl 툴팁(`paint_tip`)·시그니처 카드(`sig_card_tip`)도 같은 규칙. 시험 = journal 10-06 §3-1(A 5행 · B 1행 뒤집힘 · C 시그니처 카드).
 - **10-06 카드 버튼 = MouseUp 확정**(사용자 추가 요구 · 값 목록 팝업 버튼과 같은 규칙): 버튼 위에서 누르고 **뗄 때** 실행 · 누른 채 버튼 밖으로 벗어나 떼면 취소 · 기동 명령 `ui.click`(Down+Up) 회귀 = "데이터 200행 보기" → 결과2 rows=4(journal 10-06 §9 ⑤).
 - **10-08 없는 객체 = 카드 없음**(98504fc · bb81c51 · 사용자 캡처): 미확인 이름 = 벽돌색 밑줄만 · Ctrl 툴팁·hover 카드를 띄우지 않는다(종전 "(현재 연결에 없는 객체)" 카드) · ~~다른 스키마에 있으면 안내 카드 유지~~ → bb81c51에서 그 안내도 삭제(`ObjLinkElsewhere` 제거 · §10 엄격 판정).
-- **10-21 선적재 판정 = 테이블 코멘트를 아는가**(134차 win · 사용자 "탐색기 상세엔 설명이 있는데 hover 카드엔 (설명 없음)" · BISCM `M4E_I301080`): `objlink_prefetch`가 상세(L3)를 청하는 조건 = 상세 `Unknown` **그리고** 테이블·루틴 링크면 `!Snapshot::comment_known(names, id)`(테이블 코멘트 값 또는 지도 항목 = NULL도 앎) · 컬럼·제약 링크면 종전대로 `!col_comments.contains_key(id)` — 종전 = 종류 무관 "컬럼 코멘트가 있으면 안 청함" → 스키마 워머(L2)가 컬럼 코멘트만 채운 테이블은 테이블 설명을 영영 못 받았다 · 함께 = 상세 패널의 테이블 단위 코멘트가 메타에도 들어가 카드가 같은 원천을 본다(`MetaStore::set_object_comments` · 85 §3).
+- **10-21 선적재 판정 = 테이블 코멘트를 아는가**(134차 win · 사용자 "탐색기 상세엔 설명이 있는데 hover 카드엔 (설명 없음)" · APPDB `M4E_I301080`): `objlink_prefetch`가 상세(L3)를 청하는 조건 = 상세 `Unknown` **그리고** 테이블·루틴 링크면 `!Snapshot::comment_known(names, id)`(테이블 코멘트 값 또는 지도 항목 = NULL도 앎) · 컬럼·제약 링크면 종전대로 `!col_comments.contains_key(id)` — 종전 = 종류 무관 "컬럼 코멘트가 있으면 안 청함" → 스키마 워머(L2)가 컬럼 코멘트만 채운 테이블은 테이블 설명을 영영 못 받았다 · 함께 = 상세 패널의 테이블 단위 코멘트가 메타에도 들어가 카드가 같은 원천을 본다(`MetaStore::set_object_comments` · 85 §3).
 
 - **10-05 `obj.*` 액션(얇은 판 · T-180 ④)**: 77 §1-1 액션 레지스트리를 "id 이관" 대신 **얇게** — 탐색기 우클릭 메뉴의 id 12개(`select` · `source` · `copy` …)는 E2E가 쓰므로 그대로 두고, 호스트 명령 `obj.*`가 **선택 노드에 대해 같은 길(`Explorer::menu_pick`)** 을 부른다(`act_selected` · `open_menu_selected` · `app/meta.rs` `obj_act`). 명령 = `obj.menu`(Shift+F10 · 선택 행 자리에 우클릭 메뉴) · `obj.select_rows` · `obj.source` · `obj.copy_name` · `obj.refresh` · `obj.refresh_meta` · `obj.sizes`(팔레트 "오브젝트 탐색기" 묶음) · 기존 `obj.reveal`(F4) · `obj.info`(Shift+F4) · `obj.rows`. 탐색기가 닫혀 있으면 열고 · 선택 없음 = 상태줄 "객체 탐색기에서 선택한 항목이 없습니다" · 삭제·서버 해제·접속처럼 **묻는 동작은 명령으로 두지 않는다**(메뉴에서만). `ObjectRef` 통일(링크 `Link` · 탐색기 `ObjectInfo` · `RevealTarget`)은 설계 메모로 남김(보류 가능).
 
@@ -144,7 +144,7 @@
 
 ## 9. "탐색기에서 보기" 조합 매트릭스(10-01 ㉗-i · `scripts/win-reveal-matrix-e2e.sh` · MC/DC)
 
-저장된 암호 프로필(Oracle BISCM·BISCM_SB·SQLEDU = 같은 서버 다른 계정 · SNOPDB_19c = 다른 서버 PRD(`-R`) · SQL Server M4PLAN · PostgreSQL Repository) · 케이스마다 새 프로세스(= 첫 시도) · 판정 셋 = ① 메뉴 판정 `reveal=true` ② 선택 경로 ③ `visible=true`.
+저장된 암호 프로필(Oracle APPDB·APPDB_SB·EDU01 = 같은 서버 다른 계정 · DEMODB_19c = 다른 서버 PRD(`-R`) · SQL Server PLANDB · PostgreSQL Repository) · 케이스마다 새 프로세스(= 첫 시도) · 판정 셋 = ① 메뉴 판정 `reveal=true` ② 선택 경로 ③ `visible=true`.
 
 | 조건 | 값 | 독립 변화 쌍(다른 조건 고정) |
 |---|---|---|
@@ -198,7 +198,7 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
 - ★ **엄격 판정 = 적힌(또는 현재) 스키마에서만 · 폴백 없음**(사용자 10-08 3차 "해당 DB에 있는지만 · 인접 검사 없음"): 미확인 링크 = 툴팁·카드 없음(다른 스키마 안내 삭제) · 스키마를 적은 이름 = 후보 메뉴 없음 · 탭 메뉴 = 적힌/현재 스키마에서 **종류까지** 맞을 때만(10-08 bin85의 같은 종류 다른 스키마 폴백 제거). 스키마 없이 쓴 이름의 "다른 스키마의 같은 이름 ▸" 후보 메뉴(§6 10-05)는 그대로.
 - **괄호 없는 호출 `EXEC proc @a = 1`**(7c28f4e): 프로시저 이름 = 루틴 링크(메타에 없으면 미확인) · 시험 포함.
 - 🔧 **카드 가는 길의 다른 줄 링크**(89be477 · 사용자 10-08 `MP_VRSN_ID`): 카드 영역 안에서 다른 링크를 지나면 카드가 교체·소멸하던 결함 → 교체는 앵커와 **같은 줄 띠**에서만(`switch_allowed_in_zone` · 이웃 단어 교체는 유지).
-- ★ **카드 영역 안 다른 줄 링크 = 머무름 교체**(사용자 10-21 · 134차 · 결함 = 위로 뜬 카드가 바로 윗줄을 덮은 채 그 아래 깔린 링크로 옮겨도 카드가 안 바뀜): 같은 줄 띠 즉시 교체는 그대로 · **다른 줄 링크 위에 `objlink.hover_ms`(700 ms) 머무르면 그 링크로 교체** · 카드 **버튼 위 = 2배 머무름**(1.4 s · 위로 뜬 카드의 버튼 줄은 늘 바로 윗줄을 덮으므로 제외하지 않음) · 같은 링크 예약 중에도 포인터가 **버튼 위로 들어오면 마감 = 지금 + 2배로 연장**(버튼에 닿기 전 지나간 점의 700 ms 예약이 누르려는 사이 카드를 바꾸지 않게 · 8차) · 순수 `zone_dwell_target` → `Option<(링크, 배수)>` · 예약 `ObjLinks.zone_switch`는 재분석에서도 **구간으로 이어받음**(1차 결함 = L2 컬럼 워머 응답마다 `objlink_sync`가 예약을 지워 700 ms에 못 닿음) · 진단 `NSQL_TRACE_OBJLINK` = `[objlink] zone dwell armed …`/`due …` · 협업 V1(격리 홈 BISCM · 빈 줄 5 + 6·7행) = 틈 자리·버튼 줄 아래 모두 교체 ✓(캡처 `target/v1-card/t1`·`t2`).
+- ★ **카드 영역 안 다른 줄 링크 = 머무름 교체**(사용자 10-21 · 134차 · 결함 = 위로 뜬 카드가 바로 윗줄을 덮은 채 그 아래 깔린 링크로 옮겨도 카드가 안 바뀜): 같은 줄 띠 즉시 교체는 그대로 · **다른 줄 링크 위에 `objlink.hover_ms`(700 ms) 머무르면 그 링크로 교체** · 카드 **버튼 위 = 2배 머무름**(1.4 s · 위로 뜬 카드의 버튼 줄은 늘 바로 윗줄을 덮으므로 제외하지 않음) · 같은 링크 예약 중에도 포인터가 **버튼 위로 들어오면 마감 = 지금 + 2배로 연장**(버튼에 닿기 전 지나간 점의 700 ms 예약이 누르려는 사이 카드를 바꾸지 않게 · 8차) · 순수 `zone_dwell_target` → `Option<(링크, 배수)>` · 예약 `ObjLinks.zone_switch`는 재분석에서도 **구간으로 이어받음**(1차 결함 = L2 컬럼 워머 응답마다 `objlink_sync`가 예약을 지워 700 ms에 못 닿음) · 진단 `NSQL_TRACE_OBJLINK` = `[objlink] zone dwell armed …`/`due …` · 협업 V1(격리 홈 APPDB · 빈 줄 5 + 6·7행) = 틈 자리·버튼 줄 아래 모두 교체 ✓(캡처 `target/v1-card/t1`·`t2`).
 - 라벨 "실제 객체와 비교…" → "실제 객체와 비교"(b9f2d56).
 
 ## 5. 후속(T-257)

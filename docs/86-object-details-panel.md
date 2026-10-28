@@ -37,7 +37,7 @@
 ┌ 활동 막대 │ 객체 탐색기(검색창 + 트리)                         │ 편집기 …
 │           │ …                                                │
 │           ├──────── split_d(끌기 = explorer.details_h) ────────┤
-│           │ [TABLE] BISCM.M4E_I301030  Description…   ▾  ⧉    │  ← 머리 줄(UI 글꼴 · 26 px)
+│           │ [TABLE] APPDB.M4E_I301030  Description…   ▾  ⧉    │  ← 머리 줄(UI 글꼴 · 26 px)
 │           │ == Properties (5) ==                              │  ← 본문(고정폭 · 읽기 전용 · 선택/복사/스크롤)
 │           │ Property  Value                                   │
 │           │ …                                                │
@@ -74,8 +74,8 @@
 
 | 동작 | 결과 | 예 |
 |---|---|---|
-| 복사 버튼 클릭 | 설명(Description) · 없으면 `스키마.이름` | `PIPELINED` / `BISCM.M4E_I301030` |
-| **Shift**+클릭 | `종류 - 스키마.이름 - 설명` | `TABLE - BISCM.M4E_I301030 - …` |
+| 복사 버튼 클릭 | 설명(Description) · 없으면 `스키마.이름` | `PIPELINED` / `APPDB.M4E_I301030` |
+| **Shift**+클릭 | `종류 - 스키마.이름 - 설명` | `TABLE - APPDB.M4E_I301030 - …` |
 | 본문 선택 + ⌘/Ctrl+C | 선택 글 | 표 일부 · DDL 일부 |
 | 효과 | `CopyBtn` 체크 표시 1 s(다른 복사 버튼과 같음) · 실패 = 상태줄 | |
 
@@ -85,7 +85,7 @@
 
 ## 5. 층·부하(85 §3 L2 · §4 L3)
 
-- ★ **L2 코멘트 워머(§212)**: 관계 폴더(Tables/Views/MV)가 읽힌 스키마마다 `schema_comments_raw`(질의 2 · 백그라운드 세션 · `meta.warm_idle_ms` 간격 · 한 번에 하나)로 테이블·컬럼 코멘트를 **객체 목록(MetaStore)** 에 채운다(`ObjEntry.comment` · `Snapshot.col_comments` · `comment_schemas`) — 패널은 `comments_of`로 왕복 0 · 아직 없으면 테이블 단위 `Req::Comments` 1회. 설정 `meta.warm_comments`(on). 실측 스키마당 0.5~4.5 s(BISCM_SB 24k 컬럼). ★ **T-348(10-15)** = 코멘트는 객체 id가 아니라 **(스키마, 소문자 이름) 지도** `Snapshot::schema_comments`에 먼저 담는다 → L1 이름 등재 **순서와 무관**(종전 = 이름이 등재된 객체에만 붙이고 "완료" 표시 → 뒤에 등재된 객체는 영영 코멘트 없음 · 스키마 이름 미등재면 조용히 버림) · `comments_of`는 지도에서 답하고 · `load_names_x`가 이름을 새로 등재하면 지도의 코멘트를 `ObjEntry.comment`/`col_comments`에 붙인다(`apply_schema_comments` 한 자리) · 시험 `schema_comments_survive_names_arriving_later`.
+- ★ **L2 코멘트 워머(§212)**: 관계 폴더(Tables/Views/MV)가 읽힌 스키마마다 `schema_comments_raw`(질의 2 · 백그라운드 세션 · `meta.warm_idle_ms` 간격 · 한 번에 하나)로 테이블·컬럼 코멘트를 **객체 목록(MetaStore)** 에 채운다(`ObjEntry.comment` · `Snapshot.col_comments` · `comment_schemas`) — 패널은 `comments_of`로 왕복 0 · 아직 없으면 테이블 단위 `Req::Comments` 1회. 설정 `meta.warm_comments`(on). 실측 스키마당 0.5~4.5 s(APPDB_SB 24k 컬럼). ★ **T-348(10-15)** = 코멘트는 객체 id가 아니라 **(스키마, 소문자 이름) 지도** `Snapshot::schema_comments`에 먼저 담는다 → L1 이름 등재 **순서와 무관**(종전 = 이름이 등재된 객체에만 붙이고 "완료" 표시 → 뒤에 등재된 객체는 영영 코멘트 없음 · 스키마 이름 미등재면 조용히 버림) · `comments_of`는 지도에서 답하고 · `load_names_x`가 이름을 새로 등재하면 지도의 코멘트를 `ObjEntry.comment`/`col_comments`에 붙인다(`apply_schema_comments` 한 자리) · 시험 `schema_comments_survive_names_arriving_later`.
 
 - 선택마다 카탈로그 질의 = 속성 0 · 컬럼 1 · 하위 폴더 종류 수(비면 0행 응답) · 소스/DDL 1 → 테이블 ≈ 6~9 질의(각 수십 ms · 급한 메타 세션 · 26 §8 등재). 같은 객체를 다시 골라도 다시 읽는다(캐시 없음 = 최신 · 후속 = 짧은 LRU).
 - 메모리 = 섹션 글 하나(수 KB~수백 KB DDL) · 패널을 끄면 대상 비움.
@@ -122,7 +122,7 @@
 
 ## 7. 자체 점검(09-25 · 키 주입 0)
 
-- 단위 = `cargo test -p nsql-catalog detail`(`render_table` 정렬 · 소스 종류) · 실서버 CLI = `nsql cat -c BISCM -s BISCM detail M4E_I301030`(Properties · Columns 9 · Constraints · Indexes · DDL) · `nsql cat -c M4PLAN detail <proc> procedure`.
+- 단위 = `cargo test -p nsql-catalog detail`(`render_table` 정렬 · 소스 종류) · 실서버 CLI = `nsql cat -c APPDB -s APPDB detail M4E_I301030`(Properties · Columns 9 · Constraints · Indexes · DDL) · `nsql cat -c PLANDB detail <proc> procedure`.
 - GUI(격리 · 데모 SQLite · `explorer.details=on`) = `@after:1500:explorer.expand1,@after:2500:explorer.expand2,@after:3500:explorer.select3,@after:5000:details.dump:<파일>` → `== Properties (4) == … == Columns (3) == … == Constraints (1) ==`(dept) · 기동 명령 `explorer.select<row>` 신설.
 - 실기 U-166 = View ▸ 객체 상세 → 테이블 클릭 = 섹션 · ▾/▴ · 복사 · Shift+복사 · 본문 선택 ⌘C · 스플리터 끌기 · 탐색기 스크롤과 겹치지 않음.
 

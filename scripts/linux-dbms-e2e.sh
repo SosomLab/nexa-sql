@@ -5,10 +5,10 @@
 #     검증 뒤 즉시 REVOKE + DROP 한다(기존 객체·계정 권한은 건드리지 않는다).
 #   SQLite는 DCL이 없어 해당 항목을 N/A로 적는다(오류 아님).
 #
-# 사용: scripts/linux-dbms-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "BISCM:oracle,M4PLAN:mssql,Repository:postgres,Demo:sqlite"]
+# 사용: scripts/linux-dbms-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "APPDB:oracle,PLANDB:mssql,Repository:postgres,Demo:sqlite"]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILES="BISCM:oracle,M4PLAN:mssql,Repository:postgres,Demo:sqlite"
+NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILES="APPDB:oracle,PLANDB:mssql,Repository:postgres,Demo:sqlite"
 while getopts "o:n:p:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILES=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p prof:dialect,...]"; exit 2; }
 mkdir -p "$OUT"; REPORT="$OUT/dbms-e2e.txt"; : > "$REPORT"

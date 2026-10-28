@@ -131,7 +131,7 @@
 | **V7 전수 점검** | ✅ 09-21 89차 후반(win): 값 크기 상한 `vars.max_value_kb`(1024) · 실서버 통합 13/13(Oracle·SQL Server·PG — 로컬 프로필). ✅ 09-21 1차 계측 `bench_vars`(§4 표) + 훑기 최적화 · 실서버 통합 9/9(Oracle·SQL Server·PG). ☐ 값 크기 상한 · 4방언 GUI 실기(Codespaces) · 변수 창·입력 창의 포커스/마우스 라우팅 실기표 | 🔶 |
 | 뒤로 | 행마다 실행(배열 바인드) · 그리드 셀 → 변수 · 주-상세 연결 · 서버에 비추기(SESSION_CONTEXT · `set_config`) · MySQL/MariaDB · NoSQL 어댑터 | ☐ |
 
-## 6. 09-21 실기 (Oracle 19c · SNOP-DB · `NSQLT_` 객체만 · 사전 0 → 이름 지정 삭제 → 잔여 0)
+## 6. 09-21 실기 (Oracle 19c · DEMO-DB · `NSQLT_` 객체만 · 사전 0 → 이름 지정 삭제 → 잔여 0)
 
 사용자 예시 그대로: `EXEC :V := '…'`(탭 구분 포함) ✅ · 맨 `EXEC` + 여러 줄 `SELECT … INTO :A, :B … ;` ✅ · `SELECT :A, :B FROM DUAL` ✅ · `VAR PC_RET REFCURSOR` + `EXEC p(:PC_RET, :V, 3)` → **바로 결과**(`PC_RET:` 라벨) ✅ · **선언 없이** `EXEC p2(:PC_A, :PC_B, :V_MSG)` → 서명에서 커서 2 + 문자열 OUT ✅(종전 PLS-00306) · `DBMS_SQL.RETURN_RESULT` 2장 ✅(종전 = 첫 장만, 둘째는 변수로 빨려 들어감) · `SELECT * FROM TABLE(파이프라인 함수(:V))` ✅ · GUI = 결과 탭 `PC_A` · `PC_B` ✅(캡처).
 
@@ -151,7 +151,7 @@
 
 ## 8. 시험 환경
 
-- Oracle = SNOP-DB(VPN · `NSQLT_` 접두 · 사전 0 확인 → 이름 지정 삭제 → 잔여 0 · 스냅숏 대조). **VPN이 끊기면 GitHub Codespaces**(`.devcontainer` = dev + Oracle Free + SQL Server · PG/MySQL 프로필 · `NSQL_*_URL`) — 다른 DBMS도 Codespaces · 끝나면 닫는다(사용자 09-21). 막힌 것: gh 토큰에 `codespace` 권한 없음 → `gh auth refresh -h github.com -s codespace`(사용자 브라우저 인증 1회).
+- Oracle = DEMO-DB(VPN · `NSQLT_` 접두 · 사전 0 확인 → 이름 지정 삭제 → 잔여 0 · 스냅숏 대조). **VPN이 끊기면 GitHub Codespaces**(`.devcontainer` = dev + Oracle Free + SQL Server · PG/MySQL 프로필 · `NSQL_*_URL`) — 다른 DBMS도 Codespaces · 끝나면 닫는다(사용자 09-21). 막힌 것: gh 토큰에 `codespace` 권한 없음 → `gh auth refresh -h github.com -s codespace`(사용자 브라우저 인증 1회).
 - CI `integration` = PG · SQL Server · Oracle 컨테이너에서 같은 흐름(지금 T-146로 실패 중 → 이번 수정으로 통과 예상).
 
 ## 9. 변수 안의 변수 — 확장 시점(대입 시 vs 사용 시) 조사·권장·구현 (09-22 · 사용자 요청)
@@ -341,7 +341,7 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 
 - 고정: 스크립트 `SET DEFINE ON`(전 방언 = Oracle처럼 묻기) · `SET DEFINE OFF`(전부 글자) · 설정 **`script.define`** = `auto`(위 표 · 기본) · `on` · `off` · `script.strict`(엄격 모드)는 `on`으로 덮는다.
 - 구현: nsql-script `Settings.define_lenient` · `Settings::default_define(dialect)` · `Engine::set_define_mode`(방언 전환 때 고정이 아니면 그 방언 기본으로 복귀) · nsql-run `Runner::with_define_mode`(너그러운 모드에서는 `missing_inputs`가 `&`를 훑지 않음) · GUI `worker.rs` · CLI `run`/`shell`/`plan`/`query`/`export`/`import`.
-- 확인(10-10 협업 V1): `-d mssql` `SELECT 'R&D'` = 그대로 · `-d oracle` = `&D` 미정의 경고 · `:setvar Env prod` + `'&Env'` = `'prod'` · `SET DEFINE ON` + mssql = 경고 · `script.define=off` + `DEFINE x = 7` = `'&x'` 그대로 · GUI M4PLAN `SELECT 'R&D'` = 입력 창 없이 결과. `nsql plan`(실행 미리보기)도 같은 설정을 따른다(10-10 · `plan::run_plan`에 `define_mode`). **검증 = `scripts/define-e2e.sh` 47/0**(CLI plan 4방언 17 · 실서버 run 4곳 8 · GUI 입력 창 22).
+- 확인(10-10 협업 V1): `-d mssql` `SELECT 'R&D'` = 그대로 · `-d oracle` = `&D` 미정의 경고 · `:setvar Env prod` + `'&Env'` = `'prod'` · `SET DEFINE ON` + mssql = 경고 · `script.define=off` + `DEFINE x = 7` = `'&x'` 그대로 · GUI PLANDB `SELECT 'R&D'` = 입력 창 없이 결과. `nsql plan`(실행 미리보기)도 같은 설정을 따른다(10-10 · `plan::run_plan`에 `define_mode`). **검증 = `scripts/define-e2e.sh` 47/0**(CLI plan 4방언 17 · 실서버 run 4곳 8 · GUI 입력 창 22).
 
 ### 12-5. 살펴보기 · 로그
 
@@ -390,5 +390,5 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 
 - **프로필 변수 폼 편집** — 원천 = 접속 폼의 변수 목록 하나(`ConnectPanel::vars`) · 창 "프로필 변수 [<프로필>]"은 그 뷰(편집 즉시 폼 "바뀜" `Dirty::Vars`) · **파일 쓰기는 [저장] 때만**(`Vault::save` 뒤 `set_vars` · 같은 트랜잭션) · 불러오기·복제·`conn.edit`·기동 인자 프로필도 변수 동반 · 자리·높이 = [22 §1-2](22-driver-extensions.md)(D-365).
 - **글로벌 치환 변수 보존** — `vars/global.sql`(바인드 `VAR`/`EXEC` 줄과 한 파일)에 `DEFINE 이름 = '값'` 줄 · 스위치 = `vars.global_persist`(바인드와 공용) · nsql-script `varsfile::store_global_full` / `load_global_macros` / `macros_from_script` · 종전 `store_global`(바인드만)은 DEFINE 줄 보존 · GUI = 기동 때 읽어 `App.global_macros` → 모든 세션 러너 `Cmd::GlobalMacros` · `DEFINE x GLOBAL`이 바꾸면 즉시 저장 · CLI = `vars.cli_global=on`이면 `nsql run` 시작 때 읽고 끝에 씀.
-- **따옴표 규칙** — 쓸 때 늘 `'값'`으로 감싸고 `'` → `''` · 읽을 때 감싼 따옴표를 벗기고 `''` → `'` · 감싸지 않은 손 작성 줄은 앞뒤 trim(종전) · 줄바꿈 든 값은 건너뜀 · 이유 = 앞뒤 공백 보존(V1 1차 결함 `' x '` → `x`) · 확인 = `' x '`·`'it''s'`·`'M4PLAN'` 재기동 왕복 ✓.
+- **따옴표 규칙** — 쓸 때 늘 `'값'`으로 감싸고 `'` → `''` · 읽을 때 감싼 따옴표를 벗기고 `''` → `'` · 감싸지 않은 손 작성 줄은 앞뒤 trim(종전) · 줄바꿈 든 값은 건너뜀 · 이유 = 앞뒤 공백 보존(V1 1차 결함 `' x '` → `x`) · 확인 = `' x '`·`'it''s'`·`'PLANDB'` 재기동 왕복 ✓.
 - 함께(TODO만): T-433 `grid.offset_warn` 안내 위치([43 §9-3](43-fetch-model-and-result-tabs.md)) · T-434 아웃라인에서 값 없는 층 이동 `DEFINE 이름 SHARE|SHARED|LOCAL|TAB|UNSHARE|GLOBAL` 제외.
