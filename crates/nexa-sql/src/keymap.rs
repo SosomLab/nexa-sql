@@ -1454,6 +1454,32 @@ impl Keymap {
             .map(|(_, _, id)| *id)
     }
 
+    /// ★ T-14 잔여(10-29): 2단 코드(`ctrl+k, ctrl+u`)의 context 바인딩 — 두 조합이 같고 조건이 참인 뒤 바인딩 우선.
+    pub(crate) fn lookup_seq_ctx(
+        &self,
+        first: &Chord,
+        second: &Chord,
+        src: &dyn crate::keymap_file::ContextSource,
+    ) -> Option<&'static str> {
+        self.ctx_bindings
+            .iter()
+            .rev()
+            .find(|(chords, ctx, _)| {
+                chords.len() == 2
+                    && chords[0] == *first
+                    && chords[1] == *second
+                    && crate::keymap_file::matches(ctx, src)
+            })
+            .map(|(_, _, id)| *id)
+    }
+
+    /// context 바인딩의 첫 조합인가(2단 코드의 첫 키를 누르면 다음 키를 기다려야 한다 — 일반 표의 `prefixes`와 같은 역할).
+    pub(crate) fn is_ctx_prefix(&self, ch: &Chord) -> bool {
+        self.ctx_bindings
+            .iter()
+            .any(|(chords, _, _)| chords.len() == 2 && chords[0] == *ch)
+    }
+
     /// ★ T-14 2단계: 파일 바인딩 적용 — 명령 = 이 앱의 id(`COMMANDS`·동적) 또는 Sublime 이름(별칭) · 코드 1개 = 단일 · 2개 = 시퀀스 ·
     /// context 있는 것은 보관만(3단계). 반환 = (적용 수 · context 보관 수 · 모르는 명령 수). 같은 조합은 **뒤가 앞을 덮는다**.
     pub(crate) fn apply_bindings(
@@ -1501,7 +1527,7 @@ impl Keymap {
 
     /// 이 조합이 2단 코드의 첫 키인가(호스트가 다음 키를 기다린다).
     pub(crate) fn is_prefix(&self, ch: &Chord) -> bool {
-        self.prefixes.contains(ch)
+        self.prefixes.contains(ch) || self.is_ctx_prefix(ch)
     }
 
     /// 2단 코드 조회.
@@ -1602,6 +1628,24 @@ mod tests {
         }
         assert_eq!(km.lookup_ctx(&f9, &Src(true)), Some("run.statement"));
         assert_eq!(km.lookup_ctx(&f9, &Src(false)), None);
+        // 2단 코드 + context: ctrl+k, ctrl+x → selection_empty일 때만 file.save · 첫 키는 접두로 인식.
+        let b2 = crate::keymap_file::parse(
+            r#"[{ "keys": ["ctrl+k", "ctrl+x"], "command": "save", "context": [{ "key": "selection_empty" }] }]"#,
+        )
+        .unwrap();
+        assert_eq!(km.apply_bindings(&b2), (0, 1, 0));
+        let (k1, k2) = (
+            Chord::parse("ctrl+k").unwrap(),
+            Chord::parse("ctrl+x").unwrap(),
+        );
+        assert!(km.is_ctx_prefix(&k1) && !km.is_ctx_prefix(&k2));
+        assert_eq!(km.lookup_seq_ctx(&k1, &k2, &Src(true)), Some("file.save"));
+        assert_eq!(km.lookup_seq_ctx(&k1, &k2, &Src(false)), None);
+        assert_eq!(
+            km.lookup_seq(&k1, &k2),
+            None,
+            "context 바인딩은 일반 표에 없다"
+        );
         assert_eq!(
             km.codes.get("file.save_as").map(String::as_str),
             Some("ctrl+alt+s")

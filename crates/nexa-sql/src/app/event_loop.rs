@@ -1100,7 +1100,12 @@ impl ApplicationHandler<Wake> for App {
                 ) {
                     // 2단 코드의 둘째 키(`Ctrl+K, Ctrl+U` · 09-16) — 없는 조합이면 안내만.
                     if let Some(first) = self.pending_chord.take() {
-                        match self.keymap.lookup_seq(&first, &ch) {
+                        // ★ T-14 잔여: 2단 코드도 context 바인딩이 먼저(조건이 참일 때만) · 없으면 일반 표.
+                        match self
+                            .keymap
+                            .lookup_seq_ctx(&first, &ch, self)
+                            .or_else(|| self.keymap.lookup_seq(&first, &ch))
+                        {
                             // 자동 반복(키를 누르고 있음)은 반복해도 되는 명령만(사용자 09-17 Ctrl+T 80개).
                             Some(id) if kev.repeat && !keymap::repeatable(id) => {}
                             Some(id) => self.key_command(id, el),
