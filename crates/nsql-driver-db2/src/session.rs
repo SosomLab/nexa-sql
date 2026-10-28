@@ -48,6 +48,8 @@ impl nsql_core::CancelHandle for Db2Cancel {
 const PKGID: &str = "SYSSH200";
 const PKGCNSTKN: &str = "SYSLVL01";
 const PKGSN: u16 = 65;
+/// ★ 서버 커서용 섹션 풀(157차 2단계 · derby `SectionManager` = 작은 패키지 SYSSH200의 동적 섹션 1..=64 · 65 = 즉시 실행·비커서 문장).
+const CURSOR_SECTIONS: u16 = 64;
 const QRYBLKSZ: u32 = 65_535;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -74,29 +76,38 @@ pub struct Db2Session {
     active: Arc<AtomicBool>,
     /// 취소용 소켓 복제(접속 때 한 번).
     cancel_tcp: Option<std::net::TcpStream>,
-    /// ★ 열린 서버 커서(157차 · 한 번에 하나 · PG와 같은 모델) — 새 실행·커밋·롤백·접속 끊김이 닫는다.
-    cursor: Option<OpenCursor>,
+    /// ★ 열린 서버 커서들(157차 2단계 · 사용자 10-28 "다중 커서 지금 착수"): 커서마다 섹션 하나(1..=64) · 패키지 `SYSSH200` = **WITH HOLD**
+    ///   (derby 명명: SYSS**H** = 보유 · SYSS**N** = 비보유)라 커밋에도 유지 · 롤백·접속 끊김이 닫는다 · 새 실행은 닫지 않는다 ·
+    ///   풀이 비면 가장 오래된 커서를 닫고 재사용. 순서 = 오래된 것부터(끝 = 최근 사용).
+    cursors: Vec<OpenCursor>,
+    /// 빈 섹션 번호(pop = 가장 작은 번호부터).
+    free_sections: Vec<u16>,
     next_cursor: u32,
 }
 
-/// 열린 서버 커서: 상한에서 멈춘 조회 집합(`SetAcc` = QRYINSID·상관 번호·열 기술·아직 안 넘긴 행·잘린 행 조각) + 결과 열.
+/// 열린 서버 커서: 상한에서 멈춘 조회 집합(`SetAcc` = QRYINSID·상관 번호·열 기술·아직 안 넘긴 행·잘린 행 조각) + 결과 열 + 섹션.
 struct OpenCursor {
     id: u32,
     set: SetAcc,
     columns: Vec<Column>,
-    /// 자동 커밋 모드에서 연 커서 = 문장 뒤 커밋(RDBCMM = 커서도 닫힘)을 커서가 닫힐 때까지 미룬다.
-    own_txn: bool,
+    /// 이 커서의 패키지 섹션(PKGSN · 1..=64 · 닫히면 풀로).
+    section: u16,
 }
 
 impl std::fmt::Debug for OpenCursor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenCursor")
             .field("id", &self.id)
+            .field("section", &self.section)
             .field("buffered_rows", &self.set.rows.len())
             .field("open", &self.set.open)
-            .field("own_txn", &self.own_txn)
             .finish()
     }
+}
+
+/// 새 세션의 빈 섹션 풀(1..=64 · pop이 1부터).
+fn fresh_sections() -> Vec<u16> {
+    (1..=CURSOR_SECTIONS).rev().collect()
 }
 
 /// 서버가 `OFFSET … ROWS FETCH FIRST`(Db2 LUW 11.1+)를 받는가 — ACCRDBRM PRDID `SQLvvrrm`(`SQL11059` = 11.5 · `SQL10057` = 10.5 ·
@@ -127,6 +138,8 @@ struct SetAcc {
     /// OPNQRYRM이 온 상관 번호(= OPNQRY/EXCSQLSTT의 번호 · CNTQRY/CLSQRY는 같은 번호로 · pydrda).
     corr: u16,
     open: bool,
+    /// 이 집합을 연 섹션(0 = 기본 PKGSN 65 · 커서 모드 = 풀 섹션) — CNTQRY/CLSQRY의 PKGNAMCSN.
+    section: u16,
 }
 
 /// 응답 체인 하나를 해석한 결과.
@@ -289,7 +302,8 @@ impl Db2Session {
             in_tx: false,
             active: Arc::new(AtomicBool::new(false)),
             cancel_tcp,
-            cursor: None,
+            cursors: Vec::new(),
+            free_sections: fresh_sections(),
             next_cursor: 1,
         };
         if let Some(schema) = spec.schema.as_deref().filter(|x| !x.is_empty()) {
@@ -307,6 +321,11 @@ impl Db2Session {
     }
 
     fn pkgnamcsn(&self) -> Ddm {
+        self.pkgnamcsn_sn(PKGSN)
+    }
+
+    /// 섹션 번호를 지정한 PKGNAMCSN(커서 모드 = 풀 섹션 · 그 밖 = [`PKGSN`]).
+    fn pkgnamcsn_sn(&self, sn: u16) -> Ddm {
         // 64바이트 = RDBNAM 18 · RDBCOLID 18 · PKGID 18(셋 다 **EBCDIC cp500 · 대문자 · 0x40 채움** — CI 2차 40115496236: ASCII로 보내자
         //   SQL0805N 패키지 없음 · 서버는 RDBNAM을 EBCDIC 대문자로 돌려준다) · PKGCNSTKN 8(ASCII `SYSLVL01` · pydrda/go-db2) · PKGSN 2(큰 끝).
         let mut v = Vec::with_capacity(64);
@@ -314,7 +333,7 @@ impl Db2Session {
         v.extend_from_slice(&crate::ebcdic::padded("NULLID", 18));
         v.extend_from_slice(&crate::ebcdic::padded(PKGID, 18));
         v.extend_from_slice(format!("{PKGCNSTKN:>8}").as_bytes());
-        v.extend_from_slice(&PKGSN.to_be_bytes());
+        v.extend_from_slice(&sn.to_be_bytes());
         Ddm::new(cp::PKGNAMCSN, v)
     }
 
@@ -488,13 +507,16 @@ impl Db2Session {
     fn set_pkgnamcsn(&self, r: &Reply, i: usize) -> Ddm {
         match r.pkgsnlst.get(i) {
             Some(v) if v.len() >= 64 => Ddm::new(cp::PKGNAMCSN, v.clone()),
-            _ => self.pkgnamcsn(),
+            _ => self.pkgnamcsn_sn(match r.sets.get(i).map(|s| s.section) {
+                Some(sn) if sn != 0 => sn,
+                _ => PKGSN,
+            }),
         }
     }
 
     /// 체인 보내고 응답을 끝까지 받아 해석 · 열린 집합은 차례로 상한까지 `CNTQRY`로 이어 받는다.
     fn round_trip(&mut self, cmds: &[(Ddm, Vec<Ddm>)]) -> Result<Reply, DbError> {
-        self.round_trip_opt(cmds, false)
+        self.round_trip_opt(cmds, false, PKGSN)
     }
 
     /// `keep_open` = 상한에 닿은 **단일 조회 집합**을 닫지 않고 열어 둔다(서버 커서 · 157차 · 남은 행은 [`Session::fetch_next`]로).
@@ -503,11 +525,15 @@ impl Db2Session {
         &mut self,
         cmds: &[(Ddm, Vec<Ddm>)],
         keep_open: bool,
+        section: u16,
     ) -> Result<Reply, DbError> {
         self.send_chain(cmds)?;
         let mut r = Reply::default();
         let chain = self.wire()?.recv_chain()?;
         self.absorb(&chain, &mut r)?;
+        for set in &mut r.sets {
+            set.section = section;
+        }
         let mut i = 0;
         let mut stalls = 0u32;
         while r.error.is_none() && i < r.sets.len() {
@@ -578,26 +604,45 @@ impl Db2Session {
         self.absorb(&chain, r)
     }
 
-    /// 열린 서버 커서를 닫는다(`CLSQRY` · 서버가 이미 닫았으면 생략) + 미룬 자동 커밋. 소켓이 없으면 상태만 버린다.
-    fn close_open_cursor(&mut self) -> Result<(), DbError> {
-        let Some(c) = self.cursor.take() else {
+    /// 커서 하나를 닫는다(`CLSQRY` · 서버가 이미 닫았으면 생략) + 섹션을 풀로. 소켓이 없으면 상태만 버린다.
+    fn close_cursor_obj(&mut self, c: OpenCursor) -> Result<(), DbError> {
+        self.free_section(c.section);
+        if self.wire.is_none() || !c.set.open {
             return Ok(());
+        }
+        let r = Reply {
+            sets: vec![c.set],
+            cur: Some(0),
+            ..Reply::default()
         };
-        if self.wire.is_none() {
-            return Ok(());
+        self.close_set(&r, 0)
+    }
+
+    /// 모든 커서 상태를 버린다(CLSQRY 없이 · 롤백 = 서버가 닫았다 · 끊김 = 소켓 없음) + 섹션 전부 풀로.
+    fn drop_cursors(&mut self) {
+        for c in std::mem::take(&mut self.cursors) {
+            self.free_section(c.section);
         }
-        if c.set.open {
-            let r = Reply {
-                sets: vec![c.set],
-                cur: Some(0),
-                ..Reply::default()
-            };
-            self.close_set(&r, 0)?;
+    }
+
+    fn free_section(&mut self, sn: u16) {
+        if (1..=CURSOR_SECTIONS).contains(&sn) && !self.free_sections.contains(&sn) {
+            self.free_sections.push(sn);
         }
-        if c.own_txn && !self.in_tx {
-            self.uow(true)?;
+    }
+
+    /// 커서용 섹션 하나 — 풀이 비면 **가장 오래된 커서**를 닫고 그 섹션을 쓴다.
+    fn alloc_section(&mut self) -> Result<u16, DbError> {
+        if let Some(sn) = self.free_sections.pop() {
+            return Ok(sn);
         }
-        Ok(())
+        if !self.cursors.is_empty() {
+            let oldest = self.cursors.remove(0);
+            self.close_cursor_obj(oldest)?;
+        }
+        self.free_sections
+            .pop()
+            .ok_or_else(|| err("Db2: no free package section for a cursor"))
     }
 
     fn close_set(&mut self, r: &Reply, i: usize) -> Result<(), DbError> {
@@ -651,9 +696,9 @@ impl Db2Session {
     }
 
     /// `cursor` = 서버 커서 모드(157차): 첫 응답은 한 블록만(MAXBLKEXT 0 · 나머지는 CNTQRY로 블록씩) · 아니면 전부 한 체인(0xFFFF).
-    fn opnqry(&self, with_params: bool, cursor: bool) -> Ddm {
+    fn opnqry(&self, with_params: bool, cursor: bool, sn: u16) -> Ddm {
         let mut kids = vec![
-            self.pkgnamcsn(),
+            self.pkgnamcsn_sn(sn),
             Ddm::u32(cp::QRYBLKSZ, QRYBLKSZ),
             Ddm::u16(cp::MAXBLKEXT, if cursor { 0 } else { 0xFFFF }),
             Ddm::new(cp::QRYCLSIMP, vec![0x01]),
@@ -680,8 +725,6 @@ impl Db2Session {
     fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
         let sql = req.sql.trim().trim_end_matches(';').trim();
         let mut out = ExecResult::default();
-        // ★ 새 실행 = 열린 서버 커서를 먼저 닫는다(한 세션 한 커서 · 옛 핸들은 fetch_next 오류).
-        self.close_open_cursor()?;
         if let Some(commit) = tx_control(sql) {
             if commit {
                 self.commit()?;
@@ -698,6 +741,8 @@ impl Db2Session {
         let call = is_call(sql);
         // ★ 서버 커서(157차): 상한이 있는 조회(CALL 제외)는 한 블록씩 받고 상한에서 멈춰 커서를 열어 둔다(`pending`).
         let keep = query && !call && self.max_rows > 0;
+        // 2단계: 커서 모드 = 풀 섹션(열린 커서는 그대로 · 풀이 비면 가장 오래된 커서 반납) · 그 밖 = 기본 섹션.
+        let sn = if keep { self.alloc_section()? } else { PKGSN };
         let values: Vec<Value> = req.params.iter().map(|p| p.value.clone()).collect();
         let mut reply = if values.is_empty() && !call {
             if query {
@@ -706,13 +751,14 @@ impl Db2Session {
                         (
                             Ddm::group(
                                 cp::PRPSQLSTT,
-                                &[self.pkgnamcsn(), Ddm::new(cp::RTNSQLDA, vec![0xF1])],
+                                &[self.pkgnamcsn_sn(sn), Ddm::new(cp::RTNSQLDA, vec![0xF1])],
                             ),
                             vec![Self::sqlstt(sql)],
                         ),
-                        (self.opnqry(false, keep), Vec::new()),
+                        (self.opnqry(false, keep, sn), Vec::new()),
                     ],
                     keep,
+                    sn,
                 )?
             } else {
                 self.round_trip(&[(
@@ -728,7 +774,7 @@ impl Db2Session {
             let mut prep_cmds = vec![(
                 Ddm::group(
                     cp::PRPSQLSTT,
-                    &[self.pkgnamcsn(), Ddm::new(cp::RTNSQLDA, vec![0xF1])],
+                    &[self.pkgnamcsn_sn(sn), Ddm::new(cp::RTNSQLDA, vec![0xF1])],
                 ),
                 vec![Self::sqlstt(sql)],
             )];
@@ -736,13 +782,14 @@ impl Db2Session {
                 prep_cmds.push((
                     Ddm::group(
                         cp::DSCSQLSTT,
-                        &[self.pkgnamcsn(), Ddm::new(cp::TYPSQLDA, vec![0x01])],
+                        &[self.pkgnamcsn_sn(sn), Ddm::new(cp::TYPSQLDA, vec![0x01])],
                     ),
                     Vec::new(),
                 ));
             }
             let prep = self.round_trip(&prep_cmds)?;
             if let Some(e) = prep.error {
+                self.free_section(sn);
                 return Err(e);
             }
             // ★ XML(988/989) 바인드 = `?`를 `XMLPARSE(DOCUMENT CAST(? AS CLOB(2G)))`로 감싸 CLOB 경로(EXTDTA 0xCF)를 재사용 — XML을 LOB으로
@@ -758,6 +805,7 @@ impl Db2Session {
                     sql: fdoca::replace_placeholder(sql, k, XML_WRAP),
                     params: req.params.clone(),
                 };
+                self.free_section(sn);
                 return self.execute_inner(&req2);
             }
             let le = self.le();
@@ -775,7 +823,7 @@ impl Db2Session {
             let mut r = if call {
                 self.round_trip(&[(self.excsqlstt_call(!values.is_empty()), objs)])?
             } else if query {
-                self.round_trip_opt(&[(self.opnqry(true, keep), objs)], keep)?
+                self.round_trip_opt(&[(self.opnqry(true, keep, sn), objs)], keep, sn)?
             } else {
                 self.round_trip(&[(
                     Ddm::group(
@@ -791,6 +839,7 @@ impl Db2Session {
             r
         };
         if let Some(e) = reply.error.take() {
+            self.free_section(sn);
             if !self.in_tx {
                 let _ = self.rollback_quiet();
             }
@@ -868,16 +917,18 @@ impl Db2Session {
                 .first()
                 .map(|r| r.columns.clone())
                 .unwrap_or_default();
-            self.cursor = Some(OpenCursor {
+            self.cursors.push(OpenCursor {
                 id,
                 set,
                 columns,
-                own_txn: !self.in_tx,
+                section: sn,
             });
             out.pending = Some(CursorHandle(id));
-            // 자동 커밋은 커서가 닫힐 때(RDBCMM이 커서를 닫으므로).
-            return Ok(out);
+        } else if keep {
+            // 작은 결과(첫 블록에 ENDQRYRM) = 커서 없음 → 섹션 반납.
+            self.free_section(sn);
         }
+        // 자동 커밋은 종전대로 문장마다 — 패키지가 WITH HOLD라 열린 커서는 커밋을 넘어 산다(CI db2.yml로 확인).
         if !self.in_tx {
             self.commit()?;
         }
@@ -933,13 +984,15 @@ impl Session for Db2Session {
     }
 
     /// 열린 커서에서 다음 `max`행(0 = 끝까지) — 보관한 행을 먼저 쓰고 모자라면 `CNTQRY`로 블록씩 · 상한+1로 "더 있음" 판정.
+    /// 끝까지 읽은 커서는 닫고 섹션을 반납 · 더 있으면 목록 끝(최근 사용)으로.
     fn fetch_next(&mut self, h: CursorHandle, max: usize) -> Result<(ResultSet, bool), DbError> {
         if self.wire.is_none() {
-            self.cursor = None;
+            self.drop_cursors();
         }
-        let Some(mut c) = self.cursor.take_if(|c| c.id == h.0) else {
+        let Some(pos) = self.cursors.iter().position(|c| c.id == h.0) else {
             return Err(err(format!("cursor #{} is not open", h.0)));
         };
+        let mut c = self.cursors.remove(pos);
         self.active.store(true, Ordering::Release);
         let mut stalls = 0u32;
         let mut failed: Option<DbError> = None;
@@ -979,8 +1032,7 @@ impl Session for Db2Session {
             {
                 self.wire = None;
             }
-            self.cursor = Some(c);
-            let _ = self.close_open_cursor();
+            let _ = self.close_cursor_obj(c);
             return Err(e);
         }
         let rows = if max > 0 && c.set.rows.len() > max {
@@ -991,16 +1043,18 @@ impl Session for Db2Session {
         };
         let more = c.set.open || !c.set.rows.is_empty();
         let columns = c.columns.clone();
-        self.cursor = Some(c);
-        if !more {
-            self.close_open_cursor()?;
+        if more {
+            self.cursors.push(c);
+        } else {
+            self.close_cursor_obj(c)?;
         }
         Ok((ResultSet { columns, rows }, more))
     }
 
     fn close_cursor(&mut self, h: CursorHandle) -> Result<(), DbError> {
-        if self.cursor.as_ref().is_some_and(|c| c.id == h.0) {
-            self.close_open_cursor()?;
+        if let Some(pos) = self.cursors.iter().position(|c| c.id == h.0) {
+            let c = self.cursors.remove(pos);
+            self.close_cursor_obj(c)?;
         }
         Ok(())
     }
@@ -1065,14 +1119,14 @@ impl Session for Db2Session {
     }
 
     fn commit(&mut self) -> Result<(), DbError> {
-        // 작업 단위 끝 = 서버가 열린 커서를 닫는다(CLSQRY 불필요 · 핸들은 무효).
-        self.cursor = None;
+        // WITH HOLD 패키지 = 커밋 뒤에도 열린 커서는 그대로(2단계).
         self.in_tx = false;
         self.uow(true)
     }
 
     fn rollback(&mut self) -> Result<(), DbError> {
-        self.cursor = None;
+        // 롤백 = 서버가 모든 커서를 닫는다(WITH HOLD 포함 · CLSQRY 불필요 · 핸들 무효).
+        self.drop_cursors();
         self.in_tx = false;
         self.uow(false)
     }
@@ -1134,6 +1188,53 @@ mod tests {
         assert!(offset_fetch_supported("SQLxx"));
     }
 
+    /// 157차 2단계: 섹션 풀 = 1부터 오름차순 · 반납한 번호 재사용 · 기본 섹션 65는 풀 밖 · 풀이 비면 가장 오래된 커서 반납.
+    #[test]
+    fn section_pool_allocates_ascending_and_recycles() {
+        let mut s = Db2Session {
+            wire: None,
+            info: ServerInfo::default(),
+            database: format!("{:<18}", "SAMPLE"),
+            description: String::new(),
+            max_rows: 0,
+            in_tx: false,
+            active: Arc::new(AtomicBool::new(false)),
+            cancel_tcp: None,
+            cursors: Vec::new(),
+            free_sections: fresh_sections(),
+            next_cursor: 1,
+        };
+        assert_eq!(s.alloc_section().unwrap(), 1);
+        assert_eq!(s.alloc_section().unwrap(), 2);
+        assert_eq!(s.alloc_section().unwrap(), 3);
+        s.free_section(2);
+        s.free_section(PKGSN);
+        s.free_section(2);
+        assert_eq!(
+            s.alloc_section().unwrap(),
+            2,
+            "반납한 번호 재사용 · 중복 반납 무시"
+        );
+        let p = s.pkgnamcsn_sn(7);
+        assert_eq!(&p.value[62..], &[0x00, 0x07]);
+        // 풀 소진: 커서 64개가 섹션을 다 쥐면 가장 오래된 것(id 1)이 닫히고 그 섹션이 돌아온다(소켓 없음 = CLSQRY 생략).
+        s.free_sections = Vec::new();
+        for id in 1..=CURSOR_SECTIONS {
+            s.cursors.push(OpenCursor {
+                id: u32::from(id),
+                set: SetAcc::default(),
+                columns: Vec::new(),
+                section: id,
+            });
+        }
+        assert_eq!(s.alloc_section().unwrap(), 1);
+        assert_eq!(s.cursors.len(), 63);
+        assert_eq!(s.cursors[0].id, 2);
+        s.drop_cursors();
+        assert!(s.cursors.is_empty());
+        assert_eq!(s.free_sections.len(), 63, "1은 방금 할당 중");
+    }
+
     #[test]
     fn pkgnamcsn_is_64_bytes_ascii() {
         let s = Db2Session {
@@ -1145,7 +1246,8 @@ mod tests {
             in_tx: false,
             active: Arc::new(AtomicBool::new(false)),
             cancel_tcp: None,
-            cursor: None,
+            cursors: Vec::new(),
+            free_sections: fresh_sections(),
             next_cursor: 1,
         };
         assert!(s.cancel_handle().is_none(), "소켓 없음 = 취소 핸들 없음");

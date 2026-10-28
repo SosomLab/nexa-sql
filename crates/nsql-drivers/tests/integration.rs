@@ -1856,7 +1856,7 @@ fn db2_server_cursor_and_rownum_paging() {
     assert_eq!(rest.rows[0][0], Value::Int(5));
     assert_eq!(rest.rows[2995][0], Value::Int(3000));
     assert!(s.fetch_next(h, 2).is_err(), "끝난 커서 = 닫힘");
-    // 열린 커서 중 새 실행 = 조용히 닫고 진행(옛 핸들은 오류) · 커밋도 닫는다 · close_cursor는 멱등.
+    // ★ 2단계(섹션 풀 · WITH HOLD): 새 실행·커밋은 열린 커서를 **닫지 않는다** · 롤백은 닫는다 · close_cursor는 멱등.
     // (ID만은 3,000행이 ~21 KB라 첫 블록에 ENDQRYRM까지 와 커서가 안 열린다 = 작은 결과의 정상 동작 · CI 40642186831 → PAD 포함)
     let h2 = s
         .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
@@ -1867,15 +1867,51 @@ fn db2_server_cursor_and_rownum_paging() {
         .execute(&req("SELECT COUNT(*) FROM NSQLT_DB2C"))
         .expect("count");
     assert_eq!(c.result_sets[0].rows[0][0], Value::Int(3000));
-    assert!(s.fetch_next(h2, 2).is_err());
-    let h3 = s
-        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
-        .expect("select 3")
-        .pending
-        .expect("pending 3");
+    let (n2, more) = s.fetch_next(h2, 2).expect("새 실행 뒤에도 커서 유지");
+    assert_eq!((n2.rows[0][0].clone(), more), (Value::Int(3), true));
     s.commit().expect("commit");
-    assert!(s.fetch_next(h3, 2).is_err());
-    s.close_cursor(h3).expect("close_cursor 멱등");
+    let (n3, _) = s.fetch_next(h2, 2).expect("커밋 뒤에도 유지(WITH HOLD)");
+    assert_eq!(n3.rows[0][0], Value::Int(5));
+    s.rollback().expect("rollback");
+    assert!(s.fetch_next(h2, 2).is_err(), "롤백 = 서버가 커서를 닫는다");
+    s.close_cursor(h2).expect("close_cursor 멱등");
+    // 동시 커서 둘(오름·내림) = 섹션이 달라 서로 간섭 없음.
+    let ha = s
+        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
+        .expect("asc")
+        .pending
+        .expect("pending asc");
+    let hd = s
+        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID DESC"))
+        .expect("desc")
+        .pending
+        .expect("pending desc");
+    let (a1, _) = s.fetch_next(ha, 1).expect("asc 1");
+    let (d1, _) = s.fetch_next(hd, 1).expect("desc 1");
+    assert_eq!(
+        (a1.rows[0][0].clone(), d1.rows[0][0].clone()),
+        (Value::Int(3), Value::Int(2998))
+    );
+    s.close_cursor(ha).expect("close asc");
+    let (drest, more) = s.fetch_next(hd, 0).expect("desc rest");
+    assert_eq!((drest.rows.len(), more), (2997, false));
+    assert_eq!(drest.rows[2996][0], Value::Int(1));
+    // 풀 소진: 65번째 커서가 가장 오래된 것을 밀어낸다(섹션 1..=64).
+    let mut hs = Vec::new();
+    for _ in 0..65 {
+        hs.push(
+            s.execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
+                .expect("pool")
+                .pending
+                .expect("pending pool"),
+        );
+    }
+    assert!(s.fetch_next(hs[0], 1).is_err(), "가장 오래된 커서 = 반납됨");
+    assert!(s.fetch_next(hs[1], 1).is_ok(), "둘째 = 아직 열림");
+    assert!(s.fetch_next(hs[64], 1).is_ok(), "65째 = 열림");
+    for h in hs {
+        s.close_cursor(h).expect("close pool");
+    }
     // 상한 없음 = 커서 없이 전부(종전).
     s.set_option("max_rows", "0").expect("max_rows 0");
     let all = s
