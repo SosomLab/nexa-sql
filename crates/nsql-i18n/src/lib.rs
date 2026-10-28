@@ -4638,15 +4638,10 @@ impl Msg {
                 "Default schema",
                 "기본 스키마",
             ],
-            Msg::PhSsh => [
-                "user@host[:port] (optional)",
-                "user@host[:port](선택)",
-            ],
+            // 반 폭 칸(≈16자)이라 "(optional)" 꼬리를 뺀다(160차 V1 P3: "user@host[:port](선"에서 잘림) — 선택 칸임은 라벨에 필수 점이 없는 것으로.
+            Msg::PhSsh => ["user@host[:port]", "user@host[:port]"],
             Msg::LblSsh => ["SSH tunnel", "SSH 터널"],
-            Msg::PhSshKey => [
-                "key file (optional)",
-                "키 파일(선택)",
-            ],
+            Msg::PhSshKey => ["key file", "키 파일"],
             Msg::LblSshKey => ["SSH key", "SSH 키"],
             Msg::MnCopyConnString => [
                 "Copy connection string",
