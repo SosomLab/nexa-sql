@@ -617,6 +617,8 @@ impl ApplicationHandler<Wake> for App {
         // 아웃라인 패널 = 활성 탭·본문 세대가 바뀌었을 때만 다시(캐시 · 유휴 틱 · D-203).
         self.outline_sync();
         self.outline_follow();
+        // ★ 확장 사건 배달(154차-b · 길 A ⑤): 구독 확장이 있을 때만 비교·배달(edit 디바운스 · caret · doc).
+        self.ext_events_tick(now);
         // ★ 미사용 판정 즉시 회수(사용자 09-23): `스키마.`로 읽어 온 메타 버킷은 열린 문서 어디에도 그 이름이 없으면 바로 버린다
         //   (문서 낱말 캐시로 판정 · 현재 스키마·사전·트리가 펼친 것은 대상 아님).
         {
@@ -637,6 +639,9 @@ impl ApplicationHandler<Wake> for App {
             self.redraw();
         }
         if let Some(t) = self.intel.next_wake() {
+            next = next.min(t);
+        }
+        if let Some(t) = self.ext_ev.edit_due {
             next = next.min(t);
         }
         // 머무름 툴팁 마감(Ctrl 없는 객체 설명 · `objlink.hover_ms`).

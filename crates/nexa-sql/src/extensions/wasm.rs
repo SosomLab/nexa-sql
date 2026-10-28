@@ -10,16 +10,17 @@
 //! 같은 id의 WASM 확장이 로드되면 내장(builtin) 확장을 **대체**한다(내장 = 로드 실패 때 폴백).
 
 use super::{
-    key_matches, Capabilities, Command, EditorOps, Extension, ExtensionEffect, FileOp, Label,
-    MenuContribution, MenuTarget, Prompt, PromptRow, SettingDef, SettingDefKind, TransformOut,
-    TransformReq,
+    key_matches, Capabilities, Command, EditOp, EditorOps, Extension, ExtensionEffect, FileOp,
+    Label, MenuContribution, MenuTarget, Prompt, PromptRow, SettingDef, SettingDefKind,
+    TransformOut, TransformReq,
 };
 use nsql_settings::json::{self, Json};
 use nsql_settings::Settings;
 use std::cell::Cell;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wasmi::{Caller, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmi::{Caller, Engine, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 /// 호출당 연료(인터프리터 명령 수) — 정책 층은 계산이 거의 없다(설정 파싱 · JSON).
 const FUEL: u64 = 50_000_000;
@@ -39,6 +40,14 @@ const OUT_CAP: usize = 1 << 20;
 const MODULE_CAP: usize = 8 * 1024 * 1024;
 /// 연속 실패 격리 횟수.
 const BREAKER_LIMIT: u32 = 3;
+/// ★ 길 A(154차) 상한: 확장 전용 상태 JSON · 호출당 편집 요청 수·바이트 · 본문 읽기 1회 상한.
+const STORAGE_CAP: usize = 64 * 1024;
+/// ★ 사건 배달(154차-b): 처리기 한 번의 연료·시간 — 키 입력 경로에 얹히므로 짧게.
+const EVENT_FUEL: u64 = 20_000_000;
+const EVENT_TIMEOUT_MS: u64 = 50;
+const EDIT_OPS_CAP: usize = 256;
+const EDIT_BYTES_CAP: usize = 1 << 20;
+const DOC_READ_CAP: usize = 1 << 20;
 
 /// 호스트 상태(호출 하나 동안) — 리미터 · 마감 · 게스트가 요청한 편집기 op · 로그.
 struct HostCtx {
@@ -54,6 +63,57 @@ struct HostCtx {
     settings: Vec<(String, String)>,
     /// ★ 설정 덮어쓰기 요청(148차 · `nx_setting_set`): (키, 값) · 호출당 16개까지 · 호스트가 호출 뒤 선언·검증 후 overlay 층에.
     setting_sets: Vec<(String, String)>,
+    /// ★ 길 A(154차): 본문 스냅샷(글자 열 · `editor.read` 선언 때만 채움) · 구간 · 읽기/쓰기 허용 · 편집 요청 큐 · 상태줄 · 전용 상태.
+    doc: Arc<Vec<char>>,
+    regions: Vec<(usize, usize)>,
+    can_read: bool,
+    can_write: bool,
+    edit_ops: Vec<EditOp>,
+    edit_bytes: usize,
+    status: Option<String>,
+    storage: Option<String>,
+    storage_dirty: bool,
+}
+
+/// 게스트 버퍼(길이 접두)에 바이트를 써 준다 → 쓴 길이(-1 = cap 부족·메모리 없음).
+fn write_buf(caller: &mut Caller<'_, HostCtx>, ptr: i32, cap: i32, bytes: &[u8]) -> i32 {
+    if bytes.len() > cap.max(0) as usize {
+        return -1;
+    }
+    let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+        return -1;
+    };
+    let mut buf = Vec::with_capacity(bytes.len() + 4);
+    buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(bytes);
+    if mem.write(caller, ptr as usize, &buf).is_err() {
+        return -1;
+    }
+    bytes.len() as i32
+}
+
+/// `[[a,b],…]` JSON → 구간 목록(모양이 다르면 None).
+fn regions_from_json(text: &str) -> Option<Vec<(usize, usize)>> {
+    let v = json::parse(text).ok()?;
+    let Json::Arr(items) = v else {
+        return None;
+    };
+    let mut out = Vec::with_capacity(items.len());
+    for it in items {
+        let Json::Arr(ab) = it else {
+            return None;
+        };
+        if ab.len() != 2 {
+            return None;
+        }
+        let a = jnum(&ab[0])?;
+        let b = jnum(&ab[1])?;
+        if a < 0.0 || b < a {
+            return None;
+        }
+        out.push((a as usize, b as usize));
+    }
+    Some(out)
 }
 
 /// `nx_host_get`의 종류 번호(SDK `query::*`와 같은 표).
@@ -209,6 +269,158 @@ fn linker(engine: &Engine) -> Result<Linker<HostCtx>, wasmi::Error> {
             Ok(1)
         },
     )?;
+    // ★ 길 A(ABI v1.3 · 154차) 편집기 읽기: nx_editor_len() · nx_editor_text(from,to,ptr,cap) · nx_editor_regions(ptr,cap) — `editor.read` 선언 때만 답한다(아니면 -1).
+    l.func_wrap(
+        "env",
+        "nx_editor_len",
+        |mut caller: Caller<'_, HostCtx>| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 1_000)?;
+            if !caller.data().can_read {
+                return Ok(-1);
+            }
+            Ok(caller.data().doc.len() as i32)
+        },
+    )?;
+    l.func_wrap(
+        "env",
+        "nx_editor_text",
+        |mut caller: Caller<'_, HostCtx>,
+         from: i32,
+         to: i32,
+         ptr: i32,
+         cap: i32|
+         -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 20_000)?;
+            if !caller.data().can_read || from < 0 || to < from {
+                return Ok(-1);
+            }
+            let (a, b) = (from as usize, to as usize);
+            if b > caller.data().doc.len() || b - a > DOC_READ_CAP {
+                return Ok(-1);
+            }
+            let text: String = caller.data().doc[a..b].iter().collect();
+            Ok(write_buf(&mut caller, ptr, cap, text.as_bytes()))
+        },
+    )?;
+    l.func_wrap(
+        "env",
+        "nx_editor_regions",
+        |mut caller: Caller<'_, HostCtx>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 5_000)?;
+            if !caller.data().can_read {
+                return Ok(-1);
+            }
+            let text = format!(
+                "[{}]",
+                caller
+                    .data()
+                    .regions
+                    .iter()
+                    .map(|(a, b)| format!("[{a},{b}]"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            Ok(write_buf(&mut caller, ptr, cap, text.as_bytes()))
+        },
+    )?;
+    // ★ 길 A 편집기 쓰기(큐 · `editor.write` 선언 때만 접수 · 호출당 256건 · 1 MB): nx_editor_replace(from,to,ptr) · nx_editor_set_regions(ptr).
+    l.func_wrap(
+        "env",
+        "nx_editor_replace",
+        |mut caller: Caller<'_, HostCtx>,
+         from: i32,
+         to: i32,
+         ptr: i32|
+         -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 20_000)?;
+            if !caller.data().can_write
+                || from < 0
+                || to < from
+                || caller.data().edit_ops.len() >= EDIT_OPS_CAP
+            {
+                return Ok(0);
+            }
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(0);
+            };
+            let Some(text) = read_buf(mem.data(&caller), ptr as u32) else {
+                return Ok(0);
+            };
+            if caller.data().edit_bytes + text.len() > EDIT_BYTES_CAP {
+                return Ok(0);
+            }
+            let d = caller.data_mut();
+            d.edit_bytes += text.len();
+            d.edit_ops
+                .push(EditOp::Replace(from as usize, to as usize, text));
+            Ok(1)
+        },
+    )?;
+    l.func_wrap(
+        "env",
+        "nx_editor_set_regions",
+        |mut caller: Caller<'_, HostCtx>, ptr: i32| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 10_000)?;
+            if !caller.data().can_write || caller.data().edit_ops.len() >= EDIT_OPS_CAP {
+                return Ok(0);
+            }
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(0);
+            };
+            let text = read_buf(mem.data(&caller), ptr as u32).unwrap_or_default();
+            let Some(r) = regions_from_json(&text) else {
+                return Ok(0);
+            };
+            caller.data_mut().edit_ops.push(EditOp::SetRegions(r));
+            Ok(1)
+        },
+    )?;
+    // ★ nx_ui_status(ptr) : 상태줄 글(호출당 마지막 것).
+    l.func_wrap(
+        "env",
+        "nx_ui_status",
+        |mut caller: Caller<'_, HostCtx>, ptr: i32| -> Result<(), wasmi::Error> {
+            host_guard(&mut caller, 5_000)?;
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(());
+            };
+            let text = read_buf(mem.data(&caller), ptr as u32).unwrap_or_default();
+            caller.data_mut().status = Some(text.chars().take(256).collect());
+            Ok(())
+        },
+    )?;
+    // ★ 전용 상태(storage · `<root>/<id>/state.json` · 64 KB): nx_storage_get(ptr,cap) · nx_storage_set(ptr) — 호출 뒤 호스트가 파일에.
+    l.func_wrap(
+        "env",
+        "nx_storage_get",
+        |mut caller: Caller<'_, HostCtx>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 5_000)?;
+            let Some(v) = caller.data().storage.clone() else {
+                return Ok(-1);
+            };
+            Ok(write_buf(&mut caller, ptr, cap, v.as_bytes()))
+        },
+    )?;
+    l.func_wrap(
+        "env",
+        "nx_storage_set",
+        |mut caller: Caller<'_, HostCtx>, ptr: i32| -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 10_000)?;
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(0);
+            };
+            let Some(text) = read_buf(mem.data(&caller), ptr as u32) else {
+                return Ok(0);
+            };
+            if text.len() > STORAGE_CAP {
+                return Ok(0);
+            }
+            let d = caller.data_mut();
+            d.storage = Some(text);
+            d.storage_dirty = true;
+            Ok(1)
+        },
+    )?;
     // nx_log(ptr) : 로그 한 줄(호출당 32줄까지).
     l.func_wrap(
         "env",
@@ -251,6 +463,19 @@ pub(crate) struct WasmExtension {
     settings_write: Vec<String>,
     /// ★ 모듈이 import하는 호스트 함수 이름(T-448 · 능력 요약 = 파일 동작·설정 덮어쓰기 사용 여부).
     imports: Vec<String>,
+    /// ★ 길 A(154차): 메타 `stateful`·`capabilities`·`events` · 보존 인스턴스(stateful) · 마지막 호출 시각(유휴 회수) · 호출 전 본문 스냅샷 ·
+    ///   편집 요청·상태줄 큐 · 전용 상태(바깥 None = 아직 안 읽음).
+    stateful: bool,
+    caps_decl: Vec<String>,
+    events: Vec<String>,
+    live: std::cell::RefCell<Option<Live>>,
+    last_call: Cell<Option<Instant>>,
+    doc_snapshot: std::cell::RefCell<Snapshot>,
+    edit_ops: std::cell::RefCell<Vec<EditOp>>,
+    status: std::cell::RefCell<Option<String>>,
+    storage: std::cell::RefCell<Option<Option<String>>>,
+    /// 전용 상태 파일의 뿌리(호스트가 `set_storage_root`로 넣는다 · None = storage 없음 = 시험·개발 폴더 로드).
+    storage_root: std::cell::RefCell<Option<std::path::PathBuf>>,
     /// 이번 호출에서 게스트가 읽을 수 있는 설정(전용 + 선언) — 호출 직전에 채운다.
     call_settings: std::cell::RefCell<Vec<(String, String)>>,
     /// 마지막 호출이 남긴 설정 덮어쓰기 요청.
@@ -265,6 +490,15 @@ pub(crate) struct WasmExtension {
     failures: Cell<u32>,
     /// 마지막 호출의 로그·오류(호스트가 거둬 로그 창에).
     pub(crate) notes: std::cell::RefCell<Vec<String>>,
+}
+
+/// 본문 스냅샷(글자 열 · 구간) — `editor.read` 호출 전에 뜬다.
+type Snapshot = (Arc<Vec<char>>, Vec<(usize, usize)>);
+
+/// 보존 인스턴스(stateful · 길 A): Store(HostCtx는 호출마다 갈아 끼운다) + Instance.
+struct Live {
+    store: Store<HostCtx>,
+    instance: Instance,
 }
 
 impl std::fmt::Debug for WasmExtension {
@@ -469,6 +703,16 @@ impl WasmExtension {
             settings_read: Vec::new(),
             settings_write: Vec::new(),
             imports,
+            stateful: false,
+            caps_decl: Vec::new(),
+            events: Vec::new(),
+            live: std::cell::RefCell::new(None),
+            last_call: Cell::new(None),
+            doc_snapshot: std::cell::RefCell::new((Arc::new(Vec::new()), Vec::new())),
+            edit_ops: std::cell::RefCell::new(Vec::new()),
+            status: std::cell::RefCell::new(None),
+            storage: std::cell::RefCell::new(None),
+            storage_root: std::cell::RefCell::new(None),
             call_settings: std::cell::RefCell::new(Vec::new()),
             setting_sets: std::cell::RefCell::new(Vec::new()),
             file_ops: std::cell::RefCell::new(Vec::new()),
@@ -644,6 +888,10 @@ impl WasmExtension {
         };
         ext.settings_read = strs("settings_read");
         ext.settings_write = strs("settings_write");
+        // ★ 길 A(ABI v1.3 · 154차): 인스턴스 유지 · 능력 선언 · 구독 사건.
+        ext.stateful = jget(&v, "stateful").and_then(jbool).unwrap_or(false);
+        ext.caps_decl = strs("capabilities");
+        ext.events = strs("events");
         for p in &ext.prompts {
             if !ext.commands.iter().any(|c| c.id == p.id) {
                 ext.commands.push(Command {
@@ -668,6 +916,11 @@ impl WasmExtension {
         let mut v = self.settings_read.clone();
         v.extend(self.settings_write.iter().cloned());
         v
+    }
+
+    #[cfg(test)]
+    fn take_wasm_notes_for_test(&self) -> Vec<String> {
+        std::mem::take(&mut *self.notes.borrow_mut())
     }
 
     fn tripped(&self) -> bool {
@@ -714,6 +967,95 @@ impl WasmExtension {
         r
     }
 
+    fn has_cap(&self, cap: &str) -> bool {
+        self.caps_decl.iter().any(|c| c == cap)
+    }
+
+    /// 전용 상태 파일(`<root>/<id>/state.json`).
+    fn storage_path(&self) -> Option<std::path::PathBuf> {
+        self.storage_root
+            .borrow()
+            .as_ref()
+            .map(|r| r.join(&self.id).join("state.json"))
+    }
+
+    /// 전용 상태 파일의 뿌리(확장 관리자 설치 폴더 · 호스트가 로드 뒤 넣는다 · 단위 시험은 넣지 않아 실제 설정 폴더에 쓰지 않는다).
+    pub(crate) fn set_storage_root(&self, root: Option<std::path::PathBuf>) {
+        *self.storage_root.borrow_mut() = root;
+        *self.storage.borrow_mut() = None;
+    }
+
+    /// 전용 상태(처음 한 번 파일에서 · 이후 캐시).
+    fn storage_value(&self) -> Option<String> {
+        let mut slot = self.storage.borrow_mut();
+        if slot.is_none() {
+            let v = self
+                .storage_path()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .filter(|t| t.len() <= STORAGE_CAP);
+            *slot = Some(v);
+        }
+        slot.clone().flatten()
+    }
+
+    /// ★ 유휴 회수(길 A · 39 §3): 마지막 호출에서 `idle`이 지난 보존 인스턴스를 버린다(상태는 storage에 둔 것만 남는다) → 로그 한 줄.
+    pub(crate) fn reap_idle(&self, idle: Duration) -> Option<String> {
+        if self.live.borrow().is_none() {
+            return None;
+        }
+        let last = self.last_call.get()?;
+        if last.elapsed() < idle {
+            return None;
+        }
+        *self.live.borrow_mut() = None;
+        Some(format!(
+            "wasm extension {}: idle instance released",
+            self.id
+        ))
+    }
+
+    /// ★ 사건 배달(154차-b): `nx_ext_event(JSON)` → 처리 여부. 사건 처리기가 낸 편집·파일·설정 요청은 **버린다**(관찰 전용 · 로그 한 줄).
+    pub(crate) fn dispatch_event(&self, json: &str) -> bool {
+        let handled = self
+            .call_limited(
+                "nx_ext_event",
+                Some(json),
+                false,
+                EVENT_FUEL,
+                EVENT_TIMEOUT_MS,
+            )
+            .map(|(r, _)| r != "0")
+            .unwrap_or(false);
+        let dropped = self.edit_ops.borrow_mut().drain(..).count()
+            + self.file_ops.borrow_mut().drain(..).count()
+            + self.setting_sets.borrow_mut().drain(..).count();
+        if dropped > 0 {
+            self.notes.borrow_mut().push(format!(
+                "[{}] {dropped} request(s) from an event handler ignored (events are observe-only)",
+                self.id
+            ));
+        }
+        handled
+    }
+
+    /// (재)인스턴스화 — stateful이면 `nx_ext_init`도 1회.
+    fn instantiate(&self, ctx: HostCtx, fuel: u64) -> Result<Live, String> {
+        let mut store = Store::new(&self.engine, ctx);
+        store.limiter(|c| &mut c.limits);
+        store.set_fuel(fuel).map_err(|e| e.to_string())?;
+        let l = linker(&self.engine).map_err(|e| e.to_string())?;
+        let instance = l
+            .instantiate_and_start(&mut store, &self.module)
+            .map_err(|e| e.to_string())?;
+        if self.stateful {
+            if let Ok(init) = instance.get_typed_func::<(), ()>(&store, "nx_ext_init") {
+                init.call(&mut store, ())
+                    .map_err(|e| format!("nx_ext_init: {e}"))?;
+            }
+        }
+        Ok(Live { store, instance })
+    }
+
     fn call_inner(
         &self,
         f: &str,
@@ -722,6 +1064,7 @@ impl WasmExtension {
         fuel: u64,
         timeout_ms: u64,
     ) -> Result<(String, Vec<(i32, bool)>), String> {
+        let (doc, regions) = self.doc_snapshot.borrow().clone();
         let ctx = HostCtx {
             limits: StoreLimitsBuilder::new().memory_size(MEM_CAP).build(),
             deadline: Instant::now() + Duration::from_millis(timeout_ms),
@@ -731,84 +1074,145 @@ impl WasmExtension {
             file_ops: Vec::new(),
             settings: self.call_settings.borrow().clone(),
             setting_sets: Vec::new(),
+            doc,
+            regions,
+            can_read: self.has_cap("editor.read"),
+            can_write: self.has_cap("editor.write"),
+            edit_ops: Vec::new(),
+            edit_bytes: 0,
+            status: None,
+            storage: if self.stateful {
+                self.storage_value()
+            } else {
+                None
+            },
+            storage_dirty: false,
         };
-        let mut store = Store::new(&self.engine, ctx);
-        store.limiter(|c| &mut c.limits);
-        store.set_fuel(fuel).map_err(|e| e.to_string())?;
-        let l = linker(&self.engine).map_err(|e| e.to_string())?;
-        let instance = l
-            .instantiate_and_start(&mut store, &self.module)
-            .map_err(|e| e.to_string())?;
+        // ★ 길 A(154차): stateful이면 보존 인스턴스를 다시 쓴다(HostCtx만 갈아 끼움 · 연료 다시 채움) · 아니면 호출마다 새로.
+        let mut live = match self.live.borrow_mut().take() {
+            Some(mut l) if self.stateful => {
+                *l.store.data_mut() = ctx;
+                l.store.set_fuel(fuel).map_err(|e| e.to_string())?;
+                l
+            }
+            _ => self.instantiate(ctx, fuel)?,
+        };
+        self.last_call.set(Some(Instant::now()));
+        let r = self.call_live(&mut live, f, input, returns_buf);
+        // 호출이 남긴 것 수거(성공·실패 공통 · 트랩 때도 로그는 거둔다 · 146차).
+        let data = live.store.data_mut();
+        let logs = std::mem::take(&mut data.logs);
+        let file_ops = std::mem::take(&mut data.file_ops);
+        let setting_sets = std::mem::take(&mut data.setting_sets);
+        let edit_ops = std::mem::take(&mut data.edit_ops);
+        let status = data.status.take();
+        let storage = if data.storage_dirty {
+            data.storage.clone()
+        } else {
+            None
+        };
+        data.storage_dirty = false;
+        let ops = std::mem::take(&mut data.ops);
+        if !logs.is_empty() {
+            let mut notes = self.notes.borrow_mut();
+            for l in logs {
+                notes.push(format!("[{}] {l}", self.id));
+            }
+        }
+        match r {
+            Err(e) => {
+                // 트랩·시간 초과 = 인스턴스 버림(다음 호출 때 다시 만들고 init).
+                Err(e)
+            }
+            Ok(out) => {
+                if self.stateful {
+                    *self.live.borrow_mut() = Some(live);
+                }
+                if !file_ops.is_empty() {
+                    let mut q = self.file_ops.borrow_mut();
+                    for (kind, path) in &file_ops {
+                        q.push(match *kind {
+                            FILE_OP_OPEN => FileOp::Open(path.clone()),
+                            FILE_OP_REVEAL => FileOp::Reveal(path.clone()),
+                            _ => FileOp::CopyPath(path.clone()),
+                        });
+                    }
+                }
+                if !setting_sets.is_empty() {
+                    self.setting_sets.borrow_mut().extend(setting_sets);
+                }
+                if !edit_ops.is_empty() {
+                    self.edit_ops.borrow_mut().extend(edit_ops);
+                }
+                if status.is_some() {
+                    *self.status.borrow_mut() = status;
+                }
+                if let Some(v) = storage {
+                    if let Some(p) = self.storage_path() {
+                        if let Some(d) = p.parent() {
+                            let _ = std::fs::create_dir_all(d);
+                        }
+                        if let Err(e) = std::fs::write(&p, v.as_bytes()) {
+                            self.notes
+                                .borrow_mut()
+                                .push(format!("[{}] storage write failed: {e}", self.id));
+                        }
+                    }
+                    *self.storage.borrow_mut() = Some(Some(v));
+                }
+                Ok((out, ops))
+            }
+        }
+    }
+
+    /// 인스턴스에 입력 버퍼를 넣고 `f`를 부른다 → 반환 버퍼(또는 정수 글).
+    fn call_live(
+        &self,
+        live: &mut Live,
+        f: &str,
+        input: Option<&str>,
+        returns_buf: bool,
+    ) -> Result<String, String> {
+        let store = &mut live.store;
+        let instance = &live.instance;
         let mem = instance
-            .get_memory(&store, "memory")
+            .get_memory(&*store, "memory")
             .ok_or("memory export missing")?;
         let arg = match input {
             Some(text) => {
                 let alloc = instance
-                    .get_typed_func::<i32, i32>(&store, "nx_alloc")
+                    .get_typed_func::<i32, i32>(&*store, "nx_alloc")
                     .map_err(|_| "nx_alloc export missing")?;
                 let ptr = alloc
-                    .call(&mut store, text.len() as i32)
+                    .call(&mut *store, text.len() as i32)
                     .map_err(|e| e.to_string())? as usize;
                 let mut buf = Vec::with_capacity(text.len() + 4);
                 buf.extend_from_slice(&(text.len() as u32).to_le_bytes());
                 buf.extend_from_slice(text.as_bytes());
-                mem.write(&mut store, ptr, &buf)
+                mem.write(&mut *store, ptr, &buf)
                     .map_err(|e| e.to_string())?;
                 Some(ptr as i32)
             }
             None => None,
         };
-        let called = match arg {
+        let ret = match arg {
             Some(p) => instance
-                .get_typed_func::<i32, i32>(&store, f)
+                .get_typed_func::<i32, i32>(&*store, f)
                 .map_err(|_| format!("{f} export missing"))?
-                .call(&mut store, p)
-                .map_err(|e| e.to_string()),
+                .call(&mut *store, p)
+                .map_err(|e| e.to_string())?,
             None => instance
-                .get_typed_func::<(), i32>(&store, f)
+                .get_typed_func::<(), i32>(&*store, f)
                 .map_err(|_| format!("{f} export missing"))?
-                .call(&mut store, ())
-                .map_err(|e| e.to_string()),
+                .call(&mut *store, ())
+                .map_err(|e| e.to_string())?,
         };
-        let ret = match called {
-            Ok(v) => v,
-            Err(e) => {
-                // ★ 트랩·오류 때도 게스트가 그 전에 남긴 `nx_log` 줄은 수거한다(146차 · 종전엔 store와 함께 버려져 원인 추적이 안 됐다).
-                let data = store.into_data();
-                let mut notes = self.notes.borrow_mut();
-                for l in data.logs {
-                    notes.push(format!("[{}] {l}", self.id));
-                }
-                return Err(e);
-            }
-        };
-        let out = if returns_buf {
-            read_buf(mem.data(&store), ret as u32).ok_or("return buffer corrupt")?
+        if returns_buf {
+            read_buf(mem.data(&*store), ret as u32)
+                .ok_or_else(|| "return buffer corrupt".to_string())
         } else {
-            ret.to_string()
-        };
-        let data = store.into_data();
-        if !data.file_ops.is_empty() {
-            let mut ops = self.file_ops.borrow_mut();
-            for (kind, path) in &data.file_ops {
-                ops.push(match *kind {
-                    FILE_OP_OPEN => FileOp::Open(path.clone()),
-                    FILE_OP_REVEAL => FileOp::Reveal(path.clone()),
-                    _ => FileOp::CopyPath(path.clone()),
-                });
-            }
+            Ok(ret.to_string())
         }
-        if !data.setting_sets.is_empty() {
-            self.setting_sets.borrow_mut().extend(data.setting_sets);
-        }
-        if !data.logs.is_empty() {
-            let mut notes = self.notes.borrow_mut();
-            for l in data.logs {
-                notes.push(format!("[{}] {l}", self.id));
-            }
-        }
-        Ok((out, data.ops))
     }
 }
 
@@ -843,8 +1247,13 @@ impl Extension for WasmExtension {
     fn run_with(&mut self, id: &str, ed: &mut dyn EditorOps, doc_path: &str, s: &Settings) -> bool {
         *self.doc_path.borrow_mut() = doc_path.to_string();
         *self.call_settings.borrow_mut() = settings_pairs(s, &self.prefix, &self.readable());
+        // ★ 길 A(154차): `editor.read`를 선언한 확장에만 본문·구간 스냅샷(호출 한 번 동안).
+        if self.has_cap("editor.read") {
+            *self.doc_snapshot.borrow_mut() = ed.snapshot();
+        }
         let r = self.run(id, ed);
         self.doc_path.borrow_mut().clear();
+        *self.doc_snapshot.borrow_mut() = (Arc::new(Vec::new()), Vec::new());
         r
     }
     fn run(&mut self, id: &str, ed: &mut dyn EditorOps) -> bool {
@@ -908,7 +1317,26 @@ impl Extension for WasmExtension {
             settings_write: self.settings_write.clone(),
             file_ops: self.imports.iter().any(|n| n == "nx_file_op"),
             setting_set: self.imports.iter().any(|n| n == "nx_setting_set"),
+            stateful: self.stateful,
+            editor_read: self.has_cap("editor.read"),
+            editor_write: self.has_cap("editor.write"),
+            events: self.events.clone(),
         }
+    }
+    fn stateful(&self) -> bool {
+        self.stateful
+    }
+    fn declared_caps(&self) -> Vec<String> {
+        self.caps_decl.clone()
+    }
+    fn events(&self) -> Vec<String> {
+        self.events.clone()
+    }
+    fn take_edit_ops(&self) -> Vec<EditOp> {
+        std::mem::take(&mut self.edit_ops.borrow_mut())
+    }
+    fn take_status(&self) -> Option<String> {
+        self.status.borrow_mut().take()
     }
     /// ★ 프롬프트 변환(ABI v1.2): 요청 JSON(+ 접두 설정) → `nx_ext_transform` → 값/오류/행.
     fn transform(&self, req: &TransformReq, s: &Settings) -> Result<TransformOut, String> {
@@ -1086,6 +1514,64 @@ mod tests {
             (out.apply.as_str(), out.text.as_str()),
             ("text", "안녕하세요")
         );
+    }
+
+    /// ★ 길 A(154차 · ABI v1.3): uppercase-selection = stateful(세션 카운터가 호출 사이에 남음) · editor.read/write(스냅샷 → 교체 요청 큐 →
+    ///   `apply_edits` 한 묶음) · 상태줄 · 유휴 회수 뒤 init 다시(카운터 1부터). 파일이 없으면 건너뛴다.
+    #[test]
+    fn uppercase_wasm_is_stateful_and_edits_through_queue() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../extensions/uppercase-selection/uppercase_selection.wasm");
+        if !path.exists() {
+            eprintln!("skip: {} not built", path.display());
+            return;
+        }
+        let mut ext = WasmExtension::load_file(&path).expect("load");
+        let caps = ext.capabilities();
+        assert!(
+            caps.stateful && caps.editor_read && caps.editor_write,
+            "{caps:?}"
+        );
+        assert_eq!(caps.events.len(), 3, "caret · edit · doc");
+        let s = Settings::from_text(std::path::PathBuf::from("x"), "");
+        let mut tb = nexa_ctl::TextBox::new("");
+        tb.set_text("abc def");
+        tb.set_regions_pub(&[(0, 3)]);
+        assert!(ext.run_with("ext.uppercase_selection.run", &mut tb, "", &s));
+        let ops = ext.take_edit_ops();
+        assert_eq!(ops, vec![EditOp::Replace(0, 3, "ABC".into())]);
+        assert_eq!(EditorOps::apply_edits(&mut tb, &ops).expect("apply"), 1);
+        assert!(tb.text().starts_with("ABC def"), "{}", tb.text());
+        let st = ext.take_status().expect("status");
+        assert!(st.contains("1 (session)"), "{st}");
+        // 두 번째 호출 = 같은 인스턴스(세션 2).
+        tb.set_regions_pub(&[(4, 7)]);
+        assert!(ext.run_with("ext.uppercase_selection.run", &mut tb, "", &s));
+        let st = ext.take_status().expect("status");
+        assert!(st.contains("2 (session)"), "{st}");
+        // 유휴 회수 → 다음 호출은 새 인스턴스(세션 1) · 겹치는 편집은 거절.
+        assert!(ext.reap_idle(Duration::ZERO).is_some());
+        assert!(ext.run_with("ext.uppercase_selection.run", &mut tb, "", &s));
+        let st = ext.take_status().expect("status");
+        assert!(st.contains("1 (session)"), "{st}");
+        let _ = ext.take_edit_ops();
+        let bad = vec![
+            EditOp::Replace(0, 3, "x".into()),
+            EditOp::Replace(2, 5, "y".into()),
+        ];
+        assert!(EditorOps::apply_edits(&mut tb, &bad).is_err());
+        assert!(EditorOps::apply_edits(&mut tb, &[EditOp::Replace(0, 99, "x".into())]).is_err());
+        // ★ 154차-b: 캐럿 사건 10번 → 게스트 로그 "caret events: 10" · 모르는 사건은 미처리.
+        for _ in 0..10 {
+            assert!(ext.dispatch_event(r#"{"kind":"caret","regions":[[1,1]]}"#));
+        }
+        assert!(!ext.dispatch_event(r#"{"kind":"nope"}"#));
+        let notes = ext.take_wasm_notes_for_test();
+        assert!(
+            notes.iter().any(|n| n.contains("caret events: 10")),
+            "{notes:?}"
+        );
+        let _ = ext.take_wasm_notes_for_test();
     }
 
     /// 소스 트리의 공식 패키지 `.wasm`(SDK 샘플로 빌드해 둔 것)을 로드해 메타·설정→효과·명령 큐를 확인한다.

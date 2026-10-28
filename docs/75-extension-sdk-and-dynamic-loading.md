@@ -95,7 +95,9 @@
 - **기억 범위** = 그 버전 동안(같은 버전 재설치 = 유지 · 새 버전 설치 = 비움) · 내장 확장(설치 기록 없음)은 늘 허용 · 위험하지 않은 능력(명령 · 프롬프트 · 읽는 설정)은 설치 승인으로 끝.
 - 능력 칸의 원천 = §3-3 능력 요약(T-448) — 승인 화면은 wasm 메타를 배치 전에 메모리에서 로드해 만든다.
 
-### 3-5. ABI v1.3 — 상태 있는 확장 · 편집기 쓰기(길 A · 10-28 설계 · D-371 · T-450 · 구현 전)
+### 3-5. ABI v1.3 — 상태 있는 확장 · 편집기 쓰기(길 A · 10-28 · D-371 · T-450 · ★ 154차 구현 ✅ = a(인스턴스·편집기 읽기/쓰기) + b(사건 배달))
+
+> **구현 현황(154차-a · [journal 10-27 §15](journal/2026-10-27.md))** — 보존 인스턴스 `Live{Store, Instance}` · import **8**(아래 표 7 + `nx_editor_len`/`text`/`regions`/`replace`/`set_regions`/`nx_ui_status`/`nx_storage_get`/`set` = 표 그대로) · 유휴 회수 = **명령 실행 때 검사**(틱 타이머 아님 · `extensions.stateful_idle_secs` HIDDEN · 기본 300) · storage 뿌리 = 호스트가 `Registry::set_storage_root`로 넣음(= 확장 설치 폴더 `<extensions>/<id>/state.json` · 단위 시험은 뿌리 없음 = storage 꺼짐) · `editor.write` 첫 사용 = D-90 보류 `HeldOp::Edit(n)`(그 회차 요청은 버리고 허용 뒤 "다시 실행") · 상세 탭 능력 칸 3(상태 유지 · 편집기 접근 · 구독 사건) · SDK 0.4 · 샘플 uppercase-selection 0.1.0. **실측(V1-k)** = 적용 = 되돌리기 한 번에 원복 ✓ · 유휴 1초 → 다음 실행 때 "idle instance released" + `nx_ext_init` 재실행 · 세션 카운터 1로 · storage 누적 유지 ✓. **사건 배달(154-b ✅)** = `App::ext_events_tick`(이벤트 루프 · 구독 확장 있을 때만 비교) · edit = 활성 탭 본문 세대 변화 → `extensions.event_debounce_ms`(기본 100 · 0~5000) 뒤 1건 · caret = 구간 변화 즉시 · doc = 탭 open/close/activate(**뷰 탭도 온다 = 의도** · 뷰 탭·저장 전 탭은 path가 빈 글 · 확장이 path로 구분) · `nx_ext_event` 연료 2e7 · 50 ms · **관찰 전용**(처리기가 낸 편집·파일·설정 요청은 버리고 "ignored (events are observe-only)" 로그) · 마스터 스위치 `extensions.events`(on · HIDDEN). 실측(V1-l) = 캐럿 10번 → "caret events: 10" · 20 ms 간격 편집 2번 → edit 사건 1건 · `extensions.events=off` → 사건 0. **편집기 전용 가드(154-b)** = `editor.read/write`를 선언한 확장의 명령은 활성 탭이 뷰 탭이면 실행하지 않고 "<명령>: 편집기 탭에서 실행하세요" · 첫 사용 [허용]/[거부] 뒤 요청이 나온 편집기 탭으로 복귀(`ext_return_tab`).
 
 > 설계 = 개발 154차 초안(10-28). 전제 = D-90 ③(§3-4) · 사용자 원칙 3(SDK 범용 · 전용 설정 + 기본 설정 접근 · **확장은 본 프로그램에 영향 X**).
 
@@ -132,7 +134,7 @@
 
 **호스트 코드 지도** = `wasm.rs`(`stateful` 메타 · 보존 인스턴스 `RefCell<Option<(Store, Instance)>>` · HostCtx는 호출마다 교체 · import 7 · `edit_ops` 큐 · 트랩 때 버림 · `nx_ext_init` · 유휴 = `Registry::reap_idle(now)`) · `mod.rs`(trait `init/on_event/take_edit_ops/stateful/capabilities` · `EditorOps`에 `text/len/regions/replace_many/set_regions` — nexa-ctl `TextBox` 위에 얇게) · `app/extensions.rs`(명령 뒤 `drain_edit_ops` → 검증 → `begin_undo_group` + `replace_many` + `set_regions_pub` + `end_undo_group` · 그 탭 하나에만 · 다른 탭이면 버림 · `editor.write` 첫 사용 = D-90 보류 경로 재사용 · 사건 = 변경 기록(버전) 100 ms 디바운스 · 구독 확장에만) · 상세 탭 능력 칸에 `stateful` · `events` · `editor.write`.
 
-**순서(T-450)** = ① 문서(이 절 · 68 §2 · 50 §4 · 39 §3) ② 호스트 인스턴스 유지 + import/export + 상한 + 유휴 회수 ③ SDK 0.4 + 샘플 + ext-build ④ D-90 연동(`editor.write` 첫 사용) + 상세 탭 칸 ⑤ V1(대문자 변환 · 되돌리기 1단계 · 트랩 복구 · 유휴 회수 · 사건 디바운스).
+**순서(T-450)** = ✅ ① 문서(이 절 · 68 §2 · 50 §4 · 39 §3) ✅ ② 호스트 인스턴스 유지 + import/export + 상한 + 유휴 회수 ✅ ③ SDK 0.4 + 샘플 + ext-build ✅ ④ D-90 연동(`editor.write` 첫 사용) + 상세 탭 칸(154차-a) ✅ ⑤ 사건 배달 + V1-k·l(154-b)(대문자 변환 · 되돌리기 1단계 · 트랩 복구 · 유휴 회수 · 사건 디바운스).
 
 **보류·위험** = 사건은 구독한 확장에만 · 디바운스(키 입력마다 wasm 호출이 늘면 편집기 지연 · 마스터 스위치 `extensions.events`) · 겹치는/좌표 밖 교체 요청은 **전부 거절**(부분 적용 없음) + 로그 · 상태 파일은 확장 전용 폴더 안(설정·프로필·볼트와 격리).
 

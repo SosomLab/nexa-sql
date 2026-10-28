@@ -594,6 +594,10 @@ struct App {
     ext_staged: Vec<(usize, extensions::manager::Staged)>,
     /// ★ 첫 사용 확인 전 보류된 위험 요청(설정 덮어쓰기 · 파일 동작): (확장 id, 요청).
     ext_held: Vec<(String, extensions::HeldOp)>,
+    /// ★ 확장 사건 배달 상태(154차-b).
+    ext_ev: extensions::ExtEvents,
+    /// ★ 첫 사용 요청이 나온 편집기 탭(허용/거부 뒤 복귀 · 154차 관찰 ②).
+    ext_return_tab: Option<u64>,
     /// 저장소 메타 캐시((저장소, 폴더) → 메타 · 실패도 None으로) — 같은 확장 설명을 다시 열 때 원격 GET 0 · ⟳ 새로 고침 때 비움(협업 지적 10-20).
     ext_meta_cache: std::collections::HashMap<(String, String), Option<extensions::manager::Meta>>,
     grid_tab: u64,
@@ -2010,6 +2014,8 @@ fn main() {
         ext_catalog: Vec::new(),
         ext_staged: Vec::new(),
         ext_held: Vec::new(),
+        ext_ev: extensions::ExtEvents::default(),
+        ext_return_tab: None,
         ext_meta_cache: std::collections::HashMap::new(),
         grid_tab: 0,
         explorer,

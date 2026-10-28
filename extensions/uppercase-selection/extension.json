@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "id": "uppercase-selection",
+  "name": "Uppercase Selection",
+  "version": "0.1.0",
+  "kind": "wasm",
+  "summary": "Stateful extension demo (ABI v1.3): uppercase the selection through the editor read/write API · keeps a counter between calls · stores a total",
+  "description": "Reference sample for ABI v1.3 'stateful' extensions: the instance is kept between calls (stateful), the command 'Upper: Uppercase selection' reads the selected regions and queues replacements - the app validates and applies them as one undo step (editor.write is shown at install time and confirmed on first use). A session counter lives in the instance; a total counter is kept in the extension's own state.json. It also subscribes to caret events and logs every 10th one.\nBuilt from extensions/sdk/samples/uppercase-selection with nexa-ext-sdk 0.4.",
+  "author": "SosomLab",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/sdk/samples/uppercase-selection",
+  "min_app": "0.1.1",
+  "platforms": [],
+  "requires": [],
+  "settings_prefix": "ext.uppercase_selection.",
+  "files": [
+    {
+      "path": "uppercase_selection.wasm",
+      "sha256": "5f2d75101f47a187dd785168ece84d23c5a85beb0316935482a048fa0aab7596",
+      "dest": ""
+    }
+  ],
+  "messages": {
+    "install": "Uppercase Selection is installed - select text and run 'Upper: Uppercase selection' (first use asks to allow editing the document)."
+  },
+  "repository": "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions"
+}

@@ -62,6 +62,9 @@ impl Extension for Hello {
             // 기본 설정 접근 선언(148차): 읽기 = 화면 언어 · 덮어쓰기 = 자동 닫기 쌍(데모 · 그 밖은 호스트가 거절).
             settings_read: vec!["ui.lang".into()],
             settings_write: vec![KEY_AUTOCLOSE.into()],
+            stateful: false,
+            capabilities: vec![],
+            events: vec![],
         }
     }
 

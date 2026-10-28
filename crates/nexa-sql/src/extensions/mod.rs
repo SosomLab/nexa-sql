@@ -161,11 +161,31 @@ pub(crate) struct TransformOut {
     pub(crate) text: String,
 }
 
-/// ★ 첫 사용 확인 전 보류된 위험 요청(D-90 ③ · 152차): 설정 덮어쓰기 · 파일 동작.
+/// ★ 첫 사용 확인 전 보류된 위험 요청(D-90 ③ · 152차): 설정 덮어쓰기 · 파일 동작 · 편집기 쓰기(건수만 · 허용 뒤 명령 재실행).
 #[derive(Clone, Debug)]
 pub(crate) enum HeldOp {
     Set(String, String),
     File(FileOp),
+    Edit(usize),
+}
+
+/// ★ 사건 배달 상태(154차-b · 길 A ⑤): 탭 목록(열림/닫힘) · 활성 탭 · 본문 세대(디바운스) · 구간(캐럿) — `App::ext_events_tick`이 매 틱 비교한다.
+#[derive(Debug, Default)]
+pub(crate) struct ExtEvents {
+    pub(crate) tabs: Vec<(u64, Option<PathBuf>)>,
+    pub(crate) active: Option<u64>,
+    pub(crate) rev: u64,
+    pub(crate) regions: Vec<(usize, usize)>,
+    /// 편집 사건 디바운스 마감(그때 마지막 세대 하나만 보낸다 · 이벤트 루프가 이 시각에 깬다).
+    pub(crate) edit_due: Option<std::time::Instant>,
+    pub(crate) pending_rev: Option<u64>,
+}
+
+/// ★ 편집기 쓰기 요청(길 A · ABI v1.3 · 154차): 호출이 끝난 뒤 호스트가 검증해 **한 되돌리기 묶음**으로 적용 · 좌표 = 호출 시작 때 본문(글자 인덱스).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EditOp {
+    Replace(usize, usize, String),
+    SetRegions(Vec<(usize, usize)>),
 }
 
 /// ★ 확장의 **능력 요약**(T-448 · 151차 · 사용자 10-28): 상세 탭·승인 창(D-90)이 보여 준다 — 명령·프롬프트·읽는/바꾸는 설정·파일 동작.
@@ -179,6 +199,11 @@ pub(crate) struct Capabilities {
     pub(crate) file_ops: bool,
     /// 설정 덮어쓰기 import(`nx_setting_set`)를 쓰는가(선언 `settings_write`와 별개 · 선언 없이 import만 있으면 거절된다).
     pub(crate) setting_set: bool,
+    /// ★ 길 A(154차): 인스턴스 유지 · 편집기 읽기/쓰기 선언 · 구독 사건.
+    pub(crate) stateful: bool,
+    pub(crate) editor_read: bool,
+    pub(crate) editor_write: bool,
+    pub(crate) events: Vec<String>,
 }
 
 /// 설정 키 패턴 일치(메타 `settings_read`/`settings_write` · 148차): 정확히 같거나 `prefix*`.
@@ -280,7 +305,27 @@ pub(crate) trait Extension {
             settings_write: self.settings_write(),
             file_ops: false,
             setting_set: !self.settings_write().is_empty(),
+            stateful: self.stateful(),
+            editor_read: self.declared_caps().iter().any(|c| c == "editor.read"),
+            editor_write: self.declared_caps().iter().any(|c| c == "editor.write"),
+            events: self.events(),
         }
+    }
+    /// ★ 길 A(154차): 인스턴스 유지 선언 · 능력 선언(`editor.read` · `editor.write` · `events`) · 구독 사건 · 편집 요청·상태줄 큐.
+    fn stateful(&self) -> bool {
+        false
+    }
+    fn declared_caps(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn events(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn take_edit_ops(&self) -> Vec<EditOp> {
+        Vec::new()
+    }
+    fn take_status(&self) -> Option<String> {
+        None
     }
 }
 
@@ -297,6 +342,10 @@ pub(crate) trait EditorOps {
     fn goto_bracket_sibling(&mut self, next: bool, shift: bool) -> bool;
     fn goto_bracket_parent(&mut self, shift: bool) -> bool;
     fn goto_bracket_child(&mut self, shift: bool) -> bool;
+    /// ★ 길 A(154차): 본문(글자 열)·구간 스냅샷 — `editor.read`를 선언한 확장의 호출 전에만 뜬다.
+    fn snapshot(&self) -> (std::sync::Arc<Vec<char>>, Vec<(usize, usize)>);
+    /// ★ 길 A: 편집 요청을 검증(범위 · 겹침)해 한 되돌리기 묶음으로 적용 → 적용한 교체 수.
+    fn apply_edits(&mut self, ops: &[EditOp]) -> Result<usize, String>;
 }
 
 impl EditorOps for nexa_ctl::TextBox {
@@ -314,6 +363,46 @@ impl EditorOps for nexa_ctl::TextBox {
     }
     fn goto_bracket_child(&mut self, shift: bool) -> bool {
         nexa_ctl::TextBox::goto_bracket_child(self, shift)
+    }
+    fn snapshot(&self) -> (std::sync::Arc<Vec<char>>, Vec<(usize, usize)>) {
+        let len = self.buf().len();
+        (
+            std::sync::Arc::new(self.buf().slice_string(0, len).chars().collect()),
+            self.regions(),
+        )
+    }
+    fn apply_edits(&mut self, ops: &[EditOp]) -> Result<usize, String> {
+        let len = self.buf().len();
+        let mut edits: Vec<(usize, usize, &str)> = Vec::new();
+        let mut regions: Option<&Vec<(usize, usize)>> = None;
+        for op in ops {
+            match op {
+                EditOp::Replace(a, b, t) => {
+                    if a > b || *b > len {
+                        return Err(format!("edit out of range {a}..{b} (len {len})"));
+                    }
+                    edits.push((*a, *b, t.as_str()));
+                }
+                EditOp::SetRegions(r) => regions = Some(r),
+            }
+        }
+        edits.sort_by_key(|e| (e.0, e.1));
+        if edits.windows(2).any(|w| w[1].0 < w[0].1) {
+            return Err("edits overlap".to_string());
+        }
+        self.begin_undo_group();
+        if !edits.is_empty() {
+            let mut inv = nexa_ctl::Invalidations::default();
+            self.replace_many(&edits, &mut inv);
+        }
+        if let Some(r) = regions {
+            let n = self.buf().len();
+            if !r.is_empty() && r.iter().all(|&(a, b)| a <= b && b <= n) {
+                self.set_regions_pub(r);
+            }
+        }
+        self.end_undo_group();
+        Ok(edits.len())
     }
 }
 
@@ -343,6 +432,12 @@ impl Registry {
         self.active_indices()
             .into_iter()
             .find(|&i| owns(&*self.extensions[i]))
+    }
+
+    /// 명령 소유 확장의 id(관찰 ① · 154차: 편집기 탭 판정용).
+    pub(crate) fn owner_id_of(&self, cmd: &str) -> Option<String> {
+        self.owner_of(cmd)
+            .map(|i| self.extensions[i].id().to_string())
     }
 
     /// 활성 확장의 인덱스 — 같은 id가 둘(내장 + WASM)이면 WASM만.
@@ -708,6 +803,62 @@ impl Registry {
             }
         }
         out
+    }
+
+    /// ★ 길 A(154차): 모든 확장의 편집 요청 (확장 id, 요청들) · 상태줄 요청 (확장 id, 글) · 유휴 인스턴스 회수.
+    pub(crate) fn drain_edit_ops(&self) -> Vec<(String, Vec<EditOp>)> {
+        self.extensions
+            .iter()
+            .filter_map(|p| {
+                let ops = p.take_edit_ops();
+                (!ops.is_empty()).then(|| (p.id().to_string(), ops))
+            })
+            .collect()
+    }
+
+    pub(crate) fn drain_status(&self) -> Vec<(String, String)> {
+        self.extensions
+            .iter()
+            .filter_map(|p| p.take_status().map(|s| (p.id().to_string(), s)))
+            .collect()
+    }
+
+    /// ★ 길 A: 로드된 wasm 전부에 전용 상태 파일 뿌리를 넣는다(호스트가 `apply_extensions`에서 · 시험은 안 넣음).
+    pub(crate) fn set_storage_root(&self, root: Option<PathBuf>) {
+        for w in self.extensions.iter().filter_map(|p| p.as_wasm()) {
+            w.set_storage_root(root.clone());
+        }
+    }
+
+    /// ★ 사건 배달(154차-b): 켜진 wasm 중 `kind`를 구독한 것이 있는가 · 구독한 것들에 JSON을 보낸다(배달 수).
+    pub(crate) fn wants_event(&self, kind: &str, disabled: &[String]) -> bool {
+        self.active_indices().into_iter().any(|i| {
+            let p = &self.extensions[i];
+            !disabled.iter().any(|d| d == p.id()) && p.events().iter().any(|e| e == kind)
+        })
+    }
+
+    pub(crate) fn dispatch_event(&self, kind: &str, json: &str, disabled: &[String]) -> usize {
+        let mut n = 0;
+        for i in self.active_indices() {
+            let p = &self.extensions[i];
+            if disabled.iter().any(|d| d == p.id()) || !p.events().iter().any(|e| e == kind) {
+                continue;
+            }
+            if let Some(w) = p.as_wasm() {
+                w.dispatch_event(json);
+                n += 1;
+            }
+        }
+        n
+    }
+
+    pub(crate) fn reap_idle(&self, idle: std::time::Duration) -> Vec<String> {
+        self.extensions
+            .iter()
+            .filter_map(|p| p.as_wasm())
+            .filter_map(|w| w.reap_idle(idle))
+            .collect()
     }
 
     /// ★ 켜진 확장의 명령 전부 `(확장 id, 확장 이름, 명령)`(팔레트 라벨 · 키맵 기본 코드 · `key.<id>` 동적 설정 · 146차 · 149차).

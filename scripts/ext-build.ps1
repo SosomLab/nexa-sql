@@ -19,7 +19,8 @@ $map = @(
     @{ crate = "hello_ext";         pkg = "hello-ext";     file = "hello_ext.wasm" },
     @{ crate = "sql_formatter_kiros33"; pkg = "sql-formatter-kiros33"; file = "sql_formatter_kiros33.wasm" },
     @{ crate = "project_explorer_menus"; pkg = "project-explorer-menus"; file = "project_explorer_menus.wasm" },
-    @{ crate = "insert_sequence_ext"; pkg = "insert-sequence"; file = "insert_sequence.wasm" }
+    @{ crate = "insert_sequence_ext"; pkg = "insert-sequence"; file = "insert_sequence.wasm" },
+    @{ crate = "uppercase_selection_ext"; pkg = "uppercase-selection"; file = "uppercase_selection.wasm" }
 )
 foreach ($m in $map) {
     if ($Only -and $Only -ne $m.pkg) { continue }

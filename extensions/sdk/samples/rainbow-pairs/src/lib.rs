@@ -50,6 +50,9 @@ impl Extension for RainbowPairs {
             settings_prefix: "ext.rainbow_pairs.".into(),
             settings_read: vec![],
             settings_write: vec![],
+            stateful: false,
+            capabilities: vec![],
+            events: vec![],
             prompts: vec![],
             commands,
             menus: vec![Menu::editor(

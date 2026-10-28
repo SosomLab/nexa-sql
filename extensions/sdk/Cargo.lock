@@ -50,3 +50,10 @@ dependencies = [
  "nexa-ext-sdk",
  "nsql-format",
 ]
+
+[[package]]
+name = "uppercase-selection-ext"
+version = "0.1.0"
+dependencies = [
+ "nexa-ext-sdk",
+]

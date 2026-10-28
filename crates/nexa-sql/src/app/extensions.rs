@@ -67,6 +67,9 @@ impl App {
         for note in self.extensions.sync_wasm(&want) {
             self.log_win.push(LogEntry::new(LogKind::Info, note));
         }
+        // ★ 길 A(154차): 상태 있는 확장의 전용 상태 파일 뿌리 = 확장 설치 폴더(`<root>/<id>/state.json`).
+        self.extensions
+            .set_storage_root(extensions::manager::root_dir());
         let mut disabled = self.ext_disabled();
         // ★ 기본 켜진 내장(D-368 · Insert Sequence · 148차)은 설치 기록 없이도 산다 — 끄기만 가능.
         let default_on = self.extensions.default_on_ids();
@@ -337,6 +340,30 @@ impl App {
 
     /// ★ 확장 명령 실행 + 상황 경로 지정(프로젝트 탐색기 행 · 146차) + 파일 동작 요청 적용.
     pub(crate) fn run_extension_cmd_for(&mut self, id: &str, doc: &str) {
+        // ★ 길 A(154차): 유휴 보존 인스턴스 회수(`extensions.stateful_idle_secs` · 0 = 안 함).
+        let idle = self.settings.int("extensions.stateful_idle_secs");
+        if idle > 0 {
+            for note in self
+                .extensions
+                .reap_idle(std::time::Duration::from_secs(idle as u64))
+            {
+                self.log_win.push(LogEntry::new(LogKind::Info, note));
+            }
+        }
+        // ★ 관찰 ①(154차 V1-k · 협업): editor.read/write를 선언한 확장의 명령은 **편집기 탭에서만** — 상세 탭 같은 뷰 탭이면 안내하고 끝
+        //   (종전엔 조용히 실행돼 편집 요청만 버려지고 카운터는 올랐다).
+        if self.editors.is_view_tab_active() {
+            let needs_editor = self
+                .extensions
+                .owner_id_of(id)
+                .and_then(|o| self.extensions.capabilities_of(&o))
+                .is_some_and(|c| c.editor_read || c.editor_write);
+            if needs_editor {
+                self.sess.status = tf(Msg::StExtNeedsEditor, &[id]);
+                self.redraw();
+                return;
+            }
+        }
         let disabled = self.ext_disabled();
         if self
             .extensions
@@ -364,6 +391,147 @@ impl App {
             self.ext_request_use(&id);
         }
         self.ext_apply_setting_sets();
+        self.ext_apply_edit_ops();
+    }
+
+    /// ★ 사건 배달(154차-b · 길 A ⑤): 매 틱 활성 탭·본문 세대·구간·탭 목록을 비교해 구독한 wasm에 `edit`(디바운스 `extensions.event_debounce_ms`) ·
+    ///   `caret` · `doc`(open/close/activate)를 보낸다. 마스터 스위치 `extensions.events` · 구독 확장이 없으면 비교만(비용 ≈ 0).
+    pub(crate) fn ext_events_tick(&mut self, now: std::time::Instant) {
+        if !self.settings.flag("extensions.events") {
+            return;
+        }
+        let disabled = self.ext_disabled();
+        let want_edit = self.extensions.wants_event("edit", &disabled);
+        let want_caret = self.extensions.wants_event("caret", &disabled);
+        let want_doc = self.extensions.wants_event("doc", &disabled);
+        if !(want_edit || want_caret || want_doc) {
+            return;
+        }
+        let n = self.editors.len();
+        let tabs: Vec<(u64, Option<std::path::PathBuf>)> = (0..n)
+            .map(|i| (self.editors.tab_id(i), self.editors.path_of(i)))
+            .collect();
+        let active = self.editors.tab_id(self.editors.active());
+        if want_doc {
+            let opened: Vec<(u64, Option<std::path::PathBuf>)> = tabs
+                .iter()
+                .filter(|(id, _)| !self.ext_ev.tabs.iter().any(|(x, _)| x == id))
+                .cloned()
+                .collect();
+            let closed: Vec<(u64, Option<std::path::PathBuf>)> = self
+                .ext_ev
+                .tabs
+                .iter()
+                .filter(|(id, _)| !tabs.iter().any(|(x, _)| x == id))
+                .cloned()
+                .collect();
+            for (id, p) in opened {
+                self.ext_dispatch_event("doc", &doc_event_json("open", id, p.as_deref()));
+            }
+            for (id, p) in closed {
+                self.ext_dispatch_event("doc", &doc_event_json("close", id, p.as_deref()));
+            }
+            if self.ext_ev.active != Some(active) {
+                let p = self.editors.path_of(self.editors.active());
+                self.ext_dispatch_event("doc", &doc_event_json("activate", active, p.as_deref()));
+            }
+        }
+        let switched = self.ext_ev.active != Some(active);
+        self.ext_ev.tabs = tabs;
+        self.ext_ev.active = Some(active);
+        let rev = self.editors.cur().rev();
+        let regions = self.editors.cur().regions();
+        if switched {
+            // 탭 전환 = 기준만 바꾼다(편집·캐럿 사건 아님).
+            self.ext_ev.rev = rev;
+            self.ext_ev.regions = regions;
+            self.ext_ev.edit_due = None;
+            self.ext_ev.pending_rev = None;
+            return;
+        }
+        if want_edit {
+            if rev != self.ext_ev.rev {
+                self.ext_ev.rev = rev;
+                self.ext_ev.pending_rev = Some(rev);
+                let ms = self
+                    .settings
+                    .int("extensions.event_debounce_ms")
+                    .clamp(0, 5_000) as u64;
+                self.ext_ev.edit_due = Some(now + std::time::Duration::from_millis(ms));
+            }
+            if let (Some(due), Some(r)) = (self.ext_ev.edit_due, self.ext_ev.pending_rev) {
+                if now >= due {
+                    self.ext_ev.edit_due = None;
+                    self.ext_ev.pending_rev = None;
+                    self.ext_dispatch_event(
+                        "edit",
+                        &format!("{{\"kind\":\"edit\",\"doc\":\"{active}\",\"version\":{r}}}"),
+                    );
+                }
+            }
+        } else {
+            self.ext_ev.rev = rev;
+        }
+        if want_caret {
+            if regions != self.ext_ev.regions {
+                let json = format!(
+                    "{{\"kind\":\"caret\",\"doc\":\"{active}\",\"regions\":[{}]}}",
+                    regions
+                        .iter()
+                        .map(|(a, b)| format!("[{a},{b}]"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                self.ext_ev.regions = regions;
+                self.ext_dispatch_event("caret", &json);
+            }
+        } else {
+            self.ext_ev.regions = regions;
+        }
+    }
+
+    /// 사건 하나를 구독 확장들에 보내고 로그를 거둔다.
+    fn ext_dispatch_event(&mut self, kind: &str, json: &str) {
+        let disabled = self.ext_disabled();
+        if self.extensions.dispatch_event(kind, json, &disabled) > 0 {
+            for note in self.extensions.take_wasm_notes() {
+                self.log_win.push(LogEntry::new(LogKind::Info, note));
+            }
+        }
+    }
+
+    /// ★ 길 A(154차): 확장의 편집 요청 적용 — `editor.write` 첫 사용은 D-90 확인(요청은 버리고 허용 뒤 명령 재실행) · 검증·한 되돌리기 묶음은
+    ///   `EditorOps::apply_edits`(활성 탭) · 상태줄 요청은 그대로 상태줄에.
+    pub(crate) fn ext_apply_edit_ops(&mut self) {
+        let mut ask: Vec<String> = Vec::new();
+        for (ext, ops) in self.extensions.drain_edit_ops() {
+            if !self.ext_use_approved(&ext, "editor_write") {
+                self.ext_held
+                    .push((ext.clone(), extensions::HeldOp::Edit(ops.len())));
+                if !ask.contains(&ext) {
+                    ask.push(ext);
+                }
+                continue;
+            }
+            match extensions::EditorOps::apply_edits(self.editors.cur_mut(), &ops) {
+                Ok(n) => self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    format!("[{ext}] applied {n} edit(s) as one undo step"),
+                )),
+                Err(e) => self.log_win.push(LogEntry::new(
+                    LogKind::Error,
+                    format!("[{ext}] edits refused: {e}"),
+                )),
+            }
+            self.redraw();
+        }
+        for id in ask {
+            self.ext_request_use(&id);
+        }
+        for (ext, text) in self.extensions.drain_status() {
+            self.sess.status = format!("[{ext}] {text}");
+            self.redraw();
+        }
     }
 
     /// ★ 확장의 설정 덮어쓰기 요청 적용(148차 · 사용자 10-27 "기본 설정을 바꿀 수 있되 본 프로그램에 영향 X"): 메타 `settings_write` 선언 + 레지스트리
@@ -578,6 +746,18 @@ impl App {
         if c.file_ops {
             field(Msg::ExtDetFileOps, t(Msg::ExtDetFileOpsList).to_string());
         }
+        // ★ 길 A(154차): 인스턴스 유지 · 편집기 접근 · 구독 사건.
+        if c.stateful {
+            field(Msg::ExtDetStateful, t(Msg::ExtDetYes).to_string());
+        }
+        let editor = match (c.editor_read, c.editor_write) {
+            (true, true) => "read · write",
+            (true, false) => "read",
+            (false, true) => "write",
+            _ => "",
+        };
+        field(Msg::ExtDetEditor, editor.to_string());
+        field(Msg::ExtDetEvents, c.events.join(", "));
         out
     }
 
@@ -597,6 +777,10 @@ impl App {
         let Some(row) = self.ext_row_for_installed(id) else {
             return;
         };
+        // ★ 관찰 ②(154차 V1-k): 요청이 나온 편집기 탭을 기억해 허용/거부 뒤 그 탭으로 돌아간다(상세 탭에서 다시 실행하면 ①에 걸린다).
+        if !self.editors.is_view_tab_active() {
+            self.ext_return_tab = Some(self.editors.tab_id(self.editors.active()));
+        }
         let key = format!("ext:{id}");
         let already = self
             .ext_details
@@ -616,6 +800,9 @@ impl App {
                 extensions::HeldOp::File(extensions::FileOp::CopyPath(p)) => {
                     format!("copy path {p}")
                 }
+                extensions::HeldOp::Edit(n) => format!(
+                    "edit the document ({n} change(s)) - run the command again after allowing"
+                ),
             })
             .collect();
         if let Some(d) = self.ext_details.get_mut(&key) {
@@ -629,6 +816,17 @@ impl App {
         }
         self.sess.status = tf(Msg::StExtApprovalPending, &[&row.name, &row.version]);
         self.redraw();
+    }
+
+    /// 첫 사용 요청이 나온 편집기 탭으로 돌아간다(관찰 ② · 154차) — 기억한 탭이 아직 있으면.
+    fn ext_return_to_editor(&mut self) {
+        if let Some(t) = self.ext_return_tab.take() {
+            if self.editors.index_of_id(t).is_some() {
+                self.editors.switch_to_id(t);
+                self.set_focus(Focus::Editor);
+                self.redraw();
+            }
+        }
     }
 
     /// 설정 덮어쓰기 요청 하나 적용(선언 · 검증 · overlay · 로그 · 재적용).
@@ -1068,18 +1266,35 @@ impl App {
                         self.log_win.push(LogEntry::new(LogKind::Error, e));
                     }
                 }
+                let rerun = held
+                    .iter()
+                    .any(|h| matches!(h, extensions::HeldOp::Edit(_)));
+                if rerun {
+                    if let Err(e) = mgr::approve_use(key, "editor_write") {
+                        self.log_win.push(LogEntry::new(LogKind::Error, e));
+                    }
+                }
                 let id = key.to_string();
                 for h in held {
                     match h {
                         extensions::HeldOp::Set(k, v) => self.ext_apply_one_set(&id, &k, &v),
                         extensions::HeldOp::File(op) => self.ext_file_op(op),
+                        extensions::HeldOp::Edit(_) => {}
                     }
                 }
-                self.sess.status = tf(Msg::StExtUseAllowed, &[&id]);
+                self.sess.status = tf(
+                    if rerun {
+                        Msg::StExtUseAllowedRerun
+                    } else {
+                        Msg::StExtUseAllowed
+                    },
+                    &[&id],
+                );
                 if let Some(row) = self.ext_row_for_installed(&id) {
                     self.ext_details.remove(&format!("ext:{}", row.id));
                     self.ext_open_detail(&row);
                 }
+                self.ext_return_to_editor();
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             }
@@ -1090,6 +1305,7 @@ impl App {
                     self.ext_details.remove(&format!("ext:{}", row.id));
                     self.ext_open_detail(&row);
                 }
+                self.ext_return_to_editor();
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             }
@@ -2305,6 +2521,18 @@ impl App {
 }
 
 /// 확장 라벨 → (영어, 한국어) 글(동적 설정 항목의 라벨·설명 · 146차).
+/// 문서 사건 JSON(`doc` · open/close/activate · 경로는 JSON 글자 이스케이프).
+fn doc_event_json(what: &str, id: u64, path: Option<&std::path::Path>) -> String {
+    let p = path
+        .map(|p| {
+            p.to_string_lossy()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        })
+        .unwrap_or_default();
+    format!("{{\"kind\":\"doc\",\"what\":\"{what}\",\"doc\":\"{id}\",\"path\":\"{p}\"}}")
+}
+
 /// 확장의 설정 분류(있으면 그것 · 없으면 확장 이름으로 동적 분류 등재 + `extra_cats`에) — 149차 `key.<id>` 등재가 쓴다.
 fn ext_category(id: &str, name: &str, extra_cats: &mut Vec<Msg>) -> Msg {
     let cat = match nsql_settings::extension_categories()

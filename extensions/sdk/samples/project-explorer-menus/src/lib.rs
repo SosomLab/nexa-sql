@@ -33,6 +33,9 @@ impl Extension for ProjectExplorerMenus {
             settings_prefix: "ext.project_explorer_menus.".into(),
             settings_read: vec![],
             settings_write: vec![],
+            stateful: false,
+            capabilities: vec![],
+            events: vec![],
             prompts: vec![],
             commands: vec![
                 Command::new(

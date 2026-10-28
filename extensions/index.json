@@ -44,6 +44,14 @@
       "version": "0.1.1",
       "kind": "wasm",
       "summary": "Multi-caret sequence insertion (numbers · letters · dates · lists · templates) as a prompt extension — same engine as the built-in, replaces it when installed (WASM · ABI v1.2)"
+    },
+    {
+      "id": "uppercase-selection",
+      "dir": "uppercase-selection",
+      "name": "Uppercase Selection",
+      "version": "0.1.0",
+      "kind": "wasm",
+      "summary": "Stateful extension demo (ABI v1.3): uppercase the selection through the editor read/write API · counter kept between calls · total in state.json"
     }
   ]
 }

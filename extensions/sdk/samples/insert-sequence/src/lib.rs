@@ -57,6 +57,9 @@ impl Extension for InsertSequence {
             settings_prefix: "ext.insert_sequence.".into(),
             settings_read: vec![],
             settings_write: vec![],
+            stateful: false,
+            capabilities: vec![],
+            events: vec![],
             // 명령은 프롬프트 선언에서 호스트가 병합한다(같은 id · 같은 키).
             commands: vec![],
             menus: vec![],

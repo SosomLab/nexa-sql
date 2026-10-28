@@ -35,3 +35,4 @@ place hello_ext hello-ext hello_ext.wasm
 place sql_formatter_kiros33 sql-formatter-kiros33 sql_formatter_kiros33.wasm
 place project_explorer_menus project-explorer-menus project_explorer_menus.wasm
 place insert_sequence_ext insert-sequence insert_sequence.wasm
+place uppercase_selection_ext uppercase-selection uppercase_selection.wasm

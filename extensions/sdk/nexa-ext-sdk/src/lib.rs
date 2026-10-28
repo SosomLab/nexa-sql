@@ -295,6 +295,12 @@ pub struct Meta {
     pub settings_read: Vec<String>,
     /// ★ 덮어쓸 수 있다고 선언한 기본 설정 키 패턴 — `host::setting_set`은 이 안에서만(런타임 overlay · 확장이 꺼지면 원복).
     pub settings_write: Vec<String>,
+    /// ★ 길 A(ABI v1.3 · 154차): 호출 사이에 인스턴스를 유지한다(`init`이 (재)인스턴스화 때 1회 · 상태는 `storage`로 보존 권장).
+    pub stateful: bool,
+    /// 능력 선언 — `editor.read`(본문·구간 읽기) · `editor.write`(교체·구간 요청 · 설치 때 표시 + 첫 사용 재확인) · `events`.
+    pub capabilities: Vec<String>,
+    /// 구독 사건(`on_event`) — `edit` · `caret` · `doc`.
+    pub events: Vec<String>,
 }
 
 impl Meta {
@@ -383,6 +389,21 @@ impl Meta {
             .with(
                 "settings_write",
                 self.settings_write
+                    .iter()
+                    .map(|k| Json::from(k.as_str()))
+                    .collect::<Vec<_>>(),
+            )
+            .with("stateful", self.stateful)
+            .with(
+                "capabilities",
+                self.capabilities
+                    .iter()
+                    .map(|k| Json::from(k.as_str()))
+                    .collect::<Vec<_>>(),
+            )
+            .with(
+                "events",
+                self.events
                     .iter()
                     .map(|k| Json::from(k.as_str()))
                     .collect::<Vec<_>>(),
@@ -507,6 +528,33 @@ impl Editor {
     }
 
     /// ★ 활성 문서의 파일 경로(09-30 · docs/97) — 파일이 아닌 스크립트 탭이면 `None`. 프로젝트 탐색기 메뉴에서 불렸으면 그 행의 경로.
+    /// ★ 길 A(ABI v1.3): 본문 글자 수(`editor.read` 선언 없으면 0).
+    pub fn len(&self) -> usize {
+        host::editor_len().max(0) as usize
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// 구간 글(글자 인덱스 · 1 MB 상한 · 선언 없으면 빈 글).
+    pub fn text(&self, from: usize, to: usize) -> String {
+        host::editor_text(from, to).unwrap_or_default()
+    }
+    /// 구간 목록(캐럿 = `(a, a)`).
+    pub fn regions(&self) -> Vec<(usize, usize)> {
+        host::editor_regions()
+    }
+    /// 교체 **요청**(큐 · 좌표 = 호출 시작 때 본문 · 겹치면 전부 거절 · 호출이 끝난 뒤 앱이 한 되돌리기 묶음으로 적용) · `editor.write`.
+    pub fn replace(&mut self, from: usize, to: usize, text: &str) -> bool {
+        host::editor_replace(from, to, text)
+    }
+    /// 구간/캐럿 설정 요청(교체 적용 뒤 좌표).
+    pub fn set_regions(&mut self, regions: &[(usize, usize)]) -> bool {
+        host::editor_set_regions(regions)
+    }
+    /// 상태줄 글(호출당 마지막 것).
+    pub fn status(&self, text: &str) {
+        host::ui_status(text)
+    }
     pub fn doc_path(&self) -> Option<String> {
         host::get(query::DOC_PATH).filter(|p| !p.is_empty())
     }
@@ -788,7 +836,9 @@ impl TransformResponse {
                 self.rows
                     .iter()
                     .map(|r| {
-                        let mut o = Json::obj().with("text", r.text.as_str()).with("warn", r.warn);
+                        let mut o = Json::obj()
+                            .with("text", r.text.as_str())
+                            .with("warn", r.warn);
                         if let Some(id) = &r.id {
                             o = o.with("id", id.as_str());
                         }
@@ -817,6 +867,64 @@ pub trait Extension {
     fn transform(_req: &TransformRequest) -> TransformResponse {
         TransformResponse::err("no transform")
     }
+    /// ★ 길 A(ABI v1.3): (재)인스턴스화 뒤 1회(`stateful`만) — 상태 복원은 `storage::get`.
+    fn init() {}
+    /// ★ 구독한 사건(메타 `events`) — 처리했으면 true.
+    fn on_event(_e: &Event) -> bool {
+        false
+    }
+}
+
+/// 사건(`nx_ext_event` 입력): `edit`(doc · version) · `caret`(regions) · `doc`(what = open|close|activate · path).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Event {
+    pub kind: String,
+    pub doc: String,
+    pub version: u64,
+    pub regions: Vec<(usize, usize)>,
+    pub what: String,
+    pub path: String,
+}
+
+impl Event {
+    pub fn from_json(text: &str) -> Event {
+        let mut e = Event::default();
+        let Ok(Json::Obj(items)) = json::parse(text) else {
+            return e;
+        };
+        for (k, v) in items {
+            match k.as_str() {
+                "kind" => e.kind = v.as_str().unwrap_or("").to_string(),
+                "doc" => e.doc = v.as_str().unwrap_or("").to_string(),
+                "what" => e.what = v.as_str().unwrap_or("").to_string(),
+                "path" => e.path = v.as_str().unwrap_or("").to_string(),
+                "version" => e.version = v.as_f64().unwrap_or(0.0).max(0.0) as u64,
+                "regions" => {
+                    for it in v.as_arr().unwrap_or(&[]) {
+                        if let Some(ab) = it.as_arr() {
+                            if ab.len() == 2 {
+                                let a = ab[0].as_f64().unwrap_or(0.0) as usize;
+                                let b = ab[1].as_f64().unwrap_or(0.0) as usize;
+                                e.regions.push((a, b));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        e
+    }
+}
+
+/// ★ 확장 전용 상태(길 A · `stateful`): JSON 글 하나(64 KB) · 앱이 `<root>/<id>/state.json`에 보관.
+pub mod storage {
+    pub fn get() -> Option<String> {
+        super::host::storage_get()
+    }
+    pub fn set(text: &str) -> bool {
+        super::host::storage_set(text)
+    }
 }
 
 /// 호스트 import(실제 wasm32) / 목(호스트 테스트).
@@ -835,6 +943,143 @@ pub mod host {
         fn nx_setting_get(key: i32, ptr: i32, cap: i32) -> i32;
         /// ★ 설정 덮어쓰기 요청(148차): `key`·`val` 버퍼 · 반환 1 = 접수(호스트가 호출 뒤 선언·검증 후 overlay 층에).
         fn nx_setting_set(key: i32, val: i32) -> i32;
+        /// ★ 길 A(ABI v1.3 · 154차): 편집기 읽기(`editor.read`) · 쓰기 요청(`editor.write` · 큐) · 상태줄 · 전용 상태.
+        fn nx_editor_len() -> i32;
+        fn nx_editor_text(from: i32, to: i32, ptr: i32, cap: i32) -> i32;
+        fn nx_editor_regions(ptr: i32, cap: i32) -> i32;
+        fn nx_editor_replace(from: i32, to: i32, ptr: i32) -> i32;
+        fn nx_editor_set_regions(ptr: i32) -> i32;
+        fn nx_ui_status(ptr: i32);
+        fn nx_storage_get(ptr: i32, cap: i32) -> i32;
+        fn nx_storage_set(ptr: i32) -> i32;
+    }
+
+    /// 호스트가 길이 접두로 채워 주는 버퍼를 받아 글로(`cap` 바이트까지).
+    #[cfg(target_arch = "wasm32")]
+    fn recv(cap: usize, call: impl FnOnce(i32, i32) -> i32) -> Option<String> {
+        let p = super::buf::alloc(cap);
+        let n = call(p as i32, cap as i32);
+        // SAFETY: 호스트가 길이 접두 + 본문을 썼다(n ≤ cap) · 버퍼는 우리가 마련했고 아래에서 회수한다.
+        let out = if n >= 0 {
+            Some(unsafe { super::buf::read(p) })
+        } else {
+            None
+        };
+        super::buf::free_cap(p, cap + 4);
+        out
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn editor_len() -> i32 {
+        // SAFETY: 호스트가 링크한 import.
+        unsafe { nx_editor_len() }
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn editor_text(from: usize, to: usize) -> Option<String> {
+        let cap = (to.saturating_sub(from) * 4 + 16).min(1 << 20);
+        // SAFETY: 호스트가 링크한 import.
+        recv(cap, |p, c| unsafe {
+            nx_editor_text(from as i32, to as i32, p, c)
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn editor_regions() -> Vec<(usize, usize)> {
+        // SAFETY: 호스트가 링크한 import.
+        let Some(text) = recv(64 * 1024, |p, c| unsafe { nx_editor_regions(p, c) }) else {
+            return Vec::new();
+        };
+        parse_regions(&text)
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn editor_replace(from: usize, to: usize, text: &str) -> bool {
+        let b = super::buf::make(text.as_bytes());
+        // SAFETY: 호스트가 링크한 import · 버퍼는 호출이 끝날 때까지 산다.
+        let r = unsafe { nx_editor_replace(from as i32, to as i32, b as i32) };
+        super::buf::free(b);
+        r != 0
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn editor_set_regions(regions: &[(usize, usize)]) -> bool {
+        let text = format!(
+            "[{}]",
+            regions
+                .iter()
+                .map(|(a, b)| format!("[{a},{b}]"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let b = super::buf::make(text.as_bytes());
+        // SAFETY: 위와 같다.
+        let r = unsafe { nx_editor_set_regions(b as i32) };
+        super::buf::free(b);
+        r != 0
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn ui_status(text: &str) {
+        let b = super::buf::make(text.as_bytes());
+        // SAFETY: 위와 같다.
+        unsafe { nx_ui_status(b as i32) };
+        super::buf::free(b);
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn storage_get() -> Option<String> {
+        // SAFETY: 호스트가 링크한 import.
+        recv(64 * 1024, |p, c| unsafe { nx_storage_get(p, c) })
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn storage_set(text: &str) -> bool {
+        let b = super::buf::make(text.as_bytes());
+        // SAFETY: 위와 같다.
+        let r = unsafe { nx_storage_set(b as i32) };
+        super::buf::free(b);
+        r != 0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn editor_len() -> i32 {
+        0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn editor_text(_from: usize, _to: usize) -> Option<String> {
+        None
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn editor_regions() -> Vec<(usize, usize)> {
+        Vec::new()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn editor_replace(_from: usize, _to: usize, _text: &str) -> bool {
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn editor_set_regions(_regions: &[(usize, usize)]) -> bool {
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn ui_status(_text: &str) {}
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn storage_get() -> Option<String> {
+        None
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn storage_set(_text: &str) -> bool {
+        false
+    }
+
+    /// `[[a,b],…]` → 구간 목록(모양이 다르면 빈 목록).
+    pub fn parse_regions(text: &str) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        if let Ok(super::Json::Arr(items)) = super::json::parse(text) {
+            for it in items {
+                if let Some(ab) = it.as_arr() {
+                    if ab.len() == 2 {
+                        let a = ab[0].as_f64().unwrap_or(0.0) as usize;
+                        let b = ab[1].as_f64().unwrap_or(0.0) as usize;
+                        out.push((a, b));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// 설정 값 하나(전용 키 + 메타 `settings_read`에 선언한 기본 키만 · 그 밖은 None).
@@ -983,7 +1228,7 @@ pub mod buf {
     }
 }
 
-/// export 일곱(기본 5 + 포맷 + 변환)을 만든다 — `export_extension!(MyExt);`
+/// export 아홉(기본 5 + 포맷 + 변환 + init + 사건)을 만든다 — `export_extension!(MyExt);`
 #[macro_export]
 macro_rules! export_extension {
     ($t:ty) => {
@@ -1025,6 +1270,18 @@ macro_rules! export_extension {
             $crate::buf::make(out.as_bytes()) as i32
         }
         #[no_mangle]
+        pub extern "C" fn nx_ext_init() {
+            <$t as $crate::Extension>::init();
+        }
+        #[no_mangle]
+        pub extern "C" fn nx_ext_event(ptr: i32) -> i32 {
+            // SAFETY: 위와 같다.
+            let text = unsafe { $crate::buf::read(ptr as *const u8) };
+            i32::from(<$t as $crate::Extension>::on_event(
+                &$crate::Event::from_json(&text),
+            ))
+        }
+        #[no_mangle]
         pub extern "C" fn nx_ext_transform(ptr: i32) -> i32 {
             // SAFETY: 위와 같다.
             let text = unsafe { $crate::buf::read(ptr as *const u8) };
@@ -1048,6 +1305,9 @@ mod tests {
             settings_prefix: "x.".into(),
             settings_read: vec![],
             settings_write: vec![],
+            stateful: false,
+            capabilities: vec![],
+            events: vec![],
             commands: vec![Command::new("edit.a", Label::new("A", "가")).with_key("ctrl+alt+a")],
             menus: vec![Menu::project_explorer(
                 "m",
@@ -1176,7 +1436,10 @@ mod tests {
             e.to_json(),
             r#"{"error":"bad","rows":[{"text":"L1: ?","warn":true}]}"#
         );
-        assert_eq!(TransformResponse::text("T").to_json(), r#"{"apply":"text","text":"T"}"#);
+        assert_eq!(
+            TransformResponse::text("T").to_json(),
+            r#"{"apply":"text","text":"T"}"#
+        );
         assert_eq!(
             TransformResponse::none(vec![("42".into(), false)]).to_json(),
             r#"{"apply":"none","rows":[{"text":"42","warn":false}]}"#
@@ -1185,7 +1448,9 @@ mod tests {
         assert!(r2.is_commit() && !r2.is_cancel() && r2.selection == "abc");
         assert_eq!(r2.pick.as_deref(), Some("ko"));
         assert_eq!(
-            TransformResponse::none(vec![]).with_choices(vec![("hi", "Hi")]).to_json(),
+            TransformResponse::none(vec![])
+                .with_choices(vec![("hi", "Hi")])
+                .to_json(),
             r#"{"apply":"none","rows":[{"text":"Hi","warn":false,"id":"hi"}]}"#
         );
         let m2 = Meta {
@@ -1194,7 +1459,32 @@ mod tests {
             ..Meta::default()
         };
         let j2 = json::dump(&m2.to_json());
-        assert!(j2.contains("\"settings_read\":[\"ui.lang\"]") && j2.contains("\"settings_write\":[\"editor.*\"]"), "{j2}");
+        assert!(
+            j2.contains("\"settings_read\":[\"ui.lang\"]")
+                && j2.contains("\"settings_write\":[\"editor.*\"]"),
+            "{j2}"
+        );
+        // ★ ABI v1.3(154차): stateful · capabilities · events · 사건 JSON · 구간 JSON.
+        let m3 = Meta {
+            stateful: true,
+            capabilities: vec!["editor.read".into(), "editor.write".into()],
+            events: vec!["caret".into()],
+            ..Meta::default()
+        };
+        let j3 = json::dump(&m3.to_json());
+        assert!(
+            j3.contains("\"stateful\":true")
+                && j3.contains("\"capabilities\":[\"editor.read\",\"editor.write\"]")
+                && j3.contains("\"events\":[\"caret\"]"),
+            "{j3}"
+        );
+        let e = Event::from_json(r#"{"kind":"caret","regions":[[1,2],[5,5]],"version":7}"#);
+        assert_eq!(
+            (e.kind.as_str(), e.version, e.regions.len()),
+            ("caret", 7, 2)
+        );
+        assert_eq!(host::parse_regions("[[0,3],[4,7]]"), vec![(0, 3), (4, 7)]);
+        assert!(host::parse_regions("nope").is_empty());
     }
 
     #[test]

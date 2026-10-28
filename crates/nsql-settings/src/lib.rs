@@ -1185,6 +1185,35 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 상태 있는 확장(길 A · 154차 · 39 §3): 보존 인스턴스 유휴 회수 초(0 = 안 버림) · 기본 300 · HIDDEN.
+    Entry {
+        key: "extensions.stateful_idle_secs",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtStatefulIdle,
+        desc: Msg::DescExtStatefulIdle,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "300",
+    },
+    // ★ 확장 사건 배달(154차-b · 39 §3): 마스터 스위치 · 편집 사건 디바운스(ms · 10초 이하 = ms 규칙).
+    Entry {
+        key: "extensions.events",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtEvents,
+        desc: Msg::DescExtEvents,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "extensions.event_debounce_ms",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtEventDebounce,
+        desc: Msg::DescExtEventDebounce,
+        kind: SettingKind::Int { min: 0, max: 5_000 },
+        default: "100",
+    },
     Entry {
         key: "extensions.disabled",
         cat: Msg::CatExtManager,
