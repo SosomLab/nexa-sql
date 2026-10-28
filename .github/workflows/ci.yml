@@ -69,3 +69,23 @@ jobs:
         run: cargo test --workspace
       - name: smoke (fonts · drivers)
         run: cargo run -q -p nexa-sql -- --smoke
+
+  # ★ T-10 라이선스 게이트(10-29 168차): deny.toml 허용 목록 밖(카피레프트 등)·읽을 수 없는 라이선스 = 실패. 형제 저장소는 path 의존이라 함께 체크아웃.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-license
+          path: nexa-license
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses sources
+          manifest-path: nexa-sql/Cargo.toml

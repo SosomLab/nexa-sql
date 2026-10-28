@@ -1,0 +1,67 @@
+# cargo-deny — 라이선스 게이트(T-10 · DR-3 외부 crate 원장의 자동 검사 · 10-29 168차).
+#   로컬:  cargo deny check licenses        (cargo install cargo-deny)
+#   CI  :  .github/workflows/ci.yml `deny` 잡(EmbarkStudios/cargo-deny-action)
+#   목록 = scripts/third-party-notices.py(THIRD-PARTY-NOTICES) · 여기는 **허용/금지** 판정만. 형제 저장소(nexa-ui · nexa-license)는 path 의존이라
+#   같은 메타데이터에 들어온다(워크스페이스 라이선스 = PolyForm NC · LicenseRef).
+
+[graph]
+# 모든 타깃(3-OS)의 의존을 함께 본다 — Windows 전용·macOS 전용 crate(GDI · CoreText · DPAPI)가 빠지지 않게.
+all-features = false
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+
+[licenses]
+# 허용 = 관대한 라이선스만(배포본에 고지 동봉 = THIRD-PARTY-NOTICES). 카피레프트(GPL·AGPL·LGPL)는 목록에 없으므로 자동 거절.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+    "LicenseRef-PolyForm-Noncommercial-1.0.0",
+]
+# 라이선스 표현을 못 읽는 crate는 실패(조용히 통과 금지).
+unused-allowed-license = "allow"
+confidence-threshold = 0.8
+
+# `ring`은 라이선스 파일이 OpenSSL + ISC + MIT 묶음이라 SPDX 표현이 없다 — 알려진 해시로 명시(cargo-deny 공식 예시).
+[[licenses.clarify]]
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[[licenses.clarify]]
+crate = "webpki"
+expression = "ISC"
+license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
+
+# ★ 예외 1건 = `unix-odbc`(LGPL-2.1-or-later · D-361 10-25 "드라이버 파일은 정적으로"): Linux/macOS 확장 ODBC 드라이버가 unixODBC 드라이버
+#   관리자를 **정적 동봉**한다 — LGPL 재링크 요건은 공개 저장소 소스 + THIRD-PARTY-NOTICES 고지로 충족(docs/10 D-361 · 64 §4). 전역 허용이 아니라
+#   이 crate만. 다른 LGPL이 들어오면 여기서 멈춘다.
+[[licenses.exceptions]]
+crate = "unix-odbc"
+allow = ["LGPL-2.1-or-later"]
+
+[bans]
+# 중복 버전은 경고만(드라이버 어댑터들이 서로 다른 판을 끌어올 수 있다 · DR-3 원장에서 관리).
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
