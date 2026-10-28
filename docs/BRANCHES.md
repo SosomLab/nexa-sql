@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| aux-activate-startup | 2026-10-29 | 2026-10-29 → main ff(삭제) · **e58fc93c** | 1 | 163차 win = `NSQL_NO_ACTIVATE=startup`(재시작 스크립트 · 보조 창 활성화 복구) · e58fc93c |
+| explorer-focus-on-show | 2026-10-29 | 2026-10-29 → main ff(삭제) · **fc39d63f** | 1 | 163차 win = 객체 탐색기 켜기 포커스 · fc39d63f |
 | ssh-tunnel-hardening | 2026-10-28 | 2026-10-28 → main ff(삭제) · **38ac716a** | 4 | 162차 win = SSH 터널 강화(D-391) + 익명화 2·3차 · 441fe3ea · 4d06f1e9 · 7e501de7 · 38ac716a |
 | ssh-real-pass | 2026-10-28 | 2026-10-28 → main ff(삭제) · **454d48a2** | 1 | 161차 win 후속 = 실서버 SSH 터널 시험 통과(스크립트 선검사 `ssh_key` → `-i` · docs/125 갱신) · 454d48a2 |
 | conn-ssh-disclosure | 2026-10-28 | 2026-10-28 → main ff(삭제) · **f43da8ff** | 4 | 161차 win = 접속 창 SSH 칸 기본 접힘(D-390) + 실서버 SSH 터널 시험 케이스(125 · 대상 재지정) · edb8da3c · c3e3b234 · 250a7fa4 · f43da8ff |
