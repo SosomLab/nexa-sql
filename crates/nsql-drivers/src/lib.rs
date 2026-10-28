@@ -17,6 +17,9 @@ pub mod ext;
 pub mod tunnel;
 /// SSH 터널 설정(`ssh.command` · `ssh.connect_timeout_secs`) — 호스트가 기동·설정 변경 때.
 pub use tunnel::set_config as set_ssh;
+pub use tunnel::{
+    cleanup_stale as cleanup_stale_tunnels, live_tunnels, set_state_dir as set_ssh_state_dir,
+};
 
 /// `sqlite:` 뒤 경로 — 권한부(`//`)는 **한 번만** 벗긴다. 종전 `trim_start_matches("//")`는 슬래시 쌍을 전부 먹어
 /// `sqlite:////abs/x.db`(SQLAlchemy식 절대 경로)가 상대 경로 `abs/x.db`가 됐다(86차 mac 점검 · T-148).
@@ -149,7 +152,8 @@ fn default_port(d: Dialect) -> u16 {
 /// SSH 터널 위의 세션(T-3): 드라이버 세션 + 터널 프로세스(세션이 닫히면 함께 끝남). 모든 호출은 그대로 넘기고 `describe`만 바꾼다.
 struct Tunneled {
     inner: Box<dyn Session>,
-    _tunnel: tunnel::Tunnel,
+    /// 같은 대상의 세션들과 공유(162차) — 마지막 세션이 닫힐 때 ssh 종료.
+    _tunnel: std::sync::Arc<tunnel::Tunnel>,
     desc: String,
 }
 

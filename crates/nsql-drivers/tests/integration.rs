@@ -1093,6 +1093,16 @@ fn pg_ssh_tunnel_round_trip() {
         spec.port.unwrap_or(5432)
     );
     assert!(d.contains(&orig), "원래 호스트 표시({orig}): {d}");
+    // ★ 162차: 같은 대상의 두 번째 세션은 터널 프로세스를 **공유**(ssh 1개) · 둘 다 닫히면 0.
+    assert_eq!(nsql_drivers::live_tunnels(), 1);
+    let s2 = nsql_drivers::open(&spec, Dialect::Postgres).expect("두 번째 세션(공유)");
+    assert_eq!(nsql_drivers::live_tunnels(), 1, "같은 대상 = ssh 1개");
+    drop(s2);
+    assert_eq!(
+        nsql_drivers::live_tunnels(),
+        1,
+        "첫 세션이 살아 있으면 터널 유지"
+    );
     let r = s
         .execute(&ExecRequest {
             sql: "SELECT 1 + 1, inet_client_addr()::text".to_string(),
@@ -1106,6 +1116,11 @@ fn pg_ssh_tunnel_round_trip() {
         r.result_sets[0].rows[0][1].display()
     );
     drop(s);
+    assert_eq!(
+        nsql_drivers::live_tunnels(),
+        0,
+        "마지막 세션 닫힘 = ssh 종료"
+    );
     // 잘못된 ssh 포트 = ssh가 바로 끝남 → 상한 안에 오류 + stderr 원문.
     let mut bad = spec.clone();
     bad.ssh = Some("nexa@localhost:2".into());

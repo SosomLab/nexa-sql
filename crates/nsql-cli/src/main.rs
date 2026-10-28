@@ -436,6 +436,9 @@ pub(crate) fn apply_driver_switches() {
                 .and_then(|v| v.trim().parse().ok())
                 .unwrap_or(15),
         );
+        // 162차: 터널 PID 원장(<설정 폴더>/run) + 지난 실행이 남긴 ssh 정리 — GUI와 같은 자리.
+        nsql_drivers::set_ssh_state_dir(nsql_settings::config_dir().map(|d| d.join("run")));
+        nsql_drivers::cleanup_stale_tunnels();
         // 확장 드라이버 폴더(T-27 ③) = <설정 폴더>/drivers — GUI와 같은 자리.
         nsql_drivers::ext::set_driver_dir(
             nsql_settings::config_dir()

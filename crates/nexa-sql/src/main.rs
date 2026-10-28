@@ -2263,6 +2263,12 @@ fn main() {
         app.settings.get("ssh.command").unwrap_or("ssh"),
         app.settings.int("ssh.connect_timeout_secs").max(1) as u64,
     );
+    // ★ 162차: 터널 PID 원장 = <설정 폴더>/run · 지난 인스턴스가 남긴 ssh를 기동 때 정리(소유자 죽음 + 이름 ssh/포트 열림일 때만).
+    nsql_drivers::set_ssh_state_dir(nsql_settings::config_dir().map(|d| d.join("run")));
+    let stale = nsql_drivers::cleanup_stale_tunnels();
+    if stale > 0 {
+        eprintln!("[ssh] cleaned {stale} stale tunnel process(es) from a previous run");
+    }
     // ★ 확장 드라이버 폴더(DR-29 · T-27 ③) = <설정 폴더>/drivers(`NSQL_DRIVER_DIR`가 있으면 그쪽) — 기동 때 읽지 않고 첫 접속 때 지연 로드.
     nsql_drivers::ext::set_driver_dir(
         nsql_settings::config_dir()
