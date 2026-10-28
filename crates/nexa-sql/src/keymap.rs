@@ -936,7 +936,8 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         id: "conn.disconnect",
-        label: Msg::TipDisconnect,
+        // 메뉴·팔레트와 같은 라벨(10-29 T-14 시험이 찾은 어긋남 · 종전 TipDisconnect = 같은 글이지만 다른 키).
+        label: Msg::MnDisconnect,
         win: "",
         mac: "",
         linux: "",

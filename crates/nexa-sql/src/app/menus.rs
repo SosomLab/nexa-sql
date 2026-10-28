@@ -1765,6 +1765,27 @@ impl App {
     /// 명령 팔레트의 항목 전부(메뉴: 항목 · 구문 · 확장 …) — 명령 팔레트와 Goto Anything `>`가 같이 쓴다(10-07).
     /// (id, 표시 라벨 = 현재 언어, 숨은 검색 키 = **모든 언어**의 `메뉴: 항목` · 사용자 10-13 "영어 이름·기능명으로도 · 영어 화면에서 한글로도").
     /// i18n 표는 정적(바이너리 안)이라 추가 적재 없음 · 명령 ≈ 120개 × 언어 수 = 수십 KB.
+    /// 보기 토글 항목의 **지금 상태**(팔레트 "보이기/숨기기" 라벨용) — `commands::PALETTE`의 `Toggle` 행과 짝.
+    fn view_toggle_state(&self, id: &str) -> bool {
+        match id {
+            "view.explorer" => self.explorer.is_visible(),
+            "view.object_details" => self.settings.flag("explorer.details"),
+            "view.output" => self.panel.output_index().is_some(),
+            "view.search" => self.search.is_visible(),
+            "view.project" => self.project_panel.is_visible(),
+            "view.bookmarks" => self.bm_panel.is_visible(),
+            "view.outline" => self.outline_panel.is_visible(),
+            "view.log" => self.log_win.is_open(),
+            "view.txlog" => self.txlog_win.is_open(),
+            "view.sessions" => self.sessions_win.is_open(),
+            "view.memory" => self.mem_win.is_open(),
+            "view.find_objects" => self.findobj_win.is_open(),
+            "view.variables" => self.vars_win.is_open(),
+            "view.on_top" => self.settings.flag("window.always_on_top"),
+            _ => false,
+        }
+    }
+
     pub(crate) fn palette_commands(&self) -> Vec<(String, String, String)> {
         let mut cmds: Vec<(String, String, String)> = Vec::new();
         let m = |id: &str, menu: Msg, item: Msg| {
@@ -1781,131 +1802,7 @@ impl App {
                 .join(" ");
             (id.to_string(), format!("{}: {}", t(menu), t(item)), key)
         };
-        cmds.push(m("file.new", Msg::MnFile, Msg::MnNew));
-        cmds.push(m("file.open", Msg::MnFile, Msg::MnOpen));
-        cmds.push(m("file.save", Msg::MnFile, Msg::MnSave));
-        cmds.push(m("file.save_as", Msg::MnFile, Msg::MnSaveAs));
-        cmds.push(m("file.follow", Msg::MnFile, Msg::MnFileFollow));
-        cmds.push(m("file.run_file", Msg::MnFile, Msg::MnRunFile));
-        cmds.push(m("file.large_force", Msg::MnFile, Msg::MnLargeForce));
-        cmds.push(m("mem.trim_now", Msg::MnView, Msg::MnMemTrimNow));
-        cmds.push(m("file.exit", Msg::MnFile, Msg::MnExit));
-        cmds.push(m("edit.cut", Msg::MnEdit, Msg::MnCut));
-        cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
-        cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
-        cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
-        cmds.push(m(
-            "edit.expand_selection",
-            Msg::MnEdit,
-            Msg::MnExpandSelection,
-        ));
-        cmds.push(m("edit.goto_bracket", Msg::MnEdit, Msg::MnGotoBracket));
-        cmds.push(m("edit.bracket_prev", Msg::MnEdit, Msg::MnBracketPrev));
-        cmds.push(m("edit.bracket_next", Msg::MnEdit, Msg::MnBracketNext));
-        cmds.push(m("edit.bracket_parent", Msg::MnEdit, Msg::MnBracketParent));
-        cmds.push(m("edit.bracket_child", Msg::MnEdit, Msg::MnBracketChild));
-        cmds.push(m("edit.complete", Msg::MnEdit, Msg::MnComplete));
-        cmds.push(m("goto.symbol", Msg::MnEdit, Msg::MnGotoSymbol));
-        // Extension Manager(Sublime "Package Control: …" 표기 · docs/50 §10).
-        // 관리자 상태에 맞는 명령만(사용자 09-19): 꺼짐 = "켜기" 하나 · 켜짐 = "끄기" + 나머지(두 번째 "켜기"는 없다).
-        if self.settings.flag("extensions.enabled") {
-            cmds.push(m(
-                "ext.disable_mgr",
-                Msg::MnExtensions,
-                Msg::MnExtDisableManager,
-            ));
-            cmds.push(m("view.extensions", Msg::MnView, Msg::MnExtensionsPanel));
-            cmds.push(m("ext.install", Msg::MnExtensions, Msg::MnExtInstall));
-            cmds.push(m("ext.update", Msg::MnExtensions, Msg::MnExtUpdate));
-            // ★ 확장 명령(146차 · docs/75 §9 ②): 라벨 = "<확장 이름>: <명령>" · 검색 키 = 라벨(두 언어는 메타가 준 것뿐).
-            let off = self.ext_disabled();
-            for (_, ext_name, c) in self.extensions.commands_all(&off) {
-                // 메타 라벨이 이미 "<이름>: …" 꼴이면 그대로(SDK 샘플 관례) · 아니면 확장 이름을 앞에.
-                let text = c.label.text();
-                let label = if text.contains(':') {
-                    text
-                } else {
-                    format!("{ext_name}: {text}")
-                };
-                cmds.push((c.id.clone(), label.clone(), label.to_lowercase()));
-            }
-            cmds.push(m("ext.remove", Msg::MnExtensions, Msg::MnExtRemove));
-            cmds.push(m("ext.list", Msg::MnExtensions, Msg::MnExtList));
-            cmds.push(m("ext.enable", Msg::MnExtensions, Msg::MnExtEnable));
-            cmds.push(m("ext.disable", Msg::MnExtensions, Msg::MnExtDisable));
-            cmds.push(m("ext.repo_add", Msg::MnExtensions, Msg::MnExtRepoAdd));
-            cmds.push(m("ext.repo_list", Msg::MnExtensions, Msg::MnExtRepoList));
-            cmds.push(m(
-                "ext.repo_remove",
-                Msg::MnExtensions,
-                Msg::MnExtRepoRemove,
-            ));
-        } else {
-            cmds.push(m(
-                "ext.enable_mgr",
-                Msg::MnExtensions,
-                Msg::MnExtEnableManager,
-            ));
-        }
-        cmds.push(m(
-            "edit.expand_brackets",
-            Msg::MnEdit,
-            Msg::MnExpandBrackets,
-        ));
-        cmds.push(m(
-            "edit.skip_occurrence",
-            Msg::MnEdit,
-            Msg::MnSkipOccurrence,
-        ));
-        cmds.push(m("obj.reveal", Msg::MnEdit, Msg::MnObjLinkReveal));
-        cmds.push(m("obj.info", Msg::MnEdit, Msg::MnObjInfoTab));
-        cmds.push(m("obj.rows", Msg::MnEdit, Msg::MnObjRows));
-        cmds.push(m("view.zoom_in", Msg::MnView, Msg::MnZoomIn));
-        cmds.push(m("view.zoom_out", Msg::MnView, Msg::MnZoomOut));
-        cmds.push(m("view.zoom_reset", Msg::MnView, Msg::MnZoomReset));
-        cmds.push(m("obj.compare", Msg::MnEdit, Msg::MnObjCompare));
-        cmds.push(m("compare.next", Msg::MnEdit, Msg::MnCompareNext));
-        cmds.push(m("compare.prev", Msg::MnEdit, Msg::MnComparePrev));
-        cmds.push(m(
-            "obj.compare_server",
-            Msg::MnEdit,
-            Msg::MnObjCompareServer,
-        ));
-        for (id, msg) in [
-            ("obj.menu", Msg::MnObjMenu),
-            ("obj.select_rows", Msg::ExpSelectRows),
-            ("obj.source", Msg::ExpOpenSource),
-            ("obj.copy_name", Msg::ExpCopyName),
-            ("obj.refresh", Msg::ExpRefresh),
-            ("obj.refresh_meta", Msg::ExpRefreshMeta),
-            ("obj.sizes", Msg::ExpLoadSizes),
-        ] {
-            cmds.push(m(id, Msg::MnExplorer, msg));
-        }
-        for (id, msg) in [
-            ("bookmark.toggle", Msg::MnBmToggle),
-            ("bookmark.next", Msg::MnBmNext),
-            ("bookmark.prev", Msg::MnBmPrev),
-            ("bookmark.select_all", Msg::MnBmSelectAll),
-            ("bookmark.label", Msg::MnBmLabel),
-            ("bookmark.clear_doc", Msg::MnBmClearDoc),
-            ("view.bookmarks", Msg::MnBookmarksPanel),
-        ] {
-            cmds.push(m(id, Msg::MnBookmarks, msg));
-        }
-        cmds.push(m(
-            "edit.select_all_occurrences",
-            Msg::MnEdit,
-            Msg::MnSelectAllOccurrences,
-        ));
-        cmds.push(m("edit.undo", Msg::MnEdit, Msg::MnUndo));
-        cmds.push(m("edit.find", Msg::MnEdit, Msg::MnFind));
-        cmds.push(m("edit.replace", Msg::MnEdit, Msg::MnReplace));
-        cmds.push(m("edit.find_next", Msg::MnEdit, Msg::MnFindNext));
-        cmds.push(m("edit.find_prev", Msg::MnEdit, Msg::MnFindPrev));
-        cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
-        cmds.push(m("edit.soft_undo", Msg::MnEdit, Msg::MnSoftUndo));
-        cmds.push(m("edit.soft_redo", Msg::MnEdit, Msg::MnSoftRedo));
+        // ★ T-14 1단계(10-29): 정적 항목은 `commands::PALETTE` 표 한 곳 — 종류별로 조건·라벨만 여기서 정한다.
         // ★ 보기 메뉴의 켜고 끄는 항목은 **지금 상태 기준 한 줄**(사용자 09-27 "켜져 있으면 숨기기, 꺼져 있으면 보이기 —
         //   2줄씩 보이지 않게"): 팔레트를 여는 순간 상태를 읽어 라벨만 정한다(평소 비용 0 · 열 때 한 번).
         let tv = |id: &str, item: Msg, on: bool| {
@@ -1928,152 +1825,38 @@ impl App {
                 .join(" ");
             (id.to_string(), format!("{}: {}", t(Msg::MnView), verb), key)
         };
-        cmds.push(tv(
-            "view.explorer",
-            Msg::MnExplorer,
-            self.explorer.is_visible(),
-        ));
-        cmds.push(tv(
-            "view.object_details",
-            Msg::MnObjectDetails,
-            self.settings.flag("explorer.details"),
-        ));
-        cmds.push(tv(
-            "view.output",
-            Msg::MnOutput,
-            self.panel.output_index().is_some(),
-        ));
-        cmds.push(tv(
-            "view.search",
-            Msg::MnSearchPanel,
-            self.search.is_visible(),
-        ));
-        cmds.push(tv(
-            "view.project",
-            Msg::MnProjectPanel,
-            self.project_panel.is_visible(),
-        ));
-        cmds.push(tv(
-            "view.bookmarks",
-            Msg::MnBookmarksPanel,
-            self.bm_panel.is_visible(),
-        ));
-        cmds.push(tv(
-            "view.outline",
-            Msg::MnOutlinePanel,
-            self.outline_panel.is_visible(),
-        ));
-        cmds.push(tv("view.log", Msg::MnLogWindow, self.log_win.is_open()));
-        cmds.push(tv(
-            "view.txlog",
-            Msg::MnTxLogWindow,
-            self.txlog_win.is_open(),
-        ));
-        cmds.push(tv(
-            "view.sessions",
-            Msg::MnSessManager,
-            self.sessions_win.is_open(),
-        ));
-        cmds.push(tv(
-            "view.memory",
-            Msg::MnMemoryWindow,
-            self.mem_win.is_open(),
-        ));
-        cmds.push(tv(
-            "view.find_objects",
-            Msg::MnFindObjects,
-            self.findobj_win.is_open(),
-        ));
-        cmds.push(tv(
-            "view.variables",
-            Msg::MnVariables,
-            self.vars_win.is_open(),
-        ));
-        // 드라이버 관리자 = 열기/포커스(토글 아님) → "Hide" 라벨이 붙는 tv가 아니라 m(협업 10-23 지적).
-        cmds.push(m("view.drivers", Msg::MnView, Msg::MnDrivers));
-        cmds.push(tv(
-            "view.on_top",
-            Msg::MnAlwaysOnTop,
-            self.settings.flag("window.always_on_top"),
-        ));
-        cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
-        cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
-        cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
-        cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
-        cmds.push(m("view.toolbar_reset", Msg::MnView, Msg::MnResetToolbar));
-        cmds.push(m("view.layout_reset", Msg::MnView, Msg::MnResetLayout));
-        cmds.push(m("project.new", Msg::MnProject, Msg::MnProjectNew));
-        cmds.push(m("project.open", Msg::MnProject, Msg::MnProjectOpen));
-        cmds.push(m("project.switch", Msg::MnProject, Msg::MnProjectSwitch));
-        cmds.push(m("project.save", Msg::MnProject, Msg::MnProjectSave));
-        cmds.push(m("project.save_as", Msg::MnProject, Msg::MnProjectSaveAs));
-        cmds.push(m("project.close", Msg::MnProject, Msg::MnProjectClose));
-        cmds.push(m(
-            "project.add_folder",
-            Msg::MnProject,
-            Msg::MnProjectAddFolder,
-        ));
-        cmds.push(m("vars.script", Msg::MnView, Msg::MnVariablesScript));
-        cmds.push(m("vars.show", Msg::MnView, Msg::MnShowVariables));
-        cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
-        cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
-        cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));
-        cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
-        cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
-        cmds.push(m("run.statement", Msg::MnRun, Msg::MnRunStatement));
-        cmds.push(m(
-            "run.statement_new_tab",
-            Msg::MnRun,
-            Msg::MnRunStatementNewTab,
-        ));
-        cmds.push(m("result.tab.close", Msg::MnRun, Msg::MnResultCloseTab));
-        cmds.push(m("result.tab.next", Msg::MnRun, Msg::MnResultNextTab));
-        cmds.push(m("result.tab.prev", Msg::MnRun, Msg::MnResultPrevTab));
-        cmds.push(m("run.all", Msg::MnRun, Msg::MnRunAll));
-        cmds.push(m("run.explain", Msg::MnRun, Msg::MnExplain));
-        cmds.push(m("run.explain_analyze", Msg::MnRun, Msg::MnExplainAnalyze));
-        cmds.push(m("run.commit", Msg::MnRun, Msg::MnCommit));
-        cmds.push(m("run.rollback", Msg::MnRun, Msg::MnRollback));
-        cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
-        cmds.push(m("conn.disconnect", Msg::MnRun, Msg::MnDisconnect));
-        cmds.push(m("session.info", Msg::MnRun, Msg::MnSessInfo));
-        cmds.push(m("session.env:none", Msg::MnRun, Msg::MnEnvNone));
-        cmds.push(m("session.env:dev", Msg::MnRun, Msg::MnEnvDev));
-        cmds.push(m("session.env:test", Msg::MnRun, Msg::MnEnvTest));
-        cmds.push(m("session.env:prod", Msg::MnRun, Msg::MnEnvProd));
-        for (id, msg) in [
-            ("edit.duplicate_line", Msg::MnDuplicateLine),
-            ("edit.delete_line", Msg::MnDeleteLine),
-            ("edit.join_lines", Msg::MnJoinLines),
-            ("edit.swap_line_up", Msg::MnSwapLineUp),
-            ("edit.swap_line_down", Msg::MnSwapLineDown),
-            ("edit.toggle_comment", Msg::MnToggleComment),
-            ("edit.toggle_block_comment", Msg::MnToggleBlockComment),
-            ("intel.refresh", Msg::MnIntelRefresh),
-            ("intel.refresh_server", Msg::MnIntelRefreshServer),
-            ("intel.refresh_all", Msg::MnIntelRefreshAll),
-            ("edit.indent", Msg::MnIndent),
-            ("edit.unindent", Msg::MnUnindent),
-            ("edit.select_line", Msg::MnSelectLine),
-            ("edit.split_lines", Msg::MnSplitLines),
-            ("edit.add_caret_up", Msg::MnAddCaretUp),
-            ("edit.add_caret_down", Msg::MnAddCaretDown),
-            ("edit.upper_case", Msg::MnUpperCase),
-            ("edit.lower_case", Msg::MnLowerCase),
-            ("edit.goto_line", Msg::MnGotoLine),
-            ("eol.crlf", Msg::MnEolCrlf),
-            ("eol.lf", Msg::MnEolLf),
-            ("eol.cr", Msg::MnEolCr),
-        ] {
-            cmds.push(m(id, Msg::MnEdit, msg));
+        // Extension Manager(Sublime "Package Control: …" 표기 · docs/50 §10) — 관리자 상태에 맞는 명령만(사용자 09-19):
+        // 꺼짐 = "켜기" 하나 · 켜짐 = "끄기" + 나머지(두 번째 "켜기"는 없다).
+        let ext_on = self.settings.flag("extensions.enabled");
+        for c in crate::app::commands::PALETTE {
+            match c.kind {
+                crate::app::commands::PalKind::Plain => cmds.push(m(c.id, c.menu, c.item)),
+                crate::app::commands::PalKind::Toggle => {
+                    cmds.push(tv(c.id, c.item, self.view_toggle_state(c.id)))
+                }
+                crate::app::commands::PalKind::ExtOn if ext_on => {
+                    cmds.push(m(c.id, c.menu, c.item))
+                }
+                crate::app::commands::PalKind::ExtOff if !ext_on => {
+                    cmds.push(m(c.id, c.menu, c.item))
+                }
+                crate::app::commands::PalKind::ExtDynamic if ext_on => {
+                    // ★ 확장 명령(146차 · docs/75 §9 ②): 라벨 = "<확장 이름>: <명령>" · 검색 키 = 라벨(두 언어는 메타가 준 것뿐).
+                    let off = self.ext_disabled();
+                    for (_, ext_name, c) in self.extensions.commands_all(&off) {
+                        // 메타 라벨이 이미 "<이름>: …" 꼴이면 그대로(SDK 샘플 관례) · 아니면 확장 이름을 앞에.
+                        let text = c.label.text();
+                        let label = if text.contains(':') {
+                            text
+                        } else {
+                            format!("{ext_name}: {text}")
+                        };
+                        cmds.push((c.id.clone(), label.clone(), label.to_lowercase()));
+                    }
+                }
+                _ => {}
+            }
         }
-        cmds.push(m("view.goto_anything", Msg::MnView, Msg::MnGotoAnything));
-        cmds.push(m("edit.prefs", Msg::MnEdit, Msg::MnPreferences));
-        cmds.push(m("edit.settings_json", Msg::MnEdit, Msg::MnSettingsJson));
-        cmds.push(m("settings.export", Msg::MnEdit, Msg::MnSettingsExport));
-        cmds.push(m("settings.import", Msg::MnEdit, Msg::MnSettingsImport));
-        cmds.push(m("help.license", Msg::MnHelp, Msg::MnLicense));
-        cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {
             let key = nsql_i18n::Lang::ALL
                 .iter()
