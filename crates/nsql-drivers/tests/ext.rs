@@ -111,9 +111,14 @@ fn built_driver_cdylibs_export_abi_v2_vtables() {
         .join("target")
         .join(profile);
     let mut seen = 0;
+    // 같은 dll이 여러 방언에 걸릴 수 있다(odbc = Odbc·Access · T-425) → id 하나는 한 번만(dll은 자기 방언만 보고한다).
+    let mut done = std::collections::HashSet::new();
     for (dialect, ids) in nsql_drivers::DRIVER_IDS {
         for id in *ids {
             if *id == "odbc" && !cfg!(windows) {
+                continue;
+            }
+            if !done.insert(*id) {
                 continue;
             }
             let p = target.join(library_file_name(&nsql_drivers::ext_crate_name(id)));
