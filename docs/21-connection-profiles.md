@@ -112,3 +112,17 @@ duckdb::memory:?driver=duckdb           # 축약형 꼬리도 같다(?driver= ·
 - ★ **GUI 접속 폼(10-23 cf10a33)** = 방언 콤보에 **Oracle (Thin)** · **Oracle (OCI)** 두 항목(값 `oracle?driver=thin|oci`) → 고르면 `ConnectSpec.driver`에 들어가 저장·왕복 · 프로필을 열면 그 driver 항목이 선택된다.
 
 > ★ **프로필 변수(10-26 · T-153 ② · 5e53e376)** — 프로필 파일에 `var.<이름>=값` 줄(이름 = 대문자 식별자 · 스펙 재저장에도 보존 · nsql-vault `vars`/`set_vars`) · CLI `nsql conn var <프로필> [NAME=value …]`(`NAME=` = 삭제) · 접속 뒤 변수 창 `profile` 층(읽기 전용) · ✅ **접속 창 폼 편집 UI(10-27 · 141차 win · T-153 후속 2)** = 폼 서버 유형 줄 아래 버튼 [프로필 변수 (n)…] → 창 "프로필 변수 [<프로필>]"(표 Name|Value · 입력란 `이름 = 값` · 값 비면 삭제) · 편집은 폼 변수 목록으로만(바뀜 `Dirty::Vars` · Save •) · 파일 쓰기 = [저장] 때 `Vault::save` 뒤 `set_vars` · 불러오기·복제·`conn.edit`·기동 인자 프로필도 변수 동반 · 기동 명령 `conn.var:<프로필>:<이름>=<값>` · `conn.vars:<프로필>`(창 · `@after:2000:` 필요).
+
+## 9. TLS 꼬리 `?tls=` · `?tls_ca=`(MySQL 10-22 T-388 · PostgreSQL 10-28 T-70 · 155차)
+
+```
+postgres://u:p@h:5432/db?sslmode=require                       # libpq 이름(disable · prefer · require · verify-ca · verify-full)
+postgres://u:p@h:5432/db?tls=verify_identity&tls_ca=C:/ca.pem   # 내부 이름 + CA 파일(PEM)
+postgres://u:p@h:5432/db?sslmode=verify-ca&sslrootcert=/etc/ca.pem
+mysql://u:p@h:3306/db?tls=required
+```
+
+- 모드 = `disabled` · `preferred` · `required`(암호화만 · 검증 없음) · `verify_ca`(사슬) · `verify_identity`(사슬 + 호스트) — PG 접속 문자열 `?sslmode=`는 libpq 이름도 받는다(설정 `pg.tls`/`mysql.tls`는 내부 이름 5개만 · 다른 Choice 키와 같은 규칙) · 모르는 값 = "TLS: unknown mode '<값>' (…)" 오류로 접속하지 않음.
+- CA = `ConnectSpec.tls_ca`(`?tls_ca=` · PG는 `sslrootcert=`도) · 왕복 · 확장 드라이버 ABI kv `tls_ca` · 없는 파일 = "TLS CA file <경로>: I/O error …".
+- 접속 문자열에 없으면 설정 `pg.tls`/`pg.tls_ca` · `mysql.tls`/`mysql.tls_ca`(기본 preferred · D-384) — 허브가 `open()`에서 주입(명시값 우선 · 내장·cdylib 공용) · 설정 변경은 다음 접속부터.
+- 비밀번호·CA 경로 외의 인증서 재료(클라이언트 인증서 `sslcert`/`sslkey`)는 아직 없다.
