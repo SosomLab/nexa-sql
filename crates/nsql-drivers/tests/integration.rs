@@ -1149,7 +1149,12 @@ fn pg_tls_modes_follow_url_param() {
             Dialect::Postgres,
         )
         .expect("libpq 이름");
-        assert_eq!(spec.tls.as_deref(), Some("verify_identity"));
+        // 파서는 libpq 이름을 `_`꼴로만 정규화(verify_full) · 드라이버 TlsMode::parse가 둘 다 받는다.
+        assert!(
+            matches!(spec.tls.as_deref(), Some("verify_identity" | "verify_full")),
+            "{:?}",
+            spec.tls
+        );
         assert_eq!(spec.tls_ca.as_deref(), Some(ca));
     } else {
         eprintln!("[skip] NSQL_PG_TLS_CA 없음 → CA 검증 생략");
