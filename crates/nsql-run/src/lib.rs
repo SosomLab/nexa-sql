@@ -659,6 +659,11 @@ pub struct Runner {
     pub fetch_size: usize,
     /// 유휴 커서 상한(설정 `db.cursor_idle_secs` · 0 = 없음) — 마지막 페치 뒤 이 시간이 지나면 닫고 OFFSET 폴백.
     pub cursor_idle_secs: u64,
+    /// ★ T-116 겹침 검사(설정 `grid.overlap_check` · 기본 켬 · docs/43 §9-3): OFFSET 재질의로 다음 페이지를 받을 때 `offset-1`행을 함께
+    /// 받아 **직전 페이지의 마지막 행**과 비교한다 — 다르면 서버 결과가 바뀐 것(삽입·삭제·정렬 동점) → 오류로 알리고 이어 붙이지 않는다.
+    pub overlap_check: bool,
+    /// 직전 페이지의 꼬리(문장 · 넘긴 행 수 = 다음 OFFSET · 마지막 행) — 겹침 검사의 기준. 실행·페치마다 갱신.
+    page_tail: Option<(String, usize, Vec<Value>)>,
     /// 읽기 트랜잭션 자동 종료(설정 `tx.read_end` · docs/56 L1).
     pub read_end: ReadEnd,
     /// 열린 트랜잭션에 변경이 있었는가(수동 모드 · 커밋/롤백/암묵 커밋/접속에서 초기화).
@@ -899,6 +904,8 @@ impl Runner {
             keep_cursor: true,
             fetch_size: 0,
             cursor_idle_secs: 0,
+            overlap_check: true,
+            page_tail: None,
             last_unit: None,
             read_end: ReadEnd::Auto,
             hold: None,
@@ -1976,20 +1983,37 @@ impl Runner {
         // 래핑은 limit+1행을 달라고 하고 상한은 limit — 한 행이 더 오면 `more`.
         // ★ 157차: 서버가 `OFFSET … FETCH`를 못 받으면(Db2 ≤ 10.5 · `Caps::offset_fetch`) `ROW_NUMBER()` 폴백 + 번호 열 떼기.
         let offset_fetch = self.session.as_ref().is_none_or(|s| s.caps().offset_fetch);
+        // ★ T-116 겹침 검사: 직전 페이지 꼬리가 이 문장·이 위치면 `offset-1`행부터 받아 첫 행을 꼬리와 대조한다(한 행 비용).
+        let check = self.overlap_check
+            && offset > 0
+            && self
+                .page_tail
+                .as_ref()
+                .is_some_and(|(s, served, _)| *served == offset && same_sql(s, sql));
+        let (start, extra) = if check { (offset - 1, 1) } else { (offset, 0) };
         let (q, max) = if limit == 0 {
             (
-                nsql_io::paging::page_sql_opts(d, sql, offset, 0, offset_fetch),
+                nsql_io::paging::page_sql_opts(d, sql, start, 0, offset_fetch),
                 0,
             )
         } else {
             (
-                nsql_io::paging::page_sql_opts(d, sql, offset, limit + 1, offset_fetch),
-                limit,
+                nsql_io::paging::page_sql_opts(d, sql, start, limit + 1 + extra, offset_fetch),
+                limit + extra,
             )
         };
         let t0 = Instant::now();
         let (mut rs, more, _) = self.query_once(&q, max)?;
         nsql_io::paging::strip_rn(&mut rs);
+        if check {
+            let expected = self.page_tail.as_ref().map(|t| &t.2);
+            if rs.rows.first() != expected {
+                // 꼬리가 사라졌거나 다른 행이 그 자리에 왔다 = 서버 결과가 바뀜 → 이어 붙이면 누락·중복. 호스트는 처음부터 다시 받는다.
+                self.page_tail = None;
+                return Err(msg_err(tf(Msg::ErrPageOverlap, &[&offset.to_string()])));
+            }
+            rs.rows.remove(0);
+        }
         let mut timeline = Timeline::new();
         let span = timeline.push(Stage::Navigate, t0.elapsed());
         span.rows = Some(rs.rows.len() as u64);
@@ -2009,12 +2033,22 @@ impl Runner {
         if limit > 0 && self.cursor_matches(sql, offset) {
             if let Some((h, _)) = self.cursor() {
                 if let Ok((rs, more, tl)) = self.fetch_next(h, limit) {
+                    self.remember_tail(sql, offset, &rs);
                     return Ok((rs, more, tl, true));
                 }
             }
         }
-        self.fetch_offset(sql, offset, limit)
-            .map(|(rs, more, tl)| (rs, more, tl, false))
+        let (rs, more, tl) = self.fetch_offset(sql, offset, limit)?;
+        self.remember_tail(sql, offset, &rs);
+        Ok((rs, more, tl, false))
+    }
+
+    /// 겹침 검사 기준 갱신(T-116): 이 페이지의 마지막 행 = 다음 OFFSET 재질의가 대조할 꼬리.
+    fn remember_tail(&mut self, sql: &str, offset: usize, rs: &ResultSet) {
+        self.page_tail = rs
+            .rows
+            .last()
+            .map(|row| (sql.to_string(), offset + rs.rows.len(), row.clone()));
     }
 
     /// 이 문장을 OFFSET 재질의·재실행으로 이어 받을 수 있는가 — **조회(SELECT·WITH)만**. 프로시저 호출·`PRINT`가 낸 커서 결과
@@ -3006,6 +3040,20 @@ impl Runner {
                 }
                 let n_sets = result.result_sets.len();
                 let max_rows = self.max_rows;
+                // ★ T-116 겹침 검사의 첫 꼬리: 마지막 결과 집합에서 상한 안 마지막 행(호스트가 들고 있는 마지막 행과 같다).
+                // 결과 집합이 없는 실행(DML·DDL)은 꼬리를 건드리지 않는다 — 페이지 사이에 다른 문장을 돌려도 그 조회의 꼬리는 남는다.
+                if n_sets > 0 {
+                    self.page_tail = result.result_sets.last().and_then(|r| {
+                        let served = if max_rows > 0 {
+                            r.rows.len().min(max_rows)
+                        } else {
+                            r.rows.len()
+                        };
+                        r.rows
+                            .get(served.checked_sub(1)?)
+                            .map(|row| (item.text.clone(), served, row.clone()))
+                    });
+                }
                 // 드라이버가 커서를 열어 뒀으면(마지막 결과 집합이 잘림) 유지 모드일 때만 러너가 맡는다 · 아니면 바로 닫는다.
                 let pending = result.pending.take();
                 let mut kept: Option<OpenCursor> = None;
@@ -4972,6 +5020,40 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
         assert_eq!(rs.rows.len(), 25);
         assert!(h.is_none());
         let _ = calls;
+    }
+
+    /// ★ T-116 겹침 검사(10-29): 커서 없이(OFFSET 재질의) 다음 페이지를 받을 때 `offset-1`행 = 직전 꼬리면 그대로 이어 붙이고(꼬리 행은
+    /// 결과에서 뺌 · 행 수·more 그대로), 서버가 바뀌어(삭제) 그 자리에 다른 행이 오면 오류 · 끄면 검사 없음 · 꼬리와 다른 위치면 검사 없음.
+    #[test]
+    fn overlap_check_detects_server_change() {
+        let mut r = seeded(25).with_max_rows(10);
+        r.keep_cursor = false;
+        let (errs, ev) = collect(&mut r, "SELECT id FROM t ORDER BY id;\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        let (rs, more) = first_rs(&ev);
+        assert_eq!((rs.rows.len(), more), (10, true));
+        assert!(r.cursor().is_none(), "커서 유지 끔");
+        // 일치: 11..15 · 꼬리 행(10)은 결과에 없다 · more.
+        let (rs, more, _, used) = r.fetch_page("SELECT id FROM t ORDER BY id", 10, 5).unwrap();
+        assert!(!used);
+        assert_eq!(rs.rows.len(), 5, "{:?}", rs.rows);
+        assert_eq!(rs.rows[0][0], Value::Int(11));
+        assert!(more);
+        // 서버 변경: 앞쪽 행 삭제 → offset 14 자리의 행이 15가 아니라 16 → 오류(이어 붙이지 않음).
+        let (errs, _) = collect(&mut r, "DELETE FROM t WHERE id = 3;\n");
+        assert_eq!(errs, 0);
+        let e = r
+            .fetch_page("SELECT id FROM t ORDER BY id", 15, 5)
+            .expect_err("겹침 불일치");
+        assert!(e.message.contains("15"), "{}", e.message);
+        // 꼬리와 다른 위치(20)는 검사 없이 그냥 받는다.
+        let (rs, _, _, _) = r.fetch_page("SELECT id FROM t ORDER BY id", 20, 5).unwrap();
+        assert_eq!(rs.rows.len(), 4);
+        // 끄면 같은 불일치도 조용히 이어 붙인다(종전 동작).
+        let (errs, _) = collect(&mut r, "DELETE FROM t WHERE id = 4;\n");
+        assert_eq!(errs, 0);
+        r.overlap_check = false;
+        assert!(r.fetch_page("SELECT id FROM t ORDER BY id", 24, 5).is_ok());
     }
 
     #[test]

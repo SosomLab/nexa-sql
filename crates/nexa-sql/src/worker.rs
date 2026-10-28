@@ -473,6 +473,8 @@ fn apply_fetch_settings(runner: &mut Runner) {
     runner.keep_cursor = s.get("grid.fetch_mode").unwrap_or("cursor") == "cursor";
     runner.fetch_size = s.int("db.fetch_size").max(0) as usize;
     runner.cursor_idle_secs = s.int("db.cursor_idle_secs").max(0) as u64;
+    // T-116 겹침 검사(`grid.overlap_check` · 기본 켬).
+    runner.overlap_check = s.flag("grid.overlap_check");
     // docs/56 L1: 수동 모드의 변경 없는 트랜잭션 자동 종료.
     runner.read_end = nsql_run::ReadEnd::parse(s.get("tx.read_end").unwrap_or("auto"));
     // 실행 뒤 돌아온 REF CURSOR를 바로 결과로(끄면 `PRINT rc`).

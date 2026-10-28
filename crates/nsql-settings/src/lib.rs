@@ -1910,6 +1910,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-116 겹침 검사(10-29 · 43 §9-3): OFFSET 재질의 페이지의 `offset-1`행을 직전 꼬리와 대조 — 다르면 거절(누락·중복 방지).
+    Entry {
+        key: "grid.overlap_check",
+        cat: Msg::CatGrid,
+        label: Msg::LblOverlapCheck,
+        desc: Msg::DescOverlapCheck,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 결과 표시 방식(사용자 10-09 "최초 조회 건수 표시 후 전체 / 증분 — 증분 기본"): incremental = 첫 세그먼트를 바로 보이고 나머지는
     //   배치마다 이어 붙임(■·진행률·예산 = 배치 경계 · 열 너비 = 첫 세그먼트) · whole = 종전(전부 받은 뒤 표시).
     Entry {

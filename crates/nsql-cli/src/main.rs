@@ -1843,6 +1843,11 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_var_limits(var_limits_setting().0, var_limits_setting().1);
     apply_load_switches(&mut runner);
     runner.cursor_idle_secs = idle;
+    // T-116 겹침 검사(`grid.overlap_check` · 기본 켬) — GUI 워커와 같은 규칙.
+    runner.overlap_check = settings_cached()
+        .ok()
+        .and_then(|s| s.get("grid.overlap_check").map(|v| v == "on"))
+        .unwrap_or(true);
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     for (n, v) in &o.defines {
         runner.engine.define(n, v);
