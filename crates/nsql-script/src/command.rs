@@ -27,7 +27,8 @@ pub enum Command {
     Exec {
         body: String,
     },
-    Connect(ConnectSpec),
+    /// (Box = 스펙이 커져 열거형 변형 크기 경고 · 159차 ssh 필드.)
+    Connect(Box<ConnectSpec>),
     Disconnect,
     Set(SetOption),
     Define {
@@ -277,7 +278,7 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
         return Ok(Some(Command::SetVar { name, value }));
     }
     if let Some(rest) = t.strip_prefix(":connect") {
-        return Ok(Some(Command::Connect(ConnectSpec::parse(rest)?)));
+        return Ok(Some(Command::Connect(Box::new(ConnectSpec::parse(rest)?))));
     }
     if let Some(rest) = t.strip_prefix(":r ") {
         return Ok(Some(Command::Include {
@@ -312,7 +313,7 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
         "EXEC" | "EXECUTE" => Command::Exec {
             body: rest.trim_end_matches(';').trim().to_string(),
         },
-        "CONN" | "CONNECT" => Command::Connect(ConnectSpec::parse(rest)?),
+        "CONN" | "CONNECT" => Command::Connect(Box::new(ConnectSpec::parse(rest)?)),
         "DISC" | "DISCONNECT" => Command::Disconnect,
         "SET" => match parse_set(rest)? {
             Some(c) => c,

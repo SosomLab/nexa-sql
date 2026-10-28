@@ -1071,6 +1071,59 @@ fn mysql_tls_modes_follow_url_param() {
     }
 }
 
+/// ★ T-3 SSH 터널(159차 · D-382): CI의 sshd 컨테이너를 거쳐 PG에 붙는다(`NSQL_SSH_PG_URL` = `…?ssh=nexa@localhost:2222&ssh_key=…`).
+/// 허브 `nsql_drivers::open`이 터널을 띄우고 `127.0.0.1:<로컬>`로 바꾼 스펙으로 드라이버를 연다 · 설명 = 원래 호스트 + " via ssh …" ·
+/// 세션이 닫히면 ssh 프로세스도 끝난다. 잘못된 대상(없는 포트)은 상한 안에 ssh의 stderr 원문으로 실패. env가 없으면 생략.
+#[test]
+fn pg_ssh_tunnel_round_trip() {
+    use nsql_core::ExecRequest;
+    let Ok(url) = std::env::var("NSQL_SSH_PG_URL") else {
+        eprintln!("[skip] NSQL_SSH_PG_URL 없음");
+        return;
+    };
+    let spec = nsql_drivers::parse_target(&url, Dialect::Postgres).expect("접속 문자열");
+    assert!(spec.ssh.is_some() && spec.ssh_key.is_some(), "{spec:?}");
+    let started = std::time::Instant::now();
+    let mut s = nsql_drivers::open(&spec, Dialect::Postgres).expect("ssh 터널 접속");
+    let d = s.describe();
+    assert!(d.contains(" via ssh nexa@localhost:2222"), "설명 꼬리: {d}");
+    assert!(
+        d.contains("host.docker.internal:5432"),
+        "원래 호스트 표시: {d}"
+    );
+    let r = s
+        .execute(&ExecRequest {
+            sql: "SELECT 1 + 1, inet_client_addr()::text".to_string(),
+            params: Vec::new(),
+        })
+        .expect("select over tunnel");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(2));
+    eprintln!(
+        "[ssh] 접속 {:?} · client addr {}",
+        started.elapsed(),
+        r.result_sets[0].rows[0][1].display()
+    );
+    drop(s);
+    // 잘못된 ssh 포트 = ssh가 바로 끝남 → 상한 안에 오류 + stderr 원문.
+    let mut bad = spec.clone();
+    bad.ssh = Some("nexa@localhost:2".into());
+    let t0 = std::time::Instant::now();
+    let e = nsql_drivers::open(&bad, Dialect::Postgres)
+        .err()
+        .map(|e| e.message)
+        .expect("없는 ssh 포트 = 실패");
+    assert!(e.starts_with("SSH:"), "{e}");
+    assert!(t0.elapsed().as_secs() <= 20, "{e} ({:?})", t0.elapsed());
+    // 키 없음 = Permission denied 안내.
+    let mut nokey = spec.clone();
+    nokey.ssh_key = Some("/nonexistent/key".into());
+    let e = nsql_drivers::open(&nokey, Dialect::Postgres)
+        .err()
+        .map(|e| e.message)
+        .expect("키 없음 = 실패");
+    assert!(e.starts_with("SSH:"), "{e}");
+}
+
 /// ★ T-70 후속(158차 · 사용자 10-28 결정 ⓐ): CI의 **자체 서명 TLS PG**(`NSQL_PG_TLS_URL` · CA 파일 = `NSQL_PG_TLS_CA`)로 모드 5종 ·
 /// 인증서 오류 원문(사슬) · `tls_ca=` 검증 · preferred의 "(TLS on)" 꼬리 · **TLS 세션의 취소**(같은 TLS로 cancel_query · 57014).
 /// 내장(rlib)·확장(`NSQL_TEST_DYN=1` · cdylib) 두 경로 모두 같은 단언. env가 없으면 생략.

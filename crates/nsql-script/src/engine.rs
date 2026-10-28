@@ -529,7 +529,7 @@ impl Engine {
                 vec![Action::Print(out)]
             }
             Command::Exec { .. } => self.plan_exec(text),
-            Command::Connect(spec) => vec![Action::Connect(spec.clone())],
+            Command::Connect(spec) => vec![Action::Connect((**spec).clone())],
             Command::Disconnect => vec![Action::Disconnect],
             Command::Set(opt) => {
                 self.apply_set(opt);

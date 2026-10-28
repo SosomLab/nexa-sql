@@ -429,6 +429,13 @@ pub(crate) fn apply_driver_switches() {
             s.get("pg.tls").unwrap_or("preferred"),
             s.get("pg.tls_ca").unwrap_or(""),
         );
+        // SSH 터널(T-3 · 159차) — `ssh.command` · `ssh.connect_timeout_secs`.
+        nsql_drivers::set_ssh(
+            s.get("ssh.command").unwrap_or("ssh"),
+            s.get("ssh.connect_timeout_secs")
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(15),
+        );
         // 확장 드라이버 폴더(T-27 ③) = <설정 폴더>/drivers — GUI와 같은 자리.
         nsql_drivers::ext::set_driver_dir(
             nsql_settings::config_dir()

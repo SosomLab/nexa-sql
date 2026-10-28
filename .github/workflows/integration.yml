@@ -160,6 +160,19 @@ jobs:
           docker exec pgtls psql -U nexa -d nexa -c "SHOW ssl"
           echo "NSQL_PG_TLS_URL=postgres://nexa:nexa@localhost:5434/nexa" >> "$GITHUB_ENV"
           echo "NSQL_PG_TLS_CA=$PWD/ca.crt" >> "$GITHUB_ENV"
+      # ★ T-3 SSH 터널(159차 · D-382): sshd 컨테이너(키 인증 · 2222) → 터널 대상 = 러너의 PG 서비스(host.docker.internal:5432) ·
+      #   known_hosts 선등록(BatchMode) · `pg_ssh_tunnel_round_trip`이 `?ssh=nexa@localhost:2222&ssh_key=…`로 접속한다.
+      - name: SSH server container (openssh-server · key auth · port 2222)
+        working-directory: .
+        run: |
+          mkdir -p sshtun && ssh-keygen -q -t ed25519 -N "" -f sshtun/id_ed25519
+          docker run -d --name sshtun -p 2222:2222 --add-host=host.docker.internal:host-gateway \
+            -e PUID=1000 -e PGID=1000 -e USER_NAME=nexa -e PUBLIC_KEY="$(cat sshtun/id_ed25519.pub)" \
+            -e SUDO_ACCESS=false -e PASSWORD_ACCESS=false lscr.io/linuxserver/openssh-server:latest
+          for i in $(seq 1 30); do ssh-keyscan -p 2222 -T 3 localhost 2>/dev/null | grep -q ed25519 && break; sleep 2; done
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -p 2222 localhost >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -o BatchMode=yes -p 2222 -i sshtun/id_ed25519 nexa@localhost true && echo "ssh login ok"
+          echo "NSQL_SSH_PG_URL=postgres://nexa:nexa@host.docker.internal:5432/nexa?ssh=nexa@localhost:2222&ssh_key=$PWD/sshtun/id_ed25519" >> "$GITHUB_ENV"
       - name: wait for DBs
         run: bash scripts/wait-for-db.sh
       - name: integration tests

@@ -2046,6 +2046,8 @@ impl Runner {
                 env: _,
                 tls: _,
                 tls_ca: _,
+                ssh: _,
+                ssh_key: _,
                 driver: _,
             } => Some(u.as_str()),
             _ => None,

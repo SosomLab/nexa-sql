@@ -2535,6 +2535,8 @@ mod tests {
             env: Default::default(),
             tls: None,
             tls_ca: None,
+            ssh: None,
+            ssh_key: None,
             driver: None,
         }
     }
@@ -2690,6 +2692,8 @@ mod tests {
             env: Default::default(),
             tls: None,
             tls_ca: None,
+            ssh: None,
+            ssh_key: None,
             driver: None,
         };
         // 파일은 임시 폴더 아래에만(접속이 파일을 만든다 · 61 §2 "실제 폴더에 쓰지 않는다").

@@ -4989,6 +4989,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ SSH 터널(T-3 · D-382 · 159차): 시스템 ssh 프로세스 포워딩 — 명령(빈 값 = 비활성) · 포워딩 포트가 열릴 때까지 상한.
+    Entry {
+        key: "ssh.command",
+        cat: Msg::CatConnection,
+        label: Msg::LblSshCommand,
+        desc: Msg::DescSshCommand,
+        kind: SettingKind::Text,
+        default: "ssh",
+    },
+    Entry {
+        key: "ssh.connect_timeout_secs",
+        cat: Msg::CatConnection,
+        label: Msg::LblSshConnectTimeout,
+        desc: Msg::DescSshConnectTimeout,
+        kind: SettingKind::Int { min: 1, max: 120 },
+        default: "15",
+    },
     Entry {
         key: "mysql.tls",
         cat: Msg::CatDbmsMysql,
@@ -8258,6 +8275,7 @@ pub const ADVANCED: &[&str] = &[
     "session.max_private",
     "probe.max_retries",
     "connect.max_concurrent",
+    "ssh.command",
     // 스레드·캐시·프로세스
     "search.threads",
     "project.scan_threads",

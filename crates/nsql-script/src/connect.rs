@@ -124,6 +124,11 @@ pub struct ConnectSpec {
     /// ★ `?driver=`(T-27 잔여 · 10-24): 이 접속에 쓸 드라이버 — Oracle `thin`|`oci` · 확장 id(`oracle-thin` · `duckdb` …). 호스트(허브)만 본다 ·
     ///   ABI 코덱에는 싣지 않는다(드라이버는 자기 id를 안다 · 기존 패키지 호환). 없으면 설정(`oracle.driver`)·후보 순서.
     pub driver: Option<String>,
+    /// ★ SSH 터널(T-3 · D-382 · 159차): `?ssh=user@host[:port]` — 허브가 시스템 `ssh -N -L`로 포워딩하고 드라이버는 `127.0.0.1:<로컬>`로
+    ///   붙는다(드라이버·ABI는 모른다). 프로필(볼트 `ssh=`)·CLI 문자열·GUI 공용.
+    pub ssh: Option<String>,
+    /// `?ssh_key=` = ssh `-i` 개인 키 경로(없으면 사용자의 ssh 설정·에이전트).
+    pub ssh_key: Option<String>,
 }
 
 /// ★ ODBC 접속 문자열(T-383)의 `key=value;` 토큰 — `{…}` 안의 `;`는 구분자가 아니다 · `}}` = `}`.
@@ -374,6 +379,18 @@ impl ConnectSpec {
                         && !v.trim().is_empty()
                     {
                         spec.tls_ca = Some(percent_decode(v.trim()));
+                    } else if (k.eq_ignore_ascii_case("ssh")
+                        || k.eq_ignore_ascii_case("ssh_host")
+                        || k.eq_ignore_ascii_case("ssh-host"))
+                        && !v.trim().is_empty()
+                    {
+                        spec.ssh = Some(percent_decode(v.trim()));
+                    } else if (k.eq_ignore_ascii_case("ssh_key")
+                        || k.eq_ignore_ascii_case("ssh-key")
+                        || k.eq_ignore_ascii_case("ssh_identity"))
+                        && !v.trim().is_empty()
+                    {
+                        spec.ssh_key = Some(percent_decode(v.trim()));
                     } else if k.eq_ignore_ascii_case("role") && !v.trim().is_empty() {
                         spec.role = Some(v.trim().to_ascii_uppercase());
                     } else if k.eq_ignore_ascii_case("driver") && !v.trim().is_empty() {
@@ -560,6 +577,10 @@ impl ConnectSpec {
             s.push_str("?schema=");
             s.push_str(sc);
         }
+        if let Some(t) = &self.ssh {
+            s.push_str(" via ssh ");
+            s.push_str(t);
+        }
         s
     }
 
@@ -618,6 +639,12 @@ impl ConnectSpec {
         }
         if let Some(d) = &self.driver {
             q.push(format!("driver={d}"));
+        }
+        if let Some(t) = &self.ssh {
+            q.push(format!("ssh={t}"));
+        }
+        if let Some(k) = &self.ssh_key {
+            q.push(format!("ssh_key={k}"));
         }
         if !q.is_empty() {
             s.push('?');
@@ -992,6 +1019,31 @@ mod tests {
         let t = ConnectSpec::parse("mysql://u@h/db?tls=REQUIRED").unwrap();
         assert_eq!(t.tls.as_deref(), Some("required"));
         assert_eq!(t.connection_string(), "mysql://u@h/db?tls=required");
+        // ★ T-3(159차): SSH 터널 = `ssh=` · `ssh_key=` 왕복 · 가림 표시 " via ssh …" · 별칭 ssh_host/ssh-key.
+        let sh = ConnectSpec::parse("postgres://u@h:5432/db?ssh=me@bastion:2222&ssh_key=/k/id")
+            .expect("ssh spec");
+        assert_eq!(sh.ssh.as_deref(), Some("me@bastion:2222"));
+        assert_eq!(sh.ssh_key.as_deref(), Some("/k/id"));
+        let cs = sh.connection_string();
+        assert!(
+            cs.contains("ssh=me@bastion:2222") && cs.contains("ssh_key=/k/id"),
+            "{cs}"
+        );
+        let back = ConnectSpec::parse(&cs).expect("round trip");
+        assert_eq!(
+            (back.ssh, back.ssh_key),
+            (sh.ssh.clone(), sh.ssh_key.clone())
+        );
+        assert!(
+            sh.redacted().ends_with(" via ssh me@bastion:2222"),
+            "{}",
+            sh.redacted()
+        );
+        let alias = ConnectSpec::parse("mysql://u@h/db?ssh-host=b&ssh-key=k").expect("alias");
+        assert_eq!(
+            (alias.ssh.as_deref(), alias.ssh_key.as_deref()),
+            (Some("b"), Some("k"))
+        );
         // ★ T-70(155차): CA 파일 = `tls_ca` · libpq 별칭 `sslrootcert` · 왕복.
         let pgc =
             ConnectSpec::parse("postgres://u@h/db?sslmode=verify-full&sslrootcert=/etc/ca.pem")

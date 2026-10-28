@@ -14,6 +14,9 @@ use nsql_core::{DbError, Dialect, Session};
 use nsql_script::ConnectSpec;
 
 pub mod ext;
+pub mod tunnel;
+/// SSH 터널 설정(`ssh.command` · `ssh.connect_timeout_secs`) — 호스트가 기동·설정 변경 때.
+pub use tunnel::set_config as set_ssh;
 
 /// `sqlite:` 뒤 경로 — 권한부(`//`)는 **한 번만** 벗긴다. 종전 `trim_start_matches("//")`는 슬래시 쌍을 전부 먹어
 /// `sqlite:////abs/x.db`(SQLAlchemy식 절대 경로)가 상대 경로 `abs/x.db`가 됐다(86차 mac 점검 · T-148).
@@ -80,7 +83,175 @@ fn with_pg_tls(spec: &ConnectSpec) -> ConnectSpec {
     s
 }
 
+/// 스펙으로 세션을 연다 — `?ssh=`가 있으면 먼저 **SSH 터널**(T-3 · [`tunnel`])을 띄우고 `127.0.0.1:<로컬 포트>`로 바꾼 스펙으로 연다
+/// (터널 프로세스는 세션과 함께 끝난다 · 설명은 원래 호스트 + " via ssh …").
 pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Session>, DbError> {
+    let Some(ssh) = spec.ssh.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return open_direct(spec, default_dialect);
+    };
+    let dialect = spec.dialect.unwrap_or(default_dialect);
+    let Some(host) = spec
+        .host
+        .as_deref()
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+    else {
+        return Err(DbError {
+            code: None,
+            message: format!(
+                "SSH: a tunnel needs host:port in the connection - this {dialect} target has no host \
+                 (TNS aliases, DSNs and file databases cannot be tunnelled)"
+            ),
+            position: None,
+        });
+    };
+    let port = spec.port.unwrap_or(default_port(dialect));
+    if port == 0 {
+        return Err(DbError {
+            code: None,
+            message: format!("SSH: a tunnel needs an explicit port for {dialect}"),
+            position: None,
+        });
+    }
+    let t = tunnel::open(ssh, spec.ssh_key.as_deref(), host, port)?;
+    let mut local = spec.clone();
+    local.host = Some("127.0.0.1".to_string());
+    local.port = Some(t.local_port);
+    local.ssh = None;
+    local.ssh_key = None;
+    let inner = open_direct(&local, default_dialect)?;
+    // 드라이버 설명은 `127.0.0.1:<로컬>`로 나오므로 원래 호스트로 되돌리고 터널 꼬리를 붙인다(TLS 꼬리 등은 유지).
+    let desc = inner.describe().replace(
+        &format!("127.0.0.1:{}", t.local_port),
+        &format!("{host}:{port}"),
+    );
+    let desc = format!("{desc} via ssh {ssh}");
+    Ok(Box::new(Tunneled {
+        inner,
+        _tunnel: t,
+        desc,
+    }))
+}
+
+/// 방언별 기본 포트(터널 대상 · 스펙에 포트가 없을 때) — 0 = 포트 개념 없음.
+fn default_port(d: Dialect) -> u16 {
+    match d {
+        Dialect::Postgres => 5432,
+        Dialect::Mysql => 3306,
+        Dialect::Mssql => 1433,
+        Dialect::Oracle => 1521,
+        Dialect::Db2 => 50000,
+        Dialect::Clickhouse => 8123,
+        _ => 0,
+    }
+}
+
+/// SSH 터널 위의 세션(T-3): 드라이버 세션 + 터널 프로세스(세션이 닫히면 함께 끝남). 모든 호출은 그대로 넘기고 `describe`만 바꾼다.
+struct Tunneled {
+    inner: Box<dyn Session>,
+    _tunnel: tunnel::Tunnel,
+    desc: String,
+}
+
+impl Session for Tunneled {
+    fn dialect(&self) -> Dialect {
+        self.inner.dialect()
+    }
+    fn caps(&self) -> nsql_core::Caps {
+        self.inner.caps()
+    }
+    fn driver_name(&self) -> String {
+        self.inner.driver_name()
+    }
+    fn limits(&self) -> &'static [nsql_core::DriverLimit] {
+        self.inner.limits()
+    }
+    fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
+        self.inner.cancel_handle()
+    }
+    fn execute(&mut self, req: &nsql_core::ExecRequest) -> Result<nsql_core::ExecResult, DbError> {
+        self.inner.execute(req)
+    }
+    fn fetch_cursor(
+        &mut self,
+        cursor: nsql_core::CursorId,
+    ) -> Result<nsql_core::ResultSet, DbError> {
+        self.inner.fetch_cursor(cursor)
+    }
+    fn fetch_cursor_page(
+        &mut self,
+        cursor: nsql_core::CursorId,
+        max: usize,
+    ) -> Result<(nsql_core::ResultSet, Option<nsql_core::CursorHandle>), DbError> {
+        self.inner.fetch_cursor_page(cursor, max)
+    }
+    fn commit(&mut self) -> Result<(), DbError> {
+        self.inner.commit()
+    }
+    fn rollback(&mut self) -> Result<(), DbError> {
+        self.inner.rollback()
+    }
+    fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
+        self.inner.set_option(name, value)
+    }
+    fn set_message_sink(&mut self, sink: Option<nsql_core::MessageSink>) {
+        self.inner.set_message_sink(sink)
+    }
+    fn describe(&self) -> String {
+        self.desc.clone()
+    }
+    fn cursor_supported(&self) -> bool {
+        self.inner.cursor_supported()
+    }
+    fn fetch_next(
+        &mut self,
+        h: nsql_core::CursorHandle,
+        max: usize,
+    ) -> Result<(nsql_core::ResultSet, bool), DbError> {
+        self.inner.fetch_next(h, max)
+    }
+    fn close_cursor(&mut self, h: nsql_core::CursorHandle) -> Result<(), DbError> {
+        self.inner.close_cursor(h)
+    }
+    fn is_alive(&self) -> bool {
+        self.inner.is_alive()
+    }
+    fn set_call_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        self.inner.set_call_timeout(timeout)
+    }
+    fn bulk_begin<'a>(
+        &'a mut self,
+        table: &str,
+        cols: &[String],
+        types: &[String],
+        opts: &nsql_core::bulk::BulkOpts,
+    ) -> Result<Box<dyn nsql_core::bulk::BulkSink + 'a>, DbError> {
+        self.inner.bulk_begin(table, cols, types, opts)
+    }
+    fn catalog_tables(
+        &mut self,
+        schema: Option<&str>,
+    ) -> Result<Option<Vec<nsql_core::CatalogTable>>, DbError> {
+        self.inner.catalog_tables(schema)
+    }
+    fn catalog_columns(
+        &mut self,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Result<Option<Vec<nsql_core::CatalogColumn>>, DbError> {
+        self.inner.catalog_columns(schema, table)
+    }
+    fn copy_out(
+        &mut self,
+        sql: &str,
+        csv: bool,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64, DbError> {
+        self.inner.copy_out(sql, csv, out)
+    }
+}
+
+fn open_direct(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Session>, DbError> {
     let dialect = spec.dialect.unwrap_or(default_dialect);
     // ★ T-70: PostgreSQL(와이어 호환 포함)은 설정의 TLS 모드·CA를 스펙에 넣어 어느 드라이버 경로든 같은 값을 쓴다.
     let filled;
@@ -786,6 +957,20 @@ pub fn builtin_dialects() -> Vec<Dialect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 159차 T-3: 터널은 호스트·포트가 있어야 한다 — 없으면 ssh를 띄우기 전에 거절(네트워크 0).
+    #[test]
+    fn ssh_tunnel_needs_host_and_port() {
+        let mut spec = ConnectSpec::parse("sqlite::memory:").expect("spec");
+        spec.ssh = Some("me@bastion".into());
+        let e = open(&spec, Dialect::Sqlite)
+            .err()
+            .map(|e| e.message)
+            .unwrap_or_default();
+        assert!(e.contains("needs host:port"), "{e}");
+        assert_eq!(default_port(Dialect::Postgres), 5432);
+        assert_eq!(default_port(Dialect::Sqlite), 0);
+    }
 
     /// 157차: TLS 요구 판정(required 이상 · libpq 이름 포함)과 `pg_stat_ssl.ssl` 값 해석.
     #[test]

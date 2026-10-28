@@ -353,9 +353,7 @@ pub(crate) fn connect_intent(src: &str) -> Option<ConnectIntent> {
     nsql_script::split_script(src)
         .into_iter()
         .find_map(|it| match it.kind {
-            ItemKind::Command(Command::Connect(spec)) => {
-                Some(ConnectIntent::Connect(Box::new(spec)))
-            }
+            ItemKind::Command(Command::Connect(spec)) => Some(ConnectIntent::Connect(spec)),
             ItemKind::Command(Command::Disconnect) => Some(ConnectIntent::Disconnect),
             _ => None,
         })

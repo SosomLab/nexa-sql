@@ -246,6 +246,13 @@ impl Vault {
         if let Some(e) = spec.env {
             known.push(("env", e.as_str().to_string()));
         }
+        // ★ SSH 터널(T-3 · 159차) — 프로필에 같이 산다(비밀 아님 · 키 **경로**만).
+        if let Some(v) = &spec.ssh {
+            known.push(("ssh", v.clone()));
+        }
+        if let Some(v) = &spec.ssh_key {
+            known.push(("ssh_key", v.clone()));
+        }
         if let Some(pw) = &spec.password {
             let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
             known.push(("secret", hex_encode(&env)));
@@ -458,6 +465,8 @@ impl Vault {
                 "role" => spec.role = Some(v),
                 "schema" => spec.schema = Some(v),
                 "env" => spec.env = nsql_script::ConnEnv::from_name(&v),
+                "ssh" => spec.ssh = Some(v),
+                "ssh_key" => spec.ssh_key = Some(v),
                 "secret" => secret = Some(v),
                 _ => {}
             }
@@ -552,6 +561,8 @@ mod tests {
             env: None,
             tls: None,
             tls_ca: None,
+            ssh: None,
+            ssh_key: None,
             driver: None,
         }
     }

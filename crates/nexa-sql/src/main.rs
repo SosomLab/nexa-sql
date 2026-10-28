@@ -2258,6 +2258,11 @@ fn main() {
         app.settings.get("pg.tls").unwrap_or("preferred"),
         app.settings.get("pg.tls_ca").unwrap_or(""),
     );
+    // SSH 터널(T-3 · 159차 · `ssh.command` · `ssh.connect_timeout_secs`).
+    nsql_drivers::set_ssh(
+        app.settings.get("ssh.command").unwrap_or("ssh"),
+        app.settings.int("ssh.connect_timeout_secs").max(1) as u64,
+    );
     // ★ 확장 드라이버 폴더(DR-29 · T-27 ③) = <설정 폴더>/drivers(`NSQL_DRIVER_DIR`가 있으면 그쪽) — 기동 때 읽지 않고 첫 접속 때 지연 로드.
     nsql_drivers::ext::set_driver_dir(
         nsql_settings::config_dir()

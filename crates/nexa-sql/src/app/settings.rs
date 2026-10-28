@@ -487,6 +487,10 @@ impl App {
                 self.settings.get("mysql.tls").unwrap_or("preferred"),
                 self.settings.get("mysql.tls_ca").unwrap_or(""),
             ),
+            "ssh.command" | "ssh.connect_timeout_secs" => nsql_drivers::set_ssh(
+                self.settings.get("ssh.command").unwrap_or("ssh"),
+                self.settings.int("ssh.connect_timeout_secs").max(1) as u64,
+            ),
             // Oracle 클라이언트(자동/직접 지정) — 드라이버에 넘기고 설정 창의 읽기 전용 탐지 결과를 다시 계산한다.
             "oracle.driver" | "oracle.client_mode" | "oracle.client_dir" | "oracle.tns_admin" => {
                 apply_oracle_client(&self.settings);
