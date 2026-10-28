@@ -20,7 +20,7 @@
 use nsql_core::MessageSink;
 use nsql_core::{
     Column, CursorId, DbError, Dialect, Direction, ExecRequest, ExecResult, ResultSet, Session,
-    Value,
+    Stage, Value,
 };
 use nsql_script::ConnectSpec;
 use std::sync::{Arc, Mutex};
@@ -1258,13 +1258,25 @@ impl MssqlSession {
         match route(&req.sql, !values.is_empty(), !outs.is_empty()) {
             Route::Rpc => {
                 // ★ 첫 결과의 메타데이터를 먼저 본다(행 0개 집합은 `into_results`가 버린다 · 10-11).
-                let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) =
-                    self.rt.block_on(async {
-                        let mut stream = client.query(sql.as_str(), &refs).await.map_err(fix)?;
-                        let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
-                        let sets = stream.into_results().await.map_err(fix)?;
-                        Ok::<_, DbError>((cols, sets))
-                    })?;
+                // ★ T-47(10-29): Execute = 요청 송신 → 첫 응답(메타데이터) · Fetch = TDS 스트림의 행 수신(러너의 합산 대신 단계별).
+                let t0 = std::time::Instant::now();
+                let (first_cols, sets, exec_dur, fetch_dur): (
+                    Option<Vec<Column>>,
+                    Vec<Vec<Row>>,
+                    std::time::Duration,
+                    std::time::Duration,
+                ) = self.rt.block_on(async {
+                    let mut stream = client.query(sql.as_str(), &refs).await.map_err(fix)?;
+                    let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
+                    let exec_dur = t0.elapsed();
+                    let t1 = std::time::Instant::now();
+                    let sets = stream.into_results().await.map_err(fix)?;
+                    Ok::<_, DbError>((cols, sets, exec_dur, t1.elapsed()))
+                })?;
+                result.timing.push(Stage::Execute, exec_dur);
+                let span = result.timing.push(Stage::Fetch, fetch_dur);
+                span.rows = Some(sets.iter().map(|s| s.len() as u64).sum());
+                span.note = Some("TDS stream".into());
                 let mut result_sets: Vec<ResultSet> = sets
                     .iter()
                     .filter(|s| !s.is_empty())

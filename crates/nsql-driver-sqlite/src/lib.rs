@@ -16,7 +16,7 @@
 
 use nsql_core::{
     Column, CursorHandle, CursorId, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session,
-    Value,
+    Stage, Value,
 };
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection, Row, Rows};
@@ -259,6 +259,8 @@ fn serve_execute(
     max_rows: usize,
     reply: Sender<Result<ExecResult, DbError>>,
 ) -> (Option<Req>, bool) {
+    // ★ T-47(10-29): Execute = prepare + query(첫 응답) · Fetch = 행 수신 — 러너의 "execute+fetch" 합산 대신 단계별로.
+    let t0 = std::time::Instant::now();
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
         Err(e) => {
@@ -299,6 +301,9 @@ fn serve_execute(
             return (None, false);
         }
     };
+    let mut result = ExecResult::default();
+    result.timing.push(Stage::Execute, t0.elapsed()).note = Some("prepare+query".into());
+    let t1 = std::time::Instant::now();
     let (batch, peek) = match read_batch(&mut rows, ncols, max_rows, None) {
         Ok(x) => x,
         Err(e) => {
@@ -306,11 +311,14 @@ fn serve_execute(
             return (None, false);
         }
     };
-    let mut result = ExecResult::default();
-    result.result_sets.push(ResultSet {
+    let rs = ResultSet {
         columns: columns.clone(),
         rows: batch,
-    });
+    };
+    let span = result.timing.push(Stage::Fetch, t1.elapsed());
+    span.rows = Some(rs.rows.len() as u64);
+    span.bytes = Some(rs.approx_bytes());
+    result.result_sets.push(rs);
     let Some(first) = peek else {
         let _ = reply.send(Ok(result));
         return (None, false);
@@ -520,6 +528,19 @@ mod tests {
         assert_eq!(rs.columns[1].name, "name");
         assert_eq!(rs.rows[0], vec![Value::Int(1), Value::Str("홍길동".into())]);
         assert!(r.pending.is_none());
+    }
+
+    /// ★ T-47(10-29): 조회의 타임라인 = Execute(prepare+query) → Fetch(행 수) 두 단계 · DML은 단계 없음(러너가 합산).
+    #[test]
+    fn timing_splits_execute_and_fetch() {
+        let mut s = seed(25);
+        let r = run(&mut s, "SELECT id FROM t");
+        let stages: Vec<Stage> = r.timing.spans.iter().map(|x| x.stage).collect();
+        assert_eq!(stages, vec![Stage::Execute, Stage::Fetch]);
+        assert_eq!(r.timing.spans[1].rows, Some(25));
+        assert!(r.timing.spans[1].bytes.is_some());
+        let r = run(&mut s, "DELETE FROM t WHERE id > 20");
+        assert!(r.timing.spans.is_empty());
     }
 
     #[test]
