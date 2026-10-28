@@ -1590,8 +1590,9 @@ fn main() {
         // ★ macOS 자체 시험(`NSQL_NO_ACTIVATE` · 10-24 사용자 "윈도우처럼 백그라운드로"): winit은 기동 때 앱을 활성화한다
         //   (`NSApp.activate(ignoringOtherApps:)` + Regular 정책) → 창 속성 `with_active(false)`만으로는 앱이 전경이 되며 창이 올라왔다.
         //   Accessory 정책(Dock·메뉴 없음 · 스스로 활성화되지 않음) + 다른 앱 무시 활성화 끔 = Windows의 "뒤에서 띄움"과 같은 동작.
+        //   `startup`(재시작 스크립트 · 사용자 실기용)은 Dock·메뉴가 있어야 하므로 Accessory로 가지 않는다 — 자체 시험(`1`)만(163차).
         #[cfg(target_os = "macos")]
-        if std::env::var_os("NSQL_NO_ACTIVATE").is_some() {
+        if crate::winfocus::no_activate_all() {
             use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS as _};
             b.with_activation_policy(ActivationPolicy::Accessory)
                 .with_activate_ignoring_other_apps(false);

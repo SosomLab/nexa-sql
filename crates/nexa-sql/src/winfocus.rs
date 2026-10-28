@@ -172,10 +172,23 @@ pub(crate) fn raise_group(bottom_to_top: &[&Window]) {
     }
 }
 
-/// 창을 앞으로 — 자체 시험(`NSQL_NO_ACTIVATE`)에서는 **하지 않는다**(시험 인스턴스가 사용자의 전경 창·키 입력을 빼앗지 않게 ·
-/// docs/61 §2). 새로 만드는 창의 활성화는 `icon::with_icon`이 같은 변수로 막는다.
+/// ★ `NSQL_NO_ACTIVATE`의 두 뜻(163차 · 사용자 10-29 "객체 찾기 창이 다시 비활성으로 뜬다"):
+/// - `1`(자체 시험 · docs/61 §2) = **모든** 활성화 금지 — 기동 창도, 사용자 동작으로 여는 보조 창·대화상자도 앞으로 오지 않는다.
+/// - `startup`(재시작 스크립트 · 사용자 실기용 인스턴스) = **기동 때 주 창만** 비활성(작업 중인 사용자의 포커스를 빼앗지 않게) ·
+///   그 뒤 사용자가 여는 객체 찾기·변수·로그 창과 대화상자는 평소처럼 활성화. 종전엔 한 뜻뿐이라 재시작 스크립트로 띄운
+///   실기 인스턴스에서 156차의 보조 창 활성화가 무효였다.
+pub(crate) fn no_activate_all() -> bool {
+    std::env::var_os("NSQL_NO_ACTIVATE").is_some_and(|v| v != "startup")
+}
+
+pub(crate) fn no_activate_startup() -> bool {
+    std::env::var_os("NSQL_NO_ACTIVATE").is_some()
+}
+
+/// 창을 앞으로 — 자체 시험(`NSQL_NO_ACTIVATE=1`)에서는 **하지 않는다**(시험 인스턴스가 사용자의 전경 창·키 입력을 빼앗지 않게 ·
+/// docs/61 §2). 새로 만드는 창의 기동 활성화는 `icon::with_icon`이 `no_activate_startup`으로 막는다.
 pub(crate) fn focus(w: &winit::window::Window) {
-    if std::env::var_os("NSQL_NO_ACTIVATE").is_none() {
+    if !no_activate_all() {
         w.focus_window();
     }
 }

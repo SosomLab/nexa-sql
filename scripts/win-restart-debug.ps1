@@ -9,7 +9,8 @@
 #        pwsh scripts/win-restart-debug.ps1 -Release     # Debug + Release lite
 #        -PidFile <파일>(기본 = $env:TEMP\nexa-sql-debug.pid) · -NsqlHome <폴더>(NSQL_HOME 격리 · 기본 = 실제 설정 ·
 #        이름이 $HOME 자동 변수와 겹치면 param 바인딩에서 실패한다 · 협업 10-27)
-#   띄운 창은 NSQL_NO_ACTIVATE=1(포커스를 빼앗지 않는다 · 61 §2-4) — 사용자가 작업 표시줄에서 올린다.
+#   띄운 창은 NSQL_NO_ACTIVATE=startup(기동 때 주 창만 비활성 · 61 §2-4) — 사용자가 작업 표시줄에서 올린다 · 그 뒤 사용자가 여는
+#   보조 창(객체 찾기·변수·로그…)·대화상자는 평소처럼 활성화된다(163차 · `1`은 자체 시험 전용 = 모든 활성화 금지).
 param(
     [switch]$NoBuild,
     [switch]$Release,
@@ -79,7 +80,7 @@ if (-not $NoBuild) {
 }
 
 Stop-RepoInstances 'debug'
-$env:NSQL_NO_ACTIVATE = '1'
+$env:NSQL_NO_ACTIVATE = 'startup'
 if ($NsqlHome) { $env:NSQL_HOME = $NsqlHome } else { Remove-Item Env:NSQL_HOME -ErrorAction SilentlyContinue }
 $exe = Join-Path $root 'target\debug\nexa-sql.exe'
 # ★ 표준 출력을 리다이렉트하지 않는다(협업 10-27 관찰): `-RedirectStandardOutput`은 핸들 상속으로 띄워 호출자의 stdout 파이프까지

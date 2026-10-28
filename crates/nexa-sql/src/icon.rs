@@ -174,7 +174,8 @@ pub(crate) fn with_icon(attrs: winit::window::WindowAttributes) -> winit::window
     };
     // 자체 시험(`NSQL_NO_ACTIVATE=1` · docs/61 §2): 창을 **활성화하지 않고** 띄운다 — 캡처용으로 띄운 격리 인스턴스가 전경 포커스를
     // 가져가 사용자가 치던 키를 받던 일(09-21 실기: 시험 창의 편집기에 사용자의 글자가 들어갔다)을 막는다. 평소엔 변수 없음 = 그대로.
-    let attrs = if std::env::var_os("NSQL_NO_ACTIVATE").is_some() {
+    //   `startup`(재시작 스크립트)도 기동 창은 비활성 — 그 뒤 보조 창은 `winfocus::no_activate_all`이 가른다(163차).
+    let attrs = if crate::winfocus::no_activate_startup() {
         attrs.with_active(false)
     } else {
         attrs
