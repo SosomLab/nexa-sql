@@ -125,6 +125,7 @@
 | **설정 overlay 층 `Settings::set_overlay`/`clear_overlay` + `adopt_unknown`**(10-27 · 148차 · [94 §9](94-settings-key-naming-and-location.md)) | nsql-settings | 확장이 기본 설정을 바꾸되 사용자 파일·값에 영향 0 → 런타임 층(먼저 읽힘 · 저장 0 · 주인별 해제) · 동적 등재 키의 파일 값은 등재 뒤 승격 | hello-ext 0.2.0 · 확장 전용 설정 |
 | **페이징 폴백 `page_sql_opts` + `strip_rn`**(10-28 · 157차 · D-385) | nsql-io `paging.rs` · nsql-run `fetch_offset` | 서버가 `OFFSET … FETCH`를 못 하면(Db2 ≤ 10.5 등 · `Caps.offset_fetch` 거짓) → `ROW_NUMBER() OVER ()`로 감싸 번호 열(`RN_COL`)로 자르고 결과에서 그 열을 뗀다 · 방언 분기 대신 능력표 | Db2 네이티브(10.5) · 다른 옛 서버 후보 |
 | **위임 세션 래퍼 `Tunneled`**(10-28 · 159차 · D-388) | nsql-drivers `tunnel.rs` · 허브 `open()` | 접속 전에 붙는 부가 자원(ssh 포워딩 프로세스)을 `Box<dyn Session>` 하나로 감싸 수명을 세션에 묶는다 — `Session` 메서드 전부 위임 · describe 꼬리만 덧붙임 · Drop = 자원 정리 · 어댑터·ABI는 모른다 | SSH 터널(★ 162차 D-391 = 래퍼가 공유 터널 `Arc`를 쥔다 → 같은 대상 세션 N개에 ssh 1 · 마지막 래퍼 Drop = 종료 · Job/PID 원장) · 후보 = 프록시(SOCKS/HTTP CONNECT) · 접속 전 훅 |
+| **Command 표 `commands::PALETTE`**(10-29 · 167차 · T-14 1단계 · D-393) | nexa-sql `app/commands.rs` | 명령 팔레트 정적 항목을 한 표로(137행 · 종류 = 일반 · 토글 · 확장 켬/끔 · 동적 자리) · `palette_commands`는 표 순회 · 시험 = id 중복 0 · 키맵 라벨 일치 · 메뉴 id ⊆ 팔레트 ∪ `MENU_ONLY` | 메뉴 · 팔레트 · 툴바 · 기동 명령 · 2단계 = `.sublime-keymap` 파서·context |
 
 규칙: 같은 문제를 두 번째 만나면 **부품으로 올린다**(nexa-ui면 공용). 창마다 복사한 코드는 이 표의 후보다.
 

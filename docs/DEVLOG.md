@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-29 (167차 · Windows · T-14 1단계 + T-11 2단계 결정)** — 명령 팔레트 정적 항목 한 표 `commands::PALETTE`(137행 · 시험 3이 중복 3·누락 3·라벨 키 1 찾아 정정 · ad2958b0) · T-11 = D-394 채택 보류(셰이핑 코드는 feature·스위치 뒤 유지 · 조건 3)([journal 10-27 §28-2·§29](journal/2026-10-27.md)).
 - **2026-10-29 (166차 · Windows · T-11 셰이핑 스파이크 1단계)** — nexa-gfx 선택 feature `shaping`(rustybuzz 0.20 · `Font::shape`/`draw_shaped`/`measure_shaped`) · nexa-ctl RasterCtx = UI 비례 글꼴 + 스위치일 때만 · nexa-sql 설정 `ui.text_shaping`(기본 off) · 다음 = 2단계 A/B 측정([journal 10-27 §28](journal/2026-10-27.md)).
 - **2026-10-29 (165차 · Windows · T-452)** — 익명화 뒤 실서버 점검 스크립트 4개(bench-boost · linux-fetch-consistency · intel-alias · win-intel-3part)가 실제 값을 env `NSQL_E2E_*`·인자로 받게(기본값 익명 유지 · a43c6d6f) · 다음 = T-11 셰이핑 스파이크([journal 10-27 §27](journal/2026-10-27.md)).
 - **2026-10-29 (164차 · Windows · SSH accept-new + 브리프 결정 반영)** — SSH 호스트 키 `StrictHostKeyChecking=accept-new` · 인증 = 키만(D-392 · ab9ab290) · 열린 항목 브리프 [126](126-open-items-brief.md) 사용자 결정 11건 = D-393(T-48·T-56·T-57 마감 · T-125 종결 · T-149 P1 · T-166 재작성 · 새 T-453 · 낡은 원장 7곳 정리)([journal 10-27 §26](journal/2026-10-27.md)).
