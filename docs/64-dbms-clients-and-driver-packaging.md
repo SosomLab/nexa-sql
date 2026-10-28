@@ -130,6 +130,27 @@ nsql-core::Session(포트) ──┬── 내장 어댑터(정적 링크)      
 
 > ★ **10-25 외부 네이티브 의존 원칙(D-361 · D-362)** = 확장 드라이버는 **드라이버 파일만으로 완결** — Db2 = 네이티브 DRDA(IBM 클라이언트 불필요) · ODBC = unixODBC 정적 동봉(벤더 ODBC 드라이버만) · 예외 = Oracle OCI(Instant Client = 사용자 선택 · Thin이 기본) · DuckDB = 동봉 런타임(D-351 · `bundled` 전환 = T-427).
 
+#### 3-1b. 실측(10-29 · 172차 · T-454 · D-350 뒤 = 설치본 lite + 확장 드라이버)
+
+- 앱 실행 파일(Windows · Release · 이 PC `target/release`) = **lite**(설치본과 같은 구성 · Oracle OCI만 내장) `nexa-sql.exe` **19,088,896 B(18.20 MB)** · `nsql.exe` **7,357,440 B(7.02 MB)** — 10-29 02:23 판(T-11 셰이핑 feature 포함 · 166차) · **full**(`*.full` · 모든 드라이버 내장) `nexa-sql.exe` 23,223,296 B(22.15 MB) · `nsql.exe` 12,604,416 B(12.02 MB) — 10-26 판(full은 기본 생성 안 함 · D-352).
+- 확장 드라이버 = **drivers-v0.1.8 게시 자산 zip**(MB · `gh release view drivers-v0.1.8` · 자산 125 = 플랫폼 4 × 31 + `sha256sums.txt`) + 이 PC `target/lite/release` cdylib(MB · Windows · **10-26~10-28 판 = 0.1.8 이전 빌드**라 참고값):
+
+| 드라이버 | windows-x86_64 zip | linux-x86_64 zip | macos-aarch64 zip | macos-x86_64 zip | Windows dll(로컬) |
+|---|---|---|---|---|---|
+| clickhouse | 1.27 | 1.54 | 1.38 | 1.55 | 2.43 |
+| db2 | 1.30 | 1.57 | 1.40 | 1.58 | 2.49 |
+| duckdb | 18.70 | 26.74 | 38.65 | 38.69 | 0.78 |
+| mssql | 0.99 | 1.08 | 0.95 | 1.03 | 1.89 |
+| mysql | 2.19 | 2.30 | 2.02 | 2.30 | 4.61 |
+| odbc | 0.21 | 0.42 | 0.34 | 0.38 | 0.43 |
+| oracle-oci | 0.37 | 0.38 | 0.34 | 0.36 | 0.74 |
+| oracle-thin | 1.55 | 1.85 | 1.61 | 1.85 | 3.07 |
+| pg | 1.63 | 1.92 | 1.70 | 1.92 | 0.98 |
+| sqlite | 1.04 | 1.16 | 1.02 | 1.11 | 1.91 |
+| (전부 묶음) | 29.26 | 38.99 | 49.44 | 50.78 | — |
+
+- 읽는 법 = DuckDB zip이 큰 것은 libduckdb 동적 라이브러리를 함께 싣기 때문(T-427 bundled 보류) · 나머지는 0.2~2.3 MB · 전부 묶음(오프라인 번들)은 Windows 기준 약 29 MB.
+
 ## 4. 경량 배포판 — 정의 · Instant Client 없이 가능한가(사용자 09-21)
 
 > ★ **10-23 D-350으로 정의가 바뀜** = 기본 설치본 자체가 "드라이버 없는 판"(남는 것 = Oracle OCI · Instant Client가 있으면 접속) · 그 밖 드라이버 = 접속 시 자동 다운로드 또는 오프라인 번들 · 아래 표(크기·구성)는 D단계(릴리스 워크플로) 뒤 실측으로 갱신한다 · D단계 ✅(10-23 b93ca33) = 설치본 feature = `--no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` · 경량 CLI Debug 실측 22.0 → 12.4 MB · Release·설치본 크기 = 첫 릴리스 산출물로 실측(대기).

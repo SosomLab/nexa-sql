@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-29 (172차 · Windows · T-454 문서)** — 64 §3-1b 크기 실측 표(lite/full 앱 + drivers-v0.1.8 zip 4 플랫폼) · 94 `driver.repo` 옛 태그 문구 정정 · 위키 Drivers 머리 "설치본 = Oracle OCI만 · 나머지 자동 설치"([journal 10-27 §35](journal/2026-10-27.md)).
 - **2026-10-29 (171차 · Windows · T-116)** — OFFSET 재질의 다음 페이지마다 직전 꼬리 1행을 겹쳐 받아 대조(서버 결과가 바뀌면 "처음부터 다시" 오류 · `grid.overlap_check` 기본 켬 · 0a0d4957)([journal 10-27 §34](journal/2026-10-27.md)).
 - **2026-10-29 (170차 · Windows · T-216 + 정리)** — 편집기 `CONNECT` 두 번 = 앞 연결을 닫는다는 로그 안내(D-208 · e16149ed) · 사용자 키맵 요약 로그 프로세스당 1회(e566f557) · nexa-ui nexa-dlg 시험의 `read_dir` 순서 의존 결함 수정(6063203 · ubuntu CI 4연속 ✗ 해소)([journal 10-27 §33](journal/2026-10-27.md)).
 - **2026-10-29 (169차 · Windows · T-47 `--timing=json`)** — CLI 단계 계측을 JSON 한 줄로(`timing_line` 순수 함수 · afa6a16b) · 사고 = e67091f3 컴파일 오류 push → 즉시 정정 · 재발 방지 = 검증 체인 `&&`만([journal 10-27 §32](journal/2026-10-27.md)).

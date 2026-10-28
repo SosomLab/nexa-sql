@@ -1,5 +1,8 @@
 # Drivers (드라이버)
 
+> **Installer = Oracle OCI only (10-23 · D-350).** Every other driver (PostgreSQL · SQL Server · MySQL/MariaDB · SQLite · Oracle Thin · DuckDB · ClickHouse · Db2 · ODBC) is an extension that installs automatically on the first connect (`driver.auto_install`, on by default) or with `nsql driver install <id>` — releases `drivers-v<ver>`.
+> **설치본 = Oracle OCI만(10-23 · D-350).** 나머지 드라이버(PostgreSQL · SQL Server · MySQL/MariaDB · SQLite · Oracle Thin · DuckDB · ClickHouse · Db2 · ODBC)는 확장이며 첫 접속 때 자동 설치됩니다(`driver.auto_install` · 기본 켬) · 또는 `nsql driver install <id>` · 릴리스 `drivers-v<ver>`.
+
 > **Self-contained drivers (10-25).** Each driver package works on its own: the IBM Db2 driver speaks DRDA natively (no IBM client needed — the clidriver steps below are only for the Windows ODBC fallback), and on Linux/macOS the ODBC driver bundles its own driver manager — **install only the vendor's ODBC driver; unixODBC is not required**.
 > **드라이버 자체 완결(10-25).** Db2 드라이버는 DRDA를 직접 말하므로 IBM 클라이언트가 필요 없습니다(아래 clidriver 절차는 Windows ODBC 폴백용). Linux/macOS의 ODBC 드라이버는 드라이버 관리자를 함께 담고 있어 **벤더 ODBC 드라이버만 설치하면 되고 unixODBC는 필요 없습니다.**
 
