@@ -81,6 +81,10 @@ enum Field {
     Quick,
     Host,
     Port,
+    /// ★ SSH 터널 대상 `user@host[:port]`(T-3 2차 · 160차 · `?ssh=` · 네트워크 방언만 · 선택) — 허브가 시스템 ssh로 포워딩한다(D-388).
+    Ssh,
+    /// SSH 개인 키 경로(`?ssh_key=` · 선택 · 비우면 사용자의 ssh 설정·에이전트).
+    SshKey,
     Database,
     /// 기본 스키마(`?schema=` · Oracle CURRENT_SCHEMA · PG search_path · 그 외 숨김 · 사용자 09-18).
     Schema,
@@ -89,11 +93,13 @@ enum Field {
     Name,
 }
 
-const FIELDS: [Field; 8] = [
+const FIELDS: [Field; 10] = [
     Field::Quick,
     Field::Name,
     Field::Host,
     Field::Port,
+    Field::Ssh,
+    Field::SshKey,
     Field::Database,
     Field::User,
     Field::Password,
@@ -114,6 +120,9 @@ pub(crate) struct ConnectPanel {
     dialect: Combo,
     host: TextBox,
     port: TextBox,
+    /// ★ SSH 터널(T-3 2차 · 160차): 호스트+포트 줄 아래 한 줄 = 대상(왼쪽) + 키 경로(오른쪽) · 파일 방언은 숨김.
+    ssh: TextBox,
+    ssh_key: TextBox,
     database: TextBox,
     schema: TextBox,
     user: TextBox,
@@ -159,6 +168,9 @@ pub(crate) struct FormSnap {
     pub dialect: String,
     pub host: String,
     pub port: String,
+    /// SSH 터널 대상·키(네트워크 방언만 · 파일 방언은 빈 값).
+    pub ssh: String,
+    pub ssh_key: String,
     pub database: String,
     pub schema: String,
     pub user: String,
@@ -177,6 +189,8 @@ pub(crate) enum Dirty {
     Dialect,
     Host,
     Port,
+    Ssh,
+    SshKey,
     Database,
     Schema,
     User,
@@ -228,6 +242,8 @@ fn missing_fields(dialect: Dialect, action: FormAction, now: &FormSnap) -> Vec<F
         Field::Name => now.name.trim().is_empty(),
         Field::Host => now.host.trim().is_empty(),
         Field::Port => now.port.trim().is_empty(),
+        // SSH 칸은 늘 선택(필수 판정 밖).
+        Field::Ssh | Field::SshKey => false,
         Field::Database => now.database.trim().is_empty(),
         Field::Schema => now.schema.trim().is_empty(),
         Field::User => now.user.trim().is_empty(),
@@ -260,6 +276,12 @@ pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
     }
     if ne(&base.port, &now.port) {
         out.push(Dirty::Port);
+    }
+    if ne(&base.ssh, &now.ssh) {
+        out.push(Dirty::Ssh);
+    }
+    if ne(&base.ssh_key, &now.ssh_key) {
+        out.push(Dirty::SshKey);
     }
     if ne(&base.database, &now.database) {
         out.push(Dirty::Database);
@@ -441,6 +463,8 @@ impl ConnectPanel {
             },
             host: TextBox::new(t(Msg::PhHost)),
             port: TextBox::new(""),
+            ssh: TextBox::new(t(Msg::PhSsh)),
+            ssh_key: TextBox::new(t(Msg::PhSshKey)),
             database: TextBox::new(t(Msg::PhDatabase)),
             schema: TextBox::new(t(Msg::PhSchema)),
             user: TextBox::new(t(Msg::PhUser)),
@@ -495,6 +519,8 @@ impl ConnectPanel {
         };
         let db_ph = self.database_placeholder();
         rebuild(&mut self.host, t(Msg::PhHost), false);
+        rebuild(&mut self.ssh, t(Msg::PhSsh), false);
+        rebuild(&mut self.ssh_key, t(Msg::PhSshKey), false);
         rebuild(&mut self.database, &db_ph, false);
         rebuild(&mut self.schema, t(Msg::PhSchema), false);
         rebuild(&mut self.user, t(Msg::PhUser), false);
@@ -560,6 +586,8 @@ impl ConnectPanel {
         self.host.set_text(spec.host.as_deref().unwrap_or(""));
         self.port
             .set_text(&spec.port.map(|p| p.to_string()).unwrap_or_default());
+        self.ssh.set_text(spec.ssh.as_deref().unwrap_or(""));
+        self.ssh_key.set_text(spec.ssh_key.as_deref().unwrap_or(""));
         self.database
             .set_text(spec.database.as_deref().unwrap_or(""));
         self.schema.set_text(spec.schema.as_deref().unwrap_or(""));
@@ -588,6 +616,16 @@ impl ConnectPanel {
         if self.schema_applies() && !sc.trim().is_empty() {
             spec.schema = Some(sc.trim().to_string());
         }
+        // ★ SSH 터널(T-3 2차): 네트워크 방언만 · 빈 칸 = 없음 · 접속 문자열 `?ssh=`·`?ssh_key=`와 같은 값(볼트 `ssh=` 줄로 저장).
+        if self.ssh_applies() {
+            let opt = |tb: &TextBox| {
+                let v = tb.text();
+                let v = v.trim();
+                (!v.is_empty()).then(|| v.to_string())
+            };
+            spec.ssh = opt(&self.ssh);
+            spec.ssh_key = opt(&self.ssh_key);
+        }
         // 서버 유형 = 콤보(Save = 프로필에 영속 · 접속 = 이 값으로 붙는다).
         spec.env = nsql_script::ConnEnv::from_name(&self.env.selected_value());
         // 드라이버 변형(Oracle Thin/OCI · 사용자 10-23 "접속 폼에 드라이버 선택") = 접속 문자열 `?driver=`와 같은 값.
@@ -601,6 +639,11 @@ impl ConnectPanel {
             self.env.select_value(env_value(env));
             self.snap.env = env_value(env).to_string();
         }
+    }
+
+    /// SSH 터널 칸이 뜻이 있는 방언 = 네트워크 방언 전부(파일 방언은 숨김).
+    fn ssh_applies(&self) -> bool {
+        !self.file_based()
     }
 
     /// 기본 스키마 칸이 뜻이 있는 방언(Oracle · PostgreSQL) — SQL Server는 Database가 그 자리 · 파일 방언은 없음.
@@ -621,6 +664,8 @@ impl ConnectPanel {
         for tb in [
             &mut self.host,
             &mut self.port,
+            &mut self.ssh,
+            &mut self.ssh_key,
             &mut self.database,
             &mut self.schema,
             &mut self.user,
@@ -675,6 +720,16 @@ impl ConnectPanel {
             dialect: self.dialect.selected_value(),
             host: self.host.text(),
             port: self.port.text(),
+            ssh: if self.ssh_applies() {
+                self.ssh.text()
+            } else {
+                String::new()
+            },
+            ssh_key: if self.ssh_applies() {
+                self.ssh_key.text()
+            } else {
+                String::new()
+            },
             database: self.database.text(),
             schema: if self.schema_applies() {
                 self.schema.text()
@@ -722,6 +777,8 @@ impl ConnectPanel {
         let is = |d: Dirty| dirty.contains(&d);
         self.host.set_modified(is(Dirty::Host));
         self.port.set_modified(is(Dirty::Port));
+        self.ssh.set_modified(is(Dirty::Ssh));
+        self.ssh_key.set_modified(is(Dirty::SshKey));
         self.database.set_modified(is(Dirty::Database));
         self.schema.set_modified(is(Dirty::Schema));
         self.user.set_modified(is(Dirty::User));
@@ -734,6 +791,7 @@ impl ConnectPanel {
             Field::Name => snap.name.trim().is_empty(),
             Field::Host => snap.host.trim().is_empty(),
             Field::Port => snap.port.trim().is_empty(),
+            Field::Ssh | Field::SshKey => false,
             Field::Database => snap.database.trim().is_empty(),
             Field::Schema => snap.schema.trim().is_empty(),
             Field::User => snap.user.trim().is_empty(),
@@ -807,6 +865,8 @@ impl ConnectPanel {
         for c in [
             &mut self.host,
             &mut self.port,
+            &mut self.ssh,
+            &mut self.ssh_key,
             &mut self.database,
             &mut self.schema,
             &mut self.user,
@@ -864,6 +924,8 @@ impl ConnectPanel {
         if self.file_based() {
             self.host.set_bounds(off, &mut inv);
             self.port.set_bounds(off, &mut inv);
+            self.ssh.set_bounds(off, &mut inv);
+            self.ssh_key.set_bounds(off, &mut inv);
         } else {
             // 호스트 + 포트 한 줄(포트 폭 고정).
             y += label_h;
@@ -873,6 +935,15 @@ impl ConnectPanel {
                 .set_bounds(Rect::new(x, y, w - port_w - gap, field_h), &mut inv);
             self.port
                 .set_bounds(Rect::new(x + w - port_w, y, port_w, field_h), &mut inv);
+            y += field_h + gap;
+            // ★ SSH 터널 한 줄(T-3 2차 · 160차 · D-389: 창 기본 높이 614 → 648): 대상 `user@host[:port]`(왼쪽) + 키 경로(오른쪽) ·
+            //   기본 스키마 줄과 같은 반반 나눔 — 호스트에 닿는 경로라 호스트 줄 바로 아래.
+            y += label_h;
+            let half = (w - gap) / 2;
+            self.ssh
+                .set_bounds(Rect::new(x, y, w - half - gap, field_h), &mut inv);
+            self.ssh_key
+                .set_bounds(Rect::new(x + w - half, y, half, field_h), &mut inv);
             y += field_h + gap;
         }
         if !self.db_in_last_row() {
@@ -1029,6 +1100,8 @@ impl ConnectPanel {
         match f {
             Field::Host => &mut self.host,
             Field::Port => &mut self.port,
+            Field::Ssh => &mut self.ssh,
+            Field::SshKey => &mut self.ssh_key,
             Field::Database => &mut self.database,
             Field::Schema => &mut self.schema,
             Field::User => &mut self.user,
@@ -1106,7 +1179,10 @@ impl ConnectPanel {
         let mut v: Vec<Field> = FIELDS
             .iter()
             .copied()
-            .filter(|f| !(self.file_based() && matches!(f, Field::Host | Field::Port)))
+            .filter(|f| {
+                !(self.file_based()
+                    && matches!(f, Field::Host | Field::Port | Field::Ssh | Field::SshKey))
+            })
             .filter(|f| !(matches!(f, Field::Schema) && !self.schema_applies()))
             .collect();
         if self.db_in_last_row() {
@@ -1186,6 +1262,8 @@ impl ConnectPanel {
         match f {
             Field::Host => &self.host,
             Field::Port => &self.port,
+            Field::Ssh => &self.ssh,
+            Field::SshKey => &self.ssh_key,
             Field::Database => &self.database,
             Field::Schema => &self.schema,
             Field::User => &self.user,
@@ -1200,6 +1278,8 @@ impl ConnectPanel {
         for tb in [
             &self.host,
             &self.port,
+            &self.ssh,
+            &self.ssh_key,
             &self.database,
             &self.schema,
             &self.user,
@@ -1435,6 +1515,8 @@ impl ConnectPanel {
             Field::Name => t(Msg::LblProfileName).to_string(),
             Field::Host => t(Msg::LblHost).to_string(),
             Field::Port => t(Msg::LblPort).to_string(),
+            Field::Ssh => t(Msg::LblSsh).to_string(),
+            Field::SshKey => t(Msg::LblSshKey).to_string(),
             Field::Database => match self.selected_dialect() {
                 Dialect::Sqlite => t(Msg::LblFile),
                 Dialect::Odbc => t(Msg::LblDsn),
@@ -1480,6 +1562,8 @@ impl ConnectPanel {
         self.dialect.select_value(&snap.dialect);
         self.host.set_text(&snap.host);
         self.port.set_text(&snap.port);
+        self.ssh.set_text(&snap.ssh);
+        self.ssh_key.set_text(&snap.ssh_key);
         self.database.set_text(&snap.database);
         self.schema.set_text(&snap.schema);
         self.user.set_text(&snap.user);
@@ -1686,6 +1770,20 @@ impl ConnectPanel {
             is(Dirty::Port),
             Field::Port,
         );
+        label(
+            dc,
+            self.ssh.bounds(),
+            t(Msg::LblSsh),
+            is(Dirty::Ssh),
+            Field::Ssh,
+        );
+        label(
+            dc,
+            self.ssh_key.bounds(),
+            t(Msg::LblSshKey),
+            is(Dirty::SshKey),
+            Field::SshKey,
+        );
         let db_label = match self.selected_dialect() {
             Dialect::Sqlite => t(Msg::LblFile),
             Dialect::Odbc => t(Msg::LblDsn),
@@ -1725,6 +1823,8 @@ impl ConnectPanel {
         for tb in [
             &self.host,
             &self.port,
+            &self.ssh,
+            &self.ssh_key,
             &self.database,
             &self.schema,
             &self.user,
@@ -1913,6 +2013,8 @@ mod dirty_tests {
             dialect: "oracle".into(),
             host: "h".into(),
             port: "1521".into(),
+            ssh: "".into(),
+            ssh_key: "".into(),
             database: "db".into(),
             schema: "".into(),
             user: "u".into(),
@@ -1989,17 +2091,19 @@ mod dirty_tests {
         assert!(!p.is_dirty());
     }
 
-    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(11칸 독립) · 같으면 빈 목록.
+    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(13칸 독립) · 같으면 빈 목록.
     #[test]
     fn each_field_independently() {
         let b = base();
         assert!(dirty_fields(&b, &b).is_empty());
         type Mut = fn(&mut FormSnap);
-        let cases: [(Mut, Dirty); 11] = [
+        let cases: [(Mut, Dirty); 13] = [
             (|s| s.name = "B".into(), Dirty::Name),
             (|s| s.dialect = "pg".into(), Dirty::Dialect),
             (|s| s.host = "x".into(), Dirty::Host),
             (|s| s.port = "1".into(), Dirty::Port),
+            (|s| s.ssh = "me@bastion:2222".into(), Dirty::Ssh),
+            (|s| s.ssh_key = "/k/id".into(), Dirty::SshKey),
             (|s| s.database = "y".into(), Dirty::Database),
             (|s| s.schema = "S".into(), Dirty::Schema),
             (|s| s.user = "v".into(), Dirty::User),
@@ -2049,6 +2153,49 @@ mod dirty_tests {
             Some(PanelAction::Save { vars, .. }) => assert_eq!(vars.len(), 2),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// ★ T-3 2차(160차): SSH 칸 ↔ 스펙 왕복 — 불러오기(`?ssh=`·`?ssh_key=`)가 두 칸에 들어가고 저장본이 된다 · 고치면 그 칸만 바뀜 ·
+    /// Save/Connect 스펙에 `ssh`·`ssh_key`로 실린다(빈 칸 = None · 양끝 공백 제거) · 파일 방언(SQLite)은 칸이 숨고 스펙에도 안 실린다.
+    #[test]
+    fn ssh_fields_round_trip() {
+        let mut p = ConnectPanel::new(vec![Dialect::Postgres, Dialect::Sqlite]);
+        p.set_bounds(Rect::new(0, 0, 292, 640), 1.0);
+        let spec =
+            ConnectSpec::parse("postgres://u:pw@h:5432/db?ssh=me@bastion:2222&ssh_key=/k/id")
+                .expect("spec");
+        p.fill("A", &spec, Vec::new());
+        assert_eq!(
+            (p.ssh.text().as_str(), p.ssh_key.text().as_str()),
+            ("me@bastion:2222", "/k/id")
+        );
+        assert!(!p.is_dirty(), "{:?}", p.dirty());
+        assert!(p.ssh.bounds().w > 0 && p.ssh_key.bounds().w > 0);
+        p.ssh.set_text(" me@other ");
+        assert_eq!(p.dirty(), vec![Dirty::Ssh]);
+        p.ssh_key.set_text("");
+        assert_eq!(p.dirty(), vec![Dirty::Ssh, Dirty::SshKey]);
+        let built = p.build_spec().expect("build");
+        assert_eq!(built.ssh.as_deref(), Some("me@other"));
+        assert_eq!(built.ssh_key, None);
+        assert!(
+            built.connection_string().contains("ssh=me@other"),
+            "{}",
+            built.connection_string()
+        );
+        // 버리기 = 저장본으로.
+        p.discard_changes();
+        assert_eq!(p.ssh.text(), "me@bastion:2222");
+        assert!(!p.is_dirty());
+        // 파일 방언: 칸 숨김 · Tab 순서 밖 · 스펙에 안 실림(글자가 남아 있어도).
+        p.dialect.select_value(&Dialect::Sqlite.to_string());
+        p.apply_dialect(Dialect::Sqlite);
+        p.database.set_text(":memory:");
+        assert_eq!((p.ssh.bounds().w, p.ssh_key.bounds().w), (0, 0));
+        assert!(!p.visible_fields().contains(&Field::Ssh));
+        let built = p.build_spec().expect("sqlite");
+        assert_eq!((built.ssh, built.ssh_key), (None, None));
+        assert_eq!(p.snapshot().ssh, "");
     }
 
     /// 필수 칸 판정 MC/DC(22 §10): 방언 × 동작 × 칸별 빈 값 — 각 조건이 결과를 독립적으로 바꾼다.
@@ -2101,10 +2248,12 @@ mod dirty_tests {
             missing_fields(Dialect::Oracle, FormAction::Save, &no_name),
             vec![Field::Name]
         );
-        // Port·Schema는 늘 선택 · 여러 칸이면 폼 순서(Name · Host · … · Password).
+        // Port·Schema·SSH는 늘 선택 · 여러 칸이면 폼 순서(Name · Host · … · Password).
         let mut sparse = base();
         sparse.port.clear();
         sparse.schema.clear();
+        sparse.ssh.clear();
+        sparse.ssh_key.clear();
         sparse.host = " ".into();
         sparse.user.clear();
         assert_eq!(
@@ -2125,6 +2274,19 @@ mod dirty_tests {
             p.schema.bounds(),
             p.env.bounds(),
             p.save_btn.bounds(),
+        );
+        // ★ SSH 줄(T-3 2차): 호스트 줄 바로 아래 · 대상(왼쪽) + 키(오른쪽) 한 줄 · Database 위.
+        let (sh, sk, host, db) = (
+            p.ssh.bounds(),
+            p.ssh_key.bounds(),
+            p.host.bounds(),
+            p.database.bounds(),
+        );
+        assert_eq!((sh.y, sh.h), (sk.y, sk.h), "{sh:?} {sk:?}");
+        assert!(sh.w > 0 && sk.x > sh.right(), "{sh:?} {sk:?}");
+        assert!(
+            sh.y > host.bottom() && db.y > sh.bottom(),
+            "{host:?} {sh:?} {db:?}"
         );
         // 비밀번호 줄: 체크는 같은 줄 오른쪽 · 비밀번호는 그만큼 좁다.
         assert!(
@@ -2151,12 +2313,17 @@ mod dirty_tests {
         assert!(db.w > 0 && env.x > db.right(), "{db:?} {env:?}");
         assert!(db.y > pw.bottom() && p.save_btn.bounds().y > db.bottom());
         assert!(p.user.bounds().y < pw.y && p.user.bounds().y > p.host.bounds().y);
-        // Tab 순서도 폼 순서: … → Password → Database(마지막).
+        // Tab 순서도 폼 순서: … → Password → Database(마지막) · SSH 두 칸은 Port 다음.
         let vis = p.visible_fields();
         assert_eq!(vis.last().copied(), Some(Field::Database));
         assert!(
             vis.iter().position(|f| *f == Field::Password)
                 < vis.iter().position(|f| *f == Field::Database)
+        );
+        let at = |f: Field| vis.iter().position(|x| *x == f).expect("visible");
+        assert_eq!(
+            (at(Field::Ssh), at(Field::SshKey)),
+            (at(Field::Port) + 1, at(Field::Port) + 2)
         );
         // SQLite(파일): 경로 칸은 제자리(줄 전체) · 서버 유형이 마지막 줄 전체.
         let mut q = ConnectPanel::new(vec![Dialect::Sqlite]);

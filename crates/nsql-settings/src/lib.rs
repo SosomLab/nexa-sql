@@ -4619,7 +4619,7 @@ pub const REGISTRY: &[Entry] = &[
             min: 300,
             max: 1600,
         },
-        default: "614",
+        default: "648",
     },
     Entry {
         key: "login.panel_w",
