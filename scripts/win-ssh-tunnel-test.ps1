@@ -18,19 +18,25 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 if (-not $Target -and -not $ProfileName) { Write-Host "Target 또는 ProfileName 하나는 필요"; exit 2 }
 
-# ── 점프 대상 추출(Target의 ?ssh= · 프로필은 nsql conn show)
+# ── 점프 대상·키 추출(Target의 ?ssh=·ssh_key= · 프로필은 nsql conn show + 프로필 파일의 ssh_key= 줄)
+$Key = ""
+if ($Target -match '[?&]ssh_key=([^&]+)') { $Key = [uri]::UnescapeDataString($Matches[1]) }
 if (-not $Jump) {
     if ($Target -match '[?&]ssh=([^&]+)') { $Jump = [uri]::UnescapeDataString($Matches[1]) }
     elseif ($ProfileName) {
         $show = & target/debug/nsql.exe conn show $ProfileName 2>&1 | Out-String
         if ($show -match 'via ssh (\S+)') { $Jump = $Matches[1].Trim() }
+        if ($show -match '([A-Za-z]:\\[^\r\n]+\.conf)') {
+            $kl = Get-Content $Matches[1] | Where-Object { $_ -match '^ssh_key=' } | Select-Object -First 1
+            if ($kl) { $Key = $kl.Substring(8).Trim() }
+        }
     }
 }
 if (-not $Jump) { Write-Host "점프 대상(ssh=)을 찾지 못함"; exit 2 }
 $jumpHost = $Jump; $jumpPort = ""
 if ($Jump -match '^(.*):(\d+)$') { $jumpHost = $Matches[1]; $jumpPort = $Matches[2] }
 $hostOnly = ($jumpHost -split '@')[-1]
-Write-Host "== 1) ssh 선검사: $Jump"
+Write-Host "== 1) ssh 선검사: $Jump$(if ($Key) { " (키 $Key)" })"
 if ($AddKnownHost) {
     $scan = if ($jumpPort) { ssh-keyscan -p $jumpPort -T 5 $hostOnly 2>$null } else { ssh-keyscan -T 5 $hostOnly 2>$null }
     if ($scan) { Add-Content -Path "$HOME/.ssh/known_hosts" -Value $scan; Write-Host "   known_hosts에 $hostOnly 추가" }
@@ -38,6 +44,7 @@ if ($AddKnownHost) {
 }
 $sshArgs = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
 if ($jumpPort) { $sshArgs += @("-p", $jumpPort) }
+if ($Key) { $sshArgs += @("-i", $Key) }
 $sshArgs += @($jumpHost, "echo", "ssh-ok")
 $pre = & ssh @sshArgs 2>&1 | Out-String
 if ($pre -match "ssh-ok") { Write-Host "   로그인 OK" }

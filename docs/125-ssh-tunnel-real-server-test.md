@@ -6,7 +6,9 @@
 
 ## 0. 지금 상태 한 줄
 
-프로필 `biscm-ssh`(격리 홈)까지 만들었고 **svcuser 인증에서 멈춤** — 61.81.244.108은 22 도달·호스트 키 등록 ✓이나 이 PC의 키를 거절한다(허용 = publickey·gssapi·password). 앱 터널은 `BatchMode`(비밀번호 프롬프트 없음)라 **svcuser용 키**가 있어야 한다 → §6-1 사용자 결정. 키가 준비되면 `scripts/win-ssh-tunnel-test.ps1 -Profile biscm-ssh` 한 줄로 3단계가 돈다.
+★ **통과(10-28 밤)** — 사용자가 svcuser에 키 `~/.ssh/sybae0057_ed25519`를 구성한 뒤 `scripts/win-ssh-tunnel-test.ps1 -Profile biscm-ssh` 3단계 전부 ✓: ① ssh 선검사 로그인 OK ② `ssh_tunnel_real_server` 2라운드 ✓(설명 " via ssh svcuser@61.81.244.108" · `USER=BISCM` · `SERVER_HOST=snop-db-dev` · 접속+조회 0.66s / 0.49s) ③ `nsql run` 왕복 `VIA_SSH=1` ✓. 프로필 `biscm-ssh`(`…?ssh=svcuser@61.81.244.108&ssh_key=C:/Users/kiros33/.ssh/sybae0057_ed25519&driver=thin`)는 격리 홈과 **실제 볼트**(사용자 승인 · `%APPDATA%\nexa-sql\profiles\ca3d2fab6ddb510c.conf`) 둘 다에 있다 → GUI 접속 창에서 `biscm-ssh`를 불러오면 SSH 터널 칸이 자동 펼침되고 [접속]이 같은 터널을 지난다(사용자 실기 몫).
+
+막혔던 지점(기록) = svcuser 인증 — 61.81.244.108은 22 도달·호스트 키 등록 ✓이나 이 PC 기본 키를 거절(허용 = publickey·gssapi·password) · 앱 터널은 `BatchMode`라 svcuser용 키가 필요했다 → 사용자가 키 등록(ⓐ) · 스크립트 선검사가 프로필의 `ssh_key`를 `-i`로 넘기지 않던 결함도 고침.
 
 ## 1. 이 PC의 상태(10-28 조사 · 읽기 전용)
 
@@ -26,9 +28,9 @@
 | 항목 | 결과 | 뜻 |
 |---|---|---|
 | 61.81.244.108:**22** | TCP 도달 ✓ · 배너("세방그룹 자산 … 인가되지 않은 사용자 접근 시 처벌") · 인증 = `publickey,gssapi-keyex,gssapi-with-mic,password` · 호스트 키 = 스크립트 `-AddKnownHost`로 등록 ✓ | 점프 호스트 OK · **키 또는 비밀번호** |
-| `svcuser@61.81.244.108` 로그인 | 이 PC 기본 키(`Host *` IdentityFile) = **Permission denied** | svcuser 키 필요(§6-1) |
+| `svcuser@61.81.244.108` 로그인 | 이 PC 기본 키(`Host *` IdentityFile) = Permission denied → **`-i ~/.ssh/sybae0057_ed25519` = OK**(사용자 구성 · 10-28 밤) | 프로필 `ssh_key=`로 지정 |
 | 61.81.244.110:**1521** | 이 PC에서 **직접 도달 ✓**(22도 열림) | 터널 없이도 붙는다 → 시험은 "터널을 지나는가"를 설명 꼬리 " via ssh …"·`SYS_CONTEXT('USERENV','SERVER_HOST')`로 판정 |
-| 프로필 `biscm-ssh` | 격리 홈 `%TEMP%\claude\nsql-ssh-test` · `oracle://BISCM:…@61.81.244.110:1521/BISCMDEV?ssh=svcuser@61.81.244.108&driver=thin` · `conn show` = "… via ssh svcuser@61.81.244.108" ✓ | 실제 볼트 등록은 사용자 승인 뒤(§6-2) |
+| 프로필 `biscm-ssh` | `oracle://BISCM:…@61.81.244.110:1521/BISCMDEV?ssh=svcuser@61.81.244.108&ssh_key=C:/Users/kiros33/.ssh/sybae0057_ed25519&driver=thin` · `conn show` = "… via ssh svcuser@61.81.244.108" ✓ · 격리 홈 `%TEMP%\claude\nsql-ssh-test` + **실제 볼트**(사용자 승인 10-28) | 비밀번호 = 볼트 봉투(DPAPI) · 키 = 파일 경로만 |
 
 ## 2. 경로 후보와 가능 여부
 
@@ -65,9 +67,12 @@ scripts\win-ssh-tunnel-test.ps1 -Profile biscm-ssh -AddKnownHost
 |---|---|---|---|---|---|
 | 10-28 | A | ✗ 공개 키 미등록(`kiros33@192.168.0.58` Permission denied · 스크립트 1단계가 원문+힌트로 멈춤 ✓) | 생략 | 생략 | 대상 변경으로 보류 |
 | 10-28 | B · C | — | — | — | 사용자 제외로 종결 |
-| 10-28 | A′ | ✗ `svcuser@61.81.244.108` Permission denied(publickey,gssapi-keyex,gssapi-with-mic,password) · 호스트 키 등록 ✓ · 배너 출력 ✓ · 프로필 `biscm-ssh` 생성 ✓ | 생략 | 생략 | **사용자 결정 대기**: svcuser 키 파일 또는 공개 키 등록(§6-1) |
+| 10-28 | A′ | ✗ `svcuser@61.81.244.108` Permission denied(publickey,gssapi-keyex,gssapi-with-mic,password) · 호스트 키 등록 ✓ · 배너 출력 ✓ · 프로필 `biscm-ssh` 생성 ✓ | 생략 | 생략 | 사용자 결정 → 키 등록(ⓐ) |
+| 10-28 밤 | **A′** | ✓ `-i sybae0057_ed25519` 로그인 OK | ✓ 2라운드(0.66s · 0.49s · USER=BISCM · SERVER_HOST=snop-db-dev) | ✓ `VIA_SSH=1` | **전부 통과** · 실제 볼트 등록 ✓ · GUI 실기 = 사용자 |
 
-## 6. 사용자에게 묻는 것(세분)
+## 6. 사용자에게 물은 것(세분 · 10-28 밤 전부 해소)
+
+- 결과: 1 = ⓐ(사용자가 svcuser에 `sybae0057_ed25519` 공개 키 등록) · 2 = 실제 볼트 등록 승인(✓ 반영) · 3 = B·C 제외. 아래는 당시 질문 원문.
 
 1. **svcuser 인증(막힌 지점)** — 셋 중 하나:
    ⓐ svcuser용 **개인 키 파일**이 있다 → 경로를 알려 주면 프로필에 `ssh_key=`로 넣는다(암호 걸린 키는 ssh-agent에 올려야 BatchMode에서 돈다).
