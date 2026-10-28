@@ -166,13 +166,19 @@ jobs:
         working-directory: .
         run: |
           mkdir -p sshtun && ssh-keygen -q -t ed25519 -N "" -f sshtun/id_ed25519
-          docker run -d --name sshtun -p 2222:2222 --add-host=host.docker.internal:host-gateway \
+          # 서비스 컨테이너 네트워크에 붙여 서비스 이름(postgres)으로 터널 대상 지정 — 러너 게시 포트(host-gateway)는 userland-proxy 없는
+          # 러너에서 컨테이너 안에서 닿지 않는다(40674556827 "Connection reset by peer"). 네트워크를 못 찾으면 host-gateway 폴백.
+          NET=$(docker network ls --format '{{.Name}}' | grep -m1 github_network || true)
+          if [ -n "$NET" ]; then TARGET=postgres; NETOPT="--network $NET"; else TARGET=host.docker.internal; NETOPT="--add-host=host.docker.internal:host-gateway"; fi
+          echo "ssh tunnel target = $TARGET (network ${NET:-bridge})"
+          docker run -d --name sshtun -p 2222:2222 $NETOPT \
             -e PUID=1000 -e PGID=1000 -e USER_NAME=nexa -e PUBLIC_KEY="$(cat sshtun/id_ed25519.pub)" \
             -e SUDO_ACCESS=false -e PASSWORD_ACCESS=false lscr.io/linuxserver/openssh-server:latest
           for i in $(seq 1 30); do ssh-keyscan -p 2222 -T 3 localhost 2>/dev/null | grep -q ed25519 && break; sleep 2; done
           mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -p 2222 localhost >> ~/.ssh/known_hosts 2>/dev/null
           ssh -o BatchMode=yes -p 2222 -i sshtun/id_ed25519 nexa@localhost true && echo "ssh login ok"
-          echo "NSQL_SSH_PG_URL=postgres://nexa:nexa@host.docker.internal:5432/nexa?ssh=nexa@localhost:2222&ssh_key=$PWD/sshtun/id_ed25519" >> "$GITHUB_ENV"
+          docker exec sshtun sh -c "nc -z -w 3 $TARGET 5432 && echo 'sshd -> pg reachable'" || echo "WARN: sshd cannot reach $TARGET:5432"
+          echo "NSQL_SSH_PG_URL=postgres://nexa:nexa@$TARGET:5432/nexa?ssh=nexa@localhost:2222&ssh_key=$PWD/sshtun/id_ed25519" >> "$GITHUB_ENV"
       - name: wait for DBs
         run: bash scripts/wait-for-db.sh
       - name: integration tests

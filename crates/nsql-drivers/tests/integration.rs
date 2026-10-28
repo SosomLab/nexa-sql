@@ -1087,10 +1087,12 @@ fn pg_ssh_tunnel_round_trip() {
     let mut s = nsql_drivers::open(&spec, Dialect::Postgres).expect("ssh 터널 접속");
     let d = s.describe();
     assert!(d.contains(" via ssh nexa@localhost:2222"), "설명 꼬리: {d}");
-    assert!(
-        d.contains("host.docker.internal:5432"),
-        "원래 호스트 표시: {d}"
+    let orig = format!(
+        "{}:{}",
+        spec.host.as_deref().unwrap_or(""),
+        spec.port.unwrap_or(5432)
     );
+    assert!(d.contains(&orig), "원래 호스트 표시({orig}): {d}");
     let r = s
         .execute(&ExecRequest {
             sql: "SELECT 1 + 1, inet_client_addr()::text".to_string(),
