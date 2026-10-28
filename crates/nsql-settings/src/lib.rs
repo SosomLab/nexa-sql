@@ -899,6 +899,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-11 셰이핑 스파이크(D-383 · 10-29): UI 텍스트(라벨·메뉴·대화상자)만 rustybuzz 배치 · 기본 끔 · A/B 측정용.
+    Entry {
+        key: "ui.text_shaping",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTextShaping,
+        desc: Msg::DescTextShaping,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "ui.font_size",
         // 기본 14 → 15 · 편집기 14 → 16 · 그리드 15 신설 — Golden 기준 가독성(사용자 09-15 "폰트가 너무 작다").

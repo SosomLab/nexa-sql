@@ -205,6 +205,8 @@ impl App {
         nexa_gfx::text::set_text_snap(self.settings.flag("ui.text_snap"));
         nexa_gfx::text::set_text_hint(self.settings.flag("ui.text_hint"));
         nexa_gfx::text::set_text_gdi(self.settings.flag("ui.text_gdi"));
+        // ★ T-11 셰이핑 스파이크(10-29): UI 텍스트 한정 · 라벨 폭이 바뀌므로 호출자가 다시 배치·그린다.
+        nexa_gfx::text::set_text_shaping(self.settings.flag("ui.text_shaping"));
         nexa_gfx::text::set_text_weight(
             self.settings.int("ui.text_weight").clamp(0, 60) as f32 / 100.0,
         );
@@ -618,7 +620,8 @@ impl App {
                 self.bm_panel.set_typeahead(cfg);
                 self.outline_panel.set_typeahead(cfg);
             }
-            "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" | "ui.text_weight" => {
+            "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" | "ui.text_weight"
+            | "ui.text_shaping" => {
                 self.apply_text_render();
                 self.log_win.redraw();
             }

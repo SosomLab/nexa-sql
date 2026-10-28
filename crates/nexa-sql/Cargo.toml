@@ -46,7 +46,8 @@ nsql-i18n.workspace = true
 nsql-settings.workspace = true
 nsql-log.workspace = true
 nsql-license.workspace = true
-nexa-gfx.workspace = true
+# ★ T-11 셰이핑 스파이크(D-383 · 10-29): UI 텍스트 한정 rustybuzz — 설정 `ui.text_shaping`(기본 끔)으로 A/B · 크기·시간 측정 뒤 결정.
+nexa-gfx = { workspace = true, features = ["shaping"] }
 nexa-ctl.workspace = true
 nexa-font.workspace = true
 nexa-fs.workspace = true
