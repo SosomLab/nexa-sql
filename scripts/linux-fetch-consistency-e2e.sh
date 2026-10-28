@@ -10,7 +10,8 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; P=APPDB; FROM="M4S_I002040 A WHERE 1=1 AND A.PROJECT_CD = 'ACME'"
+# ★ T-452(10-29 · 익명화 뒤): 실서버 값은 -p/-t 또는 env NSQL_E2E_ORACLE_PROFILE · NSQL_E2E_ORACLE_FROM(기본값은 익명 = 실서버에선 0행).
+OUT=""; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; P="${NSQL_E2E_ORACLE_PROFILE:-APPDB}"; FROM="${NSQL_E2E_ORACLE_FROM:-M4S_I002040 A WHERE 1=1 AND A.PROJECT_CD = 'ACME'}"
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/release/nsql"; WAIT=70; ONLY=""
 while getopts "o:P:p:t:e:n:w:O:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; p) P=$OPTARG;; t) FROM=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; w) WAIT=$OPTARG;; O) ONLY=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-P real-config] [-p profile] [-t \"<FROM … WHERE …>\"] [-e app] [-n nsql] [-w secs] [-O A,B,C]"; exit 2; }

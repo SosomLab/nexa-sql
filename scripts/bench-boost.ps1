@@ -1,11 +1,18 @@
 ﻿# bench-boost.ps1 — 실행 속도 향상(perf.boost) 켬/끔 성능 비교(docs/45 · T-90e): Release exe로 GUI 3회(기동·유휴 자원·유휴 CPU) +
-#   CLI 3회(nsql run --timing · 프로필 DEMODB_19c(Oracle) · PLANDB(SQL Server)). 결과 = targetench-boost.csv + 중앙값 요약.
-# 사용:  pwsh -File scriptsench-boost.ps1 [-Runs 3] [-Out targetench-boost.csv]   (실행 전 cargo build --release · 프로필 비밀번호 저장돼 있어야)
+#   CLI 3회(nsql run --timing · Oracle 프로필 + 표 + PROJECT_CD 필터 · SQL Server 프로필). 결과 = target\bench-boost.csv + 중앙값 요약.
+# 사용:  pwsh -File scripts\bench-boost.ps1 [-Runs 3] [-Out target\bench-boost.csv]   (실행 전 cargo build --release · 프로필 비밀번호 저장돼 있어야)
+#   ★ T-452(10-29 · 익명화 뒤): 실서버 값은 매개변수 또는 env — -OracleProfile/$env:NSQL_E2E_ORACLE_PROFILE · -OracleTable/NSQL_E2E_ORACLE_TABLE ·
+#     -ProjectCd/NSQL_E2E_PROJECT_CD · -MssqlProfile/NSQL_E2E_MSSQL_PROFILE. 기본값은 익명(DEMODB_19c · M4S_I002040 · ACME · PLANDB) = 실서버에선 0행.
 param(
-    [string]$Root = "D:\Projects\kiros33\nexa-sql",
+    [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [int]$Runs = 3,
-    [string]$Out = "D:\Projects\kiros33\nexa-sql\target\bench-boost.csv"
+    [string]$Out = "",
+    [string]$OracleProfile = $(if ($env:NSQL_E2E_ORACLE_PROFILE) { $env:NSQL_E2E_ORACLE_PROFILE } else { "DEMODB_19c" }),
+    [string]$OracleTable = $(if ($env:NSQL_E2E_ORACLE_TABLE) { $env:NSQL_E2E_ORACLE_TABLE } else { "M4S_I002040" }),
+    [string]$ProjectCd = $(if ($env:NSQL_E2E_PROJECT_CD) { $env:NSQL_E2E_PROJECT_CD } else { "ACME" }),
+    [string]$MssqlProfile = $(if ($env:NSQL_E2E_MSSQL_PROFILE) { $env:NSQL_E2E_MSSQL_PROFILE } else { "PLANDB" })
 )
+if (-not $Out) { $Out = Join-Path $Root "target\bench-boost.csv" }
 $ErrorActionPreference = "Continue"
 $gui = Join-Path $Root "target\release\nexa-sql.exe"
 $cli = Join-Path $Root "target\release\nsql.exe"
@@ -63,9 +70,9 @@ $origBoost = ((& $cli config get perf.boost) | Out-String).Trim()
 foreach ($mode in @("off", "on")) {
     & $cli config set perf.boost $mode | Out-Null
     Gui-Sample $mode
-    Cli-Query $mode "DEMODB_19c" "SELECT * FROM M4S_I002040 A WHERE A.PROJECT_CD = 'ACME';" "oracle_200"
-    Cli-Query $mode "DEMODB_19c" "SELECT COUNT(*) FROM M4S_I002040;" "oracle_count"
-    Cli-Query $mode "PLANDB" "SELECT TOP 200 * FROM INFORMATION_SCHEMA.COLUMNS;" "mssql_200"
+    Cli-Query $mode $OracleProfile "SELECT * FROM $OracleTable A WHERE A.PROJECT_CD = '$ProjectCd';" "oracle_200"
+    Cli-Query $mode $OracleProfile "SELECT COUNT(*) FROM $OracleTable;" "oracle_count"
+    Cli-Query $mode $MssqlProfile "SELECT TOP 200 * FROM INFORMATION_SCHEMA.COLUMNS;" "mssql_200"
 }
 if ($origBoost -in @("on", "off")) {
     & $cli config set perf.boost $origBoost | Out-Null

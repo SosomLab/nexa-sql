@@ -8,7 +8,8 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; PROF=""; LIST="APPDB:oracle:APPDB_SB:ANTI_KR_ITEM,PLANDB:mssql:APPDB_MS.dbo:M4E_C300000"
+# ★ T-452(10-29 · 익명화 뒤): 실서버 목록은 -d 또는 env NSQL_E2E_INTEL_LIST(기본값은 익명 = 실서버에선 해석 실패).
+OUT=""; PROF=""; LIST="${NSQL_E2E_INTEL_LIST:-APPDB:oracle:APPDB_SB:ANTI_KR_ITEM,PLANDB:mssql:APPDB_MS.dbo:M4E_C300000}"
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"
 while getopts "o:P:d:g:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; d) LIST=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real NSQL_HOME> [-d 프로필:방언:한정자:표,…] [-g gui] [-n nsql]"; exit 2; }

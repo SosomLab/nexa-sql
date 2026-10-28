@@ -6,7 +6,8 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="PLANDB"; DB="APPDB_MS"; TBL="M4E_C300000"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+# ★ T-452(10-29 · 익명화 뒤): 실서버 값은 -p/-d/-t 또는 env NSQL_E2E_MSSQL_PROFILE · NSQL_E2E_MSSQL_DB · NSQL_E2E_MSSQL_TABLE(기본값은 익명).
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; PROFILE="${NSQL_E2E_MSSQL_PROFILE:-PLANDB}"; DB="${NSQL_E2E_MSSQL_DB:-APPDB_MS}"; TBL="${NSQL_E2E_MSSQL_TABLE:-M4E_C300000}"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
 while getopts "o:g:p:d:t:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; p) PROFILE=$OPTARG;; d) DB=$OPTARG;; t) TBL=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-p profile] [-d other-db] [-t table] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
