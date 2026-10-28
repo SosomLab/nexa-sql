@@ -88,10 +88,21 @@ impl App {
                         } else {
                             Msg::RsnReconnectSetting
                         };
-                        self.log_win.push(LogEntry::new(
-                            LogKind::Info,
-                            tf(Msg::StSessRetarget, &[&target.redacted(), t(why)]),
-                        ));
+                        // ★ T-216(10-29 · D-208 권장안 = 모델 유지 + 안내): 살아 있는 전용 세션이 **다른** 서버·계정으로 바뀌면
+                        //   "앞 연결 X를 닫고 Y로"를 명시(종전 한 줄은 새 대상만 보여 앞 연결이 왜 사라졌는지 알 수 없었다 · 54 §10-5).
+                        let replacing = self.sess.connected
+                            && !self.sess.broken
+                            && !same
+                            && !self.sess.desc.is_empty();
+                        let line = if replacing {
+                            tf(
+                                Msg::StSessReplaced,
+                                &[&self.sess.desc, &target.redacted(), t(why)],
+                            )
+                        } else {
+                            tf(Msg::StSessRetarget, &[&target.redacted(), t(why)])
+                        };
+                        self.log_win.push(LogEntry::new(LogKind::Info, line));
                         self.sess.spec = Some(*spec);
                     }
                 }

@@ -2326,6 +2326,7 @@ dependencies = [
  "nsql-format",
  "nsql-i18n",
  "nsql-io",
+ "nsql-json",
  "nsql-license",
  "nsql-log",
  "nsql-run",
