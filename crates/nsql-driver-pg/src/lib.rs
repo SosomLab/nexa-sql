@@ -300,13 +300,13 @@ fn connect_bounded(
 fn connect_timeout_error(mode: TlsMode) -> DbError {
     let message = match mode {
         TlsMode::Disabled => format!(
-            "connect did not complete within {CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not              answer the startup message"
+            "connect did not complete within {CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not answer the startup message"
         ),
         TlsMode::Preferred | TlsMode::Required => format!(
-            "TLS handshake did not complete within {CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not              finish the TLS negotiation or the startup message"
+            "TLS handshake did not complete within {CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not finish the TLS negotiation or the startup message"
         ),
         TlsMode::VerifyCa | TlsMode::VerifyIdentity => format!(
-            "TLS handshake did not complete within {CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not              finish the TLS negotiation; the server certificate may have failed verification (set pg.tls_ca to the server CA              file, or use tls=verify_ca when the host name does not match)"
+            "TLS handshake did not complete within {CONNECT_TIMEOUT_SECS}s - the server accepted the TCP connection but did not finish the TLS negotiation; the server certificate may have failed verification (set pg.tls_ca to the server CA file, or use tls=verify_ca when the host name does not match)"
         ),
     };
     DbError {
@@ -1576,6 +1576,31 @@ mod tests {
 
     /// 커서 유지(T-48a): 어떤 문장을 DECLARE로 감싸는가 · 조립 SQL · 트랜잭션 경계 추적.
     /// 원인 사슬이 메시지에 이어진다(거부 포트 · TLS 오류 원문이 묻히지 않게).
+    /// 157차 P3(협업): 상한 문구에 줄 이음 공백이 섞이지 않는다(모드 3가지 · 검증 모드만 CA 안내).
+    #[test]
+    fn connect_timeout_messages_are_single_spaced() {
+        for m in [
+            TlsMode::Disabled,
+            TlsMode::Required,
+            TlsMode::VerifyIdentity,
+        ] {
+            let msg = connect_timeout_error(m).message;
+            assert!(!msg.contains("  "), "{msg}");
+            assert!(msg.contains("within 20s"), "{msg}");
+            assert_eq!(
+                msg.contains("pg.tls_ca"),
+                m == TlsMode::VerifyIdentity,
+                "{msg}"
+            );
+        }
+        assert!(connect_timeout_error(TlsMode::Disabled)
+            .message
+            .starts_with("connect did not"));
+        assert!(connect_timeout_error(TlsMode::Required)
+            .message
+            .starts_with("TLS handshake"));
+    }
+
     #[test]
     fn error_chain_joins_sources() {
         let inner = std::io::Error::other("inner cause");
