@@ -124,6 +124,7 @@
 | **프롬프트 변환 포트 `Extension::prompts`/`transform` + `Registry::transform`**(10-27 · 148차 · [75 §3-2](75-extension-sdk-and-dynamic-loading.md)) | nexa-sql `extensions/mod.rs` · `app/insseq.rs`(세션) · SDK `Prompt`/`TransformRequest`/`TransformResponse` | 입력란 → 값 기능을 확장으로 만들되 본문 쓰기 권한을 주지 않음 → **포트(trait) + 레지스트리 + 설정 `placeholder_key`** · 호스트가 세션(구간·교체·확정·복원·되돌리기)을 들고 게스트는 순수 함수 · 같은 id = wasm 앞섬 | Insert Sequence(내장 · wasm) |
 | **설정 overlay 층 `Settings::set_overlay`/`clear_overlay` + `adopt_unknown`**(10-27 · 148차 · [94 §9](94-settings-key-naming-and-location.md)) | nsql-settings | 확장이 기본 설정을 바꾸되 사용자 파일·값에 영향 0 → 런타임 층(먼저 읽힘 · 저장 0 · 주인별 해제) · 동적 등재 키의 파일 값은 등재 뒤 승격 | hello-ext 0.2.0 · 확장 전용 설정 |
 | **페이징 폴백 `page_sql_opts` + `strip_rn`**(10-28 · 157차 · D-385) | nsql-io `paging.rs` · nsql-run `fetch_offset` | 서버가 `OFFSET … FETCH`를 못 하면(Db2 ≤ 10.5 등 · `Caps.offset_fetch` 거짓) → `ROW_NUMBER() OVER ()`로 감싸 번호 열(`RN_COL`)로 자르고 결과에서 그 열을 뗀다 · 방언 분기 대신 능력표 | Db2 네이티브(10.5) · 다른 옛 서버 후보 |
+| **위임 세션 래퍼 `Tunneled`**(10-28 · 159차 · D-388) | nsql-drivers `tunnel.rs` · 허브 `open()` | 접속 전에 붙는 부가 자원(ssh 포워딩 프로세스)을 `Box<dyn Session>` 하나로 감싸 수명을 세션에 묶는다 — `Session` 메서드 전부 위임 · describe 꼬리만 덧붙임 · Drop = 자원 정리 · 어댑터·ABI는 모른다 | SSH 터널 · 후보 = 프록시(SOCKS/HTTP CONNECT) · 접속 전 훅 |
 
 규칙: 같은 문제를 두 번째 만나면 **부품으로 올린다**(nexa-ui면 공용). 창마다 복사한 코드는 이 표의 후보다.
 

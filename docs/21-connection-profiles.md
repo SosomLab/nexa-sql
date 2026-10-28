@@ -126,3 +126,15 @@ mysql://u:p@h:3306/db?tls=required
 - CA = `ConnectSpec.tls_ca`(`?tls_ca=` · PG는 `sslrootcert=`도) · 왕복 · 확장 드라이버 ABI kv `tls_ca` · 없는 파일 = "TLS CA file <경로>: I/O error …".
 - 접속 문자열에 없으면 설정 `pg.tls`/`pg.tls_ca` · `mysql.tls`/`mysql.tls_ca`(기본 preferred · D-384) — 허브가 `open()`에서 주입(명시값 우선 · 내장·cdylib 공용) · 설정 변경은 다음 접속부터.
 - 비밀번호·CA 경로 외의 인증서 재료(클라이언트 인증서 `sslcert`/`sslkey`)는 아직 없다.
+
+## 10. SSH 터널 `?ssh=` · `?ssh_key=`(10-28 · 159차 · T-3 · D-382 · D-388)
+
+```
+postgres://u:p@db.internal:5432/app?ssh=me@bastion.example.com          # 기본 22 · 에이전트/기본 키
+oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
+```
+
+- `ssh` = `user@host[:port]`(별칭 `ssh_host`) · `ssh_key` = 개인 키 파일(`-i` · 별칭 `ssh-key`/`ssh_identity`) — 접속 문자열 왕복 · 가림 표시 꼬리 " via ssh …".
+- 볼트 프로필 = `ssh=` · `ssh_key=` 두 줄(비밀 아님 · 평문 · 키 **파일 경로**만 · 암호 걸린 키는 ssh-agent로).
+- 동작 = 허브가 시스템 `ssh -N -L 127.0.0.1:<자동 포트>:<host>:<port>`를 띄우고 어댑터는 로컬 포트로 접속 · `BatchMode=yes`(묻지 않음) → 처음 보는 호스트는 터미널에서 한 번 접속해 known_hosts에 등록 · 호스트 없는 대상(TNS 별칭·DSN·파일) = 거절.
+- 설정 `ssh.command`(기본 `ssh` · 빈 값 = 터널 끔 · 고급) · `ssh.connect_timeout_secs`(15) · 접속 창 SSH 필드 = 2차(T-3).

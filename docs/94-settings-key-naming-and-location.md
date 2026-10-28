@@ -147,6 +147,11 @@
 - ★ **`driver.auto_install`**(10-23 · D-350 C단계) = Bool · 기본 **on** · 분류 **접속**(`CatConnection` · 설정 창에 보임) · 라벨 "없는 드라이버 자동 설치" · 끄면 접속 시 -1350 + 설치 안내만.
 - ★ **`driver.check_updates`**(10-23 · fbe5001) = Bool · 기본 **on** · 분류 **DBMS ▸ 드라이버** · 라벨 "드라이버 갱신 하루 1회 확인" · 색인 캐시 24시간 초과일 때만 GET 1 · 새 버전 = 상태줄 안내 + 로그(자동 교체 없음) · ★ **10-27 설명 갱신(D-364)** = 영어 "Once a day at startup, re-read the driver index; when installed drivers have newer versions, show a notice with an [Update] button (status bar and log too). Nothing is replaced until you click it" · 한국어 "하루 1회 기동 때 드라이버 색인을 다시 읽어 설치된 드라이버에 새 버전이 있으면 [갱신] 버튼이 있는 안내를 띄웁니다(상태줄·로그에도). 누르기 전에는 바꾸지 않습니다"(`Msg::DescDriverCheckUpdates`).
 
+### 6-9. SSH 터널 키(10-28 · 159차 · T-3 · D-388)
+
+- `ssh.command` = Text · 기본 `ssh` · 분류 **접속**(`CatConnection`) · **고급**(ADVANCED) · 빈 값 = 터널 비활성("SSH: tunnels are disabled …") · 경로를 넣으면 그 실행 파일.
+- `ssh.connect_timeout_secs` = Int 1..=120 · 기본 15 · 분류 접속 · 라벨 "SSH 터널 대기 상한(초)" · 포워딩 포트가 열릴 때까지 + ssh `ConnectTimeout` · 10초 초과라 `_secs`(§6-5).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).
