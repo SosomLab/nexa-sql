@@ -53,6 +53,10 @@ pub(crate) fn open_window(el: &ActiveEventLoop, spec: OpenSpec<'_>) -> Option<Op
         crate::wingeom::place_outer(&win, Some((x, y)));
     }
     crate::wingeom::keep_on_screen(&win, spec.owner);
+    // ★ 생성 직후 **활성화**(156차 · 사용자 10-28 "객체 찾기 창이 비활성으로 뜬다"): 창 생성의 `SW_SHOW`만으로는 OS 전경 규칙에 따라
+    //   소유 창이 활성화되지 않은 채 뜰 수 있다 — 대화상자(about·sqlprev·input…)가 쓰는 같은 길(`winfocus::focus` = winit
+    //   `force_window_active`)을 이 호스트로 여는 모든 보조 창(객체 찾기·변수·로그·메모리·세션…)에 적용. 자체 시험(`NSQL_NO_ACTIVATE`)은 건너뛴다.
+    crate::winfocus::focus(&win);
     let win = Rc::new(win);
     let scale = win.scale_factor() as f32;
     let surface = crate::present::Presenter::new(win.clone()).ok();
