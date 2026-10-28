@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/157-pg-tls-db2-cursor | 2026-10-28 | 2026-10-28 → main ff(삭제) · **c523dd9d** | 5 | 157차 win = PG TLS 보강(접속 상한 · 옛 확장 TLS 보증) + Db2 서버 커서 · 10.5 페이징 폴백 · DDM 0x8004 (옛 이름 feat/157-pg-tls-guard) |
 | fix/156-aux-window-focus | 2026-10-28 | 2026-10-28 → main ff(삭제) · **aa9b08e2** | 2 | 156차 win = 보조 창 생성 직후 활성화(`winhost::open_window` → `winfocus::focus`) · 사용자 실기 ✓ |
 | feat/155-pg-tls | 2026-10-28 | 2026-10-28 → main ff(삭제) · **9cdf2da5** | 3 | 155차 win = T-70 PostgreSQL TLS(rustls · TlsMode 5종 · `pg.tls`/`pg.tls_ca` · D-384 기본 preferred) |
 | feat/154-stateful-ext | 2026-10-28 | 2026-10-28 → main ff(삭제) · **d0938355** | 1 | 154차(a·b) win = T-450 길 A(상태 있는 확장 · 편집기 읽기/쓰기 · 사건 배달 · ABI v1.3 · SDK 0.4 · uppercase-selection 0.1.0) · 편집기 전용 가드 · 허용 뒤 탭 복귀 |
