@@ -98,12 +98,12 @@ const FIELDS: [Field; 10] = [
     Field::Name,
     Field::Host,
     Field::Port,
-    Field::Ssh,
-    Field::SshKey,
     Field::Database,
     Field::User,
     Field::Password,
     Field::Schema,
+    Field::Ssh,
+    Field::SshKey,
 ];
 
 pub(crate) struct ConnectPanel {
@@ -120,9 +120,13 @@ pub(crate) struct ConnectPanel {
     dialect: Combo,
     host: TextBox,
     port: TextBox,
-    /// ★ SSH 터널(T-3 2차 · 160차): 호스트+포트 줄 아래 한 줄 = 대상(왼쪽) + 키 경로(오른쪽) · 파일 방언은 숨김.
+    /// ★ SSH 터널(T-3 2차 · 160차 · 161차 접힘): 자주 안 쓰는 칸이라 **기본 접힘**(사용자 10-28) — 프로필 변수 줄 오른쪽 [SSH 터널…]
+    ///   버튼으로 펼치면 그 아래 한 줄 = 대상(왼쪽) + 키 경로(오른쪽) · 접어도 값은 유지(스펙·저장본에 그대로) · 값이 있는 프로필을
+    ///   불러오면 자동 펼침 · 파일 방언은 버튼·칸 모두 숨김.
     ssh: TextBox,
     ssh_key: TextBox,
+    ssh_open: bool,
+    ssh_btn: Button,
     database: TextBox,
     schema: TextBox,
     user: TextBox,
@@ -465,6 +469,8 @@ impl ConnectPanel {
             port: TextBox::new(""),
             ssh: TextBox::new(t(Msg::PhSsh)),
             ssh_key: TextBox::new(t(Msg::PhSshKey)),
+            ssh_open: false,
+            ssh_btn: Button::new(t(Msg::BtnSshOpen)),
             database: TextBox::new(t(Msg::PhDatabase)),
             schema: TextBox::new(t(Msg::PhSchema)),
             user: TextBox::new(t(Msg::PhUser)),
@@ -530,7 +536,36 @@ impl ConnectPanel {
         self.quick_btn.set_label(t(Msg::BtnQuickConnect));
         self.vars_btn
             .set_label(tf(Msg::BtnProfileVars, &[&self.vars.len().to_string()]));
+        self.sync_ssh_btn();
         self.layout_inner();
+    }
+
+    /// SSH 펼침 버튼 라벨 = 접힘 "SSH 터널…" · 접힘 + 값 있음 "SSH 터널 (켬)…" · 펼침 "SSH 터널 접기".
+    fn sync_ssh_btn(&mut self) {
+        let has = !self.ssh.text().trim().is_empty() || !self.ssh_key.text().trim().is_empty();
+        self.ssh_btn.set_label(t(if self.ssh_open {
+            Msg::BtnSshClose
+        } else if has {
+            Msg::BtnSshOpenSet
+        } else {
+            Msg::BtnSshOpen
+        }));
+    }
+
+    /// SSH 칸 펼침/접힘(버튼 · 시험) — 접어도 값은 그대로 · 펼치면 대상 칸에 포커스.
+    pub(crate) fn set_ssh_open(&mut self, open: bool) {
+        if self.ssh_open == open {
+            return;
+        }
+        self.ssh_open = open;
+        if open {
+            self.field_focus = Some(Field::Ssh);
+        } else if matches!(self.field_focus, Some(Field::Ssh | Field::SshKey)) {
+            self.field_focus = Some(Field::Host);
+        }
+        self.sync_ssh_btn();
+        self.layout_inner();
+        self.sync_focus();
     }
 
     fn selected_dialect(&self) -> Dialect {
@@ -588,6 +623,8 @@ impl ConnectPanel {
             .set_text(&spec.port.map(|p| p.to_string()).unwrap_or_default());
         self.ssh.set_text(spec.ssh.as_deref().unwrap_or(""));
         self.ssh_key.set_text(spec.ssh_key.as_deref().unwrap_or(""));
+        // 값이 있는 프로필 = 자동 펼침(사용자가 SSH가 걸린 프로필임을 바로 보게) · 없으면 접힘.
+        self.ssh_open = spec.ssh.is_some() || spec.ssh_key.is_some();
         self.database
             .set_text(spec.database.as_deref().unwrap_or(""));
         self.schema.set_text(spec.schema.as_deref().unwrap_or(""));
@@ -641,9 +678,14 @@ impl ConnectPanel {
         }
     }
 
-    /// SSH 터널 칸이 뜻이 있는 방언 = 네트워크 방언 전부(파일 방언은 숨김).
+    /// SSH 터널 칸이 뜻이 있는 방언 = 네트워크 방언 전부(파일 방언은 숨김) — 스펙·저장본의 기준(접힘과 무관).
     fn ssh_applies(&self) -> bool {
         !self.file_based()
+    }
+
+    /// SSH 칸이 지금 화면에 있는가 = 네트워크 방언 + 펼침(배치·Tab 순서의 기준).
+    fn ssh_shown(&self) -> bool {
+        self.ssh_applies() && self.ssh_open
     }
 
     /// 기본 스키마 칸이 뜻이 있는 방언(Oracle · PostgreSQL) — SQL Server는 Database가 그 자리 · 파일 방언은 없음.
@@ -677,6 +719,7 @@ impl ConnectPanel {
         }
         self.save_pw.set_checked(false);
         self.vars.clear();
+        self.ssh_open = false;
         let d = self.selected_dialect();
         self.apply_dialect(d);
         self.mark_saved();
@@ -779,6 +822,7 @@ impl ConnectPanel {
         self.port.set_modified(is(Dirty::Port));
         self.ssh.set_modified(is(Dirty::Ssh));
         self.ssh_key.set_modified(is(Dirty::SshKey));
+        self.sync_ssh_btn();
         self.database.set_modified(is(Dirty::Database));
         self.schema.set_modified(is(Dirty::Schema));
         self.user.set_modified(is(Dirty::User));
@@ -882,6 +926,7 @@ impl ConnectPanel {
         self.connect_btn.set_scale(scale);
         self.save_btn.set_scale(scale);
         self.vars_btn.set_scale(scale);
+        self.ssh_btn.set_scale(scale);
         self.layout_inner();
     }
 
@@ -936,15 +981,6 @@ impl ConnectPanel {
             self.port
                 .set_bounds(Rect::new(x + w - port_w, y, port_w, field_h), &mut inv);
             y += field_h + gap;
-            // ★ SSH 터널 한 줄(T-3 2차 · 160차 · D-389: 창 기본 높이 614 → 648): 대상 `user@host[:port]`(왼쪽) + 키 경로(오른쪽) ·
-            //   기본 스키마 줄과 같은 반반 나눔 — 호스트에 닿는 경로라 호스트 줄 바로 아래.
-            y += label_h;
-            let half = (w - gap) / 2;
-            self.ssh
-                .set_bounds(Rect::new(x, y, w - half - gap, field_h), &mut inv);
-            self.ssh_key
-                .set_bounds(Rect::new(x + w - half, y, half, field_h), &mut inv);
-            y += field_h + gap;
         }
         if !self.db_in_last_row() {
             place(&mut self.database, &mut inv, &mut y, field_h);
@@ -983,10 +1019,34 @@ impl ConnectPanel {
             }
             y += field_h + gap;
         }
-        // ★ 프로필 변수 버튼 한 줄(전폭 · 라벨 없음 · T-153 후속 10-27 · D-365: 창 기본 높이 580 → 614).
-        self.vars_btn
-            .set_bounds(Rect::new(x, y, w, field_h), &mut inv);
+        // ★ 프로필 변수 버튼 줄(라벨 없음 · T-153 후속 10-27 · D-365: 창 기본 높이 580 → 614) — 네트워크 방언은 오른쪽 반을
+        //   [SSH 터널…] 펼침 버튼이 차지(161차 · 사용자 10-28 "자주 안 쓰니 확장 버튼으로") · 파일 방언은 전폭.
+        if self.ssh_applies() {
+            let half = (w - gap) / 2;
+            self.vars_btn
+                .set_bounds(Rect::new(x, y, w - half - gap, field_h), &mut inv);
+            self.ssh_btn
+                .set_bounds(Rect::new(x + w - half, y, half, field_h), &mut inv);
+        } else {
+            self.vars_btn
+                .set_bounds(Rect::new(x, y, w, field_h), &mut inv);
+            self.ssh_btn.set_bounds(off, &mut inv);
+        }
         y += field_h + gap;
+        // ★ SSH 터널 펼침 줄(T-3 2차 · 160차 · D-389: 창 기본 높이 614 → 648 = 펼친 상태 기준): 대상 `user@host[:port]`(왼쪽) +
+        //   키 경로(오른쪽) · 기본 스키마 줄과 같은 반반 나눔 · 접힘이면 자리 없음(상태줄이 그만큼 넓어진다).
+        if self.ssh_shown() {
+            y += label_h;
+            let half = (w - gap) / 2;
+            self.ssh
+                .set_bounds(Rect::new(x, y, w - half - gap, field_h), &mut inv);
+            self.ssh_key
+                .set_bounds(Rect::new(x + w - half, y, half, field_h), &mut inv);
+            y += field_h + gap;
+        } else {
+            self.ssh.set_bounds(off, &mut inv);
+            self.ssh_key.set_bounds(off, &mut inv);
+        }
         // 버튼 3개 한 줄 — 동일 너비 · 동일 간격(나머지 px는 양끝에 나눠 중앙 정렬 · 사용자 09-14).
         let bw = (w - gap * 2) / 3;
         let bh = self.s(28.0);
@@ -1078,6 +1138,7 @@ impl ConnectPanel {
         set(&mut self.env, hit == Some(5));
         set(&mut self.quick_btn, hit == Some(6));
         set(&mut self.vars_btn, hit == Some(7));
+        set(&mut self.ssh_btn, hit == Some(8));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -1091,9 +1152,10 @@ impl ConnectPanel {
             self.env.bounds(),
             self.quick_btn.bounds(),
             self.vars_btn.bounds(),
+            self.ssh_btn.bounds(),
         ]
         .iter()
-        .position(|b| b.contains(p))
+        .position(|b| b.w > 0 && b.contains(p))
     }
 
     fn textbox(&mut self, f: Field) -> &mut TextBox {
@@ -1123,8 +1185,10 @@ impl ConnectPanel {
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         let a = self.test_btn.tick(now_ms);
         let b = self.connect_btn.tick(now_ms);
-        let c =
-            self.save_btn.tick(now_ms) | self.quick_btn.tick(now_ms) | self.vars_btn.tick(now_ms);
+        let c = self.save_btn.tick(now_ms)
+            | self.quick_btn.tick(now_ms)
+            | self.vars_btn.tick(now_ms)
+            | self.ssh_btn.tick(now_ms);
         let d = self.dialect.tick_hover(now_ms) | self.env.tick_hover(now_ms);
         // 입력란 hover 페이드(회색 · Slow).
         let mut e = false;
@@ -1148,6 +1212,7 @@ impl ConnectPanel {
             || self.save_btn.is_animating()
             || self.quick_btn.is_animating()
             || self.vars_btn.is_animating()
+            || self.ssh_btn.is_animating()
             || self.dialect.hover_animating()
             || self.env.hover_animating()
             || self.copy.next_tick(std::time::Instant::now()).is_some()
@@ -1179,15 +1244,15 @@ impl ConnectPanel {
         let mut v: Vec<Field> = FIELDS
             .iter()
             .copied()
-            .filter(|f| {
-                !(self.file_based()
-                    && matches!(f, Field::Host | Field::Port | Field::Ssh | Field::SshKey))
-            })
+            .filter(|f| !(self.file_based() && matches!(f, Field::Host | Field::Port)))
             .filter(|f| !(matches!(f, Field::Schema) && !self.schema_applies()))
+            .filter(|f| !(matches!(f, Field::Ssh | Field::SshKey) && !self.ssh_shown()))
             .collect();
         if self.db_in_last_row() {
+            // Database는 마지막 줄이지만 펼친 SSH 두 칸보다는 앞(폼 순서).
             v.retain(|f| *f != Field::Database);
-            v.push(Field::Database);
+            let at = v.iter().position(|f| *f == Field::Ssh).unwrap_or(v.len());
+            v.insert(at, Field::Database);
         }
         v
     }
@@ -1410,6 +1475,9 @@ impl ConnectPanel {
             self.save_btn.on_event(ev, inv);
             self.quick_btn.on_event(ev, inv);
             self.vars_btn.on_event(ev, inv);
+            if self.ssh_btn.bounds().w > 0 {
+                self.ssh_btn.on_event(ev, inv);
+            }
             // 포커스 링은 하나만 — 방금 눌린 컨트롤만 켠다(텍스트박스면 전부 끈다).
             if let InputEvent::MouseDown { x, y, .. } = *ev {
                 let hit = self.ctl_hit(Point { x, y });
@@ -1432,6 +1500,12 @@ impl ConnectPanel {
             }
             if self.vars_btn.take_clicked() {
                 return Some(PanelAction::EditVars);
+            }
+            if self.ssh_btn.take_clicked() {
+                let open = !self.ssh_open;
+                self.set_ssh_open(open);
+                inv.push(self.bounds);
+                return None;
             }
         }
         // 키 · 문자 → 포커스 텍스트박스
@@ -1564,6 +1638,7 @@ impl ConnectPanel {
         self.port.set_text(&snap.port);
         self.ssh.set_text(&snap.ssh);
         self.ssh_key.set_text(&snap.ssh_key);
+        self.ssh_open |= !snap.ssh.trim().is_empty() || !snap.ssh_key.trim().is_empty();
         self.database.set_text(&snap.database);
         self.schema.set_text(&snap.schema);
         self.user.set_text(&snap.user);
@@ -1872,6 +1947,13 @@ impl ConnectPanel {
         if is(Dirty::Vars) {
             stripe(dc, self.vars_btn.bounds());
         }
+        // SSH 펼침 버튼 — 접힌 채로 SSH 값이 저장본과 다르면(불러오기 뒤 접음) 띠로 알린다.
+        if self.ssh_btn.bounds().w > 0 {
+            self.ssh_btn.paint(dc, th);
+            if !self.ssh_open && (is(Dirty::Ssh) || is(Dirty::SshKey)) {
+                stripe(dc, self.ssh_btn.bounds());
+            }
+        }
         self.test_btn.paint(dc, th);
         self.connect_btn.paint(dc, th);
         // Save = 바뀐 칸이 있으면 강조 + `Save •`(`sync_dirty` · 툴바 Commit 배지와 같은 문법).
@@ -2170,7 +2252,17 @@ mod dirty_tests {
             ("me@bastion:2222", "/k/id")
         );
         assert!(!p.is_dirty(), "{:?}", p.dirty());
+        // 값이 있는 프로필 = 자동 펼침 · 접어도 스펙·저장본에 값은 그대로(바뀜 아님) · 다시 펼침.
+        assert!(p.ssh_open);
         assert!(p.ssh.bounds().w > 0 && p.ssh_key.bounds().w > 0);
+        p.set_ssh_open(false);
+        assert_eq!(p.ssh.bounds().w, 0);
+        assert!(!p.is_dirty());
+        assert_eq!(
+            p.build_spec().expect("collapsed").ssh.as_deref(),
+            Some("me@bastion:2222")
+        );
+        p.set_ssh_open(true);
         p.ssh.set_text(" me@other ");
         assert_eq!(p.dirty(), vec![Dirty::Ssh]);
         p.ssh_key.set_text("");
@@ -2187,11 +2279,20 @@ mod dirty_tests {
         p.discard_changes();
         assert_eq!(p.ssh.text(), "me@bastion:2222");
         assert!(!p.is_dirty());
-        // 파일 방언: 칸 숨김 · Tab 순서 밖 · 스펙에 안 실림(글자가 남아 있어도).
+        // 값 없는 프로필 = 접힘 · New = 접힘.
+        let plain = ConnectSpec::parse("postgres://u:pw@h:5432/db").expect("plain");
+        p.fill("B", &plain, Vec::new());
+        assert!(!p.ssh_open);
+        p.set_ssh_open(true);
+        p.clear();
+        assert!(!p.ssh_open);
+        // 파일 방언: 버튼·칸 숨김 · Tab 순서 밖 · 스펙에 안 실림(글자가 남아 있어도).
         p.dialect.select_value(&Dialect::Sqlite.to_string());
         p.apply_dialect(Dialect::Sqlite);
         p.database.set_text(":memory:");
+        p.set_ssh_open(true);
         assert_eq!((p.ssh.bounds().w, p.ssh_key.bounds().w), (0, 0));
+        assert_eq!(p.ssh_btn.bounds().w, 0);
         assert!(!p.visible_fields().contains(&Field::Ssh));
         let built = p.build_spec().expect("sqlite");
         assert_eq!((built.ssh, built.ssh_key), (None, None));
@@ -2275,19 +2376,14 @@ mod dirty_tests {
             p.env.bounds(),
             p.save_btn.bounds(),
         );
-        // ★ SSH 줄(T-3 2차): 호스트 줄 바로 아래 · 대상(왼쪽) + 키(오른쪽) 한 줄 · Database 위.
-        let (sh, sk, host, db) = (
-            p.ssh.bounds(),
-            p.ssh_key.bounds(),
-            p.host.bounds(),
-            p.database.bounds(),
-        );
-        assert_eq!((sh.y, sh.h), (sk.y, sk.h), "{sh:?} {sk:?}");
-        assert!(sh.w > 0 && sk.x > sh.right(), "{sh:?} {sk:?}");
-        assert!(
-            sh.y > host.bottom() && db.y > sh.bottom(),
-            "{host:?} {sh:?} {db:?}"
-        );
+        // ★ SSH(T-3 2차 · 161차 접힘): 기본 접힘 = 칸 없음 · [SSH 터널…] 버튼이 프로필 변수 버튼 오른쪽 같은 줄.
+        assert_eq!((p.ssh.bounds().w, p.ssh_key.bounds().w), (0, 0));
+        assert!(!p.ssh_open);
+        {
+            let (vb, sb) = (p.vars_btn.bounds(), p.ssh_btn.bounds());
+            assert_eq!((vb.y, vb.h), (sb.y, sb.h), "{vb:?} {sb:?}");
+            assert!(sb.w > 0 && sb.x > vb.right(), "{vb:?} {sb:?}");
+        }
         // 비밀번호 줄: 체크는 같은 줄 오른쪽 · 비밀번호는 그만큼 좁다.
         assert!(
             chk.y >= pw.y && chk.bottom() <= pw.bottom(),
@@ -2299,10 +2395,29 @@ mod dirty_tests {
         assert_eq!((sc.y, sc.h), (env.y, env.h));
         assert!(sc.w > 0 && env.x > sc.right(), "{sc:?} {env:?}");
         assert!(sc.y > pw.bottom() && btn.y > sc.bottom());
-        // ★ 프로필 변수 버튼 = 서버 유형 줄 아래 · 저장 버튼 위 · 전폭(10-27).
+        // ★ 프로필 변수 버튼 = 서버 유형 줄 아래 · 저장 버튼 위 · 네트워크 방언은 왼쪽 반(오른쪽 = SSH 버튼 · 10-28).
         let vb = p.vars_btn.bounds();
         assert!(vb.y > sc.bottom() && btn.y > vb.bottom(), "{vb:?} {btn:?}");
-        assert_eq!((vb.x, vb.w), (p.user.bounds().x, p.user.bounds().w));
+        assert_eq!(vb.x, p.user.bounds().x);
+        assert!(vb.w < p.user.bounds().w);
+        // 펼치면 그 줄 아래 SSH 대상(왼쪽) + 키(오른쪽) 한 줄 · 버튼 3개는 그만큼 내려간다 · 접으면 원위치 + 값 유지.
+        p.ssh.set_text("me@b");
+        p.set_ssh_open(true);
+        let (sh, sk, btn2) = (p.ssh.bounds(), p.ssh_key.bounds(), p.save_btn.bounds());
+        assert_eq!((sh.y, sh.h), (sk.y, sk.h), "{sh:?} {sk:?}");
+        assert!(sh.w > 0 && sk.x > sh.right(), "{sh:?} {sk:?}");
+        assert!(
+            sh.y > vb.bottom() && btn2.y > sh.bottom(),
+            "{vb:?} {sh:?} {btn2:?}"
+        );
+        assert!(btn2.y > btn.y);
+        assert_eq!(p.field_focus, Some(Field::Ssh));
+        assert_eq!(p.visible_fields().last().copied(), Some(Field::SshKey));
+        p.set_ssh_open(false);
+        assert_eq!(p.save_btn.bounds(), btn);
+        assert_eq!(p.ssh.text(), "me@b");
+        assert_eq!(p.field_focus, Some(Field::Host));
+        p.ssh.set_text("");
         // SQL Server: 스키마 숨김 · 그 자리에 Database(왼쪽) + 서버 유형(오른쪽) 한 줄 · User는 호스트 바로 아래로 올라온다(사용자 10-01).
         p.dialect.select_value(&Dialect::Mssql.to_string());
         p.apply_dialect(Dialect::Mssql);
@@ -2313,18 +2428,22 @@ mod dirty_tests {
         assert!(db.w > 0 && env.x > db.right(), "{db:?} {env:?}");
         assert!(db.y > pw.bottom() && p.save_btn.bounds().y > db.bottom());
         assert!(p.user.bounds().y < pw.y && p.user.bounds().y > p.host.bounds().y);
-        // Tab 순서도 폼 순서: … → Password → Database(마지막) · SSH 두 칸은 Port 다음.
+        // Tab 순서도 폼 순서: … → Password → Database(마지막) · SSH 두 칸은 접혀 있으면 순서 밖 · 펼치면 Database 뒤.
         let vis = p.visible_fields();
         assert_eq!(vis.last().copied(), Some(Field::Database));
         assert!(
             vis.iter().position(|f| *f == Field::Password)
                 < vis.iter().position(|f| *f == Field::Database)
         );
+        assert!(!vis.contains(&Field::Ssh));
+        p.set_ssh_open(true);
+        let vis = p.visible_fields();
         let at = |f: Field| vis.iter().position(|x| *x == f).expect("visible");
         assert_eq!(
-            (at(Field::Ssh), at(Field::SshKey)),
-            (at(Field::Port) + 1, at(Field::Port) + 2)
+            (at(Field::Database), at(Field::Ssh), at(Field::SshKey)),
+            (vis.len() - 3, vis.len() - 2, vis.len() - 1)
         );
+        p.set_ssh_open(false);
         // SQLite(파일): 경로 칸은 제자리(줄 전체) · 서버 유형이 마지막 줄 전체.
         let mut q = ConnectPanel::new(vec![Dialect::Sqlite]);
         q.set_bounds(Rect::new(0, 0, 292, 600), 1.0);
