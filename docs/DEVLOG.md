@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-28 밤 (162차 · Windows · 저장소 익명화 + SSH 터널 강화)** — 사용자 지시 = 파일의 IP·도메인·호스트·계정·업무 코드 익명화(1차 b8a72b09 · 2차 4d06f1e9 · crates 7e501de7 · 3차 38ac716a · 이력은 유지 · 실서버 점검 값 파라미터화 T-452) · SSH 터널 = 명령창 숨김 · 대상당 ssh 1 공유 · Job Object · PID 원장 + 기동 정리(D-391 · 441fe3ea) · V1 a~e ✓([journal 10-27 §24](journal/2026-10-27.md)).
 - **2026-10-28 (161차 · Windows · SSH 칸 기본 접힘 + 실서버 SSH 시험 케이스)** — 사용자 "자주 안 쓰니 확장 버튼으로" = 프로필 변수 버튼 줄 반반 [SSH 터널…] 펼침/접기(값 있으면 자동 펼침 · 접어도 값 유지 · D-390) · 실서버 SSH 터널 시험 케이스 `ssh_tunnel_real_server` + `scripts/win-ssh-tunnel-test.ps1` + [125](125-ssh-tunnel-real-server-test.md) · 실행 = 사용자 결정 대기([journal 10-27 §23](journal/2026-10-27.md)).
 - **2026-10-28 (160차 · Windows · T-3 2차 접속 창 SSH 칸)** — 접속 폼 호스트 줄 아래 SSH 터널(`user@host[:port]`) + SSH 키(경로) 한 줄 · 파일 방언 숨김 · 불러오기/저장/버리기/바뀜 표식 · 필수 밖 · 볼트 `ssh=`/`ssh_key=` 왕복 · 로그인 창 기본 높이 648(D-389) · V1 a~d ✓ · 다음 = 사용자 결정 대기(SSH 실기 · BatchMode)([journal 10-27 §22](journal/2026-10-27.md)).
 - **2026-10-28 (159차 · Windows · T-3 SSH 터널 1차)** — 사용자 결정 D-382(시스템 ssh 포워딩 · 외부 crate 0) 구현 = `?ssh=user@host[:port]`/`ssh_key` · 볼트 `ssh=`/`ssh_key=` · 허브 `nsql-drivers::tunnel`(`ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -L` · 로컬 포트 자동 · stderr 안내) + `Tunneled` 세션 래퍼(드라이버·ABI 무관 · D-388) · 설정 `ssh.command`/`ssh.connect_timeout_secs` · CI sshd 컨테이너 왕복(터널 경유 증명) · main **bef0e4ab** · lite + pg 0.1.8 실서버 TLS 확인 ✓ · 다음 = 2차 접속 창 SSH 필드([journal 10-27 §21](journal/2026-10-27.md)).

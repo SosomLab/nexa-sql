@@ -140,3 +140,4 @@ oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
 - 설정 `ssh.command`(기본 `ssh` · 빈 값 = 터널 끔 · 고급) · `ssh.connect_timeout_secs`(15).
 - 접속 창 칸(10-28 · 160차 · T-3 2차 · ★ 161차 = **기본 접힘** D-390) = 프로필 변수 버튼 옆 **[SSH 터널…]**(값 있으면 "SSH 터널 (켬)…")으로 펼치면 **SSH 터널**(`user@host[:port]`) · **SSH 키**(파일 경로) 한 줄 · 둘 다 선택(필수 아님) · 빈 칸 = 터널 없음 · 값 있는 프로필 = 자동 펼침 · 접어도 값 유지 · 파일 방언은 숨김 · 저장 = 볼트 `ssh=`/`ssh_key=` 줄 · [22 §1-3](22-driver-extensions.md).
 - 실서버 시험(10-28 · 161차) = 로컬 ssh 설정으로 Oracle에 붙는 시험 케이스·절차 = [125](125-ssh-tunnel-real-server-test.md)(`integration::ssh_tunnel_real_server` · `scripts/win-ssh-tunnel-test.ps1`).
+- 터널 수명(10-28 · 162차 · D-391) = Windows에서 ssh 명령창이 뜨지 않는다(`CREATE_NO_WINDOW`) · 같은 대상으로 여러 세션을 열어도 ssh는 1개(공유 · 마지막 세션이 닫히면 종료) · 앱이 비정상 종료해도 ssh가 남지 않게 Job Object(Windows) + PID 원장 `<설정 폴더>/run/ssh-tunnels.pids`(다음 기동 때 정리) · 원리 = [125 §7](125-ssh-tunnel-real-server-test.md).
