@@ -103,6 +103,9 @@ pub struct Caps {
     /// ★ 스칼라 식 조회에 붙일 `FROM`(10-24 · D-359): `EXEC :B := :A + 10`을 `SELECT … AS "B"`로 보낼 때 FROM 없는 SELECT를
     ///   거부하는 방언(Db2 = `SYSIBM.SYSDUMMY1`)만 `Some`.
     pub scalar_from: Option<&'static str>,
+    /// ★ 서버가 `OFFSET n ROWS FETCH FIRST m ROWS ONLY` 페이징을 받는가(157차 · Db2 ≤ 10.5 = 거짓 → 러너가 `ROW_NUMBER()` 폴백 ·
+    ///   [108 §9 T-5](../../docs/108-dbms-syntax-and-objects-survey.md)). 세션이 서버 버전으로 정한다(Db2 = ACCRDBRM PRDID) · 그 밖 = 참.
+    pub offset_fetch: bool,
 }
 
 const ORACLE: Caps = Caps {
@@ -122,6 +125,7 @@ const ORACLE: Caps = Caps {
     bulk_load: crate::bulk::BulkLoad::ArrayDml,
     tsql_print: false,
     scalar_from: None,
+    offset_fetch: true,
 };
 
 const MSSQL: Caps = Caps {
@@ -142,6 +146,7 @@ const MSSQL: Caps = Caps {
     bulk_load: crate::bulk::BulkLoad::TdsBulk,
     tsql_print: true,
     scalar_from: None,
+    offset_fetch: true,
 };
 
 const POSTGRES: Caps = Caps {
@@ -161,6 +166,7 @@ const POSTGRES: Caps = Caps {
     bulk_load: crate::bulk::BulkLoad::CopyIn,
     tsql_print: false,
     scalar_from: None,
+    offset_fetch: true,
 };
 
 /// `?` 자리 바인드 · 1행 결과로 값을 받는 DBMS의 공통 틀(MySQL · SQLite · ODBC가 여기서 갈라진다).
@@ -182,6 +188,7 @@ const QUESTION: Caps = Caps {
     },
     tsql_print: false,
     scalar_from: None,
+    offset_fetch: true,
 };
 
 /// MySQL/MariaDB(135차 · 드라이버 `nsql-driver-mysql`): `CALL p(?, ?)` 준비문의 OUT/INOUT 값은 **마지막 결과 집합 한 행**으로 온다

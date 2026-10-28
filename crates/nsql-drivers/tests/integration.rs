@@ -1809,6 +1809,94 @@ fn db2_open(spec: &ConnectSpec) -> Result<Box<dyn Session>, DbError> {
     Ok(Box::new(nsql_driver_db2::Db2Session::open(spec)?))
 }
 
+/// ★ 157차 서버 커서(이어 받기 · 한 세션 한 커서 · 자동 커밋 보류) + 10.5 페이징 폴백 SQL(`ROW_NUMBER()` · 12.1에서도 같은 문법)을 실서버로.
+/// 3,000행 × ~110 B = 한 블록(64 KB)을 넘겨야 첫 응답이 열린 채 끝난다(작은 결과는 첫 블록에 ENDQRYRM이 같이 와 커서 없이 끝 = 종전).
+#[test]
+fn db2_server_cursor_and_rownum_paging() {
+    let Some(spec) = db2_spec() else {
+        return;
+    };
+    let mut s = db2_open(&spec).expect("open");
+    assert!(s.cursor_supported());
+    let req = |q: &str| nsql_core::ExecRequest {
+        sql: q.to_string(),
+        params: Vec::new(),
+    };
+    let _ = s.execute(&req("DROP TABLE NSQLT_DB2C"));
+    s.execute(&req(
+        "CREATE TABLE NSQLT_DB2C (ID INTEGER NOT NULL PRIMARY KEY, PAD VARCHAR(100))",
+    ))
+    .expect("create");
+    s.execute(&req(
+        "INSERT INTO NSQLT_DB2C WITH T(N) AS (VALUES 1 UNION ALL SELECT N + 1 FROM T WHERE N < 3000) SELECT N, REPEAT('x', 100) FROM T",
+    ))
+    .expect("insert 3000");
+    s.set_option("max_rows", "2").expect("max_rows");
+    let r = s
+        .execute(&req("SELECT ID, PAD FROM NSQLT_DB2C ORDER BY ID"))
+        .expect("select");
+    assert_eq!(
+        r.result_sets[0].rows.len(),
+        2,
+        "{:?}",
+        r.result_sets[0].rows.len()
+    );
+    assert_eq!(r.result_sets[0].rows[1][0], Value::Int(2));
+    let h = r.pending.expect("상한에 닿은 조회 = 커서 열림");
+    let (p2, more) = s.fetch_next(h, 2).expect("fetch_next 1");
+    assert_eq!((p2.rows.len(), more), (2, true));
+    assert_eq!(p2.rows[0][0], Value::Int(3));
+    assert_eq!(p2.columns[0].name, "ID");
+    let (rest, more) = s.fetch_next(h, 0).expect("fetch_next rest");
+    assert_eq!(
+        (rest.rows.len(), more),
+        (2996, false),
+        "남은 전부 = CNTQRY 블록 여러 개"
+    );
+    assert_eq!(rest.rows[0][0], Value::Int(5));
+    assert_eq!(rest.rows[2995][0], Value::Int(3000));
+    assert!(s.fetch_next(h, 2).is_err(), "끝난 커서 = 닫힘");
+    // 열린 커서 중 새 실행 = 조용히 닫고 진행(옛 핸들은 오류) · 커밋도 닫는다 · close_cursor는 멱등.
+    let h2 = s
+        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .expect("select 2")
+        .pending
+        .expect("pending 2");
+    let c = s
+        .execute(&req("SELECT COUNT(*) FROM NSQLT_DB2C"))
+        .expect("count");
+    assert_eq!(c.result_sets[0].rows[0][0], Value::Int(3000));
+    assert!(s.fetch_next(h2, 2).is_err());
+    let h3 = s
+        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .expect("select 3")
+        .pending
+        .expect("pending 3");
+    s.commit().expect("commit");
+    assert!(s.fetch_next(h3, 2).is_err());
+    s.close_cursor(h3).expect("close_cursor 멱등");
+    // 상한 없음 = 커서 없이 전부(종전).
+    s.set_option("max_rows", "0").expect("max_rows 0");
+    let all = s
+        .execute(&req("SELECT ID FROM NSQLT_DB2C ORDER BY ID"))
+        .expect("all");
+    assert_eq!(all.result_sets[0].rows.len(), 3000);
+    assert!(all.pending.is_none());
+    // 10.5 폴백 페이징 SQL(nsql-io `page_sql_opts(Db2, …, false)`와 같은 꼴) = 번호 열이 끝에 · 호스트가 뗀다.
+    let q = "SELECT * FROM (SELECT x.*, ROW_NUMBER() OVER () AS NSQL_RN__ FROM (\nSELECT ID FROM NSQLT_DB2C ORDER BY ID\n) x) y WHERE NSQL_RN__ > 1 AND NSQL_RN__ <= 3";
+    let p = s.execute(&req(q)).expect("rownum paging");
+    let rs = &p.result_sets[0];
+    assert_eq!(
+        rs.columns.last().map(|c| c.name.as_str()),
+        Some("NSQL_RN__")
+    );
+    assert_eq!(
+        rs.rows.iter().map(|r| r[0].clone()).collect::<Vec<_>>(),
+        vec![Value::Int(2), Value::Int(3)]
+    );
+    s.execute(&req("DROP TABLE NSQLT_DB2C")).expect("drop");
+}
+
 /// ★ T-426 2차 ⑤ EUSRIDPWD(SECMEC 9) 실서버 검증 — db2.yml이 기존 시험 뒤 서버 인증을 `SERVER_ENCRYPT`로 바꾸고 `NSQL_DB2_EXPECT_SECMEC9=1`로
 /// 이 시험만 돌린다(이름이 `db2_`로 시작하지 않아 앞 단계 필터 밖). env가 없으면 생략 · 있으면 **평문 3 폴백은 실패**로 판정(설명 꼬리로 본다).
 #[test]

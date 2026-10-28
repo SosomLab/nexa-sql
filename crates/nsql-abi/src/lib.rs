@@ -797,6 +797,7 @@ pub mod codec {
                 bulk_load,
                 tsql_print,
                 scalar_from,
+                offset_fetch,
             } = *c;
             self.u8(match marker {
                 Marker::Named => 0,
@@ -851,6 +852,8 @@ pub mod codec {
             self.bool(tsql_print);
             // ★ 꼬리 필드(10-25 · D-359): 옛 드라이버(drivers-v0.1.3 이하)는 여기서 끝난다 → 읽는 쪽은 버퍼가 끝나면 None.
             self.opt_str(scalar_from);
+            // 꼬리 필드 2(157차): 옛 앱은 안 읽고 · 옛 드라이버는 안 보낸다(= 참).
+            self.bool(offset_fetch);
         }
         pub fn bulk_opts(&mut self, o: &BulkOpts) {
             self.u64(o.batch_rows as u64);
@@ -963,6 +966,11 @@ pub mod codec {
             } else {
                 self.opt_str()?.map(|s| &*Box::leak(s.into_boxed_str()))
             };
+            let offset_fetch = if self.pos >= self.buf.len() {
+                true
+            } else {
+                self.bool()?
+            };
             Ok(Caps {
                 marker,
                 out_values,
@@ -978,6 +986,7 @@ pub mod codec {
                 bulk_load,
                 tsql_print,
                 scalar_from,
+                offset_fetch,
             })
         }
         pub fn bulk_opts(&mut self) -> Result<BulkOpts, DecodeError> {
@@ -1937,10 +1946,22 @@ mod tests_v2 {
         // ★ 꼬리 필드 호환(10-25): `scalar_from` 바이트가 없는 옛 인코딩도 읽힌다(None).
         let mut w = Writer::default();
         w.caps(&Caps::of(Dialect::Db2));
-        let cut = w.buf.len() - 1 - "SYSIBM.SYSDUMMY1".len() - 4;
+        let cut = w.buf.len() - 1 - 1 - "SYSIBM.SYSDUMMY1".len() - 4;
         let old = Reader::new(&w.buf[..cut]).caps().expect("old caps");
         assert_eq!(old.scalar_from, None);
+        assert!(old.offset_fetch, "꼬리 2 없음 = 참");
         assert_eq!(old.ident_fold, Caps::of(Dialect::Db2).ident_fold);
+        // 꼬리 1만 있고 꼬리 2(offset_fetch · 157차)가 없는 인코딩도 참으로 읽힌다 · 거짓은 왕복한다.
+        let one = Reader::new(&w.buf[..w.buf.len() - 1])
+            .caps()
+            .expect("tail-1 caps");
+        assert_eq!(one.scalar_from, Some("SYSIBM.SYSDUMMY1"));
+        assert!(one.offset_fetch);
+        let mut c = Caps::of(Dialect::Db2);
+        c.offset_fetch = false;
+        let mut w = Writer::default();
+        w.caps(&c);
+        assert_eq!(Reader::new(&w.buf).caps().expect("caps"), c);
     }
 
     #[test]

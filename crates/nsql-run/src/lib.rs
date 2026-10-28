@@ -1974,13 +1974,22 @@ impl Runner {
             return Err(msg_err(t(Msg::NoSession)));
         };
         // 래핑은 limit+1행을 달라고 하고 상한은 limit — 한 행이 더 오면 `more`.
+        // ★ 157차: 서버가 `OFFSET … FETCH`를 못 받으면(Db2 ≤ 10.5 · `Caps::offset_fetch`) `ROW_NUMBER()` 폴백 + 번호 열 떼기.
+        let offset_fetch = self.session.as_ref().is_none_or(|s| s.caps().offset_fetch);
         let (q, max) = if limit == 0 {
-            (nsql_io::paging::page_sql(d, sql, offset, 0), 0)
+            (
+                nsql_io::paging::page_sql_opts(d, sql, offset, 0, offset_fetch),
+                0,
+            )
         } else {
-            (nsql_io::paging::page_sql(d, sql, offset, limit + 1), limit)
+            (
+                nsql_io::paging::page_sql_opts(d, sql, offset, limit + 1, offset_fetch),
+                limit,
+            )
         };
         let t0 = Instant::now();
-        let (rs, more, _) = self.query_once(&q, max)?;
+        let (mut rs, more, _) = self.query_once(&q, max)?;
+        nsql_io::paging::strip_rn(&mut rs);
         let mut timeline = Timeline::new();
         let span = timeline.push(Stage::Navigate, t0.elapsed());
         span.rows = Some(rs.rows.len() as u64);
