@@ -1071,6 +1071,116 @@ fn mysql_tls_modes_follow_url_param() {
     }
 }
 
+/// ★ T-70 후속(158차 · 사용자 10-28 결정 ⓐ): CI의 **자체 서명 TLS PG**(`NSQL_PG_TLS_URL` · CA 파일 = `NSQL_PG_TLS_CA`)로 모드 5종 ·
+/// 인증서 오류 원문(사슬) · `tls_ca=` 검증 · preferred의 "(TLS on)" 꼬리 · **TLS 세션의 취소**(같은 TLS로 cancel_query · 57014).
+/// 내장(rlib)·확장(`NSQL_TEST_DYN=1` · cdylib) 두 경로 모두 같은 단언. env가 없으면 생략.
+#[test]
+fn pg_tls_modes_follow_url_param() {
+    use nsql_core::ExecRequest;
+    let Ok(url) = std::env::var("NSQL_PG_TLS_URL") else {
+        eprintln!("[skip] NSQL_PG_TLS_URL 없음");
+        return;
+    };
+    let ca = std::env::var("NSQL_PG_TLS_CA").ok();
+    let probe = "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()";
+    // (세션, pg_stat_ssl.ssl 글자, 설명) — 접속·조회 실패는 오류 문구로.
+    let open =
+        |tls: &str, ca: Option<&str>| -> Result<(Box<dyn Session>, String, String), String> {
+            let sep = if url.contains('?') { '&' } else { '?' };
+            let mut u = format!("{url}{sep}tls={tls}");
+            if let Some(ca) = ca {
+                u.push_str(&format!("&tls_ca={ca}"));
+            }
+            let spec = nsql_drivers::parse_target(&u, Dialect::Postgres)?;
+            let mut s = open_session(&spec, Dialect::Postgres).map_err(|e| e.message)?;
+            let r = s
+                .execute(&ExecRequest {
+                    sql: probe.to_string(),
+                    params: Vec::new(),
+                })
+                .map_err(|e| e.message)?;
+            let on = r
+                .result_sets
+                .first()
+                .and_then(|rs| rs.rows.first())
+                .and_then(|row| row.first())
+                .map(nsql_core::Value::display)
+                .unwrap_or_default();
+            let desc = s.describe();
+            Ok((s, on, desc))
+        };
+    let on = |v: &str| v == "t" || v.eq_ignore_ascii_case("true");
+    // 1. required · preferred = 암호화 · disabled = 평문 · preferred는 설명 꼬리 "(TLS on)".
+    let (_, v, _) = open("required", None).expect("required");
+    assert!(on(&v), "required → ssl: {v:?}");
+    let (_, v, d) = open("preferred", None).expect("preferred");
+    assert!(on(&v), "preferred → 서버가 되면 암호화: {v:?}");
+    assert!(d.ends_with("(TLS on)"), "preferred 설명 꼬리: {d:?}");
+    let (_, v, d) = open("disabled", None).expect("disabled");
+    assert!(!on(&v), "disabled → 평문: {v:?}");
+    assert!(!d.contains("(TLS"), "disabled = 꼬리 없음: {d:?}");
+    // 2. 검증 모드 = CA 없으면(자체 서명) 인증서 오류 원문이 사슬로 · 상한 안에 끝난다.
+    let started = std::time::Instant::now();
+    let e = open("verify_ca", None)
+        .err()
+        .expect("verify_ca(CA 없음) = 실패");
+    assert!(
+        started.elapsed().as_secs() <= 40,
+        "검증 실패는 상한 안에 오류로 끝난다({e})"
+    );
+    assert!(
+        e.contains("certificate") || e.contains("Unknown") || e.contains("TLS"),
+        "인증서 오류 원문이 보인다: {e}"
+    );
+    let e = open("verify_identity", None)
+        .err()
+        .expect("verify_identity(CA 없음) = 실패");
+    assert!(e.contains("TLS") || e.contains("certificate"), "{e}");
+    // 3. CA 파일을 주면 verify_ca · verify_identity(SAN = localhost) 둘 다 암호화 접속.
+    if let Some(ca) = ca.as_deref() {
+        let (_, v, _) = open("verify_ca", Some(ca)).expect("verify_ca + CA");
+        assert!(on(&v), "verify_ca + CA → ssl: {v:?}");
+        let (_, v, _) = open("verify_identity", Some(ca)).expect("verify_identity + CA");
+        assert!(on(&v), "verify_identity + CA → ssl: {v:?}");
+        // libpq 이름도 같은 뜻(`sslmode=verify-full` · `sslrootcert=`).
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let spec = nsql_drivers::parse_target(
+            &format!("{url}{sep}sslmode=verify-full&sslrootcert={ca}"),
+            Dialect::Postgres,
+        )
+        .expect("libpq 이름");
+        assert_eq!(spec.tls.as_deref(), Some("verify_identity"));
+        assert_eq!(spec.tls_ca.as_deref(), Some(ca));
+    } else {
+        eprintln!("[skip] NSQL_PG_TLS_CA 없음 → CA 검증 생략");
+    }
+    // 4. TLS 세션의 취소 = 취소 접속도 같은 TLS(T-70 · `PgCancel`) → pg_sleep이 57014로 끝난다.
+    let (mut s, _, _) = open("required", None).expect("required for cancel");
+    let h = s.cancel_handle().expect("PG = 취소 핸들 있음");
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        h.cancel()
+    });
+    let started = std::time::Instant::now();
+    let r = s.execute(&ExecRequest {
+        sql: "SELECT pg_sleep(30)".to_string(),
+        params: Vec::new(),
+    });
+    let cancel = t.join().expect("cancel thread");
+    assert!(cancel.is_ok(), "TLS 취소 접속 성공: {cancel:?}");
+    let e = r.err().expect("취소된 문장 = 오류");
+    assert!(
+        e.message.contains("57014") || e.message.contains("cancel"),
+        "취소 오류 원문: {}",
+        e.message
+    );
+    assert!(
+        started.elapsed().as_secs() < 20,
+        "취소가 먹혀 30 s 전에 끝난다({:?})",
+        started.elapsed()
+    );
+}
+
 /// ★ 대량 적재(89 §1-5 · T-387 후속): `LOAD DATA LOCAL INFILE` 싱크 왕복 — 임시 표에 3행(탭·줄바꿈·역슬래시·한글·NULL·바이트) →
 /// `finish` = 3 → 재조회 값 동일. 서버 `local_infile=OFF`면 `bulk_begin` 거절(러너 폴백 경로) = 건너뜀으로 기록.
 /// `NSQL_MARIADB_URL`이 있으면 MariaDB로도 같은 표를 돈다.

@@ -141,6 +141,25 @@ jobs:
           sudo curl -fsSL -o ic.zip https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
           sudo unzip -q ic.zip && sudo rm ic.zip && sudo mv instantclient_* instantclient
           ls /opt/oracle/instantclient | head
+      # ★ T-70 후속(158차 · 사용자 10-28 결정): 자체 서명 CA로 서명한 서버 인증서(SAN = localhost · 127.0.0.1)로 **TLS 켠 PG**를 하나 더(5434)
+      #   → `pg_tls_modes_follow_url_param`이 모드 5종 · 인증서 오류 원문 · CA 파일 검증 · TLS 중 취소를 본다(내장·확장 두 경로). 서비스
+      #   컨테이너는 인증서 파일을 넣을 수 없어 단계에서 docker run.
+      - name: PostgreSQL TLS container (self-signed CA · port 5434)
+        working-directory: .
+        run: |
+          mkdir -p pgtls && cd pgtls
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt -days 2 -subj "/CN=nexa-test-ca"
+          openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=localhost"
+          printf "subjectAltName=DNS:localhost,IP:127.0.0.1\n" > san.cnf
+          openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 2 -extfile san.cnf
+          sudo chown 999:999 server.key server.crt && sudo chmod 600 server.key
+          docker run -d --name pgtls -p 5434:5432 -e POSTGRES_USER=nexa -e POSTGRES_PASSWORD=nexa -e POSTGRES_DB=nexa \
+            -v "$PWD/server.crt:/certs/server.crt:ro" -v "$PWD/server.key:/certs/server.key:ro" \
+            postgres:17 -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 1 30); do docker exec pgtls pg_isready -U nexa -h localhost && break; sleep 2; done
+          docker exec pgtls psql -U nexa -d nexa -c "SHOW ssl"
+          echo "NSQL_PG_TLS_URL=postgres://nexa:nexa@localhost:5434/nexa" >> "$GITHUB_ENV"
+          echo "NSQL_PG_TLS_CA=$PWD/ca.crt" >> "$GITHUB_ENV"
       - name: wait for DBs
         run: bash scripts/wait-for-db.sh
       - name: integration tests
