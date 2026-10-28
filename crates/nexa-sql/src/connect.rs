@@ -2138,10 +2138,10 @@ mod dirty_tests {
         );
         assert_eq!(
             quick_profile_name(
-                &s("odbc:Driver={SQL Server};Server=192.168.0.58,1433;Database=M4PLAN;UID=u"),
+                &s("odbc:Driver={SQL Server};Server=172.16.1.58,1433;Database=M4PLAN;UID=u"),
                 none
             ),
-            "odbc-SQL_Server-192.168.0.58"
+            "odbc-SQL_Server-172.16.1.58"
         );
         assert_eq!(
             quick_profile_name(&s("odbc:Trusted_Connection=yes"), none),

@@ -1075,13 +1075,13 @@ mod tests {
     /// `user@host` = 비밀번호 없음(물어본다) · `user:@host` = 빈 비밀번호를 명시(묻지 않는다) — 둘을 구분한다.
     #[test]
     fn explicit_empty_password_is_not_missing() {
-        let none = ConnectSpec::parse("oracle://BISCM@192.168.0.58:1521/BISCM").unwrap();
+        let none = ConnectSpec::parse("oracle://BISCM@172.16.1.58:1521/BISCM").unwrap();
         assert_eq!(none.user.as_deref(), Some("BISCM"));
         assert!(none.password.is_none());
-        let empty = ConnectSpec::parse("oracle://BISCM:@192.168.0.58:1521/BISCM").unwrap();
+        let empty = ConnectSpec::parse("oracle://BISCM:@172.16.1.58:1521/BISCM").unwrap();
         assert_eq!(empty.user.as_deref(), Some("BISCM"));
         assert_eq!(empty.password.as_deref(), Some(""));
-        assert_eq!(empty.host.as_deref(), Some("192.168.0.58"));
+        assert_eq!(empty.host.as_deref(), Some("172.16.1.58"));
         assert_eq!(empty.database.as_deref(), Some("BISCM"));
         // sqlplus식도 같다.
         let sp = ConnectSpec::parse("scott/@orcl").unwrap();
@@ -1167,9 +1167,9 @@ mod tests {
     fn odbc_endpoint_from_connection_string() {
         assert_eq!(
             odbc_endpoint(
-                "Driver={SQL Server};Server=192.168.0.58,1433;Database=M4PLAN;Uid=u;Pwd=p"
+                "Driver={SQL Server};Server=172.16.1.58,1433;Database=M4PLAN;Uid=u;Pwd=p"
             ),
-            Some(("192.168.0.58".into(), 1433))
+            Some(("172.16.1.58".into(), 1433))
         );
         assert_eq!(
             odbc_endpoint("Driver={SQL Server};Server=tcp:db.example,1444"),

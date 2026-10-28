@@ -152,13 +152,13 @@ mkdir -p "$INSTANT_CLIENT_PATH/network/admin"
 cat > "$INSTANT_CLIENT_PATH/network/admin/tnsnames.ora" <<'EOF'
 M4PLAN55 =
   (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 192.168.0.55)(PORT = 1521))
+    (ADDRESS = (PROTOCOL = TCP)(HOST = 172.16.1.55)(PORT = 1521))
     (CONNECT_DATA = (SERVER = DEDICATED)(SERVICE_NAME = XE))
   )
 
 M4PLAN58 =
   (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 192.168.0.58)(PORT = 1521))
+    (ADDRESS = (PROTOCOL = TCP)(HOST = 172.16.1.58)(PORT = 1521))
     (CONNECT_DATA = (SERVER = DEDICATED)(SERVICE_NAME = BISCM))
   )
 EOF
@@ -168,11 +168,11 @@ EOF
 
 ```sh
 sqlplus -V                                            # 설치 확인
-sqlplus BISCM/biscm@192.168.0.55:1521/XE              # EZConnect
-sqlplus BISCM/biscm@M4PLAN55                          # tnsnames 별칭
-sqlplus BISCM/biscm@"(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=192.168.0.55)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=XE)))"
+sqlplus <user>/<pw>@172.16.1.55:1521/XE              # EZConnect
+sqlplus <user>/<pw>@M4PLAN55                          # tnsnames 별칭
+sqlplus <user>/<pw>@"(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=172.16.1.55)(PORT=1521))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=XE)))"
 # nexa-sql CLI — 같은 접속을 우리 도구로
-nsql run -c "oracle://BISCM:biscm@192.168.0.55:1521/XE" examples/it-oracle.sql
+nsql run -c "oracle://<user>:<pw>@172.16.1.55:1521/XE" examples/it-oracle.sql
 ```
 (선택) 방향키 히스토리: `brew install rlwrap` 후 `alias sqlplus='rlwrap sqlplus'`.
 

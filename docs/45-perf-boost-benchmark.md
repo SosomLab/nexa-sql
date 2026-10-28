@@ -1,6 +1,6 @@
 # 45 · 실행 속도 향상(`perf.boost`) 켬/끔 성능 비교 (1차 2026-09-17 · **2차 2026-09-22 §4** · Windows 실측)
 
-> **요청**(사용자 09-17): *"실행속도향상을 켠 상태와 끈 상태에 대한 다양한 측면의 성능 비교 · 실 연결은 61.81.244.214:1521 · MSSQL은 등록된 SQL Server · 별도 문서에 비교표로."*
+> **요청**(사용자 09-17): *"실행속도향상을 켠 상태와 끈 상태에 대한 다양한 측면의 성능 비교 · 실 연결은 172.16.0.214:1521 · MSSQL은 등록된 SQL Server · 별도 문서에 비교표로."*
 > **설계**: [39 §4-6](39-resource-governance.md) · **측정 스크립트**: `scratchpad/bench-boost.ps1`(세션 임시 · 저장소 이식 = T-90e) · 원자료 `target/bench-boost.csv`.
 
 ## 0. 결론 다섯 줄
@@ -17,8 +17,8 @@
 |---|---|
 | 기기 | Windows 11 Pro 10.0.26200 · 개발 PC(Ryzen/Intel 미기록 · `nexa-sys` CPU 수 미기록) |
 | 빌드 | `target/release`(옵션 그대로 · LTO/strip 미적용 = T-102 전) · nexa-sql 52차 작업 트리(DR-33 · 툴바 도크 · 향상 모드 포함) |
-| Oracle | `SNOPDB_19c` = BISCM@**61.81.244.214**:1521/BISCM(WAN) · `M4S_I002040` 155,316행 |
-| SQL Server | `M4PLAN` = BISCM_MS@192.168.0.58:1433/M4PLAN_MS(LAN) |
+| Oracle | `SNOPDB_19c` = BISCM@**172.16.0.214**:1521/BISCM(WAN) · `M4S_I002040` 155,316행 |
+| SQL Server | `M4PLAN` = BISCM_MS@172.16.1.58:1433/M4PLAN_MS(LAN) |
 | 방법 | 모드마다 `nsql config set perf.boost off/on` → GUI 3회 기동(창 핸들까지 ms · 4초 뒤 자원 · 유휴 10초 CPU) · CLI 질의 3회(`nsql run --timing`) · **중앙값** |
 | 주의 | GUI 3회 중 1회는 다른 캡처 작업과 겹쳤을 수 있어 중앙값으로 본다 · 유휴 측정은 창에 포커스 없음(백그라운드) |
 

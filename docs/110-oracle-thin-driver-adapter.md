@@ -48,7 +48,7 @@
 | 의존 | — | rustls 0.23(aws-lc-rs = C/asm 빌드 · Windows는 cmake/nasm이 필요할 수 있음) · webpki-roots · aes/cbc/pbkdf2/sha2 · chrono · uuid · whoami · rand |
 
 ### 1-3. 사용자 실서버(10-13 · 읽기 전용 조회 · 운영 SNOPDB_19c 제외)
-- 저장된 Oracle 프로필 6개 = 전부 BISCM 계열 · **Oracle Database 19c EE**(192.168.0.58).
+- 저장된 Oracle 프로필 6개 = 전부 BISCM 계열 · **Oracle Database 19c EE**(172.16.1.58).
 - `v$session_connect_info` = Encryption/Crypto-checksumming 서비스 줄만(알고리즘 어댑터 줄 없음) → **NNE 미사용**.
 - 계정 BISCM·SQLEDU·BISCM_SB `PASSWORD_VERSIONS = 11G 12C` · `sec_case_sensitive_logon = TRUE` → #6 위험 "중간"(10G가 없어 확인된 실패 조건은 아님 · **스파이크 첫 확인 항목**).
 

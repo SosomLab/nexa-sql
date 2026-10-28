@@ -40,6 +40,6 @@ echo "▶ 등록된 드라이버:"; odbcinst -q -d
 cat <<'EOT'
 ▶ 검증(예 · 자세히 = scripts/linux-odbc-e2e.sh):
   nsql run -c "odbc:Driver={SQLite3};Database=/tmp/odbc-test.sqlite" roundtrip.sql           # CREATE · INSERT(한글) · SELECT
-  isql -v -k "Driver={PostgreSQL Unicode};Server=192.168.0.60;Port=5433;Database=matrixdb2;UID=postgres;PWD=…"
-  isql -v -k "Driver={ODBC Driver 18 for SQL Server};Server=192.168.0.58,1433;UID=BISCM_MS;PWD=…;TrustServerCertificate=yes"
+  isql -v -k "Driver={PostgreSQL Unicode};Server=172.16.1.60;Port=5433;Database=matrixdb2;UID=postgres;PWD=…"
+  isql -v -k "Driver={ODBC Driver 18 for SQL Server};Server=172.16.1.58,1433;UID=BISCM_MS;PWD=…;TrustServerCertificate=yes"
 EOT

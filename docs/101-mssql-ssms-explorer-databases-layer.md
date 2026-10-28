@@ -13,7 +13,7 @@
 ## 2. 목표 골격(SSMS 대조 · SQL Server에만 적용 · Oracle/PG/MySQL/SQLite는 종전 트리)
 
 ```
-[서버 헤더]  192.168.0.58:1433 (SQL Server 15.0.4375.4 - BISCM_MS)        연결 1개
+[서버 헤더]  172.16.1.58:1433 (SQL Server 15.0.4375.4 - BISCM_MS)        연결 1개
  └ 연결 행    BISCM_MS · M4PLAN                             현재 DB: BISCM_MS
     ├ 📁 데이터베이스
     │   ├ 📁 시스템 데이터베이스        master · model · msdb · tempdb

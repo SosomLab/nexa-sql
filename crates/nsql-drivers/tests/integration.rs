@@ -1128,7 +1128,7 @@ fn pg_ssh_tunnel_round_trip() {
 
 /// ★ 실서버 SSH 터널(161차 · 사용자 10-28 · [docs/125](../../../docs/125-ssh-tunnel-real-server-test.md)): 사용자의 **로컬 ssh 설정**
 /// (`~/.ssh/config` 별칭 · 에이전트 · ProxyCommand = cloudflared 포함)으로 실서버에 붙는다 — 방언 무관(접속 문자열 scheme이 정한다).
-/// `NSQL_SSH_URL` = `oracle://u:p@127.0.0.1:1521/SVC?ssh=acct@192.168.0.58&driver=thin` 꼴 · 또는 `NSQL_SSH_PROFILE` = 볼트 프로필 이름
+/// `NSQL_SSH_URL` = `oracle://u:p@127.0.0.1:1521/SVC?ssh=acct@172.16.1.58&driver=thin` 꼴 · 또는 `NSQL_SSH_PROFILE` = 볼트 프로필 이름
 /// (비밀번호를 환경·셸 기록에 남기지 않는 길). 둘 다 없으면 생략. 판정 = 설명에 " via ssh " 꼬리 · 방언별 확인 조회가 1행 · 세션을 닫으면
 /// ssh 프로세스가 따라 끝난다(두 번째 접속이 새 포트로 다시 성공).
 #[test]

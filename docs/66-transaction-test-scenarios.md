@@ -48,11 +48,11 @@ nsql conn path
 ### 0-3. 프로필 등록 — 네 개 (비밀번호는 물어본다)
 
 ```powershell
-nsql conn add ORA_T  "oracle://BISCM@192.168.0.58:1521/BISCM"
-nsql conn add MSS_T  "mssql://BISCM_MS@192.168.0.58:1433/M4PLAN_MS"
-nsql conn add PG_T   "postgres://postgres@192.168.0.60:5433/matrixdb2"
+nsql conn add ORA_T  "oracle://BISCM@172.16.1.58:1521/BISCM"
+nsql conn add MSS_T  "mssql://BISCM_MS@172.16.1.58:1433/M4PLAN_MS"
+nsql conn add PG_T   "postgres://postgres@172.16.1.60:5433/matrixdb2"
 nsql conn add LITE_T "sqlite:$env:TEMP\nsql-tx-test\tx.db"
-nsql conn add ORA_PROD_T "oracle://BISCM@192.168.0.58:1521/BISCM?env=prod"   # §D 운영 유형용
+nsql conn add ORA_PROD_T "oracle://BISCM@172.16.1.58:1521/BISCM?env=prod"   # §D 운영 유형용
 
 nsql conn list                 # ▶ 다섯 줄 · PW 열에 ✓
 nsql conn test ORA_T           # ▶ 붙는지 확인(넷 다 해 본다)
@@ -97,9 +97,9 @@ foreach ($k in 'tx.stale_min','tx.remind_min','tx.idle_limit_min','tx.idle_count
 
 | DBMS | 명령 |
 |---|---|
-| Oracle | `sqlplus BISCM@//192.168.0.58:1521/BISCM` |
-| SQL Server | `sqlcmd -S 192.168.0.58,1433 -U BISCM_MS -d M4PLAN_MS` (없으면 SSMS 새 쿼리 창) |
-| PostgreSQL | `psql "postgresql://postgres@192.168.0.60:5433/matrixdb2"` |
+| Oracle | `sqlplus BISCM@//172.16.1.58:1521/BISCM` |
+| SQL Server | `sqlcmd -S 172.16.1.58,1433 -U BISCM_MS -d M4PLAN_MS` (없으면 SSMS 새 쿼리 창) |
+| PostgreSQL | `psql "postgresql://postgres@172.16.1.60:5433/matrixdb2"` |
 | SQLite | `sqlite3 "$env:TEMP\nsql-tx-test\tx.db"` (mac·Linux = `sqlite3 "$TX/tx.db"`) |
 
 ### 0-6. 앱 띄우기 (같은 터미널에서)
@@ -168,7 +168,7 @@ Remove-Item Env:\NSQL_STARTUP_CMD           # 다음 실행부터는 평소대�
 🅑 관찰 세션
 
 ```sql
-sqlplus BISCM@//192.168.0.58:1521/BISCM
+sqlplus BISCM@//172.16.1.58:1521/BISCM
 
 SET LINESIZE 200 PAGESIZE 200
 COLUMN PROGRAM FORMAT A28
@@ -419,7 +419,7 @@ nsql plan "$TX\f1.sql" -d oracle
 ### 5-0. 관찰 세션
 
 ```powershell
-sqlcmd -S 192.168.0.58,1433 -U BISCM_MS -d M4PLAN_MS
+sqlcmd -S 172.16.1.58,1433 -U BISCM_MS -d M4PLAN_MS
 ```
 
 🅑 관찰 3종 — **`application_name`으로 우리 앱 세션을 바로 찾는다**
@@ -549,7 +549,7 @@ UPDATE NSQLT_TX SET V = 'mine' WHERE ID = 9;
 
 ### 5-5. D·E·F
 
-- **D**: `nsql conn add MSS_PROD_T "mssql://BISCM_MS@192.168.0.58:1433/M4PLAN_MS?env=prod"` → 접속 → §4-5와 같다.
+- **D**: `nsql conn add MSS_PROD_T "mssql://BISCM_MS@172.16.1.58:1433/M4PLAN_MS?env=prod"` → 접속 → §4-5와 같다.
 - **E**: §4-6에서 `CONNECT ORA_T` → `CONNECT MSS_T`로 바꾼다.
 - **F**:
 
@@ -570,7 +570,7 @@ nsql run -c MSS_T "$TX\f1.sql" --timing
 ### 6-0. 관찰 세션
 
 ```bash
-psql "postgresql://postgres@192.168.0.60:5433/matrixdb2"
+psql "postgresql://postgres@172.16.1.60:5433/matrixdb2"
 ```
 
 🅑 관찰 3종 — 마지막 줄의 `\watch 2`를 붙이면 2초마다 저절로 다시 돈다
@@ -717,7 +717,7 @@ UPDATE nsqlt_tx SET v = 'mine' WHERE id = 9;
 
 ### 6-5. D·E·F
 
-- **D**: `nsql conn add PG_PROD_T "postgres://postgres@192.168.0.60:5433/matrixdb2?env=prod"`
+- **D**: `nsql conn add PG_PROD_T "postgres://postgres@172.16.1.60:5433/matrixdb2?env=prod"`
 - **E**: §4-6에서 `CONNECT PG_T`
 - **F**:
 

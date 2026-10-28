@@ -39,8 +39,8 @@ echo "▶ 등록된 드라이버:"; "$PFX"/bin/odbcinst -q -d
 cat <<'EOF'
 ▶ 검증(예):
   # 드라이버·네트워크·TLS·로그인 단계(비밀번호 틀리면 28000 '로그인하지 못했습니다' = 거기까지 정상)
-  isql -v -k "Driver={ODBC Driver 18 for SQL Server};Server=192.168.0.58,1433;UID=BISCM_MS;PWD=…;TrustServerCertificate=yes"
-  printf '…\n' | nsql run -c "odbc:Driver={ODBC Driver 18 for SQL Server};Server=192.168.0.58,1433;Database=M4PLAN_MS;TrustServerCertificate=yes;UID=BISCM_MS" --password-stdin q.sql
+  isql -v -k "Driver={ODBC Driver 18 for SQL Server};Server=172.16.1.58,1433;UID=BISCM_MS;PWD=…;TrustServerCertificate=yes"
+  printf '…\n' | nsql run -c "odbc:Driver={ODBC Driver 18 for SQL Server};Server=172.16.1.58,1433;Database=M4PLAN_MS;TrustServerCertificate=yes;UID=BISCM_MS" --password-stdin q.sql
   # 어댑터 왕복(자격 증명 불필요)
   nsql run -c "odbc:Driver={SQLite3};Database=/tmp/odbc-test.sqlite" roundtrip.sql   # CREATE · INSERT(한글) · SELECT
 EOF

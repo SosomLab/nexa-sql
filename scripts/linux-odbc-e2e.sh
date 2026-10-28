@@ -11,7 +11,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="192.168.0.60:5433/matrixdb2"; MS="192.168.0.58,1433"; PROFILES=""
+OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="172.16.1.60:5433/matrixdb2"; MS="172.16.1.58,1433"; PROFILES=""
 while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -n) NSQL=$2; shift 2;; -e) EXE=$2; shift 2;; --pg) PG=$2; shift 2;; --ms) MS=$2; shift 2;; --profiles) PROFILES=$2; shift 2;; *) echo "usage: $0 -o <out> [-n nsql] [-e gui] [--pg host:port/db] [--ms host,port] [--profiles 이름,이름]"; exit 2;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }
 mkdir -p "$OUT"; REPORT="$OUT/odbc-e2e.txt"; : > "$REPORT"

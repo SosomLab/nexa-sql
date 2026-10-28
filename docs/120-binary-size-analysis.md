@@ -303,7 +303,7 @@
 
 - **BREAKING 3** = (1) `command_timeout` 기본 **30 s** · `handshake_timeout` **15 s**(종전 무제한) → 우리 Config에 `command_timeout(None)`(또는 `Session::set_call_timeout` 값) **명시 필수**(안 하면 긴 질의·bulk가 30 s에 끊김) (2) encrypt 기본 **Required** → 우리는 `config.encryption(...)`을 늘 명시(`crates/nsql-driver-mssql/src/lib.rs:976`) → 영향 0 (3) 자격 = `secrecy::SecretString` → `AuthMethod::sql_server` 생성자만 써서 영향 0.
 - 그 밖 = `trust_cert_ca` 누적 규칙(우리는 `trust_cert()`만 · 959행) · async-std 기능 삭제 = 미사용 · 덤 = 디코드 패닉 → 오류 반환(T-309 `todo!()` 부류 해소) · 핸드셰이크 멈춤 감지 · 보안 권고 해소 · thiserror 2.
-- 검증(착수 때 · 협업 V1·V2) = BISCM_MS_DEV(192.168.0.58:1433/M4PLAN_MS · 10-22 등록) 실서버 = grid-edit MSSQL · conn-cmd 38 · tdsbulk(13.9k행/s 기준) · 동일성 E2E · encrypt on/off 접속 · Attention 취소·stop-latency · Linux·mac = CI `integration`(SQL Server 컨테이너) + 세션 실기 1회.
+- 검증(착수 때 · 협업 V1·V2) = BISCM_MS_DEV(172.16.1.58:1433/M4PLAN_MS · 10-22 등록) 실서버 = grid-edit MSSQL · conn-cmd 38 · tdsbulk(13.9k행/s 기준) · 동일성 E2E · encrypt on/off 접속 · Attention 취소·stop-latency · Linux·mac = CI `integration`(SQL Server 컨테이너) + 세션 실기 1회.
 
 ## 6. 결정안(측정 1·3·4 반영 · 성능(F·B 벤치)은 §5-2 대기)
 

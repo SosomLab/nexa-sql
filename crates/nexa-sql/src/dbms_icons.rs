@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(
             pick(
                 Some(Dialect::Postgres),
-                "Repository postgres://postgres/***@192.168.0.60:5433/matrixdb2"
+                "Repository postgres://postgres/***@172.16.1.60:5433/matrixdb2"
             ),
             "postgresql"
         );
