@@ -137,4 +137,5 @@ oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
 - `ssh` = `user@host[:port]`(별칭 `ssh_host`) · `ssh_key` = 개인 키 파일(`-i` · 별칭 `ssh-key`/`ssh_identity`) — 접속 문자열 왕복 · 가림 표시 꼬리 " via ssh …".
 - 볼트 프로필 = `ssh=` · `ssh_key=` 두 줄(비밀 아님 · 평문 · 키 **파일 경로**만 · 암호 걸린 키는 ssh-agent로).
 - 동작 = 허브가 시스템 `ssh -N -L 127.0.0.1:<자동 포트>:<host>:<port>`를 띄우고 어댑터는 로컬 포트로 접속 · `BatchMode=yes`(묻지 않음) → 처음 보는 호스트는 터미널에서 한 번 접속해 known_hosts에 등록 · 호스트 없는 대상(TNS 별칭·DSN·파일) = 거절.
-- 설정 `ssh.command`(기본 `ssh` · 빈 값 = 터널 끔 · 고급) · `ssh.connect_timeout_secs`(15) · 접속 창 SSH 필드 = 2차(T-3).
+- 설정 `ssh.command`(기본 `ssh` · 빈 값 = 터널 끔 · 고급) · `ssh.connect_timeout_secs`(15).
+- 접속 창 칸(10-28 · 160차 · T-3 2차) = 폼 호스트 줄 아래 **SSH 터널**(`user@host[:port]`) · **SSH 키**(파일 경로) 한 줄 · 둘 다 선택(필수 아님) · 빈 칸 = 터널 없음 · 파일 방언은 숨김 · 저장 = 볼트 `ssh=`/`ssh_key=` 줄 · [22 §1-3](22-driver-extensions.md).

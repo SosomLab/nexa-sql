@@ -42,6 +42,13 @@
 - 창은 **폼의 뷰** — 원천은 `ConnectPanel::vars` 하나 · 창의 변경은 폼에 즉시 반영(§9 바뀜) · 파일 쓰기는 폼 [저장]에서만.
 - 로그인 창 기본 높이 580 → **614**(`login.window_h` · D-365) · 확인(협업 V1) = 바깥 높이 619 → 653(+34).
 
+### 1-3. SSH 터널 줄(10-28 · 160차 win · T-3 2차 · D-389)
+
+- 자리 = **호스트+포트 줄 바로 아래** 한 줄 — 왼쪽 "SSH 터널"(`user@host[:port]`) · 오른쪽 "SSH 키"(키 파일 경로) · 기본 스키마 줄과 같은 반반 나눔 · 라벨 필수 점 없음(늘 선택).
+- **파일 방언(SQLite·DuckDB·Access…)은 숨김**(폭 0 · Tab 순서 밖 · 빈자리 없이 다음 줄이 붙음).
+- 불러오기·저장·버리기·바뀜 표식(§9)은 다른 칸과 같은 길 · 저장 = `ConnectSpec.ssh`/`ssh_key`(빈 칸 = None · 양끝 공백 제거) → 볼트 `ssh=`/`ssh_key=` · 동작은 [21 §10](21-connection-profiles.md).
+- 로그인 창 기본 높이 614 → **648**(`login.window_h` · D-389) · 확인(협업 V1) = 바깥 1056×687.
+
 ## 0. 09-15 개정(DR-29) — 전송은 프로세스가 아니라 **in-process 동적 라이브러리**
 
 > ✅ **구현됨(10-22 · 136차 · T-27 ①② · D-347 · 31cc01b)** = `nsql-abi`(ABI v1 함수 13 + 코덱) · `nsql-driver-dyn`(LoadLibraryW/dlopen 로더 · `DynSession`) · SQLite cdylib 참조 드라이버 · ✅ ③ 레지스트리(9646dcf) = `NSQL_DRIVER_DIR` > `<설정 폴더>/drivers` · `drivers/<id>/<ver>/nsql_driver_<id>.{dll,so,dylib}` · 최신 버전 선택 · 내장 없는 방언 = 확장 폴백(지연 로드) · 남음 = 로그인 콤보 확장 방언 표시 · `?driver=` 명시 · 커서·벌크·카탈로그 ABI · 매니페스트·다운로드(T-28·T-29).

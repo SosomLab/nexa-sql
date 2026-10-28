@@ -150,6 +150,7 @@
 ### 6-9. SSH 터널 키(10-28 · 159차 · T-3 · D-388)
 
 - `ssh.command` = Text · 기본 `ssh` · 분류 **접속**(`CatConnection`) · **고급**(ADVANCED) · 빈 값 = 터널 비활성("SSH: tunnels are disabled …") · 경로를 넣으면 그 실행 파일.
+- `login.window_h` 기본값 614 → **648**(10-28 · 160차 · 접속 창 SSH 줄 · D-389 · 저장한 값은 유지).
 - `ssh.connect_timeout_secs` = Int 1..=120 · 기본 15 · 분류 접속 · 라벨 "SSH 터널 대기 상한(초)" · 포워딩 포트가 열릴 때까지 + ssh `ConnectTimeout` · 10초 초과라 `_secs`(§6-5).
 
 ### 6-3. 설정 창 규칙(구현)
