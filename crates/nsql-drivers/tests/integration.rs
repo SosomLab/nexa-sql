@@ -1173,7 +1173,7 @@ fn pg_tls_modes_follow_url_param() {
     });
     let cancel = t.join().expect("cancel thread");
     assert!(cancel.is_ok(), "TLS 취소 접속 성공: {cancel:?}");
-    let e = r.err().expect("취소된 문장 = 오류");
+    let e = r.expect_err("취소된 문장 = 오류");
     assert!(
         e.message.contains("57014") || e.message.contains("cancel"),
         "취소 오류 원문: {}",
