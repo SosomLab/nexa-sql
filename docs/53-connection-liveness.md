@@ -76,7 +76,7 @@
 **감지 4경로**(전부 사용자 동작 시점 또는 무료):
 1. **빠른 판정을 늘 건다**: 지금은 신호등이 초록이 아닐 때만 → **마지막 성공 뒤 `probe.stale_secs`(기본 60초) 이상 지났으면** 실행·페치·펼침 전에 `probe_once`(TCP SYN 1 · `probe.timeout_ms` 2초). 성공하면 시각 갱신. 비용 = 오랜만의 첫 동작에 SYN 1개.
 2. **드라이버 0-왕복 상태**: Oracle `status()` · PG `is_closed()` — 실행 직전에 공짜로 본다. TCP keepalive를 켜 두면 끊긴 소켓이 여기서 잡힌다.
-3. **호출 타임아웃**: Oracle `set_call_timeout(session.call_timeout_secs)`(기본 0 = 끔 · 켜면 죽은 소켓이 N초 안에 `ORA-03136`) — 긴 질의와 구분이 안 되므로 기본은 끄고 **빠른 판정이 주 수단** · MSSQL `set_read_timeout`도 같은 키.
+3. **호출 타임아웃**: Oracle `set_call_timeout(session.call_timeout_secs)`(기본 0 = 끔 · 켜면 죽은 소켓이 N초 안에 `ORA-03136`) — 긴 질의와 구분이 안 되므로 기본은 끄고 **빠른 판정이 주 수단** · ★ SQL Server(10-29 · 176차) = 같은 키로 호출마다 상한(execute 3경로 · commit · rollback · USE · 메타) → 넘기면 tiberius 스트림이 어긋나 세션을 못 쓰므로 **소켓 shutdown + `is_alive()=false`**(§3 Broken 경로 → 재접속) · 메시지 `[-2 · 접속 오류] call timed out after N s (session.call_timeout_secs) - connection closed, reconnect on next run`.
 4. **오류 분류**: 지금의 `is_connection_error` → Broken.
 
 **복구**: Broken 세션에 실행이 오면 ① 빠른 판정 다시(SYN 1) ② 살아 있으면 같은 스펙으로 재접속(`connect.auto_reconnect` · 지금도 있음) + `stateful`이면 "세션 상태 소실" 안내 + 열린 트랜잭션 `Lost` ③ 죽어 있으면 즉시 오류(막힘 0). 백그라운드 재시도 없음. 유휴 닫기·메타 재개도 같은 빠른 판정을 먼저 건다(죽은 서버에 `Disconnect`/`Open`으로 갇히지 않게 — 갇히면 워커/메타 스레드 교체 = 09-16 즉시 해제 규약).
@@ -127,7 +127,7 @@
 | 재접속 원천(10-09 · 1e624fd · ad2c765) | 재접속 원천 = 러너 `Runner::connected_to()`(비밀번호 없는 접속 사양) + 세션 자격 금고 `recall` — 실행이 끝날 때마다 워커 `active_spec`을 이것으로 동기화(10-09 · 1e624fd · 사용자 결함 "전용 세션이 네트워크 복귀 뒤 재접속 안 됨 · 접속 회복 → 접속 끊김 → DPI-1010 반복" · 뿌리 = 편집기 `CONNECT` 문으로 붙은 전용 세션은 `active_spec`이 비어 `ensure_alive`가 다시 붙을 대상이 없었다) · 공유·전용(`CONNECT` 문) 같은 원천 · 사양이 없으면 "회복"이 아니라 끊김으로 보고 · 시험 = Debug 훅 `sess.kill`(워커 세션 객체를 실제로 떨어뜨림 · 원천은 유지) + `scripts/win-reconnect-e2e.sh`(SQLite 격리 · 공유·전용 8) · 실서버 APPDB V1 = kill 뒤 "다시 접속 중" → 1행 · 금고 `recall(hit)` 1 · `remember` 추가 0 · 실 VPN 복구 = 사용자 실기 |
 | 드라이버 0-왕복 상태(T-128) | `Session::is_alive()` 포트(기본 true) — Oracle `status()`(`OCI_SERVER_NOT_CONNECTED`) · PG `Client::is_closed()` · 판정의 `dead_hint` |
 | TCP keepalive(D-110 · T-129) | PG `keepalives(true)` + idle/interval/retries · SQL Server `socket2::SockRef::set_tcp_keepalive`(어댑터 안 · tokio가 이미 끌어오는 크레이트) · `net.keepalive_secs`(60 · 0 = 끔 · 새 접속부터) · Oracle은 EZConnect 문자열에 keepalive 파라미터를 넣을 수 없어 **`status()` + 판정**으로 대신 |
-| Oracle 호출 상한(D-111) | `session.call_timeout_secs`(기본 0 = 끔) → `Connection::set_call_timeout` |
+| 서버 호출 상한(D-111 · ★ 10-29 SQL Server 추가) | `session.call_timeout_secs`(기본 0 = 끔) → Oracle `Connection::set_call_timeout`(세션 유지) · SQL Server `tokio::time::timeout`(넘기면 **소켓 닫고 끊김** → 다음 실행 재접속 · 오류 코드 -2) · 허브 `open_direct`가 세션마다 `set_call_timeout`(내장·확장·터널) · CLI도 적용 |
 | 끊긴 서버에서 중지 ■ | `sess.broken`이면 `abandon_worker`(워커 교체 · 세션은 Broken+`idle_closed`로 남겨 다음 실행 때 재접속) — OCIBreak를 죽은 소켓에 보내지 않는다 |
 | 유휴 닫기 | `idle_tick`도 `abandon_worker`(닫기 = commit + logoff가 죽은 소켓에 갇혀도 세션 큐가 막히지 않는다) |
 | 남은 것 | T-130 OS 네트워크 변경 신호(D-113) — 지금은 `probe.stale_secs`(60초)가 그 자리를 대신한다 · MSSQL read timeout(취소 = 소켓 종료가 이미 있어 급하지 않음) · `Suspend`로 잠든 메타 세션의 logoff가 갇히면 그 메타 스레드는 다음 요청까지 대기(재개 전 판정은 하지만 갇힌 스레드 자체는 교체하지 않음) |

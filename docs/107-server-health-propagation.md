@@ -11,7 +11,7 @@
 | 겹 | 실행 세션(53 §8 · 있음) | 메타 세션(탐색기 · 지금) | 사건에서 벌어진 일 |
 |---|---|---|---|
 | 동작 직전 판정 | `ensure_alive` = SYN 1회(`probe.timeout_ms`) · 마지막 성공 뒤 `probe.stale_secs`(60 s) 지나면 반드시 | **없음** — `reachable(spec)`은 유휴로 닫힌 세션을 **다시 열 때만**(`resume`) | 세션 객체는 살아 있다고 믿고 죽은 소켓에 질의 |
-| 호출 상한 | `session.call_timeout_secs`(Oracle · 기본 0) · 노드 로드 `explorer.timeout` 15 s(`loading_since`) | `Req::Source`·`Details`·`GenSql`·`Sizes`는 **`loading_since` 밖** → 상한 0 · Oracle 메타 세션 call timeout 0 | 드라이버가 TCP 재전송 타임아웃(수 분)까지 갇힘 · 메타 스레드는 한 번에 한 질의라 뒤 요청도 전부 대기 |
+| 호출 상한 | `session.call_timeout_secs`(Oracle · SQL Server(10-29) · 기본 0) · 노드 로드 `explorer.timeout` 15 s(`loading_since`) | `Req::Source`·`Details`·`GenSql`·`Sizes`는 **`loading_since` 밖** → 상한 0 · Oracle 메타 세션 call timeout 0 | 드라이버가 TCP 재전송 타임아웃(수 분)까지 갇힘 · 메타 스레드는 한 번에 한 질의라 뒤 요청도 전부 대기 |
 | 안내 | Broken → 탭 표식·플러그 빨강·상태줄·로그 1줄(`sync_sess_ui`) | 시작 = 상태줄 `ExpLoadingSource` 한 줄 · 끝 = `ExplorerAction::Status(e)` **상태줄 한 줄** · 바쁨 표시 없음 · 토스트 없음 · 로그 없음 | 상태줄 글은 다음 상태 글에 바로 덮임 → "아무 메시지 없음"으로 보임 |
 
 덧붙여 **실행 세션의 Broken은 메타 세션으로, 메타 세션의 실패는 실행 세션으로 전해지지 않는다**(같은 서버인데 상태가 둘). 끊김을 안 쪽이 있어도 다른 쪽은 모른 채 다음 동작에서 또 갇힌다.
