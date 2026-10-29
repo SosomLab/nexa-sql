@@ -635,13 +635,18 @@ mod tests {
             COMMANDS.len() + 1,
             "context 행 하나가 뒤에 붙는다"
         );
+        // ★ 표시 문자열은 OS마다 다르다(맥 = `⌘⌥9` · 그 밖 = `Ctrl+Alt+9` · ci 40903924326 macos ✗) → 같은 표시 함수로 기대값을 만든다.
+        let disp = |code: &str| crate::keymap::Chord::parse(code).unwrap().display();
         let save_as = w.rows.iter().find(|r| r.id == "file.save_as").unwrap();
         assert!(save_as.file && save_as.when.is_none());
-        assert_eq!(save_as.chord, "Ctrl+Alt+9");
+        assert_eq!(save_as.chord, disp("ctrl+alt+9"));
         let last = w.rows.last().unwrap();
         assert_eq!(last.id, "edit.upper_case");
         assert!(last.file);
-        assert_eq!(last.chord, "Ctrl+K, Ctrl+9");
+        assert_eq!(
+            last.chord,
+            format!("{}, {}", disp("ctrl+k"), disp("ctrl+9"))
+        );
         assert_eq!(last.when.as_deref(), Some("num_selections == 2"));
         let plain = w.rows.iter().find(|r| r.id == "file.new").unwrap();
         assert!(!plain.file && plain.when.is_none());
