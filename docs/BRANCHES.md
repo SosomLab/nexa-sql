@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| feat/174-t14-context-keys | 2026-10-29 | (미병합 · 17시 사용자 결정) | 소스 **ed5f0fd5** · 문서 = 다음 커밋 | 174차 win = T-14 잔여(context 키 11종 · 단축키 창 파일 바인딩 표시 · keymap.dump/try) |
+| feat/174-t14-context-keys | 2026-10-29 | (미병합 · 17시 사용자 결정) | 소스 **ed5f0fd5** · 문서 50b2c27c · 175차 T-453 = 소스 8dedf0ee · 문서 = 다음 커밋 | 174차 win = T-14 잔여(context 키 11종 · 단축키 창 파일 바인딩 표시 · keymap.dump/try) + 175차 T-453 1차 CLI 줄 편집기·Tab |
 | t47-driver-stages | 2026-10-29 | 2026-10-29 → main ff(삭제) · **b4ec19b8** | 1 | 173차 win = T-47 잔여 SQLite·SQL Server Execute/Fetch 분리 · b4ec19b8 |
 | t14-seq-ctx | 2026-10-29 | 2026-10-29 → main ff(삭제) · **ba451bd5** | 1 | 172차 win = T-14 잔여 2단 코드 context · ba451bd5 |
 | t116-overlap-check | 2026-10-29 | 2026-10-29 → main ff(삭제) · **0a0d4957** | 1 | 171차 win = T-116 OFFSET 재질의 겹침 검사 · 0a0d4957 |

@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-29 오후 (175차 · Windows · T-453 1차)** — `nsql shell` 자체 줄 편집기(외부 crate 0 · raw 모드 · 기록 `shell_history` · `cli.history_max`) + Tab 완성(GUI와 같은 문맥 판정 · 메타 첫 Tab 지연 적재) · 터미널일 때만 · 파이프는 종전([journal 10-27 §38](journal/2026-10-27.md)).
 - **2026-10-29 오후 (174차 · Windows · T-14 잔여)** — 키맵 파일 context 키 11종(`num_selections` · `preceding_text` 등) · 단축키 창에 파일 바인딩 "(파일)"·조건 행 · 파일 바인딩 = 기본 키에 덧붙임(표시 = 동작) · 기동 명령 `keymap.dump`/`keymap.try` · 위키 단축키 문서 신설([journal 10-27 §37](journal/2026-10-27.md)).
 - **2026-10-29 06시 (173차 · Windows · 자율 모드 마감)** — T-47 전부(SQLite·SQL Server Execute/Fetch 분리 · b4ec19b8) · T-14 2단 코드 context(ba451bd5) · 02:00~06:00 자율 모드 총정리 = 165~173차 · D-394·D-395 · 사고 1 · 합의 1([journal 10-27 §36·§36-1](journal/2026-10-27.md)).
 - **2026-10-29 (172차 · Windows · T-454 문서)** — 64 §3-1b 크기 실측 표(lite/full 앱 + drivers-v0.1.8 zip 4 플랫폼) · 94 `driver.repo` 옛 태그 문구 정정 · 위키 Drivers 머리 "설치본 = Oracle OCI만 · 나머지 자동 설치"([journal 10-27 §35](journal/2026-10-27.md)).
