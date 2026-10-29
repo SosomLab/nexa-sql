@@ -255,7 +255,21 @@ impl Session for Tunneled {
     }
 }
 
+/// ★ T-128(10-29 · 176차): 호스트가 `set_net_options`로 넣은 호출 상한을 **세션 포트**로 적용 — 내장·확장(cdylib · 전역 static이
+/// dll 안에는 안 닿는다 · ABI `set_call_timeout`)·터널 래퍼 어느 경로든 한 곳. 드라이버 안 전역(Oracle·SQL Server)과 값이 같아 중복 적용은 무해.
 fn open_direct(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Session>, DbError> {
+    let mut s = open_direct_raw(spec, default_dialect)?;
+    let secs = CALL_TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if secs > 0 {
+        s.set_call_timeout(Some(std::time::Duration::from_secs(secs)));
+    }
+    Ok(s)
+}
+
+fn open_direct_raw(
+    spec: &ConnectSpec,
+    default_dialect: Dialect,
+) -> Result<Box<dyn Session>, DbError> {
     let dialect = spec.dialect.unwrap_or(default_dialect);
     // ★ T-70: PostgreSQL(와이어 호환 포함)은 설정의 TLS 모드·CA를 스펙에 넣어 어느 드라이버 경로든 같은 값을 쓴다.
     let filled;
@@ -789,7 +803,11 @@ pub fn set_mysql_tls(mode: &str, ca_path: &str) {
 }
 
 /// 네트워크 생존 옵션(docs/53): TCP keepalive 유휴(초 · PG·SQL Server · 0 = 끔) · Oracle 호출 상한(초 · 0 = 없음). 다음 접속부터.
+/// 호출 상한(초 · 0 = 없음) — [`open`]이 세션마다 포트로 넣는다(확장 드라이버 포함).
+static CALL_TIMEOUT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn set_net_options(keepalive_secs: u64, call_timeout_secs: u64) {
+    CALL_TIMEOUT_SECS.store(call_timeout_secs, std::sync::atomic::Ordering::Relaxed);
     #[cfg(feature = "pg")]
     nsql_driver_pg::set_keepalive_secs(keepalive_secs);
     #[cfg(feature = "mssql")]
@@ -801,6 +819,9 @@ pub fn set_net_options(keepalive_secs: u64, call_timeout_secs: u64) {
     nsql_driver_oracle::set_call_timeout_secs(call_timeout_secs);
     #[cfg(feature = "oracle-thin")]
     nsql_driver_oracle_thin::set_call_timeout_secs(call_timeout_secs);
+    // ★ T-128(10-29): SQL Server도 같은 상한(tokio timeout · 넘기면 소켓 닫고 끊김 표시).
+    #[cfg(feature = "mssql")]
+    nsql_driver_mssql::set_call_timeout_secs(call_timeout_secs);
     #[cfg(not(all(
         feature = "pg",
         feature = "mssql",

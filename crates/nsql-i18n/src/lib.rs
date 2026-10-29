@@ -4343,13 +4343,10 @@ impl Msg {
                 "PostgreSQL and SQL Server sockets send empty keepalive segments after this idle time so the OS notices a dead path (VPN dropped). They carry no data, so the server's idle-session policy is not affected. 0 = off. Applies to new connections",
                 "PostgreSQL·SQL Server 소켓이 이 시간 동안 조용하면 빈 keepalive 세그먼트를 보내 OS가 끊긴 경로(VPN 끊김)를 알아채게 합니다. 데이터가 없어 서버의 유휴 세션 정책에는 영향이 없습니다. 0 = 끔 · 새 접속부터",
             ],
-            Msg::LblCallTimeout => [
-                "Oracle call timeout (s)",
-                "Oracle 호출 상한(초)",
-            ],
+            Msg::LblCallTimeout => ["Server call timeout (s)", "서버 호출 상한(초)"],
             Msg::DescCallTimeout => [
-                "Upper bound for any Oracle client call; a call on a dead socket fails with ORA-03136 after this many seconds. Long queries also hit it, so the default is off (0) - the quick check before a run is the main guard. Applies to new connections",
-                "Oracle 클라이언트 호출 하나의 상한 - 죽은 소켓에 보낸 호출이 이 시간 뒤 ORA-03136으로 끝납니다. 긴 질의도 걸리므로 기본은 끔(0) · 실행 전 빠른 판정이 주 수단입니다. 새 접속부터",
+                "Upper bound for one server call (Oracle, SQL Server); a call on a dead socket fails after this many seconds (Oracle ORA-03136 keeps the session; SQL Server closes the socket and reconnects on the next run). Long queries also hit it, so the default is off (0) - the quick check before a run is the main guard. Applies to new connections",
+                "서버 호출 하나의 상한(Oracle · SQL Server) - 죽은 소켓에 보낸 호출이 이 시간 뒤 끝납니다(Oracle = ORA-03136 · 세션 유지 · SQL Server = 소켓을 닫고 다음 실행 때 재접속). 긴 질의도 걸리므로 기본은 끔(0) · 실행 전 빠른 판정이 주 수단입니다. 새 접속부터",
             ],
             Msg::StSessSameKept => [
                 "CONNECT to the same server: existing session kept ({0}). Turn on 'Reconnect to the same server' to drop and reconnect",

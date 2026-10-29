@@ -2818,3 +2818,67 @@ fn db2_session_catalog_schema_and_errors() {
     exec(&mut s, "DROP TABLE NSQLT_DB2S").expect("drop");
     s.commit().expect("commit");
 }
+
+/// ★ T-128(10-29): SQL Server 호출 상한 — `set_call_timeout(2 s)` 뒤 `WAITFOR DELAY '00:00:10'`은 2 s 근처에서 접속 오류(코드 -2)로 끝나고
+/// 세션은 끊김(`is_alive() = false` → 호스트 재접속) · 상한 안의 짧은 호출은 그대로 통과.
+#[test]
+fn mssql_call_timeout_breaks_long_call() {
+    use nsql_core::ExecRequest;
+    let profile = std::env::var("NSQL_MSSQL_PROFILE").ok();
+    let spec = match (std::env::var("NSQL_MSSQL_URL"), profile) {
+        (Ok(url), _) => nsql_drivers::parse_target(&url, Dialect::Mssql).expect("접속 문자열"),
+        (Err(_), Some(name)) => nsql_vault::Vault::open_default()
+            .and_then(|v| v.get(&name))
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| panic!("프로필 없음: {name}")),
+        _ => {
+            eprintln!("[skip] NSQL_MSSQL_URL 없음");
+            return;
+        }
+    };
+    let mut s = open_session(&spec, Dialect::Mssql).expect("접속");
+    s.set_call_timeout(Some(std::time::Duration::from_secs(2)));
+    let t0 = std::time::Instant::now();
+    let r = s.execute(&ExecRequest {
+        sql: "WAITFOR DELAY '00:00:10'".into(),
+        params: Vec::new(),
+    });
+    let took = t0.elapsed();
+    let e = r.expect_err("상한을 넘긴 호출 = 오류");
+    assert_eq!(e.code, Some(-2), "{e:?}");
+    assert!(e.message.contains("timed out"), "{e:?}");
+    assert!(took.as_secs() < 6, "상한 2 s인데 {took:?}");
+    assert!(!s.is_alive(), "상한으로 끊긴 세션 = 죽음");
+    // 새 세션 + 넉넉한 상한 = 짧은 호출은 통과하고 세션도 산다.
+    let mut s2 = open_session(&spec, Dialect::Mssql).expect("재접속");
+    s2.set_call_timeout(Some(std::time::Duration::from_secs(30)));
+    let r = s2
+        .execute(&ExecRequest {
+            sql: "SELECT 1 AS ok".into(),
+            params: Vec::new(),
+        })
+        .expect("짧은 호출은 통과");
+    assert_eq!(r.result_sets[0].rows[0][0], Value::Int(1));
+    assert!(s2.is_alive(), "상한 안 = 세션 유지");
+    // ★ 허브 경로(176차): 호스트가 `set_net_options`로 넣은 상한을 `nsql_drivers::open`이 세션 포트로 적용한다(확장 드라이버도 같은 길).
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            nsql_drivers::set_net_options(60, 0);
+        }
+    }
+    let _reset = Reset;
+    nsql_drivers::set_net_options(60, 2);
+    let mut s3 = nsql_drivers::open(&spec, Dialect::Mssql).expect("허브 접속");
+    let t0 = std::time::Instant::now();
+    let e = s3
+        .execute(&ExecRequest {
+            sql: "WAITFOR DELAY '00:00:10'".into(),
+            params: Vec::new(),
+        })
+        .expect_err("허브가 넣은 상한으로 끊김");
+    assert_eq!(e.code, Some(-2), "{e:?}");
+    assert!(t0.elapsed().as_secs() < 6, "{:?}", t0.elapsed());
+    assert!(!s3.is_alive());
+}

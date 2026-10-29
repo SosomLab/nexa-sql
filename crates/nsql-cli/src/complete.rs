@@ -203,6 +203,28 @@ pub(crate) fn complete(
             }
         }
         CtxKind::Want(w) => {
+            // 정적 표(메타 불필요 · GUI와 같은 원천 `builtins`): 자료형 · 정렬 · 시스템 프로시저 파라미터 · `%TYPE`/`%ROWTYPE`.
+            match w {
+                Want::DataType => groups.push(
+                    nsql_script::builtins::types(dialect)
+                        .iter()
+                        .map(|b| cased(b.name))
+                        .collect(),
+                ),
+                Want::Collation => groups.push(
+                    nsql_script::builtins::collations(dialect)
+                        .iter()
+                        .map(|b| b.name.to_string())
+                        .collect(),
+                ),
+                Want::ProcParam(name) => {
+                    if let Some(p) = nsql_script::builtins::proc_params(dialect, name) {
+                        groups.push(p.params.iter().map(|(n, _)| n.to_string()).collect());
+                    }
+                }
+                Want::TypeAttr => groups.push(vec![cased("TYPE"), cased("ROWTYPE")]),
+                _ => {}
+            }
             if let Some(s) = session {
                 cache.ensure(s);
                 match w {
@@ -218,6 +240,8 @@ pub(crate) fn complete(
                             groups.push(cache.names(|k| k == kind));
                         }
                     }
+                    // 사용자 정의 타입(`ObjectKind::Type`)도 자료형 자리에.
+                    Want::DataType => groups.push(cache.names(|k| k == ObjectKind::Type)),
                     _ => {}
                 }
             }

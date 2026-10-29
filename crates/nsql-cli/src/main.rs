@@ -448,6 +448,11 @@ pub(crate) fn apply_driver_switches() {
         );
         // 162차: 터널 PID 원장(<설정 폴더>/run) + 지난 실행이 남긴 ssh 정리 — GUI와 같은 자리.
         nsql_drivers::set_ssh_state_dir(nsql_settings::config_dir().map(|d| d.join("run")));
+        // ★ T-128(176차 · 협업 V1 발견): keepalive · 서버 호출 상한 — GUI `apply_net_options`와 같은 값(종전 CLI는 안 넘겼다 = 상한 무효).
+        nsql_drivers::set_net_options(
+            s.int("net.keepalive_secs").max(0) as u64,
+            s.int("session.call_timeout_secs").max(0) as u64,
+        );
         nsql_drivers::cleanup_stale_tunnels();
         // 확장 드라이버 폴더(T-27 ③) = <설정 폴더>/drivers — GUI와 같은 자리.
         nsql_drivers::ext::set_driver_dir(

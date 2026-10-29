@@ -92,6 +92,15 @@ pub fn set_keepalive_secs(secs: u64) {
     KEEPALIVE_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// ★ T-128(10-29): 호출 상한(초 · 0 = 없음) — 호스트가 `session.call_timeout_secs`를 넣는다(Oracle과 같은 전역) · 다음 접속부터 ·
+/// 세션별 `set_call_timeout`이 덮을 수 있다(메타 세션 `explorer.timeout`).
+static CALL_TIMEOUT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 설정 `session.call_timeout_secs`(docs/53).
+pub fn set_call_timeout_secs(secs: u64) {
+    CALL_TIMEOUT_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// 암호화 범위(설정 `mssql.encrypt` · 접속 때 읽는다): 0 = 전 구간(`Required`) · 1 = 로그인만(`Off` — 로그인 뒤 평문 · **TDS Attention 취소 가능**).
 static ENCRYPTION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
@@ -205,6 +214,41 @@ pub struct MssqlSession {
     sink: Option<MessageSink>,
     /// 대량 적재 대상 표(싱크가 `&'a str`로 빌린다 · 89 §1-3).
     bulk_table: String,
+    /// ★ T-128(10-29): 호출 상한(`session.call_timeout_secs` · Oracle `set_call_timeout`과 같은 포트) — 서버 호출 하나가 이 시간을 넘으면
+    ///   `tokio::time::timeout`으로 끊는다. tiberius는 응답 스트림 중간에 future를 버리면 프로토콜이 어긋나므로 소켓을 닫고 세션을
+    ///   **끊김**(`broken`)으로 표시 → `is_alive() = false` → 호스트가 다음 동작에서 재접속(docs/53 §3).
+    call_timeout: Option<std::time::Duration>,
+    broken: bool,
+}
+
+/// ★ T-128: 호출 상한이 있으면 그 안에서 · 넘기면 소켓을 닫고(서버가 배치를 중단) `broken`을 올린 뒤 접속 오류로 돌려준다.
+fn bounded<T>(
+    rt: &Runtime,
+    limit: Option<std::time::Duration>,
+    sock: &std::net::TcpStream,
+    broken: &mut bool,
+    fut: impl std::future::Future<Output = Result<T, DbError>>,
+) -> Result<T, DbError> {
+    let Some(limit) = limit.filter(|d| !d.is_zero()) else {
+        return rt.block_on(fut);
+    };
+    // `timeout`은 런타임 안에서 만들어야 한다(타이머 = reactor) → async 블록 안에서.
+    match rt.block_on(async { tokio::time::timeout(limit, fut).await }) {
+        Ok(r) => r,
+        Err(_) => {
+            let _ = sock.shutdown(std::net::Shutdown::Both);
+            *broken = true;
+            Err(DbError {
+                // -2 = SQL Server 클라이언트의 "Timeout expired" 코드(ODBC/ADO 관례) → 분류 = 접속 오류(docs/53 §3 Broken).
+                code: Some(-2),
+                message: format!(
+                    "call timed out after {} s (session.call_timeout_secs) - connection closed, reconnect on next run",
+                    limit.as_secs_f64()
+                ),
+                position: None,
+            })
+        }
+    }
 }
 
 /// ★ TDS BULK INSERT 싱크(docs/89 §1-3 · T-236 B-4): 배치마다 `Client::bulk_insert`(열 메타 조회 → 행 스트림 → finalize)를 한 번씩
@@ -1017,6 +1061,10 @@ impl MssqlSession {
             description: format!("{} · {encrypt_note}", spec.redacted()),
             sink: None,
             bulk_table: String::new(),
+            call_timeout: Some(CALL_TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed))
+                .filter(|s| *s > 0)
+                .map(std::time::Duration::from_secs),
+            broken: false,
         })
     }
 }
@@ -1088,15 +1136,21 @@ impl MssqlSession {
             "SELECT c.name, c.scale FROM {db}sys.all_columns c JOIN {db}sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({lit}) AND t.name IN ('decimal','numeric','money','smallmoney')"
         );
         let client = &mut self.client;
-        let rows = self.rt.block_on(async {
-            client
-                .simple_query(&sql)
-                .await
-                .map_err(err)?
-                .into_first_result()
-                .await
-                .map_err(err)
-        })?;
+        let rows = bounded(
+            &self.rt,
+            self.call_timeout,
+            &self.cancel_sock,
+            &mut self.broken,
+            async {
+                client
+                    .simple_query(&sql)
+                    .await
+                    .map_err(err)?
+                    .into_first_result()
+                    .await
+                    .map_err(err)
+            },
+        )?;
         Ok(rows
             .iter()
             .filter_map(|r| {
@@ -1205,44 +1259,72 @@ impl Session for MssqlSession {
         }
         let sql = format!("USE [{}]", value.replace(']', "]]"));
         let client = &mut self.client;
-        self.rt.block_on(async {
-            client
-                .simple_query(&sql)
-                .await
-                .map_err(err)?
-                .into_results()
-                .await
-                .map_err(err)?;
-            Ok(())
-        })
+        bounded(
+            &self.rt,
+            self.call_timeout,
+            &self.cancel_sock,
+            &mut self.broken,
+            async {
+                client
+                    .simple_query(&sql)
+                    .await
+                    .map_err(err)?
+                    .into_results()
+                    .await
+                    .map_err(err)?;
+                Ok(())
+            },
+        )
     }
 
     fn commit(&mut self) -> Result<(), DbError> {
         let client = &mut self.client;
-        self.rt.block_on(async {
-            client
-                .simple_query("IF @@TRANCOUNT > 0 COMMIT")
-                .await
-                .map_err(err)?
-                .into_results()
-                .await
-                .map_err(err)
-        })?;
+        bounded(
+            &self.rt,
+            self.call_timeout,
+            &self.cancel_sock,
+            &mut self.broken,
+            async {
+                client
+                    .simple_query("IF @@TRANCOUNT > 0 COMMIT")
+                    .await
+                    .map_err(err)?
+                    .into_results()
+                    .await
+                    .map_err(err)
+            },
+        )?;
         Ok(())
     }
 
     fn rollback(&mut self) -> Result<(), DbError> {
         let client = &mut self.client;
-        self.rt.block_on(async {
-            client
-                .simple_query("IF @@TRANCOUNT > 0 ROLLBACK")
-                .await
-                .map_err(err)?
-                .into_results()
-                .await
-                .map_err(err)
-        })?;
+        bounded(
+            &self.rt,
+            self.call_timeout,
+            &self.cancel_sock,
+            &mut self.broken,
+            async {
+                client
+                    .simple_query("IF @@TRANCOUNT > 0 ROLLBACK")
+                    .await
+                    .map_err(err)?
+                    .into_results()
+                    .await
+                    .map_err(err)
+            },
+        )?;
         Ok(())
+    }
+
+    /// ★ T-128: 호출 상한(`session.call_timeout_secs` · 메타 세션 `explorer.timeout`) — Oracle과 같은 포트 · 0/None = 없음.
+    fn set_call_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        self.call_timeout = timeout;
+    }
+
+    /// 호출 상한으로 끊긴 뒤 = 죽은 세션(소켓 닫힘 · 프로토콜 어긋남) → 호스트가 재접속.
+    fn is_alive(&self) -> bool {
+        !self.broken
     }
 }
 
@@ -1265,14 +1347,20 @@ impl MssqlSession {
                     Vec<Vec<Row>>,
                     std::time::Duration,
                     std::time::Duration,
-                ) = self.rt.block_on(async {
-                    let mut stream = client.query(sql.as_str(), &refs).await.map_err(fix)?;
-                    let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
-                    let exec_dur = t0.elapsed();
-                    let t1 = std::time::Instant::now();
-                    let sets = stream.into_results().await.map_err(fix)?;
-                    Ok::<_, DbError>((cols, sets, exec_dur, t1.elapsed()))
-                })?;
+                ) = bounded(
+                    &self.rt,
+                    self.call_timeout,
+                    &self.cancel_sock,
+                    &mut self.broken,
+                    async {
+                        let mut stream = client.query(sql.as_str(), &refs).await.map_err(fix)?;
+                        let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
+                        let exec_dur = t0.elapsed();
+                        let t1 = std::time::Instant::now();
+                        let sets = stream.into_results().await.map_err(fix)?;
+                        Ok::<_, DbError>((cols, sets, exec_dur, t1.elapsed()))
+                    },
+                )?;
                 result.timing.push(Stage::Execute, exec_dur);
                 let span = result.timing.push(Stage::Fetch, fetch_dur);
                 span.rows = Some(sets.iter().map(|s| s.len() as u64).sum());
@@ -1310,9 +1398,13 @@ impl MssqlSession {
                 result.result_sets = result_sets;
             }
             Route::Execute => {
-                let n = self
-                    .rt
-                    .block_on(async { client.execute(sql.as_str(), &refs).await.map_err(fix) })?;
+                let n = bounded(
+                    &self.rt,
+                    self.call_timeout,
+                    &self.cancel_sock,
+                    &mut self.broken,
+                    async { client.execute(sql.as_str(), &refs).await.map_err(fix) },
+                )?;
                 // ★ 파라미터 배치는 `DECLARE @x … = @P1;`마다 DONE 1행이 붙어 `total()`이 부풀린다(3 파라미터 + UPDATE 1행 = 4 ·
                 //   4-DBMS E2E 09-26) → 마지막 문장(실제 DML)의 수만.
                 result.rows_affected = Some(if values.is_empty() {
@@ -1323,13 +1415,18 @@ impl MssqlSession {
             }
             Route::Batch => {
                 // SQL 배치(sp_executesql 아님) — `#temp`·SET·USE 같은 세션 상태가 남는다. 파라미터 없음.
-                let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) =
-                    self.rt.block_on(async {
+                let (first_cols, sets): (Option<Vec<Column>>, Vec<Vec<Row>>) = bounded(
+                    &self.rt,
+                    self.call_timeout,
+                    &self.cancel_sock,
+                    &mut self.broken,
+                    async {
                         let mut stream = client.simple_query(sql.as_str()).await.map_err(fix)?;
                         let cols = stream.columns().await.map_err(fix)?.map(meta_columns);
                         let sets = stream.into_results().await.map_err(fix)?;
                         Ok::<_, DbError>((cols, sets))
-                    })?;
+                    },
+                )?;
                 let mut result_sets: Vec<ResultSet> = sets
                     .iter()
                     .filter(|s| !s.is_empty())
