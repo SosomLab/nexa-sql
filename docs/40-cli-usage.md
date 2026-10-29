@@ -817,7 +817,20 @@ nsql> exit
 - **세션 변수·접속은 셸이 살아 있는 동안 유지**된다
 - 옵션은 `run`과 같다(접속 · `-f` · `--max-rows` · `--width` · `--max-col-width` · `--overflow` · `-x` · `--timing` · `--log` · `-v`)
 - 파이프도 된다: `printf 'SELECT 1;\nquit\n' | nsql shell -c "sqlite::memory:"`
-- ★ **줄 편집기·Tab 완성(10-29 · T-453 1차)** — 터미널에서 띄우면 자체 줄 편집기가 켜진다(외부 라이브러리 없음 · 3-OS): ←→ · Home/End · Backspace/Delete · Ctrl+A/E/B/F/U/K/W · **↑↓ = 기록**(설정 폴더 `shell_history` · `cli.history_max` 기본 500 · 0 = 끔) · **Tab = 완성**(셸 명령 `\d` `.tables` … · 키워드 · 테이블·뷰 · `별칭.`/`스키마.` 뒤 컬럼·객체 — GUI 코드 완성과 같은 문맥 판정 · 메타는 첫 Tab 때 읽음 · 후보 여럿이면 공통 접두까지 채우고 표로 보여 줌) · **Ctrl+R = 기록 거꾸로 찾기**(글자를 칠 때마다 최신 일치 · Ctrl+R 반복 = 더 오래된 일치 · Enter = 확정 · 이동 키 = 찾기 끝내고 그 줄 편집 · Ctrl+C = 원래 줄로) · Ctrl+C = 줄 취소 · 빈 줄에서 Ctrl+D = 종료 · 한글 폭 2칸 · 긴 줄은 접어서 다시 그림. 파이프·리다이렉트(비터미널)는 종전처럼 줄 단위로 읽고 기록하지 않는다.
+- ★ **줄 편집기·Tab 완성(10-29 · T-453 1차)** — 터미널에서 띄우면 자체 줄 편집기가 켜진다(외부 라이브러리 없음 · 3-OS): ←→ · Home/End · Backspace/Delete · Ctrl+A/E/B/F/U/K/W · **↑↓ = 기록**(설정 폴더 `shell_history` · `cli.history_max` 기본 500 · 0 = 끔) · **Tab = 완성**(셸 명령 `\d` `.tables` … · 키워드 · 테이블·뷰 · `별칭.`/`스키마.` 뒤 컬럼·객체 — GUI 코드 완성과 같은 문맥 판정 · 메타는 첫 Tab 때 읽음 · 후보 여럿이면 공통 접두까지 채우고 표로 보여 줌) · **Ctrl+R = 기록 거꾸로 찾기**(글자를 칠 때마다 최신 일치 · Ctrl+R 반복 = 더 오래된 일치 · Enter = 확정 · 이동 키 = 찾기 끝내고 그 줄 편집 · Ctrl+C = 원래 줄로) · ★ **Ctrl+Z(·Ctrl+_) = 되돌리기 · Ctrl+Y = 다시(이어 친 글자·이어 지운 글자 = 한 묶음 · Enter·Ctrl+C로 비움) · Alt+Y = 마지막으로 지운 글 붙이기(Ctrl+K/U/W · Alt+D · Alt+Backspace로 지운 것) · Alt+←/→ · Ctrl+←/→ · Alt+B/F = 단어 이동 · Alt+D = 뒤 단어 지우기 · Alt+Backspace = 앞 단어 지우기(단어 = 영숫자·`_`·한글 · Ctrl+W는 공백 기준)**(10-29 · Windows는 콘솔을 직접 읽어 Ctrl+Z가 셸을 끝내지 않음 · 받은 키를 보려면 `NSQL_KEY_TRACE=<파일>`) · Ctrl+C = 줄 취소 · 빈 줄에서 Ctrl+D = 종료 · 한글 폭 2칸 · 긴 줄은 접어서 다시 그림. 파이프·리다이렉트(비터미널)는 종전처럼 줄 단위로 읽고 기록하지 않는다.
+- ★ **Tab 별칭·대소문자 = GUI 설정(10-29)** — `nsql config set intel.insert_alias on`(기본 off · GUI와 공유)이면 FROM/JOIN 자리에서 테이블 후보 하나로 확정될 때 ` A`처럼 별칭을 붙인다(모양 = `intel.alias_style` abbr|letters · `intel.alias_upper` · 같은 문장의 별칭은 건너뜀 · 뒤에 이미 별칭이 있으면 이름만) · 후보 대소문자 = `intel.insert_case` · 설정은 셸을 띄울 때 읽는다(바꾼 뒤 다시 띄움 · 셸 안 `set`/`get`은 출력 설정 전용).
+- ★ **`SHOW VERSION` · `SHOW AUTOCOMMIT`(10-29)** — `SHOW VERSION`(`VER` · `SERVER`) = `클라이언트: nsql 0.3.1 (full|lite)` + `서버: <방언> <버전> (<에디션>) · user=… · db=…`(서버 1왕복) · `SHOW AUTOCOMMIT`(`AUTO`) = `autocommit ON|OFF` · 접속 줄 끝에 `· autocommit on|off` · **셸의 자동 커밋 = 설정 `session.autocommit`(기본 on)** · `nsql run`·export·import = 종전대로 수동 + 끝날 때 커밋 · 셸·스크립트 안 `SET AUTOCOMMIT ON|OFF`가 우선 · `nsql --help` 첫 줄과 셸 `\?` 머리에 프로그램 판.
+- ★ **셸 `show` = 항목 표(10-30)** — 셸 `show`(·`set`·`get` 단독) = **항목별 표**(열 = 항목 · 현재값 · 설정 가능한 값 · 설명 · 행 = width · colwidth · overflow · format · max_rows · pager · autocommit) + 꼬리 "바꾸기: set … · 영구: nsql config set cli.<항목> · autocommit: SET AUTOCOMMIT" · `get <항목>` = 그 줄만(`autocommit`/`auto`도) · `set <항목> <값>` 뒤 = 바뀐 항목 줄 · `\x` = overflow 줄 · 종전 한 줄 요약 + set 도움말 두 줄을 대체.
+
+```
+항목        현재값  설정 가능한 값                               설명
+width       140     <n> | auto (0 = 무제한)                      표 한 줄 폭(auto = 터미널 폭)
+format      grid    grid | markdown | csv | tsv | json | jsonl  결과 출력 형식
+autocommit  ON      ON | OFF                                     문장마다 커밋
+…
+```
+
+(위 표는 모양 예시 — 정확한 문구는 셸에서 `show`로 본다.)
 
 #### 셸 안에서 출력 형식 바꾸기
 

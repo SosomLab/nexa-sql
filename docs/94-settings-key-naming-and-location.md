@@ -169,6 +169,11 @@
 
 - `session.call_timeout_secs` 라벨 "Oracle 호출 상한(초)" → **"서버 호출 상한(초)"**(`LblCallTimeout`) · 설명 = Oracle·SQL Server 공용(Oracle = 넘겨도 세션 유지 · SQL Server = 소켓 닫고 다음 실행에 재접속) · 키·단위·기본(0 = 끔) 그대로.
 
+### 6-14. 자동 커밋 · 자동완성 설정의 CLI 범위(10-29 · 178차 · T-453)
+
+- `session.autocommit`(기본 on) = GUI + **`nsql shell`** · `nsql run`·export·import 등 = 이 설정과 무관하게 수동 + 끝날 때 커밋(SQL*Plus 관례 · 스크립트 호환 · 사용자 결정 ⑤b) · 설명(`DescAutocommit`)에 CLI 범위 명시 · 셸·스크립트 `SET AUTOCOMMIT`이 우선.
+- `intel.insert_alias` · `intel.alias_style` · `intel.alias_upper` · `intel.insert_case` = GUI 코드 완성 + **CLI 셸 Tab**(`CompleteCfg::from_settings` · 셸 기동 때 읽음) · `intel.insert_alias` 기본 off 그대로(사용자 10-30 "현행 유지").
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).
