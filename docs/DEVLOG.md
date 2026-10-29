@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-29 오후 (174차 · Windows · T-14 잔여)** — 키맵 파일 context 키 11종(`num_selections` · `preceding_text` 등) · 단축키 창에 파일 바인딩 "(파일)"·조건 행 · 파일 바인딩 = 기본 키에 덧붙임(표시 = 동작) · 기동 명령 `keymap.dump`/`keymap.try` · 위키 단축키 문서 신설([journal 10-27 §37](journal/2026-10-27.md)).
+- **2026-10-29 06시 (173차 · Windows · 자율 모드 마감)** — T-47 전부(SQLite·SQL Server Execute/Fetch 분리 · b4ec19b8) · T-14 2단 코드 context(ba451bd5) · 02:00~06:00 자율 모드 총정리 = 165~173차 · D-394·D-395 · 사고 1 · 합의 1([journal 10-27 §36·§36-1](journal/2026-10-27.md)).
 - **2026-10-29 (172차 · Windows · T-454 문서)** — 64 §3-1b 크기 실측 표(lite/full 앱 + drivers-v0.1.8 zip 4 플랫폼) · 94 `driver.repo` 옛 태그 문구 정정 · 위키 Drivers 머리 "설치본 = Oracle OCI만 · 나머지 자동 설치"([journal 10-27 §35](journal/2026-10-27.md)).
 - **2026-10-29 (171차 · Windows · T-116)** — OFFSET 재질의 다음 페이지마다 직전 꼬리 1행을 겹쳐 받아 대조(서버 결과가 바뀌면 "처음부터 다시" 오류 · `grid.overlap_check` 기본 켬 · 0a0d4957)([journal 10-27 §34](journal/2026-10-27.md)).
 - **2026-10-29 (170차 · Windows · T-216 + 정리)** — 편집기 `CONNECT` 두 번 = 앞 연결을 닫는다는 로그 안내(D-208 · e16149ed) · 사용자 키맵 요약 로그 프로세스당 1회(e566f557) · nexa-ui nexa-dlg 시험의 `read_dir` 순서 의존 결함 수정(6063203 · ubuntu CI 4연속 ✗ 해소)([journal 10-27 §33](journal/2026-10-27.md)).

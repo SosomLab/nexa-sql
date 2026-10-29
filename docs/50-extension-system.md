@@ -143,7 +143,7 @@
 |---|---|---|---|
 | 시작 | `npx yo code` → 폴더 · `package.json` · `extension.ts` | `Packages/My/my.py` 파일 하나 | `nsql plugin new my` → `plugin.toml` · `src/lib.rs` |
 | 명령 등록 | `contributes.commands` + `registerCommand` | `class MyCommand(sublime_plugin.TextCommand)` (클래스 이름 = 명령) | `plugin.toml [[commands]]` + `#[command]` 함수(export) |
-| 메뉴/키 | `contributes.menus/keybindings` | `Main.sublime-menu` · `Default.sublime-keymap` | `plugin.toml [[menus]]/[[keys]]` · ✅ 10-29 사용자 `Packages/User/Default[ (<OS>)].sublime-keymap` 파서·context(T-14 · D-395) |
+| 메뉴/키 | `contributes.menus/keybindings` | `Main.sublime-menu` · `Default.sublime-keymap` | `plugin.toml [[menus]]/[[keys]]` · ✅ 10-29 사용자 `Packages/User/Default[ (<OS>)].sublime-keymap` 파서·context(T-14 · D-395 · 174차 context 키 표 = [위키 단축키](wiki/Keyboard-Shortcuts.md)) |
 | 설정 | `contributes.configuration`(스키마 → 설정 UI 자동) | `My.sublime-settings`(JSON · UI 없음 · 파일 편집) | `plugin.toml [[settings]]` → REGISTRY 등재(설정 창 자동 · i18n 라벨) |
 | 실행·확인 | F5 → 새 창 · 디버거 | 저장 → 자동 리로드 · 콘솔 | `cargo build --target wasm32-wasip1` → `extensions.dev_dir` 감시 재적재 · 로그 창 `⟨plugin⟩` 층 |
 | 배포 | `vsce publish` | Package Control PR(채널 JSON) | `nsql plugin pack` → GitHub Release + 인덱스 PR(서명) |

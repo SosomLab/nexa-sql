@@ -43,9 +43,9 @@
 | 단계 | 정의(시작 → 끝) | 측정 층 · 현재 상태 | 부가 지표 |
 |---|---|---|---|
 | Compose | 마지막 키 입력 → 실행 요청 | GUI · ☐(편집기 E4 뒤) | 문장 길이 |
-| Send | 문장 분리·바인드 준비 → 드라이버 호출 직전 | 러너 · ☐(T-47) | 바인드 수 |
-| **Execute** | 드라이버 호출 → 첫 응답(행/완료) | 드라이버 · ✅ Oracle(`stmt.query`/`execute`) · 기타 = 러너 합산 "execute+fetch" | — |
-| **Fetch** | 첫 응답 → 마지막 행 수신(배열 페치 왕복 포함) | 드라이버 · ✅ Oracle(`array N` note) · ☐ MSSQL 스트림 분리(T-47) | 행 수 · 바이트 |
+| Send | 문장 분리·바인드 준비 → 드라이버 호출 직전 | 러너 · ✅(T-47) | 바인드 수 |
+| **Execute** | 드라이버 호출 → 첫 응답(행/완료) | 드라이버 · ✅ Oracle(`stmt.query`/`execute`) · ✅ SQLite(`prepare+query`) · ✅ SQL Server(첫 응답) · 기타 = 러너 합산 "execute+fetch" · DML = 합산 유지 | — |
+| **Fetch** | 첫 응답 → 마지막 행 수신(배열 페치 왕복 포함) | 드라이버 · ✅ Oracle(`array N` note) · ✅ SQLite(행 순회) · ✅ SQL Server(`TDS stream`) — 10-29 T-47 · 나머지 방언 = 러너 합산 | 행 수 · 바이트 |
 | Receive | 와이어 → `Value` 디코딩 | 드라이버 · ☐(Fetch에 포함 — 분리는 프로파일링 뒤) | — |
 | **Load** | `ResultSet` 수신 → 그리드 모델 준비 | 호스트 · ✅ 그리드 푸터 | 바이트(`approx_bytes`) |
 | **Render** | 프레임 그리기(첫 프레임·이후 프레임) | 호스트 · ✅ 그리드 푸터(매 프레임) | 행/셀 수 |
@@ -129,7 +129,7 @@
 
 | ID | 항목 | 의존 |
 |---|---|---|
-| **T-47** | Send 스팬(러너) · MSSQL/SQLite Execute·Fetch 분리 · `--timing=json` · 로그 파일(TSV · 회전) | ✅ 골격 |
+| **T-47** | Send 스팬(러너) · MSSQL/SQLite Execute·Fetch 분리 · `--timing=json` · 로그 파일(TSV · 회전) | ✅ 전부(10-29 · 173차) |
 | **T-48** | 페치 모델 — 상한·배치 스트리밍·"더 가져오기"(Navigate) · 예산 경고 · 실행 히스토리 패널 · 메타만(EXPLAIN/COUNT) | D-42 D-43 |
 | **T-49** | `DBMS_OUTPUT.GET_LINES` 배열 회수 · 실행 중 주기 폴링 옵션 · UNLIMITED 안내 | — |
 | **T-50** | 컬럼 지향 결과 저장소 + 페인트 할당 0 + 폭 캐시 — nexa-grid(U-3 · dir2 `rows.rs` 이식)와 함께 | nexa-ui U-3 |
