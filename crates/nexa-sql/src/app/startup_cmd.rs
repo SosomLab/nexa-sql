@@ -1597,6 +1597,15 @@ cells={n}
             }
             return;
         }
+        // `define.auto|on|off` = 상태줄 `&` 치환 팝업의 선택과 같은 길(D-141 · 10-30 · 입력 주입 없이).
+        if let Some(rest) = id
+            .strip_prefix("define.")
+            .filter(|r| matches!(*r, "auto" | "on" | "off"))
+        {
+            self.define_pick(rest);
+            self.redraw();
+            return;
+        }
         // `tx.manual`/`tx.auto` = 상태줄 Auto-commit 팝업의 선택과 같은 길(수동 커밋 실기를 입력 주입 없이 · `tx.log`는 창이라 아래로).
         if let Some(rest) = id
             .strip_prefix("tx.")

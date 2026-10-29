@@ -16,6 +16,8 @@ pub(crate) const KEY: &str = "statusbar.layout";
 /// 기본 순서의 끝 = … 파일 형식 · **메모리 · 라이선스**(사용자 10-04 "라이선스 왼쪽에 메모리").
 pub(crate) const BLOCKS: OrderDefs = &[
     ("tx", &[]),
+    // ★ `&` 치환 모드(D-141 상태줄 토글 · T-149 잔여 · 10-30): `& auto|on|off` · 클릭 = 팝업으로 전환.
+    ("define", &[]),
     ("state", &["large", "readonly", "bookmark"]),
     ("pos", &[]),
     ("result", &["rows", "time"]),
@@ -35,6 +37,7 @@ pub(crate) const LOCKED: &[&str] = &["license"];
 pub(crate) fn label(block: &str, item: Option<&str>) -> Msg {
     match item.unwrap_or(block) {
         "tx" => Msg::SbTx,
+        "define" => Msg::SbDefine,
         "state" => Msg::SbGrpState,
         "large" => Msg::SbLarge,
         "readonly" => Msg::SbReadOnly,
@@ -155,8 +158,8 @@ mod tests {
     /// 그리기 코드가 만드는 순서(메모리가 앞쪽)로 칸을 준다.
     fn built() -> Vec<(&'static str, i32)> {
         [
-            "tx", "mem", "large", "readonly", "bookmark", "pos", "rows", "time", "autosave", "git",
-            "enc", "eol", "indent", "syntax", "license",
+            "tx", "define", "mem", "large", "readonly", "bookmark", "pos", "rows", "time",
+            "autosave", "git", "enc", "eol", "indent", "syntax", "license",
         ]
         .into_iter()
         .map(|id| (id, 0))
@@ -169,8 +172,8 @@ mod tests {
         assert_eq!(
             ids(&v),
             [
-                "tx", "large", "readonly", "bookmark", "pos", "rows", "time", "autosave", "git",
-                "enc", "eol", "indent", "syntax", "mem", "license"
+                "tx", "define", "large", "readonly", "bookmark", "pos", "rows", "time", "autosave",
+                "git", "enc", "eol", "indent", "syntax", "mem", "license"
             ]
         );
         assert_eq!(to_setting(&blocks("")), "", "기본 = 빈 값");
@@ -187,8 +190,8 @@ mod tests {
         assert_eq!(
             ids(&v),
             [
-                "syntax", "enc", "indent", "mem", "tx", "large", "readonly", "bookmark", "pos",
-                "autosave", "git", "license"
+                "syntax", "enc", "indent", "mem", "tx", "define", "large", "readonly", "bookmark",
+                "pos", "autosave", "git", "license"
             ]
         );
         // 그룹을 숨겨도 자식 체크는 보존된다.

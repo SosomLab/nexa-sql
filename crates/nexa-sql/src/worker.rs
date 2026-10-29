@@ -73,6 +73,8 @@ pub(crate) enum Cmd {
     GlobalMacros(Vec<(String, String)>),
     /// ★ 프로필 층(읽기 전용 · T-153): 접속 프로필의 `var.<이름>=값` 목록 — 접속 뒤 호스트가 한 번 준다(DB로 가는 것 없음).
     FixedVars(Vec<(String, String)>),
+    /// ★ `&` 치환 모드(설정 `script.define` = auto | on | off · D-141 상태줄 토글 · 10-30) — 통제 명령(DB로 가는 것 없음).
+    DefineMode(String),
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
@@ -144,6 +146,7 @@ impl Cmd {
                 | Cmd::KillSession
                 | Cmd::Quit
                 | Cmd::Autocommit(_)
+                | Cmd::DefineMode(_)
                 | Cmd::SharedVars(_)
                 | Cmd::GlobalVars(_)
                 | Cmd::GlobalMacros(_)
@@ -1798,6 +1801,10 @@ pub(crate) fn spawn(
                     }
                     Cmd::Autocommit(on) => {
                         runner.set_autocommit(on);
+                        true
+                    }
+                    Cmd::DefineMode(mode) => {
+                        runner.engine.set_define_mode(&mode);
                         true
                     }
                     Cmd::KillSession => {

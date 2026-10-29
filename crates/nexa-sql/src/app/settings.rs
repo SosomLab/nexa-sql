@@ -834,6 +834,8 @@ impl App {
     fn apply_setting_misc(&mut self, key: &str) -> bool {
         match key {
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
+            // ★ `&` 치환 모드(D-141 · 10-30): 설정 화면에서 바꿔도 열린 세션의 러너에 바로(상태줄 팝업과 같은 길).
+            "script.define" => self.define_apply_live(),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
             "editor.auto_close_pairs"
             | "editor.pair_kinds"

@@ -693,6 +693,8 @@ struct App {
     /// 확인 뒤 이어질 동작.
     tx_after: Option<TxAfter>,
     status_tx_rect: Rect,
+    /// `&` 치환 모드 세그먼트(D-141 · 클릭 = 팝업).
+    status_define_rect: Rect,
     /// 마지막 페인트의 상태바 칸 사각형(id별 · 우클릭 메뉴의 "영역" 판정 · 사용자 10-04).
     status_seg_rects: Vec<(&'static str, Rect)>,
     /// 상태바 띠 전체(우클릭 = 상태바 메뉴).
@@ -2080,6 +2082,7 @@ fn main() {
         detail_key: None,
         tx_after: None,
         status_tx_rect: Rect::new(0, 0, 0, 0),
+        status_define_rect: Rect::new(0, 0, 0, 0),
         status_seg_rects: Vec::new(),
         status_bar_rect: Rect::new(0, 0, 0, 0),
         json_watch: None,

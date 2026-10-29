@@ -333,6 +333,11 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ 상태줄 `&` 치환 팝업의 답(D-141 · 10-30).
+        if let Some(rest) = id.strip_prefix("define.") {
+            self.define_pick(rest);
+            return;
+        }
         if let Some(rest) = id.strip_prefix("tx.") {
             self.tx_pick(rest);
             self.redraw();

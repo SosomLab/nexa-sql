@@ -1750,7 +1750,7 @@ impl App {
         }
     }
 
-    /// 상태줄의 클릭되는 항목 index(0 구문 · 1 들여쓰기 · 2 줄끝 · 3 메모리 · 4 라이선스 · 5 자동 저장 · 6 트랜잭션 · 7 인코딩).
+    /// 상태줄의 클릭되는 항목 index(0 구문 · 1 들여쓰기 · 2 줄끝 · 3 메모리 · 4 라이선스 · 5 자동 저장 · 6 트랜잭션 · 7 인코딩 · 8 `&` 치환).
     fn status_item_at(&self, p: Point) -> Option<u8> {
         [
             self.status_syntax_rect,
@@ -1761,6 +1761,7 @@ impl App {
             self.status_autosave_rect,
             self.status_tx_rect,
             self.status_enc_rect,
+            self.status_define_rect,
         ]
         .iter()
         .position(|r| r.w > 0 && r.contains(p))
@@ -1790,6 +1791,7 @@ impl App {
             5 => self.open_autosave_menu(),
             6 => self.open_tx_menu(),
             7 => self.open_enc_menu(),
+            8 => self.open_define_menu(),
             _ => {}
         }
     }
@@ -1806,6 +1808,7 @@ impl App {
             self.status_lic_rect,
             self.status_mem_rect,
             self.status_autosave_rect,
+            self.status_define_rect,
         ]
         .iter()
         .any(|r| r.w > 0 && r.contains(p))
