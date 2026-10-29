@@ -350,6 +350,8 @@ pub enum RunEvent {
         schema: String,
         /// ★ 접속 직후의 **현재 DB**(SQL Server `DB_NAME()` · MySQL `DATABASE()` · 그 밖 빈 글 · 10-01 ⑯) = 탭 작업 단위의 연결 기본값.
         database: String,
+        /// ★ 이 러너의 자동 커밋 상태(사용자 10-29 "처음 접속 시 접속 정보에 autocommit 표시") — CLI 접속 줄 꼬리.
+        autocommit: bool,
     },
     Disconnected,
     Error {
@@ -2215,6 +2217,7 @@ impl Runner {
                     dialect,
                     schema,
                     database,
+                    autocommit: self.engine.settings.autocommit,
                 });
                 // ★ 드라이버 제약 안내(docs/110 §6) — 접속 직후 한 번(제약이 없는 드라이버는 조용하다).
                 if let Some(s) = self.session.as_ref() {
@@ -2730,6 +2733,53 @@ impl Runner {
                         more: false,
                         label: Some("Variables".to_string()),
                     });
+                    return true;
+                }
+                // ★ `SHOW AUTOCOMMIT|AUTO`(사용자 10-29): 이 러너의 플래그(서버 상태를 묻지 않음 · 44 §3).
+                if matches!(w_up.as_str(), "AUTOCOMMIT" | "AUTO") {
+                    let on = if self.engine.settings.autocommit {
+                        "ON"
+                    } else {
+                        "OFF"
+                    };
+                    emit(RunEvent::Message(tf(Msg::ShowAutocommit, &[on])));
+                    return true;
+                }
+                // ★ `SHOW VERSION|VER|SERVER`(사용자 10-29): 클라이언트 판 + 서버 판(`nsql_catalog::server_info` · 1 왕복 · 접속 없으면 안내).
+                if matches!(w_up.as_str(), "VERSION" | "VER" | "SERVER") {
+                    let variant = build_variant();
+                    let tag = if variant.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({variant})")
+                    };
+                    let client = tf(Msg::ShowVersionClient, &[env!("CARGO_PKG_VERSION"), &tag]);
+                    let server = match self.session.as_mut() {
+                        None => t(Msg::NoSession).to_string(),
+                        Some(s) => {
+                            let d = s.dialect().to_string();
+                            match nsql_catalog::server_info(s.as_mut()) {
+                                Ok(i) if !i.version.is_empty() => {
+                                    let mut detail = format!("{d} {}", i.version);
+                                    if !i.edition.is_empty() {
+                                        detail.push_str(&format!(" ({})", i.edition));
+                                    }
+                                    if !i.login.is_empty() {
+                                        detail.push_str(&format!(" · user={}", i.login));
+                                    }
+                                    if !i.current_db.is_empty() {
+                                        detail.push_str(&format!(" · db={}", i.current_db));
+                                    }
+                                    tf(Msg::ShowVersionServer, &[&detail])
+                                }
+                                Ok(_) => tf(Msg::ShowVersionUnknown, &[&d]),
+                                Err(e) => {
+                                    tf(Msg::ShowVersionUnknown, &[&format!("{d}: {}", e.message)])
+                                }
+                            }
+                        }
+                    };
+                    emit(RunEvent::Message(format!("{client}\n{server}")));
                     return true;
                 }
                 let text = match w_up.as_str() {
@@ -3825,6 +3875,18 @@ fn summary(item: &Item) -> String {
         ItemKind::Sql(k) => format!("{k:?}"),
         ItemKind::Invalid(_) => "Invalid".into(),
     }
+}
+
+/// ★ 빌드 변형 이름(`SHOW VERSION` · 도움말 · 10-29): 호스트가 기동 때 한 번 알려 준다(`full` = 내장 드라이버 전부 · `lite` =
+///   Oracle OCI만 · D-350·D-352) — 기능 플래그는 호스트 크레이트에 있으므로 여기서는 저장만. 모르면 빈 글.
+static BUILD_VARIANT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+pub fn set_build_variant(v: &'static str) {
+    let _ = BUILD_VARIANT.set(v);
+}
+
+pub fn build_variant() -> &'static str {
+    BUILD_VARIANT.get().copied().unwrap_or("")
 }
 
 #[cfg(test)]

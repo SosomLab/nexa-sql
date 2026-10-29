@@ -2,10 +2,17 @@
 //!
 //! 순수 부분(디코더 [`Decoder`] · 편집 [`LineEditor`] · 그리기 [`render`] · 후보 표 [`format_columns`])은 시험으로 덮고,
 //! 터미널 I/O는 [`read_interactive`] 한 곳. 터미널이 아니면(배치 · 파이프) 호출자가 종전 `read_line`을 쓴다.
-//! 키 = 좌우·Home/End·Backspace/Delete·↑↓ 기록·Tab 완성·Ctrl+A/E/B/F/U/K/W/L·Ctrl+C(줄 취소)·Ctrl+D(빈 줄 = 끝).
+//! 키 = 좌우·Home/End·Backspace/Delete·↑↓ 기록·Tab 완성·Ctrl+A/E/B/F/U/K/W/L·Ctrl+C(줄 취소)·Ctrl+D(빈 줄 = 끝)·Ctrl+R(기록 찾기)
+//! · 단어 = Alt+B/F(`ESC b`/`ESC f`) · Ctrl/Alt+←/→(`ESC [ 1;5D` 등) · Alt+D(앞쪽 단어 지우기) · Alt+Backspace(뒤쪽 단어 지우기)
+//! · 되돌리기 = Ctrl+Z(·Ctrl+_) · 다시 = Ctrl+Y(GUI `edit.undo`/`edit.redo`와 같은 키 · 사용자 10-29) · 붙이기(yank) = Alt+Y(마지막으로 지운 글).
+//!   되돌리기 단위 = 이어 친 글자 묶음 · 이어 지운 글자 묶음 · 그 밖 편집(지우기·완성·기록·붙이기)은 하나씩 · Enter·Ctrl+C로 비움.
+//!   Windows는 콘솔을 직접 읽는다(`term::read_console_utf8` · 표준 `Stdin`이 Ctrl+Z를 EOF로 바꾸기 때문).
+//! 키 진단 = `NSQL_KEY_TRACE=<파일>`이면 받은 바이트와 해석한 키를 그 파일에 덧붙인다(원격·맥 Option 판정용).
 //! 그리기 = ANSI(`\r` · `ESC[K` · `ESC[J` · 커서 이동) — Windows는 raw 모드에서 VT 처리를 켠다(Windows 10+).
 
-use std::io::{self, IsTerminal, Read, Write};
+#[cfg(not(windows))]
+use std::io::Read;
+use std::io::{self, IsTerminal, Write};
 
 /// 디코더가 낸 키.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +42,20 @@ pub(crate) enum Key {
     KillWord,
     /// Ctrl+R — 기록 거꾸로 찾기(검색 모드 · 반복 = 더 오래된 일치).
     SearchHistory,
+    /// Alt+B · Ctrl/Alt+← — 단어 처음으로.
+    WordLeft,
+    /// Alt+F · Ctrl/Alt+→ — 다음 단어 끝으로.
+    WordRight,
+    /// Alt+Backspace — 커서 앞 단어 지우기(단어 경계 = 영숫자·`_`·비ASCII).
+    KillWordLeft,
+    /// Alt+D — 커서 뒤 단어 지우기.
+    KillWordRight,
+    /// Ctrl+Z · Ctrl+_ — 되돌리기.
+    Undo,
+    /// Ctrl+Y — 다시 실행.
+    Redo,
+    /// Alt+Y — 마지막으로 지운 글 붙이기(yank).
+    Yank,
     /// 모르는 제어·이스케이프 = 버린다.
     Ignore,
 }
@@ -96,6 +117,8 @@ impl Decoder {
             0x15 => Key::KillToStart,
             0x17 => Key::KillWord,
             0x12 => Key::SearchHistory,
+            0x1a | 0x1f => Key::Undo,
+            0x19 => Key::Redo,
             b if b < 0x20 => Key::Ignore,
             b if b < 0x80 => Key::Char(b as char),
             b => {
@@ -108,10 +131,15 @@ impl Decoder {
         })
     }
 
-    /// `ESC …` — `[`/`O` 뒤 종료 글자(알파벳 · `~`)까지 모은다. ESC 뒤 다른 글자(Alt 조합)는 버린다.
+    /// `ESC …` — `[`/`O` 뒤 종료 글자(알파벳 · `~`)까지 모은다. ESC 뒤 한 글자 = Alt 조합(`b`/`f`/`d`/Backspace만 · 나머지 버림).
     fn finish_esc(&mut self) -> Option<Key> {
         let key = match self.esc.as_slice() {
             [0x1b, b'['] | [0x1b, b'O'] => return None,
+            [0x1b, b'b' | b'B'] => Key::WordLeft,
+            [0x1b, b'f' | b'F'] => Key::WordRight,
+            [0x1b, b'd' | b'D'] => Key::KillWordRight,
+            [0x1b, b'y' | b'Y'] => Key::Yank,
+            [0x1b, 0x7f | 0x08] => Key::KillWordLeft,
             [0x1b, b'[' | b'O', rest @ ..] => {
                 let &last = rest.last()?;
                 if !(last.is_ascii_alphabetic() || last == b'~') {
@@ -122,15 +150,22 @@ impl Decoder {
                     return None;
                 }
                 let params = &rest[..rest.len() - 1];
-                let first_num: u32 = params
-                    .split(|c| *c == b';')
-                    .next()
-                    .and_then(|p| std::str::from_utf8(p).ok())
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(0);
+                let num = |i: usize| -> u32 {
+                    params
+                        .split(|c| *c == b';')
+                        .nth(i)
+                        .and_then(|p| std::str::from_utf8(p).ok())
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(0)
+                };
+                let first_num = num(0);
+                // xterm 수식 키 = 둘째 매개변수 1+비트(1 Shift · 2 Alt · 4 Ctrl) — Alt나 Ctrl이 섞이면 단어 이동.
+                let word = (num(1).saturating_sub(1) & 0b110) != 0;
                 match (last, first_num) {
                     (b'A', _) => Key::Up,
                     (b'B', _) => Key::Down,
+                    (b'C', _) if word => Key::WordRight,
+                    (b'D', _) if word => Key::WordLeft,
                     (b'C', _) => Key::Right,
                     (b'D', _) => Key::Left,
                     (b'H', _) | (b'~', 1 | 7) => Key::Home,
@@ -144,6 +179,11 @@ impl Decoder {
         self.esc.clear();
         Some(key)
     }
+}
+
+/// 단어 글자 = 영숫자 · `_` · 비ASCII(한글 등). 그 밖(공백 · 구두점 · 연산자)은 구분자.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || !c.is_ascii()
 }
 
 /// 편집기가 호출자에게 요구하는 것.
@@ -171,6 +211,17 @@ struct Search {
     saved_cursor: usize,
 }
 
+/// 되돌리기 묶음 — 이어 친 글자·이어 지운 글자는 한 단계로 합친다(readline과 같은 감각).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Group {
+    None,
+    Insert,
+    Delete,
+}
+
+/// 되돌리기 스택 상한(줄 하나의 편집 · 넘으면 가장 오래된 것부터).
+const UNDO_MAX: usize = 200;
+
 /// 한 줄 편집 상태(글자 인덱스 · 기록 탐색은 지금 줄의 초안을 보존).
 pub(crate) struct LineEditor {
     buf: Vec<char>,
@@ -180,6 +231,11 @@ pub(crate) struct LineEditor {
     hist_pos: Option<usize>,
     draft: Vec<char>,
     search: Option<Search>,
+    undo: Vec<(Vec<char>, usize)>,
+    redo: Vec<(Vec<char>, usize)>,
+    group: Group,
+    /// 마지막으로 지운 글(Ctrl+K/U/W · Alt+D · Alt+Backspace) — Alt+Y가 붙인다.
+    kill: Vec<char>,
 }
 
 impl LineEditor {
@@ -192,7 +248,37 @@ impl LineEditor {
             hist_pos: None,
             draft: Vec::new(),
             search: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            group: Group::None,
+            kill: Vec::new(),
         }
+    }
+
+    /// 편집 전에 지금 상태를 되돌리기 스택에 남긴다 — 같은 묶음이 이어지면 합친다 · 새 편집은 다시 실행 스택을 비운다.
+    fn snapshot(&mut self, group: Group) {
+        if group != Group::None && group == self.group {
+            return;
+        }
+        self.undo.push((self.buf.clone(), self.cursor));
+        if self.undo.len() > UNDO_MAX {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.group = group;
+    }
+
+    /// 지운 글을 붙이기 버퍼에(빈 것은 무시).
+    fn remember_kill(&mut self, text: Vec<char>) {
+        if !text.is_empty() {
+            self.kill = text;
+        }
+    }
+
+    fn clear_undo(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.group = Group::None;
     }
 
     /// 검색 모드면 그 프롬프트(`(reverse-i-search)'질의': `) — 호출자가 보통 프롬프트 대신 그린다.
@@ -223,8 +309,42 @@ impl LineEditor {
                 return a;
             }
         }
+        // 글자·지우기 밖의 키는 되돌리기 묶음을 끊는다(이동 뒤 친 글자는 새 단계).
+        if !matches!(key, Key::Char(_) | Key::Backspace | Key::Delete | Key::Eof) {
+            self.group = Group::None;
+        }
         match key {
+            Key::Undo => {
+                let Some((b, c)) = self.undo.pop() else {
+                    return Action::None;
+                };
+                let cur = (std::mem::replace(&mut self.buf, b), self.cursor);
+                self.redo.push(cur);
+                self.cursor = c.min(self.buf.len());
+                Action::Redraw
+            }
+            Key::Redo => {
+                let Some((b, c)) = self.redo.pop() else {
+                    return Action::None;
+                };
+                let cur = (std::mem::replace(&mut self.buf, b), self.cursor);
+                self.undo.push(cur);
+                self.cursor = c.min(self.buf.len());
+                Action::Redraw
+            }
+            Key::Yank => {
+                if self.kill.is_empty() {
+                    return Action::None;
+                }
+                self.snapshot(Group::None);
+                let k = self.kill.clone();
+                let n = k.len();
+                self.buf.splice(self.cursor..self.cursor, k);
+                self.cursor += n;
+                Action::Redraw
+            }
             Key::SearchHistory => {
+                self.snapshot(Group::None);
                 self.search = Some(Search {
                     query: String::new(),
                     pos: None,
@@ -234,6 +354,7 @@ impl LineEditor {
                 Action::Redraw
             }
             Key::Char(c) => {
+                self.snapshot(Group::Insert);
                 self.buf.insert(self.cursor, c);
                 self.cursor += 1;
                 Action::Redraw
@@ -252,6 +373,43 @@ impl LineEditor {
                 self.cursor += 1;
                 Action::Redraw
             }
+            Key::WordLeft => {
+                let i = self.word_left();
+                if i == self.cursor {
+                    return Action::None;
+                }
+                self.cursor = i;
+                Action::Redraw
+            }
+            Key::WordRight => {
+                let i = self.word_right();
+                if i == self.cursor {
+                    return Action::None;
+                }
+                self.cursor = i;
+                Action::Redraw
+            }
+            Key::KillWordLeft => {
+                let i = self.word_left();
+                if i == self.cursor {
+                    return Action::None;
+                }
+                self.snapshot(Group::None);
+                let k: Vec<char> = self.buf.drain(i..self.cursor).collect();
+                self.remember_kill(k);
+                self.cursor = i;
+                Action::Redraw
+            }
+            Key::KillWordRight => {
+                let i = self.word_right();
+                if i == self.cursor {
+                    return Action::None;
+                }
+                self.snapshot(Group::None);
+                let k: Vec<char> = self.buf.drain(self.cursor..i).collect();
+                self.remember_kill(k);
+                Action::Redraw
+            }
             Key::Home => {
                 self.cursor = 0;
                 Action::Redraw
@@ -264,6 +422,7 @@ impl LineEditor {
                 if self.cursor == 0 {
                     return Action::None;
                 }
+                self.snapshot(Group::Delete);
                 self.cursor -= 1;
                 self.buf.remove(self.cursor);
                 Action::Redraw
@@ -272,16 +431,27 @@ impl LineEditor {
                 if self.cursor >= self.buf.len() {
                     return Action::None;
                 }
+                self.snapshot(Group::Delete);
                 self.buf.remove(self.cursor);
                 Action::Redraw
             }
             Key::KillToStart => {
-                self.buf.drain(..self.cursor);
+                if self.cursor == 0 {
+                    return Action::None;
+                }
+                self.snapshot(Group::None);
+                let k: Vec<char> = self.buf.drain(..self.cursor).collect();
+                self.remember_kill(k);
                 self.cursor = 0;
                 Action::Redraw
             }
             Key::KillToEnd => {
-                self.buf.truncate(self.cursor);
+                if self.cursor >= self.buf.len() {
+                    return Action::None;
+                }
+                self.snapshot(Group::None);
+                let k = self.buf.split_off(self.cursor);
+                self.remember_kill(k);
                 Action::Redraw
             }
             Key::KillWord => {
@@ -295,7 +465,9 @@ impl LineEditor {
                 if i == self.cursor {
                     return Action::None;
                 }
-                self.buf.drain(i..self.cursor);
+                self.snapshot(Group::None);
+                let k: Vec<char> = self.buf.drain(i..self.cursor).collect();
+                self.remember_kill(k);
                 self.cursor = i;
                 Action::Redraw
             }
@@ -307,12 +479,14 @@ impl LineEditor {
                 self.buf.clear();
                 self.cursor = 0;
                 self.hist_pos = None;
+                self.clear_undo();
                 Action::Submit(s)
             }
             Key::Cancel => {
                 self.buf.clear();
                 self.cursor = 0;
                 self.hist_pos = None;
+                self.clear_undo();
                 Action::Cancel
             }
             Key::Eof => {
@@ -395,6 +569,31 @@ impl LineEditor {
         }
     }
 
+    /// 커서 앞 단어의 처음(readline `backward-word`: 구분자를 건너뛴 뒤 단어 글자를 건너뛴다).
+    fn word_left(&self) -> usize {
+        let mut i = self.cursor;
+        while i > 0 && !is_word_char(self.buf[i - 1]) {
+            i -= 1;
+        }
+        while i > 0 && is_word_char(self.buf[i - 1]) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// 커서 뒤 단어의 끝(readline `forward-word`).
+    fn word_right(&self) -> usize {
+        let n = self.buf.len();
+        let mut i = self.cursor;
+        while i < n && !is_word_char(self.buf[i]) {
+            i += 1;
+        }
+        while i < n && is_word_char(self.buf[i]) {
+            i += 1;
+        }
+        i
+    }
+
     fn history_prev(&mut self) -> Action {
         if self.history.is_empty() {
             return Action::None;
@@ -407,6 +606,7 @@ impl LineEditor {
             Some(0) => return Action::None,
             Some(p) => p - 1,
         };
+        self.snapshot(Group::None);
         self.buf = self.history[pos].chars().collect();
         self.cursor = self.buf.len();
         self.hist_pos = Some(pos);
@@ -417,6 +617,7 @@ impl LineEditor {
         let Some(p) = self.hist_pos else {
             return Action::None;
         };
+        self.snapshot(Group::None);
         if p + 1 >= self.history.len() {
             self.buf = std::mem::take(&mut self.draft);
             self.hist_pos = None;
@@ -443,6 +644,7 @@ impl LineEditor {
 
     /// `[start, cursor)`(글자 인덱스)를 `text`로 바꾸고 커서를 그 뒤에.
     pub(crate) fn replace_range(&mut self, start: usize, text: &str) {
+        self.snapshot(Group::None);
         let start = start.min(self.cursor);
         let tail: Vec<char> = self.buf.split_off(self.cursor);
         self.buf.truncate(start);
@@ -653,6 +855,8 @@ impl Drop for RawGuard {
 
 /// 완성 함수 — `(본문, 커서 글자 인덱스) → (바꿀 시작 글자 인덱스, 후보들)`.
 pub(crate) type Completer<'a> = dyn FnMut(&str, usize) -> (usize, Vec<String>) + 'a;
+/// 후보 하나로 확정될 때 그 글을 꾸민다(줄 · 커서 · 후보 → 넣을 글 · 예 = 테이블 뒤 자동 별칭 · 10-29 ⑥).
+pub(crate) type Decorator<'a> = dyn FnMut(&str, usize, &str) -> String + 'a;
 
 /// 터미널에서 한 줄을 읽는다(프롬프트·에코 = stderr · 키 주입 없음). 완성 = [`Completer`].
 /// raw 모드를 못 켜면 종전 `read_line`과 같이 동작한다.
@@ -660,6 +864,7 @@ pub(crate) fn read_interactive(
     prompt: &str,
     ed: &mut LineEditor,
     complete: &mut Completer<'_>,
+    decorate: &mut Decorator<'_>,
 ) -> Outcome {
     if !io::stdin().is_terminal() {
         return read_plain(prompt);
@@ -696,9 +901,16 @@ pub(crate) fn read_interactive(
         let _ = e.flush();
     };
     let mut stdin = io::stdin().lock();
-    let mut bytes = [0u8; 64];
+    let mut bytes: Vec<u8> = vec![0; 64];
+    let mut trace = std::env::var_os("NSQL_KEY_TRACE").and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    });
     loop {
-        let n = match stdin.read(&mut bytes) {
+        let n = match read_chunk(&mut stdin, &mut bytes) {
             Ok(0) => {
                 finish(row, end_row);
                 return Outcome::Eof;
@@ -710,10 +922,17 @@ pub(crate) fn read_interactive(
                 return Outcome::Eof;
             }
         };
+        if let Some(f) = trace.as_mut() {
+            let hex: Vec<String> = bytes[..n].iter().map(|b| format!("{b:02x}")).collect();
+            let _ = writeln!(f, "bytes {}", hex.join(" "));
+        }
         for &b in &bytes[..n] {
             let Some(key) = dec.push(b) else {
                 continue;
             };
+            if let Some(f) = trace.as_mut() {
+                let _ = writeln!(f, "  key {key:?}");
+            }
             match ed.handle(key) {
                 Action::None => {}
                 Action::Redraw => draw(ed, &mut row, &mut end_row, false),
@@ -739,7 +958,8 @@ pub(crate) fn read_interactive(
                     match cands.len() {
                         0 => {}
                         1 => {
-                            ed.replace_range(start, &cands[0]);
+                            let text = decorate(&ed.text(), ed.cursor(), &cands[0]);
+                            ed.replace_range(start, &text);
                             draw(ed, &mut row, &mut end_row, false);
                         }
                         _ => {
@@ -760,6 +980,18 @@ pub(crate) fn read_interactive(
             }
         }
     }
+}
+
+/// 입력 한 덩어리(최대 64바이트 꼴) — Windows는 콘솔을 직접(UTF-16 → UTF-8 · Ctrl+Z 보존) · 그 밖은 표준 입력.
+#[cfg(windows)]
+fn read_chunk(_stdin: &mut io::StdinLock<'_>, buf: &mut Vec<u8>) -> io::Result<usize> {
+    crate::term::read_console_utf8(buf)
+}
+
+#[cfg(not(windows))]
+fn read_chunk(stdin: &mut io::StdinLock<'_>, buf: &mut Vec<u8>) -> io::Result<usize> {
+    buf.resize(64, 0);
+    stdin.read(buf)
 }
 
 /// 터미널이 아닐 때(배치 · 파이프) — 프롬프트는 그대로 찍고 한 줄.
@@ -805,8 +1037,23 @@ mod tests {
                 Key::Delete
             ]
         );
-        // 조합키가 붙은 화살표(`ESC [ 1;5C`)도 방향만.
-        assert_eq!(feed(&mut d, b"\x1b[1;5C"), vec![Key::Right]);
+        // 조합키가 붙은 화살표: Shift(2)는 방향만 · Alt(3)·Ctrl(5)·Alt+Ctrl(7)은 단어 이동.
+        assert_eq!(feed(&mut d, b"\x1b[1;2C"), vec![Key::Right]);
+        assert_eq!(feed(&mut d, b"\x1b[1;5C"), vec![Key::WordRight]);
+        assert_eq!(feed(&mut d, b"\x1b[1;3D"), vec![Key::WordLeft]);
+        assert_eq!(feed(&mut d, b"\x1b[1;7D"), vec![Key::WordLeft]);
+        // Alt 조합(ESC + 글자): b/f = 단어 이동 · d = 앞쪽 단어 지우기 · Backspace(0x7f·0x08) = 뒤쪽 단어 지우기.
+        assert_eq!(
+            feed(&mut d, b"\x1bb\x1bf\x1bd\x1b\x7f\x1b\x08\x1bF"),
+            vec![
+                Key::WordLeft,
+                Key::WordRight,
+                Key::KillWordRight,
+                Key::KillWordLeft,
+                Key::KillWordLeft,
+                Key::WordRight
+            ]
+        );
         assert_eq!(
             feed(&mut d, b"\r\n\x7f\x08\t\x03\x04\x01\x05\x0c\x0b\x15\x17"),
             vec![
@@ -826,7 +1073,11 @@ mod tests {
             ]
         );
         assert_eq!(feed(&mut d, b"\x1b[5~"), vec![Key::Ignore], "PageUp = 무시");
-        assert_eq!(feed(&mut d, b"\x1bx"), vec![Key::Ignore], "Alt 조합 = 무시");
+        assert_eq!(
+            feed(&mut d, b"\x1bx"),
+            vec![Key::Ignore],
+            "그 밖 Alt 조합 = 무시"
+        );
         assert_eq!(
             feed(&mut d, b"\xff"),
             vec![Key::Ignore],
@@ -906,6 +1157,103 @@ mod tests {
         e2.load_history(&path);
         assert_eq!(e2.history(), ["c", "x\ny"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 되돌리기·다시·붙이기: 이어 친 글자 = 한 단계 · 이동 뒤 글자 = 새 단계 · 지우기 = 한 단계 + 붙이기 버퍼 · Enter = 비움 · 디코더.
+    #[test]
+    fn undo_redo_and_yank() {
+        let mut ed = LineEditor::new(10);
+        for c in "abc".chars() {
+            ed.handle(Key::Char(c));
+        }
+        ed.handle(Key::Home);
+        ed.handle(Key::Char('x'));
+        assert_eq!(ed.text(), "xabc");
+        assert_eq!(ed.handle(Key::Undo), Action::Redraw);
+        assert_eq!(
+            (ed.text().as_str(), ed.cursor()),
+            ("abc", 0),
+            "이동 뒤 글자 = 따로"
+        );
+        assert_eq!(ed.handle(Key::Undo), Action::Redraw);
+        assert_eq!(ed.text(), "", "이어 친 abc = 한 단계");
+        assert_eq!(ed.handle(Key::Undo), Action::None, "더 없음");
+        assert_eq!(ed.handle(Key::Redo), Action::Redraw);
+        assert_eq!(ed.text(), "abc");
+        assert_eq!(ed.handle(Key::Redo), Action::Redraw);
+        assert_eq!(ed.text(), "xabc");
+        assert_eq!(ed.handle(Key::Redo), Action::None);
+        // Ctrl+K = 지우기 + 붙이기 버퍼 · Alt+Y = 붙이기 · 되돌리기 한 단계씩(다시 실행 뒤 커서 = 그때의 1).
+        assert_eq!(ed.cursor(), 1);
+        assert_eq!(ed.handle(Key::KillToEnd), Action::Redraw);
+        assert_eq!(ed.text(), "x");
+        assert_eq!(ed.handle(Key::Yank), Action::Redraw);
+        assert_eq!((ed.text().as_str(), ed.cursor()), ("xabc", 4));
+        ed.handle(Key::Undo);
+        assert_eq!(ed.text(), "x");
+        ed.handle(Key::Undo);
+        assert_eq!(ed.text(), "xabc");
+        // 새 편집은 다시 실행 스택을 비운다(되돌린 뒤 커서 = 그때의 1 → 끝으로 옮기고 친다).
+        ed.handle(Key::End);
+        ed.handle(Key::Char('!'));
+        assert_eq!(ed.handle(Key::Redo), Action::None);
+        // 이어 지운 글자 = 한 단계.
+        ed.handle(Key::Backspace);
+        ed.handle(Key::Backspace);
+        assert_eq!(ed.text(), "xab");
+        ed.handle(Key::Undo);
+        assert_eq!(ed.text(), "xabc!");
+        // Enter = 비움 · 붙이기 버퍼는 남는다.
+        assert_eq!(ed.handle(Key::Enter), Action::Submit("xabc!".into()));
+        assert_eq!(ed.handle(Key::Undo), Action::None);
+        assert_eq!(ed.handle(Key::Yank), Action::Redraw);
+        assert_eq!(ed.text(), "abc");
+        // 디코더: Ctrl+Z · Ctrl+_ = 되돌리기 · Ctrl+Y = 다시 · Alt+Y = 붙이기.
+        let mut d = Decoder::default();
+        assert_eq!(
+            feed(&mut d, b"\x1a\x1f\x19\x1by"),
+            vec![Key::Undo, Key::Undo, Key::Redo, Key::Yank]
+        );
+    }
+
+    /// 단어 이동·지우기(readline 경계 = 영숫자·`_`·비ASCII · 구두점·공백은 구분자): `select a.col_1, 한글 from t`.
+    #[test]
+    fn word_moves_and_kills() {
+        let mut ed = LineEditor::new(10);
+        for c in "select a.col_1, 한글 from t".chars() {
+            ed.handle(Key::Char(c));
+        }
+        let n = ed.text().chars().count();
+        assert_eq!(ed.cursor(), n);
+        // 끝에서 Alt+B: t → from → 한글 → col_1 → a → select → 0.
+        let mut stops = Vec::new();
+        while ed.handle(Key::WordLeft) == Action::Redraw {
+            stops.push(ed.cursor());
+        }
+        assert_eq!(stops, vec![n - 1, n - 6, 16, 9, 7, 0]);
+        // 처음에서 Alt+F: 단어 끝으로.
+        assert_eq!(ed.handle(Key::WordRight), Action::Redraw);
+        assert_eq!(ed.cursor(), 6, "select|");
+        ed.handle(Key::WordRight);
+        assert_eq!(ed.cursor(), 8, "select a|");
+        ed.handle(Key::WordRight);
+        assert_eq!(ed.cursor(), 14, "select a.col_1|");
+        // Alt+D = 앞쪽 단어(구분자 포함) 지우기: ", 한글" 중 한글까지.
+        assert_eq!(ed.handle(Key::KillWordRight), Action::Redraw);
+        assert_eq!(ed.text(), "select a.col_1 from t");
+        // Alt+Backspace = 뒤쪽 단어 지우기: col_1.
+        assert_eq!(ed.handle(Key::KillWordLeft), Action::Redraw);
+        assert_eq!((ed.text().as_str(), ed.cursor()), ("select a. from t", 9));
+        // 양 끝 = 변화 없음.
+        ed.handle(Key::Home);
+        assert_eq!(ed.handle(Key::WordLeft), Action::None);
+        assert_eq!(ed.handle(Key::KillWordLeft), Action::None);
+        ed.handle(Key::End);
+        assert_eq!(ed.handle(Key::WordRight), Action::None);
+        assert_eq!(ed.handle(Key::KillWordRight), Action::None);
+        // Ctrl+W는 종전대로 공백 기준(a. 까지 한 덩어리).
+        assert_eq!(ed.handle(Key::KillWord), Action::Redraw);
+        assert_eq!(ed.text(), "select a. from ");
     }
 
     /// Ctrl+R 거꾸로 찾기: 질의 글자마다 최신부터 · 반복 = 더 오래된 일치 · Backspace = 다시 최신부터 · Ctrl+C = 복원 ·

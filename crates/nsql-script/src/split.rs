@@ -1058,7 +1058,9 @@ pub fn client_show(what: &str) -> bool {
     let head = words.next().unwrap_or("");
     match head {
         "CONN" | "CONNECTION" | "CONNINFO" | "ERR" | "ERRORS" => true,
-        "USER" | "VARIABLES" | "VAR" | "VARS" => words.next().is_none(),
+        // ★ 10-29: `SHOW AUTOCOMMIT`·`SHOW VERSION`(단독 · MySQL 서버에는 없는 꼴).
+        "USER" | "VARIABLES" | "VAR" | "VARS" | "AUTOCOMMIT" | "AUTO" | "VERSION" | "VER"
+        | "SERVER" => words.next().is_none(),
         _ => false,
     }
 }
@@ -1089,6 +1091,11 @@ mod show_passthrough_tests {
             "다른 방언 = 전부 클라이언트 명령: {oracle:?}"
         );
         assert!(client_show("err pkg_x") && client_show("CONNECTION") && client_show("vars"));
+        assert!(
+            client_show("autocommit")
+                && client_show("VERSION;")
+                && !client_show("version like 'x'")
+        );
         assert!(!client_show("STATUS LIKE 'x'") && !client_show("variables like 'x'"));
     }
 }

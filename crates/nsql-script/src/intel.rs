@@ -96,6 +96,9 @@ pub struct Context {
     /// ★ 관계 자리에서 **자동 별칭을 붙여도 되는가**(사용자 10-09 "ALTER TABLE t A · CREATE INDEX … ON t A"): 문법이 별칭을 허용하는
     /// 자리(FROM/JOIN · MERGE INTO/USING · 방언이 허용하는 UPDATE/DELETE 대상)만 true — [`alias_allowed`].
     pub alias_ok: bool,
+    /// ★ 캐럿 낱말 **뒤에 이미 별칭이 있는가**(사용자 10-29 "`FROM DMS_I002040| A` 확정 → `DMS_I002040 B A`"): 낱말 꼬리·공백 다음이
+    /// `AS`·인용 이름·키워드가 아닌 식별자면 true — 호스트는 그때 자동 별칭을 붙이지 않는다. [`alias_follows_at`].
+    pub alias_follows: bool,
 }
 
 /// `*` 자리 정보.
@@ -1091,6 +1094,40 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
 
 /// `whole` = 문서 전체를 **한 문장**으로(PG 달러 인용 본문 = PL/pgSQL 블록 · `;`마다 나누면 둘째 선언부터 DECLARE 구역을 잃는다).
 fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool) -> Context {
+    let mut c = context_at_raw(src, caret, dialect, whole);
+    c.alias_follows = c.alias_ok && alias_follows_at(src, c.replace.end, dialect);
+    c
+}
+
+/// ★ 캐럿 낱말 뒤에 별칭이 이미 있는가(순수 · 사용자 10-29): `from`부터 낱말 꼬리와 공백(줄바꿈 포함)을 건너뛴 다음 토큰이
+/// `AS` · 인용 이름(`"…"` · `[…]` · `` `…` ``) · 키워드가 아닌 식별자면 true. `,` · `;` · `)` · 끝 · 키워드(`WHERE`·`JOIN`…)면 false.
+pub fn alias_follows_at(src: &str, from: usize, dialect: Option<Dialect>) -> bool {
+    let b = src.as_bytes();
+    let mut i = from.min(b.len());
+    while i < b.len() && (is_ident_char(b[i]) || b[i] == b'$' || b[i] == b'#') {
+        i += 1;
+    }
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let Some(&c) = b.get(i) else {
+        return false;
+    };
+    if matches!(c, b'"' | b'[' | b'`') {
+        return true;
+    }
+    if !is_ident_char(c) || c.is_ascii_digit() {
+        return false;
+    }
+    let s = i;
+    while i < b.len() && is_ident_char(b[i]) {
+        i += 1;
+    }
+    let word = src[s..i].to_ascii_uppercase();
+    word == "AS" || !keywords_for(dialect).any(|k| k == word)
+}
+
+fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool) -> Context {
     let caret = caret.min(src.len());
     let b = src.as_bytes();
     // 접두 = 캐럿 앞 식별자 글자들(`:`·`&`·`@` 접두 포함).
@@ -1116,6 +1153,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
         clause: None,
         stmt_kind: None,
         alias_ok: false,
+        alias_follows: false,
     };
     let stmt = if whole {
         0..src.len()
@@ -1184,6 +1222,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
             clause: None,
             stmt_kind: None,
             alias_ok: false,
+            alias_follows: false,
         };
     }
     let (stmt_kind, clause) = grammar_clause(&before, dialect);
@@ -1241,6 +1280,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
             clause,
             stmt_kind,
             alias_ok,
+            alias_follows: false,
         };
     }
     // ★ `*` / `alias.*` 바로 뒤(접두 없음 · `COUNT(*`는 제외): "모든 컬럼" 조각 자리 — 치환 구간 = 별표(와 별칭) 전체.
@@ -1278,6 +1318,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
             clause,
             stmt_kind,
             alias_ok: false,
+            alias_follows: false,
         };
     }
     // ★ 특정 종류만 고르는 자리(10-01 ⑩) — 관계 판정보다 먼저(`DROP VIEW |` · `USE |` · `EXEC |`).
@@ -1300,6 +1341,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
             clause,
             stmt_kind,
             alias_ok: false,
+            alias_follows: false,
         };
     }
     // 관계 자리: 바로 앞 낱말이 FROM/JOIN/… 이거나, 콤마 앞 관계 목록이 이어지는 중 · `ON`/`USING`은 문장에 따라.
@@ -1321,6 +1363,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
             clause,
             stmt_kind,
             alias_ok,
+            alias_follows: false,
         };
     }
     Context {
@@ -1336,6 +1379,7 @@ fn context_at_in(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool)
         clause,
         stmt_kind,
         alias_ok: false,
+        alias_follows: false,
     }
 }
 
@@ -2742,6 +2786,32 @@ mod tests {
             k("SELECT a COLLATE Korean_Wansung_CI_AS ", Dialect::Mssql),
             c
         );
+    }
+
+    /// 뒤에 별칭이 이미 있는가(사용자 10-29 `DMS_I002040| A` → `B A`): 식별자·`AS`·인용 = 있음 · 키워드·`,`·`;`·끝 = 없음 · 낱말 가운데 캐럿은 꼬리를 건너뛴다.
+    #[test]
+    fn alias_follows_rules() {
+        let o = Some(Dialect::Oracle);
+        let f = |src: &str, caret: usize| context_at(src, caret, o).alias_follows;
+        assert!(f("SELECT * FROM DMS_I002040 A WHERE 1=1", 25));
+        assert!(f("SELECT * FROM emp AS e", 17));
+        assert!(f("SELECT * FROM emp \"E\"", 17), "인용 별칭");
+        assert!(f("SELECT * FROM emp\n  e\nWHERE 1=1", 17), "다음 줄 별칭");
+        assert!(
+            f("SELECT * FROM em A", 16),
+            "낱말 가운데 캐럿 = 꼬리 건너뜀"
+        );
+        assert!(!f("SELECT * FROM emp WHERE 1=1", 17), "키워드");
+        assert!(!f("SELECT * FROM emp JOIN d", 17));
+        assert!(!f("SELECT * FROM emp, dept", 17));
+        assert!(!f("SELECT * FROM emp;", 17));
+        assert!(!f("SELECT * FROM emp", 17), "끝");
+        assert!(!f("SELECT * FROM emp 1", 17), "숫자 = 별칭 아님");
+        assert!(
+            !f("ALTER TABLE emp A", 15),
+            "별칭 불허 자리(alias_ok = false)면 언제나 false"
+        );
+        assert!(alias_follows_at("x  a", 1, o) && !alias_follows_at("x  from", 1, o));
     }
 
     #[test]

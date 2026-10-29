@@ -1507,6 +1507,12 @@ const DEFAULT_DIALECT: Dialect = Dialect::Oracle;
 fn main() {
     // 기동 구간 계측(`NSQL_TRACE_FRAMES=1` · docs/39 S-14 · Linux 09-22): 표시는 `[startup]` 한 줄(누적 ms) — 창이 보이기까지 어디에 쓰였는가.
     let boot = Instant::now();
+    // ★ 빌드 변형(`SHOW VERSION` · 10-29): 내장 드라이버 전부 = full · Oracle OCI만 = lite(D-350).
+    nsql_run::set_build_variant(if cfg!(feature = "drivers-builtin") {
+        "full"
+    } else {
+        "lite"
+    });
     let mut marks: Vec<(&'static str, Duration)> = Vec::new();
     let mark =
         |m: &mut Vec<(&'static str, Duration)>, name: &'static str| m.push((name, boot.elapsed()));

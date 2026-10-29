@@ -191,6 +191,13 @@ mod win {
         fn GetStdHandle(n: u32) -> *mut c_void;
         fn GetConsoleMode(h: *mut c_void, mode: *mut u32) -> i32;
         fn SetConsoleMode(h: *mut c_void, mode: u32) -> i32;
+        fn ReadConsoleW(
+            h: *mut c_void,
+            buf: *mut u16,
+            n: u32,
+            read: *mut u32,
+            ctl: *const c_void,
+        ) -> i32;
     }
     const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
     const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // (DWORD)-11
@@ -362,6 +369,35 @@ mod win {
         Some((in_mode, out_mode))
     }
 
+    /// ★ 콘솔 입력을 **직접** 읽는다(UTF-16 → UTF-8 · T-453 undo · 10-29): Rust 표준 `Stdin`은 Windows 콘솔에서 Ctrl+Z(0x1a)를
+    ///   EOF로 바꿔 버려(`CTRL_Z_MASK` · 그 읽기가 0바이트) raw 모드의 Ctrl+Z가 셸을 끝냈다 — 여기서는 글자 그대로 넘긴다.
+    ///   `Ok(0)` = 진짜 EOF(핸들 닫힘).
+    pub(super) fn read_console_utf8(out: &mut Vec<u8>) -> std::io::Result<usize> {
+        let mut buf = [0u16; 64];
+        let mut n = 0u32;
+        // SAFETY: 표준 입력 핸들 · 버퍼 길이를 그대로 넘기고 읽은 수만 쓴다.
+        let ok = unsafe {
+            let h = GetStdHandle(STD_INPUT_HANDLE);
+            if h.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            ReadConsoleW(
+                h,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+                &mut n,
+                std::ptr::null(),
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let s = String::from_utf16_lossy(&buf[..(n as usize).min(buf.len())]);
+        out.clear();
+        out.extend_from_slice(s.as_bytes());
+        Ok(out.len())
+    }
+
     pub(super) fn raw_restore(modes: (u32, u32)) {
         // SAFETY: 위와 동일.
         unsafe {
@@ -375,6 +411,12 @@ mod win {
             }
         }
     }
+}
+
+/// ★ T-453: 콘솔 입력 직접 읽기(Windows · Ctrl+Z 보존 · [`crate::lineedit`]가 쓴다).
+#[cfg(windows)]
+pub(crate) fn read_console_utf8(out: &mut Vec<u8>) -> std::io::Result<usize> {
+    win::read_console_utf8(out)
 }
 
 /// ★ T-453: 줄 편집기 raw 모드 켜기/복원(Windows 콘솔 · [`crate::lineedit`]가 쓴다).

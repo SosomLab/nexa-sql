@@ -714,6 +714,14 @@ fn shell_alias(line: &str) -> Option<ShellAlias> {
 
 /// 셸 `\?`/`help` — 명령 표 + 별칭 표(stderr · `help set`과 같은 자리).
 fn print_shell_help() {
+    // ★ 머리에 프로그램 판(사용자 10-29 "도움말에 프로그램 버전도").
+    eprintln!(
+        "{}",
+        tf(
+            Msg::HlpShellVersion,
+            &[env!("CARGO_PKG_VERSION"), nsql_run::build_variant()]
+        )
+    );
     eprintln!("{}", t(Msg::HlpShellCommands));
     for line in t(Msg::HlpShellCommandList).split('\n') {
         eprintln!("  {line}");
@@ -725,7 +733,7 @@ fn print_shell_help() {
     for line in t(Msg::HlpShellAliasList).split('\n') {
         eprintln!("  {line}");
     }
-    eprintln!("\n{}", t(Msg::CliShellSetHelp));
+    eprintln!("\n{}", t(Msg::CliShellSetFooter));
 }
 
 /// 표 폭 옵션 — 설정 `cli.width`/`cli.max_col_width`/`cli.overflow`(`nsql config set …`) 위에 플래그가 덮는다.
@@ -758,7 +766,109 @@ fn grid_opts(o: &Opts) -> GridOpts {
 }
 
 /// 셸 `set`/`show`/`\x` — 세션 동안만 바뀐다(영구는 `nsql config set cli.*`). 처리했으면 true.
-fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 'static)>) -> bool {
+/// 셸 설정 항목의 표준 이름(별칭 → 하나 · `show`/`get`/`set` 공용 · 10-30 ⑨).
+fn shell_opt_key(k: &str) -> Option<&'static str> {
+    Some(match k {
+        "width" | "linesize" | "line_width" => "width",
+        "colwidth" | "max_col_width" | "col" => "colwidth",
+        "overflow" | "wrap" => "overflow",
+        "format" | "fmt" => "format",
+        "max_rows" | "maxrows" | "rows" => "max_rows",
+        "pager" => "pager",
+        "autocommit" | "auto" => "autocommit",
+        _ => return None,
+    })
+}
+
+/// ★ 셸 설정 표(사용자 10-30 ⑨): 항목 · 현재값 · 설정 가능한 값 · 설명 — `only` = 그 항목 줄만(머리 포함) · 전체면 꼬리 안내 한 줄.
+///   열 폭은 표시 폭(한글 2칸)으로 맞춘다.
+fn print_shell_settings(
+    g: &GridOpts,
+    fmt_name: &str,
+    max_rows: usize,
+    pager: bool,
+    autocommit: bool,
+    only: Option<&str>,
+) {
+    let rows: [(&str, String, Msg, Msg); 7] = [
+        (
+            "width",
+            g.line_width.to_string(),
+            Msg::CliOptWidthAllowed,
+            Msg::CliOptWidthDesc,
+        ),
+        (
+            "colwidth",
+            g.max_col.to_string(),
+            Msg::CliOptColwidthAllowed,
+            Msg::CliOptColwidthDesc,
+        ),
+        (
+            "overflow",
+            g.overflow.name().to_string(),
+            Msg::CliOptOverflowAllowed,
+            Msg::CliOptOverflowDesc,
+        ),
+        (
+            "format",
+            fmt_name.to_string(),
+            Msg::CliOptFormatAllowed,
+            Msg::CliOptFormatDesc,
+        ),
+        (
+            "max_rows",
+            max_rows.to_string(),
+            Msg::CliOptMaxRowsAllowed,
+            Msg::CliOptMaxRowsDesc,
+        ),
+        (
+            "pager",
+            if pager { "on" } else { "off" }.to_string(),
+            Msg::CliOptPagerAllowed,
+            Msg::CliOptPagerDesc,
+        ),
+        (
+            "autocommit",
+            if autocommit { "ON" } else { "OFF" }.to_string(),
+            Msg::CliOptAutocommitAllowed,
+            Msg::CliOptAutocommitDesc,
+        ),
+    ];
+    let width = |s: &str| s.chars().map(lineedit::char_width).sum::<usize>();
+    let pad = |s: &str, w: usize| format!("{s}{}", " ".repeat(w.saturating_sub(width(s))));
+    let mut lines: Vec<[String; 4]> = vec![[
+        t(Msg::CliShellColItem).to_string(),
+        t(Msg::CliShellColValue).to_string(),
+        t(Msg::CliShellColAllowed).to_string(),
+        t(Msg::CliShellColDesc).to_string(),
+    ]];
+    for (k, v, a, d) in rows {
+        if only.is_none_or(|o| o == k) {
+            lines.push([k.to_string(), v, t(a).to_string(), t(d).to_string()]);
+        }
+    }
+    let col = |i: usize| lines.iter().map(|l| width(&l[i])).max().unwrap_or(0);
+    let (w0, w1, w2) = (col(0), col(1), col(2));
+    for l in &lines {
+        eprintln!(
+            "{}  {}  {}  {}",
+            pad(&l[0], w0),
+            pad(&l[1], w1),
+            pad(&l[2], w2),
+            l[3]
+        );
+    }
+    if only.is_none() {
+        eprintln!("{}", t(Msg::CliShellSetFooter));
+    }
+}
+
+fn shell_set(
+    line: &str,
+    p: &mut Printer,
+    session: Option<&mut (dyn Session + 'static)>,
+    autocommit: bool,
+) -> bool {
     let dialect = p.dialect;
     if let Some(rest) = line.trim().to_ascii_lowercase().strip_prefix("copy") {
         let rest = rest.trim().trim_end_matches(';');
@@ -809,21 +919,10 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
     let fmt_name = p.format.name();
     let max_rows = p.max_rows;
     let pager = p.pager;
-    let show = |g: &GridOpts| {
-        eprintln!(
-            "{}",
-            tf(
-                Msg::CliShellSettings,
-                &[
-                    &g.line_width.to_string(),
-                    &g.max_col.to_string(),
-                    g.overflow.name(),
-                    &fmt_name.to_string(),
-                    &max_rows.to_string(),
-                    if pager { "on" } else { "off" },
-                ],
-            )
-        );
+    // 표 전체(`show`) · 한 줄(`get <항목>` · `set` 뒤 = 바뀐 항목만).
+    let show = |g: &GridOpts| print_shell_settings(g, &fmt_name, max_rows, pager, autocommit, None);
+    let show_one = |g: &GridOpts, fmt: &str, rows: usize, pg: bool, k: &str| {
+        print_shell_settings(g, fmt, rows, pg, autocommit, shell_opt_key(k))
     };
     if low == "\\x" {
         g.overflow = if g.overflow == Overflow::Expanded {
@@ -831,35 +930,27 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
         } else {
             Overflow::Expanded
         };
-        show(g);
+        show_one(g, &fmt_name, max_rows, pager, "overflow");
         return true;
     }
     if low == "show" || low == "set" || low == "get" || low == "\\pset" || low == "help set" {
         show(g);
-        eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliShellSetHelp));
-        eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliShellSetMaxRows));
         return true;
     }
-    // get/show <키> — 값 하나만.
+    // get/show <항목> — 그 줄만(머리 포함).
     if let Some(k) = low
         .strip_prefix("get ")
         .or_else(|| low.strip_prefix("show "))
     {
         let k = k.trim().trim_end_matches(';');
-        let v = match k {
-            "width" | "linesize" | "line_width" => g.line_width.to_string(),
-            "colwidth" | "max_col_width" | "col" => g.max_col.to_string(),
-            "overflow" | "wrap" => g.overflow.name().to_string(),
-            "format" | "fmt" => fmt_name.clone(),
-            "max_rows" | "maxrows" | "rows" => max_rows.to_string(),
-            "pager" => if pager { "on" } else { "off" }.to_string(),
-            "all" | "" => {
-                show(g);
-                return true;
-            }
-            _ => return false,
-        };
-        eprintln!("{k} = {v}");
+        if matches!(k, "all" | "") {
+            show(g);
+            return true;
+        }
+        if shell_opt_key(k).is_none() {
+            return false;
+        }
+        show_one(g, &fmt_name, max_rows, pager, k);
         return true;
     }
     let Some(rest) = low.strip_prefix("set ") else {
@@ -891,7 +982,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
             Some(n) => {
                 p.max_rows = n;
                 let g = g.clone();
-                show(&g);
+                show_one(&g, &fmt_name, n, pager, "max_rows");
                 return true;
             }
             None => eprintln!("set max_rows <n>"),
@@ -900,7 +991,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
             "on" | "off" => {
                 p.pager = v == "on";
                 let g = g.clone();
-                show(&g);
+                show_one(&g, &fmt_name, max_rows, p.pager, "pager");
                 return true;
             }
             _ => eprintln!("set pager on|off"),
@@ -913,14 +1004,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
             Some(f) => {
                 let g = g.clone();
                 p.format = f;
-                let fmt_name = p.format.name();
-                eprintln!(
-                    "width {} · colwidth {} · overflow {} · format {}",
-                    g.line_width,
-                    g.max_col,
-                    g.overflow.name(),
-                    fmt_name
-                );
+                show_one(&g, &p.format.name(), max_rows, pager, "format");
                 return true;
             }
             None => eprintln!(
@@ -929,7 +1013,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
         },
         _ => return false,
     }
-    show(g);
+    show_one(g, &fmt_name, max_rows, pager, k);
     true
 }
 
@@ -1452,13 +1536,19 @@ impl Printer {
             RunEvent::Connected {
                 description,
                 dialect,
+                autocommit,
                 ..
             } => {
                 self.dialect = dialect;
+                // ★ 접속 줄 꼬리에 자동 커밋 상태(사용자 10-29 · CLI = 기본 수동 + 종료 때 커밋이라 겉으로 안 보이던 것).
                 let _ = writeln!(
                     out,
-                    "{}",
-                    tf(Msg::StConnected, &[&description, &dialect.to_string()])
+                    "{} · {}",
+                    tf(Msg::StConnected, &[&description, &dialect.to_string()]),
+                    tf(
+                        Msg::CliAutocommitTag,
+                        &[if autocommit { "on" } else { "off" }]
+                    )
                 );
             }
             RunEvent::Disconnected | RunEvent::ConnectionClosed => {
@@ -1836,7 +1926,11 @@ fn cmd_shell(o: &Opts) -> i32 {
     };
     printer.auto_more = st.as_ref().is_some_and(|s| s.flag("cli.auto_more"));
     let (fetch_size, keep_cursor, idle) = fetch_settings();
+    // ★ 셸만 GUI 설정 `session.autocommit`(기본 on)을 따른다(사용자 결정 ⑤ b · 10-29) — `nsql run` 등 나머지 러너는 종전대로
+    //   수동 + 종료 때 커밋(`commit_at_exit` · SQL*Plus 관례 · 스크립트의 명시 COMMIT 전제). 셸 안 `SET AUTOCOMMIT`은 여전히 우선.
+    let autocommit = st.as_ref().is_none_or(|s| s.flag("session.autocommit"));
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_autocommit(autocommit)
         .with_max_rows(printer.shell_limit())
         .with_fetch_size(fetch_size)
         .with_keep_cursor(keep_cursor)
@@ -1873,6 +1967,8 @@ fn cmd_shell(o: &Opts) -> i32 {
         }
     }
     let mut meta = complete::MetaCache::default();
+    // ★ GUI 자동완성 설정을 CLI Tab에도(사용자 10-29 ⑥⑦ · 별칭 3키 · 삽입 대소문자).
+    let ccfg = complete::CompleteCfg::from_settings(st);
     let stdin = io::stdin();
     let mut buf = String::new();
     loop {
@@ -1880,9 +1976,18 @@ fn cmd_shell(o: &Opts) -> i32 {
         let line = if interactive {
             let dialect = runner.dialect();
             let mut cands = |l: &str, c: usize| {
-                complete::complete(l, c, dialect, runner.session.as_deref_mut(), &mut meta)
+                complete::complete_with(
+                    l,
+                    c,
+                    dialect,
+                    runner.session.as_deref_mut(),
+                    &mut meta,
+                    &ccfg,
+                )
             };
-            match lineedit::read_interactive(prompt, &mut ed, &mut cands) {
+            let mut deco =
+                |l: &str, c: usize, chosen: &str| complete::decorate(l, c, dialect, chosen, &ccfg);
+            match lineedit::read_interactive(prompt, &mut ed, &mut cands, &mut deco) {
                 lineedit::Outcome::Line(l) => l,
                 lineedit::Outcome::Cancel => {
                     buf.clear();
@@ -1921,7 +2026,8 @@ fn cmd_shell(o: &Opts) -> i32 {
                 continue;
             }
         }
-        if buf.is_empty() && shell_set(t, &mut printer, runner.session.as_deref_mut()) {
+        let autocommit = runner.autocommit();
+        if buf.is_empty() && shell_set(t, &mut printer, runner.session.as_deref_mut(), autocommit) {
             continue;
         }
         // 다른 CLI 별칭(T-52): `\d` `.tables` `\i` … → SQL*Plus식 한 줄로 바꿔 엔진에.
@@ -1956,9 +2062,10 @@ fn cmd_shell(o: &Opts) -> i32 {
         if !complete {
             continue;
         }
-        // 접속·스키마가 바뀌는 문장 뒤에는 Tab 완성 캐시를 비운다(다음 Tab에서 다시 읽음).
+        // 접속·스키마가 바뀌는 문장 · 객체를 만들고 지우는 문장(DDL · 스크립트) 뒤에는 Tab 완성 캐시를 비운다(다음 Tab에서 다시 읽음).
         let reset_meta = first.to_ascii_uppercase().starts_with("CONN")
             || first.to_ascii_uppercase().starts_with("DISC")
+            || complete::invalidates_meta(first)
             || runner
                 .dialect()
                 .is_some_and(|d| nsql_catalog::context_switch_name(d, &buf).is_some());
@@ -2236,6 +2343,12 @@ fn startup_line(marks: &[(&str, std::time::Instant)]) -> String {
 
 fn main() {
     START.get_or_init(std::time::Instant::now);
+    // ★ 빌드 변형(`SHOW VERSION` · 도움말 · 10-29): 내장 드라이버 전부 = full · Oracle OCI만 = lite(D-350).
+    nsql_run::set_build_variant(if cfg!(feature = "drivers-builtin") {
+        "full"
+    } else {
+        "lite"
+    });
     // 언어는 설정 파일(ui.lang · 기본 영어)에서 — 폴더를 모르면 기본값(T-37).
     if let Ok(s) = settings_cached() {
         nsql_i18n::set_lang(s.lang());

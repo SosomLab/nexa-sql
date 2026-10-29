@@ -1410,6 +1410,7 @@ impl App {
                     dialect,
                     schema,
                     database,
+                    ..
                 } => {
                     // ★ 연결 기본 작업 단위(⑯): DB 전환 방언 = 접속 직후 DB · 그 밖 = 현재 스키마.
                     self.sess.default_unit = if matches!(

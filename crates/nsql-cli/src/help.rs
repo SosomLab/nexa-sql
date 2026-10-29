@@ -1,7 +1,7 @@
 //! `nsql --help` · `nsql <명령> --help` · `nsql help [<명령>]` — 명령·인자·옵션마다 상세 설명(사용자 09-16).
 //! 문구는 전부 `nsql-i18n::Msg`(영어 기본 · 한국어) · 표는 데이터(옵션 원장)에서 만든다 — 새 옵션은 [`OPTS`]에 한 줄.
 
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 
 /// 옵션 하나 — 플래그 표기 · 값 자리 · 설명 · (있으면) 기본값을 주는 설정 키.
 ///
@@ -587,7 +587,13 @@ fn default_note(key: &str) -> String {
 /// 전체 개요(명령 목록 + 접속 대상 표기 + 드라이버).
 fn overview(drivers: &str) -> String {
     let mut o = String::new();
-    o.push_str(&format!("{}\n\n", t(Msg::HlpTitle)));
+    o.push_str(&format!(
+        "{}\n\n",
+        tf(
+            Msg::HlpTitle,
+            &[env!("CARGO_PKG_VERSION"), nsql_run::build_variant()]
+        )
+    ));
     o.push_str(&format!("{}\n", t(Msg::HlpCommands)));
     let w = CMDS.iter().map(|c| c.name.len()).max().unwrap_or(0);
     for c in CMDS {

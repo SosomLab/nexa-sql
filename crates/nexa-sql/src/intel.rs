@@ -2159,9 +2159,13 @@ impl Intel {
             }
             // ★ 문법이 별칭을 허용하는 자리만(`Context::alias_ok` · 사용자 10-09 "ALTER TABLE t A"·"CREATE INDEX … ON t A" 안 붙게) ·
             //   한정 이름(`FROM 스키마.|` · `FROM DB.소유자.|` = `Member` + `from_chain`)도 같은 규칙(사용자 10-21 "마지막 테이블에 Alias가
-            //   붙지 않아" — `Schema.Table A` · `Database.owner.Table A`).
+            //   붙지 않아" — `Schema.Table A` · `Database.owner.Table A`). ★ 뒤에 별칭이 이미 있으면(`FROM DMS_I002040| A` ·
+            //   `Context::alias_follows` · 사용자 10-29 "B A가 된다") 이름만 바꾼다.
             CandKind::Table | CandKind::View | CandKind::Synonym
-                if self.cfg.insert_alias && alias_slot(ctx) && ctx.alias_ok =>
+                if self.cfg.insert_alias
+                    && alias_slot(ctx)
+                    && ctx.alias_ok
+                    && !ctx.alias_follows =>
             {
                 // 치던 접두 자체가 alias 표에 테이블로 잡혀 있으면(`FROM sc|`) 그것은 제외.
                 let taken: Vec<&str> = ctx
@@ -3226,6 +3230,32 @@ mod tests {
         );
         assert!(!it.is_open());
         assert_eq!(it.mru[0], "SALES_CUSTOMER");
+        // ★ 뒤에 별칭이 이미 있으면(`FROM sc| A WHERE`) 이름만(사용자 10-29 "DMS_I002040 B A").
+        let doc = "SELECT * FROM sc A WHERE 1=1";
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            16,
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
+        let i = it
+            .cands
+            .iter()
+            .position(|c| c.text == "SALES_CUSTOMER")
+            .expect("sc");
+        it.pick(&format!("intel:{i}"));
+        let a = it.take_accept().expect("accept");
+        assert_eq!(
+            (a.replace.clone(), a.text.as_str()),
+            (14..16, "SALES_CUSTOMER"),
+            "별칭이 뒤에 있으면 덧붙이지 않음"
+        );
     }
 
     /// T-178: 내장 함수 = `NAME()` + 캐럿 안 · 패키지 멤버 · 사전 객체 · 시그니처 도움 · INSERT 컬럼 목록 조각 · 컬럼 상세 · alias.
