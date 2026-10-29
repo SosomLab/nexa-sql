@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-30 새벽 (179차 · Windows · 릴리스)** — 맥 CI 수정(keys_win 시험 · bb41dc06) · 🚀 **v0.4.0**(Latest) + **drivers-v0.1.9** · 채널 Homebrew ✓ · Chocolatey 제출 · APT/RPM ✓ · 브랜치 = 셸 다중 줄(T-453) · `script.define_in_strings` · 상태줄 `&` 세그먼트(T-149 · D-141)([journal 10-30 §1·§2](journal/2026-10-30.md)).
 - **2026-10-30 새벽 (178차 · Windows · `nsql shell` 실기 후속)** — 결함 2(DDL 뒤 Tab 캐시 · 단어 이동) + 사용자 지시 ①~⑦(Ctrl+Z/Y · Alt+Y · `SHOW VERSION` · `SHOW AUTOCOMMIT` · 접속 줄 autocommit · 도움말 판 · Tab 별칭 = GUI 설정 · 셸만 `session.autocommit`) · Windows 실기 ✓ · 셸 `show` 항목 표(현재값·설정 가능한 값·설명) · 포터블 보류 · main 병합·push(사용자 10-30)([journal 10-27 §41](journal/2026-10-27.md)).
 - **2026-10-29 오후 (177차 · Windows · Ctrl+R)** — `nsql shell` 기록 거꾸로 찾기(readline reverse-i-search · 328b172c) · 오늘 풀 테스트 workspace 1190/0 · SDK 24/0([journal 10-27 §40](journal/2026-10-27.md)).
 - **2026-10-29 오후 (176차 · Windows · T-128 + T-453)** — SQL Server 호출 상한(`session.call_timeout_secs` · 넘기면 소켓 닫고 재접속 · 허브 `open_direct`가 세션마다 적용 = 내장·확장·터널 · CLI 배선 · 협업 V1이 CLI 미적용을 잡아 2차 수정) · CLI Tab 정적 후보(자료형·콜레이션·프로시저 파라미터)([journal 10-27 §39](journal/2026-10-27.md)).

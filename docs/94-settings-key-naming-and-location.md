@@ -174,6 +174,14 @@
 - `session.autocommit`(기본 on) = GUI + **`nsql shell`** · `nsql run`·export·import 등 = 이 설정과 무관하게 수동 + 끝날 때 커밋(SQL*Plus 관례 · 스크립트 호환 · 사용자 결정 ⑤b) · 설명(`DescAutocommit`)에 CLI 범위 명시 · 셸·스크립트 `SET AUTOCOMMIT`이 우선.
 - `intel.insert_alias` · `intel.alias_style` · `intel.alias_upper` · `intel.insert_case` = GUI 코드 완성 + **CLI 셸 Tab**(`CompleteCfg::from_settings` · 셸 기동 때 읽음) · `intel.insert_alias` 기본 off 그대로(사용자 10-30 "현행 유지").
 
+### 6-15. 문자열 안 `&` 치환(10-30 · 179차 · T-149 · D-141)
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `script.define_in_strings` | Bool | **on** | 스크립트·변수(`CatScriptVars`) | on = SQL*Plus 그대로(`'…'` 안 `&이름`도 치환) · off = 문자열 리터럴 안은 글자 그대로·묻지 않음(`'R&D'` 보존) · 주석 안은 늘 치환 없음 · GUI·CLI(러너 5곳) 공용 |
+
+- 상태줄 `&` 세그먼트(블록 `define` · `statusbar.layout`)의 auto/on/off는 이 키가 아니라 `script.define`을 바꾼다(모든 세션에 즉시).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

@@ -9,6 +9,8 @@
 - ★ **드라이버 릴리스 전 `nsql_abi::DRIVER_VERSION` 올리기**(사용자 10-23 · 4fd25c2) — 드라이버는 앱과 따로 버전을 매긴다 · `drivers-v<ver>` 태그 = 상수 값이어야 한다(`package-drivers.py`가 다르면 중단) · 한 번 공개한 드라이버 버전은 다시 올리지 않으므로 고치려면 상수부터 올린다.
   - 예(10-23 첫 적용) = `drivers-v0.1.2` 전에 1a9f02f에서 `DRIVER_VERSION` 0.1.1 → 0.1.2 · 앱 릴리스 `v0.2.8`과 별개 번호.
   - 예(10-28) = `drivers-v0.1.8` 전에 6144b7e1에서 `DRIVER_VERSION` 0.1.7 → 0.1.8(pg TLS · 사용자 결정 · drivers.yml 40649951326 · 앱 최신 v0.3.1과 별개).
+  - 예(10-30) = `drivers-v0.1.9` 전에 a73f987f에서 `DRIVER_VERSION` 0.1.8 → 0.1.9(SQL Server 호출 상한 ABI · 사용자 결정 = 앱 v0.4.0과 함께 · drivers.yml 40909266914 · 봇 색인 20df99fb).
 - ★ **10-23 저장소 변수 현재값**(사용자 "winget/choco 제외") = `WINGET_PUBLISH` false · `CHOCO_PUSH` false · `RELEASE_FULL` false — v0.2.8 · **v0.2.9 모두 이 값으로 배포**(값 유지) · 다음 릴리스 전에도 사용자에게 다시 확인.
 - ★ **10-26 저장소 변수 현재값**(v0.3.0 · 사용자 결정 "게시 완료된 대상은 확인해서 포함") = `CHOCO_PUSH` **true**(10-26 · Chocolatey 0.2.7 승인 이력 → v0.3.0 제출) · `WINGET_PUBLISH` false(게시 이력 없음 · 첫 등록 PR #447007 검수 중) · `RELEASE_FULL` false — **다음 릴리스 전에도 사용자에게 다시 확인**(기본 = 이 값 유지 · Chocolatey는 직전 제출이 승인됐는지 guard가 본다).
 - ★ **10-27 저장소 변수 현재값**(v0.3.1 · 사용자 "게시는 가능한 경우 진행" = 변경 없음) = `CHOCO_PUSH` true · `WINGET_PUBLISH` false · `RELEASE_FULL` false — 값 유지 · ⚠ choco guard는 승인 목록(OData)만 봐 검수 대기 중인 0.3.0을 "마지막 제출"로 못 보고 0.3.1을 제출했다(403 없이 접수 · 둘 다 검수 대기 · T-435) · **다음 릴리스 전에도 사용자에게 다시 확인**.
+- ★ **10-30 저장소 변수 현재값**(v0.4.0 + drivers-v0.1.9 · 사용자 "그대로") = `CHOCO_PUSH` true · `WINGET_PUBLISH` false · `RELEASE_FULL` false — 값 유지 · choco guard = "마지막으로 올린 0.3.1 승인됨 · 대기 중인 제출 없음 — 제출" → 0.4.0 push 성공(검수 대기) · winget skipped · **다음 릴리스 전에도 사용자에게 다시 확인**.

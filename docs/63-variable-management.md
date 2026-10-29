@@ -145,7 +145,7 @@
 | **D-138** | 스크립트 전체 실행에서 조회가 여럿일 때 | ① 지금처럼 마지막 결과가 덮는다 ② **문장마다 결과 탭**(상한 안 · DBeaver "탭별 실행") ③ 설정 | **③, 기본 ②** — 커서 여러 개는 이미 탭으로 나뉜다(V1) |
 | D-139 | `SELECT … INTO` 0행·여러 행 | Oracle식 오류 / psql식 / 첫 행 | **Oracle식**(설정 `vars.into_policy`) · NULL = Null(지우지 않음) |
 | D-140 | 비밀 값 | 없음 / **`ACCEPT HIDE` + 이름 규칙(`*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`)으로 표시 → 가림·기록 안 함·저장 안 함** | 권장대로 |
-| D-141 | `&` 치환 | SQL\*Plus 그대로 / **Oracle 방언 탭에서만 기본 켬 · 주석 안 제외(지금) · 문자열 안은 선택 · 상태줄 토글** | 권장대로 |
+| D-141 | `&` 치환 | SQL\*Plus 그대로 / **Oracle 방언 탭에서만 기본 켬 · 주석 안 제외(지금) · 문자열 안은 선택 · 상태줄 토글** | 권장대로 · ✅ 10-30 문자열 안 선택(`script.define_in_strings`) · 상태줄 세그먼트 |
 | D-142 | 이름 대소문자 | **무시(처음 쓴 표기 보존)** · `:"이름"`만 구분 · SQLite `:x @x $x` = 한 변수(**구현 10-05** · T-162 ① · `bind.rs` `unify_sqlite_markers`) | 권장대로 |
 | D-143 | 서버에 비추기 | 안 함 / **변수별 선택**(SESSION_CONTEXT · `set_config` · `SET @v` — PG는 트랜잭션을 탄다는 경고) | 뒤로 |
 
@@ -289,7 +289,7 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 | **내장 변수** | `${file}` `${workspaceFolder}` `${config:키}` … | 앱이 아는 값(VS Code 이름 · §10) · 모르는 문맥 = 글자 그대로 | 실행마다 스냅숏 | — (설정 `vars.intrinsic`) |
 | **환경 변수** | `${env:이름}` | 내장 별칭 `NSQL_*` → OS 환경 변수 | 클라이언트 | — (설정 `vars.env_subst`) |
 
-치환의 층 순서 = `DEFINE` → 내장 → 글자 그대로. `::타입` 캐스트·`:=`는 바인드로 읽지 않는다(psql 어휘 규칙). 주석 안은 치환하지 않고 문자열 안은 선택(`define.in_strings`) · `SET DEFINE OFF`로 끈다(D-141).
+치환의 층 순서 = `DEFINE` → 내장 → 글자 그대로. `::타입` 캐스트·`:=`는 바인드로 읽지 않는다(psql 어휘 규칙). 주석 안은 치환하지 않고 문자열 안은 선택(`script.define_in_strings` · 기본 on = SQL*Plus 그대로 · off = `'R&D'` 보존 · 10-30) · `SET DEFINE OFF`로 끈다 · GUI 상태줄 `&` 세그먼트 = auto/on/off 팝업(설정 `script.define` · 모든 세션에 즉시 · 10-30)(D-141).
 
 ### 12-2. 바인드 변수 — 선언·타입·대입
 
