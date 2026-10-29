@@ -293,9 +293,10 @@ fn eval_one(c: &Context, src: &dyn ContextSource) -> bool {
             }
         }
     };
+    // 배열 값 = 선택(캐럿)마다 하나(`preceding_text` 등 · 174차) — `match_all` = 전부 · 아니면 **첫 선택만**(Sublime 규칙 · 10-29 정정 = 종전 "하나라도").
     match &v {
         Json::Arr(items) if c.match_all => !items.is_empty() && items.iter().all(test),
-        Json::Arr(items) => items.iter().any(test),
+        Json::Arr(items) => items.first().is_some_and(test),
         other => test(other),
     }
 }
@@ -303,6 +304,34 @@ fn eval_one(c: &Context, src: &dyn ContextSource) -> bool {
 /// 바인딩의 context 전부가 참인가(비어 있으면 참).
 pub(crate) fn matches(ctx: &[Context], src: &dyn ContextSource) -> bool {
     ctx.iter().all(|c| eval_one(c, src))
+}
+
+impl Context {
+    /// 한 줄 요약(단축키 창의 조건 열 · `selection_empty == on` · `preceding_text ~ "FROM$"` · 전부면 `*` 접미).
+    pub(crate) fn summary(&self) -> String {
+        let op = match self.op {
+            Op::Equal => "==",
+            Op::NotEqual => "!=",
+            Op::RegexMatch => "~=",
+            Op::NotRegexMatch => "!~=",
+            Op::RegexContains => "~",
+            Op::NotRegexContains => "!~",
+        };
+        let operand = match &self.operand {
+            Json::Str(s) => format!("\"{s}\""),
+            other => other.scalar_text().unwrap_or_else(|| "?".into()),
+        };
+        let all = if self.match_all { "*" } else { "" };
+        format!("{}{all} {op} {operand}", self.key)
+    }
+}
+
+/// context 전체의 요약(` & `로 잇는다 · 비어 있으면 빈 글).
+pub(crate) fn summarize(ctx: &[Context]) -> String {
+    ctx.iter()
+        .map(Context::summary)
+        .collect::<Vec<_>>()
+        .join(" & ")
 }
 
 /// 이 OS의 Sublime 키맵 파일 이름(`Default (Windows)` · `Default (OSX)` · `Default (Linux)`).
@@ -523,6 +552,25 @@ mod tests {
             &[ctx("sel_texts", Op::Equal, Json::Str("a".into()), false)],
             &src
         ));
+        // match_all 없음 = 첫 선택만 본다(Sublime) — 둘째 "ab"만 맞는 조건은 거짓.
+        assert!(!matches(
+            &[ctx("sel_texts", Op::Equal, Json::Str("ab".into()), false)],
+            &src
+        ));
+        assert_eq!(
+            summarize(&[
+                ctx("selection_empty", Op::Equal, Json::Bool(true), false),
+                ctx(
+                    "preceding_text",
+                    Op::RegexContains,
+                    Json::Str("FROM$".into()),
+                    true
+                ),
+                ctx("num_selections", Op::NotEqual, Json::Num(1.0), false),
+            ]),
+            r#"selection_empty == on & preceding_text* ~ "FROM$" & num_selections != 1"#
+        );
+        assert_eq!(summarize(&[]), "");
         assert!(!matches(
             &[ctx("no_such_key", Op::Equal, Json::Bool(true), false)],
             &src

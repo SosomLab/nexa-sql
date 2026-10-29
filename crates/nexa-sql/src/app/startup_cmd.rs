@@ -1305,6 +1305,21 @@ cells={n}
             let _ = std::fs::write(path, self.explorer.selected_path());
             return;
         }
+        // ★ 174차 자체 시험(T-14 · 키 주입 0): `keymap.dump:<경로>` = 키맵 파일 요약 · context 행 · context 키의 지금 값 ·
+        //   `keymap.try:<조합[;둘째]>@<경로>` = 그 조합이 지금 어느 명령에 걸리는지(실행 안 함 · 덧붙여 씀).
+        if let Some(path) = id.strip_prefix("keymap.dump:") {
+            let _ = std::fs::write(path, self.keymap_dump());
+            return;
+        }
+        if let Some((chords, path)) = id
+            .strip_prefix("keymap.try:")
+            .and_then(|r| r.split_once('@'))
+        {
+            let line = self.keymap_try(chords);
+            let prev = std::fs::read_to_string(path).unwrap_or_default();
+            let _ = std::fs::write(path, prev + &line);
+            return;
+        }
         // ★ 자체 시험(10-01 ㉗-j): 활성 탭에 파일 내용을 붙여 넣는다(사용자 재현 순서 "새 편집창 → 쿼리 붙여넣기" · 키 주입 0).
         if let Some(path) = id.strip_prefix("editor.paste:") {
             if let Ok(text) = std::fs::read_to_string(path) {

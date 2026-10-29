@@ -4,8 +4,22 @@
 
 use crate::*;
 
-/// ★ T-14 3단계(최소): 키맵 파일 context 평가에 앱이 주는 값 — Sublime 키 이름을 따른다(모르는 키 = None = 거짓).
-/// `selection_empty` · `has_selection` · `focus`(editor·grid·explorer·…) · `panel`(= focus) · `setting.<키>`(설정 값 글자).
+/// ★ T-14 3단계: 키맵 파일 context 평가에 앱이 주는 값 — Sublime 키 이름을 따른다(모르는 키 = None = 거짓).
+///
+/// | 키 | 값 |
+/// |---|---|
+/// | `selection_empty` · `has_selection` | 주 선택 유무 |
+/// | `num_selections` | 선택(캐럿) 수(다중 캐럿 포함) |
+/// | `preceding_text` · `following_text` · `text` | 선택마다 "줄 처음~선택 시작" · "선택 끝~줄 끝" · 선택 글(캐럿 = 빈 글) — 선택이 둘 이상이면 배열(`match_all` = 전부 · 아니면 첫 선택) |
+/// | `read_only` | 현재 탭 읽기 전용 |
+/// | `focus` · `panel` | 포커스 이름(editor·grid·explorer·find·search·extensions·project·bookmarks·details·outline) |
+/// | `panel_visible` · `panel_has_focus` | 찾기/바꾸기 패널 표시 · 포커스 |
+/// | `overlay_visible` | 명령 팔레트 열림 |
+/// | `auto_complete_visible` | 자동 완성 목록 열림 |
+/// | `connected` · `dialect` | 현재 세션 접속 여부 · 서버 유형 표시 이름(`Oracle`·`PostgreSQL`·…) |
+/// | `setting.<키>` | 설정 값 글자 |
+///
+/// 선택별 글은 **줄 안**만 본다(Sublime과 같음) — 본문 전체를 뜨지 않는다(편집기 불변식 · `buf()` 조회).
 impl crate::keymap_file::ContextSource for App {
     fn value(&self, key: &str) -> Option<nsql_json::Json> {
         use nsql_json::Json;
@@ -21,15 +35,135 @@ impl crate::keymap_file::ContextSource for App {
             Focus::Details => "details",
             Focus::Outline => "outline",
         };
+        let ed = self.editors.cur();
+        // 선택마다 값 하나(1개 = 스칼라 · 여럿 = 배열).
+        let per_region = |f: &dyn Fn(usize, usize) -> String| -> Json {
+            let mut vals: Vec<Json> = ed
+                .regions()
+                .into_iter()
+                .map(|(a, b)| Json::Str(f(a, b)))
+                .collect();
+            if vals.len() == 1 {
+                vals.pop().unwrap_or(Json::Null)
+            } else {
+                Json::Arr(vals)
+            }
+        };
         match key {
-            "selection_empty" => Some(Json::Bool(self.editors.cur().selection().is_none())),
-            "has_selection" => Some(Json::Bool(self.editors.cur().selection().is_some())),
+            "selection_empty" => Some(Json::Bool(ed.selection().is_none())),
+            "has_selection" => Some(Json::Bool(ed.selection().is_some())),
+            "num_selections" => Some(Json::Num(ed.regions().len() as f64)),
+            "preceding_text" => Some(per_region(&|a, _| line_parts(ed.buf(), a, a).0)),
+            "following_text" => Some(per_region(&|_, b| line_parts(ed.buf(), b, b).1)),
+            "text" => Some(per_region(&|a, b| ed.buf().slice_string(a, b))),
+            "read_only" => Some(Json::Bool(ed.is_read_only())),
             "focus" | "panel" => Some(Json::Str(focus_name.to_string())),
+            "panel_visible" => Some(Json::Bool(self.find.is_visible())),
+            "panel_has_focus" => Some(Json::Bool(
+                self.find.is_visible() && self.focus == Focus::Find,
+            )),
+            "overlay_visible" => Some(Json::Bool(self.palette.is_open())),
+            "auto_complete_visible" => Some(Json::Bool(self.intel.is_open())),
+            "connected" => Some(Json::Bool(self.sess.connected)),
+            "dialect" => Some(Json::Str(self.sess.dialect.display_name().to_string())),
             k => k
                 .strip_prefix("setting.")
                 .and_then(|name| self.settings.get(name))
                 .map(|v| Json::Str(v.to_string())),
         }
+    }
+}
+
+/// context 키 전부(자체 시험 덤프 순서 · `setting.*` 제외).
+pub(crate) const CONTEXT_KEYS: [&str; 16] = [
+    "selection_empty",
+    "has_selection",
+    "num_selections",
+    "preceding_text",
+    "following_text",
+    "text",
+    "read_only",
+    "focus",
+    "panel",
+    "panel_visible",
+    "panel_has_focus",
+    "overlay_visible",
+    "auto_complete_visible",
+    "connected",
+    "dialect",
+    "setting.ui.lang",
+];
+
+impl App {
+    /// ★ 174차 자체 시험(키 주입 0 · `NSQL_STARTUP_CMD` `keymap.dump:<경로>`): 사용자 키맵 파일 요약 · context 행 · context 키의 **지금** 값.
+    pub(crate) fn keymap_dump(&self) -> String {
+        use crate::keymap_file::ContextSource;
+        let (a, c, u) = self.keymap.file_summary();
+        let mut out = format!("file: applied {a} · context {c} · unknown {u}\n");
+        for (chord, when, id) in self.keymap.ctx_rows() {
+            out.push_str(&format!("ctx: {chord} | {when} | {id}\n"));
+        }
+        for k in CONTEXT_KEYS {
+            let v = self
+                .value(k)
+                .map_or_else(|| "-".to_string(), |j| nsql_json::dump(&j));
+            out.push_str(&format!("key {k} = {v}\n"));
+        }
+        out
+    }
+
+    /// ★ 174차 자체 시험: 이 조합(`ctrl+alt+9` · 2단은 `ctrl+k;ctrl+9`)을 지금 누르면 어느 명령이 걸리는가 — 키 사건 순서(context → 일반 표)와 같되 **실행하지 않는다**.
+    pub(crate) fn keymap_try(&self, chords: &str) -> String {
+        use crate::keymap::Chord;
+        let parts: Vec<Option<Chord>> = chords.split(';').map(Chord::parse).collect();
+        let hit = match parts.as_slice() {
+            [Some(a)] => self
+                .keymap
+                .lookup_ctx(a, self)
+                .or_else(|| self.keymap.lookup(a)),
+            [Some(a), Some(b)] => self
+                .keymap
+                .lookup_seq_ctx(a, b, self)
+                .or_else(|| self.keymap.lookup_seq(a, b)),
+            _ => None,
+        };
+        format!("try {chords} = {}\n", hit.unwrap_or("none"))
+    }
+}
+
+/// 구간 `[a, b)`가 놓인 줄에서 (줄 처음~`a`, `b`~줄 끝)의 글 — 개행은 빼고, 줄 밖은 보지 않는다(순수 함수 · 시험).
+pub(crate) fn line_parts(buf: &nexa_ctl::edit::TextBuf, a: usize, b: usize) -> (String, String) {
+    let n = buf.len();
+    let (a, b) = (a.min(n), b.min(n).max(a.min(n)));
+    let before = buf.slice_string(buf.line_start(buf.line_of(a)), a);
+    let after = buf.slice_string(b, buf.line_end(buf.line_of(b)));
+    (before, after)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::line_parts;
+    use nexa_ctl::edit::TextBuf;
+
+    fn buf(s: &str) -> TextBuf {
+        let mut b = TextBuf::new();
+        b.splice(0, 0, s);
+        b
+    }
+
+    /// 선택별 앞뒤 글 = 그 줄 안에서만 · 캐럿(빈 구간) · 줄 경계 · 범위 넘침.
+    #[test]
+    fn line_parts_stay_within_the_line() {
+        let b = buf("SELECT *\nFROM t\n");
+        assert_eq!(line_parts(&b, 3, 3), ("SEL".into(), "ECT *".into()));
+        // 둘째 줄 캐럿(9 = 'F').
+        assert_eq!(line_parts(&b, 13, 13), ("FROM".into(), " t".into()));
+        // 선택 [0, 6) = "SELECT" → 앞 빈 글 · 뒤 " *".
+        assert_eq!(line_parts(&b, 0, 6), (String::new(), " *".into()));
+        // 줄 끝 개행 자리(8) = 앞 전부 · 뒤 빈 글(개행 제외).
+        assert_eq!(line_parts(&b, 8, 8), ("SELECT *".into(), String::new()));
+        // 본문 끝(마지막 빈 줄) · 넘침은 끝으로.
+        assert_eq!(line_parts(&b, 99, 99), (String::new(), String::new()));
     }
 }
 

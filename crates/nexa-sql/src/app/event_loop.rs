@@ -2100,23 +2100,7 @@ impl App {
             self.open_prefs_now(el);
         }
         if std::mem::take(&mut self.open_keys) {
-            // 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
-            let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
-            let over = parent.and_then(|w| {
-                let p = w.outer_position().ok()?;
-                let sz = w.outer_size();
-                Some((p.x, p.y, sz.width, sz.height))
-            });
-            self.keys_win.refresh(&self.keymap);
-            self.keys_win.open(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                over,
-                parent,
-            );
-            if let Some(w) = self.keys_win.window() {
-                winfocus::focus(w);
-            }
+            self.open_keys_now(el);
         }
         if std::mem::take(&mut self.open_conn) {
             self.open_conn_window(el);
@@ -2133,6 +2117,26 @@ impl App {
 }
 
 impl App {
+    /// 단축키 창 열기 본체(사건 경로와 펌프 `pump_window_requests`가 같이 쓴다 · 174차) — 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
+    fn open_keys_now(&mut self, el: &ActiveEventLoop) {
+        let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
+        let over = parent.and_then(|w| {
+            let p = w.outer_position().ok()?;
+            let sz = w.outer_size();
+            Some((p.x, p.y, sz.width, sz.height))
+        });
+        self.keys_win.refresh(&self.keymap);
+        self.keys_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            over,
+            parent,
+        );
+        if let Some(w) = self.keys_win.window() {
+            winfocus::focus(w);
+        }
+    }
+
     /// 설정 창 열기 본체(사건 경로 `open_requested_windows`와 펌프 `pump_window_requests`가 같이 쓴다 · T-305).
     fn open_prefs_now(&mut self, el: &ActiveEventLoop) {
         let over = self.window.as_ref().and_then(|w| {
@@ -2226,6 +2230,10 @@ impl App {
         // 설정 창도 사건 없이(기동 명령 `edit.prefs:<검색어>` · T-305).
         if std::mem::take(&mut self.open_prefs) {
             self.open_prefs_now(el);
+        }
+        // ★ 174차: 단축키 창도 사건 없이(기동 명령 `view.keys` — 협업 V1에서 격리 기동(`NSQL_NO_ACTIVATE`)에 창이 영영 안 열렸다).
+        if std::mem::take(&mut self.open_keys) {
+            self.open_keys_now(el);
         }
         // 파일·폴더 대화상자도 같다(설정 창의 "찾아보기…" · 기동 명령 — 메인 창에 사건이 없으면 열리지 않았다).
         if let Some(mode) = self.open_file_dlg.take() {

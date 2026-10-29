@@ -3,6 +3,8 @@
 //! 메인 창의 소유 창. 값은 호스트가 [`KeysAction::Changed`]를 받아 설정 `key.<id>`에 쓰고 키맵을 다시 만든다(이 창은 고르기만).
 //! - [지정] = 캡처 모드(행이 "키를 누르세요…" · Esc = 취소) · [비우기] = 단축키 없음(`none`) · [초기화] = 전부 플랫폼 기본.
 //! - 충돌 = 같은 조합을 쓰는 다른 명령 이름을 행 끝에 경고색으로.
+//! - ★ 174차(T-14): 사용자 키맵 파일(`Packages/User/*.sublime-keymap`)의 바인딩은 단축키 뒤 "(파일)" 꼬리 · context 바인딩은
+//!   명령 행 뒤에 읽기 전용 행(조건 요약 `when …`) — 이 창에서는 바꿀 수 없다(파일을 고친다 · [지정]/[비우기] 비활성).
 
 use crate::keymap::{self, Chord, Keymap, COMMANDS};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -47,6 +49,10 @@ struct RowView {
     label: String,
     chord: String,
     conflict: Option<String>,
+    /// ★ 174차: 사용자 키맵 파일의 바인딩이 섞여 있다 → 단축키 뒤 "(파일)" 꼬리(바꾸려면 파일을 고친다).
+    file: bool,
+    /// ★ 174차: context 바인딩 행(조건 요약 · 읽기 전용 = [지정]/[비우기] 비활성 · 명령 행들 뒤에 붙는다).
+    when: Option<String>,
 }
 
 pub(crate) struct KeysWin {
@@ -110,14 +116,35 @@ impl KeysWin {
                     label: t(c.label).to_string(),
                     chord: km.display_of(c.id),
                     conflict,
+                    file: km.file_bound(c.id),
+                    when: None,
                 }
             })
             .collect();
+        // ★ 174차: 사용자 키맵 파일의 context 바인딩은 명령 행 뒤에 읽기 전용 행으로(조건 요약 열).
+        self.rows
+            .extend(km.ctx_rows().into_iter().map(|(chord, when, id)| RowView {
+                id,
+                label: keymap::label_of(id),
+                chord,
+                conflict: None,
+                file: true,
+                when: Some(when),
+            }));
+        if self.selected.is_some_and(|i| i >= self.rows.len()) {
+            self.selected = None;
+        }
         self.sync_enabled();
     }
 
+    /// 선택 행을 이 창에서 바꿀 수 있는가(context 행 = 파일에서만).
+    fn editable(&self) -> bool {
+        self.selected
+            .is_some_and(|i| self.rows.get(i).is_some_and(|r| r.when.is_none()))
+    }
+
     fn sync_enabled(&mut self) {
-        let on = self.selected.is_some() && !self.capturing;
+        let on = self.editable() && !self.capturing;
         self.assign_btn.set_enabled(on);
         self.clear_btn.set_enabled(on);
     }
@@ -352,7 +379,7 @@ impl KeysWin {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::ArrowDown) => self.move_sel(1),
                     Key::Named(NamedKey::ArrowUp) => self.move_sel(-1),
-                    Key::Named(NamedKey::Enter) if self.selected.is_some() => {
+                    Key::Named(NamedKey::Enter) if self.editable() => {
                         self.capturing = true;
                         self.sync_enabled();
                     }
@@ -404,7 +431,7 @@ impl KeysWin {
             }
         }
         if self.assign_btn.take_clicked() {
-            if self.selected.is_some() {
+            if self.editable() {
                 self.capturing = true;
                 self.sync_enabled();
             }
@@ -413,7 +440,7 @@ impl KeysWin {
         }
         if self.clear_btn.take_clicked() {
             self.redraw();
-            if let Some(i) = self.selected {
+            if let Some(i) = self.selected.filter(|_| self.editable()) {
                 return KeysAction::Changed {
                     id: self.rows[i].id.to_string(),
                     code: "none".into(),
@@ -539,6 +566,15 @@ impl KeysWin {
                 dc.text(list.x + pad / 2, ty, clip, &r.label, th.text);
                 let (chord, color) = if sel && self.capturing {
                     (t(Msg::KeysCapturing).to_string(), th.accent)
+                } else if r.file {
+                    (
+                        format!("{} {}", r.chord, t(Msg::KeysFromFile)),
+                        if r.when.is_some() {
+                            th.text_dim
+                        } else {
+                            th.text
+                        },
+                    )
                 } else {
                     (r.chord.clone(), th.text)
                 };
@@ -550,6 +586,14 @@ impl KeysWin {
                         clip,
                         &tf(Msg::KeysConflict, &[c]),
                         th.warn,
+                    );
+                } else if let Some(w) = &r.when {
+                    dc.text(
+                        list.x + label_w + chord_w,
+                        ty,
+                        clip,
+                        &tf(Msg::KeysWhen, &[w]),
+                        th.text_dim,
                     );
                 }
             }
@@ -563,5 +607,54 @@ impl KeysWin {
             }
         }
         let _ = buf.present();
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// ★ 174차(T-14): 파일 바인딩 행 = "(파일)" 표시 · context 바인딩 = 명령 행 뒤 읽기 전용 행(조건 요약) · 그 행을 고르면 [지정]/[비우기] 꺼짐.
+    #[test]
+    fn file_and_context_rows_are_marked_and_context_rows_are_read_only() {
+        let b = crate::keymap_file::parse(
+            r#"[
+                { "keys": ["ctrl+alt+9"], "command": "file.save_as" },
+                { "keys": ["ctrl+k", "ctrl+9"], "command": "edit.upper_case",
+                  "context": [{ "key": "num_selections", "operator": "equal", "operand": 2 }] }
+            ]"#,
+        )
+        .unwrap();
+        let mut km = Keymap::default();
+        assert_eq!(km.apply_bindings(&b), (1, 1, 0));
+        let mut w = KeysWin::new();
+        w.refresh(&km);
+        assert_eq!(
+            w.rows.len(),
+            COMMANDS.len() + 1,
+            "context 행 하나가 뒤에 붙는다"
+        );
+        let save_as = w.rows.iter().find(|r| r.id == "file.save_as").unwrap();
+        assert!(save_as.file && save_as.when.is_none());
+        assert_eq!(save_as.chord, "Ctrl+Alt+9");
+        let last = w.rows.last().unwrap();
+        assert_eq!(last.id, "edit.upper_case");
+        assert!(last.file);
+        assert_eq!(last.chord, "Ctrl+K, Ctrl+9");
+        assert_eq!(last.when.as_deref(), Some("num_selections == 2"));
+        let plain = w.rows.iter().find(|r| r.id == "file.new").unwrap();
+        assert!(!plain.file && plain.when.is_none());
+        // 명령 행 선택 = 바꿀 수 있음 · context 행 선택 = 읽기 전용.
+        w.selected = Some(0);
+        w.sync_enabled();
+        assert!(w.editable() && w.assign_btn.is_enabled() && w.clear_btn.is_enabled());
+        w.selected = Some(w.rows.len() - 1);
+        w.sync_enabled();
+        assert!(!w.editable() && !w.assign_btn.is_enabled() && !w.clear_btn.is_enabled());
+        // 행 수가 줄어든 키맵으로 다시 채우면 범위 밖 선택은 풀린다.
+        w.refresh(&Keymap::default());
+        assert_eq!(w.rows.len(), COMMANDS.len());
+        assert_eq!(w.selected, None);
     }
 }

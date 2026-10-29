@@ -1333,6 +1333,8 @@ pub(crate) struct Keymap {
     ctx_bindings: Vec<(Vec<Chord>, Vec<crate::keymap_file::Context>, &'static str)>,
     /// 사용자 키맵 파일 적용 요약(적용 · context 보관 · 모르는 명령) — 진단·로그.
     file_summary: (usize, usize, usize),
+    /// ★ 174차: 사용자 키맵 파일의 (context 없는) 바인딩이 적용된 명령 — 단축키 창 "(파일)" 표시.
+    file_ids: HashSet<&'static str>,
 }
 
 /// ★ 동적 명령(확장 메타 `commands[].key` · 146차 · docs/75 §9 ②): `(id, win, mac, linux)` — `set_dynamic`으로 교체 · `from_settings`가 `COMMANDS` 뒤에 더한다.
@@ -1509,16 +1511,83 @@ impl Keymap {
                 kept += 1;
                 continue;
             }
-            if chords.len() == 2 {
+            // ★ 174차 "표시 = 동작": Sublime 키맵은 키→명령 표에 **더하는** 것이라 기본·설정 조합은 그대로 살아 있다 → 이 명령의
+            //   코드에 덧붙이고(종전 = 덮어써서 창에 파일 코드만 보였다), 이 조합을 쓰던 **다른** 명령의 코드에서는 그 조합을 뺀다
+            //   (파일이 가로챘으므로 — 종전에는 옛 주인 행에 계속 보였다 · 협업 결함 후보 A).
+            let prev = if chords.len() == 2 {
                 self.prefixes.insert(chords[0].clone());
-                self.seq.insert((chords[0].clone(), chords[1].clone()), cid);
+                self.seq.insert((chords[0].clone(), chords[1].clone()), cid)
             } else {
-                self.map.insert(chords[0].clone(), cid);
+                self.map.insert(chords[0].clone(), cid)
+            };
+            if let Some(other) = prev.filter(|o| *o != cid) {
+                self.strip_code(other, &chords);
             }
-            self.codes.insert(cid, b.keys.join(","));
+            self.append_code(cid, &b.keys.join(","));
+            self.file_ids.insert(cid);
             applied += 1;
         }
         (applied, kept, unknown)
+    }
+
+    /// 명령 코드(`a|b|c`)에 조각 하나를 덧붙인다(같은 조합이 이미 있으면 그 자리를 빼고 뒤에 · `none`은 걷는다).
+    fn append_code(&mut self, id: &'static str, part: &str) {
+        let new = part_chords(part);
+        let mut parts: Vec<String> = self
+            .codes
+            .get(id)
+            .map(String::as_str)
+            .unwrap_or_default()
+            .split('|')
+            .map(str::trim)
+            .filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("none"))
+            .filter(|p| part_chords(p) != new)
+            .map(String::from)
+            .collect();
+        parts.push(part.to_string());
+        self.codes.insert(id, parts.join("|"));
+    }
+
+    /// 명령 코드에서 이 조합(단일 · 2단)을 뺀다 — 다른 명령이 가로챘을 때(남는 것이 없으면 빈 글 = 단축키 없음).
+    fn strip_code(&mut self, id: &'static str, chords: &[Chord]) {
+        let Some(cur) = self.codes.get(id) else {
+            return;
+        };
+        let kept: Vec<&str> = cur
+            .split('|')
+            .map(str::trim)
+            .filter(|p| !p.is_empty() && part_chords(p).as_deref() != Some(chords))
+            .collect();
+        let joined = kept.join("|");
+        self.codes.insert(id, joined);
+    }
+
+    /// 사용자 키맵 파일 적용 요약(적용 · context 보관 · 모르는 명령) — 자체 시험 덤프.
+    pub(crate) fn file_summary(&self) -> (usize, usize, usize) {
+        self.file_summary
+    }
+
+    /// 이 명령에 사용자 키맵 파일의 (context 없는) 바인딩이 적용돼 있다(단축키 창 "(파일)" 꼬리).
+    pub(crate) fn file_bound(&self, id: &str) -> bool {
+        self.file_ids.contains(id)
+    }
+
+    /// context 바인딩 행(단축키 창 표시용 · 읽기 전용) = (코드 표시 `Ctrl+K, Ctrl+U` · 조건 요약 · 명령 id) · 파일 순서.
+    pub(crate) fn ctx_rows(&self) -> Vec<(String, String, &'static str)> {
+        self.ctx_bindings
+            .iter()
+            .map(|(chords, ctx, id)| {
+                (
+                    chords
+                        .iter()
+                        .map(Chord::display)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    crate::keymap_file::summarize(ctx),
+                    *id,
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn lookup(&self, ch: &Chord) -> Option<&'static str> {
@@ -1564,6 +1633,18 @@ impl Keymap {
     }
 }
 
+/// 코드 조각 하나(`ctrl+s` · `ctrl+k,ctrl+u`)의 조합 열 — `none`·해석 불가 = None.
+fn part_chords(p: &str) -> Option<Vec<Chord>> {
+    let p = p.trim();
+    if p.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    match split_seq(p) {
+        Some((a, b)) => Some(vec![Chord::parse(a)?, Chord::parse(b)?]),
+        None => Some(vec![Chord::parse(p)?]),
+    }
+}
+
 /// 명령 라벨(i18n).
 pub(crate) fn label_of(id: &str) -> String {
     COMMANDS
@@ -1604,11 +1685,37 @@ mod tests {
         ]"#;
         let b = crate::keymap_file::parse(text).unwrap();
         let mut km = Keymap::default();
+        // 기본 코드가 있는 상태를 흉내 낸다(file.save = ctrl+s · file.save_as = ctrl+shift+s).
+        km.codes.insert("file.save", "ctrl+s".into());
+        km.map.insert(Chord::parse("ctrl+s").unwrap(), "file.save");
+        km.codes.insert("file.save_as", "ctrl+shift+s".into());
         assert_eq!(km.apply_bindings(&b), (3, 1, 2));
         // 뒤가 앞을 덮는다: ctrl+alt+s = file.save_as.
         assert_eq!(
             km.lookup(&Chord::parse("ctrl+alt+s").unwrap()),
             Some("file.save_as")
+        );
+        // ★ 174차 표시 = 동작: 파일 코드는 기본 코드 뒤에 **덧붙고**(ctrl+s도 여전히 동작) · 가로채인 조합은 옛 주인 코드에서 빠진다.
+        assert_eq!(
+            km.code_of("file.save"),
+            "ctrl+s",
+            "ctrl+alt+s는 save_as가 가로챘다"
+        );
+        assert_eq!(km.code_of("file.save_as"), "ctrl+shift+s|ctrl+alt+s");
+        assert_eq!(
+            km.lookup(&Chord::parse("ctrl+s").unwrap()),
+            Some("file.save"),
+            "기본 조합은 남는다"
+        );
+        assert!(km.file_bound("file.save") && km.file_bound("file.save_as"));
+        assert!(!km.file_bound("file.new"));
+        assert_eq!(
+            km.ctx_rows(),
+            vec![(
+                "F9".to_string(),
+                "selection_empty == on".to_string(),
+                "run.statement"
+            )]
         );
         let (a, c) = (
             Chord::parse("ctrl+k").unwrap(),
@@ -1648,7 +1755,8 @@ mod tests {
         );
         assert_eq!(
             km.codes.get("file.save_as").map(String::as_str),
-            Some("ctrl+alt+s")
+            Some("ctrl+shift+s|ctrl+alt+s"),
+            "파일 코드는 기본 코드 뒤에 덧붙는다(174차)"
         );
         assert_eq!(
             km.codes.get("edit.upper_case").map(String::as_str),
