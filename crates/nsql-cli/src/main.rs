@@ -2006,7 +2006,12 @@ fn cmd_shell(o: &Opts) -> i32 {
             line
         };
         if interactive && hist_max > 0 {
-            ed.push_history(&line);
+            // 기록 한 항목 = 문장 하나(T-453 잔여 · 10-30): 이어지는 줄은 마지막 항목에 붙인다(↑로 여러 줄 문장이 통째로 돌아온다).
+            if buf.is_empty() {
+                ed.push_history(&line);
+            } else {
+                ed.amend_last_history(&line);
+            }
             if let Some(p) = &hist_path {
                 ed.save_history(p);
             }

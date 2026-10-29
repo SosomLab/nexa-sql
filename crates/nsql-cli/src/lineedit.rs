@@ -7,6 +7,9 @@
 //! · 되돌리기 = Ctrl+Z(·Ctrl+_) · 다시 = Ctrl+Y(GUI `edit.undo`/`edit.redo`와 같은 키 · 사용자 10-29) · 붙이기(yank) = Alt+Y(마지막으로 지운 글).
 //!   되돌리기 단위 = 이어 친 글자 묶음 · 이어 지운 글자 묶음 · 그 밖 편집(지우기·완성·기록·붙이기)은 하나씩 · Enter·Ctrl+C로 비움.
 //!   Windows는 콘솔을 직접 읽는다(`term::read_console_utf8` · 표준 `Stdin`이 Ctrl+Z를 EOF로 바꾸기 때문).
+//! · 다중 줄(T-453 잔여 · 10-30) = 본문에 `\n`이 있을 수 있다(기록에서 불러온 여러 줄 문장 · Alt+Enter = 줄 바꿈 삽입) · 그리기는 줄마다
+//!   `   -> ` 이음 프롬프트 · ↑↓ = 본문 안에서는 줄 이동, 첫/끝 줄에서는 기록 · Home/End = 그 줄 안 · 기록 한 항목 = 문장 하나(셸이
+//!   이어지는 줄을 `amend_last_history`로 붙인다 · 파일은 `\u{1}` 접기 그대로).
 //! 키 진단 = `NSQL_KEY_TRACE=<파일>`이면 받은 바이트와 해석한 키를 그 파일에 덧붙인다(원격·맥 Option 판정용).
 //! 그리기 = ANSI(`\r` · `ESC[K` · `ESC[J` · 커서 이동) — Windows는 raw 모드에서 VT 처리를 켠다(Windows 10+).
 
@@ -56,6 +59,8 @@ pub(crate) enum Key {
     Redo,
     /// Alt+Y — 마지막으로 지운 글 붙이기(yank).
     Yank,
+    /// Alt+Enter — 줄 바꿈 삽입(여러 줄 문장 편집).
+    NewLine,
     /// 모르는 제어·이스케이프 = 버린다.
     Ignore,
 }
@@ -139,6 +144,7 @@ impl Decoder {
             [0x1b, b'f' | b'F'] => Key::WordRight,
             [0x1b, b'd' | b'D'] => Key::KillWordRight,
             [0x1b, b'y' | b'Y'] => Key::Yank,
+            [0x1b, b'\r' | b'\n'] => Key::NewLine,
             [0x1b, 0x7f | 0x08] => Key::KillWordLeft,
             [0x1b, b'[' | b'O', rest @ ..] => {
                 let &last = rest.last()?;
@@ -359,6 +365,12 @@ impl LineEditor {
                 self.cursor += 1;
                 Action::Redraw
             }
+            Key::NewLine => {
+                self.snapshot(Group::None);
+                self.buf.insert(self.cursor, '\n');
+                self.cursor += 1;
+                Action::Redraw
+            }
             Key::Left => {
                 if self.cursor == 0 {
                     return Action::None;
@@ -411,11 +423,11 @@ impl LineEditor {
                 Action::Redraw
             }
             Key::Home => {
-                self.cursor = 0;
+                self.cursor = self.line_bounds(self.cursor).0;
                 Action::Redraw
             }
             Key::End => {
-                self.cursor = self.buf.len();
+                self.cursor = self.line_bounds(self.cursor).1;
                 Action::Redraw
             }
             Key::Backspace => {
@@ -471,8 +483,21 @@ impl LineEditor {
                 self.cursor = i;
                 Action::Redraw
             }
-            Key::Up => self.history_prev(),
-            Key::Down => self.history_next(),
+            // 여러 줄 본문 안에서는 줄 이동 · 첫/끝 줄이면 기록 탐색.
+            Key::Up => {
+                if self.move_line(true) {
+                    Action::Redraw
+                } else {
+                    self.history_prev()
+                }
+            }
+            Key::Down => {
+                if self.move_line(false) {
+                    Action::Redraw
+                } else {
+                    self.history_next()
+                }
+            }
             Key::Tab => Action::Complete,
             Key::Enter => {
                 let s = self.text();
@@ -566,6 +591,51 @@ impl LineEditor {
             s.pos = Some(i);
             self.buf = self.history[i].chars().collect();
             self.cursor = self.buf.len();
+        }
+    }
+
+    /// `pos`가 속한 줄의 [시작, 끝)(글자 인덱스 · 끝 = 그 줄의 `\n` 자리 또는 본문 끝).
+    fn line_bounds(&self, pos: usize) -> (usize, usize) {
+        let pos = pos.min(self.buf.len());
+        let start = self.buf[..pos]
+            .iter()
+            .rposition(|&c| c == '\n')
+            .map_or(0, |i| i + 1);
+        let end = self.buf[pos..]
+            .iter()
+            .position(|&c| c == '\n')
+            .map_or(self.buf.len(), |i| pos + i);
+        (start, end)
+    }
+
+    /// 여러 줄 본문에서 한 줄 위/아래로(같은 열 · 짧은 줄이면 끝) — 갈 줄이 없으면 false(호출자 = 기록 탐색).
+    fn move_line(&mut self, up: bool) -> bool {
+        let (s, e) = self.line_bounds(self.cursor);
+        let col = self.cursor - s;
+        let (ns, ne) = if up {
+            if s == 0 {
+                return false;
+            }
+            self.line_bounds(s - 1)
+        } else {
+            if e >= self.buf.len() {
+                return false;
+            }
+            self.line_bounds(e + 1)
+        };
+        self.cursor = ns + col.min(ne - ns);
+        true
+    }
+
+    /// 이어지는 줄을 마지막 기록 항목에 붙인다(여러 줄 문장 = 기록 한 항목 · 셸이 버퍼가 비지 않았을 때 부른다).
+    pub(crate) fn amend_last_history(&mut self, line: &str) {
+        let line = line.trim_end();
+        match self.history.last_mut() {
+            Some(last) => {
+                last.push('\n');
+                last.push_str(line);
+            }
+            None => self.push_history(line),
         }
     }
 
@@ -717,8 +787,11 @@ fn width(s: &str) -> usize {
     s.chars().map(char_width).sum()
 }
 
+/// 여러 줄 본문의 둘째 줄부터 앞에 붙는 이음 프롬프트(셸의 `   -> `와 같은 꼴).
+const CONT_PROMPT: &str = "   -> ";
+
 /// 줄 그리기(순수) — 이전 그리기의 커서 행 `prev_row`에서 출발해 프롬프트+본문을 다시 쓰고 커서를 놓는다. 폭 `cols`로 접힌다.
-/// 반환 = (출력 문자열 · 커서가 놓인 행 · 마지막 행) — 다음 그리기와 줄 마감이 쓴다.
+/// 본문의 `\n`은 줄 바꿈(`\r\n` + [`CONT_PROMPT`]) · 반환 = (출력 문자열 · 커서가 놓인 행 · 마지막 행) — 다음 그리기와 줄 마감이 쓴다.
 pub(crate) fn render(
     prompt: &str,
     text: &str,
@@ -733,19 +806,35 @@ pub(crate) fn render(
     }
     s.push_str("\r\x1b[J");
     s.push_str(prompt);
-    s.push_str(text);
-    let total = width(prompt) + width(text);
-    let mut end_row = total / cols;
-    let end_col = total % cols;
-    if end_col == 0 && total > 0 {
+    // (row, col) = 논리 줄의 시작 행 + 그 줄에서 쌓인 폭 → 실제 행 = row + col / cols · 열 = col % cols.
+    let mut row = 0usize;
+    let mut col = width(prompt);
+    let mut cur: Option<(usize, usize)> = None;
+    for (i, c) in text.chars().enumerate() {
+        if i == cursor {
+            cur = Some((row + col / cols, col % cols));
+        }
+        if c == '\n' {
+            // 폭에 딱 맞게 찬 줄은 터미널 커서가 마지막 칸에 머물러 있어 `\r\n`이 한 행만 내린다.
+            row += if col > 0 && col.is_multiple_of(cols) {
+                col / cols
+            } else {
+                col / cols + 1
+            };
+            s.push_str("\r\n");
+            s.push_str(CONT_PROMPT);
+            col = width(CONT_PROMPT);
+        } else {
+            s.push(c);
+            col += char_width(c);
+        }
+    }
+    let (cur_row, cur_col) = cur.unwrap_or((row + col / cols, col % cols));
+    let end_row = row + col / cols;
+    if col > 0 && col.is_multiple_of(cols) {
         // 폭에 딱 맞게 끝나면 터미널마다 다음 행 이동이 다르다 → 공백으로 접고 처음으로.
         s.push_str(" \r");
-    } else {
-        end_row = total / cols;
     }
-    let cur_w = width(prompt) + text.chars().take(cursor).map(char_width).sum::<usize>();
-    let cur_row = cur_w / cols;
-    let cur_col = cur_w % cols;
     if end_row > cur_row {
         s.push_str(&format!("\x1b[{}A", end_row - cur_row));
     }
@@ -1355,6 +1444,85 @@ mod tests {
         assert_eq!(char_width('한'), 2);
         let (_, row, _) = render("", "한글한글한", 5, 10, 0);
         assert_eq!(row, 1);
+    }
+
+    /// 여러 줄 본문 그리기: `\n` = `\r\n` + 이음 프롬프트 · 행 수 · 커서가 둘째 줄이면 그 행 · 접힌 첫 줄 뒤 줄 바꿈 · 딱 찬 줄.
+    #[test]
+    fn render_handles_newlines() {
+        // "> ab" / "   -> cd" · 커서 = 'c'(인덱스 3) → 행 1 · 열 6.
+        let (s, row, end) = render("> ", "ab\ncd", 3, 20, 0);
+        assert_eq!(s, "\r\x1b[J> ab\r\n   -> cd\r\x1b[6C");
+        assert_eq!((row, end), (1, 1));
+        // 커서가 첫 줄 끝(인덱스 2 = '\n' 자리) → 행 0 · 열 4 · 끝 행 1에서 한 행 위로.
+        let (s, row, end) = render("> ", "ab\ncd", 2, 20, 0);
+        assert!(s.ends_with("\x1b[1A\r\x1b[4C"), "{s:?}");
+        assert_eq!((row, end), (0, 1));
+        // 첫 줄이 접히면(폭 10 · "> " + 12자 = 2행) 둘째 논리 줄은 행 2.
+        let (_, row, end) = render("> ", "abcdefghijkl\nx", 14, 10, 0);
+        assert_eq!((row, end), (2, 2));
+        // 첫 줄이 폭에 딱 차면(10칸) `\r\n`은 한 행만 내린다 → 둘째 줄 = 행 1.
+        let (_, row, end) = render("> ", "abcdefgh\nx", 10, 10, 0);
+        assert_eq!((row, end), (1, 1));
+        // 빈 둘째 줄 끝 커서 = 이음 프롬프트 폭(6).
+        let (s, _, _) = render("> ", "ab\n", 3, 20, 0);
+        assert!(s.ends_with("\r\x1b[6C"), "{s:?}");
+    }
+
+    /// 여러 줄 편집: Alt+Enter 삽입 · ↑↓ = 줄 이동(같은 열 · 짧은 줄 끝) → 첫/끝 줄에서는 기록 · Home/End = 줄 안 ·
+    /// Backspace로 줄 잇기 · 이어지는 줄은 기록 한 항목에 붙음 · 디코더 ESC CR.
+    #[test]
+    fn multiline_edit_navigation_and_history_amend() {
+        let mut ed = LineEditor::new(10);
+        ed.push_history("select 1");
+        for c in "select a".chars() {
+            ed.handle(Key::Char(c));
+        }
+        assert_eq!(ed.handle(Key::NewLine), Action::Redraw);
+        for c in "from t".chars() {
+            ed.handle(Key::Char(c));
+        }
+        assert_eq!(ed.text(), "select a\nfrom t");
+        // 둘째 줄 끝(열 6) → ↑ = 첫 줄 열 6.
+        assert_eq!(ed.handle(Key::Up), Action::Redraw);
+        assert_eq!(ed.cursor(), 6);
+        // 첫 줄에서 ↑ = 기록.
+        ed.handle(Key::Up);
+        assert_eq!(ed.text(), "select 1");
+        ed.handle(Key::Down);
+        assert_eq!(ed.text(), "select a\nfrom t", "초안 복귀");
+        // 끝 줄에서 ↓ = 기록(더 없음 = 변화 없음).
+        assert_eq!(ed.handle(Key::Down), Action::None);
+        // Home/End = 그 줄 안.
+        ed.handle(Key::Home);
+        assert_eq!(ed.cursor(), 9, "둘째 줄 시작");
+        ed.handle(Key::End);
+        assert_eq!(ed.cursor(), 15);
+        // 첫 줄 끝으로 가서 ↓ = 둘째 줄의 같은 열(짧으면 끝).
+        ed.handle(Key::Up);
+        ed.handle(Key::End);
+        assert_eq!(ed.cursor(), 8);
+        ed.handle(Key::Down);
+        assert_eq!(ed.cursor(), 15, "둘째 줄은 6자 → 끝");
+        // 둘째 줄 처음에서 Backspace = 줄 잇기.
+        ed.handle(Key::Home);
+        ed.handle(Key::Backspace);
+        assert_eq!(ed.text(), "select afrom t");
+        ed.handle(Key::Undo);
+        assert_eq!(ed.text(), "select a\nfrom t");
+        // Enter = 여러 줄 그대로 확정.
+        assert_eq!(
+            ed.handle(Key::Enter),
+            Action::Submit("select a\nfrom t".into())
+        );
+        // 셸의 기록 붙이기: 첫 줄 push · 이어지는 줄 amend → 한 항목.
+        ed.push_history("select x");
+        ed.amend_last_history("from y;");
+        assert_eq!(
+            ed.history().last().map(String::as_str),
+            Some("select x\nfrom y;")
+        );
+        let mut d = Decoder::default();
+        assert_eq!(feed(&mut d, b"\x1b\r"), vec![Key::NewLine]);
     }
 
     /// 후보 표: 열 맞춤 · 줄 바꿈 `\r\n` · 상한 넘침 표시.
