@@ -5878,6 +5878,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(SCRIPT_DEFINE_OPTS),
         default: "auto",
     },
+    // ★ T-149 잔여(10-30 · 63a §10): 문자열 리터럴 안의 `&이름`도 바꾸는가 — 기본 켬(SQL*Plus 그대로) · 끄면 'R&D' 보존.
+    Entry {
+        key: "script.define_in_strings",
+        cat: Msg::CatScriptVars,
+        label: Msg::LblScriptDefineInStrings,
+        desc: Msg::DescScriptDefineInStrings,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "settings.json_editor",
         cat: Msg::CatSession,

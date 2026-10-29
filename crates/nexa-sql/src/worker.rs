@@ -491,6 +491,8 @@ fn apply_fetch_settings(runner: &mut Runner) {
     runner
         .engine
         .set_define_mode(s.get("script.define").unwrap_or("auto"));
+    // T-149 잔여(10-30): 문자열 리터럴 안 `&이름` 치환(기본 켬 · 끄면 'R&D' 보존).
+    runner.engine.settings.define_in_strings = s.flag("script.define_in_strings");
     runner.engine.settings.max_value_bytes =
         (s.int("vars.max_value_kb").max(0) as usize).saturating_mul(1024);
 }

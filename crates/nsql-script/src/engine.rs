@@ -105,6 +105,9 @@ pub struct Settings {
     /// ★ 너그러운 치환(D-272 · 10-10): `true` = **정의된 이름만** 바꾸고 미정의 `&x`는 글자 그대로(묻지도 오류도 아님 — `'R&D'`) ·
     /// `false` = SQL*Plus처럼 미정의면 묻는다(Oracle 기본 · `SET DEFINE`/설정 on으로 고정하면 전 방언).
     pub define_lenient: bool,
+    /// ★ 문자열 리터럴 안의 `&이름`도 바꾸는가(설정 `script.define_in_strings` · 기본 켬 = SQL*Plus 그대로 · T-149 잔여 · 10-30):
+    /// 끄면 `'R&D'`·`'&x'` 같은 글자는 건드리지 않고 묻지도 않는다(63a §10 "safer"). 주석 안은 언제나 치환하지 않는다.
+    pub define_in_strings: bool,
     pub verify: bool,
     pub echo: bool,
     pub fetch_size: u32,
@@ -139,6 +142,7 @@ impl Default for Settings {
             feedback: true,
             define_char: Some('&'),
             define_lenient: false,
+            define_in_strings: true,
             verify: true,
             echo: false,
             fetch_size: 500,
@@ -874,12 +878,14 @@ impl Engine {
         let mut out = String::with_capacity(text.len());
         let mut i = 0;
         while i < b.len() {
-            // 주석 안은 치환하지 않는다(SQL*Plus는 하지만 사고를 부른다). 문자열 안은 SQL*Plus처럼 치환.
+            // 주석 안은 치환하지 않는다(SQL*Plus는 하지만 사고를 부른다). 문자열 안은 SQL*Plus처럼 치환 — 설정
+            // `script.define_in_strings`를 끄면 문자열 안도 건너뛴다.
             if b[i] == ch as u8
                 && !matches!(
                     classes[i],
                     crate::lexer::Class::LineComment | crate::lexer::Class::BlockComment
                 )
+                && (self.settings.define_in_strings || classes[i] != crate::lexer::Class::Str)
             {
                 let double = i + 1 < b.len() && b[i + 1] == ch as u8;
                 let start = i + if double { 2 } else { 1 };
@@ -1638,6 +1644,29 @@ mod tests {
         let mut e2 = Engine::new(Dialect::Oracle);
         e2.plan(&item("EXEC :V2 := :V1 + 5"));
         assert!(e2.vars.formula_of("V2").is_none());
+    }
+
+    /// `script.define_in_strings` 끔 = 문자열 리터럴 안 `&이름`은 글자 그대로(묻지도 않음) · 밖은 치환 · 켬(기본) = 둘 다 치환.
+    #[test]
+    fn define_in_strings_off_keeps_string_literals() {
+        let mut e = Engine::new(Dialect::Oracle);
+        e.define("dept", "SALES");
+        let text = "SELECT '&dept' a, &dept b, 'R&D' c FROM t";
+        assert_eq!(
+            e.substitute(text),
+            Err("D".to_string()),
+            "기본 = 문자열 안도 치환(SQL*Plus) → 'R&D'의 &D를 묻는다"
+        );
+        e.settings.define_in_strings = false;
+        assert_eq!(
+            e.substitute(text).as_deref(),
+            Ok("SELECT '&dept' a, SALES b, 'R&D' c FROM t")
+        );
+        // 주석 안은 설정과 무관하게 그대로.
+        assert_eq!(
+            e.substitute("SELECT &dept -- &dept").as_deref(),
+            Ok("SELECT SALES -- &dept")
+        );
     }
 
     #[test]

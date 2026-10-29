@@ -522,6 +522,13 @@ fn define_setting() -> String {
         .unwrap_or_else(|| "auto".to_string())
 }
 
+/// 설정 `script.define_in_strings`(기본 켬) — 문자열 리터럴 안 `&이름` 치환.
+fn define_in_strings_setting() -> bool {
+    settings_cached()
+        .ok()
+        .is_none_or(|s| s.flag("script.define_in_strings"))
+}
+
 /// 셸 추가 페치 명령(T-48d · docs/43 §5) — `\more [n]`/`more [n]` · `\all` · `\count` · `\pager on|off`.
 #[derive(Debug, PartialEq, Eq)]
 enum FetchCmd {
@@ -1683,6 +1690,7 @@ fn cmd_run(o: &Opts) -> i32 {
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting())
         .with_define_mode(&define_setting())
+        .with_define_in_strings(define_in_strings_setting())
         .with_auto_cursor(cursor_autoshow_setting())
         .with_into_first(into_first_setting())
         .with_var_limits(var_limits_setting().0, var_limits_setting().1);
@@ -1830,6 +1838,7 @@ fn cmd_import(o: &Opts) -> i32 {
     let mut printer = Printer::new(o, Format::Grid, false);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_define_mode(&define_setting())
+        .with_define_in_strings(define_in_strings_setting())
         .with_max_rows(1)
         .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
@@ -1939,6 +1948,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting())
         .with_define_mode(&define_setting())
+        .with_define_in_strings(define_in_strings_setting())
         .with_auto_cursor(cursor_autoshow_setting())
         .with_into_first(into_first_setting())
         .with_var_limits(var_limits_setting().0, var_limits_setting().1);
@@ -2111,6 +2121,7 @@ fn cmd_explain(o: &Opts) -> i32 {
     let mut printer = Printer::new(o, o.format.clone(), false);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_define_mode(&define_setting())
+        .with_define_in_strings(define_in_strings_setting())
         .with_max_rows(o.max_rows)
         .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
@@ -2207,6 +2218,7 @@ fn cmd_export(o: &Opts) -> i32 {
     // export = 무제한(D-68) · 커서 유지 없음 · 왕복당 행수는 설정(`db.fetch_size`).
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_define_mode(&define_setting())
+        .with_define_in_strings(define_in_strings_setting())
         .with_max_rows(o.max_rows)
         .with_fetch_size(fetch_settings().0)
         .with_keep_cursor(false)

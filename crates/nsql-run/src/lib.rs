@@ -966,6 +966,13 @@ impl Runner {
         self
     }
 
+    /// 문자열 리터럴 안 `&이름` 치환 여부(설정 `script.define_in_strings` · 기본 켬 · T-149 잔여).
+    #[must_use]
+    pub fn with_define_in_strings(mut self, on: bool) -> Self {
+        self.engine.settings.define_in_strings = on;
+        self
+    }
+
     /// 실시간 메시지 싱크 장착(체이닝).
     #[must_use]
     pub fn with_message_sink(mut self, sink: nsql_core::MessageSink) -> Self {
