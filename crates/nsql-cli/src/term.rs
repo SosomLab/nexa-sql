@@ -316,4 +316,74 @@ mod win {
             }
         }
     }
+
+    const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4; // (DWORD)-12
+    const ENABLE_PROCESSED_INPUT: u32 = 0x1;
+    const ENABLE_LINE_INPUT: u32 = 0x2;
+    const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x200;
+    const ENABLE_PROCESSED_OUTPUT: u32 = 0x1;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x4;
+
+    /// ★ T-453 줄 편집기 raw 모드 — 입력 = 줄 입력·에코·처리(Ctrl+C) 끔 + VT 입력(화살표 = `ESC [ A`) · 출력(stdout·stderr) = VT 처리 켬.
+    /// 이전 (입력, 출력) 모드를 돌려준다 · 콘솔이 아니거나 VT를 못 켜면(옛 Windows) None = 호출자가 종전 줄 읽기로.
+    pub(super) fn raw_on() -> Option<(u32, u32)> {
+        let (mut in_mode, mut out_mode) = (0u32, 0u32);
+        // SAFETY: 표준 핸들 조회·모드 읽기/쓰기 — 포인터는 지역 변수 · 실패하면 입력 모드를 되돌린다.
+        unsafe {
+            let hin = GetStdHandle(STD_INPUT_HANDLE);
+            let hout = GetStdHandle(STD_OUTPUT_HANDLE);
+            if hin.is_null() || hout.is_null() || GetConsoleMode(hin, &mut in_mode) == 0 {
+                return None;
+            }
+            if GetConsoleMode(hout, &mut out_mode) == 0 {
+                return None;
+            }
+            let raw = (in_mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+                | ENABLE_VIRTUAL_TERMINAL_INPUT;
+            if SetConsoleMode(hin, raw) == 0 {
+                return None;
+            }
+            let vt = out_mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            if SetConsoleMode(hout, vt) == 0 {
+                SetConsoleMode(hin, in_mode);
+                return None;
+            }
+            let herr = GetStdHandle(STD_ERROR_HANDLE);
+            if !herr.is_null() {
+                let mut m = 0u32;
+                if GetConsoleMode(herr, &mut m) != 0 {
+                    SetConsoleMode(
+                        herr,
+                        m | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+                    );
+                }
+            }
+        }
+        Some((in_mode, out_mode))
+    }
+
+    pub(super) fn raw_restore(modes: (u32, u32)) {
+        // SAFETY: 위와 동일.
+        unsafe {
+            let hin = GetStdHandle(STD_INPUT_HANDLE);
+            if !hin.is_null() {
+                SetConsoleMode(hin, modes.0);
+            }
+            let hout = GetStdHandle(STD_OUTPUT_HANDLE);
+            if !hout.is_null() {
+                SetConsoleMode(hout, modes.1);
+            }
+        }
+    }
+}
+
+/// ★ T-453: 줄 편집기 raw 모드 켜기/복원(Windows 콘솔 · [`crate::lineedit`]가 쓴다).
+#[cfg(windows)]
+pub(crate) fn raw_on() -> Option<(u32, u32)> {
+    win::raw_on()
+}
+
+#[cfg(windows)]
+pub(crate) fn raw_restore(modes: (u32, u32)) {
+    win::raw_restore(modes);
 }

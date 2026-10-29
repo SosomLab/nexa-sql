@@ -13,12 +13,14 @@
 
 mod bookmark;
 mod cat;
+mod complete;
 mod config;
 mod conn;
 mod driver;
 mod grep;
 mod help;
 mod license;
+mod lineedit;
 mod plan;
 mod term;
 
@@ -1853,16 +1855,51 @@ fn cmd_shell(o: &Opts) -> i32 {
         runner.engine.define(n, v);
     }
     eprintln!("{}", t(Msg::CliShellBanner));
+    // ★ T-453(D-393): 터미널이면 자체 줄 편집기(좌우·기록·Tab 완성 · 외부 crate 0) · 아니면(배치·파이프) 종전 `read_line`.
+    let interactive = io::stdin().is_terminal();
+    let hist_max = st
+        .as_ref()
+        .map_or(500, |s| s.int("cli.history_max").max(0) as usize);
+    let mut ed = lineedit::LineEditor::new(hist_max);
+    let hist_path = nsql_settings::config_dir().map(|d| d.join("shell_history"));
+    if interactive {
+        if let Some(p) = &hist_path {
+            ed.load_history(p);
+        }
+    }
+    let mut meta = complete::MetaCache::default();
     let stdin = io::stdin();
     let mut buf = String::new();
     loop {
-        eprint!("{}", if buf.is_empty() { "nsql> " } else { "   -> " });
-        let _ = io::stderr().flush();
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(_) => break,
+        let prompt = if buf.is_empty() { "nsql> " } else { "   -> " };
+        let line = if interactive {
+            let dialect = runner.dialect();
+            let mut cands = |l: &str, c: usize| {
+                complete::complete(l, c, dialect, runner.session.as_deref_mut(), &mut meta)
+            };
+            match lineedit::read_interactive(prompt, &mut ed, &mut cands) {
+                lineedit::Outcome::Line(l) => l,
+                lineedit::Outcome::Cancel => {
+                    buf.clear();
+                    continue;
+                }
+                lineedit::Outcome::Eof => break,
+            }
+        } else {
+            eprint!("{prompt}");
+            let _ = io::stderr().flush();
+            let mut line = String::new();
+            match stdin.lock().read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            line
+        };
+        if interactive && hist_max > 0 {
+            ed.push_history(&line);
+            if let Some(p) = &hist_path {
+                ed.save_history(p);
+            }
         }
         let t = line.trim_end_matches(['\r', '\n']);
         if buf.is_empty()
@@ -1914,7 +1951,16 @@ fn cmd_shell(o: &Opts) -> i32 {
         if !complete {
             continue;
         }
+        // 접속·스키마가 바뀌는 문장 뒤에는 Tab 완성 캐시를 비운다(다음 Tab에서 다시 읽음).
+        let reset_meta = first.to_ascii_uppercase().starts_with("CONN")
+            || first.to_ascii_uppercase().starts_with("DISC")
+            || runner
+                .dialect()
+                .is_some_and(|d| nsql_catalog::context_switch_name(d, &buf).is_some());
         let src = std::mem::take(&mut buf);
+        if reset_meta {
+            meta.reset();
+        }
         let mut prompt = prompt_stdin;
         printer.set_source(&src);
         runner.set_max_rows(printer.shell_limit());

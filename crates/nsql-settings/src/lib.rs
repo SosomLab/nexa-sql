@@ -7314,6 +7314,18 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ T-453(10-29): `nsql shell` 줄 편집기 기록 상한(0 = 기록 안 함 · 파일 = 설정 폴더 `shell_history`).
+    Entry {
+        key: "cli.history_max",
+        cat: Msg::CatCli,
+        label: Msg::LblCliHistoryMax,
+        desc: Msg::DescCliHistoryMax,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 100_000,
+        },
+        default: "500",
+    },
 ];
 
 /// 키로 항목 찾기.
