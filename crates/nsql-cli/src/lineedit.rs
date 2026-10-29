@@ -33,6 +33,8 @@ pub(crate) enum Key {
     KillToEnd,
     /// Ctrl+W.
     KillWord,
+    /// Ctrl+R — 기록 거꾸로 찾기(검색 모드 · 반복 = 더 오래된 일치).
+    SearchHistory,
     /// 모르는 제어·이스케이프 = 버린다.
     Ignore,
 }
@@ -93,6 +95,7 @@ impl Decoder {
             0x0b => Key::KillToEnd,
             0x15 => Key::KillToStart,
             0x17 => Key::KillWord,
+            0x12 => Key::SearchHistory,
             b if b < 0x20 => Key::Ignore,
             b if b < 0x80 => Key::Char(b as char),
             b => {
@@ -160,6 +163,14 @@ pub(crate) enum Action {
     Clear,
 }
 
+/// 기록 거꾸로 찾기(Ctrl+R · readline `reverse-i-search`) 상태 — 질의 · 지금 일치한 기록 인덱스 · 들어오기 전 줄.
+struct Search {
+    query: String,
+    pos: Option<usize>,
+    saved: Vec<char>,
+    saved_cursor: usize,
+}
+
 /// 한 줄 편집 상태(글자 인덱스 · 기록 탐색은 지금 줄의 초안을 보존).
 pub(crate) struct LineEditor {
     buf: Vec<char>,
@@ -168,6 +179,7 @@ pub(crate) struct LineEditor {
     hist_max: usize,
     hist_pos: Option<usize>,
     draft: Vec<char>,
+    search: Option<Search>,
 }
 
 impl LineEditor {
@@ -179,7 +191,15 @@ impl LineEditor {
             hist_max: hist_max.max(1),
             hist_pos: None,
             draft: Vec::new(),
+            search: None,
         }
+    }
+
+    /// 검색 모드면 그 프롬프트(`(reverse-i-search)'질의': `) — 호출자가 보통 프롬프트 대신 그린다.
+    pub(crate) fn search_prompt(&self) -> Option<String> {
+        self.search
+            .as_ref()
+            .map(|s| format!("(reverse-i-search)'{}': ", s.query))
     }
 
     pub(crate) fn text(&self) -> String {
@@ -198,7 +218,21 @@ impl LineEditor {
 
     /// 키 하나 처리(순수).
     pub(crate) fn handle(&mut self, key: Key) -> Action {
+        if self.search.is_some() {
+            if let Some(a) = self.handle_search(&key) {
+                return a;
+            }
+        }
         match key {
+            Key::SearchHistory => {
+                self.search = Some(Search {
+                    query: String::new(),
+                    pos: None,
+                    saved: self.buf.clone(),
+                    saved_cursor: self.cursor,
+                });
+                Action::Redraw
+            }
             Key::Char(c) => {
                 self.buf.insert(self.cursor, c);
                 self.cursor += 1;
@@ -290,6 +324,74 @@ impl LineEditor {
             }
             Key::ClearScreen => Action::Clear,
             Key::Ignore => Action::None,
+        }
+    }
+
+    /// 검색 모드의 키 — 글자·Backspace = 질의를 고치고 **최신부터** 다시 찾기 · Ctrl+R = 지금 일치보다 **오래된** 일치 ·
+    /// Ctrl+C = 들어오기 전 줄로 복원하고 끝 · 그 밖(Enter·이동·Tab…) = 검색을 끝내고 그 키를 일반 처리(`None` = 계속 처리하라).
+    fn handle_search(&mut self, key: &Key) -> Option<Action> {
+        match key {
+            Key::Char(c) => {
+                if let Some(s) = self.search.as_mut() {
+                    s.query.push(*c);
+                }
+                self.search_find(None);
+                Some(Action::Redraw)
+            }
+            Key::Backspace => {
+                if let Some(s) = self.search.as_mut() {
+                    s.query.pop();
+                }
+                self.search_find(None);
+                Some(Action::Redraw)
+            }
+            Key::SearchHistory => {
+                let from = self.search.as_ref().and_then(|s| s.pos);
+                match from {
+                    Some(0) => {}
+                    Some(p) => self.search_find(Some(p - 1)),
+                    None => self.search_find(None),
+                }
+                Some(Action::Redraw)
+            }
+            Key::Cancel => {
+                if let Some(s) = self.search.take() {
+                    self.buf = s.saved;
+                    self.cursor = s.saved_cursor;
+                }
+                Some(Action::Redraw)
+            }
+            Key::Ignore => Some(Action::None),
+            _ => {
+                self.search = None;
+                None
+            }
+        }
+    }
+
+    /// `start`(포함)부터 거꾸로 질의를 품은 기록을 찾는다(대소문자 무시 · `None` = 최신부터). 찾으면 줄 = 그 기록 · 커서 = 끝 ·
+    /// 못 찾으면 그대로. 질의가 비면 들어오기 전 줄로.
+    fn search_find(&mut self, start: Option<usize>) {
+        let Some(s) = self.search.as_mut() else {
+            return;
+        };
+        if s.query.is_empty() {
+            s.pos = None;
+            self.buf = s.saved.clone();
+            self.cursor = s.saved_cursor;
+            return;
+        }
+        let q = s.query.to_lowercase();
+        let Some(top) = start.or(self.history.len().checked_sub(1)) else {
+            return;
+        };
+        let hit = (0..=top.min(self.history.len().saturating_sub(1)))
+            .rev()
+            .find(|&i| self.history[i].to_lowercase().contains(&q));
+        if let Some(i) = hit {
+            s.pos = Some(i);
+            self.buf = self.history[i].chars().collect();
+            self.cursor = self.buf.len();
         }
     }
 
@@ -571,8 +673,9 @@ pub(crate) fn read_interactive(
     let mut row = 0usize;
     let mut end_row = 0usize;
     let mut draw = |ed: &LineEditor, row: &mut usize, end_row: &mut usize, fresh: bool| {
+        let sp = ed.search_prompt();
         let (s, r, e) = render(
-            prompt,
+            sp.as_deref().unwrap_or(prompt),
             &ed.text(),
             ed.cursor(),
             cols(),
@@ -803,6 +906,61 @@ mod tests {
         e2.load_history(&path);
         assert_eq!(e2.history(), ["c", "x\ny"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Ctrl+R 거꾸로 찾기: 질의 글자마다 최신부터 · 반복 = 더 오래된 일치 · Backspace = 다시 최신부터 · Ctrl+C = 복원 ·
+    /// 이동 키 = 검색 끝(줄 유지) · Enter = 검색 끝 + 확정 · 프롬프트.
+    #[test]
+    fn reverse_search_walks_history() {
+        let mut ed = LineEditor::new(10);
+        for l in ["select 1", "insert x", "SELECT 2", "update y"] {
+            ed.push_history(l);
+        }
+        for c in "dr".chars() {
+            ed.handle(Key::Char(c));
+        }
+        assert_eq!(ed.handle(Key::SearchHistory), Action::Redraw);
+        assert_eq!(
+            ed.search_prompt().as_deref(),
+            Some("(reverse-i-search)'': ")
+        );
+        assert_eq!(ed.text(), "dr", "질의가 비면 줄 그대로");
+        ed.handle(Key::Char('s'));
+        ed.handle(Key::Char('e'));
+        assert_eq!(ed.text(), "SELECT 2", "최신 일치(대소문자 무시)");
+        assert_eq!(
+            ed.search_prompt().as_deref(),
+            Some("(reverse-i-search)'se': ")
+        );
+        assert_eq!(ed.handle(Key::SearchHistory), Action::Redraw);
+        assert_eq!(ed.text(), "insert x", "더 오래된 일치");
+        ed.handle(Key::SearchHistory);
+        assert_eq!(ed.text(), "select 1");
+        ed.handle(Key::SearchHistory);
+        assert_eq!(ed.text(), "select 1", "더 없으면 그대로");
+        ed.handle(Key::Char('z'));
+        assert_eq!(ed.text(), "select 1", "일치 없음 = 줄 유지");
+        assert_eq!(ed.handle(Key::Backspace), Action::Redraw);
+        assert_eq!(ed.text(), "SELECT 2", "질의를 줄이면 다시 최신부터");
+        // 이동 키 = 검색 끝 · 줄은 그대로 · 그 키는 일반 처리(끝에서 Left = 한 칸).
+        assert_eq!(ed.handle(Key::Left), Action::Redraw);
+        assert!(ed.search_prompt().is_none());
+        assert_eq!((ed.text().as_str(), ed.cursor()), ("SELECT 2", 7));
+        // Ctrl+C = 들어오기 전 줄 복원.
+        ed.handle(Key::SearchHistory);
+        ed.handle(Key::Char('u'));
+        assert_eq!(ed.text(), "update y");
+        assert_eq!(ed.handle(Key::Cancel), Action::Redraw);
+        assert_eq!((ed.text().as_str(), ed.cursor()), ("SELECT 2", 7));
+        assert!(ed.search_prompt().is_none());
+        // Enter = 검색 끝 + 확정.
+        ed.handle(Key::SearchHistory);
+        ed.handle(Key::Char('i'));
+        assert_eq!(ed.handle(Key::Enter), Action::Submit("insert x".into()));
+        assert!(ed.search_prompt().is_none());
+        // 디코더: Ctrl+R = 0x12.
+        let mut d = Decoder::default();
+        assert_eq!(d.push(0x12), Some(Key::SearchHistory));
     }
 
     /// 바꾸기: `[start, cursor)`를 후보로 · 꼬리 보존 · 공통 접두.
