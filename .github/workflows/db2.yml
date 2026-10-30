@@ -4,6 +4,11 @@
 name: db2
 on:
   workflow_dispatch:
+    inputs:
+      image:
+        description: "Db2 container image (default = pinned 12.1.2.0 · e.g. icr.io/db2_community/db2 = latest · 사용자 10-31)"
+        required: false
+        default: "icr.io/db2_community/db2:12.1.2.0"
   schedule:
     - cron: "17 18 * * *" # 03:17 KST
   pull_request:
@@ -29,7 +34,8 @@ jobs:
     timeout-minutes: 30
     services:
       db2:
-        image: icr.io/db2_community/db2:12.1.2.0
+        # ★ 수동 실행 입력 image(10-31) · 야간·PR은 입력이 없어 고정 판으로.
+        image: ${{ inputs.image || 'icr.io/db2_community/db2:12.1.2.0' }}
         env:
           LICENSE: accept
           DB2INST1_PASSWORD: Nexa_Sql2026
