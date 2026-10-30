@@ -387,8 +387,100 @@ impl App {
             threads: self.settings.int("search.threads").clamp(0, 16) as usize,
             gitignore: self.settings.flag("search.gitignore"),
             excludes,
+            // ★ T-81e: UTF-8이 아닌 파일 = EUC-KR로 한 번 풀어 본다(무손실일 때만 · 아니면 바이트 그대로 · 36 §2 인코딩).
+            transcode: Some(nsql_search::Transcoder(std::sync::Arc::new(
+                |raw: &[u8]| {
+                    let (text, lossy, _) = crate::enc::decode(raw, "euckr");
+                    (!lossy).then(|| text.into_bytes())
+                },
+            ))),
         };
         self.search.start(ctx);
+        self.redraw();
+    }
+
+    /// ★ T-81d(10-30 · 36 §1 "바꾸기 → 적용 = 파일 저장(탭에 열려 있으면 버퍼 갱신) · 백업"): 결과의 모든 파일에 바꾸기를 적용한다.
+    ///   열린 탭 = 버퍼를 **되돌릴 수 있게** 통째 교체(`replace_all_undoable` · 저장은 사용자) · 디스크 파일 = 원본을
+    ///   `<설정 폴더>/backups/replace/<이름>.<stamp17>`에 남긴 뒤 같은 인코딩으로 다시 쓴다(EUC-KR이면 EUC-KR) · 끝나면 같은 조건으로 다시 검색.
+    pub(crate) fn search_replace_all(&mut self, with: &str) {
+        let Some(matcher) = self.search.make_matcher() else {
+            self.sess.status = t(Msg::StReplaceNothing).into();
+            return;
+        };
+        let targets = self.search.replace_targets();
+        if targets.is_empty() {
+            self.sess.status = t(Msg::StReplaceNothing).into();
+            self.redraw();
+            return;
+        }
+        let backup_dir = nsql_settings::config_dir().map(|d| d.join("backups").join("replace"));
+        let stamp = backups::stamp17(&nsql_log::now_local());
+        let (mut files, mut count) = (0usize, 0usize);
+        let mut inv = Invalidations::default();
+        for (tab, path) in targets {
+            if let Some(id) = tab {
+                if let Some(tb) = self.editors.buf_mut_by_id(id) {
+                    let text = tb.text();
+                    if let Some((new, n)) = matcher.replace_all(&text, with) {
+                        tb.replace_all_undoable(&new, &mut inv);
+                        files += 1;
+                        count += n;
+                    }
+                }
+                continue;
+            }
+            let Some(p) = path else { continue };
+            let Ok(bytes) = std::fs::read(&p) else {
+                continue;
+            };
+            let (text, lossy, enc_id) = crate::enc::decode_owned(bytes.clone(), "auto");
+            let (text, enc_id) = if lossy {
+                let (t2, lossy2, _) = crate::enc::decode(&bytes, "euckr");
+                if lossy2 {
+                    (text, enc_id)
+                } else {
+                    (t2, "euckr")
+                }
+            } else {
+                (text, enc_id)
+            };
+            let Some((new, n)) = matcher.replace_all(&text, with) else {
+                continue;
+            };
+            if let Some(dir) = &backup_dir {
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "file".into());
+                let _ = std::fs::create_dir_all(dir);
+                let _ = std::fs::write(dir.join(format!("{name}.{stamp}")), &bytes);
+            }
+            match std::fs::write(&p, crate::enc::encode(&new, enc_id)) {
+                Ok(()) => {
+                    files += 1;
+                    count += n;
+                }
+                Err(e) => {
+                    let msg = tf(
+                        Msg::StReplaceFail,
+                        &[&nexa_fs::path::display(&p), &e.to_string()],
+                    );
+                    self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+                    self.sess.status = msg;
+                }
+            }
+        }
+        if files == 0 {
+            self.sess.status = t(Msg::StReplaceNothing).into();
+        } else {
+            let msg = tf(
+                Msg::StReplaceDone,
+                &[&files.to_string(), &count.to_string()],
+            );
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.sess.status = msg;
+            self.start_search();
+        }
         self.redraw();
     }
 

@@ -207,6 +207,40 @@ impl Matcher {
     }
 
     /// `hay`의 모든 일치 `(start, end)`를 오름차순으로 `out`에 덧붙인다. `keep_going`이 false를 주면 멈춘다(취소).
+    /// ★ T-81d(10-30): 본문 전체 바꾸기(순수) — 일치 구간은 [`Self::find_all`]과 같은 규칙(단어 경계 포함) · 정규식이면 `$1`·`${name}` 치환
+    ///   (`regex::bytes::Captures::expand`) · 아니면 리터럴. 일치가 없으면 `None` · 있으면 (새 본문, 바꾼 수).
+    #[must_use]
+    pub fn replace_all(&self, text: &str, with: &str) -> Option<(String, usize)> {
+        let hay = text.as_bytes();
+        let mut spans = Vec::new();
+        self.find_all(hay, &mut spans, &mut || true);
+        if spans.is_empty() {
+            return None;
+        }
+        let mut out: Vec<u8> = Vec::with_capacity(hay.len() + with.len());
+        let mut last = 0usize;
+        let mut n = 0usize;
+        for &(s, e) in &spans {
+            if s < last || e > hay.len() {
+                continue;
+            }
+            out.extend_from_slice(&hay[last..s]);
+            match &self.kind {
+                Kind::Regex { re, .. } => match re.captures(&hay[s..e]) {
+                    Some(c) => c.expand(with.as_bytes(), &mut out),
+                    None => out.extend_from_slice(with.as_bytes()),
+                },
+                _ => out.extend_from_slice(with.as_bytes()),
+            }
+            last = e;
+            n += 1;
+        }
+        out.extend_from_slice(&hay[last..]);
+        let text = String::from_utf8(out)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        Some((text, n))
+    }
+
     pub fn find_all(
         &self,
         hay: &[u8],
@@ -411,5 +445,32 @@ mod tests {
         assert_eq!(literal_prefix(r"(?i)abc"), None);
         assert_eq!(literal_prefix(r"\d+"), None);
         assert_eq!(literal_prefix(r"^SELECT"), None);
+    }
+
+    /// ★ T-81d: 바꾸기 — 리터럴(대소문자 무시) · 단어 경계 · 정규식 그룹 치환 · 일치 없음 = None.
+    #[test]
+    fn replace_all_literal_word_and_regex_groups() {
+        let m = Matcher::new("from", false, false, false).expect("matcher");
+        assert_eq!(
+            m.replace_all("SELECT 1 FROM a; select 2 from b", "JOIN"),
+            Some(("SELECT 1 JOIN a; select 2 JOIN b".to_string(), 2))
+        );
+        let w = Matcher::new("a", true, true, false).expect("matcher");
+        assert_eq!(
+            w.replace_all("a ab a_b a", "x"),
+            Some(("x ab a_b x".to_string(), 2))
+        );
+        let re = Matcher::new(r"(\w+)@(\w+)", true, false, true).expect("matcher");
+        assert_eq!(
+            re.replace_all("u@h and v@k", "$2:$1"),
+            Some(("h:u and k:v".to_string(), 2))
+        );
+        assert_eq!(m.replace_all("nothing here", "x"), None);
+        // 한글(자모열 매처)도 리터럴 치환.
+        let h = Matcher::new("가나", false, false, false).expect("matcher");
+        assert_eq!(
+            h.replace_all("가나다 가나", "X"),
+            Some(("X다 X".to_string(), 2))
+        );
     }
 }

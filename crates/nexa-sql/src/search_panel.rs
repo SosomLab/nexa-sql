@@ -116,6 +116,8 @@ pub(crate) struct SearchCtx {
     pub gitignore: bool,
     /// 설정 `search.excludes`(콤마 구분).
     pub excludes: Vec<String>,
+    /// ★ T-81e: UTF-8이 아닌 파일의 변환기(호스트 EUC-KR 등 · 없으면 바이트 그대로).
+    pub transcode: Option<nsql_search::Transcoder>,
 }
 
 /// 결과를 열 때 호스트에 넘기는 것.
@@ -194,6 +196,15 @@ pub(crate) struct SearchPanel {
     query: TextBox,
     where_box: TextBox,
     btns: Vec<FindBtn>,
+    /// ★ T-81d(10-30 · 36 §1): 바꾸기 줄 — `›` 접기/펼치기(검색어 틀 왼쪽) · 바꾸기 상자 · [모두 바꾸기](틀 안 오른쪽).
+    fold_btn: FindBtn,
+    replace: TextBox,
+    replace_open: bool,
+    repl_btns: Vec<FindBtn>,
+    /// [모두 바꾸기] 요청(바꿀 글 · 호스트가 `take_replace_all`로 가져가 적용).
+    replace_req: Option<String>,
+    /// 지금 결과를 만든 매처(미리보기 `→ 새 줄` 계산용 · 검색마다 갱신).
+    matcher: Option<Matcher>,
     /// 위치(Where) 상자의 토글 = Aa 하나(패턴 대소문자 구분 · 기본 끔 = OS 무관 무시 · 사용자 10-13).
     where_btns: Vec<FindBtn>,
     files: Vec<FileEntry>,
@@ -319,6 +330,8 @@ impl SearchPanel {
         query.set_busy_host_painted(true);
         let mut where_box = TextBox::new(t(Msg::PhSearchWhere)).with_clearable();
         where_box.set_focus_ring(false);
+        let mut replace = TextBox::new(t(Msg::PhSearchReplace)).with_clearable();
+        replace.set_focus_ring(false);
         SearchPanel {
             visible: false,
             bounds: Rect::default(),
@@ -330,6 +343,12 @@ impl SearchPanel {
                 FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
                 FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
             ],
+            fold_btn: FindBtn::new(BtnKind::Fold, toolicons::mi_chevron_right),
+            replace,
+            replace_open: false,
+            repl_btns: vec![FindBtn::new(BtnKind::ReplaceAll, toolicons::mi_replace_all)],
+            replace_req: None,
+            matcher: None,
             where_btns: vec![FindBtn::new(BtnKind::Case, toolicons::mi_match_case)],
             files: Vec::new(),
             rows: Vec::new(),
@@ -470,11 +489,61 @@ impl SearchPanel {
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         if self.where_box.is_focused() {
             Some(&mut self.where_box)
+        } else if self.replace_open && self.replace.is_focused() {
+            Some(&mut self.replace)
         } else if self.query.is_focused() {
             Some(&mut self.query)
         } else {
             None
         }
+    }
+
+    /// ★ T-81d: 바꾸기 줄 열고 바꾸기 상자에 포커스(Ctrl+Shift+H 후보 · 팔레트).
+    pub(crate) fn focus_replace(&mut self) {
+        self.replace_open = true;
+        self.fold_btn.checked = true;
+        let (b, s) = (self.bounds, self.scale);
+        self.set_bounds(b, s);
+        self.query.set_focused(false);
+        self.where_box.set_focused(false);
+        self.replace.set_focused(true);
+    }
+
+    /// [모두 바꾸기] 요청(1회성) — 바꿀 글(빈 글 = 삭제).
+    pub(crate) fn take_replace_all(&mut self) -> Option<String> {
+        self.replace_req.take()
+    }
+
+    /// 바꾸기 대상 = 지금 결과의 파일들(탭 id · 경로) — 호스트가 탭은 버퍼로, 파일은 디스크로 바꾼다.
+    pub(crate) fn replace_targets(&self) -> Vec<(Option<u64>, Option<PathBuf>)> {
+        self.files.iter().map(|f| (f.tab, f.path.clone())).collect()
+    }
+
+    /// 지금 검색 조건으로 매처를 새로 만든다(호스트의 바꾸기 적용용).
+    pub(crate) fn make_matcher(&self) -> Option<Matcher> {
+        Matcher::new(&self.query.text(), self.case(), self.word(), self.regex()).ok()
+    }
+
+    /// 자체 시험·덤프용(기동 명령 `search.dump:<파일>`): 결과 파일마다 `라벨<TAB>일치 수` 한 줄 + 바꾸기 줄 상태 + 상태 글.
+    pub(crate) fn dump_text(&self) -> String {
+        let mut out = String::new();
+        for f in &self.files {
+            out.push_str(&format!(
+                "{}	{}
+",
+                f.label,
+                f.matches.len()
+            ));
+        }
+        out.push_str(&format!(
+            "replace_open={} replace_text={:?} files={} status={}
+",
+            self.replace_open,
+            self.replace.text(),
+            self.files.len(),
+            self.status
+        ));
+        out
     }
 
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
@@ -488,8 +557,12 @@ impl SearchPanel {
         let y1 = b.y + pad;
         let tg = px(20.0);
         let tgap = px(2.0);
+        // ★ T-81d: `›` 접기 토글(검색어 틀 왼쪽 · 찾기 위젯과 같은 자리) — 틀은 그만큼 오른쪽에서 시작.
+        let fold_w = tg;
+        self.fold_btn.rect = Rect::new(b.x + pad, y1 + px(3.0), fold_w, tg);
+        let fx = b.x + pad + fold_w + tgap;
         // 검색어 상자 = 폭 전체 · 안쪽 오른쪽 토글 3개(찾기 위젯과 같은 배치).
-        let frame = Rect::new(b.x + pad, y1, (b.w - pad * 2).max(px(80.0)), ih);
+        let frame = Rect::new(fx, y1, (b.right() - pad - fx).max(px(80.0)), ih);
         let mut tx = frame.right() - px(2.0) - tg;
         for k in [BtnKind::Regex, BtnKind::Word, BtnKind::Case] {
             if let Some(btn) = self.btns.iter_mut().find(|x| x.kind == k) {
@@ -503,7 +576,27 @@ impl SearchPanel {
             &mut inv,
         );
         // 위·아래 여백 = 다른 패널과 같은 부품 상수(사용자 09-22 "모두 동일하게").
-        let y2 = y1 + ih + px(crate::filterbar::GAP_Y);
+        let mut y2 = y1 + ih + px(crate::filterbar::GAP_Y);
+        // ★ T-81d: 바꾸기 줄(펼쳤을 때만 · 검색어 틀과 같은 x·폭 · 틀 안 오른쪽 [모두 바꾸기]).
+        if self.replace_open {
+            let yr = y2;
+            let mut rx = frame.right() - px(2.0) - tg;
+            for btn in &mut self.repl_btns {
+                btn.rect = Rect::new(rx, yr + px(3.0), tg, tg);
+                rx -= tg + tgap;
+            }
+            self.replace.set_scale(s);
+            self.replace.set_bounds(
+                Rect::new(frame.x, yr, (rx + tg + tgap - frame.x).max(px(40.0)), ih),
+                &mut inv,
+            );
+            y2 = yr + ih + px(crate::filterbar::GAP_Y);
+        } else {
+            self.replace.set_bounds(Rect::default(), &mut inv);
+            for btn in &mut self.repl_btns {
+                btn.rect = Rect::default();
+            }
+        }
         // 위치 상자 = 같은 틀 · 안쪽 오른쪽 Aa 토글(사용자 10-13).
         let mut wx = frame.right() - px(2.0) - tg;
         for btn in &mut self.where_btns {
@@ -585,6 +678,7 @@ impl SearchPanel {
                 return;
             }
         };
+        self.matcher = Matcher::new(&q, self.case(), self.word(), self.regex()).ok();
         let t0 = Instant::now();
         let mut tab_matches = 0usize;
         if spec.open_tabs {
@@ -653,6 +747,7 @@ impl SearchPanel {
             threads: ctx.threads,
             gitignore: ctx.gitignore,
             pattern_case: self.where_case(),
+            transcode: ctx.transcode,
         };
         match Search::spawn(opts) {
             Ok((rx, cancel)) => {
@@ -1023,7 +1118,10 @@ impl SearchPanel {
             InputEvent::Key { key, shift, .. } => {
                 match key {
                     CtlKey::Enter => {
-                        if self.query.is_focused() || self.where_box.is_focused() {
+                        if self.query.is_focused()
+                            || self.where_box.is_focused()
+                            || (self.replace_open && self.replace.is_focused())
+                        {
                             self.history_commit();
                             self.request = true;
                             return true;
@@ -1090,11 +1188,13 @@ impl SearchPanel {
                 self.drag_out = false;
                 let in_q = self.query.bounds().contains(p);
                 let in_w = self.where_box.bounds().contains(p);
+                let in_r = self.replace_open && self.replace.bounds().contains(p);
                 // 상자 편집 메뉴가 떠 있으면(메뉴 항목 클릭) 포커스는 그대로 — 메뉴 동작(잘라내기·붙여넣기)의 대상이 포커스 상자라서
                 // (`focused_textbox` → `clip_action` · 사용자 10-13 "파일 검색에서 동작 안 함").
                 if !(self.query.popup_open() || self.where_box.popup_open()) {
                     self.query.set_focused(in_q);
                     self.where_box.set_focused(in_w);
+                    self.replace.set_focused(in_r);
                 }
                 let hit = self.btns.iter().position(|b| b.rect.contains(p));
                 for (i, b) in self.btns.iter_mut().enumerate() {
@@ -1127,6 +1227,29 @@ impl SearchPanel {
         }
         if tb_done != Some(false) {
             self.where_box.on_event(ev, &mut inv);
+        }
+        if self.replace_open {
+            self.replace.on_event(ev, &mut inv);
+            let _ = self.replace.take_changed();
+        }
+        self.fold_btn.on_event(ev);
+        for b in &mut self.repl_btns {
+            b.on_event(ev);
+        }
+        if self.fold_btn.take_clicked() {
+            self.replace_open = !self.replace_open;
+            self.fold_btn.checked = self.replace_open;
+            let (b, s) = (self.bounds, self.scale);
+            self.set_bounds(b, s);
+            if !self.replace_open {
+                self.replace.set_focused(false);
+            }
+        }
+        for b in &mut self.repl_btns {
+            if b.take_clicked() && b.kind == BtnKind::ReplaceAll {
+                // 결과가 있을 때만(없으면 호스트가 "먼저 검색" 안내).
+                self.replace_req = Some(self.replace.text());
+            }
         }
         // 상자 클릭 = 이력 드롭다운(보기 방식 Dropdown · 이력 있을 때 · 사용자 09-23).
         if let (InputEvent::MouseDown { x, y, .. }, Some(h)) = (ev, &self.history) {
@@ -1205,6 +1328,16 @@ impl SearchPanel {
         self.query.busy_ring().paint(dc, th, frame, r, s);
         for btn in &self.btns {
             btn.paint(dc, th, s);
+        }
+        // ★ T-81d: `›` 토글 + 바꾸기 줄(펼쳤을 때).
+        self.fold_btn.paint(dc, th, s);
+        if self.replace_open {
+            let rb = self.replace.bounds();
+            let rframe = Rect::new(rb.x, rb.y, frame.w, rb.h);
+            paint_box_frame(dc, th, rframe, &self.replace, r);
+            for btn in &self.repl_btns {
+                btn.paint(dc, th, s);
+            }
         }
         // 위치 상자 = 같은 틀 + Aa 토글(사용자 10-13).
         let wb = self.where_box.bounds();
@@ -1322,7 +1455,39 @@ impl SearchPanel {
                         &shown,
                         th.text,
                     );
-                    tx + total + indent
+                    // ★ T-81d 미리보기: 바꾸기 줄이 열려 있고 글이 있으면 `→ 바뀐 줄`(흐린 색 · 왼쪽 자름 없이 그 자리부터).
+                    let mut end = tx + total;
+                    if self.replace_open {
+                        let with = self.replace.text();
+                        if !with.is_empty() {
+                            if let Some((newline, _)) = self
+                                .matcher
+                                .as_ref()
+                                .and_then(|m| m.replace_all(line, &with))
+                            {
+                                let arrow = " → ";
+                                let aw = dc.text_width(arrow);
+                                dc.text(
+                                    end,
+                                    ty,
+                                    clip_to(Rect::new(end, y, aw, rh)),
+                                    arrow,
+                                    th.text_dim,
+                                );
+                                end += aw;
+                                let nw = dc.text_width(&newline);
+                                dc.text(
+                                    end,
+                                    ty,
+                                    clip_to(Rect::new(end, y, nw, rh)),
+                                    &newline,
+                                    th.text_dim,
+                                );
+                                end += nw;
+                            }
+                        }
+                    }
+                    end + indent
                 }
                 Row::SkipHeader => {
                     let chev_w = dc.text_height().max(10);

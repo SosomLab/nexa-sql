@@ -999,6 +999,15 @@ impl Editors {
         self.reapply_layer_indents();
     }
 
+    /// ★ T-69 문법 층 교체(`Packages/User/<문법>.nexa-settings` 저장 뒤 재스캔) → 재정의 없는 탭에 즉시 반영.
+    pub(crate) fn set_syntax_defaults(
+        &mut self,
+        map: std::collections::BTreeMap<String, (Option<u8>, Option<bool>)>,
+    ) {
+        self.syntax_defaults = map;
+        self.reapply_layer_indents();
+    }
+
     /// ★ T-39b 프로젝트 `[문법]` 층 교체(프로젝트 열기·닫기·전환) → 재정의 없는 탭에 즉시 반영.
     pub(crate) fn set_syntax_indent(
         &mut self,
@@ -3448,6 +3457,13 @@ mod split_tests {
         ed.set_syntax_indent(m);
         assert!(ed.set_syntax("SQL"));
         assert_eq!(ed.indent(), (4, false), "구문 전환이 층을 따라간다");
+        // 문법 층(Packages) 아래 · 프로젝트 층이 위: 문법 층 탭 폭 2 + 프로젝트 층 공백 끔 → (2, false) · 프로젝트 층을 비우면 (2, true).
+        let mut d = std::collections::BTreeMap::new();
+        d.insert("sql".to_string(), (Some(2), Some(true)));
+        ed.set_syntax_defaults(d);
+        assert_eq!(ed.indent(), (2, false), "문법 층 위에 프로젝트 층");
+        ed.set_syntax_indent(std::collections::BTreeMap::new());
+        assert_eq!(ed.indent(), (2, true), "프로젝트 층 없음 = 문법 층");
     }
 
     #[test]

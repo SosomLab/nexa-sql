@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/188-prod-confirm-toolbar | 2026-10-31 | 2026-10-31 → main ff(삭제) · **1fd95f76** | 1 | 188차 win = 운영 2단 확인 오탐 수정(D-424 · `is_statement_start`) + T-278 툴바 그룹 안 순서·그룹 숨김(`toolbar.items`) · 15파일 · nexa-ui 짝 = e9c6e88(247차) |
 | feat/187-prefs-project-scope | 2026-10-31 | 2026-10-31 → main ff(삭제) · **2af10528** | 1 | 187차 win = T-39b 후속 — 설정 창 하단 "프로젝트" 스위치(허용 키만 · 절 값 편집 → 프로젝트 파일) + 카드 "프로젝트에서 덮어씀" 덧말 · 9파일 |
 | feat/186-project-settings | 2026-10-31 | 2026-10-31 → main ff(삭제) · **61d086ae** | 1 | 186차 win = T-39b 프로젝트 스코프 설정(프로젝트 파일 `settings` 절 · `project_allowed` · overlay) + T-69 문법·프로젝트 들여쓰기 층 · 12파일 |
 | feat/185-driver-upgrade-ux | 2026-10-31 | 2026-10-31 → main ff(삭제) · **c5fd1ec1** | 1 | 185차 win = 드라이버 갱신 UX(사용자 10-30 밤 · D-423 · 요약 한 줄 · [모두 갱신] · [닫기] · 접속 시 자동 갱신 `driver.auto_upgrade`) + T-39b 시작분(`project_allowed` · `Project.settings`) · 19파일 |

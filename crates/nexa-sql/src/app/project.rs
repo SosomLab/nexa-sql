@@ -619,6 +619,114 @@ impl App {
         self.prefs_win.redraw();
     }
 
+    /// ★ T-39b(67 §8-4): 상태줄 팝업 "프로젝트에 저장" — 지금 탭의 들여쓰기를 프로젝트 `settings`의 `[문법]` 묶음에(그 문법 두 키만 갈아 끼움)
+    ///   → 즉시 적용 → 자동 저장 감시.
+    pub(crate) fn indent_save_project(&mut self, ts: u8, spaces: bool) {
+        if !self.project.is_open() {
+            return;
+        }
+        let g = self.editors.syntax_name().to_lowercase();
+        self.project.settings.retain(|(gr, k, _)| {
+            !(gr.as_deref() == Some(g.as_str())
+                && (k == "editor.tab_size" || k == "editor.indent_spaces"))
+        });
+        self.project
+            .settings
+            .push((Some(g.clone()), "editor.tab_size".into(), ts.to_string()));
+        self.project.settings.push((
+            Some(g.clone()),
+            "editor.indent_spaces".into(),
+            if spaces { "on" } else { "off" }.into(),
+        ));
+        self.apply_project_settings();
+        self.project_changed(false);
+        self.sess.status = tf(Msg::StIndentSavedProject, &[&g]);
+        self.redraw();
+    }
+
+    /// ★ T-69(67 §8-3 문법 층): 상태줄 팝업 "이 문법의 기본으로 저장" — `<설정 폴더>/Packages/User/<문법>.nexa-settings`(JSON 객체 · 있으면
+    ///   두 키만 갱신 · 나머지 보존) → 레지스트리를 다시 훑어 편집기 문법 층 교체(탭 재정의 없는 탭에 즉시).
+    pub(crate) fn indent_save_syntax(&mut self, ts: u8, spaces: bool) {
+        use nsql_settings::json::{dump, parse, Json};
+        let name = self.editors.syntax_name();
+        let Some(dir) = crate::syntax::SyntaxRegistry::packages_dir() else {
+            self.sess.status = tf(Msg::StIndentSaveSyntaxFail, &["no config folder"]);
+            return;
+        };
+        let user = dir.join("User");
+        let path = user.join(format!("{name}.nexa-settings"));
+        let mut obj: Vec<(String, Json)> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| parse(&t).ok())
+            .and_then(|j| match j {
+                Json::Obj(items) => Some(items),
+                _ => None,
+            })
+            .unwrap_or_default();
+        for (k, v) in [
+            ("editor.tab_size", Json::Num(f64::from(ts))),
+            ("editor.indent_spaces", Json::Bool(spaces)),
+        ] {
+            match obj.iter_mut().find(|(key, _)| key == k) {
+                Some(slot) => slot.1 = v,
+                None => obj.push((k.to_string(), v)),
+            }
+        }
+        let r = std::fs::create_dir_all(&user)
+            .and_then(|()| std::fs::write(&path, format!("{}\n", dump(&Json::Obj(obj)))));
+        match r {
+            Ok(()) => {
+                let defaults = crate::syntax::SyntaxRegistry::load().indent_defaults();
+                self.editors.set_syntax_defaults(defaults);
+                self.sess.status = tf(
+                    Msg::StIndentSavedSyntax,
+                    &[&name, &nexa_fs::path::display(&path)],
+                );
+            }
+            Err(e) => self.sess.status = tf(Msg::StIndentSaveSyntaxFail, &[&e.to_string()]),
+        }
+        self.redraw();
+    }
+
+    /// ★ T-39b(67 §8-4 · 58 정책): 프로젝트 파일이 **밖에서**(git pull · 다른 인스턴스) 바뀌었으면 `settings` 절만 다시 읽어 갈아 끼운다 —
+    ///   메인 창이 활성화될 때 한 번(열린 파일 확인과 같은 때) · 길이가 마지막 저장분과 같으면 읽지 않는다(값싼 1차 판정) · 탭·폴더는 건드리지
+    ///   않는다(우리 상태가 자동 저장으로 다시 쓰인다 · 종전과 같음).
+    pub(crate) fn project_reload_settings_if_changed(&mut self) {
+        let Some(path) = self.project.path.clone() else {
+            return;
+        };
+        if self.project_last_json.is_empty() {
+            return;
+        }
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return;
+        };
+        if meta.len() as usize == self.project_last_json.len() {
+            return;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            return;
+        };
+        if bytes == self.project_last_json {
+            return;
+        }
+        let Ok(p) = project::Project::load(&path) else {
+            return;
+        };
+        if p.settings == self.project.settings {
+            return;
+        }
+        self.project.settings = p.settings;
+        self.apply_project_settings();
+        let msg = tf(
+            Msg::LogProjectSettingsReloaded,
+            &[&nexa_fs::path::display(&path)],
+        );
+        self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+        self.sess.status = msg;
+        self.redraw();
+    }
+
     /// 프로젝트 파일 저장 — 탐색기의 마지막 선택 위치를 담아서(닫기·전환·폴더 변경·종료 = 전부 이 길).
     pub(crate) fn project_save(&mut self) -> Result<(), String> {
         self.project_capture_state();

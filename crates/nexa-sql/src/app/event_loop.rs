@@ -424,6 +424,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(req) = self.search.take_open() {
             self.open_search_result(req);
         }
+        // ★ T-81d: 파일 검색 [모두 바꾸기].
+        if let Some(with) = self.search.take_replace_all() {
+            self.search_replace_all(&with);
+        }
         if self.ext_panel.tick(now_ms) {
             self.redraw();
         }
@@ -813,6 +817,10 @@ impl ApplicationHandler<Wake> for App {
         }
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
+            // ★ T-39b: 프로젝트 파일이 밖에서 바뀌었으면 settings 절 재적용(메인 창으로 돌아올 때 한 번).
+            if self.window.as_ref().is_some_and(|w| w.id() == id) {
+                self.project_reload_settings_if_changed();
+            }
             // 라이선스 파일이 밖에서(CLI `nsql license install`) 바뀌었으면 배지·창을 다시(변경 서명만 봄 · 파일은 안 읽음).
             if self.licensing.refresh() {
                 self.license_win.redraw();

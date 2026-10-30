@@ -48,6 +48,27 @@ impl App {
             "indent.guess",
             format!("   {}", t(Msg::MnIndentGuess)),
         ));
+        // ★ T-39b/T-69(10-30 · 67 §8-4): 지금 탭의 들여쓰기를 어느 층에 저장할지 — 전역 · 이 문법(Packages/User/<문법>.nexa-settings) ·
+        //   프로젝트(`[문법]` 묶음 · 프로젝트 모드일 때만).
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item(
+            "indent.save_global",
+            format!("   {}", t(Msg::MnIndentSaveGlobal)),
+        ));
+        let syn = self.editors.syntax_name();
+        items.push(CtxItem::item(
+            "indent.save_syntax",
+            format!("   {}", tf(Msg::MnIndentSaveSyntax, &[&syn])),
+        ));
+        if self.project.is_open() {
+            items.push(CtxItem::item(
+                "indent.save_project",
+                format!(
+                    "   {}",
+                    tf(Msg::MnIndentSaveProject, &[&syn.to_lowercase()])
+                ),
+            ));
+        }
         let r = self.status_tab_rect;
         let host = self
             .window
@@ -379,6 +400,18 @@ impl App {
             }
             "indent.to_spaces" => self.editors.convert_indent(true),
             "indent.to_tabs" => self.editors.convert_indent(false),
+            // ★ T-39b/T-69: 층에 저장(전역 · 문법 · 프로젝트).
+            "indent.save_global" => {
+                let _ = self.settings.set("editor.tab_size", &ts.to_string());
+                let _ = self
+                    .settings
+                    .set("editor.indent_spaces", if spaces { "on" } else { "off" });
+                self.persist_settings();
+                self.apply_setting("editor.tab_size");
+                self.sess.status = t(Msg::StIndentSavedGlobal).into();
+            }
+            "indent.save_syntax" => self.indent_save_syntax(ts, spaces),
+            "indent.save_project" => self.indent_save_project(ts, spaces),
             s if s.starts_with("indent.size:") => {
                 let n = s["indent.size:".len()..]
                     .parse::<u8>()

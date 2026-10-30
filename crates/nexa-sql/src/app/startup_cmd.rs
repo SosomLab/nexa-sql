@@ -1426,6 +1426,23 @@ cells={n}
             self.redraw();
             return;
         }
+        // ★ T-81d(10-30 · 자체 시험): 검색 결과·바꾸기 줄 덤프(`search.dump:<파일>`) · 바꾸기 줄 열고 포커스(`search.replace_focus`) ·
+        //   상태줄 들여쓰기 팝업 열기(`indent.menu` · 캡처용).
+        if let Some(path) = id.strip_prefix("search.dump:") {
+            let _ = std::fs::write(path, self.search.dump_text());
+            return;
+        }
+        if id == "search.replace_focus" {
+            self.search.set_visible(true);
+            self.search.focus_replace();
+            self.redraw();
+            return;
+        }
+        if id == "indent.menu" {
+            self.open_indent_menu();
+            self.redraw();
+            return;
+        }
         // 자체 시험용: 활성 탭 이름을 바로 바꾼다(`tab.rename_to:<이름>` — 팔레트 입력 없이 · 북마크 패널 문서 이름 추종 캡처 09-23).
         if let Some(name) = id.strip_prefix("tab.rename_to:") {
             let i = self.editors.active();

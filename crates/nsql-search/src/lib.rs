@@ -47,6 +47,20 @@ use std::time::{Duration, Instant};
 /// 한 배치의 최대 일치 수(파일 단위 · 큰 파일은 여러 배치).
 pub const BATCH_MAX: usize = 64;
 
+/// ★ T-81e(10-30): 레거시 인코딩 변환기 — 본문이 **올바른 UTF-8이 아닐 때만** 호출된다 · `Some(utf8 바이트)` = 변환 성공(그 본문으로 매칭) ·
+/// `None` = 바이트 그대로 매칭(종전). 호스트(nexa-sql)가 EUC-KR 등 `encoding_rs` 경로를 넣는다 — 이 크레이트는 std + regex만(D-76).
+#[derive(Clone)]
+pub struct Transcoder(pub Arc<TranscodeFn>);
+
+/// [`Transcoder`]의 함수 꼴(바이트 → UTF-8 바이트 · 실패 = None).
+pub type TranscodeFn = dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync;
+
+impl std::fmt::Debug for Transcoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Transcoder")
+    }
+}
+
 /// 검색 옵션. 설정 키 후보(nsql-settings): `search.max_file_kb`(1024) · `search.threads`(0) · `search.gitignore`(true) · `search.excludes`.
 #[derive(Debug, Clone)]
 pub struct SearchOpts {
@@ -74,6 +88,8 @@ pub struct SearchOpts {
     /// ★ 포함/제외 **패턴**의 대소문자 구분(사용자 10-13 "OS를 구분하지 않고 Where는 대소문자를 구별하지 않게"): 기본 `false` =
     ///   OS 무관 ASCII 접기(`*.gwf` ↔ `.GWF`) · `true` = 바이트 그대로. `.gitignore`는 이 값과 무관(git 의미론).
     pub pattern_case: bool,
+    /// ★ T-81e: UTF-8이 아닌 본문의 변환기(없으면 바이트 그대로).
+    pub transcode: Option<Transcoder>,
 }
 
 impl Default for SearchOpts {
@@ -90,6 +106,7 @@ impl Default for SearchOpts {
             threads: 0,
             gitignore: true,
             pattern_case: false,
+            transcode: None,
         }
     }
 }
@@ -291,7 +308,18 @@ fn run(opts: SearchOpts, matcher: Matcher, tx: Sender<Batch>, shared: Arc<Shared
         shared.skipped.fetch_add(1, Ordering::Relaxed);
         send(Batch::Skipped { path, reason });
     };
-    let visit = |path: PathBuf| search_file(path, max_bytes, &matcher, &shared, &send, &skip);
+    let transcode = opts.transcode.clone();
+    let visit = |path: PathBuf| {
+        search_file(
+            path,
+            max_bytes,
+            &matcher,
+            transcode.as_ref(),
+            &shared,
+            &send,
+            &skip,
+        )
+    };
     let error = |path: PathBuf, message: String| {
         shared.errors.fetch_add(1, Ordering::Relaxed);
         send(Batch::Error { path, message });
@@ -317,10 +345,12 @@ thread_local! {
 
 /// 파일 하나 — 열기 → `fstat` 크기 상한 → 첫 8KB 이진 판정(이진이면 나머지를 읽지 않는다) → 읽기 → BOM 처리 → 매칭 →
 /// 일치 파일만 줄 계산 → 배치 전송. `max_bytes` 0 = 무제한. 건너뛰면 이유와 함께 `skip`(검색 로그).
+#[allow(clippy::too_many_arguments)]
 fn search_file(
     path: PathBuf,
     max_bytes: u64,
     matcher: &Matcher,
+    transcode: Option<&Transcoder>,
     shared: &Shared,
     send: &dyn Fn(Batch),
     skip: &dyn Fn(PathBuf, SkipReason),
@@ -362,6 +392,14 @@ fn search_file(
         let Some(body) = decode::prepare(&raw) else {
             skip(path, SkipReason::Binary); // BOM 뒤 판정에서 이진
             return;
+        };
+        // ★ T-81e: 올바른 UTF-8이 아니면 호스트 변환기(EUC-KR 등)를 한 번 시도 — 실패면 종전처럼 바이트 그대로.
+        let body = match transcode {
+            Some(t) if std::str::from_utf8(&body).is_err() => match (t.0)(&body) {
+                Some(utf8) => std::borrow::Cow::Owned(utf8),
+                None => body,
+            },
+            _ => body,
         };
         shared.files_searched.fetch_add(1, Ordering::Relaxed);
         let mut spans = Vec::new();
