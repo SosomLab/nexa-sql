@@ -220,6 +220,8 @@ pub(crate) struct Intel {
     dialect: Option<Dialect>,
     /// 마지막으로 팝업을 붙인 캐럿 자리(호스트가 이번에 좌표를 못 주면 열린 팝업은 이 자리에 머문다 · 09-23).
     last_anchor: Option<Point>,
+    /// ★ 외부 후보 모드(T-76 ② · 10-30): `request_external`로 연 팝업의 바꿀 구간 — `Some`이면 확정이 SQL 규칙을 건너뛴다(`close`가 비운다).
+    ext_replace: Option<Range<usize>>,
 }
 
 const MRU_MAX: usize = 20;
@@ -259,6 +261,7 @@ impl Intel {
             over_budget: None,
             dialect: None,
             last_anchor: None,
+            ext_replace: None,
         }
     }
 
@@ -295,6 +298,7 @@ impl Intel {
         self.menu.close();
         self.cands.clear();
         self.ctx = None;
+        self.ext_replace = None;
         self.tab = None;
         self.due = None;
         self.loading = false;
@@ -1701,6 +1705,68 @@ impl Intel {
     }
 
     /// 자기 감속이 막 일어난 탭(한 번만).
+    /// ★ 외부 후보로 팝업 열기(T-76 ② settings.json 힌트 · 10-30): SQL 문맥 분석 없이 호출자가 만든 후보를 `prefix`로 랭킹해 연다 —
+    /// 확정은 `replace` 구간을 후보 글로 바꾸는 것뿐(`pick_with`의 외부 모드). 후보가 없으면 닫고 거짓. 앵커 규칙은 `request`와 같다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn request_external(
+        &mut self,
+        tab: u64,
+        replace: Range<usize>,
+        prefix: &str,
+        cands: Vec<Cand>,
+        anchor: Option<Point>,
+        host: Rect,
+        scale: f32,
+        point_of: &dyn Fn(usize) -> Option<Point>,
+    ) -> bool {
+        if !self.cfg.enabled {
+            return false;
+        }
+        self.needs.clear();
+        self.need_objects.clear();
+        self.need_kinds.clear();
+        self.need_details.clear();
+        self.loading = false;
+        self.loading_objects = false;
+        let mut ranked = intel::rank(cands, prefix, self.cfg.mode, &[], usize::MAX);
+        ranked.truncate(self.cfg.max_total);
+        if ranked.is_empty() {
+            self.close();
+            return false;
+        }
+        self.icon_kinds = Vec::new();
+        self.prefix_now = prefix.to_string();
+        self.cands = ranked;
+        self.shown = self.cfg.max_items.min(self.cands.len());
+        let items = self.build_items();
+        self.card_want = None;
+        self.card_shown = None;
+        self.ctx = None;
+        self.ext_replace = Some(replace.clone());
+        self.tab = Some(tab);
+        let p = match point_of(replace.start).or(anchor) {
+            Some(p) => p,
+            None if self.menu.is_open() => self.last_anchor.unwrap_or(Point {
+                x: host.x,
+                y: host.y,
+            }),
+            None => {
+                self.due = Some(Instant::now() + Duration::from_millis(16));
+                return false;
+            }
+        };
+        self.last_anchor = Some(p);
+        self.menu.set_scale(scale);
+        self.menu.set_max_rows(Some(self.cfg.rows));
+        self.menu.set_min_rows(Some(self.cfg.rows));
+        self.menu.set_max_width(Some(self.cfg.popup_max_w));
+        self.menu.set_click_selects(true);
+        self.text_w = (280.0 * scale) as i32;
+        crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, self.text_w);
+        self.due = None;
+        true
+    }
+
     pub(crate) fn take_degraded(&mut self) -> Option<u64> {
         self.degraded.take()
     }
@@ -2142,6 +2208,18 @@ impl Intel {
         else {
             return;
         };
+        // ★ 외부 후보(T-76 ② settings.json 힌트 · 10-30): SQL 규칙(대소문자·한정자·별칭·괄호) 없이 글자 그대로 바꿔 넣는다.
+        if let Some(rep) = self.ext_replace.clone() {
+            if let Some(c) = self.cands.get(i) {
+                self.accept = Some(Accept {
+                    replace: rep,
+                    text: c.text.clone(),
+                    caret_back: 0,
+                });
+            }
+            self.close();
+            return;
+        }
         let (Some(c), Some(ctx)) = (self.cands.get(i), self.ctx.as_ref()) else {
             return;
         };

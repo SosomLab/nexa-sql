@@ -101,6 +101,7 @@ mod search_history;
 mod search_panel;
 mod sessions;
 mod sessions_win;
+mod settings_hint;
 mod sqlprev_win;
 mod statusbar;
 mod syntax;
@@ -557,6 +558,8 @@ struct App {
     find_pending_scope: Option<(usize, usize)>,
     /// ★ 찾기를 **열 때**의 캐럿·선택(131차 · 사용자 10-20): Esc(취소)가 여기로 되돌린다 · × 닫기·열려 있는 동안 재진입은 그대로.
     find_origin: Option<(usize, Option<(usize, usize)>)>,
+    /// ★ T-266 Output 안 찾기(10-30): 찾기 막대를 Output 탭에 포커스가 있을 때 열었는가 — 대상 상자가 Output 본문(app/find.rs `find_box`).
+    find_on_output: bool,
     /// ★ 이번에 연 뒤 찾기가 캐럿을 일치로 **옮긴 적이 있는가**(131차 ⑩ · 사용자 10-20): 없으면 Esc = 원래 자리 · 있으면 Esc = 그 자리 유지.
     find_moved: bool,
     editors: Editors,
@@ -1995,6 +1998,7 @@ fn main() {
         find_scope: None,
         find_pending_scope: None,
         find_origin: None,
+        find_on_output: false,
         find_moved: false,
         editors,
         grid: grid::Grid::default(),

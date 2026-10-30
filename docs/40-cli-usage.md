@@ -696,6 +696,7 @@ INSERT INTO NEW_EMP (id, name, dept, sal) VALUES (3, 'Park', 'IT', 4800);
 - 형식: `csv` `tsv` `json` `jsonl` `insert[:테이블명]`(그 밖의 `-f` 값도 공통 형식 표 §4-1을 따른다).
 - `--fast` = 서버가 csv/tsv를 만들어 흘린다(PostgreSQL `COPY TO`). 지원하지 않는 DBMS면 안내 후 일반 경로 — SQLite: `--fast를 지원하지 않는 DBMS - 일반 경로로`.
 - `--max-rows N`으로 상한 · 접속 옵션(`--host` … `--password-stdin` `--no-prompt`)은 `run`과 같다.
+- ★ **스트리밍(10-30 · 180차 · T-8)** — 질의가 **한 문장**이고 형식이 `csv`·`tsv`·`json`·`jsonl`·`insert`이면 결과를 메모리에 모으지 않고 **배치마다 바로 쓴다**(배치 = `db.fetch_size`와 2000 중 큰 쪽 · 메모리 = 배치 하나). 서버 커서가 있는 드라이버(PostgreSQL · Oracle · Db2 · SQLite)는 커서로 이어 받고, 없는 드라이버(SQL Server · MySQL · ODBC · ClickHouse · DuckDB)는 **OFFSET 페이지 재질의**로 이어 받는다 — 이 경우 페이지 사이에 데이터가 바뀌면 행이 겹치거나 빠질 수 있으므로 **`ORDER BY`(유일 키)를 붙이는 것을 권장**. 여러 문장 · 프로시저 · `grid`/`md`/`sql:*` 형식 = 종전 일괄 경로(결과 전체를 모은 뒤 씀) · `--fast` = 그대로. 출력은 일괄 경로와 바이트 단위로 같다(시험).
 
 ### Step 12 — 대량 적재 (`import`)
 

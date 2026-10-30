@@ -277,7 +277,15 @@ impl App {
                 let text = nsql_run::var_list_text(vars);
                 self.output_push(ed, OutKind::Info, &text);
             }
-            RunEvent::Message(m) => self.output_push(ed, OutKind::Info, m),
+            // ★ T-266 등급(10-30): 서버 메시지의 접두(PG `WARNING:`·`EXCEPTION:` …)로 종류를 고른다 — 그 밖 = Info.
+            RunEvent::Message(m) => {
+                let kind = match nsql_run::message_level(m) {
+                    nsql_run::MessageLevel::Error => OutKind::Error,
+                    nsql_run::MessageLevel::Warning => OutKind::Warn,
+                    nsql_run::MessageLevel::Info => OutKind::Info,
+                };
+                self.output_push(ed, kind, m);
+            }
             RunEvent::Warning(m) => self.output_push(ed, OutKind::Warn, m),
             RunEvent::DriverLimits { driver, limits, .. } => {
                 let text = driver_limits_text(driver, limits);

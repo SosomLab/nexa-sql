@@ -253,6 +253,15 @@ impl ResultPanel {
         self.tabs.get(self.active).is_some_and(|t| t.is_output)
     }
 
+    /// 활성 탭이 Output이면 그 버퍼(읽기 · T-266 찾기 대상 판정).
+    pub(crate) fn output_active_ref(&self) -> Option<&crate::output::OutputView> {
+        if self.output_active() {
+            self.output.as_ref()
+        } else {
+            None
+        }
+    }
+
     /// 활성 탭이 Output이면 그 버퍼(그리기·입력의 대상).
     pub(crate) fn output_active_mut(&mut self) -> Option<&mut crate::output::OutputView> {
         if self.output_active() {

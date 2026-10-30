@@ -60,6 +60,8 @@ impl OutputView {
         body.set_wrap(true);
         body.set_line_numbers(false);
         body.set_gutter_marks(false);
+        // ★ T-266 줄 단위 색(10-30 · 사용자 결정): 줄 앞 표식(✖ · ⚠)으로 오류 = danger · 경고 = warn · 여러 줄 메시지의 이어진 줄(들여씀)도 같은 색.
+        body.set_highlighter(Some(std::rc::Rc::new(OutHighlighter)));
         body.set_minimap(false);
         body.set_focus_ring(false);
         // 우클릭 메뉴는 팝업 층에서(`paint_popup` · 호스트가 맨 마지막에 부른다).
@@ -84,6 +86,15 @@ impl OutputView {
     }
 
     /// 두 번 클릭 간격(설정 `ui.dblclick_ms`).
+    /// ★ T-266 Output 안 찾기(10-30): 본문 상자(찾기 표식·선택·스크롤을 호스트의 찾기 막대가 그대로 쓴다).
+    pub(crate) fn body(&self) -> &TextBox {
+        &self.body
+    }
+
+    pub(crate) fn body_mut(&mut self) -> &mut TextBox {
+        &mut self.body
+    }
+
     pub(crate) fn set_dblclick_ms(&mut self, ms: u64) {
         self.dblclick_ms = ms.max(100);
     }
@@ -346,6 +357,74 @@ impl OutputView {
 /// ★ Output 줄에서 편집기 줄 번호(10-01): `[hh:mm:ss] ✖ 3행: …` · `… line 3: …`(로그 요약 형식 `Msg::LogLineSummary` 두 언어) —
 /// 시각·표식 뒤 첫 숫자 묶음이 `행:` 또는 `line N:` 꼴일 때만. 순수 함수(시험 대상).
 #[must_use]
+/// ★ T-266 Output 전용 하이라이터(10-30): 줄 종류는 글자로만 남아 있으므로(`[시각] ✖ 글` · `⚠ 글` · 이어진 줄 = 들여씀) 줄 머리로 판정한다 —
+/// `✖` = [`TokenKind::Error`] · `⚠` = [`TokenKind::Warn`] · 그 밖 = Plain. 상태(`state`) = 직전 메시지의 종류(0 Plain · 1 Error · 2 Warn) ·
+/// 공백으로 시작하는 줄(여러 줄 메시지의 이어진 줄)은 그 종류를 잇는다. 순수(시험).
+#[derive(Debug)]
+struct OutHighlighter;
+
+/// 줄의 종류 판정 — `[hh:mm:ss] ` 시각 접두를 건너뛴 뒤 표식을 본다 · 들여쓴 줄 = 이전 상태 유지.
+fn out_line_kind(line: &str, state: u32) -> u32 {
+    let b = line.as_bytes();
+    if line.starts_with(' ') && !line.trim().is_empty() {
+        return state;
+    }
+    let rest = if b.len() >= 11 && b[0] == b'[' && b[9] == b']' && b[10] == b' ' {
+        &line[11..]
+    } else {
+        line
+    };
+    if rest.starts_with('✖') {
+        1
+    } else if rest.starts_with('⚠') {
+        2
+    } else {
+        0
+    }
+}
+
+impl nexa_ctl::Highlighter for OutHighlighter {
+    fn line_spans(&self, line: &str, state: &mut u32, out: &mut Vec<(usize, nexa_ctl::TokenKind)>) {
+        let k = out_line_kind(line, *state);
+        *state = k;
+        let kind = match k {
+            1 => nexa_ctl::TokenKind::Error,
+            2 => nexa_ctl::TokenKind::Warn,
+            _ => nexa_ctl::TokenKind::Plain,
+        };
+        out.push((line.chars().count(), kind));
+    }
+    fn name(&self) -> &str {
+        "Output"
+    }
+    fn strings_span_lines(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod hl_tests {
+    use super::out_line_kind;
+
+    /// 시각 접두 유무 · ✖/⚠/일반 · 들여쓴 이어진 줄은 이전 종류 · 빈 줄은 Plain.
+    #[test]
+    fn output_line_kinds() {
+        assert_eq!(out_line_kind("[12:34:56] ✖ 3행: 오류", 0), 1);
+        assert_eq!(out_line_kind("✖ 오류", 2), 1);
+        assert_eq!(out_line_kind("[12:34:56] ⚠ 경고", 0), 2);
+        assert_eq!(out_line_kind("⚠ 경고", 0), 2);
+        assert_eq!(out_line_kind("[12:34:56] 안내", 1), 0);
+        assert_eq!(
+            out_line_kind("           이어진 줄", 1),
+            1,
+            "들여쓴 줄 = 이전 종류"
+        );
+        assert_eq!(out_line_kind("   계속", 2), 2);
+        assert_eq!(out_line_kind("", 1), 0, "빈 줄 = Plain");
+        assert_eq!(out_line_kind("보통 글", 0), 0);
+    }
+}
+
 pub(crate) fn parse_error_line(line: &str) -> Option<usize> {
     let mut s = line.trim_start();
     if s.starts_with('[') {

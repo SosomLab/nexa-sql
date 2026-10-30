@@ -644,7 +644,12 @@ impl App {
                     self.layout();
                     self.redraw();
                 } else {
-                    let seed = self.editors.cur().copy_selection();
+                    // ★ T-266 Output 안 찾기(10-30): Output 탭에 포커스가 있는 채 Ctrl+F = Output 본문을 대상으로(막대는 같은 것).
+                    if !self.find.is_visible() {
+                        self.find_on_output =
+                            self.panel.output_active() && self.focus == Focus::Grid;
+                    }
+                    let seed = self.find_box().copy_selection();
                     // ★ 131차(사용자 10-19 이관 · VS Code): 열 때의 선택을 보관(`find_pending_scope`) · 여러 줄 선택이면 캐럿·선택을
                     //   옮기지 않고 일치 표식·개수만 갱신(`find_refresh`) → "선택 범위에서 찾기"가 그 선택을 범위로 쓸 수 있다.
                     // ★ 10-20: 선택 없이 열면(지난 검색어가 상자에 남은 경우) **캐럿을 옮기지 않는다** — 다음 찾기(Enter·F3)를 눌러야
@@ -654,7 +659,7 @@ impl App {
                         .as_deref()
                         .is_some_and(|s| !s.is_empty() && !s.contains('\n'));
                     if !self.find.is_visible() {
-                        let ed = self.editors.cur();
+                        let ed = self.find_box();
                         self.find_origin =
                             Some((ed.caret(), ed.selection().filter(|(a, b)| b > a)));
                         self.find_moved = false;

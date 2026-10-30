@@ -7,6 +7,28 @@ use crate::*;
 impl App {
     /// 편집기 본문에서 질의 일치 위치(문자 인덱스 · 대소문자 옵션) 전부.
     /// 찾기 조건 → 정규식(D-76): 정규식 모드가 아니어도 같은 엔진(글자 그대로 이스케이프)을 쓴다 — 단어 단위·대소문자 규칙 한 곳.
+    /// ★ T-266 Output 안 찾기(10-30): 찾기 막대의 대상 상자 — 찾기를 **Output 탭에 포커스가 있을 때 열었으면**(`find_on_output`) Output
+    ///   본문(읽기 전용 · 표식·선택·스크롤만 · 바꾸기는 읽기 전용이라 무변경) · 그 밖 = 활성 편집기. Output 탭이 닫히거나 바뀌면 편집기로 돌아간다.
+    pub(crate) fn find_box(&self) -> &TextBox {
+        if self.find_on_output {
+            if let Some(o) = self.panel.output_active_ref() {
+                return o.body();
+            }
+        }
+        self.editors.cur()
+    }
+
+    pub(crate) fn find_box_mut(&mut self) -> &mut TextBox {
+        // 빌림 규칙: 가지 안에서 빌린 참조를 돌려주고 다른 가지에서 `self`를 또 쓰면 NLL이 거부한다 → 가지 안에서 전부 끝낸다.
+        if self.find_on_output && self.panel.output_active_ref().is_some() {
+            return match self.panel.output_active_mut() {
+                Some(o) => o.body_mut(),
+                None => unreachable!("output_active_ref was Some"),
+            };
+        }
+        self.ed_mut()
+    }
+
     fn find_rx(&mut self) -> Option<fancy_regex::Regex> {
         let q = self.find.query();
         if q.is_empty() {
@@ -44,12 +66,12 @@ impl App {
             let Some(r) = self.find_rx() else {
                 return Vec::new();
             };
-            let full = self.ed_mut().text();
+            let full = self.find_box_mut().text();
             return rx::find_all(&r, &full);
         }
         let q: Vec<char> = self.find.query().chars().collect();
         let (cs, ww) = (self.find.case_sensitive(), self.find.whole_word());
-        let buf = self.editors.cur().buf();
+        let buf = self.find_box().buf();
         if q.is_empty() || q.len() > buf.len() {
             return Vec::new();
         }
@@ -76,7 +98,7 @@ impl App {
     /// ★ 찾기를 열 때의 편집기 선택을 적어 둔다(131차 · 사용자 10-19 이관) — 반환 = **여러 줄 선택이라 지켜야 하는가**
     ///   (씨앗으로 쓰지 않는 선택 = 열어도 캐럿·선택을 옮기지 않는다 · VS Code). 한 줄 선택도 범위 후보로는 보관(`always` 설정).
     pub(crate) fn find_note_open_selection(&mut self) -> bool {
-        let ed = self.ed_mut();
+        let ed = self.find_box_mut();
         let sel = ed.selection().filter(|(a, b)| b > a);
         let multi = sel.is_some_and(|(a, b)| selection_spans_lines(ed.buf(), a, b));
         self.find_pending_scope = sel;
@@ -94,7 +116,7 @@ impl App {
         let Some((a, b)) = self.find_pending_scope else {
             return;
         };
-        let multi = selection_spans_lines(self.ed_mut().buf(), a, b);
+        let multi = selection_spans_lines(self.find_box_mut().buf(), a, b);
         if auto_scope_on(&mode, multi) {
             self.find.set_in_selection(true);
             self.find_action(FindAction::ScopeChanged);
@@ -120,12 +142,12 @@ impl App {
         self.find.set_has_matches(!matches.is_empty());
         if matches.is_empty() {
             self.find.set_status(t(Msg::StFindNone));
-            self.ed_mut().set_find_marks(Vec::new());
+            self.find_box_mut().set_find_marks(Vec::new());
             self.redraw();
             return;
         }
-        let sel = self.ed_mut().selection();
-        let caret = self.ed_mut().caret();
+        let sel = self.find_box_mut().selection();
+        let caret = self.find_box_mut().caret();
         let idx = if forward {
             let from = match sel {
                 Some((a, b)) if advance => {
@@ -149,7 +171,7 @@ impl App {
         let (s, e) = matches[idx];
         if move_caret {
             let mut inv = Invalidations::default();
-            self.ed_mut().select_range(s, e, &mut inv);
+            self.find_box_mut().select_range(s, e, &mut inv);
             self.find_moved = true; // 검색을 수행했다(⑩) → Esc는 이 자리에 남는다.
         }
         self.find.set_status(tf(
@@ -157,7 +179,7 @@ impl App {
             &[&(idx + 1).to_string(), &matches.len().to_string()],
         ));
         // 일치 전부 표시(T-73).
-        self.ed_mut().set_find_marks(matches);
+        self.find_box_mut().set_find_marks(matches);
         self.redraw();
     }
 
@@ -165,7 +187,7 @@ impl App {
     /// 일치 `(a, b)`에 넣을 치환문 — 정규식 모드면 `$1`/`${name}` 확장 · 아니면 글자 그대로.
     fn find_expansion(&mut self, a: usize) -> String {
         let repl = self.find.replacement();
-        let full = self.ed_mut().text();
+        let full = self.find_box_mut().text();
         let base = if self.find.regex() {
             match self.find_rx() {
                 Some(r) => rx::expand_at(&r, &full, a, &repl),
@@ -188,11 +210,11 @@ impl App {
 
     fn find_replace_one(&mut self) {
         let matches = self.find_matches();
-        if let Some((a, b)) = self.ed_mut().selection() {
+        if let Some((a, b)) = self.find_box_mut().selection() {
             if matches.contains(&(a, b)) {
                 let repl = self.find_expansion(a);
                 let mut inv = Invalidations::default();
-                self.ed_mut().replace_range(a, b, &repl, &mut inv);
+                self.find_box_mut().replace_range(a, b, &repl, &mut inv);
             }
         }
         self.find_step(true, false);
@@ -218,7 +240,7 @@ impl App {
             .zip(repls.iter())
             .map(|((a, b), r)| (*a, *b, r.as_str()))
             .collect();
-        self.ed_mut().replace_many(&edits, &mut inv);
+        self.find_box_mut().replace_many(&edits, &mut inv);
         self.find
             .set_status(tf(Msg::StReplacedN, &[&matches.len().to_string()]));
         self.redraw();
@@ -239,18 +261,18 @@ impl App {
             FindAction::ScopeChanged => {
                 if self.find.in_selection() {
                     // ★ 131차: 지금 선택이 여러 줄이면 그것 · 아니면 열 때 보관한 선택(일치 이동으로 선택이 바뀌었어도) · 그것도 없으면 지금 선택.
-                    let cur = self.ed_mut().selection();
+                    let cur = self.find_box_mut().selection();
                     let cur_multi = cur.is_some_and(|(a, b)| {
-                        b > a && selection_spans_lines(self.ed_mut().buf(), a, b)
+                        b > a && selection_spans_lines(self.find_box_mut().buf(), a, b)
                     });
                     let pick = pick_find_scope(cur, cur_multi, self.find_pending_scope);
                     match pick {
                         Some((a, b)) if b > a => {
                             self.find_scope = Some((a, b));
-                            self.ed_mut().set_find_scope(Some((a, b)));
+                            self.find_box_mut().set_find_scope(Some((a, b)));
                             // 범위 안 첫 일치로(선택은 범위 표시가 대신한다).
                             let mut inv = Invalidations::default();
-                            self.ed_mut().select_range(a, a, &mut inv);
+                            self.find_box_mut().select_range(a, a, &mut inv);
                         }
                         _ => {
                             self.find.set_in_selection(false);
@@ -259,7 +281,7 @@ impl App {
                     }
                 } else {
                     self.find_scope = None;
-                    self.ed_mut().set_find_scope(None);
+                    self.find_box_mut().set_find_scope(None);
                 }
                 self.find_step(true, false);
             }
@@ -269,7 +291,7 @@ impl App {
                     self.find.set_status(t(Msg::StFindNone));
                 } else {
                     let n = matches.len();
-                    self.ed_mut().set_regions_pub(&matches);
+                    self.find_box_mut().set_regions_pub(&matches);
                     self.find
                         .set_status(tf(Msg::StSelections, &[&n.to_string()]));
                     self.set_focus(Focus::Editor);
@@ -283,8 +305,8 @@ impl App {
                 if let Some((caret, sel)) = origin.filter(|_| cancel_restores(self.find_moved)) {
                     let mut inv = Invalidations::default();
                     match sel {
-                        Some((a, b)) => self.ed_mut().select_range(a, b, &mut inv),
-                        None => self.ed_mut().select_range(caret, caret, &mut inv),
+                        Some((a, b)) => self.find_box_mut().select_range(a, b, &mut inv),
+                        None => self.find_box_mut().select_range(caret, caret, &mut inv),
                     }
                 }
                 self.find_action(FindAction::Close);
@@ -294,8 +316,8 @@ impl App {
                 self.find_scope = None;
                 self.find_pending_scope = None;
                 self.find_origin = None;
-                self.ed_mut().set_find_scope(None);
-                self.ed_mut().set_find_marks(Vec::new());
+                self.find_box_mut().set_find_scope(None);
+                self.find_box_mut().set_find_marks(Vec::new());
                 self.layout();
                 self.set_focus(Focus::Editor);
                 self.redraw();
@@ -382,12 +404,13 @@ impl App {
             (None, None) => return,
         }
         let start = {
-            let ed = self.ed_mut();
+            let ed = self.find_box_mut();
             ed.goto_line(req.line);
             ed.caret() + req.col
         };
         let mut inv = Invalidations::default();
-        self.ed_mut().select_range(start, start + req.len, &mut inv);
+        self.find_box_mut()
+            .select_range(start, start + req.len, &mut inv);
         if req.permanent {
             self.set_focus(Focus::Editor);
         }
@@ -402,7 +425,7 @@ impl App {
         } else {
             Vec::new()
         };
-        self.ed_mut().set_find_marks(marks);
+        self.find_box_mut().set_find_marks(marks);
     }
 }
 

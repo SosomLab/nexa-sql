@@ -547,7 +547,13 @@ impl PgSession {
         let notices = std::sync::Arc::new(std::sync::Mutex::new(Notices::default()));
         let n2 = notices.clone();
         cfg.notice_callback(move |e: postgres::error::DbError| {
-            let text = format!("{}: {}", e.severity(), e.message());
+            // ★ T-266(10-30): 등급 접두는 로케일 무관 영어(`parsed_severity` = 프로토콜 V 필드 · 없으면 서버 글자) — 호스트가
+            //   `nsql_run::message_level`로 WARNING/EXCEPTION을 가려 Output 색·표식을 고른다.
+            let sev = e.parsed_severity().map_or_else(
+                || e.severity().to_string(),
+                |s| format!("{s:?}").to_ascii_uppercase(),
+            );
+            let text = format!("{sev}: {}", e.message());
             if let Ok(mut n) = n2.lock() {
                 match &n.sink {
                     Some(s) => s(text),

@@ -142,7 +142,8 @@ VS Code의 "Open Settings (JSON)"과 같은 두 번째 편집 경로. 원천은 
 | 열기 | `settings.json_editor` = **external**(기본 · OS의 .json 연결 프로그램 `cmd /C start` · `open` · `xdg-open`) / **builtin**(T-76 · 편집기 파일 저장 T-74 뒤 · 지금은 external 대체 안내) |
 | 반영 | 연 뒤부터 1초 폴링(mtime) — 저장되면 `import_json`: **있는 키만** 적용(없는 키 유지) · 모르는 키/틀린 값은 무시하고 보고 · 바뀐 키만 `apply_setting`(즉시 반영 목록 = 설정 창과 동일) + settings.conf 저장 + 설정 창 갱신 + 상태줄/로그 |
 | CLI | `nsql config export-json [file|-]` · `nsql config import-json <file>` — 같은 코덱(`nsql-settings::json` · 외부 crate 0) |
-| 후속 | T-76 내장 편집기(JSON 구문 강조 · 스키마 힌트) · 프로젝트 스코프 `.nexa/settings.json`(T-39b) |
+| 후속 | T-76 내장 편집기 — ✅ JSON 구문 강조(10-30 180차) · ✅ **스키마 힌트 1차**(10-30 181차 · 아래) · 프로젝트 스코프 = 프로젝트 파일 `settings` 절(T-39b · D-407 · [67 §8](67-project-workspace.md) · 종전 `.nexa/settings.json` 안 폐기) |
+| 스키마 힌트(T-76 ②) | settings.json 탭(`settings.json_editor = builtin` · 경로 = 설정 파일)에서 **Ctrl+Space** → 캐럿 자리 판정(`settings_hint::site_at` = 문자열·이스케이프·`//`·`/* */` 주석·객체 경로 스택 · 배열 안 제외) · **키 자리** = 레지스트리 키의 현재 경로 다음 조각(끝 조각 = 라벨 · 중간 = `…`) · **값 자리** = Bool `true`/`false`(기본 쪽 표시) · Choice 값(라벨) · Int/Size 기본값(`min~max`) · 그 밖 기본값 · 따옴표 밖이면 `"…"`로 넣음 · 팝업 = SQL 자동완성과 같은 부품(`Intel::request_external` · 대소문자/별칭 규칙 없음) · 한계 = 자동 트리거 없음 · 설명 카드 없음 · 다른 JSON 파일 대상 아님 |
 
 ### 5-1. 설정 내보내기 / 가져오기(10-24 · 사용자 지시 · 개발 = nsql-settings `json.rs` + 호스트 · 협업 V1 ✓)
 

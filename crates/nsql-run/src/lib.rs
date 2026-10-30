@@ -1954,6 +1954,46 @@ impl Runner {
         Ok((stopped, timeline))
     }
 
+    /// ★ T-8 스트리밍 내보내기(10-30): 질의 결과를 **배치마다** `on_batch`로 넘긴다(메모리에 모으지 않음) — 커서를 여는 드라이버는
+    /// `query_stream` + `fetch_all_with`(배치 = `fetch_size`·2000 중 큰 쪽) · 못 여는 드라이버(SQL Server·MySQL·ODBC …)는 OFFSET 페이지
+    /// 루프 폴백(`fetch_offset` · 정렬 없는 질의는 순서가 흔들릴 수 있어 호출자가 안내). `on_batch`가 거짓이면 멈춘다(취소). 반환 = 넘긴 행 수.
+    pub fn export_stream(
+        &mut self,
+        sql: &str,
+        on_batch: &mut dyn FnMut(&ResultSet) -> bool,
+    ) -> Result<u64, DbError> {
+        let batch = self.fetch_size.max(2000);
+        if self.cursor_supported() {
+            let (first, h, _) = self.query_stream(sql, batch)?;
+            let mut total = first.rows.len() as u64;
+            let go = on_batch(&first);
+            match h {
+                Some(h) if go => {
+                    let (_stopped, _) = self.fetch_all_with(h, 0, &mut |rs, _, _| {
+                        total += rs.rows.len() as u64;
+                        on_batch(&rs)
+                    })?;
+                    self.close_cursor();
+                }
+                _ => self.close_cursor(),
+            }
+            return Ok(total);
+        }
+        let mut offset = 0usize;
+        let mut total = 0u64;
+        loop {
+            let (rs, more, _) = self.fetch_offset(sql, offset, batch)?;
+            let n = rs.rows.len();
+            total += n as u64;
+            let go = on_batch(&rs);
+            if !more || n == 0 || !go {
+                break;
+            }
+            offset += n;
+        }
+        Ok(total)
+    }
+
     /// `SELECT COUNT(*) FROM (질의) x` — 같은 세션에서 곁가지로(열린 커서는 그대로). 반환 = (건수, Navigate 스팬).
     pub fn count(&mut self, sql: &str) -> Result<(u64, Timeline), DbError> {
         let Some(d) = self.dialect() else {
@@ -3848,6 +3888,58 @@ pub fn print_pairs_text(pairs: &[(String, Value)]) -> String {
         .join(" · ")
 }
 
+/// ★ T-266 서버 메시지 등급(10-30 · 사용자 결정): 드라이버가 글자로만 넘기는 메시지(`RunEvent::Message`)의 등급 — 호스트(Output 탭 · CLI)가
+/// 색·표식을 고른다. 판정 = 등급 접두(PostgreSQL `RAISE`: `WARNING:` · `NOTICE:` · `INFO:` · `DEBUG:` · `LOG:` · `EXCEPTION`/`ERROR`/`FATAL`/`PANIC`) ·
+/// 그 밖 = Info(DBMS_OUTPUT · T-SQL PRINT · RAISERROR 심각도 ≤ 10은 드라이버가 등급을 주지 않아 Info = 한계 · docs/100 §3-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+/// 메시지 글의 등급(접두 · 대소문자 무시 · 접두 뒤는 `:` 또는 공백).
+#[must_use]
+pub fn message_level(text: &str) -> MessageLevel {
+    let head: String = text
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let rest = text.trim_start()[head.len()..].chars().next();
+    if !matches!(rest, Some(':') | Some(' ')) {
+        return MessageLevel::Info;
+    }
+    match head.as_str() {
+        "WARNING" | "WARN" => MessageLevel::Warning,
+        "EXCEPTION" | "ERROR" | "FATAL" | "PANIC" => MessageLevel::Error,
+        _ => MessageLevel::Info,
+    }
+}
+
+#[cfg(test)]
+mod msg_level_tests {
+    use super::{message_level, MessageLevel};
+
+    /// PG RAISE 접두 · 대소문자 · 접두 뒤 구분자 없으면 Info · 보통 글 = Info.
+    #[test]
+    fn levels_from_prefix() {
+        assert_eq!(message_level("WARNING: low disk"), MessageLevel::Warning);
+        assert_eq!(message_level("warning  x"), MessageLevel::Warning);
+        assert_eq!(message_level("NOTICE: hello"), MessageLevel::Info);
+        assert_eq!(message_level("EXCEPTION: boom"), MessageLevel::Error);
+        assert_eq!(message_level("ERROR: x"), MessageLevel::Error);
+        assert_eq!(
+            message_level("WARNINGS are fine"),
+            MessageLevel::Info,
+            "접두 뒤 구분자 없음"
+        );
+        assert_eq!(message_level("Hello world"), MessageLevel::Info);
+        assert_eq!(message_level(""), MessageLevel::Info);
+    }
+}
+
 /// 인자 없는 `VARIABLE`의 한 줄 문구 `A NUMBER · B VARCHAR2(40)`.
 pub fn var_list_text(vars: &[(String, nsql_core::VarType)]) -> String {
     vars.iter()
@@ -5058,6 +5150,37 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
         let (errs, _) = collect(&mut r, "CONNECT sqlite://x/:memory:?autocommit=on\n");
         assert_eq!(errs, 0);
         assert!(r.autocommit(), "스펙이 켠다");
+    }
+
+    /// ★ T-8 스트리밍 내보내기(10-30): 5000행을 배치로 전부 넘긴다(커서 경로 · 배치 ≥ 2) · 멈춤 = 첫 배치 뒤 중단 · 끝나면 커서 닫힘.
+    #[test]
+    fn export_stream_batches_and_stop() {
+        let mut r = seeded(5000);
+        let mut batches = 0usize;
+        let mut rows = 0usize;
+        let total = r
+            .export_stream("SELECT id FROM t ORDER BY id", &mut |rs| {
+                batches += 1;
+                rows += rs.rows.len();
+                true
+            })
+            .unwrap();
+        assert_eq!(total, 5000);
+        assert_eq!(rows, 5000);
+        assert!(batches >= 2, "배치 {batches}");
+        assert!(r.cursor().is_none(), "끝나면 커서 닫힘");
+        let mut seen = 0usize;
+        let total = r
+            .export_stream("SELECT id FROM t ORDER BY id", &mut |rs| {
+                seen += rs.rows.len();
+                false
+            })
+            .unwrap();
+        assert!(
+            total < 5000 && total == seen as u64,
+            "첫 배치 뒤 멈춤: {total}"
+        );
+        assert!(r.cursor().is_none());
     }
 
     fn seeded(n: usize) -> Runner {

@@ -2307,6 +2307,56 @@ fn cmd_export(o: &Opts) -> i32 {
         Format::Sql(k) => Some(*k),
         _ => None,
     };
+    // ★ T-8 스트리밍 내보내기(10-30 · 사용자 결정): 질의 한 문장 + 배치 가능한 형식(csv/tsv/json/jsonl/insert)이면 결과를 모으지 않고
+    //   배치마다 바로 쓴다(수백만 행도 메모리 일정 · 커서 없는 드라이버는 OFFSET 페이지 폴백). 그 밖(여러 문장 · 프로시저 · grid/markdown ·
+    //   sql:* = 키 조회 필요)은 종전 일괄 경로.
+    if let [item] = items.as_slice() {
+        if sql_kind.is_none()
+            && nsql_io::StreamWriter::supports(&format)
+            && matches!(
+                item.kind,
+                nsql_script::ItemKind::Sql(nsql_script::SqlKind::Query)
+            )
+        {
+            let mut writer = nsql_io::StreamWriter::new(format.clone(), dialect, "");
+            let mut write_err: Option<String> = None;
+            let streamed = runner.export_stream(&item.text, &mut |rs| match writer
+                .write_batch(&mut out, rs)
+            {
+                Ok(()) => true,
+                Err(e) => {
+                    write_err = Some(e.to_string());
+                    false
+                }
+            });
+            if let Err(e) = writer.finish(&mut out) {
+                write_err.get_or_insert(e.to_string());
+            }
+            let _ = out.flush();
+            match (streamed, write_err) {
+                (Err(e), _) => {
+                    eprintln!("ERROR: {e}");
+                    return 1;
+                }
+                (Ok(_), Some(e)) => {
+                    eprintln!("{}", tf(Msg::CliWriteFailed, &[&e]));
+                    return 1;
+                }
+                (Ok(n), None) => {
+                    if o.out.is_some() {
+                        eprintln!(
+                            "{}",
+                            tf(
+                                Msg::CliExportDone,
+                                &[&n.to_string(), o.out.as_deref().unwrap_or("-")]
+                            )
+                        );
+                    }
+                    return 0;
+                }
+            }
+        }
+    }
     for (i, item) in items.iter().enumerate() {
         runner.run_item(i, item, &mut no_prompt, &mut |e| match e {
             RunEvent::ResultSet { rs, .. } => {

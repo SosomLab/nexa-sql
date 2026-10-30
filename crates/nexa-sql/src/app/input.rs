@@ -90,7 +90,8 @@ pub(crate) fn scope_at(ed: &nexa_ctl::TextBox, pos: usize) -> String {
         K::Comment => "comment",
         K::Keyword => "keyword",
         K::Number => "constant.numeric",
-        K::Plain => return s,
+        // Error/Warn = Output 로그 상자 전용 등급(T-266) — 편집기 스코프에서는 코드와 같다.
+        K::Plain | K::Error | K::Warn => return s,
     };
     s.push(' ');
     s.push_str(part);

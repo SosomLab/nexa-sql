@@ -132,6 +132,16 @@ impl App {
             return;
         }
         let i = self.editors.active();
+        // ★ T-76 ②(10-30): 내장 편집기의 settings.json(JSON 구문 + 설정 파일 경로)이면 스키마 힌트 — SQL 완성은 건너뛴다.
+        if self.editors.syntax_name() == "JSON"
+            && self
+                .editors
+                .path_of(i)
+                .is_some_and(|p| p == self.settings.json_path())
+        {
+            self.intel_request_settings(manual);
+            return;
+        }
         if let Some(why) = self.intel_unsuitable(i, manual) {
             if manual {
                 self.sess.status = t(why).into();
@@ -256,6 +266,50 @@ impl App {
     }
 
     /// 확정 글자를 편집기에(접두 구간 교체 · `caret_back` = `NAME()` 안으로).
+    /// ★ T-76 ②(10-30): settings.json 스키마 힌트 — 캐럿 자리(키/값 · 둘러싼 객체 경로)를 읽어 레지스트리 후보를 **외부 모드** 팝업으로.
+    ///   1차는 Ctrl+Space(수동)만(글자 입력 자동 트리거는 SQL 규칙이라 JSON에 맞지 않음) · 자리가 아니면(배열 안 · 값 뒤) 아무것도 안 한다.
+    fn intel_request_settings(&mut self, manual: bool) {
+        if !manual {
+            return;
+        }
+        let tab = self.editors.tab_id(self.editors.active());
+        let (text, caret_c, anchor) = {
+            let ed = self.editors.cur();
+            (ed.text(), ed.caret(), ed.caret_point())
+        };
+        let caret_b = text
+            .char_indices()
+            .nth(caret_c)
+            .map_or(text.len(), |(b, _)| b);
+        let Some(site) = crate::settings_hint::site_at(&text, caret_b) else {
+            return;
+        };
+        let cands = crate::settings_hint::candidates(&site);
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or_default();
+        let ed = self.editors.cur();
+        let point_of = |b: usize| ed.point_at(text[..b.min(text.len())].chars().count());
+        let opened = self.intel.request_external(
+            tab,
+            site.replace(),
+            site.prefix(),
+            cands,
+            anchor,
+            host,
+            self.scale,
+            &point_of,
+        );
+        if opened {
+            self.redraw();
+        }
+    }
+
     pub(crate) fn intel_apply(&mut self) {
         let Some(a) = self.intel.take_accept() else {
             return;

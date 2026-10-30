@@ -214,6 +214,199 @@ fn write_delimited<S: RowSource + ?Sized>(
     Ok(())
 }
 
+/// ★ T-8 스트리밍 내보내기(10-30 · 사용자 결정): 결과를 **배치마다** 쓴다 — 머리(CSV/TSV 헤더 · JSON `[`)는 첫 배치에 · 꼬리(JSON `]`)는
+/// [`StreamWriter::finish`]에 · 메모리에 전체를 모으지 않는다. 받는 형식 = CSV · TSV · JSON · JSON Lines · Insert(표 폭 계산이 필요한
+/// Grid/Markdown과 키 조회가 필요한 `sql:*`는 [`StreamWriter::supports`] = 거짓 → 호출자는 일괄 경로).
+#[derive(Debug)]
+pub struct StreamWriter {
+    fmt: Format,
+    dialect: Dialect,
+    null: String,
+    /// 지금까지 쓴 행 수(JSON 쉼표 판단 · 보고).
+    rows: u64,
+    /// 머리를 썼는가(첫 배치).
+    started: bool,
+}
+
+impl StreamWriter {
+    /// 이 형식을 배치로 쓸 수 있는가.
+    #[must_use]
+    pub fn supports(fmt: &Format) -> bool {
+        matches!(
+            fmt,
+            Format::Csv | Format::Tsv | Format::Json | Format::JsonLines | Format::Insert { .. }
+        )
+    }
+
+    #[must_use]
+    pub fn new(fmt: Format, dialect: Dialect, null: &str) -> Self {
+        StreamWriter {
+            fmt,
+            dialect,
+            null: null.to_string(),
+            rows: 0,
+            started: false,
+        }
+    }
+
+    /// 지금까지 쓴 행 수.
+    #[must_use]
+    pub fn rows(&self) -> u64 {
+        self.rows
+    }
+
+    /// 배치 하나를 쓴다(빈 배치도 머리는 쓴다 → 0행 결과도 헤더/`[]`가 남는다).
+    pub fn write_batch<S: RowSource + ?Sized>(
+        &mut self,
+        out: &mut dyn Write,
+        src: &S,
+    ) -> io::Result<()> {
+        let first = !self.started;
+        self.started = true;
+        match &self.fmt {
+            Format::Csv | Format::Tsv => {
+                let delim = if matches!(self.fmt, Format::Csv) {
+                    b','
+                } else {
+                    b'\t'
+                };
+                let d = (delim as char).to_string();
+                if first {
+                    let header: Vec<String> = (0..src.ncols())
+                        .map(|c| quote_field(&src.column(c).name, delim))
+                        .collect();
+                    writeln!(out, "{}", header.join(&d))?;
+                }
+                for r in 0..src.len() {
+                    let cells: Vec<String> = src
+                        .cells(r)
+                        .map(|v| quote_field(&cell_text(v, &self.null), delim))
+                        .collect();
+                    writeln!(out, "{}", cells.join(&d))?;
+                }
+            }
+            Format::Json => {
+                if first {
+                    out.write_all(b"[")?;
+                }
+                for r in 0..src.len() {
+                    if self.rows > 0 {
+                        out.write_all(b",")?;
+                    }
+                    out.write_all(b"\n  ")?;
+                    write_json_row(out, src, r)?;
+                    self.rows += 1;
+                }
+                return Ok(());
+            }
+            Format::JsonLines => {
+                for r in 0..src.len() {
+                    write_json_row(out, src, r)?;
+                    out.write_all(b"\n")?;
+                }
+            }
+            Format::Insert { table } => {
+                let cols = src.col_names();
+                for r in 0..src.len() {
+                    let vals: Vec<String> = src
+                        .cells(r)
+                        .map(|v| v.to_sql_literal(self.dialect))
+                        .collect();
+                    writeln!(
+                        out,
+                        "INSERT INTO {table} ({}) VALUES ({});",
+                        cols.join(", "),
+                        vals.join(", ")
+                    )?;
+                }
+            }
+            Format::Grid | Format::Markdown | Format::Sql(_) => {
+                return Err(io::Error::other("format is not streamable"));
+            }
+        }
+        self.rows += src.len() as u64;
+        Ok(())
+    }
+
+    /// 꼬리(JSON `]` · 배치가 한 번도 없었으면 `[]`) — 다른 형식은 아무것도 쓰지 않는다.
+    pub fn finish(&mut self, out: &mut dyn Write) -> io::Result<()> {
+        if matches!(self.fmt, Format::Json) {
+            if !self.started {
+                out.write_all(b"[")?;
+            }
+            out.write_all(if self.rows == 0 { b"]\n" } else { b"\n]\n" })?;
+        }
+        self.started = true;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    use nsql_core::{Column, ResultSet, Value};
+
+    fn rs(from: i64, n: i64) -> ResultSet {
+        ResultSet {
+            columns: vec![
+                Column {
+                    name: "ID".into(),
+                    type_name: "int".into(),
+                },
+                Column {
+                    name: "N".into(),
+                    type_name: "text".into(),
+                },
+            ],
+            rows: (from..from + n)
+                .map(|i| vec![Value::Int(i), Value::Str(format!("r{i}"))])
+                .collect(),
+        }
+    }
+
+    /// ★ T-8(10-30): 배치 2개 = 일괄 결과와 글자 그대로 같다(CSV · JSON · JSONL · Insert) · 0행 = 헤더/`[]` · Grid는 거부.
+    #[test]
+    fn stream_matches_batch_output() {
+        for fmt in [
+            Format::Csv,
+            Format::Tsv,
+            Format::Json,
+            Format::JsonLines,
+            Format::Insert { table: "t".into() },
+        ] {
+            assert!(StreamWriter::supports(&fmt));
+            let whole = rs(1, 5);
+            let mut expect = Vec::new();
+            write_result_set(&mut expect, &whole, &fmt, Dialect::Sqlite).unwrap();
+            let mut got = Vec::new();
+            let mut w = StreamWriter::new(fmt.clone(), Dialect::Sqlite, "");
+            w.write_batch(&mut got, &rs(1, 3)).unwrap();
+            w.write_batch(&mut got, &rs(4, 2)).unwrap();
+            w.finish(&mut got).unwrap();
+            assert_eq!(
+                String::from_utf8(got).unwrap(),
+                String::from_utf8(expect).unwrap(),
+                "{fmt:?}"
+            );
+            assert_eq!(w.rows(), 5);
+        }
+        // 0행: JSON = `[]` · CSV = 헤더만.
+        let mut got = Vec::new();
+        let mut w = StreamWriter::new(Format::Json, Dialect::Sqlite, "");
+        w.write_batch(&mut got, &rs(1, 0)).unwrap();
+        w.finish(&mut got).unwrap();
+        assert_eq!(String::from_utf8(got).unwrap(), "[]\n");
+        let mut got = Vec::new();
+        let mut w = StreamWriter::new(Format::Csv, Dialect::Sqlite, "");
+        w.write_batch(&mut got, &rs(1, 0)).unwrap();
+        w.finish(&mut got).unwrap();
+        assert_eq!(String::from_utf8(got).unwrap(), "ID,N\n");
+        assert!(!StreamWriter::supports(&Format::Grid));
+        let mut w = StreamWriter::new(Format::Grid, Dialect::Sqlite, "");
+        assert!(w.write_batch(&mut Vec::new(), &rs(1, 1)).is_err());
+    }
+}
+
 /// 형식 이름(`set format`·설정 표시용).
 impl Format {
     #[must_use]

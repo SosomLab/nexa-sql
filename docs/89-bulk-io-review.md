@@ -109,6 +109,7 @@ nsql-run
   폴백 사다리: 드라이버 BulkSink → MultiRow VALUES(파라미터 상한 안) → 단건 준비문
 nsql-io
   CSV/TSV/JSONL 스트리밍 파서(RowSource 구현 · 헤더 → 열 매핑 · 타입 변환 = CellSpec) · 쓰기 버퍼 · (후속) gzip
+  ✅ 10-30(180차 · T-8) 내보내기 쪽 = `StreamWriter`(supports/new/write_batch/finish/rows · CSV·TSV·JSON·JSONL·Insert) + nsql-run `Runner::export_stream(sql, on_batch)`(커서 = query_stream + fetch_all_with · 커서 없음 = OFFSET 페이지) · CLI `nsql export` 스트리밍 · GUI는 2차
 ```
 
 드라이버 구현 = Oracle `Batch`(배열 DML · `with_batch_errors` · `APPEND` 힌트 옵션) · PG `copy_in` binary(타입 = 카탈로그 OID) + `copy_out` · MSSQL `bulk_insert`(`CHECK_CONSTRAINTS` 기본 on · `FIRE_TRIGGERS` 옵션) · SQLite 트랜잭션 + `prepare_cached` + PRAGMA 옵션 · MySQL/ODBC = 확장 드라이버 때.
