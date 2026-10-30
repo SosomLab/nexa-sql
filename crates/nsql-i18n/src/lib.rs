@@ -868,6 +868,7 @@ pub enum Msg {
     StBinaryFile,
     /// 프로젝트 탐색기 한 번 클릭이 미리보기 대신 정식 탭으로 열릴 때 로그(10-13) — {0} 경로 · {1} 이유.
     LogPreviewBypass,
+    LogProjectSettingsIgnored,
     LogPreviewOff,
     LogPreviewTooBig,
     /// 탐색기 서버 헤더 툴팁 줄(10-13 · 필드명 접두).
@@ -5340,6 +5341,7 @@ impl Msg {
             Msg::BinaryTabTitle => ["{0} (binary)", "{0} (바이너리)"],
             Msg::StBinaryFile => ["{0}: binary file - not displayed", "{0}: 바이너리 파일 - 표시하지 않음"],
             Msg::LogPreviewBypass => ["Opened as a regular tab instead of preview: {0} - {1}", "미리보기 대신 정식 탭으로 열림: {0} - {1}"],
+            Msg::LogProjectSettingsIgnored => ["Project settings ignored (not allowed in a project file, or invalid value): {0}", "프로젝트 설정 무시(프로젝트 파일에서 허용되지 않거나 값이 잘못됨): {0}"],
             Msg::LogPreviewOff => ["preview tab setting (project.preview_tab) is off", "미리보기 탭 설정(project.preview_tab) 꺼짐"],
             Msg::LogPreviewTooBig => ["size {0} is at or above file.async_load_mb ({1} MB)", "크기 {0}이(가) file.async_load_mb({1} MB) 이상"],
             Msg::TipSrvDbms => ["DBMS: {0}", "DBMS: {0}"],

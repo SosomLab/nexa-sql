@@ -213,6 +213,29 @@ impl Project {
                 }
                 continue;
             }
+            // ★ T-39b(10-30 · 67 §8-1): `settings` 절 = 평키 + `[문법]` 묶음 한 단계 · 값은 글자로 보관(모르는 키도 보존).
+            if k == "settings" {
+                if let Json::Obj(items) = v {
+                    for (sk, sv) in items {
+                        match (syntax_group(sk), sv) {
+                            (Some(g), Json::Obj(inner)) => {
+                                for (ik, iv) in inner {
+                                    if let Some(raw) = json_raw(iv) {
+                                        p.settings.push((Some(g.clone()), ik.clone(), raw));
+                                    }
+                                }
+                            }
+                            (None, other) => {
+                                if let Some(raw) = json_raw(other) {
+                                    p.settings.push((None, sk.clone(), raw));
+                                }
+                            }
+                            (Some(_), _) => {}
+                        }
+                    }
+                }
+                continue;
+            }
             if k == "selected" {
                 if let Json::Str(s) = v {
                     if !s.trim().is_empty() {
@@ -371,6 +394,48 @@ impl Project {
                 .collect();
             out.push_str(&format!(",\n  \"profiles\": [{}]", names.join(", ")));
         }
+        // ★ T-39b: 설정 절(평키 먼저 · 그 다음 `[문법]` 묶음 · 들어온 순서 유지 · 모르는 키도 그대로 다시 쓴다).
+        if !self.settings.is_empty() {
+            out.push_str(",\n  \"settings\": {");
+            let mut first = true;
+            let mut sep = |out: &mut String| {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                out.push_str("\n    ");
+            };
+            for (g, k, raw) in &self.settings {
+                if g.is_none() {
+                    sep(&mut out);
+                    out.push_str(&format!("\"{}\": {}", escape(k), setting_json(k, raw)));
+                }
+            }
+            let mut groups: Vec<&str> = Vec::new();
+            for g in self.settings.iter().filter_map(|(g, _, _)| g.as_deref()) {
+                if !groups.contains(&g) {
+                    groups.push(g);
+                }
+            }
+            for g in groups {
+                sep(&mut out);
+                out.push_str(&format!("\"[{}]\": {{ ", escape(g)));
+                let mut inner_first = true;
+                for (_, k, raw) in self
+                    .settings
+                    .iter()
+                    .filter(|(x, _, _)| x.as_deref() == Some(g))
+                {
+                    if !inner_first {
+                        out.push_str(", ");
+                    }
+                    inner_first = false;
+                    out.push_str(&format!("\"{}\": {}", escape(k), setting_json(k, raw)));
+                }
+                out.push_str(" }");
+            }
+            out.push_str("\n  }");
+        }
         if let Some(b) = &self.bookmarks {
             out.push_str(",\n  \"bookmarks\": ");
             out.push_str(b.trim());
@@ -458,6 +523,34 @@ impl WorkMode {
 }
 
 /// 상대 경로 → 절대(`base` 아래) · 이미 절대면 그대로.
+/// `[sql]` → `Some("sql")`(소문자 · 67 §8-1 VS Code `[언어]` 관례) · 평키 = None.
+fn syntax_group(key: &str) -> Option<String> {
+    let inner = key.strip_prefix('[')?.strip_suffix(']')?.trim();
+    (!inner.is_empty()).then(|| inner.to_lowercase())
+}
+
+/// JSON 값 → 설정 원시 글자(레지스트리 꼴): 불 = on/off · 정수는 소수점 없이 · 문자열 그대로 · 배열·객체·null = 없음.
+pub(crate) fn json_raw(v: &Json) -> Option<String> {
+    match v {
+        Json::Bool(b) => Some(if *b { "on" } else { "off" }.to_string()),
+        Json::Num(n) if n.fract() == 0.0 && n.abs() < 1e15 => Some(format!("{}", *n as i64)),
+        Json::Num(n) => Some(n.to_string()),
+        Json::Str(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// 설정 원시 글자 → JSON 조각(레지스트리 종류대로: 불 → true/false · 정수 → 숫자 · 그 밖·모르는 키 = 문자열).
+fn setting_json(key: &str, raw: &str) -> String {
+    use nsql_settings::SettingKind;
+    match nsql_settings::entry(key).map(|e| e.kind) {
+        Some(SettingKind::Bool) if matches!(raw, "on" | "true") => "true".into(),
+        Some(SettingKind::Bool) if matches!(raw, "off" | "false") => "false".into(),
+        Some(SettingKind::Int { .. }) if raw.parse::<i64>().is_ok() => raw.to_string(),
+        _ => format!("\"{}\"", escape(raw)),
+    }
+}
+
 fn resolve(rel: &str, base: Option<&Path>) -> PathBuf {
     let p = PathBuf::from(rel);
     if p.is_absolute() {
@@ -707,6 +800,59 @@ mod tests {
         // 없는 파일은 걸러진다.
         let raw2 = format!("{}|{}", dir.join("gone.nsql-project").display(), raw);
         assert_eq!(recent_list(&raw2), vec![a, b]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ T-39b(10-30 · 67 §8-5): 설정 절 왕복 — 불/정수/문자열 꼴 · `[sql]` 묶음 · **모르는 키 보존** · 비어 있으면 키를 쓰지 않는다.
+    #[test]
+    fn settings_section_round_trip_preserves_unknown_keys() {
+        let dir = std::env::temp_dir().join(format!("nsql-proj4-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("s.nsql-project");
+        std::fs::write(
+            &file,
+            r#"{"version":1,"settings":{"editor.tab_size":2,"editor.indent_spaces":true,
+                "format.keyword_case":"upper","future.unknown":"keep","[SQL]":{"editor.tab_size":4},
+                "[json]":{"editor.indent_spaces":false},"[]":{"x":1},"bad":[1,2]}}"#,
+        )
+        .unwrap();
+        let p = Project::load(&file).unwrap();
+        assert_eq!(
+            p.settings,
+            vec![
+                (None, "editor.tab_size".to_string(), "2".to_string()),
+                (None, "editor.indent_spaces".to_string(), "on".to_string()),
+                (None, "format.keyword_case".to_string(), "upper".to_string()),
+                (None, "future.unknown".to_string(), "keep".to_string()),
+                (
+                    Some("sql".to_string()),
+                    "editor.tab_size".to_string(),
+                    "4".to_string()
+                ),
+                (
+                    Some("json".to_string()),
+                    "editor.indent_spaces".to_string(),
+                    "off".to_string()
+                ),
+            ]
+        );
+        let js = p.to_json();
+        assert!(js.contains("\"editor.tab_size\": 2"), "{js}");
+        assert!(js.contains("\"editor.indent_spaces\": true"), "{js}");
+        assert!(js.contains("\"future.unknown\": \"keep\""), "{js}");
+        assert!(js.contains("\"[sql]\": { \"editor.tab_size\": 4 }"), "{js}");
+        assert!(
+            js.contains("\"[json]\": { \"editor.indent_spaces\": false }"),
+            "{js}"
+        );
+        std::fs::write(&file, js.as_bytes()).unwrap();
+        let again = Project::load(&file).unwrap();
+        assert_eq!(again.settings, p.settings);
+        let empty = Project {
+            path: Some(file),
+            ..Project::default()
+        };
+        assert!(!empty.to_json().contains("settings"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -231,6 +231,15 @@ tab=15 len=27
 - 상태줄 들여쓰기 팝업 = "이 문법의 기본으로 저장"(전역 문법 층) · "프로젝트에 저장"(프로젝트 모드일 때 · `[문법]` 묶음) · "전역 기본으로 저장".
 - 프로젝트 파일이 밖에서 바뀌면(git pull) 58 정책대로 다시 읽고 설정 층을 갈아 끼운다(열린 탭에 즉시 반영 · `apply_setting` 경로).
 
+### 8-6. 구현 1차(10-31 · 186차 12차 · 개발) — 설계와 다른 점
+
+- **허용 키 = 함수** `nsql_settings::project_allowed(key)`(§8-2의 `Entry.scope` 칸 대신 · 허용 = `editor.*`(글꼴·미니맵 폭 제외) · `format.*` · `script.define*` · `grid.null_text` · `intel.insert_*`) — 새 키를 추가할 때 이 함수의 허용 여부를 함께 정한다(30 §1-2 체크리스트 9).
+- **읽기/쓰기** = project.rs 헤더 `settings` 절(평키 + `[문법]` 한 단계 · JSON 불/정수/문자열 ↔ 레지스트리 원시 글자 · **모르는 키 보존** · 비면 키를 쓰지 않음) · 순수 `json_raw`/`setting_json`/`syntax_group` · 시험 `settings_section_round_trip_preserves_unknown_keys`.
+- **적용** = `apply_project_settings()`(프로젝트 열기·전환 + 기동 복원 길) = `Settings::clear_overlay("project")` → 허용 키만 `set_overlay(key, raw, "project")` → 걷힌·넣은 키를 `apply_setting`으로 즉시 반영 · **overlay라 settings.conf에 쓰지 않는다**(프로젝트를 닫거나 바꾸면 자동 원복) · `[문법]` 묶음은 1차에서 `editor.tab_size`·`editor.indent_spaces`만(`Editors::set_syntax_indent`) · 불허·잘못된 값 = 로그 1줄 `Project settings ignored …: <키>`.
+- **들여쓰기 층**(editors.rs) = 전역 → 문법(`syntax.rs` `indent_defaults()` = `Packages/<pkg>/<이름>.nexa-settings` 스캔 · Sublime `<Syntax>.sublime-settings` 차용 · JSON 객체) → 프로젝트 `[문법]` → 탭 재정의(감지 D-403·팝업) · `indent_for_syntax`/`default_indent_for` · 시험 `syntax_indent_layers_resolve_nearest_first`(MC/DC 6단) · `syntax_settings_layer_indent_defaults`.
+- **V1(협업 · 격리 홈 · temp 프로젝트 인자)** = ① `{"editor.tab_size":2,"[sql]":{"editor.indent_spaces":false},"driver.auto_install":false}` → `edit.indent` = 탭 · 로그 "무시 … driver.auto_install" 1줄 ② `[sql]` 공백 true → `··select`(공백 2칸 = 프로젝트 tab_size + [sql] 둘 다 적용) ✓.
+- **남음(다음 묶음)** = 설정 창 범위 탭 `사용자|프로젝트`(§8-4) · 카드 "프로젝트에서 덮어씀" 출처 · 상태줄 들여쓰기 팝업 "프로젝트에 저장" · 프로젝트 파일 외부 변경(git pull) 시 재적용 · `[문법]`의 그 밖 키.
+
 ### 8-5. 시험
 
 - 순수 해석기: 층 조합 MC/DC(전역만 · +문법 · +프로젝트 · +프로젝트[문법] · +탭) · 모르는 키 보존 왕복 · Global 전용 키 무시.

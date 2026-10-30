@@ -11,6 +11,9 @@ use std::rc::Rc;
 
 pub(crate) struct SyntaxRegistry {
     specs: Vec<Rc<SyntaxSpec>>,
+    /// ★ T-69 문법 층(10-30 · 67 §8-3): `Packages/<패키지>/<이름>.nexa-settings`(Sublime `<Syntax>.sublime-settings` 차용 · JSON 객체) —
+    ///   (구문 이름 소문자, (키, 원시 값)) · 같은 이름은 나중 패키지가 덮는다.
+    settings: Vec<(String, Vec<(String, String)>)>,
 }
 
 impl SyntaxRegistry {
@@ -23,6 +26,7 @@ impl SyntaxRegistry {
                 Rc::new(SyntaxSpec::json()),
                 Rc::new(SyntaxSpec::plain()),
             ],
+            settings: Vec::new(),
         };
         if let Some(dir) = Self::packages_dir() {
             r.scan(&dir);
@@ -52,10 +56,29 @@ impl SyntaxRegistry {
             let mut files: Vec<PathBuf> = files
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "nexa-syntax"))
+                .filter(|p| {
+                    p.extension()
+                        .is_some_and(|e| e == "nexa-syntax" || e == "nexa-settings")
+                })
                 .collect();
             files.sort();
             for f in files {
+                if f.extension().is_some_and(|e| e == "nexa-settings") {
+                    match std::fs::read_to_string(&f)
+                        .map_err(|e| e.to_string())
+                        .and_then(|t| nsql_settings::json::parse(&t))
+                    {
+                        Ok(js) => {
+                            let name = f
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().to_lowercase())
+                                .unwrap_or_default();
+                            self.add_settings(&name, &js);
+                        }
+                        Err(e) => eprintln!("syntax settings: {}: {e}", f.display()),
+                    }
+                    continue;
+                }
                 match std::fs::read_to_string(&f)
                     .map_err(|e| e.to_string())
                     .and_then(|t| SyntaxSpec::parse(&t))
@@ -72,6 +95,48 @@ impl SyntaxRegistry {
     fn add(&mut self, spec: SyntaxSpec) {
         self.specs.retain(|s| s.name != spec.name);
         self.specs.push(Rc::new(spec));
+    }
+
+    /// `<이름>.nexa-settings` 본문(JSON 객체) 등록 — 객체가 아니면 무시 · 값은 원시 글자(`project::json_raw`).
+    fn add_settings(&mut self, name: &str, js: &nsql_settings::json::Json) {
+        let nsql_settings::json::Json::Obj(items) = js else {
+            return;
+        };
+        let kv: Vec<(String, String)> = items
+            .iter()
+            .filter_map(|(k, v)| crate::project::json_raw(v).map(|r| (k.clone(), r)))
+            .collect();
+        self.settings.retain(|(n, _)| n != name);
+        self.settings.push((name.to_string(), kv));
+    }
+
+    /// 문법 층의 들여쓰기(구문 이름 소문자 → (탭 폭, 공백 여부) · 각각 있을 때만) — `editor.tab_size`·`editor.indent_spaces`만 본다.
+    pub(crate) fn indent_defaults(
+        &self,
+    ) -> std::collections::BTreeMap<String, (Option<u8>, Option<bool>)> {
+        let mut out = std::collections::BTreeMap::new();
+        for (name, kv) in &self.settings {
+            let mut v: (Option<u8>, Option<bool>) = (None, None);
+            for (k, raw) in kv {
+                match k.as_str() {
+                    "editor.tab_size" => {
+                        v.0 = raw.parse::<u8>().ok().filter(|n| (1..=16).contains(n));
+                    }
+                    "editor.indent_spaces" => {
+                        v.1 = match raw.as_str() {
+                            "on" | "true" => Some(true),
+                            "off" | "false" => Some(false),
+                            _ => None,
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            if v.0.is_some() || v.1.is_some() {
+                out.insert(name.clone(), v);
+            }
+        }
+        out
     }
 
     pub(crate) fn names(&self) -> Vec<String> {
@@ -122,7 +187,38 @@ mod tests {
                 Rc::new(SyntaxSpec::json()),
                 Rc::new(SyntaxSpec::plain()),
             ],
+            settings: Vec::new(),
         }
+    }
+
+    /// ★ T-69 문법 층: `<이름>.nexa-settings` 객체 → 들여쓰기 기본(탭 폭·공백 각각) · 객체 아님·범위 밖 = 무시 · 같은 이름은 덮음.
+    #[test]
+    fn syntax_settings_layer_indent_defaults() {
+        let mut r = reg();
+        r.add_settings(
+            "sql",
+            &nsql_settings::json::parse(r#"{"editor.tab_size": 2, "other": "x"}"#).expect("json"),
+        );
+        r.add_settings(
+            "json",
+            &nsql_settings::json::parse(
+                r#"{"editor.indent_spaces": false, "editor.tab_size": 99}"#,
+            )
+            .expect("json"),
+        );
+        r.add_settings(
+            "plain text",
+            &nsql_settings::json::parse("[1]").expect("json"),
+        );
+        let d = r.indent_defaults();
+        assert_eq!(d.get("sql"), Some(&(Some(2), None)));
+        assert_eq!(d.get("json"), Some(&(None, Some(false))));
+        assert!(!d.contains_key("plain text"));
+        r.add_settings(
+            "sql",
+            &nsql_settings::json::parse(r#"{"editor.tab_size": 8}"#).expect("json"),
+        );
+        assert_eq!(r.indent_defaults().get("sql"), Some(&(Some(8), None)));
     }
 
     /// ★ T-76 잔여(10-30): settings.json · 사용자 키맵 파일은 JSON 규격 · SQL은 그대로.

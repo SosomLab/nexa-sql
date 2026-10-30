@@ -484,6 +484,7 @@ impl App {
         // 미저장 탭의 툴팁 "저장(프로젝트 파일)" 줄 = 이 프로젝트 파일(사용자 10-07).
         self.editors.set_tip_saved_fallback(p.path.clone());
         self.project = p;
+        self.apply_project_settings();
         let last = self
             .project
             .path
@@ -518,6 +519,59 @@ impl App {
             self.bm_sync_ui();
             self.project_last_json = self.project.to_document();
             self.project_mark_saved_gen();
+        }
+    }
+
+    /// ★ T-39b(10-30 · 67 §8-3 · D-406·D-407): 프로젝트 `settings` 절 → 설정 **덮어쓰기 층**(소유자 `project` · 파일에 저장되지 않음 ·
+    ///   프로젝트를 닫거나 바꾸면 통째로 걷힘) + `[문법]` 묶음의 들여쓰기 → 편집기 문법 층. 허용 키(`project_allowed`)만 · 나머지는 무시 +
+    ///   로그 한 줄(받은 파일로 위험한 동작이 켜지지 않게 · 67 §8-2). 걷힌 키·넣은 키는 `apply_setting`으로 즉시 반영.
+    pub(crate) fn apply_project_settings(&mut self) {
+        let mut touched = self.settings.clear_overlay("project");
+        let mut by_syntax: std::collections::BTreeMap<String, (Option<u8>, Option<bool>)> =
+            std::collections::BTreeMap::new();
+        let mut ignored: Vec<String> = Vec::new();
+        for (group, key, raw) in self.project.settings.clone() {
+            if !nsql_settings::project_allowed(&key) {
+                ignored.push(key);
+                continue;
+            }
+            match group {
+                None => match self.settings.set_overlay(&key, &raw, "project") {
+                    Ok(_) => {
+                        if !touched.contains(&key) {
+                            touched.push(key);
+                        }
+                    }
+                    Err(_) => ignored.push(key),
+                },
+                Some(g) => {
+                    let slot = by_syntax.entry(g.clone()).or_default();
+                    match key.as_str() {
+                        "editor.tab_size" => {
+                            match raw.parse::<u8>().ok().filter(|v| (1..=16).contains(v)) {
+                                Some(v) => slot.0 = Some(v),
+                                None => ignored.push(format!("[{g}] {key}")),
+                            }
+                        }
+                        "editor.indent_spaces" => match raw.as_str() {
+                            "on" | "true" => slot.1 = Some(true),
+                            "off" | "false" => slot.1 = Some(false),
+                            _ => ignored.push(format!("[{g}] {key}")),
+                        },
+                        _ => ignored.push(format!("[{g}] {key}")),
+                    }
+                }
+            }
+        }
+        self.editors.set_syntax_indent(by_syntax);
+        for k in &touched {
+            self.apply_setting(k);
+        }
+        if !ignored.is_empty() {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                tf(Msg::LogProjectSettingsIgnored, &[&ignored.join(", ")]),
+            ));
         }
     }
 
@@ -1207,6 +1261,7 @@ impl App {
                     self.project_set(proj, false);
                 } else {
                     self.project = proj;
+                    self.apply_project_settings();
                     self.project_panel.set_project(
                         self.project.name(),
                         &self.project.folders,

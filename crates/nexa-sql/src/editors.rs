@@ -236,6 +236,10 @@ pub(crate) struct Editors {
     close_prev: bool,
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
+    /// ★ T-69 문법 층(10-30 · 67 §8-3): `Packages/<pkg>/<Syntax>.nexa-settings`의 들여쓰기(구문 이름 소문자 → (탭 폭, 공백) 각각 있을 때만).
+    syntax_defaults: std::collections::BTreeMap<String, (Option<u8>, Option<bool>)>,
+    /// ★ T-39b 프로젝트 `[문법]` 층 — 문법 층 위 · 탭 재정의(`indents`) 아래.
+    syntax_indent: std::collections::BTreeMap<String, (Option<u8>, Option<bool>)>,
     /// ★ T-69 잔여(10-30 · `editor.detect_indent`): 파일을 열 때 버퍼에서 감지해 그 탭 계층에 넣는다(디스크 설정은 그대로).
     detect_indent: bool,
     /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
@@ -282,6 +286,7 @@ impl Editors {
         let mut tabs = TabBar::new();
         tabs.set_multiline(multiline);
         tabs.set_show_new(true);
+        let syntax_defaults_init = registry.indent_defaults();
         let mut e = Editors {
             tabs,
             menu: CtxMenu::new(),
@@ -341,6 +346,8 @@ impl Editors {
             menu_extras: Vec::new(),
             indent: (4, true),
             indents: Vec::new(),
+            syntax_defaults: syntax_defaults_init,
+            syntax_indent: std::collections::BTreeMap::new(),
             detect_indent: true,
             paths: Vec::new(),
             saved: Vec::new(),
@@ -437,7 +444,8 @@ impl Editors {
             tb.set_bracket_opts(b.clone());
         }
         tb.set_menu_extras(self.menu_extras.clone());
-        tb.set_indent(self.indent.0, self.indent.1);
+        let (ts, sp) = self.indent_for_syntax(&syntax.name);
+        tb.set_indent(ts, sp);
         tb.set_tab_stops(self.tab_stops);
         tb.set_scroll_snap(self.scroll_snap);
         tb.set_minimap(self.minimap.0);
@@ -581,6 +589,11 @@ impl Editors {
         let comment = spec.line_comments.first().cloned();
         self.cur_mut().set_highlighter(Some(spec));
         self.cur_mut().set_line_comment(comment);
+        // 구문이 바뀌면 문법·프로젝트 층의 들여쓰기도 따라간다(탭 재정의가 없을 때만).
+        if self.indents.get(self.active).copied().flatten().is_none() {
+            let (ts, sp) = self.default_indent_for(self.active);
+            self.cur_mut().set_indent(ts, sp);
+        }
         true
     }
 
@@ -983,9 +996,47 @@ impl Editors {
 
     pub(crate) fn set_indent(&mut self, tab_size: u8, spaces: bool) {
         self.indent = (tab_size, spaces);
-        for (i, b) in self.bufs.iter_mut().enumerate() {
+        self.reapply_layer_indents();
+    }
+
+    /// ★ T-39b 프로젝트 `[문법]` 층 교체(프로젝트 열기·닫기·전환) → 재정의 없는 탭에 즉시 반영.
+    pub(crate) fn set_syntax_indent(
+        &mut self,
+        map: std::collections::BTreeMap<String, (Option<u8>, Option<bool>)>,
+    ) {
+        self.syntax_indent = map;
+        self.reapply_layer_indents();
+    }
+
+    /// 전역 → 문법 층 → 프로젝트 `[문법]` 층 순으로 덮은 들여쓰기(67 §8-3 · 가까운 층이 이긴다).
+    fn indent_for_syntax(&self, name: &str) -> (u8, bool) {
+        let key = name.to_lowercase();
+        let mut v = self.indent;
+        for layer in [&self.syntax_defaults, &self.syntax_indent] {
+            if let Some((ts, sp)) = layer.get(&key) {
+                if let Some(t) = ts {
+                    v.0 = *t;
+                }
+                if let Some(s) = sp {
+                    v.1 = *s;
+                }
+            }
+        }
+        v
+    }
+
+    /// 탭 i의 재정의 없는 기본(그 탭 구문 기준).
+    fn default_indent_for(&self, i: usize) -> (u8, bool) {
+        self.syntax
+            .get(i)
+            .map_or(self.indent, |s| self.indent_for_syntax(&s.name))
+    }
+
+    fn reapply_layer_indents(&mut self) {
+        for i in 0..self.bufs.len() {
             if self.indents.get(i).copied().flatten().is_none() {
-                b.set_indent(tab_size, spaces);
+                let (ts, sp) = self.default_indent_for(i);
+                self.bufs[i].set_indent(ts, sp);
             }
         }
     }
@@ -1009,7 +1060,7 @@ impl Editors {
         if let Some(slot) = self.indents.get_mut(i) {
             *slot = v;
         }
-        let (ts, sp) = v.unwrap_or(self.indent);
+        let (ts, sp) = v.unwrap_or_else(|| self.default_indent_for(i));
         if let Some(b) = self.bufs.get_mut(i) {
             b.set_indent(ts, sp);
         }
@@ -1050,7 +1101,7 @@ impl Editors {
             .get(self.active)
             .copied()
             .flatten()
-            .unwrap_or(self.indent)
+            .unwrap_or_else(|| self.default_indent_for(self.active))
     }
 
     /// 활성 탭 본문의 줄머리 들여쓰기 변환.
@@ -3368,6 +3419,37 @@ mod split_tests {
     use super::*;
 
     /// 칸에 든 탭 = 탭 줄의 묶임 표식(상단 줄 · 사용자 09-22) · 단일 복귀 = 전부 해제.
+    /// ★ T-39b/T-69(10-30 · 67 §8-3·§8-5): 층 조합 — 전역만 · +프로젝트 `[sql]`(탭 폭만) · 다른 구문 탭은 영향 없음 · 탭 재정의가 이김 ·
+    /// 층을 비우면 전역으로 복귀 · 구문 전환이 층을 따라간다.
+    #[test]
+    fn syntax_indent_layers_resolve_nearest_first() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        ed.syntax_defaults.clear();
+        ed.set_indent(4, true);
+        ed.new_tab(Some("a.sql".into()));
+        ed.new_tab(Some("b.txt".into()));
+        let (sql, txt) = (ed.len() - 2, ed.len() - 1);
+        assert_eq!(ed.indent(), (4, true));
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("sql".to_string(), (Some(2), None));
+        ed.set_syntax_indent(m);
+        assert_eq!(ed.indent(), (4, true), "Plain Text 탭은 그대로");
+        ed.tab_click(sql, false, false);
+        assert_eq!(ed.indent(), (2, true), "SQL 탭 = 프로젝트 [sql] 층");
+        ed.set_tab_indent(8, false);
+        assert_eq!(ed.indent(), (8, false), "탭 재정의가 이긴다");
+        ed.set_indent_of(sql, None);
+        assert_eq!(ed.indent(), (2, true));
+        ed.set_syntax_indent(std::collections::BTreeMap::new());
+        assert_eq!(ed.indent(), (4, true), "층을 비우면 전역");
+        ed.tab_click(txt, false, false);
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("sql".to_string(), (None, Some(false)));
+        ed.set_syntax_indent(m);
+        assert!(ed.set_syntax("SQL"));
+        assert_eq!(ed.indent(), (4, false), "구문 전환이 층을 따라간다");
+    }
+
     #[test]
     fn grouped_tabs_follow_split_set() {
         let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
