@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/182-minimap-git | 2026-10-30 | 2026-10-30 → main ff(삭제) · **67a0a776** | 1 | 182차 win = T-110 2-3 미니맵 git 변경 줄(`editor.minimap_git` · gitstat HEAD 본문) · 13파일 · nexa-ui 짝 = d2092b7(245차) |
 | feat/181-export-stream-hints-output | 2026-10-30 | 2026-10-30 → main ff(삭제) · **e4d73bcd** | 1 | 181차 win = T-8 CLI 스트리밍 내보내기(`StreamWriter` · `Runner::export_stream`) · T-76 ② settings.json 스키마 힌트 1차 · T-266 메시지 등급·Output 줄 색·Output 찾기 · 23파일 +1141/−36 · nexa-ui 짝 = 0ce13a3(244차) |
 | feat/180-decisions-shell-keymap | 2026-10-30 | 2026-10-30 → main ff(삭제) · **2c871aeb** | 1 | 180차 win = 사용자 결정 ②③(D-396·D-397) + B 목록 1~5차(T-14 selector · T-77 · T-133 · T-200 objects·절 안 위치·`-=` · T-53 · T-131 · T-455 · T-149 ③ · Caps.syntax · T-76 ① · T-69 감지 · T-110 2-1·2-4·2-5 · T-90 ⚡ · T-39 변경 바 · T-278 `prefs.goto`) + 2차 B 결정 D-406~D-421 · 69파일 +3168/−248 · nexa-ui 짝 = b5afb6e(243차) |
 | feat/179-shell-multiline | 2026-10-30 | 2026-10-30 → main rebase 뒤 ff(삭제) · **787c4f81** | 소스 98a3f5b1 · 57fe2688 · d32a3660 · 문서 787c4f81(rebase 전 = 2184edd6 · a1b9c1e1 · c1ac9aba · a73834a8) | 179차 win = T-453 셸 다중 줄 + T-149 ① `script.define_in_strings` ② D-141 상태줄 `&` 세그먼트 |
