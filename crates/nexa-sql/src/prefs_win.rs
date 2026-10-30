@@ -99,6 +99,8 @@ struct Card {
     rect: Rect,
     /// 검색 모드에서 카테고리 표시.
     show_cat: bool,
+    /// ★ T-39 키맵 그리드(가벼운 판 · 10-30): `key.<명령>` 카드의 명령 그룹 라벨(`파일`·`편집` … · 단축키 창과 같은 그룹 함수) — 제목 앞에 `그룹 › 라벨`.
+    group: Option<String>,
     error: Option<String>,
     /// 기본값 글자가 컨트롤 줄에 안 들어가면(긴 URL) 설명 아래 한 줄로(사용자 09-17).
     default_below: bool,
@@ -305,6 +307,15 @@ impl PrefsWin {
             model.set_expanded(&[gi], true);
         }
         model
+    }
+
+    /// ★ T-39 키맵 그리드(10-30): `key.<명령 id>` 설정의 명령 그룹 라벨(`key.preset`처럼 명령이 아닌 키 = None).
+    fn key_group(key: &str) -> Option<String> {
+        let id = key.strip_prefix("key.")?;
+        if !id.contains('.') {
+            return None;
+        }
+        Some(crate::keys_win::group_label(crate::keys_win::group_key(id)))
     }
 
     /// 카드 덧말(강조색 한 줄 · `None` = 지움) — 바뀌면 다시 그린다.
@@ -785,6 +796,7 @@ impl PrefsWin {
                     aux,
                     rect: Rect::default(),
                     show_cat,
+                    group: Self::key_group(sn.entry.key),
                     error: None,
                     locked: false,
                     default_below: false,
@@ -2298,10 +2310,12 @@ impl PrefsWin {
                 let tx = r.x + inner_pad;
                 let mut ty = r.y + inner_pad;
                 dc.select_font(FontSlot::Base, true);
-                let label = if c.show_cat {
-                    format!("{} › {}", t(c.entry.cat), t(c.entry.label))
-                } else {
-                    t(c.entry.label).to_string()
+                // ★ T-39 키맵 그리드: 단축키 카드는 `그룹 › 라벨`(검색 모드면 `분류 › 그룹 › 라벨`).
+                let label = match (c.show_cat, c.group.as_deref()) {
+                    (true, Some(g)) => format!("{} › {g} › {}", t(c.entry.cat), t(c.entry.label)),
+                    (true, None) => format!("{} › {}", t(c.entry.cat), t(c.entry.label)),
+                    (false, Some(g)) => format!("{g} › {}", t(c.entry.label)),
+                    (false, None) => t(c.entry.label).to_string(),
                 };
                 dc.text(tx, ty, clip, &label, th.text);
                 dc.select_font(FontSlot::Base, false);

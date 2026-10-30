@@ -260,6 +260,29 @@ impl App {
         self.redraw();
     }
 
+    /// ★ T-39 키맵 그리드(가벼운 판 · 10-30): 설정 창 `key.<명령>` 카드마다 **충돌 메모** — 같은 조합을 쓰는 다른 명령이 있으면
+    ///   덧말(`set_note` · 단축키 창의 충돌 열과 같은 판정 `Keymap::conflict`) · 없으면 지움. 설정 창을 열 때와 `key.*`가 바뀔 때.
+    pub(crate) fn prefs_key_conflicts(&mut self) {
+        use crate::keymap::{self, Chord};
+        let entries: Vec<&'static str> = nsql_settings::REGISTRY
+            .iter()
+            .map(|e| e.key)
+            .filter(|k| {
+                k.starts_with("key.") && k.strip_prefix("key.").is_some_and(|id| id.contains('.'))
+            })
+            .collect();
+        for key in entries {
+            let id = &key[4..];
+            let code = self.keymap.code_of(id);
+            let other = code
+                .split('|')
+                .filter_map(Chord::parse)
+                .find_map(|ch| self.keymap.conflict(&ch, id));
+            let note = other.map(|o| tf(Msg::KeysConflict, &[&keymap::label_of(o)]));
+            self.prefs_win.set_note(key, note);
+        }
+    }
+
     /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
     pub(crate) fn apply_indent(&mut self) {
         let ts = self.settings.int("editor.tab_size").clamp(1, 8);
@@ -1042,6 +1065,8 @@ impl App {
                 self.sync_menu_shortcuts();
                 self.apply_menu_decor();
                 self.keys_win.refresh(&self.keymap);
+                // ★ T-39 키맵 그리드: 설정 창 단축키 카드의 충돌 메모도 다시.
+                self.prefs_key_conflicts();
             }
             k if k.starts_with("editor.whitespace") || k.starts_with("editor.show_") => {
                 let ws = whitespace_style(&self.settings);

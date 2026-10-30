@@ -803,13 +803,13 @@ impl KeysWin {
 }
 
 /// ★ T-53 잔여(10-30): 명령 id의 그룹 열쇠 = 첫 `.` 앞 접두(`file.save` → `file` · 없으면 전체).
-fn group_key(id: &str) -> &str {
+pub(crate) fn group_key(id: &str) -> &str {
     id.split_once('.').map_or(id, |(g, _)| g)
 }
 
 /// 그룹 라벨 — 메뉴 이름을 그대로 쓴다(`file`·`edit`·`view`·`run`·`find`·`bookmark`·`tab`·`conn`·`vars`·`mem`·`ext`·`goto` ·
 /// 결과·객체·인텔리센스는 전용 글 · 그 밖 = "Other").
-fn group_label(g: &str) -> String {
+pub(crate) fn group_label(g: &str) -> String {
     let m = match g {
         "file" => Msg::MnFile,
         "edit" => Msg::MnEdit,

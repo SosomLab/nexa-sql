@@ -2158,6 +2158,8 @@ impl App {
         self.prefs_win
             .set_advanced(self.settings.flag("ui.prefs_advanced"));
         self.prefs_win.refresh(&self.settings);
+        // ★ T-39 키맵 그리드: 단축키 카드의 충돌 메모.
+        self.prefs_key_conflicts();
         if let Some(q) = self.prefs_query.take() {
             self.prefs_win.preset_query(&q);
         }

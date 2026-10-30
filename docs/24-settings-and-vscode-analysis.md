@@ -90,6 +90,7 @@
 | `[language]` 오버라이드 | ❌ 지금은 없음 — 방언별(`[oracle]` `[mssql]`)로 재해석 가능성만 메모 | 편집기 설정이 생기면(E1~) 판단 |
 | 프로필 · Settings Sync · 정책 | ❌ | 단일 사용자 도구 · 서버 없음(DR) |
 | 설정 편집기 UI(§2) | 📐 **T-39** — 좌측 TOC(카테고리) · 검색줄 · 스크롤 본문 · 항목 카드(제목·설명·컨트롤) · 변경 바(09-16 제거 → **10-30 5차 복귀 = 페이드 애니메이션** · `Card.mod_fade` · D-406) · Reset · "파일 열기" 링크 | 캡처 원칙 6개 그대로. 컨트롤은 nexa-ctl(Combo·Checkbox·TextBox) · 목차는 nexa-dir2 `columns/rows` 이식 후 |
+| 키맵 편집(Keyboard Shortcuts 표) | ✅ **가벼운 판**(10-30 183차 · T-39 · D-406) — 본격 편집 = 단축키 창(T-53 검색·그룹 · 대부분 대체) · 설정 창 Keys 분류의 `key.<명령>` 카드 제목 = **`그룹 › 라벨`**(검색 결과에서는 `분류 › 그룹 › 라벨` · 그룹 = 단축키 창과 같은 함수 `keys_win::group_key/group_label`) · 같은 조합을 쓰는 다른 명령이 있으면 카드 덧말 **"충돌: …"**(`App::prefs_key_conflicts` → `Keymap::conflict` · 창을 열 때 + `key.*` 바뀔 때 갱신) · 새 컨트롤·설정 키 없음 · nexa-ui 21 §3-1 `KeymapGrid`는 **미채택** | 설정 먼저 규칙 — 단축키 창이 이미 검색·그룹·충돌 표시를 하므로 설정 창은 표식만 |
 | `@modified` 검색 | ✅ 데이터는 있음(`Settings::is_modified`) · UI는 T-39 | |
 | Commonly Used | T-39에서 `REGISTRY` 순서 상위 N개 = 자주 쓰는 것(레지스트리에 `common: bool` 추가) | |
 | 키 → 제목 자동 변환 | ❌ **i18n 키를 명시**(`label: Msg`) | 한국어에는 자동 변환이 없다(DR-19 한글 1급) |
