@@ -3179,6 +3179,9 @@ pub enum Msg {
     /// ★ T-110 2-3(10-30): git 변경 줄 미니맵 표식.
     LblEditorMinimapGit,
     DescEditorMinimapGit,
+    /// ★ T-121 (b)(10-30): 오프라인 탐색기 메타 LRU 상한.
+    LblMetaCacheMb,
+    DescMetaCacheMb,
     DescEditorMinimapWidth,
     // ── Sublime 줄·선택 편집 명령(T-98) · Goto Anything(T-96) · 줄끝 메뉴(T-89) · 09-16
     MnDuplicateLine,
@@ -8303,6 +8306,11 @@ impl Msg {
             Msg::LblEditorMinimapWidth => ["Minimap width (px)", "미니맵 폭(px)"],
             Msg::DescEditorMinimapWidth => ["Logical pixels · 20–400 · default 160", "논리 px · 20~400 · 기본 160"],
             Msg::LblEditorMinimapDirty => ["Minimap: changed lines since save", "미니맵: 저장 뒤 바뀐 줄"],
+            Msg::LblMetaCacheMb => ["Offline metadata cache limit (MB)", "오프라인 메타 캐시 상한(MB)"],
+            Msg::DescMetaCacheMb => [
+                "Total metadata kept for explorer servers with no live session · when exceeded the least recently used server loses its column layer first, then everything (reloaded on next connect) · 0 = no limit",
+                "세션이 없는 탐색기 서버들의 메타 합계 상한 · 넘으면 가장 오래 안 쓴 서버부터 컬럼 층 → 전체 순으로 비운다(다음 접속 때 다시 읽음) · 0 = 상한 없음",
+            ],
             Msg::LblEditorMinimapGit => ["Minimap: changed lines vs git HEAD", "미니맵: git HEAD 대비 바뀐 줄"],
             Msg::DescEditorMinimapGit => [
                 "Mark lines changed against the committed file (git HEAD) on the minimap's inner left column (added = green · modified = blue · deleted above = red line) · file tabs in a git tree · needs the status bar git segment's refresh",
@@ -11958,6 +11966,8 @@ impl Msg {
         Msg::DescEditorMinimapDirty,
         Msg::LblEditorMinimapGit,
         Msg::DescEditorMinimapGit,
+        Msg::LblMetaCacheMb,
+        Msg::DescMetaCacheMb,
         Msg::DescEditorMinimapWidth,
         Msg::MnDuplicateLine,
         Msg::MnDeleteLine,

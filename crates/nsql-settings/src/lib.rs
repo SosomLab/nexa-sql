@@ -6149,6 +6149,15 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ 실행 속도 향상(사용자 09-17): UI 구성·부가 표시·폴링·I/O 키(`perf::BOOST`)를 최적값으로 강제 + 설정 창 잠금 · 동작 영향 0.
     // macOS 화면 내보내기(T-147 · D-133 ②) — IOSurface 풀(할당·복사 0 · 색 맞춤 = 합성기) / 종전 softbuffer. 다른 OS는 무시.
+    // ★ T-121 (b)(10-30): 세션이 0인(오프라인) 탐색기 칸들의 메타 합계 상한(MB) — 넘으면 오래 안 쓴 칸부터 컬럼 층 → 전체 순으로 비운다 · 0 = 없음.
+    Entry {
+        key: "meta.cache_mb",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMetaCacheMb,
+        desc: Msg::DescMetaCacheMb,
+        kind: SettingKind::Int { min: 0, max: 4096 },
+        default: "256",
+    },
     Entry {
         key: "gfx.linux_backend",
         cat: Msg::CatPerformance,

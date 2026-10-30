@@ -576,6 +576,8 @@ impl App {
                 indent: self.editors.indent_of(i),
                 view: self.editors.view_key_of(i),
                 read_only,
+                // ★ T-121 (e)(10-30): 이 탭이 묶인 공유 세션의 프로필(접속 중일 때만).
+                profile: self.tab_profile_for_capture(self.editors.tab_id(i)),
                 ..project::TabState::default()
             };
             // ★ 캡처 비용 = 바뀐 탭만(사용자 09-30 · 72 §3): 본문 세대(epoch · change_seq)·캐럿이 지난 캡처와 같으면 앵커를 다시
@@ -806,6 +808,10 @@ impl App {
                     let new_id = self.editors.tab_id(i);
                     if t.preview {
                         self.editors.set_preview_id(Some(new_id));
+                    }
+                    // ★ T-121 (e)(10-30): 저장 당시 프로필의 공유 세션에 다시 묶기(없으면 접속될 때까지 보관).
+                    if let Some(p) = &t.profile {
+                        self.restore_tab_bind(new_id, p);
                     }
                     // 무제 탭의 변수 표 복원(T-153 ③ · 새 탭 id로).
                     if t.path.is_none() {

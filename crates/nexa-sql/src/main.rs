@@ -748,6 +748,8 @@ struct App {
     next_sess_id: u64,
     /// 탭 → 공유 세션 선택(없으면 `default_shared`). 전용 세션은 `Sess::owner`가 우선한다.
     tab_bind: HashMap<u64, u64>,
+    /// ★ T-121 (e)(10-30): 프로젝트 복원 때 그 프로필의 공유 세션이 아직 없던 탭들(프로필 → 탭 id) — 그 프로필이 접속되면 묶는다(자동 재접속 없음).
+    pending_bind: HashMap<String, Vec<u64>>,
     /// ★ 마지막으로 탐색기를 맞춘 (탭, 세션)(10-01 ㉗-j · 탭의 연결이 바뀌면 그 서버 칸의 현재 스키마로 한 번 이동).
     explorer_focus_key: Option<(u64, u64)>,
     /// 자체 시험(㉗-k): 메뉴가 열린 채 재분석을 강제할 때만 true.
@@ -2106,6 +2108,7 @@ fn main() {
         parked: Vec::new(),
         next_sess_id: 1,
         tab_bind: HashMap::new(),
+        pending_bind: HashMap::new(),
         tab_unit: HashMap::new(),
         explorer_focus_key: None,
         objlink_menu_force_closed_for_resync: false,

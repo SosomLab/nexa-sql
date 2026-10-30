@@ -72,6 +72,67 @@ impl App {
     }
 
     /// 탭이 쓰는 세션 id — ① 그 탭의 전용 세션(닫는 중이 아닌) ② 탭이 고른 공유 세션 ③ 기본 공유 세션.
+    /// ★ T-121 (d)(10-30): 접속 중인 공유 세션의 프로필 전부를 접속 창 초록 화살표로(세션 집합이 바뀔 때마다).
+    pub(crate) fn conn_win_sync_live(&mut self) {
+        let mut live: Vec<String> = self
+            .all_sess()
+            .filter(|s| s.connected && !s.closing && !s.is_private() && !s.profile.is_empty())
+            .map(|s| s.profile.clone())
+            .collect();
+        live.sort();
+        live.dedup();
+        self.conn_win.set_live_marks(live);
+    }
+
+    /// ★ T-121 (e)(10-30): 프로젝트 복원 탭을 저장 당시 프로필의 공유 세션에 묶는다 — 그 프로필이 접속 중이면 바로(`tab_bind`) ·
+    ///   아니면 `pending_bind`에 두었다가 그 프로필이 접속될 때 묶는다(자동 재접속은 하지 않는다 · 26 §8).
+    pub(crate) fn restore_tab_bind(&mut self, tab: u64, profile: &str) {
+        if profile.is_empty() {
+            return;
+        }
+        let live = self
+            .all_sess()
+            .find(|s| s.connected && !s.closing && !s.is_private() && s.profile == profile)
+            .map(|s| s.id);
+        match live {
+            Some(sid) => {
+                self.tab_bind.insert(tab, sid);
+            }
+            None => self
+                .pending_bind
+                .entry(profile.to_string())
+                .or_default()
+                .push(tab),
+        }
+    }
+
+    /// ★ T-121 (e): 프로필이 접속됐다 — 기다리던 탭들을 그 공유 세션에 묶는다(닫힌 탭은 버린다).
+    pub(crate) fn apply_pending_binds(&mut self, profile: &str) {
+        let Some(tabs) = self.pending_bind.remove(profile) else {
+            return;
+        };
+        let Some(sid) = self
+            .all_sess()
+            .find(|s| s.connected && !s.closing && !s.is_private() && s.profile == profile)
+            .map(|s| s.id)
+        else {
+            return;
+        };
+        for tab in tabs {
+            if self.editors.index_of_id(tab).is_some() {
+                self.tab_bind.insert(tab, sid);
+            }
+        }
+    }
+
+    /// ★ T-121 (e)(10-30): 프로젝트 캡처용 — 탭이 묶인 세션이 **접속 중인 공유 세션**이면 그 프로필(전용·인라인·끊김 = None).
+    pub(crate) fn tab_profile_for_capture(&self, tab: u64) -> Option<String> {
+        let sid = self.sess_id_for_tab(tab);
+        self.sess_by_id(sid)
+            .filter(|s| s.connected && !s.closing && !s.is_private() && !s.profile.is_empty())
+            .map(|s| s.profile.clone())
+    }
+
     pub(crate) fn sess_id_for_tab(&self, tab: u64) -> u64 {
         let private = self
             .all_sess()
@@ -145,9 +206,11 @@ impl App {
         if connected {
             if let Some(spec) = spec {
                 self.conn_win.mark_connected(&profile);
-                self.conn_win.clear_connect_marks();
+                // ★ T-121 (d)(10-30): 접속 중인 프로필 전부 표시(종전 = 이것 하나만) + (e) 기다리던 탭 묶기.
+                self.conn_win_sync_live();
                 self.conn_win
                     .set_connect_mark(&profile, Some(ConnectMark::Connected));
+                self.apply_pending_binds(&profile);
                 self.explorer.connect(&spec, &profile, true, false);
             }
         }
@@ -833,8 +896,10 @@ impl App {
         if limit == 0 {
             return;
         }
-        // 탐색기 메타 세션도 같은 한도로 유휴 회수(트리는 그대로 · 다음 펼침 때 메타 스레드가 다시 연다).
-        self.explorer.idle_tick(limit);
+        // 탐색기 메타 세션도 같은 한도로 유휴 회수(트리는 그대로 · 다음 펼침 때 메타 스레드가 다시 연다) + ★ 오프라인 메타 LRU 상한
+        //   (T-121 (b) · `meta.cache_mb` · 0 = 없음 · 세션 유휴 닫기가 꺼져 있으면 이 틱도 안 돈다 = 같은 주기).
+        let cache_mb = self.settings.int("meta.cache_mb").max(0) as u64;
+        self.explorer.idle_tick(limit, cache_mb);
         let include_shared = self.settings.flag("session.idle_shared");
         let manual = !self.settings.flag("session.autocommit");
         let due: Vec<u64> = self
@@ -1382,7 +1447,8 @@ impl App {
         self.sess.key_cache.clear();
         self.sess.sql_wait = None;
         self.editors.set_conn_desc("");
-        self.conn_win.clear_connect_marks();
+        // ★ T-121 (d)(10-30): 해제 뒤 남은 접속 중 프로필만 초록(종전 = 전부 지움).
+        self.conn_win_sync_live();
         self.conn_win.clear_active();
         self.panel_op = None;
         self.conn_win.panel.set_state(ConnState::Idle);

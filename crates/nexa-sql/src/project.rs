@@ -64,6 +64,9 @@ pub(crate) struct TabState {
     pub read_only: bool,
     /// ★ 뷰 탭 열쇠(`ext:<확장 id>` · 본문 없는 호스트 뷰) — 복원 때 같은 뷰를 다시 연다(사용자 09-30 "재시작하면 빈 편집 탭").
     pub view: Option<String>,
+    /// ★ T-121 (e)(10-30): 저장 당시 이 탭이 묶여 있던 **공유 세션의 프로필**(접속 중일 때만 · 전용 세션·인라인 접속 = None) — 복원 때 같은
+    ///   프로필의 공유 세션에 다시 묶는다(없으면 접속될 때까지 보관 · 자동 재접속 없음). 프로젝트 파일 키 `profile`(파일 하나 규칙).
+    pub profile: Option<String>,
 }
 
 impl Project {
@@ -138,6 +141,9 @@ impl Project {
                                 ("id", Json::Num(n)) => t.id = (*n).max(0.0) as u64,
                                 ("vars", Json::Str(s)) if !s.is_empty() => t.vars = Some(s.clone()),
                                 ("view", Json::Str(s)) => t.view = Some(s.clone()),
+                                ("profile", Json::Str(s)) if !s.is_empty() => {
+                                    t.profile = Some(s.clone())
+                                }
                                 ("tab_size", Json::Num(n)) => {
                                     let sp = t.indent.is_some_and(|x| x.1);
                                     t.indent = Some(((*n).clamp(1.0, 64.0) as u8, sp));
@@ -324,6 +330,10 @@ impl Project {
                 }
                 if let Some(v) = &t.view {
                     out.push_str(&format!(", \"view\": \"{}\"", escape(v)));
+                }
+                // ★ T-121 (e): 저장 당시 공유 세션의 프로필(접속 중이던 탭만).
+                if let Some(p) = t.profile.as_deref().filter(|p| !p.is_empty()) {
+                    out.push_str(&format!(", \"profile\": \"{}\"", escape(p)));
                 }
                 out.push_str(" }");
             }

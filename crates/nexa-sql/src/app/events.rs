@@ -310,10 +310,12 @@ impl App {
                     self.load_profile_vars();
                     let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
-                    // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
-                    self.conn_win.clear_connect_marks();
+                    // 접속 버튼 초록 = 접속 중인 프로필 전부(★ T-121 (d) 10-30 · 종전 09-14 = 방금 것 하나) → 잠시 보여 준 뒤 창 닫힘.
+                    self.conn_win_sync_live();
                     self.conn_win
                         .set_connect_mark(&name, Some(ConnectMark::Connected));
+                    // ★ T-121 (e): 프로젝트 복원 때 이 프로필을 기다리던 탭들을 묶는다.
+                    self.apply_pending_binds(&name);
                     self.conn_win.veil_phase(&name, t(Msg::VeilConnected));
                     self.conn_win.close_after_connect();
                     // 활성 탭에 접속 정보 적용 — 탭이 없으면 새 탭(사용자 09-14).

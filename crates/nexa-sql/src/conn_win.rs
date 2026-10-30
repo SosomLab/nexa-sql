@@ -363,6 +363,8 @@ pub(crate) struct ConnWin {
     policy: ProbePolicy,
     /// 지금 세션이 붙어 있는 프로필(실행 중 접속성 오류 → 이 서버를 즉시 재프로브).
     active: Option<String>,
+    /// ★ T-121 (d)(10-30): 지금 접속 중인 공유 세션의 프로필 전부(초록 화살표 · 창을 열 때도 이 목록으로).
+    live: Vec<String>,
 }
 
 impl ConnWin {
@@ -432,6 +434,7 @@ impl ConnWin {
             connected: probe::connected_names(),
             policy: ProbePolicy::default(),
             active: None,
+            live: Vec::new(),
         };
         w.refresh_profiles(None);
         w
@@ -531,11 +534,6 @@ impl ConnWin {
         self.redraw();
     }
 
-    pub(crate) fn clear_connect_marks(&mut self) {
-        self.conn_marks.clear();
-        self.redraw();
-    }
-
     /// 잠시 뒤 창을 닫는다(호스트 `tick`이 시각을 본다).
     pub(crate) fn close_soon(&mut self, after: std::time::Duration) {
         self.close_at = Some(Instant::now() + after);
@@ -554,6 +552,17 @@ impl ConnWin {
         }
         self.test_marks.insert(name.to_string(), mark);
         self.sync_enabled();
+        self.redraw();
+    }
+
+    /// ★ T-121 (d)(10-30): 지금 접속 중인 공유 세션의 프로필 **전부**를 초록 화살표로(종전 = 활성 하나만) — 호스트가 세션 집합이 바뀔 때마다
+    ///   부른다(접속 성공 · 공유 연결 전환 · 해제) · 창을 열 때도 같은 목록으로 표시한다.
+    pub(crate) fn set_live_marks(&mut self, names: Vec<String>) {
+        self.live = names;
+        self.conn_marks.clear();
+        for n in &self.live {
+            self.conn_marks.insert(n.clone(), ConnectMark::Connected);
+        }
         self.redraw();
     }
 
@@ -1139,10 +1148,16 @@ impl ConnWin {
         self.window = Some(win);
         self.refresh_profiles(None);
         self.schedule_probes();
-        // 초록 화살표 = 지금 접속된 프로필 하나만(사용자 09-14) · 나머지는 회색.
+        // 초록 화살표 = 지금 접속 중인 프로필 전부(★ T-121 (d) 10-30 · 종전 09-14 = 활성 하나) · 목록이 비어 있으면 활성 하나 · 나머지는 회색.
         self.conn_marks.clear();
-        if let Some(a) = self.active.clone() {
-            self.conn_marks.insert(a, ConnectMark::Connected);
+        if self.live.is_empty() {
+            if let Some(a) = self.active.clone() {
+                self.conn_marks.insert(a, ConnectMark::Connected);
+            }
+        } else {
+            for n in self.live.clone() {
+                self.conn_marks.insert(n, ConnectMark::Connected);
+            }
         }
         self.detail_t = 0.0;
         self.anim = None;

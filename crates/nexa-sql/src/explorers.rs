@@ -762,12 +762,45 @@ impl ExplorerSet {
         out
     }
 
-    /// 메타 세션 유휴 회수(세션 유휴 닫기와 같은 한도 · 0 = 끔).
-    pub(crate) fn idle_tick(&mut self, limit_secs: u64) {
+    /// 메타 세션 유휴 회수(세션 유휴 닫기와 같은 한도 · 0 = 끔) + ★ 오프라인 메타 LRU 상한(T-121 (b) · 10-30 · `meta.cache_mb` ·
+    /// 0 = 상한 없음): 세션이 0인 칸들의 메타 합계가 상한을 넘으면 **가장 오래 안 쓴 칸부터** 컬럼 층을 비우고(L2 → Unknown ·
+    /// 이름은 남겨 트리 표시는 유지), 그래도 넘으면 메타를 통째로 비운다(다음 접속 때 다시 읽는다).
+    pub(crate) fn idle_tick(&mut self, limit_secs: u64, cache_mb: u64) {
         for p in &mut self.panes {
             p.ex.suspend_if_idle(limit_secs);
             // ★ L3 회수(85 §4) — 30초 주기.
             let _ = p.ex.reclaim_meta();
+        }
+        if cache_mb == 0 {
+            return;
+        }
+        let cap = (cache_mb as usize).saturating_mul(1 << 20);
+        let total = |panes: &Vec<Pane>| -> usize {
+            panes
+                .iter()
+                .filter(|p| p.ex.is_offline())
+                .map(|p| p.ex.meta_bytes())
+                .sum()
+        };
+        if total(&self.panes) <= cap {
+            return;
+        }
+        // 오프라인 칸을 오래 안 쓴 순으로.
+        let mut order: Vec<usize> = (0..self.panes.len())
+            .filter(|&i| self.panes[i].ex.is_offline())
+            .collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(self.panes[i].ex.idle_secs()));
+        for &i in &order {
+            if total(&self.panes) <= cap {
+                return;
+            }
+            self.panes[i].ex.shrink_meta(false);
+        }
+        for &i in &order {
+            if total(&self.panes) <= cap {
+                return;
+            }
+            self.panes[i].ex.shrink_meta(true);
         }
     }
 

@@ -3530,6 +3530,25 @@ impl Explorer {
         self.offline
     }
 
+    /// ★ T-121 (b)(10-30): 이 칸 메타의 대략 바이트(LRU 상한 판정).
+    pub(crate) fn meta_bytes(&self) -> usize {
+        self.meta.approx_bytes()
+    }
+
+    /// 마지막 사용 뒤 지난 초(LRU 순서).
+    pub(crate) fn idle_secs(&self) -> u64 {
+        self.last_used.elapsed().as_secs()
+    }
+
+    /// ★ T-121 (b): 메타 줄이기 — `hard = false` = 컬럼 층(L2)만 Unknown으로(이름·트리는 유지) · `true` = 메타 통째 비움(다음 접속 때 재적재).
+    pub(crate) fn shrink_meta(&mut self, hard: bool) {
+        if hard {
+            self.meta.clear();
+        } else {
+            let _ = self.meta.mark_columns_unknown(None);
+        }
+    }
+
     /// 이 서버에 붙은 세션이 0이 됐다 — 메타 접속만 닫고 읽어 둔 트리는 남긴다(펼치지 않은 가지는 더 못 읽는다).
     pub(crate) fn go_offline(&mut self) {
         if self.offline || self.conn_desc.is_empty() {
