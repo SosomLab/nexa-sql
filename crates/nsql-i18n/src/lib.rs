@@ -5617,7 +5617,7 @@ impl Msg {
             Msg::LblProjectBackupDays => ["Unsaved snapshot retention (days)", "미저장 스냅숏 보관(일)"],
             Msg::DescProjectBackupDays => ["Unsaved edits of file tabs are snapshotted to backups/ on auto-save (originals untouched); snapshots older than this are pruned at startup", "파일 탭의 미저장 편집은 자동 저장 때 backups/에 스냅숏(원본은 안 만진다) · 이 일수를 넘은 스냅숏은 시작 때 정리"],
             Msg::StProjectRestoredDirty => ["Restored {0} tab(s) from the project ({1} with unsaved edits)", "프로젝트에서 탭 {0}개 복원(미저장 편집 {1}개)"],
-            Msg::StBackupExternal => ["Unsaved snapshot kept but not applied - the file changed on disk: {0}", "파일이 밖에서 바뀌어 미저장 스냅숏을 올리지 않았습니다(스냅숏은 보관): {0}"],
+            Msg::StBackupExternal => ["The file changed on disk while closed - unsaved text restored (banner: Compare / Reload / Keep): {0}", "닫혀 있는 동안 파일이 밖에서 바뀌었습니다 - 미저장 본문을 올렸습니다(띠: 비교 / 다시 읽기 / 유지): {0}"],
             Msg::LogBackupPruned => ["Pruned {0} old unsaved snapshot(s)", "오래된 미저장 스냅숏 {0}개 정리"],
             Msg::ProjOpenFiles => ["OPEN FILES", "열린 파일"],
             Msg::ProjFolders => ["PROJECT FOLDERS", "프로젝트 폴더"],

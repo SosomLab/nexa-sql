@@ -481,6 +481,8 @@ same = JOIN                 # 별칭
 
 #### 3. 바로 적용 가능한 `.sqlg` 줄(✅만)
 
+> ★ **반영됨(10-31 · 191차 17차 · 개발)** — 아래 ✅ 줄을 9개 `.sqlg`에 반영(ansi 자기 줄 + 방언 파일 끝 `-=` 블록 · 같은 `[clause X]` 머리줄 반복 = 파서가 같은 섹션으로 합침) · **보류 3** = CASE 낱말 삭제(CASE 상태 §10-4-3과 같은 커밋) · Oracle `DELETE … USING`(19c/23ai 기준 판 미정) · `MINUS`/`INTERSECT ALL`(같은 이유) · V1(협업 · 기본 방언 Oracle · 접속 없음) = `SELECT * FROM t ` 뒤 후보에 `AS`·`ROWS ONLY` 없음 · `ORDER BY a ` 뒤 `OFFSET`·`FETCH NEXT` 있음 · `SIBLINGS` 없음 ✓.
+
 > `-=` 줄은 그 방언 파일의 해당 섹션 안에 넣는다. 섹션이 없으면 `[clause X]` 머리줄도 새로 만든다. "자기 줄 수정"은 `-=`가 아니라 기존 `+=`/`=` 줄을 고치는 것이다.
 
 ##### ansi.sqlg(자기 줄 수정)

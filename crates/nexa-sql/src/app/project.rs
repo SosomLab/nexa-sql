@@ -969,6 +969,14 @@ impl App {
                                         LogKind::Info,
                                         tf(Msg::StBackupExternal, &[&p.to_string_lossy()]),
                                     ));
+                                    // ★ T-165 P3 D-180(10-30 · 70 §9): 복원한 미저장 본문 ≠ 지금 디스크 → 외부 변경과 같은 길로
+                                    //   **탭 띠**(비교 / 다시 읽기 / 유지 · `extfile` 58 정책) — 종전 = 로그만.
+                                    if let (Ok(bytes), Some(sig)) =
+                                        (std::fs::read(p), nexa_fs::watch::file_sig(p))
+                                    {
+                                        let id = self.editors.tab_id(i);
+                                        self.ext_on_changed(id, p, sig, &bytes);
+                                    }
                                 }
                             }
                             self.restore_caret(i, t, &opts);

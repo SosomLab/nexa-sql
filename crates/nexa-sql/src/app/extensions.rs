@@ -2145,7 +2145,7 @@ impl App {
         }
     }
 
-    fn ext_on_changed(
+    pub(crate) fn ext_on_changed(
         &mut self,
         id: u64,
         path: &Path,

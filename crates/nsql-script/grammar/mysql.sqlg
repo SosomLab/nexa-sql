@@ -27,7 +27,7 @@ next += ON DUPLICATE KEY UPDATE
 [clause ON DUPLICATE KEY UPDATE]
 objects = column, function
 [clause UPDATE]
-next += IGNORE
+next += 
 [clause DELETE FROM]
 next += LIMIT
 [clause CREATE]
@@ -42,3 +42,31 @@ next += COLLATE
 next += COLLATE
 [clause ALTER TABLE]
 next += COLLATE
+
+# ★ T-200(10-30 · 82 §10-7 공식 문법 대조 ✅ 반영): 부모에서 물려받은 낱말 중 이 방언에 없는 것을 뺀다(`-=`).
+[start]
+next -= MERGE INTO
+[clause FROM]
+next -= FULL JOIN, FETCH FIRST, ROWS ONLY
+[clause JOIN]
+next -= FULL JOIN
+[clause ON]
+next -= FULL JOIN
+[clause WHERE]
+next -= FETCH FIRST, ROWS ONLY
+[clause GROUP BY]
+next -= FETCH FIRST
+[clause HAVING]
+next -= FETCH FIRST
+[clause ORDER BY]
+next -= FETCH FIRST, ROWS ONLY, NULLS FIRST, NULLS LAST, OFFSET, FETCH NEXT
+[clause INSERT INTO]
+next -= DEFAULT VALUES
+[clause VALUES]
+next -= RETURNING
+[clause SET]
+next -= RETURNING
+[clause DELETE FROM]
+next -= RETURNING
+[clause UPDATE]
+first = LOW_PRIORITY, IGNORE

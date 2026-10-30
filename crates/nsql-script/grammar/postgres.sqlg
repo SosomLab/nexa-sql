@@ -48,3 +48,12 @@ next += MATERIALIZED VIEW, EXTENSION, TYPE, CASCADE
 next += ADD COLUMN, ALTER COLUMN, DROP COLUMN IF EXISTS, OWNER TO, COLLATE
 [clause ON]
 next += COLLATE
+
+# ★ T-200(10-30 · 82 §10-7 공식 문법 대조 ✅ 반영): 부모에서 물려받은 낱말 중 이 방언에 없는 것을 뺀다(`-=`).
+[start]
+next -= DESCRIBE
+[clause FETCH FIRST]
+next -= PERCENT ROWS ONLY
+[clause LIMIT]
+next = OFFSET, FOR UPDATE, FOR SHARE
+first = ALL
