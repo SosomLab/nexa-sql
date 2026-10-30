@@ -38,6 +38,12 @@ pub(crate) enum PrefsAction {
     },
     /// 기본값으로.
     Reset(String),
+    /// ★ T-39b 범위 탭 "프로젝트"(67 §8-4): 값을 **프로젝트 파일 settings 절**에(호스트가 절 갱신 · 적용 · 자동 저장) · 절에서 제거.
+    ProjectChanged {
+        key: String,
+        value: String,
+    },
+    ProjectReset(String),
     /// 색 창 열기(어느 색 키를 고르는가).
     OpenColors(String),
     OpenKeys,
@@ -159,6 +165,13 @@ pub(crate) struct PrefsWin {
     changed: Switch,
     /// "변경"을 켠 시점의 바뀐 키 집합 — 켠 동안 카드가 기본값으로 돌아가도 **사라지지 않게**(되돌리기 다음 동작이 끊기지 않게) 고정 · 껐다 켜면 다시 셈.
     changed_keys: Option<std::collections::HashSet<&'static str>>,
+    /// ★ T-39b 범위 탭(67 §8-4 · 사용자 10-30 "프로젝트 파일 하나만"): 프로젝트가 열려 있을 때만 보이는 "프로젝트" 스위치 — 켜면 카드 =
+    ///   `project_allowed` 키만 · 값 = 프로젝트 절의 값(없으면 실효값) · 강조선 = 절에 있는 키 · 변경/초기화 = `ProjectChanged`/`ProjectReset`.
+    project: Switch,
+    /// 프로젝트 절의 평키 값(호스트가 넣는다 · `None` = 프로젝트 없음 = 스위치 숨김).
+    project_vals: Option<Vec<(String, String)>>,
+    /// 카드 덧말 "프로젝트에서 덮어씀: 값"(호스트 덧말 `notes`와 합쳐 그린다 · 범위 스위치와 무관하게 늘).
+    project_notes: std::collections::HashMap<String, String>,
     /// 목록 위 안내 한 줄(고급 숨김 수 · 바뀐 설정 없음 · 숨은 키 변경 수).
     note: Option<String>,
     json_btn: Button,
@@ -248,6 +261,7 @@ impl PrefsWin {
         self.search.set_placeholder(t(Msg::PhSearchSettings));
         self.advanced.set_label(t(Msg::LblAdvanced));
         self.changed.set_label(t(Msg::LblChangedOnly));
+        self.project.set_label(t(Msg::LblPrefsProject));
         self.json_btn.set_label(t(Msg::BtnEditJson));
         self.export_btn.set_label(t(Msg::BtnExportSettings));
         self.import_btn.set_label(t(Msg::BtnImportSettings));
@@ -335,6 +349,31 @@ impl PrefsWin {
         if changed {
             self.redraw();
         }
+    }
+
+    /// ★ T-39b: 프로젝트 절의 평키 값(호스트 · 프로젝트 열기/닫기/절 변경마다) — `None` = 프로젝트 없음(스위치 숨김·꺼짐). 카드 덧말
+    ///   "프로젝트에서 덮어씀"도 여기서 갈아 끼운다(호스트 덧말과 따로 보관 → 들여쓰기 덧말 같은 호스트 덧말을 지우지 않는다).
+    pub(crate) fn set_project_scope(&mut self, vals: Option<Vec<(String, String)>>) {
+        self.project_notes.clear();
+        if let Some(v) = &vals {
+            for (k, raw) in v {
+                self.project_notes
+                    .insert(k.clone(), tf(Msg::PrefsOverriddenByProject, &[raw]));
+            }
+        }
+        if vals.is_none() {
+            self.project.set_on(false);
+        }
+        self.project_vals = vals;
+        if !self.cards.is_empty() {
+            self.rebuild_cards();
+        }
+        self.redraw();
+    }
+
+    /// 범위 스위치 "프로젝트"가 켜져 있고 프로젝트가 있는가.
+    fn project_on(&self) -> bool {
+        self.project_vals.is_some() && self.project.is_on()
     }
 
     /// 미리보기 상자(호스트가 SQL 구문 강조가 붙은 읽기 전용 상자를 만들어 준다 · 기동 때 한 번).
@@ -462,6 +501,9 @@ impl PrefsWin {
             advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Right),
             changed: Switch::new(t(Msg::LblChangedOnly), false).with_label_side(LabelSide::Right),
             changed_keys: None,
+            project: Switch::new(t(Msg::LblPrefsProject), false).with_label_side(LabelSide::Right),
+            project_vals: None,
+            project_notes: std::collections::HashMap::new(),
             note: None,
             json_btn: Button::new(t(Msg::BtnEditJson)),
             export_btn: Button::new(t(Msg::BtnExportSettings)),
@@ -549,14 +591,18 @@ impl PrefsWin {
             self.rebuild_cards();
             return;
         }
+        let proj = self
+            .project_on()
+            .then(|| self.project_vals.clone().unwrap_or_default());
         for c in &mut self.cards {
             let Some(sn) = self.snap.iter().find(|x| x.entry.key == c.entry.key) else {
                 continue;
             };
-            c.modified = sn.modified;
-            c.mod_fade.set(sn.modified);
-            if c.value != sn.value {
-                c.value = sn.value.clone();
+            let (sv, sm) = view_of(proj.as_deref(), sn);
+            c.modified = sm;
+            c.mod_fade.set(sm);
+            if c.value != sv {
+                c.value = sv.clone();
                 c.error = None;
                 if is_default_formatter_key(c.entry.key) {
                     let want = c.value != "basic";
@@ -565,14 +611,14 @@ impl PrefsWin {
                     }
                 }
                 match &mut c.ctl {
-                    CardCtl::Bool(sw) => sw.set_on(sn.value == "on"),
-                    CardCtl::Choice(cb) => cb.select_value(&sn.value),
-                    CardCtl::Pos(pd) => pd.select_value(HudPos::parse(&sn.value).code()),
+                    CardCtl::Bool(sw) => sw.set_on(sv == "on"),
+                    CardCtl::Choice(cb) => cb.select_value(&sv),
+                    CardCtl::Pos(pd) => pd.select_value(HudPos::parse(&sv).code()),
                     CardCtl::Text(tb) => {
                         // 입력 중인 칸은 건드리지 않는다 — 단 **읽기 전용(잠긴) 칸**은 포커스가 있어도 갱신한다: 자동 → 직접 지정으로
                         // 바꿀 때 보이던 탐지 경로가 남으면 그것을 고쳐 저장하게 된다(사용자가 넣은 적 없는 값).
                         if !tb.is_focused() || tb.is_read_only() {
-                            tb.set_text(&sn.value);
+                            tb.set_text(&sv);
                             let mut inv = Invalidations::default();
                             tb.select_range(0, 0, &mut inv);
                         }
@@ -664,9 +710,22 @@ impl PrefsWin {
         }
         // ★ 표시 순서 = 그룹 → 카테고리 → 키 접두 묶음 → 등재 순(사용자 09-28 "세션 관련 설정이 흩어지지 않게") — 검색 결과도 같은 순.
         chosen.sort_by_key(|s| nsql_settings::display_order(s.entry.key));
+        // ★ T-39b 범위 "프로젝트"(67 §8-4): 허용 키만 · 값 = 프로젝트 절의 값(없으면 실효값) · 강조선 = 절에 있는 키.
+        let project_on = self.project_on();
+        if project_on {
+            chosen.retain(|s| nsql_settings::project_allowed(s.entry.key));
+            let proj = self.project_vals.as_deref();
+            for s in &mut chosen {
+                let (v, m) = view_of(proj, s);
+                s.value = v;
+                s.modified = m;
+            }
+        }
         self.adv_hidden = adv_hidden;
         // 안내 한 줄: 고급 숨김 수(변경 꺼짐) · 변경 켬 = 없음 안내 / 창에 카드가 없는 숨은 키(내부 분류)의 변경 수.
-        self.note = if changed_on {
+        self.note = if project_on {
+            Some(t(Msg::PrefsProjectScopeNote).into())
+        } else if changed_on {
             let hidden_changed = self
                 .snap
                 .iter()
@@ -1030,6 +1089,15 @@ impl PrefsWin {
             self.advanced.is_on(),
             self.cards.len()
         ));
+        // ★ T-39b 범위 스위치(`-` = 프로젝트 없음 · 숨김).
+        out.push_str(&format!(
+            "project={}\n",
+            match self.project_vals {
+                None => "-",
+                Some(_) if self.project.is_on() => "on",
+                Some(_) => "off",
+            }
+        ));
         out
     }
 
@@ -1191,6 +1259,16 @@ impl PrefsWin {
         self.changed.set_bounds(
             Rect::new(
                 pad + self.s(160.0) + self.s(8.0),
+                by,
+                self.s(120.0),
+                bottom_h,
+            ),
+            &mut inv,
+        );
+        self.project.set_scale(s);
+        self.project.set_bounds(
+            Rect::new(
+                pad + self.s(160.0) + self.s(8.0) + self.s(120.0) + self.s(8.0),
                 by,
                 self.s(120.0),
                 bottom_h,
@@ -1694,6 +1772,9 @@ impl PrefsWin {
         if route(self.changed.bounds(), false) {
             self.changed.on_event(&ie, &mut inv);
         }
+        if self.project_vals.is_some() && route(self.project.bounds(), false) {
+            self.project.on_event(&ie, &mut inv);
+        }
         if route(self.close_btn.bounds(), self.close_btn.is_focused())
             || matches!(ie, InputEvent::MouseMove { .. })
         {
@@ -1720,6 +1801,11 @@ impl PrefsWin {
         }
         if self.changed.take_toggled().is_some() {
             self.set_changed_only(self.changed.is_on());
+            self.redraw();
+            return PrefsAction::None;
+        }
+        if self.project.take_toggled().is_some() {
+            self.rebuild_cards();
             self.redraw();
             return PrefsAction::None;
         }
@@ -1922,8 +2008,20 @@ impl PrefsWin {
         None
     }
 
-    /// 컨트롤 변화 수거 → 첫 변경만 보고(한 이벤트에 하나).
+    /// 컨트롤 변화 수거 → 첫 변경만 보고(한 이벤트에 하나). 범위 "프로젝트"가 켜져 있으면 값 변경·초기화는 프로젝트 절로 간다.
     fn collect_changes(&mut self) -> PrefsAction {
+        let a = self.collect_changes_raw();
+        if !self.project_on() {
+            return a;
+        }
+        match a {
+            PrefsAction::Changed { key, value } => PrefsAction::ProjectChanged { key, value },
+            PrefsAction::Reset(key) => PrefsAction::ProjectReset(key),
+            other => other,
+        }
+    }
+
+    fn collect_changes_raw(&mut self) -> PrefsAction {
         for c in &mut self.cards {
             let key = c.entry.key.to_string();
             if c.reset.take_clicked() {
@@ -2094,13 +2192,21 @@ impl PrefsWin {
                 .any(|s| s.entry.key == "perf.boost" && s.value == "on");
             for c in &mut self.cards {
                 // 설명 + (있으면) 호스트가 준 **한 줄 덧말**(`<키>#note` — 예: 이 값이 무엇으로 정해졌는지 · 사용자 09-21).
-                let note = self
+                let host_note = self
                     .notes
                     .get(c.entry.key)
-                    .or_else(|| self.info.get(&format!("{}#note", c.entry.key)));
+                    .or_else(|| self.info.get(&format!("{}#note", c.entry.key)))
+                    .filter(|n| !n.is_empty());
+                // ★ T-39b: "프로젝트에서 덮어씀" 덧말은 호스트 덧말 앞에(둘 다 있으면 ` · `로 잇는다).
+                let note: Option<String> = match (self.project_notes.get(c.entry.key), host_note) {
+                    (Some(p), Some(h)) => Some(format!("{p} · {h}")),
+                    (Some(p), None) => Some(p.clone()),
+                    (None, Some(h)) => Some(h.clone()),
+                    (None, None) => None,
+                };
                 let mut lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
                 let note_at = lines.len();
-                if let Some(n) = note.filter(|n| !n.is_empty()) {
+                if let Some(n) = note.as_deref() {
                     lines.extend(Self::wrap(&mut dc, n, text_w));
                 }
                 let boost_hint =
@@ -2524,10 +2630,17 @@ impl PrefsWin {
                 let gap_in = (14.0 * sc).round() as i32;
                 let gap_between = (6.0 * sc).round() as i32;
                 let mut x = (PAD * sc).round() as i32;
-                for (sw, msg) in [
+                let mut sws: Vec<(&mut Switch, Msg)> = vec![
                     (&mut self.advanced, Msg::LblAdvanced),
                     (&mut self.changed, Msg::LblChangedOnly),
-                ] {
+                ];
+                // ★ T-39b 범위 스위치는 프로젝트가 열려 있을 때만(없으면 자리도 비운다 = 사건 라우팅 0).
+                if self.project_vals.is_some() {
+                    sws.push((&mut self.project, Msg::LblPrefsProject));
+                } else {
+                    self.project.set_bounds(Rect::default(), &mut inv);
+                }
+                for (sw, msg) in sws {
                     let w = track_w + dc.text_width(t(msg)) + gap_in;
                     sw.set_bounds(Rect::new(x, b.y, w, b.h), &mut inv);
                     sw.paint(&mut dc, th);
@@ -2584,6 +2697,17 @@ fn card_pass(changed_on: bool, in_changed_set: bool, adv_on: bool, is_adv: bool)
         Pass::HiddenAdvanced
     } else {
         Pass::Show
+    }
+}
+
+/// ★ T-39b 범위 "프로젝트"의 카드 값(순수): 절에 키가 있으면 (절 값, 강조) · 없으면 (실효값, 강조 없음) · 범위 꺼짐(`None`) = 그대로.
+fn view_of(proj: Option<&[(String, String)]>, sn: &Snap) -> (String, bool) {
+    match proj {
+        None => (sn.value.clone(), sn.modified),
+        Some(vals) => match vals.iter().find(|(k, _)| k == sn.entry.key) {
+            Some((_, v)) => (v.clone(), true),
+            None => (sn.value.clone(), false),
+        },
     }
 }
 
@@ -2701,5 +2825,71 @@ mod tests {
             ro(&w, "oracle.client_dir"),
             (true, "C:/detected/instantclient".into())
         );
+    }
+
+    /// ★ T-39b 범위 "프로젝트"(67 §8-4): 켜면 허용 키만 · 절 값이 카드 값 + 강조 · 절에 없는 허용 키 = 실효값 + 강조 없음 ·
+    /// 프로젝트 없음(`None`) = 스위치 꺼짐·카드 원복 · 덧말은 범위와 무관하게 붙는다 · 덤프 `project=` 세 상태.
+    #[test]
+    fn project_scope_filters_allowed_keys_and_shows_project_values() {
+        let path =
+            std::env::temp_dir().join(format!("nsql-prefs-proj-{}.conf", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut s = Settings::open(path);
+        s.set("editor.tab_size", "3").expect("set");
+        let mut w = PrefsWin::new();
+        w.refresh(&s);
+        w.preset_query("editor");
+        assert!(w.dump_text().contains("project=-\n"));
+        w.set_project_scope(Some(vec![("editor.tab_size".into(), "2".into())]));
+        assert!(w.dump_text().contains("project=off\n"));
+        assert!(
+            w.cards.iter().any(|c| c.entry.key == "editor.font_size"),
+            "범위 꺼짐 = 글꼴 크기(불허 키)도 보인다"
+        );
+        let tab = w
+            .cards
+            .iter()
+            .find(|c| c.entry.key == "editor.tab_size")
+            .expect("card");
+        assert_eq!(
+            (tab.value.as_str(), tab.modified),
+            ("3", true),
+            "범위 꺼짐 = 실효값(전역 3 · 기본과 다름)"
+        );
+        assert!(w.project_notes.contains_key("editor.tab_size"));
+        w.project.set_on(true);
+        w.rebuild_cards();
+        assert!(w.dump_text().contains("project=on\n"));
+        assert!(w
+            .cards
+            .iter()
+            .all(|c| nsql_settings::project_allowed(c.entry.key)));
+        let tab = w
+            .cards
+            .iter()
+            .find(|c| c.entry.key == "editor.tab_size")
+            .expect("card");
+        assert_eq!((tab.value.as_str(), tab.modified), ("2", true));
+        let detect = w
+            .cards
+            .iter()
+            .find(|c| c.entry.key == "editor.detect_indent")
+            .expect("card");
+        assert!(!detect.modified, "절에 없는 허용 키 = 강조 없음");
+        assert!(w.note.as_deref() == Some(t(Msg::PrefsProjectScopeNote)));
+        // 호스트가 절을 바꾸면(값 제거) 카드도 따라간다.
+        w.set_project_scope(Some(Vec::new()));
+        let tab = w
+            .cards
+            .iter()
+            .find(|c| c.entry.key == "editor.tab_size")
+            .expect("card");
+        assert_eq!((tab.value.as_str(), tab.modified), ("3", false));
+        assert!(w.project_notes.is_empty());
+        // 프로젝트 닫힘 = 스위치 꺼짐 + 불허 키 복귀.
+        w.set_project_scope(None);
+        assert!(!w.project.is_on());
+        assert!(w.dump_text().contains("project=-\n"));
+        assert!(w.cards.iter().any(|c| c.entry.key == "editor.font_size"));
     }
 }

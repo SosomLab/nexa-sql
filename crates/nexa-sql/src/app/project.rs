@@ -573,6 +573,50 @@ impl App {
                 tf(Msg::LogProjectSettingsIgnored, &[&ignored.join(", ")]),
             ));
         }
+        self.prefs_sync_project_scope();
+    }
+
+    /// ★ T-39b 범위 탭(67 §8-4): 설정 창에 프로젝트 절의 평키 값(= 덮어쓰기 층 `project`의 실제 적용값)과 "프로젝트에서 덮어씀" 덧말을 넣는다
+    ///   — 프로젝트 없음 = `None`(스위치 숨김).
+    pub(crate) fn prefs_sync_project_scope(&mut self) {
+        let vals = self
+            .project
+            .is_open()
+            .then(|| self.settings.overlay_of("project"));
+        self.prefs_win.set_project_scope(vals);
+    }
+
+    /// ★ T-39b 범위 탭: 설정 창 "프로젝트"에서 바꾼 값(`Some`) / 제거(`None`) → 헤더 `settings` 절(평키) → 즉시 적용 → 자동 저장 감시 ·
+    ///   허용 키·정규화 통과 값만(아니면 카드에 오류 표시 · 절은 그대로).
+    pub(crate) fn project_setting_set(&mut self, key: &str, value: Option<&str>) {
+        if !self.project.is_open() || !nsql_settings::project_allowed(key) {
+            return;
+        }
+        let normalized = match value.map(str::trim).filter(|v| !v.is_empty()) {
+            None => None,
+            Some(v) => {
+                match nsql_settings::entry(key).and_then(|e| nsql_settings::normalize(e.kind, v)) {
+                    Some(n) => Some(n),
+                    None => {
+                        let allowed = nsql_settings::entry(key)
+                            .map_or_else(String::new, |e| nsql_settings::allowed(e.kind));
+                        self.prefs_win.set_error(key, allowed);
+                        self.prefs_win.redraw();
+                        return;
+                    }
+                }
+            }
+        };
+        self.project
+            .settings
+            .retain(|(g, k, _)| !(g.is_none() && k == key));
+        if let Some(n) = normalized {
+            self.project.settings.push((None, key.to_string(), n));
+        }
+        self.apply_project_settings();
+        self.project_changed(false);
+        self.prefs_win.refresh(&self.settings);
+        self.prefs_win.redraw();
     }
 
     /// 프로젝트 파일 저장 — 탐색기의 마지막 선택 위치를 담아서(닫기·전환·폴더 변경·종료 = 전부 이 길).

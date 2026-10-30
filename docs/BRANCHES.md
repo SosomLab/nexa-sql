@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/186-project-settings | 2026-10-31 | 2026-10-31 → main ff(삭제) · **61d086ae** | 1 | 186차 win = T-39b 프로젝트 스코프 설정(프로젝트 파일 `settings` 절 · `project_allowed` · overlay) + T-69 문법·프로젝트 들여쓰기 층 · 12파일 |
 | feat/185-driver-upgrade-ux | 2026-10-31 | 2026-10-31 → main ff(삭제) · **c5fd1ec1** | 1 | 185차 win = 드라이버 갱신 UX(사용자 10-30 밤 · D-423 · 요약 한 줄 · [모두 갱신] · [닫기] · 접속 시 자동 갱신 `driver.auto_upgrade`) + T-39b 시작분(`project_allowed` · `Project.settings`) · 19파일 |
 | feat/184 | 2026-10-31 | 2026-10-31 → main ff(삭제) · **46c9a013** | 1 | 184차 win = T-39 키맵 카테고리 그리드 가벼운 판(설정 창 `key.*` 카드 제목 `그룹 › 라벨` + 충돌 덧말) · nexa-ui 변경 없음 |
 | feat/183-explorer-server-rest | 2026-10-30 | 2026-10-30 → main ff(삭제) · **dbf38485** | 1 | 183차 win = T-121 (b) 오프라인 메타 상한 `meta.cache_mb` · (d) 접속 창 다중 "접속됨" · (e) 탭↔접속 복원(프로젝트 파일 탭 `profile`) · 19파일 +223/−19 · nexa-ui 변경 없음 |

@@ -226,7 +226,7 @@ tab=15 len=27
 
 ### 8-4. 쓰기 · 화면
 
-- 설정 창 머리에 **범위 탭 `사용자 | 프로젝트`**(프로젝트 모드일 때만 · VS Code User/Workspace) — 프로젝트 탭 = Project 허용 키만 보이고 값을 바꾸면 헤더 `settings` 절에 쓴다(기존 저장 경로 `project_save_to` · 자동 저장 감시 세대에 포함 · 70 §7-1).
+- ★ **구현(10-31 · 186차 13차)** = 탭이 아니라 **하단 스위치 "프로젝트"**(기존 "고급"·"변경" 스위치와 같은 자리 · 고급 묶음 · 프로젝트가 열려 있을 때만 보임) — 아래 설계(머리 범위 탭)를 이렇게 바꿈. 설계 원문: 설정 창 머리에 **범위 탭 `사용자 | 프로젝트`**(프로젝트 모드일 때만 · VS Code User/Workspace) — 프로젝트 탭 = Project 허용 키만 보이고 값을 바꾸면 헤더 `settings` 절에 쓴다(기존 저장 경로 `project_save_to` · 자동 저장 감시 세대에 포함 · 70 §7-1).
 - 카드에 **출처 표시**("프로젝트에서 덮어씀" · 되돌리기 = 그 키를 절에서 지움) · 상태줄 들여쓰기 툴팁 = 값의 출처 층(31 §2).
 - 상태줄 들여쓰기 팝업 = "이 문법의 기본으로 저장"(전역 문법 층) · "프로젝트에 저장"(프로젝트 모드일 때 · `[문법]` 묶음) · "전역 기본으로 저장".
 - 프로젝트 파일이 밖에서 바뀌면(git pull) 58 정책대로 다시 읽고 설정 층을 갈아 끼운다(열린 탭에 즉시 반영 · `apply_setting` 경로).
@@ -238,7 +238,8 @@ tab=15 len=27
 - **적용** = `apply_project_settings()`(프로젝트 열기·전환 + 기동 복원 길) = `Settings::clear_overlay("project")` → 허용 키만 `set_overlay(key, raw, "project")` → 걷힌·넣은 키를 `apply_setting`으로 즉시 반영 · **overlay라 settings.conf에 쓰지 않는다**(프로젝트를 닫거나 바꾸면 자동 원복) · `[문법]` 묶음은 1차에서 `editor.tab_size`·`editor.indent_spaces`만(`Editors::set_syntax_indent`) · 불허·잘못된 값 = 로그 1줄 `Project settings ignored …: <키>`.
 - **들여쓰기 층**(editors.rs) = 전역 → 문법(`syntax.rs` `indent_defaults()` = `Packages/<pkg>/<이름>.nexa-settings` 스캔 · Sublime `<Syntax>.sublime-settings` 차용 · JSON 객체) → 프로젝트 `[문법]` → 탭 재정의(감지 D-403·팝업) · `indent_for_syntax`/`default_indent_for` · 시험 `syntax_indent_layers_resolve_nearest_first`(MC/DC 6단) · `syntax_settings_layer_indent_defaults`.
 - **V1(협업 · 격리 홈 · temp 프로젝트 인자)** = ① `{"editor.tab_size":2,"[sql]":{"editor.indent_spaces":false},"driver.auto_install":false}` → `edit.indent` = 탭 · 로그 "무시 … driver.auto_install" 1줄 ② `[sql]` 공백 true → `··select`(공백 2칸 = 프로젝트 tab_size + [sql] 둘 다 적용) ✓.
-- **남음(다음 묶음)** = 설정 창 범위 탭 `사용자|프로젝트`(§8-4) · 카드 "프로젝트에서 덮어씀" 출처 · 상태줄 들여쓰기 팝업 "프로젝트에 저장" · 프로젝트 파일 외부 변경(git pull) 시 재적용 · `[문법]`의 그 밖 키.
+- **13차(10-31 · 186차 후속) 설정 창 범위** = prefs_win 하단 스위치 **"프로젝트"**(호스트 `set_project_scope(Option<Vec<(키, 값)>>)` · 프로젝트 없음 = 숨김) — 켜면 카드 = `project_allowed` 키만 · 값 = 프로젝트 절 값(없으면 실효값) · 강조선 = 절에 있는 키 · 안내줄 `PrefsProjectScopeNote` · 값 변경/초기화 = `PrefsAction::ProjectChanged`/`ProjectReset` → `project_setting_set(key, Some(값)|None)`(허용 키·정규화 통과 값만 → 헤더 절 평키 갱신 → `apply_project_settings` → `project_changed(false)` = 자동 저장 감시) · **카드 덧말**(범위와 무관) = 절에 있는 키의 카드에 "프로젝트에서 덮어씀: 값"(호스트 덧말과 ` · `로 합침 · 별도 `project_notes`라 들여쓰기 등 다른 덧말을 지우지 않음) · 동기화 `prefs_sync_project_scope()` = `apply_project_settings` 끝 + 설정 창 열 때 · 덤프 `project=-|off|on` · 순수 `view_of` · 시험 `project_scope_filters_allowed_keys_and_shows_project_values` · nexa-sql 520/0.
+- **남음(다음 묶음)** = 상태줄 들여쓰기 팝업 "프로젝트에 저장" · 프로젝트 파일 외부 변경(git pull) 시 재적용 · `[문법]`의 그 밖 키 · 설정 창에서 `[문법]` 묶음 편집.
 
 ### 8-5. 시험
 

@@ -1427,6 +1427,13 @@ impl App {
                     }
                     self.prefs_win.redraw();
                 }
+                // ★ T-39b 범위 "프로젝트": 값은 프로젝트 파일 settings 절로(적용·자동 저장은 `project_setting_set`).
+                PrefsAction::ProjectChanged { key, value } => {
+                    self.project_setting_set(&key, Some(&value));
+                }
+                PrefsAction::ProjectReset(key) => {
+                    self.project_setting_set(&key, None);
+                }
                 PrefsAction::Reset(key) => {
                     let _ = self.settings.reset(&key);
                     self.persist_settings();
@@ -2158,6 +2165,8 @@ impl App {
         self.prefs_win
             .set_advanced(self.settings.flag("ui.prefs_advanced"));
         self.prefs_win.refresh(&self.settings);
+        // ★ T-39b 범위 스위치 "프로젝트" + 카드 덧말(열 때마다 맞춘다).
+        self.prefs_sync_project_scope();
         // ★ T-39 키맵 그리드: 단축키 카드의 충돌 메모.
         self.prefs_key_conflicts();
         if let Some(q) = self.prefs_query.take() {
