@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/191-grammar-contrast-d180 | 2026-10-31 | 2026-10-31 → main ff(삭제) · **4abeac0a** | 1 | 191차 win = T-200 대조표 `.sqlg` 반영(82 §10-7 ✅ 줄 · 보류 3) + T-165 P3 D-180 복원 띠 + `StBackupExternal` 문구 정정 · 18파일 · 밤 작업 마지막 묶음 |
 | feat/190-bookmarks-object-revive | 2026-10-31 | 2026-10-31 → main ff(삭제) · **3738752d** | 1 | 190차 win = T-167 B5 객체 DDL 북마크(`DocKey::Object` · 재개 = 살아 있는 세션만 · D-426) + B6 무효·부활(`validate_files` · 열린 문서 부활) · 13파일 · nexa-ui 없음 |
 | feat/189-indent-layers-replace | 2026-10-31 | 2026-10-31 → main ff(삭제) · **91686ff7** | 1 | 189차 win = T-39b·T-69 완료(팝업 저장 3항목 · 외부 변경 재적용) + T-81 d 바꾸기 · e EUC-KR + 기동 명령 `search.dump`·`search.replace_focus`·`indent.menu` · 17파일 · nexa-ui = 3447a06(docs 247차 정정) |
 | feat/188-prod-confirm-toolbar | 2026-10-31 | 2026-10-31 → main ff(삭제) · **1fd95f76** | 1 | 188차 win = 운영 2단 확인 오탐 수정(D-424 · `is_statement_start`) + T-278 툴바 그룹 안 순서·그룹 숨김(`toolbar.items`) · 15파일 · nexa-ui 짝 = e9c6e88(247차) |
