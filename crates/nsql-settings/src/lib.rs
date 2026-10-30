@@ -5163,6 +5163,17 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 사용자 10-30 "연결을 시도하면 해당 드라이버는 자동으로 업그레이드": 접속 전에 **캐시된 색인**(하루 1회 갱신 확인이 받아 둔 것)과
+    //   설치본을 비교해 새 판이 있으면 설치하고 그 판으로 연다. 네트워크는 사용자의 접속 동작 안에서만(26 §8) · 끄면 안내(토스트)와
+    //   [모두 갱신]만. 설치 실패 = 설치된 판으로 접속(접속을 막지 않는다).
+    Entry {
+        key: "driver.auto_upgrade",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverAutoUpgrade,
+        desc: Msg::DescDriverAutoUpgrade,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "connect.remember_session_password",
         cat: Msg::CatConnection,
@@ -7422,6 +7433,65 @@ pub fn dynamic_entries() -> Vec<&'static Entry> {
 #[must_use]
 pub fn ext_use_key(id: &str) -> &'static str {
     intern_key(&format!("ext.{}.use", id.replace('-', "_")))
+}
+
+/// ★ T-39b 프로젝트 스코프(10-30 · docs/67 §8-2 · D-407): 프로젝트 파일의 `settings` 절이 덮어쓸 수 있는 키인가 — 프로젝트 파일은 VCS로
+/// 남에게서 받는 파일이라 **동작·경로·네트워크·비밀·창/테마**는 전역 전용(무시 + 로그). 허용 = 편집기 모양·들여쓰기 규칙(`editor.*` 중
+/// 글꼴·미니맵 폭 같은 화면 취향 제외) · 포맷터 `format.*` · 스크립트 치환 `script.define*` · 완성 `intel.*` 일부 · 그리드 NULL 글자.
+#[must_use]
+pub fn project_allowed(key: &str) -> bool {
+    const DENY_EDITOR: &[&str] = &[
+        "editor.font_face",
+        "editor.font_size",
+        "editor.minimap_width",
+        "editor.minimap_box_color",
+        "editor.minimap_min_cols",
+    ];
+    const ALLOW_EXACT: &[&str] = &["grid.null_text", "intel.insert_case", "intel.insert_alias"];
+    if DENY_EDITOR.contains(&key) {
+        return false;
+    }
+    key.starts_with("editor.")
+        || key.starts_with("format.")
+        || key.starts_with("script.define")
+        || ALLOW_EXACT.contains(&key)
+}
+
+#[cfg(test)]
+mod project_scope_tests {
+    use super::project_allowed;
+
+    /// 허용 = editor(취향 제외) · format · script.define* · 명시 목록 · 거부 = 드라이버·세션·perf·ui·ssh·확장·라이선스.
+    #[test]
+    fn project_scope_allow_and_deny() {
+        for k in [
+            "editor.tab_size",
+            "editor.indent_spaces",
+            "editor.detect_indent",
+            "format.keyword_case",
+            "script.define",
+            "script.define_in_strings",
+            "grid.null_text",
+            "intel.insert_case",
+        ] {
+            assert!(project_allowed(k), "{k}");
+        }
+        for k in [
+            "editor.font_face",
+            "editor.font_size",
+            "editor.minimap_width",
+            "oracle.driver",
+            "driver.auto_install",
+            "session.autocommit",
+            "perf.mode",
+            "ui.theme",
+            "ssh.command",
+            "statusbar.git",
+            "meta.cache_mb",
+        ] {
+            assert!(!project_allowed(k), "{k}");
+        }
+    }
 }
 
 /// ★ 임의 키 interning(146차 10-27 · 확장 메타 `settings`의 키): 같은 글 = 같은 `&'static` 포인터 · 누수 상한 = 서로 다른 키 수.

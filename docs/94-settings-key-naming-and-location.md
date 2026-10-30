@@ -145,6 +145,7 @@
 - 분류 = **CatInternal**(설정 창에 안 보임 · HIDDEN) · `driver.repo`(Text · 기본 **`SosomLab/nexa-sql`**(D-349 · 10-22 · 별도 드라이버 저장소 없음) · 색인 `drivers/index.json`(drivers.yml 봇이 갱신)·자산(Releases 태그 **`drivers-v<ver>`** · pre-release · `nsql-driver-<id>-<ver>-<os>-<arch>.zip`/`.sig`/`.sha256` · 10-29 T-454 정정 · 종전 표기 "`driver-*`")을 받을 GitHub 저장소) · `driver.http_timeout_secs`(Int 5~600 · 기본 30 · 10 s 초과라 `_secs` · §6-5).
 - 토큰은 설정 키로 두지 않는다 = 환경 변수 `NSQL_GITHUB_TOKEN`만(설정 파일에 비밀을 남기지 않음) · 자동 갱신 확인 키 `driver.check_updates`는 GUI 배지와 함께 2차.
 - ★ **`driver.auto_install`**(10-23 · D-350 C단계) = Bool · 기본 **on** · 분류 **접속**(`CatConnection` · 설정 창에 보임) · 라벨 "없는 드라이버 자동 설치" · 끄면 접속 시 -1350 + 설치 안내만.
+- ★ **`driver.auto_upgrade`**(10-30 밤 · 185차 · D-423) = Bool · 기본 **on** · 분류 **DBMS ▸ 드라이버**(`CatDbmsDrivers`) · 라벨/설명 i18n · 켜면 그 드라이버로 접속할 때 캐시된 색인이 새 판을 말하면 설치 후 새 판으로 접속(열린 세션은 옛 판 · 실패 = 설치판으로 접속) · GUI·CLI 기동 때 `set_auto_upgrade`로 반영 · [22 §3-0b](22-driver-extensions.md).
 - ★ **`driver.check_updates`**(10-23 · fbe5001) = Bool · 기본 **on** · 분류 **DBMS ▸ 드라이버** · 라벨 "드라이버 갱신 하루 1회 확인" · 색인 캐시 24시간 초과일 때만 GET 1 · 새 버전 = 상태줄 안내 + 로그(자동 교체 없음) · ★ **10-27 설명 갱신(D-364)** = 영어 "Once a day at startup, re-read the driver index; when installed drivers have newer versions, show a notice with an [Update] button (status bar and log too). Nothing is replaced until you click it" · 한국어 "하루 1회 기동 때 드라이버 색인을 다시 읽어 설치된 드라이버에 새 버전이 있으면 [갱신] 버튼이 있는 안내를 띄웁니다(상태줄·로그에도). 누르기 전에는 바꾸지 않습니다"(`Msg::DescDriverCheckUpdates`).
 
 ### 6-9. SSH 터널 키(10-28 · 159차 · T-3 · D-388)

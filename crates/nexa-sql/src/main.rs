@@ -2308,6 +2308,7 @@ fn main() {
             app.settings.int("driver.http_timeout_secs"),
         )
     }));
+    nsql_drivers::set_auto_upgrade(app.settings.flag("driver.auto_upgrade"));
     apply_oracle_client(&app.settings);
     app.apply_net_options();
     // ★ D-350 하루 1회 드라이버 갱신 확인(`driver.check_updates` · 조용히 · 자동 교체 없음).

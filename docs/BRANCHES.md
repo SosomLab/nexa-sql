@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/184 | 2026-10-31 | 2026-10-31 → main ff(삭제) · **46c9a013** | 1 | 184차 win = T-39 키맵 카테고리 그리드 가벼운 판(설정 창 `key.*` 카드 제목 `그룹 › 라벨` + 충돌 덧말) · nexa-ui 변경 없음 |
 | feat/183-explorer-server-rest | 2026-10-30 | 2026-10-30 → main ff(삭제) · **dbf38485** | 1 | 183차 win = T-121 (b) 오프라인 메타 상한 `meta.cache_mb` · (d) 접속 창 다중 "접속됨" · (e) 탭↔접속 복원(프로젝트 파일 탭 `profile`) · 19파일 +223/−19 · nexa-ui 변경 없음 |
 | feat/182-minimap-git | 2026-10-30 | 2026-10-30 → main ff(삭제) · **67a0a776** | 1 | 182차 win = T-110 2-3 미니맵 git 변경 줄(`editor.minimap_git` · gitstat HEAD 본문) · 13파일 · nexa-ui 짝 = d2092b7(245차) |
 | feat/181-export-stream-hints-output | 2026-10-30 | 2026-10-30 → main ff(삭제) · **e4d73bcd** | 1 | 181차 win = T-8 CLI 스트리밍 내보내기(`StreamWriter` · `Runner::export_stream`) · T-76 ② settings.json 스키마 힌트 1차 · T-266 메시지 등급·Output 줄 색·Output 찾기 · 23파일 +1141/−36 · nexa-ui 짝 = 0ce13a3(244차) |

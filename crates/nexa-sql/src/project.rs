@@ -32,6 +32,9 @@ pub(crate) struct Project {
     pub search: Option<String>,
     pub bm_collapsed: Vec<u32>,
     pub profiles: Vec<String>,
+    /// ★ T-39b 프로젝트 스코프 설정(10-30 · docs/67 §8 · D-406·D-407): 헤더 `settings` 절 = (구문 묶음 `Some("sql")` | 프로젝트 전체 `None`,
+    ///   키, 원시 값 글자). 모르는 키도 **보존**(새 판 파일을 옛 판이 열어도 안 지움) · 적용은 `nsql_settings::project_allowed` 키만.
+    pub settings: Vec<(Option<String>, String, String)>,
 }
 
 /// 편집기 탭 하나의 저장 상태(docs/67 §2-4 · 사용자 09-23).

@@ -181,7 +181,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 |---|---|
 | **기본 = 최신** | 설치 시 `GET /repos/<repo>/releases`에서 `tag_prefix`가 맞는 **최신 non-prerelease** 태그를 고른다(GitHub `releases/latest`는 저장소 전체 최신이라 확장별 태그 접두로 다시 거른다). 프리릴리스는 `--pre` 옵션 시에만 |
 | **버전 지정** | `nsql driver install oracle-oci@19.25` — SxS(§4)용. `@latest` = 기본 |
-| **갱신 확인** | 앱 시작 시 하루 1회(설정 `driver.check_updates` · 기본 켬 · 오프라인이면 조용히 건너뜀) 색인과 각 확장의 최신 태그를 비교 → 상태줄/드라이버 관리자에 "새 버전 x.y.z" 배지. **자동 교체는 안 한다** — 사용자가 Update를 누른다(접속 중인 세션이 쓰는 파일을 갈아치우지 않기 위해 · §5 삭제 보호와 같은 이유) |
+| **갱신 확인** | 앱 시작 시 하루 1회(설정 `driver.check_updates` · 기본 켬 · 오프라인이면 조용히 건너뜀) 색인과 각 확장의 최신 태그를 비교 → 상태줄/드라이버 관리자에 "새 버전 x.y.z" 배지. ~~자동 교체는 안 한다~~ → ★ **10-30 밤(D-423) 변경** = 안내 = 요약 한 줄(`duckdb, mssql → 0.1.9`) + 토스트 [모두 갱신](일괄) · [닫기] · **그 드라이버로 접속할 때 자동 갱신**(`driver.auto_upgrade` 기본 on · §3-0b) · 열린 세션은 옛 판을 계속 쓴다(파일을 갈아치우지 않고 새 판을 옆에 설치 · SxS) |
 | **Update = 새 버전을 옆에 설치**(SxS) + 프로필의 `driver=` 미지정 항목은 자동으로 최신을 쓴다. 고정(`@ver`)된 프로필은 그대로 → 사용자가 옮긴다 |
 | **다운로드 검증** | ① `.sha256` 일치 ② `.sig` Ed25519 검증(본체 내장 공개키 · 실패 = 설치 거부, 우회 옵션 없음) ③ 압축 해제는 임시 폴더 → 검증 후 `drivers/<id>/<ver>/`로 **원자적 rename**(중단돼도 반쪽 설치 없음) |
 | **네트워크** | HTTPS 클라이언트는 `rustls` + `webpki-roots`(원장에 이미 ② 계층 항목 · 트리에 tiberius가 끌어온 `rustls`·`ring` 있음) — 자체 HTTP/1.1 최소 구현(리다이렉트 · Content-Length · chunked). GitHub API는 익명 60회/시간 한도 → 색인은 캐시(`drivers/index.json` · ETag) · 토큰은 옵션(사설 저장소용 `NSQL_GITHUB_TOKEN`) |
@@ -194,6 +194,14 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 - 접속하려는 방언의 드라이버가 이 빌드에도 드라이버 폴더에도 없으면(오류 -1350) **사용자의 그 접속 동작 안에서** 색인을 읽고 첫 후보 id를 받아 검증·설치한 뒤 한 번 다시 접속한다 · 실패하면 원래 오류에 "auto-install failed: …"를 붙인다(코드 유지).
 - 끄는 키 = `driver.auto_install`(기본 켬 · 끄면 종전처럼 -1350 + `nsql driver install <id>` 안내) · 저장소 = `driver.repo` · 상한 = `driver.http_timeout_secs`.
 - ★ **10-23 5179fe7 = 시도 전 점검** — `open_auto`가 먼저 `driver_status_for(dialect, ?driver=)`를 보고 Missing이면 `ensure_driver`로 설치한 뒤 연다(점검 뒤에도 -1350이면 한 번 더) · 설치 실패 = **-1351 `ERR_DRIVER_INSTALL_FAILED`** · **접속 테스트 버튼도 같은 길**(종전 = 자동 설치 없이 실패) · 진행 = `TestResult.stage` 틱 → 상태줄·접속 창 베일 · 캐시 색인에 id가 없으면 색인을 한 번 새로 받는다(d0f311d · 26 §8).
+
+### 3-0b. 접속 시 자동 갱신(10-30 밤 · 185차 · D-423 · 사용자)
+
+- **언제** = 사용자가 접속할 때(`nsql-drivers::open_auto`) · 그 접속이 확장 드라이버(Extension{id, version})를 쓰고 `driver.auto_upgrade`(Bool · 기본 **on** · DBMS ▸ 드라이버)가 켜져 있을 때만.
+- **판단** = **캐시된 색인**(기동 하루 1회 확인이 받아 둔 것 · 이 단계의 네트워크 0)이 설치판보다 높은 판을 말할 때만(`newer_in_index`) → 그때만 자산을 내려받아 설치(`install(..., Some(latest))`) → 적재 캐시에서 그 id를 잊음(`ext::forget_loaded`) → **이번 접속부터 새 판** · 이미 열린 세션은 Arc로 옛 판을 계속 씀.
+- **실패** = 진행 콜백 `upgrade-failed` 안내 뒤 **설치된 판으로 접속**(갱신 실패가 접속을 막지 않는다) · 재시도 없음(다음 접속 때 다시 판단).
+- **안내 카드** = 갱신 후보는 id별 하나(SxS로 여러 판이 있으면 가장 높은 판만 비교 · 최신 판이 이미 있으면 후보 아님) · 상태줄 `Driver updates available: duckdb, mssql → 0.1.9`(판이 다르면 `a → x, b → y`) · 토스트 본문 `[Update all] upgrades them now · each driver also upgrades itself when you connect` · 버튼 = **[모두 갱신]**(후보 전부 · 일괄) · **[닫기]**(고정 카드 공통 보조 버튼 · 카드만 사라짐) · 관리자 행의 [Update]는 그 행 하나.
+- 네트워크 원장 = [26 §8](26-performance-architecture.md) "접속 시 드라이버 자동 갱신" 행 · 부하원 = [39 §3](39-resource-governance.md).
 
 ### 3-1. 구현 메모(10-22 · T-29 1차 · cf22683)
 

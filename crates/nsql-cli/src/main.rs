@@ -468,6 +468,7 @@ pub(crate) fn apply_driver_switches() {
                 s.int("driver.http_timeout_secs"),
             )
         }));
+        nsql_drivers::set_auto_upgrade(s.flag("driver.auto_upgrade"));
     }
 }
 

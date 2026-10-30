@@ -454,27 +454,27 @@ impl App {
                         Ok((idx, cached)) => {
                             let n = idx.drivers.len().to_string();
                             if std::mem::take(&mut self.driver_task.badge_check) {
-                                // 기동 갱신 확인: 설치본보다 새 버전이 있으면 상태줄 + 로그(자동 교체 없음 · 22 §3).
+                                // 기동 갱신 확인: 설치본보다 새 버전이 있으면 상태줄 + 로그 + 카드(22 §3). 교체는 [모두 갱신] 또는
+                                // 접속 때 그 드라이버만 자동(`driver.auto_upgrade` · 사용자 10-30).
                                 let installed = self
                                     .driver_root()
                                     .map(|r| ext::list_extensions_in(&r))
                                     .unwrap_or_default();
                                 let ups = install::updates(&idx, &installed);
                                 if !ups.is_empty() {
-                                    let list: Vec<String> = ups
-                                        .iter()
-                                        .map(|u| format!("{} {} → {}", u.id, u.installed, u.latest))
-                                        .collect();
-                                    let text = tf(Msg::StDriverUpdates, &[&list.join(", ")]);
+                                    // ★ 한 줄 요약(사용자 10-30 "간단히 최신 버전만"): `duckdb, mssql → 0.1.9`(id별 하나 · 설치 판 생략).
+                                    let summary = install::update_summary(&ups);
+                                    let text = tf(Msg::StDriverUpdates, &[&summary]);
                                     self.sess.status = text.clone();
                                     self.log_win
                                         .push(crate::LogEntry::new(crate::LogKind::Info, text));
-                                    // ★ 알림 + [갱신] 한 번 클릭(사용자 10-27): 사라지지 않는 카드 · 범위 = 설치된 드라이버의 새 버전만.
+                                    // ★ 알림 + [모두 갱신] 한 번 클릭(사용자 10-27): 사라지지 않는 카드([닫기]는 고정 카드 공통 · 10-30) ·
+                                    //   범위 = 설치된 드라이버의 새 버전만.
                                     self.toasts.push_button_sticky(
                                         crate::toast::ToastKind::Info,
                                         t(Msg::ToastDriverUpdatesTitle),
-                                        tf(Msg::ToastDriverUpdatesBody, &[&list.join(", ")]),
-                                        t(Msg::BtnDrvUpdate),
+                                        tf(Msg::ToastDriverUpdatesBody, &[&summary]),
+                                        t(Msg::BtnDrvUpdateAll),
                                         UPDATE_INSTALLED_ACTION,
                                     );
                                 }

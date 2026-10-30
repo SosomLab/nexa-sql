@@ -570,6 +570,20 @@ pub fn auto_install_source() -> Option<ext::install::Source> {
         .clone()
 }
 
+/// ★ 접속 시 자동 갱신(설정 `driver.auto_upgrade` · 사용자 10-30 "연결을 시도하면 해당 드라이버는 자동으로 업그레이드"): 설치된 확장이
+/// **캐시된 색인**의 `latest`보다 낮으면 접속 전에 새 판을 설치하고 그 판으로 연다. 색인 캐시가 없으면(갱신 확인을 끈 경우) 아무것도 안 한다 ·
+/// 설치 실패는 접속을 막지 않는다(진행 콜백 `upgrade-failed` 뒤 설치된 판으로 계속). 설치 원천은 [`set_auto_install`]의 것을 같이 쓴다.
+static AUTO_UPGRADE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_auto_upgrade(on: bool) {
+    AUTO_UPGRADE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn auto_upgrade() -> bool {
+    AUTO_UPGRADE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 자동 설치 진행 콜백: `(드라이버 id, 단계 = index/download/verify/install/installed, 받은 바이트, 전체)`.
 pub type DriverProgress<'a> = &'a mut dyn FnMut(&str, &str, u64, Option<u64>);
 
@@ -583,11 +597,14 @@ pub fn open_auto(
 ) -> Result<Box<dyn Session>, DbError> {
     let dialect = spec.dialect.unwrap_or(default_dialect);
     let want = spec.driver.as_deref();
-    if matches!(
-        driver_status_for(dialect, want),
-        DriverStatus::Missing { .. }
-    ) {
-        ensure_driver(dialect, want, driver_missing(dialect, want), progress)?;
+    match driver_status_for(dialect, want) {
+        DriverStatus::Missing { .. } => {
+            ensure_driver(dialect, want, driver_missing(dialect, want), progress)?;
+        }
+        DriverStatus::Extension { id, version } if auto_upgrade() => {
+            upgrade_driver(&id, &version, progress);
+        }
+        DriverStatus::Builtin | DriverStatus::Extension { .. } => {}
     }
     let first = open(spec, default_dialect);
     let Err(e) = first else { return first };
@@ -632,6 +649,47 @@ fn ensure_driver(
     })?;
     progress(id, "installed", rep.bytes, Some(rep.bytes));
     Ok(())
+}
+
+/// 캐시된 색인이 새 판을 말하면 설치하고 올려 둔 판을 잊는다(순수 판정 = [`newer_in_index`]) — 실패는 콜백으로만 알리고 돌아온다.
+fn upgrade_driver(id: &str, installed: &str, progress: DriverProgress<'_>) {
+    let Some(src) = auto_install_source() else {
+        return;
+    };
+    let Some(root) = ext::driver_dir() else {
+        return;
+    };
+    let Some(idx) = ext::install::cached_index(&root) else {
+        return;
+    };
+    let Some(latest) = newer_in_index(&idx, id, installed) else {
+        return;
+    };
+    progress(id, "upgrade", 0, None);
+    let r = ext::install::install(
+        &src,
+        &root,
+        id,
+        Some(&latest),
+        false,
+        false,
+        ext::keys::DRIVER_KEYS,
+        &mut |stage, n, total| progress(id, stage, n, total),
+    );
+    match r {
+        Ok(rep) => {
+            ext::forget_loaded(id);
+            progress(id, "installed", rep.bytes, Some(rep.bytes));
+        }
+        Err(_) => progress(id, "upgrade-failed", 0, None),
+    }
+}
+
+/// 색인의 `latest`가 `installed`보다 높으면 그 판(순수).
+#[must_use]
+pub fn newer_in_index(idx: &ext::install::Index, id: &str, installed: &str) -> Option<String> {
+    let latest = idx.find(id)?.latest.as_deref().filter(|l| !l.is_empty())?;
+    (ext::version_cmp(latest, installed) == std::cmp::Ordering::Greater).then(|| latest.to_string())
 }
 
 /// 확장 후보를 차례로 열어 본다 · 전부 없으면 [`driver_missing`].
@@ -1041,6 +1099,20 @@ mod tests {
         let s = open_auto(&spec, Dialect::Sqlite, &mut |_, _, _, _| calls += 1).expect("open");
         assert_eq!(s.dialect(), Dialect::Sqlite);
         assert_eq!(calls, 0, "내장이면 설치 진행 콜백이 없다");
+        let idx =
+            ext::install::parse_index(r#"{"drivers":[{"id":"pg","latest":"0.2.0"},{"id":"x"}]}"#)
+                .expect("index");
+        assert_eq!(
+            newer_in_index(&idx, "pg", "0.1.9").as_deref(),
+            Some("0.2.0")
+        );
+        assert_eq!(newer_in_index(&idx, "pg", "0.2.0"), None);
+        assert_eq!(
+            newer_in_index(&idx, "x", "0.1.0"),
+            None,
+            "latest 없음 = 판단 안 함"
+        );
+        assert_eq!(newer_in_index(&idx, "nope", "0.1.0"), None);
         let e = driver_missing(Dialect::Postgres, None);
         assert_eq!(e.code, Some(ERR_DRIVER_MISSING));
         assert!(

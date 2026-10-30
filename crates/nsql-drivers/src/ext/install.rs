@@ -925,24 +925,49 @@ pub struct Update {
     pub latest: String,
 }
 
-/// 설치본(id별 최신) vs 색인 `latest`(순수).
+/// 설치본(**id별 최신 하나** · SxS로 여러 판이 있어도 가장 높은 판만 비교 — 사용자 10-30 "안내가 너무 복잡") vs 색인 `latest`(순수).
 #[must_use]
 pub fn updates(index: &Index, installed: &[ExtInfo]) -> Vec<Update> {
-    let mut out = Vec::new();
+    let mut out: Vec<Update> = Vec::new();
     for e in installed {
         let Some(d) = index.find(&e.id) else { continue };
         let Some(latest) = d.latest.as_deref().filter(|l| !l.is_empty()) else {
             continue;
         };
-        if version_cmp(latest, &e.version) == std::cmp::Ordering::Greater {
-            out.push(Update {
+        if version_cmp(latest, &e.version) != std::cmp::Ordering::Greater {
+            // 이미 최신 판이 설치돼 있다 — 같은 id의 낮은 판으로 만든 후보도 걷는다.
+            out.retain(|u| u.id != e.id);
+            continue;
+        }
+        match out.iter_mut().find(|u| u.id == e.id) {
+            Some(u) if version_cmp(&e.version, &u.installed) == std::cmp::Ordering::Greater => {
+                u.installed = e.version.clone();
+            }
+            Some(_) => {}
+            None => out.push(Update {
                 id: e.id.clone(),
                 installed: e.version.clone(),
                 latest: latest.to_string(),
-            });
+            }),
         }
     }
     out
+}
+
+/// 갱신 안내 한 줄(순수 · 사용자 10-30 "간단히 최신 버전만"): 최신 판이 전부 같으면 `a, b, c → 0.1.9` · 다르면 `a → 0.1.9, b → 0.2.0`.
+#[must_use]
+pub fn update_summary(ups: &[Update]) -> String {
+    let Some(first) = ups.first() else {
+        return String::new();
+    };
+    if ups.iter().all(|u| u.latest == first.latest) {
+        let ids: Vec<&str> = ups.iter().map(|u| u.id.as_str()).collect();
+        return format!("{} → {}", ids.join(", "), first.latest);
+    }
+    ups.iter()
+        .map(|u| format!("{} → {}", u.id, u.latest))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -1051,5 +1076,44 @@ mod tests {
         assert!(verify_sig_text("ed25519 k 00", data, &[])
             .expect_err("no keys")
             .contains("no trusted"));
+    }
+
+    fn ext(id: &str, ver: &str) -> ExtInfo {
+        ExtInfo {
+            id: id.into(),
+            version: ver.into(),
+            path: std::path::PathBuf::new(),
+            dialect: None,
+            abi: None,
+            manifest: true,
+        }
+    }
+
+    #[test]
+    fn updates_dedupe_per_id_and_summary() {
+        let idx = parse_index(
+            r#"{"drivers":[{"id":"duckdb","latest":"0.1.9"},{"id":"mssql","latest":"0.1.9"},{"id":"pg","latest":"0.2.0"},{"id":"mysql","latest":"0.1.9"}]}"#,
+        )
+        .expect("index");
+        // duckdb 세 판 설치 → 후보 하나(설치 = 가장 높은 0.1.8) · mysql은 최신이 이미 있어 후보 아님(낮은 판 0.1.2가 있어도).
+        let inst = [
+            ext("duckdb", "0.1.2"),
+            ext("duckdb", "0.1.8"),
+            ext("duckdb", "0.1.7"),
+            ext("mssql", "0.1.8"),
+            ext("mysql", "0.1.2"),
+            ext("mysql", "0.1.9"),
+            ext("pg", "0.1.9"),
+        ];
+        let ups = updates(&idx, &inst);
+        let ids: Vec<&str> = ups.iter().map(|u| u.id.as_str()).collect();
+        assert_eq!(ids, ["duckdb", "mssql", "pg"]);
+        assert_eq!(ups[0].installed, "0.1.8");
+        assert_eq!(
+            update_summary(&ups),
+            "duckdb → 0.1.9, mssql → 0.1.9, pg → 0.2.0"
+        );
+        assert_eq!(update_summary(&ups[..2]), "duckdb, mssql → 0.1.9");
+        assert_eq!(update_summary(&[]), "");
     }
 }

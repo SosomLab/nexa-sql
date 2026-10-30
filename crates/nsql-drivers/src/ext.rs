@@ -196,6 +196,14 @@ pub fn is_loaded(id: &str) -> bool {
         .is_some_and(|m| m.contains_key(id))
 }
 
+/// ★ 올려 둔 판을 잊는다(접속 시 자동 갱신 뒤 · 사용자 10-30): 다음 [`open_ext`]가 새 판을 올린다. 이미 열린 세션은 `Arc`로 옛 판을
+/// 붙들고 있으므로 안전(라이브러리는 내리지 않는다).
+pub fn forget_loaded(id: &str) {
+    if let Some(m) = LOADED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        m.remove(id);
+    }
+}
+
 /// 휴지통 폴더 이름(드라이버 폴더 안 · 다음 시작 때 비운다).
 pub const TRASH_DIR: &str = ".trash";
 

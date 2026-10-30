@@ -129,6 +129,7 @@
 | 드라이버 확장 다운로드(T-29 1차 · 10-22) | 사용자 명령(`nsql driver search/install/update`)만 · 색인 GET 1(nexa-sql `drivers/index.json` raw · ETag · 1시간 캐시 · D-349) · 자산 GET 3(같은 저장소 Releases `driver-*` pre-release) · API GET 1(필요할 때만) · 동시 1 · 재시도 없음 · 본문 1 GiB | `driver.http_timeout_secs`(30 · HIDDEN) · (자동 갱신 확인 `driver.check_updates` = 2차 · 끄는 키도 그때) | — | — | — | `nsql-net` · `ext::install` · 26 §8 |
 | 접속 시 드라이버 자동 설치(D-350 C단계 · 10-23) | 사용자 접속 동작 안 1회(-1350일 때만) · 색인 1 + 자산 3 GET · 동시 1 · 재시도 = 설치 뒤 접속 1회 | `driver.auto_install`(기본 켬) · `driver.http_timeout_secs` | 켬 | 켬 | 켬 | `open_auto` · 26 §8 |
 | 드라이버 갱신 확인(10-23 · fbe5001) | 하루 1회 · 색인 캐시 24시간 초과 + 확장을 쓰는 빌드/설치일 때만 색인 GET 1 · 자동 교체 없음(상태줄 안내만) | `driver.check_updates`(기본 켬) | 켬 | 켬 | 끔 | `app` 기동 뒤 유휴 |
+| 접속 시 드라이버 자동 갱신(10-30 밤 · 185차 · D-423) | 사용자 접속 동작 안 1회 · 캐시 색인이 새 판을 말할 때만 자산 GET + 설치(디스크 = SxS 새 판 폴더 1) · 동시 1 · 재시도 없음 · 끄는 키 `driver.auto_upgrade` | — | — | — | — | — |
 | 삭제 대기 드라이버 정리(10-23 · a888ae2) | GUI·CLI 기동 직후 1회 · 표식 파일 `drivers/.delete-pending` stat 1(없으면 끝) · 있으면 적힌 폴더만 삭제 | (끄는 키 없음 = 비용 stat 1 · 사용자 삭제 동작의 뒷정리) | 켬 | 켬 | 켬 | `ext::sweep_pending` |
 | 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |

@@ -34,6 +34,8 @@ struct Toast {
     ///   누르면 그 명령 1회 · 카드 닫힘. 모양 = `TimeoutButton` 무장 상태(위험색 채움 · 밝은 글자).
     button: Option<(String, String)>,
     btn_rect: Rect,
+    /// ★ 고정 카드의 [닫기](사용자 10-30 "닫기 위해서 버튼을 눌러야 하니 닫기 버튼도") — 명령 없이 카드만 지운다 · 버튼 왼쪽 · 테두리만.
+    close_rect: Rect,
     /// ★ 버튼의 2단 확인 마감(시작 시각 · 총 길이 · 10-23 2단 통일) — 있으면 버튼 위에 왼쪽부터 차오르는 흰 게이지(`TimeoutButton` 무장 모양).
     btn_deadline: Option<(Instant, Duration)>,
     /// ★ 고정 카드(10-15 · 운영 보류 "커밋 대기"): 수명이 없고 버튼을 누르거나 호스트가 `dismiss_action`으로 지울 때까지 남는다.
@@ -121,6 +123,7 @@ impl Toasts {
             action: None,
             button: None,
             btn_rect: Rect::default(),
+            close_rect: Rect::default(),
             btn_deadline: None,
             sticky: false,
         });
@@ -301,12 +304,15 @@ impl Toasts {
         self.items.iter().position(|t| t.rect.contains(p))
     }
 
-    /// 카드 `i`를 `p`에서 놓았다 — 닫고, 버튼 위면 버튼 명령 · 버튼 없는 카드의 본문이면 카드 명령(`take_action`).
+    /// 카드 `i`를 `p`에서 놓았다 — 닫고, 버튼 위면 버튼 명령 · 버튼 없는 카드의 본문이면 카드 명령(`take_action`) · [닫기] 위면 닫기만.
     pub(crate) fn pick(&mut self, i: usize, p: Point) {
         if i >= self.items.len() {
             return;
         }
         let t = self.items.remove(i);
+        if t.close_rect.contains(p) {
+            return;
+        }
         if let Some((_, a)) = t.button.as_ref().filter(|_| t.btn_rect.contains(p)) {
             self.taken = Some(a.clone());
         } else if t.action.is_some() && t.button.is_none() {
@@ -421,8 +427,20 @@ impl Toasts {
                 }
                 let cy = dc.text_center_y(br.y, br.h);
                 dc.text(br.x + px(8.0), cy, br, label, th.panel_bg);
+                // ★ 고정 카드 = [닫기] 보조 버튼(명령 버튼 왼쪽 · 테두리 + 본문색 글자 · 누르면 카드만 사라짐).
+                if t.sticky {
+                    let cl = nsql_i18n::t(Msg::BtnClose);
+                    let cw = dc.text_width(cl) + px(16.0);
+                    let cr = Rect::new(br.x - px(6.0) - cw, br.y, cw, br.h);
+                    t.close_rect = cr;
+                    dc.stroke_round_rect_alpha(cr, px(4.0), th.border, 1.0, a);
+                    dc.text(cr.x + px(8.0), cy, cr, cl, th.text);
+                } else {
+                    t.close_rect = Rect::default();
+                }
             } else {
                 t.btn_rect = Rect::default();
+                t.close_rect = Rect::default();
             }
             y = r.y - gap;
         }
@@ -657,5 +675,24 @@ mod tests {
         ts.pick(i, Point { x: 5, y: 5 });
         assert!(!ts.animating());
         assert!(ts.hit(Point { x: 5, y: 5 }).is_none());
+    }
+
+    #[test]
+    fn sticky_close_button_dismisses_without_action() {
+        let mut ts = Toasts::new();
+        ts.configure(1000, 85);
+        ts.push_button_sticky(ToastKind::Info, "t", "b", "Go", "x.go");
+        ts.items[0].rect = Rect::new(0, 0, 100, 40);
+        ts.items[0].btn_rect = Rect::new(60, 20, 30, 15);
+        ts.items[0].close_rect = Rect::new(20, 20, 30, 15);
+        // [닫기] 위 → 카드만 사라지고 명령은 없다.
+        ts.pick(0, Point { x: 25, y: 25 });
+        assert!(ts.items.is_empty());
+        assert_eq!(ts.take_action(), None);
+        // 명령 버튼 위 → 명령.
+        ts.push_button_sticky(ToastKind::Info, "t", "b", "Go", "x.go");
+        ts.items[0].btn_rect = Rect::new(60, 20, 30, 15);
+        ts.pick(0, Point { x: 65, y: 25 });
+        assert_eq!(ts.take_action().as_deref(), Some("x.go"));
     }
 }
