@@ -244,6 +244,9 @@ impl App {
         // ★ T-110 2-4(10-30): 저장 뒤 수정 줄 표식(기준선 = 저장본 · 파일 탭만).
         self.editors
             .set_minimap_diff(self.settings.flag("editor.minimap_dirty"));
+        // ★ T-110 2-3(10-30): git HEAD 대비 변경 줄(둘째 기준선 = 상태줄 git 부품이 받는 HEAD 본문 · 끄면 기준선 비움 · 다음 git 갱신 때 다시 채움).
+        self.editors
+            .set_minimap_git(self.settings.flag("editor.minimap_git"));
         self.editors
             .set_split_max(self.settings.int("editor.split_max"));
         let (color, alpha) = color_alpha_setting(&self.settings, "editor.minimap_box_color");
@@ -909,6 +912,7 @@ impl App {
             | "editor.minimap_width"
             | "editor.minimap_min_cols"
             | "editor.minimap_dirty"
+            | "editor.minimap_git"
             | "editor.minimap_box_color"
             | "editor.minimap_border"
             | "editor.minimap_viewport"

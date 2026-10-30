@@ -14,10 +14,14 @@ pub(crate) struct GitInfo {
     pub branch: String,
     /// `git status --porcelain` 줄 수(수정·추가·삭제·미추적).
     pub changed: usize,
+    /// ★ T-110 2-3(10-30): 감시 파일의 **HEAD 본문**(`git show HEAD:./<파일>` · 추적되지 않은 파일 = None) — 미니맵 git 변경 줄의 둘째 기준선.
+    pub head: Option<String>,
 }
 
 pub(crate) struct GitWatch {
     dir: Option<PathBuf>,
+    /// ★ T-110 2-3: 감시 파일(활성 탭 · `dir` 안의 파일 이름만 쓴다) — 바뀌면 다시 잰다.
+    file: Option<PathBuf>,
     info: Option<GitInfo>,
     rx: Option<mpsc::Receiver<Option<GitInfo>>>,
     last: Option<Instant>,
@@ -28,6 +32,7 @@ impl GitWatch {
     pub(crate) fn new() -> Self {
         GitWatch {
             dir: None,
+            file: None,
             info: None,
             rx: None,
             last: None,
@@ -40,6 +45,15 @@ impl GitWatch {
         if self.dir != dir {
             self.dir = dir;
             self.info = None;
+            self.last = None;
+            self.rx = None;
+        }
+    }
+
+    /// ★ T-110 2-3: 감시 파일(활성 탭의 파일 · `dir` 안) — 바뀌면 HEAD 본문을 다시 받는다(브랜치·변경 수는 그대로 두고 즉시 재조회).
+    pub(crate) fn set_file(&mut self, file: Option<PathBuf>) {
+        if self.file != file {
+            self.file = file;
             self.last = None;
             self.rx = None;
         }
@@ -64,11 +78,12 @@ impl GitWatch {
         }
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
+        let file = self.file.clone();
         self.last = Some(Instant::now());
         let _ = std::thread::Builder::new()
             .name("nsql-git".into())
             .spawn(move || {
-                let _ = tx.send(probe(&dir));
+                let _ = tx.send(probe(&dir, file.as_deref()));
             });
     }
 
@@ -116,8 +131,8 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// 폴더가 git 작업 트리면 (브랜치 · 변경 수).
-pub(crate) fn probe(dir: &Path) -> Option<GitInfo> {
+/// 폴더가 git 작업 트리면 (브랜치 · 변경 수 · ★ 감시 파일의 HEAD 본문(T-110 2-3 · `git show HEAD:./<이름>` · 미추적/없음 = None)).
+pub(crate) fn probe(dir: &Path, file: Option<&Path>) -> Option<GitInfo> {
     let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     let branch = branch.trim().to_string();
     if branch.is_empty() {
@@ -125,5 +140,14 @@ pub(crate) fn probe(dir: &Path) -> Option<GitInfo> {
     }
     let status = git(dir, &["status", "--porcelain"]).unwrap_or_default();
     let changed = status.lines().filter(|l| !l.trim().is_empty()).count();
-    Some(GitInfo { branch, changed })
+    // 파일 이름만(`-C dir` 기준 상대 경로 `./이름`) — 경로에 `:`·공백이 있어도 인자 하나라 안전.
+    let head = file
+        .and_then(|f| f.file_name())
+        .and_then(|n| n.to_str())
+        .and_then(|n| git(dir, &["show", &format!("HEAD:./{n}")]));
+    Some(GitInfo {
+        branch,
+        changed,
+        head,
+    })
 }

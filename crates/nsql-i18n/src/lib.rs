@@ -3176,6 +3176,9 @@ pub enum Msg {
     /// ★ T-110 2-4(10-30): 저장 뒤 수정 줄 미니맵 표식.
     LblEditorMinimapDirty,
     DescEditorMinimapDirty,
+    /// ★ T-110 2-3(10-30): git 변경 줄 미니맵 표식.
+    LblEditorMinimapGit,
+    DescEditorMinimapGit,
     DescEditorMinimapWidth,
     // ── Sublime 줄·선택 편집 명령(T-98) · Goto Anything(T-96) · 줄끝 메뉴(T-89) · 09-16
     MnDuplicateLine,
@@ -8300,6 +8303,11 @@ impl Msg {
             Msg::LblEditorMinimapWidth => ["Minimap width (px)", "미니맵 폭(px)"],
             Msg::DescEditorMinimapWidth => ["Logical pixels · 20–400 · default 160", "논리 px · 20~400 · 기본 160"],
             Msg::LblEditorMinimapDirty => ["Minimap: changed lines since save", "미니맵: 저장 뒤 바뀐 줄"],
+            Msg::LblEditorMinimapGit => ["Minimap: changed lines vs git HEAD", "미니맵: git HEAD 대비 바뀐 줄"],
+            Msg::DescEditorMinimapGit => [
+                "Mark lines changed against the committed file (git HEAD) on the minimap's inner left column (added = green · modified = blue · deleted above = red line) · file tabs in a git tree · needs the status bar git segment's refresh",
+                "커밋된 파일(git HEAD) 대비 바뀐 줄을 미니맵 왼쪽 안쪽 열에 표시(추가 = 초록 · 수정 = 파랑 · 위에서 삭제 = 빨간 선) · git 트리 안 파일 탭만 · 상태줄 git 부품의 갱신 주기를 따른다",
+            ],
             Msg::DescEditorMinimapDirty => [
                 "Mark lines changed since the last save on the minimap's left edge (added = green · modified = yellow · deleted above = red line) · file tabs only",
                 "마지막 저장 뒤 바뀐 줄을 미니맵 왼쪽 가장자리에 표시(추가 = 초록 · 수정 = 노랑 · 위에서 삭제 = 빨간 선) · 파일 탭만",
@@ -11948,6 +11956,8 @@ impl Msg {
         Msg::DescEditorMinimapMinCols,
         Msg::LblEditorMinimapDirty,
         Msg::DescEditorMinimapDirty,
+        Msg::LblEditorMinimapGit,
+        Msg::DescEditorMinimapGit,
         Msg::DescEditorMinimapWidth,
         Msg::MnDuplicateLine,
         Msg::MnDeleteLine,

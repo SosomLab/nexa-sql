@@ -181,6 +181,8 @@ pub(crate) struct Editors {
     minimap_min_cols: usize,
     /// ★ T-110 2-4(10-30): 저장 뒤 수정 줄을 미니맵에(`editor.minimap_dirty`).
     minimap_diff: bool,
+    /// ★ T-110 2-3(10-30): git 변경 줄을 미니맵에(`editor.minimap_git` · HEAD 본문 = 둘째 기준선).
+    minimap_git: bool,
     /// ★ 줄 간격(설정 `editor.line_height_mode`/`editor.line_height` + 글꼴 px · 전 탭 + 새 탭 · 134차 · docs/118).
     line_spacing: (nexa_ctl::LineSpacing, f32),
     minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
@@ -353,6 +355,7 @@ impl Editors {
             minimap: (false, 160),
             minimap_min_cols: 0,
             minimap_diff: false,
+            minimap_git: false,
             line_spacing: (nexa_ctl::LineSpacing::Auto, 0.0),
             minimap_box: (None, None, false),
             minimap_opts: (false, false, true),
@@ -441,6 +444,7 @@ impl Editors {
         tb.set_minimap_width(self.minimap.1);
         tb.set_minimap_min_cols(self.minimap_min_cols);
         tb.set_minimap_diff(self.minimap_diff);
+        tb.set_minimap_git(self.minimap_git);
         tb.set_line_spacing(self.line_spacing.0, self.line_spacing.1);
         tb.set_minimap_box(self.minimap_box.0, self.minimap_box.1, self.minimap_box.2);
         tb.set_minimap_behavior(self.minimap_opts.0, self.minimap_opts.1);
@@ -693,6 +697,26 @@ impl Editors {
         self.minimap_diff = on;
         for b in &mut self.bufs {
             b.set_minimap_diff(on);
+        }
+    }
+
+    /// ★ T-110 2-3(10-30): git 변경 줄 미니맵 표식 켬/끔을 모든 탭에(끄면 둘째 기준선도 비운다 · 새 탭은 `make_box`).
+    pub(crate) fn set_minimap_git(&mut self, on: bool) {
+        self.minimap_git = on;
+        for b in &mut self.bufs {
+            b.set_minimap_git(on);
+            if !on {
+                b.set_git_baseline(None);
+            }
+        }
+    }
+
+    /// ★ T-110 2-3(10-30): 활성 탭의 HEAD 본문(git 감시 스레드가 받은 것 · None = 미추적/없음)을 둘째 기준선으로 — 파일 탭만.
+    pub(crate) fn set_git_head_active(&mut self, head: Option<&str>) {
+        let i = self.active;
+        let is_file = self.paths.get(i).is_some_and(|p| p.is_some());
+        if let Some(b) = self.bufs.get_mut(i) {
+            b.set_git_baseline(if is_file { head } else { None });
         }
     }
 

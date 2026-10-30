@@ -281,7 +281,16 @@ impl ApplicationHandler<Wake> for App {
         }
         // Goto Anything 프로젝트 파일 열거 수거(10-07).
         redraw |= self.goto_walk_tick();
-        redraw |= self.git.poll();
+        if self.git.poll() {
+            redraw = true;
+            // ★ T-110 2-3(10-30): 새 git 정보 = 활성 탭의 HEAD 본문을 둘째 기준선으로(켜져 있을 때 · 미추적 파일 = 없음).
+            let head = self
+                .settings
+                .flag("editor.minimap_git")
+                .then(|| self.git.info().and_then(|i| i.head.clone()))
+                .flatten();
+            self.editors.set_git_head_active(head.as_deref());
+        }
         // 잠든 결과 탭의 텍스트 변환도 이어서 거둔다(다른 탭에서 완성 · 09-16) — 그리지는 않는다.
         for g in self.sleeping_grids_mut() {
             let _ = g.tick(now_ms);

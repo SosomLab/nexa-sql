@@ -278,11 +278,18 @@ impl App {
                 }
                 // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
                 if self.settings.flag("statusbar.git") {
-                    let dir = self
-                        .editors
-                        .active_path()
+                    let path = self.editors.active_path();
+                    let dir = path
+                        .as_ref()
                         .and_then(|p| p.parent().map(Path::to_path_buf));
                     self.git.set_dir(dir);
+                    // ★ T-110 2-3(10-30): 감시 파일 = 활성 탭(HEAD 본문 → 미니맵 git 변경 줄 · 켜져 있을 때만 받는다).
+                    self.git
+                        .set_file(if self.settings.flag("editor.minimap_git") {
+                            path
+                        } else {
+                            None
+                        });
                     self.git.refresh(false);
                     if let Some(info) = self.git.info() {
                         segs.push((

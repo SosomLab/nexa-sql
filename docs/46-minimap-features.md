@@ -41,7 +41,7 @@ VS Code 대조(사용자 평이 좋은 것): `showSlider`(always/mouseover) · `
 |---|---|---|---|
 | 2-1 ✅ 10-30 | **토글 메뉴·단축키**(180차 · 명령 `view.minimap` · 기본 단축키 없음 = 단축키 창에서 지정 · 팔레트/보기 토글 행 켜짐/꺼짐 · 설정 `editor.minimap` 토글+저장+`apply_minimap` 즉시) | View ▸ 미니맵(체크) + 키맵 `view.minimap` · 값은 설정에 저장(창별 아님 — 설정 하나로 단순하게) | `view.minimap` |
 | 2-2 | **현재 문장 범위** (SQL 특화) | 캐럿이 든 문장(`;` 블록 = 실행 대상)의 행 범위를 아주 옅은 accent로 — "지금 실행하면 어디까지인가"가 지도에 보임 | `editor.minimap_statement`(on) |
-| 2-3 | **git 변경 줄 띠** | 저장된 파일과 HEAD 차이(추가 초록 · 수정 파랑 · 삭제 빨강 점) — 상태줄 git 부품이 이미 있으므로 diff 행 계산만 추가 · 파일 탭에서만 | `editor.minimap_git`(on) |
+| 2-3 ✅ 10-30 | **git 변경 줄 띠**(181차 8차 · nexa-ctl `TextBox::set_git_baseline(Option<&str>)` = 저장 기준선과 **독립**인 둘째 기준선(같은 줄 해시 캐시 재사용) + `git_marks()` + `set_minimap_git(bool)` · 기준 = `git show HEAD:./<파일>`(미추적 = 없음) · **열 배치** = 미니맵 왼쪽 가장자리 **바깥 열 = 저장 뒤 수정 줄(2-4 · `editor.minimap_dirty`)** · **안쪽 열(그 오른쪽) = HEAD 대비 git 줄** · 추가 = ok 초록 · 수정 = accent 파랑 · 위에서 삭제 = danger 가는 선 · 오른쪽 가장자리 = 오류·북마크 · 갱신 = 상태줄 git 부품 주기(`statusbar.git_secs` 15초 · 저장 직후 즉시) · **`statusbar.git`을 끄면 git 줄도 꺼짐** · 거터는 저장 diff만) | 저장된 파일과 HEAD 차이(추가 초록 · 수정 파랑 · 삭제 빨강 점) — 상태줄 git 부품이 이미 있으므로 diff 행 계산만 추가 · 파일 탭에서만 | `editor.minimap_git`(on) |
 | 2-4 ✅ 10-30 | **저장 뒤 수정 줄**(5차 · nexa-ctl `TextBox::set_minimap_diff(bool)` = 기준선(`set_baseline` = 저장본) 대비 `diff_marks`를 **미니맵 왼쪽 가장자리**에: 추가 = ok · 수정 = warn 2px · 위에서 삭제 = danger 가는 선 · 오른쪽 가장자리의 오류·북마크와 안 겹침 · 정렬 + 이진 탐색 · 거터 표시는 종전 `editor.diff_marks`) | 마지막 저장 이후 바뀐 행(옅은 노랑) — 편집기 undo 스택으로 행 추적 | `editor.minimap_dirty`(off) |
 | 2-5 ✅ 10-30 | **좁은 창 자동 숨김**(180차 · nexa-ctl `TextBox::set_minimap_min_cols(n)` = 그릴 때 본문 폭/글자 폭 < n이면 그 프레임 띠 없음 · 0 = 늘 표시 · 변경 즉시 · 전 탭 + 새 탭) | 편집기 폭 < N열이면 숨김(설정 값은 유지) | `editor.minimap_min_cols`(60) |
 

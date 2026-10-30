@@ -3527,6 +3527,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ T-110 2-3(10-30 · docs/46): git HEAD 대비 바뀐 줄을 미니맵 왼쪽 안쪽 열에(상태줄 git 부품이 HEAD 본문을 받는다 · 기본 켬 · 파일 탭만).
+    Entry {
+        key: "editor.minimap_git",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapGit,
+        desc: Msg::DescEditorMinimapGit,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "editor.minimap_box_color",
         cat: Msg::CatEditor,
