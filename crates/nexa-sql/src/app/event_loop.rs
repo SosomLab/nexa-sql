@@ -1767,9 +1767,12 @@ impl App {
                             if let Some(spec) = o.server.clone() {
                                 self.bind_tab_to_server(tab, &spec);
                             }
+                            self.editors
+                                .set_doc_object(tab, super::bookmarks::object_doc_key(&o));
                             self.object_tabs.insert(tab, o);
                             self.sync_sess();
                             self.sync_sess_ui();
+                            self.bm_after_source_open();
                         }
                     }
                     self.sync_modal();

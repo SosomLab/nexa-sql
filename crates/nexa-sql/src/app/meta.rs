@@ -408,9 +408,13 @@ impl App {
                         if let Some(spec) = o.server.clone() {
                             self.bind_tab_to_server(tab, &spec);
                         }
+                        // ★ T-167 B5: 북마크 문서 열쇠(어느 서버의 어느 객체) + 대기 중인 북마크 이동.
+                        self.editors
+                            .set_doc_object(tab, super::bookmarks::object_doc_key(&o));
                         self.object_tabs.insert(tab, o);
                         self.sync_sess();
                         self.sync_sess_ui();
+                        self.bm_after_source_open();
                     } else if let Some(spec) = server {
                         // SELECT 템플릿 탭도 그 표의 서버 세션에(활성 세션이 다른 서버 — 예: Oracle 탭에서 SQL Server 표 행 조회 · 사용자 10-08 캡처).
                         let tab = self.editors.active_id();

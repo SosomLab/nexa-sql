@@ -119,6 +119,9 @@ pub(crate) struct Editors {
     /// **뷰 탭**(본문이 글 편집기가 아니라 호스트가 그리는 전용 뷰 — 확장 상세 등): 탭 id → 뷰 열쇠(예 `ext:<id>`).
     /// 탭 줄·전환·닫기는 보통 탭과 같고, 본문 그리기·입력만 호스트의 뷰가 맡는다.
     view_tabs: std::collections::HashMap<u64, String>,
+    /// ★ T-167 B5(10-30 · 69 §4-2): 객체 소스 탭의 문서 열쇠(탭 id → `DocKey::Object`) — 북마크가 "어느 서버의 어느 객체"에 붙는지 ·
+    ///   호스트가 소스 탭을 만들 때 넣고 탭이 닫히면 걷힌다(`reap_views`).
+    doc_objects: std::collections::HashMap<u64, nsql_bookmarks::DocKey>,
     /// ★ 사용자가 이름을 바꾼 탭(id) — 저장해도 파일 이름으로 되돌리지 않는다 · 프로젝트/폴더 모드는 이 이름을 보존(사용자 09-28).
     custom_titles: std::collections::HashSet<u64>,
     /// **큰 파일 모드**(docs/59 §4 1단계): 탭 id → (단계 1·2, 사용자가 "기능 강제로 켜기"를 눌렀는가). 단계는 읽을 때·저장할 때 정한다.
@@ -309,6 +312,7 @@ impl Editors {
             split_max: 3,
             body: Rect::new(0, 0, 0, 0),
             view_tabs: std::collections::HashMap::new(),
+            doc_objects: std::collections::HashMap::new(),
             custom_titles: std::collections::HashSet::new(),
             large: std::collections::HashMap::new(),
             large_cfg: [(5 << 20, 100_000), (20 << 20, 300_000)],
@@ -1944,10 +1948,27 @@ impl Editors {
         self.view_tabs.get(&self.active_id()).map(String::as_str)
     }
 
+    /// ★ T-167 B5: 객체 소스 탭의 문서 열쇠 등록/해제.
+    pub(crate) fn set_doc_object(&mut self, id: u64, key: Option<nsql_bookmarks::DocKey>) {
+        match key {
+            Some(k) => {
+                self.doc_objects.insert(id, k);
+            }
+            None => {
+                self.doc_objects.remove(&id);
+            }
+        }
+    }
+
+    pub(crate) fn doc_object(&self, id: u64) -> Option<&nsql_bookmarks::DocKey> {
+        self.doc_objects.get(&id)
+    }
+
     /// 닫힌 탭의 뷰 등록을 정리한다(호스트 틱).
     pub(crate) fn reap_views(&mut self) {
         let alive = &self.ids;
         self.view_tabs.retain(|id, _| alive.contains(id));
+        self.doc_objects.retain(|id, _| alive.contains(id));
         self.large.retain(|id, _| alive.contains(id));
         self.read_only.retain(|id| alive.contains(id));
         self.loading.retain(|id| alive.contains(id));

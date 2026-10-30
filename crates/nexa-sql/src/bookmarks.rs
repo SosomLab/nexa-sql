@@ -200,6 +200,8 @@ impl Bookmarks {
         if n > 0 {
             self.touch();
         }
+        // ★ T-167 B6: 저장소를 열 때 파일 존재 점검(없음 표시 · 되살림).
+        let _ = self.validate_files();
         // 파일·폴더 모드: 이름 없는 탭 열쇠는 메모리 전용이므로 파일에서 온 것(옛 규칙의 잔재 · 지난 실행의 탭 id)은 버린다.
         if project.is_none() {
             let before = self.store.items.len();
@@ -247,6 +249,7 @@ impl Bookmarks {
                 self.store = st;
                 self.seq.clear();
                 self.changed = true;
+                let _ = self.validate_files();
                 true
             }
             Err(e) => {
@@ -323,10 +326,52 @@ impl Bookmarks {
     // ───────────── 문서 열쇠 · 본문 ─────────────
 
     pub(crate) fn doc_key(ed: &Editors, i: usize) -> DocKey {
+        // ★ T-167 B5: 객체 소스 탭 = `DocKey::Object`(서버 키 + 스키마·종류·이름 · 69 §4-2) · 그 밖은 파일/이름 없는 탭.
+        if let Some(k) = ed.doc_object(ed.tab_id(i)) {
+            return k.clone();
+        }
         match ed.path_of(i) {
             Some(p) => DocKey::file(&p.to_string_lossy()),
             None => DocKey::Scratch { tab: ed.tab_id(i) },
         }
+    }
+
+    /// ★ T-167 B6(10-30 · 69 §3-3 L2 · §3-4 L3): 파일 북마크의 존재 점검 — 파일이 없으면 `Invalid{FileMissing}` · 다시 생기면 `Live`로
+    ///   되살린다(그 뒤 열 때 L1 재탐색이 자리를 맞춘다). 저장소를 열 때(`bind_project`·`load_json`)와 하루 1회 정리 때. 돌려주는 값 =
+    ///   (없음으로 바뀐 수, 되살린 수).
+    pub(crate) fn validate_files(&mut self) -> (usize, usize) {
+        let now = now_epoch();
+        let (mut missing, mut revived) = (0usize, 0usize);
+        for b in &mut self.store.items {
+            let DocKey::File { path } = &b.doc else {
+                continue;
+            };
+            let exists = std::path::Path::new(path).is_file();
+            match (&b.state, exists) {
+                (State::Live, false) => {
+                    b.state = State::Invalid {
+                        since: now,
+                        reason: Reason::FileMissing,
+                    };
+                    missing += 1;
+                }
+                (
+                    State::Invalid {
+                        reason: Reason::FileMissing,
+                        ..
+                    },
+                    true,
+                ) => {
+                    b.state = State::Live;
+                    revived += 1;
+                }
+                _ => {}
+            }
+        }
+        if missing + revived > 0 {
+            self.touch();
+        }
+        (missing, revived)
     }
 
     fn lines_of(ed: &Editors, i: usize) -> Vec<String> {
@@ -845,18 +890,9 @@ impl Bookmarks {
             };
             let anchor = b.anchor.clone();
             let was_live = b.is_live();
-            let r = if !was_live
-                && !matches!(
-                    b.state,
-                    State::Invalid {
-                        reason: Reason::TextGone | Reason::TooBig,
-                        ..
-                    }
-                ) {
-                continue; // 파일 없음 등은 다른 신호(L3)가 되살린다.
-            } else {
-                relocate(&anchor, &refs, None, &self.opts)
-            };
+            // ★ T-167 B6 L3(10-30): 문서가 **열려 있다** = 파일·객체가 존재한다 → 사유와 무관하게 무효 북마크도 다시 찾아 되살린다
+            //   (종전 = 줄 사라짐·큰 파일만 · 파일 없음/객체 없음은 영영 무효로 남았다).
+            let r = relocate(&anchor, &refs, None, &self.opts);
             let Some(b) = self.store.get_mut(id) else {
                 continue;
             };

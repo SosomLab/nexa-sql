@@ -193,6 +193,52 @@ impl App {
                 idx = self.bm_tab_of(&b.doc);
             }
         }
+        // ★ T-167 B5 재개(69 §4-2): 객체 북마크인데 소스 탭이 없으면 — 그 서버에 **살아 있는** 세션 칸이 있을 때만 소스를 조회해 열고
+        //   도착하면 이어서 이동(`bm_goto_pending`) · 없으면 안내만(자동 재접속 금지 · 26 §8).
+        if idx.is_none() {
+            if let nsql_bookmarks::DocKey::Object {
+                profile,
+                schema,
+                kind,
+                name,
+                ..
+            } = &b.doc
+            {
+                let spec = self
+                    .explorer
+                    .find_servers()
+                    .into_iter()
+                    .filter_map(|(s, _)| s)
+                    .find(|s| server_key(s) == *profile);
+                let Some(spec) = spec else {
+                    self.sess.status = tf(Msg::StBookmarkNeedConnect, &[profile]);
+                    self.redraw();
+                    return;
+                };
+                let Some(k) = nsql_catalog::ObjectKind::parse(kind) else {
+                    self.sess.status = t(Msg::StBookmarkNoDoc).into();
+                    return;
+                };
+                let info = nsql_catalog::ObjectInfo {
+                    db: String::new(),
+                    schema: schema.clone(),
+                    name: name.clone(),
+                    kind: k,
+                    status: String::new(),
+                    modified: String::new(),
+                    extra: String::new(),
+                };
+                if self.explorer.open_source_for(Some(&spec), &info) {
+                    self.bm_goto_pending = Some((id, permanent));
+                    self.sess.status =
+                        tf(Msg::StBookmarkOpeningObject, &[&format!("{schema}.{name}")]);
+                } else {
+                    self.sess.status = tf(Msg::StBookmarkNeedConnect, &[profile]);
+                }
+                self.redraw();
+                return;
+            }
+        }
         let Some(i) = idx else {
             self.sess.status = t(Msg::StBookmarkNoDoc).into();
             return;
@@ -207,6 +253,23 @@ impl App {
         }
         self.set_focus(Focus::Editor);
         self.redraw();
+    }
+
+    /// ★ T-167 B5: 객체 소스 탭이 열린 직후 — 재탐색(되살림 포함) + 대기 중인 북마크 이동이 **이 문서** 것이면 이어서 간다.
+    pub(crate) fn bm_after_source_open(&mut self) {
+        let i = self.editors.active();
+        self.bookmarks.relocate_doc(&self.editors, i);
+        if let Some((id, permanent)) = self.bm_goto_pending.take() {
+            let doc = bookmarks::Bookmarks::doc_key(&self.editors, i);
+            let same = self
+                .bookmarks
+                .store
+                .get(id)
+                .is_some_and(|b| b.doc.same(&doc, cfg!(any(windows, target_os = "macos"))));
+            if same {
+                self.bm_goto(id, permanent);
+            }
+        }
     }
 
     /// 문서의 북마크 줄 전부에 캐럿(Sublime Select All Bookmarks · 69 §6-1).
@@ -428,5 +491,64 @@ impl App {
             self.bm_sync_ui();
         }
         self.redraw();
+    }
+}
+
+/// ★ T-167 B5(69 §4-2): 서버 키 = `호스트:포트/데이터베이스`(소문자 호스트 · 계정·역할은 뺀다 — 같은 객체를 다른 계정으로 봐도 같은 문서).
+pub(crate) fn server_key(s: &nsql_script::ConnectSpec) -> String {
+    format!(
+        "{}:{}/{}",
+        s.host.as_deref().unwrap_or("").to_ascii_lowercase(),
+        s.port.map(|p| p.to_string()).unwrap_or_default(),
+        s.database.as_deref().unwrap_or("")
+    )
+}
+
+/// 객체 소스 탭의 출처 → 북마크 문서 열쇠(서버 없으면 `None` = 이름 없는 탭 규칙으로).
+pub(crate) fn object_doc_key(o: &crate::explorer::ObjectOrigin) -> Option<nsql_bookmarks::DocKey> {
+    let spec = o.server.as_ref()?;
+    Some(nsql_bookmarks::DocKey::Object {
+        profile: server_key(spec),
+        dialect: spec.dialect.map(|d| d.to_string()).unwrap_or_default(),
+        schema: o.schema.clone(),
+        kind: o.kind.code().to_string(),
+        name: o.name.clone(),
+        part: "source".into(),
+    })
+}
+
+#[cfg(test)]
+mod object_doc_key_tests {
+    use super::*;
+
+    /// 서버 키는 계정·역할·비밀번호와 무관 · 호스트 소문자 · 종류 코드.
+    #[test]
+    fn server_key_ignores_account_and_folds_host() {
+        let mut a =
+            nsql_script::ConnectSpec::parse("oracle://u1:pw@MyHost:1521/APPDB").expect("spec");
+        let b = nsql_script::ConnectSpec::parse("oracle://u2@myhost:1521/APPDB").expect("spec");
+        assert_eq!(server_key(&a), server_key(&b));
+        assert_eq!(server_key(&a), "myhost:1521/APPDB");
+        a.role = Some("sysdba".into());
+        assert_eq!(server_key(&a), server_key(&b));
+        let o = crate::explorer::ObjectOrigin {
+            schema: "HR".into(),
+            name: "PKG_X".into(),
+            kind: nsql_catalog::ObjectKind::Procedure,
+            server: Some(b),
+        };
+        let k = object_doc_key(&o).expect("key");
+        assert_eq!(
+            k,
+            nsql_bookmarks::DocKey::Object {
+                profile: "myhost:1521/APPDB".into(),
+                dialect: "oracle".into(),
+                schema: "HR".into(),
+                kind: "procedure".into(),
+                name: "PKG_X".into(),
+                part: "source".into(),
+            }
+        );
+        assert!(object_doc_key(&crate::explorer::ObjectOrigin { server: None, ..o }).is_none());
     }
 }
