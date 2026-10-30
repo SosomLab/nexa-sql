@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/180-decisions-shell-keymap | 2026-10-30 | 2026-10-30 → main ff(삭제) · **2c871aeb** | 1 | 180차 win = 사용자 결정 ②③(D-396·D-397) + B 목록 1~5차(T-14 selector · T-77 · T-133 · T-200 objects·절 안 위치·`-=` · T-53 · T-131 · T-455 · T-149 ③ · Caps.syntax · T-76 ① · T-69 감지 · T-110 2-1·2-4·2-5 · T-90 ⚡ · T-39 변경 바 · T-278 `prefs.goto`) + 2차 B 결정 D-406~D-421 · 69파일 +3168/−248 · nexa-ui 짝 = b5afb6e(243차) |
 | feat/179-shell-multiline | 2026-10-30 | 2026-10-30 → main rebase 뒤 ff(삭제) · **787c4f81** | 소스 98a3f5b1 · 57fe2688 · d32a3660 · 문서 787c4f81(rebase 전 = 2184edd6 · a1b9c1e1 · c1ac9aba · a73834a8) | 179차 win = T-453 셸 다중 줄 + T-149 ① `script.define_in_strings` ② D-141 상태줄 `&` 세그먼트 |
 | feat/174-t14-context-keys | 2026-10-29 | 2026-10-30 → main ff(삭제) · **64d0f0d8** | 소스 **ed5f0fd5** · 문서 50b2c27c · 175차 T-453 = 소스 8dedf0ee · 문서 6669f6e6 · 176차 = 소스 b54a39eb · 문서 246a136e · 177차 = 소스 328b172c · 문서 69476072 · 178차 = 소스 c7ed07e4 · 문서 64d0f0d8 · 뒤이어 main 직접 = bb41dc06(맥 시험) · a73f987f(DRIVER_VERSION 0.1.9) · eecdd1fa(v0.4.0) | 174차 win = T-14 잔여(context 키 11종 · 단축키 창 파일 바인딩 표시 · keymap.dump/try) + 175차 T-453 1차 CLI 줄 편집기·Tab + 176차 T-128 SQL Server 호출 상한·T-453 정적 후보 + 177차 Ctrl+R + 178차 셸 실기 후속(결함 2 · 지시 ①~⑦ · ⑨ show 표) |
 | t47-driver-stages | 2026-10-29 | 2026-10-29 → main ff(삭제) · **b4ec19b8** | 1 | 173차 win = T-47 잔여 SQLite·SQL Server Execute/Fetch 분리 · b4ec19b8 |
