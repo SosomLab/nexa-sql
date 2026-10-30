@@ -944,9 +944,9 @@ mod tests {
     fn groups_move_whole_children_stay_inside() {
         let mut w = OrderWin::new();
         w.set(spec(), "");
-        assert!(w
-            .dump()
-            .starts_with("key statusbar.layout\n>[x] tx\n [x] define\n [x] state\n   [x] large\n"));
+        assert!(w.dump().starts_with(
+            "key statusbar.layout\n>[x] tx\n [x] define\n [x] perf\n [x] state\n   [x] large\n"
+        ));
         // 맨 위 블록을 위로 = 변화 없음.
         assert!(value(w.move_sel(false)).is_none());
         // 그룹 `format`을 위로 한 칸 = `project` 그룹과 통째 자리 바꿈(자식 4개가 같이 간다).
@@ -986,7 +986,8 @@ mod tests {
         assert!(w.move_sel_to_row(row_of(&w, "rows")));
         let v = (spec().to_setting)(&w.blocks);
         assert!(
-            v.starts_with("define:1|state:1[") && v.contains("|result:1[rows:1,time:1]|tx:1|"),
+            v.starts_with("define:1|perf:1|state:1[")
+                && v.contains("|result:1[rows:1,time:1]|tx:1|"),
             "{v}"
         );
         // 기본값 = 빈 설정값.

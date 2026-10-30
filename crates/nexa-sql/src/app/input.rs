@@ -18,8 +18,9 @@ use crate::*;
 /// | `auto_complete_visible` | 자동 완성 목록 열림 |
 /// | `connected` · `dialect` | 현재 세션 접속 여부 · 서버 유형 표시 이름(`Oracle`·`PostgreSQL`·…) |
 /// | `setting.<키>` | 설정 값 글자 |
+/// | `selector` | ★ 캐럿의 스코프 글(10-30 · T-14 잔여) = `source.<구문>` + 토큰 종류(`string.quoted` · `comment` · `keyword` · `constant.numeric` · 없으면 코드) — `equal`/`not_equal`은 Sublime 선택자 일치([`crate::keymap_file::selector_matches`]) · 강조기 없는 탭 = `text.plain` |
 ///
-/// 선택별 글은 **줄 안**만 본다(Sublime과 같음) — 본문 전체를 뜨지 않는다(편집기 불변식 · `buf()` 조회).
+/// 선택별 글은 **줄 안**만 본다(Sublime과 같음) — 본문 전체를 뜨지 않는다(편집기 불변식 · `buf()` 조회 · 스코프는 캐럿 줄 하나만 토큰화 = [`nexa_ctl::TextBox::token_kind_at`]).
 impl crate::keymap_file::ContextSource for App {
     fn value(&self, key: &str) -> Option<nsql_json::Json> {
         use nsql_json::Json;
@@ -66,6 +67,7 @@ impl crate::keymap_file::ContextSource for App {
             "auto_complete_visible" => Some(Json::Bool(self.intel.is_open())),
             "connected" => Some(Json::Bool(self.sess.connected)),
             "dialect" => Some(Json::Str(self.sess.dialect.display_name().to_string())),
+            "selector" => Some(Json::Str(scope_at(ed, ed.caret()))),
             k => k
                 .strip_prefix("setting.")
                 .and_then(|name| self.settings.get(name))
@@ -74,8 +76,31 @@ impl crate::keymap_file::ContextSource for App {
     }
 }
 
+/// ★ 캐럿 `pos`의 스코프 글(Sublime 꼴 · T-14 `selector` · 10-30) — `source.<구문 이름 소문자>` + 토큰 종류 조각.
+/// 강조기 없는 탭 = `text.plain` · 코드(`Plain`) = 뿌리만. 캐럿 줄 하나만 토큰화한다([`nexa_ctl::TextBox::token_kind_at`]).
+pub(crate) fn scope_at(ed: &nexa_ctl::TextBox, pos: usize) -> String {
+    use nexa_ctl::TokenKind as K;
+    let Some(h) = ed.highlighter() else {
+        return "text.plain".to_string();
+    };
+    let lang = h.name().to_ascii_lowercase();
+    let mut s = format!("source.{lang}");
+    let part = match ed.token_kind_at(pos) {
+        K::Str => "string.quoted",
+        K::Comment => "comment",
+        K::Keyword => "keyword",
+        K::Number => "constant.numeric",
+        K::Plain => return s,
+    };
+    s.push(' ');
+    s.push_str(part);
+    s.push('.');
+    s.push_str(&lang);
+    s
+}
+
 /// context 키 전부(자체 시험 덤프 순서 · `setting.*` 제외).
-pub(crate) const CONTEXT_KEYS: [&str; 16] = [
+pub(crate) const CONTEXT_KEYS: [&str; 17] = [
     "selection_empty",
     "has_selection",
     "num_selections",
@@ -91,6 +116,7 @@ pub(crate) const CONTEXT_KEYS: [&str; 16] = [
     "auto_complete_visible",
     "connected",
     "dialect",
+    "selector",
     "setting.ui.lang",
 ];
 
@@ -149,6 +175,29 @@ mod tests {
         let mut b = TextBuf::new();
         b.splice(0, 0, s);
         b
+    }
+
+    /// ★ `selector` 스코프 글(10-30): 강조기 없음 = text.plain · 코드 = 뿌리만 · 문자열/주석/키워드/숫자 조각 · 구문 이름 소문자.
+    #[test]
+    fn scope_at_names_sublime_like_scopes() {
+        use std::rc::Rc;
+        let mut t = nexa_ctl::TextBox::new("").with_multiline();
+        t.set_text("select 'a' /* c */ 7 x");
+        assert_eq!(super::scope_at(&t, 0), "text.plain");
+        t.set_highlighter(Some(Rc::new(nexa_ctl::SyntaxSpec::sql())));
+        assert_eq!(super::scope_at(&t, 0), "source.sql keyword.sql");
+        assert_eq!(super::scope_at(&t, 8), "source.sql string.quoted.sql");
+        assert_eq!(super::scope_at(&t, 12), "source.sql comment.sql");
+        assert_eq!(super::scope_at(&t, 19), "source.sql constant.numeric.sql");
+        assert_eq!(super::scope_at(&t, 21), "source.sql");
+        assert!(crate::keymap_file::selector_matches(
+            "source.sql - string - comment",
+            &super::scope_at(&t, 21)
+        ));
+        assert!(!crate::keymap_file::selector_matches(
+            "source.sql - string - comment",
+            &super::scope_at(&t, 8)
+        ));
     }
 
     /// 선택별 앞뒤 글 = 그 줄 안에서만 · 캐럿(빈 구간) · 줄 경계 · 범위 넘침.
@@ -1762,6 +1811,7 @@ impl App {
             self.status_tx_rect,
             self.status_enc_rect,
             self.status_define_rect,
+            self.status_perf_rect,
         ]
         .iter()
         .position(|r| r.w > 0 && r.contains(p))
@@ -1792,6 +1842,8 @@ impl App {
             6 => self.open_tx_menu(),
             7 => self.open_enc_menu(),
             8 => self.open_define_menu(),
+            // ★ T-90 잔여(10-30): ⚡ = 설정 창(성능 분류).
+            9 => self.open_prefs = true,
             _ => {}
         }
     }
@@ -1809,6 +1861,7 @@ impl App {
             self.status_mem_rect,
             self.status_autosave_rect,
             self.status_define_rect,
+            self.status_perf_rect,
         ]
         .iter()
         .any(|r| r.w > 0 && r.contains(p))

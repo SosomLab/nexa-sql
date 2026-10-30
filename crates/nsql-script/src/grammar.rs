@@ -19,6 +19,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct ClauseRule {
     pub next: Vec<String>,
     pub objects: Vec<String>,
+    /// ★ T-200 절 안 위치(10-30): 절 키워드 **바로 뒤(첫 항목 자리)에만** 오는 예약어(`SELECT` = `DISTINCT`·`ALL` · T-SQL `TOP`) —
+    /// 항목이 하나라도 나온 뒤에는 내지 않는다.
+    pub first: Vec<String>,
+}
+
+/// ★ T-200(10-30): 절 안에서 캐럿이 놓인 자리 — [`Grammar::next_at`]가 예약어 후보를 좁히는 근거.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClausePos {
+    /// 절 키워드 바로 뒤(항목 없음) — `first` 예약어를 더하고 절 전환 예약어(`FROM`·`WHERE` …)는 뺀다(`SELECT FROM`은 없다).
+    First,
+    /// 콤마 바로 뒤(다음 항목 자리) — `first`를 뺀다(`SELECT a, DISTINCT`는 없다). 절 전환 예약어는 남긴다(사용자가 `fr…`를
+    /// 치다 FROM으로 가는 흐름 · 기존 시험 `SELECT a, fr` = FROM 제안).
+    AfterComma,
+    /// 그 밖(항목 중간·뒤) — `first`만 뺀다.
+    #[default]
+    Other,
 }
 
 /// 파일 한 벌을 해석한 결과(부모와 합치기 전).
@@ -28,6 +44,8 @@ struct Raw {
     extends: Option<String>,
     start: Option<Vec<String>>,
     start_add: Vec<String>,
+    /// ★ `next -= …`(10-30 · docs/82 §10 "상속에 빼기가 없어 방언에 없는 예약어가 제안됨"): 부모에서 뺄 것.
+    start_del: Vec<String>,
     statements: HashMap<String, (Option<Vec<String>>, Vec<String>)>,
     clauses: HashMap<String, RawClause>,
 }
@@ -38,6 +56,18 @@ struct RawClause {
     next_add: Vec<String>,
     objects: Option<Vec<String>>,
     same: Option<String>,
+    first: Option<Vec<String>>,
+    first_add: Vec<String>,
+    next_del: Vec<String>,
+    first_del: Vec<String>,
+}
+
+/// 줄의 연산자: `=`(교체) · `+=`(부모에 더함) · `-=`(부모에서 뺌 · 10-30).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineOp {
+    Set,
+    Add,
+    Del,
 }
 
 /// 방언 문법(부모까지 합친 최종).
@@ -73,6 +103,14 @@ fn add_unique(dst: &mut Vec<String>, src: &[String]) {
     }
 }
 
+/// `-=`(10-30): 대소문자 무시로 `src`에 있는 항목을 `dst`에서 뺀다(없는 것은 무시).
+fn remove_ci(dst: &mut Vec<String>, src: &[String]) {
+    if src.is_empty() {
+        return;
+    }
+    dst.retain(|d| !src.iter().any(|s| s.eq_ignore_ascii_case(d)));
+}
+
 /// 파일 해석 — 형식 오류는 줄 번호와 함께.
 fn parse(text: &str) -> Result<Raw, String> {
     let mut raw = Raw::default();
@@ -102,10 +140,12 @@ fn parse(text: &str) -> Result<Raw, String> {
             }
             continue;
         }
-        let (key, add, val) = if let Some((k, v)) = line.split_once("+=") {
-            (k.trim(), true, v.trim())
+        let (key, op, val) = if let Some((k, v)) = line.split_once("+=") {
+            (k.trim(), LineOp::Add, v.trim())
+        } else if let Some((k, v)) = line.split_once("-=") {
+            (k.trim(), LineOp::Del, v.trim())
         } else if let Some((k, v)) = line.split_once('=') {
-            (k.trim(), false, v.trim())
+            (k.trim(), LineOp::Set, v.trim())
         } else {
             return Err(tr!(
                 "{}: not a `key = value` line: {line}",
@@ -116,27 +156,40 @@ fn parse(text: &str) -> Result<Raw, String> {
         match (&cur, key) {
             (None, "dialect") => raw.dialect = val.to_ascii_lowercase(),
             (None, "extends") => raw.extends = Some(val.to_ascii_lowercase()),
-            (Some((kind, _)), "next") if kind == "start" => {
-                if add {
-                    raw.start_add.extend(list(val));
-                } else {
-                    raw.start = Some(list(val));
-                }
-            }
+            (Some((kind, _)), "next") if kind == "start" => match op {
+                LineOp::Add => raw.start_add.extend(list(val)),
+                LineOp::Del => raw.start_del.extend(list(val)),
+                LineOp::Set => raw.start = Some(list(val)),
+            },
             (Some((kind, name)), "clauses") if kind == "statement" => {
                 let e = raw.statements.entry(name.clone()).or_default();
-                if add {
-                    e.1.extend(list(val));
-                } else {
-                    e.0 = Some(list(val));
+                match op {
+                    LineOp::Add => e.1.extend(list(val)),
+                    LineOp::Set => e.0 = Some(list(val)),
+                    LineOp::Del => {
+                        return Err(tr!(
+                            "{}: `-=` is only for `next`/`first`",
+                            "{}: `-=`는 `next`/`first`에서만",
+                            ln + 1
+                        ))
+                    }
                 }
             }
             (Some((kind, name)), "next") if kind == "clause" => {
                 let e = raw.clauses.entry(name.clone()).or_default();
-                if add {
-                    e.next_add.extend(list(val));
-                } else {
-                    e.next = Some(list(val));
+                match op {
+                    LineOp::Add => e.next_add.extend(list(val)),
+                    LineOp::Del => e.next_del.extend(list(val)),
+                    LineOp::Set => e.next = Some(list(val)),
+                }
+            }
+            // ★ T-200(10-30): 첫 항목 자리에만 오는 예약어(`first = …` / `first += …`).
+            (Some((kind, name)), "first") if kind == "clause" => {
+                let e = raw.clauses.entry(name.clone()).or_default();
+                match op {
+                    LineOp::Add => e.first_add.extend(list(val)),
+                    LineOp::Del => e.first_del.extend(list(val)),
+                    LineOp::Set => e.first = Some(list(val)),
                 }
             }
             (Some((kind, name)), "objects") if kind == "clause" => {
@@ -178,6 +231,7 @@ fn resolve(raw: &Raw, base: Option<&Grammar>) -> Grammar {
         g.start = s.clone();
     }
     add_unique(&mut g.start, &raw.start_add);
+    remove_ci(&mut g.start, &raw.start_del);
     for (name, (set, add)) in &raw.statements {
         let e = g.statements.entry(name.clone()).or_default();
         if let Some(s) = set {
@@ -198,6 +252,12 @@ fn resolve(raw: &Raw, base: Option<&Grammar>) -> Grammar {
         if let Some(o) = &rc.objects {
             e.objects = o.clone();
         }
+        if let Some(f) = &rc.first {
+            e.first = f.clone();
+        }
+        add_unique(&mut e.first, &rc.first_add);
+        remove_ci(&mut e.next, &rc.next_del);
+        remove_ci(&mut e.first, &rc.first_del);
     }
     g
 }
@@ -233,6 +293,40 @@ impl Grammar {
     pub fn objects(&self, clause: &str) -> Option<&[String]> {
         let c = self.canon(clause);
         self.clauses.get(&c).map(|r| r.objects.as_slice())
+    }
+
+    /// 절 키워드 바로 뒤(첫 항목 자리)에만 오는 예약어(`first = …`) — 모르는 절 = `None`.
+    #[must_use]
+    pub fn first(&self, clause: &str) -> Option<&[String]> {
+        let c = self.canon(clause);
+        self.clauses.get(&c).map(|r| r.first.as_slice())
+    }
+
+    /// ★ T-200 절 안 위치(10-30): 자리에 맞는 예약어 — `First` = `first` + `next`에서 절 전환 예약어(다른 절 이름)를 뺀 것 ·
+    /// `AfterComma` = `next`에서 절 전환 예약어와 `first`를 뺀 것 · `Other` = `next`에서 `first`를 뺀 것(파일 순서 유지).
+    /// 모르는 절 = `None`(호스트는 전체 표로 폴백).
+    #[must_use]
+    pub fn next_at(&self, clause: &str, pos: ClausePos) -> Option<Vec<String>> {
+        let c = self.canon(clause);
+        let rule = self.clauses.get(&c)?;
+        let names = self.clause_names();
+        let is_clause = |k: &str| names.contains(&norm(k));
+        let in_first = |k: &str| rule.first.iter().any(|f| f.eq_ignore_ascii_case(k));
+        let mut out: Vec<String> = Vec::new();
+        if pos == ClausePos::First {
+            out.extend(rule.first.iter().cloned());
+        }
+        for k in &rule.next {
+            let drop = match pos {
+                ClausePos::First => is_clause(k) || in_first(k),
+                ClausePos::AfterComma => in_first(k),
+                ClausePos::Other => in_first(k),
+            };
+            if !drop && !out.iter().any(|o| o.eq_ignore_ascii_case(k)) {
+                out.push(k.clone());
+            }
+        }
+        Some(out)
     }
 
     /// 감지용 절 이름 전부(절 + 별칭 + 문장 절 목록 · 대문자 · 낱말은 한 칸).
@@ -377,6 +471,62 @@ pub fn load_dir(dir: &std::path::Path) -> Vec<(String, Result<String, String>)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ T-200 절 안 위치(10-30): `first`(SELECT = DISTINCT·ALL · mssql += TOP) · 자리별 예약어 — First = first + 전환 제외 ·
+    /// AfterComma = 전환·first 제외 · Other = first 제외 · 모르는 절 = None.
+    #[test]
+    fn next_at_narrows_by_clause_position() {
+        let g = for_dialect(None);
+        let has = |v: &[String], k: &str| v.iter().any(|s| s.eq_ignore_ascii_case(k));
+        assert!(has(g.first("SELECT").unwrap(), "DISTINCT"));
+        let first = g.next_at("SELECT", ClausePos::First).unwrap();
+        assert!(has(&first, "DISTINCT") && has(&first, "CASE"), "{first:?}");
+        assert!(
+            !has(&first, "FROM"),
+            "SELECT 바로 뒤에 FROM 없음: {first:?}"
+        );
+        let comma = g.next_at("SELECT", ClausePos::AfterComma).unwrap();
+        assert!(has(&comma, "CASE") && has(&comma, "FROM") && !has(&comma, "DISTINCT"));
+        let other = g.next_at("SELECT", ClausePos::Other).unwrap();
+        assert!(has(&other, "FROM") && !has(&other, "DISTINCT"));
+        assert!(g.next_at("NO SUCH", ClausePos::Other).is_none());
+        let ms = for_dialect(Some(Dialect::Mssql));
+        assert!(
+            has(ms.first("SELECT").unwrap(), "TOP"),
+            "mssql first += TOP"
+        );
+        assert!(
+            has(ms.first("SELECT").unwrap(), "DISTINCT"),
+            "부모 first 상속"
+        );
+        assert!(!has(
+            &ms.next_at("SELECT", ClausePos::Other).unwrap(),
+            "TOP"
+        ));
+    }
+
+    /// ★ `-=`(10-30 · docs/82 §10): 부모에서 물려받은 예약어를 자식 방언이 뺀다(next · first · start) · 대소문자 무시 · 없는 것은 무시 ·
+    /// `clauses -=`는 오류.
+    #[test]
+    fn minus_equals_removes_inherited_keywords() {
+        let name = register(
+            "dialect = testdel\nextends = ansi\n[start]\nnext -= EXPLAIN, nothing_here\n[clause SELECT]\nnext -= and, OR\nfirst -= ALL\nnext += EXTRA_KW\n",
+        )
+        .expect("register");
+        let g = for_name(&name);
+        let has = |v: &[String], k: &str| v.iter().any(|s| s.eq_ignore_ascii_case(k));
+        assert!(!has(g.start(), "EXPLAIN") && has(g.start(), "SELECT"));
+        let n = g.next("SELECT").unwrap();
+        assert!(!has(n, "AND") && !has(n, "OR") && has(n, "CASE") && has(n, "EXTRA_KW"));
+        let f = g.first("SELECT").unwrap();
+        assert!(!has(f, "ALL") && has(f, "DISTINCT"));
+        // 부모(ansi)는 그대로.
+        assert!(has(for_dialect(None).next("SELECT").unwrap(), "AND"));
+        assert!(
+            register("dialect = bad\nextends = ansi\n[statement SELECT]\nclauses -= FROM\n")
+                .is_err()
+        );
+    }
 
     #[test]
     fn builtin_files_parse_and_extend_ansi() {

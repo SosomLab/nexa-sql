@@ -131,7 +131,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
         let rest = src[pos..le].trim_end_matches('\r').trim();
         // ★ Db2 CLP `--#SET TERMINATOR @`(10-26 · 협업 조사 (C)④): 주석 꼴 지시자 — 그 줄부터 문장 끝 = 그 글자(서버엔 종결자를 떼고 보낸다 ·
         //   `--#SET TERMINATOR ;` = 복귀). 주석 건너뛰기보다 **먼저** 본다.
-        if dialect == Some(Dialect::Db2) {
+        if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.clp_terminator) {
             if let Some(d) = db2_terminator_line(rest) {
                 delim = (d != ";").then(|| d.to_string());
                 pos = le;
@@ -148,7 +148,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             pos = le;
             continue;
         }
-        if matches!(dialect, Some(Dialect::Mysql | Dialect::Db2)) {
+        if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.delimiter_directive) {
             if let Some(d) = delimiter_line(rest) {
                 delim = (d != ";").then(|| d.to_string());
                 pos = le;
@@ -323,10 +323,8 @@ fn is_bare_connect_by(line: &str) -> bool {
 /// 반환 = (텍스트, 항목 끝 오프셋, 다음 스캔 위치).
 /// `/` 줄로 끝나는 블록이 없는 방언인가(문장은 늘 `;`로 끝난다 — 본문의 `BEGIN … END`만 짝을 맞춘다).
 fn semicolon_only(dialect: Option<Dialect>) -> bool {
-    matches!(
-        dialect,
-        Some(Dialect::Sqlite | Dialect::Mysql | Dialect::Postgres)
-    )
+    // T-149 ④(10-30): 방언 표(`Syntax::semicolon_only`) · 방언 모름 = 거짓(`/` 블록 가능 = 종전).
+    dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.semicolon_only)
 }
 
 /// `BEGIN`으로 시작하지만 블록이 아니라 **트랜잭션 문장**인가(`BEGIN;` · `BEGIN TRANSACTION` …) — 방언 무관.
@@ -1036,7 +1034,8 @@ mod mysql_tests {
 fn command_or_sql(text: &str, dialect: Option<Dialect>) -> ItemKind {
     match parse_command(text) {
         Ok(Some(crate::command::Command::Show { what }))
-            if dialect == Some(Dialect::Mysql) && !client_show(&what) =>
+            if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.server_show)
+                && !client_show(&what) =>
         {
             ItemKind::Sql(SqlKind::Query)
         }

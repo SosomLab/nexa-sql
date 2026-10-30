@@ -74,7 +74,7 @@
 |---|---|---|
 | **VarStore**(바인드 변수) | 이름 → {타입 · 값 · 선언됨 · **비밀** · 출처(스크립트·입력·OUT·잡은 행·프로필) · 이번 실행에서 바뀜 · 소비됨(커서)} | 값은 **타입을 가진 채** 보관하고 타입 있는 바인드로 보낸다(절대 "전부 문자열" 아님) · `Value`에 `Missing`·`Array`·`Doc`·`Ext{tag}`·`Query(글)` 추가 예정(NoSQL · 커서 없는 DBMS의 "지연 커서") |
 | **MacroStore**(치환 변수) | `&v` · `DEFINE` · `:setvar`/`$(v)` · 인자 `&1` · 시스템 변수(`_USER` `_DATE` `_ROW_COUNT` `_SQLCODE` `_ELAPSED_MS` `_FILE`) · 범용 `${v:형식}` | **바인드와 섞지 않는다**(이름이 같아도 별개 · 매크로가 바인드를 가로채지 않는다) · 패널에서는 한 목록에 "종류" 열로 |
-| **Caps**(드라이버 능력 — 포트 + 레지스트리 · [30](30-architecture-patterns.md)) | `marker`{`:n` `@n` `$N` `?` `$name` 엔진이 알려줌} · `bind_named/positional/array` · `ident_placeholder` · `out_values`{없음·프로토콜·꼬리 행·결과 행} · `return_status` · `cursor_out`{없음·핸들·이름(트랜잭션 필요)} · `multi_result` · `implicit_results` · `paging` · `server_vars` · `bind_scope`{어디나·DML만·WHERE만} · `describe_params` | 엔진의 방언 `match`를 **능력 질의**로 바꾼다 → 새 DBMS·NoSQL 어댑터는 능력표 + 어댑터 함수(`to_native` · `from_native` · `quote_value` · `quote_ident` · `format`)만 채운다 |
+| **Caps**(드라이버 능력 — 포트 + 레지스트리 · [30](30-architecture-patterns.md)) | `marker`{`:n` `@n` `$N` `?` `$name` 엔진이 알려줌} · `bind_named/positional/array` · `ident_placeholder` · `out_values`{없음·프로토콜·꼬리 행·결과 행} · `return_status` · `cursor_out`{없음·핸들·이름(트랜잭션 필요)} · `multi_result` · `implicit_results` · `paging` · `server_vars` · `bind_scope`{어디나·DML만·WHERE만} · `describe_params` | 엔진의 방언 `match`를 **능력 질의**로 바꾼다 → 새 DBMS·NoSQL 어댑터는 능력표 + 어댑터 함수(`to_native` · `from_native` · `quote_value` · `quote_ident` · `format`)만 채운다 · ★ **10-30 `Caps.syntax: Syntax`(T-149 ④ · 180차)** = 문법 사실 하위 표 20필드(multirow_values · three_part_names · savepoint(설정·되돌리기·해제 · None = 미지원) · plan_text_column · database_switch · define_prompt_undefined · bind_marker_aliases · nchar_literal · backslash_escape · ident_quote{DoubleQuote·Bracket·Backtick} · hash_comment · clp_terminator · delimiter_directive · dollar_quoting · semicolon_only · server_show · tsql_from · anchored_types · use_targets_schema · output_pseudo_tables · explain{OraclePlanTable·TsqlShowplan·PgVerbose·SqliteQueryPlan·Db2ExplainTables·Explain·Passthrough}) · 상수 SYN_ANSI/ORACLE/MSSQL/POSTGRES/MYSQL/SQLITE/NO_SAVEPOINT/DB2/ACCESS · nsql-run·nsql-script의 방언 분기 19곳을 이 표 질의로 걷음(동작 불변) · 파일형/ODBC 접속 처리는 `Dialect::is_file_based`가 원장(Caps 대상 아님) · ABI 전송 안 함(D-402 · [22 §0-1](22-driver-extensions.md)) |
 | **호출 서명 추론** | `EXEC proc(:A, :B)`의 자리·이름 ↔ 서버 서명 → 선언 없는 바인드의 타입·방향 | ✅ Oracle `ALL_ARGUMENTS`(09-21) · 다음 = PG `pg_proc` · SQL Server `sys.parameters` · MySQL `information_schema.PARAMETERS` · 루틴당 1회 · 캐시 |
 | **낮추기 사다리** | 진짜 바인드 → (문장 종류가 바인드를 못 받으면 · DDL·PG 유틸리티·`DO`) 어댑터가 인용한 글자 + **눈에 보이는 안내** → PROD 접속에서 인용 없는 자유 글은 확인 | 조용한 글자 치환 금지 |
 
@@ -145,7 +145,7 @@
 | **D-138** | 스크립트 전체 실행에서 조회가 여럿일 때 | ① 지금처럼 마지막 결과가 덮는다 ② **문장마다 결과 탭**(상한 안 · DBeaver "탭별 실행") ③ 설정 | **③, 기본 ②** — 커서 여러 개는 이미 탭으로 나뉜다(V1) |
 | D-139 | `SELECT … INTO` 0행·여러 행 | Oracle식 오류 / psql식 / 첫 행 | **Oracle식**(설정 `vars.into_policy`) · NULL = Null(지우지 않음) |
 | D-140 | 비밀 값 | 없음 / **`ACCEPT HIDE` + 이름 규칙(`*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`)으로 표시 → 가림·기록 안 함·저장 안 함** | 권장대로 |
-| D-141 | `&` 치환 | SQL\*Plus 그대로 / **Oracle 방언 탭에서만 기본 켬 · 주석 안 제외(지금) · 문자열 안은 선택 · 상태줄 토글** | 권장대로 · ✅ 10-30 문자열 안 선택(`script.define_in_strings`) · 상태줄 세그먼트 |
+| D-141 | `&` 치환 | SQL\*Plus 그대로 / **Oracle 방언 탭에서만 기본 켬 · 주석 안 제외(지금) · 문자열 안은 선택 · 상태줄 토글** | 권장대로 · ✅ 10-30 문자열 안 선택(`script.define_in_strings`) · 상태줄 세그먼트(팝업 항목 = "&name substitution: auto \| on \| off" 짧은 3항목 · 설명은 설정 화면 · 사용자 10-30) |
 | D-142 | 이름 대소문자 | **무시(처음 쓴 표기 보존)** · `:"이름"`만 구분 · SQLite `:x @x $x` = 한 변수(**구현 10-05** · T-162 ① · `bind.rs` `unify_sqlite_markers`) | 권장대로 |
 | D-143 | 서버에 비추기 | 안 함 / **변수별 선택**(SESSION_CONTEXT · `set_config` · `SET @v` — PG는 트랜잭션을 탄다는 경고) | 뒤로 |
 
@@ -289,7 +289,7 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 | **내장 변수** | `${file}` `${workspaceFolder}` `${config:키}` … | 앱이 아는 값(VS Code 이름 · §10) · 모르는 문맥 = 글자 그대로 | 실행마다 스냅숏 | — (설정 `vars.intrinsic`) |
 | **환경 변수** | `${env:이름}` | 내장 별칭 `NSQL_*` → OS 환경 변수 | 클라이언트 | — (설정 `vars.env_subst`) |
 
-치환의 층 순서 = `DEFINE` → 내장 → 글자 그대로. `::타입` 캐스트·`:=`는 바인드로 읽지 않는다(psql 어휘 규칙). 주석 안은 치환하지 않고 문자열 안은 선택(`script.define_in_strings` · 기본 on = SQL*Plus 그대로 · off = `'R&D'` 보존 · 10-30) · `SET DEFINE OFF`로 끈다 · GUI 상태줄 `&` 세그먼트 = auto/on/off 팝업(설정 `script.define` · 모든 세션에 즉시 · 10-30)(D-141).
+치환의 층 순서 = `DEFINE` → 내장 → 글자 그대로. `::타입` 캐스트·`:=`는 바인드로 읽지 않는다(psql 어휘 규칙). 주석 안은 치환하지 않고 문자열 안은 선택(`script.define_in_strings` · 기본 on = SQL*Plus 그대로 · off = `'R&D'` 보존 · 10-30 · ★ 두 설정의 경계 = `script.define`(auto/on/off)은 `&` 치환 **전체**를 켜고 끄고, `script.define_in_strings`는 그중 **문자열 리터럴 안**만 고른다 · 따옴표 밖 `&이름`은 끔이어도 그대로 묻는다 · 이 경계는 **실행 전 입력 훑기**(`missing_inputs_with` = GUI 입력 창·CLI 물음)와 **치환**(`substitute`) 두 길에 똑같이 적용 · 10-30 결함 = 훑기가 문자열 안도 모아 끔인데 입력 창이 떴음 → 수정) · `SET DEFINE OFF`로 끈다 · GUI 상태줄 `&` 세그먼트 = auto/on/off 팝업(설정 `script.define` · 모든 세션에 즉시 · 10-30)(D-141).
 
 ### 12-2. 바인드 변수 — 선언·타입·대입
 

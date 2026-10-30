@@ -1024,6 +1024,19 @@ fn shell_set(
     true
 }
 
+/// 필수 항목 이름(오류 글 · 접속 문자열의 자리 이름 그대로 · T-133).
+fn login_field_name(f: nsql_core::LoginField) -> &'static str {
+    use nsql_core::LoginField as F;
+    match f {
+        F::Host => "host",
+        F::Port => "port",
+        F::Database => "database",
+        F::Schema => "schema",
+        F::User => "user",
+        F::Password => "password",
+    }
+}
+
 /// `-c <target>` — 프로필 이름이면 저장소에서, 아니면 접속 문자열 파싱.
 fn resolve_target(target: &str, dialect: Dialect) -> Result<ConnectSpec, String> {
     if nsql_vault::is_profile_name(target) {
@@ -1627,6 +1640,21 @@ fn connect_or_exit(
         eprintln!("{e}");
         std::process::exit(2)
     });
+    // ★ T-133 잔여(10-30): 필수 로그인 항목 검사 = 접속 폼과 같은 표(`Dialect::login_required` · 비밀번호는 아래 env/프롬프트 몫) —
+    //   빠졌으면 서버에 아무것도 보내지 않고 종료 코드 2(종전에는 드라이버 오류가 늦게 · 방언마다 다른 글로 나왔다).
+    let d = spec.dialect.unwrap_or(dialect);
+    let missing = spec.missing_login(d, false);
+    if !missing.is_empty() {
+        let names: Vec<&str> = missing.iter().map(|f| login_field_name(*f)).collect();
+        eprintln!(
+            "{}",
+            tf(
+                Msg::CliErrMissingLogin,
+                &[&names.join(", "), d.display_name()]
+            )
+        );
+        std::process::exit(2);
+    }
     // 비밀번호 없는 접속 문자열/프로필 = env/프롬프트(sqlplus/psql 관례 · 사용자 09-16).
     term::ensure_password(&mut spec, no_prompt, target);
     // 접속 실패는 `Connected`보다 먼저 온다 → 오류 코드 표기는 **대상의 방언**으로(SQLite 실패가 `[ORA-00014]`로 보이던 결함 · T-148).
@@ -1982,8 +2010,20 @@ fn cmd_shell(o: &Opts) -> i32 {
     let stdin = io::stdin();
     let mut buf = String::new();
     loop {
-        let prompt = if buf.is_empty() { "nsql> " } else { "   -> " };
         let line = if interactive {
+            // ★ 열린 트랜잭션 표시(T-77 잔여 · 10-30 · psql `*` 관례): `nsql*3> ` = 수동 모드에서 변경 문장 3개 대기 · `nsql*> ` =
+            //   열렸지만 변경 없음(읽기 트랜잭션) · 자동 커밋/닫힘 = `nsql> `. 이어지는 줄은 그대로 `   -> `.
+            let prompt = if !buf.is_empty() {
+                "   -> ".to_string()
+            } else if runner.tx_open() {
+                match runner.tx_pending() {
+                    0 => "nsql*> ".to_string(),
+                    n => format!("nsql*{n}> "),
+                }
+            } else {
+                "nsql> ".to_string()
+            };
+            let prompt = prompt.as_str();
             let dialect = runner.dialect();
             let mut cands = |l: &str, c: usize| {
                 complete::complete_with(
@@ -2006,8 +2046,7 @@ fn cmd_shell(o: &Opts) -> i32 {
                 lineedit::Outcome::Eof => break,
             }
         } else {
-            eprint!("{prompt}");
-            let _ = io::stderr().flush();
+            // ★ 비TTY(파이프·배치) = 프롬프트 없음(psql 관례 · 사용자 결정 10-30 ③ · 종전에는 끝에 `nsql> `가 남았다).
             let mut line = String::new();
             match stdin.lock().read_line(&mut line) {
                 Ok(0) | Err(_) => break,

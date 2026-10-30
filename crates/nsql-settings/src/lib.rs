@@ -950,6 +950,15 @@ pub const REGISTRY: &[Entry] = &[
         // 기본 off = Tab 키가 **탭 문자**(폭 4 = `editor.tab_size`) — 사용자 확정 09-16(이전 on = 공백).
         default: "off",
     },
+    // ★ T-69 잔여(10-30 · docs/31 §40): 파일을 열 때 버퍼에서 들여쓰기를 감지해 **현재 탭 계층**에만 넣는다(디스크 설정은 그대로).
+    Entry {
+        key: "editor.detect_indent",
+        cat: Msg::CatEditor,
+        label: Msg::LblDetectIndent,
+        desc: Msg::DescDetectIndent,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "editor.tab_stops",
         cat: Msg::CatEditor,
@@ -3499,6 +3508,24 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 20, max: 400 },
         // 09-24 사용자: 160 → 120.
         default: "120",
+    },
+    // ★ T-110 2-5(10-30 · docs/46): 본문이 이 열 수보다 좁으면 미니맵을 숨긴다(설정은 유지) · 0 = 늘 표시.
+    Entry {
+        key: "editor.minimap_min_cols",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapMinCols,
+        desc: Msg::DescEditorMinimapMinCols,
+        kind: SettingKind::Int { min: 0, max: 300 },
+        default: "60",
+    },
+    // ★ T-110 2-4(10-30 · docs/46): 저장 이후 바뀐 줄을 미니맵 왼쪽 가장자리에(거터 diff 띠와 같은 원천 · 기본 끔).
+    Entry {
+        key: "editor.minimap_dirty",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapDirty,
+        desc: Msg::DescEditorMinimapDirty,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     Entry {
         key: "editor.minimap_box_color",

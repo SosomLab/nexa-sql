@@ -237,6 +237,13 @@ impl App {
         let on = self.settings.flag("editor.minimap");
         let w = self.settings.int("editor.minimap_width").clamp(20, 400) as i32;
         self.editors.set_minimap(on, w);
+        // ★ T-110 2-5(10-30): 좁은 창 자동 숨김 열 수(0 = 규칙 없음).
+        self.editors.set_minimap_min_cols(
+            self.settings.int("editor.minimap_min_cols").clamp(0, 300) as usize,
+        );
+        // ★ T-110 2-4(10-30): 저장 뒤 수정 줄 표식(기준선 = 저장본 · 파일 탭만).
+        self.editors
+            .set_minimap_diff(self.settings.flag("editor.minimap_dirty"));
         self.editors
             .set_split_max(self.settings.int("editor.split_max"));
         let (color, alpha) = color_alpha_setting(&self.settings, "editor.minimap_box_color");
@@ -259,6 +266,9 @@ impl App {
         self.editors.set_tab_stops(stops);
         self.editors
             .set_indent(ts as u8, self.settings.flag("editor.indent_spaces"));
+        // ★ T-69 잔여(10-30): 파일 열 때 감지 스위치.
+        self.editors
+            .set_detect_indent(self.settings.flag("editor.detect_indent"));
         // Auto indent(docs/49): 변수 4 + 규칙 세트.
         let cfg = nexa_ctl::AutoIndent {
             enabled: self.settings.flag("editor.auto_indent"),
@@ -897,6 +907,8 @@ impl App {
             "editor.minimap"
             | "editor.split_max"
             | "editor.minimap_width"
+            | "editor.minimap_min_cols"
+            | "editor.minimap_dirty"
             | "editor.minimap_box_color"
             | "editor.minimap_border"
             | "editor.minimap_viewport"
@@ -950,6 +962,7 @@ impl App {
             }
             "editor.tab_size"
             | "editor.indent_spaces"
+            | "editor.detect_indent"
             | "editor.tab_stops"
             | "editor.auto_indent"
             | "editor.smart_indent"

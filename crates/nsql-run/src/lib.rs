@@ -101,32 +101,10 @@ fn savepoint_sql(
     Option<&'static str>,
     Option<&'static str>,
 ) {
-    match dialect {
-        Dialect::Mssql => (
-            Some("SAVE TRANSACTION nsql_edit"),
-            Some("ROLLBACK TRANSACTION nsql_edit"),
-            None,
-        ),
-        Dialect::Oracle => (
-            Some("SAVEPOINT nsql_edit"),
-            Some("ROLLBACK TO nsql_edit"),
-            None,
-        ),
-        // DuckDB = SAVEPOINT 미지원(1.x) · Access(Jet) = 없음.
-        Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
-            (None, None, None)
-        }
-        // Db2(10-24): 세이브포인트 = `ON ROLLBACK RETAIN CURSORS` 필수 어절.
-        Dialect::Db2 => (
-            Some("SAVEPOINT nsql_edit ON ROLLBACK RETAIN CURSORS"),
-            Some("ROLLBACK TO SAVEPOINT nsql_edit"),
-            Some("RELEASE SAVEPOINT nsql_edit"),
-        ),
-        _ => (
-            Some("SAVEPOINT nsql_edit"),
-            Some("ROLLBACK TO SAVEPOINT nsql_edit"),
-            Some("RELEASE SAVEPOINT nsql_edit"),
-        ),
+    // T-149 ④(10-30): 문장은 방언 표(`Syntax::savepoint` · None = 미지원 = DuckDB 1.x · Access · ODBC 일반 · ClickHouse).
+    match nsql_core::Caps::of(dialect).syntax.savepoint {
+        Some((set, back, release)) => (Some(set), Some(back), release),
+        None => (None, None, None),
     }
 }
 
@@ -674,6 +652,8 @@ pub struct Runner {
     hold_stmts: Vec<HeldStmt>,
     hold_total: u64,
     hold_block: bool,
+    /// ★ 열린 트랜잭션 안에서 실행된 **변경 문장 수**(수동 모드 · `nsql shell` 프롬프트 `*n` · T-77 잔여 10-30) — 트랜잭션이 끝나면 0.
+    tx_stmts: usize,
     hold_no_where: bool,
     hold_stop: Option<usize>,
     tx_changed: bool,
@@ -914,6 +894,7 @@ impl Runner {
             hold_stmts: Vec::new(),
             hold_total: 0,
             hold_block: false,
+            tx_stmts: 0,
             hold_no_where: false,
             hold_stop: None,
             tx_changed: false,
@@ -1107,16 +1088,13 @@ impl Runner {
         if let Some(e) = first_err {
             return Err(e);
         }
-        let pick = match dialect {
-            Dialect::Mssql => sets
+        // T-149 ④(10-30): 계획 결과 집합을 고르는 열 이름은 방언 표(`Syntax::plan_text_column` · SQL Server `StmtText`).
+        let pick = match nsql_core::Caps::of(dialect).syntax.plan_text_column {
+            Some(col) => sets
                 .iter()
-                .find(|rs| {
-                    rs.columns
-                        .iter()
-                        .any(|c| c.name.eq_ignore_ascii_case("StmtText"))
-                })
+                .find(|rs| rs.columns.iter().any(|c| c.name.eq_ignore_ascii_case(col)))
                 .or(sets.last()),
-            _ => sets.last(),
+            None => sets.last(),
         };
         let (columns, rows): (Vec<String>, Vec<Vec<String>>) = match pick {
             Some(rs) => (
@@ -1245,12 +1223,14 @@ impl Runner {
         } else {
             self.engine.settings.define_char
         };
-        nsql_script::missing_inputs(
+        // ★ 10-30: 문자열 안 `&이름`은 설정 `script.define_in_strings`를 따른다(엔진 substitute와 같은 규칙 · 끄면 'R&D'를 묻지 않는다).
+        nsql_script::missing_inputs_with(
             src,
             self.dialect(),
             &self.engine.vars,
             &self.engine.defines,
             define_char,
+            self.engine.settings.define_in_strings,
         )
     }
 
@@ -1297,7 +1277,8 @@ impl Runner {
 
     /// ★ 선언 없이 쓴 바인드의 타입을 **루틴 서명에서** 정한다(`EXEC proc(:PC_A, :PC_B)` — Golden 관용 · 변수 관리 09-21).
     /// REF CURSOR OUT 인자를 문자열로 바인드하면 PLS-00306이므로, 타입이 아직 없는 바인드가 있을 때만 `ALL_ARGUMENTS`를
-    /// 한 번 읽는다(루틴당 1회 · 캐시 · 실패는 조용히 = 종전 동작). 지금은 Oracle만(다른 방언은 OUT 바인드가 없다).
+    /// 한 번 읽는다(루틴당 1회 · 캐시 · 실패는 조용히 = 종전 동작). 방언별 방식 = `Caps::call_signature`(Oracle `BindTypes` ·
+    /// PG·MySQL `Captures` · SQL Server `OutputMarks` · SQLite 등 `None` = 아무것도 안 함 · T-149 ③ 10-30 주석 정정).
     fn infer_call_bind_types(&mut self, item: &Item) {
         self.engine.call_captures = None;
         self.engine.call_outputs.clear();
@@ -1494,6 +1475,7 @@ impl Runner {
         self.tx_changed = false;
         self.tx_user = false;
         self.tx_open = false;
+        self.tx_stmts = 0;
         self.hold_stmts.clear();
         self.hold_total = 0;
         self.hold_block = false;
@@ -1591,6 +1573,16 @@ impl Runner {
     #[must_use]
     pub fn tx_open(&self) -> bool {
         self.tx_open
+    }
+
+    /// ★ 열린 트랜잭션 안의 변경 문장 수(`nsql shell` 프롬프트 `nsql*n>` · T-77 잔여 10-30) — 트랜잭션이 없으면 0.
+    #[must_use]
+    pub fn tx_pending(&self) -> usize {
+        if self.tx_open {
+            self.tx_stmts
+        } else {
+            0
+        }
     }
 
     /// ★ 그리드 편집 적용(nexa-sql 87 §7·§14 · T-182) — **데이터 보호 불변식**(사용자 09-26): 셀 편집이 만든 UPDATE/DELETE는
@@ -1785,6 +1777,7 @@ impl Runner {
             }
             if rep.done > 0 || rep.rollback_needed {
                 self.tx_changed = true;
+                self.tx_stmts += rep.done;
             }
         }
         rep
@@ -1804,6 +1797,7 @@ impl Runner {
             }
             TxEffect::Change => {
                 self.tx_changed = true;
+                self.tx_stmts += 1;
                 return false;
             }
             TxEffect::Clean => {}
@@ -1846,6 +1840,7 @@ impl Runner {
                 let _ = s.close_cursor(c.handle);
                 if finish_tx(s.as_mut(), c.deferred_end) {
                     self.tx_open = false;
+                    self.tx_stmts = 0;
                 }
             }
         }
@@ -1883,6 +1878,7 @@ impl Runner {
                     if let Some(c) = self.cursor.take() {
                         if finish_tx(session.as_mut(), c.deferred_end) {
                             self.tx_open = false;
+                            self.tx_stmts = 0;
                         }
                     }
                 }
@@ -2092,6 +2088,7 @@ impl Runner {
                 ssh: _,
                 ssh_key: _,
                 driver: _,
+                autocommit: _,
             } => Some(u.as_str()),
             _ => None,
         }
@@ -2176,6 +2173,11 @@ impl Runner {
             Ok(mut session) => {
                 let dialect = session.dialect();
                 self.engine.set_caps(dialect, session.caps());
+                // ★ 접속별 자동 커밋(`?autocommit=` · 프로필 `autocommit=` · T-77 잔여 10-30) — 접속 직후 이 러너의 모드로(설정보다 우선 ·
+                //   이후 `SET AUTOCOMMIT`·호스트 토글은 종전대로 덮는다). 없으면 그대로.
+                if let Some(ac) = spec.autocommit {
+                    self.engine.settings.autocommit = ac;
+                }
                 self.set_connection_sysvars(spec.user.as_deref(), spec.database.as_deref());
                 if self.engine.settings.serveroutput {
                     let _ = session.set_option("serveroutput", "on");
@@ -2210,7 +2212,7 @@ impl Runner {
                     .and_then(|s| nsql_catalog::current_schema(s.as_mut()).ok())
                     .unwrap_or_default();
                 // 현재 DB 1회(DB 전환이 있는 방언만 · 탭 작업 단위의 기본값 · ⑯).
-                let database = if matches!(dialect, Dialect::Mssql | Dialect::Mysql) {
+                let database = if self.engine.caps.syntax.database_switch {
                     self.session
                         .as_mut()
                         .and_then(|s| nsql_catalog::server_info(s.as_mut()).ok())
@@ -3234,6 +3236,7 @@ impl Runner {
                                 timeline.push(Stage::Commit, t.elapsed());
                             }
                             self.tx_open = false;
+                            self.tx_stmts = 0;
                         }
                     }
                 } else if self.read_end_due(&item.text, result.rows_affected) {
@@ -3249,6 +3252,7 @@ impl Runner {
                                 span.note = Some("read tx end (rollback)".into());
                             }
                             self.tx_open = false;
+                            self.tx_stmts = 0;
                         }
                     }
                     emit(RunEvent::ReadTxEnded { index, deferred });
@@ -5009,6 +5013,51 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             })
             .unwrap();
         assert_eq!(rs.rows[0][0], Value::Int(5));
+    }
+
+    /// ★ T-77 잔여(10-30): ① 접속 스펙 `?autocommit=off`가 러너 모드를 정한다(설정보다 우선 · `Connected.autocommit`에 실린다) ·
+    /// ② 수동 모드의 변경 문장 수 `tx_pending`(셸 프롬프트 `*n`) = DML마다 +1 · 읽기만 = 열려도 0 · COMMIT/ROLLBACK = 0.
+    #[test]
+    fn profile_autocommit_and_tx_pending_count() {
+        let mut r = runner().with_autocommit(true);
+        let (errs, ev) = collect(&mut r, "CONNECT sqlite://x/:memory:?autocommit=off\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        assert!(ev.iter().any(|e| matches!(
+            e,
+            RunEvent::Connected {
+                autocommit: false,
+                ..
+            }
+        )));
+        assert!(!r.autocommit(), "스펙이 끈다");
+        assert_eq!(r.tx_pending(), 0);
+        let (errs, _) = collect(&mut r, "CREATE TABLE t(id INTEGER);\n");
+        assert_eq!(errs, 0);
+        let (errs, _) = collect(
+            &mut r,
+            "INSERT INTO t VALUES (1);\nINSERT INTO t VALUES (2);\n",
+        );
+        assert_eq!(errs, 0);
+        assert!(r.tx_open());
+        assert_eq!(
+            r.tx_pending(),
+            3,
+            "CREATE(SQLite DDL = 트랜잭션 안 변경) + INSERT 2"
+        );
+        let (errs, _) = collect(&mut r, "SELECT COUNT(*) FROM t;\n");
+        assert_eq!(errs, 0);
+        assert_eq!(r.tx_pending(), 3, "읽기는 세지 않는다");
+        let (errs, _) = collect(&mut r, "COMMIT;\n");
+        assert_eq!(errs, 0);
+        assert!(!r.tx_open());
+        assert_eq!(r.tx_pending(), 0, "커밋 뒤 0");
+        // 모르는 값·없음 = 러너 모드 그대로(여기서는 끔인 채).
+        let (errs, ev) = collect(&mut r, "CONNECT sqlite://x/:memory:\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        assert!(!r.autocommit());
+        let (errs, _) = collect(&mut r, "CONNECT sqlite://x/:memory:?autocommit=on\n");
+        assert_eq!(errs, 0);
+        assert!(r.autocommit(), "스펙이 켠다");
     }
 
     fn seeded(n: usize) -> Runner {

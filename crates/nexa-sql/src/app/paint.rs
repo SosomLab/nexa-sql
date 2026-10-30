@@ -154,6 +154,10 @@ impl App {
                 segs.push(("tx", (tx, false)));
                 // ★ `&` 치환 모드 세그먼트(D-141 상태줄 토글 · 10-30): `& auto|on|off` · off = 흐림 · 클릭 = 팝업.
                 segs.push(("define", (define_txt, define_on)));
+                // ★ T-90 잔여(10-30): 향상 모드 ⚡ — 켜져 있을 때만(클릭 = 설정 창 · 39 §4-6).
+                if self.settings.boost_on() {
+                    segs.push(("perf", ("⚡".to_string(), false)));
+                }
                 // 메모리 총량 세그먼트(docs/80 · `mem.statusbar` · 클릭 = 메모리 맵 창) — 조회는 5 s에 한 번, 그릴 때만.
                 if let Some(txt) = mem_txt {
                     segs.push(("mem", (txt, false)));
@@ -307,6 +311,7 @@ impl App {
                 self.status_enc_rect = Rect::new(0, 0, 0, 0);
                 self.status_tx_rect = Rect::new(0, 0, 0, 0);
                 self.status_define_rect = Rect::new(0, 0, 0, 0);
+                self.status_perf_rect = Rect::new(0, 0, 0, 0);
                 self.status_mem_rect = Rect::new(0, 0, 0, 0);
                 self.status_lic_rect = Rect::new(0, 0, 0, 0);
                 self.status_autosave_rect = Rect::new(0, 0, 0, 0);
@@ -330,6 +335,9 @@ impl App {
                     if *id == "define" {
                         self.status_define_rect = r;
                     }
+                    if *id == "perf" {
+                        self.status_perf_rect = r;
+                    }
                     if *id == "license" {
                         self.status_lic_rect = r;
                     }
@@ -341,7 +349,10 @@ impl App {
                     }
                     // ★ 클릭되는 항목 전부 = 버튼처럼(사용자 09-28): hover = 선택색 · 누름 = 상태 레이어.
                     let clickable = *is_syntax
-                        || matches!(*id, "tx" | "define" | "license" | "mem" | "autosave");
+                        || matches!(
+                            *id,
+                            "tx" | "define" | "perf" | "license" | "mem" | "autosave"
+                        );
                     if clickable {
                         let pressed = (*id == "mem" && self.mem_pressed)
                             || (*id == "autosave" && self.autosave_pressed);

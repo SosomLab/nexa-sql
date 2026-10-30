@@ -42,6 +42,12 @@ impl App {
             "indent.to_tabs",
             format!("   {}", t(Msg::MnConvertToTabs)),
         ));
+        // ★ T-69 잔여(10-30 · docs/31 §50 ③): 버퍼에서 감지 → 현재 탭 계층에.
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item(
+            "indent.guess",
+            format!("   {}", t(Msg::MnIndentGuess)),
+        ));
         let r = self.status_tab_rect;
         let host = self
             .window
@@ -249,6 +255,22 @@ impl App {
             || id.starts_with("conn.again:")
         {
             self.disconnect_pick(id);
+            return;
+        }
+        // ★ T-69 잔여(10-30): 버퍼에서 감지 → 그 탭 계층에 · 결과는 상태줄 한 줄.
+        if id == "indent.guess" {
+            self.sess.status = match self.editors.guess_indent_from_buffer() {
+                Some((w, true)) => tf(
+                    Msg::StIndentGuessed,
+                    &[&tf(Msg::StSpaces, &[&w.to_string()])],
+                ),
+                Some((w, false)) => tf(
+                    Msg::StIndentGuessed,
+                    &[&tf(Msg::StTabSize, &[&w.to_string()])],
+                ),
+                None => t(Msg::StIndentGuessNone).to_string(),
+            };
+            self.redraw();
             return;
         }
         let (ts, spaces) = self.editors.indent();
@@ -897,6 +919,16 @@ impl App {
                     self.set_focus(Focus::Editor);
                 }
                 self.layout();
+            }
+            // ★ T-110 2-1(10-30): 미니맵 토글 = 설정 `editor.minimap` 하나(창별 아님) → 저장 + 즉시 적용.
+            "view.minimap" => {
+                let on = !self.settings.flag("editor.minimap");
+                let _ = self
+                    .settings
+                    .set("editor.minimap", if on { "on" } else { "off" });
+                let _ = self.settings.save();
+                self.apply_minimap();
+                self.redraw();
             }
             "view.explorer" => {
                 let on = !self.explorer.is_visible();
@@ -1774,6 +1806,7 @@ impl App {
     fn view_toggle_state(&self, id: &str) -> bool {
         match id {
             "view.explorer" => self.explorer.is_visible(),
+            "view.minimap" => self.settings.flag("editor.minimap"),
             "view.object_details" => self.settings.flag("explorer.details"),
             "view.output" => self.panel.output_index().is_some(),
             "view.search" => self.search.is_visible(),

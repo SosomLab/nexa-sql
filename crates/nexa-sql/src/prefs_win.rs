@@ -86,6 +86,9 @@ struct Card {
     entry: &'static Entry,
     value: String,
     modified: bool,
+    /// ★ T-39 잔여(10-30 · 사용자 결정): 기본값과 다른 카드의 왼쪽 강조선을 **페이드**로(09-16 "그리지 않음" 결정을 뒤집음 ·
+    ///   초기화 버튼과 같은 뜻이지만 바뀐 순간 짧게 번지는 전이가 어디가 바뀌었는지 알려 준다). `modified`가 바뀔 때 목표만 바꾼다.
+    mod_fade: nexa_ctl::tokens::Fade,
     ctl: CardCtl,
     reset: Button,
     /// 색·단축키 보조 버튼(선택…/캡처…).
@@ -183,6 +186,8 @@ pub(crate) struct PrefsWin {
     preview_drag: bool,
     scroll: i32,
     content_h: i32,
+    /// ★ T-278(10-30 · 기동 명령 `prefs.goto:<키>` · 캡처 자동화): 다음 그리기에서 이 키의 카드를 목록 맨 위로 스크롤한다(배치 뒤에만 좌표를 안다).
+    pending_focus: Option<&'static str>,
     bars: ScrollBars,
     /// 스냅샷(전체 · 비노출 포함) — `refresh`로 갱신.
     snap: Vec<Snap>,
@@ -467,6 +472,7 @@ impl PrefsWin {
             preview_drag: false,
             scroll: 0,
             content_h: 0,
+            pending_focus: None,
             bars: ScrollBars::new(),
             snap: Vec::new(),
             adv_hidden: 0,
@@ -537,6 +543,7 @@ impl PrefsWin {
                 continue;
             };
             c.modified = sn.modified;
+            c.mod_fade.set(sn.modified);
             if c.value != sn.value {
                 c.value = sn.value.clone();
                 c.error = None;
@@ -767,6 +774,12 @@ impl PrefsWin {
                     entry: sn.entry,
                     value: sn.value,
                     modified: sn.modified,
+                    // 열 때·카드 재생성 때는 깜빡이지 않게 목표 값으로 점프.
+                    mod_fade: {
+                        let mut f = nexa_ctl::tokens::Fade::hover();
+                        f.jump(sn.modified);
+                        f
+                    },
                     ctl,
                     reset: Button::new(t(Msg::BtnReset)),
                     aux,
@@ -858,6 +871,7 @@ impl PrefsWin {
         any |= self.preview_copy.next_tick(now).is_some();
         for c in &mut self.cards {
             any |= c.reset.tick(now_ms);
+            any |= c.mod_fade.tick(now_ms);
             any |= c.copy.next_tick(now).is_some();
             if let Some(b) = &mut c.aux {
                 any |= b.tick(now_ms);
@@ -887,6 +901,7 @@ impl PrefsWin {
                     .is_some()
                 || self.cards.iter().any(|c| {
                     c.reset.is_animating()
+                        || c.mod_fade.is_animating()
                         || c.copy.next_tick(std::time::Instant::now()).is_some()
                         || c.aux.as_ref().is_some_and(|b| b.is_animating())
                         || match &c.ctl {
@@ -906,6 +921,13 @@ impl PrefsWin {
         // 열린 직후의 "트리 선택이 바뀌었다" 판정이 검색어를 지우지 않게 지금 선택을 기억해 둔다.
         self.last_tree_row = self.tree.selected_row();
         self.rebuild_cards();
+    }
+
+    /// ★ T-278(10-30): 설정 키의 카드로 간다(기동 명령 `prefs.goto:<키>`) — 그 분류를 고르고(검색어 비움) 다음 그리기에서 카드를 맨 위로 스크롤.
+    pub(crate) fn focus_key(&mut self, key: &'static str, cat: Msg) {
+        self.select_category(cat);
+        self.pending_focus = Some(key);
+        self.redraw();
     }
 
     /// ★ 분류 하나를 골라 연다(확장 "설정" 버튼 · 사용자 09-30): 그룹을 펼치고 트리 행을 선택 · 검색어는 비운다.
@@ -982,6 +1004,14 @@ impl PrefsWin {
         if let Some(n) = &self.note {
             out.push_str(&format!("note={n}\n"));
         }
+        // ★ T-278(10-30): `prefs.goto:` 검증용 — 스크롤 위치와 맨 위에 보이는 카드.
+        let top_card = self
+            .cards
+            .iter()
+            .filter(|c| c.rect.h > 0)
+            .min_by_key(|c| c.rect.y)
+            .map_or("-", |c| c.entry.key);
+        out.push_str(&format!("scroll={} top_card={top_card}\n", self.scroll));
         out.push_str(&format!(
             "changed_only={} advanced={} cards={}\n",
             self.changed.is_on(),
@@ -2207,6 +2237,22 @@ impl PrefsWin {
                 y += ch + gap;
             }
             self.content_h = y + self.scroll - list.y;
+            // ★ T-278(10-30): `prefs.goto:<키>` — 배치가 끝나 좌표를 아는 지금 그 카드를 목록 맨 위로(숨긴 카드면 무시) · 다음 그리기 요청.
+            if let Some(k) = self.pending_focus.take() {
+                if let Some(top) = self
+                    .cards
+                    .iter()
+                    .find(|c| c.entry.key == k && c.rect.h > 0)
+                    .map(|c| c.rect.y)
+                {
+                    // 메서드 호출은 그리기 중 빌린 `surface`와 겹치므로 필드로 직접(클램프 = `clamp_scroll`과 같은 식).
+                    let max = (self.content_h - list.h).max(0);
+                    self.scroll = (self.scroll + top - list.y).clamp(0, max);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+            }
             // ── 그리기: 검색 · 트리 · 카드(클립) · 하단
             self.search.paint(&mut dc, th);
             if let Some(r) = self.reveal_row.take() {
@@ -2239,11 +2285,14 @@ impl PrefsWin {
                     continue;
                 }
                 dc.fill_round_rect(clip, (6.0 * s).round() as i32, th.panel_bg);
-                // 기본값과 다른 값의 왼쪽 강조선은 그리지 않는다(사용자 09-16 — 초기화 버튼이 같은 뜻을 전한다).
-                if false && c.modified {
-                    dc.fill_rect(
+                // ★ T-39 잔여(10-30 · 사용자 결정 = 09-16 "그리지 않음"을 뒤집음): 기본값과 다른 카드의 왼쪽 강조선을 **페이드**로 —
+                //   값이 바뀐 순간 번지고 초기화하면 사라진다(`mod_fade` · 열 때는 점프라 깜빡임 없음).
+                let bar_a = c.mod_fade.value();
+                if bar_a > 0.0 {
+                    dc.fill_rect_alpha(
                         Rect::new(r.x, r.y, (3.0 * s).round() as i32, r.h).intersection(&list),
                         th.accent,
+                        bar_a,
                     );
                 }
                 let tx = r.x + inner_pad;

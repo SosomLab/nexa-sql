@@ -177,6 +177,10 @@ pub(crate) struct Editors {
     scroll_snap: bool,
     /// 미니맵(켬 · 폭 논리 px · T-97).
     minimap: (bool, i32),
+    /// ★ T-110 2-5(10-30): 좁은 창 자동 숨김 열 수(`editor.minimap_min_cols` · 0 = 규칙 없음) — 새 탭에도 같은 값.
+    minimap_min_cols: usize,
+    /// ★ T-110 2-4(10-30): 저장 뒤 수정 줄을 미니맵에(`editor.minimap_dirty`).
+    minimap_diff: bool,
     /// ★ 줄 간격(설정 `editor.line_height_mode`/`editor.line_height` + 글꼴 px · 전 탭 + 새 탭 · 134차 · docs/118).
     line_spacing: (nexa_ctl::LineSpacing, f32),
     minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
@@ -230,6 +234,8 @@ pub(crate) struct Editors {
     close_prev: bool,
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
+    /// ★ T-69 잔여(10-30 · `editor.detect_indent`): 파일을 열 때 버퍼에서 감지해 그 탭 계층에 넣는다(디스크 설정은 그대로).
+    detect_indent: bool,
     /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
     paths: Vec<Option<PathBuf>>,
     /// 마지막으로 열거나 저장한 본문(더러움 판정 근거 · 새 탭 = 빈 문자열).
@@ -333,6 +339,7 @@ impl Editors {
             menu_extras: Vec::new(),
             indent: (4, true),
             indents: Vec::new(),
+            detect_indent: true,
             paths: Vec::new(),
             saved: Vec::new(),
             dirty_cache: std::cell::RefCell::new(HashMap::new()),
@@ -344,6 +351,8 @@ impl Editors {
             tab_stops: true,
             scroll_snap: false,
             minimap: (false, 160),
+            minimap_min_cols: 0,
+            minimap_diff: false,
             line_spacing: (nexa_ctl::LineSpacing::Auto, 0.0),
             minimap_box: (None, None, false),
             minimap_opts: (false, false, true),
@@ -430,6 +439,8 @@ impl Editors {
         tb.set_scroll_snap(self.scroll_snap);
         tb.set_minimap(self.minimap.0);
         tb.set_minimap_width(self.minimap.1);
+        tb.set_minimap_min_cols(self.minimap_min_cols);
+        tb.set_minimap_diff(self.minimap_diff);
         tb.set_line_spacing(self.line_spacing.0, self.line_spacing.1);
         tb.set_minimap_box(self.minimap_box.0, self.minimap_box.1, self.minimap_box.2);
         tb.set_minimap_behavior(self.minimap_opts.0, self.minimap_opts.1);
@@ -667,6 +678,22 @@ impl Editors {
             b.set_minimap_width(width);
         }
         self.enforce_large();
+    }
+
+    /// ★ T-110 2-5(10-30): 좁은 창 자동 숨김 열 수를 모든 탭에(새 탭은 `make_box`가 같은 값).
+    pub(crate) fn set_minimap_min_cols(&mut self, cols: usize) {
+        self.minimap_min_cols = cols;
+        for b in &mut self.bufs {
+            b.set_minimap_min_cols(cols);
+        }
+    }
+
+    /// ★ T-110 2-4(10-30): 저장 뒤 수정 줄 미니맵 표식 켬/끔을 모든 탭에(새 탭은 `make_box`).
+    pub(crate) fn set_minimap_diff(&mut self, on: bool) {
+        self.minimap_diff = on;
+        for b in &mut self.bufs {
+            b.set_minimap_diff(on);
+        }
     }
 
     /// 미니맵 동작(설정 `editor.minimap_viewport`/`minimap_click`/`minimap_find` · 전 탭).
@@ -976,6 +1003,23 @@ impl Editors {
         self.cur().selection_count()
     }
 
+    /// ★ T-69 잔여(10-30): 열 때 감지 켜기/끄기(설정 `editor.detect_indent`).
+    pub(crate) fn set_detect_indent(&mut self, on: bool) {
+        self.detect_indent = on;
+    }
+
+    /// ★ T-69 잔여(10-30): 활성 탭 버퍼에서 들여쓰기를 감지해 그 탭 계층에 넣는다(팝업 "버퍼에서 감지") — 돌려주는 값 = 감지 결과.
+    pub(crate) fn guess_indent_from_buffer(&mut self) -> Option<(u8, bool)> {
+        let buf = self.cur().buf();
+        let n = buf.line_count().min(DETECT_LINES);
+        let lines: Vec<String> = (0..n)
+            .map(|l| buf.slice_string(buf.line_start(l), buf.line_end(l)))
+            .collect();
+        let d = detect_indent_in(lines.iter().map(String::as_str))?;
+        self.set_tab_indent(d.0, d.1);
+        Some(d)
+    }
+
     /// 활성 탭의 실제 들여쓰기(탭 폭 · 공백 여부) — 상태줄 세그먼트·팝업 표시 근거.
     pub(crate) fn indent(&self) -> (u8, bool) {
         self.indents
@@ -1240,8 +1284,17 @@ impl Editors {
             return;
         }
         let name = file_title(path);
+        // ★ T-69 잔여(10-30): 열 때 감지(`editor.detect_indent`) — 앞 2000줄만 · 그 탭 계층에만(Sublime `detect_indentation` 관례).
+        let detected = if self.detect_indent {
+            detect_indent_in(text.lines().take(DETECT_LINES))
+        } else {
+            None
+        };
         let id = self.begin_load_tab(&name);
         self.fill_loaded(id, Some(path), &name, &name, PreparedText::new(text), eol);
+        if let (Some(d), Some(i)) = (detected, self.index_of_id(id)) {
+            self.set_indent_of(i, Some(d));
+        }
     }
 
     // ───────────────────────── 미리보기 탭(docs/67 §4 · 사용자 09-22) ──────────────────
@@ -2889,6 +2942,85 @@ type TipSaved = (usize, Instant, (Msg, String));
 const DELETED_TAB_COLOR: nexa_ctl::Color = nexa_ctl::Color(0x00A5_1C1C);
 
 /// 경로 → 탭 제목(파일 이름 · 없으면 경로 전체).
+/// 감지가 보는 줄 수 상한(앞부분만 · 큰 파일에서 전체를 훑지 않는다).
+const DETECT_LINES: usize = 2000;
+
+/// ★ T-69 잔여(10-30 · docs/31 §17 세 제품 공통 `detect_indentation`): 줄들의 **앞 공백**에서 (탭 폭, 공백 여부)를 추정한다.
+/// 규칙 = 들여쓴 줄(공백/탭으로 시작 · 빈 줄 제외)이 3개 미만이면 `None` · 탭으로 시작하는 줄이 공백 줄보다 많으면 탭 ·
+/// 공백이면 이웃 줄과의 들여쓰기 **차이**(1~8)의 최빈값이 폭(차이가 하나도 없으면 공백 수의 최빈값 · 그래도 없으면 `None`).
+/// 순수 함수 — 파일 열기(`text.lines()`)와 버퍼(줄 조각)가 같은 함수를 쓴다.
+pub(crate) fn detect_indent_in<'a>(lines: impl Iterator<Item = &'a str>) -> Option<(u8, bool)> {
+    let mut tabs = 0usize;
+    let mut spaces_lines = 0usize;
+    let mut deltas = [0usize; 9];
+    let mut widths = [0usize; 9];
+    let mut prev: Option<usize> = None;
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.starts_with('\t') {
+            tabs += 1;
+            prev = None;
+            continue;
+        }
+        let n = line.bytes().take_while(|b| *b == b' ').count();
+        if n > 0 {
+            spaces_lines += 1;
+            if n <= 8 {
+                widths[n] += 1;
+            }
+        }
+        if let Some(p) = prev {
+            let d = n.abs_diff(p);
+            if (1..=8).contains(&d) {
+                deltas[d] += 1;
+            }
+        }
+        prev = Some(n);
+    }
+    if tabs + spaces_lines < 3 {
+        return None;
+    }
+    if tabs > spaces_lines {
+        return Some((4, false));
+    }
+    let best = |hist: &[usize; 9]| -> Option<u8> {
+        (1..=8)
+            .filter(|&w| hist[w] > 0)
+            .max_by_key(|&w| (hist[w], usize::MAX - w))
+            .map(|w| w as u8)
+    };
+    best(&deltas).or_else(|| best(&widths)).map(|w| (w, true))
+}
+
+#[cfg(test)]
+mod detect_indent_tests {
+    use super::detect_indent_in;
+
+    /// 공백 2 · 공백 4 · 탭 · 섞임(다수결) · 줄 부족 = None · 빈 줄 무시.
+    #[test]
+    fn detects_width_and_kind() {
+        let two = "a\n  b\n    c\n  d\n\n    e\n";
+        assert_eq!(detect_indent_in(two.lines()), Some((2, true)));
+        let four = "SELECT 1\n    FROM t\n        WHERE x\n    AND y\n";
+        assert_eq!(detect_indent_in(four.lines()), Some((4, true)));
+        let tabs = "a\n\tb\n\t\tc\n\td\n";
+        assert_eq!(detect_indent_in(tabs.lines()), Some((4, false)));
+        let mixed = "a\n\tb\n  c\n  d\n    e\n";
+        assert_eq!(
+            detect_indent_in(mixed.lines()),
+            Some((2, true)),
+            "공백 줄이 더 많다"
+        );
+        assert_eq!(detect_indent_in("a\n  b\n".lines()), None, "들여쓴 줄 1개");
+        assert_eq!(detect_indent_in("a\nb\nc\n".lines()), None);
+        // 모든 들여쓴 줄이 같은 깊이(차이 0) = 공백 수 최빈값으로.
+        let flat = "a\n    b\n    c\n    d\n";
+        assert_eq!(detect_indent_in(flat.lines()), Some((4, true)));
+    }
+}
+
 pub(crate) fn file_title(path: &Path) -> String {
     path.file_name()
         .map(|s| s.to_string_lossy().into_owned())

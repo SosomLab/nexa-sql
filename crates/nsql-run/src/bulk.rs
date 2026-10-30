@@ -198,7 +198,8 @@ pub fn multirow_sql(
         out.push(')');
     };
     let mut out = String::new();
-    if dialect == Dialect::Oracle {
+    // T-149 ④(10-30): `VALUES (…),(…)`를 못 받는 방언(Oracle)만 `INSERT ALL … INTO`.
+    if !nsql_core::Caps::of(dialect).syntax.multirow_values {
         out.push_str("INSERT ALL");
         for _ in 0..n {
             out.push_str(&format!("\nINTO {table} ({col_list}) VALUES "));
@@ -1010,7 +1011,8 @@ impl Runner {
 /// (열 이름 · 기저 타입 · 길이 · 정밀도 · scale · 순서 = 카탈로그 `columns`와 같은 다섯 열 → `fmt_type`) · 다른 방언이나 1·2부 이름 = `None`(종전 카탈로그 길).
 /// 순수 함수(T-309). `OBJECT_ID`는 3부 이름을 그 DB에서 푼다(세션 DB를 바꾸지 않음).
 pub(crate) fn mssql_cols_sql(dialect: Dialect, table: &str) -> Option<String> {
-    if dialect != Dialect::Mssql {
+    // T-149 ④(10-30): 3부 이름을 그 DB의 카탈로그로 푸는 방언만(SQL Server).
+    if !nsql_core::Caps::of(dialect).syntax.three_part_names {
         return None;
     }
     let parts: Vec<&str> = table.split('.').collect();

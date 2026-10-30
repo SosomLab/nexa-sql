@@ -89,7 +89,7 @@
 | 계층 default → user → workspace | ✅ **default → user** 지금 · **프로젝트 `.nexa/settings.conf`**는 [18 세션·프로젝트](18-session-and-projects.md) 착수 시(T-39b) | 프로젝트(스크립트 폴더)별 방언·인코딩·포맷 규칙이 실제 필요 |
 | `[language]` 오버라이드 | ❌ 지금은 없음 — 방언별(`[oracle]` `[mssql]`)로 재해석 가능성만 메모 | 편집기 설정이 생기면(E1~) 판단 |
 | 프로필 · Settings Sync · 정책 | ❌ | 단일 사용자 도구 · 서버 없음(DR) |
-| 설정 편집기 UI(§2) | 📐 **T-39** — 좌측 TOC(카테고리) · 검색줄 · 스크롤 본문 · 항목 카드(제목·설명·컨트롤) · 변경 바 · Reset · "파일 열기" 링크 | 캡처 원칙 6개 그대로. 컨트롤은 nexa-ctl(Combo·Checkbox·TextBox) · 목차는 nexa-dir2 `columns/rows` 이식 후 |
+| 설정 편집기 UI(§2) | 📐 **T-39** — 좌측 TOC(카테고리) · 검색줄 · 스크롤 본문 · 항목 카드(제목·설명·컨트롤) · 변경 바(09-16 제거 → **10-30 5차 복귀 = 페이드 애니메이션** · `Card.mod_fade` · D-406) · Reset · "파일 열기" 링크 | 캡처 원칙 6개 그대로. 컨트롤은 nexa-ctl(Combo·Checkbox·TextBox) · 목차는 nexa-dir2 `columns/rows` 이식 후 |
 | `@modified` 검색 | ✅ 데이터는 있음(`Settings::is_modified`) · UI는 T-39 | |
 | Commonly Used | T-39에서 `REGISTRY` 순서 상위 N개 = 자주 쓰는 것(레지스트리에 `common: bool` 추가) | |
 | 키 → 제목 자동 변환 | ❌ **i18n 키를 명시**(`label: Msg`) | 한국어에는 자동 변환이 없다(DR-19 한글 1급) |

@@ -71,5 +71,5 @@ Default(REGISTRY)  →  전역 User(settings.conf)  →  문법/확장자(Packag
 ## 4. 작업 — T-69(순서)
 1. nexa-gfx 탭 폭 주입 + 탭 정지점 측정 · TextBox `set_indent(tab_size, spaces)` · Tab/Shift+Tab 동작(선택 줄 들여쓰기).
 2. `nsql-settings` 키 4개 · 문법 계층 파일 로더(`syntax.rs` 옆 · `nexa-conf`) · 해석기 `IndentResolver`(계층 목록).
-3. 감지 휴리스틱 + 변환 명령(단위 테스트: 탭/공백/혼합/빈 버퍼).
+3. 감지 휴리스틱 + 변환 명령(단위 테스트: 탭/공백/혼합/빈 버퍼). — ✅ 감지(10-30 · 180차) = 설정 `editor.detect_indent`(Bool · 기본 on) · 순수 함수 `editors::detect_indent_in(lines)`(앞 2000줄 · 들여쓴 줄 3개 미만 = 감지 안 함 · 탭 줄 > 공백 줄 = 탭 · 공백 폭 = 이웃 줄 들여쓰기 차이의 최빈값(없으면 공백 수 최빈값) · 시험 7) · 파일 열 때 `Editors::open_file`이 **그 탭 계층**(`set_indent_of`)에만 넣음(디스크 설정 불변 · Sublime/VS Code/IntelliJ 관례) · 상태줄 들여쓰기 팝업 구분선 + "버퍼에서 감지"(`indent.guess` · 결과 = 상태줄 "들여쓰기 감지: 공백: 4"/"탭: 4" 또는 "감지하지 못했습니다") · 변환 명령 = 종전 · 남은 것 = 문법/프로젝트 계층(§2 · ☐).
 4. 상태바 세그먼트 + 팝업 + 팔레트 명령 · 세션 메타 저장.

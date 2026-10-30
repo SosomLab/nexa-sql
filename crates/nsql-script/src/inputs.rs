@@ -169,17 +169,24 @@ impl InputNeed {
 /// 글에서 치환 변수 참조 이름(대문자)을 나온 순서대로 — [`crate::Engine::substitute`]와 같은 규칙(주석 안 제외).
 #[must_use]
 pub fn macro_refs(text: &str, define_char: char) -> Vec<String> {
-    macro_refs_with(text, &classify(text), define_char)
+    macro_refs_with(text, &classify(text), define_char, true)
 }
 
-/// [`macro_refs`] — 분류를 이미 가진 호출자용.
-fn macro_refs_with(text: &str, classes: &[Class], define_char: char) -> Vec<String> {
+/// [`macro_refs`] — 분류를 이미 가진 호출자용. `in_strings` = 문자열 리터럴 안도 참조로 본다(SQL*Plus · 설정
+/// `script.define_in_strings` · 끄면 `'R&D'`의 `&D`는 참조가 아니다 — 엔진 `substitute`와 같은 규칙 · 10-30 결함: 훑기만 설정을 안 봐 입력 창이 떴다).
+fn macro_refs_with(
+    text: &str,
+    classes: &[Class],
+    define_char: char,
+    in_strings: bool,
+) -> Vec<String> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
     while i < b.len() {
         if b[i] == define_char as u8
             && !matches!(classes[i], Class::LineComment | Class::BlockComment)
+            && (in_strings || classes[i] != Class::Str)
         {
             let double = i + 1 < b.len() && b[i + 1] == define_char as u8;
             let start = i + if double { 2 } else { 1 };
@@ -286,9 +293,22 @@ pub fn missing_inputs(
     defines: &crate::macros::MacroStore,
     define_char: Option<char>,
 ) -> Vec<InputNeed> {
+    missing_inputs_with(src, dialect, vars, defines, define_char, true)
+}
+
+/// [`missing_inputs`] + `in_strings`(문자열 리터럴 안 `&이름`도 입력으로 볼지 — 설정 `script.define_in_strings` · 호스트 러너가 넘긴다).
+#[must_use]
+pub fn missing_inputs_with(
+    src: &str,
+    dialect: Option<Dialect>,
+    vars: &VarStore,
+    defines: &crate::macros::MacroStore,
+    define_char: Option<char>,
+    in_strings: bool,
+) -> Vec<InputNeed> {
     // SQLite는 `@x` · `$x`도 이름 매개변수다 → `:x`로 맞춰 본다(같은 길이라 줄·오프셋이 그대로 · T-162 ①).
     let unified;
-    let src = if dialect == Some(Dialect::Sqlite) {
+    let src = if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.bind_marker_aliases) {
         unified = crate::bind::unify_sqlite_markers(src);
         &*unified
     } else {
@@ -327,7 +347,7 @@ pub fn missing_inputs(
             );
             // 치환 글자가 없는 문장은 분류(토큰화)하지 않는다.
             if !is_def_cmd && item_macro {
-                for name in macro_refs_with(&item.text, &classes, ch) {
+                for name in macro_refs_with(&item.text, &classes, ch, in_strings) {
                     // 시스템 변수(`&_USER` …)는 호스트가 채운다 — 묻지 않는다.
                     if crate::engine::SYSTEM_VARS.contains(&name.as_str()) {
                         continue;
@@ -552,6 +572,35 @@ mod tests {
         assert!(
             contains_ci("set define on", b"DEFINE") && !contains_ci("undefined", b"SET DEFINE")
         );
+    }
+
+    /// ★ 10-30 결함(사용자): `script.define_in_strings`를 꺼도 `'R&D'`의 `&D` 입력 창이 떴다 — 훑기가 설정을 안 봤다.
+    ///   `in_strings=false` = 문자열 안은 참조 아님 · 문자열 밖 `&dept`는 그대로 묻는다 · 주석은 어느 쪽이든 아님.
+    #[test]
+    fn define_in_strings_off_skips_string_literals_in_scan() {
+        let vars = VarStore::new();
+        let defs = crate::macros::MacroStore::new();
+        let src = "SELECT 'R&D' a, &dept b FROM t -- &no\n";
+        let on = missing_inputs_with(src, Some(Dialect::Oracle), &vars, &defs, Some('&'), true);
+        assert_eq!(
+            on.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(),
+            ["D", "DEPT"]
+        );
+        let off = missing_inputs_with(src, Some(Dialect::Oracle), &vars, &defs, Some('&'), false);
+        assert_eq!(
+            off.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(),
+            ["DEPT"]
+        );
+        // 문자열 안뿐인 스크립트 = 입력 없음.
+        assert!(missing_inputs_with(
+            "SELECT 'R&D' FROM dual;\n",
+            Some(Dialect::Oracle),
+            &vars,
+            &defs,
+            Some('&'),
+            false
+        )
+        .is_empty());
     }
 
     #[test]

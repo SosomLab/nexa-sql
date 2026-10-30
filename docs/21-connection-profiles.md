@@ -142,3 +142,10 @@ oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
 - 실서버 시험(10-28 · 161차) = 로컬 ssh 설정으로 Oracle에 붙는 시험 케이스·절차 = [125](125-ssh-tunnel-real-server-test.md)(`integration::ssh_tunnel_real_server` · `scripts/win-ssh-tunnel-test.ps1`).
 - 터널 수명(10-28 · 162차 · D-391) = Windows에서 ssh 명령창이 뜨지 않는다(`CREATE_NO_WINDOW`) · 같은 대상으로 여러 세션을 열어도 ssh는 1개(공유 · 마지막 세션이 닫히면 종료) · 앱이 비정상 종료해도 ssh가 남지 않게 Job Object(Windows) + PID 원장 `<설정 폴더>/run/ssh-tunnels.pids`(다음 기동 때 정리) · 원리 = [125 §7](125-ssh-tunnel-real-server-test.md).
 - 인증·호스트 키(10-29 · 164차 · D-392) = **키 인증만**(키 파일·agent·`~/.ssh/config` · 비밀번호 인증 미지원 · 묻지 않음 `BatchMode`) · 호스트 키 = `StrictHostKeyChecking=accept-new` → 처음 보는 호스트는 자동 등록(터미널에서 미리 접속할 필요 없음) · 호스트 키가 바뀐 서버는 거부.
+
+## 11. 자동 커밋 `?autocommit=` · 프로필 키 `autocommit=`(10-30 · 180차 · T-77 · D-399)
+
+- 접속 문자열 꼬리 `?autocommit=on|off`(`true/false/1/0/yes/no` · 축약형 꼬리도) · 볼트 프로필 키 `autocommit=`(평문 · 비밀 아님) — `connection_string` 왕복.
+- 의미 = **접속 직후 모드만**: 러너 `connect()`가 이 값으로 자동 커밋을 맞춘다(전역 설정 `session.autocommit`보다 우선) · 그 뒤 `SET AUTOCOMMIT`·GUI 토글은 종전대로.
+- CLI = 셸·`nsql run` 모두 적용(`run`의 끝 커밋 규칙은 그대로) · 접속 줄 `· autocommit on|off`에 반영.
+- ★ 한계(GUI) = 상태줄 버튼·배지는 **전역 설정 그대로** — 프로필 값이 설정과 다르면 로그 + 토스트(`StProfileAutocommit`)로만 알린다 · 세션별 autocommit 표시는 보류(D-399).

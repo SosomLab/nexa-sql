@@ -294,6 +294,8 @@ impl DynDriver {
         if let Ok(bytes) = s.call(ops::CAPS, &[]) {
             if let Ok(c) = codec::Reader::new(&bytes).caps() {
                 s.caps = c;
+                // ★ T-149 ④(10-30): 문법 표는 ABI로 오지 않는다(코덱 = ANSI 자리 채움) → 방언 표로 덮는다.
+                s.caps.syntax = nsql_core::Caps::of(s.dialect()).syntax;
             }
         }
         if let Ok(bytes) = s.call(ops::DRIVER_NAME, &[]) {

@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-30 저녁 (180차 · Windows · 결정 정리 + B 목록 1~5차)** — 결정 D-396~D-421(비TTY 프롬프트 생략 · 키맵 a′ · 2차 B 묶음 15건 · 충돌 1) · 규칙 신설 2(설정 먼저 · 프로젝트 파일 하나만) · 구현 = T-14 `selector` · T-77 · T-133 · T-200(objects 게이트 · 절 안 위치 `first` · 상속 빼기 `-=`) · T-53 · T-131 · T-455 · T-149 ③ · Caps.syntax · T-76 ① JSON 강조 · T-69 감지 · T-110 2-1·2-4·2-5 미니맵 · T-90 ⚡ · T-39 변경 바 · T-278 `prefs.goto` · 설계 = 67 §8 · 95 §10·§11 · 70 §9 · 82 §10 대조표([journal 10-30 §3~§5](journal/2026-10-30.md)).
 - **2026-10-30 새벽 (179차 · Windows · 릴리스)** — 맥 CI 수정(keys_win 시험 · bb41dc06) · 🚀 **v0.4.0**(Latest) + **drivers-v0.1.9** · 채널 Homebrew ✓ · Chocolatey 제출 · APT/RPM ✓ · 브랜치 = 셸 다중 줄(T-453) · `script.define_in_strings` · 상태줄 `&` 세그먼트(T-149 · D-141)([journal 10-30 §1·§2](journal/2026-10-30.md)).
 - **2026-10-30 새벽 (178차 · Windows · `nsql shell` 실기 후속)** — 결함 2(DDL 뒤 Tab 캐시 · 단어 이동) + 사용자 지시 ①~⑦(Ctrl+Z/Y · Alt+Y · `SHOW VERSION` · `SHOW AUTOCOMMIT` · 접속 줄 autocommit · 도움말 판 · Tab 별칭 = GUI 설정 · 셸만 `session.autocommit`) · Windows 실기 ✓ · 셸 `show` 항목 표(현재값·설정 가능한 값·설명) · 포터블 보류 · main 병합·push(사용자 10-30)([journal 10-27 §41](journal/2026-10-27.md)).
 - **2026-10-29 오후 (177차 · Windows · Ctrl+R)** — `nsql shell` 기록 거꾸로 찾기(readline reverse-i-search · 328b172c) · 오늘 풀 테스트 workspace 1190/0 · SDK 24/0([journal 10-27 §40](journal/2026-10-27.md)).

@@ -122,7 +122,11 @@ impl Settings {
     /// 그대로 — 문서화된 `:setvar Env` → `&Env` 흐름은 그대로 살고 `'R&D'`의 거짓 입력 창만 사라진다. 돌려주는 값 = (접두, 너그러움).
     #[must_use]
     pub fn default_define(dialect: Dialect) -> (Option<char>, bool) {
-        (Some('&'), dialect != Dialect::Oracle)
+        // T-149 ④(10-30): "묻는가"는 방언 표(`Syntax::define_prompt_undefined` · SQL*Plus 계열만 참).
+        (
+            Some('&'),
+            !nsql_core::Caps::of(dialect).syntax.define_prompt_undefined,
+        )
     }
 }
 
@@ -294,7 +298,8 @@ impl Engine {
             Err(e) => return vec![Self::subst_error(e)],
         };
         // SQLite는 `@x` · `$x`도 이름 매개변수다 → `:x`와 한 변수로(T-162 ① · 같은 길이 치환).
-        let text = if self.dialect == Dialect::Sqlite && matches!(item.kind, ItemKind::Sql(_)) {
+        let text = if self.caps.syntax.bind_marker_aliases && matches!(item.kind, ItemKind::Sql(_))
+        {
             crate::bind::unify_sqlite_markers(&text).into_owned()
         } else {
             text
@@ -1029,10 +1034,17 @@ fn clip_utf8(s: &str, limit: usize) -> &str {
 /// 그대로 둔다(글자 상수 안에서 유효하다). OS와 무관한 순수 글자 처리 — Windows · macOS · Linux에서 같은 결과.
 fn sql_text_literal(v: &str, dialect: Dialect) -> String {
     let body = v.replace('\'', "''");
-    match dialect {
-        Dialect::Mssql => format!("N'{body}'"),
-        Dialect::Mysql => format!("'{}'", body.replace('\\', "\\\\")),
-        _ => format!("'{body}'"),
+    // T-149 ④(10-30): 방언 표 — `N'…'`(nchar_literal) · 역슬래시 이스케이프(backslash_escape).
+    let syn = nsql_core::Caps::of(dialect).syntax;
+    let body = if syn.backslash_escape {
+        body.replace('\\', "\\\\")
+    } else {
+        body
+    };
+    if syn.nchar_literal {
+        format!("N'{body}'")
+    } else {
+        format!("'{body}'")
     }
 }
 
@@ -1042,10 +1054,12 @@ fn format_macro(v: &str, fmt: &str, dialect: Dialect) -> Option<String> {
     Some(match fmt.to_ascii_lowercase().as_str() {
         "" | "raw" => v.to_string(),
         "q" | "quote" | "sql" => sql_text_literal(v, dialect),
-        "id" | "ident" => match dialect {
-            Dialect::Mssql => format!("[{}]", v.replace(']', "]]")),
-            Dialect::Mysql => format!("`{}`", v.replace('`', "``")),
-            _ => format!("\"{}\"", v.replace('"', "\"\"")),
+        "id" | "ident" => match nsql_core::Caps::of(dialect).syntax.ident_quote {
+            nsql_core::caps::IdentQuote::Bracket => format!("[{}]", v.replace(']', "]]")),
+            nsql_core::caps::IdentQuote::Backtick => format!("`{}`", v.replace('`', "``")),
+            nsql_core::caps::IdentQuote::DoubleQuote => {
+                format!("\"{}\"", v.replace('"', "\"\""))
+            }
         },
         "upper" => v.to_uppercase(),
         "lower" => v.to_lowercase(),

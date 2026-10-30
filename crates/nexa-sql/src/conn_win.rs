@@ -122,6 +122,9 @@ enum Guard {
     Load(String),
     New,
     Close,
+    /// ★ T-131 잔여(10-30): 폼에 불러온 프로필(= 선택 행)을 지우려 할 때 폼이 바뀐 채면 버림/취소를 먼저(저장 항목 없음 · 지우는데
+    ///   저장은 모순) — 대상은 발화 때 선택 행으로 다시 읽는다.
+    Delete,
 }
 
 /// 접속 중 막의 상태.
@@ -1627,11 +1630,15 @@ impl ConnWin {
                 self.guarded(Guard::Load(n), out);
             }
         }
-        if self.btn_delete.take_clicked()
-            && self.selected_name().is_some()
-            && self.del_arm.is_none()
-        {
-            self.arm_delete();
+        if self.btn_delete.take_clicked() && self.del_arm.is_none() {
+            if let Some(n) = self.selected_name() {
+                // ★ T-131 잔여(10-30): 폼에 불러와 고치던 프로필을 지우려면 먼저 버림/취소를 묻는다(다른 프로필 = 바로 무장).
+                if self.panel.loaded_name().as_deref() == Some(n.as_str()) {
+                    self.guarded(Guard::Delete, out);
+                } else {
+                    self.arm_delete();
+                }
+            }
         }
         if self.btn_close.take_clicked() {
             return self.guarded(Guard::Close, out);
@@ -1650,21 +1657,19 @@ impl ConnWin {
                 self.cursor
             };
             let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
+            // ★ T-131: 삭제 지킴이는 "저장" 항목이 없다(지우면서 저장은 모순 · 버림 = 삭제 진행 · 취소).
+            let with_save = !matches!(self.guard, Some(Guard::Delete));
+            let mut items = vec![
+                CtxItem::maybe("guard_title", t(Msg::MnGuardTitle), false),
+                CtxItem::Separator,
+            ];
+            if with_save {
+                items.push(CtxItem::item("guard_save", t(Msg::MnGuardSave)));
+            }
+            items.push(CtxItem::item("guard_discard", t(Msg::MnGuardDiscard)));
+            items.push(CtxItem::item("guard_cancel", t(Msg::MnGuardCancel)));
             self.menu.set_scale(self.scale);
-            crate::menu_icons::open_at(
-                &mut self.menu,
-                x,
-                y,
-                vec![
-                    CtxItem::maybe("guard_title", t(Msg::MnGuardTitle), false),
-                    CtxItem::Separator,
-                    CtxItem::item("guard_save", t(Msg::MnGuardSave)),
-                    CtxItem::item("guard_discard", t(Msg::MnGuardDiscard)),
-                    CtxItem::item("guard_cancel", t(Msg::MnGuardCancel)),
-                ],
-                host,
-                self.ctx_text_w,
-            );
+            crate::menu_icons::open_at(&mut self.menu, x, y, items, host, self.ctx_text_w);
             self.redraw();
             return false;
         }
@@ -1693,6 +1698,11 @@ impl ConnWin {
             }
             Guard::New => {
                 self.open_detail(true);
+                false
+            }
+            // ★ T-131: 버림 뒤 삭제 진행 = 종전과 같은 5초 무장 버튼(두 번째 클릭이 실제 삭제).
+            Guard::Delete => {
+                self.arm_delete();
                 false
             }
             Guard::Close => {
@@ -2170,6 +2180,10 @@ impl ConnWin {
                     Some("guard_cancel") => {
                         self.guard = None;
                     }
+                    // ★ T-131: 폼 우클릭 "변경 취소" = 전부 저장본으로.
+                    Some("revert_all") => {
+                        self.panel.discard_changes();
+                    }
                     // 콤보 우클릭: 선택 항목 / 목록(여러 줄) 복사(사용자 09-14).
                     Some("combo_item") => {
                         let _ = crate::clipboard::write_text(&self.panel.dialect_selected_label());
@@ -2242,6 +2256,26 @@ impl ConnWin {
                 }
                 if let Some(PanelAction::Edit(act)) = self.panel.route(&ev, &mut inv) {
                     self.clip(act);
+                }
+                // ★ T-131 잔여(10-30): 입력란 밖(라벨·여백) 우클릭 + 폼이 바뀐 채 = "변경 취소" 메뉴(전체 되돌리기 · 저장본으로).
+                if !self.panel.edit_menu_open() && self.panel.is_dirty() {
+                    let host = self
+                        .window
+                        .as_ref()
+                        .map(|w| {
+                            let sz = w.inner_size();
+                            Rect::new(0, 0, sz.width as i32, sz.height as i32)
+                        })
+                        .unwrap_or(self.list);
+                    self.menu.set_scale(self.scale);
+                    crate::menu_icons::open_at(
+                        &mut self.menu,
+                        x,
+                        y,
+                        vec![CtxItem::item("revert_all", t(Msg::MnRevertChanges))],
+                        host,
+                        self.ctx_text_w,
+                    );
                 }
                 self.redraw();
                 return;

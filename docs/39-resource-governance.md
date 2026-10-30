@@ -357,6 +357,8 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 >
 > 09-17 추가: 향상 모드 강제 표에 `editor.diff_marks=off`(줄 디프 계산 · 편집마다) · `log.dev_mode=off`(상세 로그 게이트 0 · [48](48-logging-architecture.md)).
 
+**상태줄 ⚡(10-30 · 180차 · T-90)** = 상태줄 블록 `perf`(`define` 뒤 · 순서 편집 창 노출) · `perf.boost` 켜짐일 때만 "⚡" 세그먼트 · 클릭 = 설정 창(성능 분류 = 설정 검색) · 설정 창 Performance 카드 = `CatPerformance` 분류가 이미 담당.
+
 ## 5. 시나리오 — 모드가 실제로 바꾸는 것(사용자 관점)
 
 | 상황 | auto가 고르는 모드 | 체감 |

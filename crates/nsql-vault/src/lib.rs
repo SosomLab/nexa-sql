@@ -253,6 +253,10 @@ impl Vault {
         if let Some(v) = &spec.ssh_key {
             known.push(("ssh_key", v.clone()));
         }
+        // ★ 접속별 자동 커밋(T-77 · 10-30) — 프로필 키 `autocommit=on|off`.
+        if let Some(a) = spec.autocommit {
+            known.push(("autocommit", if a { "on" } else { "off" }.to_string()));
+        }
         if let Some(pw) = &spec.password {
             let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
             known.push(("secret", hex_encode(&env)));
@@ -467,6 +471,7 @@ impl Vault {
                 "env" => spec.env = nsql_script::ConnEnv::from_name(&v),
                 "ssh" => spec.ssh = Some(v),
                 "ssh_key" => spec.ssh_key = Some(v),
+                "autocommit" => spec.autocommit = nsql_script::parse_on_off(&v),
                 "secret" => secret = Some(v),
                 _ => {}
             }
@@ -563,6 +568,7 @@ mod tests {
             tls_ca: None,
             ssh: None,
             ssh_key: None,
+            autocommit: None,
             driver: None,
         }
     }

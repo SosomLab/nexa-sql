@@ -41,12 +41,12 @@ pub mod varsfile;
 pub use bind::{extract_binds, BindRef};
 pub use call::{call_shape, mark_output, tsql_call_shape, CallArg, CallShape};
 pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, SpoolMode};
-pub use connect::{ConnEnv, ConnectSpec, ENV_CHOICES};
+pub use connect::{parse_on_off, ConnEnv, ConnectSpec, ENV_CHOICES};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{local_assign, Action, Diagnostic, Engine, SYSTEM_VARS};
 pub use inputs::{
-    default_delivery, delivery_tag, input_preview, macro_refs, missing_inputs, typed_input,
-    Delivery, InputKind, InputNeed,
+    default_delivery, delivery_tag, input_preview, macro_refs, missing_inputs, missing_inputs_with,
+    typed_input, Delivery, InputKind, InputNeed,
 };
 pub use lang::{lang, set_lang, Lang};
 pub use macros::{MacroLayer, MacroStore};

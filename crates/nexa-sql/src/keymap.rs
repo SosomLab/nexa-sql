@@ -275,6 +275,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+shift+e",
         linux: "ctrl+shift+e",
     },
+    // ★ T-110 2-1(10-30): 미니맵 토글 — 기본 단축키 없음(Sublime도 메뉴만 · 단축키 창에서 지정).
+    Command {
+        id: "view.minimap",
+        label: Msg::MnMinimap,
+        win: "",
+        mac: "",
+        linux: "",
+    },
     // ★ 다음/이전 문장(`;` 기준 · 사용자 09-16) — Alt+↓/↑: Sublime 기본 맵에서 비어 있고(Ctrl+Shift+↑/↓ = 줄 교체 ·
     //   Ctrl+Alt+↑/↓ = 커서 추가) 방향키라 "이동"으로 읽힌다.
     Command {
@@ -1335,6 +1343,9 @@ pub(crate) struct Keymap {
     file_summary: (usize, usize, usize),
     /// ★ 174차: 사용자 키맵 파일의 (context 없는) 바인딩이 적용된 명령 — 단축키 창 "(파일)" 표시.
     file_ids: HashSet<&'static str>,
+    /// ★ 180차(결정 ② a′ · D-397): 파일의 context 없는 바인딩(조합 열 · 명령) — 파일 순서. 단축키 창이 [지정]/[비우기] 때
+    ///   "파일이 이 키/명령을 씀(파일 우선)" 안내를 내는 근거(동작은 파일 > 설정 그대로).
+    file_chords: Vec<(Vec<Chord>, &'static str)>,
 }
 
 /// ★ 동적 명령(확장 메타 `commands[].key` · 146차 · docs/75 §9 ②): `(id, win, mac, linux)` — `set_dynamic`으로 교체 · `from_settings`가 `COMMANDS` 뒤에 더한다.
@@ -1525,6 +1536,7 @@ impl Keymap {
             }
             self.append_code(cid, &b.keys.join(","));
             self.file_ids.insert(cid);
+            self.file_chords.push((chords, cid));
             applied += 1;
         }
         (applied, kept, unknown)
@@ -1570,6 +1582,22 @@ impl Keymap {
     /// 이 명령에 사용자 키맵 파일의 (context 없는) 바인딩이 적용돼 있다(단축키 창 "(파일)" 꼬리).
     pub(crate) fn file_bound(&self, id: &str) -> bool {
         self.file_ids.contains(id)
+    }
+
+    /// ★ 180차(결정 ② a′): 파일의 context 없는 바인딩 목록(단축키 창이 열 때 복사해 두고 [지정] 때 `file_owner_in`으로 대조).
+    pub(crate) fn file_chords(&self) -> &[(Vec<Chord>, &'static str)] {
+        &self.file_chords
+    }
+
+    /// ★ 180차(결정 ② a′): 사용자 키맵 파일이 이 명령에 묶은 조합들의 표시 글(`Ctrl+Alt+9` · `Ctrl+K, Ctrl+9` · ` / ` 이음) · 없으면 None.
+    pub(crate) fn file_display_of(&self, id: &str) -> Option<String> {
+        let parts: Vec<String> = self
+            .file_chords
+            .iter()
+            .filter(|(_, cid)| *cid == id)
+            .map(|(c, _)| c.iter().map(Chord::display).collect::<Vec<_>>().join(", "))
+            .collect();
+        (!parts.is_empty()).then(|| parts.join(" / "))
     }
 
     /// context 바인딩 행(단축키 창 표시용 · 읽기 전용) = (코드 표시 `Ctrl+K, Ctrl+U` · 조건 요약 · 명령 id) · 파일 순서.
@@ -1631,6 +1659,17 @@ impl Keymap {
     pub(crate) fn conflict(&self, ch: &Chord, except: &str) -> Option<&'static str> {
         self.lookup(ch).filter(|id| *id != except)
     }
+}
+
+/// ★ 180차(결정 ② a′): 파일 바인딩 목록에서 이 조합 열의 주인(뒤 줄이 이김 = Sublime) — `Keymap::file_owner`와 단축키 창이 함께 쓴다.
+pub(crate) fn file_owner_in(
+    list: &[(Vec<Chord>, &'static str)],
+    chords: &[Chord],
+) -> Option<&'static str> {
+    list.iter()
+        .rev()
+        .find(|(c, _)| c.as_slice() == chords)
+        .map(|(_, id)| *id)
 }
 
 /// 코드 조각 하나(`ctrl+s` · `ctrl+k,ctrl+u`)의 조합 열 — `none`·해석 불가 = None.

@@ -24,6 +24,8 @@ objects = subquery
 
 [clause SELECT]
 next = DISTINCT, ALL, AS, FROM, CASE, WHEN, THEN, ELSE, END, NULL, TRUE, FALSE, NOT, EXISTS, CAST, OVER, PARTITION BY, IN, BETWEEN, LIKE, IS NULL, IS NOT NULL, AND, OR
+# `first` = 절 키워드 바로 뒤(첫 항목 자리)에만 오는 예약어(T-200 절 안 위치 · 10-30) — 항목이 나온 뒤·콤마 뒤에는 내지 않는다.
+first = DISTINCT, ALL
 objects = column, function, subquery
 
 [clause FROM]

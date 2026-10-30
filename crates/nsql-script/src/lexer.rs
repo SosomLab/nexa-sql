@@ -25,7 +25,12 @@ pub fn classify(text: &str) -> Vec<Class> {
 /// ★ 방언을 아는 분류(135차 · MySQL): `#` 줄 주석 · 문자열 안 백슬래시 이스케이프(`'it\'s'`)는 **MySQL에서만**(Oracle `#`은
 /// 식별자 글자 · T-SQL `#temp` · PG 표준 문자열은 `\`가 글자). 백틱 `` `…` ``은 어느 방언에서도 다른 뜻이 없어 늘 인용 식별자.
 pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class> {
-    let mysql = dialect == Some(nsql_core::Dialect::Mysql);
+    // T-149 ④(10-30): 방언 표(`Syntax`) — `#` 줄 주석 · 역슬래시 이스케이프 · 달러 인용(방언 모름 = ANSI = 달러 인용만 참).
+    let syn = dialect.map_or(nsql_core::caps::Syntax::ansi(), |d| {
+        nsql_core::Caps::of(d).syntax
+    });
+    let (hash_comment, backslash, dollar) =
+        (syn.hash_comment, syn.backslash_escape, syn.dollar_quoting);
     let b = text.as_bytes();
     let n = b.len();
     let mut out = vec![Class::Code; n];
@@ -47,13 +52,13 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
                 out[i..end].fill(Class::BlockComment);
                 i = end;
             }
-            b'#' if mysql => {
+            b'#' if hash_comment => {
                 let end = memchr_nl(b, i);
                 out[i..end].fill(Class::LineComment);
                 i = end;
             }
             b'\'' => {
-                let end = scan_single_quoted_in(b, i, mysql);
+                let end = scan_single_quoted_in(b, i, backslash);
                 out[i..end].fill(Class::Str);
                 i = end;
             }
@@ -63,7 +68,7 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
                 i = end;
             }
             // PostgreSQL 달러 인용(`$$ … $$` · `$body$ … $body$`) — 함수/프로시저 본문(사용자 09-15 PG 지원) · MySQL에는 없다(`DELIMITER $$`가 구분자).
-            b'$' if !prev_is_ident(b, i) && !mysql => {
+            b'$' if !prev_is_ident(b, i) && dollar => {
                 if let Some(end) = scan_dollar_quoted(b, i) {
                     out[i..end].fill(Class::Str);
                     i = end;

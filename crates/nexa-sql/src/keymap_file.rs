@@ -270,11 +270,63 @@ fn regex_ok(pattern: &str, text: &str, whole: bool) -> bool {
     regex::Regex::new(&pat).is_ok_and(|re| re.is_match(text))
 }
 
+/// 스코프 원자(`string` · `string.quoted`)가 스코프 조각(`string.quoted.sql`)에 맞는가 — 점 경계 접두.
+fn atom_hits(atom: &str, seg: &str) -> bool {
+    seg == atom || (seg.starts_with(atom) && seg[atom.len()..].starts_with('.'))
+}
+
+/// 원자들이 스코프 조각들에 **순서대로** 맞는가(Sublime 후손 선택자 · 빈 원자 = 전부).
+fn atoms_match(atoms: &[&str], segs: &[&str]) -> bool {
+    let mut from = 0usize;
+    for atom in atoms {
+        match segs[from.min(segs.len())..]
+            .iter()
+            .position(|s| atom_hits(atom, s))
+        {
+            Some(i) => from += i + 1,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// ★ Sublime 스코프 선택자(부분집합)가 캐럿의 스코프 글(`source.sql string.quoted.sql`)에 맞는가(T-14 잔여 `selector` · 10-30).
+/// `,`/`|` = 하나라도 · 공백 = 후손(순서대로 · 각 원자는 조각의 점 경계 접두) · `A - B` = A이면서 B 아님(`-string`도 됨) · 빈 선택자 = 전부.
+pub(crate) fn selector_matches(selector: &str, scope: &str) -> bool {
+    let segs: Vec<&str> = scope.split_whitespace().collect();
+    selector.split([',', '|']).any(|alt| {
+        let mut pos: Vec<&str> = Vec::new();
+        let mut neg: Vec<&str> = Vec::new();
+        let mut minus = false;
+        for tok in alt.split_whitespace() {
+            if tok == "-" {
+                minus = true;
+            } else if let Some(rest) = tok.strip_prefix('-') {
+                neg.push(rest);
+            } else if minus {
+                neg.push(tok);
+                minus = false;
+            } else {
+                pos.push(tok);
+            }
+        }
+        atoms_match(&pos, &segs) && !neg.iter().any(|n| atoms_match(&[n], &segs))
+    })
+}
+
 /// 조건 하나 평가(값이 배열이면 `match_all` = 전부 · 아니면 하나라도).
 fn eval_one(c: &Context, src: &dyn ContextSource) -> bool {
     let Some(v) = src.value(&c.key) else {
         return false;
     };
+    // ★ `selector` = 스코프 선택자 일치(equal/not_equal) — 글자 비교가 아니다 · 정규식 연산자는 스코프 글 그대로(아래 공통 길).
+    if c.key == "selector" && matches!(c.op, Op::Equal | Op::NotEqual) {
+        let (Some(scope), Some(sel)) = (v.scalar_text(), c.operand.scalar_text()) else {
+            return false;
+        };
+        let hit = selector_matches(&sel, &scope);
+        return if c.op == Op::Equal { hit } else { !hit };
+    }
     let test = |val: &Json| -> bool {
         match c.op {
             Op::Equal => json_eq(val, &c.operand),
@@ -427,6 +479,50 @@ mod tests {
         assert_eq!(sublime_alias("show_overlay"), Some("view.palette"));
         assert_eq!(sublime_alias("file.save"), None);
         assert_eq!(sublime_alias("toggle_setting"), None);
+    }
+
+    /// ★ `selector`(10-30): 후손·택일·제외·점 경계 접두 · equal/not_equal은 선택자 일치 · 정규식 연산자는 스코프 글 그대로.
+    #[test]
+    fn selector_matches_scopes_like_sublime() {
+        let s = "source.sql string.quoted.sql";
+        assert!(selector_matches("string", s));
+        assert!(selector_matches("source.sql string", s));
+        assert!(selector_matches("string.quoted", s));
+        assert!(!selector_matches("string.quoted.double", s));
+        assert!(!selector_matches("str", s), "점 경계 접두만");
+        assert!(!selector_matches("string source.sql", s), "후손은 순서대로");
+        assert!(selector_matches("comment, string", s));
+        assert!(selector_matches("comment | string", s));
+        assert!(!selector_matches("source.sql - string", s));
+        assert!(selector_matches("source.sql - comment", s));
+        assert!(!selector_matches("source.sql -string", s));
+        assert!(selector_matches("", s), "빈 선택자 = 전부");
+        assert!(selector_matches(
+            "source.sql - string - comment",
+            "source.sql"
+        ));
+        assert!(!selector_matches(
+            "source.sql - string - comment",
+            "source.sql comment.sql"
+        ));
+
+        let src = Src(vec![("selector", Json::Str(s.into()))]);
+        let eq = |sel: &str| ctx("selector", Op::Equal, Json::Str(sel.into()), false);
+        let ne = |sel: &str| ctx("selector", Op::NotEqual, Json::Str(sel.into()), false);
+        assert!(matches(&[eq("source.sql string")], &src));
+        assert!(!matches(&[eq("comment")], &src));
+        assert!(matches(&[ne("comment")], &src));
+        assert!(!matches(&[ne("string")], &src));
+        assert!(matches(
+            &[ctx(
+                "selector",
+                Op::RegexContains,
+                Json::Str("quoted".into()),
+                false
+            )],
+            &src
+        ));
+        assert!(!matches(&[eq("string")], &Src(vec![])), "값 없음 = 거짓");
     }
 
     struct Src(Vec<(&'static str, Json)>);

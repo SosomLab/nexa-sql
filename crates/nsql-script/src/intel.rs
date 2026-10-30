@@ -91,6 +91,8 @@ pub struct Context {
     /// ★ 문법 절(09-24 · `grammar`): 캐럿 괄호 깊이의 **마지막 절**(`SELECT` · `FROM` · `GROUP BY` · `LEFT JOIN` …) — 서브쿼리 안이면 그 안의
     /// 절 · 함수 괄호 안이면 `None`. 호스트는 이 절의 `next`만 키워드로 낸다(`SELECT avg` 자리에 `HAVING`이 나오지 않게).
     pub clause: Option<String>,
+    /// ★ T-200 절 안 위치(10-30): `clause` 안에서 캐럿 자리(첫 항목 · 콤마 뒤 · 그 밖) — 호스트가 [`crate::grammar::Grammar::next_at`]로 예약어를 좁힌다.
+    pub clause_pos: crate::grammar::ClausePos,
     /// 문장의 첫 낱말(대문자 · `SELECT`/`INSERT`/`WITH` …).
     pub stmt_kind: Option<String>,
     /// ★ 관계 자리에서 **자동 별칭을 붙여도 되는가**(사용자 10-09 "ALTER TABLE t A · CREATE INDEX … ON t A"): 문법이 별칭을 허용하는
@@ -126,7 +128,8 @@ pub fn alias_allowed(
     let Some(last) = before.last() else {
         return false;
     };
-    let mssql = dialect == Some(Dialect::Mssql);
+    // T-149 ④(10-30): T-SQL 관계 자리 규칙은 방언 표(`Syntax::tsql_from`) — 이름은 종전 그대로.
+    let mssql = dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.tsql_from);
     if is_word(last, "FROM") || is_word(last, "JOIN") || (last.text == "," && in_from_list(before))
     {
         // `DELETE FROM t a`는 SQL Server에서 불가(`DELETE a FROM t a` 꼴만).
@@ -522,7 +525,7 @@ fn want_at(
         && n >= 2
         && is_name(before[n - 2])
         && before[n - 2].end == last.start
-        && matches!(dialect, Some(Dialect::Oracle | Dialect::Postgres) | None)
+        && dialect.is_none_or(|d| nsql_core::Caps::of(d).syntax.anchored_types)
     {
         return Some(Want::TypeAttr);
     }
@@ -532,10 +535,13 @@ fn want_at(
     }
     // `USE |`(SQL Server = 데이터베이스 · MySQL = 스키마(= DB)).
     if n == 1 && is_word(last, "USE") {
-        return Some(match dialect {
-            Some(Dialect::Mysql) => Want::Schema,
-            _ => Want::Database,
-        });
+        return Some(
+            if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.use_targets_schema) {
+                Want::Schema
+            } else {
+                Want::Database
+            },
+        );
     }
     // Oracle `ALTER SESSION SET CURRENT_SCHEMA = |`.
     if n >= 2 && last.text == "=" && is_word(before[n - 2], "CURRENT_SCHEMA") {
@@ -1032,9 +1038,21 @@ pub fn client_next_in(doc: &str, ctx: &Context) -> Option<&'static [ClientCand]>
 fn grammar_clause(
     before: &[&Word<'_>],
     dialect: Option<Dialect>,
-) -> (Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, crate::grammar::ClausePos) {
+    use crate::grammar::ClausePos;
     let g = crate::grammar::for_dialect(dialect);
     let names = g.clause_names();
+    // ★ T-200 절 안 위치(10-30): 절을 찾은 뒤 그 절의 마지막 낱말 인덱스 `i`로 자리를 판정한다 — 캐럿 바로 앞까지 낱말이 없으면 First ·
+    //   마지막 낱말이 `,`면 AfterComma(깊이 0 = 같은 절 안) · 그 밖 Other.
+    let pos_at = |i: usize, len: usize, last: Option<&str>| -> ClausePos {
+        if i + 1 >= len {
+            ClausePos::First
+        } else if last == Some(",") {
+            ClausePos::AfterComma
+        } else {
+            ClausePos::Other
+        }
+    };
     let up: Vec<String> = before
         .iter()
         .map(|w| {
@@ -1054,7 +1072,7 @@ fn grammar_clause(
             ")" => depth += 1,
             "(" => {
                 if depth == 0 {
-                    return (stmt, None);
+                    return (stmt, None, ClausePos::Other);
                 }
                 depth -= 1;
             }
@@ -1063,7 +1081,8 @@ fn grammar_clause(
                     if i + 1 >= n {
                         let cand = up[i + 1 - n..=i].join(" ");
                         if names.contains(&cand) {
-                            return (stmt, Some(cand));
+                            let pos = pos_at(i, up.len(), up.last().map(String::as_str));
+                            return (stmt, Some(cand), pos);
                         }
                     }
                 }
@@ -1071,7 +1090,7 @@ fn grammar_clause(
             _ => {}
         }
     }
-    (stmt, None)
+    (stmt, None, ClausePos::Other)
 }
 
 fn is_word(w: &Word<'_>, kw: &str) -> bool {
@@ -1151,6 +1170,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
         star: None,
         from_chain: false,
         clause: None,
+        clause_pos: crate::grammar::ClausePos::Other,
         stmt_kind: None,
         alias_ok: false,
         alias_follows: false,
@@ -1203,7 +1223,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
     }
     let ws = words(text, &classes);
     let mut aliases = alias_table_deep(&ws);
-    if dialect == Some(Dialect::Mssql) {
+    if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.output_pseudo_tables) {
         add_output_pseudo(&ws, &mut aliases);
     }
     // 접두 앞의 낱말들(접두 자체는 뺀다).
@@ -1220,12 +1240,13 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             star: None,
             from_chain: false,
             clause: None,
+            clause_pos: crate::grammar::ClausePos::Other,
             stmt_kind: None,
             alias_ok: false,
             alias_follows: false,
         };
     }
-    let (stmt_kind, clause) = grammar_clause(&before, dialect);
+    let (stmt_kind, clause, clause_pos) = grammar_clause(&before, dialect);
     let (paren_owner, paren_into) = paren_owner(&before).unwrap_or((None, false));
     let last = before[before.len() - 1];
     // `qualifier.` — 점이 접두 바로 앞에 붙어 있을 때만.
@@ -1278,6 +1299,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             star: None,
             from_chain,
             clause,
+            clause_pos,
             stmt_kind,
             alias_ok,
             alias_follows: false,
@@ -1316,6 +1338,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             star: None,
             from_chain: false,
             clause,
+            clause_pos,
             stmt_kind,
             alias_ok: false,
             alias_follows: false,
@@ -1339,6 +1362,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             star: None,
             from_chain: false,
             clause,
+            clause_pos,
             stmt_kind,
             alias_ok: false,
             alias_follows: false,
@@ -1361,6 +1385,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             star: None,
             from_chain: false,
             clause,
+            clause_pos,
             stmt_kind,
             alias_ok,
             alias_follows: false,
@@ -1377,6 +1402,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
         star,
         from_chain: false,
         clause,
+        clause_pos,
         stmt_kind,
         alias_ok: false,
         alias_follows: false,

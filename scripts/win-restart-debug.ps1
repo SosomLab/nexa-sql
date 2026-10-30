@@ -24,7 +24,9 @@ $bins = @('nexa-sql.exe', 'nsql.exe')
 
 function Build-Filtered([string[]]$cargoArgs, [string]$tag) {
     # cargo 출력은 warning/error/Finished 줄만 · 종료 코드는 cargo 것($LASTEXITCODE는 파이프 안 네이티브 명령 것이 남는다).
-    & cargo @cargoArgs 2>&1 | Where-Object { $_ -match '^(warning|error)|Finished' } | Select-Object -First 5 | ForEach-Object { "[$tag] $_" }
+    # ★ 10-30: `Select-Object -First 5`는 다섯 줄째에서 파이프를 끊어 cargo가 중단되는데 $LASTEXITCODE는 0으로 남아 옛 산출물을 복사했다
+    #   (협업 발견) → 전부 받은 뒤 마지막 8줄만(`-Last`는 끝까지 소비한다).
+    & cargo @cargoArgs 2>&1 | Where-Object { $_ -match '^(warning|error)|Finished' } | ForEach-Object { "[$tag] $_" } | Select-Object -Last 8
     if ($LASTEXITCODE -ne 0) { throw "[$tag] cargo build 실패(exit $LASTEXITCODE) — 종료·복사·재기동하지 않음" }
 }
 

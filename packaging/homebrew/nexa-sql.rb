@@ -4,7 +4,7 @@
 # **공개된 릴리스의 실제 dmg 해시로** 채운다 — 손으로 적는 해시는 언젠가 틀리고, 틀린 해시는 사용자 기기에서 설치 실패로 나타난다.
 #
 # ★ 서명·공증이 없는 빌드(DR-20)는 quarantine이 붙으면 macOS가 실행을 막는다(nexa-clip 실측 08-11 — SIGKILL).
-#   Homebrew Cask는 기본으로 quarantine을 붙이므로 postflight에서 떼고, 무엇을 왜 했는지 caveats에 밝힌다.
+#   Homebrew Cask는 기본으로 quarantine을 붙이므로 postflight_steps(run xattr)에서 떼고, 무엇을 왜 했는지 caveats에 밝힌다.
 # ★ CLI `nsql`은 번들 안(`Contents/MacOS/nsql`) — `binary`가 brew의 bin에 링크한다(pkg 설치본의 /usr/local/bin 링크와 같은 역할).
 cask "nexa-sql" do
   version "@VERSION@"
@@ -21,15 +21,16 @@ cask "nexa-sql" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :big_sur"
+  # T-455(10-30): 문자열 비교형 `">= :big_sur"`은 폐지 예고 → 심볼 하나 = "이 판 이상"(Cask Cookbook).
+  depends_on macos: :big_sur
 
   app "Nexa SQL.app"
   binary "#{appdir}/Nexa SQL.app/Contents/MacOS/nsql"
 
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Nexa SQL.app"],
-                   sudo: false
+  # T-455(10-30): 옛 `postflight do … system_command` 블록은 폐지 예고(공식 탭은 이미 거부) → 구조화 단계 `postflight_steps`의
+  # `run`(글자 그대로 인자 · `{{appdir}}`는 설치 시점 자리표시). 맥에서 `brew style`/`brew audit --strict`로 확인(다음 릴리스).
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Nexa SQL.app"]
   end
 
   caveats <<~EOS

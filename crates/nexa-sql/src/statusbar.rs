@@ -18,6 +18,8 @@ pub(crate) const BLOCKS: OrderDefs = &[
     ("tx", &[]),
     // ★ `&` 치환 모드(D-141 상태줄 토글 · T-149 잔여 · 10-30): `& auto|on|off` · 클릭 = 팝업으로 전환.
     ("define", &[]),
+    // ★ T-90 잔여(10-30): 향상 모드 ⚡(`perf.boost` 켜짐일 때만 나온다 · 클릭 = 설정 창).
+    ("perf", &[]),
     ("state", &["large", "readonly", "bookmark"]),
     ("pos", &[]),
     ("result", &["rows", "time"]),
@@ -38,6 +40,7 @@ pub(crate) fn label(block: &str, item: Option<&str>) -> Msg {
     match item.unwrap_or(block) {
         "tx" => Msg::SbTx,
         "define" => Msg::SbDefine,
+        "perf" => Msg::SbPerf,
         "state" => Msg::SbGrpState,
         "large" => Msg::SbLarge,
         "readonly" => Msg::SbReadOnly,
@@ -158,7 +161,7 @@ mod tests {
     /// 그리기 코드가 만드는 순서(메모리가 앞쪽)로 칸을 준다.
     fn built() -> Vec<(&'static str, i32)> {
         [
-            "tx", "define", "mem", "large", "readonly", "bookmark", "pos", "rows", "time",
+            "tx", "define", "perf", "mem", "large", "readonly", "bookmark", "pos", "rows", "time",
             "autosave", "git", "enc", "eol", "indent", "syntax", "license",
         ]
         .into_iter()
@@ -172,8 +175,8 @@ mod tests {
         assert_eq!(
             ids(&v),
             [
-                "tx", "define", "large", "readonly", "bookmark", "pos", "rows", "time", "autosave",
-                "git", "enc", "eol", "indent", "syntax", "mem", "license"
+                "tx", "define", "perf", "large", "readonly", "bookmark", "pos", "rows", "time",
+                "autosave", "git", "enc", "eol", "indent", "syntax", "mem", "license"
             ]
         );
         assert_eq!(to_setting(&blocks("")), "", "기본 = 빈 값");
@@ -190,8 +193,8 @@ mod tests {
         assert_eq!(
             ids(&v),
             [
-                "syntax", "enc", "indent", "mem", "tx", "define", "large", "readonly", "bookmark",
-                "pos", "autosave", "git", "license"
+                "syntax", "enc", "indent", "mem", "tx", "define", "perf", "large", "readonly",
+                "bookmark", "pos", "autosave", "git", "license"
             ]
         );
         // 그룹을 숨겨도 자식 체크는 보존된다.

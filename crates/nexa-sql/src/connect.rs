@@ -163,6 +163,8 @@ pub(crate) struct ConnectPanel {
     snap: FormSnap,
     /// 마지막 `sync_dirty`의 바뀐 칸(그리기는 &self라 여기서 읽는다).
     dirty_now: Vec<Dirty>,
+    /// ★ T-131 잔여(10-30): 그릴 때 적어 둔 **바뀐 칸의 라벨 사각형**(라벨 글 + 표식) — 클릭 = 그 칸만 저장본으로 되돌리기.
+    label_hits: std::cell::RefCell<Vec<(Field, Rect)>>,
 }
 
 /// 폼 값의 스냅숏(저장본 · 09-19 T-131) — 칸별 비교로 "바뀜"을 판정한다(공백은 양끝만 정규화).
@@ -494,6 +496,7 @@ impl ConnectPanel {
             auto_port: None,
             snap: FormSnap::default(),
             dirty_now: Vec::new(),
+            label_hits: std::cell::RefCell::new(Vec::new()),
             state: ConnState::Idle,
             connected: false,
         };
@@ -1399,6 +1402,13 @@ impl ConnectPanel {
         }
         if let InputEvent::MouseDown { x, y, .. } = *ev {
             let p = Point { x, y };
+            // ★ T-131 잔여(10-30): 바뀐 칸의 라벨(` •`) 클릭 = 그 칸만 저장본으로 되돌리기(입력란 밖 · 라벨 띠 안).
+            if let Some(f) = self.label_hit(p) {
+                if self.revert_field(f) {
+                    inv.push(self.bounds);
+                    return None;
+                }
+            }
             let mut hit = None;
             for f in self.visible_fields() {
                 if self.textbox(f).bounds().contains(p) {
@@ -1631,6 +1641,35 @@ impl ConnectPanel {
     }
 
     /// 변경 버리기 — 저장본(스냅숏)으로 되돌린다.
+    /// ★ T-131 잔여(10-30): 점 `p`가 바뀐 칸의 라벨 위인가(그릴 때 적어 둔 사각형 · 바뀐 칸만).
+    fn label_hit(&self, p: Point) -> Option<Field> {
+        self.label_hits
+            .borrow()
+            .iter()
+            .find(|(_, r)| r.contains(p))
+            .map(|(f, _)| *f)
+    }
+
+    /// ★ T-131 잔여(10-30): 글 칸 하나를 저장본 값으로 되돌린다(이름·호스트·포트·SSH·SSH 키·DB·스키마·사용자·비밀번호).
+    ///   콤보·체크·변수는 [`Self::discard_changes`](전체 되돌리기)만 — 참 = 되돌림.
+    fn revert_field(&mut self, f: Field) -> bool {
+        let snap = self.snap.clone();
+        let v: &str = match f {
+            Field::Name => &snap.name,
+            Field::Host => &snap.host,
+            Field::Port => &snap.port,
+            Field::Ssh => &snap.ssh,
+            Field::SshKey => &snap.ssh_key,
+            Field::Database => &snap.database,
+            Field::Schema => &snap.schema,
+            Field::User => &snap.user,
+            Field::Password => &snap.password,
+            Field::Quick => return false,
+        };
+        self.textbox(f).set_text(v);
+        true
+    }
+
     pub(crate) fn discard_changes(&mut self) {
         let snap = self.snap.clone();
         self.dialect.select_value(&snap.dialect);
@@ -1765,6 +1804,7 @@ impl ConnectPanel {
         let req = required_fields(self.selected_dialect(), FormAction::Connect);
         let req_name = true; // 프로필 이름은 Save에 필수.
         let warn = self.warn.clone();
+        self.label_hits.borrow_mut().clear();
         let label = |dc: &mut dyn DrawCtx, r: Rect, text: &str, changed: bool, field: Field| {
             if r.w == 0 {
                 return;
@@ -1773,6 +1813,13 @@ impl ConnectPanel {
             let missing = warn.contains(&field);
             dc.text(r.x, y, b, text, if missing { th.warn } else { th.text_dim });
             let mut x = r.x + dc.text_width(text);
+            if changed {
+                // ★ T-131 잔여(10-30): 라벨(글 + 표식 자리)을 클릭 대상으로 적어 둔다 — 클릭 = 이 칸만 되돌리기.
+                let w = x - r.x + self.s(MARK_GAP + MARK_D) * 2;
+                self.label_hits
+                    .borrow_mut()
+                    .push((field, Rect::new(r.x, y, w, label_h)));
+            }
             // ★ 표식 = **같은 크기의 원**(필수 = 빨강 · 바뀜 = 파랑) · 글자 줄의 세로 중앙(사용자 09-19 — 종전에는 글리프
             //   `*`·`•`라 글꼴마다 크기·높이가 달랐다).
             let cy = y + dc.text_height() / 2 + self.s(1.0); // 글자 상자 중앙보다 1px 아래 = 눈에 보이는 글자 중앙
@@ -2088,6 +2135,29 @@ fn wrap_words(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> Vec<String> {
 #[cfg(test)]
 mod dirty_tests {
     use super::*;
+
+    /// ★ T-131 잔여(10-30): 칸 하나 되돌리기 = 그 칸만 저장본으로(다른 바뀐 칸은 그대로) · Quick = 아무것도 안 함 ·
+    ///   전체 되돌리기(`discard_changes`)는 전부.
+    #[test]
+    fn revert_one_field_keeps_other_changes() {
+        let mut p = ConnectPanel::new(vec![Dialect::Postgres]);
+        p.host.set_text("h1");
+        p.user.set_text("u1");
+        p.mark_saved();
+        p.host.set_text("h2");
+        p.user.set_text("u2");
+        assert_eq!(p.dirty(), vec![Dirty::Host, Dirty::User]);
+        assert!(p.revert_field(Field::Host));
+        assert_eq!(p.host.text(), "h1");
+        assert_eq!(p.dirty(), vec![Dirty::User], "사용자 칸의 변경은 남는다");
+        assert!(!p.revert_field(Field::Quick));
+        assert_eq!(p.dirty(), vec![Dirty::User]);
+        p.discard_changes();
+        assert!(p.dirty().is_empty());
+        assert_eq!(p.user.text(), "u1");
+        // 라벨 사각형은 그릴 때 채워진다 — 비어 있으면 어떤 점도 맞지 않는다.
+        assert_eq!(p.label_hit(Point { x: 1, y: 1 }), None);
+    }
 
     fn base() -> FormSnap {
         FormSnap {

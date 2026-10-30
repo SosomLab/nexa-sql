@@ -20,6 +20,18 @@ impl App {
             let _ = std::fs::write(path, self.prefs_win.dump_text());
             return;
         }
+        // ★ T-278(10-30 · 캡처 자동화): `prefs.goto:<키>` = 설정 창을 그 키의 분류로 열고 카드를 맨 위로 스크롤(이미 열려 있으면 바로).
+        if let Some(key) = id.strip_prefix("prefs.goto:") {
+            if let Some(e) = nsql_settings::entry(key) {
+                if self.prefs_win.window().is_some() {
+                    self.prefs_win.focus_key(e.key, e.cat);
+                } else {
+                    self.prefs_focus = Some((e.key, e.cat));
+                    self.open_prefs = true;
+                }
+            }
+            return;
+        }
         if let Some(key) = id.strip_prefix("prefs.browse:") {
             if let Some(k) = nsql_settings::entry(key).map(|e| e.key) {
                 self.file_purpose = FilePurpose::SettingFolder(k);

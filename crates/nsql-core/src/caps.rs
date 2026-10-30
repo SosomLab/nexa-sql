@@ -106,7 +106,202 @@ pub struct Caps {
     /// ★ 서버가 `OFFSET n ROWS FETCH FIRST m ROWS ONLY` 페이징을 받는가(157차 · Db2 ≤ 10.5 = 거짓 → 러너가 `ROW_NUMBER()` 폴백 ·
     ///   [108 §9 T-5](../../docs/108-dbms-syntax-and-objects-survey.md)). 세션이 서버 버전으로 정한다(Db2 = ACCRDBRM PRDID) · 그 밖 = 참.
     pub offset_fetch: bool,
+    /// ★ T-149 ④(10-30): 문법·관용의 능력표 — 종전에 엔진·러너·분할기·완성기에 흩어져 있던 방언 `match` 19곳을 여기로 모았다.
+    pub syntax: Syntax,
 }
+
+/// 식별자 인용 꼴(`${v:id}` · 이름 인용).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IdentQuote {
+    /// `"이름"`(ANSI · Oracle · PG · SQLite).
+    DoubleQuote,
+    /// `[이름]`(T-SQL).
+    Bracket,
+    /// `` `이름` ``(MySQL).
+    Backtick,
+}
+
+/// 실행 계획 스크립트 틀(`explain_script` · GUI Explain · CLI `nsql explain`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExplainForm {
+    /// `EXPLAIN PLAN FOR …; SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())` — Oracle.
+    OraclePlanTable,
+    /// `SET SHOWPLAN_TEXT ON; GO; DECLARE …; 문장; GO; SET SHOWPLAN_TEXT OFF` — SQL Server(배치여야 결과 집합이 온다).
+    TsqlShowplan,
+    /// `EXPLAIN (VERBOSE, COSTS) …` — PostgreSQL.
+    PgVerbose,
+    /// `EXPLAIN QUERY PLAN …` — SQLite.
+    SqliteQueryPlan,
+    /// EXPLAIN 표에 쓰고 우리 행만 읽는다 — Db2.
+    Db2ExplainTables,
+    /// `EXPLAIN …` 한 줄 — MySQL · ODBC · DuckDB · ClickHouse.
+    Explain,
+    /// 실행 계획 없음 → 문장 그대로(결과 = 데이터) — Access(Jet).
+    Passthrough,
+}
+
+/// ★ T-149 ④(10-30): 방언 **문법·관용**의 능력표 — "어느 DBMS인가" 대신 "이 문법을 받는가"를 묻는다. 새 DBMS는 한 줄만 채운다.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Syntax {
+    /// 다중 행 INSERT = `VALUES (…), (…)` · 거짓 = `INSERT ALL … INTO …`(Oracle).
+    pub multirow_values: bool,
+    /// `DB.schema.table` 3부 이름을 그 DB의 카탈로그로 풀 수 있는가(SQL Server `OBJECT_ID(N'[DB].[s].[t]')`).
+    pub three_part_names: bool,
+    /// 세이브포인트 문장(설정 · 되돌리기 · 해제(없으면 None)) · `None` = 미지원(DuckDB 1.x · Access · ODBC 일반 · ClickHouse).
+    pub savepoint: Option<(&'static str, &'static str, Option<&'static str>)>,
+    /// 실행 계획 결과 집합을 고르는 열 이름(SQL Server `StmtText`) · None = 마지막 집합.
+    pub plan_text_column: Option<&'static str>,
+    /// 접속 뒤 "현재 DB" 전환 단위가 있는가(`USE db` · SQL Server · MySQL) → 탭 작업 단위 기본값에 DB를 쓴다.
+    pub database_switch: bool,
+    /// `&이름`이 미정의일 때 묻는가(SQL*Plus 계열 = Oracle · D-272) · 거짓 = 정의된 이름만 치환하고 미정의는 글자 그대로.
+    pub define_prompt_undefined: bool,
+    /// `@x` · `$x`도 이름 바인드인가(SQLite) → `:x`로 통일해 한 변수로.
+    pub bind_marker_aliases: bool,
+    /// 글자 상수를 `N'…'`로 쓰는가(SQL Server 유니코드).
+    pub nchar_literal: bool,
+    /// 글자 상수 안 역슬래시가 이스케이프인가(MySQL) — 상수 생성은 `\` → `\\` · 렉서는 `'it\'s'`를 한 글자로.
+    pub backslash_escape: bool,
+    pub ident_quote: IdentQuote,
+    /// `#` 줄 주석(MySQL · Oracle `#`은 식별자 글자 · T-SQL `#temp`).
+    pub hash_comment: bool,
+    /// `--#SET TERMINATOR x` 지시자(Db2 CLP).
+    pub clp_terminator: bool,
+    /// `DELIMITER x` 지시자(MySQL · Db2).
+    pub delimiter_directive: bool,
+    /// 달러 인용 `$$ … $$`·`$tag$ … $tag$`를 문자열로 보는가(PostgreSQL 본문 · 다른 뜻이 없는 방언은 참) · MySQL = 거짓(`DELIMITER $$`가 구분자).
+    pub dollar_quoting: bool,
+    /// 문장은 늘 `;`로 끝난다(`/` 줄 블록 없음 · 본문의 `BEGIN … END`만 짝) — SQLite · MySQL · PG. 거짓 = `/`로 끝나는 블록(Oracle 등).
+    pub semicolon_only: bool,
+    /// `SHOW …`가 서버 문장인가(MySQL = STATUS·TABLES·CREATE TABLE …) · 거짓 = 클라이언트 명령.
+    pub server_show: bool,
+    /// T-SQL 관계 자리 규칙(`DELETE a FROM t a` · `UPDATE a SET … FROM`).
+    pub tsql_from: bool,
+    /// `표.열%TYPE` 앵커 자료형(Oracle · PG).
+    pub anchored_types: bool,
+    /// `USE |`가 고르는 것 = 스키마(MySQL · 스키마 = DB) · 거짓 = 데이터베이스.
+    pub use_targets_schema: bool,
+    /// `OUTPUT inserted.`/`deleted.` 가상 표(SQL Server).
+    pub output_pseudo_tables: bool,
+    pub explain: ExplainForm,
+}
+
+impl Syntax {
+    /// ANSI 기준 표(ABI 코덱이 `Caps`를 풀 때 자리 채움 — 문법 표는 전송하지 않고 호스트가 방언 표로 덮는다 · ABI v2 유지).
+    #[must_use]
+    pub const fn ansi() -> Syntax {
+        SYN_ANSI
+    }
+}
+
+/// 표준 세이브포인트 3문장.
+const SP_STD: Option<(&str, &str, Option<&str>)> = Some((
+    "SAVEPOINT nsql_edit",
+    "ROLLBACK TO SAVEPOINT nsql_edit",
+    Some("RELEASE SAVEPOINT nsql_edit"),
+));
+
+/// ANSI 기준 문법(`?` 방언들의 바탕).
+const SYN_ANSI: Syntax = Syntax {
+    multirow_values: true,
+    three_part_names: false,
+    savepoint: SP_STD,
+    plan_text_column: None,
+    database_switch: false,
+    define_prompt_undefined: false,
+    bind_marker_aliases: false,
+    nchar_literal: false,
+    backslash_escape: false,
+    ident_quote: IdentQuote::DoubleQuote,
+    hash_comment: false,
+    clp_terminator: false,
+    delimiter_directive: false,
+    dollar_quoting: true,
+    semicolon_only: false,
+    server_show: false,
+    tsql_from: false,
+    anchored_types: false,
+    use_targets_schema: false,
+    output_pseudo_tables: false,
+    explain: ExplainForm::Explain,
+};
+
+const SYN_ORACLE: Syntax = Syntax {
+    multirow_values: false,
+    savepoint: Some(("SAVEPOINT nsql_edit", "ROLLBACK TO nsql_edit", None)),
+    define_prompt_undefined: true,
+    anchored_types: true,
+    explain: ExplainForm::OraclePlanTable,
+    ..SYN_ANSI
+};
+
+const SYN_MSSQL: Syntax = Syntax {
+    three_part_names: true,
+    savepoint: Some((
+        "SAVE TRANSACTION nsql_edit",
+        "ROLLBACK TRANSACTION nsql_edit",
+        None,
+    )),
+    plan_text_column: Some("StmtText"),
+    database_switch: true,
+    nchar_literal: true,
+    ident_quote: IdentQuote::Bracket,
+    tsql_from: true,
+    output_pseudo_tables: true,
+    explain: ExplainForm::TsqlShowplan,
+    ..SYN_ANSI
+};
+
+const SYN_POSTGRES: Syntax = Syntax {
+    semicolon_only: true,
+    anchored_types: true,
+    explain: ExplainForm::PgVerbose,
+    ..SYN_ANSI
+};
+
+const SYN_MYSQL: Syntax = Syntax {
+    database_switch: true,
+    backslash_escape: true,
+    ident_quote: IdentQuote::Backtick,
+    hash_comment: true,
+    delimiter_directive: true,
+    dollar_quoting: false,
+    semicolon_only: true,
+    server_show: true,
+    use_targets_schema: true,
+    ..SYN_ANSI
+};
+
+const SYN_SQLITE: Syntax = Syntax {
+    bind_marker_aliases: true,
+    semicolon_only: true,
+    explain: ExplainForm::SqliteQueryPlan,
+    ..SYN_ANSI
+};
+
+/// 세이브포인트 없는 `?` 방언(DuckDB 1.x · ODBC 일반 · ClickHouse).
+const SYN_NO_SAVEPOINT: Syntax = Syntax {
+    savepoint: None,
+    ..SYN_ANSI
+};
+
+/// Db2(10-24): 세이브포인트 = `ON ROLLBACK RETAIN CURSORS` 필수 어절 · CLP 지시자 둘 · EXPLAIN 표.
+const SYN_DB2: Syntax = Syntax {
+    savepoint: Some((
+        "SAVEPOINT nsql_edit ON ROLLBACK RETAIN CURSORS",
+        "ROLLBACK TO SAVEPOINT nsql_edit",
+        Some("RELEASE SAVEPOINT nsql_edit"),
+    )),
+    clp_terminator: true,
+    delimiter_directive: true,
+    explain: ExplainForm::Db2ExplainTables,
+    ..SYN_ANSI
+};
+
+const SYN_ACCESS: Syntax = Syntax {
+    savepoint: None,
+    explain: ExplainForm::Passthrough,
+    ..SYN_ANSI
+};
 
 const ORACLE: Caps = Caps {
     marker: Marker::Named,
@@ -126,6 +321,7 @@ const ORACLE: Caps = Caps {
     tsql_print: false,
     scalar_from: None,
     offset_fetch: true,
+    syntax: SYN_ORACLE,
 };
 
 const MSSQL: Caps = Caps {
@@ -147,6 +343,7 @@ const MSSQL: Caps = Caps {
     tsql_print: true,
     scalar_from: None,
     offset_fetch: true,
+    syntax: SYN_MSSQL,
 };
 
 const POSTGRES: Caps = Caps {
@@ -167,6 +364,7 @@ const POSTGRES: Caps = Caps {
     tsql_print: false,
     scalar_from: None,
     offset_fetch: true,
+    syntax: SYN_POSTGRES,
 };
 
 /// `?` 자리 바인드 · 1행 결과로 값을 받는 DBMS의 공통 틀(MySQL · SQLite · ODBC가 여기서 갈라진다).
@@ -189,6 +387,7 @@ const QUESTION: Caps = Caps {
     tsql_print: false,
     scalar_from: None,
     offset_fetch: true,
+    syntax: SYN_ANSI,
 };
 
 /// MySQL/MariaDB(135차 · 드라이버 `nsql-driver-mysql`): `CALL p(?, ?)` 준비문의 OUT/INOUT 값은 **마지막 결과 집합 한 행**으로 온다
@@ -198,12 +397,14 @@ const MYSQL: Caps = Caps {
     server_autocommit: true,
     call_signature: CallSignature::Captures,
     bulk_load: crate::bulk::BulkLoad::LocalInfile,
+    syntax: SYN_MYSQL,
     ..QUESTION
 };
 
 const SQLITE: Caps = Caps {
     tx_begin: Some("BEGIN"),
     server_autocommit: true,
+    syntax: SYN_SQLITE,
     ..QUESTION
 };
 
@@ -211,6 +412,7 @@ const SQLITE: Caps = Caps {
 const DUCKDB: Caps = Caps {
     tx_begin: Some("BEGIN TRANSACTION"),
     server_autocommit: true,
+    syntax: SYN_NO_SAVEPOINT,
     ..QUESTION
 };
 
@@ -220,6 +422,7 @@ const DUCKDB: Caps = Caps {
 const ODBC: Caps = Caps {
     tx_begin: Some("BEGIN TRANSACTION"),
     server_autocommit: true,
+    syntax: SYN_NO_SAVEPOINT,
     ..QUESTION
 };
 
@@ -232,6 +435,7 @@ const CLICKHOUSE: Caps = Caps {
         max_rows: 1000,
         max_params: 32000,
     },
+    syntax: SYN_NO_SAVEPOINT,
     ..QUESTION
 };
 
@@ -242,6 +446,7 @@ const DB2: Caps = Caps {
     server_autocommit: true,
     ident_fold: IdentFold::Upper,
     scalar_from: Some("SYSIBM.SYSDUMMY1"),
+    syntax: SYN_DB2,
     ..QUESTION
 };
 
@@ -253,6 +458,7 @@ const ACCESS: Caps = Caps {
         max_rows: 1,
         max_params: 255,
     },
+    syntax: SYN_ACCESS,
     ..QUESTION
 };
 
@@ -305,7 +511,9 @@ mod tests {
     /// 능력표 = 종전 방언 `match`와 같은 값(T-152는 동작을 바꾸지 않는다) — 방언 × 능력 전수.
     #[test]
     fn table_matches_the_former_dialect_branches() {
-        use Dialect::{Mssql, Mysql, Odbc, Oracle, Postgres, Sqlite};
+        use Dialect::{
+            Access, Clickhouse, Db2, Duckdb, Mssql, Mysql, Odbc, Oracle, Postgres, Sqlite,
+        };
         let m = |d| Caps::of(d).marker;
         assert_eq!(
             [
@@ -368,6 +576,48 @@ mod tests {
         }
         assert_eq!(Caps::of(Oracle).call_signature, CallSignature::BindTypes);
         assert_eq!(Caps::of(Postgres).call_signature, CallSignature::Captures);
+        // T-149 ③ MySQL 서명 추론 = `information_schema.PARAMETERS`(PG와 같은 Captures 방식 · 10-30 단언 추가).
+        assert_eq!(Caps::of(Mysql).call_signature, CallSignature::Captures);
+        // ★ T-149 ④(10-30) 문법 표 — 종전 방언 `match`와 같은 답을 내는지 표본으로 고정.
+        assert!(
+            !Caps::of(Oracle).syntax.multirow_values && Caps::of(Postgres).syntax.multirow_values
+        );
+        assert!(
+            Caps::of(Oracle).syntax.define_prompt_undefined
+                && !Caps::of(Mssql).syntax.define_prompt_undefined
+        );
+        assert_eq!(Caps::of(Mssql).syntax.ident_quote, IdentQuote::Bracket);
+        assert_eq!(Caps::of(Mysql).syntax.ident_quote, IdentQuote::Backtick);
+        assert!(
+            Caps::of(Mysql).syntax.hash_comment
+                && Caps::of(Mysql).syntax.backslash_escape
+                && !Caps::of(Mysql).syntax.dollar_quoting
+        );
+        assert!(
+            Caps::of(Sqlite).syntax.bind_marker_aliases
+                && !Caps::of(Postgres).syntax.bind_marker_aliases
+        );
+        assert!(
+            Caps::of(Db2).syntax.clp_terminator
+                && Caps::of(Db2).syntax.delimiter_directive
+                && !Caps::of(Postgres).syntax.delimiter_directive
+        );
+        assert!(
+            Caps::of(Duckdb).syntax.savepoint.is_none()
+                && Caps::of(Access).syntax.savepoint.is_none()
+                && Caps::of(Sqlite).syntax.savepoint.is_some()
+        );
+        assert_eq!(Caps::of(Mssql).syntax.plan_text_column, Some("StmtText"));
+        assert_eq!(Caps::of(Access).syntax.explain, ExplainForm::Passthrough);
+        assert_eq!(Caps::of(Clickhouse).syntax.explain, ExplainForm::Explain);
+        assert!(
+            Caps::of(Mssql).syntax.database_switch
+                && Caps::of(Mysql).syntax.database_switch
+                && !Caps::of(Oracle).syntax.database_switch
+        );
+        assert!(
+            Caps::of(Mysql).syntax.use_targets_schema && !Caps::of(Mssql).syntax.use_targets_schema
+        );
         assert_eq!(Caps::of(Mssql).call_signature, CallSignature::OutputMarks);
         assert_eq!(Caps::of(Sqlite).call_signature, CallSignature::None);
         assert_eq!(Caps::of(Oracle).fold_ident("Emp"), "EMP");

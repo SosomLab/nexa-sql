@@ -2156,6 +2156,10 @@ impl App {
         if let Some(cat) = self.prefs_category.take() {
             self.prefs_win.select_category(cat);
         }
+        // ★ T-278(10-30): `prefs.goto:<키>` — 분류 선택 + 다음 그리기에서 그 카드로 스크롤.
+        if let Some((k, cat)) = self.prefs_focus.take() {
+            self.prefs_win.focus_key(k, cat);
+        }
         self.prefs_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),

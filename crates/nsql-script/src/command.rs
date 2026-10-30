@@ -922,19 +922,21 @@ fn spool_default_ext(path: &str) -> String {
 #[must_use]
 pub fn explain_script(dialect: Dialect, stmt: &str) -> String {
     let s = stmt.trim().trim_end_matches(';').trim();
-    match dialect {
-        Dialect::Oracle => {
+    use nsql_core::caps::ExplainForm as E;
+    // T-149 ④(10-30): 틀은 방언 표(`Syntax::explain`)가 고른다 — 방언 이름이 아니라 "어떤 EXPLAIN을 받는가".
+    match nsql_core::Caps::of(dialect).syntax.explain {
+        E::OraclePlanTable => {
             format!("EXPLAIN PLAN FOR {s};\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY());\n")
         }
-        // ClickHouse(10-24): `EXPLAIN`(= PLAN · 한 열 `explain`의 들여쓰기 트리 · 실제 실행 계획은 없다).
-        Dialect::Clickhouse => format!("EXPLAIN {s};\n"),
+        // `EXPLAIN` 한 줄(MySQL · ODBC · DuckDB · ClickHouse(10-24) = PLAN · 한 열 `explain`의 들여쓰기 트리 · 실제 실행 계획은 없다).
+        E::Explain => format!("EXPLAIN {s};\n"),
         // Db2(10-24 · 협업 검증 10-25): EXPLAIN 표(CURRENT SCHEMA에 있어야 비한정 이름이 풀린다 · 없으면 `CALL SYSPROC.SYSINSTALLOBJECTS('EXPLAIN', 'C', NULL, '<스키마>')` ·
         //   NULL 스키마 = SYSTOOLS)에 쓰고 **우리 행만**(EXPLAIN_REQUESTER = CURRENT USER · QUERYTAG = 'NSQL' · 최신 1건) 읽는다 · 트리(EXPLAIN_STREAM)는 2차.
-        Dialect::Db2 => format!("EXPLAIN PLAN SELECTION SET QUERYTAG = 'NSQL' FOR {s};\nSELECT o.operator_id, o.operator_type, o.total_cost, o.io_cost FROM EXPLAIN_OPERATOR o WHERE o.explain_requester = CURRENT USER AND (o.explain_requester, o.explain_time, o.source_name, o.source_schema, o.explain_level, o.stmtno, o.sectno) IN (SELECT explain_requester, explain_time, source_name, source_schema, explain_level, stmtno, sectno FROM EXPLAIN_STATEMENT WHERE explain_requester = CURRENT USER AND querytag = 'NSQL' AND explain_level = 'P' ORDER BY explain_time DESC FETCH FIRST 1 ROW ONLY) ORDER BY o.operator_id;\n"),
+        E::Db2ExplainTables => format!("EXPLAIN PLAN SELECTION SET QUERYTAG = 'NSQL' FOR {s};\nSELECT o.operator_id, o.operator_type, o.total_cost, o.io_cost FROM EXPLAIN_OPERATOR o WHERE o.explain_requester = CURRENT USER AND (o.explain_requester, o.explain_time, o.source_name, o.source_schema, o.explain_level, o.stmtno, o.sectno) IN (SELECT explain_requester, explain_time, source_name, source_schema, explain_level, stmtno, sectno FROM EXPLAIN_STATEMENT WHERE explain_requester = CURRENT USER AND querytag = 'NSQL' AND explain_level = 'P' ORDER BY explain_time DESC FETCH FIRST 1 ROW ONLY) ORDER BY o.operator_id;\n"),
         // Access(Jet) = 실행 계획 없음 → 문장 그대로(결과 = 데이터).
-        Dialect::Access => format!("{s};\n"),
+        E::Passthrough => format!("{s};\n"),
         // DECLARE로 시작해야 어댑터가 sp_executesql(RPC)이 아닌 배치로 보낸다 — SHOWPLAN 결과 집합은 배치에서만 온다(09-15 실측).
-        Dialect::Mssql => format!(
+        E::TsqlShowplan => format!(
             "SET SHOWPLAN_TEXT ON;
 GO
 DECLARE @nsql_plan BIT;
@@ -944,11 +946,8 @@ SET SHOWPLAN_TEXT OFF;
 GO
 "
         ),
-        Dialect::Postgres => format!("EXPLAIN (VERBOSE, COSTS) {s};\n"),
-        Dialect::Sqlite => format!("EXPLAIN QUERY PLAN {s};\n"),
-        Dialect::Mysql | Dialect::Odbc | Dialect::Duckdb => {
-            format!("EXPLAIN {s};\n")
-        }
+        E::PgVerbose => format!("EXPLAIN (VERBOSE, COSTS) {s};\n"),
+        E::SqliteQueryPlan => format!("EXPLAIN QUERY PLAN {s};\n"),
     }
 }
 

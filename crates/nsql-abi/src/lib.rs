@@ -798,6 +798,9 @@ pub mod codec {
                 tsql_print,
                 scalar_from,
                 offset_fetch,
+                // ★ T-149 ④(10-30): 문법 표(`Syntax`)는 방언의 사실 → 전송하지 않는다(ABI v2 유지) · 읽는 쪽은 ANSI 자리 채움 뒤
+                //   호스트(nsql-driver-dyn)가 방언 표로 덮는다.
+                syntax: _,
             } = *c;
             self.u8(match marker {
                 Marker::Named => 0,
@@ -987,6 +990,8 @@ pub mod codec {
                 tsql_print,
                 scalar_from,
                 offset_fetch,
+                // 전송하지 않는 문법 표 — 호스트가 방언 표로 덮는다(T-149 ④).
+                syntax: nsql_core::caps::Syntax::ansi(),
             })
         }
         pub fn bulk_opts(&mut self) -> Result<BulkOpts, DecodeError> {
@@ -1930,7 +1935,11 @@ mod tests_v2 {
             let c = Caps::of(d);
             let mut w = Writer::default();
             w.caps(&c);
-            assert_eq!(Reader::new(&w.buf).caps().expect("caps"), c, "{d:?}");
+            let mut back = Reader::new(&w.buf).caps().expect("caps");
+            // ★ T-149 ④(10-30): 문법 표(`syntax`)는 전송하지 않는다 — 읽는 쪽은 ANSI 자리 채움 · 호스트(nsql-driver-dyn)가 방언 표로 덮는다.
+            assert_eq!(back.syntax, nsql_core::caps::Syntax::ansi(), "{d:?}");
+            back.syntax = c.syntax;
+            assert_eq!(back, c, "{d:?}");
         }
         let mut c = Caps::of(Dialect::Postgres);
         c.tx_begin = Some("BEGIN");
@@ -1939,6 +1948,7 @@ mod tests_v2 {
             max_rows: 500,
             max_params: 2100,
         };
+        c.syntax = nsql_core::caps::Syntax::ansi(); // 전송하지 않는 필드 = 읽는 쪽 자리 채움과 같게.
         let mut w = Writer::default();
         w.caps(&c);
         assert_eq!(Reader::new(&w.buf).caps().expect("caps"), c);
@@ -1959,6 +1969,7 @@ mod tests_v2 {
         assert!(one.offset_fetch);
         let mut c = Caps::of(Dialect::Db2);
         c.offset_fetch = false;
+        c.syntax = nsql_core::caps::Syntax::ansi();
         let mut w = Writer::default();
         w.caps(&c);
         assert_eq!(Reader::new(&w.buf).caps().expect("caps"), c);

@@ -458,6 +458,8 @@ struct App {
     prefs_query: Option<String>,
     /// 설정 창을 이 분류로 열기(확장 "설정" 버튼 · 사용자 09-30).
     prefs_category: Option<Msg>,
+    /// ★ T-278(10-30): 기동 명령 `prefs.goto:<키>` — 설정 창을 열(거나 이미 열려 있으면 바로) 그 카드로 스크롤.
+    prefs_focus: Option<(&'static str, Msg)>,
     prefs_win: PrefsWin,
     /// 좌측 활동 막대(VS Code식 · 사용자 09-15) — 패널 토글 + 동작 버튼.
     act_bar: ActivityBar,
@@ -695,6 +697,8 @@ struct App {
     status_tx_rect: Rect,
     /// `&` 치환 모드 세그먼트(D-141 · 클릭 = 팝업).
     status_define_rect: Rect,
+    /// ★ T-90 잔여(10-30): 향상 모드 ⚡ 세그먼트(`perf.boost` 켜짐일 때만 · 클릭 = 설정 창).
+    status_perf_rect: Rect,
     /// 마지막 페인트의 상태바 칸 사각형(id별 · 우클릭 메뉴의 "영역" 판정 · 사용자 10-04).
     status_seg_rects: Vec<(&'static str, Rect)>,
     /// 상태바 띠 전체(우클릭 = 상태바 메뉴).
@@ -1939,6 +1943,7 @@ fn main() {
         open_prefs: false,
         prefs_query: None,
         prefs_category: None,
+        prefs_focus: None,
         prefs_win,
         act_bar,
         file_win,
@@ -2083,6 +2088,7 @@ fn main() {
         tx_after: None,
         status_tx_rect: Rect::new(0, 0, 0, 0),
         status_define_rect: Rect::new(0, 0, 0, 0),
+        status_perf_rect: Rect::new(0, 0, 0, 0),
         status_seg_rects: Vec::new(),
         status_bar_rect: Rect::new(0, 0, 0, 0),
         json_watch: None,

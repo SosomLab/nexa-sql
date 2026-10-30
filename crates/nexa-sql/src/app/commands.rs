@@ -152,6 +152,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("edit.soft_redo", Msg::MnEdit, Msg::MnSoftRedo),
     // 보기 토글(켜져 있으면 "숨기기" · 꺼져 있으면 "보이기" 한 줄).
     tv("view.explorer", Msg::MnExplorer),
+    tv("view.minimap", Msg::MnMinimap),
     tv("view.object_details", Msg::MnObjectDetails),
     tv("view.output", Msg::MnOutput),
     tv("view.search", Msg::MnSearchPanel),

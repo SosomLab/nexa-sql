@@ -129,6 +129,19 @@ pub struct ConnectSpec {
     pub ssh: Option<String>,
     /// `?ssh_key=` = ssh `-i` 개인 키 경로(없으면 사용자의 ssh 설정·에이전트).
     pub ssh_key: Option<String>,
+    /// ★ 접속별 자동 커밋(T-77 잔여 · 10-30): `?autocommit=on|off`(`true/false`·`1/0`·`yes/no`) · 프로필 키 `autocommit=`. 러너가 접속
+    ///   직후 자기 모드로 삼는다(설정 `session.autocommit`보다 우선 · 스크립트 `SET AUTOCOMMIT`은 그 뒤에도 우선). 없으면 설정.
+    pub autocommit: Option<bool>,
+}
+
+/// `on/off`·`true/false`·`1/0`·`yes/no`(대소문자 무시) → 불린 · 그 밖 = `None`.
+#[must_use]
+pub fn parse_on_off(v: &str) -> Option<bool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => Some(true),
+        "off" | "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
 }
 
 /// ★ ODBC 접속 문자열(T-383)의 `key=value;` 토큰 — `{…}` 안의 `;`는 구분자가 아니다 · `}}` = `}`.
@@ -284,7 +297,10 @@ impl ConnectSpec {
                     if let Some((path, q)) = db.rsplit_once('?') {
                         let known = q.split('&').all(|kv| {
                             kv.split_once('=').is_some_and(|(k, _)| {
-                                matches!(k.to_ascii_lowercase().as_str(), "driver" | "env")
+                                matches!(
+                                    k.to_ascii_lowercase().as_str(),
+                                    "driver" | "env" | "autocommit"
+                                )
                             })
                         });
                         if known && !q.is_empty() {
@@ -294,6 +310,8 @@ impl ConnectSpec {
                                         spec.driver = Some(v.trim().to_ascii_lowercase());
                                     } else if k.eq_ignore_ascii_case("env") {
                                         spec.env = ConnEnv::from_name(v);
+                                    } else if k.eq_ignore_ascii_case("autocommit") {
+                                        spec.autocommit = parse_on_off(v);
                                     }
                                 }
                             }
@@ -365,6 +383,9 @@ impl ConnectSpec {
                         spec.schema = Some(percent_decode(v.trim()));
                     } else if k.eq_ignore_ascii_case("env") {
                         spec.env = ConnEnv::from_name(v);
+                    } else if k.eq_ignore_ascii_case("autocommit") {
+                        // T-77(10-30): 모르는 값은 무시(= 설정을 따른다).
+                        spec.autocommit = parse_on_off(v);
                     } else if k.eq_ignore_ascii_case("tls")
                         || k.eq_ignore_ascii_case("ssl-mode")
                         || k.eq_ignore_ascii_case("sslmode")
@@ -533,6 +554,38 @@ impl ConnectSpec {
         Ok(spec)
     }
 
+    /// ★ 빠진 필수 로그인 항목(T-133 잔여 · 10-30 · 원장 = [`Dialect::login_required`] = 접속 폼과 같은 표). CLI `-c` 인자 검사용.
+    /// `with_password = false`면 Password는 세지 않는다(CLI는 env/프롬프트가 뒤에 채운다 · D-115 별개). Oracle 예외 = `user@TNS`
+    /// (포트·서비스 없이 별칭이 host 칸) · `/ as sysdba`(OS 인증 · 사용자·호스트 없음) → 드라이버 판단에 맡긴다(빈 목록).
+    #[must_use]
+    pub fn missing_login(
+        &self,
+        dialect: Dialect,
+        with_password: bool,
+    ) -> Vec<nsql_core::LoginField> {
+        use nsql_core::LoginField as F;
+        let empty = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+        if dialect == Dialect::Oracle {
+            let tns = !empty(&self.host) && self.port.is_none() && empty(&self.database);
+            let os_auth = empty(&self.user) && empty(&self.host) && self.role.is_some();
+            if tns || os_auth {
+                return Vec::new();
+            }
+        }
+        dialect
+            .login_required()
+            .iter()
+            .copied()
+            .filter(|f| match f {
+                F::Host => empty(&self.host),
+                F::Database => empty(&self.database),
+                F::User => empty(&self.user),
+                F::Password => with_password && empty(&self.password),
+                F::Port | F::Schema => false,
+            })
+            .collect()
+    }
+
     /// 표시용(비밀번호 가림).
     pub fn redacted(&self) -> String {
         // ★ ODBC = 문자열 그대로 + `;UID=u;PWD=***`(비밀번호는 parse 때 스펙으로 올라와 본문에 없다).
@@ -645,6 +698,9 @@ impl ConnectSpec {
         }
         if let Some(k) = &self.ssh_key {
             q.push(format!("ssh_key={k}"));
+        }
+        if let Some(a) = self.autocommit {
+            q.push(format!("autocommit={}", if a { "on" } else { "off" }));
         }
         if !q.is_empty() {
             s.push('?');
@@ -980,6 +1036,56 @@ mod tests {
         assert_eq!(c.schema.as_deref(), Some("HR"));
         assert_eq!(c.connection_string(), "oracle://scott@h:1521/svc?schema=HR");
         assert_eq!(c.redacted(), "oracle://scott/***@h:1521/svc?schema=HR");
+        // ★ 접속별 자동 커밋 `?autocommit=`(T-77 · 10-30) — 왕복 · 별칭 · 모르는 값 = 없음 · 축약형 꼬리에서도.
+        let p = ConnectSpec::parse("pg://u@h/db?autocommit=off").unwrap();
+        assert_eq!(p.autocommit, Some(false));
+        assert_eq!(p.connection_string(), "postgres://u@h/db?autocommit=off");
+        assert_eq!(
+            ConnectSpec::parse("pg://u@h/db?autocommit=YES")
+                .unwrap()
+                .autocommit,
+            Some(true)
+        );
+        assert_eq!(
+            ConnectSpec::parse("pg://u@h/db?autocommit=maybe")
+                .unwrap()
+                .autocommit,
+            None
+        );
+        assert_eq!(
+            ConnectSpec::parse("sqlite:/tmp/a.db?autocommit=0")
+                .unwrap()
+                .autocommit,
+            Some(false)
+        );
+        assert_eq!(parse_on_off(" On "), Some(true));
+        assert_eq!(parse_on_off("x"), None);
+        // ★ T-133 잔여(10-30): 빠진 필수 항목 = 방언 표 그대로 · 비밀번호는 요청할 때만 · Oracle TNS/OS 인증 예외.
+        use nsql_core::LoginField as F;
+        let p = ConnectSpec::parse("pg://h").unwrap();
+        assert_eq!(p.missing_login(Dialect::Postgres, false), vec![F::User]);
+        assert_eq!(
+            p.missing_login(Dialect::Postgres, true),
+            vec![F::User, F::Password]
+        );
+        let p = ConnectSpec {
+            user: Some("scott".into()),
+            host: Some("h".into()),
+            port: Some(1521),
+            ..Default::default()
+        };
+        assert_eq!(p.missing_login(Dialect::Oracle, false), vec![F::Database]);
+        let p = ConnectSpec::parse("scott/x@PRODDB").unwrap();
+        assert!(
+            p.missing_login(Dialect::Oracle, true).is_empty(),
+            "TNS 별칭"
+        );
+        let p = ConnectSpec::parse("/ as sysdba").unwrap();
+        assert!(p.missing_login(Dialect::Oracle, true).is_empty(), "OS 인증");
+        let p = ConnectSpec::default();
+        assert_eq!(p.missing_login(Dialect::Sqlite, false), vec![F::Database]);
+        let p = ConnectSpec::parse("clickhouse://h").unwrap();
+        assert!(p.missing_login(Dialect::Clickhouse, true).is_empty());
         // 접속 유형 `?env=` — 왕복 · 별칭 · 모르는 값은 무시.
         let p = ConnectSpec::parse("pg://u@h/db?schema=s&env=production").unwrap();
         assert_eq!(p.env, Some(ConnEnv::Prod));

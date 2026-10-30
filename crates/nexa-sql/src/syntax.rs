@@ -17,7 +17,12 @@ impl SyntaxRegistry {
     /// 내장 + `Packages/` 스캔.
     pub(crate) fn load() -> Self {
         let mut r = SyntaxRegistry {
-            specs: vec![Rc::new(SyntaxSpec::sql()), Rc::new(SyntaxSpec::plain())],
+            // ★ T-76 잔여(10-30): JSON(settings.json · `.sublime-keymap` 등) 내장 — `Packages/`의 같은 이름 규격이 있으면 그쪽이 덮는다.
+            specs: vec![
+                Rc::new(SyntaxSpec::sql()),
+                Rc::new(SyntaxSpec::json()),
+                Rc::new(SyntaxSpec::plain()),
+            ],
         };
         if let Some(dir) = Self::packages_dir() {
             r.scan(&dir);
@@ -112,8 +117,22 @@ mod tests {
 
     fn reg() -> SyntaxRegistry {
         SyntaxRegistry {
-            specs: vec![Rc::new(SyntaxSpec::sql()), Rc::new(SyntaxSpec::plain())],
+            specs: vec![
+                Rc::new(SyntaxSpec::sql()),
+                Rc::new(SyntaxSpec::json()),
+                Rc::new(SyntaxSpec::plain()),
+            ],
         }
+    }
+
+    /// ★ T-76 잔여(10-30): settings.json · 사용자 키맵 파일은 JSON 규격 · SQL은 그대로.
+    #[test]
+    fn json_files_get_json_syntax() {
+        let r = reg();
+        assert_eq!(r.for_title("settings.json").name, "JSON");
+        assert_eq!(r.for_title("Default (Windows).sublime-keymap").name, "JSON");
+        assert_eq!(r.for_title("query.sql").name, "SQL");
+        assert!(r.names().contains(&"JSON".to_string()));
     }
 
     /// 확장자 → 구문: .sql = SQL · .txt/.log/.md = Plain Text · **모르는 확장자(.rs/.toml/.exe) = Plain Text** · 확장자 없음 = SQL ·

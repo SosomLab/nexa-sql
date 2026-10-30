@@ -1410,8 +1410,19 @@ impl App {
                     dialect,
                     schema,
                     database,
-                    ..
+                    autocommit,
                 } => {
+                    // ★ 접속별 자동 커밋(T-77 잔여 · 10-30): 스펙/프로필 `autocommit=`이 러너 모드를 바꿨으면(설정과 다름) 로그 + 토스트로
+                    //   알린다 — 커밋/롤백 버튼·대기 표식은 여전히 전역 설정을 보므로 사용자가 차이를 알아야 한다.
+                    if autocommit != self.settings.flag("session.autocommit") {
+                        let m = tf(
+                            Msg::StProfileAutocommit,
+                            &[if autocommit { "on" } else { "off" }],
+                        );
+                        self.log_win.push(LogEntry::new(LogKind::Info, m.clone()));
+                        self.toasts
+                            .push(toast::ToastKind::Info, description.clone(), m);
+                    }
                     // ★ 연결 기본 작업 단위(⑯): DB 전환 방언 = 접속 직후 DB · 그 밖 = 현재 스키마.
                     self.sess.default_unit = if matches!(
                         dialect,

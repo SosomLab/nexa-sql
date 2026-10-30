@@ -1492,8 +1492,9 @@ impl Intel {
                             intel::keywords_for(dialect).map(String::from).collect()
                         }
                         (CtxKind::Start, _) => g.start().to_vec(),
-                        (_, Some(cl)) => match g.next(cl) {
-                            Some(n) => n.to_vec(),
+                        // ★ T-200 절 안 위치(10-30): 첫 항목 자리 = `first` 더하고 절 전환 예약어 빼기 · 콤마 뒤 = 전환·first 빼기 · 그 밖 = first 빼기.
+                        (_, Some(cl)) => match g.next_at(cl, ctx.clause_pos) {
+                            Some(n) => n,
                             None => intel::keywords_for(dialect).map(String::from).collect(),
                         },
                         _ => intel::keywords_for(dialect).map(String::from).collect(),
@@ -1589,6 +1590,24 @@ impl Intel {
             }
         }
         let mru: &[String] = if self.cfg.recent { &self.mru } else { &[] };
+        // ★ T-200 잔여(10-30): 문법 `objects` 게이트 — **식 자리**(`Expr` · SELECT 목록·WHERE·ON·SET)에서 절이 허용하지 않는 객체
+        //   종류는 **한 층 아래로**(걷지 않는다 — SELECT 목록의 표 이름은 `t.col` 한정자로 쓰이고 문법 파일의 빈틈이 후보를 숨기면
+        //   안 된다). 관계 자리(`Relation`)는 `from_kinds`가 이미 층을 정했고 `Want`/`ExecArgs`는 종류를 고른 자리라 건드리지 않는다.
+        if self.cfg.grammar && matches!(ctx.kind, CtxKind::Expr) {
+            let g = nsql_script::grammar::for_dialect(dialect);
+            if let Some(objs) = ctx
+                .clause
+                .as_deref()
+                .and_then(|cl| g.objects(cl))
+                .filter(|o| !o.is_empty())
+            {
+                for c in cands.iter_mut() {
+                    if objects_demote(c.kind, objs) {
+                        c.layer = c.layer.saturating_add(1);
+                    }
+                }
+            }
+        }
         // ★ `*`/`A.*` 뒤는 "모든 컬럼" 조각 말고는 고를 것이 없다(사용자 09-24) — 다른 후보를 전부 걷어낸다.
         if ctx.star.is_some() {
             cands.retain(|c| c.kind == CandKind::Snippet);
@@ -2253,6 +2272,54 @@ fn layer_of(k: ObjectKind, table_fn: bool) -> u8 {
         ObjectKind::Function | ObjectKind::Package => 2,
         ObjectKind::Procedure => 3,
         _ => 2,
+    }
+}
+
+/// ★ T-200 잔여(10-30): 문법 절의 `objects`(`column`·`table`·`view`·`schema`·`function`·`subquery`)가 이 후보 종류를 **허용하지
+/// 않는가** — 참이면 랭킹 층을 하나 내린다(걷지 않는다). 객체가 아닌 종류(키워드·조각·변수·심볼·낱말·자료형)는 늘 거짓.
+/// 대응 = Column·Alias → column · Table·Synonym·Sequence → table · View → view · Schema·Database → schema · Function·Routine·Package → function.
+fn objects_demote(kind: CandKind, objects: &[String]) -> bool {
+    let want = match kind {
+        CandKind::Column | CandKind::Alias => "column",
+        CandKind::Table | CandKind::Synonym | CandKind::Sequence => "table",
+        CandKind::View => "view",
+        CandKind::Schema | CandKind::Database => "schema",
+        CandKind::Function | CandKind::Routine | CandKind::Package => "function",
+        _ => return false,
+    };
+    !objects.iter().any(|o| o.eq_ignore_ascii_case(want))
+}
+
+#[cfg(test)]
+mod objects_gate_tests {
+    use super::*;
+
+    /// 절의 objects에 없는 종류만 참 · 객체 아닌 종류는 늘 거짓 · 대소문자 무관.
+    #[test]
+    fn objects_demote_follows_clause_list() {
+        let sel: Vec<String> = ["column", "function", "subquery"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!objects_demote(CandKind::Column, &sel));
+        assert!(!objects_demote(CandKind::Alias, &sel));
+        assert!(!objects_demote(CandKind::Function, &sel));
+        assert!(
+            objects_demote(CandKind::Table, &sel),
+            "SELECT 목록의 표 = 한 층 아래"
+        );
+        assert!(objects_demote(CandKind::Schema, &sel));
+        assert!(!objects_demote(CandKind::Keyword, &sel));
+        assert!(!objects_demote(CandKind::Snippet, &sel));
+        let from: Vec<String> = ["Table", "VIEW", "schema"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!objects_demote(CandKind::Table, &from));
+        assert!(!objects_demote(CandKind::View, &from));
+        assert!(!objects_demote(CandKind::Synonym, &from));
+        assert!(objects_demote(CandKind::Column, &from));
+        assert!(objects_demote(CandKind::Function, &from));
     }
 }
 

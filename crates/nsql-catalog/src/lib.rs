@@ -3639,7 +3639,8 @@ pub struct RoutineArg {
 
 /// 호출 이름(`proc` · `pkg.proc` · `schema.proc` · `schema.pkg.proc`)의 인자 목록 — **선언 없이 쓴 바인드의 타입을 서명에서
 /// 정하려고**(REF CURSOR OUT을 문자열로 바인드하면 PLS-00306 · 변수 관리 09-21). Oracle(`ALL_ARGUMENTS`) · **PostgreSQL(`pg_proc`
-/// — T-151: 어느 자리가 OUT/INOUT인지 알아야 돌아온 값을 그 자리의 바인드로 받는다)** · 그 외 = 빈 목록.
+/// — T-151: 어느 자리가 OUT/INOUT인지 알아야 돌아온 값을 그 자리의 바인드로 받는다)** · SQL Server(`sys.parameters`) ·
+/// MySQL(`information_schema.PARAMETERS` · T-149 ③) · 그 외 = 빈 목록.
 /// 이름이 여러 해석에 맞으면 전부 돌려준다(호출자가 인자 수·이름으로 오버로드를 고른다). 동의어는 풀지 않는다.
 pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
     if s.dialect() == Dialect::Postgres {
