@@ -2637,6 +2637,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ T-278(10-30): 그룹 안 버튼 순서 + 그룹 표시(`order` 문법 · 그룹 순서는 `toolbar.layout` · 버튼 표시는 `toolbar.hidden`이 따로 들고
+    //   이 값에서는 무시) — 툴바 편집 창이 쓴다 · 기본과 같으면 빈 값.
+    Entry {
+        key: "toolbar.items",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToolbarItems,
+        desc: Msg::DescToolbarItems,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ★ 진행 표시 링(혜성 · 사용자 10-07 "모든 검색에 · 컨트롤 속성 · 사용/두께/색/유지시간 설정 · 성능 향상 모드에서 끔"): 전역 스타일 → nexa-ctl.
     // ★ 툴팁 자리(사용자 10-07): 기본 = 항목 위(읽는 방향 · 다음 줄을 가리지 않게) · 끄면 아래.
     // ★ 우클릭 메뉴 영역 간 배타(사용자 10-08): 다른 영역 클릭·키 = 닫기 · 닫은 클릭을 바로 진행할지.

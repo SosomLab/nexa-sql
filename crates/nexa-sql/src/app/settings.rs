@@ -661,7 +661,7 @@ impl App {
                 self.apply_text_render();
                 self.log_win.redraw();
             }
-            "toolbar.hidden" => {
+            "toolbar.hidden" | "toolbar.items" => {
                 self.apply_toolbar_visibility();
                 self.layout();
             }
@@ -1378,8 +1378,9 @@ impl App {
                 blocks: super::toolbar::toolbar_order_blocks,
                 to_setting: super::toolbar::toolbar_order_setting,
                 label: super::toolbar::toolbar_order_label,
-                locked: super::toolbar::TOOLBAR_GROUP_IDS,
-                child_move: false,
+                // ★ T-278(10-30): 그룹 숨김 허용(잠금 없음) · 그룹 안 버튼 순서 이동 허용.
+                locked: &[],
+                child_move: true,
                 free: false,
             });
         }
@@ -1402,7 +1403,7 @@ impl App {
     /// 순서/표시 편집 창 열기 요청(설정 창 [편집…] · 기동 명령 `order.open:<키>`) — 모르는 키 = 무시. 실제 열기는 이벤트 루프에서.
     pub(crate) fn open_order_editor(&mut self, key: &str) {
         // 툴바의 표시(`toolbar.hidden`)·배치(`toolbar.layout`) 카드 = 둘을 함께 고치는 툴바 편집으로.
-        let key = if matches!(key, "toolbar.hidden" | "toolbar.layout") {
+        let key = if matches!(key, "toolbar.hidden" | "toolbar.layout" | "toolbar.items") {
             super::toolbar::TOOLBAR_ORDER_KEY
         } else {
             key

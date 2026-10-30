@@ -338,6 +338,7 @@ impl App {
             && sessions::prod_confirm_needed(
                 prod,
                 self.settings.flag("run.prod_confirm"),
+                self.sess.dialect,
                 &e3_items,
             )
         {

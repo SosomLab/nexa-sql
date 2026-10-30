@@ -147,25 +147,12 @@ impl App {
         items
     }
 
-    /// 지금 툴바 상태(도크 순서 + 숨긴 버튼) → 편집 창이 읽는 값(`order` 문법).
+    /// 지금 툴바 상태(도크 순서 + 숨긴 버튼 + ★ T-278 `toolbar.items`의 버튼 순서·그룹 표시) → 편집 창이 읽는 값(`order` 문법).
     pub(crate) fn toolbar_order_value(&self) -> String {
         let hidden = self.hidden_toolbar_ids();
         let order = self.tool_dock.layout().order;
-        let blocks: Vec<nexa_ctl::order::OrderBlock> = order
-            .iter()
-            .filter_map(|gid| {
-                let (_, items) = TOOLBAR_BLOCKS.iter().find(|(b, _)| b == gid)?;
-                Some((
-                    gid.clone(),
-                    true,
-                    items
-                        .iter()
-                        .map(|i| (i.to_string(), !hidden.contains(&i.to_string())))
-                        .collect(),
-                ))
-            })
-            .collect();
-        nexa_ctl::order::serialize(&blocks)
+        let items_setting = self.settings.get("toolbar.items").unwrap_or("");
+        nexa_ctl::order::serialize(&toolbar_order_compose(&order, &hidden, items_setting))
     }
 
     /// 편집 창의 값 → 툴바에 적용: 그룹 순서 = 도크 순서(행·플로팅은 그대로) · 자식 체크 = `toolbar.hidden`. 저장까지.
@@ -181,6 +168,13 @@ impl App {
             let _ = self.settings.reset("toolbar.hidden");
         } else {
             let _ = self.settings.set("toolbar.hidden", &hidden.join(","));
+        }
+        // ★ T-278: 그룹 안 버튼 순서 + 그룹 표시 = `toolbar.items`(그룹 순서·버튼 표시와 독립 · 기본이면 빈 값).
+        let items_setting = toolbar_items_setting(&blocks);
+        if items_setting.is_empty() {
+            let _ = self.settings.reset("toolbar.items");
+        } else {
+            let _ = self.settings.set("toolbar.items", &items_setting);
         }
         // 순서만 바꾼다 — 그룹마다 지금의 행과 플로팅 좌표는 지킨다.
         let old = self.tool_dock.layout();
@@ -222,13 +216,21 @@ impl App {
             .collect()
     }
 
-    /// 설정 `toolbar.hidden` → 툴바 버튼 표시 여부.
+    /// 설정 `toolbar.hidden` → 툴바 버튼 표시 여부 · ★ T-278 `toolbar.items` → 그룹 안 버튼 순서 + 그룹 표시.
     pub(crate) fn apply_toolbar_visibility(&mut self) {
         let hidden = self.hidden_toolbar_ids();
         let mut inv = Invalidations::default();
         for (id, _) in TOOLBAR_ITEMS {
             self.tool_dock
                 .set_item_visible(id, !hidden.contains(&id.to_string()), &mut inv);
+        }
+        let items_setting = self.settings.get("toolbar.items").unwrap_or("").to_string();
+        for (gid, vis, items) in nexa_ctl::order::parse(TOOLBAR_BLOCKS, &[], &items_setting) {
+            let ids: Vec<&str> = items.iter().map(|(i, _)| i.as_str()).collect();
+            if let Some(bar) = self.tool_dock.bar_mut(&gid) {
+                bar.reorder(&ids, &mut inv);
+            }
+            self.tool_dock.set_group_visible(&gid, vis);
         }
         self.sync_toolbar_tips();
         for f in &self.tool_floats {
@@ -443,6 +445,7 @@ impl App {
         let _ = self.tool_dock.take_actions();
         let _ = self.settings.reset("toolbar.layout");
         let _ = self.settings.reset("toolbar.hidden");
+        let _ = self.settings.reset("toolbar.items");
         self.persist_settings();
         self.apply_toolbar_visibility();
         self.tool_layout_dirty = false;
@@ -566,18 +569,56 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
     ("view", &["view.variables", "view.find_objects", "view.log"]),
 ];
 
-/// 그룹은 숨기지 않는다(버튼 단위로만) — 편집 창에서 그룹 체크 잠금.
+/// 그룹 id(정의 순) — ★ T-278(10-30): 그룹도 숨길 수 있다(편집 창 체크 · `toolbar.items`) · 잠금 없음.
 pub(crate) const TOOLBAR_GROUP_IDS: &[&str] = &["file", "edit", "run", "conn", "tabconn", "view"];
 
 pub(crate) fn toolbar_order_blocks(value: &str) -> Vec<nexa_ctl::order::OrderBlock> {
     nexa_ctl::order::parse(TOOLBAR_BLOCKS, &[], value)
-        .into_iter()
-        .map(|(id, _, items)| (id, true, items))
-        .collect()
 }
 
 pub(crate) fn toolbar_order_setting(blocks: &[nexa_ctl::order::OrderBlock]) -> String {
     nexa_ctl::order::normalize(TOOLBAR_BLOCKS, &[], &nexa_ctl::order::serialize(blocks))
+}
+
+/// ★ T-278(순수): 편집 창 블록 → `toolbar.items` 값 = **그룹 안 버튼 순서 + 그룹 표시**만(정의 순 그룹 · 버튼 표시는 전부 1로 = `toolbar.hidden`
+/// 몫 · 그룹 순서는 `toolbar.layout` 몫) · 기본과 같으면 빈 값.
+pub(crate) fn toolbar_items_setting(blocks: &[nexa_ctl::order::OrderBlock]) -> String {
+    let ordered: Vec<nexa_ctl::order::OrderBlock> = TOOLBAR_BLOCKS
+        .iter()
+        .filter_map(|(gid, _)| blocks.iter().find(|(b, _, _)| b == gid))
+        .map(|(gid, vis, items)| {
+            (
+                gid.clone(),
+                *vis,
+                items.iter().map(|(i, _)| (i.clone(), true)).collect(),
+            )
+        })
+        .collect();
+    nexa_ctl::order::normalize(TOOLBAR_BLOCKS, &[], &nexa_ctl::order::serialize(&ordered))
+}
+
+/// ★ T-278(순수): 지금 상태 세 조각(도크 그룹 순서 · 숨긴 버튼 · `toolbar.items`) → 편집 창 블록.
+pub(crate) fn toolbar_order_compose(
+    group_order: &[String],
+    hidden: &[String],
+    items_setting: &str,
+) -> Vec<nexa_ctl::order::OrderBlock> {
+    let parsed = nexa_ctl::order::parse(TOOLBAR_BLOCKS, &[], items_setting);
+    let mut out: Vec<nexa_ctl::order::OrderBlock> = group_order
+        .iter()
+        .filter_map(|gid| parsed.iter().find(|(b, _, _)| b == gid).cloned())
+        .collect();
+    for b in &parsed {
+        if !out.iter().any(|(g, _, _)| g == &b.0) {
+            out.push(b.clone());
+        }
+    }
+    for (_, _, items) in &mut out {
+        for (id, vis) in items.iter_mut() {
+            *vis = !hidden.contains(id);
+        }
+    }
+    out
 }
 
 pub(crate) fn toolbar_order_label(block: &str, item: Option<&str>) -> Msg {
@@ -658,6 +699,42 @@ mod tests {
         }
     }
 
+    /// ★ T-278(10-30): 세 조각 합성·분해 — `toolbar.items`는 버튼 순서 + 그룹 표시만(그룹 순서·버튼 표시와 독립) · 기본 = 빈 값.
+    #[test]
+    fn toolbar_items_setting_is_independent_of_group_order_and_hidden_buttons() {
+        let order: Vec<String> = ["view", "file", "edit", "run", "conn", "tabconn"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let hidden = vec!["file.open".to_string()];
+        // items 설정 없음 = 기본 순서 · 전부 보임 → 블록은 도크 순서 · 숨긴 버튼만 0.
+        let b = toolbar_order_compose(&order, &hidden, "");
+        assert_eq!(b[0].0, "view");
+        assert_eq!(b[1].2[1], ("file.open".to_string(), false));
+        assert_eq!(toolbar_items_setting(&b), "", "순서·표시가 기본이면 빈 값");
+        // 버튼 순서 바꿈(file.save 먼저) + 그룹 숨김(edit) → items 설정에 담기고 그룹 순서·버튼 표시는 담기지 않는다.
+        let v =
+            "view:1[view.log:1]|file:1[file.save:1,file.new:0,file.open:1,file.save_as:1]|edit:0";
+        let blocks = toolbar_order_blocks(v);
+        let items = toolbar_items_setting(&blocks);
+        assert!(
+            items.starts_with("file:1[file.save:1,file.new:1"),
+            "{items}"
+        );
+        assert!(items.contains("|edit:0["), "{items}");
+        assert!(
+            !items.contains(":0,") || !items.contains("file.new:0"),
+            "버튼 표시는 담지 않는다"
+        );
+        // 다시 합성: 도크 순서 + 숨김 + items → 같은 뜻.
+        let back = toolbar_order_compose(&order, &["file.new".to_string()], &items);
+        let file = back.iter().find(|(g, _, _)| g == "file").expect("file");
+        assert_eq!(file.2[0], ("file.save".to_string(), true));
+        assert_eq!(file.2[1], ("file.new".to_string(), false));
+        assert!(!back.iter().find(|(g, _, _)| g == "edit").expect("edit").1);
+        assert_eq!(back[0].0, "view", "그룹 순서는 도크가 정한다");
+    }
+
     #[test]
     fn toolbar_order_value_round_trip_and_groups_never_hidden() {
         assert_eq!(
@@ -665,11 +742,11 @@ mod tests {
             "",
             "기본 = 빈 값"
         );
-        // 그룹 순서 바꿈 + 버튼 하나 숨김 + 그룹 숨김 시도(무시).
+        // 그룹 순서 바꿈 + 버튼 하나 숨김 + 그룹 숨김(T-278부터 허용).
         let v = "view:0[view.log:1]|file:1[file.new:1,file.open:0,file.save:1,file.save_as:1]";
         let b = toolbar_order_blocks(v);
         assert_eq!(b[0].0, "view");
-        assert!(b.iter().all(|(_, vis, _)| *vis), "그룹은 늘 표시");
+        assert!(!b[0].1, "그룹 숨김이 보존된다(T-278)");
         let hidden: Vec<&str> = b
             .iter()
             .flat_map(|(_, _, it)| it.iter())

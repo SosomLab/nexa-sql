@@ -217,7 +217,7 @@ flowchart TD
 | A2 문장 분해·판정 | ⬜ 기존 | UI | 문장으로 나누고 변경 없는 `CONNTYPE`을 거름 | `run_needed_items` |
 | **A2g 트랜잭션 경계 검사** | 🟧 1단계 | 문지기 | 실행할 문장 중 ① 암묵 커밋 ② 트랜잭션 밖 전용 문장이 있고, 세션에 잔여 TX(미커밋 변경 · 운영 보류)가 있거나 같은 실행 안에서 그 앞에 변경 문장이 있으면 → **아무것도 보내지 않고 W1** · 운영·개발 모두 | 순수 함수 `tx_boundary_guard` · `Dialect::implicit_commit` 확장 · §5-2 · D-304 |
 | **W1 경고창** | 🟧 1단계 | UI·사용자 | 모달 경고창 = 막은 문장(줄 번호) · 성격(①/②) · 잔여 TX 요약 · [커밋](운영 = 빨간 타임아웃 2단) [롤백] [취소] · 처리 뒤 자동 실행하지 않고 "다시 실행하세요" | §5-2 |
-| A3 운영 2단 확인 | ⬜ 기존 | 문지기 | 운영 + 조회 아닌 문장 → 첫 실행은 무장만 | `run.prod_confirm` · `prod_armed` |
+| A3 운영 2단 확인 | ⬜ 기존 | 문지기 | 운영 + 조회 아닌 문장 → 첫 실행은 무장만 · ★ 10-31 188차(D-424) **첫 낱말이 문장 시작이 아니면(명백한 구문 오류 · 예 `abc select …`) 확인 없이 서버로**(서버가 구문 오류로 거절 · 클라이언트 명령·`<<라벨>>` 제외 · SQL Server·ODBC·Access는 프로시저 이름 호출이 있어 종전대로) | `run.prod_confirm` · `prod_armed` · `sessions::prod_confirm_needed` · `nsql_core::is_statement_start` |
 | A3b 토스트 버튼·창 설정 | 🟦 2단계 | UI | 토스트에 빨간 [실행] 버튼 · 3초 → 설정 `run.prod_confirm_ms` | `Toasts::push_button` |
 | **A5 보류 정책 판정** | 🟧 1단계 | 문지기 | 운영 + `tx.prod_hold` 켬 + 변경 문장 → 보류 경로 | 순수 함수 `prod_hold_policy`(MC/DC 시험) |
 | A6x 사전 COUNT | 🟪 3단계 | 러너 | 단순 UPDATE/DELETE의 예상 행 수를 2단 확인 문구에 | 87 §14 guard 재사용 |

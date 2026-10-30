@@ -1288,11 +1288,21 @@ pub(crate) fn run_needed_items(
 /// 운영 접속에서 **변경 문장**(DML·DDL·PL/SQL 블록 등 SELECT가 아닌 것 · 서버로 가는 것)을 실행하려 한다 → 한 번 더 확인할 것인가(순수 판정).
 /// 클라이언트 전용 명령(`is_client_only`)은 서버를 바꾸지 않으므로 세지 않는다(10-01) — 단 **`CONNTYPE`는 센다**: 변경 없는 것은
 /// 앞 단계(`run_needed_items`)에서 빠졌으므로 여기 남은 `CONNTYPE`는 운영 유형을 **해제**하는 것 = 보호를 내리는 변경(사용자 10-01).
-pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]) -> bool {
+/// ★ 명백한 구문 오류(사용자 10-30 · D-424): 첫 낱말이 어느 방언에서도 문장을 시작할 수 없으면(`;` 빠져 앞 조각이 붙은 `… abc SELECT …` 등)
+///   서버가 그대로 거절할 문장이므로 확인 대상이 아니다(`nsql_core::is_statement_start` · SQL Server·ODBC·Access는 프로시저 이름 호출이
+///   가능해 늘 확인) · PL/SQL 라벨 `<<x>>`로 시작하는 블록은 문장이다.
+pub(crate) fn prod_confirm_needed(
+    prod: bool,
+    setting_on: bool,
+    dialect: nsql_core::Dialect,
+    items: &[String],
+) -> bool {
     prod && setting_on
         && items.iter().any(|sql| {
             let k = nsql_core::first_keyword(sql);
+            let labeled = sql.trim_start().starts_with("<<");
             !k.is_empty()
+                && (labeled || is_client_only(sql) || nsql_core::is_statement_start(dialect, &k))
                 && (!is_client_only(sql) || is_conntype_cmd(sql))
                 // 작업 단위 전환(`ALTER SESSION SET CURRENT_SCHEMA` · `SET search_path`)은 데이터 변경이 아니다(10-01 ⑮).
                 && !is_context_switch(sql)
@@ -1435,6 +1445,8 @@ mod tests {
             (3, 8),
             "전역이 더 엄격하면 전역"
         );
+        use nsql_core::Dialect as D;
+        let need = |p: bool, s: bool, items: &[String]| need(p, s, D::Oracle, items);
         let dml = vec!["select 1".to_string(), "update t set a = 1".to_string()];
         let ro = vec![
             "select 1".to_string(),
@@ -1444,6 +1456,33 @@ mod tests {
         assert!(!need(false, true, &dml), "운영 아님");
         assert!(!need(true, false, &dml), "설정 끔");
         assert!(!need(true, true, &ro), "조회만");
+        // ★ D-424(10-30): 명백한 구문 오류(첫 낱말이 문장 시작이 아님) = 확인 없이 서버로 → 서버 오류 · 라벨 블록·DuckDB FROM-first는 문장.
+        let broken = vec!["abc select 1 from dual".to_string()];
+        assert!(!need(true, true, &broken), "구문 오류 = 확인 없음");
+        assert!(
+            !need(true, true, &["1 update t set a = 1".to_string()]),
+            "숫자로 시작 = 구문 오류"
+        );
+        assert!(
+            super::prod_confirm_needed(true, true, D::Mssql, &broken),
+            "SQL Server = 프로시저 이름 호출일 수 있어 확인"
+        );
+        assert!(
+            super::prod_confirm_needed(true, true, D::Odbc, &broken),
+            "ODBC = 모름 = 확인"
+        );
+        assert!(
+            need(true, true, &["<<lbl>> begin null; end;".to_string()]),
+            "PL/SQL 라벨 블록 = 문장"
+        );
+        assert!(
+            super::prod_confirm_needed(true, true, D::Duckdb, &["from t".to_string()]),
+            "DuckDB FROM-first = 문장(조회지만 목록 밖 = 확인 · 종전과 같음)"
+        );
+        assert!(
+            !need(true, true, &["-- note\nabc select 1".to_string()]),
+            "주석 뒤 첫 낱말로 판정"
+        );
         // ★ 10-01: 클라이언트 전용 명령은 서버를 바꾸지 않는다 → 운영 확인 없음 · EXEC는 서버로 간다 → 확인.
         let client = vec![
             "SET AUTOCOMMIT OFF".to_string(),
