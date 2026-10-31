@@ -72,13 +72,21 @@ jobs:
       # ★ T-458(11-01 · 사용자 "리눅스는 xvfb로" · D-435): GUI 기능 점검을 Xvfb 가상 디스플레이에서 — scripts/lib/xvfb.sh가 스크립트를
       #   xvfb-run 아래로 다시 띄운다(창은 러너 화면에 뜨지 않음 · 키 주입 0). 1단계 = 기동·창 수·덤프 판정 시나리오 일부(Debug exe ·
       #   FC_WAIT_SCALE 2 = 기동 지연 보정). 2단계(전수)는 시간 실측 뒤 · 맥·윈도우 동일 기법 = T-459 헤드리스 백엔드.
+      #   ★ 1차 실행(ci 41214096070) = 앱이 Xvfb 안에서 즉시 종료(5/5 exited · 원인 원문 없음) → winit X11 런타임(libxkbcommon · xcb · xcursor…)을
+      #   함께 설치하고, 실패하면 stderr·ldd를 바로 출력한다(산출물 업로드 없이 로그로).
       - name: xvfb func-check (linux · subset)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y -qq xvfb x11-utils
+          sudo apt-get install -y -qq xvfb x11-utils libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1 libxcb-shm0 libxcb-render0 libxcb-xfixes0 libxcb-randr0 libxcursor1 libxi6 libxrandr2
           cargo build -q -p nexa-sql -p nsql-cli
           scripts/linux-func-check.sh -o target/func-check -e target/debug/nexa-sql -n target/debug/nsql -O S01,S02,S03,S04,S05
           tail -n 3 target/func-check/func-check.txt
+      - name: xvfb func-check diagnostics (on failure)
+        if: runner.os == 'Linux' && failure()
+        run: |
+          for f in target/func-check/S0*.stderr.txt target/func-check/S0*.stdout.txt; do echo "== $f"; head -n 40 "$f" 2>/dev/null; done
+          echo "== ldd"; ldd target/debug/nexa-sql | grep -iE "not found|xkb|xcb|x11" || true
+          echo "== direct run"; NSQL_HOME=target/func-check/home NSQL_STARTUP_CMD="@after:800:file.exit" xvfb-run -a target/debug/nexa-sql; echo "rc=$?"
 
   # ★ T-10 라이선스 게이트(10-29 168차): deny.toml 허용 목록 밖(카피레프트 등)·읽을 수 없는 라이선스 = 실패. 형제 저장소는 path 의존이라 함께 체크아웃.
   deny:
