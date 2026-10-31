@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/197-bookmarks-note-servers | 2026-10-31 | 2026-10-31 → main ff(삭제) · **5a4cd9f5** | 1 | 192차 win 24차 = T-167 B4b 메모 편집 · B6 서버 모름(`ServerUnknown`) + 하루 1회 점검·정리 · 소스 3 + 문서 5 |
+| feat/196-minimap-scale-side | 2026-10-31 | 2026-10-31 → main ff(삭제) · **68e4e703** | 1 | 192차 win 23차 = T-110 3-2 미니맵 배율 · 3-3 왼쪽 배치 + settings.json 힌트 평키 보강 · 13파일 · nexa-ui 250차 7b8bb36 동반(맥 248·249 뒤 rebase) · ci 첫 회 ✗(옛 nexa-ui main) → rerun ✓ |
 | feat/195-settings-hint-2 | 2026-10-31 | 2026-10-31 → main ff(삭제) · **23f1d517** | 1 | 192차 win 22차 = T-76 ② settings.json 스키마 힌트 2차(D-409 · 자동 트리거 + 설정 항목 상세 카드 `Target::Setting`) · 소스 4 + docs 3(BRANCHES·STATUS·journal = 194차 해시분) · 22차 문서(TODO·24·76·journal §7·STATUS)는 다음 커밋 |
 | feat/194-hot-exit | 2026-10-31 | 2026-10-31 → main ff(삭제) · **acaf2cc9** | 1 | 192차 win 21차 = T-165 P3 ② 파일 모드 hot exit(D-181 · `project.hot_exit` always · `workspaces/hot-exit.nsql-project`) · 10파일(소스 3 + 문서 7) |
 | feat/193-river-plsql | 2026-10-31 | 2026-10-31 → main ff(삭제) · **06077ff9** | 1 | 192차 win 19·20차 = T-255 강(river) 정렬 `format.indent_style` + PL/SQL `format.plsql = indent`(`river.rs`·`plsql.rs` 새) + 19차 V1 결함(OPTION_KEYS 누락) 수정·재발 방지 시험 · 14파일(nsql-format 4 + app/format.rs 시험 + settings/i18n + 문서 7) · settings `project.hot_exit`·i18n 6행 = 다음 묶음 몫이 먼저 들어감(효과는 194차부터) |

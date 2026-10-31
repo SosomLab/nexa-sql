@@ -49,7 +49,7 @@ VS Code 대조(사용자 평이 좋은 것): `showSlider`(always/mouseover) · `
 
 | # | 기능 | 설명 | 설정 |
 |---|---|---|---|
-| 3-1 | **자동 숨김 페이드**(VS Code autohide) | 편집기 hover/스크롤 때만 서서히 나타남 — `IntentFade` 부품 재사용 | `editor.minimap_autohide`(off) |
+| 3-1 | **자동 숨김 페이드**(VS Code autohide) | 편집기 hover/스크롤 때만 서서히 나타남 — `IntentFade` 부품 재사용 | `editor.minimap_autohide`(off) · ✅ **10-31 25차** = `editor.minimap_autohide`(off 기본) · 켬 = 마지막 마우스 이동/휠 뒤 1200 ms(`MINIMAP_AUTOHIDE_MS`) 안에만 내용을 그림 · **띠 자리는 그대로**(본문 폭 불변) · 페이드(서서히)가 아니라 즉시 나타남/사라짐 · nexa-ctl `set_minimap_autohide`·`minimap_shown`(nexa-ui 251차) · V1 캡처 ✓ · [journal 10-31 §10](journal/2026-10-31.md) |
 | 3-2 | **배율** | 줄당 1/2/3px(긴 파일은 1 · 짧은 파일은 3) · `auto` = 파일 길이로 | `editor.minimap_scale`(2/auto) · ✅ **10-31 23차** = `editor.minimap_scale` auto/1/2/3(기본 2) · auto = 문서 전체 행 × 배율 ≤ 띠 높이인 가장 큰 값(없으면 1) · nexa-ctl `set_minimap_scale`(nexa-ui 250차 7b8bb36) · [journal 10-31 §8](journal/2026-10-31.md) |
 | 3-3 | **왼쪽 배치** | 거터 옆 | `editor.minimap_side`(right) · ✅ **10-31 23차** = `editor.minimap_side` right/left(기본 right) · 왼쪽 = 거터 바로 오른쪽(본문은 띠 + 4px 뒤) · nexa-ctl `set_minimap_left` · V1 캡처 ✓ · [journal 10-31 §8](journal/2026-10-31.md) |
 | 3-4 | **섹션 헤더** | 주석 구분선(`-- ====` · `-- #region` · `/* == */`)의 첫 단어를 미니맵에 작은 글자로 — 긴 스크립트 탐색에 좋다(VS Code 1.85+) | `editor.minimap_sections`(off) |

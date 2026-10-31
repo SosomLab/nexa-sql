@@ -3596,6 +3596,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(MINIMAP_SIDE_OPTS),
         default: "right",
     },
+    // ★ T-110 3-1(10-31 · docs/46 3순위): 자동 숨김 — 마우스 이동·휠 뒤 1.2초만 띠를 그린다(자리는 유지 · 본문 안 흔들림 · 기본 끔).
+    Entry {
+        key: "editor.minimap_autohide",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapAutohide,
+        desc: Msg::DescEditorMinimapAutohide,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     // ★ T-110 2-4(10-30 · docs/46): 저장 이후 바뀐 줄을 미니맵 왼쪽 가장자리에(거터 diff 띠와 같은 원천 · 기본 끔).
     Entry {
         key: "editor.minimap_dirty",

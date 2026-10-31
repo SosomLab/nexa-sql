@@ -252,6 +252,9 @@ impl App {
             scale,
             self.settings.get("editor.minimap_side") == Some("left"),
         );
+        // ★ T-110 3-1: 자동 숨김(마우스 이동·휠 뒤 1.2초 · 자리는 유지).
+        self.editors
+            .set_minimap_autohide(self.settings.flag("editor.minimap_autohide"));
         // ★ T-110 2-4(10-30): 저장 뒤 수정 줄 표식(기준선 = 저장본 · 파일 탭만).
         self.editors
             .set_minimap_diff(self.settings.flag("editor.minimap_dirty"));
@@ -949,6 +952,7 @@ impl App {
             | "editor.minimap_min_cols"
             | "editor.minimap_scale"
             | "editor.minimap_side"
+            | "editor.minimap_autohide"
             | "editor.minimap_dirty"
             | "editor.minimap_git"
             | "editor.minimap_box_color"
