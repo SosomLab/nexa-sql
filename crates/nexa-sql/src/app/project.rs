@@ -1195,6 +1195,98 @@ impl App {
         self.bookmarks.save_now();
     }
 
+    /// ★ T-165 P3 ② hot exit(D-181 · 70 §9): 파일 모드 종료 문서의 자리 = 설정 폴더(`workspaces/hot-exit.nsql-project` · D-183 프로젝트 폴더에
+    ///   쓰지 않음 · D-407 사용자 프로젝트 파일과 무관).
+    fn hot_exit_path() -> Option<PathBuf> {
+        nsql_settings::config_dir().map(|d| d.join("workspaces").join("hot-exit.nsql-project"))
+    }
+
+    /// hot exit이 켜져 있고(기본 `always`) 프로젝트가 없으며, 미저장 탭을 **전부** 담을 수 있는가(`project.unsaved_max_mb` 넘는 탭이
+    /// 있으면 거짓 = 그 탭은 묻는다 · 70 §9 ④).
+    pub(crate) fn hot_exit_applies(&self) -> bool {
+        if self.project.is_open() || self.settings.get("project.hot_exit") == Some("off") {
+            return false;
+        }
+        let max_bytes = (self.settings.int("project.unsaved_max_mb").max(0) as usize) << 20;
+        (0..self.editors.tab_count()).all(|i| {
+            !self.editors.is_dirty(i)
+                || self
+                    .editors
+                    .tab_box(i)
+                    .is_some_and(|tb| tb.buf().len_bytes() <= max_bytes)
+        })
+    }
+
+    /// 종료 직전: 파일 모드의 작업 환경(탭 · 미저장 본문 · 캐럿)을 hot exit 문서로 쓴다 — 미저장이 하나도 없으면 문서를 지운다(다음 기동에
+    ///   복원할 것이 없다). 프로젝트 모드에는 해당 없음.
+    pub(crate) fn hot_exit_save(&mut self) {
+        let Some(path) = Self::hot_exit_path() else {
+            return;
+        };
+        if self.project.is_open() {
+            return;
+        }
+        let dirty = (0..self.editors.tab_count())
+            .filter(|&i| self.editors.is_dirty(i))
+            .count();
+        if dirty == 0 {
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
+        // 임시로 경로를 꽂아 캡처(상대 경로 기준 = 설정 폴더) → 저장 → 파일 모드로 되돌림.
+        let saved = self.project.clone();
+        self.project.path = Some(path.clone());
+        self.project_capture_state();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let r = self.project.save();
+        self.project = saved;
+        match r {
+            Ok(()) => {
+                let msg = tf(Msg::StHotExitSaved, &[&dirty.to_string()]);
+                self.log_win.push(LogEntry::new(LogKind::Info, msg));
+            }
+            Err(e) => self
+                .log_win
+                .push(LogEntry::new(LogKind::Info, tf(Msg::ErrProjectFile, &[&e]))),
+        }
+    }
+
+    /// 기동(파일 모드 · 첫 인스턴스 · 파일 인자 없음): hot exit 문서가 있으면 탭을 복원하고 문서를 지운다(한 번만).
+    pub(crate) fn hot_exit_restore(&mut self) {
+        if self.project.is_open()
+            || !self.arg_files.is_empty()
+            || !self.first_instance
+            || self.settings.get("project.hot_exit") == Some("off")
+        {
+            return;
+        }
+        let Some(path) = Self::hot_exit_path().filter(|p| p.is_file()) else {
+            return;
+        };
+        let Ok(doc) = project::Project::load(&path) else {
+            let _ = std::fs::remove_file(&path);
+            return;
+        };
+        let n = doc.tabs.len();
+        let unsaved = doc.tabs.iter().filter(|t| t.text.is_some()).count();
+        // 탭만 빌려 쓴다(폴더·설정 절은 없음) — `project_restore`는 `self.project.tabs`를 읽으므로 잠시 꽂았다가 원래(빈) 프로젝트로.
+        let saved = self.project.clone();
+        self.project.tabs = doc.tabs;
+        self.project.active = doc.active;
+        self.project_restore();
+        self.project = saved;
+        self.project_last_json.clear();
+        let _ = std::fs::remove_file(&path);
+        let msg = tf(
+            Msg::StHotExitRestored,
+            &[&n.to_string(), &unsaved.to_string()],
+        );
+        self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+        self.sess.status = msg;
+    }
+
     /// ★ 자동 저장 틱(사용자 09-28 정의 · [70 §7](../../../docs/70-autosave-and-restore.md)):
     ///   ① **감시된 변경**(변경 세대 = 탭 집합·순서·본문 세대·활성 탭 · `project_touch` = 폴더·탐색기 선택)은 **최초 변경 시점 +
     ///      `project.autosave_change_ms`(10초)** 에 1회 저장 — 그 안의 추가 변경은 타이머를 옮기지 않는다(최초 트리거 기준).

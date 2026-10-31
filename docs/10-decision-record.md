@@ -295,7 +295,7 @@
 | D-178 | 참조 파일 백업 판 수 — ① 최신 1개(권장) — 사용자 확인 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:166 §8 · TODO.md:288 · CLAUDE.md:17 |
 | D-179 | 캐럿·스크롤을 워크스페이스에 쓰는 시점 — ② 탭 전환·포커스 잃음·5초 유휴·종료(권장) — 확인 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:167 §8 · TODO.md:288 |
 | D-180 | 복원 때 백업 본문 vs 디스크가 다를 때 — ① 묵시로 백업 올리고 띠(권장) · 미저장 스냅숏 복원에 ① 적용 · 사용자 확인은 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:168 §8 · journal/2026-09-22.md:582 · TODO.md:288 |
-| D-181 | `project.hot_exit` 기본 — ① `always`(권장) — 확인 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:169 §8 · TODO.md:288 |
+| D-181 | `project.hot_exit` 기본 — ① `always`(권장) — 확인 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:169 §8 · TODO.md:288 · ✅ **10-31 192차 21차 구현** = 새 키 `project.hot_exit`(always/off · 기본 always) · 파일 모드(프로젝트 없음)에서 종료 때 미저장 탭(파일·스크립트 · `project.unsaved_max_mb` 이하)을 묻지 않고 `<설정 폴더>/workspaces/hot-exit.nsql-project`(프로젝트 문서 형식 · 폴더·설정 절 없음)에 저장 → 다음 기동(첫 인스턴스 · 파일 인자 없음)에 탭 복원 뒤 문서 삭제 · off = 종래대로 묻기 · 남은 문서 삭제 · [journal 10-31 §6](journal/2026-10-31.md) |
 | D-182 | 100개 `Save All` 진행 표시 — ① 상태줄 카운트만(권장) — 확인 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:170 §8 · TODO.md:288 |
 | D-183 | 백업 폴더 위치 — ① 설정 폴더 `backups/`(권장) — 확인 대기 | ✅ 10-30 권장안 확정(D-413) | 70-autosave-and-restore.md:171 §8 · TODO.md:288 |
 | D-184[43] | 전체 조회의 커서 경로도 실행 카드 표시 = 예 — 권장안 적용 | 🚧 권장안 진행 | 43-fetch-model-and-result-tabs.md:314 §11-4 · journal/2026-09-22.md:318 |

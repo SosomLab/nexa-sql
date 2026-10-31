@@ -170,6 +170,8 @@ impl ApplicationHandler<Wake> for App {
         self.bookmarks.bind_project(self.project.path.as_deref());
         self.bm_sync_ui();
         self.project_restore();
+        // ★ T-165 P3 ② hot exit: 파일 모드면 지난 종료의 미저장 탭 복원(문서는 한 번 쓰고 지움).
+        self.hot_exit_restore();
         self.rebuild_menus();
         if !self.demo_ready && !self.settings.flag("demo.prompted") {
             let _ = self.settings.set("demo.prompted", "on");

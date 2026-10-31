@@ -209,6 +209,17 @@ impl App {
     /// 종료 마무리(저장 · 창 크기 · 워커 종료 · 루프 종료) — 창 이벤트 끝과 유휴 틱 **둘 다**에서 부른다(09-24: 기동 명령·타이머로
     /// 요청한 종료가 창 이벤트가 없으면 영영 처리되지 않았다 — `scripts/func-block-comment.sh`가 잡음).
     pub(crate) fn finish_exit(&mut self, el: &ActiveEventLoop) {
+        // ★ hot exit(파일 모드): 미저장 탭 보존 문서 쓰기(프로젝트 모드는 flush_on_exit의 프로젝트 저장이 한다).
+        if self.hot_exit_applies() {
+            self.hot_exit_save();
+        } else if !self.project.is_open() {
+            // 끔(묻기 경로를 거쳤다) = 지난 보존 문서가 남아 있으면 지운다(다음 기동에 옛 탭이 튀어나오지 않게).
+            if let Some(p) = nsql_settings::config_dir()
+                .map(|d| d.join("workspaces").join("hot-exit.nsql-project"))
+            {
+                let _ = std::fs::remove_file(p);
+            }
+        }
         self.flush_on_exit();
         self.persist_window_sizes(true);
         for s in self.all_sess() {
@@ -230,9 +241,13 @@ impl App {
                 return;
             }
         }
-        let keep_scratch = self.project.is_open();
+        // ★ T-165 P3 ② hot exit(D-181 · 기본 always): 프로젝트 없이 종료 = 미저장 탭을 묻지 않고 보존(`hot_exit_save` · 다음 기동에 복원) ·
+        //   `off`이거나 상한을 넘는 탭이 있으면 종전처럼 탭마다 묻는다.
+        let hot_exit = self.hot_exit_applies();
+        let keep_scratch = self.project.is_open() || hot_exit;
         let dirty = (0..self.editors.tab_count()).find(|&i| {
-            self.editors.is_dirty(i) && !(keep_scratch && self.editors.path_of(i).is_none())
+            self.editors.is_dirty(i)
+                && !(keep_scratch && (hot_exit || self.editors.path_of(i).is_none()))
         });
         if let Some(i) = dirty {
             self.exit_pending = true;
