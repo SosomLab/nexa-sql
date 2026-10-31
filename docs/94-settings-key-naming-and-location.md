@@ -230,6 +230,15 @@
 |---|---|---|---|---|
 | `ui.prefs_project` | Bool | off | 모양 · HIDDEN | 설정 창 하단 "프로젝트" 스위치의 마지막 상태(라벨 "설정 창: 프로젝트 범위") · 토글 = 저장(`ui.prefs_advanced`와 같은 길) · 창을 열 때 복원 · 프로젝트가 없으면 늘 꺼짐(값은 그대로) · 바꿔도 재시작 안내 없음 |
 
+
+### 6-24. SQL 포맷 강 정렬 · PL/SQL 블록(10-31 · 192차 19·20차 · T-255 · D-416 · [95 §10·§11](95-sql-formatter.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `format.indent_style` | Choice | `standard` | 포맷 | `standard`(지금 모양) · `river`(절·JOIN·ON·AND/OR 머리를 강 열에 오른쪽 맞춤 · 공백만) · CLI `nsql format`·GUI 같은 값(pair `indent_style`) |
+| `format.plsql` | Choice | `off` | 포맷 | `off`(PL/SQL 블록 원문 통과) · `indent`(줄바꿈 유지 · 줄 앞 들여쓰기만 구조 깊이로 · 판정 실패 = 원문) · `full`(v2 · 지금은 `indent`와 같음) |
+
+- 재발 방지 = nexa-sql 시험 `registry_format_keys_are_all_option_keys`(레지스트리 `format.*` − {`default`, `max_kb`} ⊆ `nsql_format::OPTION_KEYS`) — 19차에 `indent_style`이 OPTION_KEYS에 없어 CLI·GUI가 값을 넘기지 못한 결함의 재발 방지.
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

@@ -11,6 +11,8 @@
 
 pub mod layout;
 pub mod lexer;
+pub mod plsql;
+pub mod river;
 
 pub use layout::{Line, Part, Role};
 pub use lexer::{lex, Kind, Token};
@@ -133,9 +135,27 @@ impl DialectTarget {
     }
 }
 
+/// ★ T-255(10-30 D-416 · 10-31 구현): 절 배치 — `standard`(절 키워드 단독 줄 · 항목 한 단계 안) / `river`(절 키워드 오른쪽 맞춤 ·
+/// 첫 항목 같은 줄 · docs/95 §10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentStyle {
+    Standard,
+    River,
+}
+
+/// ★ T-255 2단계(10-31 · docs/95 §11): PL/SQL 블록(통과 영역) 처리 — `Off`(원문 그대로 · 기본) / `Indent`(줄 앞 공백만 구조 깊이로 ·
+/// 판정 실패 = 원문) · `full`(단위 SQL 펼치기)은 v2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlsqlStyle {
+    Off,
+    Indent,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
     pub indent: Indent,
+    pub indent_style: IndentStyle,
+    pub plsql: PlsqlStyle,
     /// 탭 폭(정렬 계산 · 탭 스톱).
     pub tab_width: usize,
     pub keyword_case: Case,
@@ -204,6 +224,8 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             indent: Indent::Tab,
+            indent_style: IndentStyle::Standard,
+            plsql: PlsqlStyle::Off,
             tab_width: 4,
             keyword_case: Case::Upper,
             identifier_case: Case::Keep,
@@ -247,6 +269,9 @@ impl Default for Options {
 pub const OPTION_KEYS: &[&str] = &[
     "indent",
     "indent_width",
+    // ★ T-255(10-31): 호스트(CLI·GUI)는 이 표로만 format.*을 모은다 — from_pairs에 키를 더하면 여기도(협업 V1 19차 교훈).
+    "indent_style",
+    "plsql",
     "keyword_case",
     "identifier_case",
     "function_case",
@@ -314,6 +339,20 @@ impl Options {
                             o.indent = Indent::Spaces(o.tab_width as u8);
                         }
                     }
+                }
+                "indent_style" => {
+                    o.indent_style = if lv == "river" {
+                        IndentStyle::River
+                    } else {
+                        IndentStyle::Standard
+                    };
+                }
+                "plsql" => {
+                    o.plsql = if lv == "indent" || lv == "full" {
+                        PlsqlStyle::Indent
+                    } else {
+                        PlsqlStyle::Off
+                    };
                 }
                 "keyword_case" => o.keyword_case = Case::parse(&lv),
                 "identifier_case" => o.identifier_case = Case::parse(&lv),
@@ -587,10 +626,14 @@ where
 /// 확장 API 채움 함수: (줄 index, 조각 index, 지금까지의 줄 글) → 그 조각 앞에 넣을 글(탭 정렬).
 pub type LinePad<'a> = &'a dyn Fn(usize, usize, &str) -> String;
 
-/// 확장 API ①: Basic의 전처리 결과(줄 IR).
+/// 확장 API ①: Basic의 전처리 결과(줄 IR) — `indent_style = river`면 강 정렬 후처리까지(95 §10 · 확장은 `col`이 있는 줄을 건너뛴다).
 #[must_use]
 pub fn prepare(src: &str, opts: &Options) -> Vec<Line> {
-    layout::layout(src, opts)
+    let mut lines = layout::layout(src, opts);
+    if opts.indent_style == IndentStyle::River {
+        river::apply(&mut lines, opts);
+    }
+    lines
 }
 
 /// 확장 API ③: Basic 렌더(`pad` = 조각 앞 채움 · 없으면 Basic 그대로).

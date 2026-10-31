@@ -534,10 +534,19 @@ const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
     ("trailing", Msg::ValFmtTrailing),
 ];
 const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+const HOT_EXIT_OPTS: &[(&str, Msg)] = &[
+    ("always", Msg::ValHotExitAlways),
+    ("off", Msg::ValHotExitOff),
+];
 // ★ T-255(10-31): 절 배치 standard / river(95 §10).
 const FMT_INDENT_STYLE_OPTS: &[(&str, Msg)] = &[
     ("standard", Msg::ValFmtStandard),
     ("river", Msg::ValFmtRiver),
+];
+// ★ T-255 2단계(10-31): PL/SQL 블록 처리 off / indent(95 §11 · full은 v2).
+const FMT_PLSQL_OPTS: &[(&str, Msg)] = &[
+    ("off", Msg::ValFmtPlsqlOff),
+    ("indent", Msg::ValFmtPlsqlIndent),
 ];
 /// 간격 3택 = 활성 탭 설정 / 공백 / 탭(사용자 09-30 · 인라인 주석 앞).
 const FMT_GAP3_OPTS: &[(&str, Msg)] = &[
@@ -1325,6 +1334,16 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtIndentStyle,
         kind: SettingKind::Choice(FMT_INDENT_STYLE_OPTS),
         default: "standard",
+    },
+    // ★ T-255 2단계(95 §11): PL/SQL 블록(DECLARE/BEGIN · CREATE PROCEDURE/FUNCTION/PACKAGE/TRIGGER/TYPE) — off = 원문 통과(기본 · 소스를
+    //   망가뜨리면 안 되는 영역) · indent = 줄바꿈은 두고 줄 앞 공백만 구조 깊이로(판정 실패 = 원문).
+    Entry {
+        key: "format.plsql",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtPlsql,
+        desc: Msg::DescFmtPlsql,
+        kind: SettingKind::Choice(FMT_PLSQL_OPTS),
+        default: "off",
     },
     Entry {
         key: "format.comma",
@@ -3901,6 +3920,16 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescProjectRestoreLast,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // ★ T-165 P3 ②(10-30 D-181 · 10-31 구현): 파일 모드(프로젝트 없음)에서도 종료 때 미저장 탭을 묻지 않고 보존 → 다음 기동에 복원
+    //   (Sublime hot_exit · 원천 = `<설정 폴더>/workspaces/hot-exit.nsql-project` · 프로젝트 모드는 프로젝트 파일이 이미 보존). `off` = 탭마다 묻기.
+    Entry {
+        key: "project.hot_exit",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectHotExit,
+        desc: Msg::DescProjectHotExit,
+        kind: SettingKind::Choice(HOT_EXIT_OPTS),
+        default: "always",
     },
     Entry {
         key: "project.preview_tab",

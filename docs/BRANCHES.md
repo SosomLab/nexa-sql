@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/192-prefs-project-export | 2026-10-31 | 2026-10-31 → main ff(삭제) · **29cd7122** | 1 | 192차 win 18차 = D-428 설정 창 "프로젝트" 스위치 기억(`ui.prefs_project`) + T-8 GUI 2차 결과 스트리밍 내보내기(그리드 우클릭 · `Cmd::ExportStream`) + 아침 문서 묶음(결정 4건 · Db2 latest) · 22파일(소스 12 + 문서 10) · nsql-settings `format.indent_style`·i18n 4행 = T-255 몫이 먼저 들어감(효과는 193차부터) |
 | chore/db2-image-input | 2026-10-31 | 2026-10-31 → main ff(삭제) · **6253fab7** | 1 | `db2.yml` `workflow_dispatch` 입력 `image`(기본 = 고정 `icr.io/db2_community/db2:12.1.2.0` · 야간·PR = 고정) · 사용자 10-31 "최신 판(latest)으로 시험 가능한가" · 코드스페이스 대체 |
 | feat/191-grammar-contrast-d180 | 2026-10-31 | 2026-10-31 → main ff(삭제) · **4abeac0a** | 1 | 191차 win = T-200 대조표 `.sqlg` 반영(82 §10-7 ✅ 줄 · 보류 3) + T-165 P3 D-180 복원 띠 + `StBackupExternal` 문구 정정 · 18파일 · 밤 작업 마지막 묶음 |
 | feat/190-bookmarks-object-revive | 2026-10-31 | 2026-10-31 → main ff(삭제) · **3738752d** | 1 | 190차 win = T-167 B5 객체 DDL 북마크(`DocKey::Object` · 재개 = 살아 있는 세션만 · D-426) + B6 무효·부활(`validate_files` · 열린 문서 부활) · 13파일 · nexa-ui 없음 |

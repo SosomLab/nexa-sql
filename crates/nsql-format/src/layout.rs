@@ -61,6 +61,8 @@ pub struct Line {
     pub role: Role,
     /// 이 줄 앞 빈 줄 수.
     pub blank_before: usize,
+    /// ★ T-255 강 정렬(95 §10): `Some(열)`이면 줄 접두 = 공백 `열`개(단계 들여쓰기 대신 · 줄 앞 콤마는 그 뒤 `, `) · `None` = 종전 단계 접두.
+    pub col: Option<usize>,
 }
 
 impl Line {
@@ -70,6 +72,7 @@ impl Line {
             parts: Vec::new(),
             role,
             blank_before: 0,
+            col: None,
         }
     }
     /// 정렬 없이 이은 본문(들여쓰기 제외).
@@ -382,7 +385,16 @@ pub fn render_lines(
         if l.role != Role::Raw {
             let leading =
                 opts.comma == Comma::Leading && matches!(l.parts.first(), Some(Part::Comma));
-            out.push_str(&line_prefix(l.indent, leading, opts));
+            match l.col {
+                // ★ 강 정렬 줄 = 공백 열 + (줄 앞 콤마면 `, `) — 열 정렬이 목적이라 탭을 쓰지 않는다(95 §10-1).
+                Some(c) => {
+                    out.push_str(&" ".repeat(c));
+                    if leading {
+                        out.push_str(", ");
+                    }
+                }
+                None => out.push_str(&line_prefix(l.indent, leading, opts)),
+            }
         }
         out.push_str(body.trim_end());
         out.push_str(nl);
@@ -471,7 +483,13 @@ pub fn layout(src: &str, opts: &Options) -> Vec<Line> {
             } else {
                 blank_of(&toks[i], first_stmt, opts)
             };
-            push_raw(&mut out, text, blank);
+            // ★ T-255 2단계(95 §11): `format.plsql = indent`면 블록 줄 앞 공백을 구조 깊이로(판정 실패 = 원문 그대로).
+            let reindented = if opts.plsql == crate::PlsqlStyle::Indent {
+                crate::plsql::reindent(text, &toks[i..j], toks[i].span.0, opts)
+            } else {
+                None
+            };
+            push_raw(&mut out, reindented.as_deref().unwrap_or(text), blank);
             first_stmt = false;
             prev_cmd = false;
             i = j;

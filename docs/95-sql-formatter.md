@@ -165,9 +165,11 @@
 시험: nsql-format `paren_group_seed` · `dialect_substitution` · `auto_alias_for_tables` · `table_description_comments`(+ 기존 15) · nsql-settings/i18n 등재.
 
 
-## 10. 강(river) 정렬 설계 — `format.indent_style = standard|river`(10-30 · D-416 · T-255 · 설계 = 협업 · 구현 전)
+## 10. 강(river) 정렬 설계 — `format.indent_style = standard|river`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 1차 구현)
 
 > 사용자 결정(10-30): 확장이 아니라 **Basic 옵션**으로. 기본 = `standard`(지금 그대로). 아래 = 구현 전 설계 — 바꿀 때 이 절을 고친다.
+
+> ★ **구현됨(10-31 1차 · 192차 19·20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — `Options.indent_style: IndentStyle {Standard, River}`(pair `indent_style` · `OPTION_KEYS` 등재) · `Line.col: Option<usize>`(Some = 공백 열 접두 · 줄 앞 콤마 `, `) · `prepare()` = layout 뒤 **`river::apply`**(새 모듈 `river.rs` · IR 후처리 · Walker 무변경 = §10-2 그대로) · 세그먼트 = 깊이 0의 SELECT/WITH/UPDATE/DELETE(집합 연산자 뒤 새 강 · INSERT/MERGE·Raw 제외) · 깊이별 강 폭 = 절·JOIN·ON·AND/OR 머리 예약어 폭 최댓값 → 오른쪽 맞춤 · 절 키워드만 있는 줄 + 첫 항목 합침 · 항목 = 강+1(줄 앞 콤마 = 강 열) · 그 밖 줄 = 깊이×단위 공백 · 탭 단위여도 강은 공백. V1(CLI) = 강 폭이 `LEFT OUTER JOIN`(15)이면 `SELECT` 앞 9칸(설계대로). **남음** = 서브쿼리 안쪽 강 세부 · CASE 상대 들여쓰기 · 확장 kiros33 정렬은 `col` 있는 줄을 건너뜀(문서화된 동작).
 
 ### 10-1. 모양
 
@@ -211,7 +213,9 @@ SELECT a.id,                         -- 절 키워드를 강 열에 오른쪽 �
 - 시험 = 위 예 · 서브쿼리 2단(안쪽 강) · `LEFT OUTER JOIN`(강이 넓어짐) · 줄 앞 콤마 · UNION · CASE 항목 · 주석 · UPDATE/DELETE · INSERT/MERGE 불변 · 탭 단위에서 공백 강.
 - 난이도 = 중(새 모듈 1 + IR 한 칸 + 렌더 분기) · Walker 무변경이라 standard 회귀 위험 낮음.
 
-## 11. PL/SQL 블록 포맷 설계 — `format.plsql = off|indent|full`(10-30 · D-416 · T-255 · 설계 = 협업 · 구현 전)
+## 11. PL/SQL 블록 포맷 설계 — `format.plsql = off|indent|full`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 `indent` 구현 · `full` = v2)
+
+> ★ **`indent` 구현됨(10-31 · 192차 20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — 새 모듈 `nsql-format/src/plsql.rs` `reindent(text, toks, base, opts) -> Option<String>` = 통과(Raw) 블록의 줄바꿈은 두고 줄 앞 공백만 구조 깊이로(§11-3 표 = 스택 Decl/Begin/If/Loop/Case/When · 루틴 머리 이어 줄 +1 · `/` 0 · 주석 줄 = 지금 깊이 · 여러 줄 문자열/블록 주석 안 줄은 손대지 않음) · 판정 실패(짝 없는 END · 안 닫힘 · `WHEN`/`IF`가 THEN과 다른 줄) = `None` = 원문 · `Options.plsql: Off|Indent`(pair `plsql` · `full`은 지금 Indent로 받음) · `layout()` 통과 가지에서 호출 · 방언 = Oracle 계열(oracle·tibero·db2 PL/SQL 호환) · V1(CLI) = §11-3 예시 본문을 왼쪽 정렬한 파일 → 예시와 같은 계단 · off = 입력과 동일. **남음** = `full`(§11-4 · v2) · T-SQL/PG 블록(v2).
 
 ### 11-1. 지금
 

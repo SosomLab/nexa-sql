@@ -887,3 +887,23 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod option_keys_tests {
+    /// ★ 19차 V1 교훈(10-31): 호스트는 `nsql_format::OPTION_KEYS`로만 `format.*`을 모아 넘기므로, 레지스트리의 포맷 옵션 키는
+    /// 전부 그 표에 있어야 한다(없으면 설정이 조용히 무시됨 — `indent_style`이 그랬다). 예외 = 포맷터 선택·크기 상한(옵션이 아님).
+    #[test]
+    fn registry_format_keys_are_all_option_keys() {
+        let except = ["format.default", "format.max_kb"];
+        let missing: Vec<&str> = nsql_settings::REGISTRY
+            .iter()
+            .map(|e| e.key)
+            .filter(|k| k.starts_with("format.") && !except.contains(k))
+            .filter(|k| !nsql_format::OPTION_KEYS.contains(&&k["format.".len()..]))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "OPTION_KEYS에 없는 format 키: {missing:?}"
+        );
+    }
+}
