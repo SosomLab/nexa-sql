@@ -47,20 +47,38 @@ fn first_word(line: &Line) -> String {
     }
 }
 
-/// 이 줄이 속한 **강의 깊이**: 절·JOIN = 자기 깊이 · `ON`/`USING` 절 · 조건(AND/OR) · 항목 = 한 단계 위(0이면 0).
-fn river_level(line: &Line) -> usize {
-    match line.role {
-        Role::Clause => {
-            let w = first_word(line);
-            if w == "ON" || w == "USING" {
-                line.indent.saturating_sub(1)
-            } else {
-                line.indent
+/// 세그먼트 줄마다 속한 **강의 깊이**: 절·JOIN = 자기 깊이 · `ON`/`USING` 절 = 한 단계 위 · **조건(AND/OR) = 가장 가까운 앞 절의 깊이**
+/// (★ 10-31 결함 수정: `cond_indent = same`이면 조건 줄이 절 키워드와 같은 깊이라 종전 "한 단계 위" 가정이 틀렸다 · ON 조건은 늘 같은 열) ·
+/// 항목·그 밖 = 한 단계 위(0이면 0).
+fn river_levels(seg: &[Line]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(seg.len());
+    // 최근 절(깊이, 강 깊이) — 더 깊은 절(서브쿼리)이 끝나 바깥으로 돌아오면 바깥 절이 다시 걸린다(`<=` 탐색).
+    let mut clauses: Vec<(usize, usize)> = Vec::new();
+    for line in seg {
+        let lv = match line.role {
+            Role::Clause => {
+                let w = first_word(line);
+                if w == "ON" || w == "USING" {
+                    line.indent.saturating_sub(1)
+                } else {
+                    line.indent
+                }
             }
+            Role::Join => line.indent,
+            Role::Cond => clauses
+                .iter()
+                .rev()
+                .find(|(ind, _)| *ind <= line.indent)
+                .map_or(line.indent.saturating_sub(1), |(_, lv)| *lv),
+            _ => line.indent.saturating_sub(1),
+        };
+        if matches!(line.role, Role::Clause | Role::Join) {
+            clauses.retain(|(ind, _)| *ind < line.indent);
+            clauses.push((line.indent, lv));
         }
-        Role::Join => line.indent,
-        _ => line.indent.saturating_sub(1),
+        out.push(lv);
     }
+    out
 }
 
 /// 문장(세그먼트) 경계 = 깊이 0의 절·JOIN 줄 또는 Raw 줄. `None` = 강 적용 대상 아님(INSERT · MERGE · Raw).
@@ -159,13 +177,14 @@ pub fn apply(lines: &mut Vec<Line>, opts: &Options) {
             continue;
         }
         let seg: Vec<Line> = lines[s..e].to_vec();
+        let lvs = river_levels(&seg);
         // 2) 깊이별 강 폭 = 절·JOIN·ON·조건 줄 머리 예약어 폭의 최댓값.
         let mut width: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
-        for l in &seg {
+        for (idx, l) in seg.iter().enumerate() {
             if matches!(l.role, Role::Clause | Role::Join | Role::Cond) {
                 let (n, w, _) = keyword_head(&l.parts, tw);
                 if n > 0 {
-                    let lv = river_level(l);
+                    let lv = lvs[idx];
                     let cur = width.entry(lv).or_insert(0);
                     *cur = (*cur).max(w);
                 }
@@ -197,7 +216,7 @@ pub fn apply(lines: &mut Vec<Line>, opts: &Options) {
                     }
                 }
             }
-            let lv = river_level(&l);
+            let lv = lvs[k];
             let base = base_of(lv, &frames, unit);
             let w = width.get(&lv).copied().unwrap_or(0);
             match l.role {
@@ -211,10 +230,13 @@ pub fn apply(lines: &mut Vec<Line>, opts: &Options) {
                         let only_kw = all_kw && l.parts.len() == 1 && l.role == Role::Clause;
                         if only_kw {
                             if let Some(next) = seg.get(k + 1) {
-                                let next_lv = river_level(next);
+                                let next_lv = lvs[k + 1];
+                                // 첫 조건은 한 단계 안(기본) 또는 같은 깊이(`cond_indent = same` · ON) 어느 쪽이든 잇는다.
+                                let same_col_cond =
+                                    next.role == Role::Cond && next.indent == l.indent;
                                 let joinable = matches!(next.role, Role::Item | Role::Cond)
                                     && next_lv == lv
-                                    && next.indent == l.indent + 1
+                                    && (next.indent == l.indent + 1 || same_col_cond)
                                     && !matches!(next.parts.first(), Some(Part::Comma))
                                     && !matches!(first_word(next).as_str(), "AND" | "OR")
                                     && next.blank_before == 0;
@@ -372,6 +394,32 @@ mod tests {
                 .map(|w| w.to_ascii_uppercase())
                 .collect::<Vec<_>>()
         );
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    /// ★ 결함 수정(10-31 협업 발견): `cond_indent = same`이면 WHERE 첫 조건이 0열로 떨어졌다 — 조건 줄의 강 깊이 = 가장 가까운 앞 절 ·
+    /// 첫 조건은 같은 깊이여도 절 줄에 잇는다 · 서브쿼리 안 WHERE도 · 멱등.
+    #[test]
+    fn river_cond_indent_same_joins_first_condition() {
+        let mut o = river_opts(Comma::Leading);
+        o.cond_indent = false;
+        let src = "select a, (select max(b.d) from t2 b where b.k = a.k and b.x = 1) m from t where x = 1 and y = 2 order by a";
+        let out = format_basic(src, &o);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "  SELECT a", "{out}");
+        assert_eq!(lines[1], "       , (", "{out}");
+        assert_eq!(lines[2], "          SELECT max(b.d)", "{out}");
+        assert_eq!(lines[3], "            FROM t2 b", "{out}");
+        assert_eq!(
+            lines[4], "           WHERE b.k = a.k",
+            "안쪽 WHERE 첫 조건도 같은 줄\n{out}"
+        );
+        assert_eq!(lines[5], "             AND b.x = 1", "{out}");
+        assert_eq!(lines[6], "         ) m", "{out}");
+        assert_eq!(lines[7], "    FROM t", "{out}");
+        assert_eq!(lines[8], "   WHERE x = 1", "첫 조건은 WHERE 줄에\n{out}");
+        assert_eq!(lines[9], "     AND y = 2", "{out}");
+        assert_eq!(lines[10], "ORDER BY a", "{out}");
         assert_eq!(format_basic(&out, &o), out, "idempotent");
     }
 
