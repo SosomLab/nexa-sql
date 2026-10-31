@@ -165,11 +165,13 @@
 시험: nsql-format `paren_group_seed` · `dialect_substitution` · `auto_alias_for_tables` · `table_description_comments`(+ 기존 15) · nsql-settings/i18n 등재.
 
 
-## 10. 강(river) 정렬 설계 — `format.indent_style = standard|river`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 1차 구현)
+## 10. 강(river) 정렬 설계 — `format.indent_style = standard|river`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 1차 구현 · ✅ 10-31 2차 = river 완료)
 
 > 사용자 결정(10-30): 확장이 아니라 **Basic 옵션**으로. 기본 = `standard`(지금 그대로). 아래 = 구현 전 설계 — 바꿀 때 이 절을 고친다.
 
-> ★ **구현됨(10-31 1차 · 192차 19·20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — `Options.indent_style: IndentStyle {Standard, River}`(pair `indent_style` · `OPTION_KEYS` 등재) · `Line.col: Option<usize>`(Some = 공백 열 접두 · 줄 앞 콤마 `, `) · `prepare()` = layout 뒤 **`river::apply`**(새 모듈 `river.rs` · IR 후처리 · Walker 무변경 = §10-2 그대로) · 세그먼트 = 깊이 0의 SELECT/WITH/UPDATE/DELETE(집합 연산자 뒤 새 강 · INSERT/MERGE·Raw 제외) · 깊이별 강 폭 = 절·JOIN·ON·AND/OR 머리 예약어 폭 최댓값 → 오른쪽 맞춤 · 절 키워드만 있는 줄 + 첫 항목 합침 · 항목 = 강+1(줄 앞 콤마 = 강 열) · 그 밖 줄 = 깊이×단위 공백 · 탭 단위여도 강은 공백. V1(CLI) = 강 폭이 `LEFT OUTER JOIN`(15)이면 `SELECT` 앞 9칸(설계대로). **남음** = 서브쿼리 안쪽 강 세부 · CASE 상대 들여쓰기 · 확장 kiros33 정렬은 `col` 있는 줄을 건너뜀(문서화된 동작).
+> ★ **구현됨(10-31 1차 · 192차 19·20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — `Options.indent_style: IndentStyle {Standard, River}`(pair `indent_style` · `OPTION_KEYS` 등재) · `Line.col: Option<usize>`(Some = 공백 열 접두 · 줄 앞 콤마 `, `) · `prepare()` = layout 뒤 **`river::apply`**(새 모듈 `river.rs` · IR 후처리 · Walker 무변경 = §10-2 그대로) · 세그먼트 = 깊이 0의 SELECT/WITH/UPDATE/DELETE(집합 연산자 뒤 새 강 · INSERT/MERGE·Raw 제외) · 깊이별 강 폭 = 절·JOIN·ON·AND/OR 머리 예약어 폭 최댓값 → 오른쪽 맞춤 · 절 키워드만 있는 줄 + 첫 항목 합침 · 항목 = 강+1(줄 앞 콤마 = 강 열) · 그 밖 줄 = 깊이×단위 공백 · 탭 단위여도 강은 공백. V1(CLI) = 강 폭이 `LEFT OUTER JOIN`(15)이면 `SELECT` 앞 9칸(설계대로). ~~**남음** = 서브쿼리 안쪽 강 세부 · CASE 상대 들여쓰기~~ · 확장 kiros33 정렬은 `col` 있는 줄을 건너뜀(문서화된 동작).
+>
+> ★ **2차 구현됨(10-31 · 192차 33차 · 개발 · [journal 10-31 §18](journal/2026-10-31.md))** — `river.rs` 열 프레임 `Frame{open_indent, inner0, close_col}` · 앞 줄이 `(`로 끝나고 이 줄이 더 깊으면 안쪽 블록 기준 열 = `(` 다음 열 → 안쪽 강 = 그 열 + 안쪽 키워드 폭 최댓값 · 닫는 `)` = `(` 열 · 여러 줄 CASE = `CASE` 낱말 열 기준 WHEN/ELSE +한 단 · END = CASE 열 · 중첩 · 깊이가 열림 이하로 돌아오면 닫힘(§10-1 "서브쿼리 = `(` 다음 열이 새 강의 기준 · CASE = 항목 열 기준 상대 들여쓰기" 그대로) · 시험 1 · V1(CLI · 콤마 앞 · `case_inline_max` 40) = `     , (` / `        SELECT max(b.d)`(8) / `       ) AS last_d`(7) / `           WHEN …`(11) / `       END grp`(7) / ` WHERE EXISTS (` / `               SELECT 1`(15) / `              )`(14) · 멱등 ✓ · standard 꼴 정상. **river 남음 없음.**
 
 ### 10-1. 모양
 

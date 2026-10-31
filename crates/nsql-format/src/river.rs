@@ -5,6 +5,10 @@
 //! 오른쪽 맞춤 · 첫 항목은 절 줄에 잇는다 · 이어지는 항목 = 강 열 + 1(줄 앞 콤마는 강 열에) · `ON`·`AND`/`OR`도 강에 오른쪽 맞춤 ·
 //! 서브쿼리(더 깊은 절)는 자기 깊이의 강 · INSERT · MERGE 문장과 통과(Raw) 줄은 그대로(standard). 강 줄의 들여쓰기는 **공백**으로만
 //! (열 정렬이 목적 · `Line::col`).
+//!
+//! ★ 2차(10-31 · 95 §10-1 "서브쿼리 안쪽 강 · CASE 상대 들여쓰기"): **열 프레임** — 앞 줄이 `(`로 끝나고 이 줄이 더 깊으면 안쪽 블록의 기준
+//! 열 = `(` 다음 열(안쪽 강은 그 열 + 안쪽 최댓값) · 닫는 `)` = 여는 줄의 `(` 열 · 여러 줄 CASE = `CASE` 낱말 열 기준(WHEN/ELSE = +한 단 ·
+//! END = CASE 열). 프레임은 중첩되고 깊이가 열림 이하로 돌아오면 닫힌다.
 
 use crate::layout::{display_width, Line, Part, Role};
 use crate::{is_keyword, Comma, Indent, Options};
@@ -77,6 +81,59 @@ fn segment_kind(line: &Line) -> Option<bool> {
     None
 }
 
+/// ★ 열 프레임(서브쿼리 괄호 · 여러 줄 CASE): 연 줄의 깊이 · 안쪽 첫 깊이의 기준 열 · 닫는 줄의 열.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    open_indent: usize,
+    inner0: usize,
+    close_col: usize,
+}
+
+/// 깊이 `ind`의 기준 열 — 가장 안쪽의 열린 프레임(`ind > open_indent`) 기준 · 없으면 깊이 × 단위.
+fn base_of(ind: usize, frames: &[Frame], unit: usize) -> usize {
+    match frames.iter().rev().find(|f| ind > f.open_indent) {
+        Some(f) => f.inner0 + (ind - f.open_indent - 1) * unit,
+        None => ind * unit,
+    }
+}
+
+/// 줄 앞 콤마 모드의 콤마 줄은 렌더가 `, `(2칸)를 먼저 그린다.
+fn lead_width(line: &Line, opts: &Options) -> usize {
+    if opts.comma == Comma::Leading && matches!(line.parts.first(), Some(Part::Comma)) {
+        2
+    } else {
+        0
+    }
+}
+
+/// 앞 줄(`prev`)이 이 줄(`cur`)의 블록을 열었는가 — `(`로 끝남 = 괄호 프레임 · `cur`가 CASE 가지(WHEN/ELSE) = CASE 프레임(`CASE` 낱말 열).
+fn open_frame(prev: &Line, cur: &Line, opts: &Options, unit: usize) -> Option<Frame> {
+    let col = prev.col?;
+    let plain = prev.plain(opts);
+    let text = plain.trim_end();
+    let lead = lead_width(prev, opts);
+    let tw = opts.tab_width.max(1);
+    if text.ends_with('(') {
+        let oc = col + lead + display_width(text, tw).saturating_sub(1);
+        return Some(Frame {
+            open_indent: cur.indent.saturating_sub(1),
+            inner0: oc + 1,
+            close_col: oc,
+        });
+    }
+    if cur.role == Role::Case {
+        let up = text.to_ascii_uppercase();
+        let idx = up.rfind("CASE")?;
+        let cc = col + lead + display_width(&text[..idx], tw);
+        return Some(Frame {
+            open_indent: cur.indent.saturating_sub(1),
+            inner0: cc + unit,
+            close_col: cc,
+        });
+    }
+    None
+}
+
 /// 강 정렬 적용(IR 후처리 · 멱등 = 같은 토큰열이면 같은 결과).
 pub fn apply(lines: &mut Vec<Line>, opts: &Options) {
     let tw = opts.tab_width.max(1);
@@ -114,12 +171,34 @@ pub fn apply(lines: &mut Vec<Line>, opts: &Options) {
                 }
             }
         }
-        // 3) 줄마다 열 계산 · 절 줄에 첫 항목 잇기.
+        // 3) 줄마다 열 계산 · 절 줄에 첫 항목 잇기 · ★ 열 프레임(괄호·CASE).
+        let mut frames: Vec<Frame> = Vec::new();
         let mut k = 0;
         while k < seg.len() {
             let mut l = seg[k].clone();
+            // 프레임 닫기: 깊이가 열림 이하로 돌아왔다 — 닫는 줄(`)` · CASE `END`)이면 그 열에.
+            let mut closer: Option<usize> = None;
+            while frames.last().is_some_and(|f| l.indent <= f.open_indent) {
+                let Some(f) = frames.pop() else {
+                    break;
+                };
+                let is_closer = l.indent == f.open_indent
+                    && (l.role == Role::Close || (l.role == Role::Case && first_word(&l) == "END"));
+                if is_closer {
+                    closer = Some(f.close_col);
+                    break;
+                }
+            }
+            // 프레임 열기: 앞 줄보다 깊어졌고 앞 줄이 `(`로 끝났거나 이 줄이 CASE 가지.
+            if let Some(prev) = out.last() {
+                if l.indent > prev.indent && prev.role != Role::Raw {
+                    if let Some(f) = open_frame(prev, &l, opts, unit) {
+                        frames.push(f);
+                    }
+                }
+            }
             let lv = river_level(&l);
-            let base = lv * unit;
+            let base = base_of(lv, &frames, unit);
             let w = width.get(&lv).copied().unwrap_or(0);
             match l.role {
                 Role::Clause | Role::Join | Role::Cond => {
@@ -157,9 +236,9 @@ pub fn apply(lines: &mut Vec<Line>, opts: &Options) {
                     }
                 }
                 Role::Raw => {}
-                // 닫는 괄호 · CASE · 주석 · 집합 연산자 · 그 밖 = 자기 깊이 열(공백).
+                // 닫는 괄호 · CASE · 주석 · 집합 연산자 · 그 밖 = 자기 깊이 열(프레임 안이면 그 기준 · 닫는 줄 = 연 줄의 `(`/`CASE` 열).
                 _ => {
-                    l.col = Some(l.indent * unit);
+                    l.col = Some(closer.unwrap_or_else(|| base_of(l.indent, &frames, unit)));
                 }
             }
             out.push(l);
@@ -245,6 +324,53 @@ mod tests {
         assert!(
             !lines.iter().take(6).any(|l| l.contains('\t')),
             "강 줄에 탭 없음\n{out}"
+        );
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    /// ★ 2차(95 §10-1): 서브쿼리 = `(` 다음 열이 안쇽 강의 기준 · 닫는 `)` = `(` 열 · EXISTS 서브쿼리도 · 여러 줄 CASE = `CASE` 열 기준(WHEN +한 단 ·
+    /// END = CASE 열) · 멱등 · 토큰 보존.
+    #[test]
+    fn river_subquery_and_case_frames() {
+        let mut o = river_opts(Comma::Leading);
+        o.case_inline_max = 40;
+        let src = "select a.k, (select max(b.d) from t2 b where b.k = a.k) as last_d, case when a.q > 100 then 'H' when a.q > 0 then 'L' else 'N' end grp from t1 a where exists (select 1 from t3 c where c.k = a.k)";
+        let out = format_basic(src, &o);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "SELECT a.k", "{out}");
+        assert_eq!(lines[1], "     , (", "{out}");
+        assert_eq!(
+            lines[2], "        SELECT max(b.d)",
+            "안쪽 강 = `(` 다음 열\n{out}"
+        );
+        assert_eq!(lines[3], "          FROM t2 b", "{out}");
+        assert_eq!(lines[4], "         WHERE b.k = a.k", "{out}");
+        assert_eq!(lines[5], "       ) AS last_d", "닫는 괄호 = `(` 열\n{out}");
+        assert_eq!(lines[6], "     , CASE", "{out}");
+        assert_eq!(
+            lines[7], "           WHEN a.q > 100 THEN 'H'",
+            "WHEN = CASE 열 + 한 단\n{out}"
+        );
+        assert_eq!(lines[8], "           WHEN a.q > 0 THEN 'L'", "{out}");
+        assert_eq!(lines[9], "           ELSE 'N'", "{out}");
+        assert_eq!(lines[10], "       END grp", "END = CASE 열\n{out}");
+        assert_eq!(lines[11], "  FROM t1 a", "{out}");
+        assert_eq!(lines[12], " WHERE EXISTS (", "{out}");
+        assert_eq!(lines[13], "               SELECT 1", "{out}");
+        assert_eq!(lines[14], "                 FROM t3 c", "{out}");
+        assert_eq!(lines[15], "                WHERE c.k = a.k", "{out}");
+        assert_eq!(lines[16], "              )", "{out}");
+        // 괄호는 띄어 비교(표준 레이아웃이 `(`를 줄로 분리).
+        let paren = |t: &str| t.replace('(', " ( ").replace(')', " ) ");
+        assert_eq!(
+            words(&paren(src))
+                .iter()
+                .map(|w| w.to_ascii_uppercase())
+                .collect::<Vec<_>>(),
+            words(&paren(&out))
+                .iter()
+                .map(|w| w.to_ascii_uppercase())
+                .collect::<Vec<_>>()
         );
         assert_eq!(format_basic(&out, &o), out, "idempotent");
     }

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **4bcaa9a9** | 1 | 192차 win 32차(205차) = T-255 v2 = T-SQL 규칙 표 + PL/pgSQL `$$` 본문 + 원천 방언 pair `dialect`(달러 본문 삼킴 결함 수정) · nsql-format 4 + app/format.rs + nsql-cli + 문서 · nexa-ui 문서 0c84dc0(253 기록) |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **815110cd** | 1 | 192차 win 31차(204차) = T-110 3-4 미니맵 섹션 헤더(`sections.rs` 새 파일) · T-165 P3 ④ 큰 버퍼 띠 · T-167 B4d 3키(confirm_clear · undo_secs · max_groups) · 14 소스 + 문서 7 · nexa-ui 253차 55fe8d1 동반 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **e7528ebb** | 1 | 192차 win 30차(203차) = T-76 ③ `.sublime-keymap` 힌트(settings_hint.rs · completion.rs) + 69 §9-5 B4d 대조 · 문서 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **a778c4c6** | 1 | 192차 win 29차 = T-255 `format.plsql = full`(블록 안 단위 SQL 펼침 · CURSOR/OPEN 접두 + 한 단 · 짧은 DML 한 줄 · 멱등) + 28차 ⓒ 재판정 ✓ · nsql-format 3 + settings + i18n + 문서 |
