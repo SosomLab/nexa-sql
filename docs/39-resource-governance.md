@@ -142,6 +142,7 @@
 
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
+| 미저장 파일 탭 백업 쓰기(10-31 · 192차 28차 · T-165 P3 ① · [70 §3·§4](70-autosave-and-restore.md)) | 스레드 `backup-writer` 1(작업 없으면 채널 대기 · CPU 0) · 틱당 만료분 최대 `project.backup_batch`(8)개 · 같은 탭은 큐에서 병합(변경 뒤 `project.autosave_change_ms` · 최대 `project.autosave_secs`) | `project.autosave`(off = 큐 미사용) · `project.backup_batch`(HIDDEN) · `project.unsaved_max_mb` | on 8 | on 8 | on 8 | `app/project.rs` `backup_tick` · `backups::Writer` |
 | 구문 강조(탭 전체 재분석) | 없음 | `editor.highlight`(신설 · on/off) · ~~`editor.highlight_max_kb`~~(09-22 폐기 · 미배선 — 컷오프 = `file.large_syntax_level` L2 · [72](72-size-limits-and-large-file-constraints.md)) | on 1024 | on 512 | on 128 | `editors::make_box` |
 | Ctrl+D 전체 선택 검색 | 없음 | `editor.max_occurrences`(신설 · HIDDEN) | 10000 | 5000 | 1000 | `select_next_occurrence` |
 | 결과 그리드 정렬·복사 | `grid.max_rows` 안 | (상한 공유) | — | — | — | `grid.rs` |
@@ -262,7 +263,7 @@
 | **파일 검색**(T-81) | `nsql-search` ≤ `search.threads` | 없음 | 스트리밍(파일 전체를 들지 않는다) | 폴더 걷기 | 검색 끝 | `search.threads` · `search.max_file_kb` | — |
 | **신호등**(프로브) | `nsql-probe-collect` ≤ `probe.max_inflight` | 없음 | — | 소켓 SYN | — | `probe.enabled` · `probe.interval` | ✅ 300 s · 동시 1 · ICMP off |
 
-**스레드 원장**(이름 · 언제 생기고 죽나 — D11): `nsql-worker`(세션마다 · 세션 수명) · `nsql-sqlite`(SQLite 세션 · 연결 소유) · `nsql-cancel`(실행 취소 요청마다 · 1회) · `nsql-probe-collect`(창이 열려 있는 동안) · `nsql-explorer`(서버별 메타 · 유휴 회수) · `nsql-textview`(변환 중) · `nsql-git`(조회마다) · `nsql-log`(파일 싱크를 켰을 때) · `nsql-search`(검색 중) · `file-load`(큰 파일마다 1회) · `multi-open`(다중 열기 1회) · `ext-index`(확장 목록 1회) · `nsql-demo`(데모 DB 생성 1회). **유휴 상주 = 11~14개**(접속 0이면 11 · 접속 1이면 13~14) — 나머지는 일이 끝나면 죽는다.
+**스레드 원장**(이름 · 언제 생기고 죽나 — D11): `backup-writer`(10-31 28차 · 앱 수명 · 종료 때 남은 쓰기 뒤 join · 작업 없으면 채널 대기) · `nsql-worker`(세션마다 · 세션 수명) · `nsql-sqlite`(SQLite 세션 · 연결 소유) · `nsql-cancel`(실행 취소 요청마다 · 1회) · `nsql-probe-collect`(창이 열려 있는 동안) · `nsql-explorer`(서버별 메타 · 유휴 회수) · `nsql-textview`(변환 중) · `nsql-git`(조회마다) · `nsql-log`(파일 싱크를 켰을 때) · `nsql-search`(검색 중) · `file-load`(큰 파일마다 1회) · `multi-open`(다중 열기 1회) · `ext-index`(확장 목록 1회) · `nsql-demo`(데모 DB 생성 1회). **유휴 상주 = 11~14개**(접속 0이면 11 · 접속 1이면 13~14) — 나머지는 일이 끝나면 죽는다.
 **자식 프로세스**: `git`(상태줄) · `curl`(확장 목록) · `ping`(프로브 ICMP · 기본 끔) · `cmd`/`open`/`xdg-open`(OS 연결 프로그램) · `defaults`/`gsettings`(OS 테마) — 전부 **사용자 동작이나 주기 설정에 딸리고**, 끄는 키가 있다. 앱이 상주 자식 프로세스를 두지 않는다(드라이버도 in-process · DR-29).
 
 ---

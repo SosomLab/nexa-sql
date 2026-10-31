@@ -1631,6 +1631,8 @@ pub mod dberr;
 pub use dberr::{classify, native_code, Classified, ErrorClass};
 pub mod ddl;
 pub use ddl::{ddl_target, DdlKind, DdlTarget, DdlVerb};
+pub mod savequeue;
+pub use savequeue::SaveQueue;
 
 #[cfg(test)]
 mod tests {

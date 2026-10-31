@@ -481,6 +481,11 @@ struct App {
     project_last_json: Vec<u8>,
     /// 자동 저장 캡처의 탭별 기억(탭 id → 앵커·스냅숏·디스크 해시 · 사용자 09-30).
     capture_cache: std::collections::HashMap<u64, backups::CaptureMark>,
+    /// ★ T-165 P3 ①(70 §3~4 · 10-31): 파일 탭 스냅숏 저장 큐(열쇠 = 탭 id · 페이로드 = 경로) · 탭별 마지막으로 큐에 넣은 본문 세대 ·
+    ///   쓰기 스레드(`backup-writer` · 첫 쓰기 때 만든다).
+    backup_queue: nsql_core::SaveQueue<u64, PathBuf>,
+    backup_rev: HashMap<u64, u64>,
+    backup_writer: Option<backups::Writer>,
     /// 사건(탭 열기/닫기/전환 · 폴더 변경) 뒤 2초 디바운스 저장(09-23).
     project_touch_at: Option<Instant>,
     /// ★ 프로젝트 변경 추적(사용자 09-28 · 상태줄 `*자동 저장`): 구조 변경(탭 열기/닫기/이동 · 폴더) 카운터 + 마지막 저장 때의 세대.
@@ -1969,6 +1974,9 @@ fn main() {
         project_autosave_at: Instant::now(),
         project_last_json: Vec::new(),
         capture_cache: std::collections::HashMap::new(),
+        backup_queue: nsql_core::SaveQueue::new(),
+        backup_rev: HashMap::new(),
+        backup_writer: None,
         project_touch_at: None,
         project_touch_seq: 0,
         project_gen_saved: 0,

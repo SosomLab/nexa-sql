@@ -4006,6 +4006,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 1, max: 365 },
         default: "7",
     },
+    // ★ T-165 P3 ①(70 §4 · 10-31 · HIDDEN): 한 틱에 쓰기 스레드로 보내는 스냅숏 수 상한(프레임 예산 · 39 §2).
+    Entry {
+        key: "project.backup_batch",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectBackupBatch,
+        desc: Msg::DescProjectBackupBatch,
+        kind: SettingKind::Int { min: 1, max: 64 },
+        default: "8",
+    },
     Entry {
         key: "project.autosave_secs",
         cat: Msg::CatProject,
@@ -8395,6 +8404,8 @@ pub fn locked_by_chain(key: &str, value_of: &dyn Fn(&str) -> String) -> bool {
 pub const HIDDEN: &[&str] = &[
     // D-256(10-07): 값 목록 상한 폐지 — 키는 옛 설정 파일 호환으로만 남긴다(효과 없음).
     "grid.filter_values_max",
+    // T-165 P3 ①(10-31): 스냅숏 틱당 전송 상한(구현 상수).
+    "project.backup_batch",
     "ui.prefs_advanced",
     "ui.prefs_project",
     "mem.detail",

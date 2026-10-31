@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **5f250df1** | 1 | 192차 win 27차 = T-167 나머지(B4b 항목 드래그 · B4c 그룹 순서 드래그 · B6 ObjectMissing·이동 제안 띠 D-163 · B5 저장 시 복사본 D-167) + 띠 옛 경로 마지막 두 조각으로 줄임 · 13 소스 + 문서 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **e113cf73** | 1 | 192차 win 26차 = T-200 CASE 식 상태(`[expression CASE]` · `case_pos`) + ansi CASE 낱말 삭제 · 82 §10 보류 0 · 소스 4 + 82·BRANCHES·STATUS·TODO·journal · nexa-ui = 251차 문서 손질 cdfd769 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **cb3c219b** | 1 | 192차 win 25차 = T-110 3-1 미니맵 자동 숨김(`editor.minimap_autohide`) · 소스 4 + 46·94·BRANCHES·STATUS·journal · 작업 브랜치 없이 main에 직접 커밋 · nexa-ui 251차 dd33ce5 동반 |
 | feat/197-bookmarks-note-servers | 2026-10-31 | 2026-10-31 → main ff(삭제) · **5a4cd9f5** | 1 | 192차 win 24차 = T-167 B4b 메모 편집 · B6 서버 모름(`ServerUnknown`) + 하루 1회 점검·정리 · 소스 3 + 문서 5 |

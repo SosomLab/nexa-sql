@@ -60,6 +60,7 @@ impl App {
                     if let Some(p) = self.editors.path_of(i) {
                         backups::remove(&p);
                     }
+                    self.backup_forget(tab);
                     self.editors.close_tab_forced(i);
                     self.sync_grid_tab();
                 }
@@ -101,6 +102,7 @@ impl App {
                     if let Some(p) = self.editors.path_of(i) {
                         backups::remove(&p);
                     }
+                    self.backup_forget(self.editors.tab_id(i));
                     self.editors.close_tab_forced(i);
                 }
                 self.sync_grid_tab();
@@ -243,7 +245,8 @@ impl App {
         }
         // ★ T-165 P3 ② hot exit(D-181 · 기본 always): 프로젝트 없이 종료 = 미저장 탭을 묻지 않고 보존(`hot_exit_save` · 다음 기동에 복원) ·
         //   `off`이거나 상한을 넘는 탭이 있으면 종전처럼 탭마다 묻는다.
-        let hot_exit = self.hot_exit_applies();
+        // ★ 프로젝트 모드(자동 저장 on · hot_exit ≠ off · 상한 안)도 파일 탭을 묻지 않는다 — 본문은 `project_save`가 이미 담았다(70 §6 ⑥ · 28차).
+        let hot_exit = self.hot_exit_applies() || self.hot_exit_project();
         let keep_scratch = self.project.is_open() || hot_exit;
         let dirty = (0..self.editors.tab_count()).find(|&i| {
             self.editors.is_dirty(i)
@@ -1150,6 +1153,7 @@ impl App {
                     self.bm_sync_ui();
                 }
                 backups::remove(path);
+                self.backup_forget(self.editors.active_id());
                 // ★ T-153 ③: 무제 탭이 파일이 되면 변수 표를 **그 파일 기준**(경로 해시 파일)으로 인수인계 — 프로젝트의 무제 탭 항목은
                 //   다음 프로젝트 저장 때 경로 탭이 되어 빠진다(사용자 10-26 "저장된 파일 기준에 변수가 인수인계").
                 if was_untitled {

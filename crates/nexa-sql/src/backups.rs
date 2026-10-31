@@ -263,6 +263,99 @@ impl CaptureMark {
     }
 }
 
+/// ★ 백업 쓰기 스레드 작업(70 §4).
+enum Job {
+    Write { path: PathBuf, text: String },
+    Remove(PathBuf),
+}
+
+/// ★ 백업 쓰기 스레드 `backup-writer`(70 §4 · 39 §3 · T-165 P3 ① · 10-31): 스냅숏 쓰기·삭제를 **UI 밖에서 순서대로**(tmp → rename은
+/// [`write`] 그대로) · 실패는 경로당 1회만 모아 두고 호스트가 로그로 거둔다(`take_errors`) · 스레드를 못 만들면 동기로 쓴다(기능 유지).
+/// 큐에서 꺼낸 **본문**을 받는다(UI 스레드가 `buf()`에서 한 번 뜬 것) — 스레드는 쓰고 버린다(memtrim 규약).
+pub(crate) struct Writer {
+    tx: Option<std::sync::mpsc::Sender<Job>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    errors: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Writer {
+    pub(crate) fn spawn() -> Writer {
+        let (tx, rx) = std::sync::mpsc::channel::<Job>();
+        let errors = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let errs = errors.clone();
+        let handle = std::thread::Builder::new()
+            .name("backup-writer".into())
+            .spawn(move || {
+                let mut failed: std::collections::HashSet<PathBuf> =
+                    std::collections::HashSet::new();
+                for job in rx {
+                    match job {
+                        Job::Write { path, text } => {
+                            if write(&path, &text) {
+                                failed.remove(&path);
+                            } else if failed.insert(path.clone()) {
+                                if let Ok(mut e) = errs.lock() {
+                                    e.push(format!(
+                                        "backup: snapshot write failed: {}",
+                                        path.display()
+                                    ));
+                                }
+                            }
+                        }
+                        Job::Remove(path) => remove(&path),
+                    }
+                }
+            })
+            .ok();
+        Writer {
+            tx: handle.is_some().then_some(tx),
+            handle,
+            errors,
+        }
+    }
+
+    /// 스냅숏 쓰기 요청(본문은 이미 뜬 문자열) — 스레드가 없으면 동기.
+    pub(crate) fn write(&self, path: &Path, text: String) {
+        match &self.tx {
+            Some(tx) => {
+                let _ = tx.send(Job::Write {
+                    path: path.to_path_buf(),
+                    text,
+                });
+            }
+            None => {
+                let _ = write(path, &text);
+            }
+        }
+    }
+
+    /// 스냅숏 삭제 요청(쓰기와 같은 순서로 처리 — 늦은 쓰기가 삭제를 덮지 않는다).
+    pub(crate) fn remove(&self, path: &Path) {
+        match &self.tx {
+            Some(tx) => {
+                let _ = tx.send(Job::Remove(path.to_path_buf()));
+            }
+            None => remove(path),
+        }
+    }
+
+    /// 모아 둔 실패(경로당 1회) — 호스트가 로그 창에.
+    pub(crate) fn take_errors(&self) -> Vec<String> {
+        self.errors
+            .lock()
+            .map(|mut e| std::mem::take(&mut *e))
+            .unwrap_or_default()
+    }
+
+    /// 종료: 보낸 것은 끝까지 쓰고 합류(보낸 작업 수에 비례 · 종료 직전 1회).
+    pub(crate) fn shutdown(mut self) {
+        drop(self.tx.take());
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn read_matching(path: &Path) -> Result<Option<String>, ()> {
     let Some(f) = file_of(path) else {

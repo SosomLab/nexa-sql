@@ -842,33 +842,8 @@ impl App {
             .map(|i| self.editors.tab_id(i))
             .collect();
         self.capture_cache.retain(|id, _| live.contains(id));
-        // 파일 탭의 미저장 본문 = 스냅숏(docs/70 §5 · 원본은 안 만진다) · clean이면 스냅숏 삭제.
-        // ★ 본문이 지난 스냅숏 뒤로 바뀐 탭만 쓴다(사용자 09-30 — 종전엔 캡처마다 최대 8 MB를 다시 썼다) · 상한은 위와 같은 탭 기준.
-        for i in 0..self.editors.tab_count() {
-            let Some(p) = self.editors.path_of(i) else {
-                continue;
-            };
-            let tab_id = self.editors.tab_id(i);
-            if self.editors.is_dirty(i) {
-                if let Some(tb) = self.editors.tab_box(i) {
-                    let buf = tb.buf();
-                    let key = (buf.epoch(), buf.change_seq());
-                    let fits = max_bytes == 0 || buf.len_bytes() <= max_bytes;
-                    let mark = self.capture_cache.entry(tab_id).or_default();
-                    if fits && mark.backup_key != Some(key) {
-                        let text = tb.text();
-                        if backups::write(&p, &text) {
-                            mark.backup_key = Some(key);
-                        }
-                    }
-                }
-            } else {
-                if let Some(mark) = self.capture_cache.get_mut(&tab_id) {
-                    mark.backup_key = None;
-                }
-                backups::remove(&p);
-            }
-        }
+        // 파일 탭의 미저장 본문 = 스냅숏(docs/70 §5 · 원본은 안 만진다) — ★ T-165 P3 ①(10-31): 쓰기는 여기(동기)가 아니라
+        //   `backup_tick`의 저장 큐 + `backup-writer` 스레드가 맡는다(틱마다 바뀐 탭만 큐에 · 만료분만 본문을 떠서 보냄 · clean = 삭제).
         for (title, bytes) in over {
             let msg = tf(
                 Msg::StAutosaveTabTooLarge,
@@ -1173,7 +1148,108 @@ impl App {
         let (periodic_wait, quick) = self.project_autosave_waits();
         let periodic = self.project_autosave_at + periodic_wait;
         let changed = self.project_touch_at.map(|t| t + quick);
-        Some(changed.map_or(periodic, |t| t.min(periodic)).max(now))
+        let mut next = changed.map_or(periodic, |t| t.min(periodic));
+        // ★ T-165 P3 ①: 스냅숏 큐의 다음 만료도 깨움 시각에(잠자기 친화 · 70 §3).
+        if let Some(q) = self.backup_queue.next_due() {
+            next = next.min(q);
+        }
+        Some(next.max(now))
+    }
+
+    /// ★ T-165 P3 ①(70 §3~4 · 10-31): 파일 탭 미저장 스냅숏 = **저장 큐 + 쓰기 스레드**. 틱마다 ① dirty 파일 탭(상한 안)의 본문 세대가
+    ///   지난 push 뒤 바뀌었으면 `push`(같은 탭 = 대기 재설정 · `project.autosave_change_ms` 뒤 · 계속 쳐도 `project.autosave_secs`마다
+    ///   한 번은) ② clean이 됐거나 닫힌 탭 = 큐 취소(+ 스냅숏 삭제) ③ 만료된 것만 최대 `project.backup_batch`개 본문을 떠서
+    ///   `backup-writer`에 보낸다(UI 스레드 디스크 쓰기 0 · 나머지는 다음 틱) ④ 스레드의 실패는 로그 한 줄(경로당 1회).
+    fn backup_tick(&mut self, now: Instant) {
+        let (max_wait, delay) = self.project_autosave_waits();
+        let max_bytes = (self.settings.int("project.unsaved_max_mb").max(0) as usize) << 20;
+        let mut remove: Vec<PathBuf> = Vec::new();
+        let mut live: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for i in 0..self.editors.tab_count() {
+            let tab = self.editors.tab_id(i);
+            live.insert(tab);
+            let Some(p) = self.editors.path_of(i) else {
+                continue;
+            };
+            let dirty = self.editors.is_dirty(i);
+            let Some((fits, rev)) = self.editors.tab_box(i).map(|tb| {
+                (
+                    max_bytes == 0 || tb.buf().len_bytes() <= max_bytes,
+                    tb.rev(),
+                )
+            }) else {
+                continue;
+            };
+            if dirty && fits {
+                if self.backup_rev.get(&tab) != Some(&rev) {
+                    self.backup_rev.insert(tab, rev);
+                    self.backup_queue.push(tab, p, now, delay, max_wait);
+                }
+            } else if self.backup_rev.remove(&tab).is_some() {
+                self.backup_queue.cancel(&tab);
+                if let Some(m) = self.capture_cache.get_mut(&tab) {
+                    m.backup_key = None;
+                }
+                remove.push(p);
+            }
+        }
+        // 닫힌 탭 = 큐에서 뺀다(스냅숏 삭제는 닫기 경로 `backup_forget` + `backups::remove`가 이미).
+        let gone: Vec<u64> = self
+            .backup_rev
+            .keys()
+            .copied()
+            .filter(|t| !live.contains(t))
+            .collect();
+        for t in gone {
+            self.backup_rev.remove(&t);
+            self.backup_queue.cancel(&t);
+        }
+        let batch = self.settings.int("project.backup_batch").clamp(1, 64) as usize;
+        let due = self.backup_queue.take_due_limit(now, batch);
+        let mut writes: Vec<(PathBuf, String)> = Vec::new();
+        for (tab, p) in due {
+            let Some(i) = self
+                .editors
+                .index_of_id(tab)
+                .filter(|&i| self.editors.is_dirty(i))
+            else {
+                continue;
+            };
+            let Some((key, text)) = self
+                .editors
+                .tab_box(i)
+                .map(|tb| ((tb.buf().epoch(), tb.buf().change_seq()), tb.text()))
+            else {
+                continue;
+            };
+            self.capture_cache.entry(tab).or_default().backup_key = Some(key);
+            writes.push((p, text));
+        }
+        if !remove.is_empty() || !writes.is_empty() {
+            let w = self
+                .backup_writer
+                .get_or_insert_with(backups::Writer::spawn);
+            for p in remove {
+                w.remove(&p);
+            }
+            for (p, text) in writes {
+                w.write(&p, text);
+            }
+        }
+        let errs = self
+            .backup_writer
+            .as_ref()
+            .map(backups::Writer::take_errors)
+            .unwrap_or_default();
+        for e in errs {
+            self.log_win.push(LogEntry::new(LogKind::Error, e));
+        }
+    }
+
+    /// 탭을 버리거나 저장했다 — 스냅숏 큐에서 뺀다(파일 삭제는 호출자가 `backups::remove`).
+    pub(crate) fn backup_forget(&mut self, tab: u64) {
+        self.backup_queue.cancel(&tab);
+        self.backup_rev.remove(&tab);
     }
 
     /// (주기 점검 `project.autosave_secs` ≥ 5초, 변경 뒤 저장 `project.autosave_change_ms` ≥ 100 ms · 주기보다 크지 않게 · 09-30 ms 단위).
@@ -1193,6 +1269,21 @@ impl App {
             let _ = self.project_save();
         }
         self.bookmarks.save_now();
+        // ★ T-165 P3 ①: 큐에 남은 스냅숏은 지금 동기로 쓰고(디바운스를 기다리지 않음) · 쓰기 스레드는 보낸 것을 끝까지 쓴 뒤 합류.
+        for (tab, p) in self.backup_queue.flush() {
+            if let Some(i) = self
+                .editors
+                .index_of_id(tab)
+                .filter(|&i| self.editors.is_dirty(i))
+            {
+                if let Some(tb) = self.editors.tab_box(i) {
+                    let _ = backups::write(&p, &tb.text());
+                }
+            }
+        }
+        if let Some(w) = self.backup_writer.take() {
+            w.shutdown();
+        }
     }
 
     /// ★ T-165 P3 ② hot exit(D-181 · 70 §9): 파일 모드 종료 문서의 자리 = 설정 폴더(`workspaces/hot-exit.nsql-project` · D-183 프로젝트 폴더에
@@ -1207,9 +1298,25 @@ impl App {
         if self.project.is_open() || self.settings.get("project.hot_exit") == Some("off") {
             return false;
         }
+        self.hot_exit_tabs_fit()
+    }
+
+    /// ★ 프로젝트 모드의 hot exit(70 §6 ⑥ · D-181 · 10-31 28차 협업 관찰): 프로젝트가 열려 있고 자동 저장이 켜져 있으면 미저장 본문은
+    ///   `request_exit`의 `project_save`가 프로젝트 문서(blob)에 담으므로 **파일 탭도 묻지 않는다** — `hot_exit=off`이거나 상한을 넘는 탭이
+    ///   있으면 종전처럼 묻는다(종전 = 프로젝트 모드의 파일 탭은 늘 물었다 · 09-23 규칙이 D-181 이전).
+    pub(crate) fn hot_exit_project(&self) -> bool {
+        self.project.is_open()
+            && self.project_autosave_on()
+            && self.settings.get("project.hot_exit") != Some("off")
+            && self.hot_exit_tabs_fit()
+    }
+
+    /// 미저장 탭이 전부 `project.unsaved_max_mb` 안인가(0 = 무제한).
+    fn hot_exit_tabs_fit(&self) -> bool {
         let max_bytes = (self.settings.int("project.unsaved_max_mb").max(0) as usize) << 20;
         (0..self.editors.tab_count()).all(|i| {
             !self.editors.is_dirty(i)
+                || max_bytes == 0
                 || self
                     .editors
                     .tab_box(i)
@@ -1297,6 +1404,8 @@ impl App {
         if !self.project.is_open() || !self.project_autosave_on() {
             return;
         }
+        // ★ T-165 P3 ①: 파일 탭 스냅숏(큐 → 스레드)은 프로젝트 문서 저장과 따로, 매 틱.
+        self.backup_tick(Instant::now());
         let (periodic_wait, quick) = self.project_autosave_waits();
         // 최초 변경 시각(감시된 변경) — 이미 잡혀 있으면 옮기지 않는다.
         if self.project_touch_at.is_none() && self.project_autosave_dirty() {

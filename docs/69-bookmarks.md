@@ -288,7 +288,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 ### 4-1. 파일
 
-> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — **이동 제안 띠(D-163)** = 파일을 열 때 `on_opened`가 "이 문서에 북마크 0 ∧ FileMissing 북마크 중 doc_hash 같은 것"을 찾아 `App.bm_suggest` → 외부 변경 띠가 없을 때 같은 띠 부품에 "이 내용에 붙어 있던 북마크 N개가 있습니다(옛 경로 …). 이어 붙일까요?" [이어 붙이기][아니오] · 수락 = 열쇠 이동 + Live + 재탐색 · 끄기 = `bookmark.move_suggest` · 기동 명령 `ext.banner:bm_attach|bm_dismiss` · V1 캡처 ✓ · 관찰 P3 = 옛 경로가 길면 띠 글이 버튼 앞에서 잘림.
+> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — **이동 제안 띠(D-163)** = 파일을 열 때 `on_opened`가 "이 문서에 북마크 0 ∧ FileMissing 북마크 중 doc_hash 같은 것"을 찾아 `App.bm_suggest` → 외부 변경 띠가 없을 때 같은 띠 부품에 "이 내용에 붙어 있던 북마크 N개가 있습니다(옛 경로 …). 이어 붙일까요?" [이어 붙이기][아니오] · 수락 = 열쇠 이동 + Live + 재탐색 · 끄기 = `bookmark.move_suggest` · 기동 명령 `ext.banner:bm_attach|bm_dismiss` · V1 캡처 ✓ · 관찰 P3(옛 경로가 길면 띠 글이 버튼 앞에서 잘림) = ✅ **200차 반영**(옛 경로를 마지막 두 조각 `…/폴더/파일.sql`로 줄임).
 
 - **키 = 경로**. 프로젝트 안이면 **프로젝트 파일 기준 상대 경로**(67 §2-1 규약 · 저장소를 다른 PC로 옮겨도 산다), 밖이면 절대 경로. 저장은 `/` 구분자로 정규화(Windows `\` → `/`).
 - 비교는 `std::fs::canonicalize` 후 Windows에서 **대소문자 무시**(`varsfile.rs`/`undofile.rs`의 `name_for`와 같은 규칙 · 09-22 프로필 사고의 교훈).

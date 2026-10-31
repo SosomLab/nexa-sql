@@ -53,6 +53,8 @@
 
 ## 3. 저장 큐 `SaveQueue` — 틱 + 같은 액션 병합 + 대기 재설정 + 상한
 
+> ★ **구현됨(10-31 · 192차 28차 · 개발 · [journal 10-31 §13](journal/2026-10-31.md))** — nsql-core `savequeue.rs` `SaveQueue<K,P>`(의존 0 · 순수 · 시각 인자) · `push`(같은 열쇠 = 페이로드 교체 + due 재설정 · deadline = 첫 요청 + max_wait 유지) · `take_due`/`take_due_limit`(만료분만 · 앞에서 N개) · `flush` · `cancel` · `next_due` · 시험 MC/DC · 앱 = `project_autosave_tick` 앞머리 `backup_tick(now)` = dirty 파일 탭(`project.unsaved_max_mb` 안)의 본문 세대(rev)가 바뀌면 push(delay = `project.autosave_change_ms` · max_wait = `project.autosave_secs`) · clean/닫힘 = cancel + 스냅숏 삭제 · 만료분만 최대 `project.backup_batch`(HIDDEN · 8)개 · `project_autosave_next`에 `next_due` 반영(잠자기 친화) · 캡처의 동기 스냅숏 루프 제거.
+
 ```rust
 // nsql-core/src/savequeue.rs  (의존 0 · 순수 · 테스트 가능)
 pub enum SaveKey { Workspace(WsId), TabBackup(TabId), FileBackup(PathHash), Project(WsId), Settings }
@@ -80,6 +82,8 @@ impl<P> SaveQueue<P> {
 - MC/DC 테스트: (같은 열쇠 재요청 · 다른 열쇠 · delay 만료 · deadline 만료 · cancel 뒤 · flush) — 시각은 인자(`now`)라 실시간 없이 시험.
 
 ## 4. 백업 스레드 — 쓰기는 UI 밖 · 원자적 · 순서대로
+
+> ★ **구현됨(10-31 · 192차 28차 · 개발 · [journal 10-31 §13](journal/2026-10-31.md))** — `backups::Writer` = 스레드 `backup-writer`(채널 Write/Remove 순서대로 · tmp→rename · 실패 경로당 1회 → `take_errors` → 로그 창 Error · 스레드 못 만들면 동기 쓰기 · 종료 `shutdown` = 보낸 것 끝까지 쓰고 join) · `flush_on_exit` = 큐 잔여를 동기로 쓰고 합류 · 버림/저장 경로 3곳 `backup_forget` · UI 스레드 디스크 쓰기 0(종전 = 캡처마다 동기 쓰기) · V1 = 파일 탭 더럽힘 → `backups/files/<해시>.txt`(프리앰블 2줄 + 본문) 생성 → 저장 → 삭제 ✓.
 
 - 스레드 **하나**(`backup-writer` · 39 §3 등재): 채널로 `Write{path, bytes}` / `Delete{path}` / `Prune{dir, days}` 를 받아 순서대로 처리 · `tmp` 쓰기 → `rename`(원자적 · 크래시해도 반쪽 파일 없음) · 실패는 로그 창 한 줄(반복 금지 · 같은 경로는 1회).
 - UI 스레드가 하는 것: `take_due` → 탭마다 **세대 비교**(`EditState::rev` · 마지막 백업 세대와 같으면 건너뜀) → 바뀐 것만 `buf()`로 문자열(61 §1 예외 — 백업 시점 1회 · 큰 파일 모드 탭은 제외) → 채널 `send`. 2 MB 본문 문자열화 ≈ 1~2 ms(55 §6 실측 규모) · 100개 탭이 동시에 만료돼도 한 틱에 **최대 N개**(`project.backup_batch` 8)만 보내고 나머지는 다음 틱(프레임 예산 39 §2).
@@ -110,7 +114,8 @@ impl<P> SaveQueue<P> {
 3. 메모리 탭: 백업 본문 · 제목 · 구문 · dirty.
 4. 캐럿·선택·스크롤·접힘: 본문 길이로 클램프해 복원(줄이 줄었으면 마지막 줄) · 활성 탭 · 동시 편집 집합은 복원하지 않는다(단일 · 단순).
 5. 접속: 탭 표식만 · 상태줄 "복원된 탭 n개(미저장 m개)" 토스트(클릭 = 목록 팔레트 · 항목 = 탭으로) — 묻지 않는다(D-146 ①).
-6. 프로젝트 닫기·전환·종료: 큐 `flush` → 백업 스레드가 다 쓸 때까지 **최대 `project.flush_wait_ms`(1500)** 기다린 뒤 종료(VS Code는 무한 대기 후 강제 · 우리는 상한 + 로그) · 큰 버퍼 탭만 저장을 묻는다(3택: 저장 / 버림 / 취소 · 34 규약).
+6. ★ **28차 관찰 → 201차 수정([journal 10-31 §13](journal/2026-10-31.md))** = 프로젝트 모드에서 더러운 **파일 탭**이 있으면 종료가 "저장하고 닫기/저장하지 않고 닫기/취소"를 묻던 것(`app/files.rs` 옛 09-23 규칙 "파일 탭마다 묻기"가 남아 있었음) → 프로젝트 모드 + 자동 저장 on + `project.hot_exit ≠ off` + 미저장 탭 전부 `project.unsaved_max_mb` 안(0 = 무제한)이면 파일 탭도 묻지 않고 종료(`request_exit`가 먼저 `project_save`로 본문 blob을 담음 · `App::hot_exit_project`) · 자동 저장 off·hot_exit off·상한 초과 = 종전처럼 묻기 · 재판정 = 29차 V1.
+   프로젝트 닫기·전환·종료: 큐 `flush` → 백업 스레드가 다 쓸 때까지 **최대 `project.flush_wait_ms`(1500)** 기다린 뒤 종료(VS Code는 무한 대기 후 강제 · 우리는 상한 + 로그) · 큰 버퍼 탭만 저장을 묻는다(3택: 저장 / 버림 / 취소 · 34 규약).
 
 ### 6-1. 구현 현황(09-23 · 96차 후반 · journal §92)
 
@@ -188,4 +193,4 @@ impl<P> SaveQueue<P> {
 | D-183 | 백업 폴더 위치 | **설정 폴더 `backups/`** | 프로젝트 폴더에 쓰지 않음(D-407 프로젝트 파일 하나만과도 일치) |
 
 - 09-23 정정(§6-1)과의 관계: 미저장 본문의 **복원 원천 = 프로젝트 파일**(v2 블록) · `backups/`는 안전망. 파일 모드(프로젝트 없음)는 프로젝트 파일이 없으므로 **기본 워크스페이스**(67 §2-1 `workspaces/default.nsql-workspace`) + `backups/<워크스페이스 id>/`가 원천 — D-181 `always`의 남은 일이 여기.
-- 남은 일(P3) = ① `SaveQueue`(같은 열쇠 병합 · 최대 대기) + 쓰기 전용 백업 스레드 ② 파일 모드 hot exit ③ D-180 탭 띠 ④ 큰 버퍼(`project.backup_max_mb` 8) 안내 ⑤ `hot_exit=off` 종료 물음 ⑥ 실측(P3-e).
+- 남은 일(P3) = ① ✅ 10-31 28차 `SaveQueue` + `backup-writer`([journal 10-31 §13](journal/2026-10-31.md)) · ~~① `SaveQueue`(같은 열쇠 병합 · 최대 대기) + 쓰기 전용 백업 스레드~~ ② 파일 모드 hot exit ③ D-180 탭 띠 ④ 큰 버퍼(`project.backup_max_mb` 8) 안내 ⑤ `hot_exit=off` 종료 물음 ⑥ 실측(P3-e).
