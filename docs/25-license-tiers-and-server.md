@@ -493,7 +493,7 @@ nexa-license (lib · 의존 기본 0 · features)
 | **편집 용량**(큰 파일 모드 59 §5 · `file.large_ask_mb` 50 · L2 = 평문·읽기 전용) | **2 MB 이상 = 읽기 전용**(L2 강제 · 실행은 가능) | 기본값(50 MB 물음) | | `nsql run` 파일 실행(무료) · 파일 나누기 |
 | **결과 다중 탭 상한** `grid.result_tabs_max`(지금 8) | **2** | 8~64 | | 결과를 파일로 저장 · 재실행 |
 | **동시 창/인스턴스**(세션 창·보조 창은 무료) | 창 1 | 다중 | | 인스턴스 2개 실행 |
-| xlsx/parquet export(T-8) | | ✅ | | csv → Excel |
+| xlsx/parquet export(T-8 · ★ 배선 예정 210차 · D-432 · `export-xlsx` 한 곳 · 기본 끔 D-145) | | ✅ | | csv → Excel |
 | **GUI Import 창**(대량 적재) | | ✅ | | `nsql import` CLI(무료) |
 | SSH 터널(T-3) | | ✅ | | `ssh -L` |
 | 드라이버 **확장 관리자**(설치·SxS) | | ✅ | | 수동 설치(폴더에 복사) |

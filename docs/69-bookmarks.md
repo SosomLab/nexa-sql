@@ -699,8 +699,8 @@ pub trait BookmarkStore {
 | `bookmark.gutter_color` | 테마 강조색 고정 · 무효 = `text_dim`(`marks_for(…, theme.accent, theme.text_dim)`) | 폐기 후보 — 테마로 충족(설정 먼저 규칙) | |
 | `bookmark.default_group_name` | 기본 그룹 = 빈 이름(표시 "기본") · 그룹 이름 바꾸기로 바꿀 수 있음 | 폐기 후보 — 기존 기능(이름 바꾸기)으로 충족 | |
 | `bookmark.mnemonic_scope` | 문서 안 유일(doc) 고정(`nsql-bookmarks` `set_mnemonic`·`by_mnemonic` = `doc.same`) | 폐기 후보 — global 요구 없음(D-162 doc) | |
-| `bookmark.panel_group_by` | 그룹 → 문서 → 항목 고정(`bookmarks_panel.rs:483` 문서 이름순) · 도구줄 전환 없음 | **D 대기** — D-172 "도구줄에서 문서·평면으로 바꿀 수 있다" 미이행 = 구현 또는 D-172 축소 | 사용자 결정 |
-| `bookmark.panel_sort` | 문서 안 = 줄 순 고정(`bookmarks_panel.rs:500`) | **D 대기**(panel_group_by와 함께) | created·visited 값은 이미 저장됨 |
+| `bookmark.panel_group_by` | 그룹 → 문서 → 항목 고정(`bookmarks_panel.rs:483` 문서 이름순) · 도구줄 전환 없음 | ✖ **폐기(사용자 10-31 밤)** — D-172 축소 = 그룹 → 문서 → 항목 고정(요청 있으면 그때) | — |
+| `bookmark.panel_sort` | 문서 안 = 줄 순 고정(`bookmarks_panel.rs:500`) | ✖ **폐기(사용자 10-31 밤)** — 줄 번호순 고정 | created·visited 값은 이미 저장됨 |
 | `bookmark.badge` | 활동 막대 북마크 배지 기능 자체가 없음(탭 배지 `set_badges`는 다른 것) | 보류 — 배지 기능을 만들 때 함께 | |
 | `bookmark.share_default` | 공용(B7) 미구현 · `shared` 필드는 저장만 | 보류 — ⏸ B7과 함께 | |
 
@@ -709,6 +709,8 @@ pub trait BookmarkStore {
 **요약** = 구현 필요 3(**confirm_clear 안전** · undo_secs · max_groups) · 대체 2(panel_preview·panel_preview_reuse → `project.preview_tab`) · 폐기 확정 1(reconnect_ask) · 폐기 후보 8(anchor_update · revive · panel_autoscroll_from · panel_row_text · panel_show_invalid · gutter_color · default_group_name · mnemonic_scope) · D 대기 2(panel_group_by · panel_sort) · 보류 2(badge · share_default).
 
 > ★ **31차 결정(10-31 · 개발 세션 · D-430 · 사용자 번복 가능)** — 구현 3 = ✅ `bookmark.confirm_clear`(on) · `bookmark.undo_secs`(5) · `bookmark.max_groups`(50 · HIDDEN) · **폐기 확정 11** = 대체 2(`panel_preview`·`panel_preview_reuse` → `project.preview_tab`) + reconnect_ask + 폐기 후보 8(anchor_update · revive · panel_autoscroll_from · panel_row_text · panel_show_invalid · gutter_color · default_group_name · mnemonic_scope) · D 대기 2(panel_group_by · panel_sort) = 그대로 사용자 결정 대기 · 보류 2(badge · share_default) = 그대로 · V1 ✓ = clear 1회 = 안내 + 유지 → 1.3초 뒤 재실행 = 2개 제거 + 토스트 → `bookmark.undo_remove` = 2개 복귀 · [journal 10-31 §16](journal/2026-10-31.md).
+
+> ★ **사용자 확정(10-31 밤 · [journal 10-31 §22](journal/2026-10-31.md))** = D-430 ✅(구현 3 · 폐기 11 그대로) + 남은 D 대기 2키(`bookmark.panel_group_by` · `bookmark.panel_sort`)도 **폐기** → D-172 축소 = 패널 묶음 그룹 → 문서 → 항목 · 문서 안 줄 번호순 고정(요청 있으면 그때 다시) · 이로써 §9 설계 키 = 구현 3 · 대체 2 · 폐기 13.
 
 ## 10. 부하원 등재([39 §3](39-resource-governance.md))
 
