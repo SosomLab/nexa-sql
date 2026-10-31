@@ -297,7 +297,15 @@ END p;
 | 본문 `DECLARE`/`BEGIN`/`IF … THEN`/`END IF` | Oracle 공통 표(§11-3) |
 | `$$ LANGUAGE plpgsql;` · `$$;` | 0 |
 
-**남음** = T-SQL `BEGIN` 없는 `IF` 안 여러 문장(한 줄만 +1) · `IF … ELSE IF` 연쇄.
+~~**남음** = T-SQL `BEGIN` 없는 `IF` 안 여러 문장(한 줄만 +1) · `IF … ELSE IF` 연쇄.~~ → ✅ **11-01 212차(D-433 · [journal 11-01 §3](journal/2026-11-01.md))**
+
+| T-SQL 경우 | 규칙 |
+|---|---|
+| `IF 조건` ↵ (BEGIN 없음) · 옵션 `format.tsql_if_body = next`(기본) | 본문 = 다음 **한 문장 전체** +1 — 여러 줄 문장은 `;`까지 또는 절 머리(FROM·WHERE·AND·OR·JOIN·ON·GROUP·ORDER·HAVING·VALUES·UNION·OUTPUT·WHEN·THEN·`,`·`)` · UPDATE 안 SET · INSERT/WITH 안 SELECT)로 이어지는 동안 · 그다음 문장 = IF 깊이(T-SQL 의미 보존) |
+| 같은 경우 · `block` | 원문 들여쓰기가 조건 줄보다 깊은 줄 전부 +1(ELSE·END·GO에서 끝) · 원문이 평평하면 `next`와 같음 |
+| `ELSE` ↵ `IF …` · `ELSE IF …` 한 줄 | 연쇄 = ELSE와 같은 깊이(중첩 +1 안 함) |
+| `ELSE` ↵ `BEGIN` | 종전 |
+| 구현 | `plsql.rs` reindent 조건 줄 상태 `TsqlCond{Pending, Body}` · nsql-format `TsqlIfBody` + pair `tsql_if_body` + `OPTION_KEYS` · 시험 +3(next 여러 줄 · ELSE IF 연쇄 · block · 전부 멱등) · 다른 방언(`-d oracle`) = 종전 |
 
 ### 11-5. 구현 지점
 

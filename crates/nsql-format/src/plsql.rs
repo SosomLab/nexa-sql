@@ -98,6 +98,61 @@ fn line_infos(text: &str, toks: &[Token], base: usize) -> Vec<(usize, usize, Lin
     out
 }
 
+/// 원문 줄의 들여쓰기 열(공백 1 · 탭 = `tab_width`) — `block` 본문 범위 판정(D-433).
+fn orig_indent(body: &str, tab_width: usize) -> usize {
+    body.chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .map(|c| if c == '\t' { tab_width.max(1) } else { 1 })
+        .sum()
+}
+
+/// `;` 없이 여러 줄로 이어진 T-SQL 문장의 **이어 줄** 머리 낱말인가(D-433 `next` = 다음 한 문장 전체) — 절·접속·괄호 닫힘 · `SET`은
+/// `UPDATE` 문장 안에서만(단독 `SET @x = …`은 새 문장) · `SELECT`는 `INSERT …`/`WITH` 문장 안에서만.
+fn tsql_stmt_continues(stmt_first: &str, next_first: &str) -> bool {
+    matches!(
+        next_first,
+        "FROM"
+            | "WHERE"
+            | "AND"
+            | "OR"
+            | "JOIN"
+            | "INNER"
+            | "LEFT"
+            | "RIGHT"
+            | "FULL"
+            | "CROSS"
+            | "OUTER"
+            | "ON"
+            | "GROUP"
+            | "ORDER"
+            | "HAVING"
+            | "VALUES"
+            | "UNION"
+            | "EXCEPT"
+            | "INTERSECT"
+            | "OUTPUT"
+            | "WHEN"
+            | "THEN"
+            | ","
+            | ")"
+    ) || (next_first == "SET" && stmt_first == "UPDATE")
+        || (next_first == "SELECT" && matches!(stmt_first, "INSERT" | "WITH"))
+}
+
+/// 다음 **코드 줄**(토큰이 있는 줄 · 빈 줄·주석만 줄은 건너뜀)의 색인.
+fn next_code_line(infos: &[(usize, usize, LineInfo)], from: usize) -> Option<usize> {
+    (from..infos.len()).find(|&i| infos[i].2.has_tokens && !infos[i].2.inside_multiline)
+}
+
+/// T-SQL `BEGIN` 없는 IF/ELSE/WHILE 본문 상태(D-433): 조건 줄 다음부터 본문이 끝날 때까지 한 단 안.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TsqlCond {
+    /// 조건 줄을 막 지났다 — 다음 코드 줄이 BEGIN이면 블록(아무것도 안 함) · `IF`면 `ELSE IF` 연쇄(같은 깊이) · 그 밖 = 본문 시작.
+    Pending { from_else: bool, cond_indent: usize },
+    /// 본문 안(한 단 안) — `block` = 원문 들여쓰기가 `cond_indent`보다 깊은 동안 · `next` = 한 문장이 끝날 때까지.
+    Body { block: bool, cond_indent: usize },
+}
+
 fn is_routine_head(first: &str) -> bool {
     matches!(
         first,
@@ -236,9 +291,14 @@ pub fn reindent(
     let infos = line_infos(text, toks, base);
     let mut stack: Vec<Open> = Vec::new();
     let mut in_header = false;
-    // ★ T-255 v2(95 §11-4 · 10-31): T-SQL 표 — THEN 없는 `IF 조건`/`ELSE`/`WHILE 조건` 다음 줄이 BEGIN이 아니면 그 한 줄만 +1.
+    // ★ T-255 v2(95 §11-4 · 10-31): T-SQL 표 — THEN 없는 `IF 조건`/`ELSE`/`WHILE 조건` 다음 줄이 BEGIN이 아니면 본문 = 한 단 안.
+    //   ★ D-433(11-01): 본문 범위 = `next`(다음 한 문장 전체 · 여러 줄이면 `;`/절 이어짐까지) 또는 `block`(원문 들여쓰기를 따라) ·
+    //   `ELSE` 바로 다음 줄의 `IF` = `ELSE IF` 연쇄 = 같은 깊이(중첩 아님).
     let tsql = opts.dialect == crate::SrcDialect::Mssql;
-    let mut after_cond = false;
+    let block_mode = opts.tsql_if_body == crate::TsqlIfBody::Block;
+    let mut cond: Option<TsqlCond> = None;
+    // 본문 첫 문장의 머리 낱말(`next` 이어 줄 판정용).
+    let mut body_stmt_first = String::new();
     let mut out = String::with_capacity(text.len() + 64);
     let mut li = 0usize;
     while li < infos.len() {
@@ -263,6 +323,33 @@ pub fn reindent(
             continue;
         }
         let depth = stack.len();
+        // ★ D-433: T-SQL 조건 줄 뒤 본문 판정(이 줄을 쓰기 전에 상태 전이 · 주석만 줄도 본문 안이면 한 단 안).
+        let this_indent = orig_indent(body, opts.tab_width);
+        let mut cond_bump = false;
+        if tsql {
+            match cond {
+                Some(TsqlCond::Pending {
+                    from_else,
+                    cond_indent,
+                }) if info.has_tokens => {
+                    let f0 = info.first.as_str();
+                    if f0 == "BEGIN" || f0 == "GO" {
+                        cond = None;
+                    } else if f0 == "IF" && from_else {
+                        // `ELSE` ↵ `IF …` = 연쇄 — 이 줄은 ELSE와 같은 깊이 · 아래 IF 가지가 다시 Pending을 만든다.
+                        cond = None;
+                    } else {
+                        // 본문 시작: `block`은 원문이 조건 줄보다 깊을 때만(평평하면 `next`로).
+                        let block = block_mode && this_indent > cond_indent;
+                        body_stmt_first = f0.to_string();
+                        cond = Some(TsqlCond::Body { block, cond_indent });
+                        cond_bump = true;
+                    }
+                }
+                Some(TsqlCond::Body { .. }) => cond_bump = true,
+                _ => {}
+            }
+        }
         // ★ full(95 §11-4): 이 줄에서 단위 SQL 문장이 시작하면 `;`까지 SQL 포매터로 펼쳐 지금 깊이에 — 그 줄들은 스택을 바꾸지 않는다.
         if opts.plsql == crate::PlsqlStyle::Full && info.has_tokens {
             if let Some(next) =
@@ -277,9 +364,6 @@ pub fn reindent(
         let l = info.last.as_str();
         // 이 줄 깊이 · 뒤 스택 변화.
         let mut this = depth;
-        // T-SQL: 앞 줄이 `IF/ELSE/WHILE 조건`이었고 이 줄이 BEGIN이 아니면 단일 문장 = +1(한 줄만).
-        let cond_bump = tsql && after_cond && info.has_tokens && f != "BEGIN";
-        after_cond = false;
         if !info.has_tokens {
             // 주석만 있는 줄 = 지금 깊이.
         } else if body.trim() == "/" || body.trim().eq_ignore_ascii_case("GO") {
@@ -288,10 +372,16 @@ pub fn reindent(
             // PostgreSQL `$$ LANGUAGE plpgsql;` / `$$;` = 본문 닫힘 뒤 줄 — 머리 깊이(0).
             in_header = false;
         } else if tsql && matches!(f, "IF" | "WHILE") {
-            after_cond = true;
+            cond = Some(TsqlCond::Pending {
+                from_else: false,
+                cond_indent: this_indent,
+            });
         } else if tsql && f == "ELSE" {
-            // T-SQL ELSE = IF 블록이 END로 이미 닫혔으므로 같은 깊이 · 다음 한 줄(또는 BEGIN 블록).
-            after_cond = true;
+            // T-SQL ELSE = IF 블록이 END로 이미 닫혔으므로 같은 깊이 · 다음 한 문장(또는 BEGIN 블록) · `ELSE IF …` 한 줄 = IF 조건 줄.
+            cond = Some(TsqlCond::Pending {
+                from_else: s != "IF",
+                cond_indent: this_indent,
+            });
         } else if tsql && f == "DECLARE" {
             // T-SQL `DECLARE @x INT;` = 문장(선언부 없음).
         } else if f == "END" {
@@ -387,6 +477,24 @@ pub fn reindent(
         }
         if cond_bump {
             this += 1;
+            // 본문이 다음 코드 줄로 이어지는가(D-433): `block` = 다음 코드 줄의 원문 들여쓰기가 조건 줄보다 깊고 ELSE/END/GO가 아님 ·
+            // `next` = 이 줄이 `;`로 안 끝났고 다음 코드 줄 머리가 이어 줄 낱말.
+            if let Some(TsqlCond::Body { block, cond_indent }) = cond {
+                let next = next_code_line(&infos, li);
+                let keep = next.is_some_and(|ni| {
+                    let (ns, ne, nfo) = &infos[ni];
+                    let nf = nfo.first.as_str();
+                    if block {
+                        orig_indent(&text[*ns..*ne], opts.tab_width) > cond_indent
+                            && !matches!(nf, "ELSE" | "END" | "GO")
+                    } else {
+                        !body.trim_end().ends_with(';') && tsql_stmt_continues(&body_stmt_first, nf)
+                    }
+                });
+                if !keep {
+                    cond = None;
+                }
+            }
         }
         for _ in 0..this {
             out.push_str(&unit);
@@ -471,6 +579,74 @@ mod tests {
             plain.contains("\n  CURSOR c IS SELECT a, b FROM t"),
             "{plain}"
         );
+    }
+
+    /// ★ D-433(11-01): `next`(기본) = BEGIN 없는 IF 본문은 **다음 한 문장 전체**(여러 줄 UPDATE … SET … WHERE … ; 까지) · 그다음 문장은 IF 깊이 ·
+    /// 세미콜론 없는 여러 줄 문장도 절 머리로 잇는다 · 멱등.
+    #[test]
+    fn tsql_if_body_next_takes_whole_statement() {
+        let o = Options {
+            dialect: crate::SrcDialect::Mssql,
+            ..opts()
+        };
+        let src = "IF @a > 0\nUPDATE t\nSET x = 1\nWHERE id = @a;\nSET @b = 1;\nWHILE @b < 3\nINSERT INTO t (x)\nSELECT @b\nSET @b = @b + 1;\n";
+        let want = "IF @a > 0\n  UPDATE t\n  SET x = 1\n  WHERE id = @a;\nSET @b = 1;\nWHILE @b < 3\n  INSERT INTO t (x)\n  SELECT @b\nSET @b = @b + 1;\n";
+        let toks = lex(src);
+        assert_eq!(reindent(src, src, &toks, 0, &o).as_deref(), Some(want));
+        let toks2 = lex(want);
+        assert_eq!(
+            reindent(want, want, &toks2, 0, &o).as_deref(),
+            Some(want),
+            "멱등"
+        );
+    }
+
+    /// ★ D-433(11-01): `IF … ELSE IF … ELSE` 연쇄 — `ELSE IF` 한 줄도, `ELSE` ↵ `IF`도 같은 깊이(중첩 아님) · 각 가지 본문 한 단 안 ·
+    /// `ELSE` ↵ `BEGIN` 블록은 종전 · 멱등.
+    #[test]
+    fn tsql_else_if_chain_stays_flat() {
+        let o = Options {
+            dialect: crate::SrcDialect::Mssql,
+            ..opts()
+        };
+        let src = "IF @a = 1\nSET @x = 1;\nELSE IF @a = 2\nSET @x = 2;\nELSE\nIF @a = 3\nSET @x = 3;\nELSE\nBEGIN\nSET @x = 0;\nEND\n";
+        let want = "IF @a = 1\n  SET @x = 1;\nELSE IF @a = 2\n  SET @x = 2;\nELSE\nIF @a = 3\n  SET @x = 3;\nELSE\nBEGIN\n  SET @x = 0;\nEND\n";
+        let toks = lex(src);
+        assert_eq!(reindent(src, src, &toks, 0, &o).as_deref(), Some(want));
+        let toks2 = lex(want);
+        assert_eq!(
+            reindent(want, want, &toks2, 0, &o).as_deref(),
+            Some(want),
+            "멱등"
+        );
+    }
+
+    /// ★ D-433(11-01): `block` = 원문 들여쓰기를 따라 조건 줄보다 깊은 줄 전부가 본문(두 문장 다 한 단 안 · 평평해지는 줄에서 끝) ·
+    /// 원문이 평평하면 `next`와 같음 · 멱등(출력도 깊어 다시 돌려도 같음).
+    #[test]
+    fn tsql_if_body_block_follows_source_indent() {
+        let o = Options {
+            dialect: crate::SrcDialect::Mssql,
+            tsql_if_body: crate::TsqlIfBody::Block,
+            ..opts()
+        };
+        let src = "IF @a > 0\n    SET @x = 1;\n    SET @y = 2;\nSET @z = 3;\nIF @b > 0\nSET @x = 1;\nSET @y = 2;\n";
+        let want = "IF @a > 0\n  SET @x = 1;\n  SET @y = 2;\nSET @z = 3;\nIF @b > 0\n  SET @x = 1;\nSET @y = 2;\n";
+        let toks = lex(src);
+        assert_eq!(reindent(src, src, &toks, 0, &o).as_deref(), Some(want));
+        let toks2 = lex(want);
+        assert_eq!(
+            reindent(want, want, &toks2, 0, &o).as_deref(),
+            Some(want),
+            "멱등"
+        );
+        // 같은 원문을 `next`로 돌리면 첫 문장만 한 단 안.
+        let n = Options {
+            tsql_if_body: crate::TsqlIfBody::Next,
+            ..o
+        };
+        let want_next = "IF @a > 0\n  SET @x = 1;\nSET @y = 2;\nSET @z = 3;\nIF @b > 0\n  SET @x = 1;\nSET @y = 2;\n";
+        assert_eq!(reindent(src, src, &toks, 0, &n).as_deref(), Some(want_next));
     }
 
     /// ★ T-255 v2(95 §11-4 · 10-31): T-SQL 표 — THEN 없는 IF/ELSE/WHILE 뒤 단일 문장 +1 · BEGIN 블록은 그대로 · BEGIN TRY/CATCH · DECLARE = 문장 ·

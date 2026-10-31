@@ -282,6 +282,12 @@
 |---|---|---|---|---|
 | `format.preset` | Choice default\|kiros33\|river\|custom | default | SQL 포맷(맨 위) | 고르면 내장 프리셋의 스타일 키 값을 복사해 적용(5초 되돌리기) · 스타일 키가 바뀌면 일치 이름/`custom`으로 동기 · 프로젝트 범위 제외 |
 
+### 6-31. T-SQL IF 본문(11-01 · 212차 · D-433 · [95 §11-4](95-sql-formatter.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `format.tsql_if_body` | Choice next\|block | next | SQL 포맷(`format.plsql` 바로 아래) | T-SQL `BEGIN` 없는 IF 본문 범위 — `next` = 다음 한 문장 전체(의미 보존) · `block` = 원문에서 더 깊게 들여쓴 줄 전부 · 스타일 키(바꾸면 `format.preset` = custom 동기) |
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

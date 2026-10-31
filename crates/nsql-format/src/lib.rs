@@ -153,6 +153,16 @@ pub enum PlsqlStyle {
     Full,
 }
 
+/// ★ D-433(11-01 · T-255 · 95 §11-4): T-SQL에서 `BEGIN` 없는 `IF 조건`/`ELSE`/`WHILE 조건` 뒤 **본문 범위** —
+/// `Next`(기본) = 다음 **한 문장**(여러 줄이면 `;`·절 이어짐까지 · T-SQL 의미 그대로) · `Block` = 원문 들여쓰기를 따라 조건 줄보다
+/// 깊게 들여쓴 줄들을 전부 본문으로(사람이 쓴 의도 · 원문이 평평하면 `Next`와 같음) · pair `tsql_if_body` = `next` | `block`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TsqlIfBody {
+    #[default]
+    Next,
+    Block,
+}
+
 /// ★ T-255 v2(10-31 · 95 §11-4): **원천 방언 힌트**(pair `dialect` · GUI = 세션 방언 · CLI = `-d`) — PL/SQL 블록 규칙 표를 고른다
 /// (`Oracle`/`Generic` = PL/SQL·PL/pgSQL 공통 표 · `Mssql` = T-SQL 표(THEN 없는 IF/ELSE/WHILE · BEGIN TRY/CATCH · DECLARE = 문장 · GO) ·
 /// `Postgres` = 공통 표 + `$$` 본문). SQL 문장 포맷 자체는 바꾸지 않는다(치환은 `dialect_target`).
@@ -184,6 +194,8 @@ pub struct Options {
     pub indent: Indent,
     pub indent_style: IndentStyle,
     pub plsql: PlsqlStyle,
+    /// T-SQL `BEGIN` 없는 IF/ELSE/WHILE 본문 범위(D-433 · pair `tsql_if_body`).
+    pub tsql_if_body: TsqlIfBody,
     /// ★ T-255 v2: 원천 방언 힌트(블록 규칙 표 선택 · pair `dialect`).
     pub dialect: SrcDialect,
     /// 탭 폭(정렬 계산 · 탭 스톱).
@@ -256,6 +268,7 @@ impl Default for Options {
             indent: Indent::Tab,
             indent_style: IndentStyle::Standard,
             plsql: PlsqlStyle::Off,
+            tsql_if_body: TsqlIfBody::Next,
             dialect: SrcDialect::Generic,
             tab_width: 4,
             keyword_case: Case::Upper,
@@ -303,6 +316,8 @@ pub const OPTION_KEYS: &[&str] = &[
     // ★ T-255(10-31): 호스트(CLI·GUI)는 이 표로만 format.*을 모은다 — from_pairs에 키를 더하면 여기도(협업 V1 19차 교훈).
     "indent_style",
     "plsql",
+    // ★ D-433: T-SQL BEGIN 없는 IF 본문 범위(next|block).
+    "tsql_if_body",
     // ★ 포맷 프리셋 이름(D-431 · 호스트 표시용 · 포매터는 무시 — 레지스트리 ⊆ OPTION_KEYS 시험 때문에 등재).
     "preset",
     "keyword_case",
@@ -385,6 +400,13 @@ impl Options {
                         "indent" => PlsqlStyle::Indent,
                         "full" => PlsqlStyle::Full,
                         _ => PlsqlStyle::Off,
+                    };
+                }
+                "tsql_if_body" => {
+                    o.tsql_if_body = if lv == "block" {
+                        TsqlIfBody::Block
+                    } else {
+                        TsqlIfBody::Next
                     };
                 }
                 // ★ T-255 v2: 원천 방언 힌트(설정 키가 아니라 호스트가 세션/`-d`에서 붙이는 pair).

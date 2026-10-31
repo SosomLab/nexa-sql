@@ -4,6 +4,9 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-11-01 | 2026-11-01 → main · **65dc2849** | 1 | 192차 win 211차 보강 = ci.yml ubuntu X11 런타임(libxkbcommon-x11-0 등) 설치 + 실패 시 진단 단계 · ci **41215024319** ✓(15:33:51Z · xvfb 단계 51 s · S01~S05 ok) |
+| feat/211-t458-xvfb | 2026-11-01 | 2026-11-01 → main ff · **6a8706fd** · 삭제 | 1 | 192차 win 211차 = T-458 Linux xvfb(D-435 · `scripts/lib/xvfb.sh` · 스크립트 20 · ci.yml ubuntu `xvfb func-check` S01~S05) · 27파일 · 소스 0 · ci **41214096070** ✗(새 단계 = 앱 즉시 종료 · X11 런타임 누락) → 65dc2849로 해결 |
+| feat/210-t457-from-table | 2026-10-31 | 2026-10-31 → main ff · **05f3e2bb** · 삭제 | 1 | 192차 win 210차 = T-457 운영 2단 `FROM t`(DuckDB·ClickHouse)·`TABLE t`(PostgreSQL) 조회 분류(D-434 · `Syntax.query_heads` · `is_query_head` · `TxClass::of_sql_in` · `classify_sql_in`) · 19파일(협업 문서 포함) · ci **41213802284** ✓(15:19:43Z) · integration **41213802025** ✓(15:18:01Z) |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **42f7af1e** | 1 | 192차 win 10-31 밤 최종 마감(협업 작성 · DEVLOG·MILESTONES·STATUS·journal §0) + 사용자 결정 12건 반영(D-398~405·D-430 확정 · D-432~434 · T-457 · journal §22) + CLAUDE.md "프로젝트 파일 하나만" 한 줄 · 12파일 · 소스 0 · ci **41210187285** ✓(14:32:27Z · 문서만 = integration 미실행) |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **2f83a53e** | 1 | 192차 win 209차 마감 문서(협업 작성) = T-456 포맷 프리셋 종결(사용자 완료 확인) · 24 보조 버튼 라벨 ✅ · journal §21 CI·간이 확인 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **26618f42** | 1 | 192차 win 37차(209차) = CLI `config set format.preset` 출력에 "포맷 프리셋 X 적용(옵션 N개 바뀜)" 한 줄(36차 P3) + 36차·208 문서 |

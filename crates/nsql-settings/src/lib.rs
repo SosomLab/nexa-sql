@@ -557,6 +557,11 @@ const FMT_PLSQL_OPTS: &[(&str, Msg)] = &[
     ("indent", Msg::ValFmtPlsqlIndent),
     ("full", Msg::ValFmtPlsqlFull),
 ];
+/// ★ D-433(11-01): T-SQL `BEGIN` 없는 IF/ELSE/WHILE 본문 범위.
+const FMT_TSQL_IF_BODY_OPTS: &[(&str, Msg)] = &[
+    ("next", Msg::ValFmtTsqlIfBodyNext),
+    ("block", Msg::ValFmtTsqlIfBodyBlock),
+];
 /// ★ 포맷 프리셋(사용자 10-31 · D-431): 내장 3 + `custom`(어느 프리셋과도 다름 · 표시용).
 const FMT_PRESET_OPTS: &[(&str, Msg)] = &[
     ("default", Msg::ValFmtPresetDefault),
@@ -1370,6 +1375,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtPlsql,
         kind: SettingKind::Choice(FMT_PLSQL_OPTS),
         default: "off",
+    },
+    // ★ D-433(11-01 · T-255): T-SQL BEGIN 없는 IF 본문 범위 — next = 다음 한 문장(의미 보존) · block = 원문 들여쓰기를 따라.
+    Entry {
+        key: "format.tsql_if_body",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtTsqlIfBody,
+        desc: Msg::DescFmtTsqlIfBody,
+        kind: SettingKind::Choice(FMT_TSQL_IF_BODY_OPTS),
+        default: "next",
     },
     Entry {
         key: "format.comma",
