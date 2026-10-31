@@ -1491,10 +1491,18 @@ impl Intel {
                     // ★ 문법 절 기반(09-24 · nsql-script `grammar` · `SELECT avg` 자리에 `HAVING` 없음): 문장 시작 = `[start]` · 절을 알면
                     //   그 절의 `next`만 · 모르는 자리(함수 괄호 안 · 낯선 절) = 공통 + 방언 키워드 전체.
                     let g = nsql_script::grammar::for_dialect(dialect);
+                    // ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): 짝 안 맞는 CASE 안이면 절 next 대신 `[expression CASE]` 자리별 예약어
+                    //   (절·objects는 그대로 → 컬럼·함수 후보 유지 · 섹션 없는 문법은 절 next로).
+                    let case_kws = if self.cfg.grammar {
+                        ctx.case_pos.and_then(|p| g.case_next(p))
+                    } else {
+                        None
+                    };
                     let kws: Vec<String> = match (&ctx.kind, ctx.clause.as_deref()) {
                         _ if !self.cfg.grammar => {
                             intel::keywords_for(dialect).map(String::from).collect()
                         }
+                        _ if case_kws.is_some() => case_kws.unwrap_or_default(),
                         (CtxKind::Start, _) => g.start().to_vec(),
                         // ★ T-200 절 안 위치(10-30): 첫 항목 자리 = `first` 더하고 절 전환 예약어 빼기 · 콤마 뒤 = 전환·first 빼기 · 그 밖 = first 빼기.
                         (_, Some(cl)) => match g.next_at(cl, ctx.clause_pos) {

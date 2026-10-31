@@ -37,6 +37,41 @@ pub enum ClausePos {
     Other,
 }
 
+/// ★ T-200 CASE 식 상태(10-31 · docs/82 §10-4-3): 짝 안 맞는 `CASE` 안에서 캐럿이 놓인 자리 — [`Grammar::case_next`]의 색인.
+/// 절(`SELECT`·`WHERE` …)이 아니라 **식 내부** 상태라 절 `next`보다 우선하고, 바깥 절의 `objects`는 그대로 쓴다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CasePos {
+    /// `CASE |` · `CASE 식 |`(단순형) — 다음 = `WHEN`.
+    AfterOpen = 0,
+    /// `CASE WHEN 조건 |` — 다음 = `THEN`(과 조건 연산자).
+    AfterWhen = 1,
+    /// `CASE WHEN … THEN 결과 |` — 다음 = `WHEN`·`ELSE`·`END`.
+    AfterThen = 2,
+    /// `CASE … ELSE 결과 |` — 다음 = `END`.
+    AfterElse = 3,
+}
+
+impl CasePos {
+    /// `[expression CASE]` 섹션의 키 이름 → 자리.
+    fn from_key(k: &str) -> Option<Self> {
+        match k {
+            "after_open" => Some(Self::AfterOpen),
+            "after_when" => Some(Self::AfterWhen),
+            "after_then" => Some(Self::AfterThen),
+            "after_else" => Some(Self::AfterElse),
+            _ => None,
+        }
+    }
+}
+
+/// `[expression CASE]`의 네 자리(해석 전 · 색인 = [`CasePos`]).
+#[derive(Clone, Debug, Default)]
+struct RawCase {
+    set: [Option<Vec<String>>; 4],
+    add: [Vec<String>; 4],
+    del: [Vec<String>; 4],
+}
+
 /// 파일 한 벌을 해석한 결과(부모와 합치기 전).
 #[derive(Clone, Debug, Default)]
 struct Raw {
@@ -48,6 +83,8 @@ struct Raw {
     start_del: Vec<String>,
     statements: HashMap<String, (Option<Vec<String>>, Vec<String>)>,
     clauses: HashMap<String, RawClause>,
+    /// ★ T-200(10-31): `[expression CASE]`.
+    case_rule: RawCase,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -78,6 +115,8 @@ pub struct Grammar {
     statements: HashMap<String, Vec<String>>,
     clauses: HashMap<String, ClauseRule>,
     aliases: HashMap<String, String>,
+    /// ★ T-200(10-31): CASE 식 안 자리별 예약어(색인 = [`CasePos`] · 전부 비면 섹션 없음).
+    case_rule: [Vec<String>; 4],
 }
 
 fn norm(s: &str) -> String {
@@ -131,6 +170,16 @@ fn parse(text: &str) -> Result<Raw, String> {
             } else if let Some(n) = body.strip_prefix("clause ") {
                 cur = Some(("clause".into(), norm(n)));
                 raw.clauses.entry(norm(n)).or_default();
+            } else if let Some(n) = body.strip_prefix("expression ") {
+                // ★ T-200(10-31): 식 내부 상태 — 지금은 `CASE`만.
+                if norm(n) != "CASE" {
+                    return Err(tr!(
+                        "{}: unknown expression section [{body}] (only `expression CASE`)",
+                        "{}: 모르는 식 섹션 [{body}](`expression CASE`만)",
+                        ln + 1
+                    ));
+                }
+                cur = Some(("expression".into(), "CASE".into()));
             } else {
                 return Err(tr!(
                     "{}: unknown section header [{body}]",
@@ -205,6 +254,22 @@ fn parse(text: &str) -> Result<Raw, String> {
                 let e = raw.clauses.entry(name.clone()).or_default();
                 e.same = Some(norm(val));
             }
+            // ★ T-200(10-31): `[expression CASE]` after_open / after_when / after_then / after_else(`=`·`+=`·`-=`).
+            (Some((kind, _)), key) if kind == "expression" => {
+                let Some(pos) = CasePos::from_key(key) else {
+                    return Err(tr!(
+                        "{}: key `{key}` is not allowed in [expression CASE] (after_open/after_when/after_then/after_else)",
+                        "{}: [expression CASE]에 올 수 없는 키 `{key}`(after_open/after_when/after_then/after_else)",
+                        ln + 1
+                    ));
+                };
+                let i = pos as usize;
+                match op {
+                    LineOp::Add => raw.case_rule.add[i].extend(list(val)),
+                    LineOp::Del => raw.case_rule.del[i].extend(list(val)),
+                    LineOp::Set => raw.case_rule.set[i] = Some(list(val)),
+                }
+            }
             _ => {
                 return Err(tr!(
                     "{}: key `{key}` is not allowed here",
@@ -258,6 +323,13 @@ fn resolve(raw: &Raw, base: Option<&Grammar>) -> Grammar {
         add_unique(&mut e.first, &rc.first_add);
         remove_ci(&mut e.next, &rc.next_del);
         remove_ci(&mut e.first, &rc.first_del);
+    }
+    for (i, slot) in g.case_rule.iter_mut().enumerate() {
+        if let Some(s) = &raw.case_rule.set[i] {
+            *slot = s.clone();
+        }
+        add_unique(slot, &raw.case_rule.add[i]);
+        remove_ci(slot, &raw.case_rule.del[i]);
     }
     g
 }
@@ -327,6 +399,16 @@ impl Grammar {
             }
         }
         Some(out)
+    }
+
+    /// ★ T-200 CASE 식 상태(10-31): 짝 안 맞는 `CASE` 안의 자리별 예약어(`[expression CASE]`) — 섹션이 없는 문법이면 `None`
+    /// (호스트는 절 `next`로 되돌아간다).
+    #[must_use]
+    pub fn case_next(&self, pos: CasePos) -> Option<Vec<String>> {
+        if self.case_rule.iter().all(Vec::is_empty) {
+            return None;
+        }
+        Some(self.case_rule[pos as usize].clone())
     }
 
     /// 감지용 절 이름 전부(절 + 별칭 + 문장 절 목록 · 대문자 · 낱말은 한 칸).
@@ -503,6 +585,76 @@ mod tests {
             &ms.next_at("SELECT", ClausePos::Other).unwrap(),
             "TOP"
         ));
+    }
+
+    /// ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): ansi `[expression CASE]` 네 자리 · 절 next에서 WHEN/THEN/ELSE/END가 빠짐(CASE는 남음) ·
+    /// 자식 방언의 `+=`/`-=` · 모르는 키·섹션은 오류.
+    #[test]
+    fn case_expression_section_parses_and_inherits() {
+        let g = for_dialect(None);
+        let has = |v: &[String], k: &str| v.iter().any(|s| s.eq_ignore_ascii_case(k));
+        assert!(has(&g.case_next(CasePos::AfterOpen).unwrap(), "WHEN"));
+        assert!(has(&g.case_next(CasePos::AfterWhen).unwrap(), "THEN"));
+        let then = g.case_next(CasePos::AfterThen).unwrap();
+        assert!(
+            has(&then, "WHEN") && has(&then, "ELSE") && has(&then, "END"),
+            "{then:?}"
+        );
+        assert!(has(&g.case_next(CasePos::AfterElse).unwrap(), "END"));
+        for cl in ["SELECT", "ON", "WHERE", "HAVING", "SET"] {
+            let n = g.next(cl).unwrap();
+            assert!(
+                has(n, "CASE")
+                    && !has(n, "WHEN")
+                    && !has(n, "THEN")
+                    && !has(n, "ELSE")
+                    && !has(n, "END"),
+                "{cl}: {n:?}"
+            );
+        }
+        let name = register(
+            "dialect = testcase
+extends = ansi
+[expression CASE]
+after_then -= ELSE
+after_open += EXTRA_KW
+",
+        )
+        .unwrap();
+        let t = for_name(&name);
+        assert!(!has(&t.case_next(CasePos::AfterThen).unwrap(), "ELSE"));
+        let open = t.case_next(CasePos::AfterOpen).unwrap();
+        assert!(
+            has(&open, "EXTRA_KW") && has(&open, "WHEN"),
+            "부모 상속 + 더함: {open:?}"
+        );
+        assert!(register(
+            "dialect = badcase
+[expression CASE]
+next = X
+"
+        )
+        .is_err());
+        assert!(register(
+            "dialect = badcase2
+[expression IF]
+after_open = X
+"
+        )
+        .is_err());
+        let empty = parse(
+            "dialect = nocase
+[start]
+next = SELECT
+",
+        )
+        .unwrap();
+        assert!(
+            resolve(&empty, None)
+                .case_next(CasePos::AfterOpen)
+                .is_none(),
+            "섹션 없는 문법 = None"
+        );
     }
 
     /// ★ `-=`(10-30 · docs/82 §10): 부모에서 물려받은 예약어를 자식 방언이 뺀다(next · first · start) · 대소문자 무시 · 없는 것은 무시 ·

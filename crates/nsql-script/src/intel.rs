@@ -93,6 +93,9 @@ pub struct Context {
     pub clause: Option<String>,
     /// ★ T-200 절 안 위치(10-30): `clause` 안에서 캐럿 자리(첫 항목 · 콤마 뒤 · 그 밖) — 호스트가 [`crate::grammar::Grammar::next_at`]로 예약어를 좁힌다.
     pub clause_pos: crate::grammar::ClausePos,
+    /// ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): 캐럿이 **짝 안 맞는 `CASE`** 안이면 그 자리 — 호스트는 절 `next` 대신
+    /// [`crate::grammar::Grammar::case_next`]를 낸다(절 `clause`·`objects`는 그대로 = 컬럼·함수 후보 유지). 괄호 안이라 절을 모를 때도 안다.
+    pub case_pos: Option<crate::grammar::CasePos>,
     /// 문장의 첫 낱말(대문자 · `SELECT`/`INSERT`/`WITH` …).
     pub stmt_kind: Option<String>,
     /// ★ 관계 자리에서 **자동 별칭을 붙여도 되는가**(사용자 10-09 "ALTER TABLE t A · CREATE INDEX … ON t A"): 문법이 별칭을 허용하는
@@ -1035,11 +1038,20 @@ pub fn client_next_in(doc: &str, ctx: &Context) -> Option<&'static [ClientCand]>
 /// ★ 문법 절 감지(`grammar` · 09-24): `before`를 뒤에서 앞으로 괄호 깊이를 세며 걷는다 — 깊이 0에서 문법의 절 이름(최대 세 낱말 ·
 /// `GROUP BY`·`LEFT OUTER JOIN`)에 맞는 첫 것이 절 · 깊이 0에서 `(`를 만나면(함수 인자·IN 목록 안) `None` · 서브쿼리 안이면 그 안의
 /// `SELECT`/`FROM`…이 먼저 걸린다. 첫 낱말 = 문장 종류.
+///
+/// ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): 같은 걷기에서 같은 괄호 깊이의 `CASE`/`END` 짝을 센다 — 절(또는 `(`)에 닿기 전에
+/// **짝 안 맞는 `CASE`** 가 있으면 그 안에서 캐럿에 가장 가까운 `WHEN`/`THEN`/`ELSE`로 자리를 정한다(닫힌 안쪽 CASE … END 안의 낱말은
+/// 세지 않음 · PL/SQL `END IF`/`END LOOP`는 CASE 닫기가 아니고 `END CASE`는 닫기 · MERGE `WHEN MATCHED`는 절 이름이라 먼저 걸림).
 fn grammar_clause(
     before: &[&Word<'_>],
     dialect: Option<Dialect>,
-) -> (Option<String>, Option<String>, crate::grammar::ClausePos) {
-    use crate::grammar::ClausePos;
+) -> (
+    Option<String>,
+    Option<String>,
+    crate::grammar::ClausePos,
+    Option<crate::grammar::CasePos>,
+) {
+    use crate::grammar::{CasePos, ClausePos};
     let g = crate::grammar::for_dialect(dialect);
     let names = g.clause_names();
     // ★ T-200 절 안 위치(10-30): 절을 찾은 뒤 그 절의 마지막 낱말 인덱스 `i`로 자리를 판정한다 — 캐럿 바로 앞까지 낱말이 없으면 First ·
@@ -1065,6 +1077,10 @@ fn grammar_clause(
         .collect();
     let stmt = up.first().cloned().filter(|s| !s.is_empty() && s != "(");
     let mut depth = 0i32;
+    // CASE 상태: 닫힌 CASE … END 깊이(뒤에서 앞으로) · 짝 안 맞는 CASE 안의 마지막 WHEN/THEN/ELSE · 판정 결과.
+    let mut case_depth = 0u32;
+    let mut case_word: Option<&str> = None;
+    let mut case_pos: Option<CasePos> = None;
     let mut i = up.len();
     while i > 0 {
         i -= 1;
@@ -1072,7 +1088,7 @@ fn grammar_clause(
             ")" => depth += 1,
             "(" => {
                 if depth == 0 {
-                    return (stmt, None, ClausePos::Other);
+                    return (stmt, None, ClausePos::Other, case_pos);
                 }
                 depth -= 1;
             }
@@ -1082,15 +1098,47 @@ fn grammar_clause(
                         let cand = up[i + 1 - n..=i].join(" ");
                         if names.contains(&cand) {
                             let pos = pos_at(i, up.len(), up.last().map(String::as_str));
-                            return (stmt, Some(cand), pos);
+                            return (stmt, Some(cand), pos, case_pos);
                         }
+                    }
+                }
+                if case_pos.is_none() {
+                    match up[i].as_str() {
+                        // `END IF`/`END LOOP`(PL/SQL 블록 닫기)는 건너뛰고 · 그 밖의 `END`는 CASE 닫기.
+                        "END" => {
+                            if !matches!(up.get(i + 1).map(String::as_str), Some("IF" | "LOOP")) {
+                                case_depth += 1;
+                            }
+                        }
+                        "CASE" => {
+                            if i > 0 && up[i - 1] == "END" {
+                                // `END CASE`(PL/SQL CASE 문 닫기) — END도 같이 소비.
+                                case_depth += 1;
+                                i -= 1;
+                            } else if case_depth > 0 {
+                                case_depth -= 1;
+                            } else {
+                                case_pos = Some(match case_word {
+                                    Some("WHEN") => CasePos::AfterWhen,
+                                    Some("THEN") => CasePos::AfterThen,
+                                    Some("ELSE") => CasePos::AfterElse,
+                                    _ => CasePos::AfterOpen,
+                                });
+                            }
+                        }
+                        w @ ("WHEN" | "THEN" | "ELSE")
+                            if case_depth == 0 && case_word.is_none() =>
+                        {
+                            case_word = Some(w);
+                        }
+                        _ => {}
                     }
                 }
             }
             _ => {}
         }
     }
-    (stmt, None, ClausePos::Other)
+    (stmt, None, ClausePos::Other, case_pos)
 }
 
 fn is_word(w: &Word<'_>, kw: &str) -> bool {
@@ -1171,6 +1219,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
         from_chain: false,
         clause: None,
         clause_pos: crate::grammar::ClausePos::Other,
+        case_pos: None,
         stmt_kind: None,
         alias_ok: false,
         alias_follows: false,
@@ -1241,12 +1290,13 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             from_chain: false,
             clause: None,
             clause_pos: crate::grammar::ClausePos::Other,
+            case_pos: None,
             stmt_kind: None,
             alias_ok: false,
             alias_follows: false,
         };
     }
-    let (stmt_kind, clause, clause_pos) = grammar_clause(&before, dialect);
+    let (stmt_kind, clause, clause_pos, case_pos) = grammar_clause(&before, dialect);
     let (paren_owner, paren_into) = paren_owner(&before).unwrap_or((None, false));
     let last = before[before.len() - 1];
     // `qualifier.` — 점이 접두 바로 앞에 붙어 있을 때만.
@@ -1300,6 +1350,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             from_chain,
             clause,
             clause_pos,
+            case_pos,
             stmt_kind,
             alias_ok,
             alias_follows: false,
@@ -1339,6 +1390,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             from_chain: false,
             clause,
             clause_pos,
+            case_pos,
             stmt_kind,
             alias_ok: false,
             alias_follows: false,
@@ -1363,6 +1415,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             from_chain: false,
             clause,
             clause_pos,
+            case_pos,
             stmt_kind,
             alias_ok: false,
             alias_follows: false,
@@ -1386,6 +1439,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
             from_chain: false,
             clause,
             clause_pos,
+            case_pos,
             stmt_kind,
             alias_ok,
             alias_follows: false,
@@ -1403,6 +1457,7 @@ fn context_at_raw(src: &str, caret: usize, dialect: Option<Dialect>, whole: bool
         from_chain: false,
         clause,
         clause_pos,
+        case_pos,
         stmt_kind,
         alias_ok: false,
         alias_follows: false,
@@ -2097,6 +2152,81 @@ mod tests {
             c.clause.as_deref(),
             Some("WHERE"),
             "닫힌 서브쿼리 뒤 = 바깥 절"
+        );
+    }
+
+    /// ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): 짝 안 맞는 CASE 안 = 자리(열림·WHEN 뒤·THEN 뒤·ELSE 뒤) · 닫힌 CASE 뒤 = None ·
+    /// 중첩(안쪽이 닫혀도 바깥 유지) · 함수 괄호 안(절은 모르지만 CASE는 안다) · 바깥 절 유지 · MERGE `WHEN MATCHED` = 절 ·
+    /// PL/SQL `END CASE` = 닫기 · `END IF` = 닫기 아님.
+    #[test]
+    fn case_expression_state_in_context() {
+        use crate::grammar::CasePos;
+        let lite = Some(Dialect::Sqlite);
+        let at = |s: &str| context_at(s, s.len(), lite);
+        assert_eq!(at("SELECT CASE ").case_pos, Some(CasePos::AfterOpen));
+        assert_eq!(
+            at("SELECT CASE a ").case_pos,
+            Some(CasePos::AfterOpen),
+            "단순형"
+        );
+        assert_eq!(
+            at("SELECT CASE WHEN a = 1 ").case_pos,
+            Some(CasePos::AfterWhen)
+        );
+        let c = at("SELECT CASE WHEN a = 1 THEN 'x' ");
+        assert_eq!(c.case_pos, Some(CasePos::AfterThen));
+        assert_eq!(c.clause.as_deref(), Some("SELECT"), "바깥 절 유지");
+        assert_eq!(
+            at("SELECT CASE WHEN a THEN 1 ELSE ").case_pos,
+            Some(CasePos::AfterElse)
+        );
+        assert_eq!(
+            at("SELECT CASE WHEN a THEN 1 END, ").case_pos,
+            None,
+            "닫힌 CASE 뒤"
+        );
+        assert_eq!(
+            at("SELECT CASE WHEN a THEN 1 END x FROM t WHERE ").case_pos,
+            None
+        );
+        assert_eq!(
+            at("SELECT CASE WHEN a THEN CASE WHEN b THEN 1 END ").case_pos,
+            Some(CasePos::AfterThen),
+            "안쪽 CASE 닫힘 · 바깥 THEN 뒤"
+        );
+        assert_eq!(
+            at("SELECT CASE WHEN a THEN CASE WHEN b ").case_pos,
+            Some(CasePos::AfterWhen),
+            "안쪽 CASE의 WHEN 뒤"
+        );
+        let c = at("SELECT SUM(CASE WHEN a ");
+        assert_eq!(
+            (c.clause.as_deref(), c.case_pos),
+            (None, Some(CasePos::AfterWhen)),
+            "함수 괄호 안"
+        );
+        assert_eq!(at("SELECT SUM(CASE WHEN a THEN 1 END) ").case_pos, None);
+        let c = at("MERGE INTO t USING s ON (t.id = s.id) WHEN MATCHED ");
+        assert_eq!(
+            (c.clause.as_deref(), c.case_pos),
+            (Some("WHEN MATCHED"), None)
+        );
+        assert_eq!(
+            at("MERGE INTO t USING s ON (t.id = s.id) WHEN MATCHED THEN UPDATE SET x = CASE WHEN ")
+                .case_pos,
+            Some(CasePos::AfterWhen)
+        );
+        let ora = Some(Dialect::Oracle);
+        let at = |s: &str| context_at(s, s.len(), ora);
+        assert_eq!(
+            at("BEGIN CASE a WHEN 1 THEN x := 1; END CASE; y := ").case_pos,
+            None,
+            "END CASE = 닫기"
+        );
+        assert_eq!(
+            at("BEGIN CASE WHEN a THEN IF b THEN NULL; END IF; ").case_pos,
+            Some(CasePos::AfterThen),
+            "END IF는 CASE 닫기 아님"
         );
         let src = "INSERT INTO t (a, b) VALUES (";
         let c = context_at(src, src.len(), lite);

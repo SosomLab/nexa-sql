@@ -296,6 +296,8 @@ same = JOIN                 # 별칭
 
 #### 10-4-3. CASE 식 안 상태(절이 아닌 별도 제안)
 
+> ★ **구현됨(10-31 · 192차 26차 · 개발 · [journal 10-31 §11](journal/2026-10-31.md))** — nsql-script `grammar.rs` `[expression CASE]` 섹션(`after_open`/`after_when`/`after_then`/`after_else` · `=`/`+=`/`-=` · `CasePos` 4자리 · `Grammar::case_next` · 섹션 없는 문법 = None) · `intel.rs` `Context.case_pos` = 절 걷기에서 같은 괄호 깊이의 CASE/END 짝을 세어 짝 안 맞는 CASE 안이면 마지막 WHEN/THEN/ELSE로 자리 판정(중첩 · 함수 괄호 안 · `END IF`/`END LOOP` 무시 · `END CASE` 닫기 · MERGE `WHEN MATCHED`는 절) · nexa-sql 완성 = `case_pos`가 있으면 절 `next` 대신 `case_next`(절·objects 유지) · ansi.sqlg SELECT/ON/WHERE/HAVING/SET `next`에서 WHEN·THEN·ELSE·END 삭제(CASE는 남김) · V1 = `SELECT a ` 뒤 네 낱말 없음 · `CASE WHEN a = 1 ` 뒤 THEN · `CASE WHEN a THEN 1 ` 뒤 WHEN·ELSE·END · `SUM(CASE WHEN a ` 뒤 THEN ✓.
+
 - 현재 `WHEN/THEN/ELSE/END`가 SELECT·ON·WHERE·HAVING·SET의 `next`에 상시 들어 있어 CASE 밖에서도 뜬다.
 - 제안: 식 내부 상태를 절과 따로 둔다.
   ```
@@ -362,7 +364,7 @@ same = JOIN                 # 별칭
 |---|---|---|---|
 | FROM·WHERE·ORDER BY 다음 `ROWS ONLY` 단독 삭제 | Oracle row_limiting_clause `FETCH { FIRST \| NEXT } [ rowcount \| percent PERCENT ] { ROW \| ROWS } { ONLY \| WITH TIES }` (https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/img_text/row_limiting_clause.html) · PG `FETCH { FIRST \| NEXT } [ count ] { ROW \| ROWS } { ONLY \| WITH TIES }` (https://www.postgresql.org/docs/current/sql-select.html) · T-SQL `FETCH { FIRST \| NEXT } … { ROW \| ROWS } ONLY`는 OFFSET 안에서만 (https://learn.microsoft.com/en-us/sql/t-sql/queries/select-order-by-clause-transact-sql) — `ROWS ONLY`는 어느 방언에서도 FETCH 뒤에만 온다 | ✅ | ansi 자기 줄 수정: `[clause FROM]`·`[clause WHERE]`·`[clause ORDER BY]`의 `next`에서 `ROWS ONLY` 지우기(부모라 `-=` 불필요) |
 | ORDER BY 다음 `OFFSET`(+ `FETCH NEXT`) 추가 | 위 세 문서 모두 `[ORDER BY …] [OFFSET n {ROW\|ROWS}] [FETCH …]` · T-SQL은 "FETCH는 OFFSET 뒤에만"(`<offset_fetch> ::= OFFSET … [FETCH …]`) | ✅(더하기) — 단 방언 정리 필요 | ansi `[clause ORDER BY] next`에 `OFFSET, FETCH NEXT` 추가. 그러면 **sqlite·mysql·access**에 `[clause ORDER BY] next -= OFFSET, FETCH NEXT`가 필요하다(SQLite/MySQL의 OFFSET은 LIMIT 안에서만 · Access는 없음 · §2-5·2-6·2-9) |
-| SELECT·ON·WHERE·HAVING·SET 다음 `WHEN, THEN, ELSE, END` 삭제 | CASE 식 `CASE WHEN condition THEN result [WHEN …] [ELSE result] END` (https://www.postgresql.org/docs/current/functions-conditional.html · T-SQL CASE 동일) — 네 낱말은 CASE 식 안에서만 문법상 뜻이 있다 | ⚠ 구현 의존 | 문법상 맞다. 다만 82 §10-4-3 **CASE 상태를 구현하기 전에 지우면 CASE 안에서 WHEN/THEN이 안 뜨는 회귀**가 생긴다. CASE 상태와 **같은 커밋에** ansi 자기 줄 수정: `[clause SELECT]`·`[clause ON]`·`[clause WHERE]`·`[clause HAVING]`·`[clause SET]` `next`에서 `WHEN, THEN, ELSE, END` 지우기(`CASE`는 남김) |
+| SELECT·ON·WHERE·HAVING·SET 다음 `WHEN, THEN, ELSE, END` 삭제 | CASE 식 `CASE WHEN condition THEN result [WHEN …] [ELSE result] END` (https://www.postgresql.org/docs/current/functions-conditional.html · T-SQL CASE 동일) — 네 낱말은 CASE 식 안에서만 문법상 뜻이 있다 | ⚠ 구현 의존 | 문법상 맞다. 다만 82 §10-4-3 **CASE 상태를 구현하기 전에 지우면 CASE 안에서 WHEN/THEN이 안 뜨는 회귀**가 생긴다. CASE 상태와 **같은 커밋에** ansi 자기 줄 수정: `[clause SELECT]`·`[clause ON]`·`[clause WHERE]`·`[clause HAVING]`·`[clause SET]` `next`에서 `WHEN, THEN, ELSE, END` 지우기(`CASE`는 남김) · ✅ **10-31 26차 반영**(CASE 상태와 같은 커밋 · [journal 10-31 §11](journal/2026-10-31.md)) |
 | `[statement SELECT] clauses`의 `LIMIT`(ansi에서 빼기) | Oracle·T-SQL·Access 문법에 LIMIT 없음(위 문서 · Access SELECT https://learn.microsoft.com/en-us/office/client-developer/access/desktop-database-reference/select-statement-microsoft-access-sql) | ✅(단 `clauses -=` 불가) | ansi `next` 목록에는 LIMIT이 없으므로 `-=`로 할 일이 없다. **ansi `[statement SELECT] clauses`에서 LIMIT을 지우고**, LIMIT이 있는 방언에 `clauses += LIMIT` — postgres·sqlite·mysql은 이미 있음. **clickhouse는 없으니 추가 필요**(db2는 §4 미확인) |
 
 ##### 2-1. Oracle(oracle.sqlg)
@@ -481,7 +483,7 @@ same = JOIN                 # 별칭
 
 #### 3. 바로 적용 가능한 `.sqlg` 줄(✅만)
 
-> ★ **반영됨(10-31 · 191차 17차 · 개발)** — 아래 ✅ 줄을 9개 `.sqlg`에 반영(ansi 자기 줄 + 방언 파일 끝 `-=` 블록 · 같은 `[clause X]` 머리줄 반복 = 파서가 같은 섹션으로 합침) · **보류 3** = CASE 낱말 삭제(CASE 상태 §10-4-3과 같은 커밋) · Oracle `DELETE … USING`(19c/23ai 기준 판 미정) · `MINUS`/`INTERSECT ALL`(같은 이유) · V1(협업 · 기본 방언 Oracle · 접속 없음) = `SELECT * FROM t ` 뒤 후보에 `AS`·`ROWS ONLY` 없음 · `ORDER BY a ` 뒤 `OFFSET`·`FETCH NEXT` 있음 · `SIBLINGS` 없음 ✓.
+> ★ **반영됨(10-31 · 191차 17차 · 개발)** — 아래 ✅ 줄을 9개 `.sqlg`에 반영(ansi 자기 줄 + 방언 파일 끝 `-=` 블록 · 같은 `[clause X]` 머리줄 반복 = 파서가 같은 섹션으로 합침) · **보류 3** = ~~CASE 낱말 삭제~~(✅ 10-31 26차 = CASE 상태와 함께) · ~~Oracle `DELETE … USING`·`MINUS`/`INTERSECT ALL`~~(✅ D-427 23ai 확정 = 후보 유지 · 조치 없음) → **보류 0** · V1(협업 · 기본 방언 Oracle · 접속 없음) = `SELECT * FROM t ` 뒤 후보에 `AS`·`ROWS ONLY` 없음 · `ORDER BY a ` 뒤 `OFFSET`·`FETCH NEXT` 있음 · `SIBLINGS` 없음 ✓.
 
 > `-=` 줄은 그 방언 파일의 해당 섹션 안에 넣는다. 섹션이 없으면 `[clause X]` 머리줄도 새로 만든다. "자기 줄 수정"은 `-=`가 아니라 기존 `+=`/`=` 줄을 고치는 것이다.
 
