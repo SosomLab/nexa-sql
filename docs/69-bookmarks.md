@@ -678,6 +678,36 @@ pub trait BookmarkStore {
 - `perf.boost`(향상 모드)는 `inline_label`·`minimap`·`panel_autoscroll_from`을 끈 값으로 강제한다(39 §4-6 · 강제값 > 개별 값).
 - CLI `nsql config list bookmark`로 전부 보이고 `nsql config set bookmark.stale_days 0`로 바꾼다.
 
+### 9-5. B4d 대조(10-31 · 협업 분석 · 개발 결정 대기)
+
+> 대조 = 위 §9-1~9-3 설계 표의 `bookmark.*` 키 ↔ `nsql-settings::REGISTRY`(10-31 · `key: "bookmark.*"` **20개** + 이름 이주 2 = `bookmark.inline_label_ctrl` → `ctrl.bookmark_label` · `bookmark.inline_label_ctrl_scope` → `ctrl.bookmark_scope`(`RENAMED`)). 명령 id(`bookmark.toggle`·`next`·…)는 설정이 아니라 뺐다. 근거 코드는 10-31 main 기준 읽기만(협업). 판정은 **초안** — 구현/폐기는 개발 세션이 정하고, 사용자 결정이 필요한 것은 "D 대기"로 적었다.
+
+**① §9에 있고 REGISTRY에 없는 키(18) · ② 판정 초안**
+
+| 설계 키 | 지금 코드 동작(근거) | 판정 초안 | 비고 |
+|---|---|---|---|
+| `bookmark.confirm_clear` | **문서 전체 지우기(`bookmark.clear_doc`)에 확인도 되돌리기 토스트도 없음** — `app/bookmarks.rs:569` 상태줄 안내만 · `Bookmarks::clear_doc`(`bookmarks.rs:441`)은 지운 목록을 되돌리기용으로 남기지 않음(한 항목 제거만 `bm_removed_toast` 5초 [되돌리기]) | **구현 필요(안전)** — 확인 또는 되돌리기 토스트 중 하나 | 사용자 데이터(북마크) 일괄 손실 경로 · 키 대신 "늘 되돌리기"로 해도 됨(개발 판단) |
+| `bookmark.undo_secs` | 5초 고정(`app/bookmarks.rs:256` `bm_removed_toast` · 토스트 기본 수명) | 구현 필요(작음) · HIDDEN 가능 | 구현 상수 → 설정 레지스트리(30 규칙) |
+| `bookmark.max_groups` | 그룹 수 상한 없음(`groups.len()` 검사 없음) | 구현 필요(작음 · HIDDEN 50) | 39 부하원 규칙(상한 하나 이상) |
+| `bookmark.panel_preview` · `bookmark.panel_preview_reuse` | 한 번 클릭 = 미리보기 탭 · 탐색기와 같은 규칙 `project.preview_tab`을 따름(`app/bookmarks.rs:280`) · 미리보기 슬롯은 공용 하나 | **이름만 다름 → `project.preview_tab`으로 대체**(두 키 폐기) | 설계 표에 대체 표시만 |
+| `bookmark.reconnect_ask` | 확인 대화상자 없음 · 살아 있는 세션만 · 없으면 상태줄 안내 | **폐기(확정)** — D-426 "안내만"(10-31) | §4-2·§9 이미 ✖ |
+| `bookmark.anchor_update` | 재배치 때 늘 새 앵커로 갱신(`bookmarks.rs:1103` `make_anchor`) | 폐기 후보 — 늘 on과 같음 · 끌 이유 없음 | |
+| `bookmark.revive` | 파일·서버가 돌아오면 늘 되살림(`validate_files`·`validate_servers`) | 폐기 후보 — 늘 on | |
+| `bookmark.panel_autoscroll_from` | 미구현(캐럿이 북마크 줄에 닿아도 목록 선택 그대로) | 폐기 후보 — 설계 기본값 off와 같은 동작 | 요청 있으면 그때 |
+| `bookmark.panel_row_text` | 행 = 이름 + 줄 원문(both 고정 · 10-31 V1 캡처 `moved-bm  SELECT …M dual;`) | 폐기 후보 — both 고정 | |
+| `bookmark.panel_show_invalid` | 무효 = 제자리(inline) + 사유 글 · 우클릭 "무효 모두 지우기"(`remove_invalid`) | 폐기 후보 — inline 고정 + 메뉴로 충족 | |
+| `bookmark.gutter_color` | 테마 강조색 고정 · 무효 = `text_dim`(`marks_for(…, theme.accent, theme.text_dim)`) | 폐기 후보 — 테마로 충족(설정 먼저 규칙) | |
+| `bookmark.default_group_name` | 기본 그룹 = 빈 이름(표시 "기본") · 그룹 이름 바꾸기로 바꿀 수 있음 | 폐기 후보 — 기존 기능(이름 바꾸기)으로 충족 | |
+| `bookmark.mnemonic_scope` | 문서 안 유일(doc) 고정(`nsql-bookmarks` `set_mnemonic`·`by_mnemonic` = `doc.same`) | 폐기 후보 — global 요구 없음(D-162 doc) | |
+| `bookmark.panel_group_by` | 그룹 → 문서 → 항목 고정(`bookmarks_panel.rs:483` 문서 이름순) · 도구줄 전환 없음 | **D 대기** — D-172 "도구줄에서 문서·평면으로 바꿀 수 있다" 미이행 = 구현 또는 D-172 축소 | 사용자 결정 |
+| `bookmark.panel_sort` | 문서 안 = 줄 순 고정(`bookmarks_panel.rs:500`) | **D 대기**(panel_group_by와 함께) | created·visited 값은 이미 저장됨 |
+| `bookmark.badge` | 활동 막대 북마크 배지 기능 자체가 없음(탭 배지 `set_badges`는 다른 것) | 보류 — 배지 기능을 만들 때 함께 | |
+| `bookmark.share_default` | 공용(B7) 미구현 · `shared` 필드는 저장만 | 보류 — ⏸ B7과 함께 | |
+
+**③ REGISTRY에 있고 §9 표에 없는 키(2)** = `ctrl.bookmark_label`(옛 `bookmark.inline_label_ctrl`) · `ctrl.bookmark_scope`(옛 `bookmark.inline_label_ctrl_scope`) — 인라인 라벨 컨트롤 설정 · `nsql-settings` `RENAMED`로 `ctrl.*`에 이주 → §9-2 표에 "→ `ctrl.*`로 이주" 두 줄 추가 후보. 그 밖 20개는 모두 §9 표에 있음(`bookmark.mnemonic_ask_rewrite`는 표에서 이미 `bookmark.mnemonic_notice`로 표시).
+
+**요약** = 구현 필요 3(**confirm_clear 안전** · undo_secs · max_groups) · 대체 2(panel_preview·panel_preview_reuse → `project.preview_tab`) · 폐기 확정 1(reconnect_ask) · 폐기 후보 8(anchor_update · revive · panel_autoscroll_from · panel_row_text · panel_show_invalid · gutter_color · default_group_name · mnemonic_scope) · D 대기 2(panel_group_by · panel_sort) · 보류 2(badge · share_default).
+
 ## 10. 부하원 등재([39 §3](39-resource-governance.md))
 
 | 부하원 | 상한 | 키 | 비고 |

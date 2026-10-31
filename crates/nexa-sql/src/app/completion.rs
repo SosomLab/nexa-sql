@@ -142,6 +142,16 @@ impl App {
             self.intel_request_settings(manual);
             return;
         }
+        // ★ T-76 ③(10-31): `.sublime-keymap`(JSON 구문) = 키맵 힌트(바인딩 키 · 명령 id · 조합 글 · context 키/연산자).
+        if self.editors.syntax_name() == "JSON"
+            && self.editors.path_of(i).is_some_and(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().ends_with(".sublime-keymap"))
+            })
+        {
+            self.intel_request_keymap(manual);
+            return;
+        }
         if let Some(why) = self.intel_unsuitable(i, manual) {
             if manual {
                 self.sess.status = t(why).into();
@@ -270,15 +280,7 @@ impl App {
     ///   팝업으로. 수동(Ctrl+Space) = 늘 · 자동(글자 입력 · `after_char` 규칙 = 자동 켬·최소 글자 수) = **접두가 있을 때만**(따옴표 안에서 글자를
     ///   치기 시작하면 뜨고, 빈 자리에서는 뜨지 않는다) · 자리가 아니면(배열 안 · 값 뒤) 아무것도 안 한다 · 후보마다 상세 카드(`Target::Setting`).
     fn intel_request_settings(&mut self, manual: bool) {
-        let tab = self.editors.tab_id(self.editors.active());
-        let (text, caret_c, anchor) = {
-            let ed = self.editors.cur();
-            (ed.text(), ed.caret(), ed.caret_point())
-        };
-        let caret_b = text
-            .char_indices()
-            .nth(caret_c)
-            .map_or(text.len(), |(b, _)| b);
+        let (text, caret_b) = self.intel_json_caret();
         let Some(site) = crate::settings_hint::site_at(&text, caret_b) else {
             return;
         };
@@ -286,6 +288,49 @@ impl App {
             return;
         }
         let cands = crate::settings_hint::candidates(&site);
+        self.intel_show_json_hint(&text, site.replace(), site.prefix(), cands);
+    }
+
+    /// ★ T-76 ③(10-31): 키맵 파일 힌트 — 자리 판정 `keymap_site_at` · 후보 = 바인딩/컨텍스트 키 · 팔레트 명령 id(라벨 "메뉴: 항목") ·
+    ///   조합 글(수식키 + 키 이름 · 접두 유지) · context 키/연산자. 자동 = 접두가 있을 때만(settings.json과 같은 규칙).
+    fn intel_request_keymap(&mut self, manual: bool) {
+        let (text, caret_b) = self.intel_json_caret();
+        let Some(site) = crate::settings_hint::keymap_site_at(&text, caret_b) else {
+            return;
+        };
+        if !manual && site.prefix().is_empty() {
+            return;
+        }
+        let cmds: Vec<(String, String)> = super::commands::PALETTE
+            .iter()
+            .filter(|c| !matches!(c.kind, super::commands::PalKind::ExtDynamic))
+            .map(|c| (c.id.to_string(), format!("{}: {}", t(c.menu), t(c.item))))
+            .collect();
+        let cands = crate::settings_hint::keymap_candidates(&site, &cmds);
+        self.intel_show_json_hint(&text, site.replace(), site.prefix(), cands);
+    }
+
+    /// 활성 편집기의 본문과 캐럿 바이트 위치(JSON 힌트 공용).
+    fn intel_json_caret(&self) -> (String, usize) {
+        let ed = self.editors.cur();
+        let text = ed.text();
+        let caret_b = text
+            .char_indices()
+            .nth(ed.caret())
+            .map_or(text.len(), |(b, _)| b);
+        (text, caret_b)
+    }
+
+    /// JSON 힌트 후보를 외부 모드 팝업으로(settings.json · 키맵 공용).
+    fn intel_show_json_hint(
+        &mut self,
+        text: &str,
+        replace: std::ops::Range<usize>,
+        prefix: &str,
+        cands: Vec<nsql_script::intel::Cand>,
+    ) {
+        let tab = self.editors.tab_id(self.editors.active());
+        let anchor = self.editors.cur().caret_point();
         let host = self
             .window
             .as_ref()
@@ -297,14 +342,7 @@ impl App {
         let ed = self.editors.cur();
         let point_of = |b: usize| ed.point_at(text[..b.min(text.len())].chars().count());
         let opened = self.intel.request_external(
-            tab,
-            site.replace(),
-            site.prefix(),
-            cands,
-            anchor,
-            host,
-            self.scale,
-            &point_of,
+            tab, replace, prefix, cands, anchor, host, self.scale, &point_of,
         );
         if opened {
             self.redraw();

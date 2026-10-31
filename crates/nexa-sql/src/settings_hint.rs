@@ -331,6 +331,382 @@ pub(crate) fn candidates(site: &Site) -> Vec<Cand> {
     }
 }
 
+// ───────────────────────── ★ T-76 ③(10-31): `.sublime-keymap` 힌트 ─────────────────────────
+
+/// 키맵 파일(바인딩 **배열**)의 캐럿 자리 — 바인딩 객체의 키(`keys`·`command`·`args`·`context`) · `context` 배열 안 객체의 키(`key`·`operator`·
+/// `operand`·`match_all`) · 값(`command` · `context.key` · `context.operator` · `keys` 배열 원소). `args` 안·그 밖 = None.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum KmSite {
+    Key {
+        /// context 객체 안인가(아니면 바인딩 객체).
+        ctx: bool,
+        prefix: String,
+        replace: Range<usize>,
+        quoted: bool,
+    },
+    Value {
+        /// `command` · `context.key` · `context.operator` · `keys`.
+        key: String,
+        prefix: String,
+        replace: Range<usize>,
+        quoted: bool,
+    },
+}
+
+impl KmSite {
+    pub(crate) fn prefix(&self) -> &str {
+        match self {
+            KmSite::Key { prefix, .. } | KmSite::Value { prefix, .. } => prefix,
+        }
+    }
+    pub(crate) fn replace(&self) -> Range<usize> {
+        match self {
+            KmSite::Key { replace, .. } | KmSite::Value { replace, .. } => replace.clone(),
+        }
+    }
+    fn quoted(&self) -> bool {
+        match self {
+            KmSite::Key { quoted, .. } | KmSite::Value { quoted, .. } => *quoted,
+        }
+    }
+}
+
+/// 둘러싼 컨테이너(스캐너 스택).
+#[derive(Clone, Debug)]
+enum Frame {
+    /// 배열 · `key` = 이 배열이 매달린 키(루트 = None).
+    Arr { key: Option<String> },
+    /// 객체 · `parent` = 이 객체가 든 배열의 키(루트 배열 = None · `context` · `args`) · `cur_key` = 지금 키 · `after_colon`/`expect_key`.
+    Obj {
+        parent: Option<String>,
+        cur_key: Option<String>,
+        after_colon: bool,
+        expect_key: bool,
+    },
+}
+
+/// 바인딩 객체/컨텍스트 객체의 값 자리 이름(`command` · `context.key` · `context.operator`) — 그 밖(`args` 안 · `operand` · `match_all`)은 None.
+fn km_value_key(parent: Option<&str>, cur_key: Option<&str>) -> Option<String> {
+    match (parent, cur_key?) {
+        (None, "command") => Some("command".into()),
+        (Some("context"), "key") => Some("context.key".into()),
+        (Some("context"), "operator") => Some("context.operator".into()),
+        _ => None,
+    }
+}
+
+pub(crate) fn keymap_site_at(text: &str, caret: usize) -> Option<KmSite> {
+    let b = text.as_bytes();
+    let caret = caret.min(b.len());
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut i = 0usize;
+    while i < caret {
+        let c = b[i];
+        match c {
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'"' => {
+                let (end, closed) = scan_string(b, i + 1);
+                if caret <= end || !closed {
+                    let prefix = text.get(i + 1..caret).unwrap_or("").to_string();
+                    let replace = (i + 1)..end;
+                    return match stack.last() {
+                        Some(Frame::Obj {
+                            parent,
+                            after_colon: false,
+                            ..
+                        }) => match parent.as_deref() {
+                            None => Some(KmSite::Key {
+                                ctx: false,
+                                prefix,
+                                replace,
+                                quoted: true,
+                            }),
+                            Some("context") => Some(KmSite::Key {
+                                ctx: true,
+                                prefix,
+                                replace,
+                                quoted: true,
+                            }),
+                            _ => None,
+                        },
+                        Some(Frame::Obj {
+                            parent,
+                            cur_key,
+                            after_colon: true,
+                            ..
+                        }) => km_value_key(parent.as_deref(), cur_key.as_deref()).map(|key| {
+                            KmSite::Value {
+                                key,
+                                prefix,
+                                replace,
+                                quoted: true,
+                            }
+                        }),
+                        Some(Frame::Arr { key: Some(k) }) if k == "keys" => Some(KmSite::Value {
+                            key: "keys".into(),
+                            prefix,
+                            replace,
+                            quoted: true,
+                        }),
+                        _ => None,
+                    };
+                }
+                let s = text.get(i + 1..end).unwrap_or("").to_string();
+                if let Some(Frame::Obj {
+                    cur_key,
+                    after_colon,
+                    expect_key,
+                    ..
+                }) = stack.last_mut()
+                {
+                    if *after_colon {
+                        *after_colon = false;
+                    } else {
+                        *cur_key = Some(s);
+                    }
+                    *expect_key = false;
+                }
+                i = end + 1;
+                continue;
+            }
+            b':' => {
+                if let Some(Frame::Obj { after_colon, .. }) = stack.last_mut() {
+                    *after_colon = true;
+                }
+            }
+            b',' => {
+                if let Some(Frame::Obj {
+                    cur_key,
+                    after_colon,
+                    expect_key,
+                    ..
+                }) = stack.last_mut()
+                {
+                    *cur_key = None;
+                    *after_colon = false;
+                    *expect_key = true;
+                }
+            }
+            b'{' => {
+                let parent = match stack.last() {
+                    Some(Frame::Arr { key }) => key.clone(),
+                    // 배열 밖의 객체(키 값으로 바로 온 객체 = `args`) = 그 키.
+                    Some(Frame::Obj { cur_key, .. }) => cur_key.clone().or(Some("?".into())),
+                    None => Some("?".into()),
+                };
+                stack.push(Frame::Obj {
+                    parent,
+                    cur_key: None,
+                    after_colon: false,
+                    expect_key: true,
+                });
+            }
+            b'[' => {
+                let key = match stack.last() {
+                    Some(Frame::Obj {
+                        cur_key,
+                        after_colon: true,
+                        ..
+                    }) => cur_key.clone(),
+                    _ => None,
+                };
+                stack.push(Frame::Arr { key });
+            }
+            b'}' | b']' => {
+                stack.pop();
+                if let Some(Frame::Obj {
+                    after_colon,
+                    expect_key,
+                    ..
+                }) = stack.last_mut()
+                {
+                    *after_colon = false;
+                    *expect_key = false;
+                }
+            }
+            b' ' | b'\t' | b'\r' | b'\n' => {}
+            _ => {
+                // 따옴표 없는 값(true · 숫자) = 지나간다.
+                if let Some(Frame::Obj {
+                    after_colon,
+                    expect_key,
+                    ..
+                }) = stack.last_mut()
+                {
+                    *after_colon = false;
+                    *expect_key = false;
+                }
+            }
+        }
+        i += 1;
+    }
+    // 문자열 밖(따옴표를 아직 안 쳤다).
+    match stack.last() {
+        Some(Frame::Obj {
+            parent,
+            expect_key: true,
+            after_colon: false,
+            ..
+        }) => match parent.as_deref() {
+            None => Some(KmSite::Key {
+                ctx: false,
+                prefix: String::new(),
+                replace: caret..caret,
+                quoted: false,
+            }),
+            Some("context") => Some(KmSite::Key {
+                ctx: true,
+                prefix: String::new(),
+                replace: caret..caret,
+                quoted: false,
+            }),
+            _ => None,
+        },
+        Some(Frame::Obj {
+            parent,
+            cur_key,
+            after_colon: true,
+            ..
+        }) => km_value_key(parent.as_deref(), cur_key.as_deref()).map(|key| KmSite::Value {
+            key,
+            prefix: String::new(),
+            replace: caret..caret,
+            quoted: false,
+        }),
+        Some(Frame::Arr { key: Some(k) }) if k == "keys" => Some(KmSite::Value {
+            key: "keys".into(),
+            prefix: String::new(),
+            replace: caret..caret,
+            quoted: false,
+        }),
+        _ => None,
+    }
+}
+
+/// context 조건 키(`app/input.rs` `ContextSource for App`와 같은 목록 · `setting.` 접두는 글자 그대로).
+pub(crate) const KEYMAP_CONTEXT_KEYS: &[&str] = &[
+    "selector",
+    "selection_empty",
+    "has_selection",
+    "num_selections",
+    "preceding_text",
+    "following_text",
+    "text",
+    "read_only",
+    "focus",
+    "panel",
+    "panel_visible",
+    "panel_has_focus",
+    "overlay_visible",
+    "auto_complete_visible",
+    "connected",
+    "dialect",
+    "setting.",
+];
+const KEYMAP_OPERATORS: &[&str] = &[
+    "equal",
+    "not_equal",
+    "regex_match",
+    "not_regex_match",
+    "regex_contains",
+    "not_regex_contains",
+];
+const KEYMAP_MODIFIERS: &[&str] = &["ctrl+", "shift+", "alt+", "super+"];
+const KEYMAP_KEY_NAMES: &[&str] = &[
+    "enter",
+    "tab",
+    "space",
+    "escape",
+    "backspace",
+    "delete",
+    "insert",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+    "up",
+    "down",
+    "left",
+    "right",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+];
+
+/// 키맵 자리의 후보 — `commands` = (명령 id, 라벨 "메뉴: 항목") 호스트가 팔레트 표에서. 따옴표 밖이면 `"…"`를 붙인다.
+pub(crate) fn keymap_candidates(site: &KmSite, commands: &[(String, String)]) -> Vec<Cand> {
+    let quoted = site.quoted();
+    let q = |s: &str| {
+        if quoted {
+            s.to_string()
+        } else {
+            format!("\"{s}\"")
+        }
+    };
+    let plain = |list: &[&str]| -> Vec<Cand> {
+        list.iter()
+            .enumerate()
+            .map(|(i, k)| cand(q(k), String::new(), i as u32, 0))
+            .collect()
+    };
+    match site {
+        KmSite::Key { ctx: false, .. } => plain(&["keys", "command", "args", "context"]),
+        KmSite::Key { ctx: true, .. } => plain(&["key", "operator", "operand", "match_all"]),
+        KmSite::Value { key, prefix, .. } => match key.as_str() {
+            "command" => commands
+                .iter()
+                .enumerate()
+                .map(|(i, (id, label))| cand(q(id), label.clone(), i as u32, 0))
+                .collect(),
+            "context.key" => plain(KEYMAP_CONTEXT_KEYS),
+            "context.operator" => plain(KEYMAP_OPERATORS),
+            "keys" => {
+                // `ctrl+shift+` 뒤 = 키 이름만(앞 조각은 그대로 붙여 교체 구간과 맞춤) · 처음 = 수식키 + 키 이름.
+                let head = prefix.rfind('+').map_or("", |p| &prefix[..=p]);
+                let mut out: Vec<String> = Vec::new();
+                if head.is_empty() {
+                    out.extend(KEYMAP_MODIFIERS.iter().map(|m| q(m)));
+                } else {
+                    out.extend(
+                        KEYMAP_MODIFIERS
+                            .iter()
+                            .filter(|m| !head.contains(&m[..m.len() - 1]))
+                            .map(|m| q(&format!("{head}{m}"))),
+                    );
+                }
+                out.extend(KEYMAP_KEY_NAMES.iter().map(|k| q(&format!("{head}{k}"))));
+                out.into_iter()
+                    .enumerate()
+                    .map(|(i, text)| cand(text, String::new(), i as u32, 0))
+                    .collect()
+            }
+            _ => Vec::new(),
+        },
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -508,5 +884,84 @@ mod tests {
             "{cands:?}"
         );
         assert!(cands.iter().all(|c| c.text.starts_with("editor.")));
+    }
+
+    /// ★ T-76 ③(10-31): 키맵 파일 자리 — 바인딩 키(따옴표 안/밖) · `command` 값 · `keys` 원소(수식키 뒤 = 키 이름만) · context 객체 키/값 ·
+    /// `args` 안·`operand` = None · 후보 조립(명령 라벨 · 조합 글 접두 유지).
+    #[test]
+    fn keymap_site_and_candidates() {
+        let src = r#"[
+  { "keys": ["ctrl+s"], "command": "file.save" },
+  { "keys": ["ctrl+shift+"], "command": "run.", "args": {"x": "y"},
+    "context": [ { "key": "sel", "operator": "equ", "operand": "editor" } ] },
+  { "
+]"#;
+        let at = |needle: &str, back: usize| -> usize {
+            src.find(needle).expect(needle) + needle.len() - back
+        };
+        // `"ctrl+shift+"` 안 끝 = keys 원소 · 접두 유지.
+        let s = keymap_site_at(src, at("\"ctrl+shift+", 0)).expect("keys");
+        assert!(
+            matches!(&s, KmSite::Value { key, prefix, quoted: true, .. } if key == "keys" && prefix == "ctrl+shift+")
+        );
+        let c = keymap_candidates(&s, &[]);
+        assert!(
+            c.iter().any(|c| c.text == "ctrl+shift+f5"),
+            "{:?}",
+            c.iter().map(|c| &c.text).collect::<Vec<_>>()
+        );
+        assert!(
+            c.iter().any(|c| c.text == "ctrl+shift+alt+"),
+            "남은 수식키만"
+        );
+        assert!(!c.iter().any(|c| c.text == "ctrl+shift+ctrl+"));
+        // `"run."` 안 = command 값 · 명령 후보 라벨.
+        let s = keymap_site_at(src, at("\"run.", 0)).expect("command");
+        assert!(
+            matches!(&s, KmSite::Value { key, prefix, .. } if key == "command" && prefix == "run.")
+        );
+        let cmds = vec![("run.statement".to_string(), "Run: Statement".to_string())];
+        let c = keymap_candidates(&s, &cmds);
+        assert_eq!(
+            (c[0].text.as_str(), c[0].detail.as_str()),
+            ("run.statement", "Run: Statement")
+        );
+        // args 안 = None.
+        assert_eq!(keymap_site_at(src, at("\"x\": \"y", 0)), None);
+        // context 객체: key 값 · operator 값 · operand = None · 객체 키.
+        let s = keymap_site_at(src, at("\"sel", 0)).expect("ctx key");
+        assert!(matches!(&s, KmSite::Value { key, .. } if key == "context.key"));
+        assert!(keymap_candidates(&s, &[])
+            .iter()
+            .any(|c| c.text == "preceding_text"));
+        let s = keymap_site_at(src, at("\"equ", 0)).expect("op");
+        assert!(matches!(&s, KmSite::Value { key, .. } if key == "context.operator"));
+        assert_eq!(keymap_site_at(src, at("\"editor", 0)), None, "operand");
+        let s = keymap_site_at(src, at("\"operator", 0)).expect("ctx obj key");
+        assert!(matches!(&s, KmSite::Key { ctx: true, prefix, .. } if prefix == "operator"));
+        // 새 바인딩 객체의 첫 키(따옴표 안 · 빈 접두) · 따옴표 밖(`{ ` 뒤) = 후보에 따옴표를 붙인다.
+        let s = keymap_site_at(src, at("{ \"\n]", 2)).expect("new key");
+        assert!(matches!(
+            &s,
+            KmSite::Key {
+                ctx: false,
+                quoted: true,
+                ..
+            }
+        ));
+        let s = keymap_site_at(src, at("{ \"\n]", 3)).expect("new key unquoted");
+        assert!(matches!(
+            &s,
+            KmSite::Key {
+                ctx: false,
+                quoted: false,
+                ..
+            }
+        ));
+        let c = keymap_candidates(&s, &[]);
+        assert_eq!(
+            c.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+            ["\"keys\"", "\"command\"", "\"args\"", "\"context\""]
+        );
     }
 }
