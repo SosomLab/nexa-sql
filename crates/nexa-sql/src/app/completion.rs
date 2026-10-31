@@ -266,12 +266,10 @@ impl App {
     }
 
     /// 확정 글자를 편집기에(접두 구간 교체 · `caret_back` = `NAME()` 안으로).
-    /// ★ T-76 ②(10-30): settings.json 스키마 힌트 — 캐럿 자리(키/값 · 둘러싼 객체 경로)를 읽어 레지스트리 후보를 **외부 모드** 팝업으로.
-    ///   1차는 Ctrl+Space(수동)만(글자 입력 자동 트리거는 SQL 규칙이라 JSON에 맞지 않음) · 자리가 아니면(배열 안 · 값 뒤) 아무것도 안 한다.
+    /// ★ T-76 ②(10-30 1차 · 10-31 2차): settings.json 스키마 힌트 — 캐럿 자리(키/값 · 둘러싼 객체 경로)를 읽어 레지스트리 후보를 **외부 모드**
+    ///   팝업으로. 수동(Ctrl+Space) = 늘 · 자동(글자 입력 · `after_char` 규칙 = 자동 켬·최소 글자 수) = **접두가 있을 때만**(따옴표 안에서 글자를
+    ///   치기 시작하면 뜨고, 빈 자리에서는 뜨지 않는다) · 자리가 아니면(배열 안 · 값 뒤) 아무것도 안 한다 · 후보마다 상세 카드(`Target::Setting`).
     fn intel_request_settings(&mut self, manual: bool) {
-        if !manual {
-            return;
-        }
         let tab = self.editors.tab_id(self.editors.active());
         let (text, caret_c, anchor) = {
             let ed = self.editors.cur();
@@ -284,6 +282,9 @@ impl App {
         let Some(site) = crate::settings_hint::site_at(&text, caret_b) else {
             return;
         };
+        if !manual && site.prefix().is_empty() {
+            return;
+        }
         let cands = crate::settings_hint::candidates(&site);
         let host = self
             .window

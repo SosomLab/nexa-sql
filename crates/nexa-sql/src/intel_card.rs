@@ -24,6 +24,11 @@ pub(crate) enum Target {
     Word(String),
     /// (넣을 본문, 이름 — `모든 컬럼 (N)`).
     Snippet(String, String),
+    /// ★ T-76 ②(10-31): settings.json 스키마 힌트의 설정 항목(`entries_all()` index · 값 후보면 선택지 index).
+    Setting {
+        idx: usize,
+        value: Option<u16>,
+    },
     None,
 }
 
@@ -34,6 +39,14 @@ impl Target {
         match (kind, c.kind) {
             (1, _) => Target::Column(id, (c.tag & 0xFFFF) as u16),
             (2, _) => Target::Object(id),
+            (3, _) => Target::Setting {
+                idx: (c.tag & 0xFF_FFFF_FFFF_FFFF) as usize,
+                value: None,
+            },
+            (4, _) => Target::Setting {
+                idx: ((c.tag >> 16) & 0xFF_FFFF_FFFF) as usize,
+                value: Some((c.tag & 0xFFFF) as u16).filter(|v| *v != 0xFFFF),
+            },
             (_, CandKind::Function) => Target::Function(c.text.clone()),
             (_, CandKind::Schema) => Target::Schema(c.text.clone()),
             (_, CandKind::Keyword) => Target::Keyword(c.text.clone()),
@@ -293,6 +306,32 @@ pub(crate) fn build(
             card.title = k.clone();
             card.subtitle = t(Msg::CardKeyword).into();
         }
+        // ★ T-76 ② 설정 항목 카드: 키 · 라벨 · 설명 · 기본값 · 허용값 · 분류(+ 값 후보면 그 선택지).
+        Target::Setting { idx, value } => {
+            let e = *nsql_settings::entries_all().get(*idx)?;
+            card.title = e.key.to_string();
+            card.subtitle = t(e.label).into();
+            card.rows
+                .push((t(Msg::CardDescription).into(), t(e.desc).to_string()));
+            card.rows.push((
+                t(Msg::CardDefault).into(),
+                if e.default.is_empty() {
+                    "-".into()
+                } else {
+                    e.default.to_string()
+                },
+            ));
+            card.rows
+                .push((t(Msg::CardAllowed).into(), nsql_settings::allowed(e.kind)));
+            card.rows
+                .push((t(Msg::CardCategory).into(), t(e.cat).to_string()));
+            if let (Some(v), nsql_settings::SettingKind::Choice(list)) = (value, e.kind) {
+                if let Some((val, label)) = list.get(*v as usize) {
+                    card.rows
+                        .push((t(Msg::CardValue).into(), format!("{val} = {}", t(*label))));
+                }
+            }
+        }
         Target::Word(w) => {
             card.title = w.clone();
             card.subtitle = t(Msg::CardDocWord).into();
@@ -551,5 +590,36 @@ mod tests {
                 == t(Msg::CardKeyword)
         );
         assert!(build(&Target::None, &m.names, &snap, None).is_none());
+    }
+
+    /// ★ T-76 ②: 설정 항목 카드 — 키 제목 · 라벨 · 설명/기본값/허용값/분류 행 · 값 후보면 선택지 행.
+    #[test]
+    fn setting_card_rows() {
+        let all = nsql_settings::entries_all();
+        let idx = all
+            .iter()
+            .position(|e| e.key == "format.comma")
+            .expect("format.comma");
+        let m = MetaStore::new(1 << 20);
+        let snap = m.snapshot();
+        let card = build(
+            &Target::Setting {
+                idx,
+                value: Some(0),
+            },
+            &m.names,
+            &snap,
+            None,
+        )
+        .expect("card");
+        assert_eq!(card.title, "format.comma");
+        let labels: Vec<&str> = card.rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(labels.contains(&t(Msg::CardDefault)), "{labels:?}");
+        assert!(labels.contains(&t(Msg::CardAllowed)));
+        assert!(
+            card.rows.iter().any(|(_, v)| v.starts_with("leading = ")),
+            "{:?}",
+            card.rows
+        );
     }
 }

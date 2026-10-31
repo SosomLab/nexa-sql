@@ -6,7 +6,7 @@
 
 use nsql_i18n::t;
 use nsql_script::intel::{Cand, CandKind};
-use nsql_settings::{entries_all, entry, SettingKind};
+use nsql_settings::{entries_all, SettingKind};
 use std::ops::Range;
 
 /// 캐럿 자리.
@@ -213,13 +213,18 @@ fn full_key(path: &[String], last: Option<&str>) -> String {
     k
 }
 
-fn cand(text: String, detail: String, order: u32) -> Cand {
+/// ★ T-76 ②(10-31) 상세 카드 꼬리표: 키 후보 = `3<<56 | 항목 index` · 값 후보 = `4<<56 | 항목 index<<16 | 값 index`(0xFFFF = 값 index 없음) ·
+///   index = `entries_all()` 순서(같은 세션 안에서 고정) · 카드는 `intel_card::Target::Setting`.
+pub(crate) const TAG_SETTING_KEY: u64 = 3 << 56;
+pub(crate) const TAG_SETTING_VALUE: u64 = 4 << 56;
+
+fn cand(text: String, detail: String, order: u32, tag: u64) -> Cand {
     Cand {
         text,
         kind: CandKind::Keyword,
         detail,
         source: 5,
-        tag: 0,
+        tag,
         mark: String::new(),
         order,
         qualifier: String::new(),
@@ -241,7 +246,7 @@ pub(crate) fn candidates(site: &Site) -> Vec<Cand> {
     match site {
         Site::Key { path, .. } => {
             let mut out: Vec<Cand> = Vec::new();
-            for e in entries_all() {
+            for (idx, e) in entries_all().into_iter().enumerate() {
                 if nsql_settings::is_internal(e.key) {
                     continue;
                 }
@@ -260,14 +265,24 @@ pub(crate) fn candidates(site: &Site) -> Vec<Cand> {
                     "…".to_string()
                 };
                 let n = out.len() as u32;
-                out.push(cand(q(next), detail, n));
+                let tag = if leaf {
+                    TAG_SETTING_KEY | idx as u64
+                } else {
+                    0
+                };
+                out.push(cand(q(next), detail, n, tag));
             }
             out
         }
         Site::Value { key, .. } => {
-            let Some(e) = entry(key) else {
+            let Some((idx, e)) = entries_all()
+                .into_iter()
+                .enumerate()
+                .find(|(_, x)| x.key == key)
+            else {
                 return Vec::new();
             };
+            let vtag = |vi: u64| TAG_SETTING_VALUE | ((idx as u64) << 16) | vi;
             let mut out: Vec<Cand> = Vec::new();
             match e.kind {
                 SettingKind::Bool => {
@@ -281,19 +296,25 @@ pub(crate) fn candidates(site: &Site) -> Vec<Cand> {
                                 String::new()
                             },
                             i as u32,
+                            vtag(0xFFFF),
                         ));
                     }
                 }
                 SettingKind::Choice(list) => {
                     for (i, (v, label)) in list.iter().enumerate() {
-                        out.push(cand(q(v), t(*label).to_string(), i as u32));
+                        out.push(cand(q(v), t(*label).to_string(), i as u32, vtag(i as u64)));
                     }
                 }
                 SettingKind::Int { min, max } | SettingKind::Size { min, max } => {
-                    out.push(cand(e.default.to_string(), format!("{min}~{max}"), 0));
+                    out.push(cand(
+                        e.default.to_string(),
+                        format!("{min}~{max}"),
+                        0,
+                        vtag(0xFFFF),
+                    ));
                 }
                 _ => {
-                    out.push(cand(q(e.default), t(e.label).to_string(), 0));
+                    out.push(cand(q(e.default), t(e.label).to_string(), 0, vtag(0xFFFF)));
                 }
             }
             out
@@ -436,5 +457,33 @@ mod tests {
             quoted: true,
         })
         .is_empty());
+    }
+
+    /// ★ T-76 ②: 카드 꼬리표 — 키 후보(말단) = `TAG_SETTING_KEY | index` · 중간 경로(`…`) = 0 · 값 후보 = `TAG_SETTING_VALUE` + 항목·값 index.
+    #[test]
+    fn candidates_carry_setting_tags() {
+        let s = r#"{"editor": {"tab_"#;
+        let site = site_at(s, s.len()).unwrap();
+        let cands = candidates(&site);
+        let tab = cands
+            .iter()
+            .find(|c| c.text == "tab_size")
+            .expect("editor.tab_size 후보");
+        assert_eq!(tab.tag >> 56, 3);
+        let idx = (tab.tag & 0xFF_FFFF_FFFF_FFFF) as usize;
+        assert_eq!(entries_all()[idx].key, "editor.tab_size");
+        let s2 = r#"{"format": {"comma": "#;
+        let site2 = site_at(s2, s2.len()).unwrap();
+        let vals = candidates(&site2);
+        assert!(vals.iter().all(|c| c.tag >> 56 == 4), "{vals:?}");
+        let lead = vals
+            .iter()
+            .find(|c| c.text.contains("leading"))
+            .expect("leading");
+        assert_eq!(lead.tag & 0xFFFF, 0, "첫 선택지 index");
+        assert_eq!(
+            entries_all()[((lead.tag >> 16) & 0xFF_FFFF_FFFF) as usize].key,
+            "format.comma"
+        );
     }
 }
