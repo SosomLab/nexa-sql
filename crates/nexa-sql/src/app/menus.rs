@@ -798,6 +798,9 @@ impl App {
             "edit.format" => self.format_sql_cmd(),
             "edit.format_with" => self.format_with_cmd(),
             "edit.format_preview" => self.format_preview_cmd(),
+            // ★ 포맷 프리셋(D-431): 팔레트 목록 · 토스트 [되돌리기].
+            "edit.format_preset" => self.format_preset_cmd(),
+            "format.preset_undo" => self.format_preset_undo_cmd(),
             x if x.starts_with("format.") => self.format_pick(x),
             "intel.refresh" | "intel.refresh_server" | "intel.refresh_all" => {
                 self.intel_refresh(id)
@@ -1465,6 +1468,7 @@ impl App {
                     item("edit.format", Msg::MnFormatSql),
                     item("edit.format_with", Msg::MnFormatWith),
                     item("edit.format_preview", Msg::MnFormatPreview),
+                    item("edit.format_preset", Msg::MnFormatPreset),
                     MenuEntry::Separator,
                     // 인텔리센스 캐시 새로 고침(79 §4 · 현재 스키마 · 이 서버 · 전 서버).
                     item("intel.refresh", Msg::MnIntelRefresh),

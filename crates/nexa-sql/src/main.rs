@@ -674,6 +674,9 @@ struct App {
     hover_area: Option<Focus>,
     /// ★ SQL 포맷 미리보기(엔진 id, 원본) — 미리보기 탭이 열려 있는 동안 설정 변경마다 다시 그린다(docs/95).
     format_preview: Option<(String, String)>,
+    /// ★ 포맷 프리셋(D-431): 적용 직전의 스타일 키 값(JSON · [되돌리기] 토스트 5초가 소비) · 적용 중 표시(프리셋 키 재적용 루프 방지).
+    format_preset_undo: Option<String>,
+    format_preset_applying: bool,
     /// 탐색기 유휴 워터마크의 다음 시각(docs/57 T2).
     meta_refresh_next: Option<Instant>,
     /// 외부 파일 변경(docs/58): 감시 스레드(처음 쓸 때 만든다) · 탭별 상태 · 확인 띠 · 다음 폴링 · 메인 창 활성 여부 ·
@@ -2091,6 +2094,8 @@ fn main() {
         refetch_force: false,
         hover_area: None,
         format_preview: None,
+        format_preset_undo: None,
+        format_preset_applying: false,
         meta_refresh_next: None,
         ext_watch: None,
         ext_files: HashMap::new(),
@@ -2348,6 +2353,8 @@ fn main() {
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
     nsql_drivers::set_odbc_cancel(app.settings.get("odbc.cancel").unwrap_or("auto"));
     app.apply_tab_accent();
+    // ★ 포맷 프리셋(D-431): 기동 때 한 번 — settings.json을 밖에서 고쳤어도 표시 이름이 실제 값과 맞게.
+    app.format_preset_sync();
     app.apply_extensions(None);
     app.apply_window_sizes();
     app.editors

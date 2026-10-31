@@ -303,6 +303,8 @@ pub const OPTION_KEYS: &[&str] = &[
     // ★ T-255(10-31): 호스트(CLI·GUI)는 이 표로만 format.*을 모은다 — from_pairs에 키를 더하면 여기도(협업 V1 19차 교훈).
     "indent_style",
     "plsql",
+    // ★ 포맷 프리셋 이름(D-431 · 호스트 표시용 · 포매터는 무시 — 레지스트리 ⊆ OPTION_KEYS 시험 때문에 등재).
+    "preset",
     "keyword_case",
     "identifier_case",
     "function_case",

@@ -226,6 +226,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("edit.format", Msg::MnEdit, Msg::MnFormatSql),
     p("edit.format_with", Msg::MnEdit, Msg::MnFormatWith),
     p("edit.format_preview", Msg::MnEdit, Msg::MnFormatPreview),
+    p("edit.format_preset", Msg::MnEdit, Msg::MnFormatPreset),
     p("intel.refresh", Msg::MnEdit, Msg::MnIntelRefresh),
     p(
         "intel.refresh_server",

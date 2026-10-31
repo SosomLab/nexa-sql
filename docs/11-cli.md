@@ -14,6 +14,7 @@ nsql import   -c <연결> --table t --from file [--format …] [--mode insert|up
 nsql bulk     -c <연결> --table t --from file       # ★ 방언별 네이티브 대량 적재(§3)
 nsql desc     -c <연결> <object>                    # DESCRIBE
 nsql conn     list|add|show|rm|test|path              # ✅ 연결 프로필(사용자 폴더 암호화 저장 · GUI와 공유 · [21](21-connection-profiles.md))
+nsql format   [<file|->] [-o file] [--in-place] [-d dialect] [--preset default|kiros33|river]   # ✅ Basic 포매터 · `--preset` = 그 실행만 프리셋 덮음(설정 불변 · 모르는 이름 = 종료 2 · D-431 · [95 §12](95-sql-formatter.md))
 ```
 
 - `-c <연결>` = ✅ 프로필 이름 또는 접속 문자열(`oracle://u@h:1521/svc` · `mssql://…` · `u/p@tns`). 스크립트 `CONNECT <이름>`도 프로필을 쓴다.

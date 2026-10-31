@@ -2185,6 +2185,8 @@ impl App {
         self.prefs_win.set_info(dbms_info_values());
         self.prefs_win
             .set_advanced(self.settings.flag("ui.prefs_advanced"));
+        // ★ 포맷 프리셋(D-431): 설정 창을 열 때 일치 이름을 맞춘다(CLI·외부 편집 뒤).
+        self.format_preset_sync();
         self.prefs_win.refresh(&self.settings);
         // ★ T-39b 범위 스위치 "프로젝트" + 카드 덧말(열 때마다 맞춘다) · D-428 기억된 상태.
         self.prefs_win

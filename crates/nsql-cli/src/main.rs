@@ -8,6 +8,7 @@
 //! nsql bookmark list [--project <file>] [--doc <path>] [--md] | add <file> <line> [--label <text>] | rm <id> | prune [--days N]
 //! nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path
 //! nsql config list | get <key> | set <key> <value> | reset <key> | path     # 앱 설정(ui.lang · ui.theme …) — GUI와 공유
+//! nsql format [-d dialect] [--preset default|kiros33|river] [--in-place | -o file] <file|->   # Basic 포맷터(설정 format.* · 프리셋은 그 위에)
 //! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
@@ -61,6 +62,8 @@ struct Opts {
     fast: bool,
     /// `nsql format --in-place`(T-255).
     in_place: bool,
+    /// `nsql format --preset <이름>`(D-431): 내장 프리셋 값을 설정 위에 덮는다(설정은 안 바꿈).
+    preset: Option<String>,
     /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
     timing: bool,
     /// `--timing=json` — 같은 내용을 줄마다 JSON 객체로(T-47 · 스크립트·CI가 파싱 · 10-29).
@@ -138,6 +141,7 @@ fn parse_opts() -> Opts {
         empty_null: None,
         fast: false,
         in_place: false,
+        preset: None,
         timing: false,
         timing_json: false,
         log: false,
@@ -267,6 +271,7 @@ fn parse_opts() -> Opts {
             }
             "--fast" => o.fast = true,
             "--in-place" => o.in_place = true,
+            "--preset" => o.preset = Some(val("--preset")),
             "--log" => o.log = true,
             _ => o.positional.push(a),
         }
@@ -2215,6 +2220,19 @@ fn cmd_format(o: &Opts) -> i32 {
         .collect();
     // ★ T-255 v2: 원천 방언 힌트 = `-d`(기본 oracle) — PL/SQL 블록 규칙 표(T-SQL·PL/pgSQL) 선택.
     pairs.push(("dialect".to_string(), o.dialect.to_string()));
+    // ★ 포맷 프리셋(D-431): `--preset`이면 내장 값을 설정 위에 덮는다(파일·설정은 그대로).
+    if let Some(name) = &o.preset {
+        let Some(pp) = nsql_settings::format_preset_pairs(name) else {
+            eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliErrPreset, &[name]));
+            return 2;
+        };
+        for (k, v) in pp {
+            match pairs.iter_mut().find(|(kk, _)| kk == k) {
+                Some(e) => e.1 = v.to_string(),
+                None => pairs.push((k.to_string(), v.to_string())),
+            }
+        }
+    }
     let opts =
         nsql_format::Options::from_pairs(pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     let out = nsql_format::format_basic(&src, &opts);

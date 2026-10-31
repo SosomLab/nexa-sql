@@ -253,8 +253,26 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                 Ok(s) => s,
                 Err(c) => return c,
             };
+            // ★ 포맷 프리셋(D-431 · 협업 35차 관찰): `format.preset`은 GUI와 같은 뜻 = 그 프리셋의 스타일 키를 **복사**(이름만 적지 않는다) ·
+            //   `custom`은 고를 것이 없다 · 스타일 키를 바꾸면 일치 이름을 `format.preset`에 맞춘다(표시 불일치 방지).
+            if key == "format.preset" {
+                let Some(pairs) = nsql_settings::format_preset_pairs(value) else {
+                    eprintln!("{}", tf(Msg::CliErrPreset, &[value]));
+                    return 2;
+                };
+                for (k, v) in pairs {
+                    if let Err(e) = s.set(k, v) {
+                        eprintln!("{e}");
+                        return 2;
+                    }
+                }
+            }
             match s.set(key, value) {
                 Ok(n) => {
+                    if nsql_settings::is_format_style_key(key) {
+                        let m = nsql_settings::format_preset_match(&|k| s.get(k));
+                        let _ = s.set("format.preset", m);
+                    }
                     let code = save(&s);
                     if code == 0 {
                         println!("{}", tf(Msg::CfgSet, &[key, &n]));

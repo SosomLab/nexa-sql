@@ -318,3 +318,19 @@ END p;
 - 분기 표(여는/중간/닫는)는 MC/DC 대상(52 §12 규칙).
 - 표본 소스는 **익명화한 것만** 저장소에(실제 업무 패키지 금지).
 - 난이도 = `indent` 중 · `full` 중(+) · 렌더·Walker 변경은 `format_statement` 기준 깊이 한 곳.
+
+## 12. 포맷 프리셋 — `format.preset = default|kiros33|river|custom`(10-31 · D-431 · 192차 35차 · ✅ 구현)
+
+> 요청(사용자 10-31 저녁) = 현재 설정 → `kiros33` · 기본값 → `Default` · river용 → `River` 프리셋을 만들고 포맷 설정에서 골라 묶음으로 바꾸게. 설정 먼저 규칙으로 먼저 설정 창 **Import…** + 프리셋 JSON 3개를 안내했고(journal §19) → 사용자가 개발로 확정(AskUserQuestion 2회 답 · 개발 세션) → [journal 10-31 §20](journal/2026-10-31.md).
+
+| 항목 | 결정(D-431) |
+|---|---|
+| 대상 | 내장 Basic 포매터 옵션만(스타일 키 = `format.*` − `format.default` · `format.max_kb` · `format.preset` = `is_format_style_key`) |
+| 프리셋 | 내장 3개만(사용자 저장 없음) · `default` = 레지스트리 기본값에서 생성 · `kiros33` = 기본값과 다른 12키(간격 4종 tab · comma leading · cond_indent same · function_case upper · where_seed · paren_seed · auto_alias · column_alias_all · semicolon_newline on) · `river` = 2키(indent_style river · comma leading) · 표 = `nsql_settings::FORMAT_PRESETS` |
+| 적용 | **복사** — 고르는 순간 스타일 키 값을 설정에 써 넣음(`apply_settings_json_text` 한 길 = 저장·반영·설정 창·미리보기 갱신 · 재진입 가드) · 즉시 적용 + 5초 [되돌리기] 토스트(`format.preset_undo` · 적용 전 스냅숏) |
+| 상태 표시 | 스타일 키가 바뀌면 일치하는 프리셋 이름을 `format.preset`에 동기 · 없으면 `custom` |
+| 진입점 4 | ① 설정 창 SQL Formatting 맨 위 "Preset" 드롭다운(기존 Choice 카드 · 라이브 미리보기) ② 미리보기와 같은 창 ③ 팔레트 "Format preset…"(`edit.format_preset` → `format.preset:<이름>` · 현재 = ✓) + "Format with…" 목록 끝 · Edit 메뉴 ④ CLI `nsql format --preset <이름>`(그 실행만 설정 위에 덮음 · 설정은 안 바꿈 · 모르는 이름 = 종료 2) |
+| 범위 | 프로젝트 설정으로 덮을 수 없음(`project_allowed` 제외) · `OPTION_KEYS`의 `preset` = 포매터가 무시 |
+
+- **V1(10-31 35차 · 협업)** ✓ = 설정 창 Format 첫 카드 `format.preset` · GUI `format.preset:kiros33` → 토스트 "포맷 프리셋 kiros33 적용(옵션 13개 바뀜)" + 5초 되돌리기 · 스타일 키 하나 바꿈 → `custom` · CLI `--preset kiros33/river` 꼴 · `--preset nope` = 종료 2 + 안내 · 팔레트 3행.
+- **관찰(P2 · 개발 판단 대기)** = CLI `nsql config set format.preset river`는 값만 기록하고 프리셋을 적용하지 않음 → 표시 이름과 실제 옵션이 어긋난 채 저장.

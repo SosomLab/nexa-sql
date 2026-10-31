@@ -557,6 +557,13 @@ const FMT_PLSQL_OPTS: &[(&str, Msg)] = &[
     ("indent", Msg::ValFmtPlsqlIndent),
     ("full", Msg::ValFmtPlsqlFull),
 ];
+/// ★ 포맷 프리셋(사용자 10-31 · D-431): 내장 3 + `custom`(어느 프리셋과도 다름 · 표시용).
+const FMT_PRESET_OPTS: &[(&str, Msg)] = &[
+    ("default", Msg::ValFmtPresetDefault),
+    ("kiros33", Msg::ValFmtPresetKiros33),
+    ("river", Msg::ValFmtPresetRiver),
+    ("custom", Msg::ValFmtPresetCustom),
+];
 /// 간격 3택 = 활성 탭 설정 / 공백 / 탭(사용자 09-30 · 인라인 주석 앞).
 const FMT_GAP3_OPTS: &[(&str, Msg)] = &[
     ("editor", Msg::ValActiveTab),
@@ -1271,6 +1278,16 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExtTabBadge,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // ★ 포맷 프리셋(사용자 10-31 · D-431 · 95 §24): Basic 옵션 묶음을 한 번에 — 값 = 지금 `format.*` 스타일 키와 전부 일치하는 내장 프리셋
+    //   이름(없으면 `custom`) · 고르면 호스트가 그 프리셋의 키 값을 **복사**(되돌리기 토스트 5초) · 내장 = default(레지스트리 기본값) · kiros33 · river.
+    Entry {
+        key: "format.preset",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtPreset,
+        desc: Msg::DescFmtPreset,
+        kind: SettingKind::Choice(FMT_PRESET_OPTS),
+        default: "default",
     },
     // ★ SQL 포맷(docs/95 · 사용자 09-28): 기본 포맷터 + Basic·확장 공용 옵션(`format.*`).
     Entry {
@@ -7606,13 +7623,72 @@ pub fn project_allowed(key: &str) -> bool {
         "editor.minimap_min_cols",
     ];
     const ALLOW_EXACT: &[&str] = &["grid.null_text", "intel.insert_case", "intel.insert_alias"];
-    if DENY_EDITOR.contains(&key) {
+    // ★ D-431: `format.preset`은 "고르면 다른 키를 복사하는" 동작 키라 프로젝트 겹침 값으로 두지 않는다(전역에서만).
+    if DENY_EDITOR.contains(&key) || key == "format.preset" {
         return false;
     }
     key.starts_with("editor.")
         || key.starts_with("format.")
         || key.starts_with("script.define")
         || ALLOW_EXACT.contains(&key)
+}
+
+#[cfg(test)]
+mod format_preset_tests {
+    use super::*;
+
+    /// ★ D-431: 내장 프리셋 3 · 차이 키는 전부 레지스트리에 있고 값은 그 종류에 맞음 · `default` = 전부 기본값 · pairs = 스타일 키 전부 ·
+    /// 일치 판정(프리셋 값 그대로 = 이름 · 한 키만 달라도 custom · 빈 설정 = default) · 모르는 이름 = None · 스타일 키 거름.
+    #[test]
+    fn presets_valid_and_match() {
+        let style: Vec<&str> = REGISTRY
+            .iter()
+            .filter(|e| is_format_style_key(e.key))
+            .map(|e| e.key)
+            .collect();
+        assert!(style.len() >= 30, "{}", style.len());
+        assert!(!style.contains(&"format.default") && !style.contains(&"format.preset"));
+        for (name, diffs) in FORMAT_PRESETS {
+            for (k, v) in *diffs {
+                let e = REGISTRY
+                    .iter()
+                    .find(|e| e.key == *k)
+                    .unwrap_or_else(|| panic!("{name}: {k} not in REGISTRY"));
+                match e.kind {
+                    SettingKind::Bool => assert!(matches!(*v, "on" | "off"), "{name} {k}={v}"),
+                    SettingKind::Choice(list) => {
+                        assert!(list.iter().any(|(o, _)| o == v), "{name} {k}={v}")
+                    }
+                    _ => {}
+                }
+                assert_ne!(*v, e.default, "{name} {k}: 차이 목록에 기본값과 같은 값");
+            }
+            let pairs = format_preset_pairs(name).expect("pairs");
+            assert_eq!(pairs.len(), style.len(), "{name}");
+            // 프리셋 값 그대로면 그 이름.
+            let m =
+                format_preset_match(&|k| pairs.iter().find(|(kk, _)| *kk == k).map(|(_, v)| *v));
+            assert_eq!(m, *name);
+        }
+        assert_eq!(
+            format_preset_match(&|_| None),
+            "default",
+            "빈 설정 = 기본값"
+        );
+        let river = format_preset_pairs("River").expect("대소문자 무시");
+        assert!(river
+            .iter()
+            .any(|(k, v)| *k == "format.indent_style" && *v == "river"));
+        let m = format_preset_match(&|k| {
+            if k == "format.indent_style" {
+                Some("river")
+            } else {
+                None
+            }
+        });
+        assert_eq!(m, "custom", "comma는 기본 trailing이라 river와 다름");
+        assert!(format_preset_pairs("nope").is_none());
+    }
 }
 
 #[cfg(test)]
@@ -8526,6 +8602,85 @@ pub const HIDDEN: &[&str] = &[
 #[must_use]
 pub fn is_hidden(key: &str) -> bool {
     HIDDEN.contains(&key)
+}
+
+/// ★ 포맷 프리셋(사용자 10-31 · D-431 · 95 §24): 내장 3개 — (이름, 레지스트리 기본값과 **다른 키만**) · `default` = 전부 기본값 · 값은
+/// 설정 문자열 꼴. 사용자 프리셋은 두지 않는다(결정). 출처 = 협업 10-31 JSON(kiros33 12 · river 2).
+pub const FORMAT_PRESETS: &[(&str, &[(&str, &str)])] = &[
+    ("default", &[]),
+    (
+        "kiros33",
+        &[
+            ("format.as_gap", "tab"),
+            ("format.auto_alias", "on"),
+            ("format.column_alias_all", "on"),
+            ("format.comma", "leading"),
+            ("format.comma_gap", "tab"),
+            ("format.cond_indent", "same"),
+            ("format.function_case", "upper"),
+            ("format.logical_gap", "tab"),
+            ("format.operator_gap", "tab"),
+            ("format.paren_seed", "on"),
+            ("format.semicolon_newline", "on"),
+            ("format.where_seed", "on"),
+        ],
+    ),
+    (
+        "river",
+        &[
+            ("format.comma", "leading"),
+            ("format.indent_style", "river"),
+        ],
+    ),
+];
+
+/// 프리셋이 다루는 **스타일 키**인가 = `format.*` 중 엔진 선택(`format.default`) · 상한(`format.max_kb`) · 프리셋 자체를 뺀 것.
+#[must_use]
+pub fn is_format_style_key(key: &str) -> bool {
+    key.starts_with("format.")
+        && !matches!(key, "format.default" | "format.max_kb" | "format.preset")
+}
+
+/// 프리셋 이름 → 스타일 키 **전부**의 값(기본값 위에 차이를 덮음 · 레지스트리 순) · 모르는 이름 = None.
+#[must_use]
+pub fn format_preset_pairs(name: &str) -> Option<Vec<(&'static str, &'static str)>> {
+    let (_, diffs) = FORMAT_PRESETS
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))?;
+    Some(
+        REGISTRY
+            .iter()
+            .filter(|e| is_format_style_key(e.key))
+            .map(|e| {
+                let v = diffs
+                    .iter()
+                    .find(|(k, _)| *k == e.key)
+                    .map_or(e.default, |(_, v)| *v);
+                (e.key, v)
+            })
+            .collect(),
+    )
+}
+
+/// 지금 값(`get(key)` · None = 기본값)과 스타일 키가 **전부** 같은 내장 프리셋 이름 · 없으면 `"custom"`.
+#[must_use]
+pub fn format_preset_match<'a>(get: &dyn Fn(&str) -> Option<&'a str>) -> &'static str {
+    for (name, _) in FORMAT_PRESETS {
+        let Some(pairs) = format_preset_pairs(name) else {
+            continue;
+        };
+        let all = pairs.iter().all(|(k, v)| {
+            let def = REGISTRY
+                .iter()
+                .find(|e| e.key == *k)
+                .map_or("", |e| e.default);
+            get(k).unwrap_or(def) == *v
+        });
+        if all {
+            return name;
+        }
+    }
+    "custom"
 }
 
 /// ★ **고급 설정**(사용자 09-28 "자주 수정할 만한 설정만 기본 표시 · DBMS 종속·드물게 바꾸는 설정은 Advanced로") — 설정 창의

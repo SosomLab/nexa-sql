@@ -554,10 +554,136 @@ impl App {
                 tf(Msg::PalFormatPreview, &[&name]),
             ));
         }
+        // ★ 포맷 프리셋(D-431): 같은 목록 끝에 프리셋 3개(지금 값과 일치하는 것 = ✓).
+        cmds.extend(self.format_preset_cmds());
         self.palette.set_commands(cmds);
         self.palette.open("");
         self.ime_refresh();
         self.redraw();
+    }
+
+    /// ★ 포맷 프리셋(사용자 10-31 · D-431 · 95 §24): 팔레트 항목 `format.preset:<이름>`(현재 일치 = ✓).
+    fn format_preset_cmds(&self) -> Vec<(String, String)> {
+        let cur = nsql_settings::format_preset_match(&|k| self.settings.get(k));
+        nsql_settings::FORMAT_PRESETS
+            .iter()
+            .map(|(name, _)| {
+                let mark = if *name == cur { "✓ " } else { "" };
+                (
+                    format!("format.preset:{name}"),
+                    format!(
+                        "{mark}{}",
+                        tf(Msg::PalFormatPreset, &[&Self::format_preset_label(name)])
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// 프리셋 표시 이름(선택지 라벨과 같은 글).
+    fn format_preset_label(name: &str) -> String {
+        let m = match name {
+            "default" => Msg::ValFmtPresetDefault,
+            "kiros33" => Msg::ValFmtPresetKiros33,
+            "river" => Msg::ValFmtPresetRiver,
+            _ => Msg::ValFmtPresetCustom,
+        };
+        t(m).to_string()
+    }
+
+    /// 팔레트 "Format preset…" = 프리셋만 고르는 목록.
+    pub(crate) fn format_preset_cmd(&mut self) {
+        let cmds = self.format_preset_cmds();
+        self.palette.set_commands(cmds);
+        self.palette.open("");
+        self.ime_refresh();
+        self.redraw();
+    }
+
+    /// 지금 스타일 키 전부(+ `format.preset`)를 설정 JSON 글로 — 되돌리기 스냅숏.
+    fn format_style_json(&self) -> String {
+        let mut out = String::from("{");
+        for e in nsql_settings::REGISTRY
+            .iter()
+            .filter(|e| nsql_settings::is_format_style_key(e.key) || e.key == "format.preset")
+        {
+            let v = self.settings.get(e.key).unwrap_or(e.default);
+            out.push_str(&format!("\"{}\": {}, ", e.key, json_str(v)));
+        }
+        out.push_str("\"_\": 0}");
+        out
+    }
+
+    /// ★ 프리셋 적용 = 그 프리셋의 스타일 키 값을 지금 설정에 **복사**(한 길 `apply_settings_json_text` = 저장·반영·설정 창 갱신) · 적용 전
+    ///   값은 5초 [되돌리기] 토스트(`format.preset_undo`). `custom`은 고를 것이 없다(일치 이름으로 되돌림).
+    pub(crate) fn format_preset_apply(&mut self, name: &str) {
+        let name = name.trim().to_ascii_lowercase();
+        if name == "custom" {
+            self.format_preset_sync();
+            return;
+        }
+        let Some(pairs) = nsql_settings::format_preset_pairs(&name) else {
+            self.sess.status = tf(Msg::CliErrPreset, &[&name]);
+            self.redraw();
+            return;
+        };
+        let before = self.format_style_json();
+        let prev_name = self
+            .settings
+            .get("format.preset")
+            .unwrap_or("default")
+            .to_string();
+        let mut json = String::from("{");
+        for (k, v) in &pairs {
+            json.push_str(&format!("\"{k}\": {}, ", json_str(v)));
+        }
+        json.push_str(&format!("\"format.preset\": {}}}", json_str(&name)));
+        self.format_preset_applying = true;
+        let applied = self.apply_settings_json_text(&json);
+        self.format_preset_applying = false;
+        if let Some((n, _)) = applied {
+            self.format_preset_undo = Some(before);
+            let label = Self::format_preset_label(&name);
+            // 바뀐 개수 = 스타일 키만(프리셋 이름 키 자신은 뺀다 · 협업 35차 관찰).
+            let n = n.saturating_sub(usize::from(prev_name != name));
+            self.sess.status = tf(Msg::StFormatPresetApplied, &[&label, &n.to_string()]);
+            self.toasts.push_action_ttl(
+                toast::ToastKind::Info,
+                self.sess.status.clone(),
+                t(Msg::StFormatPresetUndo).to_string(),
+                "format.preset_undo",
+                Duration::from_secs(5),
+            );
+        }
+        self.redraw();
+    }
+
+    /// [되돌리기] = 적용 직전 스냅숏을 같은 길로 다시 넣는다.
+    pub(crate) fn format_preset_undo_cmd(&mut self) {
+        let Some(json) = self.format_preset_undo.take() else {
+            return;
+        };
+        self.format_preset_applying = true;
+        let r = self.apply_settings_json_text(&json);
+        self.format_preset_applying = false;
+        if let Some((n, _)) = r {
+            self.sess.status = tf(Msg::StFormatPresetRestored, &[&n.to_string()]);
+        }
+        self.format_preset_sync();
+        self.redraw();
+    }
+
+    /// 스타일 키가 바뀐 뒤: 지금 값과 일치하는 프리셋 이름을 `format.preset`에(표시용 · 저장 · 설정 창 갱신 · 적용 루프 없음).
+    pub(crate) fn format_preset_sync(&mut self) {
+        if self.format_preset_applying {
+            return;
+        }
+        let m = nsql_settings::format_preset_match(&|k| self.settings.get(k));
+        if self.settings.get("format.preset").unwrap_or("default") != m {
+            let _ = self.settings.set("format.preset", m);
+            self.persist_settings();
+            self.prefs_sync();
+        }
     }
 
     /// 팔레트에서 고른 항목(`format.<동사>:<엔진>`).
@@ -569,6 +695,8 @@ impl App {
         let engine = engine.to_string();
         match verb {
             "use" => self.format_apply(&engine),
+            // ★ 포맷 프리셋(D-431).
+            "preset" => self.format_preset_apply(&engine),
             "default" => {
                 let _ = self.settings.set("format.default", &engine);
                 self.persist_settings();
@@ -784,6 +912,11 @@ impl App {
         self.layout();
         self.redraw();
     }
+}
+
+/// 설정 값 → JSON 문자열 리터럴(따옴표·역슬래시만 이스케이프 · 설정 값은 제어 문자가 없다).
+fn json_str(v: &str) -> String {
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// 큰 문서의 캐럿 문장 탐색 창(바이트 · 캐럿 앞뒤 각각 · 사용자 09-30 · 인텔리센스 `intel.max_doc_kb` 창과 같은 폭).
