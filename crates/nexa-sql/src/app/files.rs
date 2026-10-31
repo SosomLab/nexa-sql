@@ -455,6 +455,8 @@ impl App {
             }
             // 설정 내보내기 기본 이름(10-24).
             (PickerMode::Save, FilePurpose::SettingsFile) => "nexa-sql-settings.json".into(),
+            // ★ T-8 GUI 2차: 결과 내보내기 기본 이름(형식 = 확장자 · csv 기본).
+            (PickerMode::Save, FilePurpose::ResultExport) => "result.csv".into(),
             (PickerMode::Open | PickerMode::Folder, _)
             | (
                 PickerMode::Save,

@@ -170,6 +170,8 @@ pub(crate) struct PrefsWin {
     project: Switch,
     /// 프로젝트 절의 평키 값(호스트가 넣는다 · `None` = 프로젝트 없음 = 스위치 숨김).
     project_vals: Option<Vec<(String, String)>>,
+    /// ★ D-428(10-31): 스위치의 기억된 상태(설정 `ui.prefs_project` · 호스트가 열 때 넣는다 · 토글하면 호스트가 저장).
+    project_want: bool,
     /// 카드 덧말 "프로젝트에서 덮어씀: 값"(호스트 덧말 `notes`와 합쳐 그린다 · 범위 스위치와 무관하게 늘).
     project_notes: std::collections::HashMap<String, String>,
     /// 목록 위 안내 한 줄(고급 숨김 수 · 바뀐 설정 없음 · 숨은 키 변경 수).
@@ -361,14 +363,24 @@ impl PrefsWin {
                     .insert(k.clone(), tf(Msg::PrefsOverriddenByProject, &[raw]));
             }
         }
-        if vals.is_none() {
-            self.project.set_on(false);
-        }
+        // 프로젝트 없음 = 꺼짐 · 있음 = 기억된 상태(D-428).
+        self.project.set_on(vals.is_some() && self.project_want);
         self.project_vals = vals;
         if !self.cards.is_empty() {
             self.rebuild_cards();
         }
         self.redraw();
+    }
+
+    /// ★ D-428: 기억된 스위치 상태(설정 `ui.prefs_project`) — 열기 전에 호스트가 넣는다 · 프로젝트가 있을 때만 켜진다.
+    pub(crate) fn set_project_switch(&mut self, on: bool) {
+        self.project_want = on;
+        if self.project_vals.is_some() && self.project.is_on() != on {
+            self.project.set_on(on);
+            if !self.cards.is_empty() {
+                self.rebuild_cards();
+            }
+        }
     }
 
     /// 범위 스위치 "프로젝트"가 켜져 있고 프로젝트가 있는가.
@@ -503,6 +515,7 @@ impl PrefsWin {
             changed_keys: None,
             project: Switch::new(t(Msg::LblPrefsProject), false).with_label_side(LabelSide::Right),
             project_vals: None,
+            project_want: false,
             project_notes: std::collections::HashMap::new(),
             note: None,
             json_btn: Button::new(t(Msg::BtnEditJson)),
@@ -1805,9 +1818,14 @@ impl PrefsWin {
             return PrefsAction::None;
         }
         if self.project.take_toggled().is_some() {
+            self.project_want = self.project.is_on();
             self.rebuild_cards();
             self.redraw();
-            return PrefsAction::None;
+            // ★ D-428: 상태는 설정 `ui.prefs_project`로(고급 스위치와 같은 규칙) — 호스트가 저장한다.
+            return PrefsAction::Changed {
+                key: "ui.prefs_project".into(),
+                value: if self.project.is_on() { "on" } else { "off" }.into(),
+            };
         }
         if self.advanced.take_toggled().is_some() {
             self.rebuild_cards();
@@ -2857,8 +2875,8 @@ mod tests {
             "범위 꺼짐 = 실효값(전역 3 · 기본과 다름)"
         );
         assert!(w.project_notes.contains_key("editor.tab_size"));
-        w.project.set_on(true);
-        w.rebuild_cards();
+        // D-428: 스위치 = 기억된 상태(호스트가 넣는다) — 직접 켜는 대신 같은 길로.
+        w.set_project_switch(true);
         assert!(w.dump_text().contains("project=on\n"));
         assert!(w
             .cards

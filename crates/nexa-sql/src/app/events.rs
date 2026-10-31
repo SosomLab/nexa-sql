@@ -403,6 +403,23 @@ impl App {
                         self.import_done(result);
                     }
                 }
+                // ★ T-8 GUI 2차: 내보내기 진행·끝.
+                ConnOutcome::ExportProgress { key, rows, secs } => {
+                    if key == self.export_key {
+                        self.sess.status = tf(
+                            Msg::StExportProgress,
+                            &[&rows.to_string(), &format!("{secs:.1}")],
+                        );
+                        self.redraw();
+                    }
+                }
+                ConnOutcome::ExportDone { key, path, result } => {
+                    self.sess.aux_done();
+                    if key == self.export_key {
+                        self.export_cancel = None;
+                        self.result_export_done(&path, result);
+                    }
+                }
                 ConnOutcome::Applied {
                     key,
                     rep,

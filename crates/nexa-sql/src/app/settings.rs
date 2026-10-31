@@ -370,6 +370,8 @@ impl App {
     fn apply_setting_ui(&mut self, key: &str) -> bool {
         match key {
             "ui.theme" => self.apply_theme(),
+            // 설정 창 스위치 상태(고급 · 프로젝트) = 저장만(창이 스스로 반영) — "재시작 필요" 안내가 뜨지 않게 적용된 것으로 센다.
+            "ui.prefs_advanced" | "ui.prefs_project" => {}
             // ★ 포맷 옵션(공통 `format.*` · 확장 `ext.sqlfmt_kiros33.*`) = 열려 있는 미리보기 탭을 다시 그린다(docs/95).
             k if k.starts_with("format.") || k.starts_with("ext.sqlfmt_kiros33.") => {
                 self.format_preview_refresh();

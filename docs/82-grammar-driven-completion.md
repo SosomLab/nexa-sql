@@ -346,7 +346,7 @@ same = JOIN                 # 별칭
 
 1. 빼자는 제안은 **대부분 공식 문법으로 확인됐다(✅)**. 그대로 적용해도 되는 `-=` 줄은 §3에 파일별로 모아 두었다.
 2. **반박(✖) 4건**: ① Oracle WHERE 다음 `FOR UPDATE NOWAIT`는 문법상 맞는 연속어다(빼지 말 것 · `SKIP LOCKED` 단독만 뺀다) ② MySQL 8.4는 `GROUP BY ROLLUP(…)` 형식을 **지원한다**(10-3-6 "ROLLUP() 형식 없음"은 틀림 · ROLLUP은 남기고 CUBE/GROUPING SETS만 뺀다) ③ ClickHouse는 `INSERT … RETURNING (SELECT …) VALUES …`가 있다(뺄 것은 VALUES **뒤** RETURNING뿐) ④ ClickHouse SELECT 다음 `SETTINGS`·`FORMAT`은 FROM 없는 SELECT에서 유효하다(초안도 이 둘은 빼자고 하지 않았음 · 확인만).
-3. **버전 의존(⚠)**: Oracle **23ai는 `DELETE … USING`(from_using_clause)과 `EXCEPT`·`MINUS ALL`을 지원한다**(19c는 없음). 지원 기준을 19c로 볼지 23ai로 볼지 정해야 한다.
+3. **버전 의존(⚠)**: Oracle **23ai는 `DELETE … USING`(from_using_clause)과 `EXCEPT`·`MINUS ALL`을 지원한다**(19c는 없음). 지원 기준을 19c로 볼지 23ai로 볼지 정해야 한다. → ★ **23ai로 확정(D-427 · 사용자 10-31)** = 두 후보 유지.
 4. **새로 찾은 잘못**: sqlite는 FROM·WHERE·ORDER BY 다음에 `OFFSET`을 자기 파일에서 `+=`로 넣었지만, SQLite의 OFFSET은 `LIMIT n OFFSET m` 안에서만 온다. 그리고 FULL/CROSS JOIN을 빼려면 `[clause ON] next`에서도 빼야 한다(ON 다음에도 조인 낱말이 있음).
 5. 같은 파일이 `+=`로 넣은 낱말(mssql `WITH (NOLOCK)`·OFFSET/FETCH NEXT, oracle `SIBLINGS`·`SKIP LOCKED`·`RETURNING INTO`·`WHERE CURRENT OF`, db2 SELECT의 `FETCH FIRST`·UPDATE의 `WHERE CURRENT OF`, clickhouse SELECT의 FROM 뒤 절)은 `-=`가 아니라 **그 `+=` 줄에서 지운다**. `resolve`가 같은 섹션 안에서 `+=`와 `-=`를 어떤 순서로 적용하는지에 기대지 않기 위해서다.
 
@@ -378,10 +378,10 @@ same = JOIN                 # 별칭
 | WHEN MATCHED 다음 `AND`·`THEN DELETE`, WHEN NOT MATCHED 다음 `AND` | merge_update_clause `WHEN MATCHED THEN UPDATE SET … [ where_clause ] [ DELETE where_clause ]` — 23ai (…/23/sqlrf/img_text/merge_update_clause.html) · MERGE 본문 `… ON ( condition ) [ merge_update_clause ] [ merge_insert_clause ] …` (…/23/sqlrf/img_text/merge.html). `WHEN MATCHED AND …`도, 독립 `THEN DELETE`도 없다 | ✅(19c·23ai 모두) | `[clause WHEN MATCHED]` 아래 `next -= AND, THEN DELETE` · `[clause WHEN NOT MATCHED]` 아래 `next -= AND` |
 | WITH 다음 `RECURSIVE` | subquery_factoring_clause `query_name ( c_alias [, c_alias]… ) AS { ( [ with_clause ] subquery ) [search_clause] [cycle_clause] \| values_clause }` — 23ai (…/23/sqlrf/img_text/subquery_factoring_clause.html). 19c 본문도 재귀를 "query_name을 자기 정의에서 참조"하는 구조로만 설명한다 | ✅ | `[clause WITH]` 아래 `next -= RECURSIVE` |
 | UNION 다음 `DISTINCT` | 19c `{ UNION [ALL] \| INTERSECT \| MINUS }` (…/19/sqlrf/img_text/subquery.html) · 23ai `{ UNION \| INTERSECT \| MINUS \| EXCEPT } [ALL]` (…/23/sqlrf/img_text/subquery.html). DISTINCT는 어느 판에도 없다 | ✅ | `[clause UNION]` 아래 `next -= DISTINCT` |
-| MINUS/INTERSECT 다음 `ALL` | 19c에는 없고 23ai(21c+)에는 있다(위 두 문서) | ⚠ 21c+ | 그대로 둔다(`ALL` 유지 · 19c 기준이면 MINUS·INTERSECT에 따로 별칭 섹션이 필요해 `-=`로는 안 됨) |
+| MINUS/INTERSECT 다음 `ALL` | 19c에는 없고 23ai(21c+)에는 있다(위 두 문서) | ⚠ 21c+ | 그대로 둔다(`ALL` 유지 · 19c 기준이면 MINUS·INTERSECT에 따로 별칭 섹션이 필요해 `-=`로는 안 됨) · ★ **23ai 기준 확정(D-427 · 사용자 10-31) = `ALL` 유지** |
 | LIMIT(상속) | row_limiting_clause가 유일한 행 제한(위) · LIMIT 낱말 없음 | ✅ | `next`에는 LIMIT이 없어 `-=`로 할 일이 없다 → §2-0 ansi `clauses` 정리로 해결 |
 | INSERT INTO 다음 `DEFAULT VALUES` | insert_values_clause `VALUES ( { expr \| DEFAULT } … )` — 23ai (…/23/sqlrf/img_text/insert_values_clause.html) · single_table_insert에 DEFAULT VALUES 없음 | ✅ | `[clause INSERT INTO]` 아래 `next -= DEFAULT VALUES` |
-| DELETE FROM 다음 `USING` | **19c**: `DELETE … [ t_alias ] [ where_clause ] [ returning_clause ]` (…/19/sqlrf/img_text/delete.html) → 없음. **23ai**: `… [ t_alias ] [ from_using_clause ] [ where_clause ] …`, `from_using_clause = { FROM \| USING } { table_reference \| join_clause … }` (…/23/sqlrf/img_text/delete.html · …/23/sqlrf/img_text/from_using_clause.html) → **있음** | ⚠ 23ai+ | 기준이 19c면 `[clause DELETE FROM]` 아래 `next -= USING`. 23ai 기준이면 남긴다(초안의 ✖ 판정은 23ai에서 틀림) |
+| DELETE FROM 다음 `USING` | **19c**: `DELETE … [ t_alias ] [ where_clause ] [ returning_clause ]` (…/19/sqlrf/img_text/delete.html) → 없음. **23ai**: `… [ t_alias ] [ from_using_clause ] [ where_clause ] …`, `from_using_clause = { FROM \| USING } { table_reference \| join_clause … }` (…/23/sqlrf/img_text/delete.html · …/23/sqlrf/img_text/from_using_clause.html) → **있음** | ⚠ 23ai+ | 기준이 19c면 `[clause DELETE FROM]` 아래 `next -= USING`. 23ai 기준이면 남긴다(초안의 ✖ 판정은 23ai에서 틀림) · ★ **23ai 기준 확정(D-427 · 사용자 10-31) = `USING` 유지**(19c 빼기 안 함) |
 | FROM·WHERE·ORDER BY 다음 `ROWS ONLY` | §2-0 | ✅ | ansi에서 해결(oracle 줄 불필요) |
 
 ##### 2-2. SQL Server(mssql.sqlg)

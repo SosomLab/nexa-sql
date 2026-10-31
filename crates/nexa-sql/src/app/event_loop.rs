@@ -1305,6 +1305,10 @@ impl App {
                         }
                         (PickerMode::Open, FilePurpose::Project) => self.project_load_path(&path),
                         (PickerMode::Save, FilePurpose::Project) => self.project_save_to(&path),
+                        // ★ T-8 GUI 2차: 결과 → 파일 스트리밍 내보내기.
+                        (PickerMode::Save, FilePurpose::ResultExport) => {
+                            self.result_export_start(&path)
+                        }
                         (PickerMode::Folder, FilePurpose::Project) => {
                             self.project_add_folder(&path)
                         }
@@ -2176,7 +2180,9 @@ impl App {
         self.prefs_win
             .set_advanced(self.settings.flag("ui.prefs_advanced"));
         self.prefs_win.refresh(&self.settings);
-        // ★ T-39b 범위 스위치 "프로젝트" + 카드 덧말(열 때마다 맞춘다).
+        // ★ T-39b 범위 스위치 "프로젝트" + 카드 덧말(열 때마다 맞춘다) · D-428 기억된 상태.
+        self.prefs_win
+            .set_project_switch(self.settings.flag("ui.prefs_project"));
         self.prefs_sync_project_scope();
         // ★ T-39 키맵 그리드: 단축키 카드의 충돌 메모.
         self.prefs_key_conflicts();
@@ -2207,6 +2213,12 @@ impl App {
     ///   의 앞 단계(T-248 · 09-29 분리 · 행동 보존): 보조 창 · 파일 대화상자 · SQL 미리보기/값 보기 · Import · 입력/비밀번호 창 ·
     ///   저장 물음 · 데모 · 툴바 플로팅 · 툴바 배치 저장.
     fn pump_window_requests(&mut self, el: &ActiveEventLoop) {
+        // ★ T-8 GUI 2차: 그리드 우클릭 "파일로 내보내기…" → 저장 창(형식 = 확장자).
+        if std::mem::take(&mut self.export_pick_pending) {
+            self.file_purpose = FilePurpose::ResultExport;
+            self.open_file_window(el, PickerMode::Save);
+            self.sync_modal();
+        }
         // 기동 명령·타이머가 부탁한 변수 창(창 이벤트가 없어도 열리게).
         // 창 열기 깃발은 이벤트가 없을 때도 본다(메뉴·기동 명령이 부탁한 창 — `window_event` 끝에서만 보면 늦게 열린다 · docs/61 §6 흠 ⑤).
         if std::mem::take(&mut self.open_txlog) {

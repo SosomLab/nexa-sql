@@ -78,6 +78,16 @@ pub(crate) enum Cmd {
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
+    /// ★ T-8 GUI 2차(10-31): 결과 → 파일 스트리밍 내보내기 — 원본 질의를 다시 실행해 배치마다 쓴다(`Runner::export_stream` + `StreamWriter`) ·
+    ///   진행 `ExportProgress`(200 ms 간격) · 끝 `ExportDone` · 취소 = `cancel` 깃발(배치 경계).
+    ExportStream {
+        key: u64,
+        sql: String,
+        path: std::path::PathBuf,
+        format: nsql_io::Format,
+        null: String,
+        cancel: Arc<AtomicBool>,
+    },
     /// ★ 탭 작업 단위로 세션을 **조용히** 맞춘다(10-01 ⑯ · 탭 전환 때) — 드라이버 `set_option("schema")`(SQL Server/MySQL `USE` ·
     ///   Oracle `ALTER SESSION SET CURRENT_SCHEMA`) · Output·카드 없음 · 성공 = `RunEvent::DbChanged`.
     SetUnit(String),
@@ -200,6 +210,17 @@ pub(crate) enum ConnOutcome {
     ImportDone {
         key: u64,
         result: Result<nsql_run::bulk::BulkReport, String>,
+    },
+    /// ★ T-8 GUI 2차: 내보내기 진행(쓴 행 · 경과 초 · 200 ms 간격) · 끝(행 수 · 초 · 실패 글).
+    ExportProgress {
+        key: u64,
+        rows: u64,
+        secs: f64,
+    },
+    ExportDone {
+        key: u64,
+        path: std::path::PathBuf,
+        result: Result<(u64, f64), String>,
     },
     /// `Cmd::FetchPage` 결과 — `offset`부터 **이어 붙임**(전체 조회도 나머지를 이어 붙인다 · 09-17 위치 유지) ·
     /// `offset` 0은 교체. `all` = 전체 조회 결과(늦은 세그먼트와 구별) · `stop` = 전체 조회가 멈춘 이유(예산·취소).
@@ -1734,6 +1755,82 @@ pub(crate) fn spawn(
                             }
                         };
                         let _ = ctx_tx.send(ConnOutcome::ImportDone { key, result });
+                        wake_now();
+                        true
+                    }
+                    Cmd::ExportStream {
+                        key,
+                        sql,
+                        path,
+                        format,
+                        null,
+                        cancel,
+                    } => {
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let t0 = std::time::Instant::now();
+                        let result: Result<(u64, f64), String> = match alive {
+                            Err(m) => Err(m),
+                            Ok(()) => (|| {
+                                let file = std::fs::File::create(&path).map_err(|e| {
+                                    format!("{}: {e}", path.to_string_lossy())
+                                })?;
+                                let mut out = std::io::BufWriter::new(file);
+                                let dialect = runner.engine.dialect;
+                                let mut writer = nsql_io::StreamWriter::new(format, dialect, &null);
+                                let mut write_err: Option<String> = None;
+                                let mut last = std::time::Instant::now() - Duration::from_secs(1);
+                                let tx2 = ctx_tx.clone();
+                                runner.close_cursor();
+                                let streamed = runner.export_stream(&sql, &mut |rs| {
+                                    if cancel.load(Ordering::Relaxed) {
+                                        return false;
+                                    }
+                                    match writer.write_batch(&mut out, rs) {
+                                        Ok(()) => {
+                                            if last.elapsed() >= Duration::from_millis(200) {
+                                                last = std::time::Instant::now();
+                                                let _ = tx2.send(ConnOutcome::ExportProgress {
+                                                    key,
+                                                    rows: writer.rows(),
+                                                    secs: t0.elapsed().as_secs_f64(),
+                                                });
+                                                wake_now();
+                                            }
+                                            true
+                                        }
+                                        Err(e) => {
+                                            write_err = Some(e.to_string());
+                                            false
+                                        }
+                                    }
+                                });
+                                if let Err(e) = writer.finish(&mut out) {
+                                    write_err.get_or_insert(e.to_string());
+                                }
+                                use std::io::Write;
+                                let _ = out.flush();
+                                match (streamed, write_err) {
+                                    (Err(e), _) => Err(e.message),
+                                    (Ok(_), Some(e)) => Err(e),
+                                    (Ok(_), None) if cancel.load(Ordering::Relaxed) => {
+                                        Err("cancelled".to_string())
+                                    }
+                                    (Ok(_), None) => Ok((writer.rows(), t0.elapsed().as_secs_f64())),
+                                }
+                            })(),
+                        };
+                        let _ = ctx_tx.send(ConnOutcome::ExportDone { key, path, result });
                         wake_now();
                         true
                     }

@@ -67,6 +67,7 @@
 - **형태**: `on: workflow_dispatch` + `schedule`(야간) + `pull_request` `paths:`(`crates/nsql-driver-db2*/**` 등) · `services:` `icr.io/db2_community/db2:12.1.x.0` 버전 고정 · `options: --privileged` · env에 `ARCHIVE_LOGS=false` `AUTOCONFIG=false` `UPDATEAVAIL=NO` `PERSISTENT_HOME=false` · 대기 = datajudge식 로그 grep에 `timeout-minutes: 10`(Testcontainers와 같은 상한) · 실패하면 `docker logs` 덤프 · clidriver tar.gz는 `actions/cache`(키 = 파일명 + Last-Modified).
 - 탐침은 CLP `db2 connect`가 아니라 로그 grep이나 마커 파일로 한다(slick의 SQL0478N 경고).
 - ★ **다른 판 시험(10-31 · 6253fab7)** = `gh workflow run db2.yml -f image=icr.io/db2_community/db2`(태그 생략 = latest · 다른 태그도 같은 입력) · 입력 없는 실행(야간·PR) = 고정 `12.1.2.0` · 이 PC = Docker/podman/WSL 없음 → 로컬 컨테이너 시험 불가 · 코드스페이스(10-31 삭제) 대신 이 길 · ⚠ 10.5는 공개 이미지가 없어 이 입력으로도 불가(10-29 확인).
+- ★ **고정 판 = 12.1.2.0 유지(D-429 · 사용자 10-31)** = latest(12.1.5.0 · run 41146989460 ✓ 9/0 ×2)는 필요할 때 `image=`로만.
 
 ## ② IBM clidriver
 

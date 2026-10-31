@@ -102,7 +102,18 @@ impl App {
         }
         if self.grid.take_cancel_request() {
             self.sess.worker.cancel_fetch();
+            // ★ T-8 GUI 2차: 내보내기 중이면 ■ = 내보내기 취소(배치 경계에서 멈춤).
+            if let Some(c) = &self.export_cancel {
+                c.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             self.sess.status = t(Msg::StFetchCancelling).into();
+        }
+        if self.grid.take_export_request() {
+            if self.grid.source_sql().trim().is_empty() {
+                self.sess.status = t(Msg::StExportNoSql).into();
+            } else {
+                self.export_pick_pending = true;
+            }
         }
         if self.grid.take_refresh() {
             self.refresh_result();
@@ -254,6 +265,87 @@ impl App {
                 refetch,
             },
         );
+        self.redraw();
+    }
+
+    /// ★ T-8 GUI 2차(10-31 · D-411): 결과 그리드 → 파일 **스트리밍** 내보내기 — 그리드에 있는 행이 아니라 **원본 질의를 다시 실행**해 배치마다
+    ///   쓴다(수백만 행도 메모리 일정 · CLI와 같은 `Runner::export_stream` + `nsql_io::StreamWriter`) · 형식 = 확장자(csv · tsv/txt · json ·
+    ///   jsonl/ndjson · sql = INSERT) · 세션 문지기(`gate_pass`) 통과 · 진행은 상태줄 · ■ = 취소 · 끝 = 토스트 + 로그.
+    pub(crate) fn result_export_start(&mut self, path: &std::path::Path) {
+        let sql = self.grid.source_sql().trim().to_string();
+        if sql.is_empty() {
+            self.sess.status = t(Msg::StExportNoSql).into();
+            self.redraw();
+            return;
+        }
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let format = match ext.as_str() {
+            "tsv" | "txt" => nsql_io::Format::Tsv,
+            "json" => nsql_io::Format::Json,
+            "jsonl" | "ndjson" => nsql_io::Format::JsonLines,
+            "sql" => nsql_io::Format::Insert { table: "T".into() },
+            _ => nsql_io::Format::Csv,
+        };
+        let Some(pass) = self.gate_pass() else {
+            return;
+        };
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.export_cancel = Some(cancel.clone());
+        self.export_key += 1;
+        self.sess.aux += 1;
+        let shown = nexa_fs::path::display(path);
+        self.sess.status = tf(Msg::StExportStarted, &[&shown]);
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+        self.log_win.push(LogEntry::new(LogKind::Send, sql.clone()));
+        let null = self
+            .settings
+            .get("grid.null_text")
+            .unwrap_or("")
+            .to_string();
+        self.sess.submit(
+            pass,
+            worker::Cmd::ExportStream {
+                key: self.export_key,
+                sql,
+                path: path.to_path_buf(),
+                format,
+                null,
+                cancel,
+            },
+        );
+        self.redraw();
+    }
+
+    /// 내보내기 끝(워커 `ConnOutcome::ExportDone`): 성공 = 토스트 + 상태줄 + 로그 · 실패 = 오류 토스트 + 로그.
+    pub(crate) fn result_export_done(
+        &mut self,
+        path: &std::path::Path,
+        result: Result<(u64, f64), String>,
+    ) {
+        let shown = nexa_fs::path::display(path);
+        match result {
+            Ok((rows, secs)) => {
+                let msg = tf(
+                    Msg::StExportDone,
+                    &[&rows.to_string(), &shown, &format!("{secs:.2}")],
+                );
+                self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+                self.sess.status = msg.clone();
+                self.toasts
+                    .push(toast::ToastKind::Info, t(Msg::ToastExportTitle), msg);
+            }
+            Err(e) => {
+                let msg = tf(Msg::StExportFailed, &[&e]);
+                self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+                self.sess.status = msg.clone();
+                self.toasts
+                    .push(toast::ToastKind::Error, t(Msg::ToastExportTitle), msg);
+            }
+        }
         self.redraw();
     }
 

@@ -344,6 +344,10 @@ struct App {
     import_pending: bool,
     import_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     import_key: u64,
+    /// ★ T-8 GUI 2차: 진행 중인 결과 내보내기(취소 깃발 · 요청 번호 · 저장 창 열기 요청).
+    export_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    export_key: u64,
+    export_pick_pending: bool,
     /// 값 보기 창 열기 요청(그리드 → 다음 틱에 값 모드로 · 87 §5).
     sqlprev_value: Option<grid::ValueReq>,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
@@ -1883,6 +1887,9 @@ fn main() {
         import_pending: false,
         import_cancel: None,
         import_key: 0,
+        export_cancel: None,
+        export_key: 0,
+        export_pick_pending: false,
         sqlprev_value: None,
         input_win,
         input_pending: None,
@@ -2629,6 +2636,8 @@ enum FilePurpose {
     License,
     /// ★ 드라이버 패키지/오프라인 번들 zip(드라이버 관리자 [파일에서 설치…] · D-350).
     DriverPackage,
+    /// ★ T-8 GUI 2차(10-31): 결과 그리드 → 파일 스트리밍 내보내기(Save · 형식 = 확장자 csv/tsv/json/jsonl/sql).
+    ResultExport,
 }
 
 /// 파일에서 셀에 넣은 결과 = (이진 바이트, 글, 바이트 수).

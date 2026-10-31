@@ -150,6 +150,7 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 | **Fetch all** | §3-5 · 진행률 + 취소 | ✅ |
 | **Count** | 메타 세션 `SELECT COUNT(*) FROM (sql) x` → 상태 "N / 총 M" · 실패(방언·DDL)면 조용히 비활성 · **활성 = 결과 ∧ 조회 문장 ∧ 세션 연결·한가 ∧ 페치 중 아님 ∧ 서버에 더 있음**(전부 받았으면 건수 = 행 수 · 09-19 `can_count`) | ✅ |
 | Export… | 기존 Export(파일 · [40](40-cli-usage.md) CLI와 같은 형식) — **탭 rows가 아니라 재질의로 무제한**(D-68) | ✅(기존) |
+| **그리드 우클릭 "파일로 내보내기…"**(10-31 · 192차 18차 · T-8 GUI 2차 · D-411) | 원본 질의가 있는 결과에서만 활성 · 저장 창(`result.csv` · 형식 = 확장자 csv/tsv/txt/json/jsonl/ndjson/sql) → 같은 세션에서 **재실행 스트리밍**(`Cmd::ExportStream` · 배치마다 파일에 쓰기 = 메모리 일정 · 수백만 행) · 실행 통제 = `gate_pass` + `sess.aux` · 진행 = 상태줄 200 ms "내보내는 중… N행 · s초" · 끝 = 토스트 + 로그 · ■ = 배치 경계에서 취소 · NULL 글자 = `grid.null_text` | ✅ |
 | 상태 문구 | `200행 · 더 있음 · 0.052s(fetch 0.047s) · 15:20:52` · Count 뒤 `200 / 총 12,345` · 예산 근접 시 색 | ✅ |
 
 ### 4-3a. 결과 탭 비용 검토 · 켜기/끄기(사용자 09-16 · D-73~75)

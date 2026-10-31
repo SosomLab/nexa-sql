@@ -534,6 +534,11 @@ const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
     ("trailing", Msg::ValFmtTrailing),
 ];
 const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+// ★ T-255(10-31): 절 배치 standard / river(95 §10).
+const FMT_INDENT_STYLE_OPTS: &[(&str, Msg)] = &[
+    ("standard", Msg::ValFmtStandard),
+    ("river", Msg::ValFmtRiver),
+];
 /// 간격 3택 = 활성 탭 설정 / 공백 / 탭(사용자 09-30 · 인라인 주석 앞).
 const FMT_GAP3_OPTS: &[(&str, Msg)] = &[
     ("editor", Msg::ValActiveTab),
@@ -1310,6 +1315,16 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtFunctionCase,
         kind: SettingKind::Choice(FMT_CASE_OPTS),
         default: "keep",
+    },
+    // ★ T-255(10-30 사용자 "Basic 옵션으로" · 10-31 구현 · 95 §10): 절 배치 — standard(지금) / river(절 키워드 오른쪽 맞춤 · 첫 항목 같은 줄 ·
+    //   AND/OR·JOIN·ON 강 맞춤 · 서브쿼리는 자기 강 · INSERT/MERGE는 standard 그대로 · 강 줄은 공백 들여쓰기).
+    Entry {
+        key: "format.indent_style",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtIndentStyle,
+        desc: Msg::DescFmtIndentStyle,
+        kind: SettingKind::Choice(FMT_INDENT_STYLE_OPTS),
+        default: "standard",
     },
     Entry {
         key: "format.comma",
@@ -2541,6 +2556,15 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatAppearance,
         label: Msg::LblPrefsAdvanced,
         desc: Msg::DescPrefsAdvanced,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // ★ 설정 창 "프로젝트" 범위 스위치의 마지막 상태(사용자 10-31 D-428 · 고급 스위치와 같은 규칙 · HIDDEN) — 프로젝트가 열려 있을 때만 적용.
+    Entry {
+        key: "ui.prefs_project",
+        cat: Msg::CatAppearance,
+        label: Msg::LblPrefsProjectRemember,
+        desc: Msg::DescPrefsProject,
         kind: SettingKind::Bool,
         default: "off",
     },
@@ -8290,6 +8314,7 @@ pub const HIDDEN: &[&str] = &[
     // D-256(10-07): 값 목록 상한 폐지 — 키는 옛 설정 파일 호환으로만 남긴다(효과 없음).
     "grid.filter_values_max",
     "ui.prefs_advanced",
+    "ui.prefs_project",
     "mem.detail",
     "ui.theme_cache_ms",
     "odbc.cancel",

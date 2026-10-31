@@ -142,6 +142,8 @@ pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter
         // 셀 값 = 어떤 파일이든(이진 포함) → 전체가 기본 · 텍스트·SQL은 좁혀 보기용.
         FilePurpose::CellValue => vec![all(), text(), sql()],
         FilePurpose::Import => vec![data(), text(), sql(), all()],
+        // ★ T-8 GUI 2차: 결과 내보내기 = 데이터 형식(확장자 = 형식 · sql = INSERT 문).
+        FilePurpose::ResultExport => vec![data(), sql(), all()],
         FilePurpose::License => license_filters(),
         FilePurpose::DriverPackage => vec![
             FileFilter::new(t(Msg::FilterDriverPackage), &["zip"]),

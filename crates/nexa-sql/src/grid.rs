@@ -518,6 +518,8 @@ pub(crate) struct Grid {
     pending_copy: Option<(String, usize)>,
     /// 메뉴에서 고른 SQL 복사 종류(호스트가 키 정보를 받아 `copy_sql`로 완성 · docs/41).
     pending_sql: Option<SqlKind>,
+    /// ★ T-8 GUI 2차(10-31): 우클릭 "파일로 내보내기…" — 호스트가 저장 창을 열고 원본 질의를 스트리밍으로 다시 읽어 쓴다.
+    pending_export: bool,
     /// 메뉴 단축키 문구(복사 · 전체 선택 · 호스트 주입).
     sc_copy: String,
     sc_all: String,
@@ -732,6 +734,7 @@ impl Default for Grid {
             menu_area: Rect::default(),
             pending_copy: None,
             pending_sql: None,
+            pending_export: false,
             sc_copy: String::new(),
             sc_all: String::new(),
             menu_click_consumed: false,
@@ -4873,6 +4876,11 @@ impl Grid {
         self.pending_sql.take()
     }
 
+    /// ★ T-8 GUI 2차: "파일로 내보내기…" 요청(1회성).
+    pub(crate) fn take_export_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_export)
+    }
+
     /// 실행문에서 추정한 대상 테이블.
     pub(crate) fn source_table(&self) -> Option<String> {
         self.source_table.clone()
@@ -5708,6 +5716,12 @@ impl Grid {
             hdr_only,
             adv_item,
             sql_item,
+            // ★ T-8 GUI 2차(10-31): 결과 전체를 파일로(원본 질의를 배치마다 스트리밍 · 수백만 행도 메모리 일정 · 형식 = 확장자).
+            CtxItem::maybe(
+                "export_file",
+                t(Msg::MnExportFile),
+                self.rs.is_some() && !self.source_sql.trim().is_empty(),
+            ),
             CtxItem::Separator,
             CtxItem::item("all", t(Msg::MnSelectAll))
                 .with_icon(Some(toolicons::mi_select_all()))
@@ -5922,6 +5936,10 @@ impl Grid {
             })
         {
             self.pending_copy = self.copy_selection(k);
+            return;
+        }
+        if id == "export_file" {
+            self.pending_export = true;
             return;
         }
         let kind = match id {
@@ -11681,8 +11699,9 @@ mod edit_key_path_tests {
             .iter()
             .filter(|it| matches!(it, CtxItem::Item { .. }))
             .count();
-        // 10-12·13 = "빈 문자열로" · "지금으로 ▸" 둘이 늘어 16 → 18(상한은 "한 화면에 스크롤 없이" 기준 · 61 §2-2 ⑤).
-        assert!(n <= 18, "상위 항목 {n}");
+        // 10-12·13 = "빈 문자열로" · "지금으로 ▸" 둘이 늘어 16 → 18 · 10-31 T-8 "파일로 내보내기…" 하나 더 → 19(상한은 "한 화면에 스크롤 없이"
+        //   기준 · 61 §2-2 ⑤).
+        assert!(n <= 19, "상위 항목 {n}");
     }
 
     /// 88 §3 2(T-232): 포커스 밖 = 비활성 선택색(알파 절반).
