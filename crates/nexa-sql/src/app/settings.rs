@@ -241,6 +241,17 @@ impl App {
         self.editors.set_minimap_min_cols(
             self.settings.int("editor.minimap_min_cols").clamp(0, 300) as usize,
         );
+        // ★ T-110 3-2·3-3(10-31): 배율(auto/1/2/3) · 왼쪽 배치.
+        let scale = match self.settings.get("editor.minimap_scale").unwrap_or("2") {
+            "auto" => 0,
+            "1" => 1,
+            "3" => 3,
+            _ => 2,
+        };
+        self.editors.set_minimap_layout(
+            scale,
+            self.settings.get("editor.minimap_side") == Some("left"),
+        );
         // ★ T-110 2-4(10-30): 저장 뒤 수정 줄 표식(기준선 = 저장본 · 파일 탭만).
         self.editors
             .set_minimap_diff(self.settings.flag("editor.minimap_dirty"));
@@ -936,6 +947,8 @@ impl App {
             | "editor.split_max"
             | "editor.minimap_width"
             | "editor.minimap_min_cols"
+            | "editor.minimap_scale"
+            | "editor.minimap_side"
             | "editor.minimap_dirty"
             | "editor.minimap_git"
             | "editor.minimap_box_color"

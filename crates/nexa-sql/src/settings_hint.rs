@@ -244,7 +244,15 @@ pub(crate) fn candidates(site: &Site) -> Vec<Cand> {
         }
     };
     match site {
-        Site::Key { path, .. } => {
+        Site::Key { path, prefix, .. } => {
+            // ★ 평키 보강(10-31 협업 관찰): 접두에 `.`가 있으면(`"editor.tab_"`) 점 앞은 경로로 보고 말단만 맞춘다 · 후보 글은 전체 평키
+            //   (`editor.tab_size`)로 돌려주어 교체 구간(접두 전체)과 맞게.
+            let (extra, head): (Vec<String>, String) = match prefix.rsplit_once('.') {
+                Some((a, _)) => (a.split('.').map(str::to_string).collect(), format!("{a}.")),
+                None => (Vec::new(), String::new()),
+            };
+            let mut path: Vec<String> = path.clone();
+            path.extend(extra);
             let mut out: Vec<Cand> = Vec::new();
             for (idx, e) in entries_all().into_iter().enumerate() {
                 if nsql_settings::is_internal(e.key) {
@@ -254,7 +262,8 @@ pub(crate) fn candidates(site: &Site) -> Vec<Cand> {
                 if segs.len() <= path.len() || !segs.iter().zip(path.iter()).all(|(a, b)| a == b) {
                     continue;
                 }
-                let next = segs[path.len()];
+                let next = format!("{head}{}", segs[path.len()]);
+                let next = next.as_str();
                 if out.iter().any(|c| c.text == q(next)) {
                     continue;
                 }
@@ -485,5 +494,19 @@ mod tests {
             entries_all()[((lead.tag >> 16) & 0xFF_FFFF_FFFF) as usize].key,
             "format.comma"
         );
+    }
+
+    /// ★ 평키 접두(`"editor.tab_"`) = 점 앞을 경로로 · 후보 글은 전체 평키 · 교체 구간은 접두 전체.
+    #[test]
+    fn flat_key_prefix_completes_full_key() {
+        let s = r#"{"editor.tab_"#;
+        let site = site_at(s, s.len()).unwrap();
+        assert_eq!(site.prefix(), "editor.tab_");
+        let cands = candidates(&site);
+        assert!(
+            cands.iter().any(|c| c.text == "editor.tab_size"),
+            "{cands:?}"
+        );
+        assert!(cands.iter().all(|c| c.text.starts_with("editor.")));
     }
 }

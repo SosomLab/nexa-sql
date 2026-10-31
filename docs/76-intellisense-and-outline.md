@@ -118,6 +118,8 @@
 
 ## 10. 상세 카드(100차 mac · 09-24)
 
+> ★ **대상 추가(10-31 · 192차 22차 · T-76 ②)** = `intel_card::Target::Setting{idx, value}` — settings.json 힌트 후보(키/값)의 카드 = 키 제목 · 라벨 부제 · 설명 · 기본값 · 허용값(`nsql_settings::allowed`) · 분류 · 값 후보면 "값 = 라벨" 행 · 같은 `intel.detail_card` 설정 · DB 조회 없음(레지스트리만) · [journal 10-31 §7](journal/2026-10-31.md).
+
 팝업 옆 같은 높이의 반투명 카드(`intel_card.rs` · 77 §1-3 `HoverCard`의 첫 구현). 틀은 하나(제목 · 부제 · 속성 행 · 절 목록 · 읽는 중), 대상별로 채운다.
 
 | 대상 | 속성 행 | 절 |

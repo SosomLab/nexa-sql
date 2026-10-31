@@ -182,6 +182,8 @@ pub(crate) struct Editors {
     minimap: (bool, i32),
     /// ★ T-110 2-5(10-30): 좁은 창 자동 숨김 열 수(`editor.minimap_min_cols` · 0 = 규칙 없음) — 새 탭에도 같은 값.
     minimap_min_cols: usize,
+    /// ★ T-110 3-2·3-3(10-31): 배율(0 = 자동 · 1~3) · 왼쪽 배치 — 새 탭에도 같은 값.
+    minimap_layout: (u8, bool),
     /// ★ T-110 2-4(10-30): 저장 뒤 수정 줄을 미니맵에(`editor.minimap_dirty`).
     minimap_diff: bool,
     /// ★ T-110 2-3(10-30): git 변경 줄을 미니맵에(`editor.minimap_git` · HEAD 본문 = 둘째 기준선).
@@ -365,6 +367,7 @@ impl Editors {
             scroll_snap: false,
             minimap: (false, 160),
             minimap_min_cols: 0,
+            minimap_layout: (2, false),
             minimap_diff: false,
             minimap_git: false,
             line_spacing: (nexa_ctl::LineSpacing::Auto, 0.0),
@@ -455,6 +458,8 @@ impl Editors {
         tb.set_minimap(self.minimap.0);
         tb.set_minimap_width(self.minimap.1);
         tb.set_minimap_min_cols(self.minimap_min_cols);
+        tb.set_minimap_scale(self.minimap_layout.0);
+        tb.set_minimap_left(self.minimap_layout.1);
         tb.set_minimap_diff(self.minimap_diff);
         tb.set_minimap_git(self.minimap_git);
         tb.set_line_spacing(self.line_spacing.0, self.line_spacing.1);
@@ -706,6 +711,15 @@ impl Editors {
         self.minimap_min_cols = cols;
         for b in &mut self.bufs {
             b.set_minimap_min_cols(cols);
+        }
+    }
+
+    /// ★ T-110 3-2·3-3(10-31): 미니맵 배율(0 = 자동)·왼쪽 배치를 모든 탭에(새 탭은 `make_box`).
+    pub(crate) fn set_minimap_layout(&mut self, scale: u8, left: bool) {
+        self.minimap_layout = (scale, left);
+        for b in &mut self.bufs {
+            b.set_minimap_scale(scale);
+            b.set_minimap_left(left);
         }
     }
 

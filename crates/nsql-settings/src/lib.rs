@@ -534,6 +534,14 @@ const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
     ("trailing", Msg::ValFmtTrailing),
 ];
 const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+const MINIMAP_SCALE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValAuto),
+    ("1", Msg::ValMinimapScale1),
+    ("2", Msg::ValMinimapScale2),
+    ("3", Msg::ValMinimapScale3),
+];
+const MINIMAP_SIDE_OPTS: &[(&str, Msg)] =
+    &[("right", Msg::ValSideRight), ("left", Msg::ValSideLeft)];
 const HOT_EXIT_OPTS: &[(&str, Msg)] = &[
     ("always", Msg::ValHotExitAlways),
     ("off", Msg::ValHotExitOff),
@@ -3570,6 +3578,23 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescEditorMinimapMinCols,
         kind: SettingKind::Int { min: 0, max: 300 },
         default: "60",
+    },
+    // ★ T-110 3-2·3-3(10-31 · docs/46 3순위): 배율(행당 px · auto = 문서가 띠에 다 들어가는 가장 큰 값) · 배치(오른쪽/왼쪽 = 거터 옆).
+    Entry {
+        key: "editor.minimap_scale",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapScale,
+        desc: Msg::DescEditorMinimapScale,
+        kind: SettingKind::Choice(MINIMAP_SCALE_OPTS),
+        default: "2",
+    },
+    Entry {
+        key: "editor.minimap_side",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapSide,
+        desc: Msg::DescEditorMinimapSide,
+        kind: SettingKind::Choice(MINIMAP_SIDE_OPTS),
+        default: "right",
     },
     // ★ T-110 2-4(10-30 · docs/46): 저장 이후 바뀐 줄을 미니맵 왼쪽 가장자리에(거터 diff 띠와 같은 원천 · 기본 끔).
     Entry {

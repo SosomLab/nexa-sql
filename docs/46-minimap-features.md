@@ -50,8 +50,8 @@ VS Code 대조(사용자 평이 좋은 것): `showSlider`(always/mouseover) · `
 | # | 기능 | 설명 | 설정 |
 |---|---|---|---|
 | 3-1 | **자동 숨김 페이드**(VS Code autohide) | 편집기 hover/스크롤 때만 서서히 나타남 — `IntentFade` 부품 재사용 | `editor.minimap_autohide`(off) |
-| 3-2 | **배율** | 줄당 1/2/3px(긴 파일은 1 · 짧은 파일은 3) · `auto` = 파일 길이로 | `editor.minimap_scale`(2/auto) |
-| 3-3 | **왼쪽 배치** | 거터 옆 | `editor.minimap_side`(right) |
+| 3-2 | **배율** | 줄당 1/2/3px(긴 파일은 1 · 짧은 파일은 3) · `auto` = 파일 길이로 | `editor.minimap_scale`(2/auto) · ✅ **10-31 23차** = `editor.minimap_scale` auto/1/2/3(기본 2) · auto = 문서 전체 행 × 배율 ≤ 띠 높이인 가장 큰 값(없으면 1) · nexa-ctl `set_minimap_scale`(248차) · [journal 10-31 §8](journal/2026-10-31.md) |
+| 3-3 | **왼쪽 배치** | 거터 옆 | `editor.minimap_side`(right) · ✅ **10-31 23차** = `editor.minimap_side` right/left(기본 right) · 왼쪽 = 거터 바로 오른쪽(본문은 띠 + 4px 뒤) · nexa-ctl `set_minimap_left` · V1 캡처 ✓ · [journal 10-31 §8](journal/2026-10-31.md) |
 | 3-4 | **섹션 헤더** | 주석 구분선(`-- ====` · `-- #region` · `/* == */`)의 첫 단어를 미니맵에 작은 글자로 — 긴 스크립트 탐색에 좋다(VS Code 1.85+) | `editor.minimap_sections`(off) |
 | 3-5 | **접힌 영역 표시** | 접기(T-계획) 뒤 접힌 블록을 한 줄 띠로 | — |
 | 3-6 | **뷰포트 부드러운 이동** | 클릭 이동 때 `ui.animations`에 맞춰 짧은 슬라이드 | (애니메이션 마스터 따름) |
