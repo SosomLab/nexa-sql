@@ -65,6 +65,10 @@ impl App {
         if !self.bookmarks.enabled {
             return;
         }
+        // ★ T-167 B6 하루 1회(기동 뒤 첫 틱 포함): 파일 존재 · 서버 존재 점검 + 무효 정리 — 바뀐 것이 있으면 로그 한 줄씩.
+        if self.bookmarks.daily_due() {
+            self.bm_daily_check();
+        }
         let i = self.editors.active();
         let moved = self.bookmarks.sync_tab(&self.editors, i);
         if self.bookmarks.take_changed() || moved {
@@ -79,6 +83,61 @@ impl App {
         self.bookmarks.tick_save();
     }
 
+    /// ★ T-167 B6: 아는 서버 키 = 저장 프로필(비밀번호 없는 스펙) + 살아 있는 탐색기 칸.
+    fn bm_known_server_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self
+            .explorer
+            .find_servers()
+            .into_iter()
+            .filter_map(|(s, _)| s)
+            .map(|s| server_key(&s))
+            .collect();
+        if let Ok(list) = nsql_vault::Vault::open_default().and_then(|v| v.list()) {
+            for p in list {
+                let k = server_key(&p.spec);
+                if !keys.contains(&k) {
+                    keys.push(k);
+                }
+            }
+        }
+        keys
+    }
+
+    /// 하루 1회 점검 + 저장소를 열 때(`project_set` 뒤) — 파일 없음/되살림 · 서버 모름/되살림 · 정리.
+    pub(crate) fn bm_daily_check(&mut self) {
+        let (missing, revived) = self.bookmarks.validate_files();
+        if missing + revived > 0 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                tf(
+                    Msg::LogBookmarksValidated,
+                    &[&missing.to_string(), &revived.to_string()],
+                ),
+            ));
+        }
+        let known = self.bm_known_server_keys();
+        let (unknown, back) = self.bookmarks.validate_servers(&known);
+        if unknown + back > 0 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                tf(
+                    Msg::LogBookmarksServers,
+                    &[&unknown.to_string(), &back.to_string()],
+                ),
+            ));
+        }
+        let pruned = self.bookmarks.prune_now();
+        if pruned > 0 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!("bookmarks: pruned {pruned} stale"),
+            ));
+        }
+        if missing + revived + unknown + back + pruned > 0 {
+            self.bm_sync_ui();
+        }
+    }
+
     /// 패널이 낸 요청 거두기.
     pub(crate) fn bm_pump(&mut self) {
         while let Some(a) = self.bm_panel.take_action() {
@@ -91,6 +150,9 @@ impl App {
                 }
                 bookmarks_panel::BmAction::Rename(id, text) => {
                     self.bookmarks.set_label(id, Some(text))
+                }
+                bookmarks_panel::BmAction::Note(id, text) => {
+                    self.bookmarks.set_note(id, Some(text))
                 }
                 bookmarks_panel::BmAction::Mnemonic(id, n) => match n {
                     // ★ 같은 번호 다시 = 니모닉만 해제 · 다른 북마크 것이면 확인 없이 바로 가져오고 [복원하기] 안내

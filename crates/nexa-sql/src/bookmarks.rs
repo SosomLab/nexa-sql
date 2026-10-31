@@ -63,6 +63,8 @@ pub(crate) struct Bookmarks {
     first_dirty: Option<Instant>,
     /// ★ 방금 가져온 니모닉의 복원 기록(사용자 10-22 · 69 §C-10): 토스트 [복원하기]가 소비한다 · 다음 가져오기가 덮는다.
     pub(crate) pending_restore: Option<MnRestore>,
+    /// ★ T-167 B6: 하루 1회 점검의 마지막 시각(기동 직후 첫 틱 = 바로 1회).
+    last_check: Option<Instant>,
     /// 표시 변경(거터·패널) 1회성 신호.
     changed: bool,
     /// 마지막으로 지운 것들(5초 되돌리기 토스트 · 69 C-28).
@@ -97,6 +99,7 @@ impl Bookmarks {
             dirty_since: None,
             first_dirty: None,
             pending_restore: None,
+            last_check: None,
             changed: false,
             last_removed: Vec::new(),
         }
@@ -791,6 +794,72 @@ impl Bookmarks {
             b.label = label.filter(|l| !l.trim().is_empty());
             self.touch();
         }
+    }
+
+    /// ★ T-167 B4b(10-31): 메모(빈 글 = 지움).
+    pub(crate) fn set_note(&mut self, id: u64, note: Option<String>) {
+        if let Some(b) = self.store.get_mut(id) {
+            b.note = note.filter(|n| !n.trim().is_empty());
+            self.touch();
+        }
+    }
+
+    /// ★ T-167 B6(10-31 · 69 §3-3 `ServerUnknown`): 객체 북마크의 서버 키(`host:port/db`)가 **아는 서버**(저장 프로필 + 살아 있는 세션)에
+    ///   없으면 `Invalid{ServerUnknown}` · 다시 생기면 `Live` → (모름으로 바뀐 수, 되살린 수).
+    pub(crate) fn validate_servers(&mut self, known: &[String]) -> (usize, usize) {
+        let now = now_epoch();
+        let (mut unknown, mut revived) = (0usize, 0usize);
+        for b in &mut self.store.items {
+            let DocKey::Object { profile, .. } = &b.doc else {
+                continue;
+            };
+            let ok = known.iter().any(|k| k == profile);
+            match (&b.state, ok) {
+                (State::Live, false) => {
+                    b.state = State::Invalid {
+                        since: now,
+                        reason: Reason::ServerUnknown,
+                    };
+                    unknown += 1;
+                }
+                (
+                    State::Invalid {
+                        reason: Reason::ServerUnknown,
+                        ..
+                    },
+                    true,
+                ) => {
+                    b.state = State::Live;
+                    revived += 1;
+                }
+                _ => {}
+            }
+        }
+        if unknown + revived > 0 {
+            self.touch();
+        }
+        (unknown, revived)
+    }
+
+    /// ★ T-167 B6 하루 1회 점검(69 §5 "정리 시점 = 저장소를 열 때 1회 + 하루 1회 유휴"): 참이면 호스트가 파일·서버 점검과 정리를 돌린다.
+    pub(crate) fn daily_due(&mut self) -> bool {
+        let now = Instant::now();
+        match self.last_check {
+            Some(t) if now.duration_since(t) < Duration::from_secs(24 * 3600) => false,
+            _ => {
+                self.last_check = Some(now);
+                true
+            }
+        }
+    }
+
+    /// 정리(무효 `stale_days` 지난 것) — 돌려주는 값 = 지운 수.
+    pub(crate) fn prune_now(&mut self) -> usize {
+        let n = self.store.prune(now_epoch(), self.stale_days);
+        if n > 0 {
+            self.touch();
+        }
+        n
     }
 
     /// 문서의 살아 있는 개수 / 전체 살아 있는 개수(상태줄 `북마크 3/12`).

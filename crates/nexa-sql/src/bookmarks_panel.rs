@@ -36,6 +36,8 @@ pub(crate) enum BmAction {
     DeleteGroup(u32, bool),
     RemoveInvalid,
     OpenSettings,
+    /// ★ T-167 B4b 메모(10-31): 항목 메모 편집(빈 글 = 지움).
+    Note(u64, String),
 }
 
 #[derive(Clone, Debug)]
@@ -77,6 +79,8 @@ enum SelKey {
 enum RenameKind {
     Item(u64),
     Group(u32),
+    /// ★ T-167 B4b: 항목 메모.
+    Note(u64),
 }
 
 pub(crate) struct BookmarksPanel {
@@ -332,6 +336,23 @@ impl BookmarksPanel {
             Some(Row::Group { id, name, .. }) => (RenameKind::Group(*id), name.clone()),
             _ => return false,
         };
+        self.begin_edit(r, kind, cur)
+    }
+
+    /// ★ T-167 B4b 메모(10-31): 선택 항목의 메모를 제자리 상자로(이름 편집과 같은 부품 · Enter = 저장 · 빈 글 = 지움).
+    pub(crate) fn begin_note(&mut self) -> bool {
+        let Some(r) = self.sel else { return false };
+        let Some(Row::Item { id, .. }) = self.rows.get(r).cloned() else {
+            return false;
+        };
+        let cur = self
+            .item(id)
+            .and_then(|b| b.note.clone())
+            .unwrap_or_default();
+        self.begin_edit(r, RenameKind::Note(id), cur)
+    }
+
+    fn begin_edit(&mut self, r: usize, kind: RenameKind, cur: String) -> bool {
         let mut inv = Invalidations::default();
         let mut tb = TextBox::new("");
         tb.set_scale(self.scale);
@@ -639,6 +660,7 @@ impl BookmarksPanel {
                 items.push(CtxItem::item("open", t(Msg::MnBmOpen)));
                 items.push(CtxItem::Separator);
                 items.push(CtxItem::item("rename", t(Msg::MnBmLabel)));
+                items.push(CtxItem::item("note", t(Msg::MnBmNote)));
                 // 같은 문서의 다른 북마크가 쓰는 번호 = "사용 중: N줄" 보조 글(사용자 10-22 · 고르면 호스트가 가져오기 확인).
                 let used: Vec<(u8, u32)> = bm
                     .as_ref()
@@ -752,6 +774,12 @@ impl BookmarksPanel {
                 if let Some(r) = self.menu_row {
                     self.sel = Some(r);
                     self.begin_rename();
+                }
+            }
+            "note" => {
+                if let Some(r) = self.menu_row {
+                    self.sel = Some(r);
+                    self.begin_note();
                 }
             }
             "mn:clear" => {
@@ -880,6 +908,7 @@ impl BookmarksPanel {
                     let act = match kind {
                         RenameKind::Item(id) => BmAction::Rename(*id, text),
                         RenameKind::Group(g) => BmAction::RenameGroup(*g, text),
+                        RenameKind::Note(id) => BmAction::Note(*id, text),
                     };
                     self.actions.push(act);
                     self.rename = None;
@@ -1432,6 +1461,10 @@ impl BookmarksPanel {
                         continue;
                     }
                     let mut text = bm.display();
+                    // ★ B4b 메모 = 이름 뒤 ` — 메모`(한 줄 · 줄바꿈은 공백으로).
+                    if let Some(n) = bm.note.as_deref().filter(|n| !n.trim().is_empty()) {
+                        text = format!("{text}  — {}", n.replace(['\n', '\r'], " "));
+                    }
                     if let State::Invalid { reason, .. } = bm.state {
                         let why = match reason {
                             Reason::FileMissing => t(Msg::BmReasonFile),
