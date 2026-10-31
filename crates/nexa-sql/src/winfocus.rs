@@ -178,11 +178,30 @@ pub(crate) fn raise_group(bottom_to_top: &[&Window]) {
 ///   그 뒤 사용자가 여는 객체 찾기·변수·로그 창과 대화상자는 평소처럼 활성화. 종전엔 한 뜻뿐이라 재시작 스크립트로 띄운
 ///   실기 인스턴스에서 156차의 보조 창 활성화가 무효였다.
 pub(crate) fn no_activate_all() -> bool {
-    std::env::var_os("NSQL_NO_ACTIVATE").is_some_and(|v| v != "startup")
+    headless() || std::env::var_os("NSQL_NO_ACTIVATE").is_some_and(|v| v != "startup")
 }
 
 pub(crate) fn no_activate_startup() -> bool {
-    std::env::var_os("NSQL_NO_ACTIVATE").is_some()
+    headless() || std::env::var_os("NSQL_NO_ACTIVATE").is_some()
+}
+
+/// ★ 헤드리스(D-436 · T-459 · 사용자 11-01 "맥·윈도우도 xvfb와 같은 기법"): `NSQL_HEADLESS=1`(0이 아니면) = **모든 창을 보이지 않게**
+/// 만든다(OS 화면·포커스·입력·클립보드와 분리 = 3-OS 공통 · Linux는 그래도 X 서버가 필요하므로 Xvfb 위에서) · 주 창은 OS 재그리기 사건
+/// (숨은 창에는 오지 않는다)에 기대지 않고 `about_to_wait`에서 스스로 그린다 · 기동 명령 `capture:<png>`가 프레임버퍼를 떨군다 ·
+/// `NSQL_NO_ACTIVATE=1`을 함께 뜻한다(활성화·전경 0).
+pub(crate) fn headless() -> bool {
+    std::env::var_os("NSQL_HEADLESS").is_some_and(|v| v != "0")
+}
+
+/// 창 속성에 헤드리스를 입힌다(보이지 않게) — 모든 `create_window` 자리가 이 한 곳을 지난다.
+pub(crate) fn attrs_headless(
+    attrs: winit::window::WindowAttributes,
+) -> winit::window::WindowAttributes {
+    if headless() {
+        attrs.with_visible(false)
+    } else {
+        attrs
+    }
 }
 
 /// 창을 앞으로 — 자체 시험(`NSQL_NO_ACTIVATE=1`)에서는 **하지 않는다**(시험 인스턴스가 사용자의 전경 창·키 입력을 빼앗지 않게 ·

@@ -220,7 +220,7 @@ impl SqlPrevWin {
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         attrs = crate::wingeom::centered_over(attrs, owner, size.width, 4);
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             return;
         };
         let win = Rc::new(win);
@@ -343,7 +343,7 @@ impl SqlPrevWin {
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         attrs = crate::wingeom::centered_over(attrs, owner, size.width, 4);
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             return;
         };
         let win = Rc::new(win);

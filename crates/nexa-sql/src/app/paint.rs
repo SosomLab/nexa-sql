@@ -771,6 +771,13 @@ impl App {
             }
         }
         mark(&mut t_sec, &mut marks); // 4 = 스플리터·툴팁·메뉴바
+                                      // ★ 헤드리스 캡처(D-436 · 기동 명령 `capture:<png>`): 그린 프레임버퍼를 present 전에 PNG로(보이지 않는 창도 같은 픽셀).
+        if let Some(path) = self.capture_req.take() {
+            let png = crate::png::encode(size.width, size.height, &buf);
+            if let Err(e) = std::fs::write(&path, png) {
+                eprintln!("[capture] {}: {e}", path.display());
+            }
+        }
         let _ = buf.present();
         mark(&mut t_sec, &mut marks); // 5 = present
         if let Some(tr) = &mut self.frame_trace {

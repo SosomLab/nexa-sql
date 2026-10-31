@@ -63,7 +63,9 @@ impl ToolFloatWin {
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
         }
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        let win = el.create_window(attrs).ok()?;
+        let win = el
+            .create_window(crate::winfocus::attrs_headless(attrs))
+            .ok()?;
         let win = Rc::new(win);
         let scale = win.scale_factor() as f32;
         let mut me = ToolFloatWin {

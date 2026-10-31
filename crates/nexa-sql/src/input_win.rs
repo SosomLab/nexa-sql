@@ -237,7 +237,7 @@ impl InputWin {
         if self.rows.iter().any(|r| r.need.hide) {
             self.ime_hint.window_opened();
         }
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             self.ime_hint.window_closed();
             return;
         };

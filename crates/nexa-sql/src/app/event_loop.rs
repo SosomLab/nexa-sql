@@ -45,7 +45,7 @@ impl ApplicationHandler<Wake> for App {
             }
         };
         rmark("resumed", &mut rmarks);
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             eprintln!("{}", t(Msg::ErrNoWindow));
             el.exit();
             return;
@@ -84,7 +84,12 @@ impl ApplicationHandler<Wake> for App {
             }
             // 화면 밖으로 나가지 않게(OS가 계단식으로 놓은 기본 위치 · 해상도가 바뀐 뒤의 기억 위치 — 09-21 점검: 1080 높이에서 아래 60px이 잘렸다).
             wingeom::keep_on_screen(&win, None);
-            win.set_visible(true);
+            // ★ 헤드리스(D-436): 창을 끝까지 보이지 않는다 · 첫 프레임은 스스로(숨은 창 = OS 재그리기 사건 없음).
+            if crate::winfocus::headless() {
+                self.headless_dirty.set(true);
+            } else {
+                win.set_visible(true);
+            }
             rmark("visible", &mut rmarks);
         }
         self.scale = win.scale_factor() as f32;
@@ -218,6 +223,11 @@ impl ApplicationHandler<Wake> for App {
         if self.exit_requested {
             self.finish_exit(el);
             return;
+        }
+        // ★ 헤드리스(D-436): 숨은 주 창은 OS가 RedrawRequested를 보내지 않는다 → 표식이 서 있으면 여기서 직접 그린다(캡처 포함).
+        if crate::winfocus::headless() && self.headless_dirty.replace(false) {
+            self.paint();
+            self.findobj_paint_trace();
         }
         // ★ T-350: 이 묶음의 사건을 다 처리한 뒤 **지금 상태로 다시 판정하고** IME 허용 값을 한 번만 OS에(끄기 지연 · 켜기는
         //   `ime_refresh`가 즉시). 다시 판정하는 이유(사용자 10-15 2차 "조건 바에 들어갈 때만"): 조건 바 클릭은 `set_focus(Grid)`가

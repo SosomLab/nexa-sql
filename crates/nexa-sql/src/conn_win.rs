@@ -1132,7 +1132,7 @@ impl ConnWin {
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         // Linux IME 감시 = 이 창의 수명 동안(비밀번호 칸 포커스와 무관) — 창보다 **먼저** 띄워 첫 포커스의 모드 통지를 초기값으로 받는다.
         self.ime_hint.window_opened();
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             self.ime_hint.window_closed();
             return;
         };

@@ -48,7 +48,9 @@ pub(crate) fn open_window(el: &ActiveEventLoop, spec: OpenSpec<'_>) -> Option<Op
         ));
     }
     let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), spec.owner);
-    let win = el.create_window(attrs).ok()?;
+    let win = el
+        .create_window(crate::winfocus::attrs_headless(attrs))
+        .ok()?;
     if let Some(((x, y), _)) = same {
         crate::wingeom::place_outer(&win, Some((x, y)));
     }

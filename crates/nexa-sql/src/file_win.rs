@@ -303,7 +303,7 @@ impl FileWin {
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(cx.max(0), cy.max(0)));
         }
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             self.picker = None;
             return;
         };

@@ -88,6 +88,7 @@ mod order_win;
 mod outline_panel;
 mod palette;
 mod parwalk;
+mod png;
 mod prefs_win;
 mod present;
 mod probe;
@@ -590,6 +591,10 @@ struct App {
     view_layout: bool,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
+    /// ★ 헤드리스(D-436): 숨은 창에는 OS 재그리기 사건이 오지 않는다 → `redraw()`가 표식을 세우고 `about_to_wait`가 직접 그린다.
+    headless_dirty: std::cell::Cell<bool>,
+    /// ★ 헤드리스 캡처(기동 명령 `capture:<png>`): 다음 프레임을 그린 뒤 present 전에 PNG로 쓴다(한 번).
+    capture_req: Option<std::path::PathBuf>,
     /// `NSQL_TRACE_IME=1` — 키·IME 사건을 stderr로(T-139 진단).
     trace_ime: bool,
     /// 지금 한글을 앱이 조합하는가(`sync_hangul_mode` · None = 아직 안 맞춤).
@@ -1388,6 +1393,9 @@ impl App {
         if let Some(w) = &self.window {
             self.tmark("request_redraw");
             w.request_redraw();
+            if crate::winfocus::headless() {
+                self.headless_dirty.set(true);
+            }
         }
     }
 
@@ -2054,6 +2062,8 @@ fn main() {
         result_area: Rect::new(0, 0, 0, 0),
         offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::new(boot)),
+        headless_dirty: std::cell::Cell::new(false),
+        capture_req: None,
         trace_ime: std::env::var_os("NSQL_TRACE_IME").is_some(),
         hangul_app: None,
         input_at: None,

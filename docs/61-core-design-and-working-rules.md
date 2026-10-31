@@ -307,7 +307,16 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 > ★ **"성능 평가해줘"가 오면** — 도구를 고르기 전에 [71 성능 종합 점검 프로세스](71-performance-review-process.md)를 편다: 규정 대상 12차원 · 순서 A(인벤토리) → B(기동) → C(시나리오) → D(향상 모드 A/B) → E(누수) → F(벤치) → G(병목 추적) · 판정선 · 생략할 때는 **왜 생략했는지**를 보고에 적는다. 실행기 = Windows `scripts/win-perf-all.ps1` · Linux `scripts/linux-perf-all.sh`.
 
 
-- ★ **헤드리스 GUI 시험(11-01 · 사용자 · D-435·D-436 · 예고)**: Linux = xvfb 래퍼 `scripts/lib/xvfb.sh`(`NSQL_XVFB=1` 기본 · `linux-*.sh` 전부 경유 · CI ubuntu에도) · 맥·윈도우 = 앱 자체 헤드리스 백엔드 `NEXA_HEADLESS=1` + 기동 명령 `capture <파일>`(214차 · T-459) — 들어오면 이 줄을 사용법으로 바꾼다.
+- ★ **헤드리스 GUI 시험(11-01 · 사용자 · D-435·D-436)** — 창이 사용자 화면에 뜨지 않고 포커스·입력·클립보드와 분리된 자동 시험.
+  - **Linux = Xvfb(211차 ✅ · T-458)**: 래퍼 `scripts/lib/xvfb.sh`를 `linux-*.sh`가 포함 → `xvfb-run` 아래로 다시 실행(`NSQL_XVFB=0` = 실제 화면 · 화면 크기 `NSQL_XVFB_SCREEN` 기본 1600x1000x24) · CI ubuntu `xvfb func-check` S01~S05 · 필요 패키지 = `xvfb x11-utils` + X11 런타임(`libxkbcommon-x11-0` 등 · 없으면 앱이 즉시 종료) · 실기용 재시작 스크립트는 포함하지 않음.
+  - **앱 자체 헤드리스(214차 ✅ 1차 · T-459)**: 환경 `NSQL_HEADLESS=1`(= `NSQL_NO_ACTIVATE=1`도 뜻함) → 모든 창을 숨긴 채 생성(`winfocus::attrs_headless` 한 곳 · 주 창도 `set_visible(true)` 생략) · 숨은 창은 OS 재그리기 사건이 없어 `redraw()` 표식 → `about_to_wait`가 직접 그림 · 기동 명령 `capture:<png 경로>` = 다음 프레임의 **주 창** 프레임버퍼를 present 전에 PNG로(새 `png.rs` · 외부 crate 0 · 창이 보이든 숨었든 같은 픽셀 · OS 캡처 도구 불필요) · 예 = `NSQL_HOME=<격리> NSQL_HEADLESS=1 NSQL_STARTUP_CMD="@after:2500:capture:cap.png"` · CI = ubuntu xvfb 단계 끝 헤드리스 캡처 1회(`test -s headless.png`).
+  - **한계(1차)** = 보조 창(설정·접속 창 등)은 캡처 안 됨 · IME·OS 대화상자 층은 대상 밖 · 실기용 인스턴스는 헤드리스로 띄우지 않는다 · 2차 후보(요청 시) = `capture:<png>;<창>` · `lib/headless.sh` + func-check 창 수 판정 → capture 판정 · 헤드리스 전수 E2E.
+
+  | OS | 헤드리스 방식 | 캡처 |
+  |---|---|---|
+  | Windows · macOS | `NSQL_HEADLESS=1` = 창 숨김(화면에 안 뜸 · Windows V1 = `IsWindowVisible` False · 포커스 변화 0 · mac = 실기 ⓜ″) | 앱 자체 `capture:` |
+  | Linux | Xvfb 위에서 같은 길(`NSQL_HEADLESS=1` 병용 가능) | 앱 자체 `capture:` · 또는 `import -window` |
+
 - **기동 명령** `NSQL_STARTUP_CMD`(쉼표로 구분 · 3-OS 공통): `open:<경로>` · 명령 id(`edit.duplicate_line` · `file.save` · `view.log` …) · `@connected:<명령>`(첫 접속 뒤) · `@after:<ms>:<명령>`(시차) · `explorer.filter:<글>`/`explorer.expand<row>`/`explorer.menu:<row>`/`explorer.pick:<id>`/`explorer.dump:<파일>` · `sqlprev.dump:` · `editor.dump:<파일>`(활성 탭 제목·종류·본문) · `output.dump:<파일>`(Output 탭) · `drop.confirm`/`drop.confirm_nobackup`/`drop.dump:<파일>`(객체 삭제 창 2단 확인 통과·덤프) · `session.env:prod`(접속 유형) · `conn.edit:<프로필>` · `bigfile.open|readonly|head|run`(큰 파일 열기 선택) · `file.load_cancel`. 실행 인자로 프로필 이름(`Local`)을 주면 그 프로필로 접속한다.
   - ★ 키맵(10-29 · 174차 · T-14): `keymap.dump:<경로>` = 사용자 키맵 파일 요약 · context 행 · context 키의 지금 값 · `keymap.try:<조합[;둘째]>@<경로>` = 그 조합이 지금 어느 명령에 걸리는지(실행 안 함 · 덧붙여 씀) · `view.keys`(단축키 창)는 174차 `open_keys_now` 펌프 경로로 수정 → 사건 없는 격리 기동에서도 열림.
 - **로그인 창이 필요한 기동 명령은 지연을 준다**(10-27 141차 win): `conn.vars:<프로필>`(프로필 변수 창) · `conn.edit:<프로필>`(상세 패널)은 로그인 창이 생긴 뒤여야 열린다 → `@after:2000:conn.vars:Local`처럼 · 지연 없이 주면 상세·창 모두 안 열림(09-30 `conn.edit:` 미개봉도 같은 원인으로 봄) · `conn.var:<프로필>:<이름>=<값>`(폼에 넣고 저장 · 빈 값 = 삭제)은 창 없이도 동작.

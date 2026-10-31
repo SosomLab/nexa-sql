@@ -81,6 +81,10 @@ jobs:
           cargo build -q -p nexa-sql -p nsql-cli
           scripts/linux-func-check.sh -o target/func-check -e target/debug/nexa-sql -n target/debug/nsql -O S01,S02,S03,S04,S05
           tail -n 3 target/func-check/func-check.txt
+          # ★ T-459(D-436): 헤드리스(창 숨김 · 스스로 그리기 · `capture:` PNG) — Linux도 같은 길(Xvfb 위).
+          NSQL_HOME=target/func-check/home NSQL_HEADLESS=1 NSQL_STARTUP_CMD="@after:2500:capture:target/func-check/headless.png" \
+            xvfb-run -a target/debug/nexa-sql & HP=$!; sleep 7; kill $HP 2>/dev/null; wait $HP 2>/dev/null || true
+          test -s target/func-check/headless.png && head -c 8 target/func-check/headless.png | od -An -c && ls -l target/func-check/headless.png
       - name: xvfb func-check diagnostics (on failure)
         if: runner.os == 'Linux' && failure()
         run: |

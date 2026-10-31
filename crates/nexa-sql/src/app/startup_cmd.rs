@@ -1327,6 +1327,13 @@ cells={n}
             let _ = std::fs::write(path, self.keymap_dump());
             return;
         }
+        // ★ 헤드리스 캡처(D-436 · T-459): `capture:<png>` = 다음 프레임의 주 창 프레임버퍼를 PNG로(창이 보이든 숨었든 같은 픽셀 ·
+        //   OS 캡처 도구(PrintWindow·screencapture·import) 없이 3-OS 동일 · 키 주입 0).
+        if let Some(path) = id.strip_prefix("capture:") {
+            self.capture_req = Some(std::path::PathBuf::from(path));
+            self.redraw();
+            return;
+        }
         if let Some((chords, path)) = id
             .strip_prefix("keymap.try:")
             .and_then(|r| r.split_once('@'))
