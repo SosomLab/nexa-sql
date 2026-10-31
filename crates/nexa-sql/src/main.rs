@@ -99,6 +99,7 @@ mod runtoast;
 mod rx;
 mod search_history;
 mod search_panel;
+mod sections;
 mod sessions;
 mod sessions_win;
 mod settings_hint;
@@ -682,6 +683,11 @@ struct App {
     ext_banner: extfile::Banner,
     /// ★ T-167 B6 이동 제안(D-163): 방금 연 파일에 붙일 수 있는 파일 없음 북마크(띠가 소비 · 한 번에 하나).
     bm_suggest: Option<bookmarks::MoveSuggest>,
+    /// ★ B4d `bookmark.confirm_clear`: 문서 전체 지우기 2단 확인 무장(탭 · 시각 · 5초).
+    bm_clear_armed: Option<(u64, Instant)>,
+    /// ★ T-165 P3 ④(70 §4): 미저장 본문이 `project.unsaved_max_mb`를 넘어 자동 백업·프로젝트 보존에 담기지 않는 탭 · 띠를 닫은 탭.
+    backup_over: std::collections::HashSet<u64>,
+    backup_over_dismissed: std::collections::HashSet<u64>,
     ext_poll_next: Option<Instant>,
     main_active: bool,
     ext_last_tab: u64,
@@ -2090,6 +2096,9 @@ fn main() {
         ext_files: HashMap::new(),
         ext_banner: extfile::Banner::default(),
         bm_suggest: None,
+        bm_clear_armed: None,
+        backup_over: std::collections::HashSet::new(),
+        backup_over_dismissed: std::collections::HashSet::new(),
         ext_poll_next: None,
         // 포커스 사건이 오기 전에는 비활성(09-24: 한 번도 활성화되지 않은 창(`NSQL_NO_ACTIVATE` 시험 · 뒤에서 띄운 창)이
         //   계속 깜빡이며 다시 그렸다) — 정상 기동은 첫 `Focused(true)`로 바로 활성이 된다.

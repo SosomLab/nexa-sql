@@ -82,6 +82,9 @@ pub(crate) enum TabMenuReq {
     RevealObject(usize),
 }
 
+/// ★ T-110 3-4: 섹션 헤더 재훑기 전 입력 멈춤 대기(ms · 타이핑 중 전체 훑기 방지).
+const SECTIONS_SETTLE_MS: u128 = 400;
+
 pub(crate) struct Editors {
     tabs: TabBar,
     /// 탭 우클릭 메뉴(결과 탭과 같은 부품 · 팝업 층에 그린다).
@@ -186,6 +189,10 @@ pub(crate) struct Editors {
     minimap_layout: (u8, bool),
     /// ★ T-110 3-1(10-31): 자동 숨김(`editor.minimap_autohide`).
     minimap_autohide: bool,
+    /// ★ T-110 3-4(10-31): 섹션 헤더(`editor.minimap_sections`) · 탭별 마지막으로 훑은 본문 세대 · 바뀐 뒤 잠깐 멈춤을 기다리는 대기(탭 · 세대 · 시각).
+    minimap_sections: bool,
+    sections_rev: std::collections::HashMap<u64, u64>,
+    sections_pending: Option<(u64, u64, std::time::Instant)>,
     /// ★ T-110 2-4(10-30): 저장 뒤 수정 줄을 미니맵에(`editor.minimap_dirty`).
     minimap_diff: bool,
     /// ★ T-110 2-3(10-30): git 변경 줄을 미니맵에(`editor.minimap_git` · HEAD 본문 = 둘째 기준선).
@@ -371,6 +378,9 @@ impl Editors {
             minimap_min_cols: 0,
             minimap_layout: (2, false),
             minimap_autohide: false,
+            minimap_sections: false,
+            sections_rev: std::collections::HashMap::new(),
+            sections_pending: None,
             minimap_diff: false,
             minimap_git: false,
             line_spacing: (nexa_ctl::LineSpacing::Auto, 0.0),
@@ -716,6 +726,66 @@ impl Editors {
         for b in &mut self.bufs {
             b.set_minimap_min_cols(cols);
         }
+    }
+
+    /// ★ T-110 3-4(10-31): 섹션 헤더 켜기/끄기 — 끄면 전 탭의 라벨을 비운다 · 켜면 다음 틱에 활성 탭부터(`minimap_sections_tick`).
+    pub(crate) fn set_minimap_sections(&mut self, on: bool) {
+        self.minimap_sections = on;
+        self.sections_rev.clear();
+        self.sections_pending = None;
+        if !on {
+            for b in &mut self.bufs {
+                b.set_minimap_sections(Vec::new());
+            }
+        }
+    }
+
+    /// ★ T-110 3-4: 틱 — 활성 탭의 본문 세대가 바뀐 뒤 `SECTIONS_SETTLE_MS` 동안 더 바뀌지 않으면 주석 구분선을 다시 훑어 미니맵 라벨로
+    ///   (타이핑마다 전체를 훑지 않는다 · 큰 파일 L1+는 건너뜀 · 다른 탭은 전환 뒤 첫 틱에). 돌려주는 값 = 라벨이 바뀌어 다시 그려야 하는가.
+    pub(crate) fn minimap_sections_tick(&mut self) -> bool {
+        if !self.minimap_sections {
+            return false;
+        }
+        let i = self.active();
+        let id = self.tab_id(i);
+        let Some(rev) = self.tab_box(i).map(nexa_ctl::TextBox::rev) else {
+            return false;
+        };
+        if self.sections_rev.get(&id) == Some(&rev) {
+            return false;
+        }
+        let now = std::time::Instant::now();
+        match self.sections_pending {
+            Some((t, r, at)) if t == id && r == rev => {
+                if now.duration_since(at).as_millis() < SECTIONS_SETTLE_MS {
+                    return false;
+                }
+            }
+            _ => {
+                // 첫 틱(탭 전환 · 처음 켬)은 바로 · 그 뒤 변경은 멈춤을 기다린다.
+                let first = !self.sections_rev.contains_key(&id);
+                self.sections_pending = Some((id, rev, now));
+                if !first {
+                    return false;
+                }
+            }
+        }
+        self.sections_pending = None;
+        let sections = match self.tab_box(i) {
+            Some(tb) if self.large_level(i) == 0 => {
+                let buf = tb.buf();
+                let n = buf.line_count();
+                let cows: Vec<std::borrow::Cow<'_, str>> =
+                    (0..n).map(|l| buf.line_text(l)).collect();
+                crate::sections::section_headers(cows.iter().map(|c| c.as_ref()))
+            }
+            _ => Vec::new(),
+        };
+        self.sections_rev.insert(id, rev);
+        if let Some(tb) = self.tab_box_mut(i) {
+            tb.set_minimap_sections(sections);
+        }
+        true
     }
 
     /// ★ T-110 3-1(10-31): 자동 숨김을 모든 탭에(새 탭은 `make_box`).

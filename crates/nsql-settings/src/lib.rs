@@ -3606,6 +3606,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ T-110 3-4(10-31 · docs/46 3순위): 섹션 헤더 — 주석 구분선(`-- ====` · `#region` · `MARK:`)의 라벨을 미니맵에 작은 글자로(기본 끔).
+    Entry {
+        key: "editor.minimap_sections",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapSections,
+        desc: Msg::DescEditorMinimapSections,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     // ★ T-110 2-4(10-30 · docs/46): 저장 이후 바뀐 줄을 미니맵 왼쪽 가장자리에(거터 diff 띠와 같은 원천 · 기본 끔).
     Entry {
         key: "editor.minimap_dirty",
@@ -6970,6 +6979,31 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ B4d(10-31 · 69 §9-5): 되돌리기 토스트 초(0 = 없음) · 문서 전체 지우기 2단 확인 · 그룹 수 상한(HIDDEN · 39 부하원 상한 규칙).
+    Entry {
+        key: "bookmark.undo_secs",
+        cat: Msg::CatBookmarkGeneral,
+        label: Msg::LblBmUndoSecs,
+        desc: Msg::DescBmUndoSecs,
+        kind: SettingKind::Int { min: 0, max: 60 },
+        default: "5",
+    },
+    Entry {
+        key: "bookmark.confirm_clear",
+        cat: Msg::CatBookmarkGeneral,
+        label: Msg::LblBmConfirmClear,
+        desc: Msg::DescBmConfirmClear,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "bookmark.max_groups",
+        cat: Msg::CatBookmarkGeneral,
+        label: Msg::LblBmMaxGroups,
+        desc: Msg::DescBmMaxGroups,
+        kind: SettingKind::Int { min: 0, max: 500 },
+        default: "50",
+    },
     Entry {
         key: "bookmark.max_per_doc",
         cat: Msg::CatBookmarkGeneral,
@@ -8028,6 +8062,9 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("bookmark.stale_days", "bookmark.enabled", Dep::On),
     ("bookmark.move_suggest", "bookmark.enabled", Dep::On),
     ("bookmark.save_copy_on_save", "bookmark.enabled", Dep::On),
+    ("bookmark.undo_secs", "bookmark.enabled", Dep::On),
+    ("bookmark.confirm_clear", "bookmark.enabled", Dep::On),
+    ("bookmark.max_groups", "bookmark.enabled", Dep::On),
     ("bookmark.max_per_doc", "bookmark.enabled", Dep::On),
     ("bookmark.max_total", "bookmark.enabled", Dep::On),
     ("bookmark.gutter", "bookmark.enabled", Dep::On),
@@ -8407,6 +8444,8 @@ pub const HIDDEN: &[&str] = &[
     "grid.filter_values_max",
     // T-165 P3 ①(10-31): 스냅숏 틱당 전송 상한(구현 상수).
     "project.backup_batch",
+    // T-167 B4d(10-31): 북마크 그룹 수 상한(구현 상수 · 69 §9).
+    "bookmark.max_groups",
     "ui.prefs_advanced",
     "ui.prefs_project",
     "mem.detail",

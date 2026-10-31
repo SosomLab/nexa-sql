@@ -408,6 +408,10 @@ impl ApplicationHandler<Wake> for App {
         self.project_autosave_tick();
         self.sync_open_files();
         self.bm_tick();
+        // ★ T-110 3-4: 미니맵 섹션 헤더(활성 탭 · 본문 세대 변화 + 멈춤 뒤 1회).
+        if self.editors.minimap_sections_tick() {
+            self.redraw();
+        }
         // 탭 제목 세대가 바뀌면(이름 바꾸기·저장·열기/닫기) 전용 세션 탭 이름 목록도(탐색기 연결 행 툴팁 · 10-13).
         if self.priv_titles_rev != self.editors.titles_rev() {
             self.sync_private_tabs();

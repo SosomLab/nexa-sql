@@ -40,6 +40,8 @@ struct Toast {
     btn_deadline: Option<(Instant, Duration)>,
     /// ★ 고정 카드(10-15 · 운영 보류 "커밋 대기"): 수명이 없고 버튼을 누르거나 호스트가 `dismiss_action`으로 지울 때까지 남는다.
     sticky: bool,
+    /// ★ 카드별 수명(10-31 · 북마크 되돌리기 `bookmark.undo_secs`) — None = 전역 `ui.toast_ms`.
+    ttl: Option<Duration>,
 }
 
 const MAX_TOASTS: usize = 5;
@@ -126,6 +128,7 @@ impl Toasts {
             close_rect: Rect::default(),
             btn_deadline: None,
             sticky: false,
+            ttl: None,
         });
         while self.items.len() > MAX_TOASTS {
             self.items.remove(0);
@@ -143,6 +146,21 @@ impl Toasts {
         self.push(kind, title, body);
         if let Some(t) = self.items.last_mut() {
             t.action = Some(action.to_string());
+        }
+    }
+
+    /// ★ 수명을 따로 주는 동작 토스트(10-31 · 북마크 되돌리기 `bookmark.undo_secs`) — 전역 `ui.toast_ms` 대신 이 카드만.
+    pub(crate) fn push_action_ttl(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        action: &str,
+        ttl: Duration,
+    ) {
+        self.push_action(kind, title, body, action);
+        if let Some(t) = self.items.last_mut() {
+            t.ttl = Some(ttl);
         }
     }
 
@@ -284,7 +302,7 @@ impl Toasts {
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
         let ttl = self.ttl;
         self.items
-            .retain(|t| t.sticky || now.duration_since(t.born) < ttl);
+            .retain(|t| t.sticky || now.duration_since(t.born) < t.ttl.unwrap_or(ttl));
         !self.items.is_empty()
     }
 

@@ -2389,6 +2389,34 @@ impl App {
                 danger: false,
             })
         });
+        // ★ T-165 P3 ④(70 §4): 미저장 본문이 상한을 넘는 탭 — 자동 백업·보존에 담기지 않는다는 띠 [저장][닫기](닫으면 그 탭은 다시 안 띄움).
+        let view = view.or_else(|| {
+            if !self.backup_over.contains(&id) || self.backup_over_dismissed.contains(&id) {
+                return None;
+            }
+            let bytes = self
+                .editors
+                .index_of_id(id)
+                .and_then(|i| self.editors.tab_box(i))
+                .map_or(0, |tb| tb.buf().len_bytes());
+            Some(extfile::BannerView {
+                text: tf(
+                    Msg::BanBackupTooLarge,
+                    &[
+                        &nsql_core::fmt_bytes(bytes as u64),
+                        &self.settings.int("project.unsaved_max_mb").to_string(),
+                    ],
+                ),
+                buttons: vec![
+                    (extfile::BannerHit::SaveNow, t(Msg::BtnBanSave).to_string()),
+                    (
+                        extfile::BannerHit::BackupDismiss,
+                        t(Msg::BtnExtDismiss).to_string(),
+                    ),
+                ],
+                danger: false,
+            })
+        });
         let changed = self.ext_banner.set(view);
         let inset = px(self.ext_banner.height(), self.scale);
         if self.editors.set_top_inset(inset) || changed {
@@ -2484,6 +2512,13 @@ impl App {
             }
             extfile::BannerHit::BmDismiss => {
                 self.bm_suggest = None;
+            }
+            extfile::BannerHit::SaveNow => {
+                // 저장 명령 그대로(파일 탭 = 그 자리에 · 무제 탭 = 다른 이름으로 저장 창).
+                self.menu_action("file.save");
+            }
+            extfile::BannerHit::BackupDismiss => {
+                self.backup_over_dismissed.insert(id);
             }
             extfile::BannerHit::Dismiss => {
                 // 삭제 안내를 닫는다 — 상태(`deleted`)는 남겨 같은 삭제로 다시 띄우지 않는다.

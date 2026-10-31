@@ -47,6 +47,8 @@ pub(crate) struct Bookmarks {
     persist: bool,
     max_per_doc: usize,
     max_total: usize,
+    /// ★ B4d(10-31): 그룹 수 상한(`bookmark.max_groups` · 0 = 없음).
+    max_groups: usize,
     stale_days: u32,
     /// 워크스페이스 파일(없으면 저장 안 함).
     path: Option<PathBuf>,
@@ -90,6 +92,7 @@ impl Bookmarks {
             persist: true,
             max_per_doc: 500,
             max_total: 5000,
+            max_groups: 50,
             stale_days: 30,
             path: None,
             folder: None,
@@ -111,6 +114,7 @@ impl Bookmarks {
         self.persist = s.flag("bookmark.persist");
         self.max_per_doc = s.int("bookmark.max_per_doc").max(0) as usize;
         self.max_total = s.int("bookmark.max_total").max(0) as usize;
+        self.max_groups = s.int("bookmark.max_groups").max(0) as usize;
         self.stale_days = s.int("bookmark.stale_days").max(0) as u32;
         self.opts = RelocateOpts {
             search_lines: s.int("bookmark.search_lines").max(0) as usize,
@@ -441,10 +445,19 @@ impl Bookmarks {
     pub(crate) fn clear_doc(&mut self, ed: &Editors, i: usize) -> usize {
         let doc = Self::doc_key(ed, i);
         let gone = self.store.clear_doc(&doc, CASE_INSENSITIVE);
-        if !gone.is_empty() {
+        let n = gone.len();
+        if n > 0 {
+            // ★ B4d(10-31 · 69 §9-5 confirm_clear): 문서 전체 지우기도 되돌리기 대상(종전 = 목록을 남기지 않아 일괄 손실 경로).
+            self.last_removed = gone;
             self.touch();
         }
-        gone.len()
+        n
+    }
+
+    /// 문서의 살아 있는 북마크 수(지우기 2단 확인의 안내용).
+    pub(crate) fn count_doc(&self, ed: &Editors, i: usize) -> usize {
+        let doc = Self::doc_key(ed, i);
+        self.store.for_doc(&doc, CASE_INSENSITIVE).len()
     }
 
     /// 문서의 살아 있는 북마크 줄들(0-기준 · 켜진 그룹만) — 멀티커서·거터.
@@ -798,8 +811,11 @@ impl Bookmarks {
         n
     }
 
-    /// 새 그룹(이름 중복이면 뒤에 ` (2)`) — id.
-    pub(crate) fn new_group(&mut self, base: &str) -> u32 {
+    /// 새 그룹(이름 중복이면 뒤에 ` (2)`) — id · ★ B4d: `bookmark.max_groups`(0 = 없음)에 닿았으면 None.
+    pub(crate) fn new_group(&mut self, base: &str) -> Option<u32> {
+        if self.max_groups > 0 && self.store.groups.len() >= self.max_groups {
+            return None;
+        }
         let mut name = base.to_string();
         let mut k = 2;
         while self.store.groups.iter().any(|g| g.name == name) {
@@ -808,7 +824,7 @@ impl Bookmarks {
         }
         let id = self.store.add_group(&name);
         self.touch();
-        id
+        Some(id)
     }
 
     pub(crate) fn rename_group(&mut self, gid: u32, name: &str) {

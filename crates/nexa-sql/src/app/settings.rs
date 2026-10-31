@@ -255,6 +255,9 @@ impl App {
         // ★ T-110 3-1: 자동 숨김(마우스 이동·휠 뒤 1.2초 · 자리는 유지).
         self.editors
             .set_minimap_autohide(self.settings.flag("editor.minimap_autohide"));
+        // ★ T-110 3-4: 섹션 헤더(주석 구분선 라벨 · 활성 탭 · 멈춤 뒤 훑기).
+        self.editors
+            .set_minimap_sections(self.settings.flag("editor.minimap_sections"));
         // ★ T-110 2-4(10-30): 저장 뒤 수정 줄 표식(기준선 = 저장본 · 파일 탭만).
         self.editors
             .set_minimap_diff(self.settings.flag("editor.minimap_dirty"));
@@ -953,6 +956,7 @@ impl App {
             | "editor.minimap_scale"
             | "editor.minimap_side"
             | "editor.minimap_autohide"
+            | "editor.minimap_sections"
             | "editor.minimap_dirty"
             | "editor.minimap_git"
             | "editor.minimap_box_color"

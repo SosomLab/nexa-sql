@@ -136,6 +136,10 @@ pub(crate) enum BannerHit {
     BmAttach,
     /// 이동 제안 거절(이 탭 · 다시 묻지 않음).
     BmDismiss,
+    /// ★ T-165 P3 ④(70 §4): 큰 버퍼 띠 [저장] — 지금 저장(무제 탭은 다른 이름으로).
+    SaveNow,
+    /// 큰 버퍼 띠 닫기(이 탭 · 다시 안 띄움).
+    BackupDismiss,
 }
 
 /// 띠 내용(호스트가 만든다).

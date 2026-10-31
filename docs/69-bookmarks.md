@@ -629,12 +629,12 @@ pub trait BookmarkStore {
 | `bookmark.mnemonic_ask_rewrite` → 구현 이름 **`bookmark.mnemonic_notice`**(10-22 · 3차) | Bool · on | 다른 북마크의 번호를 가져오면 [복원하기] 안내 토스트(끄면 조용히 가져온다 · 설정 ▸ 북마크) | `enabled` |
 | `bookmark.stale_days` | Int · **30**(0 = 영원히) | 무효가 된 지 N일 뒤 정리 | `enabled` |
 | `bookmark.max_per_doc` · `bookmark.max_total` | Int · **500** · **5000** | 상한(넘으면 무효부터 버리고, 그래도 넘치면 거부) | `enabled` |
-| `bookmark.max_groups` | Int · 50 · HIDDEN | 그룹 수 상한 | `enabled` |
+| `bookmark.max_groups` | Int · 50 · HIDDEN | 그룹 수 상한 | `enabled` · ✅ 10-31 31차 구현(Int 0~500 · 넘으면 새 그룹 거부 + 상태줄 안내) |
 | `bookmark.default_group_name` | Text · (비면 프로젝트 이름) | 기본 그룹의 이름 | `enabled` |
 | `bookmark.save_copy_on_save` | Bool · on | DDL 탭을 파일로 저장할 때 복사본을 만든다(D-167) | `enabled` · ✅ 10-31 27차 구현 |
 | `bookmark.reconnect_ask` | Bool · on | 객체 문서를 열 때 미접속이면 물어본다(끄면 연결된 서버만 열린다) | `enabled` |
-| `bookmark.undo_secs` | Int · 5 | 제거 뒤 [실행 취소] 토스트가 머무는 초(0 = 없음 · C-28) | `enabled` |
-| `bookmark.confirm_clear` | Bool · on | 문서 전체·전부 지우기에 두 번 확인 | `enabled` |
+| `bookmark.undo_secs` | Int · 5 | 제거 뒤 [실행 취소] 토스트가 머무는 초(0 = 없음 · C-28) | `enabled` · ✅ 10-31 31차 구현(Int 0~60 · 토스트 카드별 수명 `push_action_ttl`) |
+| `bookmark.confirm_clear` | Bool · on | 문서 전체·전부 지우기에 두 번 확인 | `enabled` · ✅ 10-31 31차 구현(`bookmark.clear_doc` 첫 호출 = "5초 안에 다시 실행하면 N개를 지웁니다" 안내 + 무장 · 5초 안 재호출 = 지움 + [되돌리기] 토스트 · 지운 목록 = `last_removed`) |
 
 ### 9-2. `Bookmarks ▸ 표시`(`CatBookmarkDisplay`)
 
@@ -678,7 +678,7 @@ pub trait BookmarkStore {
 - `perf.boost`(향상 모드)는 `inline_label`·`minimap`·`panel_autoscroll_from`을 끈 값으로 강제한다(39 §4-6 · 강제값 > 개별 값).
 - CLI `nsql config list bookmark`로 전부 보이고 `nsql config set bookmark.stale_days 0`로 바꾼다.
 
-### 9-5. B4d 대조(10-31 · 협업 분석 · 개발 결정 대기)
+### 9-5. B4d 대조(10-31 · 협업 분석 · ✅ 31차 개발 결정)
 
 > 대조 = 위 §9-1~9-3 설계 표의 `bookmark.*` 키 ↔ `nsql-settings::REGISTRY`(10-31 · `key: "bookmark.*"` **20개** + 이름 이주 2 = `bookmark.inline_label_ctrl` → `ctrl.bookmark_label` · `bookmark.inline_label_ctrl_scope` → `ctrl.bookmark_scope`(`RENAMED`)). 명령 id(`bookmark.toggle`·`next`·…)는 설정이 아니라 뺐다. 근거 코드는 10-31 main 기준 읽기만(협업). 판정은 **초안** — 구현/폐기는 개발 세션이 정하고, 사용자 결정이 필요한 것은 "D 대기"로 적었다.
 
@@ -707,6 +707,8 @@ pub trait BookmarkStore {
 **③ REGISTRY에 있고 §9 표에 없는 키(2)** = `ctrl.bookmark_label`(옛 `bookmark.inline_label_ctrl`) · `ctrl.bookmark_scope`(옛 `bookmark.inline_label_ctrl_scope`) — 인라인 라벨 컨트롤 설정 · `nsql-settings` `RENAMED`로 `ctrl.*`에 이주 → §9-2 표에 "→ `ctrl.*`로 이주" 두 줄 추가 후보. 그 밖 20개는 모두 §9 표에 있음(`bookmark.mnemonic_ask_rewrite`는 표에서 이미 `bookmark.mnemonic_notice`로 표시).
 
 **요약** = 구현 필요 3(**confirm_clear 안전** · undo_secs · max_groups) · 대체 2(panel_preview·panel_preview_reuse → `project.preview_tab`) · 폐기 확정 1(reconnect_ask) · 폐기 후보 8(anchor_update · revive · panel_autoscroll_from · panel_row_text · panel_show_invalid · gutter_color · default_group_name · mnemonic_scope) · D 대기 2(panel_group_by · panel_sort) · 보류 2(badge · share_default).
+
+> ★ **31차 결정(10-31 · 개발 세션 · D-430 · 사용자 번복 가능)** — 구현 3 = ✅ `bookmark.confirm_clear`(on) · `bookmark.undo_secs`(5) · `bookmark.max_groups`(50 · HIDDEN) · **폐기 확정 11** = 대체 2(`panel_preview`·`panel_preview_reuse` → `project.preview_tab`) + reconnect_ask + 폐기 후보 8(anchor_update · revive · panel_autoscroll_from · panel_row_text · panel_show_invalid · gutter_color · default_group_name · mnemonic_scope) · D 대기 2(panel_group_by · panel_sort) = 그대로 사용자 결정 대기 · 보류 2(badge · share_default) = 그대로 · V1 ✓ = clear 1회 = 안내 + 유지 → 1.3초 뒤 재실행 = 2개 제거 + 토스트 → `bookmark.undo_remove` = 2개 복귀 · [journal 10-31 §16](journal/2026-10-31.md).
 
 ## 10. 부하원 등재([39 §3](39-resource-governance.md))
 

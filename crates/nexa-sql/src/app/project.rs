@@ -1246,6 +1246,34 @@ impl App {
         }
     }
 
+    /// ★ T-165 P3 ④(70 §4 · 10-31): 미저장 본문이 `project.unsaved_max_mb`를 넘는 탭(프로젝트 보존·스냅숏·hot exit 전부 담지 않는다) —
+    ///   집합이 바뀌면 편집기 위 띠(`ext_banner_sync` · "자동 백업되지 않습니다 — 저장하세요" [저장][닫기])를 다시 맞춘다. 0 = 무제한.
+    ///   프로젝트 유무와 무관(파일 모드 hot exit도 같은 상한).
+    pub(crate) fn backup_over_tick(&mut self) {
+        let max_bytes = (self.settings.int("project.unsaved_max_mb").max(0) as usize) << 20;
+        let mut now: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        if max_bytes > 0 {
+            for i in 0..self.editors.tab_count() {
+                if !self.editors.is_dirty(i) {
+                    continue;
+                }
+                if self
+                    .editors
+                    .tab_box(i)
+                    .is_some_and(|tb| tb.buf().len_bytes() > max_bytes)
+                {
+                    now.insert(self.editors.tab_id(i));
+                }
+            }
+        }
+        if now != self.backup_over {
+            // 상한 안으로 돌아온 탭은 닫기 기억도 푼다(다시 넘으면 다시 띄움).
+            self.backup_over_dismissed.retain(|t| now.contains(t));
+            self.backup_over = now;
+            self.ext_banner_sync();
+        }
+    }
+
     /// 탭을 버리거나 저장했다 — 스냅숏 큐에서 뺀다(파일 삭제는 호출자가 `backups::remove`).
     pub(crate) fn backup_forget(&mut self, tab: u64) {
         self.backup_queue.cancel(&tab);
@@ -1401,6 +1429,8 @@ impl App {
     ///      `project.autosave_secs`(30초)** 주기 점검으로 — 문서를 만들어 이전 저장본과 같으면 쓰지 않는다.
     ///   ③ 어느 길이든 저장·점검하면 두 타이머를 모두 초기화한다(저장 횟수 최소화) · 변경이 없으면 쓰지 않는다.
     pub(crate) fn project_autosave_tick(&mut self) {
+        // ★ T-165 P3 ④: 상한 초과 탭 띠는 프로젝트 유무와 무관하게.
+        self.backup_over_tick();
         if !self.project.is_open() || !self.project_autosave_on() {
             return;
         }

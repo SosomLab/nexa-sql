@@ -87,7 +87,7 @@ impl<P> SaveQueue<P> {
 
 - 스레드 **하나**(`backup-writer` · 39 §3 등재): 채널로 `Write{path, bytes}` / `Delete{path}` / `Prune{dir, days}` 를 받아 순서대로 처리 · `tmp` 쓰기 → `rename`(원자적 · 크래시해도 반쪽 파일 없음) · 실패는 로그 창 한 줄(반복 금지 · 같은 경로는 1회).
 - UI 스레드가 하는 것: `take_due` → 탭마다 **세대 비교**(`EditState::rev` · 마지막 백업 세대와 같으면 건너뜀) → 바뀐 것만 `buf()`로 문자열(61 §1 예외 — 백업 시점 1회 · 큰 파일 모드 탭은 제외) → 채널 `send`. 2 MB 본문 문자열화 ≈ 1~2 ms(55 §6 실측 규모) · 100개 탭이 동시에 만료돼도 한 틱에 **최대 N개**(`project.backup_batch` 8)만 보내고 나머지는 다음 틱(프레임 예산 39 §2).
-- 큰 버퍼(`project.backup_max_mb` 8 초과 · 큰 파일 모드 L1/L2): 백업하지 않고 탭 띠 "이 탭은 자동 백업되지 않습니다 — 저장하세요"(Sublime 4151 관례) · 종료·프로젝트 닫기 때 **묻는다**(§6).
+- 큰 버퍼(`project.backup_max_mb` 8 초과 · 큰 파일 모드 L1/L2): 백업하지 않고 탭 띠 "이 탭은 자동 백업되지 않습니다 — 저장하세요"(Sublime 4151 관례) · 종료·프로젝트 닫기 때 **묻는다**(§6). ✅ **10-31 31차 띠 구현** = 상한 키는 `project.unsaved_max_mb`(설계의 `backup_max_mb` 대신 · 0 = 무제한) · `backup_over_tick`(매 틱 · 상한 초과 dirty 탭 집합이 바뀔 때만 띠 갱신 · 프로젝트 유무 무관) · 외부 변경/이동 제안 띠가 없을 때 "이 탭({크기})은 project.unsaved_max_mb({N} MB)를 넘어 … 저장하세요" [저장][닫기] · [닫기] = 이 탭 다시 안 띄움(상한 안으로 돌아오면 기억 해제) · 기동 명령 `ext.banner:save|backup_dismiss` · V1 캡처 ✓ · [journal 10-31 §16](journal/2026-10-31.md).
 - 메모리 회수: 문자열은 보내고 나면 스레드가 drop · `memtrim.rs`(59) 규약 그대로.
 
 ## 5. 참조 파일(디스크 파일)의 임시 저장 — 원본은 사용자 몫
@@ -193,4 +193,4 @@ impl<P> SaveQueue<P> {
 | D-183 | 백업 폴더 위치 | **설정 폴더 `backups/`** | 프로젝트 폴더에 쓰지 않음(D-407 프로젝트 파일 하나만과도 일치) |
 
 - 09-23 정정(§6-1)과의 관계: 미저장 본문의 **복원 원천 = 프로젝트 파일**(v2 블록) · `backups/`는 안전망. 파일 모드(프로젝트 없음)는 프로젝트 파일이 없으므로 **기본 워크스페이스**(67 §2-1 `workspaces/default.nsql-workspace`) + `backups/<워크스페이스 id>/`가 원천 — D-181 `always`의 남은 일이 여기.
-- 남은 일(P3) = ① ✅ 10-31 28차 `SaveQueue` + `backup-writer`([journal 10-31 §13](journal/2026-10-31.md)) · ~~① `SaveQueue`(같은 열쇠 병합 · 최대 대기) + 쓰기 전용 백업 스레드~~ ② 파일 모드 hot exit ③ D-180 탭 띠 ④ 큰 버퍼(`project.backup_max_mb` 8) 안내 ⑤ `hot_exit=off` 종료 물음 ⑥ 실측(P3-e).
+- 남은 일(P3) = ① ✅ 10-31 28차 `SaveQueue` + `backup-writer`([journal 10-31 §13](journal/2026-10-31.md)) · ~~① `SaveQueue`(같은 열쇠 병합 · 최대 대기) + 쓰기 전용 백업 스레드~~ ② 파일 모드 hot exit ③ D-180 탭 띠 ✅ ④ 큰 버퍼 안내 띠(10-31 31차 · 상한 = `project.unsaved_max_mb`) ⑤ `hot_exit=off` 종료 물음 ⑥ 실측(P3-e).

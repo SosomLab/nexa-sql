@@ -216,9 +216,18 @@ impl App {
                         continue;
                     }
                     let base = t(Msg::BmNewGroupName).to_string();
-                    let gid = self.bookmarks.new_group(&base);
-                    self.bm_panel.sync(&self.bookmarks.store);
-                    self.sess.status = tf(Msg::StBookmarkGroupNew, &[&gid.to_string()]);
+                    match self.bookmarks.new_group(&base) {
+                        Some(gid) => {
+                            self.bm_panel.sync(&self.bookmarks.store);
+                            self.sess.status = tf(Msg::StBookmarkGroupNew, &[&gid.to_string()]);
+                        }
+                        None => {
+                            self.sess.status = tf(
+                                Msg::StBookmarkGroupMax,
+                                &[&self.settings.int("bookmark.max_groups").to_string()],
+                            );
+                        }
+                    }
                 }
                 bookmarks_panel::BmAction::RenameGroup(g, name) => {
                     self.bookmarks.rename_group(g, &name)
@@ -261,11 +270,17 @@ impl App {
             tf(Msg::StBookmarkCleared, &[&n.to_string()])
         };
         self.sess.status = body.clone();
-        self.toasts.push_action(
+        // ★ B4d(69 §9 `bookmark.undo_secs` · C-28): 토스트 수명 = 설정 초(0 = 토스트 없음 · 상태줄만 · 되돌리기는 명령으로 가능).
+        let secs = self.settings.int("bookmark.undo_secs").clamp(0, 60) as u64;
+        if secs == 0 {
+            return;
+        }
+        self.toasts.push_action_ttl(
             toast::ToastKind::Info,
             body,
             t(Msg::StBookmarkUndo).to_string(),
             "bookmark.undo_remove",
+            Duration::from_secs(secs),
         );
     }
 
@@ -567,8 +582,29 @@ impl App {
                     }
                 }
                 "bookmark.clear_doc" => {
-                    let n = self.bookmarks.clear_doc(&self.editors, i);
-                    self.sess.status = tf(Msg::StBookmarkCleared, &[&n.to_string()]);
+                    // ★ B4d(69 §9 `bookmark.confirm_clear` · D-177 "전체 지우기는 두 번 확인"): 켜져 있으면 첫 호출 = 안내만 + 5초 무장 ·
+                    //   같은 탭에서 5초 안 다시 = 지움 · 지운 뒤에는 [되돌리기] 토스트(`bookmark.undo_secs`).
+                    let tab = self.editors.tab_id(i);
+                    let armed = self
+                        .bm_clear_armed
+                        .is_some_and(|(t, at)| t == tab && at.elapsed().as_secs() < 5);
+                    if self.settings.flag("bookmark.confirm_clear") && !armed {
+                        let n = self.bookmarks.count_doc(&self.editors, i);
+                        if n == 0 {
+                            self.sess.status = tf(Msg::StBookmarkCleared, &["0"]);
+                        } else {
+                            self.bm_clear_armed = Some((tab, Instant::now()));
+                            self.sess.status = tf(Msg::StBookmarkClearArm, &[&n.to_string()]);
+                        }
+                    } else {
+                        self.bm_clear_armed = None;
+                        let n = self.bookmarks.clear_doc(&self.editors, i);
+                        if n > 0 {
+                            self.bm_removed_toast(n, "");
+                        } else {
+                            self.sess.status = tf(Msg::StBookmarkCleared, &[&n.to_string()]);
+                        }
+                    }
                 }
                 "bookmark.select_all" => self.bm_select_all_in(i),
                 "bookmark.undo_remove" => {
