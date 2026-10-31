@@ -13,3 +13,13 @@ workspace = true
 
 [dependencies]
 nsql-core.workspace = true
+# ★ D-432(11-01 · T-8 · 사용자 결정): xlsx/parquet 내보내기 = DR-3 외부 crate 예외(10 §4 원장) — 이 크레이트 안에만 가두고 공개 시그니처에
+#   외부 타입 0(`StreamWriter`가 감싼다). parquet은 기본 기능(arrow·압축 묶음) 끔 + snappy만 · 저수준 작성기(행 그룹 = 배치)로 arrow 없이.
+parquet = { version = "60.1", default-features = false, features = ["snap"], optional = true }
+rust_xlsxwriter = { version = "0.102", optional = true }
+
+[features]
+# 두 형식 모두 기본 켬(사용자 11-01 · lite·full·개발 동일) — 끄려면 이 크레이트를 default-features = false로.
+default = ["export-xlsx", "export-parquet"]
+export-xlsx = ["dep:rust_xlsxwriter"]
+export-parquet = ["dep:parquet"]

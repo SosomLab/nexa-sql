@@ -9,7 +9,7 @@
 nsql plan     [-d d] <script|-> [args]              # ✅ 엔진 dry-run(실행 없이 계획 출력)
 nsql run      -c <연결> [-f fmt] <script|-> [args]  # ✅ 스크립트 실행(&1..&n · WHENEVER · 프롬프트)
 nsql shell    -c <연결>                             # ✅ 최소 대화형(줄 누적 · `;`/`/`/명령으로 실행) · ☐ 줄 편집·히스토리
-nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T] [-o file]   # ✅ · ☐ parquet/xlsx
+nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T]|xlsx|parquet [-o file]   # ✅ · xlsx/parquet = 11-01 213차(D-432)
 nsql import   -c <연결> --table t --from file [--format …] [--mode insert|upsert|replace] [--batch 5000]
 nsql bulk     -c <연결> --table t --from file       # ★ 방언별 네이티브 대량 적재(§3)
 nsql desc     -c <연결> <object>                    # DESCRIBE
@@ -51,4 +51,4 @@ nsql config set format.preset default|kiros33|river   # ✅ 프리셋 적용 = �
 
 1. **M1**: `nsql run/shell` + Oracle·MSSQL 드라이버 + `export csv/json` — 엔진 실기 검증.
 2. **M2**: `import/bulk` 6방언 · PG/MySQL/SQLite 드라이버 · ODBC 폴백.
-3. **M3**: ~~연결 프로필 키체인 공유~~(✅ 09-13 DR-22 · 파일 저장소) · sqlplus/sqlcmd 호환 별칭 · Parquet/XLSX.
+3. **M3**: ~~연결 프로필 키체인 공유~~(✅ 09-13 DR-22 · 파일 저장소) · sqlplus/sqlcmd 호환 별칭 · ~~Parquet/XLSX~~(✅ 내보내기 11-01 213차 · 가져오기는 미정).

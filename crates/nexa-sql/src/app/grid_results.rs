@@ -287,8 +287,21 @@ impl App {
             "json" => nsql_io::Format::Json,
             "jsonl" | "ndjson" => nsql_io::Format::JsonLines,
             "sql" => nsql_io::Format::Insert { table: "T".into() },
+            // ★ D-432(11-01): 이진 형식 2(xlsx = Excel · parquet) — 라이선스 게이트 `export-xlsx` 한 곳(25 §13-3 · 기본 끔 D-145 · T-36).
+            "xlsx" => nsql_io::Format::Xlsx,
+            "parquet" => nsql_io::Format::Parquet,
             _ => nsql_io::Format::Csv,
         };
+        if matches!(format, nsql_io::Format::Xlsx | nsql_io::Format::Parquet) {
+            if !nsql_io::StreamWriter::supports(&format) {
+                self.sess.status = tf(Msg::StExportFormatUnavailable, &[&format.name()]);
+                self.redraw();
+                return;
+            }
+            if !self.lic_gate(nsql_license::Feature::ExportXlsx) {
+                return;
+            }
+        }
         let Some(pass) = self.gate_pass() else {
             return;
         };

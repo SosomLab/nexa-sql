@@ -8,6 +8,11 @@ pub mod delim;
 pub mod jsonl;
 pub mod paging;
 pub mod sqlgen;
+// ★ D-432(11-01 · T-8): 외부 crate 예외 2(rust_xlsxwriter · parquet)는 이 두 모듈 안에만(공개 타입 0 · 기능 스위치 · 기본 켬).
+#[cfg(feature = "export-parquet")]
+mod parquet_out;
+#[cfg(feature = "export-xlsx")]
+mod xlsx;
 pub use sqlgen::{
     choose_key, generate, generate_src, guess_table, split_table, KeyMode, KeySource, KeySpec,
     SqlKind,
@@ -35,6 +40,10 @@ pub enum Format {
     Insert {
         table: String,
     },
+    /// ★ D-432(11-01): Excel 통합 문서 — 파일 내보내기 전용(`nsql export -f xlsx` · `-o x.xlsx` · GUI 저장 창 확장자) · 터미널 표시(블록 렌더)는 grid.
+    Xlsx,
+    /// ★ D-432(11-01): Apache Parquet(배치 = 행 그룹 · 스트리밍 · snappy) — 파일 내보내기 전용.
+    Parquet,
 }
 
 impl Format {
@@ -49,6 +58,8 @@ impl Format {
             "json" => Format::Json,
             "jsonl" | "jsonlines" | "ndjson" => Format::JsonLines,
             "markdown" | "md" => Format::Markdown,
+            "xlsx" | "excel" => Format::Xlsx,
+            "parquet" => Format::Parquet,
             "sql" => Format::Sql(SqlKind::Insert),
             k if k.starts_with("sql:") => Format::Sql(SqlKind::parse(&k[4..])?),
             _ => {
@@ -157,6 +168,12 @@ pub fn write_result_set_opts<S: RowSource + ?Sized>(
             let key = choose_key(KeyMode::Pk, None, &names);
             out.write_all(generate_src(dialect, "T", &names, src, 0..n, *kind, &key).as_bytes())
         }
+        // ★ D-432: 이진 형식은 스트리밍 작성기 한 길로(한 배치 + 꼬리).
+        Format::Xlsx | Format::Parquet => {
+            let mut w = StreamWriter::new(fmt.clone(), dialect, &grid.null);
+            w.write_batch(out, src)?;
+            w.finish(out)
+        }
         Format::Csv => write_delimited(out, src, b',', &grid.null),
         Format::Tsv => write_delimited(out, src, b'\t', &grid.null),
         Format::Json => {
@@ -226,16 +243,28 @@ pub struct StreamWriter {
     rows: u64,
     /// 머리를 썼는가(첫 배치).
     started: bool,
+    /// ★ D-432: 이진 형식 작성기(외부 crate는 각 모듈 안에만 · 여기서는 상태만 든다).
+    #[cfg(feature = "export-xlsx")]
+    xlsx: Option<xlsx::XlsxOut>,
+    #[cfg(feature = "export-parquet")]
+    parquet: Option<parquet_out::ParquetOut>,
 }
 
 impl StreamWriter {
     /// 이 형식을 배치로 쓸 수 있는가.
     #[must_use]
     pub fn supports(fmt: &Format) -> bool {
-        matches!(
-            fmt,
-            Format::Csv | Format::Tsv | Format::Json | Format::JsonLines | Format::Insert { .. }
-        )
+        match fmt {
+            Format::Csv
+            | Format::Tsv
+            | Format::Json
+            | Format::JsonLines
+            | Format::Insert { .. } => true,
+            // ★ D-432: 기능이 빠진 빌드면 "지원 안 함"(호스트는 다른 형식을 안내).
+            Format::Xlsx => cfg!(feature = "export-xlsx"),
+            Format::Parquet => cfg!(feature = "export-parquet"),
+            Format::Grid | Format::Markdown | Format::Sql(_) => false,
+        }
     }
 
     #[must_use]
@@ -246,6 +275,10 @@ impl StreamWriter {
             null: null.to_string(),
             rows: 0,
             started: false,
+            #[cfg(feature = "export-xlsx")]
+            xlsx: None,
+            #[cfg(feature = "export-parquet")]
+            parquet: None,
         }
     }
 
@@ -320,6 +353,36 @@ impl StreamWriter {
                     )?;
                 }
             }
+            Format::Xlsx => {
+                #[cfg(feature = "export-xlsx")]
+                {
+                    let x = self.xlsx.get_or_insert_with(xlsx::XlsxOut::new);
+                    x.write_batch(src, &self.null)?;
+                }
+                #[cfg(not(feature = "export-xlsx"))]
+                {
+                    let _ = out;
+                    return Err(io::Error::other(
+                        "xlsx export is not built in (feature export-xlsx)",
+                    ));
+                }
+            }
+            Format::Parquet => {
+                #[cfg(feature = "export-parquet")]
+                {
+                    let p = self
+                        .parquet
+                        .get_or_insert_with(parquet_out::ParquetOut::new);
+                    p.write_batch(out, src, &self.null)?;
+                }
+                #[cfg(not(feature = "export-parquet"))]
+                {
+                    let _ = out;
+                    return Err(io::Error::other(
+                        "parquet export is not built in (feature export-parquet)",
+                    ));
+                }
+            }
             Format::Grid | Format::Markdown | Format::Sql(_) => {
                 return Err(io::Error::other("format is not streamable"));
             }
@@ -335,6 +398,19 @@ impl StreamWriter {
                 out.write_all(b"[")?;
             }
             out.write_all(if self.rows == 0 { b"]\n" } else { b"\n]\n" })?;
+        }
+        // ★ D-432: xlsx = 여기서 zip 전체를 씀(배치가 없었으면 빈 통합 문서) · parquet = 꼬리(배치가 없었으면 오류 = 파일 없음).
+        #[cfg(feature = "export-xlsx")]
+        if matches!(self.fmt, Format::Xlsx) {
+            let x = self.xlsx.get_or_insert_with(xlsx::XlsxOut::new);
+            x.finish(out)?;
+        }
+        #[cfg(feature = "export-parquet")]
+        if matches!(self.fmt, Format::Parquet) {
+            let p = self
+                .parquet
+                .get_or_insert_with(parquet_out::ParquetOut::new);
+            p.finish(out)?;
         }
         self.started = true;
         Ok(())
@@ -405,6 +481,69 @@ mod stream_tests {
         let mut w = StreamWriter::new(Format::Grid, Dialect::Sqlite, "");
         assert!(w.write_batch(&mut Vec::new(), &rs(1, 1)).is_err());
     }
+
+    /// ★ D-432(11-01): xlsx/parquet도 스트리밍 작성기 한 길 — 두 배치 + 꼬리 = zip(`PK`)/`PAR1` · 이름·parse 왕복 · 비스트림 경로
+    /// (`write_result_set_opts`)도 같은 바이트.
+    #[test]
+    fn xlsx_and_parquet_stream() {
+        assert!(StreamWriter::supports(&Format::Xlsx) && StreamWriter::supports(&Format::Parquet));
+        assert_eq!(Format::parse("xlsx"), Some(Format::Xlsx));
+        assert_eq!(Format::parse("excel"), Some(Format::Xlsx));
+        assert_eq!(Format::parse("parquet"), Some(Format::Parquet));
+        assert_eq!(Format::Xlsx.name(), "xlsx");
+        assert_eq!(Format::Parquet.name(), "parquet");
+        let mut x = Vec::new();
+        let mut w = StreamWriter::new(Format::Xlsx, Dialect::Sqlite, "");
+        w.write_batch(&mut x, &rs(2, 1)).unwrap();
+        assert!(x.is_empty(), "xlsx는 finish에서 한 번에");
+        w.write_batch(&mut x, &rs(2, 1)).unwrap();
+        w.finish(&mut x).unwrap();
+        assert_eq!(w.rows(), 2);
+        assert!(x.starts_with(b"PK"));
+        let mut p = Vec::new();
+        let mut w = StreamWriter::new(Format::Parquet, Dialect::Sqlite, "");
+        w.write_batch(&mut p, &rs(2, 1)).unwrap();
+        assert!(p.starts_with(b"PAR1"), "첫 행 그룹이 바로 흘러나온다");
+        w.write_batch(&mut p, &rs(2, 1)).unwrap();
+        w.finish(&mut p).unwrap();
+        assert!(p.ends_with(b"PAR1"));
+        let mut q = Vec::new();
+        write_result_set_opts(
+            &mut q,
+            &rs(2, 1),
+            &Format::Parquet,
+            Dialect::Sqlite,
+            &GridOpts::default(),
+        )
+        .unwrap();
+        assert!(q.starts_with(b"PAR1") && q.ends_with(b"PAR1"));
+        // 그리드 블록 렌더는 grid와 같은 글(터미널 표시).
+        let lay = block_layout(&rs(2, 1), &GridOpts::default());
+        let key = KeySpec::default();
+        let a = render_block(
+            &rs(2, 1),
+            &Format::Xlsx,
+            Dialect::Sqlite,
+            &lay,
+            0..1,
+            true,
+            true,
+            "T",
+            &key,
+        );
+        let b = render_block(
+            &rs(2, 1),
+            &Format::Grid,
+            Dialect::Sqlite,
+            &lay,
+            0..1,
+            true,
+            true,
+            "T",
+            &key,
+        );
+        assert_eq!(a, b);
+    }
 }
 
 /// 형식 이름(`set format`·설정 표시용).
@@ -418,6 +557,8 @@ impl Format {
             Format::Json => "json".into(),
             Format::JsonLines => "jsonl".into(),
             Format::Markdown => "markdown".into(),
+            Format::Xlsx => "xlsx".into(),
+            Format::Parquet => "parquet".into(),
             Format::Sql(k) => format!("sql:{}", k.name()),
             Format::Insert { table } => format!("insert:{table}"),
         }
@@ -685,7 +826,8 @@ pub fn render_block<S: RowSource + ?Sized>(
     let n = rs.ncols();
     let null = layout.null.as_str();
     match fmt {
-        Format::Grid => {
+        // ★ D-432: 이진 형식은 터미널 블록 표시가 없다 → grid로(파일 내보내기는 `write_result_set_opts`/`StreamWriter`).
+        Format::Grid | Format::Xlsx | Format::Parquet => {
             let cells: Vec<Vec<String>> = (start..end)
                 .map(|r| rs.cells(r).map(|v| cell_text(v, null)).collect())
                 .collect();

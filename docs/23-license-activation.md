@@ -196,7 +196,7 @@ impl Licensing {
 | 후보 | 게이트 | 이유 |
 |---|:--:|---|
 | 접속·실행·그리드·export csv/tsv/json/insert · 스크립트 엔진 · 연결 프로필 · 편집기 전부 | **무료** | 제품의 정체성. 막으면 비교표 탈락([03 §5](03-competitive-landscape.md)) |
-| xlsx/parquet export(T-8) | Pro | 업무 산출물 = 회사 용도 신호 · ★ 배선 예정(210차 · D-432 · `export-xlsx` 한 곳 · 게이트 기본 끔 D-145) |
+| xlsx/parquet export(T-8) | Pro | 업무 산출물 = 회사 용도 신호 · ✅ 배선됨(11-01 213차 · D-432 · `lic_gate(Feature::ExportXlsx)` = GUI 결과 내보내기 xlsx·parquet 한 곳 · 게이트 기본 끔 D-145) |
 | SSH 터널(T-3) | Pro | 운영 접근 |
 | 드라이버 확장 설치(T-28) · 벤더 클라이언트(OCI/ODBC) | Pro | 사내 레거시 DBMS = 상업 |
 | 동시 다중 접속(창/탭 2개 이상) | Pro | TablePlus·Dataflare 선례 |

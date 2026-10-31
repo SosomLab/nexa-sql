@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/212-t255-tsql-if | 2026-11-01 | 2026-11-01 → main ff · **d71d4f48** · 삭제 | 1 | 192차 win 212차 = T-255 T-SQL `BEGIN` 없는 IF 본문(`format.tsql_if_body` next\|block) + `ELSE IF` 연쇄(D-433) · 13파일(소스 4 + 문서 9) · ci **41216058979** ✓(15:48:10Z · xvfb 단계 54 s ✓) · integration **41216058894** ✓(15:45:40Z) |
 | (main 직접) | 2026-11-01 | 2026-11-01 → main · **65dc2849** | 1 | 192차 win 211차 보강 = ci.yml ubuntu X11 런타임(libxkbcommon-x11-0 등) 설치 + 실패 시 진단 단계 · ci **41215024319** ✓(15:33:51Z · xvfb 단계 51 s · S01~S05 ok) |
 | feat/211-t458-xvfb | 2026-11-01 | 2026-11-01 → main ff · **6a8706fd** · 삭제 | 1 | 192차 win 211차 = T-458 Linux xvfb(D-435 · `scripts/lib/xvfb.sh` · 스크립트 20 · ci.yml ubuntu `xvfb func-check` S01~S05) · 27파일 · 소스 0 · ci **41214096070** ✗(새 단계 = 앱 즉시 종료 · X11 런타임 누락) → 65dc2849로 해결 |
 | feat/210-t457-from-table | 2026-10-31 | 2026-10-31 → main ff · **05f3e2bb** · 삭제 | 1 | 192차 win 210차 = T-457 운영 2단 `FROM t`(DuckDB·ClickHouse)·`TABLE t`(PostgreSQL) 조회 분류(D-434 · `Syntax.query_heads` · `is_query_head` · `TxClass::of_sql_in` · `classify_sql_in`) · 19파일(협업 문서 포함) · ci **41213802284** ✓(15:19:43Z) · integration **41213802025** ✓(15:18:01Z) |

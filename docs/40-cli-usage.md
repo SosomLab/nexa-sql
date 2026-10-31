@@ -1428,6 +1428,17 @@ n       s
 (null)  x
 ```
 
+**`-f xlsx`** / **`-f parquet`**(11-01 213차 · D-432) — 표 계산·분석 도구로 넘길 때. 이진 파일이라 `-o 파일`(또는 `> 파일`)로 받는다.
+
+```
+nsql export -c prod -q "select * from emp" -f xlsx    -o emp.xlsx
+nsql export -c prod -t big_table               -f parquet -o big.parquet
+```
+
+- xlsx = 시트 하나 · 행 상한 1,048,576(넘으면 오류 — 큰 결과는 csv/parquet) · 셀 32,767자 · |정수| > 2^53 · 16자리 이상 Decimal은 글자로(정밀도 보존) · 별칭 `excel`.
+- parquet = 배치 하나 = 행 그룹 하나(메모리 = 한 배치) · SNAPPY 압축 · 열 형 = 첫 배치의 첫 비NULL 값(INT64 · DOUBLE · BOOLEAN · UTF8) · 같은 열 이름은 `_2`를 붙임 · 결과 0행 = 오류(빈 파일 안 만듦).
+- 접속 안내 줄은 `export`에서 stderr로 나간다 — stdout 리다이렉트(`> f.parquet` · CSV 파이프)가 순수하다.
+
 ### 4-3. SQL 형식 5종 — 결과를 실행문으로
 
 결과 행을 **다시 실행할 수 있는 SQL**로 만든다. 데이터 이관·재현·패치 스크립트에 쓴다. 테이블 이름은 실행한 문장에서 추정한다. 아래는 `emp`에 **PK(`id`)가 있을 때**(Step 3)의 실제 출력이다.

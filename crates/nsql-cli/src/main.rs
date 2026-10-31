@@ -1145,6 +1145,9 @@ struct Printer {
     pager: bool,
     /// 설정 `cli.auto_more` — 잘린 결과 뒤 묻지 않고 다음 세그먼트를 이어 출력.
     auto_more: bool,
+    /// ★ D-432(11-01 · 213차 관찰): `nsql export`는 **stdout = 데이터만** — 접속 줄·안내 같은 Printer 출력은 stderr로(이진 xlsx/parquet가
+    ///   `접속: …` 글로 오염되던 결함 · csv를 파이프로 받을 때도 같았음). 스풀은 그대로.
+    notes_to_stderr: bool,
 }
 
 impl Printer {
@@ -1171,6 +1174,7 @@ impl Printer {
             served: 0,
             pager: false,
             auto_more: false,
+            notes_to_stderr: false,
         }
     }
 
@@ -1252,10 +1256,15 @@ impl Printer {
         if bytes.is_empty() {
             return;
         }
-        let o = io::stdout();
-        let mut o = o.lock();
-        let _ = o.write_all(bytes);
-        drop(o);
+        if self.notes_to_stderr {
+            let _ = io::stdout().flush();
+            let _ = io::stderr().write_all(bytes);
+        } else {
+            let o = io::stdout();
+            let mut o = o.lock();
+            let _ = o.write_all(bytes);
+            drop(o);
+        }
         spool_write(&self.spool, bytes);
     }
 
@@ -2284,6 +2293,8 @@ fn cmd_export(o: &Opts) -> i32 {
         .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
+    // ★ D-432: export의 stdout은 데이터 전용(접속 줄 등은 stderr) — `nsql export … -f parquet > f.parquet`가 깨끗하게.
+    printer.notes_to_stderr = true;
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let dialect = runner.engine.dialect;
     let mut out: Box<dyn Write> = match &o.out {
