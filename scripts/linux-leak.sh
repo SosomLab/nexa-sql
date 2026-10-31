@@ -8,6 +8,7 @@
 # 읽는 법: 첫 1~2주기는 캐시·글리프가 채워지며 오른다(정상). 그 뒤 **마지막 절반의 기울기**(MB/주기)가 0에 가까우면 누수 없음.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 EXE="$ROOT/target/release/nexa-sql"; HOME_DIR=""; FIRST=""; CYC=""; N=10; PER=4000; START=4000; ARGS=""; TAG=leak
 while getopts "e:H:F:C:n:p:S:a:t:" o; do case $o in e) EXE=$OPTARG;; H) HOME_DIR=$OPTARG;; F) FIRST=$OPTARG;; C) CYC=$OPTARG;; n) N=$OPTARG;; p) PER=$OPTARG;; S) START=$OPTARG;; a) ARGS=$OPTARG;; t) TAG=$OPTARG;; esac; done
 [ -d "$HOME_DIR" ] || { echo "home dir missing: '$HOME_DIR'"; exit 2; }

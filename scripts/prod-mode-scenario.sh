@@ -18,6 +18,7 @@
 #   -d sqlite -c Local = 서버 없이 로컬 파일 DB로(프로필을 스크립트가 만든다 · -P 불필요)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 OUT="$ROOT/target/prod-scenario"; PROF=""; CONN="APPDB"; DIALECT="oracle"; STEP=""; INTER=0; KEEP=0; LIMIT=0
 EXE="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
 while getopts "o:P:c:d:s:g:n:ikL" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; c) CONN=$OPTARG;; d) DIALECT=$OPTARG;; s) STEP=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; i) INTER=1;; k) KEEP=1;; L) LIMIT=1;; esac; done

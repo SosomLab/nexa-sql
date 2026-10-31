@@ -11,6 +11,7 @@
 #        · -S = 메타 시나리오가 펼칠 스키마(기본 = Oracle 프로필 이름 = 로그인 계정) · -M = 메타 시나리오(s8~s12)만 돈다(하네스 손질 뒤 빠른 재확인).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 H=""; D=""; OUT=""; PROF=Local
 REAL="${APPDATA:-$HOME/.config}/nexa-sql"; SCHEMA=""; META_ONLY=""
 while getopts "H:D:o:p:P:S:M" o; do case $o in H) H=$OPTARG;; D) D=$OPTARG;; o) OUT=$OPTARG;; p) PROF=$OPTARG;; P) REAL=$OPTARG;; S) SCHEMA=$OPTARG;; M) META_ONLY=1;; esac; done

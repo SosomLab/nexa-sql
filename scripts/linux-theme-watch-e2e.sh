@@ -6,6 +6,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/lib/timeout.sh"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 OUT=""; EXE="$ROOT/target/debug/nexa-sql"
 while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -e) EXE=$2; shift 2;; *) echo "usage: $0 -o <out> [-e gui]"; exit 2;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }

@@ -12,6 +12,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILE="APPDB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; EXE=""
 while getopts "o:n:p:P:g:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; P) PROF=$OPTARG;; g) EXE=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p profile] [-P real-config-dir] [-g gui-exe]"; exit 2; }

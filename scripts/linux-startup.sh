@@ -6,6 +6,7 @@
 # 사용:  scripts/linux-startup.sh -H /tmp/nsql-home -n 5 -s 3 [-a Local] [-e <exe>] [-t tag]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 EXE="$ROOT/target/release/nexa-sql"; HOME_DIR=""; RUNS=5; SETTLE=3; ARGS=""; TAG=startup
 while getopts "e:H:n:s:a:t:" o; do case $o in e) EXE=$OPTARG;; H) HOME_DIR=$OPTARG;; n) RUNS=$OPTARG;; s) SETTLE=$OPTARG;; a) ARGS=$OPTARG;; t) TAG=$OPTARG;; esac; done
 [ -d "$HOME_DIR" ] || { echo "home dir missing: '$HOME_DIR'"; exit 2; }

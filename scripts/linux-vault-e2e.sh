@@ -6,6 +6,7 @@
 #       프로필 PLANDB(mssql · 비밀번호 저장)과 oracle://APPDB:APPDB@172.16.1.58:1521/APPDB(실서버 · 읽기)를 쓴다 — 필요하면 -m/-r 로 바꾼다.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 APP="$ROOT/target/debug/nexa-sql"; HOME_SRC=""; OUT=""; MSSQL="mssql://APPDB_MS@172.16.1.58:1433/PLANDB_MS"; MSPROF="PLANDB"; ORA="oracle://APPDB:APPDB@172.16.1.58:1521/APPDB"
 while getopts "P:o:e:m:p:r:" o; do case $o in P) HOME_SRC=$OPTARG;; o) OUT=$OPTARG;; e) APP=$OPTARG;; m) MSSQL=$OPTARG;; p) MSPROF=$OPTARG;; r) ORA=$OPTARG;; esac; done
 [ -n "$HOME_SRC" ] && [ -n "$OUT" ] || { echo "usage: -P <real home> -o <out dir> [-e exe] [-m mssql-url] [-p mssql-profile] [-r oracle-url]"; exit 2; }

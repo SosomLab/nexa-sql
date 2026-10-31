@@ -13,6 +13,7 @@
 #   -x = 끝에 임시 프로시저 DROP(기본 = **남긴다** · 사용자가 직접 실행해 볼 수 있게 · 10-17 협업 세션이 사용자에게 알린 상태와 같게 · NSQLT_* = 61 §2-4 ⑤ 임시 객체)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 EXE="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"; OUT=""; PROF=""; MS=""; PG=""; ORA=""; LITE=0; DROP=0
 while getopts "o:P:m:p:r:sxe:n:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; m) MS=$OPTARG;; p) PG=$OPTARG;; r) ORA=$OPTARG;; s) LITE=1;; x) DROP=1;; e) EXE=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-P <settings dir>] [-m prof] [-p prof] [-r prof] [-s]"; exit 2; }

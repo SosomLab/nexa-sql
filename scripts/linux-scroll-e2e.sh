@@ -9,6 +9,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 OUT=""; APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"
 while getopts "o:e:n:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-e app] [-n nsql]"; exit 2; }

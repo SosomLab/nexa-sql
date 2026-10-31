@@ -8,6 +8,7 @@
 #   -P 없으면 ①만. GUI는 -P와 -d가 있을 때. 대기 = 마지막 @after + 5 s(App Nap · 61 §4).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"; OUT=""; PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
 while getopts "o:e:n:P:d:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-e app] [-n cli] [-P <settings dir>] [-d dialect:profile,…]"; exit 2; }

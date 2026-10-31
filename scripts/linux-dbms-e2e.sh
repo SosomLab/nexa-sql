@@ -8,6 +8,7 @@
 # 사용: scripts/linux-dbms-e2e.sh -o <출력폴더> [-n target/debug/nsql] [-p "APPDB:oracle,PLANDB:mssql,Repository:postgres,Demo:sqlite"]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 NSQL="$ROOT/target/debug/nsql"; OUT=""; PROFILES="APPDB:oracle,PLANDB:mssql,Repository:postgres,Demo:sqlite"
 while getopts "o:n:p:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILES=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli] [-p prof:dialect,...]"; exit 2; }

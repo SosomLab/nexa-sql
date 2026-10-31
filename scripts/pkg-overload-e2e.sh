@@ -7,6 +7,7 @@
 # 사용: scripts/pkg-overload-e2e.sh -o <출력> -P <실제 설정 폴더> [-p APPDB] [-s APPDB_SB] [-k PKG_STAT_GATHER_BSY] [-m PRC_RUN_ALL] [-e target/debug/nexa-sql]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 APP="$ROOT/target/debug/nexa-sql"; OUT=""; PROF=""; PRO="APPDB"; SCH="APPDB_SB"; PKG="PKG_STAT_GATHER_BSY"; MEM="PRC_RUN_ALL"
 while getopts "o:P:p:s:k:m:e:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; p) PRO=$OPTARG;; s) SCH=$OPTARG;; k) PKG=$OPTARG;; m) MEM=$OPTARG;; e) APP=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out> -P <settings dir> [-p 프로필] [-s 스키마] [-k 패키지] [-m 멤버] [-e app]"; exit 2; }

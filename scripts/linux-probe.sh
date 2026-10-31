@@ -9,6 +9,7 @@
 #   stderr는 <home>/<tag>.stderr 에 남는다(`NSQL_TRACE_FRAMES=1`을 함께 주면 `[frames]`·`[load]` 줄이 여기에).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 EXE="$ROOT/target/release/nexa-sql"; HOME_DIR=""; CMD=""; SECS=20; TAG=probe; ARGS=""; IV=1
 while getopts "e:H:c:s:t:a:i:" o; do case $o in e) EXE=$OPTARG;; H) HOME_DIR=$OPTARG;; c) CMD=$OPTARG;; s) SECS=$OPTARG;; t) TAG=$OPTARG;; a) ARGS=$OPTARG;; i) IV=$OPTARG;; esac; done
 [ -d "$HOME_DIR" ] || { echo "home dir missing (create the sandbox folder first): '$HOME_DIR'"; exit 2; }

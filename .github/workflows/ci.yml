@@ -69,6 +69,16 @@ jobs:
         run: cargo test --workspace
       - name: smoke (fonts · drivers)
         run: cargo run -q -p nexa-sql -- --smoke
+      # ★ T-458(11-01 · 사용자 "리눅스는 xvfb로" · D-435): GUI 기능 점검을 Xvfb 가상 디스플레이에서 — scripts/lib/xvfb.sh가 스크립트를
+      #   xvfb-run 아래로 다시 띄운다(창은 러너 화면에 뜨지 않음 · 키 주입 0). 1단계 = 기동·창 수·덤프 판정 시나리오 일부(Debug exe ·
+      #   FC_WAIT_SCALE 2 = 기동 지연 보정). 2단계(전수)는 시간 실측 뒤 · 맥·윈도우 동일 기법 = T-459 헤드리스 백엔드.
+      - name: xvfb func-check (linux · subset)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq xvfb x11-utils
+          cargo build -q -p nexa-sql -p nsql-cli
+          scripts/linux-func-check.sh -o target/func-check -e target/debug/nexa-sql -n target/debug/nsql -O S01,S02,S03,S04,S05
+          tail -n 3 target/func-check/func-check.txt
 
   # ★ T-10 라이선스 게이트(10-29 168차): deny.toml 허용 목록 밖(카피레프트 등)·읽을 수 없는 라이선스 = 실패. 형제 저장소는 path 의존이라 함께 체크아웃.
   deny:

@@ -7,6 +7,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/lib/timeout.sh"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 OUT=""; REPO="$ROOT"; HOLD=6000
 while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -C) REPO=$(cd "$2" && pwd); shift 2;; -H) HOLD=$2; shift 2;; *) echo "usage: $0 -o <out> [-C repo] [-H hold_ms]"; exit 2;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }

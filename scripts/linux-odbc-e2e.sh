@@ -11,6 +11,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/lib/timeout.sh"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 OUT=""; NSQL="$ROOT/target/debug/nsql"; EXE="$ROOT/target/debug/nexa-sql"; PG="172.16.1.60:5433/repodb"; MS="172.16.1.58,1433"; PROFILES=""
 while [ $# -gt 0 ]; do case "$1" in -o) OUT=$2; shift 2;; -n) NSQL=$2; shift 2;; -e) EXE=$2; shift 2;; --pg) PG=$2; shift 2;; --ms) MS=$2; shift 2;; --profiles) PROFILES=$2; shift 2;; *) echo "usage: $0 -o <out> [-n nsql] [-e gui] [--pg host:port/db] [--ms host,port] [--profiles 이름,이름]"; exit 2;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir>"; exit 2; }

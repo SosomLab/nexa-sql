@@ -8,6 +8,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 # ★ T-452(10-29 · 익명화 뒤): 실서버 목록은 -d 또는 env NSQL_E2E_INTEL_LIST(기본값은 익명 = 실서버에선 해석 실패).
 OUT=""; PROF=""; LIST="${NSQL_E2E_INTEL_LIST:-APPDB:oracle:APPDB_SB:ANTI_KR_ITEM,PLANDB:mssql:APPDB_MS.dbo:M4E_C300000}"
 EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"

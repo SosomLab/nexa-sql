@@ -5,6 +5,7 @@
 # 사용: scripts/linux-mem-reclaim.sh -H <격리홈> -D <자료> -o <출력> [-p Local]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; H=""; D=""; OUT=""; PROF=Local
+. "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 while getopts "H:D:o:p:" o; do case $o in H) H=$OPTARG;; D) D=$OPTARG;; o) OUT=$OPTARG;; p) PROF=$OPTARG;; esac; done
 [ -n "$H" ] && [ -n "$D" ] && [ -n "$OUT" ] || { echo "usage: -H <home> -D <data> -o <out> [-p profile]"; exit 2; }
 mkdir -p "$H" "$D" "$OUT"; R="$OUT/mem-reclaim.txt"; : > "$R"
