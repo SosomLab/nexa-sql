@@ -873,13 +873,14 @@ pub(crate) fn is_dml_sql(sql: &str) -> bool {
     )
 }
 
-/// 서버 상태를 바꾸는 문장인가(조회·클라이언트 명령·COMMIT/ROLLBACK 제외 · D-298 "변경").
-pub(crate) fn is_change_sql(sql: &str) -> bool {
+/// 서버 상태를 바꾸는 문장인가(조회·클라이언트 명령·COMMIT/ROLLBACK 제외 · D-298 "변경") · 방언을 알면 그 방언의 추가 조회 머리도
+/// 조회(D-434 · DuckDB `FROM t` · PG `TABLE t`).
+pub(crate) fn is_change_sql(sql: &str, dialect: Option<nsql_core::Dialect>) -> bool {
     if is_client_only(sql) || nsql_core::TxControl::of_sql(sql) == nsql_core::TxControl::End {
         return false;
     }
     !matches!(
-        nsql_core::TxClass::of_sql(sql),
+        nsql_core::TxClass::of_sql_in(sql, dialect),
         nsql_core::TxClass::None | nsql_core::TxClass::Read
     )
 }
@@ -1291,6 +1292,8 @@ pub(crate) fn run_needed_items(
 /// ★ 명백한 구문 오류(사용자 10-30 · D-424): 첫 낱말이 어느 방언에서도 문장을 시작할 수 없으면(`;` 빠져 앞 조각이 붙은 `… abc SELECT …` 등)
 ///   서버가 그대로 거절할 문장이므로 확인 대상이 아니다(`nsql_core::is_statement_start` · SQL Server·ODBC·Access는 프로시저 이름 호출이
 ///   가능해 늘 확인) · PL/SQL 라벨 `<<x>>`로 시작하는 블록은 문장이다.
+/// ★ D-434(10-31 · T-457): 그 방언의 **추가 조회 머리**(`Caps.syntax.query_heads` · PG `TABLE t` · DuckDB·ClickHouse `FROM t`)는 조회 =
+///   확인 없음 · 다른 방언에서 같은 낱말은 종전(문장 시작 목록에 있으면 확인).
 pub(crate) fn prod_confirm_needed(
     prod: bool,
     setting_on: bool,
@@ -1306,6 +1309,7 @@ pub(crate) fn prod_confirm_needed(
                 && (!is_client_only(sql) || is_conntype_cmd(sql))
                 // 작업 단위 전환(`ALTER SESSION SET CURRENT_SCHEMA` · `SET search_path`)은 데이터 변경이 아니다(10-01 ⑮).
                 && !is_context_switch(sql)
+                && !nsql_core::is_query_head(dialect, &k)
                 && !matches!(
                     k.as_str(),
                     "SELECT"
@@ -1475,9 +1479,41 @@ mod tests {
             need(true, true, &["<<lbl>> begin null; end;".to_string()]),
             "PL/SQL 라벨 블록 = 문장"
         );
+        // ★ D-434(10-31 · T-457): 방언의 추가 조회 머리 = 조회 = 확인 없음 · 다른 방언에서 같은 낱말 = 종전(문장 시작 = 확인) —
+        //   조건별 독립 영향 쌍 = (낱말 FROM/TABLE) × (방언 맞음/다름).
+        let from_t = vec!["from t".to_string()];
+        let table_t = vec!["table t".to_string()];
         assert!(
-            super::prod_confirm_needed(true, true, D::Duckdb, &["from t".to_string()]),
-            "DuckDB FROM-first = 문장(조회지만 목록 밖 = 확인 · 종전과 같음)"
+            !super::prod_confirm_needed(true, true, D::Duckdb, &from_t),
+            "DuckDB FROM-first = 조회 = 확인 없음"
+        );
+        assert!(
+            !super::prod_confirm_needed(true, true, D::Clickhouse, &from_t),
+            "ClickHouse FROM-first = 조회"
+        );
+        assert!(
+            !super::prod_confirm_needed(true, true, D::Postgres, &table_t),
+            "PG TABLE t = 조회"
+        );
+        assert!(
+            need(true, true, &from_t),
+            "Oracle `from t` = 문장 시작 목록에 있음 = 종전대로 확인"
+        );
+        assert!(
+            need(true, true, &table_t),
+            "Oracle `table t` = 종전대로 확인"
+        );
+        assert!(
+            super::prod_confirm_needed(true, true, D::Duckdb, &table_t),
+            "DuckDB `table t` = 추가 머리 아님 = 종전대로 확인"
+        );
+        assert!(
+            super::prod_confirm_needed(true, true, D::Postgres, &from_t),
+            "PG `from t` = 추가 머리 아님 = 종전대로 확인"
+        );
+        assert!(
+            !super::prod_confirm_needed(true, true, D::Duckdb, &["from t select a".to_string()]),
+            "머리만 본다(FROM-first 뒤 SELECT)"
         );
         assert!(
             !need(true, true, &["-- note\nabc select 1".to_string()]),
@@ -2507,11 +2543,15 @@ mod hold_tests {
             kept,
             vec!["DROP TABLE x".to_string(), "BEGIN NULL; END;".to_string()]
         );
-        assert!(is_change_sql("UPDATE t SET a=1") && is_change_sql("DROP TABLE x"));
+        assert!(is_change_sql("UPDATE t SET a=1", None) && is_change_sql("DROP TABLE x", None));
         assert!(
-            !is_change_sql("SELECT 1")
-                && !is_change_sql("COMMIT")
-                && !is_change_sql("SET DEFINE OFF")
+            !is_change_sql("SELECT 1", None)
+                && !is_change_sql("COMMIT", None)
+                && !is_change_sql("SET DEFINE OFF", None)
         );
+        // ★ D-434: 방언의 추가 조회 머리 = 변경 아님 · 모르는 방언·다른 방언 = 종전(Other = 변경).
+        assert!(!is_change_sql("from t", Some(nsql_core::Dialect::Duckdb)));
+        assert!(is_change_sql("from t", Some(nsql_core::Dialect::Oracle)));
+        assert!(is_change_sql("from t", None));
     }
 }

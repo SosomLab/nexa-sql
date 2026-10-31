@@ -157,7 +157,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             if let Some(d) = delim.as_deref() {
                 let (text, end_off, next) = collect_delim_stmt(src, &classes, pos, d);
                 if !text.is_empty() {
-                    let kind = ItemKind::Sql(classify_sql(&text));
+                    let kind = ItemKind::Sql(classify_sql_in(&text, dialect));
                     items.push(Item {
                         kind,
                         text,
@@ -249,7 +249,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             continue;
         }
         let (text, end_off, next) = collect_sql(src, &classes, pos, rest, dialect);
-        let kind = ItemKind::Sql(classify_sql(&text));
+        let kind = ItemKind::Sql(classify_sql_in(&text, dialect));
         items.push(Item {
             kind,
             text,
@@ -528,6 +528,19 @@ fn starts_block(first_line: &str) -> bool {
     }
 }
 
+/// ★ 방언을 아는 분류(D-434 · T-457): 그 방언의 추가 조회 머리(`Caps.syntax.query_heads` · PG `TABLE t` · DuckDB·ClickHouse FROM-first)는
+/// [`SqlKind::Query`] — 그리드 건수·OFFSET 재질의·CLI 스트리밍 내보내기가 조회로 다룬다. 나머지 = [`classify_sql`].
+#[must_use]
+pub fn classify_sql_in(text: &str, dialect: Option<Dialect>) -> SqlKind {
+    if let Some(d) = dialect {
+        let first = nsql_core::first_keyword(text);
+        if nsql_core::is_query_head(d, &first) {
+            return SqlKind::Query;
+        }
+    }
+    classify_sql(text)
+}
+
 pub fn classify_sql(text: &str) -> SqlKind {
     let up = text.trim_start().to_ascii_uppercase();
     let first = up.split_whitespace().next().unwrap_or("");
@@ -552,6 +565,39 @@ mod tests {
     use crate::command::Command;
 
     const GOLDEN: &str = "EXEC\t:V_PRG_NM\t\t\t:=\t'SP_DMP_MPO_DME_CREATE_BSY';\n\nEXEC DBMS_STATS.GATHER_TABLE_STATS(USER, 'DME_I301080', CASCADE=>TRUE, NO_INVALIDATE=>FALSE);\n\nEXEC SP_DMP_MP_VERSION_CREATE(:PC_RET, 'ACME', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'user01');\n\n\n--\tMP 버전에 기반한 변수 설정\nEXEC\nSELECT\n\tA.PROJECT_CD\n,\tA.MP_VRSN_ID\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_ID\nFROM\n\tDMS_O301010 A\nWHERE 1=1\nAND\tA.PROJECT_CD\t\t=\t'ACME'\n\nSELECT\n\t:V_PROJECT_CD\n,\t:V_PRG_NM\nFROM\n\tDUAL\n;\n";
+
+    /// ★ D-434: 방언을 아는 분할은 DuckDB·ClickHouse `FROM t` · PG `TABLE t`를 조회로(`SqlKind::Query`) · Oracle·방언 없음 = 종전 Other.
+    #[test]
+    fn query_heads_classify_as_query_in_their_dialects() {
+        let kind = |src: &str, d: Option<Dialect>| split_script_in(src, d)[0].kind.clone();
+        assert!(matches!(
+            kind("from t;", Some(Dialect::Duckdb)),
+            ItemKind::Sql(SqlKind::Query)
+        ));
+        assert!(matches!(
+            kind("FROM t SELECT a, b;", Some(Dialect::Clickhouse)),
+            ItemKind::Sql(SqlKind::Query)
+        ));
+        assert!(matches!(
+            kind("table t;", Some(Dialect::Postgres)),
+            ItemKind::Sql(SqlKind::Query)
+        ));
+        assert!(matches!(
+            kind("from t;", Some(Dialect::Oracle)),
+            ItemKind::Sql(SqlKind::Other)
+        ));
+        assert!(matches!(
+            kind("from t;", None),
+            ItemKind::Sql(SqlKind::Other)
+        ));
+        assert!(
+            matches!(
+                kind("table t;", Some(Dialect::Duckdb)),
+                ItemKind::Sql(SqlKind::Other)
+            ),
+            "DuckDB `TABLE`은 추가 머리가 아님(종전)"
+        );
+    }
 
     #[test]
     fn tsql_create_or_alter_is_a_block_until_go() {
@@ -1040,7 +1086,7 @@ fn command_or_sql(text: &str, dialect: Option<Dialect>) -> ItemKind {
             ItemKind::Sql(SqlKind::Query)
         }
         Ok(Some(c)) => ItemKind::Command(c),
-        Ok(None) => ItemKind::Sql(classify_sql(text)),
+        Ok(None) => ItemKind::Sql(classify_sql_in(text, dialect)),
         Err(e) => ItemKind::Invalid(e),
     }
 }

@@ -183,9 +183,21 @@ pub struct Syntax {
     /// `OUTPUT inserted.`/`deleted.` 가상 표(SQL Server).
     pub output_pseudo_tables: bool,
     pub explain: ExplainForm,
+    /// ★ D-434(10-31 · T-457): 이 방언에서 **조회 문장을 시작하는 추가 낱말**(모든 방언 공통 `SELECT`·`WITH`·`VALUES`·`EXPLAIN` 밖) —
+    /// PostgreSQL `TABLE t` · DuckDB·ClickHouse FROM-first `FROM t [SELECT …]`. 운영 2단 확인 · 트랜잭션 분류(`TxClass`) · 문장 종류
+    /// (`SqlKind`) · OFFSET 재질의 판정이 이 표를 본다(다른 방언은 종전 그대로 = "알 수 없음"). 대문자.
+    pub query_heads: &'static [&'static str],
 }
 
 impl Syntax {
+    /// 첫 낱말이 이 방언의 추가 조회 머리인가(대소문자 무시 · D-434).
+    #[must_use]
+    pub fn is_query_head(&self, word: &str) -> bool {
+        self.query_heads
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(word))
+    }
+
     /// ANSI 기준 표(ABI 코덱이 `Caps`를 풀 때 자리 채움 — 문법 표는 전송하지 않고 호스트가 방언 표로 덮는다 · ABI v2 유지).
     #[must_use]
     pub const fn ansi() -> Syntax {
@@ -223,6 +235,7 @@ const SYN_ANSI: Syntax = Syntax {
     use_targets_schema: false,
     output_pseudo_tables: false,
     explain: ExplainForm::Explain,
+    query_heads: &[],
 };
 
 const SYN_ORACLE: Syntax = Syntax {
@@ -255,6 +268,7 @@ const SYN_POSTGRES: Syntax = Syntax {
     semicolon_only: true,
     anchored_types: true,
     explain: ExplainForm::PgVerbose,
+    query_heads: &["TABLE"],
     ..SYN_ANSI
 };
 
@@ -278,10 +292,16 @@ const SYN_SQLITE: Syntax = Syntax {
     ..SYN_ANSI
 };
 
-/// 세이브포인트 없는 `?` 방언(DuckDB 1.x · ODBC 일반 · ClickHouse).
+/// 세이브포인트 없는 `?` 방언(ODBC 일반 · DuckDB·ClickHouse의 바탕).
 const SYN_NO_SAVEPOINT: Syntax = Syntax {
     savepoint: None,
     ..SYN_ANSI
+};
+
+/// DuckDB 1.x · ClickHouse(D-434): 세이브포인트 없음 + **FROM-first** 조회(`FROM t` · `FROM t SELECT …`).
+const SYN_FROM_FIRST: Syntax = Syntax {
+    query_heads: &["FROM"],
+    ..SYN_NO_SAVEPOINT
 };
 
 /// Db2(10-24): 세이브포인트 = `ON ROLLBACK RETAIN CURSORS` 필수 어절 · CLP 지시자 둘 · EXPLAIN 표.
@@ -412,7 +432,7 @@ const SQLITE: Caps = Caps {
 const DUCKDB: Caps = Caps {
     tx_begin: Some("BEGIN TRANSACTION"),
     server_autocommit: true,
-    syntax: SYN_NO_SAVEPOINT,
+    syntax: SYN_FROM_FIRST,
     ..QUESTION
 };
 
@@ -435,7 +455,7 @@ const CLICKHOUSE: Caps = Caps {
         max_rows: 1000,
         max_params: 32000,
     },
-    syntax: SYN_NO_SAVEPOINT,
+    syntax: SYN_FROM_FIRST,
     ..QUESTION
 };
 
@@ -507,6 +527,27 @@ impl Caps {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ D-434: 추가 조회 머리 = PG `TABLE` · DuckDB·ClickHouse `FROM` · 나머지 없음(대소문자 무시).
+    #[test]
+    fn query_heads_per_dialect() {
+        use Dialect::{Clickhouse, Duckdb, Mssql, Odbc, Oracle, Postgres, Sqlite};
+        let q = |d, w| Caps::of(d).syntax.is_query_head(w);
+        assert!(q(Postgres, "TABLE") && q(Postgres, "table"));
+        assert!(!q(Postgres, "FROM"));
+        assert!(q(Duckdb, "FROM") && q(Clickhouse, "from"));
+        assert!(
+            !q(Duckdb, "TABLE"),
+            "DuckDB `TABLE`은 공통 목록(TxClass)이 이미 조회로 본다"
+        );
+        for d in [Oracle, Mssql, Sqlite, Odbc] {
+            assert!(!q(d, "FROM") && !q(d, "TABLE"), "{d:?}");
+        }
+        assert!(
+            Syntax::ansi().query_heads.is_empty(),
+            "ABI 자리 채움 = 빈 표"
+        );
+    }
 
     /// 능력표 = 종전 방언 `match`와 같은 값(T-152는 동작을 바꾸지 않는다) — 방언 × 능력 전수.
     #[test]

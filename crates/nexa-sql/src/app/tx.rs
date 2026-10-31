@@ -32,7 +32,7 @@ impl App {
             }
             return;
         }
-        let class = nsql_core::TxClass::of_sql(stmt);
+        let class = nsql_core::TxClass::of_sql_in(stmt, Some(self.sess.dialect));
         // 대기 대상: 영향 행 > 0인 DML · 트랜잭션 DDL 방언(PG·SQL Server·SQLite)의 DDL/TRUNCATE(docs/44 §5).
         let ddl_pending = class.is_ddl() && self.sess.dialect.ddl_transactional();
         if !ddl_pending && !rows_affected.is_some_and(|n| n > 0) {
@@ -101,7 +101,7 @@ impl App {
                     at: Instant::now(),
                     when: when.clone(),
                     summary: h.summary.clone(),
-                    class: nsql_core::TxClass::of_sql(&h.summary),
+                    class: nsql_core::TxClass::of_sql_in(&h.summary, Some(self.sess.dialect)),
                 });
             }
         }
@@ -198,8 +198,13 @@ impl App {
     pub(crate) fn run_tx_gate(&self, items: &[String]) -> Option<String> {
         let held = self.sess.prod_held.is_some();
         let tx_open = held || !self.sess.tx_pending.is_empty() || self.sess.tx_dirty;
-        let has_change = items.iter().any(|s| sessions::is_change_sql(s));
-        let has_ddl = items.iter().any(|s| nsql_core::TxClass::of_sql(s).is_ddl());
+        let dialect = self.sess.dialect;
+        let has_change = items
+            .iter()
+            .any(|s| sessions::is_change_sql(s, Some(dialect)));
+        let has_ddl = items
+            .iter()
+            .any(|s| nsql_core::TxClass::of_sql_in(s, Some(dialect)).is_ddl());
         let implicit = items.iter().any(|s| self.sess.dialect.implicit_commit(s));
         let same_tab = self
             .sess

@@ -335,7 +335,8 @@ fn is_query(sql: &str) -> bool {
         .to_ascii_uppercase();
     matches!(
         head.as_str(),
-        "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "EXISTS" | "CHECK"
+        // ★ D-434(10-31): ClickHouse FROM-first(`FROM t SELECT …` · `FROM t`) = 결과를 돌려주는 문장(공식 문서 SELECT/FROM).
+        "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "EXISTS" | "CHECK" | "FROM"
     )
 }
 
@@ -1050,6 +1051,7 @@ mod tests {
         assert!(is_query("  (SELECT 1)"));
         assert!(is_query("with t as (select 1) select * from t"));
         assert!(is_query("SHOW TABLES"));
+        assert!(is_query("FROM t SELECT a"), "FROM-first(D-434)");
         assert!(!is_query("INSERT INTO t VALUES (1)"));
         assert!(!is_query("CREATE TABLE t (x UInt8) ENGINE = Memory"));
     }

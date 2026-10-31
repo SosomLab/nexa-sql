@@ -832,7 +832,7 @@ fn tx_effect(sql: &str, rows_affected: Option<u64>, dialect: Dialect) -> TxEffec
         TxControl::End => return TxEffect::Ended,
         TxControl::None => {}
     }
-    let class = TxClass::of_sql(sql);
+    let class = TxClass::of_sql_in(sql, Some(dialect));
     match class {
         TxClass::None => TxEffect::Clean,
         TxClass::Read => {
@@ -1500,7 +1500,7 @@ impl Runner {
         if tx_effect(&item.text, rows, self.engine.dialect) != TxEffect::Change {
             return;
         }
-        let class = nsql_core::TxClass::of_sql(&item.text);
+        let class = nsql_core::TxClass::of_sql_in(&item.text, Some(self.engine.dialect));
         let block = matches!(class, nsql_core::TxClass::Other);
         let no_where = dml_without_where(&item.text);
         self.hold_total += rows.unwrap_or(0);
@@ -2100,7 +2100,16 @@ impl Runner {
     /// (T-202)는 커서가 닫히면 이어 받을 길이 없다(프로시저를 다시 돌리지 않는다 · 호스트는 "커서 닫힘"으로 끝낸다).
     #[must_use]
     pub fn requery_ok(sql: &str) -> bool {
-        matches!(nsql_script::classify_sql(sql), nsql_script::SqlKind::Query)
+        Self::requery_ok_in(sql, None)
+    }
+
+    /// 방언을 아는 판정(D-434): DuckDB·ClickHouse `FROM t` · PG `TABLE t`도 조회라 이어 받는다.
+    #[must_use]
+    pub fn requery_ok_in(sql: &str, dialect: Option<Dialect>) -> bool {
+        matches!(
+            nsql_script::classify_sql_in(sql, dialect),
+            nsql_script::SqlKind::Query
+        )
     }
 
     /// 프로필 해석기 장착(체이닝).
@@ -5573,6 +5582,11 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
     fn requery_ok_is_query_only() {
         assert!(Runner::requery_ok("SELECT 1 FROM DUAL"));
         assert!(Runner::requery_ok("  with c as (select 1) select * from c"));
+        // ★ D-434: 방언의 추가 조회 머리.
+        assert!(Runner::requery_ok_in("from t", Some(Dialect::Duckdb)));
+        assert!(Runner::requery_ok_in("TABLE t", Some(Dialect::Postgres)));
+        assert!(!Runner::requery_ok_in("from t", Some(Dialect::Oracle)));
+        assert!(!Runner::requery_ok("from t"));
         assert!(!Runner::requery_ok("EXEC P(:rc)"));
         assert!(!Runner::requery_ok("BEGIN p(:rc); END;"));
         assert!(!Runner::requery_ok("PRINT rc"));

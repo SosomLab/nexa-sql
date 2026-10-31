@@ -774,6 +774,15 @@ impl TxClass {
         }
     }
 
+    /// 방언을 아는 분류(D-434): 그 방언의 추가 조회 머리(PG `TABLE` · DuckDB·ClickHouse `FROM`)는 [`TxClass::Read`] · 나머지 = [`TxClass::of_sql`].
+    #[must_use]
+    pub fn of_sql_in(sql: &str, dialect: Option<Dialect>) -> TxClass {
+        if dialect.is_some_and(|d| is_query_head(d, &first_keyword(sql))) {
+            return TxClass::Read;
+        }
+        Self::of_sql(sql)
+    }
+
     /// 심각도(잃는 것의 크기 · 버튼 색은 가장 큰 것을 따른다).
     #[must_use]
     pub const fn severity(self) -> u8 {
@@ -1073,6 +1082,13 @@ pub fn is_statement_start(dialect: Dialect, first_word: &str) -> bool {
     }
     let up = first_word.to_ascii_uppercase();
     STATEMENT_START.contains(&up.as_str())
+}
+
+/// ★ D-434(10-31 · T-457): 첫 낱말이 **이 방언의 추가 조회 머리**인가(`Caps.syntax.query_heads` · PG `TABLE` · DuckDB·ClickHouse `FROM`) —
+/// 운영 2단 확인에서 조회로 빼고, [`TxClass::of_sql_in`]·`SqlKind`가 조회로 분류한다. 다른 방언 = 거짓(종전 그대로).
+#[must_use]
+pub fn is_query_head(dialect: Dialect, first_word: &str) -> bool {
+    Caps::of(dialect).syntax.is_query_head(first_word)
 }
 
 impl Dialect {
@@ -1734,6 +1750,27 @@ mod tests {
         assert!(is_locking_read("SELECT * FROM t WITH (UPDLOCK, ROWLOCK)"));
         assert!(is_locking_read("select 1 from t lock in share mode"));
         assert!(!is_locking_read("select * from t where a = 1"));
+    }
+
+    /// ★ D-434: 방언을 아는 분류 — DuckDB·ClickHouse `FROM t` · PG `TABLE t` = 조회 · 같은 글이 Oracle·방언 없음이면 종전(`FROM` = Other ·
+    /// `TABLE` = 공통 Read).
+    #[test]
+    fn tx_class_query_heads_by_dialect() {
+        use Dialect::{Clickhouse, Duckdb, Oracle, Postgres};
+        assert_eq!(TxClass::of_sql_in("from t", Some(Duckdb)), TxClass::Read);
+        assert_eq!(
+            TxClass::of_sql_in("-- c\nFROM t SELECT a", Some(Clickhouse)),
+            TxClass::Read
+        );
+        assert_eq!(TxClass::of_sql_in("from t", Some(Oracle)), TxClass::Other);
+        assert_eq!(TxClass::of_sql_in("from t", None), TxClass::Other);
+        assert_eq!(TxClass::of_sql_in("table t", Some(Postgres)), TxClass::Read);
+        assert_eq!(
+            TxClass::of_sql_in("update t set a = 1", Some(Duckdb)),
+            TxClass::Update,
+            "조회 머리가 아니면 종전 분류"
+        );
+        assert!(is_query_head(Duckdb, "from") && !is_query_head(Duckdb, "select"));
     }
 
     #[test]

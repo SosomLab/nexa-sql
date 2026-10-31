@@ -2318,7 +2318,8 @@ fn cmd_export(o: &Opts) -> i32 {
             }
         }
     }
-    let items = split_script(&format!("{sql};"));
+    // 방언을 아는 분할(D-434): DuckDB·ClickHouse `FROM t` · PG `TABLE t`도 조회 = 스트리밍 경로.
+    let items = nsql_script::split_script_in(&format!("{sql};"), Some(dialect));
     let mut errors = 0;
     let mut rows = 0usize;
     let mut no_prompt = |_: &str| None;

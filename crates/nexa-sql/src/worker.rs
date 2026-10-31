@@ -1276,7 +1276,7 @@ pub(crate) fn spawn(
                             (Ok(()), None) => Err(t(Msg::ExpNotConnected).to_string()),
                             (Ok(()), Some(_)) => {
                                 if !runner.cursor_matches(&sql, offset)
-                                    && !nsql_run::Runner::requery_ok(&sql)
+                                    && !nsql_run::Runner::requery_ok_in(&sql, runner.dialect())
                                 {
                                     // ★ T-202: 커서 결과인데 커서가 없다 — 프로시저를 다시 돌리지 않고 빈 페이지 + 더 없음.
                                     stop = Some(FetchStop::CursorGone);

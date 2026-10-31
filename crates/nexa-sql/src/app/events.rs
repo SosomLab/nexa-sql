@@ -1156,13 +1156,17 @@ impl App {
                     // 이 결과를 만든 문장 하나를 그리드에 알린다 — 건수(Σ)·OFFSET 재질의·새로고침·SQL 복사가 스크립트 전체가
                     // 아니라 **그 문장**을 쓴다 · 조회 문장이 아니면(EXEC/PRINT의 REF CURSOR 등) 건수 불가(09-19 규정).
                     let stmt = self.sess.last_run_items.get(index).cloned();
+                    // 방언을 아는 분할(D-434): DuckDB·ClickHouse `FROM t` · PG `TABLE t`도 조회 = 건수·재질의 가능.
+                    let dialect = self.sess.dialect;
                     let is_query = stmt.as_deref().is_some_and(|s| {
-                        nsql_script::split_script(s).first().is_some_and(|it| {
-                            matches!(
-                                it.kind,
-                                nsql_script::ItemKind::Sql(nsql_script::SqlKind::Query)
-                            )
-                        })
+                        nsql_script::split_script_in(s, Some(dialect))
+                            .first()
+                            .is_some_and(|it| {
+                                matches!(
+                                    it.kind,
+                                    nsql_script::ItemKind::Sql(nsql_script::SqlKind::Query)
+                                )
+                            })
                     });
                     // ★ 같은 문장이 결과를 둘 이상 냈으면(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합) 두 번째부터는
                     //   딸린 결과 탭으로 — 종전에는 같은 그리드를 덮어써 마지막 것만 남았다(09-21).
