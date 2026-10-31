@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/214-t459-headless | 2026-11-01 | 2026-11-01 → main ff · **7debeaa7** · 삭제 | 1 | 192차 win 214차 = T-459 앱 자체 헤드리스 백엔드 1차(D-436 · `NSQL_HEADLESS=1` 창 숨김 + 스스로 그리기 · 기동 명령 `capture:<png>` · 새 `png.rs` 외부 crate 0 · ci.yml 헤드리스 캡처 1회) · 26파일(소스 20 + 문서 6) · ci **41219613348** ✓(16:31:36Z · deny ✓ · ubuntu xvfb + 헤드리스 캡처 `headless.png` 3,899,433 B 머리 `0x89 PNG` 서명 ✓) · integration **41219613322** ✓(16:29:09Z) |
+| feat/213-t8-xlsx-parquet | 2026-11-01 | 2026-11-01 → main ff · **2e0402f0** · 삭제 | 1 | 192차 win 213차 = T-8 xlsx/parquet 내보내기(D-432 · `rust_xlsxwriter` 0.102.0 · `parquet` 60.1.0 arrow 없이 · feature 기본 켬 · 게이트 `lic_gate(Feature::ExportXlsx)` 한 곳 · export 안내 줄 stderr · Release lite +1.74 MiB) · 19파일(소스 9 + 문서 10) · ci **41217993523** ✓(16:25:44Z · **deny ✓** = 새 crate 2 라이선스 통과 · xvfb ✓) · integration **41217993470** ✓(16:15:49Z) |
 | feat/212-t255-tsql-if | 2026-11-01 | 2026-11-01 → main ff · **d71d4f48** · 삭제 | 1 | 192차 win 212차 = T-255 T-SQL `BEGIN` 없는 IF 본문(`format.tsql_if_body` next\|block) + `ELSE IF` 연쇄(D-433) · 13파일(소스 4 + 문서 9) · ci **41216058979** ✓(15:48:10Z · xvfb 단계 54 s ✓) · integration **41216058894** ✓(15:45:40Z) |
 | (main 직접) | 2026-11-01 | 2026-11-01 → main · **65dc2849** | 1 | 192차 win 211차 보강 = ci.yml ubuntu X11 런타임(libxkbcommon-x11-0 등) 설치 + 실패 시 진단 단계 · ci **41215024319** ✓(15:33:51Z · xvfb 단계 51 s · S01~S05 ok) |
 | feat/211-t458-xvfb | 2026-11-01 | 2026-11-01 → main ff · **6a8706fd** · 삭제 | 1 | 192차 win 211차 = T-458 Linux xvfb(D-435 · `scripts/lib/xvfb.sh` · 스크립트 20 · ci.yml ubuntu `xvfb func-check` S01~S05) · 27파일 · 소스 0 · ci **41214096070** ✗(새 단계 = 앱 즉시 종료 · X11 런타임 누락) → 65dc2849로 해결 |
