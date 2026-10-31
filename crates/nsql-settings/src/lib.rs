@@ -555,6 +555,7 @@ const FMT_INDENT_STYLE_OPTS: &[(&str, Msg)] = &[
 const FMT_PLSQL_OPTS: &[(&str, Msg)] = &[
     ("off", Msg::ValFmtPlsqlOff),
     ("indent", Msg::ValFmtPlsqlIndent),
+    ("full", Msg::ValFmtPlsqlFull),
 ];
 /// 간격 3택 = 활성 탭 설정 / 공백 / 탭(사용자 09-30 · 인라인 주석 앞).
 const FMT_GAP3_OPTS: &[(&str, Msg)] = &[

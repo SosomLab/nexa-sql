@@ -144,11 +144,13 @@ pub enum IndentStyle {
 }
 
 /// ★ T-255 2단계(10-31 · docs/95 §11): PL/SQL 블록(통과 영역) 처리 — `Off`(원문 그대로 · 기본) / `Indent`(줄 앞 공백만 구조 깊이로 ·
-/// 판정 실패 = 원문) · `full`(단위 SQL 펼치기)은 v2.
+/// 판정 실패 = 원문) / `Full`(`Indent` + 블록 안 **단위 SQL 문장**(SELECT/WITH/INSERT/UPDATE/DELETE/MERGE · `CURSOR … IS`/`OPEN … FOR` 뒤)을
+/// SQL 포매터로 펼쳐 그 깊이에 · §11-4 · 10-31 201차).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlsqlStyle {
     Off,
     Indent,
+    Full,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -348,10 +350,10 @@ impl Options {
                     };
                 }
                 "plsql" => {
-                    o.plsql = if lv == "indent" || lv == "full" {
-                        PlsqlStyle::Indent
-                    } else {
-                        PlsqlStyle::Off
+                    o.plsql = match lv.as_str() {
+                        "indent" => PlsqlStyle::Indent,
+                        "full" => PlsqlStyle::Full,
+                        _ => PlsqlStyle::Off,
                     };
                 }
                 "keyword_case" => o.keyword_case = Case::parse(&lv),

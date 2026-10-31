@@ -236,7 +236,7 @@
 | 키 | 종류 | 기본 | 분류 | 뜻 |
 |---|---|---|---|---|
 | `format.indent_style` | Choice | `standard` | 포맷 | `standard`(지금 모양) · `river`(절·JOIN·ON·AND/OR 머리를 강 열에 오른쪽 맞춤 · 공백만) · CLI `nsql format`·GUI 같은 값(pair `indent_style`) |
-| `format.plsql` | Choice | `off` | 포맷 | `off`(PL/SQL 블록 원문 통과) · `indent`(줄바꿈 유지 · 줄 앞 들여쓰기만 구조 깊이로 · 판정 실패 = 원문) · `full`(v2 · 지금은 `indent`와 같음) |
+| `format.plsql` | Choice | `off` | 포맷 | `off`(PL/SQL 블록 원문 통과) · `indent`(줄바꿈 유지 · 줄 앞 들여쓰기만 구조 깊이로 · 판정 실패 = 원문) · `full`(v2 · 지금은 `indent`와 같음) · ★ 29차 `full` 구현 = 블록 안 단위 SQL을 SQL 포매터로 펼쳐 그 깊이에(`CURSOR … IS`/`OPEN … FOR` 뒤 = 한 단 더 · 짧은 DML = 한 줄 유지) |
 
 - 재발 방지 = nexa-sql 시험 `registry_format_keys_are_all_option_keys`(레지스트리 `format.*` − {`default`, `max_kb`} ⊆ `nsql_format::OPTION_KEYS`) — 19차에 `indent_style`이 OPTION_KEYS에 없어 CLI·GUI가 값을 넘기지 못한 결함의 재발 방지.
 

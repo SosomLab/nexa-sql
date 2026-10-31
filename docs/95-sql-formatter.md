@@ -203,7 +203,7 @@ SELECT a.id,                         -- 절 키워드를 강 열에 오른쪽 �
 | 변환 | 새 모듈 `nsql-format/src/river.rs` · `prepare`(lib.rs:592) = `layout()` 뒤 `if River { river::apply(&mut lines, opts) }` | **IR 후처리**(Walker 4천 줄은 손대지 않는다): `blocks()`(layout.rs:433)로 문장 단위 → 역할(`Role::Clause/Item/Cond/Join/SetOp/Close/Case/Comment`)과 `indent`로 질의 블록·깊이를 복원 → Clause 줄 다음의 첫 Item/Cond 줄을 **Clause 줄로 합침** · 각 줄에 `col` 계산 |
 | 렌더 | `layout.rs` `render_lines`(:307) · `line_prefix`(:87) | `col`이 Some이면 `" ".repeat(col)` 접두 |
 | 문장 판정 | `format_statement`(:916)의 `known` | river 대상 = SELECT/WITH/UPDATE/DELETE만 · INSERT/MERGE 줄은 `apply`가 건너뜀 |
-| 설정 | `nsql-settings` REGISTRY `format.indent_style`(Choice standard/river · 기본 standard) · i18n 라벨/설명 · 설정 창 미리보기(§8-1)는 그대로 반영 | |
+| 설정 | `nsql-settings` REGISTRY `format.indent_style`(Choice standard/river · 기본 standard) · i18n 라벨/설명 · 설정 창 미리보기(§8-1)는 그대로 반영 | · ✅ off/indent/full(29차 `full` 추가 · `ValFmtPlsqlFull`) |
 | CLI | `nsql format --indent-style river`(공통 옵션 pairs 그대로) | |
 | 확장 | kiros33(탭 정렬 · strict)은 Basic `Line` 위에서 돈다 → **river일 때 확장 정렬 끔**(확장이 `col`이 있는 줄은 건너뜀 · 문서화) | 확장 SDK 문서 한 줄 |
 
@@ -213,7 +213,7 @@ SELECT a.id,                         -- 절 키워드를 강 열에 오른쪽 �
 - 시험 = 위 예 · 서브쿼리 2단(안쪽 강) · `LEFT OUTER JOIN`(강이 넓어짐) · 줄 앞 콤마 · UNION · CASE 항목 · 주석 · UPDATE/DELETE · INSERT/MERGE 불변 · 탭 단위에서 공백 강.
 - 난이도 = 중(새 모듈 1 + IR 한 칸 + 렌더 분기) · Walker 무변경이라 standard 회귀 위험 낮음.
 
-## 11. PL/SQL 블록 포맷 설계 — `format.plsql = off|indent|full`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 `indent` 구현 · `full` = v2)
+## 11. PL/SQL 블록 포맷 설계 — `format.plsql = off|indent|full`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 `indent` 구현 · ✅ 10-31 `full` 구현(29차))
 
 > ★ **`indent` 구현됨(10-31 · 192차 20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — 새 모듈 `nsql-format/src/plsql.rs` `reindent(text, toks, base, opts) -> Option<String>` = 통과(Raw) 블록의 줄바꿈은 두고 줄 앞 공백만 구조 깊이로(§11-3 표 = 스택 Decl/Begin/If/Loop/Case/When · 루틴 머리 이어 줄 +1 · `/` 0 · 주석 줄 = 지금 깊이 · 여러 줄 문자열/블록 주석 안 줄은 손대지 않음) · 판정 실패(짝 없는 END · 안 닫힘 · `WHEN`/`IF`가 THEN과 다른 줄) = `None` = 원문 · `Options.plsql: Off|Indent`(pair `plsql` · `full`은 지금 Indent로 받음) · `layout()` 통과 가지에서 호출 · 방언 = Oracle 계열(oracle·tibero·db2 PL/SQL 호환) · V1(CLI) = §11-3 예시 본문을 왼쪽 정렬한 파일 → 예시와 같은 계단 · off = 입력과 동일. **남음** = `full`(§11-4 · v2) · T-SQL/PG 블록(v2).
 
@@ -266,6 +266,8 @@ END p;
 
 ### 11-4. `full` 추가 규칙
 
+> ★ **구현됨(10-31 · 192차 29차 · 개발 · [journal 10-31 §14](journal/2026-10-31.md))** — `PlsqlStyle::Full`(pair `plsql = full`) · `plsql.rs` `format_unit_sql` = `indent` 걷기 중 줄 첫 낱말이 SELECT/WITH/INSERT/UPDATE/DELETE/MERGE(또는 `CURSOR … IS`/`OPEN … FOR` 뒤 · 다음 줄이어도 = 멱등)면 괄호 밖 첫 `;`까지를 `layout::format_statement`(깊이 0)로 펼쳐 줄마다 그 깊이(접두 줄이 있으면 +1)로 넣고 소비(스택 불변) · `;` 뒤 같은 줄 주석 보존 · `;` 없음/`;` 뒤 다른 토큰 = indent 규칙 · `FOR r IN (SELECT …) LOOP`·동적 SQL·`RETURN (SELECT …)` = 그대로 · 짧은 UPDATE/INSERT/DELETE = `keep_oneliners` 한 줄 · `reindent(src, text, toks, base, opts)` · 설정 선택지 `full` · V1(CLI) = CURSOR 뒤 SELECT 한 단 더 여러 줄 · 긴 SELECT INTO 블록 깊이 여러 줄 + `; -- cnt` 보존 · 짧은 UPDATE 한 줄 · 멱등 ✓. **남음** = T-SQL/PG 블록(v2) · 토큰 보존 검사(§11-5 '안전')는 옵션(대소문자·AS) 영향으로 생략 · `FOR … IN (SELECT`·동적 SQL.
+
 - 단위 문장 = 줄 첫 낱말이 SELECT/WITH/INSERT/UPDATE/DELETE/MERGE(또는 `CURSOR … IS` · `OPEN … FOR` 뒤)부터 괄호 밖 `;`까지 → `format_statement`(layout.rs:916)에 **기준 깊이 인자**를 더해 호출(`Walker::statement(indent)` :1153은 이미 깊이를 받는다 · 지금 호출은 0) · `SELECT … INTO 변수`는 기존 `select_into_vars`(:1249) 규칙 그대로.
 - `FOR r IN (SELECT …) LOOP`(괄호 안 질의) · 동적 SQL 문자열(`EXECUTE IMMEDIATE '…'`) = **v1 대상 아님**(원문 줄 유지 · 깊이만).
 - T-SQL(`BEGIN … END` · `IF … ELSE` THEN 없음 · `WHILE`) · PostgreSQL `DO $$ … $$`/함수 본문(달러 인용 = 토큰 하나) = **v2**(방언별 표 · v1은 Oracle 계열 = oracle·tibero·db2 PL/SQL 호환만).
@@ -274,11 +276,11 @@ END p;
 
 | 지점 | 변경 |
 |---|---|
-| `lib.rs` `Options` | `pub plsql: PlsqlStyle { Off, Indent, Full }` · 키 `plsql` |
+| `lib.rs` `Options` | `pub plsql: PlsqlStyle { Off, Indent, Full }` · 키 `plsql` · ✅ 20차 Off/Indent · 29차 Full |
 | `layout.rs` `layout()` 통과 분기(:452 아래 `starts_block_passthrough` 갈래) | `opts.plsql != Off`면 새 모듈 `plsql::format_block(&toks[i..j], src, opts, blank) -> Option<Vec<Line>>` · `None`(판정 실패·토큰 불일치) = 지금처럼 `push_raw` |
-| 새 모듈 `nsql-format/src/plsql.rs` | 줄 단위 깊이 계산(§11-3 표 = 상수 표 + 순수 함수) · `full`이면 단위 문장 구간을 `format_statement(…, base)`로 |
-| `format_statement` | 기준 깊이 인자 추가(기존 호출 = 0) |
-| 안전 | 결과 토큰열(공백·줄바꿈 제외)이 원문과 다르면 원문 반환 · 멱등 확인 |
+| 새 모듈 `nsql-format/src/plsql.rs` | 줄 단위 깊이 계산(§11-3 표 = 상수 표 + 순수 함수) · `full`이면 단위 문장 구간을 `format_statement(…, base)`로 · ✅ 20차 `reindent` · 29차 `format_unit_sql` |
+| `format_statement` | 기준 깊이 인자 추가(기존 호출 = 0) · 29차 = 깊이 0으로 펼친 뒤 줄마다 들여 넣음(인자 추가 대신) |
+| 안전 | 결과 토큰열(공백·줄바꿈 제외)이 원문과 다르면 원문 반환 · 멱등 확인 · 멱등 ✓ · 토큰열 비교는 옵션(대소문자·AS) 영향으로 생략(29차) |
 | 설정 | REGISTRY `format.plsql`(Choice off/indent/full · 기본 off) · i18n · 미리보기 예시에 작은 프로시저 하나 |
 | 확장 | 블록 줄 = `Role::Raw` 유지(확장 정렬 대상 아님) |
 

@@ -484,8 +484,8 @@ pub fn layout(src: &str, opts: &Options) -> Vec<Line> {
                 blank_of(&toks[i], first_stmt, opts)
             };
             // ★ T-255 2단계(95 §11): `format.plsql = indent`면 블록 줄 앞 공백을 구조 깊이로(판정 실패 = 원문 그대로).
-            let reindented = if opts.plsql == crate::PlsqlStyle::Indent {
-                crate::plsql::reindent(text, &toks[i..j], toks[i].span.0, opts)
+            let reindented = if opts.plsql != crate::PlsqlStyle::Off {
+                crate::plsql::reindent(src, text, &toks[i..j], toks[i].span.0, opts)
             } else {
                 None
             };
@@ -931,7 +931,13 @@ fn exec_statement(
     Some(j)
 }
 
-fn format_statement(out: &mut Vec<Line>, stmt: &[Token], src: &str, opts: &Options, blank: usize) {
+pub(crate) fn format_statement(
+    out: &mut Vec<Line>,
+    stmt: &[Token],
+    src: &str,
+    opts: &Options,
+    blank: usize,
+) {
     // 앞머리 주석은 독립 줄.
     let mut k = 0;
     let mut blank = blank;
