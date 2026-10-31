@@ -676,6 +676,128 @@ impl Bookmarks {
         }
     }
 
+    /// ★ T-167 B4c(10-31): 그룹 순서 — 패널 드래그(`gid`를 `before` 앞으로 · None = 맨 뒤).
+    pub(crate) fn reorder_group(&mut self, gid: u32, before: Option<u32>) {
+        if self.store.reorder_group(gid, before) {
+            self.touch();
+        }
+    }
+
+    /// ★ T-167 B6 `ObjectMissing`(69 §3-3 · 10-31): 우리가 실행한 DDL이 닿은 객체의 **소스 북마크** — `dropped`(DROP·RENAME) = 살아 있던 것을
+    /// `Invalid{ObjectMissing}`으로 · 아니면(CREATE) `ObjectMissing`이던 것을 되살린다(그 뒤 소스를 열면 L1 재탐색). 비교 = 서버 키 ·
+    /// 스키마(대소문자 무시 · 문장에 없으면 세션 기본) · 종류 코드 · 이름(대소문자 무시). 돌려주는 값 = 바뀐 수.
+    pub(crate) fn on_ddl(
+        &mut self,
+        profile: &str,
+        schema: Option<&str>,
+        kind_code: &str,
+        name: &str,
+        dropped: bool,
+    ) -> usize {
+        let now = now_epoch();
+        let mut n = 0;
+        for b in &mut self.store.items {
+            let DocKey::Object {
+                profile: p,
+                schema: s,
+                kind: k,
+                name: nm,
+                ..
+            } = &b.doc
+            else {
+                continue;
+            };
+            if p != profile
+                || !k.eq_ignore_ascii_case(kind_code)
+                || !nm.eq_ignore_ascii_case(name)
+                || !schema.is_some_and(|sc| sc.eq_ignore_ascii_case(s))
+            {
+                continue;
+            }
+            match (&b.state, dropped) {
+                (State::Live, true) => {
+                    b.state = State::Invalid {
+                        since: now,
+                        reason: Reason::ObjectMissing,
+                    };
+                    n += 1;
+                }
+                (
+                    State::Invalid {
+                        reason: Reason::ObjectMissing,
+                        ..
+                    },
+                    false,
+                ) => {
+                    b.state = State::Live;
+                    n += 1;
+                }
+                _ => {}
+            }
+        }
+        if n > 0 {
+            self.touch();
+        }
+        n
+    }
+
+    /// ★ T-167 B6 이동 제안 수락(D-163 · 10-31): 제안된 북마크들을 새 파일 열쇠로 옮기고 되살린다(그 뒤 호출자가 L1 재탐색).
+    pub(crate) fn attach_moved(&mut self, ids: &[u64], new_path: &str) -> usize {
+        let to = DocKey::file(new_path);
+        let mut n = 0;
+        for b in self.store.items.iter_mut().filter(|b| ids.contains(&b.id)) {
+            b.doc = to.clone();
+            b.state = State::Live;
+            n += 1;
+        }
+        if n > 0 {
+            self.store.normalize(CASE_INSENSITIVE);
+            self.touch();
+        }
+        n
+    }
+
+    /// ★ T-167 B5 복사본(D-167 · 69 §2-4 · 10-31): 객체 DDL 탭(`from` = 객체 열쇠)을 파일로 저장 — 그 문서의 북마크를 **파일 열쇠로 복사**
+    /// (새 id · `origin` = 객체 열쇠 · 원본은 그대로 · 같은 줄에 이미 있으면 건너뜀). 돌려주는 값 = 복사한 수.
+    pub(crate) fn object_saved_as(&mut self, from: &DocKey, path: &Path) -> usize {
+        let to = DocKey::file(&path.to_string_lossy());
+        let now = now_epoch();
+        let src: Vec<Bookmark> = self
+            .store
+            .items
+            .iter()
+            .filter(|b| b.doc == *from)
+            .cloned()
+            .collect();
+        let mut n = 0;
+        for b in src {
+            if self
+                .store
+                .at_line(&to, b.anchor.line as usize, CASE_INSENSITIVE)
+                .is_some()
+            {
+                continue;
+            }
+            let id = self.store.next_id;
+            self.store.next_id += 1;
+            self.store.items.push(Bookmark {
+                id,
+                doc: to.clone(),
+                state: State::Live,
+                created: now,
+                visited: now,
+                origin: Some(from.clone()),
+                ..b
+            });
+            n += 1;
+        }
+        if n > 0 {
+            self.store.normalize(CASE_INSENSITIVE);
+            self.touch();
+        }
+        n
+    }
+
     /// 새 그룹(이름 중복이면 뒤에 ` (2)`) — id.
     pub(crate) fn new_group(&mut self, base: &str) -> u32 {
         let mut name = base.to_string();
@@ -1011,13 +1133,63 @@ impl Bookmarks {
     }
 
     /// 탭을 새로 읽었다(열기 · 재로드) → 재탐색 + 기록 시작점.
-    pub(crate) fn on_opened(&mut self, ed: &Editors, i: usize) {
+    pub(crate) fn on_opened(&mut self, ed: &Editors, i: usize) -> Option<MoveSuggest> {
         self.relocate_doc(ed, i);
         if let Some(tb) = ed.tab_box(i) {
             let b = tb.buf();
             self.seq.insert(ed.tab_id(i), (b.change_seq(), b.epoch()));
         }
         self.changed = true;
+        self.move_suggest(ed, i)
+    }
+
+    /// ★ T-167 B6 이동 제안(D-163 · 69 §4-1 · 10-31): 방금 연 **파일** 문서에 북마크가 없고, 파일 없음(`FileMissing`)으로 무효가 된
+    /// 북마크 중 이 본문과 **내용 해시가 같은** 것이 있으면 제안(옛 경로 하나 · 가장 많은 쪽). 자동으로 갈아끼우지 않는다(라이브러리
+    /// 사본·백업을 잘못 짚을 수 있다) · 해시는 재탐색 상한 안에서만.
+    fn move_suggest(&self, ed: &Editors, i: usize) -> Option<MoveSuggest> {
+        let doc = Self::doc_key(ed, i);
+        let DocKey::File { path } = &doc else {
+            return None;
+        };
+        if !self.store.for_doc(&doc, CASE_INSENSITIVE).is_empty() {
+            return None;
+        }
+        let lines = Self::lines_of(ed, i);
+        if lines.is_empty() || (self.opts.max_lines > 0 && lines.len() > self.opts.max_lines) {
+            return None;
+        }
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let hash = nsql_bookmarks::doc_hash(&refs);
+        if hash == 0 {
+            return None;
+        }
+        let mut by_path: Vec<(String, Vec<u64>)> = Vec::new();
+        for b in &self.store.items {
+            let DocKey::File { path: old } = &b.doc else {
+                continue;
+            };
+            let missing = matches!(
+                b.state,
+                State::Invalid {
+                    reason: Reason::FileMissing,
+                    ..
+                }
+            );
+            if !missing || b.anchor.doc_hash != hash || old.eq_ignore_ascii_case(path) {
+                continue;
+            }
+            match by_path.iter_mut().find(|(p, _)| p == old) {
+                Some((_, v)) => v.push(b.id),
+                None => by_path.push((old.clone(), vec![b.id])),
+            }
+        }
+        let (old_path, ids) = by_path.into_iter().max_by_key(|(_, v)| v.len())?;
+        Some(MoveSuggest {
+            tab: ed.tab_id(i),
+            old_path,
+            new_path: path.clone(),
+            ids,
+        })
     }
 
     /// 이름 없는 탭이 파일로 저장됐다(C-21) → 문서 열쇠 이동(복사 아님).
@@ -1037,6 +1209,15 @@ impl Bookmarks {
             self.touch();
         }
     }
+}
+
+/// ★ T-167 B6 이동 제안(D-163): 탭 · 옛 경로 · 새 경로 · 옮길 북마크 id — 편집기 위 띠 [이어 붙이기]/[아니오]가 소비한다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MoveSuggest {
+    pub tab: u64,
+    pub old_path: String,
+    pub new_path: String,
+    pub ids: Vec<u64>,
 }
 
 /// 스크래치 → 파일 열쇠 이전 판정(순수 · 09-25): 지금 열쇠가 파일이고, ① 직전 기록이 이 탭의 스크래치였거나 ② 저장소에 이 탭의

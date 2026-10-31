@@ -6943,6 +6943,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 3650 },
         default: "30",
     },
+    // ★ T-167 B6·B5(10-31 · 69 §9): 파일 이동 제안 띠(D-163) · 객체 DDL 탭 저장 시 복사본(D-167).
+    Entry {
+        key: "bookmark.move_suggest",
+        cat: Msg::CatBookmarkGeneral,
+        label: Msg::LblBmMoveSuggest,
+        desc: Msg::DescBmMoveSuggest,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "bookmark.save_copy_on_save",
+        cat: Msg::CatBookmarkGeneral,
+        label: Msg::LblBmSaveCopy,
+        desc: Msg::DescBmSaveCopy,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "bookmark.max_per_doc",
         cat: Msg::CatBookmarkGeneral,
@@ -7999,6 +8016,8 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("grid.row_focus_color", "grid.row_focus", Dep::On),
     ("bookmark.persist", "bookmark.enabled", Dep::On),
     ("bookmark.stale_days", "bookmark.enabled", Dep::On),
+    ("bookmark.move_suggest", "bookmark.enabled", Dep::On),
+    ("bookmark.save_copy_on_save", "bookmark.enabled", Dep::On),
     ("bookmark.max_per_doc", "bookmark.enabled", Dep::On),
     ("bookmark.max_total", "bookmark.enabled", Dep::On),
     ("bookmark.gutter", "bookmark.enabled", Dep::On),

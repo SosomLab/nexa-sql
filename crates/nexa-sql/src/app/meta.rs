@@ -15,12 +15,14 @@ impl App {
 
     /// 성공한 문장이 DDL이면 대상을 모은다(docs/57 T1) — 반영은 실행이 끝난 뒤(또는 커밋 때) 한 번에.
     pub(crate) fn meta_on_done(&mut self, stmt: &str) {
-        if !self.settings.flag("meta.refresh_on_ddl") {
-            return;
-        }
         let Some(t) = nsql_core::ddl_target(stmt, self.sess.dialect) else {
             return;
         };
+        // ★ T-167 B6: 소스 북마크의 ObjectMissing/되살림 신호(탐색기 갱신 설정과 무관).
+        self.bm_on_ddl(&t);
+        if !self.settings.flag("meta.refresh_on_ddl") {
+            return;
+        }
         let wait = sessions::ddl_waits_for_commit(
             self.sess.dialect.ddl_transactional(),
             self.settings.flag("session.autocommit"),

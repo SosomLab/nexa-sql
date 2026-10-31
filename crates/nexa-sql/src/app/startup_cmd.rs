@@ -868,6 +868,8 @@ cells={n}
                 "follow" => extfile::BannerHit::Follow,
                 "dismiss" => extfile::BannerHit::Dismiss,
                 "overwrite" => extfile::BannerHit::Overwrite,
+                "bm_attach" => extfile::BannerHit::BmAttach,
+                "bm_dismiss" => extfile::BannerHit::BmDismiss,
                 _ => extfile::BannerHit::None,
             };
             self.ext_banner_pick(hit);

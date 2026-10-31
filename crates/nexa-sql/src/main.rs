@@ -675,6 +675,8 @@ struct App {
     ext_watch: Option<nexa_fs::watch::StatWatch>,
     ext_files: HashMap<u64, extfile::ExtInfo>,
     ext_banner: extfile::Banner,
+    /// ★ T-167 B6 이동 제안(D-163): 방금 연 파일에 붙일 수 있는 파일 없음 북마크(띠가 소비 · 한 번에 하나).
+    bm_suggest: Option<bookmarks::MoveSuggest>,
     ext_poll_next: Option<Instant>,
     main_active: bool,
     ext_last_tab: u64,
@@ -2079,6 +2081,7 @@ fn main() {
         ext_watch: None,
         ext_files: HashMap::new(),
         ext_banner: extfile::Banner::default(),
+        bm_suggest: None,
         ext_poll_next: None,
         // 포커스 사건이 오기 전에는 비활성(09-24: 한 번도 활성화되지 않은 창(`NSQL_NO_ACTIVATE` 시험 · 뒤에서 띄운 창)이
         //   계속 깜빡이며 다시 그렸다) — 정상 기동은 첫 `Focused(true)`로 바로 활성이 된다.

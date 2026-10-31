@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **e113cf73** | 1 | 192차 win 26차 = T-200 CASE 식 상태(`[expression CASE]` · `case_pos`) + ansi CASE 낱말 삭제 · 82 §10 보류 0 · 소스 4 + 82·BRANCHES·STATUS·TODO·journal · nexa-ui = 251차 문서 손질 cdfd769 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **cb3c219b** | 1 | 192차 win 25차 = T-110 3-1 미니맵 자동 숨김(`editor.minimap_autohide`) · 소스 4 + 46·94·BRANCHES·STATUS·journal · 작업 브랜치 없이 main에 직접 커밋 · nexa-ui 251차 dd33ce5 동반 |
 | feat/197-bookmarks-note-servers | 2026-10-31 | 2026-10-31 → main ff(삭제) · **5a4cd9f5** | 1 | 192차 win 24차 = T-167 B4b 메모 편집 · B6 서버 모름(`ServerUnknown`) + 하루 1회 점검·정리 · 소스 3 + 문서 5 |
 | feat/196-minimap-scale-side | 2026-10-31 | 2026-10-31 → main ff(삭제) · **68e4e703** | 1 | 192차 win 23차 = T-110 3-2 미니맵 배율 · 3-3 왼쪽 배치 + settings.json 힌트 평키 보강 · 13파일 · nexa-ui 250차 7b8bb36 동반(맥 248·249 뒤 rebase) · ci 첫 회 ✗(옛 nexa-ui main) → rerun ✓ |

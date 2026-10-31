@@ -2363,6 +2363,32 @@ impl App {
                 None
             }
         });
+        // ★ T-167 B6 이동 제안 띠(D-163 · 69 §4-1): 외부 변경 띠가 없을 때만 · 이 탭의 제안 하나.
+        let view = view.or_else(|| {
+            let s = self.bm_suggest.as_ref().filter(|s| s.tab == id)?;
+            // 옛 경로는 마지막 두 조각만(`…/폴더/파일.sql` · 협업 27차 관찰 = 긴 경로가 버튼 앞에서 잘림).
+            let parts: Vec<&str> = s
+                .old_path
+                .split(['/', '\\'])
+                .filter(|p| !p.is_empty())
+                .collect();
+            let shown = if parts.len() > 2 {
+                format!("…/{}", parts[parts.len() - 2..].join("/"))
+            } else {
+                s.old_path.clone()
+            };
+            Some(extfile::BannerView {
+                text: tf(Msg::BmBanMove, &[&s.ids.len().to_string(), &shown]),
+                buttons: vec![
+                    (
+                        extfile::BannerHit::BmAttach,
+                        t(Msg::BtnBmAttach).to_string(),
+                    ),
+                    (extfile::BannerHit::BmDismiss, t(Msg::BtnBmNo).to_string()),
+                ],
+                danger: false,
+            })
+        });
         let changed = self.ext_banner.set(view);
         let inset = px(self.ext_banner.height(), self.scale);
         if self.editors.set_top_inset(inset) || changed {
@@ -2447,6 +2473,17 @@ impl App {
                     self.ext_save_armed = Some((id, Instant::now()));
                     self.save_to(&path);
                 }
+            }
+            extfile::BannerHit::BmAttach => {
+                if let Some(s) = self.bm_suggest.take() {
+                    let n = self.bookmarks.attach_moved(&s.ids, &s.new_path);
+                    self.bookmarks.relocate_doc(&self.editors, i);
+                    self.bm_sync_ui();
+                    self.sess.status = tf(Msg::StBookmarkAttached, &[&n.to_string(), &name]);
+                }
+            }
+            extfile::BannerHit::BmDismiss => {
+                self.bm_suggest = None;
             }
             extfile::BannerHit::Dismiss => {
                 // 삭제 안내를 닫는다 — 상태(`deleted`)는 남겨 같은 삭제로 다시 띄우지 않는다.

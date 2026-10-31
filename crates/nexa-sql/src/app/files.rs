@@ -930,7 +930,13 @@ impl App {
                     if mode == LoadMode::Open {
                         restored = self.undo_persist_load(i, &path);
                         self.vars_persist_load(tab, &path);
-                        self.bookmarks.on_opened(&self.editors, i);
+                        // ★ T-167 B6 이동 제안(D-163): 같은 내용의 파일 없음 북마크가 있으면 편집기 위 띠(자동 갈아끼움 없음).
+                        if let Some(s) = self.bookmarks.on_opened(&self.editors, i) {
+                            if self.settings.flag("bookmark.move_suggest") {
+                                self.bm_suggest = Some(s);
+                                self.ext_banner_sync();
+                            }
+                        }
                         self.bm_refresh_tab(i);
                     }
                 }
@@ -1125,7 +1131,24 @@ impl App {
         match res {
             Ok(()) => {
                 let was_untitled = self.editors.path_of(self.editors.active()).is_none();
+                let obj_key = self.editors.doc_object(self.editors.active_id()).cloned();
                 self.editors.mark_saved(path);
+                // ★ T-167 B5 복사본(D-167 · 69 §2-4): 객체 소스 탭을 파일로 저장 = 그 문서의 북마크를 파일 열쇠로 **복사**(출처 기억 ·
+                //   원본 유지) · 탭은 이제 파일이므로 객체 열쇠를 뗀다(다음 북마크는 파일 열쇠로).
+                if let Some(k) = obj_key {
+                    let tab = self.editors.active_id();
+                    if self.settings.flag("bookmark.save_copy_on_save") {
+                        let n = self.bookmarks.object_saved_as(&k, path);
+                        if n > 0 {
+                            self.log_win.push(LogEntry::new(
+                                LogKind::Info,
+                                format!("bookmarks: {n} copied to {}", path.display()),
+                            ));
+                        }
+                    }
+                    self.editors.set_doc_object(tab, None);
+                    self.bm_sync_ui();
+                }
                 backups::remove(path);
                 // ★ T-153 ③: 무제 탭이 파일이 되면 변수 표를 **그 파일 기준**(경로 해시 파일)으로 인수인계 — 프로젝트의 무제 탭 항목은
                 //   다음 프로젝트 저장 때 경로 탭이 되어 빠진다(사용자 10-26 "저장된 파일 기준에 변수가 인수인계").

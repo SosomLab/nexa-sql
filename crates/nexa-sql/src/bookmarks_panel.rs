@@ -38,6 +38,8 @@ pub(crate) enum BmAction {
     OpenSettings,
     /// ★ T-167 B4b 메모(10-31): 항목 메모 편집(빈 글 = 지움).
     Note(u64, String),
+    /// ★ T-167 B4c(10-31): 그룹 순서 — 그룹을 `before` 앞으로(None = 맨 뒤 · 드래그).
+    ReorderGroup(u32, Option<u32>),
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +85,25 @@ enum RenameKind {
     Note(u64),
 }
 
+/// ★ T-167 B4b/B4c 드래그(10-31 · 69 §6-5·§6-7): 누른 행 · 누른 점 · 지금 점 · 문턱(4px)을 넘었는가 — 항목 = 다른 그룹으로 이동 ·
+/// 그룹 = 순서 바꾸기. 칩(커서 옆 이름)은 `dragchip` 부품(결과 열 머리·탐색기 노드와 같은 모양) · Esc = 취소(C-27).
+#[derive(Clone, Copy, Debug)]
+struct RowDrag {
+    row: usize,
+    press: Point,
+    cur: Point,
+    active: bool,
+}
+
+/// 놓을 자리.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DropTarget {
+    /// 항목을 이 그룹으로.
+    Group(u32),
+    /// 그룹을 이 그룹 앞에(None = 맨 뒤).
+    Before(Option<u32>),
+}
+
 pub(crate) struct BookmarksPanel {
     visible: bool,
     bounds: Rect,
@@ -126,6 +147,8 @@ pub(crate) struct BookmarksPanel {
     typeahead: nexa_ctl::TypeAhead,
     ta_cfg: crate::explorer::TypeAheadCfg,
     now_hint: u64,
+    /// ★ T-167 드래그(항목 → 그룹 · 그룹 순서).
+    drag: Option<RowDrag>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -174,6 +197,7 @@ impl BookmarksPanel {
             typeahead: nexa_ctl::TypeAhead::default(),
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
             now_hint: 0,
+            drag: None,
         }
     }
 
@@ -615,6 +639,41 @@ impl BookmarksPanel {
             .unwrap_or(nsql_bookmarks::DEFAULT_GROUP)
     }
 
+    /// ★ T-167 드래그 놓을 자리(순수 판정 · 10-31): 항목 = 커서 행이 속한 그룹(목록 아래 빈 곳 = 마지막 그룹) · 그룹 = 커서 행의 그룹 —
+    /// 그룹 행 위쪽 절반이면 그 그룹 **앞**, 아니면(아래쪽·문서·항목 행) 다음 그룹 앞(마지막이면 맨 뒤) · 목록 밖 = None.
+    fn drop_target(&self, from: usize, p: Point) -> Option<DropTarget> {
+        if !self.list_rect.contains(p) {
+            return None;
+        }
+        match self.rows.get(from)? {
+            Row::Item { .. } => {
+                let r = self.row_at(p).unwrap_or(self.rows.len().saturating_sub(1));
+                Some(DropTarget::Group(self.group_of_row(r)))
+            }
+            Row::Group { .. } => {
+                let Some(r) = self.row_at(p) else {
+                    return Some(DropTarget::Before(None));
+                };
+                let gid = self.group_of_row(r);
+                let gi = self.groups.iter().position(|g| g.id == gid)?;
+                let top = self.list_rect.y + r as i32 * self.row_h - self.scroll_y;
+                let upper = matches!(self.rows[r], Row::Group { .. }) && p.y < top + self.row_h / 2;
+                Some(DropTarget::Before(if upper {
+                    Some(gid)
+                } else {
+                    self.groups.get(gi + 1).map(|g| g.id)
+                }))
+            }
+            Row::Doc { .. } => None,
+        }
+    }
+
+    /// 드래그 중인가(호스트 · 시험).
+    #[cfg(test)]
+    fn dragging(&self) -> bool {
+        self.drag.is_some_and(|d| d.active)
+    }
+
     /// 행 활성화 — 항목 = 이동(`permanent` = 정식 탭 · 아니면 미리보기) · 그룹/문서 = 접기 토글.
     fn activate(&mut self, r: usize, permanent: bool) {
         match self.rows.get(r).cloned() {
@@ -950,10 +1009,49 @@ impl BookmarksPanel {
         }
         match *ev {
             InputEvent::MouseMove { x, y } => {
-                let h = self.row_at(Point { x, y });
+                let p = Point { x, y };
+                // ★ T-167 드래그: 문턱(4px)을 넘으면 끌기 시작(더블클릭 판정은 버림) · 끄는 동안은 칩·놓을 자리만 갱신.
+                let th = self.px(4.0);
+                if let Some(d) = self.drag.as_mut() {
+                    d.cur = p;
+                    if !d.active && ((p.x - d.press.x).abs() >= th || (p.y - d.press.y).abs() >= th)
+                    {
+                        d.active = true;
+                        self.last_click = None;
+                    }
+                    if d.active {
+                        return true;
+                    }
+                }
+                let h = self.row_at(p);
                 let changed = h != self.hover.map(|(r, _)| r);
                 self.hover = h.map(|r| (r, Instant::now()));
                 changed
+            }
+            InputEvent::MouseUp { x, y } => {
+                let Some(d) = self.drag.take() else {
+                    return false;
+                };
+                if !d.active {
+                    return false;
+                }
+                let p = Point { x, y };
+                if let Some(t) = self.drop_target(d.row, p) {
+                    match (self.rows.get(d.row).cloned(), t) {
+                        (Some(Row::Item { id, .. }), DropTarget::Group(g)) => {
+                            if self.item(id).is_some_and(|b| b.group != g) {
+                                self.actions.push(BmAction::MoveGroup(id, g));
+                            }
+                        }
+                        (Some(Row::Group { id, .. }), DropTarget::Before(before))
+                            if before != Some(id) =>
+                        {
+                            self.actions.push(BmAction::ReorderGroup(id, before));
+                        }
+                        _ => {}
+                    }
+                }
+                true
             }
             InputEvent::RightDown { x, y } => {
                 let p = Point { x, y };
@@ -980,6 +1078,15 @@ impl BookmarksPanel {
                 }
                 if let Some(r) = self.row_at(p) {
                     self.sel = Some(r);
+                    // ★ T-167 드래그 후보(항목·그룹 행) — 문턱을 넘기 전에는 평소 클릭과 같다.
+                    self.drag =
+                        matches!(self.rows.get(r), Some(Row::Item { .. } | Row::Group { .. }))
+                            .then_some(RowDrag {
+                                row: r,
+                                press: p,
+                                cur: p,
+                                active: false,
+                            });
                     // 같은 행을 `dblclick_ms` 안에 다시 = 더블클릭 → 정식 탭(프로젝트 탐색기와 같은 규칙 · 사용자 09-23) · 세 번째는 새 시작.
                     let now = Instant::now();
                     let dbl = matches!(self.last_click, Some((j, t0)) if j == r && now.duration_since(t0).as_millis() < self.dblclick_ms);
@@ -1041,6 +1148,11 @@ impl BookmarksPanel {
                 self.typeahead_char(c)
             }
             InputEvent::Key { key, primary, .. } => {
+                // ★ T-167 드래그 중 Esc = 취소(칩을 걷고 아무것도 바꾸지 않는다 · C-27).
+                if key == CtlKey::Escape && self.drag.is_some_and(|d| d.active) {
+                    self.drag = None;
+                    return true;
+                }
                 if self.filter.is_focused() {
                     match key {
                         // ↑/↓/PgUp/PgDn/Home/End = 이력(드롭다운/Flat)이 먼저 · 끝에서 ↓ = 목록으로(사용자 09-23) ·
@@ -1465,6 +1577,10 @@ impl BookmarksPanel {
                     if let Some(n) = bm.note.as_deref().filter(|n| !n.trim().is_empty()) {
                         text = format!("{text}  — {}", n.replace(['\n', '\r'], " "));
                     }
+                    // ★ B5 복사본 = 출처 칩 ` ⟵ HR.PKG_X`(69 §2-4 · D-167).
+                    if let Some(o) = &bm.origin {
+                        text = format!("{text}  ⟵ {}", o.short_name());
+                    }
                     if let State::Invalid { reason, .. } = bm.state {
                         let why = match reason {
                             Reason::FileMissing => t(Msg::BmReasonFile),
@@ -1480,6 +1596,42 @@ impl BookmarksPanel {
                 }
             }
             y += rh;
+        }
+        // ★ T-167 드래그: 놓을 자리(항목 = 대상 그룹 행 강조 · 그룹 = 끼울 자리 선) + 커서 옆 칩(`dragchip` 부품 · C-27).
+        if let Some(d) = self.drag.filter(|d| d.active) {
+            let group_row_y = |g: u32| -> Option<i32> {
+                self.rows
+                    .iter()
+                    .position(|r| matches!(r, Row::Group { id, .. } if *id == g))
+                    .map(|gr| lr.y + gr as i32 * rh - self.scroll_y)
+            };
+            match self.drop_target(d.row, d.cur) {
+                Some(DropTarget::Group(g)) => {
+                    if let Some(y) = group_row_y(g).filter(|y| *y >= lr.y && *y < lr.bottom()) {
+                        dc.fill_rect_alpha(Rect::new(lr.x, y, lr.w, rh), th.accent, 0.14);
+                    }
+                }
+                Some(DropTarget::Before(b)) => {
+                    let y = match b {
+                        Some(g) => group_row_y(g),
+                        None => Some(lr.y + self.rows.len() as i32 * rh - self.scroll_y),
+                    };
+                    if let Some(y) = y.filter(|y| *y >= lr.y && *y <= lr.bottom()) {
+                        dc.fill_rect(Rect::new(lr.x, (y - 1).max(lr.y), lr.w, 2), th.accent);
+                    }
+                }
+                None => {}
+            }
+            let name = match self.rows.get(d.row) {
+                Some(Row::Item { id, .. }) => {
+                    self.item(*id).map(Bookmark::display).unwrap_or_default()
+                }
+                Some(Row::Group { name, .. }) => name.clone(),
+                _ => String::new(),
+            };
+            if !name.is_empty() {
+                crate::dragchip::paint(dc, th, self.scale, &name, d.cur);
+            }
         }
         // 타입어헤드 HUD(입력 중 접두 · 패널 영역 기준 3×3 위치 · 객체 탐색기와 같은 부품).
         let ta_text = self.typeahead.composing();
@@ -1540,6 +1692,145 @@ mod tests {
             .position(|r| matches!(r, Row::Item { .. }))
             .expect("item row");
         (p, r)
+    }
+
+    /// 그룹 둘(기본 + "B") · 항목 하나(기본 그룹) — 행 = Group1 · Doc · Item · Group2.
+    fn panel_two_groups() -> (BookmarksPanel, usize, usize, usize) {
+        let mut p = BookmarksPanel::new();
+        p.set_visible(true);
+        p.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        let mut store = Store::new();
+        let anchor = nsql_bookmarks::make_anchor(
+            &["a", "b", "c"],
+            1,
+            0,
+            &nsql_bookmarks::RelocateOpts::default(),
+        );
+        store
+            .add(DocKey::file("C:/x/a.sql"), anchor, 1, true, 100, 1000)
+            .expect("add");
+        store.add_group("B");
+        p.sync(&store);
+        let item = p
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Item { .. }))
+            .expect("item row");
+        let g1 = p
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { id: 1, .. }))
+            .expect("group 1 row");
+        let g2 = p
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Group { id: 2, .. }))
+            .expect("group 2 row");
+        (p, item, g1, g2)
+    }
+
+    fn row_center(p: &BookmarksPanel, r: usize) -> (i32, i32) {
+        (
+            p.list_rect.x + 120,
+            p.list_rect.y + r as i32 * p.row_h + p.row_h / 2,
+        )
+    }
+
+    /// ★ T-167 B4b 드래그(10-31 · 69 §6-5): 항목을 눌러 4px 넘게 끌어 다른 그룹 행에 놓으면 `MoveGroup` · 같은 그룹에 놓으면 아무것도 없음 ·
+    /// 문턱 전 놓기 = 평소 클릭(미리보기 Goto만) · Esc = 취소(칩 걷고 아무것도 바꾸지 않음 · C-27).
+    #[test]
+    fn drag_item_to_other_group_moves_and_escape_cancels() {
+        let (mut p, item, _g1, g2) = panel_two_groups();
+        let (x, y) = row_center(&p, item);
+        let (tx, ty) = row_center(&p, g2);
+        let down = InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        };
+        // 끌어서 그룹 2에 놓기.
+        p.on_event(&down);
+        p.on_event(&InputEvent::MouseMove { x: x + 2, y: y + 1 });
+        assert!(!p.dragging(), "문턱 전");
+        p.on_event(&InputEvent::MouseMove { x: tx, y: ty });
+        assert!(p.dragging());
+        p.on_event(&InputEvent::MouseUp { x: tx, y: ty });
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        assert!(
+            acts.contains(&BmAction::MoveGroup(1, 2)),
+            "그룹 2로 이동: {acts:?}"
+        );
+        assert!(!p.dragging());
+        // 같은 그룹(자기 문서 행)에 놓기 = 이동 없음.
+        p.on_event(&down);
+        p.on_event(&InputEvent::MouseMove { x, y: y - 40 });
+        p.on_event(&InputEvent::MouseUp { x, y: y - 40 });
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        assert!(
+            !acts.iter().any(|a| matches!(a, BmAction::MoveGroup(..))),
+            "{acts:?}"
+        );
+        // Esc = 취소.
+        p.on_event(&down);
+        p.on_event(&InputEvent::MouseMove { x: tx, y: ty });
+        assert!(p.dragging());
+        assert!(p.on_event(&InputEvent::Key {
+            key: CtlKey::Escape,
+            shift: false,
+            primary: false,
+        }));
+        assert!(!p.dragging());
+        p.on_event(&InputEvent::MouseUp { x: tx, y: ty });
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        assert!(
+            !acts.iter().any(|a| matches!(a, BmAction::MoveGroup(..))),
+            "Esc 뒤 놓기 = 아무것도 없음: {acts:?}"
+        );
+    }
+
+    /// ★ T-167 B4c 그룹 순서 드래그(10-31 · 69 §6-7): 그룹 2를 그룹 1 행 **위쪽 절반**에 놓으면 `ReorderGroup(2, Some(1))` ·
+    /// 그룹 1을 그룹 2 행 아래쪽 절반에 놓으면 맨 뒤(`None`) · 자기 앞 = 아무것도 없음 · 문서 행 위에 놓으면 그 그룹 다음 앞.
+    #[test]
+    fn drag_group_reorders() {
+        let (mut p, item, g1, g2) = panel_two_groups();
+        let (x, y2) = row_center(&p, g2);
+        let top1 = p.list_rect.y + g1 as i32 * p.row_h + 2;
+        p.on_event(&InputEvent::MouseDown {
+            x,
+            y: y2,
+            shift: false,
+            primary: false,
+        });
+        p.on_event(&InputEvent::MouseMove { x, y: top1 });
+        p.on_event(&InputEvent::MouseUp { x, y: top1 });
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        assert_eq!(acts, vec![BmAction::ReorderGroup(2, Some(1))]);
+        // 그룹 1 → 그룹 2 행 아래쪽 절반 = 맨 뒤.
+        let (_, y1) = row_center(&p, g1);
+        let low2 = p.list_rect.y + g2 as i32 * p.row_h + p.row_h - 2;
+        p.on_event(&InputEvent::MouseDown {
+            x,
+            y: y1,
+            shift: false,
+            primary: false,
+        });
+        p.on_event(&InputEvent::MouseMove { x, y: low2 });
+        p.on_event(&InputEvent::MouseUp { x, y: low2 });
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        assert_eq!(acts, vec![BmAction::ReorderGroup(1, None)]);
+        // 그룹 2 → 그룹 1의 항목 행 위 = 그룹 1 다음(= 그룹 2 자기 앞) → 아무것도 없음.
+        let (_, yi) = row_center(&p, item);
+        p.on_event(&InputEvent::MouseDown {
+            x,
+            y: y2,
+            shift: false,
+            primary: false,
+        });
+        p.on_event(&InputEvent::MouseMove { x, y: yi });
+        p.on_event(&InputEvent::MouseUp { x, y: yi });
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        assert!(acts.is_empty(), "{acts:?}");
     }
 
     /// ← 로 펼친 문서 행을 접으면 그 행이 선택된 채 남고, 한 번 더 ← = 그룹 행으로(사용자 10-20 실기 결함 ·

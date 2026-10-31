@@ -1272,7 +1272,7 @@ pub(crate) fn missing_name(msg: &str) -> Option<String> {
 }
 
 /// `nsql_core::DdlKind` → 탐색기 폴더 종류(스키마는 폴더가 아니라 루트 목록).
-fn folder_kind(k: nsql_core::DdlKind) -> Option<ObjectKind> {
+pub(crate) fn folder_kind(k: nsql_core::DdlKind) -> Option<ObjectKind> {
     use nsql_core::DdlKind as D;
     Some(match k {
         D::Table => ObjectKind::Table,

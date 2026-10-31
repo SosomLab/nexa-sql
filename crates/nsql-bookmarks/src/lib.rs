@@ -137,6 +137,9 @@ pub struct Bookmark {
     pub visited: u64,
     /// 재탐색이 줄 삭제로 경계에 붙였다(정확한 자리가 아니다 · 69 §3-1).
     pub shifted: bool,
+    /// ★ T-167 B5 복사본(D-167 · 69 §2-4 · 10-31): 객체 DDL 탭을 파일로 저장할 때 만든 복사본의 **출처**(원본 객체 열쇠) — 패널 행에
+    /// 출처 칩 ` ⟵ HR.PKG_X`. 원본은 그대로 남는다.
+    pub origin: Option<DocKey>,
 }
 
 impl Bookmark {
@@ -698,6 +701,7 @@ impl Store {
             created: now,
             visited: now,
             shifted: false,
+            origin: None,
         });
         Ok(id)
     }
@@ -706,6 +710,34 @@ impl Store {
         if let Some(i) = self.items.iter().position(|b| !b.is_live()) {
             self.items.remove(i);
         }
+    }
+
+    /// ★ T-167 B4c 그룹 순서(69 §6-7 · 10-31): `gid`를 `before` 그룹 **앞**으로(None = 맨 뒤). 모르는 id·제자리 = false.
+    pub fn reorder_group(&mut self, gid: u32, before: Option<u32>) -> bool {
+        if Some(gid) == before {
+            return false;
+        }
+        let Some(from) = self.groups.iter().position(|g| g.id == gid) else {
+            return false;
+        };
+        if before.is_some_and(|b| !self.groups.iter().any(|g| g.id == b)) {
+            return false;
+        }
+        let g = self.groups.remove(from);
+        let at = match before {
+            Some(b) => self
+                .groups
+                .iter()
+                .position(|x| x.id == b)
+                .unwrap_or(self.groups.len()),
+            None => self.groups.len(),
+        };
+        if at == from {
+            self.groups.insert(from, g);
+            return false;
+        }
+        self.groups.insert(at, g);
+        true
     }
 
     pub fn remove(&mut self, id: u64) -> Option<Bookmark> {
@@ -878,26 +910,7 @@ impl Store {
             out.push_str("\n    { \"id\": ");
             out.push_str(&b.id.to_string());
             out.push_str(", \"doc\": ");
-            match &b.doc {
-                DocKey::File { path } => out.push_str(&format!("{{ \"file\": {} }}", jstr(path))),
-                DocKey::Scratch { tab } => out.push_str(&format!("{{ \"tab\": {tab} }}")),
-                DocKey::Object {
-                    profile,
-                    dialect,
-                    schema,
-                    kind,
-                    name,
-                    part,
-                } => out.push_str(&format!(
-                    "{{ \"obj\": {{ \"profile\": {}, \"dialect\": {}, \"schema\": {}, \"kind\": {}, \"name\": {}, \"part\": {} }} }}",
-                    jstr(profile),
-                    jstr(dialect),
-                    jstr(schema),
-                    jstr(kind),
-                    jstr(name),
-                    jstr(part)
-                )),
-            }
+            out.push_str(&doc_json(&b.doc));
             let a = &b.anchor;
             out.push_str(&format!(
                 ", \"line\": {}, \"col\": {}, \"text\": {}, \"before\": {}, \"after\": {}, \"hash\": \"{:016x}\", \"lines\": {}",
@@ -924,6 +937,9 @@ impl Store {
             ));
             if b.shifted {
                 out.push_str(", \"shifted\": true");
+            }
+            if let Some(o) = &b.origin {
+                out.push_str(&format!(", \"origin\": {}", doc_json(o)));
             }
             if let State::Invalid { since, reason } = b.state {
                 out.push_str(&format!(
@@ -997,29 +1013,56 @@ impl Store {
     }
 }
 
+/// 문서 열쇠 → JSON 조각(`{ "file": … }` · `{ "tab": n }` · `{ "obj": {…} }`).
+fn doc_json(d: &DocKey) -> String {
+    match d {
+        DocKey::File { path } => format!("{{ \"file\": {} }}", jstr(path)),
+        DocKey::Scratch { tab } => format!("{{ \"tab\": {tab} }}"),
+        DocKey::Object {
+            profile,
+            dialect,
+            schema,
+            kind,
+            name,
+            part,
+        } => format!(
+            "{{ \"obj\": {{ \"profile\": {}, \"dialect\": {}, \"schema\": {}, \"kind\": {}, \"name\": {}, \"part\": {} }} }}",
+            jstr(profile),
+            jstr(dialect),
+            jstr(schema),
+            jstr(kind),
+            jstr(name),
+            jstr(part)
+        ),
+    }
+}
+
+/// JSON 조각 → 문서 열쇠(모르는 꼴 = None).
+fn parse_doc(v: &Json) -> Option<DocKey> {
+    let Json::Obj(d) = v else {
+        return None;
+    };
+    if let Some(p) = field_str(d, "file") {
+        Some(DocKey::file(&p))
+    } else if let Some(t) = field_num(d, "tab") {
+        Some(DocKey::Scratch { tab: t as u64 })
+    } else if let Some(Json::Obj(o)) = field(d, "obj") {
+        Some(DocKey::Object {
+            profile: field_str(o, "profile").unwrap_or_default(),
+            dialect: field_str(o, "dialect").unwrap_or_default(),
+            schema: field_str(o, "schema").unwrap_or_default(),
+            kind: field_str(o, "kind").unwrap_or_default(),
+            name: field_str(o, "name").unwrap_or_default(),
+            part: field_str(o, "part").unwrap_or_default(),
+        })
+    } else {
+        None
+    }
+}
+
 fn parse_item(f: &[(String, Json)]) -> Option<Bookmark> {
     let id = field_num(f, "id")? as u64;
-    let doc = match field(f, "doc")? {
-        Json::Obj(d) => {
-            if let Some(p) = field_str(d, "file") {
-                DocKey::file(&p)
-            } else if let Some(t) = field_num(d, "tab") {
-                DocKey::Scratch { tab: t as u64 }
-            } else if let Some(Json::Obj(o)) = field(d, "obj") {
-                DocKey::Object {
-                    profile: field_str(o, "profile").unwrap_or_default(),
-                    dialect: field_str(o, "dialect").unwrap_or_default(),
-                    schema: field_str(o, "schema").unwrap_or_default(),
-                    kind: field_str(o, "kind").unwrap_or_default(),
-                    name: field_str(o, "name").unwrap_or_default(),
-                    part: field_str(o, "part").unwrap_or_default(),
-                }
-            } else {
-                return None;
-            }
-        }
-        _ => return None,
-    };
+    let doc = parse_doc(field(f, "doc")?)?;
     let hash = field_str(f, "hash")
         .and_then(|h| u64::from_str_radix(&h, 16).ok())
         .unwrap_or(0);
@@ -1056,6 +1099,7 @@ fn parse_item(f: &[(String, Json)]) -> Option<Bookmark> {
         created: field_num(f, "created").unwrap_or(0.0) as u64,
         visited: field_num(f, "visited").unwrap_or(0.0) as u64,
         shifted: field_bool(f, "shifted").unwrap_or(false),
+        origin: field(f, "origin").and_then(parse_doc),
     })
 }
 
@@ -1298,6 +1342,14 @@ mod tests {
                 since: 5,
                 reason: Reason::FileMissing,
             };
+            b.origin = Some(DocKey::Object {
+                profile: "h:1521/DB".into(),
+                dialect: "oracle".into(),
+                schema: "HR".into(),
+                kind: "package".into(),
+                name: "PKG_X".into(),
+                part: "source".into(),
+            });
         }
         st.add_group("검증");
         let text = st.to_json();
@@ -1309,6 +1361,27 @@ mod tests {
         assert_eq!(s2.items.len(), 1);
         assert_eq!(s2.next_id, 10);
         assert_eq!(s2.groups.len(), 1, "기본 그룹은 만들어 둔다");
+    }
+
+    /// ★ T-167 B4c(10-31): 그룹 순서 — 앞으로 · 맨 뒤로 · 제자리/모르는 id/자기 앞 = false · 기본 그룹도 옮길 수 있다.
+    #[test]
+    fn reorder_group_moves_and_rejects_noops() {
+        let mut st = Store::new();
+        let a = st.add_group("A");
+        let b = st.add_group("B");
+        let ids = |s: &Store| s.groups.iter().map(|g| g.id).collect::<Vec<_>>();
+        assert_eq!(ids(&st), vec![DEFAULT_GROUP, a, b]);
+        assert!(st.reorder_group(b, Some(a)));
+        assert_eq!(ids(&st), vec![DEFAULT_GROUP, b, a]);
+        assert!(st.reorder_group(DEFAULT_GROUP, None), "기본 그룹을 맨 뒤로");
+        assert_eq!(ids(&st), vec![b, a, DEFAULT_GROUP]);
+        assert!(!st.reorder_group(a, Some(a)), "자기 앞 = 제자리");
+        assert!(!st.reorder_group(b, Some(a)), "이미 그 앞 = 제자리");
+        assert!(!st.reorder_group(99, None), "모르는 id");
+        assert!(!st.reorder_group(a, Some(99)), "모르는 대상");
+        assert_eq!(ids(&st), vec![b, a, DEFAULT_GROUP]);
+        assert!(st.reorder_group(DEFAULT_GROUP, Some(b)));
+        assert_eq!(ids(&st), vec![DEFAULT_GROUP, b, a]);
     }
 
     #[test]

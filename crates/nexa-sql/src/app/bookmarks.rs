@@ -138,6 +138,40 @@ impl App {
         }
     }
 
+    /// ★ T-167 B6 `ObjectMissing`(69 §3-3 · 10-31): 성공한 DDL 문장(`meta_on_done`)이 DROP/RENAME이면 그 객체의 소스 북마크를 무효로 ·
+    /// CREATE면 되살림 — 탐색기 갱신 설정(`meta.refresh_on_ddl`)과 무관하게 · 접속 세션의 서버 키 · 스키마 없으면 세션 기본 스키마.
+    pub(crate) fn bm_on_ddl(&mut self, t: &nsql_core::DdlTarget) {
+        use nsql_core::DdlVerb;
+        let dropped = match t.verb {
+            DdlVerb::Drop | DdlVerb::Rename => true,
+            DdlVerb::Create => false,
+            _ => return,
+        };
+        let Some(spec) = self.sess.spec.as_ref() else {
+            return;
+        };
+        let Some(kind) = crate::explorer::folder_kind(t.kind) else {
+            return;
+        };
+        let profile = server_key(spec);
+        let schema = t.schema.clone().or_else(|| self.meta_default_schema());
+        let n = self
+            .bookmarks
+            .on_ddl(&profile, schema.as_deref(), kind.code(), &t.name, dropped);
+        if n > 0 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "bookmarks: {n} object bookmark(s) {} after {:?} {}",
+                    if dropped { "invalidated" } else { "revived" },
+                    t.verb,
+                    t.name
+                ),
+            ));
+            self.bm_sync_ui();
+        }
+    }
+
     /// 패널이 낸 요청 거두기.
     pub(crate) fn bm_pump(&mut self) {
         while let Some(a) = self.bm_panel.take_action() {
@@ -167,6 +201,9 @@ impl App {
                     None => self.bookmarks.set_mnemonic(id, None),
                 },
                 bookmarks_panel::BmAction::MoveGroup(id, g) => self.bookmarks.move_group(id, g),
+                bookmarks_panel::BmAction::ReorderGroup(g, before) => {
+                    self.bookmarks.reorder_group(g, before)
+                }
                 bookmarks_panel::BmAction::RemoveDoc(doc) => {
                     let n = self.bookmarks.remove_doc(&doc);
                     if n > 0 {

@@ -201,6 +201,8 @@ pub struct Group { pub id: GroupId, pub name: String, pub default: bool, pub ena
 
 ### 2-4. DDL 탭 → 파일 저장(사용자 요구 "복사본을 전달")
 
+> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — `save_to`에서 탭이 객체 소스 열쇠였으면 `object_saved_as`(새 id · `origin` = 객체 열쇠 · 원본 북마크 유지 · 같은 줄 중복 건너뜀) + 탭의 객체 열쇠를 뗌 · 패널 행 ` ⟵ HR.PKG_X` 출처 칩 · JSON `origin` 키(모르는 키 = 종전 호환) · 끄기 = `bookmark.save_copy_on_save`.
+
 DDL 탭에서 **Save As**로 파일을 만들면:
 
 1. 그 문서의 북마크를 **파일 문서 키로 복사**한다(`origin = Object{…}` · 새 `id`).
@@ -259,6 +261,8 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 ### 3-3. L2 · 문서 자체가 없을 때
 
+> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — **ObjectMissing 신호** = `meta_on_done`에서 DDL 대상 파싱 뒤 `bm_on_ddl` — DROP/RENAME = 그 서버 키·스키마·종류 코드·이름의 소스 북마크 Live → `Invalid{ObjectMissing}` · CREATE = 되살림 · `meta.refresh_on_ddl`과 무관 · 로그 한 줄. rename 제안(옛 → 새 이름 "이어 붙일까요")은 `ddl_target`이 새 이름을 잡지 않아 보류.
+
 | 상황 | 판정 | 신호 |
 |---|---|---|
 | 파일 없음 | `Invalid{FileMissing}` | 탭 열기 실패 · `extfile.rs` 감시(58 §5 `FileSig`) |
@@ -283,6 +287,8 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 ## 4. 문서 동일성 — "어떤 파일에 종속되었는가"(요구 ①)
 
 ### 4-1. 파일
+
+> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — **이동 제안 띠(D-163)** = 파일을 열 때 `on_opened`가 "이 문서에 북마크 0 ∧ FileMissing 북마크 중 doc_hash 같은 것"을 찾아 `App.bm_suggest` → 외부 변경 띠가 없을 때 같은 띠 부품에 "이 내용에 붙어 있던 북마크 N개가 있습니다(옛 경로 …). 이어 붙일까요?" [이어 붙이기][아니오] · 수락 = 열쇠 이동 + Live + 재탐색 · 끄기 = `bookmark.move_suggest` · 기동 명령 `ext.banner:bm_attach|bm_dismiss` · V1 캡처 ✓ · 관찰 P3 = 옛 경로가 길면 띠 글이 버튼 앞에서 잘림.
 
 - **키 = 경로**. 프로젝트 안이면 **프로젝트 파일 기준 상대 경로**(67 §2-1 규약 · 저장소를 다른 PC로 옮겨도 산다), 밖이면 절대 경로. 저장은 `/` 구분자로 정규화(Windows `\` → `/`).
 - 비교는 `std::fs::canonicalize` 후 Windows에서 **대소문자 무시**(`varsfile.rs`/`undofile.rs`의 `name_for`와 같은 규칙 · 09-22 프로필 사고의 교훈).
@@ -403,6 +409,8 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 ### 6-5. 좌클릭 · 더블클릭 · 키보드 (D-173)
 
+> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — **항목 드래그 → 다른 그룹** = 패널 `RowDrag`(문턱 4px · 칩 = `dragchip` 부품 · 대상 그룹 행 강조 · Esc 취소 · MouseUp = `BmAction::MoveGroup`).
+
 | 입력 | 동작 |
 |---|---|
 | **한 번 클릭** | ★ **미리보기** — 그 자리를 편집기에 보여 주되 **포커스는 목록에 남긴다**. ↑↓로 계속 훑어볼 수 있다(`bookmark.panel_preview` 기본 on) |
@@ -438,6 +446,8 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 메뉴는 **열려 있는 동안 모달이되 바깥 클릭은 메뉴를 닫고 그 클릭을 그대로 진행**한다(팝업/메뉴 UX 규칙).
 
 ### 6-7. 그룹(카테고리) 관리
+
+> ★ **구현됨(10-31 · 192차 27차 · 개발 · [journal 10-31 §12](journal/2026-10-31.md))** — **그룹 순서 드래그** = 그룹 행 위쪽 절반 = 그 앞 · 아래/문서/항목 행 = 다음 그룹 앞 · 맨 뒤 = None · 끼울 자리 2px 선 · `BmAction::ReorderGroup` · `Store::reorder_group`.
 
 - **한 북마크는 그룹 하나에만 속한다**(D-174). 옮기면 이전 그룹에서 빠진다 — 폴더와 같은 감각이고 "여기서 지우면 저기도 지워지나"라는 혼란이 없다. JetBrains는 다중 소속을 허용하면서도 **줄 북마크만은 예외로 막아 두었다**(`findGroupsToAdd`에서 `is LineBookmark -> null`) — 우리 대상이 바로 그 줄 북마크다.
 - **기본 그룹**: 새 북마크가 들어가는 곳. 이름은 프로젝트 이름(프로젝트가 없으면 `기본`). 지울 수 없고, 다른 그룹을 기본으로 지정하면 그때 넘어간다(JetBrains `Use as default list`).
@@ -621,7 +631,7 @@ pub trait BookmarkStore {
 | `bookmark.max_per_doc` · `bookmark.max_total` | Int · **500** · **5000** | 상한(넘으면 무효부터 버리고, 그래도 넘치면 거부) | `enabled` |
 | `bookmark.max_groups` | Int · 50 · HIDDEN | 그룹 수 상한 | `enabled` |
 | `bookmark.default_group_name` | Text · (비면 프로젝트 이름) | 기본 그룹의 이름 | `enabled` |
-| `bookmark.save_copy_on_save` | Bool · on | DDL 탭을 파일로 저장할 때 복사본을 만든다(D-167) | `enabled` |
+| `bookmark.save_copy_on_save` | Bool · on | DDL 탭을 파일로 저장할 때 복사본을 만든다(D-167) | `enabled` · ✅ 10-31 27차 구현 |
 | `bookmark.reconnect_ask` | Bool · on | 객체 문서를 열 때 미접속이면 물어본다(끄면 연결된 서버만 열린다) | `enabled` |
 | `bookmark.undo_secs` | Int · 5 | 제거 뒤 [실행 취소] 토스트가 머무는 초(0 = 없음 · C-28) | `enabled` |
 | `bookmark.confirm_clear` | Bool · on | 문서 전체·전부 지우기에 두 번 확인 | `enabled` |
@@ -658,7 +668,7 @@ pub trait BookmarkStore {
 | `bookmark.relocate_unique` | Bool · on | 마지막 수단 = 문서에서 그 줄이 유일하면 거기로 | `enabled` |
 | `bookmark.relocate_max_lines` | Int · 200000 | 이보다 큰 문서는 재탐색을 건너뛴다(줄 번호만) | `enabled` |
 | `bookmark.revive` | Bool · on | 파일·객체가 돌아오면 무효를 되살린다(L3) | `enabled` |
-| `bookmark.move_suggest` | Bool · on | 내용 해시가 같은 파일을 열면 "이어 붙일까요" 띠(D-163) | `enabled` |
+| `bookmark.move_suggest` | Bool · on | 내용 해시가 같은 파일을 열면 "이어 붙일까요" 띠(D-163) | `enabled` · ✅ 10-31 27차 구현 |
 
 ### 9-4. 규약
 
@@ -690,11 +700,11 @@ pub trait BookmarkStore {
 | **B2** ✅ 09-22(거터 색 띠 · 미니맵 틱 · 줄 끝 라벨 · 설정 `bookmark.minimap`/`inline_label`/`inline_label_chars` · §74) | 편집기 배선 — `bookmarks.rs` · `TextBuf` 줄 변경 기록 소비 · 토글/이동/니모닉 명령 · 거터·미니맵·인라인 표시 | U-1 U-2 B1 |
 | **B3** ✅ 09-22(개인 워크스페이스 파일만 · 포트는 B7 때) | 저장소 — `BookmarkStore` 포트 + 워크스페이스 backend(기본 워크스페이스부터) · 저장 시점 배선 | B1 · (67 T-165) |
 | **B4a** ✅ 09-22(문서 → 항목 · 그룹 트리는 B4c) | **패널 뼈대** — 활동 막대 항목 `view.bookmarks` + 아이콘 `mi_bookmark` · `bookmarks_panel.rs`(search_panel 골격) · 묶음/정렬/필터 · 가상 스크롤 · 빈 상태 · 배지 · 상태줄 세그먼트 | B2 B3 |
-| **B4b** 🚧 09-22(✅ **10-31 24차 메모 편집** = 우클릭 "메모 편집" · 제자리 상자 · 빈 글 = 지움 · 행 = 이름 뒤 ` — 메모` · 남음 = 순서 드래그 · [journal 10-31 §9](journal/2026-10-31.md) · 우클릭 메뉴 넷 · Delete · 5초 되돌리기 토스트 · 제자리 이름) · **09-23 미리보기(한 번 클릭 = ◦ 탭) · 더블클릭/Enter/메뉴 Open = 정식 탭(승격 포함) ✅**(journal §92 · `BmAction::Goto(id, permanent)`) · 남음 = 드래그·메모 | **패널 조작** — 미리보기(좌클릭)·이동(더블클릭·Enter)·키보드 전부 · 우클릭 메뉴 넷(항목·무효·문서·그룹·빈 곳) · 제자리 이름 편집 · 드래그 이동(고스트·Esc) · 제거 + 5초 실행 취소 | B4a |
-| **B4c** ✅ 09-22(순서 드래그 제외) | **그룹 관리** — 만들기·이름·기본 지정·켜기/끄기·삭제 2택·순서·상한 · 순회/거터가 `enabled`를 존중 | B4b |
+| **B4b** ✅ 10-31 27차 완료(항목 드래그 → 다른 그룹 · [journal 10-31 §12](journal/2026-10-31.md)) · 🚧 09-22(✅ **10-31 24차 메모 편집** = 우클릭 "메모 편집" · 제자리 상자 · 빈 글 = 지움 · 행 = 이름 뒤 ` — 메모` · 남음 = 순서 드래그 · [journal 10-31 §9](journal/2026-10-31.md) · 우클릭 메뉴 넷 · Delete · 5초 되돌리기 토스트 · 제자리 이름) · **09-23 미리보기(한 번 클릭 = ◦ 탭) · 더블클릭/Enter/메뉴 Open = 정식 탭(승격 포함) ✅**(journal §92 · `BmAction::Goto(id, permanent)`) · 남음 = 드래그·메모 | **패널 조작** — 미리보기(좌클릭)·이동(더블클릭·Enter)·키보드 전부 · 우클릭 메뉴 넷(항목·무효·문서·그룹·빈 곳) · 제자리 이름 편집 · 드래그 이동(고스트·Esc) · 제거 + 5초 실행 취소 | B4a |
+| **B4c** ✅ 09-22 · ✅ 10-31 27차 순서 드래그([journal 10-31 §12](journal/2026-10-31.md)) | **그룹 관리** — 만들기·이름·기본 지정·켜기/끄기·삭제 2택·순서·상한 · 순회/거터가 `enabled`를 존중 | B4b |
 | **B4d** 🚧 09-22(14키) | **설정 영역** — `GrpBookmarks` + 분류 셋 · 키 38개 등록(라벨·설명 `Msg` · 종속 · HIDDEN · `perf.boost` 강제값) · 패널 ▸ "북마크 설정 열기" | B4a |
-| **B5** ✅ 1차 10-31(190차 · D-426 · 남음 = 저장 시 복사본 · rename 제안) | 객체 DDL 문서 — `OpenSql`에 `origin` · 재개(~~확인 후 접속~~ → 살아 있는 세션만 · 없으면 상태줄 안내 · D-426 ✅) · 저장 시 복사본 · rename 제안 | B2 · 57 |
-| **B6** ✅ 1차 10-31(190차 · 파일 없음 판정 · 열린 문서 부활) · ✅ **2차 10-31 24차**(`ServerUnknown` = 객체 북마크 서버 키가 저장 프로필 + 살아 있는 탐색기 칸에 없음 · 다시 생기면 Live · **하루 1회 점검** = 기동 첫 틱 + 24시간마다 파일·서버 점검 + 정리 · 바뀐 것만 로그 · [journal 10-31 §9](journal/2026-10-31.md)) · 남음 = ObjectMissing 신호 · 이동 제안 띠 | 무효·부활·정리 — 판정 · `stale_days` · 상한 · 파일 이동 제안 띠 | B3 · 58 |
+| **B5** ✅ 1차 10-31(190차 · D-426) · ✅ 27차 저장 시 복사본(D-167 · `origin` 칩) · 남음 = rename 제안(보류 · `ddl_target`) | 객체 DDL 문서 — `OpenSql`에 `origin` · 재개(~~확인 후 접속~~ → 살아 있는 세션만 · 없으면 상태줄 안내 · D-426 ✅) · 저장 시 복사본 · rename 제안 | B2 · 57 |
+| **B6** ✅ 1차 10-31(190차 · 파일 없음 판정 · 열린 문서 부활) · ✅ **2차 10-31 24차**(`ServerUnknown` = 객체 북마크 서버 키가 저장 프로필 + 살아 있는 탐색기 칸에 없음 · 다시 생기면 Live · **하루 1회 점검** = 기동 첫 틱 + 24시간마다 파일·서버 점검 + 정리 · 바뀐 것만 로그 · [journal 10-31 §9](journal/2026-10-31.md)) · ✅ 27차 ObjectMissing 신호(DDL DROP/RENAME/CREATE) · 이동 제안 띠(D-163) · B6 완료 | 무효·부활·정리 — 판정 · `stale_days` · 상한 · 파일 이동 제안 띠 | B3 · 58 |
 | **B7** | 공용/개인 2단 — 프로젝트 파일 backend · "공용으로 올리기" · 프로필 이름만 적기 | 67 T-165 |
 | **B8** ✅ 09-22(`nsql-cli/bookmark.rs` · 별칭 `bm` · `--project`/`--doc`/`--md`/`--label`/`--days` · 자동 점검 S36 = CLI로 심고 GUI가 읽음 · §74) | CLI `nsql bookmark list\|add\|rm\|prune` · 문서(이 파일 · 39 §3) | B1 B3 |
 

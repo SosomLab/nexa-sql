@@ -132,6 +132,10 @@ pub(crate) enum BannerHit {
     Overwrite,
     /// 닫기(삭제 안내).
     Dismiss,
+    /// ★ T-167 B6 이동 제안(D-163): 파일 없음 북마크를 이 파일에 이어 붙이기.
+    BmAttach,
+    /// 이동 제안 거절(이 탭 · 다시 묻지 않음).
+    BmDismiss,
 }
 
 /// 띠 내용(호스트가 만든다).
