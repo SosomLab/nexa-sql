@@ -605,11 +605,30 @@ fn block_end(toks: &[Token], start: usize) -> usize {
     let mut depth = 0i32;
     let mut paren = 0i32;
     let mut closed = false;
+    // ★ T-255 v2(10-31): PostgreSQL 달러 인용 본문(`$$ … $$` · `$body$ … $body$`) 안의 `;`·BEGIN/END는 세지 않는다 · 닫는 태그 뒤 첫 `;`가 끝
+    //   (종전 = SQL 본문 함수 `AS $$ SELECT 1; $$ LANGUAGE sql;`이 문서 끝까지 삼켰다).
+    let mut dollar: Option<String> = None;
     let mut j = start;
     while j < toks.len() {
         let t = &toks[j];
         if j > start && t.nl_before > 0 && is_terminator_line(toks, j) {
             return j;
+        }
+        if t.kind == Kind::Word && crate::plsql::is_dollar_tag(&t.text) {
+            match &dollar {
+                None => dollar = Some(t.text.clone()),
+                Some(open) if open.eq_ignore_ascii_case(&t.text) => {
+                    dollar = None;
+                    closed = true;
+                }
+                Some(_) => {}
+            }
+            j += 1;
+            continue;
+        }
+        if dollar.is_some() {
+            j += 1;
+            continue;
         }
         if t.is_punct("(") {
             paren += 1;
@@ -654,6 +673,8 @@ fn starts_block_passthrough(toks: &[Token]) -> bool {
     };
     match first.as_str() {
         "DECLARE" => true,
+        // ★ T-255 v2: PostgreSQL `DO $$ … $$;` 익명 블록.
+        "DO" => true,
         "BEGIN" => {
             let at = toks.iter().position(|t| !t.is_comment()).unwrap_or(0);
             !begin_is_transaction(toks, at)

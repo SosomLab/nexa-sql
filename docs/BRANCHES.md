@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **815110cd** | 1 | 192차 win 31차(204차) = T-110 3-4 미니맵 섹션 헤더(`sections.rs` 새 파일) · T-165 P3 ④ 큰 버퍼 띠 · T-167 B4d 3키(confirm_clear · undo_secs · max_groups) · 14 소스 + 문서 7 · nexa-ui 253차 55fe8d1 동반 |
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **e7528ebb** | 1 | 192차 win 30차(203차) = T-76 ③ `.sublime-keymap` 힌트(settings_hint.rs · completion.rs) + 69 §9-5 B4d 대조 · 문서 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **a778c4c6** | 1 | 192차 win 29차 = T-255 `format.plsql = full`(블록 안 단위 SQL 펼침 · CURSOR/OPEN 접두 + 한 단 · 짧은 DML 한 줄 · 멱등) + 28차 ⓒ 재판정 ✓ · nsql-format 3 + settings + i18n + 문서 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **6c614eba** | 1 | 192차 win 28차 = T-165 P3 ① 저장 큐 `SaveQueue`(nsql-core 새 모듈) + 백업 쓰기 스레드 `backup-writer` + 28차 관찰 수정(프로젝트 모드 파일 탭 종료 물음 → `hot_exit_project`) · 7 소스 + savequeue.rs + 문서 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **5f250df1** | 1 | 192차 win 27차 = T-167 나머지(B4b 항목 드래그 · B4c 그룹 순서 드래그 · B6 ObjectMissing·이동 제안 띠 D-163 · B5 저장 시 복사본 D-167) + 띠 옛 경로 마지막 두 조각으로 줄임 · 13 소스 + 문서 |

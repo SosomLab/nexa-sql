@@ -153,11 +153,39 @@ pub enum PlsqlStyle {
     Full,
 }
 
+/// ★ T-255 v2(10-31 · 95 §11-4): **원천 방언 힌트**(pair `dialect` · GUI = 세션 방언 · CLI = `-d`) — PL/SQL 블록 규칙 표를 고른다
+/// (`Oracle`/`Generic` = PL/SQL·PL/pgSQL 공통 표 · `Mssql` = T-SQL 표(THEN 없는 IF/ELSE/WHILE · BEGIN TRY/CATCH · DECLARE = 문장 · GO) ·
+/// `Postgres` = 공통 표 + `$$` 본문). SQL 문장 포맷 자체는 바꾸지 않는다(치환은 `dialect_target`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SrcDialect {
+    #[default]
+    Generic,
+    Oracle,
+    Mssql,
+    Postgres,
+}
+
+impl SrcDialect {
+    /// nsql-core `Dialect` 이름(소문자) → 힌트(모르는 이름 = Generic).
+    #[must_use]
+    pub fn parse(s: &str) -> SrcDialect {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "oracle" | "ora" | "oci" | "tibero" | "db2" | "odbc" => SrcDialect::Oracle,
+            "mssql" | "sqlserver" | "tds" => SrcDialect::Mssql,
+            "postgres" | "postgresql" | "pg" | "redshift" | "cockroach" | "yugabyte"
+            | "greenplum" | "timescale" => SrcDialect::Postgres,
+            _ => SrcDialect::Generic,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
     pub indent: Indent,
     pub indent_style: IndentStyle,
     pub plsql: PlsqlStyle,
+    /// ★ T-255 v2: 원천 방언 힌트(블록 규칙 표 선택 · pair `dialect`).
+    pub dialect: SrcDialect,
     /// 탭 폭(정렬 계산 · 탭 스톱).
     pub tab_width: usize,
     pub keyword_case: Case,
@@ -228,6 +256,7 @@ impl Default for Options {
             indent: Indent::Tab,
             indent_style: IndentStyle::Standard,
             plsql: PlsqlStyle::Off,
+            dialect: SrcDialect::Generic,
             tab_width: 4,
             keyword_case: Case::Upper,
             identifier_case: Case::Keep,
@@ -356,6 +385,8 @@ impl Options {
                         _ => PlsqlStyle::Off,
                     };
                 }
+                // ★ T-255 v2: 원천 방언 힌트(설정 키가 아니라 호스트가 세션/`-d`에서 붙이는 pair).
+                "dialect" => o.dialect = SrcDialect::parse(&lv),
                 "keyword_case" => o.keyword_case = Case::parse(&lv),
                 "identifier_case" => o.identifier_case = Case::parse(&lv),
                 "function_case" => o.function_case = Case::parse(&lv),

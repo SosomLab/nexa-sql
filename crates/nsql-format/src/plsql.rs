@@ -101,8 +101,13 @@ fn line_infos(text: &str, toks: &[Token], base: usize) -> Vec<(usize, usize, Lin
 fn is_routine_head(first: &str) -> bool {
     matches!(
         first,
-        "CREATE" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "TRIGGER" | "TYPE"
+        "CREATE" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "TRIGGER" | "TYPE" | "DO"
     )
+}
+
+/// ★ T-255 v2: PostgreSQL 달러 인용 태그(`$$` · `$body$` · 렉서는 `$`를 식별자 글자로 읽어 낱말 하나).
+pub(crate) fn is_dollar_tag(w: &str) -> bool {
+    w.len() >= 2 && w.starts_with('$') && w.ends_with('$')
 }
 
 /// `full`의 단위 SQL 문장 첫 낱말.
@@ -231,6 +236,9 @@ pub fn reindent(
     let infos = line_infos(text, toks, base);
     let mut stack: Vec<Open> = Vec::new();
     let mut in_header = false;
+    // ★ T-255 v2(95 §11-4 · 10-31): T-SQL 표 — THEN 없는 `IF 조건`/`ELSE`/`WHILE 조건` 다음 줄이 BEGIN이 아니면 그 한 줄만 +1.
+    let tsql = opts.dialect == crate::SrcDialect::Mssql;
+    let mut after_cond = false;
     let mut out = String::with_capacity(text.len() + 64);
     let mut li = 0usize;
     while li < infos.len() {
@@ -269,10 +277,23 @@ pub fn reindent(
         let l = info.last.as_str();
         // 이 줄 깊이 · 뒤 스택 변화.
         let mut this = depth;
+        // T-SQL: 앞 줄이 `IF/ELSE/WHILE 조건`이었고 이 줄이 BEGIN이 아니면 단일 문장 = +1(한 줄만).
+        let cond_bump = tsql && after_cond && info.has_tokens && f != "BEGIN";
+        after_cond = false;
         if !info.has_tokens {
             // 주석만 있는 줄 = 지금 깊이.
-        } else if body.trim() == "/" {
+        } else if body.trim() == "/" || body.trim().eq_ignore_ascii_case("GO") {
             this = 0;
+        } else if is_dollar_tag(f) {
+            // PostgreSQL `$$ LANGUAGE plpgsql;` / `$$;` = 본문 닫힘 뒤 줄 — 머리 깊이(0).
+            in_header = false;
+        } else if tsql && matches!(f, "IF" | "WHILE") {
+            after_cond = true;
+        } else if tsql && f == "ELSE" {
+            // T-SQL ELSE = IF 블록이 END로 이미 닫혔으므로 같은 깊이 · 다음 한 줄(또는 BEGIN 블록).
+            after_cond = true;
+        } else if tsql && f == "DECLARE" {
+            // T-SQL `DECLARE @x INT;` = 문장(선언부 없음).
         } else if f == "END" {
             // 가지(WHEN/ELSE)가 열려 있으면 먼저 닫고 블록을 닫는다.
             if stack.last() == Some(&Open::When) {
@@ -307,6 +328,8 @@ pub fn reindent(
                 }
                 _ => return None,
             }
+        } else if tsql && (f == "WHEN" || f == "CASE") {
+            // T-SQL에는 CASE 문장이 없다(식만 · 여러 줄 CASE 식의 WHEN 줄은 그대로 깊이).
         } else if f == "WHEN" {
             // EXCEPTION/CASE 가지: 앞 가지가 열려 있으면 닫고, 이 줄은 그 자리에.
             if stack.last() == Some(&Open::When) {
@@ -333,6 +356,9 @@ pub fn reindent(
             }
         } else if matches!(f, "FOR" | "WHILE" | "LOOP") && l == "LOOP" {
             stack.push(Open::Loop);
+        } else if is_routine_head(f) && is_dollar_tag(l) {
+            // PostgreSQL 한 줄 머리 + `AS $$`/`DO $$` = 본문 시작(선언부는 본문의 DECLARE/BEGIN이 스스로 연다).
+            in_header = false;
         } else if is_routine_head(f) && !matches!(l, "IS" | "AS") && f != "TYPE" {
             // 루틴 머리 첫 줄(IS/AS가 아직 안 나옴) — 이어지는 줄은 +1.
             in_header = true;
@@ -341,11 +367,13 @@ pub fn reindent(
             if matches!(l, "IS" | "AS") {
                 in_header = false;
                 stack.push(Open::Decl);
+            } else if is_dollar_tag(l) {
+                in_header = false;
             }
         } else if matches!(l, "IS" | "AS") && is_routine_head(f) {
             // 한 줄 머리 + IS/AS = 선언부 시작.
             stack.push(Open::Decl);
-        } else if l == "THEN" && f != "WHEN" {
+        } else if !tsql && l == "THEN" && f != "WHEN" {
             // `ELSIF cond THEN`은 위에서 · 그 밖(`IF`가 앞 줄에 걸친 조건의 끝 줄) = 열기.
             stack.push(Open::If);
         } else if l == "LOOP" {
@@ -357,14 +385,17 @@ pub fn reindent(
                 stack.push(Open::Decl);
             }
         }
+        if cond_bump {
+            this += 1;
+        }
         for _ in 0..this {
             out.push_str(&unit);
         }
         out.push_str(body.trim());
         out.push_str(nl);
     }
-    // 블록 끝 = 스택 0(또는 머리만 남은 패키지 명세는 END가 닫았어야 한다).
-    if !stack.is_empty() {
+    // 블록 끝 = 스택 0(또는 머리만 남은 패키지 명세는 END가 닫았어야 한다) · T-SQL은 `AS` 뒤 BEGIN 없는 본문(선언부만 남음)을 허용.
+    if !stack.is_empty() && !(tsql && stack == [Open::Decl]) {
         return None;
     }
     Some(out)
@@ -440,6 +471,90 @@ mod tests {
             plain.contains("\n  CURSOR c IS SELECT a, b FROM t"),
             "{plain}"
         );
+    }
+
+    /// ★ T-255 v2(95 §11-4 · 10-31): T-SQL 표 — THEN 없는 IF/ELSE/WHILE 뒤 단일 문장 +1 · BEGIN 블록은 그대로 · BEGIN TRY/CATCH · DECLARE = 문장 ·
+    /// GO = 0 · 머리 `AS` 뒤 BEGIN 없는 본문 허용 · 같은 글을 Oracle 표로 돌리면 실패(= 원문) · 멱등.
+    #[test]
+    fn tsql_rules() {
+        let o = Options {
+            dialect: crate::SrcDialect::Mssql,
+            ..opts()
+        };
+        let src = "CREATE PROCEDURE p @a INT AS\nBEGIN\nIF @a > 0\nBEGIN\nUPDATE t SET x = 1 WHERE id = @a;\nEND\nELSE\nSET @a = 0;\nWHILE @a < 3\nSET @a = @a + 1;\nBEGIN TRY\nDECLARE @x INT;\nEND TRY\nBEGIN CATCH\nTHROW;\nEND CATCH\nEND\nGO\n";
+        let want = "CREATE PROCEDURE p @a INT AS\nBEGIN\n  IF @a > 0\n  BEGIN\n    UPDATE t SET x = 1 WHERE id = @a;\n  END\n  ELSE\n    SET @a = 0;\n  WHILE @a < 3\n    SET @a = @a + 1;\n  BEGIN TRY\n    DECLARE @x INT;\n  END TRY\n  BEGIN CATCH\n    THROW;\n  END CATCH\nEND\nGO\n";
+        let toks = lex(src);
+        assert_eq!(reindent(src, src, &toks, 0, &o).as_deref(), Some(want));
+        let toks2 = lex(want);
+        assert_eq!(
+            reindent(want, want, &toks2, 0, &o).as_deref(),
+            Some(want),
+            "멱등"
+        );
+        assert_eq!(
+            run(src),
+            None,
+            "Oracle 표로는 THEN 없는 IF = 판정 실패 = 원문"
+        );
+        // BEGIN 없는 본문(머리 AS 뒤 문장들) = 허용 · 본문 +1.
+        let s2 = "CREATE PROCEDURE q AS\nSELECT 1;\nGO\n";
+        let t2 = lex(s2);
+        assert_eq!(
+            reindent(s2, s2, &t2, 0, &o).as_deref(),
+            Some("CREATE PROCEDURE q AS\n  SELECT 1;\nGO\n")
+        );
+    }
+
+    /// ★ T-255 v2: PL/pgSQL — `RETURNS … AS $$` 머리(이어 줄 +1 · `$$`로 끝) · 본문 DECLARE/BEGIN/IF THEN/END IF · `$$ LANGUAGE plpgsql;` = 0 ·
+    /// `DO $$ … $$;` · 문서 수준 = 함수 뒤 문장이 따로 포맷되고 `$$` 안 `;`에 쪼개지지 않음(`block_end`).
+    #[test]
+    fn plpgsql_dollar_body() {
+        let o = Options {
+            dialect: crate::SrcDialect::Postgres,
+            ..opts()
+        };
+        let src = "CREATE OR REPLACE FUNCTION f(a int)\nRETURNS int AS $$\nDECLARE\nv int;\nBEGIN\nIF a > 0 THEN\nv := 1;\nEND IF;\nRETURN v;\nEND;\n$$ LANGUAGE plpgsql;\n";
+        let want = "CREATE OR REPLACE FUNCTION f(a int)\n  RETURNS int AS $$\nDECLARE\n  v int;\nBEGIN\n  IF a > 0 THEN\n    v := 1;\n  END IF;\n  RETURN v;\nEND;\n$$ LANGUAGE plpgsql;\n";
+        let toks = lex(src);
+        assert_eq!(reindent(src, src, &toks, 0, &o).as_deref(), Some(want));
+        let d = "DO $$\nBEGIN\nRAISE NOTICE 'x';\nEND;\n$$;\n";
+        let td = lex(d);
+        assert_eq!(
+            reindent(d, d, &td, 0, &o).as_deref(),
+            Some("DO $$\nBEGIN\n  RAISE NOTICE 'x';\nEND;\n$$;\n")
+        );
+        // 문서 수준: 함수 블록이 `$$` 안 `;`에 쪼개지지 않고 뒤 문장은 따로 포맷(소문자 select → SELECT).
+        let doc = format!("{src}\nselect 1 from t;\n");
+        let out = crate::format_basic(&doc, &o);
+        assert!(out.contains("$$ LANGUAGE plpgsql;"), "{out}");
+        assert!(out.contains("\n  IF a > 0 THEN\n"), "{out}");
+        assert!(
+            out.contains(
+                "SELECT
+"
+            ) && out.contains(
+                "
+  1
+"
+            ),
+            "뒤 문장 따로 포맷: {out}"
+        );
+        // SQL 본문 함수(BEGIN 없음)도 `$$` 닫힘 뒤 `;`에서 끝난다(종전 = 문서 끝까지 삼킴).
+        let sqlfn =
+            "CREATE FUNCTION g() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql;\nselect 2 from t;\n";
+        let out2 = crate::format_basic(sqlfn, &o);
+        assert!(
+            out2.contains(
+                "SELECT
+"
+            ) && out2.contains(
+                "
+  2
+"
+            ),
+            "{out2}"
+        );
+        assert!(out2.lines().count() >= 2, "{out2}");
     }
 
     /// 95 §11-3 예시 그대로(머리 · 선언 · IF/ELSIF · FOR LOOP · EXCEPTION/WHEN · END 이름 · `/`).

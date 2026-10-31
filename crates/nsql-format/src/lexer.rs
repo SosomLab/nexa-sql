@@ -216,6 +216,23 @@ pub fn lex(src: &str) -> Vec<Token> {
             push(Kind::Bind, end, j, &mut nl, &mut ci);
             continue;
         }
+        // ★ T-255 v2(10-31): PostgreSQL 달러 인용 태그(`$$` · `$body$`) = 낱말 하나(`Kind::Word`) — 블록 통과(`block_end`)·PL/pgSQL
+        //   재들여쓰기가 본문 경계로 쓴다(종전 = `$`가 낱말 시작이 아니라 따로 떨어졌다). `$1`(Bind)·`${var}`는 위에서 먼저.
+        if c == '$' {
+            let mut j = ci + 1;
+            while j < chars.len() && chars[j].1 != '$' && is_word_char(chars[j].1) {
+                j += 1;
+            }
+            if j < chars.len() && chars[j].1 == '$' {
+                let end = if j + 1 < chars.len() {
+                    chars[j + 1].0
+                } else {
+                    n
+                };
+                push(Kind::Word, end, j + 1, &mut nl, &mut ci);
+                continue;
+            }
+        }
         // 숫자.
         if c.is_ascii_digit()
             || (c == '.' && ci + 1 < chars.len() && chars[ci + 1].1.is_ascii_digit())

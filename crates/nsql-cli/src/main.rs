@@ -2205,7 +2205,7 @@ fn cmd_format(o: &Opts) -> i32 {
             return 1;
         }
     };
-    let pairs: Vec<(String, String)> = nsql_format::OPTION_KEYS
+    let mut pairs: Vec<(String, String)> = nsql_format::OPTION_KEYS
         .iter()
         .map(|k| {
             let key = format!("format.{k}");
@@ -2213,6 +2213,8 @@ fn cmd_format(o: &Opts) -> i32 {
             (key, v)
         })
         .collect();
+    // ★ T-255 v2: 원천 방언 힌트 = `-d`(기본 oracle) — PL/SQL 블록 규칙 표(T-SQL·PL/pgSQL) 선택.
+    pairs.push(("dialect".to_string(), o.dialect.to_string()));
     let opts =
         nsql_format::Options::from_pairs(pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     let out = nsql_format::format_basic(&src, &opts);

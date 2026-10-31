@@ -396,6 +396,8 @@ impl App {
         preview: bool,
         mut pairs: Vec<(String, String)>,
     ) -> Result<String, String> {
+        // ★ T-255 v2: 원천 방언 힌트(세션 방언 · PL/SQL 블록 규칙 표 선택) — Basic·확장 공통 pair.
+        pairs.push(("dialect".to_string(), self.sess.dialect.to_string()));
         if engine == BASIC_ENGINE {
             let mut opts = nsql_format::Options::from_pairs(
                 pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),

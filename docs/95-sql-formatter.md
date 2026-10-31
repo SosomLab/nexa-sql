@@ -272,11 +272,35 @@ END p;
 - `FOR r IN (SELECT …) LOOP`(괄호 안 질의) · 동적 SQL 문자열(`EXECUTE IMMEDIATE '…'`) = **v1 대상 아님**(원문 줄 유지 · 깊이만).
 - T-SQL(`BEGIN … END` · `IF … ELSE` THEN 없음 · `WHILE`) · PostgreSQL `DO $$ … $$`/함수 본문(달러 인용 = 토큰 하나) = **v2**(방언별 표 · v1은 Oracle 계열 = oracle·tibero·db2 PL/SQL 호환만).
 
+> ★ **v2 구현됨(10-31 · 192차 32차 · 개발 · [journal 10-31 §17](journal/2026-10-31.md))** — 원천 방언 = pair `dialect`(`SrcDialect` Generic/Oracle/Mssql/Postgres · **설정 키 아님** · GUI = 세션 방언 · CLI `nsql format -d`(기본 oracle)) · 렉서 = 달러 인용 태그 `$$`·`$body$` = 낱말 하나 · layout `block_end` = 달러 본문 안 `;`·BEGIN/END를 세지 않고 닫는 태그 뒤 첫 `;`에서 끝(종전 결함 = `AS $$ SELECT 1; $$ LANGUAGE sql;`이 문서 끝까지 삼킴) · `DO` 블록 통과 · 시험 2(`tsql_rules` · `plpgsql_dollar_body`) · V1(CLI) ✓ = T-SQL 계단 · `-d oracle` = 원문 · PL/pgSQL 본문 계단 + 뒤 SELECT 따로 · 멱등.
+
+**T-SQL 규칙 표(dialect = mssql · `indent`/`full` 공통)**
+
+| 줄 | 깊이 |
+|---|---|
+| `IF 조건` · `ELSE` · `WHILE 조건`(THEN 없음) | 그 깊이 · 다음 줄이 `BEGIN`이 아니면 **그 한 줄만 +1** |
+| `BEGIN` … `END` · `BEGIN TRY` … `END TRY` · `BEGIN CATCH` … `END CATCH` | 블록(여는 줄 = 바깥 깊이 · 안 = +1) |
+| `DECLARE @x …` | 문장(블록 아님) |
+| `CASE` … `WHEN` … `END` | 식(스택 안 바꿈) |
+| `GO` | 0 |
+| 머리 `CREATE PROCEDURE … AS` | 뒤 `BEGIN` 없는 본문 허용 |
+
+**PL/pgSQL 차이(어느 방언이든)**
+
+| 줄 | 깊이 |
+|---|---|
+| 머리 `… AS $$` · `DO $$` | 0 · 이어 줄 +1 · `$$`로 끝 |
+| 본문 `DECLARE`/`BEGIN`/`IF … THEN`/`END IF` | Oracle 공통 표(§11-3) |
+| `$$ LANGUAGE plpgsql;` · `$$;` | 0 |
+
+**남음** = T-SQL `BEGIN` 없는 `IF` 안 여러 문장(한 줄만 +1) · `IF … ELSE IF` 연쇄.
+
 ### 11-5. 구현 지점
 
 | 지점 | 변경 |
 |---|---|
 | `lib.rs` `Options` | `pub plsql: PlsqlStyle { Off, Indent, Full }` · 키 `plsql` · ✅ 20차 Off/Indent · 29차 Full |
+| `lib.rs` `Options.dialect` | `SrcDialect { Generic, Oracle, Mssql, Postgres }` · pair `dialect`(설정 키 아님) · GUI `format_run_pairs` = 세션 방언 · CLI `-d`(기본 oracle) · ✅ 32차 |
 | `layout.rs` `layout()` 통과 분기(:452 아래 `starts_block_passthrough` 갈래) | `opts.plsql != Off`면 새 모듈 `plsql::format_block(&toks[i..j], src, opts, blank) -> Option<Vec<Line>>` · `None`(판정 실패·토큰 불일치) = 지금처럼 `push_raw` |
 | 새 모듈 `nsql-format/src/plsql.rs` | 줄 단위 깊이 계산(§11-3 표 = 상수 표 + 순수 함수) · `full`이면 단위 문장 구간을 `format_statement(…, base)`로 · ✅ 20차 `reindent` · 29차 `format_unit_sql` |
 | `format_statement` | 기준 깊이 인자 추가(기존 호출 = 0) · 29차 = 깊이 0으로 펼친 뒤 줄마다 들여 넣음(인자 추가 대신) |
