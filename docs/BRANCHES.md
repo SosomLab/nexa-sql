@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **d278c3c4** | 1 | 192차 win 35·36차(208차) = 포맷 프리셋 D-431(`format.preset` · 복사 적용 + 5초 되돌리기 · 진입점 4) + 설정 창 보조 버튼 라벨 "Settings/설정" + 35차 관찰 수정(CLI `config set format.preset` 복사 경로 · 일치 이름 동기) · 11 소스 + 문서 8 |
+| (main 직접) | 2026-10-31 | 2026-10-31 → main · **5d7a3771** | 1 | 192차 win 34차(207차) = river + `format.cond_indent = same` 결함 수정(`river_levels`) · 협업 발견 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **4165c982** | 1 | 192차 win 33차(206차) = T-255 river 2차(서브쿼리·CASE 열 프레임 · `river.rs`) · river 완료 · 문서 |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **4bcaa9a9** | 1 | 192차 win 32차(205차) = T-255 v2 = T-SQL 규칙 표 + PL/pgSQL `$$` 본문 + 원천 방언 pair `dialect`(달러 본문 삼킴 결함 수정) · nsql-format 4 + app/format.rs + nsql-cli + 문서 · nexa-ui 문서 0c84dc0(253 기록) |
 | (main 직접) | 2026-10-31 | 2026-10-31 → main · **815110cd** | 1 | 192차 win 31차(204차) = T-110 3-4 미니맵 섹션 헤더(`sections.rs` 새 파일) · T-165 P3 ④ 큰 버퍼 띠 · T-167 B4d 3키(confirm_clear · undo_secs · max_groups) · 14 소스 + 문서 7 · nexa-ui 253차 55fe8d1 동반 |

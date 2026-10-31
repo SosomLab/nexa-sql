@@ -333,4 +333,4 @@ END p;
 | 범위 | 프로젝트 설정으로 덮을 수 없음(`project_allowed` 제외) · `OPTION_KEYS`의 `preset` = 포매터가 무시 |
 
 - **V1(10-31 35차 · 협업)** ✓ = 설정 창 Format 첫 카드 `format.preset` · GUI `format.preset:kiros33` → 토스트 "포맷 프리셋 kiros33 적용(옵션 13개 바뀜)" + 5초 되돌리기 · 스타일 키 하나 바꿈 → `custom` · CLI `--preset kiros33/river` 꼴 · `--preset nope` = 종료 2 + 안내 · 팔레트 3행.
-- **관찰(P2 · 개발 판단 대기)** = CLI `nsql config set format.preset river`는 값만 기록하고 프리셋을 적용하지 않음 → 표시 이름과 실제 옵션이 어긋난 채 저장.
+- ~~**관찰(P2)** = CLI `nsql config set format.preset river`는 값만 기록하고 프리셋을 적용하지 않음~~ → ✅ **208차 수정(36차 V1 · [journal 10-31 §21](journal/2026-10-31.md))** = CLI `config set format.preset <이름>`도 같은 복사 경로(스타일 키 전부 set · `custom`/모르는 이름 = 종료 2 + 안내) · 스타일 키를 `config set`하면 일치 이름 동기 · GUI 적용 개수에서 프리셋 키 자신 제외(kiros33 = 12) · 기동 때 + 설정 창 열 때 일치 이름 동기(외부 편집 뒤 불일치 방지).

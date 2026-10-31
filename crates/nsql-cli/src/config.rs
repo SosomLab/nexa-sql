@@ -260,12 +260,27 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                     eprintln!("{}", tf(Msg::CliErrPreset, &[value]));
                     return 2;
                 };
+                // 함께 바뀌는 스타일 키 수(GUI 토스트와 같은 안내 · 협업 36차 P3).
+                let changed = pairs
+                    .iter()
+                    .filter(|(k, v)| {
+                        let def = nsql_settings::REGISTRY
+                            .iter()
+                            .find(|e| e.key == *k)
+                            .map_or("", |e| e.default);
+                        s.get(k).unwrap_or(def) != *v
+                    })
+                    .count();
                 for (k, v) in pairs {
                     if let Err(e) = s.set(k, v) {
                         eprintln!("{e}");
                         return 2;
                     }
                 }
+                println!(
+                    "{}",
+                    tf(Msg::StFormatPresetApplied, &[value, &changed.to_string()])
+                );
             }
             match s.set(key, value) {
                 Ok(n) => {
