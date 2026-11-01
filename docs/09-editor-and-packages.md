@@ -64,7 +64,7 @@ Sublime의 Python API **모양**(`TextCommand.run(edit, args)` · `EventListener
 - ★ 방언·드라이버도 플러그인의 한 종류다: `nexa-dialect.json`(데이터) + 선택적 `.wasm`(이름 정규화·계획 파서 등 코드).
 
 ### 4-3. 드라이버 플러그인
-Tabularis의 **stdio JSON-RPC 프로세스 플러그인**([03 §3](03-competitive-landscape.md))을 채택 후보로 둔다 — 언어 무관(Java JDBC 래퍼도 가능), 크래시 격리, 라이선스 격리(GPL 드라이버도 별 프로세스면 본체 오염 없음). 내장 드라이버(순수 Rust)와 같은 `Session` 포트를 구현한다.
+★ **현행 = D-350(10-23) 확장 cdylib**(C ABI v2 · [22 §0](22-driver-extensions.md)) · 아래는 09-12 후보 원안. Tabularis의 **stdio JSON-RPC 프로세스 플러그인**([03 §3](03-competitive-landscape.md))을 채택 후보로 둔다 — 언어 무관(Java JDBC 래퍼도 가능), 크래시 격리, 라이선스 격리(GPL 드라이버도 별 프로세스면 본체 오염 없음). 내장 드라이버(순수 Rust)와 같은 `Session` 포트를 구현한다.
 
 ## 5. 위험과 대응
 

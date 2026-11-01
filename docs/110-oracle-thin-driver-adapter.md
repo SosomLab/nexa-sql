@@ -75,7 +75,7 @@ nsql-driver-oracle (oracle 0.6 = ODPI-C → OCI)   ← oracle::* 타입은 여�
 
 ### 3-1. 배치
 - 새 크레이트 **`crates/nsql-driver-oracle-thin`**(`oracledb` 의존은 여기 안에만 · DR-3 원장 등재) · `nsql-drivers` feature **`oracle-thin`**.
-- 빌드 조합: **표준판** = `oracle` + `oracle-thin` · **경량판 C** = `oracle-thin`만(64 §4-1 · Instant Client 없이 Oracle).
+- 빌드 조합(10-13 기준): **표준판** = `oracle` + `oracle-thin` · **경량판 C** = `oracle-thin`만(64 §4-1 · Instant Client 없이 Oracle). ★ **11-01 정합 = D-350·D-352** 뒤 설치본(lite) = OCI 내장 + **Thin = 확장**(접속 시 자동 설치) · full = 둘 다 내장(선택) · "경량판 C" 빌드는 없음 · 아래 "경량판" 문장 = 원안.
 - `Dialect`는 늘리지 않는다(새 방언 = Caps·분할기·완성 전부 갈라짐) · `ConnectSpec`에 드라이버 칸을 싣지 않는다(접속 문자열·프로필·vault 키까지 번짐 · 요구는 "설정으로 선택").
 
 ### 3-2. 선택 자리(한 자리 원칙)

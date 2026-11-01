@@ -19,11 +19,13 @@
 │    TCP/TLS(rustls) · SSH 터널 · 프록시 · keepalive · 취소 토큰 · 타임아웃 ·      │
 │    연결 풀 · 자격 증명(OS 키체인) — DBMS 프로토콜을 모른다                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ ① Adapters          nsql-driver-oracle · -mssql · -postgres · -mysql · -sqlite · -odbc · -rpc(플러그인) │
+│ ① Adapters          nsql-driver-oracle · -mssql · -pg · -mysql · -sqlite · -odbc · -dyn(cdylib 로더) │
 │    각 DBMS 프로토콜/클라이언트를 `Session`·`Catalog`·`Bulk` 포트로 번역            │
 └──────────────────────────────────────────────────────────────────────────────┘
       의존 방향:  ④ → ③ ← ①      ① → ②      (③은 ①②④를 모른다 · ④는 ①②를 모른다)
 ```
+
+> ★ 11-01 정합 = 어댑터 이름은 실제 크레이트(`nsql-driver-pg` · `-oracle-thin` · `-duckdb` · `-clickhouse` · `-db2` · `-dyn`) · 드라이버 배포 = D-350(설치본 = Oracle OCI만 · 나머지 확장 cdylib · [22 §0](22-driver-extensions.md)) · 종전 `-rpc`(stdio 플러그인)는 원안.
 
 - **UI는 드라이버를 모른다**: UI가 아는 것은 `Box<dyn Session>`뿐. 드라이버 교체(예: kubo `oracle` → 공식 `oracledb`)가 UI 코드 0줄 변경.
 - **Core는 네트워크를 모른다**: 엔진은 `Action`을 내고 결과를 `absorb`할 뿐. 그래서 `nsql plan`이 DB 없이 돈다.

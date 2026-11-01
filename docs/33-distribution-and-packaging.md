@@ -2,13 +2,13 @@
 
 > **요청**(사용자 09-15): *"포터블 배포는 하지 않을 것 · 목적별 실행파일을 분리하고 공유/정적 라이브러리도 별도 구성해서 설치본으로 배포 · macOS의 특징을 최대한 고려해 일관성 있는 배포판"*.
 > **선행**: [22 드라이버 확장](22-driver-extensions.md)(SxS 드라이버 프로세스) · [25 §9](25-license-tiers-and-server.md)(저장소 분리) · nexa-clip `packaging/`(3-OS 파이프라인 · choco/winget/homebrew/linux) · [01 아키텍처](01-architecture.md).
-> **상태**: ✅ **DR-27**(→ **D-78 포터블 모드 재검토 · 09-17 사용자 "큰 방향성에서는 포터블 배포도 고려"** · §0-1) · **DR-32**(09-16: D-49 MSI · D-50 pkg 링크) · **T-72/T-62 ✅ 09-16 49차**(맥 실기 pkg/dmg · MSI/deb/rpm은 CI · 서명·매니페스트 후속 · [journal 49차](journal/2026-09-16.md)).
+> **상태**: ✅ **DR-27**(→ **D-78 포터블 모드 재검토(⏸ 보류 D-381) · 09-17 사용자 "큰 방향성에서는 포터블 배포도 고려"** · §0-1) · **DR-32**(09-16: D-49 MSI · D-50 pkg 링크) · **T-72/T-62 ✅ 09-16 49차**(맥 실기 pkg/dmg · MSI/deb/rpm은 CI · 서명·매니페스트 후속 · [journal 49차](journal/2026-09-16.md)).
 
 ---
 
 ## 0. 원칙
 
-1. **설치본이 기본.** 사용자 데이터·설정·프로필은 **OS 사용자 폴더**(`%APPDATA%\nexa-sql` · `~/Library/Application Support/nexa-sql` · `~/.config/nexa-sql`). 확장 드라이버도 그 아래 **`<설정 폴더>/drivers/<id>/<ver>/`**(설치본은 비워 둔다 · 환경 변수 `NSQL_DRIVER_DIR`가 있으면 그 폴더 · T-27 ③ 10-22). **포터블 모드는 D-78로 재검토(09-17 사용자)** — 설계 조건: exe 옆 `data\`(또는 `NSQL_HOME`)가 있으면 **그 폴더를 사용자 폴더로**(설정·프로필·툴바 배치·최근 파일 = 한 파일 트리 · 코드 경로는 지금의 `NSQL_HOME` 규약 그대로) · 자동 갱신·OS 등록(연결 프로그램·PATH) 없음 · zip 채널은 MSI/pkg와 같은 산출물에서 · 기기 키(DPAPI)·라이선스 기기 ID는 포터블에서 어떻게 할지 결정 필요. **그 전까지 새로 저장하는 상태는 전부 설정 레지스트리/`NSQL_HOME` 아래**에 둔다(exe 옆 파일 금지).
+1. **설치본이 기본.** 사용자 데이터·설정·프로필은 **OS 사용자 폴더**(`%APPDATA%\nexa-sql` · `~/Library/Application Support/nexa-sql` · `~/.config/nexa-sql`). 확장 드라이버도 그 아래 **`<설정 폴더>/drivers/<id>/<ver>/`**(설치본은 비워 둔다 · 환경 변수 `NSQL_DRIVER_DIR`가 있으면 그 폴더 · T-27 ③ 10-22). **포터블 모드는 D-78로 재검토(⏸ 보류 D-381)(09-17 사용자)** — 설계 조건: exe 옆 `data\`(또는 `NSQL_HOME`)가 있으면 **그 폴더를 사용자 폴더로**(설정·프로필·툴바 배치·최근 파일 = 한 파일 트리 · 코드 경로는 지금의 `NSQL_HOME` 규약 그대로) · 자동 갱신·OS 등록(연결 프로그램·PATH) 없음 · zip 채널은 MSI/pkg와 같은 산출물에서 · 기기 키(DPAPI)·라이선스 기기 ID는 포터블에서 어떻게 할지 결정 필요. **그 전까지 새로 저장하는 상태는 전부 설정 레지스트리/`NSQL_HOME` 아래**에 둔다(exe 옆 파일 금지).
 2. **실행파일은 목적별로 나눈다** — GUI · CLI · (드라이버 프로세스) · (라이선스 도구). 한 exe에 여러 모드를 욱여넣지 않는다(`nexa-sql --cli` 같은 것 없음).
 3. **공통 코드는 라이브러리로 한 번만** — Rust 크레이트(`nsql-core/script/run/io/catalog/…`)는 **정적**(rlib · 각 exe에 링크). OS/외부 런타임(Oracle Instant Client · 향후 ODBC)은 **공유 라이브러리로 별도 위치**에 두고 실행 시 로드한다. 설치본 안에서 한 사본을 모든 exe가 공유.
 4. **3-OS에서 같은 레이아웃 의미** — 폴더 이름과 역할이 같고, OS 관례(macOS `.app` 번들 · Windows `Program Files` · Linux FHS)에만 맞춘다.
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | `nexa-sql` (`Nexa SQL.app` on mac) | exe(GUI) | 편집기·그리드·탐색기·접속 창 | 정적 Rust 크레이트 전부 · nexa-ui |
 | `nsql` | exe(CLI) | run/shell/export/conn/cat/config — GUI와 같은 코어 | 정적 |
-| `nsql-driver-<id>` | exe(드라이버 프로세스 · [22](22-driver-extensions.md)) | stdio JSON-RPC · SxS `drivers/<id>/<ver>/` | 정적 + 그 드라이버의 공유 lib |
+| `nsql_driver_<id>.{dll,so,dylib}` | **확장 cdylib**(D-350 · C ABI v2 · [22 §0-1](22-driver-extensions.md)) | 지연 dlopen · SxS `drivers/<id>/<ver>/` · 접속 시 자동 설치 · 오프라인 번들 | 정적 + 그 드라이버의 공유 lib · (이력 원안 = exe 드라이버 프로세스 · stdio JSON-RPC) |
 | `nexa-license-tool` | exe(발급기 · 비공개 저장소) | 배포판에 **포함하지 않음** | — |
 | Oracle Instant Client | 공유 lib(`oci.dll`·`libclntsh.dylib`·`libclntsh.so`) | 사용자 설치(D-1 재배포 조건) 또는 드라이버 확장이 내려받음 · **설치본에 동봉 안 함** | 런타임 dlopen(ODPI-C) |
 | 폰트·아이콘·문법 패키지 | 자원 | `Packages/*.nexa-syntax` · 아이콘(`packaging/branding` SSOT) · 한글 폴백 폰트는 OS 폰트 우선(14) | 파일 |
@@ -32,7 +32,7 @@ Rust 크레이트를 **동적 라이브러리(cdylib)** 로 나누지 않는 이
 
 **★ 10-25 D-362** = Linux/macOS ODBC = unixODBC(LGPL-2.1) **정적 동봉** → THIRD-PARTY-NOTICES에 unixODBC 고지 필요(`scripts/third-party-notices.py` 표 · 소스 = 공개 저장소로 LGPL §6 충족) · 확장 ODBC 패키지(`drivers/odbc/<ver>/`)의 LICENSE에도 같은 고지.
 
-**ODBC(10-22 · 136차 · D-345 · 수정 8091f8c)** = **Windows만** 내장(OS 인박스 `odbc32` · 사용자는 벤더 ODBC 드라이버와 DSN만 설치) · **macOS/Linux = ODBC 없음**(빈 스텁 · unixODBC 동봉·의존 없음 → deb/rpm `Depends`·cask·THIRD-PARTY-NOTICES 변경 없음) · 근거 = unixODBC LGPL-2.1(정적 동봉 요건) + 동적 링크 런타임 의존 · mac/Linux 길 = D-346 후보(확장 cdylib 또는 패키지 의존).
+**ODBC(10-22 · 136차 · D-345 · 수정 8091f8c)** = **Windows만** 내장(OS 인박스 `odbc32` · 사용자는 벤더 ODBC 드라이버와 DSN만 설치) · **macOS/Linux = ODBC 없음**(빈 스텁 · unixODBC 동봉·의존 없음 → deb/rpm `Depends`·cask·THIRD-PARTY-NOTICES 변경 없음) · 근거 = unixODBC LGPL-2.1(정적 동봉 요건) + 동적 링크 런타임 의존 · mac/Linux 길 = D-346 후보(확장 cdylib 또는 패키지 의존) · ★ **D-362(10-25)로 대체** = 확장 ODBC는 Linux/macOS도 unixODBC **정적 동봉**(설치본 의존 없음 · [121 §0](121-database-support-priority.md)).
 
 ---
 

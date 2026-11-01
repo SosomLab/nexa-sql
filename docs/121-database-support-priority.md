@@ -4,7 +4,7 @@
 
 ## 0. 한 줄 결론
 
-지금 = **내장 드라이버 4**(Oracle OCI/Thin · SQL Server · PostgreSQL · SQLite) + **방언만 있는 둘**(MySQL · ODBC = 드라이버 없음). 다음 순서 권장 = **P1 MySQL/MariaDB 내장**(방언·카탈로그·문법이 이미 있어 드라이버만 · 순수 Rust · 전 세계 수요 1~2위) → **P2 ODBC 일반 드라이버**(한 번에 Tibero·Altibase·CUBRID·DB2·HANA·Goldilocks = 국산·레거시 전부 3급으로 열림) → **P3 Tibero 전용 방언**(ODBC 위에 Oracle 호환 방언 = 국내 공공·금융) → **P4 DuckDB**(임베디드 분석 · 파일 DB = SQLite와 같은 자리) → **P5 ClickHouse/클라우드 DW**(수요 확인 뒤). NoSQL(Mongo·Redis)은 범위 밖 유지(DR-11).
+(10-21 원안 · ★ 현행 = 아래 "10-23 현황" = D-350 전 드라이버 확장 cdylib · 설치본 = Oracle OCI만) 지금 = **내장 드라이버 4**(Oracle OCI/Thin · SQL Server · PostgreSQL · SQLite) + **방언만 있는 둘**(MySQL · ODBC = 드라이버 없음). 다음 순서 권장 = **P1 MySQL/MariaDB 내장**(방언·카탈로그·문법이 이미 있어 드라이버만 · 순수 Rust · 전 세계 수요 1~2위) → **P2 ODBC 일반 드라이버**(한 번에 Tibero·Altibase·CUBRID·DB2·HANA·Goldilocks = 국산·레거시 전부 3급으로 열림) → **P3 Tibero 전용 방언**(ODBC 위에 Oracle 호환 방언 = 국내 공공·금융) → **P4 DuckDB**(임베디드 분석 · 파일 DB = SQLite와 같은 자리) → **P5 ClickHouse/클라우드 DW**(수요 확인 뒤). NoSQL(Mongo·Redis)은 범위 밖 유지(DR-11).
 
 > ★ **10-25 확정** = D-361 Db2 네이티브 DRDA(T-426 · 1차 구현) · D-362 ODBC 정적 동봉(unixODBC 불필요).
 > ★ **10-25 방향 변경(사용자 "Nexa SQL과 드라이버 파일만 있으면 실행 가능해야" · D-361 후보)** = Db2 = **네이티브 DRDA 확장 드라이버 `nsql-driver-db2`**(순수 Rust · 외부 crate 0 · Oracle Thin과 같은 길 · 방언·SYSCAT·오류표 재사용) 예정 · 아래 ODBC 경로 = **Windows 폴백** · 조사 = [121b](121b-db2-drda-research.md).
@@ -85,7 +85,7 @@
 | T-385 | 확장 드라이버 틀(22 §0 · cdylib · 지연 dlopen) → DuckDB 1호 |
 | T-386 | 위키 "지원 데이터베이스" 페이지(등급표 · 전제 조건 · 64 §1 요약 · 영어 우선) |
 
-## 7. 기술 방식 — 주요 DBMS는 **내장** · 추가 드라이버는 **GitHub 저장소에서 다운로드**(★ 사용자 확정 10-21)
+## 7. 기술 방식 — 주요 DBMS는 **내장** · 추가 드라이버는 **GitHub 저장소에서 다운로드**(★ 사용자 확정 10-21 · ⚠ **D-350(10-23)으로 대체** — 아래 = 10-21 원안 보관 · 현행 = [22 §0-1](22-driver-extensions.md))
 
 > 사용자 10-21: "다양한 데이터베이스를 지원하려면 주요 DBMS는 내장으로 제공하고, 사용자가 추가로 쓰려는 드라이버는 GitHub 저장소를 통해 다운로드하도록 지원". 원천 결정 = DR-24(GitHub Releases 다운로드 · 관리자) · DR-29(확장 = in-process cdylib C ABI · 지연 dlopen · 프로세스는 격리 선택) · [22 §0·§2](22-driver-extensions.md) · [64 §3-4](64-dbms-clients-and-driver-packaging.md) · 확장 매니저 [50 §1](50-extension-system.md)(index.json · SHA-256 · Ed25519 서명 · `extensions.repositories`). 여기서는 그 결정을 **드라이버 배포 체계** 한 장으로 묶는다.
 

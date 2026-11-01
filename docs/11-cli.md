@@ -9,7 +9,7 @@
 nsql plan     [-d d] <script|-> [args]              # ✅ 엔진 dry-run(실행 없이 계획 출력)
 nsql run      -c <연결> [-f fmt] <script|-> [args]  # ✅ 스크립트 실행(&1..&n · WHENEVER · 프롬프트)
 nsql shell    -c <연결>                             # ✅ 최소 대화형(줄 누적 · `;`/`/`/명령으로 실행) · ☐ 줄 편집·히스토리
-nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T]|xlsx|parquet [-o file]   # ✅ · xlsx/parquet = 11-01 213차(D-432)
+nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T]|xlsx|parquet [-o file]   # ✅ · xlsx/parquet = 11-01 213차(D-432) · `insert` 이름 생략 = `-t` 표 → 질의 FROM 추정 → `T`(215차)
 nsql import   -c <연결> --table t --from file [--format …] [--mode insert|upsert|replace] [--batch 5000]
 nsql bulk     -c <연결> --table t --from file       # ★ 방언별 네이티브 대량 적재(§3)
 nsql desc     -c <연결> <object>                    # DESCRIBE
@@ -30,7 +30,7 @@ nsql config set format.preset default|kiros33|river   # ✅ 프리셋 적용 = �
 | 1급 | **SQL Server** | `tiberius-ng` 또는 `tiberius`(재개) → Microsoft `mssql-tds` 성숙 시 | SSPI/Kerberos/Entra 토큰 · `sp_executesql` OUTPUT · BulkLoad |
 | 2급 | PostgreSQL / MySQL / SQLite | `tokio-postgres` / `mysql_async` / `rusqlite(bundled)` | COPY · LOAD DATA · 트랜잭션 배치 |
 | 3급 | Tibero · Altibase · CUBRID · 기타 | `odbc-api` 폴백 | 벤더 클라이언트 사용자 설치 |
-| 확장 | JDBC 전용 DB 등 | stdio JSON-RPC 드라이버 플러그인([09 §4-3](09-editor-and-packages.md)) | 언어 무관 |
+| 확장 | JDBC 전용 DB 등 | 확장 cdylib(C ABI · D-350 · [22 §0](22-driver-extensions.md)) — 설치본 내장 = Oracle OCI만 · (원안 = stdio JSON-RPC 플러그인 [09 §4-3](09-editor-and-packages.md)) | C ABI면 언어 무관 |
 
 모든 드라이버는 `nsql_core::Session` 포트(`execute` · `fetch_cursor` · `commit` · `rollback`) + 카탈로그 포트(오브젝트 브라우저용)를 구현한다. 동기 드라이버는 워커 스레드에서 돌리고 UI/CLI는 채널로 받는다(clip DR-41 "UI 스레드는 기다리지 않는다").
 

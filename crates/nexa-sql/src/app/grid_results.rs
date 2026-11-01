@@ -286,7 +286,10 @@ impl App {
             "tsv" | "txt" => nsql_io::Format::Tsv,
             "json" => nsql_io::Format::Json,
             "jsonl" | "ndjson" => nsql_io::Format::JsonLines,
-            "sql" => nsql_io::Format::Insert { table: "T".into() },
+            // ★ T-8(11-01 215차): 표 이름 = 그리드가 원본 질의 `FROM`에서 추정한 이름(`guess_table` · 없으면 `T`) — CLI export와 같은 규칙.
+            "sql" => nsql_io::Format::Insert {
+                table: self.grid.source_table().unwrap_or_else(|| "T".into()),
+            },
             // ★ D-432(11-01): 이진 형식 2(xlsx = Excel · parquet) — 라이선스 게이트 `export-xlsx` 한 곳(25 §13-3 · 기본 끔 D-145 · T-36).
             "xlsx" => nsql_io::Format::Xlsx,
             "parquet" => nsql_io::Format::Parquet,

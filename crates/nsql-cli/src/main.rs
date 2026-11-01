@@ -2265,6 +2265,21 @@ fn cmd_format(o: &Opts) -> i32 {
     }
 }
 
+/// export의 출력 형식 — `grid`는 csv로 · `-f insert`(표 이름 생략 = `T`)는 `-t <표>` → 질의 `FROM`에서 추정(`guess_table` ·
+/// ★ T-8 11-01 215차) → `T` 순으로 표 이름을 정한다(`-f insert:NAME`은 그대로).
+fn export_format(format: &Format, table_opt: Option<&str>, sql: &str) -> Format {
+    match (format, table_opt) {
+        (Format::Grid, _) => Format::Csv,
+        (Format::Insert { table }, Some(t)) if table == "T" => Format::Insert {
+            table: t.to_string(),
+        },
+        (Format::Insert { table }, None) if table == "T" => Format::Insert {
+            table: guess_table(sql).unwrap_or_else(|| "T".into()),
+        },
+        (f, _) => f.clone(),
+    }
+}
+
 fn cmd_export(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
         eprintln!("{}", t(Msg::CliErrNeedTarget));
@@ -2278,11 +2293,7 @@ fn cmd_export(o: &Opts) -> i32 {
             return 2;
         }
     };
-    let format = match (&o.format, &o.table) {
-        (Format::Grid, _) => Format::Csv,
-        (Format::Insert { table }, Some(t)) if table == "T" => Format::Insert { table: t.clone() },
-        (f, _) => f.clone(),
-    };
+    let format = export_format(&o.format, o.table.as_deref(), &sql);
     let mut printer = Printer::new(o, Format::Grid, false);
     // export = 무제한(D-68) · 커서 유지 없음 · 왕복당 행수는 설정(`db.fetch_size`).
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
@@ -2586,6 +2597,26 @@ fn timing_line(json: bool, label: &str, tl: &nsql_core::Timeline) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// T-8(215차): `-f insert`의 표 이름 = -t > 질의 FROM 추정 > T · `insert:NAME`·다른 형식은 그대로 · grid → csv.
+    #[test]
+    fn export_format_guesses_insert_table() {
+        let ins = Format::Insert { table: "T".into() };
+        let f = |fmt: &Format, t: Option<&str>, sql: &str| super::export_format(fmt, t, sql).name();
+        assert_eq!(f(&ins, Some("HR.EMP"), "SELECT 1"), "insert:HR.EMP");
+        assert_eq!(
+            f(&ins, None, "select e.* from hr.emp e join dept d on 1=1"),
+            "insert:hr.emp"
+        );
+        assert_eq!(
+            f(&ins, None, "select a from (select 1 from dual) x"),
+            "insert:T"
+        );
+        let named = Format::Insert { table: "X".into() };
+        assert_eq!(f(&named, Some("HR.EMP"), "select * from t"), "insert:X");
+        assert_eq!(f(&Format::Grid, None, "select * from t"), "csv");
+        assert_eq!(f(&Format::Csv, Some("t"), "select * from t"), "csv");
+    }
+
     /// ★ T-47(10-29): `--timing=json` 한 줄 = 파싱 가능한 JSON 객체(단계 배열 · null · 이스케이프) · 글 모드는 종전 요약.
     #[test]
     fn timing_line_json_and_text() {

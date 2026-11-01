@@ -26,7 +26,7 @@
 
 | 확장점 | 포트(규약) | 레지스트리 | 설정 선택 | 동적 배치 | 상태 |
 |---|---|---|---|---|---|
-| **DB 드라이버** | `nsql_core::Session`·`Catalog` · `Opener` 클로저 | `nsql-drivers::open`(방언 → 어댑터 · feature) | 접속 문자열 `scheme://` · 프로필 `dialect` · `NSQL_ORACLE_CLIENT_DIR` | 내장 3종 · **RPC 드라이버**(stdio JSON-RPC 프로세스 · GitHub Releases · SxS) = T-27~30 | 내장 ✅ · RPC 📐 |
+| **DB 드라이버** | `nsql_core::Session`·`Catalog` · `Opener` 클로저 | `nsql-drivers::open`(방언 → 어댑터 · feature) | 접속 문자열 `scheme://` · 프로필 `dialect` · `NSQL_ORACLE_CLIENT_DIR` | ★ D-350 = 설치본 내장 = Oracle OCI만 · 나머지 = **확장 cdylib**(C ABI v2 · `nsql-driver-dyn` 지연 dlopen · `drivers-v*` 다운로드 · SxS · [22 §0](22-driver-extensions.md)) · 개발 빌드 = 전부 feature 내장 | ✅ 확장 cdylib(T-396) · (이력) stdio RPC 프로세스 = 격리 선택지 |
 | **편집기 구문/패키지** | `.nexa-syntax`(Sublime 형식) · `Highlighter` trait | `syntax.rs` 레지스트리(확장자 → 규격 · `Packages/*/` 스캔·덮어쓰기) | `Set Syntax` 팔레트 · 확장자 기본 | 파일 드롭인(재시작 없이 스캔) · WASM 플러그인(DR-14) 📐 | 파일 ✅ · WASM 📐 |
 | **로그 표현** | `nsql_log::LogFormat` trait | `nsql_log::formatter(name)` | `log.format` | 내장 3종 | ✅ |
 | **접속 프로필 저장소** | `Vault`(봉투 형식 · 기기 키) | 단일(사용자 폴더) | `NSQL_HOME` | — | ✅ · 원격/팀 저장소는 [25](25-license-tiers-and-server.md) |
@@ -149,6 +149,6 @@
 
 ## 4. 결정(관례 · 사용자 확인 불요)
 - IoC = **생성자 주입 + 레지스트리** · 전역 컨테이너/리플렉션 없음(DR-3 외부 crate 0 · 단일 바이너리 DR-1과 조화).
-- 동적 배치 경계 = **프로세스(stdio RPC)·WASM·스레드** 셋만 — 네이티브 dylib 플러그인은 쓰지 않는다(ABI·안정성).
+- 동적 배치 경계 = **cdylib(C ABI · `nsql-abi` · 드라이버 확장 = DR-29·D-350)·WASM(확장 플러그인)·프로세스(격리가 필요할 때의 선택지)·스레드** — Rust ABI 동적 라이브러리는 쓰지 않는다(C ABI만). (이력: 09-14 원안 "프로세스·WASM·스레드 셋만 · 네이티브 dylib 금지"는 DR-29(09-15)·D-350(10-23)으로 정정 · 11-01 정합)
 - 규약에는 **버전 필드**를 둔다(드라이버 매니페스트 · `.nexa-syntax` · 라이선스 파일 · 설정 키 rename 표).
 - 구현 상수는 **설정 레지스트리**로 · 자주 바꾸지 않으면 `HIDDEN`(`nsql config list all`).

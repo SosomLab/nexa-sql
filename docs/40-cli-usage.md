@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-16): *"CLI 사용 방법이 정리된 문서가 있는지 확인하고 필요하면 만들어줘 · 추가된 기능들을 테스트할 수 있도록 순서대로 · `conn list`를 사용한 접속뿐 아니라 직접 hostname 등을 지정해서 접속하는 방법도 기술."* · (사용자 10-23) *"40번 CLI 명령 전체 최신화"*
 > **성격**: 이 문서는 **사용·점검 안내**다. 설계 제안은 [11 CLI](11-cli.md), 인자 규약과 타 CLI 조사는 [27 CLI 인자 규약](27-cli-conventions.md), 연결 프로필 내부는 [21](21-connection-profiles.md), 드라이버 확장은 [22](22-driver-extensions.md)에 있다.
-> **검증**: §2의 모든 명령·출력은 **nsql 0.2.8**(main 6561a4e 빌드 · 2026-10-23 · Windows · 격리 `NSQL_HOME` · `ui.lang=ko`)로 **실제 실행해 확인**했다 — SQLite(내장) + DuckDB(확장 · 접속 시 자동 설치). 실서버가 필요한 예(§3 · Oracle/SQL Server/PostgreSQL/MySQL/ODBC)는 "(출력 생략 · 실서버 필요)"로 표시했다. 출력의 절대 경로는 `…`로 줄였다.
+> **검증**: §2의 모든 명령·출력은 **nsql 0.2.8**(main 6561a4e 빌드 · 2026-10-23 · Windows · 격리 `NSQL_HOME` · `ui.lang=ko`)로 **실제 실행해 확인**했다 — SQLite(개발 빌드 내장 · 설치본은 확장 D-350) + DuckDB(확장 · 접속 시 자동 설치). 실서버가 필요한 예(§3 · Oracle/SQL Server/PostgreSQL/MySQL/ODBC)는 "(출력 생략 · 실서버 필요)"로 표시했다. 출력의 절대 경로는 `…`로 줄였다.
 > **10-23 최신화**: 명령 8개 → **14개**(`import` `format` `driver` `license` `grep` `bookmark` 추가) · 접속 대상(MySQL · DuckDB · ODBC · `?driver=` · 빈 비밀번호 `user:@host` · `--password-stdin`) · **드라이버 = 확장(D-350)** · 출력 형식 `sql:*` · 표 모양 옵션 · 셸 `\more`/`\all`/`\count`/`\pager`/`set max_rows` · 프로필 서버 유형 `conn env` · 모든 단계의 출력을 0.2.8로 다시 떴다.
 > **원장**: 옵션·인자의 최종 근거는 `nsql <명령> --help`(`nsql-cli/src/help.rs`)다. 어긋나면 도움말이 맞다.
 
@@ -694,6 +694,7 @@ INSERT INTO NEW_EMP (id, name, dept, sal) VALUES (3, 'Park', 'IT', 4800);
 ```
 
 - 형식: `csv` `tsv` `json` `jsonl` `insert[:테이블명]`(그 밖의 `-f` 값도 공통 형식 표 §4-1을 따른다).
+- ★ **`insert` 표 이름(11-01 215차 · T-8)** — `insert:NAME`으로 주면 그 이름 · 생략하면 `-t <표>`의 표 이름 → `-q` 질의의 FROM에서 추정(`nsql_io::guess_table` · 한 표일 때) → 그래도 없으면 `T` · GUI 그리드 "파일로 내보내기…"의 `.sql`도 같은 추정(원본 질의 FROM) · `nsql run -f insert`(§4)는 질의 문맥이 없어 종전대로 `T`.
 - `--fast` = 서버가 csv/tsv를 만들어 흘린다(PostgreSQL `COPY TO`). 지원하지 않는 DBMS면 안내 후 일반 경로 — SQLite: `--fast를 지원하지 않는 DBMS - 일반 경로로`.
 - `--max-rows N`으로 상한 · 접속 옵션(`--host` … `--password-stdin` `--no-prompt`)은 `run`과 같다.
 - ★ **스트리밍(10-30 · 180차 · T-8)** — 질의가 **한 문장**이고 형식이 `csv`·`tsv`·`json`·`jsonl`·`insert`이면 결과를 메모리에 모으지 않고 **배치마다 바로 쓴다**(배치 = `db.fetch_size`와 2000 중 큰 쪽 · 메모리 = 배치 하나). 서버 커서가 있는 드라이버(PostgreSQL · Oracle · Db2 · SQLite)는 커서로 이어 받고, 없는 드라이버(SQL Server · MySQL · ODBC · ClickHouse · DuckDB)는 **OFFSET 페이지 재질의**로 이어 받는다 — 이 경우 페이지 사이에 데이터가 바뀌면 행이 겹치거나 빠질 수 있으므로 **`ORDER BY`(유일 키)를 붙이는 것을 권장**. 여러 문장 · 프로시저 · `grid`/`md`/`sql:*` 형식 = 종전 일괄 경로(결과 전체를 모은 뒤 씀) · `--fast` = 그대로. 출력은 일괄 경로와 바이트 단위로 같다(시험).

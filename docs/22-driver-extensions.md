@@ -92,7 +92,7 @@
 - **허브 상태** = `driver_status(id)` = Builtin(이 빌드에 정적 링크) / Extension(드라이버 폴더에 설치됨) / Missing → `open()`은 후보 id를 차례로 시도하고 없으면 `ERR_DRIVER_MISSING`(-1350 · 메시지에 `nsql driver install <id>`) · 보조 = `DRIVER_IDS` · `ext_ids` · `dialect_of_ext` · `ext_crate_name` · `is_builtin`.
 - ✅ **C 자동 설치**(e62752a) = 허브 `open_auto` = 오류 -1350 + 정책 → 첫 후보 id를 색인 → 다운로드 → 검증 → 설치 → 1회 재시도(실패 = 원래 오류 + "auto-install failed: …") · 설정 `driver.auto_install`(기본 켬) · GUI 진행 = 상태줄 + 접속 창 베일 · CLI 진행 = stderr `[driver] id: stage pct` · `available()` = 이 OS의 전 방언(콤보 꼬리 사라짐) · 오프라인 번들 = §5-1.
 - ✅ **D 릴리스 워크플로**(b93ca33) = `.github/workflows/drivers.yml`(태그 `drivers-v<ver>` → 4 매트릭스 빌드 → 포장 → 서명·자가 검증 → 오프라인 번들 → **pre-release** → `drivers/index.json` 갱신 커밋 · 33 §5-5-1) · 설치본 = 드라이버 없는 판(`--no-default-features --features …/driver-oracle-oci` · 경량 CLI Debug 22.0 → 12.4 MB).
-- 남은 단계 = E 문서(TODO T-396) · C2 = GUI [파일에서 설치…] 버튼 · 첫 릴리스 `drivers-v0.1.0`(사용자 시크릿 `NEXA_DRIVER_KEY_B64`·`NEXA_DRIVER_KEY_PASS` 등록 뒤).
+- ✅ 전 단계 완료(11-01 정합) = E 문서(T-396 · T-454) · C2 GUI [파일에서 설치…](`driver_win.rs` · `app/drivers.rs`) · 첫 릴리스 `drivers-v0.1.0` → 현행 **drivers-v0.1.9**(10-30) · 갱신 = D-423 · (이력) 남은 단계 = E 문서 · C2 · 첫 릴리스(시크릿 `NEXA_DRIVER_KEY_B64`·`NEXA_DRIVER_KEY_PASS` 등록 뒤).
 
 
 사용자 요구 *"로딩 시간·불필요한 메모리·속도 지연이 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"*. 실측(release · 09-15): `nsql` 기동 ≈ 20ms(sqlite 실행 포함 24ms) · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(MSSQL tokio 런타임·Oracle ODPI-C는 **첫 접속 때** 만들어짐). 정적으로 링크된 드라이버는 OS 요구 페이징 덕에 **쓰지 않으면 RAM에 올라오지 않는다** → 내장 4종은 정적 유지가 최적(분리 = 비용만 추가).
@@ -108,7 +108,7 @@
 ## 2. 드라이버 = 확장 — GitHub Releases에서 내려받는 별도 프로세스(→ §0: 기본 전송은 in-process cdylib · 프로세스는 격리 선택 모드)
 
 ### 2-1. 왜 "다운로드"가 필요한가 (단일 바이너리 원칙 DR-1과의 조화)
-- 본체는 **올 러스트 단일 바이너리**(DR-1). 순수 Rust 드라이버(SQLite · MSSQL tiberius · PG · MySQL · Oracle thin GA 후)는 **내장**(feature) — 다운로드 대상이 아니다.
+- 본체는 **올 러스트 단일 바이너리**(DR-1). ★ **D-350(10-23)**: 설치본 내장 = **Oracle OCI만** · 나머지(SQLite · MSSQL · PG · MySQL · Oracle Thin · ODBC · DuckDB · ClickHouse · Db2)는 **확장 cdylib**(접속 시 자동 설치 · §0-1) · 개발 빌드(cargo 기본 feature)와 full 변형(D-352 선택)은 전부 내장. (이력: 09-13 원안 = 순수 Rust 드라이버 내장 · 다운로드 대상 아님)
 - 다운로드가 필요한 것은 **본체에 넣을 수 없거나 넣기 싫은 것**: ⓐ 벤더 네이티브 클라이언트가 필요한 드라이버(Oracle ODPI-C + Instant Client · Tibero/Altibase/CUBRID ODBC) ⓑ 라이선스가 본체와 섞이면 안 되는 것(GPL · 벤더 EULA) ⓒ 크기가 큰 것 ⓓ 버전을 **여러 개 나란히** 두어야 하는 것(§4) ⓔ 서드파티가 만드는 드라이버(JDBC 래퍼 등).
 - DBeaver는 Maven Central에서 jar를 받아 `%APPDATA%\DBeaverData\drivers\maven\`에 버전별로 둔다([참고](https://dbeaver.com/docs/dbeaver/Driver-Manager/)). 우리는 **GitHub Releases**가 그 자리다(사용자 지정).
 
@@ -121,7 +121,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 메서드 = nsql_core::Session 포트 1:1 — connect · execute · fetch_cursor · commit · rollback · set_option · cancel · describe(카탈로그)
 값 인코딩 = nsql_core::Value(JSON · BLOB은 base64 · 대용량 결과는 fetch_cursor 페이징)
 ```
-- **왜 cdylib이 아닌가**: Rust ABI 불안정 · 크래시 격리 없음 · **한 프로세스에 Oracle 클라이언트 하나만**(§4-1) → 프로세스여야 SxS가 된다. 언어 무관(Java JDBC 래퍼도 확장이 된다). 라이선스 격리(GPL 드라이버도 본체 오염 없음).
+- (원안 09-13 · DR-29가 **C ABI cdylib**로 해소 · 지금은 격리가 필요할 때 프로세스를 고르는 근거로만) **왜 cdylib이 아닌가**: Rust ABI 불안정 · 크래시 격리 없음 · **한 프로세스에 Oracle 클라이언트 하나만**(§4-1) → 프로세스여야 SxS가 된다. 언어 무관(Java JDBC 래퍼도 확장이 된다). 라이선스 격리(GPL 드라이버도 본체 오염 없음).
 - WASM(`wasmi` · DR-16)은 **소켓·네이티브 라이브러리 로드가 안 되므로 드라이버에는 부적합** — 코드 플러그인(TextCommand 등)에만 쓴다.
 - 내장 드라이버와 확장 드라이버는 **같은 `Box<dyn Session>`** — `nsql-drivers` 레지스트리가 `Dialect`/`driver=` 값으로 내장 vs `nsql-driver-rpc`(프록시 세션)를 고른다. UI·CLI는 차이를 모른다(DR-7).
 - **포트 계약 체크(새 드라이버·확장 드라이버 공통 · 10-11 추가)**: ⓐ **0건 결과도 컬럼 메타가 있는 빈 `ResultSet` 하나를 낸다**(43 §3-1 · SQL Server tiberius처럼 빈 집합 메타를 안 주는 라이브러리는 드라이버 안에서 보충 · journal 10-11 §4) ⓑ 페치는 배치 단위로 취소 깃발을 본다(43 §3-4) ⓒ `Caps`로 능력을 말한다(61 §1-6).
@@ -304,6 +304,8 @@ nsql driver path                    drivers/ 폴더
 
 ## 7. 단계 (백로그 · 순서가 중요 — 프로토콜 없이 다운로드는 의미 없음)
 
+> ★ **원안(09-13) 표** · 실제 이행 = T-27 = cdylib 로더(`nsql-driver-dyn` · ABI v2)로 개정 · T-30 = ✅ 대체됨(D-350 · OCI = 설치본 내장 유지) · 현행 = §0 · §0-1(11-01 정합).
+
 | 순서 | ID | 내용 | 검증 |
 |:--:|---|---|---|
 | 1 | **T-27** | `nsql-driver-rpc` — stdio JSON-RPC 프로토콜 v1(프레임 · 메서드 · Value 인코딩) + 프록시 `Session` + **참조 구현 = 내장 SQLite를 프로세스로 감싼 `nsql-driver-sqlite-rpc`**(테스트용) | 기존 nsql-run 테스트를 RPC 세션으로 그대로 통과 |
@@ -312,7 +314,7 @@ nsql driver path                    drivers/ 폴더
 | 4 | **T-30** | Oracle OCI 확장 — 현 `nsql-driver-oracle`(kubo)을 RPC 프로세스로 분리 · Instant Client 19/23 두 판 SxS · 프로필 `driver=` · ORA-28040 힌트 | integration(Oracle Free 23ai) + 구형 서버는 사용자 실기 |
 | 5 | **T-31** | GUI — DBeaver식 접속 대화상자(§1) · 로그인 리스트 · 드라이버 관리자(§5-2) | 사용자 실기 |
 
-**본체에 남는 내장 드라이버**: SQLite · MSSQL(tiberius) · (M4) PG · MySQL · Oracle thin(GA 후). 내장/확장은 사용자에게 같은 "드라이버" 목록에 보이고, 내장은 `built-in` 배지 · 삭제 불가.
+**본체에 남는 내장 드라이버**: ★ D-350 = **Oracle OCI만**(설치본 lite) · 나머지 = 확장 · (이력 원안 = SQLite · MSSQL(tiberius) · (M4) PG · MySQL · Oracle thin(GA 후)). 내장/확장은 사용자에게 같은 "드라이버" 목록에 보이고, 내장은 `built-in` 배지 · 삭제 불가.
 
 ## 8. 열린 결정
 - **D-19** 드라이버 저장소 구성 — 단일 `nexa-sql-drivers`(확장별 태그 접두) vs 확장별 저장소. 권장 = 단일(색인·CI 한 곳) + 서드파티는 별도. → ✅ **D-349(10-22 · 사용자)로 대체** = 별도 저장소 없이 **nexa-sql 저장소 안**(색인 `drivers/index.json` · 태그 `driver-<id>-v<ver>` pre-release) · 서드파티는 색인 `repo`로 별도 저장소.
