@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-11-01 | 2026-11-01 → main · **6b6a0857** | 1 | 192차 win 220차 = D-438 ⑦ T-248 긴 함수 분해 2차(`Intel::request` 1,267 → 271 · `App::drain_events` 892 → 353 = 새 `app/run_events.rs` · 원복 태그 `pre-t248-220` · 동작 불변 = 533 시험 · 헤드리스 func-check 12/12) · 소스 4 · ci **41273373130** ✓ · integration **41273373082** ✓ |
+| (main 직접) | 2026-11-01 | 2026-11-01 → main · **6d5a5d5b** | 1 | 192차 win 219차 = D-438 ⑥ T-123 Oracle GTT INSERT/MERGE 세션 상태 표식(적재 L1 메타 `extra = TEMPORARY` · 왕복 0 · D-443) + 218 문서 9 · 소스 6 · ci **41271369972** ✓(xvfb 16 · 3-OS · deny) · integration **41271369875** ✓ |
 | (main 직접) | 2026-11-01 | 2026-11-01 → main · **afd973da** | 1 | 192차 win 218차 = D-438 ⑤ T-227 상세 캐시 → nsql-run `meta::L3Cache<T>` 이관(종결) + S36 수정 = GUI `open_file`·`load_file` 문서 키 절대 경로화(D-442) · 소스 3 · ci **41270532062** ✓(**xvfb 대표 16 = 통과 16 · 실패 0 · S36 ok** · 3-OS · deny) · integration **41270532057** ✓ |
 | (main 직접) | 2026-11-01 | 2026-11-01 → main · **9da3eebf** | 1 | 192차 win 216·217 문서(협업 작성 docs 13 · D-440 · D-441 · D-436 2차 · T-463 · 61 §4 · 102 §12) · ci **41269915608** ✗(문서만 · ubuntu xvfb S36만 15/1 = 218 수정 전 판) |
 | (main 직접) | 2026-11-01 | 2026-11-01 → main · **63b3e335** | 1 | 192차 win 217차 = D-438 ④ T-459 헤드리스 2차(보조 창 `capture:<png>@<창>` · `windows.dump` · `lib/headless.sh` · func-check `-Headless`) + parwalk 시험 OS 의존 수정 · 소스 5 + scripts 3 · ci **41269155903** ✗(단위 시험 3-OS ✓ · ubuntu xvfb **S36만** 15/1 = 원인 확정: CLI 북마크 문서 키 = 절대 경로 ↔ GUI `open:` 상대 경로 탭 키 → marks 0 · 타이밍 아님 · 수정 = 218차 `open_file_enc` 절대 경로화) · integration **41269155896** ✓ |

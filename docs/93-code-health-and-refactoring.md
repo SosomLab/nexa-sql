@@ -122,9 +122,11 @@ python scripts/code-health.py --baseline target/code-health/baseline.json   # �
 | 파일 | 담당 | 대표 메서드 |
 |---|---|---|
 | `event_loop.rs` | winit 사건 처리기(`ApplicationHandler`) — `window_event` = 앞 판정 → 보조 창 분배 → 메인 창 → 쌓인 창 요청 | `window_event` · `aux_window_event` · `open_requested_windows` · `about_to_wait` |
+| `init.rs` | ★ 11-01 221차 = `main()`의 App 생성 뒤 초기화 단락(≈290줄) → `App::init_*` · 새 기동 초기화는 여기에 | `init_*` |
 | `input.rs` | 키·마우스 라우팅(책임 연쇄 — 고리 = `route_<패널>` 15개 · 순서는 `route_inner`) · 포커스 · IME | `route` · `route_inner` · `route_palette` · `route_explorer` · `set_focus` |
-| `paint.rs` | 프레임 합성 | `paint` |
+| `paint.rs` | 프레임 합성 — ★ 11-01 221차: `paint()`가 `self.surface.take()`로 표면을 떼어 `paint_on(&mut self, surface)`(168줄) → 세그먼트 5 `paint_seg_chrome`(373) · `paint_seg_editor`(69) · `paint_seg_grid`(47) · `paint_seg_cards_explorer`(64) · `paint_seg_overlays`(160) · 공통 값 `PaintEnv`(표면 빌림 전 계산 + 프레임 수치) · **그리는 중 `self.surface` = None** | `paint` · `paint_on` · `paint_seg_*` |
 | `events.rs` | 백그라운드 사건 소화(워커·접속·가져오기) | `drain_events` · `drain_conn` |
+| `run_events.rs` | ★ 11-01 220차 = 실행 사건(`RunEvent::` Begin · ResultSet · DriverLimits · Connected · Timing · Error) 가지 본문 · `drain_events`는 분배만 · **새 실행 사건 처리는 여기에** | `on_ev_*` |
 | `menus.rs` | 풀다운·우클릭·팔레트 · 명령 분배 | `menu_action` · `key_command` · `build_menus` |
 | `startup_cmd.rs` | 기동 명령(자체 시험·자동 점검 경로) | `startup_cmd` |
 | `settings.rs` | 설정 키 → 화면 반영 · 테마·언어 | `apply_setting` · `apply_*` |
@@ -230,7 +232,8 @@ main.rs에 남은 것: `App` 구조체와 생성 · `layout` · `redraw`/`tmark`
 ## 8. 남은 후보(다음 실행)
 
 - `worker::spawn` → `WorkerState`(러너·현재 접속·끊김 의심·알림 상태를 필드로) + `Cmd`별 처리 메서드(Command 패턴) — 전제 = CI integration 초록 · `mac-grid-edit-e2e.sh`/`linux-dbms-e2e.sh` 통과.
-- 긴 함수: 현황 = [TODO T-248](TODO.md)(✅ 09-29 1차 = `apply_setting`·`about_to_wait`·`drain_conn` 분해 · 남음 = `intel::request` · `main` · `paint` · `drain_events` · D-438 ⑦ (11-01 정합)) · (이력 09-28) `intel::request`(856) · `main`(697) · `paint`(597) · `drain_events`(554) · `about_to_wait`(497) · `apply_setting`(494) · `drain_conn`(485) — 한 함수 = 한 흐름이 되도록 단계별 도움 함수로(행동 보존 · 기능 점검 필수).
+- ✅ **긴 함수 T-248 잔여 4 전부 분해(11-01 221차 3차 · [journal 11-01 §15](journal/2026-11-01.md))**: `main` **944 → 678**(초기화 → `app/init.rs` `App::init_*`) · `App::paint` **793 → 168**(`paint_on` + 세그먼트 5 · `PaintEnv`) · 남은 세분화 후보 = `cands_expr` 466 · `paint_seg_chrome` 373 · 그 밖 상위 = `startup_cmd` 1,699 · worker `spawn` 1,487 · `nsql-i18n::row` 4,802(표).
+- 긴 함수(★ 11-01 220차 2차 · 원복 태그 `pre-t248-220` · [journal 11-01 §13](journal/2026-11-01.md)): `Intel::request` **1,267 → 271**(가지 5 → `cands_member` 290 · `cands_exec_args` 59 · `cands_proc_param` 35 · `cands_relation` 134 · `cands_expr` 466 · 공유 입력 = 읽기 전용 Copy 묶음 `ReqIn<'_>` · 클로저 push_col/push_member → 자유 함수) · `App::drain_events` **892 → 353**(→ `app/run_events.rs` `on_ev_*`) · 남음(221차~) = `main` 944(App 뒤 초기화 단락 ≈290 → `App::init_*`) · `paint` 793(크롬 세그먼트 424 · 빌림 구조 검토) · `cands_expr` 466 세분화 후보 · 그 밖 상위 = `startup_cmd` 1,699 · worker `spawn` 1,487 · `nsql-i18n::row` 4,802(표) · 현황 = [TODO T-248](TODO.md) · (이력) 긴 함수: 현황 = [TODO T-248](TODO.md)(✅ 09-29 1차 = `apply_setting`·`about_to_wait`·`drain_conn` 분해 · 남음 = `intel::request` · `main` · `paint` · `drain_events` · D-438 ⑦ (11-01 정합)) · (이력 09-28) `intel::request`(856) · `main`(697) · `paint`(597) · `drain_events`(554) · `about_to_wait`(497) · `apply_setting`(494) · `drain_conn`(485) — 한 함수 = 한 흐름이 되도록 단계별 도움 함수로(행동 보존 · 기능 점검 필수).
 - 큰 파일: `explorer.rs` · `grid.rs` · `conn_win.rs` — `app/`와 같은 방식(상태 한 곳 · 동작 기능별)으로.
 - 남은 중복(도구 G 상위 28): 보조 창 열기 꼬리(생성 → 자리 복원 → 화면 안 → 표면 · 로그/메모리/세션 창) · 표 창 그리기 머리(세션/트랜잭션 로그/변수) — 창 공통 호스트(`WinHost` · 30 T-65)로 올리면 함께 사라진다.
 - `menu_action`·`startup_cmd`의 문자열 `match`를 명령 표(Command 레지스트리)로 — 키맵·팔레트·메뉴가 같은 표를 쓰게(효과 = 명령 추가가 한 자리).

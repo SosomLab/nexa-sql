@@ -260,7 +260,7 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 
 → **처방(D-103 ⓒ 구현)**: 세션마다 `stateful` 깃발. 실행 스크립트의 문장을 `sessions::alters_session_state`로 본다 — `ALTER SESSION`·`SET`·`USE`·`PRAGMA`·`ATTACH` · `TEMP`/`#` 임시 객체 · `PREPARE`·`LISTEN`·`LOCK` · **`BEGIN`/`DECLARE`/`EXEC`/`CALL`/`DO`(PL/SQL·프로시저는 패키지 상태·컨텍스트를 바꿀 수 있고 글만 봐서는 모른다 → 보수적으로 전부)** · `set_config(`·`pg_advisory_lock`·`GET_LOCK(`·`sp_set_session_context`·`DBMS_SESSION.`·`:=`. 하나라도 나갔으면 그 세션은 **유휴 닫기에서 제외**(`idle_action`의 조건). 새로 접속하면 깃발을 내린다. **판정 정정(09-30)**: ① `CONNECT`/`DISCONNECT`는 클라이언트 지시 = 제외(접속 문자열의 비밀번호 `Sql#Edu2026`이 걸려 재접속마다 헛경고 · 사용자 로그) ② `#`는 **이름 첫 글자**일 때만(`#t`·`##g` · `EMP#`·문자열 안 제외 · `temp_table_hash`) ③ 깃발은 실행 전 일괄이 아니라 **문장이 서버로 나가는 `RunEvent::Begin`에서 그때의 세션에**(`CONNECT` 뒤 문장 = 새 세션) · 켜지는 순간 로그 한 줄(`Msg::StSessStateful` · 원인 문장 80자).
 - 어쩔 수 없이 세션이 바뀌었을 때(접속 오류 뒤 자동 재접속 · 사용자의 재접속)는 **한 번 알린다**: "새 서버 세션입니다 — 앞 세션의 세션 설정·임시 테이블·패키지 상태는 사라졌습니다"(로그 + 토스트 · `stateful`이었을 때만).
-- 글만 봐서는 모르는 것(정직한 한계): Oracle 전역 임시 테이블에 대한 **평범한 INSERT** · 함수 호출 안에서 바뀌는 패키지 상태(`SELECT pkg.f FROM dual`). 전자는 수동 커밋이면 "열린 트랜잭션"으로 걸리고, 자동 커밋 + `PRESERVE ROWS`만 샌다 → 걱정되면 `session.idle_secs = 0`.
+- 글만 봐서는 모르는 것(정직한 한계): Oracle 전역 임시 테이블에 대한 **평범한 INSERT** · 함수 호출 안에서 바뀌는 패키지 상태(`SELECT pkg.f FROM dual`). 전자는 수동 커밋이면 "열린 트랜잭션"으로 걸리고, 자동 커밋 + `PRESERVE ROWS`만 샌다 → 걱정되면 `session.idle_secs = 0`. ★ **11-01 219차(T-123 · D-443)** = 전자(GTT INSERT)는 해소 — Oracle **전역 임시 테이블에 넣는 평범한 INSERT/MERGE도 세션 상태 표식**(유휴 닫기 제외 · 재접속 때 1회 안내) · 판정 = 그 서버의 **적재된 L1 메타**만(`ObjEntry.extra = "TEMPORARY"` · 서버 왕복 0 · 탐색기가 그 스키마를 아직 안 읽었으면 표식 안 함 = 남는 정직한 한계) · 스키마 없는 이름 = 세션 현재 스키마 · `DELETE ROWS` GTT도 표식(보수적) · 순수 판정 `sessions::insert_target(stmt)` + App `inserts_into_temp` · 남는 한계 = 함수 호출 안 패키지 상태 · 메타 미적재 스키마의 GTT.
 - 공유 세션은 기본 제외 그대로(`session.idle_shared = off`).
 
 ## 7. 화면
@@ -342,7 +342,7 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 |---|---|---|
 | **T-121** | ✅ 종결(사용자 10-31 · 11-01 정합) · 서버별 탐색기 ✅(§2-2) · 잔여 = `MetaStore` 인텔리센스를 서버 키로 묶기 · 오프라인 메타 LRU(`meta.cache_mb`) · 노드 우클릭 "이 서버로 새 탭" · 접속 창 다중 "접속됨" 표시 · `tab_bind` 세션 복원 | T-57 · ✅ 10-30 182차 = 5항목 전부(§2-2 끝) |
 | **T-122** | 30 §1-2 체크리스트에 "DB로 가는 새 진입점 = `gate_open()`" 추가 · `worker.send` 직접 호출을 `Sess` 메서드 뒤로 숨기기(문지기 우회 불가) | — |
-| **T-123** | ✅ 09-18 세션 상태 추적(§6-4) — 잔여 = 자동 커밋에서 Oracle GTT(`PRESERVE ROWS`) INSERT 감지(카탈로그 조회 필요) | — |
+| **T-123** | ✅ 09-18 세션 상태 추적(§6-4) · ✅ **11-01 219차 종결** = Oracle GTT INSERT/MERGE 표식(적재 L1 메타 `extra = TEMPORARY` · 왕복 0 · D-443) · (이력) 잔여 = 자동 커밋에서 Oracle GTT(`PRESERVE ROWS`) INSERT 감지(카탈로그 조회 필요) | — |
 | **T-124** | ✅ 09-18 트랜잭션 로그 세션 열 — 잔여 = 실행 로그 창의 세션 태그 · 세션 필터 UI | — |
 | **T-125** | 실기(Windows·mac): §13 점검표 | — |
 | **T-126** | CLI `nsql shell` — 전용 세션 개념 없음(세션 1개) 확인 · 27 §6 ④ 문구 갱신 | — |

@@ -84,7 +84,7 @@ pub struct MetaCaps { bits: u64 }   // SCHEMAS · CATALOGS(DB) · SYNONYMS · PA
                                      // · KEYS_FK · INDEXES · PARAMS · SOURCE · WATERMARK · CURRENT_SCHEMA · CASE_INSENSITIVE_NAMES
 pub struct SchemaEntry { name: Sym, catalog: Option<Sym> /*MSSQL/PG DB*/, is_current: bool, is_system: bool }
 pub struct ObjEntry   { schema: Sym, name: Sym, kind: ObjectKind /*17종 상위집합*/, status: ObjStatus /*Valid|Invalid|Unknown*/,
-                        modified: Option<u64>, created: Option<u64>, comment: Option<Sym>, extra: Option<Sym> /*PG 오버로드 서명 등*/,
+                        modified: Option<u64>, created: Option<u64>, comment: Option<Sym>, extra: Option<Sym> /*PG 오버로드 서명 · Oracle GTT = "TEMPORARY"(11-01 219차 · 52 §6-4) 등*/,
                         target: Option<(Sym, Sym)> /*시노님·뷰 대상*/, cols: ColState }
 pub struct ColEntry   { name: Sym, data_type: Sym /*원문*/, canon: CanonType /*Text|Int|Float|Decimal|Date|Time|DateTime|Bool|Binary|Json|Other*/,
                         length: Option<u32>, precision: Option<u16>, scale: Option<u16>, nullable: Option<bool>, position: u16,

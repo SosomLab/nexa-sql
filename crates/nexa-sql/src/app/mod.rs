@@ -22,6 +22,7 @@ mod format;
 pub(crate) mod goto;
 mod grid_results;
 pub(crate) mod health;
+mod init;
 pub(crate) mod inline_labels;
 pub(crate) mod input;
 pub(crate) mod insseq;

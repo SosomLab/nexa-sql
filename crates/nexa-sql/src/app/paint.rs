@@ -4,8 +4,44 @@
 
 use crate::*;
 
+/// `paint`가 표면을 빌리기 **전에** 셈해 둔 값과 프레임 공통 수치(221차 T-248 ④) — 세그먼트 메서드 `paint_seg_*`가 함께 본다(읽기 전용).
+struct PaintEnv {
+    mem_txt: Option<String>,
+    autosave_dirty: bool,
+    view_mode: bool,
+    objlink_tip: Option<(String, Rect)>,
+    objlink_buttons: Vec<(&'static str, String, bool)>,
+    objlink_hot: usize,
+    sig_tip: Option<(String, Rect)>,
+    diff_tab: bool,
+    ed_rect: Rect,
+    zoom_style: nexa_ctl::HudStyle,
+    define_txt: String,
+    define_on: bool,
+    win: Rc<Window>,
+    size: winit::dpi::PhysicalSize<u32>,
+    s: f32,
+    wi: i32,
+    hi: i32,
+    caret_on: bool,
+    th: Theme,
+    ui_px: f32,
+    mono_px: f32,
+    grid_px: f32,
+}
+
 impl App {
     pub(crate) fn paint(&mut self) {
+        // ★ 221차(T-248 ④): 표면을 잠시 꺼내 지역으로 넘긴다 — 프레임 버퍼 빌림이 `self`를 잡지 않아 세그먼트를 `&mut self` 메서드로 나눌 수 있다
+        //   (종전 = `self.surface.as_mut()` 빌림 동안 한 함수 793줄). 그리는 중 `self.surface`는 None(아무도 읽지 않는다 · 끝나면 되돌림).
+        let Some(mut surface) = self.surface.take() else {
+            return;
+        };
+        self.paint_on(&mut surface);
+        self.surface = Some(surface);
+    }
+
+    fn paint_on(&mut self, surface: &mut present::Presenter) {
         // 상태줄 메모리 글은 그리기 빌림 전에(5 s에 한 번 OS 조회 · docs/80).
         let mem_txt = self.mem_status_text();
         // 프로젝트 변경 표식(`*자동 저장` · 세대 비교 · 그리기 빌림 전에 · 사용자 09-28).
@@ -45,7 +81,7 @@ impl App {
         let zoom_style = self.zoom_hud_style();
         // `&` 치환 세그먼트 글은 surface를 빌리기 전에(불변 빌림 충돌 · D-141).
         let (define_txt, define_on) = self.define_seg_text();
-        let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
+        let Some(win) = self.window.clone() else {
             return;
         };
         let size = win.inner_size();
@@ -70,463 +106,36 @@ impl App {
             let ui_px = self.settings.font_px("ui.font_size");
             let mono_px = self.settings.font_px("editor.font_size");
             let grid_px = self.settings.font_px("grid.font_size");
-            // ── UI 층(한글 UI 본)
-            {
-                let prefs = FontPrefs::with_base(ui_px);
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s)
-                    .with_fonts(prefs)
-                    .with_caret_on(caret_on);
-                dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
-                self.editors.paint_tabs(&mut dc, &th);
-                if !view_mode {
-                    self.panel.paint_bar(&mut dc, &th);
-                }
-                // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
-                dc.fill_rect(self.tool_dock.bounds(), th.chrome_bg);
-                self.tool_dock.paint(&mut dc, &th);
-                // ★ 글자 항목(탭 연결·작업 단위)의 폭이 바뀌어 그룹 사각형이 낡았으면 다시 배치하고 한 번 더 그린다(⑲).
-                let mut dock_inv = Invalidations::default();
-                if self.tool_dock.relayout_if_stale(&mut dock_inv) {
-                    win.request_redraw();
-                }
-                // 툴바 툴팁은 탐색기·편집기가 덮지 못하게 최상위 층(메뉴바 직전)에서 그린다(09-16 사용자 캡처: 툴바 아래 검은 띠).
-                dc.fill_rect(self.menubar.bounds(), th.chrome_bg);
-                dc.fill_rect(
-                    Rect::new(0, self.tool_dock.bounds().bottom() - 1, wi, 1),
-                    th.border,
-                );
-                // 메뉴바(드롭다운 포함)는 편집기·그리드·탐색기 뒤인 최상위 패스에서 그린다(09-15 사용자 캡처: 풀다운이 뒤로 가림).
-                // 상태줄
-                let sy = hi - px(24.0, s);
-                dc.fill_rect(Rect::new(0, sy, wi, px(24.0, s)), th.chrome_bg);
-                dc.fill_rect(Rect::new(0, sy, wi, 1), th.border);
-                dc.select_font(FontSlot::Base, false);
-                let busy = if self.sess.blocked() { "⏳ " } else { "" };
-                let ty = dc.text_center_y(sy, px(24.0, s));
-                // 전용 세션 탭 = 상태줄 앞에 "전용: 접속 설명"(Golden의 Private Session 줄 · docs/52 §7).
-                let broken = if self.sess.broken {
-                    format!("[{}] ", t(Msg::StSessBrokenTag))
-                } else {
-                    String::new()
-                };
-                // ★ 접속 설명이 없는 전용 세션(연결 없는 안내 탭 · "(앞부분)" · 개별 모드 접속 전)은 접두를 붙이지 않는다(사용자 10-13 A안 ·
-                //   종전 "[전용: -]" = 정보 없음).
-                let left_text = if self.sess.is_private() && !self.sess.desc.is_empty() {
-                    format!(
-                        "{busy}{broken}[{}: {}] {}",
-                        t(Msg::StSessPrivate),
-                        self.sess.desc.as_str(),
-                        self.sess.status
-                    )
-                } else {
-                    format!("{busy}{broken}{}", self.sess.status)
-                };
-                // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
-                let (ln, col) = self.editors.caret_line_col();
-                let mut segs: Vec<(&'static str, (String, bool))> = Vec::new();
-                // 트랜잭션 모드(자동/수동 · 수동에 미커밋 변경이 있으면 ●).
-                // 트랜잭션 세그먼트(DR-30): Auto / Manual / "Manual ● n pending · since hh:mm" · 클릭 = 팝업.
-                // ★ 자동 커밋 모드라도 운영 보류(D-295)로 대기가 있으면 건수·시각을 보인다(10-16 사용자 "자동 모드에서 카운트가 안 보임").
-                let auto = self.settings.flag("session.autocommit");
-                let tx = if auto && self.sess.tx_pending.is_empty() {
-                    t(Msg::StTxAuto).to_string()
-                } else if let Some(first) = self.sess.tx_pending.first() {
-                    let base = tf(
-                        if auto {
-                            Msg::StTxPendingAuto
-                        } else {
-                            Msg::StTxPending
-                        },
-                        &[&self.sess.tx_pending.len().to_string(), &first.when],
-                    );
-                    // 내 미커밋이 남을 막고 있으면 상태줄에도(docs/56 L3).
-                    if self.sess.tx_blockers > 0 {
-                        format!(
-                            "{base} · {}",
-                            tf(Msg::StatusTxBlocking, &[&self.sess.tx_blockers.to_string()])
-                        )
-                    } else {
-                        base
-                    }
-                } else {
-                    t(Msg::StTxManual).to_string()
-                };
-                segs.push(("tx", (tx, false)));
-                // ★ `&` 치환 모드 세그먼트(D-141 상태줄 토글 · 10-30): `& auto|on|off` · off = 흐림 · 클릭 = 팝업.
-                segs.push(("define", (define_txt, define_on)));
-                // ★ T-90 잔여(10-30): 향상 모드 ⚡ — 켜져 있을 때만(클릭 = 설정 창 · 39 §4-6).
-                if self.settings.boost_on() {
-                    segs.push(("perf", ("⚡".to_string(), false)));
-                }
-                // 메모리 총량 세그먼트(docs/80 · `mem.statusbar` · 클릭 = 메모리 맵 창) — 조회는 5 s에 한 번, 그릴 때만.
-                if let Some(txt) = mem_txt {
-                    segs.push(("mem", (txt, false)));
-                }
-                // (접속 이름 세그먼트는 09-28 사용자 요청으로 뺐다 — 접속은 툴바 플러그 배지·탭 표식·세션 창이 보여 준다.)
-                // 큰 파일 모드 · 읽기 전용 표식(docs/59) — 이 탭에서 일부 기능이 꺼져 있음을 늘 보이게.
-                let (large_level, large_forced) = self.editors.active_large();
-                if large_level > 0 && !large_forced {
-                    segs.push((
-                        "large",
-                        (tf(Msg::StLargeSeg, &[&large_level.to_string()]), false),
-                    ));
-                }
-                if self.editors.active_read_only() {
-                    segs.push(("readonly", (t(Msg::StReadOnlySeg).to_string(), false)));
-                }
-                // 북마크 `이 문서/전체`(docs/69 §6-2 · `bookmark.statusbar`).
-                if self.bookmarks.enabled && self.settings.flag("bookmark.statusbar") {
-                    let (here, all) = self
-                        .bookmarks
-                        .counts_for(&self.editors, self.editors.active());
-                    if all > 0 {
-                        segs.push((
-                            "bookmark",
-                            (
-                                tf(Msg::StBookmarkSeg, &[&here.to_string(), &all.to_string()]),
-                                false,
-                            ),
-                        ));
-                    }
-                }
-                let nsel = self.editors.selection_count();
-                if self.focus == Focus::Grid
-                    && self
-                        .grid
-                        .selection_summary()
-                        .is_some_and(|(r, c, _)| r * c > 1)
-                {
-                    let (r, c, _) = self.grid.selection_summary().unwrap_or((0, 0, 0));
-                    segs.push((
-                        "pos",
-                        (tf(Msg::StGridSel, &[&r.to_string(), &c.to_string()]), false),
-                    ));
-                } else if nsel > 1 {
-                    // 열 모드·다중 커서 = 선택 영역 수(Sublime "5 selection regions").
-                    segs.push(("pos", (tf(Msg::StSelections, &[&nsel.to_string()]), false)));
-                } else if let Some((l, c)) = self.editors.selection_summary() {
-                    // 일반 선택 = 줄 수·문자 수(Sublime "6 lines, 90 characters selected").
-                    segs.push((
-                        "pos",
-                        (
-                            tf(Msg::StSelected, &[&l.to_string(), &c.to_string()]),
-                            false,
-                        ),
-                    ));
-                } else {
-                    segs.push((
-                        "pos",
-                        (tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false),
-                    ));
-                }
-                // 필터가 있으면 "n / N행"(T-181) · 아니면 마지막 실행 행 수.
-                if let Some((shown, total)) = self.grid.filter_summary() {
-                    segs.push((
-                        "rows",
-                        (
-                            tf(
-                                Msg::StRowsFiltered,
-                                &[&shown.to_string(), &total.to_string()],
-                            ),
-                            false,
-                        ),
-                    ));
-                } else if let Some(n) = self.sess.last_rows {
-                    segs.push(("rows", (tf(Msg::StRowsShort, &[&n.to_string()]), false)));
-                }
-                if let Some(secs) = self.sess.last_secs {
-                    segs.push(("time", (format!("{secs:.3}s"), false)));
-                }
-                // 들여쓰기 세그먼트(Sublime "Tab Size: 4"/"Spaces: 4" · 구문 왼쪽 · 클릭 = 팝업 · 사용자 09-15).
-                let (tsz, ispaces) = self.editors.indent();
-                let ts = tsz.to_string();
-                let indent_seg = if ispaces {
-                    tf(Msg::StSpaces, &[&ts])
-                } else {
-                    tf(Msg::StTabSize, &[&ts])
-                };
-                // ★ 라이선스 배지(docs/23 §4-4 · D-44: 무료 = "non-commercial use only" 상시) — 클릭 = 라이선스 창.
-                // (라이선스 배지는 맨 오른쪽 — 아래 구문 뒤에 넣는다 · 사용자 09-28.)
-                // ★ 프로젝트 자동 저장 표식(사용자 09-28 · `statusbar.autosave`): 켜짐(주기) / 꺼짐 · 클릭 = 자동 저장 폴더.
-                let autosave_seg = self.settings.flag("statusbar.autosave");
-                // (`project_autosave_on`과 같은 판정 — 여기서는 `surface` 차용 때문에 필드 단위로 푼다.)
-                // 표시 = **설정 값**(프로젝트가 없어도 · 사용자 09-28 "30초 설정인데 끔으로 보인다").
-                let autosave_on = self.settings.flag("project.autosave")
-                    && (!self.settings.flag("license.gates")
-                        || self
-                            .licensing
-                            .check(nsql_license::Feature::ProjectRestore)
-                            .is_allowed());
-                let autosave_secs = self
-                    .settings
-                    .int("project.autosave_secs")
-                    .max(5)
-                    .to_string();
-                // ★ 변경이 있으면 `*` 접두(저장되면 사라짐) — 폭은 늘 `*` 포함으로 재어 들락거리지 않는다(사용자 09-28).
-                let autosave_base = if autosave_on {
-                    tf(Msg::StAutosaveOn, &[&autosave_secs])
-                } else {
-                    t(Msg::StAutosaveOff).to_string()
-                };
-                if autosave_seg {
-                    let txt = if autosave_dirty {
-                        format!("*{autosave_base}")
-                    } else {
-                        autosave_base
-                    };
-                    segs.push(("autosave", (txt, false)));
-                }
-                // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
-                if self.settings.flag("statusbar.git") {
-                    let path = self.editors.active_path();
-                    let dir = path
-                        .as_ref()
-                        .and_then(|p| p.parent().map(Path::to_path_buf));
-                    self.git.set_dir(dir);
-                    // ★ T-110 2-3(10-30): 감시 파일 = 활성 탭(HEAD 본문 → 미니맵 git 변경 줄 · 켜져 있을 때만 받는다).
-                    self.git
-                        .set_file(if self.settings.flag("editor.minimap_git") {
-                            path
-                        } else {
-                            None
-                        });
-                    self.git.refresh(false);
-                    if let Some(info) = self.git.info() {
-                        segs.push((
-                            "git",
-                            (format!("{} ({})", info.branch, info.changed), false),
-                        ));
-                    }
-                }
-                // 인코딩 세그먼트(클릭 = 저장 인코딩 / 다시 열기 팝업 · 사용자 09-16).
-                segs.push(("enc", (enc::short(&self.editors.active_encoding()), true)));
-                // 줄끝 세그먼트(VS Code/Sublime식 · 클릭 = LF/CRLF 팝업 · docs/38 · 사용자 09-16).
-                segs.push(("eol", (self.editors.active_eol().label().to_string(), true)));
-                segs.push(("indent", (indent_seg, true)));
-                segs.push(("syntax", (self.editors.syntax_name(), true)));
-                segs.push(("license", (Self::license_badge_of(&self.licensing), false)));
-                // ★ 순서·표시 = 설정 `statusbar.layout`(사용자 10-04 · 빈 값 = 위에서 만든 순서 그대로 · 라이선스 배지는 숨김 잠금).
-                let segs = crate::statusbar::arrange(
-                    self.settings.get(crate::statusbar::KEY).unwrap_or(""),
-                    segs,
-                );
-                let gap = px(12.0, s);
-                let mut xr = wi - px(8.0, s);
-                self.status_syntax_rect = Rect::new(0, 0, 0, 0);
-                self.status_tab_rect = Rect::new(0, 0, 0, 0);
-                self.status_eol_rect = Rect::new(0, 0, 0, 0);
-                self.status_enc_rect = Rect::new(0, 0, 0, 0);
-                self.status_tx_rect = Rect::new(0, 0, 0, 0);
-                self.status_define_rect = Rect::new(0, 0, 0, 0);
-                self.status_perf_rect = Rect::new(0, 0, 0, 0);
-                self.status_mem_rect = Rect::new(0, 0, 0, 0);
-                self.status_lic_rect = Rect::new(0, 0, 0, 0);
-                self.status_autosave_rect = Rect::new(0, 0, 0, 0);
-                self.status_seg_rects.clear();
-                self.status_bar_rect = Rect::new(0, sy, wi, px(24.0, s));
-                let star_w = dc.text_width("*");
-                for (id, (text, is_syntax)) in segs.iter().rev() {
-                    // 자동 저장 항목은 `*` 자리를 늘 확보(글이 없으면 그만큼 오른쪽에 붙여 그린다).
-                    let reserve = if *id == "autosave" && !autosave_dirty {
-                        star_w
-                    } else {
-                        0
-                    };
-                    let tw = dc.text_width(text) + reserve;
-                    xr -= tw;
-                    let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
-                    self.status_seg_rects.push((*id, r));
-                    if *id == "tx" {
-                        self.status_tx_rect = r;
-                    }
-                    if *id == "define" {
-                        self.status_define_rect = r;
-                    }
-                    if *id == "perf" {
-                        self.status_perf_rect = r;
-                    }
-                    if *id == "license" {
-                        self.status_lic_rect = r;
-                    }
-                    if *id == "autosave" {
-                        self.status_autosave_rect = r;
-                    }
-                    if *id == "mem" {
-                        self.status_mem_rect = r;
-                    }
-                    // ★ 클릭되는 항목 전부 = 버튼처럼(사용자 09-28): hover = 선택색 · 누름 = 상태 레이어.
-                    let clickable = *is_syntax
-                        || matches!(
-                            *id,
-                            "tx" | "define" | "perf" | "license" | "mem" | "autosave"
-                        );
-                    if clickable {
-                        let pressed = (*id == "mem" && self.mem_pressed)
-                            || (*id == "autosave" && self.autosave_pressed);
-                        if pressed {
-                            dc.state_layer(r, th.text, nexa_ctl::tokens::State::Pressed);
-                        } else if self.pointer.is_some_and(|p| r.contains(p)) {
-                            dc.fill_rect_alpha(r, th.sel_bg, 0.6);
-                        }
-                    }
-                    let ty = dc.text_center_y(sy, px(24.0, s));
-                    dc.text(
-                        xr + reserve,
-                        ty,
-                        r,
-                        text,
-                        if *is_syntax { th.text } else { th.text_dim },
-                    );
-                    // 클릭 가능한 구문 계열 4개(구문 · 들여쓰기 · 줄끝 · 인코딩) — 순서가 바뀌어도 id로 맞춘다.
-                    match *id {
-                        "syntax" => self.status_syntax_rect = r,
-                        "indent" => self.status_tab_rect = r,
-                        "eol" => self.status_eol_rect = r,
-                        "enc" => self.status_enc_rect = r,
-                        _ => {}
-                    }
-                    xr -= gap;
-                    dc.fill_rect(
-                        Rect::new(xr + gap / 2, sy + px(5.0, s), 1, px(14.0, s)),
-                        th.border,
-                    );
-                }
-                // 왼쪽 상태 문구는 세그먼트 앞에서 잘라 겹치지 않게(09-16 캡처: 긴 타이밍 문구가 세그먼트 위로 지나갔다).
-                dc.select_font(FontSlot::Base, false);
-                let left_w = (xr - px(8.0, s) - px(4.0, s)).max(0);
-                // 서버 유형 칩(상태줄 맨 앞 · 3자리 약어 · 운영 = 위험색 · 테스트 = 경고색 · 개발 = 강조색 · 없음 = 흐림) — 지금 탭의
-                //   세션이 붙어 있을 때만. 설정 `statusbar.env_badge`(사용자 10-08) = 켬이면 **유형과 무관하게 늘** · 끔이면 늘 숨김
-                //   (종전 = PRD·TST만). 세션에서 임시로 바꾼 유형 = 외곽선 칩(프로필 값 = 채운 칩 · 사용자 10-01).
-                let env_chip = (self.sess.connected && self.settings.flag("statusbar.env_badge"))
-                    .then(|| {
-                        let env = self.sess.spec.as_ref().and_then(|sp| sp.env);
-                        match env {
-                            Some(e @ nsql_script::ConnEnv::Prod) => (e.abbr(), th.danger),
-                            Some(e @ nsql_script::ConnEnv::Test) => (e.abbr(), th.warn),
-                            Some(e @ nsql_script::ConnEnv::Dev) => (e.abbr(), th.accent),
-                            None => (nsql_script::connect::ENV_NONE_ABBR, th.text_dim),
-                        }
-                    });
-                let mut lx = px(8.0, s);
-                if let Some((label, color)) = env_chip {
-                    let cw = dc.text_width(label) + px(12.0, s);
-                    let chip = Rect::new(lx, sy + px(4.0, s), cw, px(16.0, s));
-                    let cy = dc.text_center_y(chip.y, chip.h);
-                    if self.sess.env_temp {
-                        dc.stroke_round_rect(chip, px(3.0, s), color, 1.0);
-                        dc.text(chip.x + px(6.0, s), cy, chip, label, color);
-                    } else {
-                        dc.fill_round_rect(chip, px(3.0, s), color);
-                        dc.text(chip.x + px(6.0, s), cy, chip, label, th.panel_bg);
-                    }
-                    lx += cw + px(6.0, s);
-                }
-                dc.text(
-                    lx,
-                    ty,
-                    Rect::new(0, sy, px(8.0, s) + left_w, px(24.0, s)),
-                    &left_text,
-                    th.text_dim,
-                );
-            }
+            // ★ 221차(T-248 ④): 세그먼트 메서드가 함께 보는 값(표면 빌림 전 계산분 + 프레임 수치).
+            let env = PaintEnv {
+                mem_txt,
+                autosave_dirty,
+                view_mode,
+                objlink_tip,
+                objlink_buttons,
+                objlink_hot,
+                sig_tip,
+                diff_tab,
+                ed_rect,
+                zoom_style,
+                define_txt,
+                define_on,
+                win,
+                size,
+                s,
+                wi,
+                hi,
+                caret_on,
+                th,
+                ui_px,
+                mono_px,
+                grid_px,
+            };
+            self.paint_seg_chrome(&mut gfx, &env);
             mark(&mut t_sec, &mut marks); // 0 = 크롬(탭·툴바·상태줄)
-                                          // ── 고정폭 층(편집기·그리드)
-            {
-                let prefs = FontPrefs::with_base(mono_px);
-                let view_key = self.editors.active_view().map(str::to_string);
-                match view_key
-                    .as_ref()
-                    .and_then(|k| self.ext_details.get(k).cloned())
-                {
-                    // ★ 뷰 탭(확장 상세) = 편집기 자리에 전용 페이지를 UI 글꼴로 그린다(글 편집기는 그리지 않는다).
-                    Some(detail) => {
-                        let vprefs = FontPrefs {
-                            base: SlotFont {
-                                size: ui_px,
-                                bold: false,
-                                italic: false,
-                            },
-                            message: SlotFont {
-                                size: ui_px * 1.7,
-                                bold: true,
-                                italic: false,
-                            },
-                            ..FontPrefs::default()
-                        };
-                        let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(vprefs);
-                        if view_key.as_deref() != Some(self.ext_view_key.as_str()) {
-                            self.ext_view_key = view_key.unwrap_or_default();
-                            self.ext_view.reset();
-                        }
-                        self.ext_view.set_bounds(self.editors.editor_bounds(), s);
-                        self.ext_view.paint(&mut dc, &th, &detail);
-                    }
-                    // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).
-                    None if diff_tab => {
-                        let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
-                            .with_fonts(prefs)
-                            .with_caret_on(caret_on);
-                        self.diff_view.set_bounds(self.editors.editor_bounds(), s);
-                        self.diff_view.paint(&mut dc, &th);
-                    }
-                    None => {
-                        let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
-                            .with_fonts(prefs)
-                            .with_caret_on(caret_on);
-                        self.editors.paint_bodies(&mut dc, &th);
-                    }
-                }
-            }
-            // ★ 객체 상세 본문(읽기 전용 텍스트박스 · docs/86) — 글꼴·크기 = **객체 탐색기와 같게**(UI 글꼴 · `explorer.font_size` ·
-            //   사용자 09-28 "객체 상세 패널의 글꼴/크기를 객체 탐색기와 일치시켜" · 종전 = 편집기 고정폭).
-            if self.objdetail.is_visible() && !self.objdetail.is_collapsed() {
-                let exp_px = match self.settings.font_px("explorer.font_size") {
-                    e if e <= 0.0 => self.settings.font_px("ui.menu_font_size"),
-                    e => e,
-                };
-                let prefs = FontPrefs::with_base(exp_px);
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.objdetail.paint_body(&mut dc, &th);
-            }
+            self.paint_seg_editor(&mut gfx, &env);
             mark(&mut t_sec, &mut marks); // 1 = 편집기
-                                          // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
-            {
-                let prefs = FontPrefs::with_base(grid_px);
-                let gf: &Font = self.grid_font.as_ref().unwrap_or(&self.ui_font);
-                // 행번호는 고정폭 슬롯(편집기 고정폭 얼굴 · 사용자 09-17) — 자릿수 폭이 흔들리지 않게.
-                let fonts = FontSet {
-                    mono: Some(&self.mono_font),
-                    ..FontSet::single(gf)
-                };
-                let mut dc = RasterCtx::with_font_set(&mut gfx, fonts, s).with_fonts(prefs);
-                // 결과 탭 줄이 바로 위면 그리드의 위 경계선을 끈다(탭 줄 아래선 1px만 · 사용자 09-22).
-                let bar = self.panel.bar_visible();
-                self.grid.set_top_border(!bar);
-                self.grid.set_focused(self.focus == Focus::Grid);
-                if !view_mode {
-                    // ★ Output 탭이 활성이면 그 자리에 Output(그리드·결과 도구줄은 그리지 않는다 · 09-30).
-                    let gb = self.grid.bounds;
-                    let focused = self.focus == Focus::Grid;
-                    if let Some(o) = self.panel.output_active_mut() {
-                        o.set_bounds(gb, s);
-                        o.set_focused(focused);
-                        o.paint(&mut dc, &th);
-                    } else {
-                        self.grid.set_cond_host_paint(true);
-                        self.grid.paint(&mut dc, &th, s);
-                        drop(dc);
-                        // ★ 조건 바 = 편집기와 같은 **고정폭 얼굴**이되 크기는 **그리드 결과와 같게**(`grid.font_size` · 사용자 10-07
-                        //   "폰트가 커졌어 · 그리드 결과와 동일한 크기로" = 앞선 "편집기 줄 간격 일치"는 얼굴·줄 높이(20×배율 공통)만 따른다).
-                        let prefs = FontPrefs::with_base(grid_px);
-                        let fonts = FontSet {
-                            mono: Some(&self.mono_font),
-                            ..FontSet::single(&self.mono_font)
-                        };
-                        let mut dc = RasterCtx::with_font_set(&mut gfx, fonts, s).with_fonts(prefs);
-                        self.grid.paint_cond(&mut dc, &th, s);
-                    }
-                }
-            }
+            self.paint_seg_grid(&mut gfx, &env);
             mark(&mut t_sec, &mut marks); // 2 = 그리드
             if let Some((lines, dur)) = self.grid.take_text_report() {
                 dlog!(self, LogLayer::Load, LogLevel::Timing, {
@@ -568,207 +177,9 @@ impl App {
                     .elapsed(render)
                 });
             }
-            // ── 최상위 카드(탭 툴팁 · UI 글꼴)
-            {
-                let prefs = FontPrefs::with_base(ui_px);
-                // In selection 토글 = 편집기에 선택이 있거나 이미 범위가 잡혀 있을 때만(사용자 09-17).
-                let sel_ok =
-                    self.find_scope.is_some() || self.editors.selection_summary().is_some();
-                self.find.set_selection_available(sel_ok);
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.find.paint(&mut dc, &th);
-                // 결과 도구줄 상태 글자 = 상태줄과 같은 UI 글꼴·크기(사용자 09-16).
-                if !view_mode {
-                    self.grid.paint_footer_text(&mut dc, &th);
-                }
-                // 미저장 탭의 "저장:" 줄 = 지금 열린 프로젝트 파일(복원·자동 저장 경로에서도 맞게 · 값 비교라 비용 0 · 사용자 10-07).
-                self.editors
-                    .set_tip_saved_fallback(self.project.path.clone());
-                self.editors.paint_tooltip(&mut dc, &th, wi);
-            }
-            // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
-            {
-                let exp_px = match self.settings.font_px("explorer.font_size") {
-                    e if e <= 0.0 => self.settings.font_px("ui.menu_font_size"),
-                    e => e,
-                };
-                let prefs = FontPrefs::with_base(exp_px);
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.act_bar.paint(&mut dc, &th);
-                self.explorer.set_font_px(exp_px);
-                self.explorer.paint(&mut dc, &th);
-                if self.objdetail.is_visible() {
-                    if !self.objdetail.is_collapsed() {
-                        self.split_d.paint(&mut dc, &th);
-                    }
-                    self.objdetail.paint_header(&mut dc, &th, Instant::now());
-                }
-                self.search.paint(&mut dc, &th);
-                self.project_panel.paint(&mut dc, &th);
-                self.bm_panel.paint(&mut dc, &th);
-                self.outline_panel.paint(&mut dc, &th);
-                self.ext_panel.paint(&mut dc, &th);
-            }
-            // ★ 프로젝트 탐색기 플래시(사용자 10-07) — 자체 글꼴(`ui.flash_font_face` 비면 UI 글꼴 = 시스템 기본 · 크기
-            //   `ui.flash_font_size` 12pt) · 패널 다음 층 · 팝업 아래.
-            if self.project_panel.flash_active() {
-                // 모양·즉시 모드는 그리기 직전에 설정에서(향상 모드 토글·모양 변경이 바로 반영 · 비용 = 문자열 조회 2).
-                self.project_panel.set_flash_style(
-                    self.settings.get("ui.flash_shape").unwrap_or("rounded"),
-                    self.settings.boost_on(),
-                );
-                let fpx = self.settings.font_px("ui.flash_font_size");
-                let prefs = FontPrefs::with_base(if fpx > 0.0 { fpx } else { ui_px });
-                let font = self.flash_font.as_ref().unwrap_or(&self.ui_font);
-                let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
-                self.project_panel.paint_flash(&mut dc, &th);
-            }
+            self.paint_seg_cards_explorer(&mut gfx, &env);
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
-                                          // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
-            {
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s);
-                self.split_v.paint(&mut dc, &th);
-                if !view_mode {
-                    self.split_h.paint(&mut dc, &th);
-                }
-            }
-            // ── 툴바 툴팁(UI 글꼴) — 툴바 패스에서 그리면 그 뒤에 칠하는 탐색기·편집기가 덮어 툴바 아래 2~3px 띠만
-            //    남았다(09-16 Windows 캡처). nexa-ctl `Toolbar::paint_tooltip` 규약대로 팝업 층에서.
-            {
-                let prefs = FontPrefs::with_base(ui_px);
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.tool_dock.paint_tooltip(&mut dc, &th);
-                // 툴바 그룹 드래그 고스트 — 편집기 위까지 나가므로 팝업 층에.
-                self.tool_dock.paint_drag_overlay(&mut dc, &th);
-                self.find.paint_tooltip(&mut dc, &th);
-                self.search.paint_tooltip(&mut dc, &th);
-                self.project_panel.paint_tooltip(&mut dc, &th);
-                self.project_panel.paint_popup(&mut dc, &th);
-                self.bm_panel.paint_popup(&mut dc, &th);
-                self.outline_panel.paint_popup(&mut dc, &th);
-                self.ext_panel.paint_popup(&mut dc, &th);
-                self.objdetail.paint_popup(&mut dc, &th);
-                // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
-                //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙). 상태 메뉴(탭 닫기 확인 등)는 더 뒤 —
-                //   여기서 그리면 외부 변경 띠·토스트가 메뉴를 덮었다(사용자 10-07 캡처) → 팔레트 직전으로.
-                // ★ Ctrl/머무름 객체 링크 설명 카드(툴팁 + 동작 버튼 · T-256/T-179) + 메뉴(팝업 층).
-                self.objlinks.card = app::objlink::paint_hover_card(
-                    &mut dc,
-                    &th,
-                    objlink_tip.as_ref(),
-                    objlink_hot,
-                    &objlink_buttons,
-                    self.pointer,
-                    self.objlinks.card_pressed,
-                    self.settings
-                        .get("objlink.tooltip_pos")
-                        .unwrap_or("top_right"),
-                    self.scale,
-                    Rect::new(0, 0, size.width as i32, size.height as i32),
-                    ed_rect,
-                );
-                self.objlink_menu.paint(&mut dc, &th);
-                // ★ 시그니처 카드(T-178): 캐럿 **위**(완성 팝업은 아래라 겹치지 않는다) · 같은 툴팁 부품 · 표면 안으로.
-                app::objlink::paint_tip(
-                    &mut dc,
-                    &th,
-                    sig_tip.as_ref(),
-                    "above",
-                    self.scale,
-                    Rect::new(0, 0, size.width as i32, size.height as i32),
-                    ed_rect,
-                );
-                // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76) + 상세 카드(옆 · 같은 높이 · 09-24).
-                self.intel.menu.paint(&mut dc, &th);
-                if self.intel.is_open() && self.intel.cfg().detail_card {
-                    if let Some(target) = self.intel.card_target() {
-                        let spec = self.sess.spec.clone();
-                        let (names, snap) = self.explorer.meta_view(spec.as_ref());
-                        if let Some(card) =
-                            intel_card::build(&target, names, &snap, Some(self.sess.dialect))
-                        {
-                            intel_card::paint(
-                                &mut dc,
-                                &th,
-                                self.intel.menu.bounds(),
-                                &card,
-                                self.intel.cfg(),
-                                s,
-                                (wi, hi),
-                            );
-                        }
-                    }
-                }
-                // ★ 토스트·실행 카드는 팝업(우클릭 메뉴·팔레트) **아래 층**(팝업 = 맨 마지막 규칙 · 사용자 09-22 "우클릭 메뉴가 뒤로 숨음").
-                // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
-                let eb = self.editors.editor_bounds();
-                let (top, tx, ty) = if eb.w > 0 && eb.h > 0 {
-                    (eb.y, eb.right(), eb.bottom())
-                } else {
-                    (0, wi, hi - px(24.0, s))
-                };
-                // 실행 카드 누적(아래→위 · 편집기 영역을 넘으면 휠 스크롤 · 사용자 09-22).
-                let ty = self.run_toast.paint(&mut dc, &th, top, tx, ty, s);
-                let ty = self.tx_warn.paint(&mut dc, &th, tx, ty, s);
-                self.ext_banner.set_bounds(self.editors.banner_rect());
-                self.ext_banner.paint(&mut dc, &th, s);
-                self.toasts.paint(&mut dc, &th, tx, ty, s);
-                // 토스트·카드가 바꾼 글꼴 슬롯(Status·굵게)을 되돌린다 — 팝업은 호출자의 글꼴을 쓴다(09-22 메뉴 글자 커짐).
-                dc.select_font(FontSlot::Base, false);
-                // ★ 글꼴 크기 HUD(사용자 10-07) — 바뀐 영역 안 캡슐 · 팝업 아래 층.
-                if self.zoom_hud.visible() {
-                    self.zoom_hud
-                        .paint(&mut dc, self.zoom_hud_area, s, &zoom_style);
-                }
-                if !view_mode {
-                    // ★ 열 끌기 → 편집 탭 놓을 자리(사용자 10-12): 글자 인덱스의 캐럿 선(강조색 · 줄 높이) — 칩은 그리드 overlays.
-                    // 글 상자(패널 필터·찾기 바) 위 = 상자 테두리를 강조색으로(10-12).
-                    if let Some(r) = self.col_drop_box {
-                        dc.stroke_round_rect(r, 3, th.accent, 2.0);
-                    }
-                    if let Some(idx) = self.col_drop_hint {
-                        let tb = self.editors.cur();
-                        if let Some(p) = tb.point_at(idx) {
-                            // `point_at`의 y = 줄 **바닥**(top + line_h · 카드 앵커 규칙) → 선은 그 위로 한 줄(협업 V1 ⓑ 관찰).
-                            let lh = tb.line_h().max(2);
-                            dc.fill_rect(Rect::new(p.x - 1, p.y - lh, 2, lh), th.accent);
-                        }
-                    }
-                    self.grid.paint_overlays(&mut dc, &th);
-                    self.panel.paint_popups(&mut dc, &th);
-                }
-                // 탐색기 노드 끌기 칩(팝업 층 · 10-15).
-                self.explorer.paint_drag_chip(&mut dc, &th);
-                self.editors.paint_popups(&mut dc, &th);
-                self.ext_view.paint_popup(&mut dc, &th);
-                if diff_tab {
-                    self.diff_view.paint_popup(&mut dc, &th);
-                }
-                self.panel.output_paint_popup(&mut dc, &th);
-                self.explorer.paint_popups(&mut dc, &th);
-                // 상태 메뉴(탭 닫기 확인 · 상태줄 칸 메뉴) = 팝업 층 맨 뒤(외부 변경 띠·토스트·카드 위 · 사용자 10-07).
-                self.status_menu.paint(&mut dc, &th);
-                self.palette.paint(&mut dc, &th);
-                let eb = self.editors.editor_bounds();
-                // ★ 파일 적재 진행 막 — 편집 영역 가운데 · 맨 위 층(적재 중에는 입력도 받지 않는다).
-                let delay =
-                    Duration::from_millis(self.settings.int("file.load_progress_ms").max(0) as u64);
-                let active_tab = self.editors.active_id();
-                Self::paint_file_load(&mut self.file_loads, active_tab, delay, eb, &mut dc, &th, s);
-            }
-            // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
-            {
-                let prefs = FontPrefs {
-                    base: SlotFont {
-                        size: self.settings.font_px("ui.menu_font_size"),
-                        bold: false,
-                        italic: false,
-                    },
-                    ..FontPrefs::default()
-                };
-                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.menubar.paint(&mut dc, &th);
-            }
+            self.paint_seg_overlays(&mut gfx, &env);
         }
         mark(&mut t_sec, &mut marks); // 4 = 스플리터·툴팁·메뉴바
                                       // ★ 헤드리스 캡처(D-436 · 기동 명령 `capture:<png>`): 그린 프레임버퍼를 present 전에 PNG로(보이지 않는 창도 같은 픽셀).
@@ -796,6 +207,729 @@ impl App {
                     path.join(" · ")
                 );
             }
+        }
+    }
+
+    /// `paint`의 세그먼트 — 크롬(탭 바 · 패널 바 · 툴바 도크 · 상태줄 · UI 글꼴)(221차 T-248 ④ 분해 · 본문 그대로 · 공통 값 = [`PaintEnv`]).
+    fn paint_seg_chrome(&mut self, gfx: &mut Surface<'_>, env: &PaintEnv) {
+        let PaintEnv {
+            s,
+            wi,
+            hi,
+            caret_on,
+            th,
+            ui_px,
+            view_mode,
+            autosave_dirty,
+            define_on,
+            ..
+        } = *env;
+        // ── UI 층(한글 UI 본)
+        {
+            let prefs = FontPrefs::with_base(ui_px);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                .with_fonts(prefs)
+                .with_caret_on(caret_on);
+            dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
+            self.editors.paint_tabs(&mut dc, &th);
+            if !view_mode {
+                self.panel.paint_bar(&mut dc, &th);
+            }
+            // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
+            dc.fill_rect(self.tool_dock.bounds(), th.chrome_bg);
+            self.tool_dock.paint(&mut dc, &th);
+            // ★ 글자 항목(탭 연결·작업 단위)의 폭이 바뀌어 그룹 사각형이 낡았으면 다시 배치하고 한 번 더 그린다(⑲).
+            let mut dock_inv = Invalidations::default();
+            if self.tool_dock.relayout_if_stale(&mut dock_inv) {
+                env.win.request_redraw();
+            }
+            // 툴바 툴팁은 탐색기·편집기가 덮지 못하게 최상위 층(메뉴바 직전)에서 그린다(09-16 사용자 캡처: 툴바 아래 검은 띠).
+            dc.fill_rect(self.menubar.bounds(), th.chrome_bg);
+            dc.fill_rect(
+                Rect::new(0, self.tool_dock.bounds().bottom() - 1, wi, 1),
+                th.border,
+            );
+            // 메뉴바(드롭다운 포함)는 편집기·그리드·탐색기 뒤인 최상위 패스에서 그린다(09-15 사용자 캡처: 풀다운이 뒤로 가림).
+            // 상태줄
+            let sy = hi - px(24.0, s);
+            dc.fill_rect(Rect::new(0, sy, wi, px(24.0, s)), th.chrome_bg);
+            dc.fill_rect(Rect::new(0, sy, wi, 1), th.border);
+            dc.select_font(FontSlot::Base, false);
+            let busy = if self.sess.blocked() { "⏳ " } else { "" };
+            let ty = dc.text_center_y(sy, px(24.0, s));
+            // 전용 세션 탭 = 상태줄 앞에 "전용: 접속 설명"(Golden의 Private Session 줄 · docs/52 §7).
+            let broken = if self.sess.broken {
+                format!("[{}] ", t(Msg::StSessBrokenTag))
+            } else {
+                String::new()
+            };
+            // ★ 접속 설명이 없는 전용 세션(연결 없는 안내 탭 · "(앞부분)" · 개별 모드 접속 전)은 접두를 붙이지 않는다(사용자 10-13 A안 ·
+            //   종전 "[전용: -]" = 정보 없음).
+            let left_text = if self.sess.is_private() && !self.sess.desc.is_empty() {
+                format!(
+                    "{busy}{broken}[{}: {}] {}",
+                    t(Msg::StSessPrivate),
+                    self.sess.desc.as_str(),
+                    self.sess.status
+                )
+            } else {
+                format!("{busy}{broken}{}", self.sess.status)
+            };
+            // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
+            let (ln, col) = self.editors.caret_line_col();
+            let mut segs: Vec<(&'static str, (String, bool))> = Vec::new();
+            // 트랜잭션 모드(자동/수동 · 수동에 미커밋 변경이 있으면 ●).
+            // 트랜잭션 세그먼트(DR-30): Auto / Manual / "Manual ● n pending · since hh:mm" · 클릭 = 팝업.
+            // ★ 자동 커밋 모드라도 운영 보류(D-295)로 대기가 있으면 건수·시각을 보인다(10-16 사용자 "자동 모드에서 카운트가 안 보임").
+            let auto = self.settings.flag("session.autocommit");
+            let tx = if auto && self.sess.tx_pending.is_empty() {
+                t(Msg::StTxAuto).to_string()
+            } else if let Some(first) = self.sess.tx_pending.first() {
+                let base = tf(
+                    if auto {
+                        Msg::StTxPendingAuto
+                    } else {
+                        Msg::StTxPending
+                    },
+                    &[&self.sess.tx_pending.len().to_string(), &first.when],
+                );
+                // 내 미커밋이 남을 막고 있으면 상태줄에도(docs/56 L3).
+                if self.sess.tx_blockers > 0 {
+                    format!(
+                        "{base} · {}",
+                        tf(Msg::StatusTxBlocking, &[&self.sess.tx_blockers.to_string()])
+                    )
+                } else {
+                    base
+                }
+            } else {
+                t(Msg::StTxManual).to_string()
+            };
+            segs.push(("tx", (tx, false)));
+            // ★ `&` 치환 모드 세그먼트(D-141 상태줄 토글 · 10-30): `& auto|on|off` · off = 흐림 · 클릭 = 팝업.
+            segs.push(("define", (env.define_txt.clone(), define_on)));
+            // ★ T-90 잔여(10-30): 향상 모드 ⚡ — 켜져 있을 때만(클릭 = 설정 창 · 39 §4-6).
+            if self.settings.boost_on() {
+                segs.push(("perf", ("⚡".to_string(), false)));
+            }
+            // 메모리 총량 세그먼트(docs/80 · `mem.statusbar` · 클릭 = 메모리 맵 창) — 조회는 5 s에 한 번, 그릴 때만.
+            if let Some(txt) = env.mem_txt.clone() {
+                segs.push(("mem", (txt, false)));
+            }
+            // (접속 이름 세그먼트는 09-28 사용자 요청으로 뺐다 — 접속은 툴바 플러그 배지·탭 표식·세션 창이 보여 준다.)
+            // 큰 파일 모드 · 읽기 전용 표식(docs/59) — 이 탭에서 일부 기능이 꺼져 있음을 늘 보이게.
+            let (large_level, large_forced) = self.editors.active_large();
+            if large_level > 0 && !large_forced {
+                segs.push((
+                    "large",
+                    (tf(Msg::StLargeSeg, &[&large_level.to_string()]), false),
+                ));
+            }
+            if self.editors.active_read_only() {
+                segs.push(("readonly", (t(Msg::StReadOnlySeg).to_string(), false)));
+            }
+            // 북마크 `이 문서/전체`(docs/69 §6-2 · `bookmark.statusbar`).
+            if self.bookmarks.enabled && self.settings.flag("bookmark.statusbar") {
+                let (here, all) = self
+                    .bookmarks
+                    .counts_for(&self.editors, self.editors.active());
+                if all > 0 {
+                    segs.push((
+                        "bookmark",
+                        (
+                            tf(Msg::StBookmarkSeg, &[&here.to_string(), &all.to_string()]),
+                            false,
+                        ),
+                    ));
+                }
+            }
+            let nsel = self.editors.selection_count();
+            if self.focus == Focus::Grid
+                && self
+                    .grid
+                    .selection_summary()
+                    .is_some_and(|(r, c, _)| r * c > 1)
+            {
+                let (r, c, _) = self.grid.selection_summary().unwrap_or((0, 0, 0));
+                segs.push((
+                    "pos",
+                    (tf(Msg::StGridSel, &[&r.to_string(), &c.to_string()]), false),
+                ));
+            } else if nsel > 1 {
+                // 열 모드·다중 커서 = 선택 영역 수(Sublime "5 selection regions").
+                segs.push(("pos", (tf(Msg::StSelections, &[&nsel.to_string()]), false)));
+            } else if let Some((l, c)) = self.editors.selection_summary() {
+                // 일반 선택 = 줄 수·문자 수(Sublime "6 lines, 90 characters selected").
+                segs.push((
+                    "pos",
+                    (
+                        tf(Msg::StSelected, &[&l.to_string(), &c.to_string()]),
+                        false,
+                    ),
+                ));
+            } else {
+                segs.push((
+                    "pos",
+                    (tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false),
+                ));
+            }
+            // 필터가 있으면 "n / N행"(T-181) · 아니면 마지막 실행 행 수.
+            if let Some((shown, total)) = self.grid.filter_summary() {
+                segs.push((
+                    "rows",
+                    (
+                        tf(
+                            Msg::StRowsFiltered,
+                            &[&shown.to_string(), &total.to_string()],
+                        ),
+                        false,
+                    ),
+                ));
+            } else if let Some(n) = self.sess.last_rows {
+                segs.push(("rows", (tf(Msg::StRowsShort, &[&n.to_string()]), false)));
+            }
+            if let Some(secs) = self.sess.last_secs {
+                segs.push(("time", (format!("{secs:.3}s"), false)));
+            }
+            // 들여쓰기 세그먼트(Sublime "Tab Size: 4"/"Spaces: 4" · 구문 왼쪽 · 클릭 = 팝업 · 사용자 09-15).
+            let (tsz, ispaces) = self.editors.indent();
+            let ts = tsz.to_string();
+            let indent_seg = if ispaces {
+                tf(Msg::StSpaces, &[&ts])
+            } else {
+                tf(Msg::StTabSize, &[&ts])
+            };
+            // ★ 라이선스 배지(docs/23 §4-4 · D-44: 무료 = "non-commercial use only" 상시) — 클릭 = 라이선스 창.
+            // (라이선스 배지는 맨 오른쪽 — 아래 구문 뒤에 넣는다 · 사용자 09-28.)
+            // ★ 프로젝트 자동 저장 표식(사용자 09-28 · `statusbar.autosave`): 켜짐(주기) / 꺼짐 · 클릭 = 자동 저장 폴더.
+            let autosave_seg = self.settings.flag("statusbar.autosave");
+            // (`project_autosave_on`과 같은 판정 — 여기서는 `surface` 차용 때문에 필드 단위로 푼다.)
+            // 표시 = **설정 값**(프로젝트가 없어도 · 사용자 09-28 "30초 설정인데 끔으로 보인다").
+            let autosave_on = self.settings.flag("project.autosave")
+                && (!self.settings.flag("license.gates")
+                    || self
+                        .licensing
+                        .check(nsql_license::Feature::ProjectRestore)
+                        .is_allowed());
+            let autosave_secs = self
+                .settings
+                .int("project.autosave_secs")
+                .max(5)
+                .to_string();
+            // ★ 변경이 있으면 `*` 접두(저장되면 사라짐) — 폭은 늘 `*` 포함으로 재어 들락거리지 않는다(사용자 09-28).
+            let autosave_base = if autosave_on {
+                tf(Msg::StAutosaveOn, &[&autosave_secs])
+            } else {
+                t(Msg::StAutosaveOff).to_string()
+            };
+            if autosave_seg {
+                let txt = if autosave_dirty {
+                    format!("*{autosave_base}")
+                } else {
+                    autosave_base
+                };
+                segs.push(("autosave", (txt, false)));
+            }
+            // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
+            if self.settings.flag("statusbar.git") {
+                let path = self.editors.active_path();
+                let dir = path
+                    .as_ref()
+                    .and_then(|p| p.parent().map(Path::to_path_buf));
+                self.git.set_dir(dir);
+                // ★ T-110 2-3(10-30): 감시 파일 = 활성 탭(HEAD 본문 → 미니맵 git 변경 줄 · 켜져 있을 때만 받는다).
+                self.git
+                    .set_file(if self.settings.flag("editor.minimap_git") {
+                        path
+                    } else {
+                        None
+                    });
+                self.git.refresh(false);
+                if let Some(info) = self.git.info() {
+                    segs.push((
+                        "git",
+                        (format!("{} ({})", info.branch, info.changed), false),
+                    ));
+                }
+            }
+            // 인코딩 세그먼트(클릭 = 저장 인코딩 / 다시 열기 팝업 · 사용자 09-16).
+            segs.push(("enc", (enc::short(&self.editors.active_encoding()), true)));
+            // 줄끝 세그먼트(VS Code/Sublime식 · 클릭 = LF/CRLF 팝업 · docs/38 · 사용자 09-16).
+            segs.push(("eol", (self.editors.active_eol().label().to_string(), true)));
+            segs.push(("indent", (indent_seg, true)));
+            segs.push(("syntax", (self.editors.syntax_name(), true)));
+            segs.push(("license", (Self::license_badge_of(&self.licensing), false)));
+            // ★ 순서·표시 = 설정 `statusbar.layout`(사용자 10-04 · 빈 값 = 위에서 만든 순서 그대로 · 라이선스 배지는 숨김 잠금).
+            let segs = crate::statusbar::arrange(
+                self.settings.get(crate::statusbar::KEY).unwrap_or(""),
+                segs,
+            );
+            let gap = px(12.0, s);
+            let mut xr = wi - px(8.0, s);
+            self.status_syntax_rect = Rect::new(0, 0, 0, 0);
+            self.status_tab_rect = Rect::new(0, 0, 0, 0);
+            self.status_eol_rect = Rect::new(0, 0, 0, 0);
+            self.status_enc_rect = Rect::new(0, 0, 0, 0);
+            self.status_tx_rect = Rect::new(0, 0, 0, 0);
+            self.status_define_rect = Rect::new(0, 0, 0, 0);
+            self.status_perf_rect = Rect::new(0, 0, 0, 0);
+            self.status_mem_rect = Rect::new(0, 0, 0, 0);
+            self.status_lic_rect = Rect::new(0, 0, 0, 0);
+            self.status_autosave_rect = Rect::new(0, 0, 0, 0);
+            self.status_seg_rects.clear();
+            self.status_bar_rect = Rect::new(0, sy, wi, px(24.0, s));
+            let star_w = dc.text_width("*");
+            for (id, (text, is_syntax)) in segs.iter().rev() {
+                // 자동 저장 항목은 `*` 자리를 늘 확보(글이 없으면 그만큼 오른쪽에 붙여 그린다).
+                let reserve = if *id == "autosave" && !autosave_dirty {
+                    star_w
+                } else {
+                    0
+                };
+                let tw = dc.text_width(text) + reserve;
+                xr -= tw;
+                let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
+                self.status_seg_rects.push((*id, r));
+                if *id == "tx" {
+                    self.status_tx_rect = r;
+                }
+                if *id == "define" {
+                    self.status_define_rect = r;
+                }
+                if *id == "perf" {
+                    self.status_perf_rect = r;
+                }
+                if *id == "license" {
+                    self.status_lic_rect = r;
+                }
+                if *id == "autosave" {
+                    self.status_autosave_rect = r;
+                }
+                if *id == "mem" {
+                    self.status_mem_rect = r;
+                }
+                // ★ 클릭되는 항목 전부 = 버튼처럼(사용자 09-28): hover = 선택색 · 누름 = 상태 레이어.
+                let clickable = *is_syntax
+                    || matches!(
+                        *id,
+                        "tx" | "define" | "perf" | "license" | "mem" | "autosave"
+                    );
+                if clickable {
+                    let pressed = (*id == "mem" && self.mem_pressed)
+                        || (*id == "autosave" && self.autosave_pressed);
+                    if pressed {
+                        dc.state_layer(r, th.text, nexa_ctl::tokens::State::Pressed);
+                    } else if self.pointer.is_some_and(|p| r.contains(p)) {
+                        dc.fill_rect_alpha(r, th.sel_bg, 0.6);
+                    }
+                }
+                let ty = dc.text_center_y(sy, px(24.0, s));
+                dc.text(
+                    xr + reserve,
+                    ty,
+                    r,
+                    text,
+                    if *is_syntax { th.text } else { th.text_dim },
+                );
+                // 클릭 가능한 구문 계열 4개(구문 · 들여쓰기 · 줄끝 · 인코딩) — 순서가 바뀌어도 id로 맞춘다.
+                match *id {
+                    "syntax" => self.status_syntax_rect = r,
+                    "indent" => self.status_tab_rect = r,
+                    "eol" => self.status_eol_rect = r,
+                    "enc" => self.status_enc_rect = r,
+                    _ => {}
+                }
+                xr -= gap;
+                dc.fill_rect(
+                    Rect::new(xr + gap / 2, sy + px(5.0, s), 1, px(14.0, s)),
+                    th.border,
+                );
+            }
+            // 왼쪽 상태 문구는 세그먼트 앞에서 잘라 겹치지 않게(09-16 캡처: 긴 타이밍 문구가 세그먼트 위로 지나갔다).
+            dc.select_font(FontSlot::Base, false);
+            let left_w = (xr - px(8.0, s) - px(4.0, s)).max(0);
+            // 서버 유형 칩(상태줄 맨 앞 · 3자리 약어 · 운영 = 위험색 · 테스트 = 경고색 · 개발 = 강조색 · 없음 = 흐림) — 지금 탭의
+            //   세션이 붙어 있을 때만. 설정 `statusbar.env_badge`(사용자 10-08) = 켬이면 **유형과 무관하게 늘** · 끔이면 늘 숨김
+            //   (종전 = PRD·TST만). 세션에서 임시로 바꾼 유형 = 외곽선 칩(프로필 값 = 채운 칩 · 사용자 10-01).
+            let env_chip =
+                (self.sess.connected && self.settings.flag("statusbar.env_badge")).then(|| {
+                    let env = self.sess.spec.as_ref().and_then(|sp| sp.env);
+                    match env {
+                        Some(e @ nsql_script::ConnEnv::Prod) => (e.abbr(), th.danger),
+                        Some(e @ nsql_script::ConnEnv::Test) => (e.abbr(), th.warn),
+                        Some(e @ nsql_script::ConnEnv::Dev) => (e.abbr(), th.accent),
+                        None => (nsql_script::connect::ENV_NONE_ABBR, th.text_dim),
+                    }
+                });
+            let mut lx = px(8.0, s);
+            if let Some((label, color)) = env_chip {
+                let cw = dc.text_width(label) + px(12.0, s);
+                let chip = Rect::new(lx, sy + px(4.0, s), cw, px(16.0, s));
+                let cy = dc.text_center_y(chip.y, chip.h);
+                if self.sess.env_temp {
+                    dc.stroke_round_rect(chip, px(3.0, s), color, 1.0);
+                    dc.text(chip.x + px(6.0, s), cy, chip, label, color);
+                } else {
+                    dc.fill_round_rect(chip, px(3.0, s), color);
+                    dc.text(chip.x + px(6.0, s), cy, chip, label, th.panel_bg);
+                }
+                lx += cw + px(6.0, s);
+            }
+            dc.text(
+                lx,
+                ty,
+                Rect::new(0, sy, px(8.0, s) + left_w, px(24.0, s)),
+                &left_text,
+                th.text_dim,
+            );
+        }
+    }
+
+    /// `paint`의 세그먼트 — 편집기(고정폭 · 뷰 탭 · 객체 상세 본문)(221차 T-248 ④ 분해 · 본문 그대로 · 공통 값 = [`PaintEnv`]).
+    fn paint_seg_editor(&mut self, gfx: &mut Surface<'_>, env: &PaintEnv) {
+        let PaintEnv {
+            s,
+            caret_on,
+            th,
+            ui_px,
+            mono_px,
+            diff_tab,
+            ..
+        } = *env;
+        // ── 고정폭 층(편집기·그리드)
+        {
+            let prefs = FontPrefs::with_base(mono_px);
+            let view_key = self.editors.active_view().map(str::to_string);
+            match view_key
+                .as_ref()
+                .and_then(|k| self.ext_details.get(k).cloned())
+            {
+                // ★ 뷰 탭(확장 상세) = 편집기 자리에 전용 페이지를 UI 글꼴로 그린다(글 편집기는 그리지 않는다).
+                Some(detail) => {
+                    let vprefs = FontPrefs {
+                        base: SlotFont {
+                            size: ui_px,
+                            bold: false,
+                            italic: false,
+                        },
+                        message: SlotFont {
+                            size: ui_px * 1.7,
+                            bold: true,
+                            italic: false,
+                        },
+                        ..FontPrefs::default()
+                    };
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(vprefs);
+                    if view_key.as_deref() != Some(self.ext_view_key.as_str()) {
+                        self.ext_view_key = view_key.unwrap_or_default();
+                        self.ext_view.reset();
+                    }
+                    self.ext_view.set_bounds(self.editors.editor_bounds(), s);
+                    self.ext_view.paint(&mut dc, &th, &detail);
+                }
+                // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).
+                None if diff_tab => {
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.mono_font, s)
+                        .with_fonts(prefs)
+                        .with_caret_on(caret_on);
+                    self.diff_view.set_bounds(self.editors.editor_bounds(), s);
+                    self.diff_view.paint(&mut dc, &th);
+                }
+                None => {
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.mono_font, s)
+                        .with_fonts(prefs)
+                        .with_caret_on(caret_on);
+                    self.editors.paint_bodies(&mut dc, &th);
+                }
+            }
+        }
+        // ★ 객체 상세 본문(읽기 전용 텍스트박스 · docs/86) — 글꼴·크기 = **객체 탐색기와 같게**(UI 글꼴 · `explorer.font_size` ·
+        //   사용자 09-28 "객체 상세 패널의 글꼴/크기를 객체 탐색기와 일치시켜" · 종전 = 편집기 고정폭).
+        if self.objdetail.is_visible() && !self.objdetail.is_collapsed() {
+            let exp_px = match self.settings.font_px("explorer.font_size") {
+                e if e <= 0.0 => self.settings.font_px("ui.menu_font_size"),
+                e => e,
+            };
+            let prefs = FontPrefs::with_base(exp_px);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            self.objdetail.paint_body(&mut dc, &th);
+        }
+    }
+
+    /// `paint`의 세그먼트 — 결과 그리드(자체 글꼴 크기)(221차 T-248 ④ 분해 · 본문 그대로 · 공통 값 = [`PaintEnv`]).
+    fn paint_seg_grid(&mut self, gfx: &mut Surface<'_>, env: &PaintEnv) {
+        let PaintEnv {
+            s,
+            th,
+            grid_px,
+            view_mode,
+            ..
+        } = *env;
+        // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
+        {
+            let prefs = FontPrefs::with_base(grid_px);
+            let gf: &Font = self.grid_font.as_ref().unwrap_or(&self.ui_font);
+            // 행번호는 고정폭 슬롯(편집기 고정폭 얼굴 · 사용자 09-17) — 자릿수 폭이 흔들리지 않게.
+            let fonts = FontSet {
+                mono: Some(&self.mono_font),
+                ..FontSet::single(gf)
+            };
+            let mut dc = RasterCtx::with_font_set(&mut *gfx, fonts, s).with_fonts(prefs);
+            // 결과 탭 줄이 바로 위면 그리드의 위 경계선을 끈다(탭 줄 아래선 1px만 · 사용자 09-22).
+            let bar = self.panel.bar_visible();
+            self.grid.set_top_border(!bar);
+            self.grid.set_focused(self.focus == Focus::Grid);
+            if !view_mode {
+                // ★ Output 탭이 활성이면 그 자리에 Output(그리드·결과 도구줄은 그리지 않는다 · 09-30).
+                let gb = self.grid.bounds;
+                let focused = self.focus == Focus::Grid;
+                if let Some(o) = self.panel.output_active_mut() {
+                    o.set_bounds(gb, s);
+                    o.set_focused(focused);
+                    o.paint(&mut dc, &th);
+                } else {
+                    self.grid.set_cond_host_paint(true);
+                    self.grid.paint(&mut dc, &th, s);
+                    drop(dc);
+                    // ★ 조건 바 = 편집기와 같은 **고정폭 얼굴**이되 크기는 **그리드 결과와 같게**(`grid.font_size` · 사용자 10-07
+                    //   "폰트가 커졌어 · 그리드 결과와 동일한 크기로" = 앞선 "편집기 줄 간격 일치"는 얼굴·줄 높이(20×배율 공통)만 따른다).
+                    let prefs = FontPrefs::with_base(grid_px);
+                    let fonts = FontSet {
+                        mono: Some(&self.mono_font),
+                        ..FontSet::single(&self.mono_font)
+                    };
+                    let mut dc = RasterCtx::with_font_set(&mut *gfx, fonts, s).with_fonts(prefs);
+                    self.grid.paint_cond(&mut dc, &th, s);
+                }
+            }
+        }
+    }
+
+    /// `paint`의 세그먼트 — 최상위 카드(탭 툴팁) + 오브젝트 탐색기(221차 T-248 ④ 분해 · 본문 그대로 · 공통 값 = [`PaintEnv`]).
+    fn paint_seg_cards_explorer(&mut self, gfx: &mut Surface<'_>, env: &PaintEnv) {
+        let PaintEnv {
+            s,
+            wi,
+            th,
+            ui_px,
+            view_mode,
+            ..
+        } = *env;
+        // ── 최상위 카드(탭 툴팁 · UI 글꼴)
+        {
+            let prefs = FontPrefs::with_base(ui_px);
+            // In selection 토글 = 편집기에 선택이 있거나 이미 범위가 잡혀 있을 때만(사용자 09-17).
+            let sel_ok = self.find_scope.is_some() || self.editors.selection_summary().is_some();
+            self.find.set_selection_available(sel_ok);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            self.find.paint(&mut dc, &th);
+            // 결과 도구줄 상태 글자 = 상태줄과 같은 UI 글꼴·크기(사용자 09-16).
+            if !view_mode {
+                self.grid.paint_footer_text(&mut dc, &th);
+            }
+            // 미저장 탭의 "저장:" 줄 = 지금 열린 프로젝트 파일(복원·자동 저장 경로에서도 맞게 · 값 비교라 비용 0 · 사용자 10-07).
+            self.editors
+                .set_tip_saved_fallback(self.project.path.clone());
+            self.editors.paint_tooltip(&mut dc, &th, wi);
+        }
+        // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
+        {
+            let exp_px = match self.settings.font_px("explorer.font_size") {
+                e if e <= 0.0 => self.settings.font_px("ui.menu_font_size"),
+                e => e,
+            };
+            let prefs = FontPrefs::with_base(exp_px);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            self.act_bar.paint(&mut dc, &th);
+            self.explorer.set_font_px(exp_px);
+            self.explorer.paint(&mut dc, &th);
+            if self.objdetail.is_visible() {
+                if !self.objdetail.is_collapsed() {
+                    self.split_d.paint(&mut dc, &th);
+                }
+                self.objdetail.paint_header(&mut dc, &th, Instant::now());
+            }
+            self.search.paint(&mut dc, &th);
+            self.project_panel.paint(&mut dc, &th);
+            self.bm_panel.paint(&mut dc, &th);
+            self.outline_panel.paint(&mut dc, &th);
+            self.ext_panel.paint(&mut dc, &th);
+        }
+        // ★ 프로젝트 탐색기 플래시(사용자 10-07) — 자체 글꼴(`ui.flash_font_face` 비면 UI 글꼴 = 시스템 기본 · 크기
+        //   `ui.flash_font_size` 12pt) · 패널 다음 층 · 팝업 아래.
+        if self.project_panel.flash_active() {
+            // 모양·즉시 모드는 그리기 직전에 설정에서(향상 모드 토글·모양 변경이 바로 반영 · 비용 = 문자열 조회 2).
+            self.project_panel.set_flash_style(
+                self.settings.get("ui.flash_shape").unwrap_or("rounded"),
+                self.settings.boost_on(),
+            );
+            let fpx = self.settings.font_px("ui.flash_font_size");
+            let prefs = FontPrefs::with_base(if fpx > 0.0 { fpx } else { ui_px });
+            let font = self.flash_font.as_ref().unwrap_or(&self.ui_font);
+            let mut dc = RasterCtx::new(&mut *gfx, font, s).with_fonts(prefs);
+            self.project_panel.paint_flash(&mut dc, &th);
+        }
+    }
+
+    /// `paint`의 세그먼트 — 스플리터 · 툴팁·카드 · HUD · 메뉴바(최상위)(221차 T-248 ④ 분해 · 본문 그대로 · 공통 값 = [`PaintEnv`]).
+    fn paint_seg_overlays(&mut self, gfx: &mut Surface<'_>, env: &PaintEnv) {
+        let PaintEnv {
+            s,
+            wi,
+            hi,
+            th,
+            ui_px,
+            view_mode,
+            diff_tab,
+            size,
+            ed_rect,
+            objlink_hot,
+            ..
+        } = *env;
+        // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
+        {
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s);
+            self.split_v.paint(&mut dc, &th);
+            if !view_mode {
+                self.split_h.paint(&mut dc, &th);
+            }
+        }
+        // ── 툴바 툴팁(UI 글꼴) — 툴바 패스에서 그리면 그 뒤에 칠하는 탐색기·편집기가 덮어 툴바 아래 2~3px 띠만
+        //    남았다(09-16 Windows 캡처). nexa-ctl `Toolbar::paint_tooltip` 규약대로 팝업 층에서.
+        {
+            let prefs = FontPrefs::with_base(ui_px);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            self.tool_dock.paint_tooltip(&mut dc, &th);
+            // 툴바 그룹 드래그 고스트 — 편집기 위까지 나가므로 팝업 층에.
+            self.tool_dock.paint_drag_overlay(&mut dc, &th);
+            self.find.paint_tooltip(&mut dc, &th);
+            self.search.paint_tooltip(&mut dc, &th);
+            self.project_panel.paint_tooltip(&mut dc, &th);
+            self.project_panel.paint_popup(&mut dc, &th);
+            self.bm_panel.paint_popup(&mut dc, &th);
+            self.outline_panel.paint_popup(&mut dc, &th);
+            self.ext_panel.paint_popup(&mut dc, &th);
+            self.objdetail.paint_popup(&mut dc, &th);
+            // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
+            //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙). 상태 메뉴(탭 닫기 확인 등)는 더 뒤 —
+            //   여기서 그리면 외부 변경 띠·토스트가 메뉴를 덮었다(사용자 10-07 캡처) → 팔레트 직전으로.
+            // ★ Ctrl/머무름 객체 링크 설명 카드(툴팁 + 동작 버튼 · T-256/T-179) + 메뉴(팝업 층).
+            self.objlinks.card = app::objlink::paint_hover_card(
+                &mut dc,
+                &th,
+                env.objlink_tip.as_ref(),
+                objlink_hot,
+                &env.objlink_buttons,
+                self.pointer,
+                self.objlinks.card_pressed,
+                self.settings
+                    .get("objlink.tooltip_pos")
+                    .unwrap_or("top_right"),
+                self.scale,
+                Rect::new(0, 0, size.width as i32, size.height as i32),
+                ed_rect,
+            );
+            self.objlink_menu.paint(&mut dc, &th);
+            // ★ 시그니처 카드(T-178): 캐럿 **위**(완성 팝업은 아래라 겹치지 않는다) · 같은 툴팁 부품 · 표면 안으로.
+            app::objlink::paint_tip(
+                &mut dc,
+                &th,
+                env.sig_tip.as_ref(),
+                "above",
+                self.scale,
+                Rect::new(0, 0, size.width as i32, size.height as i32),
+                ed_rect,
+            );
+            // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76) + 상세 카드(옆 · 같은 높이 · 09-24).
+            self.intel.menu.paint(&mut dc, &th);
+            if self.intel.is_open() && self.intel.cfg().detail_card {
+                if let Some(target) = self.intel.card_target() {
+                    let spec = self.sess.spec.clone();
+                    let (names, snap) = self.explorer.meta_view(spec.as_ref());
+                    if let Some(card) =
+                        intel_card::build(&target, names, &snap, Some(self.sess.dialect))
+                    {
+                        intel_card::paint(
+                            &mut dc,
+                            &th,
+                            self.intel.menu.bounds(),
+                            &card,
+                            self.intel.cfg(),
+                            s,
+                            (wi, hi),
+                        );
+                    }
+                }
+            }
+            // ★ 토스트·실행 카드는 팝업(우클릭 메뉴·팔레트) **아래 층**(팝업 = 맨 마지막 규칙 · 사용자 09-22 "우클릭 메뉴가 뒤로 숨음").
+            // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
+            let eb = self.editors.editor_bounds();
+            let (top, tx, ty) = if eb.w > 0 && eb.h > 0 {
+                (eb.y, eb.right(), eb.bottom())
+            } else {
+                (0, wi, hi - px(24.0, s))
+            };
+            // 실행 카드 누적(아래→위 · 편집기 영역을 넘으면 휠 스크롤 · 사용자 09-22).
+            let ty = self.run_toast.paint(&mut dc, &th, top, tx, ty, s);
+            let ty = self.tx_warn.paint(&mut dc, &th, tx, ty, s);
+            self.ext_banner.set_bounds(self.editors.banner_rect());
+            self.ext_banner.paint(&mut dc, &th, s);
+            self.toasts.paint(&mut dc, &th, tx, ty, s);
+            // 토스트·카드가 바꾼 글꼴 슬롯(Status·굵게)을 되돌린다 — 팝업은 호출자의 글꼴을 쓴다(09-22 메뉴 글자 커짐).
+            dc.select_font(FontSlot::Base, false);
+            // ★ 글꼴 크기 HUD(사용자 10-07) — 바뀐 영역 안 캡슐 · 팝업 아래 층.
+            if self.zoom_hud.visible() {
+                self.zoom_hud
+                    .paint(&mut dc, self.zoom_hud_area, s, &env.zoom_style);
+            }
+            if !view_mode {
+                // ★ 열 끌기 → 편집 탭 놓을 자리(사용자 10-12): 글자 인덱스의 캐럿 선(강조색 · 줄 높이) — 칩은 그리드 overlays.
+                // 글 상자(패널 필터·찾기 바) 위 = 상자 테두리를 강조색으로(10-12).
+                if let Some(r) = self.col_drop_box {
+                    dc.stroke_round_rect(r, 3, th.accent, 2.0);
+                }
+                if let Some(idx) = self.col_drop_hint {
+                    let tb = self.editors.cur();
+                    if let Some(p) = tb.point_at(idx) {
+                        // `point_at`의 y = 줄 **바닥**(top + line_h · 카드 앵커 규칙) → 선은 그 위로 한 줄(협업 V1 ⓑ 관찰).
+                        let lh = tb.line_h().max(2);
+                        dc.fill_rect(Rect::new(p.x - 1, p.y - lh, 2, lh), th.accent);
+                    }
+                }
+                self.grid.paint_overlays(&mut dc, &th);
+                self.panel.paint_popups(&mut dc, &th);
+            }
+            // 탐색기 노드 끌기 칩(팝업 층 · 10-15).
+            self.explorer.paint_drag_chip(&mut dc, &th);
+            self.editors.paint_popups(&mut dc, &th);
+            self.ext_view.paint_popup(&mut dc, &th);
+            if diff_tab {
+                self.diff_view.paint_popup(&mut dc, &th);
+            }
+            self.panel.output_paint_popup(&mut dc, &th);
+            self.explorer.paint_popups(&mut dc, &th);
+            // 상태 메뉴(탭 닫기 확인 · 상태줄 칸 메뉴) = 팝업 층 맨 뒤(외부 변경 띠·토스트·카드 위 · 사용자 10-07).
+            self.status_menu.paint(&mut dc, &th);
+            self.palette.paint(&mut dc, &th);
+            let eb = self.editors.editor_bounds();
+            // ★ 파일 적재 진행 막 — 편집 영역 가운데 · 맨 위 층(적재 중에는 입력도 받지 않는다).
+            let delay =
+                Duration::from_millis(self.settings.int("file.load_progress_ms").max(0) as u64);
+            let active_tab = self.editors.active_id();
+            Self::paint_file_load(&mut self.file_loads, active_tab, delay, eb, &mut dc, &th, s);
+        }
+        // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
+        {
+            let prefs = FontPrefs {
+                base: SlotFont {
+                    size: self.settings.font_px("ui.menu_font_size"),
+                    bold: false,
+                    italic: false,
+                },
+                ..FontPrefs::default()
+            };
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            self.menubar.paint(&mut dc, &th);
         }
     }
 
