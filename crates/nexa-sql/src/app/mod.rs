@@ -36,6 +36,7 @@ mod output;
 mod paint;
 mod project;
 pub(crate) mod run;
+mod run_events;
 mod session;
 mod settings;
 pub(crate) mod split;

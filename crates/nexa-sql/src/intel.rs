@@ -228,6 +228,86 @@ const MRU_MAX: usize = 20;
 /// 문서 단어 상한(큰 문서 보호).
 const DOC_WORDS_MAX: usize = 5000;
 
+/// `request`의 후보 보조(220차 · 종전 클로저 · `show_types`만 밖에서 받는다).
+fn push_col(
+    cands: &mut Vec<Cand>,
+    id: nsql_run::meta::ObjId,
+    c: &nsql_run::meta::ColEntry,
+    names: &Interner,
+    show_types: bool,
+) {
+    cands.push(Cand {
+        text: names.get(c.name).to_string(),
+        kind: CandKind::Column,
+        detail: if show_types {
+            names.get(c.data_type).to_string()
+        } else {
+            String::new()
+        },
+        source: 1,
+        tag: tag_column(id, c.position),
+        mark: if show_types {
+            key_marks(c.key, c.nullable)
+        } else {
+            String::new()
+        },
+        // 둘러보기 순서 = 테이블 안 순번(사용자 09-24).
+        order: u32::from(c.position),
+        qualifier: String::new(),
+        layer: 0,
+    });
+}
+
+/// `request`의 후보 보조(220차 · 종전 클로저 · `show_types`만 밖에서 받는다).
+fn push_member(
+    cands: &mut Vec<Cand>,
+    id: nsql_run::meta::ObjId,
+    c: &nsql_run::meta::ColEntry,
+    names: &Interner,
+    from_chain: bool,
+    show_types: bool,
+) {
+    let ty = names.get(c.data_type);
+    let table_fn = ty.starts_with("TABLE FUNCTION");
+    if from_chain && ty.starts_with("PROCEDURE") {
+        return;
+    }
+    cands.push(Cand {
+        text: names.get(c.name).to_string(),
+        kind: CandKind::Routine,
+        detail: if show_types {
+            ty.to_string()
+        } else {
+            String::new()
+        },
+        source: 1,
+        tag: tag_column(id, c.position),
+        mark: String::new(),
+        order: u32::from(c.position),
+        qualifier: String::new(),
+        layer: if !from_chain {
+            0
+        } else if table_fn {
+            1
+        } else {
+            2
+        },
+    });
+}
+
+/// `request` 한 번의 **읽기 전용 입력 묶음**(220차 T-248 · 가지 메서드 `cands_*`가 함께 본다 · 전부 Copy 참조).
+#[derive(Clone, Copy)]
+struct ReqIn<'a> {
+    ctx: &'a Context,
+    meta: Option<&'a MetaView<'a>>,
+    dialect: Option<Dialect>,
+    doc: &'a str,
+    symbols: &'a [(String, SymKind)],
+    doc_words: &'a [String],
+    show_types: bool,
+    functions: bool,
+}
+
 impl Intel {
     pub(crate) fn new(cfg: IntelCfg) -> Self {
         Intel {
@@ -511,1036 +591,40 @@ impl Intel {
         let mut cands: Vec<Cand> = Vec::new();
         let show_types = self.cfg.show_types;
         // 컬럼 후보 = `이름 : 타입`(사용자 09-24) · 키 표식은 오른쪽 · 태그 = (객체 id, 순번)으로 상세 카드가 찾는다.
-        let push_col = |cands: &mut Vec<Cand>,
-                        id: nsql_run::meta::ObjId,
-                        c: &nsql_run::meta::ColEntry,
-                        names: &Interner| {
-            cands.push(Cand {
-                text: names.get(c.name).to_string(),
-                kind: CandKind::Column,
-                detail: if show_types {
-                    names.get(c.data_type).to_string()
-                } else {
-                    String::new()
-                },
-                source: 1,
-                tag: tag_column(id, c.position),
-                mark: if show_types {
-                    key_marks(c.key, c.nullable)
-                } else {
-                    String::new()
-                },
-                // 둘러보기 순서 = 테이블 안 순번(사용자 09-24).
-                order: u32::from(c.position),
-                qualifier: String::new(),
-                layer: 0,
-            });
-        };
         // ★ 패키지 멤버(09-24 ③): 메타에 그 패키지의 "컬럼"으로 든 멤버 → 함수·프로시저 후보(`NAME()`). FROM 사슬(`FROM sch.pkg.`)에서는
         //   프로시저 제외 · 테이블 함수(`TABLE FUNCTION →`) 층 1 · 그 밖 함수 층 2.
-        let push_member = |cands: &mut Vec<Cand>,
-                           id: nsql_run::meta::ObjId,
-                           c: &nsql_run::meta::ColEntry,
-                           names: &Interner,
-                           from_chain: bool| {
-            let ty = names.get(c.data_type);
-            let table_fn = ty.starts_with("TABLE FUNCTION");
-            if from_chain && ty.starts_with("PROCEDURE") {
-                return;
-            }
-            cands.push(Cand {
-                text: names.get(c.name).to_string(),
-                kind: CandKind::Routine,
-                detail: if show_types {
-                    ty.to_string()
-                } else {
-                    String::new()
-                },
-                source: 1,
-                tag: tag_column(id, c.position),
-                mark: String::new(),
-                order: u32::from(c.position),
-                qualifier: String::new(),
-                layer: if !from_chain {
-                    0
-                } else if table_fn {
-                    1
-                } else {
-                    2
-                },
-            });
-        };
         let functions = self.cfg.functions;
+        let rq = ReqIn {
+            ctx: &ctx,
+            meta,
+            dialect,
+            doc,
+            symbols: &symbols,
+            doc_words: &doc_words,
+            show_types,
+            functions,
+        };
         match &ctx.kind {
             CtxKind::None => unreachable!(),
             CtxKind::Member { qualifier } => {
-                // 1) alias/테이블 → 컬럼.
-                let mut resolved = false;
-                if let Some(a) = intel::resolve_alias(&ctx.aliases, qualifier) {
-                    // CTE/서브쿼리 = 카탈로그 없음 → 아래 문서 단어로(열 이름이 문서 안에 있다).
-                    resolved = !a.local;
-                    if a.local {
-                    } else if let Some(m) = meta {
-                        match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
-                            // ★ 데이터베이스·스키마 같은 "컬럼 없는" 객체가 이름만 같을 때(`FROM APPDB_MS.` · 10-01 ⑭)는 별칭 해석이 아니다 —
-                            //   아래 3부 이름 분기로.
-                            Some(id)
-                                if m.snap.object(id).is_some_and(|o| {
-                                    matches!(
-                                        o.kind,
-                                        ObjectKind::Database
-                                            | ObjectKind::Schema
-                                            | ObjectKind::DbUser
-                                            | ObjectKind::DbRole
-                                            | ObjectKind::LinkedServer
-                                            | ObjectKind::Login
-                                            | ObjectKind::ServerRole
-                                            | ObjectKind::Credential
-                                            | ObjectKind::CryptoProvider
-                                            | ObjectKind::ServerAudit
-                                            | ObjectKind::AuditSpec
-                                            | ObjectKind::BackupDevice
-                                            | ObjectKind::Endpoint
-                                            | ObjectKind::ServerTrigger
-                                    )
-                                }) =>
-                            {
-                                resolved = false;
-                            }
-                            Some(id) => match m.snap.columns(id) {
-                                ColState::Loaded { cols, .. } => {
-                                    for c in cols.iter() {
-                                        push_col(&mut cands, id, c, m.names);
-                                    }
-                                }
-                                ColState::Loading => self.loading = true,
-                                _ => {
-                                    self.loading = true;
-                                    self.needs.push(NeedColumns {
-                                        schema: a.schema.clone().or_else(|| {
-                                            m.snap
-                                                .current_schema
-                                                .map(|s| m.names.get(s).to_string())
-                                        }),
-                                        table: a.table.clone(),
-                                        urgent: true,
-                                    });
-                                }
-                            },
-                            None => {
-                                // 카탈로그에 없는 이름(`sys.` · `DBMS_OUTPUT.` · 아직 안 읽은 스키마) — 채움은 요청하되 아래
-                                // 정적 표·문서 단어로 이어지게 둔다.
-                                resolved = false;
-                                self.needs.push(NeedColumns {
-                                    schema: a.schema.clone(),
-                                    table: a.table.clone(),
-                                    urgent: true,
-                                });
-                            }
-                        }
-                    }
-                }
-                // ★ SQL Server 3부 이름(10-01 ⑭ · 사용자 "`Database2.dbo.Table`은 현재 DB의 `dbo.Table`과 다른 객체"):
-                //   `DB.` = 그 DB의 스키마 · `DB.스키마.` = 그 DB·스키마의 객체(복합 열쇠 `DB.스키마` 버킷 · 없으면 호스트가 `USE`로
-                //   따라가 읽음) · `DB.스키마.테이블.`은 아래 "테이블 이름 직접" 경로가 복합 열쇠로 컬럼을 찾는다.
-                let mut db_handled = false;
-                if let (Some(m), Some(Dialect::Mssql), false) = (meta, dialect, resolved) {
-                    let segs: Vec<&str> = qualifier.split('.').collect();
-                    let is_db = m.names.find("").is_some_and(|e| {
-                        m.snap
-                            .prefix(m.names, e, ObjectKind::Database, "", usize::MAX)
-                            .iter()
-                            .any(|h| m.names.get(h.name).eq_ignore_ascii_case(segs[0]))
-                    });
-                    if std::env::var_os("NSQL_TRACE_META").is_some() {
-                        eprintln!("[intel] member q={qualifier} segs={} is_db={is_db} resolved={resolved} dbs={}", segs.len(),
-                            m.names.find("").map_or(0, |e| m.snap.prefix(m.names, e, ObjectKind::Database, "", usize::MAX).len()));
-                    }
-                    if is_db && segs.len() <= 2 {
-                        db_handled = true;
-                        resolved = true;
-                        let key = segs.join(".");
-                        match m.names.find(&key) {
-                            Some(sc) if segs.len() == 1 => {
-                                self.note_coverage(m, sc, ObjectKind::Schema);
-                                for h in
-                                    m.snap
-                                        .prefix(m.names, sc, ObjectKind::Schema, "", usize::MAX)
-                                {
-                                    cands.push(obj_cand(
-                                        m,
-                                        &h,
-                                        ObjectKind::Schema,
-                                        dialect,
-                                        show_types,
-                                    ));
-                                }
-                            }
-                            Some(sc) => {
-                                for kind in from_kinds(dialect, self.cfg.routines) {
-                                    self.note_coverage(m, sc, kind);
-                                    for h in m.snap.prefix(m.names, sc, kind, "", usize::MAX) {
-                                        if ctx.from_chain && !from_ok(m, &h, kind, dialect) {
-                                            continue;
-                                        }
-                                        cands.push(obj_cand(m, &h, kind, dialect, show_types));
-                                    }
-                                }
-                            }
-                            None => {
-                                self.loading_objects = true;
-                                push_need(&mut self.need_objects, &key);
-                            }
-                        }
-                    }
-                }
-                // 2) 스키마 이름 → 그 스키마 객체.
-                if let Some(m) = meta {
-                    let q = qualifier.rsplit('.').next().unwrap_or(qualifier);
-                    let sc_hit = if db_handled {
-                        None
-                    } else {
-                        m.snap
-                            .schemas
-                            .iter()
-                            .copied()
-                            .find(|s| m.names.get(*s).eq_ignore_ascii_case(q))
-                    };
-                    if let Some(sc) = sc_hit {
-                        // ★ `스키마.`를 치는 순간 그 스키마를 읽어 캐시(사용자 09-23) — 종류는 FROM 자리와 같은 표(`from_kinds` · 뷰 = 테이블
-                        //   레이어 · 함수·패키지·프로시저 = 낮은 레이어 · 09-24). 시퀀스는 트리가 채운 것만 보인다.
-                        for kind in from_kinds(dialect, self.cfg.routines) {
-                            self.note_coverage(m, sc, kind);
-                            for h in m.snap.prefix(m.names, sc, kind, "", usize::MAX) {
-                                // FROM 자리의 `스키마.`면 프로시저·스칼라 함수는 뺀다(사용자 09-24 SQL Server 지적).
-                                if ctx.from_chain && !from_ok(m, &h, kind, dialect) {
-                                    continue;
-                                }
-                                cands.push(obj_cand(m, &h, kind, dialect, show_types));
-                            }
-                        }
-                        for h in m
-                            .snap
-                            .prefix(m.names, sc, ObjectKind::Sequence, "", usize::MAX)
-                        {
-                            cands.push(obj_cand(m, &h, ObjectKind::Sequence, dialect, show_types));
-                        }
-                        resolved = true;
-                    } else if !resolved {
-                        // 테이블·패키지 이름을 직접 쓴 경우(alias 없이 · `스키마.이름`이면 그 스키마에서) — 패키지면 멤버(09-24).
-                        let (qs, qn) = match qualifier.rsplit_once('.') {
-                            Some((s, n)) => (Some(s), n),
-                            None => (None, q),
-                        };
-                        let found = m.snap.lookup(m.names, qs, qn);
-                        let is_pkg = found
-                            .and_then(|id| m.snap.object(id))
-                            .is_some_and(|o| o.kind == ObjectKind::Package);
-                        if ctx.from_chain && qualifier.contains('.') && !is_pkg {
-                            // FROM 사슬인데 패키지가 아니다(테이블·뷰 뒤 `.`) = 고를 것 없음(§165).
-                            resolved = true;
-                        } else if let Some(id) = found {
-                            resolved = true;
-                            match m.snap.columns(id) {
-                                ColState::Loaded { cols, .. } => {
-                                    for c in cols.iter() {
-                                        if is_pkg {
-                                            push_member(&mut cands, id, c, m.names, ctx.from_chain);
-                                        } else {
-                                            push_col(&mut cands, id, c, m.names);
-                                        }
-                                    }
-                                }
-                                ColState::Loading => self.loading = true,
-                                _ => {
-                                    self.loading = true;
-                                    self.needs.push(NeedColumns {
-                                        schema: qs.map(String::from),
-                                        table: qn.to_string(),
-                                        urgent: true,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                // 2-b) 사전 스키마(`sys.` · `INFORMATION_SCHEMA.` · `pg_catalog.` …) = 서버에서 읽은 권한 반영 사전 버킷(09-23) —
-                //   이름이 `스키마.이름` 꼴이라 앞부분이 맞는 것의 뒷부분을 후보로. 없으면 아래 정적 표.
-                if !resolved {
-                    if let Some((m, ds)) = meta.and_then(dict_sym) {
-                        let want = format!("{}.", qualifier.to_ascii_lowercase());
-                        for h in m
-                            .snap
-                            .prefix(m.names, ds, ObjectKind::View, &want, usize::MAX)
-                        {
-                            let full = m.names.get(h.name);
-                            if full.len() <= want.len() {
-                                continue;
-                            }
-                            cands.push(Cand {
-                                text: full[want.len()..].to_string(),
-                                kind: CandKind::View,
-                                detail: if show_types {
-                                    "system".into()
-                                } else {
-                                    String::new()
-                                },
-                                source: 4,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                layer: 0,
-                            });
-                            resolved = true;
-                        }
-                    }
-                }
-                // 3) 시스템 패키지(`DBMS_OUTPUT.`) · 사전 객체의 앞부분(`sys.` · `INFORMATION_SCHEMA.` · `pg_catalog.`) — 정적 표(T-178).
-                if !resolved && functions {
-                    if let Some(p) = builtins::package(dialect, qualifier) {
-                        resolved = true;
-                        for m in p.members {
-                            cands.push(Cand {
-                                text: m.name.to_string(),
-                                kind: CandKind::Function,
-                                detail: if show_types {
-                                    m.sig.to_string()
-                                } else {
-                                    String::new()
-                                },
-                                source: 4,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                layer: 0,
-                            });
-                        }
-                    }
-                    let sys = builtins::system_members(dialect, qualifier);
-                    if !sys.is_empty() {
-                        resolved = true;
-                        for n in sys {
-                            cands.push(Cand {
-                                text: n.to_string(),
-                                kind: CandKind::View,
-                                detail: if show_types {
-                                    "system".into()
-                                } else {
-                                    String::new()
-                                },
-                                source: 4,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                layer: 0,
-                            });
-                        }
-                    }
-                }
-                if !resolved && self.cfg.doc_words {
-                    for w in &doc_words {
-                        cands.push(Cand {
-                            text: w.clone(),
-                            kind: CandKind::Word,
-                            detail: String::new(),
-                            source: 6,
-                            tag: 0,
-                            mark: String::new(),
-                            order: 0,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                    }
-                }
+                self.cands_member(qualifier, &rq, &mut cands);
             }
             // ★ 특정 종류만(10-01 ⑩): 키워드·문서 낱말 없이 메타의 그 종류 + 스키마.
             // ★ T-317: 사용자 루틴 인자 — 메타의 `ArgState`(없으면 요청 + 불러오는 중) · 이미 쓴 `@이름` 제외.
             CtxKind::ExecArgs { routine } => {
-                if let Some(m) = meta {
-                    let (schema, name) = routine
-                        .rsplit_once('.')
-                        .map_or((None, routine.as_str()), |(s, n)| (Some(s), n));
-                    let cur = m.snap.current_schema.map(|s| m.names.get(s).to_string());
-                    if let Some(id) =
-                        m.snap
-                            .lookup_resolvable_from(m.names, schema, cur.as_deref(), name)
-                    {
-                        match m.snap.args(id) {
-                            nsql_run::meta::ArgState::Loaded(list) => {
-                                let used = param_names_in(
-                                    &doc[ctx.statement.start
-                                        ..ctx.replace.start.max(ctx.statement.start)],
-                                );
-                                for (i, a) in list.iter().enumerate() {
-                                    // ★ T-SQL 명명 인자 = `@이름 = `(카탈로그는 `@`를 뗀 이름 · 사용자 10-08 "DBMS 특징에 맞게").
-                                    let n = m.names.get(a.name);
-                                    let shown = if n.starts_with('@') {
-                                        n.to_string()
-                                    } else {
-                                        format!("@{n}")
-                                    };
-                                    if used.iter().any(|u| u.eq_ignore_ascii_case(&shown)) {
-                                        continue;
-                                    }
-                                    cands.push(Cand {
-                                        text: format!("{shown} = "),
-                                        kind: CandKind::Variable,
-                                        detail: if show_types {
-                                            m.names.get(a.detail).to_string()
-                                        } else {
-                                            String::new()
-                                        },
-                                        source: 4,
-                                        tag: 0,
-                                        mark: String::new(),
-                                        order: i as u32,
-                                        qualifier: String::new(),
-                                        layer: 0,
-                                    });
-                                }
-                            }
-                            nsql_run::meta::ArgState::Loading => self.loading = true,
-                            nsql_run::meta::ArgState::Unknown => {
-                                self.need_args.push(id);
-                                self.loading = true;
-                            }
-                        }
-                    }
-                }
+                self.cands_exec_args(routine, &rq, &mut cands);
             }
             CtxKind::Want(intel::Want::ProcParam(p)) => {
-                // ★ T-316: 시스템 프로시저 파라미터 — 문장 안에 이미 쓴 `@이름`은 뺀다(메타 불필요).
-                let used: Vec<String> = param_names_in(
-                    &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)],
-                );
-                if let Some(sp) = nsql_script::builtins::proc_params(dialect, p) {
-                    for (i, (name, ty)) in sp.params.iter().enumerate() {
-                        if used.iter().any(|u| u.eq_ignore_ascii_case(name)) {
-                            continue;
-                        }
-                        cands.push(Cand {
-                            // T-SQL 명명 인자 꼴 `@이름 = `(사용자 10-08).
-                            text: format!("{name} = "),
-                            kind: CandKind::Variable,
-                            detail: if show_types {
-                                (*ty).to_string()
-                            } else {
-                                String::new()
-                            },
-                            source: 4,
-                            tag: 0,
-                            mark: String::new(),
-                            order: i as u32,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                    }
-                }
+                self.cands_proc_param(p, &rq, &mut cands);
             }
             CtxKind::Want(w) => {
                 self.want_cands(*w, meta, dialect, show_types, &mut cands);
             }
             CtxKind::Relation => {
-                if let Some(m) = meta {
-                    if let Some(cur) = m.snap.current_schema {
-                        // ★ 현재 스키마의 관계 객체 = 접두 없이 바로(사용자 09-23). 버킷이 아직 없으면 호스트에 채움을 요청하고
-                        //   "불러오는 중"을 보인다 · 상한 없이 다 넣고 랭킹이 자른다(종전 = 이름순 앞 200개만 → `DMS_*`가 잘렸다).
-                        //   ★ 뷰·구체화 뷰·시노님은 테이블과 같은 레이어 · 함수·패키지·프로시저는 낮은 레이어(`from_kinds` · 사용자 09-24).
-                        for kind in from_kinds(dialect, self.cfg.routines) {
-                            self.note_coverage(m, cur, kind);
-                            for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
-                                if !from_ok(m, &h, kind, dialect) {
-                                    continue;
-                                }
-                                cands.push(obj_cand(m, &h, kind, dialect, show_types));
-                            }
-                        }
-                    }
-                    for s in &m.snap.schemas {
-                        cands.push(Cand {
-                            text: m.names.get(*s).to_string(),
-                            kind: CandKind::Schema,
-                            detail: if show_types {
-                                "schema".into()
-                            } else {
-                                String::new()
-                            },
-                            source: 4,
-                            tag: 0,
-                            mark: String::new(),
-                            order: 0,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                    }
-                }
-                for a in ctx.aliases.iter().filter(|a| a.local && a.alias == a.table) {
-                    cands.push(Cand {
-                        text: a.alias.clone(),
-                        kind: CandKind::Table,
-                        detail: if show_types {
-                            "cte".into()
-                        } else {
-                            String::new()
-                        },
-                        source: 2,
-                        tag: 0,
-                        mark: String::new(),
-                        order: 0,
-                        qualifier: String::new(),
-                        layer: 0,
-                    });
-                }
-                for (name, k) in &symbols {
-                    if *k == SymKind::Object || *k == SymKind::Cte {
-                        cands.push(Cand {
-                            text: name.clone(),
-                            kind: CandKind::Symbol,
-                            detail: if show_types {
-                                k.label().to_string()
-                            } else {
-                                String::new()
-                            },
-                            source: 3,
-                            tag: 0,
-                            mark: String::new(),
-                            order: 0,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                    }
-                }
-                // 사전 객체(`ALL_TABLES` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_class`) — ★ 접속 뒤에는 서버에서 읽은
-                //   **권한 반영** 버킷(`DICT_SCHEMA` · 사용자 09-23 "권한에 맞춰 ALL_/DBA_") · 그 전(또는 아직 못 읽음)에는 정적 표(T-178).
-                let dict_loaded = meta
-                    .and_then(dict_sym)
-                    .is_some_and(|(m, ds)| m.snap.coverage(ds, ObjectKind::View).has_list());
-                if let Some((m, ds)) = meta.and_then(dict_sym) {
-                    let cov = m.snap.coverage(ds, ObjectKind::View);
-                    // 읽은 것(낡았어도)은 후보로 · 없거나 낡았으면 (다시) 읽기 청함.
-                    if cov.has_list() {
-                        for h in m.snap.prefix(m.names, ds, ObjectKind::View, "", usize::MAX) {
-                            cands.push(Cand {
-                                text: m.names.get(h.name).to_string(),
-                                kind: CandKind::View,
-                                detail: if show_types {
-                                    "system".into()
-                                } else {
-                                    String::new()
-                                },
-                                source: 4,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                // 사전 뷰(`ALL_`·`DBA_`·`CDB_`·`V$`·`GV$` — 수백~수천)는 스키마 자체 객체 **아래 층**: 빈 접두에서는
-                                // 뒤로 · 접두를 치면 등급으로 올라온다(사용자 09-24 "이런 테이블들은 뭐야").
-                                layer: 1,
-                            });
-                        }
-                    }
-                    if matches!(cov, Coverage::Missing | Coverage::Stale { .. }) {
-                        push_need(&mut self.need_objects, nsql_catalog::DICT_SCHEMA);
-                    }
-                } else if meta.is_some() {
-                    push_need(&mut self.need_objects, nsql_catalog::DICT_SCHEMA);
-                }
-                if functions && !dict_loaded {
-                    for o in builtins::system_objects(dialect) {
-                        cands.push(Cand {
-                            text: (*o).to_string(),
-                            kind: CandKind::View,
-                            detail: if show_types {
-                                "system".into()
-                            } else {
-                                String::new()
-                            },
-                            source: 4,
-                            tag: 0,
-                            mark: String::new(),
-                            order: 0,
-                            qualifier: String::new(),
-                            layer: 1,
-                        });
-                    }
-                }
+                self.cands_relation(&rq, &mut cands);
             }
             CtxKind::Expr | CtxKind::Start => {
-                // ★ 이름 지정 인자(사용자 10-08 "Argument 이름에 직접 지정하는 문법에서도 자동완성" · T-317 확장): 괄호 주인이 메타의
-                //   루틴이고 캐럿이 인자 시작(`(`·`,` 뒤)이면 `이름 => ` 조각(Oracle·PG 명명 표기 · SQL Server는 괄호 없는 `@이름` = T-317) ·
-                //   이미 `이름 =>`로 적은 인자는 제외 · 인자를 모르면 요청 + 불러오는 중.
-                if ctx.kind == CtxKind::Expr
-                    && matches!(dialect, Some(Dialect::Oracle | Dialect::Postgres))
-                {
-                    if let (Some(owner), Some(m)) = (ctx.paren_owner.as_deref(), meta) {
-                        let head =
-                            &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)];
-                        if named_arg_start(head) {
-                            let (schema, name) = owner
-                                .rsplit_once('.')
-                                .map_or((None, owner), |(sc, n)| (Some(sc), n));
-                            let cur = m.snap.current_schema.map(|c| m.names.get(c).to_string());
-                            let id = m
-                                .snap
-                                .lookup_resolvable_from(m.names, schema, cur.as_deref(), name)
-                                .filter(|&id| {
-                                    m.snap.object(id).is_some_and(|o| o.kind.is_routine())
-                                });
-                            if let Some(id) = id {
-                                match m.snap.args(id) {
-                                    nsql_run::meta::ArgState::Loaded(list) => {
-                                        let used = named_args_used(head);
-                                        for (i, a) in list.iter().enumerate() {
-                                            // 카탈로그는 이름을 대문자로 접는다(서명 대조용) — PG는 소문자 식별자가 자연스러워 소문자로(E2E 10-08).
-                                            let raw = m.names.get(a.name);
-                                            let n = if dialect == Some(Dialect::Postgres) {
-                                                raw.to_lowercase()
-                                            } else {
-                                                raw.to_string()
-                                            };
-                                            if used.iter().any(|u| u.eq_ignore_ascii_case(&n)) {
-                                                continue;
-                                            }
-                                            cands.push(Cand {
-                                                text: format!("{n} => "),
-                                                kind: CandKind::Variable,
-                                                detail: if show_types {
-                                                    m.names.get(a.detail).to_string()
-                                                } else {
-                                                    String::new()
-                                                },
-                                                source: 1,
-                                                tag: 0,
-                                                mark: String::new(),
-                                                order: i as u32,
-                                                qualifier: String::new(),
-                                                layer: 0,
-                                            });
-                                        }
-                                    }
-                                    nsql_run::meta::ArgState::Loading => self.loading = true,
-                                    nsql_run::meta::ArgState::Unknown => {
-                                        self.need_args.push(id);
-                                        self.loading = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // ★ `*` / `A.*` 뒤 = "모든 컬럼 (N)" 조각(사용자 09-24): `A.*` = 그 별칭의 컬럼 · bare `*` = FROM의 모든 테이블 컬럼(둘 이상이거나
-                //   별칭을 썼으면 `A.컬럼` · 하나뿐이고 별칭이 없으면 이름만). 안 읽은 테이블은 급한 채움 요청 + "불러오는 중".
-                if ctx.kind == CtxKind::Expr && self.cfg.insert_columns {
-                    if let (Some(star), Some(m)) = (ctx.star.as_ref(), meta) {
-                        let targets: Vec<&intel::Alias> = ctx
-                            .aliases
-                            .iter()
-                            .filter(|a| !a.local)
-                            .filter(|a| {
-                                star.qualifier
-                                    .as_deref()
-                                    .is_none_or(|q| a.alias.eq_ignore_ascii_case(q))
-                            })
-                            .collect();
-                        let qualify = star.qualifier.is_some()
-                            || targets.len() > 1
-                            || targets
-                                .first()
-                                .is_some_and(|a| !a.alias.eq_ignore_ascii_case(&a.table));
-                        let mut parts: Vec<String> = Vec::new();
-                        let mut ready = !targets.is_empty();
-                        for a in &targets {
-                            match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
-                                Some(id) => match m.snap.columns(id) {
-                                    ColState::Loaded { cols, .. } => {
-                                        for c in cols.iter() {
-                                            let name = m.names.get(c.name);
-                                            parts.push(if qualify {
-                                                format!("{}.{name}", a.alias)
-                                            } else {
-                                                name.to_string()
-                                            });
-                                        }
-                                    }
-                                    ColState::Loading => {
-                                        ready = false;
-                                        self.loading = true;
-                                    }
-                                    ColState::Error(_) => ready = false,
-                                    ColState::Unknown => {
-                                        ready = false;
-                                        self.loading = true;
-                                        self.needs.push(NeedColumns {
-                                            schema: a.schema.clone(),
-                                            table: a.table.clone(),
-                                            urgent: true,
-                                        });
-                                    }
-                                },
-                                None => {
-                                    ready = false;
-                                    self.needs.push(NeedColumns {
-                                        schema: a.schema.clone(),
-                                        table: a.table.clone(),
-                                        urgent: true,
-                                    });
-                                }
-                            }
-                        }
-                        if ready && !parts.is_empty() {
-                            // 구분 = 쉼표 + 공백(Space/Tab · `intel.star_comma_space`) · "여러 줄"이면 다음 줄 **맨 앞에 쉼표**(들여쓰기 없음 ·
-                            //   사용자 09-24 "A / , B / , C") · 기본 = "한 줄"(`A, B, C`).
-                            let ws = if self.cfg.star_tab.unwrap_or(self.editor_tab) {
-                                "\t"
-                            } else {
-                                " "
-                            };
-                            let sep = if self.cfg.star_lines {
-                                format!("\n,{ws}")
-                            } else {
-                                format!(",{ws}")
-                            };
-                            cands.push(Cand {
-                                text: parts.join(&sep),
-                                kind: CandKind::Snippet,
-                                detail: nsql_i18n::tf(
-                                    nsql_i18n::Msg::IntelAllColumnsN,
-                                    &[&parts.len().to_string()],
-                                ),
-                                source: 0,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                layer: 0,
-                            });
-                        }
-                    }
-                }
-                if ctx.kind == CtxKind::Expr && self.cfg.join_fk && ctx.prefix.is_empty() {
-                    // ★ `JOIN 테이블 [별칭] ON` 바로 뒤 = 외래 키로 만든 조인 조건을 첫 후보로(T-178 · 지연 로딩: 제약은
-                    //   이때 처음 읽는다 — 이미 있으면 즉시 · 없으면 "불러오는 중" 뒤 다시 그린다).
-                    if let (Some(target), Some(m)) =
-                        (join_on_target(&doc[..ctx.replace.start]), meta)
-                    {
-                        let mut sides: Vec<JoinSide> = Vec::new();
-                        let mut joined: Option<usize> = None;
-                        for a in ctx.aliases.iter().filter(|a| !a.local) {
-                            let Some(id) = m.snap.lookup(m.names, a.schema.as_deref(), &a.table)
-                            else {
-                                continue;
-                            };
-                            match m.snap.detail(id) {
-                                nsql_run::meta::DetailState::Loaded { detail, .. } => {
-                                    if joined.is_none()
-                                        && (a.alias.eq_ignore_ascii_case(&target)
-                                            || a.table.eq_ignore_ascii_case(&target))
-                                    {
-                                        joined = Some(sides.len());
-                                    }
-                                    sides.push(JoinSide {
-                                        alias: a.alias.clone(),
-                                        table: a.table.clone(),
-                                        keys: detail
-                                            .keys
-                                            .iter()
-                                            .filter(|k| matches!(k.kind, 'P' | 'R'))
-                                            .map(|k| JoinKey {
-                                                name: m.names.get(k.name).to_string(),
-                                                kind: k.kind,
-                                                cols: k
-                                                    .cols
-                                                    .iter()
-                                                    .map(|c| m.names.get(*c).to_string())
-                                                    .collect(),
-                                                ref_table: k
-                                                    .ref_table
-                                                    .map(|t| m.names.get(t).to_string()),
-                                                ref_cols: k
-                                                    .ref_cols
-                                                    .iter()
-                                                    .map(|c| m.names.get(*c).to_string())
-                                                    .collect(),
-                                            })
-                                            .collect(),
-                                    });
-                                }
-                                nsql_run::meta::DetailState::Loading => self.loading = true,
-                                nsql_run::meta::DetailState::Unknown => {
-                                    self.loading = true;
-                                    self.need_details.push(id);
-                                }
-                            }
-                        }
-                        if let Some(j) = joined {
-                            for (n, (cond, fk)) in fk_join_conds(&sides, j).into_iter().enumerate()
-                            {
-                                cands.push(Cand {
-                                    text: cond,
-                                    kind: CandKind::Snippet,
-                                    detail: format!("FK {fk}"),
-                                    source: 0,
-                                    tag: 0,
-                                    mark: String::new(),
-                                    order: n as u32,
-                                    qualifier: String::new(),
-                                    layer: 0,
-                                });
-                            }
-                        }
-                    }
-                }
-                if ctx.kind == CtxKind::Expr
-                    && self.cfg.insert_columns
-                    && ctx.paren_into
-                    && ctx.prefix.is_empty()
-                {
-                    // `INSERT INTO t (` 바로 뒤 = 그 테이블의 컬럼 전체를 한 조각으로(첫 후보 · T-178).
-                    if let (Some(owner), Some(m)) = (ctx.paren_owner.as_deref(), meta) {
-                        let (schema, table) = match intel::resolve_alias(&ctx.aliases, owner) {
-                            Some(a) if !a.local => (a.schema.clone(), a.table.clone()),
-                            _ => match owner.rsplit_once('.') {
-                                Some((sc, t)) => (Some(sc.to_string()), t.to_string()),
-                                None => (None, owner.to_string()),
-                            },
-                        };
-                        match m.snap.lookup(m.names, schema.as_deref(), &table) {
-                            Some(id) => match m.snap.columns(id) {
-                                ColState::Loaded { cols, .. } if !cols.is_empty() => {
-                                    let list: Vec<&str> =
-                                        cols.iter().map(|c| m.names.get(c.name)).collect();
-                                    cands.push(Cand {
-                                        text: list.join(", "),
-                                        kind: CandKind::Snippet,
-                                        detail: nsql_i18n::tf(
-                                            nsql_i18n::Msg::IntelAllColumnsN,
-                                            &[&list.len().to_string()],
-                                        ),
-                                        source: 0,
-                                        tag: 0,
-                                        mark: String::new(),
-                                        order: 0,
-                                        qualifier: String::new(),
-                                        layer: 0,
-                                    });
-                                }
-                                ColState::Loading => self.loading = true,
-                                ColState::Loaded { .. } | ColState::Error(_) => {}
-                                ColState::Unknown => {
-                                    self.loading = true;
-                                    self.needs.push(NeedColumns {
-                                        schema,
-                                        table,
-                                        urgent: true,
-                                    });
-                                }
-                            },
-                            None => self.needs.push(NeedColumns {
-                                schema,
-                                table,
-                                urgent: true,
-                            }),
-                        }
-                    }
-                }
-                if ctx.kind == CtxKind::Expr {
-                    // 문장 alias 컬럼(로드된 것만) + alias 이름.
-                    for (ai, a) in ctx.aliases.iter().enumerate() {
-                        cands.push(Cand {
-                            text: a.alias.clone(),
-                            kind: CandKind::Alias,
-                            detail: if show_types {
-                                if a.local {
-                                    "cte/subquery".into()
-                                } else {
-                                    a.table.clone()
-                                }
-                            } else {
-                                String::new()
-                            },
-                            source: 2,
-                            tag: 0,
-                            mark: String::new(),
-                            order: 0,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                        if a.local {
-                            continue;
-                        }
-                        // ★ 접두 없이 고른 컬럼(JOIN 다중 테이블 · 사용자 09-24): 모든 alias 테이블의 컬럼을 보이고(오른쪽 = alias ·
-                        //   FROM 순서 → 순번), 확정 때 `A.컬럼`(Alt = 컬럼만 · `intel.qualify_columns`). 아직 안 읽은 테이블은 채움 요청.
-                        if let Some(m) = meta {
-                            match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
-                                Some(id) => match m.snap.columns(id) {
-                                    ColState::Loaded { cols, .. } => {
-                                        let base = ai as u32 * 1000;
-                                        for c in cols.iter() {
-                                            push_col(&mut cands, id, c, m.names);
-                                            if let Some(last) = cands.last_mut() {
-                                                last.qualifier = a.alias.clone();
-                                                last.order += base;
-                                            }
-                                        }
-                                    }
-                                    ColState::Loading => self.loading = true,
-                                    ColState::Unknown => {
-                                        self.loading = true;
-                                        self.needs.push(NeedColumns {
-                                            schema: a.schema.clone().or_else(|| {
-                                                m.snap
-                                                    .current_schema
-                                                    .map(|s| m.names.get(s).to_string())
-                                            }),
-                                            table: a.table.clone(),
-                                            urgent: true,
-                                        });
-                                    }
-                                    ColState::Error(_) => {}
-                                },
-                                None => self.needs.push(NeedColumns {
-                                    schema: a.schema.clone(),
-                                    table: a.table.clone(),
-                                    urgent: true,
-                                }),
-                            }
-                        }
-                    }
-                    // 내장 함수(시그니처) + 시스템 패키지 이름 — 정적 표(T-178 · `intel.functions`).
-                    if functions {
-                        for b in builtins::functions(dialect) {
-                            cands.push(Cand {
-                                text: b.name.to_string(),
-                                kind: CandKind::Function,
-                                detail: if show_types {
-                                    b.sig.to_string()
-                                } else {
-                                    String::new()
-                                },
-                                source: 4,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                layer: 0,
-                            });
-                        }
-                        for p in builtins::packages(dialect) {
-                            cands.push(Cand {
-                                text: p.name.to_string(),
-                                kind: CandKind::Package,
-                                detail: if show_types {
-                                    "package".into()
-                                } else {
-                                    String::new()
-                                },
-                                source: 4,
-                                tag: 0,
-                                mark: String::new(),
-                                order: 0,
-                                qualifier: String::new(),
-                                layer: 0,
-                            });
-                        }
-                    }
-                    // ★ 사용자 정의 함수·패키지(사용자 10-09 "사용자 정의 함수 보완"): 식 자리에서 접두 없이 — 현재 스키마의 메타
-                    //   버킷(L1 이름)에서 · 없으면 채움 요청 · 레이어는 FROM 자리와 같은 `obj_cand`(함수·패키지 = 2).
-                    if let Some(m) = meta {
-                        if let Some(cur) = m.snap.current_schema {
-                            for kind in [ObjectKind::Function, ObjectKind::Package] {
-                                if dialect
-                                    .is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind))
-                                {
-                                    continue;
-                                }
-                                self.note_coverage_kind(m, cur, kind);
-                                for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
-                                    cands.push(obj_cand(m, &h, kind, dialect, show_types));
-                                }
-                            }
-                        }
-                    }
-                }
-                for (name, k) in &symbols {
-                    cands.push(Cand {
-                        text: name.clone(),
-                        kind: match k {
-                            SymKind::Define | SymKind::Variable | SymKind::Declared => {
-                                CandKind::Variable
-                            }
-                            SymKind::Procedure | SymKind::Function => CandKind::Routine,
-                            _ => CandKind::Symbol,
-                        },
-                        detail: if show_types {
-                            k.label().to_string()
-                        } else {
-                            String::new()
-                        },
-                        source: 3,
-                        tag: 0,
-                        mark: String::new(),
-                        order: 0,
-                        qualifier: String::new(),
-                        layer: 0,
-                    });
-                }
-                if self.cfg.keywords {
-                    // ★ 문법 절 기반(09-24 · nsql-script `grammar` · `SELECT avg` 자리에 `HAVING` 없음): 문장 시작 = `[start]` · 절을 알면
-                    //   그 절의 `next`만 · 모르는 자리(함수 괄호 안 · 낯선 절) = 공통 + 방언 키워드 전체.
-                    let g = nsql_script::grammar::for_dialect(dialect);
-                    // ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): 짝 안 맞는 CASE 안이면 절 next 대신 `[expression CASE]` 자리별 예약어
-                    //   (절·objects는 그대로 → 컬럼·함수 후보 유지 · 섹션 없는 문법은 절 next로).
-                    let case_kws = if self.cfg.grammar {
-                        ctx.case_pos.and_then(|p| g.case_next(p))
-                    } else {
-                        None
-                    };
-                    let kws: Vec<String> = match (&ctx.kind, ctx.clause.as_deref()) {
-                        _ if !self.cfg.grammar => {
-                            intel::keywords_for(dialect).map(String::from).collect()
-                        }
-                        _ if case_kws.is_some() => case_kws.unwrap_or_default(),
-                        (CtxKind::Start, _) => g.start().to_vec(),
-                        // ★ T-200 절 안 위치(10-30): 첫 항목 자리 = `first` 더하고 절 전환 예약어 빼기 · 콤마 뒤 = 전환·first 빼기 · 그 밖 = first 빼기.
-                        (_, Some(cl)) => match g.next_at(cl, ctx.clause_pos) {
-                            Some(n) => n,
-                            None => intel::keywords_for(dialect).map(String::from).collect(),
-                        },
-                        _ => intel::keywords_for(dialect).map(String::from).collect(),
-                    };
-                    for (i, k) in kws.iter().enumerate() {
-                        cands.push(Cand {
-                            text: k.clone(),
-                            kind: CandKind::Keyword,
-                            detail: String::new(),
-                            source: 5,
-                            tag: 0,
-                            mark: String::new(),
-                            // 키워드는 표 순서(자주 쓰는 것부터).
-                            order: i as u32,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                    }
-                }
-                if self.cfg.doc_words {
-                    for w in &doc_words {
-                        cands.push(Cand {
-                            text: w.clone(),
-                            kind: CandKind::Word,
-                            detail: String::new(),
-                            source: 6,
-                            tag: 0,
-                            mark: String::new(),
-                            order: 0,
-                            qualifier: String::new(),
-                            layer: 0,
-                        });
-                    }
-                }
+                self.cands_expr(&rq, &mut cands);
             }
         }
         // 접두를 뺀 문서 단어(자기 자신)는 후보에서 뺀다.
@@ -1710,6 +794,1000 @@ impl Intel {
             self.over_streak = 0;
         }
         true
+    }
+
+    /// `request`의 `CtxKind::Member { qualifier }` 가지(220차 T-248 분해 · 동작 불변 · 11-01) — 후보를 `cands`에 보탠다.
+    fn cands_member(&mut self, qualifier: &str, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            ctx,
+            meta,
+            dialect,
+            doc_words,
+            show_types,
+            functions,
+            ..
+        } = *rq;
+        // 1) alias/테이블 → 컬럼.
+        let mut resolved = false;
+        if let Some(a) = intel::resolve_alias(&ctx.aliases, qualifier) {
+            // CTE/서브쿼리 = 카탈로그 없음 → 아래 문서 단어로(열 이름이 문서 안에 있다).
+            resolved = !a.local;
+            if a.local {
+            } else if let Some(m) = meta {
+                match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
+                    // ★ 데이터베이스·스키마 같은 "컬럼 없는" 객체가 이름만 같을 때(`FROM APPDB_MS.` · 10-01 ⑭)는 별칭 해석이 아니다 —
+                    //   아래 3부 이름 분기로.
+                    Some(id)
+                        if m.snap.object(id).is_some_and(|o| {
+                            matches!(
+                                o.kind,
+                                ObjectKind::Database
+                                    | ObjectKind::Schema
+                                    | ObjectKind::DbUser
+                                    | ObjectKind::DbRole
+                                    | ObjectKind::LinkedServer
+                                    | ObjectKind::Login
+                                    | ObjectKind::ServerRole
+                                    | ObjectKind::Credential
+                                    | ObjectKind::CryptoProvider
+                                    | ObjectKind::ServerAudit
+                                    | ObjectKind::AuditSpec
+                                    | ObjectKind::BackupDevice
+                                    | ObjectKind::Endpoint
+                                    | ObjectKind::ServerTrigger
+                            )
+                        }) =>
+                    {
+                        resolved = false;
+                    }
+                    Some(id) => match m.snap.columns(id) {
+                        ColState::Loaded { cols, .. } => {
+                            for c in cols.iter() {
+                                push_col(cands, id, c, m.names, show_types);
+                            }
+                        }
+                        ColState::Loading => self.loading = true,
+                        _ => {
+                            self.loading = true;
+                            self.needs.push(NeedColumns {
+                                schema: a.schema.clone().or_else(|| {
+                                    m.snap.current_schema.map(|s| m.names.get(s).to_string())
+                                }),
+                                table: a.table.clone(),
+                                urgent: true,
+                            });
+                        }
+                    },
+                    None => {
+                        // 카탈로그에 없는 이름(`sys.` · `DBMS_OUTPUT.` · 아직 안 읽은 스키마) — 채움은 요청하되 아래
+                        // 정적 표·문서 단어로 이어지게 둔다.
+                        resolved = false;
+                        self.needs.push(NeedColumns {
+                            schema: a.schema.clone(),
+                            table: a.table.clone(),
+                            urgent: true,
+                        });
+                    }
+                }
+            }
+        }
+        // ★ SQL Server 3부 이름(10-01 ⑭ · 사용자 "`Database2.dbo.Table`은 현재 DB의 `dbo.Table`과 다른 객체"):
+        //   `DB.` = 그 DB의 스키마 · `DB.스키마.` = 그 DB·스키마의 객체(복합 열쇠 `DB.스키마` 버킷 · 없으면 호스트가 `USE`로
+        //   따라가 읽음) · `DB.스키마.테이블.`은 아래 "테이블 이름 직접" 경로가 복합 열쇠로 컬럼을 찾는다.
+        let mut db_handled = false;
+        if let (Some(m), Some(Dialect::Mssql), false) = (meta, dialect, resolved) {
+            let segs: Vec<&str> = qualifier.split('.').collect();
+            let is_db = m.names.find("").is_some_and(|e| {
+                m.snap
+                    .prefix(m.names, e, ObjectKind::Database, "", usize::MAX)
+                    .iter()
+                    .any(|h| m.names.get(h.name).eq_ignore_ascii_case(segs[0]))
+            });
+            if std::env::var_os("NSQL_TRACE_META").is_some() {
+                eprintln!(
+                    "[intel] member q={qualifier} segs={} is_db={is_db} resolved={resolved} dbs={}",
+                    segs.len(),
+                    m.names.find("").map_or(0, |e| m
+                        .snap
+                        .prefix(m.names, e, ObjectKind::Database, "", usize::MAX)
+                        .len())
+                );
+            }
+            if is_db && segs.len() <= 2 {
+                db_handled = true;
+                resolved = true;
+                let key = segs.join(".");
+                match m.names.find(&key) {
+                    Some(sc) if segs.len() == 1 => {
+                        self.note_coverage(m, sc, ObjectKind::Schema);
+                        for h in m
+                            .snap
+                            .prefix(m.names, sc, ObjectKind::Schema, "", usize::MAX)
+                        {
+                            cands.push(obj_cand(m, &h, ObjectKind::Schema, dialect, show_types));
+                        }
+                    }
+                    Some(sc) => {
+                        for kind in from_kinds(dialect, self.cfg.routines) {
+                            self.note_coverage(m, sc, kind);
+                            for h in m.snap.prefix(m.names, sc, kind, "", usize::MAX) {
+                                if ctx.from_chain && !from_ok(m, &h, kind, dialect) {
+                                    continue;
+                                }
+                                cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                            }
+                        }
+                    }
+                    None => {
+                        self.loading_objects = true;
+                        push_need(&mut self.need_objects, &key);
+                    }
+                }
+            }
+        }
+        // 2) 스키마 이름 → 그 스키마 객체.
+        if let Some(m) = meta {
+            let q = qualifier.rsplit('.').next().unwrap_or(qualifier);
+            let sc_hit = if db_handled {
+                None
+            } else {
+                m.snap
+                    .schemas
+                    .iter()
+                    .copied()
+                    .find(|s| m.names.get(*s).eq_ignore_ascii_case(q))
+            };
+            if let Some(sc) = sc_hit {
+                // ★ `스키마.`를 치는 순간 그 스키마를 읽어 캐시(사용자 09-23) — 종류는 FROM 자리와 같은 표(`from_kinds` · 뷰 = 테이블
+                //   레이어 · 함수·패키지·프로시저 = 낮은 레이어 · 09-24). 시퀀스는 트리가 채운 것만 보인다.
+                for kind in from_kinds(dialect, self.cfg.routines) {
+                    self.note_coverage(m, sc, kind);
+                    for h in m.snap.prefix(m.names, sc, kind, "", usize::MAX) {
+                        // FROM 자리의 `스키마.`면 프로시저·스칼라 함수는 뺀다(사용자 09-24 SQL Server 지적).
+                        if ctx.from_chain && !from_ok(m, &h, kind, dialect) {
+                            continue;
+                        }
+                        cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                    }
+                }
+                for h in m
+                    .snap
+                    .prefix(m.names, sc, ObjectKind::Sequence, "", usize::MAX)
+                {
+                    cands.push(obj_cand(m, &h, ObjectKind::Sequence, dialect, show_types));
+                }
+                resolved = true;
+            } else if !resolved {
+                // 테이블·패키지 이름을 직접 쓴 경우(alias 없이 · `스키마.이름`이면 그 스키마에서) — 패키지면 멤버(09-24).
+                let (qs, qn) = match qualifier.rsplit_once('.') {
+                    Some((s, n)) => (Some(s), n),
+                    None => (None, q),
+                };
+                let found = m.snap.lookup(m.names, qs, qn);
+                let is_pkg = found
+                    .and_then(|id| m.snap.object(id))
+                    .is_some_and(|o| o.kind == ObjectKind::Package);
+                if ctx.from_chain && qualifier.contains('.') && !is_pkg {
+                    // FROM 사슬인데 패키지가 아니다(테이블·뷰 뒤 `.`) = 고를 것 없음(§165).
+                    resolved = true;
+                } else if let Some(id) = found {
+                    resolved = true;
+                    match m.snap.columns(id) {
+                        ColState::Loaded { cols, .. } => {
+                            for c in cols.iter() {
+                                if is_pkg {
+                                    push_member(cands, id, c, m.names, ctx.from_chain, show_types);
+                                } else {
+                                    push_col(cands, id, c, m.names, show_types);
+                                }
+                            }
+                        }
+                        ColState::Loading => self.loading = true,
+                        _ => {
+                            self.loading = true;
+                            self.needs.push(NeedColumns {
+                                schema: qs.map(String::from),
+                                table: qn.to_string(),
+                                urgent: true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        // 2-b) 사전 스키마(`sys.` · `INFORMATION_SCHEMA.` · `pg_catalog.` …) = 서버에서 읽은 권한 반영 사전 버킷(09-23) —
+        //   이름이 `스키마.이름` 꼴이라 앞부분이 맞는 것의 뒷부분을 후보로. 없으면 아래 정적 표.
+        if !resolved {
+            if let Some((m, ds)) = meta.and_then(dict_sym) {
+                let want = format!("{}.", qualifier.to_ascii_lowercase());
+                for h in m
+                    .snap
+                    .prefix(m.names, ds, ObjectKind::View, &want, usize::MAX)
+                {
+                    let full = m.names.get(h.name);
+                    if full.len() <= want.len() {
+                        continue;
+                    }
+                    cands.push(Cand {
+                        text: full[want.len()..].to_string(),
+                        kind: CandKind::View,
+                        detail: if show_types {
+                            "system".into()
+                        } else {
+                            String::new()
+                        },
+                        source: 4,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
+                    });
+                    resolved = true;
+                }
+            }
+        }
+        // 3) 시스템 패키지(`DBMS_OUTPUT.`) · 사전 객체의 앞부분(`sys.` · `INFORMATION_SCHEMA.` · `pg_catalog.`) — 정적 표(T-178).
+        if !resolved && functions {
+            if let Some(p) = builtins::package(dialect, qualifier) {
+                resolved = true;
+                for m in p.members {
+                    cands.push(Cand {
+                        text: m.name.to_string(),
+                        kind: CandKind::Function,
+                        detail: if show_types {
+                            m.sig.to_string()
+                        } else {
+                            String::new()
+                        },
+                        source: 4,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
+                    });
+                }
+            }
+            let sys = builtins::system_members(dialect, qualifier);
+            if !sys.is_empty() {
+                resolved = true;
+                for n in sys {
+                    cands.push(Cand {
+                        text: n.to_string(),
+                        kind: CandKind::View,
+                        detail: if show_types {
+                            "system".into()
+                        } else {
+                            String::new()
+                        },
+                        source: 4,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
+                    });
+                }
+            }
+        }
+        if !resolved && self.cfg.doc_words {
+            for w in doc_words {
+                cands.push(Cand {
+                    text: w.clone(),
+                    kind: CandKind::Word,
+                    detail: String::new(),
+                    source: 6,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
+    }
+
+    /// `request`의 `CtxKind::ExecArgs { routine }` 가지(220차 T-248 분해 · 동작 불변 · 11-01) — 후보를 `cands`에 보탠다.
+    fn cands_exec_args(&mut self, routine: &str, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            ctx,
+            meta,
+            doc,
+            show_types,
+            ..
+        } = *rq;
+        if let Some(m) = meta {
+            let (schema, name) = routine
+                .rsplit_once('.')
+                .map_or((None, routine), |(s, n)| (Some(s), n));
+            let cur = m.snap.current_schema.map(|s| m.names.get(s).to_string());
+            if let Some(id) = m
+                .snap
+                .lookup_resolvable_from(m.names, schema, cur.as_deref(), name)
+            {
+                match m.snap.args(id) {
+                    nsql_run::meta::ArgState::Loaded(list) => {
+                        let used = param_names_in(
+                            &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)],
+                        );
+                        for (i, a) in list.iter().enumerate() {
+                            // ★ T-SQL 명명 인자 = `@이름 = `(카탈로그는 `@`를 뗀 이름 · 사용자 10-08 "DBMS 특징에 맞게").
+                            let n = m.names.get(a.name);
+                            let shown = if n.starts_with('@') {
+                                n.to_string()
+                            } else {
+                                format!("@{n}")
+                            };
+                            if used.iter().any(|u| u.eq_ignore_ascii_case(&shown)) {
+                                continue;
+                            }
+                            cands.push(Cand {
+                                text: format!("{shown} = "),
+                                kind: CandKind::Variable,
+                                detail: if show_types {
+                                    m.names.get(a.detail).to_string()
+                                } else {
+                                    String::new()
+                                },
+                                source: 4,
+                                tag: 0,
+                                mark: String::new(),
+                                order: i as u32,
+                                qualifier: String::new(),
+                                layer: 0,
+                            });
+                        }
+                    }
+                    nsql_run::meta::ArgState::Loading => self.loading = true,
+                    nsql_run::meta::ArgState::Unknown => {
+                        self.need_args.push(id);
+                        self.loading = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// `request`의 `CtxKind::Want(intel::Want::ProcParam(p))` 가지(220차 T-248 분해 · 동작 불변 · 11-01) — 후보를 `cands`에 보탠다.
+    fn cands_proc_param(&mut self, p: &str, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            ctx,
+            dialect,
+            doc,
+            show_types,
+            ..
+        } = *rq;
+        // ★ T-316: 시스템 프로시저 파라미터 — 문장 안에 이미 쓴 `@이름`은 뺀다(메타 불필요).
+        let used: Vec<String> =
+            param_names_in(&doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)]);
+        if let Some(sp) = nsql_script::builtins::proc_params(dialect, p) {
+            for (i, (name, ty)) in sp.params.iter().enumerate() {
+                if used.iter().any(|u| u.eq_ignore_ascii_case(name)) {
+                    continue;
+                }
+                cands.push(Cand {
+                    // T-SQL 명명 인자 꼴 `@이름 = `(사용자 10-08).
+                    text: format!("{name} = "),
+                    kind: CandKind::Variable,
+                    detail: if show_types {
+                        (*ty).to_string()
+                    } else {
+                        String::new()
+                    },
+                    source: 4,
+                    tag: 0,
+                    mark: String::new(),
+                    order: i as u32,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
+    }
+
+    /// `request`의 `CtxKind::Relation` 가지(220차 T-248 분해 · 동작 불변 · 11-01) — 후보를 `cands`에 보탠다.
+    fn cands_relation(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            ctx,
+            meta,
+            dialect,
+            symbols,
+            show_types,
+            functions,
+            ..
+        } = *rq;
+        if let Some(m) = meta {
+            if let Some(cur) = m.snap.current_schema {
+                // ★ 현재 스키마의 관계 객체 = 접두 없이 바로(사용자 09-23). 버킷이 아직 없으면 호스트에 채움을 요청하고
+                //   "불러오는 중"을 보인다 · 상한 없이 다 넣고 랭킹이 자른다(종전 = 이름순 앞 200개만 → `DMS_*`가 잘렸다).
+                //   ★ 뷰·구체화 뷰·시노님은 테이블과 같은 레이어 · 함수·패키지·프로시저는 낮은 레이어(`from_kinds` · 사용자 09-24).
+                for kind in from_kinds(dialect, self.cfg.routines) {
+                    self.note_coverage(m, cur, kind);
+                    for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
+                        if !from_ok(m, &h, kind, dialect) {
+                            continue;
+                        }
+                        cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                    }
+                }
+            }
+            for s in &m.snap.schemas {
+                cands.push(Cand {
+                    text: m.names.get(*s).to_string(),
+                    kind: CandKind::Schema,
+                    detail: if show_types {
+                        "schema".into()
+                    } else {
+                        String::new()
+                    },
+                    source: 4,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
+        for a in ctx.aliases.iter().filter(|a| a.local && a.alias == a.table) {
+            cands.push(Cand {
+                text: a.alias.clone(),
+                kind: CandKind::Table,
+                detail: if show_types {
+                    "cte".into()
+                } else {
+                    String::new()
+                },
+                source: 2,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
+            });
+        }
+        for (name, k) in symbols {
+            if *k == SymKind::Object || *k == SymKind::Cte {
+                cands.push(Cand {
+                    text: name.clone(),
+                    kind: CandKind::Symbol,
+                    detail: if show_types {
+                        k.label().to_string()
+                    } else {
+                        String::new()
+                    },
+                    source: 3,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
+        // 사전 객체(`ALL_TABLES` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_class`) — ★ 접속 뒤에는 서버에서 읽은
+        //   **권한 반영** 버킷(`DICT_SCHEMA` · 사용자 09-23 "권한에 맞춰 ALL_/DBA_") · 그 전(또는 아직 못 읽음)에는 정적 표(T-178).
+        let dict_loaded = meta
+            .and_then(dict_sym)
+            .is_some_and(|(m, ds)| m.snap.coverage(ds, ObjectKind::View).has_list());
+        if let Some((m, ds)) = meta.and_then(dict_sym) {
+            let cov = m.snap.coverage(ds, ObjectKind::View);
+            // 읽은 것(낡았어도)은 후보로 · 없거나 낡았으면 (다시) 읽기 청함.
+            if cov.has_list() {
+                for h in m.snap.prefix(m.names, ds, ObjectKind::View, "", usize::MAX) {
+                    cands.push(Cand {
+                        text: m.names.get(h.name).to_string(),
+                        kind: CandKind::View,
+                        detail: if show_types {
+                            "system".into()
+                        } else {
+                            String::new()
+                        },
+                        source: 4,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        // 사전 뷰(`ALL_`·`DBA_`·`CDB_`·`V$`·`GV$` — 수백~수천)는 스키마 자체 객체 **아래 층**: 빈 접두에서는
+                        // 뒤로 · 접두를 치면 등급으로 올라온다(사용자 09-24 "이런 테이블들은 뭐야").
+                        layer: 1,
+                    });
+                }
+            }
+            if matches!(cov, Coverage::Missing | Coverage::Stale { .. }) {
+                push_need(&mut self.need_objects, nsql_catalog::DICT_SCHEMA);
+            }
+        } else if meta.is_some() {
+            push_need(&mut self.need_objects, nsql_catalog::DICT_SCHEMA);
+        }
+        if functions && !dict_loaded {
+            for o in builtins::system_objects(dialect) {
+                cands.push(Cand {
+                    text: (*o).to_string(),
+                    kind: CandKind::View,
+                    detail: if show_types {
+                        "system".into()
+                    } else {
+                        String::new()
+                    },
+                    source: 4,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 1,
+                });
+            }
+        }
+    }
+
+    /// `request`의 `CtxKind::Expr | CtxKind::Start` 가지(220차 T-248 분해 · 동작 불변 · 11-01) — 후보를 `cands`에 보탠다.
+    fn cands_expr(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            ctx,
+            meta,
+            dialect,
+            doc,
+            symbols,
+            doc_words,
+            show_types,
+            functions,
+        } = *rq;
+        // ★ 이름 지정 인자(사용자 10-08 "Argument 이름에 직접 지정하는 문법에서도 자동완성" · T-317 확장): 괄호 주인이 메타의
+        //   루틴이고 캐럿이 인자 시작(`(`·`,` 뒤)이면 `이름 => ` 조각(Oracle·PG 명명 표기 · SQL Server는 괄호 없는 `@이름` = T-317) ·
+        //   이미 `이름 =>`로 적은 인자는 제외 · 인자를 모르면 요청 + 불러오는 중.
+        if ctx.kind == CtxKind::Expr && matches!(dialect, Some(Dialect::Oracle | Dialect::Postgres))
+        {
+            if let (Some(owner), Some(m)) = (ctx.paren_owner.as_deref(), meta) {
+                let head = &doc[ctx.statement.start..ctx.replace.start.max(ctx.statement.start)];
+                if named_arg_start(head) {
+                    let (schema, name) = owner
+                        .rsplit_once('.')
+                        .map_or((None, owner), |(sc, n)| (Some(sc), n));
+                    let cur = m.snap.current_schema.map(|c| m.names.get(c).to_string());
+                    let id = m
+                        .snap
+                        .lookup_resolvable_from(m.names, schema, cur.as_deref(), name)
+                        .filter(|&id| m.snap.object(id).is_some_and(|o| o.kind.is_routine()));
+                    if let Some(id) = id {
+                        match m.snap.args(id) {
+                            nsql_run::meta::ArgState::Loaded(list) => {
+                                let used = named_args_used(head);
+                                for (i, a) in list.iter().enumerate() {
+                                    // 카탈로그는 이름을 대문자로 접는다(서명 대조용) — PG는 소문자 식별자가 자연스러워 소문자로(E2E 10-08).
+                                    let raw = m.names.get(a.name);
+                                    let n = if dialect == Some(Dialect::Postgres) {
+                                        raw.to_lowercase()
+                                    } else {
+                                        raw.to_string()
+                                    };
+                                    if used.iter().any(|u| u.eq_ignore_ascii_case(&n)) {
+                                        continue;
+                                    }
+                                    cands.push(Cand {
+                                        text: format!("{n} => "),
+                                        kind: CandKind::Variable,
+                                        detail: if show_types {
+                                            m.names.get(a.detail).to_string()
+                                        } else {
+                                            String::new()
+                                        },
+                                        source: 1,
+                                        tag: 0,
+                                        mark: String::new(),
+                                        order: i as u32,
+                                        qualifier: String::new(),
+                                        layer: 0,
+                                    });
+                                }
+                            }
+                            nsql_run::meta::ArgState::Loading => self.loading = true,
+                            nsql_run::meta::ArgState::Unknown => {
+                                self.need_args.push(id);
+                                self.loading = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ★ `*` / `A.*` 뒤 = "모든 컬럼 (N)" 조각(사용자 09-24): `A.*` = 그 별칭의 컬럼 · bare `*` = FROM의 모든 테이블 컬럼(둘 이상이거나
+        //   별칭을 썼으면 `A.컬럼` · 하나뿐이고 별칭이 없으면 이름만). 안 읽은 테이블은 급한 채움 요청 + "불러오는 중".
+        if ctx.kind == CtxKind::Expr && self.cfg.insert_columns {
+            if let (Some(star), Some(m)) = (ctx.star.as_ref(), meta) {
+                let targets: Vec<&intel::Alias> = ctx
+                    .aliases
+                    .iter()
+                    .filter(|a| !a.local)
+                    .filter(|a| {
+                        star.qualifier
+                            .as_deref()
+                            .is_none_or(|q| a.alias.eq_ignore_ascii_case(q))
+                    })
+                    .collect();
+                let qualify = star.qualifier.is_some()
+                    || targets.len() > 1
+                    || targets
+                        .first()
+                        .is_some_and(|a| !a.alias.eq_ignore_ascii_case(&a.table));
+                let mut parts: Vec<String> = Vec::new();
+                let mut ready = !targets.is_empty();
+                for a in &targets {
+                    match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
+                        Some(id) => match m.snap.columns(id) {
+                            ColState::Loaded { cols, .. } => {
+                                for c in cols.iter() {
+                                    let name = m.names.get(c.name);
+                                    parts.push(if qualify {
+                                        format!("{}.{name}", a.alias)
+                                    } else {
+                                        name.to_string()
+                                    });
+                                }
+                            }
+                            ColState::Loading => {
+                                ready = false;
+                                self.loading = true;
+                            }
+                            ColState::Error(_) => ready = false,
+                            ColState::Unknown => {
+                                ready = false;
+                                self.loading = true;
+                                self.needs.push(NeedColumns {
+                                    schema: a.schema.clone(),
+                                    table: a.table.clone(),
+                                    urgent: true,
+                                });
+                            }
+                        },
+                        None => {
+                            ready = false;
+                            self.needs.push(NeedColumns {
+                                schema: a.schema.clone(),
+                                table: a.table.clone(),
+                                urgent: true,
+                            });
+                        }
+                    }
+                }
+                if ready && !parts.is_empty() {
+                    // 구분 = 쉼표 + 공백(Space/Tab · `intel.star_comma_space`) · "여러 줄"이면 다음 줄 **맨 앞에 쉼표**(들여쓰기 없음 ·
+                    //   사용자 09-24 "A / , B / , C") · 기본 = "한 줄"(`A, B, C`).
+                    let ws = if self.cfg.star_tab.unwrap_or(self.editor_tab) {
+                        "\t"
+                    } else {
+                        " "
+                    };
+                    let sep = if self.cfg.star_lines {
+                        format!("\n,{ws}")
+                    } else {
+                        format!(",{ws}")
+                    };
+                    cands.push(Cand {
+                        text: parts.join(&sep),
+                        kind: CandKind::Snippet,
+                        detail: nsql_i18n::tf(
+                            nsql_i18n::Msg::IntelAllColumnsN,
+                            &[&parts.len().to_string()],
+                        ),
+                        source: 0,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
+                    });
+                }
+            }
+        }
+        if ctx.kind == CtxKind::Expr && self.cfg.join_fk && ctx.prefix.is_empty() {
+            // ★ `JOIN 테이블 [별칭] ON` 바로 뒤 = 외래 키로 만든 조인 조건을 첫 후보로(T-178 · 지연 로딩: 제약은
+            //   이때 처음 읽는다 — 이미 있으면 즉시 · 없으면 "불러오는 중" 뒤 다시 그린다).
+            if let (Some(target), Some(m)) = (join_on_target(&doc[..ctx.replace.start]), meta) {
+                let mut sides: Vec<JoinSide> = Vec::new();
+                let mut joined: Option<usize> = None;
+                for a in ctx.aliases.iter().filter(|a| !a.local) {
+                    let Some(id) = m.snap.lookup(m.names, a.schema.as_deref(), &a.table) else {
+                        continue;
+                    };
+                    match m.snap.detail(id) {
+                        nsql_run::meta::DetailState::Loaded { detail, .. } => {
+                            if joined.is_none()
+                                && (a.alias.eq_ignore_ascii_case(&target)
+                                    || a.table.eq_ignore_ascii_case(&target))
+                            {
+                                joined = Some(sides.len());
+                            }
+                            sides.push(JoinSide {
+                                alias: a.alias.clone(),
+                                table: a.table.clone(),
+                                keys: detail
+                                    .keys
+                                    .iter()
+                                    .filter(|k| matches!(k.kind, 'P' | 'R'))
+                                    .map(|k| JoinKey {
+                                        name: m.names.get(k.name).to_string(),
+                                        kind: k.kind,
+                                        cols: k
+                                            .cols
+                                            .iter()
+                                            .map(|c| m.names.get(*c).to_string())
+                                            .collect(),
+                                        ref_table: k.ref_table.map(|t| m.names.get(t).to_string()),
+                                        ref_cols: k
+                                            .ref_cols
+                                            .iter()
+                                            .map(|c| m.names.get(*c).to_string())
+                                            .collect(),
+                                    })
+                                    .collect(),
+                            });
+                        }
+                        nsql_run::meta::DetailState::Loading => self.loading = true,
+                        nsql_run::meta::DetailState::Unknown => {
+                            self.loading = true;
+                            self.need_details.push(id);
+                        }
+                    }
+                }
+                if let Some(j) = joined {
+                    for (n, (cond, fk)) in fk_join_conds(&sides, j).into_iter().enumerate() {
+                        cands.push(Cand {
+                            text: cond,
+                            kind: CandKind::Snippet,
+                            detail: format!("FK {fk}"),
+                            source: 0,
+                            tag: 0,
+                            mark: String::new(),
+                            order: n as u32,
+                            qualifier: String::new(),
+                            layer: 0,
+                        });
+                    }
+                }
+            }
+        }
+        if ctx.kind == CtxKind::Expr
+            && self.cfg.insert_columns
+            && ctx.paren_into
+            && ctx.prefix.is_empty()
+        {
+            // `INSERT INTO t (` 바로 뒤 = 그 테이블의 컬럼 전체를 한 조각으로(첫 후보 · T-178).
+            if let (Some(owner), Some(m)) = (ctx.paren_owner.as_deref(), meta) {
+                let (schema, table) = match intel::resolve_alias(&ctx.aliases, owner) {
+                    Some(a) if !a.local => (a.schema.clone(), a.table.clone()),
+                    _ => match owner.rsplit_once('.') {
+                        Some((sc, t)) => (Some(sc.to_string()), t.to_string()),
+                        None => (None, owner.to_string()),
+                    },
+                };
+                match m.snap.lookup(m.names, schema.as_deref(), &table) {
+                    Some(id) => match m.snap.columns(id) {
+                        ColState::Loaded { cols, .. } if !cols.is_empty() => {
+                            let list: Vec<&str> =
+                                cols.iter().map(|c| m.names.get(c.name)).collect();
+                            cands.push(Cand {
+                                text: list.join(", "),
+                                kind: CandKind::Snippet,
+                                detail: nsql_i18n::tf(
+                                    nsql_i18n::Msg::IntelAllColumnsN,
+                                    &[&list.len().to_string()],
+                                ),
+                                source: 0,
+                                tag: 0,
+                                mark: String::new(),
+                                order: 0,
+                                qualifier: String::new(),
+                                layer: 0,
+                            });
+                        }
+                        ColState::Loading => self.loading = true,
+                        ColState::Loaded { .. } | ColState::Error(_) => {}
+                        ColState::Unknown => {
+                            self.loading = true;
+                            self.needs.push(NeedColumns {
+                                schema,
+                                table,
+                                urgent: true,
+                            });
+                        }
+                    },
+                    None => self.needs.push(NeedColumns {
+                        schema,
+                        table,
+                        urgent: true,
+                    }),
+                }
+            }
+        }
+        if ctx.kind == CtxKind::Expr {
+            // 문장 alias 컬럼(로드된 것만) + alias 이름.
+            for (ai, a) in ctx.aliases.iter().enumerate() {
+                cands.push(Cand {
+                    text: a.alias.clone(),
+                    kind: CandKind::Alias,
+                    detail: if show_types {
+                        if a.local {
+                            "cte/subquery".into()
+                        } else {
+                            a.table.clone()
+                        }
+                    } else {
+                        String::new()
+                    },
+                    source: 2,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+                if a.local {
+                    continue;
+                }
+                // ★ 접두 없이 고른 컬럼(JOIN 다중 테이블 · 사용자 09-24): 모든 alias 테이블의 컬럼을 보이고(오른쪽 = alias ·
+                //   FROM 순서 → 순번), 확정 때 `A.컬럼`(Alt = 컬럼만 · `intel.qualify_columns`). 아직 안 읽은 테이블은 채움 요청.
+                if let Some(m) = meta {
+                    match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
+                        Some(id) => match m.snap.columns(id) {
+                            ColState::Loaded { cols, .. } => {
+                                let base = ai as u32 * 1000;
+                                for c in cols.iter() {
+                                    push_col(cands, id, c, m.names, show_types);
+                                    if let Some(last) = cands.last_mut() {
+                                        last.qualifier = a.alias.clone();
+                                        last.order += base;
+                                    }
+                                }
+                            }
+                            ColState::Loading => self.loading = true,
+                            ColState::Unknown => {
+                                self.loading = true;
+                                self.needs.push(NeedColumns {
+                                    schema: a.schema.clone().or_else(|| {
+                                        m.snap.current_schema.map(|s| m.names.get(s).to_string())
+                                    }),
+                                    table: a.table.clone(),
+                                    urgent: true,
+                                });
+                            }
+                            ColState::Error(_) => {}
+                        },
+                        None => self.needs.push(NeedColumns {
+                            schema: a.schema.clone(),
+                            table: a.table.clone(),
+                            urgent: true,
+                        }),
+                    }
+                }
+            }
+            // 내장 함수(시그니처) + 시스템 패키지 이름 — 정적 표(T-178 · `intel.functions`).
+            if functions {
+                for b in builtins::functions(dialect) {
+                    cands.push(Cand {
+                        text: b.name.to_string(),
+                        kind: CandKind::Function,
+                        detail: if show_types {
+                            b.sig.to_string()
+                        } else {
+                            String::new()
+                        },
+                        source: 4,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
+                    });
+                }
+                for p in builtins::packages(dialect) {
+                    cands.push(Cand {
+                        text: p.name.to_string(),
+                        kind: CandKind::Package,
+                        detail: if show_types {
+                            "package".into()
+                        } else {
+                            String::new()
+                        },
+                        source: 4,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
+                    });
+                }
+            }
+            // ★ 사용자 정의 함수·패키지(사용자 10-09 "사용자 정의 함수 보완"): 식 자리에서 접두 없이 — 현재 스키마의 메타
+            //   버킷(L1 이름)에서 · 없으면 채움 요청 · 레이어는 FROM 자리와 같은 `obj_cand`(함수·패키지 = 2).
+            if let Some(m) = meta {
+                if let Some(cur) = m.snap.current_schema {
+                    for kind in [ObjectKind::Function, ObjectKind::Package] {
+                        if dialect.is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind)) {
+                            continue;
+                        }
+                        self.note_coverage_kind(m, cur, kind);
+                        for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
+                            cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                        }
+                    }
+                }
+            }
+        }
+        for (name, k) in symbols {
+            cands.push(Cand {
+                text: name.clone(),
+                kind: match k {
+                    SymKind::Define | SymKind::Variable | SymKind::Declared => CandKind::Variable,
+                    SymKind::Procedure | SymKind::Function => CandKind::Routine,
+                    _ => CandKind::Symbol,
+                },
+                detail: if show_types {
+                    k.label().to_string()
+                } else {
+                    String::new()
+                },
+                source: 3,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
+            });
+        }
+        if self.cfg.keywords {
+            // ★ 문법 절 기반(09-24 · nsql-script `grammar` · `SELECT avg` 자리에 `HAVING` 없음): 문장 시작 = `[start]` · 절을 알면
+            //   그 절의 `next`만 · 모르는 자리(함수 괄호 안 · 낯선 절) = 공통 + 방언 키워드 전체.
+            let g = nsql_script::grammar::for_dialect(dialect);
+            // ★ T-200 CASE 식 상태(10-31 · 82 §10-4-3): 짝 안 맞는 CASE 안이면 절 next 대신 `[expression CASE]` 자리별 예약어
+            //   (절·objects는 그대로 → 컬럼·함수 후보 유지 · 섹션 없는 문법은 절 next로).
+            let case_kws = if self.cfg.grammar {
+                ctx.case_pos.and_then(|p| g.case_next(p))
+            } else {
+                None
+            };
+            let kws: Vec<String> = match (&ctx.kind, ctx.clause.as_deref()) {
+                _ if !self.cfg.grammar => intel::keywords_for(dialect).map(String::from).collect(),
+                _ if case_kws.is_some() => case_kws.unwrap_or_default(),
+                (CtxKind::Start, _) => g.start().to_vec(),
+                // ★ T-200 절 안 위치(10-30): 첫 항목 자리 = `first` 더하고 절 전환 예약어 빼기 · 콤마 뒤 = 전환·first 빼기 · 그 밖 = first 빼기.
+                (_, Some(cl)) => match g.next_at(cl, ctx.clause_pos) {
+                    Some(n) => n,
+                    None => intel::keywords_for(dialect).map(String::from).collect(),
+                },
+                _ => intel::keywords_for(dialect).map(String::from).collect(),
+            };
+            for (i, k) in kws.iter().enumerate() {
+                cands.push(Cand {
+                    text: k.clone(),
+                    kind: CandKind::Keyword,
+                    detail: String::new(),
+                    source: 5,
+                    tag: 0,
+                    mark: String::new(),
+                    // 키워드는 표 순서(자주 쓰는 것부터).
+                    order: i as u32,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
+        if self.cfg.doc_words {
+            for w in doc_words {
+                cands.push(Cand {
+                    text: w.clone(),
+                    kind: CandKind::Word,
+                    detail: String::new(),
+                    source: 6,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
     }
 
     /// 자기 감속이 막 일어난 탭(한 번만).
