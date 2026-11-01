@@ -270,6 +270,8 @@ impl App {
             show_dot: self.settings.flag("file.show_dot"),
             // 제외 폴더(설정 `project.exclude` · 쉼표 구분 · D-259 기본 `.git,.svn,.hg,node_modules,target,.nsql` · `-` = 없음).
             skip_dirs: exclude_names(self.settings.get(EXCLUDE_KEY).unwrap_or("")),
+            // ★ T-290(216차): 루트 최상위 `.gitignore` 간이 해석(설정 `project.gitignore` · 기본 on).
+            gitignore: self.settings.flag("project.gitignore"),
         };
         let threads = self.settings.int("project.scan_threads").clamp(0, 16) as usize;
         self.goto_walk = Some(parwalk::spawn(folders, opts, threads));

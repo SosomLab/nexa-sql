@@ -63,6 +63,9 @@ pub(crate) struct LogWin {
     fmt_name: String,
     template: String,
     cols: Columns,
+    /// ★ T-124(216차): 지금 활성 세션의 라벨(접속 설명) — 이후 `push`되는 줄에 찍힌다 · 본 라벨들(둘 이상 = 세션 열 자동).
+    cur_session: Option<String>,
+    sessions_seen: Vec<String>,
     /// 보이는 종류(설정 `log.kinds` · 비면 전부).
     kinds: Vec<LogKind>,
     /// 필터를 통과한 버퍼 index(표시 순서의 원천).
@@ -152,6 +155,8 @@ impl LogWin {
             fmt_name: format.to_string(),
             template: nsql_log::DEFAULT_TEMPLATE.to_string(),
             cols: Columns::default(),
+            cur_session: None,
+            sessions_seen: Vec::new(),
             kinds: Vec::new(),
             vis: Vec::new(),
             menu: ContextMenu::new(),
@@ -243,8 +248,28 @@ impl LogWin {
         self.redraw();
     }
 
+    /// ★ T-124: 활성 세션 라벨 — `App`이 세션을 바꿀 때마다(탭 전환·접속·거둠) 부른다. 라벨이 둘 이상 보이면 세션 열을 저절로 켠다
+    ///   (설정 `log.columns`에 `session`을 적으면 늘 켬).
+    pub(crate) fn set_session(&mut self, label: &str) {
+        let l = label.trim();
+        self.cur_session = (!l.is_empty()).then(|| l.to_string());
+        if !l.is_empty() && !self.sessions_seen.iter().any(|s| s == l) {
+            self.sessions_seen.push(l.to_string());
+            if self.sessions_seen.len() == 2 {
+                self.rebuild_fmt();
+            }
+        }
+    }
+
+    /// 실제 적용 컬럼 = 설정 + (라벨 둘 이상이면 세션 열).
+    fn eff_cols(&self) -> Columns {
+        let mut c = self.cols;
+        c.session = c.session || self.sessions_seen.len() >= 2;
+        c
+    }
+
     fn rebuild_fmt(&mut self) {
-        self.fmt = nsql_log::formatter_with(&self.fmt_name, &self.template, self.cols);
+        self.fmt = nsql_log::formatter_with(&self.fmt_name, &self.template, self.eff_cols());
         self.invalidate_layout();
         self.redraw();
     }
@@ -303,7 +328,8 @@ impl LogWin {
                     0 => self.cols.ts,
                     1 => self.cols.kind,
                     2 => self.cols.rows,
-                    _ => self.cols.elapsed,
+                    3 => self.cols.elapsed,
+                    _ => self.cols.session,
                 };
                 CtxItem::item(format!("col:{n}"), *n).with_checked(on)
             })
@@ -815,7 +841,10 @@ impl LogWin {
             )
     }
 
-    pub(crate) fn push(&mut self, e: LogEntry) {
+    pub(crate) fn push(&mut self, mut e: LogEntry) {
+        if e.session.is_none() {
+            e.session.clone_from(&self.cur_session);
+        }
         let before = self.buf.len();
         self.buf.push(e);
         self.meta.push_back(None);

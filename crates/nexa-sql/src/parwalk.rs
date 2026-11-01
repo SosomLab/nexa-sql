@@ -34,21 +34,24 @@ pub(crate) struct ListOpts {
     pub show_dot: bool,
     /// 건너뛸 폴더 **이름**(어느 깊이든 · 대소문자 그대로 · 예 `.git` `target` `node_modules` · 설정 `project.exclude` · D-259/260 · T-290).
     pub skip_dirs: Vec<String>,
+    /// ★ T-290(216차): 루트마다 최상위 `.gitignore` 하나를 간이 해석해 무시 항목을 뺀다(설정 `project.gitignore` · 깊은 .gitignore는 안 봄).
+    pub gitignore: bool,
 }
 
+/// 큐 항목 = (루트 index · 폴더) — 루트의 `.gitignore`로 상대 경로를 판정하기 위해.
 struct Queue {
-    state: Mutex<(VecDeque<PathBuf>, usize)>,
+    state: Mutex<(VecDeque<(usize, PathBuf)>, usize)>,
     cv: Condvar,
 }
 
 impl Queue {
-    fn push(&self, p: PathBuf) {
+    fn push(&self, p: (usize, PathBuf)) {
         let mut g = self.state.lock().unwrap_or_else(|e| e.into_inner());
         g.0.push_back(p);
         self.cv.notify_one();
     }
     /// 다음 작업 — 큐가 비고 일하는 워커가 없으면 `None`(전원 종료).
-    fn next(&self, cancel: &AtomicBool) -> Option<PathBuf> {
+    fn next(&self, cancel: &AtomicBool) -> Option<(usize, PathBuf)> {
         let mut g = self.state.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             if cancel.load(Ordering::Relaxed) {
@@ -111,16 +114,44 @@ fn run(roots: Vec<PathBuf>, opts: ListOpts, n: usize, tx: Sender<DirMsg>, cancel
         state: Mutex::new((VecDeque::new(), 0)),
         cv: Condvar::new(),
     };
-    for r in roots {
-        queue.push(r);
+    // ★ T-290: 루트마다 최상위 `.gitignore`(있으면) — 워커가 공유(읽기 전용).
+    let roots: Vec<(PathBuf, Option<nsql_search::RootIgnore>)> = roots
+        .into_iter()
+        .map(|r| {
+            let ig = if opts.gitignore {
+                nsql_search::RootIgnore::load(&r)
+            } else {
+                None
+            };
+            (r, ig)
+        })
+        .collect();
+    for (i, (r, _)) in roots.iter().enumerate() {
+        queue.push((i, r.clone()));
     }
     let dirs = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|s| {
         for _ in 0..n {
             s.spawn(|| {
-                while let Some(path) = queue.next(&cancel) {
-                    let entries = nexa_fs::list_opts(&path, opts.show_hidden, opts.show_dot)
+                while let Some((ri, path)) = queue.next(&cancel) {
+                    let mut entries = nexa_fs::list_opts(&path, opts.show_hidden, opts.show_dot)
                         .map_err(|e| e.to_string());
+                    if let (Ok(v), Some(ig)) = (&mut entries, &roots[ri].1) {
+                        // 루트 기준 상대 성분 + 이름으로 `.gitignore` 판정(폴더면 아래로도 안 내려간다).
+                        let rel: Vec<String> = path
+                            .strip_prefix(&roots[ri].0)
+                            .map(|p| {
+                                p.components()
+                                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        v.retain(|e| {
+                            let mut comps: Vec<&str> = rel.iter().map(String::as_str).collect();
+                            comps.push(&e.name);
+                            !ig.is_ignored(&comps, e.is_dir)
+                        });
+                    }
                     let child_dirs: Vec<PathBuf> = entries
                         .as_ref()
                         .map(|v| {
@@ -140,7 +171,7 @@ fn run(roots: Vec<PathBuf>, opts: ListOpts, n: usize, tx: Sender<DirMsg>, cancel
                         cancel.store(true, Ordering::Relaxed);
                     } else {
                         for d in child_dirs {
-                            queue.push(d);
+                            queue.push((ri, d));
                         }
                     }
                     queue.finish();
@@ -233,6 +264,7 @@ mod tests {
                 show_hidden: false,
                 show_dot: false,
                 skip_dirs: skip,
+                gitignore: false,
             },
             std::env::var("NSQL_PARWALK_THREADS")
                 .ok()
@@ -261,6 +293,53 @@ mod tests {
     }
 
     /// 깊은 트리를 병렬로 전부 열거 · 부모 메시지가 자식보다 먼저 · 실패 폴더는 사유와 함께 · Done은 마지막 · 취소는 멈춘다.
+    /// ★ T-290(216차): 루트 `.gitignore`(`*.log` · `build/`)가 무시하는 파일·폴더는 열거에서 빠진다 · 끄면 그대로 · 하위 폴더의 파일도 상대 경로로 판정.
+    #[test]
+    fn root_gitignore_filters_entries() {
+        let dir = std::env::temp_dir().join(format!("nsql-parwalk-gi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(dir.join("build"));
+        let _ = std::fs::create_dir_all(dir.join("src"));
+        let _ = std::fs::write(dir.join(".gitignore"), "*.log\nbuild/\n");
+        for f in ["a.sql", "b.log", "src/c.log", "src/d.sql", "build/e.sql"] {
+            let _ = std::fs::write(dir.join(f), "x");
+        }
+        let collect = |gi: bool| {
+            let (rx, _c) = spawn(
+                vec![dir.clone()],
+                ListOpts {
+                    show_hidden: false,
+                    show_dot: true,
+                    skip_dirs: Vec::new(),
+                    gitignore: gi,
+                },
+                2,
+            );
+            let mut names: Vec<String> = Vec::new();
+            for m in rx {
+                if let DirMsg::Dir { entries: Ok(v), .. } = m {
+                    names.extend(v.into_iter().map(|e| e.name));
+                }
+            }
+            names.sort();
+            names
+        };
+        let on = collect(true);
+        for keep in ["a.sql", "d.sql", "src", ".gitignore"] {
+            assert!(on.iter().any(|n| n == keep), "{keep} 없음: {on:?}");
+        }
+        assert!(
+            !on.iter()
+                .any(|n| n.ends_with(".log") || n == "build" || n == "e.sql"),
+            "{on:?}"
+        );
+        let off = collect(false);
+        for keep in ["b.log", "c.log", "build", "e.sql"] {
+            assert!(off.iter().any(|n| n == keep), "{keep} 없음: {off:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn walks_everything_parent_first_and_cancels() {
         let dir = std::env::temp_dir().join(format!("nsql-parwalk-{}", std::process::id()));
@@ -278,6 +357,7 @@ mod tests {
                 show_hidden: false,
                 show_dot: true,
                 skip_dirs: Vec::new(),
+                gitignore: false,
             },
             3,
         );
@@ -316,6 +396,7 @@ mod tests {
                 show_hidden: false,
                 show_dot: true,
                 skip_dirs: Vec::new(),
+                gitignore: false,
             },
             2,
             tx,

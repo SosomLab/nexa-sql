@@ -322,10 +322,12 @@ impl App {
         let i = self.parked.iter().position(|s| s.id == id)?;
         let home = self.sess.id;
         std::mem::swap(&mut self.sess, &mut self.parked[i]);
+        self.log_sess_sync();
         let r = f(self);
         if let Some(j) = self.parked.iter().position(|s| s.id == home) {
             std::mem::swap(&mut self.sess, &mut self.parked[j]);
         }
+        self.log_sess_sync();
         Some(r)
     }
 
@@ -501,6 +503,7 @@ impl App {
             let to = self.default_shared;
             if let Some(i) = self.parked.iter().position(|s| s.id == to) {
                 std::mem::swap(&mut self.sess, &mut self.parked[i]);
+                self.log_sess_sync();
             }
         }
         let before = self.parked.len();
@@ -624,7 +627,14 @@ impl App {
         self.explorer.set_private(private);
     }
 
+    /// ★ T-124(216차): 실행 로그 창에 지금 세션의 라벨(접속 설명)을 알린다 — 이후 줄에 세션이 찍힌다.
+    pub(crate) fn log_sess_sync(&mut self) {
+        let d = self.sess.desc.clone();
+        self.log_win.set_session(&d);
+    }
+
     pub(crate) fn sync_sess_ui(&mut self) {
+        self.log_sess_sync();
         // 설정 창이 열려 있으면 활성 탭 덧말·미리보기도 따라온다(탭 전환 · 사용자 09-29).
         self.prefs_format_preview_refresh();
         // ★ 활성 탭의 연결이 바뀌었다(접속 추가·표식 메뉴·탭 전환) → 탐색기를 그 서버 칸의 현재 스키마로 한 번(10-01 ㉗-j · 세션마다 한 번).

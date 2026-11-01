@@ -38,6 +38,25 @@ pub use ignore::DEFAULT_EXCLUDES;
 pub use matcher::{Error, Matcher};
 pub use walk::MAX_THREADS;
 
+/// ★ T-290(216차 · 11-01): 루트 폴더의 **최상위 `.gitignore` 하나**만 읽는 간이 판정 — Goto Anything 색인(`parwalk`)이 쓴다 ·
+///   깊은 폴더의 `.gitignore`는 보지 않는다(파일 검색은 [`SearchOpts::gitignore`]로 전부 본다). 파일이 없거나 규칙이 비면 `None`.
+#[derive(Debug, Clone)]
+pub struct RootIgnore(Arc<ignore::IgnoreNode>);
+
+impl RootIgnore {
+    #[must_use]
+    pub fn load(root: &Path) -> Option<RootIgnore> {
+        let base = Arc::new(ignore::IgnoreNode::from_lines(std::iter::empty(), 0, None));
+        ignore::IgnoreNode::load_child(root, 0, &base).map(RootIgnore)
+    }
+
+    /// 루트 기준 상대 성분(마지막 = 이름)이 무시되는가.
+    #[must_use]
+    pub fn is_ignored(&self, rel_comps: &[&str], is_dir: bool) -> bool {
+        self.0.is_ignored(rel_comps, is_dir)
+    }
+}
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};

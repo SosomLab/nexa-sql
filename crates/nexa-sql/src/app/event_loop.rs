@@ -226,6 +226,10 @@ impl ApplicationHandler<Wake> for App {
         }
         // ★ 헤드리스(D-436): 숨은 주 창은 OS가 RedrawRequested를 보내지 않는다 → 표식이 서 있으면 여기서 직접 그린다(캡처 포함).
         if crate::winfocus::headless() && self.headless_dirty.replace(false) {
+            // ★ 216차: 결과 탭·그리드 동기화를 **paint 바깥**에서 먼저 — 헤드리스는 OS 사건(Resized·Focused)이 없어 첫 paint 안에서
+            //   `Grid::fresh_like`(Debug 프레임 수백 KB)까지 내려가 Windows 주 스레드 스택(1 MB)이 넘쳤다(11-01 V1 · 백트레이스 =
+            //   about_to_wait → paint → sync_grid_tab → fresh_like → … → TextBox::new). 스택 자체는 build.rs `/STACK` 8 MB로 키움.
+            self.sync_grid_tab();
             self.paint();
             self.findobj_paint_trace();
         }

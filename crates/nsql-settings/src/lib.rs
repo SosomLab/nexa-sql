@@ -4132,6 +4132,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: ".git,.svn,.hg,node_modules,target,.nsql",
     },
+    // ★ T-290(216차 · 11-01): Goto Anything 색인이 각 루트의 최상위 `.gitignore`를 간이 해석(깊은 .gitignore는 안 봄 · 탐색기 트리·파일 검색은 별도).
+    Entry {
+        key: "project.gitignore",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectGitignore,
+        desc: Msg::DescProjectGitignore,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "project.scan_threads",
         cat: Msg::CatProject,

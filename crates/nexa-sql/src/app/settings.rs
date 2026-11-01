@@ -941,7 +941,7 @@ impl App {
             | "file.show_hidden"
             | "file.show_dot" => self.sync_project_panel_opts(),
             // 제외 폴더(카드에서 직접 고친 경우) = Ctrl+P 캐시 낡음.
-            "project.exclude" => self.goto_files_at = None,
+            "project.exclude" | "project.gitignore" => self.goto_files_at = None,
             "search.history_max" => self
                 .search_history
                 .borrow_mut()

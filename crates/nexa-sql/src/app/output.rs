@@ -277,9 +277,10 @@ impl App {
                 let text = nsql_run::var_list_text(vars);
                 self.output_push(ed, OutKind::Info, &text);
             }
-            // ★ T-266 등급(10-30): 서버 메시지의 접두(PG `WARNING:`·`EXCEPTION:` …)로 종류를 고른다 — 그 밖 = Info.
+            // ★ T-266 등급(10-30): 서버 메시지의 접두(PG `WARNING:`·`EXCEPTION:` …)로 종류를 고른다 — 그 밖 = Info ·
+            //   2차(216차) = SQL Server는 Info 토큰(심각도 ≤ 10)만 오므로 늘 Info(`message_level_in`).
             RunEvent::Message(m) => {
-                let kind = match nsql_run::message_level(m) {
+                let kind = match nsql_run::message_level_in(Some(self.sess.dialect), m) {
                     nsql_run::MessageLevel::Error => OutKind::Error,
                     nsql_run::MessageLevel::Warning => OutKind::Warn,
                     nsql_run::MessageLevel::Info => OutKind::Info,

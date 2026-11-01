@@ -44,4 +44,10 @@ fn gen_dbms_icons() {
 fn main() {
     embed_windows_resources("nexa-sql.rc", "nexa-sql");
     gen_dbms_icons();
+    // ★ 216차(11-01 · 사용자 고지): Windows(MSVC) GUI 실행 파일의 **주 스레드 스택 = 8 MB**(기본 1 MB → Linux·macOS 기본과 같게).
+    //   헤드리스 첫 paint가 `Grid::fresh_like`까지 내려가는 Debug 스택이 1 MB를 넘겨 `thread 'main' has overflowed its stack`
+    //   (11-01 V1 · 비헤드리스는 OS 사건이 먼저 그리드를 만들어 안 보였음). 실행 파일에만(bins) · CLI·드라이버 cdylib 무관.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/STACK:8388608");
+    }
 }

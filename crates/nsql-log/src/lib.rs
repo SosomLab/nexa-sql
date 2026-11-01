@@ -299,6 +299,8 @@ pub struct LogEntry {
     pub layer: LogLayer,
     /// 상세 수준 — `Basic`은 늘 보이는 기본 메시지 · 나머지는 개발자 모드 + 마스크가 켜져 있을 때만 **생성**된다.
     pub level: LogLevel,
+    /// ★ T-124(216차 · 11-01): 세션 라벨(접속 설명) — 다중 세션에서 어느 세션의 줄인지. `None` = 모름/단일(열에는 빈 칸).
+    pub session: Option<String>,
 }
 
 /// 처리 층(docs/48 §2) — 상세 로그 마스크의 축. 순서 = 마스크 비트 그룹.
@@ -458,7 +460,14 @@ impl LogEntry {
             message: message.into(),
             layer: LogLayer::App,
             level: LogLevel::Basic,
+            session: None,
         }
+    }
+    /// 세션 라벨(빈 글 = 없음).
+    pub fn session(mut self, label: impl Into<String>) -> Self {
+        let l: String = label.into();
+        self.session = (!l.is_empty()).then_some(l);
+        self
     }
     pub fn rows(mut self, n: impl Into<Option<u64>>) -> Self {
         self.rows = n.into();
@@ -512,6 +521,8 @@ pub struct Columns {
     pub kind: bool,
     pub rows: bool,
     pub elapsed: bool,
+    /// ★ T-124: 세션 열 — 기본 끔(CLI 출력 불변) · GUI 실행 로그 창은 라벨이 둘 이상 보이면 저절로 켠다.
+    pub session: bool,
 }
 
 impl Default for Columns {
@@ -521,14 +532,15 @@ impl Default for Columns {
             kind: true,
             rows: true,
             elapsed: true,
+            session: false,
         }
     }
 }
 
 impl Columns {
-    pub const NAMES: [&'static str; 4] = ["time", "kind", "rows", "elapsed"];
+    pub const NAMES: [&'static str; 5] = ["time", "kind", "rows", "elapsed", "session"];
 
-    /// `time,kind,rows,elapsed` 중 보일 것(빈 문자열 = 전부).
+    /// `time,kind,rows,elapsed,session` 중 보일 것(빈 문자열 = 기본 = 앞 넷).
     pub fn parse(s: &str) -> Columns {
         let s = s.trim();
         if s.is_empty() {
@@ -540,6 +552,7 @@ impl Columns {
             kind: has("kind"),
             rows: has("rows"),
             elapsed: has("elapsed"),
+            session: has("session"),
         }
     }
 
@@ -561,6 +574,9 @@ impl Columns {
         if self.elapsed {
             v.push("elapsed");
         }
+        if self.session {
+            v.push("session");
+        }
         v.join(",")
     }
 
@@ -570,6 +586,7 @@ impl Columns {
             1 => self.kind,
             2 => self.rows,
             3 => self.elapsed,
+            4 => self.session,
             _ => true,
         }
     }
@@ -580,26 +597,28 @@ impl Columns {
             "kind" => self.kind = !self.kind,
             "rows" => self.rows = !self.rows,
             "elapsed" => self.elapsed = !self.elapsed,
+            "session" => self.session = !self.session,
             _ => {}
         }
     }
 }
 
-/// 컬럼 값(모든 포맷이 같은 순서로 쓴다 — ts · kind · rows · elapsed · message).
-fn cells(e: &LogEntry) -> [String; 5] {
+/// 컬럼 값(모든 포맷이 같은 순서로 쓴다 — ts · kind · rows · elapsed · session · message).
+fn cells(e: &LogEntry) -> [String; 6] {
     [
         e.ts.stamp(),
         e.kind.label().to_string(),
         e.rows.map(|r| r.to_string()).unwrap_or_default(),
         e.elapsed.map(fmt_dur).unwrap_or_default(),
+        e.session.clone().unwrap_or_default(),
         e.message.replace('\n', " "),
     ]
 }
 
 /// 마스크 적용(숨긴 컬럼은 빈 문자열).
-fn masked(e: &LogEntry, c: Columns) -> [String; 5] {
+fn masked(e: &LogEntry, c: Columns) -> [String; 6] {
     let mut v = cells(e);
-    for (i, cell) in v.iter_mut().enumerate().take(4) {
+    for (i, cell) in v.iter_mut().enumerate().take(5) {
         if !c.get(i) {
             cell.clear();
         }
@@ -621,7 +640,7 @@ impl LogFormat for RawFormat {
         self.cols = c;
     }
     fn line(&self, e: &LogEntry) -> String {
-        let [ts, kind, rows, el, msg] = masked(e, self.cols);
+        let [ts, kind, rows, el, sess, msg] = masked(e, self.cols);
         let mut s = String::new();
         if self.cols.ts {
             s.push_str(&ts);
@@ -644,6 +663,9 @@ impl LogFormat for RawFormat {
         }
         if !el.is_empty() {
             s.push_str(&format!("  {el}"));
+        }
+        if !sess.is_empty() {
+            s.push_str(&format!("  [{sess}]"));
         }
         if !msg.is_empty() {
             s.push_str("  ");
@@ -672,7 +694,7 @@ impl LogFormat for MarkdownFormat {
         for (i, n) in Columns::NAMES.iter().enumerate() {
             if self.cols.get(i) {
                 h.push_str(&format!(" {n} |"));
-                r.push_str(if i >= 2 { "--:|" } else { "---|" });
+                r.push_str(if i == 2 || i == 3 { "--:|" } else { "---|" });
             }
         }
         h.push_str(" message |");
@@ -682,12 +704,12 @@ impl LogFormat for MarkdownFormat {
     fn line(&self, e: &LogEntry) -> String {
         let v = cells(e);
         let mut s = String::from("|");
-        for (i, cell) in v.iter().enumerate().take(4) {
+        for (i, cell) in v.iter().enumerate().take(5) {
             if self.cols.get(i) {
                 s.push_str(&format!(" {cell} |"));
             }
         }
-        s.push_str(&format!(" {} |", v[4].replace('|', "\\|")));
+        s.push_str(&format!(" {} |", v[5].replace('|', "\\|")));
         s
     }
 }
@@ -699,23 +721,23 @@ pub struct GridFormat {
 }
 
 impl GridFormat {
-    pub const WIDTHS: [usize; 4] = [23, 8, 8, 9];
+    pub const WIDTHS: [usize; 5] = [23, 8, 8, 9, 14];
 
-    fn row(&self, v: [String; 5]) -> String {
+    fn row(&self, v: [String; 6]) -> String {
         let w = Self::WIDTHS;
         let mut s = String::new();
-        for i in 0..4 {
+        for i in 0..5 {
             if !self.cols.get(i) {
                 continue;
             }
             let cell = &v[i];
-            if i >= 2 {
+            if i == 2 || i == 3 {
                 s.push_str(&format!("{cell:>w$}│", w = w[i]));
             } else {
                 s.push_str(&format!("{cell:<w$}│", w = w[i]));
             }
         }
-        s.push_str(&v[4]);
+        s.push_str(&v[5]);
         s
     }
 }
@@ -733,6 +755,7 @@ impl LogFormat for GridFormat {
             "kind".into(),
             "rows".into(),
             "elapsed".into(),
+            "session".into(),
             "message".into(),
         ]))
     }
@@ -755,7 +778,7 @@ impl LogFormat for CompactFormat {
         self.cols = c;
     }
     fn line(&self, e: &LogEntry) -> String {
-        let [_, kind, rows, el, msg] = cells(e);
+        let [_, kind, rows, el, sess, msg] = cells(e);
         let mut s = String::new();
         if self.cols.ts {
             s.push_str(&e.ts.time_only());
@@ -763,6 +786,9 @@ impl LogFormat for CompactFormat {
         }
         if self.cols.kind {
             s.push_str(&format!("{kind:<7} "));
+        }
+        if self.cols.session && !sess.is_empty() {
+            s.push_str(&format!("[{sess}] "));
         }
         s.push_str(&msg);
         let mut tail = Vec::new();
@@ -807,7 +833,7 @@ impl LogFormat for JsonlFormat {
     }
     fn line(&self, e: &LogEntry) -> String {
         format!(
-            "{{\"ts\":{},\"kind\":{},\"rows\":{},\"elapsed_ms\":{},\"message\":{}}}",
+            "{{\"ts\":{},\"kind\":{},\"rows\":{},\"elapsed_ms\":{},\"session\":{},\"message\":{}}}",
             json_str(&e.ts.stamp()),
             json_str(e.kind.label()),
             e.rows.map_or("null".to_string(), |r| r.to_string()),
@@ -815,6 +841,7 @@ impl LogFormat for JsonlFormat {
                 "{:.1}",
                 d.as_secs_f64() * 1000.0
             )),
+            e.session.as_deref().map_or("null".to_string(), json_str),
             json_str(&e.message)
         )
     }
@@ -845,12 +872,15 @@ impl LogFormat for DelimitedFormat {
         }
     }
     fn header(&self) -> Option<String> {
+        // csv/tsv = 종전 5열 그대로(CLI 로그 파일 형식 불변 · 세션은 GUI 창·raw/grid/markdown/compact/jsonl/템플릿에서).
         Some(["time", "kind", "rows", "elapsed", "message"].join(&self.delim.to_string()))
     }
     fn line(&self, e: &LogEntry) -> String {
         cells(e)
             .iter()
-            .map(|c| self.q(c))
+            .enumerate()
+            .filter(|(i, _)| *i != 4)
+            .map(|(_, c)| self.q(c))
             .collect::<Vec<_>>()
             .join(&self.delim.to_string())
     }
@@ -874,6 +904,7 @@ impl TemplateFormat {
             "kind" => e.kind.label().to_string(),
             "rows" => e.rows.map(|r| r.to_string()).unwrap_or_default(),
             "elapsed" => e.elapsed.map(fmt_dur).unwrap_or_default(),
+            "session" | "sess" => e.session.clone().unwrap_or_default(),
             "msg" | "message" => e.message.replace('\n', " "),
             _ => return None,
         })
@@ -1283,6 +1314,7 @@ mod tests {
             message: "SELECT * FROM t".into(),
             layer: LogLayer::App,
             level: LogLevel::Basic,
+            session: None,
         }
     }
 
@@ -1440,6 +1472,30 @@ mod format_ext_tests {
         assert_eq!(m.line(&e), "fetch     33.0ms  SELECT 1 FROM dual");
         assert_eq!(Columns::parse("").to_setting(), "");
         assert_eq!(Columns::parse("time,kind").to_setting(), "time,kind");
+        // ★ T-124(216차): 세션 열 = 기본 끔 · `session` 적으면 켬 · toggle · 포맷터마다 라벨 자리.
+        assert!(!Columns::default().session);
+        let c = Columns::parse("time,session");
+        assert!(c.session && c.ts && !c.kind);
+        assert_eq!(c.to_setting(), "time,session");
+        let mut t = Columns::default();
+        t.toggle("session");
+        assert_eq!(t.to_setting(), "time,kind,rows,elapsed,session");
+        let e = LogEntry::new(LogKind::Send, "SELECT 1").session("pg://b");
+        let raw_on = formatter_with("raw", "", Columns::parse("kind,session"));
+        assert_eq!(
+            raw_on.line(&e),
+            "execute   [pg://b]  SELECT 1".replace("execute ", "send    ")
+        );
+        let raw_off = formatter_with("raw", "", Columns::parse("kind"));
+        assert_eq!(raw_off.line(&e), "send      SELECT 1");
+        let tpl = formatter_with("template", "{session}|{msg}", Columns::default());
+        assert_eq!(tpl.line(&e), "pg://b|SELECT 1");
+        let j = formatter_with("jsonl", "", Columns::default()).line(&e);
+        assert!(j.contains("\"session\":\"pg://b\""), "{j}");
+        let none = LogEntry::new(LogKind::Send, "x");
+        assert!(formatter_with("jsonl", "", Columns::default())
+            .line(&none)
+            .contains("\"session\":null"));
         assert_eq!(LogKind::parse("ERROR"), Some(LogKind::Error));
     }
 

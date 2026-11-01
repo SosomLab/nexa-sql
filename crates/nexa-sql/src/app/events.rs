@@ -1494,6 +1494,7 @@ impl App {
                     self.sess.key_cache.clear();
                     self.sess.touch();
                     self.txlog.set_session_label(self.sess.id, &description);
+                    self.log_win.set_session(&description);
                     // 새 접속 = 서버의 세션 상태는 처음부터 — 앞 세션에서 세션 설정·임시 데이터를 만들었으면 한 번 알린다.
                     if std::mem::take(&mut self.sess.stateful) {
                         let m = t(Msg::StSessStateLost).to_string();

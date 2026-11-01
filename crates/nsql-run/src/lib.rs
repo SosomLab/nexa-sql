@@ -3927,9 +3927,20 @@ pub fn message_level(text: &str) -> MessageLevel {
     }
 }
 
+/// ★ T-266 2차(216차 · 11-01): 방언을 아는 등급 — SQL Server는 TDS **Info 토큰**(심각도 ≤ 10 · PRINT · RAISERROR ≤ 10)만 메시지로 오고
+/// 심각도 ≥ 11은 Error 토큰 = 오류 경로이므로, 글 접두로 가리지 않고 **늘 Info**(`PRINT 'ERROR: …'`가 오류로 보이던 흠 · tiberius는
+/// class를 주지 않아 토큰 의미로 판정). 그 밖 방언 = [`message_level`].
+#[must_use]
+pub fn message_level_in(dialect: Option<Dialect>, text: &str) -> MessageLevel {
+    if matches!(dialect, Some(Dialect::Mssql)) {
+        return MessageLevel::Info;
+    }
+    message_level(text)
+}
+
 #[cfg(test)]
 mod msg_level_tests {
-    use super::{message_level, MessageLevel};
+    use super::{message_level, message_level_in, MessageLevel};
 
     /// PG RAISE 접두 · 대소문자 · 접두 뒤 구분자 없으면 Info · 보통 글 = Info.
     #[test]
@@ -3939,6 +3950,16 @@ mod msg_level_tests {
         assert_eq!(message_level("NOTICE: hello"), MessageLevel::Info);
         assert_eq!(message_level("EXCEPTION: boom"), MessageLevel::Error);
         assert_eq!(message_level("ERROR: x"), MessageLevel::Error);
+        // ★ T-266 2차: SQL Server 메시지(Info 토큰)는 접두와 무관하게 Info · 다른 방언·모름 = 접두 판정.
+        assert_eq!(
+            message_level_in(Some(crate::Dialect::Mssql), "ERROR: from PRINT"),
+            MessageLevel::Info
+        );
+        assert_eq!(
+            message_level_in(Some(crate::Dialect::Postgres), "WARNING: w"),
+            MessageLevel::Warning
+        );
+        assert_eq!(message_level_in(None, "ERROR: x"), MessageLevel::Error);
         assert_eq!(
             message_level("WARNINGS are fine"),
             MessageLevel::Info,

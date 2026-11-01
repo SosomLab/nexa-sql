@@ -1162,6 +1162,8 @@ impl ProjectPanel {
                 show_dot: self.show_dot,
                 // 프로젝트 탐색기 트리는 전부 보인다(제외 규칙은 Goto Anything 색인에만 · D-260 공용화는 다음 단계).
                 skip_dirs: Vec::new(),
+                // ★ T-290(216차): `.gitignore`도 색인에만 — 트리에는 무시 파일도 그대로 보인다(VS Code 탐색기와 같음).
+                gitignore: false,
             },
             self.scan_threads,
         );

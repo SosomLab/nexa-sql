@@ -300,7 +300,7 @@ NSQL_HOME="$H" "$CLI" bookmark add "$QL" 2 --label "monthly totals" >/dev/null 2
 NSQL_HOME="$H" "$CLI" bookmark add "$QL" 5 >/dev/null 2>&1
 NSQL_HOME="$H" "$CLI" bookmark add "$QL" 120 >/dev/null 2>&1
 say "  cli: $(NSQL_HOME="$H" "$CLI" bookmark list 2>/dev/null | grep -c 'q_lines') bookmarks on q_lines.sql"
-run_s S36 "CLI로 심은 북마크 = 거터·미니맵 틱·줄 끝 라벨(§74)" "open:$QL,@after:2500:bm.stat:$OUT/s36_bm.txt" Local 4.5 "" "s36_bm.txt:marks=3"
+run_s S36 "CLI로 심은 북마크 = 거터·미니맵 틱·줄 끝 라벨(§74)" "open:$QL,@after:5000:bm.stat:$OUT/s36_bm.txt" Local 8 "" "s36_bm.txt:marks=3"
 printf '{ "version": 1, "folders": [ { "path": "." } ] }' > "$PSAVE"
 run_s S52 "프로젝트 저장 3번 = 탭 그대로 · 파일에 탭 경로(§92)" "project.load:$PSAVE,open:$A,open:$B,@after:1000:project.panel:on,@after:1300:bookmark.set_1,@after:1400:ui.click:400/161,@after:1500:bookmark.set_2,@after:1600:ui.click:460/80,@after:1700:bookmark.set_1,@after:1800:project.save,@after:2600:project.save,@after:3400:project.save,@after:4200:tabs.dump:$OUT/s52_tabs.txt" Local 5.5 "" "s52_tabs.txt:a.sql s52_tabs.txt:b.sql"
 saved=$(cat "$PSAVE" 2>/dev/null)

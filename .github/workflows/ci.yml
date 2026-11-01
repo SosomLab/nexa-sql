@@ -88,7 +88,7 @@ jobs:
       - name: xvfb func-check diagnostics (on failure)
         if: runner.os == 'Linux' && failure()
         run: |
-          for f in target/func-check/S0*.stderr.txt target/func-check/S0*.stdout.txt; do echo "== $f"; head -n 40 "$f" 2>/dev/null; done
+          for f in target/func-check/*.txt; do echo "== $f"; head -n 40 "$f" 2>/dev/null; done
           echo "== ldd"; ldd target/debug/nexa-sql | grep -iE "not found|xkb|xcb|x11" || true
           echo "== direct run"; NSQL_HOME=target/func-check/home NSQL_STARTUP_CMD="@after:800:file.exit" xvfb-run -a target/debug/nexa-sql; echo "rc=$?"
 
