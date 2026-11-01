@@ -79,6 +79,8 @@ dlog!(self, LogLayer::Fetch, LogLevel::Timing, {
 
 ## 5. 후속
 
+- ✅ **실행 로그 창 세션 열(11-01 216차 · T-124)** = `LogEntry.session: Option<String>`(접속 설명 라벨) · `Columns` 5번째 `session` · 설정 `log.columns`에 `session`을 적으면 늘 표시 · 안 적으면 화면에 라벨이 둘 이상일 때 저절로 켬 · 포맷터 = raw·compact `[라벨]` 접두 · grid·markdown 열 · jsonl `"session"` · csv·tsv 열 · 템플릿 `{session}` · CLI 기본 출력 불변(기본 끔) · 세션 필터 UI = 요청 시.
+
 - **완전 지연 포맷**: `LogRec { layer, level, stage, t0: u64, dur_ns, rows, bytes }`(32B Copy)를 링에 넣고 텍스트는 로그 창이 그릴 때 만든다 — 켠 상태의 문자열 비용까지 0으로. i18n 조립을 표시 시점으로 옮기는 것이 조건(현재 `LogEntry.message`는 문자열).
 - **컴파일 타임 제거**: `nsql-log` feature `devlog`(기본 on) · off면 `wants()` = `false` 상수 → 릴리스 특수 빌드에서 상세 경로 코드 자체가 사라진다.
 - `trace` 수준 실제 생산 지점(드라이버 호출 단위) · `tx`/`meta` 층 채우기 · 텍스트 보기 변환 시간(`load`에 합산).

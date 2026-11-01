@@ -100,6 +100,7 @@
   ① **메시지 등급** = nsql-run `MessageLevel{Info, Warning, Error}` + `message_level(text)` — 글 머리 접두로 판정(`WARNING`/`WARN` → Warning · `EXCEPTION`/`ERROR`/`FATAL`/`PANIC` → Error · `NOTICE`/`INFO`/`DEBUG`/`LOG`/그 밖 → Info · 접두 뒤 `:` 또는 공백 필요) · GUI `RunEvent::Message` → 등급별 `OutKind` · PostgreSQL = notice 콜백이 `parsed_severity`(프로토콜 V 필드 · 서버 로케일과 무관한 영어 · 없으면 서버 글자)로 `"WARNING: …"` 접두를 보장 · **한계 = SQL Server `RAISERROR` 심각도 ≤ 10(정보 메시지)은 tiberius가 message만 넘겨 Info로 분류**(심각도 11+는 오류 경로 = 종전대로 오류) · 드라이버 변경은 별도.
   ② **줄 단위 색** = nexa-ctl `TokenKind::Error`(danger) · `Warn`(warn) 추가(SQL 강조 규격은 내지 않음) · nexa-sql `OutHighlighter` = 줄 머리 `[hh:mm:ss] `를 건너뛰고 `✖` = 오류 · `⚠` = 경고 · 들여쓴 이어진 줄은 앞 줄 종류 유지.
   ③ **Output 안 찾기** = Output 탭에 포커스가 있을 때 Ctrl+F → 같은 찾기 막대가 **Output 본문**을 대상으로(표식 · 다음/이전 · 범위 그대로 · 읽기 전용이라 바꾸기는 무변경) · Output 탭이 바뀌면 편집기 대상으로 돌아감.
+  ④ ✅ **SQL Server 메시지 등급(11-01 216차 · T-266 종결)** = `nsql_run::message_level_in(dialect, text)` — SQL Server는 TDS Info 토큰(심각도 ≤ 10 = PRINT · RAISERROR ≤ 10)만 메시지로 오고 ≥ 11은 Error 토큰 = 오류 경로이므로 **글 접두로 가리지 않고 늘 Info**(tiberius가 class를 주지 않아 토큰 의미로 판정 · `PRINT 'ERROR: x'`가 빨갛게 보이던 흠) · 다른 방언 = ①의 접두 판정 그대로.
 
 ## 4. 실기(09-30 · Debug · appdb 자동 접속 · 키 주입 0)
 

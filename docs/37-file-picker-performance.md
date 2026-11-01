@@ -158,7 +158,7 @@ let meta = match de.file_type() {
 
 ---
 
-### P-4 🟡 P2 · 배치마다 전체를 다시 만든다 (lister 도입의 부작용)
+### P-4 ✅ P2 · 배치마다 전체를 다시 만든다 (lister 도입의 부작용) — ✅ 150ms 간격 + 11-01 216차 `refresh_grid` 사본 0(`mem::take` 참조 행 · T-85 · nexa-ui 2866642)
 
 **위치**: `nexa-dlg/src/lib.rs:881-910`(`poll_loaders`) → `:1229`(`refresh_grid`)
 

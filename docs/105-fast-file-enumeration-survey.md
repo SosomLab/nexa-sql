@@ -99,7 +99,7 @@
 | # | 작업 | 단계 |
 |---|---|---|
 | **T-289** | Goto 캐시 교체식(재열거 중 옛 목록 유지) · 60초 만료 = 다음 열 때 뒤에서 | 1 |
-| **T-290** | 제외 규칙 `project.exclude` + 기본값(D-259) + 최상위 `.gitignore` 간이 해석 · `parwalk` 적용 | 1 |
+| **T-290** | ✅ 11-01 216차 완료(`.gitignore` = `project.gitignore` 기본 on D-440 · Goto 색인만 · 루트 최상위 하나) · 제외 규칙 `project.exclude` + 기본값(D-259) + 최상위 `.gitignore` 간이 해석 · `parwalk` 적용 | 1 |
 | **T-291** | `nexa_fs::list_names`(이름 + `file_type()`만 · `DT_UNKNOWN`/링크만 stat) → Goto·파일 검색 | 1 |
 | **T-292** | 목록 저장 = 폴더 표 + 이름(arena) · 퍼지 대상 문자열 공유 | 1 |
 | **T-293** | nexa-ui `DirWatch` 포트 + 3-OS 어댑터(D-263) → "폴더 다시 읽기"를 `parwalk`에 · Windows ✅ bin50 · macOS ✅ 10-10(FSEvents · 실제 경로 매핑) · **Linux inotify ✅ 10-11**(T-321 · nexa-ui 201차 · 폴더마다 watch · 새 폴더 즉시 등록 · `ENOSPC` = 그 루트 `RootGone` → TTL 폴백 + 상태줄) = **3-OS 완료** | 2 |

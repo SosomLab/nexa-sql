@@ -245,6 +245,7 @@
 | 키 | 종류 | 기본 | 분류 | 뜻 |
 |---|---|---|---|---|
 | `project.hot_exit` | Choice | `always` | 프로젝트 | `always` = 프로젝트 없이 쓸 때도 종료 때 미저장 탭(상한 `project.unsaved_max_mb` 이하)을 묻지 않고 `<설정 폴더>/workspaces/hot-exit.nsql-project`에 보관 → 다음 기동에 복원(한 번 · 복원 뒤 문서 삭제) · `off` = 종료 때 탭별 저장/버림/취소 묻기(남은 문서 삭제) · 상한을 넘는 탭은 always여도 묻는다 · 프로젝트 모드는 프로젝트 파일이 담당(이 문서 안 만듦) |
+| `project.gitignore` | Bool | `on` | 프로젝트 | Goto Anything(Ctrl+P) 색인이 각 프로젝트 루트의 **최상위 `.gitignore` 하나**를 간이 해석해 무시 파일을 뺀다(깊은 .gitignore는 보지 않음) · 끔 = 종전 · 바꾸면 색인 캐시 무효화(`project.exclude`와 같은 자리) · 파일 검색은 `search.gitignore` 따로 · 기본 on = D-440(사용자 결정 표시 · 216차 · T-290) |
 
 ### 6-26. 미니맵 배율 · 위치(10-31 · 192차 23차 · T-110 3-2·3-3 · [46](46-minimap-features.md))
 
