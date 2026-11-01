@@ -36,11 +36,18 @@ gui() { # <이름> <명령> <초>
 say "explorer-dnd-e2e $(date '+%F %T')"
 # ① 좌표.
 rm -f "$OUT/pt_obj" "$OUT/pt_folder"
-gui pt "$PRE,@after:6500:explorer.rowpt:sales_customer:$(w "$OUT/pt_obj"),@after:6600:explorer.rowpt:Tables:$(w "$OUT/pt_folder")" 10
+rm -f "$OUT/pt_wins"
+gui pt "$PRE,@after:6500:explorer.rowpt:sales_customer:$(w "$OUT/pt_obj"),@after:6600:explorer.rowpt:Tables:$(w "$OUT/pt_folder"),@after:6700:windows.dump:$(w "$OUT/pt_wins")" 10
 { read -r OX OY || [ -n "${OX:-}" ]; } < "$OUT/pt_obj" 2>/dev/null || { bad "행 좌표 없음(sales_customer)" "$(cat "$OUT/pt.stderr" 2>/dev/null | tail -3)"; say "RESULT PASS $pass FAIL $fail"; exit 1; }
 { read -r FX FY || [ -n "${FX:-}" ]; } < "$OUT/pt_folder" 2>/dev/null || FX=0
 [ "$OX" != "none" ] && ok "① 행 좌표 sales_customer = $OX $OY · Tables = $FX $FY" || { bad "① 행 좌표 none"; say "RESULT PASS $pass FAIL $fail"; exit 1; }
-EX=820; EY=140   # 편집기 안(1200×800 · 탐색기 오른쪽 · 탭 바 아래)
+# 놓는 점 = 편집기 안(논리 1200×800 기준 820,140 · 탐색기 오른쪽 · 탭 바 아래). `explorer.rowpt`·`ui.*` 좌표는 **물리 픽셀**이라
+# 창 덤프(`windows.dump` · inner_size = 물리)의 실제 크기로 비례 환산한다(Retina 2배 = 1640,280 · 11-01 mac V3 C: 고정 820,140은 편집기 밖 → 삽입 0).
+WIN_WH=$(sed -n '2p' "$OUT/pt_wins" 2>/dev/null | cut -f2)
+WW=${WIN_WH%x*}; WH=${WIN_WH#*x}
+case "$WW$WH" in ''|*[!0-9]*) WW=1200; WH=800;; esac
+EX=$((WW*820/1200)); EY=$((WH*140/800))
+ok "①' 창 ${WW}x${WH}(물리) → 놓는 점 $EX $EY"
 drag() { # <시작x> <시작y> <끝x> <끝y> → 명령 조각(문턱 넘김 → 중간 점 → 목표)
   local sx=$1 sy=$2 ex=$3 ey=$4
   echo "@after:7000:ui.down:$sx/$sy,@after:7200:ui.move:$((sx+8))/$((sy+6)),@after:7400:ui.move:$((sx+80))/$((sy+10)),@after:7600:ui.move:$(((sx+ex)/2))/$(((sy+ey)/2)),@after:7800:ui.move:$ex/$ey,@after:8000:ui.move:$((ex+2))/$((ey+1)),@after:8300:ui.up:$((ex+2))/$((ey+1))"

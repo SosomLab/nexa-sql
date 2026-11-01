@@ -23,11 +23,11 @@ version = "0.1.0"
 
 [[package]]
 name = "nsql-format"
-version = "0.3.1"
+version = "0.4.0"
 
 [[package]]
 name = "nsql-seq"
-version = "0.3.1"
+version = "0.4.0"
 
 [[package]]
 name = "project-explorer-menus"

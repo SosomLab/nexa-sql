@@ -56,6 +56,28 @@ license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
 crate = "unix-odbc"
 allow = ["LGPL-2.1-or-later"]
 
+# ★ 권고(advisories · 11-01 mac V3 A5 · 222차): 로컬 `cargo deny check`(advisories 포함) 기준. CI는 `licenses sources`만(새 권고가 날마다
+#   생겨 외부 요인으로 CI가 멈추지 않게 · 권고는 풀 테스트 V3 A5에서 본다 · 102 §5-7). 아래 무시 목록 = **올릴 수 없는** 상위 crate에 묶인 것만 —
+#   고칠 수 있는 것은 `cargo update -p`로 바로 올린다(11-01: rustls 0.23.46 · rustls-webpki 0.103.16 · webpki-roots 1.0.11 · tokio 1.54.1 · ctutils 0.4.7).
+#   원장 = docs/10 §4(DR-3 외부 crate) · 재검토 = 상위 crate가 새 판을 내면(tiberius 0.13은 rustls feature가 없어 native-tls만 → 0.12 유지).
+[advisories]
+ignore = [
+    # tiberius 0.12.3(MSSQL · rustls 0.21 · rustls-webpki 0.101 · rustls-pemfile 1) — 0.13은 rustls 제거(native-tls만) → 올릴 수 없음.
+    #   MSSQL 접속은 사설망·자체 CA가 대부분(TLS 검증은 서버 인증서 고정 · 22 §2) · 영향 = 이름 제약 검증·CRL 파싱·ServerHello 하향(0.21 계열).
+    { id = "RUSTSEC-2026-0346", reason = "rustls 0.21.12 ← tiberius 0.12.3(0.13 = native-tls만) · Debug 출력에 세션 비밀 — 로그에 rustls 세션 값을 Debug로 찍지 않는다" },
+    { id = "RUSTSEC-2026-0349", reason = "rustls 0.21.12 ← tiberius 0.12.3 · ServerHello 하향(PQ 키 교환 미사용 = 영향 없음)" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 ← tiberius 0.12.3 · URI 이름 제약(서버 인증서 = 호스트 이름 검증만)" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 ← tiberius 0.12.3 · 와일드카드 이름 제약" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 ← tiberius 0.12.3 · CRL 파싱 패닉(CRL 미사용)" },
+    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.101.7 ← tiberius 0.12.3 · 불신 중간 CA(0.103 계열은 0.103.16으로 올림)" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1.0.4 ← tiberius 0.12.3 · 2.2.0 ← mysql 28.0.4(최신) · 유지 중단 = PEM 읽기만(기능 결함 아님)" },
+    # oracle 0.6.3(최신) → paste(proc-macro · 유지 중단 · 빌드 시점만).
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 ← oracle 0.6.3(최신) · proc-macro = 런타임 코드 없음" },
+    # ../nexa-ui nexa-gfx → ab_glyph 0.2.32(최신) → owned_ttf_parser → ttf-parser(유지 중단) · rustybuzz(DR-18 · feature `shaping` 기본 끔 · 그래프에는 있음).
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 ← ab_glyph 0.2.32(최신 · nexa-gfx 글꼴 래스터) · 대체 = ab_glyph가 옮기면 따라간다" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz 0.20.1 · DR-18 feature `shaping` 기본 끔(릴리스 lite·full 모두 미포함 · 개발 선택)" },
+]
+
 [bans]
 # 중복 버전은 경고만(드라이버 어댑터들이 서로 다른 판을 끌어올 수 있다 · DR-3 원장에서 관리).
 multiple-versions = "warn"

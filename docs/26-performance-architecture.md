@@ -1015,6 +1015,25 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 
 **빌드 전 통합 시험**(release · Oracle APPDB_DEV · MSSQL APPDB_MS_DEV · PG REPO_DEV): 19/23 · Oracle 4건 = `DPI-1047`(이 PC Instant Client 없음 = 환경 · 생략) · mssql·pg·mysql·odbc·sqlite·dyn ✓.
 
+### 7-19. 11-01 **141차 macOS V3 F**(같은 기기 Intel i9-9980HK · **macOS 26.7.1** · Release **lite** + 확장 SQLite 0.0.0-dev(`NSQL_DRIVER_DIR`) · main 9431552d + 문서 · `scripts/mac-perf-all.sh` · 격리 홈 · 입력 주입 0 · 수행 = 협업 세션) — 7-12(09-26 · full 내장 · macOS 26.6.2) 대비 · ⚠ **경로 차이(확장 드라이버 · OS 판)** = 엄밀한 A/B 아님
+
+| 항목 | 7-12 | 7-19 | 판정 |
+|---|---:|---:|---|
+| `nexa-sql` / `nsql` | 12.68 / 6.90 MB(full) | **20.99 / 10.05 MB**(lite) | 그 뒤 기능 증가분(TLS·SSH·xlsx/parquet 등) · 상한 30 MB 안 |
+| 기동 창까지 로그인 / 접속(5회 중앙) | 407 / 396 ms | **549 / 545 ms** | ⚠ +35 %/+38 % · 양봉(352·357 / 549~599) · **판정 보류 → T-464**(같은 조건 A/B) |
+| `[startup]` 앱 조립 | 부품 완성 ≈165 ms | 221~288 ms(fonts 109~171) | T-464에서 지목 |
+| footprint 유휴 / 접속 | 114.5 / 96.0 MB | **34.4 / 25.6 MB** | 좋아짐(IOSurface 2벌 몫이 빠짐 · `gfx.mac_present_trim_ms` 추정 · 미확인) |
+| RSS 유휴 / 접속 | 152.3 / 135.9 MB | 71.3 / 65.0 MB | 좋아짐 |
+| 65 MB 파일 footprint | 172.1 MB | **101.7 MB** | 좋아짐 |
+| 10만 행 → 닫기 | 120.0 → 96.1 | 42.2 → **25.8** | 회수 ✓ |
+| 10만 행 프레임 avg / max | — / 33.65 ms | 8.86 / 53.5 ms | max = 첫 페인트(정지 아님) |
+| 향상 모드 CPU/초 | 0 | 0 | 같음 |
+| 누수 기울기(6 MB · 10만 행 · 로그 · 2 MB) | ✅ | −0.300 · −0.725 · −1.000 · −0.125 | 없음 |
+| CLI SQLite 10만 행 wall | 793~798 ms | **634.5 ms** | −20 % |
+| CLI SQLite 200행 wall | 11~12 ms(G-4 `cli-wall.py`) | 14.1 ms | 같은 자릿수 |
+
+판정(71 §4) = 회귀 확정 0 · 판정 보류 1(기동 창까지 → T-464) · 원문 = [journal 11-01 §16](journal/2026-11-01.md) · `target/v3-1101/f/out/perf.txt`.
+
 ## 8. 네트워크 부하 원칙 — 09-14 검토 · 상시 관리 항목(사용자 요청)
 
 > 상위 원장 = [39 §3-2 자원 거버넌스](39-resource-governance.md)(09-16) — 이 표는 NET 도메인의 근거 표로 그대로 유지한다.

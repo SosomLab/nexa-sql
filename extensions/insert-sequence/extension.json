@@ -21,7 +21,7 @@
   "files": [
     {
       "path": "insert_sequence.wasm",
-      "sha256": "709ad8762d7d3df4c13a9bec425f2d49a3b352f05cfb37034fbec0d364902ff4",
+      "sha256": "5081e625ddae80ff0042d3e2400c7896a4fc7cc584fbadd6e9997022a56909db",
       "dest": ""
     }
   ],

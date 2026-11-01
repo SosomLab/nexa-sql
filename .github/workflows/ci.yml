@@ -69,6 +69,14 @@ jobs:
         run: cargo test --workspace
       - name: smoke (fonts · drivers)
         run: cargo run -q -p nexa-sql -- --smoke
+      # ★ 확장 SDK 작업 공간(extensions/sdk · wasm32 · 루트 `exclude`)은 `cargo test --workspace`에 안 들어간다 — 공용 crate(nsql-format·nsql-seq)의
+      #   공개 형이 바뀌면 샘플이 조용히 깨졌다(11-01 mac V3 B1: `Line.col` 193차 추가 → sql-formatter-kiros33 E0063) → Linux 러너 한 곳에서 check.
+      - name: ext sdk check (wasm32 · linux)
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --workspace --target wasm32-unknown-unknown
+        working-directory: nexa-sql/extensions/sdk
       # ★ T-458(11-01 · 사용자 "리눅스는 xvfb로" · D-435): GUI 기능 점검을 Xvfb 가상 디스플레이에서 — scripts/lib/xvfb.sh가 스크립트를
       #   xvfb-run 아래로 다시 띄운다(창은 러너 화면에 뜨지 않음 · 키 주입 0). 1단계 = 기동·창 수·덤프 판정 시나리오 일부(Debug exe ·
       #   FC_WAIT_SCALE 2 = 기동 지연 보정). 2단계(전수)는 시간 실측 뒤 · 맥·윈도우 동일 기법 = T-459 헤드리스 백엔드.

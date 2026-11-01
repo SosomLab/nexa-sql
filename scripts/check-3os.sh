@@ -6,6 +6,9 @@
 # 사용:  scripts/check-3os.sh            # 전부(fmt → 호스트 → 다른 두 타깃)
 #        scripts/check-3os.sh --quick    # fmt + 호스트 clippy만
 # 시간:  타깃당 수십 초(캐시 적중 시 수 초) — 각 타깃은 target/<triple>/ 에 따로 쌓인다.
+# ★ 교차 C 도구(11-01 mac V3 A4 · 222차): 141차 이후 rustls(PG TLS · tiberius)의 `ring`·`aws-lc-sys` 빌드 스크립트가 교차 타깃 **C 헤더·컴파일러**를
+#   요구한다(맥에서 `cc --target=x86_64-pc-windows-msvc` = 'assert.h' file not found). 그런 PC에서는 그 타깃을 **생략**(실패 아님 · 교차 판정은 CI =
+#   docs/61 §3) — 먼저 1줄짜리 C 파일로 탐침해 판단한다. `CROSS_C_PROBE=0`이면 탐침 없이 종전처럼 바로 돈다.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 FAIL=0
@@ -36,6 +39,9 @@ if [[ "${1:-}" != "--quick" ]]; then
     for T in "${OTHERS[@]}"; do
         if ! rustup target list --installed | grep -q "^$T\$"; then
             echo "  ⚠ 타깃 std 없음: rustup target add $T (이번은 건너뜀)"; continue
+        fi
+        if [[ "${CROSS_C_PROBE:-1}" != 0 ]] && ! printf '#include <assert.h>\nint main(void){return 0;}\n' | "${CC:-cc}" --target="$T" -x c -c - -o /dev/null >/dev/null 2>&1; then
+            echo "  ⚠ 교차 C 도구 없음($T · ring/aws-lc-sys 빌드 스크립트가 C 헤더 요구) — 이 타깃은 생략 · 교차 판정은 CI(docs/61 §3)"; continue
         fi
         step "clippy --target $T"
         run cargo clippy --workspace --all-targets --target "$T" -- -D warnings

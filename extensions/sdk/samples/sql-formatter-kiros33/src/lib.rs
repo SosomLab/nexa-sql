@@ -301,6 +301,7 @@ fn with_set_op_dashes(lines: Vec<Line>, opts: &Options) -> Vec<Line> {
                 parts: vec![Part::Text(dash.clone())],
                 role: Role::Other,
                 blank_before: 0,
+                col: None,
             };
             out.push(mk());
             out.push(l);

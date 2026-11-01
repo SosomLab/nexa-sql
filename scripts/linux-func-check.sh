@@ -297,6 +297,10 @@ write_pws() { cat > "$PWS" <<JSON
 JSON
 }
 write_pws
+# S55용 = PWS에서 q_lines.sql 정식 탭만 뺀 사본(북마크는 그대로): 정식 탭이 이미 있으면 북마크 한 번 클릭이 그 탭을 활성화할 뿐 미리보기 탭을 만들지 않는다(설계대로 · 11-01 mac V3 C 재판정).
+# ★ 시나리오마다 **따로** 사본(11-01 재판정 4회): 앱이 종료하며 연 탭을 프로젝트 파일에 되쓰므로 S54가 만든 정식 탭이 같은 파일을 쓰는 S55에 복원됐다.
+PWSNT54="$D/fc-ws-notab54.nsql-project"; PWSNT55="$D/fc-ws-notab55.nsql-project"
+for f in "$PWSNT54" "$PWSNT55"; do sed -e 's|"tabs": \[ { "path": "[^}]*}, |"tabs": [ |' -e 's|"active": 1,|"active": 0,|' "$PWS" > "$f"; done
 run_s S40 "프로젝트 열기 = 마지막 선택 위치 복원(§77)"     "project.load:$PSEL,@after:1200:project.panel:on" Local 4.5
 run_s S49 "필터 안내 글 두 줄(일치 없음 → 상한)(§80)"      "project.load:$PBIG,@after:1200:project.panel:on,@after:2000:project.filter:zzqq" Local 5 $'project.scan_max=100\n'
 run_s S51 "프로젝트 로딩 = 작업 환경 복원 + OPEN FILES(§89)" "project.load:$PWS,@after:1500:project.panel:on,@after:3500:tabs.dump:$OUT/s51_tabs.txt" Local 5 "" "s51_tabs.txt:q_lines.sql s51_tabs.txt:Notes"
@@ -314,8 +318,28 @@ saved=$(cat "$PSAVE" 2>/dev/null)
 say "  file: tabs=$(printf '%s' "$saved" | grep -c '"tabs"') a.sql=$(printf '%s' "$saved" | grep -c '"path": "a\.sql"') b.sql=$(printf '%s' "$saved" | grep -c '"path": "b\.sql"') mn1x2=$(printf '%s' "$saved" | grep -o '"mn": 1' | wc -l) mn2x1=$(printf '%s' "$saved" | grep -o '"mn": 2' | wc -l) blob=$(printf '%s' "$saved" | grep -c 'NSQL-BLOBS') tabs_in_dump=$(grep -c '|' "$OUT/s52_tabs.txt" 2>/dev/null)"
 write_pws
 run_s S53 "프로젝트 로딩 = 옛 탭 닫고 교체 · 패널·접속 표식 복원(§92)" "open:$A,@after:1200:project.load:$PWS,@after:3000:tabs.dump:$OUT/s53_tabs.txt" Local 4 "" "s53_tabs.txt:q_lines.sql !s53_tabs.txt:a.sql"
-run_s S54 "북마크 패널 더블클릭 = 정식 탭(§92)"             "view.bookmarks,@after:1500:ui.dclick:150/182,@after:3000:tabs.dump:$OUT/s54_tabs.txt" Local 4.5 "" "s54_tabs.txt:q_lines"
-run_s S55 "북마크 패널 한 번 클릭 = 미리보기 탭(§92)"       "view.bookmarks,@after:1500:ui.click:150/182,@after:3000:tabs.dump:$OUT/s55_tabs.txt" Local 4.5 "" "s55_tabs.txt:q_lines"
+# ★ 좌표 배율 탐침(11-01 mac 재판정 5회): `ui.*` 좌표는 **물리 픽셀** — 맥은 외부 모니터 연결 여부로 1배/2배가 바뀌어 고정 좌표(150/182 · Linux 1배 ·
+#   BASECONF 1375×945 논리 기준)가 2배 화면에서는 필터 상자에 떨어졌다 → 창 하나를 띄워 `windows.dump`(inner_size = 물리)로 실제 크기를 읽고 비례 환산(DnD e2e와 같은 길).
+fc_probe_scale() {
+  local wf="$OUT/scale.wins.txt" secs=2.5; rm -f "$wf"
+  case "$APP" in */debug/*) secs=$(awk -v s="$secs" -v k="${FC_WAIT_SCALE:-2}" 'BEGIN{printf "%.2f", s*k}');; esac
+  printf '%s' "$BASECONF" > "$H/settings.conf"
+  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:1200:windows.dump:$wf" "$APP" Local >/dev/null 2>&1 &
+  local p=$!; sleep "$secs"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
+  local wh; wh=$(sed -n '2p' "$wf" 2>/dev/null | cut -f2); FC_W=${wh%x*}; FC_H=${wh#*x}
+  case "$FC_W$FC_H" in ''|*[!0-9]*) FC_W=1375; FC_H=945;; esac
+  say "  scale: window ${FC_W}x${FC_H} (physical · base 1375x945)"
+}
+fc_pt() { echo "$(( FC_W*$1/1375 ))/$(( FC_H*$2/945 ))"; }   # <논리 x> <논리 y> → "물리x/물리y"
+FC_W=1375; FC_H=945
+if [ -z "$ONLY" ] || echo ",$ONLY," | grep -qE ",S5[45],"; then fc_probe_scale; fi
+BM1=$(fc_pt 150 182)   # 북마크 패널 첫 항목 행
+# S54·S55 = 자기 완결(11-01 mac V3 C 재판정 3회): 종전엔 S53이 홈에 남긴 project.last에 기댔다(`-O`·헤드리스 = "BOOKMARKS · 0") → `$PWSNT54`·`$PWSNT55`(q_lines 정식 탭 없는
+#   사본 · 시나리오별)를 직접 연다. ★ `view.bookmarks`는 **토글** — 프로젝트의 `panel=bookmarks` 복원이 이미 패널을 열므로 다시 부르면 닫힌다(re3 ✗ 원인) → 부르지 않는다.
+#   q_lines 탭이 없어야 더블클릭 = 정식 탭 **생성** · 한 번 클릭 = 미리보기 탭 생성이 판정된다(탭이 있으면 활성화만 = 저절로 통과).
+#   좌표 = `$BM1`(논리 150/182를 창 물리 크기로 환산 · fc_probe_scale) · 좌표 없는 시험 명령(`bm.open:<n>`)은 후보(T-154 비고).
+run_s S54 "북마크 패널 더블클릭 = 정식 탭(§92)"             "project.load:$PWSNT54,@after:3000:ui.dclick:$BM1,@after:4500:tabs.dump:$OUT/s54_tabs.txt" Local 6 "" "s54_tabs.txt:q_lines.sql.File"
+run_s S55 "북마크 패널 한 번 클릭 = 미리보기 탭(§92)"       "project.load:$PWSNT55,@after:3000:ui.click:$BM1,@after:4500:tabs.dump:$OUT/s55_tabs.txt" Local 6 "" "s55_tabs.txt:q_lines.sql.Preview"
 write_pws
 run_s S57 "프로젝트 닫기 = 처음 실행 상태 + 북마크 초기화(§98)" "open:$A,@after:1000:project.load:$PWS,@after:2500:project.close,@after:3200:view.bookmarks,@after:4000:tabs.dump:$OUT/s57_tabs.txt" Local 5 "" "!s57_tabs.txt:q_lines.sql !s57_tabs.txt:a.sql"
 # S58 폴더 모드 = 두 번째 인자가 폴더 → 북마크는 <폴더>/.nsql/workspaces/에.
@@ -327,7 +351,9 @@ run_s S60 "파일 모드 북마크 = 사건 없이도 디바운스 저장(§104)
 say "  file: ws_saved=$([ -f "$H/workspaces/default.nsql-workspace" ] && echo true || echo false)"
 # ── 115차 8차 묶음(10-07) · 훅 = fs.write/fs.delete · mem.trim · tabs.dump · ext.view · ext.banner · flash.dump · editor.dump ──
 run_s S79 "Output 탭 = 오류 실행 뒤 자동 표시·전환(108차 · docs/100 §3)" "open:$QE,@after:1200:run.all,@after:3500:output.dump:$OUT/s79_output.txt" Local 5 "" "s79_output.txt:no_such_table_zz"
-run_s S80 "메모리 창 = 묶음 소계 · 전용 WS · [힙 정리] · ▲/▼(115-8 · docs/80 §4)" "open:$Q5,@after:1200:run.all,@after:2500:view.memory,@after:5000:mem.trim,@after:6200:mem.dump:$OUT/s80_mem.txt" Local 7.5 "" "s80_mem.txt:private_ws=[1-9]"
+# S80 판정값 = OS별: Windows·Linux = 전용 워킹 셋 `private_ws>0` · macOS = 풋프린트가 곧 그 값이라 따로 세지 않는다(memstat.rs cfg macos `private_ws` = 0 · 행 숨김 · 11-01 mac V3 C) → `footprint>0`.
+S80_CHK='private_ws=[1-9]'; [ "$(uname -s)" = Darwin ] && S80_CHK='footprint=[1-9]'
+run_s S80 "메모리 창 = 묶음 소계 · 전용 WS · [힙 정리] · ▲/▼(115-8 · docs/80 §4)" "open:$Q5,@after:1200:run.all,@after:2500:view.memory,@after:5000:mem.trim,@after:6200:mem.dump:$OUT/s80_mem.txt" Local 7.5 "" "s80_mem.txt:$S80_CHK"
 S81NEW="$D/s81_new_file.sql"; rm -f "$S81NEW"
 run_s S81 "폴더 변경 감시 → 플래시(필터 없음 · 스낵바 · 페이드)(T-293/T-299)" "project.load:$PROJ,@after:1000:project.panel:on,@after:2600:fs.write:$S81NEW|SELECT 81;,@after:3600:flash.dump:$OUT/s81_flash.txt" Local 4.5 "" "s81_flash.txt:Folder.change|폴더.변경"
 rm -f "$S81NEW"

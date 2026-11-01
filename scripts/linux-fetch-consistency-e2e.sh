@@ -44,8 +44,8 @@ run_case() {
   # 환경 판정 먼저: 실행 로그·stderr에 연결 리셋이 있으면 이 시나리오는 ENV(재실행 대상) — 행 수·중복 판정은 뜻이 없다.
   if cat "$OUT/$id.log.txt" "$OUT/$id.stderr" 2>/dev/null | grep -qE "$ENV_RE"; then envc "$id 서버 연결 리셋(환경 · 재실행 대상)" "$(cat "$OUT/$id.log.txt" "$OUT/$id.stderr" 2>/dev/null | grep -E "$ENV_RE" | head -2)"; return; fi
   if [ ! -s "$OUT/$id.rid.txt" ]; then bad "$id ROWID 덤프 없음(결과 없음 또는 시간 부족)" "$(tail -3 "$OUT/$id.stderr")"; return; fi
-  local n dup more
-  n=$(grep -c '' "$OUT/$id.rid.txt"); dup=$(sort "$OUT/$id.rid.txt" | uniq -d | wc -l); more=$(grep -oE 'more=(true|false)' "$OUT/$id.grid.txt" | head -1)
+  local n dup more   # dup = `wc -l`은 맥 BSD에서 앞 공백이 붙는다("       0") → `tr -d` 뒤 비교(11-01 mac V3 D · 다른 스크립트의 wc -l은 출력용뿐)
+  n=$(grep -c '' "$OUT/$id.rid.txt"); dup=$(sort "$OUT/$id.rid.txt" | uniq -d | wc -l | tr -d ' '); more=$(grep -oE 'more=(true|false)' "$OUT/$id.grid.txt" | head -1)
   say "        행 $n · 중복 ROWID $dup · $more · 로그: $(grep -cE '재질의:|커서에서 .*이어 받음' "$OUT/$id.log.txt") 페이지 줄 · $(grep -c '취소하는 중' "$OUT/$id.log.txt") 취소"
   [ "$n" = "$CNT" ] && ok "$id 행 수 = COUNT(*) ($n)" || bad "$id 행 수 $n ≠ COUNT(*) $CNT (차이 $((n-CNT)))"
   [ "$dup" = 0 ] && ok "$id 중복 ROWID 없음" || bad "$id 중복 ROWID ${dup}건" "$(sort "$OUT/$id.rid.txt" | uniq -d | head -3)"
