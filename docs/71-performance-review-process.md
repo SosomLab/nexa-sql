@@ -82,6 +82,8 @@ pwsh -NoProfile -File scripts/win-perf-all.ps1 -HomeDir ... -DataDir ... -Out ..
 
 창 핸들까지 ms · `-SettleSecs`까지 CPU ms · 그때의 Private/핸들/스레드를 `-Runs`번 재고 **중앙값**. 구간이 필요하면 `[startup]` 누적 로그로 어느 단계가 늘었는지 지목한다(Linux 91차의 글꼴·아이콘 병목을 이렇게 찾았다 — [26 §7-7](26-performance-architecture.md)).
 
+- **맥 = `scripts/mac-startup.sh`**(T-464 · 11-01) — 기준 열 = **app-win**(`[startup:resumed] window N` · ms since main = 창 표시)과 **paint**(`first paint at +N`) · 바깥 "window"(첫 stderr 줄까지 · spawn 포함)는 **참고치** · 바깥 시계는 perl `Time::HiRes`(python3 금지 — 기동 160~250 ms/회가 값에 더해져 양봉을 만든다 · 26 §7-19 각주) · 감지 루프 안에서 시계를 부르지 않는다.
+
 ### C. 시나리오 상주 — `win-perf-all.ps1 -Stages scenarios`(내부적으로 `win-big-probe.ps1`과 같은 표본)
 
 **규정 시나리오**(늘리기만 하고 빼지 않는다 — 시계열 비교가 목적):
