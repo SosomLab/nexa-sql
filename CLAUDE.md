@@ -35,7 +35,7 @@
 | DR-6 | **CLI `nsql` 포함**(접속·스크립트·export/import·bulk) — GUI와 같은 코어 |
 | DR-7 | **4계층**: UI / Core / Network / 어댑터 — 허브 포트로만 연계(④→③←①, ①→②) |
 | DR-8 | **세션 변수는 클라이언트에 산다** — 리터럴 대입 로컬 · 방언 재작성(MSSQL `sp_executesql` OUTPUT · `SELECT @X=`) |
-| DR-10~18 | 단일 앱 · 지원 범위 3급 · 드라이버 선택 · 자체 결과셋 · rustybuzz · WASM 플러그인 · 예산 · **CLI+최소 GUI 병행** |
+| DR-10~18 | 단일 앱 · 지원 범위 3급 · 드라이버 선택 · 자체 결과셋 · rustybuzz = 조건부(D-383·D-394 · feature `shaping` 기본 끔) · WASM 플러그인 · 예산 · **CLI+최소 GUI 병행** |
 | DR-19 | **한글·고정폭 1급**(`nexa-font` · 편집기/그리드 고정폭 + 한글 폴백) |
 | DR-20 | 코드 서명은 **별도 요청 시** |
 | DR-22 | **연결 프로필 = 사용자 폴더 `nsql-vault`**(비밀번호만 봉투 · Windows DPAPI 기기 키 · CLI·GUI·다중 인스턴스 공유) — [21](docs/21-connection-profiles.md) |
@@ -89,5 +89,5 @@
 
 ## 4. 새 세션 오리엔테이션
 
-1. 이 파일 + [docs/61](docs/61-core-design-and-working-rules.md)(규칙·불변식·OS별 차이) + [docs/00](docs/00-foundation-report.md) → 2. [STATUS](docs/STATUS.md) 맨 위 → 3. [STATUS](docs/STATUS.md) 맨 위 "다음 세션 시작점" + [TODO](docs/TODO.md)의 🚧/P1 순(지금(10-26 139차 win) = **T-153 후속 2**(접속 창 프로필 변수 표 편집 · `DEFINE … SHARE` 층 문법) · Db2 후속(10.5 페이징 · 다중 커서 = 보류 · 서버 필요) · T-417 ClickHouse 실서버 · 보류 = T-427 · D-353 · 사용자 결정 원장 = [journal 10-26 §4](docs/journal/2026-10-26.md) · [docs/61 §6](docs/61-core-design-and-working-rules.md)은 09-21 기준 기록).
+1. 이 파일 + [docs/61](docs/61-core-design-and-working-rules.md)(규칙·불변식·OS별 차이) + [docs/00](docs/00-foundation-report.md) → 2. [STATUS](docs/STATUS.md) 맨 위 → 3. [STATUS](docs/STATUS.md) 맨 위 "다음 세션 시작점" + [TODO](docs/TODO.md)의 🚧/P1 순(지금 = STATUS 맨 위 "다음 세션 시작점" · **순차 보완 계획 D-438**(11-01 아침 · 새 기능 추가 없이 현 상태 보완 ①~⑦ · 전문 = [docs/61 §6-2](docs/61-core-design-and-working-rules.md)) · 사용자 결정 원장 = [journal 11-01 §6](docs/journal/2026-11-01.md) · [docs/61 §6](docs/61-core-design-and-working-rules.md) = 11-01 아침 기준(상태 · 순차 계획)).
 2. 새 PC면 형제 저장소 `../nexa-ui`·`../nexa-license`(공개 · 검증 전용 · `nsql-license`가 path 의존)를 **먼저** pull(path 의존) → 세 저장소 `cargo test --workspace` → [docs/61 §3](docs/61-core-design-and-working-rules.md) "맥에서 처음 할 일".
