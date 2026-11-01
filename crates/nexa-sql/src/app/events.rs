@@ -1063,7 +1063,11 @@ impl App {
                         .unwrap_or_default();
                     // 세션 상태를 바꾸는 문장이 서버로 나가면 이 세션은 유휴로 닫지 않고, 재접속 때 한 번 알린다(docs/52 §6-4 · D-103).
                     // 표식은 문장이 실제로 도는 세션에 붙는다(`CONNECT` 뒤 문장 = 새 세션). 켜지는 순간 원인 문장을 로그에 남긴다.
-                    if server && !self.sess.stateful && sessions::alters_session_state(&stmt) {
+                    // ★ T-123(219차): Oracle GTT에 넣는 평범한 INSERT/MERGE도 세션 상태(적재된 메타의 TEMPORARY · 왕복 0).
+                    if server
+                        && !self.sess.stateful
+                        && (sessions::alters_session_state(&stmt) || self.inserts_into_temp(&stmt))
+                    {
                         self.sess.stateful = true;
                         let head: String =
                             stmt.lines().next().unwrap_or("").chars().take(80).collect();

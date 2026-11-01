@@ -2,7 +2,7 @@
 
 > 사용자 09-24: "객체 정보의 소유는 DBMS 연결에 공용 · 읽은 쪽이 채워 전달 · 다른 탭은 캐시를 즉시 · 탐색기 갱신은 하위 객체까지 · 완성 정보 갱신은 별도 메뉴/명령 팔레트로 직접 요청 — 타 클라이언트 조사 후 설계". 원천 = [47](47-intellisense-metadata.md) · [57](57-explorer-refresh-after-ddl.md) · [76 §9](76-intellisense-and-outline.md) · [77 §1-2](77-data-workbench-architecture.md).
 
-> 09-25 후속 = [85 메타 3층](85-metadata-layers.md)(L1 이름 층 `Coverage::Names` · L2 워머 · L3 회수 TTL/상한).
+> 09-25 후속 = [85 메타 3층](85-metadata-layers.md)(L1 이름 층 `Coverage::Names` · L2 워머 · L3 회수 TTL/상한). ★ 11-01 218차 = 상세 캐시 소유 = nsql-run `meta::L3Cache<T>` 부품(85 §4 · T-227 ✅ · 탐색기는 인스턴스만 · MetaStore와 형제).
 
 ## 0. 결론 다섯 줄
 

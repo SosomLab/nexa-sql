@@ -292,6 +292,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 - **키 = 경로**. 프로젝트 안이면 **프로젝트 파일 기준 상대 경로**(67 §2-1 규약 · 저장소를 다른 PC로 옮겨도 산다), 밖이면 절대 경로. 저장은 `/` 구분자로 정규화(Windows `\` → `/`).
 - 비교는 `std::fs::canonicalize` 후 Windows에서 **대소문자 무시**(`varsfile.rs`/`undofile.rs`의 `name_for`와 같은 규칙 · 09-22 프로필 사고의 교훈).
+- ★ **파일 문서 키 = 절대 경로(11-01 218차 · D-442)** — GUI가 파일을 받는 길(기동 명령 `open:` · 실행 인자 · 끌어놓기 · OS 열기 · 미리보기 · 큰 파일)은 `open_file`/`load_file` 진입에서 `std::path::absolute`로 절대 경로화(`push_recent`와 같은 정규화) → CLI `bookmark add`(canonicalize 절대 경로)와 키 표기가 같다 · 종전 = 상대 경로 인자(`nexa-sql q.sql` · `open:data/q.sql`)로 연 탭은 상대 경로 키라 CLI가 심은 북마크가 0으로 보였다(CI func-check S36 · [journal 11-01 §11](journal/2026-11-01.md)).
 - **앱 안에서의 이동·이름 변경은 즉시 따라간다**(파일 대화상자 · 탐색기 · Save As 경로가 저장소의 경로를 그 자리에서 고친다 — Qt Creator `updateFilePath` · VS Code `onDidRenameFiles`에 대응).
 - **밖에서의 이동은 제안한다**(사용자 D-163): 무효(`FileMissing`)가 된 북마크의 `anchor.doc_hash`와 **같은 해시의 파일을 열었을 때** 탭 상단 띠 한 줄 —
   `이 내용에 붙어 있던 북마크 3개가 있습니다(옛 경로 …/old.sql).  [이어 붙이기]  [아니오]`

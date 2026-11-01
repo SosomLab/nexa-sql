@@ -46,6 +46,8 @@
 
 ## 4. L3 상세(즉시 채움 · 빠른 회수)
 
+> ★ **부품(11-01 218차 · T-227 ✅)** = nsql-run `meta::L3Cache<T>`(`L3Entry{value, used(초), bytes, dirty}` · `insert` · `get`(stale = dirty 또는 TTL) · `invalidate`(범위) · `reclaim`(TTL 뒤 개수 상한) · `bytes` · 순수 판정 `l3_key_hit` · 시험 3) — 탐색기 상세 패널은 `L3Cache<Vec<DetailSection>>` 인스턴스만 쥔다(종전 `detail_cache` DetailEntry·세 함수 본문 제거 · 시계 = `now_secs` 초 = MetaStore `at`과 같음) · MetaStore는 타입 무관이라 L3Cache는 **형제 부품**(L3 회수 원장 = 이 절 한 곳 · 소유 규칙 = [79](79-metadata-ownership-and-refresh.md)) · 컬럼 대상 `c:` 열쇠도 같은 캐시 대상 · [journal 11-01 §11](journal/2026-11-01.md).
+
 | 정보 | 채움(즉시) | 회수 |
 |---|---|---|
 | 테이블 상세(제약·인덱스·코멘트 = 카드) | `request_detail` → `DetailMeta`(백그라운드 · 1.3 s 실측) | `meta.detail_max` 64(오래된 것부터) · `meta.detail_ttl_secs` 300 |

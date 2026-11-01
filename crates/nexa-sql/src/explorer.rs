@@ -7440,6 +7440,15 @@ impl Explorer {
         )
     }
 
+    /// ★ T-123(219차): 적재된 L1 메타에서 객체 부가(`extra` · Oracle GTT = `TEMPORARY` · SQL Server 테이블 함수 코드) — 왕복 0 ·
+    ///   스키마 없음 = 현재 스키마 규칙(`Snapshot::lookup`) · 이름이 없거나 아직 안 읽었으면 None(정직한 한계).
+    pub(crate) fn object_extra(&self, schema: Option<&str>, name: &str) -> Option<String> {
+        let snap = self.meta.snapshot();
+        let id = snap.lookup(&self.meta.names, schema, name)?;
+        let x = snap.objs.get(id.0 as usize)?.extra?;
+        Some(self.meta.names.get(x).to_string())
+    }
+
     /// L1 한 걸음(85 §2): 접속 직후부터 스키마 하나씩(간격 `idle_ms`) — 검색 중이면 `pump_index`가 대신 돈다.
     fn l1_step(&mut self, now: Instant) -> bool {
         let c = self.index_cfg;

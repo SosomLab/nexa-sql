@@ -477,7 +477,7 @@ pub fn name_index(
     };
     // 종류 문자 → ObjectKind(방언별 · 모르는 것은 버린다).
     let kinds = kinds_for(dialect);
-    let rows: Vec<(String, String, String)> = match dialect {
+    let rows: Vec<(String, String, String, String)> = match dialect {
         Dialect::Oracle => {
             // ★ 84 §2-1(09-25 실측 APPDB_SB 1,4xx 객체): `ALL_OBJECTS` 3.3 s(행마다 권한 판정) · `DBA_OBJECTS` 0.09 s · 자기 스키마 `USER_OBJECTS` 0.05 s.
             //   → DBA 뷰를 먼저(접근 불가 = 이 스레드에서 한 번만 시도 · 메타 스레드 = 세션 하나) → 자기 스키마는 USER_ → 그 밖 ALL_.
@@ -497,16 +497,24 @@ pub fn name_index(
                 "object_type IN ({}) AND object_name NOT LIKE 'BIN$%'{top}",
                 types.join(",")
             );
-            let to_rows = |rs: &ResultSet| -> Vec<(String, String, String)> {
+            // ★ T-123(219차 · 11-01): `temporary`(Y = 전역 임시 테이블 · GTT)를 부가로 — INSERT가 세션 상태(PRESERVE ROWS)가 되는지 판정(52 §6-4).
+            let to_rows = |rs: &ResultSet| -> Vec<(String, String, String, String)> {
                 rs.rows
                     .iter()
-                    .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                    .map(|r| {
+                        let temp = if col(r, 3) == "Y" {
+                            "TEMPORARY".to_string()
+                        } else {
+                            String::new()
+                        };
+                        (col(r, 0), col(r, 1), col(r, 2), temp)
+                    })
                     .collect()
             };
-            let mut rows: Option<Vec<(String, String, String)>> = None;
+            let mut rows: Option<Vec<(String, String, String, String)>> = None;
             if ORACLE_DBA_OK.with(|c| c.get() != Some(false)) {
                 let sql = format!(
-                    "SELECT owner, object_type, object_name FROM dba_objects WHERE {body}{}",
+                    "SELECT owner, object_type, object_name, temporary FROM dba_objects WHERE {body}{}",
                     in_list("owner")
                 );
                 match query(s, &sql) {
@@ -527,7 +535,7 @@ pub fn name_index(
                     .is_some_and(|u| u.eq_ignore_ascii_case(&schemas[0]))
                 {
                     let sql = format!(
-                        "SELECT {} AS owner, object_type, object_name FROM user_objects WHERE {body}",
+                        "SELECT {} AS owner, object_type, object_name, temporary FROM user_objects WHERE {body}",
                         lit(&schemas[0])
                     );
                     rows = Some(to_rows(&query(s, &sql)?));
@@ -537,7 +545,7 @@ pub fn name_index(
                 Some(r) => r,
                 None => {
                     let sql = format!(
-                        "SELECT owner, object_type, object_name FROM all_objects WHERE {body}{}",
+                        "SELECT owner, object_type, object_name, temporary FROM all_objects WHERE {body}{}",
                         in_list("owner")
                     );
                     to_rows(&query(s, &sql)?)
@@ -559,7 +567,14 @@ pub fn name_index(
             query(s, &sql)?
                 .rows
                 .iter()
-                .map(|r| (col(r, 0), col(r, 1).trim().to_string(), col(r, 2)))
+                .map(|r| {
+                    (
+                        col(r, 0),
+                        col(r, 1).trim().to_string(),
+                        col(r, 2),
+                        String::new(),
+                    )
+                })
                 .collect()
         }
         Dialect::Postgres => {
@@ -577,7 +592,7 @@ pub fn name_index(
             query(s, &sql)?
                 .rows
                 .iter()
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2), String::new()))
                 .collect()
         }
         // ★ Db2(10-24 · D-359): SYSCAT 다섯 뷰 합집합 · 종류 코드 = TABLES.type(T/V/S/A) · proc:P/F · TRIGGER · SEQUENCE · INDEX.
@@ -602,7 +617,7 @@ pub fn name_index(
             query(s, &sql)?
                 .rows
                 .iter()
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2), String::new()))
                 .collect()
         }
         Dialect::Mysql => {
@@ -622,7 +637,7 @@ pub fn name_index(
             query(s, &sql)?
                 .rows
                 .iter()
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2), String::new()))
                 .collect()
         }
         Dialect::Sqlite => {
@@ -637,7 +652,7 @@ pub fn name_index(
             query(s, &sql)?
                 .rows
                 .iter()
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2), String::new()))
                 .collect()
         }
         Dialect::Odbc | Dialect::Duckdb | Dialect::Clickhouse | Dialect::Access => {
@@ -655,7 +670,12 @@ pub fn name_index(
                         } else {
                             "BASE TABLE"
                         };
-                        (odbc_schema_label(&t.schema), ty.to_string(), t.name)
+                        (
+                            odbc_schema_label(&t.schema),
+                            ty.to_string(),
+                            t.name,
+                            String::new(),
+                        )
                     })
                     .collect()
             } else {
@@ -667,14 +687,14 @@ pub fn name_index(
                     .rows
                     .iter()
                     .take(lim)
-                    .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                    .map(|r| (col(r, 0), col(r, 1), col(r, 2), String::new()))
                     .collect()
             }
         }
     };
     let truncated = rows.len() >= lim && lim != usize::MAX;
     let mut out = Vec::with_capacity(rows.len().min(max.max(1)));
-    for (schema, ty, name) in rows
+    for (schema, ty, name, hint) in rows
         .into_iter()
         .take(if truncated { max } else { usize::MAX })
     {
@@ -684,10 +704,11 @@ pub fn name_index(
         if !kinds.contains(&kind) {
             continue;
         }
+        // 부가 = SQL Server 테이블 반환 함수 코드 · Oracle 임시 객체 `TEMPORARY`(T-123) · 그 밖 빈 값.
         let extra = if dialect == Dialect::Mssql && matches!(ty.as_str(), "IF" | "TF" | "FT") {
             ty.clone()
         } else {
-            String::new()
+            hint
         };
         out.push(NameEntry {
             schema,

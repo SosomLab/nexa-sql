@@ -633,6 +633,23 @@ impl App {
         self.log_win.set_session(&d);
     }
 
+    /// ★ T-123(219차 · 11-01): Oracle 전역 임시 테이블(GTT)에 넣는 평범한 `INSERT`/`MERGE` = 세션 상태 — PRESERVE ROWS면 세션이 끝날 때까지
+    ///   남으므로 유휴 닫기에서 제외하고 재접속 때 한 번 알린다(52 §6-4의 "글만 봐서는 모르는 것" 하나 해소). 판정 = 그 서버의 **적재된** L1
+    ///   메타(`extra` = TEMPORARY · 카탈로그 `temporary='Y'`)만 · 서버 왕복 0 · 안 읽었으면 false(정직한 한계) · DELETE ROWS GTT도 같이
+    ///   표식(보수적 · 닫지 않는 쪽이 안전). 스키마 없는 이름 = 세션 현재 스키마.
+    pub(crate) fn inserts_into_temp(&self, stmt: &str) -> bool {
+        if self.sess.dialect != nsql_core::Dialect::Oracle {
+            return false;
+        }
+        let Some((schema, table)) = sessions::insert_target(stmt) else {
+            return false;
+        };
+        let sc = schema.or_else(|| self.sess.cur_schema.clone());
+        self.explorer
+            .object_extra(self.sess.spec.as_ref(), sc.as_deref(), &table)
+            .is_some_and(|x| x.eq_ignore_ascii_case("TEMPORARY"))
+    }
+
     pub(crate) fn sync_sess_ui(&mut self) {
         self.log_sess_sync();
         // 설정 창이 열려 있으면 활성 탭 덧말·미리보기도 따라온다(탭 전환 · 사용자 09-29).

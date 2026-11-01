@@ -1542,6 +1542,17 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         }
     }
 
+    /// ★ T-123(219차): 그 서버 칸의 적재된 메타에서 객체 부가(`extra`) — 칸이 없거나 모르면 None · 서버 왕복 0.
+    pub(crate) fn object_extra(
+        &self,
+        spec: Option<&ConnectSpec>,
+        schema: Option<&str>,
+        name: &str,
+    ) -> Option<String> {
+        let i = spec.and_then(|s| self.find(s))?;
+        self.panes[i].ex.object_extra(schema, name)
+    }
+
     pub(crate) fn has_server(&self, spec: Option<&ConnectSpec>) -> bool {
         spec.and_then(|s| self.find(s))
             .is_some_and(|i| !self.panes[i].ex.is_offline())

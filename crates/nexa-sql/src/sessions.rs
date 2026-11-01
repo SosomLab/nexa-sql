@@ -507,6 +507,27 @@ pub(crate) fn alters_session_state(stmt: &str) -> bool {
         .any(|k| up.contains(k))
 }
 
+/// ★ T-123(219차 · 11-01): `INSERT INTO [스키마.]표` · `MERGE INTO [스키마.]표`의 대상 — (스키마, 이름) · 따옴표는 벗김 · 둘째 낱말이
+///   `INTO`가 아니면(`INSERT ALL/FIRST` · 힌트) None(단순 판정 · 호스트는 Oracle GTT 판정에만 쓴다 · 52 §6-4).
+pub(crate) fn insert_target(stmt: &str) -> Option<(Option<String>, String)> {
+    let mut w = stmt
+        .split(|c: char| c.is_whitespace() || c == '(')
+        .filter(|t| !t.is_empty());
+    let first = w.next()?.to_ascii_uppercase();
+    if first != "INSERT" && first != "MERGE" {
+        return None;
+    }
+    if !w.next()?.eq_ignore_ascii_case("INTO") {
+        return None;
+    }
+    let raw = w.next()?.trim_end_matches([',', ';']);
+    let unq = |s: &str| s.trim_matches('"').to_string();
+    Some(match raw.split_once('.') {
+        Some((s, t)) => (Some(unq(s)), unq(t)),
+        None => (None, unq(raw)),
+    })
+}
+
 /// SQL Server 임시 테이블 표기(`#t` · `##g`)가 **이름 자리**에 있는가 — `#`이 낱말 첫 글자일 때만(앞 = 시작·공백·구분 문자).
 /// `EMP#` 같은 컬럼 이름 · `Pw#Demo` 같은 문자열 안 글자는 아니다.
 fn temp_table_hash(up: &str) -> bool {
@@ -2279,6 +2300,32 @@ mod tests {
         ] {
             assert!(!alters_session_state(s), "{s}");
         }
+    }
+
+    /// ★ T-123(219차): INSERT/MERGE 대상 표 추출 — 스키마 유무 · 괄호 붙은 컬럼 목록 · 따옴표 · 그 밖 문장은 None.
+    #[test]
+    fn insert_target_parse() {
+        use super::insert_target;
+        assert_eq!(
+            insert_target("INSERT INTO hr.gtt_emp (id) VALUES (1)"),
+            Some((Some("hr".into()), "gtt_emp".into()))
+        );
+        assert_eq!(
+            insert_target("insert into gtt_emp(id) values (1)"),
+            Some((None, "gtt_emp".into()))
+        );
+        assert_eq!(
+            insert_target(
+                "MERGE INTO \"HR\".\"T\" d USING s ON (1=1) WHEN MATCHED THEN UPDATE SET a = 1"
+            ),
+            Some((Some("HR".into()), "T".into()))
+        );
+        assert_eq!(
+            insert_target("INSERT ALL INTO t1 VALUES (1) SELECT 1 FROM dual"),
+            None
+        );
+        assert_eq!(insert_target("UPDATE t SET a = 1"), None);
+        assert_eq!(insert_target("SELECT 1"), None);
     }
 
     /// D4 MC/DC: 다섯 조건 각각이 단독으로 "거두지 않음"을 만든다.
