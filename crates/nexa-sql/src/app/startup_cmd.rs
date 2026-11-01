@@ -1329,9 +1329,48 @@ cells={n}
         }
         // ★ 헤드리스 캡처(D-436 · T-459): `capture:<png>` = 다음 프레임의 주 창 프레임버퍼를 PNG로(창이 보이든 숨었든 같은 픽셀 ·
         //   OS 캡처 도구(PrintWindow·screencapture·import) 없이 3-OS 동일 · 키 주입 0).
-        if let Some(path) = id.strip_prefix("capture:") {
-            self.capture_req = Some(std::path::PathBuf::from(path));
-            self.redraw();
+        //   ★ 2차(217차): `capture:<png>@<창 제목 일부>` = 그 **보조 창**의 프레임버퍼(제목 부분 일치 · 대소문자 무시 · 첫 창 · 주 창 제외 ·
+        //   Presenter가 present 직전에 떨군다 = `present::request_capture`) · 헤드리스면 `about_to_wait`가 보조 창도 직접 그린다.
+        if let Some(spec) = id.strip_prefix("capture:") {
+            match spec.rsplit_once('@') {
+                Some((path, title)) if !title.trim().is_empty() => {
+                    let needle = title.trim().to_ascii_lowercase();
+                    let hit = self
+                        .all_windows()
+                        .into_iter()
+                        .skip(1)
+                        .find(|w| w.title().to_ascii_lowercase().contains(&needle));
+                    match hit {
+                        Some(w) => {
+                            crate::present::request_capture(w.id(), std::path::PathBuf::from(path));
+                            w.request_redraw();
+                            self.redraw();
+                        }
+                        None => eprintln!("[capture] no window titled *{}*", title.trim()),
+                    }
+                }
+                _ => {
+                    self.capture_req = Some(std::path::PathBuf::from(spec));
+                    self.redraw();
+                }
+            }
+            return;
+        }
+        // ★ T-459 2차(217차): 열린 창 목록 덤프 = 헤드리스 기능 점검의 "창 수" 판정(OS는 숨은 창을 못 본다) — `wins=N` 한 줄 +
+        //   창마다 `제목\t가로x세로\tvisible|hidden`(주 창이 첫 줄).
+        if let Some(path) = id.strip_prefix("windows.dump:") {
+            let wins = self.all_windows();
+            let mut out = format!("wins={}\n", wins.len());
+            for w in wins {
+                let s = w.inner_size();
+                let vis = if w.is_visible().unwrap_or(false) {
+                    "visible"
+                } else {
+                    "hidden"
+                };
+                out.push_str(&format!("{}\t{}x{}\t{vis}\n", w.title(), s.width, s.height));
+            }
+            let _ = std::fs::write(path, out);
             return;
         }
         if let Some((chords, path)) = id

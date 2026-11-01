@@ -325,7 +325,8 @@ mod tests {
             names
         };
         let on = collect(true);
-        for keep in ["a.sql", "d.sql", "src", ".gitignore"] {
+        // `.gitignore` 자체는 단언하지 않는다 — Unix에서는 점 파일 = 숨김(show_hidden=false)이라 OS마다 다르다(CI 6ae03a4a).
+        for keep in ["a.sql", "d.sql", "src"] {
             assert!(on.iter().any(|n| n == keep), "{keep} 없음: {on:?}");
         }
         assert!(

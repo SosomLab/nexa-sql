@@ -232,6 +232,23 @@ impl ApplicationHandler<Wake> for App {
             self.sync_grid_tab();
             self.paint();
             self.findobj_paint_trace();
+            // ★ 2차(217차): 보조 창도 OS 재그리기 사건이 없다 → 살아 있는 보조 창 전부에 RedrawRequested를 직접 넣는다(캡처 포함 ·
+            //   시험 전용 비용 · 주 창은 위에서 그렸다).
+            let main_id = self.window.as_ref().map(|w| w.id());
+            let aux: Vec<WindowId> = self
+                .all_windows()
+                .into_iter()
+                .map(Window::id)
+                .filter(|id| Some(*id) != main_id)
+                .collect();
+            for id in aux {
+                winit::application::ApplicationHandler::window_event(
+                    self,
+                    el,
+                    id,
+                    WindowEvent::RedrawRequested,
+                );
+            }
         }
         // ★ T-350: 이 묶음의 사건을 다 처리한 뒤 **지금 상태로 다시 판정하고** IME 허용 값을 한 번만 OS에(끄기 지연 · 켜기는
         //   `ime_refresh`가 즉시). 다시 판정하는 이유(사용자 10-15 2차 "조건 바에 들어갈 때만"): 조건 바 클릭은 `set_focus(Grid)`가

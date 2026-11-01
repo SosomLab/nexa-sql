@@ -15,8 +15,11 @@ param(
     [string]$Exe = "",
     [string]$Cli = "",
     [string]$Only = "",
-    [double]$WaitScale = 0
+    [double]$WaitScale = 0,
+    # ★ T-459 2차(11-01): 앱 자체 헤드리스(NSQL_HEADLESS=1) = 화면에 창 0 · 창 수 = 기동 명령 windows.dump · 캡처 = capture:<png>(PrintWindow 대신).
+    [switch]$Headless
 )
+if ($Headless) { $env:NSQL_HEADLESS = "1"; $env:NSQL_NO_ACTIVATE = "1" }
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 # T-346 ①(10-15): 앱은 `NSQL_STARTUP_CMD` 안의 덤프 경로를 **자기 cwd 기준**으로 푼다 → 상대 -Out이면 다른 폴더에 써 S95 판정이 깨진다(125차 V3).
@@ -128,6 +131,14 @@ function Run-Scenario {
     $env:NSQL_HOME = $home2
     Set-Content -LiteralPath (Join-Path $home2 "settings.conf") -Value ($baseConf + $Conf) -Encoding UTF8
     $errLog = Join-Path $Out ("{0}.stderr.txt" -f $Id)
+    $winsFile = Join-Path $Out ("{0}.wins.txt" -f $Id)
+    $shot0 = Join-Path $Out ("{0}_0.png" -f $Id)
+    if ($Headless) {
+        foreach ($f in @($winsFile, $shot0)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+        $ms = [int][Math]::Max(500, $WaitMs * $WaitScale * 0.75 - 500)
+        $tail = "@after:{0}:windows.dump:{1},@after:{2}:capture:{3}" -f $ms, $winsFile, ($ms + 200), $shot0
+        $Cmd = if ($Cmd) { "$Cmd,$tail" } else { $tail }
+    }
     $env:NSQL_STARTUP_CMD = $Cmd
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Exe; $psi.Arguments = $ArgList; $psi.WorkingDirectory = (Split-Path $Exe)
@@ -138,6 +149,13 @@ function Run-Scenario {
     $alive = -not $p.HasExited
     $wins = 0; $files = @()
     if ($alive) {
+        if ($Headless) {
+            if (Test-Path -LiteralPath $winsFile) {
+                $m = [regex]::Match((Get-Content -LiteralPath $winsFile -Raw), 'wins=(\d+)')
+                if ($m.Success) { $wins = [int]$m.Groups[1].Value }
+            }
+            if (Test-Path -LiteralPath $shot0) { $files += (Split-Path -Leaf $shot0) }
+        } else {
         $wins = [NxFc]::CountVisible([uint32]$p.Id)
         foreach ($i in 0..($Shots - 1)) {
             # 그 프로세스의 보이는 창 전부(메인 + 접속 창·보조 창) — 큰 것부터 `_w0`, `_w1`, …
@@ -161,6 +179,7 @@ function Run-Scenario {
             }
             if ($i -lt $Shots - 1) { Start-Sleep -Milliseconds $ShotGapMs }
         }
+        } # headless else
         try { $p.Kill() } catch {}
     }
     try { $p.WaitForExit(5000) | Out-Null } catch {}

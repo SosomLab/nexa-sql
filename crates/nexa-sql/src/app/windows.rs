@@ -150,7 +150,7 @@ impl App {
     }
 
     /// 앱의 모든 창(메인 + 보조 + 모달 · 열린 것만) — z-order 정리 · id → 창 조회의 단일 원천(09-27).
-    fn all_windows(&self) -> Vec<&Window> {
+    pub(crate) fn all_windows(&self) -> Vec<&Window> {
         [
             self.window.as_deref(),
             self.log_win.window(),

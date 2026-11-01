@@ -15,6 +15,7 @@ set -u
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Windows: use scripts/win-func-check.ps1 (pwsh -NoProfile -File scripts/win-func-check.ps1 -HomeDir … -DataDir … -Out …) — this script counts windows with xwininfo/CGWindowList only"; exit 2;; esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
+. "$ROOT/scripts/lib/headless.sh"   # NSQL_FC_HEADLESS=1 = 앱 자체 헤드리스(T-459 2차 · 창 수 = windows.dump · 3-OS 공통)
 # 기능 점검 = Release(win-func-check.ps1과 같게 · Debug는 기동이 1.5 s라 기동 명령이 밀린다 · 09-26 실측).
 APP="$ROOT/target/release/nexa-sql"; CLI="$ROOT/target/release/nsql"; OUT=""; ONLY=""
 while getopts "o:e:n:O:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; n) CLI=$OPTARG;; O) ONLY=$OPTARG;; esac; done
@@ -125,12 +126,18 @@ run_s() {
   # T-429: Debug 기동 ≈2 s가 대기를 먹는다(`@after` 시계는 기동 명령 처리 시점부터) → Debug exe면 대기 ×FC_WAIT_SCALE(기본 2 · Release = 1).
   case "$APP" in */debug/*) secs=$(awk -v s="$secs" -v k="${FC_WAIT_SCALE:-2}" 'BEGIN{printf "%.2f", s*k}');; esac
   printf '%s%s' "$BASECONF" "$conf" > "$home2/settings.conf"
+  # ★ 헤드리스(T-459 2차): OS가 창을 못 보므로 기동 명령 끝에 창 목록 덤프를 붙여 그 수로 판정한다.
+  local winsf="$OUT/$id.wins.txt"; rm -f "$winsf"
+  if fc_headless; then cmd="${cmd:+$cmd,}$(fc_wins_tail "$winsf" "$secs")"; fi
   local err="$OUT/$id.stderr.txt"
   NSQL_HOME="$home2" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" "$APP" $arg >"$OUT/$id.stdout.txt" 2>"$err" &
   local p=$!
   sleep "$secs"
   local alive=0 wins=0
-  if kill -0 "$p" 2>/dev/null; then alive=1; wins=$(wins_now "$p"); fi
+  if kill -0 "$p" 2>/dev/null; then
+    alive=1
+    if fc_headless; then wins=$(fc_wins_read "$winsf"); wins=${wins:-0}; else wins=$(wins_now "$p"); fi
+  fi
   kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
   local panic=0; grep -qE "panicked|RUST_BACKTRACE" "$err" 2>/dev/null && panic=1
   local verdict="ok" detail=""
