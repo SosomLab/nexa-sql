@@ -139,7 +139,7 @@
 - **테스트 실행 = Debug(full) · Release(lite)도 함께 빌드**(사용자 병행 시험 · D-363 · 절차·함정 = §3) · 재시작 인스턴스 = 실제 설정([102 §5-5](102-collab-session-operation.md)).
 
 ### 2-2. 코드 규칙(원문 = 이 절의 팝업 세칙 2-2-a~d · UI 포커스·hover·라우팅 = [claude-ui-rules](claude-ui-rules.md) · 확장점 = [30](30-architecture-patterns.md) · 부하원 = [39 §3](39-resource-governance.md) · 네트워크 = [26 §8](26-performance-architecture.md))
-- ★ **프레임 그리기 = `paint()` → `paint_on(&mut self, surface)` → 세그먼트 `paint_seg_*`**(11-01 221차 · T-248) — `paint()`가 `self.surface.take()`로 표면을 떼어 넘기므로 **그리는 중 `self.surface`는 None**(세그먼트·그 아래 코드에서 `self.surface`를 다시 잡지 않는다 · 필요한 값은 `PaintEnv`로) · 새 그리기 영역 = 맞는 세그먼트에 · 기동 초기화 = `app/init.rs` `App::init_*` · 지도 = [93 §5](93-code-health-and-refactoring.md).
+- ★ **프레임 그리기 = `paint()` → `paint_on(&mut self, surface)` → 세그먼트 `paint_seg_*`**(11-01 221차 · T-248) — `paint()`가 `self.surface.take()`로 표면을 떼어 넘기므로 **그리는 중 `self.surface`는 None**(세그먼트·그 아래 코드에서 `self.surface`를 다시 잡지 않는다 · 필요한 값은 `PaintEnv`로) · 크롬 세그먼트 = 틀/문구/세그먼트/상태줄 4단계(11-02 142차) · `&mut self`가 필요한 단계(세그먼트 구성 · git 갱신)는 dc 밖(`RasterCtx`가 `self.ui_font`를 빌림) · 새 그리기 영역 = 맞는 세그먼트에 · 기동 초기화 = `app/init.rs` `App::init_*` · 지도 = [93 §5](93-code-health-and-refactoring.md).
 - ★ **실행 사건(`RunEvent::`) 처리 = `app/run_events.rs`의 `on_ev_*`**(11-01 220차 · T-248) — `drain_events`(events.rs)는 분배만 · 새 실행 사건 가지는 run_events.rs에 메서드로 · 지도 = [93 §5](93-code-health-and-refactoring.md).
 - ★ **편집기 스크립트 명령을 추가하면 셋을 함께**(사용자 10-16 · [76 §19](76-intellisense-and-outline.md)): nsql-script `COMMAND_WORDS`(파서) · `intel.rs` `CLIENT_COMMANDS`(완성 낱말·설명) · 필요하면 `client_next`(명령 뒤 자리 후보) — 규칙 시험 `client_commands_cover_parser_words`가 어긋남을 잡는다.
 

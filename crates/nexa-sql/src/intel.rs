@@ -1324,15 +1324,30 @@ impl Intel {
 
     /// `request`의 `CtxKind::Expr | CtxKind::Start` 가지(220차 T-248 분해 · 동작 불변 · 11-01) — 후보를 `cands`에 보탠다.
     fn cands_expr(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        // 가지 순서 = 후보 원 순서(랭킹 전) · 가지마다 자기 조건을 본다(T-248 잔여 세분화 · 동작 불변).
+        self.cands_expr_named_args(rq, cands);
+        self.cands_expr_star(rq, cands);
+        self.cands_expr_join_fk(rq, cands);
+        self.cands_expr_insert_cols(rq, cands);
+        if rq.ctx.kind == CtxKind::Expr {
+            self.cands_expr_alias_cols(rq, cands);
+            self.cands_expr_builtins(rq, cands);
+            self.cands_expr_user_routines(rq, cands);
+        }
+        self.cands_expr_symbols(rq, cands);
+        self.cands_expr_keywords(rq, cands);
+        self.cands_expr_doc_words(rq, cands);
+    }
+
+    /// `cands_expr`의 가지 — 이름 지정 인자 `이름 => `(Oracle·PG · T-317)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_named_args(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
         let ReqIn {
             ctx,
             meta,
             dialect,
             doc,
-            symbols,
-            doc_words,
             show_types,
-            functions,
+            ..
         } = *rq;
         // ★ 이름 지정 인자(사용자 10-08 "Argument 이름에 직접 지정하는 문법에서도 자동완성" · T-317 확장): 괄호 주인이 메타의
         //   루틴이고 캐럿이 인자 시작(`(`·`,` 뒤)이면 `이름 => ` 조각(Oracle·PG 명명 표기 · SQL Server는 괄호 없는 `@이름` = T-317) ·
@@ -1392,6 +1407,11 @@ impl Intel {
                 }
             }
         }
+    }
+
+    /// `cands_expr`의 가지 — `*`/`A.*` 뒤 "모든 컬럼 (N)" 조각(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_star(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn { ctx, meta, .. } = *rq;
         // ★ `*` / `A.*` 뒤 = "모든 컬럼 (N)" 조각(사용자 09-24): `A.*` = 그 별칭의 컬럼 · bare `*` = FROM의 모든 테이블 컬럼(둘 이상이거나
         //   별칭을 썼으면 `A.컬럼` · 하나뿐이고 별칭이 없으면 이름만). 안 읽은 테이블은 급한 채움 요청 + "불러오는 중".
         if ctx.kind == CtxKind::Expr && self.cfg.insert_columns {
@@ -1481,6 +1501,11 @@ impl Intel {
                 }
             }
         }
+    }
+
+    /// `cands_expr`의 가지 — `JOIN … ON` 뒤 외래 키 조인 조건(T-178)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_join_fk(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn { ctx, meta, doc, .. } = *rq;
         if ctx.kind == CtxKind::Expr && self.cfg.join_fk && ctx.prefix.is_empty() {
             // ★ `JOIN 테이블 [별칭] ON` 바로 뒤 = 외래 키로 만든 조인 조건을 첫 후보로(T-178 · 지연 로딩: 제약은
             //   이때 처음 읽는다 — 이미 있으면 즉시 · 없으면 "불러오는 중" 뒤 다시 그린다).
@@ -1548,6 +1573,11 @@ impl Intel {
                 }
             }
         }
+    }
+
+    /// `cands_expr`의 가지 — `INSERT INTO t (` 뒤 컬럼 전체 조각(T-178)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_insert_cols(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn { ctx, meta, .. } = *rq;
         if ctx.kind == CtxKind::Expr
             && self.cfg.insert_columns
             && ctx.paren_into
@@ -1601,120 +1631,157 @@ impl Intel {
                 }
             }
         }
-        if ctx.kind == CtxKind::Expr {
-            // 문장 alias 컬럼(로드된 것만) + alias 이름.
-            for (ai, a) in ctx.aliases.iter().enumerate() {
-                cands.push(Cand {
-                    text: a.alias.clone(),
-                    kind: CandKind::Alias,
-                    detail: if show_types {
-                        if a.local {
-                            "cte/subquery".into()
-                        } else {
-                            a.table.clone()
+    }
+
+    /// `cands_expr`의 가지 — 문장 alias 이름 + alias 테이블 컬럼(식 자리 · 호출자가 `CtxKind::Expr`를 본다)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_alias_cols(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            ctx,
+            meta,
+            show_types,
+            ..
+        } = *rq;
+        // 문장 alias 컬럼(로드된 것만) + alias 이름.
+        for (ai, a) in ctx.aliases.iter().enumerate() {
+            cands.push(Cand {
+                text: a.alias.clone(),
+                kind: CandKind::Alias,
+                detail: if show_types {
+                    if a.local {
+                        "cte/subquery".into()
+                    } else {
+                        a.table.clone()
+                    }
+                } else {
+                    String::new()
+                },
+                source: 2,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
+            });
+            if a.local {
+                continue;
+            }
+            // ★ 접두 없이 고른 컬럼(JOIN 다중 테이블 · 사용자 09-24): 모든 alias 테이블의 컬럼을 보이고(오른쪽 = alias ·
+            //   FROM 순서 → 순번), 확정 때 `A.컬럼`(Alt = 컬럼만 · `intel.qualify_columns`). 아직 안 읽은 테이블은 채움 요청.
+            if let Some(m) = meta {
+                match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
+                    Some(id) => match m.snap.columns(id) {
+                        ColState::Loaded { cols, .. } => {
+                            let base = ai as u32 * 1000;
+                            for c in cols.iter() {
+                                push_col(cands, id, c, m.names, show_types);
+                                if let Some(last) = cands.last_mut() {
+                                    last.qualifier = a.alias.clone();
+                                    last.order += base;
+                                }
+                            }
                         }
+                        ColState::Loading => self.loading = true,
+                        ColState::Unknown => {
+                            self.loading = true;
+                            self.needs.push(NeedColumns {
+                                schema: a.schema.clone().or_else(|| {
+                                    m.snap.current_schema.map(|s| m.names.get(s).to_string())
+                                }),
+                                table: a.table.clone(),
+                                urgent: true,
+                            });
+                        }
+                        ColState::Error(_) => {}
+                    },
+                    None => self.needs.push(NeedColumns {
+                        schema: a.schema.clone(),
+                        table: a.table.clone(),
+                        urgent: true,
+                    }),
+                }
+            }
+        }
+    }
+
+    /// `cands_expr`의 가지 — 내장 함수 시그니처 + 시스템 패키지(정적 표 · `intel.functions`)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_builtins(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            dialect,
+            show_types,
+            functions,
+            ..
+        } = *rq;
+        // 내장 함수(시그니처) + 시스템 패키지 이름 — 정적 표(T-178 · `intel.functions`).
+        if functions {
+            for b in builtins::functions(dialect) {
+                cands.push(Cand {
+                    text: b.name.to_string(),
+                    kind: CandKind::Function,
+                    detail: if show_types {
+                        b.sig.to_string()
                     } else {
                         String::new()
                     },
-                    source: 2,
+                    source: 4,
                     tag: 0,
                     mark: String::new(),
                     order: 0,
                     qualifier: String::new(),
                     layer: 0,
                 });
-                if a.local {
-                    continue;
-                }
-                // ★ 접두 없이 고른 컬럼(JOIN 다중 테이블 · 사용자 09-24): 모든 alias 테이블의 컬럼을 보이고(오른쪽 = alias ·
-                //   FROM 순서 → 순번), 확정 때 `A.컬럼`(Alt = 컬럼만 · `intel.qualify_columns`). 아직 안 읽은 테이블은 채움 요청.
-                if let Some(m) = meta {
-                    match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
-                        Some(id) => match m.snap.columns(id) {
-                            ColState::Loaded { cols, .. } => {
-                                let base = ai as u32 * 1000;
-                                for c in cols.iter() {
-                                    push_col(cands, id, c, m.names, show_types);
-                                    if let Some(last) = cands.last_mut() {
-                                        last.qualifier = a.alias.clone();
-                                        last.order += base;
-                                    }
-                                }
-                            }
-                            ColState::Loading => self.loading = true,
-                            ColState::Unknown => {
-                                self.loading = true;
-                                self.needs.push(NeedColumns {
-                                    schema: a.schema.clone().or_else(|| {
-                                        m.snap.current_schema.map(|s| m.names.get(s).to_string())
-                                    }),
-                                    table: a.table.clone(),
-                                    urgent: true,
-                                });
-                            }
-                            ColState::Error(_) => {}
-                        },
-                        None => self.needs.push(NeedColumns {
-                            schema: a.schema.clone(),
-                            table: a.table.clone(),
-                            urgent: true,
-                        }),
+            }
+            for p in builtins::packages(dialect) {
+                cands.push(Cand {
+                    text: p.name.to_string(),
+                    kind: CandKind::Package,
+                    detail: if show_types {
+                        "package".into()
+                    } else {
+                        String::new()
+                    },
+                    source: 4,
+                    tag: 0,
+                    mark: String::new(),
+                    order: 0,
+                    qualifier: String::new(),
+                    layer: 0,
+                });
+            }
+        }
+    }
+
+    /// `cands_expr`의 가지 — 현재 스키마의 사용자 정의 함수·패키지(10-09)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_user_routines(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            meta,
+            dialect,
+            show_types,
+            ..
+        } = *rq;
+        // ★ 사용자 정의 함수·패키지(사용자 10-09 "사용자 정의 함수 보완"): 식 자리에서 접두 없이 — 현재 스키마의 메타
+        //   버킷(L1 이름)에서 · 없으면 채움 요청 · 레이어는 FROM 자리와 같은 `obj_cand`(함수·패키지 = 2).
+        if let Some(m) = meta {
+            if let Some(cur) = m.snap.current_schema {
+                for kind in [ObjectKind::Function, ObjectKind::Package] {
+                    if dialect.is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind)) {
+                        continue;
                     }
-                }
-            }
-            // 내장 함수(시그니처) + 시스템 패키지 이름 — 정적 표(T-178 · `intel.functions`).
-            if functions {
-                for b in builtins::functions(dialect) {
-                    cands.push(Cand {
-                        text: b.name.to_string(),
-                        kind: CandKind::Function,
-                        detail: if show_types {
-                            b.sig.to_string()
-                        } else {
-                            String::new()
-                        },
-                        source: 4,
-                        tag: 0,
-                        mark: String::new(),
-                        order: 0,
-                        qualifier: String::new(),
-                        layer: 0,
-                    });
-                }
-                for p in builtins::packages(dialect) {
-                    cands.push(Cand {
-                        text: p.name.to_string(),
-                        kind: CandKind::Package,
-                        detail: if show_types {
-                            "package".into()
-                        } else {
-                            String::new()
-                        },
-                        source: 4,
-                        tag: 0,
-                        mark: String::new(),
-                        order: 0,
-                        qualifier: String::new(),
-                        layer: 0,
-                    });
-                }
-            }
-            // ★ 사용자 정의 함수·패키지(사용자 10-09 "사용자 정의 함수 보완"): 식 자리에서 접두 없이 — 현재 스키마의 메타
-            //   버킷(L1 이름)에서 · 없으면 채움 요청 · 레이어는 FROM 자리와 같은 `obj_cand`(함수·패키지 = 2).
-            if let Some(m) = meta {
-                if let Some(cur) = m.snap.current_schema {
-                    for kind in [ObjectKind::Function, ObjectKind::Package] {
-                        if dialect.is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind)) {
-                            continue;
-                        }
-                        self.note_coverage_kind(m, cur, kind);
-                        for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
-                            cands.push(obj_cand(m, &h, kind, dialect, show_types));
-                        }
+                    self.note_coverage_kind(m, cur, kind);
+                    for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
+                        cands.push(obj_cand(m, &h, kind, dialect, show_types));
                     }
                 }
             }
         }
+    }
+
+    /// `cands_expr`의 가지 — 스크립트 심볼(DEFINE·변수·선언·루틴)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_symbols(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn {
+            symbols,
+            show_types,
+            ..
+        } = *rq;
         for (name, k) in symbols {
             cands.push(Cand {
                 text: name.clone(),
@@ -1736,6 +1803,11 @@ impl Intel {
                 layer: 0,
             });
         }
+    }
+
+    /// `cands_expr`의 가지 — 문법 절 기반 키워드(`intel.keywords` · T-200 CASE 자리)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_keywords(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn { ctx, dialect, .. } = *rq;
         if self.cfg.keywords {
             // ★ 문법 절 기반(09-24 · nsql-script `grammar` · `SELECT avg` 자리에 `HAVING` 없음): 문장 시작 = `[start]` · 절을 알면
             //   그 절의 `next`만 · 모르는 자리(함수 괄호 안 · 낯선 절) = 공통 + 방언 키워드 전체.
@@ -1773,6 +1845,11 @@ impl Intel {
                 });
             }
         }
+    }
+
+    /// `cands_expr`의 가지 — 문서 낱말(`intel.doc_words`)(T-248 잔여 세분화 · 본문 그대로).
+    fn cands_expr_doc_words(&mut self, rq: &ReqIn<'_>, cands: &mut Vec<Cand>) {
+        let ReqIn { doc_words, .. } = *rq;
         if self.cfg.doc_words {
             for w in doc_words {
                 cands.push(Cand {
