@@ -561,8 +561,11 @@ impl App {
     }
 
     pub(crate) fn open_file(&mut self, path: &Path) {
-        self.open_file_enc(path, "auto");
-        self.folder_title_apply(path);
+        // ★ 218차(CI S36 · 협업 진단): 기동 명령 `open:`·인자·OS 열기로 받은 **상대 경로**를 그대로 문서 키로 쓰면 CLI `bookmark add`
+        //   (canonicalize 절대 경로)·프로젝트 키와 표기가 갈려 북마크가 0으로 보였다 → 진입에서 절대 경로로(`push_recent`와 같은 정규화).
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        self.open_file_enc(&abs, "auto");
+        self.folder_title_apply(&abs);
     }
 
     /// 바이트 → 문자열(인코딩 지정 · `auto` = BOM 감지). 돌려주는 값 = (본문, 대체 문자 발생, 실제 인코딩).
@@ -612,6 +615,9 @@ impl App {
     /// 파일을 읽어 `mode`대로 쓴다. 큰 파일(`file.async_load_mb` 이상)은 **자리 탭**을 먼저 만들고 작업 스레드가 읽기·풀기·
     /// 편집기 본문 준비까지 끝낸다 — 그동안 진행 막은 그 탭 안에만 보이고 다른 탭은 그대로 쓴다(`fileload.rs`).
     pub(crate) fn load_file(&mut self, path: &Path, enc: &str, mode: LoadMode) {
+        // 모든 적재 길(미리보기 탭 · 큰 파일 선택 뒤 · 실행용 읽기)도 같은 절대 경로 표기(218차 · 위 `open_file` 참고).
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = abs.as_path();
         let to_tab = mode != LoadMode::Run;
         if matches!(mode, LoadMode::Open | LoadMode::ReadOnly) {
             // 이미 열려 있으면 읽지 않고 그 탭으로 · 같은 파일을 읽는 중이면 그 자리 탭으로.

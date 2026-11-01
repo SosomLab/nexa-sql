@@ -881,28 +881,9 @@ impl DetailTarget {
     }
 }
 
-/// 상세 캐시 항목(86 §5 · L3).
-struct DetailEntry {
-    sections: Vec<DetailSection>,
-    /// 마지막으로 보인 시각(미사용 회수의 시계).
-    used: Instant,
-    bytes: usize,
-    /// 새로 고침 범위에 들어 다음 클릭에 다시 읽어야 한다(보이는 건 캐시 · 도착하면 교체).
-    dirty: bool,
-}
+// 상세 캐시 항목·열쇠 판정은 218차에 `nsql_run::meta::{L3Cache, l3_key_hit}`로 이관(T-227 · 86 §5 L3).
 
-/// 상세 캐시 열쇠(`DetailTarget::key` · `o:스키마.이름:종류` · `c:스키마.테이블.컬럼` · `i:…`)가 무효화 범위에 드는가(순수).
-fn detail_key_hit(key: &str, schema: Option<&str>, name: Option<&str>) -> bool {
-    let body = key.get(2..).unwrap_or("");
-    match (schema, name) {
-        (None, _) => true,
-        (Some(sc), None) => body.starts_with(&format!("{sc}.")),
-        (Some(sc), Some(n)) => {
-            body.starts_with(&format!("{sc}.{n}:")) || body.starts_with(&format!("{sc}.{n}."))
-        }
-    }
-}
-
+/// 섹션들의 대략 바이트(메모리 창 집계 · L3Cache bytes).
 fn detail_bytes(secs: &[DetailSection]) -> usize {
     secs.iter()
         .map(|s| {
@@ -1171,7 +1152,8 @@ pub(crate) struct Explorer {
     icon_cache: IconCache,
     /// ★ 객체 상세 캐시(사용자 09-26 "이미 본 대상은 깜빡임 없이 · 상한/미사용 회수 · 새로 고침 범위는 무효화") —
     ///   열쇠 = `DetailTarget::key` · 값 = 섹션 · `dirty` = 새로 고침(수동·DDL·워터마크)이 닿아 다음 클릭에 다시 읽는다(보이는 건 즉시 · 도착하면 교체).
-    detail_cache: HashMap<String, DetailEntry>,
+    ///   ★ 218차(T-227): 저장 구조·TTL·LRU·무효화 판정은 `nsql_run::meta::L3Cache`(메타 회수 원장과 같은 모듈) — 여기는 섹션 타입만 붙인다.
+    detail_cache: nsql_run::meta::L3Cache<Vec<DetailSection>>,
     /// 새로 고침 범위 전파 기록(스키마, 객체) — 호스트가 가져가 상세 패널의 코멘트 캐시도 버린다(T-227 후속 · 09-26).
     detail_invalidated: Vec<(Option<String>, Option<String>)>,
     /// 루트 브랜드 아이콘 캐시(이름 · 색 · 크기 → 그림 · dbms_icons · 사용자 09-22).
@@ -2693,7 +2675,7 @@ impl Explorer {
             reveal: None,
             reveal_done: false,
             icon_cache: HashMap::new(),
-            detail_cache: HashMap::new(),
+            detail_cache: nsql_run::meta::L3Cache::new(),
             detail_invalidated: Vec::new(),
             brand_cache: HashMap::new(),
             rows_cache: Vec::new(),
@@ -3732,10 +3714,7 @@ impl Explorer {
         let (l1, l2, l3) = self.meta.layer_bytes();
         acc.add(Cat::Meta, l1 as u64);
         acc.add(Cat::MetaCols, l2 as u64);
-        acc.add(
-            Cat::MetaDetail,
-            (l3 + self.detail_cache.values().map(|e| e.bytes).sum::<usize>()) as u64,
-        );
+        acc.add(Cat::MetaDetail, (l3 + self.detail_cache.bytes()) as u64);
         let icons: usize = self
             .icon_cache
             .values()
@@ -4521,12 +4500,9 @@ impl Explorer {
                         };
                         self.detail_cache.insert(
                             key,
-                            DetailEntry {
-                                bytes: detail_bytes(secs),
-                                sections: secs.clone(),
-                                used: Instant::now(),
-                                dirty: false,
-                            },
+                            secs.clone(),
+                            detail_bytes(secs),
+                            Self::now_secs(),
                         );
                     }
                     self.actions.push(ExplorerAction::Details { owner, col, r });
@@ -6859,20 +6835,14 @@ impl Explorer {
 
     /// 캐시된 상세(있으면 즉시 표시용 사본 · `true` = 새로 고침 범위였거나 TTL이 지나 **다시 읽어 교체**해야 한다).
     pub(crate) fn cached_details(&mut self, key: &str) -> Option<(Vec<DetailSection>, bool)> {
-        let ttl = Duration::from_secs(self.index_cfg.detail_ttl_secs.max(1));
-        let e = self.detail_cache.get_mut(key)?;
-        let stale = e.dirty || e.used.elapsed() > ttl;
-        e.used = Instant::now();
-        Some((e.sections.clone(), stale))
+        let ttl = self.index_cfg.detail_ttl_secs.max(1);
+        let (v, stale) = self.detail_cache.get(key, Self::now_secs(), ttl)?;
+        Some((v.clone(), stale))
     }
 
     /// 새로 고침 범위 전파: 스키마(`name` 없음) 또는 객체 하나의 상세를 무효화(다음 클릭에 다시 읽는다).
     fn invalidate_details(&mut self, schema: Option<&str>, name: Option<&str>) {
-        for (k, e) in &mut self.detail_cache {
-            if detail_key_hit(k, schema, name) {
-                e.dirty = true;
-            }
-        }
+        self.detail_cache.invalidate(schema, name);
         self.detail_invalidated
             .push((schema.map(str::to_string), name.map(str::to_string)));
         // ★ 코멘트도 같은 범위로 잊는다(10-21 · 사용자 "메타를 전체 갱신하는 방법이 없다 · 변경된 내용 다시 캐시"): 메타 지도·객체 코멘트
@@ -6954,22 +6924,12 @@ impl Explorer {
 
     /// 상세 캐시 회수(85 §4 · 유휴 30초 틱): TTL 지난 미사용 항목 제거 · 개수 상한(`meta.detail_max`)은 오래된 것부터.
     fn reclaim_details(&mut self) -> usize {
-        let ttl = Duration::from_secs(self.index_cfg.detail_ttl_secs.max(1));
-        let before = self.detail_cache.len();
-        self.detail_cache.retain(|_, e| e.used.elapsed() <= ttl);
-        let max = self.index_cfg.detail_max.max(1);
-        if self.detail_cache.len() > max {
-            let mut by_age: Vec<(Instant, String)> = self
-                .detail_cache
-                .iter()
-                .map(|(k, e)| (e.used, k.clone()))
-                .collect();
-            by_age.sort();
-            for (_, k) in by_age.into_iter().take(self.detail_cache.len() - max) {
-                self.detail_cache.remove(&k);
-            }
-        }
-        before - self.detail_cache.len()
+        let c = self.index_cfg;
+        self.detail_cache.reclaim(
+            Self::now_secs(),
+            c.detail_ttl_secs.max(1),
+            c.detail_max.max(1),
+        )
     }
 
     /// Generate SQL 요청(새로고침도 같은 길) — 메타 세션에서 만든 뒤 `ExplorerAction::Preview`.
@@ -10704,7 +10664,7 @@ mod search_thread_tests {
 
 #[cfg(test)]
 mod detail_cache_tests {
-    use super::detail_key_hit;
+    use nsql_run::meta::l3_key_hit as detail_key_hit;
 
     /// 상세 캐시 무효화 범위(09-26): 전부 · 스키마 · 객체(하위/컬럼 포함) — 이름이 접두사인 다른 객체는 건드리지 않는다.
     #[test]

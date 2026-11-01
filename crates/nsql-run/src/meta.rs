@@ -1485,6 +1485,201 @@ impl Snapshot {
     }
 }
 
+/// ★ T-227(218차 · 11-01): L3 **표시용 상세 캐시** — 탐색기 상세 패널의 렌더된 섹션(nsql-catalog `DetailSection`) 같은 "열쇠 → 값" 캐시의
+///   공통 부품(85 §4 · 79 소유 규칙 = 메타 회수 원장 한 곳). 열쇠 = `DetailTarget::key`(`o:스키마.이름:종류` · `c:스키마.테이블.컬럼` · `i:…`) ·
+///   `used` = 마지막 조회 시각(초) · `dirty` = 새로 고침 범위에 들어 다음 조회에 다시 읽어야 함(보이는 건 즉시 · 도착하면 교체) ·
+///   `bytes` = 메모리 창 집계. 종전 `Explorer.detail_cache`(HashMap + 세 함수)를 이리로 옮김 — 탐색기는 타입을 붙인 인스턴스만 쥔다
+///   (`MetaStore`는 타입 무관이라 형제 부품 · 같은 유휴 틱 `reclaim_meta`에서 함께 회수).
+#[derive(Debug, Clone)]
+pub struct L3Entry<T> {
+    pub value: T,
+    /// 마지막 조회 시각(초 · `MetaStore`의 `at`과 같은 시계).
+    pub used: u64,
+    pub bytes: usize,
+    /// 새로 고침 범위에 들어 다음 조회에 다시 읽어야 한다(보이는 건 캐시 · 도착하면 교체).
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct L3Cache<T> {
+    map: HashMap<String, L3Entry<T>>,
+}
+
+impl<T> Default for L3Cache<T> {
+    fn default() -> Self {
+        L3Cache {
+            map: HashMap::new(),
+        }
+    }
+}
+
+impl<T> L3Cache<T> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 넣기(같은 열쇠 = 교체 · dirty 해제).
+    pub fn insert(&mut self, key: String, value: T, bytes: usize, now: u64) {
+        self.map.insert(
+            key,
+            L3Entry {
+                value,
+                used: now,
+                bytes,
+                dirty: false,
+            },
+        );
+    }
+
+    /// 조회(= 사용 시각 갱신) · `stale` = dirty 또는 TTL(초) 지남 → 호출자는 보이는 건 그대로 쓰고 다시 읽어 교체한다.
+    pub fn get(&mut self, key: &str, now: u64, ttl_secs: u64) -> Option<(&T, bool)> {
+        let e = self.map.get_mut(key)?;
+        let stale = e.dirty || now.saturating_sub(e.used) > ttl_secs;
+        e.used = now;
+        Some((&e.value, stale))
+    }
+
+    /// 범위 무효화(스키마 없음 = 전부 · 스키마 = 그 스키마 · 객체 = 그 객체와 하위/컬럼 · 판정 = [`l3_key_hit`]) · 반환 = 표시한 수.
+    pub fn invalidate(&mut self, schema: Option<&str>, name: Option<&str>) -> usize {
+        let mut n = 0;
+        for (k, e) in &mut self.map {
+            if l3_key_hit(k, schema, name) {
+                e.dirty = true;
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// 회수(85 §4 · 유휴 틱): TTL 지난 미사용 항목 제거 · 개수 상한은 오래된 것부터 · 반환 = 비운 수.
+    pub fn reclaim(&mut self, now: u64, ttl_secs: u64, max: usize) -> usize {
+        let before = self.map.len();
+        self.map
+            .retain(|_, e| now.saturating_sub(e.used) <= ttl_secs);
+        let max = max.max(1);
+        if self.map.len() > max {
+            let mut by_age: Vec<(u64, String)> =
+                self.map.iter().map(|(k, e)| (e.used, k.clone())).collect();
+            by_age.sort();
+            for (_, k) in by_age.into_iter().take(self.map.len() - max) {
+                self.map.remove(&k);
+            }
+        }
+        before - self.map.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// 메모리 창 집계(값 크기 합).
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.map.values().map(|e| e.bytes).sum()
+    }
+}
+
+/// 상세 캐시 열쇠(`o:스키마.이름:종류` · `c:스키마.테이블.컬럼` · `i:…`)가 무효화 범위에 드는가(순수 · 종전 탐색기 `detail_key_hit`).
+#[must_use]
+pub fn l3_key_hit(key: &str, schema: Option<&str>, name: Option<&str>) -> bool {
+    let body = key.get(2..).unwrap_or("");
+    match (schema, name) {
+        (None, _) => true,
+        (Some(sc), None) => body.starts_with(&format!("{sc}.")),
+        (Some(sc), Some(n)) => {
+            body.starts_with(&format!("{sc}.{n}:")) || body.starts_with(&format!("{sc}.{n}."))
+        }
+    }
+}
+
+#[cfg(test)]
+mod l3_tests {
+    use super::{l3_key_hit, L3Cache};
+
+    /// 무효화 범위(09-26 · 탐색기에서 옮김): 전부 · 스키마 · 객체(하위/컬럼 포함) — 이름이 접두사인 다른 객체는 아님.
+    #[test]
+    fn key_hit_scope() {
+        let o = "o:APPDB.EMP:Table";
+        let c = "c:APPDB.EMP.NAME";
+        let i = "i:APPDB.EMP:Indexes:EMP_PK";
+        let other = "o:APPDB.EMP2:Table";
+        let other_schema = "o:HR.EMP:Table";
+        for k in [o, c, i, other, other_schema] {
+            assert!(l3_key_hit(k, None, None));
+        }
+        assert!(l3_key_hit(o, Some("APPDB"), None));
+        assert!(!l3_key_hit(other_schema, Some("APPDB"), None));
+        assert!(l3_key_hit(o, Some("APPDB"), Some("EMP")));
+        assert!(l3_key_hit(c, Some("APPDB"), Some("EMP")));
+        assert!(l3_key_hit(i, Some("APPDB"), Some("EMP")));
+        assert!(
+            !l3_key_hit(other, Some("APPDB"), Some("EMP")),
+            "EMP2는 EMP가 아니다"
+        );
+        assert!(!l3_key_hit(other_schema, Some("APPDB"), Some("EMP")));
+        assert!(!l3_key_hit("x", Some("A"), None));
+    }
+
+    /// 조회 = 사용 시각 갱신 · stale = TTL 지남 또는 dirty(무효화 범위) · 다시 넣으면 dirty 해제 · bytes 집계.
+    #[test]
+    fn get_stale_dirty_and_bytes() {
+        let mut c: L3Cache<&str> = L3Cache::new();
+        c.insert("o:A.T:Table".into(), "t", 10, 100);
+        c.insert("c:A.T.X".into(), "x", 5, 100);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c.bytes(), 15);
+        assert_eq!(c.get("o:A.T:Table", 150, 300), Some((&"t", false)));
+        assert_eq!(
+            c.get("o:A.T:Table", 500, 300),
+            Some((&"t", true)),
+            "TTL 300 지남(마지막 150)"
+        );
+        assert_eq!(
+            c.get("o:A.T:Table", 510, 300),
+            Some((&"t", false)),
+            "조회가 사용 시각을 갱신했다"
+        );
+        assert_eq!(c.invalidate(Some("A"), Some("T")), 2, "객체 + 컬럼");
+        assert_eq!(c.get("c:A.T.X", 511, 300), Some((&"x", true)));
+        c.insert("c:A.T.X".into(), "x2", 6, 512);
+        assert_eq!(c.get("c:A.T.X", 513, 300), Some((&"x2", false)));
+        assert!(c.get("none", 0, 1).is_none());
+        c.clear();
+        assert!(c.is_empty());
+    }
+
+    /// 회수 = TTL 지난 것 제거 뒤 개수 상한(오래된 것부터) · 상한 0은 1로.
+    #[test]
+    fn reclaim_ttl_then_max() {
+        let mut c: L3Cache<u8> = L3Cache::new();
+        for (i, used) in [(1u8, 10u64), (2, 20), (3, 30), (4, 40)] {
+            c.insert(format!("o:A.T{i}:Table"), i, 1, used);
+        }
+        assert_eq!(
+            c.reclaim(100, 85, 10),
+            1,
+            "used 10만 TTL 85 밖(100-10=90 > 85 · 100-20=80은 안)"
+        );
+        assert_eq!(c.len(), 3);
+        assert_eq!(c.reclaim(100, 1000, 2), 1, "상한 2 = 가장 오래된 T2 제거");
+        assert!(c.get("o:A.T2:Table", 100, 1000).is_none());
+        assert!(c.get("o:A.T4:Table", 100, 1000).is_some());
+        assert_eq!(c.reclaim(100, 1000, 0), 1, "상한 0 = 1로 본다");
+        assert_eq!(c.len(), 1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
