@@ -1,5 +1,7 @@
 # 65. OS별 성능 비교 — 실행 속도 · 용량 · 메모리 (Windows · macOS · Linux · 2026-09-22 기준)
 
+> ★ 09-22 측정 스냅숏 · 이후 수치 = 각 원문([26](26-performance-architecture.md) · [45](45-perf-boost-benchmark.md) · [55](55-editor-input-latency.md) · [59](59-large-file-handling.md) · [62](62-macos-input-and-present.md) · [64](64-dbms-clients-and-driver-packaging.md))(11-01 정합)
+
 > 사용자 09-22(Linux 91차): "윈도우와 맥에서 진행했던 성능 평가를 동일하게 진행하고 속도·메모리·기능·용량 전수 검사·최적화" → "각 운영체제별 차이도 분석" → "비교 문서 작성".
 > 원자료: Windows = [26 §7-5·7-6](26-performance-architecture.md) · [59 §6-2](59-large-file-handling.md) · [64 §3-1·§5-1](64-dbms-clients-and-driver-packaging.md) · [45](45-perf-boost-benchmark.md)(89차 · 09-21) / macOS = [55 §3](55-editor-input-latency.md) · [62](62-macos-input-and-present.md) · [journal 09-21](journal/2026-09-21.md)(86~90차) / Linux = [26 §7-7](26-performance-architecture.md) · [journal 09-22](journal/2026-09-22.md)(91차 · 원본 `target/perf-linux-2026-09-22/`).
 > ★ **읽는 법**: 세 기기는 성능이 다르다(Windows 개발 PC ≫ mac M-시리즈 ≈ · Linux는 2코어 VM). 절대값 비교가 아니라 **① 같은 기기 안 전/후 A/B ② 예산(26 §5 · 39 §2) 대비 ③ 형상이 같은가**(셀당 바이트 · 피크/상주 비율 · 회수 여부)를 본다.

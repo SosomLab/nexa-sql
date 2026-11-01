@@ -227,6 +227,8 @@ E(누수 주기)는 *되풀이의 기울기*를 보고, 여기는 **놓은 뒤 �
 
 **macOS(09-24 · 100차)**: `scripts/mac-perf-all.sh`(B 기동 `mac-startup.sh` · C 시나리오 `mac-probe.sh` · D 향상 모드 = 같은 실행기의 s8 · E 누수 `mac-leak.sh` · CLI 타이밍) · A 인벤토리 = `otool -L`·`stat`·`cargo tree`·`config list all`(스크립트 없이 한 줄) · F 벤치 공통 · 메모리 지표 = `vmmap --summary`의 Physical footprint(≈ Windows Private) + RSS · 결과 = 26 §7-11.
 
+> 실행 기록 = 각 날짜 journal · 아래 §8~§12 = 이력(11-01 정합)
+
 ## 8. 이번 실행(2026-09-22 · Windows 93차 뒤 · 94차)
 
 **전 단계 A~F를 돌렸다**(G는 회귀가 없어 들어가지 않았다). 결과 = [26 §7-8](26-performance-architecture.md)(A 인벤토리 · B 기동 · C 시나리오 · E 누수 · F 벤치) · [45 §4](45-perf-boost-benchmark.md)(D 향상 모드) · [39 §3-7](39-resource-governance.md)(기능 프로파일 · 스레드 원장).
@@ -278,7 +280,7 @@ C-2 실행기가 배운 것 → §C-2 절차에 반영: ① `grid.max_rows`를 �
 - 협업 세션 운영 = 측정 단계 직전에 개발 세션에 **"측정 시작"** → 개발은 컴파일·빌드 정지 → 끝나면 **"측정 끝"**(수치 오염 방지 · 이번 실행에서 처음 적용 · 측정 직전 개발 Debug 빌드 1건은 끝날 때까지 25초 대기).
 - 절차 보완(이번 교훈): ① **워밍업 기동은 실행기가 시험 자료·프로필을 만든 뒤에** — 빈 격리 홈에서 앱을 먼저 띄우면 빈 `profiles/`가 생겨 실행기의 `Local` 프로필 생성(폴더 없을 때만)이 건너뛰어지고 접속 시나리오가 접속 없이 돈다(1차 B~E 무효) → 실행기 쪽 판정을 `profiles` 폴더가 아니라 `nsql conn list`의 `Local` 존재로 — ✅ **반영됨(10-26 139차 win · T-408 · `^Local\s` · R3b TRaise 6040)** ② 적재가 빨라지면 R3b(열고 150 ms 뒤 취소)의 시점이 적재 구간과 어긋난다(10-23 실제 = 65 MB ≈100 ms · OS 캐시) → 취소 시점은 적재 시작 직후(현재 60 ms)로 두고, 시점 근거를 40 ms 표본으로 함께 남긴다 · `-TRaise`는 취소 **전** 시각이어야 "올림"이 맞다(T-408).
 
-## 8. 상시 점검 항목 — 완성 팝업 반응(사용자 09-24 "인텔리센스 속도는 매우 마음에 들어 · 이 상태가 유지되도록 지속 검토")
+## 13. 상시 점검 항목(옛 번호 §8 중복 → §13 · 11-01 정합) — 완성 팝업 반응(사용자 09-24 "인텔리센스 속도는 매우 마음에 들어 · 이 상태가 유지되도록 지속 검토")
 
 - 기준: 팝업 ↑/↓·마우스 이동 1프레임 ≤ **15 ms(Debug · 의존 최적화)** / ≤ 10 ms(Release) · 행마다 서버 질의 0(카드는 머문 대상만) · 같은 행 안 MouseMove = 다시 그리기 0.
 - 방법: 격리 인스턴스 `NSQL_HOME=<격리> NSQL_NO_ACTIVATE=1 NSQL_TRACE_FRAMES=1 NSQL_STARTUP_CMD='@after:1500:view.memory' target/debug/nexa-sql`(메모리 창 250 ms 갱신 = 입력 없이 4 fps) → `[frames] n=60 avg … present …` 줄 · 기준선 = 26 §7-12(Debug 13.9 · Release 9.8 ms).
