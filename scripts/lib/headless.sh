@@ -5,9 +5,13 @@
 #   캡처 = `capture:<png>`(주 창) · `capture:<png>@<창 제목 일부>`(보조 창) — 창별 paint 코드 무관 · 3-OS 같은 픽셀.
 #   기본 = 꺼짐(종전 = Linux Xvfb(D-435) · Windows/mac 실제 화면) · 켜기 = `NSQL_FC_HEADLESS=1 scripts/linux-func-check.sh …` ·
 #   Windows = `win-func-check.ps1 -Headless`. 사용자 실기 인스턴스 스크립트는 이 파일을 포함하지 않는다.
-if [ "${NSQL_FC_HEADLESS:-0}" != 0 ]; then
+#   ★ 142차(11-02 · 14번): E2E 스크립트 공통 진입점 — `NSQL_E2E_HEADLESS=1`도 같은 뜻 · lib/xvfb.sh·lib/timeout.sh 끝에서 이 파일을 포함하므로
+#     두 lib를 다 쓰는 스크립트에서 두 번 돌 수 있다 → 안내 줄은 한 번만(NSQL_HEADLESS_LIB_SAID).
+if [ "${NSQL_FC_HEADLESS:-0}" != 0 ] || [ "${NSQL_E2E_HEADLESS:-0}" != 0 ]; then
   export NSQL_HEADLESS=1 NSQL_NO_ACTIVATE=1
+  [ -n "${NSQL_HEADLESS_LIB_SAID:-}" ] ||
   echo "[headless] NSQL_HEADLESS=1 — windows stay hidden; window count = windows.dump · capture = capture:<png>[@<title>]" >&2
+  export NSQL_HEADLESS_LIB_SAID=1
 fi
 fc_headless() { [ "${NSQL_HEADLESS:-0}" != 0 ]; }
 # 기동 명령 꼬리 = 대기 끝 무렵에 창 목록 덤프(`@after` 시계는 기동 명령 처리 시점부터 · 기동 ≈2 s는 FC_WAIT_SCALE이 덮는다).

@@ -7,6 +7,7 @@
 # 사용: scripts/mac-openfiles-e2e.sh -o <출력> [-e target/debug/nexa-sql]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/headless.sh"   # NSQL_E2E_HEADLESS=1 = 앱 자체 헤드리스(142차 · 14번)
 APP="$ROOT/target/debug/nexa-sql"; OUT=""
 while getopts "o:e:" o; do case $o in o) OUT=$OPTARG;; e) APP=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-e app]"; exit 2; }

@@ -830,6 +830,16 @@ impl LogWin {
             )
     }
 
+    /// 자체 시험 상태(142차 · `log.stat:<파일>`): 본 세션 라벨 수 · 세션 열이 실제로 켜졌는지(설정 또는 라벨 둘 이상 = 자동).
+    pub(crate) fn stat(&self) -> String {
+        format!(
+            "sessions_seen={} session_col={} entries={}\n",
+            self.sessions_seen.len(),
+            self.eff_cols().session,
+            self.buf.len()
+        )
+    }
+
     pub(crate) fn dump_text(&self) -> String {
         self.buf
             .iter()

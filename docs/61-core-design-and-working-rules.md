@@ -138,6 +138,8 @@
 - **git·문서 트랜잭션 = [16 §4-1](16-doc-git-conventions.md)(원문)** — push는 사용자가 말할 때만 · `git add <파일>`만(`-A`·`.` 금지) · 커밋 끝 `Co-Authored-By:`는 세션이 안내하는 줄 그대로(지어내지 않는다) · 한 작업 = 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES) · 끝나면 STATUS 맨 위 "다음 세션 시작점"을 본다.
 - **테스트 실행 = Debug(full) · Release(lite)도 함께 빌드**(사용자 병행 시험 · D-363 · 절차·함정 = §3) · 재시작 인스턴스 = 실제 설정([102 §5-5](102-collab-session-operation.md)).
 
+- ★ **자동 진행 중 확인 질문(사용자 11-02)**: 목록을 순차 진행하는 동안 확인이 필요한 사항이 생기면 **추천안을 포함해 제시**하고(결정 하나씩 · 선택지별 결과·위험 · D-444 그대로), **각 질문당 1분 안에 답이 없으면 보수적인 추천안으로 계속 진행**한다(되돌릴 수 있는 쪽 · 삭제·외부 영향은 "하지 않음"이 보수적) — 뒤늦게 다른 답이 오면 그때 되돌리거나 바꾼다. 도구 질문 창(AskUserQuestion)은 시간 제한이 없으므로 이 규칙은 **글로 묻고 추천대로 진행**하는 형태로 적용하고, 작업이 멈춰도 되는 결정(되돌릴 수 없는 것)만 질문 창으로 막아 묻는다.
+
 ### 2-2. 코드 규칙(원문 = 이 절의 팝업 세칙 2-2-a~d · UI 포커스·hover·라우팅 = [claude-ui-rules](claude-ui-rules.md) · 확장점 = [30](30-architecture-patterns.md) · 부하원 = [39 §3](39-resource-governance.md) · 네트워크 = [26 §8](26-performance-architecture.md))
 - ★ **프레임 그리기 = `paint()` → `paint_on(&mut self, surface)` → 세그먼트 `paint_seg_*`**(11-01 221차 · T-248) — `paint()`가 `self.surface.take()`로 표면을 떼어 넘기므로 **그리는 중 `self.surface`는 None**(세그먼트·그 아래 코드에서 `self.surface`를 다시 잡지 않는다 · 필요한 값은 `PaintEnv`로) · 크롬 세그먼트 = 틀/문구/세그먼트/상태줄 4단계(11-02 142차) · `&mut self`가 필요한 단계(세그먼트 구성 · git 갱신)는 dc 밖(`RasterCtx`가 `self.ui_font`를 빌림) · 새 그리기 영역 = 맞는 세그먼트에 · 기동 초기화 = `app/init.rs` `App::init_*` · 지도 = [93 §5](93-code-health-and-refactoring.md).
 - ★ **실행 사건(`RunEvent::`) 처리 = `app/run_events.rs`의 `on_ev_*`**(11-01 220차 · T-248) — `drain_events`(events.rs)는 분배만 · 새 실행 사건 가지는 run_events.rs에 메서드로 · 지도 = [93 §5](93-code-health-and-refactoring.md).
@@ -247,6 +249,8 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
   정리는 **그 일에 맞는 명령**을 쓴다(워크트리 = `git worktree remove` · 빌드 산출물 = `cargo clean -p …` · 프로세스 = PID 지정) — 범위가 명령 자체에 묶여 있어 엉뚱한 경로를 건드릴 수 없다.
   **확인 창의 출처** = 규칙 문서가 아니라 하네스 권한 설정 `.claude/settings.json`(allow = 명령 첫 단어 · 체인은 조각마다) — 원문 = §3-1(OS별 허용 목록 · 제안 파일 절차 · 09-22 점검 경위).
 - 실행 중인 다른 프로세스는 사용자의 것일 수 있다 — 끝낼 때는 **내가 띄운 PID**만. **예외 = 이 저장소 `target/{debug,release}/nexa-sql.exe` 인스턴스**: 개발(빌드·테스트·재시작) 사이에는 누가 띄웠든 **강제 종료하고 진행**한다(사용자 09-22 92차 "개발 사이에는 기존 프로세스를 강제 종료하고 진행" — 실행 중인 exe가 링크를 막는다) · ★ **`target/debug/` 아래는 exe 전부**(nexa-sql.exe · nsql.exe · 확장 드라이버 프로세스 — 사용자 10-29 "디버그의 경우 실행 중인 프로세스가 있어도 강제 종료 후 빌드 및 실행" · 실기 중인 셸도 포함) · 종료한 PID·시작 시각은 보고에 한 줄 · 다른 경로의 exe(설치본)·다른 앱은 그대로.
+
+- ★ **디스크 과다 사용 관리(사용자 11-02 · 142차 mac 사고 = `target/debug` 121 GB(deps 62 + incremental 56) + 시험 산출물로 볼륨이 가득 차 ENOSPC · 두 세션 셸 정지)**: 개발 산출물이 수십 GB를 차지하지 않게 **세션 시작 때와 긴 작업(풀 테스트 · 릴리스 빌드 · check-3os 전체 모드) 전에 `scripts/disk-check.sh`로 여유·큰 폴더를 본다** — 여유 < 20 GB면 정리를 **제안**한다(긴 작업 전 ≥ 30 GB) — ★ **삭제는 매번 질문**(사용자 11-02 결정: 지울 항목·크기를 보이고 확인 · **1분 안에 답이 없으면 미삭제로 두고 다음 작업을 진행** · 다시 모자라면 다시 제안) · `--prune`은 사용자가 답한 뒤에만. **지울 후보(질문 뒤)** = `target/*/incremental`(증분 캐시 · 다음 빌드가 다시 만든다) · 시험·측정 산출물 폴더(`target/v*-*` · `t###` · `func-check*` · `perf-*` · `capture-*` · `uicheck` · `*.log` … 결론은 journal에 있다) · 스크래치패드 캡처(PNG·BMP · 비교가 끝나면 즉시). **남기는 것** = `target/debug`(실기 exe) · `target/release`·`lite`(Release lite 판) · `duckdb-download` · 릴리스 자산 작업본(`packaging` · `v130-bundle` · `rel0*`) · 교차 타깃 폴더는 `--cross`로만 · `cargo clean`은 사용자 지시 때만(재빌드 10분+). **새 시험 스크립트 규칙** = 산출물은 `target/<id>/` 한 폴더 · 큰 캡처(PNG)는 판정 뒤 삭제하거나 `-k`(보존)일 때만 남긴다 · 같은 시험을 되풀이할 때는 산출 폴더를 덮어쓴다(`v3-1101`·`t464` 같은 날짜 폴더를 늘리지 않는다). 편집기(Sublime · VS Code)가 `target/`을 인덱싱하지 않게 프로젝트 파일의 제외 패턴에 `target/`을 둔다(저장소 `.gitignore`는 이미 제외).
 
 ### 2-5. 협업 세션 운영 기준(10-04 · 사용자 · 원문 = [102](102-collab-session-operation.md) · 11-01 B2 축약)
 
@@ -364,6 +368,11 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 - 기준 수치(Release · 09-20 · 이 Windows PC): 65 MB 파일 상주 87 MB · 피크 106 MB · 70만 줄 입력 3~4 ms · 그리기 2 ms · 4만 줄 전 기능 입력 8 ms. 맥에서 크게 다르면 원인을 본다.
 
 - ★ **예약 기동 명령의 여유(09-26 §217)**: `NSQL_NO_ACTIVATE=1`로 띄운(비활성) 앱은 macOS App Nap 때문에 `@after` 타이머가 수 초 늦게 깰 수 있다 → 자체 시험은 **마지막 `@after` + 5 s** 뒤에 프로세스를 끝낸다(안 그러면 마지막 덤프가 빈다 · 기능 결함이 아니다). 인자에 쉼표가 필요한 명령(`grid.edit.set`)은 `;`로 나눈다.
+
+- **북마크 패널 시험 명령(11-02 143차 · T-154)** = `bm.open:<행|라벨>[:perm]`(패널 행 활성화 = 클릭 경로 그대로 `activate` → `Goto` → `bm_goto` · 라벨 = 대소문자 무시 접두 · 항목 행 먼저 · `perm` = 더블클릭(정식 탭) · 없으면 한 번 클릭(미리보기) · 좌표·배율 무관) · `bm.rows:<파일>`(보이는 행 덤프 `행\t종류(G/D/I)\t라벨` · 머리 `rows=N visible=bool` · **인자는 이 덤프로 먼저 확인**) · func-check S54/S55가 씀.
+- **E2E 헤드리스 공통 진입점(11-02 143차)** = `NSQL_E2E_HEADLESS=1 scripts/<e2e>.sh …` → `lib/timeout.sh`·`lib/xvfb.sh` 끝에서 `lib/headless.sh`를 포함(가드 = 한 번만 · lib 없는 `mac-openfiles-e2e.sh`·`win-vars-e2e.sh`는 직접 포함) = `NSQL_HEADLESS=1 NSQL_NO_ACTIVATE=1`(OS 창 0 · 포커스·입력·클립보드 분리) · 서버 없는 C 단계 16종 = 248/0(11-02 맥) · 창 의존 `mac-trim-e2e.sh`·`linux-121-122-e2e.sh`는 대상 밖.
+- **결과 내보내기·실행 로그 시험 명령 + 현장 후보 E2E(11-02 143차 · T-154)** = `grid.export:<파일>`("파일로 내보내기…"를 파일 창 없이 `result_export_start` · 형식 = 확장자) · `log.stat:<파일>`(`sessions_seen=N session_col=bool entries=N`) · `scripts/headless-field-e2e.sh`(격리 홈 · sqlite 프로필 2 · 헤드리스 · 산출 `target/field-hl/` 덮어쓰기 · 라이선스 게이트 xlsx · 헤드리스 PNG · INSERT 실행 · 세션 열 = 13건).
+- **디스크 점검·정리 = `scripts/disk-check.sh [--prune] [--cross]`**(11-02 142차 · §2-4 디스크 규칙): 볼륨 여유(< 20 GB 경고) · `target/` 큰 폴더 상위 12 · 형제 저장소 target · 지울 수 있는 것과 크기(dry-run 기본 · `--prune` = 삭제 · `--cross` = 교차 타깃 폴더까지). 3-OS 공통(bash · df/du만).
 
 ## 5. 로컬 메모리에서 저장소로 올린 것(이 PC의 `memory/` → 여기 · 11-01 B2 재작성)
 

@@ -683,6 +683,39 @@ impl BookmarksPanel {
         }
     }
 
+    /// 자체 시험(T-154 · 11-02 142차 · S54/S55): 행 번호 또는 라벨 접두(대소문자 무시 · 항목 행 먼저 · 다음 문서/그룹)로 행을 활성화 —
+    /// 클릭 경로와 같은 [`Self::activate`](→ `BmAction::Goto`) · `permanent` = 더블클릭(정식 탭) · 아니면 한 번 클릭(미리보기).
+    /// 좌표·배율과 무관하게 3-OS 헤드리스에서 같은 길을 지난다. 찾은 행 번호를 돌려준다(없으면 None).
+    pub(crate) fn activate_by(&mut self, arg: &str, permanent: bool) -> Option<usize> {
+        let r = match arg.parse::<usize>() {
+            Ok(r) => (r < self.rows.len()).then_some(r)?,
+            Err(_) => {
+                let q = arg.to_lowercase();
+                let hit = |r: &usize| self.row_label(*r).to_lowercase().starts_with(&q);
+                (0..self.rows.len())
+                    .filter(|r| matches!(self.rows[*r], Row::Item { .. }))
+                    .find(hit)
+                    .or_else(|| (0..self.rows.len()).find(hit))?
+            }
+        };
+        self.activate(r, permanent);
+        Some(r)
+    }
+
+    /// 자체 시험 덤프(142차 · `bm.rows:<파일>`): 보이는 행 목록 — `행\t종류\t라벨` 한 줄씩(그룹 G · 문서 D · 항목 I) · 머리 = `rows=N visible=bool`.
+    pub(crate) fn rows_debug(&self) -> String {
+        let mut out = format!("rows={} visible={}\n", self.rows.len(), self.visible);
+        for r in 0..self.rows.len() {
+            let kind = match self.rows[r] {
+                Row::Group { .. } => 'G',
+                Row::Doc { .. } => 'D',
+                Row::Item { .. } => 'I',
+            };
+            out.push_str(&format!("{r}\t{kind}\t{}\n", self.row_label(r)));
+        }
+        out
+    }
+
     /// 필터 검색어 이력 잇기(전역 · `filter.bookmarks` · 사용자 09-23).
     pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
         self.filter.set_history(h, "filter.bookmarks");

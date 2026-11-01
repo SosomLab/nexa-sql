@@ -318,28 +318,15 @@ saved=$(cat "$PSAVE" 2>/dev/null)
 say "  file: tabs=$(printf '%s' "$saved" | grep -c '"tabs"') a.sql=$(printf '%s' "$saved" | grep -c '"path": "a\.sql"') b.sql=$(printf '%s' "$saved" | grep -c '"path": "b\.sql"') mn1x2=$(printf '%s' "$saved" | grep -o '"mn": 1' | wc -l) mn2x1=$(printf '%s' "$saved" | grep -o '"mn": 2' | wc -l) blob=$(printf '%s' "$saved" | grep -c 'NSQL-BLOBS') tabs_in_dump=$(grep -c '|' "$OUT/s52_tabs.txt" 2>/dev/null)"
 write_pws
 run_s S53 "프로젝트 로딩 = 옛 탭 닫고 교체 · 패널·접속 표식 복원(§92)" "open:$A,@after:1200:project.load:$PWS,@after:3000:tabs.dump:$OUT/s53_tabs.txt" Local 4 "" "s53_tabs.txt:q_lines.sql !s53_tabs.txt:a.sql"
-# ★ 좌표 배율 탐침(11-01 mac 재판정 5회): `ui.*` 좌표는 **물리 픽셀** — 맥은 외부 모니터 연결 여부로 1배/2배가 바뀌어 고정 좌표(150/182 · Linux 1배 ·
-#   BASECONF 1375×945 논리 기준)가 2배 화면에서는 필터 상자에 떨어졌다 → 창 하나를 띄워 `windows.dump`(inner_size = 물리)로 실제 크기를 읽고 비례 환산(DnD e2e와 같은 길).
-fc_probe_scale() {
-  local wf="$OUT/scale.wins.txt" secs=2.5; rm -f "$wf"
-  case "$APP" in */debug/*) secs=$(awk -v s="$secs" -v k="${FC_WAIT_SCALE:-2}" 'BEGIN{printf "%.2f", s*k}');; esac
-  printf '%s' "$BASECONF" > "$H/settings.conf"
-  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:1200:windows.dump:$wf" "$APP" Local >/dev/null 2>&1 &
-  local p=$!; sleep "$secs"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
-  local wh; wh=$(sed -n '2p' "$wf" 2>/dev/null | cut -f2); FC_W=${wh%x*}; FC_H=${wh#*x}
-  case "$FC_W$FC_H" in ''|*[!0-9]*) FC_W=1375; FC_H=945;; esac
-  say "  scale: window ${FC_W}x${FC_H} (physical · base 1375x945)"
-}
-fc_pt() { echo "$(( FC_W*$1/1375 ))/$(( FC_H*$2/945 ))"; }   # <논리 x> <논리 y> → "물리x/물리y"
-FC_W=1375; FC_H=945
-if [ -z "$ONLY" ] || echo ",$ONLY," | grep -qE ",S5[45],"; then fc_probe_scale; fi
-BM1=$(fc_pt 150 182)   # 북마크 패널 첫 항목 행
 # S54·S55 = 자기 완결(11-01 mac V3 C 재판정 3회): 종전엔 S53이 홈에 남긴 project.last에 기댔다(`-O`·헤드리스 = "BOOKMARKS · 0") → `$PWSNT54`·`$PWSNT55`(q_lines 정식 탭 없는
 #   사본 · 시나리오별)를 직접 연다. ★ `view.bookmarks`는 **토글** — 프로젝트의 `panel=bookmarks` 복원이 이미 패널을 열므로 다시 부르면 닫힌다(re3 ✗ 원인) → 부르지 않는다.
 #   q_lines 탭이 없어야 더블클릭 = 정식 탭 **생성** · 한 번 클릭 = 미리보기 탭 생성이 판정된다(탭이 있으면 활성화만 = 저절로 통과).
-#   좌표 = `$BM1`(논리 150/182를 창 물리 크기로 환산 · fc_probe_scale) · 좌표 없는 시험 명령(`bm.open:<n>`)은 후보(T-154 비고).
-run_s S54 "북마크 패널 더블클릭 = 정식 탭(§92)"             "project.load:$PWSNT54,@after:3000:ui.dclick:$BM1,@after:4500:tabs.dump:$OUT/s54_tabs.txt" Local 6 "" "s54_tabs.txt:q_lines.sql.File"
-run_s S55 "북마크 패널 한 번 클릭 = 미리보기 탭(§92)"       "project.load:$PWSNT55,@after:3000:ui.click:$BM1,@after:4500:tabs.dump:$OUT/s55_tabs.txt" Local 6 "" "s55_tabs.txt:q_lines.sql.Preview"
+#   ★ 142차(11-02): 좌표 클릭(`ui.(d)click:<물리 좌표>` + 배율 탐침 fc_probe_scale)을 **`bm.open:<행|라벨>[:perm]`**(패널 `activate` → Goto · 클릭과 같은 길 ·
+#     좌표·배율·창 크기 무관 · 3-OS 헤드리스 동일)로 바꿈 — 좌표 입력 경로는 win-explorer-dnd-e2e(ui.down/move/up)와 패널 단위 시험이 덮는다.
+#     인자 = 프로젝트 파일(write_pws)에 든 북마크 항목의 표시 글 `SELECT 5;`(라벨 없음 = 줄 원문) — 홈 저장소의 CLI 북마크(`monthly totals`)는 프로젝트 모드에서 보이지 않는다 ·
+#     행 목록 확인 = `bm.rows:<파일>`.
+run_s S54 "북마크 패널 더블클릭 = 정식 탭(§92)"             "project.load:$PWSNT54,@after:3000:bm.open:SELECT 5;:perm,@after:4500:tabs.dump:$OUT/s54_tabs.txt" Local 6 "" "s54_tabs.txt:q_lines.sql.File"
+run_s S55 "북마크 패널 한 번 클릭 = 미리보기 탭(§92)"       "project.load:$PWSNT55,@after:3000:bm.open:SELECT 5;,@after:4500:tabs.dump:$OUT/s55_tabs.txt" Local 6 "" "s55_tabs.txt:q_lines.sql.Preview"
 write_pws
 run_s S57 "프로젝트 닫기 = 처음 실행 상태 + 북마크 초기화(§98)" "open:$A,@after:1000:project.load:$PWS,@after:2500:project.close,@after:3200:view.bookmarks,@after:4000:tabs.dump:$OUT/s57_tabs.txt" Local 5 "" "!s57_tabs.txt:q_lines.sql !s57_tabs.txt:a.sql"
 # S58 폴더 모드 = 두 번째 인자가 폴더 → 북마크는 <폴더>/.nsql/workspaces/에.

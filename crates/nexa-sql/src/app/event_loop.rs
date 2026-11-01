@@ -2260,6 +2260,11 @@ impl App {
         }
         // 기동 명령·타이머가 부탁한 변수 창(창 이벤트가 없어도 열리게).
         // 창 열기 깃발은 이벤트가 없을 때도 본다(메뉴·기동 명령이 부탁한 창 — `window_event` 끝에서만 보면 늦게 열린다 · docs/61 §6 흠 ⑤).
+        // ★ T-463(142차 · 11-02): 로그 창 토글 깃발도 여기서 — 기동 명령 `view.log`는 `menu_action`이 `toggle_log`만 켜고 끝나는데 종전엔
+        //   `window_event` 끝의 `open_requested_windows`만 봐서 사건 없는 기동(격리 홈 · 헤드리스)에서 로그 창이 영영 열리지 않았다.
+        if std::mem::take(&mut self.toggle_log) {
+            self.toggle_log_window(el);
+        }
         if std::mem::take(&mut self.open_txlog) {
             self.open_txlog_window(el);
         }

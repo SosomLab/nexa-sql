@@ -20,3 +20,6 @@ if ! command -v timeout >/dev/null 2>&1; then
     }
   fi
 fi
+
+# ★ 142차(11-02): 헤드리스 공통 진입점 — NSQL_E2E_HEADLESS=1(또는 NSQL_FC_HEADLESS=1)이면 앱 자체 헤드리스(lib/headless.sh · 가드 있음).
+. "${BASH_SOURCE[0]%/*}/headless.sh"

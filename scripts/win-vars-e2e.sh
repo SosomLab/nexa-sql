@@ -8,6 +8,7 @@
 # 사용: scripts/win-vars-e2e.sh -o <출력폴더> [-n target/release/nsql.exe]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/headless.sh"   # NSQL_E2E_HEADLESS=1 = 앱 자체 헤드리스(142차 · 14번)
 NSQL="$ROOT/target/release/nsql.exe"; OUT=""
 while getopts "o:n:" o; do case $o in o) OUT=$OPTARG;; n) NSQL=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-n cli]"; exit 2; }

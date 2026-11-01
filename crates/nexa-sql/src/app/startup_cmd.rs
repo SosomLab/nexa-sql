@@ -934,6 +934,31 @@ cells={n}
             }
             return;
         }
+        // 자체 시험 덤프(142차): `bm.rows:<파일>` = 북마크 패널의 보이는 행(번호 · 종류 · 라벨) — `bm.open` 인자를 정할 때·실패 원인을 볼 때.
+        if let Some(path) = id.strip_prefix("bm.rows:") {
+            let _ = std::fs::write(path, self.bm_panel.rows_debug());
+            return;
+        }
+        // 자체 시험(T-154 · 142차 · S54/S55): `bm.open:<행|라벨>[:perm]` = 북마크 패널 행 활성화 — 클릭 경로 그대로(`activate` → `Goto` →
+        //   `bm_goto`) · `perm` = 더블클릭(정식 탭) · 없으면 한 번 클릭(미리보기) · 좌표·배율 무관(종전 `ui.(d)click:<물리 좌표>` + 배율 탐침 대체).
+        if let Some(rest) = id.strip_prefix("bm.open:") {
+            let (arg, perm) = match rest.rsplit_once(':') {
+                Some((a, "perm")) => (a, true),
+                _ => (rest, false),
+            };
+            self.sess.status = match self.bm_panel.activate_by(arg, perm) {
+                Some(r) => {
+                    self.bm_pump();
+                    format!(
+                        "bm.open {arg}: row {r}{}",
+                        if perm { " (perm)" } else { "" }
+                    )
+                }
+                None => format!("bm.open {arg}: no such row"),
+            };
+            self.redraw();
+            return;
+        }
         // 진단(09-25 "북마크 니모닉 표시가 안 된다"): 탭마다 문서 열쇠 · 저장소 표식/라벨 수 · 텍스트박스에 걸린 수 · 설정.
         if let Some(path) = id.strip_prefix("bm.stat:") {
             let mut out = format!(
@@ -1244,6 +1269,17 @@ cells={n}
                 self.menu_action(&a);
             }
             self.redraw();
+            return;
+        }
+        // 자체 시험(142차 · 실기 후보 ⓛ″·ⓝ″ 자동 덮기): `grid.export:<파일>` = 결과 그리드 "파일로 내보내기…"를 파일 창 없이 같은 길로
+        //   (`result_export_start` · 형식 = 확장자 · xlsx/parquet는 라이선스 게이트 `lic_gate` 그대로 → 게이트 켜짐 = 라이선스 창 · `license.dump`로 판정).
+        if let Some(path) = id.strip_prefix("grid.export:") {
+            self.result_export_start(Path::new(path));
+            return;
+        }
+        // 자체 시험(142차 · 실기 후보 ⓞ″): `log.stat:<파일>` = 로그 창 상태 한 줄(`sessions_seen=N session_col=bool` · 세션 열 자동 표시 판정).
+        if let Some(path) = id.strip_prefix("log.stat:") {
+            let _ = std::fs::write(path, self.log_win.stat());
             return;
         }
         if let Some(path) = id.strip_prefix("log.dump:") {

@@ -16,3 +16,6 @@ if [ "$(uname -s)" = Linux ] && [ "${NSQL_XVFB:-1}" != 0 ] && [ -z "${NSQL_XVFB_
     echo "[xvfb] xvfb-run not found — running on the real display (sudo apt install xvfb x11-utils)" >&2
   fi
 fi
+
+# ★ 142차(11-02): 헤드리스 공통 진입점 — NSQL_E2E_HEADLESS=1(또는 NSQL_FC_HEADLESS=1)이면 앱 자체 헤드리스(lib/headless.sh · 가드 있음).
+. "${BASH_SOURCE[0]%/*}/headless.sh"
