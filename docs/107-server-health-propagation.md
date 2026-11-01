@@ -119,7 +119,7 @@ L4 복구(재접속·재개) ───────▶   Alive 복귀            
 
 설정 키(모두 `REGISTRY` · 39 §3 등재): 기존 `probe.timeout_ms`(**2000** · 10-08 확인 = 레지스트리 기본) · `probe.stale_secs`(60) · `connect.auto_reconnect` · `explorer.timeout`(15) · 새 = `net.watch`(on · ⑤) · `net.notify_quiet_secs`(60 · ③) · `meta.call_timeout_secs`(= `explorer.timeout` 따름 · 0 = 끔).
 
-## 7. 결정 대기(D-265 ~ · 권장안 표시)
+## 7. 결정(✅ 10-08 권장안 채택 · D-265~ · 권장안 표시 (11-01 정합))
 
 | # | 결정 | 권장 |
 |---|---|---|

@@ -11,7 +11,7 @@
 | **추출(읽기)** | PostgreSQL **`COPY … TO STDOUT`**(서버가 CSV/binary로 직접) · 그 외 = **배열 페치 크기 + 스트리밍**(Oracle `fetch_array_size`/prefetch · SQL Server 행 스트림 · SQLite step) + 파일 쓰기 버퍼링 | Oracle `fetch_array_size` ✅(설정 `db.fetch_size`) · PG `copy_out` ✅(미사용) · 나머지 스트리밍 ✅ | 2~10× (PG COPY는 20×까지) |
 | **공통** | 다중 행 `INSERT … VALUES (…),(…)` · 준비문 1회 + 실행 N · 커밋 묶기(N행마다) · 인덱스/제약 잠시 끄기 · 로깅 최소화 | 방언 독립 · 지금 없음 | 5~20× |
 
-우리 현 상태: **적재 경로가 없다**(`nsql export`만 · import/bulk 미구현 · DR-6 범위) · 그리드 편집 적용은 행마다 문장 1개(안전 규칙상 1행 = 1문장 유지 · 87 §14) · 추출은 `RowSource` 스트리밍 + 형식 렌더러 1벌(DR-33)로 이미 복사 0.
+우리 현 상태 (11-01 정합): **적재 경로 ✅**(B-1~B-4 · CLI `nsql import` · GUI Import 창 · PG COPY · Oracle 배열 DML · SQL Server TDS bulk · §3-4-a) · (이력 09-26 = 적재 경로가 없다 · `nsql export`만 · import/bulk 미구현 · DR-6 범위) · 그리드 편집 적용은 행마다 문장 1개(안전 규칙상 1행 = 1문장 유지 · 87 §14) · 추출은 `RowSource` 스트리밍 + 형식 렌더러 1벌(DR-33)로 이미 복사 0.
 
 ## 1. DBMS별 지원 방식
 
@@ -89,7 +89,7 @@
 5. **클라이언트 메모리 상한** — 입력은 파일을 **스트리밍 파싱**(CSV 상태 기계 · 행 버퍼 N) · 출력은 `RowSource` 스트리밍(DR-33) + 8~64 KB 쓰기 버퍼 · 압축은 후속.
 6. **타입 안전** — COPY binary·TDS bulk·배열 바인드는 열 타입을 정확히 알아야 한다 → 카탈로그(`MetaStore` 컬럼 타입 · 79 단일 원천)에서 `CellSpec`/`VarType`로 미리 맞춘다(문자열 → 날짜 변환은 `gridedit::datetime` 재사용).
 7. **오류 처리** — 스트림형(COPY · BULK)은 행 단위 오류 위치를 못 주는 경우가 많다 → "배치 실패 = 그 배치를 단건 재실행해 문제 행 지목"(2단계) · 배열 바인드(Oracle `with_batch_errors` · ODBC 상태 배열)는 행 단위 오류 ✅.
-8. **데이터 보호 규칙과의 관계**(87 §14 · CLAUDE.md §3) — 벌크 적재는 **INSERT 전용**(사용자가 파일을 넣는 명시 동작). UPDATE/DELETE는 규칙대로 1행 = 1문장 + 사전 검사를 유지한다(배열 바인드로 묶더라도 문장마다 영향 행 수 1 검사가 가능한 경로만 — Oracle 배열 DML은 행별 영향 수를 주므로 후속 검토, COPY/BULK는 INSERT뿐이라 해당 없음).
+8. **데이터 보호 규칙과의 관계**(87 §14 · 원문 = [61 §1-7](61-core-design-and-working-rules.md) · 11-01 정합) — 벌크 적재는 **INSERT 전용**(사용자가 파일을 넣는 명시 동작). UPDATE/DELETE는 규칙대로 1행 = 1문장 + 사전 검사를 유지한다(배열 바인드로 묶더라도 문장마다 영향 행 수 1 검사가 가능한 경로만 — Oracle 배열 DML은 행별 영향 수를 주므로 후속 검토, COPY/BULK는 INSERT뿐이라 해당 없음).
 
 ## 3. nexa-sql 설계 제안
 
@@ -147,11 +147,11 @@ nsql-io
 
 남음 = Import 창 후속(열 매핑 표 UI · 진행 카드 연동 · 결과 탭 새로 고침) · B-4 나머지(TVP · 파이프라이닝 · MySQL `LOAD DATA`/ODBC 배열 · SQL Server bulk 옵션 `CHECK_CONSTRAINTS`/`FIRE_TRIGGERS`는 tiberius 0.12에 API 없음).
 
-### 3-5. 결정 대기
+### 3-5. 결정(권장안 진행 · D-222 = text 구현(binary 후속) (11-01 정합) · (이력) 결정 대기)
 
 - **D-220** 벌크 적재 = INSERT 전용(UPDATE/DELETE는 87 §14 규칙 유지) — 권장 ✅.
 - **D-221** SQL Server bulk 기본 `CHECK_CONSTRAINTS` on · `FIRE_TRIGGERS` off — 권장(안전 우선 · 트리거는 옵션).
-- **D-222** PG COPY = binary 기본(타입은 카탈로그에서) · 카탈로그를 못 읽으면 text COPY 폴백.
+- **D-222** PG COPY = binary 기본(타입은 카탈로그에서) · 카탈로그를 못 읽으면 text COPY 폴백. → 구현 = **text**(binary 후속 · §3-4-a (11-01 정합))
 - **D-223** 커밋 간격 기본 10,000행(실패 배치는 그 배치만 롤백 · 이미 커밋된 배치는 남는다는 고지) vs 끝에 한 번(전부-아니면-무).
 - **D-224** 위험 옵션(NOLOGGING/APPEND · `synchronous=OFF` · 제약 끄기)은 **기본 끔 + 확인 창**.
 

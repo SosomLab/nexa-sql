@@ -21,7 +21,7 @@
 | 모듈 | 형태 | 입력 → 출력 | 순서 |
 |---|---|---|---|
 | **SQL 구문 강조** | `syntect` + `Packages/SQL/*.sublime-syntax`(Oracle PL/SQL · T-SQL · PG 변형) + `.sublime-color-scheme` | 버퍼 줄 → scope 범위 → 색 | M3 ① |
-| **SQL 포매터** | 크레이트 `nsql-format`(토크나이저 + 규칙) · 명령 `format_sql` · 설정 `sql_format.*` | 텍스트 → 텍스트. 스타일 옵션: 키워드 대문자 · **선행 콤마(사용자 스크립트 스타일 `,\tA.COL`)** · 탭/공백 · `=` 정렬(Alignment 대응) · 절 줄바꿈 | M3 ② |
+| **SQL 포매터** | 크레이트 `nsql-format`(토크나이저 + 규칙) · 명령 `format_sql` · 설정 `format.*`([95](95-sql-formatter.md) · 원안 `sql_format.*` · 11-01 정합) | 텍스트 → 텍스트. 스타일 옵션: 키워드 대문자 · **선행 콤마(사용자 스크립트 스타일 `,\tA.COL`)** · 탭/공백 · `=` 정렬(Alignment 대응) · 절 줄바꿈 | M3 ② |
 | **자동완성** | `CompletionProvider` — 키워드(`.sublime-completions`) + 스키마 인덱스(`Catalog`) | 접두·컨텍스트(FROM 뒤=테이블 · 별칭.=컬럼) → 후보 | M3 ③ |
 | **스니펫** | `.sublime-snippet`(SQL 관용구: `sel`·`ins`·`exec`·`var`) | tab trigger → 필드 | M3 ③ |
 | **정렬·연번·대소문자 변환** | 명령 패키지(`Alignment`·`Insert Nums` 대응) | 선택 → 변환 | M3 ④ |

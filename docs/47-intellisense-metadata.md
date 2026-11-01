@@ -132,10 +132,12 @@ pub struct ParamEntry { name: Sym, data_type: Sym, mode: ParamMode /*In|Out|InOu
 | 부분/약어 일치(`s_c` → `SALES_CUSTOMER`) | O(n·m) 상한 | 접두 결과가 `limit` 미만일 때만 · 버킷 크기 ≤ 20k · 예산 초과 시 중단(부분 결과 표시) |
 | 스냅샷 읽기 | 락 0 | `ArcSwap`류(`Mutex<Arc<Snapshot>>`에서 `Arc` 복제만 · 그리는 동안 락 없음) |
 
-- **메모리 추정**: 객체 10k + 컬럼 200k 기준 — 인터너 문자열 ≈ 6MB · `ObjEntry` 32B×10k · `ColEntry` 24B×200k ≈ 5MB · 인덱스 ≈ 4MB → **≈ 15MB**. 상한 `meta.max_mb`(64) 초과 시 **가장 오래 안 쓴 스키마의 컬럼부터** 내림(객체 목록은 유지 · 다시 필요하면 재조회). 부하원 원장 39 §3에 등재(스레드 0 추가 · 메모리 · 네트워크 = 메타 세션 순차).
+- **메모리 추정**: 객체 10k + 컬럼 200k 기준 — 인터너 문자열 ≈ 6MB · `ObjEntry` 32B×10k · `ColEntry` 24B×200k ≈ 5MB · 인덱스 ≈ 4MB → **≈ 15MB**. 상한 `meta.max_mb`(64 · ✖ 원안 키 → 실제 회수 = [85 §4](85-metadata-layers.md) · 오프라인 칸 합계 `meta.cache_mb` 256 (11-01 정합)) 초과 시 **가장 오래 안 쓴 스키마의 컬럼부터** 내림(객체 목록은 유지 · 다시 필요하면 재조회). 부하원 원장 39 §3에 등재(스레드 0 추가 · 메모리 · 네트워크 = 메타 세션 순차).
 - **디스크 캐시(선택 · D-85)**: `<config>/meta/<profile-id>.nmeta`(버전 · 방언 · 스냅샷 직렬화 · 워터마크). 접속 직후 읽어 **즉시 서비스** → 백그라운드에서 워터마크 비교 → 다른 버킷만 재조회. 비밀 없음(이름·타입·코멘트만) · 크기 상한 같음.
 
 ## 4. 수집 계획(점증) — 접속부터
+
+> **설계 원안**(09-17) · 실제 = [85](85-metadata-layers.md)(L1 이름 · L2 워머 · L3 회수) · 키 = [94](94-settings-key-naming-and-location.md) · 이 절의 `meta.prefetch`·청크 예산 키는 REGISTRY에 없다(§8-2 ✖) (11-01 정합)
 
 | 단계 | 언제 | 무엇 | 크기/예산 |
 |---|---|---|---|
@@ -228,29 +230,31 @@ DBeaver 환경설정의 두 페이지를 그대로 카테고리로 쓴다: **편
 
 ### 8-2. 메타데이터(`meta.*` · `CatMeta` · DBeaver "Metadata")
 
+> **설계 원안** · 실제 = [85](85-metadata-layers.md) · 키 = [94](94-settings-key-naming-and-location.md)/`REGISTRY` · ✖ = REGISTRY에 없는 키(11-01 코드 대조 · 실제 분류 = `CatExplorer`·`CatPerformance` · `CatMeta` 없음) · 갱신 키 SSOT = [57 §2-5](57-explorer-refresh-after-ddl.md) · L2·L3 키(`meta.warm_columns_max`·`meta.warm_idle_ms`·`meta.warm_comments`·`meta.detail_max`·`meta.detail_ttl_secs`·`meta.cols_ttl_secs`) = [85 §7](85-metadata-layers.md) (11-01 정합)
+
 | 그룹(DBeaver) | 키 | 종류 · 기본 | DBeaver 대응 | 결정 |
 |---|---|---|---|---|
-| 읽기 | `meta.enabled` | Bool · **on** | Read metadata on connect | off = 탐색기 펼침만 · 인텔 저장소 안 채움 |
-| | `meta.prefetch` | Choice current/**current_and_used**/all | Read all objects on connect(확장) | D-81 |
-| | `meta.prefetch_columns` | Bool · **on** | — | S2 벌크 컬럼 |
-| | `meta.comments` | Choice **always**/on_demand/off | Read table/column comments | D-83 |
-| | `meta.keys` | Bool · **on** | Read keys | PK/FK 비트(툴팁·랭킹) |
-| | `meta.separate_connection` | Bool · **on** | Open separate connection for metadata | 지금의 메타 세션(26 §8 상한 안) |
-| 갱신 | `meta.refresh_on_ddl` | Bool · **on** | — | D-82 |
-| | `meta.refresh_secs` | Int 0~3600 · **300** | (탐색기 `explorer.refresh_secs`와 통합 · 0 = 끔) | D-82 워터마크 |
-| | `meta.refresh_idle_ms` | Int 1~60 · **5** · HIDDEN | — | 유휴 판정 |
-| | `meta.refresh_scope` | Choice **changed**/all | — | 워터마크가 바뀐 스키마만 / 전부 |
+| 읽기 | `meta.enabled` ✖ | Bool · **on** | Read metadata on connect | off = 탐색기 펼침만 · 인텔 저장소 안 채움 |
+| | `meta.prefetch` ✖ | Choice current/**current_and_used**/all | Read all objects on connect(확장) | D-81 |
+| | `meta.prefetch_columns` ✖ | Bool · **on** | — | S2 벌크 컬럼 |
+| | `meta.comments` ✖ | Choice **always**/on_demand/off | Read table/column comments | D-83 · 실제 = L2 코멘트 워머 `meta.warm_comments`(on · 85 §3) (11-01 정합) |
+| | `meta.keys` ✖ | Bool · **on** | Read keys | PK/FK 비트(툴팁·랭킹) |
+| | `meta.separate_connection` ✖ | Bool · **on** | Open separate connection for metadata | 지금의 메타 세션(26 §8 상한 안) |
+| 갱신 | `meta.refresh_on_ddl` | Bool · **on** | — | D-82 · → [57 §2-5](57-explorer-refresh-after-ddl.md)(+`refresh_on_commit`·`refresh_on_missing`·`refresh_highlight_ms`) (11-01 정합) |
+| | `meta.refresh_secs` | Int 0~3600 · **300** | (옛 `explorer.refresh_secs` = 이주만 · 0 = 끔) | D-82 워터마크 · → 57 §2-5 |
+| | `meta.refresh_idle_ms` | Int 0~600000 · **5000** · HIDDEN(옛 `meta.refresh_idle_secs` → RESCALED ×1000 · 11-01 정정) | — | 유휴 판정 · → 57 §2-5 |
+| | `meta.refresh_scope` | Choice **changed**/all | — | 워터마크가 바뀐 스키마만 / 전부 · → 57 §2-5 |
 | 캐시 | `meta.disk_cache` | Bool · **on** | Cache metadata | D-85 |
-| | `meta.disk_cache_max_mb` | Int 8~512 · **64** · HIDDEN | — | 프로필당 |
-| | `meta.max_mb` | Int 16~1024 · **64** | — | 메모리 상한(초과 = 컬럼 LRU 내림) |
-| 부하 | `meta.chunk_rows` | Int 200~10000 · **2000** · HIDDEN | — | 벌크 청크 |
-| | `meta.chunk_ms` | Int 50~1000 · **200** · HIDDEN | — | 청크 시간 상한 |
-| | `meta.timeout` | Int 5~120 · **15** | (탐색기 `explorer.timeout` 통합 —✅ 09-29 T-249 구현·재등록) | |
-| | `meta.pause_while_running` | Bool · **on** · HIDDEN | — | 실행 중 S4 정지 |
+| | `meta.disk_cache_max_mb` ✖ | Int 8~512 · **64** · HIDDEN | — | 프로필당 |
+| | `meta.max_mb` ✖ | Int 16~1024 · **64** | — | 메모리 상한(초과 = 컬럼 LRU 내림) · 실제 = 회수 [85 §4](85-metadata-layers.md) + 오프라인 칸 합계 `meta.cache_mb`(256 · 성능 분류 · T-121) (11-01 정합) |
+| 부하 | `meta.chunk_rows` ✖ | Int 200~10000 · **2000** · HIDDEN | — | 벌크 청크 |
+| | `meta.chunk_ms` ✖ | Int 50~1000 · **200** · HIDDEN | — | 청크 시간 상한 |
+| | `meta.timeout` ✖ | Int 5~120 · **15** | (탐색기 `explorer.timeout` 통합 —✅ 09-29 T-249 구현·재등록) | 실제 = `explorer.timeout`(0~600 · 15) 그대로 + 메타 호출 상한 `meta.call_timeout_secs`(0 = `explorer.timeout`을 따름 · HIDDEN · D-265) (11-01 정합) |
+| | `meta.pause_while_running` ✖ | Bool · **on** · HIDDEN | — | 실행 중 S4 정지 |
 
-- 종속 잠금(설정 창 D-52 규칙): `intel.enabled=off` → `intel.*` 전부 잠김 · `intel.auto_activation=off` → `delay_ms/activate_on_typing/trigger_chars/min_chars` 잠김 · `intel.hover=off` → `hover_*` 잠김 · `meta.enabled=off` → `meta.*` 잠김 · `meta.refresh_secs=0` → `refresh_idle_ms/refresh_scope` 잠김 · `meta.disk_cache=off` → `disk_cache_max_mb` 잠김.
-- 성능 모드(39 §4 `perf.mode`/`perf.boost`)와의 관계: `perf.boost`는 UI 전용 키만 강제하므로 `intel.*`/`meta.*`는 건드리지 않는다. 대신 `perf.mode=low`(저사양 프리셋)에서 `meta.prefetch=current` · `meta.prefetch_columns=off` · `intel.match=prefix`로 프리셋 값을 낮춘다(사용자가 개별 값을 두면 그 값이 우선 · 39 §4 우선순위).
-- 기존 `explorer.auto_refresh/refresh_secs/timeout`은 `meta.*`로 **통합**(탐색기와 인텔이 같은 저장소를 쓰므로 갱신 정책도 하나 · 마이그레이션 = 옛 키 값이 있으면 새 키로 옮기고 제거).
+- 종속 잠금(설정 창 D-52 규칙): `intel.enabled=off` → `intel.*` 전부 잠김 · `intel.auto_activation=off` → `delay_ms/activate_on_typing/trigger_chars/min_chars` 잠김 · `intel.hover=off` → `hover_*` 잠김 · `meta.enabled=off` → `meta.*` 잠김(✖ 키 없음) · `meta.refresh_secs=0` → `refresh_idle_ms/refresh_scope` 잠김 · `meta.disk_cache=off` → `disk_cache_max_mb` 잠김(✖ 키 없음). 실제 `meta.*` 종속(`DEPENDS`) = `refresh_on_commit` ← `refresh_on_ddl` on · `refresh_scope`·`refresh_idle_ms` ← `refresh_secs` ≠ 0 (11-01 정합).
+- 성능 모드(39 §4 `perf.mode`/`perf.boost`)와의 관계: `perf.boost`는 UI 전용 키만 강제하므로 `intel.*`/`meta.*`는 건드리지 않는다. 대신 `perf.mode=low`(저사양 프리셋)에서 `meta.prefetch=current` · `meta.prefetch_columns=off` · `intel.match=prefix`로 프리셋 값을 낮춘다(원안 · `meta.prefetch*` ✖ 키 없음 (11-01 정합) · 사용자가 개별 값을 두면 그 값이 우선 · 39 §4 우선순위).
+- 기존 `explorer.auto_refresh/refresh_secs/timeout`은 `meta.*`로 **통합**(탐색기와 인텔이 같은 저장소를 쓰므로 갱신 정책도 하나 · 마이그레이션 = 옛 키 값이 있으면 새 키로 옮기고 제거). → 실제 (11-01 정합): 옛 `explorer.auto_refresh`·`explorer.refresh_secs`는 REGISTRY에 없고 **이주용으로만** 읽힌다(`migrate_explorer_refresh` · auto_refresh=on이고 주기 ≠ 300일 때만 `meta.refresh_secs`로 옮김 · off는 옮기지 않음 = 새 기본 300 · 옛 줄은 다음 저장 때 사라짐) · `explorer.timeout`은 현행 키로 남음(+`meta.call_timeout_secs`).
 - CLI: 같은 키가 `nsql shell` Tab 완성과 `DESC`에도 적용(스레드 없이 동기).
 
 > ★ **10-26 T-153 ⑤** — 객체 링크(T-179) 기반에 `LinkKind::Variable`(`:이름`)·`Macro`(`&이름`) 추가 = 편집기 hover 변수 값 카드(문자열·주석 밖 · 카드 버튼·카탈로그 상세 요청은 변수 링크 제외 · 값 있으면 밑줄 스타일).

@@ -4,7 +4,7 @@
 > **목적**: 검증된 **문서 체계 + git 작업 규약**을 이 저장소에 그대로 적용하기 위한 **휴대용 표준 문서**.
 > **사용법**: 아래 [§0 지시문](#0-지시문-복사해서-붙여넣기)이 이 저장소의 규약 원문이다. 본 저장소의 적용 실체:
 > [README](README.md)(색인) · [10 결정 기록](10-decision-record.md)(DR 표).
-> ⚠️ `15-dev-methodology.md`·`18-build-and-test.md`는 **코드 착수 시 생성**(번호 예약).
+> ★ 이 저장소의 빌드·시험 절차 SSOT = [102 §5-7](102-collab-session-operation.md)(검증 단계) · OS별 = [61 §3](61-core-design-and-working-rules.md) · commit·병합·push = **§4-1**(11-01 B2) — 이식 원문의 `15-dev-methodology.md`·`18-build-and-test.md` 번호 예약은 이 저장소에서 다른 문서(15 · 18)가 써서 무효.
 
 ---
 
@@ -18,7 +18,7 @@
   경과(DEVLOG·journal/YYYY-MM-DD·BRANCHES) / 지식(NN-주제.md·ADR) + docs/README.md 색인.
 - 상세는 journal에만 쓰고, DEVLOG·STATUS는 요약 + journal 링크로 끝낸다(중복 서술 금지).
 - 모든 진행 기록은 시간 역순(최신이 맨 위). 같은 날 여러 건이면 STATUS에 "N차"로 쌓는다.
-- 한 작업 = 한 트랜잭션 갱신: 코드 커밋 → journal 상세 → DEVLOG 한 줄 →
+- 한 작업 = 한 트랜잭션 갱신: 코드 커밋 → journal 상세 → DEVLOG 한 줄 → STATUS →
   MILESTONES/TODO 상태 → (브랜치 작업이면) BRANCHES 표.
 - 절차 문서(빌드/테스트/배포)는 SSOT를 하나로 지정하고, 절차를 바꾼 그 커밋에서 같이 고친다.
 - 확정 사항은 결정 기록(DR-n) 표에, 대안 비교가 필요한 큰 결정은 ADR 문서로 남긴다.
@@ -39,7 +39,7 @@
 - 병합·green 확인 후 로컬 브랜치를 삭제하고, 이력은 BRANCHES.md + journal에 남긴다.
 - push는 사용자가 명시적으로 요청할 때만 한다. 자동 push 금지.
 - 버전 태그 push는 공개 릴리스를 만드는 행위이므로 main push와 분리해 별도 승인을 받는다.
-- 파괴적 작업(삭제·되돌리기·강제 push·덮어쓰기)은 실행 전 확인받는다.
+- 파괴적 작업은 실행 전 확인받는다 — 대상 = 프로젝트 밖 리소스의 수정/삭제 · 되돌릴 수 없는 git(reset --hard · clean · 강제 push · 브랜치 강제 삭제). 프로젝트 내부 파일·세션이 만든 파일은 묻지 않는다(이 저장소 원문 = 61 §2-4 · 09-22 정정).
 - 그 외 일상 작업은 사용자 개입 최소화로 자동 진행한다. 상태 기록 md 갱신은 묻지 않고 진행한다.
 - 권한 설정 파일(.claude/settings.json)은 덮어쓰기 금지, 병합만 한다.
 ```
@@ -72,7 +72,7 @@
 
 1. **journal이 원본, 나머지는 요약.** 상세는 journal에만. DEVLOG·STATUS는 요약 + `[journal/YYYY-MM-DD](journal/YYYY-MM-DD.md)` 링크로 끝낸다.
 2. **진행 기록은 전부 시간 역순**(최신이 맨 위). 하루에 여러 건이면 STATUS는 `07-22 3차 / 직전(07-22 2차) …` 형태로 쌓는다.
-3. **한 작업 = 한 트랜잭션 갱신.** 코드 커밋 → journal → DEVLOG → MILESTONES/TODO → BRANCHES. 하나라도 누락하면 기록이 어긋난다.
+3. **한 작업 = 한 트랜잭션 갱신.** 코드 커밋 → journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES. 하나라도 누락하면 기록이 어긋난다.
 4. **SSOT 지정 + 동시 갱신.** 빌드·테스트·배포 절차는 문서 1개를 SSOT로 지정하고, **절차를 바꾼 그 커밋에서 함께 고친다**(사후 정리 금지).
 5. **결정은 문서로 고정.** 확정은 DR 표, 큰 결정은 ADR. 변경 시 과거를 지우지 말고 **새 항목으로 정정**하며 "정정"임을 명기한다.
 6. **"왜 + 실측값"을 남긴다.** 무엇을 했는지보다 판단 근거와 수치(테스트 green 수, 산출물 크기, 소요 시간, 재현 조건). 다음 세션의 재발명을 막는 것이 기록의 목적.
@@ -112,9 +112,20 @@ release: 0.11.0 승격(컬럼 리사이즈 단독 조절·Ctrl+V 대상 보완) 
 - 🔴 ★ **push 전 `scripts/check-3os.sh`**(fmt + 호스트·나머지 두 OS 타깃 clippy `-D warnings` — T-40 · 09-05): 한 OS에서 `cfg` 모듈 경로를 손대면 다른 OS가 깨진다(`super::hotkeys()` 사슬 = CI 16회 빨강). **push 뒤 `gh run watch`** 로 CI green까지 본다.
 - ★ **CI `deny` 잡(10-29 · T-10)** = `cargo-deny check licenses sources`(`deny.toml`) — 새 외부 crate의 라이선스가 허용 목록 밖이면 실패 · 예외는 crate 단위로 `deny.toml`에 근거와 함께.
 - 🔴 **버전 태그 push는 별도 승인.** 태그 = 공개 릴리스 생성 행위이므로 main push와 분리해 다시 확인.
-- 🔴 **파괴적 작업**(파일·브랜치 삭제, reset/revert, force push, 덮어쓰기)은 실행 전 확인.
+- 🔴 **파괴적 작업**은 실행 전 확인 — 프로젝트 **밖** 리소스의 수정/삭제 · 되돌릴 수 없는 git(`reset --hard` · `clean` · force push · 브랜치 강제 삭제) · 프로젝트 내부 파일·세션이 만든 파일은 묻지 않고 진행(사용자 09-22 정정 · 원문 = [61 §2-4](61-core-design-and-working-rules.md)).
 - 🟢 그 외 일상 작업은 **사용자 개입 최소화로 자동 진행**. 상태 기록 md 갱신은 묻지 않고 진행.
 - 🔴 권한 설정(`.claude/settings.json`)은 **덮어쓰기 금지, 병합만** — 세션 승인 항목 유실 방지.
+
+### 4-1. 이 저장소의 "commit · main 병합 · push" 절차(원문 · 11-01 B2 · CLAUDE.md · 61 §2-1 · 102 §6은 이 절 링크)
+
+1. **작업 브랜치**(`feat/…` · `fix/…` · `docs/…`) — 협업 운영이면 커밋은 개발 세션 한 곳([102 §6](102-collab-session-operation.md)) · 커밋 직전 대상 저장소 전부 `fetch`.
+2. **커밋 전** = `cargo fmt --all -- --check` **두 작업공간**(nexa-sql · 바뀌었으면 nexa-ui — 파일별 rustfmt는 마지막 수정 뒤 빠지기 쉬움) · `git add <파일>`만 · `git diff --cached --stat`로 의도한 파일만 staged인지(`git mv`는 즉시 스테이징) · 메시지 끝 = 세션이 안내하는 `Co-Authored-By:` 줄 그대로 · 메시지에 실제 IP·계정·업무 코드 금지([61 §2-1](61-core-design-and-working-rules.md) 익명화).
+3. **빌드 요청·push 전** = `scripts/check-3os.sh --quick`(bin의 dead_code는 `clippy -p`로 안 잡힘) · push 전 전체 = `scripts/check-3os.sh`.
+4. `main`에 `--ff-only` 병합 → 로컬 브랜치 삭제 → `docs/BRANCHES.md`에 한 줄.
+5. **push = 사용자 요청 때만** · 형제 저장소를 함께 고쳤으면 **nexa-ui 먼저** · 버전 태그는 별도 승인.
+6. **push 뒤 CI** = `gh run list --commit <전체 SHA>`(짧은 해시는 `git rev-parse`로 펼침 · 비인증 API 시간당 60회 한도) · 실패 = `gh run view <id> --log-failed` → 결과를 journal(+ BRANCHES 줄)에.
+7. **문서** = 한 작업 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES) · 끝나면 STATUS 맨 위 "다음 세션 시작점"이 최신인지 본다(CLAUDE.md에는 차수 요약을 쌓지 않는다).
+8. **릴리스·개발 병행** = `main` 전용 워크트리 `../_rel` + 병합 전 rebase · 해시는 병합 뒤 문서에 · 릴리스 규칙 = [claude-release-rules](claude-release-rules.md).
 
 ## 5. 릴리스 (배포가 있는 프로젝트)
 
@@ -123,7 +134,7 @@ release: 0.11.0 승격(컬럼 리사이즈 단독 조절·Ctrl+V 대상 보완) 
 3. 배포 결과를 다시 기록: `docs: X.Y.Z 배포 결과 동기 — 자산·채널 상태`.
 4. 외부 심사 채널(패키지 매니저·스토어) 대기 중이면 **보류 방침을 문서에 명시**하고 그때까지 신규 태그를 만들지 않는다.
 
-## 6. 새 프로젝트 적용 체크리스트
+## 6. 새 프로젝트 적용 체크리스트(이식용 일반 예시 · 이 저장소의 15·18 번호는 다른 문서)
 
 ```
 CLAUDE.md                       # 정체성·확정 결정(DR)·규약 요약·다음 단계·새 세션 오리엔테이션

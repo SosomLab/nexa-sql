@@ -10,8 +10,8 @@
 | 편집 모델·키맵 | **Sublime Text 4의 `Default` 패키지를 명세서로** 채택 — 명령 이름(`find_under_expand` · `split_selection_into_lines` · `soft_undo` · `expand_selection{to}`)과 키 바인딩 JSON을 그대로 | ST 사용자의 근육 기억을 사고 나머지 앱(VS Code·IntelliJ)의 키맵은 **패키지로 제공**(같은 명령에 다른 키) |
 | 프레임워크 | 새 프레임워크 없음 — **`nexa-ui`(자체 래스터) 위에 `nexa-edit` 크레이트** | [06 Part B](06-rust-ecosystem.md) 결론: egui가 얻는 점수는 nexa-ui도 얻고, 자체 에디터 구현 비용은 어느 프레임워크든 동일 |
 | 구조 참고 | **Helix `helix-core`**(Rope + Selection{anchor,head} + Transaction/ChangeSet) 를 뼈대로, Zed `DisplayMap`(Fold→Tab→Wrap) 개념 차용. **코드 복사는 MIT/Apache만**(Helix MPL·Zed GPL은 설계만) | <20k LOC 목표 |
-| 구문 강조 | **`.sublime-syntax`를 그대로 읽는다** — `syntect`(MIT · branch 지원은 master) 채택. `.sublime-color-scheme`(JSON)·`.tmPreferences` 파서는 자체 | ST 패키지 생태계(SQL·PL/SQL·T-SQL 문법)를 재사용 |
-| 텍스트 셰이핑 | 크레이트 도입 대상(**D-3**) — 후보 `rustybuzz`(MIT · HarfBuzz 포팅) 단독 vs `cosmic-text`(shaping+폴백+bidi 일괄). 현 `nexa-gfx`는 글리프 단위라 **한글 조합·CJK 폭·합자**가 안 된다 | 편집기·그리드 모두 요구 |
+| 구문 강조 | ✅ 자체 `.nexa-syntax`([29 §1](29-editor-syntax-palette-statusbar.md)) · syntect 미채택(11-01 정합) · (이력) 원안 = **`.sublime-syntax`를 그대로 읽는다** — `syntect`(MIT · branch 지원은 master) 채택. `.sublime-color-scheme`(JSON)·`.tmPreferences` 파서는 자체 | ST 패키지 생태계(SQL·PL/SQL·T-SQL 문법)를 재사용 |
+| 텍스트 셰이핑 | 셰이핑 = DR-15 조건부(D-383·D-394 · T-11 ⏸ 채택 보류 · 11-01 정합) · (이력) 원안 = 크레이트 도입 대상(**D-3**) — 후보 `rustybuzz`(MIT · HarfBuzz 포팅) 단독 vs `cosmic-text`(shaping+폴백+bidi 일괄). 현 `nexa-gfx`는 글리프 단위라 **한글 조합·CJK 폭·합자**가 안 된다 | 편집기·그리드 모두 요구 |
 | **IME** | P0. preedit는 버퍼에 넣지 않고 **뷰 오버레이**로 그리며 커서 사각형을 OS에 보고(Windows `WM_IME_COMPOSITION` · macOS `NSTextInputClient` · Wayland `text_input_v3`). ST의 Windows 한글 이슈(#3626)를 반면교사 | 한국어 필수 |
 | 대용량 | 인메모리 + 지연 하이라이팅. EmEditor식 부분 열기는 P1 후반 | SQL 덤프·결과 |
 
@@ -45,7 +45,7 @@ nexa-edit
 
 | 파일 | 역할 | 파서 |
 |---|---|---|
-| `.sublime-syntax` | 문법 | syntect |
+| `.sublime-syntax` | 문법 | (원안) syntect → 실제 = 자체 `.nexa-syntax`(11-01 정합) |
 | `.sublime-color-scheme` | 색 | 자체(JSON) |
 | `.tmPreferences` | 들여쓰기·주석·심볼 | 자체(plist) |
 | `.sublime-snippet` · `.sublime-completions` | 스니펫·완성 | 자체 |
@@ -72,5 +72,5 @@ Sublime의 Python API **모양**(`TextCommand.run(edit, args)` · `EventListener
 |---|---|
 | 편집기 코어가 2만 줄을 넘어 늪이 됨 | Helix 구조 고정 · 단계별 테스트 · P0 외 기능은 패키지로 미룸 |
 | 한글 IME 3-OS 편차 | 각 OS 실기 점검표(clip `21-manual-test` 방식) · preedit 오버레이 원칙 고수 |
-| syntect branch 미릴리스 | git 의존(master 커밋 고정) 또는 branch 없는 문법으로 시작(SQL 문법은 branch 불필요) |
-| 셰이핑 크레이트가 외부 의존 0 규율과 충돌 | D-3에서 명시 예외 원장 등재(rustybuzz는 의존 트리 작음) |
+| syntect branch 미릴리스(이력 · syntect 미채택 · 11-01 정합) | git 의존(master 커밋 고정) 또는 branch 없는 문법으로 시작(SQL 문법은 branch 불필요) |
+| 셰이핑 크레이트가 외부 의존 0 규율과 충돌 | 셰이핑 = DR-15 조건부(D-383·D-394 · 11-01 정합) · (이력) D-3에서 명시 예외 원장 등재(rustybuzz는 의존 트리 작음) |

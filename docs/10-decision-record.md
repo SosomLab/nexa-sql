@@ -260,13 +260,13 @@
 | D-149[95] | 포맷터 시드 = Basic 끔 / kiros33 켬 — 고지 후 진행 | 🚧 권장안 진행 | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |
 | D-150[68] | 확장 API 1차 범위 — ① Rainbow Pairs를 WASM으로 옮기는 데 필요한 API만(권장) — 답 대기 | ✅ 현행 확정(TODO T-166 · 11-01 정합) | 68-extension-developer-api.md:141 §7 · TODO.md:291 |
 | D-150[95] | 포맷 단축키 = Shift+Alt+F — 고지 후 진행 | 🚧 권장안 진행 | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |
-| D-151[68] | Rainbow Pairs 최종 형태 — ② 앱 동봉(`bundled`) + 저장소 갱신(권장) — 답 대기 | ⏳ 대기 | 68-extension-developer-api.md:142 §7 · TODO.md:291 |
+| D-151[68] | Rainbow Pairs 최종 형태 — ② 앱 동봉(`bundled`) + 저장소 갱신(권장) — 답 대기 | ✅ 현행 확정(TODO T-166 · D-393 · 11-01 정합) | 68-extension-developer-api.md:142 §7 · TODO.md:291 |
 | D-151[95] | 포맷 범위 = 선택 > 문서 — 고지 후 진행 | 🚧 권장안 진행 | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |
-| D-152[68] | 확장 동적 해제 기본값 — ① 유휴 300초 뒤 내림(향상 모드는 즉시 · 권장) — 답 대기 | ⏳ 대기 | 68-extension-developer-api.md:143 §7 · TODO.md:291 |
+| D-152[68] | 확장 동적 해제 기본값 — ① 유휴 300초 뒤 내림(향상 모드는 즉시 · 권장) — 답 대기 | ✅ 현행 확정(TODO T-166 · D-393 · 11-01 정합) | 68-extension-developer-api.md:143 §7 · TODO.md:291 |
 | D-152[95] | 포맷 미리보기 = 읽기 전용 탭(설정 변경 즉시 갱신) — 고지 후 진행 | 🚧 권장안 진행 | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |
-| D-153[68] | 확장 활성화 모델 — ① VS Code식 활성화 이벤트(선언 기여 + 지연 적재 · 권장) — 답 대기 | ⏳ 대기 | 68-extension-developer-api.md:144 §7 · TODO.md:291 |
+| D-153[68] | 확장 활성화 모델 — ① VS Code식 활성화 이벤트(선언 기여 + 지연 적재 · 권장) — 답 대기 | ✅ 현행 확정(TODO T-166 · D-393 · 11-01 정합) | 68-extension-developer-api.md:144 §7 · TODO.md:291 |
 | D-153[95] | 확장 포맷터 id `sql-formatter-kiros33` · 설정 접두 `sqlfmt.` — 고지 후 진행 | ✅ 구현(키 = `ext.sqlfmt_kiros33.*` · 옛 `sqlfmt.*` = RENAMED 이주 · 11-01 정합) | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |
-| D-154[68] | 확장 SDK 위치·언어 — ① 형제 저장소 `nexa-ext-sdk`(Rust + WIT · 권장) — 답 대기(75 구현은 저장소 안 `extensions/sdk` · WIT 없음) | ⏳ 대기 | 68-extension-developer-api.md:145 §7 · 75-extension-sdk-and-dynamic-loading.md:154 · TODO.md:291 |
+| D-154[68] | 확장 SDK 위치·언어 — ① 형제 저장소 `nexa-ext-sdk`(Rust + WIT · 권장) — 답 대기(75 구현은 저장소 안 `extensions/sdk` · WIT 없음) | ✅ 현행 = 저장소 안 `extensions/sdk/nexa-ext-sdk` · WIT 대신 버퍼+JSON ABI v1([75](75-extension-sdk-and-dynamic-loading.md) · 권장안과 다름 · 11-01 정합) | 68-extension-developer-api.md:145 §7 · 75-extension-sdk-and-dynamic-loading.md:154 · TODO.md:291 |
 | D-154[95] | `sqlfmt.strict` 기본 켬 — 고지 후 진행 | ✅ 구현(키 = `ext.sqlfmt_kiros33.*` · 옛 `sqlfmt.*` = RENAMED 이주 · 11-01 정합) | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |
 | D-155[68] | 확장 서명·저장소 신뢰 — ① 공식 인덱스만 서명 · 개인 저장소는 경고(권장) — 답 대기 | ✅ → **D-373 ②로 흡수**(공식 + 사용자 추가 URL · 서명 필수 · 11-01 정합) | 68-extension-developer-api.md:146 §7 · TODO.md:291 |
 | D-155[95] | 포맷터 v1 밖 = 별칭 자동 부여·테이블 주석·PL/SQL 블록·방언 치환(T-255) — 고지 후 진행 | 🚧 권장안 진행 | journal/2026-09-28.md:190 §11 · journal/2026-09-28.md:189 |

@@ -38,12 +38,12 @@
 | 충돌 마커 `<<<<<<<`/`=======`/`>>>>>>>` (`zdiff3`면 `|||||||` base 포함) | SQL에 마커가 남은 채 실행되면 파서 오류 → 사용자가 놀란다 | ⚠️ **기본은 3-pane 병합 뷰**(base/디스크/버퍼) · 마커 삽입은 고급 옵션 |
 | non-conflicting hunk 자동 적용 | 겹치지 않는 변경은 자동 반영, 충돌 hunk만 사용자에게 | ✅ 단 자동 적용 결과는 "dirty + 병합됨" 배지로 표시 |
 
-## 4. 개발 방향 (결정 → DR-21 후보)
+## 4. 개발 방향 (결정 → D-119~124([58](58-external-change-policy.md)) · 11-01 정합 · (이력) DR-21 후보)
 
 1. **기본 정책**: `reload_file_on_change: true`(뷰별 끄기). dirty 버퍼는 즉시 바꾸지 않고 **탭 배지 + 비모달 토스트**("디스크에서 변경됨 — 병합 / 다시 불러오기 / 무시"). 저장 시 conflict면 저장을 막고 병합 뷰.
 2. **병합 흐름**: 워처 → 해시 확인 → clean이면 fast-forward · dirty면 diff3 시도 → 충돌 0이면 자동 적용(배지) · 충돌 있으면 3-pane 뷰(수용/거부/직접 편집) → 저장 = 병합 결과 + base 갱신.
 3. **삭제/이름변경**: 탭 유지 + "(deleted)" · 저장하면 복원(VS Code).
 4. **자동 저장(`save_on_focus_lost`)** 기본 off. 켜더라도 conflict 버퍼는 자동 저장 제외(Sublime #4176 교훈).
-5. **크레이트**: `diffy`(MIT/Apache · `merge(ancestor, ours, theirs)` · `ConflictStyle::Diff3`) 1순위 — 단순. hunk별 해결 UI가 필요해지면 `similar 3.x`의 `TextMerge`. 원장 등재 대상(DR-3 예외는 아니므로 D 결정 필요 → D-8).
-6. **미저장 버퍼 복원(hot exit)** 과 결합: 세션 파일에 버퍼 내용 + base 스냅샷 해시를 함께 저장해 재시작 후에도 3-way가 가능하게([18](18-session-and-projects.md)).
-7. **구현 위치**: `nexa-edit::buffer::disk`(스냅샷·해시·판정 · 순수 로직 테스트) + `nsql-plat::watch`(OS 워처 · debounce) + GUI 병합 뷰(M3 후반).
+5. **크레이트**: `diffy`(MIT/Apache · `merge(ancestor, ours, theirs)` · `ConflictStyle::Diff3`) 1순위 — 단순. hunk별 해결 UI가 필요해지면 `similar 3.x`의 `TextMerge`. 원장 등재 대상(DR-3 예외는 아니므로 D 결정 필요 → D-8) → ✅ D-124 = 자체 구현(`diff_lines` 재사용 · `diffy` 불채택 · 11-01 정합).
+6. **미저장 버퍼 복원(hot exit)** 과 결합: 세션 파일에 버퍼 내용 + base 스냅샷 해시를 함께 저장해 재시작 후에도 3-way가 가능하게([18](18-session-and-projects.md) → 18 스텁 · [67](67-project-workspace.md)·[70](70-autosave-and-restore.md) · 11-01 정합).
+7. **구현 위치**(실제 = T-140 `extfile.rs` · 11-01 정합 · 이하 원안): `nexa-edit::buffer::disk`(스냅샷·해시·판정 · 순수 로직 테스트) + `nsql-plat::watch`(OS 워처 · debounce) + GUI 병합 뷰(M3 후반).

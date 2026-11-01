@@ -4,9 +4,9 @@
 
 ## 0. 결론 여섯 줄
 
-1. **트리 8 그룹 · 24 카테고리 · 434 키**를 **7 그룹 · 31 카테고리**로 다시 묶는다(§3) — 카테고리 = "한 화면에서 같이 결정하는 것" 단위 · 키 접두(`run.` `tx.` `vars.` `db.`)가 아니라 **사용자의 일**(실행 표시 · 트랜잭션 보호 · 변수) 단위.
+1. **트리 8 그룹 · 24 카테고리 · 434 키**(09-24 수치 · 11-01 REGISTRY 약 776키 · 11-01 정합)를 **7 그룹 · 31 카테고리**로 다시 묶는다(§3) — 카테고리 = "한 화면에서 같이 결정하는 것" 단위 · 키 접두(`run.` `tx.` `vars.` `db.`)가 아니라 **사용자의 일**(실행 표시 · 트랜잭션 보호 · 변수) 단위.
 2. 카테고리 안 **순서 규칙**(§4): ① 마스터 스위치 ② 그 종속 항목을 **바로 아래 들여쓰기** ③ 범위·동작 → 표시 → 한계·예산 ④ 자동 기억 값은 `HIDDEN`. 순서의 단일 원천 = 새 `LAYOUT` 표(레지스트리 자체는 그대로 두어 키 계약·마이그레이션 0).
-3. **종속(잠금)** `DEPENDS`를 68 → 약 100으로 보강(§5 · 빠진 마스터 30여) — 조건 종류는 지금 셋(`On` · `NotEmpty` · `Eq`)에 `Gt(0)`(0 = 끔인 정수 키)을 더한다.
+3. **종속(잠금)** `DEPENDS`를 68 → 약 100으로 보강(§5 · 빠진 마스터 30여) — 조건 종류는 지금 셋(`On` · `NotEmpty` · `Eq`)에 `Gt(0)`(0 = 끔인 정수 키)을 더한다. (09-24 기준 안 · 종속 구현 = [94 §8](94-settings-key-naming-and-location.md) · 조건 = 실제 `Dep` 넷 `On`·`NotEmpty`·`Eq`·`Ne`(`Gt(0)` → `Ne("0")`) · 11-01 `DEPENDS` 236항 · 11-01 정합)
 4. **강제값** = 새 `FORCES` 표(§6 · `(부모, 조건, 자식, 값)`) — `perf.boost`의 `BOOST`를 여기로 옮겨 일반화 · 유효값(`effective`)이 대체되고 설정 창은 "○○ 때문에 고정" · 저장값은 유지(부모를 되돌리면 복귀).
 5. 설정 창: 종속 항목 들여쓰기 + 잠금/강제 사유 문구 · 검색은 그대로 · `nsql config list` 머리글은 `LAYOUT` 순서.
 6. 적용은 **안 확인 뒤** T-186으로: ① 부품(`LAYOUT`·`FORCES`·`Gt`) ② 트리·순서 ③ `DEPENDS` 보강 ④ 설정 창 표시 ⑤ 위키·i18n(T-185와 같이).
@@ -16,8 +16,8 @@
 | 항목 | 값 |
 |---|---|
 | 그룹 → 카테고리 | General(Log·Session·Performance) · User Interface(Appearance·Input·Keys·Window·Explorer) · Editors(Editor·Intel·Files·Project) · Connections(Connection·CLI) · Data Editor(Grid) · DBMS(Oracle·MSSQL·PG·SQLite) · Bookmarks(3) · Extensions(Manager·Rainbow Pairs) |
-| 키 수 | 434(Keys 65 · Editor 53 · Session 46 · Appearance 37 · Files 35 · Grid 24 · Intel 23 · Connection 21 · Log 19 · Explorer 18 · Window 17 · Performance 12 · Oracle 12 · Project 11 · …) |
-| 종속 잠금 | `DEPENDS` 68(`On` 54 · `Eq` 9 · `NotEmpty` 5) |
+| 키 수 | (09-24 기준 · 11-01 REGISTRY 약 776 · 11-01 정합) 434(Keys 65 · Editor 53 · Session 46 · Appearance 37 · Files 35 · Grid 24 · Intel 23 · Connection 21 · Log 19 · Explorer 18 · Window 17 · Performance 12 · Oracle 12 · Project 11 · …) |
+| 종속 잠금 | `DEPENDS` 68(`On` 54 · `Eq` 9 · `NotEmpty` 5) · (09-24 기준 · 11-01 = 236항 · 구현 = [94 §8](94-settings-key-naming-and-location.md) · 11-01 정합) |
 | 강제값 | `perf.boost` → `BOOST` 27키(유일한 강제 메커니즘) · `perf.mode` 프리셋(`PERF` 24키 · 모드별 값) |
 | 숨김·정보 | `HIDDEN` 65(자동 기억·구현 값) · `INFO_KEYS`(읽기 전용 파생) |
 | 순서 | 카테고리 안 = 레지스트리 등재 순(기능 추가 순서라 흩어짐) |
@@ -30,6 +30,8 @@
 - **강제값이 필요한데 없는 곳**: `intel.enabled=off` → 자동 활성·시그니처·아웃라인 강제 off(지금은 각 기능이 따로 검사) · `file.external_change=off` → merge off · `session.autocommit=on` → `tx.smart_commit` 뜻 없음 · `grid.result_tabs=off` → `result_per_statement` off · `bookmark.enabled=off` → 표시 4 off · `perf.mode=low` → (PERF 프리셋이 이미 함).
 
 ## 3. 새 트리(그룹 → 카테고리 → 절) — 안
+
+> (11-01 정합) 적용 = T-250(09-29)으로 카테고리 5분류 신설(서버 상태 · 트랜잭션 보호 · 스크립트·변수 · 실행 카드 · 되돌리기) · 나머지 트리 재편·순서 = T-186(📐).
 
 절(§)은 카드 사이 소제목(설정 창 · 위키 · `config list` 머리글). `▸`는 종속(부모 바로 아래 들여쓰기).
 
@@ -89,6 +91,8 @@
 
 ## 5. 종속(잠금) 보강 — `DEPENDS` 추가 안(약 32)
 
+> (11-01 정합) 구현 = [94 §8](94-settings-key-naming-and-location.md) · 이 표는 09-24 안 · 조건 `Gt(0)`·`Not` 원안 → 실제 `Dep::Ne`(`Ne("0")` 등).
+
 | 자식 | 부모 | 조건 |
 |---|---|---|
 | `intel.auto_activation`·`intel.match`·`intel.keywords`·`intel.document_words`·`intel.functions`·`intel.preload`·`intel.recent_boost`·`intel.max_items`·`intel.budget_ms`·`intel.popup_rows`·`intel.popup_max_width`·`intel.show_types`·`intel.key_passthrough`·`intel.insert_*`·`intel.signature_help` | `intel.enabled` | On |
@@ -112,7 +116,7 @@
 | `file.probe_chevrons` | `file.os_icons` | On |
 | `ui.toast_progress`·`ui.toast_alpha` | `ui.toast_ms` | Gt(0) |
 
-새 조건 종류: `Gt(i64)`(정수 키 · "0 = 끔") · `Not(&str)`.
+새 조건 종류: `Gt(i64)`(정수 키 · "0 = 끔") · `Not(&str)`. → 실제 = `Ne(&str)` 하나로(145차 10-27 · `Gt` 없음 · 94 §8 · 11-01 정합)
 
 ## 6. 강제값 — 새 `FORCES` 표(안)
 

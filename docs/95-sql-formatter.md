@@ -96,7 +96,7 @@
 | `ext.sqlfmt_kiros33.and_same_level` | on | WHERE/HAVING의 AND/OR = 절 키워드와 같은 열(§3) · `AND\t조건` |
 | `ext.sqlfmt_kiros33.set_op_dashes` | on | 집합 연산자 앞뒤 대시 구분행(§12 · 키워드 글자 수) |
 
-버전 = **1.3.1**(09-30 · 1.3.0 = dup_alias · window_break · 아웃라이어 탭 · BETWEEN/IS NULL 정렬 · 방향 없는 항목 정렬 기준 · marks · **1.3.1 = 다중 행 항목(`OVER (…)`의 `)` 줄)도 AS 정렬 블록에 포함 `merged_blocks`**) — 규칙 = wasm이 바뀌는 커밋마다 세 곳 버전 올림(75 §3-1). 호스트에 남은 kiros33 전용 = 설정 키·라벨 정적 등록뿐(75 §9 ① 동적 등록 전까지).
+버전 = **1.3.1**(09-30 · 1.3.0 = dup_alias · window_break · 아웃라이어 탭 · BETWEEN/IS NULL 정렬 · 방향 없는 항목 정렬 기준 · marks · **1.3.1 = 다중 행 항목(`OVER (…)`의 `)` 줄)도 AS 정렬 블록에 포함 `merged_blocks`**) — 규칙 = wasm이 바뀌는 커밋마다 세 곳 버전 올림(75 §3-1). 호스트에 남은 kiros33 전용 = 설정 키·라벨 정적 등록뿐(75 §9 ① 동적 등록 전까지) → 동적 등록 가능(75 §9 ① ✅ 10-27 T-258) · kiros33 키 이전 = 미착수(REGISTRY 정적 `ext.sqlfmt_kiros33.*` 10키 그대로 · 11-01 정합).
 
 구현(1.1.0 · 09-29) = **Basic 확장 API**(§5-1): `strict_options`(공통 옵션 위 덮어쓰기 · `cond_indent` = `and_same_level`) → `nsql_format::prepare` → 구분행 손질 → `AlignPlan`(블록별 탭 스톱 · `line_prefix`/`display_width`/`tabs_to`) → `nsql_format::render(pad)`. 별칭 자동 부여 · 테이블 설명 · 방언 치환 · 괄호 그룹 시드 · AND/OR 뒤 간격 · 연산자 간격은 전부 Basic 몫(확장 코드 0) — 1.0.0의 `AND\t` 후처리·`same_level_conditions`는 지웠다.
 
@@ -133,7 +133,7 @@
 
 > ★ **11-01 215차 확인 = T-255 종결**(D-438 ②) — 아래 "남음"의 river 정렬(§10 ✅ 1·2차) · PL/SQL 블록(§11 ✅ indent·full·v2 · T-SQL IF D-433) 모두 구현 · 10-04 kiros33 정렬 흠 = 재현 안 됨 · 회귀 시험 10-05 추가(`longest_item_and_forced_as_share_the_tab_stop`) · 남은 제약 1 = 여러 줄에 걸친 한 줄 꼴 `EXEC p(…`의 캐럿 문장 포맷은 첫 줄만(선택해서 포맷 · journal 10-03 ②).
 
-✅ 09-29 1차(§9): 괄호 AND/OR 그룹 `(1=1`/`(1=0` 시드 · 별칭 자동 부여(2-1) · 테이블 설명 주석(2-2 · 메타) · 방언 치환(§22) · 결과 그리드 "Copy SQL" 포맷 연동 · CLI `nsql format`. **남음**: 강(river) 정렬(렌더 구조 변경 = 절 키워드 우측 정렬 + 첫 항목 같은 줄 · 별도 설계) · PL/SQL 블록(§21 · 통과 블록의 계단식 재들여쓰기 + 내부 단위 쿼리 포맷 · 별도 설계).
+✅ 09-29 1차(§9): 괄호 AND/OR 그룹 `(1=1`/`(1=0` 시드 · 별칭 자동 부여(2-1) · 테이블 설명 주석(2-2 · 메타) · 방언 치환(§22) · 결과 그리드 "Copy SQL" 포맷 연동 · CLI `nsql format`. ~~**남음**: 강(river) 정렬(렌더 구조 변경 = 절 키워드 우측 정렬 + 첫 항목 같은 줄 · 별도 설계) · PL/SQL 블록(§21 · 통과 블록의 계단식 재들여쓰기 + 내부 단위 쿼리 포맷 · 별도 설계).~~ → ✅ river = §10 · PL/SQL = §11(T-255 종결 · 위 11-01 머리 · 11-01 정합)
 
 ## 8. 우클릭 Format 그룹 · 포맷 범위 · 기본 포맷터 콤보(사용자 09-29)
 
@@ -209,7 +209,7 @@ SELECT a.id,                         -- 절 키워드를 강 열에 오른쪽 �
 | 변환 | 새 모듈 `nsql-format/src/river.rs` · `prepare`(lib.rs:592) = `layout()` 뒤 `if River { river::apply(&mut lines, opts) }` | **IR 후처리**(Walker 4천 줄은 손대지 않는다): `blocks()`(layout.rs:433)로 문장 단위 → 역할(`Role::Clause/Item/Cond/Join/SetOp/Close/Case/Comment`)과 `indent`로 질의 블록·깊이를 복원 → Clause 줄 다음의 첫 Item/Cond 줄을 **Clause 줄로 합침** · 각 줄에 `col` 계산 |
 | 렌더 | `layout.rs` `render_lines`(:307) · `line_prefix`(:87) | `col`이 Some이면 `" ".repeat(col)` 접두 |
 | 문장 판정 | `format_statement`(:916)의 `known` | river 대상 = SELECT/WITH/UPDATE/DELETE만 · INSERT/MERGE 줄은 `apply`가 건너뜀 |
-| 설정 | `nsql-settings` REGISTRY `format.indent_style`(Choice standard/river · 기본 standard) · i18n 라벨/설명 · 설정 창 미리보기(§8-1)는 그대로 반영 | · ✅ off/indent/full(29차 `full` 추가 · `ValFmtPlsqlFull`) |
+| 설정 | `nsql-settings` REGISTRY `format.indent_style`(Choice standard/river · 기본 standard) · i18n 라벨/설명 · 설정 창 미리보기(§8-1)는 그대로 반영 · 키 이름·기본값·분류 = [94 §6-24](94-settings-key-naming-and-location.md) · 11-01 정합 | · ✅ off/indent/full(29차 `full` 추가 · `ValFmtPlsqlFull`) |
 | CLI | `nsql format --indent-style river`(공통 옵션 pairs 그대로) | |
 | 확장 | kiros33(탭 정렬 · strict)은 Basic `Line` 위에서 돈다 → **river일 때 확장 정렬 끔**(확장이 `col`이 있는 줄은 건너뜀 · 문서화) | 확장 SDK 문서 한 줄 |
 
@@ -221,7 +221,7 @@ SELECT a.id,                         -- 절 키워드를 강 열에 오른쪽 �
 
 ## 11. PL/SQL 블록 포맷 설계 — `format.plsql = off|indent|full`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 `indent` 구현 · ✅ 10-31 `full` 구현(29차))
 
-> ★ **`indent` 구현됨(10-31 · 192차 20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — 새 모듈 `nsql-format/src/plsql.rs` `reindent(text, toks, base, opts) -> Option<String>` = 통과(Raw) 블록의 줄바꿈은 두고 줄 앞 공백만 구조 깊이로(§11-3 표 = 스택 Decl/Begin/If/Loop/Case/When · 루틴 머리 이어 줄 +1 · `/` 0 · 주석 줄 = 지금 깊이 · 여러 줄 문자열/블록 주석 안 줄은 손대지 않음) · 판정 실패(짝 없는 END · 안 닫힘 · `WHEN`/`IF`가 THEN과 다른 줄) = `None` = 원문 · `Options.plsql: Off|Indent`(pair `plsql` · `full`은 지금 Indent로 받음) · `layout()` 통과 가지에서 호출 · 방언 = Oracle 계열(oracle·tibero·db2 PL/SQL 호환) · V1(CLI) = §11-3 예시 본문을 왼쪽 정렬한 파일 → 예시와 같은 계단 · off = 입력과 동일. **남음** = `full`(§11-4 · v2) · T-SQL/PG 블록(v2).
+> ★ **`indent` 구현됨(10-31 · 192차 20차 · 개발 · [journal 10-31 §5](journal/2026-10-31.md))** — 새 모듈 `nsql-format/src/plsql.rs` `reindent(text, toks, base, opts) -> Option<String>` = 통과(Raw) 블록의 줄바꿈은 두고 줄 앞 공백만 구조 깊이로(§11-3 표 = 스택 Decl/Begin/If/Loop/Case/When · 루틴 머리 이어 줄 +1 · `/` 0 · 주석 줄 = 지금 깊이 · 여러 줄 문자열/블록 주석 안 줄은 손대지 않음) · 판정 실패(짝 없는 END · 안 닫힘 · `WHEN`/`IF`가 THEN과 다른 줄) = `None` = 원문 · `Options.plsql: Off|Indent`(pair `plsql` · `full`은 지금 Indent로 받음) · `layout()` 통과 가지에서 호출 · 방언 = Oracle 계열(oracle·tibero·db2 PL/SQL 호환) · V1(CLI) = §11-3 예시 본문을 왼쪽 정렬한 파일 → 예시와 같은 계단 · off = 입력과 동일. ~~**남음** = `full`(§11-4 · v2) · T-SQL/PG 블록(v2).~~ → ✅ `full`(10-31 29차 · 아래) · T-SQL/PG 블록 = ✅ v2(10-31 32차 · 아래 v2 머리 · 11-01 정합)
 
 ### 11-1. 지금
 
@@ -272,7 +272,7 @@ END p;
 
 ### 11-4. `full` 추가 규칙
 
-> ★ **구현됨(10-31 · 192차 29차 · 개발 · [journal 10-31 §14](journal/2026-10-31.md))** — `PlsqlStyle::Full`(pair `plsql = full`) · `plsql.rs` `format_unit_sql` = `indent` 걷기 중 줄 첫 낱말이 SELECT/WITH/INSERT/UPDATE/DELETE/MERGE(또는 `CURSOR … IS`/`OPEN … FOR` 뒤 · 다음 줄이어도 = 멱등)면 괄호 밖 첫 `;`까지를 `layout::format_statement`(깊이 0)로 펼쳐 줄마다 그 깊이(접두 줄이 있으면 +1)로 넣고 소비(스택 불변) · `;` 뒤 같은 줄 주석 보존 · `;` 없음/`;` 뒤 다른 토큰 = indent 규칙 · `FOR r IN (SELECT …) LOOP`·동적 SQL·`RETURN (SELECT …)` = 그대로 · 짧은 UPDATE/INSERT/DELETE = `keep_oneliners` 한 줄 · `reindent(src, text, toks, base, opts)` · 설정 선택지 `full` · V1(CLI) = CURSOR 뒤 SELECT 한 단 더 여러 줄 · 긴 SELECT INTO 블록 깊이 여러 줄 + `; -- cnt` 보존 · 짧은 UPDATE 한 줄 · 멱등 ✓. **남음** = T-SQL/PG 블록(v2) · 토큰 보존 검사(§11-5 '안전')는 옵션(대소문자·AS) 영향으로 생략 · `FOR … IN (SELECT`·동적 SQL.
+> ★ **구현됨(10-31 · 192차 29차 · 개발 · [journal 10-31 §14](journal/2026-10-31.md))** — `PlsqlStyle::Full`(pair `plsql = full`) · `plsql.rs` `format_unit_sql` = `indent` 걷기 중 줄 첫 낱말이 SELECT/WITH/INSERT/UPDATE/DELETE/MERGE(또는 `CURSOR … IS`/`OPEN … FOR` 뒤 · 다음 줄이어도 = 멱등)면 괄호 밖 첫 `;`까지를 `layout::format_statement`(깊이 0)로 펼쳐 줄마다 그 깊이(접두 줄이 있으면 +1)로 넣고 소비(스택 불변) · `;` 뒤 같은 줄 주석 보존 · `;` 없음/`;` 뒤 다른 토큰 = indent 규칙 · `FOR r IN (SELECT …) LOOP`·동적 SQL·`RETURN (SELECT …)` = 그대로 · 짧은 UPDATE/INSERT/DELETE = `keep_oneliners` 한 줄 · `reindent(src, text, toks, base, opts)` · 설정 선택지 `full` · V1(CLI) = CURSOR 뒤 SELECT 한 단 더 여러 줄 · 긴 SELECT INTO 블록 깊이 여러 줄 + `; -- cnt` 보존 · 짧은 UPDATE 한 줄 · 멱등 ✓. ~~**남음** = T-SQL/PG 블록(v2)~~ → ✅ v2(10-31 32차 · 아래 v2 머리 · 11-01 정합) · 남음 = 토큰 보존 검사(§11-5 '안전')는 옵션(대소문자·AS) 영향으로 생략 · `FOR … IN (SELECT`·동적 SQL.
 
 - 단위 문장 = 줄 첫 낱말이 SELECT/WITH/INSERT/UPDATE/DELETE/MERGE(또는 `CURSOR … IS` · `OPEN … FOR` 뒤)부터 괄호 밖 `;`까지 → `format_statement`(layout.rs:916)에 **기준 깊이 인자**를 더해 호출(`Walker::statement(indent)` :1153은 이미 깊이를 받는다 · 지금 호출은 0) · `SELECT … INTO 변수`는 기존 `select_into_vars`(:1249) 규칙 그대로.
 - `FOR r IN (SELECT …) LOOP`(괄호 안 질의) · 동적 SQL 문자열(`EXECUTE IMMEDIATE '…'`) = **v1 대상 아님**(원문 줄 유지 · 깊이만).
@@ -301,6 +301,8 @@ END p;
 
 ~~**남음** = T-SQL `BEGIN` 없는 `IF` 안 여러 문장(한 줄만 +1) · `IF … ELSE IF` 연쇄.~~ → ✅ **11-01 212차(D-433 · [journal 11-01 §3](journal/2026-11-01.md))**
 
+키 `format.tsql_if_body` 이름·기본값·분류 = [94 §6-31](94-settings-key-naming-and-location.md) · 아래는 동작(11-01 정합)
+
 | T-SQL 경우 | 규칙 |
 |---|---|
 | `IF 조건` ↵ (BEGIN 없음) · 옵션 `format.tsql_if_body = next`(기본) | 본문 = 다음 **한 문장 전체** +1 — 여러 줄 문장은 `;`까지 또는 절 머리(FROM·WHERE·AND·OR·JOIN·ON·GROUP·ORDER·HAVING·VALUES·UNION·OUTPUT·WHEN·THEN·`,`·`)` · UPDATE 안 SET · INSERT/WITH 안 SELECT)로 이어지는 동안 · 그다음 문장 = IF 깊이(T-SQL 의미 보존) |
@@ -319,7 +321,7 @@ END p;
 | 새 모듈 `nsql-format/src/plsql.rs` | 줄 단위 깊이 계산(§11-3 표 = 상수 표 + 순수 함수) · `full`이면 단위 문장 구간을 `format_statement(…, base)`로 · ✅ 20차 `reindent` · 29차 `format_unit_sql` |
 | `format_statement` | 기준 깊이 인자 추가(기존 호출 = 0) · 29차 = 깊이 0으로 펼친 뒤 줄마다 들여 넣음(인자 추가 대신) |
 | 안전 | 결과 토큰열(공백·줄바꿈 제외)이 원문과 다르면 원문 반환 · 멱등 확인 · 멱등 ✓ · 토큰열 비교는 옵션(대소문자·AS) 영향으로 생략(29차) |
-| 설정 | REGISTRY `format.plsql`(Choice off/indent/full · 기본 off) · i18n · 미리보기 예시에 작은 프로시저 하나 |
+| 설정 | REGISTRY `format.plsql`(Choice off/indent/full · 기본 off) · i18n · 미리보기 예시에 작은 프로시저 하나 · 키 이름·기본값·분류 = [94 §6-24](94-settings-key-naming-and-location.md) · 11-01 정합 |
 | 확장 | 블록 줄 = `Role::Raw` 유지(확장 정렬 대상 아님) |
 
 ### 11-6. 시험
@@ -332,6 +334,8 @@ END p;
 ## 12. 포맷 프리셋 — `format.preset = default|kiros33|river|custom`(10-31 · D-431 · 192차 35차 · ✅ 구현)
 
 > 요청(사용자 10-31 저녁) = 현재 설정 → `kiros33` · 기본값 → `Default` · river용 → `River` 프리셋을 만들고 포맷 설정에서 골라 묶음으로 바꾸게. 설정 먼저 규칙으로 먼저 설정 창 **Import…** + 프리셋 JSON 3개를 안내했고(journal §19) → 사용자가 개발로 확정(AskUserQuestion 2회 답 · 개발 세션) → [journal 10-31 §20](journal/2026-10-31.md).
+
+키 `format.preset` 이름·기본값·분류 = [94 §6-30](94-settings-key-naming-and-location.md) · 아래는 동작(11-01 정합)
 
 | 항목 | 결정(D-431) |
 |---|---|

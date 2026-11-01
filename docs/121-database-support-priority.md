@@ -7,7 +7,7 @@
 (10-21 원안 · ★ 현행 = 아래 "10-23 현황" = D-350 전 드라이버 확장 cdylib · 설치본 = Oracle OCI만) 지금 = **내장 드라이버 4**(Oracle OCI/Thin · SQL Server · PostgreSQL · SQLite) + **방언만 있는 둘**(MySQL · ODBC = 드라이버 없음). 다음 순서 권장 = **P1 MySQL/MariaDB 내장**(방언·카탈로그·문법이 이미 있어 드라이버만 · 순수 Rust · 전 세계 수요 1~2위) → **P2 ODBC 일반 드라이버**(한 번에 Tibero·Altibase·CUBRID·DB2·HANA·Goldilocks = 국산·레거시 전부 3급으로 열림) → **P3 Tibero 전용 방언**(ODBC 위에 Oracle 호환 방언 = 국내 공공·금융) → **P4 DuckDB**(임베디드 분석 · 파일 DB = SQLite와 같은 자리) → **P5 ClickHouse/클라우드 DW**(수요 확인 뒤). NoSQL(Mongo·Redis)은 범위 밖 유지(DR-11).
 
 > ★ **10-25 확정** = D-361 Db2 네이티브 DRDA(T-426 · 1차 구현) · D-362 ODBC 정적 동봉(unixODBC 불필요).
-> ★ **10-25 방향 변경(사용자 "Nexa SQL과 드라이버 파일만 있으면 실행 가능해야" · D-361 후보)** = Db2 = **네이티브 DRDA 확장 드라이버 `nsql-driver-db2`**(순수 Rust · 외부 crate 0 · Oracle Thin과 같은 길 · 방언·SYSCAT·오류표 재사용) 예정 · 아래 ODBC 경로 = **Windows 폴백** · 조사 = [121b](121b-db2-drda-research.md).
+> ★ **10-25 방향 변경(사용자 "Nexa SQL과 드라이버 파일만 있으면 실행 가능해야" · D-361 후보(10-25 · 이후 확정 = 위 줄 · 11-01 정합))** = Db2 = **네이티브 DRDA 확장 드라이버 `nsql-driver-db2`**(순수 Rust · 외부 crate 0 · Oracle Thin과 같은 길 · 방언·SYSCAT·오류표 재사용) 예정 · 아래 ODBC 경로 = **Windows 폴백** · 조사 = [121b](121b-db2-drda-research.md).
 > ★ **10-25 138차 갱신(1차)** = **IBM Db2 = 내장 ODBC 어댑터 위 전용 방언**(D-359 · T-424 · SYSCAT 카탈로그 · SQLCODE 분류 · `db2.sqlg` · CI `db2.yml` · clidriver = 사용자 설치 · 조사 원문 [121a](121a-db2-research.md)) · MS Access 방언(D-360 · 범위 밖 · 사용자 결정 대기).
 > ★ **10-24 138차 갱신** = ClickHouse = **확장 전용 드라이버**(D-354 · HTTP 인터페이스 · 자체 `nsql-net`/`nsql-json` · 외부 crate 0 · `drivers-v0.1.3` 릴리스부터 설치 가능) · PG 와이어 호환(Redshift · CockroachDB · YugabyteDB · Greenplum · TimescaleDB)과 Db2 · HANA · Informix(ODBC) = **접속 프리셋**(스킴 → 방언 · 기본 포트) — P5의 "ODBC로 커버"를 스킴 한 줄로 · T-415.
 
@@ -71,7 +71,7 @@
 | D-336 | 다음 지원 순서 = P1 MySQL/MariaDB(내장) → P2 ODBC(내장) → P3 Tibero(확장) → P4 DuckDB(확장) → P5 수요 확인 | ✅ **사용자 확정 10-21**(묶음 = D-342) · 순서는 권장안 · ★ **10-22 사용자 재확인** = ODBC(내장) 완료 → Tibero · DuckDB **확장 모듈**(GitHub Releases에서 **자동 다운로드** · DR-24) |
 | D-337 | MySQL 등급 = 2급 시작 → 1급 승격(그리드 편집·벌크·운영 가드까지) | 1급 목표(방언 자산이 이미 1급 수준) |
 | D-338 | ODBC = 3급 틀로 먼저 · 전용 방언(Tibero 등)은 요청·검증 환경 있을 때 | ✅ |
-| D-339 | DuckDB = 확장 드라이버 1호(본체 크기 보호) | ✅ |
+| D-339 | DuckDB = 확장 드라이버 1호(본체 크기 보호) | ✅ **D-351로 해소**(DuckDB = 확장 전용 · 11-01 정합) |
 
 ## 6. 할 일 후보(결정 뒤 TODO 등재)
 
@@ -149,6 +149,6 @@ nsql-core::Session(포트)
 
 | # | 결정 | 권장 |
 |---|---|---|
-| D-340 | 드라이버 배포 체계 = 내장(1·2급 주요 DBMS) + GitHub Releases 다운로드 확장(cdylib C ABI · 서명 색인 · 지연 적재 · SxS · 오프라인 설치 · 격리 모드 선택) | ✅ **사용자 확정 10-21**(방식 = DR-24·DR-29 그대로) |
+| D-340 | 드라이버 배포 체계 = 내장(1·2급 주요 DBMS) + GitHub Releases 다운로드 확장(cdylib C ABI · 서명 색인 · 지연 적재 · SxS · 오프라인 설치 · 격리 모드 선택) | ✅ **사용자 확정 10-21**(방식 = DR-24·DR-29 그대로) → **D-350(10-23) 대체**(전 드라이버 확장 cdylib · 11-01 정합) |
 | D-341 | 공식 색인 저장소 이름 = `SosomLab/nexa-drivers` · 템플릿 = `nexa-driver-template` · 서명 키 = nexa-license 체계 재사용 | 권장 → 색인 저장소 = **D-349로 대체**(nexa-sql 저장소 안) |
-| D-342 | **내장 = Oracle · SQL Server · PostgreSQL · SQLite · MySQL/MariaDB · ODBC** / **확장 드라이버 = Tibero · DuckDB**(ClickHouse·클라우드 DW·Db2/HANA 전용 방언도 확장 · ODBC 일반 접속은 내장으로 이미 가능) | ✅ **사용자 확정 10-21**("MySQL/MariaDB ODBC까지 내장 · Tibero · DuckDB를 확장 드라이버로") |
+| D-342 | **내장 = Oracle · SQL Server · PostgreSQL · SQLite · MySQL/MariaDB · ODBC** / **확장 드라이버 = Tibero · DuckDB**(ClickHouse·클라우드 DW·Db2/HANA 전용 방언도 확장 · ODBC 일반 접속은 내장으로 이미 가능) | ✅ **사용자 확정 10-21**("MySQL/MariaDB ODBC까지 내장 · Tibero · DuckDB를 확장 드라이버로") → **D-350(10-23) 대체**(설치본 내장 = Oracle OCI만 · 11-01 정합) |

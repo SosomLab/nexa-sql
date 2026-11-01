@@ -1,8 +1,8 @@
 # 61 · 핵심 설계와 작업 규칙 — 다른 PC(맥)에서 그대로 이어 가기 (사용자 요청 09-20)
 
 > **왜 이 문서인가**: 세션이 기억하는 규칙 가운데 일부는 **그 PC의 로컬 메모리 폴더**(`~/.claude/projects/…/memory/`)에만 있었다 — 다른 PC에서는 보이지 않는다. 저장소에 들어 있는 것만 따라온다. 이 문서는 ① 로컬에만 있던 규칙을 저장소로 올리고 ② 09-19~20에 굳어진 핵심 설계(편집 버퍼 · 되돌리기 · 큰 파일 · 적재)의 **불변식과 금지 사항**을 한곳에 모으고 ③ Windows와 macOS에서 다르게 해야 하는 것을 가른다.
-> **읽는 순서(새 PC · 새 세션)**: [CLAUDE.md](../CLAUDE.md) → 이 문서 → [STATUS](STATUS.md) → [TODO](TODO.md). 형제 저장소 nexa-ui도 같은 순서(`../nexa-ui/CLAUDE.md` §3-1에 요약). ★ 09-27부터 **형제 저장소는 둘** — `../nexa-ui`(UI) · `../nexa-license`(라이선스 라이브러리 · 공개 · 검증 전용 · `crates/nsql-license`가 path 의존 · 없으면 빌드가 안 된다 → `git clone git@kiros33.github.com:SosomLab/nexa-license.git ../nexa-license`).
-> 규칙의 원문이 따로 있는 것은 링크만 단다(이중 관리 금지) — 여기서 원문인 것은 §1의 "규칙" 줄과 §2-3 · §2-4 · §3이다.
+> **읽는 순서(새 PC · 새 세션)** = [CLAUDE.md](../CLAUDE.md) §4 오리엔테이션(원문 · 11-01 B2). 형제 저장소 nexa-ui도 같은 순서(`../nexa-ui/CLAUDE.md` §3-1에 요약). ★ 09-27부터 **형제 저장소는 둘** — `../nexa-ui`(UI) · `../nexa-license`(라이선스 라이브러리 · 공개 · 검증 전용 · `crates/nsql-license`가 path 의존 · 없으면 빌드가 안 된다 → `git clone git@kiros33.github.com:SosomLab/nexa-license.git ../nexa-license`).
+> 규칙의 원문이 따로 있는 것은 링크만 단다(이중 관리 금지 · 11-01 B2 정리) — **여기서 원문인 것** = §1(불변식 · §1-7 데이터 보호 포함) · §2-1(한글 답 · 설정 먼저 · 프로젝트 파일 하나 · 익명화) · §2-2(코드 규칙 · 팝업 세칙 2-2-a~d) · §2-3 · §2-4(격리·안전 · 확인 대원칙) · §3(OS별 · Release lite) · §3-1(하네스 권한) · §4(검증 도구 · 헤드리스) · §5(메모리 → 저장소 표). **다른 곳이 원문** = 협업 운영·검증 단계 = [102](102-collab-session-operation.md)(§5-7) · commit·병합·push = [16 §4-1](16-doc-git-conventions.md) · UI 포커스·hover·마우스 라우팅 = [claude-ui-rules](claude-ui-rules.md) · 배포·패키지 = [claude-release-rules](claude-release-rules.md) · CLAUDE.md = 색인 + 요지.
 
 ## 1. 핵심 설계 — 불변식과 금지 사항
 
@@ -43,8 +43,50 @@
 | 객체 탐색기 갱신 | 실행한 DDL → 그 폴더만 디프 · 커밋 시점 · 유휴 워터마크 · 우클릭 Refresh = 누른 자리가 범위(서버 = 전부 · 폴더 = 그 아래 · 객체 = 그것만) | [57](57-explorer-refresh-after-ddl.md) · [28 §1-2](28-object-explorer.md) |
 | 외부 파일 변경 | 조용한 재로드 · 겹침 0이면 병합 · 비모달 띠 · 저장 2단 확인 · 감지 = 활성화·탭 전환·저장 직전 + 보이는 탭 폴링 · 재로드 = 최소 줄 편집 | [58](58-external-change-policy.md) · [60 §7](60-undo-redo-redesign.md) |
 | 접속 유형 | 개발/시험/운영 · 운영 = 실행 2단 확인 + 짧은 유휴 기준(값·UI는 가정 — 사용자 확인 필요) | [56 §9](56-manual-commit-lock-prevention.md) |
-| 메모리 회수 | 큰 것을 놓은 1초 뒤 1회 + 유휴 주기 · 보이지 않는 탭의 그리기 캐시 해제 · 워킹셋 트림은 하지 않는다 | [59 §2](59-large-file-handling.md) | glibc `malloc_trim(0)` |
+| 메모리 회수 | 큰 것을 놓은 1초 뒤 1회 + 유휴 주기 · 보이지 않는 탭의 그리기 캐시 해제 · 워킹셋 트림은 하지 않는다 | [59 §2](59-large-file-handling.md) · OS별 = §3 |
 | 확장 | 관리자 끔 = 전 확장 정지 · 활동 막대 아이콘 = 관리자 켜짐일 때만 · 상세 = 뷰 탭 | [50 §14](50-extension-system.md) |
+
+### 1-5. 09-20~21(맥 86~88차)에 굳은 것 — 변수 · 트랜잭션 · 화면 내보내기
+
+| 주제 | 핵심(불변식) | 원문 |
+|---|---|---|
+| **수동 커밋 = 진짜 트랜잭션**(T-146) | PG·SQLite·SQL Server·MySQL은 서버가 문장마다 커밋한다 → **수동 모드의 첫 문장 앞에서 러너가 연다**(`nsql-run` `manual_begin_sql` 순수 함수 + MC/DC · `tx_open`). 커밋·롤백·읽기 종료·접속에서 `tx_open`을 내린다 — **세션을 직접 커밋하는 새 경로를 만들면 `note_tx_ended()`를 같이 부른다**(안 부르면 다음 문장의 `BEGIN`이 "이미 트랜잭션 안"으로 실패) | [journal 09-21](journal/2026-09-21.md) 87차 후반 |
+| **변수 표 = 세 층**(D-135) | 탭(App이 주인 `App.tab_vars` — 실행마다 `Cmd::Run.vars`로 넘기고 `RunEvent::Vars`로 돌려받는다) → 연결 공유(러너 = 세션 · `VAR x SHARE` · 호스트 사본 `Sess.shared_vars` · 고치면 `Cmd::SharedVars`) → 프로필(읽기 전용 · 아직 출처 없음). **변수를 `Runner`/`Sess`에 새로 두지 않는다**(탭이 주인) · 바인드(`VarStore`)와 치환(`Engine.defines`)은 섞지 않는다 | [63 §3](63-variable-management.md) |
+| **결과가 여럿이면 탭도 여럿** | 같은 문장의 두 번째 이후 결과(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합) = 늘 딸린 탭(`ResultTab.child_of`) · 다른 문장의 결과 = 설정 `grid.result_per_statement`(D-138) · 판정 = `sessions::extra_result_slot` · 실행 끝에 안 쓰인 딸린 탭을 걷는다(`run_tracking` — **결과 새로고침은 걷지 않는다**) · `RunEvent::ResultSet.label` = 커서 변수 이름 | [63 §5](63-variable-management.md) |
+| **1행 결과를 추측해 변수로 빨아들이지 않는다** | OUT 바인드가 없는 방언은 요청이 받는 쪽을 명시(`Prepared.captures` · 자리 순서) · Oracle/SQL Server는 결과 집합을 절대 흡수하지 않는다 · 0행·여러 행 = Oracle식 오류(D-139 · SQL Server는 서버 쪽 `@@ROWCOUNT` 검사) | [63 §3-1](63-variable-management.md) |
+| **선언 없는 바인드의 타입 = 루틴 서명** | `nsql-script::call_shape` + `nsql-catalog::routine_args`(지금 Oracle `ALL_ARGUMENTS`만) · 루틴당 1회 캐시 · DDL·접속에서 비움 · 저장 코드 DDL(`CREATE … PROCEDURE/TRIGGER …`)은 바인드하지 않는다(`Prepared::verbatim` — `:NEW`/`:OLD`) | [63 §3](63-variable-management.md) |
+| **실행 전에 한 번 묻는다**(D-137) | 워커가 `missing_inputs`로 찾고 `RunEvent::InputNeeded`를 낸 뒤 `InputReply`를 **기다린다**(세션 = 바쁨 · ■ = 입력 취소) · 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다 — **메뉴·기동 명령이 부탁한 창 열기 깃발은 `about_to_wait`에서도 본다**(`window_event` 끝에서만 보면 이벤트가 없을 때 안 열린다) | [63 §5](63-variable-management.md) |
+| **화면 내보내기는 `present.rs` 한 곳** | 모든 창은 `present::Presenter`로 픽셀을 낸다(`softbuffer::Context/Surface`를 창 코드에 직접 두지 않는다) · macOS IOSurface 경로는 **기본 끔**(`gfx.mac_present`) — 화면·입력 실험은 기본 끔 + 실패 시 조용한 폴백 · 사용자가 병행 테스트하는 `target/` 빌드를 실험 상태로 두지 않는다 | [62 §2-1](62-macos-input-and-present.md) |
+| 맥 한글 입력 | 한글 입력 소스일 때만 앱 조합(`input.hangul_compose=auto` · nexa-ctl `TextBox` 전역 스위치) — **새 창을 만들면 `set_ime_allowed(input::system_ime())` + `sync_hangul_mode`의 창 목록에 등록** | [62 §1](62-macos-input-and-present.md) |
+
+- ★ **컨트롤 배선 체크(09-25 §210)**: nexa-ctl 컨트롤(TextBox 등)을 패널이 직접 놓을 때는 `set_bounds`와 함께 **`set_scale(scale)`** 을 꼭 부른다 — 줄 높이·여백이 `s(...)`로 배율을 곱하므로 빠지면 레티나에서 글자가 겹친다(객체 상세 패널 결함).
+- ★ **글꼴 증분 = 논리 px(10-02 mac · [journal 10-02 §2](journal/2026-10-02.md))**: `select_font_sized(슬롯, 굵게, 증분)`의 증분은 슬롯 크기(논리 px)에 더해진 뒤 **그리기 쪽이 배율을 곱한다** — 측정값(`text_height()`·`text_width()` = 물리 px)이나 `scale`을 곱한 값을 그대로 넘기지 않는다(넘겨야 하면 배율로 나눈다). 어기면 배율 1에서는 멀쩡하고 HiDPI(맥 Retina · Windows 150 %)에서만 글자가 작아진다(속도 HUD = 75 %가 50 %로 · 탐색기 용량 글자). 크기가 배율에 비례하는지는 **배율 1·2로 그려 치수를 단언하는 시험**으로 덮는다(nexa-ctl `speed_hud_size_scales_with_dpi`의 `ScaleCtx`). · ★ **같은 부류 = 도형 크기의 하한·상한 상수(10-04 mac · [journal 10-04 §8](journal/2026-10-04.md))**: 툴바 ▾가 Retina에서 납작·가늘게(`ˇ` 꼴) 보였다 — nexa-ctl `draw_chevron_down`의 하한(반폭 2 · 굵기 1.5)이 물리 px라 논리 8 px 칸에서 모양이 하한으로 정해지는데 2배 화면에서 하한이 커지지 않았다 → `draw_chevron_down_scaled(ctx, area, color, scale)`(하한 × 배율 · 기존 함수 = scale 1.0 위임). **크기를 정하는 하한·상한 상수도 논리 px로 두고 배율을 곱한다** · 같은 8 px 칸 `posdrop.rs` ▾도 10-04 후속에서 `draw_chevron_down_scaled`로 바꿈(journal 10-04 §22).
+- ★ **아이콘 크기 = 같은 줄 기존 아이콘의 도형 범위에 맞춘다(10-13 사용자 실기)**: 새 아이콘 세트를 들이면 원본 viewBox 그대로 쓰지 말고 그 자리 기존 아이콘의 도형 범위(예: 활동 막대 확장 = 40..216/256 · 여백 15.6 %)에 맞춰 축소한다(`VB_ACT_MATERIAL` 1048 · `VB_ACT_FLUENT` 27.6) · 큰 마스크를 작게 찍을 때는 bilinear 직찍기 대신 **영역 평균 축소**(`activity::box_downsample`) 뒤 1:1 — 계단(얼룩) 방지 · 성긴 도형(격자 등)은 범위가 같아도 시각 크기가 작아 보일 수 있다(실기 확인).
+- ★ **글자 세로 위치 = `text_center_y` 한 규칙(10-13 사용자 실기 · 거터 포함)**: 한 줄 안의 글자(본문 · 줄 번호 · 니모닉 숫자 · 배지 글)는 모두 행 가운데 기준(`ty` = `text_center_y`)으로 놓는다 — 행 맨 위(`y`)에 그리면 본문과 어긋난다(줄 번호·니모닉 숫자가 위로 뜬 결함) · 상자 안 글자 = 그 상자 기준 `text_center_y` · 같은 줄의 띠·상자(북마크 띠 · 니모닉 상자)는 **같은 세로 범위**(y+1 · lh−2)로 맞춘다 · 확인 = 캡처 ×3 크롭의 픽셀 범위가 같은지.
+
+### 1-6. 09-21(Windows 89차)에 굳은 것 — 능력표 · PG 커서 · 입력
+
+- **엔진·러너는 방언을 묻지 않는다 — `Caps`를 묻는다**(`nsql-core/caps.rs` · T-152): 새 분기가 필요하면 `Dialect` `match`를 쓰지 말고 능력표에 칸을 더한다(전수 테스트 `table_matches_the_former_dialect_branches`에 한 줄) · 세션이 붙으면 `Engine::set_caps(방언, session.caps())` · 남겨 둔 방언 분기 = 값 인용(`to_sql_literal`)과 카탈로그 질의뿐.
+- **자동 커밋 모드의 `COMMIT`은 `caps.autocommit_needs_commit(tx_open, tx_user)`가 참일 때만**(T-155) · CLI 종료 = `Runner::commit_at_exit`.
+- **PG refcursor는 드라이버가 푼다**(T-150): 결과의 글자 값이 열린 커서 이름이면 그 자리에서 `FETCH … IN` → 결과 집합 + `result_labels` · 자동 커밋이면 호출과 FETCH를 한 트랜잭션으로 · 러너·GUI는 모른다(Oracle 핸들 커서와 같은 "결과 + 라벨" 모양).
+- **PG 호출의 OUT 값은 서명이 말한 자리의 바인드가 받는다**(T-151 · `Engine.call_captures` — 한 번 쓰이고 비워진다).
+- **`ACCEPT`는 실행할 때마다 묻는다**: GUI = 실행 전 입력 창이 한 번에(`InputNeed{prompt,default,hide}`) → `apply_inputs`가 `Engine.accepted`에 표시 → 러너는 그 `ACCEPT`를 지나간다 · CLI = 그 자리에서 묻는다.
+- **실서버 통합 테스트는 프로필로**: `NSQL_PG_PROFILE=<볼트 프로필 이름>`(비밀번호를 환경 변수·명령줄에 쓰지 않는다) · 서버에는 `pg_temp` 임시 객체만 만든다.
+- **날짜·불리언은 진짜 타입으로 바인드한다**(Oracle · T-151): 값이 ISO 꼴(`YYYY-MM-DD[ HH:MM[:SS[.f]]]`)이면 `OracleType::Date`/`Timestamp`, 아니면 종전처럼 글자(서버의 암묵 변환). 변수 값의 표시도 ISO 꼴 — 결과 그리드의 DATE 열과 같다.
+- **T-SQL 호출의 `OUTPUT`은 서명이 보충한다**(`Caps::call_signature = OutputMarks` · `Engine.call_outputs` — 한 번 쓰이고 비워진다) · **선언 없이 생긴 글자 변수는 값이 돌아오는 바인드에서만 4000으로 넓힌다**(`dialect.rs bind_type` — 선언한 길이는 사용자의 뜻).
+- **미정의 바인드 경고는 읽기만 하는 보통 SQL에서만** — 블록·`EXEC`의 바인드는 받는 쪽일 수 있다.
+- **시스템 변수는 `Engine.sysvars`에**(사용자 `DEFINE`과 섞지 않는다 · 이름 = `SYSTEM_VARS`) · `${이름:형식}`은 정의된 이름 + 아는 형식만 바꾼다(모르면 글자 그대로 · 묻지 않는다).
+- **새 부하원은 스위치와 함께**: 결과에 영향을 주면 개별 설정(`vars.signature_lookup` · `pg.refcursor_expand`), 영향이 없으면 `perf::BOOST` 후보(39 §4-6). 실서버 시험은 프로필 환경 변수 셋(`NSQL_ORACLE_PROFILE` · `NSQL_MSSQL_PROFILE` · `NSQL_PG_PROFILE`) — Oracle은 객체를 만들지 않고(익명 블록 · SYS 패키지), SQL Server는 세션 임시 프로시저(`#…`)만.
+- **큰 파일 탭은 상시 비용이 드는 기능을 단계별로 끈다 — 새 기능(특히 확장 효과·플러그인 훅)을 넣을 때 `editors.rs enforce_large`에 한 줄**(`feature_limited(level, 기준)` · 기준은 설정 · 편집 코어는 끄지 않는다 · 단계가 내려가면 `restore_large_features`로 되돌린다).
+- **설정의 종속은 `DEPENDS`로**(부모가 조건을 못 채우면 설정 창에서 잠김 + 흐림) · 키를 바꾸면 옛 값은 `migrate_*`로 옮긴다(`grid.result_tabbar` → `grid.result_tabbar_single`).
+- 자체 캡처: 설정 창은 `NSQL_STARTUP_CMD=edit.prefs:<검색어>`로 그 카드만 보이게 연다 · 격리 폴더의 `settings.conf`는 **`키=값`(공백 없음)** — 덧붙인 뒤 `nsql config get <키>`(같은 `NSQL_HOME`)로 읽히는지 확인한다.
+- **결과 탭 제목 = 번호 규칙이 기본**(`결과N` · 가장 큰 번호 + 1 · `results.rs numbered_index`가 두 언어의 틀을 읽는다) · 사용자가 붙인 이름(`named`)과 커서 라벨은 덮지 않는다.
+- **DBMS별 종속 설정은 "자동 탐지 / 직접 지정 / 읽기 전용 정보" 틀로**([64 §2](64-dbms-clients-and-driver-packaging.md)): 계산 값은 `nsql_settings::INFO_KEYS`(저장 안 함 · `set` 거부 · 설정 창에서 늘 잠김) · 탐지는 파일 시스템만 읽는다 · **직접 지정한 것은 그것만 쓴다**(조용히 다른 것으로 넘어가지 않는다 — 실패가 낫다) · 드라이버는 값만 돌려주고 문구는 호스트가 `Msg`로.
+- **`${…:q}`** = 작은따옴표로 감싸고 안의 작은따옴표는 두 번 · SQL Server `N'…'` · MySQL 역슬래시 두 번(`engine.rs sql_text_literal`).
+- **마우스 이동·키 처리 경로에서 `edit.text()`·`chars_vec()`를 부르지 않는다** — 줄·구간 조회는 `edit.buf()`의 줄 표로(`line_of` · `line_start` · `line_end`). 89차 추가: 드래그 처리가 사건마다 본문 전체를 문자열로 만들어 20 MB에서 12.7 ms/이동이었다 → 입력 경로를 고치면 `bench_editor`에 그 시나리오를 더한다.
+- **드래그 선택은 포인터가 컨트롤 밖에 있어도 세로 위치를 따라간다**(옆 밖 = 그 줄의 처음/끝 · 한 글자씩 미는 가로 자동 스크롤은 같은 줄에 가려진 글이 있을 때만).
+- **"잠금"은 사건 전달을 막는 것으로 끝나지 않는다** — 포커스 지정 · 키/IME/붙여넣기 경로(`focused_textbox`) · 값 수거 · 잠금 재계산 시점 넷을 다 본다. 글자 칸은 nexa-ctl 읽기 전용(`set_read_only` — 복사는 되고 편집은 편집 코어가 거부)으로, 나머지는 포커스를 주지 않는다(`prefs_win.rs apply_deps` · 89차 추가 7).
+- **창은 만들 때 모니터 안으로**(`wingeom::keep_on_screen`) — 새 창을 추가하면 생성 직후 한 줄.
 
 ### 1-7. 데이터 보호 불변식(09-26 · 사용자 핵심 규칙 · [87 §14](87-grid-data-editing.md))
 
@@ -86,21 +128,21 @@
 
 ### 2-1. 사용자와의 약속
 
-- ★ **모든 답은 예외 없이 한글로**(사용자 09-16 · 09-28 재지적 "규칙에 한글로 답변하도록 제약") — 한 줄 진행 안내 · 중간 보고 · **최종 요약 보고** · 목록·표 제목까지. 긴 세션·문맥 요약 뒤에도 같다. 영어는 사용자가 그 답에 한해 요구할 때만 · 코드 식별자·명령어·경로·오류 원문만 그대로. 보내기 전에 첫 문장·마지막 문장이 한글인지 확인한다.
-- ★ **예외 — 패키지 게시물 + 프로그램 내부 정보는 전부 영어**(사용자 10-04 winget·choco 제출물 → 10-10 확장 "기본 문서와 설명, 버전 등 프로그램 내부의 정보") — ① 제출물(매니페스트·nuspec 글 필드 · PR/검수 코멘트 · 패키지 스크립트 주석/출력 · 한글·이메일 금지) ② 프로그램·패키지 안의 정보(Cargo `description` · VERSIONINFO · MSI/pkg/deb/rpm/desktop/cask 글 필드 · `--version`/`--help`·About 기본 출력 · 설치/제거 스크립트 출력 · THIRD-PARTY-NOTICES·NOTICE · 버전 = SemVer + 영어 접미) ③ 동봉·링크되는 기본 문서(README · LICENSE · 릴리스 노트 영어 절 먼저) · 한국어는 i18n·`[ko]`·`.ko.md`로 **덧붙이기만** · 저장소 문서·스크립트 주석·CI 로그·대화는 한글 그대로 · 점검 `scripts/pkg-text-english-check.sh` · 사용자 보고 = 영어 원문 + 한글 요약 · 자세히 = [33 §5-6](33-distribution-and-packaging.md).
-- ★ **설정 먼저 규칙(사용자 10-30)**: 기능 변경·추가 요청을 받으면 **먼저 기존 설정(설정 키 · 키맵 · 상태줄/툴바 편집 · 프로필 옵션 · 기동 명령)만으로 충족되는지** 본다 — 충분히 반영되거나 **조금 불편해도 어느 정도 충족되면** 개발하지 않고 ① 어떤 설정을 어떻게 바꾸는지 ② 사용자가 직접 해 볼 **시험 방법**(단계 · 기대 결과) ③ 남는 불편(있으면)을 안내해 **사용자 검토를 먼저** 받는다. 사용자가 "불충족"이라 하면 그때 추가 기능을 개발한다(진행 중 목록에는 '설정 안내 · 사용자 검토 대기'로 남긴다). 판단이 애매하면 설정 안내와 개발안(규모)을 함께 내고 사용자가 고른다 · 데이터 보호·실행 통제 같은 안전 결함은 이 규칙의 예외(바로 고친다). 원문 = CLAUDE.md §3.
-- ★ **프로젝트 파일 하나만(사용자 10-30 · D-407)**: 프로젝트에 딸린 상태·설정을 위해 **함께 관리해야 하는 연계 파일**(`.nexa/settings.conf` · `.nsql/settings.conf` · `.local.json` 같은 것)을 새로 만들지 않는다 — 필요하면 **프로젝트 파일(`.nsql-project`) 안에 기록**한다(JSON 헤더의 절 · 큰 본문은 v2 블록 · 67 §7). 프로젝트 파일 안으로 넣기 어려우면 **기능·목적을 설명하고 사용자에게 다시 묻는다**. (해석 · 다르면 정정) 사용자 설정 폴더 쪽 자료(`backups/` · `meta/` 캐시 · `Packages/`)는 프로젝트와 같이 옮기는 연계 파일이 아니므로 이 규칙 밖. 검토 대상 = 폴더 모드 `<폴더>/.nsql/`(67 §6 · 이미 북마크 워크스페이스를 둠) · 73 §4-2 기기별 `.local.json` 설계 — 새로 넓히지 말고 손댈 때 사용자에게 묻는다. ✅ **CLAUDE.md §3 반영(사용자 10-31 밤 확인 · 개발 세션)**.
+- ★ **모든 답은 예외 없이 한글로**(사용자 09-16 · 09-28 재지적 "규칙에 한글로 답변하도록 제약") — 한 줄 진행 안내 · 중간 보고 · **최종 요약 보고** · 목록·표 제목까지. 긴 세션·문맥 요약 뒤에도 같다. 영어는 사용자가 그 답에 한해 요구할 때만 · 코드 식별자·명령어·경로·오류 원문만 그대로. 보내기 전에 첫 문장·마지막 문장이 한글인지 확인한다. 원문 = 이 줄(CLAUDE.md §3 = 요지).
+- ★ **예외 — 패키지 게시물 + 프로그램 내부 정보는 전부 영어**(사용자 10-04 · 10-10 확장) — 제출물 · 프로그램·패키지 안의 정보 · 동봉 기본 문서는 영어(한국어는 덧붙이기만) · 저장소 문서·대화는 한글 그대로 · 원문 = [claude-release-rules](claude-release-rules.md) · 세부 = [33 §5-6](33-distribution-and-packaging.md).
+- ★ **설정 먼저 규칙(사용자 10-30)**: 기능 변경·추가 요청을 받으면 **먼저 기존 설정(설정 키 · 키맵 · 상태줄/툴바 편집 · 프로필 옵션 · 기동 명령)만으로 충족되는지** 본다 — 충분히 반영되거나 **조금 불편해도 어느 정도 충족되면** 개발하지 않고 ① 어떤 설정을 어떻게 바꾸는지 ② 사용자가 직접 해 볼 **시험 방법**(단계 · 기대 결과) ③ 남는 불편(있으면)을 안내해 **사용자 검토를 먼저** 받는다. 사용자가 "불충족"이라 하면 그때 추가 기능을 개발한다(진행 중 목록에는 '설정 안내 · 사용자 검토 대기'로 남긴다). 판단이 애매하면 설정 안내와 개발안(규모)을 함께 내고 사용자가 고른다 · 데이터 보호·실행 통제 같은 안전 결함은 이 규칙의 예외(바로 고친다). 원문 = 이 줄(CLAUDE.md §3 = 요지).
+- ★ **프로젝트 파일 하나만(사용자 10-30 · D-407)**: 프로젝트에 딸린 상태·설정을 위해 **함께 관리해야 하는 연계 파일**(`.nexa/settings.conf` · `.nsql/settings.conf` · `.local.json` 같은 것)을 새로 만들지 않는다 — 필요하면 **프로젝트 파일(`.nsql-project`) 안에 기록**한다(JSON 헤더의 절 · 큰 본문은 v2 블록 · 67 §7). 프로젝트 파일 안으로 넣기 어려우면 **기능·목적을 설명하고 사용자에게 다시 묻는다**. (해석 · 다르면 정정) 사용자 설정 폴더 쪽 자료(`backups/` · `meta/` 캐시 · `Packages/`)는 프로젝트와 같이 옮기는 연계 파일이 아니므로 이 규칙 밖. 검토 대상 = 폴더 모드 `<폴더>/.nsql/`(67 §6 · 이미 북마크 워크스페이스를 둠) · 73 §4-2 기기별 `.local.json` 설계 — 새로 넓히지 말고 손댈 때 사용자에게 묻는다. ✅ **CLAUDE.md §3 반영(사용자 10-31 밤 확인 · 개발 세션)** · 원문 = 이 줄(D-407 · CLAUDE.md §3 = 요지).
 - ★ **익명화(사용자 10-28 · 저장소 규칙으로 올림 11-01 · D-439)**: 저장소 안 파일(문서 · 소스 · 시험 상수 · 스크립트 · **커밋 메시지**)에 실제 IP·도메인·호스트·DB 계정·회사 업무 코드를 쓰지 않는다 — 처음부터 익명 값으로 · git 이력은 두고 앞으로만(force push 없음) · 실제 값이 필요한 보고는 채팅에서만 · 실서버 접속 정보는 볼트 프로필·env로만. **익명 값(이 표만 저장소에 · 실제 값 ↔ 익명 대응 원본 = 로컬 메모리·사용자)**: 주소 = `172.16.0.0/16`(원래 대역마다 `172.16.0~6.x` 한 칸씩) · 호스트 = `db-dev-01` · `ssh1.example.com` · `git.internal` · 홈 경로 = `%USERPROFILE%` · 키 = `id_ed25519` · 회사명 = `<회사>` · ssh 계정 = `jumpuser` · DB 계정·서비스 = `APPDB`(`_SB`/`_MS`/`_DEV`) · `EDU01` · `RPT01` · `PLANDB` · `repodb` · `REPO_DEV` · `ACME` · `user01` · `DEMO` · `CUSTB_DEMO` · `CUSTC_DEMO` · 프로필 예 = `appdb-ssh` · 업무 접두 = `DMS_` · `DME_` · `SP_DMP_` · 공개 도메인 `sosomlab.com`·연락처는 그대로. ★ 반대로 **명령을 실제로 돌릴 때**(통합 시험 `NSQL_*_PROFILE` · E2E)는 문서의 익명 이름이 아니라 **실제 볼트 프로필 이름**(`nsql conn list`로 확인 · PC마다 다름).
-- **진행 보고 규칙**(CLAUDE.md §3 맨 위): 지시를 받으면 즉시 진행 중 목록에 넣어 보여 주고 · 항목이 끝날 때마다 중간 보고 · 최종 보고에 **"충돌·조정"** 절(무엇과 무엇이 부딪쳤나 · 어느 쪽을 따랐나 = 기본은 나중 지시 · 그래서 무엇을 되돌렸나).
-- **push는 사용자가 말할 때만.** "commit · main 병합 · push" = 작업 브랜치(`feat/…` · `fix/…` · `docs/…`) → 커밋 → `main`에 `--ff-only` 병합 → 로컬 브랜치 삭제 → `docs/BRANCHES.md`에 한 줄 → push(형제 저장소를 함께 고쳤으면 **nexa-ui 먼저**) → CI 결과를 journal에. 원문 = [16](16-doc-git-conventions.md).
-- 스테이징은 `git add <파일>`만(`-A` · `.` 금지). 커밋 메시지 끝에는 그 세션이 안내하는 `Co-Authored-By:` 줄을 그대로 붙인다(모델 이름은 세션마다 다르다 — 지어내지 않는다).
-- 문서 = 한 작업 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES). CLAUDE.md의 "현 단계" 줄도 같이 본다(09-20에 52차에서 멈춰 있던 것을 발견).
-- 테스트 실행 = Debug · 그 전에 **Release도 빌드**(사용자가 `target/release`로 병행 시험) · 끝나면 Debug 창을 **깨끗한 환경 변수로** 다시 띄워 둔다.
+- **진행 보고 규칙**(원문 = CLAUDE.md §3 둘째 줄): 지시를 받으면 즉시 진행 중 목록에 넣어 보여 주고 · 항목이 끝날 때마다 중간 보고 · 최종 보고에 **"충돌·조정"** 절(무엇과 무엇이 부딪쳤나 · 어느 쪽을 따랐나 = 기본은 나중 지시 · 그래서 무엇을 되돌렸나).
+- **git·문서 트랜잭션 = [16 §4-1](16-doc-git-conventions.md)(원문)** — push는 사용자가 말할 때만 · `git add <파일>`만(`-A`·`.` 금지) · 커밋 끝 `Co-Authored-By:`는 세션이 안내하는 줄 그대로(지어내지 않는다) · 한 작업 = 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES) · 끝나면 STATUS 맨 위 "다음 세션 시작점"을 본다.
+- **테스트 실행 = Debug(full) · Release(lite)도 함께 빌드**(사용자 병행 시험 · D-363 · 절차·함정 = §3) · 재시작 인스턴스 = 실제 설정([102 §5-5](102-collab-session-operation.md)).
 
-### 2-2. 코드 규칙(원문은 CLAUDE.md §3 · [30](30-architecture-patterns.md) · [39 §3](39-resource-governance.md) · [26 §8](26-performance-architecture.md))
+### 2-2. 코드 규칙(원문 = 이 절의 팝업 세칙 2-2-a~d · UI 포커스·hover·라우팅 = [claude-ui-rules](claude-ui-rules.md) · 확장점 = [30](30-architecture-patterns.md) · 부하원 = [39 §3](39-resource-governance.md) · 네트워크 = [26 §8](26-performance-architecture.md))
 - ★ **편집기 스크립트 명령을 추가하면 셋을 함께**(사용자 10-16 · [76 §19](76-intellisense-and-outline.md)): nsql-script `COMMAND_WORDS`(파서) · `intel.rs` `CLIENT_COMMANDS`(완성 낱말·설명) · 필요하면 `client_next`(명령 뒤 자리 후보) — 규칙 시험 `client_commands_cover_parser_words`가 어긋남을 잡는다.
 
-사용자 문자열 = `nsql-i18n::Msg` · 설정 키 = `nsql-settings::REGISTRY`(구현 상수도 · 자주 안 바꾸면 HIDDEN) · 스레드·디스크·캐시 = 부하원 원장에 등재 + 끄거나 상한을 둘 설정 · 네트워크 = 26 §8 체크리스트 · DB 진입점 = `gate_open()` · 분기 조건 2개 이상 = 순수 함수 + MC/DC · 포커스 링 ≤ 1 · 마우스는 커서 아래 컨트롤에만 · hover = `IntentFade` · 팝업은 맨 마지막 층.
+사용자 문자열 = `nsql-i18n::Msg` · 설정 키 = `nsql-settings::REGISTRY`(구현 상수도 · 자주 안 바꾸면 HIDDEN) · 스레드·디스크·캐시 = 부하원 원장에 등재 + 끄거나 상한을 둘 설정 · 네트워크 = 26 §8 체크리스트 · DB 진입점 = `App::gate_pass()` 증표 → `Sess::submit`(30 §1-2 8번 · 시험이 우회를 막음 · 막힘 판정 = `gate_open`) · 분기 조건 2개 이상 = 순수 함수 + MC/DC · 포커스 링 ≤ 1 · 마우스는 커서 아래 컨트롤에만 · hover = `IntentFade` · 팝업은 맨 마지막 층.
+
+#### 2-2-a. 팝업 배치(원문 · claude-ui-rules는 이 절 링크)
 
 - ★ **팝업 배치 규칙**(사용자 09-21 · 전수 조사 89차): 우클릭 메뉴·툴팁·드롭다운은 **그리기 표면 밖으로 나가지 않는다.**
 
@@ -200,42 +242,13 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
   | **한 줄 고지 뒤 진행** | 사용자 결정으로 표시해 둔 기본값·정책의 변경(D-nnn "사용자 결정" · 예 D-133 present 기본) · 첫 빌드가 수 분 늘어나는 빌드 프로필 변경 · 실서버 **읽기** 접속(계정·서버·읽기 전용임을 보고에) — "전체 진행" 지시가 있어도 실행 전 한 줄로 알린다(09-24 자체 점검 §178) | 보고에 되돌리는 방법까지 |
 
   정리는 **그 일에 맞는 명령**을 쓴다(워크트리 = `git worktree remove` · 빌드 산출물 = `cargo clean -p …` · 프로세스 = PID 지정) — 범위가 명령 자체에 묶여 있어 엉뚱한 경로를 건드릴 수 없다.
-  **확인 창의 출처**: 규칙 문서가 아니라 하네스 권한 설정 `.claude/settings.json`(allow = 명령 **첫 단어** 기준 · `&&`·`;`·`|` 체인은 조각마다 판정 · `ask` = 늘 묻는 것)이다. 09-22 점검: 세션의 명령이 `cd … && …`·변수 대입·`for`/`until`·PowerShell `$x = …; Stop-Process …`처럼 허용 목록에 없는 단어로 시작해 매번 확인/분류기로 갔고, `rm:*`·`Remove-Item:*`이 `ask`라 스크래치·`target/` 정리도 물었다 → allow를 넓히고(`cd`·`sed`·`for`·`until`·`Stop-Process`·`Start-Process`·`$`·스크래치/`target/` 한정 `rm`) `rm`·`Remove-Item`은 `ask`에서 뺀다(외부 삭제 금지는 이 규칙이 지킨다). 이 파일은 하네스 분류기가 **내 편집을 막으므로** 바뀐 내용은 제안 파일(`settings.proposed.json`)로 만들어 사용자가 적용한다. 명령을 쓸 때는 허용된 단어로 시작하고(절대 경로 인자 · 로직은 python 파일), 체인은 짧게.
+  **확인 창의 출처** = 규칙 문서가 아니라 하네스 권한 설정 `.claude/settings.json`(allow = 명령 첫 단어 · 체인은 조각마다) — 원문 = §3-1(OS별 허용 목록 · 제안 파일 절차 · 09-22 점검 경위).
 - 실행 중인 다른 프로세스는 사용자의 것일 수 있다 — 끝낼 때는 **내가 띄운 PID**만. **예외 = 이 저장소 `target/{debug,release}/nexa-sql.exe` 인스턴스**: 개발(빌드·테스트·재시작) 사이에는 누가 띄웠든 **강제 종료하고 진행**한다(사용자 09-22 92차 "개발 사이에는 기존 프로세스를 강제 종료하고 진행" — 실행 중인 exe가 링크를 막는다) · ★ **`target/debug/` 아래는 exe 전부**(nexa-sql.exe · nsql.exe · 확장 드라이버 프로세스 — 사용자 10-29 "디버그의 경우 실행 중인 프로세스가 있어도 강제 종료 후 빌드 및 실행" · 실기 중인 셸도 포함) · 종료한 PID·시작 시각은 보고에 한 줄 · 다른 경로의 exe(설치본)·다른 앱은 그대로.
 
-### 2-5. 협업 세션 운영 기준(10-04 · 사용자 · 원문 = [102](102-collab-session-operation.md))
+### 2-5. 협업 세션 운영 기준(10-04 · 사용자 · 원문 = [102](102-collab-session-operation.md) · 11-01 B2 축약)
 
-- **목적 = 모델별 역할 분담**: 설계·개발(아키텍처 · 방향 결정 · 소스 수정) = **Fable 개발 세션** · 자료 분석 · 문서 작성 · 빌드/감시 · 재시작 = **Opus 협업 세션**. 찾기 = `ListAgents` · 연락 = `SendMessage`.
-- **파일 소유**: 한 파일은 한 세션만 고친다 — 소스 = 개발 세션 · 문서 = 협업 세션(결함·내용은 고치지 말고 메시지로 보낸다).
-- **커밋은 개발 세션 한 곳에서만**(사용자 요청 시 · 소스+문서 한 트랜잭션) · 협업 세션은 git 조회만.
-- **같은 `target/` 동시 빌드 금지** — 전체 빌드·재시작은 협업 세션이 "빌드 요청"을 받은 뒤에만 · 개발 세션은 `cargo check`·단위 시험만.
-- **검증 단계 V0~V3**(102 §5-7 · 사용자 10-04 · **10-06 개정**): **풀 테스트(워크스페이스 전체 `cargo test` + 기능 전수) = (✖ 11-01 대체 · D-439 → **사용자 요청 때 + 릴리스 직전 1회** · 원문 = [102 §5-7](102-collab-session-operation.md)) 종전 = 하루 1회 기본 + 버전 배포 등 중요 기점 + 사용자 요청** · 빌드·재시작·커밋마다는 **방금 개발한 기능과 그 연관 기능의 시험만**(V0 = `cargo check` + 관련 단위 시험 · V1 = 재시작 + 바뀐 기능 자체 시험 · V2 = clippy·fmt·관련 시험·Release 1회 · 워크스페이스 전체는 push 뒤 CI) · "핵심 로직이면 전수" 자동 규칙은 폐지(넓은 변경 = 연관 범위 확대 또는 사용자에게 물음) · 개발 중 실행 = Debug만(Release 실행·교체 = 사용자).
-- **다른 저장소로 가져가기·재요청**(사용자 10-04 · 102 §0-1): 가져갈 것 = 102 §0~§11(원장은 새로) · 가져간 표시 한 줄 · 같은 요청이 다시 오면 문서를 열어 확인하고 이미 정리돼 있으면 "운영 방침은 정리된 상태"(경로 · 날짜·해시)로 답한다.
-- **긴 작업 = 백그라운드 + 완료 알림 · 포그라운드 대기 루프 금지**(사용자 10-04 "배치 작업을 걸어도 언제든 멈출 수 있도록 감시는 유지" · 102 §5-3).
-- **[P0] 빌드 + Debug 재시작 = 최우선**: 위임 첫 줄에 등급 꼬리표(P0~P3) · P0가 오면 협업 세션은 하던 일을 멈추고 먼저(102 §5).
-- **재시작 = 실제 설정 · 격리 = 시험 동안만**(사용자 10-17 · 102 §5-5): "재시작됨" 인스턴스는 사용자 실기용이라 `NSQL_HOME` 없이 · 격리 홈 인스턴스는 V1·배치가 끝나면 종료하고 `pgrep`으로 0 확인 · 사용자가 쓰는 창은 그대로(새 판 = 재실행 안내).
-- **그날 풀 테스트 뒤 = V1·V2만**(사용자 10-17 · 102 §5-7): 기능 점검 전수·E2E 배치·성능·영어 점검 재실행 금지 · 재실행은 실패 항목만.
-- **시험은 간략하게 · 빌드 전 통합 테스트**(사용자 10-21 · 102 §5-7): E2E 배치·기능 전수·실서버 4방언·풀 테스트 = 사용자 요청 때만 · V1 = 바뀐 기능 덤프 판정 몇 개 · 빌드 전에 드라이버 통합 테스트(`cargo test -p nsql-drivers --test integration -- --test-threads=1` · 저장 프로필 env · TCP 도달 먼저 · 미도달/사용자 제외 = 생략 기록).
-- **깊은 작업이 아니면 협업(Opus)**(사용자 10-21 · 102 §12): 개발(Fable) = 설계·방향 결정·핵심 소스 수정 · 그 밖(분석·문서·빌드·시험·CI·코드 탐색·기계적 수정 후보 정리) = 협업 · 위임이 여럿이면 협업 내부 하위 에이전트로 병렬(같은 `target/` 빌드는 하나씩 · 하위 에이전트도 소스·git 쓰기 금지).
-- **상시 갱신**: 상충·아슬·굳힘 사례는 102 §12 원장에 쌓고 규칙을 그때마다 고친다.
-
-### 1-5. 09-20~21(맥 86~88차)에 굳은 것 — 변수 · 트랜잭션 · 화면 내보내기
-
-| 주제 | 핵심(불변식) | 원문 |
-|---|---|---|
-| **수동 커밋 = 진짜 트랜잭션**(T-146) | PG·SQLite·SQL Server·MySQL은 서버가 문장마다 커밋한다 → **수동 모드의 첫 문장 앞에서 러너가 연다**(`nsql-run` `manual_begin_sql` 순수 함수 + MC/DC · `tx_open`). 커밋·롤백·읽기 종료·접속에서 `tx_open`을 내린다 — **세션을 직접 커밋하는 새 경로를 만들면 `note_tx_ended()`를 같이 부른다**(안 부르면 다음 문장의 `BEGIN`이 "이미 트랜잭션 안"으로 실패) | [journal 09-21](journal/2026-09-21.md) 87차 후반 |
-| **변수 표 = 세 층**(D-135) | 탭(App이 주인 `App.tab_vars` — 실행마다 `Cmd::Run.vars`로 넘기고 `RunEvent::Vars`로 돌려받는다) → 연결 공유(러너 = 세션 · `VAR x SHARE` · 호스트 사본 `Sess.shared_vars` · 고치면 `Cmd::SharedVars`) → 프로필(읽기 전용 · 아직 출처 없음). **변수를 `Runner`/`Sess`에 새로 두지 않는다**(탭이 주인) · 바인드(`VarStore`)와 치환(`Engine.defines`)은 섞지 않는다 | [63 §3](63-variable-management.md) |
-| **결과가 여럿이면 탭도 여럿** | 같은 문장의 두 번째 이후 결과(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합) = 늘 딸린 탭(`ResultTab.child_of`) · 다른 문장의 결과 = 설정 `grid.result_per_statement`(D-138) · 판정 = `sessions::extra_result_slot` · 실행 끝에 안 쓰인 딸린 탭을 걷는다(`run_tracking` — **결과 새로고침은 걷지 않는다**) · `RunEvent::ResultSet.label` = 커서 변수 이름 | [63 §5](63-variable-management.md) |
-| **1행 결과를 추측해 변수로 빨아들이지 않는다** | OUT 바인드가 없는 방언은 요청이 받는 쪽을 명시(`Prepared.captures` · 자리 순서) · Oracle/SQL Server는 결과 집합을 절대 흡수하지 않는다 · 0행·여러 행 = Oracle식 오류(D-139 · SQL Server는 서버 쪽 `@@ROWCOUNT` 검사) | [63 §3-1](63-variable-management.md) |
-| **선언 없는 바인드의 타입 = 루틴 서명** | `nsql-script::call_shape` + `nsql-catalog::routine_args`(지금 Oracle `ALL_ARGUMENTS`만) · 루틴당 1회 캐시 · DDL·접속에서 비움 · 저장 코드 DDL(`CREATE … PROCEDURE/TRIGGER …`)은 바인드하지 않는다(`Prepared::verbatim` — `:NEW`/`:OLD`) | [63 §3](63-variable-management.md) |
-| **실행 전에 한 번 묻는다**(D-137) | 워커가 `missing_inputs`로 찾고 `RunEvent::InputNeeded`를 낸 뒤 `InputReply`를 **기다린다**(세션 = 바쁨 · ■ = 입력 취소) · 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다 — **메뉴·기동 명령이 부탁한 창 열기 깃발은 `about_to_wait`에서도 본다**(`window_event` 끝에서만 보면 이벤트가 없을 때 안 열린다) | [63 §5](63-variable-management.md) |
-| **화면 내보내기는 `present.rs` 한 곳** | 모든 창은 `present::Presenter`로 픽셀을 낸다(`softbuffer::Context/Surface`를 창 코드에 직접 두지 않는다) · macOS IOSurface 경로는 **기본 끔**(`gfx.mac_present`) — 화면·입력 실험은 기본 끔 + 실패 시 조용한 폴백 · 사용자가 병행 테스트하는 `target/` 빌드를 실험 상태로 두지 않는다 | [62 §2-1](62-macos-input-and-present.md) |
-| 맥 한글 입력 | 한글 입력 소스일 때만 앱 조합(`input.hangul_compose=auto` · nexa-ctl `TextBox` 전역 스위치) — **새 창을 만들면 `set_ime_allowed(input::system_ime())` + `sync_hangul_mode`의 창 목록에 등록** | [62 §1](62-macos-input-and-present.md) |
-
-- ★ **컨트롤 배선 체크(09-25 §210)**: nexa-ctl 컨트롤(TextBox 등)을 패널이 직접 놓을 때는 `set_bounds`와 함께 **`set_scale(scale)`** 을 꼭 부른다 — 줄 높이·여백이 `s(...)`로 배율을 곱하므로 빠지면 레티나에서 글자가 겹친다(객체 상세 패널 결함).
-- ★ **글꼴 증분 = 논리 px(10-02 mac · [journal 10-02 §2](journal/2026-10-02.md))**: `select_font_sized(슬롯, 굵게, 증분)`의 증분은 슬롯 크기(논리 px)에 더해진 뒤 **그리기 쪽이 배율을 곱한다** — 측정값(`text_height()`·`text_width()` = 물리 px)이나 `scale`을 곱한 값을 그대로 넘기지 않는다(넘겨야 하면 배율로 나눈다). 어기면 배율 1에서는 멀쩡하고 HiDPI(맥 Retina · Windows 150 %)에서만 글자가 작아진다(속도 HUD = 75 %가 50 %로 · 탐색기 용량 글자). 크기가 배율에 비례하는지는 **배율 1·2로 그려 치수를 단언하는 시험**으로 덮는다(nexa-ctl `speed_hud_size_scales_with_dpi`의 `ScaleCtx`). · ★ **같은 부류 = 도형 크기의 하한·상한 상수(10-04 mac · [journal 10-04 §8](journal/2026-10-04.md))**: 툴바 ▾가 Retina에서 납작·가늘게(`ˇ` 꼴) 보였다 — nexa-ctl `draw_chevron_down`의 하한(반폭 2 · 굵기 1.5)이 물리 px라 논리 8 px 칸에서 모양이 하한으로 정해지는데 2배 화면에서 하한이 커지지 않았다 → `draw_chevron_down_scaled(ctx, area, color, scale)`(하한 × 배율 · 기존 함수 = scale 1.0 위임). **크기를 정하는 하한·상한 상수도 논리 px로 두고 배율을 곱한다** · 같은 8 px 칸 `posdrop.rs` ▾도 10-04 후속에서 `draw_chevron_down_scaled`로 바꿈(journal 10-04 §22).
-- ★ **아이콘 크기 = 같은 줄 기존 아이콘의 도형 범위에 맞춘다(10-13 사용자 실기)**: 새 아이콘 세트를 들이면 원본 viewBox 그대로 쓰지 말고 그 자리 기존 아이콘의 도형 범위(예: 활동 막대 확장 = 40..216/256 · 여백 15.6 %)에 맞춰 축소한다(`VB_ACT_MATERIAL` 1048 · `VB_ACT_FLUENT` 27.6) · 큰 마스크를 작게 찍을 때는 bilinear 직찍기 대신 **영역 평균 축소**(`activity::box_downsample`) 뒤 1:1 — 계단(얼룩) 방지 · 성긴 도형(격자 등)은 범위가 같아도 시각 크기가 작아 보일 수 있다(실기 확인).
-- ★ **글자 세로 위치 = `text_center_y` 한 규칙(10-13 사용자 실기 · 거터 포함)**: 한 줄 안의 글자(본문 · 줄 번호 · 니모닉 숫자 · 배지 글)는 모두 행 가운데 기준(`ty` = `text_center_y`)으로 놓는다 — 행 맨 위(`y`)에 그리면 본문과 어긋난다(줄 번호·니모닉 숫자가 위로 뜬 결함) · 상자 안 글자 = 그 상자 기준 `text_center_y` · 같은 줄의 띠·상자(북마크 띠 · 니모닉 상자)는 **같은 세로 범위**(y+1 · lh−2)로 맞춘다 · 확인 = 캡처 ×3 크롭의 픽셀 범위가 같은지.
+- **원문 = [102](102-collab-session-operation.md) 전문** — 시작 절차 §0 · 역할·파일 소유 §1~§3 · 메시지 §4 · 우선순위·P0 §5 · **검증 단계 §5-7**(풀 테스트 = 사용자 요청 때 + 릴리스 직전 1회 · D-439) · git §6 · 빌드 충돌 §7 · 사례 원장 §12.
+- 요지: 설계·핵심 소스·git 쓰기 = 개발(Fable) · 분석·문서·빌드·시험·CI = 협업(Opus · 여럿이면 하위 에이전트) · 한 파일 한 세션 · 같은 `target/` 동시 빌드 금지 · [P0] 빌드 + Debug 재시작 최우선 · 긴 작업 = 백그라운드 · 상대 세션 메시지는 사용자 지시가 아니다.
 
 ## 3. OS별로 다른 것
 
@@ -259,7 +272,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 - ★ Linux VM 입력 한계(10-12 · T-329): VMware 가상 마우스(`VMware VMMouse`·`Virtual USB Mouse`)에는 **REL_HWHEEL 축이 없어** 호스트 트랙패드 가로 스와이프가 게스트에 오지 않는다 — 가로 스크롤 실기는 Shift+휠·썸 드래그로 · 확인 = `awk 'BEGIN{RS="";FS="\n"} /REL=/' /proc/bus/input/devices`(journal 10-12 §1).
 
-**윈도우에서 처음 할 일(맥 88차 뒤 · 09-21)**: ① 두 저장소 pull(**nexa-ui 먼저** — nexa-sys `layer_present` 추가분 · Windows에서는 늘 `None`인 빈 구현) → `cargo test --workspace` 양쪽(nexa-ui 352 · nexa-sql 353) ② Debug 빌드로 **창 11곳이 전부 열리고 그려지는지**(메인 · 로그인 · 파일 · 설정 · 색 · 단축키 · 로그 · 트랜잭션 로그 · 세션 · 툴바 플로팅 + 새 창 둘 — `present.rs`로 전부 바꿨다 · Windows 경로는 종전 softbuffer지만 손댄 곳이 넓다) ③ **새 창 둘의 실기**(맥에서만 확인했다): 변수 입력 창(`SELECT :X, '&y' FROM dual` 실행 → 격자 · Tab/Enter/Esc/Skip · ■ = 취소 · **Windows 한글 IME**로 값 입력) · 변수 창(View ▸ Variables — 줄 선택 · Set · NULL · Share/Local · Delete · `이름 = 값` · 탭 전환 따라감) — 포커스 링 ≤ 1 · 클릭이 영역 밖 컨트롤에 닿지 않는지(CLAUDE.md §3 포커스·마우스 규칙 ①~⑤) ④ **수동 커밋 실기**(T-146 — SQL Server·PG): Auto-commit 끔 → INSERT → 다른 세션에서 안 보임 → Rollback 버튼 → 사라짐 · Commit → 남음 · 상태줄 ●·툴바 배지 ⑤ 결과 탭: 조회 3개 스크립트 = 탭 3개 · 다시 실행 = 같은 자리 · 첫 탭 ↻ 새로고침에 다른 탭이 닫히지 않는지 · Oracle `examples/oracle-refcursor-pkg.sql` = 커서가 바로 결과로 ⑥ 그다음 [TODO](TODO.md) **T-149 잔여 → T-150~T-153**(아래 §6).
+**윈도우에서 처음 할 일(맥 88차 뒤 · 09-21 기록 · 지금 새 PC = CLAUDE.md §4 + 아래 맥 절차 ①② · 저장소 셋)**: ① 두 저장소 pull(**nexa-ui 먼저** — nexa-sys `layer_present` 추가분 · Windows에서는 늘 `None`인 빈 구현) → `cargo test --workspace` 양쪽(nexa-ui 352 · nexa-sql 353) ② Debug 빌드로 **창 11곳이 전부 열리고 그려지는지**(메인 · 로그인 · 파일 · 설정 · 색 · 단축키 · 로그 · 트랜잭션 로그 · 세션 · 툴바 플로팅 + 새 창 둘 — `present.rs`로 전부 바꿨다 · Windows 경로는 종전 softbuffer지만 손댄 곳이 넓다) ③ **새 창 둘의 실기**(맥에서만 확인했다): 변수 입력 창(`SELECT :X, '&y' FROM dual` 실행 → 격자 · Tab/Enter/Esc/Skip · ■ = 취소 · **Windows 한글 IME**로 값 입력) · 변수 창(View ▸ Variables — 줄 선택 · Set · NULL · Share/Local · Delete · `이름 = 값` · 탭 전환 따라감) — 포커스 링 ≤ 1 · 클릭이 영역 밖 컨트롤에 닿지 않는지(CLAUDE.md §3 포커스·마우스 규칙 ①~⑤) ④ **수동 커밋 실기**(T-146 — SQL Server·PG): Auto-commit 끔 → INSERT → 다른 세션에서 안 보임 → Rollback 버튼 → 사라짐 · Commit → 남음 · 상태줄 ●·툴바 배지 ⑤ 결과 탭: 조회 3개 스크립트 = 탭 3개 · 다시 실행 = 같은 자리 · 첫 탭 ↻ 새로고침에 다른 탭이 닫히지 않는지 · Oracle `examples/oracle-refcursor-pkg.sql` = 커서가 바로 결과로 ⑥ 그다음 [TODO](TODO.md) **T-149 잔여 → T-150~T-153**(아래 §6).
 
 ★ **Windows PC 통합 시험 = `NSQL_ORACLE_DRIVERS=thin`을 붙인다(10-26 139차 win)** — 이 PC에는 Oracle Instant Client가 없어 기본 명령은 Oracle OCI 시험 5건이 `DPI-1047: Cannot locate a 64-bit Oracle Client library`로 실패한다(OCI+Thin 둘 다 도는 기본값) → `NSQL_ORACLE_DRIVERS=thin cargo test -p nsql-drivers --test integration -- --test-threads=1`(Oracle 5/5 ✓ · 로컬 프로필 = `NSQL_PG_PROFILE=REPO_DEV` · `NSQL_ORACLE_PROFILE=APPDB_DEV` · `NSQL_MSSQL_PROFILE=APPDB_MS_DEV` · 사내망 = VPN).
 
@@ -267,9 +280,9 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 ⚠ **lite 판 Release의 함정** — 이 PC들에서 기본 `cargo build --release`를 돌리면 `target/release`가 다시 **full 판으로 덮인다** → Release를 다시 만들 때는 반드시 lite 절차(`CARGO_TARGET_DIR=target/lite …` 빌드 뒤 `target/release`의 기존 판을 `*.full`로 보존하고 lite 복사)로.
 
-**리눅스에서 처음 할 일(09-22 91차)**: ⓪ "빌드 및 재시작" = `bash scripts/linux-restart-debug.sh`(Debug 빌드 → 앞서 띄운 것만 종료 → 실제 설정으로 재기동 · `--release` = Release도 빌드 · Oracle IC 환경 자동) · ⚠ **`--release`는 아직 full 판(`cargo build --release` · 10-27)** — D-363(위 = Release는 lite)과 맞출 때까지 Release는 lite 절차(`CARGO_TARGET_DIR=target/lite … --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` → `target/release` 복사 · 종전 판 `*.full`)를 손으로(T-436) ① 세 저장소 pull(nexa-ui · nexa-license 먼저) → `scripts/linux-all-tests.sh -o /tmp/nsql-tests`(fmt·clippy·test 양쪽 + 3-OS 호스트 + 실서버 통합 = `NSQL_*_PROFILE`) ② Oracle = `scripts/install-instantclient-linux.sh --rc`(새 셸) ③ 성능 = `scripts/linux-perf-all.sh -H <격리 홈> -D <데이터> -o <결과>`(격리 홈에 `Local` SQLite 프로필 먼저 · 26 §7-7과 비교 · 창까지 시간은 `[startup]`으로 구간 확인) ④ 실기 = TODO T-163(Wayland IME · 모달 · 캡처). ⑤ ★ **빌드 전제(10-23 · 136차 ODBC 드라이버 이후 · 10-24 138차 Linux 실측)**: `sudo apt install unixodbc-dev`(CI `ci.yml:49`와 같은 처방 · 없으면 `nsql-driver-odbc`(`odbc-api` → `libodbc`) 링크 실패 · 이 VM = 2.3.14 · `LIBRARY_PATH` 불필요 = 시스템 lib 경로) · 내장 빌드(기본 feature)는 DuckDB를 받지 않는다 — `nsql-driver-duckdb`(확장 전용 · libduckdb-sys `download-lib` ≈60 MB 네트워크 1회)는 V3 B1 `cargo build -p nsql-driver-duckdb`에서 처음 받는다 · 맥 V3 절차표 = [journal 10-23 §45](journal/2026-10-23.md)의 "Linux 대응" 열을 그대로 따른다. ⑥ **ODBC 검증 환경(10-24 · 개발 세션 자산)** = `scripts/linux-odbc-setup.sh`(unixODBC + libsqliteodbc + odbc-postgresql + MS ODBC 18 저장소 · root 작업은 pkexec 1회) → `scripts/linux-odbc-e2e.sh`(CLI SQLite3 ODBC 왕복 LANG 있음/없음 · PG/MSSQL 인증 단계 · 한글 메시지 온전 · GUI 자동/수동 커밋 §2 ④-a/b 회귀 · 10-24 첫 실행 12/0) → 끝나면 `scripts/linux-odbc-rollback.sh`(dry-run 기본 · `--yes` · `--with-unixodbc` = 사용자 결정 ⑦ "필요한 설치 직접 + 제거 정리").
+**리눅스에서 처음 할 일(09-22 91차)**: ⓪ "빌드 및 재시작" = `bash scripts/linux-restart-debug.sh`(Debug 빌드 → 앞서 띄운 것만 종료 → 실제 설정으로 재기동 · `--release` = Release도 빌드 · Oracle IC 환경 자동) · `--release` = lite(D-363 · T-436 ✅) ① 세 저장소 pull(nexa-ui · nexa-license 먼저) → `scripts/linux-all-tests.sh -o /tmp/nsql-tests`(fmt·clippy·test 양쪽 + 3-OS 호스트 + 실서버 통합 = `NSQL_*_PROFILE`) ② Oracle = `scripts/install-instantclient-linux.sh --rc`(새 셸) ③ 성능 = `scripts/linux-perf-all.sh -H <격리 홈> -D <데이터> -o <결과>`(격리 홈에 `Local` SQLite 프로필 먼저 · 26 §7-7과 비교 · 창까지 시간은 `[startup]`으로 구간 확인) ④ 실기 = TODO T-163(Wayland IME · 모달 · 캡처). ⑤ ★ **빌드 전제(10-23 · 136차 ODBC 드라이버 이후 · 10-24 138차 Linux 실측)**: `sudo apt install unixodbc-dev`(CI `ci.yml:49`와 같은 처방 · 없으면 `nsql-driver-odbc`(`odbc-api` → `libodbc`) 링크 실패 · 이 VM = 2.3.14 · `LIBRARY_PATH` 불필요 = 시스템 lib 경로) · 내장 빌드(기본 feature)는 DuckDB를 받지 않는다 — `nsql-driver-duckdb`(확장 전용 · libduckdb-sys `download-lib` ≈60 MB 네트워크 1회)는 V3 B1 `cargo build -p nsql-driver-duckdb`에서 처음 받는다 · 맥 V3 절차표 = [journal 10-23 §45](journal/2026-10-23.md)의 "Linux 대응" 열을 그대로 따른다. ⑥ **ODBC 검증 환경(10-24 · 개발 세션 자산)** = `scripts/linux-odbc-setup.sh`(unixODBC + libsqliteodbc + odbc-postgresql + MS ODBC 18 저장소 · root 작업은 pkexec 1회) → `scripts/linux-odbc-e2e.sh`(CLI SQLite3 ODBC 왕복 LANG 있음/없음 · PG/MSSQL 인증 단계 · 한글 메시지 온전 · GUI 자동/수동 커밋 §2 ④-a/b 회귀 · 10-24 첫 실행 12/0) → 끝나면 `scripts/linux-odbc-rollback.sh`(dry-run 기본 · `--yes` · `--with-unixodbc` = 사용자 결정 ⑦ "필요한 설치 직접 + 제거 정리").
 
-**맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139 ⑤ **하네스 권한 점검**(아래 §3-1 — 09-23 맥·Linux 몫을 한 번에 적용 · 새 확인 창이 뜨면 그 첫 단어를 §3-1 목록에 더해 다시 제안한다). ⑥ ★ **빌드 전제(10-23 · 136차 ODBC 드라이버 이후)**: `brew install unixodbc` 뒤 cargo를 `export LIBRARY_PATH="$(brew --prefix unixodbc)/lib:${LIBRARY_PATH:-}"` 환경에서 돌린다(CI `ci.yml:55~56`과 같은 처방 · 없으면 `odbc-api` → `libodbc` 링크 실패 · 재시작 스크립트·시험도 같은 환경 · 이 맥 = Intel Homebrew `/usr/local/opt/unixodbc` 2.3.14) · 첫 빌드는 `nsql-driver-duckdb`(libduckdb-sys `download-lib`)가 공식 prebuilt libduckdb(≈50 MB)를 네트워크로 받는다. ⚠ 이렇게 만든 개발 빌드(기본 feature)는 Homebrew 경로 `/usr/local/opt/unixodbc/lib/libodbc.2.dylib`에 동적 링크된다(otool 10-24) — unixODBC 없는 맥에서는 기동 실패 위험 · 설치본 macOS는 `drivers-builtin-no-odbc`(release.yml)라 해당 없음.
+**맥에서 처음 할 일**: ① 세 저장소 pull(nexa-ui · nexa-license 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139 ⑤ **하네스 권한 점검**(아래 §3-1 — 09-23 맥·Linux 몫을 한 번에 적용 · 새 확인 창이 뜨면 그 첫 단어를 §3-1 목록에 더해 다시 제안한다). ⑥ ★ **빌드 전제(10-23 · 136차 ODBC 드라이버 이후)**: `brew install unixodbc` 뒤 cargo를 `export LIBRARY_PATH="$(brew --prefix unixodbc)/lib:${LIBRARY_PATH:-}"` 환경에서 돌린다(CI `ci.yml:55~56`과 같은 처방 · 없으면 `odbc-api` → `libodbc` 링크 실패 · 재시작 스크립트·시험도 같은 환경 · 이 맥 = Intel Homebrew `/usr/local/opt/unixodbc` 2.3.14) · 첫 빌드는 `nsql-driver-duckdb`(libduckdb-sys `download-lib`)가 공식 prebuilt libduckdb(≈50 MB)를 네트워크로 받는다. ⚠ 이렇게 만든 개발 빌드(기본 feature)는 Homebrew 경로 `/usr/local/opt/unixodbc/lib/libodbc.2.dylib`에 동적 링크된다(otool 10-24) — unixODBC 없는 맥에서는 기동 실패 위험 · 설치본 macOS는 `drivers-builtin-no-odbc`(release.yml)라 해당 없음.
 
 ### 3-1. 하네스(Claude Code) 권한 설정 — 3-OS 공통 규칙과 OS별 추가분(사용자 09-22 "동일 권한 관리를 mac에서도 다시 요청할 수 있게")
 
@@ -344,40 +357,32 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 - ★ **예약 기동 명령의 여유(09-26 §217)**: `NSQL_NO_ACTIVATE=1`로 띄운(비활성) 앱은 macOS App Nap 때문에 `@after` 타이머가 수 초 늦게 깰 수 있다 → 자체 시험은 **마지막 `@after` + 5 s** 뒤에 프로세스를 끝낸다(안 그러면 마지막 덤프가 빈다 · 기능 결함이 아니다). 인자에 쉼표가 필요한 명령(`grid.edit.set`)은 `;`로 나눈다.
 
-## 5. 로컬 메모리에서 저장소로 올린 것(이 PC의 `memory/` → 여기)
+## 5. 로컬 메모리에서 저장소로 올린 것(이 PC의 `memory/` → 여기 · 11-01 B2 재작성)
 
-| 로컬 메모리 | 이제 있는 곳 |
+> 원칙 = 다른 PC로 따라가야 하는 규칙은 로컬 메모리에만 두지 않는다 · 메모리 = 그 PC 고유 사실(경로·설치 상태)과 이 표의 사본만 · 새 규칙을 메모리에 쓰면 이 표에 한 줄 + 원문 자리에 본문.
+
+| 로컬 메모리(요지) | 이제 원문이 있는 곳 |
 |---|---|
-| 답은 한글로 | §2-1 · CLAUDE.md §3 |
-| Debug 실행 + Release 빌드 | §2-1 · CLAUDE.md §3(기존) |
-| 포커스 링 규칙 · 마우스 라우팅 규칙 | CLAUDE.md §3(기존) |
-| 형제 저장소 SSH 별칭 | CLAUDE.md §1(기존) |
-| GUI 자체 캡처 방법 | §3 · §4 · `scripts/` |
-| (메모리에 없던 것) 입력 주입 금지 · 포커스 · 클립보드 · 격리 확인 · 테스트의 실제 설정 폴더 금지 · heredoc · 브랜치 흐름 | §2-1 · §2-4 · §3 |
-
-### 1-6. 09-21(Windows 89차)에 굳은 것 — 능력표 · PG 커서 · 입력
-
-- **엔진·러너는 방언을 묻지 않는다 — `Caps`를 묻는다**(`nsql-core/caps.rs` · T-152): 새 분기가 필요하면 `Dialect` `match`를 쓰지 말고 능력표에 칸을 더한다(전수 테스트 `table_matches_the_former_dialect_branches`에 한 줄) · 세션이 붙으면 `Engine::set_caps(방언, session.caps())` · 남겨 둔 방언 분기 = 값 인용(`to_sql_literal`)과 카탈로그 질의뿐.
-- **자동 커밋 모드의 `COMMIT`은 `caps.autocommit_needs_commit(tx_open, tx_user)`가 참일 때만**(T-155) · CLI 종료 = `Runner::commit_at_exit`.
-- **PG refcursor는 드라이버가 푼다**(T-150): 결과의 글자 값이 열린 커서 이름이면 그 자리에서 `FETCH … IN` → 결과 집합 + `result_labels` · 자동 커밋이면 호출과 FETCH를 한 트랜잭션으로 · 러너·GUI는 모른다(Oracle 핸들 커서와 같은 "결과 + 라벨" 모양).
-- **PG 호출의 OUT 값은 서명이 말한 자리의 바인드가 받는다**(T-151 · `Engine.call_captures` — 한 번 쓰이고 비워진다).
-- **`ACCEPT`는 실행할 때마다 묻는다**: GUI = 실행 전 입력 창이 한 번에(`InputNeed{prompt,default,hide}`) → `apply_inputs`가 `Engine.accepted`에 표시 → 러너는 그 `ACCEPT`를 지나간다 · CLI = 그 자리에서 묻는다.
-- **실서버 통합 테스트는 프로필로**: `NSQL_PG_PROFILE=<볼트 프로필 이름>`(비밀번호를 환경 변수·명령줄에 쓰지 않는다) · 서버에는 `pg_temp` 임시 객체만 만든다.
-- **날짜·불리언은 진짜 타입으로 바인드한다**(Oracle · T-151): 값이 ISO 꼴(`YYYY-MM-DD[ HH:MM[:SS[.f]]]`)이면 `OracleType::Date`/`Timestamp`, 아니면 종전처럼 글자(서버의 암묵 변환). 변수 값의 표시도 ISO 꼴 — 결과 그리드의 DATE 열과 같다.
-- **T-SQL 호출의 `OUTPUT`은 서명이 보충한다**(`Caps::call_signature = OutputMarks` · `Engine.call_outputs` — 한 번 쓰이고 비워진다) · **선언 없이 생긴 글자 변수는 값이 돌아오는 바인드에서만 4000으로 넓힌다**(`dialect.rs bind_type` — 선언한 길이는 사용자의 뜻).
-- **미정의 바인드 경고는 읽기만 하는 보통 SQL에서만** — 블록·`EXEC`의 바인드는 받는 쪽일 수 있다.
-- **시스템 변수는 `Engine.sysvars`에**(사용자 `DEFINE`과 섞지 않는다 · 이름 = `SYSTEM_VARS`) · `${이름:형식}`은 정의된 이름 + 아는 형식만 바꾼다(모르면 글자 그대로 · 묻지 않는다).
-- **새 부하원은 스위치와 함께**: 결과에 영향을 주면 개별 설정(`vars.signature_lookup` · `pg.refcursor_expand`), 영향이 없으면 `perf::BOOST` 후보(39 §4-6). 실서버 시험은 프로필 환경 변수 셋(`NSQL_ORACLE_PROFILE` · `NSQL_MSSQL_PROFILE` · `NSQL_PG_PROFILE`) — Oracle은 객체를 만들지 않고(익명 블록 · SYS 패키지), SQL Server는 세션 임시 프로시저(`#…`)만.
-- **큰 파일 탭은 상시 비용이 드는 기능을 단계별로 끈다 — 새 기능(특히 확장 효과·플러그인 훅)을 넣을 때 `editors.rs enforce_large`에 한 줄**(`feature_limited(level, 기준)` · 기준은 설정 · 편집 코어는 끄지 않는다 · 단계가 내려가면 `restore_large_features`로 되돌린다).
-- **설정의 종속은 `DEPENDS`로**(부모가 조건을 못 채우면 설정 창에서 잠김 + 흐림) · 키를 바꾸면 옛 값은 `migrate_*`로 옮긴다(`grid.result_tabbar` → `grid.result_tabbar_single`).
-- 자체 캡처: 설정 창은 `NSQL_STARTUP_CMD=edit.prefs:<검색어>`로 그 카드만 보이게 연다 · 격리 폴더의 `settings.conf`는 **`키=값`(공백 없음)** — 덧붙인 뒤 `nsql config get <키>`(같은 `NSQL_HOME`)로 읽히는지 확인한다.
-- **결과 탭 제목 = 번호 규칙이 기본**(`결과N` · 가장 큰 번호 + 1 · `results.rs numbered_index`가 두 언어의 틀을 읽는다) · 사용자가 붙인 이름(`named`)과 커서 라벨은 덮지 않는다.
-- **DBMS별 종속 설정은 "자동 탐지 / 직접 지정 / 읽기 전용 정보" 틀로**([64 §2](64-dbms-clients-and-driver-packaging.md)): 계산 값은 `nsql_settings::INFO_KEYS`(저장 안 함 · `set` 거부 · 설정 창에서 늘 잠김) · 탐지는 파일 시스템만 읽는다 · **직접 지정한 것은 그것만 쓴다**(조용히 다른 것으로 넘어가지 않는다 — 실패가 낫다) · 드라이버는 값만 돌려주고 문구는 호스트가 `Msg`로.
-- **`${…:q}`** = 작은따옴표로 감싸고 안의 작은따옴표는 두 번 · SQL Server `N'…'` · MySQL 역슬래시 두 번(`engine.rs sql_text_literal`).
-- **마우스 이동·키 처리 경로에서 `edit.text()`·`chars_vec()`를 부르지 않는다** — 줄·구간 조회는 `edit.buf()`의 줄 표로(`line_of` · `line_start` · `line_end`). 89차 추가: 드래그 처리가 사건마다 본문 전체를 문자열로 만들어 20 MB에서 12.7 ms/이동이었다 → 입력 경로를 고치면 `bench_editor`에 그 시나리오를 더한다.
-- **드래그 선택은 포인터가 컨트롤 밖에 있어도 세로 위치를 따라간다**(옆 밖 = 그 줄의 처음/끝 · 한 글자씩 미는 가로 자동 스크롤은 같은 줄에 가려진 글이 있을 때만).
-- **"잠금"은 사건 전달을 막는 것으로 끝나지 않는다** — 포커스 지정 · 키/IME/붙여넣기 경로(`focused_textbox`) · 값 수거 · 잠금 재계산 시점 넷을 다 본다. 글자 칸은 nexa-ctl 읽기 전용(`set_read_only` — 복사는 되고 편집은 편집 코어가 거부)으로, 나머지는 포커스를 주지 않는다(`prefs_win.rs apply_deps` · 89차 추가 7).
-- **창은 만들 때 모니터 안으로**(`wingeom::keep_on_screen`) — 새 창을 추가하면 생성 직후 한 줄.
+| 답은 한글로 · 진행 보고 | §2-1 · CLAUDE.md §3 |
+| Debug 실행 + Release(lite) 빌드 | §2-1 · §3 |
+| 포커스 링 · 마우스 라우팅 · hover | [claude-ui-rules](claude-ui-rules.md) |
+| 형제 저장소 SSH 별칭 | CLAUDE.md §1 |
+| GUI 자체 캡처 · 헤드리스 | §3 · §4 · `scripts/` |
+| 입력 주입 금지 · 포커스 · 클립보드 · 격리 확인 · 시험의 실제 설정 폴더 금지 · heredoc | §2-4 · §3 |
+| ① 커밋 전 `cargo fmt --all -- --check` 두 작업공간(파일별 rustfmt는 마지막 수정 뒤 빠지기 쉬움) | [16 §4-1](16-doc-git-conventions.md) ② |
+| ② 빌드 요청 전 `scripts/check-3os.sh --quick`(bin dead_code는 `clippy -p`로 안 잡힘) | [16 §4-1](16-doc-git-conventions.md) ③ |
+| ③ CI 감시 = `gh run list --commit <전체 SHA>`(비인증 API 시간당 60회 한도) | [16 §4-1](16-doc-git-conventions.md) ⑥ · [102 §6](102-collab-session-operation.md) |
+| ④ 시험 범위 = 사용자 요청 때 + 릴리스 직전 1회(D-439) | [102 §5-7](102-collab-session-operation.md) |
+| ⑤ `git mv`는 즉시 스테이징 · 커밋 전 `git diff --cached --stat` | [16 §4-1](16-doc-git-conventions.md) ② |
+| ⑥ `target/debug` 아래 exe(nsql.exe 포함)는 누가 띄웠든 종료 후 빌드 | §2-4 끝 줄 |
+| ⑦ 빌드 요청 ~ 회신까지 두 저장소 소스 편집 멈춤 | [102 §5-6](102-collab-session-operation.md) |
+| ⑧ 릴리스·개발 병행 = `main` 전용 `../_rel` 워크트리 + 병합 전 rebase | [16 §4-1](16-doc-git-conventions.md) ⑧ |
+| ⑨ Windows python = pyenv 셰임 함정(인자 `\|` 깨짐 · stdout cp949 · CRLF) | §3 셸 행 아래(이 줄) — python은 실제 exe 경로로 부르고 인자 대신 환경 변수 · 출력은 UTF-8로 재설정 |
+| ⑩ 헤드리스 V1 Windows = Git Bash `$!`는 MSYS PID · 창 판정은 `FindWindow`/`IsWindowVisible` | §4 헤드리스 |
+| ⑪ 포터블 설정 폴더(T-106 · D-381)는 사용자 명시 요청 전까지 목록·결정 대기에 올리지 않음 | 이 줄(원문) |
+| ⑫ SDK 범용 구조 원칙(새 ABI 조각 = 선언 + export + 중립 요청/응답 · 단계·적용 방식·상황 축을 처음부터) | 이 줄(원문) · [75](75-extension-sdk-and-dynamic-loading.md) |
+| ⑬ 익명화(규칙 · 익명 값) | §2-1(대응표 원본 = 로컬 메모리·사용자) |
+| ⑭ 실서버 시험 환경 = Db2 = CI `db2.yml` dispatch `image` 입력(코드스페이스 삭제 · 이 PC Docker/WSL 없음) · MySQL 코드스페이스 삭제(필요 시 새로) | 이 줄(원문) · [20](20-testing-codespaces.md) |
 
 ## 6. 이어 받을 일 — 11-01 아침 기준(사용자 결정 D-437·D-438)
 

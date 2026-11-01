@@ -36,13 +36,15 @@
 
 ```
 <설정 폴더>/
-  workspaces/<워크스페이스 id>.json      ← 탭 목록·순서·활성·캐럿·스크롤·접힘·프로젝트 경로(프로젝트 없음 = "default")
+  workspaces/<워크스페이스 id>.json      ← (09-22 초안 · 현행 = §6-1·§9) 탭 목록·순서·활성·캐럿·스크롤·접힘·프로젝트 경로(프로젝트 없음 = "default")
   backups/
     <워크스페이스 id>/<탭 id>.txt         ← 메모리 탭 본문(제목 · 구문 · 세대 프리앰블)
     files/<경로 해시>.txt                 ← 참조 파일의 **미저장 변경 본문**(원본 경로 · 원본 해시·mtime · 세대 프리앰블)
   undo/<경로 해시>.nsqu                    ← (기존 60) 되돌리기 기록
 <프로젝트 폴더>/<이름>.nsql-project        ← 폴더 목록(67 · VCS)
 ```
+
+> (11-01 정합) 위 그림 = 09-22 초안 — 현행(§6-1·§9 · D-407) = 프로젝트 모드는 탭 상태·미저장 본문을 **프로젝트 파일**(67 §7 · v2 블록)에 · 파일 모드 hot exit = `<설정 폴더>/workspaces/hot-exit.nsql-project`(D-181 · 코드 `project.rs` `hot_exit_path`) · 파일 탭 안전망 = `<설정 폴더>/backups/files/<경로 해시>.txt`(`backups.rs`) · `workspaces/<워크스페이스 id>.json`은 만들지 않는다. 아래 "프로젝트 파일에는 개인 상태를 넣지 않는다"도 원안(이력).
 
 - **워크스페이스 id** = 프로젝트 파일 정규화 경로의 해시(`undofile::name_for` 규약 재사용 · Windows 대소문자 무시) · 프로젝트 없음 = `default`(D-148 ①). 프로젝트 파일에는 **개인 상태를 넣지 않는다**(VCS 공유 · Sublime `.sublime-project` ↔ `.sublime-workspace` 분리 · 67 §0-1).
 - **탭 항목**: `{ kind: file|memory, path?, title, id, order, active, caret: {line, col}, sel?: [a,b], scroll: {top_line, left_px}, folds?: [...], syntax?, encoding, eol, dirty, backup?: "<파일명>", read_only, large }`. 캐럿·스크롤은 **글자 좌표**(줄·열 — 바이트 아님 · 61 §1) · 복원 때 본문 길이로 **클램프**.
@@ -168,14 +170,7 @@ impl<P> SaveQueue<P> {
 
 ## 8. 결정(권장안 · 사용자 확인)
 
-| # | 물음 | 권장 |
-|---|---|---|
-| **D-178** | 참조 파일 백업 판 수: ① 최신 1개 ② Local History식 N개(5일) | **①** — 되돌리기 기록 파일(60)이 이력을 이미 가진다 · 단순·작음. 요구가 생기면 ②는 `backups/files/<해시>/<시각>.txt`로 확장 가능 |
-| **D-179** | 캐럿·스크롤을 워크스페이스에 쓰는 시점: ① 매 이동(디바운스) ② 탭 전환·포커스 잃음·5초 유휴·종료 | **②** — 타이핑 중 디스크 쓰기 0 · 복원 정확도는 사실상 같다 |
-| **D-180** | 복원 때 백업 본문 vs 디스크가 다를 때: ① 묵시로 백업 올리고 띠 ② 먼저 묻기 | **①**(VS Code·Sublime · D-146과 일관) |
-| **D-181** | `project.hot_exit` 기본: ① `always` ② `only_on_quit` | **①**(Sublime 기본 · 창 닫기 = 종료인 단일 창 앱) |
-| **D-182** | 100개 `Save All` 진행 표시: ① 상태줄 카운트만 ② 실행 상태 카드 | **①** — 저장은 빠르다(원자적 쓰기 100개 < 1초) · 실패만 토스트 |
-| **D-183** | 백업 폴더 위치: ① 설정 폴더 `backups/` ② 프로젝트 폴더 옆 `.nsql/` | **①**(VCS 오염 없음 · DR-27 사용자 폴더 규약) |
+→ §9(확정 D-413 · 권장 = 확정 동일 · D-178~D-183 권장 표는 §9로 합침 · 11-01 정합)
 
 ---
 
@@ -192,5 +187,5 @@ impl<P> SaveQueue<P> {
 | D-182 | 대량 Save All 진행 표시 | **상태줄 카운트만** | 실패만 토스트 |
 | D-183 | 백업 폴더 위치 | **설정 폴더 `backups/`** | 프로젝트 폴더에 쓰지 않음(D-407 프로젝트 파일 하나만과도 일치) |
 
-- 09-23 정정(§6-1)과의 관계: 미저장 본문의 **복원 원천 = 프로젝트 파일**(v2 블록) · `backups/`는 안전망. 파일 모드(프로젝트 없음)는 프로젝트 파일이 없으므로 **기본 워크스페이스**(67 §2-1 `workspaces/default.nsql-workspace`) + `backups/<워크스페이스 id>/`가 원천 — D-181 `always`의 남은 일이 여기.
+- 09-23 정정(§6-1)과의 관계: 미저장 본문의 **복원 원천 = 프로젝트 파일**(v2 블록) · `backups/`는 안전망. 파일 모드(프로젝트 없음)는 프로젝트 파일이 없으므로 **기본 워크스페이스**(67 §2-1 `workspaces/default.nsql-workspace`) + `backups/<워크스페이스 id>/`가 원천 — D-181 `always`의 남은 일이 여기. (11-01 정합: 구현 = `workspaces/hot-exit.nsql-project` 프로젝트 문서 형식 · D-181 행)
 - 남은 일(P3) = ① ✅ 10-31 28차 `SaveQueue` + `backup-writer`([journal 10-31 §13](journal/2026-10-31.md)) · ~~① `SaveQueue`(같은 열쇠 병합 · 최대 대기) + 쓰기 전용 백업 스레드~~ ② 파일 모드 hot exit ③ D-180 탭 띠 ✅ ④ 큰 버퍼 안내 띠(10-31 31차 · 상한 = `project.unsaved_max_mb`) ⑤ `hot_exit=off` 종료 물음 ⑥ 실측(P3-e).

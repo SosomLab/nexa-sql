@@ -1,6 +1,6 @@
 # 50 · 확장(extension) 시스템 도입 검토 — GitHub 배포 · 활성화 1회 · 목록/검색/설치 · 실행 방식(샌드박스·스레드·권한) · Python 대비 검토
 
-> **상태**: 📐 검토(09-17 · 사용자 요청 "GitHub에서 다운로드 · 플러그인 매니저는 1회 활성화(네트워크 필요 인지) · 목록 조회·검색 · 설치 = 다운로드+자동 배치 · 플러그인 코딩 방식 · 인터프리터면 제약 환경·별도 스레드·권한 낮춤 · Python 가정으로 속도/성능/비용/복잡도/용량 전반 검토"). 결정 = **D-87~D-90**(§6 · 사용자 답 대기). 선행 = [DR-5](10-decision-record.md)(Sublime 패키지 구조) · [DR-16](10-decision-record.md)(플러그인 = 데이터 패키지 → WASM `wasmi` → Lua는 수요 시) · [22 드라이버 확장](22-driver-extensions.md)(GitHub Releases 다운로드 · 관리 UI · in-process cdylib) · [09 편집기·패키지](09-editor-and-packages.md) · [30](30-architecture-patterns.md) 확장점 규칙 · [26 §8](26-performance-architecture.md) 네트워크 규칙.
+> **상태**: ✅ 구현 = [75](75-extension-sdk-and-dynamic-loading.md) (11-01 정합) · (이력) 📐 검토(09-17 · 사용자 요청 "GitHub에서 다운로드 · 플러그인 매니저는 1회 활성화(네트워크 필요 인지) · 목록 조회·검색 · 설치 = 다운로드+자동 배치 · 플러그인 코딩 방식 · 인터프리터면 제약 환경·별도 스레드·권한 낮춤 · Python 가정으로 속도/성능/비용/복잡도/용량 전반 검토"). 결정 = **D-87 · D-89(→D-373) · D-90(→D-372) ✅ · D-88 ⏳**(§6 · (11-01 정합)). 선행 = [DR-5](10-decision-record.md)(Sublime 패키지 구조) · [DR-16](10-decision-record.md)(플러그인 = 데이터 패키지 → WASM `wasmi` → Lua는 수요 시) · [22 드라이버 확장](22-driver-extensions.md)(GitHub Releases 다운로드 · 관리 UI · in-process cdylib) · [09 편집기·패키지](09-editor-and-packages.md) · [30](30-architecture-patterns.md) 확장점 규칙 · [26 §8](26-performance-architecture.md) 네트워크 규칙.
 
 ## 0. 결론 여섯 줄
 
@@ -103,7 +103,7 @@
 - **✅ 09-23 실제 이름**: SDK 크레이트 = `nexa-ext-sdk`(`extensions/sdk/nexa-ext-sdk` · WIT 대신 버퍼+JSON ABI v1) · 템플릿 = `extensions/sdk/samples/hello-ext` · 첫 공개 샘플 = `samples/rainbow-pairs` · 빌드 = `scripts/ext-build.*` — 상세 [75](75-extension-sdk-and-dynamic-loading.md).
 - **문서**: 호스트 API 레퍼런스(WIT에서 생성) · 능력 목록 · 샘플 3종(데코레이션 · 명령/포매터 · 결과 후처리).
 
-## 6. 의사결정(사용자 답 대기 · ⚠ 10-27 기준 = D-87 ✅ 확정 = WASM `wasmi`([75 §10](75-extension-sdk-and-dynamic-loading.md)) · D-88~D-90 대기)
+## 6. 의사결정(D-87·D-89(→D-373)·D-90(→D-372) ✅ · D-88 ⏳ (11-01 정합) · D-87 = WASM `wasmi`([75 §10](75-extension-sdk-and-dynamic-loading.md)) · (이력) 10-27 기준 = D-88~D-90 대기)
 
 | # | 질문 | 후보 | 권장 |
 |---|---|---|---|

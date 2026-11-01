@@ -1,6 +1,6 @@
 # 51 · 첫 플러그인 — 레인보우 괄호(인용부호 포함) + 괄호 이동 메뉴 · 유사 패키지 조사 · 설계
 
-> **상태**: 📐 설계(09-17 · 사용자 요청 "괄호·인용부호 `{ " ' [ ( <`를 rainbow로 순차 색 · 짝으로 이동 우클릭 메뉴 · '괄호 이동' 서브메뉴(짝·형제·상위·하위) · 유사 패키지 조사 · 설계 뒤 결정이 끝나면 개발"). 결정 = **D-91~D-95**(§7 · 사용자 답 대기). 선행 = [50 플러그인 시스템](50-extension-system.md)(3층 · WASM 기본 · D-87~90 대기) · [29 §7-1](29-editor-syntax-palette-statusbar.md)(Ctrl+M 짝 이동 · Ctrl+Shift+M 괄호 안 확장 ✅) · [49](49-auto-indent.md) · [46](46-minimap-features.md).
+> **상태**: ✅ 구현(09-17 맥 54차 · T-119 배선 · §11 · 키 층 = §13 · 11-01 정합) · (이력) 📐 설계(09-17 · 사용자 요청 "괄호·인용부호 `{ " ' [ ( <`를 rainbow로 순차 색 · 짝으로 이동 우클릭 메뉴 · '괄호 이동' 서브메뉴(짝·형제·상위·하위) · 유사 패키지 조사 · 설계 뒤 결정이 끝나면 개발"). 결정 = **D-91~D-95**(§7 · ✅ 09-17 확정 · 11-01 정합 · 원안 = 사용자 답 대기). 선행 = [50 플러그인 시스템](50-extension-system.md)(3층 · WASM 기본 · D-87~90 대기) · [29 §7-1](29-editor-syntax-palette-statusbar.md)(Ctrl+M 짝 이동 · Ctrl+Shift+M 괄호 안 확장 ✅) · [49](49-auto-indent.md) · [46](46-minimap-features.md).
 
 ## 0. 결론 여섯 줄
 
@@ -39,16 +39,18 @@ pub struct PairTable { pairs: Vec<Pair> /* open 오름차순 */, by_close: Vec<u
 
 ## 3. 표시
 
+> (11-01 정합) 설정 칸 = 실제 REGISTRY 이름 · 원안 `rainbow.*` → 색 = `ext.rainbow_pairs.*` · 쌍 종류·현재 쌍 = `editor.pair_*`(편집 코어 · §13).
+
 | 요소 | 규칙 | 설정 |
 |---|---|---|
-| 괄호 글자 색 | 깊이 `d % N`번째 팔레트 색(문자열 안 제외) | `rainbow.colors`(`#RRGGBB,...` · 비면 테마 기본 6색) · `rainbow.enabled` |
-| 인용부호 | 열림/닫힘 따옴표 글자만 색(문자열 본문은 `syn_string` 그대로) | `rainbow.quotes`(on) |
-| `<>` | 기본 제외(SQL 연산자) | `rainbow.angle`(off) |
-| 짝 없음 | `danger` 색 + 물결 밑줄 | `rainbow.unmatched`(on) |
-| 현재 쌍 | 캐럿이 괄호 옆/안 → 그 쌍 2글자에 밑줄 2px(+굵게) | `rainbow.match`(near/always/off) |
-| 현재 스코프 강조 | 옵션: 캐럿이 든 쌍 밖의 괄호를 흐리게 | `rainbow.scope_dim`(off · 2순위) |
-| 안내선 | 옵션: 쌍의 열림 열에 세로선(들여쓰기 안내선 위) | `rainbow.guides`(off · 2순위) |
-| 성능 | `rainbow.max_kb`(2048) · 향상 모드 `rainbow.enabled=off` | 39 §4 |
+| 괄호 글자 색 | 깊이 `d % N`번째 팔레트 색(문자열 안 제외) | `ext.rainbow_pairs.colors`(`#RRGGBB,...` · 비면 테마 기본 6색) · `ext.rainbow_pairs.enabled`(on) · `ext.rainbow_pairs.contrast_order`(on · §12) |
+| 인용부호 | 열림/닫힘 따옴표 글자만 색(문자열 본문은 `syn_string` 그대로) | `editor.pair_kinds`(기본에 인용부호 포함 · 원안 `rainbow.quotes`) |
+| `<>` | 기본 제외(SQL 연산자) | `editor.pair_kinds`(기본 = `< >` 제외 · 원안 `rainbow.angle`) |
+| 짝 없음 | `danger` 색 + 물결 밑줄 | `ext.rainbow_pairs.unmatched`(on) |
+| 현재 쌍 | 캐럿이 괄호 옆/안 → 그 쌍 2글자에 밑줄 2px(+굵게) | `editor.pair_match`(near/always/off · 기본 near · 원안 `rainbow.match`) |
+| 현재 스코프 강조 | 옵션: 캐럿이 든 쌍 밖의 괄호를 흐리게 | 원안 `rainbow.scope_dim`(off · 2순위) · 미구현(키 없음) |
+| 안내선 | 옵션: 쌍의 열림 열에 세로선(들여쓰기 안내선 위) | 원안 `rainbow.guides`(off · 2순위) · 미구현(키 없음) |
+| 성능 | `ext.rainbow_pairs.max_kb`(기본 0 = 편집기 큰 파일 단계 `file.large_ext_level`를 따름 · 원안 2048) · 향상 모드 `ext.rainbow_pairs.enabled=off`(BOOST) | 39 §4 |
 
 렌더: nexa-ctl `TextBox::set_color_overlay(Vec<(usize, usize, Color)>)`(문자 범위 → 색 · 기존 구문 색 위에 우선) + `set_underlines(...)` — 호스트(플러그인)가 쌍 표에서 만든다. 오버레이는 정렬 배열 · 페인트는 보이는 행 범위만 이진 탐색.
 
@@ -166,15 +168,15 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 - **언어**: Rust(1급) · C/C++ · AssemblyScript · Zig · TinyGo. Python→WASM(CPython-wasm)은 20MB+·느려서 비현실적 → Python은 프로세스 플러그인(50 §3).
 - **결론**: 편집 확장 · 명령 · 데코레이션 · 결과 후처리 · 인텔 데이터·후보까지는 WASM이 적합하고, 핵심 편집 규칙(자동 닫기 등)과 프레임 단위 그리기·드라이버는 코어/cdylib에 남긴다. 첫 플러그인은 **§9 구성(in-process · 코어+API 층)**으로 만들고, T-118 뒤 색/메뉴 층을 그대로 WASM 샘플로 옮겨 API를 검증한다.
 
-## 7. 의사결정(사용자 답 대기)
+## 7. 의사결정(✅ 09-17 전부 확정 · §11 · 11-01 정합 · 원안 = 사용자 답 대기)
 
 | # | 질문 | 후보 | 권장 |
 |---|---|---|---|
-| D-91 | 구현 형태 | ① in-process 플러그인(호스트 API 먼저 · 나중에 WASM으로) ② T-118 WASM 런타임 뒤에 ③ 편집기 내장 기능(플러그인 아님) | **①** |
+| D-91 ✅ | 구현 형태 | ① in-process 플러그인(호스트 API 먼저 · 나중에 WASM으로) ② T-118 WASM 런타임 뒤에 ③ 편집기 내장 기능(플러그인 아님) | **①** |
 | D-92 ✅ | 쌍 집합 | ① `()[]{}` + 인용부호 `" ' \`` · `<>` 제외(기본) ② `<>` 포함 ③ 인용부호 제외 | **①** 확정(09-17) |
 | D-93 ✅ | 이동 키 | ① Ctrl+Alt+, / . (형제) · Ctrl+Alt+[ / ] (상위/하위) ② Alt+↑/↓ 계열(문장 이동과 충돌) ③ 키 없이 메뉴만 | **①** 확정(09-17) |
 | D-94 ✅ | 1순위 범위 | ① 색+짝 없음+현재 쌍+이동 메뉴 ② ①+자동 닫기/감싸기 ③ ②+안내선/스코프 흐림/키워드 쌍 | **②** |
-| D-95 | 팔레트 | ① 테마 기본 6색(라이트/다크 각각) ② 사용자 색 목록 필수 ③ 종류별 독립 색 풀 | **①**(②·③은 설정 옵션) |
+| D-95 ✅ | 팔레트 | ① 테마 기본 6색(라이트/다크 각각) ② 사용자 색 목록 필수 ③ 종류별 독립 색 풀 | **①**(②·③은 설정 옵션) |
 
 ## 11. 진행 상태(09-17 Windows → Mac 이관 · T-119)
 
@@ -191,7 +193,7 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 
 **✅ 배선 완료(09-17 맥 54차 · T-119)**: 이름 **Rainbow Pairs**(`rainbow-pairs`) · 설정 키 `ext.rainbow_pairs.*`(설정 창 Extensions ▸ Rainbow Pairs · 끄면 분류 숨김) · `App.extensions` Registry · `apply_extensions`(설정 변경/켜기/끄기 → 전 탭 `set_bracket_opts` + 우클릭 서브메뉴) · 키맵 Ctrl+Alt+, . [ ] · 편집 메뉴 4항목 · 팔레트 · 명령은 `Registry::run`(끈 확장은 무시). 아래 목록은 기록용.
 
-**☐ 남은 배선(T-119 · Mac에서)**
+**(계획 원문) ☐ 남은 배선(T-119 · Mac에서)** → ✅ 09-17 맥 54차 배선 완료(위 줄 · TODO T-119 ✅ · 11-01 정합) · 잔여(TODO T-119) = 실기 · 29/24 문서 표 · 색 목록 설정 창(4번)
 1. `App`에 `plugins: Registry` 두고 시작·설정 변경(`apply_setting` `ext.rainbow_pairs.*`) 때 `on_settings` → `editors.set_bracket_opts`(전 탭 + `make_box`) · boost 뒤에도 재적용.
 2. 키맵 `edit.bracket_prev/next/parent/child`(Ctrl+Alt+, / . / [ / ] · D-93) · `menu_action`에서 `plugins.owner_of(id)` → `run(id, editor)` · 팔레트 등록(`cmds.push`).
 3. 편집 메뉴 "괄호 이동 ▸" 서브메뉴 + 편집기 우클릭 `set_menu_extras(plugins.menu_extras(display))`(단축키 표시는 `keymap::display`).

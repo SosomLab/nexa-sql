@@ -5,6 +5,8 @@
 
 ## 1. 명령 체계 (제안)
 
+> 현행 명령 = [40 §0](40-cli-usage.md)(14개 · bulk = import/export --fast · desc = cat) · 인자 규약 = [27](27-cli-conventions.md) · 아래 = 09-12 제안(11-01 정합)
+
 ```text
 nsql plan     [-d d] <script|-> [args]              # ✅ 엔진 dry-run(실행 없이 계획 출력)
 nsql run      -c <연결> [-f fmt] <script|-> [args]  # ✅ 스크립트 실행(&1..&n · WHENEVER · 프롬프트)
@@ -24,6 +26,8 @@ nsql config set format.preset default|kiros33|river   # ✅ 프리셋 적용 = �
 
 ## 2. 드라이버 계층 (`nsql-driver-*`) — [06 A](06-rust-ecosystem.md)
 
+> 우선순위 = [121](121-database-support-priority.md) · 크레이트 = [10 §4 원장](10-decision-record.md) · 드라이버 형태 = [22 §0](22-driver-extensions.md)(D-350) · 아래 표 = 09-12 원안(11-01 정합)
+
 | 순위 | DBMS | 크레이트 | 인증·비고 |
 |---|---|---|---|
 | 1급 | **Oracle** | 지금 `oracle`(kubo · ODPI-C · Instant Client 런타임 로드) → 공식 순수 Rust `oracledb` GA 시 교체 | REF CURSOR OUT · DBMS_OUTPUT · LOB · 배열 바인딩 |
@@ -35,6 +39,8 @@ nsql config set format.preset default|kiros33|river   # ✅ 프리셋 적용 = �
 모든 드라이버는 `nsql_core::Session` 포트(`execute` · `fetch_cursor` · `commit` · `rollback`) + 카탈로그 포트(오브젝트 브라우저용)를 구현한다. 동기 드라이버는 워커 스레드에서 돌리고 UI/CLI는 채널로 받는다(clip DR-41 "UI 스레드는 기다리지 않는다").
 
 ## 3. Bulk insert — 방언별 네이티브 경로 (`nsql-io`)
+
+> 현행 = [89](89-bulk-io-review.md)(`nsql import` · 설정 `bulk.*` · `--mode auto/driver/multirow/single`) · 아래 = 09-12 원안(11-01 정합)
 
 | DBMS | 경로 | 비고 |
 |---|---|---|

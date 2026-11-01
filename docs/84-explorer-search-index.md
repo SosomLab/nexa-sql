@@ -21,7 +21,7 @@
    │  ② 상세   materialize(): index ∩ m.matches → 폴더 없는 스키마엔 폴더 생성(make_folders) → Object 노드(부분) → 폴더 = Partial → complete_q
    │  refilter(): 부분 폴더도 Loaded처럼 펼침 · 개수 n/?
    └  ③ 완성   pump_complete(): complete_q 앞에서 하나 → soft + Req::Objects(prio 1) → 응답 diff_children → Loaded(n/전체) → 다음
-Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색 중이면) ② ③ 다시 · pump_index() 다음 스키마
+Resp::Index ─► index[스키마] 교체(→ 85 §6로 대체: 메타 스레드 l1_names) · index_done += 스키마 · (검색 중이면) ② ③ 다시 · pump_index() 다음 스키마
 검색 해제  ─► complete_q·index_q 비움(진행 중 하나는 응답을 그대로 받는다) · 필터가 펼친 폴더 접힘 · 부분 폴더는 Partial 그대로(펼치면 조용히 완성)
 유휴      ─► prefetch_step(now): 검색 없음 · 마지막 응답 뒤 idle_ms 경과 · 안 읽은 스키마 하나 → tx_bg Req::Index
 ```
@@ -69,9 +69,11 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 ## 4. 데이터 구조(`Explorer`)
 
+> → [85 §6](85-metadata-layers.md)로 대체(부분): `index: Vec<NameEntry>` 폐지 · 이름 사본 = 백그라운드 메타 스레드 `l1_names` · 판정 = `Req::Search`/`Resp::Hits` · 나머지 필드(`index_done`·`index_q`·`complete_q` 등)는 현행 (11-01 정합)
+
 | 필드 | 뜻 |
 |---|---|
-| `index: Vec<NameEntry>` | 스키마별로 교체되는 항목(수천~수만 · 항목당 이름 셋 = 수십 B) |
+| ~~`index: Vec<NameEntry>`~~ → 85 §6로 대체 | (원안) 스키마별로 교체되는 항목(수천~수만 · 항목당 이름 셋 = 수십 B) |
 | `index_done: HashSet<String>` | 항목이 다 있는 스키마 |
 | `index_q: VecDeque<String>` · `index_inflight: Option<String>` | 읽을 순서(현재 스키마 먼저) · 진행 중 하나 |
 | `index_truncated` · `index_last_at` | 상한 안내 · 선적재 간격 기준 |
@@ -89,13 +91,13 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 | `explorer.index_max` | 200000 | 스키마당 인덱스 상한(0 = 무제한) · 걸리면 헤더 "인덱스 상한" |
 | `explorer.index_hits_max` | 2000 | 한 필터가 서버마다 트리에 올리는 일치 상한('A' 같은 넓은 검색어 보호) |
 | `explorer.index_prefetch` | on | 유휴 선적재(§7) |
-| `explorer.index_idle_ms` | 5000 | 선적재 간격(스키마 하나마다) |
+| `explorer.index_idle_ms` | ~~5000~~ → **250**(D-209 · [85 §7](85-metadata-layers.md) (11-01 정합)) | 선적재 간격(스키마 하나마다) |
 | `explorer.search_desc` | off | 설명 포함 검색(127차 · 필터 틀 "Include Description" 토글과 한 값) — 켜면 검색어가 있을 때만 스키마별 코멘트를 읽어 이름 또는 설명 일치 · [28 §7-6](28-object-explorer.md) |
 | `explorer.search_scope` | all | 검색 범위(127차 · D-291) — all = 전체 DBMS(서버 전체 스키마 · SQL Server 전 DB) · current = 현재 스키마/데이터베이스만 · [28 §7-6](28-object-explorer.md) |
 
 ## 6. 일관성(인덱스와 트리가 어긋나지 않게)
 
-- **전체 목록 응답(`Resp::Objects`)** = 그 (스키마, 종류) 버킷의 인덱스를 새 목록으로 교체 — 트리 갱신(DDL 뒤 57 T1 · 워터마크 T2 · 사용자 새로 고침)이 곧 인덱스 갱신.
+- **전체 목록 응답(`Resp::Objects`)** = 그 (스키마, 종류) 버킷의 인덱스를 새 목록으로 교체(→ 85 §6로 대체: 메타 스레드 사본 정정 `Req::NamesUpdate` (11-01 정합)) — 트리 갱신(DDL 뒤 57 T1 · 워터마크 T2 · 사용자 새로 고침)이 곧 인덱스 갱신.
 - **스키마 목록이 새로 오면**(접속·재접속·스키마 옵션 변경) 인덱스 전부 무효화 → 검색 중이면 바로 다시 채움(사용자 1번 이미지 = 필터 중 새 접속의 노드가 안 보이던 결함 해결).
 - **명시 메타 갱신**(`intel.refresh*` · 79 §4) = 무효화.
 - 부분 폴더를 사용자가 직접 펼치면 조용히 완성(디프) — 있던 부분 노드·선택은 그대로.

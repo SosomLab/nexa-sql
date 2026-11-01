@@ -1,7 +1,7 @@
 # 68 · 확장(Extension) 개발자 API — 설계 방향 · 현재 범위 · 추가/변경 대상 · 샘플 · 배포 · 동적 로딩/해제
 
 > **요청**(사용자 09-22): *"Rainbow Pair의 실제 동작 코드를 분리해 실행 모듈도 플러그인으로 다운로드되게 하는 작업이 진행되지 않았다. 외부에서 기능을 쓰게 하려면 확장 개발자용 API가 필요 — 설계 방향 · 현재 구현 범위 · 추가/변경 대상 · 개발 샘플 · 배포 방법을 순서대로. 동적 로딩과 관리(당장 필요 없는 플러그인은 프로세스/메모리에서 내리고 해제) 검토. 방식·절차·범위는 물어볼 것."*
-> **선행**: [50 확장 시스템](50-extension-system.md)(3층 · D-87~90 **미확정**) · [51 Rainbow Pairs](51-rainbow-brackets.md)(D-91 ① 코어 + in-process 층 ✅) · [22 §0 드라이버 확장](22-driver-extensions.md)(DR-29 in-process cdylib · 지연 dlopen) · [extensions/README.md](../extensions/README.md)(패키지 메타 v1) · [39 자원 거버넌스](39-resource-governance.md).
+> **선행**: [50 확장 시스템](50-extension-system.md)(3층 · D-87 ✅ · D-89(→D-373)·D-90(→D-372) ✅ · D-88 ⏳ (11-01 정합) · (이력) D-87~90 미확정) · [51 Rainbow Pairs](51-rainbow-brackets.md)(D-91 ① 코어 + in-process 층 ✅) · [22 §0 드라이버 확장](22-driver-extensions.md)(DR-29 in-process cdylib · 지연 dlopen) · [extensions/README.md](../extensions/README.md)(패키지 메타 v1) · [39 자원 거버넌스](39-resource-governance.md).
 
 ---
 
@@ -11,8 +11,8 @@
 2. **설계 방향 = 호스트 API 한 벌 · 실행기 셋**: 확장이 보는 표면(`ExtensionApi` — 편집기 · 결과 · UI · 설정 · 이벤트)을 **하나**로 정의하고, 그 위에 in-process(우리 코드) · **WASM**(내려받는 코드 · 샌드박스) · **네이티브 cdylib**(드라이버와 같은 길 · 신뢰된 배포자만) 세 실행기를 둔다. Rainbow Pairs를 **첫 WASM 확장**으로 옮겨 API를 검증한다.
 3. **권장 실행 방식 = WASM(`wasmi`)**(D-87 ①): 샌드박스·능력 기반 권한·3-OS 한 바이너리·용량 0.6 MB · 인터프리터 속도(5~20×)는 표시·명령류에 충분. Rainbow Pairs의 무거운 부분(쌍 표 계산)은 **코어에 남고** 확장은 색·명령·메뉴만 하므로 성능 위험 없음. JIT(`wasmtime`)·Python 프로세스는 수요가 생기면.
 4. **동적 로딩/해제 = 세 상태**(설치됨 → **적재됨**(모듈 인스턴스 · 메모리) → **활성**(이벤트 구독 중)): 활성화 시점 = `manifest.activation`(`onStartup` · `onCommand:<id>` · `onLanguage:sql` · `onView:<id>` — VS Code 활성화 이벤트 모델) · **유휴 해제** = 활성 구독이 없고 `extensions.unload_idle_secs` 동안 호출이 없으면 인스턴스 폐기(메모리 회수 · 다음 호출 때 재적재 · 상태는 `storage`에 자기 몫만) · 프로세스 확장은 같은 규칙으로 종료/재기동 · 관리 UI = 확장 패널 상태 열(설치·적재·활성·해제됨 · 메모리 KB · 마지막 호출) + "지금 내리기".
-5. **개발자 경험**: `nexa-ext-sdk`(공개 · 형제 저장소 · Rust 크레이트 + WIT 파일) → `cargo build --target wasm32-unknown-unknown` → `extension.json`(`kind: wasm` · `capabilities` · `activation`) → 저장소 폴더/GitHub Releases에 올리면 매니저가 설치. 샘플 = `extensions/samples/hello-command`(팔레트 명령 하나) · `rainbow-pairs`(실전).
-6. **범위 제안(1차 = 4주 규모)**: API v1 = 편집기 읽기/장식(색·밑줄)/캐럿 · 명령 · 메뉴 기여 · 설정 · 이벤트(편집·캐럿·설정) — Rainbow Pairs가 쓰는 것만 · 결과/네트워크/파일은 v2. **결정 D-87~90 + 아래 D-150~155에 답이 필요**(§7).
+5. **개발자 경험**: `nexa-ext-sdk`(실제 = 저장소 안 `extensions/sdk/nexa-ext-sdk` · WIT 대신 버퍼+JSON ABI v1 · [75](75-extension-sdk-and-dynamic-loading.md) (11-01 정합) · 원안 = 공개 · 형제 저장소 · Rust 크레이트 + WIT 파일) → `cargo build --target wasm32-unknown-unknown` → `extension.json`(`kind: wasm` · `capabilities` · `activation`) → 저장소 폴더/GitHub Releases에 올리면 매니저가 설치. 샘플 = `extensions/samples/hello-command`(팔레트 명령 하나) · `rainbow-pairs`(실전).
+6. **범위 제안(1차 = 4주 규모)**: API v1 = 편집기 읽기/장식(색·밑줄)/캐럿 · 명령 · 메뉴 기여 · 설정 · 이벤트(편집·캐럿·설정) — Rainbow Pairs가 쓰는 것만 · 결과/네트워크/파일은 v2. **결정 D-87~90 + 아래 D-150~155에 답이 필요**(§7) → D-150~154 현행 확정(T-166) · D-155 → D-373 ② (11-01 정합).
 
 ---
 
@@ -44,6 +44,8 @@
         ▲ 같은 표면                    ▲ 같은 표면                          ▲ 같은 표면
   ① in-process(Rust · 앱 안)   ② WASM(wasmi · 내려받음 · 샌드박스)   ③ native cdylib(C ABI · 신뢰 배포자 · 드라이버와 같은 길)
 ```
+
+> (11-01 정합) 실제 경계 = WIT 대신 버퍼+JSON ABI v1(`extensions/sdk/nexa-ext-sdk` · [75 §3](75-extension-sdk-and-dynamic-loading.md)) — 위 그림의 "WIT로도 내보냄"은 원안.
 
 - **능력(capabilities)**: 매니페스트가 요구한 것만 링크(WASM import 실패 = 로드 거부 · 50 §4). Rainbow Pairs = `editor.read` · `editor.decorate` · `editor.caret` · `ui.menu` · `ui.command` · `settings`.
 - **장식 모델**(새로 필요한 것): 편집기에 **레이어별 스팬 목록**(`(from, to, style{fg, underline, bold})`)을 확장이 통째로 넘기고 편집기는 그리기 때 합성 — 편집기 내부(쌍 표 · 토큰)는 노출하지 않는다. 쌍 표 계산은 코어가 하고 `editor.pairs(range)`(읽기 전용 조회)로 확장에 준다 → Rainbow Pairs WASM = "쌍 표를 받아 색 스팬을 만든다"로 얇아진다(호출 비용 = 편집당 1회 · 상한 `ext.rainbow_pairs.max_kb`).
@@ -94,7 +96,7 @@
 | E4 | WASM 실행기 | `wasmi` 도입(DR-3 원장 · 39 부하원) · WIT ↔ 호스트 함수 바인딩 · 연료/시간/메모리 상한 · 능력별 import 필터 · 트랩 격리 | 대 |
 | E5 | 로딩/해제 관리자 | 상태 기계(§3) · 활성화 이벤트 · 유휴 해제 · 패널 상태 열·메뉴 · 설정 4키 | 중 |
 | E6 | 매니저 | `kind: wasm` 설치 허용(파일 = `.wasm` + manifest) · 서명 인덱스(D-89 · `nexa-license`의 Ed25519 재사용) · 갱신(update) · 능력 승인 화면(D-90) | 중 |
-| E7 | SDK · 샘플 · 문서 | `../nexa-ext-sdk`(형제 저장소 · `nexa-ext` 크레이트 + `wit/` + `cargo generate` 틀) · `extensions/samples/hello-command` · Rainbow Pairs를 `extensions/rainbow-pairs/`에 **wasm 패키지**로 게시 · 개발 안내(50 §7 갱신) | 중 |
+| E7 | SDK · 샘플 · 문서 | `../nexa-ext-sdk`(원안 = 형제 저장소 · `nexa-ext` 크레이트 + `wit/` + `cargo generate` 틀 · 실제 = `extensions/sdk/nexa-ext-sdk` · 버퍼+JSON ABI v1 (11-01 정합)) · `extensions/samples/hello-command` · Rainbow Pairs를 `extensions/rainbow-pairs/`에 **wasm 패키지**로 게시 · 개발 안내(50 §7 갱신) | 중 |
 | E8 | CLI | `nsql ext list/install/remove/pack/verify`(개발자가 패키지 sha256·서명을 만든다) | 소 |
 
 ---
@@ -150,17 +152,17 @@ Rainbow Pairs(실전 샘플) = 위 틀 + `activation: ["onLanguage:sql"]` + `on_
 
 ---
 
-## 7. 결정이 필요한 것(사용자 답 뒤 착수)
+## 7. 결정이 필요한 것(사용자 답 뒤 착수) — ★ D-87 ✅ · D-150~154 현행 확정(T-166 · D-393) · D-155 → D-373 ② · D-90 → D-372 ✅ · D-88 ⏳ (11-01 정합)
 
 | # | 질문 | 후보 | 권장 |
 |---|---|---|---|
-| **D-87**(50) | 내려받는 코드의 실행 방식 | ① WASM `wasmi` ② WASM JIT `wasmtime` ③ Python 프로세스 ④ Lua ⑤ 네이티브 cdylib만 | **①**(+ ⑤는 신뢰 배포자용 2차) |
-| **D-150** | 1차 범위 | ① Rainbow Pairs를 WASM으로 옮기는 데 필요한 API만(편집기 읽기·장식·캐럿·명령·메뉴·설정·이벤트) ② + 결과 그리드 읽기 ③ + 네트워크/파일 능력 | **①** — API를 실전 확장 하나로 검증한 뒤 넓힘 |
-| **D-151** | Rainbow Pairs의 최종 형태 | ① 앱에서 **제거**하고 저장소 wasm 패키지로만(설치해야 보임) ② 앱 동봉(`bundled`) + 저장소 갱신 ③ 지금처럼 builtin 유지 + wasm은 샘플로만 | **②** — 첫 실행 경험 유지 · "다운로드되는 실행 모듈"도 충족 |
-| **D-152** | 동적 해제 기본값 | ① 유휴 300초 뒤 내림 ② 내리지 않음(사용자가 수동) ③ 향상 모드에서만 | **①**(향상 모드는 즉시) |
-| **D-153** | 활성화 모델 | ① VS Code식 활성화 이벤트(선언 기여 + 지연 적재) ② 설치되면 늘 적재 | **①** |
-| **D-154** | SDK 위치·언어 | ① 형제 저장소 `nexa-ext-sdk`(Rust 크레이트 + WIT · 다른 언어는 WIT로) ② nexa-sql 안 `crates/nexa-ext` ③ Rust 외 언어 공식 지원(AssemblyScript·C) | **①**(Rust 우선 · WIT 공개로 타 언어 가능) |
-| **D-155** | 서명·저장소 신뢰(D-89 구체화) | ① 공식 인덱스만 서명 · 개인 저장소는 경고 ② 모든 저장소 서명 필수 ③ 서명 없음 | **①** |
-| D-88 · D-90(50) | Python 범위 · 능력 승인 시점 | 50 §6 | 권장 그대로(② · ③) |
+| **D-87**(50) ✅ | 내려받는 코드의 실행 방식 | ① WASM `wasmi` ② WASM JIT `wasmtime` ③ Python 프로세스 ④ Lua ⑤ 네이티브 cdylib만 | **①**(+ ⑤는 신뢰 배포자용 2차) |
+| **D-150** ✅ 현행 | 1차 범위 | ① Rainbow Pairs를 WASM으로 옮기는 데 필요한 API만(편집기 읽기·장식·캐럿·명령·메뉴·설정·이벤트) ② + 결과 그리드 읽기 ③ + 네트워크/파일 능력 | **①** — API를 실전 확장 하나로 검증한 뒤 넓힘 |
+| **D-151** ✅ 현행 | Rainbow Pairs의 최종 형태 | ① 앱에서 **제거**하고 저장소 wasm 패키지로만(설치해야 보임) ② 앱 동봉(`bundled`) + 저장소 갱신 ③ 지금처럼 builtin 유지 + wasm은 샘플로만 | **②** — 첫 실행 경험 유지 · "다운로드되는 실행 모듈"도 충족 |
+| **D-152** ✅ 현행 | 동적 해제 기본값 | ① 유휴 300초 뒤 내림 ② 내리지 않음(사용자가 수동) ③ 향상 모드에서만 | **①**(향상 모드는 즉시) |
+| **D-153** ✅ 현행 | 활성화 모델 | ① VS Code식 활성화 이벤트(선언 기여 + 지연 적재) ② 설치되면 늘 적재 | **①** |
+| **D-154** ✅ 현행(`extensions/sdk/nexa-ext-sdk` · 버퍼+JSON ABI v1) | SDK 위치·언어 | ① 형제 저장소 `nexa-ext-sdk`(Rust 크레이트 + WIT · 다른 언어는 WIT로) ② nexa-sql 안 `crates/nexa-ext` ③ Rust 외 언어 공식 지원(AssemblyScript·C) | **①**(Rust 우선 · WIT 공개로 타 언어 가능) |
+| **D-155** → D-373 ② | 서명·저장소 신뢰(D-89 구체화) | ① 공식 인덱스만 서명 · 개인 저장소는 경고 ② 모든 저장소 서명 필수 ③ 서명 없음 | **①** |
+| D-88 ⏳ · D-90 ✅ D-372(50) | Python 범위 · 능력 승인 시점 | 50 §6 | 권장 그대로(② · ③) |
 
 **절차 제안**: 답 → E1·E2(API + 장식) → E3(Rainbow Pairs를 API 위로 · 동작 동일 확인 = 51 §11 실기표) → E4·E5(WASM + 로딩/해제) → E7(SDK·샘플 · Rainbow Pairs wasm 게시) → E6·E8. 각 단계마다 39 §6 게이트(편집·드래그·실행 속도 회귀 0).

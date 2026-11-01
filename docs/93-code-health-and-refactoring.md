@@ -230,7 +230,7 @@ main.rs에 남은 것: `App` 구조체와 생성 · `layout` · `redraw`/`tmark`
 ## 8. 남은 후보(다음 실행)
 
 - `worker::spawn` → `WorkerState`(러너·현재 접속·끊김 의심·알림 상태를 필드로) + `Cmd`별 처리 메서드(Command 패턴) — 전제 = CI integration 초록 · `mac-grid-edit-e2e.sh`/`linux-dbms-e2e.sh` 통과.
-- 긴 함수: `intel::request`(856) · `main`(697) · `paint`(597) · `drain_events`(554) · `about_to_wait`(497) · `apply_setting`(494) · `drain_conn`(485) — 한 함수 = 한 흐름이 되도록 단계별 도움 함수로(행동 보존 · 기능 점검 필수).
+- 긴 함수: 현황 = [TODO T-248](TODO.md)(✅ 09-29 1차 = `apply_setting`·`about_to_wait`·`drain_conn` 분해 · 남음 = `intel::request` · `main` · `paint` · `drain_events` · D-438 ⑦ (11-01 정합)) · (이력 09-28) `intel::request`(856) · `main`(697) · `paint`(597) · `drain_events`(554) · `about_to_wait`(497) · `apply_setting`(494) · `drain_conn`(485) — 한 함수 = 한 흐름이 되도록 단계별 도움 함수로(행동 보존 · 기능 점검 필수).
 - 큰 파일: `explorer.rs` · `grid.rs` · `conn_win.rs` — `app/`와 같은 방식(상태 한 곳 · 동작 기능별)으로.
 - 남은 중복(도구 G 상위 28): 보조 창 열기 꼬리(생성 → 자리 복원 → 화면 안 → 표면 · 로그/메모리/세션 창) · 표 창 그리기 머리(세션/트랜잭션 로그/변수) — 창 공통 호스트(`WinHost` · 30 T-65)로 올리면 함께 사라진다.
 - `menu_action`·`startup_cmd`의 문자열 `match`를 명령 표(Command 레지스트리)로 — 키맵·팔레트·메뉴가 같은 표를 쓰게(효과 = 명령 추가가 한 자리).

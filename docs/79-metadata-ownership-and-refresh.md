@@ -14,18 +14,11 @@
 
 ## 1. 타 클라이언트 조사(기억 기반 요약 · 확인 필요 표시 ⚠)
 
-| 도구 | 메타 소유 | 채움 | 탐색기 갱신 | 완성 캐시 갱신(명시) |
-|---|---|---|---|---|
-| **DBeaver** | 연결(DataSource)당 `DBNModel` 캐시 — 탐색기·SQL 편집기·데이터 편집기 공용 | 트리 펼침 · 완성이 필요한 것을 지연 로드 | 노드 **Refresh(F5)** = 그 노드 하위 캐시 무효화 → 다시 읽음(자식 전부) | 별도 명령 없음 — 트리 Refresh가 곧 완성 캐시 갱신(같은 캐시) · 설정 "Enable auto-refresh" |
-| **DataGrip / IntelliJ** | 데이터 소스당 스키마 모델(`.idea` 디스크 캐시) | 접속 시 introspection(선택한 스키마) · 필요 시 부분 | 데이터 소스/스키마 **Refresh**(Ctrl+Alt+Y) = 전체 재동기화 · "Forget Cached Schemas" | 같은 명령(Refresh) · 자동 = DDL 실행 뒤 자동 동기화 옵션 |
-| **SSMS** | 연결당 IntelliSense 로컬 캐시(편집기 세션) | 접속 시 + 필요 시 | 오브젝트 탐색기 Refresh는 **캐시와 별개** | **Edit ▸ IntelliSense ▸ Refresh Local Cache(Ctrl+Shift+R)** — 탐색기와 캐시가 따로라 이 명령이 필요 |
-| **Azure Data Studio · VS Code mssql** | 연결당 언어 서비스 캐시 | 접속 시 | — | 명령 팔레트 **"Refresh IntelliSense Cache"** |
-| **Oracle SQL Developer** | 연결당 카탈로그 캐시 | 트리 펼침 · Completion Insight가 지연 로드 | 노드 Refresh = 하위 다시 읽기 | 별도 없음(트리 Refresh) · 설정 "Code Insight" 지연/개수 |
-| **Toad** ⚠ | 연결당 Code Insight 캐시 | 접속 시 백그라운드 로드 | Schema Browser Refresh | "Refresh Code Insight cache"(옵션 화면) |
-| **TablePlus / Navicat** | 연결당 | 접속 시 스키마 로드 | Reload(⌘R) | 같은 Reload |
-| **pgAdmin** | 캐시 없음 — 키 입력마다 서버 질의 | — | Refresh | 해당 없음 |
+> 조사표 = [85 §1](85-metadata-layers.md)(층·채움·회수 기준 · 이 절의 옛 표는 85 §1과 중복이라 3줄 요약으로 줄임 · 원문 = git 이력 (11-01 정합))
 
-공통점: **소유는 연결 단위** · 트리와 완성이 **같은 캐시**를 쓰는 도구(DBeaver·DataGrip·SQL Developer)는 트리 Refresh가 곧 완성 갱신 · **따로인 도구(SSMS·ADS)** 만 별도 명령. 우리는 같은 캐시(`MetaStore`)이므로 DBeaver 방식이 기본이고, 사용자가 원한 **명시 명령**은 "갱신 범위를 크게(서버/전체) 한 번에" 잡는 데 쓴다.
+- **소유** = 모든 도구가 연결(데이터 소스) 단위 캐시 하나 — 탐색기·편집기·완성 공용(DBeaver `DBNModel` · DataGrip 스키마 모델) · SSMS·ADS만 언어 서비스(IntelliSense) 캐시가 탐색기와 따로.
+- **채움** = 트리 펼침·완성이 필요한 것을 지연 로드(DBeaver · SQL Developer) 또는 접속 때 일괄·백그라운드(DataGrip · Toad · TablePlus) · pgAdmin = 캐시 없음(반례).
+- **갱신** = 같은 캐시면 노드 Refresh(F5)가 곧 완성 갱신(DBeaver · DataGrip · SQL Developer) · 따로인 도구만 별도 명령(SSMS Ctrl+Shift+R · ADS·VS Code mssql "Refresh IntelliSense Cache") → 우리는 같은 캐시(`MetaStore`) = DBeaver 방식이 기본 + 명시 명령은 큰 범위(서버/전체)를 한 번에(§4).
 
 ## 2. 소유·채움 규칙(확정안)
 

@@ -2,7 +2,7 @@
 
 > [121 데이터베이스 지원 우선순위](121-database-support-priority.md)와 **D-359**(Db2 = 내장 ODBC 어댑터 위 전용 방언 `Dialect::Db2` · 별도 크레이트·확장 id 없음 · 벤더 clidriver는 사용자 설치)의 근거 자료. 협업 세션(Opus)이 하위 에이전트 3개로 조사 = ①② CI 컨테이너·clidriver · ③⑤ SYSCAT 카탈로그 + DBeaver 대조(워크트리 초안 질의 **검증**) · ④ 오류·문법·EXPLAIN(초안 SQLCODE 분류·EXPLAIN **검증**). 출처 = 표마다 URL · 직접 확인하지 못한 것은 **(추정)** · 각 절 끝 "추정 항목". 설계 결론은 D-359와 소스가 SSOT이고 이 문서는 고치지 않는다. 같은 작업에 섞여 있던 MS Access 방언 = **D-360**(사용자 요청 범위 밖 · 유지/제거 = 사용자 결정).
 
-> ★ **10-25 방향 변경(사용자 "Nexa SQL과 드라이버 파일만 있으면 실행 가능해야" · D-361 후보)** = Db2 = **네이티브 DRDA 확장 드라이버 `nsql-driver-db2`**(순수 Rust · 외부 crate 0 · Oracle Thin과 같은 길 · 방언·SYSCAT·오류표 재사용) 예정 · 아래 ODBC 경로 = **Windows 폴백** · 조사 = [121b](121b-db2-drda-research.md).
+> ★ **10-25 방향 변경(사용자 "Nexa SQL과 드라이버 파일만 있으면 실행 가능해야" · ✅ D-361(조사 원문 · 본문 불변 · 당시 = 후보 · 11-01 정합))** = Db2 = **네이티브 DRDA 확장 드라이버 `nsql-driver-db2`**(순수 Rust · 외부 crate 0 · Oracle Thin과 같은 길 · 방언·SYSCAT·오류표 재사용) 예정 · 아래 ODBC 경로 = **Windows 폴백** · 조사 = [121b](121b-db2-drda-research.md).
 
 ## 결론(5줄) — 반영 = 커밋 4(a8384f65 방언·접속·Caps·오류·문법 · 194c7a8f SYSCAT(주의 8 반영) · bc97dc74 앱 접점 · c154d8f5 통합 시험 + `db2.yml`) + b79c1239(odbcinst 패키지)
 

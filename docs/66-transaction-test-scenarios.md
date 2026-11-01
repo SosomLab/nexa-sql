@@ -122,6 +122,8 @@ Remove-Item Env:\NSQL_STARTUP_CMD           # 다음 실행부터는 평소대�
 
 ## 1. DBMS별 동작 — 우리가 구현한 것(기대값의 원천)
 
+> DBMS 동작(암묵 커밋 · `aborted` · L1~L4)의 원천 = [56 §1·§4](56-manual-commit-lock-prevention.md) — 이 표는 시험 기대값 점검 열로만 유지 (11-01 정합)
+
 | 항목 | Oracle | SQL Server | PostgreSQL | SQLite | 원천 |
 |---|---|---|---|---|---|
 | 서버가 문장마다 커밋(`server_autocommit`) | 아니오(암묵 트랜잭션) | 예 | 예 | 예 | `nsql-core caps.rs` |
@@ -138,6 +140,8 @@ Remove-Item Env:\NSQL_STARTUP_CMD           # 다음 실행부터는 평소대�
 > ★ **핵심 검증점**: PG·SQL Server·SQLite에서 수동 모드의 DML이 **Commit 전에는 다른 세션에 보이지 않고, Rollback이면 사라져야** 한다(T-146 이전에는 "미커밋 ●"로 보이면서 이미 커밋돼 있었다). 각 절의 **B3 → B6**가 그 시험이다.
 
 ## 2. 어디를 보나 (관찰 창)
+
+> 표시 층(탭 배지 · 상태줄 · 툴바)의 원천 = [34 §2-1](34-transaction-ux.md) — 아래 표는 시험 때 볼 자리 목록(트랜잭션 로그 창 상태 글은 [44](44-transaction-log.md)) (11-01 정합)
 
 | 층 | 자동 커밋 | 수동 커밋 · 대기 n |
 |---|---|---|

@@ -1,18 +1,18 @@
 # 67 · 프로젝트(워크스페이스) 관리 — 조사 · 설계 · 결정
 
 > **요청**(사용자 09-22): *"Sublime · VS Code · DataGrip · DBeaver의 프로젝트 관리 조사. Sublime처럼 프로젝트에 미저장 탭까지 보존해 종료 뒤 다시 쓰고, 파일은 참조로 열어 다음에 최신을, 닫을 때는 전체/개별 저장·취소 확인. 강제 종료엔 주기 자동 저장(되돌리기 추적 · 별도 파일 · 복원 UI · 진짜 저장 등 최신 방식 조사·추천). 프로젝트 파일은 임의 폴더 · 폴더 Add/Remove(Sublime 구조). 탐색기 = Open files(자동 높이) + Directories(통합 스크롤 검토). 활동 막대 아이콘. **편집기 워크스페이스 개념 — DB 연결·설정과 분리.** 메뉴 = 저장·새로·열기·다른 이름·닫기·전환 + Command Palette."*
-> **선행**: [18 세션·프로젝트](18-session-and-projects.md) · [36 파일 검색·프로젝트](36-find-in-files-and-project.md)(§3 project.json 초안 · D-55~57) · [58 외부 변경 정책](58-external-change-policy.md) · [59 큰 파일](59-large-file-handling.md) · [60 되돌리기 기록 파일](60-undo-redo-redesign.md). 조사 원문 = [67a](67a-project-research.md).
+> **선행**: [18 세션·프로젝트](18-session-and-projects.md)(09-12 원안 · 이력) · [36 파일 검색·프로젝트](36-find-in-files-and-project.md)(§3 project.json 초안 = ✖ 폐기 D-410·D-407 · D-55~57) · [58 외부 변경 정책](58-external-change-policy.md) · [59 큰 파일](59-large-file-handling.md) · [60 되돌리기 기록 파일](60-undo-redo-redesign.md). 조사 원문 = [67a](67a-project-research.md).
 
 ---
 
 ## 0. 결론 여섯 줄
 
-1. **파일 둘**(Sublime 구조): `<이름>.nsql-project`(폴더 목록 · 프로젝트 설정 · **어디에나** · VCS에 올림) + `<이름>.nsql-workspace`(열린 탭 · 활성 탭 · 접힘 상태 · 검색 히스토리 — 프로젝트 **옆** · 개인용). 프로젝트 없는 상태 = **기본 워크스페이스**(사용자 데이터 폴더 `workspaces/default.nsql-workspace`) — 지금의 이름 없는 탭도 여기서 복원(hot exit · D-57).
-2. **미저장 본문은 프로젝트/워크스페이스 파일에 넣지 않는다** — 사용자 데이터 폴더 `backups/<워크스페이스 id>/<탭 id>`에 **탭마다 스냅숏 파일**(VS Code · Zed · Notepad++ 방식). 워크스페이스는 그 파일을 가리키기만. 근거 = Sublime의 "창 닫기 → 워크스페이스 / 종료 → 세션" 이중 경로가 유실의 원인(포럼 59074 · 65806) · 프로젝트 파일을 옮기거나 동기화해도 안전.
-3. **주기 저장 = 입력 디바운스 1초 + 최대 대기 5초 상한**(VS Code 1초 · Zed 100ms 스로틀 · Notepad++ 7초 · Kate 15초 중 절충) · 임시 파일 → `rename`(원자적) · dirty가 풀리면(저장·되돌리기·닫기) 스냅숏 **즉시 폐기** · 큰 버퍼(`editor.undo_giant_mb` 계열 상한)는 스냅숏 대신 저장 프롬프트(Sublime 4151).
+1. **프로젝트 파일 하나**(D-407 · 11-01 정합): `<이름>.nsql-project`(**어디에나** · VCS) 하나에 폴더 목록 · 탭·캐럿·패널·북마크·접속 표식 · 설정 절 · 미저장 본문(v2 블록) — 형식 SSOT = §7 · 설정 절 = §8 · 규칙 본문 = [61 §2-1](61-core-design-and-working-rules.md) · 프로젝트 없는 상태 = **파일·폴더 모드만** `default.nsql-workspace`(북마크 · §6) · 파일 모드 hot exit = `<설정 폴더>/workspaces/hot-exit.nsql-project`([70 §9](70-autosave-and-restore.md) · D-181) · 옛 `<설정 폴더>/workspaces/<이름>.nsql-workspace` = **읽기만(이관용 · `bookmarks.rs`)**. (이력 · 09-22 원안 = **파일 둘**(Sublime 구조) `.nsql-project`(VCS) + 프로젝트 옆 `<이름>.nsql-workspace`(열린 탭·활성 탭·접힘·검색 히스토리 · 개인용) · 기본 워크스페이스에서 hot exit(D-57) — ✖ D-407)
+2. **미저장 본문 = 프로젝트 파일 v2 블록**(§7 · 09-23 정정 · 11-01 정합) · `<설정 폴더>/backups/files/` = 파일 탭 안전망 — 저장·복원 SSOT = [70](70-autosave-and-restore.md)(§5·§6-1·§9). (이력 · 09-22 원안 = 프로젝트/워크스페이스 파일에 넣지 않고 `backups/<워크스페이스 id>/<탭 id>` 탭마다 스냅숏(VS Code · Zed · Notepad++ 방식) · 근거 = Sublime "창 닫기 → 워크스페이스 / 종료 → 세션" 이중 경로 유실(포럼 59074 · 65806))
+3. (09-22 원안 · 현행 타이밍 = [70 §7-1](70-autosave-and-restore.md) `project.autosave_change_ms` · 11-01 정합) **주기 저장 = 입력 디바운스 1초 + 최대 대기 5초 상한**(VS Code 1초 · Zed 100ms 스로틀 · Notepad++ 7초 · Kate 15초 중 절충) · 임시 파일 → `rename`(원자적) · dirty가 풀리면(저장·되돌리기·닫기) 스냅숏 **즉시 폐기** · 큰 버퍼(`editor.undo_giant_mb` 계열 상한)는 스냅숏 대신 저장 프롬프트(Sublime 4151).
 4. **복원 = 묵시**(VS Code · Zed · Sublime · Notepad++ 공통): 탭이 dirty 표식 그대로 돌아오고 상태줄/토스트 "복원된 미저장 탭 n개"만. 참조 파일이 디스크에서 바뀌었으면 탭 상단 띠(유지 / 디스크에서 다시 읽기 / 비교 — `extfile.rs`·`merge3` 재사용). 복원 못 한 스냅숏은 지우지 않고 둔다.
-5. **탐색기 = 한 컨테이너에 패널 둘**(VS Code식): 위 OPEN FILES(항목 수 × 행 높이로 자동 · 상한 `project.open_files_max` 9 · 넘치면 섹션 안 스크롤) + 아래 FOLDERS(나머지 · 폴더별 트리) · 경계 sash · 헤더 접기. **통합 스크롤 하나**는 Sublime이 택했다가 사용자 불만(헤더 유실 · 28631)을 남긴 방식이라 **채택하지 않는다**(사용자 "문제가 있다면 설계 변경" 조항 적용) — 절충 = OPEN FILES 헤더 sticky.
-6. **DB 연결과 분리**: 프로젝트 파일에는 접속 정보가 없다. 탭의 접속 컨텍스트(프로필 **이름** · 전용 세션 여부)는 워크스페이스에 **표식으로만** 저장하고 복원 때 자동 재접속하지 않는다(26 §8 · "No connection + 이전 프로필 표식"). 필요하면 나중에 프로젝트 설정에 `connection` 키를 **선택**으로.
+5. **탐색기 = 한 컨테이너에 패널 둘**(VS Code식): 위 OPEN FILES(항목 수 × 행 높이로 자동 · 상한 9(`project.open_files_max` = ✖ 없는 키 · 11-01 정합) · 넘치면 섹션 안 스크롤) + 아래 FOLDERS(나머지 · 폴더별 트리) · 경계 sash · 헤더 접기. **통합 스크롤 하나**는 Sublime이 택했다가 사용자 불만(헤더 유실 · 28631)을 남긴 방식이라 **채택하지 않는다**(사용자 "문제가 있다면 설계 변경" 조항 적용) — 절충 = OPEN FILES 헤더 sticky.
+6. **DB 연결과 분리**: 프로젝트 파일에는 접속 정보가 없다. 탭의 접속 컨텍스트(프로필 **이름** · 전용 세션 여부)는 **표식으로만** 저장하고(현행 = 프로젝트 파일 탭 필드 `profile` · §7 · 11-01 정합) 복원 때 자동 재접속하지 않는다(26 §8 · "No connection + 이전 프로필 표식"). 필요하면 나중에 프로젝트 설정에 `connection` 키를 **선택**으로.
 
 ---
 
@@ -33,7 +33,9 @@
 
 ## 2. 모델
 
-### 2-1. 파일
+### 2-1. 파일(09-22 원안 · 이력)
+
+> ✖ **두 파일 구조 = 원안(D-407로 대체 · 11-01 정합)** — 현행 = **프로젝트 파일 하나**(형식 §7 · 설정 절 §8) · 파일·폴더 모드만 `default.nsql-workspace`(§6) · 옛 `<이름>.nsql-workspace` = 읽기만(이관용). 아래 예시는 이력.
 
 ```jsonc
 // my.nsql-project  (어디에나 · VCS)
@@ -69,24 +71,15 @@
 
 ### 2-3. 저장 시점(hot exit · 자동 저장)
 
-| 시점 | 무엇 |
-|---|---|
-| 타이핑 | 아무것도 쓰지 않음 · dirty + 세대 번호 |
-| 변경 뒤 **1초 유휴** 또는 **5초 상한** | 바뀐 메모리 탭·dirty 파일 탭의 스냅숏(`backups/<id>/<tab>.txt.tmp` → rename) — **탭 단위 격리**(61 §2 · 작업 스레드 · UI는 `buf()` 스냅숏만) |
-| 탭 열기/닫기/이동 · 활성 탭 바뀜 · 폴더 추가/제거 · 접힘 | 워크스페이스 JSON(디바운스 2초) |
-| 저장 · 되돌려서 clean · 탭 닫기(버림) | 그 탭 스냅숏 **즉시 삭제** |
-| 프로젝트 닫기 · 전환 · 앱 종료 | §3 확인 뒤 워크스페이스 + 스냅숏 flush |
-| 큰 버퍼(> `project.backup_max_mb` 기본 8) | 스냅숏 대신 "저장하세요" 프롬프트(Sublime 4151) · 큰 파일 모드 L1/L2(59)와 연동 |
+저장·복원 = [70](70-autosave-and-restore.md)(SSOT · 타이밍 §7-1 · 확정 §9) · 본문 = 프로젝트 파일 블록(§7) · 파일 모드 hot exit = `workspaces/hot-exit.nsql-project`(D-181) (11-01 정합)
 
-설정: `project.hot_exit`(`always` 기본 · `only_on_quit` · `off`) · `project.backup_debounce_ms`(1000 · HIDDEN) · `project.backup_max_wait_ms`(5000 · HIDDEN) · `project.backup_max_mb`(8) · `project.open_files_max`(9) · `project.recent`(HIDDEN) · `project.last`(HIDDEN · 마지막 프로젝트 = 다음 기동에 다시 연다).
+- 실제 키 = `project.hot_exit`(always/off) · `project.autosave` · `project.autosave_secs` · `project.autosave_change_ms` · `project.unsaved_max_mb`(큰 버퍼 안내) · `project.backup_days` · `project.recent`·`project.last` · `project.restore_last`(REGISTRY 확인 11-01).
+- (이력 · 09-22 원안 표) 변경 뒤 1초 유휴/5초 상한 = 탭 스냅숏 `backups/<id>/<tab>.txt.tmp` → rename · 워크스페이스 JSON 디바운스 2초 · 저장/clean/버림 = 스냅숏 즉시 삭제 · 큰 버퍼 = 저장 프롬프트(Sublime 4151) · 원안 키 `project.backup_debounce_ms` · `project.backup_max_wait_ms` · `project.backup_max_mb` · `project.open_files_max` = **✖ 없는 키**(만들지 않음).
 
 ### 2-4. 복원
 
 1. 기동(★ 09-22 사용자 · journal §31): **기본 = 파일 모드**(프로젝트 없음). 인자 `.nsql-project` = 그 프로젝트 · `project.restore_last`(기본 끔)가 켜져 있고 **첫 인스턴스**(`instance.lock`)이고 파일 인자가 없을 때만 `project.last` · 이후 인스턴스는 인자 없으면 파일 모드. (종전 안: `project.last`가 있으면 늘 복원 — 폐기.)
-2. 파일 탭: 디스크를 **다시 읽는다**(참조 = 최신 · 사용자 요구) → 스냅숏이 있으면(dirty였음) 스냅숏 본문을 올리고 프리앰블의 원본 해시와 디스크 해시가 다르면 탭 상단 띠 **유지 / 디스크에서 다시 읽기 / 비교**(58 · `extfile.rs`) · 파일이 사라졌으면 "(삭제됨)" 표식 + 스냅숏 본문.
-3. 메모리 탭: 스냅숏 본문 그대로 · 제목 · dirty 표식 · 캐럿.
-4. 접속 표식: 프로필 이름만 표시(자동 재접속 없음).
-5. 상태줄/토스트 "복원된 미저장 탭 n개"(클릭 = 목록). 손상된 워크스페이스 파일은 `.bak`으로 시도 → 둘 다 실패면 빈 창(조용히 죽지 않는다 · 18 §3).
+2. 탭 복원(파일 탭 다시 읽기 · 미저장 본문 · 외부 변경 띠 · 접속 표식 · 안내) = [70 §6](70-autosave-and-restore.md)(SSOT · 11-01 정합). (이력 · 09-22 원안 = 파일 탭 디스크 재읽기 + 스냅숏 해시 비교 띠 · 메모리 탭 스냅숏 그대로 · 접속 = 프로필 이름만 · 토스트 "복원된 미저장 탭 n개" · 손상 워크스페이스 `.bak` → 빈 창)
 
 ---
 
@@ -125,7 +118,7 @@
 - ✅ 메뉴 Project · 팔레트 · `.nsql-project` 대화상자(Open/Save/Folder) · 최근 · Switch · `project.last` 기동.
 - ✅ 09-22 후반(journal §76~78): 셰브론 = 객체 탐색기 부품 · OS 파일/폴더 아이콘 `project.icons`(향상 모드 off) · 루트 우클릭 메뉴(Remove Folder/Add Folder) · 프로젝트 파일 `"selected"` = 마지막 선택 복원 · 탭 메뉴 "Reveal in Project Explorer"(프로젝트 폴더 안 파일만) · 활성 탭 동기 `project.auto_reveal`(기본 off = 표시만 · on = 펼침+스크롤).
 - ✅ 09-23(journal §89): 작업 환경 = 프로젝트 파일(`tabs` 경로/스크립트 본문/캐럿 앵커 · `active` · `bookmarks` 내장) · 자동 저장 `project.autosave`/`autosave_secs`(30) · 종료 흐름(프로젝트 물음 → 파일 탭 물음) · 복원 = 다시 읽기 + fuzzy 캐럿 · **OPEN FILES 섹션**.
-- ⏳ sash · 폴더 감시 · 워크스페이스 파일·hot exit(P3) · 파일 검색 연동(P5).
+- ⏳ sash · 폴더 감시 · 파일 검색 연동(P5) · (11-01 정합) 워크스페이스 파일 = ✖ D-407(프로젝트 파일 하나) · hot exit(P3) = ✅ 10-31([70 §9](70-autosave-and-restore.md) · T-165) · 최신 상태 = [TODO](TODO.md) T-165 행.
 
 ---
 
@@ -133,11 +126,13 @@
 
 | 단계 | 내용 | 부품 |
 |---|---|---|
-| P1 🚧(09-22 모델·JSON = GUI `project.rs`) | `nsql-project` 크레이트(의존 0 · JSON = `nsql-settings::json` 재사용 여부 검토 → 자체 미니 직렬화): `Project`·`Workspace` 모델 · 읽기/쓰기(원자적 · `.bak`) · 상대 경로 · 스냅숏 저장소 `Backups`(프리앰블 · 폐기 · 상한) · 순수 판정 `close_plan`(hot_exit × dirty × 거대 · MC/DC) · 테스트 | 새 크레이트 |
+| P1 ✅(09-22 모델·JSON = GUI `project.rs` · 크레이트 대신 · 11-01 정합) | `nsql-project` 크레이트(의존 0 · JSON = `nsql-settings::json` 재사용 여부 검토 → 자체 미니 직렬화): `Project`·`Workspace`(✖ D-407) 모델 · 읽기/쓰기(원자적 · `.bak`) · 상대 경로 · 스냅숏 저장소 `Backups`(프리앰블 · 폐기 · 상한) · 순수 판정 `close_plan`(hot_exit × dirty × 거대 · MC/DC) · 테스트 | 새 크레이트 |
 | P2 ✅(09-22) | GUI 상태 `App.project`(현재 프로젝트 · 워크스페이스 · 저장 시계) · 메뉴 **Project** + 팔레트 `Project: …` · 파일 대화상자(`.nsql-project` 필터 · 폴더 모드) · 최근 목록 · Switch(팔레트 목록 + "(프로젝트 없음)") | `main.rs` · `project_cmds.rs` |
-| P3 | hot exit: 탭 스냅숏 디바운스/상한 · 워크스페이스 디바운스 · 기동 복원(묵시 + 안내 토스트) · 닫기 확인 3택/개별 · 기본 워크스페이스로 기존 세션 대체 | `hotexit.rs` · `editors.rs` |
-| P4 🚧(09-22 트리·필터·미리보기 ✅) | 탐색기 패널 `project_panel.rs`(OPEN FILES + FOLDERS · sash · 지연 열거 · 감시 · 우클릭) · 활동 막대 아이콘 · 활성 탭 동기 | 활동 막대 · nexa-fs |
-| P5 | 파일 검색 Where `<project>` 연동(36) · 프로젝트 설정 덮어쓰기(24 계층) · 캡처 4장(모서리 규칙) · 문서 | |
+| P3 ✅ 10-31(①SaveQueue+`backup-writer` · ②파일 모드 hot exit · ③외부 변경 띠 · ④큰 버퍼 안내 · ⑤기존 동작 충족 · 남음 ⑥ 실측 · [70 §9](70-autosave-and-restore.md)) | hot exit: 탭 스냅숏 디바운스/상한 · 워크스페이스 디바운스 · 기동 복원(묵시 + 안내 토스트) · 닫기 확인 3택/개별 · 기본 워크스페이스로 기존 세션 대체 | `hotexit.rs` · `editors.rs` |
+| P4 🚧(09-22 트리·필터·미리보기 ✅ · 09-23 OPEN FILES ✅) | 탐색기 패널 `project_panel.rs`(OPEN FILES + FOLDERS · sash · 지연 열거 · 감시 · 우클릭) · 활동 막대 아이콘 · 활성 탭 동기 | 활동 막대 · nexa-fs |
+| P5 🔶(검색 Where 기본 범위 ✅ 09-23 · 36 §1 · 프로젝트 설정 ✅ 10-31 · §8 · 남음 = 캡처) | 파일 검색 Where `<project>` 연동(36) · 프로젝트 설정 덮어쓰기(24 계층) · 캡처 4장(모서리 규칙) · 문서 | |
+
+(11-01 정합) 단계 상태 = [TODO](TODO.md) T-165 행이 원천 · "워크스페이스 파일" = ✖ D-407.
 
 ---
 
@@ -157,8 +152,8 @@
 | 모드 | 진입 | 로컬 상태의 자리(`project::WorkMode::local_dir`) | 지금 나누는 것 | 앞으로 같은 자리에서 나눌 것 |
 |---|---|---|---|---|
 | **파일 모드** | 인자 없음(또는 파일 인자만) | 전역 설정 폴더 `%APPDATA%/nexa-sql`(`NSQL_HOME`) | 북마크 = `workspaces/default.nsql-workspace` | (기본 = 전역 설정 그대로) |
-| **폴더 모드** | `nexa-sql .` · `nexa-sql c:\users\user\project`(첫 폴더 인자 · 절대화) | **`<폴더>/.nsql/`** | 북마크 = `.nsql/workspaces/default.nsql-workspace` · `${workspaceFolder}` = 그 폴더 · 파일 대화상자 시작 폴더 | 설정 오버라이드(`.nsql/settings.conf` → 전역 위에 겹침) · 최근 파일 · 되돌리기 기록 · 미저장 스냅숏 — **설계만** 반영(코드 = `WorkMode::local_dir` 한 자리) |
-| **프로젝트 모드** | `.nsql-project` 인자 · 열기 · 전환 | **프로젝트 파일 안**(`local_dir = None`) · 기기별 오버라이드는 73 §4-2 `.local.json` | 탭·캐럿·패널·북마크·접속 표식(§4·70 §6-1) | 프로젝트 설정 절(`"settings": {…}` → 전역 위에 겹침 · 73 D-186~190 뒤) |
+| **폴더 모드** | `nexa-sql .` · `nexa-sql c:\users\user\project`(첫 폴더 인자 · 절대화) | **`<폴더>/.nsql/`** | 북마크 = `.nsql/workspaces/default.nsql-workspace` · `${workspaceFolder}` = 그 폴더 · 파일 대화상자 시작 폴더 | 설정 오버라이드(`.nsql/settings.conf` → 전역 위에 겹침 · ✖ 만들지 않음 D-407 · §8-3) · 최근 파일 · 되돌리기 기록 · 미저장 스냅숏 — **설계만** 반영(코드 = `WorkMode::local_dir` 한 자리) |
+| **프로젝트 모드** | `.nsql-project` 인자 · 열기 · 전환 | **프로젝트 파일 안**(`local_dir = None`) · 기기별 오버라이드는 73 §4-2 `.local.json`(✖ 연계 파일 금지 D-407) | 탭·캐럿·패널·북마크·접속 표식(§4·70 §6-1) | 프로젝트 설정 절(`"settings": {…}` → 전역 위에 겹침 · 73 D-186~190 뒤) |
 
 규칙: ① 우선순위 = 프로젝트 > 폴더 > 파일(`WorkMode::of`) ② 프로젝트를 닫으면 **직전 모드**(폴더 인자로 켰으면 폴더 · 아니면 파일)로 돌아가고 편집기는 처음 실행 상태(journal §98) ③ 파일 모드에서 새 프로젝트를 만들면 로컬 북마크는 프로젝트로 **이관**(로컬 파일 비움 · 기존 프로젝트를 열 때는 이관 없음) ④ `.nsql/`은 첫 저장 때 만든다(빈 저장소를 위해 파일을 만들지 않는 기존 규칙 그대로) ⑤ 새 로컬 상태를 추가할 때는 자기 경로를 계산하지 말고 `WorkMode::local_dir()` 아래에 둔다(설정·기능별 분리를 한 자리에서).
 
@@ -184,7 +179,7 @@ tab=15 len=27
 
 > ★ **10-26 T-153 ③** — `TabState.vars`(무제 탭 변수 = `vars_to_script` 글 · 프로젝트 모드에서만 보관 · 복원 때 새 탭 id로) · 파일로 저장하면 경로 해시 변수 파일로 인수인계.
 
-## 8. 프로젝트 설정 절 `settings`(10-30 · T-39b · T-69 프로젝트 층 · D-406·D-407·D-408 · 설계 = 협업 · 구현 전)
+## 8. 프로젝트 설정 절 `settings`(10-30 · T-39b · T-69 프로젝트 층 · D-406·D-407·D-408 · 설계 = 협업 · 구현 ✅ 10-31 = §8-6 · 11-01 정합)
 
 > 사용자 규칙 **"프로젝트 파일 하나만"**(D-407): 프로젝트별 설정을 `.nexa/settings.conf`(24 · 36 · 종전 T-39b 안)나 폴더 모드 `.nsql/settings.conf`(§6)로 두지 않고 **프로젝트 파일 헤더의 `settings` 절**에 둔다. 종전 안 폐기.
 
@@ -226,7 +221,7 @@ tab=15 len=27
 
 ### 8-4. 쓰기 · 화면
 
-- ★ **스위치 기억(D-428 · 사용자 10-31)** = 하단 "프로젝트" 스위치도 "고급"처럼 **마지막 상태를 기억**(설정 창을 다시 열면 그대로) · 키 `ui.prefs_project` 예정(구현 뒤 이름 확정 · 94 등재).
+- ★ **스위치 기억(D-428 · 사용자 10-31)** = 하단 "프로젝트" 스위치도 "고급"처럼 **마지막 상태를 기억**(설정 창을 다시 열면 그대로) · 키 `ui.prefs_project`(✅ 구현 · `prefs_win.rs` · 94 등재 · 11-01 정합).
 - ★ **구현(10-31 · 186차 13차)** = 탭이 아니라 **하단 스위치 "프로젝트"**(기존 "고급"·"변경" 스위치와 같은 자리 · 고급 묶음 · 프로젝트가 열려 있을 때만 보임) — 아래 설계(머리 범위 탭)를 이렇게 바꿈. 설계 원문: 설정 창 머리에 **범위 탭 `사용자 | 프로젝트`**(프로젝트 모드일 때만 · VS Code User/Workspace) — 프로젝트 탭 = Project 허용 키만 보이고 값을 바꾸면 헤더 `settings` 절에 쓴다(기존 저장 경로 `project_save_to` · 자동 저장 감시 세대에 포함 · 70 §7-1).
 - 카드에 **출처 표시**("프로젝트에서 덮어씀" · 되돌리기 = 그 키를 절에서 지움) · 상태줄 들여쓰기 툴팁 = 값의 출처 층(31 §2).
 - 상태줄 들여쓰기 팝업 = "이 문법의 기본으로 저장"(전역 문법 층) · "프로젝트에 저장"(프로젝트 모드일 때 · `[문법]` 묶음) · "전역 기본으로 저장". · ✅ **10-31 189차 구현** = 팝업 구분선 뒤 3항목 "전역 기본으로 저장"(`editor.tab_size`/`editor.indent_spaces`) · "{문법} 문법의 기본으로 저장"(`Packages/User/<문법>.nexa-settings` JSON 두 키 갱신 · 나머지 보존 · 재스캔 → `Editors::set_syntax_defaults`) · "프로젝트에 저장"(프로젝트 모드만 · settings 절 `[문법]` 두 키 → 즉시 적용 · 자동 저장)

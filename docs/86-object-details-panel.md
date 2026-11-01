@@ -87,7 +87,7 @@
 
 - ★ **L2 코멘트 워머(§212)**: 관계 폴더(Tables/Views/MV)가 읽힌 스키마마다 `schema_comments_raw`(질의 2 · 백그라운드 세션 · `meta.warm_idle_ms` 간격 · 한 번에 하나)로 테이블·컬럼 코멘트를 **객체 목록(MetaStore)** 에 채운다(`ObjEntry.comment` · `Snapshot.col_comments` · `comment_schemas`) — 패널은 `comments_of`로 왕복 0 · 아직 없으면 테이블 단위 `Req::Comments` 1회. 설정 `meta.warm_comments`(on). 실측 스키마당 0.5~4.5 s(APPDB_SB 24k 컬럼). ★ **T-348(10-15)** = 코멘트는 객체 id가 아니라 **(스키마, 소문자 이름) 지도** `Snapshot::schema_comments`에 먼저 담는다 → L1 이름 등재 **순서와 무관**(종전 = 이름이 등재된 객체에만 붙이고 "완료" 표시 → 뒤에 등재된 객체는 영영 코멘트 없음 · 스키마 이름 미등재면 조용히 버림) · `comments_of`는 지도에서 답하고 · `load_names_x`가 이름을 새로 등재하면 지도의 코멘트를 `ObjEntry.comment`/`col_comments`에 붙인다(`apply_schema_comments` 한 자리) · 시험 `schema_comments_survive_names_arriving_later`.
 
-- 선택마다 카탈로그 질의 = 속성 0 · 컬럼 1 · 하위 폴더 종류 수(비면 0행 응답) · 소스/DDL 1 → 테이블 ≈ 6~9 질의(각 수십 ms · 급한 메타 세션 · 26 §8 등재). 같은 객체를 다시 골라도 다시 읽는다(캐시 없음 = 최신 · 후속 = 짧은 LRU).
+- 선택마다 카탈로그 질의 = 속성 0 · 컬럼 1 · 하위 폴더 종류 수(비면 0행 응답) · 소스/DDL 1 → 테이블 ≈ 6~9 질의(각 수십 ms · 급한 메타 세션 · 26 §8 등재). 같은 객체를 다시 골라도 다시 읽는다(원안 · 캐시 없음 = 최신 · 후속 = 짧은 LRU) → §5-1 ✅(`detail_cache` · T-227 1차) (11-01 정합).
 - 메모리 = 섹션 글 하나(수 KB~수백 KB DDL) · 패널을 끄면 대상 비움.
 
 ### 5-1. 상세 캐시(§219 · 사용자 09-26 "이미 본 대상인데 깜빡이며 다시 채워진다")
@@ -95,8 +95,8 @@
 | 항목 | 규칙 |
 |---|---|
 | 저장 | 서버 응답(섹션)을 서버 칸(`Explorer.detail_cache`)에 `DetailTarget::key`로 · 바이트는 `MetaDetail` 원장(메모리 창·`mem.dump`) |
-| 조회 | 같은 대상 재선택 = 캐시를 **즉시** 그린다(깜빡임 0 · 왕복 0) · TTL(`meta.detail_ttl_secs` 300) 지났거나 `dirty`면 **보이는 채로** 다시 읽어 도착 시 교체 |
-| 회수 | 유휴 30초 틱(`reclaim_meta`): 미사용 TTL 초과 제거 · 개수 상한 `meta.detail_max`(64) 초과분은 오래된 것부터 |
+| 조회 | 같은 대상 재선택 = 캐시를 **즉시** 그린다(깜빡임 0 · 왕복 0) · TTL([85 §4](85-metadata-layers.md) `meta.detail_ttl_secs`) 지났거나 `dirty`면 **보이는 채로** 다시 읽어 도착 시 교체 |
+| 회수 | 유휴 30초 틱(`reclaim_meta`) · TTL·개수 상한 규칙과 값 = [85 §4](85-metadata-layers.md) L3 행(`meta.detail_ttl_secs` · `meta.detail_max`) (11-01 정합) |
 | **무효화(사용자 의도 누락 0)** | 새로 고침이 닿는 범위의 항목에 `dirty` 전파 → 다음 클릭에 다시 읽는다: ① 우클릭 Refresh/F5(`refresh(i)` · 루트 = 전부 · 스키마/폴더 = 그 스키마 · 객체/하위/컬럼 = 그 객체) ② DDL 반영(`apply_ddl` · 대상 객체) ③ 메타 갱신 ⌘⇧R(`refresh_meta` · 스키마/전부) ④ 스키마 목록 다시 읽기·접속 교체·해제 = 전부 비움 · 열쇠 매칭은 순수 함수 `detail_key_hit`(시험) |
 
 | 코멘트 캐시 연동(§229 · T-227 후속) | 같은 무효화 범위를 `Explorer::take_detail_invalidations`로 호스트가 가져가 상세 패널의 테이블 코멘트 캐시(`DetailPanel::forget_comments` · 전부/스키마/테이블)를 버리고 보이는 대상은 다시 채운다(`sync_detail_target(true)`) — 새로 고침 뒤 옛 코멘트가 남던 틈 제거 |
@@ -130,4 +130,4 @@
 
 ## 8. 남은 것(T-225)
 
-- ~~스키마 객체 수 · 코멘트 = 설명 · 더블클릭 = 편집기 · ▾/▴ 도형~~ ✅ §208 · 남음 = 섹션 접기/탭 · 짧은 LRU · 컬럼 선택 시 주인 테이블 요약 · 속성 표 컬럼 코멘트 열은 코멘트가 있을 때만.
+- ~~스키마 객체 수 · 코멘트 = 설명 · 더블클릭 = 편집기 · ▾/▴ 도형~~ ✅ §208 · 남음 = 섹션 접기/탭 · ~~짧은 LRU~~ → §5-1 ✅(`detail_cache` · T-227 1차 (11-01 정합)) · 컬럼 선택 시 주인 테이블 요약 · 속성 표 컬럼 코멘트 열은 코멘트가 있을 때만.

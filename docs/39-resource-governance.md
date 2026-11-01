@@ -43,7 +43,7 @@
 | S-4 | NET | 사용자 행동 없이 나가는 패킷은 [26 §8](26-performance-architecture.md) 표의 경로뿐 · 신호등 = 접속 창 열림 + 시도한 프로필만 · 실패 = 지수 백오프(상한 32분) · 동시 ≤ `probe.max_inflight` · **자동 재접속은 사용자 실행 시 1회** | `nsql --trace-net`(T-90e: 소켓 열기마다 로그 1줄) · 로그 창 `net` 필터 | 규칙 ✅ · 추적 로그 없음 |
 | S-5 | NET | 실패 서버에 대한 재시도 횟수 ≤ `probe.max_retries` · 접속 테스트·접속 동시 ≤ `connect.max_concurrent` · 초과는 FIFO | 단위 테스트(`ProbePolicy`) | ✅ |
 | S-6 | DB | 결과 페치는 `grid.max_rows`(200)까지만 · 페치 왕복 1,000행 ≤ 2 · 메타 조회는 **펼친 노드만**(사전 프리페치 0) · 실행 중 폴링(Oracle 라이브 로그)은 실행 중에만 · 접속 시 추가 왕복 ≤ 2(SID · 방언 확인) | `Timeline` 단계(Fetch 왕복 수 = `--timing`) · 워커 테스트 | 200 ✅ · 왕복 수 계측 미노출 |
-| S-7 | DB | 응답 없는 서버가 UI를 잡지 않는다: 실행·접속·해제·메타 조회 어느 것도 UI 스레드에서 블록 0 · Disconnect는 즉시(09-16 11차) · 문장 타임아웃 설정 가능(`db.statement_timeout` · T-90b) | 워커 교체 테스트 · 실기(VPN 끊기) | Disconnect ✅ · 타임아웃 미구현 |
+| S-7 | DB | 응답 없는 서버가 UI를 잡지 않는다: 실행·접속·해제·메타 조회 어느 것도 UI 스레드에서 블록 0 · Disconnect는 즉시(09-16 11차) · 문장 타임아웃 설정 가능(`db.statement_timeout` · T-90b) | 워커 교체 테스트 · 실기(VPN 끊기) | Disconnect ✅ · 타임아웃 ✅ 09-29 T-249(아래 표 · 11-01 정합) |
 | S-8 | CPU | 유휴 CPU **0.0%**(애니메이션 없을 때 `WaitUntil` = 다음 깜빡임뿐) · 애니메이션 중 프레임 간격 ≥ 33 ms(≤ 30 fps) · 프레임 1회 ≤ 8 ms(26 §5) | `typeperf`/작업 관리자 60초 평균 · 37 §5 프레임 계측 | 유휴 0% ✅(WaitUntil) · 프레임 ✅ P-1~4 |
 | S-9 | CPU | 큰 입력에 상한(★ 규칙 09-22: 원장의 키는 **읽는 코드 위치**를 함께 적는다 — 키만 만들고 안 읽던 `highlight_max_kb`·`max_occurrences` 재발 방지 · 크기 상한의 원장 = [72](72-size-limits-and-large-file-constraints.md)): 구문 강조는 큰 파일 단계 L2(`file.large_syntax_level` · [72](72-size-limits-and-large-file-constraints.md))에서 평문(`editor.highlight_max_kb`는 09-22 폐기 — 미배선이었다) · Ctrl+D/Alt+F3 다중 선택 ≤ `editor.max_occurrences`(09-22 배선) · 그리드 정렬은 상한 행 안에서만 · 파일 검색은 `search.threads`·`search.max_file_kb`(36) | 단위 테스트(상한 경계) | 미구현(T-90c) |
 | S-10 | CPU/디스크 | UI 스레드는 디스크·네트워크를 만지지 않는다(nexa-ui 20 §2-2) · OS 아이콘·열거·프로브는 워커 · 워커는 **사용 뒤 회수**(대화상자 닫힘 = 스레드 0 · 유휴 30초) | `resource_tests`(nexa-fs) · 스레드 수(`memcycle`) | ✅ |
@@ -89,8 +89,8 @@
 | macOS 화면 내보내기 표면 풀(IOSurface ≤ 4장(10-17 · 213차 = 3 → 4) × 창 픽셀 × 4 B + 폭이 16px 배수가 아니면 중간 버퍼 1장 · 62 §2-1) | 창마다 ≤ 4벌(레티나 메인 창 ≈ 21 MB/장) · 유휴 해제 `gfx.mac_present_trim_ms` 1500 → 메인 창 앞 장만(10-10 실측 3장 62.4 MB → 1장 20.8 MB · footprint −41 MB) | `gfx.mac_present`(`softbuffer` = 끔 = 기본) | softbuffer | softbuffer | softbuffer | `present.rs` · nexa-sys `layer_present` |
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
-| IME 안내 조회(journal 09-22 §34 · 가린 칸에 포커스가 있는 동안 150 ms마다 `GetKeyboardLayout`+`WM_IME_CONTROL` 둘 · 아니면 0) | 포커스 동안만 · 새 타이머 없음(창 tick) | `ui.ime_hint`(끄면 0) | on | on | off | `imehint.rs` · `conn_win`/`input_win` `tick` |
-| ★ **Linux IME 감시**(09-27 · **가린 칸이 있는 창(로그인·입력 창)이 열려 있는 동안** `dbus-monitor --address $(ibus address)` 자식 1 + 읽기 스레드 1 · ibus 패널 `InputMode` symbol 한/EN → 전환 즉시 · 창보다 먼저 띄워 첫 포커스 재전송 = 초기값) · Linux 엔진 조회(`ibus engine`/`gsettings` 프로세스 · 500 ms 캐시 · 가린 칸 포커스 동안만) | 창이 닫히면 kill·wait = 0 · ibus/dbus-monitor 없으면 0(폴백 = 엔진 이름·토글 키·입력 종류) | `ui.ime_hint_watch` · `ui.ime_hint` | on | on | **off** | `imewatch.rs` · `imestate.rs` |
+| IME 안내 조회(journal 09-22 §34 · 가린 칸에 포커스가 있는 동안 150 ms마다 `GetKeyboardLayout`+`WM_IME_CONTROL` 둘 · 아니면 0) | 포커스 동안만 · 새 타이머 없음(창 tick) | `input.ime_hint`(끄면 0 · 옛 `ui.ime_hint` = `RENAMED` · 11-01 정합) | on | on | off | `imehint.rs` · `conn_win`/`input_win` `tick` |
+| ★ **Linux IME 감시**(09-27 · **가린 칸이 있는 창(로그인·입력 창)이 열려 있는 동안** `dbus-monitor --address $(ibus address)` 자식 1 + 읽기 스레드 1 · ibus 패널 `InputMode` symbol 한/EN → 전환 즉시 · 창보다 먼저 띄워 첫 포커스 재전송 = 초기값) · Linux 엔진 조회(`ibus engine`/`gsettings` 프로세스 · 500 ms 캐시 · 가린 칸 포커스 동안만) | 창이 닫히면 kill·wait = 0 · ibus/dbus-monitor 없으면 0(폴백 = 엔진 이름·토글 키·입력 종류) | `input.ime_hint_watch` · `input.ime_hint`(옛 `ui.*` = `RENAMED` · 11-01 정합) | on | on | **off** | `imewatch.rs` · `imestate.rs` |
 | ★ 다중 열기 스레드 `multi-open`(journal 09-22 §30 · 열기 창에서 여러 파일 → **스레드 하나**가 고른 순서대로 읽어 자리 탭마다 결과) | 요청당 1개 · 파일 수 ≤ `file.open_max` · 끝나면 종료 · 동시 N개 없음 | `file.open_max`(1~50 · 기본 10) | 10 | 10 | 10 | `main.rs multi_open_start/multi_load_poll` |
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
 | 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
@@ -133,7 +133,7 @@
 | 삭제 대기 드라이버 정리(10-23 · a888ae2) | GUI·CLI 기동 직후 1회 · 표식 파일 `drivers/.delete-pending` stat 1(없으면 끝) · 있으면 적힌 폴더만 삭제 | (끄는 키 없음 = 비용 stat 1 · 사용자 삭제 동작의 뒷정리) | 켬 | 켬 | 켬 | `ext::sweep_pending` |
 | 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |
-| ClickHouse HTTP 드라이버(10-24 · T-415) | 상주 소켓 0 · 스레드 0(요청은 호출 스레드) · 요청마다 연결 | `db.query_timeout`(기존 · 요청 시간 상한) | — | — | — | `nsql-driver-clickhouse` |
+| ClickHouse HTTP 드라이버(10-24 · T-415) | 상주 소켓 0 · 스레드 0(요청은 호출 스레드) · 요청마다 연결 | `db.statement_timeout`(공통 · 워커 취소 · 원안 표기 `db.query_timeout` = 없는 키 · 드라이버 자체 = 연결 15 s · 읽기 24 h 고정(설정 키 없음) · 11-01 정합) | — | — | — | `nsql-driver-clickhouse` |
 | ★ 메타 3층 L1/L2([85](85-metadata-layers.md) · [84](84-explorer-search-index.md)) | L1 접속 직후 스키마당 1 질의(250 ms 간격) · L2 현재 스키마 컬럼 ≤200(300 ms 간격) · L3 회수 30 s 점검(질의 0) | `explorer.search_index` · `explorer.index_prefetch` · `explorer.index_idle_ms` · `meta.warm_columns_max` · `meta.detail_max/detail_ttl_secs/cols_ttl_secs` | on | on | prefetch off · warm 0 | T-219·T-221 |
 
 ### 3-3. CPU(+ 디스크)
@@ -249,8 +249,8 @@
 | **루틴 인자 완성 요청**(10-08 · T-317 · [85 §4](85-metadata-layers.md)) | 탐색기 메타 스레드(`Req::Args` · 메타 세션 왕복 1) | 없음(오기 전 "불러오는 중" · 오면 팝업만 갱신) | 루틴별 인자 목록 `ArgState` **한 벌**(L3 · 루틴당 1회 · 오기 전 재요청 없음) | — | L3 회수 규칙 | `intel.enabled`(코드 완성 전체) | 미등재(입력 사건 조건부 · 상시 비용 0) |
 | **★ 다중 인스턴스 시작 모드**(93차) | 없음 | 기동 때 1회 `try_lock` | 잠금 파일 핸들 1개를 프로세스가 보유 | `instance.lock`(0 바이트 · 설정 폴더) | 프로세스 종료 | `project.restore_last`(기본 끔 — 둘째 인스턴스가 프로젝트를 복원하지 않는다) | 미등재(비용 0) |
 | **★ 토스트 진행 막대**(93차) | 없음 | 카드가 떠 있는 동안 30 ms 틱(새 타이머 0) | — | — | 카드가 사라지면 0 | `ui.toast_progress` | ✅ `off` |
-| **★ IME 안내**(93차) | 없음 | 가린 칸에 포커스가 있는 동안 150 ms마다 조회 2 | — | — | 포커스가 떠나면 0 | `ui.ime_hint` | 미등재(포커스 조건부라 상시 비용 0 · low 프리셋에서 off) |
-| **★ Linux IME 감시**(104차 후반) | 없음 | 가린 칸이 있는 창이 열린 동안 자식 프로세스 1 + 스레드 1(메시지 때만 깨어남) | ~2 MB(dbus-monitor) | — | 창이 닫히면 kill = 0 | `ui.ime_hint_watch` | ✅ `off` |
+| **★ IME 안내**(93차) | 없음 | 가린 칸에 포커스가 있는 동안 150 ms마다 조회 2 | — | — | 포커스가 떠나면 0 | `input.ime_hint`(11-01 정합) | 미등재(포커스 조건부라 상시 비용 0 · low 프리셋에서 off) |
+| **★ Linux IME 감시**(104차 후반) | 없음 | 가린 칸이 있는 창이 열린 동안 자식 프로세스 1 + 스레드 1(메시지 때만 깨어남) | ~2 MB(dbus-monitor) | — | 창이 닫히면 kill = 0 | `input.ime_hint_watch`(11-01 정합) | ✅ `off` |
 | **★ 플래시 메시지**(104차 후반) | 없음 | 유지+페이드(기본 5 s) 동안 그 창 프레임마다 재그리기 | — | — | 끝나면 0 | `ui.flash_hold_ms`·`ui.flash_ms` | ✅ `300`/`200` |
 | **확장 패널**(79차) | `ext-index` 1(사용자 동작 때만) + `curl` 자식 | 없음 | 목록 JSON 1벌 | `extensions/` · `index.json` | 패널 닫힘 | `extensions.enabled` | — |
 | **탐색기 갱신**(80차) | 메타 스레드(서버별 `nsql-explorer`) | 없음 | 폴더별 디프 갱신(트리 전체 재구축 0) | — | — | `meta.refresh_*` | `meta.refresh_secs=0` · `meta.refresh_highlight_ms=0` |
@@ -344,7 +344,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 | 구분 | 키 → 강제값 | 사용자 예시와의 대응 | 비고 |
 |---|---|---|---|
-| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off · **`ui.flash_hold_ms` 300 · `ui.flash_ms` 200 · `ui.ime_hint_watch` off**(09-27) | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
+| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off · **`ui.flash_hold_ms` 300 · `ui.flash_ms` 200 · `input.ime_hint_watch` off**(09-27 · 11-01 정합 이름) | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
 | 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(우클릭 메뉴 아이콘 · 10-13 = 아이콘 생성·그리기 0 · 칸은 유지해 글 위치 불변)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off · **`objlink.tooltip` off(10-13 · hover 카드)** · **`ctrl.bookmark_label` off · `ctrl.desc_inline` off(10-13 · 111)** | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
 | 코드 완성(09-24 §187) | `intel.auto_activation` off · `intel.icons` off · `intel.detail_card` off · `intel.document_words` off · `intel.preload` off · `intel.from_routines` off | 팝업은 ⌃Space로만 · 아이콘 래스터·카드 조립·문서 훑기·접속 직후 카탈로그 질의(관계 4 + 함수 3 + 사전 1) 없음 · 수동 완성·시그니처 도움·`intel.match`·상한은 그대로(결과에 닿음) | 72 "코드 완성과 문서 크기" |
 | I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |
@@ -377,6 +377,8 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 ---
 
 ## 6. 상시 점검 — 4층 게이트(사람 손 없이 준수를 증명)
+
+> ★ **현행 운영(11-01 · 사용자 · D-439 후속)** = 상시 검증은 [102 §5-7](102-collab-session-operation.md)(차수마다 V1·V2 · 워크스페이스 전체 = push 뒤 CI = G-1의 실제 자리) · 아래 게이트 표는 성능 점검([71](71-performance-review-process.md)) 또는 릴리스 게이트를 요청받았을 때만 · G-4 `perf.yml` = 신설 안 함(보류).
 
 | 층 | 무엇 | 언제 | 도구 |
 |---|---|---|---|
@@ -412,7 +414,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 | 단계 | 내용 | 크기 |
 |---|---|---|
-| **T-90a** | ✅ 09-16 49차: 레지스트리 `perf::PERF`(=`Entry::perf()` · 병행 append 충돌 회피로 필드 대신 별도 표 · 필드 이관 후속) + `perf.mode` + `Settings::effective` + `nsql config list perf` + 기존 키 PerfBinding · 잔여 = 상태줄 ⚡ · 설정 창 Performance 카드(모드 + 링크 행) | 중 |
+| **T-90a** | ✅ 09-16 49차: 레지스트리 `perf::PERF`(=`Entry::perf()` · 병행 append 충돌 회피로 필드 대신 별도 표 · 필드 이관 후속) + `perf.mode` + `Settings::effective` + `nsql config list perf` + 기존 키 PerfBinding · ~~잔여 = 상태줄 ⚡ · 설정 창 Performance 카드(모드 + 링크 행)~~ → ✅ 10-30 180차(D-405 · 위 "상태줄 ⚡" 절 · Performance 카드 = `CatPerformance` 분류 · 11-01 정합) | 중 |
 | **T-90b** | DB: `db.statement_timeout`(드라이버 cancel 포트 — Oracle `OCIBreak` · MSSQL attention · PG `pg_cancel_backend`/소켓 · SQLite `interrupt`) · `db.fetch_size` · 탐색기 숨김 = 세션 안 엶 | 중 |
 | **T-90c** | CPU/GFX: ~~`editor.highlight_max_kb`~~(09-22 폐기) · `editor.max_occurrences`(09-22 배선) · `ui.max_fps` · `ui.animations`(OS 동작 줄이기 = nexa-fs::sys) · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons` | 중 |
 | **T-90d** | ✅ 09-16 49차: `log.max_lines` · `editor.undo_max` · `ui.glyph_cache` · `file.icon_cache` 세터 + 상한 테스트 + main.rs 배선 | 소 |

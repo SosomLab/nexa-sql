@@ -1,7 +1,7 @@
 # 94. 설정 키 이름 체계 — 위치 연계 · 길이 · 1레벨/멀티레벨 · 동의어(2026-09-28 · 102차 끝 3 win · 📐 안 + 부품 구현)
 
 > 사용자 09-28: *"변수 전체 이름(`.`을 포함한 계층 전체)이 설정이 있는 위치와 연결이 잘 되지 않아 찾기 어렵다 · 목적/기능 단위 이름이라면 위치 정보도 연계하거나 체계를 바꿔라 · 두 정보가 상충하면 좋은 방안을 설계해 추천 · 성능·속도·기능에 문제가 없다면 이름이 의미와 직관적으로 연결되고 길이는 최소 · IntelliJ·VS Code·DBeaver·Sublime 체계를 다시 조사해 1레벨(Sublime식)인지 멀티레벨인지 추천 · 동일 의미의 여러 이름이 있는지 검토"*.
-> 원천 = `nsql-settings::REGISTRY`(498키 · 46 접두 · 27 카테고리) · [24](24-settings-and-vscode-analysis.md) · [78](78-settings-reorganization.md)(카테고리 재편 안 · T-186) · 설정 창 `prefs_win.rs`.
+> 원천 = `nsql-settings::REGISTRY`(498키 · 46 접두 · 27 카테고리 = 09-28 집계 · 11-01 현재 REGISTRY 약 776키 · 접두 60 · `cat:` 분류 46 — 셈법 = `REGISTRY` 배열 안 `key: "…"` 줄 수 · 첫 `.` 앞 접두 고유 수 · `cat: Msg::Cat*` 고유 수 · 확장 동적 등록 키 제외 · 11-01 정합) · [24](24-settings-and-vscode-analysis.md) · [78](78-settings-reorganization.md)(카테고리 재편 안 · T-186) · 설정 창 `prefs_win.rs`.
 
 ## 0. 결론 여섯 줄
 
@@ -10,7 +10,7 @@
 3. **의미 직관 > 위치 연계**가 상충 원칙이다(사용자 "2가지 정보가 상충된다면") — 접두는 **사용자의 일**(`tx.` 트랜잭션 · `vars.` 변수)을 말하고, 위치는 카테고리 표가 따라온다. 반대로 위치를 위해 `session.tx_stale_min`처럼 접두를 늘리지 않는다(길이 ↑ · 뜻 ↓).
 4. **길이 규칙**: 접두 ≤ 9자 · 이름 ≤ 2낱말(`_` 하나) · 단위 접미(`_ms` `_secs` `_mb` `_kb` `_pct`)는 값의 뜻이므로 남긴다 · `enabled`/`on`류 마스터는 접두만(`intel.enabled` → 유지 · 새 키는 `probe.enabled`처럼).
 5. **동의어·중복**(§5): 뜻이 같은 키가 이름만 다른 경우는 없다(전부 대상이 다르다). 다만 **같은 뜻의 낱말이 두 표기**로 쓰이는 곳이 있다(`dblclick`/`double_click` 없음 · `secs`/`sec` 없음 · `max_*`/`*_max` **양쪽** 25/31 · `conn.`/`connect.` **둘 다** 7/4) — 낱말 표기 규칙을 정해 새 키부터 적용하고 기존 키는 §6 2차에서 정리.
-6. **구현(이번 세션)**: `RENAMED` 표 + 읽기 마이그레이션 + `canonical_key`(부품) · 1차 적용 4키(§6-1) · 설정 창 = 그룹 → 카테고리 → **접두 묶음** → 등재 순 정렬(`display_order`) + 키 옆 복사 버튼 + 고급 구분(`ADVANCED`) · 큰 파일 카테고리 신설. **2차(전면 rename · §6-2 표)는 D-146 결정 뒤 T-250**.
+6. **구현(이번 세션)**: `RENAMED` 표 + 읽기 마이그레이션 + `canonical_key`(부품) · 1차 적용 4키(§6-1) · 설정 창 = 그룹 → 카테고리 → **접두 묶음** → 등재 순 정렬(`display_order`) + 키 옆 복사 버튼 + 고급 구분(`ADVANCED`) · 큰 파일 카테고리 신설. ~~**2차(전면 rename · §6-2 표)는 D-146 결정 뒤 T-250**~~ → ✅ 09-29 T-250 적용(§6-2 · 11-01 정합).
 
 ## 1. 타 제품 조사(재조사 · 09-28)
 
@@ -28,7 +28,7 @@
 
 ## 2. 현 상태(09-28 · 스크립트 집계)
 
-- 키 498 · 접두 46 · 카테고리 27(트리 8 그룹).
+- 키 498 · 접두 46 · 카테고리 27(트리 8 그룹). (09-28 집계 · 11-01 현재 REGISTRY 약 776키 · 접두 60 · `cat:` 분류 46 · 셈법 = 머리 원천 줄 · 11-01 정합)
 - 접두 ↔ 카테고리 **1:1인 접두** 34(`key. intel. grid. explorer. log. window. oracle. project. …`).
 - **한 카테고리에 접두가 둘 이상**(위치를 키에서 못 읽는 곳 · 11):
 
@@ -132,7 +132,7 @@
 - **사용자 인터페이스 ▸ 고속 스크롤**(새 분류 · 종전 입력 분류에서 분리): `scroll.*` 8키(`scroll.fast` · `fast_speed` · `fast_grid_extra` …).
 - 키 이름은 그대로(접두 = 일 · 분류만 나눔 · `RENAMED` 없음). 검색 `filter` · `scroll`로 두 분류가 바로 나온다(journal 10-06 §9 ②).
 
-### 6-7. 편집기 줄 간격 2키(10-21 · 134차 win · [118](118-editor-line-spacing.md) · D-315 확정 대기)
+### 6-7. 편집기 줄 간격 2키(10-21 · 134차 win · [118](118-editor-line-spacing.md) · ✅ D-315(10-22 확정) · 11-01 정합)
 
 - **편집기 ▸ Editor**(분류 `CatEditor` · `editor.font_size` 다음): `editor.line_height_mode`(Choice multiple \| exact \| at_least · 기본 multiple) · `editor.line_height`(Text · 기본 `1.2` · 방식에 따라 배수 또는 px).
 - 방식과 값을 두 키로 나눈 이유 = VS Code `editor.lineHeight`처럼 값 크기(< 8 = 배수)로 뜻을 가르면 뜻이 숨는다 · 새 키라 `RENAMED` 없음.
@@ -144,7 +144,7 @@
 
 - 분류 = **CatInternal**(설정 창에 안 보임 · HIDDEN) · `driver.repo`(Text · 기본 **`SosomLab/nexa-sql`**(D-349 · 10-22 · 별도 드라이버 저장소 없음) · 색인 `drivers/index.json`(drivers.yml 봇이 갱신)·자산(Releases 태그 **`drivers-v<ver>`** · pre-release · `nsql-driver-<id>-<ver>-<os>-<arch>.zip`/`.sig`/`.sha256` · 10-29 T-454 정정 · 종전 표기 "`driver-*`")을 받을 GitHub 저장소) · `driver.http_timeout_secs`(Int 5~600 · 기본 30 · 10 s 초과라 `_secs` · §6-5).
 - 토큰은 설정 키로 두지 않는다 = 환경 변수 `NSQL_GITHUB_TOKEN`만(설정 파일에 비밀을 남기지 않음) · 자동 갱신 확인 키 `driver.check_updates`는 GUI 배지와 함께 2차.
-- ★ **`driver.auto_install`**(10-23 · D-350 C단계) = Bool · 기본 **on** · 분류 **접속**(`CatConnection` · 설정 창에 보임) · 라벨 "없는 드라이버 자동 설치" · 끄면 접속 시 -1350 + 설치 안내만.
+- ★ **`driver.auto_install`**(10-23 · D-350 C단계) = Bool · 기본 **on** · 분류 ~~**접속**(`CatConnection`)~~ → **DBMS ▸ 드라이버**(`CatDbmsDrivers` · 10-23 이동 · 위 머리 줄 · 11-01 정합) · 설정 창에 보임 · 라벨 "없는 드라이버 자동 설치" · 끄면 접속 시 -1350 + 설치 안내만.
 - ★ **`driver.auto_upgrade`**(10-30 밤 · 185차 · D-423) = Bool · 기본 **on** · 분류 **DBMS ▸ 드라이버**(`CatDbmsDrivers`) · 라벨/설명 i18n · 켜면 그 드라이버로 접속할 때 캐시된 색인이 새 판을 말하면 설치 후 새 판으로 접속(열린 세션은 옛 판 · 실패 = 설치판으로 접속) · GUI·CLI 기동 때 `set_auto_upgrade`로 반영 · [22 §3-0b](22-driver-extensions.md).
 - ★ **`driver.check_updates`**(10-23 · fbe5001) = Bool · 기본 **on** · 분류 **DBMS ▸ 드라이버** · 라벨 "드라이버 갱신 하루 1회 확인" · 색인 캐시 24시간 초과일 때만 GET 1 · 새 버전 = 상태줄 안내 + 로그(자동 교체 없음) · ★ **10-27 설명 갱신(D-364)** = 영어 "Once a day at startup, re-read the driver index; when installed drivers have newer versions, show a notice with an [Update] button (status bar and log too). Nothing is replaced until you click it" · 한국어 "하루 1회 기동 때 드라이버 색인을 다시 읽어 설치된 드라이버에 새 버전이 있으면 [갱신] 버튼이 있는 안내를 띄웁니다(상태줄·로그에도). 누르기 전에는 바꾸지 않습니다"(`Msg::DescDriverCheckUpdates`).
 

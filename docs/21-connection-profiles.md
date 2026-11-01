@@ -50,10 +50,10 @@ GUI       접속 칸에 이름만 넣고 Connect · [이름 칸] + [접속 문�
 
 ## 5. 열린 것
 - **D-18** macOS Keychain · Linux Secret Service로 기기 키 보호(현재 0600 평문). 결합 시 `device.key`만 교체 — 프로필 재암호화 불요(키 간접 한 겹의 이유).
-- GUI 프로필 **목록 선택**(콤보/로그인 리스트 — Golden식 · [22](22-driver-extensions.md) §1) · 프로필 삭제 UI — 지금은 이름 입력 + Save만.
+- ✅ GUI 프로필 **목록 선택**·삭제 = 구현(T-31 ✅ 10-23 · Golden식 로그인 목록 그리드 · 삭제 확인 2단 09-14) · 남음 = T-31b(Import/Export · Pin · 삭제 복구 `.deleted/` · `ConnectionGrid` G-4) · 11-01 정합 · (이력) GUI 프로필 **목록 선택**(콤보/로그인 리스트 — Golden식 · [22](22-driver-extensions.md) §1) · 프로필 삭제 UI — 지금은 이름 입력 + Save만.
 - 프로필별 드라이버 버전 고정(`driver=<id>@<ver>`) — [22 §4](22-driver-extensions.md).
 
-## 5. Demo 프로필 · 샘플 데이터(사용자 09-17)
+## 12. Demo 프로필 · 샘플 데이터(사용자 09-17 · 종전 번호 = §5 둘째 · 11-01 정합)
 
 - **무엇**: 서버 없이 바로 써 볼 수 있는 로컬 SQLite — 프로필 이름 **`Demo`** · 파일 `<사용자 설정 폴더>/demo.sqlite`(`NSQL_HOME` 규약 · exe 옆 금지 · 포터블 D-78과도 같은 트리) · 내용 = `examples/demo.sql`(SCOTT `dept`/`emp` + `sales` 5,000행) — 스크립트는 **바이너리에 내장**(`include_str!` · DR-27 배포본에 파일 없음).
 - **언제**: ① **최초 실행 1회** 팝업 "로컬 SQLite 데모를 만들까요?"(지금 만들기 / 나중에) — 설정 `demo.prompted`(HIDDEN · 자동 기억 · 끄면 다음 시작 때 다시) ② **도움말 ▸ 샘플 데이터 만들기(Demo 프로필)…** — 프로필과 파일이 **둘 다 있으면 비활성**(nexa-ctl 풀다운 `MenuEntry::Disabled`).

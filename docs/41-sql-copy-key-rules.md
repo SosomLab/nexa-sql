@@ -1,7 +1,7 @@
 # 41 · 결과 → SQL 문 생성의 키 규칙 — 조사 · 설계 · 결정 (사용자 요청 09-16)
 
 > **요구**(사용자 09-16): CLI에서도 결과를 SQL 5종(select · insert · update · delete · merge)으로 출력 · **키 = PK → 없으면 첫 인덱스 → 없으면 앞 3개 컬럼** · 대체했으면 **요청당 1회** 경고(로그/결과 맨 아래) · GUI도 같은 규칙 · 설정으로 유일성 기준을 **① PK 또는 첫 유니크 인덱스 ② 전체 컬럼** 중 선택(기본 ①) · 다른 클라이언트 조사 후 설계·결정.
-> **구현**: nsql-io `sqlgen`(GUI·CLI 공용 생성기) · nsql-catalog `keys()`(4 방언) · 설정 `sql.key_mode` · CLI `-f sql:<kind>`/셸 `set format sql:<kind>`/`copy sql:<kind>` · GUI Copy SQL(워커 키 조회 · 캐시).
+> **구현**: nsql-io `sqlgen`(GUI·CLI 공용 생성기) · nsql-catalog `keys()`(4 방언) · 설정 `grid.key_mode`(옛 `sql.key_mode` = `RENAMED` T-250 · 11-01 정합) · CLI `-f sql:<kind>`/셸 `set format sql:<kind>`/`copy sql:<kind>` · GUI Copy SQL(워커 키 조회 · 캐시).
 
 ---
 
@@ -25,7 +25,7 @@
 | # | 결정 | 근거 |
 |---|---|---|
 | D-62 ✅ | **키 규칙(기본 `pk`)**: PK → 첫 유니크 제약/인덱스 → **앞 3개 컬럼** + 경고 1회. 키 컬럼은 결과에 **모두 있어야** 채택(없으면 다음 후보) | 사용자 지정 · 다수 도구와 같은 앞 두 단계 · 3컬럼 대체는 경고로 표시 |
-| D-63 ✅ | **설정 `sql.key_mode`** = `pk`(기본) \| `all`(전체 컬럼 = DataGrip/HeidiSQL/Navicat 방식) — GUI Copy SQL · CLI `-f sql:*` · 셸 공통 | 사용자 요구 ①/② |
+| D-63 ✅ | **설정 `grid.key_mode`**(옛 `sql.key_mode` · T-250 `RENAMED` · 11-01 정합) = `pk`(기본) \| `all`(전체 컬럼 = DataGrip/HeidiSQL/Navicat 방식) — GUI Copy SQL · CLI `-f sql:*` · 셸 공통 | 사용자 요구 ①/② |
 | D-64 ✅ | **경고는 요청당 1회**: CLI = 결과 맨 아래 `-- WARNING: …` SQL 주석(출력이 그대로 유효한 SQL) · GUI = 상태줄 + 로그 창 1줄 | 사용자 요구 · 문장 사이에 끼우면 붙여 넣기 방해 |
 | D-65 ✅ | 테이블을 실행문에서 추정 못 하면 `T` + 경고(`-- WARNING: … T was used`) · INSERT는 키 경고 없음(키를 안 씀) | 종전 GUI 동작 유지 |
 | D-66 ✅ | 키 조회는 **필요할 때 1회**(테이블당 캐시 · 접속마다 초기화) — 조회마다 프리페치하지 않는다 | [39 S-6](39-resource-governance.md) 추가 왕복 상한 |
@@ -58,7 +58,7 @@ generate(dialect, table, names, rows, kind, key):
 | CLI 기본 | `nsql config set cli.format sql:insert` |
 | 셸 | `set format sql:delete` · `copy sql:merge`(마지막 결과 → 클립보드 · 경고 포함) |
 | GUI | 결과 그리드 우클릭 ▸ Copy SQL ▸ SELECT/INSERT/UPDATE/DELETE/MERGE(Advanced Copy ▸와 **같은 층** · 서브메뉴 1단 = T-233 · 10-27 문서 정정) |
-| 유일성 기준 | `nsql config set sql.key_mode all` · GUI 설정 창 ▸ Result Sets ▸ Key columns for generated SQL |
+| 유일성 기준 | `nsql config set grid.key_mode all`(11-01 정합) · GUI 설정 창 ▸ Result Sets ▸ Key columns for generated SQL |
 
 ## 5. 검증(09-16 · SQLite · `scratch/sqlkinds.sql`)
 

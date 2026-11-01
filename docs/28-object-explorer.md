@@ -2,7 +2,8 @@
 
 > **요청**(사용자 09-14 · DBeaver 캡처): *"DBMS의 Object 탐색 기능. 자동 갱신은 사용자가 직접 설정했을 때만(기본 없음). 조회 시점 = 해당 항목이 확장된 시점에 **단일 레벨(그 수준)만** 메타 정보 조회. 각 구성별 별도 Thread(Tables 확장 진행 중에 Procedures를 확장하면 병렬) · 각 동작의 오류가 escalation 되지 않게."*
 > **선행**: [01 아키텍처](01-architecture.md)(4계층 · 어댑터는 `Session` 포트만) · [22](22-driver-extensions.md)(드라이버 확장 — 카탈로그도 같은 경계) · [26 성능](26-performance-architecture.md)(단계 계측 · 경량) · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md)(FileGrid와 같은 계층 그리드) · TODO T-20(`Catalog` 포트).
-> **상태**: 🚧 **1차 구현 09-15**(`nsql-catalog` + `explorer.rs` + `nsql cat` — 메타 세션 스레드 1개 순차 · 지연 1단계 · 노드별 ⚠ · 소스/SELECT 새 탭). 잔여 = 스레드 풀·취소·툴팁·자동 갱신·nexa-grid. 작업 **T-56**. 결정 **D-46·D-47**(1차 = separate 고정).
+> **상태**: ✅ **구현**(T-56 ✅ 10-29 마감 · D-393 = 현행을 설계로 승격 · 1차 09-15 → 필터 §7 · 서버 전체 검색 §7-5 · 설명 검색 §7-6 · 상세 패널 §8([86](86-object-details-panel.md)) · 드라이버 카탈로그 훅 §8-1 · 삭제 §9 · 헤더 툴팁 §10 · DnD·이름 복사 §11 = 10-15까지) · 남음 = T-209(검색창 2차 · 대기) · T-347(설명 검색 후속) · nexa-grid `CatalogSource` = 철회(D-393) · 11-01 정합
+> (이력) 🚧 **1차 구현 09-15**(`nsql-catalog` + `explorer.rs` + `nsql cat` — 메타 세션 스레드 1개 순차 · 지연 1단계 · 노드별 ⚠ · 소스/SELECT 새 탭). 잔여 = 스레드 풀·취소·툴팁·자동 갱신·nexa-grid. 작업 **T-56**. 결정 **D-46·D-47**(1차 = separate 고정).
 
 ---
 

@@ -217,7 +217,7 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 - **자산**(D-349 → D-350) = 같은 저장소 Releases · 태그 **`drivers-v<ver>`** 하나에 전 드라이버(D-350 · D-349의 드라이버별 `driver-<id>-v<ver>`을 대체) · **모두 pre-release**(앱 `releases/latest` 보호) · URL = `https://github.com/SosomLab/nexa-sql/releases/download/drivers-v<ver>/nsql-driver-<id>-<ver>-<os>-<arch>.{zip,sha256,sig}` + 오프라인 번들 `nsql-drivers-all-<ver>-<os>-<arch>.zip` · 앱 배포 워크플로 3곳은 `v*` 태그 릴리스에만 반응(가드 · `drivers-v*`는 `v`로 시작하지 않음).
 - **검증 순서** = sha256 → Ed25519(`ext::keys::DRIVER_KEYS` · **키 목록이 비면 설치 거부 · 우회 옵션 없음**) → `drivers/.tmp/<pid>-<ns>/pkg`에 풀기(공통 최상위 폴더 1개 벗김) → 매니페스트 `nexa-driver.json` id·version·protocol 대조(ABI 불일치 = 거부) + 라이브러리 존재 → `drivers/<id>/<ver>/`로 **원자적 rename** · 이미 있으면 거부(`--force` = 교체).
 - **HTTPS** = 새 크레이트 `nsql-net`(rustls 0.23 + webpki-roots 1 · 프록시 CONNECT · 상한) — 위 표의 "tiberius가 끌어온 `rustls`·`ring`"은 136차 뒤 rustls 0.23 + aws-lc-rs(MySQL·Oracle Thin과 공유)로 바뀜.
-- **갱신 확인 자동(하루 1회)** = 아직 없음(2차 · `driver.check_updates` + GUI 배지) · 지금은 `nsql driver update --check` 수동만.
+- **갱신 확인 자동(하루 1회)** = ✅ 10-27 구현(D-364 기동 확인 · D-423 · 11-01 정합) · (이력) 아직 없음(2차 · `driver.check_updates` + GUI 배지) · 지금은 `nsql driver update --check` 수동만.
 - CLI = `nsql driver search [<text>] [--refresh]` · `install <id>[@<ver>] [--pre] [--force]` · `install --file <zip>` · `update [<id>] [--check]` · 설정 `driver.repo` · `driver.http_timeout_secs` · 토큰 = `NSQL_GITHUB_TOKEN`.
 
 ## 4. DBMS 버전별 호환 — SxS가 필요한가 (사용자 요구 ④ 조사)
@@ -319,7 +319,7 @@ nsql driver path                    drivers/ 폴더
 ## 8. 열린 결정
 - **D-19** 드라이버 저장소 구성 — 단일 `nexa-sql-drivers`(확장별 태그 접두) vs 확장별 저장소. 권장 = 단일(색인·CI 한 곳) + 서드파티는 별도. → ✅ **D-349(10-22 · 사용자)로 대체** = 별도 저장소 없이 **nexa-sql 저장소 안**(색인 `drivers/index.json` · 태그 `driver-<id>-v<ver>` pre-release) · 서드파티는 색인 `repo`로 별도 저장소.
 - **D-20** Oracle OCI 확장의 Instant Client 동봉 여부(D-1과 통합) — OTN 조건 확인 후.
-- **D-21** 갱신 확인 기본값(켬 권장 · 폐쇄망 배포는 설정으로 끔).
+- ✅ **D-21 = D-423으로 닫힘**(`driver.check_updates` 켬 · 자동 갱신 기본 on · §3 갱신 확인·§3-0b · 11-01 정합) · (이력) **D-21** 갱신 확인 기본값(켬 권장 · 폐쇄망 배포는 설정으로 끔).
 
 ## 9. 접속 폼의 "바뀜" 표시와 Save 유도 — 설계(사용자 09-19 · 구현 = T-131)
 

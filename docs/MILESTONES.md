@@ -45,6 +45,7 @@
 | 🚧 | **09-26~27**(Linux 101차): ★ **Linux 전수 검사**(기능 78/78 · 4-DBMS DDL·DML·TCL·DCL 62/62 · 성능·회수 · 도구 4종) · ★ **라이선스 체계 코드 완성** — 라이브러리 nexa-license(형식·검증·기기 ID·`fs`·`issuer`) · **발급기 `nexa-license-tool`**(keygen·issue·reissue·verify·ledger · 봉투 `nxk1`) · 앱 층 `nsql-license`(Feature 21 · `check` 순수 · 빌드일) · CLI `nsql license` · GUI 라이선스 창·상태줄 배지(T-34) · **게이트 12곳**(T-36 · 25 §13-3 확정 · Release 늘 켬) · 📐 [92 디지털 자산 보호](92-digital-asset-protection.md) · 위키 License · ✅ 루트 공개키 `root-v1` 등재(103차 mac · nexa-license 1bc033c · 첫 발급 NSL-2026-000001 설치) |
 | ✅ | **09-28**(win 102차 끝): 🚀 **v0.1.0 첫 공개 릴리스** — 3-OS 설치본 + sha256 · 🍺 Homebrew Cask(kiros33/tap · 자동 반영·실설치 검증) · winget·choco 없음 · 정적 CRT·임포트 게이트·CLI 버전 정보(형제 저장소 교훈 33 §5) |
 | 🚧 | **10-04**(mac 111차): ★ **협업 세션 운영**([102](102-collab-session-operation.md) · Fable 개발 × Opus 협업) · ★ DBMS 아이콘 PNG 173종(전부 + 고지 · T-277 = 설치본 고지 ✅ 10-04 · 원천별 개별 확인 남음) · ★ 화면 언어 `system` 기본 · 🔧 툴바 ▾ 배율 · 파일 DB 표시 · 포맷터 keep `as` · 스플리터 hover · Debug 기능 점검 82/82 + SQLite E2E 63 · ★ 상태바 항목 순서·표시 편집 · 툴바 우클릭·툴바 설정 편집 · 협업 검증 단계 V0~V3([journal 10-04](journal/2026-10-04.md)) |
+| ✅ | **11-01**(win 192차 210~215차): ★ T-457 운영 2단 `FROM t`·`TABLE t` 조회 분류(D-434) · ★ Linux xvfb GUI 시험 CI(T-458 · D-435 · 215차 대표 16) · ★ T-SQL `BEGIN` 없는 IF 본문(`format.tsql_if_body` · D-433 · T-255 종결) · ★ **xlsx/parquet 내보내기**(T-8 · D-432 · 외부 crate 예외 2) + INSERT 표 이름 추정 · ★ 앱 자체 헤드리스 `NSQL_HEADLESS` + `capture:`(T-459 1차 · D-436) · 사용자 결정 20(D-437) + 순차 계획(D-438) + 문서 통합(①-b · D-439) · [journal 11-01](journal/2026-11-01.md) |
 | ✅ | **10-28~31**(win 150~192차): 🚀 **v0.4.0 공개**(10-30 · Homebrew ✓ · Chocolatey 제출 · APT/RPM) + **drivers-v0.1.8·0.1.9** · ★ 상태 있는 확장(ABI v1.3) · PG TLS(T-70) · SSH 터널(T-3 · D-382) · Db2 서버 커서·다중 커서 · 저장소 익명화 · `nsql shell` 줄 편집기·Ctrl+R(T-453) · T-14 키맵 파일 · CLI 스트리밍 내보내기(T-8) · 2차 B 목록 전부(10-30~31 · 드라이버 갱신 UX · 프로젝트 설정 층 · 미니맵 3순위 · 북마크 B4~B6 · 저장 큐·hot exit) · ★ SQL 포매터 river 정렬·PL/SQL·T-SQL·PL/pgSQL(T-255) + **포맷 프리셋**(T-456 · D-431) · 남음 = 선택 항목만([STATUS](STATUS.md) 맨 위) |
 | ✅ | **10-27**(mac 140차): 🚀 **v0.3.1 공개**(lite · Homebrew 설치 검증 ✓ · Chocolatey 제출 · linux-repo 0.3.1 ✓) · **drivers-v0.1.7**(pre-release · 자산 125) · ★ 확장 드라이버 서버 커서 이어 받기(ABI 결과 코덱 꼬리 `pending`·`limits_hit` + op 19 `CODEC_FEATURES` · 혼합 조합 절단 방지) · D-363 로컬 Release = lite 3-OS · 통합 40/0 · 맥 점검(아웃라인·변수 층·기동 ✓ · T-431 재현) · [journal 10-26 §5](journal/2026-10-26.md) |
 | ✅ | **10-26**(win 139차): 🚀 **v0.3.0 공개**(lite · Homebrew 설치 검증 ✓ · Chocolatey 제출 · linux-repo) · **drivers-v0.1.6**(pre-release · 자산 125 · Db2 포함 10종) · ★ T-430 기동 아이콘 스캔라인 래스터(Debug 486~542 → 18~27 ms) · txlog 서버 행만 · EXEC 로컬 대입 · T-153 ⓑ `DEFINE … SHARE\|LOCAL\|GLOBAL` · T-429 · T-408 · T-88 ✅ · T-125 자동화 16/20 · 이 PC Release = lite · 문서 정비(README 색인 +60 · MILESTONES +22 · TODO 감사) · [journal 10-26 §4](journal/2026-10-26.md) |
@@ -93,14 +94,14 @@
 ## 배포 — [33](33-distribution-and-packaging.md) (DR-27 · 09-15)
 | 상태 | 항목 |
 |:--:|---|
-| ✅ | 설치본 릴리스 파이프라인 — 3-OS 설치본(v0.1.0 09-28 ~ v0.1.4 10-04 · `release.yml` · sha256) · 🍺 Homebrew Cask(`homebrew.yml`) · 설계 = 설치본만(MSI · pkg/dmg · deb/rpm) · 목적별 exe |
+| ✅ | 설치본 릴리스 파이프라인 — 3-OS 설치본(v0.1.0 09-28 ~ **v0.4.0 10-30**(11-01 정합 · 기본 = lite D-352 · Chocolatey `CHOCO_PUSH` true · winget false) · `release.yml` · sha256) · 🍺 Homebrew Cask(`homebrew.yml`) · 설계 = 설치본만(MSI · pkg/dmg · deb/rpm) · 목적별 exe |
 | 🚧 | **10-05** Linux 패키지 저장소 채널 — pkg.sosomlab.com(`SosomLab/linux-repo` · 서명 APT + RPM · deb·rpm 둘 다 필수 자산) · `linux-repo.yml`(공개 때 신호 · push `1ddeaf1`에 포함) · 릴리스 노트 등록 명령 · 남음 = 시크릿 등록 · linux-repo toml 커밋·push 승인 · 실제 발행·`apt`/`dnf` 실기(T-280 · [33 §5-5](33-distribution-and-packaging.md)) |
-| 🚧 | 남은 배포 일 — T-72 잔여 · winget·choco 첫 검수 통과(T-279 · 10-05 제출됨) · 포터블 모드(T-106 · D-78) · 코드 서명(DR-20 = 별도 요청 시) · 공유 lib 분리 · macOS Universal 2(완료 여부 미확인 · 10-05 정합) |
+| 🚧 | 남은 배포 일 — T-72 잔여 · winget·choco 첫 검수 통과(T-279 · 10-05 제출됨) · 코드 서명(DR-20 = 별도 요청 시) · 공유 lib 분리 · macOS Universal 2(완료 여부 미확인 · 10-05 정합) |
 
 ## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)
 | 상태 | 항목 |
 |:--:|---|
 | ✅ | **10-22~25** 확장 드라이버 = in-process cdylib(ABI v2 · D-350 · 접속 시 자동 설치 · 오프라인 번들 · 서명) · 공개 pre-release `drivers-v0.1.0~0.1.2 · 0.1.4 · 0.1.5`(0.1.3 미발행 · 10종 = sqlite·pg·mysql·mssql·oracle-thin·oracle-oci·odbc·duckdb·clickhouse·db2 · 자산 125) · ABI op 18 `CANCEL_DROPS_SESSION` · [22 §0](22-driver-extensions.md) |
-| 📐 | stdio JSON-RPC 드라이버 프로세스(T-27) · `drivers/<id>/<ver>/` SxS 보관·관리 CLI(T-28) · GitHub 최신 다운로드·서명 검증(T-29) · Oracle OCI 확장 Instant Client 19/23(T-30) · DBeaver식 접속 대화상자·드라이버 관리자(T-31) |
+| ✖ | (원안 · **D-350으로 대체** · 위 ✅ 행 = 현행 cdylib · 11-01 정합) stdio JSON-RPC 드라이버 프로세스(T-27) · `drivers/<id>/<ver>/` SxS 보관·관리 CLI(T-28) · GitHub 최신 다운로드·서명 검증(T-29) · Oracle OCI 확장 Instant Client 19/23(T-30) · DBeaver식 접속 대화상자·드라이버 관리자(T-31) |
 
 ## M3~M6 — [02](02-roadmap.md)

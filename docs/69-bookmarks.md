@@ -397,10 +397,10 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 | 기준 | 값 | 설정 |
 |---|---|---|
-| **묶음**(트리 1단) | ★ **그룹 → 문서 → 항목**(기본 · D-172) · 문서 → 항목(그룹은 위쪽 칩) · 평면 | `bookmark.panel_group_by` = `group` \| `doc` \| `flat` |
-| **정렬**(문서 안) | ★ 줄 번호(기본) · 만든 순 · 최근 방문 순 · 이름 | `bookmark.panel_sort` |
-| **문서 정렬** | 이름 순(기본) · 최근 방문 순 · 열려 있는 문서 먼저 | 같은 키의 둘째 값 |
-| **무효 표시** | ★ 회색으로 보임(기본) · 맨 아래로 모음 · 숨김 | `bookmark.panel_show_invalid` |
+| **묶음**(트리 1단) | ★ **그룹 → 문서 → 항목**(기본 · D-172) · 문서 → 항목(그룹은 위쪽 칩) · 평면 | ~~`bookmark.panel_group_by` = `group` \| `doc` \| `flat`~~ ✖ 폐기 D-430(+2 · 10-31 밤 · 그룹 → 문서 → 항목 고정 · §9-5 · 11-01 정합) |
+| **정렬**(문서 안) | ★ 줄 번호(기본) · 만든 순 · 최근 방문 순 · 이름 | ~~`bookmark.panel_sort`~~ ✖ 폐기 D-430(+2 · 10-31 밤 · 줄 번호순 고정 · §9-5 · 11-01 정합) |
+| **문서 정렬** | 이름 순(기본) · 최근 방문 순 · 열려 있는 문서 먼저 | ~~같은 키의 둘째 값~~(키 폐기 · 이름 순 고정 · 11-01 정합) |
+| **무효 표시** | ★ 회색으로 보임(기본) · 맨 아래로 모음 · 숨김 | ~~`bookmark.panel_show_invalid`~~ ✖ 폐기 D-430(inline 고정 · §9-5 · 11-01 정합) |
 | **필터** | 이름·메모·**줄 원문**·문서 이름·프로필을 함께 본다 · `Aa` 대소문자 · 공백은 AND | — |
 | **필터 접두** | `@이름` 이름만 · `#그룹` 그룹만 · `!무효` 무효만 · `:12` 줄 번호 | — |
 | **바닥 요약** | `12개 · 무효 1 · 공용 4` — 클릭하면 그 조건으로 필터(한 번의 입력으로 이어진다) | — |
@@ -488,7 +488,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 | **C-26** | 패널이 아주 좁다(폭 180px) | 줄 원문 → 이름 칩 → 줄 번호 순으로 줄여 나가고, 아이콘·니모닉은 끝까지 남긴다 |
 | **C-27** | 드래그 중 Esc | 고스트를 걷고 아무것도 바꾸지 않는다(툴바 그룹·그리드 컬럼과 같은 규칙) |
 | **C-28** | 북마크를 지웠다가 되돌리고 싶다 | `Ctrl+Z`는 **본문 편집만** 되돌린다(북마크는 본문이 아니다) → 제거는 **5초 [실행 취소] 토스트**로 되돌린다. 문서 전체·전부 지우기는 3초 두 번 확인 |
-| **C-29** | 저장이 실패했다(권한·디스크) | 메모리에는 그대로 두고 경고 토스트 1회 + 다음 저장 시점에 재시도(67 §2-3) |
+| **C-29** | 저장이 실패했다(권한·디스크) | 메모리에는 그대로 두고 경고 토스트 1회 + 다음 저장 시점에 재시도([70](70-autosave-and-restore.md)) |
 | **C-30** | 설정에서 기능을 껐다(`bookmark.enabled = off`) | 표시·순회·저장을 멈추되 **파일에 있는 것은 지우지 않는다** · 패널 아이콘은 숨긴다(확장 아이콘과 같은 규칙) |
 
 ### 6-9. 빈 상태 · 처음 쓰는 사람
@@ -500,18 +500,24 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 ## 7. 저장 (요구 ⑥)
 
-> **별도 파일을 만들지 않는다.** 북마크는 67의 프로젝트/워크스페이스 파일에 **키 하나**로 얹는다. 이유: ① 파일이 하나 더 늘면 이동·동기화에서 짝이 어긋난다 ② 저장 시점·원자성·백업·손상 대응을 67이 이미 푼다 ③ 사용자의 공용/개인 요구가 67의 두 파일 구조(VCS용/개인용)와 정확히 겹친다.
+> **별도 파일을 만들지 않는다.** 북마크는 67의 프로젝트/워크스페이스 파일에 **키 하나**로 얹는다. 이유: ① 파일이 하나 더 늘면 이동·동기화에서 짝이 어긋난다 ② 저장 시점·원자성·백업·손상 대응을 67이 이미 푼다 ③ 사용자의 공용/개인 요구가 67의 두 파일 구조(VCS용/개인용)와 정확히 겹친다. (11-01 정합: 두 파일 구조 = 67 원안 · 현행 = 프로젝트 파일 하나(D-407) → 공용/개인은 같은 파일 안 절로(B7))
 
 ### 7-1. 어디에
 
-| 무엇 | 어디 | 근거 |
+현행(11-01 정합 · D-407 · 코드 `bookmarks.rs`) — 형식 SSOT = [67 §7](67-project-workspace.md):
+
+| 모드 | 어디 | 근거 |
 |---|---|---|
-| **공용**(`shared: true`) | `<이름>.nsql-project`의 `"bookmarks"` | VCS로 팀과 공유(DBeaver `.bm`·VS Code `saveBookmarksInProject`가 검증) |
-| **개인**(기본) | `<이름>.nsql-workspace`의 `"bookmarks"` | 개인용 · `.gitignore` 권장(67) |
-| 프로젝트 없음 | `NSQL_HOME/workspaces/default.nsql-workspace` | 67 D-148 |
-| 프로젝트 밖 절대 경로 파일 | **개인 쪽만** | 공용에 남의 로컬 경로를 올리지 않는다 |
+| **프로젝트 모드** | 프로젝트 파일(`<이름>.nsql-project`) 헤더의 `"bookmarks"` 절 | D-407 프로젝트 파일 하나 · 09-23 "내장"(67 §4-1) · 공용/개인 2단(B7)도 같은 파일 안 절로 |
+| 파일 모드 | `<설정 폴더>/workspaces/default.nsql-workspace` | 67 §6 |
+| 폴더 모드 | `<폴더>/.nsql/workspaces/default.nsql-workspace` | 67 §6 |
+| 옛 `<설정 폴더>/workspaces/<이름>.nsql-workspace` | **읽기만**(이관용 · 쓰지 않음) | `bookmarks.rs` `workspace_path` |
+
+(이력 · 09-22 원안 표) 공용(`shared: true`) = `.nsql-project`의 `"bookmarks"`(VCS · DBeaver `.bm`·VS Code `saveBookmarksInProject`) · 개인(기본) = `<이름>.nsql-workspace`(`.gitignore` 권장) · 프로젝트 없음 = `NSQL_HOME/workspaces/default.nsql-workspace`(67 D-148) · 프로젝트 밖 절대 경로 파일 = 개인 쪽만(공용에 남의 로컬 경로를 올리지 않는다 — B7에서도 유지할 원칙).
 
 ### 7-2. 형식
+
+> (11-01 정합) 아래 `my.nsql-workspace` 쪽 예시 = 원안(이력) · 현행 개인 북마크도 프로젝트 파일 `bookmarks` 절(§7-1).
 
 ```jsonc
 // my.nsql-project  (공용 · git)
@@ -549,7 +555,7 @@ for c in buf.changes_since(seq):            # 없으면(기록이 밀렸거나 e
 
 ### 7-3. 시점·원자성
 
-67 §2-3과 **같은 경로**로만 쓴다 — 입력 디바운스 1초 + 최대 5초 · 임시 파일 → `rename` · 닫기/전환/종료에 즉시. 북마크가 바뀌었다고 따로 쓰지 않는다.
+프로젝트 자동 저장과 **같은 경로**로만 쓴다(SSOT = [70](70-autosave-and-restore.md) · 11-01 정합) — 임시 파일 → `rename` · 닫기/전환/종료에 즉시. 북마크가 바뀌었다고 따로 쓰지 않는다. (원안 = 67 §2-3 입력 디바운스 1초 + 최대 5초)
 
 ### 7-4. 포트(30 §2 부품 등재)
 
@@ -625,14 +631,14 @@ pub trait BookmarkStore {
 | `bookmark.enabled` | Bool · **on** | 끄면 표시·순회·저장을 멈춘다(파일의 기록은 지우지 않는다 · 활동 막대 아이콘도 숨김) · `Entry.perf` | — |
 | `bookmark.persist` | Bool · on | 끄면 세션 안에서만 산다(프로젝트·워크스페이스에 쓰지 않는다) | `enabled` |
 | `bookmark.share_default` | Enum · **private** \| shared | 새 북마크가 개인인가 공용인가 | `enabled` |
-| `bookmark.mnemonic_scope` | Enum · **doc** \| global | 니모닉 0–9의 유일 범위(D-162) | `enabled` |
+| ~~`bookmark.mnemonic_scope`~~ | Enum · **doc** \| global | 니모닉 0–9의 유일 범위(D-162) | ✖ 폐기 D-430(§9-5 · 11-01 정합) · doc 고정 |
 | `bookmark.mnemonic_ask_rewrite` → 구현 이름 **`bookmark.mnemonic_notice`**(10-22 · 3차) | Bool · on | 다른 북마크의 번호를 가져오면 [복원하기] 안내 토스트(끄면 조용히 가져온다 · 설정 ▸ 북마크) | `enabled` |
 | `bookmark.stale_days` | Int · **30**(0 = 영원히) | 무효가 된 지 N일 뒤 정리 | `enabled` |
 | `bookmark.max_per_doc` · `bookmark.max_total` | Int · **500** · **5000** | 상한(넘으면 무효부터 버리고, 그래도 넘치면 거부) | `enabled` |
 | `bookmark.max_groups` | Int · 50 · HIDDEN | 그룹 수 상한 | `enabled` · ✅ 10-31 31차 구현(Int 0~500 · 넘으면 새 그룹 거부 + 상태줄 안내) |
-| `bookmark.default_group_name` | Text · (비면 프로젝트 이름) | 기본 그룹의 이름 | `enabled` |
+| ~~`bookmark.default_group_name`~~ | Text · (비면 프로젝트 이름) | 기본 그룹의 이름 | ✖ 폐기 D-430(§9-5 · 11-01 정합) · 그룹 이름 바꾸기로 충족 |
 | `bookmark.save_copy_on_save` | Bool · on | DDL 탭을 파일로 저장할 때 복사본을 만든다(D-167) | `enabled` · ✅ 10-31 27차 구현 |
-| `bookmark.reconnect_ask` | Bool · on | 객체 문서를 열 때 미접속이면 물어본다(끄면 연결된 서버만 열린다) | `enabled` |
+| ~~`bookmark.reconnect_ask`~~ | Bool · on | 객체 문서를 열 때 미접속이면 물어본다(끄면 연결된 서버만 열린다) | ✖ 폐기 D-430(§9-5 · 11-01 정합) · D-426 안내만 |
 | `bookmark.undo_secs` | Int · 5 | 제거 뒤 [실행 취소] 토스트가 머무는 초(0 = 없음 · C-28) | `enabled` · ✅ 10-31 31차 구현(Int 0~60 · 토스트 카드별 수명 `push_action_ttl`) |
 | `bookmark.confirm_clear` | Bool · on | 문서 전체·전부 지우기에 두 번 확인 | `enabled` · ✅ 10-31 31차 구현(`bookmark.clear_doc` 첫 호출 = "5초 안에 다시 실행하면 N개를 지웁니다" 안내 + 무장 · 5초 안 재호출 = 지움 + [되돌리기] 토스트 · 지운 목록 = `last_removed`) |
 
@@ -647,9 +653,9 @@ pub trait BookmarkStore {
 | `bookmark.inline_label_chars` | Int · 40 | 인라인 라벨 길이 상한 | `inline_label` |
 | `bookmark.statusbar` | Bool · on | 상태줄 `북마크 3/12` 세그먼트 | `enabled` |
 | `bookmark.badge` | Enum · **count** \| dot \| off | 활동 막대 배지 | `enabled` |
-| `bookmark.panel_group_by` | Enum · **group** \| doc \| flat | 패널 묶음(D-172) | `enabled` |
-| `bookmark.panel_sort` | Enum · **line** \| created \| visited \| name | 문서 안 정렬 | `enabled` |
-| `bookmark.panel_show_invalid` | Enum · **inline** \| bottom \| hide | 무효 항목을 어떻게 보일까 | `enabled` |
+| ~~`bookmark.panel_group_by`~~ | Enum · **group** \| doc \| flat | 패널 묶음(D-172) | ✖ 폐기 D-430(+2 · 10-31 밤 · §9-5 · 11-01 정합) |
+| ~~`bookmark.panel_sort`~~ | Enum · **line** \| created \| visited \| name | 문서 안 정렬 | ✖ 폐기 D-430(+2 · 10-31 밤 · §9-5 · 11-01 정합) |
+| ~~`bookmark.panel_show_invalid`~~ | Enum · **inline** \| bottom \| hide | 무효 항목을 어떻게 보일까 | ✖ 폐기 D-430(§9-5 · 11-01 정합) · inline 고정 |
 | `bookmark.panel_preview` | Bool · on | 한 번 클릭 = 미리보기(끄면 선택만 · D-173) | `enabled` |
 | `bookmark.panel_preview_reuse` | Bool · on | 미리보기가 **탭 하나를 재사용**(C-3 · 2차 구현이면 자동 off) | `panel_preview` |
 | `bookmark.panel_autoscroll_from` | Bool · **off** | 편집기 캐럿을 따라 목록 선택이 움직인다 | `enabled` |
@@ -734,15 +740,15 @@ pub trait BookmarkStore {
 | **B2** ✅ 09-22(거터 색 띠 · 미니맵 틱 · 줄 끝 라벨 · 설정 `bookmark.minimap`/`inline_label`/`inline_label_chars` · §74) | 편집기 배선 — `bookmarks.rs` · `TextBuf` 줄 변경 기록 소비 · 토글/이동/니모닉 명령 · 거터·미니맵·인라인 표시 | U-1 U-2 B1 |
 | **B3** ✅ 09-22(개인 워크스페이스 파일만 · 포트는 B7 때) | 저장소 — `BookmarkStore` 포트 + 워크스페이스 backend(기본 워크스페이스부터) · 저장 시점 배선 | B1 · (67 T-165) |
 | **B4a** ✅ 09-22(문서 → 항목 · 그룹 트리는 B4c) | **패널 뼈대** — 활동 막대 항목 `view.bookmarks` + 아이콘 `mi_bookmark` · `bookmarks_panel.rs`(search_panel 골격) · 묶음/정렬/필터 · 가상 스크롤 · 빈 상태 · 배지 · 상태줄 세그먼트 | B2 B3 |
-| **B4b** ✅ 10-31 27차 완료(항목 드래그 → 다른 그룹 · [journal 10-31 §12](journal/2026-10-31.md)) · 🚧 09-22(✅ **10-31 24차 메모 편집** = 우클릭 "메모 편집" · 제자리 상자 · 빈 글 = 지움 · 행 = 이름 뒤 ` — 메모` · 남음 = 순서 드래그 · [journal 10-31 §9](journal/2026-10-31.md) · 우클릭 메뉴 넷 · Delete · 5초 되돌리기 토스트 · 제자리 이름) · **09-23 미리보기(한 번 클릭 = ◦ 탭) · 더블클릭/Enter/메뉴 Open = 정식 탭(승격 포함) ✅**(journal §92 · `BmAction::Goto(id, permanent)`) · 남음 = 드래그·메모 | **패널 조작** — 미리보기(좌클릭)·이동(더블클릭·Enter)·키보드 전부 · 우클릭 메뉴 넷(항목·무효·문서·그룹·빈 곳) · 제자리 이름 편집 · 드래그 이동(고스트·Esc) · 제거 + 5초 실행 취소 | B4a |
+| **B4b** ✅ 10-31 27차 완료(항목 드래그 → 다른 그룹 · [journal 10-31 §12](journal/2026-10-31.md)) · (이력) 09-22(✅ **10-31 24차 메모 편집** = 우클릭 "메모 편집" · 제자리 상자 · 빈 글 = 지움 · 행 = 이름 뒤 ` — 메모` · ~~남음 = 순서 드래그~~(✅ 27차) · [journal 10-31 §9](journal/2026-10-31.md) · 우클릭 메뉴 넷 · Delete · 5초 되돌리기 토스트 · 제자리 이름) · **09-23 미리보기(한 번 클릭 = ◦ 탭) · 더블클릭/Enter/메뉴 Open = 정식 탭(승격 포함) ✅**(journal §92 · `BmAction::Goto(id, permanent)`) · ~~남음 = 드래그·메모~~ → ✅ 10-31 24·27차(11-01 정합) | **패널 조작** — 미리보기(좌클릭)·이동(더블클릭·Enter)·키보드 전부 · 우클릭 메뉴 넷(항목·무효·문서·그룹·빈 곳) · 제자리 이름 편집 · 드래그 이동(고스트·Esc) · 제거 + 5초 실행 취소 | B4a |
 | **B4c** ✅ 09-22 · ✅ 10-31 27차 순서 드래그([journal 10-31 §12](journal/2026-10-31.md)) | **그룹 관리** — 만들기·이름·기본 지정·켜기/끄기·삭제 2택·순서·상한 · 순회/거터가 `enabled`를 존중 | B4b |
-| **B4d** 🚧 09-22(14키) | **설정 영역** — `GrpBookmarks` + 분류 셋 · 키 38개 등록(라벨·설명 `Msg` · 종속 · HIDDEN · `perf.boost` 강제값) · 패널 ▸ "북마크 설정 열기" | B4a |
+| **B4d** ✅ D-430 정리(구현 3 · 폐기 11+2 · 10-31 31차 · 사용자 확정 10-31 밤 · §9-5 · 11-01 정합) · (이력) 🚧 09-22(14키) | **설정 영역** — `GrpBookmarks` + 분류 셋 · (계획 원문) 키 38개 등록(라벨·설명 `Msg` · 종속 · HIDDEN · `perf.boost` 강제값) · 패널 ▸ "북마크 설정 열기" | B4a |
 | **B5** ✅ 1차 10-31(190차 · D-426) · ✅ 27차 저장 시 복사본(D-167 · `origin` 칩) · 남음 = rename 제안(보류 · `ddl_target`) | 객체 DDL 문서 — `OpenSql`에 `origin` · 재개(~~확인 후 접속~~ → 살아 있는 세션만 · 없으면 상태줄 안내 · D-426 ✅) · 저장 시 복사본 · rename 제안 | B2 · 57 |
 | **B6** ✅ 1차 10-31(190차 · 파일 없음 판정 · 열린 문서 부활) · ✅ **2차 10-31 24차**(`ServerUnknown` = 객체 북마크 서버 키가 저장 프로필 + 살아 있는 탐색기 칸에 없음 · 다시 생기면 Live · **하루 1회 점검** = 기동 첫 틱 + 24시간마다 파일·서버 점검 + 정리 · 바뀐 것만 로그 · [journal 10-31 §9](journal/2026-10-31.md)) · ✅ 27차 ObjectMissing 신호(DDL DROP/RENAME/CREATE) · 이동 제안 띠(D-163) · B6 완료 | 무효·부활·정리 — 판정 · `stale_days` · 상한 · 파일 이동 제안 띠 | B3 · 58 |
 | **B7** | 공용/개인 2단 — 프로젝트 파일 backend · "공용으로 올리기" · 프로필 이름만 적기 | 67 T-165 |
 | **B8** ✅ 09-22(`nsql-cli/bookmark.rs` · 별칭 `bm` · `--project`/`--doc`/`--md`/`--label`/`--days` · 자동 점검 S36 = CLI로 심고 GUI가 읽음 · §74) | CLI `nsql bookmark list\|add\|rm\|prune` · 문서(이 파일 · 39 §3) | B1 B3 |
 
-★ **nexa-ui를 먼저 push**한다(CLAUDE.md §3 규약).
+★ **nexa-ui를 먼저 push**한다([16 §4-1](16-doc-git-conventions.md) ⑤ · 11-01 정합).
 
 ## 12. 검증
 

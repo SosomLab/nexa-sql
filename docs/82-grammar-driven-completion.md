@@ -125,12 +125,12 @@ same = JOIN                 # 별칭
 | FROM 표 참조 | SAMPLE, PARTITION, LATERAL… | `AS OF {TIMESTAMP\|SCN}` · `VERSIONS BETWEEN` · `MATCH_RECOGNIZE` · `CROSS APPLY`/`OUTER APPLY`(12c+) | ➕ | `next += AS OF TIMESTAMP, AS OF SCN, VERSIONS BETWEEN, MATCH_RECOGNIZE, CROSS APPLY, OUTER APPLY` |
 | `[clause SET]` next `RETURNING INTO` | 연속어로 제안 | `RETURNING 식 INTO 변수`(사이에 식) | ✖ | `RETURNING INTO` 삭제(`[clause RETURNING] next`에 INTO 있음 ✅) |
 | `[start]` | MERGE INTO 중복 … | `INSERT ALL` · `INSERT FIRST`(다중 테이블) · `LOCK TABLE` · `CALL` · `FLASHBACK TABLE` · `PURGE` · `SET TRANSACTION` | ➕ | `next += INSERT ALL, INSERT FIRST, LOCK TABLE, CALL, FLASHBACK TABLE, SET TRANSACTION` |
-| `[clause WHEN MATCHED]`(상속) `AND`, `THEN DELETE` | ansi형 | `WHEN MATCHED THEN UPDATE SET … [WHERE …] [DELETE WHERE …]` — AND 조건·독립 THEN DELETE 없음 | ✖ ⚠(23ai 재확인) | `[clause WHEN MATCHED] next = THEN UPDATE SET` · `[clause WHEN NOT MATCHED] next = THEN INSERT` · SET next `+= DELETE WHERE` |
+| `[clause WHEN MATCHED]`(상속) `AND`, `THEN DELETE` | ansi형 | `WHEN MATCHED THEN UPDATE SET … [WHERE …] [DELETE WHERE …]` — AND 조건·독립 THEN DELETE 없음 | ✖ ⚠(23ai 재확인) · D-427 = 23ai 기준 확정(§10 웹 확인 = 23ai도 없음 (11-01 정합)) | `[clause WHEN MATCHED] next = THEN UPDATE SET` · `[clause WHEN NOT MATCHED] next = THEN INSERT` · SET next `+= DELETE WHERE` |
 | `[clause WITH]` `RECURSIVE`(상속) | 제안 | Oracle은 RECURSIVE 낱말 없음(재귀 CTE는 열 목록 + `SEARCH`/`CYCLE`) | ✖ | `next = AS, SELECT, SEARCH DEPTH FIRST BY, SEARCH BREADTH FIRST BY, CYCLE` |
 | LIMIT(상속) | 절로 인식 | Oracle에 LIMIT 없음 | ✖ | statement SELECT `clauses -= LIMIT` |
 | `INSERT INTO` next `DEFAULT VALUES`(상속) | 제안 | 없음 | ✖ | `-= DEFAULT VALUES` |
 | `DELETE FROM` next `USING`(상속) | 제안 | 없음 | ✖ | `-= USING` |
-| UNION next `DISTINCT` · MINUS `ALL` | 상속 | UNION DISTINCT 없음 · MINUS ALL/INTERSECT ALL/EXCEPT = 21c+ | ✖/⚠ | `[clause UNION] next = SELECT, ALL` |
+| UNION next `DISTINCT` · MINUS `ALL` | 상속 | UNION DISTINCT 없음 · MINUS ALL/INTERSECT ALL/EXCEPT = 21c+ | ✖/⚠ · D-427 = 23ai 기준 확정(`ALL` 유지 (11-01 정합)) | `[clause UNION] next = SELECT, ALL` |
 | `[clause SELECT] first` | DISTINCT, ALL | DISTINCT \| UNIQUE \| ALL | ➕ | `first += UNIQUE` |
 | 그 밖(CONNECT BY·START WITH·PIVOT·MODEL·ROLLUP·NULLS FIRST·RETURNING BULK COLLECT) | | | ✅ | — |
 
@@ -327,7 +327,7 @@ same = JOIN                 # 별칭
 
 ### 10-6. 불확실 항목(웹 확인 안 함)
 
-- Oracle 23ai: MERGE `WHEN MATCHED AND …`·독립 `THEN DELETE` 지원 여부 · 21c+ `EXCEPT`/`MINUS ALL`/`WINDOW` 절 · 테이블 별칭 `AS` 여전히 불가인지.
+- Oracle 23ai: MERGE `WHEN MATCHED AND …`·독립 `THEN DELETE` 지원 여부 · 21c+ `EXCEPT`/`MINUS ALL`/`WINDOW` 절 · 테이블 별칭 `AS` 여전히 불가인지. → D-427 = 23ai 기준 확정 · MERGE·별칭 = §10 웹 확인(10-30) (11-01 정합)
 - Db2 LUW: 재귀 CTE에 `RECURSIVE` 낱말 허용 여부 · `UNION DISTINCT` 허용 · ORDER BY `NULLS FIRST/LAST` 지원 시작 버전 · `CREATE TABLE IF NOT EXISTS`/`DROP … IF EXISTS`(11.5 기준으로 기억) · `EXPLAIN` 정확한 낱말 순서.
 - ClickHouse: 단독 `SEMI JOIN`/`ANTI JOIN` 허용 · `GROUP BY a, ROLLUP(b)` 혼용 · 경량 `UPDATE` 정식화 버전(25.x) · `QUALIFY` 도입 버전 · `WITH RECURSIVE`(24.4+ 기억) · 트랜잭션(BEGIN/COMMIT) 실험 기능 상태.
 - SQLite: DELETE/UPDATE `LIMIT` = 컴파일 옵션 의존(배포 빌드별) · RIGHT/FULL JOIN 3.39+.
@@ -705,7 +705,7 @@ next -= SEQUENCE, TRIGGER, FUNCTION, SCHEMA, TYPE, IF EXISTS
 #### 4. 아직 확인 못 한 것과 이유
 
 - **Oracle 23ai의 `LIMIT`** — 23ai row_limiting_clause를 직접 열지 않았다(19c만 열었다). 23ai에 LIMIT이 생겼다는 근거는 찾지 못했다.
-- **Oracle 19c와 23ai 중 어느 판을 기준으로 할지** — DELETE USING과 EXCEPT/MINUS ALL의 판정이 갈린다. 사용자(개발 세션)가 정할 일이다.
+- **Oracle 19c와 23ai 중 어느 판을 기준으로 할지** — DELETE USING과 EXCEPT/MINUS ALL의 판정이 갈린다. 사용자(개발 세션)가 정할 일이다. → D-427 = 23ai 기준 확정(10-31 · (11-01 정합))
 - **T-SQL ALTER TABLE에 RENAME이 없음 · CREATE OR ALTER · SAVE TRANSACTION** — URL만 확인했고 본문은 열지 않았다(널리 알려진 사실 · DELETE는 구판 2008 R2 문서 검색 요약으로 확인). EXPLAIN은 "Azure Synapse dedicated SQL pool only"를 검색 요약으로 확인했다.
 - **MySQL DELETE … USING** — 다중 표 DELETE 문서는 직접 열지 않았다(기억 · 8.4 delete.html).
 - **Db2 11.5 `UNION DISTINCT` · `LIMIT`(11.1+) · `NULLS FIRST/LAST`** — 빼자는 제안이 아니어서 이번 범위에서는 열지 않았다. Db2 ansi `clauses`에서 LIMIT을 뺄 때 db2에 다시 `+= LIMIT`이 필요한지는 미확인이다.

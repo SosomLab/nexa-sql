@@ -38,7 +38,7 @@
 |---|---|---|---|---|---|---|
 | E1 | **그리드 편집 금지** | 결과 도착·유형 변경 때 판정 | 결과 그리드 셀 편집·행 추가/삭제 | ✅ 운영만 | 없음(우회 불가) · 문구 "읽기 전용: 운영(PRD) 접속입니다" | `grid.rs:1114-1139` `edit_prepare` · `set_prod` 1214 |
 | E2 | **유형 변경 즉시 재판정** | 유형을 바꾼 순간(재실행 없이) | 열린 결과 그리드 | ✅ | — | `app/grid_results.rs:1261` `announce_env_change` · 진입점 5 |
-| E3 | **운영 2단 실행** | 실행 직후 · 서버로 보내기 전 | 조회가 아닌 모든 문장(DML · DDL · PL/SQL 블록 · EXEC · `CONNTYPE`) — `SELECT/WITH/EXPLAIN/SHOW/DESC/VALUES/PRAGMA/USE`와 클라이언트 명령만 제외 | ✅ | `run.prod_confirm` 켬 · 재실행 창 **3초 하드코딩** | `sessions.rs:1174` `prod_confirm_needed` · `app/run.rs:284-298` |
+| E3 | **운영 2단 실행** | 실행 직후 · 서버로 보내기 전 | 조회가 아닌 모든 문장(DML · DDL · PL/SQL 블록 · EXEC · `CONNTYPE`) — `SELECT/WITH/EXPLAIN/SHOW/DESC/VALUES/PRAGMA/USE`와 클라이언트 명령만 제외 | ✅ | `run.prod_confirm` 켬 · 재실행 창 ~~**3초 하드코딩**~~ → `run.prod_confirm_ms`(기본 3000 · 500~30000) · 제외 규칙 = 아래 §6 표 A3(D-424 구문 오류 = 확인 없이 서버로 · D-434 `FROM t`/`TABLE t` = 조회) · 11-01 정합 | `sessions.rs:1174` `prod_confirm_needed` · `app/run.rs:284-298` |
 | E4 | **운영 해제 2단 확인** | 유형을 PRD → 다른 값으로 바꿀 때 | 세션 메뉴 · 팔레트 · `CONNTYPE` | ✅ | `run.prod_confirm` 공유 · 빨간 [실행] 버튼 토스트 | `sessions.rs:1151` · `app/drop.rs:382-421` |
 | E5 | **유형 표시** | 늘 | 상태줄 칩(PRD = 빨강) · 로그인 목록 `· PRD` · 임시 변경 = 외곽선 칩 | ✅ | `statusbar.env_badge` 켬 | `app/paint.rs:365-389` · `conn_win.rs:2894` |
 | E6 | **미커밋 경고·자동 처리(L2)** | 미커밋 트랜잭션이 남아 있는 동안 주기 | 수동 커밋 모드의 열린 트랜잭션 | 운영 = 더 엄격 | `tx.prod_stale_min` 5 · `tx.prod_idle_limit_min` 10 · `tx.idle_action` rollback · 카운트다운 60 s | `sessions.rs:987` `tx_limits_for` · `app/tx.rs:258` |
@@ -79,7 +79,7 @@
 | G4 | 백업 파일 이름 **밀리초 없음 · 같은 초 덮어씀** | 연속 작업 시 앞 백업 소실 | 🟦 §7 |
 | G5 | 객체 백업 보관이 파일 스냅숏과 **같은 키 7일** · 실행 중 정리 없음 · 개수 상한 없음 | 운영 백업이 1주 뒤 사라짐 | 🟦 D-302 |
 | G6 | **운영 탐색기 DROP**이 `run_text_in`을 지나 E3에 걸림 → 첫 호출은 무장만 하고 반환하는데 삭제 창은 "보냄"(`DropSent`) 표시 · 백업 파일은 이미 생김 | 사용자는 지워졌다고 오인 | 🟥 1단계와 함께 재현 E2E → 수정(`app/drop.rs:314-322` · **추론**) |
-| G7 | E3 재실행 창 3초 **하드코딩** · 토스트에 버튼 없음 | 마우스 사용자에게 어려움 | 🟦 버튼 + 설정 |
+| G7 | E3 재실행 창 3초 **하드코딩** · 토스트에 버튼 없음 → ✅ `run.prod_confirm_ms` · 버튼 대신 툴바 Run 빨간 무장 + 게이지(10-23 2단 통일 · 11-01 정합) | 마우스 사용자에게 어려움 | 🟦 버튼 + 설정 |
 | G8 | 프로필 영속 유형 변경(`set_profile_env`)에는 2단 확인 없음 | 저장된 운영 프로필을 한 번에 개발로 | 🟦 E4와 같은 길 |
 | G9 | `tx.smart_commit`은 **첫 DML이 이미 커밋된 뒤** 전환 · 유형 무관 | 운영 보호에는 못 씀 | 운영은 보류 커밋이 대신 · smart_commit은 그대로 |
 | G10 | 대량 적재(Import) · CLI `nsql run`의 운영 보호 = 끊긴 끝점 검사뿐 | 운영에 대량 INSERT가 바로 반영 | 🟪 Import 운영 확인 · CLI는 별도 설계 |
@@ -218,7 +218,7 @@ flowchart TD
 | **A2g 트랜잭션 경계 검사** | 🟧 1단계 | 문지기 | 실행할 문장 중 ① 암묵 커밋 ② 트랜잭션 밖 전용 문장이 있고, 세션에 잔여 TX(미커밋 변경 · 운영 보류)가 있거나 같은 실행 안에서 그 앞에 변경 문장이 있으면 → **아무것도 보내지 않고 W1** · 운영·개발 모두 | 순수 함수 `tx_boundary_guard` · `Dialect::implicit_commit` 확장 · §5-2 · D-304 |
 | **W1 경고창** | 🟧 1단계 | UI·사용자 | 모달 경고창 = 막은 문장(줄 번호) · 성격(①/②) · 잔여 TX 요약 · [커밋](운영 = 빨간 타임아웃 2단) [롤백] [취소] · 처리 뒤 자동 실행하지 않고 "다시 실행하세요" | §5-2 |
 | A3 운영 2단 확인 | ⬜ 기존 | 문지기 | 운영 + 조회 아닌 문장 → 첫 실행은 무장만 · ★ 10-31 188차(D-424) **첫 낱말이 문장 시작이 아니면(명백한 구문 오류 · 예 `abc select …`) 확인 없이 서버로**(서버가 구문 오류로 거절 · 클라이언트 명령·`<<라벨>>` 제외 · SQL Server·ODBC·Access는 프로시저 이름 호출이 있어 종전대로) · ★ 10-31 210차(D-434 · T-457) **방언별 조회 시작 낱말도 조회로 분류** = `FROM t`(DuckDB·ClickHouse) · `TABLE t`(PostgreSQL) → 2단 확인 없음 · 다른 방언(예 Oracle `from t`·`table t`) = 종전 | `run.prod_confirm` · `prod_armed` · `sessions::prod_confirm_needed` · `nsql_core::is_statement_start` · `nsql_core::is_query_head` |
-| A3b 토스트 버튼·창 설정 | 🟦 2단계 | UI | 토스트에 빨간 [실행] 버튼 · 3초 → 설정 `run.prod_confirm_ms` | `Toasts::push_button` |
+| A3b 토스트 버튼·창 설정 | ✅ 설정 `run.prod_confirm_ms` · 버튼 = 툴바 Run 빨간 무장 + 게이지로 대체(10-23 · 11-01 정합) · (이력) 🟦 2단계 | UI | 토스트에 빨간 [실행] 버튼 · 3초 → 설정 `run.prod_confirm_ms` | `Toasts::push_button` |
 | **A5 보류 정책 판정** | 🟧 1단계 | 문지기 | 운영 + `tx.prod_hold` 켬 + 변경 문장 → 보류 경로 | 순수 함수 `prod_hold_policy`(MC/DC 시험) |
 | A6x 사전 COUNT | 🟪 3단계 | 러너 | 단순 UPDATE/DELETE의 예상 행 수를 2단 확인 문구에 | 87 §14 guard 재사용 |
 | **A6 명시 시작문** | 🟧 1단계 | 러너 | 이 실행 한 번을 트랜잭션으로(PG `BEGIN` · MSSQL `BEGIN TRANSACTION` · MySQL `START TRANSACTION` · Oracle = 러너 COMMIT 보류만) | `caps.tx_begin` · `manual_begin_sql` 재사용 |
@@ -481,7 +481,7 @@ flowchart TD
 
 - **식별자 접힘(10-16 · 사용자 실기)**: 소문자 `create or replace procedure nsqlt_case_prc …`가 "아직 없음 - 건너뜀"이던 결함 → `fold_ident`(따옴표 없는 이름 = Oracle 대문자 · PostgreSQL 소문자 · 그 밖 그대로 · 따옴표 이름은 그대로)로 서버 사전 조회 이름을 맞춤 · 백업 결과 줄을 Output과 **로그 창**에도 · V1 = APPDB 운영 격리 `APPDB.NSQLT_CASE_PRC (PROCEDURE)` 백업 ✓([journal 10-16](journal/2026-10-16.md) §2).
 - 부하원(39 §3): 정리 틱 = 파일 열거만(기본 60분 · 0 = 끔) · 백업 질의 = 사용자 실행 1회당 대상 객체 수만큼 DDL 생성 1회(탐색기 메타 세션 · 자동 재시도 0).
-- 남은 것(T-357 잔여): 토스트 버튼·`run.prod_confirm_ms`(A3b) · 프로필 영속 유형 변경 2단(G8) · Oracle `ALTER … RENAME TO`의 새 이름 추적(백업은 옛 이름으로 됨 = 의도) · 실서버 4방언 왕복(사용자 "APPDB 운영기 모드 자동화" = journal §7).
+- 남은 것(T-357 잔여): ~~토스트 버튼·`run.prod_confirm_ms`(A3b)~~ → ✅(설정 3000 · `app/run.rs` · 버튼 = 툴바 Run 빨간 무장 + 게이지 · 11-01 정합) · 프로필 영속 유형 변경 2단(G8) · Oracle `ALTER … RENAME TO`의 새 이름 추적(백업은 옛 이름으로 됨 = 의도) · 실서버 4방언 왕복(사용자 "APPDB 운영기 모드 자동화" = journal §7).
 
 ## 8. 적용 시점 · 설정 키
 
@@ -504,7 +504,7 @@ flowchart TD
 | `tx.prod_commit_confirm_ms` | 5000 | 운영 Commit 빨간 타임아웃 버튼의 두 번째 클릭 시간 | 🟧 D-300 |
 | `tx.ddl_commit_guard` | on | 트랜잭션 경계 가드(§5-2) · 운영·개발 모두 · 끄면 실행 뒤 로그만(운영은 끌 수 없음) | 🟧 D-304 |
 | `tx.ddl_commit_guard_blocks` | off | 블록 안 `EXECUTE IMMEDIATE` + DDL 낱말 휴리스틱 | 🟪 |
-| `run.prod_confirm_ms` | 3000 | 운영 2단 재실행 창(시간 단위 규칙 = ms) | 🟦 |
+| `run.prod_confirm_ms` | 3000 | 운영 2단 재실행 창(시간 단위 규칙 = ms) | 🟦 → ✅ 구현(11-01 정합) |
 | `backup.object_ddl` | on | F5·ALTER·편집기 DDL 전에도 객체 백업 | 🟦 |
 | `backup.object_days` | **30** | 객체 백업 보관 일수(유형 무관) | 🟦 D-302 |
 | `backup.object_keep` | **0** | 객체마다 최신 N개만 보관 · 0 = 무제한(일수는 늘 적용) · 운영 권장 5 | 🟦 D-302 · D-305 |

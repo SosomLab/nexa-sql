@@ -5,7 +5,7 @@
 
 ## 0. 결론 다섯 줄
 
-1. 지금 탐색기는 **수동 새로 고침(우클릭·F5)뿐**이다. 설정 `explorer.auto_refresh`·`explorer.refresh_secs`는 레지스트리에만 있고 **배선되지 않았다**. 47에서 정한 갱신 정책(D-82: 수동 + 실행한 DDL 감지 + 워터마크 주기)은 메타 저장소(T-57) 설계에만 있고 탐색기 트리에는 아직 없다.
+1. 지금 탐색기는 **수동 새로 고침(우클릭·F5)뿐**이다. 설정 `explorer.auto_refresh`·`explorer.refresh_secs`는 레지스트리에만 있고 **배선되지 않았다**(09-19 구현 전 상태 · 현행 = `meta.refresh_secs` · 옛 두 키는 이주용으로만 읽힘 (11-01 정합)). 47에서 정한 갱신 정책(D-82: 수동 + 실행한 DDL 감지 + 워터마크 주기)은 메타 저장소(T-57) 설계에만 있고 탐색기 트리에는 아직 없다.
 2. 도구들은 셋으로 갈린다: **수동만**(SSMS · SQL Developer · pgAdmin · DBeaver 편집기 DDL) · **실행한 문장을 분석해 그 객체만**(DataGrip "smart refresh") · **증분/주기**(DataGrip incremental · DBeaver 데이터 편집기의 auto-refresh). 사용자가 가장 불편해하는 것은 첫째(DBeaver #859·#21734, SSMS IntelliSense Ctrl+Shift+R).
 3. 권장 = **DataGrip식 "실행한 DDL만큼만"을 기본**으로: 실행이 성공한 DDL 문장에서 (종류·스키마·이름)을 뽑아 **그 폴더(버킷) 하나만** 다시 읽고, 펼침·선택·스크롤을 보존한 채 **디프로 반영**한다. 거기에 **유휴 워터마크 주기**(다른 세션·다른 사람의 변경)와 **수동 범위 새로 고침**을 얹는다.
 4. 시점의 함정 둘: **트랜잭션 DDL 방언(PostgreSQL·SQL Server·SQLite)의 수동 커밋** — 메타 세션은 커밋 전 변경을 못 본다 → **커밋 시점에 갱신** · **스크립트 실행** — 문장마다가 아니라 **실행이 끝난 뒤 버킷별 1회**(디바운스).
@@ -57,17 +57,19 @@
 
 ### 2-5. 설정(47 §8의 `meta.*`를 그대로 · 탐색기 분류에 노출)
 
+> ★ `meta.refresh_*` 키의 SSOT = 이 표(47 §8-2 갱신 행은 여기로 링크) · 키 정의 원천 = [94](94-settings-key-naming-and-location.md)/`REGISTRY` (11-01 정합)
+
 | 키 | 기본 | 뜻 |
 |---|---|---|
 | `meta.refresh_on_ddl` | on | T1 — 실행한 DDL 뒤 그 폴더만 갱신 |
 | `meta.refresh_on_commit` | on | T1 — 트랜잭션 DDL 방언의 수동 커밋: 커밋 때 갱신(off = 문장 직후 시도) |
 | `meta.refresh_secs` | 300 | T2 — 유휴 워터마크 주기(0 = 끔 · 옛 `explorer.refresh_secs` 값을 옮김) |
-| `meta.refresh_idle_ms` | 5 · HIDDEN | T2 — 유휴 판정 |
+| `meta.refresh_idle_ms` | 5000 · HIDDEN(ms · 0~600000 · 옛 `meta.refresh_idle_secs` 5 → RESCALED ×1000 (11-01 정합)) | T2 — 유휴 판정 |
 | `meta.refresh_scope` | changed | T2 — 바뀐 스키마만 / 펼쳐진 전부 |
 | `meta.refresh_on_missing` | on | T4 — 못 찾음 신호로 그 폴더 갱신 |
 | `meta.refresh_highlight_ms` | 2000 · HIDDEN | 새 객체 강조 시간(0 = 없음) |
 
-옛 키 `explorer.auto_refresh`/`explorer.refresh_secs`는 `meta.refresh_secs`로 통합(마이그레이션: auto_refresh=on이면 refresh_secs 값을 옮기고 off면 0).
+옛 키 `explorer.auto_refresh`/`explorer.refresh_secs`는 `meta.refresh_secs`로 통합(원안 마이그레이션: auto_refresh=on이면 refresh_secs 값을 옮기고 off면 0 → 실제 `migrate_explorer_refresh` = on이고 300이 아닐 때만 옮김 · off = 옮기지 않음(새 기본 300) (11-01 정합)).
 성능 향상 모드: T2만 끈다(T1은 사용자 동작에 딸린 1질의라 유지).
 
 ## 3. 결정(사용자 확인)

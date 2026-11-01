@@ -2,7 +2,7 @@
 
 > 사용자 10-27(142차 win 뒤): *"Sublime Insert Nums · VS Code Insert Numbers를 참고해 컬럼 모드에서 숫자·문자 등 일괄 생성 — VS Code식 상단 표현식
 > 입력창 + 미리보기 · 도움말 · Placeholder = 기본값 표현식 · 빈 입력 = Placeholder 결과 · 오류 = 공백 · 기능 범위를 정의하고 표현식을 통일되고 직관적으로."*
-> 이름 = **Insert Sequence**(사용자 지정). 내장 기능(확장 SDK의 편집기 API는 괄호 이동뿐 · 다중 캐럿 실시간 편집·상단 입력은 호스트만 가능 · [75 §3](75-extension-sdk-and-dynamic-loading.md)).
+> 이름 = **Insert Sequence**(사용자 지정). 내장 기능(확장 SDK의 편집기 API는 괄호 이동뿐 · 다중 캐럿 실시간 편집·상단 입력은 호스트만 가능 · [75 §3](75-extension-sdk-and-dynamic-loading.md)). ★ 10-28 = 내장(builtin) 확장 `insert-sequence`로 전환(T-446 ✅ · D-368 · §8 (11-01 정합)).
 
 ## 0. 결론 한 장
 

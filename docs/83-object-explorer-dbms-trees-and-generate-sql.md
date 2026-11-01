@@ -6,7 +6,7 @@
 
 1. **트리 = 선언(표) 하나** — `nsql-catalog::tree`: 스키마 아래 폴더 종류 `kinds_for(dialect)`(DBeaver 순서) · DB 수준 폴더 `db_kinds_for(dialect)`(PG Extensions·Event Triggers) · 객체 아래 하위 폴더 `sub_kinds(dialect, kind)`(Columns · Constraints · Foreign Keys · References · Indexes · Triggers · Partitions · Dependencies · Rules · Policies · Extended Properties · Arguments · Attributes · Methods · Procedures · Functions). 탐색기는 표를 읽어 노드를 만들 뿐 방언 분기를 갖지 않는다.
 2. **조회 = 카탈로그 함수 셋** — `objects(s, schema, kind)`(종류 추가) · `columns` · ★ `sub_items(s, owner, sub) -> Vec<SubItem{name, detail, icon}>`(방언별 SQL · 없는 것은 빈 목록). 트리 노드 = `Sub{owner, sub}` 폴더 + `Item(SubItem)` 잎.
-3. **DBeaver 대조**(plugin.xml `<tree>` · 09-25 원격 읽기) — Oracle: Tables·Views·Materialized Views·Indexes·Sequences·Queues·Types·Packages·Procedures·Functions·Synonyms·Schema Triggers·Table Triggers·Database Links·Java·Jobs·Scheduler(Jobs·Programs) / 테이블 = Columns·Constraints·Foreign Keys·References·Triggers·Indexes·Partitions·Dependencies. SQL Server: Databases→Schemas→ Tables·External Tables·Views·Indexes·Procedures·Sequences·Synonyms·Table Triggers·Data Types / 테이블 = Columns·Unique Keys·Check Constraints·Foreign Keys·Indexes·References·Triggers·Extended Properties. PostgreSQL: Databases→Schemas→ Tables·Foreign Tables·Views·Materialized Views·Indexes·Procedures(+Functions)·Sequences·Data Types·Aggregate Functions / DB = Event Triggers·Extensions·Storage·Roles / 테이블 = Columns·Constraints·Foreign Keys·Indexes·Dependencies·References·Partitions·Triggers·Rules·Policies. 우리 트리는 이 순서·이름을 따르고(§1) **Databases 층은 2차**(§5 D-201 — 지금은 접속한 DB 하나 = 루트 · SQL Server 3부 이름 · PG는 DB마다 접속이라 별도 결정).
+3. **DBeaver 대조**(plugin.xml `<tree>` · 09-25 원격 읽기) — Oracle: Tables·Views·Materialized Views·Indexes·Sequences·Queues·Types·Packages·Procedures·Functions·Synonyms·Schema Triggers·Table Triggers·Database Links·Java·Jobs·Scheduler(Jobs·Programs) / 테이블 = Columns·Constraints·Foreign Keys·References·Triggers·Indexes·Partitions·Dependencies. SQL Server: Databases→Schemas→ Tables·External Tables·Views·Indexes·Procedures·Sequences·Synonyms·Table Triggers·Data Types / 테이블 = Columns·Unique Keys·Check Constraints·Foreign Keys·Indexes·References·Triggers·Extended Properties. PostgreSQL: Databases→Schemas→ Tables·Foreign Tables·Views·Materialized Views·Indexes·Procedures(+Functions)·Sequences·Data Types·Aggregate Functions / DB = Event Triggers·Extensions·Storage·Roles / 테이블 = Columns·Constraints·Foreign Keys·Indexes·Dependencies·References·Partitions·Triggers·Rules·Policies. 우리 트리는 이 순서·이름을 따르고(§1) **Databases 층은 2차**(→ SQL Server = [101](101-mssql-ssms-explorer-databases-layer.md) T-270 ✅ (11-01 정합) · §5 D-201 — 지금은 접속한 DB 하나 = 루트 · SQL Server 3부 이름 · PG는 DB마다 접속이라 별도 결정).
 4. **유효성 = 아이콘 배지** — `ObjectInfo.status`가 `INVALID`면 아이콘 오른쪽 아래에 빨간 점(⛔ 느낌 · 아이콘 지름의 40 %)을 그린다 · `VALID`/`INVALID` 글자는 행에서 뗀다(그 밖 상태 `DISABLED` 등은 흐린 글자 그대로). 메타 저장소 `ObjStatus`는 이미 있음(완성 후보에도 같은 뜻).
 5. **Generate SQL = 우클릭 하위 메뉴** — 종류별: 테이블·뷰·MV = SELECT·INSERT·UPDATE·DELETE·MERGE(방언에 있으면)·DDL / 프로시저·함수 = CALL·DDL / 패키지 = CALL(멤버별 주석)·DDL / 인덱스·제약·트리거·시퀀스·시노님·타입·그 밖 = DDL. 생성 = `nsql-catalog::gen::generate(s, spec)`(컬럼·키·인자 = 카탈로그 · DDL = `source`/`DBMS_METADATA`/`pg_get_*`/sys 구성) → 메타 스레드 → `ExplorerAction::Preview`.
 6. **SQL Preview = 모달 창** `sqlprev_win.rs`(입력 창 골격 · nexa-ctl `TextBox` 편집 모드 · SQL 하이라이트 · 미니맵 끔 · 버튼 = 새로고침(다시 생성) · 파일로 저장(`FilePurpose::SqlPreview`) · 편집기에서 열기(새 탭) · 복사 · 닫기(Esc)).
@@ -77,14 +77,14 @@ Package Bodies 폴더는 뗀다(DBeaver와 같이 패키지 노드 아래 멤버
 
 | # | 결정 | 권장 |
 |---|---|---|
-| **D-201** | Databases 층(SQL Server = `db.sys.*` 3부 이름으로 다른 DB 열람 · PG = DB마다 접속이라 "접속한 DB만 펼침 + 나머지 이름만") | 2차(T-204) · 1차는 접속 DB 하나 |
+| **D-201** | Databases 층(SQL Server = `db.sys.*` 3부 이름으로 다른 DB 열람 · PG = DB마다 접속이라 "접속한 DB만 펼침 + 나머지 이름만") | 2차(T-204) · 1차는 접속 DB 하나 → SQL Server = [101](101-mssql-ssms-explorer-databases-layer.md)(T-270 ✅ · T-271 ✅ · T-272 🚧 · 3부 이름 대신 메타 세션 `USE` 전환 = 101 §4) (11-01 정합) |
 | **D-202** | Package Bodies 폴더 제거(DBeaver 동일) · 본문은 패키지 노드 소스/DDL | 제거 |
 | **D-203** | Generate SQL 바인드 표기 = `:컬럼`(엔진 재작성 DR-8) vs 방언 원표기(`@c` · `$1`) | `:컬럼` |
 
 | ID | 항목 | 크기 | 상태 |
 |---|---|---|---|
 | **T-203** | 1단계 — 트리 표 + `sub_items` + 새 종류 조회 + 유효성 배지 + 아이콘 8종 + i18n | 중~대 | ✅ §190 |
-| **T-204** | Databases 층(D-201) · SQL Server Database Triggers · PG Storage/Roles | 중 | 대기 |
+| **T-204** | Databases 층(D-201) · SQL Server Database Triggers · PG Storage/Roles | 중 | 대기 → SQL Server 층 = [101](101-mssql-ssms-explorer-databases-layer.md)(T-270 ✅ · T-271 ✅ · T-272 🚧 · USE 전환 = 101 §4) · PG 쪽은 대기 (11-01 정합) |
 | **T-205** | 2단계 — Generate SQL(`gen.rs`) + SQL Preview 모달 + CLI `cat gen` | 중 | ✅ §190 |
 | **T-206** | Dependencies PG(`pg_depend`) · Oracle Recycle Bin · 권한 폴더 | 소 | 대기 |
 

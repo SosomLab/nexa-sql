@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-15): *"트랜잭션 기본은 자동 Commit, 설정으로 수동 Commit이면 각 Editor 창별로 트랜잭션 상태를 표시 — 어떤 방식이 쉽게 식별되고 관리가 좋은가."*
 > **선행**: [18 세션·프로젝트](18-session-and-projects.md) · [26 §3](26-performance-architecture.md)(실행 계층) · [29 §4 상태줄](29-editor-syntax-palette-statusbar.md) · T-54 `session.mode`(탭별 세션) · 09-15 3차 트랜잭션 1차(전역 `session.autocommit` · Commit/Rollback · 상태줄 Auto/Manual ●).
-> **상태**: ✅ **DR-30**(09-16 권장안 확정) · **T-77 1차 구현 ✅ 09-16 49차**(공유 세션 기준 — 탭별 세션 T-54 뒤 배지가 탭별 트랜잭션이 된다 · [journal 49차](journal/2026-09-16.md)).
+> **상태**: ✅ **DR-30**(09-16 권장안 확정) · **T-77 ✅ 종결(D-437 · D-399·D-401로 해소 · 11-01 정합)** · 1차 구현 ✅ 09-16 49차(공유 세션 기준 — 탭별 세션 T-54 뒤 배지가 탭별 트랜잭션이 된다 · [journal 49차](journal/2026-09-16.md)).
 
 ---
 
@@ -52,8 +52,8 @@
 | 계층 | 원천 | 바뀌는 때 |
 |---|---|---|
 | 전역 | `session.autocommit`(기본 on) | 설정 창 · JSON |
-| 접속 프로필 | `autocommit=` 필드(선택 · 운영 서버는 수동 강제) | 접속 창 상세 |
-| **탭** | 상태줄 팝업 토글 · 스크립트 `SET AUTOCOMMIT ON/OFF`(그 탭 세션에만) | 세션 동안(영속 X · hot exit 세션 파일엔 저장) |
+| 접속 프로필 | `autocommit=` 필드(선택 · 원안 "운영 서버는 수동 강제") → **D-399**: 접속 직후 그 모드로만(`session.autocommit`보다 우선) · GUI 버튼·배지는 전역 설정 유지 · 다르면 로그+토스트 (11-01 정합) | 접속 창 상세 · 볼트 키 `autocommit=` · `?autocommit=on/off` |
+| **탭** | 상태줄 팝업 토글 · 스크립트 `SET AUTOCOMMIT ON/OFF`(그 탭 세션에만) | 세션 동안(영속 X · hot exit 세션 파일엔 저장) · ★ **탭 층 표시 = 보류(D-399)** — `SET AUTOCOMMIT`·토글은 그 세션에 종전대로 적용되나 탭·세션별 autocommit 표시는 보류 (11-01 정합) |
 
 전환 규칙: 수동→자동으로 바꾸는데 대기 n>0이면 **묻는다**(Commit and switch / Rollback and switch / Cancel).
 
@@ -80,6 +80,8 @@ n 세는 규칙: `RunEvent::Done{rows_affected: Some(_)}`인 DML/DDL 항목 · �
 | 커밋 없이 `tx.stale_min` 경과 | 묻지 않고 배지 빨강 + 상태줄 "pending 25 min"(로그 창 1줄) |
 
 ### 2-5. 설정(레지스트리 · Session 카테고리)
+
+> 키 정의 = [94](94-settings-key-naming-and-location.md)/`REGISTRY` · 잠금 방지 키(`tx.read_end`·`tx.idle_*`·`tx.block_poll_secs`·`tx.prod_*` 등) = [56 §5](56-manual-commit-lock-prevention.md) · 아래 `tx.smart_commit`·`tx.close_action`·`tx.badge`는 설명이 이 표에만 있다(REGISTRY 존재 확인 (11-01 정합))
 
 | 키 | 기본 | 뜻 |
 |---|---|---|
@@ -112,4 +114,4 @@ n 세는 규칙: `RunEvent::Done{rows_affected: Some(_)}`인 DML/DDL 항목 · �
 
 | ID | 항목 | 의존 |
 |---|---|---|
-| **T-77** | 트랜잭션 UX(§2) — 탭별 세션 위 `TxState{mode, pending, first_at}` · 탭 배지 · 상태줄 세그먼트+팝업 · 툴바 배지/활성 · 닫기/해제/전환/종료 모달 · 방언별 암묵 커밋 규칙 · 트랜잭션 로그(대기 문장 목록 · 로그 창 필터) · 설정 5키 · CLI 동등(`nsql shell` 프롬프트에 `*n` 표시) | T-54 T-55 T-61 |
+| **T-77** | 트랜잭션 UX(§2) — 탭별 세션 위 `TxState{mode, pending, first_at}` · 탭 배지 · 상태줄 세그먼트+팝업 · 툴바 배지/활성 · 닫기/해제/전환/종료 모달 · 방언별 암묵 커밋 규칙 · 트랜잭션 로그(대기 문장 목록 · 로그 창 필터) · 설정 5키 · CLI 동등(`nsql shell` 프롬프트 `nsql*n> ` · 읽기만 `nsql*> ` · 닫힘/자동 커밋 `nsql> ` = D-401) · ✅ 종결(D-437 (11-01 정합)) | T-54 T-55 T-61 |

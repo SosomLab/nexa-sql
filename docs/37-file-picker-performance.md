@@ -221,13 +221,13 @@ if got_batch || finished.is_some() { self.refresh_grid(sel); }   // ← 누적 �
 - [ ] 문서 트랜잭션(journal → DEVLOG → STATUS → TODO)은 [16](16-doc-git-conventions.md) 규약대로
 - [ ] 수정 뒤 §5로 재측정해 이 문서의 표를 **실측값으로 갱신**
 
-### TODO에 붙일 줄 (복사용 · 이 문서는 `TODO.md`를 고치지 않았다)
+### TODO에 붙일 줄 (복사용 · 이 문서는 `TODO.md`를 고치지 않았다 · (이력) 현행 상태 = [TODO](TODO.md) (11-01 정합))
 
 ```
-| **T-82** | P0 | 소 | 트리 `rows()` 평탄화 캐시 — 4,899행 8.58ms/프레임 → ~0([37 P-1](37-file-picker-performance.md)) | — | ☐ |
-| **T-83** | P0 | 소 | 트리·탐색기 페인트를 첫 가시 행부터(TreeGrid·TreeView·explorer)([37 P-2](37-file-picker-performance.md)) | — | ☐ |
-| **T-84** | P1 | 소 | `nexa-fs::entry_of` — 링크일 때만 경로 stat(53× · [37 P-3](37-file-picker-performance.md)) | — | ☐ |
-| **T-85** | P2 | 중 | 배치 도착마다 전체 재구성 완화 · `refresh_grid` 사본 제거([37 P-4](37-file-picker-performance.md)) | T-82 | ☐ |
+| **T-82** | P0 | 소 | 트리 `rows()` 평탄화 캐시 — 4,899행 8.58ms/프레임 → ~0([37 P-1](37-file-picker-performance.md)) | — | ✅ 09-15 (11-01 정합) |
+| **T-83** | P0 | 소 | 트리·탐색기 페인트를 첫 가시 행부터(TreeGrid·TreeView·explorer)([37 P-2](37-file-picker-performance.md)) | — | ✅ 09-15 (11-01 정합) |
+| **T-84** | P1 | 소 | `nexa-fs::entry_of` — 링크일 때만 경로 stat(53× · [37 P-3](37-file-picker-performance.md)) | — | ✅ 09-15 (11-01 정합) |
+| **T-85** | P2 | 중 | 배치 도착마다 전체 재구성 완화 · `refresh_grid` 사본 제거([37 P-4](37-file-picker-performance.md)) | T-82 | 🚧(150ms 간격 ✅ · `refresh_grid` 사본 제거 = 216차 진행) (11-01 정합) |
 | **T-86** | P2 | 대 | `nexa-ctl/controls/file/*` 추출 — 20 §1 계층 복원([37 P-5](37-file-picker-performance.md)) | — | ☐ |
 ```
 

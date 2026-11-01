@@ -18,4 +18,6 @@
 
 ## 3. 집행 (D-6)
 
-nexa-dir 17 설계 재사용: **Ed25519 서명 토큰(PASETO v4.public) · 공개키만 내장 · 오프라인 1차 · Cloudflare Workers+D1 온라인 2차**. `nsql-license` 크레이트(계열 공용 후보). 비밀키는 저장소·앱에 절대 미포함. 무료 기능 제한은 두지 않고(라이선스에 내재) 상업 사용자에게 "라이선스 등록" 화면만 제공하는 방향 권장 — TablePlus/DbVisualizer식 영구 라이선스 + 업데이트 기간이 개인 개발자 수용도가 높다([03 §7](03-competitive-landscape.md)).
+집행 = [23](23-license-activation.md)(형식·절차 · D-26 자체 key=value 봉투) · [25](25-license-tiers-and-server.md)(티어·서버)(11-01 정합)
+
+(이력) 원안 — nexa-dir 17 설계 재사용: **Ed25519 서명 토큰(PASETO v4.public) · 공개키만 내장 · 오프라인 1차 · Cloudflare Workers+D1 온라인 2차**. `nsql-license` 크레이트(계열 공용 후보). 비밀키는 저장소·앱에 절대 미포함. 무료 기능 제한은 두지 않고(라이선스에 내재) 상업 사용자에게 "라이선스 등록" 화면만 제공하는 방향 권장 — TablePlus/DbVisualizer식 영구 라이선스 + 업데이트 기간이 개인 개발자 수용도가 높다([03 §7](03-competitive-landscape.md)).

@@ -2,13 +2,13 @@
 
 > **요청**(사용자 09-15): *"좌측 탭에 객체탐색기 밑으로 파일 검색 기능을 추가 — VS Code 검색 패널(이미지) · Ctrl+Shift+F · 검색 대상 = ① 열린 탭(파일이거나 메모리에만 있는 탭 · 메모리 탭도 프로젝트 파일에 저장되는 대상일 수 있음) ② 프로젝트 폴더 아래 재귀 ③ 사용자가 추가한 폴더 · Sublime `Where`처럼 `<current file>,D:\…\이슈관리,D:\…\Oracle` 콤마 구분 · 빠른 재귀 탐색·내용 검색 알고리즘 · 사용 편의성 · 파일 탐색 탭은 할일에 등록."*
 > **선행**: [18 세션·프로젝트](18-session-and-projects.md) · [15 외부 변경](15-external-file-changes.md) · [20 nexa-ui 파일 관리](../../nexa-ui/docs/20-file-management-and-dialogs.md) · 활동 막대(21차 · `activity.rs`) · 플로팅 찾기(`findbar.rs`).
-> **상태**: 📐 설계 · 작업 **T-81**(TODO) · 결정 **D-55~D-57**(§6).
+> **상태**: ✅ 종결(D-437 · 11-01) · c 폐기(D-410/D-407) · 캐시 파일 폐기(D-425) · 작업 **T-81**(TODO) · 결정 **D-55~D-57**(§6) (11-01 정합 · 종전 📐 설계).
 
 ---
 
 ## 0. 정의(사용자)
 
-- **프로젝트** = 폴더 하나(루트) + 설정 파일 `<root>/.nexa-sql/project.json`. 열린 탭 목록·**이름 없는 메모리 탭의 본문**까지 프로젝트 파일에 저장되어, 프로젝트를 다시 열면 탭이 그대로 복원된다(Sublime hot exit + `.sublime-project`의 결합 · docs/18 §3 확장).
+- (이력 · 09-15 원안 · 현행 프로젝트 = [67](67-project-workspace.md) `.nsql-project` 하나 · D-407) **프로젝트** = 폴더 하나(루트) + 설정 파일 `<root>/.nexa-sql/project.json`. 열린 탭 목록·**이름 없는 메모리 탭의 본문**까지 프로젝트 파일에 저장되어, 프로젝트를 다시 열면 탭이 그대로 복원된다(Sublime hot exit + `.sublime-project`의 결합 · docs/18 §3 확장).
 - 탭 = **파일 탭**(경로 있음 · 디스크와 동기) 또는 **메모리 탭**(경로 없음 · 본문은 프로젝트 파일 안에만).
 - 검색 범위 3종: ① 열린 탭(파일·메모리 모두 — 메모리 탭은 편집기 버퍼를 직접 검색) ② 프로젝트 루트 이하 재귀 ③ 사용자가 추가한 폴더(프로젝트 설정 `folders[]`에 저장 · 여러 개).
 
@@ -36,7 +36,7 @@
 | Where | 비면 = **열린 탭 + 작업 모드 기본 범위**(파일 모드 = 열린 탭만 · 폴더 모드 = + 그 폴더 · 프로젝트 모드 = + 프로젝트 폴더 + 추가 폴더 · 사용자 09-23 · `SearchCtx.default_roots`) · 항목: `<current file>`(활성 탭 파일의 폴더) · `<open files>`(열린 탭 전부) · `<project>`(루트) · 절대 경로 폴더/파일 · `-` 접두 = 제외(`-*.log`) · **포함 글롭**(`*.sql` · `src/**/*.txt` · `+pat` — 있으면 그중 하나에 맞는 파일만(OR) · 제외는 그 뒤 AND NOT · 폴더는 늘 내려감 · 패턴만 적으면 기본 범위에 얹음 · 09-23 journal §122 · `SearchOpts.includes`) · 콤마 구분 · 히스토리 = §119 검색어 이력(`search.where` 상자) |
 | 결과 트리 | 파일 → 줄(번호 · 일치 부분 강조 · 앞뒤 문맥 한 줄) · 클릭 = 그 탭/파일 열고 해당 위치 선택 · 파일 행 `×` = 결과에서 제외 · 우클릭 = 경로 복사·탐색기에서 보기 |
 | 진행 | 상태줄 `n files · m matches · 0.42s` · 취소 버튼(진행 중) · 결과는 **도착하는 대로**(스트리밍) |
-| 바꾸기 | 미리보기(파일별 diff 행 · 체크로 제외) → 적용 = 파일 저장(탭에 열려 있으면 버퍼 갱신 · docs/15 외부 변경 규칙) · 되돌리기는 편집기 히스토리(열린 탭) / 백업 `.nexa-sql/replace-<ts>/`(닫힌 파일 · 옵션) |
+| 바꾸기 | 미리보기(파일별 diff 행 · 체크로 제외) → 적용 = 파일 저장(탭에 열려 있으면 버퍼 갱신 · docs/15 외부 변경 규칙) · 되돌리기는 편집기 히스토리(열린 탭) / 백업 `<설정 폴더>/backups/replace/<이름>.<stamp17>`(닫힌 파일 · T-81d ✅ · §4 · 원안 `.nexa-sql/replace-<ts>/` ✖ · 11-01 정합) |
 
 ## 2. 검색 엔진(속도 설계)
 
@@ -55,23 +55,10 @@
 
 부품 위치: `nsql-search`(신규 크레이트 · 의존 0 · CLI `nsql grep`도 같은 엔진 — DR-6 "CLI와 같은 코어") · UI 패널 = `search_panel.rs`(활동 막대 두 번째 패널 · 결과 = nexa-ctl `TreeView`) · 병렬 열거는 `nexa-fs`(docs/20 §2 `listing` 배치/취소)로 올려 파일 대화상자와 공유.
 
-## 3. 프로젝트 파일(docs/18 §3 확장)
+## 3. 프로젝트 파일 — ✖ 폐기(D-410 · D-407) → [67 §7](67-project-workspace.md)
 
-```json
-{ "version": 1,
-  "root": ".",                              // project.json이 있는 폴더 기준
-  "folders": ["D:/Projects/acme/<프로젝트>/이슈관리", "../Oracle"],   // ③ 지정 폴더(상대 = root 기준)
-  "tabs": [
-    { "path": "scripts/a.sql", "caret": 120, "scroll": 3, "encoding": "utf8", "indent": [4, true] },
-    { "title": "Script_3", "memory": "SELECT ...", "caret": 0 }            // 메모리 탭 = 본문 자체를 저장
-  ],
-  "active": 1,
-  "search": { "where_history": ["<current file>, ../Oracle"], "queries": ["1433"] },
-  "connection": "appdb"                      // 프로필 이름만(비밀번호는 vault)
-}
-```
-- 저장 시점: 탭 열기/닫기/이동 · 5초 디바운스 자동 저장 · 종료 시. 메모리 탭 본문은 `hot exit`처럼 매번 통째로(상한 `project.memory_tab_max_kb` 기본 512 · 넘으면 파일로 저장 권유).
-- 프로젝트 없이 실행 = **기본 프로젝트**(사용자 폴더 `nsql-projects/default/project.json`) — 지금의 "이름 없는 탭"도 여기에 저장되어 다음 실행에 복원(hot exit · docs/18 §2). 명시 프로젝트는 File ▸ Open Project…(자체 대화상자 Folder 모드 · F-4 잔여).
+- 현행 = 프로젝트 파일 `.nsql-project` 하나(형식 67 §7 · 설정 절 67 §8) · 자동 저장·hot exit = [70](70-autosave-and-restore.md) (11-01 정합).
+- (이력 · 09-15 초안) `<root>/.nexa-sql/project.json`(root · folders · tabs + 메모리 탭 본문 · active · search 히스토리 · connection = 프로필 이름) · 5초 디바운스 · 상한 `project.memory_tab_max_kb`(**✖ 없는 키**) · 기본 프로젝트 `nsql-projects/default/project.json` — 전부 T-165로 대체.
 
 ## 4. 순서(T-81 분할)
 
@@ -79,7 +66,7 @@
 |---|---|---|
 | **T-81a** | 활동 막대 두 번째 패널 `search_panel.rs`(검색어·토글·Where·범위·결과 트리 · 열린 탭 검색만) + `Ctrl+Shift+F` | 21차 활동 막대 |
 | **T-81b** ✅ 09-16 49차 | `nsql-search` 엔진(병렬 열거 · 무시 규칙 · SWAR 매칭 · 스트리밍 · 취소 · `search_text`) + `nsql grep` · 실측 21k파일 0.3~0.6s · 잔여 = 인덱스/내용 캐시·EUC-KR(T-81e) · `[abc]` 문자 집합 · 설정 키 4 등록(T-81a) | — |
-| **T-81c** | 프로젝트 파일(§3 · 기본 프로젝트 hot exit · 지정 폴더 · Where 히스토리) | T-74 |
+| **T-81c** ✖ 폐기(D-410 · D-407) | (이력) 프로젝트 파일(§3 · 기본 프로젝트 hot exit · 지정 폴더 · Where 히스토리) → T-165 `.nsql-project`([67](67-project-workspace.md)) · hot exit = [70](70-autosave-and-restore.md) | T-74 |
 | **T-81d** ✅ 10-31 189차 | 바꾸기 미리보기/적용 · 백업 · 외부 변경 연동(docs/15) — nsql-search `Matcher::replace_all(text, with)`(find_all 규칙 · 단어 경계 · 정규식 `$1`/`${name}` · 시험 5단) · 패널 = 검색어 틀 왼쪽 `›` → 바꾸기 줄(상자 + 틀 안 [모두 바꾸기]) · 결과 행 `→ 바뀐 줄` 미리보기(바꾸기 글이 있을 때 · 흐린 색) · 적용 = 열린 탭 `replace_all_undoable`(되돌리기 가능 · 저장은 사용자) · 디스크 파일 = 원본을 `<설정 폴더>/backups/replace/<이름>.<stamp17>`에 남기고 **같은 인코딩**으로 다시 씀(EUC-KR 포함) → "N개 파일에서 M곳" → 재검색 | T-81a b |
 | **T-81e** ✅ EUC-KR 10-31 189차 · ✖ 캐시 파일 폐기(D-425) | 인덱스/내용 캐시 · 정규식(T-59) · EUC-KR(T-79) — EUC-KR = `SearchOpts.transcode`(무손실일 때만) · 캐시 파일 = 만들지 않음 · 메모리 캐시 = 후보 | T-81b |
 
@@ -95,5 +82,5 @@
 | # | 질문 | 권장 |
 |---|---|---|
 | **D-55** | 기본 무시 규칙에 `.gitignore`를 자동 적용할까(ripgrep 기본) | 예(끄는 토글 제공) |
-| **D-56** | 메모리 탭 본문을 프로젝트 파일에 **평문**으로 저장(비밀번호가 SQL에 있을 수 있음) vs 별도 `tabs/*.txt` | 별도 파일(`.nexa-sql/tabs/<id>.txt` · project.json은 목록만) |
+| **D-56** | 메모리 탭 본문을 프로젝트 파일에 **평문**으로 저장(비밀번호가 SQL에 있을 수 있음) vs 별도 `tabs/*.txt` | 별도 파일(`.nexa-sql/tabs/<id>.txt` · project.json은 목록만) · **✖ 대체(D-144 → 70 backups · D-407 · 11-01 정합)** |
 | **D-57** | 기본 프로젝트 자동 생성(사용자 폴더)으로 hot exit를 바로 켤까 | 예 |
