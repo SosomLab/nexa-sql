@@ -37,6 +37,8 @@ say "explorer-dnd-e2e $(date '+%F %T')"
 # ① 좌표.
 rm -f "$OUT/pt_obj" "$OUT/pt_folder"
 rm -f "$OUT/pt_wins"
+# 예열 1회(11-02 Windows 헤드리스 1회차 0/1 = 새 Debug exe 첫 기동이 pt 10 s 안에 접속을 못 끝냄 · objbackup-prod의 warm과 같은 방식).
+gui warm "@after:1500:ui.move:10/10" 5
 gui pt "$PRE,@after:6500:explorer.rowpt:sales_customer:$(w "$OUT/pt_obj"),@after:6600:explorer.rowpt:Tables:$(w "$OUT/pt_folder"),@after:6700:windows.dump:$(w "$OUT/pt_wins")" 10
 { read -r OX OY || [ -n "${OX:-}" ]; } < "$OUT/pt_obj" 2>/dev/null || { bad "행 좌표 없음(sales_customer)" "$(cat "$OUT/pt.stderr" 2>/dev/null | tail -3)"; say "RESULT PASS $pass FAIL $fail"; exit 1; }
 { read -r FX FY || [ -n "${FX:-}" ]; } < "$OUT/pt_folder" 2>/dev/null || FX=0
@@ -47,7 +49,9 @@ WIN_WH=$(sed -n '2p' "$OUT/pt_wins" 2>/dev/null | cut -f2)
 WW=${WIN_WH%x*}; WH=${WIN_WH#*x}
 case "$WW$WH" in ''|*[!0-9]*) WW=1200; WH=800;; esac
 EX=$((WW*820/1200)); EY=$((WH*140/800))
-ok "①' 창 ${WW}x${WH}(물리) → 놓는 점 $EX $EY"
+# B 놓는 점 = 상태줄(논리 600,790)도 같은 비례 환산(11-02 Windows 1.5배 실측 · 고정 600,790은 물리 1800×1200 창에서 논리 527 = 상태줄 아님 → B가 거짓 통과).
+EX2=$((WW*600/1200)); EY2=$((WH*790/800))
+ok "①' 창 ${WW}x${WH}(물리) → 놓는 점 편집기 $EX $EY · 상태줄 $EX2 $EY2"
 drag() { # <시작x> <시작y> <끝x> <끝y> → 명령 조각(문턱 넘김 → 중간 점 → 목표)
   local sx=$1 sy=$2 ex=$3 ey=$4
   echo "@after:7000:ui.down:$sx/$sy,@after:7200:ui.move:$((sx+8))/$((sy+6)),@after:7400:ui.move:$((sx+80))/$((sy+10)),@after:7600:ui.move:$(((sx+ex)/2))/$(((sy+ey)/2)),@after:7800:ui.move:$ex/$ey,@after:8000:ui.move:$((ex+2))/$((ey+1)),@after:8300:ui.up:$((ex+2))/$((ey+1))"
@@ -56,7 +60,7 @@ drag() { # <시작x> <시작y> <끝x> <끝y> → 명령 조각(문턱 넘김 →
 gui a "$PRE,$(drag "$OX" "$OY" $EX $EY),@after:9500:editor.dump:$(w "$OUT/a.dump")" 12
 if grep -q "sales_customer" "$OUT/a.dump" 2>/dev/null; then ok "A 편집기에 놓기 = 이름 삽입(sales_customer)"; else bad "A 삽입 없음" "$(cat "$OUT/a.dump" 2>/dev/null; tail -3 "$OUT/a.stderr")"; fi
 # B 상태줄에 놓기 = 삽입 없음.
-gui b "$PRE,$(drag "$OX" "$OY" 600 790),@after:9500:editor.dump:$(w "$OUT/b.dump")" 12
+gui b "$PRE,$(drag "$OX" "$OY" $EX2 $EY2),@after:9500:editor.dump:$(w "$OUT/b.dump")" 12
 if grep -q "sales_customer" "$OUT/b.dump" 2>/dev/null; then bad "B 놓을 곳 없는데 삽입됨" "$(cat "$OUT/b.dump")"; else ok "B 상태줄에 놓기 = 삽입 없음"; fi
 grep -q "^-- drop here" "$OUT/b.dump" 2>/dev/null && ok "B 문서 원문 유지" || bad "B 문서 덤프 이상" "$(cat "$OUT/b.dump" 2>/dev/null)"
 # C 폴더 행(Tables) = 라벨 삽입(이름 복사 전 노드 규칙).
