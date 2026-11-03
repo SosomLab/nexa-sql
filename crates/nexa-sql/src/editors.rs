@@ -158,6 +158,8 @@ pub(crate) struct Editors {
     /// 탭별 구문(기본 = 제목 확장자 · 사용자 변경 시 그 탭만).
     syntax: Vec<Rc<SyntaxSpec>>,
     registry: Rc<SyntaxRegistry>,
+    /// ★ T-325 2차(11-04): 활성 세션의 방언(접속으로 확정) — "SQL" 구문은 이 방언의 예약어까지 칠한다(`SyntaxRegistry::sql_for`).
+    sql_dialect: Option<nsql_core::Dialect>,
     rulers: Vec<usize>,
     /// 안내선 스타일·표시 · 동일 출현 외곽선(설정 · 새 탭에도 적용).
     rulers_show: bool,
@@ -341,6 +343,7 @@ impl Editors {
             conn_desc: String::new(),
             syntax: Vec::new(),
             registry,
+            sql_dialect: None,
             rulers: Vec::new(),
             rulers_show: true,
             ruler_color: None,
@@ -426,7 +429,36 @@ impl Editors {
 
     /// 파일 이름(확장자)에 맞는 구문 스펙(SQL Preview 창 등 편집기 밖의 상자용).
     pub(crate) fn syntax_for_title(&self, title: &str) -> Rc<SyntaxSpec> {
-        self.registry.for_title(title)
+        self.dialect_spec(self.registry.for_title(title))
+    }
+
+    /// "SQL" 구문이고 방언을 알면 방언 스펙으로(그 밖은 그대로).
+    fn dialect_spec(&self, s: Rc<SyntaxSpec>) -> Rc<SyntaxSpec> {
+        match self.sql_dialect {
+            Some(d) if s.name == "SQL" => self.registry.sql_for(d),
+            _ => s,
+        }
+    }
+
+    /// ★ T-325 2차: 접속으로 방언이 확정됐다 — "SQL" 구문 탭의 강조기를 그 방언 스펙으로 바꾼다(강조가 꺼진 큰 파일 탭은 건드리지 않음 ·
+    ///   새 탭·`Set Syntax`도 이후 같은 스펙). 같은 방언이면 비용 0.
+    pub(crate) fn apply_sql_dialect(&mut self, dialect: nsql_core::Dialect) {
+        if self.sql_dialect == Some(dialect) {
+            return;
+        }
+        self.sql_dialect = Some(dialect);
+        let spec = self.registry.sql_for(dialect);
+        for i in 0..self.syntax.len() {
+            if self.syntax[i].name != "SQL" {
+                continue;
+            }
+            self.syntax[i] = spec.clone();
+            if let Some(b) = self.bufs.get_mut(i) {
+                if b.highlighter().is_some() {
+                    b.set_highlighter(Some(spec.clone()));
+                }
+            }
+        }
     }
 
     /// ★ 미리보기용 편집 상자(SQL Preview · 사용자 09-25 "편집기 탭과 동일하게 · 미니맵·북마크 등은 제외"): 편집기 탭과 같은 설정
@@ -603,7 +635,7 @@ impl Editors {
 
     /// 활성 탭 구문 변경(팔레트 `Set Syntax`). 모르는 이름이면 false.
     pub(crate) fn set_syntax(&mut self, name: &str) -> bool {
-        let Some(spec) = self.registry.get(name) else {
+        let Some(spec) = self.registry.get(name).map(|s| self.dialect_spec(s)) else {
             return false;
         };
         if let Some(slot) = self.syntax.get_mut(self.active) {
@@ -1318,7 +1350,7 @@ impl Editors {
             self.counter += 1;
             format!("Script_{}", self.counter)
         });
-        let syntax = self.registry.for_title(&title);
+        let syntax = self.syntax_for_title(&title);
         let tb = self.make_box("", &syntax);
         self.bufs.push(tb);
         self.indents.push(None);
@@ -1639,7 +1671,7 @@ impl Editors {
     ) -> Option<usize> {
         self.loading.remove(&id);
         let i = self.index_of_id(id)?;
-        let syntax = self.registry.for_title(like);
+        let syntax = self.syntax_for_title(like);
         let (focused, bounds) = (self.bufs[i].is_focused(), self.bufs[i].bounds());
         // 단계를 **먼저** 정한다(글자 수·줄 수는 준비본이 이미 안다 — 다시 세지 않는다). 큰 파일이면 저장본 사본(파일 크기)과
         //   줄 변경 기준선을 아예 만들지 않는다(적재 피크 메모리).
@@ -1697,7 +1729,7 @@ impl Editors {
         let i = self.active;
         // 읽을거리는 SQL이 아니다 — **Plain Text** 구문으로(키워드 색·괄호 규칙 없음 · 사용자 09-19 "and/in/to가 칠해진다").
         let syntax = match like {
-            Some(name) => self.registry.for_title(name),
+            Some(name) => self.syntax_for_title(name),
             None => self
                 .registry
                 .get("Plain Text")
@@ -2157,7 +2189,7 @@ impl Editors {
             if !keep {
                 self.titles[i] = name.clone();
             }
-            let syntax = self.registry.for_title(&name);
+            let syntax = self.syntax_for_title(&name);
             self.cur_mut().set_highlighter(Some(syntax.clone()));
             self.syntax[i] = syntax;
         }

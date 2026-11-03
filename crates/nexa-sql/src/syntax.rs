@@ -6,20 +6,25 @@
 //!   같은 이름이면 나중 것(사용자 패키지)이 내장을 덮는다. 파싱 실패는 stderr.
 
 use nexa_ctl::SyntaxSpec;
+use nsql_core::Dialect;
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 pub(crate) struct SyntaxRegistry {
     specs: Vec<Rc<SyntaxSpec>>,
+    /// ★ T-325 2차(11-04 · 108 §9): 방언별 SQL 스펙 캐시 = 내장(또는 패키지가 덮은) "SQL" + `nsql_core::reserved` 방언 예약어 표 ·
+    ///   이름·확장자는 "SQL" 그대로(팔레트 `Set Syntax`에 변형이 늘지 않음) · 처음 묻는 방언만 만든다.
+    sql_dialect: RefCell<Vec<(Dialect, Rc<SyntaxSpec>)>>,
     /// ★ T-69 문법 층(10-30 · 67 §8-3): `Packages/<패키지>/<이름>.nexa-settings`(Sublime `<Syntax>.sublime-settings` 차용 · JSON 객체) —
     ///   (구문 이름 소문자, (키, 원시 값)) · 같은 이름은 나중 패키지가 덮는다.
     settings: Vec<(String, Vec<(String, String)>)>,
 }
 
 impl SyntaxRegistry {
-    /// 내장 + `Packages/` 스캔.
-    pub(crate) fn load() -> Self {
-        let mut r = SyntaxRegistry {
+    /// 내장만(시험 · 스캔 없음).
+    pub(crate) fn builtin() -> Self {
+        SyntaxRegistry {
             // ★ T-76 잔여(10-30): JSON(settings.json · `.sublime-keymap` 등) 내장 — `Packages/`의 같은 이름 규격이 있으면 그쪽이 덮는다.
             specs: vec![
                 Rc::new(SyntaxSpec::sql()),
@@ -27,11 +32,43 @@ impl SyntaxRegistry {
                 Rc::new(SyntaxSpec::plain()),
             ],
             settings: Vec::new(),
-        };
+            sql_dialect: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// 내장 + `Packages/` 스캔.
+    pub(crate) fn load() -> Self {
+        let mut r = Self::builtin();
         if let Some(dir) = Self::packages_dir() {
             r.scan(&dir);
         }
         r
+    }
+
+    /// ★ T-325 2차: 방언별 SQL 강조 스펙 — "SQL" 키워드 ∪ 그 방언의 예약어(대문자 · `case_insensitive`) · 같은 방언은 같은 `Rc`.
+    pub(crate) fn sql_for(&self, dialect: Dialect) -> Rc<SyntaxSpec> {
+        if let Some((_, s)) = self
+            .sql_dialect
+            .borrow()
+            .iter()
+            .find(|(d, _)| *d == dialect)
+        {
+            return s.clone();
+        }
+        let base = self
+            .get("SQL")
+            .unwrap_or_else(|| Rc::new(SyntaxSpec::sql()));
+        let mut spec = (*base).clone();
+        for w in nsql_core::reserved::reserved_words(dialect) {
+            spec.keywords.insert(if spec.case_insensitive {
+                w.to_uppercase()
+            } else {
+                (*w).to_string()
+            });
+        }
+        let rc = Rc::new(spec);
+        self.sql_dialect.borrow_mut().push((dialect, rc.clone()));
+        rc
     }
 
     /// `<설정 폴더>/Packages`.
@@ -182,6 +219,7 @@ mod tests {
 
     fn reg() -> SyntaxRegistry {
         SyntaxRegistry {
+            sql_dialect: RefCell::new(Vec::new()),
             specs: vec![
                 Rc::new(SyntaxSpec::sql()),
                 Rc::new(SyntaxSpec::json()),
@@ -256,5 +294,38 @@ mod tests {
         assert_eq!(r.for_title("NoName1").name, "SQL");
         assert_eq!(r.for_title("테스트1").name, "SQL");
         assert_eq!(r.for_title(".gitignore").name, "SQL");
+    }
+}
+
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+
+    /// ★ T-325 2차: 방언 스펙 = 내장 SQL ⊇ · 방언 예약어 포함 · 이름 "SQL" 그대로 · 캐시 = 같은 Rc.
+    #[test]
+    fn sql_for_dialect_adds_reserved_words_and_keeps_name() {
+        let r = SyntaxRegistry::builtin();
+        let base = r.get("SQL").expect("SQL");
+        let ms = r.sql_for(Dialect::Mssql);
+        assert_eq!(ms.name, "SQL");
+        assert!(ms.keywords.is_superset(&base.keywords));
+        assert!(ms.keywords.contains("TOP"), "SQL Server TOP");
+        assert!(
+            r.sql_for(Dialect::Mysql).keywords.contains("LIMIT"),
+            "MySQL LIMIT"
+        );
+        assert!(
+            r.sql_for(Dialect::Sqlite)
+                .keywords
+                .contains("AUTOINCREMENT"),
+            "SQLite AUTOINCREMENT"
+        );
+        assert!(
+            r.sql_for(Dialect::Oracle).keywords.contains("ROWNUM")
+                || r.sql_for(Dialect::Oracle).keywords.contains("MINUS"),
+            "Oracle 고유어"
+        );
+        assert!(Rc::ptr_eq(&ms, &r.sql_for(Dialect::Mssql)), "캐시");
+        assert!(!Rc::ptr_eq(&ms, &r.sql_for(Dialect::Postgres)));
     }
 }
