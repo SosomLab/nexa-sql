@@ -2869,8 +2869,8 @@ WHERE WITH WORK WRITE YEAR ZONE
 | 17 | ORA·PG | 실행 시 오버로드 선택 = 인자 수·이름만 보고 **첫 묶음**(타입·기본값 미고려) → 잘못된 OUT 타입/캡처 가능 | `crates/nsql-run/src/lib.rs:1011-1026, 3029-3050` |
 | 18 | ORA | `routine_args` 의 2조각 이름 `A.B` 가 (현재 스키마, 패키지 A, B)와 (소유자 A, B) 두 후보를 OR 로 합쳐 같은 `overload='0'` 묶음에 섞일 수 있음 | `lib.rs:3297-3330` |
 | 19 | 전체 | **✅ 10-10 D-272**(Oracle만 묻기 · `script.define` · CLI 전 경로) · 종전: `&name` 치환이 방언과 무관하게 기본 켬 · 문자열 안도 치환 · 미정의면 입력 요청 → MS/PG/MY 의 `'R&D'`·`a & b` 에서 뜻밖의 입력 창 | `crates/nsql-script/src/engine.rs:127, 754-794` |
-| 20 | 내장 표 | ORA 함수 표에 의사열·패키지 멤버·프로시저 혼입(`ROWNUM` `ROWID` `DBMS_LOB.GETLENGTH` `RAISE_APPLICATION_ERROR`) · MS 함수 표에 문장 `RAISERROR` `THROW` · ORA 자료형 `BOOLEAN` 중복(뒤 것 23ai 설명이 버려짐) | `builtins.rs:73-130, 178-223, 994, 1000` |
-| 21 | 자료형 | ORA `VECTOR` · MS `json`/`vector` · PG 배열 `T[]`·`bit`·`varbit`·`jsonpath` · MY 공간 자료형 일부 · `SERIAL` 없음 | `builtins.rs:961-1150` |
+| 20 | 내장 표 | ✅ **11-04 정리**([journal 11-04 §11](journal/2026-11-04.md) · 의사열·패키지 멤버 제거 · BOOLEAN 중복 해소 · 프로시저/문장은 주석과 함께 완성 후보 유지) · (원문) ORA 함수 표에 의사열·패키지 멤버·프로시저 혼입(`ROWNUM` `ROWID` `DBMS_LOB.GETLENGTH` `RAISE_APPLICATION_ERROR`) · MS 함수 표에 문장 `RAISERROR` `THROW` · ORA 자료형 `BOOLEAN` 중복(뒤 것 23ai 설명이 버려짐) | `builtins.rs:73-130, 178-223, 994, 1000` |
+| 21 | 자료형 | ✅ **11-04 추가**(ORA `VECTOR` · MS `json`·`vector` · PG `bit`·`varbit`·`jsonpath`·`type[]` · MY `SERIAL` + 공간 6 · [journal 11-04 §11](journal/2026-11-04.md)) · (원문) ORA `VECTOR` · MS `json`/`vector` · PG 배열 `T[]`·`bit`·`varbit`·`jsonpath` · MY 공간 자료형 일부 · `SERIAL` 없음 | `builtins.rs:961-1150` |
 | 22 | MY·AN | 드라이버 없음 — 문법·키워드·카탈로그 질의는 있으나 실행 불가 · MY 루틴 Arguments 폴더는 늘 빈 목록 | `crates/nsql-drivers/src/lib.rs:60-64` · `lib.rs:3285-3287` · `tree.rs` `sub_kinds` |
 | 23 | MS·LT | 오류 위치 미전달(MS = 메시지 글에 줄만) → 편집기 오류 위치 표시 없음 | `nsql-driver-mssql/src/lib.rs:540-553` · `nsql-driver-sqlite/src/lib.rs:77-123` |
 | 24 | PG | 문맥 전환 = `SET search_path TO …` 만 · `SET SESSION/LOCAL search_path` · `SET SCHEMA 'x'` 미인식 · `"$user"` 첫 값이면 그대로 이름 | `crates/nsql-catalog/src/lib.rs:985-1001` |

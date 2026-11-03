@@ -105,8 +105,7 @@ pub const ORACLE: &[Builtin] = &[
     ),
     b!("LISTAGG", "LISTAGG(expr [, sep]) WITHIN GROUP (ORDER BY …)"),
     b!("WM_CONCAT", "WM_CONCAT(expr)"),
-    b!("ROWNUM", "ROWNUM"),
-    b!("ROWID", "ROWID"),
+    // ★ 108 §9 #20(11-04): 의사열 `ROWNUM`·`ROWID`는 함수가 아니다 — 강조는 방언 예약어 표(T-325 2차 1절) · `ROWID`는 자료형 표.
     b!("SYS_CONTEXT", "SYS_CONTEXT(namespace, parameter)"),
     b!("USERENV", "USERENV(parameter)"),
     b!("SYS_GUID", "SYS_GUID()"),
@@ -115,11 +114,12 @@ pub const ORACLE: &[Builtin] = &[
     b!("NLSSORT", "NLSSORT(str [, nls])"),
     b!("RAWTOHEX", "RAWTOHEX(raw)"),
     b!("HEXTORAW", "HEXTORAW(hex)"),
-    b!("DBMS_LOB.GETLENGTH", "DBMS_LOB.GETLENGTH(lob)"),
+    // ★ #20: `DBMS_LOB.GETLENGTH`는 패키지 멤버(`ORACLE_PACKAGES` DBMS_LOB) — 여기서는 뺀다(`DBMS_LOB.` 뒤 완성으로).
     b!("XMLAGG", "XMLAGG(xmlelement)"),
     b!("XMLELEMENT", "XMLELEMENT(name, value)"),
     b!("JSON_VALUE", "JSON_VALUE(json, path [RETURNING type])"),
     b!("JSON_OBJECT", "JSON_OBJECT(key VALUE expr, …)"),
+    // ★ #20: 프로시저(STANDARD)지만 PL/SQL 본문에서 함수처럼 치므로 완성 후보로 남긴다(시그니처 도움).
     b!(
         "RAISE_APPLICATION_ERROR",
         "RAISE_APPLICATION_ERROR(-20000..-20999, message)"
@@ -212,6 +212,7 @@ pub const MSSQL: &[Builtin] = &[
     b!("SUSER_SNAME", "SUSER_SNAME()"),
     b!("ERROR_MESSAGE", "ERROR_MESSAGE()"),
     b!("ERROR_NUMBER", "ERROR_NUMBER()"),
+    // ★ #20: `RAISERROR`·`THROW`는 T-SQL **문장**이지만 괄호 꼴·시그니처 도움이 유용해 완성 후보로 남긴다(강조 = 예약어 표).
     b!("RAISERROR", "RAISERROR(message, severity, state)"),
     b!("THROW", "THROW [error, message, state]"),
     b!("CHECKSUM", "CHECKSUM(*| expr, …)"),
@@ -893,6 +894,25 @@ mod tests {
         assert!(signature(Some(Dialect::Postgres), "no_such_fn").is_none());
     }
 
+    /// ★ 108 §9 #20·#21(11-04): 의사열·패키지 멤버는 함수 표 밖 · ORA BOOLEAN 하나 · 새 자료형.
+    #[test]
+    fn survey_20_21_tables_cleaned_and_types_added() {
+        let ora = functions(Some(Dialect::Oracle));
+        assert!(!ora.iter().any(|b| b.name == "ROWNUM" || b.name == "ROWID"));
+        assert!(!ora.iter().any(|b| b.name == "DBMS_LOB.GETLENGTH"));
+        assert!(package(Some(Dialect::Oracle), "DBMS_LOB").is_some());
+        assert_eq!(
+            ORACLE_TYPES.iter().filter(|b| b.name == "BOOLEAN").count(),
+            1
+        );
+        let has = |d: Dialect, n: &str| types(Some(d)).iter().any(|b| b.name == n);
+        assert!(has(Dialect::Oracle, "VECTOR"));
+        assert!(has(Dialect::Mssql, "JSON") && has(Dialect::Mssql, "VECTOR"));
+        assert!(has(Dialect::Postgres, "JSONPATH") && has(Dialect::Postgres, "VARBIT"));
+        assert!(has(Dialect::Postgres, "ARRAY"));
+        assert!(has(Dialect::Mysql, "SERIAL") && has(Dialect::Mysql, "MULTIPOLYGON"));
+    }
+
     #[test]
     fn packages_and_system_members() {
         assert!(package(Some(Dialect::Oracle), "DBMS_OUTPUT").is_some());
@@ -997,13 +1017,14 @@ pub const ORACLE_TYPES: &[Builtin] = &[
     b!("SIMPLE_INTEGER", "SIMPLE_INTEGER (PL/SQL · NOT NULL)"),
     b!("NATURAL", "NATURAL (PL/SQL · >= 0)"),
     b!("POSITIVE", "POSITIVE (PL/SQL · > 0)"),
-    b!("BOOLEAN", "BOOLEAN (PL/SQL)"),
+    b!("BOOLEAN", "BOOLEAN (PL/SQL · 23ai SQL)"),
     b!("SYS_REFCURSOR", "SYS_REFCURSOR (PL/SQL)"),
     b!("XMLTYPE", "XMLTYPE"),
     b!("JSON", "JSON (21c+)"),
     b!("SDO_GEOMETRY", "SDO_GEOMETRY"),
     b!("ANYDATA", "ANYDATA"),
-    b!("BOOLEAN", "BOOLEAN (PL/SQL · 23ai SQL)"),
+    // ★ 108 §9 #21(11-04): 23ai VECTOR.
+    b!("VECTOR", "VECTOR[(dims [, format])] (23ai)"),
 ];
 
 pub const POSTGRES_TYPES: &[Builtin] = &[
@@ -1057,6 +1078,11 @@ pub const POSTGRES_TYPES: &[Builtin] = &[
     b!("DATERANGE", "daterange"),
     b!("TSVECTOR", "tsvector"),
     b!("TSQUERY", "tsquery"),
+    // ★ 108 §9 #21(11-04): bit · varbit · jsonpath · 배열 꼴.
+    b!("BIT", "bit(n)"),
+    b!("VARBIT", "bit varying(n) / varbit(n)"),
+    b!("JSONPATH", "jsonpath"),
+    b!("ARRAY", "type[] (array · integer[] · text[][])"),
     b!("OID", "oid"),
     b!("NAME", "name"),
     b!("RECORD", "record (PL/pgSQL)"),
@@ -1097,6 +1123,9 @@ pub const MSSQL_TYPES: &[Builtin] = &[
     b!("IMAGE", "image (deprecated → varbinary(max))"),
     b!("UNIQUEIDENTIFIER", "uniqueidentifier"),
     b!("XML", "xml"),
+    // ★ 108 §9 #21(11-04): json(SQL Server 2025 · Azure SQL) · vector(2025 · Azure SQL).
+    b!("JSON", "json (SQL Server 2025 · Azure SQL)"),
+    b!("VECTOR", "vector(dims) (SQL Server 2025 · Azure SQL)"),
     b!("SQL_VARIANT", "sql_variant"),
     b!("HIERARCHYID", "hierarchyid"),
     b!("GEOGRAPHY", "geography"),
@@ -1139,8 +1168,19 @@ pub const MYSQL_TYPES: &[Builtin] = &[
     b!("ENUM", "ENUM('a', 'b', …)"),
     b!("SET", "SET('a', 'b', …)"),
     b!("JSON", "JSON"),
+    // ★ 108 §9 #21(11-04): SERIAL 별칭 · 공간 자료형 전부.
+    b!(
+        "SERIAL",
+        "SERIAL (= BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE)"
+    ),
     b!("GEOMETRY", "GEOMETRY"),
     b!("POINT", "POINT"),
+    b!("LINESTRING", "LINESTRING"),
+    b!("POLYGON", "POLYGON"),
+    b!("MULTIPOINT", "MULTIPOINT"),
+    b!("MULTILINESTRING", "MULTILINESTRING"),
+    b!("MULTIPOLYGON", "MULTIPOLYGON"),
+    b!("GEOMETRYCOLLECTION", "GEOMETRYCOLLECTION"),
 ];
 
 pub const SQLITE_TYPES: &[Builtin] = &[
