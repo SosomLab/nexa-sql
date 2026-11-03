@@ -546,6 +546,17 @@ impl App {
             &encoding,
             // 편집기 파일 열기만 다중 · 프로젝트/실행 파일/내보내기/설정 폴더는 하나(사용자 09-22).
             !matches!(self.file_purpose, FilePurpose::Editor),
+            // ★ T-79: 편집기 저장 창에만 줄끝 콤보(초기 = 활성 탭의 줄끝).
+            (mode == PickerMode::Save
+                && matches!(
+                    self.file_purpose,
+                    FilePurpose::Editor | FilePurpose::RunFile
+                ))
+            .then(|| match self.editors.active_eol() {
+                crate::eol::Eol::Lf => "lf",
+                crate::eol::Eol::Crlf => "crlf",
+                crate::eol::Eol::Cr => "cr",
+            }),
         );
     }
 

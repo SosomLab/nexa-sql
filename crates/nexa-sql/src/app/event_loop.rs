@@ -1361,6 +1361,14 @@ impl App {
                         (PickerMode::Open, _) => self.open_file_enc(&path, &enc),
                         (PickerMode::Save, _) => {
                             self.editors.set_active_encoding(&enc);
+                            // ★ T-79: 저장 창에서 고른 줄끝(LF/CRLF) = 탭 줄끝으로 바꾼 뒤 저장(상태줄 세그먼트도 따라감).
+                            if let Some(e) = self.file_win.take_eol() {
+                                self.editors.set_active_eol(match e.as_str() {
+                                    "lf" => crate::eol::Eol::Lf,
+                                    "cr" => crate::eol::Eol::Cr,
+                                    _ => crate::eol::Eol::Crlf,
+                                });
+                            }
                             self.save_to(&path);
                             self.finish_close_after_save();
                         }

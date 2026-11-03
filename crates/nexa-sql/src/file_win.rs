@@ -48,6 +48,8 @@ pub(crate) struct FileWin {
     overwrite_confirm_ms: u64,
     /// 다음 `open` 한 번에만 쓰는 필터(용도별 · 없으면 SQL 필터).
     next_filters: Option<Vec<FileFilter>>,
+    /// ★ T-79(11-04): 저장 창 줄끝 콤보의 확정값(`keep`/`lf`/`crlf`) — 호스트가 `take_eol`로 읽는다.
+    last_eol: Option<String>,
 }
 
 /// 앱 문자열 → 선택기 라벨(i18n 규칙: 리터럴은 여기 없다).
@@ -172,6 +174,7 @@ impl FileWin {
             mode: PickerMode::Open,
             overwrite_confirm_ms: 5000,
             next_filters: None,
+            last_eol: None,
         }
     }
 
@@ -220,6 +223,13 @@ impl FileWin {
         self.next_filters = f;
     }
 
+    /// ★ T-79: 방금 확정한 저장 창의 줄끝 선택(`lf`/`crlf` · `keep`/없음 = None) — 1회성.
+    pub(crate) fn take_eol(&mut self) -> Option<String> {
+        self.last_eol
+            .take()
+            .filter(|v| v == "lf" || v == "crlf" || v == "cr")
+    }
+
     pub(crate) fn show_dot(&self) -> Option<bool> {
         self.picker.as_ref().map(FilePicker::show_dot)
     }
@@ -241,12 +251,14 @@ impl FileWin {
         show_dot: bool,
         encoding: &str,
         single: bool,
+        eol: Option<&str>,
     ) {
         if let Some(w) = &self.window {
             crate::winfocus::focus(w);
             return;
         }
         self.mode = mode;
+        self.last_eol = None;
         // 폴더 고르기 = 파일 필터가 뜻이 없다(목록에 폴더만) → "폴더" 한 줄.
         let filters = if mode == PickerMode::Folder {
             vec![nexa_dlg::FileFilter::new(t(Msg::FilterFolders), &[])]
@@ -281,6 +293,22 @@ impl FileWin {
         // 인코딩 콤보는 파일을 열고 저장할 때만(폴더 고르기에는 없다).
         if mode != PickerMode::Folder {
             picker.set_extra(t(Msg::LblEncoding), &refs, sel);
+        }
+        // ★ T-79(11-04 · 사용자 D-447 "줄끝 콤보 바로 착수"): 편집기 저장 창에만 둘째 콤보 = 줄끝(유지 / LF / CRLF · 초기 = 탭의 현재 줄끝).
+        if let Some(cur) = eol.filter(|_| mode == PickerMode::Save) {
+            let keep = t(Msg::ValEolKeep).to_string();
+            let lf = t(Msg::ValEolLf).to_string();
+            let crlf = t(Msg::ValEolCrlf).to_string();
+            let cr = t(Msg::ValEolCr).to_string();
+            let eols: [(&str, &str); 4] =
+                [("keep", &keep), ("lf", &lf), ("crlf", &crlf), ("cr", &cr)];
+            let sel = match cur {
+                "lf" => 1,
+                "crlf" => 2,
+                "cr" => 3,
+                _ => 0,
+            };
+            picker.set_extra2(t(Msg::LblEolSave), &eols, sel);
         }
         self.picker = Some(picker);
         let (lw, lh) = (900.0, 580.0);
@@ -490,9 +518,11 @@ impl FileWin {
         p.on_event(&ie, &mut inv);
         let a = p.take_action();
         let enc = p.extra_value().unwrap_or_else(|| "auto".into());
+        let eol = p.extra2_value();
         self.redraw();
         match a {
             PickerAction::Confirm(path) => {
+                self.last_eol = eol;
                 self.close();
                 FileWinAction::Confirm(mode, path, enc)
             }
