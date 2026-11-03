@@ -108,11 +108,18 @@ impl App {
             }
             self.sess.status = t(Msg::StFetchCancelling).into();
         }
-        if self.grid.take_export_request() {
-            if self.grid.source_sql().trim().is_empty() {
+        // ★ D-448(사용자 11-04): 하위 메뉴 라디오 → 설정 `export.source`(저장 + 모든 그리드 반영).
+        if let Some(src) = self.grid.take_export_source_change() {
+            let _ = self.settings.set("export.source", &src);
+            let _ = self.settings.save();
+            self.apply_setting("export.source");
+        }
+        if let Some(code) = self.grid.take_export_request() {
+            let fetched = self.settings.get("export.source") == Some("fetched");
+            if !fetched && self.grid.source_sql().trim().is_empty() {
                 self.sess.status = t(Msg::StExportNoSql).into();
             } else {
-                self.export_pick_pending = true;
+                self.export_pick_pending = Some(code);
             }
         }
         if self.grid.take_refresh() {
@@ -272,12 +279,6 @@ impl App {
     ///   쓴다(수백만 행도 메모리 일정 · CLI와 같은 `Runner::export_stream` + `nsql_io::StreamWriter`) · 형식 = 확장자(csv · tsv/txt · json ·
     ///   jsonl/ndjson · sql = INSERT) · 세션 문지기(`gate_pass`) 통과 · 진행은 상태줄 · ■ = 취소 · 끝 = 토스트 + 로그.
     pub(crate) fn result_export_start(&mut self, path: &std::path::Path) {
-        let sql = self.grid.source_sql().trim().to_string();
-        if sql.is_empty() {
-            self.sess.status = t(Msg::StExportNoSql).into();
-            self.redraw();
-            return;
-        }
         let ext = path
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
@@ -304,6 +305,17 @@ impl App {
             if !self.lic_gate(nsql_license::Feature::ExportXlsx) {
                 return;
             }
+        }
+        // ★ D-448(사용자 11-04): 원천 "조회된 행만" = 그리드 스냅숏을 백그라운드 스레드가 쓴다(질의·세션 없음).
+        if self.settings.get("export.source") == Some("fetched") {
+            self.result_export_fetched(path, format);
+            return;
+        }
+        let sql = self.grid.source_sql().trim().to_string();
+        if sql.is_empty() {
+            self.sess.status = t(Msg::StExportNoSql).into();
+            self.redraw();
+            return;
         }
         let Some(pass) = self.gate_pass() else {
             return;
@@ -336,7 +348,72 @@ impl App {
         self.redraw();
     }
 
-    /// 내보내기 끝(워커 `ConnOutcome::ExportDone`): 성공 = 토스트 + 상태줄 + 로그 · 실패 = 오류 토스트 + 로그.
+    /// ★ D-448 원천 "조회된 행만": 지금 보이는 뷰 스냅숏(`Grid::export_snapshot` · 복사 0) → 스레드 `result-export`가 청크로 쓴다 ·
+    ///   진행 폴링 = `export_bg_poll`(한가할 때) · ■ = 같은 `export_cancel` 깃발(청크 경계) · 끝 = `result_export_done` 같은 길.
+    pub(crate) fn result_export_fetched(
+        &mut self,
+        path: &std::path::Path,
+        format: nsql_io::Format,
+    ) {
+        if self.export_bg.is_some() {
+            self.sess.status = t(Msg::StRunning).into();
+            self.redraw();
+            return;
+        }
+        let Some((data, rows, cols)) = self.grid.export_snapshot() else {
+            return;
+        };
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let null = self
+            .settings
+            .get("grid.null_text")
+            .unwrap_or("")
+            .to_string();
+        let shown = nexa_fs::path::display(path);
+        let Some(job) = super::export::spawn_fetched_export(
+            path.to_path_buf(),
+            format,
+            self.sess.dialect,
+            null,
+            data,
+            rows,
+            cols,
+            cancel.clone(),
+            self.wake_proxy.clone(),
+        ) else {
+            self.sess.status = tf(Msg::StExportFailed, &["thread"]);
+            self.redraw();
+            return;
+        };
+        self.export_cancel = Some(cancel);
+        self.export_bg = Some(job);
+        self.sess.status = tf(Msg::StExportStarted, &[&shown]);
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+        self.redraw();
+    }
+
+    /// 백그라운드 내보내기 폴링(한가할 때 · `file_loads_poll` 옆).
+    pub(crate) fn export_bg_poll(&mut self) {
+        let Some(job) = self.export_bg.as_ref() else {
+            return;
+        };
+        let got = match job.rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("export thread ended".to_string()))
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        };
+        if let Some(result) = got {
+            let path = job.path.clone();
+            self.export_bg = None;
+            self.export_cancel = None;
+            self.result_export_done(&path, result);
+        }
+    }
+
+    /// 내보내기 끝(워커 `ConnOutcome::ExportDone` 또는 백그라운드 스레드): 성공 = 토스트 + 상태줄 + 로그 · 실패 = 오류 토스트 + 로그.
     pub(crate) fn result_export_done(
         &mut self,
         path: &std::path::Path,

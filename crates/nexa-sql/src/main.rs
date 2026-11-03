@@ -349,7 +349,11 @@ struct App {
     /// ★ T-8 GUI 2차: 진행 중인 결과 내보내기(취소 깃발 · 요청 번호 · 저장 창 열기 요청).
     export_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     export_key: u64,
-    export_pick_pending: bool,
+    export_pick_pending: Option<String>,
+    /// ★ D-448: 이번 저장 창의 형식(확장자 · 하위 메뉴에서 고른 것 · 기본 이름에 붙인다).
+    export_ext: String,
+    /// ★ D-448 원천 "조회된 행만" 백그라운드 쓰기(스레드 결과 수신 · 한가할 때 폴링).
+    export_bg: Option<app::export::ExportJob>,
     /// 값 보기 창 열기 요청(그리드 → 다음 틱에 값 모드로 · 87 §5).
     sqlprev_value: Option<grid::ValueReq>,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
@@ -1913,7 +1917,9 @@ fn main() {
         import_key: 0,
         export_cancel: None,
         export_key: 0,
-        export_pick_pending: false,
+        export_pick_pending: None,
+        export_ext: String::new(),
+        export_bg: None,
         sqlprev_value: None,
         input_win,
         input_pending: None,

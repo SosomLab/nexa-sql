@@ -14,6 +14,7 @@ pub(crate) mod drop;
 mod errsuspect;
 mod event_loop;
 mod events;
+pub(crate) mod export;
 mod extensions;
 mod files;
 pub(crate) mod find;

@@ -67,7 +67,7 @@
 | 페치 · 결과 탭 | **페치 모델·결과 탭(상한·커서·Ctrl+\\) [43](43-fetch-model-and-result-tabs.md)** | [103 결과 필터의 두 상한(값 목록·필터 중 자동 페치)](103-filter-values-and-fetch-under-filter.md)(11-01 정합) |
 | 그리드 편집 · 데이터 보호 | 📐 ★ **그리드 데이터 편집(엑셀식 · nexa-ctl `gridedit` 재사용 부품 + nexa-sql 어댑터 · 타입/길이/NULL/기본값 · 날짜 입력 · LOB 보기 · 복제/붙여넣기 자동 확장 · SqlGen·적용 · E-1~E-6 · D-210~213) [87](87-grid-data-editing.md)** | 결과 → SQL 키 규칙 [41](41-sql-copy-key-rules.md) |
 | 필터 질의 | [98 필터 질의 언어(용량·종류 술어 + 논리 조합)](98-filter-query-language.md)(11-01 정합) | — |
-| 대량 I/O | 📐 ★ **대량 I/O 벌크 적재·추출 기술 검토(DBMS별 지원 방식·crate 지원·기대 배수 · 포트 `BulkSink`·`Caps.bulk_load` · CLI `nsql import` · D-220~224 · T-236) [89](89-bulk-io-review.md)** | — |
+| 대량 I/O | 📐 ★ **대량 I/O 벌크 적재·추출 기술 검토(DBMS별 지원 방식·crate 지원·기대 배수 · 포트 `BulkSink`·`Caps.bulk_load` · CLI `nsql import` · D-220~224 · T-236) [89](89-bulk-io-review.md)** | 📐 ★ **데이터 가져오기 설계(11-04 · 형식 6 한 경로 `RecordSource` · 형 추론 · 새 표 · Import 창 A·B·C · CLI `--create/--dry-run` · D-449~454 · 구현 단위 ①~⑦) [127](127-data-import-design.md)** · 내보내기 UX D-448 = [journal 11-04 §0](journal/2026-11-04.md) |
 | 테이블 구조 편집기 | [119 테이블(객체) 구조 편집기 설계](119-table-editor-design.md)(11-01 정합) | [119a 조사·자산 대조](119a-table-editor-survey.md)(11-01 정합) |
 
 ## 7. 객체 탐색기 · 메타데이터

@@ -844,6 +844,24 @@ const OUTLINE_SORT_OPTS: &[(&str, Msg)] = &[
     ("kind", Msg::ValOutlineSortKind),
 ];
 
+/// ★ D-448(11-03 · 사용자): 결과 내보내기 형식 — 코드 = 파일 확장자(그리드 우클릭 ▸ 파일로 내보내기 하위 메뉴 · 저장 창 형식 콤보 · 설정
+///   `export.format` 선택지가 **이 표 하나**). 라벨은 셋이 같이 쓴다.
+pub const EXPORT_FORMAT_OPTS: &[(&str, Msg)] = &[
+    ("xlsx", Msg::ExpFmtXlsx),
+    ("csv", Msg::ExpFmtCsv),
+    ("tsv", Msg::ExpFmtTsv),
+    ("json", Msg::ExpFmtJson),
+    ("jsonl", Msg::ExpFmtJsonl),
+    ("sql", Msg::ExpFmtSql),
+    ("parquet", Msg::ExpFmtParquet),
+];
+
+/// ★ D-448(11-04 · 사용자): 결과 내보내기 원천 — `requery` = 원본 질의 재실행 스트리밍(기본 · 완전) · `fetched` = 그리드에 있는 행을 화면 그대로.
+const EXPORT_SOURCE_OPTS: &[(&str, Msg)] = &[
+    ("requery", Msg::ValExportRequery),
+    ("fetched", Msg::ValExportFetched),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -2103,6 +2121,31 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescNullText,
         kind: SettingKind::Text,
         default: "NULL",
+    },
+    // ★ D-448(11-03 · 사용자): 결과 내보내기 = 형식을 말로 고르는 하위 메뉴(기본 형식이 맨 위 ●) + 기본 이름 `report_{stamp}`(년월일시분초).
+    Entry {
+        key: "export.format",
+        cat: Msg::CatGrid,
+        label: Msg::LblExportFormat,
+        desc: Msg::DescExportFormat,
+        kind: SettingKind::Choice(EXPORT_FORMAT_OPTS),
+        default: "xlsx",
+    },
+    Entry {
+        key: "export.name_pattern",
+        cat: Msg::CatGrid,
+        label: Msg::LblExportNamePattern,
+        desc: Msg::DescExportNamePattern,
+        kind: SettingKind::Text,
+        default: "report_{stamp}",
+    },
+    Entry {
+        key: "export.source",
+        cat: Msg::CatGrid,
+        label: Msg::LblExportSource,
+        desc: Msg::DescExportSource,
+        kind: SettingKind::Choice(EXPORT_SOURCE_OPTS),
+        default: "requery",
     },
     // ★ 빈 문자열 표식(사용자 10-12 · 설계 B): 그리드에서만 흐리게 `''` — NULL(위 글자)과 구분 · 복사·텍스트 보기는 빈 채로.
     Entry {

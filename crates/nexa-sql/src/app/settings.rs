@@ -764,6 +764,15 @@ impl App {
                 let pct = self.settings.int(key).clamp(110, 300) as i32;
                 self.all_grids().for_each(|g| g.set_row_pct(pct));
             }
+            // ★ D-448: 내보내기 기본 형식 → 모든 그리드의 하위 메뉴 순서(기본 = 맨 위 ●).
+            "export.format" => {
+                let v = self.settings.get(key).unwrap_or("xlsx").to_string();
+                self.all_grids().for_each(|g| g.set_export_default(&v));
+            }
+            "export.source" => {
+                let v = self.settings.get(key).unwrap_or("requery").to_string();
+                self.all_grids().for_each(|g| g.set_export_source(&v));
+            }
             "grid.null_text" => {
                 let text = self.settings.get(key).unwrap_or("NULL").to_string();
                 self.all_grids().for_each(|g| g.set_null_text(&text));

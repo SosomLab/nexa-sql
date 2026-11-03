@@ -142,15 +142,13 @@ pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter
         // 셀 값 = 어떤 파일이든(이진 포함) → 전체가 기본 · 텍스트·SQL은 좁혀 보기용.
         FilePurpose::CellValue => vec![all(), text(), sql()],
         FilePurpose::Import => vec![data(), text(), sql(), all()],
-        // ★ T-8 GUI 2차: 결과 내보내기 = 데이터 형식(확장자 = 형식 · sql = INSERT 문) · D-432 = xlsx · parquet(이진 · 가져오기에는 없음).
-        FilePurpose::ResultExport => vec![
-            FileFilter::new(
-                t(Msg::FilterData),
-                &["csv", "tsv", "txt", "jsonl", "json", "xlsx", "parquet"],
-            ),
-            sql(),
-            all(),
-        ],
+        // ★ T-8 GUI 2차 · D-448: 결과 내보내기 = **형식마다 한 줄**(설정 `export.format` 선택지와 같은 표 · 기본 이름의 확장자에 맞는 줄이
+        //   자동 선택 · 콤보를 바꾸면 이름 확장자가 따라감 = nexa-dlg) + 전체.
+        FilePurpose::ResultExport => nsql_settings::EXPORT_FORMAT_OPTS
+            .iter()
+            .map(|(code, label)| FileFilter::new(t(*label), &[code]))
+            .chain(std::iter::once(all()))
+            .collect(),
         FilePurpose::License => license_filters(),
         FilePurpose::DriverPackage => vec![
             FileFilter::new(t(Msg::FilterDriverPackage), &["zip"]),

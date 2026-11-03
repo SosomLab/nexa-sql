@@ -518,8 +518,15 @@ pub(crate) struct Grid {
     pending_copy: Option<(String, usize)>,
     /// 메뉴에서 고른 SQL 복사 종류(호스트가 키 정보를 받아 `copy_sql`로 완성 · docs/41).
     pending_sql: Option<SqlKind>,
-    /// ★ T-8 GUI 2차(10-31): 우클릭 "파일로 내보내기…" — 호스트가 저장 창을 열고 원본 질의를 스트리밍으로 다시 읽어 쓴다.
-    pending_export: bool,
+    /// ★ T-8 GUI 2차(10-31): 우클릭 "파일로 내보내기 ▸ <형식>" — 고른 형식 코드(= 확장자 · D-448) · 호스트가 저장 창을 열고 원본 질의를
+    ///   스트리밍으로 다시 읽어 쓴다.
+    pending_export: Option<String>,
+    /// ★ D-448: 기본 내보내기 형식(설정 `export.format` · 하위 메뉴 맨 위 ● · 호스트 주입).
+    export_default: String,
+    /// ★ D-448(사용자 11-04): 내보내기 원천(설정 `export.source` · `requery`/`fetched` · 하위 메뉴 라디오 · 호스트 주입).
+    export_source: String,
+    /// 하위 메뉴 라디오로 바꾼 원천(호스트가 설정에 쓴다 · 1회성).
+    pending_export_source: Option<String>,
     /// 메뉴 단축키 문구(복사 · 전체 선택 · 호스트 주입).
     sc_copy: String,
     sc_all: String,
@@ -734,7 +741,10 @@ impl Default for Grid {
             menu_area: Rect::default(),
             pending_copy: None,
             pending_sql: None,
-            pending_export: false,
+            pending_export: None,
+            export_default: "xlsx".into(),
+            export_source: "requery".into(),
+            pending_export_source: None,
             sc_copy: String::new(),
             sc_all: String::new(),
             menu_click_consumed: false,
@@ -3987,6 +3997,35 @@ impl Grid {
         self.clamp();
     }
 
+    /// ★ D-448: 기본 내보내기 형식 코드(설정 `export.format`) — 우클릭 하위 메뉴 순서·● 표시에만 쓴다.
+    pub(crate) fn set_export_default(&mut self, code: &str) {
+        self.export_default = code.to_string();
+    }
+
+    /// ★ D-448: 내보내기 원천 코드(설정 `export.source`) — 하위 메뉴 라디오 표시.
+    pub(crate) fn set_export_source(&mut self, code: &str) {
+        self.export_source = code.to_string();
+    }
+
+    /// 하위 메뉴 라디오로 바꾼 원천(1회성 · 호스트가 설정 `export.source`에 쓴다).
+    pub(crate) fn take_export_source_change(&mut self) -> Option<String> {
+        self.pending_export_source.take()
+    }
+
+    /// ★ D-448 원천 "조회된 행만": 지금 보이는 뷰(필터·정렬·열 순서·숨김 열 반영 · 편집 중 덧그린 값·추가 행은 제외 = 저장된 세트
+    ///   그대로)의 스냅숏 — `ResultData` clone = Arc 몇 개(셀 복사 0 · DR-33) + 행·열 인덱스. 백그라운드 스레드가 `View`로 쓴다.
+    pub(crate) fn export_snapshot(&self) -> Option<(ResultData, Vec<usize>, Vec<usize>)> {
+        let rs = self.rs.as_ref()?;
+        let n = self.rows();
+        let nc = self.col_order.len();
+        if n == 0 || nc == 0 {
+            return Some((rs.clone(), Vec::new(), self.col_order.clone()));
+        }
+        let (rows, cols) = self.region_index((0, n - 1, 0, nc - 1));
+        let rows = rows.into_iter().filter(|&r| r < rs.len()).collect();
+        Some((rs.clone(), rows, cols))
+    }
+
     pub(crate) fn set_bounds(&mut self, b: Rect) {
         // 필터 줄이 있으면 그만큼 아래에서 시작한다(줄은 받은 영역의 맨 위).
         let h = self.strip_h.min(b.h.max(0));
@@ -4876,9 +4915,9 @@ impl Grid {
         self.pending_sql.take()
     }
 
-    /// ★ T-8 GUI 2차: "파일로 내보내기…" 요청(1회성).
-    pub(crate) fn take_export_request(&mut self) -> bool {
-        std::mem::take(&mut self.pending_export)
+    /// ★ T-8 GUI 2차: "파일로 내보내기 ▸ <형식>" 요청(1회성 · 값 = 형식 코드 = 확장자 · D-448).
+    pub(crate) fn take_export_request(&mut self) -> Option<String> {
+        self.pending_export.take()
     }
 
     /// 실행문에서 추정한 대상 테이블.
@@ -5708,6 +5747,44 @@ impl Grid {
         if let CtxItem::Item { enabled, .. } = &mut hdr_only {
             *enabled = self.rs.is_some();
         }
+        // ★ D-448(11-03 · 사용자): "파일로 내보내기 ▸" = 형식을 **말로 고른다**(Excel · CSV · …) · 기본 형식(`export.format`)이 맨 위 ● ·
+        //   누르면 그 형식의 확장자가 붙은 기본 이름(`export.name_pattern`)으로 저장 창 → 호스트가 원본 질의를 스트리밍으로 다시 읽어 쓴다
+        //   (원본 질의가 있는 결과에서만 · 확장자를 몰라도 된다 · 저장 창 콤보로 바꿔도 이름이 따라간다).
+        //   ★ 원천(사용자 11-04) = 라디오 둘(설정 `export.source`): 질의 다시 실행(전체 행 · 원본 질의 필요) / 조회된 행만(지금 보이는
+        //   뷰 = 필터·정렬·열 순서 · 질의 없이 · 원본 질의가 없는 결과도 됨).
+        let fetched = self.export_source == "fetched";
+        let export_ok = self.rs.is_some() && (fetched || !self.source_sql.trim().is_empty());
+        let shown_n = self.rows().min(self.rs.as_ref().map_or(0, RowSource::len));
+        let mut export_children: Vec<CtxItem> =
+            crate::app::export::formats_ordered(&self.export_default)
+                .into_iter()
+                .map(|(code, label)| {
+                    let it = CtxItem::maybe(format!("export_{code}"), t(label), export_ok);
+                    if code == self.export_default {
+                        it.with_checked(true)
+                    } else {
+                        it
+                    }
+                })
+                .collect();
+        export_children.push(CtxItem::Separator);
+        export_children.push(
+            CtxItem::maybe(
+                "export_src_requery",
+                t(Msg::MnExportSrcRequery),
+                self.rs.is_some() && !self.source_sql.trim().is_empty(),
+            )
+            .with_checked(!fetched),
+        );
+        export_children.push(
+            CtxItem::maybe(
+                "export_src_fetched",
+                tf(Msg::MnExportSrcFetched, &[&shown_n.to_string()]),
+                self.rs.is_some(),
+            )
+            .with_checked(fetched),
+        );
+        let export_item = CtxItem::submenu("export_file", t(Msg::MnExportFile), export_children);
         let mut items = vec![
             CtxItem::maybe("copy", t(Msg::MnCopy), has)
                 .with_icon(Some(toolicons::mi_copy()))
@@ -5716,12 +5793,8 @@ impl Grid {
             hdr_only,
             adv_item,
             sql_item,
-            // ★ T-8 GUI 2차(10-31): 결과 전체를 파일로(원본 질의를 배치마다 스트리밍 · 수백만 행도 메모리 일정 · 형식 = 확장자).
-            CtxItem::maybe(
-                "export_file",
-                t(Msg::MnExportFile),
-                self.rs.is_some() && !self.source_sql.trim().is_empty(),
-            ),
+            // ★ T-8 GUI 2차(10-31): 결과 전체를 파일로(원본 질의를 배치마다 스트리밍 · 수백만 행도 메모리 일정 · 형식 = 하위 메뉴 D-448).
+            export_item,
             CtxItem::Separator,
             CtxItem::item("all", t(Msg::MnSelectAll))
                 .with_icon(Some(toolicons::mi_select_all()))
@@ -5938,8 +6011,15 @@ impl Grid {
             self.pending_copy = self.copy_selection(k);
             return;
         }
-        if id == "export_file" {
-            self.pending_export = true;
+        // ★ D-448: `export_src_<원천>`(라디오) → 호스트가 설정에 · `export_<형식 코드>`(하위 메뉴 항목) · `export_file`은 머리라 동작 없음.
+        if let Some(src) = id.strip_prefix("export_src_") {
+            self.pending_export_source = Some(src.to_string());
+            return;
+        }
+        if let Some(code) = id.strip_prefix("export_") {
+            if code != "file" {
+                self.pending_export = Some(code.to_string());
+            }
             return;
         }
         let kind = match id {

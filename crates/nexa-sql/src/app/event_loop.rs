@@ -506,6 +506,7 @@ impl ApplicationHandler<Wake> for App {
             || self.ext_fetch_rx.is_some()
             || !self.ext_meta_inflight.is_empty()
             || !self.file_loads.is_empty()
+            || self.export_bg.is_some()
             || self.editors.tooltip_pending()
             || self.zoom_hud.visible()
             || self.goto_walk.is_some()
@@ -613,6 +614,7 @@ impl ApplicationHandler<Wake> for App {
             }
         }
         self.file_loads_poll();
+        self.export_bg_poll();
         self.multi_load_poll();
         // ★ 그리드 편집 요청이 세션 바쁨으로 미뤄졌으면 한가해진 뒤 여기서(docs/87 · 키 조회) · 입력 사건 없이 생긴 페치/재조회 요청
         //   (필터 변경 → 로컬 채움 · 승격/복귀 · 페이지 연쇄 · 기동 명령)도 같은 자리에서(협업 bin50/51 a2·b1 · 10-07).
@@ -2252,8 +2254,9 @@ impl App {
     ///   의 앞 단계(T-248 · 09-29 분리 · 행동 보존): 보조 창 · 파일 대화상자 · SQL 미리보기/값 보기 · Import · 입력/비밀번호 창 ·
     ///   저장 물음 · 데모 · 툴바 플로팅 · 툴바 배치 저장.
     fn pump_window_requests(&mut self, el: &ActiveEventLoop) {
-        // ★ T-8 GUI 2차: 그리드 우클릭 "파일로 내보내기…" → 저장 창(형식 = 확장자).
-        if std::mem::take(&mut self.export_pick_pending) {
+        // ★ T-8 GUI 2차: 그리드 우클릭 "파일로 내보내기 ▸ <형식>" → 저장 창(기본 이름 = `export.name_pattern` + 고른 확장자 · D-448).
+        if let Some(ext) = self.export_pick_pending.take() {
+            self.export_ext = ext;
             self.file_purpose = FilePurpose::ResultExport;
             self.open_file_window(el, PickerMode::Save);
             self.sync_modal();

@@ -473,8 +473,15 @@ impl App {
             }
             // 설정 내보내기 기본 이름(10-24).
             (PickerMode::Save, FilePurpose::SettingsFile) => "nexa-sql-settings.json".into(),
-            // ★ T-8 GUI 2차: 결과 내보내기 기본 이름(형식 = 확장자 · csv 기본).
-            (PickerMode::Save, FilePurpose::ResultExport) => "result.csv".into(),
+            // ★ T-8 GUI 2차 · D-448: 결과 내보내기 기본 이름 = `export.name_pattern` 토큰 치환 + 하위 메뉴에서 고른 형식의 확장자.
+            (PickerMode::Save, FilePurpose::ResultExport) => super::export::default_name(
+                self.settings
+                    .get("export.name_pattern")
+                    .unwrap_or("report_{stamp}"),
+                &nsql_log::now_local(),
+                self.grid.source_table().as_deref(),
+                &self.export_ext,
+            ),
             (PickerMode::Open | PickerMode::Folder, _)
             | (
                 PickerMode::Save,

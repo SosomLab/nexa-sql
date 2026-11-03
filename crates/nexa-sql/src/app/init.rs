@@ -72,6 +72,19 @@ impl App {
             .unwrap_or("NULL")
             .to_string();
         self.grid.set_null_text(&null_text);
+        // ★ D-448: 내보내기 기본 형식(하위 메뉴 맨 위 ●).
+        let export_fmt = self
+            .settings
+            .get("export.format")
+            .unwrap_or("xlsx")
+            .to_string();
+        self.grid.set_export_default(&export_fmt);
+        let export_src = self
+            .settings
+            .get("export.source")
+            .unwrap_or("requery")
+            .to_string();
+        self.grid.set_export_source(&export_src);
         self.apply_grid_row_focus();
         self.apply_grid_edit_cfg();
         self.sync_menu_shortcuts();
