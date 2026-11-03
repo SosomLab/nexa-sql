@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t325-highlight-dialect | 2026-11-04 | 2026-11-04 → main ff(삭제) · **aba56b42** | 2 | T-325 2차 1절 강조기 키워드 방언화(`SyntaxRegistry::sql_for` · 접속 확정 때 SQL 탭 교체) · [journal 11-04 §10](journal/2026-11-04.md) |
 | t60a-cut-rich | 2026-11-04 | 2026-11-04 → main ff(삭제) · **fbc730ef** | 3 | CI 복구(`run.import` 팔레트 등록) + T-60(a) 잘라내기 서식 옵션 `editor.cut_rich` · [journal 11-04 §9](journal/2026-11-04.md) |
 | test-field-e2e-win | 2026-11-04 | 2026-11-04 → main ff(삭제) · **f77764d7** | 2 | `headless-field-e2e.sh` Windows 이식(`sqlite3` → `nsql run` · cygpath · 12/0) · [journal 11-04 §8](journal/2026-11-04.md) |
 | t79-save-eol-combo | 2026-11-04 | 2026-11-04 → main ff(삭제) · **602fdb9c** | 2 | T-79 저장 창 줄끝 콤보(유지/LF/CRLF/CR · nexa-ui d26b01c `set_extra2`) · [journal 11-04 §7](journal/2026-11-04.md) |
