@@ -701,12 +701,20 @@ INSERT INTO NEW_EMP (id, name, dept, sal) VALUES (3, 'Park', 'IT', 4800);
 
 ### Step 12 — 대량 적재 (`import`)
 
-csv/tsv/jsonl 파일(또는 `-` = 표준 입력)을 표에 **INSERT로만** 넣는다([89 대량 I/O](89-bulk-io-review.md)). 첫 레코드 = 헤더(열 이름)이고 표의 열 이름과 맞춘다.
+csv/tsv/json/jsonl/**xlsx/parquet** 파일(글 형식은 `-` = 표준 입력도)을 표에 **INSERT로만** 넣는다([89 대량 I/O](89-bulk-io-review.md) · ★ 11-04 [127 가져오기 설계](127-data-import-design.md) = 형식 6 한 경로 · 인코딩·구분자 자동 · 새 표 생성 · 형 추론 · 실패 행 건너뛰기). 첫 레코드 = 헤더(열 이름)이고 표의 열 이름과 맞춘다(대소문자 무시).
 
 | 옵션 | 뜻 · 기본값(설정 `bulk.*`) |
 |---|---|
 | `-t <table>` | 넣을 표(필수 · `DB.s.t` 3부 이름 가능) |
-| `-f csv\|tsv` | 원료 형식(jsonl은 `-f jsonl`) |
+| `-f csv\|tsv\|json\|jsonl\|xlsx\|parquet` | 원료 형식(생략 = 확장자 · `excel` = xlsx · `ndjson` = jsonl) |
+| `--sheet NAME\|N` | xlsx 시트(이름 또는 0부터 번호 · 생략 = 첫 시트) |
+| `--delim ';'` | 구분자(생략 = 앞 64 KB에서 `,` `	` `;` `\|` 자동 판정 · `tab` = 탭) |
+| `--encoding auto\|utf-8\|euc-kr\|utf-16le\|…` | 글 파일 인코딩 · `auto`(설정 `import.encoding`) = BOM → UTF-8 검증 → **EUC-KR(cp949 · 한국 Windows Excel CSV)** |
+| `--trim` · `--null-text TEXT` | 셀 앞뒤 공백 다듬기 · 이 글과 같은 셀 = NULL |
+| `--create` | **새 표를 만들고 넣는다**(표본 `--sample N`행(설정 `import.sample_rows` = 1000)으로 열 형 추론 · 이름은 방언 규칙으로 접음(Oracle 대문자 · PG 소문자) · `--types a:bigint,b:varchar(40)`로 덮기 · 문자열 길이 여유 = 설정 `import.text_margin_pct` 50 %) |
+| `--skip col,…` | 원료 열 제외(새 표에서도 뺀다) |
+| `--on-error stop\|skip` | 실패 행 처리(설정 `import.on_error` = stop) · `skip` = 실패 행만 건너뛰고 끝에 목록(값을 NULL로 바꿔 넣지 않는다 · D-452) |
+| `--dry-run` | 넣지 않고 **살펴보기만**: 열 · 추론 형 · 생성할 DDL · 앞 10행(접속 불필요 · 방언은 `-d`) |
 | `--no-header` | 첫 레코드도 데이터 → 표 열 순서로 넣는다 |
 | `--cols a,b,…` | 헤더가 없을 때 원료 열 이름 순서 |
 | `--map src=dst,…` | 원료 열 → 표 열 이름 바꾸기 |
@@ -762,7 +770,36 @@ $ nsql import -c sqlite:t2.db -t emp2 --batch 10 dup.csv      # 50 · 2(중복) 
 > `--mode driver`는 드라이버 최속 경로만 쓴다 — SQLite처럼 없으면 `오류: 0번째 행(줄 0): bulk load: driver sink not supported - 그 앞 0행은 커밋됨`(종료 1). 보통은 `auto`로 둔다.
 > `--no-header`를 빼먹으면 첫 줄 값(`10` …)을 열 이름으로 읽어 `emp2에 10 열이 없습니다(--map 또는 --cols)`(종료 2)로 멈춘다 — 아무것도 넣지 않는다.
 
-SQL Server·Oracle 전용 설정(`bulk.check_constraints` · `bulk.fire_triggers` · `bulk.append_hint`)은 `nsql config list`의 `[접속 ▸ CLI]` 묶음에 있다.
+```sh
+# ★ 11-04: xlsx를 새 표로(형 추론 · 살펴보기 먼저)
+nsql import -d sqlite --dry-run sales.xlsx -t sales            # 열·추론 형·DDL·앞 10행만
+nsql import -c "sqlite:t2.db" -t sales --create --sheet 0 --types "amount:NUMERIC" --skip memo sales.xlsx
+# cp949 CSV(한국 Excel 저장본) · `;` 구분 · 실패 행은 건너뛰고 목록
+nsql import -c "sqlite:t2.db" -t emp2 --encoding euc-kr --on-error skip emp_kr.csv
+# parquet → 기존 표
+nsql import -c "sqlite:t2.db" -t big --mode multirow big.parquet
+```
+
+```
+sales.xlsx: 열 4 · 표본 3행 · 인코딩 - · 구분자 - · 시트 Sheet1
+  id: INT NOT NULL
+  name: TEXT(3)
+  amount: DECIMAL(5,2)
+  memo: TEXT(1)
+CREATE TABLE sales (
+  "id" INTEGER NOT NULL,
+  "name" TEXT,
+  "amount" NUMERIC
+);
+id  name  amount  memo
+--  ----  ------  ----
+1   Kim   3.50    a
+…
+3행 건너뜀(앞 3행 표시)
+  2번째 행(줄 3): NOT NULL constraint failed: emp2.emp_no
+```
+
+SQL Server·Oracle 전용 설정(`bulk.check_constraints` · `bulk.fire_triggers` · `bulk.append_hint`)은 `nsql config list`의 `[접속 ▸ CLI]` 묶음에 있다 · 가져오기 공통 설정 `import.*`(표본 · 미리보기 · 인코딩 · 실패 처리 · 길이 여유 · JSON 상한)도 같은 묶음.
 
 ### Step 13 — SQL 포맷 (`format`)
 

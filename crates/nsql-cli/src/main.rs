@@ -58,6 +58,19 @@ struct Opts {
     commit_every: Option<usize>,
     mode: Option<String>,
     empty_null: Option<bool>,
+    /// `import`(11-04 · 127 §2-3): 시트 · 구분자 · 인코딩 · 새 표(`--create` · `--types a:형,…`) · 건너뛸 열 · 표본 · 실패 처리 ·
+    /// 살펴보기만(`--dry-run`) · 다듬기 · NULL 글.
+    sheet: Option<String>,
+    delim: Option<String>,
+    encoding: Option<String>,
+    create: bool,
+    types: Option<String>,
+    skip: Option<String>,
+    sample: Option<usize>,
+    on_error: Option<String>,
+    dry_run: bool,
+    trim: bool,
+    null_text: Option<String>,
     /// `export --fast`: 서버 형식화 추출(PG `COPY TO`) — 안 되면 일반 경로.
     fast: bool,
     /// `nsql format --in-place`(T-255).
@@ -139,6 +152,17 @@ fn parse_opts() -> Opts {
         commit_every: None,
         mode: None,
         empty_null: None,
+        sheet: None,
+        delim: None,
+        encoding: None,
+        create: false,
+        types: None,
+        skip: None,
+        sample: None,
+        on_error: None,
+        dry_run: false,
+        trim: false,
+        null_text: None,
         fast: false,
         in_place: false,
         preset: None,
@@ -212,6 +236,17 @@ fn parse_opts() -> Opts {
             "--commit-every" => o.commit_every = val("--commit-every").parse().ok(),
             "--mode" => o.mode = Some(val("--mode")),
             "--empty-null" => o.empty_null = Some(val("--empty-null") != "off"),
+            "--sheet" => o.sheet = Some(val("--sheet")),
+            "--delim" | "--delimiter" => o.delim = Some(val("--delim")),
+            "--encoding" => o.encoding = Some(val("--encoding")),
+            "--create" => o.create = true,
+            "--types" => o.types = Some(val("--types")),
+            "--skip" => o.skip = Some(val("--skip")),
+            "--sample" => o.sample = val("--sample").parse().ok(),
+            "--on-error" => o.on_error = Some(val("--on-error")),
+            "--dry-run" => o.dry_run = true,
+            "--trim" => o.trim = true,
+            "--null-text" => o.null_text = Some(val("--null-text")),
             "--max-rows" => {
                 let v = val("--max-rows");
                 o.max_rows = v.parse().unwrap_or_else(|_| {
@@ -1809,10 +1844,20 @@ fn cmd_run(o: &Opts) -> i32 {
 /// [--mode auto|driver|multirow|single] [--empty-null on|off] <file|->` — 대량 적재(docs/89 §3-3 · T-236 · INSERT 전용 D-220).
 fn cmd_import(o: &Opts) -> i32 {
     use nsql_i18n::{t, tf, Msg};
-    let Some(target) = &o.target else {
-        eprintln!("{}", t(Msg::CliErrNeedTarget));
-        return 2;
+    // ★ `--dry-run`은 접속 없이도 된다(방언 = `-d` 또는 프로필의 것) · 그 밖은 대상 필수.
+    let target: Option<&str> = match &o.target {
+        Some(t) => Some(t.as_str()),
+        None if o.dry_run => None,
+        None => {
+            eprintln!("{}", t(Msg::CliErrNeedTarget));
+            return 2;
+        }
     };
+    // 새 표 DDL·형 제안의 방언 = 프로필이 말하는 것(접속 전에 알 수 있다) > `-d`.
+    let dialect = target
+        .and_then(|t| resolve_target(t, o.dialect).ok())
+        .and_then(|s| s.dialect)
+        .unwrap_or(o.dialect);
     let Some(table) = &o.table else {
         eprintln!("{}", t(Msg::CliImportNeedTable));
         return 2;
@@ -1865,16 +1910,128 @@ fn cmd_import(o: &Opts) -> i32 {
                 .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()))
         })
         .collect();
+    // ★ 11-04(127 §2-3): 원료 옵션(시트 · 구분자 · 인코딩 = 플래그 > 설정 `import.encoding` > auto · 다듬기 · NULL 글) · 실패 처리 ·
+    //   새 표(`--create` = 표본으로 형 추론 → 제안 → `--types`로 덮기 · `--skip` 열 제외) · `--dry-run` = 살펴보기만 찍고 끝.
+    let delim = o.delim.as_deref().and_then(|d| match d {
+        "\\t" | "tab" | "TAB" => Some(b'\t'),
+        s => s.bytes().next(),
+    });
+    let source = nsql_run::bulk::SourceOpts {
+        format,
+        delim,
+        header: !o.no_header,
+        encoding: o
+            .encoding
+            .clone()
+            .or_else(|| {
+                st.and_then(|s| s.get("import.encoding"))
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "auto".into()),
+        sheet: o.sheet.clone(),
+        trim: o.trim,
+        null_text: o.null_text.clone().unwrap_or_default(),
+    };
+    let on_error = o
+        .on_error
+        .as_deref()
+        .or_else(|| st.and_then(|s| s.get("import.on_error")))
+        .and_then(nsql_run::bulk::OnError::parse)
+        .unwrap_or_default();
+    let sample = o.sample.unwrap_or_else(|| int("import.sample_rows", 1000));
+    let margin = int("import.text_margin_pct", 50) as u32;
+    let skip: Vec<String> = o
+        .skip
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let mut map: Vec<(String, String)> = map;
+    let mut create: Option<nsql_run::bulk::CreateSpec> = None;
+    if o.dry_run || o.create {
+        let insp = match nsql_run::bulk::inspect_source(path, &source, sample, 10) {
+            Ok(i) => i,
+            Err(m) => {
+                eprintln!("{m}");
+                return 2;
+            }
+        };
+        let mut c = nsql_run::bulk::suggest_create(dialect, &insp, margin);
+        // `--types a:형,…` — 원료 이름 또는 제안 이름(대소문자 무시)으로 덮는다.
+        for kv in o.types.as_deref().unwrap_or("").split(',') {
+            if let Some((n, ty)) = kv.split_once(':') {
+                let n = n.trim();
+                for (i, col) in c.cols.iter_mut().enumerate() {
+                    if col.name.eq_ignore_ascii_case(n)
+                        || insp
+                            .columns
+                            .get(i)
+                            .is_some_and(|r| r.eq_ignore_ascii_case(n))
+                    {
+                        col.ty = ty.trim().to_string();
+                    }
+                }
+            }
+        }
+        // 건너뛸 열은 새 표에서도 빼고 · 원료 이름 ≠ 만든 이름이면 매핑을 보탠다(1:1 순서).
+        let mut kept = Vec::new();
+        for (i, raw) in insp.columns.iter().enumerate() {
+            if skip.iter().any(|k| k.eq_ignore_ascii_case(raw)) {
+                continue;
+            }
+            if let Some(col) = c.cols.get(i) {
+                if !col.name.eq_ignore_ascii_case(raw)
+                    && !map.iter().any(|(a, _)| a.eq_ignore_ascii_case(raw))
+                {
+                    map.push((raw.clone(), col.name.clone()));
+                }
+                kept.push(col.clone());
+            }
+        }
+        c.cols = kept;
+        let ddl = nsql_run::bulk::create_table_sql_for(dialect, table, &c);
+        if o.dry_run {
+            println!(
+                "{}",
+                tf(
+                    Msg::CliImportInspect,
+                    &[
+                        path,
+                        &insp.columns.len().to_string(),
+                        &insp.sampled.to_string(),
+                        if insp.truncated { "+" } else { "" },
+                        insp.detected.encoding.unwrap_or("-"),
+                        &insp
+                            .detected
+                            .delim
+                            .map_or("-".to_string(), |d| (d as char).to_string()),
+                        insp.detected.sheet.as_deref().unwrap_or("-"),
+                    ],
+                )
+            );
+            for (i, col) in insp.columns.iter().enumerate() {
+                let k = &insp.kinds[i];
+                println!(
+                    "  {col}: {}{}",
+                    k.kind.label(),
+                    if k.nullable { "" } else { " NOT NULL" }
+                );
+            }
+            println!("{ddl};");
+            print!("{}", nsql_io::format_grid(&insp.preview, 40));
+            return 0;
+        }
+        create = Some(c);
+    }
     let spec = nsql_run::bulk::ImportSpec {
         table: table.clone(),
-        source: nsql_run::bulk::SourceOpts {
-            format,
-            header: !o.no_header,
-            ..Default::default()
-        },
-        skip: Vec::new(),
-        create: None,
-        on_error: nsql_run::bulk::OnError::Stop,
+        source,
+        skip,
+        create,
+        on_error,
         cols: o
             .cols
             .as_ref()
@@ -1895,6 +2052,10 @@ fn cmd_import(o: &Opts) -> i32 {
         .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
+    let Some(target) = target else {
+        eprintln!("{}", t(Msg::CliErrNeedTarget));
+        return 2;
+    };
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let mut last_print = std::time::Instant::now();
     let mut progress = |rows: u64, el: std::time::Duration| {
@@ -1948,6 +2109,28 @@ fn cmd_import(o: &Opts) -> i32 {
                         &f.message,
                         &rep.rows.to_string()
                     ],
+                )
+            );
+        }
+    }
+    // ★ D-452 Skip: 건너뛴 행 보고(앞 20행 상세 · 나머지는 수).
+    if rep.skipped_total > 0 {
+        eprintln!(
+            "{}",
+            tf(
+                Msg::CliImportSkipped,
+                &[
+                    &rep.skipped_total.to_string(),
+                    &rep.skipped.len().min(20).to_string()
+                ]
+            )
+        );
+        for f in rep.skipped.iter().take(20) {
+            eprintln!(
+                "  {}",
+                tf(
+                    Msg::CliImportSkipRow,
+                    &[&f.row.to_string(), &f.line.to_string(), &f.message]
                 )
             );
         }

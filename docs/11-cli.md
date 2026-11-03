@@ -12,7 +12,7 @@ nsql plan     [-d d] <script|-> [args]              # ✅ 엔진 dry-run(실행 
 nsql run      -c <연결> [-f fmt] <script|-> [args]  # ✅ 스크립트 실행(&1..&n · WHENEVER · 프롬프트)
 nsql shell    -c <연결>                             # ✅ 최소 대화형(줄 누적 · `;`/`/`/명령으로 실행) · ☐ 줄 편집·히스토리
 nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T]|xlsx|parquet [-o file]   # ✅ · xlsx/parquet = 11-01 213차(D-432) · `insert` 이름 생략 = `-t` 표 → 질의 FROM 추정 → `T`(215차)
-nsql import   -c <연결> --table t --from file [--format …] [--mode insert|upsert|replace] [--batch 5000]
+nsql import   -c <연결> -t <표> [-f csv|tsv|json|jsonl|xlsx|parquet] [--sheet N] [--delim ';'] [--encoding auto] [--create [--types a:형,…]] [--skip 열,…] [--on-error stop|skip] [--dry-run] <파일>   # ✅ · ★ 11-04 형식 6 · 새 표 · 형 추론 · Skip([127](127-data-import-design.md) · [40 Step 12](40-cli-usage.md))
 nsql bulk     -c <연결> --table t --from file       # ★ 방언별 네이티브 대량 적재(§3)
 nsql desc     -c <연결> <object>                    # DESCRIBE
 nsql conn     list|add|show|rm|test|path              # ✅ 연결 프로필(사용자 폴더 암호화 저장 · GUI와 공유 · [21](21-connection-profiles.md))
