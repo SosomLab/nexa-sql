@@ -39,6 +39,36 @@ impl BulkMode {
     }
 }
 
+/// ★ D-452(11-04 · docs/127 §5): 변환·적재 실패 처리 — `Stop` = 첫 실패에서 멈춤(기본 · 종전) · `Skip` = 실패 행만 건너뛰고 보고
+/// (값을 NULL로 바꿔 넣지 않는다 · 읽기 오류·취소·커밋 오류는 Skip이어도 멈춘다).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OnError {
+    #[default]
+    Stop,
+    Skip,
+}
+
+impl OnError {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.trim().to_ascii_lowercase().as_str() {
+            "stop" => OnError::Stop,
+            "skip" => OnError::Skip,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            OnError::Stop => "stop",
+            OnError::Skip => "skip",
+        }
+    }
+}
+
+/// 건너뛴 행 보고 상한(그 뒤는 개수만).
+pub const SKIP_REPORT_MAX: usize = 1000;
+
 /// 적재 사양.
 #[derive(Clone, Debug)]
 pub struct BulkParams {
@@ -59,6 +89,8 @@ pub struct BulkParams {
     /// ★ 취소 깃발(GUI Import 창 · 09-26): 배치 경계마다 본다 — 켜져 있으면 지금 트랜잭션(커밋 안 된 배치)을 되돌리고
     ///   `failure.message = "cancelled"`로 끝낸다(커밋된 앞부분은 남는다 · `rows`에 보고).
     pub cancel: Option<Arc<AtomicBool>>,
+    /// ★ D-452: 실패 처리(멈춤 · 행 건너뛰고 보고).
+    pub on_error: OnError,
 }
 
 impl BulkParams {
@@ -98,14 +130,27 @@ pub struct BulkReport {
     /// 보낸 배치 수.
     pub batches: u32,
     pub failure: Option<BulkFailure>,
+    /// ★ D-452 Skip: 건너뛴 행(상한 [`SKIP_REPORT_MAX`] · 전체 수는 `skipped_total`).
+    pub skipped: Vec<BulkFailure>,
+    pub skipped_total: u64,
     /// 쓴 경로(`driver:copy` · `multirow` · `single`).
     pub path: String,
     pub timeline: Timeline,
     pub elapsed: Duration,
 }
 
-/// 원료 한 행 = (필드들, 원료 줄 번호).
-pub type SourceRow = (Vec<String>, u64);
+impl BulkReport {
+    /// 건너뛴 행 하나 기록(상한까지만 보관 · 수는 전부).
+    pub fn note_skip(&mut self, f: BulkFailure) {
+        self.skipped_total += 1;
+        if self.skipped.len() < SKIP_REPORT_MAX {
+            self.skipped.push(f);
+        }
+    }
+}
+
+/// 원료 한 행 = (필드들(`None` = NULL), 원료 줄 번호).
+pub type SourceRow = (Vec<Option<String>>, u64);
 
 /// 변환된 행 = (값·타입들, 원료 행 번호, 원료 줄 번호).
 type Item = (Vec<(Value, VarType)>, u64, u64);
@@ -319,8 +364,12 @@ impl Runner {
                     let vals = fields
                         .iter()
                         .enumerate()
-                        .map(|(i, f)| {
-                            coerce(p.types.get(i).map_or("", String::as_str), f, p.empty_null)
+                        .map(|(i, f)| match f {
+                            // ★ 원료가 NULL이라고 말한 셀(JSON null · 오류 셀 · `null_text`)은 설정과 무관하게 NULL.
+                            None => (Value::Null, VarType::Auto),
+                            Some(f) => {
+                                coerce(p.types.get(i).map_or("", String::as_str), f, p.empty_null)
+                            }
                         })
                         .collect();
                     Ok(Some((vals, row_no, line)))
@@ -348,8 +397,17 @@ impl Runner {
                 }
                 SinkEnd::Failed(rows, err) => {
                     // 실패 배치를 단건으로 다시 넣어 지목 — 전부 성공하면(드라이버 경로의 변환 문제 등) 나머지는 다중 행 폴백으로 잇는다.
+                    //   ★ D-452 Skip = 실패 행만 건너뛰고 늘 잇는다(행 없는 실패 = 취소·커밋 오류 → 멈춤).
                     let mut go_on = false;
-                    if !rows.is_empty() {
+                    if !rows.is_empty() && p.on_error == OnError::Skip {
+                        let (n_ok, fails) =
+                            self.replay_skip(&rows, p, dialect, caps.marker, caps.tx_begin);
+                        rep.rows += n_ok;
+                        for f in fails {
+                            rep.note_skip(f);
+                        }
+                        go_on = true;
+                    } else if !rows.is_empty() {
                         let (n_ok, f) =
                             self.replay_single(&rows, p, dialect, caps.marker, caps.tx_begin);
                         rep.rows += n_ok;
@@ -399,6 +457,11 @@ impl Runner {
         loop {
             let item = match convert(next) {
                 Ok(v) => v,
+                // ★ D-452 Skip: 변환 실패(열 수 불일치 = 줄 번호 있음)는 건너뛰고 다음 행 · 읽기 오류(줄 0)는 멈춘다.
+                Err(f) if p.on_error == OnError::Skip && f.line != 0 => {
+                    rep.note_skip(f);
+                    continue;
+                }
                 Err(f) => {
                     rep.failure = Some(f);
                     None
@@ -469,6 +532,20 @@ impl Runner {
                         in_tx = false;
                         since_commit = 0;
                         let failed = std::mem::take(&mut batch);
+                        if p.on_error == OnError::Skip {
+                            // ★ D-452: 행마다 따로 넣어 실패 행만 건너뛰고 계속.
+                            let (n_ok, fails) =
+                                self.replay_skip(&failed, p, dialect, caps.marker, caps.tx_begin);
+                            rep.rows += n_ok;
+                            for f in fails {
+                                rep.note_skip(f);
+                            }
+                            progress(rep.rows, t0.elapsed());
+                            if end {
+                                break;
+                            }
+                            continue;
+                        }
                         let (n_ok, f) =
                             self.replay_single(&failed, p, dialect, caps.marker, caps.tx_begin);
                         rep.rows += n_ok;
@@ -545,6 +622,10 @@ impl Runner {
         loop {
             let item = match convert(next) {
                 Ok(v) => v,
+                Err(f) if p.on_error == OnError::Skip && f.line != 0 => {
+                    rep.note_skip(f);
+                    continue;
+                }
                 Err(f) => {
                     end = SinkEnd::Failed(Vec::new(), Some(f));
                     break;
@@ -738,47 +819,87 @@ impl Runner {
             ),
         }
     }
-}
 
-/// 원료 형식(GUI·CLI 공용 · 확장자로 짐작 = `Auto`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ImportFormat {
-    #[default]
-    Auto,
-    Csv,
-    Tsv,
-    Jsonl,
-}
-
-impl ImportFormat {
-    /// 확장자로 결정(`.tsv`/`.tab` · `.jsonl`/`.ndjson` · 그 밖 = csv).
-    pub fn resolve(self, path: &str) -> ImportFormat {
-        if self != ImportFormat::Auto {
-            return self;
+    /// ★ D-452 Skip: 실패 배치의 행을 **하나씩 자기 트랜잭션**으로 넣는다(성공 = 커밋 · 실패 = 되돌리고 기록 · 느리지만 실패 배치
+    ///   안에서만 · PG처럼 실패 문장이 트랜잭션을 깨는 방언에서도 같은 결과). (커밋 행 수, 실패 목록).
+    fn replay_skip(
+        &mut self,
+        rows: &[Item],
+        p: &BulkParams,
+        dialect: Dialect,
+        marker: Marker,
+        tx_begin: Option<&'static str>,
+    ) -> (u64, Vec<BulkFailure>) {
+        let Some(session) = self.session.as_mut() else {
+            return (0, Vec::new());
+        };
+        let mut ok = 0u64;
+        let mut fails = Vec::new();
+        for (vals, r, l) in rows {
+            if let Some(b) = tx_begin {
+                let _ = session.execute(&ExecRequest {
+                    sql: b.to_string(),
+                    params: Vec::new(),
+                });
+            }
+            let req = multirow_request(
+                dialect,
+                marker,
+                &p.table,
+                &p.cols,
+                std::slice::from_ref(vals),
+            );
+            let res = session.execute(&req).and_then(|_| session.commit());
+            match res {
+                Ok(()) => ok += 1,
+                Err(e) => {
+                    let _ = session.rollback();
+                    fails.push(BulkFailure {
+                        row: *r,
+                        line: *l,
+                        message: e.message,
+                    });
+                }
+            }
         }
-        let lower = path.to_ascii_lowercase();
-        if lower.ends_with(".jsonl") || lower.ends_with(".ndjson") {
-            ImportFormat::Jsonl
-        } else if lower.ends_with(".tsv") || lower.ends_with(".tab") {
-            ImportFormat::Tsv
-        } else {
-            ImportFormat::Csv
-        }
+        (ok, fails)
     }
 }
 
-/// ★ 파일 적재 사양(89 §3-3 · CLI `nsql import`와 GUI Import 창이 같은 것을 만든다 · 09-26).
+pub use nsql_io::read::{Detected, SourceFormat, SourceOpts};
+
+/// ★ D-450 새 표 열(이름은 **저장될 그대로** · 방언 접기는 [`fold_ident`] · DDL에서는 늘 인용 → INSERT의 인용과 일치).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateCol {
+    pub name: String,
+    /// DDL 형 이름(`bigint` · `VARCHAR2(40 CHAR)` …).
+    pub ty: String,
+    pub nullable: bool,
+}
+
+/// 새 표 사양(표 이름은 `ImportSpec.table`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CreateSpec {
+    pub cols: Vec<CreateCol>,
+}
+
+/// ★ 파일 적재 사양(89 §3-3 · 127 §5 · CLI `nsql import`와 GUI Import 창이 같은 것을 만든다 · 09-26 · 11-04 확장).
 #[derive(Clone, Debug)]
 pub struct ImportSpec {
     /// 대상 표(사용자 표기 그대로 · 방언 인용 포함 가능).
     pub table: String,
-    pub format: ImportFormat,
-    /// 첫 줄 = 열 이름(구분자 파일만 · JSONL은 키가 열).
-    pub header: bool,
+    /// 원료 열기 옵션(형식 · 구분자 · 헤더 · 인코딩 · 시트 · 다듬기 · NULL 글).
+    pub source: SourceOpts,
     /// 원료 열 이름 직접 지정(헤더 대신).
     pub cols: Option<Vec<String>>,
     /// 원료 열 → 표 열 이름 바꿔 붙이기.
     pub map: Vec<(String, String)>,
+    /// 건너뛸 원료 열.
+    pub skip: Vec<String>,
+    /// ★ D-450: 새 표를 먼저 만든다(실패 = 아무것도 넣지 않음).
+    pub create: Option<CreateSpec>,
+    /// ★ D-452.
+    pub on_error: OnError,
     pub batch_rows: usize,
     pub commit_every: usize,
     pub mode: BulkMode,
@@ -791,10 +912,12 @@ impl Default for ImportSpec {
     fn default() -> Self {
         ImportSpec {
             table: String::new(),
-            format: ImportFormat::Auto,
-            header: true,
+            source: SourceOpts::default(),
             cols: None,
             map: Vec::new(),
+            skip: Vec::new(),
+            create: None,
+            on_error: OnError::Stop,
             batch_rows: 1000,
             commit_every: 10_000,
             mode: BulkMode::Auto,
@@ -805,15 +928,138 @@ impl Default for ImportSpec {
     }
 }
 
-/// 원료 공급자(구분자 텍스트 · JSON Lines).
-#[allow(clippy::type_complexity)]
-enum Src {
-    Delim(nsql_io::delim::DelimReader<Box<dyn std::io::BufRead>>),
-    Jsonl(
-        nsql_io::jsonl::JsonlReader<Box<dyn std::io::BufRead>>,
-        Vec<String>,
-        Option<Vec<(String, Option<String>)>>,
-    ),
+/// 원료 살펴보기 결과(GUI 미리보기 · CLI `--dry-run` · 새 표 제안의 입력).
+#[derive(Clone, Debug)]
+pub struct Inspect {
+    pub columns: Vec<String>,
+    pub kinds: Vec<nsql_io::infer::Inferred>,
+    /// 앞 `preview_rows`행(값 = 글 · NULL).
+    pub preview: nsql_core::ResultSet,
+    pub total_hint: Option<u64>,
+    pub detected: Detected,
+    /// 표본으로 읽은 행 수 · 표본 상한에서 멈췄는가.
+    pub sampled: u64,
+    pub truncated: bool,
+}
+
+/// ★ 원료를 **표본만** 읽어 열 · 추론 형 · 미리보기를 만든다(세션 없음 · `sample_rows` 0 = 전부 · 127 §5).
+pub fn inspect_source(
+    path: &str,
+    source: &SourceOpts,
+    sample_rows: usize,
+    preview_rows: usize,
+) -> Result<Inspect, String> {
+    let mut src = nsql_io::read::open_source(std::path::Path::new(path), source)
+        .map_err(|e| e.to_string())?;
+    let columns = src.columns().map_err(|e| format!("{path}: {e}"))?;
+    let mut inf = nsql_io::infer::Inferer::new(columns.len());
+    let mut preview = nsql_core::ResultSet {
+        columns: columns
+            .iter()
+            .map(|n| nsql_core::Column {
+                name: n.clone(),
+                type_name: String::new(),
+            })
+            .collect(),
+        rows: Vec::new(),
+    };
+    let mut sampled = 0u64;
+    let mut truncated = false;
+    loop {
+        if sample_rows > 0 && sampled as usize >= sample_rows {
+            truncated = true;
+            break;
+        }
+        let Some(r) = src.next().map_err(|e| format!("{path}: {e}"))? else {
+            break;
+        };
+        sampled += 1;
+        inf.feed(&r.cells);
+        if preview.rows.len() < preview_rows {
+            preview.rows.push(
+                (0..columns.len())
+                    .map(|i| match r.cells.get(i) {
+                        Some(Some(s)) => Value::Str(s.clone()),
+                        _ => Value::Null,
+                    })
+                    .collect(),
+            );
+        }
+    }
+    Ok(Inspect {
+        kinds: inf.finish(),
+        detected: src.detected(),
+        total_hint: src.total_hint(),
+        columns,
+        preview,
+        sampled,
+        truncated,
+    })
+}
+
+/// 방언의 **인용 없는 식별자가 저장되는 꼴**로 접는다(Oracle·Db2 = 대문자 · PostgreSQL = 소문자 · 그 밖 = 그대로) — 새 표의 열·표 이름을
+/// 늘 인용해 만들어도 사용자가 나중에 인용 없이 쓸 수 있게.
+#[must_use]
+pub fn fold_ident(dialect: Dialect, name: &str) -> String {
+    match dialect {
+        Dialect::Oracle | Dialect::Db2 => name.to_uppercase(),
+        Dialect::Postgres | Dialect::Duckdb => name.to_lowercase(),
+        _ => name.to_string(),
+    }
+}
+
+/// 살펴본 결과로 새 표 열 제안(이름 정리 + 접기 + 방언 형 + nullable) — GUI 매핑 표의 초깃값 · CLI `--create`.
+#[must_use]
+pub fn suggest_create(dialect: Dialect, insp: &Inspect, text_margin_pct: u32) -> CreateSpec {
+    let mut used: Vec<String> = Vec::new();
+    let cols = insp
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, raw)| {
+            let mut name = fold_ident(dialect, &nsql_io::infer::column_ident(raw, i));
+            if used.iter().any(|u| u.eq_ignore_ascii_case(&name)) {
+                let stem = name.clone();
+                let mut k = 2;
+                loop {
+                    name = format!("{stem}_{k}");
+                    if !used.iter().any(|u| u.eq_ignore_ascii_case(&name)) {
+                        break;
+                    }
+                    k += 1;
+                }
+            }
+            used.push(name.clone());
+            let k = insp.kinds.get(i);
+            CreateCol {
+                name,
+                ty: nsql_io::infer::ddl_type(
+                    dialect,
+                    k.map_or(nsql_io::infer::Kind::Text(1), |k| k.kind),
+                    text_margin_pct,
+                ),
+                nullable: k.is_none_or(|k| k.nullable),
+            }
+        })
+        .collect();
+    CreateSpec { cols }
+}
+
+/// 새 표 DDL(열 이름은 방언 인용 · 표 이름은 사용자 표기 그대로 — 인용이 필요하면 호스트가 `qualified`로 넘긴다).
+#[must_use]
+pub fn create_table_sql_for(dialect: Dialect, table: &str, c: &CreateSpec) -> String {
+    let cols: Vec<(String, String, bool)> = c
+        .cols
+        .iter()
+        .map(|k| {
+            (
+                nsql_catalog::quote_ident(dialect, &k.name),
+                k.ty.clone(),
+                k.nullable,
+            )
+        })
+        .collect();
+    nsql_io::infer::create_table_sql(table, &cols)
 }
 
 /// 파일 앞부분(미리보기 · 최대 `lines`줄 · `max_bytes`) — Import 창의 미리보기 상자.
@@ -841,8 +1087,9 @@ pub fn preview_head(path: &std::path::Path, lines: usize, max_bytes: usize) -> S
 }
 
 impl Runner {
-    /// ★ 파일 → 표 적재 한 벌(원료 열기 · 헤더/열 · 표 열·타입 메타 · 매핑 · [`Runner::bulk_load`]) — CLI `nsql import`와
-    /// GUI Import 창의 단일 원천. `path` `-` = stdin. 준비 단계 오류(파일 · 빈 원료 · 없는 열)는 `Err(안내)`.
+    /// ★ 파일 → 표 적재 한 벌(원료 열기 `RecordSource` · 헤더/열 · (새 표면 CREATE 먼저) · 표 열·타입 메타 · 건너뜀·매핑 ·
+    ///   [`Runner::bulk_load`]) — CLI `nsql import`와 GUI Import 창의 단일 원천. `path` `-` = stdin(글 형식). 준비 단계 오류(파일 ·
+    ///   빈 원료 · 없는 열 · CREATE 실패)는 `Err(안내)` = 아무것도 넣지 않은 상태.
     pub fn import_file(
         &mut self,
         path: &str,
@@ -850,29 +1097,29 @@ impl Runner {
         progress: &mut dyn FnMut(u64, Duration),
     ) -> Result<BulkReport, String> {
         use nsql_i18n::{t, tf, Msg};
-        let fmt = spec.format.resolve(path);
-        let reader: Box<dyn std::io::BufRead> = if path == "-" {
-            Box::new(std::io::BufReader::new(std::io::stdin()))
-        } else {
-            match std::fs::File::open(path) {
-                Ok(f) => Box::new(std::io::BufReader::with_capacity(1 << 16, f)),
-                Err(e) => return Err(format!("{path}: {e}")),
-            }
-        };
-        let jsonl = fmt == ImportFormat::Jsonl;
-        let mut src = if jsonl {
-            Src::Jsonl(nsql_io::jsonl::JsonlReader::new(reader), Vec::new(), None)
-        } else {
-            let delim = if fmt == ImportFormat::Tsv {
-                b'\t'
-            } else {
-                b','
-            };
-            Src::Delim(nsql_io::delim::DelimReader::new(reader, delim))
-        };
-        // 대상 열·타입 = 빈 조회의 메타(`SELECT * … WHERE 1=0` · 모든 방언) · 빈 메타(SQL Server) = 카탈로그.
+        let fmt = spec.source.format.resolve(std::path::Path::new(path));
+        let mut src = nsql_io::read::open_source(std::path::Path::new(path), &spec.source)
+            .map_err(|e| e.to_string())?;
+        let raw_names = src.columns().map_err(|e| format!("{path}: {e}"))?;
+        let dialect = self.engine.dialect;
         let table = &spec.table;
-        let mut table_cols: Vec<(String, String)> =
+        // 대상 열·타입: 새 표 = CREATE 먼저(실패 = 중단) · 기존 표 = 빈 조회의 메타(`SELECT * … WHERE 1=0` · 모든 방언) ·
+        //   빈 메타(SQL Server) = 카탈로그.
+        let mut table_cols: Vec<(String, String)> = if let Some(c) = &spec.create {
+            let sql = create_table_sql_for(dialect, table, c);
+            let Some(sess) = self.session.as_deref_mut() else {
+                return Err("no session".into());
+            };
+            sess.execute(&ExecRequest {
+                sql,
+                params: Vec::new(),
+            })
+            .map_err(|e| e.message)?;
+            c.cols
+                .iter()
+                .map(|k| (k.name.clone(), k.ty.clone()))
+                .collect()
+        } else {
             match self.query_once(&format!("SELECT * FROM {table} WHERE 1=0"), 1) {
                 Ok((rs, _, _)) => rs
                     .columns
@@ -880,9 +1127,9 @@ impl Runner {
                     .map(|c| (c.name.clone(), c.type_name.clone()))
                     .collect(),
                 Err(e) => return Err(e.message),
-            };
+            }
+        };
         if table_cols.is_empty() {
-            let dialect = self.engine.dialect;
             // ★ SQL Server 3부 이름(`DB.schema.table` · T-309): `split_table`은 DB 조각을 버리므로 카탈로그가 현재 DB(master)에서 찾아
             //   "column … not found"가 됐다 → 그 DB의 INFORMATION_SCHEMA를 직접 조회(세션 DB는 바꾸지 않는다).
             if let Some(sql) = mssql_cols_sql(dialect, table) {
@@ -918,37 +1165,29 @@ impl Runner {
                 }
             }
         }
-        // 원료 열 이름: 지정 · 헤더 없음 = 표 열 순서 · 헤더(첫 레코드) · JSONL = 첫 객체의 키.
+        // 원료 열 이름: 지정 > 구분자 파일에 헤더 없음 = 표 열 순서 > 원료가 말한 이름(헤더 · JSON 키 · xlsx 첫 줄 · parquet 스키마).
         let src_names: Vec<String> = if let Some(c) = &spec.cols {
             c.clone()
-        } else if !spec.header && !jsonl {
-            table_cols.iter().map(|(n, _)| n.clone()).collect()
+        } else if !spec.source.header && matches!(fmt, SourceFormat::Csv | SourceFormat::Tsv) {
+            table_cols
+                .iter()
+                .take(raw_names.len())
+                .map(|(n, _)| n.clone())
+                .collect()
         } else {
-            match &mut src {
-                Src::Delim(rd) => match rd.next_record() {
-                    Ok(Some(h)) => h.iter().map(|s| s.trim().to_string()).collect(),
-                    Ok(None) => return Err(t(Msg::CliImportEmpty).to_string()),
-                    Err(e) => return Err(format!("{path}: {e}")),
-                },
-                Src::Jsonl(rd, keys, first) => match rd.next_object() {
-                    Ok(Some(o)) => {
-                        *keys = o.iter().map(|(k, _)| k.clone()).collect();
-                        *first = Some(o);
-                        keys.clone()
-                    }
-                    Ok(None) => return Err(t(Msg::CliImportEmpty).to_string()),
-                    Err(e) => return Err(format!("{path}: {e}")),
-                },
-            }
+            raw_names.clone()
         };
-        if let Src::Jsonl(_, keys, _) = &mut src {
-            if keys.is_empty() {
-                *keys = src_names.clone();
-            }
+        if src_names.is_empty() || raw_names.is_empty() {
+            return Err(t(Msg::CliImportEmpty).to_string());
         }
+        // 건너뜀 · 매핑 → 가져갈 원료 열 번호와 대상 열·타입.
+        let mut picked: Vec<usize> = Vec::new();
         let mut cols = Vec::new();
         let mut types = Vec::new();
-        for n in &src_names {
+        for (i, n) in src_names.iter().enumerate() {
+            if spec.skip.iter().any(|k| k.eq_ignore_ascii_case(n)) {
+                continue;
+            }
             let dst = spec
                 .map
                 .iter()
@@ -956,11 +1195,15 @@ impl Runner {
                 .map_or(n.as_str(), |(_, b)| b.as_str());
             match table_cols.iter().find(|(c, _)| c.eq_ignore_ascii_case(dst)) {
                 Some((c, ty)) => {
+                    picked.push(i);
                     cols.push(c.clone());
                     types.push(ty.clone());
                 }
                 None => return Err(tf(Msg::CliImportUnknownCol, &[dst, table])),
             }
+        }
+        if picked.is_empty() {
+            return Err(t(Msg::CliImportEmpty).to_string());
         }
         let p = BulkParams {
             table: table.clone(),
@@ -975,32 +1218,19 @@ impl Runner {
                 ..spec.opts.clone()
             },
             cancel: spec.cancel.clone(),
+            on_error: spec.on_error,
         };
         let mut next = || -> Result<Option<SourceRow>, String> {
-            match &mut src {
-                Src::Delim(rd) => match rd.next_record() {
-                    Ok(Some(r)) => Ok(Some((r, rd.line_no))),
-                    Ok(None) => Ok(None),
-                    Err(e) => Err(e.to_string()),
-                },
-                Src::Jsonl(rd, keys, first) => {
-                    let obj = match first.take() {
-                        Some(o) => Some(o),
-                        None => rd.next_object().map_err(|e| e.to_string())?,
-                    };
-                    Ok(obj.map(|o| {
-                        let row: Vec<String> = keys
-                            .iter()
-                            .map(|k| {
-                                o.iter()
-                                    .find(|(kk, _)| kk == k)
-                                    .and_then(|(_, v)| v.clone())
-                                    .unwrap_or_default()
-                            })
-                            .collect();
-                        (row, rd.line_no)
-                    }))
-                }
+            match src.next() {
+                Ok(Some(r)) => Ok(Some((
+                    picked
+                        .iter()
+                        .map(|&i| r.cells.get(i).cloned().flatten())
+                        .collect(),
+                    r.line,
+                ))),
+                Ok(None) => Ok(None),
+                Err(e) => Err(e.to_string()),
             }
         };
         Ok(self.bulk_load(&mut next, &p, progress))
@@ -1163,6 +1393,7 @@ mod tests {
             empty_null: true,
             opts: BulkOpts::default(),
             cancel: None,
+            on_error: OnError::Stop,
         }
     }
 
@@ -1172,7 +1403,11 @@ mod tests {
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect();
         let mut it = owned.into_iter().enumerate();
-        move || Ok(it.next().map(|(i, (a, b))| (vec![a, b], i as u64 + 2)))
+        move || {
+            Ok(it
+                .next()
+                .map(|(i, (a, b))| (vec![Some(a), Some(b)], i as u64 + 2)))
+        }
     }
 
     #[test]
@@ -1292,8 +1527,11 @@ mod tests {
     fn column_count_mismatch_and_single_mode() {
         let (mut r, _) = runner(Dialect::Sqlite, None);
         let mut it = vec![
-            Ok(Some((vec!["1".to_string(), "x".to_string()], 2u64))),
-            Ok(Some((vec!["2".to_string()], 3u64))),
+            Ok(Some((
+                vec![Some("1".to_string()), Some("x".to_string())],
+                2u64,
+            ))),
+            Ok(Some((vec![Some("2".to_string())], 3u64))),
         ]
         .into_iter();
         let mut src = move || it.next().unwrap_or(Ok(None));
@@ -1333,7 +1571,10 @@ mod tests {
             if n > 12 {
                 return Ok(None);
             }
-            Ok(Some((vec![n.to_string(), "x".into()], n as u64)))
+            Ok(Some((
+                vec![Some(n.to_string()), Some("x".into())],
+                n as u64,
+            )))
         };
         let mut p = params(Dialect::Sqlite, 3, 3);
         p.cancel = Some(flag);
@@ -1345,12 +1586,158 @@ mod tests {
         );
     }
 
+    /// ★ D-452 Skip: 실패 배치 → 행마다 따로 → 실패 행만 건너뛰고 나머지는 전부 · 열 수 불일치도 건너뜀 · `failure` 없음.
     #[test]
-    fn import_format_resolves_by_extension() {
-        assert_eq!(ImportFormat::Auto.resolve("a.CSV"), ImportFormat::Csv);
-        assert_eq!(ImportFormat::Auto.resolve("a.tsv"), ImportFormat::Tsv);
-        assert_eq!(ImportFormat::Auto.resolve("a.ndjson"), ImportFormat::Jsonl);
-        assert_eq!(ImportFormat::Tsv.resolve("a.csv"), ImportFormat::Tsv);
+    fn skip_mode_records_bad_rows_and_continues() {
+        let (mut r, _log) = runner(Dialect::Postgres, Some("bad"));
+        let mut it = vec![
+            Ok(Some((
+                vec![Some("1".to_string()), Some("x".to_string())],
+                2u64,
+            ))),
+            Ok(Some((
+                vec![Some("2".to_string()), Some("bad".to_string())],
+                3u64,
+            ))),
+            Ok(Some((vec![Some("3".to_string())], 4u64))),
+            Ok(Some((
+                vec![Some("4".to_string()), Some("y".to_string())],
+                5u64,
+            ))),
+            Ok(Some((
+                vec![Some("5".to_string()), Some("bad".to_string())],
+                6u64,
+            ))),
+        ]
+        .into_iter();
+        let mut src = move || it.next().unwrap_or(Ok(None));
+        let mut p = params(Dialect::Postgres, 10, 0);
+        p.on_error = OnError::Skip;
+        let rep = r.bulk_load(&mut src, &p, &mut |_, _| {});
+        assert!(rep.failure.is_none(), "{:?}", rep.failure);
+        assert_eq!(rep.rows, 2, "1 · 4만 남는다: {rep:?}");
+        assert_eq!(rep.skipped_total, 3);
+        let lines: Vec<u64> = rep.skipped.iter().map(|f| f.line).collect();
+        assert_eq!(
+            lines,
+            vec![4, 3, 6],
+            "열 수 불일치(줄 4)는 즉시 · 배치 실패 뒤 재실행에서 줄 3·6"
+        );
+    }
+
+    /// 실제 SQLite: csv(헤더 · `;` 자동 · 빈 셀) → 새 표(CREATE) + Skip(NOT NULL 위반 행 건너뜀) + 건너뛸 열 + 살펴보기.
+    #[test]
+    fn import_file_creates_table_and_skips_bad_rows_sqlite() {
+        use nsql_driver_sqlite::SqliteSession;
+        let tp = nsql_core::testpath::TempPath::with_ext("import-sqlite", "csv");
+        std::fs::write(
+            tp.path(),
+            "id;name;score;memo\n1;Kim;3.5;a\n;Lee;4;b\n3;Park;;c\n",
+        )
+        .expect("write");
+        let path = tp.path().to_string_lossy().to_string();
+        let insp = inspect_source(&path, &SourceOpts::default(), 1000, 2).expect("inspect");
+        assert_eq!(insp.columns, vec!["id", "name", "score", "memo"]);
+        assert_eq!(insp.detected.delim, Some(b';'));
+        assert_eq!(insp.sampled, 3);
+        assert_eq!(insp.preview.rows.len(), 2);
+        assert_eq!(insp.kinds[0].kind, nsql_io::infer::Kind::Int);
+        assert!(insp.kinds[0].nullable);
+        assert_eq!(insp.kinds[2].kind, nsql_io::infer::Kind::Decimal(2, 1));
+        let mut create = suggest_create(Dialect::Sqlite, &insp, 50);
+        create.cols[0].nullable = false;
+        create.cols.pop(); // memo 열은 표에 두지 않고 건너뛴다.
+        assert_eq!(create.cols[0].ty, "INTEGER");
+        let opener: crate::Opener = Box::new(|spec: &ConnectSpec| {
+            Ok(Box::new(SqliteSession::open(
+                spec.database.as_deref().unwrap_or(":memory:"),
+            )?) as Box<dyn Session>)
+        });
+        let mut r = Runner::new(Dialect::Sqlite, opener).with_session(
+            Box::new(SqliteSession::open(":memory:").expect("mem")),
+            "sqlite :memory:",
+        );
+        let spec = ImportSpec {
+            table: "\"scores\"".into(),
+            skip: vec!["memo".into()],
+            create: Some(create),
+            on_error: OnError::Skip,
+            batch_rows: 10,
+            ..ImportSpec::default()
+        };
+        let rep = r.import_file(&path, &spec, &mut |_, _| {}).expect("import");
+        assert!(rep.failure.is_none(), "{:?}", rep.failure);
+        assert_eq!(rep.rows, 2, "{rep:?}");
+        assert_eq!(rep.skipped_total, 1);
+        assert_eq!(rep.skipped[0].line, 3);
+        assert!(
+            rep.skipped[0].message.contains("NOT NULL"),
+            "{}",
+            rep.skipped[0].message
+        );
+        let (rs, _, _) = r
+            .query_once("SELECT id, name, score FROM scores ORDER BY id", 10)
+            .expect("select");
+        assert_eq!(rs.rows.len(), 2);
+        assert_eq!(rs.columns.len(), 3, "memo 열 없음");
+        assert_eq!(rs.rows[1][2], Value::Null, "빈 셀 = NULL");
+        // 기존 표 경로 + Stop(기본): NOT NULL 위반에서 멈추고 앞 행은 커밋.
+        let spec2 = ImportSpec {
+            table: "scores".into(),
+            skip: vec!["memo".into()],
+            batch_rows: 10,
+            ..ImportSpec::default()
+        };
+        let rep2 = r
+            .import_file(&path, &spec2, &mut |_, _| {})
+            .expect("import2");
+        assert!(rep2.failure.is_some());
+        assert_eq!(rep2.failure.as_ref().map(|f| f.line), Some(3));
+        assert_eq!(rep2.rows, 1);
+    }
+
+    #[test]
+    fn suggest_create_folds_and_types_by_dialect() {
+        let insp = Inspect {
+            columns: vec!["Emp No".into(), "name".into(), "Emp No".into()],
+            kinds: vec![
+                nsql_io::infer::Inferred {
+                    kind: nsql_io::infer::Kind::Int,
+                    nullable: false,
+                    seen: 3,
+                },
+                nsql_io::infer::Inferred {
+                    kind: nsql_io::infer::Kind::Text(10),
+                    nullable: true,
+                    seen: 3,
+                },
+                nsql_io::infer::Inferred {
+                    kind: nsql_io::infer::Kind::Date,
+                    nullable: true,
+                    seen: 1,
+                },
+            ],
+            preview: nsql_core::ResultSet::default(),
+            total_hint: None,
+            detected: Detected::default(),
+            sampled: 3,
+            truncated: false,
+        };
+        let c = suggest_create(Dialect::Oracle, &insp, 50);
+        let names: Vec<&str> = c.cols.iter().map(|k| k.name.as_str()).collect();
+        assert_eq!(names, vec!["EMP_NO", "NAME", "EMP_NO_2"]);
+        assert_eq!(c.cols[0].ty, "NUMBER(19)");
+        assert!(!c.cols[0].nullable);
+        assert_eq!(c.cols[1].ty, "VARCHAR2(15 CHAR)");
+        let sql = create_table_sql_for(Dialect::Oracle, "HR.SALES", &c);
+        assert!(
+            sql.starts_with("CREATE TABLE HR.SALES (\n  \"EMP_NO\" NUMBER(19) NOT NULL,"),
+            "{sql}"
+        );
+        let pg = suggest_create(Dialect::Postgres, &insp, 0);
+        assert_eq!(pg.cols[0].name, "emp_no");
+        assert_eq!(pg.cols[1].ty, "varchar(10)");
+        assert_eq!(OnError::parse("SKIP"), Some(OnError::Skip));
     }
 
     #[test]

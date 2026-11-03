@@ -42,7 +42,7 @@
 | Appearance | `ui.`(33) `toolbar.` `tabs.` | — |
 | Log | `log.` `txlog.` `demo.` | `demo.prompted` = HIDDEN |
 | Grid | `grid.` `sql.`(1) `export.`(3 · 11-04 D-448) | `sql.copy_keys`류 1개 → `grid.`로 · `export.format`/`name_pattern`/`source` = 결과 내보내기(원칙 3 "의미 직관 > 위치 연계" · 그리드 우클릭에서 쓰는 일이라 Result Sets에 동거) |
-| CLI | `cli.` `bulk.` | bulk = `nsql import/export` 대량 I/O — CLI 카테고리에 두되 접두 유지 |
+| CLI | `cli.` `bulk.` `import.`(6 · 11-04 T-8) | bulk = `nsql import/export` 대량 I/O — CLI 카테고리에 두되 접두 유지 · `import.` = 가져오기 표본·미리보기·인코딩·실패 처리(GUI Import 창과 CLI 공용 · bulk 옆) |
 | Window | `window.` `statusbar.` | — |
 | Editor | `editor.` `layout.`(1) | `layout.editor_split_pct` = HIDDEN |
 

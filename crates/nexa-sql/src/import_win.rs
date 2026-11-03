@@ -23,7 +23,7 @@ pub(crate) enum ImportAction {
     None,
     Paint,
     /// 시작(사양은 창의 옵션에서).
-    Start(ImportSpec),
+    Start(Box<ImportSpec>),
     /// 진행 중 취소.
     Cancel,
     Close,
@@ -187,7 +187,13 @@ impl ImportWin {
             .collect();
         ImportSpec {
             table: self.table.clone(),
-            header: self.cb_header.is_checked(),
+            source: nsql_run::bulk::SourceOpts {
+                header: self.cb_header.is_checked(),
+                ..Default::default()
+            },
+            skip: Vec::new(),
+            create: None,
+            on_error: Default::default(),
             cols: None,
             map,
             batch_rows: self.tb_batch.text().trim().parse().unwrap_or(1000),
@@ -195,7 +201,6 @@ impl ImportWin {
             mode: MODES[self.mode_idx],
             empty_null: true,
             opts: nsql_core::BulkOpts::default(),
-            format: nsql_run::bulk::ImportFormat::Auto,
             cancel: None,
         }
     }
@@ -430,7 +435,7 @@ impl ImportWin {
                     return ImportAction::None;
                 }
                 if self.btn_start.take_clicked() && !self.running {
-                    return ImportAction::Start(self.spec());
+                    return ImportAction::Start(Box::new(self.spec()));
                 }
                 if self.btn_cancel.take_clicked() && self.running {
                     return ImportAction::Cancel;

@@ -1697,7 +1697,7 @@ impl App {
                         mono_px,
                     );
                 }
-                import_win::ImportAction::Start(spec) => self.import_start(spec),
+                import_win::ImportAction::Start(spec) => self.import_start(*spec),
                 import_win::ImportAction::Cancel => self.import_cancel(),
                 import_win::ImportAction::Close => {
                     self.import_win.close();

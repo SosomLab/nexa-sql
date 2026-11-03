@@ -862,6 +862,10 @@ const EXPORT_SOURCE_OPTS: &[(&str, Msg)] = &[
     ("fetched", Msg::ValExportFetched),
 ];
 
+/// ★ D-452(11-04 · T-8 가져오기): 변환·적재 실패 처리.
+const IMPORT_ON_ERROR_OPTS: &[(&str, Msg)] =
+    &[("stop", Msg::ValImportStop), ("skip", Msg::ValImportSkip)];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -2317,6 +2321,61 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescBulkAppend,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // ★ T-8 가져오기(11-04 · docs/127 §2-2 · D-452·D-454): 표본 · 미리보기 · 인코딩 · 실패 처리 · 문자열 길이 여유 · JSON 상한.
+    Entry {
+        key: "import.sample_rows",
+        cat: Msg::CatCli,
+        label: Msg::LblImportSampleRows,
+        desc: Msg::DescImportSampleRows,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000_000,
+        },
+        default: "1000",
+    },
+    Entry {
+        key: "import.preview_rows",
+        cat: Msg::CatCli,
+        label: Msg::LblImportPreviewRows,
+        desc: Msg::DescImportPreviewRows,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 10_000,
+        },
+        default: "100",
+    },
+    Entry {
+        key: "import.encoding",
+        cat: Msg::CatCli,
+        label: Msg::LblImportEncoding,
+        desc: Msg::DescImportEncoding,
+        kind: SettingKind::Text,
+        default: "auto",
+    },
+    Entry {
+        key: "import.on_error",
+        cat: Msg::CatCli,
+        label: Msg::LblImportOnError,
+        desc: Msg::DescImportOnError,
+        kind: SettingKind::Choice(IMPORT_ON_ERROR_OPTS),
+        default: "stop",
+    },
+    Entry {
+        key: "import.text_margin_pct",
+        cat: Msg::CatCli,
+        label: Msg::LblImportTextMargin,
+        desc: Msg::DescImportTextMargin,
+        kind: SettingKind::Int { min: 0, max: 500 },
+        default: "50",
+    },
+    Entry {
+        key: "import.json_max_mb",
+        cat: Msg::CatCli,
+        label: Msg::LblImportJsonMax,
+        desc: Msg::DescImportJsonMax,
+        kind: SettingKind::Int { min: 1, max: 4096 },
+        default: "256",
     },
     Entry {
         key: "grid.paste_max_rows",

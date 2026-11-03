@@ -1822,10 +1822,13 @@ fn cmd_import(o: &Opts) -> i32 {
         return 2;
     };
     let format = match &o.format {
-        Format::JsonLines => nsql_run::bulk::ImportFormat::Jsonl,
-        Format::Tsv => nsql_run::bulk::ImportFormat::Tsv,
-        Format::Csv => nsql_run::bulk::ImportFormat::Csv,
-        _ => nsql_run::bulk::ImportFormat::Auto,
+        Format::JsonLines => nsql_run::bulk::SourceFormat::Jsonl,
+        Format::Tsv => nsql_run::bulk::SourceFormat::Tsv,
+        Format::Csv => nsql_run::bulk::SourceFormat::Csv,
+        Format::Json => nsql_run::bulk::SourceFormat::Json,
+        Format::Xlsx => nsql_run::bulk::SourceFormat::Xlsx,
+        Format::Parquet => nsql_run::bulk::SourceFormat::Parquet,
+        _ => nsql_run::bulk::SourceFormat::Auto,
     };
     // 설정 기본값(`bulk.*`) 위에 플래그.
     let st = settings_cached().ok();
@@ -1864,8 +1867,14 @@ fn cmd_import(o: &Opts) -> i32 {
         .collect();
     let spec = nsql_run::bulk::ImportSpec {
         table: table.clone(),
-        format,
-        header: !o.no_header,
+        source: nsql_run::bulk::SourceOpts {
+            format,
+            header: !o.no_header,
+            ..Default::default()
+        },
+        skip: Vec::new(),
+        create: None,
+        on_error: nsql_run::bulk::OnError::Stop,
         cols: o
             .cols
             .as_ref()
