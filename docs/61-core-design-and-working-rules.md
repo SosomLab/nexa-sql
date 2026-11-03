@@ -374,6 +374,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 - **E2E 헤드리스 공통 진입점(11-02 143차)** = `NSQL_E2E_HEADLESS=1 scripts/<e2e>.sh …` → `lib/timeout.sh`·`lib/xvfb.sh` 끝에서 `lib/headless.sh`를 포함(가드 = 한 번만 · lib 없는 `mac-openfiles-e2e.sh`·`win-vars-e2e.sh`는 직접 포함) = `NSQL_HEADLESS=1 NSQL_NO_ACTIVATE=1`(OS 창 0 · 포커스·입력·클립보드 분리) · 서버 없는 C 단계 16종 = 248/0(11-02 맥) · 창 의존 `mac-trim-e2e.sh`·`linux-121-122-e2e.sh`는 대상 밖.
 - **결과 내보내기·실행 로그 시험 명령 + 현장 후보 E2E(11-02 143차 · T-154)** = `grid.export:<파일>`("파일로 내보내기…"를 파일 창 없이 `result_export_start` · 형식 = 확장자) · `log.stat:<파일>`(`sessions_seen=N session_col=bool entries=N`) · `scripts/headless-field-e2e.sh`(격리 홈 · sqlite 프로필 2 · 헤드리스 · 산출 `target/field-hl/` 덮어쓰기 · 라이선스 게이트 xlsx · 헤드리스 PNG · INSERT 실행 · 세션 열 = 13건).
 - **SQL Server 메시지 등급 실서버 E2E(11-02 · ⓟ″)** = `scripts/mssql-print-level-e2e.sh -o -P -c <mssql 프로필>`(격리 홈 프로필 사본 · PRINT만 · 판정 = `output.dump` 접두 ✖/⚠ 유무 = 등급(`output.rs` `push_at`이 본문에 박는다 · 색은 안 담김) · 생존 6 s · 3-OS 헤드리스 · 첫 실측 11-02 Windows 8/0).
+- **실행 로그 세션 필터 E2E(11-03 · T-124 · D-446 ④)** = `scripts/log-session-filter-e2e.sh [-o <산출 · 기본 target/log-sess-hl>] [-e <gui exe>] [-n <nsql exe>]`(격리 홈 · 헤드리스 `NSQL_HEADLESS=1` · 키 주입 0 · SQLite 둘 = nsql 자신으로 생성 · 3단계 = 필터 없음 → 둘째 라벨(`log.session_filter` = 1차 `sessions=[…]`에서 읽음 · 형식 추측 없음) → 없는 라벨 · 판정 = `log.stat` 한 줄 `session_filter= visible= sessions=[…]` · 11-03 8/0 · ★ Windows = DB·프로필 경로를 `$(w …)`로(MSYS 경로를 nsql에 넘기면 `SQLITE 14` · 1차 사고) · [journal 11-03 §10](journal/2026-11-03.md)).
 - **디스크 점검·정리 = `scripts/disk-check.sh [--prune] [--cross]`**(11-02 142차 · §2-4 디스크 규칙): 볼륨 여유(< 20 GB 경고) · `target/` 큰 폴더 상위 12 · 형제 저장소 target · 지울 수 있는 것과 크기(dry-run 기본 · `--prune` = 삭제 · `--cross` = 교차 타깃 폴더까지). 3-OS 공통(bash · df/du만).
 - **임시 산출물 정리 배치 = `scripts/tmp-clean.sh [--apply] [--days N]`**(11-03 · §2-4 임시 산출물 규칙): 이 프로젝트가 만든 임시 산출물(OS 임시 `nsql-*`·`nsql_*`·`nexa-sql-*` · 이 프로젝트의 스크래치패드 세션 폴더 · `target/<id>/` 시험 산출 폴더)을 보존 기간(기본 7일)이 지나면 한꺼번에 삭제 · 프로필 사본이 든 격리 홈은 "즉시" · dry-run 기본 · `--apply` = 세션 마감 때 1회(묻지 않음) · 남기는 것은 disk-check와 같다 · 3-OS 공통(bash · find · du). 실행 시간 = 첫 적용(후보 553개 · 17 GB) Windows 약 8분 → 11-03 속도 개선(후보마다 find 1회 + du 1회 · 활성 폴더는 첫 발견에서 멈춤) 뒤 정상 상태 약 6초 · 표시 나이는 ≈(폴더와 바로 아래 항목까지).
 
@@ -421,7 +422,9 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
   - **D-432** xlsx/parquet 외부 crate 예외(213차) · **D-433** T-SQL IF 본문 `format.tsql_if_body`(212차) · **D-435** Linux xvfb 시험(211차) · **D-436** 앱 헤드리스 `NSQL_HEADLESS=1` + `capture:<png>`(214차 1차).
   - **D-437** 11-01 아침 정리 20건(종결 5 · ⏸ 분리 2 T-460·T-461 · DR-15 조건부 · T-100 ✅ · 실기 목록 자동 덮임 종결) · **D-438** 순차 계획(아래 §6-2).
 - 사용자 확인 대기 = 없음 · 실기 남음 = ⓛ″(`license.gates` 켠 xlsx 저장 = 라이선스 창) · ⓜ″(mac `NSQL_HEADLESS=1` + capture)만(나머지 = 자동 덮임 종결).
-- 보류 유지 = T-11(셰이핑 · DR-15 조건부) · T-108(중지 시점 행 · D-420) · T-382(크기 축소) · T-198(부분 다시 그리기) · T-384(Tibero) · Db2 10.5 · T-460 · T-461.
+- 보류 유지 = T-11(셰이핑 · DR-15 조건부) · T-108(중지 시점 행 · D-420) · ~~T-382(크기 축소)~~(11-03 해제 · D-446 ② · T-102 착수) · T-198(부분 다시 그리기) · T-384(Tibero) · Db2 10.5 · T-460 · T-461.
+
+- ★ **11-03 밤 갱신** = main fb467811 · 공개 판 v0.5.0 + drivers-v0.1.10(11-03) · 사용자 결정 **D-446**(winget PR 갱신 · T-102 착수 · D-438 제외 7건 항목별 · 라이선스 보류 유지) · **D-447**(P1 재판정 = 상위 10 전부 P1 유지 · T-356 114 §9-2 A·B·C 확정 · 나머지 26 제안표대로 · [journal 11-03 §5·§7](journal/2026-11-03.md)) · **T-102 측정 ✓ 회귀 없음**([26 §7-20](26-performance-architecture.md)) · **T-165 ✅ 종결** · 발견 = 2 MB 타이핑 편집기 페인트 48~62 ms(39 §6 미달 · T-91 1순위) · 다음 순서 = [STATUS](STATUS.md) 시작점 "다음 차수 계획(D-447)" · 사용자 확인 = T-136 잔여 = T-91로 재정의 · 바로 착수(11-03 확정 · T-124 다음) · §6-2 D-438 제외 목록은 D-446으로 해소.
 
 ### 6-2. 순차 계획(D-438)
 

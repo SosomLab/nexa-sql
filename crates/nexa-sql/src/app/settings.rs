@@ -1074,6 +1074,9 @@ impl App {
                 .log_win
                 .set_columns(self.settings.get(key).unwrap_or("")),
             "log.kinds" => self.log_win.set_kinds(self.settings.get(key).unwrap_or("")),
+            "log.session_filter" => self
+                .log_win
+                .set_session_filter(self.settings.get(key).unwrap_or("")),
             "log.file" | "log.file_format" | "log.file_max_kb" => self.rebuild_log_hub(),
             "log.switch_scale" => self.log_win.set_switch_scale(self.settings.int(key)),
             "grid.max_rows" => {

@@ -66,6 +66,9 @@ pub(crate) struct LogWin {
     /// ★ T-124(216차): 지금 활성 세션의 라벨(접속 설명) — 이후 `push`되는 줄에 찍힌다 · 본 라벨들(둘 이상 = 세션 열 자동).
     cur_session: Option<String>,
     sessions_seen: Vec<String>,
+    /// ★ T-124 세션 필터(11-03 · D-446): 이 라벨의 줄만 보인다(`None` = 전부 · 설정 `log.session_filter` · 우클릭 메뉴 ▸ 세션 ·
+    ///   세션 없는 줄(접속 전 메시지)은 필터가 켜지면 숨는다).
+    session_filter: Option<String>,
     /// 보이는 종류(설정 `log.kinds` · 비면 전부).
     kinds: Vec<LogKind>,
     /// 필터를 통과한 버퍼 index(표시 순서의 원천).
@@ -134,7 +137,7 @@ impl LogWin {
     /// 언어 전환 뒤 재라벨(사용자 10-13 "플레이스홀더·버튼·토글 다국어").
     pub(crate) fn relabel(&mut self) {
         if let Some(w) = &self.window {
-            w.set_title(&format!("Nexa SQL - {}", t(Msg::WinLog)));
+            w.set_title(&self.title());
         }
         self.wrap_switch.set_label(t(Msg::LblLogSwWrap));
         self.newest_switch.set_label(t(Msg::LblLogSwSort));
@@ -157,6 +160,7 @@ impl LogWin {
             cols: Columns::default(),
             cur_session: None,
             sessions_seen: Vec::new(),
+            session_filter: None,
             kinds: Vec::new(),
             vis: Vec::new(),
             menu: ContextMenu::new(),
@@ -261,6 +265,35 @@ impl LogWin {
         }
     }
 
+    /// ★ T-124 세션 필터(설정 `log.session_filter` · 메뉴) — 라벨(빈 글 = 전부). 표시 순서를 다시 만들고 선택은 비운다.
+    pub(crate) fn set_session_filter(&mut self, label: &str) {
+        let l = label.trim();
+        let next = (!l.is_empty() && l != "*").then(|| l.to_string());
+        if next == self.session_filter {
+            return;
+        }
+        self.session_filter = next;
+        self.rebuild_vis();
+        self.row_start.clear();
+        self.jump = self.autoscroll;
+        self.apply_title();
+        self.redraw();
+    }
+
+    /// 창 제목 = 기본 + 필터가 켜져 있으면 ` [라벨]`(어느 세션만 보는지 창 자체로 알 수 있게).
+    fn title(&self) -> String {
+        match &self.session_filter {
+            Some(l) => format!("Nexa SQL - {} [{l}]", t(Msg::WinLog)),
+            None => format!("Nexa SQL - {}", t(Msg::WinLog)),
+        }
+    }
+
+    fn apply_title(&self) {
+        if let Some(w) = &self.window {
+            w.set_title(&self.title());
+        }
+    }
+
     /// 실제 적용 컬럼 = 설정 + (라벨 둘 이상이면 세션 열).
     fn eff_cols(&self) -> Columns {
         let mut c = self.cols;
@@ -278,9 +311,14 @@ impl LogWin {
         self.kinds.is_empty() || self.kinds.contains(&k)
     }
 
-    /// 줄 표시 여부 = 종류 필터 + (상세 수준은 개발자 모드일 때만).
+    /// 줄 표시 여부 = 종류 필터 + (상세 수준은 개발자 모드일 때만) + 세션 필터(T-124 · 라벨 일치만).
     fn shown_entry(&self, e: &LogEntry) -> bool {
-        self.shown(e.kind) && (self.dev || e.level == nsql_log::LogLevel::Basic)
+        self.shown(e.kind)
+            && (self.dev || e.level == nsql_log::LogLevel::Basic)
+            && self
+                .session_filter
+                .as_deref()
+                .is_none_or(|f| e.session.as_deref() == Some(f))
     }
 
     fn rebuild_vis(&mut self) {
@@ -342,9 +380,17 @@ impl LogWin {
                     .with_checked(nsql_log::layer_in_mask(self.dev_mask, *l))
             })
             .collect();
+        // ★ T-124 세션 필터: 전부 + 본 라벨들(라디오처럼 하나만 체크 · 라벨을 본 적 없으면 "전부"만).
+        let mut sess = vec![CtxItem::item("sess:*", t(Msg::MnLogSessionAll))
+            .with_checked(self.session_filter.is_none())];
+        sess.extend(self.sessions_seen.iter().map(|l| {
+            CtxItem::item(format!("sess:{l}"), l.clone())
+                .with_checked(self.session_filter.as_deref() == Some(l.as_str()))
+        }));
         let items = vec![
             CtxItem::submenu("kinds", t(Msg::MnLogKinds), kinds),
             CtxItem::submenu("cols", t(Msg::MnLogColumns), cols),
+            CtxItem::submenu("sess", t(Msg::MnLogSession), sess),
             CtxItem::submenu("layers", t(Msg::MnLogDevLayers), layers),
             CtxItem::Separator,
             // 선택이 있을 때만 활성(사용자 09-19) — Ctrl/⌘+C와 같은 글.
@@ -417,6 +463,15 @@ impl LogWin {
             };
             self.set_kinds(&text);
             return LogWinAction::Setting("log.kinds", text);
+        }
+        if let Some(label) = id.strip_prefix("sess:") {
+            let text = if label == "*" {
+                String::new()
+            } else {
+                label.to_string()
+            };
+            self.set_session_filter(&text);
+            return LogWinAction::Setting("log.session_filter", text);
         }
         if let Some(name) = id.strip_prefix("col:") {
             let mut c = self.cols;
@@ -756,7 +811,7 @@ impl LogWin {
         let Some(o) = crate::winhost::open_window(
             el,
             crate::winhost::OpenSpec {
-                title: format!("Nexa SQL - {}", t(Msg::WinLog)),
+                title: self.title(),
                 theme,
                 near,
                 dy: 0,
@@ -833,10 +888,13 @@ impl LogWin {
     /// 자체 시험 상태(142차 · `log.stat:<파일>`): 본 세션 라벨 수 · 세션 열이 실제로 켜졌는지(설정 또는 라벨 둘 이상 = 자동).
     pub(crate) fn stat(&self) -> String {
         format!(
-            "sessions_seen={} session_col={} entries={}\n",
+            "sessions_seen={} session_col={} entries={} session_filter={} visible={} sessions=[{}]\n",
             self.sessions_seen.len(),
             self.eff_cols().session,
-            self.buf.len()
+            self.buf.len(),
+            self.session_filter.as_deref().unwrap_or("-"),
+            self.vis.len(),
+            self.sessions_seen.join("|")
         )
     }
 
@@ -866,7 +924,9 @@ impl LogWin {
         } else if self
             .buf
             .get(self.buf.len() - 1)
-            .is_some_and(|e| self.shown(e.kind))
+            // ★ T-124(11-03): 추가 줄도 전체 판정(`shown_entry` = 종류 + 개발자 수준 + 세션 필터)으로 — 종전 `shown(kind)`만 보아
+            //   기동 때 설정으로 켠 세션 필터가 이후 줄에 적용되지 않았다(E2E b2·c1).
+            .is_some_and(|e| self.shown_entry(e))
         {
             self.vis.push(self.buf.len() - 1);
         }

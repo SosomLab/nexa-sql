@@ -203,6 +203,8 @@ impl App {
             .set_columns(self.settings.get("log.columns").unwrap_or(""));
         self.log_win
             .set_kinds(self.settings.get("log.kinds").unwrap_or(""));
+        self.log_win
+            .set_session_filter(self.settings.get("log.session_filter").unwrap_or(""));
         self.rebuild_log_hub();
         self.log_win
             .set_newest_first(self.settings.flag("log.newest_first"));

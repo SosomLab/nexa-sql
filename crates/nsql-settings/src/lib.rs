@@ -6194,6 +6194,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ T-124 세션 필터(11-03 · D-446): 로그 창 우클릭 ▸ 세션이 고른 라벨(마지막 선택 기억 · 비면 전부).
+    Entry {
+        key: "log.session_filter",
+        cat: Msg::CatLog,
+        label: Msg::LblLogSessionFilter,
+        desc: Msg::DescLogSessionFilter,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ── 로그 창 스위치 3종(사용자 09-16) — 창 아래 스위치와 같은 값(자동 기억).
     Entry {
         key: "log.wrap",
