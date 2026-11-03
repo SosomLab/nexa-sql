@@ -990,6 +990,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-60(a)(11-04 · D-446): 잘라내기도 서식을 함께(기본 끔 · 잘라내기는 보통 편집기 안에서 옮기는 일이라 텍스트가 안전).
+    Entry {
+        key: "editor.cut_rich",
+        cat: Msg::CatEditor,
+        label: Msg::LblCutRich,
+        desc: Msg::DescCutRich,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "editor.tab_size",
         cat: Msg::CatEditor,

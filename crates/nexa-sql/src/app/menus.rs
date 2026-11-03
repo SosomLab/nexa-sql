@@ -1745,36 +1745,17 @@ impl App {
                     );
                 }
                 if let Some(text) = sel {
-                    let rich_wanted =
-                        self.focus == Focus::Editor && self.settings.flag("editor.copy_rich");
-                    let rich = rich_wanted && self.entitled(nsql_license::Feature::RichCopy);
-                    if rich_wanted && !rich {
-                        // 서식 복사는 Pro — 텍스트로 복사하고 상태줄로 안내(복사 흐름을 창으로 끊지 않는다).
-                        self.sess.status =
-                            self.license_denied_text(nsql_license::Feature::RichCopy);
-                    }
-                    let hl = self.editors.cur().highlighter().cloned();
-                    failed = match (rich, hl) {
-                        (true, Some(h)) => {
-                            let px = self.settings.font_px("editor.font_size").round() as i32;
-                            let html = nexa_ctl::to_html(
-                                &text,
-                                h.as_ref(),
-                                &self.theme,
-                                "Consolas, 'Cascadia Mono', 'D2Coding', Menlo",
-                                px,
-                            );
-                            !clipboard::write_rich(&text, &html)
-                        }
-                        _ => !clipboard::write_text(&text),
-                    };
+                    let want = self.settings.flag("editor.copy_rich");
+                    failed = !self.clip_write_editor_text(&text, want);
                 }
             }
             EditCtxAction::Cut => {
                 // ★ 클립보드에 **올라간 것을 확인한 뒤에만** 지운다(사용자 09-26 Linux — 클립보드 도구가 없는 환경에서
                 //   종전에는 글자가 먼저 사라지고 클립보드는 비어 있었다: 어디에도 없는 상태 · 데이터 보호 불변식 61 §1-7).
+                //   ★ T-60(a)(11-04 · D-446): 설정 `editor.cut_rich`면 복사와 같은 서식(HTML)도 함께 올린다.
                 if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
-                    if clipboard::write_text(&text) {
+                    let want = self.settings.flag("editor.cut_rich");
+                    if self.clip_write_editor_text(&text, want) {
                         if let Some(tb) = self.focused_textbox() {
                             tb.cut_selection(&mut inv);
                         }
@@ -2176,6 +2157,33 @@ impl App {
         }
         if bits & 262_144 != 0 {
             self.find.close_popups();
+        }
+    }
+}
+
+impl App {
+    /// ★ 편집기 글을 클립보드에(복사·잘라내기 공용 · T-60): `want_rich`(설정 `editor.copy_rich` / `editor.cut_rich`) + 권한(`RichCopy`)이면
+    ///   강조 HTML도 함께 · 권한이 없으면 텍스트만 + 상태줄 안내(흐름을 창으로 끊지 않음) · 편집기 포커스가 아니면 늘 텍스트. 성공 = true.
+    fn clip_write_editor_text(&mut self, text: &str, want_rich: bool) -> bool {
+        let rich_wanted = self.focus == Focus::Editor && want_rich;
+        let rich = rich_wanted && self.entitled(nsql_license::Feature::RichCopy);
+        if rich_wanted && !rich {
+            self.sess.status = self.license_denied_text(nsql_license::Feature::RichCopy);
+        }
+        let hl = self.editors.cur().highlighter().cloned();
+        match (rich, hl) {
+            (true, Some(h)) => {
+                let px = self.settings.font_px("editor.font_size").round() as i32;
+                let html = nexa_ctl::to_html(
+                    text,
+                    h.as_ref(),
+                    &self.theme,
+                    "Consolas, 'Cascadia Mono', 'D2Coding', Menlo",
+                    px,
+                );
+                clipboard::write_rich(text, &html)
+            }
+            _ => clipboard::write_text(text),
         }
     }
 }
