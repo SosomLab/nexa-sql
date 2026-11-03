@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t8-import-readers | 2026-11-04 | 2026-11-04 → main ff(삭제) · **370c980a** | 2 | T-8 가져오기 ①②③ nsql-io 읽기 포트 `RecordSource`(csv/tsv 인코딩·구분자 자동 · jsonl · json) + xlsx(calamine D-449)/parquet 읽기 + 형 추론 `infer` · 45/0 · [journal 11-04 §1](journal/2026-11-04.md) |
 | t8-export-format-menu | 2026-11-04 | 2026-11-04 → main ff(삭제) · **bb4e0dfe** | 2 | ★ D-448 결과 내보내기 UX(형식 하위 메뉴 7 · 기본 xlsx · `report_{stamp}` · 저장 창 콤보↔확장자(nexa-ui bc52c97) · 원천 라디오 다시 실행/조회된 행만) + docs/127 가져오기 설계 · [journal 11-04 §0](journal/2026-11-04.md) |
 | test/mssql-print-level-e2e | 2026-11-02 | 2026-11-02 → main ff(삭제) · **5c33a2f1** | 1 | ⓟ″ SQL Server PRINT 등급 실서버 E2E 자산 `scripts/mssql-print-level-e2e.sh`(헤드리스 8/0 · 판정 = `output.dump` 접두 ✖/⚠ = 등급 · 격리 홈 프로필 사본 · PRINT만 · 서버 쓰기 0) + 문서(journal 11-02 §9 · TODO T-154 ⓟ″ ✅ · 61 §4 · STATUS) · 개발×협업 세션 운영 재개 |
 | fix/dnd-e2e-b-scale | 2026-11-02 | 2026-11-02 → main ff(삭제) · **34f91a3e** | 1 | 11-02 win = 최신화(b8dc761b) 이어 가기 · `win-explorer-dnd-e2e` B(상태줄) 놓는 점 고정 600,790 → 창 물리 크기 비례 환산(1.5배 창에서 결과 그리드에 떨어져 거짓 통과 · 캡처 확인) + 예열 1회(`gui warm` · 1회차 콜드 기동 0/1 대책) · 헤드리스 6/0(1800x1200 첫 실측) · `win-objbackup-prod-e2e`(BISCM_DEV) = 협업 권한 판정 거부로 미실행 · 문서 = journal 11-02 §8 · STATUS · 102 §12 3행 |
