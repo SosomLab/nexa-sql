@@ -4,7 +4,7 @@
 //! 비교 연산자 · ORDER BY 방향 · 인라인 주석)에만 둔다. Basic은 조각을 한 칸 띄워 붙이고, 확장(kiros33)은 같은 IR에서
 //! 블록별 탭 정렬·구분행 같은 규칙을 얹어 렌더한다.
 
-use crate::lexer::{lex, Kind, Token};
+use crate::lexer::{lex_in, Kind, Token};
 use crate::{
     is_keyword, AliasAs, Comma, DialectTarget, Indent, ListStyle, LogicalNewline, Newline, Options,
 };
@@ -462,7 +462,7 @@ pub fn blocks(lines: &[Line]) -> Vec<(usize, usize)> {
 /// 원문 → 줄 IR(문장별 · 통과 문장은 Raw 줄).
 #[must_use]
 pub fn layout(src: &str, opts: &Options) -> Vec<Line> {
-    let toks = substitute_dialect(lex(src), opts.dialect_target);
+    let toks = substitute_dialect(lex_in(src, opts.dialect), opts.dialect_target);
     let mut out: Vec<Line> = Vec::new();
     let mut i = 0usize;
     let mut first_stmt = true;
@@ -3162,7 +3162,7 @@ mod tests {
     }
 
     fn words(s: &str) -> Vec<String> {
-        lex(s)
+        crate::lexer::lex(s)
             .into_iter()
             .filter(|t| !t.is_comment())
             .map(|t| t.text.to_ascii_uppercase())

@@ -49,7 +49,8 @@ pub(crate) fn needs_quote(dialect: Dialect, name: &str) -> bool {
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return true;
     }
-    if nsql_format::is_keyword(name) {
+    // ★ T-325(11-03): 방언별 예약어 표(nsql-core `reserved` · 108 §9 #7·#8) + 종전 포맷터 절 키워드(합집합 = 인용이 줄지 않게).
+    if nsql_core::reserved::is_reserved(dialect, name) || nsql_format::is_keyword(name) {
         return true;
     }
     match dialect {
@@ -115,6 +116,24 @@ mod tests {
         );
         assert_eq!(quote(Dialect::Oracle, "a\"b", false), "\"a\"\"b\"");
         assert!(needs_quote(Dialect::Oracle, ""));
+    }
+
+    /// ★ T-325(11-03 · 108 §9 #8 재현): 열 이름 `LEVEL`(Oracle) · `KEY`(MySQL · SQL Server · SQLite)는 방언 예약어라 인용 ·
+    /// PostgreSQL `key`는 비예약이라 맨 글 · 종전 포맷터 키워드(`ORDER`)도 그대로 인용.
+    #[test]
+    fn dialect_reserved_words_are_quoted() {
+        assert_eq!(quote(Dialect::Oracle, "LEVEL", false), "\"LEVEL\"");
+        assert_eq!(
+            quote(Dialect::Oracle, "KEY", false),
+            "KEY",
+            "Oracle에서 KEY는 예약어 아님"
+        );
+        assert_eq!(quote(Dialect::Mysql, "key", false), "`key`");
+        assert_eq!(quote(Dialect::Mssql, "Key", false), "[Key]");
+        assert_eq!(quote(Dialect::Sqlite, "key", false), "\"key\"");
+        assert_eq!(quote(Dialect::Postgres, "key", false), "key");
+        assert_eq!(quote(Dialect::Postgres, "user", false), "\"user\"");
+        assert_eq!(quote(Dialect::Postgres, "order", false), "\"order\"");
     }
 
     /// ★ SELECT 템플릿의 스키마·테이블도 같은 정책(사용자 10-08): needed = 평범한 이름은 맨 글 · 접힘 위반·예약어만 인용 · always = 전부.

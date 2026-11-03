@@ -1649,6 +1649,7 @@ pub mod ddl;
 pub use ddl::{ddl_target, DdlKind, DdlTarget, DdlVerb};
 pub mod savequeue;
 pub use savequeue::SaveQueue;
+pub mod reserved; // ★ T-325 방언별 예약어 표(의존 0)
 #[doc(hidden)]
 pub mod testpath; // 시험용 임시 경로 가드(T-465 · D-445) — 의존 0(std만)
 

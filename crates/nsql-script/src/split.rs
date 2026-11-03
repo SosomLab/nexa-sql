@@ -144,7 +144,7 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
             pos = le;
             continue;
         }
-        if rest == "/" || rest.eq_ignore_ascii_case("GO") {
+        if rest == "/" || is_go_line(rest) {
             pos = le;
             continue;
         }
@@ -486,13 +486,25 @@ fn collect_sql(
                 .position(|&c| c == b'\n')
                 .map_or(b.len(), |p| ns + p);
             let t = src[ns.min(b.len())..ne].trim_end_matches('\r').trim();
-            if t == "/" || t.eq_ignore_ascii_case("GO") {
+            if t == "/" || is_go_line(t) {
                 return (src[start..i].trim().to_string(), i, ne);
             }
         }
         i += 1;
     }
     (src[start..].trim().to_string(), b.len(), b.len())
+}
+
+/// T-SQL 배치 구분자 줄 — `GO` · `GO n`(T-324 · 108 §9 #12 · 반복 횟수는 받아들이되 **한 번만** 실행 = 분리만 · 대소문자 무시).
+pub(crate) fn is_go_line(t: &str) -> bool {
+    let mut w = t.split_whitespace();
+    if !w.next().is_some_and(|g| g.eq_ignore_ascii_case("GO")) {
+        return false;
+    }
+    match w.next() {
+        None => true,
+        Some(n) => n.bytes().all(|c| c.is_ascii_digit()) && w.next().is_none(),
+    }
 }
 
 fn starts_block(first_line: &str) -> bool {
@@ -1036,6 +1048,22 @@ mod mysql_tests {
         let ora = split_script_in("--#SET TERMINATOR @\nSELECT 1@", Some(Dialect::Oracle));
         assert_eq!(ora.len(), 1);
         assert!(ora[0].text.contains('@'));
+    }
+
+    /// ★ T-324(11-03 · 108 §9 #12): T-SQL `GO n`(반복 횟수)도 배치 구분자 — 분리만 하고 한 번 실행 · `GO` 뒤 숫자 아닌 것은 코드.
+    #[test]
+    fn go_with_count_splits_batches() {
+        assert!(is_go_line("GO") && is_go_line("go 3") && is_go_line("GO  10"));
+        assert!(!is_go_line("GOTO x") && !is_go_line("GO x") && !is_go_line("GO 3 4"));
+        // `GO`는 T-SQL 구분자 — MySQL 도우미(`texts`)가 아니라 Mssql 방언으로 가른다.
+        let v: Vec<String> = split_script_in(
+            "SELECT 1\nGO 3\nSELECT 2\nGO\nSELECT 3",
+            Some(Dialect::Mssql),
+        )
+        .into_iter()
+        .map(|i| i.text)
+        .collect();
+        assert_eq!(v, ["SELECT 1", "SELECT 2", "SELECT 3"], "{v:?}");
     }
 
     /// 135차 · MySQL `DELIMITER //`: 프로시저 본문 안의 `;`를 넘기고 `//`에서 끝난다 · `DELIMITER ;`로 복귀 · 줄 자체는 항목 아님.

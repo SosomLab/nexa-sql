@@ -31,6 +31,12 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
     });
     let (hash_comment, backslash, dollar) =
         (syn.hash_comment, syn.backslash_escape, syn.dollar_quoting);
+    // ★ T-324(11-03): 중첩 블록 주석 · `E'…'` 이스케이프 문자열 · `[…]` 식별자 여부도 방언 표에서.
+    let (nested, esc_prefix, bracket) = (
+        syn.nested_comments,
+        syn.escape_string_prefix,
+        syn.bracket_ident,
+    );
     let b = text.as_bytes();
     let n = b.len();
     let mut out = vec![Class::Code; n];
@@ -44,12 +50,14 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
                 i = end;
             }
             b'/' if i + 1 < n && b[i + 1] == b'*' => {
-                let mut j = i + 2;
-                while j + 1 < n && !(b[j] == b'*' && b[j + 1] == b'/') {
-                    j += 1;
-                }
-                let end = (j + 2).min(n);
+                let end = scan_block_comment(b, i, nested);
                 out[i..end].fill(Class::BlockComment);
+                i = end;
+            }
+            // PostgreSQL `E'…'`(T-324): 접두가 있는 문자열에서만 `\'`·`\\`가 한 글자(표준 문자열은 `\`가 글자).
+            b'E' | b'e' if esc_prefix && i + 1 < n && b[i + 1] == b'\'' && !prev_is_ident(b, i) => {
+                let end = scan_single_quoted_in(b, i + 1, true);
+                out[i..end].fill(Class::Str);
                 i = end;
             }
             b'#' if hash_comment => {
@@ -94,7 +102,8 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
                 out[i..end].fill(Class::Ident);
                 i = end;
             }
-            b'[' => {
+            // `[…]` 인용 식별자(T-SQL · SQLite) — 배열 첨자 방언(PG `a[1]` · DuckDB · ClickHouse)은 코드로 둔다(T-324).
+            b'[' if bracket => {
                 let mut j = i + 1;
                 while j < n && b[j] != b']' && b[j] != b'\n' {
                     j += 1;
@@ -107,6 +116,30 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
         }
     }
     out
+}
+
+/// `/* … */` — `nested`면 안의 `/*`마다 깊이를 세어 짝이 맞는 `*/`에서 닫는다(PostgreSQL · T-SQL · T-324). 닫히지 않으면 끝까지.
+fn scan_block_comment(b: &[u8], start: usize, nested: bool) -> usize {
+    let n = b.len();
+    let mut depth = 1usize;
+    let mut j = start + 2;
+    while j + 1 < n {
+        if b[j] == b'*' && b[j + 1] == b'/' {
+            depth -= 1;
+            j += 2;
+            if depth == 0 {
+                return j;
+            }
+            continue;
+        }
+        if nested && b[j] == b'/' && b[j + 1] == b'*' {
+            depth += 1;
+            j += 2;
+            continue;
+        }
+        j += 1;
+    }
+    n
 }
 
 fn prev_is_ident(b: &[u8], i: usize) -> bool {
@@ -304,5 +337,62 @@ mod mysql_tests {
         assert_eq!(classes_of("'it\\'s' x", None), "sssss.sss");
         assert_eq!(classes_of("`a;b`;", None), "iiiii.");
         assert_eq!(classes_of("`a;b`;", Some(Dialect::Mysql)), "iiiii.");
+    }
+
+    /// ★ T-324(11-03 · 108 §9 #1~#6): 중첩 블록 주석(PG·T-SQL = 하나 · Oracle = 첫 `*/`) · PG `E'…'`만 역슬래시 이스케이프 ·
+    /// `[…]`는 T-SQL·SQLite에서만 식별자(PG·DuckDB = 첨자 = 코드) · 닫히지 않은 중첩 주석은 끝까지.
+    #[test]
+    fn t324_nested_comments_escape_strings_and_brackets() {
+        let nested = "/* a /* b */ c */ x";
+        assert_eq!(
+            classes_of(nested, Some(Dialect::Postgres)),
+            format!("{}..", "*".repeat(17))
+        );
+        assert_eq!(
+            classes_of(nested, Some(Dialect::Mssql)),
+            format!("{}..", "*".repeat(17))
+        );
+        assert_eq!(
+            classes_of(nested, Some(Dialect::Oracle)),
+            format!("{}{}", "*".repeat(12), ".".repeat(7)),
+            "Oracle = 첫 */에서 닫힘"
+        );
+        assert_eq!(
+            classes_of("/* a /* b */", Some(Dialect::Postgres)),
+            "*".repeat(12),
+            "미완 중첩 = 끝까지"
+        );
+        assert_eq!(
+            classes_of("E'a\\'b' x", Some(Dialect::Postgres)),
+            "sssssss..",
+            "PG E'' = 역슬래시 이스케이프"
+        );
+        assert_eq!(
+            classes_of("E'a\\'b' x", Some(Dialect::Oracle)),
+            ".ssss.sss",
+            "Oracle = E는 코드 · 표준 문자열"
+        );
+        assert_eq!(
+            classes_of("'a\\'b' x", Some(Dialect::Postgres)),
+            "ssss.sss",
+            "PG 표준 문자열 = 역슬래시는 글자"
+        );
+        assert_eq!(
+            classes_of("xE'a' y", Some(Dialect::Postgres)),
+            "..sss..",
+            "식별자 꼬리 E는 접두가 아님"
+        );
+        assert_eq!(
+            classes_of("a[1]", Some(Dialect::Postgres)),
+            "....",
+            "PG 첨자 = 코드"
+        );
+        assert_eq!(classes_of("a[1]", Some(Dialect::Duckdb)), "....");
+        assert_eq!(
+            classes_of("a[1]", Some(Dialect::Mssql)),
+            ".iii",
+            "T-SQL = 식별자"
+        );
+        assert_eq!(classes_of("[y;]", Some(Dialect::Sqlite)), "iiii");
     }
 }

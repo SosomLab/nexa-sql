@@ -170,6 +170,14 @@ pub struct Syntax {
     pub delimiter_directive: bool,
     /// 달러 인용 `$$ … $$`·`$tag$ … $tag$`를 문자열로 보는가(PostgreSQL 본문 · 다른 뜻이 없는 방언은 참) · MySQL = 거짓(`DELIMITER $$`가 구분자).
     pub dollar_quoting: bool,
+    /// ★ T-324(11-03): 블록 주석이 **중첩**되는가(`/* a /* b */ c */` = 주석 하나 · PostgreSQL · T-SQL) · 거짓 = 첫 `*/`에서 닫힘
+    ///   (Oracle · MySQL · SQLite · ANSI).
+    pub nested_comments: bool,
+    /// ★ T-324: `E'…'` 접두 문자열 **안에서만** 역슬래시가 이스케이프(PostgreSQL · 표준 문자열 `'…'`의 `\`는 글자 · `backslash_escape`와 별개).
+    pub escape_string_prefix: bool,
+    /// ★ T-324: `[…]`가 인용 식별자인가(T-SQL · SQLite · Access · ANSI 기본) · 거짓 = 배열 첨자·연산자(PostgreSQL `a[1]` · DuckDB ·
+    ///   ClickHouse · Oracle · MySQL · Db2) — 거짓이면 렉서가 `[`를 코드로 본다.
+    pub bracket_ident: bool,
     /// 문장은 늘 `;`로 끝난다(`/` 줄 블록 없음 · 본문의 `BEGIN … END`만 짝) — SQLite · MySQL · PG. 거짓 = `/`로 끝나는 블록(Oracle 등).
     pub semicolon_only: bool,
     /// `SHOW …`가 서버 문장인가(MySQL = STATUS·TABLES·CREATE TABLE …) · 거짓 = 클라이언트 명령.
@@ -228,6 +236,9 @@ const SYN_ANSI: Syntax = Syntax {
     clp_terminator: false,
     delimiter_directive: false,
     dollar_quoting: true,
+    nested_comments: false,
+    escape_string_prefix: false,
+    bracket_ident: true,
     semicolon_only: false,
     server_show: false,
     tsql_from: false,
@@ -244,6 +255,7 @@ const SYN_ORACLE: Syntax = Syntax {
     define_prompt_undefined: true,
     anchored_types: true,
     explain: ExplainForm::OraclePlanTable,
+    bracket_ident: false,
     ..SYN_ANSI
 };
 
@@ -261,6 +273,7 @@ const SYN_MSSQL: Syntax = Syntax {
     tsql_from: true,
     output_pseudo_tables: true,
     explain: ExplainForm::TsqlShowplan,
+    nested_comments: true,
     ..SYN_ANSI
 };
 
@@ -269,6 +282,9 @@ const SYN_POSTGRES: Syntax = Syntax {
     anchored_types: true,
     explain: ExplainForm::PgVerbose,
     query_heads: &["TABLE"],
+    nested_comments: true,
+    escape_string_prefix: true,
+    bracket_ident: false,
     ..SYN_ANSI
 };
 
@@ -282,6 +298,7 @@ const SYN_MYSQL: Syntax = Syntax {
     semicolon_only: true,
     server_show: true,
     use_targets_schema: true,
+    bracket_ident: false,
     ..SYN_ANSI
 };
 
@@ -301,6 +318,7 @@ const SYN_NO_SAVEPOINT: Syntax = Syntax {
 /// DuckDB 1.x · ClickHouse(D-434): 세이브포인트 없음 + **FROM-first** 조회(`FROM t` · `FROM t SELECT …`).
 const SYN_FROM_FIRST: Syntax = Syntax {
     query_heads: &["FROM"],
+    bracket_ident: false,
     ..SYN_NO_SAVEPOINT
 };
 
@@ -314,6 +332,7 @@ const SYN_DB2: Syntax = Syntax {
     clp_terminator: true,
     delimiter_directive: true,
     explain: ExplainForm::Db2ExplainTables,
+    bracket_ident: false,
     ..SYN_ANSI
 };
 

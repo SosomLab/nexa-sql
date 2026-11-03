@@ -67,9 +67,21 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '$' | '#')
 }
 
-/// 원문 → 토큰 목록.
+/// 원문 → 토큰 목록(방언 모름 = Generic).
 #[must_use]
 pub fn lex(src: &str) -> Vec<Token> {
+    lex_in(src, crate::SrcDialect::Generic)
+}
+
+/// ★ T-324(11-03): 방언을 아는 렉서 — PostgreSQL·T-SQL = 중첩 블록 주석 · PostgreSQL `E'…'` = 역슬래시 이스케이프 · MySQL = `#` 줄 주석 +
+/// 문자열 안 역슬래시 이스케이프. 그 밖은 [`lex`]와 같다(토큰 보존 불변식 그대로).
+#[must_use]
+pub fn lex_in(src: &str, dialect: crate::SrcDialect) -> Vec<Token> {
+    use crate::SrcDialect as D;
+    let nested = matches!(dialect, D::Postgres | D::Mssql);
+    let hash_comment = dialect == D::Mysql;
+    let backslash = dialect == D::Mysql;
+    let esc_prefix = dialect == D::Postgres;
     let b = src.as_bytes();
     let n = b.len();
     let mut out = Vec::new();
@@ -110,7 +122,32 @@ pub fn lex(src: &str) -> Vec<Token> {
             continue;
         }
         if rest.starts_with("/*") {
-            let end = rest.find("*/").map_or(n, |k| i + k + 2);
+            let end = if nested {
+                // 중첩 깊이(PG·T-SQL · T-324) — 닫히지 않으면 끝까지.
+                let rb = rest.as_bytes();
+                let (mut depth, mut k) = (1usize, 2usize);
+                let mut close = None;
+                while k + 1 < rb.len() {
+                    if rb[k] == b'*' && rb[k + 1] == b'/' {
+                        depth -= 1;
+                        k += 2;
+                        if depth == 0 {
+                            close = Some(k);
+                            break;
+                        }
+                        continue;
+                    }
+                    if rb[k] == b'/' && rb[k + 1] == b'*' {
+                        depth += 1;
+                        k += 2;
+                        continue;
+                    }
+                    k += 1;
+                }
+                close.map_or(n, |k| i + k)
+            } else {
+                rest.find("*/").map_or(n, |k| i + k + 2)
+            };
             let kind = if rest.starts_with("/*+") {
                 Kind::Hint
             } else {
@@ -121,12 +158,29 @@ pub fn lex(src: &str) -> Vec<Token> {
             push(kind, end, next, &mut nl, &mut ci);
             continue;
         }
-        // 문자열 `'…'` (`''` 이스케이프).
-        if c == '\'' {
-            let mut j = ci + 1;
+        // MySQL `#` 줄 주석(T-324 · 낱말 시작 자리에서만 · Oracle `#`은 식별자 글자라 Generic은 해당 없음).
+        if hash_comment && c == '#' {
+            let end = rest.find('\n').map_or(n, |k| i + k);
+            let end = trim_cr(src, end);
+            let next = chars.partition_point(|(p, _)| *p < end);
+            push(Kind::LineComment, end, next, &mut nl, &mut ci);
+            continue;
+        }
+        // 문자열 `'…'` (`''` 이스케이프 · MySQL은 `\'`도 · PG `E'…'` 접두는 그 문자열만 역슬래시 이스케이프 · T-324).
+        let e_prefix = esc_prefix
+            && matches!(c, 'E' | 'e')
+            && chars.get(ci + 1).is_some_and(|x| x.1 == '\'')
+            && (ci == 0 || !is_word_char(chars[ci - 1].1));
+        if c == '\'' || e_prefix {
+            let bs = backslash || e_prefix;
+            let mut j = ci + if e_prefix { 2 } else { 1 };
             loop {
                 if j >= chars.len() {
                     break;
+                }
+                if bs && chars[j].1 == '\\' {
+                    j += 2;
+                    continue;
                 }
                 if chars[j].1 == '\'' {
                     if j + 1 < chars.len() && chars[j + 1].1 == '\'' {
@@ -366,6 +420,55 @@ mod tests {
 
     fn kinds(src: &str) -> Vec<(Kind, String)> {
         lex(src).into_iter().map(|t| (t.kind, t.text)).collect()
+    }
+
+    /// ★ T-324(11-03): 방언 렉서 — PG·T-SQL 중첩 블록 주석 = 토큰 하나 · MySQL `#` 줄 주석 · MySQL `'it\'s'` · PG `E'…'`만 역슬래시 ·
+    /// Generic은 종전과 같다(첫 `*/`에서 닫힘 · `#`은 낱말 글자 · 역슬래시는 글자).
+    #[test]
+    fn dialect_aware_lexing() {
+        use crate::SrcDialect as D;
+        let k = |src: &str, d: D| -> Vec<(Kind, String)> {
+            lex_in(src, d)
+                .into_iter()
+                .map(|t| (t.kind, t.text))
+                .collect()
+        };
+        let nested = "/* a /* b */ c */ x";
+        assert_eq!(
+            k(nested, D::Postgres)[0],
+            (Kind::BlockComment, "/* a /* b */ c */".into())
+        );
+        assert_eq!(k(nested, D::Mssql).len(), 2);
+        assert_eq!(
+            k(nested, D::Generic)[0],
+            (Kind::BlockComment, "/* a /* b */".into())
+        );
+        assert_eq!(
+            k("a # c\nb", D::Mysql)[1],
+            (Kind::LineComment, "# c".into())
+        );
+        assert!(
+            k("a # c", D::Generic)
+                .iter()
+                .all(|(kind, _)| *kind != Kind::LineComment),
+            "Generic = `#`은 주석이 아님"
+        );
+        assert_eq!(k("'it\\'s' x", D::Mysql)[0], (Kind::Str, "'it\\'s'".into()));
+        assert_eq!(k("'it\\'s' x", D::Generic)[0], (Kind::Str, "'it\\'".into()));
+        assert_eq!(
+            k("E'a\\'b' x", D::Postgres)[0],
+            (Kind::Str, "E'a\\'b'".into())
+        );
+        assert_eq!(
+            k("'a\\'b' x", D::Postgres)[0],
+            (Kind::Str, "'a\\'".into()),
+            "PG 표준 문자열"
+        );
+        assert_eq!(
+            k("xE'a' y", D::Postgres)[0],
+            (Kind::Word, "xE".into()),
+            "낱말 꼬리 E는 접두 아님"
+        );
     }
 
     #[test]

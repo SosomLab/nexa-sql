@@ -15,7 +15,7 @@ pub mod plsql;
 pub mod river;
 
 pub use layout::{Line, Part, Role};
-pub use lexer::{lex, Kind, Token};
+pub use lexer::{lex, lex_in, Kind, Token};
 
 /// 들여쓰기 단위.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,6 +173,8 @@ pub enum SrcDialect {
     Oracle,
     Mssql,
     Postgres,
+    /// ★ T-324(11-03): `#` 줄 주석 · 문자열 안 역슬래시 이스케이프(렉서) · 블록 규칙 표는 Generic과 같다.
+    Mysql,
 }
 
 impl SrcDialect {
@@ -184,6 +186,7 @@ impl SrcDialect {
             "mssql" | "sqlserver" | "tds" => SrcDialect::Mssql,
             "postgres" | "postgresql" | "pg" | "redshift" | "cockroach" | "yugabyte"
             | "greenplum" | "timescale" => SrcDialect::Postgres,
+            "mysql" | "mariadb" => SrcDialect::Mysql,
             _ => SrcDialect::Generic,
         }
     }
