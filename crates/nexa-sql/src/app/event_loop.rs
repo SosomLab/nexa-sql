@@ -507,6 +507,8 @@ impl ApplicationHandler<Wake> for App {
             || !self.ext_meta_inflight.is_empty()
             || !self.file_loads.is_empty()
             || self.export_bg.is_some()
+            || self.import_inspect.is_some()
+            || self.import_ctx.as_ref().is_some_and(|c| c.cols_wait)
             || self.editors.tooltip_pending()
             || self.zoom_hud.visible()
             || self.goto_walk.is_some()
@@ -615,6 +617,7 @@ impl ApplicationHandler<Wake> for App {
         }
         self.file_loads_poll();
         self.export_bg_poll();
+        self.import_bg_poll();
         self.multi_load_poll();
         // ★ 그리드 편집 요청이 세션 바쁨으로 미뤄졌으면 한가해진 뒤 여기서(docs/87 · 키 조회) · 입력 사건 없이 생긴 페치/재조회 요청
         //   (필터 변경 → 로컬 채움 · 승격/복귀 · 페이지 연쇄 · 기동 명령)도 같은 자리에서(협업 bin50/51 a2·b1 · 10-07).
@@ -1330,7 +1333,7 @@ impl App {
                         }
                         (PickerMode::Open, FilePurpose::Import) => {
                             if let Some(c) = self.import_ctx.as_mut() {
-                                c.1 = path.to_path_buf();
+                                c.path = path.to_path_buf();
                                 self.import_pending = true;
                             }
                         }
@@ -1699,9 +1702,14 @@ impl App {
                 }
                 import_win::ImportAction::Start(spec) => self.import_start(*spec),
                 import_win::ImportAction::Cancel => self.import_cancel(),
+                import_win::ImportAction::Reinspect => self.import_reinspect(),
+                import_win::ImportAction::ShowDdl(ddl) => {
+                    self.sqlprev_plain = Some((t(Msg::ImpDdlTitle).to_string(), ddl));
+                }
                 import_win::ImportAction::Close => {
                     self.import_win.close();
                     self.import_ctx = None;
+                    self.import_inspect = None;
                     self.sync_modal();
                     self.redraw();
                 }
@@ -2402,35 +2410,9 @@ impl App {
             }
             self.sync_modal();
         }
-        // ★ Import 창(89 §3-3): 파일 창 결과(또는 기동 명령 `import.open:`) → 미리보기 6줄 + 설정 `bulk.*` 기본값으로 연다.
+        // ★ Import 창 2차(127 §2-2): 파일 창 결과(또는 기동 명령 `import.open:`) → 창 열기 + 살펴보기 스레드 + (기존 표) 열 요청.
         if std::mem::take(&mut self.import_pending) {
-            if let Some((table, path, _)) = self.import_ctx.clone() {
-                let owner = self.window.clone();
-                let was_open = self.import_win.is_open();
-                let preview = nsql_run::bulk::preview_head(&path, 6, 64 * 1024);
-                let batch = self.settings.int("bulk.batch_rows").max(1) as usize;
-                let commit = self.settings.int("bulk.commit_every").max(0) as usize;
-                let mode = self
-                    .settings
-                    .get("bulk.mode")
-                    .and_then(nsql_run::bulk::BulkMode::parse)
-                    .unwrap_or_default();
-                self.import_win.open(
-                    el,
-                    theme::window_theme(self.settings.theme_mode()),
-                    owner.as_deref(),
-                    table,
-                    path,
-                    preview,
-                    (batch, commit, mode),
-                );
-                if !was_open {
-                    if let (Some(o), Some(c)) = (owner.as_deref(), self.import_win.window()) {
-                        winfocus::attach_child(o, c);
-                    }
-                }
-                self.sync_modal();
-            }
+            self.import_open_now(el);
         }
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
         if let Some((sid, needs)) = self.input_pending.take() {

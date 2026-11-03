@@ -145,7 +145,7 @@ nsql-io
 | 시험 | | nsql-run `bulk` 8(변환·문장·배치/커밋·실패 지목·열 수·**취소**·형식 판정·미리보기) · nsql-io 2 · E2E `scripts/mac-bulk-e2e.sh`(SQLite ①~④ CLI + **⑤ GUI Import 창** 17 검사 + `-P/-d` 실서버 3종 임시 표 `NSQLT_BULK` 5,000행 + PG `--fast` = **28/28**) |
 | 결정 | | D-220 INSERT 전용 ✅ · D-221 `bulk.check_constraints` on/`fire_triggers` off(옵션만 · TDS bulk 때 적용) · D-222 **PG COPY = text**(binary는 후속 · text가 서버 풀이라 타입 안전) · D-223 커밋 간격 10,000(COPY는 문장 원자) · D-224 위험 옵션 기본 끔(`bulk.append_hint`) — 한 줄 고지로 진행 |
 
-남음 = Import 창 후속(열 매핑 표 UI · 진행 카드 연동 · 결과 탭 새로 고침) · B-4 나머지(TVP · 파이프라이닝 · MySQL `LOAD DATA`/ODBC 배열 · SQL Server bulk 옵션 `CHECK_CONSTRAINTS`/`FIRE_TRIGGERS`는 tiberius 0.12에 API 없음).
+★ 11-04 = Import 창 2차 ✅(열 매핑 표 UI · 형식 6 · 형 추론 · 새 표 · Skip · [127](127-data-import-design.md)) · 남음 = 진행 카드 연동 · 결과 탭 새로 고침 · B-4 나머지(TVP · 파이프라이닝 · MySQL `LOAD DATA`/ODBC 배열 · SQL Server bulk 옵션 `CHECK_CONSTRAINTS`/`FIRE_TRIGGERS`는 tiberius 0.12에 API 없음).
 
 ### 3-5. 결정(권장안 진행 · D-222 = text 구현(binary 후속) (11-01 정합) · (이력) 결정 대기)
 

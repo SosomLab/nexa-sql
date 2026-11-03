@@ -870,9 +870,11 @@ impl App {
     /// 실행 계열 진입점의 공통 문지기 — 막혔으면 상태줄에 알리고 false.
     /// ★ Import 창 "시작"(89 §3-3): 탐색기 칸의 서버 = 활성 세션의 서버여야 한다 · gate · `Cmd::Import`(aux · 끝 = `ImportDone`).
     pub(crate) fn import_start(&mut self, mut spec: nsql_run::bulk::ImportSpec) {
-        let Some((table, path, server)) = self.import_ctx.clone() else {
+        let Some(ctx) = self.import_ctx.clone() else {
             return;
         };
+        let (path, server) = (ctx.path.clone(), ctx.server);
+        let table = spec.table.clone();
         if self.import_win.is_running() {
             return;
         }
@@ -914,7 +916,9 @@ impl App {
         };
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         spec.cancel = Some(cancel.clone());
-        spec.table = table.clone();
+        if let Some(c) = self.import_ctx.as_mut() {
+            c.created = spec.create.is_some();
+        }
         self.import_cancel = Some(cancel);
         self.import_key += 1;
         self.sess.aux += 1;
@@ -952,16 +956,27 @@ impl App {
                         let secs = rep.elapsed.as_secs_f64();
                         let rate = rep.rows as f64 / secs.max(1e-6);
                         (
-                            tf(
-                                Msg::ImpDone,
-                                &[
-                                    &rows,
-                                    &format!("{secs:.2}"),
-                                    &format!("{rate:.0}"),
-                                    &rep.path,
-                                    &rep.batches.to_string(),
-                                ],
-                            ),
+                            {
+                                let mut t = tf(
+                                    Msg::ImpDone,
+                                    &[
+                                        &rows,
+                                        &format!("{secs:.2}"),
+                                        &format!("{rate:.0}"),
+                                        &rep.path,
+                                        &rep.batches.to_string(),
+                                    ],
+                                );
+                                // ★ D-452 Skip: 건너뛴 행 수를 덧붙인다.
+                                if rep.skipped_total > 0 {
+                                    t.push_str(" · ");
+                                    t.push_str(&tf(
+                                        Msg::ImpSkippedN,
+                                        &[&rep.skipped_total.to_string()],
+                                    ));
+                                }
+                                t
+                            },
                             false,
                             format!(
                                 "ok rows={} path={} batches={}",
@@ -994,6 +1009,16 @@ impl App {
             text.clone(),
         ));
         self.import_win.set_result(text, bad, report);
+        // ★ 새 표를 만들었으면(127 §2-2) 그 스키마의 탐색기 메타를 새로 고친다.
+        if !bad {
+            if let Some(c) = self.import_ctx.clone() {
+                if c.created {
+                    let _ =
+                        self.explorer
+                            .refresh_meta(c.server.as_ref(), c.schema.as_deref(), false);
+                }
+            }
+        }
         self.redraw();
     }
 

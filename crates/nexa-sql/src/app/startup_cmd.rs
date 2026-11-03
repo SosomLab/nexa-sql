@@ -987,10 +987,37 @@ cells={n}
             return;
         }
         // 자체 시험(89 §3-3): Import 창 `import.open:<표>;<파일>` · `import.start` · `import.cancel` · `import.dump:<파일>`.
+        //   ★ 2차(127): `import.open:<표>;<파일>`(기존 표) · `import.open:new;<파일>`(새 표) · `import.set:<키>=<값>`(header·delim·encoding·sheet·
+        //   format·trim·null_text·target·table·on_error·batch·commit·empty_null·skip·include·type:<열>=<형>·map:<열>=<대상>).
         if let Some(rest) = id.strip_prefix("import.open:") {
             if let Some((table, file)) = rest.split_once(';') {
-                self.import_ctx = Some((table.to_string(), PathBuf::from(file), None));
+                let existing = (!table.is_empty() && table != "new").then(|| table.to_string());
+                let name = existing.as_ref().map(|t| {
+                    t.rsplit('.')
+                        .next()
+                        .unwrap_or(t)
+                        .trim_matches(|c| matches!(c, '"' | '`' | '[' | ']'))
+                        .to_string()
+                });
+                self.import_ctx = Some(app::import::ImportCtx {
+                    existing,
+                    schema: None,
+                    name,
+                    path: PathBuf::from(file),
+                    server: None,
+                    dialect: self.sess.dialect,
+                    cols_wait: false,
+                    created: false,
+                });
                 self.import_pending = true;
+            }
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("import.set:") {
+            if let Some((k, v)) = rest.split_once('=') {
+                if self.import_win.set_option(k, v) {
+                    self.import_reinspect();
+                }
             }
             return;
         }

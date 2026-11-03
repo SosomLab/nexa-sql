@@ -1626,6 +1626,17 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes[i].ex.request_columns(schema, table, urgent);
     }
 
+    /// ★ Import 창(127 §2-2): 그 서버 칸의 열 캐시.
+    pub(crate) fn columns_cached(
+        &self,
+        spec: Option<&ConnectSpec>,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Option<Vec<(String, String)>> {
+        let i = self.meta_pane(spec);
+        self.panes.get(i)?.ex.columns_cached(schema, table)
+    }
+
     /// 완성 상세 카드(09-24): 테이블 상세·컬럼을 객체 id로 요청.
     pub(crate) fn request_detail(&mut self, spec: Option<&ConnectSpec>, id: nsql_run::meta::ObjId) {
         let i = self.meta_pane(spec);
@@ -1786,6 +1797,12 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                     ExplorerAction::Import { owner, .. } => {
                         out.push(ExplorerAction::Import {
                             owner,
+                            server: p.key.clone(),
+                        });
+                    }
+                    ExplorerAction::ImportNew { schema, .. } => {
+                        out.push(ExplorerAction::ImportNew {
+                            schema,
                             server: p.key.clone(),
                         });
                     }

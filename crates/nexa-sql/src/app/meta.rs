@@ -553,7 +553,40 @@ impl App {
                         .and_then(|s| s.dialect)
                         .unwrap_or(self.sess.dialect);
                     let table = nsql_catalog::qualified(dialect, &owner.schema, &owner.name);
-                    self.import_ctx = Some((table, PathBuf::new(), server));
+                    self.import_ctx = Some(app::import::ImportCtx {
+                        existing: Some(table),
+                        schema: Some(owner.schema.clone()).filter(|s| !s.is_empty()),
+                        name: Some(owner.name.clone()),
+                        path: PathBuf::new(),
+                        server,
+                        dialect,
+                        cols_wait: false,
+                        created: false,
+                    });
+                    self.file_purpose = FilePurpose::Import;
+                    self.open_file_dlg = Some(PickerMode::Open);
+                    changed = true;
+                }
+                // ★ 127 §2-1 ②: 스키마 우클릭 ▸ Import Data(new table)… → 새 표.
+                ExplorerAction::ImportNew { schema, server } => {
+                    if !self.lic_gate(nsql_license::Feature::ImportGui) {
+                        changed = true;
+                        continue;
+                    }
+                    let dialect = server
+                        .as_ref()
+                        .and_then(|s| s.dialect)
+                        .unwrap_or(self.sess.dialect);
+                    self.import_ctx = Some(app::import::ImportCtx {
+                        existing: None,
+                        schema: Some(schema).filter(|s| !s.is_empty()),
+                        name: None,
+                        path: PathBuf::new(),
+                        server,
+                        dialect,
+                        cols_wait: false,
+                        created: false,
+                    });
                     self.file_purpose = FilePurpose::Import;
                     self.open_file_dlg = Some(PickerMode::Open);
                     changed = true;

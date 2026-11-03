@@ -342,8 +342,11 @@ struct App {
     sqlprev_plain: Option<(String, String)>,
     /// ★ Import 창(89 §3-3 · T-236 B-3): 대상 (표 표기 · 파일 · 탐색기 칸의 서버) · 열 차례 · 취소 깃발 · 요청 번호.
     import_win: import_win::ImportWin,
-    import_ctx: Option<(String, PathBuf, Option<ConnectSpec>)>,
+    import_ctx: Option<app::import::ImportCtx>,
     import_pending: bool,
+    /// ★ 127 §2-2: 살펴보기 스레드 · 순번(뒤늦은 응답 버림).
+    import_inspect: Option<app::import::InspectJob>,
+    import_seq: u64,
     import_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     import_key: u64,
     /// ★ T-8 GUI 2차: 진행 중인 결과 내보내기(취소 깃발 · 요청 번호 · 저장 창 열기 요청).
@@ -1913,6 +1916,8 @@ fn main() {
         import_win: import_win::ImportWin::new(),
         import_ctx: None,
         import_pending: false,
+        import_inspect: None,
+        import_seq: 0,
         import_cancel: None,
         import_key: 0,
         export_cancel: None,

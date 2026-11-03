@@ -1,6 +1,6 @@
 # 127. 데이터 가져오기(Import) 설계 — 파일 → 표 (xlsx · parquet · json · csv/tsv/jsonl 한 경로)
 
-> **상태**: 📐 설계(11-04 새벽 · 개발 세션 · 사용자 11-04 "export 뒤 import도 — DataGrip 등 최신 프로그램을 분석해 사용자 편의성과 속도가 좋은 방향") → 구현 단위 §7 순서로 commit·push.
+> **상태**: ✅ ①~⑥ 구현(11-04 새벽 · 개발 세션 단독 · [journal 11-04 §1~§4](journal/2026-11-04.md) · 커밋 4c237a90 ①②③ · 2208ffa1 ④ · ae16a9b9 ⑤ · ⑥ = GUI Import 창 2차) · ⑦ 측정·등재 = 다음 · 진입점 ③(메뉴 Database ▸ Import Data…) = 다음 차수 · 원안 = 사용자 11-04 "export 뒤 import도 — DataGrip 등 최신 프로그램을 분석해 사용자 편의성과 속도가 좋은 방향".
 > **요청 원문**(사용자): "import의 방식 및 타입 지정 등은 DataGrid 등 최신 프로그램을 분석해서 사용자 편의성과 속도가 좋은 방향으로 개발" · 앞선 결정 = D-446(T-8 가져오기 = parquet + xlsx + "TSV·CSV 포함" = 기존 csv/tsv/jsonl과 **한 경로** · xlsx 읽기 crate = DR-3 예외 원장 10 §4 추가 · 개발 선정 뒤 알림).
 > 관련 = [89 대량 I/O](89-bulk-io-review.md)(적재 경로 = 드라이버 최속 경로 · 다중 행 INSERT · 실패 지목 · 취소) · [40 Step 12](40-cli-usage.md) · [43](43-fetch-model-and-result-tabs.md) · [61 §1-7 데이터 보호](61-core-design-and-working-rules.md) · 내보내기 짝 = D-448([journal 11-04 §0](journal/2026-11-04.md)).
 

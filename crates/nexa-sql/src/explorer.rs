@@ -991,6 +991,11 @@ pub(crate) enum ExplorerAction {
         owner: ObjectInfo,
         server: Option<ConnectSpec>,
     },
+    /// ★ 127 §2-1 ②: 스키마 ▸ Import Data(new table)… — 파일로 새 표.
+    ImportNew {
+        schema: String,
+        server: Option<ConnectSpec>,
+    },
     /// ★ 객체 삭제 요청(10-01 · 탐색기 ▸ Delete… · 서버는 `ExplorerSet`이 채운다).
     DropObject {
         owner: ObjectInfo,
@@ -4038,6 +4043,33 @@ impl Explorer {
     }
 
     /// 자동 완성 즉시 채움(47 §4): 그 테이블 컬럼을 메타 세션으로 1건 요청(트리 노드 없이 · 이미 로드/로딩 중이면 0).
+    /// ★ Import 창(127 §2-2): 표의 열(이름 · 형)이 메타 캐시에 있으면 — 없으면 `None`(호스트는 `request_columns(.., true)` 뒤 다시 묻는다).
+    pub(crate) fn columns_cached(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Option<Vec<(String, String)>> {
+        let snap = self.meta.snapshot();
+        let schema_name = match schema {
+            Some(s) => s.to_string(),
+            None => self.meta.names.get(snap.current_schema?).to_string(),
+        };
+        let id = snap.lookup(&self.meta.names, Some(&schema_name), table)?;
+        match snap.columns(id) {
+            nsql_run::meta::ColState::Loaded { cols, .. } => Some(
+                cols.iter()
+                    .map(|c| {
+                        (
+                            self.meta.names.get(c.name).to_string(),
+                            self.meta.names.get(c.data_type).to_string(),
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
     pub(crate) fn request_columns(&mut self, schema: Option<&str>, table: &str, urgent: bool) {
         if self.dialect.is_none() {
             return;
@@ -8422,6 +8454,8 @@ impl Explorer {
                     }
                     NodeKind::Schema(_) => {
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        // ★ 파일 → 새 표(127 §2-1 ②).
+                        items.push(CtxItem::item("import_new", t(Msg::MnImportNew)));
                         if self.sizes_on {
                             // ★ 펼치지 않고 용량 읽기(사용자 09-30).
                             items.push(CtxItem::item("sizes", t(Msg::ExpLoadSizes)));
@@ -8928,6 +8962,14 @@ impl Explorer {
                 if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
                     self.actions.push(ExplorerAction::Import {
                         owner: o,
+                        server: None,
+                    });
+                }
+            }
+            "import_new" => {
+                if let NodeKind::Schema(sch) = self.nodes[i].kind.clone() {
+                    self.actions.push(ExplorerAction::ImportNew {
+                        schema: sch,
                         server: None,
                     });
                 }
