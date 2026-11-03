@@ -381,6 +381,8 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 > ★ **현행 운영(11-01 · 사용자 · D-439 후속)** = 상시 검증은 [102 §5-7](102-collab-session-operation.md)(차수마다 V1·V2 · 워크스페이스 전체 = push 뒤 CI = G-1의 실제 자리) · 아래 게이트 표는 성능 점검([71](71-performance-review-process.md)) 또는 릴리스 게이트를 요청받았을 때만 · G-4 `perf.yml` = 신설 안 함(보류).
 
+> ★ **편집기 페인트 게이트**(55 §5 · "2 MB 본문 페인트 ≤ 20 ms · ↓ 키 ≤ 0.1 ms") = **✅ 11-03 10.2 ms 프레임(editor 6.2)** · 수정 전 57.5/52.3(괄호 표 재스캔 · T-91 · nexa-ui 5169a3f) · 재현 = `target/t91-1103/run.ps1` · [journal 11-03 §11](journal/2026-11-03.md).
+
 | 층 | 무엇 | 언제 | 도구 |
 |---|---|---|---|
 | **G-1 회귀(단위)** | 상한 경계(페치 200 · 프로브 백오프 · 워커 교체 · 캐시 상한 · 강조 상한) | 매 커밋 `cargo test` | `probe::tests` · `worker::tests` · nexa-ui 캐시 테스트 · (신설) `budget::tests` |
