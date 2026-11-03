@@ -85,6 +85,13 @@ pub(crate) enum TabMenuReq {
 /// ★ T-110 3-4: 섹션 헤더 재훑기 전 입력 멈춤 대기(ms · 타이핑 중 전체 훑기 방지).
 const SECTIONS_SETTLE_MS: u128 = 400;
 
+/// ★ T-325 2차: 방언 강조를 어느 탭에 적용할지(공유 세션 = 전용 탭 제외 전부 · 전용 세션 = 그 탭만).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SqlDialectScope {
+    Shared { private_tabs: Vec<u64> },
+    Only(Vec<u64>),
+}
+
 pub(crate) struct Editors {
     tabs: TabBar,
     /// 탭 우클릭 메뉴(결과 탭과 같은 부품 · 팝업 층에 그린다).
@@ -440,16 +447,36 @@ impl Editors {
         }
     }
 
-    /// ★ T-325 2차: 접속으로 방언이 확정됐다 — "SQL" 구문 탭의 강조기를 그 방언 스펙으로 바꾼다(강조가 꺼진 큰 파일 탭은 건드리지 않음 ·
-    ///   새 탭·`Set Syntax`도 이후 같은 스펙). 같은 방언이면 비용 0.
-    pub(crate) fn apply_sql_dialect(&mut self, dialect: nsql_core::Dialect) {
-        if self.sql_dialect == Some(dialect) {
-            return;
-        }
-        self.sql_dialect = Some(dialect);
+    /// ★ T-325 2차: 접속으로 방언이 확정됐다 — "SQL" 구문 탭의 강조기를 그 방언 스펙으로 바꾼다(강조가 꺼진 큰 파일 탭은 건드리지 않음).
+    ///   `Shared` = 공유 세션(전용 세션이 소유한 탭은 제외 · 새 탭·`Set Syntax` 기본도 이 방언 · 같은 방언이면 비용 0) ·
+    ///   `Only` = 전용 세션(`CONNECT` 탭)의 그 탭만(기본 방언은 건드리지 않음 · 52 DR-34 세션 = 통제의 단위).
+    pub(crate) fn apply_sql_dialect(
+        &mut self,
+        dialect: nsql_core::Dialect,
+        scope: SqlDialectScope,
+    ) {
+        let only: Option<Vec<u64>> = match &scope {
+            SqlDialectScope::Shared { .. } => {
+                if self.sql_dialect == Some(dialect) {
+                    return;
+                }
+                self.sql_dialect = Some(dialect);
+                None
+            }
+            SqlDialectScope::Only(ids) => Some(ids.clone()),
+        };
+        let skip: Vec<u64> = match &scope {
+            SqlDialectScope::Shared { private_tabs } => private_tabs.clone(),
+            SqlDialectScope::Only(_) => Vec::new(),
+        };
         let spec = self.registry.sql_for(dialect);
         for i in 0..self.syntax.len() {
-            if self.syntax[i].name != "SQL" {
+            let id = self.tab_id(i);
+            let wanted = match &only {
+                Some(ids) => ids.contains(&id),
+                None => !skip.contains(&id),
+            };
+            if !wanted || self.syntax[i].name != "SQL" {
                 continue;
             }
             self.syntax[i] = spec.clone();

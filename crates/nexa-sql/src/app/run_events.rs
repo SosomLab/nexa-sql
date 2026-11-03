@@ -319,8 +319,19 @@ impl App {
             self.sess.busy = false;
         }
         self.sess.dialect = dialect;
-        // ★ T-325 2차(11-04): 방언이 확정되면 SQL 구문 탭의 강조 키워드도 그 방언으로(예약어 표 · 108 §9).
-        self.editors.apply_sql_dialect(dialect);
+        // ★ T-325 2차(11-04): 방언이 확정되면 SQL 구문 탭의 강조 키워드도 그 방언으로(예약어 표 · 108 §9) — 전용 세션은 그 탭만 ·
+        //   공유 세션은 전용 세션이 소유한 탭을 뺀 전부.
+        let scope = match self.sess.owner {
+            Some(tab) => editors::SqlDialectScope::Only(vec![tab]),
+            None => editors::SqlDialectScope::Shared {
+                private_tabs: self
+                    .all_sess()
+                    .filter(|s| !s.closing)
+                    .filter_map(|s| s.owner)
+                    .collect(),
+            },
+        };
+        self.editors.apply_sql_dialect(dialect, scope);
         self.sess.connected = true;
         self.sess.cur_schema = Some(schema).filter(|s| !s.is_empty());
         let was_broken = std::mem::take(&mut self.sess.broken);
