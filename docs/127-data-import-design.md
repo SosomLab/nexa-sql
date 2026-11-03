@@ -117,7 +117,18 @@ pub fn open_source(path: &Path, opts: &SourceOpts) -> io::Result<Box<dyn RecordS
 ## 6. 성능 목표·측정(71 · 26 §8 · 39 §3)
 
 - 미리보기/추론 = 표본 1000행 · 파일 크기와 무관 · ≤ 200 ms(xlsx는 시트 적재 비용 = 첫 열기 1회 · 100 MB 시트 수 초 → 진행 표시).
-- 적재 = 종전 경로 그대로(SQLite 다중 행 · Oracle 배열 DML · PG COPY · TDS bulk) · 읽기 층 오버헤드 ≤ 10 %(csv 디코더 스트리밍 · parquet 행 그룹) · 측정 자산 = `scripts/import-bench.sh`(sqlite · 100만 행 csv/xlsx/parquet 생성 → 적재 행/s · 메모리 피크) · 부하원 등재(39 §3) = 추론 스레드(`import.sample_rows` 상한) · JSON 전체 적재(`import.json_max_mb`).
+- 적재 = 종전 경로 그대로(SQLite 다중 행 · Oracle 배열 DML · PG COPY · TDS bulk) · 읽기 층 오버헤드 ≤ 10 %(csv 디코더 스트리밍 · parquet 행 그룹) · 측정 자산 = `scripts/import-bench.sh`(sqlite 격리 홈 · N행 표 → csv/jsonl/xlsx/parquet 내보내기 → `--dry-run` 시간 → `--create` 적재 행/s · 산출 `target/import-bench/`) · 부하원 등재(39 §3-3) = 살펴보기 스레드 `import-inspect`(`import.sample_rows`·`import.preview_rows`) · JSON 전체 적재(`import.json_max_mb` 256 · 초과 = 거절 + JSON Lines 안내 · nsql-io `open_text`).
+
+**첫 실측(11-04 · Windows · Debug exe · SQLite 파일 · 10만 행 × 5열 · 배치 1000 · 커밋 끝에 한 번 · `scripts/import-bench.sh -n 100000`)**
+
+| 형식 | 내보내기 | 파일 | 살펴보기(`--dry-run` 표본 1000) | 적재 전체(프로세스 벽시계) | 적재 엔진 보고(행/s) |
+|---|---|---|---|---|---|
+| csv | 1.58 s | 3.67 MB | 0.57 s | 2.22 s · 45,085행/s | 1.51 s · **66,319/s** · multirow · 200배치 |
+| jsonl | 7.81 s | 8.37 MB | 0.55 s | 2.76 s · 36,271/s | 1.85 s · 54,189/s |
+| xlsx | 1.29 s | 2.87 MB | **1.51 s**(시트 범위 적재 = 첫 열기 1회) | 3.99 s · 25,068/s | 1.28 s · 77,913/s |
+| parquet | 0.89 s | 1.70 MB | 0.61 s | 2.22 s · 45,085/s | 1.47 s · 68,106/s |
+
+- 읽기 층 오버헤드 = 적재 엔진 시간이 형식과 무관하게 1.3~1.9 s → 목표(≤ 10 %) 안 · xlsx는 살펴보기·적재 모두 **시트 적재 1.5 s가 고정 비용**(calamine 범위 = 셀 수 비례 · 100 MB 시트는 수 초 → 창 제목 "살펴보는 중…"으로 보임) · jsonl 내보내기가 느린 것은 내보내기 쪽(별건) · Release lite 수치는 다음 릴리스 때(71 절차).
 
 ## 7. 구현 단위(각각 commit · push · 기능 단위 시험)
 

@@ -102,6 +102,7 @@ impl App {
                 .and_then(OnError::parse)
                 .unwrap_or_default(),
             text_margin_pct: self.settings.int("import.text_margin_pct").clamp(0, 500) as u32,
+            json_max_mb: self.settings.int("import.json_max_mb").clamp(1, 4096) as u32,
         };
         let o = import_win::ImportOpen {
             existing: ctx.existing.clone(),

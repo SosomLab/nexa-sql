@@ -70,6 +70,7 @@ pub(crate) struct Defaults {
     pub encoding: String,
     pub on_error: OnError,
     pub text_margin_pct: u32,
+    pub json_max_mb: u32,
 }
 
 /// 매핑 표 한 줄 = 원료 열 하나.
@@ -234,6 +235,7 @@ impl ImportWin {
                 encoding: "auto".into(),
                 on_error: OnError::Stop,
                 text_margin_pct: 50,
+                json_max_mb: 256,
             },
             cb_format: Combo::new(fmt_items, 0),
             cb_sheet: Combo::new(Vec::new(), 0),
@@ -391,6 +393,7 @@ impl ImportWin {
             sheet,
             trim: self.cb_trim.is_checked(),
             null_text: self.tb_null.text(),
+            json_max_mb: self.defaults.json_max_mb,
         }
     }
 

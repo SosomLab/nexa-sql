@@ -95,6 +95,8 @@ pub struct SourceOpts {
     pub trim: bool,
     /// 이 글과 같은 셀 = NULL(비면 끔 · 빈 셀은 `bulk.empty_null`이 다룬다).
     pub null_text: String,
+    /// JSON 배열 파일 상한(MB · 전체를 읽는 형식이라 · 초과 = 거절 + JSON Lines 안내 · 설정 `import.json_max_mb`).
+    pub json_max_mb: u32,
 }
 
 impl Default for SourceOpts {
@@ -107,6 +109,7 @@ impl Default for SourceOpts {
             sheet: None,
             trim: false,
             null_text: String::new(),
+            json_max_mb: 256,
         }
     }
 }
@@ -251,9 +254,20 @@ pub fn open_text(
     let decoded = BufReader::with_capacity(1 << 16, DecodeReader::new(chained, enc));
     match fmt {
         SourceFormat::Json => {
+            // ★ 전체를 읽는 형식 — 상한(MB)을 넘으면 거절(39 §3-3 · 설정 `import.json_max_mb`).
+            let max = u64::from(opts.json_max_mb.max(1)) << 20;
             let mut text = String::new();
-            let mut br = decoded;
+            let mut br = decoded.take(max + 1);
             br.read_to_string(&mut text)?;
+            if text.len() as u64 > max {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "json: file larger than {} MB (import.json_max_mb) — convert to JSON Lines (.jsonl) for streaming",
+                        opts.json_max_mb
+                    ),
+                ));
+            }
             Ok(Box::new(JsonSource::from_text(&text, opts, enc)?))
         }
         SourceFormat::Jsonl => Ok(Box::new(JsonlSource {
@@ -950,6 +964,33 @@ mod tests {
             ..SourceOpts::default()
         };
         assert!(open_source(tp.path(), &bad).is_err());
+    }
+
+    #[test]
+    fn json_array_over_limit_is_refused() {
+        let o = SourceOpts {
+            json_max_mb: 1,
+            ..SourceOpts::default()
+        };
+        let big = format!(
+            "[{}]",
+            (0..200_000)
+                .map(|i| format!("{{\"v\":{i}}}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert!(big.len() > 1 << 20);
+        let r = open_text(
+            Box::new(io::Cursor::new(big.into_bytes())),
+            SourceFormat::Json,
+            &o,
+        );
+        assert!(r.is_err());
+        assert!(r
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+            .contains("JSON Lines"));
     }
 
     #[test]

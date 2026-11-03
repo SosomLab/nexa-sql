@@ -1931,6 +1931,7 @@ fn cmd_import(o: &Opts) -> i32 {
         sheet: o.sheet.clone(),
         trim: o.trim,
         null_text: o.null_text.clone().unwrap_or_default(),
+        json_max_mb: int("import.json_max_mb", 256).clamp(1, 4096) as u32,
     };
     let on_error = o
         .on_error

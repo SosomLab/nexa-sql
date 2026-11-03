@@ -1062,30 +1062,6 @@ pub fn create_table_sql_for(dialect: Dialect, table: &str, c: &CreateSpec) -> St
     nsql_io::infer::create_table_sql(table, &cols)
 }
 
-/// 파일 앞부분(미리보기 · 최대 `lines`줄 · `max_bytes`) — Import 창의 미리보기 상자.
-pub fn preview_head(path: &std::path::Path, lines: usize, max_bytes: usize) -> String {
-    use std::io::Read;
-    let Ok(f) = std::fs::File::open(path) else {
-        return String::new();
-    };
-    let mut buf = Vec::with_capacity(max_bytes.min(1 << 20));
-    let _ = f.take(max_bytes as u64).read_to_end(&mut buf);
-    let text = String::from_utf8_lossy(&buf);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let mut out = String::new();
-    for (i, l) in text.lines().enumerate() {
-        if i >= lines {
-            out.push_str("\n…");
-            break;
-        }
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(l);
-    }
-    out
-}
-
 impl Runner {
     /// ★ 파일 → 표 적재 한 벌(원료 열기 `RecordSource` · 헤더/열 · (새 표면 CREATE 먼저) · 표 열·타입 메타 · 건너뜀·매핑 ·
     ///   [`Runner::bulk_load`]) — CLI `nsql import`와 GUI Import 창의 단일 원천. `path` `-` = stdin(글 형식). 준비 단계 오류(파일 ·
@@ -1738,16 +1714,5 @@ mod tests {
         assert_eq!(pg.cols[0].name, "emp_no");
         assert_eq!(pg.cols[1].ty, "varchar(10)");
         assert_eq!(OnError::parse("SKIP"), Some(OnError::Skip));
-    }
-
-    #[test]
-    fn preview_head_limits_lines_and_strips_bom() {
-        let d = std::env::temp_dir().join(format!("nsql-bulk-prev-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        let f = d.join("p.csv");
-        std::fs::write(&f, "\u{feff}a,b\n1,2\n3,4\n5,6\n").unwrap();
-        let s = preview_head(&f, 2, 1 << 16);
-        assert_eq!(s, "a,b\n1,2\n…");
-        let _ = std::fs::remove_dir_all(&d);
     }
 }
