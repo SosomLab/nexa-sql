@@ -1649,6 +1649,8 @@ pub mod ddl;
 pub use ddl::{ddl_target, DdlKind, DdlTarget, DdlVerb};
 pub mod savequeue;
 pub use savequeue::SaveQueue;
+#[doc(hidden)]
+pub mod testpath; // 시험용 임시 경로 가드(T-465 · D-445) — 의존 0(std만)
 
 #[cfg(test)]
 mod tests {

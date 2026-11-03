@@ -25,7 +25,9 @@ fn registry_picks_latest_version_and_opens() {
         eprintln!("[skip] nsql_driver_sqlite cdylib 없음");
         return;
     };
-    let root = std::env::temp_dir().join(format!("nsql-ext-{}", std::process::id()));
+    // T-465(11-03): 적재한 cdylib는 프로세스가 끝날 때까지 내리지 않으므로(64 §5) OS 임시 폴더에 두면 Windows에서 지울 수 없다
+    //   → cargo의 `target/tmp`(CARGO_TARGET_TMPDIR)에 고정 이름으로 만들고 다음 실행이 앞선 것을 지운다(저장소 밖 찌꺼기 0).
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("nsql-ext-registry");
     let _ = std::fs::remove_dir_all(&root);
     let name = library_file_name("nsql-driver-sqlite");
     for ver in ["1.2.0", "1.10.0", "0.9.9"] {

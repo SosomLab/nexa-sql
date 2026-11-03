@@ -5061,8 +5061,9 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
     /// T-146 전 경로(SQLite 파일 · 두 접속): 수동 모드의 INSERT는 **ROLLBACK으로 되돌아가야** 한다(종전 = 이미 커밋돼 남았다).
     #[test]
     fn manual_mode_insert_is_really_uncommitted() {
-        let path = std::env::temp_dir().join(format!("nsql_t146_{}.db", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        // T-465(11-03): 가드가 끝날 때(다른 스레드 접속이 잠금을 풀 때까지 재시도) 파일·-journal을 지운다.
+        let tp = nsql_core::testpath::TempPath::with_ext("t146", "db");
+        let path = tp.to_path_buf();
         let target = format!("CONNECT sqlite://{}\n", path.display());
         let mut r = runner().with_autocommit(false);
         let (errs, ev) = collect(
@@ -5087,7 +5088,6 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             Some("1".to_string())
         );
         drop(r);
-        let _ = std::fs::remove_file(&path);
     }
 
     /// `SHOW ERRORS`(SQL*Plus 관용 줄 · 09-20) — "미지원"이 아니라 "오류 없음"(Oracle 밖에서는 컴파일 오류 개념이 없다).

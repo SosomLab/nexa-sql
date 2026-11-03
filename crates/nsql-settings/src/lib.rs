@@ -9475,17 +9475,20 @@ mod tests {
     /// 옛 `format.indent_from_tab` 폐기(09-29): 꺼져 있던 사용자는 옛 기본(tab·4)을 명시 · 켜짐/없음 = 새 기본(활성 탭 설정) · 옛 줄은 사라진다.
     #[test]
     fn indent_from_tab_is_retired_with_migration() {
-        let s = Settings::from_text(tmp("ift-off"), "format.indent_from_tab=off\n");
+        let _t = tmp("ift-off");
+        let s = Settings::from_text(_t.file(), "format.indent_from_tab=off\n");
         assert_eq!(s.get("format.indent"), Some("tab"));
         assert_eq!(s.get("format.indent_width"), Some("4"));
         assert!(s.unknown.is_empty(), "{:?}", s.unknown);
+        let _t = tmp("ift-off2");
         let s = Settings::from_text(
-            tmp("ift-off2"),
+            _t.file(),
             "format.indent_from_tab=off\nformat.indent=space\nformat.indent_width=2\n",
         );
         assert_eq!(s.get("format.indent"), Some("space"));
         assert_eq!(s.get("format.indent_width"), Some("2"));
-        let s = Settings::from_text(tmp("ift-on"), "format.indent_from_tab=on\n");
+        let _t = tmp("ift-on");
+        let s = Settings::from_text(_t.file(), "format.indent_from_tab=on\n");
         assert_eq!(s.get("format.indent"), Some("editor"));
         assert_eq!(s.get("format.indent_width"), Some("editor"));
         assert!(s.unknown.is_empty(), "{:?}", s.unknown);
@@ -9494,8 +9497,9 @@ mod tests {
     /// 키 이름 바꿈(09-28 · docs/94 §6): 옛 줄 → 새 키(기본값이면 값 없음) · 새 키가 있으면 옛 값은 버림 · 옛 줄은 unknown에 남지 않는다 · `canonical_key`.
     #[test]
     fn renamed_keys_migrate_from_old_lines() {
+        let _t = tmp("renamed");
         let s = Settings::from_text(
-            tmp("renamed"),
+            _t.file(),
             "ui.ime_hint=off\nui.ime_hint_watch=off\neditor.tab_line_scratch=#112233\nlicense.gates_dev=on\n",
         );
         assert_eq!(s.get("input.ime_hint"), Some("off"));
@@ -9508,7 +9512,8 @@ mod tests {
             s.unknown
         );
         // 새 키를 이미 정했으면 옛 값은 버린다.
-        let s = Settings::from_text(tmp("renamed2"), "ui.ime_hint=off\ninput.ime_hint=on\n");
+        let _t = tmp("renamed2");
+        let s = Settings::from_text(_t.file(), "ui.ime_hint=off\ninput.ime_hint=on\n");
         assert_eq!(s.get("input.ime_hint"), Some("on"));
         assert_eq!(canonical_key("ui.ime_hint"), "input.ime_hint");
         assert_eq!(
@@ -9543,8 +9548,9 @@ mod tests {
     /// 옛 값 버림 · 소수 옛 값 · `get_as`/`set`은 옛 키를 옛 단위로 · 표의 배수는 새 기본값 = 옛 기본값 × 배수와 맞는지(회귀 방지).
     #[test]
     fn rescaled_keys_migrate_with_unit() {
+        let _t = tmp("rescaled1");
         let s = Settings::from_text(
-            tmp("rescaled1"),
+            _t.file(),
             "ui.toast_secs=5\nprobe.timeout=2.5\nrun.toast_hide_secs=5\nproject.autosave_change_secs=30\nmeta.refresh_idle_secs=0\nexplorer.typeahead_timeout=1500\n",
         );
         assert_eq!(s.get("ui.toast_ms"), Some("5000"));
@@ -9575,10 +9581,12 @@ mod tests {
             "`get`은 늘 새 단위(옛 키 = 별칭)"
         );
         // 새 키를 이미 정했으면 옛 값은 버린다.
-        let s = Settings::from_text(tmp("rescaled2"), "ui.toast_secs=5\nui.toast_ms=1200\n");
+        let _t = tmp("rescaled2");
+        let s = Settings::from_text(_t.file(), "ui.toast_secs=5\nui.toast_ms=1200\n");
         assert_eq!(s.get("ui.toast_ms"), Some("1200"));
         // 옛 키로 set = 옛 단위 해석 · 범위 검증은 새 단위로.
-        let mut s = Settings::from_text(tmp("rescaled3"), "");
+        let _t = tmp("rescaled3");
+        let mut s = Settings::from_text(_t.file(), "");
         assert_eq!(s.set("ui.toast_secs", "2.5").unwrap(), "2500");
         assert_eq!(s.get("ui.toast_ms"), Some("2500"));
         assert_eq!(s.set("ui.toast_secs", "3").unwrap(), "3000");
@@ -9674,8 +9682,9 @@ mod tests {
     /// 09-28 기본값: 서버 노드 연결 해제 = 항상 고르기(D-144) · 파일 검색 상한 = SSD 8 MB · 향상 모드 = HDD 2 MB · 옛 기본값이 파일에 있으면 새 기본값.
     #[test]
     fn defaults_disconnect_pick_and_search_limit() {
+        let _t = tmp("d0928");
         let s = Settings::from_text(
-            tmp("d0928"),
+            _t.file(),
             "explorer.disconnect_pick=auto\nsearch.max_file_kb=1024\n",
         );
         assert_eq!(s.get("explorer.disconnect_pick"), Some("always"));
@@ -9734,15 +9743,28 @@ mod tests {
         assert_eq!(normalize(k, "99"), None);
     }
 
-    fn tmp(name: &str) -> PathBuf {
+    /// 시험용 설정 폴더 가드(T-465 · 11-03): 만들 때 앞선 찌꺼기를 지우고 **끝날 때(패닉 포함) 폴더째 지운다**.
+    struct Tmp(PathBuf);
+    impl Tmp {
+        fn file(&self) -> PathBuf {
+            self.0.join(FILE_NAME)
+        }
+    }
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn tmp(name: &str) -> Tmp {
         let d = std::env::temp_dir().join(format!("nsql-settings-{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&d);
-        d.join(FILE_NAME)
+        Tmp(d)
     }
 
     #[test]
     fn defaults_english_and_system() {
-        let s = Settings::open(tmp("defaults"));
+        let _t = tmp("defaults");
+        let s = Settings::open(_t.file());
         // 언어 기본값 = `system` → OS 표시 언어(지원 언어일 때) · 그 밖은 영어 — 시험 기기에 따라 en/ko.
         assert_eq!(s.lang(), nsql_i18n::system_lang());
         assert_eq!(s.get("ui.lang"), Some(LANG_SYSTEM));
@@ -9754,7 +9776,8 @@ mod tests {
 
     #[test]
     fn set_validates_and_saves_only_changes() {
-        let p = tmp("set");
+        let _t = tmp("set");
+        let p = _t.file();
         let mut s = Settings::open(p.clone());
         assert_eq!(s.set("ui.lang", "KO").unwrap(), "ko");
         assert_eq!(s.set("ui.theme", "Dark").unwrap(), "dark");
@@ -9782,7 +9805,8 @@ mod tests {
     /// 언어 기본값 = `system`(OS를 따름 · 10-04) — 사용자가 언어를 고르면(OS와 같아도) 저장돼 이긴다 · `system`/reset = 다시 OS를 따름.
     #[test]
     fn lang_follows_os_until_user_picks() {
-        let p = tmp("lang_os");
+        let _t = tmp("lang_os");
+        let p = _t.file();
         let mut s = Settings::open(p.clone());
         let os = nsql_i18n::system_lang();
         assert!(
@@ -9812,7 +9836,8 @@ mod tests {
 
     #[test]
     fn corrupt_value_falls_back_and_unknown_keys_survive() {
-        let p = tmp("corrupt");
+        let _t = tmp("corrupt");
+        let p = _t.file();
         let s = Settings::from_text(
             p.clone(),
             "_schema=1\nui.theme=purple\nui.font_size=abc\nfuture.key=42\n",
@@ -9970,7 +9995,8 @@ mod tests {
                 "{k}: 강제값이 검증을 통과해야 한다"
             );
         }
-        let mut s = Settings::open(tmp("boost"));
+        let _t = tmp("boost");
+        let mut s = Settings::open(_t.file());
         s.set("ui.fade_fast_ms", "900").unwrap();
         s.set("statusbar.git", "on").unwrap();
         assert_eq!(s.effective("ui.fade_fast_ms"), Some("900"));
@@ -9999,7 +10025,8 @@ mod tests {
     /// T-90a(docs/39 §4): 실효 값 우선순위 — 개별 > 모드 프리셋 > 기본 · full = 기본과 동일 · reset하면 다시 모드.
     #[test]
     fn perf_effective_priority() {
-        let mut s = Settings::open(tmp("perf-eff"));
+        let _t = tmp("perf-eff");
+        let mut s = Settings::open(_t.file());
         assert_eq!(s.perf_mode(), PerfMode::Full);
         assert_eq!(s.effective("grid.max_rows"), Some("200"));
         assert_eq!(s.perf_source("grid.max_rows"), Some(PerfSource::Default));
@@ -10032,7 +10059,8 @@ mod tests {
     /// D-59: 부하원 키를 직접 바꾸면 표시 모드 = custom(설정된 모드는 그대로 남는다).
     #[test]
     fn perf_mode_display_is_custom_when_overridden() {
-        let mut s = Settings::open(tmp("perf-custom"));
+        let _t = tmp("perf-custom");
+        let mut s = Settings::open(_t.file());
         s.set("perf.mode", "balanced").unwrap();
         assert_eq!(s.perf_mode_display(), PerfMode::Balanced);
         s.set("probe.interval", "30").unwrap();
@@ -10055,7 +10083,8 @@ mod tests {
     /// auto = OS 신호(배터리·원격 → balanced · 그 외 full) · 안내(D-58)는 full일 때만.
     #[test]
     fn perf_auto_follows_signals() {
-        let mut s = Settings::open(tmp("perf-auto"));
+        let _t = tmp("perf-auto");
+        let mut s = Settings::open(_t.file());
         s.set("perf.mode", "auto").unwrap();
         let mut sig = nexa_sys::Signals::default();
         perf::set_signals_override(Some(sig));
@@ -10158,7 +10187,8 @@ mod tests {
             assert_eq!(PERF.iter().filter(|(x, _)| x == k).count(), 1, "{k} 중복");
             assert_eq!(e.perf().map(|x| x.domain), Some(b.domain));
         }
-        let s = Settings::open(tmp("perf-rows"));
+        let _t = tmp("perf-rows");
+        let s = Settings::open(_t.file());
         let rows = s.perf_rows();
         assert_eq!(rows.len(), PERF.len());
         assert!(

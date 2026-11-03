@@ -10414,8 +10414,9 @@ mod refresh_tests {
     /// 새 노드 강조) → 워터마크(`PRAGMA schema_version`)가 바뀌면 같은 폴더를 조용히 다시 읽는다.
     #[test]
     fn sqlite_end_to_end_ddl_refresh() {
-        let path = std::env::temp_dir().join(format!("nsql_t138_{}.db", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        // T-465(11-03): 가드가 끝날 때(메타 스레드 접속이 잠금을 풀 때까지 재시도) 파일·-journal을 지운다.
+        let tp = nsql_core::testpath::TempPath::with_ext("t138", "db");
+        let path = tp.to_path_buf();
         let spec = ConnectSpec::parse(&format!("sqlite:{}", path.display())).unwrap();
         let mut other = nsql_drivers::open(&spec, Dialect::Sqlite).unwrap();
         let mut run = |sql: &str| {
@@ -10458,7 +10459,6 @@ mod refresh_tests {
         assert_eq!(ex.nodes[tables].children, vec![a]);
         ex.disconnect();
         drop(other);
-        let _ = std::fs::remove_file(&path);
     }
 
     /// 워터마크: 읽어 둔 폴더가 있는 스키마만 묻는다 · 첫 값은 기준 · 달라지면 그 스키마의 읽어 둔 노드를 조용히 다시 · 유휴로 닫힌
