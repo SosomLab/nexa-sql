@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t8-import-cli | 2026-11-04 | 2026-11-04 → main ff(삭제) · **30df8728** | 2 | T-8 가져오기 ⑤ CLI `nsql import` 확장(형식 6 · `--create/--types` · `--skip` · `--on-error` · `--dry-run` 접속 없이 · cp949 실기) · 40 Step 12 · [journal 11-04 §3](journal/2026-11-04.md) |
 | t8-import-runner | 2026-11-04 | 2026-11-04 → main ff(삭제) · **51d6a776** | 2 | T-8 가져오기 ④ nsql-run `ImportSpec` 확장(source·skip·create·on_error) · `inspect_source` · `suggest_create`/DDL · Skip 적재(`replay_skip`) · 설정 `import.*` · 실제 SQLite 시험 · [journal 11-04 §2](journal/2026-11-04.md) |
 | t8-import-readers | 2026-11-04 | 2026-11-04 → main ff(삭제) · **370c980a** | 2 | T-8 가져오기 ①②③ nsql-io 읽기 포트 `RecordSource`(csv/tsv 인코딩·구분자 자동 · jsonl · json) + xlsx(calamine D-449)/parquet 읽기 + 형 추론 `infer` · 45/0 · [journal 11-04 §1](journal/2026-11-04.md) |
 | t8-export-format-menu | 2026-11-04 | 2026-11-04 → main ff(삭제) · **bb4e0dfe** | 2 | ★ D-448 결과 내보내기 UX(형식 하위 메뉴 7 · 기본 xlsx · `report_{stamp}` · 저장 창 콤보↔확장자(nexa-ui bc52c97) · 원천 라디오 다시 실행/조회된 행만) + docs/127 가져오기 설계 · [journal 11-04 §0](journal/2026-11-04.md) |
