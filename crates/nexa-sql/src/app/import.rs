@@ -70,6 +70,26 @@ pub(crate) fn new_table_name(path: &Path) -> String {
 }
 
 impl App {
+    /// ★ 메뉴 Run ▸ Import Data…(127 §2-1 ③): 현재 세션 · 새 표(기본 스키마) → 파일 창 → Import 창.
+    pub(crate) fn import_from_menu(&mut self) {
+        if !self.lic_gate(nsql_license::Feature::ImportGui) {
+            return;
+        }
+        self.import_ctx = Some(ImportCtx {
+            existing: None,
+            schema: None,
+            name: None,
+            path: PathBuf::new(),
+            server: None,
+            dialect: self.sess.dialect,
+            cols_wait: false,
+            created: false,
+        });
+        self.file_purpose = FilePurpose::Import;
+        self.open_file_dlg = Some(PickerMode::Open);
+        self.redraw();
+    }
+
     /// 파일 창 결과(또는 기동 명령) → Import 창 열기 + 살펴보기 시작 + (기존 표) 열 요청.
     pub(crate) fn import_open_now(&mut self, el: &ActiveEventLoop) {
         let Some(mut ctx) = self.import_ctx.clone() else {

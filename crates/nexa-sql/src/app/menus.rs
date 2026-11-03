@@ -849,6 +849,7 @@ impl App {
                 self.set_focus(Focus::Editor);
             }
             "view.log" => self.toggle_log = true,
+            "run.import" => self.import_from_menu(),
             "view.toolbar_reset" => self.reset_toolbar(),
             "view.layout_reset" => self.reset_layout(),
             "view.colors" => self.open_colors = true,
@@ -1559,6 +1560,9 @@ impl App {
                     item("conn.toggle", Msg::MnConnect),
                     item("conn.disconnect", Msg::MnDisconnect),
                     item("session.info", Msg::MnSessInfo),
+                    MenuEntry::Separator,
+                    // ★ 127 §2-1 ③: 메뉴에서 파일 → 새 표(현재 세션 · 기본 스키마).
+                    gated("run.import", Msg::MnImportDataMenu),
                 ],
             ),
             // ★ 탭 메뉴(Golden Tabs · 사용자 09-16): 열린 탭 순서대로 · 활성 탭은 ✓ · 고르면 전환.
