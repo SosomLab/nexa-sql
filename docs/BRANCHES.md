@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t60a-cut-rich | 2026-11-04 | 2026-11-04 → main ff(삭제) · **fbc730ef** | 3 | CI 복구(`run.import` 팔레트 등록) + T-60(a) 잘라내기 서식 옵션 `editor.cut_rich` · [journal 11-04 §9](journal/2026-11-04.md) |
 | test-field-e2e-win | 2026-11-04 | 2026-11-04 → main ff(삭제) · **f77764d7** | 2 | `headless-field-e2e.sh` Windows 이식(`sqlite3` → `nsql run` · cygpath · 12/0) · [journal 11-04 §8](journal/2026-11-04.md) |
 | t79-save-eol-combo | 2026-11-04 | 2026-11-04 → main ff(삭제) · **602fdb9c** | 2 | T-79 저장 창 줄끝 콤보(유지/LF/CRLF/CR · nexa-ui d26b01c `set_extra2`) · [journal 11-04 §7](journal/2026-11-04.md) |
 | t8-import-menu | 2026-11-04 | 2026-11-04 → main ff(삭제) · **87324a74** | 2 | T-8 가져오기 진입점 ③ 메뉴 Run ▸ 파일에서 데이터 가져오기…(`run.import` · 새 표) · [journal 11-04 §6](journal/2026-11-04.md) |
