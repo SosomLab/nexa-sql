@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| test-field-e2e-win | 2026-11-04 | 2026-11-04 → main ff(삭제) · **f77764d7** | 2 | `headless-field-e2e.sh` Windows 이식(`sqlite3` → `nsql run` · cygpath · 12/0) · [journal 11-04 §8](journal/2026-11-04.md) |
 | t79-save-eol-combo | 2026-11-04 | 2026-11-04 → main ff(삭제) · **602fdb9c** | 2 | T-79 저장 창 줄끝 콤보(유지/LF/CRLF/CR · nexa-ui d26b01c `set_extra2`) · [journal 11-04 §7](journal/2026-11-04.md) |
 | t8-import-menu | 2026-11-04 | 2026-11-04 → main ff(삭제) · **87324a74** | 2 | T-8 가져오기 진입점 ③ 메뉴 Run ▸ 파일에서 데이터 가져오기…(`run.import` · 새 표) · [journal 11-04 §6](journal/2026-11-04.md) |
 | t8-import-bench | 2026-11-04 | 2026-11-04 → main ff(삭제) · **5f6a4344** | 2 | T-8 가져오기 ⑦ `scripts/import-bench.sh` 첫 실측(Debug 10만 행 · 127 §6) · JSON 상한 `import.json_max_mb` 배선 · `preview_head` 제거 · [journal 11-04 §5](journal/2026-11-04.md) |
