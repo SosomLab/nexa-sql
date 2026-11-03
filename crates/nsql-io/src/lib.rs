@@ -5,14 +5,20 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod delim;
+pub mod infer;
 pub mod jsonl;
 pub mod paging;
+pub mod read;
 pub mod sqlgen;
 // ★ D-432(11-01 · T-8): 외부 crate 예외 2(rust_xlsxwriter · parquet)는 이 두 모듈 안에만(공개 타입 0 · 기능 스위치 · 기본 켬).
+#[cfg(feature = "import-parquet")]
+mod parquet_in;
 #[cfg(feature = "export-parquet")]
 mod parquet_out;
 #[cfg(feature = "export-xlsx")]
 mod xlsx;
+#[cfg(feature = "import-xlsx")]
+mod xlsx_in;
 pub use sqlgen::{
     choose_key, generate, generate_src, guess_table, split_table, KeyMode, KeySource, KeySpec,
     SqlKind,

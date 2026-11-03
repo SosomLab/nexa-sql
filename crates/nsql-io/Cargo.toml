@@ -13,13 +13,21 @@ workspace = true
 
 [dependencies]
 nsql-core.workspace = true
+# ★ T-8 가져오기(11-04 · docs/127 §3): JSON 배열 원료 = 자체 최소 파서(의존 0) · 글 원료 인코딩 = encoding_rs(nexa-sql enc.rs와 같은 DR-3 예외 · 스트리밍 디코더).
+nsql-json.workspace = true
+encoding_rs.workspace = true
 # ★ D-432(11-01 · T-8 · 사용자 결정): xlsx/parquet 내보내기 = DR-3 외부 crate 예외(10 §4 원장) — 이 크레이트 안에만 가두고 공개 시그니처에
 #   외부 타입 0(`StreamWriter`가 감싼다). parquet은 기본 기능(arrow·압축 묶음) 끔 + snappy만 · 저수준 작성기(행 그룹 = 배치)로 arrow 없이.
 parquet = { version = "60.1", default-features = false, features = ["snap"], optional = true }
 rust_xlsxwriter = { version = "0.102", optional = true }
+# ★ D-449(11-04 · T-8 가져오기 ②): xlsx 읽기 = calamine(순수 Rust · xlsx/xls/xlsb/ods · chrono 없이 날짜 시리얼 직접 환산) — `xlsx_in.rs` 안에만.
+calamine = { version = "0.38", default-features = false, optional = true }
 
 [features]
 # 두 형식 모두 기본 켬(사용자 11-01 · lite·full·개발 동일) — 끄려면 이 크레이트를 default-features = false로.
-default = ["export-xlsx", "export-parquet"]
+default = ["export-xlsx", "export-parquet", "import-xlsx", "import-parquet"]
 export-xlsx = ["dep:rust_xlsxwriter"]
 export-parquet = ["dep:parquet"]
+# ★ T-8 가져오기 읽기(127 §7 ② · D-449): xlsx = calamine · parquet = 같은 parquet crate의 행 API.
+import-xlsx = ["dep:calamine"]
+import-parquet = ["dep:parquet"]
