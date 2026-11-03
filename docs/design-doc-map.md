@@ -36,7 +36,7 @@
 |---|---|---|
 | 세션 변수 · 스크립트 엔진 | [08 세션 변수·스크립트 엔진(`nsql-script`)](08-session-variables.md)(11-01 정합) · **변수 관리(Usage 19군 · VarStore/MacroStore/Caps · 방언별 기법 · 단계 · ★ 내장 변수 층 `${workspaceFolder}`·`${config:키}`·`NSQL_*` = nsql-script `intrinsic.rs` · §10) [63](63-variable-management.md)** | [63a 변수 관리 조사 원문](63a-variable-research.md)(11-01 정합) · 📐 **탭별 변수 보존의 문서 식별(경로·fsid·지문·문서 id·프로젝트 탭 id 층 쌓기 · D-191~195) [74](74-vars-persistence-identity.md)** |
 | 바인드 변수 | 📐 ★ **바인드 변수 실행 전략(`:VAR` = 바인드 기본 · 리터럴은 바인드 불가 자리만 · 방언별 현황 · 기술 평가 · D-356 · T-416~T-420) [123](123-bind-variable-execution-strategy.md)** | — |
-| 객체 소스 실행 · Output | 📐 ★ **객체 소스 탭 F5 = 한 단위 · Output 탭 · 소스 열기 vs DDL 생성 분석 · Oracle DDL E2E [100](100-object-source-run-and-output-tab.md)** | — |
+| 객체 소스 실행 · Output | 📐 ★ **객체 소스 탭 F5 = 한 단위 · Output 탭 · 소스 열기 vs DDL 생성 분석 · Oracle DDL E2E [100](100-object-source-run-and-output-tab.md)** · ★ **객체 편집기 구현 범위 현황(11-03 · 소스 기준 · 기능×방언 · 사용 방법 · 미구현 15) = [100 §6](100-object-source-run-and-output-tab.md)** | — |
 | 실행 계획 | 📐 ★ **실행 계획 검토(방언별 EXPLAIN 관용 · 공통 트리 파싱 · 자동 검토 규칙 7 · 추정/실제 · GUI 결과 탭 2 · CLI `--analyze`/`--raw` · 사용법) [122](122-execution-plan-review.md)** | — |
 | 서버 메시지 · 오류 | 서버 메시지·실행 중 로그 [32](32-server-messages-and-live-log.md) · DBMS 오류 정규화·토스트 [42](42-db-error-normalization.md) | **실행 로그 상세 계측·개발자 모드·저비용 게이트 [48](48-logging-architecture.md)** |
 

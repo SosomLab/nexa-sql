@@ -145,3 +145,129 @@
 - DBeaver의 "Use DBMS_METADATA" 실패 시 자체 생성기 폴백(권한 없는 계정) — 우리는 GET_DDL 실패 = 오류 표시.
 - 소스 열기 탭 F5 직전 "객체 스키마 ≠ 세션 현재 스키마" Output 경고(T-267).
 
+## 6. 구현 범위 현황(11-03 · 소스 기준 · 협업 분석 · 사용자 "객체 편집기 구현 범위 검토 · 어떤 기능을 사용할 수 있는지 안내")
+
+> 설계가 아니라 **main e05ee1b2(v0.5.0) 소스에 구현된 것** 기준 · 근거 = 파일:줄(그 시점 줄 번호 · 이동하면 함수 이름으로 찾기) 또는 E2E 스크립트 · 조사 = 협업 세션의 읽기 전용 하위 에이전트 + 협업이 핵심 근거 2곳 직접 대조(Oracle `ALL_ERRORS` · 그리드 사전 검사) · 원문 임시 파일은 정리 배치(D-445) 대상이라 이 절이 원본 · [journal 11-03 §2](journal/2026-11-03.md).
+>
+> **결론 한 문장** = 객체 편집 = "텍스트 기반 DDL 왕복" — 탐색기 소스 열기(스키마·`ON 테이블`·DISABLED 보존 · §5) → 편집 → F5 한 객체 한 실행(§2) → Output 컴파일 결과(§3 · Oracle은 `ALL_ERRORS`까지) → 실행 직전 자동 백업(114 §7) + DDL 생성(Generate SQL) + 그리드 행/셀 편집(87 §14 보호 세 겹 · 설정으로 못 끔) + 탐색기 삭제(2단 확인 + 백업) + 객체 소스 탭 북마크(69 §4-2) + 상세 패널(86). **폼형 구조 편집기(119 = 설계만) · 권한 편집 · 이름 바꾸기 UI · 의존 그래프는 없음.**
+
+### 6-1. 표 1 — 기능 × 방언(✓ · △ 부분 · ✗ 없음 · 근거)
+
+| 기능 | Oracle | SQL Server | PostgreSQL | MySQL/MariaDB | SQLite | DuckDB | Db2 | ClickHouse | ODBC | 근거 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ① 탐색기 트리 종류 폴더 수 | 18 | 10 | 10(+DB 수준 2) | 5 | 4 | 2(Table·View) | 9 | 2 | 2 | `nsql-catalog/src/lib.rs:376-452` `kinds_for` · `:444-451` `db_kinds_for` |
+| ① 소스 열기(더블클릭/Enter/우클릭) | ✓ | ✓ | ✓(Type 제외) | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | `lib.rs:3188-3588` `source_with` · 메뉴 노출 = `lib.rs:268-287` `has_source` · `explorer.rs:8383` |
+| ① 소스 열기 보수적 한정(스키마 · `ON 테이블` · DISABLED) | ✓ (`normalize_plsql_header` · `qualify_on_table` · `ALTER TRIGGER … DISABLE`) | ✓ (`[schema].` + 트리거 `ON` 부모 표) | ✓ (`ON schema.table` + `EXECUTE FUNCTION` 스키마) | ✓ (`` `db`.`name` `` + 트리거 `ON`) | ✓(단일 스키마) | — | △ 원문 `SYSCAT.*.text` 그대로(한정 안 함) | — | — | `lib.rs:3214-3246` · `:3344-3380` · `:3420-3455` · `:3504-3523` · `:3468-3500` |
+| ① 소스 탭 = 그 객체 서버 세션에 묶음 · 작업 단위(DB/스키마) | ✓ | ✓(DB) | ✓ | ✓(DB) | ✓ | — | ✓ | — | — | `explorer.rs:7045-7050` `Req::Source{db: unit_for}` · `explorer.rs:927-939` `OpenSql{origin, db, server}` · docs/100 §2-2 |
+| ② F5 = 객체 한 단위 실행(분할 없음) + Output 안내 + 스키마 불일치 경고 | ✓ | ✓ | ✓ | ✓ | ✓ | (소스 탭 없음) | ✓ | — | — | `app/run.rs:152-187` · `:257-259` `run_text_whole` |
+| ② 컴파일 결과 메시지(`compiled · no errors` / `Warning … compilation errors` + 줄/열) | ✓ (`ALL_ERRORS`) | ✗(서버가 CREATE 자체를 거부 → 실행 오류 경로) | ✗(같음) | ✗ | ✗ | — | ✗ | — | — | `nsql-run/src/lib.rs:3501-3560` `report_compile_errors`(`caps.compile_errors`) · `nsql-catalog/src/lib.rs:3899` Oracle만 |
+| ② 실행 오류 위치 → 편집기 캐럿 이동(T-371/372) | ✓ | ✓(줄 + 오타 분석) | ✓ | (추정 ✓) | ✓ | (추정) | (추정) | (추정) | (추정) | `scripts/win-error-goto-e2e.sh:1-12`(SQLite·PG·Oracle thin/OCI·SQL Server) · `app/run.rs:185-186` `run_src_base` |
+| ② 컴파일 오류 줄 → 캐럿 | △ Output 줄 **두 번 클릭** = 그 줄로(자동 이동 없음) | — | — | — | — | — | — | — | — | `app/output.rs:52-59` |
+| ② 실행 직전 객체 백업(`CREATE OR REPLACE`/`ALTER`/`DROP`/`TRUNCATE`/`RENAME` 대상) | ✓ | ✓ | ✓ | ✓ | ✓ | △(DDL 생성이 골격이라 테이블만) | ✓ | △ | △ | `app/objbackup.rs:1-13` · `:259-302` `objbk_plan` · `backups.rs:69` 폴더 |
+| ③ DDL 생성(Generate SQL ▸ DDL) 테이블 | ✓ `DBMS_METADATA` + 옵션(qualified·compact·full·FK 분리) + 종속 인덱스 | ✓ DBeaver식(`-- DROP` · 인라인 제약 · FK 분리 · 인덱스 · 확장 속성) | ✓ `pg_table_ddl` | △ 골격(컬럼·기본값·NOT NULL) + `ALTER … ADD CONSTRAINT` + `CREATE INDEX`(`SHOW CREATE TABLE` 아님 · 엔진/charset 없음) | ✓ `sqlite_master` + 인덱스·트리거 한 벌 | △ 골격+키 | △ 골격+키 | △ 골격+키 | △ 골격+키 | `gen.rs:1058-1172` `object_ddl` · `:1473-1500` `table_with_keys` · `lib.rs:3618-3645` `table_ddl` |
+| ③ DDL 생성 그 밖 종류 | ✓ 전 종류(`GET_DDL` 타입 표) · PL/SQL은 블록마다 `/` | ✓ 루틴·뷰·트리거(= 소스) · 인덱스 · 시퀀스 | ✓ 루틴·뷰·MV·인덱스·시퀀스·타입(enum/composite)·확장 | ✓ 뷰·루틴·트리거(= 소스) | ✓ 전부(`sqlite_master.sql`) | ✗ | ✓ 뷰·루틴·트리거(= 소스) · 시퀀스/인덱스/MV/동의어 ✗ | ✗ | ✗ | `gen.rs:957-978` `oracle_meta_type` · `:1059-1118` · `:1119-1144` · `:1145-1170` · `:1172` `_ => source` |
+| ③ 하위 항목 DDL(제약 · 인덱스 · 트리거 잎 우클릭) | ✓ | ✓ | ✓ | ✗(폴더는 있으나 `sub_ddl` 분기 없음 · 추정 = 오류) | ✓ | — | ✗(추정) | — | — | `gen.rs:1630-1720` `sub_ddl` · 메뉴 = `explorer.rs:8411-8418` · `gen.rs:296-316` `gen_whats` |
+| ③ SQL Preview 모달(옵션 · 새로고침 · 파일 저장 · 편집기에서 열기 · 복사) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `sqlprev_win.rs:1-6` · `explorer.rs:983-988` `Preview` |
+| ④ 그리드 셀/행 편집 · 삽입 · 삭제 · 복제 · NULL/빈 문자열 · 지금 날짜 | ✓ | ✓ | ✓ | ✓ | ✓ | △(코드상 허용 · 실서버 미검증) | △(허용 · 미검증) | ✗ 추정(일반 `UPDATE`/`DELETE` 문장을 ClickHouse가 거부) | △(허용 · 미검증) | `gridedit_sql.rs:1-9` · `grid.rs:5768-5852`(메뉴 id) · `keymap.rs:1074-1079` |
+| ④ 행 식별 2급 물리 식별자(숨은 열 주입) | ✓ ROWID | ✗(D-218 · 키/전 열 비교) | ✓ ctid+xmin | ✗(키/전 열) | ✓ rowid | ✗ | ✗ | ✗ | ✗ | `gridedit_sql.rs:339-360` `physical_cols` |
+| ④ 데이터 보호 ① 사전 검사 `COUNT(*)=1` ② 영향 행 수 = 1 ③ 유일성(대기 변경 안 키 중복) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `gridedit_sql.rs:556` · `:860-863` · `nsql-run/src/lib.rs:1641-1730` · docs/87 §14 표 |
+| ④ 자동 커밋 실패 = 전체 롤백 · 수동 커밋 = 세이브포인트로 이번 적용분만 · 되돌리기 실패 = "ROLLBACK 필요" | ✓ | ✓ `SAVE TRANSACTION` | ✓ | ✓ | ✓ | △ 세이브포인트 없음(수동 모드 실패 = `rollback_needed` 안내만) | ✓ `ON ROLLBACK RETAIN CURSORS` | △ 없음 | △ 없음 | `nsql-run/src/lib.rs:97-110` `savepoint_sql` · `:1634-1640` · `:1731-1785` · `nsql-core/src/caps.rs:210-212 · 243 · 253 · 310` |
+| ④ 운영(PRD) 접속 = 그리드 편집 읽기 전용 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `gridedit_sql.rs:26-28` `ReadOnly::Prod` · `nsql-i18n/src/lib.rs:5627` |
+| ④ 실서버 E2E | ✓ 임시 표(PK · 키 없음 · DATE · CLOB) | ✓(CLOB nvarchar(max)) | ✓(ctid · text) | ✗(프로필 없음) | ✓ 격리 홈 Local 8항목 | ✗ | ✗ | ✗ | ✗ | `scripts/mac-grid-edit-e2e.sh:1-10` · docs/87 §11 10-09 줄 |
+| ⑤ 객체 상세 패널(속성 · 테이블 = PK/인덱스 · 뷰 = 의존 · 루틴 = 인자 · 그 밖 = 하위 폴더 표) | ✓ | ✓ | ✓ | ✓ | ✓ | △(속성·컬럼만) | ✓ | △ | △ | `nsql-catalog/src/detail.rs:66-70` · `:205-303` · `objdetail.rs:1-4` |
+| ⑤ 탐색기 하위 폴더(컬럼 · 제약 · FK · 참조 · 인덱스 · 트리거 · 파티션 · 의존 …) 테이블 기준 | 8 | (UniqueKeys 등 · `tree.rs:192`) | (Policies 포함 · `tree.rs:202`) | 5 | 5 | Columns만 | 6 | Columns만 | Columns만 | `nsql-catalog/src/tree.rs:182-227` `sub_kinds` |
+| ⑤ 상세 머리 줄 더블클릭 = 편집기 탭 · Shift+F4 ℹ 정보 탭 · CLI `nsql cat detail` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `objdetail.rs:24-31` `DetailAction::OpenInEditor` · `app/meta.rs:176-188` · `keymap.rs:537-542` |
+| ⑥ 객체 소스 탭 북마크(문서 열쇠 = 프로필·방언·스키마·종류·이름·부분 · 재시작 뒤 유지 · DROP/RENAME 뒤 무효) | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — | `nsql-bookmarks/src/lib.rs:17-32` `DocKey::Object` · `app/bookmarks.rs:141 · 310-348 · 642-650` · docs/69 §4-2 10-31 구현 줄 |
+| ⑥ 객체 백업(DROP · REPLACE/ALTER/F5 · TRUNCATE/RENAME 각각 켬/끔 · 30일 · 객체별 N개 · 주기 정리) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | △ | △ | `app/objbackup.rs:19-48` `BkAction::setting` · `nsql-settings/src/lib.rs:3166-3206` |
+| ⑥ 운영 접속 + 백업 실패 = 실행 막음 · 비운영 = 경고 + 계속 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `app/objbackup.rs:10-11` · `app/drop.rs:5-6` |
+| ⑥ 탐색기 ▸ Delete…(모달 2단 타임아웃 · 백업 · 보수형 DROP · CASCADE 없음) | ✓ | ✓(+서버 수준 로그인·역할·연결된 서버 …) | ✓(루틴 서명 · 트리거 `ON`) | ✓(인덱스 `ON`) | ✓ | ✓(Table·View) | ✓ | ✓(Table·View) | ✓(Table·View) | `nsql-catalog/src/lib.rs:2890-2976` `drop_sql` · `app/drop.rs:1-9` · `explorer.rs:8397-8403` |
+| ⑥ 삭제 E2E | ✓(PRD 모드 · `NSQLT_BK_PRC`) | ✗ | ✗ | ✗ | ✓(PRD/none 대조) | ✗ | ✗ | ✗ | ✗ | `scripts/win-objbackup-prod-e2e.sh:1-9` · `scripts/win-drop-prod-e2e.sh:1-6` |
+| 보너스 — CREATE 문 ↔ 서버 DDL 비교 탭(`obj.compare` · 서버 DDL 열기) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | △ | △ | △ | `app/compare.rs:1-8`(DDL 생성과 같은 원천) |
+
+
+### 6-2. 소스 열기 종류 × 방언(탐색기에 그 종류 폴더가 있고 "소스 열기"가 실제로 본문을 내는가)
+
+| 종류 | Oracle | SQL Server | PostgreSQL | MySQL | SQLite | Db2 | DuckDB/ClickHouse/ODBC | 근거(`nsql-catalog/src/lib.rs`) |
+|---|---|---|---|---|---|---|---|---|
+| 뷰 | ✓ `GET_DDL('VIEW')`(컬럼 목록·FORCE 보존) · 권한 없으면 `ALL_VIEWS.TEXT` + 컬럼 목록 폴백 | ✓ `OBJECT_DEFINITION` → `CREATE OR ALTER` + `[schema].` + `GO` | ✓ `pg_get_viewdef` | ✓ `SHOW CREATE VIEW` | ✓ `sqlite_master.sql` | ✓ `SYSCAT.VIEWS.text` | ✗ `no_source`(폴더는 있음 · 메뉴 "소스 열기"가 뜨되 실패 — 추정) | `:3250-3339` · `:3366-3421` · `:3424-3440` · `:3504-3545` · `:3546-3560` · `:3466-3503` · `:3562-3564` |
+| 구체화 뷰(MV) | ✓ `GET_DDL`(`_` 분기) | — | ✓ `CREATE MATERIALIZED VIEW … AS` + `pg_get_viewdef` | — | — | ✗ `no_source`(폴더 있음) | — | `:3341-3351` · `:3424-3440` · `:3470-3487` |
+| 프로시저 · 함수 | ✓ `ALL_SOURCE` + 머리 줄 정규화 + `/` | ✓ | ✓ `pg_get_functiondef`(오버로드 = 서명 포함 이름) | ✓ `SHOW CREATE` + `` `db`. `` 한정 | — | ✓ `SYSCAT.ROUTINES.text`(오버로드 = 전부 이어 붙임) | — | `:3198-3213` · `:3441-3462` · `:3471-3476` · `explorer.rs:7030-7038` PG 서명 |
+| 패키지 · 패키지 본문 | ✓ 스펙 = 소스 열기 · 본문 = 우클릭 "Open Body" 별도 탭(`NAME.body.sql`) | — | — | — | — | — | — | `:3198-3213` · `explorer.rs:8385-8388` · `:8922` |
+| 트리거 | ✓ `ALL_SOURCE` + `ON` 소유자 한정 + DISABLED 보존 | ✓ + 트리거 `ON` 부모 표 한정 · DB 트리거(스키마 없음) · 서버 트리거 | △ 종류 폴더 없음 → 테이블 ▸ Triggers 잎 ▸ Generate SQL ▸ DDL(`source()` 호출 · `ON`·함수 스키마 한정) | ✓ `SHOW CREATE TRIGGER` + `ON` 한정 | ✓ | ✓ `SYSCAT.TRIGGERS.text` | — | `:3214-3248` · `:3399-3418` · `:3353-3365` · `gen.rs:1670-1672` · `lib.rs:376-452` |
+| 타입 | ✓ `ALL_SOURCE`(TYPE · 본문은 미분리 — 추정) | ✗ 추정(`OBJECT_DEFINITION`이 NULL → "object not found") | ✗ `no_source`(DDL 생성은 ✓ enum/composite) | — | — | — | — | `:3198-3213` · `:3380-3421` · `:3463` · `gen.rs:1091-1116` |
+| 시퀀스 · 인덱스 · 동의어 · DB 링크 · 잡 | 소스 메뉴 없음(`has_source` 아님) → DDL 생성 ✓ | 소스 메뉴 없음 → 시퀀스·인덱스 DDL ✓ · 동의어 ✗ 추정 | 시퀀스·인덱스 DDL ✓ · Aggregate ✗ | — | 인덱스 DDL ✓ | ✗ | — | `lib.rs:268-287` · `gen.rs:1059-1170` |
+| 테이블 | 소스 메뉴 없음 → DDL 생성(§2-1 ③) | 같음 | 같음 | 같음(`SHOW CREATE TABLE`은 `source()`에 있으나 탐색기 경로에서 안 쓰임) | 같음 | 같음 | 같음(골격) | `gen.rs:1172` · `lib.rs:3504-3508` |
+| 연결된 서버 · 서버 트리거(SQL Server 서버 수준) | — | ✓ 재생성 스크립트 · `sys.server_sql_modules` | — | — | — | — | — | `:3367-3380` |
+
+
+### 6-3. 자동 시험 근거(종류 × 방언 왕복 · 11-03 재실행 없음 · 문서·스크립트 머리 기록)
+
+| 시험 | 범위 | 결과(문서 기록) |
+|---|---|---|
+| `scripts/oracle-ddl-e2e.sh` | Oracle 전 유형(테이블·PK·UK·CHECK·FK·인덱스·코멘트·시퀀스·ALTER·뷰·함수·프로시저·패키지 스펙+본문·트리거·타입·시노님·MV) · 소스 왕복 원문 일치 6종 · 컴파일 오류 보고 · DDL 생성 | 67/67 (docs/100 §4) |
+| `scripts/dbms-source-e2e.sh` | PostgreSQL · SQL Server 소스 열기 보수적 한정 왕복(임시 객체 → `nsql cat source` → 형태 검사 → 재실행) | 33/33 (docs/100 §5-3) |
+| `scripts/mac-grid-edit-e2e.sh` | 그리드 편집 SQLite 8항목 + Oracle/PG/MSSQL 실서버(PK 표 · 키 없는 표 · DATE · CLOB 40,000자) | 통과(docs/87 §11) |
+| `scripts/win-objbackup-e2e.sh` · `win-objbackup-prod-e2e.sh` | 객체 백업 SQLite 7항목 · Oracle PRD 모드(REPLACE·DROP·탐색기 삭제) | 통과 기록(스크립트 머리) |
+| `scripts/win-drop-prod-e2e.sh` | 탐색기 삭제 PRD/none 대조(SQLite) | 통과 기록 |
+| `scripts/pkg-overload-e2e.sh` | Oracle 패키지 오버로드 멤버 · Generate SQL ▸ Call | 통과 기록 |
+| `crates/nsql-drivers/tests/integration.rs:1916 · :2247` | ClickHouse · Db2 스크립트 DDL/DML(카탈로그 생성기가 아닌 실행 경로) | 통합 45/0(11-03 게이트 ②) |
+| MySQL 실서버 왕복 | **없음**(프로필 없음 · 순수 함수 시험 `conservative_qualification_helpers`만) | T-268 남음 |
+
+
+### 6-4. 표 2 — 사용 방법(어디서 · 조작 · 기동 명령 · 설정 키 = `nsql-settings` REGISTRY 이름 그대로)
+
+| 기능 | 어디서 | 조작 · 단축키 · 메뉴 · 우클릭 | 기동 명령(`NSQL_STARTUP_CMD`) | 관련 설정 키(`nsql-settings` REGISTRY 그대로) |
+|---|---|---|---|---|
+| 소스 열기 | 객체 탐색기 객체 노드 | 더블클릭/Enter(테이블·뷰는 SELECT 템플릿 탭 · 소스 있는 종류는 소스 탭 · `explorer.rs:6476-6495`) · 우클릭 ▸ **Open Source** · 패키지 ▸ **Open Body** · 팔레트 `obj.source` | `explorer.expand:<라벨|행>` · `explorer.select` · `explorer.selpath` · `explorer.menu:<행>` + `explorer.pick:source` / `pick:body` · `editor.dump:<파일>` | `explorer.source_schema`(on · 머리 줄 스키마 한정) · `explorer.timeout` · `explorer.details` · `explorer.mssql_tree` · `explorer.show_system_schemas` |
+| 소스 탭 편집 → 컴파일/실행 | 소스 탭(제목 `이름.sql` · 패키지 본문 `이름.body.sql`) | **F5**(`run.all` · 본문 전체 한 단위) · Ctrl+Enter(`run.statement` · 캐럿 문장만) · Output 탭 **Ctrl+Shift+O**(`view.output`) · Output 오류 줄 두 번 클릭 = 그 줄로 · 탭 우클릭 "객체 탐색기에서 보기"(`app/tabobj.rs`) | `output.dump:<파일>` · `editor.caret` · `editor.dump` | `output.show`(auto) · `output.activate`(no_results) · `output.done_lines` · `output.timestamps` · `output.max_lines` · `output.serveroutput`(Oracle `SET SERVEROUTPUT ON`) · `backup.object_replace`(F5 재생성 전 백업) · `tx.prod_*`(운영 2단 확인) |
+| DDL 생성 | 탐색기 객체/잎(제약·인덱스·트리거) | 우클릭 ▸ **Generate SQL ▸ DDL**(테이블 = SELECT/INSERT/UPDATE/DELETE/MERGE + DDL · 루틴·패키지 = CALL + DDL · 시퀀스 = SELECT + DDL) → SQL Preview 모달(옵션 체크 · 새로고침 · 파일로 저장 · **편집기에서 열기** · 복사 · Esc) · CLI `nsql cat gen ddl <객체> [kind]` | `explorer.menu:<행>` + `explorer.pick:gen:ddl` · `sqlprev.dump:<파일>` | `gen.qualified`(on) · `gen.compact` · `gen.full_ddl` · `gen.separate_fk` · `gen.format` · `gen.bind_note` |
+| 테이블 데이터 편집 | 결과 그리드(단일 테이블 SELECT 결과 · 읽기 전용 사유는 상태줄 `gridedit_sql.rs:12-32`) | 그리드 포커스에서 **F2** 셀 편집 시작 · **Ctrl+D** 행 복제 · **Ctrl+;** 지금 날짜 · **Ctrl+Shift+;** 지금 시간 · 우클릭 메뉴 = 값 보기 · NULL · 빈 문자열 · 지금 · 복제 · 행 추가 · 행 삭제 · 되돌리기/다시 · 변경 목록 · **SQL 미리보기** · **적용** · 되돌림(`grid.rs:5768-5852`) · 적용 결과 = 토스트 + 상태줄 + 트랜잭션 로그 창(`view.txlog`) | `grid.edit.cmd:<id>` · `grid.edit.set:<행>/<열>/<값>` · `grid.edit.load:<파일>` · `grid.dump` · `txlog.dump` | `grid.edit`(on) · `grid.edit_empty`(null) · `grid.edit_refresh`(rows) · `grid.edit_hidden_keys`(off) · `grid.edit_rowid`(off) · `grid.edit_all_cols`(on) · `grid.edit_concurrency`(key) · `grid.lob_view_max_mb` · `grid.paste_max_rows` · `tx.prod_hold*` · `login.*` 운영 유형 |
+| 객체 메타 보기 | 탐색기 하위 폴더 + 객체 상세 패널(탐색기 아래) | View ▸ **Object Details**(`view.object_details`) · 객체 클릭 = 상세 · 머리 줄 ▾/▴ 축소 · 복사(Shift+클릭 = 종류-이름-설명) · 머리 줄 더블클릭 = 편집기 탭 · **Shift+F4** = ℹ 정보 탭(`obj.info`) · **F4** = 캐럿 아래 객체를 탐색기에서 찾기(`obj.reveal`) · Ctrl 홀드 = 객체 링크 툴팁 · CLI `nsql cat detail` | `details.dump:<파일>` · `objlink.reveal` · `objlink.dump` | `explorer.details` · `explorer.details_h` · `explorer.details_collapsed` · `explorer.tooltip` · `meta.warm_comments` · `objlink.*` |
+| 객체 소스 탭 북마크 | 소스 탭 거터 | **Ctrl+F2**(또는 Ctrl+K,Ctrl+K) 토글 · 거터 우클릭 · 북마크 패널(`view.bookmarks`) 클릭 = 소스 다시 열고 그 줄(그 서버의 살아 있는 탐색기 칸이 있을 때만 · 자동 접속 없음) | `bm.open` · `bm.rows` · `bm.stat` | `bookmark.enabled` · `bookmark.persist` · `bookmark.stale_days` · `bookmark.save_copy_on_save` |
+| 객체 백업 | 자동(편집기 F5·실행 · 탐색기 삭제 직전) | 상태바 저장 섹션 클릭 ▸ **객체 백업 위치 열기**(`app/menus.rs:111` · `<설정>/backups/objects/`) · 파일명 `<프로필>_<스키마>.<객체>_<종류>.<yyyyMMddHHmmssSSS>` · 머리 주석 `action:` | `objbk.dump:<파일>` | `backup.object_drop`(on) · `backup.object_replace`(on) · `backup.object_truncate`(on) · `backup.object_days`(30) · `backup.object_keep`(0 = 무제한) · `backup.prune_interval_min`(60 · HIDDEN) |
+| 객체 삭제 | 탐색기 객체 노드 | 우클릭 ▸ **Delete…** → 모달(정보 + 2단 타임아웃 버튼) → 백업 → DROP(Output · 트랜잭션 로그 · 탐색기 그 폴더 갱신) · 백업 실패 시 운영 = 막음 · 그 밖 = "백업 없이 삭제" 재확인 | `explorer.menu` + `explorer.pick:drop` · `drop.confirm` · `drop.confirm_nobackup` · `drop.dump` | `login.delete_confirm_ms` · `backup.object_drop` |
+| CREATE 문 ↔ 서버 비교 | 편집기 `CREATE …` 문장 | 팔레트 **`obj.compare`**(비교 탭 · 거터 띠 · "일치/N군데 다름") · **`obj.compare_server`**(서버 DDL 탭) | `compare.dump` | `gen.qualified`(한정 맞춤) |
+
+
+### 6-5. 미구현 · 제한 목록(TODO 번호)
+
+| # | 항목 | 상태 | 관련 TODO / 문서 |
+|---|---|---|---|
+| 1 | **테이블 구조 편집기(디자이너 · 컬럼 추가/변경/삭제 폼 · ALTER 미리보기 · 라이선스 안내 게이트)** | 📐 **설계만** — 소스 없음(`crates/` 안에 `nsql-ddl`·`objedit` 없음) | docs/119 §0 "상태 = 설계만 · D-316~326 대기 · 미착수(D-439)" · TODO 번호 = 착수 때 부여(T-382 후보) |
+| 2 | **권한(GRANT/REVOKE) 보기·편집 · 권한 폴더** | ✗ 없음(`explorer.rs`·`nsql-catalog`에 GRANT 코드 0건 · SQL Server 로그인/역할은 속성 보기·삭제만) | T-206(권한 폴더 · 대기) · docs/83 §5 |
+| 3 | **객체 이름 바꾸기(RENAME) UI** | ✗ 없음 — 편집기에서 `RENAME`/`ALTER … RENAME`을 직접 실행(백업·탐색기 갱신·북마크 무효화는 됨 `app/objbackup.rs:27-30` · `app/bookmarks.rs:141`) | T-167 B5 "rename 제안(보류)" · docs/69 §4-2 |
+| 4 | **의존성 보기(그래프 · 역참조 전체)** | △ 탐색기 하위 폴더 `Dependencies`는 **Oracle 뷰/MV · PG 뷰/MV · Oracle 테이블**만(`tree.rs:182-237`) + 상세 패널 섹션 · 전체 의존(PG `pg_depend`)·Recycle Bin·트리거 컬럼·큐 테이블 없음 | T-206(대기) |
+| 5 | 객체 삭제 후속(여러 객체 일괄 · CASCADE 옵션 · 삭제 뒤 선택 이동 · PG/MSSQL/MySQL 실서버 실기 · func-check 시나리오) | ☐ | T-269 · docs/28 §9 |
+| 6 | 컴파일 오류 목록(`compiled · no errors` / 줄·열) = **Oracle만**(`caps.compile_errors` · `lib.rs:3899`) · 컴파일 오류 자리로 캐럿 **자동** 이동 없음(Output 줄 두 번 클릭) | 제한 | T-266(✅ 두 번 클릭) · docs/100 §3-3 |
+| 7 | 소스 열기 빈 곳: PG Type/Aggregate/EventTrigger · SQL Server Type/Synonym(추정) · Db2 MV/시퀀스/인덱스/동의어 · DuckDB/ClickHouse/ODBC 뷰 · Db2 소스 한정 없음 | ✗/△ | 등재된 TODO 없음(108 §9 방언 결함 묶음 T-327은 다른 항목) |
+| 8 | 테이블 DDL 원문: MySQL/Db2/DuckDB/ClickHouse/ODBC = 컬럼 골격 + 키/인덱스(`SHOW CREATE TABLE` 등 서버 원문 아님) | △ | 등재 없음 |
+| 9 | MySQL 실서버 소스 왕복 미검증(프로필 없음 · 순수 함수 시험만) | 🚧 | T-268 |
+| 10 | 그리드 편집: DuckDB/Db2/ODBC 실서버 미검증 · ClickHouse 일반 `UPDATE`/`DELETE` 미지원(추정 실패) · DuckDB/ClickHouse/ODBC 수동 커밋 세이브포인트 없음(`caps.syntax.savepoint = None`) · "수정용 실행(1회)" 미개발(D-225) · 값 창 큰 파일 모드 | △/☐ | T-182 남은 것(docs/87 §11 · §15) |
+| 11 | 상세 패널 후속(섹션 접기/탭 · LRU · 컬럼 → 주인 요약) | 🚧 | T-225 · docs/86 §8 |
+| 12 | CREATE ↔ 서버 비교 2단계(diff 뷰어 부품 · 맞은편 줄) | ☐ | T-283 2단계 · docs/19 §6-2 |
+| 13 | 객체 소스 탭 후속(탭 줄 아이콘 `TabKind::Object` · F5 뒤 탐색기 VALID/INVALID 즉시 갱신 확인 · hover 차단 확산) | 🚧 | T-267 · docs/100 §3-3 |
+| 14 | 객체 찾기 창 2단계(서버측 정규식 본문 검색 · 데이터 값 검색) · 실서버 대조 | ☐ | T-354 · T-355 |
+| 15 | 메타 수집 계정(둘째 계정의 권한 스키마) | ☐ | T-264 |
+
+
+### 6-6. 확인한 사실 vs 추정(사용자 안내문에는 "추정" 항목을 "확인 필요"로)
+
+**확인한 사실(소스 줄을 읽음)**
+- 소스 열기 종류·방언 분기 = `nsql-catalog/src/lib.rs:3188-3588` 전체 읽음 · 메뉴 노출 조건 `has_source` = `:268-287` · 탐색기 더블클릭 분기 = `explorer.rs:6476-6495` · 우클릭 메뉴 구성 = `explorer.rs:8360-8445`.
+- DDL 생성 분기 = `gen.rs:1058-1172`(`object_ddl`) · `:1630-1720`(`sub_ddl`) · `:296-336`(`gen_whats`) · `:957-1056`(Oracle 타입 표 · `plsql_terminate` · `GET_DDL`).
+- F5 한 단위 실행 + 스키마 불일치 경고 = `app/run.rs:152-187` · 컴파일 검사 = `nsql-run/src/lib.rs:3501-3560` · Oracle 한정 = `nsql-catalog/src/lib.rs:3899`.
+- 데이터 보호 세 겹 = `nsql-run/src/lib.rs:1634-1785` 읽음(① 사전 검사 `n != Some(1)` → `ApplyPhase::PreCheck` ② `rows_affected != 1` → `ApplyPhase::Execute` ③ 자동 = `rollback()` · 수동 = `ROLLBACK TO SAVEPOINT` · `rollback_needed`) · 사전 검사문 생성 = `gridedit_sql.rs:860-863` · 세이브포인트 방언 표 = `caps.rs:210-312`.
+- 객체 백업 흐름·설정 키 = `app/objbackup.rs:1-48 · 259-302` · 폴더 = `backups.rs:69` · 상태바 메뉴 항목 = `app/menus.rs:111`.
+- 삭제 흐름 = `app/drop.rs:1-60` · DROP 문 종류 표 = `lib.rs:2890-2976`.
+- 북마크 문서 열쇠 = `nsql-bookmarks/src/lib.rs:17-32` · 재개·무효화 = `app/bookmarks.rs:141 · 310-348 · 642-650`.
+- 설정 키 이름·기본값 = `nsql-settings/src/lib.rs:2143-2201`(grid.edit*) · `:3156-3274`(gen.* · backup.object_* · explorer.source_schema) · `:5396-5440`(output.*) · `:4794`(login.delete_confirm_ms) · `:3883-3899`(explorer.details*).
+- 단축키 = `keymap.rs:120 · 156 · 163 · 489-494 · 495-542 · 1074-1079`. 기동 명령 이름 = `app/startup_cmd.rs`의 `strip_prefix`/`id ==` 전수 목록.
+- 시험 범위 = 각 E2E 스크립트 머리 주석(§2-3) · 통합 시험 함수 이름 `integration.rs:1916 · 2247`.
+
+**추정(실행·실서버로 확인하지 않음)**
+- "메뉴는 뜨지만 실패" 판정(DuckDB/ClickHouse/ODBC 뷰 · PG Type/Aggregate/EventTrigger · SQL Server Type/Synonym)은 코드 경로(`no_source` · `OBJECT_DEFINITION` NULL)로 추론 — 실제 오류 문구·토스트는 미확인.
+- MySQL 하위 항목(제약·인덱스·트리거 잎) DDL = `sub_ddl`에 MySQL 분기가 없어 오류로 추론(`gen.rs:1630-1720`에 `Dialect::Mysql` 없음 · 뒤쪽 `_` 분기는 읽지 않음).
+- ClickHouse 그리드 편집 실패 = 서버 문법(`ALTER TABLE … UPDATE`) 지식에 따른 추정 · 코드에 ClickHouse 편집 차단은 없음.
+- Oracle TYPE BODY 분리 여부 · SchemaTrigger(`GET_DDL('TRIGGER')`) 소스 열기 결과 형태는 미확인.
+- 실행 오류 캐럿 이동의 MySQL/DuckDB/Db2/ClickHouse/ODBC 동작은 E2E 대상이 아니라 "추정".
+- E2E "통과" 수치는 문서(docs/100 §4·§5-3 · docs/87 §11)와 스크립트 머리 기록을 옮긴 것 — 이번 조사에서 재실행하지 않음(11-03 릴리스 게이트 ①~⑥ 통과는 journal 기록).
