@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t8-import-runner | 2026-11-04 | 2026-11-04 → main ff(삭제) · **51d6a776** | 2 | T-8 가져오기 ④ nsql-run `ImportSpec` 확장(source·skip·create·on_error) · `inspect_source` · `suggest_create`/DDL · Skip 적재(`replay_skip`) · 설정 `import.*` · 실제 SQLite 시험 · [journal 11-04 §2](journal/2026-11-04.md) |
 | t8-import-readers | 2026-11-04 | 2026-11-04 → main ff(삭제) · **370c980a** | 2 | T-8 가져오기 ①②③ nsql-io 읽기 포트 `RecordSource`(csv/tsv 인코딩·구분자 자동 · jsonl · json) + xlsx(calamine D-449)/parquet 읽기 + 형 추론 `infer` · 45/0 · [journal 11-04 §1](journal/2026-11-04.md) |
 | t8-export-format-menu | 2026-11-04 | 2026-11-04 → main ff(삭제) · **bb4e0dfe** | 2 | ★ D-448 결과 내보내기 UX(형식 하위 메뉴 7 · 기본 xlsx · `report_{stamp}` · 저장 창 콤보↔확장자(nexa-ui bc52c97) · 원천 라디오 다시 실행/조회된 행만) + docs/127 가져오기 설계 · [journal 11-04 §0](journal/2026-11-04.md) |
 | test/mssql-print-level-e2e | 2026-11-02 | 2026-11-02 → main ff(삭제) · **5c33a2f1** | 1 | ⓟ″ SQL Server PRINT 등급 실서버 E2E 자산 `scripts/mssql-print-level-e2e.sh`(헤드리스 8/0 · 판정 = `output.dump` 접두 ✖/⚠ = 등급 · 격리 홈 프로필 사본 · PRINT만 · 서버 쓰기 0) + 문서(journal 11-02 §9 · TODO T-154 ⓟ″ ✅ · 61 §4 · STATUS) · 개발×협업 세션 운영 재개 |
