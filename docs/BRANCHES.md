@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| t8-import-bench | 2026-11-04 | 2026-11-04 → main ff(삭제) · **5f6a4344** | 2 | T-8 가져오기 ⑦ `scripts/import-bench.sh` 첫 실측(Debug 10만 행 · 127 §6) · JSON 상한 `import.json_max_mb` 배선 · `preview_head` 제거 · [journal 11-04 §5](journal/2026-11-04.md) |
 | t8-import-gui | 2026-11-04 | 2026-11-04 → main ff(삭제) · **766f6c83** | 2 | T-8 가져오기 ⑥ GUI Import 창 2차(A 원료·B 미리보기 그리드·C 매핑 표 · 새 표 · 스키마 진입점 · 살펴보기 스레드 · `import.set` 기동 명령 · V1 4경로) · [journal 11-04 §4](journal/2026-11-04.md) |
 | t8-import-cli | 2026-11-04 | 2026-11-04 → main ff(삭제) · **30df8728** | 2 | T-8 가져오기 ⑤ CLI `nsql import` 확장(형식 6 · `--create/--types` · `--skip` · `--on-error` · `--dry-run` 접속 없이 · cp949 실기) · 40 Step 12 · [journal 11-04 §3](journal/2026-11-04.md) |
 | t8-import-runner | 2026-11-04 | 2026-11-04 → main ff(삭제) · **51d6a776** | 2 | T-8 가져오기 ④ nsql-run `ImportSpec` 확장(source·skip·create·on_error) · `inspect_source` · `suggest_create`/DDL · Skip 적재(`replay_skip`) · 설정 `import.*` · 실제 SQLite 시험 · [journal 11-04 §2](journal/2026-11-04.md) |
