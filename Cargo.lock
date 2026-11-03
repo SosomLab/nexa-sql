@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "nexa-sql"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "encoding_rs",
  "fancy-regex",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-abi"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-core",
  "nsql-script",
@@ -2317,21 +2317,21 @@ dependencies = [
 
 [[package]]
 name = "nsql-bookmarks"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-settings",
 ]
 
 [[package]]
 name = "nsql-catalog"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-core",
 ]
 
 [[package]]
 name = "nsql-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-bookmarks",
  "nsql-catalog",
@@ -2352,11 +2352,11 @@ dependencies = [
 
 [[package]]
 name = "nsql-core"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nsql-driver-clickhouse"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2367,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-db2"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2377,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-duckdb"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "duckdb",
  "nsql-abi",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-dyn"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2397,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-mssql"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "nsql-abi",
@@ -2412,7 +2412,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-mysql"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "mysql",
  "nsql-abi",
@@ -2422,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-odbc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-oracle"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-oracle-thin"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2453,7 +2453,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-pg"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2466,7 +2466,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-driver-sqlite"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-abi",
  "nsql-core",
@@ -2476,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-drivers"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "miniz_oxide",
@@ -2503,15 +2503,15 @@ dependencies = [
 
 [[package]]
 name = "nsql-format"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nsql-i18n"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nsql-io"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-core",
  "parquet",
@@ -2520,11 +2520,11 @@ dependencies = [
 
 [[package]]
 name = "nsql-json"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nsql-license"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "nexa-license",
@@ -2534,11 +2534,11 @@ dependencies = [
 
 [[package]]
 name = "nsql-log"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nsql-net"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustls 0.23.46",
  "webpki-roots",
@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-run"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-catalog",
  "nsql-core",
@@ -2559,14 +2559,14 @@ dependencies = [
 
 [[package]]
 name = "nsql-script"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-core",
 ]
 
 [[package]]
 name = "nsql-search"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nsql-core",
  "regex",
@@ -2574,11 +2574,11 @@ dependencies = [
 
 [[package]]
 name = "nsql-seq"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nsql-settings"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nexa-conf",
  "nexa-sys",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "nsql-vault"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.2.17",
