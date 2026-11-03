@@ -207,6 +207,8 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("conn.toggle", Msg::MnRun, Msg::MnConnect),
     p("conn.disconnect", Msg::MnRun, Msg::MnDisconnect),
     p("session.info", Msg::MnRun, Msg::MnSessInfo),
+    // ★ 127 §2-1 ③(11-04): 메뉴 Run ▸ 파일에서 데이터 가져오기… — 팔레트에도(메뉴 전수 시험).
+    p("run.import", Msg::MnRun, Msg::MnImportDataMenu),
     p("session.env:none", Msg::MnRun, Msg::MnEnvNone),
     p("session.env:dev", Msg::MnRun, Msg::MnEnvDev),
     p("session.env:test", Msg::MnRun, Msg::MnEnvTest),
