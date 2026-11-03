@@ -1,6 +1,6 @@
 # Rendered by packaging/render-manifests.ps1 - version, SHA-256 and the MSI ProductCode are read
 # from the released MSI itself; nothing here is typed by hand.
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
 PackageIdentifier: SosomLab.NexaSQL
 PackageVersion: "@VERSION@"
 Platform:
@@ -27,4 +27,4 @@ AppsAndFeaturesEntries:
     UpgradeCode: "{B404C009-2003-4CD7-B231-113BA00242E2}"
     InstallerType: wix
 ManifestType: installer
-ManifestVersion: 1.12.0
+ManifestVersion: 1.28.0
