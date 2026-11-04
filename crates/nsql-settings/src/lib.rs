@@ -5412,6 +5412,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ T-31b(11-04): 지운 프로필 보관 기간(`profiles/.deleted` · 접속 창을 열 때 정리 · 0 = 즉시).
+    Entry {
+        key: "connect.deleted_keep_days",
+        cat: Msg::CatConnection,
+        label: Msg::LblDeletedKeepDays,
+        desc: Msg::DescDeletedKeepDays,
+        kind: SettingKind::Int { min: 0, max: 3650 },
+        default: "30",
+    },
     // SQL Server 암호화 범위(T-108 · docs/44 §4): 로그인만 암호화하면 실행 취소(TDS Attention)가 접속을 유지한 채 된다.
     Entry {
         key: "mssql.encrypt",

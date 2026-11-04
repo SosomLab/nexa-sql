@@ -1073,6 +1073,10 @@ impl Runner {
         progress: &mut dyn FnMut(u64, Duration),
     ) -> Result<BulkReport, String> {
         use nsql_i18n::{t, tf, Msg};
+        // ★ 읽기 전용 프로필(T-31b · D-458): 가져오기 자체를 거절(표 생성·INSERT 전부).
+        if self.read_only {
+            return Err(t(Msg::RunReadOnlyApply).to_string());
+        }
         let fmt = spec.source.format.resolve(std::path::Path::new(path));
         let mut src = nsql_io::read::open_source(std::path::Path::new(path), &spec.source)
             .map_err(|e| e.to_string())?;

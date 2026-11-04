@@ -114,8 +114,234 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
             }
             var(name, &o.positional[2..])
         }
+        // ★ T-31b(11-04): 삭제 복구 · 읽기 전용 · 내보내기/가져오기.
+        "restore" => {
+            let Some(name) = name else {
+                eprintln!("nsql conn restore <name>");
+                return 2;
+            };
+            if !nsql_vault::is_profile_name(name) {
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
+                return 2;
+            }
+            restore(name)
+        }
+        "deleted" => deleted(),
+        "export" => export(o, &o.positional[1..]),
+        "import" => {
+            let Some(file) = name else {
+                eprintln!("nsql conn import <file> [--overwrite]");
+                return 2;
+            };
+            import(file, o.overwrite)
+        }
+        "readonly" | "ro" => {
+            let Some(name) = name else {
+                eprintln!("nsql conn readonly <name> [on|off]");
+                return 2;
+            };
+            if !nsql_vault::is_profile_name(name) {
+                eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliConnBadName, &[name]));
+                return 2;
+            }
+            readonly(name, o.positional.get(2).map(String::as_str))
+        }
         _ => usage(),
     }
+}
+
+/// 보존 일수(설정 `connect.deleted_keep_days` · 없으면 30).
+fn keep_days() -> u64 {
+    nsql_settings::Settings::open_default()
+        .map(|s| s.int("connect.deleted_keep_days").max(0) as u64)
+        .unwrap_or(30)
+}
+
+fn restore(name: &str) -> i32 {
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    match v.restore(name) {
+        Ok(true) => {
+            println!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliConnRestored, &[name])
+            );
+            0
+        }
+        Ok(false) => {
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+            );
+            1
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+fn deleted() -> i32 {
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    let list = match v.deleted() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if list.is_empty() {
+        println!("{}", nsql_i18n::t(nsql_i18n::Msg::CliConnNoDeleted));
+        return 0;
+    }
+    println!("{}", nsql_i18n::t(nsql_i18n::Msg::CliConnDeletedHeader));
+    for d in &list {
+        println!(
+            "{:<21}  {}  {}",
+            utc_stamp(d.deleted_at),
+            d.name,
+            d.spec.redacted()
+        );
+    }
+    0
+}
+
+/// 유닉스 초 → `YYYY-MM-DD HH:MM:SS`(UTC · 의존 0 · 윤년 포함 civil 변환).
+fn utc_stamp(secs: u64) -> String {
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Howard Hinnant civil_from_days.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02}")
+}
+
+fn export(o: &Opts, names: &[String]) -> i32 {
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    let text = match v.export_text(names) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let n = text.matches("\nname=").count();
+    match o.out.as_deref() {
+        Some(path) if path != "-" => {
+            if let Err(e) = std::fs::write(path, &text) {
+                eprintln!("{path}: {e}");
+                return 1;
+            }
+            println!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliConnExported, &[&n.to_string(), path])
+            );
+        }
+        _ => print!("{text}"),
+    }
+    0
+}
+
+fn import(file: &str, overwrite: bool) -> i32 {
+    let text = if file == "-" {
+        let mut s = String::new();
+        if std::io::Read::read_to_string(&mut io::stdin().lock(), &mut s).is_err() {
+            return 1;
+        }
+        s
+    } else {
+        match std::fs::read_to_string(file) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("{file}: {e}");
+                return 1;
+            }
+        }
+    };
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    match v.import_text(&text, overwrite) {
+        Ok(r) => {
+            println!(
+                "{}",
+                nsql_i18n::tf(
+                    nsql_i18n::Msg::CliConnImported,
+                    &[
+                        &r.added.to_string(),
+                        &r.replaced.to_string(),
+                        &r.skipped.len().to_string()
+                    ]
+                )
+            );
+            if !r.skipped.is_empty() {
+                eprintln!("  skipped: {}", r.skipped.join(", "));
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+fn readonly(name: &str, value: Option<&str>) -> i32 {
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    let Ok(Some(mut spec)) = v.get(name) else {
+        eprintln!(
+            "{}",
+            nsql_i18n::tf(nsql_i18n::Msg::StArgProfileMissing, &[name])
+        );
+        return 1;
+    };
+    let on_off = |b: bool| if b { "on" } else { "off" };
+    let Some(value) = value else {
+        println!(
+            "{}",
+            nsql_i18n::tf(
+                nsql_i18n::Msg::CliConnReadOnlySet,
+                &[name, on_off(spec.read_only == Some(true))]
+            )
+        );
+        return 0;
+    };
+    let Some(on) = nsql_script::parse_on_off(value) else {
+        eprintln!("nsql conn readonly <name> [on|off]");
+        return 2;
+    };
+    spec.read_only = on.then_some(true);
+    if let Err(e) = v.save(name, &spec) {
+        eprintln!("{e}");
+        return 1;
+    }
+    println!(
+        "{}",
+        nsql_i18n::tf(nsql_i18n::Msg::CliConnReadOnlySet, &[name, on_off(on)])
+    );
+    0
 }
 
 fn var(name: &str, args: &[String]) -> i32 {
@@ -325,6 +551,10 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
             _ => {}
         }
     }
+    // ★ `--readonly`(T-31b · D-458): 프로필 키 `readonly=on`.
+    if o.readonly {
+        spec.read_only = Some(true);
+    }
     let v = match open_vault() {
         Ok(v) => v,
         Err(c) => return c,
@@ -398,9 +628,15 @@ fn rm(name: &str) -> i32 {
     };
     match v.remove(name) {
         Ok(true) => {
+            // ★ T-31b: 지운 것은 `.deleted/`에 보관(설정 일수 · 그 자리에서 오래된 것 정리).
+            let days = keep_days();
+            let _ = v.purge_deleted(days);
             println!(
                 "{}",
-                nsql_i18n::tf(nsql_i18n::Msg::StProfileDeleted, &[name])
+                nsql_i18n::tf(
+                    nsql_i18n::Msg::CliConnMovedDeleted,
+                    &[name, &days.to_string()]
+                )
             );
             0
         }

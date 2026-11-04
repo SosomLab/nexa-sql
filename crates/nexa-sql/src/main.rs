@@ -2420,6 +2420,8 @@ enum FilePurpose {
     DriverPackage,
     /// ★ T-8 GUI 2차(10-31): 결과 그리드 → 파일 스트리밍 내보내기(Save · 형식 = 확장자 csv/tsv/json/jsonl/sql).
     ResultExport,
+    /// ★ T-31b(11-04 · D-459): 접속 프로필 내보내기(Save · 비밀번호 제외)/가져오기(Open · 같은 이름은 건너뜀).
+    ProfilesFile,
 }
 
 /// 파일에서 셀에 넣은 결과 = (이진 바이트, 글, 바이트 수).

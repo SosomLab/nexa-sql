@@ -26,7 +26,83 @@ impl App {
         }
     }
 
+    /// 토스트 [되돌리기](`profile.undo:<이름>`) — `.deleted/`에서 제자리로(같은 이름이 다시 생겼으면 안내만).
+    pub(crate) fn undo_delete_profile(&mut self, name: &str) {
+        match Vault::open_default().and_then(|v| v.restore(name)) {
+            Ok(true) => {
+                self.sess.status = tf(Msg::StProfileRestored, &[name]);
+                self.conn_win.refresh_profiles(Some(name));
+            }
+            Ok(false) => self.sess.status = tf(Msg::StArgProfileMissing, &[name]),
+            Err(e) => self.sess.status = e.to_string(),
+        }
+        self.conn_win.redraw();
+        self.redraw();
+    }
+
+    /// ★ 프로필 내보내기/가져오기(T-31b · D-459): File 메뉴 → 파일 창(`FilePurpose::ProfilesFile` · Save = 내보내기 · Open = 가져오기).
+    pub(crate) fn profiles_export_dialog(&mut self) {
+        self.file_purpose = FilePurpose::ProfilesFile;
+        self.open_file_dlg = Some(PickerMode::Save);
+    }
+
+    pub(crate) fn profiles_import_dialog(&mut self) {
+        self.file_purpose = FilePurpose::ProfilesFile;
+        self.open_file_dlg = Some(PickerMode::Open);
+    }
+
+    /// 전부 내보내기(비밀번호 제외 · 볼트 `export_text`) — 결과는 상태줄 + 토스트.
+    pub(crate) fn profiles_export_to(&mut self, path: &Path) {
+        let r = Vault::open_default()
+            .and_then(|v| v.export_text(&[]))
+            .and_then(|text| {
+                let n = text.matches("\nname=").count();
+                std::fs::write(path, text).map(|()| n)
+            });
+        self.sess.status = match r {
+            Ok(n) => tf(
+                Msg::StProfilesExported,
+                &[&n.to_string(), &nexa_fs::path::display(path)],
+            ),
+            Err(e) => tf(Msg::ErrProfilesFile, &[&e.to_string()]),
+        };
+        self.toasts.push(
+            toast::ToastKind::Info,
+            t(Msg::MnProfilesExport),
+            self.sess.status.clone(),
+        );
+        self.redraw();
+    }
+
+    /// 가져오기(같은 이름은 건너뜀 · 덮어쓰기는 CLI `--overwrite`) — 결과는 상태줄 + 토스트 + 접속 창 목록 갱신.
+    pub(crate) fn profiles_import_from(&mut self, path: &Path) {
+        let r = std::fs::read_to_string(path)
+            .and_then(|text| Vault::open_default().and_then(|v| v.import_text(&text, false)));
+        self.sess.status = match r {
+            Ok(rep) => tf(
+                Msg::StProfilesImported,
+                &[
+                    &rep.added.to_string(),
+                    &rep.replaced.to_string(),
+                    &rep.skipped.len().to_string(),
+                ],
+            ),
+            Err(e) => tf(Msg::ErrProfilesFile, &[&e.to_string()]),
+        };
+        self.toasts.push(
+            toast::ToastKind::Info,
+            t(Msg::MnProfilesImport),
+            self.sess.status.clone(),
+        );
+        self.conn_win.refresh_profiles(None);
+        self.conn_win.redraw();
+        self.redraw();
+    }
+
     pub(crate) fn open_conn_window(&mut self, el: &ActiveEventLoop) {
+        // ★ 지운 프로필 보관 정리(T-31b · 설정 `connect.deleted_keep_days` · 창을 열 때 1회 · 비용 = 폴더 하나 나열).
+        let keep = self.settings.int("connect.deleted_keep_days").max(0) as u64;
+        let _ = Vault::open_default().and_then(|v| v.purge_deleted(keep));
         let over = self.window.as_ref().and_then(|w| {
             let p = w.outer_position().ok()?;
             let sz = w.outer_size();
@@ -268,10 +344,20 @@ impl App {
     }
 
     fn delete_profile(&mut self, name: &str) {
+        // ★ T-31b(11-04): 삭제 = `profiles/.deleted/`로 이동(설정 `connect.deleted_keep_days` 보관) + 토스트 [되돌리기](북마크 되돌리기와 같은 꼴 · 10초).
+        let days = self.settings.int("connect.deleted_keep_days").max(0) as u64;
         match Vault::open_default().and_then(|v| v.remove(name)) {
             Ok(_) => {
-                self.sess.status = tf(Msg::StProfileDeleted, &[name]);
+                self.sess.status = tf(Msg::StProfileDeletedUndo, &[name, &days.to_string()]);
                 self.panel_results.remove(name.trim());
+                self.toasts.push_button_timed(
+                    toast::ToastKind::Info,
+                    tf(Msg::StProfileDeleted, &[name]),
+                    self.sess.status.clone(),
+                    t(Msg::BtnUndo),
+                    &format!("profile.undo:{name}"),
+                    Duration::from_secs(10),
+                );
             }
             Err(e) => self.sess.status = e.to_string(),
         }

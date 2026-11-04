@@ -132,6 +132,10 @@ pub struct ConnectSpec {
     /// ★ 접속별 자동 커밋(T-77 잔여 · 10-30): `?autocommit=on|off`(`true/false`·`1/0`·`yes/no`) · 프로필 키 `autocommit=`. 러너가 접속
     ///   직후 자기 모드로 삼는다(설정 `session.autocommit`보다 우선 · 스크립트 `SET AUTOCOMMIT`은 그 뒤에도 우선). 없으면 설정.
     pub autocommit: Option<bool>,
+    /// ★ 읽기 전용 프로필(T-31b · D-458 · 11-04): `?readonly=on`(`read_only=` 별칭) · 프로필 키 `readonly=`. 러너가 조회가 아닌 문장
+    ///   (변경·DDL·분류 밖·프로시저 실행)·변경 적용·가져오기를 **보내지 않고 거절**한다(설정으로 못 끔) · 세션 단위 읽기 전용이 있는 방언
+    ///   (PostgreSQL · MySQL)은 접속 직후 서버에도 건다(보조). 없음 = 보통.
+    pub read_only: Option<bool>,
 }
 
 /// `on/off`·`true/false`·`1/0`·`yes/no`(대소문자 무시) → 불린 · 그 밖 = `None`.
@@ -299,7 +303,7 @@ impl ConnectSpec {
                             kv.split_once('=').is_some_and(|(k, _)| {
                                 matches!(
                                     k.to_ascii_lowercase().as_str(),
-                                    "driver" | "env" | "autocommit"
+                                    "driver" | "env" | "autocommit" | "readonly" | "read_only"
                                 )
                             })
                         });
@@ -312,6 +316,10 @@ impl ConnectSpec {
                                         spec.env = ConnEnv::from_name(v);
                                     } else if k.eq_ignore_ascii_case("autocommit") {
                                         spec.autocommit = parse_on_off(v);
+                                    } else if k.eq_ignore_ascii_case("readonly")
+                                        || k.eq_ignore_ascii_case("read_only")
+                                    {
+                                        spec.read_only = parse_on_off(v);
                                     }
                                 }
                             }
@@ -386,6 +394,11 @@ impl ConnectSpec {
                     } else if k.eq_ignore_ascii_case("autocommit") {
                         // T-77(10-30): 모르는 값은 무시(= 설정을 따른다).
                         spec.autocommit = parse_on_off(v);
+                    } else if k.eq_ignore_ascii_case("readonly")
+                        || k.eq_ignore_ascii_case("read_only")
+                    {
+                        // T-31b(11-04): 읽기 전용 프로필 — 모르는 값은 무시.
+                        spec.read_only = parse_on_off(v);
                     } else if k.eq_ignore_ascii_case("tls")
                         || k.eq_ignore_ascii_case("ssl-mode")
                         || k.eq_ignore_ascii_case("sslmode")
@@ -701,6 +714,9 @@ impl ConnectSpec {
         }
         if let Some(a) = self.autocommit {
             q.push(format!("autocommit={}", if a { "on" } else { "off" }));
+        }
+        if let Some(r) = self.read_only {
+            q.push(format!("readonly={}", if r { "on" } else { "off" }));
         }
         if !q.is_empty() {
             s.push('?');

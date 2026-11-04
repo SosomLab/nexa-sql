@@ -215,6 +215,18 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--readonly",
+        arg: "",
+        desc: Msg::HlpOptReadonly,
+        setting: None,
+    },
+    Opt {
+        flags: "--overwrite",
+        arg: "",
+        desc: Msg::HlpOptOverwrite,
+        setting: None,
+    },
+    Opt {
         flags: "--live",
         arg: "[=<spec>]",
         desc: Msg::HlpOptLive,
@@ -287,6 +299,9 @@ const CONN_OPTS: &[&str] = &[
     "-p",
     "--password-stdin",
     "--no-prompt",
+    "--readonly",
+    "-o",
+    "--overwrite",
 ];
 
 const CMDS: &[Cmd] = &[
@@ -374,7 +389,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "conn",
-        usage: "nsql conn list | add <name> [<target>] [conn options] | show <name> | env <name> [<type>] | rm <name> | test [<name>] [conn options] | path",
+        usage: "nsql conn list | add <name> [<target>] [conn options] [--readonly] | show <name> | env <name> [<type>] | readonly <name> [on|off] | rm <name> | deleted | restore <name> | export [-o <file>] [<name>…] | import <file> [--overwrite] | test [<name>] [conn options] | path",
         brief: Msg::HlpCmdConn,
         detail: Msg::HlpCmdConnDetail,
         args: &[
@@ -383,6 +398,11 @@ const CMDS: &[Cmd] = &[
             ("show <name>", Msg::HlpArgConnShow),
             ("env <name> [<type>]", Msg::HlpArgConnEnv),
             ("rm <name>", Msg::HlpArgConnRm),
+            ("deleted", Msg::HlpArgConnDeleted),
+            ("restore <name>", Msg::HlpArgConnRestore),
+            ("readonly <name> [on|off]", Msg::HlpArgConnReadonly),
+            ("export [-o <file>] [<name>…]", Msg::HlpArgConnExport),
+            ("import <file> [--overwrite]", Msg::HlpArgConnImport),
             ("test [<name>]", Msg::HlpArgConnTest),
             ("path", Msg::HlpArgConnPath),
         ],
@@ -394,6 +414,9 @@ const CMDS: &[Cmd] = &[
             "nsql conn test prod",
             "nsql conn env prod prod                                  # mark the saved profile as Production",
             "nsql conn var prod REGION=kr LIMIT=100                   # profile variables (read-only layer; NAME= removes)",
+            "nsql conn add report oracle://ro_user@db:1521/orcl --readonly   # queries only on this profile",
+            "nsql conn export -o profiles.conf && nsql conn import profiles.conf   # passwords are never exported",
+            "nsql conn deleted && nsql conn restore prod              # deleted profiles are kept in .deleted",
             "nsql conn test -d oracle --host db --port 1521 --db orcl --user scott",
         ],
     },

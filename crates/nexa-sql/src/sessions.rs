@@ -894,6 +894,19 @@ pub(crate) fn is_dml_sql(sql: &str) -> bool {
 
 /// 서버 상태를 바꾸는 문장인가(조회·클라이언트 명령·COMMIT/ROLLBACK 제외 · D-298 "변경") · 방언을 알면 그 방언의 추가 조회 머리도
 /// 조회(D-434 · DuckDB `FROM t` · PG `TABLE t`).
+/// ★ 읽기 전용 프로필이 보내도 되는 문장인가(T-31b · D-458 · 러너 `read_only_allows`와 같은 기준): 조회 분류(`Read`/`None`)만.
+pub(crate) fn read_only_ok(sql: &str, dialect: Option<nsql_core::Dialect>) -> bool {
+    matches!(
+        nsql_core::TxClass::of_sql_in(sql, dialect),
+        nsql_core::TxClass::Read | nsql_core::TxClass::None
+    )
+}
+
+/// 읽기 전용 게이트(순수 · MC/DC): 프로필이 읽기 전용이고 조회 아닌 문장이 있을 때만 막는다.
+pub(crate) fn read_only_blocks(read_only: bool, has_non_read: bool) -> bool {
+    read_only && has_non_read
+}
+
 pub(crate) fn is_change_sql(sql: &str, dialect: Option<nsql_core::Dialect>) -> bool {
     if is_client_only(sql) || nsql_core::TxControl::of_sql(sql) == nsql_core::TxControl::End {
         return false;
@@ -2528,6 +2541,32 @@ mod fetch_card_tests {
 #[cfg(test)]
 mod hold_tests {
     use super::*;
+
+    /// ★ T-31b(D-458) MC/DC: 읽기 전용 × 조회 아님 — 각 조건이 단독으로 결과를 뒤집는다 · 분류 = 조회/CTE/EXPLAIN 통과 · 변경·DDL·CALL 차단.
+    #[test]
+    fn read_only_gate_mcdc() {
+        assert!(read_only_blocks(true, true));
+        assert!(!read_only_blocks(false, true), "읽기 전용 아님 = 통과");
+        assert!(!read_only_blocks(true, false), "조회만 = 통과");
+        let d = Some(nsql_core::Dialect::Oracle);
+        assert!(
+            read_only_ok("SELECT 1 FROM dual", d)
+                && read_only_ok("WITH x AS (SELECT 1 FROM dual) SELECT * FROM x", d)
+        );
+        assert!(read_only_ok("EXPLAIN PLAN FOR SELECT 1 FROM dual", d) && read_only_ok("  ", d));
+        for s in [
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "INSERT INTO t VALUES (1)",
+            "CREATE TABLE t(a INT)",
+            "DROP TABLE t",
+            "BEGIN NULL; END;",
+            "CALL p()",
+            "TRUNCATE TABLE t",
+        ] {
+            assert!(!read_only_ok(s, d), "{s}");
+        }
+    }
 
     #[test]
     fn hold_blocks_run_mcdc() {

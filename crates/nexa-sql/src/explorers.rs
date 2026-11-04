@@ -2609,6 +2609,7 @@ mod tests {
             ssh: None,
             ssh_key: None,
             autocommit: None,
+            read_only: None,
             driver: None,
         }
     }
@@ -2767,6 +2768,7 @@ mod tests {
             ssh: None,
             ssh_key: None,
             autocommit: None,
+            read_only: None,
             driver: None,
         };
         // 파일은 임시 폴더 아래에만(접속이 파일을 만든다 · 61 §2 "실제 폴더에 쓰지 않는다").

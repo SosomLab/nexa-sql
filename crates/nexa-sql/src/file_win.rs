@@ -160,6 +160,10 @@ pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter
         ],
         FilePurpose::SettingFolder(_) => vec![all()],
         FilePurpose::SettingsFile => vec![FileFilter::new(t(Msg::FilterJson), &["json"]), all()],
+        // ★ T-31b: 접속 프로필 파일(nexa-conf key=value 블록 · `.conf`) — 텍스트도 좁혀 보기용.
+        FilePurpose::ProfilesFile => {
+            vec![FileFilter::new(t(Msg::FilterText), &["conf", "txt"]), all()]
+        }
     }
 }
 

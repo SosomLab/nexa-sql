@@ -140,6 +140,8 @@ pub(crate) struct ConnectPanel {
     /// ★ 서버 유형 콤보(사용자 10-01 · 기본 스키마 줄 오른쪽) — 프로필 편집 = **영속**(Save로 저장) · 목록 우클릭과 같은 값.
     env: Combo,
     save_pw: Checkbox,
+    /// ★ 읽기 전용 프로필(T-31b · D-458 · 11-04): 비밀번호 줄의 저장 체크 왼쪽 · 프로필 키 `readonly=` · 접속 문자열 `?readonly=on`.
+    read_only: Checkbox,
     test_btn: Button,
     connect_btn: Button,
     save_btn: Button,
@@ -182,6 +184,7 @@ pub(crate) struct FormSnap {
     pub user: String,
     pub password: String,
     pub save_pw: bool,
+    pub read_only: bool,
     /// 서버 유형 저장 값(`none`·`dev`·`test`·`prod`).
     pub env: String,
     /// 프로필 변수(이름 대문자 · 값 글자 그대로 · 순서 포함).
@@ -202,6 +205,7 @@ pub(crate) enum Dirty {
     User,
     Password,
     SavePw,
+    ReadOnly,
     Env,
     Vars,
 }
@@ -304,6 +308,9 @@ pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
     }
     if base.save_pw != now.save_pw {
         out.push(Dirty::SavePw);
+    }
+    if base.read_only != now.read_only {
+        out.push(Dirty::ReadOnly);
     }
     if base.env != now.env {
         out.push(Dirty::Env);
@@ -483,6 +490,7 @@ impl ConnectPanel {
             loaded_name: None,
             env: Combo::new(env_items(), 0),
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
+            read_only: Checkbox::new(t(Msg::LblReadOnly), false),
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
@@ -513,6 +521,7 @@ impl ConnectPanel {
     /// 언어 전환 — 라벨·placeholder 재생성(TextBox는 본문 보존 재생성).
     pub(crate) fn relabel(&mut self) {
         self.save_pw = Checkbox::new(t(Msg::LblSavePassword), self.save_pw.is_checked());
+        self.read_only = Checkbox::new(t(Msg::LblReadOnly), self.read_only.is_checked());
         let ev = self.env.selected_value();
         self.env = Combo::new(env_items(), 0);
         self.env.select_value(&ev);
@@ -635,6 +644,7 @@ impl ConnectPanel {
         self.password
             .set_text(spec.password.as_deref().unwrap_or(""));
         self.save_pw.set_checked(spec.password.is_some());
+        self.read_only.set_checked(spec.read_only == Some(true));
         self.name.set_text(name);
         let d = self.selected_dialect();
         self.apply_dialect(d);
@@ -668,6 +678,8 @@ impl ConnectPanel {
         }
         // 서버 유형 = 콤보(Save = 프로필에 영속 · 접속 = 이 값으로 붙는다).
         spec.env = nsql_script::ConnEnv::from_name(&self.env.selected_value());
+        // ★ 읽기 전용(T-31b · D-458): 켜졌을 때만 키를 쓴다(끔 = 키 없음 = 보통).
+        spec.read_only = self.read_only.is_checked().then_some(true);
         // 드라이버 변형(Oracle Thin/OCI · 사용자 10-23 "접속 폼에 드라이버 선택") = 접속 문자열 `?driver=`와 같은 값.
         spec.driver = self.selected_driver();
         Ok(spec)
@@ -721,6 +733,7 @@ impl ConnectPanel {
             tb.set_text("");
         }
         self.save_pw.set_checked(false);
+        self.read_only.set_checked(false);
         self.vars.clear();
         self.ssh_open = false;
         let d = self.selected_dialect();
@@ -785,6 +798,7 @@ impl ConnectPanel {
             user: self.user.text(),
             password: self.password.text(),
             save_pw: self.save_pw.is_checked(),
+            read_only: self.read_only.is_checked(),
             env: self.env.selected_value(),
             vars: self.vars.clone(),
         }
@@ -925,6 +939,7 @@ impl ConnectPanel {
         self.dialect.set_scale(scale);
         self.env.set_scale(scale);
         self.save_pw.set_scale(scale);
+        self.read_only.set_scale(scale);
         self.test_btn.set_scale(scale);
         self.connect_btn.set_scale(scale);
         self.save_btn.set_scale(scale);
@@ -993,9 +1008,14 @@ impl ConnectPanel {
         {
             y += label_h;
             let cw = self.s(self.port_w);
+            // ★ 비밀번호 | [읽기 전용] | [비밀번호 저장](T-31b · 체크 둘 = 포트 폭씩 · 비밀번호 칸이 그만큼 좁다).
             self.password
-                .set_bounds(Rect::new(x, y, w - cw - gap, field_h), &mut inv);
+                .set_bounds(Rect::new(x, y, w - cw * 2 - gap * 2, field_h), &mut inv);
             let ch = self.s(22.0);
+            self.read_only.set_bounds(
+                Rect::new(x + w - cw * 2 - gap, y + (field_h - ch) / 2, cw, ch),
+                &mut inv,
+            );
             self.save_pw.set_bounds(
                 Rect::new(x + w - cw, y + (field_h - ch) / 2, cw, ch),
                 &mut inv,
@@ -1142,6 +1162,7 @@ impl ConnectPanel {
         set(&mut self.quick_btn, hit == Some(6));
         set(&mut self.vars_btn, hit == Some(7));
         set(&mut self.ssh_btn, hit == Some(8));
+        set(&mut self.read_only, hit == Some(9));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -1156,6 +1177,7 @@ impl ConnectPanel {
             self.quick_btn.bounds(),
             self.vars_btn.bounds(),
             self.ssh_btn.bounds(),
+            self.read_only.bounds(),
         ]
         .iter()
         .position(|b| b.w > 0 && b.contains(p))
@@ -1480,6 +1502,7 @@ impl ConnectPanel {
             self.dialect.on_event(ev, inv);
             self.env.on_event(ev, inv);
             self.save_pw.on_event(ev, inv);
+            self.read_only.on_event(ev, inv);
             self.test_btn.on_event(ev, inv);
             self.connect_btn.on_event(ev, inv);
             self.save_btn.on_event(ev, inv);
@@ -1684,6 +1707,7 @@ impl ConnectPanel {
         self.password.set_text(&snap.password);
         self.name.set_text(&snap.name);
         self.save_pw.set_checked(snap.save_pw);
+        self.read_only.set_checked(snap.read_only);
         self.env.select_value(&snap.env);
         let d = self.selected_dialect();
         self.apply_dialect(d);
@@ -1962,6 +1986,10 @@ impl ConnectPanel {
         if is(Dirty::SavePw) {
             stripe(dc, self.save_pw.bounds());
         }
+        self.read_only.paint(dc, th);
+        if is(Dirty::ReadOnly) {
+            stripe(dc, self.read_only.bounds());
+        }
         if is(Dirty::Dialect) {
             stripe(dc, self.dialect.bounds());
         }
@@ -2172,6 +2200,7 @@ mod dirty_tests {
             user: "u".into(),
             password: "p".into(),
             save_pw: true,
+            read_only: false,
             env: "none".into(),
             vars: Vec::new(),
         }
@@ -2243,13 +2272,13 @@ mod dirty_tests {
         assert!(!p.is_dirty());
     }
 
-    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(13칸 독립) · 같으면 빈 목록.
+    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(14칸 독립 · T-31b 읽기 전용 포함) · 같으면 빈 목록.
     #[test]
     fn each_field_independently() {
         let b = base();
         assert!(dirty_fields(&b, &b).is_empty());
         type Mut = fn(&mut FormSnap);
-        let cases: [(Mut, Dirty); 13] = [
+        let cases: [(Mut, Dirty); 14] = [
             (|s| s.name = "B".into(), Dirty::Name),
             (|s| s.dialect = "pg".into(), Dirty::Dialect),
             (|s| s.host = "x".into(), Dirty::Host),
@@ -2261,6 +2290,7 @@ mod dirty_tests {
             (|s| s.user = "v".into(), Dirty::User),
             (|s| s.password = "q".into(), Dirty::Password),
             (|s| s.save_pw = false, Dirty::SavePw),
+            (|s| s.read_only = true, Dirty::ReadOnly),
             (|s| s.env = "prod".into(), Dirty::Env),
             (|s| s.vars.push(("X".into(), "1".into())), Dirty::Vars),
         ];

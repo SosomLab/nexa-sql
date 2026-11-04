@@ -1097,7 +1097,19 @@ lite: Development (DEV)
 삭제: pgdemo
 ```
 
-`conn env <이름> [<유형>]` — 유형 = `none|non` · `development|dev` · `test|tst` · `production|prd`(대소문자 무관) · 생략하면 현재 값만 본다. 운영 프로필의 시나리오 점검은 [115](115-prod-mode-scenario-nsql-guide.md).
+`conn env <이름> [<유형>]` — 유형 = `none|non` · `development|dev` · `test|tst` · `production|prd`(대소문자 무관) · 생략하면 현재 값만
+
+**삭제 복구 · 읽기 전용 · 내보내기/가져오기(11-04 · T-31b · [21 §13](21-connection-profiles.md))**
+
+```text
+nsql conn rm pgdemo                 # 지우지 않고 profiles/.deleted 로 옮긴다(설정 connect.deleted_keep_days · 기본 30일)
+nsql conn deleted                   # 보관 중인 지운 프로필 목록(지운 시각 UTC · 이름 · 대상)
+nsql conn restore pgdemo            # 제자리로(비밀번호 봉투도 그대로 · 같은 이름이 살아 있으면 오류)
+nsql conn add report oracle://ro_user@db:1521/orcl --readonly   # 읽기 전용 프로필 = 조회만 실행(변경·DDL·프로시저·가져오기 거절)
+nsql conn readonly report [on|off]  # 표식 보기/바꾸기 · 접속 줄 꼬리 " · read-only"
+nsql conn export -o profiles.conf [이름 …]   # 비밀번호는 절대 나가지 않는다 · 변수(var.*) 포함 · 파일 없으면 stdout
+nsql conn import profiles.conf [--overwrite] # 같은 이름은 건너뜀 · --overwrite = 교체(변수까지) · 가져온 프로필은 첫 접속 때 비밀번호를 묻는다
+``` 본다. 운영 프로필의 시나리오 점검은 [115](115-prod-mode-scenario-nsql-guide.md).
 
 ### Step 17 — 드라이버 (`driver`) — D-350
 

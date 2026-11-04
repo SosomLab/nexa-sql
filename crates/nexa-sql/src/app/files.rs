@@ -473,6 +473,8 @@ impl App {
             }
             // 설정 내보내기 기본 이름(10-24).
             (PickerMode::Save, FilePurpose::SettingsFile) => "nexa-sql-settings.json".into(),
+            // ★ T-31b: 접속 프로필 내보내기 기본 이름(비밀번호 없음 · `.conf` = nexa-conf key=value 블록).
+            (PickerMode::Save, FilePurpose::ProfilesFile) => "nexa-sql-profiles.conf".into(),
             // ★ T-8 GUI 2차 · D-448: 결과 내보내기 기본 이름 = `export.name_pattern` 토큰 치환 + 하위 메뉴에서 고른 형식의 확장자.
             (PickerMode::Save, FilePurpose::ResultExport) => super::export::default_name(
                 self.settings

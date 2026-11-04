@@ -40,6 +40,35 @@ pub const APP_DIR: &str = nsql_settings::APP_DIR;
 const PROFILES_DIR: &str = "profiles";
 const DEVICE_KEY: &str = "device.key";
 const EXT: &str = "conf";
+/// ★ 지운 프로필 보관 폴더(T-31b · 11-04): `profiles/.deleted/<해시>.<유닉스 초>[-n].conf` — `list()`는 `.deleted` 폴더를 보지 않는다(하위 폴더).
+const DELETED_DIR: &str = ".deleted";
+/// 내보내기 파일 첫 줄(형식 표식 · 비밀번호 없음을 사람도 알게).
+pub const EXPORT_HEADER: &str = "# nexa-sql connection profiles v1 (passwords are never exported)";
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// `.deleted/`에 보관 중인 프로필(비밀번호 없음 · 복구 후보).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletedProfile {
+    pub name: String,
+    pub spec: ConnectSpec,
+    /// 지운 시각(유닉스 초 · 파일 이름에서).
+    pub deleted_at: u64,
+    pub path: PathBuf,
+}
+
+/// 가져오기 결과.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ImportReport {
+    pub added: usize,
+    pub replaced: usize,
+    /// 건너뛴 이름(이미 있음 · 이름 규칙 위반 · 이름 없음).
+    pub skipped: Vec<String>,
+}
 
 /// 프로필 이름 규칙 — 접속 문자열에 반드시 들어가는 문자(`:` `@` `/`)를 배제한다.
 /// 프로필 변수 줄의 키 접두(`var.NAME=값`).
@@ -257,6 +286,10 @@ impl Vault {
         if let Some(a) = spec.autocommit {
             known.push(("autocommit", if a { "on" } else { "off" }.to_string()));
         }
+        // ★ 읽기 전용(T-31b · D-458) — 프로필 키 `readonly=on|off`.
+        if let Some(r) = spec.read_only {
+            known.push(("readonly", if r { "on" } else { "off" }.to_string()));
+        }
         if let Some(pw) = &spec.password {
             let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
             known.push(("secret", hex_encode(&env)));
@@ -369,21 +402,204 @@ impl Vault {
         }))
     }
 
-    /// 삭제 — 있었으면 true. 해시 파일과 종전 꼴(글자 그대로 같은 이름) 둘 다 본다.
+    /// ★ 삭제 = **`profiles/.deleted/`로 이동**(T-31b · 11-04 · 사용자 09-14 실수 삭제 사례 · 복구 가능 · 봉투 도메인은 이름이라 같은 이름으로
+    /// 되살리면 그대로 열린다) — 있었으면 true. 옮긴 파일 이름 = `<해시>.<유닉스 초>[-n].conf`(같은 이름을 여러 번 지워도 겹치지 않음) ·
+    /// 종전 꼴 파일(글자 그대로 같은 이름)도 함께 옮긴다. 보존 기간은 호스트가 [`Self::purge_deleted`]로 다룬다.
     pub fn remove(&self, name: &str) -> io::Result<bool> {
         let path = self.path_of(name)?;
-        let mut removed = match std::fs::remove_file(&path) {
-            Ok(()) => true,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
-            Err(e) => return Err(e),
-        };
-        if let Some(old) = self.legacy_path(name) {
-            if old != path {
-                std::fs::remove_file(old)?;
-                removed = true;
+        let bin = self.dir.join(PROFILES_DIR).join(DELETED_DIR);
+        let stamp = now_secs();
+        let stem = Self::file_name(name);
+        let stem = stem.trim_end_matches(&format!(".{EXT}")).to_string();
+        let mut removed = false;
+        let mut n = 0u32;
+        let legacy = self.legacy_path(name).filter(|o| *o != path);
+        for p in std::iter::once(path).chain(legacy) {
+            if !p.is_file() {
+                continue;
             }
+            std::fs::create_dir_all(&bin)?;
+            // 같은 초에 같은 이름을 두 번 지워도 덮어쓰지 않는다(`-k` 꼬리 · 빈 자리까지).
+            let mut k = n;
+            let dst = loop {
+                let suffix = if k == 0 {
+                    String::new()
+                } else {
+                    format!("-{k}")
+                };
+                let cand = bin.join(format!("{stem}.{stamp}{suffix}.{EXT}"));
+                if !cand.exists() {
+                    break cand;
+                }
+                k += 1;
+            };
+            if std::fs::rename(&p, &dst).is_err() {
+                std::fs::copy(&p, &dst)?;
+                std::fs::remove_file(&p)?;
+            }
+            removed = true;
+            n += 1;
         }
         Ok(removed)
+    }
+
+    /// `.deleted/`의 프로필(최근 것부터 · 이름을 모르는 파일은 건너뜀).
+    pub fn deleted(&self) -> io::Result<Vec<DeletedProfile>> {
+        let bin = self.dir.join(PROFILES_DIR).join(DELETED_DIR);
+        let mut out = Vec::new();
+        let rd = match std::fs::read_dir(&bin) {
+            Ok(r) => r,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e),
+        };
+        for e in rd.flatten() {
+            let file = e.file_name();
+            let Some(file) = file.to_str() else { continue };
+            let Some(body) = file.strip_suffix(&format!(".{EXT}")) else {
+                continue;
+            };
+            // `<해시>.<초>[-n]` — 둘째 조각이 지운 시각.
+            let deleted_at = body
+                .split('.')
+                .nth(1)
+                .and_then(|t| t.split('-').next())
+                .and_then(|t| t.parse::<u64>().ok())
+                .unwrap_or(0);
+            let Ok(text) = std::fs::read_to_string(e.path()) else {
+                continue;
+            };
+            let (spec, _, name) = Self::parse_doc(&text);
+            let Some(name) = name.filter(|n| is_profile_name(n)) else {
+                continue;
+            };
+            out.push(DeletedProfile {
+                name,
+                spec,
+                deleted_at,
+                path: e.path(),
+            });
+        }
+        out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at).then(a.name.cmp(&b.name)));
+        Ok(out)
+    }
+
+    /// 되살리기 — `.deleted/`의 **가장 최근** 같은 이름을 제자리로(있었으면 true). 살아 있는 같은 이름이 있으면 `AlreadyExists`
+    /// (덮어쓰지 않는다 · 호스트가 먼저 지우거나 다른 이름으로).
+    pub fn restore(&self, name: &str) -> io::Result<bool> {
+        let path = self.path_of(name)?;
+        if path.is_file() || self.legacy_path(name).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                name.to_string(),
+            ));
+        }
+        let Some(d) = self.deleted()?.into_iter().find(|d| d.name == name) else {
+            return Ok(false);
+        };
+        if std::fs::rename(&d.path, &path).is_err() {
+            std::fs::copy(&d.path, &path)?;
+            std::fs::remove_file(&d.path)?;
+        }
+        Ok(true)
+    }
+
+    /// 보존 기간이 지난 `.deleted/` 파일을 지운다(`keep_days` 0 = 전부 즉시) — 지운 수. 폴더가 없으면 0.
+    pub fn purge_deleted(&self, keep_days: u64) -> io::Result<usize> {
+        let cutoff = now_secs().saturating_sub(keep_days.saturating_mul(86_400));
+        let mut n = 0;
+        for d in self.deleted()? {
+            if d.deleted_at <= cutoff && std::fs::remove_file(&d.path).is_ok() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// ★ 내보내기 글(T-31b · D-459 · **비밀번호 제외** · 프로필마다 블록 · 첫 줄 `name=` · 변수 줄 포함 · 블록 사이 빈 줄) — `names`가 비면 전부.
+    /// 모르는 이름은 조용히 건너뛴다(호스트가 목록으로 고른다).
+    pub fn export_text(&self, names: &[String]) -> io::Result<String> {
+        let mut out = String::from(EXPORT_HEADER);
+        out.push('\n');
+        for p in self.list()? {
+            if !names.is_empty() && !names.contains(&p.name) {
+                continue;
+            }
+            let Some(path) = self.read_path(&p.name)? else {
+                continue;
+            };
+            let text = std::fs::read_to_string(&path)?;
+            out.push('\n');
+            out.push_str(&format!("name={}\n", p.name));
+            for line in text.lines() {
+                let l = line.trim_end_matches('\r');
+                let key = l.split_once('=').map(|(k, _)| k.trim()).unwrap_or("");
+                if l.trim().is_empty()
+                    || l.trim_start().starts_with('#')
+                    || key == "name"
+                    || key == "secret"
+                {
+                    continue;
+                }
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+        Ok(out)
+    }
+
+    /// ★ 가져오기 — 블록마다 저장(비밀번호 **없음** · 있어도 무시) · 같은 이름 = `overwrite`면 덮어쓰기(변수 포함) 아니면 건너뜀 ·
+    /// 이름 규칙에 어긋나는 블록도 건너뜀(보고에 이름 그대로). 파일 전체가 블록 하나도 못 만들면 `InvalidData`.
+    pub fn import_text(&self, text: &str, overwrite: bool) -> io::Result<ImportReport> {
+        let mut rep = ImportReport::default();
+        let existing: Vec<String> = self.list()?.into_iter().map(|p| p.name).collect();
+        let mut blocks = 0usize;
+        for block in text.replace("\r\n", "\n").split("\n\n") {
+            let body: String = block
+                .lines()
+                .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            if body.is_empty() {
+                continue;
+            }
+            blocks += 1;
+            let (mut spec, _secret, name) = Self::parse_doc(&body);
+            spec.password = None;
+            let Some(name) = name else {
+                rep.skipped.push("(no name)".into());
+                continue;
+            };
+            if !is_profile_name(&name) {
+                rep.skipped.push(name);
+                continue;
+            }
+            let was = existing.contains(&name);
+            if was && !overwrite {
+                rep.skipped.push(name);
+                continue;
+            }
+            self.save(&name, &spec)?;
+            let vars: Vec<(String, String)> = nexa_conf::parse(&body)
+                .pairs
+                .into_iter()
+                .filter_map(|(k, v)| k.strip_prefix(VAR_PREFIX).map(|n| (n.to_string(), v)))
+                .collect();
+            if !vars.is_empty() || was {
+                let _ = self.set_vars(&name, &vars);
+            }
+            if was {
+                rep.replaced += 1;
+            } else {
+                rep.added += 1;
+            }
+        }
+        if blocks == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "no profile blocks (expected `name=` lines)",
+            ));
+        }
+        Ok(rep)
     }
 
     /// 이름순 목록 — 파일 안 `name=`이 이름(해시 파일) · 없으면 파일 이름의 어간(종전 꼴 · 글자 그대로).
@@ -472,6 +688,7 @@ impl Vault {
                 "ssh" => spec.ssh = Some(v),
                 "ssh_key" => spec.ssh_key = Some(v),
                 "autocommit" => spec.autocommit = nsql_script::parse_on_off(&v),
+                "readonly" => spec.read_only = nsql_script::parse_on_off(&v),
                 "secret" => secret = Some(v),
                 _ => {}
             }
@@ -546,6 +763,94 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// ★ T-31b(11-04): 삭제 = `.deleted/` 이동 → 목록에서 사라짐 · `deleted()`에 보임 · `restore` = 제자리(비밀번호 봉투도 그대로 열림) ·
+    /// 같은 이름이 살아 있으면 AlreadyExists · `purge_deleted(0)` = 즉시 비움.
+    #[test]
+    fn delete_moves_to_deleted_and_restore_brings_back() {
+        let d = tmp("deleted");
+        let v = Vault::open(&d).unwrap();
+        v.save("p1", &spec(Some("pw1"))).unwrap();
+        assert!(v.remove("p1").unwrap());
+        assert!(v.list().unwrap().is_empty());
+        assert_eq!(
+            v.file_count().unwrap(),
+            0,
+            "profiles 폴더의 .conf 수 = 0(.deleted는 하위 폴더)"
+        );
+        let del = v.deleted().unwrap();
+        assert_eq!(del.len(), 1);
+        assert_eq!(del[0].name, "p1");
+        assert!(del[0].deleted_at > 0);
+        assert!(v.restore("p1").unwrap());
+        assert_eq!(
+            v.get("p1").unwrap().unwrap().password.as_deref(),
+            Some("pw1"),
+            "봉투 그대로"
+        );
+        assert!(v.deleted().unwrap().is_empty());
+        // 살아 있는 이름은 덮어쓰지 않는다 · 없는 이름 = false.
+        v.save("p2", &spec(None)).unwrap();
+        v.remove("p2").unwrap();
+        v.save("p2", &spec(None)).unwrap();
+        assert_eq!(
+            v.restore("p2").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert!(!v.restore("nope").unwrap());
+        // 두 번 지운 같은 이름 = 파일 둘 · 보존 0일 = 전부 삭제.
+        v.remove("p2").unwrap();
+        assert_eq!(v.deleted().unwrap().len(), 2);
+        assert_eq!(v.purge_deleted(0).unwrap(), 2);
+        assert!(v.deleted().unwrap().is_empty());
+        assert_eq!(v.purge_deleted(30).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ★ T-31b(D-459): 내보내기 = 비밀번호 제외 · 변수 포함 · 가져오기 = 새 이름 추가 · 같은 이름은 건너뜀 · `overwrite` = 교체(변수까지) ·
+    /// `readonly=` 키 왕복 · 빈 파일 = InvalidData.
+    #[test]
+    fn export_import_round_trip_without_passwords() {
+        let d1 = tmp("export");
+        let d2 = tmp("import");
+        let v1 = Vault::open(&d1).unwrap();
+        let mut ro = spec(Some("secret"));
+        ro.read_only = Some(true);
+        v1.save("prod", &ro).unwrap();
+        v1.set_vars("prod", &[("REGION".into(), "kr".into())])
+            .unwrap();
+        v1.save("dev", &spec(None)).unwrap();
+        let text = v1.export_text(&[]).unwrap();
+        assert!(text.starts_with(EXPORT_HEADER));
+        assert!(!text.contains("secret="), "비밀번호 봉투는 나가지 않는다");
+        assert!(
+            text.contains("name=prod")
+                && text.contains("readonly=on")
+                && text.contains("var.REGION=kr")
+        );
+        let only: String = v1.export_text(&["dev".into()]).unwrap();
+        assert!(only.contains("name=dev") && !only.contains("name=prod"));
+        let v2 = Vault::open(&d2).unwrap();
+        let r = v2.import_text(&text, false).unwrap();
+        assert_eq!((r.added, r.replaced, r.skipped.len()), (2, 0, 0));
+        let p = v2.get("prod").unwrap().unwrap();
+        assert_eq!(
+            (p.read_only, p.password.is_none(), p.host.as_deref()),
+            (Some(true), true, Some("db.example.com"))
+        );
+        assert_eq!(
+            v2.vars("prod").unwrap(),
+            vec![("REGION".to_string(), "kr".to_string())]
+        );
+        let r = v2.import_text(&text, false).unwrap();
+        assert_eq!((r.added, r.replaced), (0, 0));
+        assert_eq!(r.skipped, vec!["dev".to_string(), "prod".to_string()]);
+        let r = v2.import_text(&text, true).unwrap();
+        assert_eq!((r.added, r.replaced, r.skipped.len()), (0, 2, 0));
+        assert!(v2.import_text("# nothing\n\n", false).is_err());
+        let _ = std::fs::remove_dir_all(&d1);
+        let _ = std::fs::remove_dir_all(&d2);
+    }
+
     fn tmp(name: &str) -> PathBuf {
         let d =
             std::env::temp_dir().join(format!("nsql-vault-test-{}-{}", std::process::id(), name));
@@ -569,6 +874,7 @@ mod tests {
             ssh: None,
             ssh_key: None,
             autocommit: None,
+            read_only: None,
             driver: None,
         }
     }

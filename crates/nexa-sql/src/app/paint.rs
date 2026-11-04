@@ -501,10 +501,13 @@ impl App {
         let env_chip =
             (self.sess.connected && self.settings.flag("statusbar.env_badge")).then(|| {
                 let env = self.sess.spec.as_ref().and_then(|sp| sp.env);
+                // ★ 읽기 전용 프로필(T-31b · D-458): 유형 없음 = `RO` 칩(경고색) · 유형 있음 = 유형 칩 그대로(연결 글에 `readonly=on`이 보인다).
+                let ro = self.sess.spec.as_ref().and_then(|sp| sp.read_only) == Some(true);
                 match env {
                     Some(e @ nsql_script::ConnEnv::Prod) => (e.abbr(), th.danger),
                     Some(e @ nsql_script::ConnEnv::Test) => (e.abbr(), th.warn),
                     Some(e @ nsql_script::ConnEnv::Dev) => (e.abbr(), th.accent),
+                    None if ro => ("RO", th.warn),
                     None => (nsql_script::connect::ENV_NONE_ABBR, th.text_dim),
                 }
             });

@@ -650,6 +650,9 @@ pub struct Runner {
     /// 열린 트랜잭션에 변경이 있었는가(수동 모드 · 커밋/롤백/암묵 커밋/접속에서 초기화).
     /// ★ 운영 보류 커밋(114 §5 · 10-15): 이번 실행의 정책(`None` = 보통) + 누적(보류 문장 · 합계 행 · 블록 · WHERE 없음) · COMMIT 직전 멈춤 번호.
     hold: Option<HoldPolicy>,
+    /// ★ 읽기 전용 프로필(T-31b · D-458 · 11-04 · `ConnectSpec.read_only`): 서버로 가는 문장 중 **조회만** 통과 — 변경·DDL·분류 밖
+    ///   (CALL·EXEC·블록)·변경 적용(`apply_changes`)·가져오기(`import_file`)는 보내지 않고 거절한다(설정으로 못 끔 · 61 §1-7 정신).
+    pub(crate) read_only: bool,
     hold_stmts: Vec<HeldStmt>,
     hold_total: u64,
     hold_block: bool,
@@ -892,6 +895,7 @@ impl Runner {
             last_unit: None,
             read_end: ReadEnd::Auto,
             hold: None,
+            read_only: false,
             hold_stmts: Vec::new(),
             hold_total: 0,
             hold_block: false,
@@ -1483,6 +1487,16 @@ impl Runner {
         self.hold_no_where = false;
     }
 
+    /// 읽기 전용 프로필 게이트(접속 때 `ConnectSpec.read_only`로 켜진다 · 시험·호스트가 직접 켤 수도).
+    pub fn set_read_only(&mut self, on: bool) {
+        self.read_only = on;
+    }
+
+    #[must_use]
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     /// ★ 이번 실행의 운영 보류 정책(워커가 실행마다 넘긴다 · 끝나면 `None`) — 누적은 비운다.
     pub fn set_hold(&mut self, p: Option<HoldPolicy>) {
         self.hold = p;
@@ -1596,6 +1610,16 @@ impl Runner {
             total: stmts.len(),
             ..ApplyReport::default()
         };
+        // ★ 읽기 전용 프로필(T-31b · D-458): 그리드 편집 적용은 통째로 거절.
+        if self.read_only {
+            rep.error = Some(ApplyError {
+                index: 0,
+                phase: ApplyPhase::PreCheck,
+                message: t(Msg::RunReadOnlyApply).to_string(),
+                label: String::new(),
+            });
+            return rep;
+        }
         let auto = self.engine.settings.autocommit;
         let begin = self.engine.caps.tx_begin;
         let dialect = self.engine.dialect;
@@ -2139,6 +2163,7 @@ impl Runner {
                 ssh_key: _,
                 driver: _,
                 autocommit: _,
+                read_only: _,
             } => Some(u.as_str()),
             _ => None,
         }
@@ -2228,6 +2253,17 @@ impl Runner {
                 if let Some(ac) = spec.autocommit {
                     self.engine.settings.autocommit = ac;
                 }
+                // ★ 읽기 전용 프로필(T-31b · D-458): 러너 게이트가 본체 · 세션 단위 읽기 전용이 있는 방언(PG·MySQL)은 서버에도 건다(보조 ·
+                //   실패해도 접속은 유지).
+                self.read_only = spec.read_only == Some(true);
+                if self.read_only {
+                    if let Some(sql) = read_only_session_sql(dialect) {
+                        let _ = session.execute(&ExecRequest {
+                            sql: sql.to_string(),
+                            params: vec![],
+                        });
+                    }
+                }
                 self.set_connection_sysvars(spec.user.as_deref(), spec.database.as_deref());
                 if self.engine.settings.serveroutput {
                     let _ = session.set_option("serveroutput", "on");
@@ -2271,8 +2307,14 @@ impl Runner {
                 } else {
                     String::new()
                 };
+                // 읽기 전용 프로필은 접속 설명 꼬리에 표시(파일 방언은 접속 문자열에 꼬리가 없다 · T-31b).
+                let description = if self.read_only {
+                    format!("{} · read-only", spec.redacted())
+                } else {
+                    spec.redacted()
+                };
                 emit(RunEvent::Connected {
-                    description: spec.redacted(),
+                    description,
                     dialect,
                     schema,
                     database,
@@ -2555,6 +2597,15 @@ impl Runner {
                     return true;
                 }
             }
+        }
+        // ★ 읽기 전용 프로필(T-31b · D-458): 조회가 아닌 서버행 문장은 보내지 않는다(모르면 막는다 · 호스트 게이트와 같은 판정 = 이중 안전).
+        if self.read_only && goes_to_server(item) && !read_only_allows(item, self.engine.dialect) {
+            emit(RunEvent::Error {
+                index,
+                line: item.line,
+                error: msg_err(tf(Msg::RunReadOnlyBlocked, &[&summary(item)])),
+            });
+            return false;
         }
         emit(RunEvent::Begin {
             index,
@@ -3982,6 +4033,31 @@ pub fn var_list_text(vars: &[(String, nsql_core::VarType)]) -> String {
 /// 이 항목이 **서버로 가는가** — SQL · `EXEC` · `CONNECT`/`DISCONNECT` · `DESCRIBE` · `SHOW`(`SHOW VARIABLES`는 제외)는 간다.
 /// 나머지 스크립트 명령(`PRINT` · `VARIABLE` · `DEFINE` · `SET` · `ACCEPT` · `PROMPT` · `@파일` …)은 클라이언트 안에서 끝난다.
 /// (`EXEC :V := 리터럴`은 실제로는 왕복 0이지만 계획 전에는 알 수 없어 `EXEC`를 서버행으로 본다.)
+/// ★ 읽기 전용 프로필이 보내도 되는 항목인가(T-31b · D-458): SQL = 조회 분류(`TxClass::Read`/`None`)만 · `EXEC`(프로시저·식 평가) = 아니오 ·
+/// 그 밖의 클라이언트 명령(`CONNECT`·`DESCRIBE`·`SHOW`)·무효 항목 = 예. 분류 밖(`Other` = CALL·블록·SET …)은 **아니오**(모르면 막는다).
+#[must_use]
+pub fn read_only_allows(item: &Item, dialect: Dialect) -> bool {
+    match &item.kind {
+        ItemKind::Sql(_) => matches!(
+            nsql_core::TxClass::of_sql_in(&item.text, Some(dialect)),
+            nsql_core::TxClass::Read | nsql_core::TxClass::None
+        ),
+        ItemKind::Invalid(_) => true,
+        ItemKind::Command(nsql_script::Command::Exec { .. }) => false,
+        ItemKind::Command(_) => true,
+    }
+}
+
+/// 세션 단위 읽기 전용 문장(보조 · 없는 방언 = None): PostgreSQL · MySQL/MariaDB.
+#[must_use]
+pub fn read_only_session_sql(dialect: Dialect) -> Option<&'static str> {
+    match dialect {
+        Dialect::Postgres => Some("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"),
+        Dialect::Mysql => Some("SET SESSION TRANSACTION READ ONLY"),
+        _ => None,
+    }
+}
+
 pub fn goes_to_server(item: &Item) -> bool {
     match &item.kind {
         ItemKind::Sql(_) => true,
@@ -6001,5 +6077,91 @@ mod errpos_tests {
             None,
             "보낸 문장이 더 짧다"
         );
+    }
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+    use nsql_driver_sqlite::SqliteSession;
+    use nsql_script::split_script;
+
+    fn runner() -> Runner {
+        let opener: Opener = Box::new(|spec: &ConnectSpec| {
+            let s = SqliteSession::open(spec.database.as_deref().unwrap_or(":memory:"))?;
+            Ok(Box::new(s) as Box<dyn Session>)
+        });
+        Runner::new(Dialect::Sqlite, opener).with_session(
+            Box::new(SqliteSession::open(":memory:").unwrap()),
+            "sqlite :memory:",
+        )
+    }
+
+    /// ★ T-31b(D-458): 읽기 전용 = 조회만 통과(SELECT · EXPLAIN · PRAGMA는 분류 밖 = 막힘) · CREATE/INSERT/UPDATE/DELETE/DROP · CALL · EXEC = 오류
+    /// 이벤트 + 서버에 안 감(표가 생기지 않는다) · `apply_changes` 거절 · 끄면 종전대로.
+    #[test]
+    fn read_only_runner_blocks_everything_but_queries() {
+        let allow = |s: &str| {
+            let it = &split_script(s)[0];
+            read_only_allows(it, Dialect::Sqlite)
+        };
+        assert!(
+            allow("SELECT 1")
+                && allow("WITH x AS (SELECT 1) SELECT * FROM x")
+                && allow("EXPLAIN SELECT 1")
+        );
+        assert!(allow("DESC t") && allow("SHOW VARIABLES"));
+        for s in [
+            "CREATE TABLE t(a)",
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET a = 2",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CALL p()",
+            "EXEC p(1)",
+            "BEGIN x; END;",
+            "PRAGMA journal_mode",
+        ] {
+            assert!(!allow(s), "{s}");
+        }
+        let mut r = runner();
+        r.set_read_only(true);
+        let mut prompt = |_: &str| None;
+        let mut evs = Vec::new();
+        r.run_script(
+            "CREATE TABLE t_ro(a INTEGER); SELECT 1;",
+            &mut prompt,
+            &mut |e| evs.push(e),
+        );
+        let errs = evs
+            .iter()
+            .filter(|e| matches!(e, RunEvent::Error { error, .. } if error.message.contains("Read-only")))
+            .count();
+        assert_eq!(errs, 1, "{evs:?}");
+        assert!(
+            evs.iter().any(|e| matches!(e, RunEvent::ResultSet { .. })),
+            "SELECT은 통과"
+        );
+        let mut evs2 = Vec::new();
+        r.run_script("SELECT COUNT(*) FROM t_ro;", &mut prompt, &mut |e| {
+            evs2.push(e)
+        });
+        assert!(
+            evs2.iter().any(|e| matches!(e, RunEvent::Error { .. })),
+            "표가 만들어지지 않았다(서버에 안 감)"
+        );
+        let rep = r.apply_changes(&[]);
+        assert!(rep
+            .error
+            .as_ref()
+            .is_some_and(|e| e.message.contains("Read-only")));
+        r.set_read_only(false);
+        let mut evs3 = Vec::new();
+        r.run_script("CREATE TABLE t_ro(a INTEGER);", &mut prompt, &mut |e| {
+            evs3.push(e)
+        });
+        assert!(!evs3.iter().any(|e| matches!(e, RunEvent::Error { .. })));
+        assert!(read_only_session_sql(Dialect::Postgres).is_some());
+        assert!(read_only_session_sql(Dialect::Oracle).is_none());
     }
 }

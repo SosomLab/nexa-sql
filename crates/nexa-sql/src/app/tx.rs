@@ -217,6 +217,17 @@ impl App {
 
     /// ★ 실행 전 트랜잭션 게이트(D-298 · D-304 · 순수 판정 + MC/DC): 막으면 상태줄 글.
     pub(crate) fn run_tx_gate(&self, items: &[String]) -> Option<String> {
+        // ★ 읽기 전용 프로필(T-31b · D-458): 조회가 아닌 문장이 하나라도 있으면 상태줄 안내 + 아무것도 보내지 않음(러너도 같은 판정 = 이중 안전).
+        let ro = self.sess.spec.as_ref().and_then(|sp| sp.read_only) == Some(true);
+        let ro_dialect = self.sess.dialect;
+        if sessions::read_only_blocks(
+            ro,
+            items
+                .iter()
+                .any(|s| !sessions::read_only_ok(s, Some(ro_dialect))),
+        ) {
+            return Some(t(Msg::StReadOnlyBlocked).to_string());
+        }
         let held = self.sess.prod_held.is_some();
         let tx_open = held || !self.sess.tx_pending.is_empty() || self.sess.tx_dirty;
         let dialect = self.sess.dialect;

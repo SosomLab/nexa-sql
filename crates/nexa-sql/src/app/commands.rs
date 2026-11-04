@@ -72,6 +72,8 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("file.large_force", Msg::MnFile, Msg::MnLargeForce),
     p("mem.trim_now", Msg::MnView, Msg::MnMemTrimNow),
     p("file.exit", Msg::MnFile, Msg::MnExit),
+    p("conn.export", Msg::MnFile, Msg::MnProfilesExport),
+    p("conn.import", Msg::MnFile, Msg::MnProfilesImport),
     p("edit.cut", Msg::MnEdit, Msg::MnCut),
     p("edit.copy", Msg::MnEdit, Msg::MnCopy),
     p("edit.paste", Msg::MnEdit, Msg::MnPaste),

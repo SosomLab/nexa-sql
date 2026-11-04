@@ -151,3 +151,14 @@ oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
 - ★ 한계(GUI) = 상태줄 버튼·배지는 **전역 설정 그대로** — 프로필 값이 설정과 다르면 로그 + 토스트(`StProfileAutocommit`)로만 알린다 · 세션별 autocommit 표시는 보류(D-399).
 
 > ★ **접속 창 다중 "접속됨"(10-30 · 182차 · T-121 ④ · D-422)** — 로그인 목록의 초록 화살표 = 지금 접속 중인 **공유 세션 프로필 전부**(종전 09-14 = 활성 연결 하나만) · 접속 성공 · 공유 연결 전환 · 해제 때 갱신 · 창을 열 때도 같은 목록 · 초록 행을 다시 누르면 새로 접속하지 않고 그 연결을 활성화(`login_plan` Use).
+
+## 13. 삭제 복구 `.deleted/` · 읽기 전용 `readonly=` · 내보내기/가져오기(11-04 · T-31b · D-457~D-459 · 사용자 결정 11-04)
+
+| 조각 | 동작 | 결정 |
+|---|---|---|
+| **삭제 복구** | `Vault::remove`는 지우지 않고 **`profiles/.deleted/<해시>.<유닉스 초>[-n].conf`로 옮긴다**(봉투 도메인 = 이름 → 같은 이름으로 되살리면 비밀번호도 그대로) · `deleted()`(최근 순) · `restore(name)`(살아 있는 같은 이름이 있으면 `AlreadyExists`) · `purge_deleted(days)` · 보존 = 설정 `connect.deleted_keep_days`(기본 30 · 0 = 즉시) · GUI = 삭제 직후 토스트 **[되돌리기]**(10초 · `profile.undo:<이름>`) + 접속 창을 열 때 보존 기간 지난 파일 정리 · CLI = `nsql conn rm`(보관 안내) · `conn deleted` · `conn restore <name>` | 09-14 실수 삭제 사례 · `list()`는 하위 폴더를 보지 않아 **프로필 수 == 파일 수** 불변식 유지 |
+| **읽기 전용 프로필** | `ConnectSpec.read_only`(접속 문자열 `?readonly=on` · 별칭 `read_only` · 프로필 키 `readonly=on`) · **러너 게이트**(`nsql_run::read_only_allows` = 조회 분류 `Read`/`None`만 통과 · 변경·DDL·분류 밖(CALL·블록·SET)·`EXEC` 거절 · `apply_changes`(그리드 편집)·`import_file`(가져오기)도 거절 · 설정으로 못 끔) + **GUI 실행 게이트**(`run_tx_gate` = 상태줄 "읽기 전용 프로필: 조회만 실행됩니다" · 아무것도 보내지 않음 · `sessions::read_only_blocks` MC/DC) + **서버 보조**(PostgreSQL `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` · MySQL `SET SESSION TRANSACTION READ ONLY` · 접속 직후 1회 · 실패해도 접속 유지) · 표시 = 접속 설명 꼬리 ` · read-only` · 상태줄 칩 `RO`(유형이 없을 때 · 유형이 있으면 유형 칩 우선) · 접속 폼 **[읽기 전용] 체크**(비밀번호 줄 · 저장 체크 왼쪽) · CLI `conn add … --readonly` · `conn readonly <name> [on|off]` | **D-458**(게이트 + 모르면 막음 + 서버 보조) · 한계 = 함수 안의 DML·동적 SQL은 클라이언트가 못 본다(서버 보조가 있는 방언만 잡힘) |
+| **내보내기/가져오기** | `Vault::export_text(names)` = 첫 줄 `# nexa-sql connection profiles v1 (passwords are never exported)` + 프로필마다 블록(`name=` 첫 줄 · 스펙 키 · `var.*` 줄 · **`secret=` 절대 없음**) · `import_text(text, overwrite)` = 블록마다 저장(비밀번호 없음 · 같은 이름 = `overwrite`면 교체(변수 포함) 아니면 건너뜀 · 이름 규칙 위반 건너뜀 · 블록 0 = 오류) · GUI = **File ▸ 접속 프로필 내보내기…/가져오기…**(팔레트 등록 · `FilePurpose::ProfilesFile` · 기본 이름 `nexa-sql-profiles.conf` · GUI 가져오기는 건너뜀만 · 덮어쓰기는 CLI) · CLI = `conn export [-o <file>] [<name>…]`(파일 없으면 stdout) · `conn import <file|-> [--overwrite]` | **D-459**(1차 = 비밀번호 제외만 · 사용자 암호 봉투는 후속) · 가져온 프로필은 첫 접속 때 비밀번호를 묻는다(종전 규칙) |
+
+- 시험 = nsql-vault `delete_moves_to_deleted_and_restore_brings_back` · `export_import_round_trip_without_passwords` · nsql-run `read_only_runner_blocks_everything_but_queries` · nexa-sql `read_only_gate_mcdc` · E2E `scripts/conn-profile-e2e.sh`(CLI · sqlite · 22) · GUI 헤드리스(읽기 전용 프로필 DDL = 상태줄 차단 · SELECT 통과).
+- 남음(P3 · 요청 시) = Pin 열 · Help/Options · `ConnectionGrid`(G-4) · 지운 프로필 **목록 창**(지금은 토스트 되돌리기 + CLI).

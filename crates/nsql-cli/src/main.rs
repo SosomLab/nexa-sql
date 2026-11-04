@@ -83,6 +83,9 @@ struct Opts {
     timing_json: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
     log: bool,
+    /// `--readonly`(conn add · T-31b · D-458) · `--overwrite`(conn import · D-459).
+    readonly: bool,
+    overwrite: bool,
     /// `--live[=<스펙>]`(T-71 · 11-04 · docs/32 §2) — Oracle 실행 중 두 번째 접속이 폴링한 진행 줄을 stderr에(`Some("")` = 설정 그대로).
     live: Option<String>,
     /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
@@ -166,6 +169,8 @@ fn parse_opts() -> Opts {
         trim: false,
         null_text: None,
         fast: false,
+        readonly: false,
+        overwrite: false,
         in_place: false,
         preset: None,
         timing: false,
@@ -308,6 +313,8 @@ fn parse_opts() -> Opts {
                 o.timing_json = true;
             }
             "--fast" => o.fast = true,
+            "--readonly" | "--read-only" => o.readonly = true,
+            "--overwrite" => o.overwrite = true,
             "--in-place" => o.in_place = true,
             "--preset" => o.preset = Some(val("--preset")),
             "--log" => o.log = true,

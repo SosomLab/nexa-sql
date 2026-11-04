@@ -1327,6 +1327,12 @@ impl App {
                         (PickerMode::Open, FilePurpose::SettingsFile) => {
                             self.settings_import_from(&path);
                         }
+                        (PickerMode::Save, FilePurpose::ProfilesFile) => {
+                            self.profiles_export_to(&path);
+                        }
+                        (PickerMode::Open, FilePurpose::ProfilesFile) => {
+                            self.profiles_import_from(&path);
+                        }
                         (PickerMode::Open, FilePurpose::License) => self.license_install(&path),
                         (PickerMode::Open, FilePurpose::DriverPackage) => {
                             self.drivers_install_path(&path);

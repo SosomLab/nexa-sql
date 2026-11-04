@@ -1121,6 +1121,13 @@ impl App {
             "hold.commit" => self.tx_hold_commit(),
             "hold.commit_go" => self.tx_hold_commit_go(),
             "hold.rollback" => self.tx_hold_rollback(),
+            // ★ T-31b: 프로필 삭제 되돌리기(토스트) · 접속 프로필 내보내기/가져오기(File 메뉴 · 팔레트).
+            x if x.starts_with("profile.undo:") => {
+                let name = x["profile.undo:".len()..].to_string();
+                self.undo_delete_profile(&name);
+            }
+            "conn.export" => self.profiles_export_dialog(),
+            "conn.import" => self.profiles_import_dialog(),
             "run.commit" | "run.rollback" => {
                 if let Some(pass) = self.gate_pass() {
                     self.sess.busy = true;
@@ -1371,6 +1378,9 @@ impl App {
             item("file.run_file", Msg::MnRunFile),
             MenuEntry::Separator,
             item("file.close_tab", Msg::MnCloseTab),
+            MenuEntry::Separator,
+            item("conn.export", Msg::MnProfilesExport),
+            item("conn.import", Msg::MnProfilesImport),
         ];
         if !recent.is_empty() {
             file.push(MenuEntry::Separator);
