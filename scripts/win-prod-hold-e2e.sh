@@ -51,6 +51,12 @@ printf "UPDATE t_h SET v = 'x2' WHERE id = 2;\n" > "$OUT/b.sql"
 gui b "@connected:open:$(D b.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D b1.tx),@connected:@after:5000:run.rollback,@connected:@after:8000:tx.dump:$(D b2.tx)" 15
 has b1.tx "pending=1|held=stmts=1" && has b2.tx "pending=0|held=none" && ok "② 보류 → Rollback = 대기 0" || bad "② 롤백 흐름" "$(cat "$OUT/b1.tx" "$OUT/b2.tx" 2>/dev/null)"
 [ "$(val 2)" = "o2" ] && ok "② 서버 값 원복(o2)" || bad "② 서버 값 $(val 2)"
+# ②b 보류 → 카드 둘째 버튼 [롤백](`hold.rollback` · T-356 마감 11-04) → 원복 · 카드 덤프 = `…|Commit|hold.commit|Rollback|hold.rollback`.
+printf "UPDATE t_h SET v = 'x2b' WHERE id = 2;
+" > "$OUT/bb.sql"
+gui bb "@connected:open:$(D bb.sql),@connected:@after:1500:run.all,@connected:@after:4500:toast.dump:$(D bb1.toast),@connected:@after:5000:hold.rollback,@connected:@after:8000:tx.dump:$(D bb2.tx)" 15
+has bb1.toast "|Commit|hold.commit|Rollback|hold.rollback" && ok "②b 보류 카드 둘째 버튼 [Rollback]" || bad "②b 카드 둘째 버튼" "$(cat "$OUT/bb1.toast" 2>/dev/null)"
+has bb2.tx "pending=0|held=none" && [ "$(val 2)" = "o2" ] && ok "②b 카드 [롤백] = 대기 0 · 원복(o2)" || bad "②b 카드 롤백" "$(cat "$OUT/bb2.tx" 2>/dev/null) $(val 2)"
 # ③ 스크립트 안 COMMIT = 직전 멈춤(남은 문장 보존) → [커밋] → COMMIT + 남은 UPDATE → 다시 보류 → Commit ×2.
 printf "UPDATE t_h SET v = 'a3' WHERE id = 3;\nCOMMIT;\nUPDATE t_h SET v = 'b3' WHERE id = 3;\n" > "$OUT/c.sql"
 gui c "@connected:open:$(D c.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D c1.tx),@connected:@after:4700:toast.dump:$(D c1.toast),@connected:@after:5000:hold.commit_go,@connected:@after:8500:tx.dump:$(D c2.tx),@connected:@after:9000:run.commit,@connected:@after:9800:run.commit,@connected:@after:12500:tx.dump:$(D c3.tx)" 19

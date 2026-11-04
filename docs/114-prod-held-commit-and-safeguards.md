@@ -569,7 +569,7 @@ flowchart TD
 | **W1 · D-304 경계 가드** | 같은 게이트 = `ddl_guard_blocks(guard_on(운영은 늘 켬 · 아니면 tx.ddl_commit_guard), tx_open, implicit_commit(dialect, sql))` → 열린 변경 트랜잭션 + 암묵 커밋 문장 = 차단("먼저 커밋/롤백") · §9-2 C = 자동 실행 안 함 | 같은 자리 |
 | **§9-2 A E3 생략** | `e3_items(hold_on, items)` = 보류가 켜져 있으면 DML(INSERT/UPDATE/DELETE)과 **트랜잭션 통제문**(COMMIT/ROLLBACK/BEGIN · COMMIT은 D-299 보류 흐름이 따로 확인)은 2단 재실행에서 빼고 DDL·블록만 · `run.prod_confirm_ms`(3000 · 종전 3 s 고정) · 🔧 1차 E2E ③ 실패 = COMMIT이 E3에 세어져 첫 실행이 무장만 함 → 이 규칙 | `sessions.rs` · `app/run.rs` |
 | **카드 수명** | 보류 카드·무장 토스트 = **고정 카드**(`Toasts::push_button_sticky` · 수명 없음 · 막대 가득 · 버튼 또는 해결(`tx_close`)·만료(`tx_hold_tick`)에 `dismiss_action`) — 일반 토스트 3 s 수명이면 사용자가 보기 전에 사라졌다(협업 E2E B) · 무장 중 = 주황 카드를 치워 [커밋] 버튼 하나만(협업 V1 ②) · 빨간 카드 본문의 남은 초는 **매초 갱신**(`Toasts::set_body_for_action` · `tx_hold_tick` 1 s 깨움 · 협업 V1 ①) · 만료 = 빨간 카드 지우고 주황 카드 되살림 | `toast.rs` · `app/tx.rs` |
-| **삭제 창 DROP** | 탐색기 ▸ 삭제…(모달 2단 뒤)의 DROP은 `hold_skip_once`로 **보류를 건너뛴다**(운영 확인이 넷 = 삭제 2단 + 커밋 2단이 되지 않게 · 운영 백업 실패 = 삭제 막음은 그대로 · SQLite/PG/MSSQL = DDL 트랜잭션이라 안 걸면 즉시 반영) — **설계 판단 = 사용자 확인 대상**(협업 E2E C) | `app/drop.rs` · `app/run.rs` |
+| **삭제 창 DROP** | 탐색기 ▸ 삭제…(모달 2단 뒤)의 DROP은 `hold_skip_once`로 **보류를 건너뛴다**(운영 확인이 넷 = 삭제 2단 + 커밋 2단이 되지 않게 · 운영 백업 실패 = 삭제 막음은 그대로 · SQLite/PG/MSSQL = DDL 트랜잭션이라 안 걸면 즉시 반영) — ✅ **사용자 확정 11-04(D-457) = 건너뜀 유지**(삭제 2단 + 백업 파일이 안전장치 · 협업 E2E C) | `app/drop.rs` · `app/run.rs` |
 | **설정 7** | `tx.prod_hold`(켬) · `tx.prod_hold_rows`(0) · `tx.prod_hold_blocks`(켬) · `tx.prod_hold_no_where`(켬) · `tx.prod_commit_confirm_ms`(5000) · `tx.ddl_commit_guard`(켬 · 운영 무시 못 함) · `run.prod_confirm_ms`(3000) — 분류 트랜잭션 보호 | nsql-settings · i18n 24 |
 | **자체 시험** | 기동 명령 `tx.dump:<파일>`(`pending|held=stmts rows at_commit remaining|armed|autocommit`) · 메뉴 동작 `run.commit`/`run.rollback`/`tx.hold_commit_go` · ★ **E2E `scripts/win-prod-hold-e2e.sh`**(SQLite 격리 홈 PRD · 22 검사 = ①~⑦ 위 표의 흐름 전부 · 협업 3차 **22/0**) · 단위 = `hold_decision` · `is_commit_sql` · `dml_without_where`(주석·문자열·서브쿼리) · `hold_blocks_run` · `ddl_guard_blocks` · `commit_armed_ok` · `e3_items` MC/DC | scripts · nsql-run/sessions 시험 |
 
@@ -581,7 +581,7 @@ flowchart TD
   - **자동 커밋 모드 + 보류**: 툴바 tx.log 배지·툴팁 = 수동과 같게 · 상태줄 "자동 ● 보류 N건 · HH:MM부터"(`StTxPendingAuto`).
   - 검증 = win-prod-hold-e2e 26/0(⑧ COMMIT 문 거부 · ⑨ 수동 대기 1 + 누적 2 추가).
 - **시험 교훈(10-15)**: E2E 홈을 마지막 케이스가 다른 유형(비운영)으로 바꾸면 그 홈으로 돌린 뒤 탐침은 **다른 조건**이다(협업 A 보고 = 비운영 홈의 자동 커밋 = 정상) → 탐침 전 `nsql conn env` 확인 · 스크립트 끝에 홈 상태를 되돌리거나 케이스별 홈을 쓴다.
-- **표현(§5-3)**: 1단계 = 툴바 Commit **빨간 톤** + 토스트 카드(숫자·설명 · [커밋]) · 아이콘 테두리 게이지(ToolItem `Armed`)는 **nexa-ui 후속**(nexa-ctl `ToolItem` 상태 추가 · T-360 후보) · 보류 카드의 [롤백]·[커밋 후 계속] 버튼은 토스트 1버튼 제약 → 롤백 = 상단 Rollback(확인 없음) · 계속 = COMMIT 확인이 곧 계속(D-299 흐름) · 전용 카드 부품 = 2단계.
+- **표현(§5-3)**: 1단계 = 툴바 Commit **빨간 톤** + 토스트 카드(숫자·설명 · [커밋]) · 아이콘 게이지 = ✅ **222차 10-23 `ToolItem.armed`**(슬롯 위험색 채움 + 왼쪽부터 흰 게이지 · 호스트 `set_item_armed` 틱 주입 · 테두리 링 대신 채움 꼴로 2단 통일 · T-360 종결) · 보류 카드의 [롤백]·[커밋 후 계속] = ✅ **11-04 T-356 마감**(토스트 둘째 버튼 `set_button2_for_action` · [롤백] = `hold.rollback` = 상단 Rollback과 같은 길(확인 없음) · COMMIT 문 직전 멈춤이면 첫 버튼 글 = [커밋 후 계속]) · (종전) 토스트 1버튼 제약 → 롤백 = 상단 Rollback(확인 없음) · 계속 = COMMIT 확인이 곧 계속(D-299 흐름) · 전용 카드 부품 = 2단계.
 - **실서버**: 4 DBMS 왕복(§10 계획)은 협업 V1/E2E 후속 — SQLite 격리 E2E가 흐름 전부를 덮고, Oracle(암묵 트랜잭션)·PG/MSSQL(`BEGIN`)의 시작문 차이는 `manual_begin_sql`(T-146 · CI 통합 시험)이 이미 덮는다.
 
 ## 11. 운영기 점검 시나리오 스크립트(사용자 10-15 · `scripts/prod-mode-scenario.sh`)

@@ -144,14 +144,35 @@ impl App {
         } else {
             Msg::HoldCardTitle
         });
+        // ★ 보류 카드 전용 부품(T-356 마감 · D-447 · 11-04): [커밋] / COMMIT 문 직전 멈춤이면 [커밋 후 계속] + 둘째 버튼 [롤백](상단 Rollback과 같은 길).
+        let primary = t(if at_commit {
+            Msg::HoldBtnCommitContinue
+        } else {
+            Msg::HoldBtnCommit
+        });
         self.toasts.push_button_sticky(
             toast::ToastKind::Warn,
             title,
             body.clone(),
-            t(Msg::HoldBtnCommit),
+            primary,
             "hold.commit",
         );
+        self.toasts
+            .set_button2_for_action("hold.commit", t(Msg::HoldBtnRollback), "hold.rollback");
         body
+    }
+
+    /// 보류 카드 [롤백](T-356 마감): 상단 Rollback과 같은 길 — 확인 없음(되돌리는 쪽 · D-300) · 무장 중이었으면 해제 · 세션이 한가할 때만.
+    pub(crate) fn tx_hold_rollback(&mut self) {
+        self.sess.commit_armed = None;
+        self.toasts.dismiss_action("hold.commit_go");
+        if let Some(pass) = self.gate_pass() {
+            self.sess.busy = true;
+            self.sess.touch();
+            self.sess.submit(pass, worker::Cmd::Rollback);
+            self.sync_gate();
+        }
+        self.sync_tx_ui();
     }
 
     /// 무장 뒤 남은 초(올림 · 최소 1) — 카드 본문·[커밋 (N)] 버튼·툴바 Commit 배지가 같은 값을 쓴다.

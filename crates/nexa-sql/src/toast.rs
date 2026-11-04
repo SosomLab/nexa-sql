@@ -34,6 +34,10 @@ struct Toast {
     ///   누르면 그 명령 1회 · 카드 닫힘. 모양 = `TimeoutButton` 무장 상태(위험색 채움 · 밝은 글자).
     button: Option<(String, String)>,
     btn_rect: Rect,
+    /// ★ 둘째 버튼(라벨 · 명령 id · T-356 마감 11-04 · 보류 카드 [롤백]) — 위험색 테두리 + 위험색 글자(채움 없음 = "되돌리는 쪽") ·
+    ///   명령 버튼 왼쪽 · 누르면 그 명령 1회 · 카드 닫힘. 카드 식별은 여전히 첫 버튼의 명령 id.
+    button2: Option<(String, String)>,
+    btn2_rect: Rect,
     /// ★ 고정 카드의 [닫기](사용자 10-30 "닫기 위해서 버튼을 눌러야 하니 닫기 버튼도") — 명령 없이 카드만 지운다 · 버튼 왼쪽 · 테두리만.
     close_rect: Rect,
     /// ★ 버튼의 2단 확인 마감(시작 시각 · 총 길이 · 10-23 2단 통일) — 있으면 버튼 위에 왼쪽부터 차오르는 흰 게이지(`TimeoutButton` 무장 모양).
@@ -125,6 +129,8 @@ impl Toasts {
             action: None,
             button: None,
             btn_rect: Rect::default(),
+            button2: None,
+            btn2_rect: Rect::default(),
             close_rect: Rect::default(),
             btn_deadline: None,
             sticky: false,
@@ -228,6 +234,24 @@ impl Toasts {
         }
     }
 
+    /// ★ 그 동작의 카드에 **둘째 버튼**을 단다(T-356 마감 · 보류 카드 [롤백] · 11-04) — 있으면 true.
+    pub(crate) fn set_button2_for_action(
+        &mut self,
+        action: &str,
+        label: impl Into<String>,
+        action2: &str,
+    ) -> bool {
+        let label = label.into();
+        let mut hit = false;
+        for t in self.items.iter_mut() {
+            if t.button.as_ref().is_some_and(|(_, a)| a == action) {
+                t.button2 = Some((label.clone(), action2.to_string()));
+                hit = true;
+            }
+        }
+        hit
+    }
+
     /// 그 동작의 카드 **버튼 라벨**을 제자리에서 바꾼다(무장 카드 [커밋 (N)] 타이머 · 10-16 사용자) — 있으면 true.
     pub(crate) fn set_button_label_for_action(
         &mut self,
@@ -286,7 +310,13 @@ impl Toasts {
                     .button
                     .as_ref()
                     .map_or(("", ""), |(l, a)| (l.as_str(), a.as_str()));
-                format!("{kind}|{}|{}|{label}|{action}\n", t.title, t.body)
+                // 둘째 버튼이 있으면 `|라벨2|동작2`를 덧붙인다(없으면 종전 5칸 그대로 · E2E 호환).
+                let extra = t
+                    .button2
+                    .as_ref()
+                    .map(|(l, a)| format!("|{l}|{a}"))
+                    .unwrap_or_default();
+                format!("{kind}|{}|{}|{label}|{action}{extra}\n", t.title, t.body)
             })
             .collect()
     }
@@ -329,6 +359,10 @@ impl Toasts {
         }
         let t = self.items.remove(i);
         if t.close_rect.contains(p) {
+            return;
+        }
+        if let Some((_, a2)) = t.button2.as_ref().filter(|_| t.btn2_rect.contains(p)) {
+            self.taken = Some(a2.clone());
             return;
         }
         if let Some((_, a)) = t.button.as_ref().filter(|_| t.btn_rect.contains(p)) {
@@ -445,11 +479,23 @@ impl Toasts {
                 }
                 let cy = dc.text_center_y(br.y, br.h);
                 dc.text(br.x + px(8.0), cy, br, label, th.panel_bg);
-                // ★ 고정 카드 = [닫기] 보조 버튼(명령 버튼 왼쪽 · 테두리 + 본문색 글자 · 누르면 카드만 사라짐).
+                // ★ 둘째 버튼(T-356 · [롤백]) = 명령 버튼 왼쪽 · 위험색 테두리 + 위험색 글자(채움 없음 = 되돌리는 쪽).
+                let mut left_x = br.x;
+                if let Some((l2, _)) = t.button2.as_ref() {
+                    let w2 = dc.text_width(l2) + px(16.0);
+                    let r2 = Rect::new(br.x - px(6.0) - w2, br.y, w2, br.h);
+                    t.btn2_rect = r2;
+                    dc.stroke_round_rect_alpha(r2, px(4.0), th.danger, 1.0, a);
+                    dc.text(r2.x + px(8.0), cy, r2, l2, th.danger);
+                    left_x = r2.x;
+                } else {
+                    t.btn2_rect = Rect::default();
+                }
+                // ★ 고정 카드 = [닫기] 보조 버튼(버튼들 왼쪽 · 테두리 + 본문색 글자 · 누르면 카드만 사라짐).
                 if t.sticky {
                     let cl = nsql_i18n::t(Msg::BtnClose);
                     let cw = dc.text_width(cl) + px(16.0);
-                    let cr = Rect::new(br.x - px(6.0) - cw, br.y, cw, br.h);
+                    let cr = Rect::new(left_x - px(6.0) - cw, br.y, cw, br.h);
                     t.close_rect = cr;
                     dc.stroke_round_rect_alpha(cr, px(4.0), th.border, 1.0, a);
                     dc.text(cr.x + px(8.0), cy, cr, cl, th.text);
@@ -458,6 +504,7 @@ impl Toasts {
                 }
             } else {
                 t.btn_rect = Rect::default();
+                t.btn2_rect = Rect::default();
                 t.close_rect = Rect::default();
             }
             y = r.y - gap;

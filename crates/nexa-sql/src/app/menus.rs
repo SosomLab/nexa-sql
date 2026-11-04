@@ -1120,6 +1120,7 @@ impl App {
             }
             "hold.commit" => self.tx_hold_commit(),
             "hold.commit_go" => self.tx_hold_commit_go(),
+            "hold.rollback" => self.tx_hold_rollback(),
             "run.commit" | "run.rollback" => {
                 if let Some(pass) = self.gate_pass() {
                     self.sess.busy = true;
