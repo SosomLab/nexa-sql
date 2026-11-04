@@ -4166,6 +4166,13 @@ impl Grid {
         self.cond.set_text(text);
     }
 
+    /// ★ 자체 시험 `grid.cond.pick:<행>;<열>;<what>`(T-325 · 11-04): 보이는 (행, 열)을 우클릭한 것처럼 `menu_cell`을 세우고 조건 ▸ 항목
+    /// (`eq`·`ne`·`starts`·`contains`·`ends`·`null`·`notnull`)을 고른 것과 같은 길 — 열 이름 인용 정책(`identq`)을 키 주입 없이 판정한다.
+    pub(crate) fn cond_pick_at(&mut self, row: usize, col: usize, what: &str) {
+        self.menu_cell = self.cell_filter_target((row, col));
+        self.cond_pick(what);
+    }
+
     /// 조건 바 Enter와 같은 길(자체 시험 `grid.cond.run`).
     pub(crate) fn cond_run_now(&mut self) {
         self.cond.request_run();

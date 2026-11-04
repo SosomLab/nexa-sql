@@ -178,6 +178,9 @@ pub struct Syntax {
     /// ★ T-324: `[…]`가 인용 식별자인가(T-SQL · SQLite · Access · ANSI 기본) · 거짓 = 배열 첨자·연산자(PostgreSQL `a[1]` · DuckDB ·
     ///   ClickHouse · Oracle · MySQL · Db2) — 거짓이면 렉서가 `[`를 코드로 본다.
     pub bracket_ident: bool,
+    /// ★ T-325(11-04): 유니코드 이스케이프 식별자·문자열 `U&"d\0061t"` · `U&'…'` [`UESCAPE 'c'`](ANSI F392/F393 · PostgreSQL · Db2)를 한 토큰으로
+    ///   보는가 — 거짓이면 렉서가 `U` 낱말 + `&` 연산자 + 인용으로 찢는다(Oracle·MySQL·SQLite·T-SQL에는 없는 문법).
+    pub unicode_escapes: bool,
     /// 문장은 늘 `;`로 끝난다(`/` 줄 블록 없음 · 본문의 `BEGIN … END`만 짝) — SQLite · MySQL · PG. 거짓 = `/`로 끝나는 블록(Oracle 등).
     pub semicolon_only: bool,
     /// `SHOW …`가 서버 문장인가(MySQL = STATUS·TABLES·CREATE TABLE …) · 거짓 = 클라이언트 명령.
@@ -239,6 +242,7 @@ const SYN_ANSI: Syntax = Syntax {
     nested_comments: false,
     escape_string_prefix: false,
     bracket_ident: true,
+    unicode_escapes: false,
     semicolon_only: false,
     server_show: false,
     tsql_from: false,
@@ -285,6 +289,7 @@ const SYN_POSTGRES: Syntax = Syntax {
     nested_comments: true,
     escape_string_prefix: true,
     bracket_ident: false,
+    unicode_escapes: true,
     ..SYN_ANSI
 };
 
@@ -333,6 +338,7 @@ const SYN_DB2: Syntax = Syntax {
     delimiter_directive: true,
     explain: ExplainForm::Db2ExplainTables,
     bracket_ident: false,
+    unicode_escapes: true,
     ..SYN_ANSI
 };
 

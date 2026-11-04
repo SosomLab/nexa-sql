@@ -408,6 +408,17 @@ cells={n}
             let _ = std::fs::write(path, self.grid.cond_dump());
             return;
         }
+        // 자체 시험(T-325 · 11-04): `grid.cond.pick:<행>;<열>;<what>` = 그 셀 우클릭 ▸ 조건 ▸ 항목(열 이름 인용 정책 판정 · 키 주입 0).
+        if let Some(rest) = id.strip_prefix("grid.cond.pick:") {
+            let mut it = rest.splitn(3, ';');
+            let row = it.next().and_then(|s| s.trim().parse::<usize>().ok());
+            let col = it.next().and_then(|s| s.trim().parse::<usize>().ok());
+            if let (Some(row), Some(col), Some(what)) = (row, col, it.next()) {
+                self.grid.cond_pick_at(row, col, what.trim());
+                self.redraw();
+            }
+            return;
+        }
         if id == "grid.vpick.all" {
             self.grid.value_pick_mut().toggle_all_visible();
             self.redraw();

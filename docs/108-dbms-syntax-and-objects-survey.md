@@ -2565,7 +2565,7 @@ WHERE WITH WORK WRITE YEAR ZONE
 | 바인드 표기 | 능력표 `Caps.marker` | `crates/nsql-core/src/caps.rs:15-24, 102-186` |
 | 구문 강조 키워드 | **방언 무관 1벌**(196 낱말) | `nexa-ui/crates/nexa-ctl/src/highlight.rs:430-448` |
 | 식별자 인용 판단의 예약어 | **방언 무관 1벌**(117 낱말 · 포맷터 표 재사용) | `crates/nexa-sql/src/identq.rs:41-62` → `crates/nsql-format/src/lib.rs:437, 562` |
-| 완성 키워드 | 공통 94 + 방언 표 | `crates/nsql-script/src/intel.rs:674, 772-884` |
+| 완성 키워드 | ~~공통 94 + 방언 표~~ → ✅ **11-04 T-325 2차 3절** = 공통 101(방언 중립 · ANSI 또는 대다수 방언) + 방언 표 8(ORA 41 · MS 32 · PG 36 · MY 63 · LT 31 · **Db2 35 · DuckDB 39 · ClickHouse 40 신설**) | `crates/nsql-script/src/intel.rs` `KEYWORDS`·`keywords_for` |
 | 완성 문법(절 → 다음 낱말) | `.sqlg` 6개(ansi 위에 덧입힘 · **빼기 연산 없음**) | `crates/nsql-script/grammar/*.sqlg` · `grammar.rs:101-146, 288-297` |
 | 내장 함수·자료형·정렬·사전 객체 | 방언 표 | `crates/nsql-script/src/builtins.rs` |
 | 카탈로그·트리·소스·생성 | 방언 `match` | `crates/nsql-catalog/src/{lib,tree,gen}.rs` |
@@ -2644,8 +2644,8 @@ WHERE WITH WORK WRITE YEAR ZONE
 |---|---|---|---|---|
 | 구문 강조(SQL 하나) | 197 줄 낱말(고유 196) — 키워드 + 함수 + 자료형 혼합 | **없음**(ORA·MS·PG 공통 1벌) | ❌ | `nexa-ui/crates/nexa-ctl/src/highlight.rs:430-448` · nexa-sql은 `SyntaxSpec::sql()` 하나를 등록 `crates/nexa-sql/src/syntax.rs:20` |
 | 식별자 인용 판정(`needs_quote`) | 119 줄(고유 117) — 포맷터 절 키워드 | **없음** | ❌ | `identq.rs:52` → `nsql-format/src/lib.rs:437-565` |
-| 완성 키워드 공통 | 94 | — | ❌ | `intel.rs:674` |
-| 완성 키워드 ORA / MS / PG / MY / LT | 14 / 15 / 12 / 50 / 9 | ✅(공통 뒤에 덧붙임) | ❌ | `intel.rs:772, 788, 805, 820, 873` · 합성 `keywords_for` `intel.rs:885-899` |
+| 완성 키워드 공통 | ~~94~~ → 101(✅ 11-04 방언 전용어 `LIMIT`·`MINUS`·`ELSIF`·`PACKAGE`·`SYNONYM`·`EXCEPTION`·`DESCRIBE` 걷어 냄 · ANSI 낱말 보강) | — | ✅ | `intel.rs` `KEYWORDS` |
+| 완성 키워드 ORA / MS / PG / MY / LT / **DB2 / DUCK / CH** | ~~14 / 15 / 12 / 50 / 9~~ → 41 / 32 / 36 / 63 / 31 / 35 / 39 / 40(✅ 11-04) | ✅(공통 뒤에 덧붙임 · 중복 제거) | ✅ | `intel.rs` `*_KEYWORDS` · 합성 `keywords_for` · 시험 `t325_common_keywords_are_dialect_neutral_and_tables_cover_all_dialects` |
 | 조건 바 연산 낱말 | 소수 | 없음 | — | `crates/nexa-sql/src/condbar.rs:20` |
 | 출처 | 수작업 표(공식 예약어 목록·`V$RESERVED_WORDS`·`pg_get_keywords()`·SQLite `sqlite3_keyword_*` 미사용) | | | |
 

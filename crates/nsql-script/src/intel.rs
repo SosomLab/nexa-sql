@@ -683,6 +683,9 @@ const NOT_ALIAS: &[&str] = &[
 
 /// ANSI + 방언 공통 키워드(대문자) — `Start`/`Expr` 문맥의 후보(설정 `intel.keywords`). 함수 모양(`COALESCE(` · `COUNT(*)` …)은
 /// [`crate::builtins`]로 옮겼다(시그니처와 함께 · T-178).
+/// ★ T-325 2차(11-04 · 108 §9 #7): **공통 표 = ANSI(109)에 있거나 지원 방언 대다수가 쓰는 낱말만** — 방언 전용어(`LIMIT`·`MINUS`·`ELSIF`·
+/// `PACKAGE`·`SYNONYM`·`EXCEPTION`·`DESCRIBE`)는 방언 표로 내렸다(Oracle에서 `LIMIT`, SQL Server에서 `MINUS`가 제안되지 않게).
+/// 강조·인용 판정은 `nsql_core::reserved`(예약어 표)가 맡고, 여기는 **완성 후보**(자주 쓰는 순 · 절 문법 `.sqlg`가 모르는 자리의 폴백)다.
 pub const KEYWORDS: &[&str] = &[
     "SELECT",
     "FROM",
@@ -706,13 +709,15 @@ pub const KEYWORDS: &[&str] = &[
     "EXISTS",
     "BETWEEN",
     "LIKE",
+    "ESCAPE",
     "IS NULL",
     "IS NOT NULL",
+    "NOT NULL",
+    "ANY",
     "DISTINCT",
     "UNION",
     "UNION ALL",
     "INTERSECT",
-    "MINUS",
     "EXCEPT",
     "INSERT INTO",
     "VALUES",
@@ -730,18 +735,17 @@ pub const KEYWORDS: &[&str] = &[
     "VIEW",
     "INDEX",
     "SEQUENCE",
-    "SYNONYM",
     "PROCEDURE",
     "FUNCTION",
-    "PACKAGE",
     "TRIGGER",
+    "IF EXISTS",
+    "IF NOT EXISTS",
+    "CASCADE",
     "BEGIN",
     "END",
     "DECLARE",
-    "EXCEPTION",
     "RETURN",
     "IF",
-    "ELSIF",
     "ELSE",
     "END IF",
     "LOOP",
@@ -758,12 +762,19 @@ pub const KEYWORDS: &[&str] = &[
     "REVOKE",
     "WITH",
     "RECURSIVE",
-    "LIMIT",
     "OFFSET",
     "FETCH FIRST",
     "ROWS ONLY",
     "OVER",
     "PARTITION BY",
+    "ROLLUP",
+    "CUBE",
+    "GROUPING SETS",
+    "NULLS FIRST",
+    "NULLS LAST",
+    "CAST",
+    "CURRENT_DATE",
+    "CURRENT_TIMESTAMP",
     "NULL",
     "TRUE",
     "FALSE",
@@ -777,42 +788,85 @@ pub const KEYWORDS: &[&str] = &[
     "UNIQUE",
     "CHECK",
     "EXPLAIN",
-    "DESCRIBE",
 ];
 
-/// 방언 고유 키워드(09-24 4-DBMS 검토) — 공통 표 뒤에 붙는다(`keywords_for`).
+/// 방언 고유 키워드(09-24 4-DBMS 검토 · 11-04 T-325 2차 보강 = 108 §9 조사 표 기준) — 공통 표 뒤에 붙는다(`keywords_for`).
 const ORACLE_KEYWORDS: &[&str] = &[
     "COLLATE",
     "ROWNUM",
+    "ROWID",
+    "LEVEL",
     "CONNECT BY",
     "START WITH",
     "PRIOR",
+    "NOCYCLE",
+    "ORDER SIBLINGS BY",
     "NVL",
     "DECODE",
     "PIVOT",
     "UNPIVOT",
     "MERGE",
+    "MINUS",
     "RETURNING INTO",
-    "FETCH FIRST",
-    "ROWS ONLY",
     "SYSDATE",
+    "SYSTIMESTAMP",
+    "DUAL",
+    "FOR UPDATE",
+    "NOWAIT",
+    "SKIP LOCKED",
+    "ELSIF",
+    "EXCEPTION",
+    "RAISE",
+    "EXIT",
+    "EXIT WHEN",
+    "CURSOR",
+    "TYPE",
+    "PACKAGE",
+    "PACKAGE BODY",
+    "SYNONYM",
+    "DATABASE LINK",
+    "MATERIALIZED VIEW",
+    "OR REPLACE",
+    "CREATE OR REPLACE",
+    "EXECUTE IMMEDIATE",
+    "BULK COLLECT INTO",
+    "FORALL",
+    "PRAGMA AUTONOMOUS_TRANSACTION",
+    "DESCRIBE",
 ];
 const MSSQL_KEYWORDS: &[&str] = &[
     "COLLATE",
     "COLLATE DATABASE_DEFAULT",
     "TOP",
+    "WITH TIES",
     "CROSS APPLY",
     "OUTER APPLY",
     "WITH (NOLOCK)",
+    "WITH (UPDLOCK)",
     "IDENTITY",
     "GO",
     "EXEC",
     "OUTPUT",
     "PIVOT",
     "UNPIVOT",
-    "OFFSET",
     "FETCH NEXT",
     "GETDATE()",
+    "USE",
+    "SCHEMA",
+    "SYNONYM",
+    "CREATE OR ALTER",
+    "BEGIN TRY",
+    "END TRY",
+    "BEGIN CATCH",
+    "END CATCH",
+    "THROW",
+    "RAISERROR",
+    "PRINT",
+    "BREAK",
+    "CONTINUE",
+    "WAITFOR",
+    "SET NOCOUNT ON",
+    "OPTION (RECOMPILE)",
 ];
 const POSTGRES_KEYWORDS: &[&str] = &[
     "COLLATE",
@@ -823,10 +877,34 @@ const POSTGRES_KEYWORDS: &[&str] = &[
     "DO UPDATE",
     "RETURNING",
     "LIMIT",
-    "OFFSET",
     "ARRAY",
     "UNNEST",
     "NOW()",
+    "DISTINCT ON",
+    "FOR UPDATE",
+    "SKIP LOCKED",
+    "NOWAIT",
+    "TABLESAMPLE",
+    "IS DISTINCT FROM",
+    "ELSIF",
+    "EXCEPTION",
+    "RAISE",
+    "RAISE NOTICE",
+    "PERFORM",
+    "RETURNS",
+    "LANGUAGE",
+    "OR REPLACE",
+    "CREATE OR REPLACE",
+    "MATERIALIZED VIEW",
+    "REFRESH MATERIALIZED VIEW",
+    "TEMP",
+    "GENERATED ALWAYS AS IDENTITY",
+    "ADD COLUMN",
+    "DROP COLUMN",
+    "RENAME TO",
+    "VACUUM",
+    "ANALYZE",
+    "UESCAPE",
 ];
 /// MySQL(10-01 ⑩ — 종전에는 표가 없어 공통 표만).
 const MYSQL_KEYWORDS: &[&str] = &[
@@ -836,19 +914,23 @@ const MYSQL_KEYWORDS: &[&str] = &[
     "SHOW DATABASES",
     "SHOW CREATE TABLE",
     "DESCRIBE",
-    "EXPLAIN",
     "LIMIT",
-    "OFFSET",
     "REPLACE INTO",
     "INSERT IGNORE INTO",
     "ON DUPLICATE KEY UPDATE",
     "STRAIGHT_JOIN",
     "FOR UPDATE",
+    "FOR SHARE",
+    "SKIP LOCKED",
+    "NOWAIT",
     "LOCK IN SHARE MODE",
+    "WITH ROLLUP",
     "AUTO_INCREMENT",
+    "UNSIGNED",
     "ENGINE",
     "CHARSET",
     "COLLATE",
+    "TEMPORARY",
     "IFNULL",
     "NOW()",
     "CURDATE()",
@@ -861,8 +943,6 @@ const MYSQL_KEYWORDS: &[&str] = &[
     "DATE_SUB",
     "DATEDIFF",
     "TIMESTAMPDIFF",
-    "IF",
-    "CAST",
     "CONVERT",
     "JSON_EXTRACT",
     "JSON_OBJECT",
@@ -870,11 +950,22 @@ const MYSQL_KEYWORDS: &[&str] = &[
     "FOUND_ROWS()",
     "CALL",
     "DELIMITER",
+    "ELSEIF",
+    "LEAVE",
+    "ITERATE",
+    "REPEAT",
+    "UNTIL",
+    "END REPEAT",
+    "END WHILE",
+    "SIGNAL SQLSTATE",
+    "RESIGNAL",
+    "DETERMINISTIC",
     "START TRANSACTION",
     "LOCK TABLES",
     "UNLOCK TABLES",
     "TRUNCATE TABLE",
     "RENAME TABLE",
+    "RENAME TO",
     "ALTER TABLE",
     "ADD COLUMN",
     "DROP COLUMN",
@@ -886,15 +977,158 @@ const SQLITE_KEYWORDS: &[&str] = &[
     "PRAGMA",
     "AUTOINCREMENT",
     "WITHOUT ROWID",
+    "STRICT",
+    "ROWID",
     "LIMIT",
-    "OFFSET",
     "GLOB",
+    "IS NOT",
     "ATTACH",
     "DETACH",
     "VACUUM",
+    "ANALYZE",
+    "REINDEX",
+    "REPLACE INTO",
+    "INSERT OR IGNORE INTO",
+    "INSERT OR REPLACE INTO",
+    "ON CONFLICT",
+    "DO NOTHING",
+    "DO UPDATE",
+    "RETURNING",
+    "EXPLAIN QUERY PLAN",
+    "CREATE VIRTUAL TABLE",
+    "TEMP",
+    "GENERATED ALWAYS AS",
+    "BEGIN TRANSACTION",
+    "END TRANSACTION",
+    "ADD COLUMN",
+    "DROP COLUMN",
+    "RENAME TO",
+    "RENAME COLUMN",
+    "INDEXED BY",
+];
+/// ★ 11-04(T-325 2차): Db2 · DuckDB · ClickHouse 표 신설(종전 = 공통 표만) — 각 DBMS 공식 문서의 문장·절 낱말 중 자주 쓰는 것.
+const DB2_KEYWORDS: &[&str] = &[
+    "WITH UR",
+    "WITH CS",
+    "WITH RS",
+    "WITH RR",
+    "OPTIMIZE FOR",
+    "FOR READ ONLY",
+    "FOR UPDATE",
+    "SYSIBM.SYSDUMMY1",
+    "CURRENT DATE",
+    "CURRENT TIMESTAMP",
+    "CURRENT SCHEMA",
+    "SET SCHEMA",
+    "DECLARE GLOBAL TEMPORARY TABLE",
+    "SESSION",
+    "LOCK TABLE",
+    "IN SHARE MODE",
+    "IN EXCLUSIVE MODE",
+    "TRUNCATE TABLE",
+    "IMMEDIATE",
+    "SYNONYM",
+    "ALIAS",
+    "OR REPLACE",
+    "CREATE OR REPLACE",
+    "ELSEIF",
+    "LEAVE",
+    "ITERATE",
+    "SIGNAL SQLSTATE",
+    "RESIGNAL",
+    "GENERATED ALWAYS AS IDENTITY",
+    "ADD COLUMN",
+    "DROP COLUMN",
+    "RENAME TABLE",
+    "CALL",
+    "RUNSTATS ON TABLE",
+    "REORG TABLE",
+];
+const DUCKDB_KEYWORDS: &[&str] = &[
+    "LIMIT",
+    "QUALIFY",
+    "USING SAMPLE",
+    "PIVOT",
+    "UNPIVOT",
+    "EXCLUDE",
+    "REPLACE",
+    "COLUMNS",
+    "ASOF JOIN",
+    "POSITIONAL JOIN",
+    "SEMI JOIN",
+    "ANTI JOIN",
+    "UNION BY NAME",
+    "GROUP BY ALL",
+    "ORDER BY ALL",
+    "ILIKE",
+    "ON CONFLICT",
+    "DO NOTHING",
+    "DO UPDATE",
+    "RETURNING",
+    "INSERT OR REPLACE INTO",
+    "INSERT OR IGNORE INTO",
+    "OR REPLACE",
+    "CREATE OR REPLACE",
+    "CREATE MACRO",
+    "STRUCT",
+    "LIST",
+    "MAP",
+    "TEMP",
+    "DESCRIBE",
+    "SUMMARIZE",
+    "SHOW TABLES",
+    "COPY",
+    "EXPORT DATABASE",
+    "IMPORT DATABASE",
+    "PRAGMA",
+    "ATTACH",
+    "DETACH",
+    "CHECKPOINT",
+];
+const CLICKHOUSE_KEYWORDS: &[&str] = &[
+    "FORMAT",
+    "SETTINGS",
+    "PREWHERE",
+    "FINAL",
+    "SAMPLE",
+    "LIMIT",
+    "LIMIT BY",
+    "ENGINE",
+    "TTL",
+    "MATERIALIZED",
+    "ALIAS",
+    "EPHEMERAL",
+    "CODEC",
+    "ON CLUSTER",
+    "ARRAY JOIN",
+    "LEFT ARRAY JOIN",
+    "GLOBAL IN",
+    "GLOBAL JOIN",
+    "ASOF JOIN",
+    "ALL",
+    "WITH TOTALS",
+    "WITH FILL",
+    "WITH ROLLUP",
+    "WITH CUBE",
+    "INTERPOLATE",
+    "ILIKE",
+    "NOT ILIKE",
+    "MATERIALIZED VIEW",
+    "DICTIONARY",
+    "OPTIMIZE TABLE",
+    "SYSTEM",
+    "ATTACH",
+    "DETACH",
+    "KILL QUERY",
+    "USE",
+    "SHOW TABLES",
+    "SHOW DATABASES",
+    "SHOW CREATE TABLE",
+    "DESCRIBE TABLE",
+    "EXISTS TABLE",
 ];
 
-/// 키워드 후보 = 공통 표 + 방언 표(중복은 뺀다). 방언을 모르면 공통 표만.
+/// 키워드 후보 = 공통 표 + 방언 표(중복은 뺀다). 방언을 모르면 공통 표만 · ODBC·Access = 공통 표만.
 pub fn keywords_for(d: Option<Dialect>) -> impl Iterator<Item = &'static str> {
     let extra: &'static [&'static str] = match d {
         Some(Dialect::Oracle) => ORACLE_KEYWORDS,
@@ -902,6 +1136,9 @@ pub fn keywords_for(d: Option<Dialect>) -> impl Iterator<Item = &'static str> {
         Some(Dialect::Postgres) => POSTGRES_KEYWORDS,
         Some(Dialect::Sqlite) => SQLITE_KEYWORDS,
         Some(Dialect::Mysql) => MYSQL_KEYWORDS,
+        Some(Dialect::Db2) => DB2_KEYWORDS,
+        Some(Dialect::Duckdb) => DUCKDB_KEYWORDS,
+        Some(Dialect::Clickhouse) => CLICKHOUSE_KEYWORDS,
         _ => &[],
     };
     KEYWORDS
@@ -2253,6 +2490,69 @@ mod tests {
         let lite: Vec<&str> = keywords_for(Some(Dialect::Sqlite)).collect();
         assert!(lite.contains(&"PRAGMA"));
         assert_eq!(keywords_for(None).count(), KEYWORDS.len());
+    }
+
+    /// ★ T-325 2차(11-04 · 108 §9 #7): 공통 표에서 방언 전용어를 걷어 냈다 — Oracle에 `LIMIT`·`ELSEIF` 없음 · SQL Server에 `MINUS`·`LIMIT`
+    /// 없음 · PG·MySQL·SQLite·DuckDB·ClickHouse에는 `LIMIT` 있음 · 공통에서 내린 `ELSIF`·`EXCEPTION`·`PACKAGE`는 Oracle(·PG)에서만 ·
+    /// Db2·DuckDB·ClickHouse 표 신설 · 모든 방언에서 중복 0 · 공통 표 자체에도 중복 0.
+    #[test]
+    fn t325_common_keywords_are_dialect_neutral_and_tables_cover_all_dialects() {
+        let kw = |d: Dialect| -> Vec<&'static str> { keywords_for(Some(d)).collect() };
+        let ora = kw(Dialect::Oracle);
+        assert!(!ora.contains(&"LIMIT") && !ora.contains(&"ELSEIF") && !ora.contains(&"TOP"));
+        assert!(ora.contains(&"MINUS") && ora.contains(&"ELSIF") && ora.contains(&"PACKAGE"));
+        let ms = kw(Dialect::Mssql);
+        assert!(!ms.contains(&"MINUS") && !ms.contains(&"LIMIT") && !ms.contains(&"ELSIF"));
+        assert!(ms.contains(&"OFFSET") && ms.contains(&"FETCH NEXT") && ms.contains(&"THROW"));
+        for d in [
+            Dialect::Postgres,
+            Dialect::Mysql,
+            Dialect::Sqlite,
+            Dialect::Duckdb,
+            Dialect::Clickhouse,
+        ] {
+            assert!(kw(d).contains(&"LIMIT"), "{d:?}에는 LIMIT");
+        }
+        assert!(!kw(Dialect::Db2).contains(&"LIMIT") && kw(Dialect::Db2).contains(&"WITH UR"));
+        assert!(kw(Dialect::Duckdb).contains(&"QUALIFY"));
+        assert!(kw(Dialect::Clickhouse).contains(&"PREWHERE"));
+        assert_eq!(kw(Dialect::Odbc).len(), KEYWORDS.len(), "ODBC = 공통만");
+        for d in [
+            Dialect::Oracle,
+            Dialect::Mssql,
+            Dialect::Postgres,
+            Dialect::Mysql,
+            Dialect::Sqlite,
+            Dialect::Db2,
+            Dialect::Duckdb,
+            Dialect::Clickhouse,
+        ] {
+            let v = kw(d);
+            let mut u = v.clone();
+            u.sort_unstable();
+            u.dedup();
+            assert_eq!(u.len(), v.len(), "{d:?} 중복 없음");
+        }
+        // 공통 표 = ANSI 예약/비예약 표에 있거나 널리 쓰는 낱말만(첫 낱말 기준 · 방언 전용 첫 낱말 금지).
+        for k in KEYWORDS {
+            let first = k.split(' ').next().unwrap_or(k);
+            assert!(
+                !matches!(
+                    first,
+                    "LIMIT"
+                        | "MINUS"
+                        | "ELSIF"
+                        | "ELSEIF"
+                        | "PACKAGE"
+                        | "SYNONYM"
+                        | "EXCEPTION"
+                        | "DESCRIBE"
+                        | "TOP"
+                        | "PRAGMA"
+                ),
+                "공통 표에 방언 전용어 {k}"
+            );
+        }
     }
 
     /// ★ 빈 접두 = 이름순(길이 무시 · 사용자 09-24) · 접두가 있으면 같은 등급에서 짧은 것 먼저.

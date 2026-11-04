@@ -82,6 +82,8 @@ pub fn lex_in(src: &str, dialect: crate::SrcDialect) -> Vec<Token> {
     let hash_comment = dialect == D::Mysql;
     let backslash = dialect == D::Mysql;
     let esc_prefix = dialect == D::Postgres;
+    // ★ T-325(11-04): `U&"…"`·`U&'…'` 유니코드 이스케이프(PostgreSQL · ANSI F392/F393)는 한 토큰(`U` 낱말 + `&`로 찢기지 않게).
+    let unicode_esc = dialect == D::Postgres;
     let b = src.as_bytes();
     let n = b.len();
     let mut out = Vec::new();
@@ -194,6 +196,34 @@ pub fn lex_in(src: &str, dialect: crate::SrcDialect) -> Vec<Token> {
             }
             let end = if j < chars.len() { chars[j].0 } else { n };
             push(Kind::Str, end, j, &mut nl, &mut ci);
+            continue;
+        }
+        // 유니코드 이스케이프 접두(T-325): `U&"…"` = 인용 식별자 하나(Quoted) · `U&'…'` = 문자열 하나(Str · `''` 이스케이프만).
+        if unicode_esc
+            && matches!(c, 'U' | 'u')
+            && chars.get(ci + 1).is_some_and(|x| x.1 == '&')
+            && chars.get(ci + 2).is_some_and(|x| x.1 == '"' || x.1 == '\'')
+            && (ci == 0 || !is_word_char(chars[ci - 1].1))
+        {
+            let q = chars[ci + 2].1;
+            let mut j = ci + 3;
+            while j < chars.len() {
+                if chars[j].1 == q {
+                    if j + 1 < chars.len() && chars[j + 1].1 == q {
+                        j += 2;
+                        continue;
+                    }
+                    j += 1;
+                    break;
+                }
+                if q == '"' && chars[j].1 == '\n' {
+                    break;
+                }
+                j += 1;
+            }
+            let end = if j < chars.len() { chars[j].0 } else { n };
+            let kind = if q == '"' { Kind::Quoted } else { Kind::Str };
+            push(kind, end, j, &mut nl, &mut ci);
             continue;
         }
         // 인용 식별자.
@@ -468,6 +498,20 @@ mod tests {
             k("xE'a' y", D::Postgres)[0],
             (Kind::Word, "xE".into()),
             "낱말 꼬리 E는 접두 아님"
+        );
+        // ★ T-325(11-04): PG `U&"…"` = Quoted 하나 · `U&'…'` = Str 하나 · Generic = `U` 낱말 + `&` 연산자 + 인용(종전).
+        assert_eq!(
+            k("U&\"d\\0061t\" x", D::Postgres)[0],
+            (Kind::Quoted, "U&\"d\\0061t\"".into())
+        );
+        assert_eq!(
+            k("U&'a''b' UESCAPE '!'", D::Postgres)[0],
+            (Kind::Str, "U&'a''b'".into())
+        );
+        assert_eq!(
+            k("U&\"ab\" x", D::Generic)[0],
+            (Kind::Word, "U".into()),
+            "Generic = 종전대로"
         );
     }
 

@@ -37,6 +37,8 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
         syn.escape_string_prefix,
         syn.bracket_ident,
     );
+    // ★ T-325(11-04): `U&"…"`·`U&'…'` 유니코드 이스케이프(PostgreSQL · Db2 · ANSI F392/F393)는 한 토큰.
+    let unicode_esc = syn.unicode_escapes;
     let b = text.as_bytes();
     let n = b.len();
     let mut out = vec![Class::Code; n];
@@ -84,12 +86,26 @@ pub fn classify_in(text: &str, dialect: Option<nsql_core::Dialect>) -> Vec<Class
                     i += 1;
                 }
             }
-            b'"' => {
-                let mut j = i + 1;
-                while j < n && b[j] != b'"' {
-                    j += 1;
+            // 유니코드 이스케이프 접두(T-325): `U&"…"` = 인용 식별자 하나 · `U&'…'` = 문자열 하나(안의 `\XXXX`는 글자 · 표준 문자열 규칙).
+            b'U' | b'u'
+                if unicode_esc
+                    && i + 2 < n
+                    && b[i + 1] == b'&'
+                    && (b[i + 2] == b'"' || b[i + 2] == b'\'')
+                    && !prev_is_ident(b, i) =>
+            {
+                if b[i + 2] == b'"' {
+                    let end = scan_double_quoted(b, i + 2);
+                    out[i..end].fill(Class::Ident);
+                    i = end;
+                } else {
+                    let end = scan_single_quoted_in(b, i + 2, false);
+                    out[i..end].fill(Class::Str);
+                    i = end;
                 }
-                let end = (j + 1).min(n);
+            }
+            b'"' => {
+                let end = scan_double_quoted(b, i);
                 out[i..end].fill(Class::Ident);
                 i = end;
             }
@@ -172,6 +188,16 @@ fn scan_single_quoted_in(b: &[u8], start: usize, backslash: bool) -> usize {
         j += 1;
     }
     n
+}
+
+/// `"…"` 인용 식별자 — 닫는 `"`까지(없으면 끝까지 · 종전 인라인 규칙 그대로 · T-325에서 `U&"…"`와 공유).
+fn scan_double_quoted(b: &[u8], start: usize) -> usize {
+    let n = b.len();
+    let mut j = start + 1;
+    while j < n && b[j] != b'"' {
+        j += 1;
+    }
+    (j + 1).min(n)
 }
 
 /// Oracle `q'[…]'` · `q'{…}'` · `q'(…)'` · `q'<…>'` · `q'X…X'`.
@@ -386,6 +412,27 @@ mod mysql_tests {
             classes_of("a[1]", Some(Dialect::Postgres)),
             "....",
             "PG 첨자 = 코드"
+        );
+        // ★ T-325(11-04 · 108 §9 #7 · 109 F392/F393): `U&"…"` = 식별자 하나 · `U&'…'` = 문자열 하나(PG · Db2) · 다른 방언 = `U` 코드 + 인용.
+        assert_eq!(
+            classes_of("U&\"d\\0061t\" x", Some(Dialect::Postgres)),
+            "iiiiiiiiiii..",
+            "PG U&\"…\" = 식별자 한 토큰"
+        );
+        assert_eq!(
+            classes_of("U&'a;b' x", Some(Dialect::Db2)),
+            "sssssss..",
+            "Db2 U&'…' = 문자열 한 토큰(안의 ;는 글자)"
+        );
+        assert_eq!(
+            classes_of("U&\"ab\" x", Some(Dialect::Oracle)),
+            "..iiii..",
+            "Oracle = U는 코드 · 인용만 식별자"
+        );
+        assert_eq!(
+            classes_of("xU&\"a\" y", Some(Dialect::Postgres)),
+            "...iii..",
+            "식별자 꼬리 U는 접두가 아님"
         );
         assert_eq!(classes_of("a[1]", Some(Dialect::Duckdb)), "....");
         assert_eq!(
