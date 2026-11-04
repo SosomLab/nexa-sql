@@ -1711,6 +1711,7 @@ impl App {
                 import_win::ImportAction::Start(spec) => self.import_start(*spec),
                 import_win::ImportAction::Cancel => self.import_cancel(),
                 import_win::ImportAction::Reinspect => self.import_reinspect(),
+                import_win::ImportAction::TableChanged(name) => self.import_table_changed(name),
                 import_win::ImportAction::ShowDdl(ddl) => {
                     self.sqlprev_plain = Some((t(Msg::ImpDdlTitle).to_string(), ddl));
                 }

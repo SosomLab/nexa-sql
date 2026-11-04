@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| filewin-clipboard | 2026-11-04 | 2026-11-04 → main ff(삭제) · (해시) | 1 | 아침 피드백 5건 — 파일 창 Ctrl+C/X/V·편집 메뉴(nexa-ui 257차 46adad6) · 편집 메뉴 배타·창 안 배치(258차 7f5e311) · winget PR 0.5.0 갱신 기록 · Import 창 라디오 가로·기존 표 콤보 · **D-455 기존 표 사전 판정**(`scripts/import-existing-e2e.sh` 15/15) · [journal 11-04 §13](journal/2026-11-04.md) |
 | t325-dialect-scope | 2026-11-04 | 2026-11-04 → main ff(삭제) · **cb14f3ff** | 3 | T-325 전용 세션 탭 방언 분리 `SqlDialectScope` + 11-04 마감 문서(journal §12 · STATUS) |
 | t325-builtins | 2026-11-04 | 2026-11-04 → main ff(삭제) · **ac76186d** | 2 | T-325 2차 2절 내장 표 정리(#20)·자료형 보강(#21) · [journal 11-04 §11](journal/2026-11-04.md) |
 | t325-highlight-dialect | 2026-11-04 | 2026-11-04 → main ff(삭제) · **aba56b42** | 2 | T-325 2차 1절 강조기 키워드 방언화(`SyntaxRegistry::sql_for` · 접속 확정 때 SQL 탭 교체) · [journal 11-04 §10](journal/2026-11-04.md) |

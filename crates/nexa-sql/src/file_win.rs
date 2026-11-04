@@ -50,6 +50,8 @@ pub(crate) struct FileWin {
     next_filters: Option<Vec<FileFilter>>,
     /// ★ T-79(11-04): 저장 창 줄끝 콤보의 확정값(`keep`/`lf`/`crlf`) — 호스트가 `take_eol`로 읽는다.
     last_eol: Option<String>,
+    /// 우클릭 편집 메뉴 배타 정책(설정 `ui.ctxmenu_exclusive` · `ui.ctxmenu_passthrough` · 호스트가 열기 전에 준다).
+    ctx_policy: (bool, bool),
 }
 
 /// 앱 문자열 → 선택기 라벨(i18n 규칙: 리터럴은 여기 없다).
@@ -175,10 +177,19 @@ impl FileWin {
             overwrite_confirm_ms: 5000,
             next_filters: None,
             last_eol: None,
+            ctx_policy: (true, true),
         }
     }
 
     /// 덮어쓰기 무장 시간(설정 `file.overwrite_confirm_ms` · 다음에 여는 창부터).
+    /// 우클릭 편집 메뉴 배타 정책(본창과 같은 설정 · 사용자 11-04 "팝업 창에도 설정대로").
+    pub(crate) fn set_ctxmenu_policy(&mut self, exclusive: bool, passthrough: bool) {
+        self.ctx_policy = (exclusive, passthrough);
+        if let Some(p) = self.picker.as_mut() {
+            p.set_ctxmenu_policy(exclusive, passthrough);
+        }
+    }
+
     pub(crate) fn set_overwrite_confirm_ms(&mut self, ms: u64) {
         self.overwrite_confirm_ms = ms;
     }
@@ -268,6 +279,7 @@ impl FileWin {
             sql_filters()
         };
         let mut picker = FilePicker::new(mode, start, filters, labels());
+        picker.set_ctxmenu_policy(self.ctx_policy.0, self.ctx_policy.1);
         // 용도가 파일 하나만 뜻하면(프로젝트 파일 · 실행 파일 · 로그 내보내기) 다중 선택 없음(사용자 09-22).
         picker.set_multi(!single);
         // 덮어쓰기 = 타임아웃 버튼(두 번 눌러야 저장 · 사용자 09-19) — 시간은 설정 `file.overwrite_confirm_ms`(0 = 한 번에).
@@ -362,6 +374,41 @@ impl FileWin {
 
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         self.picker.as_mut().and_then(FilePicker::focused_textbox)
+    }
+
+    /// ★ 입력 상자(경로·이름)의 복사·잘라내기·붙여넣기(사용자 11-04 "경로를 붙여 넣을 수 없다") — Ctrl/⌘+C·X·V와 우클릭 편집 메뉴가
+    ///   같은 경로로 온다(conn_win `clip`과 같은 꼴 · 클립보드는 호스트 몫).
+    fn clip(&mut self, act: nexa_ctl::EditCtxAction) {
+        use nexa_ctl::EditCtxAction as A;
+        let mut inv = Invalidations::default();
+        match act {
+            A::Copy => {
+                if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            A::Cut => {
+                if let Some(text) = self
+                    .focused_textbox()
+                    .and_then(|tb| tb.cut_selection(&mut inv))
+                {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            A::Paste => {
+                if let Some(text) = crate::clipboard::read_text() {
+                    if let Some(tb) = self.focused_textbox() {
+                        tb.paste(&text, &mut inv);
+                    }
+                }
+            }
+            A::Custom(_) => {}
+        }
+        // 단축키·메뉴로 동작했으면 열려 있던 편집 메뉴는 닫는다(사용자 11-04 "붙여넣기를 하면 우클릭 상태 해제").
+        if let Some(p) = self.picker.as_mut() {
+            p.close_edit_menus();
+        }
+        self.redraw();
     }
 
     fn to_input(&self, ev: &WindowEvent) -> Option<InputEvent> {
@@ -480,6 +527,22 @@ impl FileWin {
             }
             WindowEvent::KeyboardInput { event: kev, .. }
                 if kev.state == ElementState::Pressed
+                    && self.primary
+                    && matches!(crate::input::shortcut_letter(kev), Some('c' | 'x' | 'v')) =>
+            {
+                // Ctrl/⌘+C·X·V = 포커스 입력 상자의 클립보드 동작(사용자 11-04) · 상자가 없으면 종전대로 통과(아무 일 없음).
+                if self.focused_textbox().is_some() {
+                    let act = match crate::input::shortcut_letter(kev) {
+                        Some('c') => nexa_ctl::EditCtxAction::Copy,
+                        Some('x') => nexa_ctl::EditCtxAction::Cut,
+                        _ => nexa_ctl::EditCtxAction::Paste,
+                    };
+                    self.clip(act);
+                    return FileWinAction::None;
+                }
+            }
+            WindowEvent::KeyboardInput { event: kev, .. }
+                if kev.state == ElementState::Pressed
                     && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Escape)) =>
             {
                 if self.picker.as_ref().is_some_and(FilePicker::popup_open) {
@@ -515,10 +578,20 @@ impl FileWin {
         let Some(p) = &mut self.picker else {
             return FileWinAction::None;
         };
+        if matches!(ie, InputEvent::RightDown { .. }) {
+            // 우클릭 직전 — 입력 상자 편집 메뉴의 "붙여넣기" 활성 여부(conn_win과 같은 규약).
+            let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
+            p.set_clipboard_has_text(has);
+        }
         p.on_event(&ie, &mut inv);
         let a = p.take_action();
         let enc = p.extra_value().unwrap_or_else(|| "auto".into());
         let eol = p.extra2_value();
+        // 입력 상자 우클릭 메뉴에서 고른 복사·잘라내기·붙여넣기(1회성) — 단축키와 같은 경로(사용자 11-04).
+        let edit_ctx = p.focused_textbox().and_then(TextBox::take_edit_ctx);
+        if let Some(act) = edit_ctx {
+            self.clip(act);
+        }
         self.redraw();
         match a {
             PickerAction::Confirm(path) => {

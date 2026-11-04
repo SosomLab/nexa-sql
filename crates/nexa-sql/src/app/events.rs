@@ -377,6 +377,14 @@ impl App {
                 }
                 ConnOutcome::Keys(table, info) => {
                     self.sess.aux_done();
+                    // ★ Import 창이 기다리는 기존 표의 키(D-455 · PK/UQ 표시 · 표본 중복 경고).
+                    if self
+                        .import_ctx
+                        .as_ref()
+                        .is_some_and(|c| c.existing.as_deref() == Some(table.as_str()))
+                    {
+                        self.import_win.set_table_keys(info.as_ref());
+                    }
                     self.sess.key_cache.insert(table, info.clone());
                     if let Some(tab) = self.sess.edit_wait.take() {
                         if let Some(g) = self.grid_for(tab) {

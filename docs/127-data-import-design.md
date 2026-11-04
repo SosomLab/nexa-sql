@@ -54,6 +54,19 @@
 - **시작** = (새 표면 CREATE 먼저 · 실패 = 아무것도 넣지 않음) → `Runner::bulk_load`(종전) · 진행 = 행·초·행/s · 취소 = 배치 경계 롤백 · 끝 = 요약 + 실패 지목(행·줄) + **새 표면 탐색기 새로 고침 + "SELECT * 열기" 단추**.
 - 설정(새 접두 `import.` · 카테고리 CLI ▸ 대량 I/O와 같은 자리 = `bulk.` 옆 · 94 원칙) = `import.sample_rows`(형 추론 표본 · 1000 · 0 = 전부) · `import.preview_rows`(100) · `import.encoding`(auto) · `import.on_error`(stop/skip) · `import.text_margin_pct`(새 표 문자열 길이 여유 · 50 → `TEXT(12)` → `VARCHAR(18)`) · 기존 `bulk.*` 그대로.
 
+### 2-4. 기존 표 적재 사전 판정(D-455 · 11-04 아침 사용자 "제약 준수 · 허용 여부 · 열 연결 규칙 · 편의성과 데이터 일관성")
+
+| 단계 | 규칙 | 근거 |
+|---|---|---|
+| 표 선택 | 기존 표 = **콤보**(스키마의 표 목록 · 메타 캐시 `tables_cached` · 빈 값 = 차단 "대상 표를 고르세요") · 새 표 = 이름 상자(같은 자리 · 라디오 가로) | 이름을 손으로 치면 오타 = 적재 실패 · 목록에서 고른다(DataGrip · DBeaver) |
+| 열 연결 | **같은 이름만 자동**(대소문자 · `_` · 공백 무시 · 같은 대상에 둘 금지) · 없으면 미지정 · 위치 연결은 버튼 **"순서대로 연결"**(헤더 없는 파일) | 위치 자동 연결은 열 순서가 다른 파일을 조용히 섞어 넣는다 → 명시 동작으로만 |
+| 차단(시작 비활성 · 빨강 · 끌 수 없음) | ✓인 원료 열이 미지정(건너뛰려면 ✓ 끔) · 대상 **NOT NULL(기본값 없음)** 열에 연결된 원료 없음 · 같은 대상 열에 둘 이상 · 열을 아직 못 읽음 | 모르면 막는다(61 §1-7 정신 · 서버에서 1행째 실패해 롤백되는 걸 미리 막는다) |
+| 경고(주황 · 시작 가능 · 판정 열에 사유) | 글 값 → 숫자/날짜/불리언 열 · 소수 → 정수 · 날짜시각 → DATE · **길이 초과**(표본 최대 > 대상 길이) · 빈 값 → NOT NULL · 그 밖 형 불일치 · **PK 열 표본 중복**(PK 전부 연결됐을 때) | 표본 기반 = 확정 아님 → 경고 · 실패 행은 오류 시(멈춤/건너뜀)대로 |
+| 표시 | 대상 열 콤보 라벨 `이름  (형) · PK/UQ · NN` · 매핑 표 마지막 열 = 판정(✗ 미지정 · ⚠ 사유 · ✓ + 표본) · 상태 줄 = 차단 > 경고 N건 > 안내 | 한 화면에서 고치고 바로 판정 |
+| 안 하는 것 | PK/UNIQUE **기존 데이터와의 충돌** 전수 사전 검사(표 전수 조회 · 큰 표에서 느림) · FK 대상 존재 검사 · CHECK 제약 | 적재 때 서버 제약이 최종 판정(멈춤 = 배치 롤백 · 건너뜀 = 행 지목) · 필요해지면 D-455 대안 = 시작 전 `SELECT 키 … WHERE 키 IN (표본)` 1회 |
+
+- 순수 함수 = `nsql_run::bulk::{TargetCol, classify_type, check_column, Issue, auto_match, match_by_position, mapping_blockers, Blocker, dup_keys_in_sample}`(시험 `existing_table_prechecks`) · 메타 = `ColEntry`의 `nullable`·`default`·`key`(PK/UQ 비트) → `Explorer::columns_cached` · 창 = `import_win::refresh_checks`(매핑·✓·표 선택이 바뀔 때마다) · E2E = `scripts/import-existing-e2e.sh`.
+
 ### 2-3. CLI(`nsql import` 확장 · 40 Step 12)
 
 ```

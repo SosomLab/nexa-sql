@@ -1632,9 +1632,19 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         spec: Option<&ConnectSpec>,
         schema: Option<&str>,
         table: &str,
-    ) -> Option<Vec<(String, String)>> {
+    ) -> Option<Vec<nsql_run::bulk::TargetCol>> {
         let i = self.meta_pane(spec);
         self.panes.get(i)?.ex.columns_cached(schema, table)
+    }
+
+    /// ★ Import 창 기존 표 콤보(D-455): 그 서버 칸의 스키마 표 목록(메타 캐시).
+    pub(crate) fn tables_cached(
+        &self,
+        spec: Option<&ConnectSpec>,
+        schema: Option<&str>,
+    ) -> Option<Vec<String>> {
+        let i = self.meta_pane(spec);
+        self.panes.get(i)?.ex.tables_cached(schema)
     }
 
     /// 완성 상세 카드(09-24): 테이블 상세·컬럼을 객체 id로 요청.

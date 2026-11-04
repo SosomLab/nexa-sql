@@ -1252,6 +1252,258 @@ pub(crate) fn mssql_cols_sql(dialect: Dialect, table: &str) -> Option<String> {
     ))
 }
 
+// ── ★ 기존 표 적재 사전 판정(127 §2-4 · D-455 · 11-04 사용자 "제약 준수 · 허용 여부 · 열 연결 규칙") — 순수 함수 · 세션 없음.
+
+/// 기존 표의 대상 열(메타 캐시 → Import 창). `nullable`은 모르면 `None`(모름 = 가정하지 않음).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct TargetCol {
+    pub name: String,
+    pub ty: String,
+    pub nullable: Option<bool>,
+    pub has_default: bool,
+    pub pk: bool,
+    pub unique: bool,
+}
+
+/// 대상 형의 거친 분류(이름으로 · 방언 공통).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TyClass {
+    Int,
+    /// 소수 가능한 수(DECIMAL · NUMBER · NUMERIC · MONEY).
+    Num,
+    Float,
+    Bool,
+    Date,
+    DateTime,
+    Time,
+    /// 글(최대 길이 · 모르면 None = 무제한/미상).
+    Text(Option<u32>),
+    Binary,
+    Other,
+}
+
+/// 형 이름 → 분류. `varchar(40)` · `VARCHAR2(40 CHAR)` · `nvarchar(max)` · `NUMBER(10)` · `NUMBER(10,2)` · `decimal(18,2)` · `timestamp(6)` ….
+#[must_use]
+pub fn classify_type(ty: &str) -> TyClass {
+    let raw = ty.trim();
+    let lower = raw.to_ascii_lowercase();
+    let (base, args) = match lower.split_once('(') {
+        Some((b, rest)) => (
+            b.trim().to_string(),
+            rest.trim_end_matches(')').trim().to_string(),
+        ),
+        None => (lower.clone(), String::new()),
+    };
+    let first_num = || -> Option<u32> {
+        args.split(',')
+            .next()
+            .and_then(|a| a.split_whitespace().next())
+            .and_then(|a| a.parse::<u32>().ok())
+    };
+    let scale = || -> Option<u32> {
+        args.split(',')
+            .nth(1)
+            .and_then(|a| a.trim().parse::<u32>().ok())
+    };
+    let base = base.trim_end_matches(" unsigned").trim().to_string();
+    match base.as_str() {
+        "int" | "integer" | "bigint" | "smallint" | "tinyint" | "mediumint" | "int2" | "int4"
+        | "int8" | "serial" | "bigserial" | "smallserial" | "integer unsigned" => TyClass::Int,
+        "number" | "numeric" | "decimal" | "dec" | "money" | "smallmoney" => {
+            if args.is_empty() {
+                TyClass::Num
+            } else if scale().unwrap_or(0) == 0 && !args.contains('*') {
+                TyClass::Int
+            } else {
+                TyClass::Num
+            }
+        }
+        "float" | "real" | "double" | "double precision" | "binary_float" | "binary_double"
+        | "float4" | "float8" => TyClass::Float,
+        "bool" | "boolean" | "bit" if args.is_empty() || first_num() == Some(1) => TyClass::Bool,
+        "date" => TyClass::Date,
+        "datetime"
+        | "datetime2"
+        | "smalldatetime"
+        | "timestamp"
+        | "timestamptz"
+        | "datetimeoffset"
+        | "timestamp with time zone"
+        | "timestamp without time zone"
+        | "timestamp with local time zone" => TyClass::DateTime,
+        "time" | "timetz" | "time with time zone" | "time without time zone" => TyClass::Time,
+        "char" | "nchar" | "varchar" | "nvarchar" | "varchar2" | "nvarchar2" | "character"
+        | "character varying" | "bpchar" => TyClass::Text(first_num()),
+        "text" | "ntext" | "clob" | "nclob" | "longtext" | "mediumtext" | "tinytext" | "long"
+        | "string" | "json" | "jsonb" | "xml" | "uuid" | "uniqueidentifier" | "enum" | "set"
+        | "citext" => TyClass::Text(None),
+        "blob" | "raw" | "long raw" | "bytea" | "varbinary" | "binary" | "image" | "longblob"
+        | "mediumblob" | "tinyblob" => TyClass::Binary,
+        _ => TyClass::Other,
+    }
+}
+
+/// 열 하나의 어긋남(표시 글은 호스트의 `Msg` 몫 · 적재 실패를 **미리 알리는** 경고일 뿐 — 서버 제약이 최종 판정).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Issue {
+    /// 글 값이 숫자·날짜·불리언 열로(변환 실패 행은 오류 시 설정대로).
+    TextIntoTyped,
+    /// 소수가 정수 열로.
+    FractionIntoInt,
+    /// 날짜시각이 날짜 열로(시각 부분 소실).
+    DateTimeIntoDate,
+    /// 길이 초과(표본 최대 · 대상 최대).
+    TooLong(u32, u32),
+    /// 빈 값(NULL)이 있는데 대상은 NOT NULL(기본값 없음).
+    NullIntoNotNull,
+    /// 그 밖의 어긋남(날짜 ↔ 숫자 · 글 ↔ 이진 …).
+    Mismatch,
+}
+
+/// 원료 열(추론) → 대상 열 호환 판정(경고 목록 · 비면 OK).
+#[must_use]
+pub fn check_column(src: &nsql_io::infer::Inferred, target: &TargetCol) -> Vec<Issue> {
+    use nsql_io::infer::Kind as K;
+    let mut v = Vec::new();
+    let cls = classify_type(&target.ty);
+    match (src.kind, cls) {
+        (_, TyClass::Other) => {}
+        (K::Text(n), TyClass::Text(Some(m))) => {
+            if n > m {
+                v.push(Issue::TooLong(n, m));
+            }
+        }
+        (_, TyClass::Text(_)) => {}
+        (K::Text(_), TyClass::Binary) => v.push(Issue::Mismatch),
+        (K::Text(_), _) => v.push(Issue::TextIntoTyped),
+        (K::Int | K::Bool, TyClass::Int | TyClass::Num | TyClass::Float) => {}
+        (K::Decimal(_, s), TyClass::Int) => {
+            if s > 0 {
+                v.push(Issue::FractionIntoInt);
+            }
+        }
+        (K::Float, TyClass::Int) => v.push(Issue::FractionIntoInt),
+        (K::Decimal(..) | K::Float, TyClass::Num | TyClass::Float) => {}
+        (K::Bool, TyClass::Bool) => {}
+        (K::Int, TyClass::Bool) => {}
+        (K::Date, TyClass::Date | TyClass::DateTime) => {}
+        (K::DateTime, TyClass::DateTime) => {}
+        (K::DateTime, TyClass::Date) => v.push(Issue::DateTimeIntoDate),
+        (K::Time, TyClass::Time) => {}
+        _ => v.push(Issue::Mismatch),
+    }
+    if src.nullable && target.nullable == Some(false) && !target.has_default {
+        v.push(Issue::NullIntoNotNull);
+    }
+    v
+}
+
+/// 이름 정규화(대소문자 · `_` · 공백 · 따옴표 무시) — 자동 연결의 기준.
+#[must_use]
+pub fn norm_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// ★ 자동 연결 = **같은 이름만**(정규화) · 없으면 `None`(사용자가 고른다 · 위치 연결은 명시 동작 `map_by_position`) · 같은 대상에 둘이 붙지 않게.
+#[must_use]
+pub fn auto_match(sources: &[String], targets: &[TargetCol]) -> Vec<Option<usize>> {
+    let mut used = vec![false; targets.len()];
+    sources
+        .iter()
+        .map(|s| {
+            let n = norm_name(s);
+            let hit = targets
+                .iter()
+                .position(|t| !n.is_empty() && norm_name(&t.name) == n);
+            match hit {
+                Some(i) if !used[i] => {
+                    used[i] = true;
+                    Some(i)
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// 위치 연결(헤더 없는 파일 · 사용자가 버튼으로) — i번째 원료 → i번째 대상.
+#[must_use]
+pub fn match_by_position(n_sources: usize, n_targets: usize) -> Vec<Option<usize>> {
+    (0..n_sources)
+        .map(|i| (i < n_targets).then_some(i))
+        .collect()
+}
+
+/// 시작을 막는 사유(매핑 수준 · 데이터 보호 = 모르면 막는다 · 열 이름).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Blocker {
+    /// 포함(✓)한 원료 열인데 대상이 없다(건너뛰려면 ✓를 끈다).
+    Unmapped(String),
+    /// 대상 NOT NULL 열(기본값 없음)에 연결된 원료가 없다.
+    NotNullUnfed(String),
+    /// 같은 대상 열에 둘 이상 연결.
+    Duplicate(String),
+}
+
+/// 포함한 원료 열의 연결(`None` = 미지정)로 차단 사유를 모은다.
+#[must_use]
+pub fn mapping_blockers(
+    sources: &[String],
+    included: &[bool],
+    mapped: &[Option<usize>],
+    targets: &[TargetCol],
+) -> Vec<Blocker> {
+    let mut out = Vec::new();
+    let mut fed = vec![0usize; targets.len()];
+    for (i, s) in sources.iter().enumerate() {
+        if !included.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        match mapped.get(i).copied().flatten() {
+            Some(t) if t < targets.len() => fed[t] += 1,
+            _ => out.push(Blocker::Unmapped(s.clone())),
+        }
+    }
+    for (t, col) in targets.iter().enumerate() {
+        if fed[t] > 1 {
+            out.push(Blocker::Duplicate(col.name.clone()));
+        }
+        if fed[t] == 0 && col.nullable == Some(false) && !col.has_default {
+            out.push(Blocker::NotNullUnfed(col.name.clone()));
+        }
+    }
+    out
+}
+
+/// 표본 행에서 키 열(원료 인덱스) 값이 겹치는가(PK/UNIQUE 사전 경고 · 빈 값은 비교하지 않음).
+#[must_use]
+pub fn dup_keys_in_sample(rows: &[Vec<Value>], key_idx: &[usize]) -> bool {
+    if key_idx.is_empty() {
+        return false;
+    }
+    let mut seen: std::collections::HashSet<Vec<String>> = std::collections::HashSet::new();
+    for r in rows {
+        let mut k = Vec::with_capacity(key_idx.len());
+        let mut any_null = false;
+        for &i in key_idx {
+            match r.get(i) {
+                Some(Value::Str(s)) if !s.is_empty() => k.push(s.trim().to_string()),
+                _ => any_null = true,
+            }
+        }
+        if any_null {
+            continue;
+        }
+        if !seen.insert(k) {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     /// T-309: 3부 이름만 · SQL Server만 · 그 DB의 sys.all_columns + OBJECT_ID(3부) · 다섯 열(이름·타입·길이·정밀도·scale) · 대괄호/따옴표 벗김 ·
@@ -1714,5 +1966,110 @@ mod tests {
         assert_eq!(pg.cols[0].name, "emp_no");
         assert_eq!(pg.cols[1].ty, "varchar(10)");
         assert_eq!(OnError::parse("SKIP"), Some(OnError::Skip));
+    }
+
+    /// ★ 기존 표 사전 판정(127 §2-4 · D-455): 형 분류 · 호환 경고 · 이름 자동 연결(위치 연결은 명시) · 차단 사유 · 표본 키 중복.
+    #[test]
+    fn existing_table_prechecks() {
+        use nsql_io::infer::{Inferred, Kind};
+        assert_eq!(classify_type("VARCHAR2(40 CHAR)"), TyClass::Text(Some(40)));
+        assert_eq!(classify_type("nvarchar(max)"), TyClass::Text(None));
+        assert_eq!(classify_type("NUMBER(10)"), TyClass::Int);
+        assert_eq!(classify_type("NUMBER(10,2)"), TyClass::Num);
+        assert_eq!(classify_type("NUMBER"), TyClass::Num);
+        assert_eq!(classify_type("timestamp(6)"), TyClass::DateTime);
+        assert_eq!(classify_type("bit"), TyClass::Bool);
+        assert_eq!(classify_type("geometry"), TyClass::Other);
+        let col = |ty: &str, nullable: Option<bool>| TargetCol {
+            name: "c".into(),
+            ty: ty.into(),
+            nullable,
+            ..TargetCol::default()
+        };
+        let inf = |kind: Kind, nullable: bool| Inferred {
+            kind,
+            nullable,
+            seen: 3,
+        };
+        assert!(check_column(&inf(Kind::Int, false), &col("bigint", None)).is_empty());
+        assert_eq!(
+            check_column(&inf(Kind::Text(50), false), &col("varchar(40)", None)),
+            vec![Issue::TooLong(50, 40)]
+        );
+        assert_eq!(
+            check_column(&inf(Kind::Text(5), false), &col("int", None)),
+            vec![Issue::TextIntoTyped]
+        );
+        assert_eq!(
+            check_column(
+                &inf(Kind::Decimal(6, 2), true),
+                &col("integer", Some(false))
+            ),
+            vec![Issue::FractionIntoInt, Issue::NullIntoNotNull]
+        );
+        assert_eq!(
+            check_column(&inf(Kind::DateTime, false), &col("date", None)),
+            vec![Issue::DateTimeIntoDate]
+        );
+        assert_eq!(
+            check_column(&inf(Kind::Date, false), &col("numeric(5)", None)),
+            vec![Issue::Mismatch]
+        );
+        // 기본값이 있으면 NOT NULL이라도 빈 값 경고 없음.
+        let mut with_default = col("int", Some(false));
+        with_default.has_default = true;
+        assert!(check_column(&inf(Kind::Int, true), &with_default).is_empty());
+        // 자동 연결 = 같은 이름만(정규화) · 중복 금지 · 나머지 None.
+        let targets = vec![
+            TargetCol {
+                name: "EMP_NO".into(),
+                nullable: Some(false),
+                ..TargetCol::default()
+            },
+            TargetCol {
+                name: "Name".into(),
+                nullable: Some(true),
+                ..TargetCol::default()
+            },
+            TargetCol {
+                name: "DEPT".into(),
+                nullable: Some(false),
+                has_default: true,
+                ..TargetCol::default()
+            },
+        ];
+        let srcs: Vec<String> = ["empno", "name", "salary"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let m = auto_match(&srcs, &targets);
+        assert_eq!(m, vec![Some(0), Some(1), None]);
+        assert_eq!(
+            match_by_position(4, 3),
+            vec![Some(0), Some(1), Some(2), None]
+        );
+        // 차단: ✓인데 미지정 · NOT NULL(기본값 없음) 미연결 · 같은 대상 둘.
+        let b = mapping_blockers(&srcs, &[true, true, true], &m, &targets);
+        assert_eq!(b, vec![Blocker::Unmapped("salary".into())]);
+        let b = mapping_blockers(&srcs, &[false, true, false], &m, &targets);
+        assert_eq!(b, vec![Blocker::NotNullUnfed("EMP_NO".into())]);
+        let b = mapping_blockers(
+            &srcs,
+            &[true, true, true],
+            &[Some(0), Some(0), Some(1)],
+            &targets,
+        );
+        assert_eq!(b, vec![Blocker::Duplicate("EMP_NO".into())]);
+        // ✓를 끈 원료는 차단이 아니다 · DEPT는 기본값이 있어 미연결이어도 통과.
+        assert!(mapping_blockers(&srcs, &[true, true, false], &m, &targets).is_empty());
+        let rows = vec![
+            vec![Value::Str("1".into()), Value::Str("a".into())],
+            vec![Value::Str("2".into()), Value::Str("a".into())],
+            vec![Value::Str("1".into()), Value::Str("b".into())],
+            vec![Value::Null, Value::Str("c".into())],
+        ];
+        assert!(!dup_keys_in_sample(&rows, &[0, 1]));
+        assert!(dup_keys_in_sample(&rows, &[0]));
+        assert!(!dup_keys_in_sample(&rows, &[]));
     }
 }

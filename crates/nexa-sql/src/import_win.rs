@@ -18,7 +18,8 @@ use nexa_gfx::{Font, Surface};
 use nsql_core::{Dialect, ResultSet, Value};
 use nsql_i18n::{t, tf, Msg};
 use nsql_run::bulk::{
-    BulkMode, CreateCol, CreateSpec, ImportSpec, Inspect, OnError, SourceFormat, SourceOpts,
+    Blocker, BulkMode, CreateCol, CreateSpec, ImportSpec, Inspect, Issue, OnError, SourceFormat,
+    SourceOpts, TargetCol,
 };
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -39,6 +40,8 @@ pub(crate) enum ImportAction {
     Reinspect,
     /// 새 표 DDL 보기(읽기 전용 글 창).
     ShowDdl(String),
+    /// ★ 기존 표 선택이 바뀌었다(맨이름 · D-455) — 호스트가 열(메타 캐시)을 다시 채운다.
+    TableChanged(String),
 }
 
 const MODES: [BulkMode; 4] = [
@@ -52,6 +55,8 @@ const MODES: [BulkMode; 4] = [
 pub(crate) struct ImportOpen {
     /// 기존 표 표기(인용된 `schema.table`) · `None` = 새 표.
     pub existing: Option<String>,
+    /// 기존 표의 맨이름(콤보 선택 · 열 캐시 조회).
+    pub name: Option<String>,
     /// 새 표를 둘 스키마(표기용 · 없으면 접속 기본).
     pub schema: Option<String>,
     /// 새 표 기본 이름(파일 줄기 정리값).
@@ -85,6 +90,8 @@ struct MapRow {
     /// 새 표 모드: 열 이름(접힌 식별자) · 형 콤보.
     new_name: String,
     ty: Combo,
+    /// ★ 기존 표 모드 사전 판정(D-455): 대상 열과의 호환 경고(비면 ✓).
+    issues: Vec<Issue>,
 }
 
 pub(crate) struct ImportWin {
@@ -98,6 +105,11 @@ pub(crate) struct ImportWin {
     dialect: Dialect,
     schema: Option<String>,
     existing: Option<String>,
+    /// 기존 표 맨이름(콤보 값) · 스키마의 표 목록(메타 캐시).
+    table_name: Option<String>,
+    tables: Vec<String>,
+    /// `import.set:table=` 뒤 호스트가 수거하는 표 변경 요청(기동 명령 자체 시험).
+    table_req: Option<String>,
     defaults: Defaults,
     // ── A 원료
     cb_format: Combo,
@@ -118,10 +130,17 @@ pub(crate) struct ImportWin {
     // ── C 대상
     rg_target: RadioGroup,
     tb_table: TextBox,
+    /// ★ 기존 표 = 콤보(스키마의 표 목록 · D-455) · 새 표 = 이름 상자 — 같은 자리.
+    cb_table: Combo,
     btn_ddl: Button,
+    /// 위치 연결(헤더 없는 파일 · 명시 동작).
+    btn_by_pos: Button,
     rows: Vec<MapRow>,
-    /// 기존 표 열(이름 · 형) — 호스트가 메타에서 채운다(`None` = 아직).
-    table_cols: Option<Vec<(String, String)>>,
+    /// 기존 표 열(이름 · 형 · NULL 허용 · 기본값 · 키) — 호스트가 메타에서 채운다(`None` = 아직).
+    table_cols: Option<Vec<TargetCol>>,
+    /// 사전 판정: 시작을 막는 사유 · PK 표본 중복 경고.
+    blockers: Vec<Blocker>,
+    pk_dup_warn: bool,
     map_scroll: i32,
     map_area: Rect,
     tb_batch: TextBox,
@@ -228,6 +247,9 @@ impl ImportWin {
             dialect: Dialect::Sqlite,
             schema: None,
             existing: None,
+            table_name: None,
+            tables: Vec::new(),
+            table_req: None,
             defaults: Defaults {
                 batch: 1000,
                 commit: 10_000,
@@ -252,9 +274,13 @@ impl ImportWin {
             inspecting: false,
             rg_target,
             tb_table: TextBox::new(""),
+            cb_table: Combo::new(vec![ComboItem::new("", t(Msg::ImpPickTable))], 0),
             btn_ddl: Button::new(t(Msg::ImpShowDdl)),
+            btn_by_pos: Button::new(t(Msg::ImpMapByPos)),
             rows: Vec::new(),
             table_cols: None,
+            blockers: Vec::new(),
+            pk_dup_warn: false,
             map_scroll: 0,
             map_area: OFF,
             tb_batch: TextBox::new(""),
@@ -286,6 +312,10 @@ impl ImportWin {
         self.dialect = o.dialect;
         self.schema = o.schema;
         self.existing = o.existing;
+        self.table_name = o.name;
+        self.tables.clear();
+        self.table_req = None;
+        self.rebuild_table_combo();
         self.defaults = o.defaults;
         self.syncing = true;
         self.cb_format.select_value("auto");
@@ -308,6 +338,8 @@ impl ImportWin {
         self.grid.set_result(ResultSet::default());
         self.rows.clear();
         self.table_cols = None;
+        self.blockers.clear();
+        self.pk_dup_warn = false;
         self.map_scroll = 0;
         match &self.existing {
             Some(tbl) => {
@@ -458,28 +490,221 @@ impl ImportWin {
                         .select_value(SourceFormat::Auto.resolve(&self.path).name());
                 }
                 self.syncing = false;
+                // 살펴보기 결과를 먼저 두고 매핑 표를 만든다(사전 판정 `refresh_checks`가 `self.inspect`를 읽는다 · E2E 1차 결함).
+                self.inspect = Some(insp.clone());
                 self.rebuild_rows(&insp);
-                self.inspect = Some(insp);
             }
         }
         self.sync_buttons();
         self.redraw();
     }
 
-    /// 기존 표의 열(이름 · 형) — 대상 콤보 후보 · 자동 짝(이름 → 위치).
-    pub(crate) fn set_table_columns(&mut self, cols: Vec<(String, String)>) {
+    /// 기존 표의 열(이름 · 형 · NULL · 기본값 · 키) — 대상 콤보 후보 · 자동 연결(같은 이름만) · 사전 판정.
+    pub(crate) fn set_table_columns(&mut self, cols: Vec<TargetCol>) {
         self.table_cols = Some(cols);
         if let Some(insp) = self.inspect.clone() {
             self.rebuild_rows(&insp);
         }
+        self.sync_buttons();
         self.redraw();
     }
 
-    fn norm(s: &str) -> String {
-        s.chars()
-            .filter(|c| c.is_alphanumeric())
-            .flat_map(char::to_lowercase)
-            .collect()
+    /// ★ 기존 표의 키(PK · 단일 열 UNIQUE · D-455) — 대상 열에 표시하고 사전 판정을 다시(열이 아직이면 무시 · 다음 `set_table_columns` 뒤 호스트가 다시 준다).
+    pub(crate) fn set_table_keys(&mut self, info: Option<&nsql_core::KeyInfo>) {
+        let Some(cols) = self.table_cols.as_mut() else {
+            return;
+        };
+        for c in cols.iter_mut() {
+            c.pk = info.is_some_and(|k| k.pk.iter().any(|p| p.eq_ignore_ascii_case(&c.name)));
+            c.unique = info.is_some_and(|k| {
+                k.unique
+                    .iter()
+                    .any(|(_, ks)| ks.len() == 1 && ks[0].eq_ignore_ascii_case(&c.name))
+            });
+        }
+        if let Some(insp) = self.inspect.clone() {
+            self.rebuild_rows(&insp);
+        }
+        self.sync_buttons();
+        self.redraw();
+    }
+
+    /// 호스트: 스키마의 표 목록(메타 캐시 · 없으면 빈 목록) → 기존 표 콤보.
+    pub(crate) fn set_tables(&mut self, tables: Vec<String>) {
+        self.tables = tables;
+        self.rebuild_table_combo();
+        self.redraw();
+    }
+
+    /// `import.set:table=` 뒤 호스트가 수거(1회성) — 열을 다시 채우게.
+    pub(crate) fn take_table_request(&mut self) -> Option<String> {
+        self.table_req.take()
+    }
+
+    /// 대상 열 콤보 라벨 = `이름  (형) · PK/UQ · NN`.
+    fn target_label(c: &TargetCol) -> String {
+        let mut s = format!("{}  ({})", c.name, c.ty);
+        if c.pk {
+            s.push_str(" · PK");
+        } else if c.unique {
+            s.push_str(" · UQ");
+        }
+        if c.nullable == Some(false) {
+            s.push_str(" · NN");
+        }
+        s
+    }
+
+    /// 표 목록 콤보 다시(선택 유지 · 목록에 없는 문맥의 표 이름도 넣는다 · 빈 값 = "— 표 선택 —").
+    fn rebuild_table_combo(&mut self) {
+        let mut names = self.tables.clone();
+        if let Some(n) = &self.table_name {
+            if !names.iter().any(|x| x == n) {
+                names.insert(0, n.clone());
+            }
+        }
+        let mut items = vec![ComboItem::new("", t(Msg::ImpPickTable))];
+        for n in &names {
+            items.push(ComboItem::new(n.clone(), n.clone()));
+        }
+        let idx = self
+            .table_name
+            .as_ref()
+            .and_then(|n| names.iter().position(|x| x == n))
+            .map_or(0, |i| i + 1);
+        self.cb_table = Combo::new(items, idx);
+    }
+
+    /// 기존 표를 골랐다(콤보 · `import.set:table=`) — 표기 갱신 · 열은 비우고 호스트가 다시 채운다. 고른 표가 있으면 true.
+    fn select_table(&mut self, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            self.table_name = None;
+            self.existing = None;
+        } else {
+            self.table_name = Some(name.to_string());
+            self.existing = Some(nsql_catalog::qualified(
+                self.dialect,
+                self.schema.as_deref().unwrap_or(""),
+                name,
+            ));
+        }
+        self.table_cols = None;
+        self.rebuild_table_combo();
+        if let Some(insp) = self.inspect.clone() {
+            self.rebuild_rows(&insp);
+        }
+        self.sync_buttons();
+        self.table_name.is_some()
+    }
+
+    /// 콤보에서 표가 바뀌었으면 그 이름(1회성).
+    fn take_table_change(&mut self) -> Option<String> {
+        self.cb_table.take_changed().map(|_| self.cb_table.value())
+    }
+
+    /// 위치 연결(헤더 없는 파일 · 버튼 · 명시 동작): i번째 원료 → i번째 대상 열.
+    fn map_by_position(&mut self) {
+        let Some(cols) = self.table_cols.clone() else {
+            return;
+        };
+        let m = nsql_run::bulk::match_by_position(self.rows.len(), cols.len());
+        for (r, t) in self.rows.iter_mut().zip(m) {
+            let v = t.map(|i| cols[i].name.clone()).unwrap_or_default();
+            r.target.select_value(&v);
+            let _ = r.target.take_changed();
+        }
+        self.refresh_checks();
+        self.sync_buttons();
+    }
+
+    /// ★ 사전 판정(D-455 · 127 §2-4): 열마다 호환 경고 · 매핑 차단 사유 · PK 표본 중복 — 매핑·✓·표 선택이 바뀔 때마다 다시.
+    ///   모르면(열 아직 · NULL 허용 미상) 가정하지 않는다 · 최종 판정은 서버 제약(실패 행은 오류 시 설정대로).
+    fn refresh_checks(&mut self) {
+        self.pk_dup_warn = false;
+        self.blockers.clear();
+        for r in &mut self.rows {
+            r.issues.clear();
+        }
+        if self.is_new() {
+            return;
+        }
+        let Some(cols) = self.table_cols.clone() else {
+            return;
+        };
+        let Some(insp) = self.inspect.as_ref() else {
+            return;
+        };
+        let sources: Vec<String> = self.rows.iter().map(|r| r.src.clone()).collect();
+        let included: Vec<bool> = self.rows.iter().map(|r| r.on.is_checked()).collect();
+        let mapped: Vec<Option<usize>> = self
+            .rows
+            .iter()
+            .map(|r| {
+                let v = r.target.value();
+                cols.iter().position(|c| c.name == v)
+            })
+            .collect();
+        for (i, r) in self.rows.iter_mut().enumerate() {
+            if let (Some(t), Some(k), true) = (mapped[i], insp.kinds.get(i), included[i]) {
+                r.issues = nsql_run::bulk::check_column(k, &cols[t]);
+            }
+        }
+        self.blockers = nsql_run::bulk::mapping_blockers(&sources, &included, &mapped, &cols);
+        let key_idx: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| included[i] && mapped[i].is_some_and(|t| cols[t].pk))
+            .collect();
+        let pk_total = cols.iter().filter(|c| c.pk).count();
+        if pk_total > 0 && key_idx.len() == pk_total {
+            self.pk_dup_warn = nsql_run::bulk::dup_keys_in_sample(&insp.preview.rows, &key_idx);
+        }
+    }
+
+    fn issue_text(i: &Issue) -> String {
+        match i {
+            Issue::TextIntoTyped => t(Msg::ImpChkTextTyped).to_string(),
+            Issue::FractionIntoInt => t(Msg::ImpChkFraction).to_string(),
+            Issue::DateTimeIntoDate => t(Msg::ImpChkDateTime).to_string(),
+            Issue::TooLong(n, m) => tf(Msg::ImpChkTooLong, &[&n.to_string(), &m.to_string()]),
+            Issue::NullIntoNotNull => t(Msg::ImpChkNullNotNull).to_string(),
+            Issue::Mismatch => t(Msg::ImpChkMismatch).to_string(),
+        }
+    }
+
+    fn blocker_text(b: &Blocker) -> String {
+        match b {
+            Blocker::Unmapped(n) => tf(Msg::ImpBlkUnmapped, &[n]),
+            Blocker::NotNullUnfed(n) => tf(Msg::ImpBlkNotNull, &[n]),
+            Blocker::Duplicate(n) => tf(Msg::ImpBlkDup, &[n]),
+        }
+    }
+
+    fn warn_count(&self) -> usize {
+        self.rows.iter().filter(|r| !r.issues.is_empty()).count() + usize::from(self.pk_dup_warn)
+    }
+
+    /// 기존 표 모드에서 시작을 막는 글(표 미선택 · 열 아직 · 차단 사유 앞 3) · 새 표/문제없음 = `None`.
+    fn start_blockers_text(&self) -> Option<String> {
+        if self.is_new() {
+            return None;
+        }
+        if self.table_name.is_none() {
+            return Some(t(Msg::ImpBlkNoTable).to_string());
+        }
+        if self.table_cols.is_none() {
+            return Some(t(Msg::ImpBlkNoCols).to_string());
+        }
+        if self.blockers.is_empty() {
+            return None;
+        }
+        Some(
+            self.blockers
+                .iter()
+                .take(3)
+                .map(Self::blocker_text)
+                .collect::<Vec<_>>()
+                .join(" · "),
+        )
     }
 
     /// 매핑 표 다시 만들기 — 종전 줄의 사용자 선택(포함 · 대상 · 형)은 원료 열 이름으로 이어 받는다.
@@ -500,7 +725,7 @@ impl ImportWin {
             nsql_run::bulk::suggest_create(self.dialect, insp, self.defaults.text_margin_pct);
         let choices = nsql_io::infer::type_choices(self.dialect);
         let table_cols = self.table_cols.clone().unwrap_or_default();
-        let mut used: Vec<String> = Vec::new();
+        let auto = nsql_run::bulk::auto_match(&insp.columns, &table_cols);
         let mut rows = Vec::new();
         for (i, src) in insp.columns.iter().enumerate() {
             let k = insp.kinds.get(i);
@@ -518,32 +743,22 @@ impl ImportWin {
                 .collect::<Vec<_>>()
                 .join(", ");
             let old = prev.iter().find(|(s, ..)| s == src);
-            // 대상 열 콤보: 건너뜀 + 표 열 · 자동 짝 = 이름(정규화) → 위치.
+            // ★ 대상 열 콤보(D-455): "— 대상 열 선택 —" + 표 열(PK · NN 표시) · 자동 연결 = **같은 이름만**(정규화 · `auto_match`) ·
+            //   없으면 미지정(✓인 채로 두면 차단 · 건너뛰려면 ✓ 끔 · 위치 연결은 버튼) · 종전 선택은 표 열에 있을 때만 이어 받는다.
             let mut items = vec![ComboItem::new("", t(Msg::ImpSkipCol))];
-            for (n, ty) in &table_cols {
-                items.push(ComboItem::new(n.clone(), format!("{n}  ({ty})")));
+            for c in &table_cols {
+                items.push(ComboItem::new(c.name.clone(), Self::target_label(c)));
             }
             let mut target = Combo::new(items, 0);
             let pick = match old {
-                Some((_, _, tv, _)) if !tv.is_empty() || table_cols.is_empty() => tv.clone(),
-                _ => {
-                    let by_name = table_cols
-                        .iter()
-                        .find(|(n, _)| Self::norm(n) == Self::norm(src))
-                        .map(|(n, _)| n.clone());
-                    by_name
-                        .or_else(|| {
-                            table_cols
-                                .get(i)
-                                .filter(|(n, _)| !used.iter().any(|u| u == n))
-                                .map(|(n, _)| n.clone())
-                        })
-                        .unwrap_or_default()
-                }
+                Some((_, _, tv, _)) if table_cols.iter().any(|c| c.name == *tv) => tv.clone(),
+                _ => auto
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map(|ti| table_cols[ti].name.clone())
+                    .unwrap_or_default(),
             };
-            if !pick.is_empty() {
-                used.push(pick.clone());
-            }
             target.select_value(&pick);
             // 새 표: 제안 이름 · 형(제안값 맨 위 + 방언 후보).
             let col = create.cols.get(i).cloned().unwrap_or(CreateCol {
@@ -578,9 +793,11 @@ impl ImportWin {
                 target,
                 new_name: col.name,
                 ty,
+                issues: Vec::new(),
             });
         }
         self.rows = rows;
+        self.refresh_checks();
     }
 
     fn sync_mode_label(&mut self) {
@@ -596,7 +813,10 @@ impl ImportWin {
     }
 
     fn sync_buttons(&mut self) {
-        let ready = !self.running && self.inspect.is_some() && !self.inspecting;
+        let ready = !self.running
+            && self.inspect.is_some()
+            && !self.inspecting
+            && self.start_blockers_text().is_none();
         self.btn_start.set_enabled(ready);
         self.btn_cancel.set_enabled(self.running);
         self.btn_close.set_enabled(!self.running);
@@ -760,19 +980,25 @@ impl ImportWin {
             out.push_str(&format!("inspect_err={e}\n"));
         }
         out.push_str(&format!(
-            "table_cols={:?}\n",
-            self.table_cols.as_ref().map(Vec::len)
+            "table_cols={:?} table_name={:?} tables={} blockers={:?} pk_dup={} start_blocked={:?}\n",
+            self.table_cols.as_ref().map(Vec::len),
+            self.table_name,
+            self.tables.len(),
+            self.blockers,
+            self.pk_dup_warn,
+            self.start_blockers_text()
         ));
         for r in &self.rows {
             out.push_str(&format!(
-                "col {} kind={} nullable={} on={} target={} new={} ty={}\n",
+                "col {} kind={} nullable={} on={} target={} new={} ty={} issues={:?}\n",
                 r.src,
                 r.kind,
                 r.nullable,
                 r.on.is_checked(),
                 r.target.value(),
                 r.new_name,
-                r.ty.value()
+                r.ty.value(),
+                r.issues
             ));
         }
         out
@@ -814,14 +1040,19 @@ impl ImportWin {
             "target" => {
                 self.rg_target.select_value(val);
                 let _ = self.rg_target.take_changed();
-                if val == "existing" && self.existing.is_none() {
-                    self.existing = Some(self.tb_table.text().trim().to_string());
+                if let Some(insp) = self.inspect.clone() {
+                    self.rebuild_rows(&insp);
+                }
+                self.sync_buttons();
+                if val == "existing" && self.table_cols.is_none() {
+                    self.table_req = self.table_name.clone();
                 }
             }
             "table" => {
-                self.tb_table.set_text(val);
-                if !self.is_new() {
-                    self.existing = Some(val.to_string());
+                if self.is_new() {
+                    self.tb_table.set_text(val);
+                } else if self.select_table(val) {
+                    self.table_req = Some(val.trim().to_string());
                 }
             }
             "on_error" => {
@@ -861,6 +1092,8 @@ impl ImportWin {
             }
             _ => {}
         }
+        // skip/include/map 뒤 사전 판정 다시(차단 → 시작 버튼 · 덤프).
+        self.refresh_checks();
         self.sync_buttons();
         self.redraw();
         reinspect
@@ -881,6 +1114,7 @@ impl ImportWin {
             &mut self.btn_close,
             &mut self.btn_mode,
             &mut self.btn_ddl,
+            &mut self.btn_by_pos,
         ] {
             b.clear_transient();
         }
@@ -946,6 +1180,9 @@ impl ImportWin {
         if self.cb_enc.is_open() {
             return Some(&mut self.cb_enc);
         }
+        if self.cb_table.is_open() {
+            return Some(&mut self.cb_table);
+        }
         self.rows.iter_mut().find_map(|r| {
             if r.target.is_open() {
                 Some(&mut r.target)
@@ -963,6 +1200,7 @@ impl ImportWin {
             &mut self.cb_sheet,
             &mut self.cb_delim,
             &mut self.cb_enc,
+            &mut self.cb_table,
         ];
         for r in &mut self.rows {
             v.push(&mut r.target);
@@ -984,20 +1222,29 @@ impl ImportWin {
                 changed = true;
             }
         }
+        let mut map_changed = false;
         for r in &mut self.rows {
-            let _ = r.target.take_changed();
+            if r.target.take_changed().is_some() {
+                map_changed = true;
+            }
             let _ = r.ty.take_changed();
+        }
+        if map_changed {
+            // 대상 열을 바꿨다 → 사전 판정 다시(차단 → 시작 버튼).
+            self.refresh_checks();
+            self.sync_buttons();
         }
         changed && !self.syncing
     }
 
-    fn buttons(&mut self) -> [&mut Button; 5] {
+    fn buttons(&mut self) -> [&mut Button; 6] {
         [
             &mut self.btn_start,
             &mut self.btn_cancel,
             &mut self.btn_close,
             &mut self.btn_mode,
             &mut self.btn_ddl,
+            &mut self.btn_by_pos,
         ]
     }
 
@@ -1101,6 +1348,15 @@ impl ImportWin {
                 // 열린 콤보 = 모달: 그 콤보에만(팝업 밖 클릭은 콤보가 닫는다).
                 if let Some(c) = self.open_combo() {
                     c.on_event(&e, &mut inv);
+                    if let Some(name) = self.take_table_change() {
+                        let picked = self.select_table(&name);
+                        self.redraw();
+                        return if picked {
+                            ImportAction::TableChanged(name)
+                        } else {
+                            ImportAction::None
+                        };
+                    }
                     let reinspect = self.take_source_changes();
                     self.redraw();
                     return if reinspect {
@@ -1138,14 +1394,21 @@ impl ImportWin {
                     self.cb_empty_null.set_focused(false);
                     let _ = self.cb_empty_null.take_toggled();
                 }
+                let mut map_changed = false;
                 if self.map_area.contains(p) || up {
                     for r in &mut self.rows {
                         if up || r.on.bounds().contains(p) {
                             r.on.on_event(&e, &mut inv);
                             r.on.set_focused(false);
-                            let _ = r.on.take_toggled();
+                            if r.on.take_toggled().is_some() {
+                                map_changed = true;
+                            }
                         }
                     }
+                }
+                if map_changed {
+                    self.refresh_checks();
+                    self.sync_buttons();
                 }
                 for rg in [&mut self.rg_target, &mut self.rg_on_error] {
                     if up || rg.bounds().contains(p) {
@@ -1154,7 +1417,17 @@ impl ImportWin {
                 }
                 let _ = self.rg_on_error.take_changed();
                 if self.rg_target.take_changed().is_some() {
+                    // 기존 ↔ 새 표 전환: 매핑 표를 그 모드로 다시(선택은 이어 받음) · 기존 표인데 열이 아직이면 호스트에 요청.
+                    if let Some(insp) = self.inspect.clone() {
+                        self.rebuild_rows(&insp);
+                    }
                     self.sync_buttons();
+                    if !self.is_new() && self.table_cols.is_none() {
+                        if let Some(n) = self.table_name.clone() {
+                            self.redraw();
+                            return ImportAction::TableChanged(n);
+                        }
+                    }
                 }
                 if self.grid.bounds.contains(p) || up {
                     self.grid.on_event(&e, self.scale);
@@ -1174,7 +1447,16 @@ impl ImportWin {
                 if self.btn_ddl.take_clicked() && self.is_new() {
                     return ImportAction::ShowDdl(self.ddl());
                 }
-                if self.btn_start.take_clicked() && !self.running && self.inspect.is_some() {
+                if self.btn_by_pos.take_clicked() && !self.is_new() {
+                    self.map_by_position();
+                    self.redraw();
+                    return ImportAction::None;
+                }
+                if self.btn_start.take_clicked()
+                    && !self.running
+                    && self.inspect.is_some()
+                    && self.start_blockers_text().is_none()
+                {
                     return ImportAction::Start(Box::new(self.spec()));
                 }
                 if self.btn_cancel.take_clicked() && self.running {
@@ -1182,6 +1464,15 @@ impl ImportWin {
                 }
                 if self.btn_close.take_clicked() && !self.running {
                     return ImportAction::Close;
+                }
+                if let Some(name) = self.take_table_change() {
+                    let picked = self.select_table(&name);
+                    self.redraw();
+                    return if picked {
+                        ImportAction::TableChanged(name)
+                    } else {
+                        ImportAction::None
+                    };
                 }
                 if source_changed || self.take_source_changes() {
                     return ImportAction::Reinspect;
@@ -1477,7 +1768,11 @@ impl ImportWin {
                 ),
                 (
                     area.x + col_on + col_src + col_kind + col_sel,
-                    t(Msg::ImpMapSample),
+                    if is_new {
+                        t(Msg::ImpMapSample)
+                    } else {
+                        t(Msg::ImpMapCheck)
+                    },
                 ),
             ];
             for (x, l) in heads {
@@ -1531,12 +1826,28 @@ impl ImportWin {
                     combo.set_enabled(!dim);
                     other.set_bounds(OFF, inv);
                     let sx = body.x + col_on + col_src + col_kind + col_sel + px(6.0);
+                    // ★ 기존 표 모드 = 판정(✗ 미지정 · ⚠ 경고 · ✓ + 표본) · 새 표/꺼진 줄 = 표본(D-455).
+                    let (txt, color) = if is_new || dim || self.table_cols.is_none() {
+                        (r.sample.clone(), th.text_dim)
+                    } else if r.target.value().is_empty() {
+                        (format!("✗ {}", t(Msg::ImpChkNeedTarget)), th.danger)
+                    } else if r.issues.is_empty() {
+                        (format!("✓  {}", r.sample), th.ok)
+                    } else {
+                        let why = r
+                            .issues
+                            .iter()
+                            .map(Self::issue_text)
+                            .collect::<Vec<_>>()
+                            .join(" · ");
+                        (format!("⚠ {why}"), th.warn)
+                    };
                     let sample = nexa_ctl::draw::ellipsize_middle(
                         &mut dc,
-                        &r.sample,
+                        &txt,
                         body.right() - sx - px(6.0),
                     );
-                    dc.text(sx, ry + (rh - th_txt) / 2, rowrect, &sample, th.text_dim);
+                    dc.text(sx, ry + (rh - th_txt) / 2, rowrect, &sample, color);
                 } else {
                     r.on.set_bounds(OFF, inv);
                     r.target.set_bounds(OFF, inv);
@@ -1554,9 +1865,13 @@ impl ImportWin {
             }
             // ── 대상 행
             let ty = target_y;
+            // ★ 라디오는 **가로**(항목 폭 = 라벨 실측 · 사용자 11-04 "세로로 겹쳐 보이고 둘째 항목을 고를 수 없다" — 종전
+            //   `set_horizontal(None)` = 세로였다) · 기존 표 = 표 콤보 + "순서대로 연결" · 새 표 = 이름 상자 + DDL 보기.
             self.rg_target.set_scale(s);
-            self.rg_target.set_horizontal(None);
-            let rw = self.rg_target.preferred_width().max(px(220.0));
+            let w0 = ((dc.text_width(t(Msg::ImpExisting)) + px(30.0)) as f32 / s).ceil() as i32;
+            let w1 = ((dc.text_width(t(Msg::ImpNewTable)) + px(30.0)) as f32 / s).ceil() as i32;
+            self.rg_target.set_horizontal_widths(&[w0, w1]);
+            let rw = self.rg_target.preferred_width();
             self.rg_target
                 .set_bounds(Rect::new(pad, ty, rw, row_h), inv);
             self.rg_target.paint(&mut dc, th);
@@ -1564,17 +1879,36 @@ impl ImportWin {
             let l = t(Msg::ImpTableName);
             dc.text(x, ty + (row_h - th_txt) / 2, clip, l, th.text);
             x += dc.text_width(l) + gap;
-            self.tb_table.set_scale(s);
-            self.tb_table.set_read_only(!is_new);
-            let tb_w = px(280.0).min(wi - pad - x - px(120.0)).max(px(100.0));
-            self.tb_table.set_bounds(Rect::new(x, ty, tb_w, row_h), inv);
-            self.tb_table.paint(&mut dc, th);
+            let tb_w = px(280.0).min(wi - pad - x - px(150.0)).max(px(100.0));
+            if is_new {
+                self.tb_table.set_scale(s);
+                self.tb_table.set_read_only(false);
+                self.tb_table.set_bounds(Rect::new(x, ty, tb_w, row_h), inv);
+                self.tb_table.paint(&mut dc, th);
+                self.cb_table.set_bounds(OFF, inv);
+            } else {
+                self.cb_table.set_scale(s);
+                self.cb_table.set_bounds(Rect::new(x, ty, tb_w, row_h), inv);
+                self.cb_table.set_viewport_bottom(hi);
+                self.tb_table.set_bounds(OFF, inv);
+            }
             x += tb_w + gap;
-            self.btn_ddl.set_scale(s);
-            let dw = dc.text_width(t(Msg::ImpShowDdl)) + px(28.0);
-            self.btn_ddl.set_bounds(Rect::new(x, ty, dw, row_h), inv);
-            self.btn_ddl.set_enabled(is_new && self.inspect.is_some());
-            self.btn_ddl.paint(&mut dc, th);
+            if is_new {
+                self.btn_ddl.set_scale(s);
+                let dw = dc.text_width(t(Msg::ImpShowDdl)) + px(28.0);
+                self.btn_ddl.set_bounds(Rect::new(x, ty, dw, row_h), inv);
+                self.btn_ddl.set_enabled(self.inspect.is_some());
+                self.btn_ddl.paint(&mut dc, th);
+                self.btn_by_pos.set_bounds(OFF, inv);
+            } else {
+                self.btn_by_pos.set_scale(s);
+                let bw = dc.text_width(t(Msg::ImpMapByPos)) + px(28.0);
+                self.btn_by_pos.set_bounds(Rect::new(x, ty, bw, row_h), inv);
+                self.btn_by_pos
+                    .set_enabled(self.table_cols.is_some() && !self.rows.is_empty());
+                self.btn_by_pos.paint(&mut dc, th);
+                self.btn_ddl.set_bounds(OFF, inv);
+            }
             // ── 옵션 행
             let oy = opts_y;
             let mut x = pad;
@@ -1604,11 +1938,12 @@ impl ImportWin {
             dc.text(x, oy + (row_h - th_txt) / 2, clip, l, th.text);
             x += dc.text_width(l) + gap;
             self.rg_on_error.set_scale(s);
-            self.rg_on_error.set_horizontal(None);
+            let e0 = ((dc.text_width(t(Msg::ImpErrStop)) + px(30.0)) as f32 / s).ceil() as i32;
+            let e1 = ((dc.text_width(t(Msg::ImpErrSkip)) + px(30.0)) as f32 / s).ceil() as i32;
+            self.rg_on_error.set_horizontal_widths(&[e0, e1]);
             let ow = self
                 .rg_on_error
                 .preferred_width()
-                .max(px(200.0))
                 .min((wi - pad - x).max(px(100.0)));
             self.rg_on_error
                 .set_bounds(Rect::new(x, oy, ow, row_h), inv);
@@ -1620,7 +1955,19 @@ impl ImportWin {
                     tf(Msg::ImpRunning, &[&rows.to_string(), &format!("{secs:.1}")]),
                     th.accent,
                 ),
-                _ => (t(Msg::ImpHint2).to_string(), th.text_dim),
+                // ★ 차단(빨강) > 경고(주황 · 시작 가능) > 안내.
+                _ => match self.start_blockers_text() {
+                    Some(b) => (b, th.danger),
+                    None if self.warn_count() > 0 => {
+                        let mut w = tf(Msg::ImpWarnN, &[&self.warn_count().to_string()]);
+                        if self.pk_dup_warn {
+                            w.push_str(" · ");
+                            w.push_str(t(Msg::ImpChkPkDup));
+                        }
+                        (w, th.warn)
+                    }
+                    None => (t(Msg::ImpHint2).to_string(), th.text_dim),
+                },
             };
             let line_text = nexa_ctl::draw::ellipsize_middle(&mut dc, &line.0, wi - pad * 2);
             dc.text(pad, status_y, clip, &line_text, line.1);
@@ -1646,6 +1993,9 @@ impl ImportWin {
             }
             if text_opts {
                 self.cb_enc.paint(&mut dc, th);
+            }
+            if !is_new {
+                self.cb_table.paint(&mut dc, th);
             }
             for r in &self.rows {
                 let c = if is_new { &r.ty } else { &r.target };

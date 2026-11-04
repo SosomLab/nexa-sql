@@ -4048,7 +4048,7 @@ impl Explorer {
         &self,
         schema: Option<&str>,
         table: &str,
-    ) -> Option<Vec<(String, String)>> {
+    ) -> Option<Vec<nsql_run::bulk::TargetCol>> {
         let snap = self.meta.snapshot();
         let schema_name = match schema {
             Some(s) => s.to_string(),
@@ -4056,18 +4056,45 @@ impl Explorer {
         };
         let id = snap.lookup(&self.meta.names, Some(&schema_name), table)?;
         match snap.columns(id) {
+            // ★ D-455(11-04): NULL 허용 · 기본값 · PK/UQ 비트도 — Import 창의 사전 판정(미연결 NOT NULL 차단 · 키 표시).
             nsql_run::meta::ColState::Loaded { cols, .. } => Some(
                 cols.iter()
-                    .map(|c| {
-                        (
-                            self.meta.names.get(c.name).to_string(),
-                            self.meta.names.get(c.data_type).to_string(),
-                        )
+                    .map(|c| nsql_run::bulk::TargetCol {
+                        name: self.meta.names.get(c.name).to_string(),
+                        ty: self.meta.names.get(c.data_type).to_string(),
+                        nullable: c.nullable,
+                        has_default: c.default.is_some(),
+                        pk: c.key & nsql_run::meta::KEY_PK != 0,
+                        unique: c.key & nsql_run::meta::KEY_UQ != 0,
                     })
                     .collect(),
             ),
             _ => None,
         }
+    }
+
+    /// ★ Import 창 기존 표 콤보(D-455): 스키마의 표 이름(메타 캐시 버킷 · 정렬) — 버킷이 아직 없으면 `None`.
+    pub(crate) fn tables_cached(&self, schema: Option<&str>) -> Option<Vec<String>> {
+        let snap = self.meta.snapshot();
+        let sym = match schema {
+            Some(s) => snap
+                .schemas
+                .iter()
+                .copied()
+                .find(|x| self.meta.names.get(*x).eq_ignore_ascii_case(s))
+                .or_else(|| self.meta.names.find(s))?,
+            None => snap.current_schema?,
+        };
+        let b = snap.buckets.get(&(sym, ObjectKind::Table))?;
+        let mut v: Vec<String> = b
+            .objs
+            .iter()
+            .filter_map(|id| snap.objs.get(id.0 as usize))
+            .map(|o| self.meta.names.get(o.name).to_string())
+            .collect();
+        v.sort_by_key(|a| a.to_lowercase());
+        v.dedup();
+        Some(v)
     }
 
     pub(crate) fn request_columns(&mut self, schema: Option<&str>, table: &str, urgent: bool) {

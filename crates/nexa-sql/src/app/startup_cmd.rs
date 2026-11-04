@@ -1018,6 +1018,9 @@ cells={n}
                 if self.import_win.set_option(k, v) {
                     self.import_reinspect();
                 }
+                if let Some(name) = self.import_win.take_table_request() {
+                    self.import_table_changed(name);
+                }
             }
             return;
         }

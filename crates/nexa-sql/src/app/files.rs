@@ -531,6 +531,10 @@ impl App {
             .set_next_filters(Some(file_win::filters_for(self.file_purpose, log_ext)));
         self.file_win
             .set_overwrite_confirm_ms(self.settings.int("file.overwrite_confirm_ms").max(0) as u64);
+        self.file_win.set_ctxmenu_policy(
+            self.settings.flag("ui.ctxmenu_exclusive"),
+            self.settings.flag("ui.ctxmenu_passthrough"),
+        );
         self.file_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),

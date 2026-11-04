@@ -126,6 +126,7 @@ impl App {
         };
         let o = import_win::ImportOpen {
             existing: ctx.existing.clone(),
+            name: ctx.name.clone(),
             schema: ctx.schema.clone(),
             new_name: new_table_name(&ctx.path),
             dialect: ctx.dialect,
@@ -144,6 +145,12 @@ impl App {
             }
         }
         self.sync_modal();
+        // ★ D-455: 기존 표 콤보 후보 = 그 스키마의 표(메타 캐시 · 버킷이 없으면 빈 목록 — 문맥의 표 이름은 콤보가 따로 넣는다).
+        let tables = self
+            .explorer
+            .tables_cached(ctx.server.as_ref(), ctx.schema.as_deref())
+            .unwrap_or_default();
+        self.import_win.set_tables(tables);
         if ctx.existing.is_some() {
             if let Some(name) = ctx.name.clone() {
                 self.explorer.request_columns(
@@ -156,7 +163,65 @@ impl App {
             }
         }
         self.import_ctx = Some(ctx);
+        self.import_request_keys();
         self.import_reinspect();
+    }
+
+    /// ★ 기존 표 선택 변경(콤보 · `import.set:table=` · D-455): 문맥의 표 갱신 · 열은 캐시에 있으면 즉시 · 없으면 요청 뒤 폴링.
+    pub(crate) fn import_table_changed(&mut self, name: String) {
+        let Some(ctx) = self.import_ctx.as_mut() else {
+            return;
+        };
+        ctx.name = Some(name.clone());
+        ctx.existing = Some(nsql_catalog::qualified(
+            ctx.dialect,
+            ctx.schema.as_deref().unwrap_or(""),
+            &name,
+        ));
+        let (server, schema) = (ctx.server.clone(), ctx.schema.clone());
+        let cached = self
+            .explorer
+            .columns_cached(server.as_ref(), schema.as_deref(), &name);
+        let wait = cached.is_none();
+        match cached {
+            Some(cols) => self.import_win.set_table_columns(cols),
+            None => self
+                .explorer
+                .request_columns(server.as_ref(), schema.as_deref(), &name, true),
+        }
+        if let Some(c) = self.import_ctx.as_mut() {
+            c.cols_wait = wait;
+        }
+        self.import_request_keys();
+    }
+
+    /// ★ 기존 표의 키(PK · UNIQUE · D-455): 세션 키 캐시 → 없으면 `Cmd::Keys`(그리드 편집과 같은 길 · 세션이 바쁘면 생략 = PK 표시·표본 중복
+    ///   경고만 빠진다 · 차단 판정과 무관) · 응답은 `ConnOutcome::Keys`에서 `import_win.set_table_keys`.
+    pub(crate) fn import_request_keys(&mut self) {
+        let Some((key, schema, name)) = self
+            .import_ctx
+            .as_ref()
+            .and_then(|c| Some((c.existing.clone()?, c.schema.clone(), c.name.clone()?)))
+        else {
+            return;
+        };
+        if let Some(info) = self.sess.key_cache.get(&key) {
+            let info = info.clone();
+            self.import_win.set_table_keys(info.as_ref());
+            return;
+        }
+        let Some(pass) = self.sess.pass() else {
+            return;
+        };
+        self.sess.aux += 1;
+        self.sess.submit(
+            pass,
+            worker::Cmd::Keys {
+                key,
+                schema,
+                table: name,
+            },
+        );
     }
 
     /// 원료 옵션으로 다시 살펴보기(스레드 · 최신 순번만 받는다).
