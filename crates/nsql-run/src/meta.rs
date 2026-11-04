@@ -904,17 +904,26 @@ impl MetaStore {
     /// 컬럼 채우기(테이블 하나).
     pub fn set_columns(&mut self, id: ObjId, cols: &[NewCol], at: u64) {
         let mut s = self.edit();
+        // ★ T-178 마감(11-04): 상세(제약)가 먼저 와 있으면 컬럼 키 비트(PK/FK/UQ)를 여기서 입힌다 — 종전에는 `meta_set_columns`가 0으로
+        //   넣고 아무도 채우지 않아 완성 팝업 표식·Import 사전 판정이 메타만으로는 PK를 몰랐다(상세는 `set_detail`이 전파).
+        let keys: Option<Arc<TableDetail>> = match s.details.get(&id) {
+            Some(DetailState::Loaded { detail, .. }) => Some(detail.clone()),
+            _ => None,
+        };
         if let Some(slot) = s.cols.get_mut(id.0 as usize) {
             let list: Vec<ColEntry> = cols
                 .iter()
-                .map(|c| ColEntry {
-                    name: self.names.intern(&c.name),
-                    data_type: self.names.intern(&c.data_type),
-                    nullable: c.nullable,
-                    position: c.position,
-                    default: c.default.as_deref().map(|d| self.names.intern(d)),
-                    comment: c.comment.as_deref().map(|d| self.names.intern(d)),
-                    key: c.key,
+                .map(|c| {
+                    let name = self.names.intern(&c.name);
+                    ColEntry {
+                        name,
+                        data_type: self.names.intern(&c.data_type),
+                        nullable: c.nullable,
+                        position: c.position,
+                        default: c.default.as_deref().map(|d| self.names.intern(d)),
+                        comment: c.comment.as_deref().map(|d| self.names.intern(d)),
+                        key: c.key | keys.as_ref().map_or(0, |d| key_bits_for(&d.keys, name)),
+                    }
                 })
                 .collect();
             *slot = ColState::Loaded {
@@ -931,7 +940,7 @@ impl MetaStore {
     /// 테이블 상세 채우기(제약·인덱스).
     pub fn set_detail(&mut self, id: ObjId, d: &NewDetail, at: u64) {
         let mut s = self.edit();
-        let keys = d
+        let keys: Vec<KeyEntry> = d
             .keys
             .iter()
             .map(|(n, k, cols, rf, rc)| KeyEntry {
@@ -957,6 +966,13 @@ impl MetaStore {
             .iter()
             .map(|(n, c)| (self.names.intern(n), self.names.intern(c)))
             .collect();
+        // ★ T-178 마감(11-04): 이미 적재된 컬럼에 키 비트 전파(바뀐 것이 있을 때만 새 Arc · 스냅숏 공유 규칙 그대로).
+        if let Some(ColState::Loaded { at: cat, cols }) = s.cols.get(id.0 as usize) {
+            if let Some(new) = with_key_bits(cols, &keys) {
+                let cat = *cat;
+                s.cols[id.0 as usize] = ColState::Loaded { at: cat, cols: new };
+            }
+        }
         s.details.insert(
             id,
             DetailState::Loaded {
@@ -1237,6 +1253,37 @@ pub struct NewObj {
     pub modified: Option<u64>,
     pub comment: Option<String>,
     pub extra: Option<String>,
+}
+
+/// 제약 목록 → 컬럼 하나의 키 비트(`P` = PK · `R` = FK · `U` = UQ · 그 밖 = 0 · 여러 제약이면 합).
+#[must_use]
+pub fn key_bits_for(keys: &[KeyEntry], col: Sym) -> u8 {
+    keys.iter()
+        .filter(|k| k.cols.contains(&col))
+        .fold(0u8, |b, k| {
+            b | match k.kind {
+                'P' => KEY_PK,
+                'R' => KEY_FK,
+                'U' => KEY_UQ,
+                _ => 0,
+            }
+        })
+}
+
+/// 컬럼 목록에 제약의 키 비트를 입힌 새 목록 — 하나도 안 바뀌면 `None`(Arc 공유 유지).
+fn with_key_bits(cols: &Arc<Vec<ColEntry>>, keys: &[KeyEntry]) -> Option<Arc<Vec<ColEntry>>> {
+    let mut changed = false;
+    let list: Vec<ColEntry> = cols
+        .iter()
+        .map(|c| {
+            let key = c.key | key_bits_for(keys, c.name);
+            if key != c.key {
+                changed = true;
+            }
+            ColEntry { key, ..c.clone() }
+        })
+        .collect();
+    changed.then(|| Arc::new(list))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -2097,6 +2144,88 @@ mod layer_tests {
             m.snapshot().coverage(hr, ObjectKind::Table),
             Coverage::Loaded { n: 3, .. }
         ));
+    }
+
+    /// ★ T-178 마감(11-04): 컬럼 키 비트는 상세(제약)에서 — 컬럼 먼저·상세 나중 / 상세 먼저·컬럼 나중 모두 PK·FK·UQ 표식 · 바뀐 것 없으면 Arc 공유.
+    #[test]
+    fn column_key_bits_follow_table_detail_in_both_orders() {
+        let mut m = MetaStore::new(1 << 20);
+        let t = |n: &str| NewObj {
+            name: n.into(),
+            ..Default::default()
+        };
+        m.load_bucket("HR", ObjectKind::Table, &[t("EMP"), t("DEPT")], 1);
+        let snap = m.snapshot();
+        let emp = snap.lookup(&m.names, Some("HR"), "EMP").unwrap();
+        let dept = snap.lookup(&m.names, Some("HR"), "DEPT").unwrap();
+        let col = |n: &str| NewCol {
+            name: n.into(),
+            data_type: "INT".into(),
+            ..Default::default()
+        };
+        let detail = NewDetail {
+            keys: vec![
+                ("PK_EMP".into(), 'P', vec!["ID".into()], None, vec![]),
+                (
+                    "FK_EMP_DEPT".into(),
+                    'R',
+                    vec!["DEPT_ID".into()],
+                    Some("DEPT".into()),
+                    vec!["ID".into()],
+                ),
+                ("UQ_EMP_MAIL".into(), 'U', vec!["MAIL".into()], None, vec![]),
+            ],
+            ..Default::default()
+        };
+        // 컬럼 먼저 → 상세 나중.
+        m.set_columns(
+            emp,
+            &[col("ID"), col("DEPT_ID"), col("MAIL"), col("NAME")],
+            10,
+        );
+        let before = match &m.snapshot().cols[emp.0 as usize] {
+            ColState::Loaded { cols, .. } => cols.clone(),
+            _ => panic!(),
+        };
+        assert!(before.iter().all(|c| c.key == 0));
+        m.set_detail(emp, &detail, 11);
+        let after = match &m.snapshot().cols[emp.0 as usize] {
+            ColState::Loaded { cols, at } => {
+                assert_eq!(*at, 10, "컬럼 시각은 그대로");
+                cols.clone()
+            }
+            _ => panic!(),
+        };
+        let bits: Vec<u8> = after.iter().map(|c| c.key).collect();
+        assert_eq!(bits, vec![KEY_PK, KEY_FK, KEY_UQ, 0]);
+        // 상세 먼저 → 컬럼 나중(DEPT).
+        m.set_detail(
+            dept,
+            &NewDetail {
+                keys: vec![("PK_DEPT".into(), 'P', vec!["ID".into()], None, vec![])],
+                ..Default::default()
+            },
+            12,
+        );
+        m.set_columns(dept, &[col("ID"), col("NAME")], 13);
+        let d: Vec<u8> = match &m.snapshot().cols[dept.0 as usize] {
+            ColState::Loaded { cols, .. } => cols.iter().map(|c| c.key).collect(),
+            _ => panic!(),
+        };
+        assert_eq!(d, vec![KEY_PK, 0]);
+        // 같은 상세를 다시 넣어도 컬럼 Arc는 그대로(바뀐 것 없음).
+        let arc_before = match &m.snapshot().cols[emp.0 as usize] {
+            ColState::Loaded { cols, .. } => Arc::as_ptr(cols),
+            _ => panic!(),
+        };
+        m.set_detail(emp, &detail, 14);
+        let arc_after = match &m.snapshot().cols[emp.0 as usize] {
+            ColState::Loaded { cols, .. } => Arc::as_ptr(cols),
+            _ => panic!(),
+        };
+        assert_eq!(arc_before, arc_after);
+        let keys_vec: Vec<KeyEntry> = Vec::new();
+        assert_eq!(key_bits_for(&keys_vec, Sym(0)), 0);
     }
 
     /// L3 회수: 상세는 TTL·상한(오래된 것부터) · 컬럼은 현재 스키마 밖 + TTL.
