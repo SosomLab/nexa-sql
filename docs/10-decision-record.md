@@ -57,7 +57,7 @@
 | D-5 | MSSQL REFCURSOR 대체 표현(결과 집합 탭) · `SESSION_CONTEXT` 옵션 노출 여부 |
 | ~~D-6~~ | → **D-23~D-31**로 세분([23](23-license-activation.md) · 09-14) |
 | D-8 | `similar`(비교·3-way 병합) 원장 등재 — ✖ 불필요(3-way 병합 = 자체 `merge3` · 58 · D-124 ✅ · 11-01 정리) |
-| D-48 | Oracle 라이브 로그 기본 소스 — 자율 트랜잭션 로그 테이블(현장 관행 · 권장) vs V$SESSION client_info(코드 1줄 · 권한) — 권장 = 테이블 기본 + 세션 세그먼트 병행([32 §2](32-server-messages-and-live-log.md)) |
+| D-48 | Oracle 라이브 로그 기본 소스 — 자율 트랜잭션 로그 테이블(현장 관행 · 권장) vs V$SESSION client_info(코드 1줄 · 권한) — 권장 = 테이블 기본 + 세션 세그먼트 병행([32 §2](32-server-messages-and-live-log.md)) · ★ **11-04 T-71 2차 = 추천안 진행(사용자 답 대기)** = 기본 `session` 유지(표 규약 없이 권한만 · 표 이름이 비면 table 소스는 성립하지 않음) + `oracle.live.longops` 병행 스위치(기본 끔) + `pipe` 소스 추가 · 테이블 기본 전환은 사용자 답 뒤 |
 | ~~D-49~~ | → **DR-32**(MSI · 09-16) |
 | ~~D-50~~ | → **DR-32**(pkg 스크립트 `/usr/local/bin/nsql` 링크 · 09-16) |
 | ~~D-51~~ | → **DR-30**(권장안 확정 · 09-16) |

@@ -782,6 +782,7 @@ const LIVE_SOURCE_OPTS: &[(&str, Msg)] = &[
     ("off", Msg::ValLiveOff),
     ("session", Msg::ValLiveSession),
     ("table", Msg::ValLiveTable),
+    ("pipe", Msg::ValLivePipe),
 ];
 
 /// `settings.json` 편집기(외부 = OS의 .json 연결 프로그램 · 내장 = 편집기 탭 · T-76).
@@ -5386,6 +5387,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "LOG_TEXT",
     },
+    // ★ T-71 2차(11-04 · 32 §2): DBMS_PIPE 파이프 이름(비면 `nsql_<sid>`) · V$SESSION_LONGOPS 진행률 병행(어느 소스와도 · 부하원 39 §3).
+    Entry {
+        key: "oracle.live.pipe",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblLivePipe,
+        desc: Msg::DescLivePipe,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.live.longops",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblLiveLongops,
+        desc: Msg::DescLiveLongops,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "connect.auto_reconnect",
         cat: Msg::CatConnection,
@@ -8330,6 +8348,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         "oracle.live.source",
         Dep::Eq("table"),
     ),
+    ("oracle.live.pipe", "oracle.live.source", Dep::Eq("pipe")),
     ("ui.toast_alpha", "ui.toast_ms", Dep::Ne("0")),
     ("ui.toast_fade_to", "ui.toast_progress", Dep::On),
     ("ui.toast_bar_spent", "ui.toast_progress", Dep::On),

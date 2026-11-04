@@ -11,6 +11,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod bulk;
+pub mod live;
 pub mod meta;
 pub mod txlog;
 

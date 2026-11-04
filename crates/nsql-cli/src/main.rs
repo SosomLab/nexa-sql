@@ -83,6 +83,8 @@ struct Opts {
     timing_json: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
     log: bool,
+    /// `--live[=<스펙>]`(T-71 · 11-04 · docs/32 §2) — Oracle 실행 중 두 번째 접속이 폴링한 진행 줄을 stderr에(`Some("")` = 설정 그대로).
+    live: Option<String>,
     /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
     password: Option<String>,
     /// `--host` · `--port` · `--db` · `--user` — 접속 문자열 대신 필드로(GUI 접속 폼과 같은 `ConnectSpec::from_parts` 경로).
@@ -169,6 +171,7 @@ fn parse_opts() -> Opts {
         timing: false,
         timing_json: false,
         log: false,
+        live: None,
         password: None,
         host: None,
         port: None,
@@ -308,6 +311,8 @@ fn parse_opts() -> Opts {
             "--in-place" => o.in_place = true,
             "--preset" => o.preset = Some(val("--preset")),
             "--log" => o.log = true,
+            "--live" => o.live = Some(String::new()),
+            s if s.starts_with("--live=") => o.live = Some(s["--live=".len()..].to_string()),
             _ => o.positional.push(a),
         }
     }
@@ -1679,13 +1684,14 @@ fn stdout_sink(spool: SpoolHandle) -> nsql_core::MessageSink {
     })
 }
 
+/// 접속(실패 = 종료 코드 1) — 돌려주는 값 = 비밀번호까지 채워진 `ConnectSpec`(`--live` 두 번째 접속이 같은 대상으로 · T-71).
 fn connect_or_exit(
     runner: &mut Runner,
     target: &str,
     dialect: Dialect,
     printer: &mut Printer,
     no_prompt: bool,
-) {
+) -> ConnectSpec {
     let mut spec = resolve_target(target, dialect).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(2)
@@ -1724,6 +1730,132 @@ fn connect_or_exit(
     if !ok {
         std::process::exit(1);
     }
+    spec
+}
+
+/// ★ `nsql run --live[=<스펙>]`(T-71 (a) · 11-04 · docs/32 §2): Oracle이면 실행 세션의 SID를 받고 **두 번째 접속**(같은 스펙)을 스레드에서 열어
+/// 설정 간격마다 `nsql_run::live::live_query`를 돌려 stderr에 `[live] 줄`을 쓴다(같은 줄·같은 오류는 한 번 = `LiveState`). 스크립트가 끝나면
+/// `stop()` = 마지막 1회 뒤 접속을 닫는다. Oracle이 아니면 안내 한 줄 뒤 None · 스펙 문법 오류 = 종료 코드 2.
+struct LiveHandle {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LiveHandle {
+    fn stop(mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+    }
+}
+
+fn start_live(
+    runner: &mut Runner,
+    spec: &ConnectSpec,
+    dialect: Dialect,
+    arg: &str,
+) -> Option<LiveHandle> {
+    use nsql_run::live::{live_query, LiveConfig, LiveLine, LiveReq, LiveState, ORACLE_SID_SQL};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let d = spec.dialect.unwrap_or(dialect);
+    if d != Dialect::Oracle {
+        eprintln!("{}", t(Msg::CliLiveNotOracle));
+        return None;
+    }
+    let base = match settings_cached() {
+        Ok(s) => LiveConfig::from_lookup(&|k| s.get(k).map(str::to_string)),
+        Err(_) => LiveConfig::from_lookup(&|_| None),
+    };
+    let cfg = match base.apply_spec(arg) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    if !cfg.active() {
+        return None;
+    }
+    // 실행 세션의 SID(접속 직후 1회 · GUI 워커 `session_id_sql`과 같은 문장).
+    let sid = runner
+        .session
+        .as_deref_mut()
+        .and_then(|s| {
+            s.execute(&nsql_core::ExecRequest {
+                sql: ORACLE_SID_SQL.to_string(),
+                params: vec![],
+            })
+            .ok()
+        })
+        .and_then(|r| r.result_sets.into_iter().next())
+        .and_then(|rs| {
+            rs.rows
+                .first()
+                .and_then(|r| r.first())
+                .map(nsql_core::Value::display)
+        })
+        .unwrap_or_default();
+    if sid.trim().parse::<i64>().is_err() {
+        eprintln!("[live] ⚠ SID unavailable — live monitor off");
+        return None;
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_t = Arc::clone(&stop);
+    let spec_t = spec.clone();
+    let join = std::thread::Builder::new()
+        .name("nsql-live".into())
+        .spawn(move || {
+            let mut open = opener(dialect);
+            let mut sess = match open(&spec_t) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[live] ⚠ {}", e.message);
+                    return;
+                }
+            };
+            let mut st = LiveState::default();
+            let interval = std::time::Duration::from_millis(cfg.interval_ms);
+            let emit = |lines: Vec<LiveLine>| {
+                for l in lines {
+                    match l {
+                        LiveLine::Text(s) => eprintln!("[live] {s}"),
+                        LiveLine::Error(e) => eprintln!("[live] ⚠ {e}"),
+                    }
+                }
+            };
+            loop {
+                let req = LiveReq {
+                    sid: sid.clone(),
+                    cfg: cfg.clone(),
+                    since: st.since.clone(),
+                };
+                emit(st.absorb(live_query(sess.as_mut(), &req)));
+                if stop_t.load(Ordering::SeqCst) {
+                    break;
+                }
+                // 간격을 100 ms 조각으로 자며 정지 신호를 본다(끝나면 바로 마지막 1회).
+                let t0 = std::time::Instant::now();
+                while t0.elapsed() < interval && !stop_t.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                if stop_t.load(Ordering::SeqCst) {
+                    let req = LiveReq {
+                        sid: sid.clone(),
+                        cfg: cfg.clone(),
+                        since: st.since.clone(),
+                    };
+                    emit(st.absorb(live_query(sess.as_mut(), &req)));
+                    break;
+                }
+            }
+        })
+        .ok()?;
+    Some(LiveHandle {
+        stop,
+        join: Some(join),
+    })
 }
 
 /// `-v 이름=값` → (이름, 값). 이름 = 영숫자·`_`(비면 안 된다) · 값은 `=` 뒤 전부(빈 값 · `=`가 든 값 허용).
@@ -1776,7 +1908,12 @@ fn cmd_run(o: &Opts) -> i32 {
     // 내장 변수 층(`${workspaceFolder}`는 프로젝트 없음 → 없음 · `${file}` = 스크립트 · `${cwd}` · `${nsqlHome}` · `${config:키}` · 사용자 09-23).
     runner.engine.settings.intrinsic = std::sync::Arc::new(intrinsic_vars(path, o.dialect));
     let t_runner = std::time::Instant::now();
-    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
+    let spec = connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
+    // ★ `--live`(T-71): 접속 뒤 · 스크립트 전에 두 번째 접속을 띄운다(Oracle이 아니면 안내 뒤 없음).
+    let live = o
+        .live
+        .as_deref()
+        .and_then(|arg| start_live(&mut runner, &spec, o.dialect, arg));
     if o.timing {
         let mut marks = STARTUP_MARKS.get().cloned().unwrap_or_default();
         marks.push(("runner", t_runner));
@@ -1814,6 +1951,9 @@ fn cmd_run(o: &Opts) -> i32 {
     // 파일이면 그 폴더가 `@@`의 기준(T-9) · stdin이면 cwd.
     let script_path = (path != "-").then(|| Path::new(path.as_str()));
     let errs = runner.run_script_in(&src, script_path, &mut prompt, &mut |e| printer.handle(e));
+    if let Some(h) = live {
+        h.stop();
+    }
     printer.flush_sql(runner.session.as_deref_mut());
     runner.commit_at_exit();
     if cli_global {

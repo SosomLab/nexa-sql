@@ -189,6 +189,8 @@ pub const PERF: &[(&str, PerfBinding)] = &[
         "oracle.live.interval_ms",
         b(Domain::Db, "1000", "2000", "5000"),
     ),
+    // T-71 2차(11-04): 진행률 병행 = 틱당 문장 1 더 — 모든 모드 기본 끔(켜는 것은 사용자).
+    ("oracle.live.longops", b(Domain::Db, "off", "off", "off")),
     ("explorer.visible", b(Domain::Db, "on", "on", "off")),
     // 탐색기 유휴 워터마크 주기(docs/57 T2) — low = 끔(내가 실행한 DDL 반영 T1은 사용자 동작에 딸린 1질의라 유지).
     ("meta.refresh_secs", b(Domain::Db, "300", "600", "0")),

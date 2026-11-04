@@ -74,7 +74,8 @@
 | 페치 배열 크기(왕복당 행) | 드라이버 기본 | `db.fetch_size`(신설 · HIDDEN) | 500 | 500 | 200 | 드라이버 어댑터 |
 | 문장 타임아웃 | 없음(드라이버 무한) | `db.statement_timeout`(신설 · 초 · 0 = 없음 ·✅ 09-29 T-249 구현·재등록) | 0 | 0 | 60 | 워커 `Cmd::Run` · 드라이버 cancel 포트 |
 | 접속 시 추가 왕복(Oracle SID) | 1 | `oracle.live.source`(none이면 생략) | — | — | none | 워커 `ConnectSpec` |
-| 실행 중 라이브 로그 폴링(Oracle) | `oracle.live.interval_ms` · 실행 중만 | `oracle.live.interval_ms` | 1000 | 2000 | 끔 | `live_tick` |
+| 실행 중 라이브 로그 폴링(Oracle) | `oracle.live.interval_ms` · 실행 중만 · 틱당 문장 1(session/table/pipe) + `oracle.live.longops`면 1 더 · 진행 중이면 건너뜀(프로필당 1) | `oracle.live.interval_ms` · `oracle.live.source` · `oracle.live.longops`(11-04 신설 · 기본 끔) | 1000 | 2000 | 끔 | `live_tick` · `nsql_run::live` |
+| CLI `nsql run --live` 두 번째 접속(Oracle · 11-04) | 로그인 1 + 위와 같은 폴링 | `--live` 플래그를 준 실행만 · 스크립트 끝 = 마지막 1회 뒤 닫음 | — | — | — | `nsql-cli cmd_run` |
 | 탐색기 메타 세션(접속마다 세션 1) | 1 | `explorer.visible`(숨김 = 세션 안 엶 · 신설 규칙) | 켬 | 켬 | 숨김 | `Explorer::connect` |
 | 탐색기 메타 세션 **서버당 1**(DR-34 · 52 §2-2 · 그 서버에 붙은 세션 ≥1이면 유지 · 0이면 접속만 닫고 트리 유지) | 서버 수 · 유휴 회수 | `session.idle_secs`(메타 세션 유휴 닫기 · 다음 요청 때 재개) · `explorer.visible` | — | — | — | `ExplorerSet::sync_refs` · `suspend_if_idle` |
 | 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout_ms` | — | — | — | `worker::ensure_alive` |

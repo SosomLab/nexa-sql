@@ -1470,6 +1470,8 @@ impl LogWin {
                     LogKind::Execute | LogKind::Fetch | LogKind::Output | LogKind::Commit => {
                         th.text
                     }
+                    // ★ 라이브 모니터 줄(T-71 · 종류 토글 "live") = 강조색으로 구분.
+                    LogKind::Live => th.accent,
                     _ => th.text_dim,
                 };
                 let Some(m) = self.meta.get(bi).and_then(|m| m.as_ref()) else {

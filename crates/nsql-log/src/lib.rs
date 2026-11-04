@@ -37,17 +37,20 @@ pub enum LogKind {
     Done,
     Error,
     Info,
+    /// ★ Oracle 라이브 모니터 줄(T-71 · docs/32 §2 · 11-04) — 실행 중 두 번째 세션이 폴링한 진행 상황(종류 메뉴 토글 = "Live 세그먼트").
+    Live,
 }
 
 impl LogKind {
     /// 전체(표시 필터 메뉴 순서).
-    pub const ALL: [LogKind; 10] = [
+    pub const ALL: [LogKind; 11] = [
         LogKind::Connect,
         LogKind::Disconnect,
         LogKind::Send,
         LogKind::Execute,
         LogKind::Fetch,
         LogKind::Output,
+        LogKind::Live,
         LogKind::Commit,
         LogKind::Done,
         LogKind::Error,
@@ -75,6 +78,7 @@ impl LogKind {
             LogKind::Done => "done",
             LogKind::Error => "ERROR",
             LogKind::Info => "info",
+            LogKind::Live => "live",
         }
     }
 }

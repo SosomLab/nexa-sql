@@ -183,11 +183,10 @@ pub(crate) struct Sess {
     pub run_card: Option<u64>,
     /// ★ 실행 카드가 지금 **페치/건수**의 것(결과 탭 키 · 시작 시각 · docs/43 §11) — 그 결과가 오면 카드를 끝낸다.
     pub fetch_card: Option<(u64, std::time::Instant)>,
-    // Oracle 라이브 로그(T-71) — 공유(탐색기와 짝인) 세션만 쓴다.
+    // Oracle 라이브 로그(T-71) — 공유(탐색기와 짝인) 세션만 쓴다 · 워터마크·중복 제거 = `nsql_run::live::LiveState`(11-04 2차 · CLI와 공용).
     pub live_sid: Option<String>,
     pub live_next: Instant,
-    pub live_since: Option<String>,
-    pub live_last: String,
+    pub live: nsql_run::live::LiveState,
     pub live_final: bool,
     // Copy SQL 키 캐시(접속당 · docs/41).
     pub key_cache: HashMap<String, Option<nsql_core::KeyInfo>>,
@@ -279,8 +278,7 @@ impl Sess {
             fetch_card: None,
             live_sid: None,
             live_next: now,
-            live_since: None,
-            live_last: String::new(),
+            live: nsql_run::live::LiveState::default(),
             live_final: false,
             key_cache: HashMap::new(),
             sql_wait: None,

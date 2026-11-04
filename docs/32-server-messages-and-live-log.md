@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-15): *"로그를 확인하는 기능 · SQL Server는 flush로 실행 중 로그 확인이 가능한데 Oracle도 가능하도록 구현해 줄 수 있는지 확인"* · *"프로시저 실행 · Output 변수 · 프로시저의 SELECT 결과를 DBMS별로 받아 표시"*.
 > **선행**: [26 성능](26-performance-architecture.md)(로그 허브 · 단계 계측) · [08 세션 변수](08-session-variables.md)(OUT 회수 규약) · [28 탐색기](28-object-explorer.md)(메타 세션 = 별도 접속).
-> **상태**: ✅ SQL Server·PostgreSQL 실시간(09-15 구현 · 실서버 확인) · 🚧 Oracle 폴링 모니터 **1차 구현**(09-15 4차 · `oracle.live.*` · session/table 소스 · GUI) · 잔여 CLI `--live`·Live 세그먼트 · 결정 **D-48**(1차 기본 = session).
+> **상태**: ✅ SQL Server·PostgreSQL 실시간(09-15 구현 · 실서버 확인) · ✅ Oracle 폴링 모니터 **1차**(09-15 4차 · `oracle.live.*` · session/table 소스 · GUI) · ✅ **2차 11-04(T-71 (a)(b)(c) · D-446)** = 부품 `nsql_run::live`(GUI·CLI 공용 · `LiveConfig`/`LiveReq`/`live_query`/`LiveState`) · 소스 **`pipe`**(DBMS_PIPE 비차단 수신 · `oracle.live.pipe` 이름 · 기본 `nsql_<sid>`) · **`oracle.live.longops`** 병행(V$SESSION_LONGOPS 진행률 줄 `⏳ …`) · 로그 창 **Live 종류**(`LogKind::Live` · 종류 메뉴 토글 · 종전 `[live]` 접두 대신 종류 열) · CLI **`nsql run --live[=<스펙>]`**(두 번째 접속으로 폴링 · stderr `[live]` 줄 · 스펙 = `session` · `table:<표>[:<시각 열>[:<본문 열>]]` · `pipe[:<이름>]` · `longops` · `off` · 쉼표 병행) · 같은 줄·같은 오류는 한 번만 · 결정 **D-48** = 기본 `session` 유지(추천안 진행 · 표 기본 전환은 사용자 답 뒤).
 
 ---
 
@@ -51,6 +51,18 @@ DBMS_OUTPUT은 못 바꾸지만, **DBA가 이미 쓰는 관행**을 도구가 �
 | ⓓ V$SESSION_LONGOPS | `DBMS_APPLICATION_INFO.SET_SESSION_LONGOPS` | `SELECT sofar, totalwork, message FROM v$session_longops WHERE sid = :sid` | 진행률 게이지에 적합 |
 
 **설계**: 로그 창 세그먼트 "Live"(켜면 폴링 시작 · `oracle.live.source = table|session|pipe|off` · `oracle.live.interval_ms` 1000 · `oracle.live.table/ts_col/text_col`) — 실행 시작 ~ 종료+1틱 동안만 폴링(유휴엔 0) · 오류는 세그먼트에 ⚠(편집기 실행 무영향) · 각 줄 = `RunEvent::Message` 경로와 같은 로그 엔트리(타임스탬프 첫 컬럼). CLI = `nsql run --live table:<t>` 옵션. 부하 원칙([26 §8](26-performance-architecture.md)): 실행 중에만 · 1s 이상 · 프로필당 1 · 마지막 시각 이후만.
+
+**2차 구현(11-04 · T-71 (a)(b)(c))** — 부품 = `crates/nsql-run/src/live.rs`(GUI 탐색기 메타 세션과 CLI가 같은 코드):
+
+| 조각 | 내용 |
+|---|---|
+| `LiveConfig::from_lookup` | 설정 `oracle.live.source/table/ts_col/text_col/pipe/longops/interval_ms` → 구성(소스 None = 끔 · 간격 250~60,000 ms) · CLI는 `apply_spec("--live 값")`으로 덮어쓴다 |
+| `live_query` | 한 틱 = 소스 줄(session / table(워터마크) / pipe) + `longops`면 진행률 줄 · SID는 숫자만 · 표·열·파이프 이름은 `ident_ok`(영숫자·`_$#."`)를 지나야 문장에 들어간다 |
+| ⓒ DBMS_PIPE | 익명 블록 1회 = `RECEIVE_MESSAGE('<파이프>', 0)`(비차단) 반복 ≤ 100 메시지 · 항목 형 VARCHAR2(9)·NUMBER(6)·DATE(12) · OUT 바인드 `:OUT` VARCHAR2(4000)(버퍼 ≤ 3,800자 · 남은 것은 다음 틱) · 파이프 이름 = `oracle.live.pipe`(비면 `nsql_<sid>`) · 프로시저 쪽 = `DBMS_PIPE.PACK_MESSAGE(글); r := DBMS_PIPE.SEND_MESSAGE('nsql_'||SYS_CONTEXT('USERENV','SID'));` · 권한 없음(PLS-00201) = ⚠ 한 번 |
+| ⓓ LONGOPS | `oracle.live.longops`(Bool · 기본 끔 · 어느 소스와도 병행) = `v$session_longops` 중 `sofar < totalwork` 최근 5건 → `⏳ message — sofar/totalwork units · ~남은 초`(message 없으면 `opname: target`) · 값이 바뀐 틱에만 줄 |
+| `LiveState` | 워터마크 · **직전 틱과 같은 줄 제거**(세션·진행률은 매 틱 같은 값) · 같은 오류 글은 한 번(성공 뒤 재발은 다시) |
+| GUI | `app/live.rs` = 구성 → 요청 → 탐색기 `Req::Live` → `LiveState::absorb` → 로그 창 `LogKind::Live`(종류 메뉴 토글 · `log.kinds`에 `live`) · 공유 세션(탐색기와 짝)만 · `Sess.live` 상태 |
+| CLI | `nsql run --live[=<스펙>]` = 접속 뒤 `ORACLE_SID_SQL`로 SID → **두 번째 접속**(같은 대상 · 비밀번호 재사용) 스레드가 간격마다 폴링 → stderr `[live] 줄` · 스크립트 끝 = 마지막 1회 뒤 종료 · Oracle이 아니면 안내 한 줄 뒤 무시 · 스펙 문법 = `session` · `table:<표>[:<시각 열>[:<본문 열>]]` · `pipe[:<이름>]` · `longops` · `off`(쉼표로 병행 · 값 없음 = 설정 그대로 · 설정이 끔이면 `session`) |
 
 **결정 D-48**: 기본 소스는 ⓑ(코드 변경 최소 · 권한만) vs ⓐ(현장 관행)? — 권장 **ⓐ 테이블 기본 + ⓑ 세그먼트 병행 표시**(둘 다 설정 시).
 

@@ -509,6 +509,17 @@ a
 
 GUI 로그 창과 같은 내용이다. 형식은 `log.format` 설정(`raw` `markdown` `grid` `compact` `jsonl` `csv` `tsv` `template`)을 따른다.
 
+**Oracle 실행 중 로그(`--live` · 11-04 · [32 §2](32-server-messages-and-live-log.md))** — 긴 프로시저가 도는 동안 `DBMS_APPLICATION_INFO`·로그 표·`DBMS_PIPE`·`V$SESSION_LONGOPS`로 남기는 진행 상황을 **두 번째 접속**이 폴링해 stderr에 `[live] …` 줄로 보여 준다(Oracle이 아니면 안내 한 줄 뒤 무시 · 설정 `oracle.live.*`가 기본값 · 플래그 값이 설정을 덮는다):
+
+```text
+nsql run -c prod long_job.sql --live                      # 설정대로(끔이면 V$SESSION client_info/action)
+nsql run -c prod long_job.sql --live=table:APP_LOG        # 로그 표(시각 열 LOG_TIME · 본문 열 LOG_TEXT 기본)
+nsql run -c prod long_job.sql --live=table:APP_LOG:TS:MSG,longops   # 로그 표 + 진행률 병행
+nsql run -c prod long_job.sql --live=pipe                 # DBMS_PIPE('nsql_<sid>') 수신 · 프로시저가 PACK_MESSAGE+SEND_MESSAGE
+```
+
+스펙 낱말 = `session` · `table:<표>[:<시각 열>[:<본문 열>]]` · `pipe[:<이름>]` · `longops` · `off`(쉼표로 병행). 간격은 설정 `oracle.live.interval_ms`(기본 1초 · 실행 중에만). 같은 줄과 같은 오류는 한 번만 나온다.
+
 ### Step 8 — 치환 변수 · 위치 인자 · 오류와 종료 코드
 
 ```sh

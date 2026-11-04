@@ -551,27 +551,8 @@ fn watermark_query(
 pub(crate) type BlockersResult = (String, Result<Vec<String>, String>);
 
 /// 라이브 폴링 결과 — (줄들, 마지막 시각).
-pub(crate) type LiveResult = Result<(Vec<String>, Option<String>), String>;
-
-/// 라이브 로그 요청(설정에서 호스트가 조립).
-#[derive(Clone, Debug)]
-pub(crate) struct LiveReq {
-    pub sid: String,
-    /// `session` | `table`.
-    pub source: String,
-    pub table: String,
-    pub ts_col: String,
-    pub text_col: String,
-    /// 마지막으로 본 시각(`YYYY-MM-DD HH24:MI:SS.FF3`) — None이면 서버 현재 시각만 받아 온다(실행 시작 기준점).
-    pub since: Option<String>,
-}
-
-/// 식별자 검사(테이블·컬럼 설정값) — 영숫자·`_`·`$`·`#`·`.`·`"`만.
-fn ident_ok(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#' | '.' | '"'))
-}
+// ★ 라이브 모니터 형·폴링 문장은 nsql-run 부품으로(T-71 2차 · 11-04 · CLI `--live`와 공용 · docs/32 §2).
+pub(crate) use nsql_run::live::{LiveReq, LiveResult};
 
 /// docs/56 L3 — "세션 `sid`가 쥔 잠금 때문에 기다리는 세션"을 한 문장으로 읽는다(방언별 카탈로그 · 권한 없으면 오류 → 호스트가 기능을 끈다).
 /// `sid`는 숫자만 받는다(문장에 그대로 들어간다). 결과 한 줄 = "세션 사용자 프로그램 대기초".
@@ -621,86 +602,6 @@ pub(crate) fn blockers_sql(dialect: Dialect, sid: &str) -> Option<String> {
         | Dialect::Clickhouse
         | Dialect::Access => return None,
     })
-}
-
-fn live_query(s: &mut dyn Session, req: &LiveReq) -> LiveResult {
-    let run = |s: &mut dyn Session, sql: &str| -> Result<nsql_core::ResultSet, String> {
-        s.execute(&nsql_core::ExecRequest {
-            sql: sql.to_string(),
-            params: vec![],
-        })
-        .map(|r| r.result_sets.into_iter().next().unwrap_or_default())
-        .map_err(|e| e.message)
-    };
-    let cell = |v: &nsql_core::Value| match v {
-        nsql_core::Value::Null => String::new(),
-        o => o.display(),
-    };
-    match req.source.as_str() {
-        "session" => {
-            let sid: i64 = req
-                .sid
-                .trim()
-                .parse()
-                .map_err(|_| "live: SID".to_string())?;
-            let rs = run(
-                s,
-                &format!(
-                    "SELECT NVL(client_info, ''), NVL(action, ''), NVL(module, ''), status FROM v$session WHERE sid = {sid}"
-                ),
-            )?;
-            let lines = rs
-                .rows
-                .iter()
-                .map(|r| {
-                    let parts: Vec<String> = r
-                        .iter()
-                        .take(3)
-                        .map(cell)
-                        .filter(|p| !p.is_empty())
-                        .collect();
-                    parts.join(" · ")
-                })
-                .filter(|l| !l.is_empty())
-                .collect();
-            Ok((lines, None))
-        }
-        "table" => {
-            if !ident_ok(&req.table) || !ident_ok(&req.ts_col) || !ident_ok(&req.text_col) {
-                return Err("live: table/column name".into());
-            }
-            let fmt = "YYYY-MM-DD HH24:MI:SS.FF3";
-            let Some(since) = &req.since else {
-                let rs = run(
-                    s,
-                    &format!("SELECT TO_CHAR(SYSTIMESTAMP, '{fmt}') FROM dual"),
-                )?;
-                let now = rs.rows.first().and_then(|r| r.first()).map(cell);
-                return Ok((Vec::new(), now));
-            };
-            let sql = format!(
-                "SELECT TO_CHAR({ts}, '{fmt}'), {tx} FROM {tb} WHERE {ts} > TO_TIMESTAMP('{since}', '{fmt}') ORDER BY {ts}",
-                ts = req.ts_col,
-                tx = req.text_col,
-                tb = req.table,
-                since = since.replace('\'', "")
-            );
-            let rs = run(s, &sql)?;
-            let mut last = None;
-            let lines = rs
-                .rows
-                .iter()
-                .map(|r| {
-                    let t = r.first().map(cell).unwrap_or_default();
-                    let x = r.get(1).map(cell).unwrap_or_default();
-                    last = Some(t.clone());
-                    format!("{t}  {x}")
-                })
-                .collect();
-            Ok((lines, last))
-        }
-        _ => Ok((Vec::new(), None)),
-    }
 }
 
 enum Resp {
@@ -2211,7 +2112,7 @@ fn meta_thread(
                 if gen != cur_gen {
                     continue;
                 }
-                let r = with_session(&mut session, |s| live_query(s, &req));
+                let r = with_session(&mut session, |s| nsql_run::live::live_query(s, &req));
                 Resp::Live { gen, r }
             }
             Req::Blockers { gen, sid } => {

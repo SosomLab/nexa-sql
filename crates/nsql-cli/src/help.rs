@@ -215,6 +215,12 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--live",
+        arg: "[=<spec>]",
+        desc: Msg::HlpOptLive,
+        setting: Some("oracle.live.source"),
+    },
+    Opt {
         flags: "--log",
         arg: "",
         desc: Msg::HlpOptLog,
@@ -290,10 +296,11 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdRun,
         detail: Msg::HlpCmdRunDetail,
         args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log", "--live"],
         notes: &[],
         examples: &[
             "nsql run -c prod report.sql",
+            "nsql run -c prod long_job.sql --live=table:APP_LOG,longops",
             "nsql run -c oracle://scott:tiger@db:1521/orcl -f csv query.sql > out.csv",
             "echo \"SELECT 1 FROM dual;\" | nsql run -c prod -",
             "nsql run -c prod --width 120 --overflow truncate wide.sql",

@@ -1,11 +1,14 @@
-//! App — 실시간 재조회(live).
+//! App — 실시간 재조회(live) · Oracle 라이브 모니터(T-71 · docs/32 §2).
 //!
 //! main.rs의 `impl App`에서 기능별로 옮긴 조각(docs/93 §4). 상태는 `App` 한 곳 · 여기는 동작만.
+//! ★ 11-04 2차: 폴링 문장·줄 형식·중복 제거는 **nsql-run 부품 `nsql_run::live`**(CLI `nsql run --live`와 공용) · 여기는 설정 → 요청 조립 ·
+//! 탐색기 메타 세션으로 보내기 · 응답을 로그 창 `LogKind::Live`(종류 메뉴 "live" 토글 = Live 세그먼트)로 흘리기만.
 
 use crate::*;
+use nsql_run::live::{LiveConfig, LiveLine};
 
 impl App {
-    /// 라이브 로그 설정(끔이면 None) — 매번 읽는다(설정 창에서 바꾸면 다음 실행부터).
+    /// 라이브 구성(설정 `oracle.live.*` · 매번 읽는다 = 설정 창에서 바꾸면 다음 실행부터) — 폴링할 것이 없으면 None.
     fn live_req(&self) -> Option<LiveReq> {
         // 라이브 모니터는 탐색기 메타 세션(= 접속 창으로 붙은 서버)으로 본다 → 그 세션의 실행만 대상(docs/52 §9).
         if self.sess.dialect != Dialect::Oracle
@@ -13,40 +16,28 @@ impl App {
         {
             return None;
         }
-        let source = self
-            .settings
-            .effective("oracle.live.source")
-            .unwrap_or("off");
-        if source == "off" {
+        let cfg = LiveConfig::from_lookup(&|k| {
+            if k == "oracle.live.source" {
+                self.settings.effective(k).map(str::to_string)
+            } else {
+                self.settings.get(k).map(str::to_string)
+            }
+        });
+        if !cfg.active() {
+            return None;
+        }
+        // 로그 표 소스인데 표 이름이 비었으면 그 소스는 성립하지 않는다(진행률만 켜져 있으면 진행률만).
+        if cfg.source == Some(nsql_run::live::LiveSource::Table)
+            && cfg.table.is_empty()
+            && !cfg.longops
+        {
             return None;
         }
         let sid = self.sess.live_sid.clone()?;
-        let table = self
-            .settings
-            .get("oracle.live.table")
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if source == "table" && table.is_empty() {
-            return None;
-        }
         Some(LiveReq {
             sid,
-            source: source.to_string(),
-            table,
-            ts_col: self
-                .settings
-                .get("oracle.live.ts_col")
-                .unwrap_or("LOG_TIME")
-                .trim()
-                .to_string(),
-            text_col: self
-                .settings
-                .get("oracle.live.text_col")
-                .unwrap_or("LOG_TEXT")
-                .trim()
-                .to_string(),
-            since: self.sess.live_since.clone(),
+            cfg,
+            since: self.sess.live.since.clone(),
         })
     }
 
@@ -58,10 +49,9 @@ impl App {
         )
     }
 
-    /// 실행 시작 — 기준 시각 초기화 · 첫 폴링 즉시(로그 테이블은 서버 현재 시각을 기준점으로 받는다).
+    /// 실행 시작 — 상태(워터마크·직전 줄·오류) 초기화 · 첫 폴링 즉시(로그 표는 서버 현재 시각을 기준점으로 받는다).
     pub(crate) fn live_start(&mut self) {
-        self.sess.live_since = None;
-        self.sess.live_last.clear();
+        self.sess.live.reset();
         self.sess.live_final = true;
         if let Some(req) = self.live_req() {
             self.explorer.live_poll(self.sess.spec.as_ref(), req);
@@ -90,30 +80,18 @@ impl App {
         }
     }
 
-    /// 라이브 응답 → 로그 창(세션 소스는 바뀐 줄만).
+    /// 라이브 응답 → 로그 창(`LogKind::Live` · 직전 틱과 같은 줄·같은 오류는 `LiveState`가 거른다).
     pub(crate) fn live_drain(&mut self) -> bool {
         let mut changed = false;
         for r in self.explorer.take_live() {
-            match r {
-                Ok((lines, last_ts)) => {
-                    if last_ts.is_some() {
-                        self.sess.live_since = last_ts;
-                    }
-                    for line in lines {
-                        if line == self.sess.live_last {
-                            continue;
-                        }
-                        self.sess.live_last = line.clone();
-                        let text = format!("[live] {line}");
-                        self.log_win.push(LogEntry::new(LogKind::Output, text));
-                        changed = true;
-                    }
+            for line in self.sess.live.absorb(r) {
+                match line {
+                    LiveLine::Text(text) => self.log_win.push(LogEntry::new(LogKind::Live, text)),
+                    LiveLine::Error(e) => self
+                        .log_win
+                        .push(LogEntry::new(LogKind::Error, format!("live: {e}"))),
                 }
-                Err(e) => {
-                    self.log_win
-                        .push(LogEntry::new(LogKind::Error, format!("[live] {e}")));
-                    changed = true;
-                }
+                changed = true;
             }
         }
         changed
