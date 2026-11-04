@@ -6,6 +6,7 @@
 |---|---|---|---|---|
 | filewin-clipboard | 2026-11-04 | 2026-11-04 → main ff(삭제) · **2e31e24f** | 1 | 아침 피드백 5건 — 파일 창 Ctrl+C/X/V·편집 메뉴(nexa-ui 257차 46adad6) · 편집 메뉴 배타·창 안 배치(258차 7f5e311) · winget PR 0.5.0 갱신 기록 · Import 창 라디오 가로·기존 표 콤보 · **D-455 기존 표 사전 판정**(`scripts/import-existing-e2e.sh` 15/15) · [journal 11-04 §13](journal/2026-11-04.md) |
 | t325-dialect-scope | 2026-11-04 | 2026-11-04 → main ff(삭제) · **cb14f3ff** | 3 | T-325 전용 세션 탭 방언 분리 `SqlDialectScope` + 11-04 마감 문서(journal §12 · STATUS) |
+| t71-live | 2026-11-04 | 2026-11-04 → main ff(삭제) · **2737780e** | 1 | T-71 2차 (a)(b)(c) = 부품 `nsql_run::live` · DBMS_PIPE · LONGOPS · `LogKind::Live` · CLI `--live` · 개발 Oracle 실기 ✓ · [journal 11-04 §15](journal/2026-11-04.md) |
 | t325-rest | 2026-11-04 | 2026-11-04 → main ff(삭제) · **44fa9b1e** | 1 | T-325 2차 3절 = 완성 키워드 표 방언 중립 + Db2·DuckDB·ClickHouse 표 · `U&"…"` 한 토큰 · `grid.cond.pick` + `cond-pick-e2e.sh` → T-325 ✅ 종결 · [journal 11-04 §14](journal/2026-11-04.md) |
 | t325-builtins | 2026-11-04 | 2026-11-04 → main ff(삭제) · **ac76186d** | 2 | T-325 2차 2절 내장 표 정리(#20)·자료형 보강(#21) · [journal 11-04 §11](journal/2026-11-04.md) |
 | t325-highlight-dialect | 2026-11-04 | 2026-11-04 → main ff(삭제) · **aba56b42** | 2 | T-325 2차 1절 강조기 키워드 방언화(`SyntaxRegistry::sql_for` · 접속 확정 때 SQL 탭 교체) · [journal 11-04 §10](journal/2026-11-04.md) |
