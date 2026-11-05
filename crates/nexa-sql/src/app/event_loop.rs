@@ -94,7 +94,11 @@ impl ApplicationHandler<Wake> for App {
         }
         self.scale = win.scale_factor() as f32;
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
-        self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
+        self.theme = theme::resolve_with_preset(
+            self.settings.theme_mode(),
+            win.theme(),
+            self.settings.get("editor.color_preset"),
+        );
         self.apply_tab_line_colors();
         self.apply_tab_history_cfg();
         self.apply_flash_font();

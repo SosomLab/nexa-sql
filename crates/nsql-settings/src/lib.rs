@@ -873,6 +873,13 @@ const THEME_OPTS: &[(&str, Msg)] = &[
     ("dark", Msg::ValDark),
 ];
 
+/// ★ T-78(11-05 · D-380 · docs/35 §4): 구문 색 프리셋.
+const COLOR_PRESET_OPTS: &[(&str, Msg)] = &[
+    ("nexa", Msg::ValPresetNexa),
+    ("dbeaver", Msg::ValPresetDbeaver),
+    ("golden", Msg::ValPresetGolden),
+];
+
 /// 추가 페치 방식(docs/43 D-70 · T-48a).
 const FETCH_MODE_OPTS: &[(&str, Msg)] = &[
     ("cursor", Msg::ValFetchCursor),
@@ -3757,6 +3764,24 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescEditorMinimapAutohide,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // ★ T-78(11-05 · D-380 · docs/35 §4): 구문 색 프리셋 — nexa(기본 팔레트) · dbeaver · golden(설치본 실측값 · 라이트/다크 각각).
+    Entry {
+        key: "editor.color_preset",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorColorPreset,
+        desc: Msg::DescEditorColorPreset,
+        kind: SettingKind::Choice(COLOR_PRESET_OPTS),
+        default: "nexa",
+    },
+    // ★ T-78(11-05 · D-54/D-380): 선택 블록 불투명도 %(100 = 불투명 종전 · 낮추면 Golden식 반투명 워시 · 글자 색 유지 · nexa-ctl `set_selection_alpha`).
+    Entry {
+        key: "editor.selection_opacity",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorSelectionOpacity,
+        desc: Msg::DescEditorSelectionOpacity,
+        kind: SettingKind::Int { min: 10, max: 100 },
+        default: "100",
     },
     // ★ T-110 3-4(10-31 · docs/46 3순위): 섹션 헤더 — 주석 구분선(`-- ====` · `#region` · `MARK:`)의 라벨을 미니맵에 작은 글자로(기본 끔).
     Entry {

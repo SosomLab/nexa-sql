@@ -1718,7 +1718,11 @@ fn main() {
         tf(Msg::StProfiles, &[&profiles.join(", ")])
     };
     // 창이 없는 동안의 팔레트 — OS 조회(창이 생기면 winit 판정으로 다시 고른다).
-    let initial_theme = theme::resolve(settings.theme_mode(), None);
+    let initial_theme = theme::resolve_with_preset(
+        settings.theme_mode(),
+        None,
+        settings.get("editor.color_preset"),
+    );
     let log_format = settings.get("log.format").unwrap_or("raw").to_string();
     let ed_line_numbers = settings.flag("editor.line_numbers");
     let ed_multi = settings.get("tabs.rows") != Some("single");

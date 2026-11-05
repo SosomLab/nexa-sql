@@ -198,6 +198,8 @@ pub(crate) struct Editors {
     minimap_layout: (u8, bool),
     /// ★ T-110 3-1(10-31): 자동 숨김(`editor.minimap_autohide`).
     minimap_autohide: bool,
+    /// ★ T-78(11-05 · D-54): 선택 블록 투명도(1.0 = 불투명 · 새 탭은 `make_box`).
+    sel_alpha: f32,
     /// ★ T-110 3-4(10-31): 섹션 헤더(`editor.minimap_sections`) · 탭별 마지막으로 훑은 본문 세대 · 바뀐 뒤 잠깐 멈춤을 기다리는 대기(탭 · 세대 · 시각).
     minimap_sections: bool,
     sections_rev: std::collections::HashMap<u64, u64>,
@@ -388,6 +390,7 @@ impl Editors {
             minimap_min_cols: 0,
             minimap_layout: (2, false),
             minimap_autohide: false,
+            sel_alpha: 1.0,
             minimap_sections: false,
             sections_rev: std::collections::HashMap::new(),
             sections_pending: None,
@@ -533,6 +536,7 @@ impl Editors {
         tb.set_minimap_scale(self.minimap_layout.0);
         tb.set_minimap_left(self.minimap_layout.1);
         tb.set_minimap_autohide(self.minimap_autohide);
+        tb.set_selection_alpha(self.sel_alpha);
         tb.set_minimap_diff(self.minimap_diff);
         tb.set_minimap_git(self.minimap_git);
         tb.set_line_spacing(self.line_spacing.0, self.line_spacing.1);
@@ -852,6 +856,14 @@ impl Editors {
         self.minimap_autohide = on;
         for b in &mut self.bufs {
             b.set_minimap_autohide(on);
+        }
+    }
+
+    /// ★ T-78(11-05 · D-54): 선택 블록 투명도(0.1~1.0)를 모든 탭에(새 탭은 `make_box`).
+    pub(crate) fn set_selection_alpha(&mut self, a: f32) {
+        self.sel_alpha = a;
+        for b in &mut self.bufs {
+            b.set_selection_alpha(a);
         }
     }
 

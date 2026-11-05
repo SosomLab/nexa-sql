@@ -12,7 +12,7 @@
 //!
 //! 우선순위: **Windows = 레지스트리 → 창 판정**([`system_dark`] `os_first` · T-308) · 다른 OS = winit `Window::theme()` → OS 조회 → `None`(= 다크 · 제품 기본 룩).
 
-use nexa_ctl::theme::Theme;
+use nexa_ctl::theme::{Color, Theme};
 use nsql_settings::ThemeMode;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -84,6 +84,70 @@ pub(crate) fn resolve(mode: ThemeMode, window_theme: Option<winit::window::Theme
     } else {
         Theme::light()
     }
+}
+
+/// ★ T-78(11-05 · D-380 · docs/35): 구문 색 프리셋(`editor.color_preset` = nexa | dbeaver | golden) — nexa·모름 = 테마 기본값 그대로 ·
+///   dbeaver/golden = 설치본 실측값(라이트/다크 · 35 §1·§2). 구문 색 9개만 바꾸고 선택·배경·레인보우는 건드리지 않는다.
+pub(crate) fn apply_preset(th: &mut Theme, preset: &str) {
+    let c = Color;
+    match (preset, th.is_dark) {
+        ("dbeaver", false) => {
+            th.syn_keyword = c(0x0080_0000);
+            th.syn_string = c(0x0000_8000);
+            th.syn_comment = c(0x0080_8080);
+            th.syn_number = c(0x0000_00FF);
+            th.syn_datatype = c(0x0000_0080);
+            th.syn_function = c(0x0000_0080);
+            th.syn_bind = c(0x0000_0080);
+            th.syn_delimiter = c(0x00FF_0000);
+            th.syn_command = c(0x0080_0080);
+        }
+        ("dbeaver", true) => {
+            th.syn_keyword = c(0x0073_9ECA);
+            th.syn_string = c(0x00CA_C580);
+            th.syn_comment = c(0x0066_9768);
+            th.syn_number = c(0x00C0_C0C0);
+            th.syn_datatype = c(0x00C1_AA6C);
+            th.syn_function = c(0x00C1_AA6C);
+            th.syn_bind = c(0x007E_BAD3);
+            th.syn_delimiter = c(0x00EE_CC64);
+            th.syn_command = c(0x00D3_BAD3);
+        }
+        // Golden 8 = 키워드 적갈색 · 주석 초록 · 문자열 파랑 · 내장 함수 빨강 · 식별자·숫자·바인드·기호 = 본문색(35 §2-a).
+        ("golden", false) => {
+            th.syn_keyword = c(0x0080_0000);
+            th.syn_string = c(0x0000_00FF);
+            th.syn_comment = c(0x0000_8000);
+            th.syn_number = th.text;
+            th.syn_datatype = th.text;
+            th.syn_function = c(0x00FF_0000);
+            th.syn_bind = th.text;
+            th.syn_delimiter = th.text;
+            th.syn_command = c(0x0080_0000);
+        }
+        ("golden", true) => {
+            th.syn_keyword = c(0x00FF_FBF0);
+            th.syn_string = c(0x00A6_CAF0);
+            th.syn_comment = c(0x00C0_DCC0);
+            th.syn_number = th.text;
+            th.syn_datatype = th.text;
+            th.syn_bind = th.text;
+            th.syn_delimiter = th.text;
+            th.syn_command = c(0x00FF_FBF0);
+        }
+        _ => {}
+    }
+}
+
+/// 설정에서 프리셋 이름을 읽어 적용(호출처 = 기동 · 창 생성 · `ui.theme`/`editor.color_preset` 변경).
+pub(crate) fn resolve_with_preset(
+    mode: ThemeMode,
+    window_theme: Option<winit::window::Theme>,
+    preset: Option<&str>,
+) -> Theme {
+    let mut th = resolve(mode, window_theme);
+    apply_preset(&mut th, preset.unwrap_or("nexa"));
+    th
 }
 
 /// 명시 모드는 창 장식(제목줄)도 따라가게 winit에 알린다. System은 `None`(OS가 정한다).
@@ -341,6 +405,25 @@ mod tests {
             assert!(dark);
             assert!(!light);
         }
+    }
+
+    /// ★ T-78: 프리셋 — dbeaver 라이트 키워드 #800000 · golden 다크 키워드 #FFFBF0 · nexa/모름 = 그대로 · 선택색 불변.
+    #[test]
+    fn preset_changes_syntax_colors_only() {
+        let base = Theme::light();
+        let mut t = Theme::light();
+        apply_preset(&mut t, "dbeaver");
+        assert_eq!(t.syn_keyword.0 & 0x00FF_FFFF, 0x0080_0000);
+        assert_eq!(t.sel_bg.0, base.sel_bg.0);
+        let mut d = Theme::dark();
+        apply_preset(&mut d, "golden");
+        assert_eq!(d.syn_keyword.0 & 0x00FF_FFFF, 0x00FF_FBF0);
+        assert_eq!(d.syn_bind.0, d.text.0);
+        let mut n = Theme::light();
+        apply_preset(&mut n, "nexa");
+        assert_eq!(n.syn_keyword.0, base.syn_keyword.0);
+        apply_preset(&mut n, "unknown");
+        assert_eq!(n.syn_keyword.0, base.syn_keyword.0);
     }
 
     #[test]

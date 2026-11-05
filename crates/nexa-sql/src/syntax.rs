@@ -66,6 +66,28 @@ impl SyntaxRegistry {
                 (*w).to_string()
             });
         }
+        // ★ T-78(11-05 · nexa-ui 260차): 방언 내장 함수(nsql-script builtins · 공통 + 방언) → 함수 색(`TokenKind::Function`).
+        fn builtins_of(d: Dialect) -> &'static [nsql_script::builtins::Builtin] {
+            use nsql_script::builtins as b;
+            match d {
+                Dialect::Oracle => b::ORACLE,
+                Dialect::Postgres | Dialect::Duckdb => b::POSTGRES,
+                Dialect::Mssql => b::MSSQL,
+                Dialect::Mysql => b::MYSQL,
+                Dialect::Sqlite => b::SQLITE,
+                _ => &[],
+            }
+        }
+        for b in nsql_script::builtins::COMMON
+            .iter()
+            .chain(builtins_of(dialect).iter())
+        {
+            spec.functions.insert(if spec.case_insensitive {
+                b.name.to_uppercase()
+            } else {
+                b.name.to_string()
+            });
+        }
         let rc = Rc::new(spec);
         self.sql_dialect.borrow_mut().push((dialect, rc.clone()));
         rc
@@ -304,6 +326,13 @@ mod dialect_tests {
     /// ★ T-325 2차: 방언 스펙 = 내장 SQL ⊇ · 방언 예약어 포함 · 이름 "SQL" 그대로 · 캐시 = 같은 Rc.
     #[test]
     fn sql_for_dialect_adds_reserved_words_and_keeps_name() {
+        // ★ T-78: 방언 내장 함수 → functions 집합(공통 COALESCE · Oracle NVL · MSSQL은 NVL 없음).
+        let reg0 = SyntaxRegistry::builtin();
+        assert!(reg0.sql_for(Dialect::Oracle).functions.contains("NVL"));
+        assert!(reg0
+            .sql_for(Dialect::Postgres)
+            .functions
+            .contains("COALESCE"));
         let r = SyntaxRegistry::builtin();
         let base = r.get("SQL").expect("SQL");
         let ms = r.sql_for(Dialect::Mssql);

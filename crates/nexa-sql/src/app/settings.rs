@@ -255,6 +255,10 @@ impl App {
         // ★ T-110 3-1: 자동 숨김(마우스 이동·휠 뒤 1.2초 · 자리는 유지).
         self.editors
             .set_minimap_autohide(self.settings.flag("editor.minimap_autohide"));
+        // ★ T-78(11-05 · D-54): 선택 불투명도(100 = 종전 불투명).
+        self.editors.set_selection_alpha(
+            self.settings.int("editor.selection_opacity").clamp(10, 100) as f32 / 100.0,
+        );
         // ★ T-110 3-4: 섹션 헤더(주석 구분선 라벨 · 활성 탭 · 멈춤 뒤 훑기).
         self.editors
             .set_minimap_sections(self.settings.flag("editor.minimap_sections"));
@@ -386,7 +390,11 @@ impl App {
     /// 설정 즉시 반영 — 테마·언어·글꼴 래스터·애니메이션·입력·포맷·객체 링크(`ui.` · `input.` · `format.` · `objlink.`). 맞는 키가 없으면 `false`.
     fn apply_setting_ui(&mut self, key: &str) -> bool {
         match key {
-            "ui.theme" => self.apply_theme(),
+            "ui.theme" | "editor.color_preset" => self.apply_theme(),
+            // ★ T-78(11-05 · D-54): 선택 불투명도 → 모든 탭.
+            "editor.selection_opacity" => self.editors.set_selection_alpha(
+                self.settings.int("editor.selection_opacity").clamp(10, 100) as f32 / 100.0,
+            ),
             // 설정 창 스위치 상태(고급 · 프로젝트) = 저장만(창이 스스로 반영) — "재시작 필요" 안내가 뜨지 않게 적용된 것으로 센다.
             "ui.prefs_advanced" | "ui.prefs_project" => {}
             // ★ 포맷 프리셋(D-431): 설정 창 드롭다운·settings.json·CLI config set으로 이름이 바뀌면 그 프리셋을 복사(적용 중 재진입 없음).
@@ -1260,7 +1268,11 @@ impl App {
     /// `ui.theme` + OS 판정으로 팔레트를 다시 고르고 전체를 다시 그린다.
     pub(crate) fn apply_theme(&mut self) {
         let wt = self.window.as_ref().and_then(|w| w.theme());
-        self.theme = theme::resolve(self.settings.theme_mode(), wt);
+        self.theme = theme::resolve_with_preset(
+            self.settings.theme_mode(),
+            wt,
+            self.settings.get("editor.color_preset"),
+        );
         self.apply_tab_line_colors();
         self.log_win.redraw();
         if let Some(w) = &self.window {

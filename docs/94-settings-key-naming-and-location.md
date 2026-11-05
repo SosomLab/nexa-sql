@@ -289,6 +289,15 @@
 |---|---|---|---|---|
 | `format.tsql_if_body` | Choice next\|block | next | SQL 포맷(`format.plsql` 바로 아래) | T-SQL `BEGIN` 없는 IF 본문 범위 — `next` = 다음 한 문장 전체(의미 보존) · `block` = 원문에서 더 깊게 들여쓴 줄 전부 · 스타일 키(바꾸면 `format.preset` = custom 동기) |
 
+### 6-32. 구문 색 프리셋 · 선택 불투명도(11-05 · T-78 · D-380 · [35](35-editor-colors-reference.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `editor.color_preset` | Choice nexa\|dbeaver\|golden | nexa | Editor | 구문 색 프리셋(DBeaver · Golden = 35 §1·§2 실측값 · 선택·배경은 바꾸지 않음) |
+| `editor.selection_opacity` | Int 10~100(%) | 100 | Editor | 선택 블록 불투명도(100 = 종전 불투명 · 낮추면 구문 색이 비치는 워시) |
+
+명명 확인 = 둘 다 Editor 분류의 `editor.` 접두 · 비율 값은 `_opacity`(퍼센트 정수 · 시간 단위 규칙 6-5와 무관).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

@@ -90,6 +90,12 @@ pub(crate) fn scope_at(ed: &nexa_ctl::TextBox, pos: usize) -> String {
         K::Comment => "comment",
         K::Keyword => "keyword",
         K::Number => "constant.numeric",
+        // ★ T-78(11-05 · nexa-ui 260차): 자료형 · 함수 · 바인드 · 구분자 · 명령(Sublime 스코프 이름).
+        K::Datatype => "storage.type",
+        K::Function => "support.function",
+        K::Bind => "variable.parameter",
+        K::Delimiter => "punctuation.terminator",
+        K::Command => "keyword.control",
         // Error/Warn = Output 로그 상자 전용 등급(T-266) — 편집기 스코프에서는 코드와 같다.
         K::Plain | K::Error | K::Warn => return s,
     };
