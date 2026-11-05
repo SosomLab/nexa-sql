@@ -537,6 +537,15 @@ pub(crate) fn stage_traced(src: &Source, sum: &Summary, tr: &mut Trace) -> Resul
     if !meta.platforms.is_empty() && !meta.platforms.iter().any(|p| p == platform()) {
         return Err(format!("{}: not for {}", meta.id, platform()));
     }
+    // ★ T-166(11-05): 최소 앱 버전 `min_app` — 설치 때 비교(`nsql ext check`는 꼴만 본다).
+    if !meta.min_app.is_empty() && version_newer(&meta.min_app, env!("CARGO_PKG_VERSION")) {
+        return Err(format!(
+            "{}: needs app {} or newer (this is {})",
+            meta.id,
+            meta.min_app,
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
     if matches!(meta.kind, Kind::Process) {
         return Err(format!(
             "{}: kind {} is not installable yet (T-118 ④)",
@@ -800,6 +809,20 @@ mod tests {
         match install_into(&src, sum, &root, &config) {
             Err(e) => assert!(e.contains("sha256")),
             Ok(_) => panic!("변조된 파일이 설치됨"),
+        }
+        // ★ min_app(11-05): 앱보다 새 버전을 요구하면 거부(파일은 원래대로).
+        std::fs::write(repo.join("demo-data/a.txt"), b"hello").expect("test");
+        std::fs::write(
+            repo.join("demo-data/extension.json"),
+            format!(
+                r#"{{"format":1,"id":"demo-data","name":"Demo Data","version":"1.0.0","kind":"data","min_app":"99.0.0",
+              "files":[{{"path":"a.txt","sha256":"{sha}","dest":"Packages/Demo/a.txt"}}]}}"#
+            ),
+        )
+        .expect("test");
+        match install_into(&src, sum, &root, &config) {
+            Err(e) => assert!(e.contains("needs app"), "{e}"),
+            Ok(_) => panic!("min_app보다 낮은 앱에 설치됨"),
         }
         remove_from("demo-data", &root, &config).expect("test");
         assert!(!config.join("Packages/Demo/a.txt").exists());

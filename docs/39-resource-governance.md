@@ -105,6 +105,7 @@
 | 확장 저장소 읽기 스레드 `ext-index`(curl 자식 프로세스 · 50 §14) | 진행 중 1 · 사용자 동작(패널 열기·⟳)으로만 | `extensions.enabled`(끄면 패널·아이콘·읽기 전부 없음) | — | — | — | `App::ext_fetch_start` |
 | (✅ 154차-a · T-450) 상태 있는 확장 인스턴스(`stateful` 메타 · wasm Store 유지 · 메모리 ≤ 16 MB/확장) | 쓰는 확장 수만큼 · 유휴가 지나면 버림(검사 = 명령 실행 때) | `extensions.stateful_idle_secs`(HIDDEN · 기본 300 · 0 = 안 버림 · V1-k 1초 실측 ✓) | — | — | — | `Registry::reap_idle` |
 | (✅ 154차-b · T-450) 확장 사건 배달(`nx_ext_event` · edit/caret/doc · 구독 확장에만 · 이벤트 루프 틱 `ext_events_tick` · 호출당 연료 2e7 · 50 ms) | edit = 디바운스 + 문서 세대 · caret = 구간 변경 때 · doc = 탭 열기/닫기/활성 | `extensions.events`(HIDDEN · 마스터 스위치 · V1-l off = 사건 0 ✓) · `extensions.event_debounce_ms`(100 · 0~5000) | — | — | — | `app/extensions.rs` 사건 발행 |
+| 개발 폴더 핫 리로드(11-05 · T-166) | 메인 창 포커스 복귀 때 dev_dir *.wasm stat N + 바뀐 파일만 읽기 · 배경 스레드 0 | `extensions.dev_reload`(끄면 수동 Reload만) | — | — | — | `App::ext_dev_reload` |
 | 공유 연결(서버당 DB 세션 1 + 워커 스레드 1 · DR-34) | 8 | `session.max_shared` | — | — | — | `App::new_shared` |
 | 전용/개별 탭 세션(DB 세션 1 + 워커 스레드 1) | 8 | `session.max_private` · `session.private_connect` | — | — | — | `App::new_private` |
 | 유휴 세션 닫기(서버 자원 회수 · 점검 30s 로컬) | 1800 s · 전용만 | `session.idle_secs`(0 = 끔) · `session.idle_shared` | — | — | — | `App::idle_tick` |

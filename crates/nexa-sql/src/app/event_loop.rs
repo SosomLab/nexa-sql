@@ -898,6 +898,8 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
                 if on {
                     self.ext_check(true);
+                    // ★ 개발 확장 핫 리로드(T-166 · 11-05): 돌아올 때 dev_dir의 바뀐 *.wasm만 다시 올린다.
+                    self.ext_dev_reload();
                 }
             }
         }

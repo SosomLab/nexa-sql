@@ -1366,6 +1366,11 @@ cells={n}
             self.conn_broken("test".into(), false);
             return;
         }
+        // ★ 개발 확장 핫 리로드 훅(T-166 · 11-05): 포커스 복귀와 같은 길(헤드리스 V1용).
+        if id == "ext.dev_reload" {
+            self.ext_dev_reload();
+            return;
+        }
         // 시험 훅(Debug 전용): 다음 ■ 한 번은 드라이버 취소를 보내지 않는다(강제 중지 경로 · 협업 10-09).
         if id == "run.stop_mute" {
             if cfg!(debug_assertions) {

@@ -1270,6 +1270,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 개발 폴더 핫 리로드(T-166 · 11-05 · 39 §3): 메인 창으로 돌아올 때 dev_dir의 *.wasm 수정 시각을 보고 바뀐 것만 다시 올린다(배경 감시 없음).
+    Entry {
+        key: "extensions.dev_reload",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtDevReload,
+        desc: Msg::DescExtDevReload,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 상태 있는 확장(길 A · 154차 · 39 §3): 보존 인스턴스 유휴 회수 초(0 = 안 버림) · 기본 300 · HIDDEN.
     Entry {
         key: "extensions.stateful_idle_secs",

@@ -374,6 +374,8 @@ struct App {
     vars_win: vars_win::VarsWin,
     /// ★ 개발 폴더 wasm 모듈의 id 캐시(146차 · `extensions.dev_dir` · 경로 → (수정 시각, id)).
     ext_dev_ids: std::collections::HashMap<PathBuf, (Option<std::time::SystemTime>, String)>,
+    /// ★ 핫 리로드(T-166 · 11-05): 수정 시각이 바뀐 개발 모듈 id(다음 `apply_extensions`가 내렸다 올린다).
+    ext_dev_changed: Vec<String>,
     /// ★ Insert Sequence 세션(docs/124 · 다중 캐럿 일괄 생성 · 열려 있는 동안 본문에 미리보기).
     seq: Option<app::insseq::SeqSession>,
     /// ★ 확장 설정 덮어쓰기 적용의 재귀 깊이(148차 · on_settings → 덮어쓰기 → 재적용 → on_settings 고리 차단).
@@ -1937,6 +1939,7 @@ fn main() {
         seq: None,
         ext_overlay_depth: 0,
         ext_dev_ids: std::collections::HashMap::new(),
+        ext_dev_changed: Vec::new(),
         profvars_win,
         open_profvars: false,
         driver_win,

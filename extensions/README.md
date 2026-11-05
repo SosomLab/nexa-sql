@@ -35,7 +35,7 @@
 | `id` · `name` · `version` · `kind` · `summary` | ✓ | `id` · `name` · `version` · `kind`는 index.json과 같아야 한다(`id`가 다르면 설치 거부 · `summary`는 index.json 쪽이 메뉴 한 줄이라 달라도 됨 · `nsql ext check`가 판정) |
 | `description` | | 긴 설명 |
 | `author` · `license` · `homepage` | | 표시용 |
-| `min_app` | | 필요한 최소 앱 버전 |
+| `min_app` | | 필요한 최소 앱 버전 · 설치 때 비교(앱이 더 낮으면 거부 "needs app X or newer" · 11-05) |
 | `platforms[]` | | `windows` · `macos` · `linux` — 비면 전부. 이 OS가 없으면 설치 거부 |
 | `requires[]` | | 먼저 있어야 하는 확장 id(지금은 표시만 · 자동 설치는 후속) |
 | `settings_prefix` | | 이 확장이 읽는 설정 키 접두(예 `rainbowpair.`) — 설정 창 "Extensions ▸ <이름>" 분류와 짝 |

@@ -541,6 +541,18 @@ impl Registry {
             .collect()
     }
 
+    /// ★ 개발 폴더 핫 리로드(T-166 · 11-05): 바뀐 id의 모듈을 내려 두면 다음 `sync_wasm`이 같은 경로를 다시 읽는다 — 내린 수.
+    pub(crate) fn drop_wasm(&mut self, ids: &[String]) -> usize {
+        if ids.is_empty() {
+            return 0;
+        }
+        let before = self.loaded_wasm.len();
+        self.extensions
+            .retain(|p| !(p.is_wasm() && ids.iter().any(|s| s == p.id())));
+        self.loaded_wasm.retain(|(id, _)| !ids.contains(id));
+        before - self.loaded_wasm.len()
+    }
+
     /// 설치된 wasm 패키지 목록 `(id, 모듈 경로)`와 맞춘다 — 새로 설치된 것은 로드, 삭제된 것은 내림, 같은 것은 그대로.
     /// 로드 실패는 안내 문장으로 돌려주고 그 id의 내장(있으면)이 그대로 산다(폴백).
     pub(crate) fn sync_wasm(&mut self, want: &[(String, PathBuf)]) -> Vec<String> {

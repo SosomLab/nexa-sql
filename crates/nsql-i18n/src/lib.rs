@@ -4219,6 +4219,8 @@ pub enum Msg {
     /// ★ 146차(10-27) 확장 마무리: 개발 폴더 · 업데이트 명령 · requires 자동 설치.
     LblExtDevDir,
     DescExtDevDir,
+    LblExtDevReload,
+    DescExtDevReload,
     MnExtUpdate,
     ExtUpdateAll,
     StExtUpToDate,
@@ -9276,6 +9278,11 @@ impl Msg {
             Msg::DescExtDevDir => [
                 "Folder whose *.wasm modules are loaded without installing (for extension development; a dev module with the same id replaces the installed one; re-apply with Extension Manager: Reload)",
                 "이 폴더의 *.wasm 모듈을 설치 없이 로드(확장 개발용 · 같은 id의 설치본은 개발 판이 대체 · 다시 읽기 = Extension Manager: Reload)",
+            ],
+            Msg::LblExtDevReload => ["Reload dev extensions on focus", "포커스 복귀 때 개발 확장 다시 읽기"],
+            Msg::DescExtDevReload => [
+                "When the main window regains focus, *.wasm files in the dev folder whose modification time changed are reloaded (no background watcher; nothing happens when nothing changed).",
+                "메인 창으로 돌아올 때 개발 폴더의 *.wasm 가운데 수정 시각이 바뀐 것만 다시 올립니다(배경 감시 없음 · 바뀐 것이 없으면 아무 일도 없음).",
             ],
             Msg::MnExtUpdate => ["Update Extensions", "확장 업데이트"],
             Msg::ExtUpdateAll => ["Update all ({0})", "모두 업데이트 ({0})"],

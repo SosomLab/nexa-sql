@@ -64,6 +64,14 @@ impl App {
             want.retain(|(i, _)| i != id);
             want.push((id.clone(), p.clone()));
         }
+        // ★ 개발 폴더 핫 리로드(11-05): 수정된 모듈은 내려 두고 아래 동기화가 같은 경로를 다시 올린다.
+        let changed: Vec<String> = std::mem::take(&mut self.ext_dev_changed);
+        if self.extensions.drop_wasm(&changed) > 0 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!("dev extension reload: {}", changed.join(", ")),
+            ));
+        }
         for note in self.extensions.sync_wasm(&want) {
             self.log_win.push(LogEntry::new(LogKind::Info, note));
         }
@@ -578,6 +586,27 @@ impl App {
         self.redraw();
     }
 
+    /// ★ 개발 폴더 핫 리로드(T-166 · 11-05 · 75 §9-3): 메인 창으로 돌아올 때 `extensions.dev_dir`의 `*.wasm` 수정 시각을 보고 바뀐 것만
+    ///   다시 올린다(배경 감시 없음 · 설정 `extensions.dev_reload` · 39 §3). 바뀐 것이 없으면 stat 몇 번이 전부 · 상태줄도 그대로.
+    pub(crate) fn ext_dev_reload(&mut self) {
+        if !self.settings.flag("extensions.dev_reload")
+            || self
+                .settings
+                .get("extensions.dev_dir")
+                .is_none_or(|s| s.trim().is_empty())
+        {
+            return;
+        }
+        let status = self.sess.status.clone();
+        let _ = self.ext_dev_modules();
+        if self.ext_dev_changed.is_empty() {
+            self.sess.status = status;
+            return;
+        }
+        self.apply_extensions(None);
+        self.redraw();
+    }
+
     /// ★ 개발 폴더의 `*.wasm` → `(id, 경로)`(146차 · `extensions.dev_dir`): id는 모듈 메타에서(수정 시각 캐시 · 같은 파일은 다시 읽지 않는다).
     fn ext_dev_modules(&mut self) -> Vec<(String, PathBuf)> {
         let dir = self
@@ -616,6 +645,10 @@ impl App {
                 None => match extensions::wasm::WasmExtension::load_file(&p) {
                     Ok(e) => {
                         let id = extensions::Extension::id(&e).to_string();
+                        // ★ 핫 리로드(11-05): 같은 파일의 수정 시각이 바뀜 = 다음 `apply_extensions`가 그 id만 내렸다 올린다.
+                        if self.ext_dev_ids.contains_key(&p) {
+                            self.ext_dev_changed.push(id.clone());
+                        }
                         self.ext_dev_ids.insert(p.clone(), (mtime, id.clone()));
                         id
                     }
