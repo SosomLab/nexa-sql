@@ -352,6 +352,18 @@ impl Toasts {
         self.items.iter().position(|t| t.rect.contains(p))
     }
 
+    /// ★ 커서 힌트(사용자 11-05 "토스트 버튼에서 I-빔이 아니라 일반 클릭 마우스"): 토스트 위가 아니면 `None` · 버튼/둘째 버튼/[닫기]
+    ///   또는 버튼 없는 동작 카드의 본문이면 `Some(true)`(= 손가락) · 그 밖 카드 본문이면 `Some(false)`(= 화살표 · 아래 편집기의 I-빔을 막는다).
+    ///   `pick`의 판정과 같은 사각형을 본다(그리기 때 채워진 `btn_rect`·`btn2_rect`·`close_rect`).
+    pub(crate) fn cursor_hint(&self, p: Point) -> Option<bool> {
+        let t = self.items.iter().find(|t| t.rect.contains(p))?;
+        let clickable = t.close_rect.contains(p)
+            || (t.button2.is_some() && t.btn2_rect.contains(p))
+            || (t.button.is_some() && t.btn_rect.contains(p))
+            || (t.action.is_some() && t.button.is_none());
+        Some(clickable)
+    }
+
     /// 카드 `i`를 `p`에서 놓았다 — 닫고, 버튼 위면 버튼 명령 · 버튼 없는 카드의 본문이면 카드 명령(`take_action`) · [닫기] 위면 닫기만.
     pub(crate) fn pick(&mut self, i: usize, p: Point) {
         if i >= self.items.len() {
@@ -759,5 +771,34 @@ mod tests {
         ts.items[0].btn_rect = Rect::new(60, 20, 30, 15);
         ts.pick(0, Point { x: 65, y: 25 });
         assert_eq!(ts.take_action().as_deref(), Some("x.go"));
+    }
+
+    /// ★ 커서 힌트(사용자 11-05): 토스트 밖 = None · 버튼/[닫기] = 손가락 · 버튼 카드의 본문 = 화살표 · 버튼 없는 동작 카드 본문 = 손가락.
+    #[test]
+    fn cursor_hint_pointer_on_buttons_arrow_on_body() {
+        let mut ts = Toasts::new();
+        ts.configure(1000, 85);
+        ts.push_button_sticky(ToastKind::Info, "t", "b", "Go", "x.go");
+        ts.items[0].rect = Rect::new(0, 0, 100, 40);
+        ts.items[0].btn_rect = Rect::new(60, 20, 30, 15);
+        ts.items[0].close_rect = Rect::new(20, 20, 30, 15);
+        assert_eq!(ts.cursor_hint(Point { x: 200, y: 200 }), None, "토스트 밖");
+        assert_eq!(ts.cursor_hint(Point { x: 65, y: 25 }), Some(true), "버튼");
+        assert_eq!(ts.cursor_hint(Point { x: 25, y: 25 }), Some(true), "[닫기]");
+        assert_eq!(
+            ts.cursor_hint(Point { x: 5, y: 5 }),
+            Some(false),
+            "버튼 카드의 본문 = 화살표"
+        );
+        // 버튼 없는 동작 카드(끊김 토스트 "클릭하면 다시 연결") = 본문 전체가 손가락.
+        ts.push_action(ToastKind::Error, "t", "b", "net.reconnect:x");
+        let i = ts.items.len() - 1;
+        ts.items[i].rect = Rect::new(0, 100, 100, 40);
+        assert_eq!(ts.cursor_hint(Point { x: 5, y: 105 }), Some(true));
+        // 동작 없는 정보 카드 = 화살표.
+        ts.push(ToastKind::Info, "t", "b");
+        let i = ts.items.len() - 1;
+        ts.items[i].rect = Rect::new(0, 200, 100, 40);
+        assert_eq!(ts.cursor_hint(Point { x: 5, y: 205 }), Some(false));
     }
 }

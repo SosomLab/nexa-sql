@@ -1040,27 +1040,33 @@ impl ApplicationHandler<Wake> for App {
                     // 스플리터 위/드래그 중 = ↔ · ↕ (그리드 헤더 경계보다 우선) · 열린 팝업(우클릭 메뉴) 아래의 스플리터는 커서를 바꾸지 않는다
                     // (사용자 10-13 · 라우팅과 같은 규칙 · 드래그 중만 예외).
                     let menus = self.open_menus() != 0;
-                    w.set_cursor(
-                        if self.split_v.is_dragging()
-                            || (!menus && self.split_v.rect().contains(cur))
-                        {
-                            winit::window::CursorIcon::ColResize
-                        } else if self.split_h.is_dragging()
-                            || self.split_d.is_dragging()
-                            || (!menus
-                                && (self.split_h.rect().contains(cur)
-                                    || (!self.split_d.rect().is_empty()
-                                        && self.split_d.rect().contains(cur))))
-                        {
-                            winit::window::CursorIcon::RowResize
-                        } else if over_edge {
-                            winit::window::CursorIcon::ColResize
-                        } else if over_text {
-                            winit::window::CursorIcon::Text
+                    // ★ 토스트가 맨 위에 그려지므로 커서도 토스트가 먼저(사용자 11-05): 버튼·[닫기]·동작 카드 = 손가락 · 본문 = 화살표.
+                    let toast = self.toasts.cursor_hint(cur);
+                    w.set_cursor(if let Some(click) = toast {
+                        if click {
+                            winit::window::CursorIcon::Pointer
                         } else {
                             winit::window::CursorIcon::Default
-                        },
-                    );
+                        }
+                    } else if self.split_v.is_dragging()
+                        || (!menus && self.split_v.rect().contains(cur))
+                    {
+                        winit::window::CursorIcon::ColResize
+                    } else if self.split_h.is_dragging()
+                        || self.split_d.is_dragging()
+                        || (!menus
+                            && (self.split_h.rect().contains(cur)
+                                || (!self.split_d.rect().is_empty()
+                                    && self.split_d.rect().contains(cur))))
+                    {
+                        winit::window::CursorIcon::RowResize
+                    } else if over_edge {
+                        winit::window::CursorIcon::ColResize
+                    } else if over_text {
+                        winit::window::CursorIcon::Text
+                    } else {
+                        winit::window::CursorIcon::Default
+                    });
                 }
             }
             WindowEvent::Ime(ime) => {
