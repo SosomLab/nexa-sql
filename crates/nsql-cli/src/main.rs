@@ -18,6 +18,7 @@ mod complete;
 mod config;
 mod conn;
 mod driver;
+mod ext;
 mod grep;
 mod help;
 mod license;
@@ -2881,6 +2882,7 @@ fn main() {
         "config" | "settings" => config::cmd_config(&o),
         "grep" => grep::cmd_grep(&o.positional),
         "license" | "lic" => license::cmd_license(&o),
+        "ext" | "extension" | "extensions" => ext::cmd_ext(&o),
         other => {
             eprintln!("{}\n", tf(Msg::CliErrCommand, &[other]));
             usage()

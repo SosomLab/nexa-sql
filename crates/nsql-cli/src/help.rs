@@ -449,6 +449,27 @@ const CMDS: &[Cmd] = &[
         ],
     },
     Cmd {
+        name: "ext",
+        usage: "nsql ext check <dir> | pack <dir> [--index <root>] | verify <dir|url> [--pub <a.pub>]... | list [<dir|url>]",
+        brief: Msg::HlpCmdExt,
+        detail: Msg::HlpCmdExtDetail,
+        args: &[
+            ("check <dir>", Msg::HlpArgExtCheck),
+            ("pack <dir> [--index <root>]", Msg::HlpArgExtPack),
+            ("verify <dir|url> [--pub <a.pub>]...", Msg::HlpArgExtVerify),
+            ("list [<dir|url>]", Msg::HlpArgExtList),
+        ],
+        opts: &[],
+        notes: &[],
+        examples: &[
+            "nsql ext check extensions                      # whole repository root (index.json)",
+            "nsql ext check extensions/hello-ext            # one package folder",
+            "nsql ext pack extensions/hello-ext             # recompute sha256 + index row",
+            "nsql ext verify extensions --pub keys/ext.pub  # index.sig + every package",
+            "nsql ext list",
+        ],
+    },
+    Cmd {
         name: "license",
         usage: "nsql license status | request [<name> [<email>]] | install <file> | remove | path | export <file> | import <file>",
         brief: Msg::HlpCmdLicense,

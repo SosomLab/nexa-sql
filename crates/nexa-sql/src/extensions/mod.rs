@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 pub(crate) mod insert_sequence;
 pub(crate) mod manager;
 pub(crate) mod rainbow_pairs;
-pub(crate) mod sha256;
 pub(crate) mod wasm;
 
 /// 표시 이름 — 내장은 i18n 메시지, WASM은 메타의 글(영어 + 한국어 선택).

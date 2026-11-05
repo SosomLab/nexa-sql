@@ -6,10 +6,15 @@
 //! 원격 읽기는 `curl -fsSL`(3-OS 기본 탑재 · 외부 crate 0 · 26 §8: 사용자 동작으로만 트래픽). 설치본은
 //! `<설정 폴더>/extensions/<id>/<version>/`(SxS) + `installed.json`(설치 파일 목록 · 삭제 때 되감기).
 
-use nsql_settings::json::{self, Json};
+use nsql_settings::json;
 use nsql_settings::{config_dir, Settings};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+// ★ T-166 E8(11-05): 메타 형식·파서·sha256은 `nsql-ext`로 이관(CLI `nsql ext`와 공용) — 경로 호환을 위해 재수출.
+pub(crate) use nsql_ext::meta::{
+    json_str, list, object, parse_index, parse_meta, text, FileSpec, Index, Kind, Meta, Summary,
+    FORMAT,
+};
 
 /// 상세 추적(개발자 모드 · `ext` 층): 저장소 읽기 · 다운로드 바이트/시간/속도 · 검증 · 보관/배치 폴더 · 기록.
 /// 매니저는 줄만 모으고 호스트가 `log.dev_mode`/층 마스크로 내보낸다(꺼져 있으면 문자열만 만들고 버림 — 사용자 동작 때만).
@@ -97,88 +102,11 @@ impl NetStat {
 }
 
 /// 메타 형식 버전(`"format": 1`).
-pub(crate) const FORMAT: i64 = 1;
 /// 기본 원격 저장소(소스 트리 밖에서 실행할 때).
 pub(crate) const DEFAULT_REMOTE: &str =
     "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions";
 /// 소스 트리의 `extensions/` 폴더(컴파일 시점 경로 · 있을 때만).
 const SOURCE_TREE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../extensions");
-
-/// 확장 종류 — `builtin`(앱에 컴파일됨 · 켜기/끄기만) · `data`(파일 배치) · `wasm`/`process`(T-118 · 아직 설치 불가).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
-    Builtin,
-    Data,
-    Wasm,
-    Process,
-}
-
-impl Kind {
-    fn parse(s: &str) -> Option<Kind> {
-        match s {
-            "builtin" => Some(Kind::Builtin),
-            "data" => Some(Kind::Data),
-            "wasm" => Some(Kind::Wasm),
-            "process" => Some(Kind::Process),
-            _ => None,
-        }
-    }
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Kind::Builtin => "builtin",
-            Kind::Data => "data",
-            Kind::Wasm => "wasm",
-            Kind::Process => "process",
-        }
-    }
-}
-
-/// 루트 `index.json`의 패키지 한 줄(폴더 식별용 · 상세는 폴더의 `extension.json`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Summary {
-    pub(crate) id: String,
-    pub(crate) dir: String,
-    pub(crate) name: String,
-    pub(crate) version: String,
-    pub(crate) kind: Kind,
-    pub(crate) summary: String,
-}
-
-/// 루트 메타.
-#[derive(Clone, Debug)]
-pub(crate) struct Index {
-    pub(crate) name: String,
-    pub(crate) packages: Vec<Summary>,
-}
-
-/// 설치 파일 하나 — `path` = 패키지 폴더 안 상대 경로 · `sha256` = 소문자 16진 · `dest` = 설정 폴더 기준 배치 경로(비면 보관만).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FileSpec {
-    pub(crate) path: String,
-    pub(crate) sha256: String,
-    pub(crate) dest: String,
-    /// 절대 URL(`https://…`) — 있으면 패키지 폴더 대신 **이 주소**에서 받는다(GitHub Releases 자산 · docs/75 §5 · `path` = 보관 이름).
-    pub(crate) url: String,
-}
-
-/// 패키지 메타(`extension.json`).
-#[derive(Clone, Debug)]
-pub(crate) struct Meta {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) version: String,
-    pub(crate) kind: Kind,
-    pub(crate) summary: String,
-    pub(crate) description: String,
-    pub(crate) author: String,
-    pub(crate) license: String,
-    pub(crate) homepage: String,
-    pub(crate) platforms: Vec<String>,
-    pub(crate) requires: Vec<String>,
-    pub(crate) settings_prefix: String,
-    pub(crate) files: Vec<FileSpec>,
-    pub(crate) message_install: String,
-}
 
 /// 저장소 원천 — 폴더(로컬) 또는 URL(원격 · `curl`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -351,143 +279,6 @@ pub(crate) fn sources(s: &Settings) -> Vec<Source> {
     out
 }
 
-fn field<'a>(obj: &'a [(String, Json)], key: &str) -> Option<&'a Json> {
-    obj.iter().find(|(k, _)| k == key).map(|(_, v)| v)
-}
-
-fn text(obj: &[(String, Json)], key: &str) -> String {
-    match field(obj, key) {
-        Some(Json::Str(s)) => s.clone(),
-        Some(Json::Num(n)) => n.to_string(),
-        Some(Json::Bool(b)) => b.to_string(),
-        _ => String::new(),
-    }
-}
-
-fn list(obj: &[(String, Json)], key: &str) -> Vec<String> {
-    match field(obj, key) {
-        Some(Json::Arr(items)) => items
-            .iter()
-            .filter_map(|v| match v {
-                Json::Str(s) => Some(s.clone()),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn object(v: &Json) -> Result<&[(String, Json)], String> {
-    match v {
-        Json::Obj(o) => Ok(o),
-        _ => Err("root is not an object".into()),
-    }
-}
-
-fn check_format(obj: &[(String, Json)]) -> Result<(), String> {
-    match field(obj, "format") {
-        Some(Json::Num(n)) if *n as i64 == FORMAT => Ok(()),
-        other => Err(format!("unsupported format {other:?} (expected {FORMAT})")),
-    }
-}
-
-/// `index.json` 파싱.
-pub(crate) fn parse_index(text_in: &str) -> Result<Index, String> {
-    let v = json::parse(text_in)?;
-    let obj = object(&v)?;
-    check_format(obj)?;
-    let mut packages = Vec::new();
-    if let Some(Json::Arr(items)) = field(obj, "packages") {
-        for it in items {
-            let o = object(it)?;
-            let id = text(o, "id");
-            if id.is_empty() {
-                return Err("package without id".into());
-            }
-            let dir = {
-                let d = text(o, "dir");
-                if d.is_empty() {
-                    id.clone()
-                } else {
-                    d
-                }
-            };
-            if dir.contains("..") || dir.contains('/') || dir.contains('\\') {
-                return Err(format!("{id}: bad dir {dir:?}"));
-            }
-            let kind = Kind::parse(&text(o, "kind")).ok_or_else(|| format!("{id}: bad kind"))?;
-            packages.push(Summary {
-                id,
-                dir,
-                name: text(o, "name"),
-                version: text(o, "version"),
-                kind,
-                summary: text(o, "summary"),
-            });
-        }
-    }
-    Ok(Index {
-        name: text(obj, "name"),
-        packages,
-    })
-}
-
-/// `extension.json` 파싱.
-pub(crate) fn parse_meta(text_in: &str) -> Result<Meta, String> {
-    let v = json::parse(text_in)?;
-    let obj = object(&v)?;
-    check_format(obj)?;
-    let id = text(obj, "id");
-    if id.is_empty() {
-        return Err("extension without id".into());
-    }
-    let kind = Kind::parse(&text(obj, "kind")).ok_or_else(|| format!("{id}: bad kind"))?;
-    let mut files = Vec::new();
-    if let Some(Json::Arr(items)) = field(obj, "files") {
-        for it in items {
-            let o = object(it)?;
-            let path = text(o, "path");
-            let dest = text(o, "dest");
-            for p in [&path, &dest] {
-                if p.contains("..") || p.starts_with('/') || p.starts_with('\\') || p.contains(':')
-                {
-                    return Err(format!("{id}: unsafe path {p:?}"));
-                }
-            }
-            let url = text(o, "url");
-            if !url.is_empty() && !url.starts_with("https://") {
-                return Err(format!("{id}: file url must be https ({url})"));
-            }
-            files.push(FileSpec {
-                path,
-                sha256: text(o, "sha256").to_ascii_lowercase(),
-                dest,
-                url,
-            });
-        }
-    }
-    let message_install = match field(obj, "messages") {
-        Some(Json::Obj(m)) => text(m, "install"),
-        _ => String::new(),
-    };
-    Ok(Meta {
-        id,
-        name: text(obj, "name"),
-        version: text(obj, "version"),
-        kind,
-        summary: text(obj, "summary"),
-        description: text(obj, "description"),
-        author: text(obj, "author"),
-        license: text(obj, "license"),
-        homepage: text(obj, "homepage"),
-        platforms: list(obj, "platforms"),
-        requires: list(obj, "requires"),
-        settings_prefix: text(obj, "settings_prefix"),
-        files,
-        message_install,
-    })
-}
-
 pub(crate) fn fetch_index(src: &Source) -> Result<Index, String> {
     fetch_index_traced(src, &mut Trace::default())
 }
@@ -554,20 +345,6 @@ fn write_installed(root: &Path, rec: &Installed) -> Result<(), String> {
         approved.join(", ")
     );
     std::fs::write(installed_path(root, &rec.id), text).map_err(|e| e.to_string())
-}
-
-fn json_str(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 fn parse_installed(text_in: &str) -> Result<Installed, String> {
@@ -781,7 +558,7 @@ pub(crate) fn stage_traced(src: &Source, sum: &Summary, tr: &mut Trace) -> Resul
             fetch_url_traced(&f.url, tr)?
         };
         total += bytes.len();
-        let got = super::sha256::hex(&bytes);
+        let got = nsql_ext::sha256::hex(&bytes);
         if got != f.sha256 {
             tr.push(format!(
                 "verify {} - sha256 MISMATCH {got} ≠ {}",
@@ -981,27 +758,6 @@ mod tests {
         { "id": "demo-data", "dir": "demo-data", "name": "Demo Data", "version": "1.0.0", "kind": "data", "summary": "a data package" },
         { "id": "rainbow-pairs", "name": "Rainbow Pairs", "version": "1.0.0", "kind": "builtin", "summary": "colors" } ] }"#;
 
-    #[test]
-    fn index_and_meta_parse() {
-        let idx = parse_index(INDEX).expect("test");
-        assert_eq!(idx.packages.len(), 2);
-        assert_eq!(idx.packages[1].dir, "rainbow-pairs", "dir가 비면 id");
-        assert!(parse_index(r#"{"format": 2, "packages": []}"#).is_err());
-        assert!(parse_index(
-            r#"{"format": 1, "packages": [{"id":"x","dir":"../y","kind":"data"}]}"#
-        )
-        .is_err());
-        let meta = parse_meta(r#"{"format":1,"id":"demo-data","name":"Demo","version":"1.0.0","kind":"data",
-            "platforms":["windows","macos","linux"],"files":[{"path":"a.txt","sha256":"x","dest":"Packages/Demo/a.txt"}],
-            "messages":{"install":"hi"}}"#).expect("test");
-        assert_eq!(meta.files[0].dest, "Packages/Demo/a.txt");
-        assert_eq!(meta.message_install, "hi");
-        assert!(parse_meta(
-            r#"{"format":1,"id":"x","kind":"data","files":[{"path":"/etc/passwd"}]}"#
-        )
-        .is_err());
-    }
-
     /// 로컬 저장소 → 설치(sha256 검증 · 보관 + 배치 + installed.json) → 목록 → 삭제(되감기).
     #[test]
     fn install_and_remove_roundtrip() {
@@ -1012,7 +768,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(repo.join("demo-data")).expect("test");
         std::fs::write(repo.join("demo-data/a.txt"), b"hello").expect("test");
-        let sha = super::super::sha256::hex(b"hello");
+        let sha = nsql_ext::sha256::hex(b"hello");
         std::fs::write(repo.join("index.json"), INDEX).expect("test");
         std::fs::write(
             repo.join("demo-data/extension.json"),

@@ -32,7 +32,7 @@
 | 키 | 필수 | 뜻 |
 |---|---|---|
 | `format` | ✓ | `1` |
-| `id` · `name` · `version` · `kind` · `summary` | ✓ | index.json과 같아야 한다(`id`가 다르면 설치 거부) |
+| `id` · `name` · `version` · `kind` · `summary` | ✓ | `id` · `name` · `version` · `kind`는 index.json과 같아야 한다(`id`가 다르면 설치 거부 · `summary`는 index.json 쪽이 메뉴 한 줄이라 달라도 됨 · `nsql ext check`가 판정) |
 | `description` | | 긴 설명 |
 | `author` · `license` · `homepage` | | 표시용 |
 | `min_app` | | 필요한 최소 앱 버전 |
@@ -102,6 +102,14 @@
 `Extension Manager: Enable Extension Manager`(최초 1회) · `Install Extension` · `Remove Extension` · `List Extensions` · `Enable Extension` · `Disable Extension` ·
 `Add Repository`(루트 URL/폴더 입력 · index.json이 읽히면 등록) · `List Repositories` · `Remove Repository`.
 설정 = `extensions.enabled` · `extensions.default_repository` · `extensions.repositories`(추가 저장소 · 쉼표) · `extensions.disabled`(끈 확장 id · 쉼표).
+
+## 도구 `nsql ext`
+
+- `nsql ext check <dir>` = 패키지 폴더 또는 저장소 루트 검사(extension.json · 파일 · sha256 · wasm 매직 · id/버전/플랫폼/`min_app` 꼴 · 색인 행 일치) · 문제가 하나라도 있으면 종료 코드 1.
+- `nsql ext pack <dir> [--index <root>]` = `files[].sha256` 재계산 + index.json 행(name · version · kind) 갱신 · 없으면 추가(원문 서식 보존 · 기본 = 부모 폴더에 index.json이 있으면 그것).
+- `nsql ext verify <dir|url> [--pub <a.pub>]...` = `--pub` 키로 `index.sig` 검증 뒤 모든 패키지 검사(`--pub`가 없으면 서명은 건너뛰고 패키지만).
+- `nsql ext list [<dir|url>]` = 저장소의 패키지 목록(기본 = `extensions.default_repository`).
+- **`index.sig`**(index.json 옆 사이드카 · 한 줄) = `ed25519 <key-id> <hex128>` · 만들기 = `nexa-license-tool sign-file index.json --key <봉투>`(서명 생성은 이 도구 밖 · `nsql ext`는 검증만).
 
 ## 패키지 추가 절차(공식 저장소)
 

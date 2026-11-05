@@ -1,4 +1,5 @@
-//! SHA-256(FIPS 180-4) — 확장 패키지 파일 체크섬 검증용(외부 crate 0 · DR-3). 짧고 검증 가능한 표준 구현.
+//! SHA-256(FIPS 180-4) — 확장 패키지 파일 체크섬 검증용(외부 crate 0 · DR-3). 짧고 검증 가능한 표준 구현(종전 nexa-sql
+//! `extensions/sha256.rs`에서 이관 · T-166 E8).
 
 const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -12,7 +13,8 @@ const K: [u32; 64] = [
 ];
 
 /// 바이트열의 SHA-256 다이제스트(32바이트).
-pub(crate) fn digest(data: &[u8]) -> [u8; 32] {
+#[must_use]
+pub fn digest(data: &[u8]) -> [u8; 32] {
     let mut h: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
@@ -58,8 +60,8 @@ pub(crate) fn digest(data: &[u8]) -> [u8; 32] {
             b = a;
             a = t1.wrapping_add(t2);
         }
-        for (hv, v) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
-            *hv = hv.wrapping_add(v);
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
+            *x = x.wrapping_add(y);
         }
     }
     let mut out = [0u8; 32];
@@ -69,8 +71,9 @@ pub(crate) fn digest(data: &[u8]) -> [u8; 32] {
     out
 }
 
-/// 소문자 16진 문자열.
-pub(crate) fn hex(data: &[u8]) -> String {
+/// 소문자 16진 64글자.
+#[must_use]
+pub fn hex(data: &[u8]) -> String {
     digest(data).iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -92,5 +95,10 @@ mod tests {
             hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
+        // 블록 경계(55 · 56 · 64바이트) — 패딩 분기.
+        for n in [55usize, 56, 63, 64, 65, 119, 120] {
+            let v = vec![b'a'; n];
+            assert_eq!(hex(&v).len(), 64);
+        }
     }
 }

@@ -2317,6 +2317,7 @@ dependencies = [
  "nsql-catalog",
  "nsql-core",
  "nsql-drivers",
+ "nsql-ext",
  "nsql-format",
  "nsql-i18n",
  "nsql-io",
@@ -2385,6 +2386,7 @@ dependencies = [
  "nsql-catalog",
  "nsql-core",
  "nsql-drivers",
+ "nsql-ext",
  "nsql-format",
  "nsql-i18n",
  "nsql-io",
@@ -2547,6 +2549,16 @@ dependencies = [
  "nsql-run",
  "nsql-script",
  "nsql-vault",
+]
+
+[[package]]
+name = "nsql-ext"
+version = "0.5.0"
+dependencies = [
+ "ed25519-dalek",
+ "nexa-license",
+ "nsql-json",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
