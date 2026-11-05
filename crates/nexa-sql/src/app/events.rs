@@ -532,29 +532,11 @@ impl App {
                 }
                 ConnOutcome::Disconnected => self.on_conn_disconnected(),
                 // ★ 끊김 확인(docs/53 §3): 세션은 남기고 상태만 — 표식·플러그·목록이 "끊김"을 보인다.
+                // ★ 두 층(107 §9-2 · ⑥): 끝점 층(SYN 실패) = 레지스트리 한 자리 · 세션 층 = 이 세션만 + 세션 토스트 — `app/health.rs conn_broken`.
                 ConnOutcome::Broken {
                     reason: m,
                     endpoint,
-                } => {
-                    // ★ 끝점 층(107 §9-2): SYN 실패는 그 서버의 모든 세션·탐색기에 — 레지스트리 한 자리로(토스트·투영·헤더).
-                    if endpoint {
-                        if let Some(ep) = app::health::ep_text(self.sess.spec.as_ref()) {
-                            self.health_event(&ep, app::health::HealthEvent::Down(m.clone()));
-                        }
-                    }
-                    if !self.sess.broken {
-                        self.sess.broken = true;
-                        let line = if m.is_empty() {
-                            tf(Msg::StSessBroken, &[&self.sess.desc])
-                        } else {
-                            format!("{} - {m}", tf(Msg::StSessBroken, &[&self.sess.desc]))
-                        };
-                        self.log_win
-                            .push(LogEntry::new(LogKind::Error, line.clone()));
-                        self.sess.status = line;
-                        self.sync_sess_ui();
-                    }
-                }
+                } => self.conn_broken(m, endpoint),
                 ConnOutcome::Alive => {
                     if self.sess.broken {
                         self.sess.broken = false;

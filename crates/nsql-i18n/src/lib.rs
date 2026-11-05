@@ -2341,6 +2341,12 @@ pub enum Msg {
     StEpBrokenBlocked,
     ExpHeaderBroken,
     StPrivateSessReset,
+    /// ★ T-313 ⑥ 두 층 모델(107 §9): 끝점 토스트 영향 목록 · 세션 층 토스트 · 헤더 툴팁 전용 세션 끊김 수.
+    ExpHealthAffected,
+    ExpSessDownTitle,
+    ExpSessDownBody,
+    ExpSessDownBodyTab,
+    TipSrvPrivBroken,
     LblNetNotifyQuiet,
     DescNetNotifyQuiet,
     LblNetWatch,
@@ -7164,6 +7170,20 @@ impl Msg {
                 "Private session reconnected - its server-side state (current schema, NLS, temporary objects) was reset",
                 "전용 세션이 다시 접속됐습니다 - 서버 쪽 세션 상태(현재 스키마·NLS·임시 객체)는 초기화됐습니다",
             ],
+            Msg::ExpHealthAffected => [
+                "Affected: shared {0} · private tabs {1}{2} · explorer",
+                "영향: 공유 {0} · 전용 탭 {1}{2} · 탐색기",
+            ],
+            Msg::ExpSessDownTitle => ["Session connection lost", "세션 연결 끊김"],
+            Msg::ExpSessDownBody => [
+                "{0} - {1}. Only this session is affected; the server is reachable (other sessions keep working).",
+                "{0} - {1}. 이 세션만 영향이 있습니다 · 서버에는 닿습니다(다른 세션은 그대로).",
+            ],
+            Msg::ExpSessDownBodyTab => [
+                "Private session of tab {0} ({1}) - {2}. Only this tab is affected; the server is reachable.",
+                "탭 {0}의 전용 세션({1}) - {2}. 이 탭만 영향이 있습니다 · 서버에는 닿습니다.",
+            ],
+            Msg::TipSrvPrivBroken => ["Private sessions lost: {0}", "전용 세션 끊김: {0}"],
             Msg::LblNetWatch => ["Watch network changes (OS signal)", "네트워크 변경 감시(OS 신호)"],
             Msg::DescNetWatch => [
                 "When the OS reports a network path change (VPN adapter down, default route changed), every connected server is marked suspect and re-checked before its next action. No polling; Windows, macOS and Linux. Takes effect at the next start.",

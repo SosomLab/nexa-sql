@@ -540,6 +540,13 @@ impl App {
             self.reconnect_endpoint(ep);
             return;
         }
+        // ★ 세션 층 토스트 클릭 = 그 세션만 다시 연결(107 §9-3 · ⑥).
+        if let Some(sid) = id.strip_prefix("net.reconnect_sess:") {
+            if let Ok(sid) = sid.trim().parse::<u64>() {
+                self.reconnect_session(sid);
+            }
+            return;
+        }
         // ★ 재질의 확인 토스트 [계속](10-12 ④) = `grid.refetch:<탭>:<offset>:<limit>`.
         if let Some(rest) = id.strip_prefix("grid.refetch:") {
             let mut it = rest

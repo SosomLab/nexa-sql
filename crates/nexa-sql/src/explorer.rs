@@ -1074,6 +1074,8 @@ pub(crate) struct Explorer {
     source_pending: bool,
     /// ★ 이 칸의 끝점이 끊겼다(docs/107 ② · 레지스트리 투영 · 벽시계 = 헤더 "끊김 hh:mm").
     broken_since: Option<std::time::SystemTime>,
+    /// ★ 세션 층(107 §9-3 · ⑥): 이 끝점의 끊긴 **전용** 세션 수 — 헤더 색은 바꾸지 않고 툴팁 한 줄만.
+    priv_broken: u32,
     /// ★ 소스 요청 시각·이름(docs/107 ① 호출 상한 · `explorer.timeout`이 지나면 실패 안내 · 늦게 오면 그때 연다).
     source_since: Option<Instant>,
     source_name: String,
@@ -2589,6 +2591,7 @@ impl Explorer {
             font_px: ICON_REF_FONT_PX,
             source_pending: false,
             broken_since: None,
+            priv_broken: 0,
             source_since: None,
             source_name: String::new(),
             source_queued: None,
@@ -3250,6 +3253,15 @@ impl Explorer {
 
     pub(crate) fn broken_since(&self) -> Option<std::time::SystemTime> {
         self.broken_since
+    }
+
+    /// 세션 층(⑥): 끊긴 전용 세션 수(툴팁 한 줄).
+    pub(crate) fn set_private_broken(&mut self, n: u32) {
+        self.priv_broken = n;
+    }
+
+    pub(crate) fn private_broken(&self) -> u32 {
+        self.priv_broken
     }
 
     /// 이 연결의 DBMS 그림(제품 힌트 → 방언) — 테마 · 원본 크기 · 표시 크기별 캐시.
@@ -5832,6 +5844,10 @@ impl Explorer {
         }
         if !self.profile_name.is_empty() {
             lines.push(tf(Msg::TipSrvProfile, &[&self.profile_name]));
+        }
+        // ★ 세션 층(107 §9-3 · ⑥): 전용 세션만 끊겼으면 헤더 색은 그대로 두고 여기 한 줄.
+        if self.priv_broken > 0 {
+            lines.push(tf(Msg::TipSrvPrivBroken, &[&self.priv_broken.to_string()]));
         }
         lines.join("\n")
     }

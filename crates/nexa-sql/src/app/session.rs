@@ -697,6 +697,8 @@ impl App {
         // ★ 전용 세션 표식(사용자 10-12 · 설계 A): 탐색기 연결 행에 'P' 칩 + "전용 · <탭 이름>" · 헤더 "전용 N" — 전용 세션의
         //   (스펙, 소유 탭 제목)을 넘긴다(탭 제목은 바뀔 수 있으니 매 동기화마다).
         self.sync_private_tabs();
+        // ★ 세션 층(107 §9-3 · ⑥): 끝점마다 끊긴 전용 세션 수 → 탐색기 헤더 툴팁 한 줄(헤더 색은 끝점 층만).
+        self.sync_private_broken();
         let cur = self.sess.spec.clone();
         self.explorer.show_for(cur.as_ref());
         self.sync_gate();

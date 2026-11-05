@@ -367,6 +367,20 @@ impl ExplorerSet {
         }
     }
 
+    /// 세션 층(107 §9-3 · ⑥): 끝점별 "끊긴 전용 세션 수"를 **모든 칸**에 한 번에(표에 없는 끝점 = 0 · 세션이 다 떠난 칸의 옛 수가 남지
+    ///   않게) — 툴팁 한 줄 · 헤더 색은 끝점 층만.
+    pub(crate) fn set_private_broken_counts(
+        &mut self,
+        counts: &std::collections::HashMap<String, u32>,
+    ) {
+        for p in &mut self.panes {
+            let n = crate::app::health::ep_text(p.key.as_ref())
+                .and_then(|ep| counts.get(&ep).copied())
+                .unwrap_or(0);
+            p.ex.set_private_broken(n);
+        }
+    }
+
     /// L0 네트워크 신호(⑤): 모든 칸의 메타 스레드에 전한다.
     pub(crate) fn net_changed_all(&mut self) {
         for p in &mut self.panes {
@@ -388,11 +402,12 @@ impl ExplorerSet {
             .iter()
             .map(|p| {
                 format!(
-                    "pane {}|broken={}|offline={}",
+                    "pane {}|broken={}|offline={}|privbroken={}",
                     crate::app::health::ep_text(p.key.as_ref()).unwrap_or_else(|| "-".into()),
                     p.ex.broken_since()
                         .map_or("-".to_string(), crate::app::health::hhmm),
-                    p.ex.is_offline()
+                    p.ex.is_offline(),
+                    p.ex.private_broken()
                 )
             })
             .collect::<Vec<_>>()

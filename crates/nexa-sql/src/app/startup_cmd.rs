@@ -1361,6 +1361,11 @@ cells={n}
             self.health_event(ep, app::health::HealthEvent::Down("test".into()));
             return;
         }
+        // ★ 세션 층 끊김 주입(⑥ · 107 §9-2): 활성 탭 세션 하나만(워커 `Broken{endpoint:false}`와 같은 길 · 끝점·헤더는 그대로).
+        if id == "net.break_sess" {
+            self.conn_broken("test".into(), false);
+            return;
+        }
         // 시험 훅(Debug 전용): 다음 ■ 한 번은 드라이버 취소를 보내지 않는다(강제 중지 경로 · 협업 10-09).
         if id == "run.stop_mute" {
             if cfg!(debug_assertions) {

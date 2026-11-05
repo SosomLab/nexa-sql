@@ -186,6 +186,37 @@ pub(crate) fn header_clear_on_quiet_up(ev: &HealthEvent, header_broken: bool) ->
     matches!(ev, HealthEvent::Up) && header_broken
 }
 
+/// ★ 두 층 판정(107 §9-2 · T-313 ⑥ · 순수 · MC/DC): 워커 `Broken{endpoint}` 하나를 어느 층에 적을지.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct LayerVerdict {
+    /// 끝점 층 사건(`Down`)으로 올린다 — SYN 실패 = 그 끝점의 모든 세션·탐색기.
+    pub ep_down: bool,
+    /// 세션 층 토스트(세션당 1회) — 끝점은 살아 있고 이 세션이 처음 끊겼을 때만(끝점이 이미 끊김이면 끝점 토스트가 덮는다).
+    pub sess_toast: bool,
+}
+
+/// `endpoint` = 워커가 SYN 실패를 봤다 · `sess_prev` = 이 세션이 이미 broken · `ep_broken` = 레지스트리가 그 끝점을 이미 Broken으로 안다.
+pub(crate) fn layer_merge(endpoint: bool, sess_prev: bool, ep_broken: bool) -> LayerVerdict {
+    LayerVerdict {
+        ep_down: endpoint,
+        sess_toast: !endpoint && !sess_prev && !ep_broken,
+    }
+}
+
+/// 영향 목록의 이름 조각(순수): 비면 "" · `max`까지 " (a · b · c)" · 넘치면 " (a · b · c +N)".
+pub(crate) fn affected_names(names: &[String], max: usize) -> String {
+    if names.is_empty() {
+        return String::new();
+    }
+    let shown: Vec<&str> = names.iter().take(max).map(String::as_str).collect();
+    let rest = names.len().saturating_sub(max);
+    if rest > 0 {
+        format!(" ({} +{rest})", shown.join(" · "))
+    } else {
+        format!(" ({})", shown.join(" · "))
+    }
+}
+
 /// 벽시계 `hh:mm`(헤더 "끊김 hh:mm").
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
     let l = nsql_log::local_at(t);
@@ -234,6 +265,8 @@ impl App {
                     LogKind::Error,
                     format!("{} - {body}", t(Msg::ExpHealthDownTitle)),
                 ));
+                // ★ 영향 목록(107 §9-3 · ⑥): 공유 N · 전용 탭 M(이름 · 개별 모드면 길어지므로 셋까지 + "+N").
+                let affected = self.health_affected_text(ep);
                 let quiet =
                     Duration::from_secs(self.settings.int("net.notify_quiet_secs").max(0) as u64);
                 if self.health.toast_allowed(ep, now, quiet) {
@@ -241,7 +274,7 @@ impl App {
                     self.toasts.push_action(
                         ToastKind::Error,
                         t(Msg::ExpHealthDownTitle).to_string(),
-                        format!("{body}\n{}", t(Msg::ExpHealthReconnectHint)),
+                        format!("{body}\n{affected}\n{}", t(Msg::ExpHealthReconnectHint)),
                         &format!("net.reconnect:{ep}"),
                     );
                 }
@@ -265,6 +298,112 @@ impl App {
         }
         self.health_gc();
         self.redraw();
+    }
+
+    /// ★ 워커 `ConnOutcome::Broken` 수신 한 자리(⑥ · 종전 events.rs 인라인): 두 층 판정 → 끝점 층은 레지스트리로 · 세션 층은 이 세션만
+    ///   broken + 로그 + 상태줄 + (처음이면) 세션 토스트(클릭 = **그 세션만** 다시 연결 `net.reconnect_sess:<id>`).
+    pub(crate) fn conn_broken(&mut self, reason: String, endpoint: bool) {
+        let ep = ep_text(self.sess.spec.as_ref());
+        let ep_broken = ep.as_deref().is_some_and(|e| self.health.is_broken(e));
+        let v = layer_merge(endpoint, self.sess.broken, ep_broken);
+        if v.ep_down {
+            if let Some(ep) = ep.as_deref() {
+                self.health_event(ep, HealthEvent::Down(reason.clone()));
+            }
+        }
+        if !self.sess.broken {
+            self.sess.broken = true;
+            let line = if reason.is_empty() {
+                tf(Msg::StSessBroken, &[&self.sess.desc])
+            } else {
+                format!("{} - {reason}", tf(Msg::StSessBroken, &[&self.sess.desc]))
+            };
+            self.log_win
+                .push(LogEntry::new(LogKind::Error, line.clone()));
+            self.sess.status = line;
+            self.sync_sess_ui();
+        }
+        if v.sess_toast {
+            let desc = self.sess.desc.clone();
+            let body = match self.sess.owner.and_then(|t| self.tab_title_of(t)) {
+                Some(tab) => tf(Msg::ExpSessDownBodyTab, &[&tab, &desc, &reason]),
+                None => tf(Msg::ExpSessDownBody, &[&desc, &reason]),
+            };
+            self.toasts.push_action(
+                ToastKind::Error,
+                t(Msg::ExpSessDownTitle).to_string(),
+                format!("{body}\n{}", t(Msg::ExpHealthReconnectHint)),
+                &format!("net.reconnect_sess:{}", self.sess.id),
+            );
+            self.redraw();
+        }
+    }
+
+    /// 탭 id → 지금 제목(전용 세션의 주인 탭 이름).
+    fn tab_title_of(&self, tab: u64) -> Option<String> {
+        self.editors
+            .tab_titles()
+            .into_iter()
+            .find(|(id, _)| *id == tab)
+            .map(|(_, t)| t)
+    }
+
+    /// 끝점 끊김 토스트의 영향 목록(107 §9-3): 공유 세션 수 · 전용 탭 수 + 이름(셋까지 · 나머지 "+N" · 개별 모드 요약).
+    fn health_affected_text(&self, ep: &str) -> String {
+        let (shared, privs) = self.health_affected(ep);
+        let names = affected_names(&privs, 3);
+        tf(
+            Msg::ExpHealthAffected,
+            &[&shared.to_string(), &privs.len().to_string(), &names],
+        )
+    }
+
+    /// (공유 세션 수, 전용 탭 이름들) — 그 끝점에 붙어 있고 닫히는 중이 아닌 세션만.
+    fn health_affected(&self, ep: &str) -> (usize, Vec<String>) {
+        let titles = self.editors.tab_titles();
+        let mut shared = 0usize;
+        let mut privs = Vec::new();
+        for s in self.all_sess().filter(|s| !s.closing && sess_on(s, ep)) {
+            match s.owner {
+                None => shared += 1,
+                Some(tab) => privs.push(
+                    titles
+                        .iter()
+                        .find(|(id, _)| *id == tab)
+                        .map_or_else(|| tab.to_string(), |(_, t)| t.clone()),
+                ),
+            }
+        }
+        (shared, privs)
+    }
+
+    /// ★ 세션 토스트 [다시 연결](⑥): **그 세션만** 조용한 재접속(끝점은 살아 있으므로 다른 세션은 건드리지 않는다 · 일회성 비밀번호 = 워커
+    ///   `PasswordNeeded` → 입력 창 · D-271).
+    pub(crate) fn reconnect_session(&mut self, id: u64) {
+        self.with_sess(id, |a| {
+            if a.sess.busy || a.sess.closing {
+                return;
+            }
+            if let Some(spec) = a.sess.spec.clone() {
+                a.connect_quietly(spec, true);
+            }
+        });
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// ★ 세션 층 → 탐색기 헤더 툴팁(107 §9-3 ⑤): 끝점마다 "끊긴 전용 세션 수"만 넘긴다(헤더 색은 끝점 층만 바꾼다). `sync_sess_ui` 끝에서.
+    pub(crate) fn sync_private_broken(&mut self) {
+        let mut counts: HashMap<String, u32> = HashMap::new();
+        for s in self.all_sess().filter(|s| !s.closing && s.connected) {
+            if let Some(ep) = ep_text(s.spec.as_ref()) {
+                let e = counts.entry(ep).or_insert(0);
+                if s.broken && s.is_private() {
+                    *e += 1;
+                }
+            }
+        }
+        self.explorer.set_private_broken_counts(&counts);
     }
 
     /// 같은 끝점의 실행 세션 전부에 투영(107 P2 "서버 단위 한 상태") — 바뀐 세션이 있으면 true · 로그 한 줄씩.
@@ -497,6 +636,57 @@ mod tests {
         r.retain_eps(|ep| ep == "a:1");
         assert!(!r.is_broken("c:3"));
         assert!(r.get("c:3").is_none());
+    }
+
+    /// ★ T-313 ⑥ 두 층 판정 MC/DC(107 §9-2): endpoint · sess_prev · ep_broken 세 조건이 각각 결과를 바꾼다.
+    #[test]
+    fn layer_merge_mcdc() {
+        // 기준: 세션 층 처음 끊김 · 끝점 멀쩡 → 세션 토스트만.
+        assert_eq!(
+            layer_merge(false, false, false),
+            LayerVerdict {
+                ep_down: false,
+                sess_toast: true
+            }
+        );
+        // endpoint 하나만 바꿈 → 끝점 층으로 · 세션 토스트 없음(끝점 토스트가 덮는다).
+        assert_eq!(
+            layer_merge(true, false, false),
+            LayerVerdict {
+                ep_down: true,
+                sess_toast: false
+            }
+        );
+        // sess_prev 하나만 바꿈 → 이미 끊긴 세션 = 토스트 다시 없음.
+        assert_eq!(
+            layer_merge(false, true, false),
+            LayerVerdict {
+                ep_down: false,
+                sess_toast: false
+            }
+        );
+        // ep_broken 하나만 바꿈 → 끝점이 이미 끊김이면 세션 토스트 없음(끝점 층 사건도 아님).
+        assert_eq!(
+            layer_merge(false, false, true),
+            LayerVerdict {
+                ep_down: false,
+                sess_toast: false
+            }
+        );
+        // 끝점 층은 세션 상태와 무관하게 늘 올린다.
+        assert!(layer_merge(true, true, true).ep_down);
+    }
+
+    #[test]
+    fn affected_names_shape() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(affected_names(&v(&[]), 3), "");
+        assert_eq!(affected_names(&v(&["A"]), 3), " (A)");
+        assert_eq!(affected_names(&v(&["A", "B", "C"]), 3), " (A · B · C)");
+        assert_eq!(
+            affected_names(&v(&["A", "B", "C", "D", "E"]), 3),
+            " (A · B · C +2)"
+        );
     }
 
     #[test]
