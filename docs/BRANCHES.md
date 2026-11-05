@@ -5,6 +5,7 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | filewin-clipboard | 2026-11-04 | 2026-11-04 → main ff(삭제) · **2e31e24f** | 1 | 아침 피드백 5건 — 파일 창 Ctrl+C/X/V·편집 메뉴(nexa-ui 257차 46adad6) · 편집 메뉴 배타·창 안 배치(258차 7f5e311) · winget PR 0.5.0 갱신 기록 · Import 창 라디오 가로·기존 표 콤보 · **D-455 기존 표 사전 판정**(`scripts/import-existing-e2e.sh` 15/15) · [journal 11-04 §13](journal/2026-11-04.md) |
+| t166-ext | 2026-11-05 | 2026-11-05 → main ff(삭제) · **0ca15b39** | 1 | T-166 E8 1조각 = `nsql ext check/pack/verify/list` · 크레이트 `nsql-ext`(파서·sha256 이관 · index.sig 검증) · D-462 후보 · V2 ✓(협업) · [journal 11-05 §3](journal/2026-11-05.md) |
 | toast-cursor | 2026-11-05 | 2026-11-05 → main ff(삭제) · **9c100d16** | 1 | 토스트 버튼 커서 = 손가락 · 본문 = 화살표(`cursor_hint`) · 시험 1 · V2 ✓(협업) · [journal 11-05 §2](journal/2026-11-05.md) |
 | t313-two-layer | 2026-11-05 | 2026-11-05 → main ff(삭제) · **f4b4117b** | 1 | T-313 ⑥ 두 층 모델 = `layer_merge` MC/DC · 끝점 토스트 영향 목록 · 세션 층 토스트 · 헤더 툴팁 · D-461 후보 · V1·V2 ✓(협업) · [journal 11-04 §19](journal/2026-11-04.md) |
 | t178-meta-keys | 2026-11-04 | 2026-11-04 → main ff(삭제) · **59d2f518** | 1 | T-178 종결 = 컬럼 키 비트(PK/FK/UQ) 전파 `set_detail`/`set_columns`(`key_bits_for`) · 시험 1 · V2 ✓(협업) · [journal 11-04 §18](journal/2026-11-04.md) |
