@@ -124,7 +124,10 @@ pub(crate) fn set_window_opacity_pct(w: &Window, pct: u8) {
     #[cfg(target_os = "macos")]
     {
         if let Some(nsw) = ns_window(w) {
-            nsw.setAlphaValue(f64::from(opacity_alpha(pct)) / 255.0);
+            // SAFETY: 메인 스레드(winit 사건 루프) · winit이 준 살아 있는 NSWindow · 알파 값만 바꾼다(CI macOS 11-07: objc2-app-kit 0.2에서 unsafe fn).
+            unsafe {
+                nsw.setAlphaValue(f64::from(opacity_alpha(pct)) / 255.0);
+            }
         }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
