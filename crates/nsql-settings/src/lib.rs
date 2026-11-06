@@ -2498,6 +2498,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 행 식별 배지(T-231 ③ · 87 §13-7 · 11-07): 1급 키 열 `KEY` · 2급 모서리 `RID` · 3급 모서리 `ALL`.
+    Entry {
+        key: "grid.col_key_icons",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridColKeyIcons,
+        desc: Msg::DescGridColKeyIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "grid.filter_funnel",
         cat: Msg::CatGridFilter,

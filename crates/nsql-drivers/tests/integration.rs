@@ -455,6 +455,66 @@ fn mssql_select_into_row_guard() {
     );
 }
 
+/// ★ T-231 ②(11-07 · 87 §13-3·§14): PG 2급(ctid+xmin) 적용 = 사전 검사(COUNT=1) + 영향 1행 · UPDATE 뒤 ctid/xmin이 바뀌므로 **낡은
+/// 식별자**로 다시 적용하면 사전 검사 0행 → 아무것도 쓰지 않는다(다른 세션이 먼저 고친 행 = 같은 길 · xmin 동시성 검사).
+#[test]
+fn pg_ctid_xmin_apply_precheck_blocks_stale_rows() {
+    use nsql_core::ExecRequest;
+    use nsql_run::{ApplyPhase, ApplyStmt};
+    let Some(mut r) = runner_for("NSQL_PG_URL", Dialect::Postgres) else {
+        return;
+    };
+    run(
+        &mut r,
+        "CREATE TEMP TABLE nsql_it_ctid (v int);\nINSERT INTO nsql_it_ctid VALUES (1), (1);\n",
+    );
+    let ev = run(
+        &mut r,
+        "SELECT ctid::text, xmin::text FROM nsql_it_ctid ORDER BY ctid LIMIT 1;\n",
+    );
+    let rs = first_rs(&ev).expect("ctid row");
+    let (ctid, xmin) = match (&rs.rows[0][0], &rs.rows[0][1]) {
+        (Value::Str(a), Value::Str(b)) => (a.clone(), b.clone()),
+        other => panic!("ctid/xmin as text: {other:?}"),
+    };
+    let stmt = |ctid: &str, xmin: &str| {
+        ApplyStmt {
+        req: ExecRequest {
+            sql: format!(
+                "UPDATE nsql_it_ctid SET v = 2 WHERE ctid = '{ctid}'::tid AND xmin = '{xmin}'::xid"
+            ),
+            params: Vec::new(),
+        },
+        guard: Some(ExecRequest {
+            sql: format!(
+                "SELECT COUNT(*) FROM nsql_it_ctid WHERE ctid = '{ctid}'::tid AND xmin = '{xmin}'::xid"
+            ),
+            params: Vec::new(),
+        }),
+        label: "row 1".into(),
+    }
+    };
+    let rep = r.apply_changes(&[stmt(&ctid, &xmin)]);
+    assert!(
+        rep.error.is_none() && rep.done == 1 && rep.affected == vec![1],
+        "{rep:?}"
+    );
+    // 같은(낡은) ctid·xmin으로 다시 → 사전 검사 0행 → 쓰기 0 · 롤백.
+    let rep2 = r.apply_changes(&[stmt(&ctid, &xmin)]);
+    let err = rep2
+        .error
+        .as_ref()
+        .expect("stale identifier must be refused");
+    assert_eq!(err.phase, ApplyPhase::PreCheck, "{rep2:?}");
+    assert_eq!(rep2.done, 0, "{rep2:?}");
+    let ev = run(&mut r, "SELECT COUNT(*) FROM nsql_it_ctid WHERE v = 2;\n");
+    assert_eq!(
+        first_rs(&ev).expect("count").rows[0][0],
+        Value::Int(1),
+        "둘째 적용은 아무것도 쓰지 않았다"
+    );
+}
+
 /// D-139(OUT 바인드 없는 방언): PostgreSQL `EXEC SELECT … INTO` = 자리 순서로 받고 0행·여러 행은 오류.
 #[test]
 fn pg_select_into_row_policy() {

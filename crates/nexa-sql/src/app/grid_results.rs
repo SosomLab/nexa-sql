@@ -571,6 +571,8 @@ impl App {
         // 열 머리 유형 아이콘(사용자 10-07 · 성능 향상 모드 = BOOST off).
         let ticons = self.settings.flag("grid.col_type_icons");
         self.all_grids().for_each(|g| g.set_type_icons(ticons));
+        let kicons = self.settings.flag("grid.col_key_icons");
+        self.all_grids().for_each(|g| g.set_key_icons(kicons));
         let popup_rows = self.settings.int("grid.filter_popup_rows").clamp(3, 40) as usize;
         self.all_grids()
             .for_each(|g| g.set_filter_popup_rows(popup_rows));

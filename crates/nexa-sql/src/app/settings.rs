@@ -801,6 +801,7 @@ impl App {
             | "grid.filter_pick_max"
             | "grid.filter_strip"
             | "grid.col_type_icons"
+            | "grid.col_key_icons"
             | "grid.filter_server"
             | "grid.filter_fill_pages"
             | "editor.quote_idents" => self.apply_grid_edit_cfg(),

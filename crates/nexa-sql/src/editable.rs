@@ -130,9 +130,13 @@ pub(crate) fn classify(
         if let Some(v) = find(&k.pk) {
             return Tier::Constraint(v);
         }
+        // ★ 87 §13-1 "NOT NULL UNIQUE만 1급"(T-231 ① · 11-07): NULL 허용 열이 든 UK는 NULL 행끼리 겹칠 수 있어 행 하나를 못 가른다 —
+        //   종전엔 UK를 전부 1급으로 봤다(사전 검사 COUNT=1이 막아 주지만 판정이 틀림). 모르면(`nullable` 기본 true) 보수적으로 제외.
         for (_, u) in &k.unique {
             if let Some(v) = find(u) {
-                return Tier::Constraint(v);
+                if v.iter().all(|&i| !cols[i].spec.nullable) {
+                    return Tier::Constraint(v);
+                }
             }
         }
         // 1급-보완: 키는 있는데 열이 빠졌다 → 빠진 키 열만 주입(PK 우선 · 없으면 첫 UK).
@@ -251,11 +255,31 @@ mod tests {
 
     #[test]
     fn tier1_unique_when_pk_missing_cols() {
-        // PK 열은 빠졌고 UK 열은 있다 → UK가 1급(주입보다 먼저).
+        // PK 열은 빠졌고 **NOT NULL** UK 열은 있다 → UK가 1급(주입보다 먼저).
         let k = keys(&["SEQ"], &[&["NAME"]]);
+        let mut cs = cols3();
+        cs[1].spec.nullable = false;
+        assert_eq!(
+            classify(Dialect::Oracle, &cs, Some(&k), &Policy::eager(), false),
+            Tier::Constraint(vec![1])
+        );
+        // ★ T-231 ①(MC/DC · 87 §13-1): 같은 UK라도 열이 NULL 허용(또는 모름)이면 1급이 아니다 → 빠진 PK 주입(1급-보완)으로.
         assert_eq!(
             classify(Dialect::Oracle, &cols3(), Some(&k), &Policy::eager(), false),
-            Tier::Constraint(vec![1])
+            Tier::NeedHiddenKeys(vec!["SEQ".to_string()])
+        );
+        // 복합 UK는 열 **전부** NOT NULL이어야 한다.
+        let k2 = keys(&[], &[&["ID", "NAME"]]);
+        let mut one = cols3();
+        one[0].spec.nullable = false;
+        assert_ne!(
+            classify(Dialect::Oracle, &one, Some(&k2), &Policy::default(), false),
+            Tier::Constraint(vec![0, 1])
+        );
+        one[1].spec.nullable = false;
+        assert_eq!(
+            classify(Dialect::Oracle, &one, Some(&k2), &Policy::default(), false),
+            Tier::Constraint(vec![0, 1])
         );
     }
 

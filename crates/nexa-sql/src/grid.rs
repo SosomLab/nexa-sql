@@ -538,6 +538,9 @@ pub(crate) struct Grid {
     cond_quote_always: bool,
     /// ★ 열 머리 유형 표시(설정 `grid.col_type_icons` · 성능 향상 모드 = 끔 · 사용자 10-07) — T-301 = 2글자 배지.
     type_icons: bool,
+    /// ★ 행 식별 배지(설정 `grid.col_key_icons` · T-231 ③ · 87 §13-7 · 11-07): 1급 키 열 이름 왼쪽 `KEY` · 2급 = 모서리 칸 `RID` ·
+    ///   3급(전 열 비교) = 모서리 칸 `ALL`(빨강 경고).
+    key_icons: bool,
     /// 열별 배지 캐시(글자 · 색조) — 결과가 바뀌면 비운다(그리기마다 표본을 다시 보지 않게).
     type_badges: Vec<(&'static str, BadgeTone)>,
     /// SQL 복사의 대상 테이블(실행문에서 추정 · 없으면 `T`).
@@ -751,6 +754,7 @@ impl Default for Grid {
             dialect: Dialect::Oracle,
             cond_quote_always: false,
             type_icons: false,
+            key_icons: false,
             type_badges: Vec::new(),
             source_table: None,
             source_sql: String::new(),
@@ -911,6 +915,7 @@ impl Grid {
             // 10-07 bin47 결함: 새 설정은 여기도 함께(안 그러면 새 탭 그리드만 기본값) — 열 이름 인용 · 유형 아이콘.
             cond_quote_always: self.cond_quote_always,
             type_icons: self.type_icons,
+            key_icons: self.key_icons,
             filter_server: self.filter_server,
             fill_pages: self.fill_pages,
             fill_pages_left: self.fill_pages,
@@ -4132,6 +4137,14 @@ impl Grid {
     pub(crate) fn set_type_icons(&mut self, on: bool) {
         if self.type_icons != on {
             self.type_icons = on;
+            self.dirty = true;
+        }
+    }
+
+    /// 설정 `grid.col_key_icons`(T-231 ③) — 행 식별 배지(KEY · RID · ALL).
+    pub(crate) fn set_key_icons(&mut self, on: bool) {
+        if self.key_icons != on {
+            self.key_icons = on;
             self.dirty = true;
         }
     }
@@ -8017,6 +8030,31 @@ impl Grid {
             } else {
                 0
             };
+            // ★ 키 배지(T-231 ③): 1급(PK/UK) 키 열 = 이름 왼쪽 `KEY`(파랑 · 유형 배지 뒤 · 같은 글꼴).
+            let key_w = if self.key_icons
+                && self.edit.as_ref().is_some_and(|e| {
+                    e.keys_ready && e.key_kind == KeyKind::Constraint && e.key_cols.contains(&ci)
+                }) {
+                dc.select_font_sized(FontSlot::Base, true, -4.0);
+                let bw = dc.text_width("KEY");
+                let sp = dc.text_width(" ");
+                let bx = x + pad + icon_w;
+                if bx + bw + sp < x + cw - pad {
+                    let by = dc.text_center_y(header.y, header.h);
+                    dc.text(
+                        bx,
+                        by,
+                        Rect::new(bx, header.y, bw, header.h).intersection(&hcells),
+                        "KEY",
+                        badge_color(BadgeTone::Blue, th),
+                    );
+                }
+                dc.select_font(FontSlot::Base, false);
+                bw + sp
+            } else {
+                0
+            };
+            let icon_w = icon_w + key_w;
             let name_clip = if filtered_col || sort_pos.is_some() || want_funnel {
                 let g = self.funnel_g();
                 let gap = (g / 3).max(2);
@@ -8106,12 +8144,37 @@ impl Grid {
             x += cw;
         }
         if self.gutter_w > 0 {
-            dc.fill_rect(
-                Rect::new(b.x, header.y, self.gutter_w, header.h),
-                th.chrome_bg,
-            );
+            let corner = Rect::new(b.x, header.y, self.gutter_w, header.h);
+            dc.fill_rect(corner, th.chrome_bg);
             let hy = dc.text_center_y(header.y, header.h);
-            dc.text(b.x + pad, hy, header, "#", th.text_dim);
+            // ★ 행 식별 배지(T-231 ③ · 87 §13-7 "ROWID 배지" · 11-07): 행번호 머리(`#`) 자리에 2급 = `RID`(파랑) · 3급 = `ALL`(빨강 = 전 열 비교
+            //   경고) — 숨은 물리 열은 화면에 없어 표 단위로. 들어가지 않으면 `#`. (처음엔 헤더 배경 직후에 그려 이 칸이 덮었다 · 협업 V1.)
+            let tag = if self.key_icons {
+                self.edit
+                    .as_ref()
+                    .filter(|e| e.keys_ready)
+                    .and_then(|e| match e.key_kind {
+                        KeyKind::Physical => Some(("RID", BadgeTone::Blue)),
+                        KeyKind::AllColumns => Some(("ALL", BadgeTone::Red)),
+                        KeyKind::Constraint => None,
+                    })
+            } else {
+                None
+            };
+            let mut drawn = false;
+            if let Some((text, tone)) = tag {
+                dc.select_font_sized(FontSlot::Base, true, -4.0);
+                let bw = dc.text_width(text);
+                if bw + 2 <= self.gutter_w {
+                    let bx = b.x + (self.gutter_w - bw) / 2;
+                    dc.text(bx, hy, corner, text, badge_color(tone, th));
+                    drawn = true;
+                }
+                dc.select_font(FontSlot::Base, false);
+            }
+            if !drawn {
+                dc.text(b.x + pad, hy, header, "#", th.text_dim);
+            }
         }
         for (ci, w) in grow {
             if let Some(cw) = self.col_w.get_mut(ci) {
