@@ -55,6 +55,8 @@ pub(crate) enum Cmd {
         key: u64,
         /// 실행문 + 사전 검사문(87 §14 데이터 보호 불변식 · 영향 1행은 늘 강제).
         stmts: Vec<nsql_run::ApplyStmt>,
+        /// ★ 집합 사전 검사(T-231 ④ · 서버 키 중복 · 비어 있으면 없음).
+        pre: Vec<nsql_run::ApplyPre>,
         /// ★ 적용이 성공하면 같은 세션에서 바로 돌릴 행 단위 재조회(87 §12-4 · T-230 · 비어 있으면 없음).
         refetch: Vec<nsql_core::ExecRequest>,
     },
@@ -1672,6 +1674,7 @@ pub(crate) fn spawn(
                     Cmd::Apply {
                         key,
                         stmts,
+                        pre,
                         refetch,
                     } => {
                         let alive = ensure_alive(
@@ -1687,7 +1690,7 @@ pub(crate) fn spawn(
                             &mut emit,
                         );
                         let rep = match alive {
-                            Ok(()) => runner.apply_changes(&stmts),
+                            Ok(()) => runner.apply_changes_pre(&pre, &stmts),
                             Err(m) => nsql_run::ApplyReport {
                                 total: stmts.len(),
                                 error: Some(nsql_run::ApplyError {

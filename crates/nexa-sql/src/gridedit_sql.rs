@@ -790,6 +790,111 @@ pub(crate) fn value_text(v: &Value) -> Option<String> {
 }
 
 /// 변경 집합 → 문장 목록(DELETE → UPDATE → INSERT). `original(row, col)` = 원본 셀(키 비교 · 원본 값).
+/// ★ 서버 키 사전 검사문(T-231 ④ · 87 §13-2 ① "서버 검사 옵션" · 11-07 · 순수): 적용 대기 변경에서 **바꾼 키 값**(기존 행)과 **추가 행의
+/// 키**가 서버에 이미 있는지 한 왕복으로 — `SELECT COUNT(*) FROM t WHERE (k1 = ? AND k2 = ?) OR (…)` · 기대 0. 제외 = 키 안 바꾼 행 ·
+/// NULL/빈 키(서버 기본값·NULL은 유일성 대상 아님) · 삭제 행의 원본 키와 같은 값(DELETE가 먼저 가므로 비게 된다) · 식 키(`now` 등 = 검사 불가 → 전체 None).
+/// 키 맞교환(A↔B)도 서버에 B가 있으니 걸린다 → 87 §13-2 ③ "두 번에 나눠 적용" 안내가 된다. 검사할 것이 없으면 None.
+pub(crate) fn server_key_check(
+    inp: &GenInput<'_>,
+    cs: &ChangeSet,
+    original: &dyn Fn(usize, usize) -> Value,
+) -> Option<ExecRequest> {
+    if inp.key_cols.is_empty() {
+        return None;
+    }
+    let d = inp.dialect;
+    let text_tuple = |vals: &[Option<String>]| -> String {
+        vals.iter()
+            .map(|v| v.clone().unwrap_or_else(|| "\u{0}NULL".into()))
+            .collect::<Vec<_>>()
+            .join("\u{1}")
+    };
+    let deleted: std::collections::HashSet<String> = cs
+        .deleted_rows()
+        .map(|row| {
+            let vals: Vec<Option<String>> = inp
+                .key_cols
+                .iter()
+                .map(|&k| value_text(&original(row, k)))
+                .collect();
+            text_tuple(&vals)
+        })
+        .collect();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut tuples: Vec<Vec<Option<String>>> = Vec::new();
+    let mut touched: Vec<usize> = cs.edits().map(|((r, _), _)| *r).collect();
+    touched.sort_unstable();
+    touched.dedup();
+    for row in touched {
+        if cs.is_deleted(RowRef::Existing(row)) {
+            continue;
+        }
+        let mut changed = false;
+        let vals: Vec<Option<String>> = inp
+            .key_cols
+            .iter()
+            .map(|&k| match cs.cell(RowRef::Existing(row), k) {
+                Some(v) => {
+                    changed = true;
+                    v.clone()
+                }
+                None => value_text(&original(row, k)),
+            })
+            .collect();
+        if !changed || vals.iter().any(Option::is_none) {
+            continue;
+        }
+        let t = text_tuple(&vals);
+        if deleted.contains(&t) || !seen.insert(t) {
+            continue;
+        }
+        tuples.push(vals);
+    }
+    for (_, ir) in cs.inserted_rows() {
+        let vals: Vec<Option<String>> = inp
+            .key_cols
+            .iter()
+            .map(|&c| ir.cells.get(c).cloned().unwrap_or(None))
+            .collect();
+        if vals.iter().any(|v| v.as_deref().is_none_or(str::is_empty)) {
+            continue;
+        }
+        let t = text_tuple(&vals);
+        if deleted.contains(&t) || !seen.insert(t) {
+            continue;
+        }
+        tuples.push(vals);
+    }
+    if tuples.is_empty() {
+        return None;
+    }
+    let mut g = Sink::new(d);
+    g.text(&format!("SELECT COUNT(*) FROM {} WHERE ", inp.table));
+    for (i, vals) in tuples.iter().enumerate() {
+        if i > 0 {
+            g.text(" OR ");
+        }
+        g.text("(");
+        for (j, (&k, v)) in inp.key_cols.iter().zip(vals).enumerate() {
+            if j > 0 {
+                g.text(" AND ");
+            }
+            let c = &inp.cols[k];
+            let b = bound_of(v, c.spec.kind, d);
+            if matches!(b, Bound::Expr(_)) {
+                return None;
+            }
+            let lhs = c.where_expr.clone().unwrap_or_else(|| q(d, &c.name));
+            g.key_eq(&lhs, b, c.bind_cast);
+        }
+        g.text(")");
+    }
+    Some(ExecRequest {
+        sql: g.sql,
+        params: g.params,
+    })
+}
+
 pub(crate) fn generate(
     inp: &GenInput<'_>,
     cs: &ChangeSet,
@@ -1227,6 +1332,65 @@ mod tests {
             2 => Value::Str("2026-01-01 00:00:00".into()),
             _ => Value::Null,
         }
+    }
+
+    /// ★ T-231 ④: 서버 키 사전 검사문 = 바꾼 키 값·추가 행 키만 · 키 안 바꾼 행·빈 키·삭제 행 원본과 같은 값 제외 · 없으면 None.
+    #[test]
+    fn server_key_check_collects_new_key_tuples_only() {
+        let cols = cols();
+        let inp = GenInput {
+            dialect: Dialect::Oracle,
+            table: "EMP",
+            cols: &cols,
+            key_cols: &[0],
+            concurrency: Concurrency::Key,
+            blobs: None,
+        };
+        let mut cs = ChangeSet::new(4);
+        // 행 1의 키(2 → 7) · 행 0은 키 아닌 열만 · 행 2 삭제 · 추가 행 키 9 · 추가 행 키 빈 글(서버 기본값 → 제외).
+        cs.set_cell(
+            RowRef::Existing(1),
+            0,
+            Some("7".into()),
+            Some(&Some("2".into())),
+        );
+        cs.set_cell(
+            RowRef::Existing(0),
+            1,
+            Some("kim".into()),
+            Some(&Some("n0".into())),
+        );
+        cs.toggle_delete(RowRef::Existing(2));
+        cs.insert_row(None, vec![Some("9".into()), Some("new".into()), None, None]);
+        cs.insert_row(
+            None,
+            vec![Some(String::new()), Some("x".into()), None, None],
+        );
+        let g = server_key_check(&inp, &cs, &orig).expect("check");
+        assert_eq!(
+            g.sql,
+            "SELECT COUNT(*) FROM EMP WHERE (\"ID\" = :P1) OR (\"ID\" = :P2)"
+        );
+        assert_eq!(g.params.len(), 2);
+        // 키 편집도 추가 행도 없으면 None.
+        let mut cs2 = ChangeSet::new(4);
+        cs2.set_cell(
+            RowRef::Existing(0),
+            1,
+            Some("kim".into()),
+            Some(&Some("n0".into())),
+        );
+        assert!(server_key_check(&inp, &cs2, &orig).is_none());
+        // 삭제 행의 키(3)로 바꾸는 것은 DELETE가 먼저라 검사에서 뺀다 → None.
+        let mut cs3 = ChangeSet::new(4);
+        cs3.toggle_delete(RowRef::Existing(2));
+        cs3.set_cell(
+            RowRef::Existing(1),
+            0,
+            Some("3".into()),
+            Some(&Some("2".into())),
+        );
+        assert!(server_key_check(&inp, &cs3, &orig).is_none());
     }
 
     #[test]

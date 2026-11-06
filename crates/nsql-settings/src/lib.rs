@@ -2290,6 +2290,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(GE_CONC_OPTS),
         default: "key",
     },
+    // ★ 서버 키 사전 검사(T-231 ④ · 87 §13-2 ① · 11-07): 바꾼/추가한 키 값이 서버에 이미 있으면 적용 전 거절(왕복 1 · 1급 키만).
+    Entry {
+        key: "grid.edit_key_check",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditKeyCheck,
+        desc: Msg::DescGridEditKeyCheck,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "grid.lob_view_max_mb",
         cat: Msg::CatGrid,

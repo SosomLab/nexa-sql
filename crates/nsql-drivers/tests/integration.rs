@@ -508,9 +508,10 @@ fn pg_ctid_xmin_apply_precheck_blocks_stale_rows() {
     assert_eq!(err.phase, ApplyPhase::PreCheck, "{rep2:?}");
     assert_eq!(rep2.done, 0, "{rep2:?}");
     let ev = run(&mut r, "SELECT COUNT(*) FROM nsql_it_ctid WHERE v = 2;\n");
+    // COUNT(bigint)는 드라이버가 Str로 돌려주기도 한다(CI 11-07 `Str("1")`) → 글로 비교.
     assert_eq!(
-        first_rs(&ev).expect("count").rows[0][0],
-        Value::Int(1),
+        first_rs(&ev).expect("count").rows[0][0].display(),
+        "1",
         "둘째 적용은 아무것도 쓰지 않았다"
     );
 }

@@ -43,6 +43,16 @@ pub struct ApplyStmt {
     pub label: String,
 }
 
+/// ★ [`Runner::apply_changes_pre`]의 **집합 사전 검사**(T-231 ④ · 87 §13-2 "서버 검사 옵션" · 11-07): `SELECT COUNT(*)`의 값이
+/// `expect`와 다르면 아무것도 쓰지 않는다 — 예: 바꾼/추가한 키 값이 서버에 이미 있으면 0이어야 할 수가 1 이상(키 맞교환도 여기 걸린다 →
+/// "두 번에 나눠 적용" · 87 §13-2 ③).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplyPre {
+    pub req: ExecRequest,
+    pub expect: u64,
+    pub label: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyPhase {
     Begin,
@@ -1591,6 +1601,12 @@ impl Runner {
     /// 수동 모드 → **세이브포인트**로 우리 부분만 되돌린다(사용자의 앞선 작업은 열린 채) · 되돌리기까지 실패하면 "ROLLBACK 필요"를 보고.
     /// ④ 성공 = 자동 커밋 모드만 커밋 · 수동은 열어 둔다. 원인은 `ApplyReport.error`(문장 index · 단계 · 상세)로.
     pub fn apply_changes(&mut self, stmts: &[ApplyStmt]) -> ApplyReport {
+        self.apply_changes_pre(&[], stmts)
+    }
+
+    /// [`Self::apply_changes`] + 집합 사전 검사 `pre`(T-231 ④): ⓪ `pre` 전부(값 = `expect`) → ① 문장별 사전 검사 → ② 실행 → ③ 마무리.
+    /// ⓪이 하나라도 어긋나면 ①②를 건너뛰고(쓰기 0) ③에서 되돌린다.
+    pub fn apply_changes_pre(&mut self, pre: &[ApplyPre], stmts: &[ApplyStmt]) -> ApplyReport {
         let mut rep = ApplyReport {
             total: stmts.len(),
             ..ApplyReport::default()
@@ -1648,8 +1664,59 @@ impl Runner {
                 savepoint = run(sess, sql).is_ok();
             }
         }
+        // ⓪ 집합 사전 검사(T-231 ④): 서버에 이미 있는 키 값 등 — 어긋나면 ①②를 건너뛴다(쓰기 0).
+        for p in pre {
+            let t0 = Instant::now();
+            match sess.execute(&p.req) {
+                Ok(r) => {
+                    let n = count_of(&r);
+                    rep.log.push(ApplyLogItem {
+                        sql: p.req.sql.clone(),
+                        binds: txlog::TxBind::from_params(&p.req.params, dialect),
+                        guard: true,
+                        elapsed: t0.elapsed(),
+                        rows: n,
+                        error: None,
+                    });
+                    if n != Some(p.expect) {
+                        rep.error = Some(ApplyError {
+                            index: 0,
+                            phase: ApplyPhase::PreCheck,
+                            // 라벨은 호스트가 앞에 붙인다(`Pre-check failed … - {label}: {message}` · 협업 V1 11-07 중복 관찰).
+                            message: format!(
+                                "{} row(s) found (expected {})",
+                                n.map_or_else(|| "?".to_string(), |v| v.to_string()),
+                                p.expect
+                            ),
+                            label: p.label.clone(),
+                        });
+                        break;
+                    }
+                }
+                Err(e) => {
+                    rep.log.push(ApplyLogItem {
+                        sql: p.req.sql.clone(),
+                        binds: txlog::TxBind::from_params(&p.req.params, dialect),
+                        guard: true,
+                        elapsed: t0.elapsed(),
+                        rows: None,
+                        error: Some(e.message.clone()),
+                    });
+                    rep.error = Some(ApplyError {
+                        index: 0,
+                        phase: ApplyPhase::PreCheck,
+                        message: e.message,
+                        label: p.label.clone(),
+                    });
+                    break;
+                }
+            }
+        }
         // ① 사전 검사 — 쓰기 전에 대상 행 수 전부 확인.
         for (i, st) in stmts.iter().enumerate() {
+            if rep.error.is_some() {
+                break;
+            }
             let Some(g) = st.guard.as_ref() else { continue };
             let t0 = Instant::now();
             let n = match sess.execute(g) {
@@ -5995,6 +6062,30 @@ mod apply_changes_tests {
         );
         assert!(l.contains(&"ROLLBACK".to_string()));
         assert!(rep.rolled_back && !rep.committed && rep.done == 0 && !rep.rollback_needed);
+    }
+
+    /// ★ T-231 ④(11-07): 집합 사전 검사 — 기대값과 다르면 ①②를 건너뛰고 쓰기 0 · 롤백 · 맞으면 종전과 같이 진행.
+    #[test]
+    fn pre_check_blocks_before_any_write() {
+        let pre = |expect: u64| ApplyPre {
+            req: ExecRequest {
+                sql: "SELECT COUNT(*) FROM t WHERE k IN (1)".into(),
+                params: Vec::new(),
+            },
+            expect,
+            label: "server key check".into(),
+        };
+        let (mut r, log) = runner(1, vec![1], true);
+        let rep = r.apply_changes_pre(&[pre(0)], &[stmt("INSERT INTO t VALUES (1)", false)]);
+        let e = rep.error.expect("error");
+        assert_eq!(e.phase, ApplyPhase::PreCheck);
+        assert!(e.message.contains("expected 0"), "{}", e.message);
+        let l = log.lock().expect("log").clone();
+        assert!(l.iter().all(|s| !s.starts_with("INSERT")), "쓰기 0: {l:?}");
+        assert!(rep.rolled_back && rep.done == 0);
+        let (mut r2, _) = runner(1, vec![1], true);
+        let rep2 = r2.apply_changes_pre(&[pre(1)], &[stmt("INSERT INTO t VALUES (1)", false)]);
+        assert!(rep2.error.is_none() && rep2.done == 1, "{rep2:?}");
     }
 
     #[test]

@@ -166,7 +166,8 @@ impl App {
                     stmts,
                     preview,
                     refetch,
-                } => self.grid_edit_apply(&table, stmts, &preview, refetch),
+                    pre,
+                } => self.grid_edit_apply(&table, stmts, pre, &preview, refetch),
             }
         }
     }
@@ -241,6 +242,7 @@ impl App {
         &mut self,
         table: &str,
         stmts: Vec<nsql_run::ApplyStmt>,
+        pre: Vec<nsql_run::ApplyPre>,
         preview: &str,
         refetch: Vec<nsql_core::ExecRequest>,
     ) {
@@ -269,6 +271,7 @@ impl App {
             worker::Cmd::Apply {
                 key: self.grid_tab,
                 stmts,
+                pre,
                 refetch,
             },
         );
@@ -539,6 +542,7 @@ impl App {
                 Some("all_old") => gridedit_sql::Concurrency::AllOld,
                 _ => gridedit_sql::Concurrency::Key,
             },
+            key_check: self.settings.flag("grid.edit_key_check"),
         };
         self.all_grids().for_each(|g| g.set_edit_cfg(cfg.clone()));
         // 정규식 필터 값 목록 상한(사용자 09-30 · `grid.filter_list_max`) — 같은 적용 길에 얹는다(시작 · grid 편집 키 변경).

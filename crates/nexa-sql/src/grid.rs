@@ -231,6 +231,8 @@ pub(crate) struct EditCfg {
     pub all_cols: bool,
     /// 낙관적 동시성(`grid.edit_concurrency`).
     pub concurrency: Concurrency,
+    /// ★ 서버 키 사전 검사(`grid.edit_key_check` · T-231 ④ · 87 §13-2 ①): 바꾼/추가한 키 값이 서버에 이미 있으면 적용 전 거절(1급 키만).
+    pub key_check: bool,
 }
 
 impl Default for EditCfg {
@@ -243,6 +245,7 @@ impl Default for EditCfg {
             rowid: false,       // 09-27 D-225
             all_cols: true,
             concurrency: Concurrency::Key,
+            key_check: true,
         }
     }
 }
@@ -260,6 +263,8 @@ pub(crate) enum EditRequest {
         preview: String,
         /// 적용 성공 뒤 같은 세션에서 돌릴 행 단위 재조회(수정·추가 행마다 하나 · 비어 있으면 전체 재조회 · 87 §12-4).
         refetch: Vec<nsql_core::ExecRequest>,
+        /// ★ 집합 사전 검사(T-231 ④ · 서버 키 중복 = 기대 0 · 비어 있으면 없음).
+        pre: Vec<nsql_run::ApplyPre>,
     },
     /// 읽기 전용 미리보기 창(SQL 미리보기).
     Preview {
@@ -1903,7 +1908,19 @@ impl Grid {
     }
 
     /// 변경 집합 → 문장(호스트가 실행).
-    fn generated(&self) -> Result<(Vec<gridedit_sql::EditStmt>, String, String), String> {
+    /// 적용 문장 묶음 = (문장들, 미리보기 글, 표 이름, 서버 키 사전 검사문(T-231 ④ · 1급 키 + 설정 켬 + 검사할 키 변경이 있을 때만)).
+    #[allow(clippy::type_complexity)]
+    fn generated(
+        &self,
+    ) -> Result<
+        (
+            Vec<gridedit_sql::EditStmt>,
+            String,
+            String,
+            Option<nsql_core::ExecRequest>,
+        ),
+        String,
+    > {
         let e = self.edit.as_ref().ok_or_else(String::new)?;
         let inp = GenInput {
             dialect: self.dialect,
@@ -1923,7 +1940,10 @@ impl Grid {
         };
         let stmts = gridedit_sql::generate(&inp, &e.cs, &orig)?;
         let preview = gridedit_sql::preview_text(&stmts, &e.target.table, e.key_kind);
-        Ok((stmts, preview, e.target.table.clone()))
+        let pre = (self.edit_cfg.key_check && e.key_kind == KeyKind::Constraint)
+            .then(|| gridedit_sql::server_key_check(&inp, &e.cs, &orig))
+            .flatten();
+        Ok((stmts, preview, e.target.table.clone(), pre))
     }
 
     fn request_preview(&mut self) {
@@ -1933,7 +1953,7 @@ impl Grid {
             return;
         }
         match self.generated() {
-            Ok((_, preview, _)) => self.edit_reqs.push(EditRequest::Preview {
+            Ok((_, preview, _, _)) => self.edit_reqs.push(EditRequest::Preview {
                 title: t(Msg::WinGePreview).to_string(),
                 text: preview,
             }),
@@ -2052,7 +2072,7 @@ impl Grid {
             return;
         }
         match self.generated() {
-            Ok((stmts, preview, table)) => {
+            Ok((stmts, preview, table, pre)) => {
                 // ★ 행 단위 재조회(87 §12-4 · T-230): 수정·추가 행마다 키로 다시 읽는 문장 — 하나라도 못 만들면 전부 비움(전체 재조회).
                 let mut refetch_rows: Vec<RowRef> = Vec::new();
                 let mut refetch: Vec<nsql_core::ExecRequest> = Vec::new();
@@ -2107,11 +2127,21 @@ impl Grid {
                         label: s.label,
                     })
                     .collect();
+                let pre: Vec<nsql_run::ApplyPre> = pre
+                    .map(|req| {
+                        vec![nsql_run::ApplyPre {
+                            req,
+                            expect: 0,
+                            label: t(Msg::GeServerKeyCheck).to_string(),
+                        }]
+                    })
+                    .unwrap_or_default();
                 self.edit_reqs.push(EditRequest::Apply {
                     table,
                     stmts: reqs,
                     preview,
                     refetch,
+                    pre,
                 });
                 self.sync_edit_tools();
             }
@@ -11436,7 +11466,7 @@ mod edit_key_path_tests {
         assert_eq!(g.col_order, vec![0, 1], "숨은 열은 화면 열 순서에 없다");
         assert!(!g.inject_pending());
         assert!(g.set_cell_for_test(0, 1, "y"));
-        let (st, _, _) = g.generated().expect("generate");
+        let (st, _, _, _) = g.generated().expect("generate");
         assert_eq!(st[0].req.sql, "UPDATE T SET \"C1\" = :P1 WHERE ROWID = :P2");
         assert_eq!(st[0].req.params[1].value, Value::Str("AAAB".into()));
         // 재조회(적용 뒤 requery)로 같은 문장이 다시 와도 계획은 살아 있다.
@@ -11597,7 +11627,7 @@ mod edit_key_path_tests {
             .is_some_and(|e| e.cols[2].hidden && e.cols[2].spec.read_only));
         assert_eq!(g.col_order, vec![0, 1]);
         assert!(g.set_cell_for_test(0, 0, "lee"));
-        let (st, _, _) = g.generated().expect("generate");
+        let (st, _, _, _) = g.generated().expect("generate");
         assert_eq!(
             st[0].req.sql,
             "UPDATE emp SET \"NAME\" = :P1 WHERE \"ID\" = :P2"
@@ -11803,7 +11833,7 @@ mod edit_key_path_tests {
             g.cur_text(RowRef::Existing(0), 1).as_deref(),
             Some("<px.bmp · 5 bytes>")
         );
-        let (st, _, _) = g.generated().expect("generate");
+        let (st, _, _, _) = g.generated().expect("generate");
         assert_eq!(st[0].req.params[0].value, Value::Bytes(bytes));
         assert_eq!(st[0].req.params[0].ty, nsql_core::VarType::Blob);
         // 글로 덮어쓰기 = 이진 폐기 · 5,000자는 CLOB 타입(길이 상한 없는 명세로).
@@ -11812,7 +11842,7 @@ mod edit_key_path_tests {
         g.set_cell_value(RowRef::Existing(0), 1, Some(long.clone()))
             .expect("text");
         assert!(g.cell_bytes(RowRef::Existing(0), 1).is_none());
-        let (st, _, _) = g.generated().expect("generate");
+        let (st, _, _, _) = g.generated().expect("generate");
         assert_eq!(st[0].req.params[0].ty, nsql_core::VarType::Clob);
         assert_eq!(st[0].req.params[0].value, Value::Str(long));
         // 값 보기 요청 = 편집 가능 · 이진 아님.
