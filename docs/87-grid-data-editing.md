@@ -342,7 +342,7 @@
 ### 13-2. 키 값을 수정할 때(유일성 위반)
 
 - WHERE는 **원본 키 값**으로 가므로 UPDATE 자체는 가능하다(지금 구현). 위반은 **서버 제약**에서 난다(ORA-00001 · PG 23505 · SQL Server 2627/2601 · SQLite 19 · MySQL 1062) → 우리는 한 트랜잭션이라 **전부 롤백 + 실패 문장의 행 표시**(자동 커밋 모드) · 수동 모드는 부분 적용 상태를 사용자가 커밋/롤백.
-- 클라이언트가 **막을 수는 없다**(다른 세션·화면 밖 행을 모른다). 할 수 있는 것 = ① **사전 검사(권장 · D-215)**: 변경 집합 안에서 같은 키가 둘 이상이 되면 적용 전 거부("키 중복 A=1이 2행") · 화면에 있는 행과의 충돌도 함께 · 서버 검사 옵션 = `SELECT 키 FROM t WHERE 키 IN (새 값들)`로 이미 있는 값 미리 확인(왕복 1). ② **순서**: 키를 비우거나 바꾸는 행을 먼저(DELETE → 키 변경 UPDATE → 나머지 UPDATE → INSERT)로 "옮겨 간 자리에 새 값이 들어오는" 흔한 경우를 통과시킨다. ③ **맞교환(A↔B)**: 임시 값 경유(2단계 UPDATE)는 도메인 밖 값이 필요해 일반해가 없다 → **지연 제약**이 있는 DBMS(Oracle `DEFERRABLE INITIALLY DEFERRED` · PG `SET CONSTRAINTS ALL DEFERRED` — 제약이 DEFERRABLE로 만들어졌을 때만 · SQL Server/MySQL/SQLite 없음)에서만 자동 처리 가능 · 그 밖은 "키 맞교환은 두 번에 나눠 적용" 안내.
+- 클라이언트가 **막을 수는 없다**(다른 세션·화면 밖 행을 모른다). 할 수 있는 것 = ① **사전 검사(권장 · D-215)**: 변경 집합 안에서 같은 키가 둘 이상이 되면 적용 전 거부("키 중복 A=1이 2행") · 화면에 있는 행과의 충돌도 함께 · 서버 검사 옵션 = `SELECT 키 FROM t WHERE 키 IN (새 값들)`로 이미 있는 값 미리 확인(왕복 1) — ✅ 11-07 `grid.edit_key_check`(기본 on · 집합 COUNT 사전 검사 · 0이 아니면 쓰기 0 · D-468 · [journal 11-07 §3](journal/2026-11-07.md)). ② **순서**: 키를 비우거나 바꾸는 행을 먼저(DELETE → 키 변경 UPDATE → 나머지 UPDATE → INSERT)로 "옮겨 간 자리에 새 값이 들어오는" 흔한 경우를 통과시킨다. ③ **맞교환(A↔B)**: 임시 값 경유(2단계 UPDATE)는 도메인 밖 값이 필요해 일반해가 없다 → **지연 제약**이 있는 DBMS(Oracle `DEFERRABLE INITIALLY DEFERRED` · PG `SET CONSTRAINTS ALL DEFERRED` — 제약이 DEFERRABLE로 만들어졌을 때만 · SQL Server/MySQL/SQLite 없음)에서만 자동 처리 가능 · 그 밖은 "키 맞교환은 두 번에 나눠 적용" 안내. → ✅ 11-07 **맞교환 = 거절 + 두 번에 나눠 적용 안내로 종결(지연 제약 자동 처리는 하지 않음 · D-468)**.
 - 정리: **키 열 편집은 허용**(DBeaver·DataGrip 동일) · 사전 중복 검사 + 순서 규칙 + 서버 오류의 행 표시가 대안이다.
 
 ### 13-3. DBMS별 행 식별자(확보 가능성)
@@ -388,7 +388,7 @@
 | 설정 | `grid.edit_hidden_keys`(on → D-225 기본 off · §15) · `grid.edit_rowid`(on → D-225 기본 off · 11-01 정합) · `grid.edit_all_cols`(on) · `grid.edit_concurrency`(key/key_old/all_old · 기본 key) | 끄면 그 등급을 건너뛴다(rowid 끔 = 3급 · all_cols 끔 = 읽기 전용) |
 | 시험 | 단위 = editable 5 · gridedit_sql +4(`analyze_alias` · `inject_hidden_columns` · `generate_physical_where_and_cast` · `key_edit_first_and_concurrency`) · grid +3(`physical_inject_requery_then_hidden_column` · `requery_failed_falls_back_to_all_columns` · `hidden_key_inject_when_pk_missing`) · E2E `scripts/mac-grid-edit-e2e.sh` ⑦ SQLite rowid = 완전 중복 행도 정확히 1행 ⑧ PK 빠진 결과 = 숨은 키 주입 · Oracle ⑨ 숨은 ID ⑩ 중복 행 ROWID(임시 표) | PG는 서버가 없어 단위 시험만(ctid/xmin 캐스트 문장 · 디코더) — Codespaces에서 실증 남음 |
 
-남음: ~~PG 실서버 실증~~ ✅ 10-10 E2E ⑤⑩ PG Physical(PASS 96/0 · [journal 10-10](journal/2026-10-10.md)) · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · 서버 사전 검사 옵션(`SELECT 키 FROM t WHERE 키 IN (새 값들)`) · 지연 제약 맞교환 · ~~상태줄/헤더 배지 "ROWID"~~ ✅ 11-07 `grid.col_key_icons`(1급 = 키 열 머리 `KEY` 파랑 · 2급 = 모서리 칸 `RID` 파랑 · 3급 = 모서리 `ALL` 빨강 · [journal 11-07 §2](journal/2026-11-07.md)) · 행 단위 재조회 = §12-4-a ✅(T-230).
+남음: ~~PG 실서버 실증~~ ✅ 10-10 E2E ⑤⑩ PG Physical(PASS 96/0 · [journal 10-10](journal/2026-10-10.md)) · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · ~~서버 사전 검사 옵션~~ ✅ 11-07 `grid.edit_key_check` · ~~지연 제약 맞교환~~ ✅ 거절 + 안내로 종결(D-468) · ~~상태줄/헤더 배지 "ROWID"~~ ✅ 11-07 `grid.col_key_icons`(1급 = 키 열 머리 `KEY` 파랑 · 2급 = 모서리 칸 `RID` 파랑 · 3급 = 모서리 `ALL` 빨강 · [journal 11-07 §2](journal/2026-11-07.md)) · 행 단위 재조회 = §12-4-a ✅(T-230).
 
 ---
 
