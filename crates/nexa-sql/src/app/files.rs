@@ -1166,6 +1166,8 @@ impl App {
                 let was_untitled = self.editors.path_of(self.editors.active()).is_none();
                 let obj_key = self.editors.doc_object(self.editors.active_id()).cloned();
                 self.editors.mark_saved(path);
+                // ★ 로컬 히스토리(C-1 · 19 §3): 저장 시점 스냅샷(같은 내용이면 건너뜀 · 설정 `history.*`).
+                self.history_on_save(path);
                 // ★ T-167 B5 복사본(D-167 · 69 §2-4): 객체 소스 탭을 파일로 저장 = 그 문서의 북마크를 파일 열쇠로 **복사**(출처 기억 ·
                 //   원본 유지) · 탭은 이제 파일이므로 객체 열쇠를 뗀다(다음 북마크는 파일 열쇠로).
                 if let Some(k) = obj_key {

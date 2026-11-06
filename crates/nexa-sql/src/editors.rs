@@ -208,6 +208,8 @@ pub(crate) struct Editors {
     minimap_diff: bool,
     /// ★ T-110 2-3(10-30): git 변경 줄을 미니맵에(`editor.minimap_git` · HEAD 본문 = 둘째 기준선).
     minimap_git: bool,
+    /// ★ git 변경 줄을 거터 띠에(`editor.git_gutter` · C-1 · 11-06).
+    git_gutter: bool,
     /// ★ 줄 간격(설정 `editor.line_height_mode`/`editor.line_height` + 글꼴 px · 전 탭 + 새 탭 · 134차 · docs/118).
     line_spacing: (nexa_ctl::LineSpacing, f32),
     minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
@@ -396,6 +398,7 @@ impl Editors {
             sections_pending: None,
             minimap_diff: false,
             minimap_git: false,
+            git_gutter: false,
             line_spacing: (nexa_ctl::LineSpacing::Auto, 0.0),
             minimap_box: (None, None, false),
             minimap_opts: (false, false, true),
@@ -539,6 +542,7 @@ impl Editors {
         tb.set_selection_alpha(self.sel_alpha);
         tb.set_minimap_diff(self.minimap_diff);
         tb.set_minimap_git(self.minimap_git);
+        tb.set_git_gutter(self.git_gutter);
         tb.set_line_spacing(self.line_spacing.0, self.line_spacing.1);
         tb.set_minimap_box(self.minimap_box.0, self.minimap_box.1, self.minimap_box.2);
         tb.set_minimap_behavior(self.minimap_opts.0, self.minimap_opts.1);
@@ -882,6 +886,19 @@ impl Editors {
         for b in &mut self.bufs {
             b.set_minimap_diff(on);
         }
+    }
+
+    /// ★ C-1(11-06): git 거터 띠 켬/끔을 모든 탭에(새 탭은 `make_box`) — 둘째 기준선은 미니맵 git과 공용이라 여기서 비우지 않는다.
+    pub(crate) fn set_git_gutter(&mut self, on: bool) {
+        self.git_gutter = on;
+        for b in &mut self.bufs {
+            b.set_git_gutter(on);
+        }
+    }
+
+    /// 이 열쇠의 뷰 탭이 열려 있는가(비교 탭 diff 뷰어 보관의 생사 판정 · C-1).
+    pub(crate) fn has_view_key(&self, key: &str) -> bool {
+        self.view_tabs.values().any(|k| k == key)
     }
 
     /// ★ T-110 2-3(10-30): git 변경 줄 미니맵 표식 켬/끔을 모든 탭에(끄면 둘째 기준선도 비운다 · 새 탭은 `make_box`).

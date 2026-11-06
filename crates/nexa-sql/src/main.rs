@@ -63,6 +63,7 @@ mod findobj_win;
 mod gitstat;
 mod grid;
 mod gridedit_sql;
+mod history;
 mod icon;
 mod imehint;
 mod imestate;
@@ -616,6 +617,8 @@ struct App {
     blink_origin: Instant,
     /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
     offset_warned: std::collections::HashSet<u64>,
+    /// ★ 엄격 교체 경고 토스트를 낸 결과 탭(D-463 · 실행당 1회 · 첫 페이지가 오면 지운다).
+    refetch_warned: std::collections::HashSet<u64>,
     /// `grid`가 속한 **결과 탭** id.
     /// 확장 레지스트리(in-process · docs/50 §4) + 매니저 팔레트가 고른 후보(설치 목록 · 저장소 목록).
     extensions: extensions::Registry,
@@ -675,8 +678,11 @@ struct App {
     ext_meta_wait: Option<((String, String), ExtRow)>,
     /// 확장 상세 뷰(편집기 자리에 그리는 전용 페이지) · 뷰 열쇠(`ext:<id>`)별 내용 · 마지막으로 그린 열쇠(바뀌면 스크롤 초기화).
     ext_view: ext_view::ExtView,
-    /// ★ 비교 탭(`compare:*` 뷰 탭)의 2-pane diff 뷰어(T-283 2단계 · `compare.view = diff`).
+    /// ★ 비교 탭(`compare:*` 뷰 탭)의 2-pane diff 뷰어(T-283 2단계 · `compare.view = diff`) — **활성 비교 탭**의 것(키 = `compare_diff_key`).
     diff_view: diff_view::DiffView,
+    /// ★ 비활성 비교 탭의 diff 뷰어 보관(C-1 · 11-06 · 두 버퍼·히스토리·객체 비교 탭이 함께 열려도 각자 내용 유지 · 결과 그리드의
+    /// `panels` 교체와 같은 꼴) — 탭 전환 때 `diff_views_sync`가 바꿔 끼우고 닫힌 탭의 것은 버린다.
+    diff_views: HashMap<String, diff_view::DiffView>,
     ext_details: HashMap<String, ext_view::ExtDetail>,
     ext_view_key: String,
     /// ★ 포인터 캡처(사용자 09-30 "드래그 컨트롤은 영역 밖에서 놓아도 기본 처리"): 누른 영역 — MouseUp까지 그 영역이 이동·놓임을 받는다.
@@ -2079,6 +2085,7 @@ fn main() {
         next_result_id: 1,
         result_area: Rect::new(0, 0, 0, 0),
         offset_warned: std::collections::HashSet::new(),
+        refetch_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::new(boot)),
         headless_dirty: std::cell::Cell::new(false),
         capture_req: None,
@@ -2116,6 +2123,7 @@ fn main() {
         ext_meta_wait: None,
         ext_view: ext_view::ExtView::default(),
         diff_view: diff_view::DiffView::default(),
+        diff_views: HashMap::new(),
         ext_details: HashMap::new(),
         ext_view_key: String::new(),
         press_capture: None,

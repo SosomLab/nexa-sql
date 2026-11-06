@@ -159,6 +159,35 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "f5",
         linux: "f5",
     },
+    // ★ 비교 탭 다음/이전 변경(19 §6-2 2단계 · C-1 11-06) · git 거터 변경 이동.
+    Command {
+        id: "compare.next",
+        label: Msg::MnCompareNext,
+        win: "f7",
+        mac: "f7",
+        linux: "f7",
+    },
+    Command {
+        id: "compare.prev",
+        label: Msg::MnComparePrev,
+        win: "shift+f7",
+        mac: "shift+f7",
+        linux: "shift+f7",
+    },
+    Command {
+        id: "git.next_hunk",
+        label: Msg::MnGitNextHunk,
+        win: "alt+f7",
+        mac: "alt+f7",
+        linux: "alt+f7",
+    },
+    Command {
+        id: "git.prev_hunk",
+        label: Msg::MnGitPrevHunk,
+        win: "shift+alt+f7",
+        mac: "shift+alt+f7",
+        linux: "shift+alt+f7",
+    },
     Command {
         id: "view.output",
         label: Msg::MnOutput,

@@ -147,6 +147,8 @@ impl App {
         self.apply_detail_mask();
         self.editors
             .set_diff_marks(self.settings.flag("editor.diff_marks"));
+        self.editors
+            .set_git_gutter(self.settings.flag("editor.git_gutter"));
         self.sync_run_stmt_button();
         nsql_drivers::set_mssql_encryption(self.settings.get("mssql.encrypt") == Some("login"));
         nsql_drivers::set_mysql_tls(

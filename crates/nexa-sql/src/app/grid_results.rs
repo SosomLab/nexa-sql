@@ -1573,6 +1573,7 @@ impl App {
         self.panels.retain(|id, _| alive.contains(id));
         self.tab_vars.retain(|id, _| alive.contains(id));
         self.object_tabs.retain(|id, _| alive.contains(id));
+        self.diff_views_sync();
         if cur != self.output_last_editor {
             self.output_last_editor = cur;
             self.output_on_tab_switch();

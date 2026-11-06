@@ -739,7 +739,19 @@ impl App {
             Ok((rs, more, elapsed)) => {
                 let n = rs.rows.len().to_string();
                 let secs = format!("{:.3}", elapsed.as_secs_f64());
+                // ★ 실행당 1회 경고의 단위(D-463): 첫 페이지(= 새 실행 결과)가 오면 이 탭의 경고 기록을 지운다.
+                if !all && !replace && offset == 0 {
+                    self.refetch_warned.remove(&key);
+                }
                 if replace {
+                    // ★ D-463(사용자 11-06): 묻지 않고 교체한 뒤 **경고 토스트**(버튼 없음) · 결과 탭의 실행당 1회 · 설정 `grid.refetch_warn`.
+                    if self.settings.flag("grid.refetch_warn") && self.refetch_warned.insert(key) {
+                        self.toasts.push(
+                            crate::toast::ToastKind::Warn,
+                            t(Msg::ToastRefetchWarnTitle),
+                            tf(Msg::ToastRefetchWarnBody, &[&n]),
+                        );
+                    }
                     // 엄격 일관성(docs/43 §9): 처음부터 다시 받아 교체했다 — 로그 1줄.
                     self.log_win.push(LogEntry::new(
                         LogKind::Info,

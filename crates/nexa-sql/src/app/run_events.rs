@@ -166,6 +166,8 @@ impl App {
         // ★ 증분 표시(사용자 10-09): 탭의 행 수가 0(전체)이고 더 있으면 첫 세그먼트를 보인 채 **나머지를 자동으로 이어 받는다**
         //   (⇊와 같은 길 · 배치마다 `Batch` · ■/진행률/예산은 배치 경계) — `whole`이면 종전대로(드라이버가 전부 읽은 뒤 표시).
         let live = self.settings.get("grid.fetch_display") != Some("whole");
+        // ★ D-463 "실행당 1회": 새 실행의 첫 결과가 이 탭에 붙는다 → 엄격 교체 경고 기록을 지운다(협업 V1 5d · 11-06).
+        self.refetch_warned.remove(&k);
         if let Some(g) = self.grid_for(k) {
             g.set_result(rs);
             g.set_dialect(dial);

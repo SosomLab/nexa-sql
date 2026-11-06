@@ -644,6 +644,15 @@ impl App {
                     self.layout();
                 }
             }
+            // ★ C-1 팔레트 선택: 비교 상대 탭(`cmpw:<탭 id>`) · 히스토리 시점(`hist:<파일 경로>`).
+            id if id.starts_with("cmpw:") => {
+                let id = id.to_string();
+                self.compare_with_tab(&id);
+            }
+            id if id.starts_with("hist:") => {
+                let id = id.to_string();
+                self.history_open(&id);
+            }
             id if id.starts_with("file.recent:") => {
                 let i: usize = id["file.recent:".len()..].parse().unwrap_or(usize::MAX);
                 if let Some(p) = self.recent_files().get(i).cloned() {
@@ -1108,6 +1117,11 @@ impl App {
             "obj.compare_server" => self.open_compare_server(),
             "compare.next" => self.compare_step(true),
             "compare.prev" => self.compare_step(false),
+            // ★ C-1(19 §1·§2·§3 · 11-06): 두 버퍼 비교 · 로컬 히스토리 · git 거터 변경 이동.
+            "edit.compare_with" => self.compare_with_pick(),
+            "edit.history" => self.history_pick(),
+            "git.next_hunk" => self.git_hunk_step(true),
+            "git.prev_hunk" => self.git_hunk_step(false),
             // ★ `obj.*` = 탐색기 선택 노드의 메뉴 동작을 팔레트·키로(T-180 ④ · 묻는 동작(삭제·서버 해제)은 메뉴에서만).
             "obj.menu" => self.obj_act(None),
             "obj.select_rows" => self.obj_act(Some("select")),

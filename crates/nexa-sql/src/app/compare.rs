@@ -194,6 +194,22 @@ pub(crate) fn normalize_pairs(text: &str, ignore_ws: bool, canon: bool) -> Vec<(
     out
 }
 
+/// ★ C-1 두 버퍼·히스토리 비교용 `(비교용, 표시용)` 줄 쌍(순수) — DDL 정규화 없이 원문 그대로(줄 끝 공백 제거 · 탭 → 공백 4) ·
+/// `ignore_ws`면 비교용만 공백 접기 · 빈 줄도 그대로(스크립트는 빈 줄이 뜻을 가질 수 있다).
+pub(crate) fn buffer_pairs(text: &str, ignore_ws: bool) -> Vec<(String, String)> {
+    text.lines()
+        .map(|raw| {
+            let show = raw.trim_end().replace('\t', "    ");
+            let cmp = if ignore_ws {
+                show.split_whitespace().collect::<Vec<_>>().join(" ")
+            } else {
+                show.clone()
+            };
+            (cmp, show)
+        })
+        .collect()
+}
+
 /// 표시용 이름 — 스키마가 없으면(SQLite) 이름만(`.t2`가 아니라 `t2` · 협업 V1 H).
 fn object_label(o: &nsql_catalog::ObjectInfo) -> String {
     if o.schema.is_empty() {
@@ -325,34 +341,15 @@ impl App {
         if self.settings.get("compare.view").unwrap_or("diff") == "diff" {
             let title = format!("⇄ {}", w.owner.name);
             let key = format!("compare:{obj}");
-            if !self.editors.open_view_tab(&key, &title) && !self.tab_room() {
-                return;
-            }
-            self.diff_view.set(
-                &cur,
-                &base,
-                &cur_show,
-                &base_show,
-                &obj,
-                (
-                    t(Msg::CompareLabelEditor).to_string(),
-                    t(Msg::CompareLabelServer).to_string(),
-                ),
+            let labels = (
+                t(Msg::CompareLabelEditor).to_string(),
+                t(Msg::CompareLabelServer).to_string(),
             );
-            // 자리 탭의 숨은 상자도 읽기 전용(어느 길로든 그 상자의 메뉴·입력이 닿으면 §214 규칙대로 쓰기 항목 비활성).
-            let i = self.editors.active();
-            self.editors.set_read_only(i, true);
-            self.compare_diff_key = key;
-            let hunks = self.diff_view.hunk_count();
-            self.compare_last = Some((w.owner.name, ddl.to_string(), hunks));
-            self.sess.status = if hunks == 0 {
-                t(Msg::StCompareSame).into()
-            } else {
-                tf(Msg::StCompareDiff2, &[&hunks.to_string()])
-            };
-            self.set_focus(Focus::Editor);
-            self.diff_view.set_focused(true);
-            self.redraw();
+            if let Some(hunks) = self.open_diff_tab(
+                &key, &title, &cur, &base, &cur_show, &base_show, &obj, labels,
+            ) {
+                self.compare_last = Some((w.owner.name, ddl.to_string(), hunks));
+            }
             return;
         }
         let head = if n == 0 {
@@ -392,6 +389,155 @@ impl App {
         };
         self.set_focus(Focus::Editor);
         self.redraw();
+    }
+
+    /// ★ 2-pane diff 탭 열기(C-1 공용 · 11-06): 뷰 탭 `key`(있으면 그 탭으로) · 그 탭의 diff 뷰어에 내용 · 읽기 전용 · 상태줄 일치/N군데 ·
+    /// 포커스. 반환 = 덩어리 수(탭을 열 수 없으면 None). 객체 비교(T-283)·두 버퍼(19 §1)·히스토리 시점(19 §3)이 같은 길.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_diff_tab(
+        &mut self,
+        key: &str,
+        title: &str,
+        a: &[String],
+        b: &[String],
+        a_show: &[String],
+        b_show: &[String],
+        obj: &str,
+        labels: (String, String),
+    ) -> Option<usize> {
+        if !self.editors.open_view_tab(key, title) && !self.tab_room() {
+            return None;
+        }
+        self.diff_park(key);
+        self.diff_view.set(a, b, a_show, b_show, obj, labels);
+        // 자리 탭의 숨은 상자도 읽기 전용(어느 길로든 그 상자의 메뉴·입력이 닿으면 §214 규칙대로 쓰기 항목 비활성).
+        let i = self.editors.active();
+        self.editors.set_read_only(i, true);
+        let hunks = self.diff_view.hunk_count();
+        self.sess.status = if hunks == 0 {
+            t(Msg::StCompareSame).into()
+        } else {
+            tf(Msg::StCompareDiff2, &[&hunks.to_string()])
+        };
+        self.set_focus(Focus::Editor);
+        self.diff_view.set_focused(true);
+        self.redraw();
+        Some(hunks)
+    }
+
+    /// 활성 diff 뷰어를 뷰 키 `key`의 것으로(C-1 · 비교 탭 여럿): 지금 든 것이 다른(살아 있는) 탭의 것이면 보관하고, `key`의 보관본이
+    /// 있으면 꺼낸다(없으면 빈 뷰어). 결과 그리드 `panels` 교체와 같은 꼴 — 사용처는 모두 `self.diff_view` 그대로.
+    fn diff_park(&mut self, key: &str) {
+        if self.compare_diff_key == key {
+            return;
+        }
+        let next = self.diff_views.remove(key).unwrap_or_default();
+        let old = std::mem::replace(&mut self.diff_view, next);
+        let old_key = std::mem::replace(&mut self.compare_diff_key, key.to_string());
+        if !old_key.is_empty() && self.editors.has_view_key(&old_key) {
+            self.diff_views.insert(old_key, old);
+        }
+    }
+
+    /// 탭 전환·닫기 뒤(`sync_grid_tab`): 활성 뷰 탭이 보관된 비교 탭이면 그 뷰어를 꺼내고, 닫힌 탭의 보관본은 버린다.
+    pub(crate) fn diff_views_sync(&mut self) {
+        if let Some(k) = self.editors.active_view().map(str::to_string) {
+            if k != self.compare_diff_key && self.diff_views.contains_key(&k) {
+                self.diff_park(&k);
+                self.diff_view.set_focused(self.focus == Focus::Editor);
+            }
+        }
+        if !self.diff_views.is_empty() {
+            let dead: Vec<String> = self
+                .diff_views
+                .keys()
+                .filter(|k| !self.editors.has_view_key(k))
+                .cloned()
+                .collect();
+            for k in dead {
+                self.diff_views.remove(&k);
+            }
+        }
+    }
+
+    /// ★ C-1(19 §1 · 사용자 11-06 결정 "활성 탭 + 목록에서 상대 선택"): 명령 `edit.compare_with` — 활성 편집기 탭 ↔ 열린 다른 탭.
+    /// 상대가 하나뿐이면 바로 · 여럿이면 팔레트 목록(`cmpw:<탭 id>`) · 뷰 탭(본문 없음)은 양쪽 다 제외.
+    pub(crate) fn compare_with_pick(&mut self) {
+        if self.editors.is_view_tab_active() {
+            self.sess.status = t(Msg::StCompareWithView).into();
+            self.redraw();
+            return;
+        }
+        let me = self.editors.active_id();
+        let others: Vec<(String, String)> = self
+            .editors
+            .tab_entries()
+            .into_iter()
+            .enumerate()
+            .filter(|(i, (id, ..))| *id != me && self.editors.view_key_of(*i).is_none())
+            .map(|(_, (id, title, path, dirty, _))| {
+                let mut label = title;
+                if dirty {
+                    label.push('*');
+                }
+                if let Some(p) = path {
+                    label.push_str("  -  ");
+                    label.push_str(&p.display().to_string());
+                }
+                (format!("cmpw:{id}"), label)
+            })
+            .collect();
+        match others.len() {
+            0 => {
+                self.sess.status = t(Msg::StCompareWithNone).into();
+                self.redraw();
+            }
+            1 => {
+                let id = others[0].0.clone();
+                self.compare_with_tab(&id);
+            }
+            _ => {
+                self.palette.set_commands(others);
+                self.palette.open("");
+                self.ime_refresh();
+                self.redraw();
+            }
+        }
+    }
+
+    /// 팔레트 선택 `cmpw:<탭 id>` → diff 탭(왼쪽 = 활성 탭 · 오른쪽 = 그 탭 · 공백 무시 = `compare.ignore_ws`).
+    pub(crate) fn compare_with_tab(&mut self, id: &str) {
+        let Some(other) = id.strip_prefix("cmpw:").and_then(|s| s.parse::<u64>().ok()) else {
+            return;
+        };
+        let me = self.editors.active_id();
+        let Some(oi) = self.editors.tab_ids().iter().position(|&t| t == other) else {
+            self.sess.status = t(Msg::StCompareWithNone).into();
+            self.redraw();
+            return;
+        };
+        let entries = self.editors.tab_entries();
+        let title_of = |id: u64| {
+            entries
+                .iter()
+                .find(|e| e.0 == id)
+                .map(|e| e.1.clone())
+                .unwrap_or_default()
+        };
+        let (ta, tb) = (title_of(me), title_of(other));
+        let a_text = self.editors.cur().text();
+        let Some(b_text) = self.editors.tab_box(oi).map(|b| b.text()) else {
+            return;
+        };
+        let ignore_ws = self.settings.flag("compare.ignore_ws");
+        let (a, a_show): (Vec<String>, Vec<String>) =
+            buffer_pairs(&a_text, ignore_ws).into_iter().unzip();
+        let (b, b_show): (Vec<String>, Vec<String>) =
+            buffer_pairs(&b_text, ignore_ws).into_iter().unzip();
+        let obj = format!("{ta} ↔ {tb}");
+        let key = format!("compare:buf:{me}:{other}");
+        let title = format!("⇄ {ta} | {tb}");
+        self.open_diff_tab(&key, &title, &a, &b, &a_show, &b_show, &obj, (ta, tb));
     }
 
     /// 명령 `obj.compare_server`: 마지막 비교의 서버 DDL 본문을 읽기 전용 탭으로(동시 편집 칸으로 나란히 두고 본다).
@@ -447,6 +593,22 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffer_pairs_keeps_blank_lines_and_indent() {
+        let p = buffer_pairs("a\r\n\tb  \n\n  c d", false);
+        assert_eq!(
+            p,
+            vec![
+                ("a".to_string(), "a".to_string()),
+                ("    b".to_string(), "    b".to_string()),
+                (String::new(), String::new()),
+                ("  c d".to_string(), "  c d".to_string()),
+            ]
+        );
+        let q = buffer_pairs("  c   d\t", true);
+        assert_eq!(q, vec![("c d".to_string(), "  c   d".to_string())]);
+    }
 
     /// 대상 판정 MC/DC(19 §6-5): CREATE만 · 종류 사상 · 스키마 없으면 기본 스키마 · 적혀 있으면 `qualified`.
     #[test]

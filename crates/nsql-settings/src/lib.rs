@@ -1243,6 +1243,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ git 거터 띠(docs/19 §2 M3 일부 · C-1 · 11-06): HEAD 본문(`gitstat`) 대비 변경 줄을 저장 띠 오른쪽 둘째 띠에 · `git.next_hunk`/`prev`.
+    Entry {
+        key: "editor.git_gutter",
+        cat: Msg::CatEditor,
+        label: Msg::LblGitGutter,
+        desc: Msg::DescGitGutter,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // 확장 매니저(사용자 09-17 · docs/50 §10 · Sublime Package Control 방식): 저장소 목록 · 끈 확장 목록.
     Entry {
         key: "extensions.enabled",
@@ -2033,11 +2042,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "strict",
     },
     // ★ 재질의 확인(10-12 사용자 결정 ④): 엄격 교체가 될 참이면 서버에 가기 전에 토스트로 묻는다([계속] = 보냄 · 닫음 = 유지).
+    //   ★ 기본 끔(D-463 · 사용자 11-06 "버튼 없이 바로 동작 · 경고 문구만 토스트"): 묻지 않고 바로 다시 받고, 교체했을 때
+    //   `grid.refetch_warn`이 실행당 1회 경고 토스트를 낸다.
     Entry {
         key: "grid.refetch_confirm",
         cat: Msg::CatGrid,
         label: Msg::LblRefetchConfirm,
         desc: Msg::DescRefetchConfirm,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // ★ 교체 경고(D-463 · 11-06): 엄격 교체가 실제로 일어났을 때 경고 토스트(버튼 없음) · 결과 탭의 실행당 1회.
+    Entry {
+        key: "grid.refetch_warn",
+        cat: Msg::CatGrid,
+        label: Msg::LblRefetchWarn,
+        desc: Msg::DescRefetchWarn,
         kind: SettingKind::Bool,
         default: "on",
     },
@@ -6633,6 +6653,32 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescUndoPersistDays,
         kind: SettingKind::Int { min: 0, max: 3650 },
         default: "30",
+    },
+    // ★ 로컬 히스토리(docs/19 §3 · C-1 11-06 · O-1 공용): 파일 저장(·객체 열기/컴파일/서버 본) 시점 스냅샷 = `NSQL_HOME/history/` ·
+    //   항목당 수(오래된 것부터 · 고정 보존) · 전체 MB(오래된 것부터).
+    Entry {
+        key: "history.enabled",
+        cat: Msg::CatUndo,
+        label: Msg::LblHistoryEnabled,
+        desc: Msg::DescHistoryEnabled,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "history.max_per_item",
+        cat: Msg::CatUndo,
+        label: Msg::LblHistoryMaxPerItem,
+        desc: Msg::DescHistoryMaxPerItem,
+        kind: SettingKind::Int { min: 1, max: 1000 },
+        default: "50",
+    },
+    Entry {
+        key: "history.max_mb",
+        cat: Msg::CatUndo,
+        label: Msg::LblHistoryMaxMb,
+        desc: Msg::DescHistoryMaxMb,
+        kind: SettingKind::Int { min: 1, max: 10000 },
+        default: "200",
     },
     Entry {
         key: "editor.undo_giant_mb",
