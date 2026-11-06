@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-07 O-1 1차**([journal 11-07 §4](journal/2026-11-07.md) · 오브젝트 시점 캐시 open·compile·restore · 복원 = 편집기 탭(D-469 · 서버 전송 0) · `edit.history_restore` · V1 13/0 + Oracle ✓ · 남음 = server 시점 · pin · 외부 변경 감지)
+>
 > ★ **11-07 T-231 ✅ 종결**(④ 서버 키 사전 검사 `grid.edit_key_check` · 맞교환 = 거절 + 두 번에 나눠 적용 안내 · D-468 · [journal 11-07 §3](journal/2026-11-07.md) · V1 8/0)
 >
 > ★ **11-07 T-231 ①②③**([journal 11-07 §2](journal/2026-11-07.md) · UNIQUE = 열 전부 NOT NULL일 때만 1급 · PG ctid+xmin 사전 검사 통합 시험 · 키 배지 `grid.col_key_icons`(KEY · RID · ALL) · V1 ✓ · 실서버 E2E 96/0 · 남음 = 서버 사전 검사 옵션 · 지연 제약 맞교환)

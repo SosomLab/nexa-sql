@@ -49,6 +49,7 @@
 
 - **내용 해시가 같으면 새 시점을 만들지 않는다**(용량 · 소음 방지). 시점 수·용량 상한(기본 오브젝트당 50개 · 전체 200MB · 오래된 것부터 정리 · "고정" 표시는 보존).
 - 복원 = 시점 선택 → 비교 뷰(현재 서버본 ↔ 시점) → **"이 시점으로 컴파일"** 한 번. 복원 자체도 시점으로 남는다(되돌리기의 되돌리기).
+  - ✅ **11-07 1차 구현(O-1 · D-469 · [journal 11-07 §4](journal/2026-11-07.md))** = 복원은 **편집기 탭 본문을 시점으로 바꾸기만**(사용자 11-06 · 바로 컴파일 안 함 · 확인 뒤 F5) · 명령 `edit.history`(시점 ↔ 현재 비교 탭) · `edit.history_restore`(복원) · 위치 = `NSQL_HOME/history/objects/<프로필>_<스키마>.<객체>_<종류>/<stamp>_<open|compile|restore>_<hash>.sql`(index.json 없이 파일 이름이 목록 · 로컬 히스토리 `history/files/`와 같은 저장소 · 같은 해시 생략 · 상한 `history.max_per_item`·`history.max_mb`) · 아직 = 컴파일 성공 뒤 `server` 시점 · 고정 · 외부 변경 감지.
 - 스크립트 파일(`.sql`)도 같은 기계로 **저장 시점 스냅샷**(git이 없는 폴더에서 로컬 히스토리 — DataGrip Local History 대응).
 - 저장 형식은 평문 `.sql`(사용자가 탐색기에서 열어도 됨) + `index.json`. 민감 정보 없음(소스뿐). 위치 = **앱 데이터 폴더만**(D-407 · 11-01 정합) · (이력) 원안 "프로젝트 폴더 안(`.nexa/objcache`)으로 두면 팀 git에" = ✖ 연계 파일 금지.
 - 방언별 소스 취득: Oracle `DBMS_METADATA.GET_DDL` / `ALL_SOURCE` · SQL Server `OBJECT_DEFINITION()` / `sys.sql_modules` · PG `pg_get_functiondef` · MySQL `SHOW CREATE`.
