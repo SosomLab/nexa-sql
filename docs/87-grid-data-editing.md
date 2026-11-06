@@ -388,7 +388,7 @@
 | 설정 | `grid.edit_hidden_keys`(on → D-225 기본 off · §15) · `grid.edit_rowid`(on → D-225 기본 off · 11-01 정합) · `grid.edit_all_cols`(on) · `grid.edit_concurrency`(key/key_old/all_old · 기본 key) | 끄면 그 등급을 건너뛴다(rowid 끔 = 3급 · all_cols 끔 = 읽기 전용) |
 | 시험 | 단위 = editable 5 · gridedit_sql +4(`analyze_alias` · `inject_hidden_columns` · `generate_physical_where_and_cast` · `key_edit_first_and_concurrency`) · grid +3(`physical_inject_requery_then_hidden_column` · `requery_failed_falls_back_to_all_columns` · `hidden_key_inject_when_pk_missing`) · E2E `scripts/mac-grid-edit-e2e.sh` ⑦ SQLite rowid = 완전 중복 행도 정확히 1행 ⑧ PK 빠진 결과 = 숨은 키 주입 · Oracle ⑨ 숨은 ID ⑩ 중복 행 ROWID(임시 표) | PG는 서버가 없어 단위 시험만(ctid/xmin 캐스트 문장 · 디코더) — Codespaces에서 실증 남음 |
 
-남음: PG 실서버 실증 · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · 서버 사전 검사 옵션(`SELECT 키 FROM t WHERE 키 IN (새 값들)`) · 지연 제약 맞교환 · 상태줄/헤더 배지 "ROWID"(지금은 미리보기 머리 주석 + 변경 목록 키 라벨).
+남음: ~~PG 실서버 실증~~ ✅ 10-10 E2E ⑤⑩ PG Physical(PASS 96/0 · [journal 10-10](journal/2026-10-10.md)) · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · 서버 사전 검사 옵션(`SELECT 키 FROM t WHERE 키 IN (새 값들)`) · 지연 제약 맞교환 · 상태줄/헤더 배지 "ROWID"(지금은 미리보기 머리 주석 + 변경 목록 키 라벨).
 
 ---
 
