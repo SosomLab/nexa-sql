@@ -844,6 +844,10 @@ impl App {
                 .outline_panel
                 .set_cfg(crate::outline_panel::outline_cfg(&self.settings)),
             "window.always_on_top" => self.apply_on_top(),
+            "window.transparency"
+            | "window.transparency_blur"
+            | "window.dialog_keeps_active"
+            | "window.blur_grace_ms" => self.apply_transparency(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "mem.always_on_top" => self.mem_win.set_on_top(self.settings.flag(key)),
             "mem.detail" => self.mem_win.set_detail(self.settings.flag(key)),

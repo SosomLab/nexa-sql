@@ -245,6 +245,9 @@ pub const BOOST: &[(&str, &str)] = &[
     // ── 렌더링·애니메이션(GFX): 프레임·페이드·깜빡임 = 다시 그리기 횟수
     ("ui.animations", "off"),
     ("ui.max_fps", "30"),
+    // 창 투명도(OS 합성 알파 = 매 프레임 합성 비용 · nexa-dir3 DR-22 "성능 향상 모드면 끈다" · 11-06).
+    ("window.transparency", "0"),
+    ("window.transparency_blur", "0"),
     ("editor.caret_blink", "off"),
     ("ui.fade_fast_ms", "0"),
     ("ui.fade_slow_ms", "0"),

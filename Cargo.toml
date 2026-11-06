@@ -39,7 +39,8 @@ members = [
   "crates/nexa-sql",      # (bin) GUI 진입 — M1에서 nexa-ui 위에 창을 연다
 ]
 # 확장 SDK 작업 공간(게스트 · wasm32 타깃)은 따로 빌드한다(docs/75 · `scripts/ext-build.*`).
-exclude = ["extensions/sdk"]
+# ★ tiberius 패치 사본(T-471 후속 · 11-06 · docs/121): 작업 공간 안 path 의존은 자동 멤버가 되어 dev-dependencies까지 끌려오므로 제외.
+exclude = ["extensions/sdk", "third_party/tiberius"]
 
 [workspace.package]
 version = "0.6.0"
@@ -124,3 +125,9 @@ strip = "symbols"
 #   디버거). 첫 빌드만 의존 전부를 다시 컴파일한다.
 [profile.dev.package."*"]
 opt-level = 2
+
+# ★ tiberius 0.12.3 패치(11-06 · T-471 후속): CLR UDT(geography·geometry·hierarchyid)·sql_variant 열을 SELECT하면 원본이 `todo!`로
+#   프로세스를 끝냈다(panic=abort) → 저장소 안 사본 `third_party/tiberius`(변경 = src/tds/codec/type_info.rs · column_data/var_len.rs ·
+#   token/token_col_metadata.rs · 주석 "nexa-sql patch")에서 값을 Binary로 돌려준다. 상위 판으로 올릴 때 같은 패치를 다시 댄다.
+[patch.crates-io]
+tiberius = { path = "third_party/tiberius" }

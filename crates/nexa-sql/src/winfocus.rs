@@ -78,6 +78,89 @@ pub(crate) fn set_enabled(w: &Window, on: bool) {
     }
 }
 
+/// 창 투명도 상한(%) — nexa-dir3와 같다(완전 투명 금지).
+pub(crate) const OPACITY_MAX_PCT: u8 = 90;
+
+/// 투명도 %(0 = 불투명) → OS 알파(255 = 불투명 · 순수).
+pub(crate) fn opacity_alpha(pct: u8) -> u8 {
+    // nexa-dir3와 같은 식(5 % = 242 · 90 % = 25 · 협업 V1 11-07 반올림 차이 정렬).
+    let pct = u32::from(pct.min(OPACITY_MAX_PCT));
+    (255 * (100 - pct) / 100) as u8
+}
+
+/// ★ 창 전체 OS 합성 투명도(nexa-dir3 DR-22 반영 · 사용자 11-06 · 설정 `window.transparency`/`window.transparency_blur` = 투명도 %):
+/// Windows = `WS_EX_LAYERED` + `SetLayeredWindowAttributes(LWA_ALPHA)`(0 %면 레이어드 스타일 해제 = 종전 그대로 · user32 FFI · DR-3) ·
+/// macOS = `NSWindow alphaValue` · X11 = `_NET_WM_WINDOW_OPACITY`(쓰고 `check`로 왕복 = dir3 GAP-028 쓰기 유실 대비) · Wayland = 미지원(조용히).
+pub(crate) fn set_window_opacity_pct(w: &Window, pct: u8) {
+    let pct = pct.min(OPACITY_MAX_PCT);
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
+            fn SetWindowLongPtrW(hwnd: isize, index: i32, value: isize) -> isize;
+            fn SetLayeredWindowAttributes(hwnd: isize, key: u32, alpha: u8, flags: u32) -> i32;
+        }
+        const GWL_EXSTYLE: i32 = -20;
+        const WS_EX_LAYERED: isize = 0x0008_0000;
+        const LWA_ALPHA: u32 = 0x2;
+        if let Some(h) = hwnd(w) {
+            // SAFETY: 유효한 HWND · 확장 스타일 비트 하나와 알파만 바꾼다.
+            unsafe {
+                let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+                if pct == 0 {
+                    if ex & WS_EX_LAYERED != 0 {
+                        SetWindowLongPtrW(h, GWL_EXSTYLE, ex & !WS_EX_LAYERED);
+                    }
+                } else {
+                    if ex & WS_EX_LAYERED == 0 {
+                        SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+                    }
+                    SetLayeredWindowAttributes(h, 0, opacity_alpha(pct), LWA_ALPHA);
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(nsw) = ns_window(w) {
+            nsw.setAlphaValue(f64::from(opacity_alpha(pct)) / 255.0);
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(x) = x11_window(w) {
+            let _ = x11_set_opacity(x, pct);
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    {
+        let _ = (w, pct);
+    }
+}
+
+/// `_NET_WM_WINDOW_OPACITY`(CARDINAL · 0xFFFFFFFF = 불투명) 쓰기 — 0 %면 속성 삭제. 자체 연결 한 번 · 왕복(`check`) 뒤 닫는다.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn x11_set_opacity(win: u32, pct: u8) -> Result<(), Box<dyn std::error::Error>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
+    use x11rb::wrapper::ConnectionExt as _;
+    let (conn, _screen) = x11rb::connect(None)?;
+    let atom = conn
+        .intern_atom(false, b"_NET_WM_WINDOW_OPACITY")?
+        .reply()?
+        .atom;
+    if pct == 0 {
+        conn.delete_property(win, atom)?.check()?;
+    } else {
+        let v = (u64::from(opacity_alpha(pct)) * 0xFFFF_FFFF / 255) as u32;
+        conn.change_property32(PropMode::REPLACE, win, atom, AtomEnum::CARDINAL, &[v])?
+            .check()?;
+    }
+    conn.flush()?;
+    Ok(())
+}
+
 /// macOS NSWindow 핸들(winit raw handle → NSView → window).
 #[cfg(target_os = "macos")]
 fn ns_window(w: &Window) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {

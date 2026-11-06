@@ -3505,13 +3505,33 @@ pub fn source_with(
                 // `name(args)` = 그 오버로드 하나 · `name`만 = **모든 오버로드**(oid 순 · 108 #16 · 11-06 — 종전 `LIMIT 1`은 첫 오버로드를
                 //   조용히 열어 그대로 컴파일하면 엉뚱한 오버로드를 덮어썼다). 둘 이상이면 `-- overload k/n: 서명` 머리 주석으로 가른다 ·
                 //   각 `CREATE OR REPLACE`는 자기 서명만 바꾸므로 그대로 실행해도 보수적(100 §5).
-                if name.contains('(') {
-                    let sql = format!(
-                        "SELECT pg_get_functiondef({}::regprocedure)",
-                        lit(&format!("{}.{}", quote_ident(dialect, schema), name))
+                if let Some((head, sig)) = name.split_once('(') {
+                    // ★ T-470(11-06 · 협업 V1): 탐색기 서명(`pg_get_function_identity_arguments` 원문 = `a integer` 이름 포함)은 `::regprocedure`
+                    //   입력이 아니다(42601) → **같은 함수로 서명 일치**로 oid를 찾는다 · 비면 이름 없는 서명(`integer`)일 수 있으니 종전 regprocedure.
+                    let head = head.trim().trim_matches('"');
+                    let sig = sig.trim_end();
+                    let sig = sig.strip_suffix(')').unwrap_or(sig).trim();
+                    let by_sig = format!(
+                        "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = {} AND p.proname = {} AND pg_get_function_identity_arguments(p.oid) = {} ORDER BY p.oid LIMIT 1",
+                        lit(schema),
+                        lit(head),
+                        lit(sig)
                     );
-                    let rs = query(s, &sql)?;
-                    let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                    let mut body = query(s, &by_sig)?
+                        .rows
+                        .first()
+                        .map(|r| col(r, 0))
+                        .unwrap_or_default();
+                    if body.trim().is_empty() {
+                        let sql = format!(
+                            "SELECT pg_get_functiondef({}::regprocedure)",
+                            lit(&format!("{}.{}", quote_ident(dialect, schema), name))
+                        );
+                        body = query(s, &sql)
+                            .ok()
+                            .and_then(|rs| rs.rows.first().map(|r| col(r, 0)))
+                            .unwrap_or_default();
+                    }
                     if body.trim().is_empty() {
                         return Err(not_found(schema, name));
                     }
@@ -3727,7 +3747,7 @@ pub struct RoutineArg {
     pub in_out: String,
     /// 기본값이 있는 인자(생략 가능 · T-327 ④ 11-06): Oracle `ALL_ARGUMENTS.DEFAULTED` · PG `pronargdefaults`(입력 인자의 끝 N개) ·
     /// SQL Server·MySQL = 모름(거짓). 오버로드 고르기의 **최소 인자 수** 근거.
-    pub has_default: bool,
+    pub has_default: Option<bool>,
 }
 
 /// 호출 이름(`proc` · `pkg.proc` · `schema.proc` · `schema.pkg.proc`)의 인자 목록 — **선언 없이 쓴 바인드의 타입을 서명에서
@@ -3801,7 +3821,7 @@ pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineA
             name: col(r, 2).trim().to_ascii_uppercase(),
             data_type: col(r, 3).trim().to_ascii_uppercase(),
             in_out: col(r, 4).trim().to_ascii_uppercase(),
-            has_default: col(r, 5).trim().eq_ignore_ascii_case("Y"),
+            has_default: Some(col(r, 5).trim().eq_ignore_ascii_case("Y")),
         })
         .collect())
 }
@@ -3858,8 +3878,8 @@ fn mssql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<Routin
                 .to_ascii_uppercase(),
             data_type: col(r, 3).trim().to_ascii_uppercase(),
             in_out: col(r, 4).trim().to_ascii_uppercase(),
-            // `sys.parameters.has_default_value`는 CLR만 채운다(T-SQL = 0) → 모름.
-            has_default: false,
+            // `sys.parameters.has_default_value`는 CLR만 채운다(T-SQL = 0) → 모름(None = 필수 수 하한을 적용하지 않는다).
+            has_default: None,
         })
         .collect())
 }
@@ -3932,7 +3952,7 @@ fn pg_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineAr
                     name: col(r, 2).trim().to_ascii_uppercase(),
                     data_type: col(r, 3).trim().to_ascii_uppercase(),
                     in_out: col(r, 4).trim().to_ascii_uppercase(),
-                    has_default: false,
+                    has_default: Some(false),
                 },
                 r.get(5).map(cell_i64).unwrap_or(0),
             )
@@ -3961,7 +3981,7 @@ fn pg_mark_defaults(rows: Vec<(RoutineArg, i64)>) -> Vec<RoutineArg> {
             .map(|(k, _)| k)
             .collect();
         for &k in inputs.iter().rev().take(ndef) {
-            group[k].has_default = true;
+            group[k].has_default = Some(true);
         }
         out.extend(group);
     }
@@ -4002,8 +4022,8 @@ fn mysql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<Routin
             name: col(r, 2).trim().to_ascii_uppercase(),
             data_type: col(r, 3).trim().to_ascii_uppercase(),
             in_out: col(r, 4).trim().to_ascii_uppercase(),
-            // `information_schema.PARAMETERS`에 기본값 열이 없다(MySQL 루틴은 기본값 자체가 없다).
-            has_default: false,
+            // `information_schema.PARAMETERS`에 기본값 열이 없다 → 모름(None).
+            has_default: None,
         })
         .collect())
 }
@@ -4239,7 +4259,7 @@ mod tests {
                     name: name.into(),
                     data_type: "INTEGER".into(),
                     in_out: io.into(),
-                    has_default: false,
+                    has_default: Some(false),
                 },
                 ndef,
             )
@@ -4253,19 +4273,19 @@ mod tests {
             a("12", 2, "B", "IN/OUT", 2),
         ];
         let got = pg_mark_defaults(rows);
-        let defs: Vec<(&str, &str, bool)> = got
+        let defs: Vec<(&str, &str, Option<bool>)> = got
             .iter()
             .map(|r| (r.overload.as_str(), r.name.as_str(), r.has_default))
             .collect();
         assert_eq!(
             defs,
             vec![
-                ("10", "A", false),
-                ("10", "B", true),
-                ("10", "R", false),
-                ("11", "A", false),
-                ("12", "A", true),
-                ("12", "B", true),
+                ("10", "A", Some(false)),
+                ("10", "B", Some(true)),
+                ("10", "R", Some(false)),
+                ("11", "A", Some(false)),
+                ("12", "A", Some(true)),
+                ("12", "B", Some(true)),
             ]
         );
     }

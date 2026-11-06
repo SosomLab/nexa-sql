@@ -4888,6 +4888,40 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ 창 투명도(nexa-dir3 DR-22·T-199·GAP-039 반영 · 사용자 11-06): 값 = **투명도 %**(0 = 불투명 · 상한 90 · dir3와 같은 방향) ·
+    //   포커스 있을 때 / 없을 때 둘 · 대화상자가 포커스를 가져도 메인을 활성으로 봄 · 비활성 적용 유예(ms · 숨김) · 성능 향상 모드 = 0 강제(perf.rs).
+    Entry {
+        key: "window.transparency",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowTransparency,
+        desc: Msg::DescWindowTransparency,
+        kind: SettingKind::Int { min: 0, max: 90 },
+        default: "5",
+    },
+    Entry {
+        key: "window.transparency_blur",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowTransparencyBlur,
+        desc: Msg::DescWindowTransparencyBlur,
+        kind: SettingKind::Int { min: 0, max: 90 },
+        default: "10",
+    },
+    Entry {
+        key: "window.dialog_keeps_active",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowDialogKeepsActive,
+        desc: Msg::DescWindowDialogKeepsActive,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "window.blur_grace_ms",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowBlurGraceMs,
+        desc: Msg::DescWindowBlurGraceMs,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "150",
+    },
     Entry {
         key: "window.focus",
         cat: Msg::CatWindow,
@@ -8776,6 +8810,8 @@ pub fn locked_by_chain(key: &str, value_of: &dyn Fn(&str) -> String) -> bool {
 }
 
 pub const HIDDEN: &[&str] = &[
+    // 창 투명도 비활성 적용 유예(nexa-dir3 GAP-039 · 느린 창 관리자용 손잡이 · 11-06).
+    "window.blur_grace_ms",
     // D-256(10-07): 값 목록 상한 폐지 — 키는 옛 설정 파일 호환으로만 남긴다(효과 없음).
     "grid.filter_values_max",
     // T-165 P3 ①(10-31): 스냅숏 틱당 전송 상한(구현 상수).

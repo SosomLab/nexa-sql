@@ -3783,7 +3783,12 @@ fn pick_overload(
                 .iter()
                 .filter(|a| a.overload == *ov && a.position >= 1)
                 .collect();
-            let required = params.iter().filter(|p| !p.has_default).count();
+            // 필수 = 기본값이 **없다고 아는** 인자(`Some(false)`) — 모르는 방언(MS·MySQL = None)은 하한을 두지 않는다(CI 통합 회귀 11-06:
+            //   `@d DATETIME2 = NULL OUTPUT`가 필수로 세어져 OUTPUT 표시를 못 붙였다).
+            let required = params
+                .iter()
+                .filter(|p| p.has_default == Some(false))
+                .count();
             passed <= params.len()
                 && passed >= required
                 && shape.args.iter().all(|a| {
@@ -4888,7 +4893,7 @@ SELECT * FROM t;
             name: name.into(),
             data_type: "INT".into(),
             in_out: io.into(),
-            has_default: false,
+            has_default: None,
         };
         let sig = vec![
             arg(1, "A", "IN"),
@@ -5051,7 +5056,7 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             name: name.into(),
             data_type: "INTEGER".into(),
             in_out: "IN".into(),
-            has_default: def,
+            has_default: Some(def),
         };
         let shape = |s: &str| nsql_script::call_shape(s).expect("call");
         // 첫 묶음 = (A, B) 필수 둘 · 둘째 = (A) 하나 — 종전엔 `p(1)`이 첫 묶음에 맞았다(최소 인자 수 미확인).
@@ -5106,6 +5111,25 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             super::pick_overload(&shape("p(1)"), &interleaved).as_deref(),
             Some("Y")
         );
+        // 기본값을 모르는 방언(MS·MySQL = None): 하한 없음 → 3개 넘겨도 4인자 묶음에 맞는다(CI 통합 회귀 11-06 `@d … = NULL OUTPUT`).
+        let unknown = |ov: &str, pos: i64, name: &str| RoutineArg {
+            overload: ov.into(),
+            position: pos,
+            name: name.into(),
+            data_type: "INT".into(),
+            in_out: "IN".into(),
+            has_default: None,
+        };
+        let ms = vec![
+            unknown("1", 1, "A"),
+            unknown("1", 2, "B"),
+            unknown("1", 3, "MSG"),
+            unknown("1", 4, "D"),
+        ];
+        assert_eq!(
+            super::pick_overload(&shape("p(3, :X, :Y)"), &ms).as_deref(),
+            Some("1")
+        );
     }
 
     #[test]
@@ -5117,7 +5141,7 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             name: name.into(),
             data_type: "INTEGER".into(),
             in_out: io.into(),
-            has_default: false,
+            has_default: None,
         };
         let sig = vec![
             arg("1", 1, "A", "IN"),

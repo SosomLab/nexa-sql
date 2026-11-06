@@ -1120,6 +1120,11 @@ impl Runner {
                 .iter()
                 .map(|k| (k.name.clone(), k.ty.clone()))
                 .collect()
+        } else if dialect == Dialect::Mssql {
+            // ★ T-471(11-06 · 협업 V1 실측): SQL Server는 빈 조회(`WHERE 1=0`)도 TDS 열 메타를 받는데 CLR UDT(geography · geometry ·
+            //   hierarchyid) 열이 있으면 tiberius가 메타 디코드에서 `todo!`(panic=abort)로 프로세스를 끝낸다 → 카탈로그(`sys.all_columns` ·
+            //   아래 3부 이름 조회 → `nsql_catalog::columns`)로만 읽는다(빈 조회 없음).
+            Vec::new()
         } else {
             match self.query_once(&format!("SELECT * FROM {table} WHERE 1=0"), 1) {
                 Ok((rs, _, _)) => rs

@@ -132,6 +132,8 @@ impl ApplicationHandler<Wake> for App {
         }
         self.window = Some(win);
         self.apply_on_top();
+        // ★ 창 투명도(11-06): 메인 창에 기동 때 한 번 · 보조 창은 유휴 틱이 건다.
+        self.apply_transparency();
         self.layout();
         self.set_focus(Focus::Editor);
         self.apply_indent();
@@ -796,6 +798,10 @@ impl ApplicationHandler<Wake> for App {
             }
             next = next.min(self.mem_next);
         }
+        // ★ 창 투명도(11-06): 새 창에 알파 · 포커스 없을 때 값의 유예 마감.
+        if let Some(d) = self.transparency_tick(now) {
+            next = next.min(d);
+        }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
@@ -881,9 +887,15 @@ impl ApplicationHandler<Wake> for App {
         {
             self.pointer_gone();
         }
+        // ★ 창 투명도(11-06): 메인·보조 어느 창의 포커스가 바뀌어도 묶음 판정을 다시(보조 창으로 가면 메인 유지 · 다른 앱이면 유예 뒤 흐림).
         if let WindowEvent::Focused(on) = event {
             if self.window.as_ref().is_some_and(|w| w.id() == id) {
                 self.main_active = on;
+            }
+            self.transparency_focus_changed();
+        }
+        if let WindowEvent::Focused(on) = event {
+            if self.window.as_ref().is_some_and(|w| w.id() == id) {
                 if !on {
                     // 비활성 = 마우스 상태(hover·툴팁·캡처·링크 hover) 정리(사용자 09-30).
                     self.pointer_gone();

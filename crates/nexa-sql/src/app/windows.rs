@@ -149,6 +149,102 @@ impl App {
         }
     }
 
+    /// 창 투명도 설정값 `(포커스 있을 때, 없을 때)` %(0~90 · 성능 향상 모드면 둘 다 0 = perf::BOOST).
+    fn transparency_pcts(&self) -> (u8, u8) {
+        let f = self.settings.int("window.transparency").clamp(0, 90) as u8;
+        let b = self.settings.int("window.transparency_blur").clamp(0, 90) as u8;
+        (f, b)
+    }
+
+    /// ★ 포커스 묶음(nexa-dir3 GAP-039 "별도 창은 묶음으로"): 메인이 활성이거나, `window.dialog_keeps_active`면 이 앱의 보조 창 하나가
+    /// 포커스를 가진 상태. 보조 창 포커스는 따로 추적하지 않고 매번 `all_windows()`의 `has_focus`로 본다(Destroyed 정리 불필요).
+    pub(crate) fn focus_group_active(&self) -> bool {
+        if self.main_active {
+            return true;
+        }
+        if !self.settings.flag("window.dialog_keeps_active") {
+            return false;
+        }
+        let main_id = self.window.as_deref().map(Window::id);
+        self.all_windows()
+            .iter()
+            .any(|w| Some(w.id()) != main_id && w.has_focus())
+    }
+
+    /// ★ 창 투명도 전부 다시 적용(11-06 · 기동 · 설정 변경): 메인 = 묶음 활성이면 포커스 값 · 아니면 포커스 없을 때 값 · 보조 창 = 포커스 값.
+    pub(crate) fn apply_transparency(&mut self) {
+        let (f, b) = self.transparency_pcts();
+        let main_pct = if self.focus_group_active() { f } else { b };
+        let main_id = self.window.as_deref().map(Window::id);
+        let mut ids = Vec::new();
+        for w in self.all_windows() {
+            let pct = if Some(w.id()) == main_id { main_pct } else { f };
+            crate::winfocus::set_window_opacity_pct(w, pct);
+            ids.push(w.id());
+        }
+        self.opacity_applied = ids.into_iter().collect();
+        self.blur_at = None;
+    }
+
+    /// 유휴 틱(`about_to_wait`): 새로 생긴 창에 투명도를 걸고 닫힌 창 id를 정리 · 유예가 지났으면 메인에 포커스 없을 때 값. 반환 = 다음 마감.
+    pub(crate) fn transparency_tick(&mut self, now: Instant) -> Option<Instant> {
+        let (f, b) = self.transparency_pcts();
+        if f == 0 && b == 0 && self.opacity_applied.is_empty() && self.blur_at.is_none() {
+            return None;
+        }
+        let main_id = self.window.as_deref().map(Window::id);
+        let active = self.focus_group_active();
+        let mut fresh = Vec::new();
+        let mut alive = Vec::new();
+        for w in self.all_windows() {
+            alive.push(w.id());
+            if !self.opacity_applied.contains(&w.id()) {
+                let pct = if Some(w.id()) == main_id {
+                    if active {
+                        f
+                    } else {
+                        b
+                    }
+                } else {
+                    f
+                };
+                crate::winfocus::set_window_opacity_pct(w, pct);
+                fresh.push(w.id());
+            }
+        }
+        self.opacity_applied.extend(fresh);
+        self.opacity_applied.retain(|id| alive.contains(id));
+        if let Some(at) = self.blur_at {
+            if now < at {
+                return Some(at);
+            }
+            self.blur_at = None;
+            if !self.focus_group_active() {
+                if let Some(w) = &self.window {
+                    crate::winfocus::set_window_opacity_pct(w, b);
+                }
+            }
+        }
+        None
+    }
+
+    /// 포커스 사건(메인·보조 창 공통): 묶음이 활성이면 메인을 포커스 값으로 즉시 · 아니면 유예 뒤 포커스 없을 때 값(틱이 적용).
+    pub(crate) fn transparency_focus_changed(&mut self) {
+        let (f, b) = self.transparency_pcts();
+        if f == 0 && b == 0 {
+            return;
+        }
+        if self.focus_group_active() {
+            self.blur_at = None;
+            if let Some(w) = &self.window {
+                crate::winfocus::set_window_opacity_pct(w, f);
+            }
+        } else {
+            let ms = self.settings.int("window.blur_grace_ms").clamp(0, 2000) as u64;
+            self.blur_at = Some(Instant::now() + Duration::from_millis(ms));
+        }
+    }
+
     /// 앱의 모든 창(메인 + 보조 + 모달 · 열린 것만) — z-order 정리 · id → 창 조회의 단일 원천(09-27).
     pub(crate) fn all_windows(&self) -> Vec<&Window> {
         [

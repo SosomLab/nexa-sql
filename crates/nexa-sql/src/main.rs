@@ -713,6 +713,10 @@ struct App {
     backup_over_dismissed: std::collections::HashSet<u64>,
     ext_poll_next: Option<Instant>,
     main_active: bool,
+    /// ★ 창 투명도(11-06 · nexa-dir3 반영): 포커스 없을 때 값을 적용할 시각(유예 `window.blur_grace_ms` · None = 대기 없음).
+    blur_at: Option<Instant>,
+    /// 투명도를 건 창 id(창 생성 지점 16곳을 고치지 않고 유휴 틱에서 **아직 안 건 창**에만 건다 · 닫힌 창은 틱에서 정리).
+    opacity_applied: std::collections::HashSet<winit::window::WindowId>,
     ext_last_tab: u64,
     ext_save_armed: Option<(u64, Instant)>,
     /// 자체 캡처용: 첫 접속 뒤에 실행할 기동 명령(`NSQL_STARTUP_CMD`의 `@connected:` 항목).
@@ -2144,6 +2148,8 @@ fn main() {
         // 포커스 사건이 오기 전에는 비활성(09-24: 한 번도 활성화되지 않은 창(`NSQL_NO_ACTIVATE` 시험 · 뒤에서 띄운 창)이
         //   계속 깜빡이며 다시 그렸다) — 정상 기동은 첫 `Focused(true)`로 바로 활성이 된다.
         main_active: false,
+        blur_at: None,
+        opacity_applied: std::collections::HashSet::new(),
         ext_last_tab: 0,
         ext_save_armed: None,
         startup_after_connect: Vec::new(),
