@@ -333,7 +333,7 @@
 
 | 등급 | 조건 | 판정 | WHERE | 비고 |
 |---|---|---|---|---|
-| **1급 · 바로 편집** | PK 또는 UNIQUE(NOT NULL) 제약이 있고 **그 열이 결과에 전부** 있다 | 편집 가능 · 경고 없음 | 키 열 = 원본 값 | 사용자 의견과 같다. UNIQUE에 NULL 허용 열이 섞이면 `IS NULL` 비교 = 여러 행일 수 있어 **NOT NULL 유니크만** 1급(NULL 허용 유니크는 3급 규칙 적용) |
+| **1급 · 바로 편집** | PK 또는 UNIQUE(NOT NULL) 제약이 있고 **그 열이 결과에 전부** 있다(✅ 11-07 구현 = UNIQUE는 **열 전부 NOT NULL일 때만** 1급 · NULL 허용·모름 = 제외 → 주입/2급/3급 · `editable::classify` · [journal 11-07 §2](journal/2026-11-07.md)) | 편집 가능 · 경고 없음 | 키 열 = 원본 값 | 사용자 의견과 같다. UNIQUE에 NULL 허용 열이 섞이면 `IS NULL` 비교 = 여러 행일 수 있어 **NOT NULL 유니크만** 1급(NULL 허용 유니크는 3급 규칙 적용) |
 | **1급-보완** | PK/UK는 있는데 결과에 키 열이 빠졌다(`SELECT a, b FROM t`) | 두 길 — ⓐ **숨은 키 열 자동 주입**(단일 테이블 문장이라 `SELECT <키 열들>, a, b FROM t …`로 재조회 · 화면에는 숨김) ⓑ 읽기 전용 + 이유 "키 열이 결과에 없음" | 키 열 | DBeaver = 읽기 전용/가상 키 · 우리는 ⓐ를 기본 후보(`grid.edit_hidden_keys` · D-214) |
 | **2급 · 물리 행 식별자** | 키가 없지만 DBMS가 행 주소를 준다 | 편집 가능 · 배지 "ROWID" | `<alias>.ROWID = :p`(등) | §13-3 표 · 문장에 `<alias>.ROWID AS "__nsql_rid"`를 주입해 재조회(단일 테이블·별칭 판정이 이미 있다) |
 | **3급 · 전 열 비교** | 키도 행 식별자도 없다(MySQL 힙 · SQL Server 힙 등) | 편집 가능하되 **경고 배지 + 사전 건수 검사**(`SELECT COUNT(*) … WHERE 전 열`이 1인 행만) + 영향 1행 엄격(지금 `grid.edit_strict`) | 비교 가능한 모든 열 = 원본 값(NULL = `IS NULL`) | §13-4 제약 · 검사 왕복 1회 추가(행 수만큼 IN 묶음) |
@@ -388,7 +388,7 @@
 | 설정 | `grid.edit_hidden_keys`(on → D-225 기본 off · §15) · `grid.edit_rowid`(on → D-225 기본 off · 11-01 정합) · `grid.edit_all_cols`(on) · `grid.edit_concurrency`(key/key_old/all_old · 기본 key) | 끄면 그 등급을 건너뛴다(rowid 끔 = 3급 · all_cols 끔 = 읽기 전용) |
 | 시험 | 단위 = editable 5 · gridedit_sql +4(`analyze_alias` · `inject_hidden_columns` · `generate_physical_where_and_cast` · `key_edit_first_and_concurrency`) · grid +3(`physical_inject_requery_then_hidden_column` · `requery_failed_falls_back_to_all_columns` · `hidden_key_inject_when_pk_missing`) · E2E `scripts/mac-grid-edit-e2e.sh` ⑦ SQLite rowid = 완전 중복 행도 정확히 1행 ⑧ PK 빠진 결과 = 숨은 키 주입 · Oracle ⑨ 숨은 ID ⑩ 중복 행 ROWID(임시 표) | PG는 서버가 없어 단위 시험만(ctid/xmin 캐스트 문장 · 디코더) — Codespaces에서 실증 남음 |
 
-남음: ~~PG 실서버 실증~~ ✅ 10-10 E2E ⑤⑩ PG Physical(PASS 96/0 · [journal 10-10](journal/2026-10-10.md)) · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · 서버 사전 검사 옵션(`SELECT 키 FROM t WHERE 키 IN (새 값들)`) · 지연 제약 맞교환 · 상태줄/헤더 배지 "ROWID"(지금은 미리보기 머리 주석 + 변경 목록 키 라벨).
+남음: ~~PG 실서버 실증~~ ✅ 10-10 E2E ⑤⑩ PG Physical(PASS 96/0 · [journal 10-10](journal/2026-10-10.md)) · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · 서버 사전 검사 옵션(`SELECT 키 FROM t WHERE 키 IN (새 값들)`) · 지연 제약 맞교환 · ~~상태줄/헤더 배지 "ROWID"~~ ✅ 11-07 `grid.col_key_icons`(1급 = 키 열 머리 `KEY` 파랑 · 2급 = 모서리 칸 `RID` 파랑 · 3급 = 모서리 `ALL` 빨강 · [journal 11-07 §2](journal/2026-11-07.md)) · 행 단위 재조회 = §12-4-a ✅(T-230).
 
 ---
 

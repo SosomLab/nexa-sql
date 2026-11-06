@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-07 T-231 ①②③**([journal 11-07 §2](journal/2026-11-07.md) · UNIQUE = 열 전부 NOT NULL일 때만 1급 · PG ctid+xmin 사전 검사 통합 시험 · 키 배지 `grid.col_key_icons`(KEY · RID · ALL) · V1 ✓ · 실서버 E2E 96/0 · 남음 = 서버 사전 검사 옵션 · 지연 제약 맞교환)
+>
 > ★ **11-07 새벽 회귀 수정 + T-470 · T-471 ✅ + 창 투명도 4키(D-466) + tiberius 패치 사본(D-467)**([journal 11-06 §6](journal/2026-11-06.md) · MSSQL 기본값 인자 OUTPUT 회귀 = `has_default: Option` · PG 이름 있는 인자 서명 소스 · MSSQL UDT import·SELECT 패닉 0 · 투명도 5/10 % · V1 ✓ · push dd548384 → macOS E0133 → 핫픽스 98ec4748 = ci ✅ 3-OS · integration ✅ 회귀 해소 · [journal 11-07 §1](journal/2026-11-07.md))
 >
 > ★ **11-06 밤 결함 묶음 11건**([journal 11-06 §5](journal/2026-11-06.md) · PG 오버로드 전부 열기 · Db2 zoned·바인드 폴백 · ClickHouse 편집 읽기 전용 · import `--create` 빈 표 DROP(D-465) · Skip/Stop 앞 배치 누락 수정 · `ui.toast_button_secs` 15초(D-464 · T-380 ✅) · 상세 패널 소스 탭 = 객체 탭 · MSSQL bulk 사전 판정 · V1 ✓ · 새 결함 T-470 · T-471 · push = origin/main fb955f9b · ci ✅ · db2 ✅ · integration ✗ 1 = MSSQL 기본값 인자 OUTPUT 표시 회귀 · 수정 대기)
