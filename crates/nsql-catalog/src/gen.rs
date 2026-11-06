@@ -632,7 +632,21 @@ fn dml_sql(
         GenWhat::Merge => {
             let ta = alias_of(&o.name, &[]);
             let sa = alias_of("src", &[&ta]);
-            merge_sql(d, &qn, &names, &binds, &key_idx, &non_key, (&ta, &sa))
+            // ★ T-327 ⑦ #26(11-06): MySQL 8.0.19+(MariaDB 제외)는 `VALUES(c)`가 폐기 예고 → 행 별칭 꼴. 판은 한 번 묻는다.
+            let row_alias = d == Dialect::Mysql
+                && crate::server_info(s)
+                    .map(|i| mysql_row_alias(&i.version))
+                    .unwrap_or(false);
+            merge_sql(
+                d,
+                &qn,
+                &names,
+                &binds,
+                &key_idx,
+                &non_key,
+                (&ta, &sa),
+                row_alias,
+            )
         }
         _ => unreachable!("dml_sql only handles DML"),
     };
@@ -653,6 +667,26 @@ fn list(items: &[String], indent: &str) -> String {
     out
 }
 
+/// MySQL(MariaDB 아님) 8.0.19 이상이면 `INSERT … AS new ON DUPLICATE KEY UPDATE c = new.c`(순수 · T-327 ⑦).
+/// MariaDB는 행 별칭이 없고 `VALUES(c)`만 받는다 · 판을 모르면 거짓(종전 꼴).
+pub(crate) fn mysql_row_alias(version: &str) -> bool {
+    let v = version.trim();
+    if v.to_ascii_lowercase().contains("mariadb") {
+        return false;
+    }
+    let mut nums = v
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse::<u32>().unwrap_or(0));
+    let (a, b, c) = (
+        nums.next().unwrap_or(0),
+        nums.next().unwrap_or(0),
+        nums.next().unwrap_or(0),
+    );
+    (a, b, c) >= (8, 0, 19)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn merge_sql(
     d: Dialect,
     qn: &str,
@@ -661,6 +695,7 @@ fn merge_sql(
     key_idx: &[usize],
     non_key: &[usize],
     aliases: (&str, &str),
+    mysql_row_alias: bool,
 ) -> String {
     if key_idx.is_empty() {
         let mut out = String::from("-- MERGE needs a primary/unique key and this table has none - INSERT is generated instead\n");
@@ -689,6 +724,14 @@ fn merge_sql(
                 let sets: Vec<String> = set_idx
                     .iter()
                     .map(|&i| format!("{} = excluded.{}", names[i], names[i]))
+                    .collect();
+                out.push_str(&list(&sets, "    "));
+            } else if mysql_row_alias {
+                // MySQL 8.0.19+ 행 별칭(`VALUES(c)` 폐기 예고 · T-327 ⑦).
+                out.push_str(&format!(" AS {sa}\nON DUPLICATE KEY UPDATE\n"));
+                let sets: Vec<String> = set_idx
+                    .iter()
+                    .map(|&i| format!("{} = {sa}.{}", names[i], names[i]))
                     .collect();
                 out.push_str(&list(&sets, "    "));
             } else {
@@ -1856,6 +1899,7 @@ mod tests {
             &[0],
             &[1],
             ("t", "s"),
+            false,
         );
         assert!(
             ora.contains("MERGE INTO HR.EMP t")
@@ -1871,6 +1915,7 @@ mod tests {
             &[0],
             &[1],
             ("t", "s"),
+            false,
         );
         assert!(
             pg.contains("MERGE INTO hr.emp AS t")
@@ -1885,6 +1930,7 @@ mod tests {
             &[0],
             &[1],
             ("t", "s"),
+            false,
         );
         assert!(
             lite.contains("ON CONFLICT (ID) DO UPDATE SET")
@@ -1898,8 +1944,34 @@ mod tests {
             &[0],
             &[1],
             ("t", "s"),
+            false,
         );
         assert!(my.contains("ON DUPLICATE KEY UPDATE") && my.contains("NAME = VALUES(NAME)"));
+        // ★ T-327 ⑦ #26: MySQL 8.0.19+ 행 별칭 꼴(`VALUES(c)` 폐기 예고) · MariaDB·구판은 종전 꼴.
+        let my8 = merge_sql(
+            Dialect::Mysql,
+            "emp",
+            &names,
+            &binds,
+            &[0],
+            &[1],
+            ("t", "s"),
+            true,
+        );
+        assert!(
+            my8.contains(") AS s\nON DUPLICATE KEY UPDATE") && my8.contains("NAME = s.NAME"),
+            "{my8}"
+        );
+        assert!(!my8.contains("VALUES(NAME)"));
+        assert!(
+            mysql_row_alias("8.0.19") && mysql_row_alias("8.4.2-log") && mysql_row_alias("9.1.0")
+        );
+        assert!(
+            !mysql_row_alias("8.0.18")
+                && !mysql_row_alias("5.7.44")
+                && !mysql_row_alias("11.4.2-MariaDB-ubu2404")
+                && !mysql_row_alias("")
+        );
         let none = merge_sql(
             Dialect::Oracle,
             "HR.EMP",
@@ -1908,6 +1980,7 @@ mod tests {
             &[],
             &[0, 1],
             ("t", "s"),
+            false,
         );
         assert!(none.starts_with("-- MERGE needs") && none.contains("INSERT INTO HR.EMP"));
     }

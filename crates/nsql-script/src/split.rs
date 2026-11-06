@@ -1109,7 +1109,7 @@ fn command_or_sql(text: &str, dialect: Option<Dialect>) -> ItemKind {
     match parse_command(text) {
         Ok(Some(crate::command::Command::Show { what }))
             if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.server_show)
-                && !client_show(&what) =>
+                && !client_show_in(&what, dialect) =>
         {
             ItemKind::Sql(SqlKind::Query)
         }
@@ -1122,6 +1122,131 @@ fn command_or_sql(text: &str, dialect: Option<Dialect>) -> ItemKind {
 /// 클라이언트 `SHOW` 꼴(SQL*Plus 관용 · docs/63): `CONN[ECTION]`·`CONNINFO`·`ERR[ORS] [이름]` 늘 · `USER`·`VAR[IABLE]S`는
 /// **단독일 때만**(MySQL `SHOW VARIABLES LIKE …`·`SHOW USER …`는 서버 문장).
 pub fn client_show(what: &str) -> bool {
+    client_show_in(what, None)
+}
+
+/// 클라이언트 `SHOW <객체 종류>`(T-52 · nsql-run `show_objects` = nsql-catalog `ObjectKind::parse`가 받는 낱말 · 의존 0이라 여기 사본).
+/// ★ T-327 ② (11-06): `server_show`인 **MySQL 외** 방언(PG · DuckDB · ClickHouse)은 서버에 `SHOW TABLES` 같은 문장이 없거나 다르므로
+/// 이 낱말로 시작하는 `SHOW`는 클라이언트 목록으로 남기고, 그 밖(`SHOW search_path` · `SHOW ALL` · `SHOW TRANSACTION …`)은 서버로.
+/// MySQL은 `SHOW TABLES`가 서버 문장이라 종전대로 서버.
+const SHOW_OBJECT_WORDS: &[&str] = &[
+    "table",
+    "tables",
+    "tab",
+    "view",
+    "views",
+    "mview",
+    "mviews",
+    "materialized",
+    "matview",
+    "procedure",
+    "procedures",
+    "proc",
+    "procs",
+    "sp",
+    "function",
+    "functions",
+    "func",
+    "funcs",
+    "fn",
+    "package",
+    "packages",
+    "pkg",
+    "pkgs",
+    "package_body",
+    "package-body",
+    "body",
+    "bodies",
+    "pkgbody",
+    "sequence",
+    "sequences",
+    "seq",
+    "trigger",
+    "triggers",
+    "trg",
+    "index",
+    "indexes",
+    "idx",
+    "synonym",
+    "synonyms",
+    "syn",
+    "type",
+    "types",
+    "external_table",
+    "external_tables",
+    "external",
+    "foreign_table",
+    "foreign_tables",
+    "foreign",
+    "aggregate",
+    "aggregates",
+    "agg",
+    "queue",
+    "queues",
+    "dblink",
+    "dblinks",
+    "db_link",
+    "links",
+    "java",
+    "java_class",
+    "job",
+    "jobs",
+    "scheduler_job",
+    "scheduler_jobs",
+    "sjobs",
+    "scheduler_program",
+    "scheduler_programs",
+    "programs",
+    "schema_trigger",
+    "schema_triggers",
+    "extension",
+    "extensions",
+    "ext",
+    "event_trigger",
+    "event_triggers",
+    "database",
+    "databases",
+    "db",
+    "dbs",
+    "user",
+    "users",
+    "db_user",
+    "db_users",
+    "role",
+    "roles",
+    "db_role",
+    "db_roles",
+    "linked_server",
+    "linked_servers",
+    "linked",
+    "lnk",
+    "schema",
+    "schemas",
+    "login",
+    "logins",
+    "server_role",
+    "server_roles",
+    "credential",
+    "credentials",
+    "crypto_provider",
+    "crypto_providers",
+    "cryptographic_provider",
+    "audit",
+    "audits",
+    "server_audit",
+    "audit_spec",
+    "audit_specs",
+    "server_audit_specification",
+    "backup_device",
+    "backup_devices",
+    "endpoint",
+    "endpoints",
+    "server_trigger",
+    "server_triggers",
+];
+
+/// [`client_show`]의 방언 꼴(T-327 ②): `None`/MySQL = 종전 규칙 · 그 밖의 `server_show` 방언 = 종전 규칙 + 객체 종류 낱말도 클라이언트.
+pub fn client_show_in(what: &str, dialect: Option<Dialect>) -> bool {
     let w = what
         .trim()
         .trim_end_matches(';')
@@ -1134,7 +1259,10 @@ pub fn client_show(what: &str) -> bool {
         // ★ 10-29: `SHOW AUTOCOMMIT`·`SHOW VERSION`(단독 · MySQL 서버에는 없는 꼴).
         "USER" | "VARIABLES" | "VAR" | "VARS" | "AUTOCOMMIT" | "AUTO" | "VERSION" | "VER"
         | "SERVER" => words.next().is_none(),
-        _ => false,
+        _ => {
+            dialect.is_some_and(|d| d != Dialect::Mysql)
+                && SHOW_OBJECT_WORDS.contains(&head.to_ascii_lowercase().as_str())
+        }
     }
 }
 
@@ -1170,5 +1298,39 @@ mod show_passthrough_tests {
                 && !client_show("version like 'x'")
         );
         assert!(!client_show("STATUS LIKE 'x'") && !client_show("variables like 'x'"));
+    }
+
+    /// ★ T-327 ② (11-06): PG `SHOW search_path`·`SHOW ALL`·`SHOW TRANSACTION ISOLATION LEVEL`은 서버 문장 · `SHOW TABLES`(객체 종류) ·
+    /// `SHOW CONN`·단독 `SHOW VARIABLES`는 클라이언트 명령 그대로. DuckDB·ClickHouse도 같은 규칙 · MySQL `SHOW TABLES`는 종전대로 서버.
+    #[test]
+    fn postgres_show_goes_to_server_except_client_and_object_forms() {
+        let src = "SHOW search_path; SHOW ALL; SHOW TRANSACTION ISOLATION LEVEL; SHOW TABLES; SHOW views; SHOW CONN; SHOW VARIABLES; SHOW ERRORS;";
+        let kinds: Vec<bool> = split_script_in(src, Some(Dialect::Postgres))
+            .iter()
+            .map(|it| matches!(it.kind, ItemKind::Sql(SqlKind::Query)))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![true, true, true, false, false, false, false, false],
+            "{kinds:?}"
+        );
+        for d in [Dialect::Duckdb, Dialect::Clickhouse] {
+            let k: Vec<bool> =
+                split_script_in("SHOW TABLES; SHOW DATABASES; SHOW whatever;", Some(d))
+                    .iter()
+                    .map(|it| matches!(it.kind, ItemKind::Sql(SqlKind::Query)))
+                    .collect();
+            assert_eq!(k, vec![false, false, true], "{d:?}");
+        }
+        assert!(client_show_in("tables", Some(Dialect::Postgres)));
+        assert!(
+            !client_show_in("tables", Some(Dialect::Mysql)),
+            "MySQL `SHOW TABLES` = 서버"
+        );
+        assert!(
+            !client_show_in("tables", None),
+            "방언 모름 = 종전 규칙(MySQL 꼴)"
+        );
+        assert!(!client_show_in("search_path", Some(Dialect::Postgres)));
     }
 }

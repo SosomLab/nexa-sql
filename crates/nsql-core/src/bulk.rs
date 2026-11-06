@@ -15,7 +15,7 @@ pub enum BulkLoad {
     ArrayDml,
     /// PostgreSQL `COPY … FROM STDIN`(text).
     CopyIn,
-    /// SQL Server TDS BULK INSERT(후속 B-4 — 지금은 MultiRow 폴백).
+    /// SQL Server TDS BULK INSERT(nsql-driver-mssql `bulk_begin` · T-236 B-4 완료 · 드라이버가 거절하면 MultiRow 폴백 · T-327 ⑧ 주석 정정 11-06).
     TdsBulk,
     /// ★ MySQL/MariaDB `LOAD DATA LOCAL INFILE`(클라이언트 스트림 · 89 §1-5 · 서버 `local_infile=OFF`면 드라이버가 거절 → MultiRow).
     LocalInfile,

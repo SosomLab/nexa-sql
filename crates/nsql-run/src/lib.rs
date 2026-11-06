@@ -1339,23 +1339,8 @@ impl Runner {
         let Some(all) = self.sig_cache.get(&key) else {
             return;
         };
-        // 오버로드 고르기: 이름 표기가 전부 있고 넘긴 인자 수가 형식 인자 수 이하인 첫 묶음.
-        let passed = shape.args.len();
-        let mut overloads: Vec<&str> = all.iter().map(|a| a.overload.as_str()).collect();
-        overloads.dedup();
-        let pick = overloads.into_iter().find(|ov| {
-            let params: Vec<&nsql_catalog::RoutineArg> = all
-                .iter()
-                .filter(|a| a.overload == *ov && a.position >= 1)
-                .collect();
-            passed <= params.len()
-                && shape.args.iter().all(|a| {
-                    a.named
-                        .as_deref()
-                        .is_none_or(|n| params.iter().any(|p| p.name == n))
-                })
-        });
-        let Some(ov) = pick else {
+        // 오버로드 고르기 = `pick_overload`(T-327 ④ · `call_captures`와 같은 규칙 한 벌).
+        let Some(ov) = pick_overload(&shape, all) else {
             return;
         };
         let hints: Vec<(String, nsql_core::VarType, String)> = need
@@ -1364,7 +1349,7 @@ impl Runner {
                 let arg = all.iter().find(|a| {
                     a.overload == ov
                         && match named {
-                            Some(n) => a.name == *n,
+                            Some(n) => a.name.eq_ignore_ascii_case(n),
                             None => a.position == *pos,
                         }
                 })?;
@@ -1376,7 +1361,7 @@ impl Runner {
             })
             .collect();
         let outputs: Vec<String> = if marks {
-            output_binds(&shape, all, ov)
+            output_binds(&shape, all, &ov)
         } else {
             Vec::new()
         };
@@ -3769,13 +3754,45 @@ fn output_binds(
             let arg = all.iter().find(|p| {
                 p.overload == overload
                     && match a.named.as_deref() {
-                        Some(n) => p.name == n,
+                        Some(n) => p.name.eq_ignore_ascii_case(n),
                         None => p.position == i as i64 + 1,
                     }
             })?;
             arg.in_out.contains("OUT").then(|| bind.to_string())
         })
         .collect()
+}
+
+/// ★ 오버로드 고르기(T-327 ④ #17 · 11-06 · 순수 · 한 벌): 서명 순으로 첫 묶음 가운데 ① 넘긴 인자 수 ≤ 형식 인자 수 ② 넘긴 인자 수 ≥
+/// **필수 인자 수**(기본값 없는 것 · `has_default`) ③ 이름 표기는 전부 그 묶음의 이름(대소문자 무시). 종전엔 ②가 없어 `p(1)`이
+/// `(a, b)` 두 인자 묶음에 먼저 맞았고, 이름 비교가 대소문자를 가렸다(서명은 대문자 정규화 · 호출은 원문).
+fn pick_overload(
+    shape: &nsql_script::CallShape,
+    all: &[nsql_catalog::RoutineArg],
+) -> Option<String> {
+    let passed = shape.args.len();
+    let mut seen: Vec<&str> = Vec::new();
+    for a in all {
+        if !seen.contains(&a.overload.as_str()) {
+            seen.push(a.overload.as_str());
+        }
+    }
+    seen.into_iter()
+        .find(|ov| {
+            let params: Vec<&nsql_catalog::RoutineArg> = all
+                .iter()
+                .filter(|a| a.overload == *ov && a.position >= 1)
+                .collect();
+            let required = params.iter().filter(|p| !p.has_default).count();
+            passed <= params.len()
+                && passed >= required
+                && shape.args.iter().all(|a| {
+                    a.named
+                        .as_deref()
+                        .is_none_or(|n| params.iter().any(|p| p.name.eq_ignore_ascii_case(n)))
+                })
+        })
+        .map(str::to_string)
 }
 
 /// `ACCEPT`의 값(순수): 답이 있고 비어 있지 않으면 그 답 · 아니면 DEFAULT · DEFAULT도 없으면 빈 답은 빈 글 · 답 없음은 `None`(오류).
@@ -3795,21 +3812,7 @@ fn call_captures(
     shape: &nsql_script::CallShape,
     all: &[nsql_catalog::RoutineArg],
 ) -> Option<Vec<String>> {
-    let passed = shape.args.len();
-    let mut overloads: Vec<&str> = all.iter().map(|a| a.overload.as_str()).collect();
-    overloads.dedup();
-    let ov = overloads.into_iter().find(|ov| {
-        let params: Vec<&nsql_catalog::RoutineArg> = all
-            .iter()
-            .filter(|a| a.overload == *ov && a.position >= 1)
-            .collect();
-        passed <= params.len()
-            && shape.args.iter().all(|a| {
-                a.named
-                    .as_deref()
-                    .is_none_or(|n| params.iter().any(|p| p.name == n))
-            })
-    })?;
+    let ov = pick_overload(shape, all)?;
     let mut out: Vec<String> = Vec::new();
     for p in all.iter().filter(|a| a.overload == ov && a.position >= 1) {
         if !p.in_out.contains("OUT") {
@@ -3820,7 +3823,7 @@ fn call_captures(
             .iter()
             .enumerate()
             .find(|(i, a)| match a.named.as_deref() {
-                Some(n) => n == p.name,
+                Some(n) => n.eq_ignore_ascii_case(&p.name),
                 None => *i as i64 + 1 == p.position,
             })
             .map(|(_, a)| a);
@@ -4885,6 +4888,7 @@ SELECT * FROM t;
             name: name.into(),
             data_type: "INT".into(),
             in_out: io.into(),
+            has_default: false,
         };
         let sig = vec![
             arg(1, "A", "IN"),
@@ -5038,6 +5042,73 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
     /// T-151 — 호출의 받는 바인드: OUT/INOUT 자리의 바인드만(자리 · 이름 표기) · 바인드가 아닌 OUT 자리는 빈 글 · IN 자리의 바인드는
     /// 받지 않는다 · 인자 수가 맞는 오버로드 · 서명을 모르거나 받을 것이 없으면 None.
     #[test]
+    /// ★ T-327 ④ #17(11-06 · MC/DC): ① 넘긴 수 ≤ 형식 수 ② 넘긴 수 ≥ 필수 수(기본값 제외) ③ 이름 표기 대소문자 무시 · 묶음 순서 보존.
+    fn pick_overload_min_args_defaults_and_case() {
+        use nsql_catalog::RoutineArg;
+        let arg = |ov: &str, pos: i64, name: &str, def: bool| RoutineArg {
+            overload: ov.into(),
+            position: pos,
+            name: name.into(),
+            data_type: "INTEGER".into(),
+            in_out: "IN".into(),
+            has_default: def,
+        };
+        let shape = |s: &str| nsql_script::call_shape(s).expect("call");
+        // 첫 묶음 = (A, B) 필수 둘 · 둘째 = (A) 하나 — 종전엔 `p(1)`이 첫 묶음에 맞았다(최소 인자 수 미확인).
+        let two_then_one = vec![
+            arg("HR.#1", 1, "A", false),
+            arg("HR.#1", 2, "B", false),
+            arg("HR.#2", 1, "A", false),
+        ];
+        assert_eq!(
+            super::pick_overload(&shape("p(1)"), &two_then_one).as_deref(),
+            Some("HR.#2")
+        );
+        assert_eq!(
+            super::pick_overload(&shape("p(1, 2)"), &two_then_one).as_deref(),
+            Some("HR.#1")
+        );
+        assert_eq!(
+            super::pick_overload(&shape("p(1, 2, 3)"), &two_then_one),
+            None
+        );
+        // 기본값 있는 B = 생략 가능 → `p(1)`도 첫 묶음.
+        let with_default = vec![arg("1", 1, "A", false), arg("1", 2, "B", true)];
+        assert_eq!(
+            super::pick_overload(&shape("p(1)"), &with_default).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            super::pick_overload(&shape("p()"), &with_default),
+            None,
+            "필수 A가 없다"
+        );
+        // 이름 표기 = 대소문자 무시(서명은 대문자 · 호출은 원문) · 모르는 이름 = 불일치.
+        assert_eq!(
+            super::pick_overload(&shape("p(a => 1, b => 2)"), &with_default).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            super::pick_overload(&shape("p(zz => 1)"), &with_default),
+            None
+        );
+        // 묶음 순서 = 서명에 처음 나온 순서(정렬되지 않은 목록에서도 중복 없이).
+        let interleaved = vec![
+            arg("X", 1, "A", false),
+            arg("Y", 1, "A", false),
+            arg("X", 2, "B", false),
+        ];
+        assert_eq!(
+            super::pick_overload(&shape("p(1, 2)"), &interleaved).as_deref(),
+            Some("X")
+        );
+        assert_eq!(
+            super::pick_overload(&shape("p(1)"), &interleaved).as_deref(),
+            Some("Y")
+        );
+    }
+
+    #[test]
     fn call_captures_follow_the_signature() {
         use nsql_catalog::RoutineArg;
         let arg = |ov: &str, pos: i64, name: &str, io: &str| RoutineArg {
@@ -5046,6 +5117,7 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
             name: name.into(),
             data_type: "INTEGER".into(),
             in_out: io.into(),
+            has_default: false,
         };
         let sig = vec![
             arg("1", 1, "A", "IN"),

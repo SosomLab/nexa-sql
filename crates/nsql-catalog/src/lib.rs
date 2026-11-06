@@ -1159,14 +1159,24 @@ pub fn use_db_name(sql: &str) -> Option<String> {
     (!name.is_empty() && !name.eq_ignore_ascii_case("GO")).then(|| name.to_string())
 }
 
+/// `search_path` 목록에서 첫 실제 스키마(`"$user"`·빈 항목은 건너뜀 · 인용 부호 제거).
+fn first_schema<'a>(
+    names: impl Iterator<Item = &'a str>,
+    unq: &dyn Fn(&str) -> String,
+) -> Option<String> {
+    names
+        .map(|n| unq(n.split_whitespace().next().unwrap_or("")))
+        .find(|n| !n.is_empty() && !n.starts_with('$'))
+}
+
 /// ★ 세션 작업 단위를 바꾸는 문장의 **대상 이름**(10-01 ⑮ · 순수): SQL Server·MySQL `USE x` · Oracle `ALTER SESSION SET CURRENT_SCHEMA = x` ·
 /// PostgreSQL `SET search_path TO x[, …]`(첫 스키마). 데이터 변경이 아니므로 운영 2단 확인 대상이 아니다. 아니면 `None`.
 #[must_use]
 pub fn context_switch_name(dialect: Dialect, sql: &str) -> Option<String> {
     let unq = |raw: &str| {
         raw.trim_end_matches(';')
-            .trim_start_matches(['[', '"', '`'])
-            .trim_end_matches([']', '"', '`', ';', ','])
+            .trim_start_matches(['[', '"', '`', '\''])
+            .trim_end_matches([']', '"', '`', '\'', ';', ','])
             .to_string()
     };
     let t = sql.trim_start().trim_start_matches('\u{feff}');
@@ -1206,19 +1216,47 @@ pub fn context_switch_name(dialect: Dialect, sql: &str) -> Option<String> {
             }
             None
         }
+        // ★ T-327 ⑤ #24(11-06): `SET [SESSION|LOCAL] search_path [TO|=] a, b` · `SET [SESSION|LOCAL] SCHEMA 'a'` · 공백 없는
+        //   `search_path='a'` · 작은따옴표 · `"$user"`는 건너뛰고 첫 실제 스키마(종전엔 `SET search_path` 뒤 첫 낱말만 · `$user`를 이름으로).
+        //   `LOCAL`은 트랜잭션 범위지만 호스트 표시용 이름이라 같이 따라간다.
         Dialect::Postgres => {
-            if w.len() >= 3
-                && w[0].eq_ignore_ascii_case("SET")
-                && w[1].eq_ignore_ascii_case("search_path")
-            {
-                let rest = w[2..].join(" ");
-                let v = rest
-                    .trim_start_matches(|c: char| c.is_whitespace())
-                    .trim_start_matches("TO")
-                    .trim_start_matches("to")
-                    .trim_start_matches('=')
-                    .trim();
-                let name = unq(v.split([',', ' ']).next()?);
+            if !w.first().is_some_and(|k| k.eq_ignore_ascii_case("SET")) {
+                return None;
+            }
+            let mut i = 1;
+            if w.get(i).is_some_and(|k| {
+                k.eq_ignore_ascii_case("SESSION") || k.eq_ignore_ascii_case("LOCAL")
+            }) {
+                i += 1;
+            }
+            let joined = w.get(i..)?.join(" ");
+            let key_end = joined
+                .find(|c: char| c == '=' || c.is_whitespace())
+                .unwrap_or(joined.len());
+            let (key, val) = joined.split_at(key_end);
+            let val = val.trim_start_matches(|c: char| c == '=' || c.is_whitespace());
+            if key.eq_ignore_ascii_case("search_path") {
+                let mut parts = val.split(',').map(str::trim).peekable();
+                if let Some(first) = parts.peek() {
+                    if let Some(rest) = first
+                        .get(..2)
+                        .filter(|p| p.eq_ignore_ascii_case("TO"))
+                        .and_then(|_| first.get(2..))
+                        .filter(|r| r.starts_with(char::is_whitespace) || r.starts_with('='))
+                    {
+                        let rest = rest
+                            .trim_start_matches(|c: char| c == '=' || c.is_whitespace())
+                            .to_string();
+                        let mut names: Vec<String> = vec![rest];
+                        parts.next();
+                        names.extend(parts.map(str::to_string));
+                        return first_schema(names.iter().map(String::as_str), &unq);
+                    }
+                }
+                return first_schema(parts, &unq);
+            }
+            if key.eq_ignore_ascii_case("SCHEMA") {
+                let name = unq(val.split_whitespace().next()?);
                 return (!name.is_empty()).then_some(name);
             }
             None
@@ -3656,6 +3694,9 @@ pub struct RoutineArg {
     pub data_type: String,
     /// `IN` | `OUT` | `IN/OUT`.
     pub in_out: String,
+    /// 기본값이 있는 인자(생략 가능 · T-327 ④ 11-06): Oracle `ALL_ARGUMENTS.DEFAULTED` · PG `pronargdefaults`(입력 인자의 끝 N개) ·
+    /// SQL Server·MySQL = 모름(거짓). 오버로드 고르기의 **최소 인자 수** 근거.
+    pub has_default: bool,
 }
 
 /// 호출 이름(`proc` · `pkg.proc` · `schema.proc` · `schema.pkg.proc`)의 인자 목록 — **선언 없이 쓴 바인드의 타입을 서명에서
@@ -3707,8 +3748,13 @@ pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineA
             )
         })
         .collect();
+    // ★ T-327 ④ #18(11-06): 두 조각 이름(`a.b`)은 후보 둘(패키지 a의 b · 소유자 a의 b)을 한 번에 묻는데, 비오버로드는 둘 다
+    //   overload '0'이라 한 묶음으로 섞여 자리 번호가 겹쳤다 → 오버로드 열쇠에 **소유자.패키지#**를 붙여 묶음을 가른다
+    //   (`ORDER BY owner, package_name, overload`라 Oracle 이름 해석 순서 = 후보 순서와 같지 않다 · 호출자는 열쇠를 비교만 한다).
+    //   `DEFAULTED`(11g+) = 기본값 있는 인자(최소 인자 수).
     let sql = format!(
-        "SELECT NVL(overload, '0'), position, NVL(argument_name, ' '), data_type, in_out \
+        "SELECT NVL(overload, '0'), position, NVL(argument_name, ' '), data_type, in_out, \
+         NVL(defaulted, 'N'), owner, NVL(package_name, ' ') \
          FROM all_arguments WHERE data_level = 0 AND ({}) ORDER BY owner, package_name, overload, position",
         cond.join(" OR ")
     );
@@ -3719,11 +3765,12 @@ pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineA
         // 인자 없는 루틴은 `data_type`이 빈 자리표시 행 하나로 온다.
         .filter(|r| !col(r, 3).trim().is_empty())
         .map(|r| RoutineArg {
-            overload: col(r, 0),
+            overload: format!("{}.{}#{}", col(r, 6).trim(), col(r, 7).trim(), col(r, 0)),
             position: r.get(1).map(cell_i64).unwrap_or(0),
             name: col(r, 2).trim().to_ascii_uppercase(),
             data_type: col(r, 3).trim().to_ascii_uppercase(),
             in_out: col(r, 4).trim().to_ascii_uppercase(),
+            has_default: col(r, 5).trim().eq_ignore_ascii_case("Y"),
         })
         .collect())
 }
@@ -3780,6 +3827,8 @@ fn mssql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<Routin
                 .to_ascii_uppercase(),
             data_type: col(r, 3).trim().to_ascii_uppercase(),
             in_out: col(r, 4).trim().to_ascii_uppercase(),
+            // `sys.parameters.has_default_value`는 CLR만 채운다(T-SQL = 0) → 모름.
+            has_default: false,
         })
         .collect())
 }
@@ -3823,9 +3872,11 @@ fn pg_routine_args_sql(call_name: &str) -> Option<String> {
             lit(&sig)
         ));
     }
+    // 여섯째 열 = `pronargdefaults`(기본값 있는 **입력** 인자 수 · 입력 인자 끝에서 N개 · T-327 ④).
     Some(format!(
         "SELECT p.oid::text, a.ord, COALESCE(a.name, ''), format_type(a.typ, NULL), \
-         CASE a.mode WHEN 'o' THEN 'OUT' WHEN 't' THEN 'OUT' WHEN 'b' THEN 'IN/OUT' ELSE 'IN' END \
+         CASE a.mode WHEN 'o' THEN 'OUT' WHEN 't' THEN 'OUT' WHEN 'b' THEN 'IN/OUT' ELSE 'IN' END, \
+         p.pronargdefaults::text \
          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace, \
          LATERAL unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[]), p.proargmodes, p.proargnames) \
          WITH ORDINALITY AS a(typ, mode, name, ord) \
@@ -3839,17 +3890,51 @@ fn pg_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineAr
         return Ok(Vec::new());
     };
     let rs = query(s, &sql)?;
-    Ok(rs
+    let rows: Vec<(RoutineArg, i64)> = rs
         .rows
         .iter()
-        .map(|r| RoutineArg {
-            overload: col(r, 0),
-            position: r.get(1).map(cell_i64).unwrap_or(0),
-            name: col(r, 2).trim().to_ascii_uppercase(),
-            data_type: col(r, 3).trim().to_ascii_uppercase(),
-            in_out: col(r, 4).trim().to_ascii_uppercase(),
+        .map(|r| {
+            (
+                RoutineArg {
+                    overload: col(r, 0),
+                    position: r.get(1).map(cell_i64).unwrap_or(0),
+                    name: col(r, 2).trim().to_ascii_uppercase(),
+                    data_type: col(r, 3).trim().to_ascii_uppercase(),
+                    in_out: col(r, 4).trim().to_ascii_uppercase(),
+                    has_default: false,
+                },
+                r.get(5).map(cell_i64).unwrap_or(0),
+            )
         })
-        .collect())
+        .collect();
+    Ok(pg_mark_defaults(rows))
+}
+
+/// PG 기본값 표시(순수 · T-327 ④): 오버로드(oid)마다 **입력 인자(IN · IN/OUT)** 가운데 끝에서 `pronargdefaults`개에 `has_default`.
+/// OUT 전용 인자는 세지 않는다(`pronargdefaults`는 입력 인자 기준).
+fn pg_mark_defaults(rows: Vec<(RoutineArg, i64)>) -> Vec<RoutineArg> {
+    let mut out: Vec<RoutineArg> = Vec::with_capacity(rows.len());
+    let mut i = 0;
+    while i < rows.len() {
+        let ov = rows[i].0.overload.clone();
+        let ndef = rows[i].1.max(0) as usize;
+        let mut group: Vec<RoutineArg> = Vec::new();
+        while i < rows.len() && rows[i].0.overload == ov {
+            group.push(rows[i].0.clone());
+            i += 1;
+        }
+        let inputs: Vec<usize> = group
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.position >= 1 && a.in_out != "OUT")
+            .map(|(k, _)| k)
+            .collect();
+        for &k in inputs.iter().rev().take(ndef) {
+            group[k].has_default = true;
+        }
+        out.extend(group);
+    }
+    out
 }
 
 /// MySQL 서명 조회문(135차) — `information_schema.parameters`: `[db.]이름`(백틱은 벗긴다 · 오버로드 없음 · 같은 이름의
@@ -3886,6 +3971,8 @@ fn mysql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<Routin
             name: col(r, 2).trim().to_ascii_uppercase(),
             data_type: col(r, 3).trim().to_ascii_uppercase(),
             in_out: col(r, 4).trim().to_ascii_uppercase(),
+            // `information_schema.PARAMETERS`에 기본값 열이 없다(MySQL 루틴은 기본값 자체가 없다).
+            has_default: false,
         })
         .collect())
 }
@@ -4076,6 +4163,48 @@ mod tests {
         assert!(b.contains("WHEN 'INOUT' THEN 'IN/OUT'"));
         assert!(mysql_routine_args_sql("a.b.c").is_none());
         assert!(mysql_routine_args_sql("").is_none());
+    }
+
+    #[test]
+    /// ★ T-327 ④: `pronargdefaults` = 오버로드마다 **입력 인자**의 끝 N개 · OUT 전용은 세지 않음 · 묶음이 섞여 와도 묶음 단위.
+    fn pg_mark_defaults_marks_trailing_inputs() {
+        let a = |ov: &str, pos: i64, name: &str, io: &str, ndef: i64| {
+            (
+                RoutineArg {
+                    overload: ov.into(),
+                    position: pos,
+                    name: name.into(),
+                    data_type: "INTEGER".into(),
+                    in_out: io.into(),
+                    has_default: false,
+                },
+                ndef,
+            )
+        };
+        let rows = vec![
+            a("10", 1, "A", "IN", 1),
+            a("10", 2, "B", "IN", 1),
+            a("10", 3, "R", "OUT", 1),
+            a("11", 1, "A", "IN", 0),
+            a("12", 1, "A", "IN", 2),
+            a("12", 2, "B", "IN/OUT", 2),
+        ];
+        let got = pg_mark_defaults(rows);
+        let defs: Vec<(&str, &str, bool)> = got
+            .iter()
+            .map(|r| (r.overload.as_str(), r.name.as_str(), r.has_default))
+            .collect();
+        assert_eq!(
+            defs,
+            vec![
+                ("10", "A", false),
+                ("10", "B", true),
+                ("10", "R", false),
+                ("11", "A", false),
+                ("12", "A", true),
+                ("12", "B", true),
+            ]
+        );
     }
 
     #[test]
@@ -4437,7 +4566,45 @@ mod tests {
             f(Dialect::Postgres, "SET search_path = \"My\"").as_deref(),
             Some("My")
         );
+        // ★ T-327 ⑤ #24(11-06): SESSION/LOCAL · `"$user"` 건너뜀 · 작은따옴표 · 공백 없는 `=` · `SET SCHEMA` · 소문자 `to`.
+        assert_eq!(
+            f(
+                Dialect::Postgres,
+                "SET SESSION search_path TO \"$user\", public"
+            )
+            .as_deref(),
+            Some("public")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "set local search_path = 'sales', hr").as_deref(),
+            Some("sales")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET search_path='a'").as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET search_path to tools;").as_deref(),
+            Some("tools")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET SCHEMA 'hr'").as_deref(),
+            Some("hr")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET SESSION SCHEMA \"Hr\";").as_deref(),
+            Some("Hr")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET search_path TO \"$user\"").as_deref(),
+            None,
+            "실제 스키마가 없으면 없음"
+        );
         assert_eq!(f(Dialect::Postgres, "SET statement_timeout = 0"), None);
+        assert_eq!(
+            f(Dialect::Postgres, "SET LOCAL statement_timeout = 0"),
+            None
+        );
         assert_eq!(f(Dialect::Mssql, "SELECT 1"), None);
     }
 }

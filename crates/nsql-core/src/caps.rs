@@ -183,7 +183,8 @@ pub struct Syntax {
     pub unicode_escapes: bool,
     /// 문장은 늘 `;`로 끝난다(`/` 줄 블록 없음 · 본문의 `BEGIN … END`만 짝) — SQLite · MySQL · PG. 거짓 = `/`로 끝나는 블록(Oracle 등).
     pub semicolon_only: bool,
-    /// `SHOW …`가 서버 문장인가(MySQL = STATUS·TABLES·CREATE TABLE …) · 거짓 = 클라이언트 명령.
+    /// `SHOW …`가 서버 문장인가(MySQL = STATUS·TABLES·CREATE TABLE … · PG = `SHOW search_path`·`SHOW ALL` · DuckDB·ClickHouse ·
+    /// T-327 ② 11-06) · 거짓 = 클라이언트 명령. 참이어도 클라이언트 꼴(nsql-script `client_show_in`)은 명령으로 남는다.
     pub server_show: bool,
     /// T-SQL 관계 자리 규칙(`DELETE a FROM t a` · `UPDATE a SET … FROM`).
     pub tsql_from: bool,
@@ -290,6 +291,7 @@ const SYN_POSTGRES: Syntax = Syntax {
     escape_string_prefix: true,
     bracket_ident: false,
     unicode_escapes: true,
+    server_show: true,
     ..SYN_ANSI
 };
 
@@ -324,6 +326,7 @@ const SYN_NO_SAVEPOINT: Syntax = Syntax {
 const SYN_FROM_FIRST: Syntax = Syntax {
     query_heads: &["FROM"],
     bracket_ident: false,
+    server_show: true,
     ..SYN_NO_SAVEPOINT
 };
 
