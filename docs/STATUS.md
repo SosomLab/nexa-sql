@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-06 오후 C-1 1차 + D-463**([journal 11-06 §3](journal/2026-11-06.md) · 두 버퍼 비교 `edit.compare_with` · git 거터 띠 + Alt+F7 · 로컬 히스토리 `edit.history` · F7/Shift+F7 · `grid.refetch_confirm` 기본 off + `grid.refetch_warn` · V1 31/32 → 재실행 경고 수정 → 32/32 · V2 ✓ · 다음 = O-1 → T-283)
+>
 > ★ **11-06 전역 세션 규칙 반영**(b51d527c · [journal 11-06 §1](journal/2026-11-06.md) · 사본 [claude-global-rules](claude-global-rules.md) · 새 PC = `scripts/install-global-rules.sh` · 커밋 = 토큰 보유자 자기 파일 · push = 사용자 요청 때만)
 >
 > 🚀 **v0.6.0 공개**(2026-11-05 05:10:37Z · Latest · [journal 11-05 §6](journal/2026-11-05.md) · 게이트 ①~⑥ 통과 · e4771884 → 태그 v0.6.0 → release 41970591146 ✓ · 자산 6(+9%) · 채널 = choco 0.6.0 push(검수 대기) · winget 제외 · Homebrew 탭 e59c99e ✓ · APT 0.6.0 ✓ · 드라이버 drivers-v0.1.10 그대로) · 다음 = ⑨ C-1 → O-1 → T-283(착수 전 설계 질문)
