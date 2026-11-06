@@ -309,6 +309,17 @@
 
 명명 확인 = 분류 접두 그대로(`editor.`·`grid.`·`ui.`) · 새 접두 `history.`는 로컬 히스토리 한 덩어리(Undo 분류 아래) · 시간 = 6-5(기본 15초 > 10초 → `_secs`).
 
+### 6-34. 창 투명도 4키(11-06 · D-466 · nexa-dir3와 같은 이름 · [journal 11-06 §6](journal/2026-11-06.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `window.transparency` | Int 0~90(%) | 5 | Window | 활성 창 투명도(알파 = 255×(100−%)/100 · 0 = 불투명 · LAYERED 끔) |
+| `window.transparency_blur` | Int 0~90(%) | 10 | Window | 앱 전체가 비활성일 때 투명도 |
+| `window.dialog_keeps_active` | Bool | on | Window | 보조 창(설정·로그인 …)은 늘 활성 값 |
+| `window.blur_grace_ms` | Int 0~2000(ms · HIDDEN) | 150 | Window | 포커스가 빠진 뒤 blur 값으로 바꾸기 전 유예(10초 이하 → `_ms` = 6-5) |
+
+명명 확인 = Window 분류의 `window.` 접두 · 값 방향은 "투명도 %"(불투명도 아님 · 0 = 끔) · 성능 향상 모드(`perf.boost`)는 앞 둘을 0으로 덮는다(perf.rs BOOST).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).
