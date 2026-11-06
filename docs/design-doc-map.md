@@ -2,7 +2,7 @@
 
 > 2026-10-22에 CLAUDE.md §2에서 글자 그대로 옮겼다(이력). 새 설계 문서를 만들면 맞는 요구 표에 한 줄을 더한다.
 > ★ **11-01 B8 재구성**: 한 줄 나열 → 요구별 표(요구 → 원문 문서 · 보조 문서) · 기존 링크 전부 유지 · `docs/` 접두 깨진 링크 정정 · 빠진 번호 문서 추가(11-01 정합).
-> ★ **규칙·운영 원문** = [CLAUDE.md §4](../CLAUDE.md) · [61](61-core-design-and-working-rules.md) · [102](102-collab-session-operation.md) · [16 §4-1](16-doc-git-conventions.md) · [claude-ui-rules](claude-ui-rules.md) · [claude-release-rules](claude-release-rules.md) · 문서 홈 = [README](README.md) · 현황 = [STATUS](STATUS.md) · [MILESTONES](MILESTONES.md) · [TODO](TODO.md).
+> ★ **규칙·운영 원문** = [CLAUDE.md §4](../CLAUDE.md) · [61](61-core-design-and-working-rules.md) · [102](102-collab-session-operation.md) · [16 §4-1](16-doc-git-conventions.md) · [claude-ui-rules](claude-ui-rules.md) · [claude-release-rules](claude-release-rules.md) · [claude-global-rules](claude-global-rules.md)(전역 세션 규칙 사본 · 11-06) · 문서 홈 = [README](README.md) · 현황 = [STATUS](STATUS.md) · [MILESTONES](MILESTONES.md) · [TODO](TODO.md).
 
 ## 1. 기반 · 결정 · 규칙 · 운영
 
