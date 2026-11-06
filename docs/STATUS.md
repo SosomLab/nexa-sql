@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **11-06 밤 결함 묶음 11건**([journal 11-06 §5](journal/2026-11-06.md) · PG 오버로드 전부 열기 · Db2 zoned·바인드 폴백 · ClickHouse 편집 읽기 전용 · import `--create` 빈 표 DROP(D-465) · Skip/Stop 앞 배치 누락 수정 · `ui.toast_button_secs` 15초(D-464 · T-380 ✅) · 상세 패널 소스 탭 = 객체 탭 · MSSQL bulk 사전 판정 · V1 ✓ · 새 결함 T-470 · T-471)
+> ★ **11-06 밤 결함 묶음 11건**([journal 11-06 §5](journal/2026-11-06.md) · PG 오버로드 전부 열기 · Db2 zoned·바인드 폴백 · ClickHouse 편집 읽기 전용 · import `--create` 빈 표 DROP(D-465) · Skip/Stop 앞 배치 누락 수정 · `ui.toast_button_secs` 15초(D-464 · T-380 ✅) · 상세 패널 소스 탭 = 객체 탭 · MSSQL bulk 사전 판정 · V1 ✓ · 새 결함 T-470 · T-471 · push = origin/main fb955f9b · ci ✅ · db2 ✅ · integration ✗ 1 = MSSQL 기본값 인자 OUTPUT 표시 회귀 · 수정 대기)
 >
 > ★ **11-06 저녁 T-327 ②④⑤⑦⑧ 종결**([journal 11-06 §4](journal/2026-11-06.md) · PG·DuckDB 서버 `SHOW` · 오버로드 `pick_overload` + 기본값 인자 · PG `SET search_path`/`SET SCHEMA` 따라가기 · MySQL 8.0.19+ MERGE · 실서버 V1 13/0 · 108 §11 결함 7 ✅)
 >
