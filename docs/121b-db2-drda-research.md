@@ -155,7 +155,7 @@ SECMEC 값(pydrda consts): 3 USRIDPWD · 4 USRIDONL · 7 USRENCPWD · 8 USRSSBPW
 | REAL | 0x0C/0x0D | 480/481(len 4) | 4B IEEE(X86 = 작은 끝) |
 | DOUBLE | 0x0A/0x0B | 480/481(len 8) | 8B IEEE |
 | DECIMAL(p,s) | 0x0E/0x0F | 484/485 | packed BCD `p/2+1` B · 마지막 니블 부호 C/F=+ · D=− · 길이 필드 = p·s 바이트 |
-| NUMERIC(zoned) | 0x10/0x11 | 488/489 · 504/505 | zoned 십진(Db2 LUW는 DECIMAL로 옴 · 추정) |
+| NUMERIC(zoned) | 0x10/0x11 | 488/489 · 504/505 | zoned 십진(Db2 LUW는 DECIMAL로 옴 · 추정) · ✅ 11-06 디코드 `zoned_decimal`(단위 시험) · 결과 집합 로케이터 0x14 = 자리표시 · 바인드는 표에 없는 SQLTYPE(DECFLOAT 997 · ROWID 905 · zoned 489 …) → VARCHAR 449로 서술자·값 함께 변환(`bind_supported`) · 실서버 = CI `db2.yml` |
 | CHAR(n) | 0x30/0x31 | 452/453 | 고정 n B (CCSIDSBC) |
 | VARCHAR | 0x32/0x33 | 448/449 | 2B 길이(큰 끝) + 바이트 |
 | LONG VARCHAR | 0x34/0x35 | 456/457 | 2B 길이 + 바이트 |

@@ -298,6 +298,17 @@
 
 명명 확인 = 둘 다 Editor 분류의 `editor.` 접두 · 비율 값은 `_opacity`(퍼센트 정수 · 시간 단위 규칙 6-5와 무관).
 
+### 6-33. 11-06 새 키 5(C-1 · D-463 · D-464 · [journal 11-06 §3·§5](journal/2026-11-06.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `editor.git_gutter` | Bool | on | Editor | git 추적 파일의 HEAD 대비 변경 줄을 거터 둘째 띠로(C-1 · 끄면 띠·폭 원복) |
+| `history.enabled` · `history.max_per_item` · `history.max_mb` | Bool · Int · Int | on · 50 · 200 | Undo | 파일 저장 시점 로컬 히스토리(`NSQL_HOME/history` · 항목당 개수 · 전체 MB 상한 · 39 §3-3) |
+| `grid.refetch_warn` | Bool | on | Grid | ORDER BY 없는 결과를 처음부터 다시 받아 교체했을 때 경고 토스트(결과 탭의 실행당 1회 · D-463 · `grid.refetch_confirm` 기본은 off로) |
+| `ui.toast_button_secs` | Int 1~600(초) | 15 | Appearance | 버튼 있는 토스트 수명(D-464 · T-380 · 10초 초과라 `_secs` = 6-5 규칙) |
+
+명명 확인 = 분류 접두 그대로(`editor.`·`grid.`·`ui.`) · 새 접두 `history.`는 로컬 히스토리 한 덩어리(Undo 분류 아래) · 시간 = 6-5(기본 15초 > 10초 → `_secs`).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).
