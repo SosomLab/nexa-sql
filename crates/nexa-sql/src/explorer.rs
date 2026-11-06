@@ -1079,6 +1079,8 @@ pub(crate) struct Explorer {
     /// ★ 소스 요청 시각·이름(docs/107 ① 호출 상한 · `explorer.timeout`이 지나면 실패 안내 · 늦게 오면 그때 연다).
     source_since: Option<Instant>,
     source_name: String,
+    /// 진행 중인 소스 요청의 서명(`extra` · PG 오버로드 구분 · 11-06 — 같은 이름의 다른 오버로드를 연달아 열면 뒤 요청이 버려졌다).
+    source_extra: String,
     /// ★ 소스 요청이 진행 중일 때 들어온 **최신** 요청 하나(덮어쓰기 · 10-16 사용자 "밀린 요청은 버리고 최신만") — 진행 중인 것이 끝나면 발행.
     source_queued: Option<(ObjectInfo, ObjectKind, String)>,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
@@ -2594,6 +2596,7 @@ impl Explorer {
             priv_broken: 0,
             source_since: None,
             source_name: String::new(),
+            source_extra: String::new(),
             source_queued: None,
             row_px: 0,
             dots_step: 0,
@@ -6984,7 +6987,8 @@ impl Explorer {
         if self.source_pending {
             // 진행 중이면 **최신 요청만** 기억(앞서 쌓인 것은 버림 · 99 LatestIntent 사상) → 응답이 오면 `drain` 끝에서 발행.
             //   단 진행 중인 것과 **같은 객체**면 중복(같은 응답이 올 것) — 넣지 않는다(10-16 ↓ 연타 1행 결함).
-            if self.source_name.eq_ignore_ascii_case(&o.name) {
+            //   ★ 같은 객체 = 이름 **+ 서명**(PG 오버로드는 이름이 같고 `extra`가 다르다 · 11-06).
+            if self.source_name.eq_ignore_ascii_case(&o.name) && self.source_extra == o.extra {
                 self.source_queued = None;
             } else {
                 self.source_queued = Some((o.clone(), kind, title));
@@ -6994,10 +6998,12 @@ impl Explorer {
         self.source_pending = true;
         self.source_since = Some(Instant::now());
         self.source_name = o.name.clone();
+        self.source_extra = o.extra.clone();
         let name = if o.kind == ObjectKind::Function || o.kind == ObjectKind::Procedure {
-            // PG 오버로드 — 서명 포함 이름으로.
+            // PG 오버로드 — 서명 포함 이름으로(`SETOF ` 접두 = 반환 집합 표시일 뿐 서명이 아니다 → 뗀다 · tree.rs와 같게 · 11-06
+            //   — 종전엔 `f(SETOF a integer)::regprocedure`로 가 변환 오류).
             if self.dialect == Some(Dialect::Postgres) && !o.extra.is_empty() {
-                format!("{}({})", o.name, o.extra)
+                format!("{}({})", o.name, o.extra.trim_start_matches("SETOF "))
             } else {
                 o.name.clone()
             }

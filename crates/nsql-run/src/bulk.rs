@@ -403,6 +403,7 @@ impl Runner {
                         let (n_ok, fails) =
                             self.replay_skip(&rows, p, dialect, caps.marker, caps.tx_begin);
                         rep.rows += n_ok;
+                        rep.batches += n_ok as u32;
                         for f in fails {
                             rep.note_skip(f);
                         }
@@ -411,6 +412,7 @@ impl Runner {
                         let (n_ok, f) =
                             self.replay_single(&rows, p, dialect, caps.marker, caps.tx_begin);
                         rep.rows += n_ok;
+                        rep.batches += n_ok as u32;
                         match f {
                             Some(f) => rep.failure = Some(f),
                             None => go_on = true,
@@ -440,6 +442,9 @@ impl Runner {
             };
         }
         let mut batch: Vec<Item> = Vec::new();
+        // ★ 이 트랜잭션에서 보냈지만 아직 **커밋 안 된** 행(11-06): 배치 실패로 되돌리면 이 행들도 함께 사라지므로 재실행 목록에 넣는다 —
+        //   종전엔 실패 배치만 다시 넣어 앞 배치들이 조용히 누락됐다(Skip = 데이터 누락 · Stop = "앞 N행 커밋됨"이 거짓). 상한 = `commit_every`.
+        let mut pending: Vec<Item> = Vec::new();
         let mut since_commit: u64 = 0;
         let mut in_tx = false;
         let begin = |s: &mut Box<dyn nsql_core::Session>| -> Result<(), String> {
@@ -508,7 +513,7 @@ impl Runner {
                         exec_total += te.elapsed();
                         rep.batches += 1;
                         since_commit += batch.len() as u64;
-                        batch.clear();
+                        pending.append(&mut batch);
                         if p.commit_every > 0 && since_commit >= p.commit_every as u64 {
                             if let Err(e) = session.commit() {
                                 rep.failure = Some(BulkFailure {
@@ -521,22 +526,25 @@ impl Runner {
                             in_tx = false;
                             rep.rows += since_commit;
                             since_commit = 0;
+                            pending.clear();
                             progress(rep.rows, t0.elapsed());
                         }
                     }
                     Err(e) => {
-                        // 되돌리면 이 트랜잭션에서 커밋 안 된 앞 배치도 함께 잃는다(`rows`에 안 센다 · D-223 커밋 간격을 작게 하면
-                        // 손실도 작다) — 실패 배치만 단건으로 다시 넣어 문제 행을 지목한다.
+                        // 되돌리면 이 트랜잭션에서 커밋 안 된 앞 배치(`pending`)도 함께 사라진다 → 그 행들 + 실패 배치를 **단건으로 다시**
+                        // 넣어 앞 행은 살리고 문제 행을 지목한다(11-06 · 종전 = 실패 배치만 → 앞 배치 조용히 누락).
                         let batch_err = e.message;
                         let _ = session.rollback();
                         in_tx = false;
                         since_commit = 0;
-                        let failed = std::mem::take(&mut batch);
+                        let mut failed = std::mem::take(&mut pending);
+                        failed.append(&mut batch);
                         if p.on_error == OnError::Skip {
-                            // ★ D-452: 행마다 따로 넣어 실패 행만 건너뛰고 계속.
+                            // ★ D-452: 행마다 따로 넣어 실패 행만 건너뛰고 계속 · 재실행 문장도 "배치"로 센다(보고의 배치 수 = 보낸 INSERT 문장 수).
                             let (n_ok, fails) =
                                 self.replay_skip(&failed, p, dialect, caps.marker, caps.tx_begin);
                             rep.rows += n_ok;
+                            rep.batches += n_ok as u32;
                             for f in fails {
                                 rep.note_skip(f);
                             }
@@ -549,6 +557,7 @@ impl Runner {
                         let (n_ok, f) =
                             self.replay_single(&failed, p, dialect, caps.marker, caps.tx_begin);
                         rep.rows += n_ok;
+                        rep.batches += n_ok as u32;
                         rep.failure = f.or(Some(BulkFailure {
                             row: 0,
                             line: 0,
@@ -617,6 +626,9 @@ impl Runner {
         let t_send = Instant::now();
         let mut exec_total = Duration::ZERO;
         let mut batch: Vec<Item> = Vec::new();
+        // ★ 커밋 안 된 행(11-06 · 다중 행 경로와 같은 이유): 싱크 실패로 되돌리면 함께 사라지므로 재실행 목록에 넣는다 — 중간 커밋이 없는
+        //   싱크(COPY)는 끝까지 쌓이지 않게 비운다(그 길의 실패는 종전처럼 전체 손실 · 재실행 없음).
+        let mut pending: Vec<Item> = Vec::new();
         let mut since_commit: u64 = 0;
         let mut end = SinkEnd::Done;
         loop {
@@ -661,8 +673,10 @@ impl Runner {
             }
             let te = Instant::now();
             if let Err(e) = sink.flush() {
+                let mut failed = std::mem::take(&mut pending);
+                failed.append(&mut batch);
                 end = SinkEnd::Failed(
-                    std::mem::take(&mut batch),
+                    failed,
                     Some(BulkFailure {
                         row: 0,
                         line: 0,
@@ -678,7 +692,7 @@ impl Runner {
             rep.batches += 1;
             since_commit += batch.len() as u64;
             let was_end = batch.is_empty();
-            batch.clear();
+            pending.append(&mut batch);
             if p.commit_every > 0 && since_commit >= p.commit_every as u64 {
                 match sink.commit() {
                     Err(e) => {
@@ -695,10 +709,14 @@ impl Runner {
                     Ok(true) => {
                         rep.rows += since_commit;
                         since_commit = 0;
+                        pending.clear();
                         progress(rep.rows, t0.elapsed());
                     }
-                    // 중간 커밋이 없는 경로(COPY) — 끝에서 한 번에 센다.
-                    Ok(false) => progress(rep.rows, t0.elapsed()),
+                    // 중간 커밋이 없는 경로(COPY) — 끝에서 한 번에 센다(재실행 목록도 쌓지 않는다).
+                    Ok(false) => {
+                        pending.clear();
+                        progress(rep.rows, t0.elapsed());
+                    }
                 }
             }
             if was_end {
@@ -1085,6 +1103,9 @@ impl Runner {
         let table = &spec.table;
         // 대상 열·타입: 새 표 = CREATE 먼저(실패 = 중단) · 기존 표 = 빈 조회의 메타(`SELECT * … WHERE 1=0` · 모든 방언) ·
         //   빈 메타(SQL Server) = 카탈로그.
+        // ★ `--create`로 방금 만든 표는 준비 단계 실패·행 0 실패 때 지운다(11-06 · 종전 = 빈 표가 남음 · D-451 "자동 삭제문 금지"는 사용자
+        //   데이터가 있는 표에 대한 것 — 여기는 우리가 만들었고 행이 0인 표만 · 건너뛴 행이 있으면 "전체 실패"가 아니라 두지 않는다).
+        let created = spec.create.is_some();
         let mut table_cols: Vec<(String, String)> = if let Some(c) = &spec.create {
             let sql = create_table_sql_for(dialect, table, c);
             let Some(sess) = self.session.as_deref_mut() else {
@@ -1158,7 +1179,8 @@ impl Runner {
             raw_names.clone()
         };
         if src_names.is_empty() || raw_names.is_empty() {
-            return Err(t(Msg::CliImportEmpty).to_string());
+            let m = t(Msg::CliImportEmpty).to_string();
+            return Err(self.abort_created(created, table, m));
         }
         // 건너뜀 · 매핑 → 가져갈 원료 열 번호와 대상 열·타입.
         let mut picked: Vec<usize> = Vec::new();
@@ -1179,11 +1201,15 @@ impl Runner {
                     cols.push(c.clone());
                     types.push(ty.clone());
                 }
-                None => return Err(tf(Msg::CliImportUnknownCol, &[dst, table])),
+                None => {
+                    let m = tf(Msg::CliImportUnknownCol, &[dst, table]);
+                    return Err(self.abort_created(created, table, m));
+                }
             }
         }
         if picked.is_empty() {
-            return Err(t(Msg::CliImportEmpty).to_string());
+            let m = t(Msg::CliImportEmpty).to_string();
+            return Err(self.abort_created(created, table, m));
         }
         let p = BulkParams {
             table: table.clone(),
@@ -1213,7 +1239,41 @@ impl Runner {
                 Err(e) => Err(e.to_string()),
             }
         };
-        Ok(self.bulk_load(&mut next, &p, progress))
+        let mut rep = self.bulk_load(&mut next, &p, progress);
+        if created
+            && rep.rows == 0
+            && rep.skipped_total == 0
+            && rep.failure.is_some()
+            && self.drop_created_table(table)
+        {
+            if let Some(f) = rep.failure.as_mut() {
+                f.message.push_str(&format!(
+                    " - created table {table} dropped (no rows loaded)"
+                ));
+            }
+        }
+        Ok(rep)
+    }
+
+    /// 준비 단계 실패 메시지 — `--create`로 만든 표면 지우고 그 사실을 덧붙인다(11-06).
+    fn abort_created(&mut self, created: bool, table: &str, msg: String) -> String {
+        if created && self.drop_created_table(table) {
+            format!("{msg} - created table {table} dropped")
+        } else {
+            msg
+        }
+    }
+
+    /// 방금 `--create`로 만든(행 0) 표를 지운다 — 성공이면 true(실패는 조용히 · 표가 남으면 메시지에 덧붙이지 않는다).
+    fn drop_created_table(&mut self, table: &str) -> bool {
+        let Some(sess) = self.session.as_deref_mut() else {
+            return false;
+        };
+        sess.execute(&ExecRequest {
+            sql: format!("DROP TABLE {table}"),
+            params: Vec::new(),
+        })
+        .is_ok()
     }
 }
 

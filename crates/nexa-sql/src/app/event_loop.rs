@@ -1837,20 +1837,14 @@ impl App {
                     if self.tab_room() {
                         self.editors.new_tab(Some(title));
                         self.editors.cur_mut().set_text(&text);
+                        // 연 본문 = 저장 지점(탐색기 소스 열기와 같게 · 11-06 — 종전엔 처음부터 ●로 보였다).
+                        let cur = self.editors.active();
+                        self.editors.mark_clean(cur);
                         // 캐럿 = 1행 1열(파일 열기와 같이 · 사용자 09-30).
                         self.editors.cur_mut().goto_line(1);
                         self.set_focus(Focus::Editor);
                         if let Some(o) = origin {
-                            let tab = self.editors.active_id();
-                            if let Some(spec) = o.server.clone() {
-                                self.bind_tab_to_server(tab, &spec);
-                            }
-                            self.editors
-                                .set_doc_object(tab, super::bookmarks::object_doc_key(&o));
-                            self.object_tabs.insert(tab, o);
-                            self.sync_sess();
-                            self.sync_sess_ui();
-                            self.bm_after_source_open();
+                            self.adopt_object_tab(o);
                         }
                     }
                     self.sync_modal();

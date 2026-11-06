@@ -535,11 +535,13 @@ impl App {
                 self.project_panel.refresh();
             }
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
-            "ui.toast_ms" | "ui.toast_alpha" => {
+            "ui.toast_ms" | "ui.toast_alpha" | "ui.toast_button_secs" => {
                 self.toasts.configure(
                     self.settings.int("ui.toast_ms"),
                     self.settings.int("ui.toast_alpha"),
                 );
+                self.toasts
+                    .set_button_ttl(self.settings.int("ui.toast_button_secs"));
                 self.apply_run_toast();
             }
             "ui.toast_progress" | "ui.toast_fade_to" | "ui.toast_bar_spent" => {

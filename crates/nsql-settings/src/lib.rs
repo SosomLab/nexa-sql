@@ -5032,6 +5032,15 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "3000",
     },
+    // ★ T-380(11-06): 버튼 있는 토스트([계속]·[다시 보지 않기]·[되돌리기])는 읽고 누를 시간이 필요 → 따로 긴 수명(초 · 94 §6-5 = 10초 초과는 초 단위).
+    Entry {
+        key: "ui.toast_button_secs",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToastButtonSecs,
+        desc: Msg::DescToastButtonSecs,
+        kind: SettingKind::Int { min: 1, max: 600 },
+        default: "15",
+    },
     Entry {
         key: "ui.toast_alpha",
         cat: Msg::CatAppearance,

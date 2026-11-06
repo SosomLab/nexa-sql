@@ -92,6 +92,21 @@ impl App {
     /// ★ 종전에는 워커 응답을 걷는 `drain_events` 안에서만 걷어서, 메뉴로 고른 연결 해제·이름 복사가 **다음 워커 응답이 올 때까지**
     ///   실행되지 않았다(응답이 없으면 끝내 안 됨 · 사용자 09-21). 입력을 탐색기에 준 직후에도 부른다.
     /// ★ 객체 상세 패널(docs/86): 탐색기 선택이 바뀌었으면 대상을 바꾸고 객체면 상세를 청한다(`force` = 켜는 순간).
+    /// ★ 활성 편집기 탭을 **객체 탭**으로 삼는다(09-30 · 11-06 공용화): 출처 기억(F5 = 한 단위 실행 · 스키마 불일치 경고) · 그 객체의
+    /// 서버 세션에 묶기 · 북마크 문서 열쇠 · 세션 표시 동기. 탐색기 소스 열기 · DDL 미리보기 "편집기에서 열기" · 상세 패널 더블클릭이 같은 길.
+    pub(crate) fn adopt_object_tab(&mut self, o: explorer::ObjectOrigin) {
+        let tab = self.editors.active_id();
+        if let Some(spec) = o.server.clone() {
+            self.bind_tab_to_server(tab, &spec);
+        }
+        self.editors
+            .set_doc_object(tab, super::bookmarks::object_doc_key(&o));
+        self.object_tabs.insert(tab, o);
+        self.sync_sess();
+        self.sync_sess_ui();
+        self.bm_after_source_open();
+    }
+
     pub(crate) fn sync_detail_target(&mut self, force: bool) {
         if !self.objdetail.is_visible() {
             if std::env::var_os("NSQL_TRACE_META").is_some() {
@@ -245,10 +260,29 @@ impl App {
                     self.redraw();
                 }
                 objdetail::DetailAction::OpenInEditor(title, text) if self.tab_room() => {
+                    // ★ T-267(11-06): 상세 패널 머리 더블클릭으로 연 소스 탭도 **객체 탭**(출처 · 그 서버 세션 · 저장 지점) — 종전엔 제목·글만
+                    //   넣어 F5가 활성 세션의 일반 분할 실행이 되고 스키마 불일치 경고도 없었다. DDL 미리보기 "편집기에서 열기"와 같은 길.
+                    let server = self.explorer.shown_key();
+                    let origin = self.explorer.selected_target().and_then(|t| match t {
+                        explorer::DetailTarget::Object(o) if o.kind.has_source() => {
+                            Some(explorer::ObjectOrigin {
+                                schema: o.schema.clone(),
+                                name: o.name.clone(),
+                                kind: o.kind,
+                                server,
+                            })
+                        }
+                        _ => None,
+                    });
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
+                    let cur = self.editors.active();
+                    self.editors.mark_clean(cur);
                     self.editors.cur_mut().goto_line(1);
                     self.set_focus(Focus::Editor);
+                    if let Some(o) = origin {
+                        self.adopt_object_tab(o);
+                    }
                     self.redraw();
                 }
                 objdetail::DetailAction::OpenInEditor(..) => {}

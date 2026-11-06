@@ -30,6 +30,14 @@ pub(crate) enum ReadOnly {
     Prod,
     /// 행을 식별할 길이 없다(키 없음 · 물리 식별자 없음 · 비교 가능한 열 없음 · 87 §13).
     NoKey,
+    /// ★ 이 방언에는 행 단위 `UPDATE`/`DELETE`가 없다(ClickHouse = `ALTER TABLE … UPDATE/DELETE` 변이 · 108 §12 T-5 · 11-06) — 종전엔 차단
+    ///   없이 일반 UPDATE를 보내 서버 구문 오류가 났다.
+    Dialect,
+}
+
+/// 그리드 편집(행 단위 UPDATE/DELETE/INSERT)이 되는 방언인가(순수) — ClickHouse만 아니다.
+pub(crate) fn dialect_editable(d: Dialect) -> bool {
+    !matches!(d, Dialect::Clickhouse)
 }
 
 impl ReadOnly {
@@ -47,6 +55,7 @@ impl ReadOnly {
             ReadOnly::Disabled => Msg::GeRoDisabled,
             ReadOnly::Prod => Msg::GeRoProd,
             ReadOnly::NoKey => Msg::GeRoNoKey,
+            ReadOnly::Dialect => Msg::GeRoDialect,
         };
         t(m).to_string()
     }
@@ -1127,6 +1136,26 @@ pub(crate) fn preview_text(stmts: &[EditStmt], table: &str, key_kind: KeyKind) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 11-06: ClickHouse만 행 단위 DML이 없어 편집을 열지 않는다(다른 방언은 그대로).
+    #[test]
+    fn dialect_editable_blocks_clickhouse_only() {
+        assert!(!dialect_editable(Dialect::Clickhouse));
+        for d in [
+            Dialect::Oracle,
+            Dialect::Postgres,
+            Dialect::Mssql,
+            Dialect::Mysql,
+            Dialect::Sqlite,
+            Dialect::Duckdb,
+            Dialect::Db2,
+            Dialect::Odbc,
+            Dialect::Access,
+        ] {
+            assert!(dialect_editable(d), "{d:?}");
+        }
+        assert!(ReadOnly::Dialect.text().contains("ClickHouse"));
+    }
 
     #[test]
     fn analyze_single_table_only() {

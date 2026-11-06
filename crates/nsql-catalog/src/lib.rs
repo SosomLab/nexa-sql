@@ -1159,6 +1159,28 @@ pub fn use_db_name(sql: &str) -> Option<String> {
     (!name.is_empty() && !name.eq_ignore_ascii_case("GO")).then(|| name.to_string())
 }
 
+/// PG 함수/프로시저 소스 본문 합치기(순수 · 108 #16): `(정의, 서명)` 목록 → 하나면 그대로 · 둘 이상이면 `-- overload k/n: 이름(서명)`
+/// 머리 주석 + 빈 줄로 가른다 · 비면 `None`. 각 정의 끝은 `;` 하나.
+fn pg_overloads_text(name: &str, bodies: &[(String, String)]) -> Option<String> {
+    match bodies {
+        [] => None,
+        [(body, _)] => Some(format!("{};\n", body.trim_end().trim_end_matches(';'))),
+        many => {
+            let n = many.len();
+            let mut out = String::new();
+            for (k, (body, sig)) in many.iter().enumerate() {
+                out.push_str(&format!(
+                    "-- overload {}/{n}: {name}({})\n{};\n\n",
+                    k + 1,
+                    sig.trim(),
+                    body.trim_end().trim_end_matches(';')
+                ));
+            }
+            Some(out.trim_end().to_string() + "\n")
+        }
+    }
+}
+
 /// `search_path` 목록에서 첫 실제 스키마(`"$user"`·빈 항목은 건너뜀 · 인용 부호 제거).
 fn first_schema<'a>(
     names: impl Iterator<Item = &'a str>,
@@ -3480,25 +3502,34 @@ pub fn source_with(
                 ))
             }
             ObjectKind::Procedure | ObjectKind::Function => {
-                // `name` 또는 `name(args)` — 서명이 없으면 첫 오버로드.
-                let sql = if name.contains('(') {
-                    format!(
+                // `name(args)` = 그 오버로드 하나 · `name`만 = **모든 오버로드**(oid 순 · 108 #16 · 11-06 — 종전 `LIMIT 1`은 첫 오버로드를
+                //   조용히 열어 그대로 컴파일하면 엉뚱한 오버로드를 덮어썼다). 둘 이상이면 `-- overload k/n: 서명` 머리 주석으로 가른다 ·
+                //   각 `CREATE OR REPLACE`는 자기 서명만 바꾸므로 그대로 실행해도 보수적(100 §5).
+                if name.contains('(') {
+                    let sql = format!(
                         "SELECT pg_get_functiondef({}::regprocedure)",
                         lit(&format!("{}.{}", quote_ident(dialect, schema), name))
-                    )
-                } else {
-                    format!(
-                        "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = {} AND p.proname = {} ORDER BY p.oid LIMIT 1",
-                        lit(schema),
-                        lit(name)
-                    )
-                };
-                let rs = query(s, &sql)?;
-                let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
-                if body.trim().is_empty() {
-                    return Err(not_found(schema, name));
+                    );
+                    let rs = query(s, &sql)?;
+                    let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                    if body.trim().is_empty() {
+                        return Err(not_found(schema, name));
+                    }
+                    return Ok(format!("{};\n", body.trim_end().trim_end_matches(';')));
                 }
-                Ok(format!("{};\n", body.trim_end().trim_end_matches(';')))
+                let sql = format!(
+                    "SELECT pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = {} AND p.proname = {} ORDER BY p.oid",
+                    lit(schema),
+                    lit(name)
+                );
+                let rs = query(s, &sql)?;
+                let bodies: Vec<(String, String)> = rs
+                    .rows
+                    .iter()
+                    .map(|r| (col(r, 0), col(r, 1)))
+                    .filter(|(b, _)| !b.trim().is_empty())
+                    .collect();
+                pg_overloads_text(name, &bodies).ok_or_else(|| not_found(schema, name))
             }
             ObjectKind::Trigger => {
                 // ★ 보수적 생성(09-30): `pg_get_triggerdef`는 search_path에 있는 표를 스키마 없이 찍는다 → `ON schema.table`로 한정.
@@ -4165,8 +4196,40 @@ mod tests {
         assert!(mysql_routine_args_sql("").is_none());
     }
 
+    /// ★ 108 #16(11-06): 서명 없는 PG 소스 열기 = 모든 오버로드 · 머리 주석 `-- overload k/n: f(서명)` · 하나면 주석 없음 · 비면 None.
     #[test]
+    fn pg_overloads_text_joins_all() {
+        assert_eq!(pg_overloads_text("f", &[]), None);
+        assert_eq!(
+            pg_overloads_text(
+                "f",
+                &[("CREATE OR REPLACE FUNCTION f() …;".into(), String::new())]
+            )
+            .as_deref(),
+            Some("CREATE OR REPLACE FUNCTION f() …;\n")
+        );
+        let two = pg_overloads_text(
+            "f",
+            &[
+                (
+                    "CREATE OR REPLACE FUNCTION f(a integer) … ".into(),
+                    "a integer".into(),
+                ),
+                (
+                    "CREATE OR REPLACE FUNCTION f(a text);".into(),
+                    "a text".into(),
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            two,
+            "-- overload 1/2: f(a integer)\nCREATE OR REPLACE FUNCTION f(a integer) …;\n\n-- overload 2/2: f(a text)\nCREATE OR REPLACE FUNCTION f(a text);\n"
+        );
+    }
+
     /// ★ T-327 ④: `pronargdefaults` = 오버로드마다 **입력 인자**의 끝 N개 · OUT 전용은 세지 않음 · 묶음이 섞여 와도 묶음 단위.
+    #[test]
     fn pg_mark_defaults_marks_trailing_inputs() {
         let a = |ov: &str, pos: i64, name: &str, io: &str, ndef: i64| {
             (

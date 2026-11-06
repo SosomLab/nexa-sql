@@ -118,6 +118,8 @@ impl App {
             self.settings.int("ui.toast_ms"),
             self.settings.int("ui.toast_alpha"),
         );
+        self.toasts
+            .set_button_ttl(self.settings.int("ui.toast_button_secs"));
         self.toasts.configure_progress(
             self.settings.flag("ui.toast_progress"),
             self.settings.int("ui.toast_fade_to"),

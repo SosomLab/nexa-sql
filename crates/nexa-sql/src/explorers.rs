@@ -1222,6 +1222,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         Arc::clone(&self.wake)
     }
 
+    /// 지금 보이는 칸의 카탈로그 키(서버 · 비밀번호 없음 · 빈 칸 = None) — 상세 패널에서 연 소스 탭의 출처 서버(T-267 · 11-06).
+    pub(crate) fn shown_key(&self) -> Option<ConnectSpec> {
+        self.panes.get(self.shown).and_then(|p| p.key.clone())
+    }
+
     /// 연결된(오프라인 아닌) 서버 칸 = (키, 라벨).
     pub(crate) fn find_servers(&self) -> Vec<(Option<ConnectSpec>, String)> {
         self.panes

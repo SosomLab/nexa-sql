@@ -1160,6 +1160,49 @@ impl MssqlSession {
             })
             .collect())
     }
+
+    /// ★ TDS bulk가 다루지 못해 tiberius가 `todo!()`/`unreachable!()`(panic=abort)에 닿는 열(11-06): CLR UDT(geography · geometry ·
+    /// hierarchyid · `is_assembly_type`) · `sql_variant` · 널 허용 money/smallmoney(추정 · MONEYN). `INSERT BULK`는 표의 **모든** 열을
+    /// 열거하므로 가져오기에서 건너뛴 열도 본다. 반환 = `이름(타입)` 목록(비면 안전).
+    fn bulk_unsupported_columns(&mut self, table: &str) -> Result<Vec<String>, DbError> {
+        let lit = format!("N'{}'", table.replace('\'', "''"));
+        let db = db_prefix(table);
+        let sql = format!(
+            "SELECT c.name, t.name, c.is_nullable, t.is_assembly_type FROM {db}sys.all_columns c JOIN {db}sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({lit}) AND c.is_computed = 0"
+        );
+        let client = &mut self.client;
+        let rows = bounded(
+            &self.rt,
+            self.call_timeout,
+            &self.cancel_sock,
+            &mut self.broken,
+            async {
+                client
+                    .simple_query(&sql)
+                    .await
+                    .map_err(err)?
+                    .into_first_result()
+                    .await
+                    .map_err(err)
+            },
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let name: &str = r.try_get::<&str, usize>(0).ok().flatten()?;
+                let ty: &str = r.try_get::<&str, usize>(1).ok().flatten()?;
+                let nullable = r.try_get::<bool, usize>(2).ok().flatten().unwrap_or(false);
+                let clr = r.try_get::<bool, usize>(3).ok().flatten().unwrap_or(false);
+                let t = ty.to_ascii_lowercase();
+                let bad =
+                    clr || matches!(
+                        t.as_str(),
+                        "geography" | "geometry" | "hierarchyid" | "sql_variant"
+                    ) || (nullable && matches!(t.as_str(), "money" | "smallmoney"));
+                bad.then(|| format!("{name}({ty})"))
+            })
+            .collect())
+    }
 }
 
 impl Session for MssqlSession {
@@ -1171,6 +1214,14 @@ impl Session for MssqlSession {
         _opts: &nsql_core::BulkOpts,
     ) -> Result<Box<dyn nsql_core::BulkSink + 'a>, DbError> {
         self.bulk_table = table.to_string();
+        // ★ 사전 판정(11-06): tiberius bulk가 패닉하는 열이 표에 있으면 거절 → nsql-run이 다중 행 INSERT로 자동 폴백(`driver refused`).
+        let bad = self.bulk_unsupported_columns(table)?;
+        if !bad.is_empty() {
+            return Err(bulk_err(format!(
+                "bulk: {table} has column(s) unsupported by TDS bulk ({}) - using row INSERT",
+                bad.join(", ")
+            )));
+        }
         let mut kinds: Vec<MsKind> = types.iter().map(|t| MsKind::of(t)).collect();
         // ★ 방어층(T-309 · 10-07): TDS bulk는 Numeric의 scale이 열 scale과 **정확히** 같아야 한다 — 어긋나면 tiberius가 `todo!()`로 프로세스를
         //   끝낸다(panic=abort · GUI Import 창도 같은 길). 호출자가 준 타입 글(`decimal`만 · scale 없음)을 믿지 않고 서버 `sys.all_columns`에서

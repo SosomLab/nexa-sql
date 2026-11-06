@@ -309,12 +309,54 @@ pub fn read_value(r: &mut Reader<'_>, c: ColDesc, le: bool) -> Result<Value, Row
             let ln = u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize;
             Value::Bytes(r.take(ln)?.to_vec())
         }
+        // ★ zoned NUMERIC(0x10 · 11-06 · 종전 = "not supported yet" 오류로 결과 **전체** 실패): 길이 = 자릿수 p · 각 바이트의 아래 니블 =
+        //   숫자(EBCDIC F0~F9 · ASCII 30~39 둘 다) · 마지막 바이트의 위 니블 = 부호(0xD · 0x7 · 0xB = 음수) · 소수 자릿수 s.
+        0x10 => {
+            let (p, s) = (c.len[0] as usize, c.len[1] as usize);
+            Value::Decimal(zoned_decimal(r.take(p)?, s))
+        }
+        // 결과 집합 로케이터(0x14 · 4 B · CALL의 결과 집합 손잡이)는 값이 아니다 → 자리표시 글(열 경계는 지킨다).
+        0x14 => {
+            r.take(4)?;
+            Value::Str("<result set locator>".into())
+        }
         t => {
             return Err(RowErr::Bad(err(format!(
-                "DRDA: column type 0x{t:02X} is not supported yet (LOB/XML = phase 2)"
+                "DRDA: column type 0x{t:02X} is not supported (no decoder; LOB/XML arrive as EXTDTA and are supported)"
             ))))
         }
     })
+}
+
+/// zoned decimal(DRDA 0x10) → 십진 문자열(순수): 바이트마다 아래 니블이 숫자 · 마지막 바이트 위 니블이 부호 · `scale` 자리에 소수점 ·
+/// 앞의 0은 걷되 정수부 한 자리는 남긴다(`"0.50"` · `"-12.3"`). 숫자가 아닌 니블(>9)은 0으로.
+fn zoned_decimal(b: &[u8], scale: usize) -> String {
+    let neg = b.last().is_some_and(|x| matches!(x >> 4, 0xD | 0x7 | 0xB));
+    let mut digits: String = b
+        .iter()
+        .map(|x| {
+            let d = x & 0x0F;
+            char::from(b'0' + d.min(9))
+        })
+        .collect();
+    if digits.len() <= scale {
+        let pad = scale + 1 - digits.len();
+        digits = "0".repeat(pad) + &digits;
+    }
+    let int_end = digits.len() - scale;
+    let (int, frac) = digits.split_at(int_end);
+    let int = int.trim_start_matches('0');
+    let int = if int.is_empty() { "0" } else { int };
+    let mut out = String::new();
+    if neg {
+        out.push('-');
+    }
+    out.push_str(int);
+    if scale > 0 {
+        out.push('.');
+        out.push_str(frac);
+    }
+    out
 }
 
 /// LOB 열인가(값이 EXTDTA로 따로 온다).
@@ -802,6 +844,30 @@ fn is_lob_type(sqltype: u16) -> bool {
     matches!(sqltype | 1, 405 | 409 | 413 | 989)
 }
 
+/// 서술자와 값 **둘 다** 인코딩할 수 있는 바인드 SQLTYPE인가(순수 · 11-06). 표에 없는 것(DECFLOAT 997 · ROWID 905 · zoned NUMERIC
+/// 489/505 · LONG VARGRAPHIC 473 · DATALINK 397 …)은 [`encode_sqldta`]가 VARCHAR(449)로 바꿔 보내 서버가 암묵 변환하게 한다.
+fn bind_supported(sqltype: u16) -> bool {
+    is_lob_type(sqltype)
+        || matches!(
+            sqltype | 1,
+            449 | 453
+                | 457
+                | 465
+                | 469
+                | 485
+                | 501
+                | 497
+                | 493
+                | 481
+                | 385
+                | 389
+                | 393
+                | 2437
+                | 913
+                | 909
+        )
+}
+
 /// LOB 값의 전송 바이트 — BLOB = 그대로 · CLOB/DBCLOB/XML = UTF-8(CCSID 1208 · 0xCF NLOBCMIXED · 서버가 DBCLOB으로 변환).
 /// ★ DBCLOB을 0xCD(NLOBCDBCS · UTF-16BE)로 보내면 길이를 바이트·문자 어느 쪽으로 해도 DTAMCHRM −30020(CI 40182500195 · 40183010063) →
 ///   CLOB 경로와 같은 형식으로(추정 ⓐ → CI 확정).
@@ -1064,6 +1130,18 @@ pub fn encode_sqldta(
     let mut dta = Vec::new();
     let mut ext = Vec::new();
     for (p, v) in params.iter().zip(values) {
+        // ★ 표에 없는 SQLTYPE은 VARCHAR(449)로(11-06 · 종전 = "bind parameter SQLTYPE n is not supported yet"로 실행 실패) — 서술자·값을
+        //   **같은** 타입으로 바꿔야 한다(한쪽만 바꾸면 DTAMCHRM −30020).
+        let fallback;
+        let p = if bind_supported(p.sqltype) {
+            p
+        } else {
+            fallback = SqlDaCol {
+                sqltype: 449,
+                ..p.clone()
+            };
+            &fallback
+        };
         dsc.extend(fdodsc_entry(p)?);
         dta.extend(fdodta_value(p, v, le)?);
         if is_lob_type(p.sqltype) && !matches!(v, Value::Null) {
@@ -1086,6 +1164,44 @@ pub fn encode_sqldta(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 11-06: zoned NUMERIC(0x10) 디코드 — EBCDIC/ASCII 니블 · 부호 오버펀치 · 소수 자릿수 · 앞 0 걷기.
+    #[test]
+    fn zoned_decimal_decodes_sign_and_scale() {
+        assert_eq!(zoned_decimal(&[0xF0, 0xF1, 0xF2, 0xC3], 2), "1.23");
+        assert_eq!(zoned_decimal(&[0xF0, 0xF1, 0xF2, 0xD3], 2), "-1.23");
+        assert_eq!(zoned_decimal(&[0xF1, 0xF2, 0xF0, 0xF3], 2), "12.03");
+        assert_eq!(zoned_decimal(b"00050", 2), "0.50");
+        assert_eq!(
+            zoned_decimal(&[0x31, 0x32, 0x73], 0),
+            "-123",
+            "ASCII 음수 오버펀치 0x7"
+        );
+        assert_eq!(zoned_decimal(&[0xF0], 0), "0");
+        assert_eq!(zoned_decimal(&[0xF5], 3), "0.005");
+    }
+
+    /// ★ 11-06: 표에 없는 바인드 SQLTYPE은 VARCHAR(449)로 — 서술자 0x39 · 값은 글자(DECFLOAT 997 · ROWID 905 · zoned 489).
+    #[test]
+    fn unsupported_bind_types_fall_back_to_varchar() {
+        assert!(bind_supported(485) && bind_supported(449) && bind_supported(409));
+        assert!(!bind_supported(997) && !bind_supported(905) && !bind_supported(489));
+        let p = SqlDaCol {
+            sqltype: 997,
+            ..SqlDaCol::default()
+        };
+        let (dsc, _ext) = encode_sqldta(&[p], &[Value::Decimal("1.5".into())], false).unwrap();
+        // 서술자 항목 = VARCHAR 널 허용(`39 3F FF`)이 있고 값은 UTF-16 "1.5"(`00 31 00 2E 00 35`).
+        assert!(
+            dsc.windows(3).any(|w| w == [0x39, 0x3F, 0xFF]),
+            "{dsc:02X?}"
+        );
+        assert!(
+            dsc.windows(6)
+                .any(|w| w == [0x00, 0x31, 0x00, 0x2E, 0x00, 0x35]),
+            "{dsc:02X?}"
+        );
+    }
 
     #[test]
     fn qrydsc_and_rows_little_endian() {

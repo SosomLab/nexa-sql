@@ -76,6 +76,9 @@ pub(crate) fn bar_remaining(full: i32, life: Option<f32>) -> i32 {
 pub(crate) struct Toasts {
     items: Vec<Toast>,
     ttl: Duration,
+    /// ★ 버튼 있는 카드의 수명(T-380 · 설정 `ui.toast_button_secs` · 11-06) — 종전엔 전역 `ui.toast_ms`(3초)에 사라져 [다시 보지 않기] 같은
+    ///   버튼을 읽고 누르기 어려웠다. 카드별 `ttl`이 따로 없을 때만.
+    button_ttl: Duration,
     /// 카드 불투명도(0.3~1.0).
     alpha: f32,
     /// 남은 시간 막대 + 진척 페이드(`ui.toast_progress`).
@@ -93,6 +96,7 @@ impl Toasts {
         Toasts {
             items: Vec::new(),
             ttl: Duration::from_secs(3),
+            button_ttl: Duration::from_secs(15),
             alpha: 0.85,
             progress: true,
             fade_to: 0.35,
@@ -105,6 +109,11 @@ impl Toasts {
     pub(crate) fn configure(&mut self, ms: i64, alpha_pct: i64) {
         self.ttl = Duration::from_millis(ms.clamp(100, 60_000) as u64);
         self.alpha = (alpha_pct.clamp(30, 100) as f32) / 100.0;
+    }
+
+    /// 설정 `ui.toast_button_secs`(초 · T-380): 버튼 있는 카드의 수명.
+    pub(crate) fn set_button_ttl(&mut self, secs: i64) {
+        self.button_ttl = Duration::from_secs(secs.clamp(1, 600) as u64);
     }
 
     /// 설정 `ui.toast_progress` · `ui.toast_fade_to`(%) · `ui.toast_bar_spent`(%).
@@ -182,6 +191,10 @@ impl Toasts {
         self.push(kind, title, body);
         if let Some(t) = self.items.last_mut() {
             t.button = Some((label.into(), action.to_string()));
+            // 버튼 카드 = 긴 수명(T-380 · 카드별 수명이 따로 오면 그것 우선 = `push_action_ttl` 류).
+            if t.ttl.is_none() {
+                t.ttl = Some(self.button_ttl);
+            }
         }
     }
 

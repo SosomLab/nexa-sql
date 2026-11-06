@@ -1213,6 +1213,9 @@ impl Grid {
             self.read_only = Some(ReadOnly::Disabled);
         } else if self.prod {
             self.read_only = Some(ReadOnly::Prod);
+        } else if !gridedit_sql::dialect_editable(self.dialect) {
+            // ★ 행 단위 DML이 없는 방언(ClickHouse)은 편집을 열지 않는다(11-06 · 종전 = 서버 구문 오류).
+            self.read_only = Some(ReadOnly::Dialect);
         } else if !is_query {
             self.read_only = Some(ReadOnly::NotQuery);
         } else {
