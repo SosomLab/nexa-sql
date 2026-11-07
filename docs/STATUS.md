@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-07 T-283 ✅ 종결**(2단계 정적 선언 차이 = 컬럼 · 인자/반환 · `ddldecl.rs` · [journal 11-07 §5](journal/2026-11-07.md) · V1 Oracle·PG·SQLite 10/10 · 관찰 = PG 스키마 없는 이름 비교 실패(기존))
+>
 > ★ **11-07 O-1 1차**([journal 11-07 §4](journal/2026-11-07.md) · 오브젝트 시점 캐시 open·compile·restore · 복원 = 편집기 탭(D-469 · 서버 전송 0) · `edit.history_restore` · V1 13/0 + Oracle ✓ · 남음 = server 시점 · pin · 외부 변경 감지)
 >
 > ★ **11-07 T-231 ✅ 종결**(④ 서버 키 사전 검사 `grid.edit_key_check` · 맞교환 = 거절 + 두 번에 나눠 적용 안내 · D-468 · [journal 11-07 §3](journal/2026-11-07.md) · V1 8/0)

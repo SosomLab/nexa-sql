@@ -98,6 +98,8 @@
 > - 이동 = 팔레트 "비교: 다음/이전 변경"(`compare.next/prev` · 순환) · F7/Shift+F7 키맵은 후속 · `compare.view` = diff(기본)/inline(1단계 거터 표식 탭) · 서버 DDL 탭 `obj.compare_server`는 비교 결과가 있을 때(비동기 왕복 뒤)만.
 > - **회귀 2 수정**: 10-07 저녁 "상세 없는 뷰 탭 자동 닫기"가 모든 뷰 탭을 닫아 1·2단계 비교 탭이 사라짐(a145717 · `ext:` 키만) · 입력 라우팅의 뷰 탭 판정이 그리기와 달라 상세 없는 뷰 탭(inline·서버 DDL·정보 탭) 본문 우클릭 메뉴가 안 열림(261839a · `App::ext_view_active()` 한 판정).
 > - 남음 = F7/Shift+F7 · §1 두 버퍼 비교에 같은 부품 재사용 · T-283 "정적 선언 차이"(인자·컬럼).
+>
+> ✅ **정적 선언 차이 구현 11-07**(T-283 종결 · [journal 11-07 §5](journal/2026-11-07.md)) = 새 순수 모듈 `crates/nexa-sql/src/ddldecl.rs`(토큰화 = 주석·문자열·인용 식별자·PG `[]` → `extract(kind, text)` · 테이블 = 열 이름·정규화 타입(동의어 INT→INTEGER · Oracle `BYTE/CHAR` 길이 단위 제거)·NULL 허용 · 제약 항목 제외 · 뷰 = 열 목록이 있을 때만 · 프로시저/함수 = 인자 이름·방향(IN/OUT/INOUT)·타입 + 반환(RETURN/RETURNS · SETOF 유지) · SQL Server 괄호 없는 `@a int = 0 OUTPUT` 꼴 · `diff` = 추가/삭제/변경/순서/반환 · 이름 없는 PG 인자 = 자리 비교) → `compare_open`이 양쪽에 같은 추출기 → 머리 줄 덧말(`DiffView::set_note` · "columns: +1 -0 ~1" / "declarations match" / "declarations: not comparable") + 문장이 있던 탭의 Output 줄(`+ C (only in editor)` · `~ B: a -> b (editor -> server)` · `return type: a -> b`) · `compare.view=inline`은 머리 주석 줄에 같은 요약 · 범위 = 머리 선언만(본문·제약·인덱스 비교 아님 · 소스 줄 diff는 그대로).
 
 ### 6-3. 비교 전 정규화(헛 차이 줄이기 · 순수 함수 + 시험)
 
