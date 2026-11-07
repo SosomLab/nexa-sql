@@ -653,6 +653,10 @@ impl App {
                 let id = id.to_string();
                 self.history_open(&id);
             }
+            id if id.starts_with("hrst:") => {
+                let id = id.to_string();
+                self.history_restore(&id);
+            }
             id if id.starts_with("file.recent:") => {
                 let i: usize = id["file.recent:".len()..].parse().unwrap_or(usize::MAX);
                 if let Some(p) = self.recent_files().get(i).cloned() {
@@ -1120,6 +1124,7 @@ impl App {
             // ★ C-1(19 §1·§2·§3 · 11-06): 두 버퍼 비교 · 로컬 히스토리 · git 거터 변경 이동.
             "edit.compare_with" => self.compare_with_pick(),
             "edit.history" => self.history_pick(),
+            "edit.history_restore" => self.history_restore_pick(),
             "git.next_hunk" => self.git_hunk_step(true),
             "git.prev_hunk" => self.git_hunk_step(false),
             // ★ `obj.*` = 탐색기 선택 노드의 메뉴 동작을 팔레트·키로(T-180 ④ · 묻는 동작(삭제·서버 해제)은 메뉴에서만).

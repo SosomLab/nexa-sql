@@ -157,6 +157,8 @@ impl App {
             if let Some(o) = self.object_tabs.get(&tab).cloned() {
                 let src = self.ed_mut().text();
                 let (kind, name) = o.label();
+                // ★ O-1(11-07 · 19 §3): 컴파일 직전 버퍼 = `compile` 시점(같은 내용이면 안 쓴다).
+                self.history_object_store(&o, crate::history::Tag::Compile, &src);
                 self.sess.run_had_rs = false;
                 self.output_push(
                     tab,

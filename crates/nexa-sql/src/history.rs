@@ -96,10 +96,13 @@ pub(crate) fn file_dir(path: &Path) -> Option<PathBuf> {
     Some(file_dir_in(&root()?, path))
 }
 
-/// 오브젝트 항목 폴더(`backups::object_stem` 줄기 · O-1).
-#[allow(dead_code)] // O-1(오브젝트 시점)에서 쓴다 — C-1은 파일 항목만.
+/// 오브젝트 항목 폴더(`backups::object_stem` 줄기 `<프로필>_<스키마>.<객체>_<종류>` · O-1 · 19 §3).
 pub(crate) fn object_dir_in(root: &Path, stem: &str) -> PathBuf {
     root.join("objects").join(stem)
+}
+
+pub(crate) fn object_dir(stem: &str) -> Option<PathBuf> {
+    Some(object_dir_in(&root()?, stem))
 }
 
 /// 내용 해시(FNV-1a 64 · 파일 이름의 셋째 조각).

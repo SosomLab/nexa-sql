@@ -451,6 +451,10 @@ impl App {
                         self.sync_sess();
                         self.sync_sess_ui();
                         self.bm_after_source_open();
+                        // ★ O-1(11-07 · 19 §3): 연 서버 원본 = `open` 시점(세션이 묶인 뒤 = 프로필 이름이 맞는 때).
+                        if let Some(o) = self.object_tabs.get(&tab).cloned() {
+                            self.history_object_store(&o, crate::history::Tag::Open, &text);
+                        }
                     } else if let Some(spec) = server {
                         // SELECT 템플릿 탭도 그 표의 서버 세션에(활성 세션이 다른 서버 — 예: Oracle 탭에서 SQL Server 표 행 조회 · 사용자 10-08 캡처).
                         let tab = self.editors.active_id();
