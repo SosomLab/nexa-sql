@@ -6,11 +6,28 @@ use crate::*;
 
 impl App {
     /// 문장에 스키마가 없을 때 쓸 그 세션의 기본 스키마(`?schema=` · SQL Server는 그 값이 DB라 제외 → 탐색기가 `dbo`로).
+    /// ★ 폴백(11-07 · 협업 V1 T-283: 프로필 `schema`가 비면 비교·북마크·백업이 ".이름"으로 "object not found") = 프로필 → 세션이 알아낸
+    ///   현재 스키마(`cur_schema` · 접속·`SET search_path`/`ALTER SESSION` 추적) → 방언 기본(PG `public` · Oracle = 접속 계정 대문자).
     pub(crate) fn meta_default_schema(&self) -> Option<String> {
         if self.sess.dialect == Dialect::Mssql {
             return None;
         }
-        self.sess.spec.as_ref().and_then(|s| s.schema.clone())
+        let spec = self.sess.spec.as_ref();
+        spec.and_then(|s| s.schema.clone())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                self.sess
+                    .cur_schema
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+            })
+            .or_else(|| match self.sess.dialect {
+                Dialect::Postgres => Some("public".to_string()),
+                Dialect::Oracle => spec
+                    .and_then(|s| s.user.clone())
+                    .map(|u| u.trim_matches('"').to_ascii_uppercase()),
+                _ => None,
+            })
     }
 
     /// 성공한 문장이 DDL이면 대상을 모은다(docs/57 T1) — 반영은 실행이 끝난 뒤(또는 커밋 때) 한 번에.
