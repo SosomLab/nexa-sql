@@ -36,6 +36,7 @@ mod connect;
 mod copybtn;
 mod dbms_icons;
 /// ★ 2-pane diff 뷰어(T-283 2단계 · 비교 탭).
+mod ddldecl;
 mod diff_view;
 mod drop_win;
 mod editable;

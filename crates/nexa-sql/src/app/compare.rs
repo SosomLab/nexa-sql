@@ -210,6 +210,55 @@ pub(crate) fn buffer_pairs(text: &str, ignore_ws: bool) -> Vec<(String, String)>
         .collect()
 }
 
+/// ★ 선언 차이 요약(순수 · T-283 2단계): `(머리 줄 한 토막, Output 줄들)` — 못 읽으면 "선언 비교 불가" 한 줄 · 같으면 "선언 일치" ·
+/// 다르면 `컬럼: +a −b ~c[ · 순서][ · 반환]` + 항목별 줄(`+ NAME` 편집기에만 · `- NAME` 서버에만 · `~ NAME: a → b` · 반환 타입).
+pub(crate) fn decl_summary(d: Option<&(bool, crate::ddldecl::DeclDiff)>) -> (String, Vec<String>) {
+    let Some((table, d)) = d else {
+        let na = t(Msg::CompareDeclNa).to_string();
+        return (na.clone(), vec![na]);
+    };
+    if d.is_empty() {
+        let same = t(Msg::CompareDeclSame).to_string();
+        return (same.clone(), vec![same]);
+    }
+    let mut extra = String::new();
+    if d.reordered {
+        extra.push_str(" · ");
+        extra.push_str(t(Msg::CompareDeclOrder));
+    }
+    if d.ret.is_some() {
+        extra.push_str(" · ");
+        extra.push_str(t(Msg::CompareDeclRet));
+    }
+    let head = tf(
+        if *table {
+            Msg::CompareDeclTable
+        } else {
+            Msg::CompareDeclRoutine
+        },
+        &[
+            &d.added.len().to_string(),
+            &d.removed.len().to_string(),
+            &d.changed.len().to_string(),
+            &extra,
+        ],
+    );
+    let mut lines = vec![head.clone()];
+    for n in &d.added {
+        lines.push(tf(Msg::CompareDeclLineAdd, &[n]));
+    }
+    for n in &d.removed {
+        lines.push(tf(Msg::CompareDeclLineDel, &[n]));
+    }
+    for (n, a, b) in &d.changed {
+        lines.push(tf(Msg::CompareDeclLineChg, &[n, a, b]));
+    }
+    if let Some((a, b)) = &d.ret {
+        lines.push(tf(Msg::CompareDeclLineRet, &[a, b]));
+    }
+    (head, lines)
+}
+
 /// 표시용 이름 — 스키마가 없으면(SQLite) 이름만(`.t2`가 아니라 `t2` · 협업 V1 H).
 fn object_label(o: &nsql_catalog::ObjectInfo) -> String {
     if o.schema.is_empty() {
@@ -328,6 +377,13 @@ impl App {
     /// `compare.view = diff`(기본 · T-283 2단계) = 2-pane diff 뷰어(맞은편 줄 내용 · 줄 배경 · 스크롤 동기 · 덩어리 이동) ·
     /// `inline` = 1단계(거터 표식만).
     fn compare_open(&mut self, w: CompareTarget, ddl: &str) {
+        // ★ T-283 2단계(사용자 11-06 결정 · 11-07): 정적 선언 차이(컬럼 · 인자/반환) = 머리 줄 요약 + Output 탭 줄(문장이 있던 탭).
+        let src_tab = self.editors.active_id();
+        let (note, lines) =
+            decl_summary(crate::ddldecl::compare(w.owner.kind, &w.stmt, ddl).as_ref());
+        for l in &lines {
+            self.output_push(src_tab, crate::output::OutKind::Info, l);
+        }
         let ignore_ws = self.settings.flag("compare.ignore_ws");
         let canon = self.settings.flag("compare.canon");
         let (cur, cur_show): (Vec<String>, Vec<String>) =
@@ -348,6 +404,7 @@ impl App {
             if let Some(hunks) = self.open_diff_tab(
                 &key, &title, &cur, &base, &cur_show, &base_show, &obj, labels,
             ) {
+                self.diff_view.set_note(note);
                 self.compare_last = Some((w.owner.name, ddl.to_string(), hunks));
             }
             return;
@@ -357,7 +414,7 @@ impl App {
         } else {
             format!("-- {}", tf(Msg::CompareHeadDiff, &[&obj, &n.to_string()]))
         };
-        let head = format!("{head} · {}", t(Msg::CompareHeadHint));
+        let head = format!("{head} · {note} · {}", t(Msg::CompareHeadHint));
         let text = std::iter::once(head.clone())
             .chain(cur)
             .collect::<Vec<_>>()

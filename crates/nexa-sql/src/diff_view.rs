@@ -26,6 +26,8 @@ pub(crate) struct DiffView {
     head: String,
     /// 왼쪽/오른쪽 라벨(예 "편집기" · "서버").
     labels: (String, String),
+    /// ★ 머리 줄 덧말(T-283 2단계 · 11-07): 정적 선언 차이 요약(`컬럼: +1 −0 ~2` …) — `set`이 비우고 `set_note`가 채운다.
+    note: String,
     /// 마지막으로 사건을 받은 쪽(스크롤 동기의 주도권).
     last_side: bool,
 }
@@ -47,6 +49,7 @@ impl Default for DiffView {
             cur: None,
             head: String::new(),
             labels: (String::new(), String::new()),
+            note: String::new(),
             last_side: false,
         }
     }
@@ -88,6 +91,7 @@ impl DiffView {
         self.left.goto_line(1);
         self.right.goto_line(1);
         self.labels = labels;
+        self.note.clear();
         let n = self.hunks.len();
         self.head = if n == 0 {
             tf(Msg::CompareHeadSame, &[obj])
@@ -98,6 +102,11 @@ impl DiffView {
 
     pub(crate) fn hunk_count(&self) -> usize {
         self.hunks.len()
+    }
+
+    /// 머리 줄 덧말(선언 차이 요약 · T-283 2단계).
+    pub(crate) fn set_note(&mut self, note: String) {
+        self.note = note;
     }
 
     /// 진단 덤프(`compare.dump`): 행 종류 요약(`editor_only` = 왼쪽(a)에만 · `server_only` = 오른쪽(b)에만) + 덩어리 범위.
@@ -230,7 +239,12 @@ impl DiffView {
             (Some(k), n) if n > 0 => format!(" · {}/{n}", k + 1),
             _ => String::new(),
         };
-        let head = format!("{}{pos} · {}", self.head, t(Msg::CompareHeadKeys));
+        let note = if self.note.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", self.note)
+        };
+        let head = format!("{}{pos}{note} · {}", self.head, t(Msg::CompareHeadKeys));
         let clip = Rect::new(b.x, b.y, b.w, self.s(24.0));
         dc.text(b.x + self.s(8.0), hy, clip, &head, th.text);
         // 상자 둘(동기 스크롤 · 색조).
