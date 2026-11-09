@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **11-10 맥 기능 점검**([journal 11-10 §1](journal/2026-11-10.md)) = 신규 기능 판정 ❌ 0 · 수정 0 · 창 투명도 5/10 · `grid.edit_key_check` on · `grid.refetch_warn` on ✅ · hover 코멘트 = Oracle 1대 덤프 + 단위 시험 ✅ · 두 서버 실측은 미도달로 미확인 · 통합 46/0/1(실서버 전부 skip) · Debug 재시작 PID 16923.
+> ★ **11-10 맥 기능 점검**([journal 11-10 §1](journal/2026-11-10.md)) = 신규 기능 판정 ❌ 0 · 수정 0 · 창 투명도 5/10 · `grid.edit_key_check` on · `grid.refetch_warn` on ✅ · hover 코멘트 = Oracle 1대 덤프 + 단위 시험 ✅ · 두 서버 실측은 미도달로 미확인 · 통합 46/0/1(실서버 전부 skip) · Debug 재시작 PID 16923 · main 0c33ff50 push · ci ✓ 42645777440.
 >
 > 🚀 **v0.7.1 공개**(2026-11-09T14:56:38Z · Latest · [journal 11-09 §2](journal/2026-11-09.md) · 패치 = hover 카드 테이블 설명 결함 3건(aeb2a33b) · **설치본 v0.7.1 = hover 수정 반영** · 게이트 통과 1344/0 · nexa-ui 689/0 · 통합 46/0 · 82ba9a93 → 태그 v0.7.1 → release 42635963635 ✓ · 자산 6 · 드라이버 drivers-v0.1.11 그대로 · choco 0.7.1 push(guard "마지막으로 올린 0.7.0 승인됨 · 대기 중인 제출 없음 — 제출." · 검수 대기) · winget 건너뜀(변수 true · guard "직전 제출이 검수 대기 중 — 건너뛴다(큐 엉킴 방지)." = PR #447007 · D-471 첫 적용) · linux-repo ✓ · Homebrew 5135123)
 >
