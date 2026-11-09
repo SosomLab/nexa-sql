@@ -176,6 +176,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - **v0.2.5**(10-20 새벽 · 130차 T-369·T-370 + 131차 win = 끊김 헤더 2단 · Ctrl+F·찾기 규칙 묶음 · 열 모드 Home/End(nexa-ui 218) · ★ T-371 오류 위치 캐럿 · nexa-ui 215 콤보 폭 · 사용자 "새 버전 릴리즈 · 패키지 게시" · 패치): 배포 전 = 축소판(그날 V3 1회 뒤 · test 942/0 · nexa-ui 640/0 · clippy -D warnings 0×2 · 영어 ✓) + 태그 전 V1(nexa-ui 원격의 다른 세션 커밋 ca2b0dd(알파 채우기 가속)가 rebase로 릴리스에 포함 → Debug 재빌드·캡처 2·nexa-ctl/gfx 488/0 = 이상 없음) · be9057c · release 39285826040 ✓(publish 한 번에) · digest 5/5 · 공개 **2026-10-19T16:45:41Z** · Homebrew 탭 2ff8b0a(homebrew.yml 39288174488) · pkg.sosomlab.com 0.2.5 자동(linux-repo signal 39288174382 → publish 39288192028 ✓) · publish-windows-packages 39288174464 = guard ✓ · winget 매니페스트 생성·검증 ✓ → PR skipped · choco pack ✓ → push skipped(변수 **false 유지** · 제출 0) · 자산 +12~46 KB · [journal 10-19 §1-6](journal/2026-10-19.md).
 
 - ★ **릴리스마다 확인(사용자 10-08 "winget·choco 재개 = 배포 시마다 확인 필요")**: 릴리스 **전에** 저장소 변수 `WINGET_PUBLISH` · `CHOCO_PUSH` 값을 사용자에게 묻는다(`gh variable list` · 기본 = 지난 릴리스 값 유지 · 지금 = **false**) · 답에 따라 true/false로 맞춘 뒤 태그 · 릴리스 노트·journal에 "winget·choco = 게시/제외" 한 줄.
+- ★ **11-09 갱신(D-471 · 사용자)** = 배포 flag(`CHOCO_PUSH` · `WINGET_PUBLISH`)는 **기본 true 유지** · 배포 때 기존 게시 상태를 확인해 이미 등록·진행 중이면 **그 채널만 제외**(= 현행 guard 동작 · winget = 같은 패키지 열린 PR이 있으면 건너뜀 · choco = 직전 버전 미승인·대기 중 제출이 있으면 건너뜀 · 코드 변경 없음) → 릴리스 전 질문은 `RELEASE_FULL`·버전만 · 위 10-08 "릴리스마다 확인"의 플래그 부분을 대체 · [10 D-471](10-decision-record.md) · [journal 11-09 §2](journal/2026-11-09.md).
 
 ### 5-4. 남은 확인
 
