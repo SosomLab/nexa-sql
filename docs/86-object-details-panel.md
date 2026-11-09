@@ -100,6 +100,7 @@
 | **무효화(사용자 의도 누락 0)** | 새로 고침이 닿는 범위의 항목에 `dirty` 전파 → 다음 클릭에 다시 읽는다: ① 우클릭 Refresh/F5(`refresh(i)` · 루트 = 전부 · 스키마/폴더 = 그 스키마 · 객체/하위/컬럼 = 그 객체) ② DDL 반영(`apply_ddl` · 대상 객체) ③ 메타 갱신 ⌘⇧R(`refresh_meta` · 스키마/전부) ④ 스키마 목록 다시 읽기·접속 교체·해제 = 전부 비움 · 열쇠 매칭은 순수 함수 `detail_key_hit`(시험) |
 
 | 코멘트 캐시 연동(§229 · T-227 후속) | 같은 무효화 범위를 `Explorer::take_detail_invalidations`로 호스트가 가져가 상세 패널의 테이블 코멘트 캐시(`DetailPanel::forget_comments` · 전부/스키마/테이블)를 버리고 보이는 대상은 다시 채운다(`sync_detail_target(true)`) — 새로 고침 뒤 옛 코멘트가 남던 틈 제거 |
+| **서버 구분(11-09 · 결함 수정)** | 패널 코멘트 캐시 열쇠 = `서버 태그|스키마.테이블`(`worker::server_tag` = `same_server`와 같은 필드 · `DetailPanel::set_conn_tag`) · 동기화 열쇠 `detail_key`도 태그를 앞에 — 다른 서버의 같은 이름 테이블을 "같은 대상"으로 보고 건너뛰던 결함 · `ExplorerAction::Comments` 응답은 **요청한 칸**(`server` 필드)에 기록(응답 전에 칸이 바뀌어도 엉뚱한 칸에 안 들어감) · [journal 11-09 §1](journal/2026-11-09.md) |
 
 ### 5-2. 지연 로딩(09-28 · 사용자 "1줄 모드면 Description만 필요 — 펼치는 시점에 조회" · [61 §1-8](61-core-design-and-working-rules.md))
 
