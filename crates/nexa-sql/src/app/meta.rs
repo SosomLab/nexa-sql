@@ -135,8 +135,14 @@ impl App {
             }
             return;
         }
+        // ★ 11-09: 열쇠 앞에 보이는 칸의 서버 태그 — DEV·PRD에서 같은 `스키마.테이블`을 고르면 다른 대상(종전 = 같다고 보고 동기화를 건너뛰어
+        //   PRD 칸 메타에 코멘트가 끝내 안 들어갔다 = hover 카드 "(no description)" · 패널엔 DEV 코멘트).
+        let tag = self.explorer.shown_tag();
+        self.objdetail.set_conn_tag(&tag);
         let t = self.explorer.selected_target();
-        let key = t.as_ref().map(explorer::DetailTarget::key);
+        let key = t
+            .as_ref()
+            .map(|t| format!("{tag}|{}", explorer::DetailTarget::key(t)));
         if std::env::var_os("NSQL_TRACE_META").is_some() {
             eprintln!(
                 "[detail] sync force={force} key={key:?} prev={:?} collapsed={}",
@@ -193,11 +199,13 @@ impl App {
 
     /// 코멘트를 패널에: 메타(스키마 워머)에 있으면 즉시 · 패널 캐시에 없으면 테이블 단위로 요청(86 §4~5).
     fn feed_comments(&mut self, o: &nsql_catalog::ObjectInfo) {
+        let tag = self.explorer.shown_tag();
+        self.objdetail.set_conn_tag(&tag);
         if self.objdetail.knows_comments(o) {
             return;
         }
         if let Some((tc, cols)) = self.explorer.comments_of(o) {
-            self.objdetail.set_comments(o, tc, cols);
+            self.objdetail.set_comments(&tag, o, tc, cols);
         } else {
             self.explorer.request_comments(o.clone());
         }
@@ -543,11 +551,22 @@ impl App {
                 ExplorerAction::Details { owner, col, r } => {
                     self.objdetail.set_sections(&owner, col.as_ref(), r);
                 }
-                ExplorerAction::Comments { owner, table, cols } => {
-                    // ★ 메타에도(10-21): hover 카드·완성 카드가 상세 패널과 같은 설명을 본다(종전 = 패널만).
-                    self.explorer
-                        .meta_set_object_comments(&owner, table.as_deref(), &cols);
-                    self.objdetail.set_comments(&owner, table, cols);
+                ExplorerAction::Comments {
+                    owner,
+                    table,
+                    cols,
+                    server,
+                } => {
+                    // ★ 메타에도(10-21): hover 카드·완성 카드가 상세 패널과 같은 설명을 본다(종전 = 패널만) · 11-09 = **응답이 온 칸**에 쓰고
+                    //   패널 캐시는 그 서버 태그로(보이는 칸이 다르면 저장만).
+                    self.explorer.meta_set_object_comments(
+                        server.as_ref(),
+                        &owner,
+                        table.as_deref(),
+                        &cols,
+                    );
+                    let tag = crate::worker::server_tag(server.as_ref());
+                    self.objdetail.set_comments(&tag, &owner, table, cols);
                 }
                 // 스키마 코멘트가 메타에 들어왔다 → 지금 대상이 그 스키마면 메타에서 채운다(패널 캐시 없을 때).
                 ExplorerAction::CommentsLoaded { schema } => {

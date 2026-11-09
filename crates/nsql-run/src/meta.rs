@@ -807,6 +807,9 @@ impl MetaStore {
     /// ★ 버킷 채우기/갱신 = **디프**(47 §5): 같은 이름은 `ObjId`를 유지(컬럼 그대로) · 수정 시각·상태·코멘트가 바뀐 것만 교체
     /// (수정 시각이 바뀐 테이블은 컬럼을 `Unknown`으로) · 없어진 것은 버킷에서 뺀다(tombstone · 컴팩션은 `compact`).
     /// 반환 = (추가, 변경, 삭제) 수.
+    /// ★ 11-09(사용자 "hover 카드엔 (no description) · 패널엔 코멘트"): 목록(`items`)에 코멘트가 없으면(탐색기 목록 질의 = 항상 None)
+    ///   **스키마 코멘트 지도의 값을 물려받는다** — 종전 = 항목을 통째 교체해 L2가 붙여 둔 `comment`를 None으로 되돌렸고, `comment_known`은
+    ///   지도에 항목이 있어 true라 상세(L3)도 안 청해 카드가 영영 비었다(패널은 지도를 직접 읽어 정상 = 두 경로가 갈림).
     pub fn load_bucket(
         &mut self,
         schema: &str,
@@ -816,6 +819,7 @@ impl MetaStore {
     ) -> (usize, usize, usize) {
         let sc = self.names.intern(schema);
         let mut s = self.edit();
+        let map = s.schema_comments.get(&sc).cloned();
         let old: Vec<ObjId> = s
             .buckets
             .get(&(sc, kind))
@@ -838,7 +842,14 @@ impl MetaStore {
                 kind,
                 status: it.status,
                 modified: it.modified,
-                comment: it.comment.as_deref().map(|c| self.names.intern(c)),
+                comment: it
+                    .comment
+                    .as_deref()
+                    .map(|c| self.names.intern(c))
+                    .or_else(|| {
+                        map.as_ref()
+                            .and_then(|m| m.tables.get(&lower).copied().flatten())
+                    }),
                 extra: it.extra.as_deref().map(|c| self.names.intern(c)),
             };
             let id = match old_by_lower.get(&lower) {
@@ -885,6 +896,20 @@ impl MetaStore {
         for id in &objs {
             let lower = self.names.lower_key(s.objs[id.0 as usize].name);
             s.exact.entry((sc, lower)).or_insert(*id);
+        }
+        // 새로 등재된 관계의 컬럼 코멘트도 지도에서(기존 id는 이미 붙어 있다 · 11-09).
+        if let Some(m) = &map {
+            if kind.is_relation() {
+                for id in &objs {
+                    if s.col_comments.contains_key(id) {
+                        continue;
+                    }
+                    let lower = self.names.lower_key(s.objs[id.0 as usize].name);
+                    if let Some(v) = m.cols.get(&lower) {
+                        s.col_comments.insert(*id, Arc::clone(v));
+                    }
+                }
+            }
         }
         s.buckets.insert(
             (sc, kind),
@@ -1513,6 +1538,20 @@ impl Snapshot {
     #[must_use]
     pub fn object(&self, id: ObjId) -> Option<&ObjEntry> {
         self.objs.get(id.0 as usize)
+    }
+
+    /// ★ 객체의 테이블 코멘트(11-09): `ObjEntry.comment` → 없으면 **스키마 코멘트 지도**(상세 패널 `comments_of`와 같은 원천). hover 카드·
+    ///   완성 카드는 이것을 본다 — 어느 길이 `comment`를 비워도(`load_bucket` 교체 등) 지도에 있으면 보인다. None = 모르거나 NULL.
+    #[must_use]
+    pub fn comment_of(&self, names: &Interner, id: ObjId) -> Option<Sym> {
+        let o = self.objs.get(id.0 as usize)?;
+        if o.comment.is_some() {
+            return o.comment;
+        }
+        let key = names.lower_key(o.name);
+        self.schema_comments
+            .get(&o.schema)
+            .and_then(|m| m.tables.get(&key).copied().flatten())
     }
 
     /// ★ 테이블 코멘트를 "알고 있는가"(값이 있거나 스키마 지도에 그 항목이 있음 = NULL도 앎 · 10-21) — Ctrl 링크 선적재가 상세(L3)를
@@ -2436,5 +2475,45 @@ mod layer_tests {
             Some("사원".to_string()),
             "이름 대소문자 무관"
         );
+    }
+
+    /// ★ 11-09(사용자 "hover 카드 (no description) · 패널엔 코멘트"): 트리 펼침(`load_bucket` · 목록엔 코멘트 없음)이 먼저 붙은 스키마
+    ///   코멘트를 지우지 않는다 — 종전 = 항목을 통째 교체해 `comment` None으로 되돌렸고 `comment_known`은 true라 상세도 안 청해 카드가 영영 비었다.
+    #[test]
+    fn load_bucket_keeps_schema_comments() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(&["HR".into()], Some("HR"));
+        // L1 이름 워머 → L2 스키마 코멘트(붙음) → 사용자가 트리를 펼침(전체 목록 · 코멘트 None · 수정 시각 있음).
+        m.load_names(
+            "HR",
+            &[ObjectKind::Table],
+            &[(ObjectKind::Table, "EMP".into())],
+            1,
+        );
+        m.set_schema_comments(
+            "HR",
+            &[("EMP".into(), Some("사원".into()))],
+            &[("EMP".into(), "ID".into(), Some("사번".into()))],
+        );
+        let obj = |n: &str| NewObj {
+            name: n.into(),
+            modified: Some(7),
+            ..NewObj::default()
+        };
+        m.load_bucket("HR", ObjectKind::Table, &[obj("EMP"), obj("DEPT")], 2);
+        let s = m.snapshot();
+        let id = s.lookup(&m.names, Some("HR"), "EMP").expect("등재");
+        let text = |c: Option<Sym>| c.map(|c| m.names.get(c).to_string());
+        assert_eq!(
+            text(s.objs[id.0 as usize].comment),
+            Some("사원".to_string())
+        );
+        assert_eq!(text(s.comment_of(&m.names, id)), Some("사원".to_string()));
+        assert_eq!(s.col_comments.get(&id).map(|v| v.len()), Some(1));
+        assert!(s.comment_known(&m.names, id));
+        // 지도에 없는 테이블 = 모름(None) · `comment_known` false → 링크 선적재가 상세(L3)로 보충한다.
+        let dept = s.lookup(&m.names, Some("HR"), "DEPT").expect("등재");
+        assert!(s.comment_of(&m.names, dept).is_none());
+        assert!(!s.comment_known(&m.names, dept));
     }
 }

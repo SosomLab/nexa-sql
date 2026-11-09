@@ -14,7 +14,7 @@
 use crate::explorer::{Explorer, ExplorerAction, LiveReq, LiveResult};
 use crate::filterbar::{FilterBar, FilterEvent, GAP_Y, INPUT_H};
 use crate::search_history::SharedHistory;
-use crate::worker::{same_catalog, same_host, same_server};
+use crate::worker::{same_catalog, same_host, same_server, server_tag};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::{Point, Rect};
@@ -1227,6 +1227,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes.get(self.shown).and_then(|p| p.key.clone())
     }
 
+    /// ★ 지금 보이는 칸의 **서버 태그**([`server_tag`] · 11-09) — 상세 패널 코멘트 캐시·`App::detail_key`가 서버를 가르는 데 쓴다.
+    pub(crate) fn shown_tag(&self) -> String {
+        server_tag(self.panes.get(self.shown).and_then(|p| p.key.as_ref()))
+    }
+
     /// 연결된(오프라인 아닌) 서버 칸 = (키, 라벨).
     pub(crate) fn find_servers(&self) -> Vec<(Option<ConnectSpec>, String)> {
         self.panes
@@ -1824,6 +1829,18 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                             took_ms,
                         });
                     }
+                    // ★ 코멘트 응답 = 이 칸에서 왔다(11-09) — 호스트가 **이 칸** 메타에 쓰고 패널 캐시도 이 서버 태그로(종전 = `shown`
+                    //   칸에 써서 응답 전에 칸을 바꾸면 엉뚱한 칸에 들어갔다).
+                    ExplorerAction::Comments {
+                        owner, table, cols, ..
+                    } => {
+                        out.push(ExplorerAction::Comments {
+                            owner,
+                            table,
+                            cols,
+                            server: p.key.clone(),
+                        });
+                    }
                     ExplorerAction::Import { owner, .. } => {
                         out.push(ExplorerAction::Import {
                             owner,
@@ -2112,14 +2129,16 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         }
     }
 
-    /// ★ 테이블 단위 코멘트 → 보이는 칸의 메타에(10-21 · 요청과 같은 칸).
+    /// ★ 테이블 단위 코멘트 → **응답이 온 칸**의 메타에(10-21 · 11-09 = `server`로 칸을 찾는다 · 못 찾으면 보이는 칸).
     pub(crate) fn meta_set_object_comments(
         &mut self,
+        server: Option<&ConnectSpec>,
         owner: &nsql_catalog::ObjectInfo,
         table: Option<&str>,
         cols: &[(String, Option<String>)],
     ) {
-        if let Some(p) = self.panes.get_mut(self.shown) {
+        let i = server.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        if let Some(p) = self.panes.get_mut(i) {
             p.ex.meta_set_object_comments(owner, table, cols);
         }
     }

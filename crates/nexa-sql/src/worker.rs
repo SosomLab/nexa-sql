@@ -399,6 +399,24 @@ pub(crate) fn same_server(a: &ConnectSpec, b: &ConnectSpec) -> bool {
         && a.role == b.role
 }
 
+/// ★ 서버 태그(11-09 · 사용자 "DEV·PRD 두 세션 = hover 카드엔 (no description) · 상세 패널엔 코멘트"): [`same_server`]와 **같은 필드**를
+///   글자열 하나로 — 서버를 가르지 않는 캐시 열쇠(`스키마.테이블` · 상세 패널 코멘트 캐시 · `App::detail_key`) 앞에 붙여 DEV에서 받은
+///   코멘트가 PRD 선택에 그대로 보이고 PRD 칸 메타에는 끝내 안 들어가던 일을 막는다. 빈 칸(None) = 빈 태그.
+pub(crate) fn server_tag(spec: Option<&ConnectSpec>) -> String {
+    let Some(s) = spec else {
+        return String::new();
+    };
+    format!(
+        "{:?}|{}|{}|{}|{}|{}",
+        s.dialect,
+        s.host.as_deref().unwrap_or(""),
+        s.port.map(|p| p.to_string()).unwrap_or_default(),
+        s.database.as_deref().unwrap_or(""),
+        s.user.as_deref().unwrap_or(""),
+        s.role.as_deref().unwrap_or("")
+    )
+}
+
 /// 이름이면 저장소에서, 아니면 접속 문자열 파싱.
 fn resolve_target(target: &str, default_dialect: Dialect) -> Result<ConnectSpec, String> {
     if nsql_vault::is_profile_name(target) {

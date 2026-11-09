@@ -872,10 +872,12 @@ pub(crate) enum ExplorerAction {
         r: Result<Vec<nsql_catalog::DetailSection>, String>,
     },
     /// 테이블·컬럼 코멘트 그대로(86 §4) — 패널 캐시(NULL = None · 공백 = Some("")).
+    /// `server` = 응답이 온 칸의 서버(`ExplorerSet::take_actions`가 채움 · 11-09) — 메타는 **그 칸**에 쓰고 패널 캐시는 그 서버 태그로.
     Comments {
         owner: ObjectInfo,
         table: Option<String>,
         cols: Vec<(String, Option<String>)>,
+        server: Option<ConnectSpec>,
     },
     /// 스키마 코멘트가 메타에 들어왔다(86 §5) — 패널이 그 스키마 대상이면 메타에서 다시 읽는다.
     CommentsLoaded {
@@ -4491,8 +4493,12 @@ impl Explorer {
                     if gen != self.gen {
                         continue;
                     }
-                    self.actions
-                        .push(ExplorerAction::Comments { owner, table, cols });
+                    self.actions.push(ExplorerAction::Comments {
+                        owner,
+                        table,
+                        cols,
+                        server: None,
+                    });
                 }
                 Resp::Sizes {
                     gen,

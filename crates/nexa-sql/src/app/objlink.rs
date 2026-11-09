@@ -2113,8 +2113,8 @@ impl App {
                     &link.name,
                 )
                 .and_then(|id| {
-                    snap.object(id)
-                        .and_then(|o| o.comment)
+                    // ★ 11-09: `ObjEntry.comment` → 스키마 코멘트 지도(`Snapshot::comment_of` · 패널과 같은 원천) → 상세(L3) 순.
+                    snap.comment_of(names, id)
                         .map(|s| names.get(s).to_string())
                         .or_else(|| match snap.detail(id) {
                             DetailState::Loaded { detail, .. } => {

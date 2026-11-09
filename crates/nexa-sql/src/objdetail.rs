@@ -46,8 +46,11 @@ pub(crate) struct DetailPanel {
     hover_toggle: bool,
     /// 스키마 대상의 종류별 객체 수(호스트가 메타에서 채움 · 서버 왕복 0).
     schema_counts: Vec<(nsql_catalog::ObjectKind, usize)>,
-    /// ★ 테이블 단위 코멘트 캐시(`스키마.테이블` → (테이블 코멘트, 컬럼 코멘트 **그대로** · NULL = None)) — 한 번 읽으면 그 테이블의 모든 컬럼은 즉시(사용자 09-25).
+    /// ★ 테이블 단위 코멘트 캐시(`서버태그|스키마.테이블` → (테이블 코멘트, 컬럼 코멘트 **그대로** · NULL = None)) — 한 번 읽으면 그 테이블의 모든 컬럼은 즉시(사용자 09-25).
+    ///   열쇠 앞의 서버 태그(`worker::server_tag` · 11-09) = DEV·PRD 같은 이름의 테이블을 가른다(종전 = 서버 무관 → 다른 서버의 코멘트가 보임).
     comments: CommentCache,
+    /// 지금 보이는 칸의 서버 태그 — 조회(`knows_comments` · 머리 줄)는 이 태그의 항목만 본다(`set_conn_tag` · 호스트가 동기화 때 넣는다).
+    conn_tag: String,
     last_head_click: Option<Instant>,
 }
 
@@ -72,44 +75,67 @@ impl DetailPanel {
             hover_toggle: false,
             schema_counts: Vec::new(),
             comments: CommentCache::new(),
+            conn_tag: String::new(),
             last_head_click: None,
         }
     }
 
-    fn owner_key(o: &nsql_catalog::ObjectInfo) -> String {
-        format!("{}.{}", o.schema, o.name)
+    /// 보이는 칸의 서버 태그(11-09) — 바뀌면 머리 줄을 다시 그린다(다른 서버의 캐시 항목은 보이지 않는다).
+    pub(crate) fn set_conn_tag(&mut self, tag: &str) {
+        if self.conn_tag != tag {
+            self.conn_tag = tag.to_string();
+            self.render();
+        }
+    }
+
+    fn key_of(tag: &str, o: &nsql_catalog::ObjectInfo) -> String {
+        format!("{tag}|{}.{}", o.schema, o.name)
+    }
+
+    fn owner_key(&self, o: &nsql_catalog::ObjectInfo) -> String {
+        Self::key_of(&self.conn_tag, o)
+    }
+
+    /// 열쇠의 `스키마.테이블` 부분(서버 태그 뒤).
+    fn key_tail(k: &str) -> &str {
+        k.split_once('|').map_or(k, |(_, t)| t)
     }
 
     /// 새로 고침 범위의 코멘트 캐시 버리기(스키마 None = 전부 · 객체 None = 그 스키마 · 둘 다 = 그 테이블) — 다음 표시에 다시 읽는다(T-227 후속).
     /// 돌려주는 값 = 지운 항목 수.
     pub(crate) fn forget_comments(&mut self, schema: Option<&str>, name: Option<&str>) -> usize {
         let before = self.comments.len();
+        // 범위는 서버 무관(새로 고침 범위는 스키마·테이블 이름으로 온다) — 다른 서버의 같은 이름도 함께 버린다(다음 표시에 다시 읽음 = 안전).
         match (schema, name) {
             (None, _) => self.comments.clear(),
             (Some(sc), None) => {
                 let prefix = format!("{sc}.");
-                self.comments.retain(|k, _| !k.starts_with(&prefix));
+                self.comments
+                    .retain(|k, _| !Self::key_tail(k).starts_with(&prefix));
             }
             (Some(sc), Some(nm)) => {
-                self.comments.remove(&format!("{sc}.{nm}"));
+                let tail = format!("{sc}.{nm}");
+                self.comments.retain(|k, _| Self::key_tail(k) != tail);
             }
         }
         before - self.comments.len()
     }
 
-    /// 이 테이블의 코멘트를 이미 아는가(캐시).
+    /// 이 테이블의 코멘트를 이미 아는가(캐시 · 보이는 칸의 서버만).
     pub(crate) fn knows_comments(&self, owner: &nsql_catalog::ObjectInfo) -> bool {
-        self.comments.contains_key(&Self::owner_key(owner))
+        self.comments.contains_key(&self.owner_key(owner))
     }
 
-    /// 코멘트 도착(NULL·공백도 그대로 기억) — 다시 그린다.
+    /// 코멘트 도착(NULL·공백도 그대로 기억) — `tag` = 응답이 온 칸의 서버 태그(보이는 칸과 다르면 저장만 · 그 칸을 볼 때 보인다) · 다시 그린다.
     pub(crate) fn set_comments(
         &mut self,
+        tag: &str,
         owner: &nsql_catalog::ObjectInfo,
         table: Option<String>,
         cols: Vec<(String, Option<String>)>,
     ) {
-        self.comments.insert(Self::owner_key(owner), (table, cols));
+        self.comments
+            .insert(Self::key_of(tag, owner), (table, cols));
         self.render();
     }
 
@@ -118,7 +144,7 @@ impl DetailPanel {
         let Some(DetailTarget::Column { owner, col }) = &self.target else {
             return None;
         };
-        let (_, cols) = self.comments.get(&Self::owner_key(owner))?;
+        let (_, cols) = self.comments.get(&self.owner_key(owner))?;
         Some(
             cols.iter()
                 .find(|(n, _)| n.eq_ignore_ascii_case(&col.name))
@@ -131,7 +157,7 @@ impl DetailPanel {
         let Some(DetailTarget::Object(o)) = &self.target else {
             return None;
         };
-        if let Some((tc, _)) = self.comments.get(&Self::owner_key(o)) {
+        if let Some((tc, _)) = self.comments.get(&self.owner_key(o)) {
             return Some(tc.clone());
         }
         if let Some(c) = self.comment_row() {
@@ -789,12 +815,35 @@ mod tests {
     }
 
     /// 새로 고침 범위 전파(T-227 후속): 테이블 하나 · 스키마 · 전부 — 지운 만큼 돌려주고 나머지는 남는다.
+    /// ★ 11-09: 코멘트 캐시는 서버 태그로 갈린다 — DEV에서 받은 코멘트는 PRD 칸을 볼 때 "모름"(다시 읽는다) · 다른 칸의 응답은 저장만.
+    #[test]
+    fn comments_cache_is_per_server() {
+        let mut p = DetailPanel::new();
+        p.set_conn_tag("dev");
+        p.set_comments("dev", &obj("A", "T1"), Some("dev comment".into()), vec![]);
+        assert!(p.knows_comments(&obj("A", "T1")));
+        p.set_conn_tag("prd");
+        assert!(!p.knows_comments(&obj("A", "T1")));
+        // 보이지 않는 칸(dev)의 응답이 늦게 와도 prd 쪽을 덮지 않는다.
+        p.set_comments("dev", &obj("A", "T2"), None, vec![]);
+        assert!(!p.knows_comments(&obj("A", "T2")));
+        p.set_comments("prd", &obj("A", "T1"), Some("prd comment".into()), vec![]);
+        assert!(p.knows_comments(&obj("A", "T1")));
+        p.set_conn_tag("dev");
+        assert!(p.knows_comments(&obj("A", "T1")));
+        assert!(p.knows_comments(&obj("A", "T2")));
+        // 새로 고침 범위(테이블 하나)는 서버 무관 — 두 서버의 A.T1이 함께 지워진다.
+        assert_eq!(p.forget_comments(Some("A"), Some("T1")), 2);
+        assert!(!p.knows_comments(&obj("A", "T1")));
+        assert!(p.knows_comments(&obj("A", "T2")));
+    }
+
     #[test]
     fn forget_comments_by_scope() {
         let mut p = DetailPanel::new();
-        p.set_comments(&obj("A", "T1"), Some("t1".into()), vec![]);
-        p.set_comments(&obj("A", "T2"), None, vec![]);
-        p.set_comments(&obj("B", "T1"), None, vec![]);
+        p.set_comments("", &obj("A", "T1"), Some("t1".into()), vec![]);
+        p.set_comments("", &obj("A", "T2"), None, vec![]);
+        p.set_comments("", &obj("B", "T1"), None, vec![]);
         assert_eq!(p.forget_comments(Some("A"), Some("T1")), 1);
         assert!(!p.knows_comments(&obj("A", "T1")));
         assert!(p.knows_comments(&obj("A", "T2")));
