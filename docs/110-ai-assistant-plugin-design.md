@@ -78,7 +78,7 @@
 | | Claude | Codex |
 |---|---|---|
 | 1차(공식) | **API 키**(`sk-ant-api…` · 콘솔 발급 · 만료 설정 권장) → 볼트 봉투 → 자식 프로세스 환경 `ANTHROPIC_API_KEY` · `--bare`(OAuth·키체인 안 읽음) · 워크스페이스 미지정 키면 `ANTHROPIC_WORKSPACE_ID`(앱 설정) | **API 키**(`OPENAI_API_KEY`) → 볼트 → app-server 환경 |
-| 사용자 자체 로그인 재사용 | 비-bare 모드면 CLI가 사용자의 Claude Code 로그인을 읽을 수 있으나 **제품 기능으로 제공 금지**(Agent SDK 문서: 제3자는 claude.ai 로그인/한도 제공 불가 · 사전 승인 제외) → 설정 `ai.claude.use_cli_login`은 **두지 않는다**. 브랜딩도 "Claude Code" 표기 금지 → 패널 이름 "Claude" | app-server는 `codex login` 상태를 스스로 씀(앱은 관여 0) · "Sign in with ChatGPT"를 **앱이 구현하지 않음**(파트너 시범 · 미등록) · 엔터프라이즈 = `clientInfo.name` 기록 |
+| 사용자 자체 로그인 재사용(별도 API 키 없이) | **기술적으로 가능**: 비-bare 모드면 CLI가 사용자 PC의 Claude Code 로그인(claude.ai 구독)을 스스로 읽는다 · 앱은 토큰을 만지지 않는다. **약관**: Agent SDK 문서 = 사전 승인 없는 제3자 제품은 claude.ai 로그인/한도를 제공할 수 없다 → 설정 `ai.claude.use_cli_login`(**기본 off** · 켜면 안내문 "개인 사용 · 배포판에서는 Anthropic 승인 필요" · 사용자 11-11 질문 "별도 API 키 없이 연계 가능한가" = 가능하되 이 조건) · 브랜딩 "Claude Code" 표기 금지 → 패널 이름 "Claude" | app-server는 `codex login`(ChatGPT 계정) 상태를 스스로 씀(앱 관여 0) → 별도 키 없이 동작 · "Sign in with ChatGPT"를 **앱이 구현하지 않음**(파트너 시범) · 제3자 클라이언트의 플랜 사용 허용 여부 = app-server 문서 "ChatGPT 플랜 사용" 절 확인 필요 · 엔터프라이즈 = `clientInfo.name` 등록 |
 | 저장 | 새 API `Vault::put_secret(name, bytes)` / `get_secret` / `delete_secret`(`sealed::seal/open` + `devkey` · `secrets/<해시>.conf`) · 설정·프로젝트 파일 평문 금지(D-407) · 로그는 길이만 | 같음 |
 | 화면 | "API 키: 설정됨(…끝 4자)" · 지우기 버튼 · 키 입력 상자 `masked` | 같음 |
 
@@ -126,7 +126,7 @@
 
 ## 10. 결정 후보(사용자 확인 · 추천 표시)
 1. **통합 방식 = CLI 호스팅(추천)** vs 직접 API. 추천 이유 = VS Code 확장과 같은 길 · 에이전트·`/`명령·권한·세션이 CLI에 있음 · 외부 crate 0 유지. 직접 API는 2차 경량 모드.
-2. **인증 = API 키만(추천)** · 사용자 CLI 로그인 재사용 기능은 두지 않음(약관) · Codex 로그인은 CLI 몫.
+2. **인증 = API 키 기본 + `ai.claude.use_cli_login` 기본 off(추천 · 1분 규칙으로 채택)** — 개인 사용은 설치된 CLI 로그인으로 키 없이 동작 · 배포판은 약관 안내 · Codex 로그인은 CLI 몫(플랜 사용 허용 여부 문서 확인 뒤 확정).
 3. **앱 기능 노출 = MCP 서버 + 브리지(추천)** · Codex는 `dynamicTools` 우선 검토.
 4. 쓰기 질의 = 항상 사용자 F5(추천) vs Auto 모드에서 승인 카드로 실행.
 5. 기본 모델 = `claude-opus-5-5`(추천 · 스킬 기본) · 행 데이터 전송 기본 = 묻기(추천).
