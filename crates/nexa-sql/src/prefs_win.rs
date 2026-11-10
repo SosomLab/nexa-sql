@@ -112,18 +112,19 @@ struct Card {
     default_below: bool,
     /// ★ 키 이름 옆 복사 버튼(사용자 09-28 · 글꼴 높이 크기 · 클릭 = 키 복사 → ✓ → 원복 · Shift/Ctrl+클릭 = 보이는 설정 전부 복사).
     copy: crate::copybtn::CopyBtn,
-    /// ★ 설명 줄바꿈 캐시(11-10 측정 · T-473): (글 폭 · 언어 · 덧말) → (줄들 · 덧말 시작 줄). 매 프레임 모든 카드(최대 ≈810장)의
-    ///   설명을 다시 재던 것(Release 카드당 ≈0.5 ms → 337장 ≈170 ms/프레임)을 폭·언어·덧말이 같으면 재사용.
-    wrap_cache: Option<WrapCache>,
 }
 
-/// 카드 설명 줄바꿈 캐시 한 벌(T-473).
-struct WrapCache {
+/// ★ 카드 그리기 캐시(11-10 T-473 · 설정 키별 · **창 수준**): 설명 줄바꿈(글 폭 · 언어 · 덧말이 같으면 재사용 · `Rc`라 프레임마다
+///   복제 없음)과 기본값 글자 폭(배율 · 언어). 종전엔 카드 안에 두어 검색마다 카드가 재생성되며 비워졌다(협업 재측정 11-10: 새
+///   검색어의 첫 그리기 20~30 ms 중 75%가 줄바꿈 · 적중 때도 337장 줄 목록 복제 5~8 ms).
+struct CardCache {
     text_w: i32,
     lang: nsql_i18n::Lang,
     note: Option<String>,
-    lines: Vec<String>,
+    lines: Rc<Vec<String>>,
     note_at: usize,
+    /// (배율 · 언어 · 폭).
+    default_w: Option<(f32, nsql_i18n::Lang, i32)>,
 }
 
 /// 스냅샷 한 줄.
@@ -175,6 +176,8 @@ pub(crate) struct PrefsWin {
     /// ★ 11-10(사용자 "열면 까만 화면이 먼저"): 창을 **숨긴 채** 만들고 첫 그리기 뒤에 보인다 — 첫 present까지 OS 기본(검정)이
     ///   노출되던 것. `open`에서 거짓 · 첫 `paint` 끝에서 참(헤드리스는 계속 숨김).
     shown: bool,
+    /// ★ 카드 그리기 캐시(설정 키별 · T-473 · `CardCache`).
+    card_cache: std::collections::HashMap<&'static str, CardCache>,
     /// ★ 11-10 계측(docs/71 측정 먼저 · `prefs.dump`에 `perf …` 줄 · `NSQL_TRACE_FRAMES`면 stderr `[prefs]`): 열기 시작 시각 ·
     ///   창 생성 ms · 첫 그리기 ms · 마지막 `rebuild_cards` µs · 마지막 `paint` µs(그중 설명 줄바꿈 µs) · 그린 카드 수.
     perf: PrefsPerf,
@@ -516,6 +519,7 @@ impl PrefsWin {
             reveal_row: None,
             model_lang: nsql_i18n::current_lang(),
             shown: false,
+            card_cache: std::collections::HashMap::new(),
             perf: PrefsPerf::default(),
             window: None,
             memo: crate::wingeom::Memo::default(),
@@ -902,7 +906,6 @@ impl PrefsWin {
                     locked: false,
                     default_below: false,
                     copy: crate::copybtn::CopyBtn::new(),
-                    wrap_cache: None,
                 }
             })
             .collect();
@@ -2257,7 +2260,8 @@ impl PrefsWin {
             }
             let mut inv = Invalidations::default();
             // (설명 줄들, 덧말이 시작하는 줄 index) — 덧말은 강조색으로 그린다.
-            let mut desc_lines: Vec<(Vec<String>, usize)> = Vec::with_capacity(self.cards.len());
+            let mut desc_lines: Vec<(Rc<Vec<String>>, usize)> =
+                Vec::with_capacity(self.cards.len());
             let boost_on = self
                 .snap
                 .iter()
@@ -2278,23 +2282,32 @@ impl PrefsWin {
                 };
                 let tw = std::time::Instant::now();
                 let lang = nsql_i18n::current_lang();
-                let (lines, note_at) = match &c.wrap_cache {
-                    Some(wc) if wc.text_w == text_w && wc.lang == lang && wc.note == note => {
-                        (wc.lines.clone(), wc.note_at)
-                    }
-                    _ => {
-                        let mut lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
-                        let note_at = lines.len();
+                let hit = self
+                    .card_cache
+                    .get(c.entry.key)
+                    .filter(|e| e.text_w == text_w && e.lang == lang && e.note == note)
+                    .map(|e| (e.lines.clone(), e.note_at));
+                let (lines, note_at) = match hit {
+                    Some(h) => h,
+                    None => {
+                        let mut v = Self::wrap(&mut dc, t(c.entry.desc), text_w);
+                        let note_at = v.len();
                         if let Some(n) = note.as_deref() {
-                            lines.extend(Self::wrap(&mut dc, n, text_w));
+                            v.extend(Self::wrap(&mut dc, n, text_w));
                         }
-                        c.wrap_cache = Some(WrapCache {
-                            text_w,
-                            lang,
-                            note: note.clone(),
-                            lines: lines.clone(),
-                            note_at,
-                        });
+                        let lines = Rc::new(v);
+                        let default_w = self.card_cache.get(c.entry.key).and_then(|e| e.default_w);
+                        self.card_cache.insert(
+                            c.entry.key,
+                            CardCache {
+                                text_w,
+                                lang,
+                                note: note.clone(),
+                                lines: lines.clone(),
+                                note_at,
+                                default_w,
+                            },
+                        );
                         (lines, note_at)
                     }
                 };
@@ -2307,7 +2320,17 @@ impl PrefsWin {
                     0
                 };
                 // 기본값 글자("Default: …")가 컨트롤 줄의 빈 자리에 안 들어가면 설명 아래 줄로 내린다(긴 URL · 사용자 09-17).
-                let dw = dc.text_width(&tf(Msg::LblDefaultValue, &[c.entry.default]));
+                // ★ 기본값 글자("Default: …") 폭은 배율·언어가 같으면 재사용(T-473).
+                let dw = match self.card_cache.get(c.entry.key).and_then(|e| e.default_w) {
+                    Some((sc, lg, w)) if sc == s && lg == lang => w,
+                    _ => {
+                        let w = dc.text_width(&tf(Msg::LblDefaultValue, &[c.entry.default]));
+                        if let Some(e) = self.card_cache.get_mut(c.entry.key) {
+                            e.default_w = Some((s, lang, w));
+                        }
+                        w
+                    }
+                };
                 let row_used = {
                     let ctl_w = match &c.ctl {
                         CardCtl::Bool(_) => (56.0 * s).round() as i32,
@@ -2764,17 +2787,24 @@ impl PrefsWin {
                 }
             }
         }
+        // ★ 첫 프레임 = 다 그린 버퍼를 들고 **보인 뒤 바로 present**(사용자 11-10 "까만 창은 사라졌는데 깜빡임"): 숨긴 창에 present한
+        //   픽셀은 OS가 버리므로 "present → 보이기" 순서면 보이는 순간부터 다음 그리기까지 빈 프레임이 노출됐다. 준비(카드·배치·
+        //   미리보기)는 이 함수에 오기 전에 모두 끝나 있다(`open_prefs_now`가 동기로 돈다).
+        let first = !self.shown;
+        if first && !crate::winfocus::headless() {
+            win.set_visible(true);
+        }
         let _ = buf.present();
         self.perf.paint_us = paint_t0.elapsed().as_micros();
         self.perf.wrap_us = wrap_us;
         self.perf.painted = self.cards.len();
-        if !self.shown {
-            // ★ 첫 그리기 뒤에 보인다(11-10 "까만 화면") — 헤드리스는 계속 숨김.
+        if first {
             self.shown = true;
             self.perf.first_paint_ms = self.perf.open_at.map_or(0, |t| t.elapsed().as_millis());
             if !crate::winfocus::headless() {
-                win.set_visible(true);
                 crate::winfocus::focus(&win);
+                // 보인 직후 OS가 한 번 더 그리기를 요구할 수 있다 — 같은 내용을 바로 다시 present(캐시 적중이라 싸다).
+                win.request_redraw();
             }
             if trace_prefs() {
                 eprintln!(
