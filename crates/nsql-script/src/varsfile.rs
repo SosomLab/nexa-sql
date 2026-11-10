@@ -30,6 +30,10 @@ pub fn store_global_full(dir: &Path, vars: &[VarState], macros: &[(String, Strin
         if raw.contains('\n') || raw.contains('\r') || name.is_empty() {
             continue;
         }
+        // ★ 비밀 이름(D-140 규칙 · T-132 ①)은 디스크에 쓰지 않는다 — HIDE로 받은 것은 호스트가 표시값 `******`로 걸러 넘긴다.
+        if crate::vars::looks_secret(name) {
+            continue;
+        }
         // ★ 값은 늘 `'…'`로 감싼다(`'` → `''`) — 치환 값의 앞뒤 공백을 지키기 위해(협업 V1 10-27 `' x '` → `x`로 깎이던 결함).
         //   DEFINE 명령은 감싼 따옴표를 벗기므로 그대로 실행해도 같은 값.
         text.push_str(&format!("DEFINE {name} = '{}'\n", raw.replace('\'', "''")));
@@ -146,9 +150,15 @@ mod tests {
             // ★ 앞뒤 공백 · 따옴표가 든 값도 그대로 돌아온다(협업 V1 10-27 결함).
             ("TS".to_string(), " x ".to_string()),
             ("Q".to_string(), "it's".to_string()),
+            // ★ 비밀 이름은 디스크에 안 쓴다(T-132 ①).
+            ("DB_PASS".to_string(), "s3cr3t".to_string()),
         ];
         store_global_full(&dir, &vars, &macros);
         let text = std::fs::read_to_string(global_path(&dir)).unwrap_or_default();
+        assert!(
+            !text.contains("DB_PASS") && !text.contains("s3cr3t"),
+            "{text}"
+        );
         assert!(text.contains("DEFINE TS = ' x '\n"), "{text}");
         assert!(text.contains("DEFINE Q = 'it''s'\n"), "{text}");
         assert_eq!(

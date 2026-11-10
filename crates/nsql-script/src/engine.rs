@@ -266,6 +266,13 @@ impl Engine {
         self.defines_dirty = true;
     }
 
+    /// ★ `ACCEPT … HIDE`로 받은 값(T-132 ①) — 탭 층에 비밀로 정의 · 목록·표시·러너 이벤트의 표시값은 `******`.
+    pub fn define_secret(&mut self, name: &str, value: &str) {
+        self.defines
+            .define_secret(crate::MacroLayer::Local, name, value);
+        self.defines_dirty = true;
+    }
+
     /// 스크립트 인자 `&1..&n`.
     pub fn set_args(&mut self, args: &[String]) {
         for (i, a) in args.iter().enumerate() {
@@ -400,6 +407,10 @@ impl Engine {
 
     /// `DEFINE` 표시 글 — 사용 시 모드에서 원문에 참조가 남아 있으면 `원문  →  현재 값`(순환이면 원문만).
     pub fn define_display(&mut self, name: &str, raw: &str) -> String {
+        // ★ 비밀(T-132 ① · D-140)은 어디에도 원문을 내지 않는다 — `DEFINE` 목록 · `DEFINE 이름` · 변수 창(`RunEvent::Vars` shown).
+        if self.defines.is_secret(name) {
+            return crate::SECRET_MASK.to_string();
+        }
         if !self.settings.expand_at_use {
             return raw.to_string();
         }

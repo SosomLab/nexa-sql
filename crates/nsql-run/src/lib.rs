@@ -2978,7 +2978,7 @@ impl Runner {
                 name,
                 prompt: label,
                 default,
-                hide: _,
+                hide,
             } => {
                 let asked = if self.strict {
                     None
@@ -2988,7 +2988,12 @@ impl Runner {
                 };
                 match accept_value(asked, default) {
                     Some(v) => {
-                        self.engine.define(&name, &v);
+                        // ★ HIDE = 비밀 치환 변수(T-132 ①): 값은 세션 메모리(엔진)에만 · 표시·목록·글로벌 저장에서 가린다.
+                        if hide {
+                            self.engine.define_secret(&name, &v);
+                        } else {
+                            self.engine.define(&name, &v);
+                        }
                         true
                     }
                     None => {

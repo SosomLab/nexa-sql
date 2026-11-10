@@ -49,7 +49,7 @@ pub use inputs::{
     typed_input, Delivery, InputKind, InputNeed,
 };
 pub use lang::{lang, set_lang, Lang};
-pub use macros::{MacroLayer, MacroStore};
+pub use macros::{MacroLayer, MacroStore, SECRET_MASK};
 pub use split::{
     classify_sql, classify_sql_in, split_script, split_script_in, Item, ItemKind, SqlKind,
 };

@@ -6,7 +6,10 @@
 //!
 //! 표면은 `BTreeMap<String, String>`과 호환(`insert` · `get` · `remove` · `iter` · `len` · `contains_key` · `FromIterator`)이라 종전 호출처가 그대로 돈다.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// 비밀 치환 변수의 표시값(T-132 ① · D-140) — 바인드 변수 가림과 같은 글.
+pub const SECRET_MASK: &str = "******";
 
 /// 치환 변수가 사는 층.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -21,6 +24,9 @@ pub struct MacroStore {
     local: BTreeMap<String, String>,
     shared: BTreeMap<String, String>,
     global: BTreeMap<String, String>,
+    /// ★ T-132 ①(11-10): `ACCEPT … HIDE`로 받은 이름(대문자) — 이름 규칙(`looks_secret`)에 안 걸려도 비밀로 본다. 층과 무관 ·
+    ///   `remove`로 지우면 같이 빠진다 · `clear`(탭 층 비움)에는 남겨 둔다(이름뿐이라 무해 · 다음 실행에 호스트가 같은 이름을 되돌려 준다).
+    hidden: BTreeSet<String>,
 }
 
 impl MacroStore {
@@ -38,6 +44,18 @@ impl MacroStore {
     pub fn define_in(&mut self, layer: MacroLayer, name: &str, value: &str) {
         self.layer_mut(layer)
             .insert(name.to_ascii_uppercase(), value.to_string());
+    }
+
+    /// ★ 비밀로 정의(`ACCEPT … HIDE` · T-132 ①) — 값은 보통처럼 들어가되 이름이 비밀 집합에 올라 모든 출구에서 가려진다.
+    pub fn define_secret(&mut self, layer: MacroLayer, name: &str, value: &str) {
+        self.hidden.insert(name.to_ascii_uppercase());
+        self.define_in(layer, name, value);
+    }
+
+    /// 비밀인가 = `ACCEPT HIDE`로 받았거나 이름 규칙(`*PASS*` `*PWD*` `*SECRET*` `*TOKEN*` · D-140).
+    #[must_use]
+    pub fn is_secret(&self, name: &str) -> bool {
+        self.hidden.contains(&name.to_ascii_uppercase()) || crate::vars::looks_secret(name)
     }
 
     /// 찾기 = 탭 → 공유 → 글로벌.
@@ -70,7 +88,11 @@ impl MacroStore {
 
     /// 지우기(`UNDEFINE`) = 탭 → 없으면 공유(글로벌은 안 지운다 · 지운 값이 있으면 돌려준다).
     pub fn remove(&mut self, name: &str) -> Option<String> {
-        self.local.remove(name).or_else(|| self.shared.remove(name))
+        let r = self.local.remove(name).or_else(|| self.shared.remove(name));
+        if r.is_some() {
+            self.hidden.remove(&name.to_ascii_uppercase());
+        }
+        r
     }
 
     /// 탭 층만 비운다(스크립트 끝 · 탭 바꿈).
@@ -169,6 +191,35 @@ impl FromIterator<(String, String)> for MacroStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ T-132 ①: HIDE로 받은 이름과 이름 규칙 이름은 비밀 · 지우면 풀림 · 엔진 표시글은 `******`.
+    #[test]
+    fn secret_names_by_hide_and_rule_are_masked() {
+        let mut m = MacroStore::new();
+        m.define_secret(MacroLayer::Local, "x", "hunter2");
+        m.define_in(MacroLayer::Local, "DB_PASS", "tiger");
+        m.define_in(MacroLayer::Local, "OWNER", "scott");
+        assert!(
+            m.is_secret("X") && m.is_secret("x"),
+            "HIDE = 비밀(대소문자 무관)"
+        );
+        assert!(m.is_secret("DB_PASS"), "이름 규칙 = 비밀");
+        assert!(!m.is_secret("OWNER"));
+        assert_eq!(
+            m.get("X").map(String::as_str),
+            Some("hunter2"),
+            "값 자체는 그대로(치환에 쓴다)"
+        );
+        assert!(m.remove("X").is_some());
+        assert!(!m.is_secret("X"), "지우면 비밀 표시도 풀린다");
+        let mut e = crate::engine::Engine::new(nsql_core::Dialect::Oracle);
+        e.define_secret("tok", "abc");
+        e.define("DB_PWD", "p");
+        e.define("OWNER", "scott");
+        assert_eq!(e.define_display("TOK", "abc"), SECRET_MASK);
+        assert_eq!(e.define_display("DB_PWD", "p"), SECRET_MASK);
+        assert_eq!(e.define_display("OWNER", "scott"), "scott");
+    }
 
     #[test]
     fn layers_shadow_and_remove_order() {

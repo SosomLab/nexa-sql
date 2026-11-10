@@ -78,6 +78,8 @@ impl App {
     pub(crate) fn global_macro_pairs(&self) -> Vec<(String, String)> {
         self.global_macros
             .iter()
+            // ★ 비밀(표시값 `******` = HIDE 또는 이름 규칙 · T-132 ①)은 디스크·다른 세션으로 내보내지 않는다.
+            .filter(|(n, _, shown)| !macro_is_secret(n, shown))
             .map(|(n, raw, _)| (n.clone(), raw.clone()))
             .collect()
     }
@@ -447,16 +449,28 @@ impl App {
     }
 }
 
+/// 치환 변수가 비밀인가(T-132 ①) — 러너가 표시값을 `******`로 보낸 것(`ACCEPT HIDE`) 또는 이름 규칙(D-140). 원문(`raw`)은
+/// 다음 실행에 되돌려 주려고 메모리에만 든다.
+fn macro_is_secret(name: &str, shown: &str) -> bool {
+    shown == nsql_script::SECRET_MASK || nsql_script::looks_secret(name)
+}
+
 /// 치환 변수 한 줄(변수 창) — 표시값 = 사용 시 모드면 `원문 → 현재 값`(63 §9) · 편집 = 원문 · 층 = 탭/공유/글로벌(T-153 후속).
 fn macro_row(
     (n, raw, shown): &(String, String, String),
     layer: nsql_script::Layer,
 ) -> vars_win::VarRow {
+    // ★ 비밀 치환 변수(T-132 ①)는 바인드 비밀과 같이 값 `******` · 편집란 비움.
+    let secret = macro_is_secret(n, shown);
     vars_win::VarRow {
         name: format!("&{n}"),
         ty: "DEFINE".into(),
-        value: shown.clone(),
-        edit: raw.clone(),
+        value: if secret {
+            nsql_script::SECRET_MASK.into()
+        } else {
+            shown.clone()
+        },
+        edit: if secret { String::new() } else { raw.clone() },
         layer,
         changed: false,
         shadowed: false,
