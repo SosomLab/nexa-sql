@@ -20,6 +20,18 @@ impl App {
             let _ = std::fs::write(path, self.prefs_win.dump_text());
             return;
         }
+        // ★ 11-10 계측: `prefs.query:<q>` = 열린 설정 창에 검색어를 넣어 `rebuild_cards`를 한 번 돌린다(닫혀 있으면 열며) · 뒤에
+        //   `prefs.dump:`로 `perf rebuild_us=…`를 읽는다.
+        if let Some(q) = id.strip_prefix("prefs.query:") {
+            if self.prefs_win.window().is_some() {
+                self.prefs_win.preset_query(q);
+                self.prefs_win.redraw();
+            } else {
+                self.prefs_query = Some(q.to_string());
+                self.open_prefs = true;
+            }
+            return;
+        }
         // ★ T-278(10-30 · 캡처 자동화): `prefs.goto:<키>` = 설정 창을 그 키의 분류로 열고 카드를 맨 위로 스크롤(이미 열려 있으면 바로).
         if let Some(key) = id.strip_prefix("prefs.goto:") {
             if let Some(e) = nsql_settings::entry(key) {

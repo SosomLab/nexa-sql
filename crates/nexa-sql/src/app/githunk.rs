@@ -21,6 +21,8 @@ pub(crate) struct GitHunkPopup {
     view: diff_view::DiffView,
     rect: Rect,
     open: bool,
+    /// 열 때 쓴 (행 수 · 줄 높이 · 배율) — 첫 그리기 뒤 칸의 실제 줄 높이가 다르면 높이를 다시 맞춘다(협업 V1 11-10 "셋째 문맥 줄 한 줄 모자람").
+    fit: (i32, i32, f32),
 }
 
 impl GitHunkPopup {
@@ -46,6 +48,16 @@ impl GitHunkPopup {
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.open {
             return;
+        }
+        // ★ 자가 보정(3차 후속): 칸 상자의 실제 줄 높이는 첫 그리기 뒤에야 안다 — 편집기 값과 다르면(글꼴·간격 차) 행 수 × 실제 높이로
+        //   사각형을 다시 잡는다(한 번).
+        let actual = self.view.line_h();
+        let (rows_n, lh, scale) = self.fit;
+        if actual > 0 && actual != lh && rows_n > 0 {
+            let s = |v: f32| (v * scale).round() as i32;
+            self.rect.h = rows_n * actual + s(42.0) + s(12.0);
+            self.fit.1 = actual;
+            self.view.set_bounds(self.rect, scale);
         }
         let b = self.rect;
         dc.fill_rect(Rect::new(b.x - 1, b.y - 1, b.w + 2, b.h + 2), th.border);
@@ -175,6 +187,7 @@ impl App {
         let avoid = Rect::new(ed.x, p.y - lh / 2, ed.w, lh);
         let pos = place_popup_beside(p, avoid, (w, h), host);
         self.githunk.rect = Rect::new(pos.x, pos.y, w, h);
+        self.githunk.fit = (rows_n, lh, self.scale);
         self.githunk.view.set_bounds(self.githunk.rect, self.scale);
         self.githunk.open = true;
         self.githunk.view.set_focused(true);

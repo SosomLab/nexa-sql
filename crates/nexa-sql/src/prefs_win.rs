@@ -160,6 +160,12 @@ pub(crate) struct PrefsWin {
     reveal_row: Option<usize>,
     /// 트리 라벨을 만든 언어 — 바뀌면(View ▸ 언어 · 설정) 다음 그리기에서 트리·카드를 다시 만든다(사용자 10-06).
     model_lang: nsql_i18n::Lang,
+    /// ★ 11-10(사용자 "열면 까만 화면이 먼저"): 창을 **숨긴 채** 만들고 첫 그리기 뒤에 보인다 — 첫 present까지 OS 기본(검정)이
+    ///   노출되던 것. `open`에서 거짓 · 첫 `paint` 끝에서 참(헤드리스는 계속 숨김).
+    shown: bool,
+    /// ★ 11-10 계측(docs/71 측정 먼저 · `prefs.dump`에 `perf …` 줄 · `NSQL_TRACE_FRAMES`면 stderr `[prefs]`): 열기 시작 시각 ·
+    ///   창 생성 ms · 첫 그리기 ms · 마지막 `rebuild_cards` µs · 마지막 `paint` µs(그중 설명 줄바꿈 µs) · 그린 카드 수.
+    perf: PrefsPerf,
     advanced: Switch,
     /// ★ "변경"(사용자 10-11): 켜면 **기본값에서 바뀐 설정만**(고급 여부·트리 선택과 무관 · 검색어와는 AND) · 창을 열 때마다 꺼짐(점검용 보기 · 비영속).
     changed: Switch,
@@ -497,6 +503,8 @@ impl PrefsWin {
             extra_cats: Vec::new(),
             reveal_row: None,
             model_lang: nsql_i18n::current_lang(),
+            shown: false,
+            perf: PrefsPerf::default(),
             window: None,
             memo: crate::wingeom::Memo::default(),
 
@@ -652,6 +660,20 @@ impl PrefsWin {
 
     /// 지금 선택/검색에 맞는 카드 목록을 만든다.
     fn rebuild_cards(&mut self) {
+        let t0 = std::time::Instant::now();
+        self.rebuild_cards_in();
+        self.perf.rebuild_us = t0.elapsed().as_micros();
+        if trace_prefs() {
+            eprintln!(
+                "[prefs] rebuild_cards query={:?} cards={} us={}",
+                self.query,
+                self.cards.len(),
+                self.perf.rebuild_us
+            );
+        }
+    }
+
+    fn rebuild_cards_in(&mut self) {
         let adv = self.advanced.is_on();
         let changed_on = self.changed_keys.is_some();
         let in_set = |key: &str| self.changed_keys.as_ref().is_some_and(|k| k.contains(key));
@@ -1092,6 +1114,15 @@ impl PrefsWin {
             .map_or("-", |c| c.entry.key);
         out.push_str(&format!("scroll={} top_card={top_card}\n", self.scroll));
         out.push_str(&format!(
+            "perf create_ms={} first_paint_ms={} rebuild_us={} paint_us={} wrap_us={} painted={}\n",
+            self.perf.create_ms,
+            self.perf.first_paint_ms,
+            self.perf.rebuild_us,
+            self.perf.paint_us,
+            self.perf.wrap_us,
+            self.perf.painted
+        ));
+        out.push_str(&format!(
             "changed_only={} advanced={} cards={}\n",
             self.changed.is_on(),
             self.advanced.is_on(),
@@ -1136,10 +1167,17 @@ impl PrefsWin {
         // 창 규칙(사용자 09-17): 같은 모니터면 기록 위치·크기 · 아니면 기본 크기로 메인 창 가운데.
         let same = self.memo.on_same_monitor(owner);
         let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((920.0, 640.0));
+        self.perf = PrefsPerf {
+            open_at: Some(std::time::Instant::now()),
+            ..PrefsPerf::default()
+        };
+        self.shown = false;
+        // ★ 숨긴 채 만든다(11-10 "까만 화면") — 첫 `paint`가 present한 뒤 `set_visible(true)`(주 창과 같은 규칙 · event_loop 27/91행).
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL - {}", t(Msg::WinPreferences)))
             .with_theme(theme)
             .with_resizable(true)
+            .with_visible(false)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
         if let Some(((x, y), _)) = same {
             attrs = attrs.with_position(crate::wingeom::logical(x, y));
@@ -1152,6 +1190,7 @@ impl PrefsWin {
         let Ok(win) = el.create_window(crate::winfocus::attrs_headless(attrs)) else {
             return;
         };
+        self.perf.create_ms = self.perf.open_at.map_or(0, |t| t.elapsed().as_millis());
         // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
         if let Some(((x, y), _)) = same {
             crate::wingeom::place_outer(&win, Some((x, y)));
@@ -2158,6 +2197,8 @@ impl PrefsWin {
             self.rebuild_cards();
             self.layout();
         }
+        let paint_t0 = std::time::Instant::now();
+        let mut wrap_us: u128 = 0;
         // B/K 토글 상태는 표면을 빌리기 전에(불변 빌림 충돌).
         let bk = self.preview_flags();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
@@ -2217,11 +2258,13 @@ impl PrefsWin {
                     (None, Some(h)) => Some(h.clone()),
                     (None, None) => None,
                 };
+                let tw = std::time::Instant::now();
                 let mut lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
                 let note_at = lines.len();
                 if let Some(n) = note.as_deref() {
                     lines.extend(Self::wrap(&mut dc, n, text_w));
                 }
+                wrap_us += tw.elapsed().as_micros();
                 let boost_hint =
                     c.locked && boost_on && nsql_settings::perf::boost_value(c.entry.key).is_some();
                 let mut extra = if c.error.is_some() || boost_hint {
@@ -2688,7 +2731,50 @@ impl PrefsWin {
             }
         }
         let _ = buf.present();
+        self.perf.paint_us = paint_t0.elapsed().as_micros();
+        self.perf.wrap_us = wrap_us;
+        self.perf.painted = self.cards.len();
+        if !self.shown {
+            // ★ 첫 그리기 뒤에 보인다(11-10 "까만 화면") — 헤드리스는 계속 숨김.
+            self.shown = true;
+            self.perf.first_paint_ms = self.perf.open_at.map_or(0, |t| t.elapsed().as_millis());
+            if !crate::winfocus::headless() {
+                win.set_visible(true);
+                crate::winfocus::focus(&win);
+            }
+            if trace_prefs() {
+                eprintln!(
+                    "[prefs] open create_ms={} first_paint_ms={} paint_us={} wrap_us={} cards={}",
+                    self.perf.create_ms,
+                    self.perf.first_paint_ms,
+                    self.perf.paint_us,
+                    self.perf.wrap_us,
+                    self.perf.painted
+                );
+            }
+        } else if trace_prefs() {
+            eprintln!(
+                "[prefs] paint us={} wrap_us={} cards={}",
+                self.perf.paint_us, self.perf.wrap_us, self.perf.painted
+            );
+        }
     }
+}
+
+/// ★ 설정 창 계측(11-10 · docs/71) — 값은 `dump_text`의 `perf …` 줄과 `NSQL_TRACE_FRAMES` stderr로 낸다.
+#[derive(Default, Clone, Copy)]
+struct PrefsPerf {
+    open_at: Option<std::time::Instant>,
+    create_ms: u128,
+    first_paint_ms: u128,
+    rebuild_us: u128,
+    paint_us: u128,
+    wrap_us: u128,
+    painted: usize,
+}
+
+fn trace_prefs() -> bool {
+    std::env::var_os("NSQL_TRACE_FRAMES").is_some()
 }
 
 /// 카드 표시 판정(순수 · MC/DC): "변경" 켬 = 바뀐 키만(고급 무관) · 꺼짐 = 고급은 Advanced가 켜져 있을 때만.

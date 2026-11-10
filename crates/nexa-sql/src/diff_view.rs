@@ -120,6 +120,11 @@ impl DiffView {
     }
 
     /// 정렬된 행 수(양쪽 합친 표시 행 · 팝업 높이 계산 · C-1 hunk 팝업 11-10).
+    /// 칸 상자의 실제 줄 높이(첫 그리기 뒤 유효 · hunk 팝업 높이 자가 보정 · 11-10).
+    pub(crate) fn line_h(&self) -> i32 {
+        self.left.line_h()
+    }
+
     pub(crate) fn row_count(&self) -> usize {
         self.rows.len()
     }
