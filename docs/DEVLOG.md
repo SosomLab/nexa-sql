@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-10 (Windows · 개발 × 협업 · 드래그 단위)** — 사용자 "더블/트리플 클릭 뒤 드래그 = 단어/줄 단위" → nexa-ui nexa-ctl textbox(eaa86a7) · V1 헤드리스 3항 ✓ · [journal 11-10 §11](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 설정 검색·줄 바꿈)** — 사용자 3건 = 설정 창 퍼지 검색(낱말 AND · 머리 부분열 · D-475) · 새 키 `editor.word_wrap` + 보기 메뉴 ✓ + 팔레트 `PalKind::Switch` · 보기 메뉴 끝 "환경 설정"(f7495f16) · V2 ✓ · V1 ✓ · 같은 트리 개발 세션 중복(1a) 관찰 · [journal 11-10 §10](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 더블클릭 선택)** — 사용자 "Sublime처럼" → nexa-ui nexa-ctl `select_word_at` + `WordClass`(공백 묶음 · 특수 문자 묶음 · 줄 끝 뒤 = 꼬리 공백 · 줄 바꿈 안 넘음 · 시험 8 · bfa8b03) · nexa-sql 재빌드만 · [journal 11-10 §9](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 찾기 바)** — 사용자 3건 = 검색창 드래그 밖 release 캡처 잔류(`area_at` 순서 + 상자 드래그 우선) · 결과 없음 = 선택 접기(`editor.find_keep_last_match` 기본 off · D-474) · 상세 머리 SCHEMA 칩 대칭(aac99bd7 · 칩 재수정 a0d82487 = 위 테두리 1px 제외) · V2 ✓ · 사용자 실기 ✓ · [journal 11-10 §8](journal/2026-11-10.md).

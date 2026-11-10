@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (nexa-ui main 직접) | 2026-11-10 | 2026-11-10 → nexa-ui main · **eaa86a7** | 1 | **nexa-ui 저장소** · 더블/트리플 클릭 뒤 드래그 = 단어/줄 단위 선택 확장(사용자 11-10) · nexa-ctl textbox · nexa-sql 변경 없음 · [journal 11-10 §11](journal/2026-11-10.md) |
 | (main 직접) | 2026-11-10 | 2026-11-10 → main · **f7495f16** + 기록 | 2 | 설정 창 퍼지 검색(D-475) · `editor.word_wrap` + 보기 메뉴·팔레트 · 보기 메뉴 "환경 설정"(사용자 11-10 · 커밋 = nexa-sql-1a · 개발 4d8ead 수정 포함) · [journal 11-10 §10](journal/2026-11-10.md) |
 | (nexa-ui main 직접) | 2026-11-10 | 2026-11-10 → nexa-ui main · **bfa8b03** | 1 | **nexa-ui 저장소** · 편집기 더블클릭 선택 = Sublime 규칙(사용자 11-10) = nexa-ctl `select_word_at` + `WordClass` · 시험 `double_click_sublime_classes` 8 · nexa-sql 변경 없음 · [journal 11-10 §9](journal/2026-11-10.md) |
 | (main 직접) | 2026-11-10 | 2026-11-10 → main · **aac99bd7** · **a0d82487** + 기록 | 4 | 찾기 바 3건(사용자 11-10) = 드래그 밖 release 캡처 잔류 · 결과 없음 = 선택 접기(`editor.find_keep_last_match` · D-474) · SCHEMA 칩 대칭 · [journal 11-10 §8](journal/2026-11-10.md) |
