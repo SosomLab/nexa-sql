@@ -237,6 +237,8 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 `Declared` 열: `decl` = `VAR`로 선언(타입 고정) · `auto` = 대입·OUT으로 암묵 생성(타입 추론). 우선순위 = tab > shared > fixed(같은 이름이면 앞 층이 이긴다).
 
 > ★ **치환 변수(`&이름` · DEFINE)도 같은 층 꼴**(10-26 139차 win · §7) — MacroStore 층 = **tab**(`DEFINE` 기본) → **shared**(`DEFINE 이름 SHARE`) → **global**(`DEFINE 이름 GLOBAL`) · 되돌리기 = `DEFINE 이름 LOCAL` · 우선순위 = tab > shared > global · 글로벌 = 앱 전체(`App.global_macros`) · ✅ **보존 = 10-27**(141차 win · `vars/global.sql`에 `DEFINE 이름 = '값'` 줄 · 바인드와 한 파일 · `vars.global_persist` 공용 · CLI `vars.cli_global`도 읽고 씀 · 아래 "10-27" 소절).
+>
+> ★ **11-10 비밀 치환 변수 가림(T-132 ① · D-476 · e0d92635)** = `ACCEPT … HIDE` 값 ∪ 이름 규칙(`*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`) → `DEFINE` 목록 · `DEFINE 이름` · 변수 창(값 `******` · 편집란 비움)에서 가리고 글로벌 저장(`vars/global.sql`)·전파에서 제외 · 값은 세션 메모리에만 · 한계 = HIDE 집합은 러너 수명(재접속 뒤 이름 규칙만) · [journal 11-10 §12](journal/2026-11-10.md).
 
 ### 11-2. 빠진 개념 = "글로벌"
 - 요구: 어느 서버·어느 탭에서나 같은 값(예 `:PROJECT_CD` · `:V_USER`) · 앱을 다시 켜도 남음. 지금은 탭마다/연결마다 다시 넣거나 스크립트(`vars.script`)로 옮겨야 한다.
