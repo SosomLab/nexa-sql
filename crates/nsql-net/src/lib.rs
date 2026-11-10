@@ -351,7 +351,13 @@ pub fn probe_reachable(url: &str, budget: Duration, proxy: Option<&str>) -> Resu
         }
         match TcpStream::connect_timeout(&a, left) {
             Ok(_) => return Ok(()),
-            Err(e) => last = Some(e),
+            // 접속 대상(프록시면 프록시 호스트)을 상세에 남긴다 — 호출자는 저장소 호스트만 알아 진단이 어렵다(협업 11-10 V1 관찰).
+            Err(e) => {
+                last = Some(io::Error::new(
+                    e.kind(),
+                    format!("connect {host}:{port}: {e}"),
+                ))
+            }
         }
     }
     Err(NetError::Io(last.unwrap_or_else(|| {
