@@ -51,7 +51,7 @@ pub(crate) fn start(owner: usize) {
         trace("no ibus address");
         return;
     };
-    let mut cmd = Command::new("dbus-monitor");
+    let mut cmd = Command::new("dbus-monitor"); // console-ok: Linux 전용 모듈(main.rs cfg)
     cmd.arg("--address")
         .arg(&addr)
         .arg("interface='org.freedesktop.IBus.Panel'")
@@ -117,7 +117,7 @@ pub(crate) fn stop(owner: usize) {
 fn ibus_address() -> Option<String> {
     static ADDR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     ADDR.get_or_init(|| {
-        let out = Command::new("ibus")
+        let out = Command::new("ibus") // console-ok: Linux 전용 모듈(main.rs cfg)
             .arg("address")
             .stdin(Stdio::null())
             .stderr(Stdio::null())

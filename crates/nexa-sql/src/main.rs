@@ -1486,11 +1486,12 @@ impl App {
 fn open_external(path: &std::path::Path) -> Result<(), String> {
     let p = path.display().to_string();
     let r = if cfg!(target_os = "windows") {
+        // console-ok: explorer.exe는 GUI 앱(콘솔 없음 · 10-15 `cmd /C start` 대체)
         std::process::Command::new("explorer.exe").arg(&p).spawn()
     } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(&p).spawn()
+        std::process::Command::new("open").arg(&p).spawn() // console-ok: macOS
     } else {
-        std::process::Command::new("xdg-open").arg(&p).spawn()
+        std::process::Command::new("xdg-open").arg(&p).spawn() // console-ok: Linux
     };
     r.map(|_| ()).map_err(|e| e.to_string())
 }

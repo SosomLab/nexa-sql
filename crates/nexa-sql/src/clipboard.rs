@@ -212,7 +212,7 @@ mod imp {
     ///   비ASCII가 전부 `?`(읽기) · 바이트 깨짐(쓰기)이 된다(재현 = `env -i pbpaste -pboard find` → `?? ???`). 직접 입력은 멀쩡하고
     ///   붙여넣기만 깨지는 이유. `en_US.UTF-8`은 macOS 기본 내장 · Linux에 없으면 C로 돌아가지만 xclip/xsel/wl-*은 변환하지 않는다.
     fn cmd(name: &str) -> Command {
-        let mut c = Command::new(name);
+        let mut c = Command::new(name); // console-ok: cfg(not(windows)) 모듈
         c.env("LC_ALL", "en_US.UTF-8");
         c
     }

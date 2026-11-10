@@ -117,13 +117,9 @@ impl GitWatch {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = std::process::Command::new("git");
+    // 콘솔 창 없이(부품 `quiet_command` = CREATE_NO_WINDOW · 11-10 규칙 61 §2-2 · 종전 자체 creation_flags를 통일).
+    let mut cmd = nsql_ext::net::quiet_command("git");
     cmd.arg("-C").arg(dir).args(args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — 콘솔 창이 깜빡이지 않게.
-    }
     let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;

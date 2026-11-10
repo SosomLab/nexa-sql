@@ -298,7 +298,7 @@ fn icmp_alive(ip: std::net::IpAddr, timeout: Duration) -> bool {
     {
         let mut args = ping_args(timeout);
         args.push(v4.to_string());
-        std::process::Command::new("ping")
+        std::process::Command::new("ping") // console-ok: cfg(not(windows))
             .args(&args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

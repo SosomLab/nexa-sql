@@ -375,7 +375,7 @@ fn engine_state(engine: &str) -> ImeState {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn run_quiet(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new(cmd)
+    let out = std::process::Command::new(cmd) // console-ok: cfg(not(any(windows, macos)))
         .args(args)
         .stdin(std::process::Stdio::null())
         .output()

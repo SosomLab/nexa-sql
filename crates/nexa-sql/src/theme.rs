@@ -245,7 +245,7 @@ mod imp {
     }
 
     pub(super) fn prefers_dark() -> Option<bool> {
-        let out = std::process::Command::new("defaults")
+        let out = std::process::Command::new("defaults") // console-ok: cfg(macos)
             .args(["read", "-g", "AppleInterfaceStyle"])
             .output()
             .ok()?;
@@ -330,7 +330,7 @@ mod imp {
     }
 
     fn probe() -> Option<bool> {
-        let out = std::process::Command::new("gsettings")
+        let out = std::process::Command::new("gsettings") // console-ok: cfg(linux)
             .args(["get", "org.gnome.desktop.interface", "color-scheme"])
             .output()
             .ok()?;

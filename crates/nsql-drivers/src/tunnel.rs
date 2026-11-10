@@ -305,7 +305,7 @@ pub fn open(ssh: &str, key: Option<&str>, host: &str, port: u16) -> Result<Arc<T
     }
     let local_port = pick_local_port()?;
     let args = ssh_args(&dest, ssh_port, key, local_port, host, port, timeout_secs);
-    let mut command = Command::new(&cmd);
+    let mut command = Command::new(&cmd); // console-ok: os::prepare가 CREATE_NO_WINDOW(162차)
     command
         .args(&args)
         .stdin(Stdio::null())
@@ -529,7 +529,7 @@ mod os {
         if let Ok(c) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
             return c.trim() == "ssh";
         }
-        Command::new("ps")
+        Command::new("ps") // console-ok: cfg(unix)
             .args(["-o", "comm=", "-p", &pid.to_string()])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().rsplit('/').next() == Some("ssh"))

@@ -58,7 +58,7 @@ impl Source {
 #[must_use]
 pub fn quiet_command(program: &str) -> std::process::Command {
     #[allow(unused_mut)]
-    let mut cmd = std::process::Command::new(program);
+    let mut cmd = std::process::Command::new(program); // console-ok: 부품 자신(아래 CREATE_NO_WINDOW)
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -103,5 +103,55 @@ mod tests {
             Source::Url("https://raw.githubusercontent.com/O/R/main/x".into())
         );
         assert_eq!(Source::parse("C:/x/ext"), Source::Dir("C:/x/ext".into()));
+    }
+
+    /// ★ 콘솔 창 금지(사용자 11-10 · 61 §2-2) — GUI 쪽 크레이트의 `Command::new(`는 `quiet_command`를 쓰거나, 콘솔이 생길 수
+    ///   없는 자리임을 같은 줄·바로 윗줄의 `// console-ok: <이유>`로 밝혀야 한다. `nsql-cli`는 콘솔 앱 자신이라 제외.
+    #[test]
+    fn no_console_window_spawns() {
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut bad = Vec::new();
+        for e in std::fs::read_dir(&crates).expect("crates dir").flatten() {
+            if e.file_name().to_string_lossy() == "nsql-cli" {
+                continue;
+            }
+            let src = e.path().join("src");
+            if src.is_dir() {
+                scan_console_spawns(&src, &mut bad);
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "Command::new without `// console-ok:` marker — use nsql_ext::net::quiet_command (rule 61 §2-2):
+{}",
+            bad.join("
+")
+        );
+    }
+
+    fn scan_console_spawns(dir: &std::path::Path, bad: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).expect("read_dir").flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                scan_console_spawns(&p, bad);
+                continue;
+            }
+            if p.extension().and_then(|x| x.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).expect("read source");
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, l) in lines.iter().enumerate() {
+                // 바늘은 쪼개 둔다 — 이 줄 자신이 검사에 걸리지 않게.
+                let needle = concat!("Command", "::new(");
+                if !l.contains(needle) || l.trim_start().starts_with("//") {
+                    continue;
+                }
+                let ok = l.contains("console-ok:") || i > 0 && lines[i - 1].contains("console-ok:");
+                if !ok {
+                    bad.push(format!("{}:{}", p.display(), i + 1));
+                }
+            }
+        }
     }
 }
