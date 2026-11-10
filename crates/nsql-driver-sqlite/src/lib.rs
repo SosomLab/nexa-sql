@@ -113,6 +113,62 @@ fn closed(h: u32) -> DbError {
 }
 
 /// T-371: 준비/실행 오류의 바이트 오프셋(`sqlite3_error_offset`)을 보낸 문장의 글자 인덱스로(없으면 위치 없음).
+/// 문자열에 **두 번째 문장**이 있는가 — 문자열(`'…'`)·식별자(`"…"` · `[…]` · `` `…` ``)·주석(`--` · `/* */`) 밖의 `;` 뒤에 공백·주석이 아닌
+/// 글이 이어지면 참. 트리거 본문의 안쪽 `;`도 참으로 본다(그 경우 호출자는 배치 실행 길로 간다).
+fn has_more_statements(sql: &str) -> bool {
+    let cs: Vec<char> = sql.chars().collect();
+    let n = cs.len();
+    let mut i = 0;
+    let mut seen_semi = false;
+    while i < n {
+        let c = cs[i];
+        if seen_semi
+            && !c.is_whitespace()
+            && !(c == '-' && cs.get(i + 1) == Some(&'-'))
+            && !(c == '/' && cs.get(i + 1) == Some(&'*'))
+        {
+            return true;
+        }
+        match c {
+            '\'' | '"' | '`' => {
+                let q = c;
+                i += 1;
+                while i < n {
+                    if cs[i] == q {
+                        if cs.get(i + 1) == Some(&q) {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            '[' => {
+                while i < n && cs[i] != ']' {
+                    i += 1;
+                }
+            }
+            '-' if cs.get(i + 1) == Some(&'-') => {
+                while i < n && cs[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if cs.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i + 1 < n && !(cs[i] == '*' && cs[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 1;
+            }
+            ';' => seen_semi = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 fn err_at(e: rusqlite::Error, sql: &str) -> DbError {
     let off = match &e {
         rusqlite::Error::SqlInputError { offset, .. } => usize::try_from(*offset).ok(),
@@ -269,6 +325,31 @@ fn serve_execute(
         }
     };
     let ncols = stmt.column_count();
+    // ★ 여러 문장이 든 문자열(협업 재현 11-10 "객체 탭 F5 `DROP VIEW …; CREATE VIEW …` = DROP만 실행되고 완료"): rusqlite `prepare`는
+    //   **첫 문장만** 준비하고 꼬리를 조용히 버린다(다중 문장 검사는 `extra_check` 기능 전용 · `Statement::execute`는 아예 안 거침).
+    //   비조회 + 바인드 없음 = `execute_batch`로 **전부** 실행(같은 연결·같은 트랜잭션 · 가운데 실패는 오류로 보고) · 조회이거나 바인드가
+    //   있으면 꼬리가 남아 있을 때 **오류**(조용한 손실 금지 · 보수적 원칙 61 §1-7). 트리거 본문의 `BEGIN … ; … END`도 배치 길로 간다.
+    let more = has_more_statements(sql);
+    if ncols == 0 && params.is_empty() && more {
+        drop(stmt);
+        let r = conn
+            .execute_batch(sql)
+            .map(|()| ExecResult {
+                rows_affected: Some(conn.changes()),
+                ..ExecResult::default()
+            })
+            .map_err(|e| err_at(e, sql));
+        let _ = reply.send(r);
+        return (None, false);
+    }
+    if more {
+        let _ = reply.send(Err(DbError {
+            code: None,
+            message: "multiple statements in one request are not supported here (query or bound statement) - run them one at a time".into(),
+            position: None,
+        }));
+        return (None, false);
+    }
     if ncols == 0 {
         let r = stmt
             .execute(params_from_iter(params.iter()))
@@ -488,6 +569,65 @@ mod tests {
             ),
         );
         s
+    }
+
+    /// ★ 11-10(협업 재현): 두 문장을 한 요청으로 보내면 종전엔 첫 문장만 실행되고 꼬리는 조용히 버려졌다(DROP만 되고 CREATE 없음).
+    ///   지금 = 비조회·바인드 없음은 전부 실행 · 조회/바인드는 오류.
+    #[test]
+    fn multi_statement_request_runs_all_or_errors() {
+        assert!(has_more_statements(
+            "DROP VIEW IF EXISTS v1;\nCREATE VIEW v1 AS SELECT 1;"
+        ));
+        assert!(!has_more_statements(
+            "SELECT 'a;b' AS x; -- 꼬리 주석\n/* 둘 */"
+        ));
+        assert!(!has_more_statements(
+            "CREATE VIEW v AS SELECT \"a;b\" FROM t;\n"
+        ));
+        assert!(has_more_statements(
+            "CREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE t SET a = 1; END;"
+        ));
+        let mut s = SqliteSession::open(":memory:").unwrap();
+        let run = |s: &mut SqliteSession, sql: &str| {
+            s.execute(&ExecRequest {
+                sql: sql.into(),
+                params: vec![],
+            })
+        };
+        run(&mut s, "CREATE TABLE t1(a)").unwrap();
+        run(&mut s, "CREATE VIEW v1 AS SELECT a FROM t1").unwrap();
+        run(
+            &mut s,
+            "DROP VIEW IF EXISTS v1;\nCREATE VIEW v1 AS SELECT a, a AS b FROM t1;\n",
+        )
+        .unwrap();
+        let r = run(
+            &mut s,
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'v1'",
+        )
+        .unwrap();
+        let sql = &r.result_sets[0];
+        assert_eq!(sql.rows.len(), 1, "DROP 뒤 CREATE까지 실행돼 뷰가 있다");
+        assert!(
+            format!("{:?}", sql.rows[0]).contains("a AS b"),
+            "{:?}",
+            sql.rows[0]
+        );
+        // 트리거 본문(안쪽 ;)도 배치 길로 만들어진다.
+        run(
+            &mut s,
+            "CREATE TRIGGER tr AFTER INSERT ON t1 BEGIN UPDATE t1 SET a = a; END;",
+        )
+        .unwrap();
+        // 조회 + 꼬리 = 오류(조용한 손실 금지).
+        let e = run(&mut s, "SELECT 1; DROP TABLE t1;").unwrap_err();
+        assert!(e.message.contains("multiple statements"), "{}", e.message);
+        let r = run(&mut s, "SELECT count(*) FROM t1").unwrap();
+        assert_eq!(
+            r.result_sets[0].rows.len(),
+            1,
+            "DROP TABLE이 실행되지 않았다"
+        );
     }
 
     #[test]
