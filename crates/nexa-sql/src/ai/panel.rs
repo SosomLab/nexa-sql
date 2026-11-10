@@ -974,6 +974,7 @@ impl AiPanel {
             st.sessions.len(),
             st.current
         );
+        s.push_str(&format!("models={}\n", st.models.join(",")));
         for r in &st.sessions {
             s.push_str(&format!(
                 "  {} {} [{}] turns={}\n",

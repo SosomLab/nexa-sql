@@ -797,7 +797,8 @@ impl App {
         let system =
             ai::tools::system_prompt(&format!("{:?}", self.sess.dialect), &self.sess.profile);
         if std::env::var_os("NSQL_AI_MOCK").is_some() {
-            self.ai_host().start_mock(text);
+            let prices = self.ai_prices();
+            self.ai_host().start_mock(text, prices, model.clone());
             self.ai_after_send();
             return;
         }

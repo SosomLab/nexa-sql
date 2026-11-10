@@ -727,7 +727,7 @@ impl Host {
     }
 
     /// 각본 상대(헤드리스 V1 · `NSQL_AI_MOCK=1`): 글 조각 → 도구 요청(get_setting) → 결과 → 끝.
-    pub(crate) fn start_mock(&mut self, text: &str) {
+    pub(crate) fn start_mock(&mut self, text: &str, prices: String, model: String) {
         let tx = self.tx.clone();
         let wake = self.wake.clone();
         let text = text.to_string();
@@ -776,7 +776,8 @@ impl Host {
                     output: 5,
                     cache_read: 0,
                     cache_write: 0,
-                    cost_usd: 0.0001,
+                    // V1: 비용 표 반영 판정용 — API 스레드와 같은 추정 함수(`ai.prices`).
+                    cost_usd: Usage::estimate_cost_in(&prices, &model, 10, 5, 0),
                 }));
                 send(AiEvent::Done {
                     stop: "end_turn".into(),
@@ -838,7 +839,11 @@ mod tests {
         let woke = Arc::new(AtomicBool::new(false));
         let w2 = woke.clone();
         let mut h = Host::new(Arc::new(move || w2.store(true, Ordering::Relaxed)));
-        h.start_mock("hi");
+        h.start_mock(
+            "hi",
+            nsql_settings::AI_PRICES_DEFAULT.into(),
+            "claude-opus-5-5".into(),
+        );
         let mut text = String::new();
         let mut done = false;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
