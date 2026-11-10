@@ -3,7 +3,7 @@
 //! Shift+Enter = 줄 바꿈 · `/` 명령 팝업) · 첨부 칩(파일 · 클립보드 · 조회 결과) · [보내기]/[■]. 두 번째 페이지 = **프로필 관리**
 //! (다중 API 프로필 · 키는 마스킹 입력 → 볼트 · [검증] = `/v1/models`).
 
-use super::{ChatMsg, Kind, Mode, Profile, Session};
+use super::{ChatMsg, Kind, Mode, Profile, Provider, Session};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
@@ -72,6 +72,8 @@ pub(crate) const SLASH: &[(&str, bool, Msg)] = &[
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LineKind {
     Text,
+    /// 마크다운 제목(굵게 · 110 §6 2차 렌더 11-11).
+    Head,
     Code,
     /// 코드 블록 첫 줄(언어 라벨 + 버튼 자리).
     CodeHead(usize),
@@ -758,10 +760,14 @@ impl AiView {
         self.lens.truncate(sess.messages.len());
         self.code_blocks.clear();
         let mut code_i = 0usize;
+        let who = match sess.provider {
+            Provider::Claude => "Claude",
+            Provider::Codex => "Codex",
+        };
         for (i, m) in sess.messages.iter().enumerate() {
             let need = self.lines.get(i).is_none() || self.lens[i] != m.text.len();
             if need {
-                let lines = layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks);
+                let lines = layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks, who);
                 if i < self.lines.len() {
                     self.lines[i] = lines;
                     self.lens[i] = m.text.len();
@@ -936,6 +942,11 @@ impl AiView {
                         LineKind::Text => {
                             in_code = false;
                             dc.text(x, yy, tr, &l.text, th.text);
+                        }
+                        LineKind::Head => {
+                            dc.select_font(FontSlot::Base, true);
+                            dc.text(x, yy, tr, &l.text, th.text);
+                            dc.select_font(FontSlot::Base, false);
                         }
                         LineKind::Dim => dc.text(x, yy, tr, &l.text, th.text_dim),
                         LineKind::Error => dc.text(x, yy, tr, &l.text, th.warn),
@@ -1328,18 +1339,19 @@ impl AiView {
     }
 }
 
-/// 메시지 하나 → 줄(역할 줄 · 본문 줄 바꿈 · 코드 블록).
+/// 메시지 하나 → 줄(역할 줄 · 본문 줄 바꿈 · 코드 블록 · 마크다운 한 줄 변환) · `who` = 어시스턴트 역할 이름(Claude/Codex).
 fn layout_msg(
     dc: &mut dyn DrawCtx,
     m: &ChatMsg,
     w: i32,
     code_i: &mut usize,
     codes: &mut Vec<String>,
+    who: &str,
 ) -> Vec<Line> {
     let mut out = Vec::new();
     let (role, body_kind) = match &m.kind {
         Kind::User => (t(Msg::AiRoleYou).to_string(), LineKind::Text),
-        Kind::Assistant => ("Claude".to_string(), LineKind::Text),
+        Kind::Assistant => (who.to_string(), LineKind::Text),
         Kind::ToolCall { name, input } => {
             let short: String = input.chars().take(160).collect();
             (format!("⚙ {name} {short}"), LineKind::Dim)
@@ -1428,11 +1440,19 @@ fn layout_msg(
                 kind: LineKind::Blank,
             });
         } else {
-            for l in wrap(dc, raw, w) {
-                out.push(Line {
-                    text: l,
-                    kind: body_kind,
-                });
+            let (text, kind) = if matches!(m.kind, Kind::User | Kind::Assistant) {
+                md_line(raw, body_kind)
+            } else {
+                (raw.to_string(), body_kind)
+            };
+            // 제목은 굵은 글꼴이 더 넓다 — 조금 좁게 접는다.
+            let ww = if kind == LineKind::Head {
+                w - w / 10
+            } else {
+                w
+            };
+            for l in wrap(dc, &text, ww) {
+                out.push(Line { text: l, kind });
             }
         }
     }
@@ -1448,6 +1468,60 @@ fn layout_msg(
         });
     }
     out
+}
+
+/// ★ 마크다운 한 줄 → 표시 글·종류(110 §6 "마크다운 렌더 = 2차" · 11-11): 제목(`#`) = 굵게 · 목록(`-`/`*`/`+` · `1.`) = `•`/번호 +
+/// 들여쓰기(체크박스 ☐/☑) · 인용(`>`) = 흐리게 `│` · 구분선(`---`/`***`) = 선 · 굵게 표식 `**x**`는 벗긴다. 인라인 코드 백틱은
+/// 그대로(고정폭 글꼴이 없으니 표식이 뜻을 전한다) · 표(`|`)도 그대로. 코드 블록 안·도구 결과에는 적용하지 않는다.
+fn md_line(raw: &str, base: LineKind) -> (String, LineKind) {
+    let trimmed = raw.trim_start();
+    let pad = " ".repeat((raw.len() - trimmed.len()).min(8));
+    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
+        return (strip_bold(trimmed[hashes..].trim()), LineKind::Head);
+    }
+    let marks = trimmed.chars().filter(|c| *c == '-' || *c == '*').count();
+    if marks >= 3
+        && (trimmed.chars().all(|c| c == '-' || c == ' ')
+            || trimmed.chars().all(|c| c == '*' || c == ' '))
+    {
+        return ("────────────".into(), LineKind::Dim);
+    }
+    if trimmed == ">" {
+        return (format!("{pad}│"), LineKind::Dim);
+    }
+    if let Some(rest) = trimmed.strip_prefix("> ") {
+        return (format!("{pad}│ {}", strip_bold(rest)), LineKind::Dim);
+    }
+    for b in ["- ", "* ", "+ "] {
+        if let Some(rest) = trimmed.strip_prefix(b) {
+            let rest = if let Some(r) = rest.strip_prefix("[ ] ") {
+                format!("☐ {r}")
+            } else if let Some(r) = rest
+                .strip_prefix("[x] ")
+                .or_else(|| rest.strip_prefix("[X] "))
+            {
+                format!("☑ {r}")
+            } else {
+                rest.to_string()
+            };
+            return (format!("{pad}• {}", strip_bold(&rest)), base);
+        }
+    }
+    let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+    if (1..=3).contains(&digits) && trimmed[digits..].starts_with(". ") {
+        return (format!("{pad}{}", strip_bold(trimmed)), base);
+    }
+    (strip_bold(raw), base)
+}
+
+/// `**굵게**` 표식 제거(짝이 있을 때만 — SQL `a**2` 같은 홑 표식은 보존).
+fn strip_bold(s: &str) -> String {
+    if s.matches("**").count() >= 2 {
+        s.replace("**", "")
+    } else {
+        s.to_string()
+    }
 }
 
 fn collect_code(text: &str, codes: &mut Vec<String>) {
@@ -1542,7 +1616,7 @@ mod tests {
         );
         let mut ci = 0;
         let mut codes = Vec::new();
-        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes);
+        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes, "Claude");
         assert_eq!(codes, vec!["select 1\nfrom dual".to_string()]);
         assert!(matches!(lines[0].kind, LineKind::Role));
         assert!(lines
@@ -1550,6 +1624,42 @@ mod tests {
             .any(|l| matches!(l.kind, LineKind::CodeHead(0))));
         assert_eq!(lines.iter().filter(|l| l.kind == LineKind::Code).count(), 2);
         assert_eq!(ci, 1);
+    }
+
+    #[test]
+    fn markdown_lines() {
+        assert_eq!(
+            md_line("## Title", LineKind::Text),
+            ("Title".into(), LineKind::Head)
+        );
+        assert_eq!(
+            md_line("- [x] done **now**", LineKind::Text),
+            ("• ☑ done now".into(), LineKind::Text)
+        );
+        assert_eq!(md_line("  * sub", LineKind::Text).0, "  • sub");
+        assert_eq!(md_line("2. two", LineKind::Text).0, "2. two");
+        assert_eq!(
+            md_line("> quoted", LineKind::Text),
+            ("│ quoted".into(), LineKind::Dim)
+        );
+        assert_eq!(md_line("---", LineKind::Text).1, LineKind::Dim);
+        // 홑 `**`·제목 아닌 `#`·표는 그대로.
+        assert_eq!(
+            md_line("select a**2 from t", LineKind::Text).0,
+            "select a**2 from t"
+        );
+        assert_eq!(md_line("#tag", LineKind::Text).0, "#tag");
+        assert_eq!(md_line("| a | b |", LineKind::Text).0, "| a | b |");
+        let m = ChatMsg::new(Kind::Assistant, "# H\n- one\n```sql\n- not a list\n```");
+        let mut dc = W;
+        let (mut ci, mut codes) = (0, Vec::new());
+        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes, "Codex");
+        assert_eq!(lines[0].text, "Codex");
+        assert_eq!(lines[1].kind, LineKind::Head);
+        assert_eq!(lines[2].text, "• one");
+        assert!(lines
+            .iter()
+            .any(|l| l.kind == LineKind::Code && l.text == "- not a list"));
     }
 
     #[test]

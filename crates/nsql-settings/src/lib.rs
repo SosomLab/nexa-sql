@@ -6405,6 +6405,17 @@ pub const REGISTRY: &[Entry] = &[
         default: AI_PRICES_DEFAULT,
     },
     Entry {
+        key: "ai.paste_chip_chars",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPasteChipChars,
+        desc: Msg::DescAiPasteChipChars,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 1_000_000,
+        },
+        default: "2000",
+    },
+    Entry {
         key: "ai.mcp_port",
         cat: Msg::CatAi,
         label: Msg::LblAiMcpPort,

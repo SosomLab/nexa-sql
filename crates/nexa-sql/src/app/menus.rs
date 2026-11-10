@@ -1859,8 +1859,11 @@ impl App {
             }
             EditCtxAction::Paste => match clipboard::read_text() {
                 Some(text) => {
-                    if let Some(tb) = self.focused_textbox() {
-                        tb.paste(&text, &mut inv);
+                    // ★ AI 작성 상자의 긴 글은 본문 대신 첨부 칩(설정 `ai.paste_chip_chars` · 110 §14-4 · 11-11).
+                    if !self.ai_paste_as_chip(&text) {
+                        if let Some(tb) = self.focused_textbox() {
+                            tb.paste(&text, &mut inv);
+                        }
                     }
                 }
                 None => failed = true,

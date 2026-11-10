@@ -1581,6 +1581,39 @@ impl App {
 
     // ───────────────────────── 첨부 · `/` 명령 ─────────────────────────
 
+    /// ★ AI 작성 상자에 붙여넣는 글이 `ai.paste_chip_chars`자 이상이면 첨부 칩으로(0 = 끔 · 110 §14-4). 가로챘으면 `true`.
+    pub(crate) fn ai_paste_as_chip(&mut self, text: &str) -> bool {
+        if !(self.ai_view_active()
+            && self.focus == Focus::Editor
+            && self.ai_view.page() == Page::Chat)
+        {
+            return false;
+        }
+        let limit = self.settings.int("ai.paste_chip_chars").max(0) as usize;
+        if limit == 0 || text.chars().count() < limit {
+            return false;
+        }
+        self.ai_init();
+        if self.ai.cur.is_none() {
+            self.ai_new_session();
+        }
+        if ai::contains_secret(text) {
+            self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
+        } else {
+            let n = text.lines().count();
+            if let Some(s) = self.ai_cur_mut() {
+                s.attachments.push(Attachment::Text {
+                    label: format!("pasted ({n} lines)"),
+                    body: text.to_string(),
+                });
+            }
+            self.ai.status = t(Msg::AiAttached).into();
+        }
+        self.ai_sync_panel();
+        self.redraw();
+        true
+    }
+
     fn ai_attach_clipboard(&mut self) {
         match crate::clipboard::read_text() {
             Some(t) if !t.trim().is_empty() => {
