@@ -339,6 +339,8 @@ pub(crate) struct FindBar {
     history: Option<SharedHistory>,
     rq: Recall,
     rr: Recall,
+    /// 상자 드래그가 상자 밖으로 나갔다 — 놓임은 이력 항목 선택이 아니다(FilterBar `drag_out`와 같다 · 11-10).
+    drag_out: bool,
 }
 
 impl FindBar {
@@ -389,6 +391,7 @@ impl FindBar {
             btns,
             status: String::new(),
             shift: false,
+            drag_out: false,
             tooltip_ms: 600,
             clamp_w: i32::MAX / 2,
             history: None,
@@ -795,6 +798,46 @@ impl FindBar {
             }
             return FindAction::None;
         }
+        if matches!(ev, InputEvent::MouseDown { .. }) {
+            self.drag_out = false;
+        }
+        // ★ 상자가 드래그 선택 중이면 이동·놓임은 **상자가 먼저**(FilterBar 09-30 · search_panel 10-13 규칙과 같다 · 사용자 11-10
+        //   "검색창에서 드래그 시작 → 밖에서 놓으면 캡처 유지"): 클릭으로 연 이력 드롭다운이 MouseMove/MouseUp을 `Consumed`로
+        //   먹어 상자가 놓임을 못 받고 `dragging`이 남았다. 상자 밖으로 끌어 놓은 것은 항목 선택이 아니라 드롭다운 닫기 · 단순
+        //   클릭(밖으로 안 끎)은 종전대로 드롭다운에도 넘긴다.
+        let mut tb_done: Option<bool> = None; // Some(true) = query · Some(false) = repl
+        if matches!(
+            ev,
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+        ) {
+            let (dq, dr) = (
+                self.query.is_dragging(),
+                self.with_replace && self.repl.is_dragging(),
+            );
+            if dq || dr {
+                let (tb, rc) = if dq {
+                    (&mut self.query, &mut self.rq)
+                } else {
+                    (&mut self.repl, &mut self.rr)
+                };
+                if let InputEvent::MouseMove { x, y } = *ev {
+                    if !tb.bounds().contains(Point { x, y }) {
+                        self.drag_out = true;
+                    }
+                }
+                tb.on_event(ev, &mut inv);
+                tb_done = Some(dq);
+                if self.drag_out {
+                    if matches!(ev, InputEvent::MouseUp { .. }) {
+                        if rc.is_open() {
+                            rc.close();
+                        }
+                        self.drag_out = false;
+                    }
+                    return FindAction::None;
+                }
+            }
+        }
         // 검색어 이력(드롭다운/Flat)이 먼저 — 찾기 상자는 글이 바뀐 것이라 다시 찾는다 · 끝에서 ↓/Tab은 찾기 막대엔 다음 컨트롤이 없어 무시.
         if let Some(h) = &self.history {
             // 편집 메뉴가 떠 있으면 키(↓ 등)는 메뉴(상자) 몫 — 이력이 먼저 받으면 메뉴 위로 드롭다운이 열렸다(사용자 10-13).
@@ -856,8 +899,10 @@ impl FindBar {
             self.query.set_focused(in_q);
             self.repl.set_focused(in_r);
         }
-        self.query.on_event(ev, &mut inv);
-        if self.with_replace {
+        if tb_done != Some(true) {
+            self.query.on_event(ev, &mut inv);
+        }
+        if self.with_replace && tb_done != Some(false) {
             self.repl.on_event(ev, &mut inv);
         }
         // 상자 클릭 = 이력 드롭다운(보기 방식 Dropdown · 이력 있을 때 · 사용자 09-23).

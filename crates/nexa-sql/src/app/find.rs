@@ -143,6 +143,16 @@ impl App {
         if matches.is_empty() {
             self.find.set_status(t(Msg::StFindNone));
             self.find_box_mut().set_find_marks(Vec::new());
+            // ★ 결과가 없으면 직전 일치 선택은 입력한 글과 더 이상 맞지 않는다(사용자 11-10 "dd → ddd") → 선택을 시작점으로 접는다
+            //   (캐럿은 그 자리 · 계속 입력해 다시 맞으면 거기서부터 찾는다). 설정 `editor.find_keep_last_match`(기본 off)가 on이면
+            //   종전대로 선택을 둔다. 표식만 갱신하는 `find_refresh`(move_caret = false)는 선택을 건드리지 않는다.
+            if move_caret && !self.settings.flag("editor.find_keep_last_match") {
+                let sel = self.find_box_mut().selection().filter(|(a, b)| b > a);
+                if let Some((a, _)) = sel {
+                    let mut inv = Invalidations::default();
+                    self.find_box_mut().select_range(a, a, &mut inv);
+                }
+            }
             self.redraw();
             return;
         }

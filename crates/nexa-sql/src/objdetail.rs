@@ -736,7 +736,10 @@ impl DetailPanel {
             let kind = self.kind_label();
             if !kind.is_empty() {
                 let cw = dc.text_width(&kind) + px(10.0);
-                let chip = Rect::new(x, head.y + px(5.0), cw, hh - px(10.0));
+                // ★ 위·아래 여백을 **같은 정수**로(사용자 11-10 "SCHEMA 칩이 살짝 위"): 종전 `y + px(5)` × `h = hh - px(10)`은 배율
+                //   1.25에서 px(5) = 6 · px(10) = 13으로 반올림이 어긋나 위 6 · 아래 7px → 칩이 반 픽셀 위로 치우쳤다.
+                let pad = px(5.0);
+                let chip = Rect::new(x, head.y + pad, cw, hh - 2 * pad);
                 dc.fill_round_rect(chip, px(3.0), th.accent);
                 let cy = dc.text_center_y(chip.y, chip.h);
                 dc.text(chip.x + px(5.0), cy, chip, &kind, th.window_bg);

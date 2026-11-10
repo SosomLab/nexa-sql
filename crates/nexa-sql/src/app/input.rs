@@ -2456,6 +2456,12 @@ impl App {
 
     /// 포인터 캡처: 점 아래의 **영역**(보이는 것만 · 팝업·바·스플리터는 영역이 아니다).
     fn area_at(&self, p: Point) -> Option<Focus> {
+        // ★ 찾기 바는 편집기 **위에 뜨는** 오버레이(bounds ⊂ editor_bounds) → 편집기보다 먼저 본다(사용자 11-10 "검색창에서 드래그
+        //   시작 → 검색창 밖에서 놓으면 캡처가 남는다"): 종전엔 바 안을 눌러도 영역 = Editor · 포커스 = Find로 어긋나 아래 캡처
+        //   분기(`focus == area`)가 늘 거짓 → 바 밖 이동·놓임이 상자에 닿지 않아 TextBox `dragging`이 남았다(팔레트 선례와 같은 결함).
+        if self.find.is_visible() && self.find.bounds().contains(p) {
+            return Some(Focus::Find);
+        }
         if self.editors.editor_bounds().contains(p) {
             return Some(Focus::Editor);
         }

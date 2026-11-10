@@ -6128,6 +6128,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(FIND_AUTO_SCOPE_OPTS),
         default: "never",
     },
+    // ★ 입력 중 일치가 사라졌을 때 마지막 일치 선택 유지(사용자 11-10 "dd → ddd로 결과 없음이면 이전 선택은 맞지 않다") — 기본 off = 선택 접기.
+    Entry {
+        key: "editor.find_keep_last_match",
+        cat: Msg::CatEditor,
+        label: Msg::LblFindKeepLastMatch,
+        desc: Msg::DescFindKeepLastMatch,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "tx.close_action",
         cat: Msg::CatTxSafety,
