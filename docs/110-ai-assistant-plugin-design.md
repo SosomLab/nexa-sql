@@ -229,8 +229,15 @@
 - 이력 = 가림 뒤 저장 · 세션 제목도 가림.
 - 모델 선택지 4(opus-5-5 · sonnet-5-5 · haiku-5-5 · fable-5-1) · Models API 조회는 2차.
 
-### 15-3 남은 것(이번 사이클 다음 단위)
-1. 실기 확인(협업 V1 각본 → 사용자 실기: API 프로필 등록·검증 · CLI 모드 첫 턴 · 승인 카드 · `/query`).
-2. Codex 어댑터(`codex app-server` JSONL · §5 표의 두 번째 열) — 같은 `AiEvent`·도구 표.
-3. 클립보드 **이미지** 첨부(CF_DIB → PNG · `png::encode` 있음) · 결과 그리드 선택 영역 첨부.
-4. WIF(§14-5) = 2차 · Models API 조회 · 비용 표 설정화.
+### 15-3 구현 2차(2026-11-11 · 커밋 8c13ea52) — Codex · 제공자 선택 · 클립보드 이미지 · V1 수정
+- **제공자**: `Provider{Claude,Codex}` — 세션·프로필에 들어가고(이력 jsonl `provider`) 패널 맨 위 분할 버튼 [Claude|Codex] · Claude면 그 아래 [API|CLI] · Codex면 모드 행 없이 프로필 행(API 키) · 설정 `ai.provider`.
+- **Codex 어댑터**(`ai/codex.rs` + `host.rs` `Running::Codex`): `codex app-server`(stdio JSONL · `jsonrpc` 생략) · 악수 = `initialize`(clientInfo nexa-sql · `experimentalApi`) → `initialized` → `account/login/start`(apiKey = 프로필 키 · `ai.codex_cli_login`이 켜져 있고 키가 없으면 생략) → `thread/start`(model · cwd = `NSQL_HOME/ai/codex-cwd` · `approvalPolicy: untrusted` · `sandbox: read-only` · **`dynamicTools` = 우리 도구 표 16종**) 또는 `thread/resume`(세션의 스레드 id) → `turn/start`(text + `localImage` 경로 · effort · 첫 턴은 스레드 준비 뒤 읽기 스레드가 보냄). 알림 → `AiEvent`(`item/agentMessage/delta` · `item/started|completed` 도구 · `thread/tokenUsage/updated` · `turn/completed` · `error`) · 서버 요청 `item/tool/call` → UI 도구 실행 → `{contentItems:[inputText], success}` · `item/commandExecution|fileChange/requestApproval` → 승인 카드 → `decision accept|decline` · `item/permissions/requestApproval` → 빈 허용. ■ = `turn/interrupt`(프로세스 유지). 모델 선택지 `gpt-6.1-sol` · `gpt-6.1-sol-mini` · 비용 추정 요율(2/10 · 0.5/2.5).
+- 약관 반영: Codex 기본은 **API 키 프로필** · CLI 자체(ChatGPT) 로그인 재사용은 설정 `ai.codex_cli_login`(기본 off · "App-server authentication has never been permitted for commercial or hosted services" · §13-1).
+- **클립보드 이미지**: `clipboard::read_image_png`(Windows `CF_DIB` 24/32bpp BI_RGB/BITFIELDS → `png::encode` · `decode_dib` 순수 함수 시험) — [클립보드]/`/clip`은 글이 없으면 이미지를 첨부.
+- V1 보정(협업 판정): `ai.open` = 패널 + 대화 탭 · 대화 탭 제목 `[RO]` 없음(ext 뷰와 같은 규칙) · 덤프 `tool_call` 줄에 입력 JSON.
+- 설정 4키 추가(합 17): `ai.provider` · `ai.codex_path` · `ai.codex_model` · `ai.codex_cli_login`.
+
+### 15-4 남은 것
+1. 실기 확인(사용자): API 프로필 등록·[검증] · Claude CLI 모드 첫 턴(MCP 중계 `nsql mcp-bridge` 연결 `init mcp=[nexa:connected]`) · Codex 첫 턴 · 승인 카드 · `/query` · 클립보드 이미지.
+2. Codex 미확인 가정(공식 문서 본문에 없어 관대하게 파싱): `item/agentMessage/delta`의 `delta` 키 · `tokenUsage.total.{inputTokens,cachedInputTokens,outputTokens}` · `item/tool/call` params(`tool`/`arguments` 또는 `name`/`input`) · dynamicTools 스키마 키 `inputSchema` — 실기에서 어긋나면 `codex.rs` 한 곳 수정(`codex app-server generate-json-schema`로 확정 가능).
+3. 결과 그리드 **선택 영역** 첨부 · Models API 조회 · 비용 표 설정화 · WIF(§14-5) = 2차.
