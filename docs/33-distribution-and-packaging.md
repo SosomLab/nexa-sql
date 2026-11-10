@@ -177,6 +177,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 - ★ **릴리스마다 확인(사용자 10-08 "winget·choco 재개 = 배포 시마다 확인 필요")**: 릴리스 **전에** 저장소 변수 `WINGET_PUBLISH` · `CHOCO_PUSH` 값을 사용자에게 묻는다(`gh variable list` · 기본 = 지난 릴리스 값 유지 · 지금 = **false**) · 답에 따라 true/false로 맞춘 뒤 태그 · 릴리스 노트·journal에 "winget·choco = 게시/제외" 한 줄.
 - ★ **11-09 갱신(D-471 · 사용자)** = 배포 flag(`CHOCO_PUSH` · `WINGET_PUBLISH`)는 **기본 true 유지** · 배포 때 기존 게시 상태를 확인해 이미 등록·진행 중이면 **그 채널만 제외**(= 현행 guard 동작 · winget = 같은 패키지 열린 PR이 있으면 건너뜀 · choco = 직전 버전 미승인·대기 중 제출이 있으면 건너뜀 · 코드 변경 없음) → 릴리스 전 질문은 `RELEASE_FULL`·버전만 · 위 10-08 "릴리스마다 확인"의 플래그 부분을 대체 · [10 D-471](10-decision-record.md) · [journal 11-09 §2](journal/2026-11-09.md).
+- **v0.7.1(11-09) · v0.7.2(11-10) = D-471 적용** — 두 번 모두 choco 제출(직전 판 승인됨 · 검수 대기) · winget 건너뜀(PR #447007 0.5.0 검수 대기) · 다음 확인점 = #447007 머지 뒤 guard가 winget을 자동 제출하는지 · [journal 11-10 §4](journal/2026-11-10.md).
 
 ### 5-4. 남은 확인
 
