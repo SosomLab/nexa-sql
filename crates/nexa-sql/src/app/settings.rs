@@ -1015,6 +1015,14 @@ impl App {
             | "editor.minimap_find"
             | "editor.minimap_errors" => self.apply_minimap(),
             "editor.word_wrap" => self.apply_word_wrap(),
+            "vars.secret_names" => {
+                nsql_script::set_secret_keywords(
+                    self.settings
+                        .get(key)
+                        .unwrap_or(nsql_script::SECRET_NAMES_DEFAULT),
+                );
+                self.redraw();
+            }
             // 자원 거버너(T-90a/d · docs/39): 상한 세터 4종 · 모드가 바뀌면 원장 키 전부 재적용(실효 값이 바뀌므로).
             "log.max_lines" => self
                 .log_win

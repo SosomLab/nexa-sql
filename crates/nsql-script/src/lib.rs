@@ -54,4 +54,7 @@ pub use split::{
     classify_sql, classify_sql_in, split_script, split_script_in, Item, ItemKind, SqlKind,
 };
 pub use split::{statement_at, statement_at_in};
-pub use vars::{looks_secret, vars_from_script, vars_to_script, Layer, Var, VarState, VarStore};
+pub use vars::{
+    looks_secret, set_secret_keywords, vars_from_script, vars_to_script, Layer, Var, VarState,
+    VarStore, SECRET_NAMES_DEFAULT,
+};

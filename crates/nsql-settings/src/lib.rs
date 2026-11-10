@@ -6231,6 +6231,26 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 비밀 이름 키워드(D-140 → 설정 · 사용자 11-11): 이름에 이 조각이 들어간 변수(바인드·치환)는 값을 `******`로 가리고 기록·저장하지
+    //   않는다 · 쉼표 구분 · 대소문자 무시 · 빈 값 = 이름 규칙 없음(`ACCEPT … HIDE`만 비밀).
+    Entry {
+        key: "vars.secret_names",
+        cat: Msg::CatScriptVars,
+        label: Msg::LblVarsSecretNames,
+        desc: Msg::DescVarsSecretNames,
+        kind: SettingKind::Text,
+        default: "PASS,PWD,SECRET,TOKEN",
+    },
+    // ★ 변수 창 👁 보기(사용자 11-11 "원문은 어떻게 확인?"): 비밀 행의 값 열 오른쪽 끝 눈 버튼을 **누르고 있는 동안만** 원문 ·
+    //   로그·저장·덤프에는 안 남는다.
+    Entry {
+        key: "vars.reveal_secret",
+        cat: Msg::CatScriptVars,
+        label: Msg::LblVarsRevealSecret,
+        desc: Msg::DescVarsRevealSecret,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "vars.intrinsic",
         cat: Msg::CatScriptVars,

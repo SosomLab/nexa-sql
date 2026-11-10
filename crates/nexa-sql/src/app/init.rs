@@ -43,6 +43,12 @@ impl App {
             .set_scroll_snap(self.settings.get("editor.scroll") == Some("row"));
         self.apply_minimap();
         self.apply_word_wrap();
+        // ★ 비밀 이름 키워드(설정 `vars.secret_names` · 11-11) — 러너·변수 창·저장 모두 `looks_secret` 한 곳을 본다.
+        nsql_script::set_secret_keywords(
+            self.settings
+                .get("vars.secret_names")
+                .unwrap_or(nsql_script::SECRET_NAMES_DEFAULT),
+        );
         self.apply_line_height();
         // 자원 거버너 상한(T-90d · 부팅 1회) — 실효 값(`perf.mode` 반영).
         self.log_win

@@ -99,13 +99,34 @@ fn label_of(name: &str) -> String {
     name.trim().trim_start_matches(':').to_string()
 }
 
-/// 이름만 보고 비밀로 볼 것인가(D-140 · `*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`).
+/// 비밀 이름 키워드 기본값(D-140) — 설정 `vars.secret_names`의 기본값과 같다.
+pub const SECRET_NAMES_DEFAULT: &str = "PASS,PWD,SECRET,TOKEN";
+
+/// ★ 비밀 이름 키워드 표(사용자 11-11 "이름 규칙을 설정으로"): 호스트(GUI·CLI)가 설정 `vars.secret_names`를 읽어 넣는다 ·
+///   `None` = 기본값. 러너 스레드도 읽으므로 `RwLock`(쓰기는 설정 변경 때만).
+static SECRET_KEYWORDS: std::sync::RwLock<Option<Vec<String>>> = std::sync::RwLock::new(None);
+
+/// 키워드 표 적용 — 쉼표·공백·세미콜론으로 나눈 조각을 대문자로 · 빈 조각은 버림 · 빈 문자열 = 이름 규칙 없음(HIDE만 비밀).
+pub fn set_secret_keywords(list: &str) {
+    let v: Vec<String> = list
+        .split([',', ' ', ';', '\t'])
+        .map(|k| k.trim().to_ascii_uppercase())
+        .filter(|k| !k.is_empty())
+        .collect();
+    if let Ok(mut g) = SECRET_KEYWORDS.write() {
+        *g = Some(v);
+    }
+}
+
+/// 이름만 보고 비밀로 볼 것인가(D-140 · 기본 `*PASS*` `*PWD*` `*SECRET*` `*TOKEN*` · 설정 `vars.secret_names`로 변경).
 #[must_use]
 pub fn looks_secret(name: &str) -> bool {
     let up = name.to_ascii_uppercase();
-    ["PASS", "PWD", "SECRET", "TOKEN"]
-        .iter()
-        .any(|k| up.contains(k))
+    let g = SECRET_KEYWORDS.read().ok();
+    match g.as_deref().and_then(|o| o.as_ref()) {
+        Some(list) => list.iter().any(|k| up.contains(k.as_str())),
+        None => SECRET_NAMES_DEFAULT.split(',').any(|k| up.contains(k)),
+    }
 }
 
 impl VarStore {
@@ -670,6 +691,22 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 비밀 이름 키워드 = 설정(11-11): 기본 네 개 · 바꾸면 그것만 · 빈 값 = 이름 규칙 없음 · 끝에 기본값으로 되돌린다(전역 · 다른 시험 보호).
+    #[test]
+    fn secret_keywords_follow_setting() {
+        assert!(looks_secret("DB_PASS") && looks_secret("my_token") && !looks_secret("OWNER"));
+        set_secret_keywords("KEY; pin ,");
+        assert!(looks_secret("API_KEY") && looks_secret("card_pin"));
+        assert!(!looks_secret("DB_PASS"), "PASS는 더 이상 비밀이 아니다");
+        set_secret_keywords("");
+        assert!(
+            !looks_secret("DB_PASS") && !looks_secret("API_KEY"),
+            "빈 값 = 이름 규칙 없음"
+        );
+        set_secret_keywords(SECRET_NAMES_DEFAULT);
+        assert!(looks_secret("DB_PASS"));
+    }
 
     /// 글로벌 층(docs/63 §11): 우선순위 tab > shared > global > fixed · `set_layer`로 세 층을 오간다 · 대입은 글로벌을 고치지 않고
     /// 탭 층에 가리는 값을 만든다 · 프로필 층은 옮길 수 없다.

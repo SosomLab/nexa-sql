@@ -12,7 +12,7 @@
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, Theme};
+use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
 use nexa_ctl::{Button, Control, InputEvent, Invalidations, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
@@ -40,6 +40,20 @@ pub(crate) struct VarRow {
     pub stale: bool,
     /// ★ 수식(사용 시 모드 · `:A + 10`) — 없으면 빈 글(Formula 열 · 사용자 10-25).
     pub formula: String,
+    /// ★ 비밀 변수(이름 규칙 `vars.secret_names` 또는 `ACCEPT … HIDE` · 11-11): 값 열에 👁 버튼을 둔다.
+    pub secret: bool,
+    /// 👁를 누르고 있는 동안 보일 원문(설정 `vars.reveal_secret`이 켜져 있을 때만 · 메모리에만 · `Debug`에는 안 찍힘).
+    pub reveal: Option<Hidden>,
+}
+
+/// 원문을 담되 `{:?}`에는 `<hidden>`으로만 찍히는 상자(로그·덤프로 새지 않게).
+#[derive(Clone, PartialEq)]
+pub(crate) struct Hidden(pub String);
+
+impl std::fmt::Debug for Hidden {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<hidden>")
+    }
 }
 
 pub(crate) enum VarsWinAction {
@@ -89,6 +103,10 @@ pub(crate) struct VarsWin {
     fix_btn: Button,
     /// 마지막 페인트의 줄(히트 테스트·선택) · 고른 이름.
     rows: Vec<VarRow>,
+    /// ★ 👁를 누르고 있는 행(원문 표시 중 · 놓거나 포커스를 잃거나 다른 행으로 옮기면 None · 11-11).
+    peek: Option<usize>,
+    /// 마지막 그리기의 값 열 안 👁 x 범위(히트 테스트).
+    eye_x: (i32, i32),
     selected: Option<String>,
     hover: Option<usize>,
     scroll: i32,
@@ -117,6 +135,8 @@ impl VarsWin {
             rows: Vec::new(),
             selected: None,
             hover: None,
+            peek: None,
+            eye_x: (0, 0),
             scroll: 0,
             row_h: 0,
             table: Rect::default(),
@@ -265,6 +285,7 @@ impl VarsWin {
                 for b in self.buttons() {
                     b.clear_transient();
                 }
+                self.peek = None;
                 self.redraw();
             }
             WindowEvent::ModifiersChanged(m) => {
@@ -298,6 +319,10 @@ impl VarsWin {
                 };
                 if over != self.hover {
                     self.hover = over;
+                    // 다른 행으로 옮기면 원문 표시를 끝낸다(누른 채 끌어도 그 행에서만).
+                    if self.peek.is_some() && self.peek != over {
+                        self.peek = None;
+                    }
                     self.redraw();
                 }
                 if !inv.is_empty() {
@@ -317,8 +342,23 @@ impl VarsWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
+                if up && self.peek.take().is_some() {
+                    self.redraw();
+                }
                 if !up {
                     if let Some(i) = self.hover.filter(|_| self.table.contains(p)) {
+                        // ★ 비밀 행의 👁(값 열 오른쪽 끝)을 누르면 **누르고 있는 동안만** 원문(11-11 · 선택·입력란은 건드리지 않음).
+                        let eye = self
+                            .rows
+                            .get(i)
+                            .is_some_and(|r| r.secret && r.reveal.is_some())
+                            && x >= self.eye_x.0
+                            && x < self.eye_x.1;
+                        if eye {
+                            self.peek = Some(i);
+                            self.redraw();
+                            return VarsWinAction::None;
+                        }
                         self.select(i);
                     } else if self.table.contains(p) {
                         // 빈 자리 = 선택 풀기(새 변수 입력 `이름 = 값`).
@@ -546,6 +586,7 @@ impl VarsWin {
                     th.text_dim,
                 );
             }
+            let mut eye_x = self.eye_x;
             for (ri, r) in self.rows.iter().enumerate().skip(first) {
                 if y >= body.bottom() {
                     break;
@@ -566,6 +607,12 @@ impl VarsWin {
                     dc.fill_rect(Rect::new(clip.x, clip.y, px(3.0), clip.h), th.accent);
                 }
                 let ty = y + (row_h - th_txt) / 2;
+                // 👁를 누르고 있는 행은 원문을(메모리에만 있던 값 · 그리기에만 쓴다).
+                let peeking = self.peek == Some(ri);
+                let value_text = match (&r.reveal, peeking) {
+                    (Some(h), true) => h.0.clone(),
+                    _ => r.value.clone(),
+                };
                 let cells = [
                     // 바인드 = `:이름` · 치환 변수 = `&이름` 그대로(139차 win V1 ④ `:&X` 표기 정리).
                     if r.name.starts_with('&') {
@@ -574,13 +621,28 @@ impl VarsWin {
                         format!(":{}", r.name)
                     },
                     r.ty.clone(),
-                    r.value.clone(),
+                    value_text,
                     r.formula.clone(),
                     r.layer.word().to_string(),
                 ];
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
-                    let cell = Rect::new(cx, clip.y, *w - px(4.0), clip.h);
+                    let mut cell = Rect::new(cx, clip.y, *w - px(4.0), clip.h);
+                    if i == 2 {
+                        // ★ 비밀 행의 값 열 오른쪽 끝 = 👁(누르고 있는 동안 원문 · 11-11) — 아이콘 폭만큼 글 칸을 줄인다.
+                        let sz = (row_h - px(4.0)).max(px(10.0));
+                        let ex = cx + *w - sz - px(6.0);
+                        eye_x = (ex, cx + *w);
+                        if r.secret && r.reveal.is_some() {
+                            let ic = crate::toolicons::mi_visibility();
+                            let (cr, cg, cb) = if peeking { th.accent } else { th.text_dim }.rgb();
+                            let img =
+                                IconImage::from_alpha_tinted(ic.w, ic.h, &ic.alpha, (cr, cg, cb));
+                            let ir = Rect::new(ex, clip.y + (clip.h - sz) / 2, sz, sz);
+                            dc.image_scaled(ir, &img, clip);
+                            cell.w = (ex - cx - px(4.0)).max(0);
+                        }
+                    }
                     // 가려진 줄(앞 층에 같은 이름)은 전부 흐리게.
                     let color = if r.shadowed || (r.stale && i == 2) || !(i == 0 || i == 2) {
                         th.text_dim
@@ -592,6 +654,7 @@ impl VarsWin {
                 }
                 y += row_h;
             }
+            self.eye_x = eye_x;
             // 입력란 + 버튼.
             let inv = &mut Invalidations::default();
             let ey = table.bottom() + pad;

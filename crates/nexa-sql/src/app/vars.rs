@@ -109,6 +109,8 @@ impl App {
 
     pub(crate) fn vars_rows(&self) -> Vec<vars_win::VarRow> {
         const MAX: usize = 200;
+        // ★ 👁 보기(11-11): 켜져 있으면 비밀 행에 원문을 실어 보낸다(창이 누르고 있는 동안만 그린다 · 로그·저장은 안 본다).
+        let reveal_on = self.settings.flag("vars.reveal_secret");
         let tab = self.editors.active_id();
         let changed = (self.vars_changed.0 == tab).then_some(&self.vars_changed.1);
         let local = self.tab_vars.get(&tab).map(Vec::as_slice).unwrap_or(&[]);
@@ -170,10 +172,13 @@ impl App {
                     }
                     nsql_script::Layer::Local => false,
                 };
+                let reveal = (v.secret && reveal_on).then(|| vars_win::Hidden(full.clone()));
                 vars_win::VarRow {
                     name: v.name.clone(),
                     ty: var_type_text(&v.ty),
                     value: shown,
+                    secret: v.secret,
+                    reveal,
                     edit: if v.secret { String::new() } else { full },
                     layer,
                     changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
@@ -192,7 +197,7 @@ impl App {
                     .get(&tab)
                     .into_iter()
                     .flatten()
-                    .map(|d| macro_row(d, nsql_script::Layer::Local)),
+                    .map(|d| macro_row(d, nsql_script::Layer::Local, reveal_on)),
             )
             // ★ 공유·글로벌 층 치환 변수(`DEFINE x SHARE|GLOBAL` · T-153 후속 10-26) — 창에서 값을 고치면 탭 층에 그림자가 생긴다(종전 편집 경로) ·
             //   층 이동은 스크립트 명령으로.
@@ -200,12 +205,12 @@ impl App {
                 self.sess
                     .shared_macros
                     .iter()
-                    .map(|d| macro_row(d, nsql_script::Layer::Shared)),
+                    .map(|d| macro_row(d, nsql_script::Layer::Shared, reveal_on)),
             )
             .chain(
                 self.global_macros
                     .iter()
-                    .map(|d| macro_row(d, nsql_script::Layer::Global)),
+                    .map(|d| macro_row(d, nsql_script::Layer::Global, reveal_on)),
             )
             .collect()
     }
@@ -459,8 +464,9 @@ fn macro_is_secret(name: &str, shown: &str) -> bool {
 fn macro_row(
     (n, raw, shown): &(String, String, String),
     layer: nsql_script::Layer,
+    reveal_on: bool,
 ) -> vars_win::VarRow {
-    // ★ 비밀 치환 변수(T-132 ①)는 바인드 비밀과 같이 값 `******` · 편집란 비움.
+    // ★ 비밀 치환 변수(T-132 ①)는 바인드 비밀과 같이 값 `******` · 편집란 비움 · 👁 보기(11-11)는 설정이 켜져 있을 때만 원문 실음.
     let secret = macro_is_secret(n, shown);
     vars_win::VarRow {
         name: format!("&{n}"),
@@ -476,5 +482,41 @@ fn macro_row(
         shadowed: false,
         stale: false,
         formula: String::new(),
+        secret,
+        reveal: (secret && reveal_on).then(|| vars_win::Hidden(raw.clone())),
+    }
+}
+
+#[cfg(test)]
+mod reveal_tests {
+    use super::macro_row;
+
+    /// ★ 비밀 행 = 값 `******` · 편집란 빈 글 · 👁 원문은 설정이 켜졌을 때만 · `{:?}`에는 안 찍힌다(11-11).
+    #[test]
+    fn secret_macro_row_masks_and_reveals_only_when_enabled() {
+        let d = (
+            "DB_PASS".to_string(),
+            "hunter2".to_string(),
+            "hunter2".to_string(),
+        );
+        let off = macro_row(&d, nsql_script::Layer::Local, false);
+        assert_eq!(off.value, nsql_script::SECRET_MASK);
+        assert!(off.edit.is_empty() && off.secret && off.reveal.is_none());
+        let on = macro_row(&d, nsql_script::Layer::Local, true);
+        assert_eq!(on.reveal.as_ref().map(|h| h.0.as_str()), Some("hunter2"));
+        assert!(
+            !format!("{on:?}").contains("hunter2"),
+            "Debug에 원문이 새지 않는다"
+        );
+        let plain = macro_row(
+            &(
+                "OWNER".to_string(),
+                "scott".to_string(),
+                "scott".to_string(),
+            ),
+            nsql_script::Layer::Local,
+            true,
+        );
+        assert!(!plain.secret && plain.reveal.is_none() && plain.edit == "scott");
     }
 }

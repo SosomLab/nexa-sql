@@ -2810,9 +2810,19 @@ static STARTUP_MARKS: std::sync::OnceLock<Vec<(&'static str, std::time::Instant)
 pub(crate) fn settings_cached() -> io::Result<&'static nsql_settings::Settings> {
     static CELL: std::sync::OnceLock<io::Result<nsql_settings::Settings>> =
         std::sync::OnceLock::new();
-    CELL.get_or_init(nsql_settings::Settings::open_default)
-        .as_ref()
-        .map_err(|e| io::Error::new(e.kind(), e.to_string()))
+    CELL.get_or_init(|| {
+        let s = nsql_settings::Settings::open_default();
+        // ★ 비밀 이름 키워드(설정 `vars.secret_names` · 11-11) — CLI의 PRINT·대입 메아리·글로벌 저장도 같은 규칙.
+        if let Ok(s) = &s {
+            nsql_script::set_secret_keywords(
+                s.get("vars.secret_names")
+                    .unwrap_or(nsql_script::SECRET_NAMES_DEFAULT),
+            );
+        }
+        s
+    })
+    .as_ref()
+    .map_err(|e| io::Error::new(e.kind(), e.to_string()))
 }
 
 /// `--timing` 기동 구간 한 줄(process 시작 → 설정 → 인자 → 러너 준비 → 접속).
