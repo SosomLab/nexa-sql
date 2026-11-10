@@ -104,21 +104,27 @@ impl App {
             self.redraw();
             return true;
         };
-        let (sa, sb) = (&a[ra], &b[rb]);
-        let obj = tf(Msg::GitHunkHead, &[&(line + 1).to_string()]);
+        let (head_part, cur_part) = (&a[ra], &b[rb]);
         self.close_context_menus();
+        // ★ 왼쪽 = 편집기(현재) · 오른쪽 = HEAD(협업 V1 11-10 관찰 (1)(2)): DiffView 색 규칙이 "a에만 = 초록 · b에만 = 빨강"이라
+        //   편집기를 a에 두어야 추가 줄 = 초록 · HEAD에만(지운 줄) = 빨강으로 범례와 맞는다. 머리글은 DB 비교 문구 대신 전용.
         self.githunk.view.set(
-            sa,
-            sb,
-            sa,
-            sb,
-            &obj,
-            ("HEAD".to_string(), t(Msg::CompareLabelCurrent).to_string()),
+            cur_part,
+            head_part,
+            cur_part,
+            head_part,
+            "",
+            (t(Msg::CompareLabelCurrent).to_string(), "HEAD".to_string()),
         );
-        // 크기 = 편집기 폭 80%(최소 320) × (행 수(≤14) × 줄 높이 + 머리 42) · 자리 = 클릭한 줄을 가리지 않게 아래/위 · 창 안.
+        let n = self.githunk.view.hunk_count();
+        self.githunk.view.set_head(tf(
+            Msg::GitHunkHeadDiff,
+            &[&(line + 1).to_string(), &n.to_string()],
+        ));
+        // 크기 = 편집기 폭 80%(최소 320) × (정렬 행 수(≤14) × 줄 높이 + 머리 42) · 자리 = 클릭한 줄을 가리지 않게 아래/위 · 창 안.
         let ed = self.editors.editor_bounds();
         let s = |v: f32| (v * self.scale).round() as i32;
-        let rows_n = sa.len().max(sb.len()).clamp(1, MAX_ROWS) as i32;
+        let rows_n = self.githunk.view.row_count().clamp(1, MAX_ROWS) as i32;
         let w = (ed.w * 4 / 5).max(s(320.0));
         let h = rows_n * lh + s(42.0) + s(8.0);
         let host = self

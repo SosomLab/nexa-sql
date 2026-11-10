@@ -2109,6 +2109,9 @@ impl App {
         if self.objdetail.menu_open() {
             m |= 2048;
         }
+        if self.githunk.is_open() {
+            m |= 512;
+        }
         if self.objlink_menu.is_open() {
             m |= 4096;
         }

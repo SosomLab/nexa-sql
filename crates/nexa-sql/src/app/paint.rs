@@ -485,11 +485,16 @@ impl App {
         self.git.set_dir(dir);
         // ★ T-110 2-3(10-30): 감시 파일 = 활성 탭(HEAD 본문 → 미니맵 git 변경 줄 · 켜져 있을 때만 받는다).
         self.git
-            .set_file(if self.settings.flag("editor.minimap_git") {
-                path
-            } else {
-                None
-            });
+            // ★ 11-10 C-1 후속(협업 V1 ❌1): git 거터·hunk 팝업도 HEAD 본문이 필요 — 미니맵 git **또는** 거터가 켜져 있으면 감시.
+            .set_file(
+                if self.settings.flag("editor.minimap_git")
+                    || self.settings.flag("editor.git_gutter")
+                {
+                    path
+                } else {
+                    None
+                },
+            );
         self.git.refresh(false);
         self.git
             .info()

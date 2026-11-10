@@ -104,6 +104,16 @@ impl DiffView {
         self.hunks.len()
     }
 
+    /// 정렬된 행 수(양쪽 합친 표시 행 · 팝업 높이 계산 · C-1 hunk 팝업 11-10).
+    pub(crate) fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// 머리글 덮어쓰기(기본 = `CompareHeadDiff2`의 DB 비교 문구 · hunk 팝업은 HEAD/편집기 범례로 바꾼다).
+    pub(crate) fn set_head(&mut self, head: String) {
+        self.head = head;
+    }
+
     /// 머리 줄 덧말(선언 차이 요약 · T-283 2단계).
     pub(crate) fn set_note(&mut self, note: String) {
         self.note = note;
