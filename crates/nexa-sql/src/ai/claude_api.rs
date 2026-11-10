@@ -415,12 +415,12 @@ pub(crate) fn stream_once(
     }
 }
 
-/// `/v1/models` 한 번으로 키 검증(프로필 관리 [검증] · 110 §4).
-pub(crate) fn validate_key(
+/// `/v1/models` 한 번으로 키 검증 + 모델 id 목록(프로필 관리 [검증] · 110 §4 · §15-5 Models API 조회 → 프로필 `models`).
+pub(crate) fn list_models(
     base_url: &str,
     api_key: &str,
     workspace: &str,
-) -> Result<usize, String> {
+) -> Result<Vec<String>, String> {
     let url = format!("{}/v1/models?limit=100", base_url.trim_end_matches('/'));
     let mut o = nsql_net::Options {
         timeout: std::time::Duration::from_secs(20),
@@ -437,14 +437,19 @@ pub(crate) fn validate_key(
     match nsql_net::get(&url, &o, &mut out, &mut |_, _| {}) {
         Ok(resp) if (200..300).contains(&resp.status) => {
             let text = String::from_utf8_lossy(&out);
-            let n = json_parse(&text)
+            let ids = json_parse(&text)
                 .ok()
                 .and_then(|v| match jget(&v, "data") {
-                    Some(Json::Arr(a)) => Some(a.len()),
+                    Some(Json::Arr(a)) => Some(
+                        a.iter()
+                            .map(|m| jstr(m, "id"))
+                            .filter(|id| !id.is_empty())
+                            .collect::<Vec<_>>(),
+                    ),
                     _ => None,
                 })
-                .unwrap_or(0);
-            Ok(n)
+                .unwrap_or_default();
+            Ok(ids)
         }
         Ok(resp) => {
             let text = String::from_utf8_lossy(&out).into_owned();
@@ -471,6 +476,7 @@ pub(crate) fn run_turn(
     messages: &mut Vec<Json>,
     timeout_secs: u64,
     max_tokens: u64,
+    prices: &str,
     tx: &mpsc::Sender<AiEvent>,
     stop: &std::sync::atomic::AtomicBool,
 ) {
@@ -508,7 +514,7 @@ pub(crate) fn run_turn(
             }
         };
         let mut u = asm.usage;
-        u.cost_usd = Usage::estimate_cost(model, u.input, u.output, u.cache_read);
+        u.cost_usd = Usage::estimate_cost_in(prices, model, u.input, u.output, u.cache_read);
         total.add(u);
         let _ = tx.send(AiEvent::Usage(u));
         messages.push(asm.assistant_message());

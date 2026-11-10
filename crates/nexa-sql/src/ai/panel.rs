@@ -27,6 +27,8 @@ pub(crate) struct PanelState {
     pub profiles: Vec<String>,
     pub profile: String,
     pub model: String,
+    /// 모델 선택지(프로필이 조회한 목록 또는 제공자 내장 표 · 현재 모델 포함).
+    pub models: Vec<String>,
     pub effort: String,
     pub auto: bool,
     pub sessions: Vec<SessionRow>,
@@ -288,13 +290,7 @@ impl AiPanel {
     fn open_drop(&mut self, kind: DropKind, anchor: Rect) {
         let items: Vec<String> = match kind {
             DropKind::Profile => self.st.profiles.clone(),
-            DropKind::Model => self
-                .st
-                .provider
-                .models()
-                .iter()
-                .map(|m| (*m).to_string())
-                .collect(),
+            DropKind::Model => self.st.models.clone(),
             DropKind::Effort => EFFORTS.iter().map(|m| (*m).to_string()).collect(),
         };
         if items.is_empty() {

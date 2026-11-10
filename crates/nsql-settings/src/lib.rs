@@ -270,6 +270,9 @@ pub const AI_PROVIDER_OPTS: &[(&str, Msg)] = &[
     ("claude", Msg::AiProviderClaude),
     ("codex", Msg::AiProviderCodex),
 ];
+/// ★ AI 비용 표 기본값(`ai.prices` · 110 §13-2 · §15-5): `<모델 부분 문자열>=<입력>/<출력>` USD/1M · `;` 구분 · 앞에서부터 첫 일치 ·
+/// `*` = 그 밖. 요율이 바뀌면 사용자가 설정에서 고친다(구현 상수 금지 · 30 §1-2).
+pub const AI_PRICES_DEFAULT: &str = "fable=10/50;mythos=10/50;gpt-6.1-sol-mini=0.5/2.5;gpt-6=2/10;opus-5-5=4/20;opus=5/25;sonnet-4=3/15;sonnet=2/10;haiku-4=1/5;haiku=0.1/0.5;*=4/20";
 pub const AI_EFFORT_OPTS: &[(&str, Msg)] = &[
     ("low", Msg::OptAiEffortLow),
     ("medium", Msg::OptAiEffortMedium),
@@ -6392,6 +6395,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiCodexCliLogin,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "ai.prices",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPrices,
+        desc: Msg::DescAiPrices,
+        kind: SettingKind::Text,
+        default: AI_PRICES_DEFAULT,
     },
     Entry {
         key: "ai.mcp_port",

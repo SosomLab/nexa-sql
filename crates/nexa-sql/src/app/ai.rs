@@ -328,6 +328,26 @@ impl App {
         let provider = cur
             .map(|s| s.provider)
             .unwrap_or_else(|| self.ai_provider_default());
+        let profile_name = cur
+            .map(|s| s.profile.clone())
+            .unwrap_or_else(|| self.ai.store.current.clone());
+        let model = cur
+            .map(|s| s.model.clone())
+            .unwrap_or_else(|| self.ai_model_default(provider));
+        let models = {
+            let mut v = self
+                .ai
+                .store
+                .profiles
+                .iter()
+                .find(|p| p.name == profile_name)
+                .map(Profile::model_choices)
+                .unwrap_or_else(|| provider.models().iter().map(|m| (*m).to_string()).collect());
+            if !v.contains(&model) {
+                v.insert(0, model.clone());
+            }
+            v
+        };
         let st = PanelState {
             provider,
             mode: cur
@@ -341,12 +361,9 @@ impl App {
                 .filter(|p| p.provider == provider)
                 .map(|p| p.name.clone())
                 .collect(),
-            profile: cur
-                .map(|s| s.profile.clone())
-                .unwrap_or_else(|| self.ai.store.current.clone()),
-            model: cur
-                .map(|s| s.model.clone())
-                .unwrap_or_else(|| self.ai_model_default(provider)),
+            profile: profile_name,
+            model,
+            models,
             effort: cur.map(|s| s.effort.clone()).unwrap_or_else(|| {
                 self.settings
                     .get("ai.effort")
@@ -629,13 +646,28 @@ impl App {
         String::from_utf8(b).ok()
     }
 
-    /// `/v1/models`로 키 검증(스레드 · 결과는 Note 이벤트로).
+    /// 비용 표(설정 `ai.prices`).
+    fn ai_prices(&self) -> String {
+        self.settings
+            .get("ai.prices")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(nsql_settings::AI_PRICES_DEFAULT)
+            .to_string()
+    }
+
+    /// [검증] = 키 확인 + 모델 목록 조회(스레드 · 결과는 Note `validate:ok:<프로필>:<모델,…>`): Claude = `/v1/models` ·
+    /// Codex = `codex app-server` `model/list`(키가 비면 CLI 자체 로그인 설정일 때만).
     fn ai_validate(&mut self, p: Profile, key: Option<String>) {
-        let key = key.or_else(|| self.ai_key_for(&p.name));
+        let is_codex = self.ai_provider() == Provider::Codex;
+        let key = key
+            .or_else(|| self.ai_key_for(&p.name))
+            .or_else(|| (is_codex && self.settings.flag("ai.codex_cli_login")).then(String::new));
         let Some(key) = key else {
             self.ai.note = t(Msg::AiKeyMissing).into();
             return;
         };
+        let codex_cli = is_codex
+            .then(|| ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex")));
         self.ai.note = t(Msg::AiValidating).into();
         let h = self.ai_host();
         let tx = h.tx.clone();
@@ -643,9 +675,12 @@ impl App {
         let _ = std::thread::Builder::new()
             .name("ai-validate".into())
             .spawn(move || {
-                let r = ai::claude_api::validate_key(&p.base_url, &key, &p.workspace);
+                let r = match &codex_cli {
+                    Some((prog, prefix)) => ai::host::codex_list_models(prog, prefix, &key),
+                    None => ai::claude_api::list_models(&p.base_url, &key, &p.workspace),
+                };
                 let _ = tx.send(AiEvent::Note(match r {
-                    Ok(n) => format!("validate:ok:{n}"),
+                    Ok(models) => format!("validate:ok:{}:{}", p.name, models.join(",")),
                     Err(e) => format!("validate:err:{e}"),
                 }));
                 wake();
@@ -739,6 +774,7 @@ impl App {
                     system,
                     timeout_secs: self.settings.int("ai.timeout_secs").max(10) as u64,
                     max_tokens: self.settings.int("ai.max_tokens").max(256) as u64,
+                    prices: self.ai_prices(),
                 };
                 if let Err(e) = self.ai_host().start_api(launch, text, &attachments) {
                     self.ai_push(ChatMsg::new(Kind::Error, e));
@@ -1034,11 +1070,17 @@ impl App {
             }
             AiEvent::Done { stop, ms } => {
                 if let Some(u) = self.ai.cli_turn_usage.take() {
+                    let prices = self.ai_prices();
                     if let Some(s) = self.ai_cur_mut() {
                         let mut u = u;
                         if u.cost_usd == 0.0 {
-                            u.cost_usd =
-                                Usage::estimate_cost(&s.model, u.input, u.output, u.cache_read);
+                            u.cost_usd = Usage::estimate_cost_in(
+                                &prices,
+                                &s.model,
+                                u.input,
+                                u.output,
+                                u.cache_read,
+                            );
                         }
                         s.usage.add(u);
                     }
@@ -1074,7 +1116,24 @@ impl App {
             AiEvent::Note(n) => {
                 if let Some(rest) = n.strip_prefix("validate:") {
                     self.ai.note = match rest.split_once(':') {
-                        Some(("ok", n)) => tf(Msg::AiValidateOk, &[n]),
+                        Some(("ok", rest)) => {
+                            // "<프로필>:<모델,…>" — 목록을 프로필에 저장(모델 콤보 선택지 · 110 §15-5).
+                            let (name, csv) = rest.split_once(':').unwrap_or((rest, ""));
+                            let models: Vec<String> = csv
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|m| !m.is_empty())
+                                .map(String::from)
+                                .collect();
+                            let n = models.len().to_string();
+                            if !models.is_empty() {
+                                if let Some(p) = self.ai.store.get_mut(name) {
+                                    p.models = models;
+                                }
+                                self.ai_store_save();
+                            }
+                            tf(Msg::AiValidateOk, &[&n])
+                        }
                         Some((_, e)) => tf(Msg::AiValidateFailed, &[e]),
                         None => rest.to_string(),
                     };

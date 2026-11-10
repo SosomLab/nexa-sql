@@ -106,6 +106,86 @@ pub(crate) struct CodexLaunch {
     pub resume: Option<String>,
 }
 
+fn write_line(w: &mut dyn Write, line: &str) -> Result<(), String> {
+    w.write_all(line.as_bytes())
+        .and_then(|()| w.write_all(b"\n"))
+        .and_then(|()| w.flush())
+        .map_err(|e| e.to_string())
+}
+
+/// ★ Codex 모델 목록(110 §15-5 · 프로필 [검증]): `codex app-server`를 잠깐 띄워 initialize → (apiKey 로그인) → `model/list` 한 번 →
+/// 종료. 키가 비면 CLI 자체 로그인(`ai.codex_cli_login`)으로 조회. 30초 상한 · 콘솔 창 없음.
+pub(crate) fn codex_list_models(
+    program: &str,
+    prefix: &[String],
+    api_key: &str,
+) -> Result<Vec<String>, String> {
+    use super::codex;
+    let mut cmd = nsql_ext::net::quiet_command(program);
+    cmd.args(prefix)
+        .arg("app-server")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| format!("{program}: {e}"))?;
+    let (Some(mut stdin), Some(out)) = (child.stdin.take(), child.stdout.take()) else {
+        let _ = child.kill();
+        return Err("no stdio".into());
+    };
+    if let Err(e) = write_line(&mut stdin, &codex::initialize(1)) {
+        let _ = child.kill();
+        return Err(e);
+    }
+    let (tx, rx) = mpsc::channel::<Result<Vec<String>, String>>();
+    let key = api_key.to_string();
+    let reader = std::thread::Builder::new()
+        .name("ai-codex-models".into())
+        .spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                if let codex::Incoming::Response { id, result, error } = codex::parse_line(&line) {
+                    if let Some(e) = error {
+                        let _ = tx.send(Err(format!("codex {id}: {e}")));
+                        return;
+                    }
+                    let next = match id {
+                        1 => {
+                            if let Err(e) = write_line(&mut stdin, &codex::initialized()) {
+                                let _ = tx.send(Err(e));
+                                return;
+                            }
+                            if key.is_empty() {
+                                codex::model_list(3)
+                            } else {
+                                codex::login_api_key(2, &key)
+                            }
+                        }
+                        2 => codex::model_list(3),
+                        3 => {
+                            let _ = tx.send(Ok(codex::model_ids(result.as_ref())));
+                            return;
+                        }
+                        _ => continue,
+                    };
+                    if let Err(e) = write_line(&mut stdin, &next) {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                }
+            }
+            let _ = tx.send(Err("codex app-server closed".into()));
+        });
+    let r = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+        Ok(r) => r,
+        Err(_) => Err("codex app-server: timeout".into()),
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Ok(h) = reader {
+        let _ = h.join();
+    }
+    r
+}
+
 /// 세션 하나의 호스트 상태(UI 스레드 소유).
 pub(crate) struct Host {
     pub tx: mpsc::Sender<AiEvent>,
@@ -137,6 +217,8 @@ pub(crate) struct ApiLaunch {
     pub system: String,
     pub timeout_secs: u64,
     pub max_tokens: u64,
+    /// 비용 표(설정 `ai.prices`).
+    pub prices: String,
 }
 
 impl Host {
@@ -599,6 +681,7 @@ impl Host {
                     &mut msgs,
                     l.timeout_secs,
                     l.max_tokens,
+                    &l.prices,
                     &wtx,
                     &stop2,
                 );

@@ -1,5 +1,8 @@
 //! ★ Codex 어댑터(docs/110 §5 · §15-3 ② · 11-11): `codex app-server`(stdio JSONL JSON-RPC · `jsonrpc` 필드 생략)의 **요청 조립 ·
-//! 알림/서버 요청 파싱**(순수 함수). 프로세스 관리는 `host.rs`(`start_codex`). 도구 = `thread/start`의 `dynamicTools`(실험 · `experimentalApi`)
+//! 알림/서버 요청 파싱**(순수 함수). 프로세스 관리는 `host.rs`(`start_codex`). 도구 = `thread/start`의 `dynamicTools`(실험 · `experimentalApi` ·
+//! 키 이름은 `codex app-server generate-json-schema`(codex-cli 0.167.0)로 확정 11-11 = `item/agentMessage/delta.delta` · `thread/tokenUsage/updated`
+//! `.tokenUsage.total.{inputTokens,cachedInputTokens,outputTokens}` · `item/tool/call` `{tool,arguments,callId}` → `{contentItems,success}` ·
+//! `DynamicToolSpec{type:"function",name,description,inputSchema}` · 모델 목록 = `model/list` → `data[].{id,hidden,isDefault}`)
 //! → 서버 요청 `item/tool/call` → 우리 도구 표 실행 → `{contentItems, success}` 응답. 인증 = 프로필 API 키(`account/login/start` apiKey ·
 //! ChatGPT 로그인은 상업 제품에 허용되지 않음 · 110 §13-1).
 
@@ -73,6 +76,7 @@ pub(crate) fn dynamic_tools() -> Json {
             .iter()
             .map(|t| {
                 obj(vec![
+                    ("type", s("function")),
                     ("name", s(t.name)),
                     ("description", s(t.desc)),
                     ("inputSchema", t.schema()),
@@ -99,6 +103,32 @@ pub(crate) fn thread_start(id: u64, model: &str, cwd: &str, with_tools: bool) ->
 
 pub(crate) fn thread_resume(id: u64, thread_id: &str) -> String {
     request(id, "thread/resume", obj(vec![("threadId", s(thread_id))]))
+}
+
+/// 모델 목록(`model/list` · 프로필 [검증] = 키 확인 겸 목록 갱신 · 110 §15-5).
+pub(crate) fn model_list(id: u64) -> String {
+    request(id, "model/list", obj(vec![("limit", Json::Num(200.0))]))
+}
+
+/// `model/list` 응답 → 모델 id(숨김 제외 · 기본 모델 먼저 · 그 밖은 서버 순서).
+pub(crate) fn model_ids(result: Option<&Json>) -> Vec<String> {
+    let Some(Json::Arr(data)) = result.and_then(|r| jget(r, "data")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(bool, String)> = data
+        .iter()
+        .filter(|m| !matches!(jget(m, "hidden"), Some(Json::Bool(true))))
+        .map(|m| {
+            let id = jstr(m, "id");
+            (
+                matches!(jget(m, "isDefault"), Some(Json::Bool(true))),
+                if id.is_empty() { jstr(m, "model") } else { id },
+            )
+        })
+        .filter(|(_, id)| !id.is_empty())
+        .collect();
+    out.sort_by_key(|(d, _)| !d);
+    out.into_iter().map(|(_, id)| id).collect()
 }
 
 /// 턴 시작 — 글 + 이미지(파일 경로 · app-server는 base64 블록 대신 `localImage`).
@@ -414,6 +444,7 @@ mod tests {
         let ts = thread_start(2, "gpt-6.1-sol", "C:/w", true);
         assert!(
             ts.contains("\"dynamicTools\"")
+                && ts.contains("\"type\":\"function\"")
                 && ts.contains("\"run_query\"")
                 && ts.contains("\"approvalPolicy\":\"untrusted\"")
         );
@@ -483,5 +514,21 @@ mod tests {
             parse_line("{\"method\":\"thread/status/changed\",\"params\":{}}"),
             Incoming::Ignore
         ));
+    }
+
+    #[test]
+    fn model_list_parses_ids() {
+        assert!(model_list(3).contains("\"method\":\"model/list\""));
+        let line = r#"{"id":3,"result":{"data":[{"id":"gpt-6.1-sol-mini","hidden":false,"isDefault":false},{"id":"old","hidden":true},{"id":"gpt-6.1-sol","isDefault":true}],"nextCursor":null}}"#;
+        match parse_line(line) {
+            Incoming::Response { result, .. } => {
+                assert_eq!(
+                    model_ids(result.as_ref()),
+                    vec!["gpt-6.1-sol", "gpt-6.1-sol-mini"]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(model_ids(None).is_empty());
     }
 }

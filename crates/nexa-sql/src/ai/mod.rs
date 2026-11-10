@@ -106,6 +106,8 @@ pub(crate) struct Profile {
     pub workspace: String,
     pub model: String,
     pub effort: String,
+    /// 조회한 모델 목록([검증] · Claude `/v1/models` · Codex `model/list` · 110 §15-5) — 비면 제공자 내장 표.
+    pub models: Vec<String>,
 }
 
 impl Profile {
@@ -117,11 +119,28 @@ impl Profile {
             workspace: String::new(),
             model: DEFAULT_MODEL.to_string(),
             effort: DEFAULT_EFFORT.to_string(),
+            models: Vec::new(),
         }
     }
     /// 볼트 비밀 이름.
     pub(crate) fn secret_name(&self) -> String {
         format!("ai.{}", self.name)
+    }
+    /// 모델 선택지 — 조회한 목록이 있으면 그것, 없으면 제공자 내장 표 · 현재 모델은 항상 포함.
+    pub(crate) fn model_choices(&self) -> Vec<String> {
+        let mut v: Vec<String> = if self.models.is_empty() {
+            self.provider
+                .models()
+                .iter()
+                .map(|m| (*m).to_string())
+                .collect()
+        } else {
+            self.models.clone()
+        };
+        if !self.model.is_empty() && !v.contains(&self.model) {
+            v.insert(0, self.model.clone());
+        }
+        v
     }
 }
 
@@ -199,6 +218,16 @@ impl ProfileStore {
                         p.provider = Provider::parse(v);
                     }
                 }
+                "models" => {
+                    if let Some(p) = cur.as_mut() {
+                        p.models = v
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|m| !m.is_empty())
+                            .map(String::from)
+                            .collect();
+                    }
+                }
                 _ => {}
             }
         }
@@ -216,13 +245,14 @@ impl ProfileStore {
         for p in &self.profiles {
             out.push('\n');
             out.push_str(&format!(
-                "name={}\nprovider={}\nbase_url={}\nworkspace={}\nmodel={}\neffort={}\n",
+                "name={}\nprovider={}\nbase_url={}\nworkspace={}\nmodel={}\neffort={}\nmodels={}\n",
                 p.name,
                 p.provider.as_str(),
                 p.base_url,
                 p.workspace,
                 p.model,
-                p.effort
+                p.effort,
+                p.models.join(",")
             ));
         }
         out
@@ -325,36 +355,58 @@ impl Usage {
         self.cache_write += o.cache_write;
         self.cost_usd += o.cost_usd;
     }
-    /// 모델별 요율(USD/1M · claude-api 스킬 표 · 캐시 읽기 = 입력의 1/20 근사)로 비용 추정.
+    /// 모델별 요율(기본 표 `nsql_settings::AI_PRICES_DEFAULT` · 캐시 읽기 = 입력의 1/20 근사)로 비용 추정.
     pub(crate) fn estimate_cost(model: &str, input: u64, output: u64, cache_read: u64) -> f64 {
-        let (i, o) = price_per_m(model);
+        Self::estimate_cost_in(
+            nsql_settings::AI_PRICES_DEFAULT,
+            model,
+            input,
+            output,
+            cache_read,
+        )
+    }
+    /// ★ 설정 `ai.prices` 표(사용자 편집 가능 · 110 §15-5)로 비용 추정.
+    pub(crate) fn estimate_cost_in(
+        table: &str,
+        model: &str,
+        input: u64,
+        output: u64,
+        cache_read: u64,
+    ) -> f64 {
+        let (i, o) = price_per_m_in(table, model);
         (input as f64 * i + output as f64 * o + cache_read as f64 * i * 0.05) / 1_000_000.0
     }
 }
 
-pub(crate) fn price_per_m(model: &str) -> (f64, f64) {
+/// 비용 표 한 줄 해석 — `<모델 부분 문자열>=<입력>/<출력>`(USD/1M) · `;` 또는 줄 바꿈 구분 · 앞에서부터 첫 일치 ·
+/// `*` = 그 밖(없으면 opus-5-5 요율) · 모르는 항목은 건너뛴다(설정 오타에 관대).
+pub(crate) fn price_per_m_in(table: &str, model: &str) -> (f64, f64) {
     let m = model.to_ascii_lowercase();
-    if m.contains("fable") || m.contains("mythos") {
-        (10.0, 50.0)
-    } else if m.contains("gpt-6.1-sol-mini") {
-        (0.5, 2.5)
-    } else if m.contains("gpt-6") {
-        (2.0, 10.0)
-    } else if m.contains("opus-5-5") {
-        (4.0, 20.0)
-    } else if m.contains("opus") {
-        (5.0, 25.0)
-    } else if m.contains("sonnet-4") {
-        (3.0, 15.0)
-    } else if m.contains("sonnet") {
-        (2.0, 10.0)
-    } else if m.contains("haiku-4") {
-        (1.0, 5.0)
-    } else if m.contains("haiku") {
-        (0.10, 0.50)
-    } else {
-        (4.0, 20.0)
+    let mut fallback = None;
+    for item in table.split([';', '\n']) {
+        let Some((pat, io)) = item.split_once('=') else {
+            continue;
+        };
+        let Some((i, o)) = io.split_once('/') else {
+            continue;
+        };
+        let (Ok(i), Ok(o)) = (i.trim().parse::<f64>(), o.trim().parse::<f64>()) else {
+            continue;
+        };
+        let pat = pat.trim().to_ascii_lowercase();
+        if pat == "*" {
+            if fallback.is_none() {
+                fallback = Some((i, o));
+            }
+        } else if !pat.is_empty() && m.contains(&pat) {
+            return (i, o);
+        }
     }
+    fallback.unwrap_or((4.0, 20.0))
+}
+
+pub(crate) fn price_per_m(model: &str) -> (f64, f64) {
+    price_per_m_in(nsql_settings::AI_PRICES_DEFAULT, model)
 }
 
 /// 첨부(입력 데이터 · 110 §14-4).
@@ -734,6 +786,34 @@ pub(crate) fn history_prune(keep_days: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn price_table_first_match_and_fallback() {
+        assert_eq!(price_per_m("claude-sonnet-5-5"), (2.0, 10.0));
+        assert_eq!(price_per_m("gpt-6.1-sol-mini"), (0.5, 2.5));
+        assert_eq!(price_per_m("claude-fable-5-1"), (10.0, 50.0));
+        // 사용자 표: 앞 항목 우선 · 오타 항목 무시 · `*` 폴백 · 줄 바꿈 구분.
+        let t = "opus=1/2\nbad\nx=y/z\n*=7/8";
+        assert_eq!(price_per_m_in(t, "claude-opus-5-5"), (1.0, 2.0));
+        assert_eq!(price_per_m_in(t, "unknown"), (7.0, 8.0));
+        assert_eq!(price_per_m_in("", "unknown"), (4.0, 20.0));
+        let c = Usage::estimate_cost_in(t, "claude-opus-5-5", 1_000_000, 1_000_000, 0);
+        assert!((c - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn profile_models_roundtrip_and_choices() {
+        let mut p = Profile::new("w");
+        p.model = "claude-x".into();
+        assert_eq!(p.model_choices()[0], "claude-x");
+        assert_eq!(p.model_choices().len(), MODELS.len() + 1);
+        p.models = vec!["claude-x".into(), "claude-y".into()];
+        let mut st = ProfileStore::default();
+        st.upsert(p.clone());
+        let back = ProfileStore::parse(&st.dump());
+        assert_eq!(back.profiles[0].models, p.models);
+        assert_eq!(back.profiles[0].model_choices(), p.models);
+    }
 
     #[test]
     fn profiles_roundtrip() {
