@@ -355,17 +355,7 @@ impl Usage {
         self.cache_write += o.cache_write;
         self.cost_usd += o.cost_usd;
     }
-    /// 모델별 요율(기본 표 `nsql_settings::AI_PRICES_DEFAULT` · 캐시 읽기 = 입력의 1/20 근사)로 비용 추정.
-    pub(crate) fn estimate_cost(model: &str, input: u64, output: u64, cache_read: u64) -> f64 {
-        Self::estimate_cost_in(
-            nsql_settings::AI_PRICES_DEFAULT,
-            model,
-            input,
-            output,
-            cache_read,
-        )
-    }
-    /// ★ 설정 `ai.prices` 표(사용자 편집 가능 · 110 §15-5)로 비용 추정.
+    /// ★ 비용 추정 — 표 = 설정 `ai.prices`(기본 `nsql_settings::AI_PRICES_DEFAULT` · 사용자 편집 가능 · 110 §15-5) · 캐시 읽기 = 입력의 1/20 근사.
     pub(crate) fn estimate_cost_in(
         table: &str,
         model: &str,
@@ -403,10 +393,6 @@ pub(crate) fn price_per_m_in(table: &str, model: &str) -> (f64, f64) {
         }
     }
     fallback.unwrap_or((4.0, 20.0))
-}
-
-pub(crate) fn price_per_m(model: &str) -> (f64, f64) {
-    price_per_m_in(nsql_settings::AI_PRICES_DEFAULT, model)
 }
 
 /// 첨부(입력 데이터 · 110 §14-4).
@@ -789,9 +775,10 @@ mod tests {
 
     #[test]
     fn price_table_first_match_and_fallback() {
-        assert_eq!(price_per_m("claude-sonnet-5-5"), (2.0, 10.0));
-        assert_eq!(price_per_m("gpt-6.1-sol-mini"), (0.5, 2.5));
-        assert_eq!(price_per_m("claude-fable-5-1"), (10.0, 50.0));
+        let d = nsql_settings::AI_PRICES_DEFAULT;
+        assert_eq!(price_per_m_in(d, "claude-sonnet-5-5"), (2.0, 10.0));
+        assert_eq!(price_per_m_in(d, "gpt-6.1-sol-mini"), (0.5, 2.5));
+        assert_eq!(price_per_m_in(d, "claude-fable-5-1"), (10.0, 50.0));
         // 사용자 표: 앞 항목 우선 · 오타 항목 무시 · `*` 폴백 · 줄 바꿈 구분.
         let t = "opus=1/2\nbad\nx=y/z\n*=7/8";
         assert_eq!(price_per_m_in(t, "claude-opus-5-5"), (1.0, 2.0));
@@ -864,6 +851,14 @@ mod tests {
         assert!(!contains_secret("SELECT 1 FROM dual"));
         assert!(contains_secret("CONNECT app/pw@host"));
         assert_eq!(Mode::parse("CLI"), Mode::Cli);
-        assert!(Usage::estimate_cost("claude-opus-5-5", 1_000_000, 0, 0) > 3.9);
+        assert!(
+            Usage::estimate_cost_in(
+                nsql_settings::AI_PRICES_DEFAULT,
+                "claude-opus-5-5",
+                1_000_000,
+                0,
+                0
+            ) > 3.9
+        );
     }
 }
