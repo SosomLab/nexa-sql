@@ -197,3 +197,10 @@
 | 클립보드 이미지 | nexa-ctl에 CF_DIB/PNG 읽기 추가 → `image` 블록(base64 · PNG/JPEG) | 2차 |
 | 파일 | 파일 대화상자·드롭 → 텍스트/SQL/CSV = 텍스트 블록(크기·행 상한) · PDF = `document` 블록(≤32 MB · 600쪽) · 이미지 = `image` · 큰 파일 = Files API 업로드 후 `file_id` 재사용 | 미리보기 칩 · 제거 가능 |
 | **테이블 조건 조회** | `+` ▸ "테이블 조회 첨부": 스키마.테이블 · WHERE · 행 상한(기본 200) 입력 → 호스트가 `gate_pass()`→`Sess::submit`으로 **읽기 질의만** 실행 → 결과를 열 이름 + 행의 CSV/표 텍스트 블록으로 첨부(셀 길이 상한 · 비밀 이름 열 가림 · 행 수 표시) · 또는 Auto 모드에서 AI가 `run_query` 도구로 직접 | 외부 전송이라 첫 사용 때 "행 데이터 전송 허용"(세션 단위) 확인 · 프롬프트 캐시 경계 뒤에 두어 반복 질문 비용 절감 |
+
+### 14-5 Workload Identity Federation(ID 페더레이션)을 우리도 쓸 수 있나(사용자 11-11)
+- **쓸 수 있다 — 단 "조직 환경"의 이야기.** WIF = 조직 관리자가 Claude Console에 ① 서비스 계정(`svac_`) ② 페더레이션 발급자(`fdis_` · 조직 IdP의 `iss` URL + JWKS) ③ 규칙(`fdrl_` · subject/audience/claims/CEL 조건 → 어느 서비스 계정 · 범위 `workspace:developer` · 토큰 수명 60~86,400초)을 만들어 두면, 클라이언트가 IdP의 **JWT**를 `POST /v1/oauth/token`(`grant_type = urn:ietf:params:oauth:grant-type:jwt-bearer` · `assertion` · `federation_rule_id` · `organization_id` · `service_account_id` · `workspace_id`)로 바꿔 단명 토큰(`sk-ant-oat01-…` · `Authorization: Bearer`)을 받는다. 정적 API 키 배포 없이 사용 · 과금은 조직 워크스페이스(서비스 계정)로.
+- 지원 IdP: AWS IAM · Google Cloud · Microsoft Entra ID · GitHub Actions · Kubernetes · SPIFFE · Okta · **임의 표준 OIDC 발급자**(Custom OIDC).
+- 데스크톱 앱(이 플러그인)에서의 형태: 사용자가 회사 IdP(Entra ID·Okta·사내 OIDC)에 **브라우저 로그인(PKCE · localhost 콜백 — 부품 있음)** → 받은 ID 토큰(JWT)을 위 교환 요청으로 Anthropic 토큰으로 → 1시간 안팎마다 재교환. 규칙이 "이 발급자의 이 클레임이면 서비스 계정 Z"라 **사용자 신원은 IdP가, 과금·권한은 서비스 계정**이 맡는다(감사는 IdP 로그 + Console 인증 이력).
+- 주의: ① `jti`가 있는 JWT는 **1회용** — 재교환마다 IdP에서 새 토큰을 받아야 한다(refresh_token/silent 재발급 필요 · 캐시 재사용 = `jti_reused` 실패) ② 발급자 JWKS는 공개 https여야(사내 IdP가 비공개면 `inline` 키 업로드) ③ 관리자 설정 없이는 불가 · **개인 Ultra 구독과는 무관**(Console 조직 전용) ④ OpenAI API의 동등 기능은 문서에서 확인하지 못함(확인 필요).
+- 설계 반영: `ai.profiles`의 인증 종류에 `api_key | wif`를 둔다 · `wif` = {발급자 로그인 URL(OIDC 디스커버리) · client_id · 규칙/조직/서비스 계정/워크스페이스 ID} · 토큰·refresh_token은 볼트 봉투 · 교환·갱신은 `nsql-net` POST(SSE 아님) · 2차 범위(1차 = API 키).
