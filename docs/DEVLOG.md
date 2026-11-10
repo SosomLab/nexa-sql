@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
-- **2026-11-10 밤 (Windows · 개발 × 협업 · 설정 창)** — 사용자 "열 때 까만 화면 · 검색 속도 측정 후 개선" → 숨긴 채 만들고 첫 그리기 뒤 보이기 + 계측(2d847f19) · 협업 측정 Debug/Release 각 3회(Release 첫 paint 14~23 ms · rebuild 337장 7~8 ms) · 개선 = T-473 · [journal 11-10 §16](journal/2026-11-10.md).
+- **2026-11-10 밤 (Windows · 개발 × 협업 · 설정 창)** — 사용자 "열 때 까만 화면 · 검색 속도 측정 후 개선" → 숨긴 채 만들고 첫 그리기 뒤 보이기 + 계측(2d847f19) · 협업 측정 Debug/Release 각 3회(Release 첫 paint 14~23 ms · rebuild 337장 7~8 ms) · 개선 1차 71b2e445(줄바꿈 캐시·선형화 · rebuild 337장 4~5.6 ms · 337장 첫 paint 줄바꿈 ≈75%) · 사용자 실기 = 더블클릭·드래그 ✓ · 깜빡임 남음 · T-473 · [journal 11-10 §16](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · C-1 3차 · SQLite 세이브포인트)** — 팝업 문맥 = Equal 행 기준 · SQLite 여러 문장 배치 = SAVEPOINT로 전부 또는 전무(D-479 보강 · 6099a596) · V1 = 자동 커밋 중간 실패 = 종전 정의 유지 ✅ · 수동 커밋 ROLLBACK/COMMIT ✅ · 통합 46/0 · [journal 11-10 §15](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · C-1 2차)** — hunk 팝업 정렬 행 그대로(색 일치) · 줄 간격·높이 · O-1 "서버 본을 히스토리에 저장했습니다" 안내(0087a82c) · V1 a·c ✅ · b = 쐐기 팝업 ✓ · 변경 띠 팝업 아래 문맥 남음 · [journal 11-10 §13](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · SQLite 다중 문장)** — 협업이 O-1 V1 중 발견 = SQLite 객체 탭 F5가 `DROP;CREATE` 중 DROP만 실행해 뷰 소실(경고 0 · 재현 2/2) → 원인 = rusqlite `prepare` 첫 문장만 → 8b069b69(비조회 `execute_batch` · 조회/바인드 꼬리 오류 · D-479) · V1 ✓ · O-1 `_server_` ✓ · 통합 46/0 · [journal 11-10 §15](journal/2026-11-10.md).
