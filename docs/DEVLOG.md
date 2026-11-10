@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-11 (Windows · 개발 × 협업 · 비밀 변수 설정화)** — 사용자 "비밀 이름 키워드를 설정으로 · 변수 창에서 잠깐 보기" → `vars.secret_names` · `vars.reveal_secret` 👁(누르는 동안만 · f4483ecd · D-480) · CLI V1 3가지 ✓ · 👁 캡처 ✓ · [journal 11-10 §12](journal/2026-11-10.md).
 - **2026-11-11 (Windows · 개발 × 협업 · push · 설정 검색 3차)** — push 전 게이트 ✓ → nexa-ui b8d0617 · nexa-sql c32c9052 push · CI 3 ✅ · 설정 검색 판정 캐시(7d1c4768 · 좁힌 검색 rebuild 40~60% ↓) · T-473 ✅ · 사용자 실기 ✓ = 검색 체감 · SCHEMA 칩 · 변수 창 비밀 가림 · [journal 11-10 §16](journal/2026-11-10.md).
 - **2026-11-11 (Windows · 개발 × 협업 · 설정 창 2차 · AI 플러그인 설계)** — 설정 카드 그리기 캐시를 창 수준으로(d93e50ce · 돌아온 검색어 첫 paint 27~40 → 3.6~7 ms · 깜빡임 수정) · AI 어시스턴트 플러그인(Claude · Codex) 설계 초안 docs/110(CLI 호스팅 + MCP 서버 · 결정 후보 6 대기) · [journal 11-10 §16](journal/2026-11-10.md) · [journal 11-10 §17](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · 설정 창)** — 사용자 "열 때 까만 화면 · 검색 속도 측정 후 개선" → 숨긴 채 만들고 첫 그리기 뒤 보이기 + 계측(2d847f19) · 협업 측정 Debug/Release 각 3회(Release 첫 paint 14~23 ms · rebuild 337장 7~8 ms) · 개선 1차 71b2e445(줄바꿈 캐시·선형화 · rebuild 337장 4~5.6 ms · 337장 첫 paint 줄바꿈 ≈75%) · 사용자 실기 = 더블클릭·드래그 ✓ · 깜빡임 남음 · T-473 · [journal 11-10 §16](journal/2026-11-10.md).
