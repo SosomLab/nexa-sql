@@ -210,7 +210,10 @@ pub(crate) struct CliLaunch {
 
 pub(crate) struct ApiLaunch {
     pub base_url: String,
-    pub api_key: String,
+    /// API 키 또는 Bearer(WIF면 자리만 — 스레드에서 `ensure_access`로 채운다).
+    pub auth: claude_api::ApiAuth,
+    /// WIF 프로필이면 (설정 · 프로필 이름) — 턴마다 토큰 확보·갱신(볼트).
+    pub wif: Option<(super::wif::Wif, String)>,
     pub workspace: String,
     pub model: String,
     pub effort: String,
@@ -671,9 +674,30 @@ impl Host {
                             }
                         }
                     });
+                let auth = match &l.wif {
+                    Some((cfg, profile)) => {
+                        match super::wif::ensure_access(cfg, &l.base_url, &l.workspace, profile) {
+                            Ok(tok) => claude_api::ApiAuth::Bearer(tok),
+                            Err(e) => {
+                                let _ = wtx.send(AiEvent::Error(format!("WIF: {e}")));
+                                let _ = wtx.send(AiEvent::Done {
+                                    stop: "error".into(),
+                                    ms: 0,
+                                });
+                                drop(wtx);
+                                if let Ok(h) = forward {
+                                    let _ = h.join();
+                                }
+                                wake();
+                                return;
+                            }
+                        }
+                    }
+                    None => l.auth.clone(),
+                };
                 claude_api::run_turn(
                     &l.base_url,
-                    &l.api_key,
+                    &auth,
                     &l.workspace,
                     &l.model,
                     &l.effort,

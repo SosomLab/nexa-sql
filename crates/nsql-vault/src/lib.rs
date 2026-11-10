@@ -26,6 +26,13 @@
 
 mod devkey;
 mod sealed;
+
+/// OS 난수 `n`바이트(PKCE 검증자 · OAuth state 같은 1회용 값 · nexa-sql AI WIF 로그인 11-11).
+pub fn random_bytes(n: usize) -> io::Result<Vec<u8>> {
+    let mut v = vec![0u8; n];
+    getrandom::getrandom(&mut v).map_err(|_| io::Error::other("OS 난수 실패"))?;
+    Ok(v)
+}
 pub mod session;
 
 use std::fmt;

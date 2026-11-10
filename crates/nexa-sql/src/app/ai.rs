@@ -2,6 +2,7 @@
 //! 이어하기 · 이름 · 삭제) · 보내기(API/CLI/각본) · 이벤트 수거 · **앱 기능 도구 실행**(UI 스레드 한 곳) · 승인 카드 · 첨부 ·
 //! `/` 명령 · 프로필(볼트 키) · 헤드리스 명령(`ai.dump:` · `ai.send:` · `ai.open`).
 
+use crate::ai::claude_api::ApiAuth;
 use crate::ai::host::{ApiLaunch, CliLaunch, CodexLaunch, Host};
 use crate::ai::panel::{PanelAction, PanelState, SessionRow};
 use crate::ai::view::{Page, ViewAction, ViewInfo};
@@ -591,6 +592,8 @@ impl App {
                 ViewAction::ProfileSave(mut p, key) => {
                     p.provider = self.ai_provider();
                     let name = p.name.clone();
+                    // WIF 프로필은 키가 없다(볼트 봉투 = 로그인 토큰 · [로그인…]이 채운다).
+                    let key = if p.wif.is_some() { None } else { key };
                     if let Some(k) = key {
                         match nsql_vault::Vault::open_default()
                             .and_then(|v| v.put_secret(&p.secret_name(), k.as_bytes()))
@@ -613,6 +616,7 @@ impl App {
                     self.ai.note = tf(Msg::AiProfileSaved, &[&name]);
                 }
                 ViewAction::ProfileValidate(p, key) => self.ai_validate(p, key),
+                ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
                 ViewAction::ShowPage(pg) => {
                     self.ai_view.show_page(pg);
                     if pg == Page::Chat {
@@ -646,6 +650,40 @@ impl App {
         String::from_utf8(b).ok()
     }
 
+    /// ★ WIF 로그인(프로필 페이지 [로그인…] · 110 §15-5): 폼 프로필을 먼저 저장하고 스레드에서 브라우저 로그인 → 토큰은 볼트로 ·
+    /// 결과는 Note `wif:ok:<프로필>` / `wif:err:<원인>`(토큰 글자는 어디에도 안 흐른다).
+    fn ai_wif_login(&mut self, mut p: Profile) {
+        let Some(cfg) = p.wif.clone() else {
+            return;
+        };
+        if p.name.trim().is_empty() {
+            self.ai.note = t(Msg::AiKeyMissing).into();
+            return;
+        }
+        p.provider = Provider::Claude;
+        self.ai.store.upsert(p.clone());
+        if self.ai.store.current.is_empty() {
+            self.ai.store.current = p.name.clone();
+        }
+        self.ai_store_save();
+        let timeout = self.settings.int("ai.wif_login_timeout_secs").max(30) as u64;
+        self.ai.note = t(Msg::AiWifLoginStarted).into();
+        let tx = self.ai_host().tx.clone();
+        let wake = self.ai_wake();
+        let _ = std::thread::Builder::new()
+            .name("ai-wif-login".into())
+            .spawn(move || {
+                let r = ai::wif::login(&cfg, &p.base_url, &p.workspace, &p.name, timeout, &|url| {
+                    crate::open_external(std::path::Path::new(url))
+                });
+                let _ = tx.send(AiEvent::Note(match r {
+                    Ok(()) => format!("wif:ok:{}", p.name),
+                    Err(e) => format!("wif:err:{e}"),
+                }));
+                wake();
+            });
+    }
+
     /// 비용 표(설정 `ai.prices`).
     fn ai_prices(&self) -> String {
         self.settings
@@ -658,6 +696,30 @@ impl App {
     /// [검증] = 키 확인 + 모델 목록 조회(스레드 · 결과는 Note `validate:ok:<프로필>:<모델,…>`): Claude = `/v1/models` ·
     /// Codex = `codex app-server` `model/list`(키가 비면 CLI 자체 로그인 설정일 때만).
     fn ai_validate(&mut self, p: Profile, key: Option<String>) {
+        if let Some(cfg) = p.wif.clone() {
+            // WIF = 저장된 토큰으로(만료면 갱신) `/v1/models`.
+            self.ai.note = t(Msg::AiValidating).into();
+            let tx = self.ai_host().tx.clone();
+            let wake = self.ai_wake();
+            let _ = std::thread::Builder::new()
+                .name("ai-validate".into())
+                .spawn(move || {
+                    let r = ai::wif::ensure_access(&cfg, &p.base_url, &p.workspace, &p.name)
+                        .and_then(|tok| {
+                            ai::claude_api::list_models(
+                                &p.base_url,
+                                &ApiAuth::Bearer(tok),
+                                &p.workspace,
+                            )
+                        });
+                    let _ = tx.send(AiEvent::Note(match r {
+                        Ok(models) => format!("validate:ok:{}:{}", p.name, models.join(",")),
+                        Err(e) => format!("validate:err:{e}"),
+                    }));
+                    wake();
+                });
+            return;
+        }
         let is_codex = self.ai_provider() == Provider::Codex;
         let key = key
             .or_else(|| self.ai_key_for(&p.name))
@@ -677,7 +739,11 @@ impl App {
             .spawn(move || {
                 let r = match &codex_cli {
                     Some((prog, prefix)) => ai::host::codex_list_models(prog, prefix, &key),
-                    None => ai::claude_api::list_models(&p.base_url, &key, &p.workspace),
+                    None => ai::claude_api::list_models(
+                        &p.base_url,
+                        &ApiAuth::Key(key.clone()),
+                        &p.workspace,
+                    ),
                 };
                 let _ = tx.send(AiEvent::Note(match r {
                     Ok(models) => format!("validate:ok:{}:{}", p.name, models.join(",")),
@@ -761,13 +827,26 @@ impl App {
                     self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiNoProfile)));
                     return;
                 };
-                let Some(key) = self.ai_key_for(&p.name) else {
-                    self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[&p.name])));
-                    return;
+                let (auth, wif) = if let Some(cfg) = p.wif.clone() {
+                    if ai::wif::tokens_load(&p.name).is_none() {
+                        self.ai_push(ChatMsg::new(
+                            Kind::Error,
+                            tf(Msg::AiWifNotSignedIn, &[&p.name]),
+                        ));
+                        return;
+                    }
+                    (ApiAuth::Bearer(String::new()), Some((cfg, p.name.clone())))
+                } else {
+                    let Some(key) = self.ai_key_for(&p.name) else {
+                        self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[&p.name])));
+                        return;
+                    };
+                    (ApiAuth::Key(key), None)
                 };
                 let launch = ApiLaunch {
                     base_url: p.base_url.clone(),
-                    api_key: key,
+                    auth,
+                    wif,
                     workspace: p.workspace,
                     model,
                     effort,
@@ -1135,6 +1214,16 @@ impl App {
                             tf(Msg::AiValidateOk, &[&n])
                         }
                         Some((_, e)) => tf(Msg::AiValidateFailed, &[e]),
+                        None => rest.to_string(),
+                    };
+                } else if let Some(rest) = n.strip_prefix("wif:") {
+                    self.ai.note = match rest.split_once(':') {
+                        Some(("ok", name)) => {
+                            let p2 = self.ai.store.get_mut(name).cloned();
+                            self.ai_view.edit_profile(p2.as_ref(), true);
+                            tf(Msg::AiWifLoginOk, &[name])
+                        }
+                        Some((_, e)) => tf(Msg::AiWifLoginFailed, &[e]),
                         None => rest.to_string(),
                     };
                 } else if n != "cli exited" || self.ai.host.as_ref().is_some_and(|h| h.busy) {

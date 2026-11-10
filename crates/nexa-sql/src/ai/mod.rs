@@ -13,6 +13,7 @@ pub(crate) mod mcp;
 pub(crate) mod panel;
 pub(crate) mod tools;
 pub(crate) mod view;
+pub(crate) mod wif;
 
 use nsql_settings::json::{dump as json_dump, parse as json_parse, Json};
 use std::path::{Path, PathBuf};
@@ -108,6 +109,8 @@ pub(crate) struct Profile {
     pub effort: String,
     /// 조회한 모델 목록([검증] · Claude `/v1/models` · Codex `model/list` · 110 §15-5) — 비면 제공자 내장 표.
     pub models: Vec<String>,
+    /// ★ 인증 = ID 페더레이션(WIF · 110 §14-5 · §15-5) — `Some`이면 API 키 대신 IdP 로그인 토큰(볼트 봉투 `ai.<이름>` = 토큰 JSON).
+    pub wif: Option<wif::Wif>,
 }
 
 impl Profile {
@@ -120,6 +123,7 @@ impl Profile {
             model: DEFAULT_MODEL.to_string(),
             effort: DEFAULT_EFFORT.to_string(),
             models: Vec::new(),
+            wif: None,
         }
     }
     /// 볼트 비밀 이름.
@@ -228,6 +232,28 @@ impl ProfileStore {
                             .collect();
                     }
                 }
+                "auth" => {
+                    if let Some(p) = cur.as_mut() {
+                        if v.eq_ignore_ascii_case("wif") && p.wif.is_none() {
+                            p.wif = Some(wif::Wif::default());
+                        }
+                    }
+                }
+                "wif_issuer" | "wif_client_id" | "wif_rule" | "wif_org" | "wif_sa"
+                | "wif_scope" => {
+                    if let Some(p) = cur.as_mut() {
+                        let w = p.wif.get_or_insert_with(wif::Wif::default);
+                        let slot = match k {
+                            "wif_issuer" => &mut w.issuer,
+                            "wif_client_id" => &mut w.client_id,
+                            "wif_rule" => &mut w.rule_id,
+                            "wif_org" => &mut w.org_id,
+                            "wif_sa" => &mut w.service_account,
+                            _ => &mut w.scope,
+                        };
+                        *slot = v.to_string();
+                    }
+                }
                 _ => {}
             }
         }
@@ -254,6 +280,12 @@ impl ProfileStore {
                 p.effort,
                 p.models.join(",")
             ));
+            if let Some(w) = &p.wif {
+                out.push_str(&format!(
+                    "auth=wif\nwif_issuer={}\nwif_client_id={}\nwif_rule={}\nwif_org={}\nwif_sa={}\nwif_scope={}\n",
+                    w.issuer, w.client_id, w.rule_id, w.org_id, w.service_account, w.scope
+                ));
+            }
         }
         out
     }
@@ -800,6 +832,20 @@ mod tests {
         let back = ProfileStore::parse(&st.dump());
         assert_eq!(back.profiles[0].models, p.models);
         assert_eq!(back.profiles[0].model_choices(), p.models);
+        // WIF 프로필 왕복(토큰은 저장 파일에 없다).
+        let mut q = Profile::new("corp");
+        q.wif = Some(wif::Wif {
+            issuer: "https://login.example/t".into(),
+            client_id: "cid".into(),
+            rule_id: "fdrl_1".into(),
+            org_id: "org".into(),
+            service_account: "svac_1".into(),
+            scope: String::new(),
+        });
+        st.upsert(q.clone());
+        let back = ProfileStore::parse(&st.dump());
+        assert_eq!(back.profiles[1], q);
+        assert!(back.profiles[0].wif.is_none());
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! Shift+Enter = 줄 바꿈 · `/` 명령 팝업) · 첨부 칩(파일 · 클립보드 · 조회 결과) · [보내기]/[■]. 두 번째 페이지 = **프로필 관리**
 //! (다중 API 프로필 · 키는 마스킹 입력 → 볼트 · [검증] = `/v1/models`).
 
+use super::wif::Wif;
 use super::{ChatMsg, Kind, Mode, Profile, Provider, Session};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -50,6 +51,8 @@ pub(crate) enum ViewAction {
     /// 저장(프로필 · 새 키 = Some · 비우면 기존 유지).
     ProfileSave(Profile, Option<String>),
     ProfileValidate(Profile, Option<String>),
+    /// WIF 프로필 브라우저 로그인(폼 내용으로).
+    ProfileLogin(Profile),
     ShowPage(Page),
 }
 
@@ -105,6 +108,9 @@ enum Btn {
     ProfileNew,
     ProfileSave,
     ProfileValidate,
+    /// 인증 방식 토글(API 키 ↔ WIF).
+    ProfileAuth,
+    ProfileLogin,
     Back,
 }
 
@@ -140,6 +146,13 @@ pub(crate) struct AiView {
     p_model: TextBox,
     p_effort: TextBox,
     p_key: TextBox,
+    /// 인증 = WIF(110 §14-5) · 아래 다섯 상자.
+    p_wif: bool,
+    p_issuer: TextBox,
+    p_client: TextBox,
+    p_rule: TextBox,
+    p_org: TextBox,
+    p_sa: TextBox,
     p_editing: Option<String>,
     p_has_key: bool,
 }
@@ -187,6 +200,12 @@ impl Default for AiView {
             p_model: tb(super::DEFAULT_MODEL),
             p_effort: tb(super::DEFAULT_EFFORT),
             p_key,
+            p_wif: false,
+            p_issuer: tb("https://login.microsoftonline.com/<tenant>/v2.0"),
+            p_client: tb("client id (public client, PKCE)"),
+            p_rule: tb("fdrl_…"),
+            p_org: tb("organization UUID"),
+            p_sa: tb("svac_…"),
             p_editing: None,
             p_has_key: false,
         }
@@ -213,6 +232,11 @@ impl AiView {
             &mut self.p_model,
             &mut self.p_effort,
             &mut self.p_key,
+            &mut self.p_issuer,
+            &mut self.p_client,
+            &mut self.p_rule,
+            &mut self.p_org,
+            &mut self.p_sa,
         ]
     }
 
@@ -240,6 +264,13 @@ impl AiView {
         self.p_model.set_text(&p.model);
         self.p_effort.set_text(&p.effort);
         self.p_key.set_text("");
+        self.p_wif = p.wif.is_some();
+        let w = p.wif.clone().unwrap_or_default();
+        self.p_issuer.set_text(&w.issuer);
+        self.p_client.set_text(&w.client_id);
+        self.p_rule.set_text(&w.rule_id);
+        self.p_org.set_text(&w.org_id);
+        self.p_sa.set_text(&w.service_account);
         self.p_has_key = has_key;
         self.p_name.set_focused(true);
     }
@@ -258,6 +289,17 @@ impl AiView {
         let effort = self.p_effort.text().trim().to_string();
         if !effort.is_empty() {
             p.effort = effort;
+        }
+        if self.p_wif {
+            p.wif = Some(Wif {
+                issuer: self.p_issuer.text().trim().to_string(),
+                client_id: self.p_client.text().trim().to_string(),
+                rule_id: self.p_rule.text().trim().to_string(),
+                org_id: self.p_org.text().trim().to_string(),
+                service_account: self.p_sa.text().trim().to_string(),
+                scope: String::new(),
+            });
+            return (p, None);
         }
         let key = self.p_key.text().trim().to_string();
         (p, (!key.is_empty()).then_some(key))
@@ -289,6 +331,11 @@ impl AiView {
                 &mut self.p_model,
                 &mut self.p_effort,
                 &mut self.p_key,
+                &mut self.p_issuer,
+                &mut self.p_client,
+                &mut self.p_rule,
+                &mut self.p_org,
+                &mut self.p_sa,
             ] {
                 if tb.is_focused() {
                     return tb;
@@ -646,6 +693,13 @@ impl AiView {
             Btn::ProfileValidate => {
                 let (p, key) = self.form_profile();
                 self.actions.push(ViewAction::ProfileValidate(p, key));
+            }
+            Btn::ProfileAuth => self.p_wif = !self.p_wif,
+            Btn::ProfileLogin => {
+                let (p, _) = self.form_profile();
+                if !p.name.is_empty() {
+                    self.actions.push(ViewAction::ProfileLogin(p));
+                }
             }
             Btn::Back => self.actions.push(ViewAction::ShowPage(Page::Chat)),
         }
@@ -1169,9 +1223,10 @@ impl AiView {
             }
             let keyed = info.keyed.contains(&p.name);
             let line = format!(
-                "{}{}  ·  {}  ·  {}  ·  {}",
+                "{}{}{}  ·  {}  ·  {}  ·  {}",
                 p.name,
                 if cur { " ✓" } else { "" },
+                if p.wif.is_some() { " [WIF]" } else { "" },
                 p.model,
                 nexa_ctl::draw::ellipsize_middle(dc, &p.base_url, self.s(220.0)),
                 t(if keyed {
@@ -1229,14 +1284,33 @@ impl AiView {
         let label_w = self.s(120.0);
         let fw = (w - label_w).min(self.s(520.0));
         let mut inv = Invalidations::default();
-        let fields: [(Msg, &mut TextBox); 6] = [
+        let wif = self.p_wif;
+        // 인증 방식 토글(API 키 ↔ WIF · Claude 전용 · 110 §14-5).
+        {
+            let ty = dc.text_center_y(y, row_h);
+            dc.text(x, ty, b, t(Msg::AiFieldAuth), th.text_dim);
+            let label = t(if wif { Msg::AiAuthWif } else { Msg::AiAuthKey });
+            let bw = dc.text_width(label) + self.s(24.0);
+            let r = Rect::new(x + label_w, y, bw, row_h);
+            self.paint_button(dc, th, r, label, false, Btn::ProfileAuth);
+            y += row_h + self.s(6.0);
+        }
+        let mut fields: Vec<(Msg, &mut TextBox)> = vec![
             (Msg::AiFieldName, &mut self.p_name),
             (Msg::AiFieldBaseUrl, &mut self.p_url),
             (Msg::AiFieldWorkspace, &mut self.p_ws),
             (Msg::AiModel, &mut self.p_model),
             (Msg::AiEffort, &mut self.p_effort),
-            (Msg::AiFieldKey, &mut self.p_key),
         ];
+        if wif {
+            fields.push((Msg::AiFieldIssuer, &mut self.p_issuer));
+            fields.push((Msg::AiFieldClientId, &mut self.p_client));
+            fields.push((Msg::AiFieldRule, &mut self.p_rule));
+            fields.push((Msg::AiFieldOrg, &mut self.p_org));
+            fields.push((Msg::AiFieldSa, &mut self.p_sa));
+        } else {
+            fields.push((Msg::AiFieldKey, &mut self.p_key));
+        }
         let has_key = self.p_has_key;
         let scale = self.scale;
         let px = |v: f32| (v * scale).round() as i32;
@@ -1253,11 +1327,13 @@ impl AiView {
         }
         y += self.s(4.0);
         let mut bx = x + label_w;
-        for (btn, label, primary) in [
-            (Btn::ProfileSave, t(Msg::AiSave), true),
-            (Btn::ProfileValidate, t(Msg::AiValidate), false),
-            (Btn::Back, t(Msg::AiBack), false),
-        ] {
+        let mut btns = vec![(Btn::ProfileSave, t(Msg::AiSave), true)];
+        if wif {
+            btns.push((Btn::ProfileLogin, t(Msg::AiLogin), false));
+        }
+        btns.push((Btn::ProfileValidate, t(Msg::AiValidate), false));
+        btns.push((Btn::Back, t(Msg::AiBack), false));
+        for (btn, label, primary) in btns {
             let bw = dc.text_width(label) + self.s(24.0);
             let r = Rect::new(bx, y, bw, row_h);
             self.paint_button(dc, th, r, label, primary, btn);
@@ -1268,7 +1344,15 @@ impl AiView {
             dc.text(x, y, b, &info.note, th.accent);
             y += lh + self.s(4.0);
         }
-        dc.text(x, y, b, t(Msg::AiKeyStorageNote), th.text_dim);
+        let note = t(if wif {
+            Msg::AiWifStorageNote
+        } else {
+            Msg::AiKeyStorageNote
+        });
+        for l in wrap(dc, note, w) {
+            dc.text(x, y, b, &l, th.text_dim);
+            y += lh;
+        }
     }
 
     /// 팝업 층(`/` 목록 · 상자 편집 메뉴).
@@ -1305,6 +1389,11 @@ impl AiView {
                 &self.p_model,
                 &self.p_effort,
                 &self.p_key,
+                &self.p_issuer,
+                &self.p_client,
+                &self.p_rule,
+                &self.p_org,
+                &self.p_sa,
             ] {
                 tb.paint_popup(dc, th);
             }

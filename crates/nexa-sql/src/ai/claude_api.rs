@@ -9,6 +9,22 @@ use std::sync::mpsc;
 
 pub(crate) const API_VERSION: &str = "2023-06-01";
 
+/// 인증 — API 키(`x-api-key`) 또는 WIF 단명 토큰(`Authorization: Bearer` · 110 §14-5 · §15-5).
+#[derive(Clone, Debug)]
+pub(crate) enum ApiAuth {
+    Key(String),
+    Bearer(String),
+}
+
+impl ApiAuth {
+    pub(crate) fn header(&self) -> (String, String) {
+        match self {
+            ApiAuth::Key(k) => ("x-api-key".into(), k.clone()),
+            ApiAuth::Bearer(t) => ("authorization".into(), format!("Bearer {t}")),
+        }
+    }
+}
+
 /// 요청 본문(스트리밍 · 적응형 사고 · 노력도 · 프롬프트 캐시 = system + 마지막 메시지).
 pub(crate) fn request_body(
     model: &str,
@@ -367,7 +383,7 @@ impl Write for SseSink<'_> {
 /// 한 턴의 네트워크 호출 — 응답을 조립해 돌려준다(HTTP 오류는 본문을 오류로).
 pub(crate) fn stream_once(
     base_url: &str,
-    api_key: &str,
+    auth: &ApiAuth,
     workspace: &str,
     body: &Json,
     timeout_secs: u64,
@@ -379,7 +395,7 @@ pub(crate) fn stream_once(
         io_timeout: Some(std::time::Duration::from_secs(timeout_secs.max(10))),
         ..nsql_net::Options::default()
     };
-    o.headers.push(("x-api-key".into(), api_key.to_string()));
+    o.headers.push(auth.header());
     o.headers
         .push(("anthropic-version".into(), API_VERSION.into()));
     o.headers
@@ -418,7 +434,7 @@ pub(crate) fn stream_once(
 /// `/v1/models` 한 번으로 키 검증 + 모델 id 목록(프로필 관리 [검증] · 110 §4 · §15-5 Models API 조회 → 프로필 `models`).
 pub(crate) fn list_models(
     base_url: &str,
-    api_key: &str,
+    auth: &ApiAuth,
     workspace: &str,
 ) -> Result<Vec<String>, String> {
     let url = format!("{}/v1/models?limit=100", base_url.trim_end_matches('/'));
@@ -426,7 +442,7 @@ pub(crate) fn list_models(
         timeout: std::time::Duration::from_secs(20),
         ..nsql_net::Options::default()
     };
-    o.headers.push(("x-api-key".into(), api_key.to_string()));
+    o.headers.push(auth.header());
     o.headers
         .push(("anthropic-version".into(), API_VERSION.into()));
     if !workspace.is_empty() {
@@ -468,7 +484,7 @@ pub(crate) fn list_models(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_turn(
     base_url: &str,
-    api_key: &str,
+    auth: &ApiAuth,
     workspace: &str,
     model: &str,
     effort: &str,
@@ -502,7 +518,7 @@ pub(crate) fn run_turn(
         let mut emit = move |e: AiEvent| {
             let _ = tx2.send(e);
         };
-        let asm = match stream_once(base_url, api_key, workspace, &body, timeout_secs, &mut emit) {
+        let asm = match stream_once(base_url, auth, workspace, &body, timeout_secs, &mut emit) {
             Ok(a) => a,
             Err(e) => {
                 let _ = tx.send(AiEvent::Error(e));

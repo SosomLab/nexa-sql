@@ -6416,6 +6416,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "2000",
     },
     Entry {
+        key: "ai.wif_login_timeout_secs",
+        cat: Msg::CatAi,
+        label: Msg::LblAiWifLoginTimeoutSecs,
+        desc: Msg::DescAiWifLoginTimeoutSecs,
+        kind: SettingKind::Int { min: 30, max: 3600 },
+        default: "180",
+    },
+    Entry {
         key: "ai.mcp_port",
         cat: Msg::CatAi,
         label: Msg::LblAiMcpPort,
