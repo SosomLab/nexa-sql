@@ -1007,7 +1007,11 @@ impl App {
             | "ai.timeout_secs"
             | "ai.max_tokens"
             | "ai.history_keep_days"
-            | "ai.mcp_port" => self.ai_sync_panel(),
+            | "ai.mcp_port"
+            | "ai.provider"
+            | "ai.codex_path"
+            | "ai.codex_model"
+            | "ai.codex_cli_login" => self.ai_sync_panel(),
             "editor.line_height_mode" | "editor.line_height" => {
                 self.apply_line_height();
                 self.layout();

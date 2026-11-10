@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
+/// Codex 스레드가 준비되기 전에 들어온 첫 턴(글 · 로컬 이미지 경로).
+pub(crate) type PendingTurn = Arc<Mutex<Option<(String, Vec<String>)>>>;
 
 /// CLI 실행 파일 해석(Windows: npm `claude.cmd`는 cmd.exe 없이 `node cli.js`로 · 네이티브 `claude.exe` 우선).
 pub(crate) fn resolve_cli(path: &str) -> (String, Vec<String>) {
@@ -77,7 +79,31 @@ pub(crate) enum Running {
     Api {
         stop: Arc<AtomicBool>,
     },
+    /// `codex app-server`(stdio JSONL) — 쓰기는 `writer` 공유 · 스레드 id·턴 id는 읽기 스레드가 채운다.
+    Codex {
+        child: std::process::Child,
+        writer: Arc<Mutex<std::process::ChildStdin>>,
+        thread: Arc<Mutex<Option<String>>>,
+        turn: Arc<Mutex<Option<String>>>,
+        /// 스레드가 준비되기 전에 들어온 첫 턴(글 · 로컬 이미지 경로).
+        pending: PendingTurn,
+        next_id: Arc<std::sync::atomic::AtomicU64>,
+        effort: String,
+        system: String,
+    },
     Mock,
+}
+
+pub(crate) struct CodexLaunch {
+    pub program: String,
+    pub prefix: Vec<String>,
+    /// 프로필 API 키(`account/login/start` apiKey) — 비면 로그인 생략(이미 로그인된 CLI).
+    pub api_key: String,
+    pub model: String,
+    pub effort: String,
+    pub cwd: String,
+    pub system: String,
+    pub resume: Option<String>,
 }
 
 /// 세션 하나의 호스트 상태(UI 스레드 소유).
@@ -132,6 +158,311 @@ impl Host {
             Running::Cli { child, .. } => matches!(child.try_wait(), Ok(None)),
             _ => false,
         }
+    }
+
+    pub(crate) fn is_codex_alive(&mut self) -> bool {
+        match &mut self.running {
+            Running::Codex { child, .. } => matches!(child.try_wait(), Ok(None)),
+            _ => false,
+        }
+    }
+
+    /// `codex app-server` 시작 — 악수(initialize → initialized → [login] → thread/start|resume)는 읽기 스레드가 응답을 보며 진행.
+    pub(crate) fn start_codex(&mut self, l: CodexLaunch) -> Result<(), String> {
+        use super::codex;
+        self.stop();
+        let mut cmd = nsql_ext::net::quiet_command(&l.program);
+        cmd.args(&l.prefix)
+            .arg("app-server")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", l.program))?;
+        let Some(stdin) = child.stdin.take() else {
+            let _ = child.kill();
+            return Err("no stdin".into());
+        };
+        let Some(out) = child.stdout.take() else {
+            let _ = child.kill();
+            return Err("no stdout".into());
+        };
+        let writer = Arc::new(Mutex::new(stdin));
+        let thread: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let turn: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let pending: PendingTurn = Arc::new(Mutex::new(None));
+        let next_id = Arc::new(std::sync::atomic::AtomicU64::new(10));
+        // 악수 첫 요청.
+        {
+            let mut w = writer.lock().map_err(|_| "lock".to_string())?;
+            w.write_all(codex::initialize(1).as_bytes())
+                .and_then(|()| w.write_all(b"\n"))
+                .and_then(|()| w.flush())
+                .map_err(|e| e.to_string())?;
+        }
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        let (w2, th2, tu2, pd2, id2) = (
+            writer.clone(),
+            thread.clone(),
+            turn.clone(),
+            pending.clone(),
+            next_id.clone(),
+        );
+        let (key, model, effort, cwd, system, resume) = (
+            l.api_key.clone(),
+            l.model.clone(),
+            l.effort.clone(),
+            l.cwd.clone(),
+            l.system.clone(),
+            l.resume.clone(),
+        );
+        let spawned = std::thread::Builder::new()
+            .name("ai-codex-out".into())
+            .spawn(move || {
+                let send_line = |line: String| {
+                    if let Ok(mut w) = w2.lock() {
+                        let _ = w.write_all(line.as_bytes());
+                        let _ = w.write_all(b"\n");
+                        let _ = w.flush();
+                    }
+                };
+                let emit = |e: AiEvent| {
+                    let _ = tx.send(e);
+                    wake();
+                };
+                let start_thread = |send_line: &dyn Fn(String)| match &resume {
+                    Some(t) => send_line(codex::thread_resume(3, t)),
+                    None => send_line(codex::thread_start(3, &model, &cwd, true)),
+                };
+                for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    // 턴 id(중단용).
+                    if line.contains("\"turn/started\"") {
+                        if let Ok(v) = nsql_settings::json::parse(line.trim()) {
+                            let tid = super::jget(&v, "params")
+                                .and_then(|p| super::jget(p, "turn"))
+                                .map(|t| super::jstr(t, "id"))
+                                .unwrap_or_default();
+                            if let Ok(mut g) = tu2.lock() {
+                                *g = (!tid.is_empty()).then_some(tid);
+                            }
+                        }
+                    }
+                    match codex::parse_line(&line) {
+                        codex::Incoming::Response { id, result, error } => {
+                            if let Some(e) = error {
+                                emit(AiEvent::Error(format!("codex {id}: {e}")));
+                                if id <= 3 {
+                                    emit(AiEvent::Done {
+                                        stop: "error".into(),
+                                        ms: 0,
+                                    });
+                                }
+                                continue;
+                            }
+                            match id {
+                                1 => {
+                                    send_line(codex::initialized());
+                                    if key.is_empty() {
+                                        start_thread(&send_line);
+                                    } else {
+                                        send_line(codex::login_api_key(2, &key));
+                                    }
+                                }
+                                2 => start_thread(&send_line),
+                                3 => {
+                                    let tid = result
+                                        .as_ref()
+                                        .and_then(|r| super::jget(r, "thread"))
+                                        .map(|t| super::jstr(t, "id"))
+                                        .unwrap_or_default();
+                                    if let Ok(mut g) = th2.lock() {
+                                        *g = (!tid.is_empty()).then_some(tid.clone());
+                                    }
+                                    emit(AiEvent::Started {
+                                        cli_session: (!tid.is_empty()).then_some(tid.clone()),
+                                        note: "codex thread ready".into(),
+                                    });
+                                    let first = pd2.lock().ok().and_then(|mut p| p.take());
+                                    if let Some((text, imgs)) = first {
+                                        let id = id2.fetch_add(1, Ordering::Relaxed);
+                                        send_line(codex::turn_start(
+                                            id, &tid, &text, &imgs, &effort, &system,
+                                        ));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        codex::Incoming::ServerRequest { id, method, params } => {
+                            match method.as_str() {
+                                "item/tool/call" => {
+                                    let (name, input) = codex::tool_call_args(&params);
+                                    let (rtx, rrx) = mpsc::channel::<ToolReply>();
+                                    emit(AiEvent::ToolRequest {
+                                        id: super::jstr(&params, "itemId"),
+                                        name,
+                                        input,
+                                        reply: rtx,
+                                    });
+                                    let w3 = w2.clone();
+                                    let _ = std::thread::Builder::new()
+                                        .name("ai-codex-tool".into())
+                                        .spawn(move || {
+                                            let r = rrx.recv().unwrap_or(ToolReply {
+                                                output: "cancelled".into(),
+                                                ok: false,
+                                            });
+                                            if let Ok(mut w) = w3.lock() {
+                                                let _ = w.write_all(
+                                                    codex::tool_call_response(&id, &r.output, r.ok)
+                                                        .as_bytes(),
+                                                );
+                                                let _ = w.write_all(b"\n");
+                                                let _ = w.flush();
+                                            }
+                                        });
+                                }
+                                "item/commandExecution/requestApproval"
+                                | "item/fileChange/requestApproval" => {
+                                    let (atx, arx) = mpsc::channel::<bool>();
+                                    emit(AiEvent::Approval {
+                                        id: super::jstr(&params, "itemId"),
+                                        tool: method.clone(),
+                                        summary: nsql_settings::json::dump(&params),
+                                        reply: atx,
+                                    });
+                                    let w3 = w2.clone();
+                                    let _ = std::thread::Builder::new()
+                                        .name("ai-codex-approve".into())
+                                        .spawn(move || {
+                                            let ok = arx.recv().unwrap_or(false);
+                                            if let Ok(mut w) = w3.lock() {
+                                                let _ = w.write_all(
+                                                    codex::approval_response(&id, ok).as_bytes(),
+                                                );
+                                                let _ = w.write_all(b"\n");
+                                                let _ = w.flush();
+                                            }
+                                        });
+                                }
+                                "item/permissions/requestApproval" => {
+                                    send_line(codex::permissions_response(&id))
+                                }
+                                _ => send_line(codex::response(
+                                    &id,
+                                    nsql_settings::json::Json::Obj(Vec::new()),
+                                )),
+                            }
+                        }
+                        codex::Incoming::Events(evs) => {
+                            for e in evs {
+                                let _ = tx.send(e);
+                            }
+                            wake();
+                        }
+                        codex::Incoming::Ignore => {}
+                    }
+                }
+                emit(AiEvent::Note("codex exited".into()));
+                emit(AiEvent::Done {
+                    stop: "exit".into(),
+                    ms: 0,
+                });
+            });
+        if spawned.is_err() {
+            let _ = child.kill();
+            return Err("thread".into());
+        }
+        if let Some(err) = child.stderr.take() {
+            let tail = self.stderr_tail.clone();
+            let _ = std::thread::Builder::new()
+                .name("ai-codex-err".into())
+                .spawn(move || {
+                    for line in BufReader::new(err).lines().map_while(Result::ok) {
+                        if let Ok(mut t) = tail.lock() {
+                            if t.len() >= 20 {
+                                t.remove(0);
+                            }
+                            t.push(line);
+                        }
+                    }
+                });
+        }
+        self.running = Running::Codex {
+            child,
+            writer,
+            thread,
+            turn,
+            pending,
+            next_id,
+            effort: l.effort,
+            system: l.system,
+        };
+        Ok(())
+    }
+
+    /// Codex 턴 — 스레드가 준비됐으면 바로 `turn/start` · 아니면 대기열(악수 뒤 읽기 스레드가 보낸다).
+    pub(crate) fn send_codex(&mut self, text: &str, local_images: &[String]) -> Result<(), String> {
+        use super::codex;
+        let Running::Codex {
+            writer,
+            thread,
+            pending,
+            next_id,
+            effort,
+            system,
+            ..
+        } = &self.running
+        else {
+            return Err("codex not running".into());
+        };
+        let tid = thread.lock().ok().and_then(|t| t.clone());
+        match tid {
+            Some(tid) => {
+                let id = next_id.fetch_add(1, Ordering::Relaxed);
+                let line = codex::turn_start(id, &tid, text, local_images, effort, system);
+                let mut w = writer.lock().map_err(|_| "lock".to_string())?;
+                w.write_all(line.as_bytes())
+                    .and_then(|()| w.write_all(b"\n"))
+                    .and_then(|()| w.flush())
+                    .map_err(|e| e.to_string())?;
+            }
+            None => {
+                if let Ok(mut p) = pending.lock() {
+                    *p = Some((text.to_string(), local_images.to_vec()));
+                }
+            }
+        }
+        self.busy = true;
+        Ok(())
+    }
+
+    /// Codex 턴 중단(프로세스는 유지) — 턴 id를 모르면 false.
+    pub(crate) fn interrupt_codex(&mut self) -> bool {
+        use super::codex;
+        let Running::Codex {
+            writer,
+            thread,
+            turn,
+            next_id,
+            ..
+        } = &self.running
+        else {
+            return false;
+        };
+        let (Some(tid), Some(tu)) = (
+            thread.lock().ok().and_then(|t| t.clone()),
+            turn.lock().ok().and_then(|t| t.clone()),
+        ) else {
+            return false;
+        };
+        let id = next_id.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut w) = writer.lock() {
+            let _ = w.write_all(codex::turn_interrupt(id, &tid, &tu).as_bytes());
+            let _ = w.write_all(b"\n");
+            let _ = w.flush();
+        }
+        true
     }
 
     /// CLI 프로세스 시작(세션당 한 번 · 이후 턴은 stdin 줄).
@@ -358,6 +689,13 @@ impl Host {
                 let _ = child.wait();
             }
             Running::Api { stop } => stop.store(true, Ordering::Relaxed),
+            Running::Codex {
+                mut child, writer, ..
+            } => {
+                drop(writer);
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             Running::Idle | Running::Mock => {}
         }
         self.busy = false;

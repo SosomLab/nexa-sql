@@ -7,6 +7,7 @@
 
 pub(crate) mod claude_api;
 pub(crate) mod claude_cli;
+pub(crate) mod codex;
 pub(crate) mod host;
 pub(crate) mod mcp;
 pub(crate) mod panel;
@@ -40,6 +41,46 @@ impl Mode {
     }
 }
 
+/// 상대(제공자) — Claude(API/CLI) · Codex(`codex app-server` + API 키 · docs/110 §15-3 ②).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum Provider {
+    #[default]
+    Claude,
+    Codex,
+}
+
+impl Provider {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Provider::Claude => "claude",
+            Provider::Codex => "codex",
+        }
+    }
+    pub(crate) fn parse(s: &str) -> Provider {
+        if s.eq_ignore_ascii_case("codex") {
+            Provider::Codex
+        } else {
+            Provider::Claude
+        }
+    }
+    pub(crate) fn default_model(self) -> &'static str {
+        match self {
+            Provider::Claude => DEFAULT_MODEL,
+            Provider::Codex => DEFAULT_CODEX_MODEL,
+        }
+    }
+    pub(crate) fn models(self) -> &'static [&'static str] {
+        match self {
+            Provider::Claude => MODELS,
+            Provider::Codex => CODEX_MODELS,
+        }
+    }
+}
+
+/// Codex 기본 모델(110 §13-2 표).
+pub(crate) const DEFAULT_CODEX_MODEL: &str = "gpt-6.1-sol";
+pub(crate) const CODEX_MODELS: &[&str] = &["gpt-6.1-sol", "gpt-6.1-sol-mini"];
+
 /// 기본 모델(claude-api 스킬 기본 · docs/110 §10 ⑤).
 pub(crate) const DEFAULT_MODEL: &str = "claude-opus-5-5";
 pub(crate) const DEFAULT_EFFORT: &str = "medium";
@@ -57,6 +98,8 @@ pub(crate) const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Profile {
     pub name: String,
+    /// 제공자(프로필은 제공자별 · 이름은 전체에서 유일 · 볼트 비밀 이름 `ai.<이름>`).
+    pub provider: Provider,
     /// Anthropic 호환 엔드포인트(기본 api.anthropic.com · 게이트웨이/프록시 가능).
     pub base_url: String,
     /// 워크스페이스 미지정 키면 필요(`anthropic-workspace-id`).
@@ -69,6 +112,7 @@ impl Profile {
     pub(crate) fn new(name: &str) -> Profile {
         Profile {
             name: name.to_string(),
+            provider: Provider::Claude,
             base_url: DEFAULT_BASE_URL.to_string(),
             workspace: String::new(),
             model: DEFAULT_MODEL.to_string(),
@@ -150,6 +194,11 @@ impl ProfileStore {
                         p.effort = v.to_string();
                     }
                 }
+                "provider" => {
+                    if let Some(p) = cur.as_mut() {
+                        p.provider = Provider::parse(v);
+                    }
+                }
                 _ => {}
             }
         }
@@ -167,8 +216,13 @@ impl ProfileStore {
         for p in &self.profiles {
             out.push('\n');
             out.push_str(&format!(
-                "name={}\nbase_url={}\nworkspace={}\nmodel={}\neffort={}\n",
-                p.name, p.base_url, p.workspace, p.model, p.effort
+                "name={}\nprovider={}\nbase_url={}\nworkspace={}\nmodel={}\neffort={}\n",
+                p.name,
+                p.provider.as_str(),
+                p.base_url,
+                p.workspace,
+                p.model,
+                p.effort
             ));
         }
         out
@@ -282,6 +336,10 @@ pub(crate) fn price_per_m(model: &str) -> (f64, f64) {
     let m = model.to_ascii_lowercase();
     if m.contains("fable") || m.contains("mythos") {
         (10.0, 50.0)
+    } else if m.contains("gpt-6.1-sol-mini") {
+        (0.5, 2.5)
+    } else if m.contains("gpt-6") {
+        (2.0, 10.0)
     } else if m.contains("opus-5-5") {
         (4.0, 20.0)
     } else if m.contains("opus") {
@@ -329,6 +387,7 @@ impl Attachment {
 pub(crate) struct Session {
     pub id: String,
     pub title: String,
+    pub provider: Provider,
     pub mode: Mode,
     pub profile: String,
     pub model: String,
@@ -349,6 +408,7 @@ impl Session {
         Session {
             id: stamp_id(),
             title: String::new(),
+            provider: Provider::Claude,
             mode,
             profile: profile.to_string(),
             model: model.to_string(),
@@ -389,6 +449,7 @@ impl Session {
         let head = Json::Obj(vec![
             ("id".into(), Json::Str(self.id.clone())),
             ("title".into(), Json::Str(self.title_or_default())),
+            ("provider".into(), Json::Str(self.provider.as_str().into())),
             ("mode".into(), Json::Str(self.mode.as_str().into())),
             ("profile".into(), Json::Str(self.profile.clone())),
             ("model".into(), Json::Str(self.model.clone())),
@@ -449,6 +510,7 @@ impl Session {
             &s("effort"),
         );
         sess.id = s("id");
+        sess.provider = Provider::parse(&s("provider"));
         sess.title = s("title");
         let cli = s("cli_session");
         sess.cli_session = (!cli.is_empty()).then_some(cli);

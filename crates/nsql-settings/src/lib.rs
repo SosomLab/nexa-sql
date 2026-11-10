@@ -266,6 +266,10 @@ pub enum SettingKind {
 /// [`SettingKind::Position`] 값(행우선 · 왼쪽 위 → 오른쪽 아래).
 /// ★ AI 모드 · 노력도 · CLI 권한 모드 선택지(docs/110 · 11-11).
 pub const AI_MODE_OPTS: &[(&str, Msg)] = &[("api", Msg::AiModeApi), ("cli", Msg::AiModeCli)];
+pub const AI_PROVIDER_OPTS: &[(&str, Msg)] = &[
+    ("claude", Msg::AiProviderClaude),
+    ("codex", Msg::AiProviderCodex),
+];
 pub const AI_EFFORT_OPTS: &[(&str, Msg)] = &[
     ("low", Msg::OptAiEffortLow),
     ("medium", Msg::OptAiEffortMedium),
@@ -6356,6 +6360,38 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiBare,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "ai.provider",
+        cat: Msg::CatAi,
+        label: Msg::LblAiProvider,
+        desc: Msg::DescAiProvider,
+        kind: SettingKind::Choice(AI_PROVIDER_OPTS),
+        default: "claude",
+    },
+    Entry {
+        key: "ai.codex_path",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCodexPath,
+        desc: Msg::DescAiCodexPath,
+        kind: SettingKind::Text,
+        default: "codex",
+    },
+    Entry {
+        key: "ai.codex_model",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCodexModel,
+        desc: Msg::DescAiCodexModel,
+        kind: SettingKind::Text,
+        default: "gpt-6.1-sol",
+    },
+    Entry {
+        key: "ai.codex_cli_login",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCodexCliLogin,
+        desc: Msg::DescAiCodexCliLogin,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     Entry {
         key: "ai.mcp_port",

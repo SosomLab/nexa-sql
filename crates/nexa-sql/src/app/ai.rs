@@ -2,12 +2,12 @@
 //! 이어하기 · 이름 · 삭제) · 보내기(API/CLI/각본) · 이벤트 수거 · **앱 기능 도구 실행**(UI 스레드 한 곳) · 승인 카드 · 첨부 ·
 //! `/` 명령 · 프로필(볼트 키) · 헤드리스 명령(`ai.dump:` · `ai.send:` · `ai.open`).
 
-use crate::ai::host::{ApiLaunch, CliLaunch, Host};
+use crate::ai::host::{ApiLaunch, CliLaunch, CodexLaunch, Host};
 use crate::ai::panel::{PanelAction, PanelState, SessionRow};
 use crate::ai::view::{Page, ViewAction, ViewInfo};
 use crate::ai::{
-    self, redact, AiEvent, Attachment, ChatMsg, Kind, Mode, Profile, ProfileStore, Session,
-    ToolReply, Usage,
+    self, redact, AiEvent, Attachment, ChatMsg, Kind, Mode, Profile, ProfileStore, Provider,
+    Session, ToolReply, Usage,
 };
 use crate::*;
 use nsql_settings::json::{parse as json_parse, Json};
@@ -168,6 +168,40 @@ impl App {
         Mode::parse(self.settings.get("ai.mode").unwrap_or("api"))
     }
 
+    fn ai_provider_default(&self) -> Provider {
+        Provider::parse(self.settings.get("ai.provider").unwrap_or("claude"))
+    }
+
+    /// 제공자별 기본 모델 설정 키.
+    fn ai_model_default(&self, p: Provider) -> String {
+        let key = match p {
+            Provider::Claude => "ai.model",
+            Provider::Codex => "ai.codex_model",
+        };
+        self.settings
+            .get(key)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(p.default_model())
+            .to_string()
+    }
+
+    /// 지금 세션의 제공자(없으면 설정).
+    fn ai_provider(&self) -> Provider {
+        self.ai_cur()
+            .map(|s| s.provider)
+            .unwrap_or_else(|| self.ai_provider_default())
+    }
+
+    /// 제공자의 현재 프로필(저장소 `current`가 다른 제공자면 그 제공자의 첫 프로필).
+    fn ai_profile_for(&self, p: Provider) -> Option<Profile> {
+        self.ai
+            .store
+            .current()
+            .filter(|q| q.provider == p)
+            .or_else(|| self.ai.store.profiles.iter().find(|q| q.provider == p))
+            .cloned()
+    }
+
     pub(crate) fn ai_cur(&self) -> Option<&Session> {
         self.ai.cur.and_then(|i| self.ai.sessions.get(i))
     }
@@ -183,25 +217,21 @@ impl App {
             h.reset_api();
         }
         let mode = self.ai_mode_default();
-        let profile = self.ai.store.current.clone();
-        let model = self
-            .ai
-            .store
-            .current()
+        let provider = self.ai_provider_default();
+        let prof = self.ai_profile_for(provider);
+        let profile = prof.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+        let model = prof
+            .as_ref()
             .map(|p| p.model.clone())
-            .filter(|_| mode == Mode::Api)
-            .unwrap_or_else(|| {
-                self.settings
-                    .get("ai.model")
-                    .unwrap_or(ai::DEFAULT_MODEL)
-                    .to_string()
-            });
+            .filter(|_| mode == Mode::Api || provider == Provider::Codex)
+            .unwrap_or_else(|| self.ai_model_default(provider));
         let effort = self
             .settings
             .get("ai.effort")
             .unwrap_or(ai::DEFAULT_EFFORT)
             .to_string();
         let mut s = Session::new(mode, &profile, &model, &effort);
+        s.provider = provider;
         s.auto = self.settings.flag("ai.auto");
         self.ai.sessions.insert(0, s);
         self.ai.cur = Some(0);
@@ -280,7 +310,12 @@ impl App {
     }
 
     pub(crate) fn ai_sync_panel(&mut self) {
-        let cli_note = if self.ai_mode_default() == Mode::Cli
+        let prov = self.ai_provider();
+        let cli_note = if prov == Provider::Codex {
+            let (prog, _) =
+                ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
+            tf(Msg::AiCliPath, &[&prog])
+        } else if self.ai_mode_default() == Mode::Cli
             || self.ai_cur().is_some_and(|s| s.mode == Mode::Cli)
         {
             let (prog, _) =
@@ -290,7 +325,11 @@ impl App {
             String::new()
         };
         let cur = self.ai_cur();
+        let provider = cur
+            .map(|s| s.provider)
+            .unwrap_or_else(|| self.ai_provider_default());
         let st = PanelState {
+            provider,
             mode: cur
                 .map(|s| s.mode)
                 .unwrap_or_else(|| self.ai_mode_default()),
@@ -299,17 +338,15 @@ impl App {
                 .store
                 .profiles
                 .iter()
+                .filter(|p| p.provider == provider)
                 .map(|p| p.name.clone())
                 .collect(),
             profile: cur
                 .map(|s| s.profile.clone())
                 .unwrap_or_else(|| self.ai.store.current.clone()),
-            model: cur.map(|s| s.model.clone()).unwrap_or_else(|| {
-                self.settings
-                    .get("ai.model")
-                    .unwrap_or(ai::DEFAULT_MODEL)
-                    .to_string()
-            }),
+            model: cur
+                .map(|s| s.model.clone())
+                .unwrap_or_else(|| self.ai_model_default(provider)),
             effort: cur.map(|s| s.effort.clone()).unwrap_or_else(|| {
                 self.settings
                     .get("ai.effort")
@@ -371,6 +408,28 @@ impl App {
     pub(crate) fn ai_panel_actions(&mut self) {
         for a in self.ai_panel.take_actions() {
             match a {
+                PanelAction::SetProvider(p) => {
+                    let _ = self.settings.set("ai.provider", p.as_str());
+                    self.persist_settings();
+                    let prof = self.ai_profile_for(p);
+                    let model = prof
+                        .as_ref()
+                        .map(|q| q.model.clone())
+                        .unwrap_or_else(|| self.ai_model_default(p));
+                    let name = prof.map(|q| q.name).unwrap_or_default();
+                    if let Some(s) = self.ai_cur_mut() {
+                        if s.provider != p {
+                            s.provider = p;
+                            s.profile = name;
+                            s.model = model;
+                            s.cli_session = None;
+                        }
+                    }
+                    if let Some(h) = &mut self.ai.host {
+                        h.stop();
+                        h.reset_api();
+                    }
+                }
                 PanelAction::SetMode(m) => {
                     let _ = self.settings.set("ai.mode", m.as_str());
                     self.persist_settings();
@@ -512,7 +571,8 @@ impl App {
                         self.ai.note = tf(Msg::AiProfileDeleted, &[&p.name]);
                     }
                 }
-                ViewAction::ProfileSave(p, key) => {
+                ViewAction::ProfileSave(mut p, key) => {
+                    p.provider = self.ai_provider();
                     let name = p.name.clone();
                     if let Some(k) = key {
                         match nsql_vault::Vault::open_default()
@@ -640,6 +700,19 @@ impl App {
             self.ai_after_send();
             return;
         }
+        if self.ai_provider() == Provider::Codex {
+            self.ai_send_codex(
+                text,
+                &attachments,
+                &profile,
+                &model,
+                &effort,
+                cli_session,
+                &system,
+            );
+            self.ai_after_send();
+            return;
+        }
         match mode {
             Mode::Api => {
                 let Some(p) = self
@@ -741,6 +814,78 @@ impl App {
         self.ai_after_send();
     }
 
+    /// Codex(`codex app-server` · API 키 로그인 · dynamicTools = 우리 도구 표).
+    #[allow(clippy::too_many_arguments)]
+    fn ai_send_codex(
+        &mut self,
+        text: &str,
+        attachments: &[Attachment],
+        profile: &str,
+        model: &str,
+        effort: &str,
+        resume: Option<String>,
+        system: &str,
+    ) {
+        let key = self.ai_key_for(profile).unwrap_or_default();
+        if key.is_empty() && !self.settings.flag("ai.codex_cli_login") {
+            self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[profile])));
+            return;
+        }
+        if !self.ai_host().is_codex_alive() {
+            let (program, prefix) =
+                ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
+            let cwd = ProfileStore::dir()
+                .map(|d| d.join("codex-cwd"))
+                .map(|d| {
+                    let _ = std::fs::create_dir_all(&d);
+                    d.to_string_lossy().into_owned()
+                })
+                .unwrap_or_else(|| ".".into());
+            let launch = CodexLaunch {
+                program,
+                prefix,
+                api_key: key,
+                model: model.to_string(),
+                effort: effort.to_string(),
+                cwd,
+                system: system.to_string(),
+                resume,
+            };
+            if let Err(e) = self.ai_host().start_codex(launch) {
+                self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiCliStartFailed, &[&e])));
+                return;
+            }
+        }
+        // 글 첨부는 본문에 · 이미지는 임시 파일(`localImage` · 접두 nsql- = tmp-clean 대상).
+        let mut body = String::new();
+        let mut images: Vec<String> = Vec::new();
+        for a in attachments {
+            match a {
+                Attachment::Text { label, body: b } => {
+                    body.push_str(&format!(
+                        "<attachment name=\"{label}\">\n{b}\n</attachment>\n"
+                    ));
+                }
+                Attachment::Image { bytes, media, .. } => {
+                    let ext = if media.contains("png") { "png" } else { "jpg" };
+                    let p = std::env::temp_dir().join(format!("nsql-ai-{}.{ext}", ai::stamp_id()));
+                    if std::fs::write(&p, bytes).is_ok() {
+                        images.push(p.to_string_lossy().into_owned());
+                    }
+                }
+                Attachment::Pdf { label, .. } => {
+                    body.push_str(&format!(
+                        "(attachment {label}: PDF is not supported with Codex)\n"
+                    ));
+                }
+            }
+        }
+        body.push_str(text);
+        if let Err(e) = self.ai_host().send_codex(&body, &images) {
+            self.ai_push(ChatMsg::new(Kind::Error, e));
+        }
+    }
+
     fn ai_after_send(&mut self) {
         self.ai.status = "…".into();
         if let Some(s) = self.ai_cur() {
@@ -753,7 +898,11 @@ impl App {
 
     pub(crate) fn ai_stop(&mut self) {
         if let Some(h) = &mut self.ai.host {
-            h.stop();
+            if h.interrupt_codex() {
+                h.busy = false;
+            } else {
+                h.stop();
+            }
         }
         if let Some((_, _, _, r)) = self.ai.approval.take() {
             match r {
@@ -1392,7 +1541,20 @@ impl App {
                 }
                 self.ai.status = nsql_i18n::t(Msg::AiAttached).into();
             }
-            _ => self.ai.status = nsql_i18n::t(Msg::AiClipboardEmpty).into(),
+            _ => match crate::clipboard::read_image_png() {
+                Some(png) => {
+                    let n = png.len() / 1024;
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.attachments.push(Attachment::Image {
+                            label: format!("clipboard image ({n} KB)"),
+                            media: "image/png".into(),
+                            bytes: png,
+                        });
+                    }
+                    self.ai.status = nsql_i18n::t(Msg::AiAttached).into();
+                }
+                None => self.ai.status = nsql_i18n::t(Msg::AiClipboardEmpty).into(),
+            },
         }
     }
 
@@ -1580,7 +1742,11 @@ impl App {
                 let _ = self.settings.set("ai.enabled", "on");
                 self.ai_apply_enabled();
             }
-            self.ai_open_chat();
+            if !self.ai_panel.is_visible() {
+                self.ai_toggle_panel();
+            } else {
+                self.ai_open_chat();
+            }
             return true;
         }
         if id == "ai.panel" {

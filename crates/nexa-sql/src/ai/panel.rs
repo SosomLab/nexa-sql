@@ -2,7 +2,7 @@
 //! 드롭 · Auto 스위치 · [새 대화][프로필 관리] · **세션 목록**(사용자 11-11 "이전 기록을 활용하는 세션 관리" — 검색 · 열기/이어하기 ·
 //! 이름 바꾸기 · 삭제 · 우클릭 메뉴) · 사용량 한 줄. 상태는 호스트가 [`PanelState`]로 넣고 동작은 [`PanelAction`]으로 돌려준다.
 
-use super::{Mode, Usage, EFFORTS, MODELS};
+use super::{Mode, Provider, Usage, EFFORTS};
 use nexa_ctl::controls::{ContextMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -22,6 +22,7 @@ pub(crate) struct SessionRow {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct PanelState {
+    pub provider: Provider,
     pub mode: Mode,
     pub profiles: Vec<String>,
     pub profile: String,
@@ -38,6 +39,7 @@ pub(crate) struct PanelState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PanelAction {
+    SetProvider(Provider),
     SetMode(Mode),
     SetProfile(String),
     SetModel(String),
@@ -69,6 +71,8 @@ struct Drop {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hit {
+    ProvClaude,
+    ProvCodex,
     ModeApi,
     ModeCli,
     Profile,
@@ -94,6 +98,8 @@ pub(crate) struct AiPanel {
     hover: Hit,
     pressed: Hit,
     /// 그릴 때 잡은 자리.
+    r_prov_claude: Rect,
+    r_prov_codex: Rect,
     r_mode_api: Rect,
     r_mode_cli: Rect,
     r_profile: Rect,
@@ -130,6 +136,8 @@ impl AiPanel {
             actions: Vec::new(),
             hover: Hit::None,
             pressed: Hit::None,
+            r_prov_claude: Rect::default(),
+            r_prov_codex: Rect::default(),
             r_mode_api: Rect::default(),
             r_mode_cli: Rect::default(),
             r_profile: Rect::default(),
@@ -245,7 +253,11 @@ impl AiPanel {
     }
 
     fn hit(&self, p: Point) -> Hit {
-        if self.r_mode_api.contains(p) {
+        if self.r_prov_claude.contains(p) {
+            Hit::ProvClaude
+        } else if self.r_prov_codex.contains(p) {
+            Hit::ProvCodex
+        } else if self.r_mode_api.contains(p) {
             Hit::ModeApi
         } else if self.r_mode_cli.contains(p) {
             Hit::ModeCli
@@ -276,7 +288,13 @@ impl AiPanel {
     fn open_drop(&mut self, kind: DropKind, anchor: Rect) {
         let items: Vec<String> = match kind {
             DropKind::Profile => self.st.profiles.clone(),
-            DropKind::Model => MODELS.iter().map(|m| (*m).to_string()).collect(),
+            DropKind::Model => self
+                .st
+                .provider
+                .models()
+                .iter()
+                .map(|m| (*m).to_string())
+                .collect(),
             DropKind::Effort => EFFORTS.iter().map(|m| (*m).to_string()).collect(),
         };
         if items.is_empty() {
@@ -548,6 +566,10 @@ impl AiPanel {
                     return true;
                 }
                 match h {
+                    Hit::ProvClaude => self
+                        .actions
+                        .push(PanelAction::SetProvider(Provider::Claude)),
+                    Hit::ProvCodex => self.actions.push(PanelAction::SetProvider(Provider::Codex)),
                     Hit::ModeApi => self.actions.push(PanelAction::SetMode(Mode::Api)),
                     Hit::ModeCli => self.actions.push(PanelAction::SetMode(Mode::Cli)),
                     Hit::Profile => self.open_drop(DropKind::Profile, self.r_profile),
@@ -607,28 +629,51 @@ impl AiPanel {
         let lh = dc.text_height();
         let row_h = lh + self.s(10.0);
         self.row_h = row_h;
-        // ── 제목 + 모드 분할 버튼
+        // ── 제목 + 제공자 분할 버튼(Claude | Codex) + Claude면 모드 분할 버튼(API | CLI)
         dc.select_font(FontSlot::Base, true);
-        dc.text(x, y, clip, "Claude", th.text);
+        dc.text(x, y, clip, t(Msg::MnAiPanel), th.text);
         dc.select_font(FontSlot::Base, false);
         y += lh + self.s(8.0);
         let half = w / 2;
-        self.r_mode_api = Rect::new(x, y, half, row_h);
-        self.r_mode_cli = Rect::new(x + half, y, w - half, row_h);
-        for (r, on, label, hit) in [
+        self.r_prov_claude = Rect::new(x, y, half, row_h);
+        self.r_prov_codex = Rect::new(x + half, y, w - half, row_h);
+        let codex = self.st.provider == Provider::Codex;
+        if codex {
+            self.r_mode_api = Rect::default();
+            self.r_mode_cli = Rect::default();
+        } else {
+            self.r_mode_api = Rect::new(x, y + row_h + self.s(4.0), half, row_h);
+            self.r_mode_cli = Rect::new(x + half, y + row_h + self.s(4.0), w - half, row_h);
+        }
+        let mut segs = vec![
             (
+                self.r_prov_claude,
+                !codex,
+                t(Msg::AiProviderClaude),
+                Hit::ProvClaude,
+            ),
+            (
+                self.r_prov_codex,
+                codex,
+                t(Msg::AiProviderCodex),
+                Hit::ProvCodex,
+            ),
+        ];
+        if !codex {
+            segs.push((
                 self.r_mode_api,
                 self.st.mode == Mode::Api,
                 t(Msg::AiModeApi),
                 Hit::ModeApi,
-            ),
-            (
+            ));
+            segs.push((
                 self.r_mode_cli,
                 self.st.mode == Mode::Cli,
                 t(Msg::AiModeCli),
                 Hit::ModeCli,
-            ),
-        ] {
+            ));
+        }
+        for (r, on, label, hit) in segs {
             let hot = self.hover == hit;
             if on {
                 dc.fill_round_rect(r, self.s(4.0), th.accent);
@@ -654,10 +699,13 @@ impl AiPanel {
             );
         }
         y += row_h + self.s(8.0);
+        if !codex {
+            y += row_h + self.s(4.0);
+        }
         // ── 프로필 / 모델 / 노력도 드롭 행
         let label_w = self.s(64.0);
         let mut rows: Vec<(Msg, String, Hit)> = Vec::new();
-        if self.st.mode == Mode::Api {
+        if self.st.mode == Mode::Api || codex {
             rows.push((
                 Msg::AiProfile,
                 if self.st.profile.is_empty() {
@@ -918,8 +966,9 @@ impl AiPanel {
     pub(crate) fn dump_text(&self) -> String {
         let st = &self.st;
         let mut s = format!(
-            "visible={} mode={} profile={} model={} effort={} auto={} busy={} sessions={} current={}\n",
+            "visible={} provider={} mode={} profile={} model={} effort={} auto={} busy={} sessions={} current={}\n",
             self.visible,
+            st.provider.as_str(),
             st.mode.as_str(),
             st.profile,
             st.model,

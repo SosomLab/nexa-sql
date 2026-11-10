@@ -17,6 +17,19 @@ pub(crate) fn read_text() -> Option<String> {
 }
 
 /// 텍스트 게시. 실패 = `false`.
+/// ★ 클립보드 이미지(docs/110 §14-4 · 11-11 · AI 첨부): Windows `CF_DIB`(24/32bpp 무압축)를 PNG 바이트로 · 다른 OS·형식은 `None`.
+#[must_use]
+pub(crate) fn read_image_png() -> Option<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        imp::read_dib().map(|(w, h, px)| crate::png::encode(w, h, &px))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 pub(crate) fn write_text(text: &str) -> bool {
     imp::write(text)
 }
@@ -49,6 +62,71 @@ pub(crate) fn cf_html(fragment: &str) -> Vec<u8> {
     v
 }
 
+/// DIB 바이트(BITMAPINFOHEADER부터) → 픽셀(순수 함수 · 시험).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn decode_dib(b: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
+    let rd32 = |o: usize| -> Option<u32> {
+        b.get(o..o + 4)
+            .map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]]))
+    };
+    let rd16 =
+        |o: usize| -> Option<u16> { b.get(o..o + 2).map(|x| u16::from_le_bytes([x[0], x[1]])) };
+    let hdr = rd32(0)? as usize;
+    if hdr < 40 {
+        return None;
+    }
+    let w = rd32(4)? as i32;
+    let h = rd32(8)? as i32;
+    let bpp = rd16(14)? as usize;
+    let comp = rd32(16)?;
+    if w <= 0 || h == 0 || !(bpp == 24 || bpp == 32) || !(comp == 0 || comp == 3) {
+        return None;
+    }
+    let colors = rd32(32)? as usize;
+    let mut off = hdr;
+    if comp == 3 && hdr == 40 {
+        off += 12;
+    }
+    off += colors * 4;
+    let (w, hh) = (w as usize, h.unsigned_abs() as usize);
+    let stride = (w * bpp / 8).div_ceil(4) * 4;
+    if b.len() < off + stride * hh {
+        return None;
+    }
+    let mut px = Vec::with_capacity(w * hh);
+    for y in 0..hh {
+        // 양수 높이 = 아래→위 저장.
+        let row = if h > 0 { hh - 1 - y } else { y };
+        let base = off + row * stride;
+        for x in 0..w {
+            let i = base + x * bpp / 8;
+            let (bl, g, r) = (b[i], b[i + 1], b[i + 2]);
+            px.push((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(bl));
+        }
+    }
+    Some((w as u32, hh as u32, px))
+}
+
+#[cfg(test)]
+mod dib_tests {
+    #[test]
+    fn decodes_24bpp_bottom_up() {
+        // 2×2 · 24bpp · 행 stride 8(2*3 → 8) · 아래 행이 먼저.
+        let mut b = vec![0u8; 40];
+        b[0] = 40;
+        b[4] = 2;
+        b[8] = 2;
+        b[12] = 1;
+        b[14] = 24;
+        // 아래 행: (B,G,R) = 파랑, 초록 · 위 행: 빨강, 흰색.
+        b.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0]);
+        b.extend_from_slice(&[0, 0, 255, 255, 255, 255, 0, 0]);
+        let (w, h, px) = super::decode_dib(&b).expect("dib");
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(px, vec![0x00FF_0000, 0x00FF_FFFF, 0x0000_00FF, 0x0000_FF00]);
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::ffi::c_void;
@@ -73,6 +151,7 @@ mod imp {
         fn GlobalSize(h: Handle) -> usize;
     }
     const CF_UNICODETEXT: u32 = 13;
+    const CF_DIB: u32 = 8;
     const GMEM_MOVEABLE: u32 = 0x0002;
 
     /// 다른 앱이 잠깐 열어 둔 경우를 위해 짧게 재시도(관리자 앱 관례 · 최대 ~50ms).
@@ -111,6 +190,35 @@ mod imp {
                 let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
                 GlobalUnlock(h);
                 Some(s)
+            }
+        })();
+        // SAFETY: 위에서 열었다.
+        unsafe {
+            CloseClipboard();
+        }
+        out
+    }
+
+    /// ★ `CF_DIB` → (폭, 높이, `0x00RRGGBB` 행우선 위→아래). BITMAPINFOHEADER · 24/32bpp · BI_RGB(0)/BI_BITFIELDS(3 · 표준 마스크)만.
+    pub(super) fn read_dib() -> Option<(u32, u32, Vec<u32>)> {
+        // SAFETY: 형식 질의는 부작용 없음.
+        if unsafe { IsClipboardFormatAvailable(CF_DIB) } == 0 || !open() {
+            return None;
+        }
+        let out = (|| {
+            // SAFETY: 클립보드를 열었다 · 핸들은 시스템 소유(잠그고 읽고 풀 뿐).
+            unsafe {
+                let h = GetClipboardData(CF_DIB);
+                if h.is_null() {
+                    return None;
+                }
+                let p = GlobalLock(h) as *const u8;
+                if p.is_null() {
+                    return None;
+                }
+                let bytes = std::slice::from_raw_parts(p, GlobalSize(h)).to_vec();
+                GlobalUnlock(h);
+                super::decode_dib(&bytes)
             }
         })();
         // SAFETY: 위에서 열었다.

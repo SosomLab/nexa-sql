@@ -806,13 +806,20 @@ impl AiView {
         // ── 머리줄: 모드 · 모델 · 프로필 · 상태
         let mut y = b.y + self.s(8.0);
         let head = format!(
-            "{}  ·  {}{}",
-            match sess.mode {
-                Mode::Api => t(Msg::AiModeApi),
-                Mode::Cli => t(Msg::AiModeCli),
+            "{}  ·  {}  ·  {}{}",
+            match sess.provider {
+                super::Provider::Claude => t(Msg::AiProviderClaude),
+                super::Provider::Codex => t(Msg::AiProviderCodex),
+            },
+            match (sess.provider, sess.mode) {
+                (super::Provider::Codex, _) => "app-server",
+                (_, Mode::Api) => t(Msg::AiModeApi),
+                (_, Mode::Cli) => t(Msg::AiModeCli),
             },
             sess.model,
-            if sess.mode == Mode::Api && !sess.profile.is_empty() {
+            if (sess.mode == Mode::Api || sess.provider == super::Provider::Codex)
+                && !sess.profile.is_empty()
+            {
                 format!("  ·  {}", sess.profile)
             } else {
                 String::new()
@@ -1307,7 +1314,7 @@ impl AiView {
             let k = match &m.kind {
                 Kind::User => "user".to_string(),
                 Kind::Assistant => "assistant".to_string(),
-                Kind::ToolCall { name, .. } => format!("tool_call:{name}"),
+                Kind::ToolCall { name, input } => format!("tool_call:{name} {input}"),
                 Kind::ToolResult { name, ok } => format!("tool_result:{name}:{ok}"),
                 Kind::Approval { tool } => format!("approval:{tool}"),
                 Kind::Error => "error".to_string(),
