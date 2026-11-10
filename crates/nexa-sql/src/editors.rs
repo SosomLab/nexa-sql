@@ -775,6 +775,11 @@ impl Editors {
     }
 
     /// ★ 줄 간격(전 탭 + 새 탭 · docs/118). 글꼴 px가 바뀌어도 다시 부른다(배수 계산).
+    /// 편집기 줄 간격(모든 탭 공통 · hunk 팝업 뷰어가 같은 값을 쓴다 · 11-10).
+    pub(crate) fn line_spacing(&self) -> (nexa_ctl::LineSpacing, f32) {
+        self.line_spacing
+    }
+
     pub(crate) fn set_line_spacing(&mut self, spacing: nexa_ctl::LineSpacing, font_px: f32) {
         self.line_spacing = (spacing, font_px);
         for b in &mut self.bufs {

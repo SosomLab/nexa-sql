@@ -54,21 +54,33 @@ impl GitHunkPopup {
     }
 }
 
-/// 클릭한 작업본 줄 `line`이 든 덩어리의 (HEAD 줄 범위, 작업본 줄 범위) — 문맥 `ctx`줄을 양쪽에 붙인다(각 본문 길이로 자른다).
+/// 클릭한 작업본 줄 `line`이 든 덩어리의 **정렬 행 구간**(전체 정렬 `rows` 기준 · 문맥 `ctx`행을 앞뒤에 붙여 `n_rows`로 자른다).
 /// 삭제만 있는 덩어리(작업본 줄 0개 · 거터는 그 **아래 줄**에 쐐기)는 `b.start == line`인 것. 없으면 None.
-pub(crate) fn hunk_ranges_at(
+/// ★ 2차(11-10 협업 관찰 ①): 줄 범위를 양쪽에서 따로 잘라 다시 정렬하면 이웃 덩어리의 지운 줄이 Replace로 묶여 색이 달라졌다 →
+///   전체 정렬의 **행**을 그대로 쓴다.
+pub(crate) fn hunk_rows_at(
     hunks: &[diff::Hunk],
     line: usize,
     ctx: usize,
-    a_len: usize,
-    b_len: usize,
-) -> Option<(Range<usize>, Range<usize>)> {
+    n_rows: usize,
+) -> Option<Range<usize>> {
     let h = hunks
         .iter()
         .find(|h| (h.b.start <= line && line < h.b.end) || (h.b.is_empty() && h.b.start == line))?;
-    let a = h.a.start.saturating_sub(ctx)..(h.a.end + ctx).min(a_len);
-    let b = h.b.start.saturating_sub(ctx)..(h.b.end + ctx).min(b_len);
-    Some((a, b))
+    Some(h.rows.start.saturating_sub(ctx)..(h.rows.end + ctx).min(n_rows))
+}
+
+/// 행의 a↔b를 맞바꾼다(팝업은 왼쪽 = 편집기 · 오른쪽 = HEAD인데 전체 정렬은 a = HEAD · b = 편집기로 했다).
+fn flip_row(r: &diff::Row) -> diff::Row {
+    diff::Row {
+        a: r.b,
+        b: r.a,
+        kind: match r.kind {
+            diff::RowKind::Insert => diff::RowKind::Delete,
+            diff::RowKind::Delete => diff::RowKind::Insert,
+            k => k,
+        },
+    }
 }
 
 impl App {
@@ -99,20 +111,22 @@ impl App {
         let rows = diff::align(&a, &b);
         let hunks = diff::hunks(&rows);
         let ctx = self.settings.int("editor.git_context").clamp(0, 10) as usize;
-        let Some((ra, rb)) = hunk_ranges_at(&hunks, line, ctx, a.len(), b.len()) else {
+        let Some(win) = hunk_rows_at(&hunks, line, ctx, rows.len()) else {
             self.sess.status = t(Msg::StGitNoHunk).into();
             self.redraw();
             return true;
         };
-        let (head_part, cur_part) = (&a[ra], &b[rb]);
         self.close_context_menus();
         // ★ 왼쪽 = 편집기(현재) · 오른쪽 = HEAD(협업 V1 11-10 관찰 (1)(2)): DiffView 색 규칙이 "a에만 = 초록 · b에만 = 빨강"이라
-        //   편집기를 a에 두어야 추가 줄 = 초록 · HEAD에만(지운 줄) = 빨강으로 범례와 맞는다. 머리글은 DB 비교 문구 대신 전용.
-        self.githunk.view.set(
-            cur_part,
-            head_part,
-            cur_part,
-            head_part,
+        //   편집기를 a에 두어야 추가 줄 = 초록 · HEAD에만(지운 줄) = 빨강으로 범례와 맞는다. 전체 정렬 행을 뒤집어 **그대로** 넣는다
+        //   (2차 · 관찰 ①: 조각을 다시 정렬하면 분류가 달라졌다).
+        let slice: Vec<diff::Row> = rows[win].iter().map(flip_row).collect();
+        let (sp, font_px) = self.editors.line_spacing();
+        self.githunk.view.set_line_spacing(sp, font_px);
+        self.githunk.view.set_rows(
+            slice,
+            &b,
+            &a,
             "",
             (t(Msg::CompareLabelCurrent).to_string(), "HEAD".to_string()),
         );
@@ -126,7 +140,9 @@ impl App {
         let s = |v: f32| (v * self.scale).round() as i32;
         let rows_n = self.githunk.view.row_count().clamp(1, MAX_ROWS) as i32;
         let w = (ed.w * 4 / 5).max(s(320.0));
-        let h = rows_n * lh + s(42.0) + s(8.0);
+        // 상자 안쪽 여백 12(위 8 + 아래 4) · 줄 높이는 팝업 칸도 편집기와 같은 줄 간격이라 같다(2차 · 관찰 ② = 종전엔 칸이 Auto 간격 +
+        //   여백 8이라 2~3행이 잘렸다).
+        let h = rows_n * lh + s(42.0) + s(12.0);
         let host = self
             .window
             .as_ref()
@@ -190,35 +206,35 @@ mod tests {
         diff::Hunk { rows, a, b }
     }
 
-    /// 덩어리 찾기 = 작업본 줄이 든 것 · 삭제만인 덩어리는 아래 줄 · 문맥은 양쪽 길이로 잘린다.
+    /// 덩어리 찾기 = 작업본 줄이 든 것 · 삭제만인 덩어리는 아래 줄 · 문맥은 행 수로 잘린다.
     #[test]
-    fn hunk_ranges_pick_and_clamp() {
+    fn hunk_rows_pick_and_clamp() {
         let hs = [hunk(0..2, 0..2, 0..0), hunk(5..8, 4..6, 3..6)];
-        assert_eq!(hunk_ranges_at(&hs, 4, 1, 10, 10), Some((3..7, 2..7)));
+        assert_eq!(hunk_rows_at(&hs, 4, 1, 20), Some(4..9));
+        assert_eq!(hunk_rows_at(&hs, 5, 3, 9), Some(2..9), "행 수로 자른다");
         assert_eq!(
-            hunk_ranges_at(&hs, 5, 3, 7, 7),
-            Some((1..7, 0..7)),
-            "본문 길이로 자른다"
-        );
-        assert_eq!(
-            hunk_ranges_at(&hs, 0, 0, 10, 10),
-            Some((0..2, 0..0)),
+            hunk_rows_at(&hs, 0, 0, 20),
+            Some(0..2),
             "삭제만 = 그 아래 줄"
         );
-        assert_eq!(hunk_ranges_at(&hs, 8, 1, 10, 10), None);
-        assert_eq!(hunk_ranges_at(&[], 0, 1, 10, 10), None);
+        assert_eq!(hunk_rows_at(&hs, 8, 1, 20), None);
+        assert_eq!(hunk_rows_at(&[], 0, 1, 20), None);
     }
 
-    /// 실제 정렬과 맞물려: HEAD 3줄 → 작업본에서 가운데 줄 수정 · 끝에 추가.
+    /// 실제 정렬과 맞물려: HEAD 3줄 → 작업본에서 가운데 줄 수정 · 끝에 추가 · 뒤집으면 Insert↔Delete.
     #[test]
-    fn hunk_ranges_with_real_align() {
+    fn hunk_rows_with_real_align_and_flip() {
         let a: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
         let b: Vec<String> = ["a", "B", "c", "d"].iter().map(|s| s.to_string()).collect();
         let rows = diff::align(&a, &b);
         let hs = diff::hunks(&rows);
-        let (ra, rb) = hunk_ranges_at(&hs, 1, 1, a.len(), b.len()).expect("hunk");
-        assert_eq!((ra, rb), (0..3, 0..3));
-        let (ra, rb) = hunk_ranges_at(&hs, 3, 0, a.len(), b.len()).expect("added");
-        assert_eq!((ra, rb), (3..3, 3..4));
+        assert_eq!(hunk_rows_at(&hs, 1, 1, rows.len()), Some(0..3));
+        let added = hunk_rows_at(&hs, 3, 0, rows.len()).expect("added");
+        let r = flip_row(&rows[added.start]);
+        assert_eq!(
+            (r.a, r.b, r.kind),
+            (Some(3), None, diff::RowKind::Delete),
+            "편집기(b)에만 있던 줄 = 뒤집으면 왼쪽(a)에만 = Delete(초록)"
+        );
     }
 }

@@ -380,6 +380,8 @@ impl App {
                         });
                         if same {
                             self.history_object_store(&w, crate::history::Tag::Server, &text);
+                            // 요청 때의 "소스 읽는 중…" 상태줄을 갈아 끼운다(협업 V1 11-10 "4초 잔류").
+                            self.sess.status = t(Msg::StHistoryServerSaved).into();
                             continue;
                         }
                         self.history_server_wait = Some(w);

@@ -71,20 +71,35 @@ impl DiffView {
         obj: &str,
         labels: (String, String),
     ) {
-        self.rows = diff::align(a, b);
-        self.hunks = diff::hunks(&self.rows);
-        self.cur = (!self.hunks.is_empty()).then_some(0);
+        let rows = diff::align(a, b);
         let a_show = if a_show.len() == a.len() { a_show } else { a };
         let b_show = if b_show.len() == b.len() { b_show } else { b };
+        self.set_rows(rows, a_show, b_show, obj, labels);
+    }
+
+    /// ★ 이미 정렬된 행을 **그대로** 넣는다(C-1 hunk 팝업 2차 · 11-10): 전체 본문을 한 번 정렬한 행 중 한 구간만 잘라 넘기면
+    ///   조각을 다시 정렬할 때 생기던 분류 차이(이웃 덩어리의 지운 줄이 Replace로 묶임)가 없다. `a_show`/`b_show` = 행의 index가
+    ///   가리키는 **전체** 줄 목록.
+    pub(crate) fn set_rows(
+        &mut self,
+        rows: Vec<diff::Row>,
+        a_show: &[String],
+        b_show: &[String],
+        obj: &str,
+        labels: (String, String),
+    ) {
+        self.rows = rows;
+        self.hunks = diff::hunks(&self.rows);
+        self.cur = (!self.hunks.is_empty()).then_some(0);
         let lt: Vec<&str> = self
             .rows
             .iter()
-            .map(|r| r.a.map_or("", |i| a_show[i].as_str()))
+            .map(|r| r.a.and_then(|i| a_show.get(i)).map_or("", String::as_str))
             .collect();
         let rt: Vec<&str> = self
             .rows
             .iter()
-            .map(|r| r.b.map_or("", |j| b_show[j].as_str()))
+            .map(|r| r.b.and_then(|j| b_show.get(j)).map_or("", String::as_str))
             .collect();
         self.left.set_text(&lt.join("\n"));
         self.right.set_text(&rt.join("\n"));
@@ -182,6 +197,12 @@ impl DiffView {
                 RowKind::Replace => Some((th.warn, 0.20)),
             })
             .collect()
+    }
+
+    /// 두 칸의 줄 간격을 편집기와 같게(hunk 팝업 높이 = 행 수 × 편집기 줄 높이가 맞아떨어지게 · 11-10 협업 관찰 ②).
+    pub(crate) fn set_line_spacing(&mut self, spacing: nexa_ctl::LineSpacing, font_px: f32) {
+        self.left.set_line_spacing(spacing, font_px);
+        self.right.set_line_spacing(spacing, font_px);
     }
 
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
