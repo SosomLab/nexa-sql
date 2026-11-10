@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-11-10 | 2026-11-10 → main · **fc872bf2** + 이 기록 커밋 | 2 | push 뒤 상태 점검(협업) = 다음 릴리스 게이트 결과 기록 보완 · choco 0.7.2 승인 정정 · journal 11-10 §7 · STATUS 시작점(사용자 결정 대기 2건) · [journal 11-10 §7](journal/2026-11-10.md) |
 | (main 직접) | 2026-11-10 | 2026-11-10 → main · **0fedee1e** | 1 | 도달 게이트 후속 = `probe_reachable` 접속 실패 상세에 실제 접속 대상 `connect <host>:<port>`(프록시면 프록시 호스트 · 협업 V1 관찰) · `crates/nsql-net` +7/−1 · [journal 11-10 §5](journal/2026-11-10.md) |
 | feat/driver-net-gate | 2026-11-10 | 2026-11-10 → main ff(삭제) | 2 | 드라이버 다운로드 직전 도달 게이트(사용자 11-10) = `probe_reachable` · `net_gate` · `driver.net_check_ms` · -1352 + 오프라인 번들 안내 · 행위별 1회(2eb3707e) · 기록(협업) · [journal 11-10 §5](journal/2026-11-10.md) |
 | fix/ext-curl-no-window | 2026-11-10 | 2026-11-10 → main ff(삭제 · rebase 뒤) · **432197ca** | 3 | 확장 패널·항목 클릭 때 콘솔 창 깜빡임(사용자 11-10) = curl → `quiet_command` 부품(8ef6b9b7) · 콘솔 창 금지 원칙 = `console-ok` 표시 + 자동 스캔 시험 · gitstat 통일(a736d1a8) · 기록(협업) · [journal 11-10 §2](journal/2026-11-10.md) |
