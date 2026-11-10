@@ -306,6 +306,8 @@
 | 키 | 종류 | 기본 | 분류 | 뜻 |
 |---|---|---|---|---|
 | `editor.git_gutter` | Bool | on | Editor | git 추적 파일의 HEAD 대비 변경 줄을 거터 둘째 띠로(C-1 · 끄면 띠·폭 원복) |
+| `editor.git_popup` | Bool | on | Editor | 거터 git 띠 클릭 = 덩어리 diff 팝업(편집기 ↔ HEAD · C-1 · D-477 · 11-10) |
+| `editor.git_context` | Int | 3 | Editor | git 덩어리 팝업의 위아래 문맥 줄 수(C-1 · D-477 · 11-10) |
 | `history.enabled` · `history.max_per_item` · `history.max_mb` | Bool · Int · Int | on · 50 · 200 | Undo | 파일 저장 시점 로컬 히스토리(`NSQL_HOME/history` · 항목당 개수 · 전체 MB 상한 · 39 §3-3) |
 | `grid.refetch_warn` | Bool | on | Grid | ORDER BY 없는 결과를 처음부터 다시 받아 교체했을 때 경고 토스트(결과 탭의 실행당 1회 · D-463 · `grid.refetch_confirm` 기본은 off로) |
 | `ui.toast_button_secs` | Int 1~600(초) | 15 | Appearance | 버튼 있는 토스트 수명(D-464 · T-380 · 10초 초과라 `_secs` = 6-5 규칙) |

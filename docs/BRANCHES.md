@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (nexa-ui main 직접) | 2026-11-10 | 2026-11-10 → nexa-ui main · **b8d0617** | 1 | **nexa-ui 저장소** · git 변경 띠 클릭 판정 `git_band_line_at`(C-1 hunk 팝업) · [journal 11-10 §13](journal/2026-11-10.md) |
+| (main 직접) | 2026-11-10 | 2026-11-10 → main · **8b7f7e73** · **7ccff1c7** · **be462daa** + 기록 | 4 | 22시 자율 진행 = O-1 `server` 시점 · C-1 hunk diff 팝업 + 보정(개발) · [journal 11-10 §13](journal/2026-11-10.md) · [journal 11-10 §14](journal/2026-11-10.md) |
 | (main 직접) | 2026-11-10 | 2026-11-10 → main · **e0d92635** · **99ad640a** + 기록 | 3 | 22시 자율 진행 = T-132 ① 치환 변수 비밀 가림(개발) · T-328 check-3os 교차 폴백 + 실행 비트(협업) · [journal 11-10 §12](journal/2026-11-10.md) |
 | (nexa-ui main 직접) | 2026-11-10 | 2026-11-10 → nexa-ui main · **eaa86a7** | 1 | **nexa-ui 저장소** · 더블/트리플 클릭 뒤 드래그 = 단어/줄 단위 선택 확장(사용자 11-10) · nexa-ctl textbox · nexa-sql 변경 없음 · [journal 11-10 §11](journal/2026-11-10.md) |
 | (main 직접) | 2026-11-10 | 2026-11-10 → main · **f7495f16** + 기록 | 2 | 설정 창 퍼지 검색(D-475) · `editor.word_wrap` + 보기 메뉴·팔레트 · 보기 메뉴 "환경 설정"(사용자 11-10 · 커밋 = nexa-sql-1a · 개발 4d8ead 수정 포함) · [journal 11-10 §10](journal/2026-11-10.md) |
