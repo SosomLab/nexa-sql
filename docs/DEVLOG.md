@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-10 밤 (Windows · 개발 × 협업 · SQLite 다중 문장)** — 협업이 O-1 V1 중 발견 = SQLite 객체 탭 F5가 `DROP;CREATE` 중 DROP만 실행해 뷰 소실(경고 0 · 재현 2/2) → 원인 = rusqlite `prepare` 첫 문장만 → 8b069b69(비조회 `execute_batch` · 조회/바인드 꼬리 오류 · D-479) · V1 ✓ · O-1 `_server_` ✓ · 통합 46/0 · [journal 11-10 §15](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · 22시 자율 진행)** — T-132 ① 치환 변수 비밀 가림(HIDE ∪ 이름 규칙 · D-476 · e0d92635) · T-328 check-3os 교차 C 도구 폴백(C 의존 없는 크레이트만) + `.sh` 실행 비트 점검 · 스크립트 5개 100755(99ad640a) · C-1 hunk diff 팝업 1차(7ccff1c7 · be462daa · nexa-ui b8d0617 · D-477) · O-1 `server` 시점(8b7f7e73 · D-478 · SQLite F5 첫 문장만 실행 정황) · -1352 lite 실기 ✓ · [journal 11-10 §12](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 드래그 단위)** — 사용자 "더블/트리플 클릭 뒤 드래그 = 단어/줄 단위" → nexa-ui nexa-ctl textbox(eaa86a7) · V1 헤드리스 3항 ✓ · [journal 11-10 §11](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 설정 검색·줄 바꿈)** — 사용자 3건 = 설정 창 퍼지 검색(낱말 AND · 머리 부분열 · D-475) · 새 키 `editor.word_wrap` + 보기 메뉴 ✓ + 팔레트 `PalKind::Switch` · 보기 메뉴 끝 "환경 설정"(f7495f16) · V2 ✓ · V1 ✓ · 같은 트리 개발 세션 중복(1a) 관찰 · [journal 11-10 §10](journal/2026-11-10.md).
