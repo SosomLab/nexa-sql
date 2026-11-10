@@ -1646,6 +1646,34 @@ impl App {
                 self.open_file_dlg = Some(nexa_dlg::PickerMode::Open);
             }
             "/clip" => self.ai_attach_clipboard(),
+            // ★ 결과 그리드 선택 영역(없으면 보이는 결과 전체 · Markdown 표 · 행 상한 `ai.max_rows`).
+            "/grid" => {
+                let max = self.settings.int("ai.max_rows").max(1) as usize;
+                let text = self
+                    .grid
+                    .copy_selection(crate::grid::CopyKind::Markdown)
+                    .map(|(t, _)| t)
+                    .or_else(|| self.grid.ai_text(max));
+                match text {
+                    Some(t) if !t.trim().is_empty() => {
+                        let lines: Vec<&str> = t.lines().take(max + 2).collect();
+                        let body = lines.join(
+                            "
+",
+                        );
+                        let n = lines.len().saturating_sub(2);
+                        if let Some(s) = self.ai_cur_mut() {
+                            s.rows_allowed = true;
+                            s.attachments.push(Attachment::Text {
+                                label: format!("grid ({n} rows)"),
+                                body,
+                            });
+                        }
+                        self.ai.status = t_(Msg::AiAttached);
+                    }
+                    _ => self.ai_push(ChatMsg::new(Kind::Error, t_(Msg::AiGridEmpty))),
+                }
+            }
             "/profiles" => {
                 self.ai_view.show_page(Page::Profiles);
                 let cur = self.ai.store.current().cloned();
@@ -1900,6 +1928,10 @@ impl App {
         }
         false
     }
+}
+
+fn t_(m: Msg) -> String {
+    t(m).to_string()
 }
 
 /// 읽기 전용 문장인가(SELECT/WITH/SHOW/EXPLAIN/DESC/VALUES · 한 문장).

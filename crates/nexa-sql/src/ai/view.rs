@@ -64,6 +64,7 @@ pub(crate) const SLASH: &[(&str, bool, Msg)] = &[
     ("/attach", false, Msg::AiSlashAttach),
     ("/clip", false, Msg::AiSlashClip),
     ("/rows", true, Msg::AiSlashRows),
+    ("/grid", false, Msg::AiSlashGrid),
     ("/profiles", false, Msg::AiSlashProfiles),
     ("/help", false, Msg::AiSlashHelp),
 ];
