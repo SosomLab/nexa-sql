@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-10 밤 (Windows · 개발 × 협업 · C-1 3차 · SQLite 세이브포인트)** — 팝업 문맥 = Equal 행 기준 · SQLite 여러 문장 배치 = SAVEPOINT로 전부 또는 전무(D-479 보강 · 6099a596) · V1 = 자동 커밋 중간 실패 = 종전 정의 유지 ✅ · 수동 커밋 ROLLBACK/COMMIT ✅ · 통합 46/0 · [journal 11-10 §15](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · C-1 2차)** — hunk 팝업 정렬 행 그대로(색 일치) · 줄 간격·높이 · O-1 "서버 본을 히스토리에 저장했습니다" 안내(0087a82c) · V1 a·c ✅ · b = 쐐기 팝업 ✓ · 변경 띠 팝업 아래 문맥 남음 · [journal 11-10 §13](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · SQLite 다중 문장)** — 협업이 O-1 V1 중 발견 = SQLite 객체 탭 F5가 `DROP;CREATE` 중 DROP만 실행해 뷰 소실(경고 0 · 재현 2/2) → 원인 = rusqlite `prepare` 첫 문장만 → 8b069b69(비조회 `execute_batch` · 조회/바인드 꼬리 오류 · D-479) · V1 ✓ · O-1 `_server_` ✓ · 통합 46/0 · [journal 11-10 §15](journal/2026-11-10.md).
 - **2026-11-10 밤 (Windows · 개발 × 협업 · 22시 자율 진행)** — T-132 ① 치환 변수 비밀 가림(HIDE ∪ 이름 규칙 · D-476 · e0d92635) · T-328 check-3os 교차 C 도구 폴백(C 의존 없는 크레이트만) + `.sh` 실행 비트 점검 · 스크립트 5개 100755(99ad640a) · C-1 hunk diff 팝업 1차(7ccff1c7 · be462daa · nexa-ui b8d0617 · D-477) · O-1 `server` 시점(8b7f7e73 · D-478 · SQLite F5 첫 문장만 실행 정황) · -1352 lite 실기 ✓ · [journal 11-10 §12](journal/2026-11-10.md).
