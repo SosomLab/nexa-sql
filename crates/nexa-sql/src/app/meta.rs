@@ -371,6 +371,19 @@ impl App {
                     server,
                     took_ms,
                 } => {
+                    // ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 받은 소스 = 히스토리에만(탭 불변) · 기다리던 출처와 같은 응답만 소비.
+                    if let Some(w) = self.history_server_wait.take() {
+                        let same = origin.as_ref().is_some_and(|o| {
+                            o.schema.eq_ignore_ascii_case(&w.schema)
+                                && o.name.eq_ignore_ascii_case(&w.name)
+                                && o.kind == w.kind
+                        });
+                        if same {
+                            self.history_object_store(&w, crate::history::Tag::Server, &text);
+                            continue;
+                        }
+                        self.history_server_wait = Some(w);
+                    }
                     // ★ 미리보기 요청이 더 새 객체로 바뀌었으면(↑/↓ 연타 · 10-16) 앞서 요청한 객체의 소스는 **버린다** — 뜻이 없어진 응답으로
                     //   미리보기 탭을 덮어쓰지 않게(최신 의도만 수행).
                     let stale_preview = self.findobj_goto.as_ref().is_some_and(|(n, _, p)| {

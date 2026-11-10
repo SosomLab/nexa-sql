@@ -6943,6 +6943,11 @@ impl Explorer {
         }
     }
 
+    /// ★ O-1 `server` 시점(11-10): 열린 탭 출처의 소스를 **다시** 받는다(패키지 본문은 종류만 `PackageBody` · 제목은 응답 가로채기라 안 쓰임).
+    pub(crate) fn reload_source_of(&mut self, o: &ObjectInfo, kind: ObjectKind) {
+        self.open_source_kind(o, kind, format!("{}.sql", o.name));
+    }
+
     /// 객체 찾기 창에서 SELECT 생성(탐색기 Generate SQL ▸ SELECT와 한 길).
     pub(crate) fn gen_select_of(&mut self, o: &ObjectInfo) {
         self.gen_sql(GenSpec {

@@ -1267,6 +1267,7 @@ impl App {
                     self.on_ev_timing(index, timeline);
                 }
                 RunEvent::Error { index, line, error } => {
+                    self.sess.run_had_err = true; // O-1 `server` 시점 판정(컴파일 오류 포함).
                     if self.on_ev_error(index, line, error) {
                         continue;
                     }
@@ -1296,6 +1297,13 @@ impl App {
                         g.request_fetch_all_force();
                     }
                 }
+                // ★ O-1 `server` 시점(19 §3 (c) · 11-10): 오브젝트 탭의 객체 F5가 **오류 없이** 끝나면 서버가 실제로 가진 소스를
+                //   다시 받아 히스토리에만 넣는다(탭 불변 · 응답은 meta.rs `OpenSql`에서 가로챈다). 오류가 있었으면 요청하지 않는다.
+                if std::mem::take(&mut self.sess.run_object) && !self.sess.run_had_err {
+                    self.history_server_request(self.sess.run_editor);
+                }
+            } else {
+                self.sess.run_object = false;
             }
             // 실행이 끝났다 = 이번 실행에서 쓰이지 않은 딸린 결과 탭(앞선 실행의 커서 탭)을 걷는다.
             if std::mem::take(&mut self.sess.run_tracking) {

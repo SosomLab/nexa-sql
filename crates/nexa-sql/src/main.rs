@@ -809,6 +809,8 @@ struct App {
     default_shared: u64,
     /// ★ 객체 소스 탭의 출처(편집기 탭 id → 서버·스키마·객체·종류 · 09-30): F5 = 본문 전체를 한 단위로 · 세션 = 그 서버.
     object_tabs: HashMap<u64, explorer::ObjectOrigin>,
+    /// ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 요청한 소스의 출처 — 같은 출처의 `OpenSql` 응답을 히스토리에만 넣고 소비.
+    history_server_wait: Option<explorer::ObjectOrigin>,
     /// ★ T-167 B5: 객체 북마크 재개 — 소스 조회를 보내 두고 탭이 열리면 이어서 이동할 (북마크 id, 정식 탭 여부).
     bm_goto_pending: Option<(u64, bool)>,
     /// `output.show=always` 갖춤을 탭 전환마다 한 번만(09-30).
@@ -2194,6 +2196,7 @@ fn main() {
         explorer_focus_key: None,
         objlink_menu_force_closed_for_resync: false,
         object_tabs: HashMap::new(),
+        history_server_wait: None,
         bm_goto_pending: None,
         output_last_editor: 0,
         default_shared: SHARED,

@@ -79,6 +79,35 @@ impl App {
         crate::backups::object_stem(&self.sess.profile, &info)
     }
 
+    /// ★ O-1 `server` 시점(19 §3 (c) · 11-10): 오브젝트 탭 `tab`의 객체 소스를 서버에서 다시 받아 **히스토리에만** 넣는다 —
+    ///   탭은 건드리지 않는다(응답은 meta.rs `OpenSql`이 `history_server_wait`로 가로챔 · 같은 해시면 저장 규칙대로 생략).
+    pub(crate) fn history_server_request(&mut self, tab: u64) {
+        if !self.settings.flag("history.enabled") {
+            return;
+        }
+        let Some(o) = self.object_tabs.get(&tab).cloned() else {
+            return;
+        };
+        let info = nsql_catalog::ObjectInfo {
+            db: String::new(),
+            schema: o.schema.clone(),
+            name: o.name.clone(),
+            kind: if o.kind == nsql_catalog::ObjectKind::PackageBody {
+                nsql_catalog::ObjectKind::Package
+            } else {
+                o.kind
+            },
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        let kind = o.kind;
+        let server = o.server.clone();
+        self.history_server_wait = Some(o);
+        self.explorer
+            .reload_source_for(server.as_ref(), &info, kind);
+    }
+
     /// 활성 탭의 히스토리 폴더 — 오브젝트 소스 탭(출처 있음)이면 객체 항목 · 아니면 파일 항목 · 둘 다 아니면 None.
     fn history_dir_active(&self) -> Option<PathBuf> {
         let tab = self.editors.active_id();

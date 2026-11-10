@@ -1254,6 +1254,19 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         true
     }
 
+    /// ★ O-1 `server` 시점(11-10): 그 서버 칸(없으면 활성 칸)에서 소스를 다시 받는다 — 응답은 호스트가 히스토리로 가로챈다.
+    pub(crate) fn reload_source_for(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        o: &nsql_catalog::ObjectInfo,
+        kind: nsql_catalog::ObjectKind,
+    ) {
+        match spec.and_then(|s| self.find(s)) {
+            Some(i) => self.panes[i].ex.reload_source_of(o, kind),
+            None => self.cur_mut().reload_source_of(o, kind),
+        }
+    }
+
     pub(crate) fn gen_select_for(
         &mut self,
         spec: Option<&ConnectSpec>,

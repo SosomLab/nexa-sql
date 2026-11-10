@@ -169,6 +169,10 @@ pub(crate) struct Sess {
     pub single_run: bool,
     /// 이번 실행에 결과 셋이 하나라도 왔나(Output 탭 전환 정책 `no_results` · 09-30).
     pub run_had_rs: bool,
+    /// ★ O-1 `server` 시점(19 §3 (c) · 11-10): 이번 실행에 `RunEvent::Error`가 하나라도 왔나(컴파일 오류 포함) — 실행 시작에 거짓.
+    pub run_had_err: bool,
+    /// ★ O-1: 이번 실행이 오브젝트 소스 탭의 **객체 단위 F5**(컴파일)였나 — 완료 때 소비(`take`) · 오류 없이 끝나면 서버 본을 다시 받는다.
+    pub run_object: bool,
     pub run_cancel_requested: bool,
     pub run_cancel_drops: bool,
     /// ★ 취소를 요청한 시각(사용자 10-09 "중지가 5~10초 뒤에야" — 서버가 break를 늦게 받는 경우의 탈출구): 요청 뒤 `run.force_stop_secs`가
@@ -268,6 +272,8 @@ impl Sess {
             run_line_base: 0,
             single_run: false,
             run_had_rs: false,
+            run_had_err: false,
+            run_object: false,
             run_cancel_requested: false,
             run_cancel_drops: false,
             run_cancel_at: None,
