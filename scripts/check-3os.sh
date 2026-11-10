@@ -9,6 +9,9 @@
 # ★ 교차 C 도구(11-01 mac V3 A4 · 222차): 141차 이후 rustls(PG TLS · tiberius)의 `ring`·`aws-lc-sys` 빌드 스크립트가 교차 타깃 **C 헤더·컴파일러**를
 #   요구한다(맥에서 `cc --target=x86_64-pc-windows-msvc` = 'assert.h' file not found). 그런 PC에서는 그 타깃을 **생략**(실패 아님 · 교차 판정은 CI =
 #   docs/61 §3) — 먼저 1줄짜리 C 파일로 탐침해 판단한다. `CROSS_C_PROBE=0`이면 탐침 없이 종전처럼 바로 돈다.
+# ★ T-328(11-10): 교차 C 도구가 없으면 그 타깃을 통째로 건너뛰지 않고 **C 빌드 의존(`cc`)이 없는 워크스페이스 크레이트만** 그 타깃으로
+#   clippy 한다(`cargo tree -i cc`로 매번 산출 · 비-호스트 `cfg` 스텁 누락 같은 실수를 이 PC에서 잡는다 · 나머지는 CI) ·
+#   `.sh` 실행 비트 점검(`git ls-files -s` = 100755 · `scripts/lib/`의 포함용 조각은 제외) = --quick에서도 돈다.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 FAIL=0
@@ -31,6 +34,13 @@ case "$HOST" in
     *)                OTHERS=(x86_64-pc-windows-msvc x86_64-apple-darwin) ;;
 esac
 
+step "scripts/*.sh 실행 비트(100755)"
+NOX="$(git ls-files -s -- 'scripts/*.sh' ':!scripts/lib/*' 2>/dev/null | awk '$1 != "100755" {print $4}')"
+if [[ -n "$NOX" ]]; then
+    echo "  ✗ 실행 비트 없음(Windows 커밋 = 100644 · 맥·리눅스에서 ./ 실행 불가):"; echo "$NOX" | sed 's/^/    /'
+    echo "    → git update-index --chmod=+x <파일>"; FAIL=$((FAIL+1))
+else echo "  ✓"; fi
+
 step "fmt --check"
 run cargo fmt --all -- --check
 step "clippy 호스트($HOST)"
@@ -41,7 +51,13 @@ if [[ "${1:-}" != "--quick" ]]; then
             echo "  ⚠ 타깃 std 없음: rustup target add $T (이번은 건너뜀)"; continue
         fi
         if [[ "${CROSS_C_PROBE:-1}" != 0 ]] && ! printf '#include <assert.h>\nint main(void){return 0;}\n' | "${CC:-cc}" --target="$T" -x c -c - -o /dev/null >/dev/null 2>&1; then
-            echo "  ⚠ 교차 C 도구 없음($T · ring/aws-lc-sys 빌드 스크립트가 C 헤더 요구) — 이 타깃은 생략 · 교차 판정은 CI(docs/61 §3)"; continue
+            PURE=$(comm -23 <(cargo tree --workspace --depth 0 --prefix none --format '{p}' 2>/dev/null | awk '{print $1}' | sort -u) \
+                <(cargo tree --workspace --target "$T" -e normal,build,dev -i cc --prefix none --format '{p}' 2>/dev/null | awk '{print $1}' | sort -u))
+            if [[ -z "$PURE" ]]; then echo "  ⚠ 교차 C 도구 없음($T) · C 의존 없는 크레이트 0 — 생략 · 교차 판정은 CI(docs/61 §3)"; continue; fi
+            step "clippy --target $T (교차 C 도구 없음 → C 의존 없는 크레이트 $(grep -c . <<< "$PURE")개만 · 나머지는 CI)"
+            # shellcheck disable=SC2046
+            run cargo clippy $(printf -- '-p %s ' $PURE) --all-targets --target "$T" -- -D warnings
+            continue
         fi
         step "clippy --target $T"
         run cargo clippy --workspace --all-targets --target "$T" -- -D warnings
