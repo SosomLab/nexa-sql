@@ -167,10 +167,12 @@
 | 풀다운 ▸ 보기 | 레이아웃 초기화 | `MnResetLayout` / `view.layout_reset` | 없음 | `restart_alt` / `discard` | 아이콘 불필요 |
 | 풀다운 ▸ 보기 | 색 설정… | `MnColors` / `view.colors` | 없음 | `palette` / `symbol-color` | 추가 |
 | 풀다운 ▸ 보기 | 단축키… | `MnKeys` / `view.keys` | 없음 | `keyboard` / `record-keys` | 추가 |
+| 풀다운 ▸ 보기 | 자동 줄 바꿈(켜짐 = ✓ · 11-10) | `view.word_wrap` | 없음 | — | 아이콘 불필요(체크 표시) |
 | 풀다운 ▸ 보기 | 테마 ▸ | `MnThemeMenu` | 없음 | `contrast` / `color-mode` | 추가 |
 | 풀다운 ▸ 보기 ▸ 테마 | (테마 이름들 · 현재 ✓) | `view.theme:*` | 없음 | — | 아이콘 불필요 |
 | 풀다운 ▸ 보기 | 언어 ▸ | `MnLanguageMenu` | 없음 | `language` / `globe` | 추가 |
 | 풀다운 ▸ 보기 ▸ 언어 | (언어 이름들 · 현재 ✓) | `view.lang:*` | 없음 | — | 아이콘 불필요 |
+| 풀다운 ▸ 보기 | 환경 설정(맨 끝 · 11-10) | `edit.prefs` | 없음 | `settings` / `gear` | 편집 메뉴 항목과 같은 판정 |
 | 풀다운 ▸ 실행 | 문장 실행 | `MnRunStatement` / `run.statement` | 없음 | `play_arrow` / `play` (재사용 `run_statement`) | 추가 |
 | 풀다운 ▸ 실행 | 새 결과 탭에 문장 실행 | `MnRunStatementNewTab` / `run.statement_new_tab` | 없음 | `playlist_play` / 확인 필요 | 추가 |
 | 풀다운 ▸ 실행 | 전체 실행 | `MnRunAll` / `run.all` | 없음 | `fast_forward` / `run-all` (재사용 `run_all`) | 추가 |
