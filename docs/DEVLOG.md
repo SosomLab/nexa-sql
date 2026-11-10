@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-11 (Windows · 개발 × 협업 · AI 탭)** — 사용자 "클로드 API · 다중 API · CLI 직접 모두 쓸 수 있는 클로드 탭 · 전체 기능을 이번 사이클에" → Claude 탭 1차(2d8adfaa · 볼트 비밀 be20dc72) · Codex 어댑터 + 제공자 선택(8c13ea52) · `/grid`(f8d2ccd5) · D-481 · 헤드리스 V1(모의) 1차 a ✓ b ❌ → 2차 전부 ✓ · 설정 17 · CI ✅ · 실기·Codex 키 확정 = T-475 · [journal 11-11 §2](journal/2026-11-11.md).
 - **2026-11-11 (Windows · 개발 × 협업 · 비밀 변수 설정화)** — 사용자 "비밀 이름 키워드를 설정으로 · 변수 창에서 잠깐 보기" → `vars.secret_names` · `vars.reveal_secret` 👁(누르는 동안만 · f4483ecd · D-480) · CLI V1 3가지 ✓ · 👁 캡처 ✓ · [journal 11-10 §12](journal/2026-11-10.md).
 - **2026-11-11 (Windows · 개발 × 협업 · push · 설정 검색 3차)** — push 전 게이트 ✓ → nexa-ui b8d0617 · nexa-sql c32c9052 push · CI 3 ✅ · 설정 검색 판정 캐시(7d1c4768 · 좁힌 검색 rebuild 40~60% ↓) · T-473 ✅ · 사용자 실기 ✓ = 검색 체감 · SCHEMA 칩 · 변수 창 비밀 가림 · [journal 11-10 §16](journal/2026-11-10.md).
 - **2026-11-11 (Windows · 개발 × 협업 · 설정 창 2차 · AI 플러그인 설계)** — 설정 카드 그리기 캐시를 창 수준으로(d93e50ce · 돌아온 검색어 첫 paint 27~40 → 3.6~7 ms · 깜빡임 수정) · AI 어시스턴트 플러그인(Claude · Codex) 설계 초안 docs/110(CLI 호스팅 + MCP 서버 · 결정 후보 6 대기) · [journal 11-10 §16](journal/2026-11-10.md) · [journal 11-10 §17](journal/2026-11-10.md).
