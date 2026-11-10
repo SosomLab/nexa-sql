@@ -192,6 +192,8 @@ pub(crate) struct Editors {
     scroll_snap: bool,
     /// 미니맵(켬 · 폭 논리 px · T-97).
     minimap: (bool, i32),
+    /// ★ 자동 줄 바꿈(사용자 11-10 · 설정 `editor.word_wrap`) — 모든 탭 공통 · 새 탭은 `make_box` · 큰 파일 탭은 `enforce_large`가 끈다.
+    word_wrap: bool,
     /// ★ T-110 2-5(10-30): 좁은 창 자동 숨김 열 수(`editor.minimap_min_cols` · 0 = 규칙 없음) — 새 탭에도 같은 값.
     minimap_min_cols: usize,
     /// ★ T-110 3-2·3-3(10-31): 배율(0 = 자동 · 1~3) · 왼쪽 배치 — 새 탭에도 같은 값.
@@ -389,6 +391,7 @@ impl Editors {
             tab_stops: true,
             scroll_snap: false,
             minimap: (false, 160),
+            word_wrap: false,
             minimap_min_cols: 0,
             minimap_layout: (2, false),
             minimap_autohide: false,
@@ -535,6 +538,7 @@ impl Editors {
         tb.set_scroll_snap(self.scroll_snap);
         tb.set_minimap(self.minimap.0);
         tb.set_minimap_width(self.minimap.1);
+        tb.set_wrap(self.word_wrap);
         tb.set_minimap_min_cols(self.minimap_min_cols);
         tb.set_minimap_scale(self.minimap_layout.0);
         tb.set_minimap_left(self.minimap_layout.1);
@@ -776,6 +780,15 @@ impl Editors {
         for b in &mut self.bufs {
             b.set_line_spacing(spacing, font_px);
         }
+    }
+
+    /// ★ 자동 줄 바꿈을 모든 탭에(사용자 11-10 · 새 탭은 `make_box`가 같은 값 · 큰 파일 탭은 그대로 끔).
+    pub(crate) fn set_word_wrap(&mut self, on: bool) {
+        self.word_wrap = on;
+        for b in &mut self.bufs {
+            b.set_wrap(on);
+        }
+        self.enforce_large();
     }
 
     pub(crate) fn set_minimap(&mut self, on: bool, width: i32) {
@@ -2011,6 +2024,8 @@ impl Editors {
             }
             let b = &mut self.bufs[i];
             b.set_minimap(false);
+            // 접기(wrap)는 전 줄 폭 측정이라 큰 파일은 끈다(미니맵과 같은 이유 · 11-10).
+            b.set_wrap(false);
             b.set_occurrence_highlight(false);
             b.set_baseline(None);
             if feature_limited(level, syntax_at) {

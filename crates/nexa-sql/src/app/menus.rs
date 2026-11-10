@@ -992,6 +992,15 @@ impl App {
                 self.apply_minimap();
                 self.redraw();
             }
+            // ★ 자동 줄 바꿈 토글(사용자 11-10) = 설정 `editor.word_wrap` 하나 → 저장 + 모든 탭 적용 + 메뉴 ✓ 갱신.
+            "view.word_wrap" => {
+                let on = !self.settings.flag("editor.word_wrap");
+                let _ = self
+                    .settings
+                    .set("editor.word_wrap", if on { "on" } else { "off" });
+                let _ = self.settings.save();
+                self.apply_word_wrap();
+            }
             "view.explorer" => {
                 let on = !self.explorer.is_visible();
                 if on {
@@ -1373,7 +1382,15 @@ impl App {
     }
 
     pub(crate) fn build_menus() -> Vec<MenuDef> {
-        Self::build_menus_with(&[], &[], false, false, Vec::new(), (Vec::new(), Vec::new()))
+        Self::build_menus_with(
+            &[],
+            &[],
+            false,
+            false,
+            Vec::new(),
+            (Vec::new(), Vec::new()),
+            false,
+        )
     }
 
     /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
@@ -1385,9 +1402,19 @@ impl App {
         blocked: bool,
         project: Vec<MenuEntry>,
         view_subs: (Vec<MenuEntry>, Vec<MenuEntry>),
+        word_wrap: bool,
     ) -> Vec<MenuDef> {
         let (theme_entries, lang_entries) = view_subs;
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
+        // ★ 자동 줄 바꿈(사용자 11-10) = 켜져 있으면 ✓ 접두(테마·언어 하위 메뉴와 같은 관례 · 토글 때 `rebuild_menus`).
+        let word_wrap_item = MenuEntry::Item(ComboItem::new(
+            "view.word_wrap",
+            format!(
+                "{}{}",
+                if word_wrap { "✓ " } else { "" },
+                t(Msg::MnWordWrap)
+            ),
+        ));
         let gated = |id: &str, m: Msg| {
             if blocked {
                 MenuEntry::Disabled(ComboItem::new(id, t(m)))
@@ -1571,12 +1598,16 @@ impl App {
                     item("view.drivers", Msg::MnDrivers),
                     item("vars.show", Msg::MnShowVariables),
                     item("vars.script", Msg::MnVariablesScript),
+                    word_wrap_item,
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     item("view.toolbar_reset", Msg::MnResetToolbar),
                     item("view.layout_reset", Msg::MnResetLayout),
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
                     item("view.keys", Msg::MnKeys),
+                    // ★ 환경 설정은 Edit에도 있지만 View에서도(사용자 11-10 "팔레트에서 설정창을 열 수 있도록 View 메뉴 추가") — 같은 id
+                    //   `edit.prefs`(팔레트 "Edit: Preferences" 한 줄 · 단축키 Ctrl+,).
+                    item("edit.prefs", Msg::MnPreferences),
                     // ★ 테마·언어 = 하위 메뉴에서 고르기(현재 값 ✓ · 사용자 10-06) — 순환 명령 `view.theme`/`view.lang`은 키맵·팔레트용으로 남긴다.
                     MenuEntry::sub(t(Msg::MnThemeMenu), theme_entries),
                     MenuEntry::sub(t(Msg::MnLanguageMenu), lang_entries),
@@ -1662,6 +1693,7 @@ impl App {
                 self.gate_shown.unwrap_or(false),
                 self.project_menu_entries(),
                 (self.theme_menu_entries(), self.lang_menu_entries()),
+                self.settings.flag("editor.word_wrap"),
             ));
         }
     }
@@ -1871,6 +1903,7 @@ impl App {
         match id {
             "view.explorer" => self.explorer.is_visible(),
             "view.minimap" => self.settings.flag("editor.minimap"),
+            "view.word_wrap" => self.settings.flag("editor.word_wrap"),
             "view.object_details" => self.settings.flag("explorer.details"),
             "view.output" => self.panel.output_index().is_some(),
             "view.search" => self.search.is_visible(),
@@ -1907,9 +1940,10 @@ impl App {
         // ★ T-14 1단계(10-29): 정적 항목은 `commands::PALETTE` 표 한 곳 — 종류별로 조건·라벨만 여기서 정한다.
         // ★ 보기 메뉴의 켜고 끄는 항목은 **지금 상태 기준 한 줄**(사용자 09-27 "켜져 있으면 숨기기, 꺼져 있으면 보이기 —
         //   2줄씩 보이지 않게"): 팔레트를 여는 순간 상태를 읽어 라벨만 정한다(평소 비용 0 · 열 때 한 번).
-        let tv = |id: &str, item: Msg, on: bool| {
+        let tv = |id: &str, item: Msg, on: bool, verbs: (Msg, Msg)| {
             let label = t(item).to_string();
-            let verb_msg = if on { Msg::PalHide } else { Msg::PalShow };
+            let (hide, show) = verbs;
+            let verb_msg = if on { hide } else { show };
             let verb = tf(verb_msg, &[&label]);
             // 숨은 검색 키 = 모든 언어의 "보기: 보이기/숨기기 항목"(둘 다 = 상태와 무관하게 이름으로 찾히게).
             let key = nsql_i18n::Lang::ALL
@@ -1919,8 +1953,8 @@ impl App {
                     format!(
                         "{}: {} {}",
                         nsql_i18n::tr(lang, Msg::MnView),
-                        nsql_i18n::tr(lang, Msg::PalHide).replace("{0}", item_l),
-                        nsql_i18n::tr(lang, Msg::PalShow).replace("{0}", item_l)
+                        nsql_i18n::tr(lang, hide).replace("{0}", item_l),
+                        nsql_i18n::tr(lang, show).replace("{0}", item_l)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1933,9 +1967,18 @@ impl App {
         for c in crate::app::commands::PALETTE {
             match c.kind {
                 crate::app::commands::PalKind::Plain => cmds.push(m(c.id, c.menu, c.item)),
-                crate::app::commands::PalKind::Toggle => {
-                    cmds.push(tv(c.id, c.item, self.view_toggle_state(c.id)))
-                }
+                crate::app::commands::PalKind::Toggle => cmds.push(tv(
+                    c.id,
+                    c.item,
+                    self.view_toggle_state(c.id),
+                    (Msg::PalHide, Msg::PalShow),
+                )),
+                crate::app::commands::PalKind::Switch => cmds.push(tv(
+                    c.id,
+                    c.item,
+                    self.view_toggle_state(c.id),
+                    (Msg::PalTurnOff, Msg::PalTurnOn),
+                )),
                 crate::app::commands::PalKind::ExtOn if ext_on => {
                     cmds.push(m(c.id, c.menu, c.item))
                 }
@@ -2022,6 +2065,7 @@ impl App {
             self.gate_shown.unwrap_or(false),
             self.project_menu_entries(),
             (self.theme_menu_entries(), self.lang_menu_entries()),
+            self.settings.flag("editor.word_wrap"),
         ));
     }
 

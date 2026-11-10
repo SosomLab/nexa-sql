@@ -17,6 +17,8 @@ pub(crate) enum PalKind {
     Plain,
     /// 보기 토글 — 지금 상태에 따라 "보기: <항목> 보이기/숨기기" 한 줄(사용자 09-27 · 메뉴 그룹은 늘 View).
     Toggle,
+    /// 켜고 끄는 설정 — "보기: <항목> 켜기/끄기" 한 줄(패널이 아니라 동작이라 보이기/숨기기가 어색한 것 · 자동 줄 바꿈 11-10).
+    Switch,
     /// 확장 관리자가 **켜져** 있을 때만.
     ExtOn,
     /// 확장 관리자가 **꺼져** 있을 때만.
@@ -49,6 +51,15 @@ const fn tv(id: &'static str, item: Msg) -> PalCmd {
         menu: Msg::MnView,
         item,
         kind: PalKind::Toggle,
+    }
+}
+
+const fn sw(id: &'static str, item: Msg) -> PalCmd {
+    PalCmd {
+        id,
+        menu: Msg::MnView,
+        item,
+        kind: PalKind::Switch,
     }
 }
 
@@ -160,6 +171,8 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     // 보기 토글(켜져 있으면 "숨기기" · 꺼져 있으면 "보이기" 한 줄).
     tv("view.explorer", Msg::MnExplorer),
     tv("view.minimap", Msg::MnMinimap),
+    // ★ 자동 줄 바꿈(사용자 11-10 "워드랩 기능은 명령 팔레트에도") — 켜기/끄기 한 줄.
+    sw("view.word_wrap", Msg::MnWordWrap),
     tv("view.object_details", Msg::MnObjectDetails),
     tv("view.output", Msg::MnOutput),
     tv("view.search", Msg::MnSearchPanel),

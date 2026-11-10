@@ -230,6 +230,14 @@ impl App {
     }
 
     /// 설정 → 미니맵(T-97).
+    /// ★ 자동 줄 바꿈(사용자 11-10): 설정 `editor.word_wrap` 하나(창별 아님) → 모든 탭 + View 메뉴 ✓ + 다시 그리기.
+    pub(crate) fn apply_word_wrap(&mut self) {
+        self.editors
+            .set_word_wrap(self.settings.flag("editor.word_wrap"));
+        self.rebuild_menus();
+        self.redraw();
+    }
+
     pub(crate) fn apply_minimap(&mut self) {
         // 전체 선택 뒤 화면(09-30 · 기동 때 미니맵과 함께 적용).
         self.editors
@@ -1006,6 +1014,7 @@ impl App {
             | "editor.minimap_click"
             | "editor.minimap_find"
             | "editor.minimap_errors" => self.apply_minimap(),
+            "editor.word_wrap" => self.apply_word_wrap(),
             // 자원 거버너(T-90a/d · docs/39): 상한 세터 4종 · 모드가 바뀌면 원장 키 전부 재적용(실효 값이 바뀌므로).
             "log.max_lines" => self
                 .log_win
@@ -1578,6 +1587,7 @@ impl App {
             self.gate_shown.unwrap_or(false),
             self.project_menu_entries(),
             (self.theme_menu_entries(), self.lang_menu_entries()),
+            self.settings.flag("editor.word_wrap"),
         ));
         let layout = self.tool_dock.layout();
         self.tool_dock = App::build_tool_dock();

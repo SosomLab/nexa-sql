@@ -363,6 +363,7 @@ impl App {
             self.gate_shown.unwrap_or(false),
             self.project_menu_entries(),
             (self.theme_menu_entries(), self.lang_menu_entries()),
+            self.settings.flag("editor.word_wrap"),
         ));
     }
 

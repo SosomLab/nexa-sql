@@ -312,6 +312,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "",
         linux: "",
     },
+    // ★ 자동 줄 바꿈(사용자 11-10) — 기본 키 없음(Sublime Alt+Shift+W는 Linux 맵에만) · 키 설정에서 배정.
+    Command {
+        id: "view.word_wrap",
+        label: Msg::MnWordWrap,
+        win: "",
+        mac: "",
+        linux: "",
+    },
     // ★ 다음/이전 문장(`;` 기준 · 사용자 09-16) — Alt+↓/↑: Sublime 기본 맵에서 비어 있고(Ctrl+Shift+↑/↓ = 줄 교체 ·
     //   Ctrl+Alt+↑/↓ = 커서 추가) 방향키라 "이동"으로 읽힌다.
     Command {

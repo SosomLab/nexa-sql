@@ -3648,6 +3648,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 자동 줄 바꿈(사용자 11-10 · View ▸ Word Wrap · 팔레트 `view.word_wrap`) — 모든 탭 공통 · 큰 파일 탭은 강제 끔.
+    Entry {
+        key: "editor.word_wrap",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorWordWrap,
+        desc: Msg::DescEditorWordWrap,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     // 탭 구분별 활성 상단 줄 색(09-22 · 09-28 사용자 "저장된/미저장/미리보기 구분별 식별선" · 빈 값 = 기본: 미저장 warn · 저장된 파일
     //   accent · 미리보기 text_dim). 미저장 = 파일이 아닌 스크립트 탭 + 저장 뒤 바뀐 파일 탭.
     Entry {

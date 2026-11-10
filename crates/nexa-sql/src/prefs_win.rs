@@ -656,9 +656,8 @@ impl PrefsWin {
         let changed_on = self.changed_keys.is_some();
         let in_set = |key: &str| self.changed_keys.as_ref().is_some_and(|k| k.contains(key));
         let q = self.query.trim().to_lowercase();
-        // 한글 = 자모열 비교(조합 중 "ㄱ"·"기"도 · nsql-core `hangul` · 사용자 09-23 "검색에 쓰이는 모든 입력") — 09-19의
-        //   "조합 중 글자 즉시 반영"(IME 경로 `display_text`) 위에 얹는다.
-        let qj = nsql_core::hangul::has_hangul(&q).then(|| nsql_core::hangul::decompose(&q, true));
+        // ★ 퍼지 검색(사용자 11-10 "edi fin"이 빈 화면): 공백 낱말 AND · 판정은 `query_hit`(한글 자모 비교 09-23 규칙 유지).
+        let tokens = crate::palette::query_tokens(&q);
         let mut chosen: Vec<Snap> = Vec::new();
         let mut adv_hidden = 0usize;
         if !q.is_empty() {
@@ -666,19 +665,9 @@ impl PrefsWin {
                 if self.hidden.contains(&sn.entry.cat) || nsql_settings::is_internal(sn.entry.key) {
                     continue;
                 }
-                let hay = format!(
-                    "{} {} {} {}",
-                    sn.entry.key,
-                    t(sn.entry.label),
-                    t(sn.entry.desc),
-                    t(sn.entry.cat)
-                )
-                .to_lowercase();
-                let hit = match &qj {
-                    Some(j) => nsql_core::hangul::contains_jamo(&hay, j, true),
-                    None => hay.contains(&q),
-                };
-                if hit {
+                let short = format!("{} {}", sn.entry.key, t(sn.entry.label)).to_lowercase();
+                let long = format!("{} {}", t(sn.entry.desc), t(sn.entry.cat)).to_lowercase();
+                if query_hit(&short, &long, &tokens) {
                     match card_pass(
                         changed_on,
                         in_set(sn.entry.key),
@@ -757,6 +746,12 @@ impl PrefsWin {
             }
         } else if adv_hidden > 0 {
             Some(tf(Msg::PrefsAdvancedHidden, &[&adv_hidden.to_string()]))
+        } else if !q.is_empty() && chosen.is_empty() {
+            // ★ 0건 안내(사용자 11-10 · 종전 = 빈 화면).
+            Some(tf(
+                Msg::PrefsNoMatch,
+                &[&format!("'{}'", self.query.trim())],
+            ))
         } else {
             None
         };
@@ -2704,6 +2699,47 @@ enum Pass {
     HiddenUnchanged,
 }
 
+/// ★ 설정 검색 일치(사용자 11-10 "퍼지 검색"): 공백으로 나눈 낱말 **전부**(AND) · 영문·숫자 낱말은 키·라벨(`short`)에서 팔레트와 같은
+///   순서 유지 부분열(`palette::fuzzy_score_lower` · "edi" → **edi**tor) 또는 설명·범주(`long`)의 부분 문자열(긴 설명에 부분열을 쓰면
+///   거의 다 걸려 쓸모가 없다) · 한글 낱말은 자모열 연속 일치(조합 중 "ㄱ"·"기" · 09-23 규칙 유지). 표시 순서는 종전대로 레이아웃 순.
+fn query_hit(short: &str, long: &str, tokens: &[Vec<char>]) -> bool {
+    tokens.iter().all(|tok| {
+        let word: String = tok.iter().collect();
+        if nsql_core::hangul::has_hangul(&word) {
+            let j = nsql_core::hangul::decompose(&word, true);
+            nsql_core::hangul::contains_jamo(short, &j, true)
+                || nsql_core::hangul::contains_jamo(long, &j, true)
+        } else {
+            head_subseq(tok, short) || long.contains(&word)
+        }
+    })
+}
+
+/// 순서 유지 부분열인데 **첫 글자는 낱말 머리**(문자열 처음 · 또는 앞 글자가 영숫자가 아님 — `.`·`_`·공백 뒤)에서만 시작한다:
+/// "edi" → **edi**tor.find ○ · r**e**n**d**er**i**ng ×(협업 V1 11-10 "gfx.linux_backend가 edi fin에 걸림" · 팔레트
+/// `fuzzy_score_lower`는 어디서든 시작해 긴 라벨에서 과다 일치).
+fn head_subseq(tok: &[char], hay: &str) -> bool {
+    let Some(&first) = tok.first() else {
+        return true;
+    };
+    let chars: Vec<char> = hay.chars().collect();
+    (0..chars.len()).any(|i| {
+        if chars[i] != first || (i > 0 && chars[i - 1].is_alphanumeric()) {
+            return false;
+        }
+        let mut rest = tok[1..].iter();
+        let mut need = rest.next();
+        for &c in &chars[i + 1..] {
+            match need {
+                Some(&n) if n == c => need = rest.next(),
+                Some(_) => {}
+                None => break,
+            }
+        }
+        need.is_none()
+    })
+}
+
 fn card_pass(changed_on: bool, in_changed_set: bool, adv_on: bool, is_adv: bool) -> Pass {
     if changed_on {
         if in_changed_set {
@@ -2843,6 +2879,50 @@ mod tests {
             ro(&w, "oracle.client_dir"),
             (true, "C:/detected/instantclient".into())
         );
+    }
+
+    /// ★ 퍼지 검색(사용자 11-10): 공백 낱말 AND · 낱말마다 키·라벨은 순서 유지 부분열("edi fin" → editor.find_…) · 설명·범주는
+    ///   부분 문자열 · 한글은 자모열 · 0건이면 안내문.
+    #[test]
+    fn fuzzy_query_matches_split_words_and_notes_no_match() {
+        let path =
+            std::env::temp_dir().join(format!("nsql-prefs-fuzzy-{}.conf", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let s = Settings::open(path.clone());
+        let mut w = PrefsWin::new();
+        w.advanced.set_on(true); // 고급 키(minimap_width 등)도 카드로
+        w.refresh(&s);
+        w.preset_query("edi fin");
+        assert!(
+            w.cards
+                .iter()
+                .any(|c| c.entry.key == "editor.find_auto_scope"),
+            "낱말 AND + 부분열: {:?}",
+            w.cards.iter().map(|c| c.entry.key).collect::<Vec<_>>()
+        );
+        assert!(
+            !w.note.as_deref().is_some_and(|n| n.contains("edi fin")),
+            "일치가 있으면 0건 안내 없음(고급 숨김 안내는 될 수 있다): {:?}",
+            w.note
+        );
+        w.preset_query("minimap width");
+        assert!(w
+            .cards
+            .iter()
+            .any(|c| c.entry.key == "editor.minimap_width"));
+        // 한글 낱말은 자모열 비교(`query_hit`) — 라벨·설명은 UI 언어(시험 = 영어)라 여기서는 키에만 있는 영문으로 본다.
+        assert!(
+            !w.cards.iter().any(|c| c.entry.key == "gfx.linux_backend"),
+            "낱말 머리가 아닌 부분열(r-e-n-d-e-r-i-n-g)은 안 걸린다"
+        );
+        w.preset_query("zzqqxx");
+        assert!(w.cards.is_empty());
+        assert!(
+            w.note.as_deref().is_some_and(|n| n.contains("zzqqxx")),
+            "0건 안내: {:?}",
+            w.note
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// ★ T-39b 범위 "프로젝트"(67 §8-4): 켜면 허용 키만 · 절 값이 카드 값 + 강조 · 절에 없는 허용 키 = 실효값 + 강조 없음 ·

@@ -42,6 +42,7 @@ impl App {
         self.editors
             .set_scroll_snap(self.settings.get("editor.scroll") == Some("row"));
         self.apply_minimap();
+        self.apply_word_wrap();
         self.apply_line_height();
         // 자원 거버너 상한(T-90d · 부팅 1회) — 실효 값(`perf.mode` 반영).
         self.log_win
