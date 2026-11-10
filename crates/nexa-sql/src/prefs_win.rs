@@ -178,6 +178,9 @@ pub(crate) struct PrefsWin {
     shown: bool,
     /// ★ 카드 그리기 캐시(설정 키별 · T-473 · `CardCache`).
     card_cache: std::collections::HashMap<&'static str, CardCache>,
+    /// ★ 검색 판정 문자열 캐시(설정 키별 · T-473 2차): (언어 · 소문자 "키 라벨" · 소문자 "설명 범주") — 글자마다 ≈810개 항목의
+    ///   `format!`·`to_lowercase`·번역 호출을 다시 하지 않는다(협업 재측정: rebuild "e" Release 4~7 ms).
+    hay_cache: std::collections::HashMap<&'static str, (nsql_i18n::Lang, String, String)>,
     /// ★ 11-10 계측(docs/71 측정 먼저 · `prefs.dump`에 `perf …` 줄 · `NSQL_TRACE_FRAMES`면 stderr `[prefs]`): 열기 시작 시각 ·
     ///   창 생성 ms · 첫 그리기 ms · 마지막 `rebuild_cards` µs · 마지막 `paint` µs(그중 설명 줄바꿈 µs) · 그린 카드 수.
     perf: PrefsPerf,
@@ -520,6 +523,7 @@ impl PrefsWin {
             model_lang: nsql_i18n::current_lang(),
             shown: false,
             card_cache: std::collections::HashMap::new(),
+            hay_cache: std::collections::HashMap::new(),
             perf: PrefsPerf::default(),
             window: None,
             memo: crate::wingeom::Memo::default(),
@@ -703,9 +707,18 @@ impl PrefsWin {
                 if self.hidden.contains(&sn.entry.cat) || nsql_settings::is_internal(sn.entry.key) {
                     continue;
                 }
-                let short = format!("{} {}", sn.entry.key, t(sn.entry.label)).to_lowercase();
-                let long = format!("{} {}", t(sn.entry.desc), t(sn.entry.cat)).to_lowercase();
-                if query_hit(&short, &long, &tokens) {
+                let lang = nsql_i18n::current_lang();
+                let (short, long) = match self.hay_cache.get(sn.entry.key) {
+                    Some((l, sh, lg)) if *l == lang => (sh.as_str(), lg.as_str()),
+                    _ => {
+                        let sh = format!("{} {}", sn.entry.key, t(sn.entry.label)).to_lowercase();
+                        let lg = format!("{} {}", t(sn.entry.desc), t(sn.entry.cat)).to_lowercase();
+                        self.hay_cache.insert(sn.entry.key, (lang, sh, lg));
+                        let e = &self.hay_cache[sn.entry.key];
+                        (e.1.as_str(), e.2.as_str())
+                    }
+                };
+                if query_hit(short, long, &tokens) {
                     match card_pass(
                         changed_on,
                         in_set(sn.entry.key),
@@ -2266,12 +2279,20 @@ impl PrefsWin {
                 .snap
                 .iter()
                 .any(|s| s.entry.key == "perf.boost" && s.value == "on");
+            // 호스트 덧말(`<키>#note`)이 하나도 없으면 카드마다 `format!` 할당을 하지 않는다(T-473 2차 · 337장 × 프레임).
+            let any_info_note = self.info.keys().any(|k| k.ends_with("#note"));
             for c in &mut self.cards {
                 // 설명 + (있으면) 호스트가 준 **한 줄 덧말**(`<키>#note` — 예: 이 값이 무엇으로 정해졌는지 · 사용자 09-21).
                 let host_note = self
                     .notes
                     .get(c.entry.key)
-                    .or_else(|| self.info.get(&format!("{}#note", c.entry.key)))
+                    .or_else(|| {
+                        if any_info_note {
+                            self.info.get(&format!("{}#note", c.entry.key))
+                        } else {
+                            None
+                        }
+                    })
                     .filter(|n| !n.is_empty());
                 // ★ T-39b: "프로젝트에서 덮어씀" 덧말은 호스트 덧말 앞에(둘 다 있으면 ` · `로 잇는다).
                 let note: Option<String> = match (self.project_notes.get(c.entry.key), host_note) {
