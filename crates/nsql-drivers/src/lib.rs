@@ -538,6 +538,9 @@ pub fn driver_status_for(dialect: Dialect, want: Option<&str>) -> DriverStatus {
 /// 자동 설치가 실패한 오류 코드(호스트가 [`ERR_DRIVER_MISSING`]과 다른 안내를 낸다 · 상세는 message).
 pub const ERR_DRIVER_INSTALL_FAILED: i64 = -1351;
 
+/// 드라이버 저장소 미도달(다운로드 직전 도달 게이트 · 사용자 11-10 · 호스트는 오프라인 번들 설치 안내를 낸다 · 상세는 message).
+pub const ERR_DRIVER_OFFLINE: i64 = -1352;
+
 /// 드라이버 없음 오류(코드 [`ERR_DRIVER_MISSING`] · 메시지에 설치 명령 · `want` = `?driver=` 지정이면 그 id를 안내).
 #[must_use]
 pub fn driver_missing(dialect: Dialect, want: Option<&str>) -> DbError {
@@ -597,6 +600,8 @@ pub fn open_auto(
 ) -> Result<Box<dyn Session>, DbError> {
     let dialect = spec.dialect.unwrap_or(default_dialect);
     let want = spec.driver.as_deref();
+    // ★ 한 접속 = 한 다운로드 행위(설치 + 갱신 + 재시도를 묶어 도달 확인 1회 · 사용자 11-10).
+    let _net = ext::install::NetAction::begin();
     match driver_status_for(dialect, want) {
         DriverStatus::Missing { .. } => {
             ensure_driver(dialect, want, driver_missing(dialect, want), progress)?;
@@ -643,7 +648,11 @@ fn ensure_driver(
         &mut |stage, n, total| progress(id, stage, n, total),
     )
     .map_err(|ie| DbError {
-        code: Some(ERR_DRIVER_INSTALL_FAILED),
+        code: Some(if ie.kind == ext::install::InstallErrorKind::Offline {
+            ERR_DRIVER_OFFLINE
+        } else {
+            ERR_DRIVER_INSTALL_FAILED
+        }),
         message: format!("{} - auto-install failed: {ie}", base.message),
         position: None,
     })?;

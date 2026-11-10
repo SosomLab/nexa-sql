@@ -6307,6 +6307,19 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 5, max: 600 },
         default: "30",
     },
+    // ★ 사용자 11-10 "네트워크 접속 확인을 다운로드 직전에 게이트로 · 최대한 짧게 · 다운로드 행위별 1회": 닿지 않으면 다운로드를 시도하지
+    //   않고 오프라인 번들 안내(-1352). DNS + TCP 접속 1회 · 데이터 없음 · 0 = 끔(94 §6-5: 10초 이하 = ms).
+    Entry {
+        key: "driver.net_check_ms",
+        cat: Msg::CatDbmsDrivers,
+        label: Msg::LblDriverNetCheck,
+        desc: Msg::DescDriverNetCheck,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000,
+        },
+        default: "1500",
+    },
     Entry {
         key: "license.gates",
         // ★ 고급 ▸ 내부(사용자 10-07 "개발자/사용자가 볼 수 없어야") — 설정 창에는 고급을 켜도 안 보인다(`INTERNAL_CATEGORIES`).

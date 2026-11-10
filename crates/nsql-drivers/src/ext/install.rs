@@ -44,6 +44,8 @@ pub enum InstallErrorKind {
     Index,
     /// 자산 내려받기 실패(HTTP · 네트워크).
     Download,
+    /// 드라이버 저장소에 닿지 않음(다운로드 직전 도달 게이트 · 사용자 11-10 · `item` = 호스트) — 호스트는 오프라인 번들 안내를 낸다.
+    Offline,
     /// sha256 불일치.
     Checksum,
     /// 서명 검증 실패 · 신뢰 키 없음.
@@ -70,6 +72,7 @@ impl InstallErrorKind {
             Self::AlreadyInstalled => "already_installed",
             Self::Index => "index",
             Self::Download => "download",
+            Self::Offline => "offline",
             Self::Checksum => "checksum",
             Self::Signature => "signature",
             Self::Abi => "abi",
@@ -132,6 +135,95 @@ fn ie(kind: InstallErrorKind, item: impl Into<String>, detail: impl Into<String>
     InstallError::new(kind, item, detail)
 }
 
+/// ★ 도달 게이트의 **행위 범위**(사용자 11-10 "다운로드 행위별 1회"): 한 행위(접속 1회 · `nsql driver` 명령 1회 · 관리자 설치 1회) 안에서
+///   첫 확인이 통과하면 그 행위의 나머지 다운로드는 다시 확인하지 않는다 — 시간 창이 아니라 범위 토큰(중첩 = 깊이 셈 · 마지막 토큰이
+///   사라지면 잊는다). 실패는 기억하지 않는다(다음 행위에서 다시 짧게 확인).
+static GATE: std::sync::Mutex<GateState> = std::sync::Mutex::new(GateState::new());
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GateState {
+    depth: u32,
+    passed: bool,
+}
+
+impl GateState {
+    const fn new() -> Self {
+        GateState {
+            depth: 0,
+            passed: false,
+        }
+    }
+    fn enter(&mut self) {
+        self.depth += 1;
+    }
+    fn leave(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+        if self.depth == 0 {
+            self.passed = false;
+        }
+    }
+    /// 이 행위에서 이미 통과했나(행위 밖 = 항상 false).
+    fn skip(&self) -> bool {
+        self.depth > 0 && self.passed
+    }
+    fn pass(&mut self) {
+        if self.depth > 0 {
+            self.passed = true;
+        }
+    }
+}
+
+/// 행위 토큰 — 만들면 범위 시작 · 떨어뜨리면 끝(마지막이면 통과 기억을 지운다). [`install`]은 스스로 하나를 잡으므로 호출자는 여러 설치를
+/// 한 행위로 묶을 때만 더 잡는다(`nsql_drivers::open_auto` · CLI `driver` 명령).
+#[must_use = "범위 토큰은 변수에 잡아 두어야 행위가 이어진다"]
+#[derive(Debug)]
+pub struct NetAction(());
+
+impl NetAction {
+    pub fn begin() -> NetAction {
+        if let Ok(mut g) = GATE.lock() {
+            g.enter();
+        }
+        NetAction(())
+    }
+}
+
+impl Drop for NetAction {
+    fn drop(&mut self) {
+        if let Ok(mut g) = GATE.lock() {
+            g.leave();
+        }
+    }
+}
+
+/// 다운로드 직전 도달 확인(`Source::probe` · 0 = 끔) — 통과(또는 이 행위에서 이미 통과)면 `Ok`, 아니면 [`InstallErrorKind::Offline`].
+fn net_gate(src: &Source) -> Result<(), InstallError> {
+    if src.probe.is_zero() {
+        return Ok(());
+    }
+    if GATE.lock().is_ok_and(|g| g.skip()) {
+        return Ok(());
+    }
+    let url = index_url(src);
+    let host = nsql_net::parse_url(&url)
+        .map(|u| u.host)
+        .unwrap_or_else(|_| src.raw.clone());
+    nsql_net::probe_reachable(&url, src.probe, None).map_err(|e| {
+        ie(
+            InstallErrorKind::Offline,
+            &host,
+            format!(
+                "driver repository unreachable ({host}, {} ms budget): {e}",
+                src.probe.as_millis()
+            ),
+        )
+    })?;
+    if let Ok(mut g) = GATE.lock() {
+        g.pass();
+    }
+    Ok(())
+}
+
 /// 어디서 받는가.
 #[derive(Clone, Debug)]
 pub struct Source {
@@ -148,6 +240,8 @@ pub struct Source {
     pub api: String,
     /// raw 파일 기본 URL(`https://raw.githubusercontent.com` · 색인).
     pub raw: String,
+    /// ★ 다운로드 직전 도달 확인 예산(`driver.net_check_ms` · 0 = 끔 · 사용자 11-10).
+    pub probe: Duration,
 }
 
 impl Source {
@@ -163,18 +257,20 @@ impl Source {
             base: "https://github.com".into(),
             api: "https://api.github.com".into(),
             raw: "https://raw.githubusercontent.com".into(),
+            probe: Duration::from_millis(1500),
         }
     }
 
-    /// 설정 값에서(`driver.repo` · `driver.http_timeout_secs`) — GUI·CLI 공용.
+    /// 설정 값에서(`driver.repo` · `driver.http_timeout_secs` · `driver.net_check_ms`) — GUI·CLI 공용.
     #[must_use]
-    pub fn from_settings(repo: Option<&str>, timeout_secs: i64) -> Source {
+    pub fn from_settings(repo: Option<&str>, timeout_secs: i64, probe_ms: i64) -> Source {
         let repo = repo
             .map(str::trim)
             .filter(|r| !r.is_empty())
             .unwrap_or(DEFAULT_REPO);
         Source {
             timeout: Duration::from_secs(timeout_secs.clamp(5, 600) as u64),
+            probe: Duration::from_millis(probe_ms.clamp(0, 10_000) as u64),
             ..Source::new(repo)
         }
     }
@@ -359,6 +455,13 @@ pub fn fetch_index(
     let cache = cached_index(root);
     if !refresh && cache.is_some() && cached_index_age(root).is_some_and(|a| a < INDEX_FRESH) {
         return Ok((cache.unwrap_or_default(), true));
+    }
+    // ★ 도달 게이트(사용자 11-10): 닿지 않으면 GET을 시도하지 않는다 — 캐시가 있으면 캐시로(종전 실패 폴백과 같음) · 없으면 Offline.
+    if let Err(e) = net_gate(src) {
+        return match cache {
+            Some(c) => Ok((c, true)),
+            None => Err(e),
+        };
     }
     let mut o = src.options(false);
     if cache.is_some() {
@@ -718,6 +821,9 @@ pub fn install(
     keys: &[RootKey],
     progress: Progress<'_>,
 ) -> Result<InstallReport, InstallError> {
+    // ★ 설치 하나 = 행위 하나(바깥 토큰이 있으면 그 행위에 묶인다) · 다운로드 직전 도달 확인은 여기서 한 번(사용자 11-10).
+    let _action = NetAction::begin();
+    net_gate(src)?;
     progress("index", 0, None);
     let (mut index, cached) = fetch_index(src, root, false)?;
     let mut entry = index.find(id).cloned();
@@ -973,6 +1079,27 @@ pub fn update_summary(ups: &[Update]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 도달 게이트 행위 범위(사용자 11-10 "다운로드 행위별 1회"): 범위 안 첫 통과는 기억 · 중첩은 깊이로 · 마지막 토큰이 끝나면 잊는다 ·
+    /// 범위 밖(depth 0)에서는 통과를 기억하지 않는다(설치마다 확인).
+    #[test]
+    fn net_gate_scope_remembers_pass_only_inside_action() {
+        let mut g = GateState::new();
+        assert!(!g.skip());
+        g.pass();
+        assert!(!g.skip(), "범위 밖 통과는 기억하지 않는다");
+        g.enter();
+        assert!(!g.skip());
+        g.pass();
+        assert!(g.skip());
+        g.enter();
+        assert!(g.skip(), "중첩 범위도 같은 행위");
+        g.leave();
+        assert!(g.skip(), "안쪽 토큰이 끝나도 바깥 행위는 이어진다");
+        g.leave();
+        assert!(!g.skip(), "마지막 토큰이 끝나면 잊는다");
+        assert_eq!(g, GateState::new());
+    }
 
     #[test]
     fn index_parse_and_names() {

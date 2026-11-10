@@ -718,6 +718,11 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
                     nsql_i18n::tf(nsql_i18n::Msg::StDriverInstallFailed, &[dn]),
                     e.message
                 ),
+                Some(nsql_drivers::ERR_DRIVER_OFFLINE) => format!(
+                    "{} ({})",
+                    nsql_i18n::tf(nsql_i18n::Msg::StDriverOffline, &[dn]),
+                    e.message
+                ),
                 _ => nsql_i18n::tf(nsql_i18n::Msg::StConnectFailed, &[&e.message]),
             };
             eprintln!("{text}");
@@ -726,6 +731,7 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
                 e.code,
                 Some(nsql_drivers::ERR_DRIVER_MISSING)
                     | Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED)
+                    | Some(nsql_drivers::ERR_DRIVER_OFFLINE)
             ) {
                 eprintln!("  {}", e.message);
             }

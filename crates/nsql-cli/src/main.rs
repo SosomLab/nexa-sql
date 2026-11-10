@@ -519,6 +519,7 @@ pub(crate) fn apply_driver_switches() {
             nsql_drivers::ext::install::Source::from_settings(
                 s.get("driver.repo"),
                 s.int("driver.http_timeout_secs"),
+                s.int("driver.net_check_ms"),
             )
         }));
         nsql_drivers::set_auto_upgrade(s.flag("driver.auto_upgrade"));
@@ -1659,6 +1660,7 @@ impl Printer {
                     Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED) => {
                         Some(Msg::StDriverInstallFailed)
                     }
+                    Some(nsql_drivers::ERR_DRIVER_OFFLINE) => Some(Msg::StDriverOffline),
                     _ => None,
                 } {
                     let dn = self.dialect.display_name();

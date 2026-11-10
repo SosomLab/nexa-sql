@@ -144,6 +144,8 @@ fn install_round_trip_over_local_server() {
         base: base.clone(),
         api: base.clone(),
         raw: base,
+        // 도달 게이트(사용자 11-10) = 로컬 서버라 즉시 통과 — 게이트가 켜진 채로 왕복이 그대로 돌아야 한다.
+        probe: std::time::Duration::from_millis(1500),
     };
     std::env::set_var("HTTPS_PROXY", "");
     let keys = keys();
@@ -388,5 +390,54 @@ fn offline_bundle_installs_every_asset_for_this_platform() {
     let ids: Vec<&str> = listed.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(ids.len(), 2);
     assert!(ids.contains(&"alpha") && ids.contains(&"gamma"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// ★ 도달 게이트(사용자 11-10 "네트워크 접속 확인을 다운로드 직전에 · 최대한 짧게"): 저장소 호스트에 닿지 않으면 색인·자산 GET을 시도하지
+/// 않고 `Offline` 종류로 **예산 안에** 끝난다(닫힌 포트 = 즉시 거부). 호스트는 이 종류로 오프라인 번들 안내를 낸다.
+#[test]
+fn unreachable_repository_fails_fast_with_offline_kind() {
+    let root = std::env::temp_dir().join(format!("nsql-install-offline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = l.local_addr().expect("addr").port();
+    drop(l);
+    let base = format!("http://127.0.0.1:{port}");
+    let src = Source {
+        repo: "SosomLab/t".into(),
+        branch: "main".into(),
+        token: None,
+        timeout: std::time::Duration::from_secs(5),
+        base: base.clone(),
+        api: base.clone(),
+        raw: base,
+        probe: std::time::Duration::from_millis(1500),
+    };
+    std::env::set_var("HTTPS_PROXY", "");
+    let keys = keys();
+    let t0 = std::time::Instant::now();
+    let mut stages = Vec::new();
+    let err = install::install(
+        &src,
+        &root,
+        "fakedb",
+        None,
+        false,
+        false,
+        &keys,
+        &mut |st, _, _| stages.push(st.to_string()),
+    )
+    .expect_err("unreachable repository must fail");
+    assert_eq!(err.kind, install::InstallErrorKind::Offline);
+    assert_eq!(err.item, "127.0.0.1");
+    assert!(
+        stages.is_empty(),
+        "게이트에서 막히면 색인 단계로 가지 않는다: {stages:?}"
+    );
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        t0.elapsed()
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -1106,6 +1106,7 @@ pub(crate) fn spawn(
                                     last_err = Some(match error.code {
                                         Some(nsql_drivers::ERR_DRIVER_MISSING) => tf(Msg::StDriverMissing, &[dn]),
                                         Some(nsql_drivers::ERR_DRIVER_INSTALL_FAILED) => tf(Msg::StDriverInstallFailed, &[dn]),
+                                        Some(nsql_drivers::ERR_DRIVER_OFFLINE) => tf(Msg::StDriverOffline, &[dn]),
                                         _ => error.message.clone(),
                                     });
                                 }
@@ -2310,6 +2311,14 @@ pub(crate) fn spawn_test(
                         "{} ({})",
                         tf(
                             Msg::StDriverInstallFailed,
+                            &[spec.dialect.map(|d| d.display_name()).unwrap_or("")],
+                        ),
+                        e.message
+                    ),
+                    Some(nsql_drivers::ERR_DRIVER_OFFLINE) => format!(
+                        "{} ({})",
+                        tf(
+                            Msg::StDriverOffline,
                             &[spec.dialect.map(|d| d.display_name()).unwrap_or("")],
                         ),
                         e.message

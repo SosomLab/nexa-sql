@@ -290,6 +290,81 @@ fn tcp_connect(
     })))
 }
 
+/// ★ 도달 게이트(사용자 11-10 "네트워크 접속 확인을 다운로드 직전에 · 최대한 짧게"): `url`의 호스트(프록시가 있으면 프록시 호스트)에
+///   DNS 해석 + TCP 접속 한 번을 **`budget` 안에** 끝낸다 — 데이터는 보내지 않는다(SYN 1회 · 26 §8). DNS는 OS 해석기라 상한이 없어
+///   스레드에서 돌리고 남은 예산만 기다린다(막히면 그 스레드는 해석이 끝날 때 조용히 사라진다). 주소가 여럿이면 남은 예산 안에서 차례로.
+///   `proxy` = [`Options::proxy`]와 같은 뜻(`None` = 환경 변수 · 빈 문자열 = 없음).
+pub fn probe_reachable(url: &str, budget: Duration, proxy: Option<&str>) -> Result<(), NetError> {
+    let start = std::time::Instant::now();
+    let o = Options {
+        proxy: proxy.map(str::to_string),
+        ..Options::default()
+    };
+    let (host, port) = match o.effective_proxy() {
+        Some(p) => {
+            let u = parse_url(&p)?;
+            (u.host, u.port)
+        }
+        None => {
+            let u = parse_url(url)?;
+            (u.host, u.port)
+        }
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let h = host.clone();
+    std::thread::Builder::new()
+        .name("net-probe-dns".into())
+        .spawn(move || {
+            let _ = tx.send(
+                (h.as_str(), port)
+                    .to_socket_addrs()
+                    .map(|a| a.collect::<Vec<_>>()),
+            );
+        })
+        .map_err(NetError::Io)?;
+    let addrs = match rx.recv_timeout(budget) {
+        Ok(Ok(a)) => a,
+        Ok(Err(e)) => {
+            return Err(NetError::Io(io::Error::new(
+                e.kind(),
+                format!("resolve {host}: {e}"),
+            )))
+        }
+        Err(_) => {
+            return Err(NetError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("resolve {host}: timed out after {} ms", budget.as_millis()),
+            )))
+        }
+    };
+    if addrs.is_empty() {
+        return Err(NetError::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no address for {host}"),
+        )));
+    }
+    let mut last = None;
+    for a in addrs {
+        let left = budget.saturating_sub(start.elapsed());
+        if left.is_zero() {
+            break;
+        }
+        match TcpStream::connect_timeout(&a, left) {
+            Ok(_) => return Ok(()),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(NetError::Io(last.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "connect {host}:{port}: timed out after {} ms",
+                budget.as_millis()
+            ),
+        )
+    })))
+}
+
 /// ★ 공개 소켓(10-25 · D-361 · 네이티브 DB 드라이버용): 평문 TCP 또는 TLS(rustls · 시스템 루트) 위 `Read + Write` 하나 —
 ///   DRDA(Db2) 등 HTTP가 아닌 프로토콜이 쓴다. 접속·읽기·쓰기 타임아웃 · Nagle 끔. 스스로 재시도하지 않는다(26 §8).
 pub struct Socket(Conn);
@@ -680,6 +755,19 @@ pub fn get_bytes(url: &str, o: &Options) -> Result<(Response, Vec<u8>), NetError
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    /// 도달 게이트: 열린 포트 = Ok · 닫힌 포트 = Err — 둘 다 예산 안에 끝난다(사용자 11-10 "최대한 짧게").
+    #[test]
+    fn probe_reachable_open_and_closed_port() {
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().expect("addr").port();
+        let url = format!("http://127.0.0.1:{port}/drivers/index.json");
+        let t0 = std::time::Instant::now();
+        assert!(probe_reachable(&url, Duration::from_millis(1500), Some("")).is_ok());
+        drop(l);
+        assert!(probe_reachable(&url, Duration::from_millis(1500), Some("")).is_err());
+        assert!(t0.elapsed() < Duration::from_secs(5));
+    }
 
     #[test]
     fn url_parse_and_join() {

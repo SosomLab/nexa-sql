@@ -84,6 +84,7 @@ impl App {
         Source::from_settings(
             self.settings.get("driver.repo"),
             self.settings.int("driver.http_timeout_secs"),
+            self.settings.int("driver.net_check_ms"),
         )
     }
 
