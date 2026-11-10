@@ -204,3 +204,33 @@
 - 데스크톱 앱(이 플러그인)에서의 형태: 사용자가 회사 IdP(Entra ID·Okta·사내 OIDC)에 **브라우저 로그인(PKCE · localhost 콜백 — 부품 있음)** → 받은 ID 토큰(JWT)을 위 교환 요청으로 Anthropic 토큰으로 → 1시간 안팎마다 재교환. 규칙이 "이 발급자의 이 클레임이면 서비스 계정 Z"라 **사용자 신원은 IdP가, 과금·권한은 서비스 계정**이 맡는다(감사는 IdP 로그 + Console 인증 이력).
 - 주의: ① `jti`가 있는 JWT는 **1회용** — 재교환마다 IdP에서 새 토큰을 받아야 한다(refresh_token/silent 재발급 필요 · 캐시 재사용 = `jti_reused` 실패) ② 발급자 JWKS는 공개 https여야(사내 IdP가 비공개면 `inline` 키 업로드) ③ 관리자 설정 없이는 불가 · **개인 Ultra 구독과는 무관**(Console 조직 전용) ④ OpenAI API의 동등 기능은 문서에서 확인하지 못함(확인 필요).
 - 설계 반영: `ai.profiles`의 인증 종류에 `api_key | wif`를 둔다 · `wif` = {발급자 로그인 URL(OIDC 디스커버리) · client_id · 규칙/조직/서비스 계정/워크스페이스 ID} · 토큰·refresh_token은 볼트 봉투 · 교환·갱신은 `nsql-net` POST(SSE 아님) · 2차 범위(1차 = API 키).
+
+## 15. 구현 1차 기록(2026-11-11 · 사용자 "전체 기능을 이번 사이클에" · 커밋 be20dc72 · 2d8adfaa)
+
+### 15-1 무엇이 들어갔나(코드 = `crates/nexa-sql/src/ai/` + `app/ai.rs` · 배선 34파일 · +8,002줄)
+| 조각 | 파일 | 요지 |
+|---|---|---|
+| 핵심 모델 | `ai/mod.rs` | `Mode{Api,Cli}` · `Profile`/`ProfileStore`(`NSQL_HOME/ai/profiles.conf` · 키 없음) · `Session`(메시지 · 사용량 · CLI 세션 id · 첨부 · 행 동의) · 이력 `NSQL_HOME/ai/history/<id>.jsonl`(**가림 뒤 저장** · 보존 `ai.history_keep_days`) · `redact`/`contains_secret`(sk- 키 · `password=` · `user/pw@`) · `AiEvent`(호스트 → UI) |
+| CLI 프로토콜 | `ai/claude_cli.rs` | `claude -p --output-format stream-json --input-format stream-json --include-partial-messages --verbose --model --permission-mode [--bare] [--effort] [--mcp-config <인라인 JSON> --permission-prompt-tool mcp__nexa__approve] [--resume] --append-system-prompt` · stdout 줄 → 이벤트(init/텍스트 델타/tool_use/tool_result/result 사용량·비용) · stdin 턴 = 텍스트 + 이미지 블록(base64 자체 구현) |
+| API 직접 | `ai/claude_api.rs` | Messages API(`nsql-net` POST · SSE 싱크로 블록 조립 — 사고·서명·tool_use 입력 델타 포함) · `thinking: adaptive` · `output_config.effort` · 프롬프트 캐시(system + 마지막 메시지 `ephemeral`) · 도구 루프(≤64회 · 도구 실행은 UI 스레드에 `ToolRequest`로 부탁) · 비용 추정(요율 표) · `/v1/models`로 키 검증 |
+| 도구 표 | `ai/tools.rs` | 16종(§3-2의 축약판 · 이름은 접두 없이 · MCP는 `mcp__nexa__*`): list_commands · run_command · get_setting · set_setting · get_editor_text · set_editor_text · format_sql · search_objects · describe_object · object_source · list_profiles · session_info · connect · run_query · get_result · explain · (+MCP `approve`) · `write` 표식 = 승인 카드 대상 · 시스템 프롬프트 공통 |
+| 호스트 | `ai/host.rs` | `Host{tx,rx,running}` — CLI = `quiet_command`(콘솔 창 0 · Windows npm `claude.cmd` → `node cli.js`로 풀어 셸 없이) 자식 + stdout 읽기 스레드 + Wake · API = 턴 스레드(대화 `Arc<Mutex<Vec<Json>>>` 공유) · Mock(`NSQL_AI_MOCK=1` · 헤드리스 V1 각본) · ■ = kill/깃발 |
+| MCP 서버 | `ai/mcp.rs` + `nsql-cli/src/mcp_bridge.rs` | GUI가 `127.0.0.1:<ai.mcp_port>`(0 = 임의)에 줄 JSON-RPC(initialize · tools/list · tools/call · ping) · 첫 줄 토큰 · `nsql mcp-bridge --port --token` = stdio ↔ TCP 중계(Claude Code가 띄움) · `approve` = 앱 승인 카드 → `{behavior: allow|deny}` |
+| 좌측 패널 | `ai/panel.rs` | 모드 분할 버튼(API/CLI) · 프로필/모델/노력도 드롭 · Auto 스위치 · [새 대화][프로필] · 사용량 한 줄 · **세션 관리**(사용자 11-11 "이전 기록 활용"): 검색 상자 · 목록(모드 태그 · 제목 · 턴 수) · 클릭 = 열기/이어하기 · 우클릭 = 열기·이름 바꾸기·삭제 · 메뉴 비트 131072 |
+| 채팅 뷰 탭 | `ai/view.rs` | 뷰 탭 키 `ai.chat`(편집기 자리 · UI 글꼴) · 머리줄(모드·모델·프로필·상태) · 대본(역할 줄 · 단어 줄 바꿈 캐시 · 코드 블록 배경 + [복사][편집기에 넣기] · 도구 호출/결과 줄 · 승인 카드 [허용][거부] · 오류 경고색) · 작성 상자(다중행 · Enter 보내기 · Shift+Enter 줄 바꿈 · Esc 비움) · `/` 팝업(11 명령 · ↑↓ · Tab/Enter 완성) · 첨부 칩(× 제거) · [파일…][클립보드][프로필] [보내기/■] · 두 번째 페이지 = 프로필 관리(목록 [사용][편집][삭제] · 폼 이름/기본 URL/워크스페이스/모델/노력도/**키 마스킹** · [저장][검증][대화로] · 키 보관 안내) |
+| 앱 연결 | `app/ai.rs` | `AiState`(호스트 · 세션 목록 · 프로필 저장소 · MCP · 승인 대기 · 비동기 도구 대기 · 결과 포착) · 세션 관리(새 대화 · 열기 = CLI `--resume` / API = 글만 재구성 · 이름 · 삭제) · 보내기(비밀 포함 글 차단 · 첨부 본문화/이미지 블록) · 이벤트 수거(틱 + Wake) · 도구 실행 한 곳(읽기 = 즉시 · 쓰기 = 승인 · 행 데이터 = 세션당 1회 동의 · Auto = 읽기·안전 명령 자동 · **비조회 run_query는 Auto여도 확인**) · `run_query`/`explain`/`/query` = `run_text_whole` → `run_events`에서 결과셋 포착 → 세션 한가해지면 응답(`ai.max_rows` 상한 · 오류는 상태줄 글) · `object_source` = 탐색기 소스 탭 열림 대기 · 파일 첨부(이미지/PDF/글 ≤512 KB) · 헤드리스 `ai.open` `ai.panel` `ai.send:` `ai.approve:` `ai.dump:` |
+| 배선 | activity · commands · menus · input · paint · event_loop · project · toolbar · settings · init · startup_cmd · run_events · grid(`ai_text`) · explorer(`ai_search_objects`/`ai_describe`/`ai_object_info`) · file_win/files(`FilePurpose::AiAttach`) | 활동 막대 `view.ai`(`ai.enabled` 꺼지면 숨김) · 팔레트 `tv("view.ai")` · `p("ai.chat")` · `sw("ai.enabled")`(확장 관리자처럼 켜기/끄기 · 사용자 11-11) · 포커스 `Focus::Ai` · 프로젝트 패널 복원 `"ai"` |
+| 설정 | `nsql-settings` 범주 `CatAi` 13키 | `ai.enabled`(off) · `ai.mode`(api|cli) · `ai.model`(claude-opus-5-5) · `ai.effort`(medium) · `ai.auto`(off) · `ai.max_rows`(200) · `ai.timeout_secs`(300) · `ai.max_tokens`(8192) · `ai.history_keep_days`(90) · `ai.cli_path`(claude) · `ai.permission_mode`(default|acceptEdits|plan) · `ai.bare`(on) · `ai.mcp_port`(0) |
+
+### 15-2 §10 결정 후보의 실제 선택(추천안 그대로 · 1분 규칙)
+- 키 보관 = 볼트 봉투 `ai.<프로필>`(`Vault::put_secret` · 기기 키 · 설정/프로젝트 파일 0) · 입력은 마스킹 · 검증은 `/v1/models` · 자식 프로세스에는 환경 변수로만(1차 CLI 모드는 사용자 자신의 로그인이라 키를 넘기지 않는다).
+- CLI 모드 기본 `--bare`(사용자 홈 훅·MCP·CLAUDE.md 미적재) · 파일 도구는 주지 않음(`--permission-prompt-tool` = 우리 `approve`).
+- 행 데이터 = 세션당 1회 동의 카드(`rows_allowed`) · `/rows on|off` · `/query`는 동의로 간주.
+- 이력 = 가림 뒤 저장 · 세션 제목도 가림.
+- 모델 선택지 4(opus-5-5 · sonnet-5-5 · haiku-5-5 · fable-5-1) · Models API 조회는 2차.
+
+### 15-3 남은 것(이번 사이클 다음 단위)
+1. 실기 확인(협업 V1 각본 → 사용자 실기: API 프로필 등록·검증 · CLI 모드 첫 턴 · 승인 카드 · `/query`).
+2. Codex 어댑터(`codex app-server` JSONL · §5 표의 두 번째 열) — 같은 `AiEvent`·도구 표.
+3. 클립보드 **이미지** 첨부(CF_DIB → PNG · `png::encode` 있음) · 결과 그리드 선택 영역 첨부.
+4. WIF(§14-5) = 2차 · Models API 조회 · 비용 표 설정화.
