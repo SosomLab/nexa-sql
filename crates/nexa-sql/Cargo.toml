@@ -38,6 +38,8 @@ nsql-catalog.workspace = true
 nsql-vault.workspace = true
 # ★ T-14 2단계(10-29): .sublime-keymap 파서(JSON · 주석 제거 뒤 nsql-json).
 nsql-json.workspace = true
+# ★ AI 어시스턴트(docs/110 · 11-11): Messages API 직접 호출(HTTPS · SSE 스트림) — 자체 TLS 클라이언트.
+nsql-net.workspace = true
 # ★ T-166 E8(11-05): 확장 메타 파서·sha256을 CLI `nsql ext`와 공유.
 nsql-ext.workspace = true
 nsql-io.workspace = true

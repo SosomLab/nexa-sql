@@ -38,6 +38,8 @@ use nsql_script::ConnectSpec;
 /// 앱 이름 — 설정 폴더 하위 이름(`%APPDATA%\nexa-sql` · `~/.config/nexa-sql` · `~/Library/Application Support/nexa-sql`).
 pub const APP_DIR: &str = nsql_settings::APP_DIR;
 const PROFILES_DIR: &str = "profiles";
+/// ★ 임의 이름 비밀(API 키 · 토큰 · 11-11) 폴더.
+const SECRETS_DIR: &str = "secrets";
 const DEVICE_KEY: &str = "device.key";
 const EXT: &str = "conf";
 /// ★ 지운 프로필 보관 폴더(T-31b · 11-04): `profiles/.deleted/<해시>.<유닉스 초>[-n].conf` — `list()`는 `.deleted` 폴더를 보지 않는다(하위 폴더).
@@ -236,6 +238,75 @@ impl Vault {
 
     fn domain(name: &str) -> Vec<u8> {
         format!("profile-v1/{name}").into_bytes()
+    }
+
+    /// ★ 임의 이름의 비밀(API 키 · 토큰 · docs/110 §4 · 11-11) — 프로필 비밀번호와 같은 봉투(기기 키 + ChaCha20-Poly1305) ·
+    ///   `secrets/<해시>.conf` 두 줄(`name=` 평문 · `secret=` 봉투 hex). 설정·프로젝트 파일에는 절대 두지 않는다.
+    pub fn put_secret(&self, name: &str, plain: &[u8]) -> io::Result<()> {
+        Self::check_name(name)?;
+        let dir = self.dir.join(SECRETS_DIR);
+        std::fs::create_dir_all(&dir)?;
+        let env = sealed::seal(&Self::secret_domain(name), &self.key, plain)?;
+        let mut text = format!("name={name}");
+        text.push('\n');
+        text.push_str("secret=");
+        text.push_str(&hex_encode(&env));
+        text.push('\n');
+        let path = dir.join(Self::file_name(name));
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, text)?;
+        std::fs::rename(&tmp, &path)
+    }
+
+    /// 비밀 읽기 — 없거나 봉투를 못 열면 `None`(기기가 바뀌면 못 연다 · 프로필 비밀번호와 같다).
+    #[must_use]
+    pub fn get_secret(&self, name: &str) -> Option<Vec<u8>> {
+        let path = self.dir.join(SECRETS_DIR).join(Self::file_name(name));
+        let text = std::fs::read_to_string(path).ok()?;
+        let mut stored_name = None;
+        let mut secret = None;
+        for line in text.lines() {
+            if let Some(v) = line.strip_prefix("name=") {
+                stored_name = Some(v.to_string());
+            } else if let Some(v) = line.strip_prefix("secret=") {
+                secret = hex_decode(v);
+            }
+        }
+        if stored_name.as_deref() != Some(name) {
+            return None;
+        }
+        sealed::open(&Self::secret_domain(name), &self.key, &secret?)
+    }
+
+    /// 비밀 지우기(없으면 그대로 성공).
+    pub fn delete_secret(&self, name: &str) -> io::Result<()> {
+        let path = self.dir.join(SECRETS_DIR).join(Self::file_name(name));
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    }
+
+    /// 저장된 비밀 이름 목록(파일의 `name=` 줄 · 이름순).
+    #[must_use]
+    pub fn secret_names(&self) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(self.dir.join(SECRETS_DIR)) else {
+            return Vec::new();
+        };
+        let mut v: Vec<String> = rd
+            .flatten()
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .filter_map(|t| {
+                t.lines()
+                    .find_map(|l| l.strip_prefix("name=").map(str::to_string))
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn secret_domain(name: &str) -> Vec<u8> {
+        format!("secret-v1/{name}").into_bytes()
     }
 
     /// 저장 — 비밀번호는 봉투에, 나머지는 평문 key=value. 같은 이름은 덮어쓴다(원자적). 종전 꼴 파일이 **글자 그대로 같은 이름**으로
@@ -1118,5 +1189,37 @@ mod tests {
         assert_eq!(hex_decode("0001abff").unwrap(), b);
         assert!(hex_decode("abc").is_none());
         assert!(hex_decode("zz").is_none());
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::Vault;
+
+    /// 임의 이름 비밀: 저장 → 읽기 같음 · 이름 목록 · 지우기 · 없는 이름 None · 파일에 평문 없음(11-11).
+    #[test]
+    fn put_get_delete_secret_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("nsql-vault-secret-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let v = Vault::open(&dir).expect("open");
+        v.put_secret("ai.claude.default", b"sk-ant-test-123")
+            .expect("put");
+        assert_eq!(
+            v.get_secret("ai.claude.default").as_deref(),
+            Some(&b"sk-ant-test-123"[..])
+        );
+        assert_eq!(v.secret_names(), vec!["ai.claude.default".to_string()]);
+        let raw = std::fs::read_dir(dir.join("secrets"))
+            .expect("dir")
+            .flatten()
+            .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+            .collect::<String>();
+        assert!(!raw.contains("sk-ant-test"), "평문이 파일에 없다: {raw}");
+        assert!(v.get_secret("nope").is_none());
+        v.delete_secret("ai.claude.default").expect("delete");
+        assert!(v.get_secret("ai.claude.default").is_none());
+        v.delete_secret("ai.claude.default")
+            .expect("두 번 지워도 오류 없음");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
