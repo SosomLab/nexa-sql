@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| (main 직접) | 2026-11-10 | 2026-11-10 → main · **0fedee1e** | 1 | 도달 게이트 후속 = `probe_reachable` 접속 실패 상세에 실제 접속 대상 `connect <host>:<port>`(프록시면 프록시 호스트 · 협업 V1 관찰) · `crates/nsql-net` +7/−1 · [journal 11-10 §5](journal/2026-11-10.md) |
 | feat/driver-net-gate | 2026-11-10 | 2026-11-10 → main ff(삭제) | 2 | 드라이버 다운로드 직전 도달 게이트(사용자 11-10) = `probe_reachable` · `net_gate` · `driver.net_check_ms` · -1352 + 오프라인 번들 안내 · 행위별 1회(2eb3707e) · 기록(협업) · [journal 11-10 §5](journal/2026-11-10.md) |
 | fix/ext-curl-no-window | 2026-11-10 | 2026-11-10 → main ff(삭제 · rebase 뒤) · **432197ca** | 3 | 확장 패널·항목 클릭 때 콘솔 창 깜빡임(사용자 11-10) = curl → `quiet_command` 부품(8ef6b9b7) · 콘솔 창 금지 원칙 = `console-ok` 표시 + 자동 스캔 시험 · gitstat 통일(a736d1a8) · 기록(협업) · [journal 11-10 §2](journal/2026-11-10.md) |
 | filewin-clipboard | 2026-11-04 | 2026-11-04 → main ff(삭제) · **2e31e24f** | 1 | 아침 피드백 5건 — 파일 창 Ctrl+C/X/V·편집 메뉴(nexa-ui 257차 46adad6) · 편집 메뉴 배타·창 안 배치(258차 7f5e311) · winget PR 0.5.0 갱신 기록 · Import 창 라디오 가로·기존 표 콤보 · **D-455 기존 표 사전 판정**(`scripts/import-existing-e2e.sh` 15/15) · [journal 11-04 §13](journal/2026-11-04.md) |

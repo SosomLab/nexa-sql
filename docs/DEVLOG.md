@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-10 (Windows · 개발 × 협업 · 리부팅 점검)** — 작업 중 PC 리부팅 → 피해 점검(잠금 0 · fsck 오류 0 · 미커밋 0 · cargo/rustc 0 · 0바이트 0 · `target/` 증분 산출물은 미확인) · v0.7.2 공개 완료 재확인(태그 97d5f7af push · 워크플로 4 ✓ · Latest · 에셋 6) · 도달 게이트 후속 0fedee1e(실패 상세 host:port) 기록 · 다음 = v0.7.3 패치 여부 사용자 결정 · [journal 11-10 §6](journal/2026-11-10.md)
 - **2026-11-10 (Windows · 개발 × 협업 · 드라이버 도달 게이트)** — 사용자 "드라이버 자동 다운로드 직전 네트워크 접속 확인 gate · 최대한 짧게 · 다운로드 행위별 1회" → `nsql_net::probe_reachable`(DNS + TCP 1회 · 데이터 0) · `net_gate` · 새 키 `driver.net_check_ms`(1500 · 0 = 끔) · -1352 `ERR_DRIVER_OFFLINE` + 오프라인 번들 안내 · `NetAction` 행위 범위(2eb3707e) · D-473 · V2 ✓ · V1 CLI ✅ · [journal 11-10 §5](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 🚀 v0.7.2)** — 게이트(1345/0 · nexa-ui 689/0 · check-3os ✓ · 통합 1차 = 실서버 망 끊김 18건 → 재실행 46/0) → 97d5f7af · 태그 v0.7.2 → 🚀 공개(04:20:33Z · choco 0.7.2 push(guard "마지막으로 올린 0.7.1 승인됨 · 대기 중인 제출 없음 — 제출." · 검수 대기) · winget 건너뜀(guard "직전 제출이 검수 대기 중 — 건너뛴다(큐 엉킴 방지)." · #447007 0.5.0 · D-471) · linux-repo ✓ · Homebrew 047c96b) · v0.1.1 초안 삭제(태그 보존) · [journal 11-10 §4](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 콘솔 창)** — 사용자 제보(설치본 v0.7.1 · 확장 패널·항목 첫 클릭 때 까만 콘솔 창 깜빡임) = GUI가 curl을 그냥 띄운 탓 → 부품 `nsql_ext::net::quiet_command`(Windows CREATE_NO_WINDOW + stdin null · 8ef6b9b7) · 사용자 "콘솔 창 원칙적으로 배제 · 규칙에 반영" → 61 §2-2 콘솔 창 금지 · D-472 · `// console-ok:` 표시 12곳 · gitstat 부품 통일 · 자동 스캔 시험 `no_console_window_spawns`(a736d1a8) · V2 ✓ · V1 새 콘솔 창 0 · [journal 11-10 §2](journal/2026-11-10.md).
