@@ -58,16 +58,37 @@ impl GitHunkPopup {
 /// 삭제만 있는 덩어리(작업본 줄 0개 · 거터는 그 **아래 줄**에 쐐기)는 `b.start == line`인 것. 없으면 None.
 /// ★ 2차(11-10 협업 관찰 ①): 줄 범위를 양쪽에서 따로 잘라 다시 정렬하면 이웃 덩어리의 지운 줄이 Replace로 묶여 색이 달라졌다 →
 ///   전체 정렬의 **행**을 그대로 쓴다.
+/// ★ 3차(협업 V1 11-10 b ◐): 문맥은 **Equal 행** 기준으로 센다 — 덩어리에 바로 이어진 비-Equal 행(이웃 덩어리 · 지운 줄)은 문맥
+///   예산을 먹지 않고 함께 보인다(git의 덩어리 병합과 같다). 종전 = 행 수로 세어 변경 띠 팝업이 지운 줄에서 끝났다.
 pub(crate) fn hunk_rows_at(
+    rows: &[diff::Row],
     hunks: &[diff::Hunk],
     line: usize,
     ctx: usize,
-    n_rows: usize,
 ) -> Option<Range<usize>> {
-    let h = hunks
-        .iter()
-        .find(|h| (h.b.start <= line && line < h.b.end) || (h.b.is_empty() && h.b.start == line))?;
-    Some(h.rows.start.saturating_sub(ctx)..(h.rows.end + ctx).min(n_rows))
+    // 덩어리 판정: 작업본 줄이 든 것 · 또는 그 줄 **바로 위에서 끝나며 지운 줄을 가진** 것(쐐기 = 삭제만인 덩어리 · 변경 뒤에 이어진
+    //   삭제가 한 덩어리로 묶인 경우 둘 다 · 3차).
+    let h = hunks.iter().find(|h| {
+        (h.b.start <= line && line < h.b.end) || (h.b.end == line && h.a.len() > h.b.len())
+    })?;
+    let eq = |i: usize| rows[i].kind == diff::RowKind::Equal;
+    let mut start = h.rows.start.min(rows.len());
+    let mut n = 0;
+    while start > 0 && n < ctx {
+        start -= 1;
+        if eq(start) {
+            n += 1;
+        }
+    }
+    let mut end = h.rows.end.min(rows.len());
+    n = 0;
+    while end < rows.len() && n < ctx {
+        if eq(end) {
+            n += 1;
+        }
+        end += 1;
+    }
+    Some(start..end)
 }
 
 /// 행의 a↔b를 맞바꾼다(팝업은 왼쪽 = 편집기 · 오른쪽 = HEAD인데 전체 정렬은 a = HEAD · b = 편집기로 했다).
@@ -111,7 +132,7 @@ impl App {
         let rows = diff::align(&a, &b);
         let hunks = diff::hunks(&rows);
         let ctx = self.settings.int("editor.git_context").clamp(0, 10) as usize;
-        let Some(win) = hunk_rows_at(&hunks, line, ctx, rows.len()) else {
+        let Some(win) = hunk_rows_at(&rows, &hunks, line, ctx) else {
             self.sess.status = t(Msg::StGitNoHunk).into();
             self.redraw();
             return true;
@@ -202,34 +223,50 @@ impl App {
 mod tests {
     use super::*;
 
-    fn hunk(rows: Range<usize>, a: Range<usize>, b: Range<usize>) -> diff::Hunk {
-        diff::Hunk { rows, a, b }
+    fn lines(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
     }
 
-    /// 덩어리 찾기 = 작업본 줄이 든 것 · 삭제만인 덩어리는 아래 줄 · 문맥은 행 수로 잘린다.
+    /// 문맥 = Equal 행 기준(3차): 변경 줄 뒤에 지운 줄이 이어져도 그 뒤 문맥 2줄이 보인다 · 삭제만인 덩어리는 아래 줄 · 끝에서 잘린다.
     #[test]
-    fn hunk_rows_pick_and_clamp() {
-        let hs = [hunk(0..2, 0..2, 0..0), hunk(5..8, 4..6, 3..6)];
-        assert_eq!(hunk_rows_at(&hs, 4, 1, 20), Some(4..9));
-        assert_eq!(hunk_rows_at(&hs, 5, 3, 9), Some(2..9), "행 수로 자른다");
-        assert_eq!(
-            hunk_rows_at(&hs, 0, 0, 20),
-            Some(0..2),
-            "삭제만 = 그 아래 줄"
-        );
-        assert_eq!(hunk_rows_at(&hs, 8, 1, 20), None);
-        assert_eq!(hunk_rows_at(&[], 0, 1, 20), None);
-    }
-
-    /// 실제 정렬과 맞물려: HEAD 3줄 → 작업본에서 가운데 줄 수정 · 끝에 추가 · 뒤집으면 Insert↔Delete.
-    #[test]
-    fn hunk_rows_with_real_align_and_flip() {
-        let a: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
-        let b: Vec<String> = ["a", "B", "c", "d"].iter().map(|s| s.to_string()).collect();
+    fn hunk_rows_context_counts_equal_rows_only() {
+        let a = lines(&["a", "b", "c", "d", "e", "f", "g"]);
+        let b = lines(&["a", "B", "d", "e", "f", "g", "h"]);
         let rows = diff::align(&a, &b);
         let hs = diff::hunks(&rows);
-        assert_eq!(hunk_rows_at(&hs, 1, 1, rows.len()), Some(0..3));
-        let added = hunk_rows_at(&hs, 3, 0, rows.len()).expect("added");
+        // 작업본 1행(B) = 변경 · 바로 뒤 HEAD c 삭제 → 창은 앞 Equal 1(a) + 변경 + 삭제 + 뒤 Equal 2(d·e).
+        let w = hunk_rows_at(&rows, &hs, 1, 2).expect("hunk");
+        let kinds: Vec<diff::RowKind> = rows[w.clone()].iter().map(|r| r.kind).collect();
+        assert_eq!(w.start, 0, "{kinds:?}");
+        assert_eq!(
+            kinds.iter().filter(|k| **k == diff::RowKind::Equal).count(),
+            3,
+            "앞 1 + 뒤 2 = Equal 3: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&diff::RowKind::Delete),
+            "이어진 지운 줄은 문맥 예산을 안 먹고 같이 보인다: {kinds:?}"
+        );
+        // 삭제만인 덩어리 = 그 아래 작업본 줄(2 = d)에서 열린다.
+        assert!(hunk_rows_at(&rows, &hs, 2, 0)
+            .is_some_and(|w| rows[w].iter().any(|r| r.kind == diff::RowKind::Delete)));
+        // 끝에 추가된 줄(작업본 6 = h) · 문맥 1 · 끝에서 잘림.
+        let w = hunk_rows_at(&rows, &hs, 6, 1).expect("added");
+        assert_eq!(w.end, rows.len());
+        assert_eq!(rows[w.start].kind, diff::RowKind::Equal);
+        assert_eq!(hunk_rows_at(&rows, &hs, 3, 1), None, "변경 없는 줄 = 없음");
+        assert_eq!(hunk_rows_at(&[], &[], 0, 1), None);
+    }
+
+    /// 실제 정렬과 맞물려: 뒤집으면 Insert↔Delete.
+    #[test]
+    fn hunk_rows_with_real_align_and_flip() {
+        let a = lines(&["a", "b", "c"]);
+        let b = lines(&["a", "B", "c", "d"]);
+        let rows = diff::align(&a, &b);
+        let hs = diff::hunks(&rows);
+        assert_eq!(hunk_rows_at(&rows, &hs, 1, 1), Some(0..3));
+        let added = hunk_rows_at(&rows, &hs, 3, 0).expect("added");
         let r = flip_row(&rows[added.start]);
         assert_eq!(
             (r.a, r.b, r.kind),

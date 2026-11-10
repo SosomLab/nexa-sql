@@ -332,13 +332,25 @@ fn serve_execute(
     let more = has_more_statements(sql);
     if ncols == 0 && params.is_empty() && more {
         drop(stmt);
-        let r = conn
-            .execute_batch(sql)
-            .map(|()| ExecResult {
-                rows_affected: Some(conn.changes()),
-                ..ExecResult::default()
-            })
-            .map_err(|e| err_at(e, sql));
+        // ★ 전부 또는 전무(D-479 후속 · 협업 관찰 11-10 "셋째 문장 실패 뒤 앞 둘이 남음" · 보수적 원칙 61 §1-7): SAVEPOINT로 감싸
+        //   가운데 실패면 되돌린다(자동 커밋 = 이 요청만의 트랜잭션 · 수동 커밋 = 바깥 트랜잭션 안에 중첩 · 바깥은 그대로). 본문이
+        //   스스로 COMMIT해 세이브포인트가 사라진 경우의 RELEASE/ROLLBACK 오류는 무시한다.
+        let _ = conn.execute_batch("SAVEPOINT nsql_multi");
+        let r = match conn.execute_batch(sql) {
+            Ok(()) => {
+                let _ = conn.execute_batch("RELEASE SAVEPOINT nsql_multi");
+                Ok(ExecResult {
+                    rows_affected: Some(conn.changes()),
+                    ..ExecResult::default()
+                })
+            }
+            Err(e) => {
+                let _ = conn.execute_batch(
+                    "ROLLBACK TO SAVEPOINT nsql_multi; RELEASE SAVEPOINT nsql_multi",
+                );
+                Err(err_at(e, sql))
+            }
+        };
         let _ = reply.send(r);
         return (None, false);
     }
@@ -619,6 +631,24 @@ mod tests {
             "CREATE TRIGGER tr AFTER INSERT ON t1 BEGIN UPDATE t1 SET a = a; END;",
         )
         .unwrap();
+        // 가운데 문장 실패 = 전부 되돌림(DROP까지 취소 · 종전 정의 유지).
+        let e = run(
+            &mut s,
+            "DROP VIEW IF EXISTS v1; CREATE VIEW v1 AS SELECT a AS zz FROM t1; CREATE VIEW v1 AS SELECT 1;",
+        )
+        .unwrap_err();
+        assert!(e.message.contains("already exists"), "{}", e.message);
+        let r = run(
+            &mut s,
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'v1'",
+        )
+        .unwrap();
+        assert_eq!(r.result_sets[0].rows.len(), 1, "뷰가 사라지지 않았다");
+        assert!(
+            format!("{:?}", r.result_sets[0].rows[0]).contains("a AS b"),
+            "종전 정의 유지: {:?}",
+            r.result_sets[0].rows[0]
+        );
         // 조회 + 꼬리 = 오류(조용한 손실 금지).
         let e = run(&mut s, "SELECT 1; DROP TABLE t1;").unwrap_err();
         assert!(e.message.contains("multiple statements"), "{}", e.message);
