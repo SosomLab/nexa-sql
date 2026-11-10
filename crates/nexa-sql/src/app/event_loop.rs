@@ -217,6 +217,9 @@ impl ApplicationHandler<Wake> for App {
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _ev: Wake) {
         self.drain_all();
+        if self.ai_poll() {
+            self.redraw();
+        }
     }
 
     /// 이벤트 루프가 끝난다 = 프로그램 종료: 들고 있던 임시 비밀번호(세션 자격 금고)의 봉투와 키를 덮어써 버린다.
@@ -476,6 +479,9 @@ impl ApplicationHandler<Wake> for App {
         }
         self.ext_fetch_poll();
         self.ext_meta_poll();
+        if self.ai_poll() {
+            self.redraw();
+        }
         if self.find.tick(now_ms) {
             self.redraw();
         }
@@ -1354,6 +1360,7 @@ impl App {
                         (PickerMode::Save, FilePurpose::ProfilesFile) => {
                             self.profiles_export_to(&path);
                         }
+                        (PickerMode::Open, FilePurpose::AiAttach) => self.ai_attach_file(&path),
                         (PickerMode::Open, FilePurpose::ProfilesFile) => {
                             self.profiles_import_from(&path);
                         }

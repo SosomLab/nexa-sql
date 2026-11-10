@@ -43,6 +43,10 @@ impl App {
             .set_scroll_snap(self.settings.get("editor.scroll") == Some("row"));
         self.apply_minimap();
         self.apply_word_wrap();
+        // ★ AI 어시스턴트(docs/110 · 11-11): 켜져 있으면 프로필·이력을 미리 읽는다(네트워크 0).
+        if self.ai_enabled() {
+            self.ai_init();
+        }
         // ★ 비밀 이름 키워드(설정 `vars.secret_names` · 11-11) — 러너·변수 창·저장 모두 `looks_secret` 한 곳을 본다.
         nsql_script::set_secret_keywords(
             self.settings

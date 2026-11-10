@@ -23,6 +23,7 @@ mod grep;
 mod help;
 mod license;
 mod lineedit;
+mod mcp_bridge;
 mod plan;
 mod term;
 
@@ -48,6 +49,8 @@ struct Opts {
     raw: bool,
     /// 비밀번호를 표준 입력의 첫 줄에서 읽는다(T-132 ③).
     password_stdin: bool,
+    /// `mcp-bridge --token`(AI 탭 MCP 중계 · docs/110 §6-3).
+    token: Option<String>,
     /// `-v 이름=값`(여러 번) — 스크립트가 돌기 전에 치환 변수(`&이름`)를 정의한다(T-153 · `DEFINE`과 같은 저장소).
     defines: Vec<(String, String)>,
     /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
@@ -150,6 +153,7 @@ fn parse_opts() -> Opts {
         analyze: false,
         raw: false,
         password_stdin: false,
+        token: None,
         defines: Vec::new(),
         no_header: false,
         map: None,
@@ -309,6 +313,7 @@ fn parse_opts() -> Opts {
                 }
             }
             "--timing" => o.timing = true,
+            "--token" => o.token = Some(val("--token")),
             "--timing=json" => {
                 o.timing = true;
                 o.timing_json = true;
@@ -2895,6 +2900,8 @@ fn main() {
         "grep" => grep::cmd_grep(&o.positional),
         "license" | "lic" => license::cmd_license(&o),
         "ext" | "extension" | "extensions" => ext::cmd_ext(&o),
+        // ★ AI 탭 MCP 중계(docs/110 §6-3 · 11-11): stdio ↔ GUI 루프백 TCP.
+        "mcp-bridge" => mcp_bridge::run(o.port, o.token.as_deref()),
         other => {
             eprintln!("{}\n", tf(Msg::CliErrCommand, &[other]));
             usage()

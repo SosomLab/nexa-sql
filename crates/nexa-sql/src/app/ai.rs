@@ -1,0 +1,1793 @@
+//! App — ★ AI 어시스턴트(Claude 탭 · docs/110 · 사용자 11-10/11-11): 패널·뷰·호스트를 잇는 동작 — 세션 관리(새 대화 · 이전 기록 열기/
+//! 이어하기 · 이름 · 삭제) · 보내기(API/CLI/각본) · 이벤트 수거 · **앱 기능 도구 실행**(UI 스레드 한 곳) · 승인 카드 · 첨부 ·
+//! `/` 명령 · 프로필(볼트 키) · 헤드리스 명령(`ai.dump:` · `ai.send:` · `ai.open`).
+
+use crate::ai::host::{ApiLaunch, CliLaunch, Host};
+use crate::ai::panel::{PanelAction, PanelState, SessionRow};
+use crate::ai::view::{Page, ViewAction, ViewInfo};
+use crate::ai::{
+    self, redact, AiEvent, Attachment, ChatMsg, Kind, Mode, Profile, ProfileStore, Session,
+    ToolReply, Usage,
+};
+use crate::*;
+use nsql_settings::json::{parse as json_parse, Json};
+use std::sync::mpsc;
+use std::time::Instant;
+
+/// 승인 대기 한 건.
+pub(crate) enum ApprovalReply {
+    /// CLI 권한 프롬프트(MCP `approve`).
+    Cli(mpsc::Sender<bool>),
+    /// API 도구 호출(허용 = 지금 실행 · 거부 = 오류 결과).
+    Api {
+        name: String,
+        input: String,
+        reply: mpsc::Sender<ToolReply>,
+    },
+    /// 행 데이터 동의만(허용 = `rows_allowed` 뒤 도구 실행).
+    Rows {
+        name: String,
+        input: String,
+        reply: mpsc::Sender<ToolReply>,
+    },
+}
+
+/// 비동기 도구(실행 결과가 나중에 온다).
+pub(crate) struct PendingTool {
+    pub reply: Option<mpsc::Sender<ToolReply>>,
+    /// 결과를 첨부로(= `/query`).
+    pub attach_label: Option<String>,
+    pub since: Instant,
+    pub max_rows: usize,
+    /// 객체 소스 열기 대기(열기 전 활성 편집기 id).
+    pub wait_editor: Option<u64>,
+}
+
+#[derive(Default)]
+pub(crate) struct AiState {
+    pub host: Option<Host>,
+    pub sessions: Vec<Session>,
+    pub cur: Option<usize>,
+    pub store: ProfileStore,
+    pub mcp: Option<ai::mcp::McpServer>,
+    pub approval: Option<(String, String, String, ApprovalReply)>,
+    pub pending: Option<PendingTool>,
+    pub capture: Option<String>,
+    pub note: String,
+    pub status: String,
+    pub turn_started: Option<Instant>,
+    /// CLI 모드 턴 사용량(result 줄이 합계 · Done에 더한다).
+    pub cli_turn_usage: Option<Usage>,
+    pub inited: bool,
+}
+
+const VIEW_KEY: &str = "ai.chat";
+
+impl App {
+    pub(crate) fn ai_enabled(&self) -> bool {
+        self.settings.flag("ai.enabled")
+    }
+
+    pub(crate) fn ai_view_active(&self) -> bool {
+        self.editors.active_view() == Some(VIEW_KEY)
+    }
+
+    /// 기동 · 켤 때: 프로필 저장소 · 이력 목록 · 패널 상태.
+    pub(crate) fn ai_init(&mut self) {
+        if self.ai.inited {
+            return;
+        }
+        self.ai.inited = true;
+        if let Some(dir) = ProfileStore::dir() {
+            self.ai.store = ProfileStore::load(&dir);
+        }
+        ai::history_prune(self.settings.int("ai.history_keep_days").max(0) as u64);
+        self.ai.sessions = ai::history_list(200);
+        self.ai.cur = None;
+        self.ai_sync_panel();
+    }
+
+    /// 설정 `ai.enabled` 적용(활동 막대 항목 · 끄면 패널·호스트 닫기).
+    pub(crate) fn ai_apply_enabled(&mut self) {
+        let on = self.ai_enabled();
+        self.act_bar.set_item_visible("view.ai", on);
+        if on {
+            self.ai_init();
+        } else {
+            if self.ai_panel.is_visible() {
+                self.ai_panel.set_visible(false);
+                if self.focus == Focus::Ai {
+                    self.set_focus(Focus::Editor);
+                }
+            }
+            if let Some(h) = &mut self.ai.host {
+                h.stop();
+            }
+            self.ai.mcp = None;
+        }
+        self.layout();
+        self.redraw();
+    }
+
+    /// 메뉴 `view.ai` — 패널 토글(열면 채팅 탭도 앞으로).
+    pub(crate) fn ai_toggle_panel(&mut self) {
+        if !self.ai_enabled() {
+            let _ = self.settings.set("ai.enabled", "on");
+            self.persist_settings();
+            self.ai_apply_enabled();
+        }
+        let on = !self.ai_panel.is_visible();
+        if on {
+            self.side_panel_close_others("view.ai");
+            self.ai_init();
+        }
+        self.ai_panel.set_visible(on);
+        if on {
+            self.ai_sync_panel();
+            self.set_focus(Focus::Ai);
+            self.ai_open_chat();
+        } else if self.focus == Focus::Ai {
+            self.set_focus(Focus::Editor);
+        }
+        self.layout();
+        self.redraw();
+    }
+
+    /// 채팅 뷰 탭 열기/앞으로.
+    pub(crate) fn ai_open_chat(&mut self) {
+        self.ai_init();
+        if self.ai.cur.is_none() {
+            self.ai_new_session();
+        }
+        self.editors.open_view_tab(VIEW_KEY, "Claude");
+        self.ai_view.show_page(Page::Chat);
+        self.set_focus(Focus::Editor);
+        self.ai_view.set_focused(true);
+        self.layout();
+        self.redraw();
+    }
+
+    fn ai_wake(&self) -> ai::host::Wake {
+        let proxy = std::sync::Mutex::new(self.wake_proxy.clone());
+        std::sync::Arc::new(move || {
+            if let Ok(p) = proxy.lock() {
+                let _ = p.send_event(Wake);
+            }
+        })
+    }
+
+    fn ai_host(&mut self) -> &mut Host {
+        if self.ai.host.is_none() {
+            let wake = self.ai_wake();
+            self.ai.host = Some(Host::new(wake));
+        }
+        self.ai.host.as_mut().expect("host")
+    }
+
+    fn ai_mode_default(&self) -> Mode {
+        Mode::parse(self.settings.get("ai.mode").unwrap_or("api"))
+    }
+
+    pub(crate) fn ai_cur(&self) -> Option<&Session> {
+        self.ai.cur.and_then(|i| self.ai.sessions.get(i))
+    }
+    fn ai_cur_mut(&mut self) -> Option<&mut Session> {
+        let i = self.ai.cur?;
+        self.ai.sessions.get_mut(i)
+    }
+
+    /// 새 세션(설정의 모드·모델·노력도 · 현재 프로필) — 맨 앞에 끼운다.
+    pub(crate) fn ai_new_session(&mut self) {
+        if let Some(h) = &mut self.ai.host {
+            h.stop();
+            h.reset_api();
+        }
+        let mode = self.ai_mode_default();
+        let profile = self.ai.store.current.clone();
+        let model = self
+            .ai
+            .store
+            .current()
+            .map(|p| p.model.clone())
+            .filter(|_| mode == Mode::Api)
+            .unwrap_or_else(|| {
+                self.settings
+                    .get("ai.model")
+                    .unwrap_or(ai::DEFAULT_MODEL)
+                    .to_string()
+            });
+        let effort = self
+            .settings
+            .get("ai.effort")
+            .unwrap_or(ai::DEFAULT_EFFORT)
+            .to_string();
+        let mut s = Session::new(mode, &profile, &model, &effort);
+        s.auto = self.settings.flag("ai.auto");
+        self.ai.sessions.insert(0, s);
+        self.ai.cur = Some(0);
+        self.ai.approval = None;
+        self.ai.pending = None;
+        self.ai.status.clear();
+        self.ai_view.reset();
+        self.ai_sync_panel();
+    }
+
+    /// 이전 세션 열기(이어하기: CLI = `--resume` · API = 대화 재구성).
+    pub(crate) fn ai_open_session(&mut self, id: &str) {
+        let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
+            return;
+        };
+        if let Some(h) = &mut self.ai.host {
+            h.stop();
+            h.reset_api();
+        }
+        self.ai.cur = Some(i);
+        self.ai.approval = None;
+        self.ai.pending = None;
+        // API 대화 재구성(글만 · 도구 왕복은 뺀다).
+        let msgs: Vec<Json> = self.ai.sessions[i]
+            .messages
+            .iter()
+            .filter_map(|m| match m.kind {
+                Kind::User => Some(ai::claude_api::user_message(&m.text, &[])),
+                Kind::Assistant if !m.text.is_empty() => Some(Json::Obj(vec![
+                    ("role".into(), Json::Str("assistant".into())),
+                    (
+                        "content".into(),
+                        Json::Arr(vec![Json::Obj(vec![
+                            ("type".into(), Json::Str("text".into())),
+                            ("text".into(), Json::Str(m.text.clone())),
+                        ])]),
+                    ),
+                ])),
+                _ => None,
+            })
+            .collect();
+        // 마지막이 user면(답이 없었다) 떼어 낸다 — 다음 보내기의 user와 연속이 되지 않게.
+        let mut msgs = msgs;
+        while msgs.last().is_some_and(|m| ai::jstr(m, "role") == "user") {
+            msgs.pop();
+        }
+        let h = self.ai_host();
+        if let Ok(mut m) = h.api_messages.lock() {
+            *m = msgs;
+        }
+        self.ai_view.reset();
+        self.ai_sync_panel();
+        self.ai_open_chat();
+    }
+
+    pub(crate) fn ai_delete_session(&mut self, id: &str) {
+        let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
+            return;
+        };
+        ai::history_delete(id);
+        self.ai.sessions.remove(i);
+        match self.ai.cur {
+            Some(c) if c == i => {
+                if let Some(h) = &mut self.ai.host {
+                    h.stop();
+                    h.reset_api();
+                }
+                self.ai.cur = None;
+                self.ai_view.reset();
+            }
+            Some(c) if c > i => self.ai.cur = Some(c - 1),
+            _ => {}
+        }
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    pub(crate) fn ai_sync_panel(&mut self) {
+        let cli_note = if self.ai_mode_default() == Mode::Cli
+            || self.ai_cur().is_some_and(|s| s.mode == Mode::Cli)
+        {
+            let (prog, _) =
+                ai::host::resolve_cli(self.settings.get("ai.cli_path").unwrap_or("claude"));
+            tf(Msg::AiCliPath, &[&prog])
+        } else {
+            String::new()
+        };
+        let cur = self.ai_cur();
+        let st = PanelState {
+            mode: cur
+                .map(|s| s.mode)
+                .unwrap_or_else(|| self.ai_mode_default()),
+            profiles: self
+                .ai
+                .store
+                .profiles
+                .iter()
+                .map(|p| p.name.clone())
+                .collect(),
+            profile: cur
+                .map(|s| s.profile.clone())
+                .unwrap_or_else(|| self.ai.store.current.clone()),
+            model: cur.map(|s| s.model.clone()).unwrap_or_else(|| {
+                self.settings
+                    .get("ai.model")
+                    .unwrap_or(ai::DEFAULT_MODEL)
+                    .to_string()
+            }),
+            effort: cur.map(|s| s.effort.clone()).unwrap_or_else(|| {
+                self.settings
+                    .get("ai.effort")
+                    .unwrap_or(ai::DEFAULT_EFFORT)
+                    .to_string()
+            }),
+            auto: cur
+                .map(|s| s.auto)
+                .unwrap_or_else(|| self.settings.flag("ai.auto")),
+            sessions: self
+                .ai
+                .sessions
+                .iter()
+                .map(|s| SessionRow {
+                    id: s.id.clone(),
+                    title: s.title_or_default(),
+                    mode: s.mode,
+                    model: s.model.clone(),
+                    turns: s.messages.iter().filter(|m| m.kind == Kind::User).count(),
+                })
+                .collect(),
+            current: cur.map(|s| s.id.clone()).unwrap_or_default(),
+            usage: cur.map(|s| s.usage).unwrap_or_default(),
+            busy: self.ai.host.as_ref().is_some_and(|h| h.busy),
+            cli_note,
+        };
+        self.ai_panel.set_state(st);
+    }
+
+    pub(crate) fn ai_view_info(&self) -> ViewInfo {
+        // 볼트는 프로필 페이지에서만 읽는다(그리기마다 파일을 열지 않게).
+        let keyed = if self.ai_view.page() == Page::Profiles {
+            nsql_vault::Vault::open_default()
+                .map(|v| v.secret_names())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|n| n.strip_prefix("ai.").map(str::to_string))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        ViewInfo {
+            busy: self.ai.host.as_ref().is_some_and(|h| h.busy),
+            approval: self
+                .ai
+                .approval
+                .as_ref()
+                .map(|(id, tool, sum, _)| (id.clone(), tool.clone(), sum.clone())),
+            profiles: self.ai.store.profiles.clone(),
+            keyed,
+            current_profile: self.ai.store.current.clone(),
+            note: self.ai.note.clone(),
+            status: self.ai.status.clone(),
+        }
+    }
+
+    // ───────────────────────── 패널 · 뷰 동작 ─────────────────────────
+
+    pub(crate) fn ai_panel_actions(&mut self) {
+        for a in self.ai_panel.take_actions() {
+            match a {
+                PanelAction::SetMode(m) => {
+                    let _ = self.settings.set("ai.mode", m.as_str());
+                    self.persist_settings();
+                    if let Some(s) = self.ai_cur_mut() {
+                        if s.mode != m {
+                            s.mode = m;
+                            s.cli_session = None;
+                            if let Some(h) = &mut self.ai.host {
+                                h.stop();
+                            }
+                        }
+                    }
+                }
+                PanelAction::SetProfile(p) => {
+                    self.ai.store.current = p.clone();
+                    self.ai_store_save();
+                    let model = self.ai.store.current().map(|q| q.model.clone());
+                    let effort = self.ai.store.current().map(|q| q.effort.clone());
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.profile = p;
+                        if let Some(m) = model {
+                            s.model = m;
+                        }
+                        if let Some(e) = effort {
+                            s.effort = e;
+                        }
+                    }
+                }
+                PanelAction::SetModel(m) => {
+                    let _ = self.settings.set("ai.model", &m);
+                    self.persist_settings();
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.model = m;
+                    }
+                }
+                PanelAction::SetEffort(e) => {
+                    let _ = self.settings.set("ai.effort", &e);
+                    self.persist_settings();
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.effort = e;
+                    }
+                }
+                PanelAction::SetAuto(on) => {
+                    let _ = self.settings.set("ai.auto", if on { "on" } else { "off" });
+                    self.persist_settings();
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.auto = on;
+                    }
+                }
+                PanelAction::NewChat => {
+                    self.ai_new_session();
+                    self.ai_open_chat();
+                }
+                PanelAction::ManageProfiles => {
+                    self.ai_open_chat();
+                    self.ai_view.show_page(Page::Profiles);
+                    let cur = self.ai.store.current().cloned();
+                    let has_key = cur.as_ref().is_some_and(|p| self.ai_key_exists(&p.name));
+                    self.ai_view.edit_profile(cur.as_ref(), has_key);
+                }
+                PanelAction::OpenSession(id) => self.ai_open_session(&id),
+                PanelAction::RenameSession(id, title) => {
+                    if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == id) {
+                        s.title = title;
+                        ai::history_save(s);
+                    }
+                }
+                PanelAction::DeleteSession(id) => self.ai_delete_session(&id),
+                PanelAction::ShowChat => self.ai_open_chat(),
+            }
+        }
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    pub(crate) fn ai_view_actions(&mut self) {
+        for a in self.ai_view.take_actions() {
+            match a {
+                ViewAction::Send(text) => self.ai_send(&text),
+                ViewAction::Stop => self.ai_stop(),
+                ViewAction::AttachFile => {
+                    self.file_purpose = FilePurpose::AiAttach;
+                    self.open_file_dlg = Some(nexa_dlg::PickerMode::Open);
+                }
+                ViewAction::AttachClipboard => self.ai_attach_clipboard(),
+                ViewAction::RemoveAttachment(i) => {
+                    if let Some(s) = self.ai_cur_mut() {
+                        if i < s.attachments.len() {
+                            s.attachments.remove(i);
+                        }
+                    }
+                }
+                ViewAction::Approve(_, ok) => self.ai_approve(ok),
+                ViewAction::Slash(line) => self.ai_slash(&line),
+                ViewAction::CopyText(s) => {
+                    let _ = crate::clipboard::write_text(&s);
+                    self.sess.status = t(Msg::StCopied).into();
+                }
+                ViewAction::InsertEditor(s) => self.ai_insert_editor(&s),
+                ViewAction::ProfileUse(arg) => {
+                    if let Some(i) = arg.strip_prefix("edit:") {
+                        if let Some(p) = i
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|i| self.ai.store.profiles.get(i))
+                            .cloned()
+                        {
+                            let has_key = self.ai_key_exists(&p.name);
+                            self.ai_view.edit_profile(Some(&p), has_key);
+                        }
+                    } else if let Some(p) = arg
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| self.ai.store.profiles.get(i))
+                        .cloned()
+                    {
+                        self.ai.store.current = p.name.clone();
+                        self.ai_store_save();
+                        if let Some(s) = self.ai_cur_mut() {
+                            s.profile = p.name.clone();
+                            s.model = p.model.clone();
+                            s.effort = p.effort.clone();
+                        }
+                        self.ai.note = tf(Msg::AiProfileInUse, &[&p.name]);
+                    }
+                }
+                ViewAction::ProfileDelete(arg) => {
+                    if let Some(p) = arg
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| self.ai.store.profiles.get(i))
+                        .cloned()
+                    {
+                        if let Ok(v) = nsql_vault::Vault::open_default() {
+                            let _ = v.delete_secret(&p.secret_name());
+                        }
+                        self.ai.store.remove(&p.name);
+                        self.ai_store_save();
+                        self.ai.note = tf(Msg::AiProfileDeleted, &[&p.name]);
+                    }
+                }
+                ViewAction::ProfileSave(p, key) => {
+                    let name = p.name.clone();
+                    if let Some(k) = key {
+                        match nsql_vault::Vault::open_default()
+                            .and_then(|v| v.put_secret(&p.secret_name(), k.as_bytes()))
+                        {
+                            Ok(()) => {}
+                            Err(e) => {
+                                self.ai.note = tf(Msg::AiKeySaveFailed, &[&e.to_string()]);
+                                continue;
+                            }
+                        }
+                    }
+                    self.ai.store.upsert(p);
+                    if self.ai.store.current.is_empty() {
+                        self.ai.store.current = name.clone();
+                    }
+                    self.ai_store_save();
+                    let has_key = self.ai_key_exists(&name);
+                    let p2 = self.ai.store.get_mut(&name).cloned();
+                    self.ai_view.edit_profile(p2.as_ref(), has_key);
+                    self.ai.note = tf(Msg::AiProfileSaved, &[&name]);
+                }
+                ViewAction::ProfileValidate(p, key) => self.ai_validate(p, key),
+                ViewAction::ShowPage(pg) => {
+                    self.ai_view.show_page(pg);
+                    if pg == Page::Chat {
+                        self.ai.note.clear();
+                    }
+                }
+            }
+        }
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    fn ai_store_save(&mut self) {
+        if let Some(dir) = ProfileStore::dir() {
+            if let Err(e) = self.ai.store.save(&dir) {
+                self.sess.status = tf(Msg::AiKeySaveFailed, &[&e.to_string()]);
+            }
+        }
+    }
+
+    fn ai_key_exists(&self, profile: &str) -> bool {
+        nsql_vault::Vault::open_default()
+            .ok()
+            .and_then(|v| v.get_secret(&format!("ai.{profile}")))
+            .is_some()
+    }
+
+    fn ai_key_for(&self, profile: &str) -> Option<String> {
+        let v = nsql_vault::Vault::open_default().ok()?;
+        let b = v.get_secret(&format!("ai.{profile}"))?;
+        String::from_utf8(b).ok()
+    }
+
+    /// `/v1/models`로 키 검증(스레드 · 결과는 Note 이벤트로).
+    fn ai_validate(&mut self, p: Profile, key: Option<String>) {
+        let key = key.or_else(|| self.ai_key_for(&p.name));
+        let Some(key) = key else {
+            self.ai.note = t(Msg::AiKeyMissing).into();
+            return;
+        };
+        self.ai.note = t(Msg::AiValidating).into();
+        let h = self.ai_host();
+        let tx = h.tx.clone();
+        let wake = self.ai_wake();
+        let _ = std::thread::Builder::new()
+            .name("ai-validate".into())
+            .spawn(move || {
+                let r = ai::claude_api::validate_key(&p.base_url, &key, &p.workspace);
+                let _ = tx.send(AiEvent::Note(match r {
+                    Ok(n) => format!("validate:ok:{n}"),
+                    Err(e) => format!("validate:err:{e}"),
+                }));
+                wake();
+            });
+    }
+
+    fn ai_insert_editor(&mut self, s: &str) {
+        if self.ai_view_active() {
+            // 채팅 탭 자신에게는 넣을 수 없다 — 새 탭.
+            self.editors.new_tab(None);
+        }
+        let mut inv = Invalidations::default();
+        self.ed_mut().paste(s, &mut inv);
+        self.set_focus(Focus::Editor);
+    }
+
+    // ───────────────────────── 보내기 · 멈춤 ─────────────────────────
+
+    pub(crate) fn ai_send(&mut self, text: &str) {
+        self.ai_init();
+        if self.ai.cur.is_none() {
+            self.ai_new_session();
+        }
+        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            self.ai.status = t(Msg::AiBusyNote).into();
+            return;
+        }
+        if ai::contains_secret(text) {
+            self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
+            return;
+        }
+        let (mode, attachments, profile, model, effort, cli_session) = {
+            let s = self.ai_cur_mut().expect("session");
+            (
+                s.mode,
+                std::mem::take(&mut s.attachments),
+                s.profile.clone(),
+                s.model.clone(),
+                s.effort.clone(),
+                s.cli_session.clone(),
+            )
+        };
+        let mut um = ChatMsg::new(Kind::User, text);
+        um.attachments = attachments.iter().map(|a| a.label().to_string()).collect();
+        self.ai_push(um);
+        self.ai.turn_started = Some(Instant::now());
+        self.ai.cli_turn_usage = None;
+        let system =
+            ai::tools::system_prompt(&format!("{:?}", self.sess.dialect), &self.sess.profile);
+        if std::env::var_os("NSQL_AI_MOCK").is_some() {
+            self.ai_host().start_mock(text);
+            self.ai_after_send();
+            return;
+        }
+        match mode {
+            Mode::Api => {
+                let Some(p) = self
+                    .ai
+                    .store
+                    .profiles
+                    .iter()
+                    .find(|p| p.name == profile)
+                    .cloned()
+                else {
+                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiNoProfile)));
+                    return;
+                };
+                let Some(key) = self.ai_key_for(&p.name) else {
+                    self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[&p.name])));
+                    return;
+                };
+                let launch = ApiLaunch {
+                    base_url: p.base_url.clone(),
+                    api_key: key,
+                    workspace: p.workspace,
+                    model,
+                    effort,
+                    system,
+                    timeout_secs: self.settings.int("ai.timeout_secs").max(10) as u64,
+                    max_tokens: self.settings.int("ai.max_tokens").max(256) as u64,
+                };
+                if let Err(e) = self.ai_host().start_api(launch, text, &attachments) {
+                    self.ai_push(ChatMsg::new(Kind::Error, e));
+                }
+            }
+            Mode::Cli => {
+                if !self.ai_host().is_cli_alive() {
+                    if self.ai.mcp.is_none() {
+                        let port = self.settings.int("ai.mcp_port").clamp(0, 65535) as u16;
+                        let tx = self.ai_host().tx.clone();
+                        let wake = self.ai_wake();
+                        match ai::mcp::start(tx, wake, port) {
+                            Ok(s) => self.ai.mcp = Some(s),
+                            Err(e) => {
+                                self.ai_push(ChatMsg::new(Kind::Error, format!("mcp: {e}")));
+                                return;
+                            }
+                        }
+                    }
+                    let cfg = self
+                        .ai
+                        .mcp
+                        .as_ref()
+                        .map(|m| ai::mcp::config_json(m.port, &m.token));
+                    let (program, prefix) =
+                        ai::host::resolve_cli(self.settings.get("ai.cli_path").unwrap_or("claude"));
+                    let args = ai::claude_cli::args(
+                        &model,
+                        &effort,
+                        self.settings.get("ai.permission_mode").unwrap_or("default"),
+                        cfg.as_deref(),
+                        cli_session.as_deref(),
+                        self.settings.flag("ai.bare"),
+                        &system,
+                    );
+                    let launch = CliLaunch {
+                        program,
+                        prefix,
+                        args,
+                        env: Vec::new(),
+                    };
+                    if let Err(e) = self.ai_host().start_cli(launch) {
+                        self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiCliStartFailed, &[&e])));
+                        return;
+                    }
+                }
+                // 글 첨부는 본문에 · 이미지는 블록으로(CLI stream-json).
+                let mut body = String::new();
+                let mut images: Vec<(String, Vec<u8>)> = Vec::new();
+                for a in &attachments {
+                    match a {
+                        Attachment::Text { label, body: b } => {
+                            body.push_str(&format!(
+                                "<attachment name=\"{label}\">\n{b}\n</attachment>\n"
+                            ));
+                        }
+                        Attachment::Image { media, bytes, .. } => {
+                            images.push((media.clone(), bytes.clone()))
+                        }
+                        Attachment::Pdf { label, .. } => {
+                            body.push_str(&format!(
+                                "(attachment {label}: PDF is not supported in CLI mode)\n"
+                            ));
+                        }
+                    }
+                }
+                body.push_str(text);
+                if let Err(e) = self.ai_host().send_cli(&body, &images) {
+                    self.ai_push(ChatMsg::new(Kind::Error, e));
+                }
+            }
+        }
+        self.ai_after_send();
+    }
+
+    fn ai_after_send(&mut self) {
+        self.ai.status = "…".into();
+        if let Some(s) = self.ai_cur() {
+            ai::history_save(s);
+        }
+        self.ai_view.reset_scroll_to_bottom();
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    pub(crate) fn ai_stop(&mut self) {
+        if let Some(h) = &mut self.ai.host {
+            h.stop();
+        }
+        if let Some((_, _, _, r)) = self.ai.approval.take() {
+            match r {
+                ApprovalReply::Cli(tx) => {
+                    let _ = tx.send(false);
+                }
+                ApprovalReply::Api { reply, .. } | ApprovalReply::Rows { reply, .. } => {
+                    let _ = reply.send(ToolReply {
+                        output: "cancelled".into(),
+                        ok: false,
+                    });
+                }
+            }
+        }
+        self.ai.pending = None;
+        self.ai.status = t(Msg::AiStopped).into();
+        self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    fn ai_push(&mut self, m: ChatMsg) {
+        if let Some(s) = self.ai_cur_mut() {
+            s.messages.push(m);
+        }
+    }
+
+    // ───────────────────────── 이벤트 수거 ─────────────────────────
+
+    /// 깨어날 때·틱마다 — 호스트 이벤트를 세션에 반영. 바뀌면 true.
+    pub(crate) fn ai_poll(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(ev) = self.ai.host.as_ref().and_then(|h| h.rx.try_recv().ok()) {
+            changed = true;
+            self.ai_handle(ev);
+        }
+        if self.ai_tick_pending() {
+            changed = true;
+        }
+        if changed {
+            self.ai_sync_panel();
+        }
+        changed
+    }
+
+    fn ai_handle(&mut self, ev: AiEvent) {
+        match ev {
+            AiEvent::Started { cli_session, note } => {
+                if let Some(s) = self.ai_cur_mut() {
+                    if cli_session.is_some() {
+                        s.cli_session = cli_session;
+                    }
+                }
+                if std::env::var_os("NSQL_TRACE_AI").is_some() {
+                    eprintln!("[ai] started {note}");
+                }
+            }
+            AiEvent::TextDelta(t) => {
+                let Some(s) = self.ai_cur_mut() else { return };
+                match s.messages.last_mut() {
+                    Some(m) if m.kind == Kind::Assistant => m.text.push_str(&t),
+                    _ => s.messages.push(ChatMsg::new(Kind::Assistant, t)),
+                }
+            }
+            AiEvent::ToolCall { id, name, input } => {
+                let mut m = ChatMsg::new(
+                    Kind::ToolCall {
+                        name,
+                        input: redact(&input),
+                    },
+                    "",
+                );
+                m.id = id;
+                self.ai_push(m);
+            }
+            AiEvent::ToolResult {
+                id,
+                name,
+                output,
+                ok,
+            } => {
+                let mut m = ChatMsg::new(Kind::ToolResult { name, ok }, redact(&output));
+                m.id = id;
+                self.ai_push(m);
+            }
+            AiEvent::ToolRequest {
+                id,
+                name,
+                input,
+                reply,
+            } => {
+                let _ = id;
+                self.ai_tool_request(name, input, reply);
+            }
+            AiEvent::Approval {
+                id,
+                tool,
+                summary,
+                reply,
+            } => {
+                let auto = self.ai_cur().is_some_and(|s| s.auto);
+                let short = tool
+                    .strip_prefix("mcp__nexa__")
+                    .unwrap_or(&tool)
+                    .to_string();
+                let needs_user = short == "run_query" && !self.ai_sql_is_readonly(&summary);
+                if auto && !needs_user {
+                    let _ = reply.send(true);
+                    return;
+                }
+                let mut m = ChatMsg::new(
+                    Kind::Approval {
+                        tool: short.clone(),
+                    },
+                    redact(&summary),
+                );
+                m.id = if id.is_empty() { ai::stamp_id() } else { id };
+                let mid = m.id.clone();
+                self.ai_push(m);
+                self.ai.approval = Some((mid, short, summary, ApprovalReply::Cli(reply)));
+            }
+            AiEvent::Usage(u) => {
+                let is_cli = self.ai_cur().is_some_and(|s| s.mode == Mode::Cli);
+                if is_cli {
+                    self.ai.cli_turn_usage = Some(u);
+                } else if let Some(s) = self.ai_cur_mut() {
+                    s.usage.add(u);
+                }
+            }
+            AiEvent::Done { stop, ms } => {
+                if let Some(u) = self.ai.cli_turn_usage.take() {
+                    if let Some(s) = self.ai_cur_mut() {
+                        let mut u = u;
+                        if u.cost_usd == 0.0 {
+                            u.cost_usd =
+                                Usage::estimate_cost(&s.model, u.input, u.output, u.cache_read);
+                        }
+                        s.usage.add(u);
+                    }
+                }
+                if let Some(h) = &mut self.ai.host {
+                    h.busy = false;
+                }
+                let elapsed = self
+                    .ai
+                    .turn_started
+                    .take()
+                    .map(|t| t.elapsed().as_millis() as u64)
+                    .unwrap_or(ms);
+                self.ai.status = tf(Msg::AiTurnDone, &[&stop, &elapsed.to_string()]);
+                if let Some(s) = self.ai_cur() {
+                    ai::history_save(s);
+                }
+            }
+            AiEvent::Error(e) => {
+                let tail = self
+                    .ai
+                    .host
+                    .as_ref()
+                    .map(|h| h.stderr_text())
+                    .unwrap_or_default();
+                let text = if tail.is_empty() {
+                    e
+                } else {
+                    format!("{e}\n{tail}")
+                };
+                self.ai_push(ChatMsg::new(Kind::Error, redact(&text)));
+            }
+            AiEvent::Note(n) => {
+                if let Some(rest) = n.strip_prefix("validate:") {
+                    self.ai.note = match rest.split_once(':') {
+                        Some(("ok", n)) => tf(Msg::AiValidateOk, &[n]),
+                        Some((_, e)) => tf(Msg::AiValidateFailed, &[e]),
+                        None => rest.to_string(),
+                    };
+                } else if n != "cli exited" || self.ai.host.as_ref().is_some_and(|h| h.busy) {
+                    self.ai_push(ChatMsg::new(Kind::Note, n));
+                }
+            }
+        }
+    }
+
+    /// 승인 카드 응답.
+    pub(crate) fn ai_approve(&mut self, ok: bool) {
+        let Some((_, _, _, r)) = self.ai.approval.take() else {
+            return;
+        };
+        match r {
+            ApprovalReply::Cli(tx) => {
+                let _ = tx.send(ok);
+            }
+            ApprovalReply::Api { name, input, reply } => {
+                if ok {
+                    self.ai_exec_tool(&name, &input, reply);
+                } else {
+                    let _ = reply.send(ToolReply {
+                        output: "denied by the user".into(),
+                        ok: false,
+                    });
+                }
+            }
+            ApprovalReply::Rows { name, input, reply } => {
+                if ok {
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.rows_allowed = true;
+                    }
+                    self.ai_exec_tool(&name, &input, reply);
+                } else {
+                    let _ = reply.send(ToolReply {
+                        output: "the user declined to share row data".into(),
+                        ok: false,
+                    });
+                }
+            }
+        }
+        self.ai_push(ChatMsg::new(
+            Kind::Note,
+            t(if ok { Msg::AiAllowed } else { Msg::AiDenied }),
+        ));
+        self.redraw();
+    }
+
+    // ───────────────────────── 도구 실행(UI 스레드) ─────────────────────────
+
+    fn ai_sql_is_readonly(&self, s: &str) -> bool {
+        // 승인 요약은 입력 JSON일 수 있다 — `sql` 값을 꺼내 본다.
+        let sql = json_parse(s)
+            .ok()
+            .map(|v| ai::jstr(&v, "sql"))
+            .filter(|q| !q.is_empty())
+            .unwrap_or_else(|| s.to_string());
+        sql_is_readonly(&sql)
+    }
+
+    /// 도구 요청(API · MCP) — 쓰기·행 데이터는 승인 뒤 · 나머지는 바로.
+    fn ai_tool_request(&mut self, name: String, input: String, reply: mpsc::Sender<ToolReply>) {
+        let Some(tool) = ai::tools::find(&name) else {
+            let _ = reply.send(ToolReply {
+                output: format!("unknown tool {name}"),
+                ok: false,
+            });
+            return;
+        };
+        let (auto, rows_allowed) = self
+            .ai_cur()
+            .map(|s| (s.auto, s.rows_allowed))
+            .unwrap_or((false, false));
+        let is_rows = matches!(tool.name, "run_query" | "get_result" | "explain");
+        let readonly_q = tool.name != "run_query" || {
+            let sql = json_parse(&input)
+                .ok()
+                .map(|v| ai::jstr(&v, "sql"))
+                .unwrap_or_default();
+            sql_is_readonly(&sql)
+        };
+        let short = tool.name.to_string();
+        if is_rows && !rows_allowed {
+            let mut m = ChatMsg::new(
+                Kind::Approval {
+                    tool: short.clone(),
+                },
+                t(Msg::AiRowsConsent),
+            );
+            m.id = ai::stamp_id();
+            let mid = m.id.clone();
+            self.ai_push(m);
+            self.ai.approval = Some((
+                mid,
+                short.clone(),
+                t(Msg::AiRowsConsent).into(),
+                ApprovalReply::Rows {
+                    name: short,
+                    input,
+                    reply,
+                },
+            ));
+            return;
+        }
+        if tool.write && (!auto || !readonly_q) {
+            let mut m = ChatMsg::new(
+                Kind::Approval {
+                    tool: short.clone(),
+                },
+                redact(&input),
+            );
+            m.id = ai::stamp_id();
+            let mid = m.id.clone();
+            self.ai_push(m);
+            self.ai.approval = Some((
+                mid,
+                short.clone(),
+                input.clone(),
+                ApprovalReply::Api {
+                    name: short,
+                    input,
+                    reply,
+                },
+            ));
+            return;
+        }
+        self.ai_exec_tool(&short, &input, reply);
+    }
+
+    /// 도구 실행 — 즉시 답하거나(동기) 대기 등록(비동기 · 질의·설명·소스).
+    fn ai_exec_tool(&mut self, name: &str, input: &str, reply: mpsc::Sender<ToolReply>) {
+        let v = json_parse(input).unwrap_or(Json::Obj(Vec::new()));
+        let g = |k: &str| ai::jstr(&v, k);
+        let gi = |k: &str, d: i64| match ai::jget(&v, k) {
+            Some(Json::Num(n)) => *n as i64,
+            Some(Json::Str(s)) => s.parse().unwrap_or(d),
+            _ => d,
+        };
+        let max_rows = gi("max_rows", self.settings.int("ai.max_rows").max(1)).max(1) as usize;
+        let ok = |s: String| ToolReply {
+            output: s,
+            ok: true,
+        };
+        let err = |s: String| ToolReply {
+            output: s,
+            ok: false,
+        };
+        let r: ToolReply = match name {
+            "list_commands" => {
+                let f = g("filter").to_lowercase();
+                let mut out = String::new();
+                for c in crate::app::commands::PALETTE {
+                    let label = format!("{}: {}", t(c.menu), t(c.item));
+                    if f.is_empty() || c.id.contains(&f) || label.to_lowercase().contains(&f) {
+                        out.push_str(&format!("{}\t{}\n", c.id, label));
+                    }
+                }
+                ok(out)
+            }
+            "run_command" => {
+                let id = g("id");
+                if crate::app::commands::PALETTE.iter().any(|c| c.id == id)
+                    || id.starts_with("view.")
+                {
+                    self.menu_action(&id);
+                    ok(format!("ran {id}"))
+                } else {
+                    err(format!("unknown command {id}"))
+                }
+            }
+            "get_setting" => {
+                let key = g("key");
+                if key.is_empty() {
+                    let mut out = String::new();
+                    for e in nsql_settings::REGISTRY {
+                        out.push_str(&format!(
+                            "{}={}\n",
+                            e.key,
+                            self.settings.get(e.key).unwrap_or("")
+                        ));
+                    }
+                    ok(out)
+                } else {
+                    match self.settings.get(&key) {
+                        Some(v) => ok(v.to_string()),
+                        None => err(format!("unknown key {key}")),
+                    }
+                }
+            }
+            "set_setting" => {
+                let key = g("key");
+                let val = g("value");
+                match self.settings.set(&key, &val) {
+                    Ok(v) => {
+                        self.persist_settings();
+                        let applied = self.apply_setting(&key);
+                        self.prefs_win.refresh(&self.settings);
+                        ok(format!(
+                            "{key}={v}{}",
+                            if applied { "" } else { " (restart needed)" }
+                        ))
+                    }
+                    Err(e) => err(e.to_string()),
+                }
+            }
+            "get_editor_text" => {
+                if self.ai_view_active() {
+                    err("the chat tab is active; switch to a SQL editor tab first".into())
+                } else {
+                    let full = self.editors.cur().text();
+                    let sel = self.editors.cur().copy_selection().unwrap_or_default();
+                    let byte_pos = full
+                        .char_indices()
+                        .nth(self.editors.cur().caret())
+                        .map_or(full.len(), |(b, _)| b);
+                    let stmt =
+                        nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect))
+                            .map(|it| full[it.span].to_string())
+                            .unwrap_or_default();
+                    ok(format!(
+                        "<text>\n{full}\n</text>\n<selection>\n{sel}\n</selection>\n<statement_at_caret>\n{stmt}\n</statement_at_caret>"
+                    ))
+                }
+            }
+            "set_editor_text" => {
+                let text = g("text");
+                let mode = g("mode");
+                if mode == "new_tab" || self.ai_view_active() {
+                    self.editors.new_tab(None);
+                }
+                let mut inv = Invalidations::default();
+                if mode == "insert" {
+                    self.ed_mut().paste(&text, &mut inv);
+                } else {
+                    let len = self.ed_mut().text().chars().count();
+                    self.ed_mut().replace_range(0, len, &text, &mut inv);
+                }
+                self.redraw();
+                ok("editor updated".into())
+            }
+            "format_sql" => {
+                let engine = self.format_default_engine();
+                match self.format_run(&engine, &g("sql"), false) {
+                    Ok(s) => ok(s),
+                    Err(e) => err(e),
+                }
+            }
+            "search_objects" => {
+                let limit = gi("limit", 50).clamp(1, 500) as usize;
+                let rows = self
+                    .explorer
+                    .ai_search_objects(&g("query"), &g("kind"), limit);
+                if rows.is_empty() {
+                    ok("no objects (is the explorer connected and loaded?)".into())
+                } else {
+                    ok(rows.join("\n"))
+                }
+            }
+            "describe_object" => {
+                let schema = g("schema");
+                let s = (!schema.is_empty()).then_some(schema.as_str());
+                match self.explorer.ai_describe(s, &g("name")) {
+                    Some(d) => ok(d),
+                    None => err("object not found in explorer; try search_objects".into()),
+                }
+            }
+            "list_profiles" => ok(crate::worker::profile_names().join("\n")),
+            "session_info" => ok(format!(
+                "profile={}\ndialect={:?}\nconnected={}\nschema={}\nbusy={}\ndesc={}",
+                self.sess.profile,
+                self.sess.dialect,
+                self.sess.connected,
+                self.sess.cur_schema.clone().unwrap_or_default(),
+                self.sess.busy,
+                self.sess.desc
+            )),
+            "connect" => {
+                let p = g("profile");
+                self.startup_cmd(&format!("conn.edit:{p}"));
+                ok(format!(
+                    "connection window opened for '{p}'; the user confirms the login"
+                ))
+            }
+            "get_result" => match self.grid.ai_text(max_rows) {
+                Some(s) => ok(s),
+                None => err("no result grid".into()),
+            },
+            "run_query" | "explain" => {
+                let sql = g("sql");
+                if sql.trim().is_empty() {
+                    let _ = reply.send(err("empty sql".into()));
+                    return;
+                }
+                if self.ai.pending.is_some() {
+                    let _ = reply.send(err("another query is still running".into()));
+                    return;
+                }
+                if !self.sess.connected {
+                    let _ = reply.send(err("not connected".into()));
+                    return;
+                }
+                if !self.gate_open() {
+                    let _ = reply.send(err(format!("session busy: {}", self.sess.status)));
+                    return;
+                }
+                let src = if name == "explain" {
+                    nsql_script::plan::explain_script_opts(
+                        self.sess.dialect,
+                        &sql,
+                        nsql_script::plan::PlanOptions { analyze: false },
+                    )
+                } else {
+                    sql
+                };
+                self.ai.capture = None;
+                self.ai.pending = Some(PendingTool {
+                    reply: Some(reply),
+                    attach_label: None,
+                    since: Instant::now(),
+                    max_rows,
+                    wait_editor: None,
+                });
+                self.run_text_whole(src);
+                return;
+            }
+            "object_source" => {
+                let schema = g("schema");
+                let s = (!schema.is_empty()).then_some(schema.as_str());
+                match self.explorer.ai_object_info(s, &g("name")) {
+                    Some(o) => {
+                        let before = self.editors.active_id();
+                        self.explorer.open_source_of(&o);
+                        self.ai.pending = Some(PendingTool {
+                            reply: Some(reply),
+                            attach_label: None,
+                            since: Instant::now(),
+                            max_rows,
+                            wait_editor: Some(before),
+                        });
+                        return;
+                    }
+                    None => err("object not found in explorer".into()),
+                }
+            }
+            other => err(format!("unknown tool {other}")),
+        };
+        let _ = reply.send(r);
+    }
+
+    /// 결과셋이 올 때(run_events) — AI가 기다리면 글로 잡아 둔다.
+    pub(crate) fn ai_capture_result(&mut self, rs: &nsql_core::ResultSet) {
+        let Some(p) = &self.ai.pending else { return };
+        if p.wait_editor.is_some() {
+            return;
+        }
+        let max = p.max_rows;
+        let mut out = String::new();
+        out.push_str(
+            &rs.columns
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>()
+                .join("\t"),
+        );
+        out.push('\n');
+        for row in rs.rows.iter().take(max) {
+            out.push_str(
+                &row.iter()
+                    .map(|v| nsql_io::cell_text(v, "NULL"))
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            );
+            out.push('\n');
+        }
+        if rs.rows.len() > max {
+            out.push_str(&format!(
+                "… ({} rows total, {} shown)\n",
+                rs.rows.len(),
+                max
+            ));
+        }
+        match &mut self.ai.capture {
+            Some(c) => {
+                c.push('\n');
+                c.push_str(&out);
+            }
+            None => self.ai.capture = Some(out),
+        }
+    }
+
+    /// 대기 도구 완료 판정(틱) — 세션이 한가해졌거나 소스 탭이 열렸다.
+    fn ai_tick_pending(&mut self) -> bool {
+        let Some(p) = &self.ai.pending else {
+            return false;
+        };
+        let timeout = p.since.elapsed()
+            > std::time::Duration::from_secs(self.settings.int("ai.timeout_secs").max(10) as u64);
+        let done_text: Option<(String, bool)> = if let Some(before) = p.wait_editor {
+            let cur = self.editors.active_id();
+            let text = self.editors.cur().text();
+            if cur != before && !text.trim().is_empty() {
+                Some((text, true))
+            } else if timeout {
+                Some(("timed out opening the source".into(), false))
+            } else {
+                None
+            }
+        } else if !self.sess.busy && p.since.elapsed() > std::time::Duration::from_millis(250) {
+            if self.sess.run_had_err {
+                Some((redact(&self.sess.status), false))
+            } else {
+                Some((
+                    self.ai
+                        .capture
+                        .take()
+                        .unwrap_or_else(|| redact(&self.sess.status)),
+                    true,
+                ))
+            }
+        } else if timeout {
+            Some(("query timed out".into(), false))
+        } else {
+            None
+        };
+        let Some((text, ok)) = done_text else {
+            return false;
+        };
+        let p = self.ai.pending.take().expect("pending");
+        if let Some(r) = p.reply {
+            let _ = r.send(ToolReply { output: text, ok });
+        } else if let Some(label) = p.attach_label {
+            if ok {
+                if let Some(s) = self.ai_cur_mut() {
+                    s.attachments.push(Attachment::Text { label, body: text });
+                }
+                self.ai.status = t(Msg::AiAttached).into();
+            } else {
+                self.ai_push(ChatMsg::new(Kind::Error, text));
+            }
+        }
+        true
+    }
+
+    // ───────────────────────── 첨부 · `/` 명령 ─────────────────────────
+
+    fn ai_attach_clipboard(&mut self) {
+        match crate::clipboard::read_text() {
+            Some(t) if !t.trim().is_empty() => {
+                if ai::contains_secret(&t) {
+                    self.ai_push(ChatMsg::new(
+                        Kind::Error,
+                        nsql_i18n::t(Msg::AiSecretBlocked),
+                    ));
+                    return;
+                }
+                let n = t.lines().count();
+                if let Some(s) = self.ai_cur_mut() {
+                    s.attachments.push(Attachment::Text {
+                        label: format!("clipboard ({n} lines)"),
+                        body: t,
+                    });
+                }
+                self.ai.status = nsql_i18n::t(Msg::AiAttached).into();
+            }
+            _ => self.ai.status = nsql_i18n::t(Msg::AiClipboardEmpty).into(),
+        }
+    }
+
+    /// 파일 창에서 고른 파일 첨부(이미지 · PDF · 글 ≤ 512 KB).
+    pub(crate) fn ai_attach_file(&mut self, path: &std::path::Path) {
+        let label = path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.ai_push(ChatMsg::new(Kind::Error, e.to_string()));
+                return;
+            }
+        };
+        let a = match ext.as_str() {
+            "png" | "jpg" | "jpeg" | "gif" | "webp" => Attachment::Image {
+                label,
+                media: match ext.as_str() {
+                    "png" => "image/png",
+                    "gif" => "image/gif",
+                    "webp" => "image/webp",
+                    _ => "image/jpeg",
+                }
+                .into(),
+                bytes,
+            },
+            "pdf" => Attachment::Pdf { label, bytes },
+            _ => {
+                if bytes.len() > 512 * 1024 {
+                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiFileTooBig)));
+                    return;
+                }
+                let body = String::from_utf8_lossy(&bytes).into_owned();
+                if ai::contains_secret(&body) {
+                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
+                    return;
+                }
+                Attachment::Text { label, body }
+            }
+        };
+        if let Some(s) = self.ai_cur_mut() {
+            s.attachments.push(a);
+        }
+        self.ai.status = t(Msg::AiAttached).into();
+        self.redraw();
+    }
+
+    fn ai_slash(&mut self, line: &str) {
+        let (cmd, arg) = line
+            .split_once(' ')
+            .map(|(c, a)| (c, a.trim()))
+            .unwrap_or((line, ""));
+        match cmd {
+            "/clear" => {
+                self.ai_new_session();
+            }
+            "/mode" => {
+                let m = Mode::parse(arg);
+                self.ai_panel_actions_apply(PanelAction::SetMode(m));
+            }
+            "/model" if !arg.is_empty() => {
+                self.ai_panel_actions_apply(PanelAction::SetModel(arg.into()))
+            }
+            "/effort" if !arg.is_empty() => {
+                self.ai_panel_actions_apply(PanelAction::SetEffort(arg.into()))
+            }
+            "/auto" => {
+                let on = arg.is_empty() || matches!(arg, "on" | "1" | "true");
+                self.ai_panel_actions_apply(PanelAction::SetAuto(on));
+            }
+            "/rows" => {
+                let on = arg.is_empty() || matches!(arg, "on" | "1" | "true");
+                if let Some(s) = self.ai_cur_mut() {
+                    s.rows_allowed = on;
+                }
+                self.ai_push(ChatMsg::new(
+                    Kind::Note,
+                    t(if on { Msg::AiRowsOn } else { Msg::AiRowsOff }),
+                ));
+            }
+            "/attach" => {
+                self.file_purpose = FilePurpose::AiAttach;
+                self.open_file_dlg = Some(nexa_dlg::PickerMode::Open);
+            }
+            "/clip" => self.ai_attach_clipboard(),
+            "/profiles" => {
+                self.ai_view.show_page(Page::Profiles);
+                let cur = self.ai.store.current().cloned();
+                let has_key = cur.as_ref().is_some_and(|p| self.ai_key_exists(&p.name));
+                self.ai_view.edit_profile(cur.as_ref(), has_key);
+            }
+            "/query" => {
+                if arg.is_empty() {
+                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiQueryUsage)));
+                } else if !sql_is_readonly(arg) {
+                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiQueryReadOnly)));
+                } else if !self.sess.connected || !self.gate_open() || self.ai.pending.is_some() {
+                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiQueryBusy)));
+                } else {
+                    let max_rows = self.settings.int("ai.max_rows").max(1) as usize;
+                    self.ai.capture = None;
+                    self.ai.pending = Some(PendingTool {
+                        reply: None,
+                        attach_label: Some(format!(
+                            "query: {}",
+                            arg.chars().take(60).collect::<String>()
+                        )),
+                        since: Instant::now(),
+                        max_rows,
+                        wait_editor: None,
+                    });
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.rows_allowed = true;
+                    }
+                    self.run_text_whole(arg.to_string());
+                    self.ai.status = "…".into();
+                }
+            }
+            _ => {
+                let mut text = String::new();
+                for (n, has_arg, d) in crate::ai::view::SLASH {
+                    text.push_str(&format!(
+                        "{n}{}  — {}\n",
+                        if *has_arg { " <arg>" } else { "" },
+                        t(*d)
+                    ));
+                }
+                self.ai_push(ChatMsg::new(Kind::Note, text));
+            }
+        }
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    fn ai_panel_actions_apply(&mut self, a: PanelAction) {
+        match a {
+            PanelAction::SetMode(m) => {
+                let _ = self.settings.set("ai.mode", m.as_str());
+                self.persist_settings();
+                if let Some(s) = self.ai_cur_mut() {
+                    s.mode = m;
+                    s.cli_session = None;
+                }
+                if let Some(h) = &mut self.ai.host {
+                    h.stop();
+                }
+            }
+            PanelAction::SetModel(m) => {
+                let _ = self.settings.set("ai.model", &m);
+                self.persist_settings();
+                if let Some(s) = self.ai_cur_mut() {
+                    s.model = m;
+                }
+            }
+            PanelAction::SetEffort(e) => {
+                let _ = self.settings.set("ai.effort", &e);
+                self.persist_settings();
+                if let Some(s) = self.ai_cur_mut() {
+                    s.effort = e;
+                }
+            }
+            PanelAction::SetAuto(on) => {
+                let _ = self.settings.set("ai.auto", if on { "on" } else { "off" });
+                self.persist_settings();
+                if let Some(s) = self.ai_cur_mut() {
+                    s.auto = on;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ───────────────────────── 헤드리스 명령(V1) ─────────────────────────
+
+    /// `ai.open` · `ai.panel` · `ai.send:<글>` · `ai.dump:<파일>` · `ai.approve:<yes|no>`. 처리했으면 true.
+    pub(crate) fn ai_startup_cmd(&mut self, id: &str) -> bool {
+        if id == "ai.open" {
+            if !self.ai_enabled() {
+                let _ = self.settings.set("ai.enabled", "on");
+                self.ai_apply_enabled();
+            }
+            self.ai_open_chat();
+            return true;
+        }
+        if id == "ai.panel" {
+            self.ai_toggle_panel();
+            return true;
+        }
+        if let Some(text) = id.strip_prefix("ai.send:") {
+            self.ai_open_chat();
+            self.ai_send(text);
+            return true;
+        }
+        if let Some(a) = id.strip_prefix("ai.approve:") {
+            self.ai_approve(a == "yes");
+            return true;
+        }
+        if let Some(path) = id.strip_prefix("ai.dump:") {
+            let mut s = self.ai_panel.dump_text();
+            if let Some(sess) = self.ai_cur() {
+                s.push_str(&self.ai_view.dump_text(sess, &self.ai_view_info()));
+            }
+            s.push_str(&format!(
+                "pending={} approval={}\n",
+                self.ai.pending.is_some(),
+                self.ai.approval.is_some()
+            ));
+            let _ = std::fs::write(path, s);
+            return true;
+        }
+        false
+    }
+}
+
+impl App {
+    // ───────────────────────── 입력 라우팅(input.rs 선례 = 아웃라인 패널) ─────────────────────────
+
+    /// 패널: 포인터는 안일 때 · 키는 포커스일 때. 가져갔으면 true.
+    pub(crate) fn route_ai_panel(&mut self, ev: InputEvent, is_ptr: bool) -> bool {
+        if !self.ai_panel.is_visible() {
+            return false;
+        }
+        let cur = Point {
+            x: self.cursor.0,
+            y: self.cursor.1,
+        };
+        let inside = self.ai_panel.bounds().contains(cur);
+        if (is_ptr && inside) || (is_wheel_ev(&ev) && inside) {
+            if matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) {
+                self.set_focus(Focus::Ai);
+            }
+            if self.ai_panel.on_event(&ev) {
+                self.redraw();
+            }
+            self.ime_refresh();
+            self.ai_panel_actions();
+            if !matches!(ev, InputEvent::MouseMove { .. }) {
+                return true;
+            }
+        } else if self.focus == Focus::Ai
+            && matches!(
+                ev,
+                InputEvent::Key { .. }
+                    | InputEvent::Char { .. }
+                    | InputEvent::SelectAll
+                    | InputEvent::Undo
+                    | InputEvent::Redo
+            )
+        {
+            let handled = self.ai_panel.on_event(&ev);
+            self.ime_refresh();
+            if !handled
+                && matches!(
+                    ev,
+                    InputEvent::Key {
+                        key: CtlKey::Escape,
+                        ..
+                    }
+                )
+            {
+                self.set_focus(Focus::Editor);
+                self.redraw();
+                return true;
+            }
+            if handled {
+                self.redraw();
+            }
+            self.ai_panel_actions();
+            return true;
+        }
+        false
+    }
+
+    /// 패널의 드롭 목록·우클릭 메뉴가 열려 있으면 먼저 받는다(바깥 클릭 = 닫고 통과).
+    pub(crate) fn route_ai_menu(&mut self, ev: InputEvent) -> bool {
+        if self.ai_panel.is_visible() && self.ai_panel.menu_open() {
+            let outside_click = matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) && !self.ai_panel.menu_bounds().contains(Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            });
+            if self.ai_panel.on_event(&ev) {
+                self.redraw();
+            }
+            self.ai_panel_actions();
+            if (!outside_click || self.ai_panel.menu_open())
+                && !matches!(ev, InputEvent::MouseMove { .. })
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 채팅 뷰 탭(확장 뷰와 같은 규칙): 포인터는 편집기 자리 안일 때 · 키는 편집기 포커스일 때.
+    pub(crate) fn route_ai_view(&mut self, ev: InputEvent, is_mouse: bool) -> bool {
+        if !self.ai_view_active() {
+            return false;
+        }
+        let cur = Point {
+            x: self.cursor.0,
+            y: self.cursor.1,
+        };
+        let in_view = self.editors.editor_bounds().contains(cur);
+        let pointer = is_mouse || is_wheel_ev(&ev);
+        let popup = self.ai_view.popup_open();
+        if pointer && (in_view || popup) {
+            if matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) {
+                self.set_focus(Focus::Editor);
+            }
+            if self.ai_view.on_event(&ev) {
+                self.redraw();
+            }
+            self.ime_refresh();
+            self.ai_view_actions();
+            return true;
+        }
+        if !pointer && self.focus == Focus::Editor {
+            if self.ai_view.on_event(&ev) {
+                self.redraw();
+            }
+            self.ime_refresh();
+            self.ai_view_actions();
+            return true;
+        }
+        false
+    }
+}
+
+/// 읽기 전용 문장인가(SELECT/WITH/SHOW/EXPLAIN/DESC/VALUES · 한 문장).
+pub(crate) fn sql_is_readonly(sql: &str) -> bool {
+    let items = nsql_script::split_script_in(sql, None);
+    if items.len() > 1 {
+        return false;
+    }
+    let s = sql.trim_start_matches(|c: char| c.is_whitespace() || c == '(');
+    // 선행 주석 제거.
+    let mut s = s;
+    loop {
+        if let Some(rest) = s.strip_prefix("--") {
+            s = rest
+                .split_once('\n')
+                .map(|(_, r)| r)
+                .unwrap_or("")
+                .trim_start();
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = rest
+                .split_once("*/")
+                .map(|(_, r)| r)
+                .unwrap_or("")
+                .trim_start();
+        } else {
+            break;
+        }
+    }
+    let up = s.to_ascii_uppercase();
+    let first = up
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or("");
+    matches!(
+        first,
+        "SELECT" | "WITH" | "SHOW" | "EXPLAIN" | "DESC" | "DESCRIBE" | "VALUES" | "PRAGMA"
+    ) && !up.contains(" INTO ")
+        && !up.contains("FOR UPDATE")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sql_is_readonly;
+
+    #[test]
+    fn readonly_detection() {
+        assert!(sql_is_readonly("select 1 from dual"));
+        assert!(sql_is_readonly(
+            "  -- note\nWITH x AS (select 1) select * from x"
+        ));
+        assert!(sql_is_readonly("(select 1)"));
+        assert!(!sql_is_readonly("delete from t"));
+        assert!(!sql_is_readonly("select * into t2 from t"));
+        assert!(!sql_is_readonly("select 1; drop table t"));
+        assert!(!sql_is_readonly("select * from t for update"));
+    }
+}

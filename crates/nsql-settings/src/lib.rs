@@ -264,6 +264,21 @@ pub enum SettingKind {
 }
 
 /// [`SettingKind::Position`] 값(행우선 · 왼쪽 위 → 오른쪽 아래).
+/// ★ AI 모드 · 노력도 · CLI 권한 모드 선택지(docs/110 · 11-11).
+pub const AI_MODE_OPTS: &[(&str, Msg)] = &[("api", Msg::AiModeApi), ("cli", Msg::AiModeCli)];
+pub const AI_EFFORT_OPTS: &[(&str, Msg)] = &[
+    ("low", Msg::OptAiEffortLow),
+    ("medium", Msg::OptAiEffortMedium),
+    ("high", Msg::OptAiEffortHigh),
+    ("xhigh", Msg::OptAiEffortXhigh),
+    ("max", Msg::OptAiEffortMax),
+];
+pub const AI_PERM_OPTS: &[(&str, Msg)] = &[
+    ("default", Msg::OptAiPermDefault),
+    ("acceptEdits", Msg::OptAiPermAcceptEdits),
+    ("plan", Msg::OptAiPermPlan),
+];
+
 pub const POSITIONS: [&str; 9] = [
     "top_left",
     "top_center",
@@ -6240,6 +6255,115 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescVarsSecretNames,
         kind: SettingKind::Text,
         default: "PASS,PWD,SECRET,TOKEN",
+    },
+    // ★ AI 어시스턴트(docs/110 · 사용자 11-11 "Claude 탭 — API · 다중 API · CLI"): 켜기(팔레트 Switch) · 모드 · 모델 · 노력도 · Auto ·
+    //   CLI 경로/권한/bare · 행 상한 · 시간 · 출력 토큰 · 이력 보존 · MCP 포트. API 키는 여기 없다(볼트 `ai.<프로필>`).
+    Entry {
+        key: "ai.enabled",
+        cat: Msg::CatAi,
+        label: Msg::LblAiEnabled,
+        desc: Msg::DescAiEnabled,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "ai.mode",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMode,
+        desc: Msg::DescAiMode,
+        kind: SettingKind::Choice(AI_MODE_OPTS),
+        default: "api",
+    },
+    Entry {
+        key: "ai.model",
+        cat: Msg::CatAi,
+        label: Msg::LblAiModel,
+        desc: Msg::DescAiModel,
+        kind: SettingKind::Text,
+        default: "claude-opus-5-5",
+    },
+    Entry {
+        key: "ai.effort",
+        cat: Msg::CatAi,
+        label: Msg::LblAiEffort,
+        desc: Msg::DescAiEffort,
+        kind: SettingKind::Choice(AI_EFFORT_OPTS),
+        default: "medium",
+    },
+    Entry {
+        key: "ai.auto",
+        cat: Msg::CatAi,
+        label: Msg::LblAiAuto,
+        desc: Msg::DescAiAuto,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "ai.max_rows",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMaxRows,
+        desc: Msg::DescAiMaxRows,
+        kind: SettingKind::Int { min: 1, max: 10000 },
+        default: "200",
+    },
+    Entry {
+        key: "ai.timeout_secs",
+        cat: Msg::CatAi,
+        label: Msg::LblAiTimeout,
+        desc: Msg::DescAiTimeout,
+        kind: SettingKind::Int { min: 10, max: 3600 },
+        default: "300",
+    },
+    Entry {
+        key: "ai.max_tokens",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMaxTokens,
+        desc: Msg::DescAiMaxTokens,
+        kind: SettingKind::Int {
+            min: 256,
+            max: 128000,
+        },
+        default: "8192",
+    },
+    Entry {
+        key: "ai.history_keep_days",
+        cat: Msg::CatAi,
+        label: Msg::LblAiHistoryKeep,
+        desc: Msg::DescAiHistoryKeep,
+        kind: SettingKind::Int { min: 0, max: 3650 },
+        default: "90",
+    },
+    Entry {
+        key: "ai.cli_path",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCliPath,
+        desc: Msg::DescAiCliPath,
+        kind: SettingKind::Text,
+        default: "claude",
+    },
+    Entry {
+        key: "ai.permission_mode",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPermissionMode,
+        desc: Msg::DescAiPermissionMode,
+        kind: SettingKind::Choice(AI_PERM_OPTS),
+        default: "default",
+    },
+    Entry {
+        key: "ai.bare",
+        cat: Msg::CatAi,
+        label: Msg::LblAiBare,
+        desc: Msg::DescAiBare,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ai.mcp_port",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMcpPort,
+        desc: Msg::DescAiMcpPort,
+        kind: SettingKind::Int { min: 0, max: 65535 },
+        default: "0",
     },
     // ★ 변수 창 👁 보기(사용자 11-11 "원문은 어떻게 확인?"): 비밀 행의 값 열 오른쪽 끝 눈 버튼을 **누르고 있는 동안만** 원문 ·
     //   로그·저장·덤프에는 안 남는다.

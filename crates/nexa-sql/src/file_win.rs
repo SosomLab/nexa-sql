@@ -159,6 +159,8 @@ pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter
             all(),
         ],
         FilePurpose::SettingFolder(_) => vec![all()],
+        // ★ AI 첨부(docs/110 · 11-11): 글·이미지·PDF 어떤 파일이든.
+        FilePurpose::AiAttach => vec![all(), text(), sql()],
         FilePurpose::SettingsFile => vec![FileFilter::new(t(Msg::FilterJson), &["json"]), all()],
         // ★ T-31b: 접속 프로필 파일(nexa-conf key=value 블록 · `.conf`) — 텍스트도 좁혀 보기용.
         FilePurpose::ProfilesFile => {

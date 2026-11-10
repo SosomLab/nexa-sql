@@ -50,6 +50,7 @@ mod ext_panel;
 mod ext_view;
 mod output;
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
+mod ai;
 mod condbar;
 mod dragchip;
 mod driver_win;
@@ -201,6 +202,8 @@ enum Focus {
     Details,
     /// 아웃라인 패널(docs/76 · 사용자 09-23).
     Outline,
+    /// ★ Claude 패널(docs/110 · 사용자 11-11).
+    Ai,
 }
 
 /// 저장소 읽기 스레드의 결과 한 벌(원천 · index · 추적 줄).
@@ -664,6 +667,10 @@ struct App {
     intel: intel::Intel,
     /// 아웃라인 패널(docs/76).
     outline_panel: outline_panel::OutlinePanel,
+    /// ★ AI 어시스턴트(docs/110 · 11-11): 좌측 패널 · 채팅 뷰 탭 · 상태(세션·호스트·프로필).
+    ai_panel: ai::panel::AiPanel,
+    ai_view: ai::view::AiView,
+    ai: app::ai::AiState,
     /// ★ T-423 ②: 아웃라인이 그리드 컬럼 목록을 보일 차례인가 — 마지막으로 포커스가 간 곳이 그리드(true)인가 편집기(false)인가(패널 자신·그 밖 포커스는 유지).
     outline_grid: bool,
     project: project::Project,
@@ -1198,6 +1205,8 @@ impl App {
         // 확장 아이콘·패널 = 확장 관리자가 켜져 있을 때만(꺼지면 아이콘이 사라지고 패널도 닫힌다 · 사용자 09-19).
         let ext_on = self.settings.flag("extensions.enabled");
         self.act_bar.set_item_visible("view.extensions", ext_on);
+        self.act_bar
+            .set_item_visible("view.ai", self.settings.flag("ai.enabled"));
         if !ext_on && self.ext_panel.is_visible() {
             self.ext_panel.set_visible(false);
             if self.focus == Focus::Ext {
@@ -1216,6 +1225,8 @@ impl App {
             Some("view.bookmarks")
         } else if self.outline_panel.is_visible() {
             Some("view.outline")
+        } else if self.ai_panel.is_visible() {
+            Some("view.ai")
         } else {
             None
         });
@@ -1225,6 +1236,7 @@ impl App {
             || self.project_panel.is_visible()
             || self.bm_panel.is_visible()
             || self.outline_panel.is_visible()
+            || self.ai_panel.is_visible()
         {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
@@ -1341,6 +1353,16 @@ impl App {
             s,
         );
         self.outline_panel.set_clamp_width(w);
+        self.ai_panel.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.ai_panel.is_visible() { exp_w } else { 0 },
+                body_h,
+            ),
+            s,
+        );
+        self.ai_panel.set_clamp_width(w);
         self.ext_panel.set_bounds(
             Rect::new(
                 act_w,
@@ -1454,9 +1476,17 @@ impl App {
         if keep != "view.outline" && self.outline_panel.is_visible() {
             self.outline_panel.set_visible(false);
         }
+        if keep != "view.ai" && self.ai_panel.is_visible() {
+            self.ai_panel.set_visible(false);
+        }
         if matches!(
             self.focus,
-            Focus::Explorer | Focus::Search | Focus::Ext | Focus::Project | Focus::Outline
+            Focus::Explorer
+                | Focus::Search
+                | Focus::Ext
+                | Focus::Project
+                | Focus::Outline
+                | Focus::Ai
         ) {
             self.set_focus(Focus::Editor);
         }
@@ -1842,6 +1872,7 @@ fn main() {
     let bm_panel = bookmarks_panel::BookmarksPanel::new();
     let intel = intel::Intel::new(intel::IntelCfg::from_settings(&settings));
     let outline_panel = outline_panel::OutlinePanel::new();
+    let ai_panel = ai::panel::AiPanel::new();
     let ext_panel = ExtPanel::new();
     mark(&mut marks, "ext_panel");
     let palette = Palette::new();
@@ -2126,6 +2157,9 @@ fn main() {
         search_history,
         intel,
         outline_panel,
+        ai_panel,
+        ai_view: ai::view::AiView::default(),
+        ai: app::ai::AiState::default(),
         project: project::Project::default(),
         ext_panel,
         ext_fetch_rx: None,
@@ -2447,6 +2481,8 @@ enum FilePurpose {
     License,
     /// ★ 드라이버 패키지/오프라인 번들 zip(드라이버 관리자 [파일에서 설치…] · D-350).
     DriverPackage,
+    /// ★ AI 채팅 첨부 파일(docs/110 · 11-11).
+    AiAttach,
     /// ★ T-8 GUI 2차(10-31): 결과 그리드 → 파일 스트리밍 내보내기(Save · 형식 = 확장자 csv/tsv/json/jsonl/sql).
     ResultExport,
     /// ★ T-31b(11-04 · D-459): 접속 프로필 내보내기(Save · 비밀번호 제외)/가져오기(Open · 같은 이름은 건너뜀).

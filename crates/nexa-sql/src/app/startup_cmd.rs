@@ -7,6 +7,10 @@ use crate::*;
 impl App {
     /// 자체 캡처용 기동 명령 하나 — `open:<경로>` = 파일을 탭으로 · 나머지 = 명령 id.
     pub(crate) fn startup_cmd(&mut self, id: &str) {
+        // ★ AI 탭(docs/110 · 11-11): `ai.open` · `ai.panel` · `ai.send:<글>` · `ai.approve:<yes|no>` · `ai.dump:<파일>`.
+        if self.ai_startup_cmd(id) {
+            return;
+        }
         // `conn.edit:<프로필>` = 로그인 창의 상세 폼을 그 프로필로 열고 두 칸을 바꾼 상태로(필수·바뀜 표식 캡처).
         // 자체 캡처용: 이름 바꾸기 입력 상자를 키 없이 연다(`tab.rename` = 편집기 탭 · `result.rename` = 결과 탭).
         // 자체 캡처용: 설정의 "찾아보기…"를 키·마우스 없이 누른다(`prefs.browse:<폴더 설정 키>`).

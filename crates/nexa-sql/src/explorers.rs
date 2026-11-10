@@ -1580,6 +1580,26 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         }
     }
 
+    /// ★ AI 도구(docs/110 · 11-11): 활성 칸의 메타에서 객체 검색·설명·소스 열기.
+    pub(crate) fn ai_search_objects(&self, query: &str, kind: &str, limit: usize) -> Vec<String> {
+        self.panes[self.shown]
+            .ex
+            .ai_search_objects(query, kind, limit)
+    }
+    pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
+        self.panes[self.shown].ex.ai_describe(schema, name)
+    }
+    pub(crate) fn ai_object_info(
+        &self,
+        schema: Option<&str>,
+        name: &str,
+    ) -> Option<nsql_catalog::ObjectInfo> {
+        self.panes[self.shown].ex.ai_object_info(schema, name)
+    }
+    pub(crate) fn open_source_of(&mut self, o: &nsql_catalog::ObjectInfo) {
+        self.cur_mut().open_source_of(o);
+    }
+
     /// ★ T-123(219차): 그 서버 칸의 적재된 메타에서 객체 부가(`extra`) — 칸이 없거나 모르면 None · 서버 왕복 0.
     pub(crate) fn object_extra(
         &self,

@@ -35,6 +35,7 @@ impl crate::keymap_file::ContextSource for App {
             Focus::Bookmarks => "bookmarks",
             Focus::Details => "details",
             Focus::Outline => "outline",
+            Focus::Ai => "ai",
         };
         let ed = self.editors.cur();
         // 선택마다 값 하나(1개 = 스칼라 · 여럿 = 배열).
@@ -328,6 +329,7 @@ impl App {
         self.project_panel.set_focused(f == Focus::Project);
         self.bm_panel.set_focused(f == Focus::Bookmarks);
         self.outline_panel.set_focused(f == Focus::Outline);
+        self.ai_panel.set_focused(f == Focus::Ai);
         self.ext_panel.set_focused(f == Focus::Ext);
         self.ime_refresh();
     }
@@ -343,6 +345,7 @@ impl App {
             Focus::Project => !self.project_panel.wants_ime(),
             Focus::Bookmarks => !self.bm_panel.wants_ime(),
             Focus::Outline => !self.outline_panel.wants_ime(),
+            Focus::Ai => !self.ai_panel.wants_ime(),
             _ => false,
         }
     }
@@ -451,6 +454,7 @@ impl App {
         match self.focus {
             // ★ 뷰 탭(확장 상세)이 활성이면 클립보드 동작(⌘/Ctrl+C·A)의 대상은 그 본문 상자(사용자 09-30).
             Focus::Editor if self.ext_view_active() => Some(self.ext_view.textbox_mut()),
+            Focus::Editor if self.ai_view_active() => Some(self.ai_view.textbox_mut()),
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Find => self.find.focused_textbox(),
             Focus::Search => self.search.focused_textbox(),
@@ -458,6 +462,7 @@ impl App {
             Focus::Project => self.project_panel.focused_textbox(),
             Focus::Bookmarks => self.bm_panel.focused_textbox(),
             Focus::Outline => self.outline_panel.focused_textbox(),
+            Focus::Ai => self.ai_panel.focused_textbox(),
             Focus::Explorer => self.explorer.focused_textbox(),
             // 그리드 = 값 목록 팝업의 검색 상자 · 조건 바(열려/포커스일 때 · IME 조합·확정 · 복사/붙여넣기/전체 선택 · 10-06).
             Focus::Grid => self.grid.text_input_textbox(),
@@ -918,6 +923,7 @@ impl App {
                     Some(Focus::Project) => self.project_panel.on_event(&out),
                     Some(Focus::Bookmarks) => self.bm_panel.on_event(&out),
                     Some(Focus::Outline) => self.outline_panel.on_event(&out),
+                    Some(Focus::Ai) => self.ai_panel.on_event(&out),
                     Some(Focus::Ext) => self.ext_panel.on_event(&out),
                     Some(Focus::Search) => self.search.on_event(&out),
                     Some(Focus::Grid) => {
@@ -1311,6 +1317,13 @@ impl App {
             return;
         }
         // 아웃라인 패널(docs/76) — 북마크 패널과 같은 규칙(포인터는 안일 때 · 키는 포커스일 때 · 열기 요청은 pump).
+        // ★ Claude 패널(docs/110 · 11-11) — 아웃라인 패널과 같은 규칙.
+        if self.route_ai_menu(ev) {
+            return;
+        }
+        if self.route_ai_panel(ev, is_ptr) {
+            return;
+        }
         if self.route_outline_menu(ev) {
             return;
         }
@@ -1556,6 +1569,7 @@ impl App {
                 | Focus::Project
                 | Focus::Bookmarks
                 | Focus::Outline
+                | Focus::Ai
                 | Focus::Details => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
@@ -2444,6 +2458,12 @@ impl App {
         if self.outline_panel.is_visible() {
             changed |= self.outline_panel.on_event(&out);
         }
+        if self.ai_panel.is_visible() {
+            changed |= self.ai_panel.on_event(&out);
+        }
+        if self.ai_view_active() {
+            changed |= self.ai_view.on_event(&out);
+        }
         if self.ext_panel.is_visible() {
             changed |= self.ext_panel.on_event(&out);
         }
@@ -2478,7 +2498,7 @@ impl App {
         if self.grid.outer_bounds().contains(p) {
             return Some(Focus::Grid);
         }
-        let panels: [(Focus, bool, Rect); 8] = [
+        let panels: [(Focus, bool, Rect); 9] = [
             (
                 Focus::Explorer,
                 self.explorer.is_visible(),
@@ -2498,6 +2518,11 @@ impl App {
                 Focus::Outline,
                 self.outline_panel.is_visible(),
                 self.outline_panel.bounds(),
+            ),
+            (
+                Focus::Ai,
+                self.ai_panel.is_visible(),
+                self.ai_panel.bounds(),
             ),
             (
                 Focus::Ext,
@@ -2530,6 +2555,7 @@ impl App {
             Focus::Project => self.project_panel.bounds(),
             Focus::Bookmarks => self.bm_panel.bounds(),
             Focus::Outline => self.outline_panel.bounds(),
+            Focus::Ai => self.ai_panel.bounds(),
             Focus::Ext => self.ext_panel.bounds(),
             Focus::Search => self.search.bounds(),
             Focus::Find => self.find.bounds(),
@@ -2544,6 +2570,9 @@ impl App {
                 if self.ext_view_active() {
                     self.ext_view.on_event(&ev);
                     self.ext_view_actions();
+                } else if self.ai_view_active() {
+                    self.ai_view.on_event(&ev);
+                    self.ai_view_actions();
                 } else {
                     self.ed_mut().on_event(&ev, inv);
                     if let Some(act) = self.ed_mut().take_edit_ctx() {
@@ -2576,6 +2605,10 @@ impl App {
             Focus::Outline => {
                 self.outline_panel.on_event(&ev);
                 self.outline_pump();
+            }
+            Focus::Ai => {
+                self.ai_panel.on_event(&ev);
+                self.ai_panel_actions();
             }
             Focus::Ext => {
                 self.ext_panel.on_event(&ev);
@@ -2648,6 +2681,9 @@ impl App {
     /// 뷰 탭(확장 상세). 가져갔으면 `true`(연쇄 끝).
     fn route_view_tab(&mut self, ev: InputEvent, is_mouse: bool) -> bool {
         if self.route_diff_tab(ev, is_mouse) {
+            return true;
+        }
+        if self.route_ai_view(ev, is_mouse) {
             return true;
         }
         // 확장 뷰(상세 있음)만 — 상세 없는 뷰 탭(비교 inline · 서버 DDL · 정보)은 읽기 전용 편집기 경로(bin112 ④).

@@ -929,6 +929,20 @@ impl App {
                 self.sync_detail_target(true);
                 self.redraw();
             }
+            // ★ Claude 탭(docs/110 · 11-11): 패널 토글 · 채팅 탭 · 켜기/끄기(확장 관리자처럼 팔레트 Switch).
+            "view.ai" => self.ai_toggle_panel(),
+            "ai.chat" => self.ai_open_chat(),
+            "ai.enabled" => {
+                let on = !self.settings.flag("ai.enabled");
+                let _ = self
+                    .settings
+                    .set("ai.enabled", if on { "on" } else { "off" });
+                self.persist_settings();
+                self.ai_apply_enabled();
+                if on {
+                    self.ai_toggle_panel();
+                }
+            }
             "view.outline" => {
                 let on = !self.outline_panel.is_visible();
                 if on {
@@ -1910,6 +1924,8 @@ impl App {
             "view.project" => self.project_panel.is_visible(),
             "view.bookmarks" => self.bm_panel.is_visible(),
             "view.outline" => self.outline_panel.is_visible(),
+            "view.ai" => self.ai_panel.is_visible(),
+            "ai.enabled" => self.settings.flag("ai.enabled"),
             "view.log" => self.log_win.is_open(),
             "view.txlog" => self.txlog_win.is_open(),
             "view.sessions" => self.sessions_win.is_open(),
@@ -2127,6 +2143,9 @@ impl App {
         if self.ext_panel.menu_open() {
             m |= 65536;
         }
+        if self.ai_panel.menu_open() {
+            m |= 131072;
+        }
         if self.search.popup_open() {
             m |= 131_072;
         }
@@ -2185,6 +2204,9 @@ impl App {
         if self.ext_panel.menu_open() && self.ext_panel.menu_bounds().contains(p) {
             m |= 65536;
         }
+        if self.ai_panel.menu_open() && self.ai_panel.menu_bounds().contains(p) {
+            m |= 131072;
+        }
         if self.search.popup_open() && self.search.popup_bounds().contains(p) {
             m |= 131_072;
         }
@@ -2242,6 +2264,9 @@ impl App {
         }
         if bits & 65536 != 0 {
             self.ext_panel.close_menu();
+        }
+        if bits & 131072 != 0 {
+            self.ai_panel.close_menu();
         }
         if bits & 131_072 != 0 {
             self.search.close_popups();

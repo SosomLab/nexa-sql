@@ -120,6 +120,14 @@ impl ActivityBar {
                     bottom: false,
                     hidden: true,
                 },
+                // ★ Claude(docs/110 · 11-11 · `ai.enabled`가 꺼지면 숨김 · 팔레트 "AI assistant: Turn on").
+                ActItem {
+                    id: "view.ai",
+                    icon: toolicons::mi_act_ai(),
+                    panel: true,
+                    bottom: false,
+                    hidden: true,
+                },
                 ActItem {
                     id: "edit.prefs",
                     icon: toolicons::mi_gear(),

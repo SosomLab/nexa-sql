@@ -1050,6 +1050,32 @@ impl Grid {
 
     /// 자체 시험용(`grid.col:<파일>|<열 이름>` · 10-11 페치 일관성 E2E): **원본 세트**의 한 열 값을 세트 순서대로 한 줄씩(투영·정렬 무관) —
     ///   ROWID 열을 쓰면 중복(겹침)·누락을 `sort | uniq -d`·행 수로 가린다. 열이 없거나 결과가 없으면 None.
+    /// ★ AI 도구 `get_result`(docs/110 · 11-11): 열 이름 줄 + 앞 `max` 행(탭 구분 · NULL = `NULL`).
+    pub(crate) fn ai_text(&self, max: usize) -> Option<String> {
+        let rs = self.rs.as_ref()?;
+        let mut out = rs
+            .columns()
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\t");
+        out.push('\n');
+        let total = rs.len();
+        for row in rs.rows().take(max) {
+            out.push_str(
+                &row.iter()
+                    .map(|v| nsql_io::cell_text(v, "NULL"))
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            );
+            out.push('\n');
+        }
+        if total > max {
+            out.push_str(&format!("… ({total} rows total, {max} shown)\n"));
+        }
+        Some(out)
+    }
+
     pub(crate) fn dump_column(&self, name: &str) -> Option<String> {
         let rs = self.rs.as_ref()?;
         let ci = rs

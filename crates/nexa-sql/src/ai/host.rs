@@ -1,0 +1,421 @@
+//! ★ 호스트(docs/110 §5·§14-1): 한 세션의 **상대**를 돌린다 — `Cli`(자식 `claude` 프로세스 · stream-json) · `Api`(Messages API
+//! 턴 스레드) · `Mock`(네트워크·CLI 없이 헤드리스 V1용 각본 · `NSQL_AI_MOCK=1`). 셋 다 [`AiEvent`]를 같은 채널로 보내고 깨운다.
+
+use super::{claude_api, claude_cli, AiEvent, Attachment, ToolReply, Usage};
+use nsql_settings::json::Json;
+use std::io::{BufRead, BufReader, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+
+pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// CLI 실행 파일 해석(Windows: npm `claude.cmd`는 cmd.exe 없이 `node cli.js`로 · 네이티브 `claude.exe` 우선).
+pub(crate) fn resolve_cli(path: &str) -> (String, Vec<String>) {
+    let p = path.trim();
+    let p = if p.is_empty() { "claude" } else { p };
+    #[cfg(windows)]
+    {
+        use std::path::{Path, PathBuf};
+        let has_dir = p.contains('\\') || p.contains('/');
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if has_dir {
+            candidates.push(PathBuf::from(p));
+        } else {
+            if let Some(home) = std::env::var_os("USERPROFILE") {
+                candidates.push(
+                    Path::new(&home)
+                        .join(".local")
+                        .join("bin")
+                        .join(format!("{p}.exe")),
+                );
+            }
+            if let Some(paths) = std::env::var_os("PATH") {
+                for dir in std::env::split_paths(&paths) {
+                    candidates.push(dir.join(format!("{p}.exe")));
+                    candidates.push(dir.join(format!("{p}.cmd")));
+                }
+            }
+        }
+        for c in candidates {
+            if !c.is_file() {
+                continue;
+            }
+            let s = c.to_string_lossy().into_owned();
+            if s.to_ascii_lowercase().ends_with(".cmd") {
+                // npm 래퍼: `node "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js"` — 셸 없이 node로 직접.
+                let cli_js = c
+                    .parent()
+                    .map(|d| {
+                        d.join("node_modules")
+                            .join("@anthropic-ai")
+                            .join("claude-code")
+                            .join("cli.js")
+                    })
+                    .filter(|f| f.is_file());
+                if let Some(js) = cli_js {
+                    return ("node".into(), vec![js.to_string_lossy().into_owned()]);
+                }
+                continue;
+            }
+            return (s, Vec::new());
+        }
+        (p.to_string(), Vec::new())
+    }
+    #[cfg(not(windows))]
+    {
+        (p.to_string(), Vec::new())
+    }
+}
+
+/// 실행 중인 상대.
+pub(crate) enum Running {
+    Idle,
+    Cli {
+        child: std::process::Child,
+        stdin: Option<std::process::ChildStdin>,
+    },
+    Api {
+        stop: Arc<AtomicBool>,
+    },
+    Mock,
+}
+
+/// 세션 하나의 호스트 상태(UI 스레드 소유).
+pub(crate) struct Host {
+    pub tx: mpsc::Sender<AiEvent>,
+    pub rx: mpsc::Receiver<AiEvent>,
+    wake: Wake,
+    pub running: Running,
+    /// 턴 진행 중(보내기 금지 · ■ 활성).
+    pub busy: bool,
+    /// API 대화(요청 본문 messages · 사고 블록 포함) — 스레드와 공유.
+    pub api_messages: Arc<Mutex<Vec<Json>>>,
+    /// CLI stderr 꼬리(실패 진단).
+    pub stderr_tail: Arc<Mutex<Vec<String>>>,
+}
+
+pub(crate) struct CliLaunch {
+    pub program: String,
+    pub prefix: Vec<String>,
+    pub args: Vec<String>,
+    /// 자식에만 주는 환경(API 키는 여기로만 · 로그 금지).
+    pub env: Vec<(String, String)>,
+}
+
+pub(crate) struct ApiLaunch {
+    pub base_url: String,
+    pub api_key: String,
+    pub workspace: String,
+    pub model: String,
+    pub effort: String,
+    pub system: String,
+    pub timeout_secs: u64,
+    pub max_tokens: u64,
+}
+
+impl Host {
+    pub(crate) fn new(wake: Wake) -> Host {
+        let (tx, rx) = mpsc::channel();
+        Host {
+            tx,
+            rx,
+            wake,
+            running: Running::Idle,
+            busy: false,
+            api_messages: Arc::new(Mutex::new(Vec::new())),
+            stderr_tail: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub(crate) fn is_cli_alive(&mut self) -> bool {
+        match &mut self.running {
+            Running::Cli { child, .. } => matches!(child.try_wait(), Ok(None)),
+            _ => false,
+        }
+    }
+
+    /// CLI 프로세스 시작(세션당 한 번 · 이후 턴은 stdin 줄).
+    pub(crate) fn start_cli(&mut self, l: CliLaunch) -> Result<(), String> {
+        self.stop();
+        let mut cmd = nsql_ext::net::quiet_command(&l.program);
+        cmd.args(&l.prefix)
+            .args(&l.args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        for (k, v) in &l.env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", l.program))?;
+        let stdin = child.stdin.take();
+        let Some(out) = child.stdout.take() else {
+            let _ = child.kill();
+            return Err("no stdout".into());
+        };
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        let spawned = std::thread::Builder::new()
+            .name("ai-cli-out".into())
+            .spawn(move || {
+                for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    let evs = claude_cli::parse_line(&line);
+                    let mut any = false;
+                    for e in evs {
+                        any = true;
+                        let _ = tx.send(e);
+                    }
+                    if any {
+                        wake();
+                    }
+                }
+                let _ = tx.send(AiEvent::Note("cli exited".into()));
+                let _ = tx.send(AiEvent::Done {
+                    stop: "exit".into(),
+                    ms: 0,
+                });
+                wake();
+            });
+        if spawned.is_err() {
+            let _ = child.kill();
+            return Err("thread".into());
+        }
+        if let Some(err) = child.stderr.take() {
+            let tail = self.stderr_tail.clone();
+            let _ = std::thread::Builder::new()
+                .name("ai-cli-err".into())
+                .spawn(move || {
+                    for line in BufReader::new(err).lines().map_while(Result::ok) {
+                        if let Ok(mut t) = tail.lock() {
+                            if t.len() >= 20 {
+                                t.remove(0);
+                            }
+                            t.push(line);
+                        }
+                    }
+                });
+        }
+        self.running = Running::Cli { child, stdin };
+        Ok(())
+    }
+
+    /// CLI 턴 보내기(stdin 한 줄).
+    pub(crate) fn send_cli(
+        &mut self,
+        text: &str,
+        images: &[(String, Vec<u8>)],
+    ) -> Result<(), String> {
+        let Running::Cli {
+            stdin: Some(si), ..
+        } = &mut self.running
+        else {
+            return Err("cli not running".into());
+        };
+        let line = claude_cli::user_turn_line(text, images);
+        si.write_all(line.as_bytes())
+            .and_then(|()| si.write_all(b"\n"))
+            .and_then(|()| si.flush())
+            .map_err(|e| e.to_string())?;
+        self.busy = true;
+        Ok(())
+    }
+
+    /// API 턴(스레드) — 사용자 메시지를 대화에 붙이고 도구 루프를 돈다.
+    pub(crate) fn start_api(
+        &mut self,
+        l: ApiLaunch,
+        text: &str,
+        attachments: &[Attachment],
+    ) -> Result<(), String> {
+        if let Running::Api { .. } = self.running {
+            if self.busy {
+                return Err("busy".into());
+            }
+        }
+        if let Ok(mut m) = self.api_messages.lock() {
+            m.push(claude_api::user_message(text, attachments));
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let messages = self.api_messages.clone();
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        let stop2 = stop.clone();
+        let spawned = std::thread::Builder::new()
+            .name("ai-api".into())
+            .spawn(move || {
+                // 스레드 동안 대화 사본으로 돌고 끝에 되돌려 넣는다(잠금을 길게 쥐지 않게).
+                let mut msgs = messages.lock().map(|m| m.clone()).unwrap_or_default();
+                let (wtx, wrx) = mpsc::channel::<AiEvent>();
+                // 이벤트마다 깨우기 — 전달 스레드 없이 바로 보내고 깨운다.
+                let forward = std::thread::Builder::new()
+                    .name("ai-api-fwd".into())
+                    .spawn({
+                        let tx = tx.clone();
+                        let wake = wake.clone();
+                        move || {
+                            for e in wrx {
+                                let _ = tx.send(e);
+                                wake();
+                            }
+                        }
+                    });
+                claude_api::run_turn(
+                    &l.base_url,
+                    &l.api_key,
+                    &l.workspace,
+                    &l.model,
+                    &l.effort,
+                    &l.system,
+                    &mut msgs,
+                    l.timeout_secs,
+                    l.max_tokens,
+                    &wtx,
+                    &stop2,
+                );
+                drop(wtx);
+                if let Ok(mut m) = messages.lock() {
+                    *m = msgs;
+                }
+                if let Ok(h) = forward {
+                    let _ = h.join();
+                }
+                wake();
+            });
+        if spawned.is_err() {
+            return Err("thread".into());
+        }
+        self.running = Running::Api { stop };
+        self.busy = true;
+        Ok(())
+    }
+
+    /// 각본 상대(헤드리스 V1 · `NSQL_AI_MOCK=1`): 글 조각 → 도구 요청(get_setting) → 결과 → 끝.
+    pub(crate) fn start_mock(&mut self, text: &str) {
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        let text = text.to_string();
+        let _ = std::thread::Builder::new()
+            .name("ai-mock".into())
+            .spawn(move || {
+                let send = |e: AiEvent| {
+                    let _ = tx.send(e);
+                    wake();
+                };
+                send(AiEvent::Started {
+                    cli_session: Some("mock".into()),
+                    note: "mock host".into(),
+                });
+                for w in ["Mock ", "reply ", "to: ", &text] {
+                    send(AiEvent::TextDelta(w.to_string()));
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                let (rtx, rrx) = mpsc::channel();
+                send(AiEvent::ToolCall {
+                    id: "m1".into(),
+                    name: "get_setting".into(),
+                    input: "{\"key\":\"editor.word_wrap\"}".into(),
+                });
+                send(AiEvent::ToolRequest {
+                    id: "m1".into(),
+                    name: "get_setting".into(),
+                    input: "{\"key\":\"editor.word_wrap\"}".into(),
+                    reply: rtx,
+                });
+                let r = rrx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap_or(ToolReply {
+                        output: "timeout".into(),
+                        ok: false,
+                    });
+                send(AiEvent::ToolResult {
+                    id: "m1".into(),
+                    name: "get_setting".into(),
+                    output: r.output,
+                    ok: r.ok,
+                });
+                send(AiEvent::TextDelta(" done.".into()));
+                send(AiEvent::Usage(Usage {
+                    input: 10,
+                    output: 5,
+                    cache_read: 0,
+                    cache_write: 0,
+                    cost_usd: 0.0001,
+                }));
+                send(AiEvent::Done {
+                    stop: "end_turn".into(),
+                    ms: 42,
+                });
+            });
+        self.running = Running::Mock;
+        self.busy = true;
+    }
+
+    /// ■ — 진행 중인 턴을 끊는다(CLI는 프로세스 종료 · API는 깃발).
+    pub(crate) fn stop(&mut self) {
+        match std::mem::replace(&mut self.running, Running::Idle) {
+            Running::Cli { mut child, stdin } => {
+                drop(stdin);
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Running::Api { stop } => stop.store(true, Ordering::Relaxed),
+            Running::Idle | Running::Mock => {}
+        }
+        self.busy = false;
+    }
+
+    pub(crate) fn stderr_text(&self) -> String {
+        self.stderr_tail
+            .lock()
+            .map(|t| t.join("\n"))
+            .unwrap_or_default()
+    }
+
+    /// API 대화를 비운다(새 세션).
+    pub(crate) fn reset_api(&mut self) {
+        if let Ok(mut m) = self.api_messages.lock() {
+            m.clear();
+        }
+    }
+}
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mock_round_trip_drives_tool_request() {
+        let woke = Arc::new(AtomicBool::new(false));
+        let w2 = woke.clone();
+        let mut h = Host::new(Arc::new(move || w2.store(true, Ordering::Relaxed)));
+        h.start_mock("hi");
+        let mut text = String::new();
+        let mut done = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done && std::time::Instant::now() < deadline {
+            match h.rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(AiEvent::TextDelta(t)) => text.push_str(&t),
+                Ok(AiEvent::ToolRequest { reply, .. }) => {
+                    let _ = reply.send(ToolReply {
+                        output: "off".into(),
+                        ok: true,
+                    });
+                }
+                Ok(AiEvent::Done { .. }) => done = true,
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => break,
+            }
+        }
+        assert!(done, "mock finished");
+        assert_eq!(text, "Mock reply to: hi done.");
+        assert!(woke.load(Ordering::Relaxed));
+        let (prog, _) = resolve_cli("");
+        assert!(!prog.is_empty());
+    }
+}

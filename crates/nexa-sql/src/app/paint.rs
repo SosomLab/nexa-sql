@@ -696,6 +696,32 @@ impl App {
                     self.ext_view.set_bounds(self.editors.editor_bounds(), s);
                     self.ext_view.paint(&mut dc, &th, &detail);
                 }
+                // ★ Claude 채팅 뷰 탭(docs/110 · 11-11) = UI 글꼴 · 편집기 자리 전체.
+                None if self.ai_view_active() => {
+                    let vprefs = FontPrefs {
+                        base: SlotFont {
+                            size: ui_px,
+                            bold: false,
+                            italic: false,
+                        },
+                        message: SlotFont {
+                            size: ui_px * 1.4,
+                            bold: true,
+                            italic: false,
+                        },
+                        ..FontPrefs::default()
+                    };
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(vprefs);
+                    let info = self.ai_view_info();
+                    self.ai_view.set_bounds(self.editors.editor_bounds(), s);
+                    match self.ai.cur.and_then(|i| self.ai.sessions.get(i)) {
+                        Some(sess) => self.ai_view.paint(&mut dc, &th, sess, &info),
+                        None => {
+                            let empty = crate::ai::Session::new(crate::ai::Mode::Api, "", "", "");
+                            self.ai_view.paint(&mut dc, &th, &empty, &info);
+                        }
+                    }
+                }
                 // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).
                 None if diff_tab => {
                     let mut dc = RasterCtx::new(&mut *gfx, &self.mono_font, s)
@@ -822,6 +848,7 @@ impl App {
             self.project_panel.paint(&mut dc, &th);
             self.bm_panel.paint(&mut dc, &th);
             self.outline_panel.paint(&mut dc, &th);
+            self.ai_panel.paint(&mut dc, &th);
             self.ext_panel.paint(&mut dc, &th);
         }
         // ★ 프로젝트 탐색기 플래시(사용자 10-07) — 자체 글꼴(`ui.flash_font_face` 비면 UI 글꼴 = 시스템 기본 · 크기
@@ -877,6 +904,7 @@ impl App {
             self.project_panel.paint_popup(&mut dc, &th);
             self.bm_panel.paint_popup(&mut dc, &th);
             self.outline_panel.paint_popup(&mut dc, &th);
+            self.ai_panel.paint_popup(&mut dc, &th);
             self.ext_panel.paint_popup(&mut dc, &th);
             self.objdetail.paint_popup(&mut dc, &th);
             // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
@@ -974,6 +1002,9 @@ impl App {
             // ★ git 덩어리 diff 팝업(C-1 후속 · 11-10) — 편집기 팝업 층.
             self.githunk.paint(&mut dc, &th);
             self.ext_view.paint_popup(&mut dc, &th);
+            if self.ai_view_active() {
+                self.ai_view.paint_popup(&mut dc, &th);
+            }
             if diff_tab {
                 self.diff_view.paint_popup(&mut dc, &th);
             }

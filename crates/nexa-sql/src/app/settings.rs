@@ -994,6 +994,20 @@ impl App {
                 self.apply_extensions(None);
                 self.layout();
             }
+            // ★ AI 어시스턴트(docs/110 · 11-11).
+            "ai.enabled" => self.ai_apply_enabled(),
+            "ai.mode"
+            | "ai.model"
+            | "ai.effort"
+            | "ai.auto"
+            | "ai.cli_path"
+            | "ai.permission_mode"
+            | "ai.bare"
+            | "ai.max_rows"
+            | "ai.timeout_secs"
+            | "ai.max_tokens"
+            | "ai.history_keep_days"
+            | "ai.mcp_port" => self.ai_sync_panel(),
             "editor.line_height_mode" | "editor.line_height" => {
                 self.apply_line_height();
                 self.layout();

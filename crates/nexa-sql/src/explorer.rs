@@ -7435,6 +7435,103 @@ impl Explorer {
 
     /// ★ T-123(219차): 적재된 L1 메타에서 객체 부가(`extra` · Oracle GTT = `TEMPORARY` · SQL Server 테이블 함수 코드) — 왕복 0 ·
     ///   스키마 없음 = 현재 스키마 규칙(`Snapshot::lookup`) · 이름이 없거나 아직 안 읽었으면 None(정직한 한계).
+    /// ★ AI 도구 `search_objects`(docs/110 · 11-11): 메타 스냅샷에서 이름 부분 일치(대소문자 무시) · 종류 필터 · 상한.
+    pub(crate) fn ai_search_objects(&self, query: &str, kind: &str, limit: usize) -> Vec<String> {
+        let snap = self.meta.snapshot();
+        let q = query.to_lowercase();
+        let k = kind.to_lowercase();
+        let mut out = Vec::new();
+        for o in &snap.objs {
+            let name = self.meta.names.get(o.name);
+            let kind_s = format!("{:?}", o.kind).to_lowercase();
+            if (!q.is_empty() && !name.to_lowercase().contains(&q))
+                || (!k.is_empty() && !kind_s.contains(&k))
+            {
+                continue;
+            }
+            out.push(format!(
+                "{}.{}\t{}\t{:?}",
+                self.meta.names.get(o.schema),
+                name,
+                kind_s,
+                o.status
+            ));
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out
+    }
+
+    /// ★ AI 도구 `describe_object`: 종류·상태·부가 + 탐색기에 이미 읽힌 컬럼(없으면 안내).
+    pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
+        let snap = self.meta.snapshot();
+        let id = snap.lookup(&self.meta.names, schema, name).or_else(|| {
+            snap.lookup_any_schema(&self.meta.names, name)
+                .into_iter()
+                .next()
+        })?;
+        let o = snap.objs.get(id.0 as usize)?;
+        let mut s = format!(
+            "{}.{}\nkind={:?}\nstatus={:?}\n",
+            self.meta.names.get(o.schema),
+            self.meta.names.get(o.name),
+            o.kind,
+            o.status
+        );
+        if let Some(x) = o.extra {
+            s.push_str(&format!("extra={}\n", self.meta.names.get(x)));
+        }
+        if let Some(c) = o.comment {
+            s.push_str(&format!("comment={}\n", self.meta.names.get(c)));
+        }
+        match snap.cols.get(id.0 as usize) {
+            Some(nsql_run::meta::ColState::Loaded { cols, .. }) => {
+                s.push_str("columns:\n");
+                for c in cols.iter() {
+                    s.push_str(&format!(
+                        "  {}\t{}\t{}{}\n",
+                        self.meta.names.get(c.name),
+                        self.meta.names.get(c.data_type),
+                        match c.nullable {
+                            Some(true) => "NULL",
+                            Some(false) => "NOT NULL",
+                            None => "",
+                        },
+                        if c.key & 1 != 0 { "\tPK" } else { "" }
+                    ));
+                }
+            }
+            _ => s.push_str(
+                "columns: not loaded yet (expand the object in the explorer, or run a query)\n",
+            ),
+        }
+        Some(s)
+    }
+
+    /// ★ AI 도구 `object_source`: 스냅샷의 객체 → `ObjectInfo`(소스 열기용).
+    pub(crate) fn ai_object_info(&self, schema: Option<&str>, name: &str) -> Option<ObjectInfo> {
+        let snap = self.meta.snapshot();
+        let id = snap.lookup(&self.meta.names, schema, name).or_else(|| {
+            snap.lookup_any_schema(&self.meta.names, name)
+                .into_iter()
+                .next()
+        })?;
+        let o = snap.objs.get(id.0 as usize)?;
+        Some(ObjectInfo {
+            db: String::new(),
+            schema: self.meta.names.get(o.schema).to_string(),
+            name: self.meta.names.get(o.name).to_string(),
+            kind: o.kind,
+            status: format!("{:?}", o.status),
+            modified: String::new(),
+            extra: o
+                .extra
+                .map(|x| self.meta.names.get(x).to_string())
+                .unwrap_or_default(),
+        })
+    }
+
     pub(crate) fn object_extra(&self, schema: Option<&str>, name: &str) -> Option<String> {
         let snap = self.meta.snapshot();
         let id = snap.lookup(&self.meta.names, schema, name)?;

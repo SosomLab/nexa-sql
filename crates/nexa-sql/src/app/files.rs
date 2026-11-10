@@ -488,7 +488,10 @@ impl App {
             (PickerMode::Open | PickerMode::Folder, _)
             | (
                 PickerMode::Save,
-                FilePurpose::Import | FilePurpose::License | FilePurpose::DriverPackage,
+                FilePurpose::Import
+                | FilePurpose::License
+                | FilePurpose::DriverPackage
+                | FilePurpose::AiAttach,
             ) => String::new(),
         };
         // ★ 파일 창의 호스트 창(그 위에 뜨고 · 닫히면 **그 창으로** 포커스가 돌아간다): 설정 폴더 = 설정 창 · 라이선스 = 라이선스 창.

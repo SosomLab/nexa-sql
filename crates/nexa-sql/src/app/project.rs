@@ -869,6 +869,8 @@ impl App {
             Some("search".into())
         } else if self.ext_panel.is_visible() {
             Some("ext".into())
+        } else if self.ai_panel.is_visible() {
+            Some("ai".into())
         } else {
             None
         };
@@ -1096,6 +1098,7 @@ impl App {
             Some("outline") => Some(("view.outline", self.outline_panel.is_visible())),
             Some("search") => Some(("view.search", self.search.is_visible())),
             Some("ext") => Some(("view.extensions", self.ext_panel.is_visible())),
+            Some("ai") => Some(("view.ai", self.ai_panel.is_visible())),
             _ => None,
         };
         if let Some((cmd, visible)) = want {

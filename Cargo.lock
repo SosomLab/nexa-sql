@@ -2324,6 +2324,7 @@ dependencies = [
  "nsql-json",
  "nsql-license",
  "nsql-log",
+ "nsql-net",
  "nsql-run",
  "nsql-script",
  "nsql-search",

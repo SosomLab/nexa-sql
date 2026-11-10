@@ -397,6 +397,7 @@ impl App {
             ("view.project", self.project_panel.is_visible()),
             ("view.bookmarks", self.bm_panel.is_visible()),
             ("view.outline", self.outline_panel.is_visible()),
+            ("view.ai", self.ai_panel.is_visible()),
             ("view.extensions", self.ext_panel.is_visible()),
             (
                 "view.object_details",

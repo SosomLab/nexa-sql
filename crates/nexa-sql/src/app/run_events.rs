@@ -168,6 +168,8 @@ impl App {
         let live = self.settings.get("grid.fetch_display") != Some("whole");
         // ★ D-463 "실행당 1회": 새 실행의 첫 결과가 이 탭에 붙는다 → 엄격 교체 경고 기록을 지운다(협업 V1 5d · 11-06).
         self.refetch_warned.remove(&k);
+        // ★ AI 도구 `run_query`/`explain`/`/query`가 기다리면 글로 잡아 둔다(docs/110 · 11-11).
+        self.ai_capture_result(&rs);
         if let Some(g) = self.grid_for(k) {
             g.set_result(rs);
             g.set_dialect(dial);
