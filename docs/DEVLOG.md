@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-10 (Windows · 개발 × 협업 · 찾기 바)** — 사용자 3건 = 검색창 드래그 밖 release 캡처 잔류(`area_at` 순서 + 상자 드래그 우선) · 결과 없음 = 선택 접기(`editor.find_keep_last_match` 기본 off · D-474) · 상세 머리 SCHEMA 칩 대칭(aac99bd7) · V2 ✓ · 사용자 실기 ✓ · [journal 11-10 §8](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · push 뒤 점검)** — git 일치 · CI ✅ · v0.7.2 자산 6 · choco 0.7.2 승인됨(STATUS 정정) · winget #447007 OPEN · 다음 릴리스 게이트 결과 기록 보완(fc872bf2) · 남은 결정 = 다음 버전 · `RELEASE_FULL` · [journal 11-10 §7](journal/2026-11-10.md).
 - **2026-11-10 (Windows · 개발 × 협업 · 리부팅 점검)** — 작업 중 PC 리부팅 → 피해 점검(잠금 0 · fsck 오류 0 · 미커밋 0 · cargo/rustc 0 · 0바이트 0 · `target/` 증분 산출물은 미확인) · v0.7.2 공개 완료 재확인(태그 97d5f7af push · 워크플로 4 ✓ · Latest · 에셋 6) · 도달 게이트 후속 0fedee1e(실패 상세 host:port) 기록 · 다음 = v0.7.3 패치 여부 사용자 결정 · [journal 11-10 §6](journal/2026-11-10.md)
 - **2026-11-10 (Windows · 개발 × 협업 · 드라이버 도달 게이트)** — 사용자 "드라이버 자동 다운로드 직전 네트워크 접속 확인 gate · 최대한 짧게 · 다운로드 행위별 1회" → `nsql_net::probe_reachable`(DNS + TCP 1회 · 데이터 0) · `net_gate` · 새 키 `driver.net_check_ms`(1500 · 0 = 끔) · -1352 `ERR_DRIVER_OFFLINE` + 오프라인 번들 안내 · `NetAction` 행위 범위(2eb3707e) · D-473 · V2 ✓ · V1 CLI ✅ · [journal 11-10 §5](journal/2026-11-10.md).
