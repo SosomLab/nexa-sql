@@ -142,3 +142,33 @@
 - Anthropic 인증: <https://platform.claude.com/docs/en/manage-claude/authentication> · Agent SDK 개요(제3자 claude.ai 로그인 불가 · 브랜딩): <https://code.claude.com/docs/en/agent-sdk/overview> · headless 프로토콜: <https://code.claude.com/docs/en/headless>
 - Codex app-server: <https://learn.chatgpt.com/docs/app-server> · MCP 설정: <https://learn.chatgpt.com/docs/extend/mcp?surface=cli> · Codex 인증: <https://developers.openai.com/codex/auth> · Sign in with ChatGPT(파트너): <https://developers.openai.com/siwc/website>
 - 저장소: 확장 ABI docs/75 · 활동 막대 `activity.rs` · 네트워크 `nsql-net` · 볼트 `nsql-vault` · 세션 통제 docs/52 · 데이터 보호 61 §1-7 · 변수 가림 D-140/T-132.
+
+## 13. 약관 · 비용 · 한도 검토(2026-11-11 · 사용자 "CLI를 쓴 개발·배포가 문제 없는가 · API 비용·한도" · Claude Ultra 구독 · Codex Free)
+
+### 13-1 약관(공식 원문 기준 · 법률 자문 아님)
+| | Anthropic(Claude) | OpenAI(Codex) |
+|---|---|---|
+| 적용 약관 | 구독(Free/Pro/Max/Ultra) = 소비자 약관 · API·Agent SDK·제품 내 Claude Code = **상업 약관**(code.claude.com/docs/legal-and-compliance) | 구독(Free/Go/Plus/Pro) = Terms of Use · API·개발자 = **Services Agreement(Business Terms)** |
+| 제품이 CLI를 띄워도 되는가 | **된다(조건부)**: "제품 안에서 Claude Code를 미리 설치하거나 실행하려면 상업 약관 동의 + ① **바이너리 무수정**(인증 방식 제거·제한 금지) ② **사용량을 대신 결제·재판매·중개하지 않는다** — 최종 사용자가 **자기** API 키·구독 자격·3P 자격으로 인증" · "최종 사용자가 **무수정 Claude Code에 자기 구독으로 로그인하는 것은 막지 않는다**" | app-server 문서: "**app-server 인증은 상업·호스팅 서비스에는 허용된 적이 없다** · 기존 로컬/오픈소스 앱은 계속 쓸 수 있으나 Sign in with ChatGPT로 이전 권장" · API 키 경로는 Services Agreement(키 매매·양도 금지 3.3(g) · 사용 한도 우회 금지 3.3(h)(i)) |
+| 금지되는 것 | "제3자 개발자가 **자기 앱 안에 Claude.ai 로그인을 제공**하거나 Free/Pro/Max/Ultra **자격으로 사용자 대신 요청을 라우팅**하는 것 · Claude.ai 자격·세션 토큰을 **수집·저장·중개**하는 것 — 로그인은 Anthropic 자체 흐름으로만" · "OAuth는 구독 구매자의 **일상적 사용** 전용 · 광고된 한도는 Claude Code·Agent SDK의 **통상적 개인 사용**을 전제" · 브랜딩: "Claude Code"·Anthropic 이름/로고를 제품·기능명·로고에 쓰거나 제휴로 보이게 금지(평문으로 "Claude Code를 실행한다"는 표기는 허용) | Terms of Use "What you cannot do": 서비스 수정·복제·재판매 · 리버스 엔지니어링 · **"Output을 자동·프로그램으로 추출"** · 산출물을 사람이 만든 것으로 표시 · 요율 제한·보호 장치 우회 · Output으로 경쟁 모델 개발 · 계정 자격 공유(Business 3.1) · 사용 정책: "민감 영역(금융·법률·의료·고용…)의 **고위험 행위를 사람의 검토 없이 자동화** 금지" |
+| 우리 설계와의 대조 | ✅ 앱은 설치된 `claude`를 **무수정**으로 띄우고 토큰을 **만지지 않으며**(저장·중개 0) 로그인은 CLI 자체 흐름 · 사용량은 사용자 본인 계정에 과금(앱이 대신 결제·재판매 0) · 패널 이름 "Claude"(브랜딩 규칙) → **허용 범위 안**. ⚠ 단 "자기 앱 안에 로그인 제공 금지"와의 경계: 앱이 로그인 버튼을 두고 CLI의 `/login`을 **대신 호출·안내만** 하는 것까지는 Anthropic 흐름이지만, 토큰을 받아 보관하는 순간 위반 → 설계 §4 유지(앱은 토큰 0). ⚠ Ultra 한도는 "통상적 개인 사용" 전제 → 자동화 대량 호출(Auto 모드 루프)은 한도 축소·조치 대상이 될 수 있음 → 기본은 대화형 · Auto는 사용자 세션 안에서만 | ⚠ app-server를 제품(배포판)이 ChatGPT 로그인으로 쓰는 것 = "상업·호스팅 서비스 불허" → **배포판 기본 = API 키** · 개인 사용(로컬 앱)은 명시적으로 계속 허용 · Terms of Use의 "Output 자동 추출 금지"는 ChatGPT 웹/앱 스크래핑을 겨냥한 것으로, app-server는 OpenAI가 **제공하는 프로토콜**이라 "허용된 수단"(Business 3.3(f) "서비스가 허용한 방법 외 추출 금지"의 반대 해석) · 사용 정책 "고위험 자동화 금지"는 **쓰기 질의 = 사용자 확인** 설계(§7)로 충족 |
+| 결론 | **개발·배포 가능**(상업 약관 동의 · 무수정 · 자기 자격 · 토큰 비보관 · 브랜딩 준수). 구독 재사용은 "기능으로 제공"이 아니라 "사용자가 자기 CLI에 로그인해 두면 동작"으로 두고 배포판 안내문에 위 조건을 적는다 | **개발·배포 가능(API 키 경로)** · ChatGPT 로그인 재사용은 개인 사용 한정(설정 기본 off + 안내) · 파트너 등록(Sign in with ChatGPT)을 받으면 배포판에서도 허용 |
+
+### 13-2 비용 · 한도
+**Claude**
+- 구독(claude.com/pricing): Ultra **$200/월** = Pro의 **10×** 주간 한도 · **5시간 한도 없음(검증 계정)** · Fable은 주간 한도의 50%까지 · **월 $200 API 크레딧 포함**(Claude Platform용 · 별도 API 키로 쓰는 크레딧). 메시지·토큰 수치는 비공개("모델·대화 길이·파일 크기에 따라 다름"). Max $100 = 5× · $100 크레딧 · Pro $20.
+- API(platform.claude.com · USD/1M 토큰 입력/출력): **Opus 5.5 $4/$20**(캐시 읽기 $0.20) · Sonnet 5.5 $2/$10 · Haiku 5.5 $0.10/$0.50 · Fable 5.1 $10/$50 · 1M 컨텍스트 · 프롬프트 캐시 읽기는 ITPM에 **안 셈**.
+- API 등급(월 지출 상한 · 자동 승급): Start $500 · Build $1,000 · Scale $200,000 · Custom 무제한 · 신규 조직은 Evaluation 등급(더 낮음)에서 시작. 분당 한도 Start: Opus 5.5/Sonnet 5.5/Haiku 5.5 = 4,000 RPM · 2,000,000 ITPM · 400,000 OTPM · Fable 5.1 = 4,000 · 500,000 · 100,000. 429 = `retry-after`(지출 상한 429는 헤더 없음 · `enforced_spend_limit_reached`).
+- 환산(예): 스키마 20K 토큰 + 질문 1K → 응답 2K를 Opus 5.5로 1회 ≈ $0.08(캐시 적중 시 입력 ≈ $0.004) · 하루 100회 ≈ $8(캐시 없이) — Ultra 포함 크레딧 $200/월로 상당 부분 충당 가능.
+
+**OpenAI / Codex**
+- 구독(learn.chatgpt.com/docs/pricing): Codex는 Free·Go·Plus·Pro·Business·Edu·Enterprise에 포함. **Free($0) = "빠른 코딩 작업 탐색" · 데스크톱 앱에서 GPT-6 Luna(표준 속도) · 기능표에 Free/Go의 CLI·IDE 확장·app-server 지원은 없음**(제3자 정리: Free는 CLI 미포함 · Plus부터) · Plus $20 = 웹·CLI·IDE·iOS + GPT-6.1 Sol/Luna · 5시간 창당 추정 메시지(Plus): Astra 5~45 · 6.1 Sol 15~160 · Luna 350~3,000 · 주간 한도 별도 · Pro $100/200/500(5시간 한도 없음). 초과분 = 크레딧(예: 6.1 Sol 입력 50 / 출력 250 크레딧 per 1M).
+- API(developers.openai.com/api/docs/pricing · USD/1M 입력/캐시/출력): **gpt-6.1-sol $2/$0.10/$10** · gpt-6-astra $10/$1/$50 · gpt-6.1-terra $1/$0.05/$5 · gpt-6-luna $0.10/$0.01/$0.50 · gpt-5.5 $5/$0.50/$30 · gpt-5.4 $2.50/$0.25/$15 · gpt-5.3-codex $1.75/$0.175/$14 · 272K 초과 장문은 할증 · Fast 모드 2×. "API 키로 로그인하면 표준 API 요율"(learn.chatgpt.com/docs/auth).
+- API 등급(크레딧 누적 구매로 자동 승급 · 월 사용 상한): **Free $100/월(허용 지역)** · Build($5 구매) $500 · Launch($100) $5,000 · Grow($500) $200,000. 분당 한도 Build: Astra/Sol/Terra 5,000 RPM · 1,000,000 TPM · Luna 2,000,000 TPM(Free 등급 수치는 비공개). 429 = `Retry-After` + 지수 백오프 · `slow_down`(급증) · 실패 요청도 분당 한도에 산입.
+- **사용자 상황(Codex Free)**: Free 플랜으로는 CLI·app-server 경로가 기능표에 없어 **이 플러그인(app-server) 사용이 사실상 불가** → API 키(종량) 또는 Plus 이상 필요. API 키면 gpt-6.1-sol 기준 위 Claude 예와 같은 1회 ≈ $0.06.
+
+### 13-3 설계 반영
+- 배포판 안내문(설정 ▸ AI): "이 기능은 사용자 PC에 설치된 무수정 `claude`/`codex`를 실행합니다 · 인증·과금은 사용자 본인 계정 · 앱은 토큰을 보관하지 않습니다 · Anthropic/OpenAI 약관 적용" + 각 링크.
+- `ai.claude.use_cli_login`·`ai.codex.use_cli_login` 기본 off · 켤 때 위 조건 안내(Codex는 "개인 사용 한정 · 배포판 불허").
+- Auto 모드 호출 상한 `ai.auto_max_turns`(기본 20) · 한도 429 수신 시 자동 재시도 금지(26 §8) · 비용 추정 표시(Claude `total_cost_usd` · Codex 토큰 × 요율표).
+- 참고 링크: Claude Code 법적 안내 <https://code.claude.com/docs/en/legal-and-compliance> · 상업 약관 <https://www.anthropic.com/legal/commercial-terms> · 소비자 약관 <https://www.anthropic.com/legal/consumer-terms> · 사용 정책 <https://www.anthropic.com/legal/aup> · 요금 <https://claude.com/pricing> · API 요율 제한 <https://platform.claude.com/docs/en/api/rate-limits> · OpenAI 이용 약관 <https://openai.com/policies/terms-of-use/> · Services Agreement <https://openai.com/policies/services-agreement/> · 사용 정책 <https://openai.com/policies/usage-policies/> · Codex 요금 <https://learn.chatgpt.com/docs/pricing> · Codex 인증 <https://learn.chatgpt.com/docs/auth> · app-server <https://learn.chatgpt.com/docs/app-server> · API 가격 <https://developers.openai.com/api/docs/pricing> · API 요율 제한 <https://developers.openai.com/api/docs/guides/rate-limits>.
