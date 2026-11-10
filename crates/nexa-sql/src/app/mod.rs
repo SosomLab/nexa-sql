@@ -21,6 +21,7 @@ pub(crate) mod find;
 pub(crate) mod findobj;
 mod format;
 mod gitgutter;
+pub(crate) mod githunk;
 pub(crate) mod goto;
 mod grid_results;
 pub(crate) mod health;

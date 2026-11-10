@@ -1152,6 +1152,10 @@ impl App {
         if self.route_objlink_menu(&ev) {
             return;
         }
+        // ★ git 덩어리 diff 팝업(C-1 후속 · 11-10): Esc = 닫기 · 안쪽 포인터·휠 = 뷰어 · 바깥 클릭은 배타 규칙이 닫는다.
+        if self.route_githunk(&ev) {
+            return;
+        }
         if self.objlinks.active {
             let hit = match ev {
                 // ★ Ctrl 링크 좌클릭 = 놓을 때(사용자 10-09): 누름은 삼키고(캐럿이 안 움직이게) 같은 링크 위에서 놓으면 동작.
@@ -1228,6 +1232,12 @@ impl App {
             //   "추가"(없을 때) / "제거"·"니모닉 해제"(있을 때) · "니모닉 지정 ▸ 1~9"(늘). 본문 우클릭(편집 메뉴)은 그대로.
             if self.open_bm_gutter_menu(Point { x, y }) {
                 self.redraw();
+                return;
+            }
+        }
+        // ★ 거터 git 띠 좌클릭 = 그 덩어리의 HEAD ↔ 작업본 팝업(C-1 후속 · 11-10 · 설정 `editor.git_popup`).
+        if let InputEvent::MouseDown { x, y, .. } = ev {
+            if self.git_hunk_click(Point { x, y }) {
                 return;
             }
         }

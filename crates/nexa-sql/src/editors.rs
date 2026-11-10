@@ -919,7 +919,8 @@ impl Editors {
         self.minimap_git = on;
         for b in &mut self.bufs {
             b.set_minimap_git(on);
-            if !on {
+            // 거터 띠도 꺼져 있을 때만 기준선을 비운다(11-10 C-1 후속).
+            if !on && !self.git_gutter {
                 b.set_git_baseline(None);
             }
         }

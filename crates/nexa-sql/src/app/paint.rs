@@ -966,6 +966,8 @@ impl App {
             // 탐색기 노드 끌기 칩(팝업 층 · 10-15).
             self.explorer.paint_drag_chip(&mut dc, &th);
             self.editors.paint_popups(&mut dc, &th);
+            // ★ git 덩어리 diff 팝업(C-1 후속 · 11-10) — 편집기 팝업 층.
+            self.githunk.paint(&mut dc, &th);
             self.ext_view.paint_popup(&mut dc, &th);
             if diff_tab {
                 self.diff_view.paint_popup(&mut dc, &th);

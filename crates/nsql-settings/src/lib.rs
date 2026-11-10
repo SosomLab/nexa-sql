@@ -1252,6 +1252,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ git 덩어리 diff 팝업(C-1 후속 · 11-10): 거터 git 띠 클릭 → HEAD ↔ 작업본 2-pane 팝업 · 문맥 줄 수.
+    Entry {
+        key: "editor.git_popup",
+        cat: Msg::CatEditor,
+        label: Msg::LblGitPopup,
+        desc: Msg::DescGitPopup,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.git_context",
+        cat: Msg::CatEditor,
+        label: Msg::LblGitContext,
+        desc: Msg::DescGitContext,
+        kind: SettingKind::Int { min: 0, max: 10 },
+        default: "3",
+    },
     // 확장 매니저(사용자 09-17 · docs/50 §10 · Sublime Package Control 방식): 저장소 목록 · 끈 확장 목록.
     Entry {
         key: "extensions.enabled",

@@ -2070,7 +2070,8 @@ impl App {
     }
 
     /// 열린 팝업 메뉴의 비트 집합(배타 규칙의 입력 · 09-22): 1 풀다운 · 2 편집기 탭 메뉴 · 4 편집기 본문 편집 메뉴 · 8 상태줄/툴바 팝업 ·
-    /// 16 오브젝트 탐색기 · 32 결과 그리드 · 64 결과 탭 줄 · 128 북마크 · 256 프로젝트 · 1024 완성 · 2048 객체 상세 · 4096 Ctrl 링크 ·
+    /// 16 오브젝트 탐색기 · 32 결과 그리드 · 64 결과 탭 줄 · 128 북마크 · 256 프로젝트 · ★ 512 git 덩어리 diff 팝업(11-10) · 1024 완성 ·
+    /// 2048 객체 상세 · 4096 Ctrl 링크 ·
     /// 8192 diff · ★ 입력창 팝업(10-13 "입력창의 우클릭은 반영이 안 됨") = 16384 그리드 입력(행수·조건 바·셀 편집기·값 고르기) ·
     /// 32768 아웃라인 필터 · 65536 확장 검색 · 131072 파일 검색 · 262144 찾기 바. 팔레트·툴팁·하위 메뉴(같은 메뉴 안)는 메뉴가 아니다.
     pub(crate) fn open_menus(&self) -> u32 {
@@ -2163,6 +2164,9 @@ impl App {
         if self.objdetail.menu_open() && self.objdetail.menu_bounds().contains(p) {
             m |= 2048;
         }
+        if self.githunk.is_open() && self.githunk.bounds().contains(p) {
+            m |= 512;
+        }
         if self.objlink_menu.is_open() && self.objlink_menu.bounds().contains(p) {
             m |= 4096;
         }
@@ -2208,6 +2212,9 @@ impl App {
         }
         if bits & 2048 != 0 {
             self.objdetail.close_menu();
+        }
+        if bits & 512 != 0 {
+            self.githunk.close();
         }
         if bits & 4096 != 0 {
             self.objlink_menu.close();

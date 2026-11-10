@@ -446,6 +446,8 @@ struct App {
     /// ★ Ctrl 객체 하이퍼링크(T-256 · 사용자 09-29): 링크 목록·hover 상태 + 우클릭 메뉴("설명 복사").
     objlinks: app::objlink::ObjLinks,
     objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
+    /// ★ git 덩어리 diff 팝업(C-1 후속 · 11-10 · 거터 git 띠 클릭 · 팝업 비트 512).
+    githunk: app::githunk::GitHunkPopup,
     /// ★ 시그니처 카드(T-178): 캐럿이 아는 함수의 괄호 안에 있는 동안 (시그니처 글, 탭 id) — 팝업 층에 캐럿 위로 그린다.
     sig_card: Option<(String, u64)>,
     /// ★ 놓을 때 동작하는 겹침 요소(토스트·띠·실행 카드·상태줄 항목·Ctrl 링크)의 누름 기억(사용자 10-09 "클릭은 Release에서").
@@ -1991,6 +1993,7 @@ fn main() {
         badge_menu_tool: None,
         objlinks: Default::default(),
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
+        githunk: app::githunk::GitHunkPopup::default(),
         sig_card: None,
         click_arm: None,
         health: Default::default(),
