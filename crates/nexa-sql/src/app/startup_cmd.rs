@@ -20,6 +20,16 @@ impl App {
             let _ = std::fs::write(path, self.prefs_win.dump_text());
             return;
         }
+        // ★ 11-10 계측: `prefs.paint` = 설정 창을 지금 한 번 그린다(헤드리스 창은 다시 그리기 사건이 안 와 `[prefs] paint` 줄이 안 찍힘).
+        if id == "prefs.paint" {
+            if self.prefs_win.window().is_some() {
+                let ui_px = self.settings.font_px("ui.font_size");
+                let mono_px = self.settings.font_px("editor.font_size");
+                self.prefs_win
+                    .paint(&self.ui_font, &self.theme, ui_px, &self.mono_font, mono_px);
+            }
+            return;
+        }
         // ★ 11-10 계측: `prefs.query:<q>` = 열린 설정 창에 검색어를 넣어 `rebuild_cards`를 한 번 돌린다(닫혀 있으면 열며) · 뒤에
         //   `prefs.dump:`로 `perf rebuild_us=…`를 읽는다.
         if let Some(q) = id.strip_prefix("prefs.query:") {

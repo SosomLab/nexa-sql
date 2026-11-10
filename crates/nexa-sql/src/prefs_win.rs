@@ -112,6 +112,18 @@ struct Card {
     default_below: bool,
     /// ★ 키 이름 옆 복사 버튼(사용자 09-28 · 글꼴 높이 크기 · 클릭 = 키 복사 → ✓ → 원복 · Shift/Ctrl+클릭 = 보이는 설정 전부 복사).
     copy: crate::copybtn::CopyBtn,
+    /// ★ 설명 줄바꿈 캐시(11-10 측정 · T-473): (글 폭 · 언어 · 덧말) → (줄들 · 덧말 시작 줄). 매 프레임 모든 카드(최대 ≈810장)의
+    ///   설명을 다시 재던 것(Release 카드당 ≈0.5 ms → 337장 ≈170 ms/프레임)을 폭·언어·덧말이 같으면 재사용.
+    wrap_cache: Option<WrapCache>,
+}
+
+/// 카드 설명 줄바꿈 캐시 한 벌(T-473).
+struct WrapCache {
+    text_w: i32,
+    lang: nsql_i18n::Lang,
+    note: Option<String>,
+    lines: Vec<String>,
+    note_at: usize,
 }
 
 /// 스냅샷 한 줄.
@@ -890,6 +902,7 @@ impl PrefsWin {
                     locked: false,
                     default_below: false,
                     copy: crate::copybtn::CopyBtn::new(),
+                    wrap_cache: None,
                 }
             })
             .collect();
@@ -2164,21 +2177,26 @@ impl PrefsWin {
         PrefsAction::None
     }
 
-    /// 단어 단위 줄바꿈(설명).
+    /// 단어 단위 줄바꿈(설명) — ★ 낱말 폭을 **한 번씩만** 재고 누적한다(11-10 T-473 · 종전 = 낱말을 붙일 때마다 늘어난 줄 전체를
+    ///   다시 재서 설명 길이의 제곱). 커닝 차이는 무시(1px 안팎).
     fn wrap(dc: &mut dyn DrawCtx, text: &str, w: i32) -> Vec<String> {
         let mut lines = Vec::new();
+        let space = dc.text_width(" ").max(1);
         for para in text.split('\n') {
             let mut cur = String::new();
+            let mut cur_w = 0;
             for word in para.split_whitespace() {
-                let cand = if cur.is_empty() {
-                    word.to_string()
-                } else {
-                    format!("{cur} {word}")
-                };
-                if dc.text_width(&cand) <= w || cur.is_empty() {
-                    cur = cand;
+                let ww = dc.text_width(word);
+                if cur.is_empty() {
+                    cur.push_str(word);
+                    cur_w = ww;
+                } else if cur_w + space + ww <= w {
+                    cur.push(' ');
+                    cur.push_str(word);
+                    cur_w += space + ww;
                 } else {
                     lines.push(std::mem::replace(&mut cur, word.to_string()));
+                    cur_w = ww;
                 }
             }
             lines.push(cur);
@@ -2259,11 +2277,27 @@ impl PrefsWin {
                     (None, None) => None,
                 };
                 let tw = std::time::Instant::now();
-                let mut lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
-                let note_at = lines.len();
-                if let Some(n) = note.as_deref() {
-                    lines.extend(Self::wrap(&mut dc, n, text_w));
-                }
+                let lang = nsql_i18n::current_lang();
+                let (lines, note_at) = match &c.wrap_cache {
+                    Some(wc) if wc.text_w == text_w && wc.lang == lang && wc.note == note => {
+                        (wc.lines.clone(), wc.note_at)
+                    }
+                    _ => {
+                        let mut lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
+                        let note_at = lines.len();
+                        if let Some(n) = note.as_deref() {
+                            lines.extend(Self::wrap(&mut dc, n, text_w));
+                        }
+                        c.wrap_cache = Some(WrapCache {
+                            text_w,
+                            lang,
+                            note: note.clone(),
+                            lines: lines.clone(),
+                            note_at,
+                        });
+                        (lines, note_at)
+                    }
+                };
                 wrap_us += tw.elapsed().as_micros();
                 let boost_hint =
                     c.locked && boost_on && nsql_settings::perf::boost_value(c.entry.key).is_some();
