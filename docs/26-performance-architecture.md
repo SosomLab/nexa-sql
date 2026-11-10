@@ -1098,6 +1098,7 @@ R5(refcursor) = 실서버 필요 · 미측정(종전과 같음).
 
 | 경로 | 1회 비용 | 빈도·동시 상한 | 자동 재시도 | 근거 코드 |
 |---|---|---|---|---|
+| **드라이버 다운로드 직전 도달 게이트**(11-10 · D-473) | DNS 해석 1 + TCP SYN 1(데이터 0 · 프록시가 있으면 프록시 호스트) | 다운로드 **행위당 1회**(설치 하나 · 접속 1회 = 설치+갱신+재시도 · CLI 명령 1회) · 예산 `driver.net_check_ms` 1500 ms | 없음(실패는 기억 안 함 · 다음 행위에서 다시) · 끄기 = `driver.net_check_ms=0` | `nsql_drivers::ext::install::net_gate` · `nsql_net::probe_reachable` · `NetAction` |
 | **Db2 · Access**(10-25 · D-359/360 · Db2 네이티브 DRDA = D-361 예정 시 이 행 갱신) | 새 트래픽 경로 0 — 내장 ODBC 어댑터 경로 재사용(접속·질의·SQLCancel) | 사용자 동작마다 | 없음 | `nsql-driver-odbc` |
 | **ClickHouse 드라이버 HTTP**(10-24 · T-415) | 요청 1(사용자 실행 · 탐색기 조회 · ■ 취소 = `KILL QUERY` 1) · 소켓 요청마다 새로 | 사용자 동작마다 · 세션당 1 + 취소 1 · 상주 0 · 폴링 0 | 없음 | `nsql-driver-clickhouse` · `nsql-net` |
 | **객체 용량**(09-30) | 사전 질의 1(스키마·종류당 · `object_sizes`) | 테이블·MV·인덱스 폴더가 읽힐 때 한 번(백그라운드 메타 세션 · 우선순위 4) · `explorer.sizes` 끔 = 0 · 향상 모드 = 끔 | 없음(실패 = 표시 없음) | `explorer.rs` `Req::Sizes` · `nsql-catalog::object_sizes` |

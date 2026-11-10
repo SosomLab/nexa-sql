@@ -1762,6 +1762,7 @@ nsql help <명령>         # 같은 내용
 |---|---|
 | `[-1350] <id> driver is not installed` | 드라이버 확장 없음 + 자동 설치 꺼짐 → `nsql driver install <id>` 또는 `nsql config set driver.auto_install on` |
 | `-1351`(자동 설치 실패) | 네트워크·GitHub 도달 확인 · 폐쇄망이면 오프라인 번들 `nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip` |
+| `-1352`(드라이버 저장소에 닿지 않음 · 11-10) | 다운로드 직전 도달 게이트(`driver.net_check_ms` 1500 ms)가 저장소(또는 프록시)에 닿지 못함 = 폐쇄망·인터넷 없음 → GET을 시도하지 않음 · 오프라인 번들 `nsql driver install --file nsql-drivers-all-<ver>-<os>-<arch>.zip`(GUI = 보기 ▸ 드라이버 관리자 ▸ 파일에서 설치…) · 게이트를 끄려면 `nsql config set driver.net_check_ms 0`(종전 동작 = 다운로드 시도 → -1351) |
 | `DPI-1047` | Oracle OCI인데 Instant Client 없음 → `NSQL_ORACLE_CLIENT_DIR` 지정 또는 `?driver=thin` |
 | `접속 실패: error connecting to server` | 호스트·포트·방화벽 확인. `nsql conn test`로 접속만 따로 시험 |
 | `비밀번호 봉투를 열 수 없습니다` | 다른 Windows 계정·다른 PC의 프로필이다 → `nsql conn add <이름> …`로 다시 저장 |

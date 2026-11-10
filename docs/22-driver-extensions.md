@@ -195,6 +195,14 @@ nexa-sql / nsql ──spawn──▶ drivers/<id>/<ver>/nsql-driver-<id>(.exe)  
 - 끄는 키 = `driver.auto_install`(기본 켬 · 끄면 종전처럼 -1350 + `nsql driver install <id>` 안내) · 저장소 = `driver.repo` · 상한 = `driver.http_timeout_secs`.
 - ★ **10-23 5179fe7 = 시도 전 점검** — `open_auto`가 먼저 `driver_status_for(dialect, ?driver=)`를 보고 Missing이면 `ensure_driver`로 설치한 뒤 연다(점검 뒤에도 -1350이면 한 번 더) · 설치 실패 = **-1351 `ERR_DRIVER_INSTALL_FAILED`** · **접속 테스트 버튼도 같은 길**(종전 = 자동 설치 없이 실패) · 진행 = `TestResult.stage` 틱 → 상태줄·접속 창 베일 · 캐시 색인에 id가 없으면 색인을 한 번 새로 받는다(d0f311d · 26 §8).
 
+#### 3-0-1. 다운로드 직전 도달 게이트(11-10 · 사용자 · D-473 · 2eb3707e)
+
+- **무엇** = 자동 설치·색인 GET **직전**에 `net_gate`(`nsql_drivers::ext::install`) = `nsql_net::probe_reachable` — DNS 해석(스레드 1) + TCP 접속 1회 · 보내는 데이터 0 · 예산 `driver.net_check_ms`(Int 0..10000 · 기본 **1500** · 0 = 끔 · 분류 DBMS ▸ 드라이버) · 프록시(`HTTPS_PROXY`)가 있으면 프록시 호스트로 잰다.
+- **닿지 않으면** GET을 시도하지 않고 `InstallErrorKind::Offline` → 접속 경로 오류 **-1352 `ERR_DRIVER_OFFLINE`** · 안내 = GUI 접속·접속 테스트 · CLI `conn test` · 스크립트 오류 = `StDriverOffline`("드라이버 저장소에 닿지 않습니다 … 오프라인 번들로 설치하세요: 보기 ▸ 드라이버 관리자 ▸ 파일에서 설치… 또는 nsql driver install --file <번들.zip>") · 드라이버 관리자·`nsql driver` = `DrvErrOffline`.
+- **행위별 1회(사용자)** = 범위 토큰 `NetAction` — install 하나 = 토큰 하나 · `open_auto`(접속 1회 = 설치 + 갱신 + 재시도) · CLI `cmd_driver`(명령 1회 · `update` 여러 개도 확인 1회)가 바깥 토큰을 잡아 첫 통과를 기억 · 마지막 토큰이 끝나면 잊음 · **실패는 기억하지 않는다**(다음 행위에서 다시 잰다).
+- **캐시 폴백** = 색인 캐시가 있으면 종전처럼 캐시를 쓴다(오류 없음) · 게이트는 네트워크를 탈 때만.
+- 시험 = `crates/nsql-drivers/tests/install.rs` `unreachable_repository_fails_fast_with_offline_kind`(닫힌 포트 → Offline · 색인 단계 미진입 · 5초 안) · V1 = journal 11-10 §5(닫힌 포트 프록시 → 1.6초에 오프라인 안내 · 끔(0) = 종전 "색인을 받지 못했습니다" 2.1초 · 정상 망 = 통과).
+
 ### 3-0b. 접속 시 자동 갱신(10-30 밤 · 185차 · D-423 · 사용자)
 
 - **언제** = 사용자가 접속할 때(`nsql-drivers::open_auto`) · 그 접속이 확장 드라이버(Extension{id, version})를 쓰고 `driver.auto_upgrade`(Bool · 기본 **on** · DBMS ▸ 드라이버)가 켜져 있을 때만.
