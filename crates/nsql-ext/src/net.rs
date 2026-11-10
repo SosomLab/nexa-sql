@@ -52,9 +52,26 @@ impl Source {
     }
 }
 
-/// 절대 URL GET(curl · 30초).
+/// 콘솔 창 없이 외부 명령 준비(3-OS · 외부 crate 0) — GUI(`windows_subsystem = "windows"`) 프로세스가 콘솔 앱(`curl`·`git`·`ssh`)을
+/// 띄우면 Windows가 새 콘솔 창을 만들어 **까만 창이 깜빡인다**(사용자 11-10 "확장 탭·확장 항목 클릭 때 까만 화면"). `CREATE_NO_WINDOW`
+/// 로 막는다 — gitstat·tunnel과 같은 처방을 부품 하나로(30 §2 · 세 번째 발견). 다른 OS는 그대로.
+#[must_use]
+pub fn quiet_command(program: &str) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.stdin(std::process::Stdio::null());
+    cmd
+}
+
+/// 절대 URL GET(curl · 30초 · 콘솔 창 없이).
 pub fn fetch_url(url: &str) -> Result<Vec<u8>, String> {
-    let out = std::process::Command::new("curl")
+    let out = quiet_command("curl")
         .args(["-fsSL", "--max-time", "30", url])
         .output()
         .map_err(|e| format!("curl: {e}"))?;

@@ -199,8 +199,10 @@ impl Source {
 }
 
 /// 절대 URL GET(curl · 30초 · 전송 통계) — 저장소 상대 경로와 `files[].url` 자산이 같은 길.
+/// ★ 콘솔 창 없이(`nsql_ext::net::quiet_command` · 사용자 11-10 "확장 탭·항목 클릭 때 까만 화면") — 패널 열기(index.json) ·
+///   항목 클릭(extension.json 메타 스레드 · 두 번째부터는 `ext_meta_cache` 적중이라 안 뜬다) · 설치(자산)가 전부 여기로 온다.
 fn fetch_url(url: &str) -> Result<(Vec<u8>, Option<NetStat>), String> {
-    let out = std::process::Command::new("curl")
+    let out = nsql_ext::net::quiet_command("curl")
         .args(["-fsSL", "--max-time", "30", "-w", NetStat::WRITE_OUT, url])
         .output()
         .map_err(|e| format!("curl: {e}"))?;
