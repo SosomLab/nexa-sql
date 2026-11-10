@@ -172,3 +172,28 @@
 - `ai.claude.use_cli_login`·`ai.codex.use_cli_login` 기본 off · 켤 때 위 조건 안내(Codex는 "개인 사용 한정 · 배포판 불허").
 - Auto 모드 호출 상한 `ai.auto_max_turns`(기본 20) · 한도 429 수신 시 자동 재시도 금지(26 §8) · 비용 추정 표시(Claude `total_cost_usd` · Codex 토큰 × 요율표).
 - 참고 링크: Claude Code 법적 안내 <https://code.claude.com/docs/en/legal-and-compliance> · 상업 약관 <https://www.anthropic.com/legal/commercial-terms> · 소비자 약관 <https://www.anthropic.com/legal/consumer-terms> · 사용 정책 <https://www.anthropic.com/legal/aup> · 요금 <https://claude.com/pricing> · API 요율 제한 <https://platform.claude.com/docs/en/api/rate-limits> · OpenAI 이용 약관 <https://openai.com/policies/terms-of-use/> · Services Agreement <https://openai.com/policies/services-agreement/> · 사용 정책 <https://openai.com/policies/usage-policies/> · Codex 요금 <https://learn.chatgpt.com/docs/pricing> · Codex 인증 <https://learn.chatgpt.com/docs/auth> · app-server <https://learn.chatgpt.com/docs/app-server> · API 가격 <https://developers.openai.com/api/docs/pricing> · API 요율 제한 <https://developers.openai.com/api/docs/guides/rate-limits>.
+
+## 14. 기술 검토 추가(2026-11-11 · 사용자 질문 4건 · 구현 전)
+
+### 14-1 API 모드와 CLI 모드를 같게 만들 수 있나
+- **화면·조작은 같게, 능력 범위만 다르게.** 패널·뷰는 `AiEvent`(글자 조각 · 도구 호출 카드 · 승인 요청 · 토큰/비용 · 끝)만 보고 그린다 · `AiHost` 포트 뒤에 `CliHost`(claude -p stream-json)와 `ApiHost`(Messages API SSE + 자체 도구 루프)를 꽂는다 → 대화·스트리밍·모델/effort·`/` 명령·첨부·토큰 표시·승인 카드·DB 도구·Auto 모드는 **같은 코드**.
+- 같은 것: 채팅·스트리밍 · 모델/effort · 토큰·비용 · 첨부(텍스트·이미지·PDF) · `/` 명령 · 앱 기능 도구(테이블 검색·조회·포맷·설정 변경) · Auto(읽기 자동·쓰기 확인).
+- 다른 것(모드 배지 · 비활성 표시): CLI만 = 파일 시스템·셸 도구 · 서브에이전트 · Claude Code 스킬 · 구독 로그인(개인 사용) · `--resume` 세션 재개. API만 = 서버 측 압축·캐시 제어 · 키별 과금·워크스페이스.
+- **앱 기능 도구 표는 두 모드가 공유**: CLI = MCP로 노출(§3) · API = 같은 표를 `tools`(strict 스키마)로 전달하고 호출은 in-process(브리지 불필요). 도구 루프 = 수동 루프(`stop_reason == tool_use` · 병렬 도구 결과는 한 메시지 · `is_error` 보고 · 강제 tool_choice 금지 · Opus 5.5 effort 기본 medium 명시).
+
+### 14-2 좌측 Claude 탭 + 상단 모드 선택(API | CLI) + 그 아래 VS Code식 구성(사용자 그림 1)
+- 상단: 모드 세그먼트(API | CLI) · 상태 점(실행 파일/키/프로필) · 세션 목록 접기.
+- 본문: 대화 기록(사용자 말풍선 · 어시스턴트 블록 · 도구 호출 접기 카드 · 승인 카드 · 오류 띠) — `ext_view`식 읽기 전용 상자 + 카드.
+- 입력부(그림 하단 바): `+`(첨부 메뉴 = 클립보드·파일·**테이블 조회**) · `/`(명령 팝업) · 경과 시간 · 에이전트 수(CLI 서브에이전트 · API = 0) · 모델/effort 칩(콤보) · Auto 토글 · 보내기/중단 · BusyRing.
+- 제약: 마크다운 렌더(1차 = 코드 블록만 고정폭+복사) · 클립보드 이미지 읽기(2차) · 모두 기존 Button·Combo·Switch·TextBox·팝업 부품.
+
+### 14-3 API 여러 개 등록·전환
+- `ai.profiles`(설정 레지스트리 밖 · `NSQL_HOME/ai/profiles.conf` · D-407 예외 아님 = 프로젝트 파일이 아니라 앱 데이터) = [{이름 · 공급자(claude · openai · anthropic 호환 게이트웨이 = Bedrock/Vertex/Foundry/사내 프록시) · base_url · 키 참조(볼트 봉투 이름) · 워크스페이스 ID · 기본 모델 · 기본 effort}] · 패널 상단 콤보로 전환 · **세션 = 프로필 고정**(대화 이력은 공급자 간 호환 안 됨 · 전환은 새 세션부터) · 키는 볼트에만 · 설정 파일엔 이름·엔드포인트만 · 요율 제한·지출 상한 429는 프로필 단위로 표시(재시도 금지 · 26 §8).
+
+### 14-4 API 모드의 입력 데이터
+| 입력 | 방법 | 비고 |
+|---|---|---|
+| 클립보드 텍스트 | 입력 상자 붙여넣기(기존 `read_text`) | 긴 글은 "첨부 칩"으로 접음(≥ 2,000자) |
+| 클립보드 이미지 | nexa-ctl에 CF_DIB/PNG 읽기 추가 → `image` 블록(base64 · PNG/JPEG) | 2차 |
+| 파일 | 파일 대화상자·드롭 → 텍스트/SQL/CSV = 텍스트 블록(크기·행 상한) · PDF = `document` 블록(≤32 MB · 600쪽) · 이미지 = `image` · 큰 파일 = Files API 업로드 후 `file_id` 재사용 | 미리보기 칩 · 제거 가능 |
+| **테이블 조건 조회** | `+` ▸ "테이블 조회 첨부": 스키마.테이블 · WHERE · 행 상한(기본 200) 입력 → 호스트가 `gate_pass()`→`Sess::submit`으로 **읽기 질의만** 실행 → 결과를 열 이름 + 행의 CSV/표 텍스트 블록으로 첨부(셀 길이 상한 · 비밀 이름 열 가림 · 행 수 표시) · 또는 Auto 모드에서 AI가 `run_query` 도구로 직접 | 외부 전송이라 첫 사용 때 "행 데이터 전송 허용"(세션 단위) 확인 · 프롬프트 캐시 경계 뒤에 두어 반복 질문 비용 절감 |
