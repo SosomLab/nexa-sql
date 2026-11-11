@@ -322,3 +322,9 @@
 | 3 | 분할 창 상단에 이름 + (VS Code처럼) 세션 선택 · 새 세션 · Claude/Codex 선택 | 분할 창 모드 머리 줄 = 세션 제목 + [≡ 세션][+ 새 세션](툴팁). [≡] = 큰 선택 팝업(§15-6 `Picker`): "＋ 새 세션(Claude)" · "＋ 새 세션(Codex)" · 이전 세션들(설명 = 제공자). 고르면 그 편집기 탭에 연결. |
 | 4 | 대본에서 드래그로 글 선택·복사 | **줄 단위 선택**: 대본 안 누른 뒤 끌면 줄 범위 강조(accent 18%) · Ctrl+C(편집 메뉴 복사 경로의 폴백 = 작성 상자 선택이 없으면 대본 선택 줄) · Esc/클릭 = 해제. 글자 단위 선택은 2차. |
 | 5 | CLI 모드 "Connection 정보 조회"에 이상한 답(ToolSearch · `mcp__nexa__approve` not found · 사용자 PC MCP 서버 목록) | `--bare`를 빼자 Claude Code가 사용자 설정의 MCP 서버(Claude_Docs · mcp-genagent)를 함께 올리고 앱의 `nexa` 서버가 빠졌다 → `--strict-mcp-config`(앱이 넘긴 `--mcp-config`만) 추가. |
+
+### 15-12 스킬(앱 계층 플레이북) · 세션이 쓸 수 있는 모델 · 모델 칩 팝업(2026-11-11 · 사용자 지시 3건)
+- **스킬**(사용자 "MCP로 줄 정보·기능은 skills로 따로 정리"): 모델이 "지금 접속 정보"를 DBMS(v$session)로 바로 묻던 것 → `ai/skills.rs`에 플레이북 5개(`connections` · `metadata` · `editor` · `results` · `app` · 영어 · 모델용). 시스템 프롬프트에는 **색인**(이름 — 언제) + 규칙("맞는 스킬을 `skill` 도구로 읽고 앱 도구를 DBMS보다 먼저")만 · 본문은 새 읽기 도구 **`skill(name)`** 으로(API · CLI(`--append-system-prompt`) · Codex 공통 · 프롬프트 짧게). 도구 17종.
+- **`session_info` 확장** = 앱 계층: 현재 편집기 세션(프로필 · 방언 · 접속 · 스키마 · 현재 DB · busy · 미커밋 수 · 가린 설명) + 세션 관리자와 같은 **전체 세션 목록**(공유/전용(주인 탭) · 접속/끊김/busy · 유휴 초 · 미커밋). DBMS 질의 없음.
+- **세션이 쓸 수 있는 모델만**(사용자 "Free에서 안 되는 모델이 기본" · "현재 세션이 쓸 수 있는 것 중 선택" · "CLI도 일반 기본값 + 선택 가능"): Codex CLI = 로그인 상태 조회 스레드가 `model/list`(키 없이 = CLI 로그인)도 받아 `AiState.codex_cli_models`에 → 모델 팝업 선택지 · 자동 이름 `sol` 풀기의 기준. 목록에 없는 모델이 지정돼 있으면 **계정 기본 모델로 바꿔 보내고 Note로 안내**(`AiModelSwapped`). API 모드 = 프로필이 [검증] 때 받은 목록(종전). Claude CLI = 목록 API가 없어 가족 이름 + 내장 표(CLI가 별칭을 받는다). `account/updated` 알림은 대본에 안 올림.
+- **모델 칩 = 버튼**(사용자 "클릭해도 변경이 없어"): 하단 [모델 · 노력도] 칩 → 큰 팝업(이 세션의 모델 선택지 + 노력도 점 5 + Auto 스위치) → `/model` · `/effort` · `/auto` 명령으로 세션에 적용.

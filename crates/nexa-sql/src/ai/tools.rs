@@ -132,6 +132,13 @@ pub(crate) const TOOLS: &[Tool] = &[
         write: true,
         props: &[("sql", "string", "SQL statement", true)],
     },
+    // ★ 스킬 플레이북(docs/110 §15-12): 색인은 시스템 프롬프트 · 본문은 이 도구로.
+    Tool {
+        name: "skill",
+        desc: "Read a Nexa SQL skill playbook (connections, metadata, editor, results, app) that says which app tools to use for a kind of request and when, if ever, to query the DBMS.",
+        write: false,
+        props: &[("name", "string", "skill name from the Skills index", true)],
+    },
 ];
 
 pub(crate) fn find(name: &str) -> Option<&'static Tool> {
@@ -242,7 +249,11 @@ pub(crate) fn system_prompt(dialect: &str, profile: &str) -> String {
 Current session: profile '{profile}', dialect {dialect}. Use the provided tools to read the editor, inspect database objects, \
 run read-only queries, format SQL, change settings and run palette commands. Never ask for or echo passwords or API keys. \
 Prefer SELECT statements; any statement that modifies data or schema must be explicit and will require the user's approval. \
-Answer concisely; put SQL in fenced code blocks."
+Answer concisely; put SQL in fenced code blocks.\n\n\
+Skills (application-layer playbooks). Nexa SQL itself holds the connection state and cached metadata: when a request matches a skill, \
+first call the `skill` tool with that name and follow it; prefer app tools (session_info, list_profiles, search_objects, describe_object, \
+get_result) over querying the DBMS, and query the database only when the skill says so or the user asks for server-side data.\n{skills}",
+        skills = super::skills::index_text()
     )
 }
 

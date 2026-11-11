@@ -69,6 +69,8 @@ pub(crate) struct AiState {
     pub run: Option<String>,
     /// `codex login status` 첫 줄(Codex CLI 모드 · 패널 바닥 줄 · None = 아직 안 물음 · Some("") = 조회 중).
     pub codex_login: Option<String>,
+    /// ★ CLI 로그인 계정이 쓸 수 있는 Codex 모델(`model/list` · 로그인 상태 조회와 함께 · 사용자 11-11 "Free에서 안 되는 모델이 기본").
+    pub codex_cli_models: Vec<String>,
     /// 코드 블록 [실행] 대기(메시지 번호 · 블록 번호) — 결과는 그 메시지의 `block_results`로.
     pub run_block: Option<(usize, usize)>,
     /// 진행 중 상태 줄 갱신 마지막 시각(1초 간격) · 턴 시작 시각(HH:MM:SS).
@@ -526,14 +528,7 @@ impl App {
             .map(|s| s.model.clone())
             .unwrap_or_else(|| self.ai_model_default(provider));
         let models: Vec<(String, String)> = {
-            let fetched = self
-                .ai
-                .store
-                .profiles
-                .iter()
-                .find(|p| p.name == profile_name)
-                .map(|p| p.models.clone())
-                .unwrap_or_default();
+            let fetched = self.ai_session_models(provider, mode_now, &profile_name);
             ai::model_items(provider, &fetched, &model)
         };
         let keyed: Vec<String> = nsql_vault::Vault::open_default()
@@ -636,6 +631,14 @@ impl App {
                 .iter()
                 .map(|s| (s.id.clone(), s.title_or_default(), s.provider))
                 .collect(),
+            models: {
+                let (mode, model, profile) = self
+                    .ai_cur()
+                    .map(|s| (s.mode, s.model.clone(), s.profile.clone()))
+                    .unwrap_or((Mode::Api, String::new(), String::new()));
+                let fetched = self.ai_session_models(self.ai.tab, mode, &profile);
+                ai::model_items(self.ai.tab, &fetched, &model)
+            },
         }
     }
 
@@ -994,6 +997,11 @@ impl App {
                 };
                 let _ = tx.send(AiEvent::Note(format!("codexlogin:{line}")));
                 wake();
+                // 그 계정이 쓸 수 있는 모델 목록(키 없이 = CLI 로그인) → 모델 팝업·자동 이름의 기준.
+                if let Ok(models) = ai::host::codex_list_models(&prog, &prefix, "") {
+                    let _ = tx.send(AiEvent::Note(format!("codexmodels:{}", models.join(","))));
+                    wake();
+                }
             });
     }
 
@@ -1056,6 +1064,20 @@ impl App {
             self.redraw();
         }
         Some(self.ai.last_tick.unwrap_or(now) + std::time::Duration::from_secs(1))
+    }
+
+    /// ★ 이 세션이 쓸 수 있는 모델 목록: API = 프로필이 [검증] 때 받은 목록 · Codex CLI = 로그인 계정의 `model/list` · 그 밖 = 빈 목록(내장 표).
+    fn ai_session_models(&self, provider: Provider, mode: Mode, profile: &str) -> Vec<String> {
+        if provider == Provider::Codex && mode == Mode::Cli {
+            return self.ai.codex_cli_models.clone();
+        }
+        self.ai
+            .store
+            .profiles
+            .iter()
+            .find(|p| p.name == profile)
+            .map(|p| p.models.clone())
+            .unwrap_or_default()
     }
 
     /// 비용 표(설정 `ai.prices`).
@@ -1180,16 +1202,10 @@ impl App {
             self.redraw();
             return;
         }
-        // ★ 자동 모델 이름(opus · sonnet · sol …)은 여기서 가장 새 id로 푼다(프로필이 조회한 목록 우선).
-        let fetched: Vec<String> = self
-            .ai
-            .store
-            .profiles
-            .iter()
-            .find(|p| p.name == profile)
-            .map(|p| p.models.clone())
-            .unwrap_or_default();
+        // ★ 자동 모델 이름(opus · sonnet · sol …)은 여기서 가장 새 id로 푼다 — 기준 = 이 세션이 쓸 수 있는 목록
+        //   (API = 프로필이 검증 때 받은 목록 · Codex CLI = 로그인 계정의 model/list · 사용자 11-11).
         let provider = self.ai_provider();
+        let fetched: Vec<String> = self.ai_session_models(provider, mode, &profile);
         let (attachments, model, effort, cli_session) = {
             let s = self.ai_cur_mut().expect("session");
             (
@@ -1378,6 +1394,24 @@ impl App {
             self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[profile])));
             return;
         }
+        // ★ CLI 로그인 계정(Free 등)이 못 쓰는 모델이면 계정 기본 모델로 바꿔 보내고 안내(사용자 11-11).
+        let model_owned;
+        let model: &str = if mode == Mode::Cli
+            && !self.ai.codex_cli_models.is_empty()
+            && !self.ai.codex_cli_models.iter().any(|m| m == model)
+        {
+            model_owned = self.ai.codex_cli_models[0].clone();
+            self.ai_push(ChatMsg::new(
+                Kind::Note,
+                tf(Msg::AiModelSwapped, &[model, &model_owned]),
+            ));
+            if let Some(s) = self.ai_cur_mut() {
+                s.model = model_owned.clone();
+            }
+            &model_owned
+        } else {
+            model
+        };
         if !self.ai_host().is_codex_alive() {
             let (program, prefix) =
                 ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
@@ -1679,6 +1713,13 @@ impl App {
                     };
                 } else if let Some(rest) = n.strip_prefix("codexlogin:") {
                     self.ai.codex_login = Some(rest.to_string());
+                } else if let Some(rest) = n.strip_prefix("codexmodels:") {
+                    self.ai.codex_cli_models = rest
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|m| !m.is_empty())
+                        .map(String::from)
+                        .collect();
                 } else if let Some(rest) = n.strip_prefix("wif:") {
                     self.ai.note = match rest.split_once(':') {
                         Some(("ok", name)) => {
@@ -1955,15 +1996,46 @@ impl App {
                 }
             }
             "list_profiles" => ok(crate::worker::profile_names().join("\n")),
-            "session_info" => ok(format!(
-                "profile={}\ndialect={:?}\nconnected={}\nschema={}\nbusy={}\ndesc={}",
-                self.sess.profile,
-                self.sess.dialect,
-                self.sess.connected,
-                self.sess.cur_schema.clone().unwrap_or_default(),
-                self.sess.busy,
-                self.sess.desc
-            )),
+            "skill" => match ai::skills::body(&g("name")) {
+                Some(b) => ok(b.to_string()),
+                None => err(format!(
+                    "unknown skill; available: {}",
+                    ai::skills::names().join(", ")
+                )),
+            },
+            // ★ 앱 계층 세션 정보(docs/110 §15-12 · 사용자 11-11): 현재 편집기 세션 + 공유/전용 세션 전부(DBMS 질의 없음).
+            "session_info" => {
+                let mut out = format!(
+                    "current: profile={} dialect={:?} connected={} schema={} db={} busy={} pending_tx={} desc={}\n",
+                    self.sess.profile,
+                    self.sess.dialect,
+                    self.sess.connected,
+                    self.sess.cur_schema.clone().unwrap_or_default(),
+                    self.sess.current_db.clone().unwrap_or_default(),
+                    self.sess.busy,
+                    self.sess.tx_pending.len(),
+                    self.sess.desc
+                );
+                out.push_str("sessions (Nexa SQL app level; shared = any tab, private = owned by one editor tab):\n");
+                for r in self.session_rows() {
+                    out.push_str(&format!(
+                        "- #{} {}{} server={} connected={} broken={} busy={} idle={}s pending_tx={}\n",
+                        r.id,
+                        if r.shared { "shared" } else { "private" },
+                        match &r.tab {
+                            Some((_, title)) => format!(" (tab \"{title}\")"),
+                            None => if r.active { " (default)".to_string() } else { String::new() },
+                        },
+                        r.server,
+                        r.connected,
+                        r.broken,
+                        r.busy,
+                        r.idle_secs,
+                        r.pending
+                    ));
+                }
+                ok(out)
+            }
             "connect" => {
                 let p = g("profile");
                 self.startup_cmd(&format!("conn.edit:{p}"));

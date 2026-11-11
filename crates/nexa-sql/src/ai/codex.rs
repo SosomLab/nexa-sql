@@ -400,7 +400,7 @@ pub(crate) fn parse_line(line: &str) -> Incoming {
                 AiEvent::Error(msg)
             });
         }
-        "account/login/completed" | "account/updated" => {
+        "account/login/completed" => {
             out.push(AiEvent::Note(format!("{method}: {}", json_dump(&params))));
         }
         _ => {}

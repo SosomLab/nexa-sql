@@ -45,6 +45,8 @@ pub(crate) struct ViewInfo {
     pub title: String,
     pub provider: Provider,
     pub sessions: Vec<(String, String, Provider)>,
+    /// 이 세션이 쓸 수 있는 모델 선택지(id · 설명) — 하단 칩 팝업.
+    pub models: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -136,6 +138,8 @@ enum Btn {
     /// 분할 창 머리: [≡ 세션] [+ 새 세션].
     SideSessions,
     SideNew,
+    /// 하단 [모델 · 노력도] 칩(큰 팝업 = 모델 + 노력도 점 + Auto).
+    ModelChip,
     ProfileUse(usize),
     ProfileEdit(usize),
     ProfileDelete(usize),
@@ -180,6 +184,10 @@ pub(crate) struct AiView {
     /// 분할 창 모드(머리 줄 = 세션 제목 + [≡][+]) · 마지막 그리기의 세션 목록(팝업 항목).
     side_mode: bool,
     side_sessions: Vec<(String, String, Provider)>,
+    /// 마지막 그리기의 모델 선택지 · 현재 모델 · 노력도(칩 팝업용).
+    chip_models: Vec<(String, String)>,
+    model_now: String,
+    effort_now: String,
     /// ★ 대본 줄 선택(드래그 · 평면 줄 번호 범위 · 사용자 11-11 "드래그로 선택·복사") · 드래그 시작 줄 · 그린 줄의 자리.
     sel: Option<(usize, usize)>,
     drag_from: Option<usize>,
@@ -262,6 +270,9 @@ impl Default for AiView {
             auto_now: false,
             side_mode: false,
             side_sessions: Vec::new(),
+            chip_models: Vec::new(),
+            model_now: String::new(),
+            effort_now: String::new(),
             sel: None,
             drag_from: None,
             line_pos: Vec::new(),
@@ -704,12 +715,47 @@ impl AiView {
             return !matches!(ev, InputEvent::MouseMove { .. });
         }
         // 세션 선택 팝업(분할 창 머리 [≡]).
-        if let Some((_, p)) = &mut self.picker {
+        if let Some((kind, p)) = &mut self.picker {
+            let kind = *kind;
             match p.on_event(ev) {
                 PickEvent::None | PickEvent::Redraw => return true,
+                PickEvent::Effort(i) => {
+                    if let Some(e) = super::EFFORTS.get(i) {
+                        self.effort_now = (*e).to_string();
+                        if let Some((_, p)) = &mut self.picker {
+                            p.set_extra(
+                                0,
+                                super::picker::Extra::Effort {
+                                    label: tf(Msg::AiEffortLabel, &[e]),
+                                    idx: i,
+                                    n: super::EFFORTS.len(),
+                                },
+                            );
+                        }
+                        self.actions.push(ViewAction::Slash(format!("/effort {e}")));
+                    }
+                    return true;
+                }
+                PickEvent::Toggle(on) => {
+                    self.auto_now = on;
+                    if let Some((_, p)) = &mut self.picker {
+                        p.set_extra(
+                            1,
+                            super::picker::Extra::Toggle {
+                                label: t(Msg::AiAuto).to_string(),
+                                on,
+                            },
+                        );
+                    }
+                    let cmd = if on { "/auto on" } else { "/auto off" };
+                    self.actions.push(ViewAction::Slash(cmd.into()));
+                    return true;
+                }
                 PickEvent::Pick(id) => {
                     self.picker = None;
-                    if let Some(rest) = id.strip_prefix("new:") {
+                    if kind == Btn::ModelChip {
+                        self.actions.push(ViewAction::Slash(format!("/model {id}")));
+                    } else if let Some(rest) = id.strip_prefix("new:") {
                         self.actions
                             .push(ViewAction::NewSession(Provider::parse(rest)));
                     } else if let Some(sid) = id.strip_prefix("s:") {
@@ -717,7 +763,6 @@ impl AiView {
                     }
                     return true;
                 }
-                PickEvent::Effort(_) | PickEvent::Toggle(_) => return true,
                 PickEvent::Close => {
                     self.picker = None;
                     if !matches!(ev, InputEvent::MouseDown { .. }) {
@@ -986,6 +1031,53 @@ impl AiView {
             Btn::SideNew => {
                 let p = self.provider;
                 self.actions.push(ViewAction::NewSession(p));
+            }
+            Btn::ModelChip => {
+                let anchor = self
+                    .buttons
+                    .iter()
+                    .find(|(k, _)| *k == Btn::ModelChip)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_default();
+                let items: Vec<PickItem> = self
+                    .chip_models
+                    .iter()
+                    .map(|(id, desc)| PickItem {
+                        id: id.clone(),
+                        title: id.clone(),
+                        desc: desc.clone(),
+                    })
+                    .collect();
+                let sel = items.iter().position(|i| i.id == self.model_now);
+                let eidx = super::EFFORTS
+                    .iter()
+                    .position(|e| *e == self.effort_now)
+                    .unwrap_or(1);
+                let extras = vec![
+                    super::picker::Extra::Effort {
+                        label: tf(Msg::AiEffortLabel, &[&self.effort_now]),
+                        idx: eidx,
+                        n: super::EFFORTS.len(),
+                    },
+                    super::picker::Extra::Toggle {
+                        label: t(Msg::AiAuto).to_string(),
+                        on: self.auto_now,
+                    },
+                ];
+                let host = self.bounds;
+                let w = self.s(340.0).min(host.w);
+                let anchor = Rect::new(anchor.right() - w, anchor.y, w, anchor.h);
+                let p = Picker::new(
+                    t(Msg::AiPickModel),
+                    items,
+                    sel,
+                    extras,
+                    anchor,
+                    host,
+                    self.lh,
+                    self.scale,
+                );
+                self.picker = Some((Btn::ModelChip, p));
             }
             Btn::SideSessions => {
                 let anchor = self
@@ -1768,6 +1860,9 @@ impl AiView {
             let r = Rect::new(x + w - bw, cy, bw, btn_h);
             // 오른쪽부터: [➤/■] [Auto] [모델 · 노력도] [에이전트](글만 · 바꾸기는 패널/`/` 명령) · 남는 자리 = 상태 글.
             self.auto_now = info.auto;
+            self.chip_models = info.models.clone();
+            self.model_now = info.model.clone();
+            self.effort_now = info.effort.clone();
             let tyc = dc.text_center_y(cy, btn_h);
             let sw = self.s(34.0);
             let ar = Rect::new(r.x - sw - self.s(4.0), cy, sw, btn_h);
@@ -1776,14 +1871,31 @@ impl AiView {
             dc.text(ar.x - alw - self.s(2.0), tyc, b, al, th.text_dim);
             self.paint_switch(dc, th, ar, info.auto, Btn::Auto);
             let mut right = ar.x - alw - self.s(10.0);
-            for chip in [format!("{} · {}", info.model, info.effort), agent] {
+            for (k, chip) in [format!("{} · {}", info.model, info.effort), agent]
+                .into_iter()
+                .enumerate()
+            {
                 let cw = dc.text_width(&chip) + self.s(12.0);
                 let cr = Rect::new(right - cw, cy, cw, btn_h);
                 if cr.x < bx + self.s(8.0) {
                     break;
                 }
                 dc.fill_round_rect(cr, btn_h / 2, th.panel_bg_alt);
-                dc.text(cr.x + self.s(6.0), tyc, cr, &chip, th.text_dim);
+                if k == 0 {
+                    // 모델 칩 = 버튼(누르면 큰 팝업).
+                    let idx = self.buttons.len();
+                    let hot = self.hover == Some(idx);
+                    dc.stroke_round_rect(
+                        cr,
+                        btn_h / 2,
+                        if hot { th.accent } else { th.border },
+                        1.0,
+                    );
+                    dc.text(cr.x + self.s(6.0), tyc, cr, &chip, th.text);
+                    self.buttons.push((Btn::ModelChip, cr));
+                } else {
+                    dc.text(cr.x + self.s(6.0), tyc, cr, &chip, th.text_dim);
+                }
                 right = cr.x - self.s(6.0);
             }
             if !info.status.is_empty() && right - bx > self.s(60.0) {
@@ -2125,6 +2237,7 @@ impl AiView {
                     Btn::Send => Some(Msg::AiSendTip),
                     Btn::SideSessions => Some(Msg::AiSideSessionsTip),
                     Btn::SideNew => Some(Msg::AiSideNewTip),
+                    Btn::ModelChip => Some(Msg::AiPickModel),
                     _ => None,
                 };
                 if let Some(tip) = tip {
