@@ -1655,11 +1655,24 @@ impl AiView {
         let n_lines = (text.split('\n').count() as i32).clamp(1, self.max_lines);
         let comp_h = n_lines * self.composer.line_h().max(lh) + self.s(14.0);
         let btn_h = lh + self.s(10.0);
-        let chips_h = if sess.attachments.is_empty() {
-            0
-        } else {
-            btn_h + self.s(6.0)
-        };
+        // ★ 첨부 칩 배치 = 여러 줄로 감쌈(사용자 11-11 "6개 첨부했는데 2개만 보임") — (번호 · 줄 · x · 본문 폭 · 라벨).
+        let xw = dc.text_width("×") + self.s(12.0);
+        let mut chips: Vec<(usize, i32, i32, i32, String)> = Vec::new();
+        {
+            let (mut cx, mut row) = (x, 0i32);
+            for (i, a) in sess.attachments.iter().enumerate() {
+                let label = nexa_ctl::draw::ellipsize_middle(dc, &a.chip_text(), self.s(220.0));
+                let bw = dc.text_width(&label) + self.s(16.0);
+                if cx > x && cx + bw + xw > x + w {
+                    cx = x;
+                    row += 1;
+                }
+                chips.push((i, row, cx, bw, label));
+                cx += bw + xw + self.s(6.0);
+            }
+        }
+        let chip_rows = chips.last().map_or(0, |c| c.1 + 1);
+        let chips_h = chip_rows * (btn_h + self.s(6.0));
         let hint_h = 0;
         let bottom_h = comp_h + btn_h + chips_h + hint_h + self.s(24.0);
         let comp_top = b.bottom() - bottom_h;
@@ -1906,19 +1919,14 @@ impl AiView {
         let mut cy = comp_top;
         dc.fill_rect(Rect::new(b.x, cy, b.w, 1), th.border);
         cy += self.s(8.0);
-        if !sess.attachments.is_empty() {
-            // 칩 = [본문(클릭 = 미리보기)][×](사용자 11-11 · 이미지는 이름 W×H).
-            let mut cx = x;
-            let xw = dc.text_width("×") + self.s(12.0);
-            for (i, a) in sess.attachments.iter().enumerate() {
-                let label = nexa_ctl::draw::ellipsize_middle(dc, &a.chip_text(), self.s(220.0));
-                let bw = dc.text_width(&label) + self.s(16.0);
-                if cx + bw + xw > x + w {
-                    break;
-                }
-                let r = Rect::new(cx, cy, bw + xw, btn_h);
-                let body = Rect::new(cx, cy, bw, btn_h);
-                let xr = Rect::new(cx + bw, cy, xw, btn_h);
+        if !chips.is_empty() {
+            // 칩 = [본문(클릭 = 미리보기)][×](사용자 11-11 · 이미지는 이름 W×H) · 줄은 위에서 계산한 배치대로.
+            for (i, row, cx, bw, label) in &chips {
+                let (i, cx, bw) = (*i, *cx, *bw);
+                let ry = cy + row * (btn_h + self.s(6.0));
+                let r = Rect::new(cx, ry, bw + xw, btn_h);
+                let body = Rect::new(cx, ry, bw, btn_h);
+                let xr = Rect::new(cx + bw, ry, xw, btn_h);
                 let ib = self.buttons.len();
                 let hot_body = self.hover == Some(ib);
                 let hot_x = self.hover == Some(ib + 1);
@@ -1928,7 +1936,7 @@ impl AiView {
                 }
                 dc.stroke_round_rect(r, btn_h / 2, th.border, 1.0);
                 let ty = dc.text_center_y(r.y, r.h);
-                dc.text(body.x + self.s(8.0), ty, body, &label, th.text);
+                dc.text(body.x + self.s(8.0), ty, body, label, th.text);
                 dc.text(
                     xr.x + self.s(4.0),
                     ty,
@@ -1938,9 +1946,8 @@ impl AiView {
                 );
                 self.buttons.push((Btn::PreviewAttachment(i), body));
                 self.buttons.push((Btn::RemoveAttachment(i), xr));
-                cx += r.w + self.s(6.0);
             }
-            cy += btn_h + self.s(6.0);
+            cy += chips_h;
         }
         // 미리보기 캐시(열린 첨부가 바뀌었을 때 한 번 디코드 · PNG만 그림 · 그 밖은 안내).
         if let Some(i) = self.preview {
