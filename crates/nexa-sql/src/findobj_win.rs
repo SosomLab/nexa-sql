@@ -1237,7 +1237,39 @@ impl FindObjWin {
         self.menu.is_open() && self.menu_row.is_none()
     }
 
+    /// 미리보기 줄 우클릭 메뉴(줄 복사).
+    fn open_preview_menu(&mut self) {
+        let (x, y) = self.cursor;
+        let items = vec![CtxItem::item("copyline", t(Msg::FoCopyLine))];
+        self.menu_row = None;
+        self.menu.set_scale(self.scale);
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let s = w.inner_size();
+                Rect::new(0, 0, s.width as i32, s.height as i32)
+            })
+            .unwrap_or(self.list_rect);
+        crate::menu_icons::open_at(
+            &mut self.menu,
+            x,
+            y,
+            items,
+            host,
+            (220.0 * self.scale) as i32,
+        );
+        self.redraw();
+    }
+
     fn menu_pick(&mut self, id: &str) -> FoAction {
+        if id == "copyline" {
+            return self
+                .pre_sel
+                .and_then(|k| self.pre_lines.get(k))
+                .map(|l| FoAction::Copy(l.text.clone()))
+                .unwrap_or(FoAction::None);
+        }
         // 닫기 확인 메뉴(행 없음) — 호스트의 Close가 검색을 취소하고 닫는다.
         match id {
             "close.stop" => return FoAction::Close,
@@ -1980,6 +2012,11 @@ impl FindObjWin {
                 } else if self.filter.bounds().contains(p) {
                     self.own_focus(Focus::Filter);
                     self.filter.on_event(&rd, &mut inv);
+                } else if let Some(k) = self.preview_index_at(p) {
+                    // ★ 미리보기 줄 우클릭 = [줄 복사] 메뉴(사용자 11-12).
+                    self.pre_sel = Some(k);
+                    self.own_focus(Focus::Preview);
+                    self.open_preview_menu();
                 } else if let Some(v) = self.view_at(p) {
                     self.select(Some(v));
                     self.own_focus(Focus::List);
@@ -2091,6 +2128,17 @@ impl FindObjWin {
                         self.ensure_visible(v);
                         self.redraw();
                         return FoAction::None;
+                    }
+                    // ★ 미리보기 줄 Ctrl+C = 그 줄 복사(사용자 11-12 "하단 결과 1줄 복사").
+                    Key::Character(c) if self.primary && self.focus == Focus::Preview => {
+                        let lower = crate::input::shortcut_letter(kev)
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| c.to_lowercase());
+                        if lower == "c" {
+                            if let Some(l) = self.pre_sel.and_then(|k| self.pre_lines.get(k)) {
+                                return FoAction::Copy(l.text.clone());
+                            }
+                        }
                     }
                     Key::Character(c) if self.primary && self.focus == Focus::List => {
                         let lower = crate::input::shortcut_letter(kev)

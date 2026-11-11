@@ -1026,6 +1026,9 @@ impl App {
             | "ai.codex_effort"
             | "ai.codex_auto"
             | "ai.composer_max_lines"
+            | "ai.verbosity"
+            | "ai.result_tabs"
+            | "ai.mcp_timeout_secs"
             | "ai.codex_model" => self.ai_sync_panel(),
             "editor.line_height_mode" | "editor.line_height" => {
                 self.apply_line_height();

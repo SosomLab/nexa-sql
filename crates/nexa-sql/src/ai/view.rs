@@ -50,6 +50,9 @@ pub(crate) struct ViewInfo {
     pub sessions: Vec<(String, String, Provider)>,
     /// 이 세션이 쓸 수 있는 모델 선택지(id · 설명) — 하단 칩 팝업.
     pub models: Vec<(String, String)>,
+    /// ★ 진행 단계(0 없음 · 1 요청 보냄 · 2 응답 중 · 3 완료) · 지금(epoch ms · 경과 계산) — 11-12.
+    pub stage: u8,
+    pub now_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -198,6 +201,10 @@ pub(crate) struct AiView {
     side_sessions: Vec<(String, String, Provider)>,
     /// 프로필 목록 행의 전체 글(Alt 전체 보기 말풍선 · 11-11 "버튼에 가려 못 본다").
     p_rows: Vec<String>,
+    /// ★ 표시 레벨(사용자 11-12): false = basic(도구 호출/성공 결과 줄 숨김) · true = 상세 · 깜빡임 위상 · 마지막 busy.
+    detail: bool,
+    blink: bool,
+    busy_last: bool,
     /// 마지막 그리기의 모델 선택지 · 현재 모델 · 노력도(칩 팝업용).
     chip_models: Vec<(String, String)>,
     model_now: String,
@@ -289,6 +296,9 @@ impl Default for AiView {
             side_mode: false,
             side_sessions: Vec::new(),
             p_rows: Vec::new(),
+            detail: false,
+            blink: true,
+            busy_last: false,
             chip_models: Vec::new(),
             model_now: String::new(),
             effort_now: String::new(),
@@ -650,12 +660,29 @@ impl AiView {
 
     /// ★ 시계 틱(이벤트 루프 · 사용자 11-11 "작성 상자 스크롤바가 항상 표시"): 작성 상자·프로필 상자·대본 스크롤바의 자동 숨김은
     ///   이 틱이 있어야 진행된다(nexa-ctl `ScrollBars::tick` · 전역 `ui.scrollbars`를 따른다).
+    /// 표시 레벨(바뀌면 줄 캐시를 버린다).
+    pub(crate) fn set_detail(&mut self, on: bool) {
+        if self.detail != on {
+            self.detail = on;
+            self.lines.clear();
+            self.lens.clear();
+        }
+    }
+
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         let mut r = false;
         for b in self.boxes_mut() {
             r |= b.tick(now_ms);
         }
         r |= self.bars.tick(now_ms);
+        // ★ 진행 중 깜빡임(단계 ①②③ · 요청 줄 경과 시간 갱신 · 11-12): 500 ms 위상 · 턴이 돌 때만 다시 그린다.
+        let b = (now_ms / 500).is_multiple_of(2);
+        if b != self.blink {
+            self.blink = b;
+            if self.busy_last {
+                r = true;
+            }
+        }
         // ★ 드래그 선택 자동 스크롤(사용자 11-11): 끄는 중 포인터가 대본 위/아래 밖이면 그쪽으로 조금씩 넘기고 끝 줄을 따라간다.
         if self.dragging && !self.transcript.is_empty() {
             let tr = self.transcript;
@@ -1558,8 +1585,19 @@ impl AiView {
         for (i, m) in sess.messages.iter().enumerate() {
             let key = msg_key(m);
             let need = self.lines.get(i).is_none() || self.lens[i] != key;
+            // ★ basic 표시(사용자 11-12 "알아보기 어려운 메시지가 너무 많다"): 도구 호출·성공한 도구 결과는 숨긴다(실패 결과·승인·오류·Note는 보임).
+            let hidden = !self.detail
+                && matches!(
+                    m.kind,
+                    Kind::ToolCall { .. } | Kind::ToolResult { ok: true, .. }
+                );
             if need {
-                let lines = layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks, who);
+                let lines = if hidden {
+                    collect_code(&m.text, &mut self.code_blocks);
+                    Vec::new()
+                } else {
+                    layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks, who)
+                };
                 if i < self.lines.len() {
                     self.lines[i] = lines;
                     self.lens[i] = key;
@@ -1730,6 +1768,9 @@ impl AiView {
             .iter()
             .enumerate()
             .map(|(i, ls)| {
+                if ls.is_empty() {
+                    return 0;
+                }
                 let mut h = ls.len() as i32 * line_h + self.s(10.0);
                 let pending = sess.messages.get(i).is_some_and(|m| {
                     matches!(m.kind, Kind::Approval { .. })
@@ -1767,11 +1808,19 @@ impl AiView {
         self.line_pos.clear();
         let mut flat_base = 0usize;
         let sel = self.sel_ordered();
+        self.busy_last = info.busy;
+        let mut user_tops: Vec<(usize, i32)> = Vec::new();
         for (mi, ls) in lines.iter().enumerate() {
             let block_h = ls.len() as i32 * line_h;
             let msg = &sess.messages[mi];
             let my_base = flat_base;
             flat_base += ls.len();
+            if ls.is_empty() {
+                continue;
+            }
+            if msg.kind == Kind::User {
+                user_tops.push((mi, ly));
+            }
             if ly + block_h >= tr.y && ly <= tr.bottom() {
                 for li in 0..ls.len() {
                     let yy = ly + li as i32 * line_h;
@@ -1876,6 +1925,39 @@ impl AiView {
                                 if is_user { th.accent } else { th.text },
                             );
                             dc.select_font(FontSlot::Base, false);
+                            // ★ 시각·경과(사용자 11-12): 요청 줄 = 요청 시각 + 경과(완료 전엔 매 틱 갱신) · 응답 줄 = 시작 (· 완료 · 걸린 시간).
+                            if li == 0 && msg.at > 0 {
+                                let stamp = if is_user {
+                                    let end = if msg.done_at > 0 {
+                                        msg.done_at
+                                    } else {
+                                        info.now_ms
+                                    };
+                                    let secs = end.saturating_sub(msg.at) as f64 / 1000.0;
+                                    tf(
+                                        Msg::AiReqAt,
+                                        &[&super::wall_stamp(msg.at), &format!("{secs:.1}")],
+                                    )
+                                } else if msg.done_at > 0 {
+                                    let secs = msg.done_at.saturating_sub(msg.at) as f64 / 1000.0;
+                                    tf(
+                                        Msg::AiDoneAt,
+                                        &[
+                                            &super::wall_time(msg.at),
+                                            &super::wall_time(msg.done_at),
+                                            &format!("{secs:.1}"),
+                                        ],
+                                    )
+                                } else {
+                                    tf(Msg::AiRespAt, &[&super::wall_time(msg.at)])
+                                };
+                                dc.select_font(FontSlot::Status, false);
+                                let sw = dc.text_width(&stamp);
+                                let sx =
+                                    (x + w - sw).max(x + dc.text_width(&l.text) + self.s(12.0));
+                                dc.text(sx, yy + self.s(2.0), tr, &stamp, th.text_dim);
+                                dc.select_font(FontSlot::Base, false);
+                            }
                         }
                         LineKind::Blank => {}
                     }
@@ -1935,6 +2017,34 @@ impl AiView {
                 0
             };
             ly += block_h + self.s(10.0) + extra;
+        }
+        // ★ 요청 고정 머리글(사용자 11-12 "VS Code처럼 그 요청에 종속된 내용 위에 요청을 고정"): 화면 위로 넘어간 마지막 사용자 요청을
+        //   대본 맨 위에 한 줄로 고정(다음 요청이 화면에 들어오면 밀려난다 · 객체 탐색기 서버 머리 고정과 같은 꼴).
+        if let Some((mi, _)) = user_tops.iter().rev().find(|(_, top)| *top < tr.y) {
+            let next_top = user_tops
+                .iter()
+                .find(|(m2, _)| m2 > mi)
+                .map(|(_, t2)| *t2)
+                .unwrap_or(i32::MAX);
+            let band_h = line_h + self.s(6.0);
+            if next_top > tr.y + band_h {
+                let text = sess.messages[*mi]
+                    .text
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .to_string();
+                let band = Rect::new(tr.x, tr.y, tr.w, band_h);
+                dc.fill_rect(band, th.panel_bg_alt);
+                dc.fill_rect(Rect::new(tr.x, band.bottom() - 1, tr.w, 1), th.border);
+                dc.select_font(FontSlot::Base, true);
+                let role = t(Msg::AiRoleYou);
+                dc.text(x, tr.y + self.s(3.0), band, role, th.accent);
+                let rw = dc.text_width(role) + self.s(10.0);
+                dc.select_font(FontSlot::Base, false);
+                let shown = nexa_ctl::draw::ellipsize_middle(dc, &text, (w - rw).max(20));
+                dc.text(x + rw, tr.y + self.s(3.0), band, &shown, th.text);
+            }
         }
         self.lines = lines;
         if self.lines.is_empty() {
@@ -2119,10 +2229,25 @@ impl AiView {
                 }
                 right = cr.x - self.s(6.0);
             }
-            if !info.status.is_empty() && right - bx > self.s(60.0) {
+            let mut sx = bx;
+            // ★ 진행 단계 ①②③(사용자 11-12): 현재 단계는 깜빡인다(tick 500 ms) · 완료(3)·없음(0)은 안 그린다.
+            if info.stage > 0 && info.stage < 3 && right - sx > self.s(120.0) {
+                for (k, g) in ["①", "②", "③"].iter().enumerate() {
+                    let cur = (k as u8 + 1) == info.stage;
+                    let col = if cur && self.blink {
+                        th.accent
+                    } else {
+                        th.text_dim
+                    };
+                    dc.text(sx, tyc, b, g, col);
+                    sx += dc.text_width(g) + self.s(2.0);
+                }
+                sx += self.s(6.0);
+            }
+            if !info.status.is_empty() && right - sx > self.s(60.0) {
                 let shown =
-                    nexa_ctl::draw::ellipsize_middle(dc, &info.status, right - bx - self.s(8.0));
-                dc.text(bx, tyc, b, &shown, th.text_dim);
+                    nexa_ctl::draw::ellipsize_middle(dc, &info.status, right - sx - self.s(8.0));
+                dc.text(sx, tyc, b, &shown, th.text_dim);
             }
             if info.busy {
                 self.paint_button(dc, th, r, label, false, Btn::Send);
@@ -2765,7 +2890,10 @@ fn layout_msg(
         Kind::Assistant => (who.to_string(), LineKind::Text),
         Kind::ToolCall { name, input } => {
             let short: String = input.chars().take(160).collect();
-            (format!("⚙ {name} {short}"), LineKind::Dim)
+            (
+                format!("{} ⚙ {name} {short}", super::wall_time(m.at)),
+                LineKind::Dim,
+            )
         }
         Kind::ToolResult { name, ok } => (
             format!(

@@ -373,6 +373,11 @@ const TAB_ROWS_OPTS: &[(&str, Msg)] =
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
 /// ★ 스크롤바 표시 방식(사용자 11-11 "기본 = 스크롤 동작 때만 · 모든 스크롤이 이 기본을 따른다") — nexa-ctl 전역 자동 숨김.
+/// ★ AI 표시 레벨(사용자 11-12): basic = 도구 호출/성공 결과 숨김 · detail = 전부.
+const AI_VERBOSITY_OPTS: &[(&str, Msg)] = &[
+    ("basic", Msg::ValAiVerbosityBasic),
+    ("detail", Msg::ValAiVerbosityDetail),
+];
 const SCROLLBAR_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValScrollbarAuto),
     ("always", Msg::ValScrollbarAlways),
@@ -6453,6 +6458,31 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiPrices,
         kind: SettingKind::Text,
         default: AI_PRICES_DEFAULT,
+    },
+    // ★ 표시 레벨 · 결과 탭 · MCP 시작 제한(사용자 11-12).
+    Entry {
+        key: "ai.verbosity",
+        cat: Msg::CatAi,
+        label: Msg::LblAiVerbosity,
+        desc: Msg::DescAiVerbosity,
+        kind: SettingKind::Choice(AI_VERBOSITY_OPTS),
+        default: "basic",
+    },
+    Entry {
+        key: "ai.result_tabs",
+        cat: Msg::CatAi,
+        label: Msg::LblAiResultTabs,
+        desc: Msg::DescAiResultTabs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ai.mcp_timeout_secs",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMcpTimeout,
+        desc: Msg::DescAiMcpTimeout,
+        kind: SettingKind::Int { min: 10, max: 600 },
+        default: "120",
     },
     // ★ hooks(docs/110 §16 · 11-11): 턴 끝 후처리 — ```sql 블록 앱 포맷 · 빈 줄 정리.
     Entry {

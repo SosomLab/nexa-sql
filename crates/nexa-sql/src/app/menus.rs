@@ -939,6 +939,7 @@ impl App {
                 self.ai_open_chat();
             }
             "ai.side" => self.ai_toggle_side(),
+            "ai.detail" => self.ai_toggle_detail(),
             "ai.enabled" => {
                 let on = !self.settings.flag("ai.enabled");
                 let _ = self
@@ -1952,6 +1953,7 @@ impl App {
             }
             "ai.enabled" => self.settings.flag("ai.enabled"),
             "ai.side" => self.ai_side_on(),
+            "ai.detail" => self.settings.get("ai.verbosity") == Some("detail"),
             "view.log" => self.log_win.is_open(),
             "view.txlog" => self.txlog_win.is_open(),
             "view.sessions" => self.sessions_win.is_open(),

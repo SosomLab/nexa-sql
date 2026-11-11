@@ -185,6 +185,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("ai.chat", Msg::MnView, Msg::MnAiChat),
     p("ai.tab", Msg::MnView, Msg::MnAiTab),
     tv("ai.side", Msg::MnAiSide),
+    tv("ai.detail", Msg::MnAiDetail),
     sw("ai.enabled", Msg::MnAiEnable),
     tv("view.log", Msg::MnLogWindow),
     tv("view.txlog", Msg::MnTxLogWindow),

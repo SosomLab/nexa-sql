@@ -75,15 +75,35 @@ pub(crate) fn start(
 }
 
 /// `--mcp-config`에 넣을 JSON(인라인) — 브리지 = 같은 폴더의 `nsql` 실행 파일.
-pub(crate) fn config_json(port: u16, token: &str) -> String {
+/// 브리지 프로그램(`nsql`): 실행 파일 옆의 `nsql[.exe]`가 있으면 절대 경로 · 없으면 PATH의 `nsql`.
+pub(crate) fn bridge_program() -> String {
     let exe = std::env::current_exe().ok();
-    let nsql = exe
-        .as_ref()
+    exe.as_ref()
         .and_then(|e| e.parent())
         .map(|d| d.join(if cfg!(windows) { "nsql.exe" } else { "nsql" }))
         .filter(|p| p.is_file())
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "nsql".to_string());
+        .unwrap_or_else(|| "nsql".to_string())
+}
+
+/// 브리지가 PATH로만 잡힐 때 실제로 찾을 수 있는가(사전 점검 · 11-12 "MCP 연결 30초 초과" 오류).
+pub(crate) fn bridge_available(program: &str) -> bool {
+    let p = std::path::Path::new(program);
+    if p.is_absolute() {
+        return p.is_file();
+    }
+    let exe = if cfg!(windows) && !program.ends_with(".exe") {
+        format!("{program}.exe")
+    } else {
+        program.to_string()
+    };
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|d| d.join(&exe).is_file()))
+        .unwrap_or(false)
+}
+
+pub(crate) fn config_json(port: u16, token: &str) -> String {
+    let nsql = bridge_program();
     let v = Json::Obj(vec![(
         "mcpServers".into(),
         Json::Obj(vec![(

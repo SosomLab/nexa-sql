@@ -113,6 +113,40 @@ impl App {
         format!("{}:{sid}", prov.view_key())
     }
 
+    /// ★ 표시 레벨 토글(팔레트 "AI: 상세 보기" · 설정 `ai.verbosity` · 사용자 11-12): basic = 도구 호출/성공 결과 줄 숨김.
+    pub(crate) fn ai_toggle_detail(&mut self) {
+        let on = self.settings.get("ai.verbosity") == Some("detail");
+        let _ = self
+            .settings
+            .set("ai.verbosity", if on { "basic" } else { "detail" });
+        self.persist_settings();
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    /// 진행 단계(사용자 11-12 "①②③ 중 현재 단계 깜빡임"): 0 = 턴 없음 · 1 = 요청 보냄(첫 응답 전) · 2 = 응답 수신 중 · 3 = 완료.
+    fn ai_stage(&self) -> u8 {
+        let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
+        let Some(s) = self.ai_cur() else { return 0 };
+        let last_user = s.messages.iter().rposition(|m| m.kind == Kind::User);
+        let Some(lu) = last_user else { return 0 };
+        let responded = s.messages.iter().skip(lu + 1).any(|m| {
+            matches!(m.kind, Kind::ToolCall { .. } | Kind::ToolResult { .. })
+                || (m.kind == Kind::Assistant && !m.text.is_empty())
+        });
+        if busy {
+            if responded {
+                2
+            } else {
+                1
+            }
+        } else if s.messages.len() > lu + 1 {
+            3
+        } else {
+            0
+        }
+    }
+
     /// 설정 `ai.provider`가 바뀌면 패널 탭도 그 제공자로(사용자 11-12 "기본을 Claude로 바꿔도 Codex로 열림").
     pub(crate) fn ai_apply_provider_default(&mut self) {
         self.ai_init();
@@ -623,6 +657,8 @@ impl App {
         self.ai_panel
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.ai_view
+            .set_detail(self.settings.get("ai.verbosity") == Some("detail"));
+        self.ai_view
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         let prov = self.ai_provider();
         let mode_now = self
@@ -755,6 +791,8 @@ impl App {
                 .map(|s| s.title_or_default())
                 .unwrap_or_default(),
             provider: self.ai.tab,
+            stage: self.ai_stage(),
+            now_ms: ai::now_ms(),
             sessions: self
                 .ai
                 .sessions
@@ -1176,7 +1214,13 @@ impl App {
             return;
         }
         self.ai.capture = None;
+        let fresh_prev = if self.settings.flag("ai.result_tabs") {
+            self.fresh_result_tab_for_run()
+        } else {
+            None
+        };
         self.run_text_whole(sql.to_string());
+        self.mark_fresh_run_tab(fresh_prev);
         self.redraw();
     }
 
@@ -1472,6 +1516,32 @@ impl App {
                             }
                         }
                     }
+                    // ★ 사전 점검(사용자 11-12 "MCP 서버 연결 30초 초과" 오류): 브리지 `nsql` 존재 · 앱 리스너 자기 접속 · 시작 제한 시간은
+                    //   `MCP_TIMEOUT`(ms · 설정 `ai.mcp_timeout_secs`)으로 CLI에 넘긴다(Claude Code 기본 30초).
+                    let bridge = ai::mcp::bridge_program();
+                    if !ai::mcp::bridge_available(&bridge) {
+                        self.ai_push(ChatMsg::new(
+                            Kind::Error,
+                            tf(Msg::AiMcpBridgeMissing, &[&bridge]),
+                        ));
+                        return;
+                    }
+                    if let Some(port) = self.ai.mcp.as_ref().map(|m| m.port) {
+                        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+                        if std::net::TcpStream::connect_timeout(
+                            &addr,
+                            std::time::Duration::from_secs(2),
+                        )
+                        .is_err()
+                        {
+                            self.ai.mcp = None;
+                            self.ai_push(ChatMsg::new(
+                                Kind::Error,
+                                tf(Msg::AiMcpListenerDown, &[&port.to_string()]),
+                            ));
+                            return;
+                        }
+                    }
                     let cfg = self
                         .ai
                         .mcp
@@ -1488,6 +1558,10 @@ impl App {
                     }
                     // ★ `--bare`는 Claude Code의 자체 로그인(구독)도 건너뛴다 → 키를 넘길 때만(사용자 11-11 "터미널은 로그인돼 있는데").
                     let bare = self.settings.flag("ai.bare") && !env.is_empty();
+                    let mcp_ms = (self.settings.int("ai.mcp_timeout_secs").clamp(10, 600) * 1000)
+                        .to_string();
+                    env.push(("MCP_TIMEOUT".into(), mcp_ms.clone()));
+                    env.push(("MCP_TOOL_TIMEOUT".into(), mcp_ms));
                     let args = ai::claude_cli::args(
                         &model,
                         &effort,
@@ -1707,6 +1781,18 @@ impl App {
                 if std::env::var_os("NSQL_TRACE_AI").is_some() {
                     eprintln!("[ai] started {note}");
                 }
+                // ★ MCP 서버가 못 붙었으면(`mcp=[nexa-sql:failed]`) 진단 Note + CLI 프로세스를 내려 다음 보내기에 다시 띄운다(11-12).
+                if note.contains("failed") {
+                    let port = self.ai.mcp.as_ref().map(|m| m.port).unwrap_or(0);
+                    let bridge = ai::mcp::bridge_program();
+                    self.ai_push(ChatMsg::new(
+                        Kind::Note,
+                        tf(Msg::AiMcpFailed, &[&port.to_string(), &bridge, &note]),
+                    ));
+                    if let Some(h) = &mut self.ai.host {
+                        h.stop();
+                    }
+                }
             }
             AiEvent::TextDelta(t) => {
                 let Some(s) = self.ai_run_mut() else { return };
@@ -1802,34 +1888,48 @@ impl App {
                 if let Some(h) = &mut self.ai.host {
                     h.busy = false;
                 }
-                // ★ PostTurn 훅(hooks.rs · 사용자 11-11 "생성 쿼리를 앱 포맷으로 표시 · 출력 간결"): ```sql 블록 = 앱 포매터 · 빈 줄 정리.
+                // ★ PostTurn 훅(hooks.rs · 사용자 11-11 "생성 쿼리를 앱 포맷으로 표시 · 출력 간결"): ```sql 블록 = 앱 포매터 · 빈 줄 정리 —
+                //   이번 턴의 **모든** 어시스턴트 메시지(마지막 사용자 메시지 뒤 · 협업 관찰 11-12 "도구 앞 메시지는 안 바뀜").
                 {
                     let fmt_on = self.settings.flag("ai.hook_format_sql");
                     let tidy_on = self.settings.flag("ai.hook_tidy");
-                    if fmt_on || tidy_on {
-                        let text = self.ai_run().and_then(|s| {
+                    let now = ai::now_ms();
+                    let last_user = self
+                        .ai_run()
+                        .and_then(|s| s.messages.iter().rposition(|m| m.kind == Kind::User))
+                        .unwrap_or(0);
+                    let targets: Vec<(usize, String)> = self
+                        .ai_run()
+                        .map(|s| {
                             s.messages
                                 .iter()
-                                .rev()
-                                .find(|m| m.kind == Kind::Assistant)
-                                .map(|m| m.text.clone())
-                        });
-                        if let Some(text) = text {
-                            let engine = self.format_default_engine();
-                            let new = ai::hooks::post_turn(&text, fmt_on, tidy_on, &mut |sql| {
+                                .enumerate()
+                                .skip(last_user)
+                                .filter(|(_, m)| m.kind == Kind::Assistant)
+                                .map(|(i, m)| (i, m.text.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let engine = self.format_default_engine();
+                    for (i, text) in targets {
+                        let new = if fmt_on || tidy_on {
+                            ai::hooks::post_turn(&text, fmt_on, tidy_on, &mut |sql| {
                                 self.format_run(&engine, sql, false).ok()
-                            });
-                            if new != text {
-                                if let Some(s) = self.ai_run_mut() {
-                                    if let Some(m) = s
-                                        .messages
-                                        .iter_mut()
-                                        .rev()
-                                        .find(|m| m.kind == Kind::Assistant)
-                                    {
-                                        m.text = new;
-                                    }
-                                }
+                            })
+                        } else {
+                            text.clone()
+                        };
+                        if new != text {
+                            if let Some(m) = self.ai_run_mut().and_then(|s| s.messages.get_mut(i)) {
+                                m.text = new;
+                            }
+                        }
+                    }
+                    // ⑥ 턴 끝 시각: 이번 턴의 메시지(사용자 요청 포함)에 완료 시각을 적는다(요청 줄 = 최종 경과 · 응답 줄 = 완료).
+                    if let Some(s) = self.ai_run_mut() {
+                        for m in s.messages.iter_mut().skip(last_user) {
+                            if m.done_at == 0 {
+                                m.done_at = now;
                             }
                         }
                     }
@@ -2458,7 +2558,14 @@ impl App {
                     max_rows,
                     wait_editor: None,
                 });
+                // ★ AI 턴의 조회마다 새 결과 탭(사용자 11-12 "여러 번 실행되면 탭 추가" · `ai.result_tabs` 기본 on · 결과 없으면 거둠).
+                let fresh_prev = if self.settings.flag("ai.result_tabs") {
+                    self.fresh_result_tab_for_run()
+                } else {
+                    None
+                };
                 self.run_text_whole(src);
+                self.mark_fresh_run_tab(fresh_prev);
                 return;
             }
             "object_source" => {

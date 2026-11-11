@@ -7477,18 +7477,54 @@ impl Explorer {
                 }
                 _ => "-".to_string(),
             };
-            if let Some(sc) = words_score(&words, names.lower(o.name)) {
+            // ★ 코멘트(사용자 11-12 "TABLE - BISCM.M4S_I301090 - 기준정보 - 설비(워크센터)관리를 찾아야"): 이름은 코드라 뜻이 코멘트에 있다 —
+            //   모든 낱말이 코멘트(소문자)에 있으면 이름 점수 아래(350)로 적중 · 행에 `comment=` 열.
+            let comment_lower = o.comment.map(|c| names.lower(c).to_string());
+            let com_sc = comment_lower
+                .as_deref()
+                .filter(|c| !words.is_empty() && words.iter().all(|w| c.contains(w.as_str())))
+                .map(|_| 350);
+            let name_sc = words_score(&words, names.lower(o.name));
+            if let Some(sc) = name_sc.max(com_sc) {
+                let comment_s = o
+                    .comment
+                    .map(|c| names.get(c).chars().take(80).collect::<String>())
+                    .unwrap_or_else(|| "-".into());
                 hits.push((
                     sc + bonus,
                     format!(
-                        "{}.{}\t{}\t{:?}\tcols={}",
+                        "{}.{}\t{}\t{:?}\tcols={}\tcomment={}",
                         names.get(o.schema),
                         names.get(o.name),
                         kind_s,
                         o.status,
-                        cols_s
+                        cols_s,
+                        comment_s
                     ),
                 ));
+            }
+            // 컬럼 코멘트(읽힌 것만): 낱말이 전부 들어 있으면 컬럼 행(250).
+            if in_columns && !words.is_empty() {
+                if let Some(cc) = snap.col_comments.get(&nsql_run::meta::ObjId(i as u32)) {
+                    for (col, cm) in cc.iter() {
+                        if let Some(cm) = cm {
+                            let low = names.lower(*cm);
+                            if words.iter().all(|w| low.contains(w.as_str())) {
+                                hits.push((
+                                    250 + bonus,
+                                    format!(
+                                        "{}.{}.{}\tcolumn\tcomment={}\tof {}",
+                                        names.get(o.schema),
+                                        names.get(o.name),
+                                        names.get(*col),
+                                        names.get(*cm).chars().take(80).collect::<String>(),
+                                        kind_s
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                }
             }
             if in_columns && !words.is_empty() {
                 if let Some(nsql_run::meta::ColState::Loaded { cols, .. }) = cols {

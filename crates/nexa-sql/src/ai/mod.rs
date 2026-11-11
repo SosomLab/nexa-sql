@@ -521,6 +521,9 @@ pub(crate) struct ChatMsg {
     pub id: String,
     /// 첨부 요약(사용자 글 아래 칩).
     pub attachments: Vec<String>,
+    /// ★ 시각(epoch ms · 사용자 11-12 "요청 시각·경과·응답 시작·완료"): 만든 때 · 끝난 때(0 = 아직 · 턴 끝에 적음).
+    pub at: u64,
+    pub done_at: u64,
     /// ★ 코드 블록 [실행] 결과(블록 번호(메시지 안) · 글 · 성공) — 화면에만(이력 저장 안 함 · 사용자 11-11).
     pub block_results: Vec<(usize, String, bool)>,
 }
@@ -532,9 +535,27 @@ impl ChatMsg {
             text: text.into(),
             id: String::new(),
             attachments: Vec::new(),
+            at: now_ms(),
+            done_at: 0,
             block_results: Vec::new(),
         }
     }
+}
+
+/// 지금(epoch ms).
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// epoch ms → 로컬 `HH:MM:SS.mmm` / `YYYY-MM-DD HH:MM:SS.mmm`.
+pub(crate) fn wall_time(ms: u64) -> String {
+    nsql_log::local_at(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)).time_only()
+}
+pub(crate) fn wall_stamp(ms: u64) -> String {
+    nsql_log::local_at(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)).stamp()
 }
 
 /// 토큰 사용량 누계(비용은 추정치 · 110 §5).
@@ -782,6 +803,8 @@ impl Session {
                     "attachments".into(),
                     Json::Arr(m.attachments.iter().map(|a| Json::Str(a.clone())).collect()),
                 ),
+                ("at".into(), Json::Num(m.at as f64)),
+                ("done_at".into(), Json::Num(m.done_at as f64)),
             ]);
             out.push_str(&json_dump(&row));
             out.push('\n');
@@ -844,6 +867,22 @@ impl Session {
             if let Some(Json::Arr(a)) = jget(&row, "attachments") {
                 m.attachments = a.iter().filter_map(Json::scalar_text).collect();
             }
+            let num = |k: &str| match jget(&row, k) {
+                Some(Json::Num(x)) if *x > 0.0 => *x as u64,
+                _ => 0,
+            };
+            if num("at") > 0 {
+                m.at = num("at");
+            }
+            m.done_at = num("done_at");
+            let num = |k: &str| match jget(&row, k) {
+                Some(Json::Num(x)) if *x > 0.0 => *x as u64,
+                _ => 0,
+            };
+            if num("at") > 0 {
+                m.at = num("at");
+            }
+            m.done_at = num("done_at");
             sess.messages.push(m);
         }
         Some(sess)
