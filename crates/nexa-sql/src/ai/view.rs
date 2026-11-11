@@ -260,6 +260,13 @@ impl AiView {
         }
     }
 
+    /// 워크스페이스 id 칸에 포커스(조직 범위 키 안내 · 11-11).
+    pub(crate) fn focus_workspace(&mut self) {
+        for (i, tb) in self.boxes_mut().into_iter().enumerate() {
+            tb.set_focused(i == 3);
+        }
+    }
+
     /// 편집 중인 기존 프로필 이름(새 프로필이면 None).
     pub(crate) fn editing_name(&self) -> Option<&str> {
         self.p_editing.as_deref()
@@ -1449,8 +1456,12 @@ impl AiView {
             y += lh + self.s(4.0);
         }
         if !info.note.is_empty() {
-            dc.text(x, y, b, &info.note, th.accent);
-            y += lh + self.s(4.0);
+            // 긴 안내(검증 실패 원문)는 줄 바꿈(사용자 11-11 스크린샷 = 한 줄에 잘림).
+            for l in wrap(dc, &info.note, w) {
+                dc.text(x, y, b, &l, th.accent);
+                y += lh;
+            }
+            y += self.s(4.0);
         }
         let note = t(if wif {
             Msg::AiWifStorageNote

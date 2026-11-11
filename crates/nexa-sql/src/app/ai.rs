@@ -1402,6 +1402,11 @@ impl App {
                             }
                             tf(Msg::AiValidateOk, &[&n])
                         }
+                        // 조직 범위 키(sk-ant-usr-…)는 workspace id가 필수 — 원문 대신 할 일을 안내하고 그 칸에 포커스.
+                        Some((_, e)) if e.contains("anthropic-workspace-id") => {
+                            self.ai_view.focus_workspace();
+                            t(Msg::AiWorkspaceNeeded).to_string()
+                        }
                         Some((_, e)) => tf(Msg::AiValidateFailed, &[e]),
                         None => rest.to_string(),
                     };
