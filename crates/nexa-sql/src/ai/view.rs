@@ -41,6 +41,10 @@ pub(crate) struct ViewInfo {
     pub note: String,
     /// 상태 줄(스트리밍 중 "…" · 마지막 턴 소요·토큰).
     pub status: String,
+    /// 분할 창 머리(세션 제목 · 제공자) · 세션 목록(id · 제목 · 제공자).
+    pub title: String,
+    pub provider: Provider,
+    pub sessions: Vec<(String, String, Provider)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +65,9 @@ pub(crate) enum ViewAction {
         block: usize,
         sql: String,
     },
+    /// 분할 창 머리: 이전 세션 열기 · 새 세션(제공자).
+    OpenSession(String),
+    NewSession(Provider),
     ProfileUse(String),
     ProfileDelete(String),
     /// 저장(프로필 · 새 키 = Some · 비우면 기존 유지 · 편집 전 이름 = Some이면 이름이 바뀌었을 때 rename).
@@ -126,6 +133,9 @@ enum Btn {
     /// [/] 명령 · Auto 스위치.
     Commands,
     Auto,
+    /// 분할 창 머리: [≡ 세션] [+ 새 세션].
+    SideSessions,
+    SideNew,
     ProfileUse(usize),
     ProfileEdit(usize),
     ProfileDelete(usize),
@@ -167,6 +177,13 @@ pub(crate) struct AiView {
     preview_cache: Option<(usize, Option<Rc<IconImage>>, String)>,
     /// 마지막 그리기의 Auto 값(스위치 클릭 → 반대로).
     auto_now: bool,
+    /// 분할 창 모드(머리 줄 = 세션 제목 + [≡][+]) · 마지막 그리기의 세션 목록(팝업 항목).
+    side_mode: bool,
+    side_sessions: Vec<(String, String, Provider)>,
+    /// ★ 대본 줄 선택(드래그 · 평면 줄 번호 범위 · 사용자 11-11 "드래그로 선택·복사") · 드래그 시작 줄 · 그린 줄의 자리.
+    sel: Option<(usize, usize)>,
+    drag_from: Option<usize>,
+    line_pos: Vec<(usize, i32, i32)>,
     /// 코드 블록 아이콘 버튼 틴트 캐시(종류 · 색).
     icon_cache: RefCell<Vec<(u8, Color, Rc<IconImage>)>>,
     transcript: Rect,
@@ -243,6 +260,11 @@ impl Default for AiView {
             preview: None,
             preview_cache: None,
             auto_now: false,
+            side_mode: false,
+            side_sessions: Vec::new(),
+            sel: None,
+            drag_from: None,
+            line_pos: Vec::new(),
             icon_cache: RefCell::new(Vec::new()),
             transcript: Rect::default(),
             composer_rect: Rect::default(),
@@ -461,6 +483,41 @@ impl AiView {
     }
 
     /// 작성 상자 안내 글을 탭 제공자 이름으로(협업 V1 관찰 · 11-11).
+    pub(crate) fn set_side_mode(&mut self, on: bool) {
+        self.side_mode = on;
+    }
+
+    /// 선택한 대본 줄의 글(복사용) — 없으면 None.
+    pub(crate) fn selection_text(&self) -> Option<String> {
+        let (a, b) = self.sel?;
+        let (a, b) = (a.min(b), a.max(b));
+        let flat: Vec<&Line> = self.lines.iter().flatten().collect();
+        let out: Vec<&str> = flat
+            .get(a..=b.min(flat.len().saturating_sub(1)))?
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect();
+        (!out.is_empty()).then(|| out.join("\n"))
+    }
+
+    /// 대본 안 점 → 평면 줄 번호(그린 줄 기준 · 위/아래 밖이면 첫/끝 줄).
+    fn line_at(&self, p: Point) -> Option<usize> {
+        if self.line_pos.is_empty() || !self.transcript.contains(p) {
+            return None;
+        }
+        if let Some((i, _, _)) = self
+            .line_pos
+            .iter()
+            .find(|(_, y, h)| p.y >= *y && p.y < y + h)
+        {
+            return Some(*i);
+        }
+        if p.y < self.line_pos[0].1 {
+            return Some(self.line_pos[0].0);
+        }
+        self.line_pos.last().map(|(i, _, _)| *i)
+    }
+
     pub(crate) fn set_max_lines(&mut self, n: i32) {
         self.max_lines = n.clamp(1, 60);
     }
@@ -646,6 +703,29 @@ impl AiView {
             }
             return !matches!(ev, InputEvent::MouseMove { .. });
         }
+        // 세션 선택 팝업(분할 창 머리 [≡]).
+        if let Some((_, p)) = &mut self.picker {
+            match p.on_event(ev) {
+                PickEvent::None | PickEvent::Redraw => return true,
+                PickEvent::Pick(id) => {
+                    self.picker = None;
+                    if let Some(rest) = id.strip_prefix("new:") {
+                        self.actions
+                            .push(ViewAction::NewSession(Provider::parse(rest)));
+                    } else if let Some(sid) = id.strip_prefix("s:") {
+                        self.actions.push(ViewAction::OpenSession(sid.to_string()));
+                    }
+                    return true;
+                }
+                PickEvent::Effort(_) | PickEvent::Toggle(_) => return true,
+                PickEvent::Close => {
+                    self.picker = None;
+                    if !matches!(ev, InputEvent::MouseDown { .. }) {
+                        return true;
+                    }
+                }
+            }
+        }
         // [+] 첨부 메뉴.
         if self.attach_menu.is_open() {
             let outside = self.attach_menu.is_outside_click(ev);
@@ -727,8 +807,15 @@ impl AiView {
                 self.mouse = Point { x, y };
                 let p = Point { x, y };
                 let h = self.buttons.iter().position(|(_, r)| r.contains(p));
-                let changed = h != self.hover;
+                let mut changed = h != self.hover;
                 self.hover = h;
+                if let Some(from) = self.drag_from {
+                    if let Some(to) = self.line_at(p) {
+                        let ns = Some((from, to));
+                        changed |= ns != self.sel;
+                        self.sel = ns;
+                    }
+                }
                 self.composer.on_event(ev, &mut inv);
                 let (_, ny, c) = self.bars.on_event(
                     ev,
@@ -770,6 +857,9 @@ impl AiView {
                     if in_c {
                         self.composer.on_event(ev, &mut inv);
                     }
+                    // 대본 안 = 줄 선택 시작(끌면 범위 · 그냥 클릭 = 선택 해제).
+                    self.sel = None;
+                    self.drag_from = if in_c { None } else { self.line_at(p) };
                 }
                 true
             }
@@ -793,6 +883,11 @@ impl AiView {
                 );
                 if ny != self.scroll_y {
                     self.scroll_y = ny;
+                }
+                if let Some(from) = self.drag_from.take() {
+                    if let Some(to) = self.line_at(p) {
+                        self.sel = (from != to).then_some((from.min(to), from.max(to)));
+                    }
                 }
                 if let Some(i) = self.pressed.take() {
                     if let Some((b, r)) = self.buttons.get(i).cloned() {
@@ -843,6 +938,7 @@ impl AiView {
                 key: CtlKey::Escape,
                 ..
             } => {
+                self.sel = None;
                 if !self.composer.text().is_empty() {
                     self.composer.set_text("");
                     self.slash.clear();
@@ -886,6 +982,55 @@ impl AiView {
                     "/auto on"
                 };
                 self.actions.push(ViewAction::Slash(cmd.into()));
+            }
+            Btn::SideNew => {
+                let p = self.provider;
+                self.actions.push(ViewAction::NewSession(p));
+            }
+            Btn::SideSessions => {
+                let anchor = self
+                    .buttons
+                    .iter()
+                    .find(|(k, _)| *k == Btn::SideSessions)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_default();
+                let mut items = vec![
+                    PickItem {
+                        id: "new:claude".into(),
+                        title: tf(Msg::AiNewSessionFor, &["Claude"]),
+                        desc: String::new(),
+                    },
+                    PickItem {
+                        id: "new:codex".into(),
+                        title: tf(Msg::AiNewSessionFor, &["Codex"]),
+                        desc: String::new(),
+                    },
+                ];
+                for (id, title, p) in &self.side_sessions {
+                    items.push(PickItem {
+                        id: format!("s:{id}"),
+                        title: title.clone(),
+                        desc: p.title().to_string(),
+                    });
+                }
+                let host = self.bounds;
+                let anchor = Rect::new(
+                    anchor.right() - self.s(320.0).min(host.w),
+                    anchor.y,
+                    self.s(320.0).min(host.w),
+                    anchor.h,
+                );
+                let p = Picker::new(
+                    t(Msg::AiPickSession),
+                    items,
+                    None,
+                    Vec::new(),
+                    anchor,
+                    host,
+                    self.lh,
+                    self.scale,
+                );
+                self.picker = Some((Btn::SideSessions, p));
             }
             Btn::AttachMenu => {
                 let anchor = self
@@ -1233,7 +1378,37 @@ impl AiView {
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
         let line_h = lh + self.s(4.0);
-        // ── 머리 줄 없음(사용자 11-11 "최상단 상태바는 없애고") — 에이전트·모델·노력도·상태는 아래 줄에.
+        // ── 머리 줄: 분할 창에서만(세션 제목 + [≡ 세션][+ 새 세션] · 사용자 11-11) · 탭에서는 없음.
+        let mut head_h = 0;
+        if self.side_mode {
+            self.side_sessions = info.sessions.clone();
+            let row_h = lh + self.s(8.0);
+            let hy = b.y + self.s(4.0);
+            let side = row_h;
+            let mut bx = b.right() - pad;
+            for (btn, glyph) in [(Btn::SideNew, "+"), (Btn::SideSessions, "≡")] {
+                bx -= side;
+                let r = Rect::new(bx, hy, side, row_h);
+                let idx = self.buttons.len();
+                let hot = self.hover == Some(idx);
+                if hot {
+                    dc.fill_round_rect(r, self.s(4.0), th.sel_bg);
+                }
+                let gw = dc.text_width(glyph);
+                let ty = dc.text_center_y(r.y, r.h);
+                dc.text(r.x + (r.w - gw) / 2, ty, r, glyph, th.text);
+                self.buttons.push((btn, r));
+                bx -= self.s(2.0);
+            }
+            dc.select_font(FontSlot::Base, true);
+            let title =
+                nexa_ctl::draw::ellipsize_middle(dc, &info.title, (bx - x - self.s(8.0)).max(20));
+            let ty = dc.text_center_y(hy, row_h);
+            dc.text(x, ty, b, &title, th.text);
+            dc.select_font(FontSlot::Base, false);
+            head_h = row_h + self.s(8.0);
+            dc.fill_rect(Rect::new(b.x, b.y + head_h - 1, b.w, 1), th.border);
+        }
         let agent = format!(
             "{}  ·  {}{}",
             match sess.provider {
@@ -1253,7 +1428,7 @@ impl AiView {
                 String::new()
             }
         );
-        let top = b.y + self.s(4.0);
+        let top = b.y + self.s(4.0) + head_h;
         // ── 작성 영역 높이(아래에서 위로 잡는다)
         let text = self.composer.text();
         let n_lines = (text.split('\n').count() as i32).clamp(1, self.max_lines);
@@ -1298,10 +1473,29 @@ impl AiView {
         let mut ly = tr.y + self.s(8.0) - self.scroll_y;
         let code_x = x + self.s(8.0);
         let lines = std::mem::take(&mut self.lines);
+        self.line_pos.clear();
+        let mut flat_base = 0usize;
+        let sel = self.sel.map(|(a, b)| (a.min(b), a.max(b)));
         for (mi, ls) in lines.iter().enumerate() {
             let block_h = ls.len() as i32 * line_h;
             let msg = &sess.messages[mi];
+            let my_base = flat_base;
+            flat_base += ls.len();
             if ly + block_h >= tr.y && ly <= tr.bottom() {
+                for li in 0..ls.len() {
+                    let yy = ly + li as i32 * line_h;
+                    self.line_pos.push((my_base + li, yy, line_h));
+                    if let Some((a, b2)) = sel {
+                        let f = my_base + li;
+                        if f >= a && f <= b2 {
+                            dc.fill_rect_alpha(
+                                Rect::new(x - self.s(4.0), yy, w + self.s(8.0), line_h),
+                                th.accent,
+                                0.18,
+                            );
+                        }
+                    }
+                }
                 let is_user = msg.kind == Kind::User;
                 if is_user {
                     dc.fill_round_rect(
@@ -1929,6 +2123,8 @@ impl AiView {
                     Btn::Commands => Some(Msg::AiComposerKeys),
                     Btn::Auto => Some(Msg::AiTipAuto),
                     Btn::Send => Some(Msg::AiSendTip),
+                    Btn::SideSessions => Some(Msg::AiSideSessionsTip),
+                    Btn::SideNew => Some(Msg::AiSideNewTip),
                     _ => None,
                 };
                 if let Some(tip) = tip {
@@ -1945,6 +2141,11 @@ impl AiView {
         }
         if self.page == Page::Chat && self.attach_menu.is_open() {
             self.attach_menu.paint(dc, th);
+        }
+        if self.page == Page::Chat {
+            if let Some((_, p)) = &self.picker {
+                p.paint(dc, th);
+            }
         }
         // 첨부 미리보기 오버레이(가운데 · 이미지는 비율 유지 · 안내 글).
         if let (Page::Chat, Some((_, img, info))) = (self.page, self.preview_cache.as_ref()) {

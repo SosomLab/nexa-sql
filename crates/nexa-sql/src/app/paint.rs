@@ -699,6 +699,7 @@ impl App {
                 // ★ Claude 채팅 뷰 탭(docs/110 · 11-11) = UI 글꼴 · 편집기 자리 전체.
                 None if self.ai_view_active() => {
                     self.ai_follow_view();
+                    self.ai_view.set_side_mode(false);
                     let vprefs = FontPrefs {
                         base: SlotFont {
                             size: ui_px,

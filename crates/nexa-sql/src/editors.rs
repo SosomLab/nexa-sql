@@ -126,6 +126,8 @@ pub(crate) struct Editors {
     split_max: usize,
     /// 본문 전체 영역(탭 줄·띠 아래) — 동시 편집 때 칸들의 합집합.
     body: Rect,
+    /// ★ 본문 오른쪽 예약 폭(AI 분할 창 · 사용자 11-11 "탭 안쪽 우측") — 탭 줄은 전체 폭 · 본문만 그만큼 좁다.
+    side_reserve: i32,
     /// **뷰 탭**(본문이 글 편집기가 아니라 호스트가 그리는 전용 뷰 — 확장 상세 등): 탭 id → 뷰 열쇠(예 `ext:<id>`).
     /// 탭 줄·전환·닫기는 보통 탭과 같고, 본문 그리기·입력만 호스트의 뷰가 맡는다.
     view_tabs: std::collections::HashMap<u64, String>,
@@ -337,6 +339,7 @@ impl Editors {
             split: Vec::new(),
             split_max: 3,
             body: Rect::new(0, 0, 0, 0),
+            side_reserve: 0,
             view_tabs: std::collections::HashMap::new(),
             doc_objects: std::collections::HashMap::new(),
             custom_titles: std::collections::HashSet::new(),
@@ -2632,7 +2635,12 @@ impl Editors {
             .max(1.0) as i32;
         self.tabs.set_bounds(Rect::new(b.x, b.y, b.w, th), inv);
         let top = th + self.top_inset;
-        let ed = Rect::new(b.x, b.y + top, b.w, (b.h - top).max(0));
+        let ed = Rect::new(
+            b.x,
+            b.y + top,
+            (b.w - self.side_reserve).max(0),
+            (b.h - top).max(0),
+        );
         self.body = ed;
         // 닫힘·이동으로 어긋난 동시 편집 집합은 버린다(2개 미만 = 단일).
         let len = self.bufs.len();
@@ -2650,6 +2658,20 @@ impl Editors {
             };
             tb.set_bounds(r, inv);
         }
+    }
+
+    /// 본문 오른쪽 예약 폭(AI 분할 창) — 바뀌면 다시 배치.
+    pub(crate) fn set_side_reserve(&mut self, w: i32) {
+        if self.side_reserve != w {
+            self.side_reserve = w;
+            let mut inv = Invalidations::default();
+            self.layout(&mut inv);
+        }
+    }
+
+    /// 본문 영역(탭 줄 아래 · 예약 폭 뺀 것).
+    pub(crate) fn body_rect(&self) -> Rect {
+        self.body
     }
 
     /// 동시 편집 중인가(칸 2개 이상).

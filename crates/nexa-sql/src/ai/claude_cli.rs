@@ -37,6 +37,8 @@ pub(crate) fn args(
     if let Some(m) = mcp_config {
         a.push("--mcp-config".into());
         a.push(m.to_string());
+        // ★ 사용자 PC의 다른 MCP 서버는 올리지 않는다(11-11 실기: 그 서버들만 올라오고 nexa가 빠져 승인 도구를 못 찾음).
+        a.push("--strict-mcp-config".into());
         // 권한 프롬프트 = 우리 MCP 승인 도구(앱 확인 창).
         a.push("--permission-prompt-tool".into());
         a.push("mcp__nexa__approve".into());

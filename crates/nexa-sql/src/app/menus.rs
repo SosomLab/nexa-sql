@@ -1828,7 +1828,11 @@ impl App {
             EditCtxAction::Copy | EditCtxAction::Cut
                 if self.focus == Focus::Editor && self.copy_confirm_pending() => {}
             EditCtxAction::Copy => {
-                let sel = self.focused_textbox().and_then(|tb| tb.copy_selection());
+                let mut sel = self.focused_textbox().and_then(|tb| tb.copy_selection());
+                // ★ AI 대본에서 드래그로 고른 줄(작성 상자 선택이 없을 때 · 사용자 11-11).
+                if sel.is_none() && (self.ai_view_active() || self.ai.side_focus) {
+                    sel = self.ai_view.selection_text();
+                }
                 if std::env::var_os("NSQL_TRACE_CLIP").is_some() {
                     eprintln!(
                         "[clip] copy: focus={:?} selection={}",

@@ -78,6 +78,9 @@ pub(crate) struct AiState {
     pub side: bool,
     pub side_rect: Rect,
     pub side_focus: bool,
+    /// ★ 탭별 세션(사용자 11-11 "각 탭마다 AI 보기 · 쓰던 세션 연결 · 없으면 새로"): 분할 창이 보는 편집기 탭 · 탭 id → 세션 id.
+    pub side_tab: Option<u64>,
+    pub tab_sessions: std::collections::HashMap<u64, String>,
 }
 
 impl App {
@@ -145,9 +148,44 @@ impl App {
     /// 분할 창을 그리기 직전: 초기화·세션이 없으면 새 세션(설정 `ai.side=on`으로 시작했을 때 칩이 비던 관찰 · 11-11).
     pub(crate) fn ai_side_prepare(&mut self) {
         self.ai_init();
+        self.ai_view.set_side_mode(true);
+        // 탭이 바뀌면 그 탭이 쓰던 세션으로(없으면 새 세션) — 턴이 도는 동안은 바꾸지 않는다.
+        let tid = self.editors.active_id();
+        let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
+        if self.ai.side_tab != Some(tid) && !busy {
+            if let (Some(old), Some(sid)) = (self.ai.side_tab, self.ai_cur().map(|s| s.id.clone()))
+            {
+                self.ai.tab_sessions.insert(old, sid);
+            }
+            self.ai.side_tab = Some(tid);
+            let found = self
+                .ai
+                .tab_sessions
+                .get(&tid)
+                .and_then(|id| self.ai.sessions.iter().position(|s| s.id == *id));
+            match found {
+                Some(i) => {
+                    let prov = self.ai.sessions[i].provider;
+                    if prov != self.ai.tab {
+                        self.ai_switch_tab(prov);
+                    }
+                    self.ai.cur = Some(i);
+                    self.ai_view.reset();
+                }
+                None => self.ai_new_session(),
+            }
+            if let Some(s) = self.ai_cur() {
+                self.ai.tab_sessions.insert(tid, s.id.clone());
+            }
+            self.ai_view.set_provider(self.ai.tab);
+            self.ai_sync_panel();
+        }
         if self.ai.cur.is_none() {
             self.ai_new_session();
             self.ai_view.set_provider(self.ai.tab);
+            if let Some(s) = self.ai_cur() {
+                self.ai.tab_sessions.insert(tid, s.id.clone());
+            }
         }
     }
 
@@ -418,7 +456,15 @@ impl App {
         }
         self.ai_view.reset();
         self.ai_sync_panel();
-        self.ai_open_chat();
+        if self.ai.side_rect.w > 0 && !self.ai_view_active() {
+            // 분할 창에서 고른 세션 = 이 편집기 탭에 연결.
+            if let (Some(tid), Some(s)) = (self.ai.side_tab, self.ai_cur()) {
+                self.ai.tab_sessions.insert(tid, s.id.clone());
+            }
+            self.redraw();
+        } else {
+            self.ai_open_chat();
+        }
     }
 
     pub(crate) fn ai_delete_session(&mut self, id: &str) {
@@ -579,6 +625,17 @@ impl App {
             auto: self.ai_cur().is_some_and(|s| s.auto),
             note: self.ai.note.clone(),
             status: self.ai.status.clone(),
+            title: self
+                .ai_cur()
+                .map(|s| s.title_or_default())
+                .unwrap_or_default(),
+            provider: self.ai.tab,
+            sessions: self
+                .ai
+                .sessions
+                .iter()
+                .map(|s| (s.id.clone(), s.title_or_default(), s.provider))
+                .collect(),
         }
     }
 
@@ -793,6 +850,17 @@ impl App {
                 }
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
                 ViewAction::RunCode { msg, block, sql } => self.ai_run_block(msg, block, &sql),
+                ViewAction::OpenSession(id) => self.ai_open_session(&id),
+                ViewAction::NewSession(p) => {
+                    if p != self.ai.tab {
+                        self.ai_switch_tab(p);
+                    }
+                    self.ai_new_session();
+                    self.ai_view.set_provider(self.ai.tab);
+                    if let (Some(tid), Some(s)) = (self.ai.side_tab, self.ai_cur()) {
+                        self.ai.tab_sessions.insert(tid, s.id.clone());
+                    }
+                }
                 ViewAction::ProfileDup(arg) => {
                     if let Some(p) = arg
                         .parse::<usize>()

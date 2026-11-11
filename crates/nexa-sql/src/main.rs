@@ -1405,20 +1405,23 @@ impl App {
                 px(self.settings.int("layout.result_min_px") as f32, s),
             )
         };
-        // ★ 편집기 옆 AI 분할 창(사용자 11-11 "미니맵 옆에 Claude") — 뷰 탭이 활성이면(편집기 자리 전체) 숨긴다.
+        // ★ 편집기 옆 AI 분할 창(사용자 11-11 "탭 안쪽 우측 · 미니맵 옆") — 탭 줄은 전체 폭 · 본문만 좁혀 그 오른쪽에.
+        //   뷰 탭이 활성이면(편집기 자리 전체) 숨긴다.
         let side_w = if self.ai.side && !view_mode && self.settings.flag("ai.enabled") {
             px(self.settings.int("ai.side_width") as f32, s).min(rw / 2)
         } else {
             0
         };
+        self.editors
+            .set_side_reserve(if side_w > 0 { side_w + grip } else { 0 });
+        self.editors
+            .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
         self.ai.side_rect = if side_w > 0 {
-            Rect::new(rx + rw - side_w, body_top, side_w, editor_h - pad)
+            let eb = self.editors.body_rect();
+            Rect::new(eb.right() + grip, eb.y, side_w, eb.h)
         } else {
             Rect::default()
         };
-        let ed_w = if side_w > 0 { rw - side_w - grip } else { rw };
-        self.editors
-            .set_bounds(Rect::new(rx, body_top, ed_w, editor_h - pad), s);
         // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
         self.find.set_bounds(self.editors.editor_bounds(), s);
         self.find.set_clamp_width(w);
