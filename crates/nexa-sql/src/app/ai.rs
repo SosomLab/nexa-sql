@@ -972,7 +972,7 @@ impl App {
             self.ai_view.set_composer_text(text);
             self.ai_view.show_page(Page::Profiles);
             self.ai_view.edit_profile(None, false);
-            self.ai.note = t(Msg::AiNoProfile).into();
+            self.ai.note = t(Msg::AiProfileFirst).into();
             self.ai_sync_panel();
             self.redraw();
             return;
