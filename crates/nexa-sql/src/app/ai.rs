@@ -90,6 +90,8 @@ pub(crate) struct AiState {
     pub chat_claude: Option<String>,
     pub chat_codex: Option<String>,
     pub on_chat: Option<Provider>,
+    /// ★ 세션별 작성 상자 초안(세션 id → 글 · 11-12).
+    pub drafts: std::collections::HashMap<String, String>,
 }
 
 impl App {
@@ -182,6 +184,24 @@ impl App {
         }
     }
 
+    /// ★ 세션을 바꿀 때 작성 상자 초안을 세션별로 보존(11-12): 떠나는 세션의 글을 저장하고 새 세션의 초안을 꺼낸다(빈 글 = 지움).
+    fn ai_switch_cur(&mut self, i: usize) {
+        let txt = self.ai_view.composer_text();
+        if let Some(old) = self.ai_cur().map(|s| s.id.clone()) {
+            if txt.trim().is_empty() {
+                self.ai.drafts.remove(&old);
+            } else {
+                self.ai.drafts.insert(old, txt);
+            }
+        }
+        self.ai.cur = Some(i);
+        let next = self
+            .ai_cur()
+            .and_then(|s| self.ai.drafts.get(&s.id).cloned())
+            .unwrap_or_default();
+        self.ai_view.set_composer_text(&next);
+    }
+
     /// 설정 `ai.provider`가 바뀌면 패널 탭도 그 제공자로(사용자 11-12 "기본을 Claude로 바꿔도 Codex로 열림").
     pub(crate) fn ai_apply_provider_default(&mut self) {
         self.ai_init();
@@ -213,7 +233,7 @@ impl App {
         if !sid.is_empty() && !busy {
             if let Some(i) = self.ai.sessions.iter().position(|s| s.id == sid) {
                 if self.ai.cur != Some(i) {
-                    self.ai.cur = Some(i);
+                    self.ai_switch_cur(i);
                     self.ai.approval = None;
                     self.ai.pending = None;
                     self.ai_view.reset();
@@ -334,7 +354,7 @@ impl App {
                         self.ai_switch_tab(prov);
                     }
                     if self.ai.cur != Some(i) {
-                        self.ai.cur = Some(i);
+                        self.ai_switch_cur(i);
                         self.ai.approval = None;
                         self.ai.pending = None;
                         self.ai_view.reset();
@@ -592,8 +612,16 @@ impl App {
         let mut s = Session::new(mode, &profile, &model, &effort);
         s.provider = provider;
         s.auto = self.ai_auto_default();
+        // 떠나는 세션의 초안 저장(새 세션은 빈 작성 상자로).
+        let txt = self.ai_view.composer_text();
+        if let Some(old) = self.ai_cur().map(|s| s.id.clone()) {
+            if !txt.trim().is_empty() {
+                self.ai.drafts.insert(old, txt);
+            }
+        }
         self.ai.sessions.insert(0, s);
         self.ai.cur = Some(0);
+        self.ai_view.set_composer_text("");
         self.ai.approval = None;
         self.ai.pending = None;
         self.ai.status.clear();
@@ -615,7 +643,7 @@ impl App {
             h.reset_api();
         }
         self.ai.run = None;
-        self.ai.cur = Some(i);
+        self.ai_switch_cur(i);
         self.ai.approval = None;
         self.ai.pending = None;
         // API 대화 재구성(글만 · 도구 왕복은 뺀다).
@@ -1896,20 +1924,23 @@ impl App {
                 reply,
             } => {
                 let auto = self.ai_run().is_some_and(|s| s.auto);
-                let short = tool
-                    .strip_prefix("mcp__nexa-sql__")
-                    .unwrap_or(&tool)
-                    .to_string();
+                let short = ai::bridge::tool_short_name(&tool).to_string();
                 let needs_user = short == "run_query" && !self.ai_sql_is_readonly(&summary);
                 if auto && !needs_user {
                     let _ = reply.send(true);
                     return;
                 }
+                // ★ 전 도구 훅(데이터 보호 · 11-12): UPDATE/DELETE에 WHERE가 없으면 승인 카드 첫 줄에 경고.
+                let card = if short == "run_query" && sql_dml_without_where(&summary) {
+                    format!("{}\n{}", t(Msg::AiNoWhereWarn), redact(&summary))
+                } else {
+                    redact(&summary)
+                };
                 let mut m = ChatMsg::new(
                     Kind::Approval {
                         tool: short.clone(),
                     },
-                    redact(&summary),
+                    card,
                 );
                 m.id = if id.is_empty() { ai::stamp_id() } else { id };
                 let mid = m.id.clone();
@@ -2201,11 +2232,20 @@ impl App {
             return;
         }
         if tool.write && (!auto || !readonly_q) {
+            let sql_in = json_parse(&input)
+                .ok()
+                .map(|v| ai::jstr(&v, "sql"))
+                .unwrap_or_default();
+            let card = if tool.name == "run_query" && sql_dml_without_where(&sql_in) {
+                format!("{}\n{}", t(Msg::AiNoWhereWarn), redact(&input))
+            } else {
+                redact(&input)
+            };
             let mut m = ChatMsg::new(
                 Kind::Approval {
                     tool: short.clone(),
                 },
-                redact(&input),
+                card,
             );
             m.id = ai::stamp_id();
             let mid = m.id.clone();
@@ -3462,6 +3502,28 @@ fn t_(m: Msg) -> String {
 }
 
 /// 읽기 전용 문장인가(SELECT/WITH/SHOW/EXPLAIN/DESC/VALUES · 한 문장).
+/// ★ UPDATE/DELETE 문장에 WHERE가 없는가(승인 카드 경고 · 데이터 보호 불변식 취지 · 11-12): 문장별로 첫 낱말이 UPDATE/DELETE이고
+/// `where` 낱말이 없으면 true(문자열 안의 where까지 세는 보수적 판정 = 경고가 덜 뜨는 쪽 · 실행 차단은 아니다).
+pub(crate) fn sql_dml_without_where(sql: &str) -> bool {
+    for item in nsql_script::split_script_in(sql, None) {
+        let body = item.text.trim();
+        let mut words = body.split_whitespace();
+        let Some(first) = words.next() else { continue };
+        let first = first.trim_start_matches('(').to_ascii_lowercase();
+        if first != "update" && first != "delete" {
+            continue;
+        }
+        let low = body.to_ascii_lowercase();
+        let has_where = low
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|w| w == "where");
+        if !has_where {
+            return true;
+        }
+    }
+    false
+}
+
 pub(crate) fn sql_is_readonly(sql: &str) -> bool {
     let items = nsql_script::split_script_in(sql, None);
     if items.len() > 1 {
@@ -3549,6 +3611,18 @@ fn ai_list_files(root: &std::path::Path, query: &str, limit: usize) -> Vec<Strin
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn dml_without_where_detects_update_delete_only() {
+        assert!(super::sql_dml_without_where("DELETE FROM t"));
+        assert!(super::sql_dml_without_where("update t set a = 1"));
+        assert!(!super::sql_dml_without_where("DELETE FROM t WHERE id = 1"));
+        assert!(!super::sql_dml_without_where(
+            "UPDATE t SET a = 1 WHERE b = 2"
+        ));
+        assert!(!super::sql_dml_without_where("SELECT * FROM t"));
+        assert!(super::sql_dml_without_where("SELECT 1; DELETE FROM t"));
+    }
     use super::sql_is_readonly;
 
     #[test]

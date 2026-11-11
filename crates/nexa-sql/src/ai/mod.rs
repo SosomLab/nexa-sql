@@ -781,6 +781,7 @@ impl Session {
             ("output".into(), Json::Num(self.usage.output as f64)),
             ("cache_read".into(), Json::Num(self.usage.cache_read as f64)),
             ("cost_usd".into(), Json::Num(self.usage.cost_usd)),
+            ("agent".into(), Json::Str(self.agent.clone())),
         ]);
         out.push_str(&json_dump(&head));
         out.push('\n');
@@ -835,6 +836,10 @@ impl Session {
         sess.title = s("title");
         let cli = s("cli_session");
         sess.cli_session = (!cli.is_empty()).then_some(cli);
+        let agent = s("agent");
+        if !agent.is_empty() {
+            sess.agent = agent;
+        }
         sess.usage = Usage {
             input: n("input") as u64,
             output: n("output") as u64,

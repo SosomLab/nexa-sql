@@ -770,7 +770,7 @@ impl AiView {
         }
     }
 
-    #[cfg(test)]
+    /// 작성 상자 글(세션별 초안 보존 · 11-12).
     pub(crate) fn composer_text(&self) -> String {
         self.composer.text()
     }

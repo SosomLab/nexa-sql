@@ -746,30 +746,56 @@ impl Host {
                     send(AiEvent::TextDelta(w.to_string()));
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                let (rtx, rrx) = mpsc::channel();
-                send(AiEvent::ToolCall {
-                    id: "m1".into(),
-                    name: "get_setting".into(),
-                    input: "{\"key\":\"editor.word_wrap\"}".into(),
-                });
-                send(AiEvent::ToolRequest {
-                    id: "m1".into(),
-                    name: "get_setting".into(),
-                    input: "{\"key\":\"editor.word_wrap\"}".into(),
-                    reply: rtx,
-                });
-                let r = rrx
-                    .recv_timeout(std::time::Duration::from_secs(10))
-                    .unwrap_or(ToolReply {
-                        output: "timeout".into(),
-                        ok: false,
+                // ★ 모의 도구 호출 목록(헤드리스 V1 · 협업 제안 11-12): `NSQL_AI_MOCK_TOOL="name:{json};name2:{json}"` — 없으면 종전
+                //   `get_setting` 하나. 결과는 " → <앞 200자>" 글로 되돌려 덤프로 판정한다(도구 결과 줄은 basic 레벨에서 숨기므로).
+                let calls: Vec<(String, String)> = std::env::var("NSQL_AI_MOCK_TOOL")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|v| {
+                        v.split(';')
+                            .filter_map(|c| {
+                                let (n, a) = c.split_once(':')?;
+                                Some((n.trim().to_string(), a.trim().to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        vec![(
+                            "get_setting".to_string(),
+                            "{\"key\":\"editor.word_wrap\"}".to_string(),
+                        )]
                     });
-                send(AiEvent::ToolResult {
-                    id: "m1".into(),
-                    name: "get_setting".into(),
-                    output: r.output,
-                    ok: r.ok,
-                });
+                for (k, (name, input)) in calls.into_iter().enumerate() {
+                    let id = format!("m{}", k + 1);
+                    let (rtx, rrx) = mpsc::channel();
+                    send(AiEvent::ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    });
+                    send(AiEvent::ToolRequest {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input,
+                        reply: rtx,
+                    });
+                    let r = rrx
+                        .recv_timeout(std::time::Duration::from_secs(10))
+                        .unwrap_or(ToolReply {
+                            output: "timeout".into(),
+                            ok: false,
+                        });
+                    let head: String = r.output.chars().take(200).collect();
+                    send(AiEvent::ToolResult {
+                        id,
+                        name: name.clone(),
+                        output: r.output,
+                        ok: r.ok,
+                    });
+                    if std::env::var_os("NSQL_AI_MOCK_TOOL").is_some() {
+                        send(AiEvent::TextDelta(format!("\n→ {name}: {head}")));
+                    }
+                }
                 send(AiEvent::TextDelta(" done.".into()));
                 send(AiEvent::Usage(Usage {
                     input: 10,

@@ -446,3 +446,9 @@
 
 - 사용자 확인(11-12 새벽): 요청 고정 머리글 ✓ · 진행 상태 표시 ✓(표시 수준은 위 2로 수정) · 조회마다 새 결과 탭 ✓ · 세션 탭 ✓ · 객체 찾기 창 ✓.
 - 설정 키 그대로(32) · i18n +2(`AiActivityLine` · `AiWaitingFirst`) · 시험 +1(mcp discover).
+
+### 16-7 헤드리스 모의 도구 호출 · 에이전트 이력(2026-11-12 새벽 · 자율 진행 · 협업 제안)
+- **`NSQL_AI_MOCK_TOOL="name:{json};name2:{json}"`**(모의 호스트 `start_mock`): 지정한 도구들을 차례로 `ToolCall → ToolRequest → ToolResult`로 부르고, 각 결과 앞 200자를 " → name: …" 글로 되돌린다(basic 레벨은 도구 결과 줄을 숨기므로 덤프 본문으로 판정). 없으면 종전 `get_setting` 하나. 이로써 `meta_stats` · `search_objects`(코멘트·컬럼) · `list_tabs` · `connect`(scope=private 승인 카드) 같은 흐름을 헤드리스 V1로 판정할 수 있다.
+- **에이전트 이력 저장**: 세션 jsonl 머리에 `agent` — 다시 열어도 `/agent`로 고른 역할이 유지된다(종전 = assistant로 되돌아감).
+- **승인 카드 "⚠ WHERE 없음"**(전 도구 훅 · 데이터 보호 불변식 취지): `run_query`의 UPDATE/DELETE 문장에 WHERE 낱말이 없으면 승인 카드 첫 줄에 "⚠ WHERE 없는 UPDATE/DELETE — 모든 행에 적용됩니다"(CLI·API 경로 공통 · `sql_dml_without_where` 순수 함수 + 시험 · 차단은 아니고 경고).
+- **세션별 작성 상자 초안**: 세션을 바꿀 때(탭 열쇠 따라가기 · 분할 창 탭별 · 세션 열기 · 새 대화) 떠나는 세션의 글을 `AiState.drafts`에 저장하고 새 세션의 초안을 꺼낸다(빈 글 = 지움) — 종전엔 뷰 부품이 하나라 글이 세션을 넘나들었다(§15-13 한계 해소).
