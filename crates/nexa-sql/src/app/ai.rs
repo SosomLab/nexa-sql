@@ -92,6 +92,9 @@ pub(crate) struct AiState {
     pub on_chat: Option<Provider>,
     /// ★ 세션별 작성 상자 초안(세션 id → 글 · 11-12).
     pub drafts: std::collections::HashMap<String, String>,
+    /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
+    ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
+    pub write_ok: Option<(String, String)>,
 }
 
 impl App {
@@ -2139,6 +2142,7 @@ impl App {
             }
             ApprovalReply::Api { name, input, reply } => {
                 if ok {
+                    self.ai.write_ok = Some((name.clone(), input.clone()));
                     self.ai_exec_tool(&name, &input, reply);
                 } else {
                     let _ = reply.send(ToolReply {
@@ -2154,8 +2158,16 @@ impl App {
                     }
                     // ★ P0(협업 관찰 11-12 · 데이터 보호): 행 데이터 **동의**는 전송 허락일 뿐 — 쓰기 문장 확인(SQL 본문 · ⚠ WHERE)을
                     //   건너뛰고 바로 실행했다(WHERE 없는 DELETE가 동의 카드 하나로 실행됨). 동의 뒤 도구 요청을 **다시 거친다**:
-                    //   읽기 전용이면 그대로 실행 · 쓰기면 확인 카드가 한 번 더 뜬다.
-                    reenter = Some((name, input, reply));
+                    //   읽기 전용(SELECT · get_result · explain)이면 동의만으로 실행 · 쓰기면 확인 카드가 한 번 더(협업 관찰 반영).
+                    let sql = json_parse(&input)
+                        .ok()
+                        .map(|v| ai::jstr(&v, "sql"))
+                        .unwrap_or_default();
+                    if name != "run_query" || sql_is_readonly(&sql) {
+                        self.ai_exec_tool(&name, &input, reply);
+                    } else {
+                        reenter = Some((name, input, reply));
+                    }
                 } else {
                     let _ = reply.send(ToolReply {
                         output: "the user declined to share row data".into(),
@@ -2642,6 +2654,17 @@ impl App {
                 if sql.trim().is_empty() {
                     let _ = reply.send(err("empty sql".into()));
                     return;
+                }
+                // ★ 이중 안전장치: 비조회 SQL은 이 호출을 사용자가 카드로 허용한 기록(`write_ok`)이 있어야만 — 없으면 실행 거부 + 오류 줄.
+                if name == "run_query" && !sql_is_readonly(&sql) {
+                    let ok_rec = self.ai.write_ok.take();
+                    if ok_rec.as_ref().is_none_or(|(n, i)| n != name || i != input) {
+                        self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiWriteGuard)));
+                        let _ = reply.send(err(
+                            "refused: a data-changing statement needs the user's explicit approval card".into(),
+                        ));
+                        return;
+                    }
                 }
                 if self.ai.pending.is_some() {
                     let _ = reply.send(err("another query is still running".into()));
