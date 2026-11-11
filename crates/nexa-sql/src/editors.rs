@@ -514,6 +514,8 @@ impl Editors {
     fn make_box(&self, text: &str, syntax: &Rc<SyntaxSpec>) -> TextBox {
         // 기본 편집기 placeholder 없음(사용자 09-22).
         let mut tb = TextBox::new("").with_multiline().with_text(text);
+        // 포커스가 다른 입력기(AI 작성 상자 등)에 있으면 고정 빔만(깜빡임은 실제 포커스만 · 사용자 11-11).
+        tb.set_idle_caret(true);
         // 우클릭 편집 메뉴는 본문 패스가 아니라 팝업 층에서(`paint_popups` · 토스트 위 · UI 글꼴 · 사용자 09-22).
         tb.set_popup_deferred(true);
         tb.set_select_all_keep_view(self.select_all_keep);

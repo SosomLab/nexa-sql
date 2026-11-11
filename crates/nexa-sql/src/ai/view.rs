@@ -258,6 +258,7 @@ impl Default for AiView {
         composer.set_gutter_marks(false);
         composer.set_minimap(false);
         composer.set_popup_deferred(true);
+        composer.set_idle_caret(true);
         let tb = |ph: &str| {
             let mut b = TextBox::new(ph);
             b.set_popup_deferred(true);

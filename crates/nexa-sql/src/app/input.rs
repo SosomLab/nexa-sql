@@ -340,7 +340,9 @@ impl App {
         if f != Focus::Grid {
             self.grid.blur_text_input();
         }
-        self.ed_mut().set_focused(f == Focus::Editor);
+        // ★ 편집기 캐럿 깜빡임 = 실제 포커스일 때만(AI 분할 창·채팅 탭이 키를 받는 동안은 고정 빔 · 사용자 11-11).
+        let ed_on = f == Focus::Editor && !self.ai.side_focus && !self.ai_view_active();
+        self.ed_mut().set_focused(ed_on);
         if self.compare_is_diff_tab() {
             self.diff_view.set_focused(f == Focus::Editor);
         }

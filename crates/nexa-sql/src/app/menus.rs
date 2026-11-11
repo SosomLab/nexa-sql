@@ -1951,7 +1951,7 @@ impl App {
                 self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex
             }
             "ai.enabled" => self.settings.flag("ai.enabled"),
-            "ai.side" => self.ai.side,
+            "ai.side" => self.ai_side_on(),
             "view.log" => self.log_win.is_open(),
             "view.txlog" => self.txlog_win.is_open(),
             "view.sessions" => self.sessions_win.is_open(),

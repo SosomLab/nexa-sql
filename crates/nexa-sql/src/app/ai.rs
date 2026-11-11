@@ -78,6 +78,8 @@ pub(crate) struct AiState {
     pub turn_wall: String,
     /// ★ 편집기 옆 분할 창(사용자 11-11): 켬 · 자리(레이아웃이 잡는다) · 키 포커스(안을 눌렀을 때).
     pub side: bool,
+    /// ★ 분할 창을 켠 편집기 탭들(사용자 11-11 "탭마다 직접 켜야 보이게") — `side`는 마지막 토글 값(설정 `ai.side`에 저장 · 시작 때 활성 탭에만 적용).
+    pub side_tabs: std::collections::HashSet<u64>,
     pub side_rect: Rect,
     pub side_focus: bool,
     /// ★ 탭별 세션(사용자 11-11 "각 탭마다 AI 보기 · 쓰던 세션 연결 · 없으면 새로"): 분할 창이 보는 편집기 탭 · 탭 id → 세션 id.
@@ -93,6 +95,11 @@ pub(crate) struct AiState {
 impl App {
     pub(crate) fn ai_enabled(&self) -> bool {
         self.settings.flag("ai.enabled")
+    }
+
+    /// 활성 편집기 탭에 분할 창이 켜져 있나(탭별 · 11-11).
+    pub(crate) fn ai_side_on(&self) -> bool {
+        self.ai.side_tabs.contains(&self.editors.active_id())
     }
 
     pub(crate) fn ai_view_active(&self) -> bool {
@@ -149,6 +156,10 @@ impl App {
         self.ai.cur = None;
         self.ai.tab = self.ai_provider_default();
         self.ai.side = self.settings.flag("ai.side");
+        if self.ai.side {
+            let tid = self.editors.active_id();
+            self.ai.side_tabs.insert(tid);
+        }
         self.ai_sync_panel();
     }
 
@@ -268,7 +279,14 @@ impl App {
             self.ai_apply_enabled();
         }
         self.ai_init();
-        self.ai.side = !self.ai.side;
+        // 이 편집기 탭만 토글(다른 탭은 각자 켠다).
+        let tid = self.editors.active_id();
+        self.ai.side = !self.ai.side_tabs.contains(&tid);
+        if self.ai.side {
+            self.ai.side_tabs.insert(tid);
+        } else {
+            self.ai.side_tabs.remove(&tid);
+        }
         let _ = self
             .settings
             .set("ai.side", if self.ai.side { "on" } else { "off" });
@@ -284,6 +302,8 @@ impl App {
             self.ai_view.set_focused(true);
         } else {
             self.ai.side_focus = false;
+            self.ai_view.set_focused(false);
+            self.set_focus(Focus::Editor);
         }
         self.ai_sync_panel();
         self.layout();
@@ -2940,6 +2960,10 @@ impl App {
             let was = self.ai.side_focus;
             self.ai.side_focus = in_view || self.ai_view.popup_open();
             if was != self.ai.side_focus {
+                // 포커스 판정 한 곳: 분할 창이 키를 받으면 작성 상자만 깜빡이고 편집기는 고정 빔(그 반대도 · 11-11).
+                self.ai_view.set_focused(self.ai.side_focus);
+                let ed_on = self.focus == Focus::Editor && !self.ai.side_focus;
+                self.ed_mut().set_focused(ed_on);
                 self.redraw();
             }
         }

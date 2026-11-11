@@ -1409,7 +1409,7 @@ impl App {
         };
         // ★ 편집기 옆 AI 분할 창(사용자 11-11 "탭 안쪽 우측 · 미니맵 옆") — 탭 줄은 전체 폭 · 본문만 좁혀 그 오른쪽에.
         //   뷰 탭이 활성이면(편집기 자리 전체) 숨긴다.
-        let side_w = if self.ai.side && !view_mode && self.settings.flag("ai.enabled") {
+        let side_w = if self.ai_side_on() && !view_mode && self.settings.flag("ai.enabled") {
             px(self.settings.int("ai.side_width") as f32, s).min(rw / 2)
         } else {
             0

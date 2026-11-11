@@ -96,6 +96,13 @@ impl App {
         };
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
+        // ★ 탭별 분할 창(11-11): 활성 탭이 바뀌어 켬/끔이 달라졌으면 그리기 전에 배치를 다시 잡는다.
+        if self.ai_enabled() {
+            let want = self.ai_side_on() && self.editors.active_view().is_none();
+            if (self.ai.side_rect.w > 0) != want {
+                self.layout();
+            }
+        }
         let caret_on = !self.settings.flag("editor.caret_blink")
             || !self.main_active
             || !nexa_sys::layer_present::app_active().unwrap_or(true)
@@ -688,7 +695,9 @@ impl App {
                         },
                         ..FontPrefs::default()
                     };
-                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(vprefs);
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                        .with_fonts(vprefs)
+                        .with_caret_on(caret_on);
                     if view_key.as_deref() != Some(self.ext_view_key.as_str()) {
                         self.ext_view_key = view_key.unwrap_or_default();
                         self.ext_view.reset();
@@ -713,7 +722,9 @@ impl App {
                         },
                         ..FontPrefs::default()
                     };
-                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(vprefs);
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                        .with_fonts(vprefs)
+                        .with_caret_on(caret_on);
                     let info = self.ai_view_info();
                     self.ai_view.set_bounds(self.editors.editor_bounds(), s);
                     match self.ai.cur.and_then(|i| self.ai.sessions.get(i)) {
@@ -755,7 +766,9 @@ impl App {
                     },
                     ..FontPrefs::default()
                 };
-                let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(vprefs);
+                let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                    .with_fonts(vprefs)
+                    .with_caret_on(caret_on);
                 let r = self.ai.side_rect;
                 dc.fill_rect(Rect::new(r.x - 1, r.y, 1, r.h), th.border);
                 let info = self.ai_view_info();

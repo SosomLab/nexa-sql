@@ -405,7 +405,7 @@ impl App {
                 "view.ai_codex",
                 self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex,
             ),
-            ("ai.side", self.ai.side),
+            ("ai.side", self.ai_side_on()),
             ("view.extensions", self.ext_panel.is_visible()),
             (
                 "view.object_details",
