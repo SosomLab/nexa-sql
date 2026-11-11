@@ -5868,6 +5868,8 @@ impl Grid {
             CtxItem::maybe("copy", t(Msg::MnCopy), has)
                 .with_icon(Some(toolicons::mi_copy()))
                 .with_shortcut(self.sc_copy.clone()),
+            // ★ 우클릭한 행 한 줄 전체 복사(TSV · 사용자 11-12 "하단 결과에서 1줄 단위 복사").
+            CtxItem::maybe("copy_row", t(Msg::MnCopyRow), self.menu_row.is_some()),
             hdr_item,
             hdr_only,
             adv_item,
@@ -6109,6 +6111,19 @@ impl Grid {
             "copy_json" => CopyKind::Json,
             "all" => {
                 self.select_all();
+                return;
+            }
+            "copy_row" => {
+                // 우클릭한 행(보이는 순서로 찾는다)을 통째로 선택한 뒤 TSV 복사.
+                let Some(dr) = self.menu_row else { return };
+                let Some(v) = self.row_order.iter().position(|&x| x == dr) else {
+                    return;
+                };
+                let last = self.last_col();
+                self.regions = vec![(v, v, 0, last)];
+                self.sel_anchor = Some((v, 0));
+                self.sel_cur = Some((v, last));
+                self.pending_copy = self.copy_selection(CopyKind::Tsv);
                 return;
             }
             _ => return,
