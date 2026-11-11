@@ -965,10 +965,9 @@ impl AiView {
                 super::Provider::Claude => t(Msg::AiProviderClaude),
                 super::Provider::Codex => t(Msg::AiProviderCodex),
             },
-            match (sess.provider, sess.mode) {
-                (super::Provider::Codex, _) => "app-server",
-                (_, Mode::Api) => t(Msg::AiModeApi),
-                (_, Mode::Cli) => t(Msg::AiModeCli),
+            match sess.mode {
+                Mode::Api => t(Msg::AiModeApi),
+                Mode::Cli => t(Msg::AiModeCli),
             },
             sess.model,
             if (sess.mode == Mode::Api || sess.provider == super::Provider::Codex)

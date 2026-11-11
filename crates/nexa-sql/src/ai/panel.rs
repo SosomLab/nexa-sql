@@ -838,9 +838,15 @@ impl AiPanel {
         self.paint_chip(dc, th, self.r_model, &mv, Hit::ModelChip);
         y += row_h + self.s(8.0);
         // ── 아래 사용량 줄(먼저 자리를 잡아 목록 높이를 정한다)
+        // 바닥 = 사용량 1줄 + CLI 모드면 경로·로그인 상태를 **줄마다**(협업 V1 관찰 "한 줄 가운데 생략" · 11-11).
         let mut foot_lines = 1;
-        if self.st.mode == Mode::Cli && !self.st.cli_note.is_empty() {
-            foot_lines += 1;
+        if self.st.mode == Mode::Cli {
+            foot_lines += self
+                .st
+                .cli_note
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count() as i32;
         }
         let foot_h = foot_lines * lh + self.s(10.0);
         // ── 세션: 제목 + 검색 상자
@@ -958,8 +964,11 @@ impl AiPanel {
             dc.text(x, fy, clip, &shown, th.text_dim);
             fy += lh;
             if foot_lines > 1 {
-                let shown = nexa_ctl::draw::ellipsize_middle(dc, &self.st.cli_note, w);
-                dc.text(x, fy, clip, &shown, th.text_dim);
+                for l in self.st.cli_note.lines().filter(|l| !l.trim().is_empty()) {
+                    let shown = nexa_ctl::draw::ellipsize_middle(dc, l, w);
+                    dc.text(x, fy, clip, &shown, th.text_dim);
+                    fy += lh;
+                }
             }
         }
     }

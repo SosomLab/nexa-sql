@@ -392,7 +392,10 @@ impl App {
             let mut n = tf(Msg::AiCliPath, &[&prog]);
             if prov == Provider::Codex {
                 if let Some(st) = self.ai.codex_login.as_deref().filter(|s| !s.is_empty()) {
-                    n = format!("{n} · {st}");
+                    n = format!(
+                        "{n}
+{st}"
+                    );
                 }
             }
             n
