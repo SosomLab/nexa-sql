@@ -188,9 +188,12 @@ pub(crate) struct AiView {
     chip_models: Vec<(String, String)>,
     model_now: String,
     effort_now: String,
-    /// ★ 대본 줄 선택(드래그 · 평면 줄 번호 범위 · 사용자 11-11 "드래그로 선택·복사") · 드래그 시작 줄 · 그린 줄의 자리.
-    sel: Option<(usize, usize)>,
-    drag_from: Option<usize>,
+    /// ★ 대본 글자 단위 선택(드래그 · 사용자 11-11 "드래그로 선택·복사" · 11-11 저녁 결정 = 글자 단위): (평면 줄, 글자) 앵커·초점.
+    ///   누른/끄는 점은 (줄, x px)로 두고 **다음 그리기**에서 글자 자리로 푼다(x → 글자는 글꼴 폭이 필요 · `resolve_col`).
+    sel: Option<((usize, usize), (usize, usize))>,
+    drag_from: Option<(usize, i32)>,
+    drag_to: Option<(usize, i32)>,
+    dragging: bool,
     line_pos: Vec<(usize, i32, i32)>,
     /// 코드 블록 아이콘 버튼 틴트 캐시(종류 · 색).
     icon_cache: RefCell<Vec<(u8, Color, Rc<IconImage>)>>,
@@ -275,6 +278,8 @@ impl Default for AiView {
             effort_now: String::new(),
             sel: None,
             drag_from: None,
+            drag_to: None,
+            dragging: false,
             line_pos: Vec::new(),
             icon_cache: RefCell::new(Vec::new()),
             transcript: Rect::default(),
@@ -498,17 +503,93 @@ impl AiView {
         self.side_mode = on;
     }
 
-    /// 선택한 대본 줄의 글(복사용) — 없으면 None.
+    /// 선택한 대본 글(복사용 · 첫/끝 줄은 글자 경계까지 · 중간 줄은 통째) — 없으면 None.
     pub(crate) fn selection_text(&self) -> Option<String> {
-        let (a, b) = self.sel?;
-        let (a, b) = (a.min(b), a.max(b));
+        let (a, b) = self.sel_ordered()?;
         let flat: Vec<&Line> = self.lines.iter().flatten().collect();
-        let out: Vec<&str> = flat
-            .get(a..=b.min(flat.len().saturating_sub(1)))?
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect();
-        (!out.is_empty()).then(|| out.join("\n"))
+        let last = flat.len().checked_sub(1)?;
+        let (la, lb) = (a.0.min(last), b.0.min(last));
+        let mut out = Vec::new();
+        for (f, l) in flat.iter().enumerate().take(lb + 1).skip(la) {
+            let n = l.text.chars().count();
+            let c0 = if f == la { a.1.min(n) } else { 0 };
+            let c1 = if f == lb { b.1.min(n) } else { n };
+            out.push(
+                l.text
+                    .chars()
+                    .skip(c0)
+                    .take(c1.saturating_sub(c0))
+                    .collect::<String>(),
+            );
+        }
+        let s = out.join("\n");
+        (!s.is_empty()).then_some(s)
+    }
+
+    /// 선택 범위를 (앞, 뒤) 순서로.
+    fn sel_ordered(&self) -> Option<((usize, usize), (usize, usize))> {
+        let (a, b) = self.sel?;
+        Some(if a <= b { (a, b) } else { (b, a) })
+    }
+
+    /// 줄 글 · 줄 x → 점 x에 가장 가까운 글자 경계(접두 폭 이진 탐색 · 글꼴은 호출자가 고른다).
+    fn col_at(dc: &mut dyn DrawCtx, text: &str, lx: i32, px: i32) -> usize {
+        let chars: Vec<char> = text.chars().collect();
+        if px <= lx || chars.is_empty() {
+            return 0;
+        }
+        let width =
+            |dc: &mut dyn DrawCtx, k: usize| dc.text_width(&chars[..k].iter().collect::<String>());
+        let (mut lo, mut hi) = (0usize, chars.len());
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            if lx + width(dc, mid) <= px {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if lo < chars.len() {
+            let (w0, w1) = (width(dc, lo), width(dc, lo + 1));
+            if px - (lx + w0) > (w1 - w0) / 2 {
+                return lo + 1;
+            }
+        }
+        lo
+    }
+
+    /// 줄 종류 → 글 시작 x · 굵은 글꼴 여부(그릴 때와 같은 규칙).
+    fn line_x(kind: &LineKind, x: i32, code_x: i32) -> (i32, bool) {
+        match kind {
+            LineKind::Code | LineKind::Result | LineKind::ResultErr | LineKind::CodeHead(_) => {
+                (code_x, false)
+            }
+            LineKind::Head | LineKind::Role => (x, true),
+            _ => (x, false),
+        }
+    }
+
+    /// 평면 줄 번호 · 점 x → 글자 자리(그릴 때만 · 글꼴 폭).
+    fn resolve_col(
+        &self,
+        dc: &mut dyn DrawCtx,
+        flat: usize,
+        px: i32,
+        x: i32,
+        code_x: i32,
+    ) -> usize {
+        let Some(l) = self.lines.iter().flatten().nth(flat) else {
+            return 0;
+        };
+        let (lx, bold) = Self::line_x(&l.kind, x, code_x);
+        if bold {
+            dc.select_font(FontSlot::Base, true);
+        }
+        let c = Self::col_at(dc, &l.text, lx, px);
+        if bold {
+            dc.select_font(FontSlot::Base, false);
+        }
+        c
     }
 
     /// 대본 안 점 → 평면 줄 번호(그린 줄 기준 · 위/아래 밖이면 첫/끝 줄).
@@ -854,11 +935,11 @@ impl AiView {
                 let h = self.buttons.iter().position(|(_, r)| r.contains(p));
                 let mut changed = h != self.hover;
                 self.hover = h;
-                if let Some(from) = self.drag_from {
+                if self.dragging {
                     if let Some(to) = self.line_at(p) {
-                        let ns = Some((from, to));
-                        changed |= ns != self.sel;
-                        self.sel = ns;
+                        // 글자 자리는 다음 그리기에서(`resolve_col`).
+                        self.drag_to = Some((to, x));
+                        changed = true;
                     }
                 }
                 self.composer.on_event(ev, &mut inv);
@@ -902,9 +983,15 @@ impl AiView {
                     if in_c {
                         self.composer.on_event(ev, &mut inv);
                     }
-                    // 대본 안 = 줄 선택 시작(끌면 범위 · 그냥 클릭 = 선택 해제).
+                    // 대본 안 = 글자 선택 시작(끌면 범위 · 그냥 클릭 = 선택 해제).
                     self.sel = None;
-                    self.drag_from = if in_c { None } else { self.line_at(p) };
+                    self.drag_from = if in_c {
+                        None
+                    } else {
+                        self.line_at(p).map(|l| (l, p.x))
+                    };
+                    self.drag_to = None;
+                    self.dragging = self.drag_from.is_some();
                 }
                 true
             }
@@ -929,9 +1016,10 @@ impl AiView {
                 if ny != self.scroll_y {
                     self.scroll_y = ny;
                 }
-                if let Some(from) = self.drag_from.take() {
+                if self.dragging {
+                    self.dragging = false;
                     if let Some(to) = self.line_at(p) {
-                        self.sel = (from != to).then_some((from.min(to), from.max(to)));
+                        self.drag_to = Some((to, p.x));
                     }
                 }
                 if let Some(i) = self.pressed.take() {
@@ -1564,10 +1652,22 @@ impl AiView {
         dc.push_clip(tr);
         let mut ly = tr.y + self.s(8.0) - self.scroll_y;
         let code_x = x + self.s(8.0);
+        // 선택 점 → 글자 자리(끄는 중엔 매 그리기 · 놓으면 한 번 더 풀고 비운다).
+        if let Some((la, xa)) = self.drag_from {
+            let a = (la, self.resolve_col(dc, la, xa, x, code_x));
+            if let Some((lf, xf)) = self.drag_to {
+                let f = (lf, self.resolve_col(dc, lf, xf, x, code_x));
+                self.sel = (a != f).then_some((a, f));
+            }
+            if !self.dragging {
+                self.drag_from = None;
+                self.drag_to = None;
+            }
+        }
         let lines = std::mem::take(&mut self.lines);
         self.line_pos.clear();
         let mut flat_base = 0usize;
-        let sel = self.sel.map(|(a, b)| (a.min(b), a.max(b)));
+        let sel = self.sel_ordered();
         for (mi, ls) in lines.iter().enumerate() {
             let block_h = ls.len() as i32 * line_h;
             let msg = &sess.messages[mi];
@@ -1577,16 +1677,6 @@ impl AiView {
                 for li in 0..ls.len() {
                     let yy = ly + li as i32 * line_h;
                     self.line_pos.push((my_base + li, yy, line_h));
-                    if let Some((a, b2)) = sel {
-                        let f = my_base + li;
-                        if f >= a && f <= b2 {
-                            dc.fill_rect_alpha(
-                                Rect::new(x - self.s(4.0), yy, w + self.s(8.0), line_h),
-                                th.accent,
-                                0.18,
-                            );
-                        }
-                    }
                 }
                 let is_user = msg.kind == Kind::User;
                 if is_user {
@@ -1690,6 +1780,35 @@ impl AiView {
                         LineKind::Blank => {}
                     }
                     let _ = in_code;
+                }
+                // 글자 단위 선택 강조(글 위에 반투명 · 첫/끝 줄은 글자 경계 · 중간 줄은 끝까지 + 줄 바꿈 표시 여백).
+                if let Some((a, b2)) = sel {
+                    for (li, l) in ls.iter().enumerate() {
+                        let f = my_base + li;
+                        if f < a.0 || f > b2.0 {
+                            continue;
+                        }
+                        let (lx, bold) = Self::line_x(&l.kind, x, code_x);
+                        let n = l.text.chars().count();
+                        let c0 = if f == a.0 { a.1.min(n) } else { 0 };
+                        let c1 = if f == b2.0 { b2.1.min(n) } else { n };
+                        if bold {
+                            dc.select_font(FontSlot::Base, true);
+                        }
+                        let x0 = lx + dc.text_width(&l.text.chars().take(c0).collect::<String>());
+                        let mut x1 =
+                            lx + dc.text_width(&l.text.chars().take(c1).collect::<String>());
+                        if bold {
+                            dc.select_font(FontSlot::Base, false);
+                        }
+                        if f < b2.0 {
+                            x1 += self.s(6.0);
+                        }
+                        if x1 > x0 {
+                            let yy = ly + li as i32 * line_h;
+                            dc.fill_rect_alpha(Rect::new(x0, yy, x1 - x0, line_h), th.accent, 0.25);
+                        }
+                    }
                 }
                 // 승인 카드 버튼(대기 중인 것만).
                 if let (Kind::Approval { .. }, Some((aid, _, _))) = (&msg.kind, &info.approval) {
@@ -2357,13 +2476,14 @@ impl AiView {
     /// 헤드리스 덤프(V1).
     pub(crate) fn dump_text(&self, sess: &Session, info: &ViewInfo) -> String {
         let mut s = format!(
-            "page={:?} busy={} msgs={} attachments={} composer={:?} approval={}\n",
+            "page={:?} busy={} msgs={} attachments={} composer={:?} approval={} sel={:?}\n",
             self.page,
             info.busy,
             sess.messages.len(),
             sess.attachments.len(),
             self.composer.text(),
-            info.approval.as_ref().map(|a| a.1.as_str()).unwrap_or("")
+            info.approval.as_ref().map(|a| a.1.as_str()).unwrap_or(""),
+            self.sel
         );
         for m in &sess.messages {
             let k = match &m.kind {
@@ -2705,6 +2825,47 @@ mod tests {
             .any(|l| matches!(l.kind, LineKind::CodeHead(0))));
         assert_eq!(lines.iter().filter(|l| l.kind == LineKind::Code).count(), 2);
         assert_eq!(ci, 1);
+    }
+
+    #[test]
+    fn char_selection_resolves_and_copies() {
+        let mut dc = W;
+        // 글자 폭 8: x=10 → 0 · 10+8*3+3 → 3(반 못 미침) · 10+8*3+5 → 4(반 넘음) · 끝 너머 → 길이.
+        assert_eq!(AiView::col_at(&mut dc, "abcdef", 10, 0), 0);
+        assert_eq!(AiView::col_at(&mut dc, "abcdef", 10, 10 + 24 + 3), 3);
+        assert_eq!(AiView::col_at(&mut dc, "abcdef", 10, 10 + 24 + 5), 4);
+        assert_eq!(AiView::col_at(&mut dc, "abcdef", 10, 999), 6);
+        assert_eq!(AiView::col_at(&mut dc, "", 10, 50), 0);
+        let mut v = AiView {
+            lines: vec![
+                vec![
+                    Line {
+                        text: "hello world".into(),
+                        kind: LineKind::Text,
+                    },
+                    Line {
+                        text: "second line".into(),
+                        kind: LineKind::Text,
+                    },
+                ],
+                vec![Line {
+                    text: "third".into(),
+                    kind: LineKind::Code,
+                }],
+            ],
+            ..Default::default()
+        };
+        assert_eq!(v.selection_text(), None);
+        v.sel = Some(((0, 6), (0, 11)));
+        assert_eq!(v.selection_text().as_deref(), Some("world"));
+        // 거꾸로 끌어도 같은 범위 · 여러 줄 = 첫 줄 꼬리 + 중간 통째 + 끝 줄 머리.
+        v.sel = Some(((2, 3), (0, 6)));
+        assert_eq!(
+            v.selection_text().as_deref(),
+            Some("world\nsecond line\nthi")
+        );
+        v.sel = Some(((0, 3), (0, 3)));
+        assert_eq!(v.selection_text(), None);
     }
 
     #[test]

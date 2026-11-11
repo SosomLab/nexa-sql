@@ -749,6 +749,8 @@ struct App {
     /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
     split_v: Splitter,
     split_h: Splitter,
+    /// ★ 스플리터 ③ 편집기 본문|AI 분할 창(세로선 · 사용자 11-11 결정) — 끌면 `ai.side_width`(자동 기억).
+    split_ai: Splitter,
     /// 확인 뒤 이어질 동작.
     tx_after: Option<TxAfter>,
     status_tx_rect: Rect,
@@ -1422,6 +1424,14 @@ impl App {
         } else {
             Rect::default()
         };
+        // 스플리터 ③ 편집기 본문|AI 분할 창 — 띠 = 본문과 분할 창 사이 틈(grip) · 분할 창이 보일 때만.
+        self.split_ai.set_rect(if side_w > 0 {
+            let r = self.ai.side_rect;
+            Rect::new(r.x - grip, r.y, grip, r.h)
+        } else {
+            Rect::default()
+        });
+        self.split_ai.set_band(Some(split_band(s)));
         // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
         self.find.set_bounds(self.editors.editor_bounds(), s);
         self.find.set_clamp_width(w);
@@ -2222,6 +2232,7 @@ fn main() {
         mem_last_tabs: 0,
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),
+        split_ai: Splitter::new(SplitAxis::Vertical),
         objdetail: objdetail::DetailPanel::new(),
         split_d: Splitter::new(SplitAxis::Horizontal),
         detail_key: None,

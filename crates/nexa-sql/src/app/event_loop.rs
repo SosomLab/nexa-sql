@@ -341,6 +341,7 @@ impl ApplicationHandler<Wake> for App {
         redraw |= self.split_v.tick(now_ms);
         redraw |= self.split_h.tick(now_ms);
         redraw |= self.split_d.tick(now_ms);
+        redraw |= self.split_ai.tick(now_ms);
         // 더러움 표시(`*`) 갱신 · 닫기 2단 안내.
         redraw |= self.editors.refresh_dirty();
         if let Some(m) = self.editors.take_notice() {
@@ -1077,7 +1078,11 @@ impl ApplicationHandler<Wake> for App {
                             winit::window::CursorIcon::Default
                         }
                     } else if self.split_v.is_dragging()
-                        || (!menus && self.split_v.rect().contains(cur))
+                        || self.split_ai.is_dragging()
+                        || (!menus
+                            && (self.split_v.rect().contains(cur)
+                                || (!self.split_ai.rect().is_empty()
+                                    && self.split_ai.rect().contains(cur))))
                     {
                         winit::window::CursorIcon::ColResize
                     } else if self.split_h.is_dragging()

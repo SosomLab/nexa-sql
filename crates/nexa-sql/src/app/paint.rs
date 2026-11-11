@@ -699,7 +699,7 @@ impl App {
                 // ★ Claude 채팅 뷰 탭(docs/110 · 11-11) = UI 글꼴 · 편집기 자리 전체.
                 None if self.ai_view_active() => {
                     self.ai_follow_view();
-                    self.ai_view.set_side_mode(false);
+                    self.ai_chat_prepare();
                     let vprefs = FontPrefs {
                         base: SlotFont {
                             size: ui_px,
@@ -919,6 +919,9 @@ impl App {
             self.split_v.paint(&mut dc, &th);
             if !view_mode {
                 self.split_h.paint(&mut dc, &th);
+            }
+            if self.ai.side_rect.w > 0 && !view_mode {
+                self.split_ai.paint(&mut dc, &th);
             }
         }
         // ── 툴바 툴팁(UI 글꼴) — 툴바 패스에서 그리면 그 뒤에 칠하는 탐색기·편집기가 덮어 툴바 아래 2~3px 띠만

@@ -275,6 +275,28 @@ impl App {
                 return true;
             }
         }
+        // ★ AI 분할 창 스플리터(사용자 11-11 결정): 띠 x → 분할 창 폭(논리 px · 설정 범위로 클램프) → `ai.side_width`.
+        match self.split_ai.on_event(ev) {
+            SplitEvent::None => {}
+            SplitEvent::Hover => self.redraw(),
+            SplitEvent::Start => return true,
+            SplitEvent::Drag(x) => {
+                let grip = px(SPLIT_GRIP, s);
+                let right = self.ai.side_rect.right();
+                let w = ((right - (x + grip)) as f32 / s).round() as i64;
+                let _ = self
+                    .settings
+                    .set("ai.side_width", &w.clamp(240, 1200).to_string());
+                self.layout();
+                self.redraw();
+                return true;
+            }
+            SplitEvent::End => {
+                self.persist_settings();
+                self.redraw();
+                return true;
+            }
+        }
         match self.split_h.on_event(ev) {
             SplitEvent::None => false,
             SplitEvent::Hover => {
@@ -1205,8 +1227,10 @@ impl App {
         // ★ 스플리터(탐색기|편집기 · 편집기|결과) — 마우스만 · 드래그 중이면 다른 컨트롤보다 먼저(사용자 09-16).
         //   ★ 열린 팝업(우클릭 메뉴 등)이 있으면 스플리터는 받지 않는다(사용자 10-13 "메뉴 고르는 중 뒤의 스플리터가 같이 움직임" ·
         //   팝업 배타 61 §2-2-b) — 이미 끌고 있던 스플리터만 예외(놓임까지).
-        let split_dragging =
-            self.split_v.is_dragging() || self.split_h.is_dragging() || self.split_d.is_dragging();
+        let split_dragging = self.split_v.is_dragging()
+            || self.split_h.is_dragging()
+            || self.split_d.is_dragging()
+            || self.split_ai.is_dragging();
         if is_mouse && (split_dragging || self.open_menus() == 0) && self.route_splitters(&ev) {
             return;
         }

@@ -83,6 +83,11 @@ pub(crate) struct AiState {
     /// ★ 탭별 세션(사용자 11-11 "각 탭마다 AI 보기 · 쓰던 세션 연결 · 없으면 새로"): 분할 창이 보는 편집기 탭 · 탭 id → 세션 id.
     pub side_tab: Option<u64>,
     pub tab_sessions: std::collections::HashMap<u64, String>,
+    /// ★ 채팅 탭이 보는 세션(제공자별 · 사용자 11-11 결정 "분할 창과 채팅 탭은 서로 다른 세션") — 분할 창은 편집기 탭별
+    ///   `tab_sessions`, 채팅 탭은 이것. `on_chat` = 마지막으로 그린 면이 그 제공자의 채팅 탭(None = 분할 창/없음).
+    pub chat_claude: Option<String>,
+    pub chat_codex: Option<String>,
+    pub on_chat: Option<Provider>,
 }
 
 impl App {
@@ -147,17 +152,74 @@ impl App {
         self.ai_sync_panel();
     }
 
+    fn ai_chat_slot(&mut self, p: Provider) -> &mut Option<String> {
+        match p {
+            Provider::Claude => &mut self.ai.chat_claude,
+            Provider::Codex => &mut self.ai.chat_codex,
+        }
+    }
+
+    /// 채팅 탭이 보던 세션으로 되돌린다(있을 때 · 턴 중엔 안 바꿈) — 분할 창이 `cur`를 편집기 탭 세션으로 바꿔 둔 뒤.
+    fn ai_chat_restore(&mut self) {
+        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            return;
+        }
+        let p = self.ai.tab;
+        let want = self.ai_chat_slot(p).clone();
+        let found = want.and_then(|id| self.ai.sessions.iter().position(|s| s.id == id));
+        if let Some(i) = found {
+            if self.ai.cur != Some(i) {
+                self.ai.cur = Some(i);
+                self.ai.approval = None;
+                self.ai.pending = None;
+                self.ai_view.reset();
+                self.ai_sync_panel();
+            }
+        }
+    }
+
+    /// 지금 세션 = 채팅 탭의 세션으로 기록(채팅 탭을 열 때 · 채팅 탭을 그릴 때).
+    fn ai_chat_mark(&mut self) {
+        let p = self.ai.tab;
+        if let Some(id) = self.ai_cur().map(|s| s.id.clone()) {
+            *self.ai_chat_slot(p) = Some(id);
+        }
+        self.ai.on_chat = Some(p);
+    }
+
+    /// 채팅 탭을 그리기 직전: 분할 창(또는 다른 제공자 탭)에서 넘어왔으면 이 제공자 채팅 탭이 보던 세션으로.
+    pub(crate) fn ai_chat_prepare(&mut self) {
+        self.ai_init();
+        self.ai_view.set_side_mode(false);
+        if self.ai.on_chat != Some(self.ai.tab) {
+            self.ai_chat_restore();
+        }
+        if !self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            self.ai_chat_mark();
+        }
+    }
+
     /// 분할 창을 그리기 직전: 초기화·세션이 없으면 새 세션(설정 `ai.side=on`으로 시작했을 때 칩이 비던 관찰 · 11-11).
     pub(crate) fn ai_side_prepare(&mut self) {
         self.ai_init();
         self.ai_view.set_side_mode(true);
-        // 탭이 바뀌면 그 탭이 쓰던 세션으로(없으면 새 세션) — 턴이 도는 동안은 바꾸지 않는다.
+        // 탭이 바뀌면(또는 채팅 탭에서 넘어왔으면) 그 탭이 쓰던 세션으로(없으면 새 세션) — 턴이 도는 동안은 바꾸지 않는다.
         let tid = self.editors.active_id();
         let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
-        if self.ai.side_tab != Some(tid) && !busy {
-            if let (Some(old), Some(sid)) = (self.ai.side_tab, self.ai_cur().map(|s| s.id.clone()))
-            {
-                self.ai.tab_sessions.insert(old, sid);
+        let from_chat = self.ai.on_chat.is_some();
+        if !busy {
+            self.ai.on_chat = None;
+        }
+        if (self.ai.side_tab != Some(tid) || from_chat) && !busy {
+            // 떠나는 탭의 세션 기록은 분할 창끼리 옮길 때만(채팅 탭 세션을 엉뚱한 탭에 묶지 않게).
+            if let (false, Some(old), Some(sid)) = (
+                from_chat,
+                self.ai.side_tab,
+                self.ai_cur().map(|s| s.id.clone()),
+            ) {
+                if old != tid {
+                    self.ai.tab_sessions.insert(old, sid);
+                }
             }
             self.ai.side_tab = Some(tid);
             let found = self
@@ -171,8 +233,12 @@ impl App {
                     if prov != self.ai.tab {
                         self.ai_switch_tab(prov);
                     }
-                    self.ai.cur = Some(i);
-                    self.ai_view.reset();
+                    if self.ai.cur != Some(i) {
+                        self.ai.cur = Some(i);
+                        self.ai.approval = None;
+                        self.ai.pending = None;
+                        self.ai_view.reset();
+                    }
                 }
                 None => self.ai_new_session(),
             }
@@ -185,6 +251,9 @@ impl App {
         if self.ai.cur.is_none() {
             self.ai_new_session();
             self.ai_view.set_provider(self.ai.tab);
+        }
+        // 분할 창에서 새 세션·세션 선택으로 바뀐 것도 이 탭에 묶는다(종전엔 탭을 바꿀 때만 기록해 [+] 새 세션이 빠졌다).
+        if !busy {
             if let Some(s) = self.ai_cur() {
                 self.ai.tab_sessions.insert(tid, s.id.clone());
             }
@@ -262,6 +331,8 @@ impl App {
             self.ai_codex_login_probe();
             self.ai_sync_panel();
             self.set_focus(Focus::Ai);
+            // 활동 막대에서 열 때는 채팅 탭이 보던 세션으로(분할 창 세션을 끌고 오지 않게).
+            self.ai_chat_restore();
             self.ai_open_chat();
         } else if self.focus == Focus::Ai {
             self.set_focus(Focus::Editor);
@@ -277,6 +348,7 @@ impl App {
             self.ai_new_session();
         }
         let tab = self.ai.tab;
+        self.ai_chat_mark();
         self.editors.open_view_tab(tab.view_key(), tab.title());
         self.ai_view.show_page(Page::Chat);
         self.set_focus(Focus::Editor);
