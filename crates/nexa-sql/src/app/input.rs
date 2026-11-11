@@ -454,7 +454,9 @@ impl App {
         match self.focus {
             // ★ 뷰 탭(확장 상세)이 활성이면 클립보드 동작(⌘/Ctrl+C·A)의 대상은 그 본문 상자(사용자 09-30).
             Focus::Editor if self.ext_view_active() => Some(self.ext_view.textbox_mut()),
-            Focus::Editor if self.ai_view_active() => Some(self.ai_view.textbox_mut()),
+            Focus::Editor if self.ai_view_active() || self.ai.side_focus => {
+                Some(self.ai_view.textbox_mut())
+            }
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Find => self.find.focused_textbox(),
             Focus::Search => self.search.focused_textbox(),
@@ -2570,7 +2572,7 @@ impl App {
                 if self.ext_view_active() {
                     self.ext_view.on_event(&ev);
                     self.ext_view_actions();
-                } else if self.ai_view_active() {
+                } else if self.ai_view_active() || self.ai.side_focus {
                     self.ai_view.on_event(&ev);
                     self.ai_view_actions();
                 } else {

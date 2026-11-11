@@ -933,6 +933,12 @@ impl App {
             "view.ai" => self.ai_toggle_panel(crate::ai::Provider::Claude),
             "view.ai_codex" => self.ai_toggle_panel(crate::ai::Provider::Codex),
             "ai.chat" => self.ai_open_chat(),
+            // ★ AI 툴바(11-11): 대화 탭(현재 탭 제공자) · 편집기 옆 분할 토글.
+            "ai.tab" => {
+                self.ai_init();
+                self.ai_open_chat();
+            }
+            "ai.side" => self.ai_toggle_side(),
             "ai.enabled" => {
                 let on = !self.settings.flag("ai.enabled");
                 let _ = self
@@ -1941,6 +1947,7 @@ impl App {
                 self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex
             }
             "ai.enabled" => self.settings.flag("ai.enabled"),
+            "ai.side" => self.ai.side,
             "view.log" => self.log_win.is_open(),
             "view.txlog" => self.txlog_win.is_open(),
             "view.sessions" => self.sessions_win.is_open(),

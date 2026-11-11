@@ -1514,6 +1514,14 @@ fn svg_tool(d: &str) -> ToolIcon {
 }
 
 /// Material `check` — Commit(툴바 · T-77).
+/// ★ AI 툴바(11-11 · 사용자 "AI 툴바 그룹"): 대화 탭 = 활동 막대 Claude 별과 같은 그림.
+pub(crate) fn ai_tab() -> ToolIcon {
+    svg_tool("M400-860 L452-632 L680-580 L452-528 L400-300 L348-528 L120-580 L348-632Z M740-900 L762-830 L832-808 L762-786 L740-716 L718-786 L648-808 L718-830Z M720-380 L742-310 L812-288 L742-266 L720-196 L698-266 L628-288 L698-310Z")
+}
+/// 편집기 옆 분할 표시 — 두 칸(왼쪽 넓게 · 오른쪽 좁게).
+pub(crate) fn ai_side() -> ToolIcon {
+    svg_tool("M120-200v-560h440v560H120Zm520 0v-560h200v560H640Z")
+}
 pub(crate) fn commit() -> ToolIcon {
     svg_tool("M382-240 154-468l 57-57 171 171 367-367 57 57-424 424Z")
 }

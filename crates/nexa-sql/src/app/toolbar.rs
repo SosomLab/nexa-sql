@@ -405,6 +405,7 @@ impl App {
                 "view.ai_codex",
                 self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex,
             ),
+            ("ai.side", self.ai.side),
             ("view.extensions", self.ext_panel.is_visible()),
             (
                 "view.object_details",
@@ -531,6 +532,15 @@ impl App {
                     .disabled(),
             ],
         );
+        // ★ AI 그룹(사용자 11-11): [대화 탭] [편집기 옆에] — 현재 탭 제공자(Claude/Codex) 기준.
+        let ai = ToolGroup::new(
+            "ai",
+            t(Msg::TbGroupAi),
+            vec![
+                ToolItem::new("ai.tab", toolicons::ai_tab()).tip(t(Msg::TipAiTab)),
+                ToolItem::new("ai.side", toolicons::ai_side()).tip(t(Msg::TipAiSide)),
+            ],
+        );
         let view = ToolGroup::new(
             "view",
             t(Msg::MnView),
@@ -545,7 +555,7 @@ impl App {
             ],
         )
         .align_right();
-        let mut dock = ToolDock::new(vec![file, edit, run, conn, tabconn, view]);
+        let mut dock = ToolDock::new(vec![file, edit, run, conn, tabconn, ai, view]);
         dock.set_icon_size(18);
         dock
     }
@@ -574,11 +584,13 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
     ),
     ("conn", &["conn.toggle", "conn.disconnect", "conn.sessions"]),
     ("tabconn", &[]),
+    ("ai", &["ai.tab", "ai.side"]),
     ("view", &["view.variables", "view.find_objects", "view.log"]),
 ];
 
 /// 그룹 id(정의 순) — ★ T-278(10-30): 그룹도 숨길 수 있다(편집 창 체크 · `toolbar.items`) · 잠금 없음.
-pub(crate) const TOOLBAR_GROUP_IDS: &[&str] = &["file", "edit", "run", "conn", "tabconn", "view"];
+pub(crate) const TOOLBAR_GROUP_IDS: &[&str] =
+    &["file", "edit", "run", "conn", "tabconn", "ai", "view"];
 
 pub(crate) fn toolbar_order_blocks(value: &str) -> Vec<nexa_ctl::order::OrderBlock> {
     nexa_ctl::order::parse(TOOLBAR_BLOCKS, &[], value)
@@ -641,6 +653,7 @@ pub(crate) fn toolbar_order_label(block: &str, item: Option<&str>) -> Msg {
             "run" => Msg::MnRun,
             "conn" => Msg::TbGroupConn,
             "tabconn" => Msg::TbGroupTabConn,
+            "ai" => Msg::TbGroupAi,
             _ => Msg::MnView,
         },
     }
@@ -664,6 +677,11 @@ pub(crate) fn toolbar_area_commands(gid: &str) -> &'static [(&'static str, Msg)]
         "conn" | "tabconn" => &[
             ("session.info", Msg::MnSessInfo),
             ("view.variables", Msg::MnVariables),
+        ],
+        "ai" => &[
+            ("ai.chat", Msg::MnAiChat),
+            ("view.ai", Msg::MnAiPanel),
+            ("view.ai_codex", Msg::MnAiCodexPanel),
         ],
         "view" => &[
             ("view.txlog", Msg::MnTxLogWindow),

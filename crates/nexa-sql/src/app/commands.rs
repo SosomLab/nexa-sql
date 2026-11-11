@@ -183,6 +183,8 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     tv("view.ai", Msg::MnAiPanel),
     tv("view.ai_codex", Msg::MnAiCodexPanel),
     p("ai.chat", Msg::MnView, Msg::MnAiChat),
+    p("ai.tab", Msg::MnView, Msg::MnAiTab),
+    tv("ai.side", Msg::MnAiSide),
     sw("ai.enabled", Msg::MnAiEnable),
     tv("view.log", Msg::MnLogWindow),
     tv("view.txlog", Msg::MnTxLogWindow),

@@ -74,6 +74,10 @@ pub(crate) struct AiState {
     /// 진행 중 상태 줄 갱신 마지막 시각(1초 간격) · 턴 시작 시각(HH:MM:SS).
     pub last_tick: Option<Instant>,
     pub turn_wall: String,
+    /// ★ 편집기 옆 분할 창(사용자 11-11): 켬 · 자리(레이아웃이 잡는다) · 키 포커스(안을 눌렀을 때).
+    pub side: bool,
+    pub side_rect: Rect,
+    pub side_focus: bool,
 }
 
 impl App {
@@ -134,7 +138,38 @@ impl App {
         self.ai.sessions = ai::history_list(200);
         self.ai.cur = None;
         self.ai.tab = self.ai_provider_default();
+        self.ai.side = self.settings.flag("ai.side");
         self.ai_sync_panel();
+    }
+
+    /// 편집기 옆 분할 창 토글(툴바 `ai.side` · 팔레트) — 켜면 현재 탭의 세션(없으면 새로)을 그 창에.
+    pub(crate) fn ai_toggle_side(&mut self) {
+        if !self.ai_enabled() {
+            let _ = self.settings.set("ai.enabled", "on");
+            self.persist_settings();
+            self.ai_apply_enabled();
+        }
+        self.ai_init();
+        self.ai.side = !self.ai.side;
+        let _ = self
+            .settings
+            .set("ai.side", if self.ai.side { "on" } else { "off" });
+        self.persist_settings();
+        if self.ai.side {
+            if self.ai.cur.is_none() {
+                self.ai_new_session();
+            }
+            self.ai_view.set_provider(self.ai.tab);
+            self.ai_view.show_page(Page::Chat);
+            self.ai.side_focus = true;
+            self.set_focus(Focus::Editor);
+            self.ai_view.set_focused(true);
+        } else {
+            self.ai.side_focus = false;
+        }
+        self.ai_sync_panel();
+        self.layout();
+        self.redraw();
     }
 
     /// 설정 `ai.enabled` 적용(활동 막대 항목 · 끄면 패널·호스트 닫기).
@@ -2032,7 +2067,7 @@ impl App {
 
     /// ★ AI 작성 상자에 붙여넣는 글이 `ai.paste_chip_chars`자 이상이면 첨부 칩으로(0 = 끔 · 110 §14-4). 가로챘으면 `true`.
     pub(crate) fn ai_paste_as_chip(&mut self, text: &str) -> bool {
-        if !(self.ai_view_active()
+        if !((self.ai_view_active() || self.ai.side_focus)
             && self.focus == Focus::Editor
             && self.ai_view.page() == Page::Chat)
         {
@@ -2065,7 +2100,7 @@ impl App {
 
     /// ★ AI 작성 상자에서 Ctrl+V — 클립보드에 글이 없고 이미지가 있으면 이미지 칩으로. 가로챘으면 `true`.
     pub(crate) fn ai_paste_image(&mut self) -> bool {
-        if !(self.ai_view_active()
+        if !((self.ai_view_active() || self.ai.side_focus)
             && self.focus == Focus::Editor
             && self.ai_view.page() == Page::Chat)
         {
@@ -2476,14 +2511,33 @@ impl App {
 
     /// 채팅 뷰 탭(확장 뷰와 같은 규칙): 포인터는 편집기 자리 안일 때 · 키는 편집기 포커스일 때.
     pub(crate) fn route_ai_view(&mut self, ev: InputEvent, is_mouse: bool) -> bool {
-        if !self.ai_view_active() {
+        let tab = self.ai_view_active();
+        let side = !tab && self.ai.side_rect.w > 0;
+        if !tab && !side {
             return false;
         }
         let cur = Point {
             x: self.cursor.0,
             y: self.cursor.1,
         };
-        let in_view = self.editors.editor_bounds().contains(cur);
+        let in_view = if side {
+            self.ai.side_rect.contains(cur)
+        } else {
+            self.editors.editor_bounds().contains(cur)
+        };
+        // 분할 창: 안을 누르면 키 포커스가 창으로 · 밖을 누르면 편집기로(사건은 그대로 통과).
+        if side
+            && matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            )
+        {
+            let was = self.ai.side_focus;
+            self.ai.side_focus = in_view || self.ai_view.popup_open();
+            if was != self.ai.side_focus {
+                self.redraw();
+            }
+        }
         let pointer = is_mouse || is_wheel_ev(&ev);
         let popup = self.ai_view.popup_open();
         if pointer && (in_view || popup) {
@@ -2500,7 +2554,7 @@ impl App {
             self.ai_view_actions();
             return true;
         }
-        if !pointer && self.focus == Focus::Editor {
+        if !pointer && self.focus == Focus::Editor && (tab || self.ai.side_focus) {
             if self.ai_view.on_event(&ev) {
                 self.redraw();
             }

@@ -1010,6 +1010,8 @@ impl App {
             | "ai.mcp_port"
             | "ai.provider"
             | "ai.codex_path"
+            | "ai.side"
+            | "ai.side_width"
             | "ai.codex_mode"
             | "ai.codex_effort"
             | "ai.codex_auto"

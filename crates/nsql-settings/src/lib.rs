@@ -6461,6 +6461,25 @@ pub const REGISTRY: &[Entry] = &[
         default: "180",
     },
     Entry {
+        key: "ai.side",
+        cat: Msg::CatAi,
+        label: Msg::LblAiSide,
+        desc: Msg::DescAiSide,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "ai.side_width",
+        cat: Msg::CatAi,
+        label: Msg::LblAiSideWidth,
+        desc: Msg::DescAiSideWidth,
+        kind: SettingKind::Int {
+            min: 240,
+            max: 1200,
+        },
+        default: "420",
+    },
+    Entry {
         key: "ai.mcp_port",
         cat: Msg::CatAi,
         label: Msg::LblAiMcpPort,

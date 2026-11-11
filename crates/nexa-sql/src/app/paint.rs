@@ -738,6 +738,34 @@ impl App {
                     self.editors.paint_bodies(&mut dc, &th);
                 }
             }
+            // ★ 편집기 옆 AI 분할 창(사용자 11-11) = UI 글꼴 · 편집기 오른쪽.
+            if self.ai.side_rect.w > 0 && !self.ai_view_active() {
+                let vprefs = FontPrefs {
+                    base: SlotFont {
+                        size: ui_px,
+                        bold: false,
+                        italic: false,
+                    },
+                    message: SlotFont {
+                        size: ui_px * 1.4,
+                        bold: true,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(vprefs);
+                let r = self.ai.side_rect;
+                dc.fill_rect(Rect::new(r.x - 1, r.y, 1, r.h), th.border);
+                let info = self.ai_view_info();
+                self.ai_view.set_bounds(r, s);
+                match self.ai.cur.and_then(|i| self.ai.sessions.get(i)) {
+                    Some(sess) => self.ai_view.paint(&mut dc, &th, sess, &info),
+                    None => {
+                        let empty = crate::ai::Session::new(crate::ai::Mode::Api, "", "", "");
+                        self.ai_view.paint(&mut dc, &th, &empty, &info);
+                    }
+                }
+            }
         }
         // ★ 객체 상세 본문(읽기 전용 텍스트박스 · docs/86) — 글꼴·크기 = **객체 탐색기와 같게**(UI 글꼴 · `explorer.font_size` ·
         //   사용자 09-28 "객체 상세 패널의 글꼴/크기를 객체 탐색기와 일치시켜" · 종전 = 편집기 고정폭).
@@ -1003,7 +1031,7 @@ impl App {
             // ★ git 덩어리 diff 팝업(C-1 후속 · 11-10) — 편집기 팝업 층.
             self.githunk.paint(&mut dc, &th);
             self.ext_view.paint_popup(&mut dc, &th);
-            if self.ai_view_active() {
+            if self.ai_view_active() || self.ai.side_rect.w > 0 {
                 self.ai_view.paint_popup(&mut dc, &th);
             }
             if diff_tab {
