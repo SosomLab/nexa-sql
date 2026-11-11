@@ -164,7 +164,7 @@ pub(crate) struct AiView {
 
 impl Default for AiView {
     fn default() -> Self {
-        let mut composer = TextBox::new(t(Msg::AiComposerHint)).with_multiline();
+        let mut composer = TextBox::new(tf(Msg::AiComposerHint, &["Claude"])).with_multiline();
         composer.set_wrap(true);
         composer.set_line_numbers(false);
         composer.set_gutter_marks(false);
@@ -370,6 +370,12 @@ impl AiView {
         }
         let key = self.p_key.text().trim().to_string();
         (p, (!key.is_empty()).then_some(key))
+    }
+
+    /// 작성 상자 안내 글을 탭 제공자 이름으로(협업 V1 관찰 · 11-11).
+    pub(crate) fn set_provider(&mut self, p: Provider) {
+        self.composer
+            .set_placeholder(tf(Msg::AiComposerHint, &[p.title()]));
     }
 
     pub(crate) fn reset(&mut self) {

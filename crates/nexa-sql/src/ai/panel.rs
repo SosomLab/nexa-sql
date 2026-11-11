@@ -93,7 +93,11 @@ impl Hit {
             Hit::NewChat => t(Msg::AiNewChat).to_string(),
             Hit::Profiles => t(Msg::AiProfiles).to_string(),
             Hit::ModeChip => tf(
-                Msg::AiTipMode,
+                if st.provider == Provider::Codex {
+                    Msg::AiTipModeCodex
+                } else {
+                    Msg::AiTipMode
+                },
                 &[t(if st.mode == Mode::Api {
                     Msg::AiModeApi
                 } else {
@@ -734,9 +738,8 @@ impl AiPanel {
         let mut bx = x + w;
         self.r_auto = Rect::new(bx - self.s(34.0), y, self.s(34.0), row_h);
         bx = self.r_auto.x - gap;
-        if codex {
-            self.r_mode = Rect::default();
-        } else {
+        // [API|CLI] 칩은 두 제공자 모두(Codex CLI = codex 자체 로그인 · 사용자 11-11 "Codex도 CLI 기능").
+        {
             let label = t(if self.st.mode == Mode::Api {
                 Msg::AiModeApi
             } else {
@@ -771,7 +774,7 @@ impl AiPanel {
             }
             self.paint_icon_btn(dc, th, self.r_new, &self.ib_new, Hit::NewChat);
             self.paint_icon_btn(dc, th, self.r_profiles, &self.ib_profiles, Hit::Profiles);
-            if !codex {
+            {
                 let r = self.r_mode;
                 let rad = self.s(4.0);
                 let api = self.st.mode == Mode::Api;
@@ -804,7 +807,7 @@ impl AiPanel {
         }
         y += row_h + self.s(6.0);
         // ── 칩 행: [프로필 ▾][모델 · 노력도 ▾] (CLI 모드는 프로필 칩 없음 — CLI 자체 로그인)
-        let show_profile = codex || self.st.mode == Mode::Api;
+        let show_profile = self.st.mode == Mode::Api;
         if show_profile {
             let half = (w - gap) / 2;
             self.r_profile = Rect::new(x, y, half, row_h);
@@ -819,12 +822,24 @@ impl AiPanel {
             self.r_profile = Rect::default();
             self.r_model = Rect::new(x, y, w, row_h);
         }
-        let mv = format!("{} · {}", self.st.model, self.st.effort);
+        // 모델 칩 글: `claude-` 접두는 떼고 · 자리가 모자라면 노력도를 생략(협업 V1 관찰 "claude-…edium" · 11-11).
+        let short = self
+            .st
+            .model
+            .strip_prefix("claude-")
+            .unwrap_or(&self.st.model);
+        let inner_w = self.r_model.w - self.s(10.0) - self.s(16.0);
+        let full = format!("{short} · {}", self.st.effort);
+        let mv = if dc.text_width(&full) <= inner_w {
+            full
+        } else {
+            short.to_string()
+        };
         self.paint_chip(dc, th, self.r_model, &mv, Hit::ModelChip);
         y += row_h + self.s(8.0);
         // ── 아래 사용량 줄(먼저 자리를 잡아 목록 높이를 정한다)
         let mut foot_lines = 1;
-        if self.st.mode == Mode::Cli && !codex && !self.st.cli_note.is_empty() {
+        if self.st.mode == Mode::Cli && !self.st.cli_note.is_empty() {
             foot_lines += 1;
         }
         let foot_h = foot_lines * lh + self.s(10.0);

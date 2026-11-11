@@ -67,6 +67,8 @@ pub(crate) struct AiState {
     pub last_codex: Option<String>,
     /// 지금 턴이 도는 세션 id — 호스트 이벤트는 여기로(탭·세션을 바꿔도 다른 대화에 섞이지 않게).
     pub run: Option<String>,
+    /// `codex login status` 첫 줄(Codex CLI 모드 · 패널 바닥 줄 · None = 아직 안 물음 · Some("") = 조회 중).
+    pub codex_login: Option<String>,
 }
 
 impl App {
@@ -102,6 +104,7 @@ impl App {
             Provider::Codex => self.ai.last_codex = cur_id,
         }
         self.ai.tab = p;
+        self.ai_view.set_provider(p);
         let want = match p {
             Provider::Claude => self.ai.last_claude.clone(),
             Provider::Codex => self.ai.last_codex.clone(),
@@ -167,6 +170,7 @@ impl App {
         }
         self.ai_panel.set_visible(on);
         if on {
+            self.ai_codex_login_probe();
             self.ai_sync_panel();
             self.set_focus(Focus::Ai);
             self.ai_open_chat();
@@ -374,16 +378,24 @@ impl App {
 
     pub(crate) fn ai_sync_panel(&mut self) {
         let prov = self.ai_provider();
-        let cli_note = if prov == Provider::Codex {
-            let (prog, _) =
-                ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
-            tf(Msg::AiCliPath, &[&prog])
-        } else if self.ai_mode_default() == Mode::Cli
-            || self.ai_cur().is_some_and(|s| s.mode == Mode::Cli)
-        {
-            let (prog, _) =
-                ai::host::resolve_cli(self.settings.get("ai.cli_path").unwrap_or("claude"));
-            tf(Msg::AiCliPath, &[&prog])
+        let mode_now = self
+            .ai_cur()
+            .map(|s| s.mode)
+            .unwrap_or_else(|| self.ai_mode_default());
+        // CLI 모드 바닥 줄 = 실행 파일 경로(+ Codex는 `codex login status` 첫 줄).
+        let cli_note = if mode_now == Mode::Cli {
+            let (key, dflt) = match prov {
+                Provider::Codex => ("ai.codex_path", "codex"),
+                Provider::Claude => ("ai.cli_path", "claude"),
+            };
+            let (prog, _) = ai::host::resolve_cli(self.settings.get(key).unwrap_or(dflt));
+            let mut n = tf(Msg::AiCliPath, &[&prog]);
+            if prov == Provider::Codex {
+                if let Some(st) = self.ai.codex_login.as_deref().filter(|s| !s.is_empty()) {
+                    n = format!("{n} · {st}");
+                }
+            }
+            n
         } else {
             String::new()
         };
@@ -529,6 +541,7 @@ impl App {
                             }
                         }
                     }
+                    self.ai_codex_login_probe();
                 }
                 PanelAction::SetProfile(p) => {
                     self.ai.store.current = p.clone();
@@ -808,6 +821,46 @@ impl App {
             });
     }
 
+    /// ★ Codex CLI 로그인 상태(`codex login status` 첫 줄 · 스레드 · 콘솔 창 없음) — Codex 탭이 CLI 모드일 때 한 번만.
+    fn ai_codex_login_probe(&mut self) {
+        if self.ai.tab != Provider::Codex || self.ai.codex_login.is_some() {
+            return;
+        }
+        let mode_now = self
+            .ai_cur()
+            .map(|s| s.mode)
+            .unwrap_or_else(|| self.ai_mode_default());
+        if mode_now != Mode::Cli {
+            return;
+        }
+        self.ai.codex_login = Some(String::new());
+        let (prog, prefix) =
+            ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
+        let tx = self.ai_host().tx.clone();
+        let wake = self.ai_wake();
+        let _ = std::thread::Builder::new()
+            .name("ai-codex-login".into())
+            .spawn(move || {
+                let mut cmd = nsql_ext::net::quiet_command(&prog);
+                cmd.args(&prefix).args(["login", "status"]);
+                let line = match cmd.output() {
+                    Ok(o) => {
+                        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+                        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+                        out.lines()
+                            .chain(err.lines())
+                            .map(str::trim)
+                            .find(|l| !l.is_empty())
+                            .unwrap_or("")
+                            .to_string()
+                    }
+                    Err(e) => e.to_string(),
+                };
+                let _ = tx.send(AiEvent::Note(format!("codexlogin:{line}")));
+                wake();
+            });
+    }
+
     /// 비용 표(설정 `ai.prices`).
     fn ai_prices(&self) -> String {
         self.settings
@@ -845,9 +898,7 @@ impl App {
             return;
         }
         let is_codex = self.ai_provider() == Provider::Codex;
-        let key = key
-            .or_else(|| self.ai_key_for(&p.name))
-            .or_else(|| (is_codex && self.settings.flag("ai.codex_cli_login")).then(String::new));
+        let key = key.or_else(|| self.ai_key_for(&p.name));
         let Some(key) = key else {
             self.ai.note = t(Msg::AiKeyMissing).into();
             return;
@@ -929,6 +980,7 @@ impl App {
         }
         if self.ai_provider() == Provider::Codex {
             self.ai_send_codex(
+                mode,
                 text,
                 &attachments,
                 &profile,
@@ -1055,10 +1107,12 @@ impl App {
         self.ai_after_send();
     }
 
-    /// Codex(`codex app-server` · API 키 로그인 · dynamicTools = 우리 도구 표).
+    /// Codex(`codex app-server` · dynamicTools = 우리 도구 표) — API 모드 = 프로필 API 키 로그인 · CLI 모드 = codex CLI 자체
+    /// (ChatGPT) 로그인 그대로(개인 사용 전용 · 110 §13-1 · 사용자 11-11 "Codex도 CLI 기능").
     #[allow(clippy::too_many_arguments)]
     fn ai_send_codex(
         &mut self,
+        mode: Mode,
         text: &str,
         attachments: &[Attachment],
         profile: &str,
@@ -1067,8 +1121,12 @@ impl App {
         resume: Option<String>,
         system: &str,
     ) {
-        let key = self.ai_key_for(profile).unwrap_or_default();
-        if key.is_empty() && !self.settings.flag("ai.codex_cli_login") {
+        let key = if mode == Mode::Cli {
+            String::new()
+        } else {
+            self.ai_key_for(profile).unwrap_or_default()
+        };
+        if mode == Mode::Api && key.is_empty() {
             self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[profile])));
             return;
         }
@@ -1344,6 +1402,8 @@ impl App {
                         Some((_, e)) => tf(Msg::AiValidateFailed, &[e]),
                         None => rest.to_string(),
                     };
+                } else if let Some(rest) = n.strip_prefix("codexlogin:") {
+                    self.ai.codex_login = Some(rest.to_string());
                 } else if let Some(rest) = n.strip_prefix("wif:") {
                     self.ai.note = match rest.split_once(':') {
                         Some(("ok", name)) => {

@@ -6389,14 +6389,6 @@ pub const REGISTRY: &[Entry] = &[
         default: "gpt-6.1-sol",
     },
     Entry {
-        key: "ai.codex_cli_login",
-        cat: Msg::CatAi,
-        label: Msg::LblAiCodexCliLogin,
-        desc: Msg::DescAiCodexCliLogin,
-        kind: SettingKind::Bool,
-        default: "off",
-    },
-    Entry {
         key: "ai.prices",
         cat: Msg::CatAi,
         label: Msg::LblAiPrices,

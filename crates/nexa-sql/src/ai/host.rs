@@ -114,7 +114,7 @@ fn write_line(w: &mut dyn Write, line: &str) -> Result<(), String> {
 }
 
 /// ★ Codex 모델 목록(110 §15-5 · 프로필 [검증]): `codex app-server`를 잠깐 띄워 initialize → (apiKey 로그인) → `model/list` 한 번 →
-/// 종료. 키가 비면 CLI 자체 로그인(`ai.codex_cli_login`)으로 조회. 30초 상한 · 콘솔 창 없음.
+/// 종료. 키가 비면 CLI 자체 로그인으로 조회. 30초 상한 · 콘솔 창 없음.
 pub(crate) fn codex_list_models(
     program: &str,
     prefix: &[String],
