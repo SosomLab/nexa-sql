@@ -3,6 +3,7 @@
 //! Shift+Enter = 줄 바꿈 · `/` 명령 팝업) · 첨부 칩(파일 · 클립보드 · 조회 결과) · [보내기]/[■]. 두 번째 페이지 = **프로필 관리**
 //! (다중 API 프로필 · 키는 마스킹 입력 → 볼트 · [검증] = `/v1/models`).
 
+use super::picker::{PickEvent, PickItem, Picker};
 use super::wif::Wif;
 use super::{ChatMsg, Kind, Mode, Profile, Provider, Session};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -52,7 +53,6 @@ pub(crate) enum ViewAction {
     ProfileSave(Profile, Option<String>, Option<String>),
     /// 복제(목록 인덱스).
     ProfileDup(String),
-    ProfileValidate(Profile, Option<String>),
     /// WIF 프로필 브라우저 로그인(폼 내용으로).
     ProfileLogin(Profile),
     ShowPage(Page),
@@ -110,7 +110,13 @@ enum Btn {
     ProfileDup(usize),
     ProfileNew,
     ProfileSave,
-    ProfileValidate,
+    /// 목록 행(클릭 = 편집).
+    ProfileRow(usize),
+    /// 고급(기본 URL · 워크스페이스) 접기/펼치기.
+    ProfileAdvanced,
+    /// 모델 · 노력도 칩(큰 선택 팝업).
+    ProfileModel,
+    ProfileEffort,
     /// 인증 방식 토글(API 키 ↔ WIF).
     ProfileAuth,
     ProfileLogin,
@@ -146,8 +152,15 @@ pub(crate) struct AiView {
     p_name: TextBox,
     p_url: TextBox,
     p_ws: TextBox,
-    p_model: TextBox,
-    p_effort: TextBox,
+    /// 모델 · 노력도(칩 → 큰 팝업 · 사용자 11-11 "콤보로") · 편집 중 프로필이 조회한 모델 목록.
+    p_model: String,
+    p_effort: String,
+    p_models: Vec<String>,
+    /// 고급(기본 URL · 워크스페이스) 펼침.
+    p_adv: bool,
+    provider: Provider,
+    picker: Option<(Btn, Picker)>,
+    lh: i32,
     p_key: TextBox,
     /// 인증 = WIF(110 §14-5) · 아래 다섯 상자.
     p_wif: bool,
@@ -202,8 +215,13 @@ impl Default for AiView {
             p_name: tb("name"),
             p_url: tb(super::DEFAULT_BASE_URL),
             p_ws: tb("wrkspc_… (optional)"),
-            p_model: tb(super::DEFAULT_MODEL),
-            p_effort: tb(super::DEFAULT_EFFORT),
+            p_model: super::DEFAULT_MODEL.to_string(),
+            p_effort: super::DEFAULT_EFFORT.to_string(),
+            p_models: Vec::new(),
+            p_adv: false,
+            provider: Provider::Claude,
+            picker: None,
+            lh: 16,
             p_key,
             p_wif: false,
             p_issuer: tb("https://login.microsoftonline.com/<tenant>/v2.0"),
@@ -235,8 +253,6 @@ impl AiView {
             &mut self.p_name,
             &mut self.p_url,
             &mut self.p_ws,
-            &mut self.p_model,
-            &mut self.p_effort,
             &mut self.p_key,
             &mut self.p_issuer,
             &mut self.p_client,
@@ -267,6 +283,17 @@ impl AiView {
         }
     }
 
+    /// [검증] 뒤 조회한 모델 목록을 폼에 반영(모델 팝업 선택지).
+    pub(crate) fn set_models(&mut self, models: Vec<String>) {
+        self.p_models = models;
+    }
+
+    /// 워크스페이스 자동 보정 뒤 폼의 칸을 맞춘다.
+    pub(crate) fn set_workspace(&mut self, ws: &str) {
+        self.p_ws.set_text(ws);
+        self.p_adv = true;
+    }
+
     /// 편집 중인 기존 프로필 이름(새 프로필이면 None).
     pub(crate) fn editing_name(&self) -> Option<&str> {
         self.p_editing.as_deref()
@@ -279,9 +306,18 @@ impl AiView {
         self.p_name.set_text(&p.name);
         self.p_url.set_text(&p.base_url);
         self.p_ws.set_text(&p.workspace);
-        self.p_model.set_text(&p.model);
-        self.p_effort.set_text(&p.effort);
+        self.p_model = p.model.clone();
+        self.p_effort = p.effort.clone();
+        self.p_models = p.models.clone();
+        // 고급은 기본값과 다를 때만 펼친다(보통 손댈 일 없음).
+        self.p_adv = p.base_url != super::DEFAULT_BASE_URL || !p.workspace.is_empty();
         self.p_key.set_text("");
+        // ★ 저장된 키가 있으면 칸에 ●●●●(저장됨)을 보여 "채워져 있음"을 알린다(사용자 11-11) — 비워 두면 그대로 유지.
+        self.p_key.set_placeholder(if has_key {
+            t(Msg::AiKeyStoredMask).to_string()
+        } else {
+            "sk-ant-…".to_string()
+        });
         self.p_wif = p.wif.is_some();
         let w = p.wif.clone().unwrap_or_default();
         self.p_issuer.set_text(&w.issuer);
@@ -307,9 +343,9 @@ impl AiView {
         if !(url.is_empty() || url.starts_with("https://") || url.starts_with("http://")) {
             return Some((2, t(Msg::AiUrlRule).to_string()));
         }
-        let effort = self.p_effort.text().trim().to_string();
-        if !effort.is_empty() && !super::EFFORTS.contains(&effort.as_str()) {
-            return Some((5, t(Msg::AiEffortRule).to_string()));
+        let ws = self.p_ws.text().trim().to_string();
+        if !(ws.is_empty() || ws == "default" || ws.starts_with("wrkspc_")) {
+            return Some((3, t(Msg::AiWorkspaceRule).to_string()));
         }
         if self.p_wif {
             for (i, (tb, label)) in [
@@ -323,16 +359,16 @@ impl AiView {
             .enumerate()
             {
                 if tb.text().trim().is_empty() {
-                    return Some((7 + i, tf(Msg::AiRequired, &[t(label)])));
+                    return Some((5 + i, tf(Msg::AiRequired, &[t(label)])));
                 }
             }
         } else if !self.p_has_key && self.p_key.text().trim().is_empty() {
-            return Some((6, tf(Msg::AiRequired, &[t(Msg::AiFieldKey)])));
+            return Some((4, tf(Msg::AiRequired, &[t(Msg::AiFieldKey)])));
         }
         None
     }
 
-    /// 점검 통과면 `true` · 아니면 안내 글 + 문제 상자에 포커스.
+    /// 점검 통과면 `true` · 아니면 안내 글 + 문제 상자에 포커스(고급 칸이면 펼친다).
     fn form_ok(&mut self) -> bool {
         match self.form_check() {
             None => {
@@ -341,6 +377,9 @@ impl AiView {
             }
             Some((i, msg)) => {
                 self.form_err = msg;
+                if i == 2 || i == 3 {
+                    self.p_adv = true;
+                }
                 for (j, tb) in self.boxes_mut().into_iter().enumerate() {
                     tb.set_focused(j == i);
                 }
@@ -356,14 +395,13 @@ impl AiView {
             p.base_url = url;
         }
         p.workspace = self.p_ws.text().trim().to_string();
-        let model = self.p_model.text().trim().to_string();
-        if !model.is_empty() {
-            p.model = model;
+        if !self.p_model.trim().is_empty() {
+            p.model = self.p_model.trim().to_string();
         }
-        let effort = self.p_effort.text().trim().to_string();
-        if !effort.is_empty() {
-            p.effort = effort;
+        if !self.p_effort.trim().is_empty() {
+            p.effort = self.p_effort.trim().to_string();
         }
+        p.models = self.p_models.clone();
         if self.p_wif {
             p.wif = Some(Wif {
                 issuer: self.p_issuer.text().trim().to_string(),
@@ -381,6 +419,7 @@ impl AiView {
 
     /// 작성 상자 안내 글을 탭 제공자 이름으로(협업 V1 관찰 · 11-11).
     pub(crate) fn set_provider(&mut self, p: Provider) {
+        self.provider = p;
         self.composer
             .set_placeholder(tf(Msg::AiComposerHint, &[p.title()]));
     }
@@ -408,8 +447,6 @@ impl AiView {
                 &mut self.p_name,
                 &mut self.p_url,
                 &mut self.p_ws,
-                &mut self.p_model,
-                &mut self.p_effort,
                 &mut self.p_key,
                 &mut self.p_issuer,
                 &mut self.p_client,
@@ -426,7 +463,7 @@ impl AiView {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.composer.popup_open() || !self.slash.is_empty()
+        self.composer.popup_open() || !self.slash.is_empty() || self.picker.is_some()
     }
 
     pub(crate) fn set_focused(&mut self, on: bool) {
@@ -443,7 +480,6 @@ impl AiView {
     pub(crate) fn composer_text(&self) -> String {
         self.composer.text()
     }
-    #[cfg(test)]
     pub(crate) fn set_composer_text(&mut self, s: &str) {
         self.composer.set_text(s);
         self.update_slash();
@@ -772,11 +808,51 @@ impl AiView {
                     self.actions.push(ViewAction::ProfileSave(p, key, prev));
                 }
             }
-            Btn::ProfileValidate => {
-                if self.form_ok() {
-                    let (p, key) = self.form_profile();
-                    self.actions.push(ViewAction::ProfileValidate(p, key));
-                }
+            Btn::ProfileRow(i) => self
+                .actions
+                .push(ViewAction::ProfileUse(format!("edit:{i}"))),
+            Btn::ProfileAdvanced => self.p_adv = !self.p_adv,
+            Btn::ProfileModel | Btn::ProfileEffort => {
+                let anchor = self
+                    .buttons
+                    .iter()
+                    .find(|(k, _)| *k == b)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_default();
+                let (title, items, cur) = if b == Btn::ProfileModel {
+                    (
+                        t(Msg::AiPickModel),
+                        super::model_items(self.provider, &self.p_models, &self.p_model),
+                        self.p_model.clone(),
+                    )
+                } else {
+                    (
+                        t(Msg::AiPickEffort),
+                        super::effort_items(),
+                        self.p_effort.clone(),
+                    )
+                };
+                let items: Vec<PickItem> = items
+                    .into_iter()
+                    .map(|(id, desc)| PickItem {
+                        id: id.clone(),
+                        title: id,
+                        desc,
+                    })
+                    .collect();
+                let sel = items.iter().position(|i| i.id == cur);
+                let host = self.bounds;
+                let p = Picker::new(
+                    title,
+                    items,
+                    sel,
+                    Vec::new(),
+                    anchor,
+                    host,
+                    self.lh,
+                    self.scale,
+                );
+                self.picker = Some((b, p));
             }
             Btn::ProfileAuth => {
                 self.p_wif = !self.p_wif;
@@ -794,6 +870,29 @@ impl AiView {
 
     fn on_event_profiles(&mut self, ev: &InputEvent) -> bool {
         let mut inv = Invalidations::default();
+        // 모델/노력도 큰 팝업이 열려 있으면 그것이 먼저(바깥 클릭 = 닫고 그대로 진행).
+        if let Some((kind, p)) = &mut self.picker {
+            let kind = *kind;
+            match p.on_event(ev) {
+                PickEvent::None | PickEvent::Redraw => return true,
+                PickEvent::Pick(id) => {
+                    if kind == Btn::ProfileModel {
+                        self.p_model = id;
+                    } else {
+                        self.p_effort = id;
+                    }
+                    self.picker = None;
+                    return true;
+                }
+                PickEvent::Effort(_) | PickEvent::Toggle(_) => return true,
+                PickEvent::Close => {
+                    self.picker = None;
+                    if !matches!(ev, InputEvent::MouseDown { .. }) {
+                        return true;
+                    }
+                }
+            }
+        }
         // 팝업(편집 메뉴) 열린 상자가 먼저.
         for tb in self.boxes_mut() {
             if tb.popup_open() {
@@ -1263,6 +1362,26 @@ impl AiView {
         }
     }
 
+    /// 폼 칩(값 + 셰브론 · 누르면 큰 팝업) — 버튼 적중 목록에 등록.
+    fn paint_chip(&mut self, dc: &mut dyn DrawCtx, th: &Theme, r: Rect, value: &str, btn: Btn) {
+        let rad = self.s(4.0);
+        let idx = self.buttons.len();
+        let hot = self.hover == Some(idx);
+        dc.fill_round_rect(r, rad, th.field_bg);
+        dc.stroke_round_rect(r, rad, if hot { th.accent } else { th.border }, 1.0);
+        let cw = self.s(10.0);
+        let inner = Rect::new(r.x + self.s(8.0), r.y, r.w - cw - self.s(20.0), r.h);
+        let shown = nexa_ctl::draw::ellipsize_middle(dc, value, inner.w.max(10));
+        let ty = dc.text_center_y(r.y, r.h);
+        dc.text(inner.x, ty, inner, &shown, th.text);
+        nexa_ctl::controls::draw_chevron_down(
+            dc,
+            Rect::new(r.right() - cw - self.s(6.0), r.y + (r.h - cw) / 2, cw, cw),
+            th.text_dim,
+        );
+        self.buttons.push((btn, r));
+    }
+
     fn paint_button(
         &mut self,
         dc: &mut dyn DrawCtx,
@@ -1352,6 +1471,11 @@ impl AiView {
             let shown =
                 nexa_ctl::draw::ellipsize_middle(dc, &line, (bx - r.x - self.s(16.0)).max(20));
             dc.text(r.x + self.s(8.0), ty, r, &shown, th.text);
+            // 행 자체 클릭 = 편집(버튼 뒤에 넣어 버튼이 먼저 맞는다).
+            self.buttons.push((
+                Btn::ProfileRow(i),
+                Rect::new(r.x, r.y, (bx - r.x).max(0), r.h),
+            ));
             y += row_h + self.s(2.0);
         }
         if info.profiles.is_empty() {
@@ -1385,6 +1509,8 @@ impl AiView {
         let fw = (w - label_w).min(self.s(520.0));
         let mut inv = Invalidations::default();
         let wif = self.p_wif;
+        let adv = self.p_adv;
+        self.lh = lh;
         // 인증 방식 토글(API 키 ↔ WIF · Claude 전용 · 110 §14-5).
         {
             let ty = dc.text_center_y(y, row_h);
@@ -1397,6 +1523,8 @@ impl AiView {
         }
         // 안 보이는 상자는 영역을 비운다(클릭·Tab 대상에서 제외 · 11-11 키 상자 결함).
         for tb in [
+            &mut self.p_url,
+            &mut self.p_ws,
             &mut self.p_key,
             &mut self.p_issuer,
             &mut self.p_client,
@@ -1406,13 +1534,8 @@ impl AiView {
         ] {
             tb.set_bounds(Rect::default(), &mut inv);
         }
-        let mut fields: Vec<(Msg, &mut TextBox)> = vec![
-            (Msg::AiFieldName, &mut self.p_name),
-            (Msg::AiFieldBaseUrl, &mut self.p_url),
-            (Msg::AiFieldWorkspace, &mut self.p_ws),
-            (Msg::AiModel, &mut self.p_model),
-            (Msg::AiEffort, &mut self.p_effort),
-        ];
+        // ★ 간소화(사용자 11-11 "너무 불편"): 이름 · 키(또는 WIF) · 모델/노력도 칩 · [고급 ▸]에 기본 URL·워크스페이스.
+        let mut fields: Vec<(Msg, &mut TextBox)> = vec![(Msg::AiFieldName, &mut self.p_name)];
         if wif {
             fields.push((Msg::AiFieldIssuer, &mut self.p_issuer));
             fields.push((Msg::AiFieldClientId, &mut self.p_client));
@@ -1422,7 +1545,10 @@ impl AiView {
         } else {
             fields.push((Msg::AiFieldKey, &mut self.p_key));
         }
-        let has_key = self.p_has_key;
+        if adv {
+            fields.push((Msg::AiFieldBaseUrl, &mut self.p_url));
+            fields.push((Msg::AiFieldWorkspace, &mut self.p_ws));
+        }
         let scale = self.scale;
         let px = |v: f32| (v * scale).round() as i32;
         for (label, tb) in fields {
@@ -1431,18 +1557,39 @@ impl AiView {
             let r = Rect::new(x + label_w, y, fw, row_h);
             tb.set_bounds(r, &mut inv);
             tb.paint(dc, th);
-            if label == Msg::AiFieldKey && has_key {
-                dc.text(r.right() + px(8.0), ty, b, t(Msg::AiKeyKeep), th.text_dim);
-            }
+            y += row_h + px(6.0);
+        }
+        // 모델 · 노력도 칩(큰 팝업) — 한 줄에 둘.
+        {
+            let ty = dc.text_center_y(y, row_h);
+            dc.text(x, ty, b, t(Msg::AiModel), th.text_dim);
+            let half = (fw - self.s(8.0)) / 2;
+            let mr = Rect::new(x + label_w, y, half, row_h);
+            let er = Rect::new(mr.right() + self.s(8.0), y, fw - half - self.s(8.0), row_h);
+            let mv = self.p_model.clone();
+            let ev = format!("{}: {}", t(Msg::AiEffort), self.p_effort);
+            self.paint_chip(dc, th, mr, &mv, Btn::ProfileModel);
+            self.paint_chip(dc, th, er, &ev, Btn::ProfileEffort);
+            y += row_h + px(6.0);
+        }
+        // [고급 ▸/▾]
+        {
+            let label = t(if adv {
+                Msg::AiAdvancedOpen
+            } else {
+                Msg::AiAdvanced
+            });
+            let bw = dc.text_width(label) + self.s(20.0);
+            let r = Rect::new(x + label_w, y, bw, row_h);
+            self.paint_button(dc, th, r, label, false, Btn::ProfileAdvanced);
             y += row_h + px(6.0);
         }
         y += self.s(4.0);
         let mut bx = x + label_w;
-        let mut btns = vec![(Btn::ProfileSave, t(Msg::AiSave), true)];
+        let mut btns = vec![(Btn::ProfileSave, t(Msg::AiSaveValidate), true)];
         if wif {
             btns.push((Btn::ProfileLogin, t(Msg::AiLogin), false));
         }
-        btns.push((Btn::ProfileValidate, t(Msg::AiValidate), false));
         btns.push((Btn::Back, t(Msg::AiBack), false));
         for (btn, label, primary) in btns {
             let bw = dc.text_width(label) + self.s(24.0);
@@ -1501,12 +1648,13 @@ impl AiView {
         }
         self.composer.paint_popup(dc, th);
         if self.page == Page::Profiles {
+            if let Some((_, p)) = &self.picker {
+                p.paint(dc, th);
+            }
             for tb in [
                 &self.p_name,
                 &self.p_url,
                 &self.p_ws,
-                &self.p_model,
-                &self.p_effort,
                 &self.p_key,
                 &self.p_issuer,
                 &self.p_client,
@@ -1844,7 +1992,7 @@ mod tests {
         v.p_name.set_text("api1");
         assert_eq!(
             v.form_check().map(|e| e.0),
-            Some(6),
+            Some(4),
             "key required for a new profile"
         );
         v.p_key.set_text("sk-ant-x");
@@ -1852,11 +2000,12 @@ mod tests {
         v.p_url.set_text("api.anthropic.com");
         assert_eq!(v.form_check().map(|e| e.0), Some(2), "url scheme");
         v.p_url.set_text("https://api.anthropic.com");
-        v.p_effort.set_text("ultra");
-        assert_eq!(v.form_check().map(|e| e.0), Some(5), "effort choice");
-        v.p_effort.set_text("high");
+        v.p_ws.set_text("Default");
+        assert_eq!(v.form_check().map(|e| e.0), Some(3), "workspace id format");
+        v.p_ws.set_text("wrkspc_0123");
+        assert!(v.form_check().is_none());
         v.p_wif = true;
-        assert_eq!(v.form_check().map(|e| e.0), Some(7), "wif issuer required");
+        assert_eq!(v.form_check().map(|e| e.0), Some(5), "wif issuer required");
         assert!(!v.form_ok() && !v.form_err.is_empty());
         assert!(v.p_issuer.is_focused());
     }

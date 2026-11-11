@@ -271,3 +271,16 @@
 | 5 | Codex도 CLI 기능(사용자 11-11 추가 지시) | Codex 패널에도 [API|CLI] 칩. API = API 키 프로필로 `codex app-server` 로그인(종전 그대로) · **CLI = codex CLI 자체(ChatGPT) 로그인을 app-server가 그대로 사용**(키 없음 · 프로필 칩 숨김 · 개인 사용 전용 = 110 §13-1 · 칩 툴팁에 안내). 엔진이 같으니 도구 16·승인 카드·`thread/resume` 이어하기 동일. 바닥 줄 = codex 경로 + `codex login status` 첫 줄(탭을 열거나 CLI로 바꿀 때 한 번 조회 · 스레드 · 콘솔 창 없음 · 이 PC = "Logged in using ChatGPT"). 설정 `ai.codex_cli_login`은 칩으로 대체해 **제거**(설정 파일의 옛 키는 unknown으로 보관되어 무해) · `ai.mode` 설명을 두 제공자용으로. |
 - 시험 추가 = mod 1(이름 규칙·rename) · view 1(필수값) · picker 1(행 클릭·휠·점·스위치·닫기) · panel 1(팝업 열기·선택·툴팁 글) · 아이콘 ASCII 미리보기에 ai/codex/key 추가.
 - 실기(T-475)에 추가: ⑧ 프로필 폼 키 입력·필수값 안내·rename·복제 ⑨ 활동 막대 Codex 탭 ↔ Claude 탭 전환(세션 목록·채팅 탭 분리) ⑩ 아이콘 툴팁 · 모델/프로필 큰 팝업(점으로 노력도 · Auto).
+
+### 15-7 사용자 실기 피드백 2차(2026-11-11 · 커밋 06ddc1f4 · 프로필 간소화/자동 모델 이름 커밋)
+실기 원문: 조직 범위 키(`sk-ant-usr-…`)로 [검증] → 400 "not scoped to a workspace" → "Default"(이름) 입력 → 400 "must be a valid workspace ID" → `wrkspc_…` 입력 → ✓ 모델 15개. 사용자 "프로필 관리가 너무 불편 · Model/Effort는 목록을 받아 콤보로 · 바뀌지 않고 버전까지 자동 반영되는 이름 · 저장된 키는 ●●●●로 보이게".
+
+| # | 구현 |
+|---|---|
+| 1 | **폼 간소화**: 이름 · API 키(저장된 키는 placeholder `•••• (저장됨 — 비우면 유지)`) · 모델/노력도 **칩 → 큰 선택 팝업**(§15-6의 `Picker` 재사용 · 노력도 5개 설명 줄) · **[고급 ▸]**(기본 URL · Workspace id — 기본값과 다를 때만 자동 펼침) · 버튼 = **[저장 + 검증]** 하나(저장 → 키/토큰 있으면 바로 검증 → 모델 목록 → 폼에 반영) · 목록 **행 클릭 = 편집** · API 모드에서 프로필 없이 보내면 오류 대신 프로필 폼(작성 글은 보존). |
+| 2 | **워크스페이스 자동 보정**: 검증이 "not scoped to a workspace"로 실패하고 Workspace id가 비어 있으면 `default`로 다시 시도 → 성공이면 프로필에 `default` 저장 + 안내("조직 키라 Default로 자동 설정 — 다른 워크스페이스는 고급에서"). 폼 점검에 Workspace id 형식(`wrkspc_…` 또는 `default` · 이름 거부) 추가. 06ddc1f4 = 그 오류 원문 대신 안내 + 칸 포커스 · 안내 줄 줄 바꿈. |
+| 3 | **자동 모델 이름(가족)**: `opus` · `sonnet` · `haiku` · `fable`(Claude) · `sol` · `sol-mini`(Codex). 세션/프로필/설정의 모델이 가족 이름이면 **보낼 때** `resolve_model`이 프로필이 조회한 목록(없으면 내장 표)에서 **버전 숫자가 가장 큰 id**(같으면 날짜 없는 짧은 별칭)로 푼다 — 다음 판이 나오면 [검증] 한 번으로 자동 반영. 모델 팝업 = 가족 이름 먼저(설명 "자동: 최신 opus(지금 claude-opus-5-5)") → 조회/내장 id. 기본값 `ai.model=opus` · `ai.codex_model=sol`. 비용 추정도 풀어서. |
+| 4 | 상태줄 "Clipboard unavailable (Linux: …)"가 Windows에 뜨던 문구 → "클립보드에 글이 없습니다(Linux는 …도 확인)". |
+
+- 시험 = mod(가족 풀기 · 항목 · 노력도) · view(필수값에 Workspace 형식) 갱신.
+- 실기(T-475)에 추가: ⑫ 프로필 폼 새 흐름(이름+키 → [저장 + 검증] → 자동 보정 안내 · 모델 팝업에서 `opus` 선택 → 보내기).

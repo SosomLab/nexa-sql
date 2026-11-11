@@ -77,6 +77,13 @@ impl Provider {
             Provider::Codex => CODEX_MODELS,
         }
     }
+    /// 자동 모델 이름(가족).
+    pub(crate) fn families(self) -> &'static [&'static str] {
+        match self {
+            Provider::Claude => CLAUDE_FAMILIES,
+            Provider::Codex => CODEX_FAMILIES,
+        }
+    }
     /// 탭·패널 제목(제품 이름 · 번역 없음).
     pub(crate) fn title(self) -> &'static str {
         match self {
@@ -122,11 +129,11 @@ pub(crate) fn model_desc(id: &str) -> nsql_i18n::Msg {
 }
 
 /// Codex 기본 모델(110 §13-2 표).
-pub(crate) const DEFAULT_CODEX_MODEL: &str = "gpt-6.1-sol";
+pub(crate) const DEFAULT_CODEX_MODEL: &str = "sol";
 pub(crate) const CODEX_MODELS: &[&str] = &["gpt-6.1-sol", "gpt-6.1-sol-mini"];
 
 /// 기본 모델(claude-api 스킬 기본 · docs/110 §10 ⑤).
-pub(crate) const DEFAULT_MODEL: &str = "claude-opus-5-5";
+pub(crate) const DEFAULT_MODEL: &str = "opus";
 pub(crate) const DEFAULT_EFFORT: &str = "medium";
 pub(crate) const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 /// 모델 선택지(설정 표 · Models API 조회는 2차).
@@ -137,6 +144,111 @@ pub(crate) const MODELS: &[&str] = &[
     "claude-fable-5-1",
 ];
 pub(crate) const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// ★ 자동 모델 이름(사용자 11-11 "바뀌지 않고 버전까지 자동 반영되는 이름"): 세션·프로필의 모델이 가족 이름이면 **보낼 때**
+/// 프로필이 조회한 목록(없으면 내장 표)에서 가장 새 id로 푼다([`resolve_model`]).
+pub(crate) const CLAUDE_FAMILIES: &[&str] = &["opus", "sonnet", "haiku", "fable"];
+pub(crate) const CODEX_FAMILIES: &[&str] = &["sol", "sol-mini"];
+
+pub(crate) fn is_family(p: Provider, name: &str) -> bool {
+    p.families().contains(&name)
+}
+
+fn matches_family(id: &str, fam: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    match fam {
+        "sol" => id.contains("sol") && !id.contains("mini"),
+        "sol-mini" => id.contains("sol") && id.contains("mini"),
+        f => id.contains(f),
+    }
+}
+
+/// id 안의 숫자 묶음(버전 · 날짜) — 큰 쪽이 새 것. 같으면 짧은 id(날짜 없는 별칭) 우선.
+fn version_key(id: &str) -> (Vec<u64>, std::cmp::Reverse<usize>) {
+    let mut v = Vec::new();
+    let mut cur: Option<u64> = None;
+    for c in id.chars() {
+        if let Some(d) = c.to_digit(10) {
+            cur = Some(
+                cur.unwrap_or(0)
+                    .saturating_mul(10)
+                    .saturating_add(u64::from(d)),
+            );
+        } else if let Some(n) = cur.take() {
+            v.push(n);
+        }
+    }
+    if let Some(n) = cur {
+        v.push(n);
+    }
+    (v, std::cmp::Reverse(id.len()))
+}
+
+/// 가족 이름 → 가장 새 id(조회 목록 우선 · 없으면 내장 표 · 그래도 없으면 이름 그대로). 가족 이름이 아니면 그대로.
+pub(crate) fn resolve_model(p: Provider, name: &str, fetched: &[String]) -> String {
+    if !is_family(p, name) {
+        return name.to_string();
+    }
+    let pick = |ids: &[&str]| -> Option<String> {
+        ids.iter()
+            .filter(|id| matches_family(id, name))
+            .max_by_key(|id| version_key(id))
+            .map(|s| (*s).to_string())
+    };
+    let fetched: Vec<&str> = fetched.iter().map(String::as_str).collect();
+    pick(&fetched)
+        .or_else(|| pick(p.models()))
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// 모델 선택 항목(id · 설명): 자동 이름들(설명 = 지금 풀리는 id) → 조회/내장 id들 · 현재 값은 항상 포함.
+pub(crate) fn model_items(p: Provider, fetched: &[String], current: &str) -> Vec<(String, String)> {
+    use nsql_i18n::{t, tf, Msg};
+    let mut out: Vec<(String, String)> = p
+        .families()
+        .iter()
+        .map(|f| {
+            let now = resolve_model(p, f, fetched);
+            ((*f).to_string(), tf(Msg::AiDescAuto, &[f, &now]))
+        })
+        .collect();
+    let ids: Vec<String> = if fetched.is_empty() {
+        p.models().iter().map(|m| (*m).to_string()).collect()
+    } else {
+        fetched.to_vec()
+    };
+    let builtin = p.models();
+    for id in ids {
+        let d = if builtin.contains(&id.as_str()) {
+            t(model_desc(&id)).to_string()
+        } else {
+            t(Msg::AiDescFetched).to_string()
+        };
+        out.push((id, d));
+    }
+    if !current.is_empty() && !out.iter().any(|(id, _)| id == current) {
+        out.insert(0, (current.to_string(), String::new()));
+    }
+    out
+}
+
+/// 노력도 선택 항목(값 · 설명).
+pub(crate) fn effort_items() -> Vec<(String, String)> {
+    use nsql_i18n::{t, Msg};
+    EFFORTS
+        .iter()
+        .map(|e| {
+            let d = match *e {
+                "low" => Msg::AiDescEffortLow,
+                "medium" => Msg::AiDescEffortMedium,
+                "high" => Msg::AiDescEffortHigh,
+                "xhigh" => Msg::AiDescEffortXhigh,
+                _ => Msg::AiDescEffortMax,
+            };
+            ((*e).to_string(), t(d).to_string())
+        })
+        .collect()
+}
 
 /// API 프로필(다중 등록 · 110 §14-3) — 키는 여기 없다(볼트 `ai.<이름>`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,22 +284,6 @@ impl Profile {
     /// 볼트 비밀 이름.
     pub(crate) fn secret_name(&self) -> String {
         format!("ai.{}", self.name)
-    }
-    /// 모델 선택지 — 조회한 목록이 있으면 그것, 없으면 제공자 내장 표 · 현재 모델은 항상 포함.
-    pub(crate) fn model_choices(&self) -> Vec<String> {
-        let mut v: Vec<String> = if self.models.is_empty() {
-            self.provider
-                .models()
-                .iter()
-                .map(|m| (*m).to_string())
-                .collect()
-        } else {
-            self.models.clone()
-        };
-        if !self.model.is_empty() && !v.contains(&self.model) {
-            v.insert(0, self.model.clone());
-        }
-        v
     }
 }
 
@@ -883,6 +979,52 @@ mod tests {
     }
 
     #[test]
+    fn family_names_resolve_to_newest() {
+        let none: Vec<String> = Vec::new();
+        assert_eq!(
+            resolve_model(Provider::Claude, "opus", &none),
+            "claude-opus-5-5"
+        );
+        assert_eq!(resolve_model(Provider::Codex, "sol", &none), "gpt-6.1-sol");
+        assert_eq!(
+            resolve_model(Provider::Codex, "sol-mini", &none),
+            "gpt-6.1-sol-mini"
+        );
+        assert_eq!(
+            resolve_model(Provider::Claude, "claude-haiku-5-5", &none),
+            "claude-haiku-5-5"
+        );
+        let fetched: Vec<String> = [
+            "claude-opus-4-1-20250805",
+            "claude-opus-5-5-20260401",
+            "claude-opus-5-5",
+            "claude-opus-5-6",
+            "claude-sonnet-5-5",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        assert_eq!(
+            resolve_model(Provider::Claude, "opus", &fetched),
+            "claude-opus-5-6"
+        );
+        assert_eq!(
+            resolve_model(Provider::Claude, "sonnet", &fetched),
+            "claude-sonnet-5-5"
+        );
+        // 조회 목록에 없는 가족은 내장 표로.
+        assert_eq!(
+            resolve_model(Provider::Claude, "haiku", &fetched),
+            "claude-haiku-5-5"
+        );
+        let items = model_items(Provider::Claude, &fetched, "opus");
+        assert_eq!(items[0].0, "opus");
+        assert!(items[0].1.contains("claude-opus-5-6"));
+        assert_eq!(items.len(), CLAUDE_FAMILIES.len() + fetched.len());
+        assert_eq!(effort_items().len(), EFFORTS.len());
+    }
+
+    #[test]
     fn profile_name_rule_and_rename() {
         assert!(profile_name_ok("api1") && profile_name_ok("team-key.v2"));
         assert!(!profile_name_ok("api#12") && !profile_name_ok("") && !profile_name_ok(".x"));
@@ -900,14 +1042,14 @@ mod tests {
     fn profile_models_roundtrip_and_choices() {
         let mut p = Profile::new("w");
         p.model = "claude-x".into();
-        assert_eq!(p.model_choices()[0], "claude-x");
-        assert_eq!(p.model_choices().len(), MODELS.len() + 1);
+        let items = model_items(Provider::Claude, &p.models, &p.model);
+        assert_eq!(items[0].0, "claude-x");
+        assert_eq!(items.len(), CLAUDE_FAMILIES.len() + MODELS.len() + 1);
         p.models = vec!["claude-x".into(), "claude-y".into()];
         let mut st = ProfileStore::default();
         st.upsert(p.clone());
         let back = ProfileStore::parse(&st.dump());
         assert_eq!(back.profiles[0].models, p.models);
-        assert_eq!(back.profiles[0].model_choices(), p.models);
         // WIF 프로필 왕복(토큰은 저장 파일에 없다).
         let mut q = Profile::new("corp");
         q.wif = Some(wif::Wif {

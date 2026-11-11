@@ -6287,7 +6287,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblAiModel,
         desc: Msg::DescAiModel,
         kind: SettingKind::Text,
-        default: "claude-opus-5-5",
+        default: "opus",
     },
     Entry {
         key: "ai.effort",
@@ -6386,7 +6386,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblAiCodexModel,
         desc: Msg::DescAiCodexModel,
         kind: SettingKind::Text,
-        default: "gpt-6.1-sol",
+        default: "sol",
     },
     Entry {
         key: "ai.prices",

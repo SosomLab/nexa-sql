@@ -411,29 +411,15 @@ impl App {
             .map(|s| s.model.clone())
             .unwrap_or_else(|| self.ai_model_default(provider));
         let models: Vec<(String, String)> = {
-            let prof = self
+            let fetched = self
                 .ai
                 .store
                 .profiles
                 .iter()
-                .find(|p| p.name == profile_name);
-            let mut v = prof
-                .map(Profile::model_choices)
-                .unwrap_or_else(|| provider.models().iter().map(|m| (*m).to_string()).collect());
-            if !v.contains(&model) {
-                v.insert(0, model.clone());
-            }
-            let builtin = provider.models();
-            v.into_iter()
-                .map(|id| {
-                    let d = if builtin.contains(&id.as_str()) {
-                        t(ai::model_desc(&id)).to_string()
-                    } else {
-                        t(Msg::AiDescFetched).to_string()
-                    };
-                    (id, d)
-                })
-                .collect()
+                .find(|p| p.name == profile_name)
+                .map(|p| p.models.clone())
+                .unwrap_or_default();
+            ai::model_items(provider, &fetched, &model)
         };
         let keyed: Vec<String> = nsql_vault::Vault::open_default()
             .map(|v| v.secret_names())
@@ -725,8 +711,13 @@ impl App {
                     let p2 = self.ai.store.get_mut(&name).cloned();
                     self.ai_view.edit_profile(p2.as_ref(), has_key);
                     self.ai.note = tf(Msg::AiProfileSaved, &[&name]);
+                    // ★ [저장 + 검증] 한 번에(사용자 11-11): 키·토큰이 있으면 바로 검증 → 모델 목록 → 워크스페이스 자동 보정.
+                    if let Some(p2) = p2 {
+                        if has_key {
+                            self.ai_validate(p2, None);
+                        }
+                    }
                 }
-                ViewAction::ProfileValidate(p, key) => self.ai_validate(p, key),
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
                 ViewAction::ProfileDup(arg) => {
                     if let Some(p) = arg
@@ -893,7 +884,7 @@ impl App {
                             )
                         });
                     let _ = tx.send(AiEvent::Note(match r {
-                        Ok(models) => format!("validate:ok:{}:{}", p.name, models.join(",")),
+                        Ok(models) => format!("validate:ok:{}:-:{}", p.name, models.join(",")),
                         Err(e) => format!("validate:err:{e}"),
                     }));
                     wake();
@@ -915,16 +906,32 @@ impl App {
         let _ = std::thread::Builder::new()
             .name("ai-validate".into())
             .spawn(move || {
+                let mut ws_auto = false;
                 let r = match &codex_cli {
                     Some((prog, prefix)) => ai::host::codex_list_models(prog, prefix, &key),
-                    None => ai::claude_api::list_models(
-                        &p.base_url,
-                        &ApiAuth::Key(key.clone()),
-                        &p.workspace,
-                    ),
+                    None => {
+                        let auth = ApiAuth::Key(key.clone());
+                        match ai::claude_api::list_models(&p.base_url, &auth, &p.workspace) {
+                            // ★ 조직 범위 키 + 워크스페이스 미지정 → Default 워크스페이스로 다시(자동 보정 · 사용자 11-11).
+                            Err(e)
+                                if p.workspace.is_empty()
+                                    && e.contains("not scoped to a workspace") =>
+                            {
+                                let r2 = ai::claude_api::list_models(&p.base_url, &auth, "default");
+                                ws_auto = r2.is_ok();
+                                r2
+                            }
+                            other => other,
+                        }
+                    }
                 };
                 let _ = tx.send(AiEvent::Note(match r {
-                    Ok(models) => format!("validate:ok:{}:{}", p.name, models.join(",")),
+                    Ok(models) => format!(
+                        "validate:ok:{}:{}:{}",
+                        p.name,
+                        if ws_auto { "d" } else { "-" },
+                        models.join(",")
+                    ),
                     Err(e) => format!("validate:err:{e}"),
                 }));
                 wake();
@@ -956,13 +963,35 @@ impl App {
             self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
             return;
         }
-        let (mode, attachments, profile, model, effort, cli_session) = {
+        let (mode, profile) = {
+            let s = self.ai_cur().expect("session");
+            (s.mode, s.profile.clone())
+        };
+        // API 모드인데 프로필이 없으면 오류 대신 프로필 폼(키 칸부터)을 연다(사용자 11-11 "직관적으로").
+        if mode == Mode::Api && !self.ai.store.profiles.iter().any(|p| p.name == profile) {
+            self.ai_view.set_composer_text(text);
+            self.ai_view.show_page(Page::Profiles);
+            self.ai_view.edit_profile(None, false);
+            self.ai.note = t(Msg::AiNoProfile).into();
+            self.ai_sync_panel();
+            self.redraw();
+            return;
+        }
+        // ★ 자동 모델 이름(opus · sonnet · sol …)은 여기서 가장 새 id로 푼다(프로필이 조회한 목록 우선).
+        let fetched: Vec<String> = self
+            .ai
+            .store
+            .profiles
+            .iter()
+            .find(|p| p.name == profile)
+            .map(|p| p.models.clone())
+            .unwrap_or_default();
+        let provider = self.ai_provider();
+        let (attachments, model, effort, cli_session) = {
             let s = self.ai_cur_mut().expect("session");
             (
-                s.mode,
                 std::mem::take(&mut s.attachments),
-                s.profile.clone(),
-                s.model.clone(),
+                ai::resolve_model(provider, &s.model, &fetched),
                 s.effort.clone(),
                 s.cli_session.clone(),
             )
@@ -1341,9 +1370,10 @@ impl App {
                     if let Some(s) = self.ai_run_mut() {
                         let mut u = u;
                         if u.cost_usd == 0.0 {
+                            let m = ai::resolve_model(s.provider, &s.model, &[]);
                             u.cost_usd = Usage::estimate_cost_in(
                                 &prices,
-                                &s.model,
+                                &m,
                                 u.input,
                                 u.output,
                                 u.cache_read,
@@ -1385,8 +1415,9 @@ impl App {
                 if let Some(rest) = n.strip_prefix("validate:") {
                     self.ai.note = match rest.split_once(':') {
                         Some(("ok", rest)) => {
-                            // "<프로필>:<모델,…>" — 목록을 프로필에 저장(모델 콤보 선택지 · 110 §15-5).
-                            let (name, csv) = rest.split_once(':').unwrap_or((rest, ""));
+                            // "<프로필>:<d|->:<모델,…>" — 목록을 프로필에 저장(모델 팝업 선택지) · d = 워크스페이스 Default 자동 보정.
+                            let (name, rest) = rest.split_once(':').unwrap_or((rest, ""));
+                            let (ws, csv) = rest.split_once(':').unwrap_or(("-", rest));
                             let models: Vec<String> = csv
                                 .split(',')
                                 .map(str::trim)
@@ -1394,13 +1425,27 @@ impl App {
                                 .map(String::from)
                                 .collect();
                             let n = models.len().to_string();
-                            if !models.is_empty() {
-                                if let Some(p) = self.ai.store.get_mut(name) {
-                                    p.models = models;
+                            let ws_auto = ws == "d";
+                            if let Some(p) = self.ai.store.get_mut(name) {
+                                if !models.is_empty() {
+                                    p.models = models.clone();
                                 }
-                                self.ai_store_save();
+                                if ws_auto {
+                                    p.workspace = "default".into();
+                                }
                             }
-                            tf(Msg::AiValidateOk, &[&n])
+                            self.ai_store_save();
+                            if self.ai_view.editing_name() == Some(name) {
+                                self.ai_view.set_models(models);
+                                if ws_auto {
+                                    self.ai_view.set_workspace("default");
+                                }
+                            }
+                            if ws_auto {
+                                tf(Msg::AiWorkspaceAuto, &[&n])
+                            } else {
+                                tf(Msg::AiValidateOk, &[&n])
+                            }
                         }
                         // 조직 범위 키(sk-ant-usr-…)는 workspace id가 필수 — 원문 대신 할 일을 안내하고 그 칸에 포커스.
                         Some((_, e)) if e.contains("anthropic-workspace-id") => {
