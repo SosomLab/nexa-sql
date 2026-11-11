@@ -193,6 +193,9 @@ pub(crate) fn handle(line: &str, exec: &mut dyn FnMut(&str, &Json) -> ToolReply)
             ]),
         ),
         "ping" => rpc_result(&id, Json::Obj(Vec::new())),
+        // ★ Claude Code 2.1.319가 `initialize` 전에 보내는 탐색 요청(11-12): -32601을 돌리면 CLI가 ≈45초를 더 기다려 기본
+        //   제한 30초 안에 `mcp=[nexa-sql:failed]`가 됐다(흉내 서버 실측 53초 ↔ 빈 결과 8.7초). 빈 결과로 바로 답한다.
+        "server/discover" => rpc_result(&id, Json::Obj(Vec::new())),
         "tools/list" => rpc_result(
             &id,
             Json::Obj(vec![("tools".into(), super::tools::mcp_tools())]),
@@ -330,6 +333,13 @@ mod tests {
                 ok: true,
             }
         };
+        // Claude Code 2.1.319의 탐색 요청 = 빈 결과(오류면 CLI가 ≈45초 기다려 제한 30초를 넘겼다 · 11-12).
+        let disc = handle(
+            r#"{"jsonrpc":"2.0","id":0,"method":"server/discover","params":{}}"#,
+            &mut exec,
+        )
+        .expect("discover");
+        assert!(disc.contains(r#""result":{}"#), "{disc}");
         let init = handle(
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
             &mut exec,

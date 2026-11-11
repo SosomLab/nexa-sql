@@ -279,15 +279,14 @@ pub(crate) fn headless() -> bool {
     std::env::var_os("NSQL_HEADLESS").is_some_and(|v| v != "0")
 }
 
+/// ★ 모든 창은 **숨긴 채** 만든다(사용자 11-12 "변수·객체 찾기·로그 등 모든 팝업이 첫 화면이 까맣다"): 첫 present 직전에
+///   `Presenter`가 보이고 활성화한다(설정 창 11-10의 길을 공통으로). 헤드리스는 영영 숨김.
 /// 창 속성에 헤드리스를 입힌다(보이지 않게) — 모든 `create_window` 자리가 이 한 곳을 지난다.
 pub(crate) fn attrs_headless(
     attrs: winit::window::WindowAttributes,
 ) -> winit::window::WindowAttributes {
-    if headless() {
-        attrs.with_visible(false)
-    } else {
-        attrs
-    }
+    let _ = headless();
+    attrs.with_visible(false)
 }
 
 /// 창을 앞으로 — 자체 시험(`NSQL_NO_ACTIVATE=1`)에서는 **하지 않는다**(시험 인스턴스가 사용자의 전경 창·키 입력을 빼앗지 않게 ·

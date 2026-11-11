@@ -72,6 +72,10 @@ pub(crate) struct Presenter {
     last_frame: Instant,
     /// 마지막 프레임 뒤 유휴 해제를 이미 했는가(한 번만 · 다음 프레임이 되돌린다).
     trimmed: bool,
+    /// ★ 숨긴 채 만든 창(모든 창 · `winfocus::attrs_headless`)을 **첫 present 직전에** 보이고 그 뒤 활성화(사용자 11-12 "모든 팝업
+    ///   창이 첫 화면이 까맣다" · 설정 창 11-10의 길을 공통으로). 헤드리스면 영영 숨김.
+    win: Rc<Window>,
+    show_pending: bool,
 }
 
 /// 유휴 해제를 **지금** 할 것인가(순수 판정 · MC/DC 테스트): IOSurface 뒷단이고 · 아직 안 했고 · 끄지 않았고(0) · 마지막 프레임 뒤 `idle_ms`가 지났다.
@@ -85,6 +89,8 @@ pub(crate) struct Buffer<'a> {
     size: (u32, u32),
     /// present 직전에 PNG로 떨굴 경로(★ T-459 2차 · 창 id 요청에서 왔다).
     capture: Option<PathBuf>,
+    /// 첫 present인 숨긴 창 — present 직전에 보이고 뒤에 활성화(Windows는 "present → 보이기" 순서면 픽셀을 버린다 · 11-10).
+    show: Option<Rc<Window>>,
 }
 
 enum Inner<'a> {
@@ -96,20 +102,26 @@ impl Presenter {
     /// 창에 붙인다. 실패 = `Err(사유)`.
     pub(crate) fn new(win: Rc<Window>) -> Result<Presenter, String> {
         let win_id = win.id();
+        let show_pending = win.is_visible() == Some(false) && !crate::winfocus::headless();
         if use_layer(cfg!(target_os = "macos"), MAC_LAYER.load(Ordering::Relaxed)) {
             if let Some(p) = layer_for(&win) {
                 return Ok(Presenter {
-                    kind: Kind::Layer { p, win },
+                    kind: Kind::Layer {
+                        p,
+                        win: win.clone(),
+                    },
                     win_id,
                     size: (0, 0),
                     last_frame: Instant::now(),
                     trimmed: false,
+                    win,
+                    show_pending,
                 });
             }
         }
         let ctx = softbuffer::Context::new(win.clone())
             .map_err(|e| format!("softbuffer context failed: {e}"))?;
-        let surface = softbuffer::Surface::new(&ctx, win)
+        let surface = softbuffer::Surface::new(&ctx, win.clone())
             .map_err(|e| format!("softbuffer surface failed: {e}"))?;
         Ok(Presenter {
             kind: Kind::Soft { surface, _ctx: ctx },
@@ -117,6 +129,8 @@ impl Presenter {
             size: (0, 0),
             last_frame: Instant::now(),
             trimmed: false,
+            win,
+            show_pending,
         })
     }
 
@@ -171,10 +185,17 @@ impl Presenter {
             Kind::Soft { surface, .. } => surface.buffer_mut().map(Inner::Soft).map_err(|_| ())?,
             Kind::Layer { p, .. } => p.frame().map(Inner::Layer).ok_or(())?,
         };
+        let show = if self.show_pending {
+            self.show_pending = false;
+            Some(self.win.clone())
+        } else {
+            None
+        };
         Ok(Buffer {
             inner,
             size: self.size,
             capture,
+            show,
         })
     }
 
@@ -229,13 +250,21 @@ impl Buffer<'_> {
                 eprintln!("[capture] {}: {e}", path.display());
             }
         }
-        match self.inner {
+        // 숨긴 채 만든 창의 첫 present: 보이기 → present → 활성화(순서가 바뀌면 Windows가 첫 픽셀을 버려 까맣게 보인다).
+        if let Some(w) = &self.show {
+            w.set_visible(true);
+        }
+        let r = match self.inner {
             Inner::Soft(b) => b.present().map_err(|_| ()),
             Inner::Layer(f) => {
                 f.present();
                 Ok(())
             }
+        };
+        if let Some(w) = &self.show {
+            crate::winfocus::focus(w);
         }
+        r
     }
 }
 

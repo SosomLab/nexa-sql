@@ -53,6 +53,8 @@ pub(crate) struct ViewInfo {
     /// ★ 진행 단계(0 없음 · 1 요청 보냄 · 2 응답 중 · 3 완료) · 지금(epoch ms · 경과 계산) — 11-12.
     pub stage: u8,
     pub now_ms: u64,
+    /// 진행 중 활동 줄(마지막 도구 · 횟수 · 경과 · 빈 글 = 없음).
+    pub activity: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1586,15 +1588,24 @@ impl AiView {
             let key = msg_key(m);
             let need = self.lines.get(i).is_none() || self.lens[i] != key;
             // ★ basic 표시(사용자 11-12 "알아보기 어려운 메시지가 너무 많다"): 도구 호출·성공한 도구 결과는 숨긴다(실패 결과·승인·오류·Note는 보임).
-            let hidden = !self.detail
-                && matches!(
-                    m.kind,
-                    Kind::ToolCall { .. } | Kind::ToolResult { ok: true, .. }
-                );
+            // basic(사용자 11-12 "1분 넘도록 무슨 일인지 모른다" · CLI 모드는 턴 내내 도구만 오간다): 도구 호출은 **한 줄**(`⚙ 이름` · 인자 없음)로,
+            //   성공한 도구 결과는 숨김 · detail = 전부.
+            let hidden = !self.detail && matches!(m.kind, Kind::ToolResult { ok: true, .. });
+            let brief = !self.detail && matches!(m.kind, Kind::ToolCall { .. });
             if need {
                 let lines = if hidden {
                     collect_code(&m.text, &mut self.code_blocks);
                     Vec::new()
+                } else if brief {
+                    collect_code(&m.text, &mut self.code_blocks);
+                    let name = match &m.kind {
+                        Kind::ToolCall { name, .. } => name.clone(),
+                        _ => String::new(),
+                    };
+                    vec![Line {
+                        text: format!("{} ⚙ {name}", super::wall_time(m.at)),
+                        kind: LineKind::Dim,
+                    }]
                 } else {
                     layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks, who)
                 };
@@ -1782,7 +1793,7 @@ impl AiView {
                 h
             })
             .sum();
-        self.content_h = total + self.s(8.0);
+        self.content_h = total + self.s(8.0) + if info.busy { line_h } else { 0 };
         let max_scroll = (self.content_h - self.transcript.h).max(0);
         if self.stick_bottom || (info.busy && self.scroll_y >= max_scroll - line_h * 2) {
             self.scroll_y = max_scroll;
@@ -2018,6 +2029,11 @@ impl AiView {
             };
             ly += block_h + self.s(10.0) + extra;
         }
+        // ★ 진행 중 활동 줄(사용자 11-12 "1분 넘도록 확인이 안 된다"): 대본 끝에 "진행: 마지막 도구 · 도구 N회 · 경과" — 글은 호스트가 매 틱 준다.
+        if info.busy && !info.activity.is_empty() {
+            let col = if self.blink { th.accent } else { th.text_dim };
+            dc.text(x, ly, tr, &info.activity, col);
+        }
         // ★ 요청 고정 머리글(사용자 11-12 "VS Code처럼 그 요청에 종속된 내용 위에 요청을 고정"): 화면 위로 넘어간 마지막 사용자 요청을
         //   대본 맨 위에 한 줄로 고정(다음 요청이 화면에 들어오면 밀려난다 · 객체 탐색기 서버 머리 고정과 같은 꼴).
         if let Some((mi, _)) = user_tops.iter().rev().find(|(_, top)| *top < tr.y) {
@@ -2231,7 +2247,7 @@ impl AiView {
             }
             let mut sx = bx;
             // ★ 진행 단계 ①②③(사용자 11-12): 현재 단계는 깜빡인다(tick 500 ms) · 완료(3)·없음(0)은 안 그린다.
-            if info.stage > 0 && info.stage < 3 && right - sx > self.s(120.0) {
+            if info.stage > 0 && info.stage < 3 && right - sx > self.s(40.0) {
                 for (k, g) in ["①", "②", "③"].iter().enumerate() {
                     let cur = (k as u8 + 1) == info.stage;
                     let col = if cur && self.blink {

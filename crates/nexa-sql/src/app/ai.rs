@@ -124,6 +124,41 @@ impl App {
         self.redraw();
     }
 
+    /// 진행 중 활동 줄(사용자 11-12): "진행: <마지막 도구> · 도구 N회 · N s" — 턴 중에만(없으면 빈 글).
+    fn ai_activity_text(&self) -> String {
+        if !self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            return String::new();
+        }
+        let Some(s) = self.ai_cur() else {
+            return String::new();
+        };
+        let Some(lu) = s.messages.iter().rposition(|m| m.kind == Kind::User) else {
+            return String::new();
+        };
+        let now = ai::now_ms();
+        let calls: Vec<&ChatMsg> = s.messages[lu + 1..]
+            .iter()
+            .filter(|m| matches!(m.kind, Kind::ToolCall { .. }))
+            .collect();
+        let (last, since) = match calls.last() {
+            Some(m) => {
+                let name = match &m.kind {
+                    Kind::ToolCall { name, .. } => name.clone(),
+                    _ => String::new(),
+                };
+                (name, now.saturating_sub(m.at) as f64 / 1000.0)
+            }
+            None => (
+                t(Msg::AiWaitingFirst).to_string(),
+                now.saturating_sub(s.messages[lu].at) as f64 / 1000.0,
+            ),
+        };
+        tf(
+            Msg::AiActivityLine,
+            &[&last, &calls.len().to_string(), &format!("{since:.0}")],
+        )
+    }
+
     /// 진행 단계(사용자 11-12 "①②③ 중 현재 단계 깜빡임"): 0 = 턴 없음 · 1 = 요청 보냄(첫 응답 전) · 2 = 응답 수신 중 · 3 = 완료.
     fn ai_stage(&self) -> u8 {
         let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
@@ -793,6 +828,7 @@ impl App {
             provider: self.ai.tab,
             stage: self.ai_stage(),
             now_ms: ai::now_ms(),
+            activity: self.ai_activity_text(),
             sessions: self
                 .ai
                 .sessions
@@ -1214,6 +1250,27 @@ impl App {
             return;
         }
         self.ai.capture = None;
+        // ★ 채팅 **뷰 탭**에서 누르면 결과가 뷰 탭의 보이지 않는 그리드로 갔다(협업 V1 관찰 11-12) → 가장 최근 편집기 탭(뷰 아님)으로
+        //   먼저 바꾸고 실행(없으면 새 탭). 분할 창 모드는 활성 탭이 편집기라 그대로.
+        if self.ai_view_active() {
+            let target = self
+                .editors
+                .tab_history()
+                .into_iter()
+                .rev()
+                .map(|(id, _)| id)
+                .find(|id| {
+                    self.editors
+                        .index_of_id(*id)
+                        .is_some_and(|i| self.editors.view_key_of(i).is_none())
+                });
+            match target.and_then(|id| self.editors.index_of_id(id)) {
+                Some(i) => self.editors.switch(i),
+                None => self.editors.new_tab(None),
+            }
+            self.layout();
+            self.sync_grid_tab();
+        }
         let fresh_prev = if self.settings.flag("ai.result_tabs") {
             self.fresh_result_tab_for_run()
         } else {

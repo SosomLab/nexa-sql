@@ -436,3 +436,13 @@
 | ⑧ MCP 30초 초과 | "nexa-sql 도구 서버 연결 실패" 오류 보완 | 원인 후보 = Claude Code의 MCP 시작 제한 기본 30 s(`MCP_TIMEOUT`) · 브리지 `nsql` 미발견 · 앱 리스너 불통. **보완** = 기동 전 사전 점검(브리지 경로 `bridge_program`/`bridge_available` · 리스너 자기 접속 2 s · 실패 = 즉시 오류 안내) · 설정 **`ai.mcp_timeout_secs`**(기본 120)를 `MCP_TIMEOUT`/`MCP_TOOL_TIMEOUT`로 CLI에 · `init mcp=[nexa-sql:failed]`면 진단 Note(포트·브리지·원문) + CLI 프로세스 내려 다음 보내기에 재기동. |
 
 - 설정 키 +3(`ai.verbosity` · `ai.result_tabs` · `ai.mcp_timeout_secs` → AI 키 32) · i18n +18 · 이력 jsonl에 `at`/`done_at`(없던 줄 = 0 → 복원 때 지금 시각 유지).
+
+### 16-6 실기 피드백 11차(2026-11-12 새벽 · MCP 실패 원인 확정 · 진행 표시 수준 · 모든 팝업 창 첫 화면)
+| # | 실기 원문 | 원인·구현 |
+|---|---|---|
+| 1 | CLI 모드 "nexa-sql 도구 서버가 CLI에 붙지 못했다(`mcp=[nexa-sql:failed]`)" — 사전 점검(브리지·리스너)을 넣어도 재현 | **원인 확정(실측)**: Claude Code 2.1.319는 `initialize` 전에 **`server/discover`** 요청을 보낸다. 앱 MCP 서버가 `-32601 method not found`를 돌리면 CLI가 ≈45초를 더 기다린다(흉내 서버 실측: 빈 결과 8.7초 ↔ 오류 53초) → 종전 기본 제한 30초 안에 못 붙어 failed. 브리지(`nsql mcp-bridge`)는 단독 왕복 정상. **수정** = `mcp::handle`이 `server/discover`에 빈 결과(`{}`)를 바로 돌린다(단위 시험) · `ai.mcp_timeout_secs`(120)는 보험으로 유지. 사전 점검·진단 Note는 그대로. |
+| 2 | 1분 넘도록 무슨 일이 일어나는지 모름(CLI 모드) | CLI 모드는 턴 내내 도구 호출만 오가는데 basic 레벨이 도구 줄을 전부 숨겼다 → basic에서도 **도구 호출은 한 줄**(`HH:MM:SS.mmm ⚙ 이름` · 인자 없음) · 성공 결과만 숨김 · 대본 끝에 **진행 활동 줄** "● 진행: <마지막 도구> · 도구 N회 · N s"(500 ms 깜빡 · 매 틱 갱신 · 첫 응답 전 = "첫 응답 대기") · 하단 ①②③은 좁아도 그린다(임계 120→40px). |
+| 3 | 설정 창처럼 변수·객체 찾기·로그 등 **모든 팝업 창**이 첫 화면이 까맣다 | 공통화: `winfocus::attrs_headless`가 **모든 창을 숨긴 채** 만들고(헤드리스와 같은 길), `Presenter`가 **첫 present 직전에 보이고 present 뒤 활성화**(`show_pending` · Windows는 present→보이기 순서면 첫 픽셀을 버린다 · 설정 창 11-10의 길을 공통으로). 설정 창의 자체 처리·주 창의 자체 처리는 그대로(이중 호출 무해). 창 20개 전부 해당(winhost 경유 8 + 직접 생성 12). |
+
+- 사용자 확인(11-12 새벽): 요청 고정 머리글 ✓ · 진행 상태 표시 ✓(표시 수준은 위 2로 수정) · 조회마다 새 결과 탭 ✓ · 세션 탭 ✓ · 객체 찾기 창 ✓.
+- 설정 키 그대로(32) · i18n +2(`AiActivityLine` · `AiWaitingFirst`) · 시험 +1(mcp discover).
