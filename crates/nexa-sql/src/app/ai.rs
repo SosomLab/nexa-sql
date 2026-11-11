@@ -589,11 +589,37 @@ impl App {
                         self.ai.note = tf(Msg::AiProfileDeleted, &[&p.name]);
                     }
                 }
-                ViewAction::ProfileSave(mut p, key) => {
+                ViewAction::ProfileSave(mut p, key, prev) => {
                     p.provider = self.ai_provider();
                     let name = p.name.clone();
                     // WIF 프로필은 키가 없다(볼트 봉투 = 로그인 토큰 · [로그인…]이 채운다).
                     let key = if p.wif.is_some() { None } else { key };
+                    let renamed = prev.filter(|o| *o != name);
+                    let exists = self.ai.store.profiles.iter().any(|q| q.name == name);
+                    // 새 프로필이거나 이름을 바꿨는데 그 이름이 이미 있으면 덮어쓰지 않는다.
+                    if exists && (renamed.is_some() || self.ai_view.editing_name().is_none()) {
+                        self.ai.note = tf(Msg::AiNameTaken, &[&name]);
+                        continue;
+                    }
+                    // ★ 이름 변경 = rename(프로필 · 볼트 비밀 · 세션 참조) — 복제가 아니다(사용자 11-11 · 복제는 [복제]).
+                    if let Some(old) = renamed {
+                        if let Ok(v) = nsql_vault::Vault::open_default() {
+                            if let Some(b) = v.get_secret(&format!("ai.{old}")) {
+                                if let Err(e) = v.put_secret(&p.secret_name(), &b) {
+                                    self.ai.note = tf(Msg::AiKeySaveFailed, &[&e.to_string()]);
+                                    continue;
+                                }
+                                let _ = v.delete_secret(&format!("ai.{old}"));
+                            }
+                        }
+                        self.ai.store.rename(&old, &name);
+                        for s in &mut self.ai.sessions {
+                            if s.profile == old {
+                                s.profile = name.clone();
+                                ai::history_save(s);
+                            }
+                        }
+                    }
                     if let Some(k) = key {
                         match nsql_vault::Vault::open_default()
                             .and_then(|v| v.put_secret(&p.secret_name(), k.as_bytes()))
@@ -617,6 +643,35 @@ impl App {
                 }
                 ViewAction::ProfileValidate(p, key) => self.ai_validate(p, key),
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
+                ViewAction::ProfileDup(arg) => {
+                    if let Some(p) = arg
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| self.ai.store.profiles.get(i))
+                        .cloned()
+                    {
+                        // "<이름>-copy" · 겹치면 -copy2 …(이름 규칙 61자 안).
+                        let base: String = p.name.chars().take(54).collect::<String>() + "-copy";
+                        let mut name = base.clone();
+                        let mut n = 2;
+                        while self.ai.store.profiles.iter().any(|x| x.name == name) {
+                            name = format!("{base}{n}");
+                            n += 1;
+                        }
+                        let mut q = p.clone();
+                        q.name = name.clone();
+                        if let Ok(v) = nsql_vault::Vault::open_default() {
+                            if let Some(b) = v.get_secret(&p.secret_name()) {
+                                let _ = v.put_secret(&q.secret_name(), &b);
+                            }
+                        }
+                        self.ai.store.upsert(q.clone());
+                        self.ai_store_save();
+                        let has_key = self.ai_key_exists(&name);
+                        self.ai_view.edit_profile(Some(&q), has_key);
+                        self.ai.note = tf(Msg::AiProfileDuplicated, &[&name]);
+                    }
+                }
                 ViewAction::ShowPage(pg) => {
                     self.ai_view.show_page(pg);
                     if pg == Page::Chat {

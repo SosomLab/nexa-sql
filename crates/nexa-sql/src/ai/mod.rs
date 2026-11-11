@@ -148,6 +148,15 @@ impl Profile {
     }
 }
 
+/// 프로필 이름 규칙 = 볼트 비밀 이름 규칙(`ai.<이름>` ≤ 64 → 이름 ≤ 61 · 영문·숫자·`_ - .` · `.`로 시작 금지) — 저장 전 폼에서 점검(사용자 11-11).
+pub(crate) fn profile_name_ok(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 61
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        && !s.starts_with('.')
+}
+
 /// 프로필 저장소 — `NSQL_HOME/ai/profiles.conf`(key=value 블록 · 빈 줄로 구분 · `current=`는 머리).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProfileStore {
@@ -314,6 +323,16 @@ impl ProfileStore {
         }
         if self.current.is_empty() {
             self.current = self.profiles[0].name.clone();
+        }
+    }
+
+    /// 이름 바꾸기(프로필 · 현재 표시) — 볼트 비밀·세션 참조는 호출자가 옮긴다.
+    pub(crate) fn rename(&mut self, old: &str, new: &str) {
+        if let Some(p) = self.profiles.iter_mut().find(|p| p.name == old) {
+            p.name = new.to_string();
+        }
+        if self.current == old {
+            self.current = new.to_string();
         }
     }
 
@@ -818,6 +837,20 @@ mod tests {
         assert_eq!(price_per_m_in("", "unknown"), (4.0, 20.0));
         let c = Usage::estimate_cost_in(t, "claude-opus-5-5", 1_000_000, 1_000_000, 0);
         assert!((c - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn profile_name_rule_and_rename() {
+        assert!(profile_name_ok("api1") && profile_name_ok("team-key.v2"));
+        assert!(!profile_name_ok("api#12") && !profile_name_ok("") && !profile_name_ok(".x"));
+        assert!(!profile_name_ok("한글") && !profile_name_ok(&"a".repeat(62)));
+        let mut st = ProfileStore::default();
+        st.upsert(Profile::new("a"));
+        st.upsert(Profile::new("b"));
+        st.rename("a", "a2");
+        assert_eq!(st.current, "a2");
+        assert_eq!(st.profiles[0].name, "a2");
+        assert_eq!(st.profiles.len(), 2);
     }
 
     #[test]

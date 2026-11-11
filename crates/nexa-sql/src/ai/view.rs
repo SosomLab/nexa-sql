@@ -48,8 +48,10 @@ pub(crate) enum ViewAction {
     InsertEditor(String),
     ProfileUse(String),
     ProfileDelete(String),
-    /// 저장(프로필 · 새 키 = Some · 비우면 기존 유지).
-    ProfileSave(Profile, Option<String>),
+    /// 저장(프로필 · 새 키 = Some · 비우면 기존 유지 · 편집 전 이름 = Some이면 이름이 바뀌었을 때 rename).
+    ProfileSave(Profile, Option<String>, Option<String>),
+    /// 복제(목록 인덱스).
+    ProfileDup(String),
     ProfileValidate(Profile, Option<String>),
     /// WIF 프로필 브라우저 로그인(폼 내용으로).
     ProfileLogin(Profile),
@@ -105,6 +107,7 @@ enum Btn {
     ProfileUse(usize),
     ProfileEdit(usize),
     ProfileDelete(usize),
+    ProfileDup(usize),
     ProfileNew,
     ProfileSave,
     ProfileValidate,
@@ -155,6 +158,8 @@ pub(crate) struct AiView {
     p_sa: TextBox,
     p_editing: Option<String>,
     p_has_key: bool,
+    /// 필수값 점검 결과(비면 없음 · 버튼 아래 경고색).
+    form_err: String,
 }
 
 impl Default for AiView {
@@ -208,6 +213,7 @@ impl Default for AiView {
             p_sa: tb("svac_…"),
             p_editing: None,
             p_has_key: false,
+            form_err: String::new(),
         }
     }
 }
@@ -254,6 +260,11 @@ impl AiView {
         }
     }
 
+    /// 편집 중인 기존 프로필 이름(새 프로필이면 None).
+    pub(crate) fn editing_name(&self) -> Option<&str> {
+        self.p_editing.as_deref()
+    }
+
     /// 프로필 편집 폼 채우기(None = 새 프로필).
     pub(crate) fn edit_profile(&mut self, p: Option<&Profile>, has_key: bool) {
         let p = p.cloned().unwrap_or_else(|| Profile::new(""));
@@ -272,7 +283,63 @@ impl AiView {
         self.p_org.set_text(&w.org_id);
         self.p_sa.set_text(&w.service_account);
         self.p_has_key = has_key;
+        self.form_err.clear();
         self.p_name.set_focused(true);
+    }
+
+    /// ★ 필수값·형식 점검(사용자 11-11) → 첫 문제 (상자 번호 = `boxes_mut` 순서 · 안내 글). 이름 규칙 = 볼트 비밀 이름 규칙.
+    fn form_check(&self) -> Option<(usize, String)> {
+        let name = self.p_name.text().trim().to_string();
+        if name.is_empty() {
+            return Some((1, tf(Msg::AiRequired, &[t(Msg::AiFieldName)])));
+        }
+        if !super::profile_name_ok(&name) {
+            return Some((1, t(Msg::AiNameRule).to_string()));
+        }
+        let url = self.p_url.text().trim().to_string();
+        if !(url.is_empty() || url.starts_with("https://") || url.starts_with("http://")) {
+            return Some((2, t(Msg::AiUrlRule).to_string()));
+        }
+        let effort = self.p_effort.text().trim().to_string();
+        if !effort.is_empty() && !super::EFFORTS.contains(&effort.as_str()) {
+            return Some((5, t(Msg::AiEffortRule).to_string()));
+        }
+        if self.p_wif {
+            for (i, (tb, label)) in [
+                (&self.p_issuer, Msg::AiFieldIssuer),
+                (&self.p_client, Msg::AiFieldClientId),
+                (&self.p_rule, Msg::AiFieldRule),
+                (&self.p_org, Msg::AiFieldOrg),
+                (&self.p_sa, Msg::AiFieldSa),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if tb.text().trim().is_empty() {
+                    return Some((7 + i, tf(Msg::AiRequired, &[t(label)])));
+                }
+            }
+        } else if !self.p_has_key && self.p_key.text().trim().is_empty() {
+            return Some((6, tf(Msg::AiRequired, &[t(Msg::AiFieldKey)])));
+        }
+        None
+    }
+
+    /// 점검 통과면 `true` · 아니면 안내 글 + 문제 상자에 포커스.
+    fn form_ok(&mut self) -> bool {
+        match self.form_check() {
+            None => {
+                self.form_err.clear();
+                true
+            }
+            Some((i, msg)) => {
+                self.form_err = msg;
+                for (j, tb) in self.boxes_mut().into_iter().enumerate() {
+                    tb.set_focused(j == i);
+                }
+                false
+            }
+        }
     }
 
     fn form_profile(&self) -> (Profile, Option<String>) {
@@ -683,21 +750,28 @@ impl AiView {
                 .actions
                 .push(ViewAction::ProfileUse(format!("edit:{i}"))),
             Btn::ProfileDelete(i) => self.actions.push(ViewAction::ProfileDelete(i.to_string())),
+            Btn::ProfileDup(i) => self.actions.push(ViewAction::ProfileDup(i.to_string())),
             Btn::ProfileNew => self.edit_profile(None, false),
             Btn::ProfileSave => {
-                let (p, key) = self.form_profile();
-                if !p.name.is_empty() {
-                    self.actions.push(ViewAction::ProfileSave(p, key));
+                if self.form_ok() {
+                    let (p, key) = self.form_profile();
+                    let prev = self.p_editing.clone();
+                    self.actions.push(ViewAction::ProfileSave(p, key, prev));
                 }
             }
             Btn::ProfileValidate => {
-                let (p, key) = self.form_profile();
-                self.actions.push(ViewAction::ProfileValidate(p, key));
+                if self.form_ok() {
+                    let (p, key) = self.form_profile();
+                    self.actions.push(ViewAction::ProfileValidate(p, key));
+                }
             }
-            Btn::ProfileAuth => self.p_wif = !self.p_wif,
+            Btn::ProfileAuth => {
+                self.p_wif = !self.p_wif;
+                self.form_err.clear();
+            }
             Btn::ProfileLogin => {
-                let (p, _) = self.form_profile();
-                if !p.name.is_empty() {
+                if self.form_ok() {
+                    let (p, _) = self.form_profile();
                     self.actions.push(ViewAction::ProfileLogin(p));
                 }
             }
@@ -729,10 +803,13 @@ impl AiView {
                 let p = Point { x, y };
                 self.pressed = self.buttons.iter().position(|(_, r)| r.contains(p));
                 if self.pressed.is_none() {
+                    // 숨긴 상자(영역 0)는 제외 · 첫 적중에서 멈춤(종전 "마지막 적중"이 숨은 WIF 상자를 고르던 결함 · 11-11).
                     let mut hit = None;
                     for (i, tb) in self.boxes_mut().into_iter().enumerate().skip(1) {
-                        if tb.bounds().contains(p) {
+                        let b = tb.bounds();
+                        if b.w > 0 && b.h > 0 && b.contains(p) {
                             hit = Some(i);
+                            break;
                         }
                     }
                     for (i, tb) in self.boxes_mut().into_iter().enumerate().skip(1) {
@@ -763,14 +840,24 @@ impl AiView {
                 true
             }
             InputEvent::Char { c: '\t', .. } => {
-                // Tab = 다음 칸.
+                // Tab = 다음 보이는 칸(숨긴 상자 건너뜀).
                 let boxes = self.boxes_mut();
-                let n = boxes.len();
-                let cur = boxes.iter().position(|b| b.is_focused()).unwrap_or(0);
-                let next = if cur < 1 {
-                    1
-                } else {
-                    (cur + 1 - 1) % (n - 1) + 1
+                let visible: Vec<usize> = boxes
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter(|(_, b)| b.bounds().w > 0)
+                    .map(|(i, _)| i)
+                    .collect();
+                let cur = boxes.iter().position(|b| b.is_focused());
+                let next = match (cur, visible.first()) {
+                    (_, None) => return true,
+                    (Some(c), Some(_)) => visible
+                        .iter()
+                        .position(|&i| i == c)
+                        .map(|k| visible[(k + 1) % visible.len()])
+                        .unwrap_or(visible[0]),
+                    (None, Some(&f)) => f,
                 };
                 for (i, tb) in self.boxes_mut().into_iter().enumerate() {
                     tb.set_focused(i == next);
@@ -1238,6 +1325,7 @@ impl AiView {
             let ty = dc.text_center_y(r.y, r.h);
             let btns = [
                 (Btn::ProfileDelete(i), t(Msg::AiSessDelete)),
+                (Btn::ProfileDup(i), t(Msg::AiDup)),
                 (Btn::ProfileEdit(i), t(Msg::AiEdit)),
                 (Btn::ProfileUse(i), t(Msg::AiUse)),
             ];
@@ -1295,6 +1383,17 @@ impl AiView {
             self.paint_button(dc, th, r, label, false, Btn::ProfileAuth);
             y += row_h + self.s(6.0);
         }
+        // 안 보이는 상자는 영역을 비운다(클릭·Tab 대상에서 제외 · 11-11 키 상자 결함).
+        for tb in [
+            &mut self.p_key,
+            &mut self.p_issuer,
+            &mut self.p_client,
+            &mut self.p_rule,
+            &mut self.p_org,
+            &mut self.p_sa,
+        ] {
+            tb.set_bounds(Rect::default(), &mut inv);
+        }
         let mut fields: Vec<(Msg, &mut TextBox)> = vec![
             (Msg::AiFieldName, &mut self.p_name),
             (Msg::AiFieldBaseUrl, &mut self.p_url),
@@ -1340,6 +1439,10 @@ impl AiView {
             bx += bw + self.s(8.0);
         }
         y += row_h + self.s(10.0);
+        if !self.form_err.is_empty() {
+            dc.text(x, y, b, &self.form_err, th.warn);
+            y += lh + self.s(4.0);
+        }
         if !info.note.is_empty() {
             dc.text(x, y, b, &info.note, th.accent);
             y += lh + self.s(4.0);
@@ -1713,6 +1816,33 @@ mod tests {
             .any(|l| matches!(l.kind, LineKind::CodeHead(0))));
         assert_eq!(lines.iter().filter(|l| l.kind == LineKind::Code).count(), 2);
         assert_eq!(ci, 1);
+    }
+
+    #[test]
+    fn profile_form_required_checks() {
+        let mut v = AiView::default();
+        v.edit_profile(None, false);
+        assert_eq!(v.form_check().map(|e| e.0), Some(1), "name required");
+        v.p_name.set_text("api#12");
+        assert_eq!(v.form_check().map(|e| e.0), Some(1), "name rule");
+        v.p_name.set_text("api1");
+        assert_eq!(
+            v.form_check().map(|e| e.0),
+            Some(6),
+            "key required for a new profile"
+        );
+        v.p_key.set_text("sk-ant-x");
+        assert!(v.form_check().is_none());
+        v.p_url.set_text("api.anthropic.com");
+        assert_eq!(v.form_check().map(|e| e.0), Some(2), "url scheme");
+        v.p_url.set_text("https://api.anthropic.com");
+        v.p_effort.set_text("ultra");
+        assert_eq!(v.form_check().map(|e| e.0), Some(5), "effort choice");
+        v.p_effort.set_text("high");
+        v.p_wif = true;
+        assert_eq!(v.form_check().map(|e| e.0), Some(7), "wif issuer required");
+        assert!(!v.form_ok() && !v.form_err.is_empty());
+        assert!(v.p_issuer.is_focused());
     }
 
     #[test]
