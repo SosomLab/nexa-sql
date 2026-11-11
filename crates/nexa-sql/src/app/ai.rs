@@ -4,7 +4,7 @@
 
 use crate::ai::claude_api::ApiAuth;
 use crate::ai::host::{ApiLaunch, CliLaunch, CodexLaunch, Host};
-use crate::ai::panel::{PanelAction, PanelState, SessionRow};
+use crate::ai::panel::{PanelAction, PanelState, ProfileRow, SessionRow};
 use crate::ai::view::{Page, ViewAction, ViewInfo};
 use crate::ai::{
     self, redact, AiEvent, Attachment, ChatMsg, Kind, Mode, Profile, ProfileStore, Provider,
@@ -60,9 +60,14 @@ pub(crate) struct AiState {
     /// CLI 모드 턴 사용량(result 줄이 합계 · Done에 더한다).
     pub cli_turn_usage: Option<Usage>,
     pub inited: bool,
+    /// ★ 활동 막대 탭(Claude / Codex · 11-11) — 패널·채팅 탭·세션 목록은 이 제공자 것만.
+    pub tab: Provider,
+    /// 탭을 떠날 때 보던 세션 id(돌아오면 복원).
+    pub last_claude: Option<String>,
+    pub last_codex: Option<String>,
+    /// 지금 턴이 도는 세션 id — 호스트 이벤트는 여기로(탭·세션을 바꿔도 다른 대화에 섞이지 않게).
+    pub run: Option<String>,
 }
-
-const VIEW_KEY: &str = "ai.chat";
 
 impl App {
     pub(crate) fn ai_enabled(&self) -> bool {
@@ -70,7 +75,42 @@ impl App {
     }
 
     pub(crate) fn ai_view_active(&self) -> bool {
-        self.editors.active_view() == Some(VIEW_KEY)
+        matches!(self.editors.active_view(), Some("ai.chat" | "ai.codex"))
+    }
+
+    /// 편집기에서 다른 제공자의 채팅 탭이 앞으로 오면 패널 탭도 따라간다(그리기 직전에 부른다).
+    pub(crate) fn ai_follow_view(&mut self) {
+        let want = match self.editors.active_view() {
+            Some("ai.codex") => Provider::Codex,
+            Some("ai.chat") => Provider::Claude,
+            _ => return,
+        };
+        if want != self.ai.tab {
+            self.ai_switch_tab(want);
+            self.ai_sync_panel();
+        }
+    }
+
+    /// 탭 전환 — 보던 세션을 기억하고 그 제공자의 마지막 세션으로(없으면 비움 · 채팅 열 때 새로).
+    fn ai_switch_tab(&mut self, p: Provider) {
+        if self.ai.tab == p {
+            return;
+        }
+        let cur_id = self.ai_cur().map(|s| s.id.clone());
+        match self.ai.tab {
+            Provider::Claude => self.ai.last_claude = cur_id,
+            Provider::Codex => self.ai.last_codex = cur_id,
+        }
+        self.ai.tab = p;
+        let want = match p {
+            Provider::Claude => self.ai.last_claude.clone(),
+            Provider::Codex => self.ai.last_codex.clone(),
+        };
+        self.ai.cur = want
+            .and_then(|id| self.ai.sessions.iter().position(|s| s.id == id))
+            .or_else(|| self.ai.sessions.iter().position(|s| s.provider == p));
+        self.ai.status.clear();
+        self.ai_view.reset();
     }
 
     /// 기동 · 켤 때: 프로필 저장소 · 이력 목록 · 패널 상태.
@@ -85,6 +125,7 @@ impl App {
         ai::history_prune(self.settings.int("ai.history_keep_days").max(0) as u64);
         self.ai.sessions = ai::history_list(200);
         self.ai.cur = None;
+        self.ai.tab = self.ai_provider_default();
         self.ai_sync_panel();
     }
 
@@ -92,6 +133,7 @@ impl App {
     pub(crate) fn ai_apply_enabled(&mut self) {
         let on = self.ai_enabled();
         self.act_bar.set_item_visible("view.ai", on);
+        self.act_bar.set_item_visible("view.ai_codex", on);
         if on {
             self.ai_init();
         } else {
@@ -110,17 +152,18 @@ impl App {
         self.redraw();
     }
 
-    /// 메뉴 `view.ai` — 패널 토글(열면 채팅 탭도 앞으로).
-    pub(crate) fn ai_toggle_panel(&mut self) {
+    /// 메뉴 `view.ai`(Claude) · `view.ai_codex`(Codex) — 그 탭의 패널 토글(열면 채팅 탭도 앞으로 · 다른 탭이 열려 있으면 전환).
+    pub(crate) fn ai_toggle_panel(&mut self, p: Provider) {
         if !self.ai_enabled() {
             let _ = self.settings.set("ai.enabled", "on");
             self.persist_settings();
             self.ai_apply_enabled();
         }
-        let on = !self.ai_panel.is_visible();
+        self.ai_init();
+        let on = !(self.ai_panel.is_visible() && self.ai.tab == p);
         if on {
-            self.side_panel_close_others("view.ai");
-            self.ai_init();
+            self.ai_switch_tab(p);
+            self.side_panel_close_others(p.act_id());
         }
         self.ai_panel.set_visible(on);
         if on {
@@ -140,7 +183,8 @@ impl App {
         if self.ai.cur.is_none() {
             self.ai_new_session();
         }
-        self.editors.open_view_tab(VIEW_KEY, "Claude");
+        let tab = self.ai.tab;
+        self.editors.open_view_tab(tab.view_key(), tab.title());
         self.ai_view.show_page(Page::Chat);
         self.set_focus(Focus::Editor);
         self.ai_view.set_focused(true);
@@ -186,11 +230,9 @@ impl App {
             .to_string()
     }
 
-    /// 지금 세션의 제공자(없으면 설정).
+    /// 지금 탭의 제공자.
     fn ai_provider(&self) -> Provider {
-        self.ai_cur()
-            .map(|s| s.provider)
-            .unwrap_or_else(|| self.ai_provider_default())
+        self.ai.tab
     }
 
     /// 제공자의 현재 프로필(저장소 `current`가 다른 제공자면 그 제공자의 첫 프로필).
@@ -210,6 +252,21 @@ impl App {
         let i = self.ai.cur?;
         self.ai.sessions.get_mut(i)
     }
+    /// 턴이 도는 세션(없으면 보이는 세션) — 호스트 이벤트·도구 실행은 여기에.
+    fn ai_run_idx(&self) -> Option<usize> {
+        self.ai
+            .run
+            .as_ref()
+            .and_then(|id| self.ai.sessions.iter().position(|s| s.id == *id))
+            .or(self.ai.cur)
+    }
+    fn ai_run(&self) -> Option<&Session> {
+        self.ai_run_idx().and_then(|i| self.ai.sessions.get(i))
+    }
+    fn ai_run_mut(&mut self) -> Option<&mut Session> {
+        let i = self.ai_run_idx()?;
+        self.ai.sessions.get_mut(i)
+    }
 
     /// 새 세션(설정의 모드·모델·노력도 · 현재 프로필) — 맨 앞에 끼운다.
     pub(crate) fn ai_new_session(&mut self) {
@@ -218,7 +275,7 @@ impl App {
             h.reset_api();
         }
         let mode = self.ai_mode_default();
-        let provider = self.ai_provider_default();
+        let provider = self.ai.tab;
         let prof = self.ai_profile_for(provider);
         let profile = prof.as_ref().map(|p| p.name.clone()).unwrap_or_default();
         let model = prof
@@ -248,10 +305,15 @@ impl App {
         let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
             return;
         };
+        let prov = self.ai.sessions[i].provider;
+        if prov != self.ai.tab {
+            self.ai_switch_tab(prov);
+        }
         if let Some(h) = &mut self.ai.host {
             h.stop();
             h.reset_api();
         }
+        self.ai.run = None;
         self.ai.cur = Some(i);
         self.ai.approval = None;
         self.ai.pending = None;
@@ -326,29 +388,44 @@ impl App {
             String::new()
         };
         let cur = self.ai_cur();
-        let provider = cur
-            .map(|s| s.provider)
-            .unwrap_or_else(|| self.ai_provider_default());
+        let provider = self.ai.tab;
         let profile_name = cur
             .map(|s| s.profile.clone())
             .unwrap_or_else(|| self.ai.store.current.clone());
         let model = cur
             .map(|s| s.model.clone())
             .unwrap_or_else(|| self.ai_model_default(provider));
-        let models = {
-            let mut v = self
+        let models: Vec<(String, String)> = {
+            let prof = self
                 .ai
                 .store
                 .profiles
                 .iter()
-                .find(|p| p.name == profile_name)
+                .find(|p| p.name == profile_name);
+            let mut v = prof
                 .map(Profile::model_choices)
                 .unwrap_or_else(|| provider.models().iter().map(|m| (*m).to_string()).collect());
             if !v.contains(&model) {
                 v.insert(0, model.clone());
             }
-            v
+            let builtin = provider.models();
+            v.into_iter()
+                .map(|id| {
+                    let d = if builtin.contains(&id.as_str()) {
+                        t(ai::model_desc(&id)).to_string()
+                    } else {
+                        t(Msg::AiDescFetched).to_string()
+                    };
+                    (id, d)
+                })
+                .collect()
         };
+        let keyed: Vec<String> = nsql_vault::Vault::open_default()
+            .map(|v| v.secret_names())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|n| n.strip_prefix("ai.").map(str::to_string))
+            .collect();
         let st = PanelState {
             provider,
             mode: cur
@@ -360,7 +437,20 @@ impl App {
                 .profiles
                 .iter()
                 .filter(|p| p.provider == provider)
-                .map(|p| p.name.clone())
+                .map(|p| ProfileRow {
+                    name: p.name.clone(),
+                    desc: format!(
+                        "{} · {}",
+                        p.model,
+                        t(if p.wif.is_some() {
+                            Msg::AiAuthWif
+                        } else if keyed.contains(&p.name) {
+                            Msg::AiKeyStored
+                        } else {
+                            Msg::AiKeyMissing
+                        })
+                    ),
+                })
                 .collect(),
             profile: profile_name,
             model,
@@ -378,6 +468,7 @@ impl App {
                 .ai
                 .sessions
                 .iter()
+                .filter(|s| s.provider == provider)
                 .map(|s| SessionRow {
                     id: s.id.clone(),
                     title: s.title_or_default(),
@@ -426,28 +517,6 @@ impl App {
     pub(crate) fn ai_panel_actions(&mut self) {
         for a in self.ai_panel.take_actions() {
             match a {
-                PanelAction::SetProvider(p) => {
-                    let _ = self.settings.set("ai.provider", p.as_str());
-                    self.persist_settings();
-                    let prof = self.ai_profile_for(p);
-                    let model = prof
-                        .as_ref()
-                        .map(|q| q.model.clone())
-                        .unwrap_or_else(|| self.ai_model_default(p));
-                    let name = prof.map(|q| q.name).unwrap_or_default();
-                    if let Some(s) = self.ai_cur_mut() {
-                        if s.provider != p {
-                            s.provider = p;
-                            s.profile = name;
-                            s.model = model;
-                            s.cli_session = None;
-                        }
-                    }
-                    if let Some(h) = &mut self.ai.host {
-                        h.stop();
-                        h.reset_api();
-                    }
-                }
                 PanelAction::SetMode(m) => {
                     let _ = self.settings.set("ai.mode", m.as_str());
                     self.persist_settings();
@@ -844,6 +913,7 @@ impl App {
                 s.cli_session.clone(),
             )
         };
+        self.ai.run = self.ai_cur().map(|s| s.id.clone());
         let mut um = ChatMsg::new(Kind::User, text);
         um.attachments = attachments.iter().map(|a| a.label().to_string()).collect();
         self.ai_push(um);
@@ -1091,12 +1161,13 @@ impl App {
         self.ai.pending = None;
         self.ai.status = t(Msg::AiStopped).into();
         self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
+        self.ai.run = None;
         self.ai_sync_panel();
         self.redraw();
     }
 
     fn ai_push(&mut self, m: ChatMsg) {
-        if let Some(s) = self.ai_cur_mut() {
+        if let Some(s) = self.ai_run_mut() {
             s.messages.push(m);
         }
     }
@@ -1122,7 +1193,7 @@ impl App {
     fn ai_handle(&mut self, ev: AiEvent) {
         match ev {
             AiEvent::Started { cli_session, note } => {
-                if let Some(s) = self.ai_cur_mut() {
+                if let Some(s) = self.ai_run_mut() {
                     if cli_session.is_some() {
                         s.cli_session = cli_session;
                     }
@@ -1132,7 +1203,7 @@ impl App {
                 }
             }
             AiEvent::TextDelta(t) => {
-                let Some(s) = self.ai_cur_mut() else { return };
+                let Some(s) = self.ai_run_mut() else { return };
                 match s.messages.last_mut() {
                     Some(m) if m.kind == Kind::Assistant => m.text.push_str(&t),
                     _ => s.messages.push(ChatMsg::new(Kind::Assistant, t)),
@@ -1174,7 +1245,7 @@ impl App {
                 summary,
                 reply,
             } => {
-                let auto = self.ai_cur().is_some_and(|s| s.auto);
+                let auto = self.ai_run().is_some_and(|s| s.auto);
                 let short = tool
                     .strip_prefix("mcp__nexa__")
                     .unwrap_or(&tool)
@@ -1196,17 +1267,17 @@ impl App {
                 self.ai.approval = Some((mid, short, summary, ApprovalReply::Cli(reply)));
             }
             AiEvent::Usage(u) => {
-                let is_cli = self.ai_cur().is_some_and(|s| s.mode == Mode::Cli);
+                let is_cli = self.ai_run().is_some_and(|s| s.mode == Mode::Cli);
                 if is_cli {
                     self.ai.cli_turn_usage = Some(u);
-                } else if let Some(s) = self.ai_cur_mut() {
+                } else if let Some(s) = self.ai_run_mut() {
                     s.usage.add(u);
                 }
             }
             AiEvent::Done { stop, ms } => {
                 if let Some(u) = self.ai.cli_turn_usage.take() {
                     let prices = self.ai_prices();
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_run_mut() {
                         let mut u = u;
                         if u.cost_usd == 0.0 {
                             u.cost_usd = Usage::estimate_cost_in(
@@ -1230,9 +1301,10 @@ impl App {
                     .map(|t| t.elapsed().as_millis() as u64)
                     .unwrap_or(ms);
                 self.ai.status = tf(Msg::AiTurnDone, &[&stop, &elapsed.to_string()]);
-                if let Some(s) = self.ai_cur() {
+                if let Some(s) = self.ai_run() {
                     ai::history_save(s);
                 }
+                self.ai.run = None;
             }
             AiEvent::Error(e) => {
                 let tail = self
@@ -1310,7 +1382,7 @@ impl App {
             }
             ApprovalReply::Rows { name, input, reply } => {
                 if ok {
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_run_mut() {
                         s.rows_allowed = true;
                     }
                     self.ai_exec_tool(&name, &input, reply);
@@ -1713,7 +1785,7 @@ impl App {
             let _ = r.send(ToolReply { output: text, ok });
         } else if let Some(label) = p.attach_label {
             if ok {
-                if let Some(s) = self.ai_cur_mut() {
+                if let Some(s) = self.ai_run_mut() {
                     s.attachments.push(Attachment::Text { label, body: text });
                 }
                 self.ai.status = t(Msg::AiAttached).into();
@@ -2008,14 +2080,20 @@ impl App {
                 self.ai_apply_enabled();
             }
             if !self.ai_panel.is_visible() {
-                self.ai_toggle_panel();
+                let p = self.ai_provider_default();
+                self.ai_toggle_panel(p);
             } else {
                 self.ai_open_chat();
             }
             return true;
         }
         if id == "ai.panel" {
-            self.ai_toggle_panel();
+            let p = self.ai.tab;
+            self.ai_toggle_panel(p);
+            return true;
+        }
+        if let Some(p) = id.strip_prefix("ai.tab:") {
+            self.ai_toggle_panel(Provider::parse(p));
             return true;
         }
         if let Some(text) = id.strip_prefix("ai.send:") {

@@ -930,7 +930,8 @@ impl App {
                 self.redraw();
             }
             // ★ Claude 탭(docs/110 · 11-11): 패널 토글 · 채팅 탭 · 켜기/끄기(확장 관리자처럼 팔레트 Switch).
-            "view.ai" => self.ai_toggle_panel(),
+            "view.ai" => self.ai_toggle_panel(crate::ai::Provider::Claude),
+            "view.ai_codex" => self.ai_toggle_panel(crate::ai::Provider::Codex),
             "ai.chat" => self.ai_open_chat(),
             "ai.enabled" => {
                 let on = !self.settings.flag("ai.enabled");
@@ -940,7 +941,10 @@ impl App {
                 self.persist_settings();
                 self.ai_apply_enabled();
                 if on {
-                    self.ai_toggle_panel();
+                    let p = crate::ai::Provider::parse(
+                        self.settings.get("ai.provider").unwrap_or("claude"),
+                    );
+                    self.ai_toggle_panel(p);
                 }
             }
             "view.outline" => {
@@ -1927,7 +1931,10 @@ impl App {
             "view.project" => self.project_panel.is_visible(),
             "view.bookmarks" => self.bm_panel.is_visible(),
             "view.outline" => self.outline_panel.is_visible(),
-            "view.ai" => self.ai_panel.is_visible(),
+            "view.ai" => self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Claude,
+            "view.ai_codex" => {
+                self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex
+            }
             "ai.enabled" => self.settings.flag("ai.enabled"),
             "view.log" => self.log_win.is_open(),
             "view.txlog" => self.txlog_win.is_open(),
@@ -2092,7 +2099,7 @@ impl App {
     /// 16 오브젝트 탐색기 · 32 결과 그리드 · 64 결과 탭 줄 · 128 북마크 · 256 프로젝트 · ★ 512 git 덩어리 diff 팝업(11-10) · 1024 완성 ·
     /// 2048 객체 상세 · 4096 Ctrl 링크 ·
     /// 8192 diff · ★ 입력창 팝업(10-13 "입력창의 우클릭은 반영이 안 됨") = 16384 그리드 입력(행수·조건 바·셀 편집기·값 고르기) ·
-    /// 32768 아웃라인 필터 · 65536 확장 검색 · 131072 파일 검색 · 262144 찾기 바. 팔레트·툴팁·하위 메뉴(같은 메뉴 안)는 메뉴가 아니다.
+    /// 32768 아웃라인 필터 · 65536 확장 검색 · 131072 파일 검색 · 262144 찾기 바 · 524288 AI 패널(선택 팝업·우클릭 · 종전 131072와 겹쳐 파일 검색과 함께 닫히던 충돌 수정 11-11). 팔레트·툴팁·하위 메뉴(같은 메뉴 안)는 메뉴가 아니다.
     pub(crate) fn open_menus(&self) -> u32 {
         let mut m = 0;
         if self.menubar.is_open() {
@@ -2147,7 +2154,7 @@ impl App {
             m |= 65536;
         }
         if self.ai_panel.menu_open() {
-            m |= 131072;
+            m |= 524_288;
         }
         if self.search.popup_open() {
             m |= 131_072;
@@ -2208,7 +2215,7 @@ impl App {
             m |= 65536;
         }
         if self.ai_panel.menu_open() && self.ai_panel.menu_bounds().contains(p) {
-            m |= 131072;
+            m |= 524_288;
         }
         if self.search.popup_open() && self.search.popup_bounds().contains(p) {
             m |= 131_072;
@@ -2268,7 +2275,7 @@ impl App {
         if bits & 65536 != 0 {
             self.ext_panel.close_menu();
         }
-        if bits & 131072 != 0 {
+        if bits & 524_288 != 0 {
             self.ai_panel.close_menu();
         }
         if bits & 131_072 != 0 {

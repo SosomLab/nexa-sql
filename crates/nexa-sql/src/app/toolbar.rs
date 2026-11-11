@@ -397,7 +397,14 @@ impl App {
             ("view.project", self.project_panel.is_visible()),
             ("view.bookmarks", self.bm_panel.is_visible()),
             ("view.outline", self.outline_panel.is_visible()),
-            ("view.ai", self.ai_panel.is_visible()),
+            (
+                "view.ai",
+                self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Claude,
+            ),
+            (
+                "view.ai_codex",
+                self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex,
+            ),
             ("view.extensions", self.ext_panel.is_visible()),
             (
                 "view.object_details",

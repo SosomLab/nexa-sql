@@ -1207,6 +1207,8 @@ impl App {
         self.act_bar.set_item_visible("view.extensions", ext_on);
         self.act_bar
             .set_item_visible("view.ai", self.settings.flag("ai.enabled"));
+        self.act_bar
+            .set_item_visible("view.ai_codex", self.settings.flag("ai.enabled"));
         if !ext_on && self.ext_panel.is_visible() {
             self.ext_panel.set_visible(false);
             if self.focus == Focus::Ext {
@@ -1226,7 +1228,7 @@ impl App {
         } else if self.outline_panel.is_visible() {
             Some("view.outline")
         } else if self.ai_panel.is_visible() {
-            Some("view.ai")
+            Some(self.ai.tab.act_id())
         } else {
             None
         });
@@ -1476,7 +1478,7 @@ impl App {
         if keep != "view.outline" && self.outline_panel.is_visible() {
             self.outline_panel.set_visible(false);
         }
-        if keep != "view.ai" && self.ai_panel.is_visible() {
+        if keep != "view.ai" && keep != "view.ai_codex" && self.ai_panel.is_visible() {
             self.ai_panel.set_visible(false);
         }
         if matches!(

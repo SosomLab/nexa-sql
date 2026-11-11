@@ -1,14 +1,19 @@
-//! ★ Claude 좌측 패널(docs/110 §14-2 · 사용자 11-11 "좌측 Claude 탭 · 상단 API/CLI 선택"): 모드 분할 버튼 · 프로필/모델/노력도
-//! 드롭 · Auto 스위치 · [새 대화][프로필 관리] · **세션 목록**(사용자 11-11 "이전 기록을 활용하는 세션 관리" — 검색 · 열기/이어하기 ·
-//! 이름 바꾸기 · 삭제 · 우클릭 메뉴) · 사용량 한 줄. 상태는 호스트가 [`PanelState`]로 넣고 동작은 [`PanelAction`]으로 돌려준다.
+//! ★ AI 좌측 패널(docs/110 §14-2 · 사용자 11-11 재설계 "공간을 아껴 — 작은 아이콘 + 툴팁 · 선택은 큰 팝업으로"): 한 패널이
+//! 활동 막대의 **Claude 탭과 Codex 탭을 각각** 받는다(제공자 = 탭 · 호스트가 [`PanelState::provider`]로 넣는다 · 세션 목록도 그 제공자만).
+//! 위 = 제목 + 아이콘 버튼(새 대화 · 프로필 · API/CLI 칩(Claude) · Auto 스위치 · 툴팁) · 칩 두 개(프로필 · 모델+노력도 → [`Picker`] 큰
+//! 팝업) · 세션 검색 + 목록(열기/이어하기 · 이름 바꾸기 · 삭제 · 우클릭 메뉴) · 아래 = 사용량 한 줄. 동작은 [`PanelAction`]으로 돌려준다.
 
+use super::picker::{Extra, PickEvent, PickItem, Picker};
 use super::{Mode, Provider, Usage, EFFORTS};
+use nexa_ctl::controls::ctxmenu::MenuIcon;
 use nexa_ctl::controls::{ContextMenu, CtxItem};
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::draw::{draw_tooltip_in, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
-use nexa_ctl::theme::Theme;
+use nexa_ctl::theme::{Color, IconImage, Theme};
 use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget};
 use nsql_i18n::{t, tf, Msg};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct SessionRow {
@@ -20,15 +25,23 @@ pub(crate) struct SessionRow {
     pub turns: usize,
 }
 
+/// 프로필 선택 팝업 한 행(이름 · 설명 = 모델 · 키 상태).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ProfileRow {
+    pub name: String,
+    pub desc: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct PanelState {
+    /// 이 패널이 지금 보여 주는 탭(활동 막대 Claude/Codex).
     pub provider: Provider,
     pub mode: Mode,
-    pub profiles: Vec<String>,
+    pub profiles: Vec<ProfileRow>,
     pub profile: String,
     pub model: String,
-    /// 모델 선택지(프로필이 조회한 목록 또는 제공자 내장 표 · 현재 모델 포함).
-    pub models: Vec<String>,
+    /// 모델 선택지(id · 설명) — 프로필이 조회한 목록 또는 제공자 내장 표 · 현재 모델 포함.
+    pub models: Vec<(String, String)>,
     pub effort: String,
     pub auto: bool,
     pub sessions: Vec<SessionRow>,
@@ -41,7 +54,6 @@ pub(crate) struct PanelState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PanelAction {
-    SetProvider(Provider),
     SetMode(Mode),
     SetProfile(String),
     SetModel(String),
@@ -57,34 +69,75 @@ pub(crate) enum PanelAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DropKind {
+enum PickKind {
     Profile,
     Model,
-    Effort,
-}
-
-struct Drop {
-    kind: DropKind,
-    items: Vec<String>,
-    rect: Rect,
-    hover: Option<usize>,
-    row_h: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hit {
-    ProvClaude,
-    ProvCodex,
-    ModeApi,
-    ModeCli,
-    Profile,
-    Model,
-    Effort,
-    Auto,
     NewChat,
     Profiles,
+    ModeChip,
+    Auto,
+    ProfileChip,
+    ModelChip,
     Session(usize),
     None,
+}
+
+impl Hit {
+    /// 툴팁 글(아이콘 버튼·칩만).
+    fn tip(self, st: &PanelState) -> Option<String> {
+        Some(match self {
+            Hit::NewChat => t(Msg::AiNewChat).to_string(),
+            Hit::Profiles => t(Msg::AiProfiles).to_string(),
+            Hit::ModeChip => tf(
+                Msg::AiTipMode,
+                &[t(if st.mode == Mode::Api {
+                    Msg::AiModeApi
+                } else {
+                    Msg::AiModeCli
+                })],
+            ),
+            Hit::Auto => t(Msg::AiTipAuto).to_string(),
+            Hit::ProfileChip => tf(Msg::AiTipProfile, &[&st.profile]),
+            Hit::ModelChip => tf(Msg::AiTipModel, &[&st.model, &st.effort]),
+            _ => return None,
+        })
+    }
+}
+
+/// 작은 아이콘 버튼(16px 틴트 아이콘 · hover 오버레이 · 눌림) — 아이콘·색별 틴트 캐시.
+struct IconBtn {
+    icon: fn() -> MenuIcon,
+    tint: RefCell<Option<(Color, Rc<IconImage>)>>,
+}
+
+impl IconBtn {
+    fn new(icon: fn() -> MenuIcon) -> IconBtn {
+        IconBtn {
+            icon,
+            tint: RefCell::new(None),
+        }
+    }
+    fn tinted(&self, fg: Color) -> Rc<IconImage> {
+        if let Some((c, img)) = self.tint.borrow().as_ref() {
+            if *c == fg {
+                return img.clone();
+            }
+        }
+        let (r, g, b) = fg.rgb();
+        let ic = (self.icon)();
+        let img = Rc::new(IconImage::from_alpha_tinted(
+            ic.w,
+            ic.h,
+            &ic.alpha,
+            (r, g, b),
+        ));
+        *self.tint.borrow_mut() = Some((fg, img.clone()));
+        img
+    }
 }
 
 const PAD: f32 = 8.0;
@@ -100,21 +153,18 @@ pub(crate) struct AiPanel {
     hover: Hit,
     pressed: Hit,
     /// 그릴 때 잡은 자리.
-    r_prov_claude: Rect,
-    r_prov_codex: Rect,
-    r_mode_api: Rect,
-    r_mode_cli: Rect,
-    r_profile: Rect,
-    r_model: Rect,
-    r_effort: Rect,
-    r_auto: Rect,
     r_new: Rect,
     r_profiles: Rect,
+    r_mode: Rect,
+    r_auto: Rect,
+    r_profile: Rect,
+    r_model: Rect,
     list_rect: Rect,
     row_h: i32,
+    lh: i32,
     scroll_y: i32,
     bars: ScrollBars,
-    drop: Option<Drop>,
+    picker: Option<(PickKind, Picker)>,
     menu: ContextMenu,
     menu_session: Option<String>,
     /// 세션 검색 상자(제목 부분 일치).
@@ -122,6 +172,8 @@ pub(crate) struct AiPanel {
     filtered: Vec<usize>,
     /// 이름 바꾸기 중인 세션 id + 입력 상자.
     rename: Option<(String, TextBox)>,
+    ib_new: IconBtn,
+    ib_profiles: IconBtn,
 }
 
 impl AiPanel {
@@ -138,26 +190,25 @@ impl AiPanel {
             actions: Vec::new(),
             hover: Hit::None,
             pressed: Hit::None,
-            r_prov_claude: Rect::default(),
-            r_prov_codex: Rect::default(),
-            r_mode_api: Rect::default(),
-            r_mode_cli: Rect::default(),
-            r_profile: Rect::default(),
-            r_model: Rect::default(),
-            r_effort: Rect::default(),
-            r_auto: Rect::default(),
             r_new: Rect::default(),
             r_profiles: Rect::default(),
+            r_mode: Rect::default(),
+            r_auto: Rect::default(),
+            r_profile: Rect::default(),
+            r_model: Rect::default(),
             list_rect: Rect::default(),
             row_h: 24,
+            lh: 16,
             scroll_y: 0,
             bars: ScrollBars::new(),
-            drop: None,
+            picker: None,
             menu: ContextMenu::new(),
             menu_session: None,
             filter,
             filtered: Vec::new(),
             rename: None,
+            ib_new: IconBtn::new(crate::toolicons::mi_add),
+            ib_profiles: IconBtn::new(crate::toolicons::mi_key),
         }
     }
 
@@ -167,9 +218,10 @@ impl AiPanel {
     pub(crate) fn set_visible(&mut self, on: bool) {
         self.visible = on;
         if !on {
-            self.drop = None;
+            self.picker = None;
             self.menu.close();
             self.rename = None;
+            self.hover = Hit::None;
         }
     }
     pub(crate) fn bounds(&self) -> Rect {
@@ -209,20 +261,31 @@ impl AiPanel {
         std::mem::take(&mut self.actions)
     }
     pub(crate) fn menu_open(&self) -> bool {
-        self.menu.is_open() || self.drop.is_some()
+        self.menu.is_open() || self.picker.is_some()
     }
     pub(crate) fn menu_bounds(&self) -> Rect {
-        if let Some(d) = &self.drop {
-            return d.rect;
+        if let Some((_, p)) = &self.picker {
+            return p.bounds();
         }
         self.menu.bounds()
     }
     pub(crate) fn close_menu(&mut self) {
         self.menu.close();
-        self.drop = None;
+        self.picker = None;
     }
     pub(crate) fn set_state(&mut self, st: PanelState) {
         if st != self.st {
+            // 열린 팝업의 꼬리 행(노력도 · Auto)은 새 값으로.
+            if let Some((PickKind::Model, p)) = &mut self.picker {
+                p.set_extra(0, effort_extra(&st.effort));
+                p.set_extra(
+                    1,
+                    Extra::Toggle {
+                        label: t(Msg::AiAuto).to_string(),
+                        on: st.auto,
+                    },
+                );
+            }
             self.st = st;
             self.refilter();
         }
@@ -255,26 +318,18 @@ impl AiPanel {
     }
 
     fn hit(&self, p: Point) -> Hit {
-        if self.r_prov_claude.contains(p) {
-            Hit::ProvClaude
-        } else if self.r_prov_codex.contains(p) {
-            Hit::ProvCodex
-        } else if self.r_mode_api.contains(p) {
-            Hit::ModeApi
-        } else if self.r_mode_cli.contains(p) {
-            Hit::ModeCli
-        } else if self.r_profile.contains(p) {
-            Hit::Profile
-        } else if self.r_model.contains(p) {
-            Hit::Model
-        } else if self.r_effort.contains(p) {
-            Hit::Effort
-        } else if self.r_auto.contains(p) {
-            Hit::Auto
-        } else if self.r_new.contains(p) {
+        if self.r_new.contains(p) {
             Hit::NewChat
         } else if self.r_profiles.contains(p) {
             Hit::Profiles
+        } else if self.r_mode.contains(p) {
+            Hit::ModeChip
+        } else if self.r_auto.contains(p) {
+            Hit::Auto
+        } else if self.r_profile.contains(p) {
+            Hit::ProfileChip
+        } else if self.r_model.contains(p) {
+            Hit::ModelChip
         } else if self.list_rect.contains(p) {
             let i = ((p.y - self.list_rect.y + self.scroll_y) / self.row_h.max(1)) as usize;
             if i < self.filtered.len() {
@@ -287,45 +342,62 @@ impl AiPanel {
         }
     }
 
-    fn open_drop(&mut self, kind: DropKind, anchor: Rect) {
-        let items: Vec<String> = match kind {
-            DropKind::Profile => self.st.profiles.clone(),
-            DropKind::Model => self.st.models.clone(),
-            DropKind::Effort => EFFORTS.iter().map(|m| (*m).to_string()).collect(),
-        };
-        if items.is_empty() {
-            return;
-        }
-        let row_h = self.row_h;
-        let h = row_h * items.len() as i32 + self.s(8.0);
-        let host = Rect::new(0, 0, self.clamp_w.max(anchor.right()), i32::MAX / 4);
-        let at = nexa_ctl::geom::place_popup(
-            Point {
-                x: anchor.x,
-                y: anchor.bottom(),
-            },
-            (anchor.w, h),
-            host,
-        );
-        self.drop = Some(Drop {
-            kind,
-            items,
-            rect: Rect::new(at.x, at.y, anchor.w, h),
-            hover: None,
-            row_h,
-        });
+    fn host_rect(&self, anchor: Rect) -> Rect {
+        Rect::new(0, 0, self.clamp_w.max(anchor.right()), i32::MAX / 4)
     }
 
-    fn pick_drop(&mut self, i: usize) {
-        let Some(d) = self.drop.take() else { return };
-        let Some(v) = d.items.get(i).cloned() else {
-            return;
+    fn open_picker(&mut self, kind: PickKind, anchor: Rect) {
+        let (title, items, selected, extras) = match kind {
+            PickKind::Profile => {
+                let items: Vec<PickItem> = self
+                    .st
+                    .profiles
+                    .iter()
+                    .map(|p| PickItem {
+                        id: p.name.clone(),
+                        title: p.name.clone(),
+                        desc: p.desc.clone(),
+                    })
+                    .collect();
+                if items.is_empty() {
+                    // 프로필이 없으면 관리 화면으로.
+                    self.actions.push(PanelAction::ManageProfiles);
+                    return;
+                }
+                let sel = items.iter().position(|i| i.id == self.st.profile);
+                (t(Msg::AiPickProfile), items, sel, Vec::new())
+            }
+            PickKind::Model => {
+                let items: Vec<PickItem> = self
+                    .st
+                    .models
+                    .iter()
+                    .map(|(id, desc)| PickItem {
+                        id: id.clone(),
+                        title: id.clone(),
+                        desc: desc.clone(),
+                    })
+                    .collect();
+                let sel = items.iter().position(|i| i.id == self.st.model);
+                (
+                    t(Msg::AiPickModel),
+                    items,
+                    sel,
+                    vec![
+                        effort_extra(&self.st.effort),
+                        Extra::Toggle {
+                            label: t(Msg::AiAuto).to_string(),
+                            on: self.st.auto,
+                        },
+                    ],
+                )
+            }
         };
-        self.actions.push(match d.kind {
-            DropKind::Profile => PanelAction::SetProfile(v),
-            DropKind::Model => PanelAction::SetModel(v),
-            DropKind::Effort => PanelAction::SetEffort(v),
-        });
+        let host = self.host_rect(anchor);
+        let p = Picker::new(
+            title, items, selected, extras, anchor, host, self.lh, self.scale,
+        );
+        self.picker = Some((kind, p));
     }
 
     fn open_menu(&mut self, p: Point, row: usize) {
@@ -403,58 +475,37 @@ impl AiPanel {
                 return false;
             }
         }
-        // 드롭 목록이 열려 있으면 그것이 먼저(바깥 클릭 = 닫고 그대로 진행).
-        if let Some(d) = &mut self.drop {
-            match *ev {
-                InputEvent::MouseMove { x, y } => {
-                    let p = Point { x, y };
-                    let h = d
-                        .rect
-                        .contains(p)
-                        .then(|| ((y - d.rect.y - 4) / d.row_h.max(1)) as usize)
-                        .filter(|&i| i < d.items.len());
-                    let changed = h != d.hover;
-                    d.hover = h;
-                    return changed;
+        // 큰 선택 팝업(바깥 클릭 = 닫고 그대로 진행).
+        if let Some((kind, p)) = &mut self.picker {
+            let kind = *kind;
+            match p.on_event(ev) {
+                PickEvent::None => return true,
+                PickEvent::Redraw => return true,
+                PickEvent::Pick(id) => {
+                    self.picker = None;
+                    self.actions.push(match kind {
+                        PickKind::Profile => PanelAction::SetProfile(id),
+                        PickKind::Model => PanelAction::SetModel(id),
+                    });
+                    return true;
                 }
-                InputEvent::MouseDown { x, y, .. } => {
-                    let p = Point { x, y };
-                    if d.rect.contains(p) {
-                        let i = ((y - d.rect.y - 4) / d.row_h.max(1)) as usize;
-                        self.pick_drop(i);
+                PickEvent::Effort(i) => {
+                    if let Some(e) = EFFORTS.get(i) {
+                        self.actions.push(PanelAction::SetEffort((*e).to_string()));
+                    }
+                    return true;
+                }
+                PickEvent::Toggle(on) => {
+                    self.actions.push(PanelAction::SetAuto(on));
+                    return true;
+                }
+                PickEvent::Close => {
+                    self.picker = None;
+                    if !matches!(ev, InputEvent::MouseDown { .. }) {
                         return true;
                     }
-                    self.drop = None;
                     // 바깥 클릭은 아래로 이어진다.
                 }
-                InputEvent::Key {
-                    key: CtlKey::Escape,
-                    ..
-                } => {
-                    self.drop = None;
-                    return true;
-                }
-                InputEvent::Key {
-                    key: CtlKey::Enter, ..
-                } => {
-                    if let Some(i) = d.hover {
-                        self.pick_drop(i);
-                    }
-                    return true;
-                }
-                InputEvent::Key {
-                    key: CtlKey::Down, ..
-                } => {
-                    d.hover = Some(d.hover.map_or(0, |h| (h + 1).min(d.items.len() - 1)));
-                    return true;
-                }
-                InputEvent::Key {
-                    key: CtlKey::Up, ..
-                } => {
-                    d.hover = Some(d.hover.map_or(0, |h| h.saturating_sub(1)));
-                    return true;
-                }
-                _ => return true,
             }
         }
         // 이름 바꾸기 상자.
@@ -562,18 +613,15 @@ impl AiPanel {
                     return true;
                 }
                 match h {
-                    Hit::ProvClaude => self
-                        .actions
-                        .push(PanelAction::SetProvider(Provider::Claude)),
-                    Hit::ProvCodex => self.actions.push(PanelAction::SetProvider(Provider::Codex)),
-                    Hit::ModeApi => self.actions.push(PanelAction::SetMode(Mode::Api)),
-                    Hit::ModeCli => self.actions.push(PanelAction::SetMode(Mode::Cli)),
-                    Hit::Profile => self.open_drop(DropKind::Profile, self.r_profile),
-                    Hit::Model => self.open_drop(DropKind::Model, self.r_model),
-                    Hit::Effort => self.open_drop(DropKind::Effort, self.r_effort),
-                    Hit::Auto => self.actions.push(PanelAction::SetAuto(!self.st.auto)),
                     Hit::NewChat => self.actions.push(PanelAction::NewChat),
                     Hit::Profiles => self.actions.push(PanelAction::ManageProfiles),
+                    Hit::ModeChip => self.actions.push(PanelAction::SetMode(match self.st.mode {
+                        Mode::Api => Mode::Cli,
+                        Mode::Cli => Mode::Api,
+                    })),
+                    Hit::Auto => self.actions.push(PanelAction::SetAuto(!self.st.auto)),
+                    Hit::ProfileChip => self.open_picker(PickKind::Profile, self.r_profile),
+                    Hit::ModelChip => self.open_picker(PickKind::Model, self.r_model),
                     Hit::Session(i) => {
                         if let Some(&si) = self.filtered.get(i) {
                             let id = self.st.sessions[si].id.clone();
@@ -595,14 +643,68 @@ impl AiPanel {
                 }
                 true
             }
-            InputEvent::Key {
-                key: CtlKey::Delete,
-                ..
-            } => {
-                // 선택 개념이 없으니 hover 행 삭제는 메뉴로만 — 키는 무시.
-                false
-            }
             _ => false,
+        }
+    }
+
+    /// 아이콘 버튼 하나(정사각 · hover/눌림 오버레이 · 16px 틴트 아이콘).
+    fn paint_icon_btn(&self, dc: &mut dyn DrawCtx, th: &Theme, r: Rect, ib: &IconBtn, hit: Hit) {
+        let rad = self.s(4.0);
+        if self.hover == hit {
+            dc.fill_round_rect_alpha(r, rad, th.text, 0.08);
+        }
+        if self.pressed == hit {
+            dc.fill_round_rect_alpha(r, rad, th.text, 0.12);
+        }
+        let img = ib.tinted(th.text);
+        let icon = self.s(16.0);
+        let dst = Rect::new(r.x + (r.w - icon) / 2, r.y + (r.h - icon) / 2, icon, icon);
+        dc.image_scaled(dst, &img, r);
+    }
+
+    /// 칩(값 + 셰브론 · 누르면 큰 팝업).
+    fn paint_chip(&self, dc: &mut dyn DrawCtx, th: &Theme, r: Rect, value: &str, hit: Hit) {
+        let rad = self.s(4.0);
+        dc.fill_round_rect(r, rad, th.field_bg);
+        dc.stroke_round_rect(
+            r,
+            rad,
+            if self.hover == hit {
+                th.accent
+            } else {
+                th.border
+            },
+            1.0,
+        );
+        let cw = self.s(10.0);
+        let inner = Rect::new(r.x + self.s(6.0), r.y, r.w - cw - self.s(16.0), r.h);
+        let shown = nexa_ctl::draw::ellipsize_middle(dc, value, inner.w.max(10));
+        let ty = dc.text_center_y(r.y, r.h);
+        dc.text(inner.x, ty, inner, &shown, th.text);
+        nexa_ctl::controls::draw_chevron_down(
+            dc,
+            Rect::new(r.right() - cw - self.s(5.0), r.y + (r.h - cw) / 2, cw, cw),
+            th.text_dim,
+        );
+    }
+
+    fn paint_switch(&self, dc: &mut dyn DrawCtx, th: &Theme, r: Rect, on: bool, hit: Hit) {
+        let tw = self.s(30.0);
+        let thh = self.s(16.0);
+        let tr = Rect::new(r.x + (r.w - tw) / 2, r.y + (r.h - thh) / 2, tw, thh);
+        dc.fill_round_rect(tr, thh / 2, if on { th.accent } else { th.border });
+        let kn = thh - self.s(4.0);
+        let kx = if on {
+            tr.right() - kn - self.s(2.0)
+        } else {
+            tr.x + self.s(2.0)
+        };
+        dc.fill_ellipse(
+            Rect::new(kx, tr.y + self.s(2.0), kn, kn),
+            nexa_ctl::Color(0x00FF_FFFF),
+        );
+        if self.hover == hit {
+            dc.fill_round_rect_alpha(r, self.s(4.0), th.text, 0.05);
         }
     }
 
@@ -623,211 +725,109 @@ impl AiPanel {
         let mut y = b.y + pad;
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
+        self.lh = lh;
         let row_h = lh + self.s(10.0);
         self.row_h = row_h;
-        // ── 제목 + 제공자 분할 버튼(Claude | Codex) + Claude면 모드 분할 버튼(API | CLI)
-        dc.select_font(FontSlot::Base, true);
-        dc.text(x, y, clip, t(Msg::MnAiPanel), th.text);
-        dc.select_font(FontSlot::Base, false);
-        y += lh + self.s(8.0);
-        let half = w / 2;
-        self.r_prov_claude = Rect::new(x, y, half, row_h);
-        self.r_prov_codex = Rect::new(x + half, y, w - half, row_h);
         let codex = self.st.provider == Provider::Codex;
+        // ── 머리: 제목(제공자) + 오른쪽 아이콘 버튼들(오른쪽부터 Auto · API/CLI · 프로필 · 새 대화)
+        let gap = self.s(4.0);
+        let mut bx = x + w;
+        self.r_auto = Rect::new(bx - self.s(34.0), y, self.s(34.0), row_h);
+        bx = self.r_auto.x - gap;
         if codex {
-            self.r_mode_api = Rect::default();
-            self.r_mode_cli = Rect::default();
+            self.r_mode = Rect::default();
         } else {
-            self.r_mode_api = Rect::new(x, y + row_h + self.s(4.0), half, row_h);
-            self.r_mode_cli = Rect::new(x + half, y + row_h + self.s(4.0), w - half, row_h);
-        }
-        let mut segs = vec![
-            (
-                self.r_prov_claude,
-                !codex,
-                t(Msg::AiProviderClaude),
-                Hit::ProvClaude,
-            ),
-            (
-                self.r_prov_codex,
-                codex,
-                t(Msg::AiProviderCodex),
-                Hit::ProvCodex,
-            ),
-        ];
-        if !codex {
-            segs.push((
-                self.r_mode_api,
-                self.st.mode == Mode::Api,
-                t(Msg::AiModeApi),
-                Hit::ModeApi,
-            ));
-            segs.push((
-                self.r_mode_cli,
-                self.st.mode == Mode::Cli,
-                t(Msg::AiModeCli),
-                Hit::ModeCli,
-            ));
-        }
-        for (r, on, label, hit) in segs {
-            let hot = self.hover == hit;
-            if on {
-                dc.fill_round_rect(r, self.s(4.0), th.accent);
+            let label = t(if self.st.mode == Mode::Api {
+                Msg::AiModeApi
             } else {
-                dc.fill_round_rect(r, self.s(4.0), th.panel_bg_alt);
-                if hot {
-                    dc.fill_rect_alpha(r, th.text, 0.08);
-                }
-            }
-            dc.stroke_round_rect(r, self.s(4.0), th.border, 1.0);
-            let tw = dc.text_width(label);
-            let ty = dc.text_center_y(r.y, r.h);
-            dc.text(
-                r.x + (r.w - tw) / 2,
-                ty,
-                r,
-                label,
-                if on {
-                    nexa_ctl::Color(0x00FF_FFFF)
-                } else {
-                    th.text
-                },
-            );
+                Msg::AiModeCli
+            });
+            let mw = dc.text_width(label) + self.s(14.0);
+            self.r_mode = Rect::new(bx - mw, y, mw, row_h);
+            bx = self.r_mode.x - gap;
         }
-        y += row_h + self.s(8.0);
-        if !codex {
-            y += row_h + self.s(4.0);
-        }
-        // ── 프로필 / 모델 / 노력도 드롭 행
-        let label_w = self.s(64.0);
-        let mut rows: Vec<(Msg, String, Hit)> = Vec::new();
-        if self.st.mode == Mode::Api || codex {
-            rows.push((
-                Msg::AiProfile,
-                if self.st.profile.is_empty() {
-                    t(Msg::AiNoProfile).to_string()
-                } else {
-                    self.st.profile.clone()
-                },
-                Hit::Profile,
-            ));
-        }
-        rows.push((Msg::AiModel, self.st.model.clone(), Hit::Model));
-        rows.push((Msg::AiEffort, self.st.effort.clone(), Hit::Effort));
-        self.r_profile = Rect::default();
-        for (label, value, hit) in rows {
-            let r = Rect::new(x + label_w, y, w - label_w, row_h);
-            match hit {
-                Hit::Profile => self.r_profile = r,
-                Hit::Model => self.r_model = r,
-                _ => self.r_effort = r,
-            }
-            let ty = dc.text_center_y(y, row_h);
-            dc.text(x, ty, clip, t(label), th.text_dim);
-            dc.fill_round_rect(r, self.s(4.0), th.field_bg);
-            dc.stroke_round_rect(
-                r,
-                self.s(4.0),
-                if self.hover == hit {
-                    th.accent
-                } else {
-                    th.border
-                },
-                1.0,
-            );
-            let inner = Rect::new(r.x + self.s(6.0), r.y, r.w - self.s(24.0), r.h);
-            let shown = nexa_ctl::draw::ellipsize_middle(dc, &value, inner.w);
-            dc.text(inner.x, ty, inner, &shown, th.text);
-            let cw = self.s(10.0);
-            nexa_ctl::controls::draw_chevron_down(
-                dc,
-                Rect::new(r.right() - cw - self.s(6.0), r.y + (r.h - cw) / 2, cw, cw),
-                th.text_dim,
-            );
-            y += row_h + self.s(4.0);
-        }
-        // ── Auto 스위치 행
-        self.r_auto = Rect::new(x, y, w, row_h);
+        self.r_profiles = Rect::new(bx - row_h, y, row_h, row_h);
+        bx = self.r_profiles.x - gap;
+        self.r_new = Rect::new(bx - row_h, y, row_h, row_h);
         {
             let ty = dc.text_center_y(y, row_h);
-            dc.text(x, ty, clip, t(Msg::AiAuto), th.text_dim);
-            let tw = self.s(30.0);
-            let thh = self.s(16.0);
-            let tr = Rect::new(x + w - tw, y + (row_h - thh) / 2, tw, thh);
-            dc.fill_round_rect(
-                tr,
-                thh / 2,
-                if self.st.auto { th.accent } else { th.border },
-            );
-            let kn = thh - self.s(4.0);
-            let kx = if self.st.auto {
-                tr.right() - kn - self.s(2.0)
-            } else {
-                tr.x + self.s(2.0)
-            };
-            dc.fill_ellipse(
-                Rect::new(kx, tr.y + self.s(2.0), kn, kn),
-                nexa_ctl::Color(0x00FF_FFFF),
-            );
-            if self.hover == Hit::Auto {
-                dc.fill_rect_alpha(self.r_auto, th.text, 0.05);
+            dc.select_font(FontSlot::Base, true);
+            let title = self.st.provider.title();
+            let title_w = (self.r_new.x - gap - x).max(10);
+            let shown = nexa_ctl::draw::ellipsize_middle(dc, title, title_w);
+            dc.text(x, ty, clip, &shown, th.text);
+            dc.select_font(FontSlot::Base, false);
+            if self.st.busy {
+                let tw = dc.text_width(&shown);
+                dc.fill_ellipse(
+                    Rect::new(
+                        x + tw + self.s(6.0),
+                        ty + lh / 2 - self.s(3.0),
+                        self.s(6.0),
+                        self.s(6.0),
+                    ),
+                    th.accent,
+                );
             }
+            self.paint_icon_btn(dc, th, self.r_new, &self.ib_new, Hit::NewChat);
+            self.paint_icon_btn(dc, th, self.r_profiles, &self.ib_profiles, Hit::Profiles);
+            if !codex {
+                let r = self.r_mode;
+                let rad = self.s(4.0);
+                let api = self.st.mode == Mode::Api;
+                dc.fill_round_rect(r, rad, if api { th.panel_bg_alt } else { th.accent });
+                dc.stroke_round_rect(
+                    r,
+                    rad,
+                    if self.hover == Hit::ModeChip {
+                        th.accent
+                    } else {
+                        th.border
+                    },
+                    1.0,
+                );
+                let label = t(if api { Msg::AiModeApi } else { Msg::AiModeCli });
+                let tw = dc.text_width(label);
+                dc.text(
+                    r.x + (r.w - tw) / 2,
+                    ty,
+                    r,
+                    label,
+                    if api {
+                        th.text
+                    } else {
+                        nexa_ctl::Color(0x00FF_FFFF)
+                    },
+                );
+            }
+            self.paint_switch(dc, th, self.r_auto, self.st.auto, Hit::Auto);
         }
         y += row_h + self.s(6.0);
-        // ── 버튼 [새 대화] [프로필 관리]
-        let bw = (w - self.s(6.0)) / 2;
-        self.r_new = Rect::new(x, y, bw, row_h);
-        self.r_profiles = Rect::new(x + bw + self.s(6.0), y, w - bw - self.s(6.0), row_h);
-        for (r, label, primary, hit) in [
-            (self.r_new, t(Msg::AiNewChat), true, Hit::NewChat),
-            (self.r_profiles, t(Msg::AiProfiles), false, Hit::Profiles),
-        ] {
-            let hot = self.hover == hit;
-            let down = self.pressed == hit;
-            let st = nexa_ctl::tokens::State::of(false, hot, down, true);
-            if primary {
-                dc.fill_round_rect(r, self.s(4.0), th.accent);
+        // ── 칩 행: [프로필 ▾][모델 · 노력도 ▾] (CLI 모드는 프로필 칩 없음 — CLI 자체 로그인)
+        let show_profile = codex || self.st.mode == Mode::Api;
+        if show_profile {
+            let half = (w - gap) / 2;
+            self.r_profile = Rect::new(x, y, half, row_h);
+            self.r_model = Rect::new(x + half + gap, y, w - half - gap, row_h);
+            let pv = if self.st.profile.is_empty() {
+                t(Msg::AiNoProfileShort).to_string()
             } else {
-                dc.fill_round_rect(r, self.s(4.0), th.panel_bg_alt);
-                dc.stroke_round_rect(r, self.s(4.0), if hot { th.accent } else { th.border }, 1.0);
-            }
-            dc.state_layer(r, th.text, st);
-            let tw = dc.text_width(label);
-            let ty = dc.text_center_y(r.y, r.h);
-            dc.text(
-                r.x + (r.w - tw) / 2,
-                ty,
-                r,
-                label,
-                if primary {
-                    nexa_ctl::Color(0x00FF_FFFF)
-                } else {
-                    th.text
-                },
-            );
+                self.st.profile.clone()
+            };
+            self.paint_chip(dc, th, self.r_profile, &pv, Hit::ProfileChip);
+        } else {
+            self.r_profile = Rect::default();
+            self.r_model = Rect::new(x, y, w, row_h);
         }
+        let mv = format!("{} · {}", self.st.model, self.st.effort);
+        self.paint_chip(dc, th, self.r_model, &mv, Hit::ModelChip);
         y += row_h + self.s(8.0);
-        // ── 사용량
-        {
-            let u = self.st.usage;
-            let line = tf(
-                Msg::AiUsageLine,
-                &[
-                    &u.input.to_string(),
-                    &u.output.to_string(),
-                    &u.cache_read.to_string(),
-                    &format!("{:.4}", u.cost_usd),
-                ],
-            );
-            dc.text(x, y, clip, &line, th.text_dim);
-            y += lh + self.s(4.0);
-            if self.st.mode == Mode::Cli && !self.st.cli_note.is_empty() {
-                dc.text(x, y, clip, &self.st.cli_note, th.text_dim);
-                y += lh + self.s(4.0);
-            }
+        // ── 아래 사용량 줄(먼저 자리를 잡아 목록 높이를 정한다)
+        let mut foot_lines = 1;
+        if self.st.mode == Mode::Cli && !codex && !self.st.cli_note.is_empty() {
+            foot_lines += 1;
         }
-        dc.fill_rect(Rect::new(x, y, w, 1), th.border);
-        y += self.s(6.0);
+        let foot_h = foot_lines * lh + self.s(10.0);
         // ── 세션: 제목 + 검색 상자
         dc.select_font(FontSlot::Base, true);
         dc.text(
@@ -844,118 +844,137 @@ impl AiPanel {
         self.filter.set_bounds(fr, &mut inv);
         self.filter.paint(dc, th);
         y += row_h + self.s(4.0);
-        self.list_rect = Rect::new(b.x, y, b.w - 1, (b.bottom() - y - pad).max(0));
+        let list_bottom = b.bottom() - foot_h - pad;
+        self.list_rect = Rect::new(b.x, y, b.w - 1, (list_bottom - y).max(0));
         self.clamp_scroll();
         let lr = self.list_rect;
         if self.filtered.is_empty() {
             let ty = dc.text_center_y(lr.y, row_h);
             dc.text(lr.x + pad, ty, lr, t(Msg::AiNoSessions), th.text_dim);
-            return;
-        }
-        let first = (self.scroll_y / row_h) as usize;
-        let mut ry = lr.y - self.scroll_y % row_h;
-        for i in first..self.filtered.len() {
-            if ry >= lr.bottom() {
-                break;
-            }
-            let s = &self.st.sessions[self.filtered[i]];
-            let r = Rect::new(lr.x, ry, lr.w, row_h);
-            let cur = s.id == self.st.current;
-            if cur {
-                dc.fill_rect(
-                    r,
-                    if self.focused {
-                        th.sel_bg
-                    } else {
-                        th.sel_bg_inactive
-                    },
-                );
-            } else if self.hover == Hit::Session(i) {
-                dc.fill_rect_alpha(r, th.text, 0.06);
-            }
-            let ty = dc.text_center_y(ry, row_h);
-            let tag = match s.mode {
-                Mode::Api => "API",
-                Mode::Cli => "CLI",
-            };
-            dc.text(lr.x + pad, ty, lr, tag, th.text_dim);
-            let tag_w = dc.text_width("API") + self.s(8.0);
-            let is_renaming = self.rename.as_ref().is_some_and(|(id, _)| *id == s.id);
-            if is_renaming {
-                let s2 = self.s(2.0);
-                let s4 = self.s(4.0);
-                if let Some((_, tb)) = &mut self.rename {
-                    let tr = Rect::new(
-                        lr.x + pad + tag_w,
-                        ry + s2,
-                        lr.w - pad * 2 - tag_w,
-                        row_h - s4,
-                    );
-                    tb.set_bounds(tr, &mut inv);
-                    tb.paint(dc, th);
+        } else {
+            let first = (self.scroll_y / row_h) as usize;
+            let mut ry = lr.y - self.scroll_y % row_h;
+            for i in first..self.filtered.len() {
+                if ry >= lr.bottom() {
+                    break;
                 }
-            } else {
-                let title_w = lr.w - pad * 2 - tag_w - self.s(30.0);
-                let shown = nexa_ctl::draw::ellipsize_middle(dc, &s.title, title_w.max(10));
-                dc.text(lr.x + pad + tag_w, ty, lr, &shown, th.text);
-                let turns = s.turns.to_string();
-                let tw = dc.text_width(&turns);
-                dc.text(lr.right() - pad - tw, ty, lr, &turns, th.text_dim);
+                let s = &self.st.sessions[self.filtered[i]];
+                let r = Rect::new(lr.x, ry, lr.w, row_h);
+                let rc = Rect::new(
+                    r.x,
+                    r.y.max(lr.y),
+                    r.w,
+                    (r.bottom().min(lr.bottom()) - r.y.max(lr.y)).max(0),
+                );
+                let cur = s.id == self.st.current;
+                if cur {
+                    dc.fill_rect(
+                        rc,
+                        if self.focused {
+                            th.sel_bg
+                        } else {
+                            th.sel_bg_inactive
+                        },
+                    );
+                } else if self.hover == Hit::Session(i) {
+                    dc.fill_rect_alpha(rc, th.text, 0.06);
+                }
+                let ty = dc.text_center_y(ry, row_h);
+                let tag = match s.mode {
+                    Mode::Api => "API",
+                    Mode::Cli => "CLI",
+                };
+                let tag_w = if codex {
+                    0
+                } else {
+                    dc.text(lr.x + pad, ty, rc, tag, th.text_dim);
+                    dc.text_width("API") + self.s(8.0)
+                };
+                let is_renaming = self.rename.as_ref().is_some_and(|(id, _)| *id == s.id);
+                if is_renaming {
+                    let s2 = self.s(2.0);
+                    let s4 = self.s(4.0);
+                    if let Some((_, tb)) = &mut self.rename {
+                        let tr = Rect::new(
+                            lr.x + pad + tag_w,
+                            ry + s2,
+                            lr.w - pad * 2 - tag_w,
+                            row_h - s4,
+                        );
+                        tb.set_bounds(tr, &mut inv);
+                        tb.paint(dc, th);
+                    }
+                } else {
+                    let title_w = lr.w - pad * 2 - tag_w - self.s(30.0);
+                    let shown = nexa_ctl::draw::ellipsize_middle(dc, &s.title, title_w.max(10));
+                    dc.text(lr.x + pad + tag_w, ty, rc, &shown, th.text);
+                    let turns = s.turns.to_string();
+                    let tw = dc.text_width(&turns);
+                    dc.text(lr.right() - pad - tw, ty, rc, &turns, th.text_dim);
+                }
+                ry += row_h;
             }
-            ry += row_h;
+            self.bars.paint(
+                dc,
+                th,
+                lr,
+                lr.w,
+                self.content_h().max(lr.h),
+                0,
+                self.scroll_y,
+                self.scale,
+            );
         }
-        self.bars.paint(
-            dc,
-            th,
-            lr,
-            lr.w,
-            self.content_h().max(lr.h),
-            0,
-            self.scroll_y,
-            self.scale,
-        );
+        // ── 바닥: 사용량(작게 · 흐리게) + CLI 경로
+        let mut fy = list_bottom + self.s(6.0);
+        dc.fill_rect(Rect::new(x, fy - self.s(4.0), w, 1), th.border);
+        {
+            let u = self.st.usage;
+            let line = tf(
+                Msg::AiUsageLine,
+                &[
+                    &u.input.to_string(),
+                    &u.output.to_string(),
+                    &u.cache_read.to_string(),
+                    &format!("{:.4}", u.cost_usd),
+                ],
+            );
+            let shown = nexa_ctl::draw::ellipsize_middle(dc, &line, w);
+            dc.text(x, fy, clip, &shown, th.text_dim);
+            fy += lh;
+            if foot_lines > 1 {
+                let shown = nexa_ctl::draw::ellipsize_middle(dc, &self.st.cli_note, w);
+                dc.text(x, fy, clip, &shown, th.text_dim);
+            }
+        }
     }
 
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.visible {
             return;
         }
-        if let Some(d) = &self.drop {
-            dc.shadow(
-                d.rect,
-                th.text,
-                nexa_ctl::tokens::Elevation::Mid,
-                self.s(4.0),
-            );
-            dc.fill_round_rect(d.rect, self.s(4.0), th.panel_bg);
-            dc.stroke_round_rect(d.rect, self.s(4.0), th.border, 1.0);
-            dc.select_font(FontSlot::Base, false);
-            let mut y = d.rect.y + self.s(4.0);
-            let current = match d.kind {
-                DropKind::Profile => &self.st.profile,
-                DropKind::Model => &self.st.model,
-                DropKind::Effort => &self.st.effort,
-            };
-            for (i, it) in d.items.iter().enumerate() {
-                let r = Rect::new(d.rect.x + 1, y, d.rect.w - 2, d.row_h);
-                if d.hover == Some(i) {
-                    dc.fill_rect(r, th.sel_bg);
-                }
-                let ty = dc.text_center_y(y, d.row_h);
-                dc.text(
-                    r.x + self.s(8.0),
-                    ty,
-                    r,
-                    it,
-                    if it == current { th.accent } else { th.text },
-                );
-                y += d.row_h;
-            }
+        if let Some((_, p)) = &self.picker {
+            p.paint(dc, th);
         }
         if self.menu.is_open() {
             self.menu.paint(dc, th);
         }
         self.filter.paint_popup(dc, th);
+        // 툴팁(아이콘 버튼·칩 · 도구줄 선례처럼 hover 즉시 · 팝업이 열려 있으면 없음).
+        if self.picker.is_none() && !self.menu.is_open() && self.pressed == Hit::None {
+            if let Some(tip) = self.hover.tip(&self.st) {
+                let r = match self.hover {
+                    Hit::NewChat => self.r_new,
+                    Hit::Profiles => self.r_profiles,
+                    Hit::ModeChip => self.r_mode,
+                    Hit::Auto => self.r_auto,
+                    Hit::ProfileChip => self.r_profile,
+                    _ => self.r_model,
+                };
+                let clamp = (self.bounds.x, self.clamp_w.max(self.bounds.right()));
+                draw_tooltip_in(dc, th, r, clamp, &tip, self.scale);
+            }
+        }
     }
 
     /// 헤드리스 덤프(V1).
@@ -974,7 +993,25 @@ impl AiPanel {
             st.sessions.len(),
             st.current
         );
-        s.push_str(&format!("models={}\n", st.models.join(",")));
+        s.push_str(&format!(
+            "models={}\n",
+            st.models
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+        s.push_str(&format!(
+            "profiles={}\n",
+            st.profiles
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+        if let Some((k, _)) = &self.picker {
+            s.push_str(&format!("picker={k:?}\n"));
+        }
         for r in &st.sessions {
             s.push_str(&format!(
                 "  {} {} [{}] turns={}\n",
@@ -988,16 +1025,33 @@ impl AiPanel {
     }
 }
 
+/// 노력도 꼬리 행(현재 = EFFORTS 위치 · 모르는 값이면 medium 자리).
+fn effort_extra(effort: &str) -> Extra {
+    let idx = EFFORTS.iter().position(|e| *e == effort).unwrap_or(1);
+    Extra::Effort {
+        label: tf(Msg::AiEffortLabel, &[effort]),
+        idx,
+        n: EFFORTS.len(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn filter_and_hit_rows() {
+    fn filter_hit_rows_and_pickers() {
         let mut p = AiPanel::new();
         p.set_visible(true);
         p.set_bounds(Rect::new(0, 0, 240, 600), 1.0);
+        p.set_clamp_width(800);
         p.set_state(PanelState {
+            models: vec![
+                ("claude-opus-5-5".into(), "best".into()),
+                ("claude-haiku-5-5".into(), "fast".into()),
+            ],
+            model: "claude-haiku-5-5".into(),
+            effort: "high".into(),
             sessions: vec![
                 SessionRow {
                     id: "a".into(),
@@ -1030,5 +1084,42 @@ mod tests {
         p.on_event(&InputEvent::MouseUp { x: 10, y: 310 });
         assert_eq!(p.take_actions(), vec![PanelAction::OpenSession("b".into())]);
         assert!(p.dump_text().contains("sessions=2"));
+        // 모델 칩 → 큰 팝업(현재 = haiku · 노력도 high = 셋째 점) → 첫 행 선택.
+        p.r_model = Rect::new(8, 40, 220, 24);
+        p.on_event(&InputEvent::MouseDown {
+            x: 20,
+            y: 50,
+            shift: false,
+            primary: false,
+        });
+        p.on_event(&InputEvent::MouseUp { x: 20, y: 50 });
+        assert!(p.menu_open() && p.dump_text().contains("picker=Model"));
+        let pr = p.menu_bounds();
+        p.on_event(&InputEvent::MouseDown {
+            x: pr.x + 20,
+            y: pr.y + 26 + 10,
+            shift: false,
+            primary: false,
+        });
+        assert_eq!(
+            p.take_actions(),
+            vec![PanelAction::SetModel("claude-opus-5-5".into())]
+        );
+        assert!(!p.menu_open());
+        // 프로필이 없으면 프로필 칩 = 관리 화면으로.
+        p.r_profile = Rect::new(8, 40, 100, 24);
+        p.on_event(&InputEvent::MouseDown {
+            x: 20,
+            y: 50,
+            shift: false,
+            primary: false,
+        });
+        p.on_event(&InputEvent::MouseUp { x: 20, y: 50 });
+        assert_eq!(p.take_actions(), vec![PanelAction::ManageProfiles]);
+        // 툴팁 글.
+        assert!(Hit::ModelChip
+            .tip(&p.st)
+            .is_some_and(|s| s.contains("claude-haiku-5-5")));
+        assert!(Hit::Session(0).tip(&p.st).is_none());
     }
 }

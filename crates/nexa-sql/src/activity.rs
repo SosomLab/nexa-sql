@@ -128,6 +128,14 @@ impl ActivityBar {
                     bottom: false,
                     hidden: true,
                 },
+                // ★ Codex 탭(11-11 · 사용자 "클로드 탭과 Codex 탭을 따로") — 같은 패널·뷰를 제공자만 바꿔 쓴다.
+                ActItem {
+                    id: "view.ai_codex",
+                    icon: toolicons::mi_act_codex(),
+                    panel: true,
+                    bottom: false,
+                    hidden: true,
+                },
                 ActItem {
                     id: "edit.prefs",
                     icon: toolicons::mi_gear(),

@@ -181,6 +181,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     tv("view.outline", Msg::MnOutlinePanel),
     // ★ Claude 탭(docs/110 · 사용자 11-11 "팔레트에서 확장처럼 끌 수 있게") — 패널 보이기/숨기기 · 채팅 탭 · 켜기/끄기.
     tv("view.ai", Msg::MnAiPanel),
+    tv("view.ai_codex", Msg::MnAiCodexPanel),
     p("ai.chat", Msg::MnView, Msg::MnAiChat),
     sw("ai.enabled", Msg::MnAiEnable),
     tv("view.log", Msg::MnLogWindow),

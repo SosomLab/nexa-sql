@@ -11,6 +11,7 @@ pub(crate) mod codex;
 pub(crate) mod host;
 pub(crate) mod mcp;
 pub(crate) mod panel;
+pub(crate) mod picker;
 pub(crate) mod tools;
 pub(crate) mod view;
 pub(crate) mod wif;
@@ -75,6 +76,48 @@ impl Provider {
             Provider::Claude => MODELS,
             Provider::Codex => CODEX_MODELS,
         }
+    }
+    /// 탭·패널 제목(제품 이름 · 번역 없음).
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude",
+            Provider::Codex => "Codex",
+        }
+    }
+    /// 활동 막대 항목 id(탭).
+    pub(crate) fn act_id(self) -> &'static str {
+        match self {
+            Provider::Claude => "view.ai",
+            Provider::Codex => "view.ai_codex",
+        }
+    }
+    /// 채팅 뷰 탭 키.
+    pub(crate) fn view_key(self) -> &'static str {
+        match self {
+            Provider::Claude => "ai.chat",
+            Provider::Codex => "ai.codex",
+        }
+    }
+}
+
+/// 모델 선택 팝업의 설명 줄(내장 표 · 조회한 모델은 "제공자 목록에서").
+pub(crate) fn model_desc(id: &str) -> nsql_i18n::Msg {
+    use nsql_i18n::Msg;
+    let m = id.to_ascii_lowercase();
+    if m.contains("fable") || m.contains("mythos") {
+        Msg::AiDescFable
+    } else if m.contains("opus") {
+        Msg::AiDescOpus
+    } else if m.contains("sonnet") {
+        Msg::AiDescSonnet
+    } else if m.contains("haiku") {
+        Msg::AiDescHaiku
+    } else if m.contains("sol-mini") {
+        Msg::AiDescSolMini
+    } else if m.contains("gpt-6") {
+        Msg::AiDescSol
+    } else {
+        Msg::AiDescFetched
     }
 }
 

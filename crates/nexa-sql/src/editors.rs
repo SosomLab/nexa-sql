@@ -2306,7 +2306,7 @@ impl Editors {
         let ext_view = self
             .view_tabs
             .get(&self.tab_id(i))
-            .is_some_and(|k| k.starts_with("ext:") || k == "ai.chat");
+            .is_some_and(|k| k.starts_with("ext:") || k.starts_with("ai."));
         let base = if self.loading.contains(&self.tab_id(i)) {
             format!("{base} …")
         } else if self.read_only.contains(&self.tab_id(i)) && !ext_view {
