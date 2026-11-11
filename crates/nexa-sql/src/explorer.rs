@@ -7436,31 +7436,130 @@ impl Explorer {
     /// ★ T-123(219차): 적재된 L1 메타에서 객체 부가(`extra` · Oracle GTT = `TEMPORARY` · SQL Server 테이블 함수 코드) — 왕복 0 ·
     ///   스키마 없음 = 현재 스키마 규칙(`Snapshot::lookup`) · 이름이 없거나 아직 안 읽었으면 None(정직한 한계).
     /// ★ AI 도구 `search_objects`(docs/110 · 11-11): 메타 스냅샷에서 이름 부분 일치(대소문자 무시) · 종류 필터 · 상한.
-    pub(crate) fn ai_search_objects(&self, query: &str, kind: &str, limit: usize) -> Vec<String> {
+    /// ★ AI 도구 `search_objects`(검색 하네스 · docs/110 §15-17): 메모리 스냅샷만 · 점수 순(정확 > 접두 > 낱말 머리 > 부분 > 퍼지 ·
+    ///   현재 스키마 +50) · 낱말 AND · `schema.name` · 종류/스키마 필터 · `in_columns`면 읽힌 컬럼 이름도(객체 점수보다 아래).
+    ///   첫 줄 = 요약(적중/읽힌 객체/스키마/현재 스키마) · 행 = `schema.name<TAB>kind<TAB>status<TAB>cols=loaded(N)|-`.
+    pub(crate) fn ai_search_objects(
+        &self,
+        query: &str,
+        kind: &str,
+        schema: &str,
+        in_columns: bool,
+        limit: usize,
+    ) -> Vec<String> {
+        use crate::ai::search::{name_score, parse_query, words_score};
         let snap = self.meta.snapshot();
-        let q = query.to_lowercase();
-        let k = kind.to_lowercase();
-        let mut out = Vec::new();
-        for o in &snap.objs {
-            let name = self.meta.names.get(o.name);
+        let names = &self.meta.names;
+        let (qschema, words) = parse_query(query);
+        let schema_f = if schema.trim().is_empty() {
+            qschema
+        } else {
+            Some(schema.trim().to_lowercase())
+        };
+        let k = kind.trim().to_lowercase();
+        let cur = snap.current_schema;
+        let mut hits: Vec<(i32, String)> = Vec::new();
+        for (i, o) in snap.objs.iter().enumerate() {
             let kind_s = format!("{:?}", o.kind).to_lowercase();
-            if (!q.is_empty() && !name.to_lowercase().contains(&q))
-                || (!k.is_empty() && !kind_s.contains(&k))
-            {
+            if !k.is_empty() && !kind_s.contains(&k) {
                 continue;
             }
-            out.push(format!(
-                "{}.{}\t{}\t{:?}",
-                self.meta.names.get(o.schema),
-                name,
-                kind_s,
-                o.status
-            ));
-            if out.len() >= limit {
-                break;
+            if let Some(sf) = &schema_f {
+                if names.lower(o.schema) != sf.as_str() {
+                    continue;
+                }
+            }
+            let bonus = if cur == Some(o.schema) { 50 } else { 0 };
+            let cols = snap.cols.get(i);
+            let cols_s = match cols {
+                Some(nsql_run::meta::ColState::Loaded { cols, .. }) => {
+                    format!("loaded({})", cols.len())
+                }
+                _ => "-".to_string(),
+            };
+            if let Some(sc) = words_score(&words, names.lower(o.name)) {
+                hits.push((
+                    sc + bonus,
+                    format!(
+                        "{}.{}\t{}\t{:?}\tcols={}",
+                        names.get(o.schema),
+                        names.get(o.name),
+                        kind_s,
+                        o.status,
+                        cols_s
+                    ),
+                ));
+            }
+            if in_columns && !words.is_empty() {
+                if let Some(nsql_run::meta::ColState::Loaded { cols, .. }) = cols {
+                    for c in cols.iter() {
+                        if let Some(sc) = words.iter().try_fold(0, |acc, w| {
+                            name_score(w, names.lower(c.name)).map(|s| acc + s)
+                        }) {
+                            hits.push((
+                                sc + bonus - 300,
+                                format!(
+                                    "{}.{}.{}\tcolumn\t{}\tof {}",
+                                    names.get(o.schema),
+                                    names.get(o.name),
+                                    names.get(c.name),
+                                    names.get(c.data_type),
+                                    kind_s
+                                ),
+                            ));
+                        }
+                    }
+                }
             }
         }
+        hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let total = hits.len();
+        let mut out = Vec::with_capacity(limit + 1);
+        out.push(format!(
+            "{total} hits (showing {}) · {} loaded objects in {} schemas · current schema {}",
+            total.min(limit),
+            snap.objs.len(),
+            snap.schemas.len(),
+            cur.map(|s| names.get(s)).unwrap_or("-")
+        ));
+        out.extend(hits.into_iter().take(limit).map(|(_, l)| l));
         out
+    }
+
+    /// ★ AI 도구 `meta_stats`: 스키마별 읽힌 객체 수(종류별) · 컬럼 읽힌 객체 수 — 모델이 사전 질의 전에 "앱이 아는 범위"를 안다.
+    pub(crate) fn ai_meta_stats(&self) -> String {
+        use std::collections::BTreeMap;
+        let snap = self.meta.snapshot();
+        let names = &self.meta.names;
+        let mut per: BTreeMap<String, (BTreeMap<String, usize>, usize)> = BTreeMap::new();
+        for (i, o) in snap.objs.iter().enumerate() {
+            let e = per.entry(names.get(o.schema).to_string()).or_default();
+            *e.0.entry(format!("{:?}", o.kind).to_lowercase())
+                .or_default() += 1;
+            if matches!(
+                snap.cols.get(i),
+                Some(nsql_run::meta::ColState::Loaded { .. })
+            ) {
+                e.1 += 1;
+            }
+        }
+        let mut s = format!(
+            "loaded objects={} schemas={} current_schema={}\n",
+            snap.objs.len(),
+            snap.schemas.len(),
+            snap.current_schema.map(|x| names.get(x)).unwrap_or("-")
+        );
+        for (schema, (kinds, with_cols)) in &per {
+            let ks: Vec<String> = kinds.iter().map(|(k, n)| format!("{k}={n}")).collect();
+            s.push_str(&format!(
+                "- {schema}: {} · columns loaded for {with_cols}\n",
+                ks.join(" ")
+            ));
+        }
+        if per.is_empty() {
+            s.push_str("(nothing loaded — connect and expand the explorer, or run a query)\n");
+        }
+        s
     }
 
     /// ★ AI 도구 `describe_object`: 종류·상태·부가 + 탐색기에 이미 읽힌 컬럼(없으면 안내).

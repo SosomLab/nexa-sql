@@ -67,13 +67,21 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "search_objects",
-        desc: "Search database objects known to the object explorer (tables, views, procedures ...) by name substring.",
+        desc: "Find objects in the metadata the app already loaded (no database query). Ranked: exact > prefix > word start > substring > fuzzy; current schema first. Query words are ANDed; `SCHEMA.NAME` narrows the schema. in_columns=true also matches loaded column names (find a table by a column). First line is a summary (hits, loaded objects, schemas, current schema).",
         write: false,
         props: &[
-            ("query", "string", "Name substring (case-insensitive)", true),
+            ("query", "string", "Name words (case-insensitive) or SCHEMA.NAME", true),
             ("kind", "string", "Optional kind filter: table, view, procedure, function, ...", false),
+            ("schema", "string", "Optional schema filter", false),
+            ("in_columns", "boolean", "Also search loaded column names (default false)", false),
             ("limit", "integer", "Max results (default 50)", false),
         ],
+    },
+    Tool {
+        name: "meta_stats",
+        desc: "What the app has loaded per schema (object counts by kind, how many have columns loaded) and the current schema. Call before deciding whether a dictionary query is needed.",
+        write: false,
+        props: &[],
     },
     Tool {
         name: "describe_object",
@@ -107,9 +115,17 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "connect",
-        desc: "Connect with a saved profile: if its password is stored, connects directly; otherwise opens the connection window where the user must type the password and confirm.",
+        desc: "Connect with a saved profile. scope=shared (default): app-wide shared connection — connects directly when the password is stored, else opens the connection window for the user. scope=private: this editor tab's own session — runs `CONNECT <profile>;` in the active editor (same as typing it), needs a stored password.",
         write: true,
-        props: &[("profile", "string", "Profile name", true)],
+        props: &[
+            ("profile", "string", "Profile name", true),
+            (
+                "scope",
+                "string",
+                "shared (default) or private (per-editor-tab session via CONNECT statement)",
+                false,
+            ),
+        ],
     },
     Tool {
         name: "run_query",

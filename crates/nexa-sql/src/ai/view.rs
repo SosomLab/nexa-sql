@@ -654,7 +654,42 @@ impl AiView {
             r |= b.tick(now_ms);
         }
         r |= self.bars.tick(now_ms);
+        // ★ 드래그 선택 자동 스크롤(사용자 11-11): 끄는 중 포인터가 대본 위/아래 밖이면 그쪽으로 조금씩 넘기고 끝 줄을 따라간다.
+        if self.dragging && !self.transcript.is_empty() {
+            let tr = self.transcript;
+            let step = (self.lh.max(12) * 2).max(8);
+            let max_scroll = (self.content_h - tr.h).max(0);
+            let dy = if self.mouse.y < tr.y {
+                -step
+            } else if self.mouse.y >= tr.bottom() {
+                step
+            } else {
+                0
+            };
+            if dy != 0 {
+                let ny = (self.scroll_y + dy).clamp(0, max_scroll);
+                if ny != self.scroll_y {
+                    self.scroll_y = ny;
+                    self.stick_bottom = false;
+                    r = true;
+                }
+                let q = self.clamp_to_transcript(self.mouse);
+                if let Some(to) = self.line_at(q) {
+                    self.drag_to = Some((to, self.mouse.x));
+                    r = true;
+                }
+            }
+        }
         r
+    }
+
+    /// 점을 대본 사각형 안(세로)으로 — 밖으로 끌 때 가장자리 줄을 잡기 위해.
+    fn clamp_to_transcript(&self, p: Point) -> Point {
+        let tr = self.transcript;
+        Point {
+            x: p.x,
+            y: p.y.clamp(tr.y, (tr.bottom() - 1).max(tr.y)),
+        }
     }
 
     pub(crate) fn take_actions(&mut self) -> Vec<ViewAction> {
@@ -964,7 +999,9 @@ impl AiView {
                 let mut changed = h != self.hover;
                 self.hover = h;
                 if self.dragging {
-                    if let Some(to) = self.line_at(p) {
+                    // 대본 밖(위/아래)으로 끌어도 가장자리 줄로 잡는다 — 자동 스크롤은 `tick`(사용자 11-11).
+                    let q = self.clamp_to_transcript(p);
+                    if let Some(to) = self.line_at(q) {
                         // 글자 자리는 다음 그리기에서(`resolve_col`).
                         self.drag_to = Some((to, x));
                         changed = true;
@@ -1046,7 +1083,8 @@ impl AiView {
                 }
                 if self.dragging {
                     self.dragging = false;
-                    if let Some(to) = self.line_at(p) {
+                    let q = self.clamp_to_transcript(p);
+                    if let Some(to) = self.line_at(q) {
                         self.drag_to = Some((to, p.x));
                     }
                 }

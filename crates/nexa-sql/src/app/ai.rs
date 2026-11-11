@@ -2092,15 +2092,20 @@ impl App {
             }
             "search_objects" => {
                 let limit = gi("limit", 50).clamp(1, 500) as usize;
-                let rows = self
-                    .explorer
-                    .ai_search_objects(&g("query"), &g("kind"), limit);
-                if rows.is_empty() {
-                    ok("no objects (is the explorer connected and loaded?)".into())
-                } else {
-                    ok(rows.join("\n"))
-                }
+                let in_cols = matches!(
+                    g("in_columns").to_ascii_lowercase().as_str(),
+                    "true" | "1" | "yes"
+                );
+                let rows = self.explorer.ai_search_objects(
+                    &g("query"),
+                    &g("kind"),
+                    &g("schema"),
+                    in_cols,
+                    limit,
+                );
+                ok(rows.join("\n"))
             }
+            "meta_stats" => ok(self.explorer.ai_meta_stats()),
             "describe_object" => {
                 let schema = g("schema");
                 let s = (!schema.is_empty()).then_some(schema.as_str());
@@ -2149,6 +2154,28 @@ impl App {
                     ));
                 }
                 ok(out)
+            }
+            "connect" if g("scope").eq_ignore_ascii_case("private") => {
+                // ★ 전용(탭) 세션(사용자 11-11 "CONNECT SB_PRD; 명령만 실행되면 된다"): 편집기에서 친 것과 같은 길(`run_text_whole` →
+                //   run.rs의 CONNECT 처리 = 이 탭의 전용 세션) · 새 API 없음 · 비밀번호는 호스트 안.
+                let p = g("profile");
+                match nsql_vault::Vault::open_default().and_then(|v| v.get(&p)) {
+                    Ok(Some(spec)) if spec.password.as_deref().is_some_and(|w| !w.is_empty()) => {
+                        if self.ai.pending.is_some() || !self.gate_open() {
+                            err(format!("session busy: {}", self.sess.status))
+                        } else {
+                            self.run_text_whole(format!("CONNECT {p};"));
+                            ok(format!(
+                                "running `CONNECT {p};` in the active editor tab — it becomes that tab's private session; call session_info in a moment to confirm"
+                            ))
+                        }
+                    }
+                    Ok(Some(_)) => err(format!(
+                        "profile '{p}' has no stored password: a private session needs one. Use scope=shared (connection window) or tell the user to type `CONNECT {p};` in the editor and log in there."
+                    )),
+                    Ok(None) => err(format!("unknown profile '{p}' (use list_profiles)")),
+                    Err(e) => err(e.to_string()),
+                }
             }
             "connect" => {
                 let p = g("profile");

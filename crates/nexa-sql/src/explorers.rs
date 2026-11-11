@@ -1581,10 +1581,20 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     }
 
     /// ★ AI 도구(docs/110 · 11-11): 활성 칸의 메타에서 객체 검색·설명·소스 열기.
-    pub(crate) fn ai_search_objects(&self, query: &str, kind: &str, limit: usize) -> Vec<String> {
+    pub(crate) fn ai_search_objects(
+        &self,
+        query: &str,
+        kind: &str,
+        schema: &str,
+        in_columns: bool,
+        limit: usize,
+    ) -> Vec<String> {
         self.panes[self.shown]
             .ex
-            .ai_search_objects(query, kind, limit)
+            .ai_search_objects(query, kind, schema, in_columns, limit)
+    }
+    pub(crate) fn ai_meta_stats(&self) -> String {
+        self.panes[self.shown].ex.ai_meta_stats()
     }
     pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
         self.panes[self.shown].ex.ai_describe(schema, name)

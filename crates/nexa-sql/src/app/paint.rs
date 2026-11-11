@@ -942,7 +942,7 @@ impl App {
         {
             let prefs = FontPrefs::with_base(ui_px);
             let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
-            self.tool_dock.paint_tooltip(&mut dc, &th);
+            // (툴바 버튼 툴팁은 메뉴바 뒤 최상위에서 — 아래 메뉴바 블록 · 11-11.)
             // 툴바 그룹 드래그 고스트 — 편집기 위까지 나가므로 팝업 층에.
             self.tool_dock.paint_drag_overlay(&mut dc, &th);
             self.find.paint_tooltip(&mut dc, &th);
@@ -1079,6 +1079,12 @@ impl App {
             };
             let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
             self.menubar.paint(&mut dc, &th);
+            // ★ 툴바 버튼 툴팁 = 메뉴바 **뒤**(진짜 최상위 · 사용자 11-11 결정 A): 전역 툴팁 방향이 "위"(10-07 `ui.tooltip_above`)라
+            //   맨 위 툴바의 툴팁은 메뉴바 띠에 놓이는데, 종전엔 메뉴바 패스가 그 뒤에 와서 덮어 **툴바 툴팁이 전부 안 보였다**.
+            //   메뉴가 열린 동안(모달 · 툴바 hover가 낡아 있을 수 있다)은 그리지 않는다. 글꼴은 Status 슬롯(기본값)이라 메뉴 글꼴과 무관.
+            if !self.menubar.is_open() {
+                self.tool_dock.paint_tooltip(&mut dc, &th);
+            }
         }
     }
 

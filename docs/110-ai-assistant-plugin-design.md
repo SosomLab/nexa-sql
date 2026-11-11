@@ -369,6 +369,18 @@
 | # | 실기 원문 | 구현 |
 |---|---|---|
 | 1 | 6개를 첨부했는데 칩이 2개만 보임 | 칩이 한 줄을 넘으면 숨기던 구조 → **여러 줄로 감쌈**: 그리기 전에 칩 폭을 재서 (번호 · 줄 · x)를 계산하고 `chips_h = 줄 수 × (btn_h + 6)` → 작성 상자가 그만큼 아래로. 클릭(미리보기)·[×] 사각형도 같은 배치. |
-| 2 | 툴바 **모든** 버튼의 툴팁이 안 보임(탐색기 툴팁은 보임) | **원인** = 10-07 설정 `ui.tooltip_above`(기본 켬)로 전역 툴팁 방향이 "기준 위"가 된 뒤, 맨 위 툴바의 툴팁이 **메뉴바 띠**에 그려지고 최상위 메뉴바 패스(`paint_seg_overlays` 끝)가 메뉴바 바탕을 다시 칠해 덮었다(탐색기는 위에 아무것도 없어 보였다 · 헤드리스 캡처에서도 전부 없던 이유). **수정** = nexa-ctl 236차: `Toolbar::paint_tooltip_in`·`ToolDock` 손잡이 툴팁이 전역 방향 대신 바의 `tip_above`(기본 아래 · 넘치면 위 · `draw_tooltip_in_dir`)를 따른다(결과 그리드 하단 툴바는 `set_tooltip_above(true)` 그대로 위). 종전의 "가짜 anchor로 위로 올리기"는 제거. |
+| 2 | 툴바 **모든** 버튼의 툴팁이 안 보임(탐색기 툴팁은 보임) | **원인** = 10-07 설정 `ui.tooltip_above`(기본 켬)로 전역 툴팁 방향이 "기준 위"가 된 뒤, 맨 위 툴바의 툴팁이 **메뉴바 띠**에 그려지고 최상위 메뉴바 패스(`paint_seg_overlays` 끝)가 메뉴바 바탕을 다시 칠해 덮었다(탐색기는 위에 아무것도 없어 보였다 · 헤드리스 캡처에서도 전부 없던 이유). **수정(사용자 결정 A · 11-11 "아래 표시는 불편")** = **그리기 순서**: 툴바 툴팁을 메뉴바 패스 **뒤**(진짜 최상위)에 그린다(`paint_seg_overlays` 끝) · 메뉴가 열린 동안은 안 그림 · 전역 "위" 선호 그대로(툴팁이 메뉴바 띠 위에 잠깐 겹침). 먼저 push했던 B안(nexa-ui 2d86926 = 툴바만 아래 방향)은 되돌림(revert). |
 
-- nexa-ui 커밋 1(nexa-ctl 시험 12/0 · clippy ✓) · nexa-sql = view.rs 칩 배치.
+| 3 | 대본 드래그 선택 때 자동 스크롤이 없음 | 끄는 중 포인터가 대본 위/아래 밖이면 `AiView::tick`이 줄 높이 2배씩 그쪽으로 넘기고 가장자리 줄을 초점으로(`clamp_to_transcript`) · 이동/놓기도 밖이면 가장자리 줄. |
+| 4 | 모델이 "전용(private) 세션은 못 만든다"고 답함 — 사용자 "`CONNECT SB_PRD;` 명령만 실행되면 되는데 따로 API가 필요한가" | 필요 없다. `connect` 도구에 **`scope=private`**: 저장 비밀번호가 있으면 활성 편집기 탭에서 `CONNECT <profile>;`를 보통 실행과 같은 길(`run_text_whole` → run.rs CONNECT = 그 탭 전용 세션)로 실행 · 없으면 오류로 안내(공유 창 또는 사용자가 직접). `connections` 스킬에 "전용 세션도 만들 수 있다 · 못 한다고 말하지 말 것" 명시. |
+| 5 | (협업 관찰) 툴팁에 단축키가 두 번 "전체 실행(F5) (F5)" | 한국어 글 3개(문장 실행 · 전체 실행 · 로그 창)에 괄호 앞 공백 → `without_shortcut`이 뗀다. |
+
+- nexa-ui = 2d86926 revert(변경 없음) · nexa-sql = view.rs 칩 배치·자동 스크롤 + paint.rs 툴팁 순서 + connect scope · i18n 글 3.
+
+### 15-17 객체 검색 하네스(2026-11-11 밤 · 사용자 "테이블을 검색할 때 이미 읽힌 Meta로 더 빠르게 · Skills로(Codex도)")
+- **원칙** = 탐색기 메타 스냅샷(메모리 · `nsql_run::meta::Snapshot`)만 본다 — DBMS 질의 0 · 새 적재 없음(지연 로딩 그대로 · 61 §1-8).
+- **`ai/search.rs`**(순수 · 시험 2): `name_score(q, name)` = 정확 1000 > 접두 800− > 낱말 머리(`_` 뒤) 600− > 부분 400− > 퍼지(`palette::fuzzy_score_lower`) <200 · `parse_query` = `SCHEMA.NAME` 스키마 떼기 + 띄어쓰기 AND 낱말 · `words_score` = 전 낱말 합.
+- **`search_objects`** 갱신: 점수 순(현재 스키마 +50) · `schema` 필터 · `kind` 필터 · **`in_columns`** = 읽힌 컬럼 이름도(객체 점수 −300 · 행 = `schema.table.column<TAB>column<TAB>type<TAB>of kind`) · 행에 `cols=loaded(N)|-` · 첫 줄 요약(적중 수 · 읽힌 객체 수 · 스키마 수 · 현재 스키마).
+- **새 도구 `meta_stats`**(읽기): 스키마별 종류별 객체 수 · 컬럼 읽힌 객체 수 · 현재 스키마 — 모델이 "앱이 아는 범위"를 보고 사전 질의가 필요한지 판단. 도구 18종.
+- **`metadata` 스킬** = 하네스 순서(①`meta_stats` → ②`search_objects`(낱말 AND · `SCHEMA.NAME` · kind · in_columns) → ③`describe_object`(컬럼 안 읽혔으면 탐색기 펼치기 또는 `SELECT * … WHERE 1=0`) → ④`object_source` → ⑤ 그때만 사전 질의) · **Claude·Codex 공통**(같은 도구 · Codex는 시스템 프롬프트를 첫 턴 `<app_context>`로 받으므로 색인·`skill` 도구 동일).
+- MCP 구성 요약(사용자 질문 11-11): API 모드 = 요청 `tools`에 18종 직접 · Claude CLI = `--mcp-config`의 `nexa` 서버 하나(`nsql mcp-bridge` stdio ↔ 앱 TCP `ai.mcp_port`) + `--strict-mcp-config` + `--permission-prompt-tool mcp__nexa__approve` + `--append-system-prompt` · Codex = app-server `dynamicTools`(MCP 아님) · 스킬 본문은 `skill(name)`.

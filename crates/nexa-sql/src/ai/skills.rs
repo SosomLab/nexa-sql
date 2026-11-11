@@ -26,7 +26,7 @@ Terms:
 Steps:
 1. Call `session_info`. It returns the current editor's session (profile, dialect, connected, schema/current db, busy, pending uncommitted statements, masked description) and the list of ALL app sessions (shared/private, owner tab, connected/broken/busy, idle seconds, pending count).
 2. Answer directly from that output. Do NOT run SQL against v$session, pg_stat_activity, sys.dm_exec_sessions or similar unless the user explicitly asks about server-side sessions, other users, locks or waits.
-3. Saved profiles: `list_profiles`. To open a connection: `connect` with the profile name. If the profile has a stored password it connects directly (then re-check with `session_info`); if not, the connection window opens and you must tell the user to type the password and confirm the login there themselves.
+3. Saved profiles: `list_profiles`. To open a connection: `connect` with the profile name. scope=shared (default) = app-wide shared connection: with a stored password it connects directly (then re-check with `session_info`); without one the connection window opens and you must tell the user to type the password and confirm the login there themselves. scope=private = the active editor tab's own session: the app runs `CONNECT <profile>;` in that tab (exactly what the user would type); it needs a stored password. You CAN create private sessions this way — do not say you cannot.
 4. 'Which schema/database am I in' = schema / current db from `session_info`; do not guess from SQL text.
 ",
     },
@@ -38,12 +38,13 @@ Steps:
 
 The object explorer caches metadata per connection. Prefer it over dictionary queries.
 
-Steps:
-1. `search_objects` with a name substring (and schema when known) to find the object and its kind.
-2. `describe_object` for columns (name, type, nullable, key) and status/extra info.
-3. `object_source` to open DDL/source (procedures, views, triggers, packages) in a tab and read it.
-4. Only when the explorer has no information for that object (not loaded, unknown schema), run a read-only dictionary query with `run_query` and say that it came from the database. Examples: Oracle ALL_TAB_COLUMNS / ALL_CONSTRAINTS, PostgreSQL information_schema.columns, SQL Server sys.columns, MySQL information_schema.COLUMNS.
-5. Scope names with the current schema from `session_info` when the user does not qualify them. Never modify objects from this skill.
+Search harness (all in-memory, instant, no database round trip):
+1. `meta_stats` — how much the app has loaded per schema and the current schema. If the schema you need shows 0 objects, metadata is not loaded yet: say so and fall back to step 5.
+2. `search_objects` — ranked (exact > prefix > word start > substring > fuzzy; current schema first). Use several words for AND (`cust order`), `SCHEMA.NAME` to pin a schema, kind=table|view|procedure|... to narrow, in_columns=true to find tables by a column name (results `schema.table.column`). Read the first summary line; `cols=loaded(N)` means `describe_object` will have columns.
+3. `describe_object` — columns (name, type, nullable, PK), status, comment. If it says columns are not loaded, ask the user to expand the object in the explorer or run a quick `SELECT * FROM x WHERE 1=0` via `run_query` (read-only) which loads them.
+4. `object_source` — DDL/source of procedures, views, triggers, packages (opens a tab).
+5. Only when the explorer has no information for that object (not loaded, unknown schema), run a read-only dictionary query with `run_query` and say that it came from the database. Examples: Oracle ALL_TAB_COLUMNS / ALL_CONSTRAINTS, PostgreSQL information_schema.columns, SQL Server sys.columns, MySQL information_schema.COLUMNS.
+6. Scope names with the current schema from `session_info` when the user does not qualify them. Never modify objects from this skill. Same steps for Claude and Codex (the tools are identical).
 ",
     },
     Skill {

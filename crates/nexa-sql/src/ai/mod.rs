@@ -12,6 +12,7 @@ pub(crate) mod host;
 pub(crate) mod mcp;
 pub(crate) mod panel;
 pub(crate) mod picker;
+pub(crate) mod search;
 pub(crate) mod skills;
 pub(crate) mod tools;
 pub(crate) mod view;
