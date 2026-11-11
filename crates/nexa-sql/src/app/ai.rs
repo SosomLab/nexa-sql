@@ -1866,6 +1866,10 @@ impl App {
                 if std::env::var_os("NSQL_TRACE_AI").is_some() {
                     eprintln!("[ai] started {note}");
                 }
+                if note.contains("connected") {
+                    let port = self.ai.mcp.as_ref().map(|m| m.port).unwrap_or(0);
+                    self.ai.status = tf(Msg::AiMcpConnected, &[&port.to_string()]);
+                }
                 // ★ MCP 서버가 못 붙었으면(`mcp=[nexa-sql:failed]`) 진단 Note + CLI 프로세스를 내려 다음 보내기에 다시 띄운다(11-12).
                 if note.contains("failed") {
                     let port = self.ai.mcp.as_ref().map(|m| m.port).unwrap_or(0);
@@ -2128,6 +2132,7 @@ impl App {
         let Some((_, _, _, r)) = self.ai.approval.take() else {
             return;
         };
+        let mut reenter: Option<(String, String, mpsc::Sender<ToolReply>)> = None;
         match r {
             ApprovalReply::Cli(tx) => {
                 let _ = tx.send(ok);
@@ -2147,7 +2152,10 @@ impl App {
                     if let Some(s) = self.ai_run_mut() {
                         s.rows_allowed = true;
                     }
-                    self.ai_exec_tool(&name, &input, reply);
+                    // ★ P0(협업 관찰 11-12 · 데이터 보호): 행 데이터 **동의**는 전송 허락일 뿐 — 쓰기 문장 확인(SQL 본문 · ⚠ WHERE)을
+                    //   건너뛰고 바로 실행했다(WHERE 없는 DELETE가 동의 카드 하나로 실행됨). 동의 뒤 도구 요청을 **다시 거친다**:
+                    //   읽기 전용이면 그대로 실행 · 쓰기면 확인 카드가 한 번 더 뜬다.
+                    reenter = Some((name, input, reply));
                 } else {
                     let _ = reply.send(ToolReply {
                         output: "the user declined to share row data".into(),
@@ -2160,6 +2168,9 @@ impl App {
             Kind::Note,
             t(if ok { Msg::AiAllowed } else { Msg::AiDenied }),
         ));
+        if let Some((name, input, reply)) = reenter {
+            self.ai_tool_request(name, input, reply);
+        }
         self.redraw();
     }
 
@@ -2236,10 +2247,16 @@ impl App {
                 .ok()
                 .map(|v| ai::jstr(&v, "sql"))
                 .unwrap_or_default();
-            let card = if tool.name == "run_query" && sql_dml_without_where(&sql_in) {
-                format!("{}\n{}", t(Msg::AiNoWhereWarn), redact(&input))
+            // 카드 본문: run_query면 JSON 대신 **SQL 본문**(읽기 쉽게 · 11-12) · 그 밖은 입력 JSON.
+            let body = if tool.name == "run_query" && !sql_in.trim().is_empty() {
+                redact(&sql_in)
             } else {
                 redact(&input)
+            };
+            let card = if tool.name == "run_query" && sql_dml_without_where(&sql_in) {
+                format!("{}\n{body}", t(Msg::AiNoWhereWarn))
+            } else {
+                body
             };
             let mut m = ChatMsg::new(
                 Kind::Approval {
@@ -2590,7 +2607,7 @@ impl App {
                         }
                     }
                     Ok(Some(_)) => err(format!(
-                        "profile '{p}' has no stored password: a private session needs one. Use scope=shared (connection window) or tell the user to type `CONNECT {p};` in the editor and log in there."
+                        "profile '{p}' has no stored password (a private session needs one). Use scope=shared (connection window) or tell the user to type `CONNECT {p};` in the editor and log in there."
                     )),
                     Ok(None) => err(format!("unknown profile '{p}' (use list_profiles)")),
                     Err(e) => err(e.to_string()),
@@ -2609,7 +2626,7 @@ impl App {
                     Ok(Some(_)) => {
                         self.startup_cmd(&format!("conn.edit:{p}"));
                         ok(format!(
-                            "profile '{p}' has no stored password: the connection window is open with it preselected. Tell the user they must type the password and confirm the login in that window themselves (you cannot do it)."
+                            "profile '{p}' has no stored password; the connection window is open with it preselected. Tell the user they must type the password and confirm the login in that window themselves (you cannot do it)."
                         ))
                     }
                     Ok(None) => err(format!("unknown profile '{p}' (use list_profiles)")),

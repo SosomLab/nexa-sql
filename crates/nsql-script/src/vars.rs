@@ -692,9 +692,17 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
 mod tests {
     use super::*;
 
+    /// ★ 비밀 키워드 전역(`SECRET_KEYWORDS`)을 바꾸거나 읽는 시험은 직렬로(병렬 시험이 섞이면 `v_password`가 비밀로 안 잡혀
+    ///   `script_round_trip`이 간헐 실패 · windows CI 11-12).
+    static SECRET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn secret_guard() -> std::sync::MutexGuard<'static, ()> {
+        SECRET_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// ★ 비밀 이름 키워드 = 설정(11-11): 기본 네 개 · 바꾸면 그것만 · 빈 값 = 이름 규칙 없음 · 끝에 기본값으로 되돌린다(전역 · 다른 시험 보호).
     #[test]
     fn secret_keywords_follow_setting() {
+        let _g = secret_guard();
         assert!(looks_secret("DB_PASS") && looks_secret("my_token") && !looks_secret("OWNER"));
         set_secret_keywords("KEY; pin ,");
         assert!(looks_secret("API_KEY") && looks_secret("card_pin"));
@@ -915,6 +923,7 @@ mod tests {
     /// 보존·내보내기 왕복: 선언·타입·값이 돌아오고 비밀·커서·여러 줄은 값이 빠진다 · 결과는 실행 가능한 스크립트다.
     #[test]
     fn script_round_trip() {
+        let _g = secret_guard();
         let mut s = VarStore::new();
         s.declare("n", VarType::Number, Some(Value::Int(42)));
         s.assign("V_CD", Value::Str("O'Brien & co".into()));

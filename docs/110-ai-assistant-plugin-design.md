@@ -452,3 +452,12 @@
 - **에이전트 이력 저장**: 세션 jsonl 머리에 `agent` — 다시 열어도 `/agent`로 고른 역할이 유지된다(종전 = assistant로 되돌아감).
 - **승인 카드 "⚠ WHERE 없음"**(전 도구 훅 · 데이터 보호 불변식 취지): `run_query`의 UPDATE/DELETE 문장에 WHERE 낱말이 없으면 승인 카드 첫 줄에 "⚠ WHERE 없는 UPDATE/DELETE — 모든 행에 적용됩니다"(CLI·API 경로 공통 · `sql_dml_without_where` 순수 함수 + 시험 · 차단은 아니고 경고).
 - **세션별 작성 상자 초안**: 세션을 바꿀 때(탭 열쇠 따라가기 · 분할 창 탭별 · 세션 열기 · 새 대화) 떠나는 세션의 글을 `AiState.drafts`에 저장하고 새 세션의 초안을 꺼낸다(빈 글 = 지움) — 종전엔 뷰 부품이 하나라 글이 세션을 넘나들었다(§15-13 한계 해소).
+- **승인 카드 본문 = SQL**(API 경로 · `run_query`): JSON 입력 대신 SQL 본문을 보여 준다(그 밖 도구는 JSON 그대로) · WHERE 경고는 그 위 첫 줄.
+- **CLI 도구 서버 연결됨 안내**: `init mcp=[nexa-sql:connected]`면 상태줄 "도구 서버 nexa-sql 연결됨(포트 N)"(대본엔 안 올림).
+
+### 16-8 ★ P0 데이터 보호 결함(2026-11-12 새벽 · 협업 V1 관찰 · 즉시 수정)
+- **결함**: AI `run_query`의 WHERE 없는 `DELETE`가 **행 데이터 동의 카드 하나만 허용해도 실행**됐다(쓰기 확인 카드·⚠ WHERE 경고가 안 뜸). 격리 홈 SQLite 복사본에서 3행 → 0행 재현(협업).
+- **원인**: `ai_approve`의 `ApprovalReply::Rows` 허용 가지가 `ai_exec_tool`을 **직접** 불러, `ai_tool_request`의 쓰기 확인 분기(`tool.write && (!auto || !readonly_q)`)를 건너뛰었다. 동의 카드가 쓰기 카드보다 먼저 오는 순서라 쓰기 문장일수록 늘 이 길을 탔다.
+- **수정**: 동의 허용 뒤 `ai_tool_request(name, input, reply)`로 **다시 진입** — 읽기 전용이면 실행 · 쓰기면 확인 카드(SQL 본문 + ⚠ WHERE)가 한 번 더 뜬다(Auto여도 비조회면 확인). 61 §1-7 "자동 편집은 1행" 불변식과 별개로, AI 경로의 쓰기는 **반드시 사용자 확인**을 거친다는 규칙을 여기서 지킨다.
+- 덤: 도구 오류 글 "has no stored password: …"가 가림 필터(`password:` 꼴)에 걸려 망가지던 것 → 문구를 괄호/세미콜론으로.
+- V1 재현 절차(협업)를 회귀 시험으로 유지: `NSQL_AI_MOCK_TOOL='run_query:{"sql":"DELETE FROM equip_master"}'` → 동의 허용 → **쓰기 확인 카드**가 떠야 하고 거부하면 행 수 그대로.
