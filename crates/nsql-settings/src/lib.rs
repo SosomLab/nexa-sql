@@ -280,6 +280,10 @@ pub const AI_EFFORT_OPTS: &[(&str, Msg)] = &[
     ("xhigh", Msg::OptAiEffortXhigh),
     ("max", Msg::OptAiEffortMax),
 ];
+pub const AI_CLI_KEY_OPTS: &[(&str, Msg)] = &[
+    ("login", Msg::OptAiCliKeyLogin),
+    ("profile", Msg::OptAiCliKeyProfile),
+];
 pub const AI_PERM_OPTS: &[(&str, Msg)] = &[
     ("default", Msg::OptAiPermDefault),
     ("acceptEdits", Msg::OptAiPermAcceptEdits),
@@ -6341,6 +6345,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "90",
     },
     Entry {
+        key: "ai.cli_key",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCliKey,
+        desc: Msg::DescAiCliKey,
+        kind: SettingKind::Choice(AI_CLI_KEY_OPTS),
+        default: "login",
+    },
+    Entry {
         key: "ai.cli_path",
         cat: Msg::CatAi,
         label: Msg::LblAiCliPath,
@@ -6387,6 +6399,39 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiCodexModel,
         kind: SettingKind::Text,
         default: "sol",
+    },
+    // ★ Codex 탭 전용 기본값(사용자 11-11 "Claude · Codex 설정을 따로") — Claude는 ai.mode/effort/auto.
+    Entry {
+        key: "ai.codex_mode",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCodexMode,
+        desc: Msg::DescAiCodexMode,
+        kind: SettingKind::Choice(AI_MODE_OPTS),
+        default: "api",
+    },
+    Entry {
+        key: "ai.codex_effort",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCodexEffort,
+        desc: Msg::DescAiCodexEffort,
+        kind: SettingKind::Choice(AI_EFFORT_OPTS),
+        default: "medium",
+    },
+    Entry {
+        key: "ai.codex_auto",
+        cat: Msg::CatAi,
+        label: Msg::LblAiCodexAuto,
+        desc: Msg::DescAiCodexAuto,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "ai.composer_max_lines",
+        cat: Msg::CatAi,
+        label: Msg::LblAiComposerMaxLines,
+        desc: Msg::DescAiComposerMaxLines,
+        kind: SettingKind::Int { min: 2, max: 40 },
+        default: "8",
     },
     Entry {
         key: "ai.prices",

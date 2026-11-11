@@ -137,6 +137,12 @@ fn raw<'a>(data: &'a [u8], e: &Entry) -> Result<&'a [u8], String> {
 }
 
 /// 항목 하나를 푼 바이트(CRC 검사 포함).
+/// zlib 스트림 해제(PNG IDAT 같은 것 · 상한 바이트) — nexa-sql AI 첨부 미리보기(11-11)가 쓴다.
+pub fn inflate_zlib(data: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(data, limit)
+        .map_err(|e| format!("inflate: {e:?}"))
+}
+
 pub fn read_entry(data: &[u8], e: &Entry) -> Result<Vec<u8>, String> {
     let r = raw(data, e)?;
     let out = match e.method {

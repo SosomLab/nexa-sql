@@ -284,3 +284,25 @@
 
 - 시험 = mod(가족 풀기 · 항목 · 노력도) · view(필수값에 Workspace 형식) 갱신.
 - 실기(T-475)에 추가: ⑫ 프로필 폼 새 흐름(이름+키 → [저장 + 검증] → 자동 보정 안내 · 모델 팝업에서 `opus` 선택 → 보내기).
+
+### 15-8 사용자 실기 피드백 3차(2026-11-11 · 커밋 = 이 절의 구현 커밋)
+| # | 실기 원문 | 구현 |
+|---|---|---|
+| 1 | CLI 모드에서 "Not logged in · Please run /login" — "이미 API로 연결했는데 뭐가 더 필요해" | CLI 모드는 프로필 키를 쓰지 않는다(claude 명령 자체 로그인). ① 그 오류 뒤 안내 줄 추가("칩을 API로 · `claude login` 한 번 · 또는 설정 `ai.cli_key = profile`") ② 새 설정 **`ai.cli_key`**(login 기본 · profile = 현재 프로필 키를 `ANTHROPIC_API_KEY` 환경 변수로만 CLI에 전달 · API 과금) ③ 채팅 머리 줄의 모드 글자 = "CLI(claude 로그인)" / "CLI(codex 로그인)". |
+| 2 | 세션 이름 바꾸기에서 한글 입력 안 됨 | 우클릭 메뉴 → [이름 바꾸기]는 `route_ai_menu` 경로라 `ime_refresh()`가 빠져 IME가 꺼진 채였다 → 한 줄 추가. |
+| 3 | 승인 카드 버튼이 아래로 가려짐 | 대본 높이 합계에 대기 중 승인 카드의 버튼 줄(btn_h+6)이 빠져 맨 아래 스크롤이 모자랐다 → 포함. |
+| 4 | 작성 상자 Shift+Enter 최대 8줄 · 설정 가능 | `ai.composer_max_lines`(기본 8 · 2~40) · 그 뒤로는 상자 안 스크롤. |
+| 5 | Claude · Codex 설정을 따로 | 제공자별 키: Claude = `ai.mode`/`ai.model`/`ai.effort`/`ai.auto` · Codex = `ai.codex_mode`/`ai.codex_model`/`ai.codex_effort`/`ai.codex_auto`(패널 칩·팝업이 탭의 키에 저장 · 새 세션도 탭의 키로) · 설정 창 라벨에 "Claude:"/"Codex:" 접두(Claude CLI 전용 = "Claude CLI:"). 공통 = 비용 표 · 행 상한 · 시간 · 토큰 · 이력 · 붙여넣기 칩 · 작성 상자 줄 수 · MCP 포트 · WIF 대기. |
+| 6 | 입력란에서 휠을 굴리면 뒤의 대본이 스크롤 | 뷰가 마지막 마우스 위치를 기억해 작성 상자 위면 상자 안 스크롤 · 아니면 대본. |
+- 설정 키 = +5(ai.cli_key · ai.codex_mode · ai.codex_effort · ai.codex_auto · ai.composer_max_lines) → 합계 24.
+
+### 15-9 사용자 실기 피드백 4차(2026-11-11 · §15-8과 같은 커밋 + 첨부/하단 바 커밋)
+| # | 실기 원문 | 구현 |
+|---|---|---|
+| 1 | 터미널 `claude`는 로그인돼 있는데 앱 CLI 모드는 "Not logged in" | 원인 = `--bare`(`ai.bare` 기본 켬)가 Claude Code의 자체 로그인도 건너뜀 → `--bare`는 프로필 키를 CLI에 넘길 때(`ai.cli_key = profile`)만 붙인다 · 설정 설명 수정. |
+| 2 | 코드 블록 [복사][편집기에 넣기]를 아이콘+툴팁으로 · [실행] 버튼으로 바로 아래 결과 | 상자 머리 = 아이콘 3개(복사 · 편집기 · ▶ 실행 · 툴팁). [실행] = 사용자가 보이는 SQL을 직접 실행하는 것과 같다(`gate_open()` → `run_text_whole` · DR-34) → 결과는 **그 블록 아래 꼬리 줄**(조회 = 앞 8행 TSV · 그 밖 = 상태 줄 · 실패 = 경고색 · 12줄/200자 상한 · 화면에만 · AI로 안 보냄 · 이력 저장 안 함). `ChatMsg.block_results` · 뷰 캐시 키에 결과 길이 포함. |
+| 3 | 프롬프트를 넣으면 진행 중인지 모른다 — 토큰 수·시작·경과 | 상태 줄 = "진행 중 · 시작 HH:MM:SS · N s · 받은 글자 M"(TextDelta마다 + 이벤트 루프 1초 틱 `ai_tick_due`) · 끝나면 종전대로 "stop · ms". |
+| 4 | 클립보드·파일 첨부를 상단 칩으로 관리·미리보기 | 칩 = [본문(클릭 = 미리보기)][×] · 이미지 칩 = 이름 W×H(PNG/GIF/JPEG 머리 파싱 `image_dims`) · 미리보기 오버레이(PNG = 그림 · 비율 유지 · 그 밖 = 안내/앞 12줄 · 클릭/Esc 닫기) · PNG 디코더 `png::decode`(8비트 · 비인터레이스 · zlib = nsql-drivers ext `inflate_zlib` · miniz_oxide 재사용). Ctrl+V = 글이 없으면 클립보드 이미지 칩. |
+| 5 | 하단 줄을 [+]·네모 안 아이콘으로 간략히 · 최상단 상태 줄 제거 · 에이전트·모델·노력도 간단 표시 | 머리 줄 제거. 아래 줄 = [+](첨부 메뉴 = 파일 · 클립보드 · 결과 그리드) [🔑] [/](명령 · 툴팁 = 키 안내) 상태 글 … [에이전트 칩 = Claude · API · 프로필] [모델 · 노력도 칩] [Auto 스위치] [➤/■]. 키 안내 줄 제거(툴팁으로). |
+- 설정 키 = §15-8 포함 합계 24 그대로(이 절은 새 키 없음).
+- 다음 = ③ 편집기 옆 분할 Claude/Codex(미니맵 오른쪽) + AI 툴바 그룹(새 Claude 탭 · 옆 표시 토글 · 패널) · 설정 `ai.side_width`.

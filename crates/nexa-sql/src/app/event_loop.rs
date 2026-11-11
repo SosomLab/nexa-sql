@@ -808,6 +808,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(d) = self.transparency_tick(now) {
             next = next.min(d);
         }
+        // ★ AI 턴 진행 중 상태 줄(경과 시간) 1초 갱신(사용자 11-11).
+        if let Some(t) = self.ai_tick_due(now) {
+            next = next.min(t);
+        }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 

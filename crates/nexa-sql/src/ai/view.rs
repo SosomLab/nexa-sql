@@ -6,11 +6,15 @@
 use super::picker::{PickEvent, PickItem, Picker};
 use super::wif::Wif;
 use super::{ChatMsg, Kind, Mode, Profile, Provider, Session};
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::controls::ctxmenu::MenuIcon;
+use nexa_ctl::controls::{ContextMenu, CtxItem};
+use nexa_ctl::draw::{draw_tooltip_in, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
-use nexa_ctl::theme::Theme;
+use nexa_ctl::theme::{Color, IconImage, Theme};
 use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget};
 use nsql_i18n::{t, tf, Msg};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum Page {
@@ -29,6 +33,10 @@ pub(crate) struct ViewInfo {
     /// 볼트에 키가 있는 프로필 이름.
     pub keyed: Vec<String>,
     pub current_profile: String,
+    /// 아래 줄 칩·스위치(모델 · 노력도 · Auto).
+    pub model: String,
+    pub effort: String,
+    pub auto: bool,
     /// 프로필 페이지 안내 줄(검증 결과 · 저장됨 …).
     pub note: String,
     /// 상태 줄(스트리밍 중 "…" · 마지막 턴 소요·토큰).
@@ -47,6 +55,12 @@ pub(crate) enum ViewAction {
     Slash(String),
     CopyText(String),
     InsertEditor(String),
+    /// 코드 블록 [실행](메시지 번호 · 블록 번호 · SQL) — 결과는 그 블록 아래에(사용자 11-11).
+    RunCode {
+        msg: usize,
+        block: usize,
+        sql: String,
+    },
     ProfileUse(String),
     ProfileDelete(String),
     /// 저장(프로필 · 새 키 = Some · 비우면 기존 유지 · 편집 전 이름 = Some이면 이름이 바뀌었을 때 rename).
@@ -82,6 +96,9 @@ enum LineKind {
     Code,
     /// 코드 블록 첫 줄(언어 라벨 + 버튼 자리).
     CodeHead(usize),
+    /// [실행] 결과 줄(코드 상자 안 · 흐리게) · 실패.
+    Result,
+    ResultErr,
     Dim,
     Error,
     Role,
@@ -97,13 +114,18 @@ struct Line {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Btn {
     Send,
-    AttachFile,
-    AttachClip,
     Profiles,
     RemoveAttachment(usize),
     Approve(bool),
     CopyCode(usize),
     InsertCode(usize),
+    RunCode(usize),
+    /// 첨부 칩 본문(미리보기) · [+] 첨부 메뉴.
+    PreviewAttachment(usize),
+    AttachMenu,
+    /// [/] 명령 · Auto 스위치.
+    Commands,
+    Auto,
     ProfileUse(usize),
     ProfileEdit(usize),
     ProfileDelete(usize),
@@ -136,12 +158,25 @@ pub(crate) struct AiView {
     lines: Vec<Vec<Line>>,
     lens: Vec<usize>,
     cache_w: i32,
-    /// 코드 블록 본문(버튼 동작용).
+    /// 코드 블록 본문(버튼 동작용) + 그 블록의 (메시지 번호 · 메시지 안 블록 번호).
     code_blocks: Vec<String>,
+    code_owner: Vec<(usize, usize)>,
+    /// [+] 첨부 메뉴 · 미리보기 중인 첨부 번호 · 미리보기 캐시(번호 · 이미지 · 안내 글).
+    attach_menu: ContextMenu,
+    preview: Option<usize>,
+    preview_cache: Option<(usize, Option<Rc<IconImage>>, String)>,
+    /// 마지막 그리기의 Auto 값(스위치 클릭 → 반대로).
+    auto_now: bool,
+    /// 코드 블록 아이콘 버튼 틴트 캐시(종류 · 색).
+    icon_cache: RefCell<Vec<(u8, Color, Rc<IconImage>)>>,
     transcript: Rect,
     composer_rect: Rect,
     scroll_y: i32,
     stick_bottom: bool,
+    /// 작성 상자 최대 줄(설정 `ai.composer_max_lines` · 사용자 11-11).
+    max_lines: i32,
+    /// 마지막 마우스 위치(휠을 작성 상자/대본 중 어디로 보낼지 · 사용자 11-11).
+    mouse: Point,
     bars: ScrollBars,
     content_h: i32,
     /// `/` 팝업(후보 인덱스 · 선택).
@@ -203,8 +238,16 @@ impl Default for AiView {
             lens: Vec::new(),
             cache_w: 0,
             code_blocks: Vec::new(),
+            code_owner: Vec::new(),
+            attach_menu: ContextMenu::new(),
+            preview: None,
+            preview_cache: None,
+            auto_now: false,
+            icon_cache: RefCell::new(Vec::new()),
             transcript: Rect::default(),
             composer_rect: Rect::default(),
+            max_lines: 8,
+            mouse: Point { x: 0, y: 0 },
             scroll_y: 0,
             stick_bottom: true,
             bars: ScrollBars::new(),
@@ -418,6 +461,10 @@ impl AiView {
     }
 
     /// 작성 상자 안내 글을 탭 제공자 이름으로(협업 V1 관찰 · 11-11).
+    pub(crate) fn set_max_lines(&mut self, n: i32) {
+        self.max_lines = n.clamp(1, 60);
+    }
+
     pub(crate) fn set_provider(&mut self, p: Provider) {
         self.provider = p;
         self.composer
@@ -463,7 +510,11 @@ impl AiView {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.composer.popup_open() || !self.slash.is_empty() || self.picker.is_some()
+        self.composer.popup_open()
+            || !self.slash.is_empty()
+            || self.picker.is_some()
+            || self.attach_menu.is_open()
+            || self.preview.is_some()
     }
 
     pub(crate) fn set_focused(&mut self, on: bool) {
@@ -578,6 +629,43 @@ impl AiView {
         if self.page == Page::Profiles {
             return self.on_event_profiles(ev);
         }
+        // 첨부 미리보기 오버레이 = 아무 클릭/Esc로 닫기.
+        if self.preview.is_some() {
+            if matches!(
+                *ev,
+                InputEvent::MouseDown { .. }
+                    | InputEvent::RightDown { .. }
+                    | InputEvent::Key {
+                        key: CtlKey::Escape,
+                        ..
+                    }
+            ) {
+                self.preview = None;
+                self.preview_cache = None;
+                return true;
+            }
+            return !matches!(ev, InputEvent::MouseMove { .. });
+        }
+        // [+] 첨부 메뉴.
+        if self.attach_menu.is_open() {
+            let outside = self.attach_menu.is_outside_click(ev);
+            let consumed = self.attach_menu.on_event(ev) && !outside;
+            if let Some(id) = self.attach_menu.take_picked() {
+                match id.as_str() {
+                    "file" => self.actions.push(ViewAction::AttachFile),
+                    "clip" => self.actions.push(ViewAction::AttachClipboard),
+                    "grid" => self.actions.push(ViewAction::Slash("/grid".into())),
+                    _ => {}
+                }
+                return true;
+            }
+            if consumed {
+                return true;
+            }
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                return false;
+            }
+        }
         if self.composer.popup_open() {
             self.composer.on_event(ev, &mut inv);
             self.after_box(true);
@@ -636,6 +724,7 @@ impl AiView {
         }
         match *ev {
             InputEvent::MouseMove { x, y } => {
+                self.mouse = Point { x, y };
                 let p = Point { x, y };
                 let h = self.buttons.iter().position(|(_, r)| r.contains(p));
                 let changed = h != self.hover;
@@ -720,9 +809,11 @@ impl AiView {
                 true
             }
             InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => {
-                let cur = self.composer.bounds();
-                // 작성 상자 위면 상자 스크롤 · 아니면 대본.
-                let _ = cur;
+                // 작성 상자 위면 상자 안 스크롤 · 아니면 대본(종전엔 늘 대본이 먼저 움직였다 · 사용자 11-11).
+                if self.composer.bounds().contains(self.mouse) {
+                    self.composer.on_event(ev, &mut inv);
+                    return true;
+                }
                 let (_, ny, c) = self.bars.on_event(
                     ev,
                     self.transcript,
@@ -779,8 +870,39 @@ impl AiView {
                 // busy면 ■.
                 self.actions.push(ViewAction::Stop);
             }
-            Btn::AttachFile => self.actions.push(ViewAction::AttachFile),
-            Btn::AttachClip => self.actions.push(ViewAction::AttachClipboard),
+            Btn::PreviewAttachment(i) => {
+                self.preview = Some(i);
+                self.preview_cache = None;
+            }
+            Btn::Commands => {
+                self.composer.set_text("/");
+                self.composer.set_focused(true);
+                self.update_slash();
+            }
+            Btn::Auto => {
+                let cmd = if self.auto_now {
+                    "/auto off"
+                } else {
+                    "/auto on"
+                };
+                self.actions.push(ViewAction::Slash(cmd.into()));
+            }
+            Btn::AttachMenu => {
+                let anchor = self
+                    .buttons
+                    .iter()
+                    .find(|(k, _)| *k == Btn::AttachMenu)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_default();
+                let items = vec![
+                    CtxItem::item("file", t(Msg::AiAttachFile)),
+                    CtxItem::item("clip", t(Msg::AiAttachClipboard)),
+                    CtxItem::item("grid", t(Msg::AiMenuGrid)),
+                ];
+                let host = Rect::new(0, 0, self.bounds.right(), i32::MAX / 4);
+                let (ay, tw) = (anchor.y - self.s(4.0), self.s(200.0));
+                crate::menu_icons::open_at(&mut self.attach_menu, anchor.x, ay, items, host, tw);
+            }
             Btn::Profiles => self.actions.push(ViewAction::ShowPage(Page::Profiles)),
             Btn::RemoveAttachment(i) => self.actions.push(ViewAction::RemoveAttachment(i)),
             Btn::Approve(ok) => self.actions.push(ViewAction::Approve(String::new(), ok)),
@@ -792,6 +914,17 @@ impl AiView {
             Btn::InsertCode(i) => {
                 if let Some(c) = self.code_blocks.get(i) {
                     self.actions.push(ViewAction::InsertEditor(c.clone()));
+                }
+            }
+            Btn::RunCode(i) => {
+                if let (Some(c), Some(&(msg, block))) =
+                    (self.code_blocks.get(i), self.code_owner.get(i))
+                {
+                    self.actions.push(ViewAction::RunCode {
+                        msg,
+                        block,
+                        sql: c.clone(),
+                    });
                 }
             }
             Btn::ProfileUse(i) => self.actions.push(ViewAction::ProfileUse(i.to_string())),
@@ -1012,21 +1145,23 @@ impl AiView {
         self.lines.truncate(sess.messages.len());
         self.lens.truncate(sess.messages.len());
         self.code_blocks.clear();
+        self.code_owner.clear();
         let mut code_i = 0usize;
         let who = match sess.provider {
             Provider::Claude => "Claude",
             Provider::Codex => "Codex",
         };
         for (i, m) in sess.messages.iter().enumerate() {
-            let need = self.lines.get(i).is_none() || self.lens[i] != m.text.len();
+            let key = msg_key(m);
+            let need = self.lines.get(i).is_none() || self.lens[i] != key;
             if need {
                 let lines = layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks, who);
                 if i < self.lines.len() {
                     self.lines[i] = lines;
-                    self.lens[i] = m.text.len();
+                    self.lens[i] = key;
                 } else {
                     self.lines.push(lines);
-                    self.lens.push(m.text.len());
+                    self.lens.push(key);
                 }
             } else {
                 // 캐시된 메시지의 코드 블록 번호를 이어 붙인다.
@@ -1037,7 +1172,42 @@ impl AiView {
                 }
                 collect_code(&m.text, &mut self.code_blocks);
             }
+            let n = self.lines[i]
+                .iter()
+                .filter(|l| matches!(l.kind, LineKind::CodeHead(_)))
+                .count();
+            for k in 0..n {
+                self.code_owner.push((i, k));
+            }
         }
+    }
+
+    /// 코드 블록 아이콘(0 복사 · 1 편집기에 넣기 · 2 실행) — 색별 틴트 캐시.
+    fn block_icon(&self, which: u8, fg: Color) -> Option<Rc<IconImage>> {
+        if let Some((_, _, img)) = self
+            .icon_cache
+            .borrow()
+            .iter()
+            .find(|(k, c, _)| *k == which && *c == fg)
+        {
+            return Some(img.clone());
+        }
+        let ic: MenuIcon = match which {
+            0 => crate::toolicons::mi_copy(),
+            1 => crate::toolicons::mi_edit(),
+            3 => crate::toolicons::mi_add(),
+            4 => crate::toolicons::mi_key(),
+            _ => crate::toolicons::mi_run()?,
+        };
+        let (r, g, b) = fg.rgb();
+        let img = Rc::new(IconImage::from_alpha_tinted(
+            ic.w,
+            ic.h,
+            &ic.alpha,
+            (r, g, b),
+        ));
+        self.icon_cache.borrow_mut().push((which, fg, img.clone()));
+        Some(img)
     }
 
     pub(crate) fn paint(
@@ -1063,19 +1233,18 @@ impl AiView {
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
         let line_h = lh + self.s(4.0);
-        // ── 머리줄: 모드 · 모델 · 프로필 · 상태
-        let mut y = b.y + self.s(8.0);
-        let head = format!(
-            "{}  ·  {}  ·  {}{}",
+        // ── 머리 줄 없음(사용자 11-11 "최상단 상태바는 없애고") — 에이전트·모델·노력도·상태는 아래 줄에.
+        let agent = format!(
+            "{}  ·  {}{}",
             match sess.provider {
                 super::Provider::Claude => t(Msg::AiProviderClaude),
                 super::Provider::Codex => t(Msg::AiProviderCodex),
             },
-            match sess.mode {
-                Mode::Api => t(Msg::AiModeApi),
-                Mode::Cli => t(Msg::AiModeCli),
+            match (sess.mode, sess.provider) {
+                (Mode::Api, _) => t(Msg::AiModeApi),
+                (Mode::Cli, super::Provider::Claude) => t(Msg::AiModeCliClaude),
+                (Mode::Cli, super::Provider::Codex) => t(Msg::AiModeCliCodex),
             },
-            sess.model,
             if (sess.mode == Mode::Api || sess.provider == super::Provider::Codex)
                 && !sess.profile.is_empty()
             {
@@ -1084,18 +1253,10 @@ impl AiView {
                 String::new()
             }
         );
-        dc.text(x, y, b, &head, th.text_dim);
-        if !info.status.is_empty() {
-            let sw = dc.text_width(&info.status);
-            dc.text(b.right() - pad - sw, y, b, &info.status, th.text_dim);
-        }
-        y += lh + self.s(6.0);
-        dc.fill_rect(Rect::new(b.x, y, b.w, 1), th.border);
-        y += 1;
-        let top = y;
+        let top = b.y + self.s(4.0);
         // ── 작성 영역 높이(아래에서 위로 잡는다)
         let text = self.composer.text();
-        let n_lines = text.split('\n').count().clamp(1, 8) as i32;
+        let n_lines = (text.split('\n').count() as i32).clamp(1, self.max_lines);
         let comp_h = n_lines * self.composer.line_h().max(lh) + self.s(14.0);
         let btn_h = lh + self.s(10.0);
         let chips_h = if sess.attachments.is_empty() {
@@ -1103,16 +1264,28 @@ impl AiView {
         } else {
             btn_h + self.s(6.0)
         };
-        let hint_h = lh + self.s(4.0);
+        let hint_h = 0;
         let bottom_h = comp_h + btn_h + chips_h + hint_h + self.s(24.0);
         let comp_top = b.bottom() - bottom_h;
         self.transcript = Rect::new(b.x, top, b.w, (comp_top - top).max(0));
         // ── 대본
         self.rebuild_lines(dc, sess, w - self.s(16.0));
+        // 대기 중 승인 카드의 버튼 줄도 높이에 넣는다(종전엔 빠져 버튼이 아래로 잘림 · 사용자 11-11).
         let total: i32 = self
             .lines
             .iter()
-            .map(|ls| ls.len() as i32 * line_h + self.s(10.0))
+            .enumerate()
+            .map(|(i, ls)| {
+                let mut h = ls.len() as i32 * line_h + self.s(10.0);
+                let pending = sess.messages.get(i).is_some_and(|m| {
+                    matches!(m.kind, Kind::Approval { .. })
+                        && info.approval.as_ref().is_some_and(|a| a.0 == m.id)
+                });
+                if pending {
+                    h += btn_h + self.s(6.0);
+                }
+                h
+            })
             .sum();
         self.content_h = total + self.s(8.0);
         let max_scroll = (self.content_h - self.transcript.h).max(0);
@@ -1151,7 +1324,12 @@ impl AiView {
                             // 코드 블록 배경은 끝 줄까지 — 끝을 찾아 미리 칠한다.
                             let n = ls[li + 1..]
                                 .iter()
-                                .take_while(|q| q.kind == LineKind::Code)
+                                .take_while(|q| {
+                                    matches!(
+                                        q.kind,
+                                        LineKind::Code | LineKind::Result | LineKind::ResultErr
+                                    )
+                                })
                                 .count() as i32;
                             let cr = Rect::new(
                                 code_x - self.s(6.0),
@@ -1162,34 +1340,44 @@ impl AiView {
                             dc.fill_round_rect(cr, self.s(4.0), th.panel_bg);
                             dc.stroke_round_rect(cr, self.s(4.0), th.border, 1.0);
                             dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.text_dim);
-                            // [복사] [편집기에 넣기]
-                            let labels = [
-                                (Btn::CopyCode(*ci), t(Msg::AiCopy)),
-                                (Btn::InsertCode(*ci), t(Msg::AiInsertEditor)),
-                            ];
-                            let mut bx = cr.right() - self.s(6.0);
-                            for (btn, label) in labels.iter().rev() {
-                                let bw = dc.text_width(label) + self.s(12.0);
-                                bx -= bw;
-                                let r = Rect::new(bx, yy + self.s(1.0), bw, line_h);
+                            // 아이콘 버튼 [실행][편집기에 넣기][복사](오른쪽부터 · 툴팁은 paint_popup · 사용자 11-11 "공간 절약").
+                            let side = line_h.max(self.s(18.0));
+                            let mut bx = cr.right() - self.s(4.0);
+                            for (btn, which) in [
+                                (Btn::RunCode(*ci), 2u8),
+                                (Btn::InsertCode(*ci), 1u8),
+                                (Btn::CopyCode(*ci), 0u8),
+                            ] {
+                                bx -= side;
+                                let r = Rect::new(bx, yy, side, side);
                                 let idx = self.buttons.len();
                                 let hot = self.hover == Some(idx);
                                 if hot {
                                     dc.fill_round_rect(r, self.s(3.0), th.sel_bg);
                                 }
-                                dc.text(
-                                    r.x + self.s(6.0),
-                                    yy + self.s(2.0),
-                                    tr,
-                                    label,
-                                    if hot { th.text } else { th.accent },
-                                );
-                                self.buttons.push((*btn, r));
-                                bx -= self.s(4.0);
+                                let fg = if which == 2 { th.accent } else { th.text_dim };
+                                if let Some(img) = self.block_icon(which, fg) {
+                                    let icon = self.s(14.0);
+                                    let dst = Rect::new(
+                                        r.x + (r.w - icon) / 2,
+                                        r.y + (r.h - icon) / 2,
+                                        icon,
+                                        icon,
+                                    );
+                                    dc.image_scaled(dst, &img, tr);
+                                }
+                                self.buttons.push((btn, r));
+                                bx -= self.s(2.0);
                             }
                         }
                         LineKind::Code => {
                             dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.syn_string);
+                        }
+                        LineKind::Result => {
+                            dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.text_dim);
+                        }
+                        LineKind::ResultErr => {
+                            dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.warn);
                         }
                         LineKind::Text => {
                             in_code = false;
@@ -1273,27 +1461,67 @@ impl AiView {
         dc.fill_rect(Rect::new(b.x, cy, b.w, 1), th.border);
         cy += self.s(8.0);
         if !sess.attachments.is_empty() {
+            // 칩 = [본문(클릭 = 미리보기)][×](사용자 11-11 · 이미지는 이름 W×H).
             let mut cx = x;
+            let xw = dc.text_width("×") + self.s(12.0);
             for (i, a) in sess.attachments.iter().enumerate() {
-                let label = format!(
-                    "{} ×",
-                    nexa_ctl::draw::ellipsize_middle(dc, a.label(), self.s(160.0))
-                );
+                let label = nexa_ctl::draw::ellipsize_middle(dc, &a.chip_text(), self.s(220.0));
                 let bw = dc.text_width(&label) + self.s(16.0);
-                if cx + bw > x + w {
+                if cx + bw + xw > x + w {
                     break;
                 }
-                let r = Rect::new(cx, cy, bw, btn_h);
-                let idx = self.buttons.len();
-                let hot = self.hover == Some(idx);
-                dc.fill_round_rect(r, btn_h / 2, if hot { th.sel_bg } else { th.panel_bg_alt });
+                let r = Rect::new(cx, cy, bw + xw, btn_h);
+                let body = Rect::new(cx, cy, bw, btn_h);
+                let xr = Rect::new(cx + bw, cy, xw, btn_h);
+                let ib = self.buttons.len();
+                let hot_body = self.hover == Some(ib);
+                let hot_x = self.hover == Some(ib + 1);
+                dc.fill_round_rect(r, btn_h / 2, th.panel_bg_alt);
+                if hot_body {
+                    dc.fill_round_rect(r, btn_h / 2, th.sel_bg);
+                }
                 dc.stroke_round_rect(r, btn_h / 2, th.border, 1.0);
                 let ty = dc.text_center_y(r.y, r.h);
-                dc.text(r.x + self.s(8.0), ty, r, &label, th.text);
-                self.buttons.push((Btn::RemoveAttachment(i), r));
-                cx += bw + self.s(6.0);
+                dc.text(body.x + self.s(8.0), ty, body, &label, th.text);
+                dc.text(
+                    xr.x + self.s(4.0),
+                    ty,
+                    xr,
+                    "×",
+                    if hot_x { th.warn } else { th.text_dim },
+                );
+                self.buttons.push((Btn::PreviewAttachment(i), body));
+                self.buttons.push((Btn::RemoveAttachment(i), xr));
+                cx += r.w + self.s(6.0);
             }
             cy += btn_h + self.s(6.0);
+        }
+        // 미리보기 캐시(열린 첨부가 바뀌었을 때 한 번 디코드 · PNG만 그림 · 그 밖은 안내).
+        if let Some(i) = self.preview {
+            if self.preview_cache.as_ref().is_none_or(|c| c.0 != i) {
+                let (img, info) = match sess.attachments.get(i) {
+                    Some(a @ super::Attachment::Image { media, bytes, .. }) => {
+                        let img = if media.contains("png") {
+                            crate::png::decode(bytes)
+                                .map(|(w, h, rgba)| Rc::new(IconImage::from_rgba(w, h, rgba)))
+                        } else {
+                            None
+                        };
+                        let info =
+                            format!("{} · {media} · {} KB", a.chip_text(), bytes.len() / 1024);
+                        (img, info)
+                    }
+                    Some(a @ super::Attachment::Text { body, .. }) => {
+                        let head: String = body.lines().take(12).collect::<Vec<_>>().join("\n");
+                        (None, format!("{}\n{head}", a.chip_text()))
+                    }
+                    Some(a) => (None, a.chip_text()),
+                    None => (None, String::new()),
+                };
+                self.preview_cache = Some((i, img, info));
+            }
+        } else {
+            self.preview_cache = None;
         }
         let cr = Rect::new(x, cy, w, comp_h);
         self.composer_rect = cr;
@@ -1312,22 +1540,64 @@ impl AiView {
             1.0,
         );
         cy += comp_h + self.s(6.0);
-        // 버튼 줄: [파일] [클립보드] [프로필]  …  [보내기/■]
+        // 버튼 줄: [+ 첨부 메뉴][🔑 프로필](아이콘 + 툴팁 · 사용자 11-11)  …  [보내기/■]
         let mut bx = x;
-        for (btn, label) in [
-            (Btn::AttachFile, t(Msg::AiAttachFile)),
-            (Btn::AttachClip, t(Msg::AiAttachClipboard)),
-            (Btn::Profiles, t(Msg::AiProfiles)),
-        ] {
-            let bw = dc.text_width(label) + self.s(20.0);
-            let r = Rect::new(bx, cy, bw, btn_h);
-            self.paint_button(dc, th, r, label, false, btn);
-            bx += bw + self.s(6.0);
+        for (btn, which) in [(Btn::AttachMenu, 3u8), (Btn::Profiles, 4u8)] {
+            let r = Rect::new(bx, cy, btn_h, btn_h);
+            let idx = self.buttons.len();
+            let hot = self.hover == Some(idx);
+            dc.fill_round_rect(r, self.s(4.0), th.panel_bg_alt);
+            dc.stroke_round_rect(r, self.s(4.0), if hot { th.accent } else { th.border }, 1.0);
+            if let Some(img) = self.block_icon(which, th.text) {
+                let icon = self.s(16.0);
+                let dst = Rect::new(r.x + (r.w - icon) / 2, r.y + (r.h - icon) / 2, icon, icon);
+                dc.image_scaled(dst, &img, b);
+            }
+            self.buttons.push((btn, r));
+            bx += btn_h + self.s(6.0);
+        }
+        // [/] 명령(네모 안 슬래시 · 툴팁 = 키 안내).
+        {
+            let r = Rect::new(bx, cy, btn_h, btn_h);
+            let idx = self.buttons.len();
+            let hot = self.hover == Some(idx);
+            dc.fill_round_rect(r, self.s(4.0), th.panel_bg_alt);
+            dc.stroke_round_rect(r, self.s(4.0), if hot { th.accent } else { th.border }, 1.0);
+            let tw = dc.text_width("/");
+            let ty = dc.text_center_y(r.y, r.h);
+            dc.text(r.x + (r.w - tw) / 2, ty, r, "/", th.text);
+            self.buttons.push((Btn::Commands, r));
+            bx += btn_h + self.s(6.0);
         }
         {
-            let label = if info.busy { "■" } else { t(Msg::AiSend) };
-            let bw = dc.text_width(label) + self.s(28.0);
+            let label = if info.busy { "■" } else { "➤" };
+            let bw = dc.text_width(label) + self.s(20.0);
             let r = Rect::new(x + w - bw, cy, bw, btn_h);
+            // 오른쪽부터: [➤/■] [Auto] [모델 · 노력도] [에이전트](글만 · 바꾸기는 패널/`/` 명령) · 남는 자리 = 상태 글.
+            self.auto_now = info.auto;
+            let tyc = dc.text_center_y(cy, btn_h);
+            let sw = self.s(34.0);
+            let ar = Rect::new(r.x - sw - self.s(4.0), cy, sw, btn_h);
+            let al = t(Msg::AiAuto);
+            let alw = dc.text_width(al);
+            dc.text(ar.x - alw - self.s(2.0), tyc, b, al, th.text_dim);
+            self.paint_switch(dc, th, ar, info.auto, Btn::Auto);
+            let mut right = ar.x - alw - self.s(10.0);
+            for chip in [format!("{} · {}", info.model, info.effort), agent] {
+                let cw = dc.text_width(&chip) + self.s(12.0);
+                let cr = Rect::new(right - cw, cy, cw, btn_h);
+                if cr.x < bx + self.s(8.0) {
+                    break;
+                }
+                dc.fill_round_rect(cr, btn_h / 2, th.panel_bg_alt);
+                dc.text(cr.x + self.s(6.0), tyc, cr, &chip, th.text_dim);
+                right = cr.x - self.s(6.0);
+            }
+            if !info.status.is_empty() && right - bx > self.s(60.0) {
+                let shown =
+                    nexa_ctl::draw::ellipsize_middle(dc, &info.status, right - bx - self.s(8.0));
+                dc.text(bx, tyc, b, &shown, th.text_dim);
+            }
             if info.busy {
                 self.paint_button(dc, th, r, label, false, Btn::Send);
             } else {
@@ -1350,7 +1620,7 @@ impl AiView {
             }
         }
         cy += btn_h + self.s(4.0);
-        dc.text(x, cy, b, t(Msg::AiComposerKeys), th.text_dim);
+        let _ = cy;
         // `/` 팝업 자리(위로).
         if !self.slash.is_empty() {
             let row_h = self.s(24.0);
@@ -1360,6 +1630,29 @@ impl AiView {
         } else {
             self.slash_rect = Rect::default();
         }
+    }
+
+    /// 스위치(Auto) — 버튼 적중 목록에 등록.
+    fn paint_switch(&mut self, dc: &mut dyn DrawCtx, th: &Theme, r: Rect, on: bool, btn: Btn) {
+        let tw = self.s(30.0);
+        let thh = self.s(16.0);
+        let tr = Rect::new(r.x + (r.w - tw) / 2, r.y + (r.h - thh) / 2, tw, thh);
+        dc.fill_round_rect(tr, thh / 2, if on { th.accent } else { th.border });
+        let kn = thh - self.s(4.0);
+        let kx = if on {
+            tr.right() - kn - self.s(2.0)
+        } else {
+            tr.x + self.s(2.0)
+        };
+        dc.fill_ellipse(
+            Rect::new(kx, tr.y + self.s(2.0), kn, kn),
+            nexa_ctl::Color(0x00FF_FFFF),
+        );
+        let idx = self.buttons.len();
+        if self.hover == Some(idx) {
+            dc.fill_round_rect_alpha(r, self.s(4.0), th.text, 0.05);
+        }
+        self.buttons.push((btn, r));
     }
 
     /// 폼 칩(값 + 셰브론 · 누르면 큰 팝업) — 버튼 적중 목록에 등록.
@@ -1623,6 +1916,87 @@ impl AiView {
 
     /// 팝업 층(`/` 목록 · 상자 편집 메뉴).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        // 코드 블록 아이콘 버튼 툴팁(hover 즉시 · 도구줄 선례).
+        if self.page == Page::Chat && self.pressed.is_none() {
+            if let Some((btn, r)) = self.hover.and_then(|i| self.buttons.get(i)) {
+                let tip = match btn {
+                    Btn::CopyCode(_) => Some(Msg::AiCopy),
+                    Btn::InsertCode(_) => Some(Msg::AiInsertEditor),
+                    Btn::RunCode(_) => Some(Msg::AiRunCode),
+                    Btn::AttachMenu => Some(Msg::AiAttachMenuTip),
+                    Btn::Profiles => Some(Msg::AiProfiles),
+                    Btn::PreviewAttachment(_) => Some(Msg::AiPreviewTip),
+                    Btn::RemoveAttachment(_) => Some(Msg::AiRemoveTip),
+                    Btn::Commands => Some(Msg::AiComposerKeys),
+                    Btn::Auto => Some(Msg::AiTipAuto),
+                    Btn::Send => Some(Msg::AiSendTip),
+                    _ => None,
+                };
+                if let Some(tip) = tip {
+                    draw_tooltip_in(
+                        dc,
+                        th,
+                        *r,
+                        (self.bounds.x, self.bounds.right()),
+                        t(tip),
+                        self.scale,
+                    );
+                }
+            }
+        }
+        if self.page == Page::Chat && self.attach_menu.is_open() {
+            self.attach_menu.paint(dc, th);
+        }
+        // 첨부 미리보기 오버레이(가운데 · 이미지는 비율 유지 · 안내 글).
+        if let (Page::Chat, Some((_, img, info))) = (self.page, self.preview_cache.as_ref()) {
+            let b = self.bounds;
+            let pad = self.s(12.0);
+            dc.select_font(FontSlot::Base, false);
+            let lh = dc.text_height();
+            let info_lines: Vec<&str> = info.lines().collect();
+            let max_w = (b.w * 4 / 5).max(self.s(200.0));
+            let max_h = (b.h * 3 / 4).max(self.s(120.0));
+            let (iw, ih) = match img {
+                Some(im) => {
+                    let (w0, h0) = (im.w.max(1) as i32, im.h.max(1) as i32);
+                    let avail_h =
+                        (max_h - pad * 2 - lh * (info_lines.len() as i32 + 1)).max(self.s(40.0));
+                    let avail_w = max_w - pad * 2;
+                    let sc = (avail_w as f32 / w0 as f32)
+                        .min(avail_h as f32 / h0 as f32)
+                        .min(1.0);
+                    (((w0 as f32) * sc) as i32, ((h0 as f32) * sc) as i32)
+                }
+                None => (0, 0),
+            };
+            let text_w = info_lines
+                .iter()
+                .map(|l| dc.text_width(l))
+                .max()
+                .unwrap_or(0)
+                .min(max_w - pad * 2);
+            let pw = iw.max(text_w).max(self.s(160.0)) + pad * 2;
+            let ph = ih
+                + lh * (info_lines.len() as i32 + 1)
+                + pad * 2
+                + if ih > 0 { self.s(6.0) } else { 0 };
+            let r = Rect::new(b.x + (b.w - pw) / 2, b.y + (b.h - ph) / 2, pw, ph);
+            dc.fill_rect_alpha(b, th.text, 0.25);
+            dc.shadow(r, th.text, nexa_ctl::tokens::Elevation::Mid, self.s(8.0));
+            dc.fill_round_rect(r, self.s(6.0), th.panel_bg);
+            dc.stroke_round_rect(r, self.s(6.0), th.border, 1.0);
+            let mut y = r.y + pad;
+            if let Some(im) = img {
+                dc.image_scaled(Rect::new(r.x + (r.w - iw) / 2, y, iw, ih), im, r);
+                y += ih + self.s(6.0);
+            }
+            for l in &info_lines {
+                let shown = nexa_ctl::draw::ellipsize_middle(dc, l, r.w - pad * 2);
+                dc.text(r.x + pad, y, r, &shown, th.text);
+                y += lh;
+            }
+            dc.text(r.x + pad, y, r, t(Msg::AiPreviewClose), th.text_dim);
+        }
         if self.page == Page::Chat && !self.slash.is_empty() && self.slash_rect.w > 0 {
             let r = self.slash_rect;
             dc.shadow(r, th.text, nexa_ctl::tokens::Elevation::Mid, self.s(4.0));
@@ -1760,11 +2134,14 @@ fn layout_msg(
     }
     let mut in_code = false;
     let mut code_buf = String::new();
+    let mut local = 0usize;
     for raw in text.split('\n') {
         if let Some(rest) = raw.trim_start().strip_prefix("```") {
             if in_code {
                 codes.push(std::mem::take(&mut code_buf));
                 *code_i += 1;
+                push_block_result(&mut out, m, local);
+                local += 1;
                 in_code = false;
             } else {
                 in_code = true;
@@ -1816,6 +2193,7 @@ fn layout_msg(
         // 스트리밍 중 닫히지 않은 블록.
         codes.push(code_buf);
         *code_i += 1;
+        push_block_result(&mut out, m, local);
     }
     for a in &m.attachments {
         out.push(Line {
@@ -1877,6 +2255,40 @@ fn strip_bold(s: &str) -> String {
         s.replace("**", "")
     } else {
         s.to_string()
+    }
+}
+
+/// 메시지 배치 캐시 키 — 글 길이 + [실행] 결과 길이(결과가 붙으면 다시 배치).
+fn msg_key(m: &ChatMsg) -> usize {
+    m.text.len() + m.block_results.iter().map(|r| r.1.len() + 1).sum::<usize>()
+}
+
+/// [실행] 결과를 코드 상자 안 꼬리 줄로(앞 12줄 · 한 줄 200자 · 실패는 경고색).
+fn push_block_result(out: &mut Vec<Line>, m: &ChatMsg, local: usize) {
+    let Some((_, text, ok)) = m.block_results.iter().find(|r| r.0 == local) else {
+        return;
+    };
+    let kind = if *ok {
+        LineKind::Result
+    } else {
+        LineKind::ResultErr
+    };
+    out.push(Line {
+        text: format!("── {} ──", t(Msg::AiResultHead)),
+        kind,
+    });
+    for (n, l) in text.lines().enumerate() {
+        if n == 12 {
+            out.push(Line {
+                text: "…".into(),
+                kind,
+            });
+            break;
+        }
+        out.push(Line {
+            text: l.chars().take(200).collect(),
+            kind,
+        });
     }
 }
 

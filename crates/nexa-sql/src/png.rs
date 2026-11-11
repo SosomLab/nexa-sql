@@ -113,3 +113,126 @@ mod tests {
         assert_eq!(&raw[1..4], &[0x12, 0x34, 0x56]);
     }
 }
+
+/// ★ PNG 디코더(AI 첨부 미리보기 · 사용자 11-11): 8비트 · 비인터레이스 · 색 0/2/3/4/6 → RGBA 바이트. 그 밖은 `None`.
+/// 압축 해제 = `nsql_drivers::ext::zip::inflate_zlib`(miniz_oxide · 이미 트리 안) · 상한 64 MB.
+pub(crate) fn decode(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if bytes.len() < 33 || bytes[..8] != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return None;
+    }
+    let be32 = |o: usize| -> Option<u32> {
+        bytes
+            .get(o..o + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let (mut w, mut h, mut depth, mut color, mut interlace) = (0u32, 0u32, 0u8, 0u8, 0u8);
+    let mut idat: Vec<u8> = Vec::new();
+    let mut palette: Vec<[u8; 3]> = Vec::new();
+    let mut p = 8usize;
+    while p + 8 <= bytes.len() {
+        let len = be32(p)? as usize;
+        let kind = &bytes[p + 4..p + 8];
+        let body = bytes.get(p + 8..p + 8 + len)?;
+        match kind {
+            b"IHDR" => {
+                w = be32(p + 8)?;
+                h = be32(p + 12)?;
+                depth = body[8];
+                color = body[9];
+                interlace = body[12];
+            }
+            b"PLTE" => palette = body.as_chunks::<3>().0.to_vec(),
+            b"IDAT" => idat.extend_from_slice(body),
+            b"IEND" => break,
+            _ => {}
+        }
+        p += 12 + len;
+    }
+    if w == 0 || h == 0 || depth != 8 || interlace != 0 || w.checked_mul(h)? > 16_000_000 {
+        return None;
+    }
+    let ch: usize = match color {
+        0 => 1,
+        2 => 3,
+        3 => 1,
+        4 => 2,
+        6 => 4,
+        _ => return None,
+    };
+    let stride = w as usize * ch;
+    let raw = nsql_drivers::ext::zip::inflate_zlib(&idat, (stride + 1) * h as usize + 1).ok()?;
+    if raw.len() < (stride + 1) * h as usize {
+        return None;
+    }
+    let mut out = vec![0u8; stride * h as usize];
+    for y in 0..h as usize {
+        let f = raw[y * (stride + 1)];
+        let src = &raw[y * (stride + 1) + 1..(y + 1) * (stride + 1)];
+        let (prev, cur) = out.split_at_mut(y * stride);
+        let prev: &[u8] = if y == 0 {
+            &[]
+        } else {
+            &prev[(y - 1) * stride..]
+        };
+        let cur = &mut cur[..stride];
+        for i in 0..stride {
+            let a = if i >= ch { cur[i - ch] } else { 0 };
+            let b = if y > 0 { prev[i] } else { 0 };
+            let c = if y > 0 && i >= ch { prev[i - ch] } else { 0 };
+            let x = src[i];
+            cur[i] = match f {
+                0 => x,
+                1 => x.wrapping_add(a),
+                2 => x.wrapping_add(b),
+                3 => x.wrapping_add(((u16::from(a) + u16::from(b)) / 2) as u8),
+                4 => {
+                    let (pa, pb, pc) = {
+                        let p = i16::from(a) + i16::from(b) - i16::from(c);
+                        (
+                            (p - i16::from(a)).abs(),
+                            (p - i16::from(b)).abs(),
+                            (p - i16::from(c)).abs(),
+                        )
+                    };
+                    let pred = if pa <= pb && pa <= pc {
+                        a
+                    } else if pb <= pc {
+                        b
+                    } else {
+                        c
+                    };
+                    x.wrapping_add(pred)
+                }
+                _ => return None,
+            };
+        }
+    }
+    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
+    for px in out.chunks_exact(ch) {
+        match color {
+            0 => rgba.extend_from_slice(&[px[0], px[0], px[0], 255]),
+            2 => rgba.extend_from_slice(&[px[0], px[1], px[2], 255]),
+            3 => {
+                let c = palette.get(px[0] as usize).copied().unwrap_or([0, 0, 0]);
+                rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+            4 => rgba.extend_from_slice(&[px[0], px[0], px[0], px[1]]),
+            _ => rgba.extend_from_slice(&[px[0], px[1], px[2], px[3]]),
+        }
+    }
+    Some((w, h, rgba))
+}
+
+#[cfg(test)]
+mod decode_tests {
+    #[test]
+    fn roundtrip_rgb() {
+        let px = [0x00FF_0000u32, 0x0000_FF00, 0x0000_00FF, 0x0012_3456];
+        let png = super::encode(2, 2, &px);
+        let (w, h, rgba) = super::decode(&png).expect("decode");
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(&rgba[..4], &[255, 0, 0, 255]);
+        assert_eq!(&rgba[12..16], &[0x12, 0x34, 0x56, 255]);
+        assert!(super::decode(b"not a png").is_none());
+    }
+}

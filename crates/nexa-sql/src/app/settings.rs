@@ -1010,6 +1010,10 @@ impl App {
             | "ai.mcp_port"
             | "ai.provider"
             | "ai.codex_path"
+            | "ai.codex_mode"
+            | "ai.codex_effort"
+            | "ai.codex_auto"
+            | "ai.composer_max_lines"
             | "ai.codex_model" => self.ai_sync_panel(),
             "editor.line_height_mode" | "editor.line_height" => {
                 self.apply_line_height();

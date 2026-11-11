@@ -69,6 +69,11 @@ pub(crate) struct AiState {
     pub run: Option<String>,
     /// `codex login status` 첫 줄(Codex CLI 모드 · 패널 바닥 줄 · None = 아직 안 물음 · Some("") = 조회 중).
     pub codex_login: Option<String>,
+    /// 코드 블록 [실행] 대기(메시지 번호 · 블록 번호) — 결과는 그 메시지의 `block_results`로.
+    pub run_block: Option<(usize, usize)>,
+    /// 진행 중 상태 줄 갱신 마지막 시각(1초 간격) · 턴 시작 시각(HH:MM:SS).
+    pub last_tick: Option<Instant>,
+    pub turn_wall: String,
 }
 
 impl App {
@@ -213,8 +218,30 @@ impl App {
         self.ai.host.as_mut().expect("host")
     }
 
+    /// ★ 제공자별 설정 키(사용자 11-11 "Claude · Codex 설정을 따로"): Claude = `ai.<이름>` · Codex = `ai.codex_<이름>`.
+    fn ai_pref_key(&self, name: &str) -> String {
+        match self.ai.tab {
+            Provider::Claude => format!("ai.{name}"),
+            Provider::Codex => format!("ai.codex_{name}"),
+        }
+    }
+
     fn ai_mode_default(&self) -> Mode {
-        Mode::parse(self.settings.get("ai.mode").unwrap_or("api"))
+        let k = self.ai_pref_key("mode");
+        Mode::parse(self.settings.get(&k).unwrap_or("api"))
+    }
+
+    fn ai_effort_default(&self) -> String {
+        let k = self.ai_pref_key("effort");
+        self.settings
+            .get(&k)
+            .unwrap_or(ai::DEFAULT_EFFORT)
+            .to_string()
+    }
+
+    fn ai_auto_default(&self) -> bool {
+        let k = self.ai_pref_key("auto");
+        self.settings.flag(&k)
     }
 
     fn ai_provider_default(&self) -> Provider {
@@ -287,14 +314,10 @@ impl App {
             .map(|p| p.model.clone())
             .filter(|_| mode == Mode::Api || provider == Provider::Codex)
             .unwrap_or_else(|| self.ai_model_default(provider));
-        let effort = self
-            .settings
-            .get("ai.effort")
-            .unwrap_or(ai::DEFAULT_EFFORT)
-            .to_string();
+        let effort = self.ai_effort_default();
         let mut s = Session::new(mode, &profile, &model, &effort);
         s.provider = provider;
-        s.auto = self.settings.flag("ai.auto");
+        s.auto = self.ai_auto_default();
         self.ai.sessions.insert(0, s);
         self.ai.cur = Some(0);
         self.ai.approval = None;
@@ -377,6 +400,8 @@ impl App {
     }
 
     pub(crate) fn ai_sync_panel(&mut self) {
+        self.ai_view
+            .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         let prov = self.ai_provider();
         let mode_now = self
             .ai_cur()
@@ -456,15 +481,12 @@ impl App {
             profile: profile_name,
             model,
             models,
-            effort: cur.map(|s| s.effort.clone()).unwrap_or_else(|| {
-                self.settings
-                    .get("ai.effort")
-                    .unwrap_or(ai::DEFAULT_EFFORT)
-                    .to_string()
-            }),
+            effort: cur
+                .map(|s| s.effort.clone())
+                .unwrap_or_else(|| self.ai_effort_default()),
             auto: cur
                 .map(|s| s.auto)
-                .unwrap_or_else(|| self.settings.flag("ai.auto")),
+                .unwrap_or_else(|| self.ai_auto_default()),
             sessions: self
                 .ai
                 .sessions
@@ -508,6 +530,9 @@ impl App {
             profiles: self.ai.store.profiles.clone(),
             keyed,
             current_profile: self.ai.store.current.clone(),
+            model: self.ai_cur().map(|s| s.model.clone()).unwrap_or_default(),
+            effort: self.ai_cur().map(|s| s.effort.clone()).unwrap_or_default(),
+            auto: self.ai_cur().is_some_and(|s| s.auto),
             note: self.ai.note.clone(),
             status: self.ai.status.clone(),
         }
@@ -519,7 +544,8 @@ impl App {
         for a in self.ai_panel.take_actions() {
             match a {
                 PanelAction::SetMode(m) => {
-                    let _ = self.settings.set("ai.mode", m.as_str());
+                    let k = self.ai_pref_key("mode");
+                    let _ = self.settings.set(&k, m.as_str());
                     self.persist_settings();
                     if let Some(s) = self.ai_cur_mut() {
                         if s.mode != m {
@@ -548,21 +574,24 @@ impl App {
                     }
                 }
                 PanelAction::SetModel(m) => {
-                    let _ = self.settings.set("ai.model", &m);
+                    let k = self.ai_pref_key("model");
+                    let _ = self.settings.set(&k, &m);
                     self.persist_settings();
                     if let Some(s) = self.ai_cur_mut() {
                         s.model = m;
                     }
                 }
                 PanelAction::SetEffort(e) => {
-                    let _ = self.settings.set("ai.effort", &e);
+                    let k = self.ai_pref_key("effort");
+                    let _ = self.settings.set(&k, &e);
                     self.persist_settings();
                     if let Some(s) = self.ai_cur_mut() {
                         s.effort = e;
                     }
                 }
                 PanelAction::SetAuto(on) => {
-                    let _ = self.settings.set("ai.auto", if on { "on" } else { "off" });
+                    let k = self.ai_pref_key("auto");
+                    let _ = self.settings.set(&k, if on { "on" } else { "off" });
                     self.persist_settings();
                     if let Some(s) = self.ai_cur_mut() {
                         s.auto = on;
@@ -719,6 +748,7 @@ impl App {
                     }
                 }
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
+                ViewAction::RunCode { msg, block, sql } => self.ai_run_block(msg, block, &sql),
                 ViewAction::ProfileDup(arg) => {
                     if let Some(p) = arg
                         .parse::<usize>()
@@ -853,6 +883,67 @@ impl App {
                 let _ = tx.send(AiEvent::Note(format!("codexlogin:{line}")));
                 wake();
             });
+    }
+
+    /// ★ 코드 블록 [실행](사용자 11-11): 보이는 SQL을 사용자가 직접 실행하는 것과 같다 — `gate_pass()` → `run_text_whole`(DR-34) ·
+    /// 결과는 그 블록 아래에 요약(조회 = 앞 8행 · 그 밖 = 상태 줄). 행 데이터는 화면에만(AI로 보내지 않는다).
+    fn ai_run_block(&mut self, msg: usize, block: usize, sql: &str) {
+        if !self.sess.connected || !self.gate_open() || self.ai.pending.is_some() {
+            self.ai.status = t(Msg::AiQueryBusy).into();
+            self.redraw();
+            return;
+        }
+        self.ai.pending = Some(PendingTool {
+            reply: None,
+            attach_label: None,
+            since: Instant::now(),
+            max_rows: 8,
+            wait_editor: None,
+        });
+        self.ai.run_block = Some((msg, block));
+        self.ai.capture = None;
+        self.ai.status = t(Msg::AiRunning).into();
+        self.run_text_whole(sql.to_string());
+    }
+
+    /// ★ 진행 중 상태 줄(사용자 11-11 "Active 상태를 알 수 있게"): 시작 시각 · 경과 · 받은 글자 수.
+    fn ai_active_status(&mut self) {
+        let Some(t0) = self.ai.turn_started else {
+            return;
+        };
+        let secs = t0.elapsed().as_secs_f64();
+        let chars = self
+            .ai_run()
+            .and_then(|s| s.messages.last())
+            .filter(|m| m.kind == Kind::Assistant)
+            .map(|m| m.text.chars().count())
+            .unwrap_or(0);
+        self.ai.status = tf(
+            Msg::AiActive,
+            &[
+                &self.ai.turn_wall,
+                &format!("{secs:.0}"),
+                &chars.to_string(),
+            ],
+        );
+    }
+
+    /// 턴 진행 중 1초마다 상태 줄 갱신 — 이벤트 루프 마감 계산에 넣는다(돌아올 시각).
+    pub(crate) fn ai_tick_due(&mut self, now: Instant) -> Option<Instant> {
+        if !self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            self.ai.last_tick = None;
+            return None;
+        }
+        let due = self
+            .ai
+            .last_tick
+            .is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_secs(1));
+        if due {
+            self.ai.last_tick = Some(now);
+            self.ai_active_status();
+            self.redraw();
+        }
+        Some(self.ai.last_tick.unwrap_or(now) + std::time::Duration::from_secs(1))
     }
 
     /// 비용 표(설정 `ai.prices`).
@@ -1001,6 +1092,10 @@ impl App {
         um.attachments = attachments.iter().map(|a| a.label().to_string()).collect();
         self.ai_push(um);
         self.ai.turn_started = Some(Instant::now());
+        self.ai.turn_wall = {
+            let st = nsql_log::now_local().stamp();
+            st.get(11..19).unwrap_or(&st).to_string()
+        };
         self.ai.cli_turn_usage = None;
         let system =
             ai::tools::system_prompt(&format!("{:?}", self.sess.dialect), &self.sess.profile);
@@ -1090,20 +1185,29 @@ impl App {
                         .map(|m| ai::mcp::config_json(m.port, &m.token));
                     let (program, prefix) =
                         ai::host::resolve_cli(self.settings.get("ai.cli_path").unwrap_or("claude"));
+                    // ★ `ai.cli_key=profile`: CLI 모드에서도 현재 프로필의 API 키를 환경 변수로만 넘긴다(CLI 로그인 없이 · 사용자 11-11).
+                    let mut env: Vec<(String, String)> = Vec::new();
+                    if self.settings.get("ai.cli_key") == Some("profile") {
+                        if let Some(k) = self.ai_key_for(&profile) {
+                            env.push(("ANTHROPIC_API_KEY".into(), k));
+                        }
+                    }
+                    // ★ `--bare`는 Claude Code의 자체 로그인(구독)도 건너뛴다 → 키를 넘길 때만(사용자 11-11 "터미널은 로그인돼 있는데").
+                    let bare = self.settings.flag("ai.bare") && !env.is_empty();
                     let args = ai::claude_cli::args(
                         &model,
                         &effort,
                         self.settings.get("ai.permission_mode").unwrap_or("default"),
                         cfg.as_deref(),
                         cli_session.as_deref(),
-                        self.settings.flag("ai.bare"),
+                        bare,
                         &system,
                     );
                     let launch = CliLaunch {
                         program,
                         prefix,
                         args,
-                        env: Vec::new(),
+                        env,
                     };
                     if let Err(e) = self.ai_host().start_cli(launch) {
                         self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiCliStartFailed, &[&e])));
@@ -1218,7 +1322,7 @@ impl App {
     }
 
     fn ai_after_send(&mut self) {
-        self.ai.status = "…".into();
+        self.ai_active_status();
         if let Some(s) = self.ai_cur() {
             ai::history_save(s);
         }
@@ -1298,6 +1402,7 @@ impl App {
                     Some(m) if m.kind == Kind::Assistant => m.text.push_str(&t),
                     _ => s.messages.push(ChatMsg::new(Kind::Assistant, t)),
                 }
+                self.ai_active_status();
             }
             AiEvent::ToolCall { id, name, input } => {
                 let mut m = ChatMsg::new(
@@ -1409,7 +1514,12 @@ impl App {
                 } else {
                     format!("{e}\n{tail}")
                 };
+                // CLI가 로그인되지 않았으면 할 일을 안내(사용자 11-11 "이미 API로 연결했는데" — CLI 모드는 키를 쓰지 않는다).
+                let not_logged = text.contains("Not logged in") || text.contains("/login");
                 self.ai_push(ChatMsg::new(Kind::Error, redact(&text)));
+                if not_logged {
+                    self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiCliNotLoggedIn)));
+                }
             }
             AiEvent::Note(n) => {
                 if let Some(rest) = n.strip_prefix("validate:") {
@@ -1894,6 +2004,15 @@ impl App {
             return false;
         };
         let p = self.ai.pending.take().expect("pending");
+        if let Some((mi, block)) = self.ai.run_block.take() {
+            if let Some(m) = self.ai_cur_mut().and_then(|s| s.messages.get_mut(mi)) {
+                m.block_results.retain(|r| r.0 != block);
+                m.block_results.push((block, text, ok));
+            }
+            self.ai.status = t(if ok { Msg::AiRunDone } else { Msg::AiRunFailed }).into();
+            self.redraw();
+            return true;
+        }
         if let Some(r) = p.reply {
             let _ = r.send(ToolReply { output: text, ok });
         } else if let Some(label) = p.attach_label {
@@ -1939,6 +2058,35 @@ impl App {
             }
             self.ai.status = t(Msg::AiAttached).into();
         }
+        self.ai_sync_panel();
+        self.redraw();
+        true
+    }
+
+    /// ★ AI 작성 상자에서 Ctrl+V — 클립보드에 글이 없고 이미지가 있으면 이미지 칩으로. 가로챘으면 `true`.
+    pub(crate) fn ai_paste_image(&mut self) -> bool {
+        if !(self.ai_view_active()
+            && self.focus == Focus::Editor
+            && self.ai_view.page() == Page::Chat)
+        {
+            return false;
+        }
+        let Some(png) = crate::clipboard::read_image_png() else {
+            return false;
+        };
+        self.ai_init();
+        if self.ai.cur.is_none() {
+            self.ai_new_session();
+        }
+        let n = png.len() / 1024;
+        if let Some(s) = self.ai_cur_mut() {
+            s.attachments.push(Attachment::Image {
+                label: format!("clipboard image ({n} KB)"),
+                media: "image/png".into(),
+                bytes: png,
+            });
+        }
+        self.ai.status = t(Msg::AiAttached).into();
         self.ai_sync_panel();
         self.redraw();
         true
@@ -2148,7 +2296,8 @@ impl App {
     fn ai_panel_actions_apply(&mut self, a: PanelAction) {
         match a {
             PanelAction::SetMode(m) => {
-                let _ = self.settings.set("ai.mode", m.as_str());
+                let k = self.ai_pref_key("mode");
+                let _ = self.settings.set(&k, m.as_str());
                 self.persist_settings();
                 if let Some(s) = self.ai_cur_mut() {
                     s.mode = m;
@@ -2159,21 +2308,24 @@ impl App {
                 }
             }
             PanelAction::SetModel(m) => {
-                let _ = self.settings.set("ai.model", &m);
+                let k = self.ai_pref_key("model");
+                let _ = self.settings.set(&k, &m);
                 self.persist_settings();
                 if let Some(s) = self.ai_cur_mut() {
                     s.model = m;
                 }
             }
             PanelAction::SetEffort(e) => {
-                let _ = self.settings.set("ai.effort", &e);
+                let k = self.ai_pref_key("effort");
+                let _ = self.settings.set(&k, &e);
                 self.persist_settings();
                 if let Some(s) = self.ai_cur_mut() {
                     s.effort = e;
                 }
             }
             PanelAction::SetAuto(on) => {
-                let _ = self.settings.set("ai.auto", if on { "on" } else { "off" });
+                let k = self.ai_pref_key("auto");
+                let _ = self.settings.set(&k, if on { "on" } else { "off" });
                 self.persist_settings();
                 if let Some(s) = self.ai_cur_mut() {
                     s.auto = on;
@@ -2310,6 +2462,8 @@ impl App {
             if self.ai_panel.on_event(&ev) {
                 self.redraw();
             }
+            // ★ 우클릭 메뉴 → [이름 바꾸기]로 입력 상자가 생기면 IME를 바로 켠다(종전엔 안 켜져 한글이 자모로 갈라짐 · 사용자 11-11).
+            self.ime_refresh();
             self.ai_panel_actions();
             if (!outside_click || self.ai_panel.menu_open())
                 && !matches!(ev, InputEvent::MouseMove { .. })

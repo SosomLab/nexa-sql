@@ -514,6 +514,8 @@ pub(crate) struct ChatMsg {
     pub id: String,
     /// 첨부 요약(사용자 글 아래 칩).
     pub attachments: Vec<String>,
+    /// ★ 코드 블록 [실행] 결과(블록 번호(메시지 안) · 글 · 성공) — 화면에만(이력 저장 안 함 · 사용자 11-11).
+    pub block_results: Vec<(usize, String, bool)>,
 }
 
 impl ChatMsg {
@@ -523,6 +525,7 @@ impl ChatMsg {
             text: text.into(),
             id: String::new(),
             attachments: Vec::new(),
+            block_results: Vec::new(),
         }
     }
 }
@@ -608,6 +611,60 @@ impl Attachment {
             | Attachment::Pdf { label, .. } => label,
         }
     }
+    /// 칩 글(사용자 11-11 "이미지처럼 상단에 표시"): 이미지 = 이름 W×H · PDF = 이름 (KB) · 글 = 이름(줄 수는 라벨에).
+    pub(crate) fn chip_text(&self) -> String {
+        match self {
+            Attachment::Text { label, .. } => label.clone(),
+            Attachment::Image {
+                label,
+                media,
+                bytes,
+            } => match image_dims(media, bytes) {
+                Some((w, h)) => format!("{label} {w}×{h}"),
+                None => format!("{label} ({} KB)", bytes.len() / 1024),
+            },
+            Attachment::Pdf { label, bytes } => format!("{label} ({} KB)", bytes.len() / 1024),
+        }
+    }
+}
+
+/// 이미지 머리에서 치수(PNG IHDR · GIF 논리 화면 · JPEG SOF) — 미리보기 칩·툴팁용 · 모르면 None.
+pub(crate) fn image_dims(media: &str, b: &[u8]) -> Option<(u32, u32)> {
+    let be32 = |o: usize| {
+        b.get(o..o + 4)
+            .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
+    };
+    if b.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return Some((be32(16)?, be32(20)?));
+    }
+    if b.starts_with(b"GIF8") {
+        return Some((
+            u32::from(u16::from_le_bytes([*b.get(6)?, *b.get(7)?])),
+            u32::from(u16::from_le_bytes([*b.get(8)?, *b.get(9)?])),
+        ));
+    }
+    if media.contains("jpeg") || b.starts_with(&[0xFF, 0xD8]) {
+        let mut p = 2usize;
+        while p + 9 < b.len() {
+            if b[p] != 0xFF {
+                p += 1;
+                continue;
+            }
+            let m = b[p + 1];
+            if m == 0xD8 || m == 0x01 || (0xD0..=0xD7).contains(&m) {
+                p += 2;
+                continue;
+            }
+            let len = usize::from(u16::from_be_bytes([b[p + 2], b[p + 3]]));
+            if matches!(m, 0xC0..=0xCF) && !matches!(m, 0xC4 | 0xC8 | 0xCC) {
+                let h = u16::from_be_bytes([b[p + 5], b[p + 6]]);
+                let w = u16::from_be_bytes([b[p + 7], b[p + 8]]);
+                return Some((u32::from(w), u32::from(h)));
+            }
+            p += 2 + len;
+        }
+    }
+    None
 }
 
 /// 세션 하나.
@@ -976,6 +1033,27 @@ mod tests {
         assert_eq!(price_per_m_in("", "unknown"), (4.0, 20.0));
         let c = Usage::estimate_cost_in(t, "claude-opus-5-5", 1_000_000, 1_000_000, 0);
         assert!((c - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn image_dims_png_gif_jpeg() {
+        let png = crate::png::encode(3, 2, &[0; 6]);
+        assert_eq!(image_dims("image/png", &png), Some((3, 2)));
+        let gif = b"GIF89a\x10\x00\x08\x00";
+        assert_eq!(image_dims("image/gif", gif), Some((16, 8)));
+        // JPEG: SOI · APP0(길이 2) · SOF0(길이 11: 정밀도 8 · 높이 5 · 폭 7 · 성분 1 …)
+        let jpg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x05, 0x00,
+            0x07, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xD9,
+        ];
+        assert_eq!(image_dims("image/jpeg", &jpg), Some((7, 5)));
+        assert_eq!(image_dims("image/webp", b"RIFF"), None);
+        let a = Attachment::Image {
+            label: "shot.png".into(),
+            media: "image/png".into(),
+            bytes: png,
+        };
+        assert_eq!(a.chip_text(), "shot.png 3×2");
     }
 
     #[test]

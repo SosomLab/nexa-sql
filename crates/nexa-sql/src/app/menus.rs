@@ -1870,7 +1870,12 @@ impl App {
                         }
                     }
                 }
-                None => failed = true,
+                // ★ 글이 없으면 AI 작성 상자에 한해 클립보드 이미지를 첨부(Ctrl+V · 사용자 11-11).
+                None => {
+                    if !self.ai_paste_image() {
+                        failed = true;
+                    }
+                }
             },
             // 플러그인 메뉴 기여(우클릭 서브메뉴 항목) → 명령 id 그대로 메뉴 경로로(09-17 · extensions).
             EditCtxAction::Custom(id) => self.menu_action(&id),
