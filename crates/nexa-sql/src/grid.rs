@@ -5791,6 +5791,9 @@ impl Grid {
         ];
         // ★ 서브메뉴는 1단(88 §3 15 · T-233): Copy SQL ▸ 은 Advanced ▸ 안이 아니라 같은 층에.
         let adv = vec![
+            // ★ 우클릭한 행 한 줄 전체 복사(TSV · 사용자 11-12 "하단 결과에서 1줄 단위 복사") — 상위 항목 상한(≤19 · 한 화면 · 61 §2-2 ⑤)을
+            //   지키려 "고급 복사 ▸" 맨 위에(CI 11-12 `context_menu_is_one_level_deep`).
+            CtxItem::maybe("copy_row", t(Msg::MnCopyRow), self.menu_row.is_some()),
             // 형식마다 다른 도형(T-303 첫 묶음 · 사용자 10-07 "CSV·TEXT·Markdown부터" · 종전 셋 다 표 아이콘).
             CtxItem::item("copy_csv", t(Msg::MnCopyCsv)).with_icon(Some(toolicons::mi_csv())),
             CtxItem::item("copy_txt", t(Msg::MnCopyText)).with_icon(Some(toolicons::mi_text())),
@@ -5868,8 +5871,6 @@ impl Grid {
             CtxItem::maybe("copy", t(Msg::MnCopy), has)
                 .with_icon(Some(toolicons::mi_copy()))
                 .with_shortcut(self.sc_copy.clone()),
-            // ★ 우클릭한 행 한 줄 전체 복사(TSV · 사용자 11-12 "하단 결과에서 1줄 단위 복사").
-            CtxItem::maybe("copy_row", t(Msg::MnCopyRow), self.menu_row.is_some()),
             hdr_item,
             hdr_only,
             adv_item,
