@@ -740,6 +740,7 @@ impl App {
             }
             // ★ 편집기 옆 AI 분할 창(사용자 11-11) = UI 글꼴 · 편집기 오른쪽.
             if self.ai.side_rect.w > 0 && !self.ai_view_active() {
+                self.ai_side_prepare();
                 let vprefs = FontPrefs {
                     base: SlotFont {
                         size: ui_px,

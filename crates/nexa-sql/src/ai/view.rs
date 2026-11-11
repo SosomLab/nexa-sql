@@ -1433,15 +1433,14 @@ impl AiView {
         }
         self.lines = lines;
         if self.lines.is_empty() {
+            // 좁은 분할 창에서도 잘리지 않게 줄 바꿈(협업 V1 관찰 11-11).
             let msg = t(Msg::AiEmptyHint);
-            for (i, line) in msg.split('\n').enumerate() {
-                dc.text(
-                    x,
-                    tr.y + self.s(16.0) + i as i32 * line_h,
-                    tr,
-                    line,
-                    th.text_dim,
-                );
+            let mut hy = tr.y + self.s(16.0);
+            for para in msg.split('\n') {
+                for line in wrap(dc, para, w - self.s(16.0)) {
+                    dc.text(x, hy, tr, &line, th.text_dim);
+                    hy += line_h;
+                }
             }
         }
         dc.pop_clip();

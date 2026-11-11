@@ -717,8 +717,10 @@ impl Session {
             .iter()
             .find(|m| m.kind == Kind::User)
             .map(|m| {
-                let t: String = m.text.chars().take(40).collect();
-                if m.text.chars().count() > 40 {
+                // 여러 줄 첫 메시지는 한 줄로(줄 바꿈 → 공백 · 협업 V1 관찰 11-11).
+                let flat: String = m.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let t: String = flat.chars().take(40).collect();
+                if flat.chars().count() > 40 {
                     format!("{t}…")
                 } else {
                     t

@@ -142,6 +142,15 @@ impl App {
         self.ai_sync_panel();
     }
 
+    /// 분할 창을 그리기 직전: 초기화·세션이 없으면 새 세션(설정 `ai.side=on`으로 시작했을 때 칩이 비던 관찰 · 11-11).
+    pub(crate) fn ai_side_prepare(&mut self) {
+        self.ai_init();
+        if self.ai.cur.is_none() {
+            self.ai_new_session();
+            self.ai_view.set_provider(self.ai.tab);
+        }
+    }
+
     /// 편집기 옆 분할 창 토글(툴바 `ai.side` · 팔레트) — 켜면 현재 탭의 세션(없으면 새로)을 그 창에.
     pub(crate) fn ai_toggle_side(&mut self) {
         if !self.ai_enabled() {
