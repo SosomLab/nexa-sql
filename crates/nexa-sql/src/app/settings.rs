@@ -1006,6 +1006,7 @@ impl App {
             }
             // ★ AI 어시스턴트(docs/110 · 11-11).
             "ai.enabled" => self.ai_apply_enabled(),
+            "ai.provider" => self.ai_apply_provider_default(),
             "ai.mode"
             | "ai.model"
             | "ai.effort"
@@ -1018,7 +1019,6 @@ impl App {
             | "ai.max_tokens"
             | "ai.history_keep_days"
             | "ai.mcp_port"
-            | "ai.provider"
             | "ai.codex_path"
             | "ai.side"
             | "ai.side_width"

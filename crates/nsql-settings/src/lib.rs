@@ -8506,6 +8506,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
         ],
     ),
     (Msg::GrpDataEditor, &[Msg::CatGrid, Msg::CatGridFilter]),
+    // ★ AI 어시스턴트(docs/110 · 사용자 11-12 "트리 어디에 모여 있나" → 트리에 없었다 · 검색으로만 닿던 것).
+    (Msg::GrpAi, &[Msg::CatAi]),
     // DBMS별 종속 설정(사용자 09-21): 클라이언트 자동 탐지/직접 지정 + 읽기 전용 파생 정보 · 그 DBMS에만 뜻이 있는 키.
     (
         Msg::GrpDbms,

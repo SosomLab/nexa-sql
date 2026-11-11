@@ -2118,6 +2118,67 @@ impl Editors {
         created
     }
 
+    /// ★ AI 세션 탭(사용자 11-12 "편집기 탭과 같은 기준" = 1클릭 미리보기 · 더블클릭 고정): 뷰 탭을 **미리보기/고정**으로 연다 —
+    ///   이미 열려 있으면 그 탭으로(고정 요청이면 승격) · 미리보기 요청이면 살아 있는 미리보기 탭을 **재사용**(파일 미리보기였어도
+    ///   이 뷰로 바꾼다) · 없으면 새 탭(미리보기면 미리보기 슬롯으로).
+    pub(crate) fn open_view_tab_preview(&mut self, key: &str, title: &str, pinned: bool) {
+        let found = self
+            .view_tabs
+            .iter()
+            .find(|(_, k)| k.as_str() == key)
+            .and_then(|(id, _)| self.index_of_id(*id));
+        if let Some(i) = found {
+            self.switch(i);
+            if self.titles[i] != title {
+                self.rename_tab(i, title);
+            }
+            if pinned {
+                self.promote_tab(i);
+            }
+            return;
+        }
+        if !pinned {
+            if let Some(i) = self.reuse_preview_tab(title) {
+                let id = self.tab_id(i);
+                self.paths[i] = None;
+                self.set_doc_object(id, None);
+                self.view_tabs.insert(id, key.to_string());
+                if let Some(tb) = self.bufs.get_mut(i) {
+                    tb.set_read_only(false);
+                    if !tb.text().is_empty() {
+                        tb.set_text("");
+                    }
+                    tb.mark_saved();
+                }
+                self.set_read_only(i, true);
+                self.sync_tabs();
+                return;
+            }
+        }
+        self.open_view_tab(key, title);
+        let id = self.active_id();
+        if pinned {
+            let i = self.active;
+            self.promote_tab(i);
+        } else {
+            self.set_preview_id(Some(id));
+        }
+    }
+
+    /// 열쇠가 맞는 뷰 탭의 제목 갱신(세션 제목이 첫 메시지로 정해질 때 · 이름 바꾸기).
+    pub(crate) fn set_view_title(&mut self, key: &str, title: &str) {
+        let found = self
+            .view_tabs
+            .iter()
+            .find(|(_, k)| k.as_str() == key)
+            .and_then(|(id, _)| self.index_of_id(*id));
+        if let Some(i) = found {
+            if self.titles[i] != title {
+                self.rename_tab(i, title);
+            }
+        }
+    }
+
     /// 탭 `i`가 뷰 탭이면 그 열쇠(`ext:<id>` …) — 프로젝트 파일에 저장해 다시 열 때 같은 뷰로 복원(사용자 09-30).
     pub(crate) fn view_key_of(&self, i: usize) -> Option<String> {
         self.view_tabs.get(&self.tab_id(i)).cloned()

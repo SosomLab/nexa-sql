@@ -103,19 +103,54 @@ impl App {
     }
 
     pub(crate) fn ai_view_active(&self) -> bool {
-        matches!(self.editors.active_view(), Some("ai.chat" | "ai.codex"))
+        self.editors
+            .active_view()
+            .is_some_and(|k| k.starts_with("ai.chat") || k.starts_with("ai.codex"))
     }
 
-    /// 편집기에서 다른 제공자의 채팅 탭이 앞으로 오면 패널 탭도 따라간다(그리기 직전에 부른다).
+    /// 채팅 뷰 탭 열쇠 = `<제공자 키>:<세션 id>`(세션마다 탭 · 11-12).
+    fn ai_view_key(prov: Provider, sid: &str) -> String {
+        format!("{}:{sid}", prov.view_key())
+    }
+
+    /// 설정 `ai.provider`가 바뀌면 패널 탭도 그 제공자로(사용자 11-12 "기본을 Claude로 바꿔도 Codex로 열림").
+    pub(crate) fn ai_apply_provider_default(&mut self) {
+        self.ai_init();
+        let p = self.ai_provider_default();
+        self.ai_switch_tab(p);
+        self.ai_view.set_provider(p);
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
+    /// 편집기에서 채팅 탭이 앞으로 오면 패널 탭·현재 세션도 그 탭의 것으로(열쇠 = 제공자:세션 · 그리기 직전에 부른다 · 11-12).
     pub(crate) fn ai_follow_view(&mut self) {
-        let want = match self.editors.active_view() {
-            Some("ai.codex") => Provider::Codex,
-            Some("ai.chat") => Provider::Claude,
-            _ => return,
+        let Some(key) = self.editors.active_view().map(str::to_string) else {
+            return;
         };
+        let (want, sid) = if let Some(r) = key.strip_prefix("ai.codex") {
+            (Provider::Codex, r)
+        } else if let Some(r) = key.strip_prefix("ai.chat") {
+            (Provider::Claude, r)
+        } else {
+            return;
+        };
+        let sid = sid.trim_start_matches(':').to_string();
         if want != self.ai.tab {
             self.ai_switch_tab(want);
             self.ai_sync_panel();
+        }
+        let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
+        if !sid.is_empty() && !busy {
+            if let Some(i) = self.ai.sessions.iter().position(|s| s.id == sid) {
+                if self.ai.cur != Some(i) {
+                    self.ai.cur = Some(i);
+                    self.ai.approval = None;
+                    self.ai.pending = None;
+                    self.ai_view.reset();
+                    self.ai_sync_panel();
+                }
+            }
         }
     }
 
@@ -170,25 +205,6 @@ impl App {
         }
     }
 
-    /// 채팅 탭이 보던 세션으로 되돌린다(있을 때 · 턴 중엔 안 바꿈) — 분할 창이 `cur`를 편집기 탭 세션으로 바꿔 둔 뒤.
-    fn ai_chat_restore(&mut self) {
-        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
-            return;
-        }
-        let p = self.ai.tab;
-        let want = self.ai_chat_slot(p).clone();
-        let found = want.and_then(|id| self.ai.sessions.iter().position(|s| s.id == id));
-        if let Some(i) = found {
-            if self.ai.cur != Some(i) {
-                self.ai.cur = Some(i);
-                self.ai.approval = None;
-                self.ai.pending = None;
-                self.ai_view.reset();
-                self.ai_sync_panel();
-            }
-        }
-    }
-
     /// 지금 세션 = 채팅 탭의 세션으로 기록(채팅 탭을 열 때 · 채팅 탭을 그릴 때).
     fn ai_chat_mark(&mut self) {
         let p = self.ai.tab;
@@ -198,12 +214,16 @@ impl App {
         self.ai.on_chat = Some(p);
     }
 
-    /// 채팅 탭을 그리기 직전: 분할 창(또는 다른 제공자 탭)에서 넘어왔으면 이 제공자 채팅 탭이 보던 세션으로.
+    /// 채팅 탭을 그리기 직전(세션은 `ai_follow_view`가 탭 열쇠로 맞춘다): 탭 제목을 세션 제목에 맞추고 표식.
     pub(crate) fn ai_chat_prepare(&mut self) {
         self.ai_init();
         self.ai_view.set_side_mode(false);
-        if self.ai.on_chat != Some(self.ai.tab) {
-            self.ai_chat_restore();
+        if let Some((id, prov, title)) = self
+            .ai_cur()
+            .map(|s| (s.id.clone(), s.provider, s.title_or_default()))
+        {
+            self.editors
+                .set_view_title(&Self::ai_view_key(prov, &id), &title);
         }
         if !self.ai.host.as_ref().is_some_and(|h| h.busy) {
             self.ai_chat_mark();
@@ -351,9 +371,7 @@ impl App {
             self.ai_codex_login_probe();
             self.ai_sync_panel();
             self.set_focus(Focus::Ai);
-            // 활동 막대에서 열 때는 채팅 탭이 보던 세션으로(분할 창 세션을 끌고 오지 않게).
-            self.ai_chat_restore();
-            self.ai_open_chat();
+            // ★ 활동 막대는 패널만 연다(사용자 11-12 "탭이 열리며 쓰던 편집창이 바뀌어 불편") — 탭은 [⊕ 새 대화]·세션 목록에서.
         } else if self.focus == Focus::Ai {
             self.set_focus(Focus::Editor);
         }
@@ -361,15 +379,26 @@ impl App {
         self.redraw();
     }
 
-    /// 채팅 뷰 탭 열기/앞으로.
+    /// 현재 세션의 채팅 탭을 **고정 탭**으로 열기/앞으로(새 대화 · 팔레트 · 기동 명령).
     pub(crate) fn ai_open_chat(&mut self) {
         self.ai_init();
         if self.ai.cur.is_none() {
             self.ai_new_session();
         }
-        let tab = self.ai.tab;
+        let Some((id, prov, title)) = self
+            .ai_cur()
+            .map(|s| (s.id.clone(), s.provider, s.title_or_default()))
+        else {
+            return;
+        };
+        self.ai_open_chat_tab(&id, prov, &title, true);
+    }
+
+    /// 세션 하나를 뷰 탭으로(미리보기 = 1클릭 · 고정 = 더블클릭/새 대화 · 편집기 탭 규칙 · 11-12).
+    fn ai_open_chat_tab(&mut self, id: &str, prov: Provider, title: &str, pinned: bool) {
         self.ai_chat_mark();
-        self.editors.open_view_tab(tab.view_key(), tab.title());
+        self.editors
+            .open_view_tab_preview(&Self::ai_view_key(prov, id), title, pinned);
         self.ai_view.show_page(Page::Chat);
         self.set_focus(Focus::Editor);
         self.ai_view.set_focused(true);
@@ -503,8 +532,8 @@ impl App {
         self.ai_sync_panel();
     }
 
-    /// 이전 세션 열기(이어하기: CLI = `--resume` · API = 대화 재구성).
-    pub(crate) fn ai_open_session(&mut self, id: &str) {
+    /// 이전 세션 열기(이어하기: CLI = `--resume` · API = 대화 재구성) · `pinned` = 고정 탭(아니면 미리보기 탭).
+    pub(crate) fn ai_open_session(&mut self, id: &str, pinned: bool) {
         let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
             return;
         };
@@ -557,7 +586,9 @@ impl App {
             }
             self.redraw();
         } else {
-            self.ai_open_chat();
+            let prov = self.ai.sessions[i].provider;
+            let title = self.ai.sessions[i].title_or_default();
+            self.ai_open_chat_tab(id, prov, &title, pinned);
         }
     }
 
@@ -565,6 +596,11 @@ impl App {
         let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
             return;
         };
+        // 그 세션의 뷰 탭도 닫는다(제공자 둘 다 시도).
+        self.editors
+            .close_view_tabs(&Self::ai_view_key(Provider::Claude, id));
+        self.editors
+            .close_view_tabs(&Self::ai_view_key(Provider::Codex, id));
         ai::history_delete(id);
         self.ai.sessions.remove(i);
         match self.ai.cur {
@@ -584,6 +620,8 @@ impl App {
     }
 
     pub(crate) fn ai_sync_panel(&mut self) {
+        self.ai_panel
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.ai_view
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         let prov = self.ai_provider();
@@ -802,15 +840,17 @@ impl App {
                     self.ai_open_chat();
                     self.ai_view.show_page(Page::Profiles);
                 }
-                PanelAction::OpenSession(id) => self.ai_open_session(&id),
+                PanelAction::OpenSession(id) => self.ai_open_session(&id, false),
+                PanelAction::OpenSessionPinned(id) => self.ai_open_session(&id, true),
                 PanelAction::RenameSession(id, title) => {
                     if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == id) {
-                        s.title = title;
+                        s.title = title.clone();
                         ai::history_save(s);
+                        let key = Self::ai_view_key(s.provider, &id);
+                        self.editors.set_view_title(&key, &title);
                     }
                 }
                 PanelAction::DeleteSession(id) => self.ai_delete_session(&id),
-                PanelAction::ShowChat => self.ai_open_chat(),
             }
         }
         self.ai_sync_panel();
@@ -944,7 +984,7 @@ impl App {
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
                 ViewAction::RunCode { msg, block, sql } => self.ai_run_block(msg, block, &sql),
                 ViewAction::RunGrid(sql) => self.ai_run_grid(&sql),
-                ViewAction::OpenSession(id) => self.ai_open_session(&id),
+                ViewAction::OpenSession(id) => self.ai_open_session(&id, true),
                 ViewAction::NewSession(p) => {
                     if p != self.ai.tab {
                         self.ai_switch_tab(p);

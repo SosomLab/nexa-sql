@@ -61,11 +61,11 @@ pub(crate) enum PanelAction {
     SetAuto(bool),
     NewChat,
     ManageProfiles,
+    /// 세션 1클릭 = 미리보기 탭 · 더블클릭 = 고정 탭(사용자 11-12 · 편집기 탭과 같은 기준).
     OpenSession(String),
+    OpenSessionPinned(String),
     RenameSession(String, String),
     DeleteSession(String),
-    /// 채팅 탭을 앞으로.
-    ShowChat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +156,9 @@ pub(crate) struct AiPanel {
     actions: Vec<PanelAction>,
     hover: Hit,
     pressed: Hit,
+    /// 세션 행 더블클릭 판정(id · 시각) · 간격(ms · 설정 `ui.dblclick_ms`).
+    last_session_click: Option<(String, std::time::Instant)>,
+    dblclick_ms: u128,
     /// 그릴 때 잡은 자리.
     r_new: Rect,
     r_profiles: Rect,
@@ -194,6 +197,8 @@ impl AiPanel {
             actions: Vec::new(),
             hover: Hit::None,
             pressed: Hit::None,
+            last_session_click: None,
+            dblclick_ms: 400,
             r_new: Rect::default(),
             r_profiles: Rect::default(),
             r_mode: Rect::default(),
@@ -261,6 +266,10 @@ impl AiPanel {
         }
         self.filter.is_focused().then_some(&mut self.filter)
     }
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
+    }
+
     pub(crate) fn take_actions(&mut self) -> Vec<PanelAction> {
         std::mem::take(&mut self.actions)
     }
@@ -629,8 +638,16 @@ impl AiPanel {
                     Hit::Session(i) => {
                         if let Some(&si) = self.filtered.get(i) {
                             let id = self.st.sessions[si].id.clone();
-                            self.actions.push(if id == self.st.current {
-                                PanelAction::ShowChat
+                            let now = std::time::Instant::now();
+                            let dbl = matches!(
+                                &self.last_session_click,
+                                Some((pid, t0)) if *pid == id
+                                    && now.duration_since(*t0).as_millis() < self.dblclick_ms
+                            );
+                            self.last_session_click =
+                                if dbl { None } else { Some((id.clone(), now)) };
+                            self.actions.push(if dbl {
+                                PanelAction::OpenSessionPinned(id)
                             } else {
                                 PanelAction::OpenSession(id)
                             });
