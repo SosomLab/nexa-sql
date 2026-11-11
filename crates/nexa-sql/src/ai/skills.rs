@@ -34,7 +34,7 @@ Steps:
         name: "metadata",
         when: "the user asks about tables, views, columns, keys, procedures, functions, triggers or DDL of a connected database",
         body: "\
-# Skill: metadata (use what the app already loaded)
+# Skill: metadata — how to use Nexa SQL's loaded metadata (object explorer cache)
 
 The object explorer caches metadata per connection. Prefer it over dictionary queries.
 
@@ -80,6 +80,54 @@ Search harness (all in-memory, instant, no database round trip):
 1. `get_setting` with an empty key lists all keys; `set_setting` changes one (persisted; bool = on/off).
 2. `list_commands` lists palette commands (id + label); `run_command` runs one (e.g. view.explorer, edit.format).
 3. Prefer explaining what a setting does and ask before changing user preferences unless the request is explicit.
+",
+    },
+    Skill {
+        name: "tabs",
+        when: "the user talks about editor tabs: which tab, switch to a tab, new tab, close tab, the other script, unsaved tabs",
+        body: "\
+# Skill: editor tabs
+
+1. `list_tabs` — id, title, file path, dirty/clean, active. The chat pane follows the active editor tab (one AI session per tab in the side pane).
+2. `switch_tab` with the id or exact title to make a tab active; then `get_editor_text` reads that tab.
+3. New tab = `run_command` id `file.new`; next/previous = `tab.next` / `tab.prev`; close = `file.close_tab` (the app asks about unsaved changes — never force).
+4. A tab bound to a private session shows that session in `session_info`; `CONNECT <profile>;` in a tab creates one (see connections).
+",
+    },
+    Skill {
+        name: "objects",
+        when: "the user wants to open, reveal, compare, refresh or get DDL/source of a database object, or row counts/sizes",
+        body: "\
+# Skill: database objects
+
+1. Locate with the metadata skill (`search_objects` → `describe_object`).
+2. Source/DDL: `object_source` opens the definition in an editor tab (procedures, views, triggers, packages, table DDL where supported).
+3. Explorer actions via `run_command`: `obj.reveal` (select the object at the caret in the explorer), `obj.info`, `obj.rows` (row count), `obj.sizes`, `obj.select_rows` (SELECT * tab), `obj.refresh` / `obj.refresh_meta` (reload a branch / metadata), `obj.compare` / `obj.compare_server` (compare definitions).
+4. Never generate or run DDL that changes objects unless the user asked explicitly; it needs approval anyway.
+",
+    },
+    Skill {
+        name: "files",
+        when: "the user asks to find, open or list files/scripts in the project or folder, recent files, or where a script is",
+        body: "\
+# Skill: project files
+
+1. `list_files` with path words (ANDed) finds files under the current project/folder root (hidden and build folders skipped, bounded). Empty query lists the first entries.
+2. `open_file` opens one in an editor tab (relative to the root or absolute).
+3. Project commands via `run_command`: `project.open`, `project.switch`, `project.save`, `project.close`; `file.open` opens the file dialog for the user; `view.project` shows the project panel.
+4. Do not read file contents through the shell; open the file and use `get_editor_text` if the content matters.
+",
+    },
+    Skill {
+        name: "extensions",
+        when: "the user asks what extensions are installed, to enable/disable one, formatters, or how to install/update extensions",
+        body: "\
+# Skill: extensions
+
+1. `list_extensions` — installed and built-in extensions with enabled state (formatters, rainbow pairs, insert sequence, WASM plugins).
+2. `set_extension_enabled` (asks the user) to turn one on or off; `apply` happens immediately.
+3. Installing/updating from a repository is done by the user in the Extensions panel (`run_command` `view.extensions`); do not attempt network installs from here.
+4. Formatting SQL uses the engine chosen in settings (`format.*`); `format_sql` applies it. The app also formats every ```sql block you return (hook).
 ",
     },
 ];

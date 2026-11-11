@@ -2485,7 +2485,6 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
     ("view.find_objects", Msg::TipFindObjects),
     ("view.log", Msg::TipLog),
     // ★ AI 그룹(11-11): [대화 탭] [편집기 옆에].
-    ("ai.tab", Msg::TipAiTab),
     ("ai.side", Msg::TipAiSide),
 ];
 

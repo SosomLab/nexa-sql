@@ -385,3 +385,30 @@
 - **`metadata` 스킬** = 하네스 순서(①`meta_stats` → ②`search_objects`(낱말 AND · `SCHEMA.NAME` · kind · in_columns) → ③`describe_object`(컬럼 안 읽혔으면 탐색기 펼치기 또는 `SELECT * … WHERE 1=0`) → ④`object_source` → ⑤ 그때만 사전 질의) · **Claude·Codex 공통**(같은 도구 · Codex는 시스템 프롬프트를 첫 턴 `<app_context>`로 받으므로 색인·`skill` 도구 동일).
 - **`/skills`**(사용자 11-11): 색인(이름 — 언제) + 안내 · `/skills <이름>` = 플레이북 본문(모델이 받는 영어 글 그대로) · 모르는 이름 = 목록 안내. 헤드리스 `ai.send:/…`는 슬래시로 푼다(협업 관찰).
 - MCP 구성 요약(사용자 질문 11-11): API 모드 = 요청 `tools`에 18종 직접 · Claude CLI = `--mcp-config`의 `nexa` 서버 하나(`nsql mcp-bridge` stdio ↔ 앱 TCP `ai.mcp_port`) + `--strict-mcp-config` + `--permission-prompt-tool mcp__nexa__approve` + `--append-system-prompt` · Codex = app-server `dynamicTools`(MCP 아님) · 스킬 본문은 `skill(name)`.
+
+## 16. 연계 구조 — MCP · hooks · skills · agents(2026-11-11 밤 · 사용자 "연계에 필요한 기능을 구성·개발하고 유기적 연계를 문서로")
+
+### 16-1 네 개념과 공급자 추상(사용자 "용어는 Claude식 · Codex 등 다른 AI도 같은 기능을 추상화 + 구현부")
+| 개념 | 뜻(앱 쪽 원천 · 공급자 무관) | Claude API | Claude CLI | Codex(app-server) |
+|---|---|---|---|---|
+| **도구**(MCP) | 앱 기능을 모델이 부르는 함수 = `ai/tools.rs` `TOOLS`(24종) — 접속·세션·메타·편집기·결과·설정·명령·탭·파일·확장·스킬 | 요청 `tools` · `tool_use` | MCP 서버 **`nexa-sql`**(`nsql mcp-bridge` stdio ↔ 앱 TCP `ai.mcp_port`) · 이름 `mcp__nexa-sql__<도구>` · `--strict-mcp-config` | `thread/start.dynamicTools` · `item/tool/call` |
+| **승인** | 쓰기 도구·행 데이터·비밀 = 호스트 `ai_tool_request`(끌 수 없음) | 앱 카드 | `--permission-prompt-tool mcp__nexa-sql__approve` | tool/call 응답 전 카드 |
+| **스킬** | 요청 종류별 플레이북 = `ai/skills.rs`(색인은 시스템 프롬프트 · 본문은 `skill` 도구 · `/skills`) | 시스템 프롬프트 | `--append-system-prompt` | 첫 턴 `<app_context>` |
+| **훅** | 모델 없이 결정적으로 끼는 단계 = `ai/hooks.rs`(턴 끝: ```sql 블록 앱 포맷 · 빈 줄 정리 · 설정 `ai.hook_*`) + 호스트의 전 도구 훅(승인·가림·동의) | 공통 | 공통 | 공통 |
+| **에이전트** | 세션의 역할 프리셋 = `ai/agents.rs`(지시 + 허용 도구 · `/agent` · 호스트가 허용 목록 강제) | 시스템 프롬프트 + 강제 | 같음 | 같음 |
+
+대응 = `ai/bridge.rs`(`MCP_SERVER` · `tool_short_name` · `approve_tool_name` · `Delivery::describe` → `/status` "연계 방식" 줄). 새 공급자 = bridge 한 줄 + 런처/파서(host.rs)만.
+
+### 16-2 한 요청이 흐르는 순서
+1. 사용자 글(+첨부 · 비밀 가림 훅) → 세션의 **에이전트** 지시 + **스킬 색인**이 든 시스템 프롬프트와 함께 공급자로.
+2. 모델이 스킬에 맞으면 `skill(name)`으로 플레이북을 읽고 **도구**를 부른다 → 호스트 전 도구 훅(에이전트 허용 · 쓰기 승인 카드 · 행 데이터 동의 · 비밀 가림) → 앱이 실행(메타 스냅샷·편집기·세션·탭·파일·확장) → 결과 반환.
+3. 턴 끝 **후처리 훅**: ```sql 블록을 앱 포매터(사용자 포맷 설정)로 · 빈 줄 정리 → 대본 표시(코드 상자 [복사][편집기][▶][▦]).
+4. 사용자 조작 = `/status`(연계 방식·에이전트 포함) · `/skills` · `/agent` · 설정 `ai.hook_format_sql` · `ai.hook_tidy`.
+
+### 16-3 스킬 영역(9) · 에이전트(4) · 새 도구(6)
+- 스킬: connections · metadata(검색 하네스) · editor · results · app · **tabs** · **objects** · **files** · **extensions**.
+- 에이전트: assistant(전부) · schema(메타 읽기 전용) · reviewer(검토·explain·포맷) · dba(세션·락 사전 질의). 이력에는 저장하지 않는다(다시 열면 assistant).
+- 도구: `list_tabs` · `switch_tab` · `list_files`(작업 루트 제한 걷기) · `open_file` · `list_extensions` · `set_extension_enabled`(승인).
+- 이번 묶음의 수정: Insert into editor(분할 창 포커스 때 paste 무시 → 편집기 포커스 복귀 뒤 삽입) · MCP 서버 이름 `nexa` → `nexa-sql` · 시스템 프롬프트 스타일 규칙(간결).
+- 같은 묶음의 작은 것: AI 툴바 그룹에서 [대화 탭] 버튼 제거(사용자 "chat tab 툴바는 제외" · `ai.side`만 · 채팅 탭은 활동 막대·팔레트) · **활동 막대 툴팁**(사용자 "좌측 아이콘에 툴팁이 없다" · hover 아이콘 오른쪽 캡슐 · 글 = 팔레트 명령 라벨 · 최상위 층) · 내장 모델 표에 `claude-fable-5-2`(사용자 "Fable 5.2가 목록에 안 보임" → API 프로필은 [저장 + 검증]이 `/v1/models`로 갱신 · CLI는 내장 표) · `/skills`.
+- API 모드와 MCP(사용자 질문): API 모드는 요청 `tools`로 같은 도구를 직접 쓴다(앱이 호출자) · Anthropic의 원격 MCP 커넥터는 인터넷에서 닿는 서버여야 해서 로컬 `nexa-sql` 서버(접속·비밀 보유)는 노출하지 않는다 → MCP는 같은 PC의 `claude` CLI용 전달 수단.

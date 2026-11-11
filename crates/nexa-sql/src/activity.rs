@@ -247,6 +247,39 @@ impl ActivityBar {
         had
     }
 
+    /// hover 중인 항목 id(툴팁용).
+    pub(crate) fn hover_id(&self) -> Option<&'static str> {
+        self.hover
+            .and_then(|i| self.items.get(i))
+            .filter(|it| !it.hidden)
+            .map(|it| it.id)
+    }
+
+    /// ★ 툴팁(사용자 11-11 "좌측 아이콘에 툴팁이 없다"): hover 아이콘 **오른쪽**에 캡슐(위/아래는 이웃 아이콘을 덮는다) · 글은 호스트가
+    ///   팔레트 명령 라벨로 준다 · 팝업 층(최상위)에서 부른다.
+    pub(crate) fn paint_tooltip(&self, dc: &mut dyn DrawCtx, th: &Theme, label: &str) {
+        let Some(i) = self.hover else { return };
+        if label.is_empty() || self.items.get(i).is_none_or(|it| it.hidden) {
+            return;
+        }
+        let slot = self.slot_rect(i);
+        dc.select_font(nexa_ctl::draw::FontSlot::Status, false);
+        let tw = dc.text_width(label);
+        let lh = dc.text_height();
+        let pad = self.s(6.0);
+        let r = Rect::new(
+            slot.right() + self.s(6.0),
+            slot.y + (slot.h - (lh + pad * 2)) / 2,
+            tw + pad * 2,
+            lh + pad * 2,
+        );
+        dc.shadow(r, th.text, nexa_ctl::tokens::Elevation::Low, self.s(4.0));
+        dc.fill_round_rect(r, self.s(4.0), th.panel_bg);
+        dc.stroke_round_rect(r, self.s(4.0), th.border, 1.0);
+        let ty = dc.text_center_y(r.y, r.h);
+        dc.text(r.x + pad, ty, r, label, th.text);
+    }
+
     pub(crate) fn paint(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         let b = self.bounds;
         if b.w <= 0 {

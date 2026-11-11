@@ -87,7 +87,7 @@ pub(crate) fn config_json(port: u16, token: &str) -> String {
     let v = Json::Obj(vec![(
         "mcpServers".into(),
         Json::Obj(vec![(
-            "nexa".into(),
+            super::bridge::MCP_SERVER.into(),
             Json::Obj(vec![
                 ("type".into(), Json::Str("stdio".into())),
                 ("command".into(), Json::Str(nsql)),

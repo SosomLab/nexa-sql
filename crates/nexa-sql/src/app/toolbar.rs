@@ -537,7 +537,7 @@ impl App {
             "ai",
             t(Msg::TbGroupAi),
             vec![
-                ToolItem::new("ai.tab", toolicons::ai_tab()).tip(t(Msg::TipAiTab)),
+                // [대화 탭] 버튼은 뺀다(사용자 11-11 "chat tab 툴바는 제외" · 채팅 탭은 활동 막대·팔레트 `ai.tab`으로).
                 ToolItem::new("ai.side", toolicons::ai_side()).tip(t(Msg::TipAiSide)),
             ],
         );
@@ -584,7 +584,7 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
     ),
     ("conn", &["conn.toggle", "conn.disconnect", "conn.sessions"]),
     ("tabconn", &[]),
-    ("ai", &["ai.tab", "ai.side"]),
+    ("ai", &["ai.side"]),
     ("view", &["view.variables", "view.find_objects", "view.log"]),
 ];
 

@@ -1084,6 +1084,17 @@ impl App {
             //   메뉴가 열린 동안(모달 · 툴바 hover가 낡아 있을 수 있다)은 그리지 않는다. 글꼴은 Status 슬롯(기본값)이라 메뉴 글꼴과 무관.
             if !self.menubar.is_open() {
                 self.tool_dock.paint_tooltip(&mut dc, &th);
+                // ★ 활동 막대 툴팁(사용자 11-11) — 아이콘 오른쪽 · 글 = 팔레트 명령 라벨(단축키 괄호는 뗀다).
+                if let Some(id) = self.act_bar.hover_id() {
+                    let label = super::commands::PALETTE
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| {
+                            crate::order_win::without_shortcut(nsql_i18n::t(c.item)).to_string()
+                        })
+                        .unwrap_or_default();
+                    self.act_bar.paint_tooltip(&mut dc, &th, &label);
+                }
             }
         }
     }

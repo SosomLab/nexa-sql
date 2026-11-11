@@ -1,0 +1,107 @@
+//! ★ hooks(docs/110 §16 · 사용자 11-11 "MCP·hooks·skills·agents 연계"): 하네스가 **모델 없이 결정적으로** 끼워 넣는 단계. 지금 둘 다
+//! 턴이 끝난 뒤(PostTurn) 어시스턴트 글에 적용 — `format_sql` = ```sql 블록을 앱 포매터(사용자 포맷 설정 그대로)로 · `tidy` = 빈 줄
+//! 뭉치·끝 공백 정리(코드 블록 안은 손대지 않음). 설정 `ai.hook_format_sql` · `ai.hook_tidy`(기본 켬). 순수 함수(시험).
+//! (PreTool 훅 = 승인·비밀 가림·행 데이터 동의는 `App::ai_tool_request`에 이미 있고 끌 수 없다.)
+
+/// 턴 끝 후처리. `fmt` = SQL 한 덩이 → 포맷 결과(실패 = None → 원문 유지).
+pub(crate) fn post_turn(
+    text: &str,
+    format_sql: bool,
+    tidy: bool,
+    fmt: &mut dyn FnMut(&str) -> Option<String>,
+) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_code = false;
+    let mut is_sql = false;
+    let mut block: Vec<String> = Vec::new();
+    let mut blank_run = 0usize;
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if !in_code && trimmed.starts_with("```") {
+            in_code = true;
+            let lang = trimmed.trim_start_matches('`').trim().to_ascii_lowercase();
+            is_sql = lang == "sql"
+                || lang == "plsql"
+                || lang == "tsql"
+                || lang == "mysql"
+                || lang == "pgsql";
+            block.clear();
+            blank_run = 0;
+            out.push(trimmed.to_string());
+            continue;
+        }
+        if in_code {
+            if trimmed.starts_with("```") {
+                in_code = false;
+                let body = block.join("\n");
+                let body = if is_sql && format_sql {
+                    match fmt(&body) {
+                        Some(f) if !f.trim().is_empty() => f.trim_end().to_string(),
+                        _ => body,
+                    }
+                } else {
+                    body
+                };
+                if !body.is_empty() {
+                    out.push(body);
+                }
+                out.push("```".to_string());
+            } else {
+                block.push(line.to_string());
+            }
+            continue;
+        }
+        if tidy {
+            if trimmed.is_empty() {
+                blank_run += 1;
+                if blank_run > 1 {
+                    continue;
+                }
+            } else {
+                blank_run = 0;
+            }
+            out.push(trimmed.to_string());
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    if in_code {
+        // 닫히지 않은 블록(스트리밍 중단) = 그대로.
+        out.extend(block);
+    }
+    let mut s = out.join("\n");
+    if tidy {
+        while s.ends_with('\n') {
+            s.pop();
+        }
+    }
+    if text.ends_with('\n') && !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_sql_blocks_and_tidies_prose() {
+        let text = "Answer:\n\n\n\nSee below:  \n```sql\nselect a,b from t\n```\n\n\n\nDone.\n```python\nx  \n```\n";
+        let mut calls = 0;
+        let out = post_turn(text, true, true, &mut |s| {
+            calls += 1;
+            assert_eq!(s, "select a,b from t");
+            Some("SELECT a, b\nFROM t".into())
+        });
+        assert_eq!(calls, 1);
+        assert_eq!(
+            out,
+            "Answer:\n\nSee below:\n```sql\nSELECT a, b\nFROM t\n```\n\nDone.\n```python\nx  \n```\n"
+        );
+        // 포매터 실패 = 원문 · 훅 둘 다 끔 = 그대로.
+        let keep = post_turn("```sql\nselect 1\n```", true, false, &mut |_| None);
+        assert_eq!(keep, "```sql\nselect 1\n```");
+        assert_eq!(post_turn(text, false, false, &mut |_| None), text);
+    }
+}

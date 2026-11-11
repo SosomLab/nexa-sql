@@ -102,6 +102,7 @@ pub(crate) const SLASH: &[(&str, bool, Msg)] = &[
     ("/status", false, Msg::AiSlashStatus),
     ("/account", false, Msg::AiSlashAccount),
     ("/skills", true, Msg::AiSlashSkills),
+    ("/agent", true, Msg::AiSlashAgent),
     ("/help", false, Msg::AiSlashHelp),
 ];
 
@@ -1688,6 +1689,11 @@ impl AiView {
                 String::new()
             }
         );
+        let agent = if sess.agent.is_empty() || sess.agent == "assistant" {
+            agent
+        } else {
+            format!("{agent}  ·  @{}", sess.agent)
+        };
         let top = b.y + self.s(4.0) + head_h;
         // ── 작성 영역 높이(아래에서 위로 잡는다)
         let text = self.composer.text();

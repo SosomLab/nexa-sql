@@ -5,9 +5,12 @@
 //! - 세션·메시지·사용량 · 호스트 → UI 이벤트([`AiEvent`]) · 가림 필터([`redact`] · [`contains_secret`]) · 이력(`NSQL_HOME/ai/history/<id>.jsonl`).
 //! - 안전 경계(110 §7): 접속·실행·비밀은 호스트 · 플러그인/AI는 요청과 표시 · 쓰기 질의는 사용자 확인.
 
+pub(crate) mod agents;
+pub(crate) mod bridge;
 pub(crate) mod claude_api;
 pub(crate) mod claude_cli;
 pub(crate) mod codex;
+pub(crate) mod hooks;
 pub(crate) mod host;
 pub(crate) mod mcp;
 pub(crate) mod panel;
@@ -143,6 +146,8 @@ pub(crate) const MODELS: &[&str] = &[
     "claude-opus-5-5",
     "claude-sonnet-5-5",
     "claude-haiku-5-5",
+    // Fable 5.2(사용자 11-11 "목록에 안 보임") — 내장 표는 CLI 모드·검증 전 프로필의 선택지 · API 프로필은 [저장 + 검증]이 /v1/models로 갱신.
+    "claude-fable-5-2",
     "claude-fable-5-1",
 ];
 pub(crate) const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
@@ -689,6 +694,8 @@ pub(crate) struct Session {
     pub attachments: Vec<Attachment>,
     /// 이 세션 동안 행 데이터 전송 허용(110 §7).
     pub rows_allowed: bool,
+    /// ★ 역할 프리셋(`agents.rs` · `/agent` · 이력에 저장 안 함 · 11-11).
+    pub agent: String,
 }
 
 impl Session {
@@ -707,6 +714,7 @@ impl Session {
             cli_session: None,
             attachments: Vec::new(),
             rows_allowed: false,
+            agent: "assistant".into(),
         }
     }
 

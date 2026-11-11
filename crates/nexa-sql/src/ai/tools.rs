@@ -78,6 +78,48 @@ pub(crate) const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        name: "list_tabs",
+        desc: "Editor tabs: id, title, file path, dirty/clean, active. Use before switch_tab or when the user refers to 'the other tab'.",
+        write: false,
+        props: &[],
+    },
+    Tool {
+        name: "switch_tab",
+        desc: "Make an editor tab active (by id from list_tabs or by exact title).",
+        write: false,
+        props: &[("tab", "string", "Tab id or title", true)],
+    },
+    Tool {
+        name: "list_files",
+        desc: "Find files under the current project/folder (bounded walk, hidden/target folders skipped). Words are ANDed against the relative path.",
+        write: false,
+        props: &[
+            ("query", "string", "Path words (case-insensitive); empty = top entries", false),
+            ("limit", "integer", "Max results (default 50)", false),
+        ],
+    },
+    Tool {
+        name: "open_file",
+        desc: "Open a file in an editor tab (path relative to the project/folder root or absolute).",
+        write: false,
+        props: &[("path", "string", "File path", true)],
+    },
+    Tool {
+        name: "list_extensions",
+        desc: "Installed/built-in extensions with id, name, version, kind and enabled state.",
+        write: false,
+        props: &[],
+    },
+    Tool {
+        name: "set_extension_enabled",
+        desc: "Enable or disable an installed extension by id (persisted; asks the user).",
+        write: true,
+        props: &[
+            ("id", "string", "Extension id (from list_extensions)", true),
+            ("enabled", "boolean", "true = enable, false = disable", true),
+        ],
+    },
+    Tool {
         name: "meta_stats",
         desc: "What the app has loaded per schema (object counts by kind, how many have columns loaded) and the current schema. Call before deciding whether a dictionary query is needed.",
         write: false,
@@ -158,7 +200,7 @@ pub(crate) const TOOLS: &[Tool] = &[
 ];
 
 pub(crate) fn find(name: &str) -> Option<&'static Tool> {
-    let short = name.strip_prefix("mcp__nexa__").unwrap_or(name);
+    let short = super::bridge::tool_short_name(name);
     TOOLS.iter().find(|t| t.name == short)
 }
 
@@ -259,17 +301,20 @@ pub(crate) fn mcp_tools() -> Json {
 }
 
 /// 시스템 프롬프트(두 모드 공통 · 110 §6-2).
-pub(crate) fn system_prompt(dialect: &str, profile: &str) -> String {
+pub(crate) fn system_prompt(dialect: &str, profile: &str, agent: &str) -> String {
     format!(
         "You are the assistant inside Nexa SQL, a desktop SQL client. The user works in a SQL editor with a result grid. \
 Current session: profile '{profile}', dialect {dialect}. Use the provided tools to read the editor, inspect database objects, \
-run read-only queries, format SQL, change settings and run palette commands. Never ask for or echo passwords or API keys. \
-Prefer SELECT statements; any statement that modifies data or schema must be explicit and will require the user's approval. \
-Answer concisely; put SQL in fenced code blocks.\n\n\
+run read-only queries, format SQL, manage tabs/files/extensions, change settings and run palette commands. Never ask for or echo passwords or API keys. \
+Prefer SELECT statements; any statement that modifies data or schema must be explicit and will require the user's approval.\n\n\
+Style (the user reads this in a narrow pane): answer first, no filler, do not restate the question; short sentences; prefer a short bullet list over prose; \
+at most one blank line between paragraphs; SQL goes in one fenced ```sql block (the app formats it and offers Copy/Insert/Run buttons), \
+followed by at most two short lines; no closing summaries or offers.\n\n\
 Skills (application-layer playbooks). Nexa SQL itself holds the connection state and cached metadata: when a request matches a skill, \
-first call the `skill` tool with that name and follow it; prefer app tools (session_info, list_profiles, search_objects, describe_object, \
-get_result) over querying the DBMS, and query the database only when the skill says so or the user asks for server-side data.\n{skills}",
-        skills = super::skills::index_text()
+first call the `skill` tool with that name and follow it; prefer app tools (session_info, list_profiles, meta_stats, search_objects, describe_object, \
+get_result, list_tabs, list_files, list_extensions) over querying the DBMS, and query the database only when the skill says so or the user asks for server-side data.\n{skills}{agent_text}",
+        skills = super::skills::index_text(),
+        agent_text = super::agents::prompt_text(agent)
     )
 }
 
@@ -279,7 +324,7 @@ mod tests {
 
     #[test]
     fn schema_and_lookup() {
-        let t = find("mcp__nexa__run_query").expect("tool");
+        let t = find("mcp__nexa-sql__run_query").expect("tool");
         assert!(t.write);
         let s = nsql_settings::json::dump(&t.schema());
         assert!(s.contains("\"required\":[\"sql\"]"), "{s}");

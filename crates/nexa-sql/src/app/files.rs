@@ -399,6 +399,17 @@ impl App {
         }
     }
 
+    /// ★ 작업 루트(AI `list_files`/`open_file` · 11-11) = 파일 창 모드와 같은 규칙(프로젝트 파일 폴더 > 폴더 인자 > 파일 인자 > 홈).
+    pub(crate) fn work_root(&self) -> Option<PathBuf> {
+        DialogBase::resolve(
+            self.project.path.as_deref(),
+            self.arg_folder.as_deref(),
+            &self.arg_files,
+            nexa_fs::home_dir().as_deref(),
+        )
+        .map(|b| b.dir().to_path_buf())
+    }
+
     pub(crate) fn open_file_window(&mut self, el: &ActiveEventLoop, mode: PickerMode) {
         let over = self.window.as_ref().and_then(|w| {
             let p = w.outer_position().ok()?;

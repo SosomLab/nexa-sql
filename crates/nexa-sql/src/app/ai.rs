@@ -1282,9 +1282,14 @@ impl App {
             // 채팅 탭 자신에게는 넣을 수 없다 — 새 탭.
             self.editors.new_tab(None);
         }
+        // ★ 먼저 편집기로 키 포커스(분할 창이 쥐고 있으면 편집기 TextBox가 비포커스라 `paste`가 버린다 — 캐럿 수정(11-11) 뒤 회귀 ·
+        //   사용자 "Insert into editor를 눌러도 붙지 않음"). 삽입 위치 = 그 탭의 캐럿(선택이 있으면 치환).
+        self.ai.side_focus = false;
+        self.ai_view.set_focused(false);
+        self.set_focus(Focus::Editor);
         let mut inv = Invalidations::default();
         self.ed_mut().paste(s, &mut inv);
-        self.set_focus(Focus::Editor);
+        self.redraw();
     }
 
     // ───────────────────────── 보내기 · 멈춤 ─────────────────────────
@@ -1339,8 +1344,15 @@ impl App {
             st.get(11..19).unwrap_or(&st).to_string()
         };
         self.ai.cli_turn_usage = None;
-        let system =
-            ai::tools::system_prompt(&format!("{:?}", self.sess.dialect), &self.sess.profile);
+        let agent = self
+            .ai_cur()
+            .map(|s| s.agent.clone())
+            .unwrap_or_else(|| "assistant".into());
+        let system = ai::tools::system_prompt(
+            &format!("{:?}", self.sess.dialect),
+            &self.sess.profile,
+            &agent,
+        );
         if std::env::var_os("NSQL_AI_MOCK").is_some() {
             let prices = self.ai_prices();
             self.ai_host().start_mock(text, prices, model.clone());
@@ -1702,7 +1714,7 @@ impl App {
             } => {
                 let auto = self.ai_run().is_some_and(|s| s.auto);
                 let short = tool
-                    .strip_prefix("mcp__nexa__")
+                    .strip_prefix("mcp__nexa-sql__")
                     .unwrap_or(&tool)
                     .to_string();
                 let needs_user = short == "run_query" && !self.ai_sql_is_readonly(&summary);
@@ -1749,6 +1761,38 @@ impl App {
                 }
                 if let Some(h) = &mut self.ai.host {
                     h.busy = false;
+                }
+                // ★ PostTurn 훅(hooks.rs · 사용자 11-11 "생성 쿼리를 앱 포맷으로 표시 · 출력 간결"): ```sql 블록 = 앱 포매터 · 빈 줄 정리.
+                {
+                    let fmt_on = self.settings.flag("ai.hook_format_sql");
+                    let tidy_on = self.settings.flag("ai.hook_tidy");
+                    if fmt_on || tidy_on {
+                        let text = self.ai_run().and_then(|s| {
+                            s.messages
+                                .iter()
+                                .rev()
+                                .find(|m| m.kind == Kind::Assistant)
+                                .map(|m| m.text.clone())
+                        });
+                        if let Some(text) = text {
+                            let engine = self.format_default_engine();
+                            let new = ai::hooks::post_turn(&text, fmt_on, tidy_on, &mut |sql| {
+                                self.format_run(&engine, sql, false).ok()
+                            });
+                            if new != text {
+                                if let Some(s) = self.ai_run_mut() {
+                                    if let Some(m) = s
+                                        .messages
+                                        .iter_mut()
+                                        .rev()
+                                        .find(|m| m.kind == Kind::Assistant)
+                                    {
+                                        m.text = new;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 let elapsed = self
                     .ai
@@ -1916,6 +1960,18 @@ impl App {
             .ai_cur()
             .map(|s| (s.auto, s.rows_allowed))
             .unwrap_or((false, false));
+        // ★ 에이전트 도구 허용(agents.rs · 11-11): 모델이 전체 목록을 받아도 역할 밖 도구는 여기서 막는다(API·CLI·Codex 공통).
+        let agent = self.ai_cur().map(|s| s.agent.clone()).unwrap_or_default();
+        if !ai::agents::allows(&agent, tool.name) {
+            let _ = reply.send(ToolReply {
+                output: format!(
+                    "tool `{}` is not available to agent `{agent}` (use /agent assistant for all tools)",
+                    tool.name
+                ),
+                ok: false,
+            });
+            return;
+        }
         let is_rows = matches!(tool.name, "run_query" | "get_result" | "explain");
         let readonly_q = tool.name != "run_query" || {
             let sql = json_parse(&input)
@@ -2106,6 +2162,132 @@ impl App {
                 ok(rows.join("\n"))
             }
             "meta_stats" => ok(self.explorer.ai_meta_stats()),
+            // ★ 탭 · 파일 · 확장(docs/110 §16 스킬 영역 · 11-11).
+            "list_tabs" => {
+                let active = self.editors.active_id();
+                let rows: Vec<String> = self
+                    .editors
+                    .tab_titles()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (id, title))| {
+                        format!(
+                            "{id}\t{title}\t{}\t{}\t{}",
+                            self.editors
+                                .path_of(i)
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default(),
+                            if self.editors.is_dirty(i) {
+                                "dirty"
+                            } else {
+                                "clean"
+                            },
+                            if id == active { "active" } else { "" }
+                        )
+                    })
+                    .collect();
+                ok(format!(
+                    "id\ttitle\tpath\tstate\tactive\n{}",
+                    rows.join("\n")
+                ))
+            }
+            "switch_tab" => {
+                let want = g("tab");
+                let idx = want
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|id| self.editors.index_of_id(id))
+                    .or_else(|| {
+                        self.editors
+                            .tab_titles()
+                            .iter()
+                            .position(|(_, t)| t.eq_ignore_ascii_case(want.trim()))
+                    });
+                match idx {
+                    Some(i) => {
+                        self.editors.switch(i);
+                        self.layout();
+                        self.redraw();
+                        ok(format!("active tab: {}", self.editors.active_title()))
+                    }
+                    None => err(format!("no tab '{want}' (use list_tabs)")),
+                }
+            }
+            "list_files" => {
+                let limit = gi("limit", 50).clamp(1, 500) as usize;
+                match self.work_root() {
+                    Some(rootdir) => ok(ai_list_files(&rootdir, &g("query"), limit).join("\n")),
+                    None => err("no project or folder is open".into()),
+                }
+            }
+            "open_file" => {
+                let p = g("path");
+                let path = std::path::PathBuf::from(p.trim());
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    match self.work_root() {
+                        Some(r) => r.join(&path),
+                        None => path,
+                    }
+                };
+                if !path.is_file() {
+                    err(format!("not a file: {}", path.display()))
+                } else {
+                    self.project_open_req(crate::project_panel::OpenReq {
+                        path: path.clone(),
+                        permanent: true,
+                    });
+                    ok(format!("opened {}", path.display()))
+                }
+            }
+            "list_extensions" => {
+                let off = self.ext_disabled();
+                let rows: Vec<String> = self
+                    .ext_installed_plus_builtin()
+                    .into_iter()
+                    .map(|r| {
+                        format!(
+                            "{}\t{}\t{}\t{:?}\t{}",
+                            r.id,
+                            r.name,
+                            r.version,
+                            r.kind,
+                            if off.contains(&r.id) {
+                                "disabled"
+                            } else {
+                                "enabled"
+                            }
+                        )
+                    })
+                    .collect();
+                ok(format!(
+                    "id\tname\tversion\tkind\tstate\n{}",
+                    rows.join("\n")
+                ))
+            }
+            "set_extension_enabled" => {
+                let id = g("id");
+                let on = matches!(
+                    g("enabled").to_ascii_lowercase().as_str(),
+                    "true" | "1" | "yes" | "on"
+                );
+                if !self.ext_installed_plus_builtin().iter().any(|r| r.id == id) {
+                    err(format!("unknown extension '{id}' (use list_extensions)"))
+                } else {
+                    let cur = self
+                        .settings
+                        .get("extensions.disabled")
+                        .unwrap_or("")
+                        .to_string();
+                    let next = crate::extensions::manager::list_toggle(&cur, &id, !on);
+                    let _ = self.settings.set("extensions.disabled", &next);
+                    let _ = self.settings.save();
+                    self.apply_extensions(None);
+                    ok(format!("{id}: {}", if on { "enabled" } else { "disabled" }))
+                }
+            }
             "describe_object" => {
                 let schema = g("schema");
                 let s = (!schema.is_empty()).then_some(schema.as_str());
@@ -2556,6 +2738,12 @@ impl App {
         };
         let onoff = |b: bool| if b { "on" } else { "off" };
         let u = &s.usage;
+        let turn = format!(
+            "{turn}\n{}: {} · agent {}",
+            t(Msg::AiDeliveryLabel),
+            ai::bridge::delivery(s.provider, s.mode).describe(),
+            s.agent
+        );
         tf(
             Msg::AiStatusText,
             &[
@@ -2726,6 +2914,29 @@ impl App {
             }
             "/account" => {
                 let text = self.ai_account_text();
+                self.ai_push(ChatMsg::new(Kind::Note, text));
+            }
+            // ★ `/agent`(agents.rs · 11-11): 목록 · `/agent <이름>` = 이 세션의 역할 프리셋(지시 + 도구 허용).
+            "/agent" => {
+                let text = if arg.is_empty() {
+                    let cur = self.ai_cur().map(|s| s.agent.clone()).unwrap_or_default();
+                    let mut t_ = format!("{} {cur}\n", t(Msg::AiAgentCurrent));
+                    for a in ai::agents::AGENTS {
+                        t_.push_str(&format!("- {}: {}\n", a.name, a.desc));
+                    }
+                    t_
+                } else if let Some(a) = ai::agents::get(arg) {
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.agent = a.name.to_string();
+                    }
+                    tf(Msg::AiAgentSet, &[a.name, a.desc])
+                } else {
+                    format!(
+                        "{} {}",
+                        t(Msg::AiAgentUnknown),
+                        ai::agents::names().join(", ")
+                    )
+                };
                 self.ai_push(ChatMsg::new(Kind::Note, text));
             }
             // ★ `/skills`(사용자 11-11): 색인(이름 — 언제) · `/skills <이름>` = 플레이북 본문 — 모델이 받는 글 그대로(영어).
@@ -3082,6 +3293,54 @@ pub(crate) fn sql_is_readonly(sql: &str) -> bool {
         "SELECT" | "WITH" | "SHOW" | "EXPLAIN" | "DESC" | "DESCRIBE" | "VALUES" | "PRAGMA"
     ) && !up.contains(" INTO ")
         && !up.contains("FOR UPDATE")
+}
+
+/// ★ `list_files` 도우미(11-11): 작업 루트 아래를 **제한적으로** 걷는다(숨김·`target`·`node_modules` 제외 · 깊이 6 · 5,000개 상한) ·
+/// 낱말 AND(상대 경로 소문자) · `상대경로<TAB>바이트`. 질의가 비면 앞 항목들.
+fn ai_list_files(root: &std::path::Path, query: &str, limit: usize) -> Vec<String> {
+    let words: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let mut out = Vec::new();
+    let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
+    let mut scanned = 0usize;
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            scanned += 1;
+            if scanned > 5000 || out.len() >= limit {
+                return out;
+            }
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                if depth < 6 {
+                    stack.push((p, depth + 1));
+                }
+                continue;
+            }
+            let rel = p
+                .strip_prefix(root)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let low = rel.to_lowercase();
+            if words.iter().all(|w| low.contains(w.as_str())) {
+                let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                out.push(format!("{rel}\t{size}"));
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

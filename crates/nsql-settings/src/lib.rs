@@ -6454,6 +6454,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: AI_PRICES_DEFAULT,
     },
+    // ★ hooks(docs/110 §16 · 11-11): 턴 끝 후처리 — ```sql 블록 앱 포맷 · 빈 줄 정리.
+    Entry {
+        key: "ai.hook_format_sql",
+        cat: Msg::CatAi,
+        label: Msg::LblAiHookFormatSql,
+        desc: Msg::DescAiHookFormatSql,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ai.hook_tidy",
+        cat: Msg::CatAi,
+        label: Msg::LblAiHookTidy,
+        desc: Msg::DescAiHookTidy,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 첨부의 비밀 가림 안내(사용자 11-11 "경고는 하되 첨부는 되게 · 경고 끄기 가능 · 기본 = 경고") — 가림 자체는 끌 수 없다.
     Entry {
         key: "ai.secret_warn",

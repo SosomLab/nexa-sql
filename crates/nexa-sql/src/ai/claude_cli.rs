@@ -41,7 +41,7 @@ pub(crate) fn args(
         a.push("--strict-mcp-config".into());
         // 권한 프롬프트 = 우리 MCP 승인 도구(앱 확인 창).
         a.push("--permission-prompt-tool".into());
-        a.push("mcp__nexa__approve".into());
+        a.push(super::bridge::approve_tool_name());
     }
     if let Some(r) = resume {
         a.push("--resume".into());
@@ -273,7 +273,7 @@ mod tests {
         );
         let delta = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}}"#;
         assert!(matches!(&parse_line(delta)[0], AiEvent::TextDelta(t) if t == "Hi"));
-        let tool = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__nexa__run_query","input":{"sql":"select 1"}}]}}"#;
+        let tool = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__nexa-sql__run_query","input":{"sql":"select 1"}}]}}"#;
         assert!(
             matches!(&parse_line(tool)[0], AiEvent::ToolCall { id, name, input } if id == "t1" && name.ends_with("run_query") && input.contains("select 1"))
         );
@@ -306,7 +306,7 @@ mod tests {
         assert!(
             s.contains("--bare")
                 && s.contains("--resume s1")
-                && s.contains("--permission-prompt-tool mcp__nexa__approve")
+                && s.contains("--permission-prompt-tool mcp__nexa-sql__approve")
         );
         let line = user_turn_line("hello", &[("image/png".into(), vec![1, 2, 3])]);
         assert!(
