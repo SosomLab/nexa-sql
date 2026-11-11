@@ -41,6 +41,7 @@ impl App {
         }
         self.editors
             .set_scroll_snap(self.settings.get("editor.scroll") == Some("row"));
+        self.apply_scrollbars();
         self.apply_minimap();
         self.apply_word_wrap();
         // ★ AI 어시스턴트(docs/110 · 11-11): 켜져 있으면 프로필·이력을 미리 읽는다(네트워크 0).

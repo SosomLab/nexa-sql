@@ -667,7 +667,7 @@ impl App {
 
     pub(crate) fn ai_view_info(&self) -> ViewInfo {
         // 볼트는 프로필 페이지에서만 읽는다(그리기마다 파일을 열지 않게).
-        let keyed = if self.ai_view.page() == Page::Profiles {
+        let keyed = if self.ai_view.page() != Page::Chat {
             nsql_vault::Vault::open_default()
                 .map(|v| v.secret_names())
                 .unwrap_or_default()
@@ -778,11 +778,9 @@ impl App {
                     self.ai_open_chat();
                 }
                 PanelAction::ManageProfiles => {
+                    // 목록 페이지로(편집은 행·[편집]·[+]에서 · 사용자 11-11 "목록과 편집 분리").
                     self.ai_open_chat();
                     self.ai_view.show_page(Page::Profiles);
-                    let cur = self.ai.store.current().cloned();
-                    let has_key = cur.as_ref().is_some_and(|p| self.ai_key_exists(&p.name));
-                    self.ai_view.edit_profile(cur.as_ref(), has_key);
                 }
                 PanelAction::OpenSession(id) => self.ai_open_session(&id),
                 PanelAction::RenameSession(id, title) => {
@@ -925,6 +923,7 @@ impl App {
                 }
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
                 ViewAction::RunCode { msg, block, sql } => self.ai_run_block(msg, block, &sql),
+                ViewAction::RunGrid(sql) => self.ai_run_grid(&sql),
                 ViewAction::OpenSession(id) => self.ai_open_session(&id),
                 ViewAction::NewSession(p) => {
                     if p != self.ai.tab {
@@ -1096,6 +1095,29 @@ impl App {
         self.ai.capture = None;
         self.ai.status = t(Msg::AiRunning).into();
         self.run_text_whole(sql.to_string());
+    }
+
+    /// 첨부에서 비밀을 가렸으면 Note + 상태줄로 알린다(0이면 조용).
+    fn ai_note_masked(&mut self, hidden: usize) {
+        if hidden == 0 || !self.settings.flag("ai.secret_warn") {
+            return;
+        }
+        let m = tf(Msg::AiSecretMasked, &[&hidden.to_string()]);
+        self.ai_push(ChatMsg::new(Kind::Note, m.clone()));
+        self.ai.status = m;
+    }
+
+    /// 코드 블록 [그리드에서 결과 보기](사용자 11-11): 보이는 SQL을 보통 실행과 똑같이(`gate_open` → `run_text_whole` · DR-34) —
+    /// 결과는 하단 결과 그리드로 · 대본에는 아무것도 안 붙인다 · AI로 안 보낸다.
+    fn ai_run_grid(&mut self, sql: &str) {
+        if !self.sess.connected || !self.gate_open() || self.ai.pending.is_some() {
+            self.ai.status = t(Msg::AiQueryBusy).into();
+            self.redraw();
+            return;
+        }
+        self.ai.capture = None;
+        self.run_text_whole(sql.to_string());
+        self.redraw();
     }
 
     /// ★ 진행 중 상태 줄(사용자 11-11 "Active 상태를 알 수 있게"): 시작 시각 · 경과 · 받은 글자 수.
@@ -2110,10 +2132,23 @@ impl App {
             }
             "connect" => {
                 let p = g("profile");
-                self.startup_cmd(&format!("conn.edit:{p}"));
-                ok(format!(
-                    "connection window opened for '{p}'; the user confirms the login"
-                ))
+                match nsql_vault::Vault::open_default().and_then(|v| v.get(&p)) {
+                    // 저장된 비밀번호가 있으면 로그인 목록 행 [Login]과 같은 길로 바로 접속(창 없음 · 비밀번호는 호스트 안).
+                    Ok(Some(spec)) if spec.password.as_deref().is_some_and(|w| !w.is_empty()) => {
+                        self.login_profile(&p);
+                        ok(format!(
+                            "connecting to '{p}' with the stored password (no window); call session_info in a moment to confirm connected=true"
+                        ))
+                    }
+                    Ok(Some(_)) => {
+                        self.startup_cmd(&format!("conn.edit:{p}"));
+                        ok(format!(
+                            "profile '{p}' has no stored password: the connection window is open with it preselected. Tell the user they must type the password and confirm the login in that window themselves (you cannot do it)."
+                        ))
+                    }
+                    Ok(None) => err(format!("unknown profile '{p}' (use list_profiles)")),
+                    Err(e) => err(e.to_string()),
+                }
             }
             "get_result" => match self.grid.ai_text(max_rows) {
                 Some(s) => ok(s),
@@ -2302,17 +2337,18 @@ impl App {
         if self.ai.cur.is_none() {
             self.ai_new_session();
         }
-        if ai::contains_secret(text) {
-            self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
-        } else {
-            let n = text.lines().count();
+        {
+            // 비밀은 가리고 첨부(거부하지 않는다 · 가린 곳 수를 안내 · 11-11).
+            let (body, hidden) = ai::redact_count(text);
+            let n = body.lines().count();
             if let Some(s) = self.ai_cur_mut() {
                 s.attachments.push(Attachment::Text {
                     label: format!("pasted ({n} lines)"),
-                    body: text.to_string(),
+                    body,
                 });
             }
             self.ai.status = t(Msg::AiAttached).into();
+            self.ai_note_masked(hidden);
         }
         self.ai_sync_panel();
         self.redraw();
@@ -2334,10 +2370,10 @@ impl App {
         if self.ai.cur.is_none() {
             self.ai_new_session();
         }
-        let n = png.len() / 1024;
         if let Some(s) = self.ai_cur_mut() {
+            // 고정 이름 + 형식 확장자(사용자 11-11 "clipboard.png처럼 · 크기는 칩에 · 용량은 미리보기에만").
             s.attachments.push(Attachment::Image {
-                label: format!("clipboard image ({n} KB)"),
+                label: "clipboard.png".into(),
                 media: "image/png".into(),
                 bytes: png,
             });
@@ -2351,13 +2387,8 @@ impl App {
     fn ai_attach_clipboard(&mut self) {
         match crate::clipboard::read_text() {
             Some(t) if !t.trim().is_empty() => {
-                if ai::contains_secret(&t) {
-                    self.ai_push(ChatMsg::new(
-                        Kind::Error,
-                        nsql_i18n::t(Msg::AiSecretBlocked),
-                    ));
-                    return;
-                }
+                let (t, hidden) = ai::redact_count(&t);
+                self.ai_note_masked(hidden);
                 let n = t.lines().count();
                 if let Some(s) = self.ai_cur_mut() {
                     s.attachments.push(Attachment::Text {
@@ -2369,10 +2400,9 @@ impl App {
             }
             _ => match crate::clipboard::read_image_png() {
                 Some(png) => {
-                    let n = png.len() / 1024;
                     if let Some(s) = self.ai_cur_mut() {
                         s.attachments.push(Attachment::Image {
-                            label: format!("clipboard image ({n} KB)"),
+                            label: "clipboard.png".into(),
                             media: "image/png".into(),
                             bytes: png,
                         });
@@ -2417,21 +2447,160 @@ impl App {
             _ => {
                 if bytes.len() > 512 * 1024 {
                     self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiFileTooBig)));
+                    self.ai.status = t(Msg::AiFileTooBig).into();
+                    self.redraw();
                     return;
                 }
-                let body = String::from_utf8_lossy(&bytes).into_owned();
-                if ai::contains_secret(&body) {
-                    self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
-                    return;
-                }
+                // 비밀(접속 문자열 비밀번호 · `password=` · API 키)은 가리고 첨부 — 종전엔 거부만 해 "첨부가 안 된다"로 보였다(11-11).
+                let (body, hidden) = ai::redact_count(&String::from_utf8_lossy(&bytes));
+                self.ai_note_masked(hidden);
                 Attachment::Text { label, body }
             }
         };
-        if let Some(s) = self.ai_cur_mut() {
-            s.attachments.push(a);
+        let n = match self.ai_cur_mut() {
+            Some(s) => {
+                s.attachments.push(a);
+                s.attachments.len()
+            }
+            None => 0,
+        };
+        if std::env::var_os("NSQL_TRACE_AI").is_some() {
+            eprintln!("[ai] attach {} -> attachments={n}", path.display());
         }
-        self.ai.status = t(Msg::AiAttached).into();
+        self.ai.status = if n == 0 {
+            t(Msg::AiNoProfile).into()
+        } else {
+            t(Msg::AiAttached).into()
+        };
         self.redraw();
+    }
+
+    /// `/status` 글: 세션 · 제공자/모드 · 모델(자동 이름 → 실제 id) · 노력도 · Auto · 메시지/첨부/행 데이터 · 사용량 · 턴.
+    fn ai_status_text(&self) -> String {
+        let Some(s) = self.ai_cur() else {
+            return t(Msg::AiNoProfile).to_string();
+        };
+        let fetched = self.ai_session_models(s.provider, s.mode, &s.profile);
+        let resolved = ai::resolve_model(s.provider, &s.model, &fetched);
+        let prov = format!(
+            "{} · {}{}",
+            match s.provider {
+                Provider::Claude => t(Msg::AiProviderClaude),
+                Provider::Codex => t(Msg::AiProviderCodex),
+            },
+            match (s.mode, s.provider) {
+                (Mode::Api, _) => t(Msg::AiModeApi),
+                (Mode::Cli, Provider::Claude) => t(Msg::AiModeCliClaude),
+                (Mode::Cli, Provider::Codex) => t(Msg::AiModeCliCodex),
+            },
+            if s.profile.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", s.profile)
+            }
+        );
+        let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
+        let turn = match self.ai.turn_started {
+            Some(t0) if busy => tf(
+                Msg::AiTurnRunning,
+                &[&self.ai.turn_wall, &t0.elapsed().as_secs().to_string()],
+            ),
+            _ => t(Msg::AiTurnIdle).to_string(),
+        };
+        let onoff = |b: bool| if b { "on" } else { "off" };
+        let u = &s.usage;
+        tf(
+            Msg::AiStatusText,
+            &[
+                &s.title_or_default(),
+                &s.id,
+                &prov,
+                &s.model,
+                &resolved,
+                &s.effort,
+                onoff(s.auto),
+                &s.messages.len().to_string(),
+                &s.attachments.len().to_string(),
+                onoff(s.rows_allowed),
+                &u.input.to_string(),
+                &u.output.to_string(),
+                &u.cache_read.to_string(),
+                &u.cache_write.to_string(),
+                &format!("{:.4}", u.cost_usd),
+                &turn,
+            ],
+        )
+    }
+
+    /// `/account` 글: 현재 API 프로필(인증 · 엔드포인트 · 워크스페이스 · 검증 때 받은 모델) · Claude CLI 키 출처/프로그램 ·
+    /// Codex CLI 로그인 줄 + 계정 모델. 비밀은 없다(키는 "저장됨"만).
+    fn ai_account_text(&self) -> String {
+        let dash = || "-".to_string();
+        let (name, auth, endpoint, ws, models) = match self.ai.store.current() {
+            Some(p) => (
+                p.name.clone(),
+                if let Some(w) = &p.wif {
+                    format!("WIF · {}", w.issuer)
+                } else if self.ai_key_exists(&p.name) {
+                    format!("{} (••••)", t(Msg::AiKeyStored))
+                } else {
+                    t(Msg::AiKeyMissing).to_string()
+                },
+                p.base_url.clone(),
+                if p.workspace.is_empty() {
+                    dash()
+                } else {
+                    p.workspace.clone()
+                },
+                if p.models.is_empty() {
+                    dash()
+                } else {
+                    p.models.join(", ")
+                },
+            ),
+            None => (
+                dash(),
+                t(Msg::AiNoProfile).to_string(),
+                dash(),
+                dash(),
+                dash(),
+            ),
+        };
+        let setting = |k: &str, d: &str| {
+            let v = self.settings.get(k).unwrap_or("");
+            if v.is_empty() {
+                d.to_string()
+            } else {
+                v.to_string()
+            }
+        };
+        let cli_key = setting("ai.cli_key", "login");
+        let cli_path = setting("ai.cli_path", "claude");
+        let codex = self
+            .ai
+            .codex_login
+            .clone()
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(dash);
+        let codex_models = if self.ai.codex_cli_models.is_empty() {
+            dash()
+        } else {
+            self.ai.codex_cli_models.join(", ")
+        };
+        tf(
+            Msg::AiAccountText,
+            &[
+                &name,
+                &auth,
+                &endpoint,
+                &ws,
+                &models,
+                &cli_key,
+                &cli_path,
+                &codex,
+                &codex_models,
+            ],
+        )
     }
 
     fn ai_slash(&mut self, line: &str) {
@@ -2502,9 +2671,15 @@ impl App {
             }
             "/profiles" => {
                 self.ai_view.show_page(Page::Profiles);
-                let cur = self.ai.store.current().cloned();
-                let has_key = cur.as_ref().is_some_and(|p| self.ai_key_exists(&p.name));
-                self.ai_view.edit_profile(cur.as_ref(), has_key);
+            }
+            // ★ `/status` · `/account`(사용자 11-11 "상태·계정 정보도 볼 수 있게"): 앱이 아는 것만(네트워크 0).
+            "/status" => {
+                let text = self.ai_status_text();
+                self.ai_push(ChatMsg::new(Kind::Note, text));
+            }
+            "/account" => {
+                let text = self.ai_account_text();
+                self.ai_push(ChatMsg::new(Kind::Note, text));
             }
             "/query" => {
                 if arg.is_empty() {
@@ -2620,6 +2795,15 @@ impl App {
         if let Some(text) = id.strip_prefix("ai.send:") {
             self.ai_open_chat();
             self.ai_send(text);
+            return true;
+        }
+        // 파일 첨부(파일 창 단계를 건너뛰고 확정 뒤 경로만 · 사용자 실기 "첨부 안 됨" 판정용 · 협업 제안 11-11).
+        if let Some(path) = id.strip_prefix("ai.attach:") {
+            self.ai_init();
+            if self.ai.cur.is_none() {
+                self.ai_new_session();
+            }
+            self.ai_attach_file(std::path::Path::new(path));
             return true;
         }
         if let Some(a) = id.strip_prefix("ai.approve:") {

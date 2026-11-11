@@ -622,7 +622,8 @@ impl Attachment {
                 bytes,
             } => match image_dims(media, bytes) {
                 Some((w, h)) => format!("{label} {w}×{h}"),
-                None => format!("{label} ({} KB)", bytes.len() / 1024),
+                // 용량은 칩에 안 보인다(미리보기 아래 줄에 · 사용자 11-11).
+                None => label.clone(),
             },
             Attachment::Pdf { label, bytes } => format!("{label} ({} KB)", bytes.len() / 1024),
         }
@@ -952,6 +953,13 @@ pub(crate) fn redact(text: &str) -> String {
 /// 비밀이 든 글인가(전송 차단 판정 · API 키 접두 또는 접속 문자열 비밀번호).
 pub(crate) fn contains_secret(text: &str) -> bool {
     redact(text) != text
+}
+
+/// ★ 첨부용 가림(사용자 11-11 "파일을 골랐더니 오류만 뜸"): 거부하지 않고 비밀만 `******`로 바꾼 글과 **가린 곳 수**를 돌려준다.
+pub(crate) fn redact_count(text: &str) -> (String, usize) {
+    let masked = redact(text);
+    let n = masked.matches("******").count() - text.matches("******").count();
+    (masked, n)
 }
 
 /// 이력 폴더.

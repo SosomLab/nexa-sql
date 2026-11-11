@@ -233,7 +233,7 @@ impl App {
         self.conn_win.redraw();
     }
 
-    fn login_profile(&mut self, name: &str) {
+    pub(crate) fn login_profile(&mut self, name: &str) {
         // (바쁜 세션 판정은 시도를 보낼 때 `login_place`가 한다 — 공유 연결이 여럿이라 대상은 스펙을 봐야 정해진다.)
         if self.conn_win.is_testing(name) {
             self.sess.status = t(Msg::StTesting).into();

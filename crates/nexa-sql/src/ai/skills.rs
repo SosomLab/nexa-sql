@@ -26,7 +26,7 @@ Terms:
 Steps:
 1. Call `session_info`. It returns the current editor's session (profile, dialect, connected, schema/current db, busy, pending uncommitted statements, masked description) and the list of ALL app sessions (shared/private, owner tab, connected/broken/busy, idle seconds, pending count).
 2. Answer directly from that output. Do NOT run SQL against v$session, pg_stat_activity, sys.dm_exec_sessions or similar unless the user explicitly asks about server-side sessions, other users, locks or waits.
-3. Saved profiles: `list_profiles`. To open a connection: `connect` with the profile name (the user confirms the login).
+3. Saved profiles: `list_profiles`. To open a connection: `connect` with the profile name. If the profile has a stored password it connects directly (then re-check with `session_info`); if not, the connection window opens and you must tell the user to type the password and confirm the login there themselves.
 4. 'Which schema/database am I in' = schema / current db from `session_info`; do not guess from SQL text.
 ",
     },

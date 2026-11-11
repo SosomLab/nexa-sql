@@ -873,6 +873,7 @@ impl App {
             "editor.scroll" => self
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
+            "ui.scrollbars" => self.apply_scrollbars(),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             k if k.starts_with("intel.") => {
                 self.intel.set_cfg(self.intel_cfg());
@@ -896,6 +897,15 @@ impl App {
     /// 설정 즉시 반영 — 편집기 표시·짝·큰 파일·되돌리기·프로젝트·검색·배치(`editor.` 나머지 · `file.large_*` · `project.` · `search.` · `layout.`). 맞는 키가 없으면 `false`.
     /// ★ 고속 스크롤 설정 → nexa-ctl 전역 [`nexa_ctl::set_fast_scroll`](8영역의 `ScrollBars`·가속기·HUD가 그때그때 읽는다) +
     ///   결과 그리드 override(`scroll.fast_grid_extra` = 한 번 먼저 오르고 상한 두 배). 시작 때와 `scroll.*` 변경 때.
+    /// ★ 스크롤바 표시 방식(`ui.scrollbars` · 사용자 11-11): nexa-ctl 전역 자동 숨김 지연 한 곳(0 = 항상 표시 · 그 밖 = 기본 2초).
+    ///   모든 `ScrollBars`가 그때그때 읽으므로 영역별로 값을 들고 다니지 않는다(핫스왑).
+    pub(crate) fn apply_scrollbars(&mut self) {
+        use nexa_ctl::controls::scroll::{set_hide_delay_ms, DEFAULT_HIDE_MS};
+        let always = self.settings.get("ui.scrollbars") == Some("always");
+        set_hide_delay_ms(if always { 0 } else { DEFAULT_HIDE_MS });
+        self.redraw();
+    }
+
     pub(crate) fn apply_fast_scroll(&mut self) {
         let (step, max) = nsql_settings::scroll_speed_params(
             self.settings.get("scroll.fast_speed").unwrap_or("fast"),

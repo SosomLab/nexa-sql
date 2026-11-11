@@ -372,6 +372,11 @@ const TAB_ROWS_OPTS: &[(&str, Msg)] =
     &[("single", Msg::ValTabsSingle), ("multi", Msg::ValTabsMulti)];
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
+/// ★ 스크롤바 표시 방식(사용자 11-11 "기본 = 스크롤 동작 때만 · 모든 스크롤이 이 기본을 따른다") — nexa-ctl 전역 자동 숨김.
+const SCROLLBAR_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValScrollbarAuto),
+    ("always", Msg::ValScrollbarAlways),
+];
 /// 미커밋 탭 닫기(DR-30).
 const TX_READ_END_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValTxReadEndAuto),
@@ -933,6 +938,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTheme,
         kind: SettingKind::Choice(THEME_OPTS),
         default: "system",
+    },
+    Entry {
+        key: "ui.scrollbars",
+        cat: Msg::CatAppearance,
+        label: Msg::LblScrollbars,
+        desc: Msg::DescScrollbars,
+        kind: SettingKind::Choice(SCROLLBAR_OPTS),
+        default: "auto",
     },
     Entry {
         key: "ui.menu_font_size",
@@ -6440,6 +6453,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiPrices,
         kind: SettingKind::Text,
         default: AI_PRICES_DEFAULT,
+    },
+    // ★ 첨부의 비밀 가림 안내(사용자 11-11 "경고는 하되 첨부는 되게 · 경고 끄기 가능 · 기본 = 경고") — 가림 자체는 끌 수 없다.
+    Entry {
+        key: "ai.secret_warn",
+        cat: Msg::CatAi,
+        label: Msg::LblAiSecretWarn,
+        desc: Msg::DescAiSecretWarn,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     Entry {
         key: "ai.paste_chip_chars",

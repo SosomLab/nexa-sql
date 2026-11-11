@@ -107,7 +107,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "connect",
-        desc: "Open the connection window preselecting a profile (the user confirms the login).",
+        desc: "Connect with a saved profile: if its password is stored, connects directly; otherwise opens the connection window where the user must type the password and confirm.",
         write: true,
         props: &[("profile", "string", "Profile name", true)],
     },

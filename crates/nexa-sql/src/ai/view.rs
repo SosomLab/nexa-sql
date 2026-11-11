@@ -20,7 +20,10 @@ use std::rc::Rc;
 pub(crate) enum Page {
     #[default]
     Chat,
+    /// 프로필 **목록**(사용자 11-11 "목록과 편집 분리").
     Profiles,
+    /// 프로필 **상세/편집**(목록에서 행·[편집]·[+]·[복제]로 들어오고 [←]로만 돌아간다 · 저장해도 머문다).
+    ProfileEdit,
 }
 
 /// 호스트가 그릴 때 주는 상태(세션 본문은 따로 `&Session`).
@@ -67,6 +70,8 @@ pub(crate) enum ViewAction {
         block: usize,
         sql: String,
     },
+    /// 코드 블록 [그리드에서 결과 보기] — 보통 실행과 같이 하단 결과 그리드로(사용자 11-11).
+    RunGrid(String),
     /// 분할 창 머리: 이전 세션 열기 · 새 세션(제공자).
     OpenSession(String),
     NewSession(Provider),
@@ -94,6 +99,8 @@ pub(crate) const SLASH: &[(&str, bool, Msg)] = &[
     ("/rows", true, Msg::AiSlashRows),
     ("/grid", false, Msg::AiSlashGrid),
     ("/profiles", false, Msg::AiSlashProfiles),
+    ("/status", false, Msg::AiSlashStatus),
+    ("/account", false, Msg::AiSlashAccount),
     ("/help", false, Msg::AiSlashHelp),
 ];
 
@@ -129,6 +136,7 @@ enum Btn {
     CopyCode(usize),
     InsertCode(usize),
     RunCode(usize),
+    GridCode(usize),
     /// 첨부 칩 본문(미리보기) · [+] 첨부 메뉴.
     PreviewAttachment(usize),
     AttachMenu,
@@ -156,7 +164,9 @@ enum Btn {
     /// 인증 방식 토글(API 키 ↔ WIF).
     ProfileAuth,
     ProfileLogin,
+    /// 상세 → 목록([←]) · 목록 → 대화.
     Back,
+    BackChat,
 }
 
 pub(crate) struct AiView {
@@ -184,6 +194,8 @@ pub(crate) struct AiView {
     /// 분할 창 모드(머리 줄 = 세션 제목 + [≡][+]) · 마지막 그리기의 세션 목록(팝업 항목).
     side_mode: bool,
     side_sessions: Vec<(String, String, Provider)>,
+    /// 프로필 목록 행의 전체 글(Alt 전체 보기 말풍선 · 11-11 "버튼에 가려 못 본다").
+    p_rows: Vec<String>,
     /// 마지막 그리기의 모델 선택지 · 현재 모델 · 노력도(칩 팝업용).
     chip_models: Vec<(String, String)>,
     model_now: String,
@@ -273,6 +285,7 @@ impl Default for AiView {
             auto_now: false,
             side_mode: false,
             side_sessions: Vec::new(),
+            p_rows: Vec::new(),
             chip_models: Vec::new(),
             model_now: String::new(),
             effort_now: String::new(),
@@ -382,6 +395,9 @@ impl AiView {
 
     /// 프로필 편집 폼 채우기(None = 새 프로필).
     pub(crate) fn edit_profile(&mut self, p: Option<&Profile>, has_key: bool) {
+        if self.page != Page::ProfileEdit {
+            self.show_page(Page::ProfileEdit);
+        }
         let p = p.cloned().unwrap_or_else(|| Profile::new(""));
         self.p_editing = (!p.name.is_empty()).then(|| p.name.clone());
         self.p_name.set_text(&p.name);
@@ -629,6 +645,17 @@ impl AiView {
         self.pressed = None;
     }
 
+    /// ★ 시계 틱(이벤트 루프 · 사용자 11-11 "작성 상자 스크롤바가 항상 표시"): 작성 상자·프로필 상자·대본 스크롤바의 자동 숨김은
+    ///   이 틱이 있어야 진행된다(nexa-ctl `ScrollBars::tick` · 전역 `ui.scrollbars`를 따른다).
+    pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        let mut r = false;
+        for b in self.boxes_mut() {
+            r |= b.tick(now_ms);
+        }
+        r |= self.bars.tick(now_ms);
+        r
+    }
+
     pub(crate) fn take_actions(&mut self) -> Vec<ViewAction> {
         std::mem::take(&mut self.actions)
     }
@@ -638,7 +665,7 @@ impl AiView {
     }
 
     pub(crate) fn textbox_mut(&mut self) -> &mut TextBox {
-        if self.page == Page::Profiles {
+        if self.page != Page::Chat {
             for tb in [
                 &mut self.p_name,
                 &mut self.p_url,
@@ -775,7 +802,7 @@ impl AiView {
     /// 사건 — 다시 그릴 일이 있으면 true(호스트: 포인터는 뷰 영역 안일 때 · 키는 편집기 포커스일 때).
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {
         let mut inv = Invalidations::default();
-        if self.page == Page::Profiles {
+        if self.page != Page::Chat {
             return self.on_event_profiles(ev);
         }
         // 첨부 미리보기 오버레이 = 아무 클릭/Esc로 닫기.
@@ -1252,6 +1279,11 @@ impl AiView {
                     });
                 }
             }
+            Btn::GridCode(i) => {
+                if let Some(c) = self.code_blocks.get(i) {
+                    self.actions.push(ViewAction::RunGrid(c.clone()));
+                }
+            }
             Btn::ProfileUse(i) => self.actions.push(ViewAction::ProfileUse(i.to_string())),
             Btn::ProfileEdit(i) => self
                 .actions
@@ -1322,7 +1354,8 @@ impl AiView {
                     self.actions.push(ViewAction::ProfileLogin(p));
                 }
             }
-            Btn::Back => self.actions.push(ViewAction::ShowPage(Page::Chat)),
+            Btn::Back => self.actions.push(ViewAction::ShowPage(Page::Profiles)),
+            Btn::BackChat => self.actions.push(ViewAction::ShowPage(Page::Chat)),
         }
     }
 
@@ -1438,7 +1471,12 @@ impl AiView {
                 key: CtlKey::Escape,
                 ..
             } => {
-                self.actions.push(ViewAction::ShowPage(Page::Chat));
+                let to = if self.page == Page::ProfileEdit {
+                    Page::Profiles
+                } else {
+                    Page::Chat
+                };
+                self.actions.push(ViewAction::ShowPage(to));
                 true
             }
             InputEvent::Key { .. }
@@ -1522,6 +1560,8 @@ impl AiView {
             1 => crate::toolicons::mi_edit(),
             3 => crate::toolicons::mi_add(),
             4 => crate::toolicons::mi_key(),
+            5 => crate::toolicons::mi_check(),
+            8 => crate::toolicons::mi_table(),
             _ => crate::toolicons::mi_run()?,
         };
         let (r, g, b) = fg.rgb();
@@ -1548,7 +1588,7 @@ impl AiView {
         }
         dc.fill_rect(b, th.field_bg);
         self.buttons.clear();
-        if self.page == Page::Profiles {
+        if self.page != Page::Chat {
             self.paint_profiles(dc, th, info);
             return;
         }
@@ -1720,6 +1760,7 @@ impl AiView {
                             let side = line_h.max(self.s(18.0));
                             let mut bx = cr.right() - self.s(4.0);
                             for (btn, which) in [
+                                (Btn::GridCode(*ci), 8u8),
                                 (Btn::RunCode(*ci), 2u8),
                                 (Btn::InsertCode(*ci), 1u8),
                                 (Btn::CopyCode(*ci), 0u8),
@@ -1911,8 +1952,16 @@ impl AiView {
                         } else {
                             None
                         };
-                        let info =
-                            format!("{} · {media} · {} KB", a.chip_text(), bytes.len() / 1024);
+                        // 아래 줄 = 추가 정보(치수 · 형식 · 용량 · 사용자 11-11 "미리보기에서 크기 표현").
+                        let dims = super::image_dims(media, bytes)
+                            .map(|(w, h)| format!("{w}×{h} · "))
+                            .unwrap_or_default();
+                        let info = format!(
+                            "{}
+{dims}{media} · {} KB",
+                            a.label(),
+                            bytes.len() / 1024
+                        );
                         (img, info)
                     }
                     Some(a @ super::Attachment::Text { body, .. }) => {
@@ -2140,16 +2189,88 @@ impl AiView {
         let pad = self.s(16.0);
         let x = b.x + pad;
         let w = (b.w - pad * 2).max(self.s(80.0));
-        dc.select_font(FontSlot::Message, true);
-        let mut y = b.y + pad;
-        dc.text(x, y, b, t(Msg::AiProfilesTitle), th.text);
-        y += dc.text_height() + self.s(6.0);
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
         let row_h = lh + self.s(12.0);
-        dc.text(x, y, b, t(Msg::AiProfilesHint), th.text_dim);
-        y += lh + self.s(10.0);
-        // 목록
+        // 안 보이는 상자는 영역을 비운다(클릭·Tab 대상에서 제외 · 11-11 키 상자 결함) — 목록 페이지는 전부.
+        let mut inv = Invalidations::default();
+        for tb in self.boxes_mut().into_iter().skip(1) {
+            tb.set_bounds(Rect::default(), &mut inv);
+        }
+        if self.page == Page::ProfileEdit {
+            self.paint_profile_form(dc, th, info, x, w, lh, row_h);
+        } else {
+            self.paint_profile_list(dc, th, info, x, w, lh, row_h);
+        }
+    }
+
+    /// 작은 아이콘 버튼(hover 배경 · 틴트 아이콘 · 툴팁은 `paint_popup`): `which` = `block_icon` 번호 · 6 = ✕ · 7 = ← 글자.
+    fn paint_icon_btn(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        r: Rect,
+        which: u8,
+        btn: Btn,
+        accent: bool,
+    ) {
+        let idx = self.buttons.len();
+        let hot = self.hover == Some(idx);
+        if hot {
+            dc.fill_round_rect(r, self.s(3.0), th.sel_bg);
+        }
+        let fg = if accent { th.accent } else { th.text_dim };
+        match which {
+            6 | 7 => {
+                let g = if which == 6 { "✕" } else { "←" };
+                let gw = dc.text_width(g);
+                let ty = dc.text_center_y(r.y, r.h);
+                dc.text(r.x + (r.w - gw) / 2, ty, r, g, fg);
+            }
+            _ => {
+                if let Some(img) = self.block_icon(which, fg) {
+                    let icon = self.s(14.0);
+                    let dst = Rect::new(r.x + (r.w - icon) / 2, r.y + (r.h - icon) / 2, icon, icon);
+                    dc.image_scaled(dst, &img, r);
+                }
+            }
+        }
+        self.buttons.push((btn, r));
+    }
+
+    /// ★ 목록 페이지(사용자 11-11 "목록과 편집 분리 · 추가 버튼 별도 · 아이콘 버튼"): 제목 + [+] · 행 = 이름 ✓ [WIF] · 모델 · 키 상태
+    ///   (버튼 앞에서 자기 영역으로 클립 · Alt 전체 보기도 버튼을 덮지 않는다 · 전체 글 = Alt + hover 말풍선) · 행 오른쪽 아이콘 =
+    ///   [✓ 사용][✎ 편집][⧉ 복제][✕ 삭제] · 행 클릭 = 상세.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_profile_list(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        info: &ViewInfo,
+        x: i32,
+        w: i32,
+        lh: i32,
+        row_h: i32,
+    ) {
+        let b = self.bounds;
+        let pad = self.s(16.0);
+        let mut y = b.y + pad;
+        dc.select_font(FontSlot::Message, true);
+        let title_h = dc.text_height();
+        dc.text(x, y, b, t(Msg::AiProfilesTitle), th.text);
+        dc.select_font(FontSlot::Base, false);
+        {
+            let side = row_h;
+            let r = Rect::new(x + w - side, y + (title_h - side).max(0) / 2, side, side);
+            self.paint_icon_btn(dc, th, r, 3, Btn::ProfileNew, true);
+        }
+        y += title_h + self.s(6.0);
+        for l in wrap(dc, t(Msg::AiProfilesHint), w) {
+            dc.text(x, y, b, &l, th.text_dim);
+            y += lh;
+        }
+        y += self.s(10.0);
+        self.p_rows.clear();
         for (i, p) in info.profiles.iter().enumerate() {
             let r = Rect::new(x, y, w, row_h);
             let cur = p.name == info.current_profile;
@@ -2158,12 +2279,11 @@ impl AiView {
             }
             let keyed = info.keyed.contains(&p.name);
             let line = format!(
-                "{}{}{}  ·  {}  ·  {}  ·  {}",
+                "{}{}{}  ·  {}  ·  {}",
                 p.name,
                 if cur { " ✓" } else { "" },
                 if p.wif.is_some() { " [WIF]" } else { "" },
                 p.model,
-                nexa_ctl::draw::ellipsize_middle(dc, &p.base_url, self.s(220.0)),
                 t(if keyed {
                     Msg::AiKeyStored
                 } else {
@@ -2171,57 +2291,82 @@ impl AiView {
                 })
             );
             let ty = dc.text_center_y(r.y, r.h);
-            let btns = [
-                (Btn::ProfileDelete(i), t(Msg::AiSessDelete)),
-                (Btn::ProfileDup(i), t(Msg::AiDup)),
-                (Btn::ProfileEdit(i), t(Msg::AiEdit)),
-                (Btn::ProfileUse(i), t(Msg::AiUse)),
-            ];
+            let side = row_h - self.s(4.0);
             let mut bx = r.right() - self.s(4.0);
-            for (btn, label) in btns {
-                let bw = dc.text_width(label) + self.s(16.0);
-                bx -= bw;
-                let br = Rect::new(bx, r.y + self.s(3.0), bw, row_h - self.s(6.0));
-                self.paint_button(dc, th, br, label, false, btn);
-                bx -= self.s(4.0);
+            for (btn, which) in [
+                (Btn::ProfileDelete(i), 6u8),
+                (Btn::ProfileDup(i), 0),
+                (Btn::ProfileEdit(i), 1),
+                (Btn::ProfileUse(i), 5),
+            ] {
+                bx -= side;
+                let br = Rect::new(bx, r.y + self.s(2.0), side, side);
+                let accent = cur && matches!(btn, Btn::ProfileUse(_));
+                self.paint_icon_btn(dc, th, br, which, btn, accent);
+                bx -= self.s(2.0);
             }
+            let text_r = Rect::new(r.x, r.y, (bx - r.x - self.s(8.0)).max(0), r.h);
             let shown =
-                nexa_ctl::draw::ellipsize_middle(dc, &line, (bx - r.x - self.s(16.0)).max(20));
-            dc.text(r.x + self.s(8.0), ty, r, &shown, th.text);
-            // 행 자체 클릭 = 편집(버튼 뒤에 넣어 버튼이 먼저 맞는다).
-            self.buttons.push((
-                Btn::ProfileRow(i),
-                Rect::new(r.x, r.y, (bx - r.x).max(0), r.h),
-            ));
+                nexa_ctl::draw::ellipsize_middle(dc, &line, (text_r.w - self.s(16.0)).max(20));
+            dc.text(r.x + self.s(8.0), ty, text_r, &shown, th.text);
+            self.p_rows.push(format!("{line}  ·  {}", p.base_url));
+            self.buttons.push((Btn::ProfileRow(i), text_r));
             y += row_h + self.s(2.0);
         }
         if info.profiles.is_empty() {
             dc.text(x, y, b, t(Msg::AiNoProfile), th.text_dim);
             y += lh + self.s(4.0);
         }
-        {
-            let label = t(Msg::AiProfileNew);
-            let bw = dc.text_width(label) + self.s(20.0);
-            let r = Rect::new(x, y + self.s(4.0), bw, row_h);
-            self.paint_button(dc, th, r, label, false, Btn::ProfileNew);
-            y += row_h + self.s(14.0);
+        y += self.s(10.0);
+        if !info.note.is_empty() {
+            for l in wrap(dc, &info.note, w) {
+                dc.text(x, y, b, &l, th.accent);
+                y += lh;
+            }
+            y += self.s(4.0);
         }
+        let label = t(Msg::AiBack);
+        let bw = dc.text_width(label) + self.s(24.0);
+        self.paint_button(
+            dc,
+            th,
+            Rect::new(x, y, bw, row_h),
+            label,
+            false,
+            Btn::BackChat,
+        );
+    }
+
+    /// ★ 상세/편집 페이지: [←](목록으로 · 저장 안 한 것은 버린다) + 제목 · 폼(이름 · 키/WIF · 모델/노력도 칩 · [고급 ▸]) ·
+    ///   [저장 + 검증](저장해도 이 페이지에 머문다) · [로그인…](WIF).
+    #[allow(clippy::too_many_arguments)]
+    fn paint_profile_form(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        info: &ViewInfo,
+        x: i32,
+        w: i32,
+        lh: i32,
+        row_h: i32,
+    ) {
+        let b = self.bounds;
+        let pad = self.s(16.0);
+        let mut y = b.y + pad;
+        let side = row_h;
+        self.paint_icon_btn(dc, th, Rect::new(x, y, side, side), 7, Btn::Back, false);
+        dc.select_font(FontSlot::Base, true);
+        let title = match &self.p_editing {
+            Some(n) => tf(Msg::AiProfileEditing, &[n]),
+            None => t(Msg::AiProfileNewTitle).to_string(),
+        };
+        let ty = dc.text_center_y(y, side);
+        dc.text(x + side + self.s(8.0), ty, b, &title, th.text);
+        dc.select_font(FontSlot::Base, false);
+        y += side + self.s(10.0);
         dc.fill_rect(Rect::new(x, y, w, 1), th.border);
         y += self.s(10.0);
-        // 폼
-        dc.select_font(FontSlot::Base, true);
-        dc.text(
-            x,
-            y,
-            b,
-            &match &self.p_editing {
-                Some(n) => tf(Msg::AiProfileEditing, &[n]),
-                None => t(Msg::AiProfileNewTitle).to_string(),
-            },
-            th.text,
-        );
-        dc.select_font(FontSlot::Base, false);
-        y += lh + self.s(8.0);
+        let _ = pad;
         let label_w = self.s(120.0);
         let fw = (w - label_w).min(self.s(520.0));
         let mut inv = Invalidations::default();
@@ -2307,7 +2452,6 @@ impl AiView {
         if wif {
             btns.push((Btn::ProfileLogin, t(Msg::AiLogin), false));
         }
-        btns.push((Btn::Back, t(Msg::AiBack), false));
         for (btn, label, primary) in btns {
             let bw = dc.text_width(label) + self.s(24.0);
             let r = Rect::new(bx, y, bw, row_h);
@@ -2341,12 +2485,19 @@ impl AiView {
     /// 팝업 층(`/` 목록 · 상자 편집 메뉴).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         // 코드 블록 아이콘 버튼 툴팁(hover 즉시 · 도구줄 선례).
-        if self.page == Page::Chat && self.pressed.is_none() {
+        if self.pressed.is_none() {
             if let Some((btn, r)) = self.hover.and_then(|i| self.buttons.get(i)) {
                 let tip = match btn {
+                    Btn::ProfileUse(_) => Some(Msg::AiUse),
+                    Btn::ProfileEdit(_) => Some(Msg::AiEdit),
+                    Btn::ProfileDup(_) => Some(Msg::AiDup),
+                    Btn::ProfileDelete(_) => Some(Msg::AiSessDelete),
+                    Btn::ProfileNew => Some(Msg::AiProfileNew),
+                    Btn::Back => Some(Msg::AiBackToList),
                     Btn::CopyCode(_) => Some(Msg::AiCopy),
                     Btn::InsertCode(_) => Some(Msg::AiInsertEditor),
                     Btn::RunCode(_) => Some(Msg::AiRunCode),
+                    Btn::GridCode(_) => Some(Msg::AiRunGrid),
                     Btn::AttachMenu => Some(Msg::AiAttachMenuTip),
                     Btn::Profiles => Some(Msg::AiProfiles),
                     Btn::PreviewAttachment(_) => Some(Msg::AiPreviewTip),
@@ -2368,6 +2519,50 @@ impl AiView {
                         t(tip),
                         self.scale,
                     );
+                }
+            }
+        }
+        // ★ Alt 전체 보기(nexa-ctl `show_full`)는 목록 행에서 버튼을 덮지 않고(행 글은 자기 영역으로 클립) hover 행의 전체 글을
+        //   말풍선으로(사용자 11-11 "펼쳐도 버튼에 가려 못 본다").
+        if self.page == Page::Profiles && nexa_ctl::draw::show_full() {
+            let row = self
+                .hover
+                .and_then(|i| self.buttons.get(i))
+                .and_then(|(b, r)| match b {
+                    Btn::ProfileRow(i)
+                    | Btn::ProfileUse(i)
+                    | Btn::ProfileEdit(i)
+                    | Btn::ProfileDup(i)
+                    | Btn::ProfileDelete(i) => Some((*i, *r)),
+                    _ => None,
+                });
+            if let Some((i, r)) = row {
+                if let Some(full) = self.p_rows.get(i) {
+                    dc.select_font(FontSlot::Base, false);
+                    let lh = dc.text_height();
+                    let pad = self.s(8.0);
+                    let b = self.bounds;
+                    let lines = wrap(dc, full, b.w - self.s(24.0) - pad * 2);
+                    let tw = lines.iter().map(|l| dc.text_width(l)).max().unwrap_or(0);
+                    let bw = tw + pad * 2;
+                    let bh = lh * lines.len() as i32 + pad * 2;
+                    let bx =
+                        r.x.min(b.right() - bw - self.s(12.0))
+                            .max(b.x + self.s(12.0));
+                    let by = if r.bottom() + bh + self.s(4.0) <= b.bottom() {
+                        r.bottom() + self.s(4.0)
+                    } else {
+                        r.y - bh - self.s(4.0)
+                    };
+                    let br = Rect::new(bx, by, bw, bh);
+                    dc.shadow(br, th.text, nexa_ctl::tokens::Elevation::Mid, self.s(6.0));
+                    dc.fill_round_rect(br, self.s(4.0), th.panel_bg);
+                    dc.stroke_round_rect(br, self.s(4.0), th.border, 1.0);
+                    let mut yy = by + pad;
+                    for l in &lines {
+                        dc.text(bx + pad, yy, br, l, th.text);
+                        yy += lh;
+                    }
                 }
             }
         }
@@ -2453,7 +2648,7 @@ impl AiView {
             }
         }
         self.composer.paint_popup(dc, th);
-        if self.page == Page::Profiles {
+        if self.page != Page::Chat {
             if let Some((_, p)) = &self.picker {
                 p.paint(dc, th);
             }
