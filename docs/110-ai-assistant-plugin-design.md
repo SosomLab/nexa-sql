@@ -383,4 +383,5 @@
 - **`search_objects`** 갱신: 점수 순(현재 스키마 +50) · `schema` 필터 · `kind` 필터 · **`in_columns`** = 읽힌 컬럼 이름도(객체 점수 −300 · 행 = `schema.table.column<TAB>column<TAB>type<TAB>of kind`) · 행에 `cols=loaded(N)|-` · 첫 줄 요약(적중 수 · 읽힌 객체 수 · 스키마 수 · 현재 스키마).
 - **새 도구 `meta_stats`**(읽기): 스키마별 종류별 객체 수 · 컬럼 읽힌 객체 수 · 현재 스키마 — 모델이 "앱이 아는 범위"를 보고 사전 질의가 필요한지 판단. 도구 18종.
 - **`metadata` 스킬** = 하네스 순서(①`meta_stats` → ②`search_objects`(낱말 AND · `SCHEMA.NAME` · kind · in_columns) → ③`describe_object`(컬럼 안 읽혔으면 탐색기 펼치기 또는 `SELECT * … WHERE 1=0`) → ④`object_source` → ⑤ 그때만 사전 질의) · **Claude·Codex 공통**(같은 도구 · Codex는 시스템 프롬프트를 첫 턴 `<app_context>`로 받으므로 색인·`skill` 도구 동일).
+- **`/skills`**(사용자 11-11): 색인(이름 — 언제) + 안내 · `/skills <이름>` = 플레이북 본문(모델이 받는 영어 글 그대로) · 모르는 이름 = 목록 안내. 헤드리스 `ai.send:/…`는 슬래시로 푼다(협업 관찰).
 - MCP 구성 요약(사용자 질문 11-11): API 모드 = 요청 `tools`에 18종 직접 · Claude CLI = `--mcp-config`의 `nexa` 서버 하나(`nsql mcp-bridge` stdio ↔ 앱 TCP `ai.mcp_port`) + `--strict-mcp-config` + `--permission-prompt-tool mcp__nexa__approve` + `--append-system-prompt` · Codex = app-server `dynamicTools`(MCP 아님) · 스킬 본문은 `skill(name)`.

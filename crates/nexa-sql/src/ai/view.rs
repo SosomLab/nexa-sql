@@ -101,6 +101,7 @@ pub(crate) const SLASH: &[(&str, bool, Msg)] = &[
     ("/profiles", false, Msg::AiSlashProfiles),
     ("/status", false, Msg::AiSlashStatus),
     ("/account", false, Msg::AiSlashAccount),
+    ("/skills", true, Msg::AiSlashSkills),
     ("/help", false, Msg::AiSlashHelp),
 ];
 

@@ -2728,6 +2728,22 @@ impl App {
                 let text = self.ai_account_text();
                 self.ai_push(ChatMsg::new(Kind::Note, text));
             }
+            // ★ `/skills`(사용자 11-11): 색인(이름 — 언제) · `/skills <이름>` = 플레이북 본문 — 모델이 받는 글 그대로(영어).
+            "/skills" => {
+                let text = if arg.is_empty() {
+                    format!("{}\n\n{}", ai::skills::index_text(), t(Msg::AiSkillsHint))
+                } else {
+                    match ai::skills::body(arg) {
+                        Some(b) => b.to_string(),
+                        None => format!(
+                            "{} {}",
+                            t(Msg::AiSkillUnknown),
+                            ai::skills::names().join(", ")
+                        ),
+                    }
+                };
+                self.ai_push(ChatMsg::new(Kind::Note, text));
+            }
             "/query" => {
                 if arg.is_empty() {
                     self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiQueryUsage)));
@@ -2841,7 +2857,11 @@ impl App {
         }
         if let Some(text) = id.strip_prefix("ai.send:") {
             self.ai_open_chat();
-            self.ai_send(text);
+            if text.starts_with('/') {
+                self.ai_slash(text.trim());
+            } else {
+                self.ai_send(text);
+            }
             return true;
         }
         // 파일 첨부(파일 창 단계를 건너뛰고 확정 뒤 경로만 · 사용자 실기 "첨부 안 됨" 판정용 · 협업 제안 11-11).
