@@ -66,8 +66,17 @@ pub(crate) fn post_turn(
             if trimmed.starts_with("```") {
                 in_code = false;
                 let body = block.join("\n");
+                // ★ 문장 끝 `;` 보정(사용자 11-12 "쿼리에 항상 ;이 있었는데 빠졌다"): 모델이 끝 `;`을 빼고 쓰면 포매터의
+                //   "`;`은 다음 줄" 규칙이 걸릴 것이 없어 결과에서도 빠졌다 — 포맷 전에 붙인다(`/`로 끝나는 PL/SQL 블록은 그대로).
                 let body = if is_sql && format_sql {
-                    match fmt(&body) {
+                    let t = body.trim_end();
+                    let src = if !t.is_empty() && !t.ends_with(';') && !t.ends_with('/') {
+                        format!("{t}\n;")
+                    } else {
+                        body.clone()
+                    };
+                    // 포맷이 실패하면 원문 그대로(붙인 `;`도 넣지 않는다).
+                    match fmt(&src) {
                         Some(f) if !f.trim().is_empty() => f.trim_end().to_string(),
                         _ => body,
                     }
@@ -131,7 +140,10 @@ mod tests {
         let mut calls = 0;
         let out = post_turn(text, true, true, &mut |s| {
             calls += 1;
-            assert_eq!(s, "select a,b from t");
+            assert!(
+                s.starts_with("select a,b from t") && s.trim_end().ends_with(';'),
+                "{s}"
+            );
             Some("SELECT a, b\nFROM t".into())
         });
         assert_eq!(calls, 1);

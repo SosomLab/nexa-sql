@@ -141,6 +141,8 @@ enum Btn {
     RemoveAttachment(usize),
     Approve(bool),
     CopyCode(usize),
+    /// 코드 상자 줄바꿈 토글(전체 코드 상자 공통 · 사용자 11-12).
+    WrapCode,
     InsertCode(usize),
     RunCode(usize),
     GridCode(usize),
@@ -205,6 +207,8 @@ pub(crate) struct AiView {
     p_rows: Vec<String>,
     /// ★ 표시 레벨(사용자 11-12): false = basic(도구 호출/성공 결과 줄 숨김) · true = 상세 · 깜빡임 위상 · 마지막 busy.
     detail: bool,
+    /// 코드 상자의 긴 줄을 상자 폭에서 접는다(코드 상자 머리 버튼 · 꺼짐 = 상자 폭에서 자름).
+    code_wrap: bool,
     blink: bool,
     busy_last: bool,
     /// 마지막 그리기의 모델 선택지 · 현재 모델 · 노력도(칩 팝업용).
@@ -299,6 +303,7 @@ impl Default for AiView {
             side_sessions: Vec::new(),
             p_rows: Vec::new(),
             detail: false,
+            code_wrap: false,
             blink: true,
             busy_last: false,
             chip_models: Vec::new(),
@@ -1333,6 +1338,11 @@ impl AiView {
                     self.actions.push(ViewAction::CopyText(c.clone()));
                 }
             }
+            Btn::WrapCode => {
+                self.code_wrap = !self.code_wrap;
+                self.lines.clear();
+                self.lens.clear();
+            }
             Btn::InsertCode(i) => {
                 if let Some(c) = self.code_blocks.get(i) {
                     self.actions.push(ViewAction::InsertEditor(c.clone()));
@@ -1607,7 +1617,15 @@ impl AiView {
                         kind: LineKind::Dim,
                     }]
                 } else {
-                    layout_msg(dc, m, w, &mut code_i, &mut self.code_blocks, who)
+                    layout_msg(
+                        dc,
+                        m,
+                        w,
+                        &mut code_i,
+                        &mut self.code_blocks,
+                        who,
+                        self.code_wrap,
+                    )
                 };
                 if i < self.lines.len() {
                     self.lines[i] = lines;
@@ -1647,6 +1665,7 @@ impl AiView {
         }
         let ic: MenuIcon = match which {
             0 => crate::toolicons::mi_copy(),
+            9 => crate::toolicons::mi_text(),
             1 => crate::toolicons::mi_edit(),
             3 => crate::toolicons::mi_add(),
             4 => crate::toolicons::mi_key(),
@@ -1851,6 +1870,8 @@ impl AiView {
                     );
                 }
                 let mut in_code = false;
+                // 코드 상자 안 글은 상자 폭에서 자른다(사용자 11-12 "글씨가 상자를 덮는다").
+                let mut code_clip = tr;
                 for (li, l) in ls.iter().enumerate() {
                     let yy = ly + li as i32 * line_h;
                     match &l.kind {
@@ -1874,6 +1895,14 @@ impl AiView {
                             );
                             dc.fill_round_rect(cr, self.s(4.0), th.panel_bg);
                             dc.stroke_round_rect(cr, self.s(4.0), th.border, 1.0);
+                            let inner =
+                                Rect::new(cr.x + 1, cr.y, (cr.w - self.s(8.0)).max(0), cr.h);
+                            code_clip = {
+                                let (x0, y0) = (inner.x.max(tr.x), inner.y.max(tr.y));
+                                let x1 = (inner.x + inner.w).min(tr.x + tr.w);
+                                let y1 = (inner.y + inner.h).min(tr.y + tr.h);
+                                Rect::new(x0, y0, (x1 - x0).max(0), (y1 - y0).max(0))
+                            };
                             dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.text_dim);
                             // 아이콘 버튼 [실행][편집기에 넣기][복사](오른쪽부터 · 툴팁은 paint_popup · 사용자 11-11 "공간 절약").
                             let side = line_h.max(self.s(18.0));
@@ -1883,6 +1912,7 @@ impl AiView {
                                 (Btn::RunCode(*ci), 2u8),
                                 (Btn::InsertCode(*ci), 1u8),
                                 (Btn::CopyCode(*ci), 0u8),
+                                (Btn::WrapCode, 9u8),
                             ] {
                                 bx -= side;
                                 let r = Rect::new(bx, yy, side, side);
@@ -1891,7 +1921,11 @@ impl AiView {
                                 if hot {
                                     dc.fill_round_rect(r, self.s(3.0), th.sel_bg);
                                 }
-                                let fg = if which == 2 { th.accent } else { th.text_dim };
+                                let fg = if which == 2 || (which == 9 && self.code_wrap) {
+                                    th.accent
+                                } else {
+                                    th.text_dim
+                                };
                                 if let Some(img) = self.block_icon(which, fg) {
                                     let icon = self.s(14.0);
                                     let dst = Rect::new(
@@ -1907,13 +1941,13 @@ impl AiView {
                             }
                         }
                         LineKind::Code => {
-                            dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.syn_string);
+                            dc.text(code_x, yy + self.s(2.0), code_clip, &l.text, th.syn_string);
                         }
                         LineKind::Result => {
-                            dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.text_dim);
+                            dc.text(code_x, yy + self.s(2.0), code_clip, &l.text, th.text_dim);
                         }
                         LineKind::ResultErr => {
-                            dc.text(code_x, yy + self.s(2.0), tr, &l.text, th.warn);
+                            dc.text(code_x, yy + self.s(2.0), code_clip, &l.text, th.warn);
                         }
                         LineKind::Text => {
                             in_code = false;
@@ -2689,6 +2723,7 @@ impl AiView {
                     Btn::ProfileNew => Some(Msg::AiProfileNew),
                     Btn::Back => Some(Msg::AiBackToList),
                     Btn::CopyCode(_) => Some(Msg::AiCopy),
+                    Btn::WrapCode => Some(Msg::AiWrapCode),
                     Btn::InsertCode(_) => Some(Msg::AiInsertEditor),
                     Btn::RunCode(_) => Some(Msg::AiRunCode),
                     Btn::GridCode(_) => Some(Msg::AiRunGrid),
@@ -2899,6 +2934,7 @@ fn layout_msg(
     code_i: &mut usize,
     codes: &mut Vec<String>,
     who: &str,
+    code_wrap: bool,
 ) -> Vec<Line> {
     let mut out = Vec::new();
     let (role, body_kind) = match &m.kind {
@@ -2996,11 +3032,21 @@ fn layout_msg(
                 code_buf.push('\n');
             }
             code_buf.push_str(raw);
-            // 코드는 자르지 않고 그대로(긴 줄은 넘침 · 복사는 전체).
-            out.push(Line {
-                text: raw.to_string(),
-                kind: LineKind::Code,
-            });
+            // 코드 줄: 줄바꿈이 켜졌으면 상자 폭에서 접고(탭은 4칸으로 펴서 잰다) · 꺼졌으면 그대로(그릴 때 상자 폭에서 자른다 · 복사는 전체).
+            if code_wrap && !raw.is_empty() {
+                let flat = raw.replace('\t', "    ");
+                for piece in wrap(dc, &flat, (w - w / 8).max(40)) {
+                    out.push(Line {
+                        text: piece,
+                        kind: LineKind::Code,
+                    });
+                }
+            } else {
+                out.push(Line {
+                    text: raw.to_string(),
+                    kind: LineKind::Code,
+                });
+            }
         } else if raw.trim().is_empty() {
             after_code = false;
             out.push(Line {
@@ -3264,7 +3310,7 @@ mod tests {
         );
         let mut ci = 0;
         let mut codes = Vec::new();
-        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes, "Claude");
+        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes, "Claude", false);
         assert_eq!(codes, vec!["select 1\nfrom dual".to_string()]);
         assert!(matches!(lines[0].kind, LineKind::Role));
         assert!(lines
@@ -3370,7 +3416,7 @@ mod tests {
         let m = ChatMsg::new(Kind::Assistant, "# H\n- one\n```sql\n- not a list\n```");
         let mut dc = W;
         let (mut ci, mut codes) = (0, Vec::new());
-        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes, "Codex");
+        let lines = layout_msg(&mut dc, &m, 400, &mut ci, &mut codes, "Codex", false);
         assert_eq!(lines[0].text, "Codex");
         assert_eq!(lines[1].kind, LineKind::Head);
         assert_eq!(lines[2].text, "• one");

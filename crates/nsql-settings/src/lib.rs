@@ -1473,6 +1473,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "keep",
     },
     Entry {
+        key: "format.table_alias_case",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtTableAliasCase,
+        desc: Msg::DescFmtTableAliasCase,
+        kind: SettingKind::Choice(FMT_CASE_OPTS),
+        default: "keep",
+    },
+    Entry {
         key: "format.function_case",
         cat: Msg::CatFormat,
         label: Msg::LblFmtFunctionCase,

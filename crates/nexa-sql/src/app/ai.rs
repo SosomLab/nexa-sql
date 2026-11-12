@@ -2517,6 +2517,40 @@ impl App {
         self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod)
     }
 
+    /// ★ 승인 카드 머리 줄(사용자 11-12 "뭘, 왜, 어떻게 하려는지 알 수 없다"): 목적(어시스턴트가 적은 한 문장) · 무엇을(문장 종류 ·
+    /// 대상 객체) · 어디서(접속 프로필 · 운영 여부). run_query/explain에만.
+    fn ai_card_head(&self, name: &str, input: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        if !matches!(name, "run_query" | "explain") {
+            return out;
+        }
+        let v = json_parse(input).unwrap_or(Json::Obj(Vec::new()));
+        let purpose = ai::jstr(&v, "purpose");
+        let sql = ai::jstr(&v, "sql");
+        let none = t(Msg::AiCardNoPurpose).to_string();
+        let purpose = if purpose.trim().is_empty() {
+            none
+        } else {
+            redact(purpose.trim())
+        };
+        out.push(tf(Msg::AiCardPurpose, &[&purpose]));
+        let dialect = self.sess.connected.then_some(self.sess.dialect);
+        let (kind, targets) = ai::guard::summarize(&sql, dialect);
+        let tg = if targets.is_empty() {
+            "-".to_string()
+        } else {
+            targets.join(", ")
+        };
+        out.push(tf(Msg::AiCardWhat, &[&kind, &tg]));
+        let env = t(if self.ai_guard_prod() {
+            Msg::AiCardEnvProd
+        } else {
+            Msg::AiCardEnvOther
+        });
+        out.push(tf(Msg::AiCardWhere, &[&self.sess.profile, env]));
+        out
+    }
+
     /// 도구 호출의 핵심 인자(등급 판정용): run_query = SQL · set_setting = 키 · run_command = id.
     fn ai_guard_arg(name: &str, input: &str) -> String {
         let v = json_parse(input).unwrap_or(Json::Obj(Vec::new()));
@@ -2679,11 +2713,16 @@ impl App {
         }
         let short = tool.name.to_string();
         if is_rows && !rows_allowed {
+            let mut lines = self.ai_card_head(tool.name, &input);
+            lines.push(t(Msg::AiRowsConsent).to_string());
+            if !arg.trim().is_empty() {
+                lines.push(redact(&arg));
+            }
             let mut m = ChatMsg::new(
                 Kind::Approval {
                     tool: short.clone(),
                 },
-                t(Msg::AiRowsConsent),
+                lines.join("\n"),
             );
             m.id = ai::stamp_id();
             let mid = m.id.clone();
@@ -2711,7 +2750,7 @@ impl App {
             } else {
                 redact(&input)
             };
-            let mut head: Vec<String> = Vec::new();
+            let mut head: Vec<String> = self.ai_card_head(tool.name, &input);
             if prod {
                 head.push(t(Msg::AiGuardProd).to_string());
             }

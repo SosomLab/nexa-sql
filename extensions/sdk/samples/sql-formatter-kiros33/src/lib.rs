@@ -127,6 +127,8 @@ fn strict_options(base: &Options) -> Options {
         indent: Indent::Tab,
         tab_width: 4,
         keyword_case: Case::Upper,
+        // 테이블 별칭·CTE 이름 = 대문자(자동 별칭 A, B와 같은 꼴 · 사용자 11-12).
+        table_alias_case: Case::Upper,
         comma: Comma::Leading,
         comma_gap: Gap::Tab,
         as_gap: Gap::Tab,

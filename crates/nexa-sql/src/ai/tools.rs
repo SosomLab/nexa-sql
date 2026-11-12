@@ -175,6 +175,7 @@ pub(crate) const TOOLS: &[Tool] = &[
         write: true,
         props: &[
             ("sql", "string", "SQL statement", true),
+            ("purpose", "string", "One short sentence in the user's language: what this statement does and why it is needed now (shown to the user on the approval card)", true),
             ("max_rows", "integer", "Rows to return (default = ai.max_rows)", false),
         ],
     },
@@ -342,7 +343,7 @@ mod tests {
         let t = find("mcp__nexa-sql__run_query").expect("tool");
         assert!(t.write);
         let s = nsql_settings::json::dump(&t.schema());
-        assert!(s.contains("\"required\":[\"sql\"]"), "{s}");
+        assert!(s.contains("\"required\":[\"sql\",\"purpose\"]"), "{s}");
         assert!(find("nope").is_none());
         let m = nsql_settings::json::dump(&mcp_tools());
         assert!(m.contains("\"approve\"") && m.contains("inputSchema"));

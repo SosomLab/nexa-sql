@@ -205,6 +205,8 @@ pub struct Options {
     pub tab_width: usize,
     pub keyword_case: Case,
     pub identifier_case: Case,
+    /// ★ 테이블 별칭·CTE 이름의 대소문자(선언과 `별칭.열` 참조를 함께 · 사용자 11-12 · 기본 keep).
+    pub table_alias_case: Case,
     pub function_case: Case,
     pub comma: Comma,
     pub comma_gap: Gap,
@@ -276,6 +278,7 @@ impl Default for Options {
             tab_width: 4,
             keyword_case: Case::Upper,
             identifier_case: Case::Keep,
+            table_alias_case: Case::Keep,
             function_case: Case::Keep,
             comma: Comma::Leading,
             comma_gap: Gap::Space,
@@ -325,6 +328,7 @@ pub const OPTION_KEYS: &[&str] = &[
     "preset",
     "keyword_case",
     "identifier_case",
+    "table_alias_case",
     "function_case",
     "comma",
     "comma_gap",
@@ -416,6 +420,7 @@ impl Options {
                 "dialect" => o.dialect = SrcDialect::parse(&lv),
                 "keyword_case" => o.keyword_case = Case::parse(&lv),
                 "identifier_case" => o.identifier_case = Case::parse(&lv),
+                "table_alias_case" => o.table_alias_case = Case::parse(&lv),
                 "function_case" => o.function_case = Case::parse(&lv),
                 "comma" => {
                     o.comma = if lv == "trailing" || lv == "end" {

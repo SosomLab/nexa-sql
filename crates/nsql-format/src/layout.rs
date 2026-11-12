@@ -989,6 +989,40 @@ pub(crate) fn format_statement(
         push_raw(out, text, blank);
         return;
     }
+    // ★ 테이블 별칭 대소문자(`table_alias_case` · 사용자 11-12 "테이블 별칭은 대문자"): 별칭 = **한정자로도 쓰이고**(`r.col`)
+    //   **홀로도 나오는**(`… t r` · `WITH h AS (` · `FROM h`) 낱말 — 스키마 이름(`s.t`의 s)은 홀로 나오지 않아 빠진다. 선언과 참조를
+    //   함께 바꾼다(인용 식별자·키워드·`.` 뒤 낱말은 그대로).
+    let recased: Vec<Token>;
+    let body: &[Token] = if opts.table_alias_case == crate::Case::Keep {
+        body
+    } else {
+        let is_word = |t: &Token| t.kind == Kind::Word && !is_keyword(&t.text);
+        let after_dot = |i: usize| i > 0 && body[i - 1].is_punct(".");
+        let before_dot = |i: usize| body.get(i + 1).is_some_and(|n| n.is_punct("."));
+        let quals: std::collections::HashSet<String> = (0..body.len())
+            .filter(|&i| is_word(&body[i]) && before_dot(i) && !after_dot(i))
+            .map(|i| body[i].up())
+            .collect();
+        let alone: std::collections::HashSet<String> = (0..body.len())
+            .filter(|&i| is_word(&body[i]) && !before_dot(i) && !after_dot(i))
+            .map(|i| body[i].up())
+            .collect();
+        recased = body
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let mut t = t.clone();
+                if is_word(&t) && !after_dot(i) {
+                    let up = t.up();
+                    if quals.contains(&up) && alone.contains(&up) {
+                        t.text = opts.table_alias_case.apply(&t.text);
+                    }
+                }
+                t
+            })
+            .collect();
+        &recased
+    };
     let stmt_words: std::collections::HashSet<String> = body
         .iter()
         .filter(|t| t.kind == Kind::Word)
@@ -3733,6 +3767,30 @@ FROM
         );
         assert!(out.contains("GROUP BY\n"), "{out}");
         assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    #[test]
+    fn table_alias_case_upper_changes_declaration_and_references() {
+        let o = Options {
+            table_alias_case: Case::Upper,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "with h as (select r.k from appdb.t r) select h.k, i.nm from h join appdb.u i on i.k = h.k order by i.nm",
+            &o,
+        );
+        assert!(out.contains("H AS ("), "{out}");
+        assert!(out.contains("appdb.t R"), "{out}");
+        assert!(out.contains("R.k"), "{out}");
+        assert!(out.contains("appdb.u I"), "{out}");
+        assert!(out.contains("I.k = H.k"), "{out}");
+        assert!(out.contains("I.nm"), "{out}");
+        // 스키마 이름·열 이름은 그대로.
+        assert!(out.contains("appdb.t") && out.contains(".nm"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+        // 기본(keep)은 손대지 않는다.
+        let keep = format_basic("select r.k from t r", &Options::default());
+        assert!(keep.contains("t r") && keep.contains("r.k"), "{keep}");
     }
 
     #[test]

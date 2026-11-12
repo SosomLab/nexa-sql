@@ -430,6 +430,71 @@ fn is_clause_word(up: &str) -> bool {
     )
 }
 
+/// 승인 카드용 요약(순수): 문장 종류(첫 낱말들 · 문장 수)와 대상 객체(FROM/JOIN/INTO/UPDATE/TABLE 뒤의 이름 · 최대 6).
+pub(crate) fn summarize(sql: &str, dialect: Option<Dialect>) -> (String, Vec<String>) {
+    let items: Vec<_> = nsql_script::split_script_in(sql, dialect)
+        .into_iter()
+        .filter(|i| !i.text.trim().is_empty())
+        .collect();
+    let mut kinds: Vec<String> = Vec::new();
+    let mut targets: Vec<String> = Vec::new();
+    for it in &items {
+        if let Some(k) = head_words(&it.text, 1).into_iter().next() {
+            if !kinds.contains(&k) {
+                kinds.push(k);
+            }
+        }
+        let Some(toks) = top_tokens(it.text.trim().trim_end_matches(';')) else {
+            continue;
+        };
+        let up: Vec<String> = toks.iter().map(|t| t.0.to_ascii_uppercase()).collect();
+        for i in 0..toks.len() {
+            let lead = matches!(
+                up[i].as_str(),
+                "FROM" | "JOIN" | "INTO" | "UPDATE" | "TABLE" | "VIEW" | "TRUNCATE"
+            );
+            if !lead {
+                continue;
+            }
+            let mut j = i + 1;
+            while up
+                .get(j)
+                .is_some_and(|u| matches!(u.as_str(), "TABLE" | "IF" | "EXISTS" | "ONLY"))
+            {
+                j += 1;
+            }
+            let mut name = String::new();
+            while let Some(t) = toks.get(j) {
+                if !is_ident(&t.0) || (name.is_empty() && is_clause_word(&up[j])) {
+                    break;
+                }
+                name.push_str(&t.0);
+                j += 1;
+                if toks.get(j).is_some_and(|t| t.0 == ".") {
+                    name.push('.');
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            let key = name.to_ascii_uppercase();
+            if !name.is_empty()
+                && !matches!(key.as_str(), "SELECT" | "DUAL" | "SET" | "VALUES")
+                && !targets.iter().any(|t| t.eq_ignore_ascii_case(&name))
+                && targets.len() < 6
+            {
+                targets.push(name);
+            }
+        }
+    }
+    let kind = if items.len() > 1 {
+        format!("{} ×{}", kinds.join("+"), items.len())
+    } else {
+        kinds.join("+")
+    };
+    (kind, targets)
+}
+
 /// 사전 조회 결과 글(열 머리 줄 + 값 줄)에서 행 수를 꺼낸다.
 pub(crate) fn parse_count(text: &str) -> Option<u64> {
     text.lines()
@@ -615,6 +680,25 @@ mod tests {
         assert_eq!(f("delete from t; delete from u"), None);
         assert_eq!(f("drop view v"), None);
         assert_eq!(f("begin null; end;"), None);
+    }
+
+    #[test]
+    fn summarize_names_kind_and_targets() {
+        let (k, t) = summarize(
+            "update appdb.t x set a = 1 where x.id in (select id from u)",
+            None,
+        );
+        assert_eq!(k, "UPDATE");
+        assert_eq!(t, vec!["appdb.t".to_string()]);
+        let (k, t) = summarize("select a from t1 join s.t2 on 1 = 1; delete from t3", None);
+        assert_eq!(k, "SELECT+DELETE ×2");
+        assert_eq!(
+            t,
+            vec!["t1".to_string(), "s.t2".to_string(), "t3".to_string()]
+        );
+        let (k, t) = summarize("drop table if exists t9", None);
+        assert_eq!(k, "DROP");
+        assert_eq!(t, vec!["t9".to_string()]);
     }
 
     #[test]
