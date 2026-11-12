@@ -684,19 +684,28 @@ pub fn vars_to_script(states: &[VarState]) -> String {
         if s.secret {
             continue;
         }
+        // ★ 수식(사용 시 모드 · 11-13 "재시작 뒤 수식이 사라진다"): 값 줄 **뒤에** `EXEC :이름 := 수식` 한 줄 — 읽을 때 값은
+        //   앞 줄(리터럴)에서, 수식은 이 줄에서 되살린다(식은 실행하지 않는다). 한 줄에 못 담는 수식은 건너뛴다.
+        let formula_line = s
+            .formula
+            .as_deref()
+            .filter(|f| !f.contains('\n') && !f.contains('\r') && !f.trim().is_empty())
+            .map(|f| format!("EXEC :{} := {}\n", s.name, f.trim()));
         let lit = match &s.value {
-            Value::Null | Value::Cursor(_) | Value::Bytes(_) => continue,
-            Value::Int(n) => n.to_string(),
-            Value::Float(f) => f.to_string(),
-            Value::Decimal(d) => d.clone(),
-            Value::Bool(b) => if *b { "1" } else { "0" }.to_string(),
-            Value::Str(t) => format!("'{}'", t.replace('\'', "''")),
+            Value::Null | Value::Cursor(_) | Value::Bytes(_) => None,
+            Value::Int(n) => Some(n.to_string()),
+            Value::Float(f) => Some(f.to_string()),
+            Value::Decimal(d) => Some(d.clone()),
+            Value::Bool(b) => Some(if *b { "1" } else { "0" }.to_string()),
+            Value::Str(t) => Some(format!("'{}'", t.replace('\'', "''"))),
         };
         // 여러 줄 글은 한 줄 명령(`EXEC`)에 못 담는다 → 건너뛴다(값은 다음 실행에서 다시 생긴다).
-        if lit.contains('\n') || lit.contains('\r') {
-            continue;
+        if let Some(lit) = lit.filter(|l| !l.contains('\n') && !l.contains('\r')) {
+            out.push_str(&format!("EXEC :{} := {lit}\n", s.name));
         }
-        out.push_str(&format!("EXEC :{} := {lit}\n", s.name));
+        if let Some(f) = formula_line {
+            out.push_str(&f);
+        }
     }
     out
 }
@@ -708,6 +717,9 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
     let mut e = crate::engine::Engine::new(nsql_core::Dialect::Oracle);
     // 치환은 끈다(값에 `&`가 들어 있을 수 있다).
     e.settings.define_char = None;
+    // ★ 수식 줄(`EXEC :b := :a + 2`)은 **수식으로 기억**만 한다(사용 시 모드의 계획 = 수식 등록 · 실행하지 않으므로 값은 앞의
+    //   리터럴 줄 그대로) — 저장했던 수식이 재시작 뒤에도 남는다(11-13).
+    e.settings.expand_at_use = true;
     for item in crate::split::split_script(text) {
         if matches!(
             &item.kind,
@@ -807,6 +819,31 @@ mod tests {
                 .map(|f| (f.text.clone(), f.deps.clone())),
             Some((":A + 2".to_string(), vec!["A".to_string()]))
         );
+    }
+
+    #[test]
+    fn script_round_trip_keeps_formulas() {
+        // ★ 11-13 회귀: 저장 글에 수식이 빠져 재시작 뒤 값만 남았다.
+        let _g = secret_guard();
+        let mut s = VarStore::default();
+        s.assign("a", Value::Int(5));
+        s.set_formula("b", ":a + 2", vec!["a".into()]);
+        s.assign("b", Value::Int(7));
+        let text = vars_to_script(&s.local_states());
+        assert!(text.contains("EXEC :b := 7\n"), "{text}");
+        assert!(text.contains("EXEC :b := :a + 2\n"), "{text}");
+        let back = vars_from_script(&text);
+        let b = back
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case("b"))
+            .expect("b");
+        assert_eq!(b.value, Value::Int(7));
+        assert_eq!(b.formula.as_deref(), Some(":a + 2"));
+        let a = back
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case("a"))
+            .expect("a");
+        assert!(a.formula.is_none());
     }
 
     #[test]
