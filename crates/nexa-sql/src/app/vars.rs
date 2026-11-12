@@ -263,6 +263,10 @@ impl App {
         let Some(pass) = self.gate_pass() else {
             return;
         };
+        // ★ 결과(`RunEvent::Vars`)는 `sess.run_editor` 탭의 표에 반영된다 — 이 실행이 보내는 표(`run_vars` = 활성 탭)와 같은 탭으로
+        //   맞춘다(협업 V1 11-13 "재기동 뒤 ⟳가 재계산하지 않는다": 그 탭에서 한 번도 실행하지 않았으면 `run_editor`가 다른 탭이라
+        //   계산된 값이 엉뚱한 탭 표로 들어갔다 · 같은 실행 안에서는 앞선 실행이 맞춰 놓아 드러나지 않았다).
+        self.sess.run_editor = self.editors.active_id();
         self.sess.submit(
             pass,
             worker::Cmd::Run {
@@ -467,7 +471,8 @@ impl App {
         // ★ 값을 고쳤으면 그 값을 쓰는 수식 변수를 바로 다시 계산한다(사용자 11-13 "요청이 즉시 반영되면 좋겠다" · 사용 시 모드 ·
         //   수식이 하나라도 있을 때만 · 접속 중이고 세션이 한가할 때만 — 아니면 다음 실행·⟳에서 계산된다).
         let has_formula = local.iter().any(|v| v.formula.is_some())
-            || self.sess.shared_vars.iter().any(|v| v.formula.is_some());
+            || self.sess.shared_vars.iter().any(|v| v.formula.is_some())
+            || self.global_vars.iter().any(|v| v.formula.is_some());
         if has_formula
             && self.settings.get("vars.expand_at") == Some("use")
             && self.sess.connected

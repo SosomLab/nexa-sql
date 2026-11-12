@@ -555,17 +555,33 @@ impl VarStore {
         // ★ 호스트(변수 창 · AI `set_var`)가 값을 고친 것도 **대입**이다(사용자 11-13 "VAR2를 바꿔도 수식 변수가 다시 계산되지
         //   않고 재계산 버튼도 듣지 않는다"): 종전에는 표를 통째로 바꾸기만 해 의존 수식이 stale이 되지 않았다. 값이 실제로
         //   바뀐(또는 새로 생긴) 이름만 본다 — 같은 값 재전달은 stale을 만들지 않는다(09-27 재계획 반복 방지와 같은 규칙).
-        let carried: Vec<(String, String, bool)> = states
+        let carried = Self::carried_formulas(&states);
+        let new = Self::from_states(states);
+        let changed = Self::changed_keys(&self.vars, &new);
+        self.vars = new;
+        self.adopt_formulas(carried, changed);
+    }
+
+    /// 호스트가 준 표에 실린 수식(이름 · 수식 · stale).
+    fn carried_formulas(states: &[VarState]) -> Vec<(String, String, bool)> {
+        states
             .iter()
             .filter_map(|st| st.formula.clone().map(|f| (norm(&st.name), f, st.stale)))
-            .collect();
-        let new = Self::from_states(states);
-        let changed: Vec<String> = new
-            .iter()
-            .filter(|(k, v)| self.vars.get(*k).is_none_or(|old| old.value != v.value))
+            .collect()
+    }
+
+    /// 값이 실제로 바뀐(또는 새로 생긴) 이름.
+    fn changed_keys(old: &BTreeMap<String, Var>, new: &BTreeMap<String, Var>) -> Vec<String> {
+        new.iter()
+            .filter(|(k, v)| old.get(*k).is_none_or(|o| o.value != v.value))
             .map(|(k, _)| k.clone())
-            .collect();
-        self.vars = new;
+            .collect()
+    }
+
+    /// 층을 갈아 끼운 뒤: 러너가 모르는 수식은 호스트 표에서 되살리고 · 값이 바뀐 이름을 의존하는 수식은 stale로.
+    /// ★ 탭 · 공유 · 글로벌 층 공용(사용자 11-13 "수식으로 저장된 변수가 재시작 뒤 값으로 보인다": 공유·글로벌 층은 표만 바꿔
+    ///   끼워 수식이 러너에 등록되지 않았고, 다음 `Vars` 알림이 수식 없는 표로 호스트의 것을 덮어썼다).
+    fn adopt_formulas(&mut self, carried: Vec<(String, String, bool)>, changed: Vec<String>) {
         // 러너가 모르는 수식(앱 재시작 · 새 접속 뒤)은 호스트가 든 표에서 되살린다 — 수식의 원천은 변수 표다.
         for (key, text, stale) in carried {
             let deps: Vec<String> = crate::bind::unique_names(&crate::bind::extract_binds(&text))
@@ -588,7 +604,11 @@ impl VarStore {
 
     /// 공유 층을 통째로 정한다(호스트의 변수 창이 고쳤을 때).
     pub fn set_shared(&mut self, states: Vec<VarState>) {
-        self.shared = Self::from_states(states);
+        let carried = Self::carried_formulas(&states);
+        let new = Self::from_states(states);
+        let changed = Self::changed_keys(&self.shared, &new);
+        self.shared = new;
+        self.adopt_formulas(carried, changed);
     }
 
     /// 프로필 층을 정한다(접속 때).
@@ -598,7 +618,11 @@ impl VarStore {
 
     /// 글로벌 층을 통째로 정한다(호스트가 시작·변경 때 · docs/63 §11).
     pub fn set_global(&mut self, states: Vec<VarState>) {
-        self.global = Self::from_states(states);
+        let carried = Self::carried_formulas(&states);
+        let new = Self::from_states(states);
+        let changed = Self::changed_keys(&self.global, &new);
+        self.global = new;
+        self.adopt_formulas(carried, changed);
     }
 
     /// 글로벌 층의 지금 상태.
@@ -736,6 +760,17 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
     // ★ 되살린 수식은 **재계산 전(stale)** 으로 싣는다(협업 V1 11-13 "재기동 뒤 a = 10 · b = 7 `:= :a + 2`가 그대로") — 저장 글은
     //   stale 표시를 싣지 않아, 의존 값이 바뀐 채 저장된 수식 값이 맞는 값처럼 남았다. 값은 저장본 그대로 보이되 흐리게(⟳) ·
     //   접속 뒤 첫 사용·재계산에서 다시 계산된다.
+    // 값 줄이 없는 수식(값이 NULL · 여러 줄이라 못 실린 것)도 변수로 되살린다 — 아니면 수식 줄만 있는 변수가 통째로 사라진다.
+    let orphans: Vec<String> = e
+        .vars
+        .formulas
+        .keys()
+        .filter(|k| !e.vars.vars.contains_key(*k))
+        .cloned()
+        .collect();
+    for k in orphans {
+        e.vars.assign(&k, Value::Null);
+    }
     let mut out = e.vars.local_states();
     for v in &mut out {
         if v.formula.is_some() {
@@ -858,6 +893,42 @@ mod tests {
             .find(|v| v.name.eq_ignore_ascii_case("a"))
             .expect("a");
         assert!(a.formula.is_none());
+    }
+
+    #[test]
+    fn shared_and_global_layers_restore_formulas_and_formula_only_lines_survive() {
+        // ★ 사용자 11-13 "수식으로 저장된 변수가 재시작 뒤 값으로 보인다": 글로벌·공유 층의 수식도 러너에 되살아난다.
+        let _g = secret_guard();
+        let mut src = VarStore::default();
+        src.assign("a", Value::Int(5));
+        src.set_formula("b", ":a + 2", vec!["a".into()]);
+        src.assign("b", Value::Int(7));
+        let mut states = vars_from_script(&vars_to_script(&src.local_states()));
+        for s in &mut states {
+            s.layer = Layer::Global;
+        }
+        let mut r = VarStore::default();
+        r.set_global(states.clone());
+        let g = r.global_states();
+        let b = g
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case("b"))
+            .expect("b");
+        assert_eq!(b.formula.as_deref(), Some(":a + 2"), "글로벌 층 수식 유지");
+        let mut r2 = VarStore::default();
+        r2.set_shared(states);
+        assert!(r2.formula_of("b").is_some(), "공유 층 수식 유지");
+        // 값 줄 없이 수식 줄만 있어도 변수가 남는다(값 NULL · 재계산 전).
+        let only = vars_from_script(
+            "EXEC :c := :a * 3
+",
+        );
+        let c = only
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case("c"))
+            .expect("c");
+        assert_eq!(c.formula.as_deref(), Some(":a * 3"));
+        assert!(c.stale && c.value == Value::Null);
     }
 
     #[test]
