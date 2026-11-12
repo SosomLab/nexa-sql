@@ -509,6 +509,17 @@ impl App {
             self.drivers_update_installed();
             return;
         }
+        // ★ 변수 수식 알림의 [켜고 수식으로](app/vars.rs · 11-12): "사용 시" 계산 모드를 켜고 같은 수식을 다시 지정한다.
+        if let Some(rest) = id.strip_prefix("vars.formula_on:") {
+            if let Some((name, expr)) = rest.split_once('\t') {
+                let _ = self.settings.set("vars.expand_at", "use");
+                self.persist_settings();
+                let (name, expr) = (name.to_string(), expr.to_string());
+                self.vars_set_formula(&name, &expr);
+            }
+            self.redraw();
+            return;
+        }
         if let Some(rest) = id.strip_prefix("notice.hide:") {
             let key = format!("notice.{rest}");
             if self.settings.set(&key, "off").is_ok() {

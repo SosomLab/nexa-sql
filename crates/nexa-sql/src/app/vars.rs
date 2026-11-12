@@ -239,6 +239,18 @@ impl App {
             .map(|r| r.name.to_ascii_uppercase())
             .collect();
         let expr = bind_bare_names(expr, &known);
+        // ★ 수식으로 **기억**되는 것은 "사용 시" 계산 모드(`vars.expand_at = use`)일 때뿐이다 — 대입 시 모드면 값만 한 번 계산된다
+        //   (사용자 11-12 "값은 들어갔는데 수식으로 동작하지 않는다"). 모드를 멋대로 바꾸지 않고(DEFINE 치환 방식도 함께 바뀐다)
+        //   알림의 [켜고 수식으로]로 묻는다 — 누르면 모드를 켜고 같은 수식을 다시 지정한다.
+        if self.settings.get("vars.expand_at") != Some("use") {
+            self.toasts.push_button(
+                toast::ToastKind::Info,
+                t(Msg::VarFormulaModeTitle),
+                t(Msg::VarFormulaModeBody),
+                t(Msg::VarFormulaModeOn),
+                &format!("vars.formula_on:{name}\t{expr}"),
+            );
+        }
         self.prod_confirmed_once = true;
         self.hold_skip_once = true;
         self.run_text(format!("EXEC :{name} := {expr};"), 0, true);

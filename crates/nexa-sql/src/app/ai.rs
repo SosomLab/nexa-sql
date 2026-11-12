@@ -2791,12 +2791,13 @@ impl App {
         //   앱 쓰기(사용자 11-12 "변수 값 하나 바꾸는데 승인 3~4번").
         let client_only = tool.name == "run_query" && {
             let items = split_items(&arg, self.sess.dialect);
-            // `EXEC :V := 리터럴`도 클라이언트가 처리한다(DR-8 · `local_assign` = 엔진·러너와 같은 판정).
+            // `EXEC :V := 리터럴`은 클라이언트가 처리하고(DR-8) `EXEC :V := 식`은 DB가 식만 계산한다 — 둘 다 변수 대입이라
+            //   트랜잭션이 없다(사용자 11-12 "변수 설정이면 운영에서도 SELECT 수준 점검으로").
             let local_exec = |i: &str| {
                 matches!(
                     nsql_script::command::parse_command(i),
                     Ok(Some(nsql_script::command::Command::Exec { ref body }))
-                        if nsql_script::local_assign(body).is_some()
+                        if ai::guard::is_bind_assign(body)
                 )
             };
             !items.is_empty()
@@ -2805,7 +2806,9 @@ impl App {
                     .all(|i| sessions::is_client_only(i) || local_exec(i))
         };
         if client_only {
-            risk = ai::guard::Risk::AppWrite;
+            // 조회 수준(카드 없음) — 실행부의 이중 안전장치(`write_ok`)는 이 호출을 승인된 것으로 표시해 지난다.
+            risk = ai::guard::Risk::Read;
+            self.ai.write_ok = Some((tool.name.to_string(), input.clone()));
         }
         let prod = self.ai_guard_prod();
         let decision = ai::guard::decide(
@@ -3519,11 +3522,25 @@ impl App {
                         || items
                             .iter()
                             .any(|i| matches!(i.kind, nsql_script::ItemKind::Command(_)));
+                    // 변수 대입·클라이언트 명령만이면 운영 보류 커밋(블록 보류)을 건너뛴다 — 트랜잭션이 없다(사용자 11-12).
+                    let assign_only = !items.is_empty()
+                        && items.iter().all(|i| {
+                            sessions::is_client_only(&i.text)
+                                || matches!(
+                                    nsql_script::command::parse_command(&i.text),
+                                    Ok(Some(nsql_script::command::Command::Exec { ref body }))
+                                        if ai::guard::is_bind_assign(body)
+                                )
+                        });
+                    if assign_only {
+                        self.hold_skip_once = true;
+                    }
                     if scripted {
                         self.run_text(src, 0, true);
                     } else {
                         self.run_text_whole(src);
                     }
+                    self.hold_skip_once = false;
                 }
                 self.prod_confirmed_once = false;
                 // ★ 실행이 시작되지 못했으면(읽기 전용 · 보류 차단 · DDL 가드 · 백업 대기) 성공이 아니라 **실패로** 알린다 — 종전에는
@@ -3638,7 +3655,14 @@ impl App {
                     }
                 });
                 match p.var_after.as_deref().map(|n| self.ai_var_get(n)) {
-                    Some(Ok(now)) => Some((format!("set.\n{now}"), true)),
+                    Some(Ok(now)) => {
+                        let note = if self.settings.get("vars.expand_at") == Some("use") {
+                            ""
+                        } else {
+                            "\nnote: the expression was evaluated once and stored as a plain value - formulas are only remembered when the setting vars.expand_at is 'use' (default 'assign'). Tell the user this and ask whether to turn it on; if yes: set_setting vars.expand_at = use, then call set_var with the formula again."
+                        };
+                        Some((format!("set.\n{now}{note}"), true))
+                    }
                     Some(Err(e)) => Some((e, false)),
                     None => Some((done, true)),
                 }

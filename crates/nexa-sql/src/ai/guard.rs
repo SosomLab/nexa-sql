@@ -196,6 +196,8 @@ pub(crate) fn classify_tool(name: &str, write: bool, arg: &str, dialect: Option<
         "run_query" => classify_sql(arg, dialect),
         // explain은 실행 계획만(실행하지 않음 · analyze 고정 끔).
         "explain" => Risk::Read,
+        // ★ 변수 설정(값·수식 · 사용자 11-12): 진입점이 분명하고 트랜잭션이 생기지 않는다 → 조회 수준(운영에서도 카드 없음).
+        "set_var" => Risk::Read,
         "set_setting" => {
             if is_protection_setting(arg) {
                 Risk::Protection
@@ -495,6 +497,25 @@ pub(crate) fn summarize(sql: &str, dialect: Option<Dialect>) -> (String, Vec<Str
     (kind, targets)
 }
 
+/// `EXEC` 본문이 **바인드 변수 대입**(`:이름 := 식`)인가 — 리터럴이든 식이든(식은 DB가 계산만 한다 · 트랜잭션 없음).
+/// 프로시저 호출(`pkg.proc(...)` · `:=` 없음) · 여러 문장(`;`) · 대입 대상이 바인드가 아닌 것은 아니다. 순수 판정.
+pub(crate) fn is_bind_assign(body: &str) -> bool {
+    let body = body.trim().trim_end_matches(';').trim();
+    if body.contains(';') {
+        return false;
+    }
+    let Some((lhs, rhs)) = body.split_once(":=") else {
+        return false;
+    };
+    let lhs = lhs.trim();
+    lhs.starts_with(':')
+        && lhs.len() > 1
+        && lhs[1..]
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '#'))
+        && !rhs.trim().is_empty()
+}
+
 /// 사전 조회 결과 글(열 머리 줄 + 값 줄)에서 행 수를 꺼낸다.
 pub(crate) fn parse_count(text: &str) -> Option<u64> {
     text.lines()
@@ -577,6 +598,7 @@ mod tests {
         assert_eq!(c("set_editor_text", true, ""), Risk::AppWrite);
         assert_eq!(c("explain", true, "delete from t"), Risk::Read);
         assert_eq!(c("search_objects", false, ""), Risk::Read);
+        assert_eq!(c("set_var", true, ""), Risk::Read);
     }
 
     /// 정책 표 전수(등급 7 × 운영 2 × Auto 2 × 자동 쓰기 2 = 56) + 불변식.
@@ -699,6 +721,16 @@ mod tests {
         let (k, t) = summarize("drop table if exists t9", None);
         assert_eq!(k, "DROP");
         assert_eq!(t, vec!["t9".to_string()]);
+    }
+
+    #[test]
+    fn bind_assign_is_recognized() {
+        assert!(is_bind_assign(":V := 'a'"));
+        assert!(is_bind_assign(":VAR3 := :VAR2 + 2;"));
+        assert!(!is_bind_assign("pkg.do_it(:V)"));
+        assert!(!is_bind_assign(":V := 1; delete from t"));
+        assert!(!is_bind_assign("x := 1"));
+        assert!(!is_bind_assign(":V :="));
     }
 
     #[test]
