@@ -217,6 +217,36 @@ impl App {
 
     /// ★ D-355(10-24): 변수 창 ⟳ — 사용 시 모드의 stale 수식을 지금 한 묶음으로 재계산(빈 스크립트 실행 + `refresh_vars` · 왕복 = 수식 묶음 1회).
     ///   DB로 가는 진입점이므로 문지기(`gate_pass`)를 지난다 · 막혔으면 상태줄 안내만.
+    /// ★ 변수를 수식으로 지정(변수 창 · 사용자 11-12): `EXEC :이름 := 수식`을 보통 실행 경로로 보낸다(결과·오류는 실행 카드와
+    /// Output에). 수식 안에서 `:` 없이 쓴 **이미 있는 변수 이름**은 `:이름`으로 바꿔 준다(`VAR2 + 5` → `:VAR2 + 5`).
+    /// 식 하나의 평가라 운영 2단 무장·보류 커밋은 건너뛴다(읽기 전용 검사·문지기는 그대로).
+    pub(crate) fn vars_set_formula(&mut self, name: &str, expr: &str) {
+        let name = name.trim().trim_start_matches(':');
+        let expr = expr.trim().trim_end_matches(';').trim();
+        if name.is_empty() || expr.is_empty() || expr.contains(';') {
+            self.sess.status = t(Msg::StVarFormulaBad).into();
+            self.redraw();
+            return;
+        }
+        if !self.sess.connected || !self.gate_open() {
+            self.sess.status = t(Msg::StVarFormulaNeedConn).into();
+            self.redraw();
+            return;
+        }
+        let known: Vec<String> = self
+            .vars_rows()
+            .iter()
+            .map(|r| r.name.to_ascii_uppercase())
+            .collect();
+        let expr = bind_bare_names(expr, &known);
+        self.prod_confirmed_once = true;
+        self.hold_skip_once = true;
+        self.run_text(format!("EXEC :{name} := {expr};"), 0, true);
+        self.prod_confirmed_once = false;
+        self.hold_skip_once = false;
+        self.project_touch();
+    }
+
     pub(crate) fn vars_refresh_now(&mut self) {
         let Some(pass) = self.gate_pass() else {
             return;
@@ -289,6 +319,12 @@ impl App {
                 // 프로필 층은 읽기 전용(docs/63 §11) — 바꾸려면 프로필(`nsql conn var`).
                 self.sess.status = t(Msg::StVarsProfileReadOnly).into();
                 self.redraw();
+                return;
+            }
+            // ★ 수식 지정(변수 창 `이름 := 수식` · 고른 줄에 `= 수식` · 11-12): 엔진으로 `EXEC :이름 := 수식`을 실행한다.
+            A::Set(name, text) if !name.starts_with('&') && text.trim_start().starts_with('=') => {
+                let expr = text.trim_start()[1..].trim().to_string();
+                self.vars_set_formula(&name, &expr);
                 return;
             }
             A::Set(name, text) if name.starts_with('&') => {
@@ -520,5 +556,65 @@ mod reveal_tests {
             true,
         );
         assert!(!plain.secret && plain.reveal.is_none() && plain.edit == "scott");
+    }
+}
+
+/// 수식 안에서 `:` 없이 쓴 낱말이 알려진 변수 이름(대문자 목록)이면 `:이름`으로(문자열 리터럴 안 · 이미 `:`가 붙은 것 ·
+/// 뒤에 `(`가 오는 함수 호출 · `.` 뒤의 낱말은 그대로). 순수 함수(시험).
+pub(crate) fn bind_bare_names(expr: &str, known: &[String]) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut out = String::with_capacity(expr.len() + 8);
+    let mut i = 0;
+    let mut in_str = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' {
+            in_str = !in_str;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if !in_str && (c.is_alphabetic() || c == '_') {
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '$' | '#'))
+            {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let prev = start.checked_sub(1).map(|p| chars[p]);
+            let next = chars[i..].iter().find(|c| !c.is_whitespace()).copied();
+            let bare = !matches!(prev, Some(':' | '.' | '&')) && next != Some('(');
+            if bare && known.iter().any(|k| k.eq_ignore_ascii_case(&word)) {
+                out.push(':');
+            }
+            out.push_str(&word);
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod formula_tests {
+    use super::bind_bare_names;
+
+    #[test]
+    fn bare_variable_names_get_a_colon() {
+        let known = vec!["VAR2".to_string(), "V1".to_string()];
+        assert_eq!(bind_bare_names("VAR2 + 5", &known), ":VAR2 + 5");
+        assert_eq!(bind_bare_names(":VAR2 + v1", &known), ":VAR2 + :v1");
+        // 문자열 안 · 함수 호출 · 한정 이름 · 모르는 낱말은 그대로.
+        assert_eq!(
+            bind_bare_names("'VAR2' || t.VAR2", &known),
+            "'VAR2' || t.VAR2"
+        );
+        assert_eq!(
+            bind_bare_names("NVL(VAR2, 0) + other", &known),
+            "NVL(:VAR2, 0) + other"
+        );
+        assert_eq!(bind_bare_names("V1(3)", &known), "V1(3)");
     }
 }
