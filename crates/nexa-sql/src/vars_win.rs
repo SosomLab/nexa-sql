@@ -216,6 +216,24 @@ impl VarsWin {
         self.window.is_some()
     }
 
+    /// ★ 버튼 hover 페이드 틱(사용자 11-12 "변수 창 버튼에 hover 표시가 없다"): 버튼의 hover는 페이드 애니메이션이라 틱이
+    /// 있어야 밝기가 바뀐다 — 이 창은 틱을 받지 않아 hover가 보이지 않았다. 바뀌었으면 true(호스트가 다시 그린다).
+    pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        if self.window.is_none() {
+            return false;
+        }
+        let mut changed = false;
+        for b in self.buttons() {
+            changed |= b.tick(now_ms);
+        }
+        changed
+    }
+
+    /// hover 페이드가 도는 중(호스트가 다음 프레임을 예약).
+    pub(crate) fn hover_animating(&mut self) -> bool {
+        self.window.is_some() && self.buttons().iter().any(|b| b.is_animating())
+    }
+
     pub(crate) fn is(&self, id: WindowId) -> bool {
         self.window.as_ref().is_some_and(|w| w.id() == id)
     }

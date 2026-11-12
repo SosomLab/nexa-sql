@@ -368,6 +368,9 @@ impl ApplicationHandler<Wake> for App {
         if self.log_win.tick(now_ms) {
             self.log_win.redraw();
         }
+        if self.vars_win.tick(now_ms) {
+            self.vars_win.redraw();
+        }
         if self.colors_win.tick(now_ms) {
             self.colors_win.redraw();
         }
@@ -505,6 +508,7 @@ impl ApplicationHandler<Wake> for App {
             || self.conn_win.tooltip_pending()
             || self.grid.hover_animating()
             || self.conn_win.hover_animating()
+            || self.vars_win.hover_animating()
             || self.colors_win.animating()
             || self.keys_win.animating()
             || self.prefs_win.animating()
