@@ -2587,6 +2587,11 @@ impl App {
             if prod {
                 card.push('\n');
                 card.push_str(t(Msg::AiGuardProd));
+                // 대기 안내는 카드 안에도(상태줄 글은 다른 상태에 덮일 수 있다 · 협업 관찰 11-12).
+                let secs =
+                    self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as f32 / 1000.0;
+                card.push('\n');
+                card.push_str(&tf(Msg::AiGuardWait, &[&format!("{secs:.0}")]));
             }
             card.push('\n');
             card.push_str(&redact(&sql));
