@@ -136,7 +136,7 @@
 - ★ **확인 질문 규칙(사용자 11-01 · 항상 준수 · D-444 · 원문 = 이 줄 · CLAUDE.md §3 = 요지)**: 사용자에게 확인이 필요한 사항은 **Action Item 1개씩 최대한 세분화**해서 묻는다 — ① **질문 하나 = 결정 하나**(여러 결정을 한 질문·한 선택지 묶음에 섞지 않는다) ② 항목마다 **상세 설명**: 무엇을 정하는지 · 왜 지금 물어야 하는지 · 선택지별로 무엇이 달라지는지(결과) · 위험·되돌리기 비용 ③ 권장안이 있으면 **첫 선택지 + "(Recommended)"** ④ 항목이 많으면 한 번에 몰지 않고 **여러 차례로** 나눠 묻는다(AskUserQuestion은 한 번에 4문항까지) ⑤ 설정만으로 충족되는지 먼저 본다(설정 먼저 규칙) · 데이터 보호·실행 통제 결함은 묻지 않고 고친다. 계기 = 11-01 이 세션에서 결정 4개를 한 질문에 묶어 물음(102 §12).
 - **진행 보고 규칙**(원문 = CLAUDE.md §3 둘째 줄): 지시를 받으면 즉시 진행 중 목록에 넣어 보여 주고 · 항목이 끝날 때마다 중간 보고 · 최종 보고에 **"충돌·조정"** 절(무엇과 무엇이 부딪쳤나 · 어느 쪽을 따랐나 = 기본은 나중 지시 · 그래서 무엇을 되돌렸나).
 - **git·문서 트랜잭션 = [16 §4-1](16-doc-git-conventions.md)(원문)** — push는 사용자가 말할 때만 · `git add <파일>`만(`-A`·`.` 금지) · 커밋 끝 `Co-Authored-By:`는 세션이 안내하는 줄 그대로(지어내지 않는다) · 한 작업 = 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES) · 끝나면 STATUS 맨 위 "다음 세션 시작점"을 본다.
-- **테스트 실행 = Debug(full) · Release(lite)도 함께 빌드**(사용자 병행 시험 · D-363 · 절차·함정 = §3) · 재시작 인스턴스 = 실제 설정([102 §5-5](102-collab-session-operation.md)).
+- **테스트 실행 = Debug(full) · Release(lite)는 사용자가 명시 요청했을 때만 Debug 재시작 뒤에**(사용자 11-12 빌드 주기 단축 · 종전 = 매번 함께 빌드(D-363 병행 시험) · 연달아 온 수정은 두세 건 묶어 한 번에 빌드·재시작 · 절차·함정 = §3) · 재시작 인스턴스 = 실제 설정([102 §5-5](102-collab-session-operation.md)).
 
 - ★ **자동 진행 중 확인 질문(사용자 11-02)**: 목록을 순차 진행하는 동안 확인이 필요한 사항이 생기면 **추천안을 포함해 제시**하고(결정 하나씩 · 선택지별 결과·위험 · D-444 그대로), **각 질문당 1분 안에 답이 없으면 보수적인 추천안으로 계속 진행**한다(되돌릴 수 있는 쪽 · 삭제·외부 영향은 "하지 않음"이 보수적) — 뒤늦게 다른 답이 오면 그때 되돌리거나 바꾼다. 도구 질문 창(AskUserQuestion)은 시간 제한이 없으므로 이 규칙은 **글로 묻고 추천대로 진행**하는 형태로 적용하고, 작업이 멈춰도 되는 결정(되돌릴 수 없는 것)만 질문 창으로 막아 묻는다.
 
@@ -288,7 +288,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 
 ★ **Windows PC 통합 시험 = `NSQL_ORACLE_DRIVERS=thin`을 붙인다(10-26 139차 win)** — 이 PC에는 Oracle Instant Client가 없어 기본 명령은 Oracle OCI 시험 5건이 `DPI-1047: Cannot locate a 64-bit Oracle Client library`로 실패한다(OCI+Thin 둘 다 도는 기본값) → `NSQL_ORACLE_DRIVERS=thin cargo test -p nsql-drivers --test integration -- --test-threads=1`(Oracle 5/5 ✓ · 로컬 프로필 = `NSQL_PG_PROFILE=REPO_DEV` · `NSQL_ORACLE_PROFILE=APPDB_DEV` · `NSQL_MSSQL_PROFILE=APPDB_MS_DEV` · 사내망 = VPN).
 
-★ **3-OS(맥 포함 · 사용자 10-26 밤 · D-363) PC Release = lite 판 · Debug = 통합(full)(Linux 10-26 · Windows 10-26 오후 139차 · macOS 10-26 밤 140차)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로.
+★ **3-OS(맥 포함 · 사용자 10-26 밤 · D-363) PC Release = lite 판 · Debug = 통합(full)(Linux 10-26 · Windows 10-26 오후 139차 · macOS 10-26 밤 140차)** — `target/release/nexa-sql`·`nsql`은 lite(`CARGO_TARGET_DIR=target/lite cargo build --release --no-default-features --features nexa-sql/driver-oracle-oci,nsql-cli/driver-oracle-oci` 뒤 `target/lite/release/*`를 복사 · 종전 내장판 = `target/release/*.full` 보존) → [P0] Release 재빌드는 **lite 옵션으로**(기본 `cargo build --release`는 내장판으로 되돌림) · Debug는 내장판 그대로. ★ **11-12부터 Release 빌드 = 사용자 명시 요청 때만**(직접 요청 · 설치 경로 복사 요청 · 릴리스 작업 · Debug 재시작 뒤 · §2-1 · [102 §5-5](102-collab-session-operation.md)).
 
 ⚠ **lite 판 Release의 함정** — 이 PC들에서 기본 `cargo build --release`를 돌리면 `target/release`가 다시 **full 판으로 덮인다** → Release를 다시 만들 때는 반드시 lite 절차(`CARGO_TARGET_DIR=target/lite …` 빌드 뒤 `target/release`의 기존 판을 `*.full`로 보존하고 lite 복사)로.
 
@@ -390,7 +390,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 | 로컬 메모리(요지) | 이제 원문이 있는 곳 |
 |---|---|
 | 답은 한글로 · 진행 보고 | §2-1 · CLAUDE.md §3 |
-| Debug 실행 + Release(lite) 빌드 | §2-1 · §3 |
+| Debug 실행 · Release(lite)는 요청 때만 | §2-1 · §3 |
 | 포커스 링 · 마우스 라우팅 · hover | [claude-ui-rules](claude-ui-rules.md) |
 | 형제 저장소 SSH 별칭 | CLAUDE.md §1 |
 | GUI 자체 캡처 · 헤드리스 | §3 · §4 · `scripts/` |
