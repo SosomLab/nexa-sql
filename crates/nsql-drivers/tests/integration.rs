@@ -385,6 +385,38 @@ fn oracle_session_variables_refcursor_and_dbms_output() {
     });
 }
 
+/// ★ 11-12(사용자 실기 · Oracle 운영): 사용 시 모드(`vars.expand_at = use`)에서 `EXEC :B := :A + 2`가 **수식으로 기억**되고
+/// 실행 끝 `Vars` 스냅숏에 실려야 한다(변수 창 Formula 열 · AI `get_var` kind = formula). OUT 흡수 뒤에도 남아야 한다.
+#[test]
+fn oracle_exec_bind_formula_is_remembered_in_use_mode() {
+    for_each_oracle(|mut r| {
+        r.engine.settings.expand_at_use = true;
+        let ev = run(&mut r, "EXEC :NF_A := 5\nEXEC :NF_B := :NF_A + 2\n");
+        assert_eq!(
+            r.engine
+                .vars
+                .formula_of("NF_B")
+                .map(|f| f.text.clone())
+                .as_deref(),
+            Some(":NF_A + 2"),
+            "{ev:#?}"
+        );
+        let local = ev
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                RunEvent::Vars { local, .. } => Some(local.clone()),
+                _ => None,
+            })
+            .expect("Vars 이벤트");
+        let b = local
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case("NF_B"))
+            .expect("NF_B");
+        assert_eq!(b.formula.as_deref(), Some(":NF_A + 2"), "{local:#?}");
+    });
+}
+
 #[test]
 fn oracle_plsql_block_out_binds_and_dml() {
     for_each_oracle(|mut r| {

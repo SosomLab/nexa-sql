@@ -1124,8 +1124,27 @@ impl App {
                 RunEvent::Print { .. } | RunEvent::VarList { .. } => {}
                 // 실행 전에 값이 필요하다(D-137) — 입력 창은 이벤트 루프에서 연다(`about_to_wait`). 워커는 답을 기다린다.
                 RunEvent::InputNeeded { needs } => {
-                    self.sess.status = t(Msg::WinInputs).into();
-                    self.input_pending = Some((self.sess.id, needs));
+                    // ★ AI 도구의 숨김 실행(11-12 협업 V1): 값 입력 창을 띄우면 사용자는 영문을 모르고 도구는 답 없이 멈춘다 →
+                    //   실행을 취소하고 **없는 변수 이름**을 오류로 돌려준다(어시스턴트가 set_var로 먼저 만들거나 사용자에게 묻는다).
+                    if self.ai.pending.as_ref().is_some_and(|p| p.silent) {
+                        let names: Vec<String> = needs.iter().map(|n| n.name.clone()).collect();
+                        self.sess.worker.input(worker::InputReply::Cancel);
+                        self.ai.impact_wait = None;
+                        if let Some(mut p) = self.ai.pending.take() {
+                            if let Some(r) = p.reply.take() {
+                                let _ = r.send(crate::ai::ToolReply {
+                                    output: format!(
+                                        "not executed: these variables have no value yet: {} - set them first with set_var, or ask the user for the values",
+                                        names.join(", ")
+                                    ),
+                                    ok: false,
+                                });
+                            }
+                        }
+                    } else {
+                        self.sess.status = t(Msg::WinInputs).into();
+                        self.input_pending = Some((self.sess.id, needs));
+                    }
                 }
                 // ★ 변수 표가 바뀌었다(실행당 한 번 · D-135): 탭 층 = 실행한 탭의 표 · 공유 층 = 이 세션의 표 · 로그에 바뀐 값(비밀은 가림).
                 RunEvent::Vars {

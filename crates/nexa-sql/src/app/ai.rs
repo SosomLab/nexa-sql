@@ -3523,15 +3523,8 @@ impl App {
                             .iter()
                             .any(|i| matches!(i.kind, nsql_script::ItemKind::Command(_)));
                     // 변수 대입·클라이언트 명령만이면 운영 보류 커밋(블록 보류)을 건너뛴다 — 트랜잭션이 없다(사용자 11-12).
-                    let assign_only = !items.is_empty()
-                        && items.iter().all(|i| {
-                            sessions::is_client_only(&i.text)
-                                || matches!(
-                                    nsql_script::command::parse_command(&i.text),
-                                    Ok(Some(nsql_script::command::Command::Exec { ref body }))
-                                        if ai::guard::is_bind_assign(body)
-                                )
-                        });
+                    let texts: Vec<String> = items.iter().map(|i| i.text.clone()).collect();
+                    let assign_only = sessions::assign_only_items(&texts);
                     if assign_only {
                         self.hold_skip_once = true;
                     }

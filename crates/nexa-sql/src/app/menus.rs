@@ -683,6 +683,23 @@ impl App {
                     }
                 }
             }
+            // ★ Output 탭이 활성이고 결과 영역에 포커스면 복사·전체 선택은 Output의 글에(종전엔 숨은 자리표시 그리드로 갔다 · 11-12).
+            "edit.copy" if self.focus == Focus::Grid && self.panel.output_active() => {
+                let text = self
+                    .panel
+                    .output_active_mut()
+                    .map(|o| o.copy_text())
+                    .unwrap_or_default();
+                if !text.is_empty() && !clipboard::write_text(&text) {
+                    self.sess.status = t(Msg::ErrClipboard).into();
+                }
+            }
+            "edit.select_all" if self.focus == Focus::Grid && self.panel.output_active() => {
+                if let Some(o) = self.panel.output_active_mut() {
+                    o.select_all();
+                }
+                self.redraw();
+            }
             "edit.copy" => self.clip_action(EditCtxAction::Copy),
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
             "edit.select_all" => {

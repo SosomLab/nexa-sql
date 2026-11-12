@@ -113,6 +113,25 @@ impl OutputView {
     }
 
     /// 두 번 클릭으로 고른 오류 줄(편집기 줄 번호 · 1부터).
+    /// ★ 전체 선택(Ctrl+A · 사용자 11-12 "Output에서 Ctrl+A·Ctrl+C가 안 된다"): 호스트의 `edit.select_all`이 Output 활성일 때 부른다.
+    pub(crate) fn select_all(&mut self) {
+        let mut inv = Invalidations::default();
+        let len = self.body.text().chars().count();
+        self.body.select_range(0, len, &mut inv);
+    }
+
+    /// 복사할 글(Ctrl+C): 선택 영역 · 없으면 전체(포커스 여부와 무관).
+    pub(crate) fn copy_text(&self) -> String {
+        let text = self.body.text();
+        match self.body.selection() {
+            Some((a, b)) if a != b => {
+                let (lo, hi) = (a.min(b), a.max(b));
+                text.chars().skip(lo).take(hi - lo).collect()
+            }
+            _ => text,
+        }
+    }
+
     /// 우클릭 메뉴에서 고른 호스트 명령(1회성).
     pub(crate) fn take_cmd(&mut self) -> Option<String> {
         self.cmd.take()

@@ -1160,6 +1160,36 @@ pub(crate) fn is_client_only(sql: &str) -> bool {
     )
 }
 
+/// ★ `EXEC :이름 := 식` 꼴의 **바인드 변수 대입**인가(리터럴이면 클라이언트가 처리 · 식이면 DB가 식만 계산 — 어느 쪽도
+/// 데이터를 바꾸지 않고 트랜잭션이 없다 · 사용자 11-12 "변수 설정은 운영에서도 SELECT 수준 점검"). 프로시저 호출 · 여러 문장은 아니다.
+pub(crate) fn is_bind_assign_exec(sql: &str) -> bool {
+    let Ok(Some(Command::Exec { body })) = nsql_script::command::parse_command(sql) else {
+        return false;
+    };
+    let body = body.trim().trim_end_matches(';').trim();
+    if body.contains(';') {
+        return false;
+    }
+    let Some((lhs, rhs)) = body.split_once(":=") else {
+        return false;
+    };
+    let lhs = lhs.trim();
+    lhs.starts_with(':')
+        && lhs.len() > 1
+        && lhs[1..]
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '#'))
+        && !rhs.trim().is_empty()
+}
+
+/// ★ 실행할 항목이 **전부** 변수 대입·클라이언트 명령인가 — 그러면 운영 2단 확인·보류 커밋을 건너뛴다(조회와 같은 등급).
+pub(crate) fn assign_only_items(items: &[String]) -> bool {
+    !items.is_empty()
+        && items
+            .iter()
+            .all(|i| is_client_only(i) || is_bind_assign_exec(i))
+}
+
 /// ★ 실행이 **필요 없는** 항목인가(10-01 · 사용자 "운영 여부보다 실행 필요 판단이 먼저"): `CONNTYPE x`/`SET CONNTYPE x`의
 /// 값이 지금 유형과 같으면 바꿀 것이 없다(모르는 값·다른 값은 실행해서 오류/변경을 낸다). 순수 판정.
 pub(crate) fn is_noop_item(sql: &str, cur_env: Option<nsql_script::ConnEnv>) -> bool {

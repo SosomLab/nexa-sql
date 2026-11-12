@@ -326,8 +326,11 @@ impl App {
         // 운영 접속 + 변경 문장(서버로 가는 것) = 2단 실행(같은 본문을 3초 안에 다시 실행하면 진행 · 앱의 2단 확인 관례 · docs/56 §4).
         let prod = cur_env == Some(nsql_script::ConnEnv::Prod);
         // ★ 운영 보류 커밋(114 §5 · D-295~D-299 · 10-15): 운영 + `tx.prod_hold` → 이번 실행은 명시 트랜잭션 + 보류(러너 정책).
-        let hold_on =
-            prod && self.settings.flag("tx.prod_hold") && !std::mem::take(&mut self.hold_skip_once);
+        // ★ 변수 대입·클라이언트 명령만의 실행(`EXEC :V := 식` · `VAR` · `DEFINE` …)은 데이터를 바꾸지 않는다 → 운영 2단 확인과
+        //   보류 커밋을 건너뛴다(사용자 11-12 "탭에서 실행해도 권한 확인이 뜨고 변수도 바로 안 바뀐다").
+        let assign_only = sessions::assign_only_items(&needed);
+        let hold_skip = std::mem::take(&mut self.hold_skip_once);
+        let hold_on = prod && self.settings.flag("tx.prod_hold") && !hold_skip && !assign_only;
         // ★ 보류 중 다른 탭의 변경·DDL(D-298) · 열린 트랜잭션 + 암묵 커밋 DDL(D-304 경계 가드)은 서버로 보내지 않는다.
         if let Some(msg) = self.run_tx_gate(&split_items(&src, self.sess.dialect)) {
             self.sess.status = msg.clone();
@@ -337,7 +340,7 @@ impl App {
             return;
         }
         // ★ 삭제 창처럼 **이미 모달 2단을 거친** 호출 · 백업 뒤 재진입은 건너뛴다(한 번 · 114 G6 · 10-15).
-        let pre_confirmed = std::mem::take(&mut self.prod_confirmed_once);
+        let pre_confirmed = std::mem::take(&mut self.prod_confirmed_once) || assign_only;
         // 114 §9-2 A(권장): 보류가 대신하는 DML은 2단 재실행을 생략 · DDL·블록은 유지(되돌릴 수 없는 것).
         let e3_items = sessions::e3_items(hold_on, &needed);
         let confirm_window = Duration::from_millis(
