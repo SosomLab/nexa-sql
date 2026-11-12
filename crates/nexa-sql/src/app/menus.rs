@@ -1950,6 +1950,30 @@ impl App {
     /// (id, 표시 라벨 = 현재 언어, 숨은 검색 키 = **모든 언어**의 `메뉴: 항목` · 사용자 10-13 "영어 이름·기능명으로도 · 영어 화면에서 한글로도").
     /// i18n 표는 정적(바이너리 안)이라 추가 적재 없음 · 명령 ≈ 120개 × 언어 수 = 수십 KB.
     /// 보기 토글 항목의 **지금 상태**(팔레트 "보이기/숨기기" 라벨용) — `commands::PALETTE`의 `Toggle` 행과 짝.
+    /// 팔레트의 토글·스위치 명령이면 지금 상태(켜짐/열림) — 아니면 None(AI 도구 `run_command`가 상태를 먼저 본다 · 11-12).
+    pub(crate) fn ai_toggle_state(&self, id: &str) -> Option<bool> {
+        let toggle = crate::app::commands::PALETTE.iter().any(|c| {
+            c.id == id
+                && matches!(
+                    c.kind,
+                    crate::app::commands::PalKind::Toggle | crate::app::commands::PalKind::Switch
+                )
+        });
+        toggle.then(|| self.view_toggle_state(id))
+    }
+
+    /// 이미 열린 도구 창을 앞으로(토글 명령을 다시 누르지 않고).
+    pub(crate) fn ai_raise_window(&self, id: &str) {
+        let w = match id {
+            "view.variables" => self.vars_win.window(),
+            "view.log" => self.log_win.window(),
+            _ => None,
+        };
+        if let Some(w) = w {
+            winfocus::focus(w);
+        }
+    }
+
     fn view_toggle_state(&self, id: &str) -> bool {
         match id {
             "view.explorer" => self.explorer.is_visible(),

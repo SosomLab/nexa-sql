@@ -413,6 +413,8 @@ impl App {
         }
         let local = self.tab_vars.get(&tab).cloned().unwrap_or_default();
         self.vars_persist_save(tab, &local);
+        // 변수 창(· AI 도구 `set_var`)에서 고친 것도 프로젝트 자동 저장 대상(무제 탭의 변수 = 프로젝트 파일 · 11-12).
+        self.project_touch();
         self.vars_win.redraw();
     }
 

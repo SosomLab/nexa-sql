@@ -1156,6 +1156,12 @@ impl App {
                     );
                     self.vars_win.redraw();
                     self.vars_persist_save(self.sess.run_editor, &local);
+                    // ★ 변수 표가 바뀌었으면 프로젝트 자동 저장 대상(사용자 11-12 "변수가 다음 실행 때 없어진다"): 무제 탭의 변수는
+                    //   프로젝트 파일에 담기는데(T-153 ③), 변경 감시(`project_change_gen`)가 변수를 보지 않아 변수만 바꾸면 저장되지
+                    //   않았다 — 앱이 정상 종료되지 않으면(강제 종료·재빌드 재시작) 사라졌다.
+                    if self.tab_vars.get(&self.sess.run_editor) != Some(&local) {
+                        self.project_touch();
+                    }
                     self.tab_vars.insert(self.sess.run_editor, local);
                     self.sess.shared_vars = shared;
                     if !line.is_empty() {

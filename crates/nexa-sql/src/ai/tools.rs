@@ -25,9 +25,12 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "run_command",
-        desc: "Run a command palette command by id (e.g. view.word_wrap, edit.format, view.explorer).",
+        desc: "Run a command palette command by id (e.g. view.word_wrap, edit.format, view.explorer). Commands that show/hide a window or switch an option are toggles: the app checks the current state first - with state=on (default) an already open window is only brought to the front, never closed.",
         write: true,
-        props: &[("id", "string", "Command id from list_commands", true)],
+        props: &[
+            ("id", "string", "Command id from list_commands", true),
+            ("state", "string", "For toggle commands: on (default - make sure it is shown/enabled) | off | toggle", false),
+        ],
     },
     Tool {
         name: "get_setting",
@@ -73,11 +76,12 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "set_var",
-        desc: "Set a variable's current value directly in the app (same as editing it in the Variables window; nothing is sent to the database). `value` is the literal text; null=true sets NULL. Creates the variable when it does not exist. Use this when the user asks to change a variable's value - do not edit the script and do not run EXEC.",
+        desc: "Set a variable's current value directly in the app (same as editing it in the Variables window; nothing is sent to the database). `value` is the literal text; null=true sets NULL. Creates the variable when it does not exist. Give `formula` (not value) when the user wants an expression or a variable that depends on other variables. Use this when the user asks to set or change a variable - do not edit the script, do not run EXEC yourself and do not tell the user to do it by hand.",
         write: true,
         props: &[
             ("name", "string", "Variable name (without ':'; prefix '&' for a substitution variable)", true),
-            ("value", "string", "New value as text", false),
+            ("value", "string", "New value as text (a literal)", false),
+            ("formula", "string", "Instead of value: an expression such as ':VAR2 + 2' - the app runs EXEC :NAME := <formula>, so the variable becomes a formula that follows the variables it depends on", false),
             ("null", "boolean", "Set NULL instead of a value", false),
         ],
     },

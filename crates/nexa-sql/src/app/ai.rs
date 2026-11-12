@@ -53,6 +53,8 @@ pub(crate) struct PendingTool {
     /// ★ 숨김 실행(11-12 사용자 "과정에 필요한 쿼리는 자체적으로 수행"): AI 도구 `run_query`/`explain`의 결과는 글로만 잡고
     /// 결과 그리드·결과 탭에는 싣지 않는다(`on_ev_result_set`이 본다).
     pub silent: bool,
+    /// 끝나면 이 변수의 상태(`get_var`)를 답으로(도구 `set_var`의 수식 지정 · 11-12).
+    pub var_after: Option<String>,
 }
 
 #[derive(Default)]
@@ -1312,6 +1314,7 @@ impl App {
             max_rows: 8,
             wait_editor: None,
             silent: false,
+            var_after: None,
         });
         self.ai.run_block = Some((msg, block));
         self.ai.capture = None;
@@ -2575,7 +2578,12 @@ impl App {
                 return out;
             }
             "set_var" => {
-                if matches!(g("null").as_str(), "true" | "1") {
+                if !g("formula").trim().is_empty() {
+                    tf(
+                        Msg::AiDoSetVarFormula,
+                        &[&g("name"), &redact(&g("formula"))],
+                    )
+                } else if matches!(g("null").as_str(), "true" | "1") {
                     tf(Msg::AiDoSetVarNull, &[&g("name")])
                 } else {
                     tf(Msg::AiDoSetVar, &[&g("name"), &redact(&g("value"))])
@@ -2672,6 +2680,7 @@ impl App {
                     max_rows: 1,
                     wait_editor: None,
                     silent: true,
+                    var_after: None,
                 });
                 self.ai.impact_wait = Some((name, input, reply, two));
                 self.run_text_whole(q);
@@ -2941,8 +2950,37 @@ impl App {
                 if crate::app::commands::PALETTE.iter().any(|c| c.id == id)
                     || id.starts_with("view.")
                 {
-                    self.menu_action(&id);
-                    ok(format!("ran {id}"))
+                    // ★ 토글 명령(창 보이기·옵션 켜기)은 지금 상태를 먼저 본다(사용자 11-12 "이미 열려 있는지 확인") — 기본 state=on:
+                    //   이미 켜져/열려 있으면 다시 누르지 않는다(누르면 닫힌다) · 열린 창은 앞으로만.
+                    match self.ai_toggle_state(&id) {
+                        Some(cur) => {
+                            let want = match g("state").as_str() {
+                                "off" => false,
+                                "toggle" => !cur,
+                                _ => true,
+                            };
+                            if cur == want {
+                                if want {
+                                    self.ai_raise_window(&id);
+                                }
+                                ok(format!(
+                                    "{id} is already {} - left as it is{}",
+                                    if want { "on/open" } else { "off/closed" },
+                                    if want { " (brought to the front)" } else { "" }
+                                ))
+                            } else {
+                                self.menu_action(&id);
+                                ok(format!(
+                                    "{id} is now {}",
+                                    if want { "on/open" } else { "off/closed" }
+                                ))
+                            }
+                        }
+                        None => {
+                            self.menu_action(&id);
+                            ok(format!("ran {id}"))
+                        }
+                    }
                 } else {
                     err(format!("unknown command {id}"))
                 }
@@ -3019,6 +3057,56 @@ impl App {
                 Ok(s) => ok(redact(&s)),
                 Err(e) => err(e),
             },
+            "set_var" if !g("formula").trim().is_empty() => {
+                // ★ 수식 지정(사용자 11-12 "VAR3을 VAR2 + 2로 등록"): `EXEC :이름 := 수식`을 엔진으로 실행 — 변수 창에 수식 변수로 남는다.
+                let name_ = g("name").trim().trim_start_matches(':').to_string();
+                let formula = g("formula").trim().trim_end_matches(';').to_string();
+                let valid = !name_.is_empty()
+                    && name_.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && !formula.contains(';');
+                if !valid {
+                    err("bad variable name or formula (one expression, no ';')".into())
+                } else if self.ai_view_active() {
+                    err("the chat tab is active; switch to a SQL editor tab first".into())
+                } else if !self.sess.connected || self.ai.pending.is_some() || !self.gate_open() {
+                    err(format!(
+                        "cannot evaluate the formula now: {}",
+                        if self.sess.connected {
+                            "the session is busy"
+                        } else {
+                            "not connected (a formula is evaluated by the database)"
+                        }
+                    ))
+                } else {
+                    self.ai.capture = None;
+                    self.ai.pending = Some(PendingTool {
+                        reply: Some(reply),
+                        attach_label: None,
+                        since: Instant::now(),
+                        max_rows: 1,
+                        wait_editor: None,
+                        silent: true,
+                        var_after: Some(name_.clone()),
+                    });
+                    // 수식 평가 = 식 하나(사용자가 카드로 승인) → 운영 2단 무장·보류를 건너뛴다.
+                    self.prod_confirmed_once = true;
+                    self.hold_skip_once = true;
+                    self.run_text(format!("EXEC :{name_} := {formula};"), 0, true);
+                    self.prod_confirmed_once = false;
+                    self.hold_skip_once = false;
+                    if !self.sess.busy {
+                        if let Some(mut p) = self.ai.pending.take() {
+                            if let Some(r) = p.reply.take() {
+                                let _ = r.send(err(format!(
+                                    "not executed: {}",
+                                    redact(&self.sess.status)
+                                )));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
             "set_var" => {
                 let null = matches!(g("null").as_str(), "true" | "1");
                 match self.ai_var_set(&g("name"), &g("value"), null) {
@@ -3405,6 +3493,7 @@ impl App {
                     max_rows,
                     wait_editor: None,
                     silent: true,
+                    var_after: None,
                 });
                 // ★ 도구 조회 = 숨김 실행(결과는 AI에게만 · 그리드·결과 탭은 그대로) — 사용자에게 보일 최종 조회는 턴 끝의
                 //   자동 표시(`ai.show_result`)나 코드 블록 ▦가 맡는다.
@@ -3465,6 +3554,7 @@ impl App {
                             max_rows,
                             wait_editor: Some(before),
                             silent: false,
+                            var_after: None,
                         });
                         return;
                     }
@@ -3538,13 +3628,20 @@ impl App {
             if self.sess.run_had_err {
                 Some((redact(&self.sess.status), false))
             } else {
-                Some((
-                    self.ai
-                        .capture
-                        .take()
-                        .unwrap_or_else(|| redact(&self.sess.status)),
-                    true,
-                ))
+                let done = self.ai.capture.take().unwrap_or_else(|| {
+                    // 결과 집합이 없는 실행(변수 대입 · DDL …) — "실행 중…" 같은 지난 상태 글 대신 완료를 알린다.
+                    let st = redact(&self.sess.status);
+                    if st.trim_end().ends_with('…') || st.trim().is_empty() {
+                        "completed (no result set)".to_string()
+                    } else {
+                        format!("completed: {st}")
+                    }
+                });
+                match p.var_after.as_deref().map(|n| self.ai_var_get(n)) {
+                    Some(Ok(now)) => Some((format!("set.\n{now}"), true)),
+                    Some(Err(e)) => Some((e, false)),
+                    None => Some((done, true)),
+                }
             }
         } else if timeout {
             Some(("query timed out".into(), false))
@@ -4015,6 +4112,7 @@ impl App {
                         max_rows,
                         wait_editor: None,
                         silent: false,
+                        var_after: None,
                     });
                     if let Some(s) = self.ai_cur_mut() {
                         s.rows_allowed = true;

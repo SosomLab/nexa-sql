@@ -1494,7 +1494,7 @@ impl App {
     }
 
     /// 작업 환경이 바뀌었다(탭 · 폴더) → 2초 뒤 저장(자동 저장 켬 · 프로젝트 열림).
-    fn project_touch(&mut self) {
+    pub(crate) fn project_touch(&mut self) {
         if self.project.is_open() {
             // 최초 변경 시각은 옮기지 않는다(사용자 09-28 "최초 트리거 + N초에 저장").
             if self.project_touch_at.is_none() {
