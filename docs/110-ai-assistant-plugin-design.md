@@ -479,3 +479,70 @@
 - **자동 표시 검증**: §16-9의 최종 조회문이 실행 오류면 포맷한 답을 원문으로 되돌리고 원문을 다시 실행 · 포맷과 무관한 오류는 대본에 표시.
 - **빈 세션 재사용**(`ai_new_session`): 같은 제공자에 대화 없는 세션이 있으면 새로 만들지 않고 그것으로 간다 — 분할 창이 탭마다 빈 "(new)"를 만들던 것과 "지우면 곧바로 새 빈 세션이 생겨 삭제가 안 되는 것처럼 보이던 것"을 함께 해소.
 - **헤드리스 판정(협업 · [journal 11-12 §14](journal/2026-11-12.md))** = 도구 2종 ✓ · 탭 3개 분할 창 [+] = 세션 1 ✓ · 패널 [+] 두 번 = 2 ✓ · 현재 세션 삭제 1 → 0 ✓.
+
+## 17. 데이터 보호 하네스(2026-11-12 오후 · 사용자 "요청과 실행 사이의 제어 · 운영은 보호 우선 · 대량 삭제/수정/테이블 제거는 최소 2단계" · e3b675bc)
+
+> 원문 = `crates/nexa-sql/src/ai/guard.rs` 머리 주석(순수 계층 · 시험 = 정책 표 전수 56 + 불변식 4). 이 절은 요약·판정 기록.
+
+### 17-1. 계층
+
+```text
+AI 도구 호출(run_query · set_setting · run_command …)
+  │ ① 분류  classify_tool / classify_sql → Risk
+  │         Read < AppWrite < Write < Bulk < Destructive < TxEnd < Protection(여러 문장 = 가장 높은 것)
+  │ ② 문맥  Ctx { prod(ConnEnv::Prod) · auto(세션 Auto) · auto_write(ai.guard_auto_write=dml) }
+  │ ③ 판정  decide(Risk, Ctx) → Allow | Card | TwoStage | Deny
+  ▼
+게이트 1 = 승인 카드(운영 ⛔ 줄 · 등급 ▲ 줄 · WHERE 없음 ⚠ · SQL 본문)
+  ▼ (TwoStage만)
+게이트 2 = 영향 확인 카드 "2단계 중 2단계 — 영향 확인 · 영향 행 수: N"(impact_count_sql = 실행 전 SELECT COUNT(*))
+          운영 = run.prod_confirm_ms(기본 3000) 지나야 [허용]이 먹음
+  ▼
+실행 = 사람 경로와 같은 run_text_in(보류 커밋 · DDL 가드 · 백업 그대로) · 게이트 한 곳 = ai_tool_request
+  ▼
+커밋 = 운영은 사람만(보류 커밋 안내 "N행이 커밋되지 않았습니다")
+```
+
+### 17-2. 정책 표(`decide`)
+
+| 등급 | 예 | 비운영 | 운영 |
+|---|---|---|---|
+| Read | SELECT · explain | 바로 실행 | 바로 실행 |
+| AppWrite | 편집기 글 · 일반 설정 · 접속 · 확장 | Auto면 바로 · 아니면 카드 | 카드 |
+| Write | INSERT · WHERE 있는 UPDATE/DELETE · CREATE · COMMENT | `ai.guard_auto_write=dml`이면 바로 · 아니면 카드 | 카드(자동 승인 안 닿음) |
+| Bulk | WHERE 없는 UPDATE/DELETE · MERGE · 블록/EXEC · 스크립트 명령 · 영향 행 ≥ `ai.guard_bulk_rows`(1000) | 2단계 | 2단계 |
+| Destructive | DROP · TRUNCATE · ALTER · RENAME · CREATE OR REPLACE · GRANT/REVOKE | 2단계 | 2단계 |
+| TxEnd | COMMIT · ROLLBACK | 카드 | **거부** |
+| Protection | 보호 설정(`run.prod_*` · `tx.*` · `backup.*` · `ai.guard_*` · `ai.auto` · `ai.codex_auto` · `ai.permission_mode` · `ai.enabled` · `ai.max_rows`) · 실행 메뉴 명령(`run.*` · `tx.*` · `hold.*` · `conn.*` · `sess.*` · `grid.apply*` · `import.*`) | 카드(Auto여도) | **거부** |
+
+### 17-3. 운영 불변식 4(시험으로 고정)
+
+1. 운영에서 데이터를 바꾸는 요청은 절대 바로 실행되지 않는다.
+2. 대량·파괴적 변경은 어디서나 2단계.
+3. 운영의 트랜잭션 끝·보호 변경은 거부(사람만).
+4. 보호 변경·트랜잭션 끝은 어떤 자동 승인으로도 풀리지 않는다.
+
+### 17-4. 설정 2
+
+- `ai.guard_auto_write` = off(기본) / dml — 비운영의 일반 변경(Write) 자동 승인. 운영에는 닿지 않는다.
+- `ai.guard_bulk_rows` = 1000(기본) — 영향 행 수가 이 이상이면 Write를 Bulk로 올려 2단계.
+
+### 17-5. 닫은 구멍(e3b675bc · 조사 보고 1·2·3·4·6·7·9)
+
+- 보호 장치에 막힌 실행(읽기 전용 프로필 · 백업 대기 등)을 **성공으로 보고**하던 것 → 실패("not executed: …")로.
+- Auto에서 `set_setting`·`run_command`가 카드 없이 실행되던 것 → 보호 키·실행 명령은 Protection(Auto여도 카드 · 운영 거부).
+- 조회 판정 = 방언 분류(`TxClass`) + 문자열 판정 둘 다(SELECT … INTO · FOR UPDATE는 조회 아님).
+- CLI 권한 프롬프트와 도구 요청의 이중 카드 → 게이트 한 곳(`ai_tool_request`).
+- 숨김 실행 잔여 = 과정 쿼리는 실행 카드·Output 탭을 만들지 않음.
+- (조사 보고 번호와 각 항목의 대응은 개발 세션 보고 기준 · 이 목록은 커밋 메시지 요약)
+
+### 17-6. 남은 것
+
+- `run.explain_analyze` 사람 경로(EXPLAIN ANALYZE는 실제 실행 · AI `explain`은 analyze 고정 끔).
+- 객체 백업(objbk) 재진입 결과 처리.
+- 전체(whole) 실행 범위 불일치.
+
+### 17-7. 헤드리스 판정(협업 · [journal 11-12 §15](journal/2026-11-12.md))
+
+전부 ✓ — (a) WHERE 없는 DELETE = 동의 → ▲ 대량 카드 → 영향 3행 카드 → 허용 0행 / 거부 3행 그대로 · (b) WHERE id=1 UPDATE = 카드 1장 → 실행 · `ai.guard_bulk_rows=1`이면 영향 1행 카드 · (c) `auto_write=dml` = (b) 카드 없이 · (a)는 여전히 2단계 · (d) DROP TABLE = ▲ 파괴적 → 영향 3행 · (e) 운영 = commit · `run.prod_confirm` off · `run.all` 셋 다 거부 줄 + 도구 오류 · `auto_write=dml`에도 ⛔ 카드 · 게이트 2를 1초 만에 허용 = 무시 → 4초 뒤 허용 = 실행 + 보류 커밋 안내 · (f) Auto + `tx.prod_hold` = 카드 / `editor.word_wrap` = 바로 · (g) 숨김 실행 = 실행 카드·Output 탭 없음 · F5는 종전대로 · (h) 읽기 전용 프로필 UPDATE = "not executed: 읽기 전용 프로필 …"(ok=false).
+관찰 = 게이트 2를 열린 지 약 1초 만에 [허용]하면 무시되고 카드가 남는 것(✓)은 확인했지만, 상태줄 덤프에는 "N초 뒤" 안내가 잡히지 않음(다른 자리에 보이는지 실기 확인) · 숨김 실행 직후 상태줄 오른쪽 칸에 그 조회의 "3행 · 0.000s"가 남음(실행 카드·Output 탭은 안 생김).
