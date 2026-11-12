@@ -918,9 +918,21 @@ impl LogWin {
         self.meta.push_back(None);
         if self.buf.len() == before {
             // 링이 앞을 버렸다 — 배치·필터 목록도 같이.
+            // ★ 선택·끌기 보존(사용자 11-12 "드래그 자체가 안 됨"): 로그가 최대 줄 수에 차면 **새 줄마다** 이 길을 타는데,
+            //   `rebuild_vis`가 선택과 끌기 상태를 지워 끌기가 매번 끊겼다(줄이 자주 들어오는 동안은 선택 불가). 버려진 맨 앞 줄이
+            //   보이던 줄이면 표시 줄 번호가 하나씩 당겨지므로(오래된 것 먼저일 때) 그만큼 옮겨 되살린다.
+            let keep = (self.sel_anchor, self.sel_head, self.dragging, self.drag_hit);
+            let shift = usize::from(self.vis.first() == Some(&0) && !self.newest_first);
             self.meta.pop_front();
             self.row_start.clear();
             self.rebuild_vis();
+            let moved = |p: Option<(usize, usize)>| {
+                p.map(|(l, c)| if l >= shift { (l - shift, c) } else { (0, 0) })
+            };
+            self.sel_anchor = moved(keep.0);
+            self.sel_head = moved(keep.1);
+            self.dragging = keep.2;
+            self.drag_hit = keep.3;
         } else if self
             .buf
             .get(self.buf.len() - 1)
@@ -1608,6 +1620,27 @@ mod tests {
     use super::*;
 
     /// T-90d(docs/39 §3-6 `log.max_lines`): 상한을 줄이면 버퍼·배치·표시 목록이 함께 앞에서 잘리고 · 그 뒤 push는 상한 안에서 돈다.
+    #[test]
+    fn selection_and_drag_survive_ring_eviction() {
+        // ★ 11-12 회귀: 최대 줄 수에 찬 로그에 새 줄이 오면 선택·끌기가 지워졌다.
+        let mut w = LogWin::new("raw");
+        w.set_max_lines(100);
+        for i in 0..100 {
+            w.push(LogEntry::new(LogKind::Info, i.to_string()));
+        }
+        w.sel_anchor = Some((10, 1));
+        w.sel_head = Some((12, 2));
+        w.dragging = true;
+        w.push(LogEntry::new(LogKind::Info, "new")); // 맨 앞 줄이 버려진다.
+        assert!(w.dragging, "drag must continue");
+        assert_eq!(w.sel_anchor, Some((9, 1)));
+        assert_eq!(w.sel_head, Some((11, 2)));
+        // 첫 줄에 걸린 선택은 0으로 눌린다.
+        w.sel_anchor = Some((0, 3));
+        w.push(LogEntry::new(LogKind::Info, "new2"));
+        assert_eq!(w.sel_anchor, Some((0, 0)));
+    }
+
     #[test]
     fn max_lines_trims_buffer_meta_and_visible() {
         let mut w = LogWin::new("raw");
