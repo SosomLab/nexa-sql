@@ -612,6 +612,26 @@ impl App {
             h.stop();
             h.reset_api();
         }
+        // ★ 빈 세션 재사용(사용자 11-12 "창은 1개인데 세션이 2개 · 삭제도 안 됨"): 대화가 없는 세션이 이미 있으면 새로 만들지 않고
+        //   그것으로 간다 — 편집기 탭마다 분할 창이 빈 "(new)"를 하나씩 만들던 것 · 지금 세션을 지우면 곧바로 새 빈 세션이 생겨
+        //   "삭제가 안 되는" 것처럼 보이던 것을 함께 없앤다.
+        let prov = self.ai.tab;
+        if let Some(i) = self
+            .ai
+            .sessions
+            .iter()
+            .position(|s| s.provider == prov && s.messages.is_empty())
+        {
+            if self.ai.cur != Some(i) {
+                self.ai_switch_cur(i);
+            }
+            self.ai.approval = None;
+            self.ai.pending = None;
+            self.ai.status.clear();
+            self.ai_view.reset();
+            self.ai_sync_panel();
+            return;
+        }
         let mode = self.ai_mode_default();
         let provider = self.ai.tab;
         let prof = self.ai_profile_for(provider);
@@ -1522,6 +1542,10 @@ impl App {
             )
         };
         self.ai.run = self.ai_cur().map(|s| s.id.clone());
+        if let Some(s) = self.ai_cur().filter(|s| s.messages.is_empty()) {
+            let (sid, tid) = (s.id.clone(), self.editors.active_id());
+            self.ai.tab_sessions.retain(|t, id| *t == tid || *id != sid);
+        }
         let mut um = ChatMsg::new(Kind::User, text);
         um.attachments = attachments.iter().map(|a| a.label().to_string()).collect();
         self.ai_push(um);

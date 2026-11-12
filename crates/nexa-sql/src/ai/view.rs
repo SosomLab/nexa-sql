@@ -2960,6 +2960,8 @@ fn layout_msg(
     let mut in_code = false;
     let mut code_buf = String::new();
     let mut local = 0usize;
+    // ★ 코드 상자는 마지막 줄 아래로 몇 px 더 내려온다 — 바로 다음 줄이 글이면 상자 테두리와 겹쳤다(사용자 11-12) → 빈 줄 하나를 둔다.
+    let mut after_code = false;
     for raw in text.split('\n') {
         if let Some(rest) = raw.trim_start().strip_prefix("```") {
             if in_code {
@@ -2968,7 +2970,14 @@ fn layout_msg(
                 push_block_result(&mut out, m, local);
                 local += 1;
                 in_code = false;
+                after_code = true;
             } else {
+                if std::mem::take(&mut after_code) {
+                    out.push(Line {
+                        text: String::new(),
+                        kind: LineKind::Blank,
+                    });
+                }
                 in_code = true;
                 let lang = rest.trim();
                 out.push(Line {
@@ -2993,11 +3002,18 @@ fn layout_msg(
                 kind: LineKind::Code,
             });
         } else if raw.trim().is_empty() {
+            after_code = false;
             out.push(Line {
                 text: String::new(),
                 kind: LineKind::Blank,
             });
         } else {
+            if std::mem::take(&mut after_code) {
+                out.push(Line {
+                    text: String::new(),
+                    kind: LineKind::Blank,
+                });
+            }
             let (text, kind) = if matches!(m.kind, Kind::User | Kind::Assistant) {
                 md_line(raw, body_kind)
             } else {
