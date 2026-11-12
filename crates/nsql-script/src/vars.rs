@@ -230,6 +230,9 @@ impl VarStore {
         for (name, f) in self.formulas.iter_mut() {
             if f.stale {
                 f.stale = false;
+                // ★ stale이 내려간 것도 **바뀐 것**으로 알린다(협업 V1 11-13: 재계산 값이 옛 값과 같으면 대입이 "안 바뀜"이라
+                //   표가 다시 알려지지 않아 호스트에 `↻`가 남았다).
+                self.dirty.insert(name.clone());
                 out.push((name.clone(), f.text.clone()));
             }
         }
@@ -267,6 +270,7 @@ impl VarStore {
             if let Some(f) = self.formulas.get_mut(&key) {
                 if f.stale {
                     f.stale = false;
+                    self.dirty.insert(key.clone());
                     out.push((key, f.text.clone()));
                 }
             }
@@ -955,6 +959,8 @@ mod tests {
             vec![("B".to_string(), ":A + 10".to_string())]
         );
         assert!(!s.local_states().iter().any(|v| v.stale));
+        // stale을 걷은 것만으로도 "바뀜"으로 알려진다(재계산 값이 같아도 호스트의 ↻가 지워지게).
+        assert!(s.take_dirty().iter().any(|n| n.eq_ignore_ascii_case("B")));
     }
 
     #[test]
