@@ -404,3 +404,10 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 - **수식 지정(변수 창)** = 입력란에 `이름 := 수식`(또는 줄을 고르고 `= 수식`) → `EXEC :이름 := 수식` 실행과 같다 · 식 안의 `:` 없는 기존 변수 이름은 자동으로 `:이름`(순수 함수 `bind_bare_names` + 시험).
 - **AI 변수 도구** = `list_vars` · `get_var` · `set_var`(값 또는 `formula` · formula = `EXEC :이름 := 수식` 숨김 실행 → 답 = get_var 상태 · 승인 카드 1 · "앱 안에서만 · DB로 보내지 않음") · `run_query`가 `EXEC :V := 리터럴`만이면 클라이언트 처리(`local_assign` · 카드 1) — [110 §18](110-ai-assistant-plugin-design.md).
 - **★ 무제 탭 변수 자동 저장** = 실행으로 변수가 바뀌었을 때 · 변수 창/AI 도구로 고쳤을 때 `project_touch` → 프로젝트 자동 저장(`project.autosave_change_ms`)이 돌아 탭 항목 `vars`에 기록(종전 = 무제 탭 변수만 바꾸면 저장이 안 돌아 강제 종료 때 잃음) · 협업 V1 = 강제 종료 뒤 재기동에서 복원 ✓.
+
+### 11-12 밤 — 수식은 "사용 시 확장" 모드에서만 · 변수 대입 = 조회 수준(c4b91fb9 · [journal 11-12 §23](journal/2026-11-12.md))
+
+- **수식 기억 조건** = `vars.expand_at = use`일 때만 `EXEC :이름 := 식`이 수식(formula · depends on)으로 남는다 · `assign`(기본)이면 한 번 계산한 값만 남는다. 협업 판정 = use에서 편집기 경로와 AI `set_var` formula가 똑같이 formula ✓(사용자 실기의 "값으로만 저장"은 그때 설정이 assign이었던 것으로 판단).
+- **안내** = 수식 지정인데 assign이면 변수 창 = 토스트 [켜고 수식으로](`vars.formula_on:<이름>\t<식>` = 설정을 use로 바꾸고 수식 지정) · AI = 도구 결과 끝 note("evaluated once … only remembered when vars.expand_at …").
+- **AI 경로 등급** = `set_var`(값·수식) · `run_query`의 `EXEC :이름 := 식`/클라이언트 명령만 = 조회 수준(카드 없음 · 운영 포함 · 보류 건너뜀) — 변수는 클라이언트에 산다(DR-8).
+- **남은 것** = 없는 변수를 쓰는 수식의 숨김 실행이 "변수 값 입력" 창에서 멈춤(결함 후보) · 사람 경로의 운영 2단 실행은 `VAR`/`EXEC :v :=`도 막음(AI 경로와 등급 불일치 = 관찰).

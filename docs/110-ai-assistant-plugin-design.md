@@ -521,6 +521,7 @@ AI 도구 호출(run_query · set_setting · run_command …)
 | Bulk | WHERE 없는 UPDATE/DELETE · MERGE · 블록/EXEC · 스크립트 명령 · 영향 행 ≥ `ai.guard_bulk_rows`(1000) | 2단계 | 2단계 |
 | Destructive | DROP · TRUNCATE · ALTER · RENAME · CREATE OR REPLACE · GRANT/REVOKE | 2단계 | 2단계 |
 | TxEnd | COMMIT · ROLLBACK | 카드 | **거부** |
+| (Read로 내림 · 11-12 c4b91fb9) | 변수 대입 = `set_var`(값·수식) · `run_query`가 `EXEC :이름 := 식`/클라이언트 명령만 | 바로 실행 | 바로 실행(보류 건너뜀) |
 | Protection | 보호 설정(`run.prod_*` · `tx.*` · `backup.*` · `ai.guard_*` · `ai.auto` · `ai.codex_auto` · `ai.permission_mode` · `ai.enabled` · `ai.max_rows`) · 실행 메뉴 명령(`run.*` · `tx.*` · `hold.*` · `conn.*` · `sess.*` · `grid.apply*` · `import.*`) | 카드(Auto여도) | **거부** |
 
 ### 17-2-a. 승인 카드 머리 줄(11-12 저녁 · 873160ce)
