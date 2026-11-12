@@ -994,6 +994,12 @@ pub(crate) fn format_statement(
         .filter(|t| t.kind == Kind::Word)
         .map(Token::up)
         .collect();
+    // ★ 한정자로 쓰인 이름(`fg.col`의 FG · 11-12): 그 테이블에 자동 별칭을 붙이면 `fg.col` 참조가 깨진다(ORA-00904).
+    let stmt_quals: std::collections::HashSet<String> = body
+        .windows(2)
+        .filter(|w| w[0].kind == Kind::Word && w[1].is_punct("."))
+        .map(|w| w[0].up())
+        .collect();
     // 이 문장의 첫 줄 자리(빈 줄 수를 넣을 줄).
     let start = out.len();
     let mut w = Walker {
@@ -1004,6 +1010,7 @@ pub(crate) fn format_statement(
         cur: None,
         in_from: false,
         stmt_words,
+        stmt_quals,
         alias_next: 0,
     };
     w.statement(0);
@@ -1047,6 +1054,8 @@ struct Walker<'a> {
     in_from: bool,
     /// 이 문장에 나온 단어(대문자) + 만든 별칭 — 자동 별칭이 겹치지 않게.
     stmt_words: std::collections::HashSet<String>,
+    /// 이 문장에서 한정자(`이름.`)로 쓰인 이름(대문자) — 그 이름의 테이블에는 자동 별칭을 붙이지 않는다.
+    stmt_quals: std::collections::HashSet<String>,
     alias_next: usize,
 }
 
@@ -2326,7 +2335,11 @@ impl<'a> Walker<'a> {
         let item_start = self.i;
         let mut cmp_done = false;
         while let Some(t) = self.peek() {
-            if Self::item_ends_at(t, kind) {
+            // ★ `LISTAGG(…) WITHIN GROUP (…)`(11-12): GROUP은 절 머리가 아니다 — 종전엔 여기서 항목이 끊겨 WITHIN이 암묵 별칭이 됐다
+            //   (`… AS WITHIN` + 다음 줄 `GROUP (…)` → ORA-00923).
+            let within_group =
+                t.is("GROUP") && self.i > item_start && self.toks[self.i - 1].is("WITHIN");
+            if !within_group && Self::item_ends_at(t, kind) {
                 break;
             }
             // 꼬리 주석 = 항목이 끝난 뒤(별칭 뒤)에 낸다 — 여기서는 소비하지 않는다.
@@ -2431,7 +2444,17 @@ impl<'a> Walker<'a> {
                             self.part(Part::As);
                             self.part(Part::Alias(self.opts.identifier_case.apply(&alias)));
                         }
-                    } else if self.opts.auto_alias && self.in_from {
+                    } else if self.opts.auto_alias
+                        && self.in_from
+                        && !toks.last().is_some_and(|t| {
+                            t.kind == Kind::Word && {
+                                let up = t.up();
+                                // DB 링크가 붙은 이름은 `@` 앞까지가 테이블 이름.
+                                let name = up.split('@').next().unwrap_or(&up);
+                                self.stmt_quals.contains(name) || self.stmt_quals.contains(&up)
+                            }
+                        })
+                    {
                         // ★ 별칭 자동 부여(스킬 2-1 · T-255): FROM/JOIN의 별칭 없는 테이블·인라인뷰에 `A`, `B`, ….
                         let name = self.next_auto_alias();
                         if table_as == AliasAs::Add {
@@ -3672,13 +3695,69 @@ FROM
 
     /// T-255 별칭 자동 부여(스킬 2-1): FROM/JOIN의 별칭 없는 테이블·인라인뷰 · 이미 있는 별칭은 유지 · 문장 안 단어와 안 겹침 · UPDATE 대상은 안 건드림.
     #[test]
+    fn auto_alias_skips_tables_referenced_by_name() {
+        // ★ 11-12 회귀: 이름으로 참조되는 테이블·CTE에 별칭을 붙이면 `fg.col`이 깨진다(ORA-00904).
+        let o = Options {
+            auto_alias: true,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "with fg as (select 1 k from dual) select r.k from t r join fg on fg.k = r.k",
+            &o,
+        );
+        assert!(out.contains("JOIN fg\n"), "{out}");
+        assert!(
+            !out.contains("JOIN fg A") && !out.contains("JOIN fg B"),
+            "{out}"
+        );
+        // 참조되지 않는 테이블은 종전대로 별칭.
+        assert!(out.contains("dual A\n"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    #[test]
+    fn listagg_within_group_stays_in_one_item() {
+        // ★ 11-12 회귀: `LISTAGG(…) WITHIN GROUP (…) AS x`가 GROUP에서 끊겨 `AS WITHIN`이 됐다(ORA-00923).
+        let o = Options {
+            column_as: AliasAs::Add,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "select a, listagg(b, ',') within group (order by b) as path from t group by a",
+            &o,
+        );
+        assert!(!out.to_uppercase().contains("AS WITHIN"), "{out}");
+        assert!(
+            out.to_uppercase().contains("WITHIN GROUP (ORDER BY B)"),
+            "{out}"
+        );
+        assert!(out.contains("GROUP BY\n"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    #[test]
+    fn db_link_name_is_one_word() {
+        // ★ 11-12(사용자): `T@LINK`의 자동 별칭이 `@` 앞에 끼던 결함 — 링크까지 한 낱말.
+        let o = Options {
+            auto_alias: true,
+            ..Options::default()
+        };
+        let out = format_basic("select * from M4S_I002040@SB_PRD", &o);
+        assert!(out.contains("M4S_I002040@SB_PRD A"), "{out}");
+        let out2 = format_basic("select x.c from s.t@lnk.example.com x where x.c = :b", &o);
+        assert!(out2.contains("s.t@lnk.example.com x"), "{out2}");
+        assert!(out2.contains(":b"), "{out2}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    #[test]
     fn auto_alias_for_tables() {
         let o = Options {
             auto_alias: true,
             ..Options::default()
         };
         let out = format_basic(
-            "select x from tb_order inner join tb_item i on i.k = tb_order.k where a = 1",
+            "select x from tb_order inner join tb_item i on i.k = k2 where a = 1",
             &o,
         );
         // `A`는 WHERE의 단어 a와 겹쳐 건너뛴다 · 기존 별칭 i는 유지.

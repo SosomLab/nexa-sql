@@ -102,6 +102,10 @@ pub(crate) struct AiState {
     pub tool_queue: std::collections::VecDeque<(String, String, mpsc::Sender<ToolReply>)>,
     /// ★ 턴이 끝난 뒤 결과 그리드에 자동으로 보일 최종 조회문(`ai.show_result=auto`).
     pub auto_show: Option<String>,
+    /// ★ 자동 표시 검증(11-12 "실행된다고 답했지만 실제 실행하면 오류"): 자동 표시 실행을 지켜보는 중(시작 시각) · 훅이 포맷으로 바꾼
+    /// 마지막 답의 원문(세션 id · 메시지 번호 · 원문) — 포맷한 문장이 오류면 원문으로 되돌리고 원문을 다시 실행한다.
+    pub auto_run: Option<Instant>,
+    pub fmt_orig: Option<(String, usize, String)>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
     ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
     pub write_ok: Option<(String, String)>,
@@ -2005,6 +2009,38 @@ impl App {
         }
     }
 
+    /// ★ 자동 표시한 최종 조회문이 오류로 끝났다(11-12 검증 하네스): 훅이 포맷으로 바꾼 문장이었으면 답을 **원문으로 되돌리고**
+    /// 원문을 다시 실행한다(포맷이 문장을 깨뜨린 경우) · 아니면 오류를 대본에 알린다(다음 요청에서 어시스턴트가 `get_log`로 본다).
+    fn ai_auto_show_failed(&mut self) {
+        let err = redact(&self.sess.status);
+        match self.ai.fmt_orig.take() {
+            Some((sid, mi, orig)) => {
+                let retry = ai::hooks::last_sql_block(&orig).filter(|q| sql_is_readonly(q));
+                if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == sid) {
+                    if let Some(m) = s.messages.get_mut(mi) {
+                        m.text = orig;
+                    }
+                    s.messages
+                        .push(ChatMsg::new(Kind::Note, tf(Msg::AiFmtReverted, &[&err])));
+                    ai::history_save(s);
+                }
+                if let Some(sql) = retry {
+                    if self.sess.connected && self.gate_open() {
+                        self.ai_run_grid(&sql);
+                        self.ai.auto_run = Some(Instant::now());
+                    }
+                }
+            }
+            None => {
+                self.ai_push(ChatMsg::new(
+                    Kind::Error,
+                    tf(Msg::AiAutoShowFailed, &[&err]),
+                ));
+            }
+        }
+        self.redraw();
+    }
+
     // ───────────────────────── 이벤트 수거 ─────────────────────────
 
     /// 깨어날 때·틱마다 — 호스트 이벤트를 세션에 반영. 바뀌면 true.
@@ -2025,8 +2061,23 @@ impl App {
                 // 턴 끝 자동 표시: 접속돼 있고 문지기가 열려 있을 때만(막혔으면 조용히 건너뜀 · ▦로 수동 실행 가능).
                 if self.sess.connected && self.gate_open() {
                     self.ai_run_grid(&sql);
+                    self.ai.auto_run = Some(Instant::now());
                     changed = true;
+                } else {
+                    self.ai.fmt_orig = None;
                 }
+            } else if self
+                .ai
+                .auto_run
+                .is_some_and(|t| t.elapsed() > std::time::Duration::from_millis(300))
+            {
+                self.ai.auto_run = None;
+                if self.sess.run_had_err {
+                    self.ai_auto_show_failed();
+                } else {
+                    self.ai.fmt_orig = None;
+                }
+                changed = true;
             }
         }
         if changed {
@@ -2162,6 +2213,7 @@ impl App {
                 }
                 // ★ PostTurn 훅(hooks.rs · 사용자 11-11 "생성 쿼리를 앱 포맷으로 표시 · 출력 간결"): ```sql 블록 = 앱 포매터 · 빈 줄 정리 —
                 //   이번 턴의 **모든** 어시스턴트 메시지(마지막 사용자 메시지 뒤 · 협업 관찰 11-12 "도구 앞 메시지는 안 바뀜").
+                self.ai.fmt_orig = None;
                 {
                     let fmt_on = self.settings.flag("ai.hook_format_sql");
                     let tidy_on = self.settings.flag("ai.hook_tidy");
@@ -2192,8 +2244,13 @@ impl App {
                             text.clone()
                         };
                         if new != text {
-                            if let Some(m) = self.ai_run_mut().and_then(|s| s.messages.get_mut(i)) {
-                                m.text = new;
+                            if let Some(s) = self.ai_run_mut() {
+                                let sid = s.id.clone();
+                                if let Some(m) = s.messages.get_mut(i) {
+                                    m.text = new;
+                                }
+                                // 뒤 메시지가 덮어쓴다 = 마지막 답의 원문만 남는다.
+                                self.ai.fmt_orig = Some((sid, i, text));
                             }
                         }
                     }
@@ -2201,6 +2258,7 @@ impl App {
                     //   턴의 마지막 답에 있는 **마지막 ```sql 블록**이 조회문이면 결과 그리드에 실행한다(쓰기 문장은 절대 자동 실행 안 함 ·
                     //   채팅 뷰 탭에서는 탭을 뺏지 않으려고 건너뜀 = ▦ 수동).
                     self.ai.tool_queue.clear();
+                    self.ai.auto_run = None;
                     let bad = ["fail", "error", "exit", "interrupt", "cancel", "abort"];
                     let ok_stop = !bad.iter().any(|b| stop.to_ascii_lowercase().contains(b));
                     self.ai.auto_show = None;
@@ -2845,6 +2903,36 @@ impl App {
                     }
                     Ok(None) => err(format!("unknown profile '{p}' (use list_profiles)")),
                     Err(e) => err(e.to_string()),
+                }
+            }
+            "get_output" => {
+                let n = gi("max_lines", 100).clamp(1, 2000) as usize;
+                match self.panel.output.as_ref().map(|v| v.text()) {
+                    Some(text) if !text.trim().is_empty() => {
+                        let lines: Vec<&str> = text.lines().collect();
+                        let from = lines.len().saturating_sub(n);
+                        ok(redact(&lines[from..].join("\n")))
+                    }
+                    _ => ok("(the Output tab is empty)".into()),
+                }
+            }
+            "get_log" => {
+                let n = gi("max_lines", 60).clamp(1, 2000) as usize;
+                let only = matches!(g("errors_only").as_str(), "true" | "1");
+                let text = self.log_win.dump_text_timed();
+                let lines: Vec<&str> = text
+                    .lines()
+                    .filter(|l| !only || l.contains("|Error|"))
+                    .collect();
+                if lines.is_empty() {
+                    ok(if only {
+                        "(no errors in the log)".into()
+                    } else {
+                        "(the log is empty)".into()
+                    })
+                } else {
+                    let from = lines.len().saturating_sub(n);
+                    ok(redact(&lines[from..].join("\n")))
                 }
             }
             "get_result" => match self.grid.ai_text(max_rows) {

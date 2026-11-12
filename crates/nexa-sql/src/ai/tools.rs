@@ -185,6 +185,21 @@ pub(crate) const TOOLS: &[Tool] = &[
         props: &[("max_rows", "integer", "Rows to return (default = ai.max_rows)", false)],
     },
     Tool {
+        name: "get_output",
+        desc: "Return the tail of the Output tab of the active editor (server messages, DBMS_OUTPUT/PRINT, statement errors with line numbers).",
+        write: false,
+        props: &[("max_lines", "integer", "Lines from the end (default 100)", false)],
+    },
+    Tool {
+        name: "get_log",
+        desc: "Return the tail of the app's execution log (time|kind|message: send, execute, fetch, done, ERROR with the server error text). Use errors_only to see just the errors. Call this when the user says a query failed.",
+        write: false,
+        props: &[
+            ("max_lines", "integer", "Lines from the end (default 60)", false),
+            ("errors_only", "boolean", "Only ERROR lines", false),
+        ],
+    },
+    Tool {
         name: "explain",
         desc: "Show the execution plan of a statement (runs EXPLAIN in the current session) and return it as text.",
         write: true,

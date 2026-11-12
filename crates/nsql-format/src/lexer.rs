@@ -403,6 +403,18 @@ pub fn lex_in(src: &str, dialect: crate::SrcDialect) -> Vec<Token> {
                 push(Kind::Str, end, k, &mut nl, &mut ci);
                 continue;
             }
+            // ★ DB 링크(Oracle `T@LINK` · `T@LINK.DOMAIN` · 사용자 11-12): 낱말에 바로 붙은 `@이름`은 같은 낱말 — 종전엔 `@LINK`가
+            //   바인드로 떨어져 자동 별칭이 `@` 앞에 끼고 띄어쓰기가 생겼다.
+            if j + 1 < chars.len() && chars[j].1 == '@' && is_word_start(chars[j + 1].1) {
+                j += 1;
+                while j < chars.len()
+                    && (is_word_char(chars[j].1)
+                        || (chars[j].1 == '.'
+                            && chars.get(j + 1).is_some_and(|x| is_word_start(x.1))))
+                {
+                    j += 1;
+                }
+            }
             let end = if j < chars.len() { chars[j].0 } else { n };
             push(Kind::Word, end, j, &mut nl, &mut ci);
             continue;

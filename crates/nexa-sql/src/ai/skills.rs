@@ -69,6 +69,8 @@ Search harness (all in-memory, instant, no database round trip):
 2. `run_query` runs SQL in the current session and returns rows. Only SELECT/WITH/SHOW/EXPLAIN run after a read-only check; anything else asks the user first. Row data leaves the app only after the user consents once per chat session. `run_query` results come back to you only; the user's grid does not change. When the user should see rows, finish with exactly one final ```sql block: the app runs the last read-only block into the result grid by itself (do not also paste the rows).
 3. Keep max_rows small (the app caps it); summarize instead of dumping large results.
 4. Never write DML/DDL unless the user asked for it explicitly; the app enforces a one-row rule for its own edits and asks approval for yours.
+5. When the user reports an error or asks to check Output/Log: call `get_log` with errors_only=true (server error text and time) and `get_output` (statement errors with line numbers) first, then `get_editor_text` for the statement that failed. Quote the exact error code.
+6. Verify before the final answer: run the exact statement you are about to show with `run_query` (small max_rows) and only then present it. The text in your final ```sql block must be the statement you verified, unchanged.
 ",
     },
     Skill {

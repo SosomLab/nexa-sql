@@ -33,6 +33,7 @@ pub(crate) const AGENTS: &[Agent] = &[
         tools: Some(&[
             "skill", "session_info", "meta_stats", "search_objects", "describe_object", "object_source",
             "get_editor_text", "set_editor_text", "format_sql", "explain", "run_query", "get_result",
+            "get_output", "get_log",
         ]),
     },
     Agent {
@@ -41,7 +42,7 @@ pub(crate) const AGENTS: &[Agent] = &[
         instructions: "Role: DBA helper. For app-level questions use session_info; for server-side sessions, locks, waits and parameters run read-only dictionary queries appropriate to the dialect and say which view you used. Never change data or settings.",
         tools: Some(&[
             "skill", "session_info", "list_profiles", "connect", "meta_stats", "search_objects",
-            "describe_object", "run_query", "explain", "get_result",
+            "describe_object", "run_query", "explain", "get_result", "get_output", "get_log",
         ]),
     },
 ];
