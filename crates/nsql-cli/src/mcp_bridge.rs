@@ -16,6 +16,7 @@ pub(crate) fn run(port: Option<u16>, token: Option<&str>) -> i32 {
             return 1;
         }
     };
+    let _ = stream.set_nodelay(true);
     let mut up = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
@@ -36,7 +37,10 @@ pub(crate) fn run(port: Option<u16>, token: Option<&str>) -> i32 {
         let out = std::io::stdout();
         let mut out = out.lock();
         for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            if out.write_all(line.as_bytes()).is_err() || out.write_all(b"\n").is_err() {
+            // 줄 + 줄바꿈을 한 번에(조각 쓰기 금지 · 11-12).
+            let mut buf = line.into_bytes();
+            buf.push(b'\n');
+            if out.write_all(&buf).is_err() {
                 break;
             }
             let _ = out.flush();
@@ -45,7 +49,9 @@ pub(crate) fn run(port: Option<u16>, token: Option<&str>) -> i32 {
     // stdin → TCP.
     let stdin = std::io::stdin();
     for line in stdin.lock().lines().map_while(Result::ok) {
-        if up.write_all(line.as_bytes()).is_err() || up.write_all(b"\n").is_err() {
+        let mut buf = line.into_bytes();
+        buf.push(b'\n');
+        if up.write_all(&buf).is_err() {
             break;
         }
         let _ = up.flush();

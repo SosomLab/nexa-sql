@@ -10,6 +10,8 @@ pub(crate) mod bridge;
 pub(crate) mod claude_api;
 pub(crate) mod claude_cli;
 pub(crate) mod codex;
+#[cfg(test)]
+mod e2e;
 pub(crate) mod hooks;
 pub(crate) mod host;
 pub(crate) mod mcp;

@@ -221,6 +221,7 @@ fn serve(
     stop: &AtomicBool,
 ) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    let _ = stream.set_nodelay(true);
     let mut writer = match stream.try_clone() {
         Ok(w) => w,
         Err(_) => return,
@@ -294,18 +295,26 @@ fn serve(
             ok: false,
         })
     };
-    let mut line = String::new();
+    // ★ 줄 조각 보존(11-12 근본 원인 · CLI `nexa-sql:failed` 세 번째): 읽기 제한(500ms)에 걸려도 `read_until`이 이미 붙여 둔
+    //   조각은 `line`에 남는다 — 종전에는 루프 머리에서 지워 요청이 통째로 사라졌다(브리지가 줄과 줄바꿈을 따로 보내 그 틈에
+    //   걸림 → CLI가 `initialize` 답을 끝없이 기다림). 지우는 것은 **한 줄을 다 처리한 뒤에만** · 바이트로 모아 UTF-8 중간 끊김도 견딘다.
+    let mut line: Vec<u8> = Vec::new();
     loop {
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        line.clear();
-        match reader.read_line(&mut line) {
+        match reader.read_until(b'\n', &mut line) {
             Ok(0) => return,
             Ok(_) => {
-                if let Some(out) = handle(&line, &mut exec) {
-                    if writer.write_all(out.as_bytes()).is_err() || writer.write_all(b"\n").is_err()
-                    {
+                if line.last() != Some(&b'\n') {
+                    continue; // EOF 직전 조각 — 다음 읽기에서 0으로 끝난다.
+                }
+                let text = String::from_utf8_lossy(&line).into_owned();
+                line.clear();
+                if let Some(out) = handle(&text, &mut exec) {
+                    let mut buf = out.into_bytes();
+                    buf.push(b'\n');
+                    if writer.write_all(&buf).is_err() {
                         return;
                     }
                     let _ = writer.flush();
@@ -418,5 +427,34 @@ mod tests {
         let mut l2 = String::new();
         let n = br.read_line(&mut l2).unwrap_or(0);
         assert_eq!(n, 0, "{l2}");
+    }
+    /// ★ 회귀(11-12 근본 원인): 요청 한 줄이 읽기 제한(500ms)을 넘겨 **두 조각**으로 와도 답해야 한다 — 종전에는 앞 조각을 버려
+    /// 요청이 사라졌고 Claude CLI가 `nexa-sql:failed`가 됐다.
+    #[test]
+    fn request_split_across_read_timeout_is_answered() {
+        let (tx, _rx) = mpsc::channel();
+        let srv = start(tx, Arc::new(|| {}), 0).expect("start");
+        let mut s = TcpStream::connect(("127.0.0.1", srv.port)).expect("connect");
+        s.write_all(format!("{{\"token\":\"{}\"}}\n", srv.token).as_bytes())
+            .expect("w");
+        // 본문과 줄바꿈 사이에 제한보다 긴 틈(한글 = UTF-8 중간 끊김도 함께).
+        let req = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\",\"params\":{\"x\":\"한글\"}}"
+            .as_bytes();
+        let cut = req.len() - 5; // "한글" 둘째 글자 중간.
+        s.write_all(&req[..cut]).expect("w");
+        s.flush().expect("f");
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        s.write_all(&req[cut..]).expect("w");
+        s.flush().expect("f");
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        s.write_all(b"\n").expect("w");
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("t");
+        let mut line = String::new();
+        BufReader::new(s).read_line(&mut line).expect("r");
+        assert!(
+            line.contains("\"id\":7") && line.contains("\"result\""),
+            "{line}"
+        );
     }
 }

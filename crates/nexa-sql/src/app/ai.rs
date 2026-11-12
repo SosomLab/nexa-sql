@@ -92,6 +92,9 @@ pub(crate) struct AiState {
     pub on_chat: Option<Provider>,
     /// ★ 세션별 작성 상자 초안(세션 id → 글 · 11-12).
     pub drafts: std::collections::HashMap<String, String>,
+    /// ★ 미리 띄운 CLI 프로세스의 띄우기 서명(아직 턴을 안 보냄 · 11-12) · 미리 띄우기를 시도한 세션 id(세션당 한 번).
+    pub warm: Option<String>,
+    pub warm_sid: Option<String>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
     ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
     pub write_ok: Option<(String, String)>,
@@ -1591,84 +1594,16 @@ impl App {
                 }
             }
             Mode::Cli => {
-                if !self.ai_host().is_cli_alive() {
-                    if self.ai.mcp.is_none() {
-                        let port = self.settings.int("ai.mcp_port").clamp(0, 65535) as u16;
-                        let tx = self.ai_host().tx.clone();
-                        let wake = self.ai_wake();
-                        match ai::mcp::start(tx, wake, port) {
-                            Ok(s) => self.ai.mcp = Some(s),
-                            Err(e) => {
-                                self.ai_push(ChatMsg::new(Kind::Error, format!("mcp: {e}")));
-                                return;
-                            }
-                        }
-                    }
-                    // ★ 사전 점검(사용자 11-12 "MCP 서버 연결 30초 초과" 오류): 브리지 `nsql` 존재 · 앱 리스너 자기 접속 · 시작 제한 시간은
-                    //   `MCP_TIMEOUT`(ms · 설정 `ai.mcp_timeout_secs`)으로 CLI에 넘긴다(Claude Code 기본 30초).
-                    let bridge = ai::mcp::bridge_program();
-                    if !ai::mcp::bridge_available(&bridge) {
-                        self.ai_push(ChatMsg::new(
-                            Kind::Error,
-                            tf(Msg::AiMcpBridgeMissing, &[&bridge]),
-                        ));
-                        return;
-                    }
-                    if let Some(port) = self.ai.mcp.as_ref().map(|m| m.port) {
-                        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-                        if std::net::TcpStream::connect_timeout(
-                            &addr,
-                            std::time::Duration::from_secs(2),
-                        )
-                        .is_err()
-                        {
-                            self.ai.mcp = None;
-                            self.ai_push(ChatMsg::new(
-                                Kind::Error,
-                                tf(Msg::AiMcpListenerDown, &[&port.to_string()]),
-                            ));
-                            return;
-                        }
-                    }
-                    let cfg = self
-                        .ai
-                        .mcp
-                        .as_ref()
-                        .map(|m| ai::mcp::config_json(m.port, &m.token));
-                    let (program, prefix) =
-                        ai::host::resolve_cli(self.settings.get("ai.cli_path").unwrap_or("claude"));
-                    // ★ `ai.cli_key=profile`: CLI 모드에서도 현재 프로필의 API 키를 환경 변수로만 넘긴다(CLI 로그인 없이 · 사용자 11-11).
-                    let mut env: Vec<(String, String)> = Vec::new();
-                    if self.settings.get("ai.cli_key") == Some("profile") {
-                        if let Some(k) = self.ai_key_for(&profile) {
-                            env.push(("ANTHROPIC_API_KEY".into(), k));
-                        }
-                    }
-                    // ★ `--bare`는 Claude Code의 자체 로그인(구독)도 건너뛴다 → 키를 넘길 때만(사용자 11-11 "터미널은 로그인돼 있는데").
-                    let bare = self.settings.flag("ai.bare") && !env.is_empty();
-                    let mcp_ms = (self.settings.int("ai.mcp_timeout_secs").clamp(10, 600) * 1000)
-                        .to_string();
-                    env.push(("MCP_TIMEOUT".into(), mcp_ms.clone()));
-                    env.push(("MCP_TOOL_TIMEOUT".into(), mcp_ms));
-                    let args = ai::claude_cli::args(
-                        &model,
-                        &effort,
-                        self.settings.get("ai.permission_mode").unwrap_or("default"),
-                        cfg.as_deref(),
-                        cli_session.as_deref(),
-                        bare,
-                        &system,
-                    );
-                    let launch = CliLaunch {
-                        program,
-                        prefix,
-                        args,
-                        env,
-                    };
-                    if let Err(e) = self.ai_host().start_cli(launch) {
-                        self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiCliStartFailed, &[&e])));
-                        return;
-                    }
+                if let Err(e) = self.ai_cli_ensure(
+                    &profile,
+                    &model,
+                    &effort,
+                    cli_session.as_deref(),
+                    &system,
+                    false,
+                ) {
+                    self.ai_push(ChatMsg::new(Kind::Error, e));
+                    return;
                 }
                 // 글 첨부는 본문에 · 이미지는 블록으로(CLI stream-json).
                 let mut body = String::new();
@@ -1740,30 +1675,9 @@ impl App {
         } else {
             model
         };
-        if !self.ai_host().is_codex_alive() {
-            let (program, prefix) =
-                ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
-            let cwd = ProfileStore::dir()
-                .map(|d| d.join("codex-cwd"))
-                .map(|d| {
-                    let _ = std::fs::create_dir_all(&d);
-                    d.to_string_lossy().into_owned()
-                })
-                .unwrap_or_else(|| ".".into());
-            let launch = CodexLaunch {
-                program,
-                prefix,
-                api_key: key,
-                model: model.to_string(),
-                effort: effort.to_string(),
-                cwd,
-                system: system.to_string(),
-                resume,
-            };
-            if let Err(e) = self.ai_host().start_codex(launch) {
-                self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiCliStartFailed, &[&e])));
-                return;
-            }
+        if let Err(e) = self.ai_codex_ensure(key, model, effort, system, resume, false) {
+            self.ai_push(ChatMsg::new(Kind::Error, e));
+            return;
         }
         // 글 첨부는 본문에 · 이미지는 임시 파일(`localImage` · 접두 nsql- = tmp-clean 대상).
         let mut body = String::new();
@@ -1795,7 +1709,222 @@ impl App {
         }
     }
 
+    /// 띄우기 서명(미리 띄운 프로세스가 지금 보낼 조건과 같은가): 제공자 · 세션 · 모델 · 노력도 · 시스템 프롬프트.
+    fn ai_launch_sig(&self, model: &str, effort: &str, system: &str) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        system.hash(&mut h);
+        let sid = self.ai_cur().map(|s| s.id.clone()).unwrap_or_default();
+        format!(
+            "{:?}|{sid}|{model}|{effort}|{:x}",
+            self.ai_provider(),
+            h.finish()
+        )
+    }
+
+    /// ★ Claude CLI 프로세스 보장(보내기 · 미리 띄우기 공용 · 11-12): 살아 있으면 그대로 — 단 **미리 띄운 뒤 조건이 바뀌었으면**
+    /// (모델 · 노력도 · 에이전트 · 접속) 내리고 새로 띄운다. `warm` = 미리 띄우기(오류는 돌려주기만 · 대본에 올리지 않는다).
+    fn ai_cli_ensure(
+        &mut self,
+        profile: &str,
+        model: &str,
+        effort: &str,
+        resume: Option<&str>,
+        system: &str,
+        warm: bool,
+    ) -> Result<(), String> {
+        let sig = self.ai_launch_sig(model, effort, system);
+        if self.ai_host().is_cli_alive() {
+            if self.ai.warm.as_ref().is_none_or(|w| *w == sig) {
+                return Ok(());
+            }
+            self.ai_host().stop();
+        }
+        self.ai.warm = None;
+        if self.ai.mcp.is_none() {
+            let port = self.settings.int("ai.mcp_port").clamp(0, 65535) as u16;
+            let tx = self.ai_host().tx.clone();
+            let wake = self.ai_wake();
+            match ai::mcp::start(tx, wake, port) {
+                Ok(s) => self.ai.mcp = Some(s),
+                Err(e) => return Err(format!("mcp: {e}")),
+            }
+        }
+        // ★ 사전 점검(사용자 11-12 "MCP 서버 연결 30초 초과" 오류): 브리지 `nsql` 존재 · 앱 리스너 자기 접속 · 시작 제한 시간은
+        //   `MCP_TIMEOUT`(ms · 설정 `ai.mcp_timeout_secs`)으로 CLI에 넘긴다(Claude Code 기본 30초).
+        let bridge = ai::mcp::bridge_program();
+        if !ai::mcp::bridge_available(&bridge) {
+            return Err(tf(Msg::AiMcpBridgeMissing, &[&bridge]));
+        }
+        if let Some(port) = self.ai.mcp.as_ref().map(|m| m.port) {
+            let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2))
+                .is_err()
+            {
+                self.ai.mcp = None;
+                return Err(tf(Msg::AiMcpListenerDown, &[&port.to_string()]));
+            }
+        }
+        let cfg = self
+            .ai
+            .mcp
+            .as_ref()
+            .map(|m| ai::mcp::config_json(m.port, &m.token));
+        let (program, prefix) =
+            ai::host::resolve_cli(self.settings.get("ai.cli_path").unwrap_or("claude"));
+        // ★ `ai.cli_key=profile`: CLI 모드에서도 현재 프로필의 API 키를 환경 변수로만 넘긴다(CLI 로그인 없이 · 사용자 11-11).
+        let mut env: Vec<(String, String)> = Vec::new();
+        if self.settings.get("ai.cli_key") == Some("profile") {
+            if let Some(k) = self.ai_key_for(profile) {
+                env.push(("ANTHROPIC_API_KEY".into(), k));
+            }
+        }
+        // ★ `--bare`는 Claude Code의 자체 로그인(구독)도 건너뛴다 → 키를 넘길 때만(사용자 11-11 "터미널은 로그인돼 있는데").
+        let bare = self.settings.flag("ai.bare") && !env.is_empty();
+        let mcp_ms = (self.settings.int("ai.mcp_timeout_secs").clamp(10, 600) * 1000).to_string();
+        env.push(("MCP_TIMEOUT".into(), mcp_ms.clone()));
+        env.push(("MCP_TOOL_TIMEOUT".into(), mcp_ms));
+        let args = ai::claude_cli::args(
+            model,
+            effort,
+            self.settings.get("ai.permission_mode").unwrap_or("default"),
+            cfg.as_deref(),
+            resume,
+            bare,
+            system,
+        );
+        let launch = CliLaunch {
+            program,
+            prefix,
+            args,
+            env,
+        };
+        self.ai_host()
+            .start_cli(launch)
+            .map_err(|e| tf(Msg::AiCliStartFailed, &[&e]))?;
+        if warm {
+            self.ai.warm = Some(sig);
+        }
+        Ok(())
+    }
+
+    /// ★ Codex app-server 프로세스 보장(보내기 · 미리 띄우기 공용 · 11-12) — 규칙은 [`Self::ai_cli_ensure`]와 같다.
+    fn ai_codex_ensure(
+        &mut self,
+        key: String,
+        model: &str,
+        effort: &str,
+        system: &str,
+        resume: Option<String>,
+        warm: bool,
+    ) -> Result<(), String> {
+        let sig = self.ai_launch_sig(model, effort, system);
+        if self.ai_host().is_codex_alive() {
+            if self.ai.warm.as_ref().is_none_or(|w| *w == sig) {
+                return Ok(());
+            }
+            self.ai_host().stop();
+        }
+        self.ai.warm = None;
+        let (program, prefix) =
+            ai::host::resolve_cli(self.settings.get("ai.codex_path").unwrap_or("codex"));
+        let cwd = ProfileStore::dir()
+            .map(|d| d.join("codex-cwd"))
+            .map(|d| {
+                let _ = std::fs::create_dir_all(&d);
+                d.to_string_lossy().into_owned()
+            })
+            .unwrap_or_else(|| ".".into());
+        let launch = CodexLaunch {
+            program,
+            prefix,
+            api_key: key,
+            model: model.to_string(),
+            effort: effort.to_string(),
+            cwd,
+            system: system.to_string(),
+            resume,
+        };
+        self.ai_host()
+            .start_codex(launch)
+            .map_err(|e| tf(Msg::AiCliStartFailed, &[&e]))?;
+        if warm {
+            self.ai.warm = Some(sig);
+        }
+        Ok(())
+    }
+
+    /// ★ 미리 띄우기(사용자 11-12 "첫 응답속도를 최소화" · 설정 `ai.prewarm`): CLI 모드 세션에서 작성 상자에 글을 치기 시작하면
+    /// CLI 프로세스를 먼저 띄워 둔다(Claude = 도구 서버 연결까지 · Codex = 악수·스레드까지) — 실측 첫 응답 8.3초 → 4.4초.
+    /// 세션당 한 번만 시도 · 실패는 조용히(보낼 때 다시 띄우며 오류를 보인다) · 요청은 보내지 않으므로 사용량은 0.
+    pub(crate) fn ai_prewarm(&mut self) {
+        if !self.settings.flag("ai.prewarm") || std::env::var_os("NSQL_AI_MOCK").is_some() {
+            return;
+        }
+        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            return;
+        }
+        let Some((sid, mode, profile)) = self
+            .ai_cur()
+            .map(|s| (s.id.clone(), s.mode, s.profile.clone()))
+        else {
+            return;
+        };
+        if mode != Mode::Cli || self.ai.warm_sid.as_deref() == Some(sid.as_str()) {
+            return;
+        }
+        let draft = self.ai_view.composer_text();
+        let draft = draft.trim();
+        if draft.is_empty() || draft.starts_with('/') {
+            return;
+        }
+        self.ai.warm_sid = Some(sid.clone());
+        let provider = self.ai_provider();
+        let alive = if provider == Provider::Codex {
+            self.ai_host().is_codex_alive()
+        } else {
+            self.ai_host().is_cli_alive()
+        };
+        if alive {
+            return;
+        }
+        let fetched = self.ai_session_models(provider, mode, &profile);
+        let (model, effort, resume, agent) = {
+            let s = self.ai_cur().expect("session");
+            (
+                ai::resolve_model(provider, &s.model, &fetched),
+                s.effort.clone(),
+                s.cli_session.clone(),
+                s.agent.clone(),
+            )
+        };
+        let system = ai::tools::system_prompt(
+            &format!("{:?}", self.sess.dialect),
+            &self.sess.profile,
+            &agent,
+        );
+        let r = if provider == Provider::Codex {
+            // 보내기와 같은 모델 보정(계정이 못 쓰는 모델 → 계정 첫 모델 · 안내는 보낼 때).
+            let models = &self.ai.codex_cli_models;
+            let model = if !models.is_empty() && !models.contains(&model) {
+                models[0].clone()
+            } else {
+                model
+            };
+            self.ai_codex_ensure(String::new(), &model, &effort, &system, resume, true)
+        } else {
+            self.ai_cli_ensure(&profile, &model, &effort, resume.as_deref(), &system, true)
+        };
+        if r.is_ok() {
+            // 악수 때 오는 세션 id(Codex 스레드)가 이 세션에 기록되게.
+            self.ai.run = Some(sid);
+        } else if std::env::var_os("NSQL_TRACE_AI").is_some() {
+            eprintln!("[ai] prewarm failed: {:?}", r.err());
+        }
+    }
+
     fn ai_after_send(&mut self) {
+        self.ai.warm = None;
         self.ai_active_status();
         if let Some(s) = self.ai_cur() {
             ai::history_save(s);
@@ -3531,6 +3660,7 @@ impl App {
             }
             self.ime_refresh();
             self.ai_view_actions();
+            self.ai_prewarm();
             return true;
         }
         false

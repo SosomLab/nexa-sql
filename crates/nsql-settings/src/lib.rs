@@ -6501,6 +6501,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ CLI 미리 띄우기(사용자 11-12 "첫 응답속도를 최소화"): 글을 치기 시작하면 CLI 프로세스를 먼저 띄운다(요청은 안 보냄).
+    Entry {
+        key: "ai.prewarm",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPrewarm,
+        desc: Msg::DescAiPrewarm,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 첨부의 비밀 가림 안내(사용자 11-11 "경고는 하되 첨부는 되게 · 경고 끄기 가능 · 기본 = 경고") — 가림 자체는 끌 수 없다.
     Entry {
         key: "ai.secret_warn",
