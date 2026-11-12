@@ -106,7 +106,7 @@ jobs:
       - name: DuckDB 런타임 캐시 비우기(rust-cache 뒤 · LNK1181)
         if: ${{ !inputs.duckdb_bundled }}
         shell: bash
-        run: rm -rf target/*/build/libduckdb-sys-* target/*/*/build/libduckdb-sys-* nexa-sql/target/*/build/libduckdb-sys-* nexa-sql/target/*/*/build/libduckdb-sys-*
+        run: rm -rf target/*/build/libduckdb-sys-* target/*/*/build/libduckdb-sys-* nexa-sql/target/*/build/libduckdb-sys-* nexa-sql/target/*/*/build/libduckdb-sys-* target/*/build/libduckdb-sys target/*/*/build/libduckdb-sys nexa-sql/target/*/build/libduckdb-sys nexa-sql/target/*/*/build/libduckdb-sys
       # D-362(10-25) 뒤 odbc cdylib은 unixODBC를 정적으로 품는다(vendored) — 아래 두 설치는 빌드 보조용으로 남겨 두되, 빌드 뒤 동적 링크가 없는지 검사한다.
       - name: unixODBC(Linux · 빌드 보조 · 런타임 의존 없음 = 아래 검사)
         if: runner.os == 'Linux'

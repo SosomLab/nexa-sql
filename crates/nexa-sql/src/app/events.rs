@@ -238,7 +238,7 @@ impl App {
                 Ok((description, elapsed_s)) => {
                     self.log_win.push(LogEntry::new(
                         LogKind::Info,
-                        tf(Msg::LogTestOk, &[&description, &elapsed_s.to_string()]),
+                        tf(Msg::LogTestOk, &[&description, &elapsed_s]),
                     ));
                     // 상태줄·패널은 프로필 이름으로 간략하게(사용자 09-16) · 접속 문자열 상세는 위 로그 창에.
                     let label = if name.is_empty() { &description } else { &name };
@@ -1240,10 +1240,10 @@ impl App {
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) {
                         self.tx_close(TxOutcome::Committed);
-                        self.sess.status = m.clone();
+                        self.sess.status = m;
                     } else if m == t(Msg::StRolledBack) {
                         self.tx_close(TxOutcome::RolledBack);
-                        self.sess.status = m.clone();
+                        self.sess.status = m;
                     }
                 }
                 RunEvent::Connected {

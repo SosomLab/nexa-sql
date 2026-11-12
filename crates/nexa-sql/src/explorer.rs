@@ -7986,12 +7986,14 @@ impl Explorer {
                     .as_deref()
                     .is_some_and(|c| c.eq_ignore_ascii_case(&hdb));
             let fi = if ssms {
-                let target = if is_cur_db {
-                    self.current_db.clone().unwrap_or_default()
+                let cur;
+                let target: &str = if is_cur_db {
+                    cur = self.current_db.clone().unwrap_or_default();
+                    &cur
                 } else {
-                    hdb.clone()
+                    &hdb
                 };
-                match self.ssms_folder_in(&target, kind) {
+                match self.ssms_folder_in(target, kind) {
                     Some(f) => f,
                     None => continue,
                 }
@@ -8029,11 +8031,11 @@ impl Explorer {
             let o = ObjectInfo {
                 // 101 규칙: 빈 db = 연결의 현재 DB · 다른 DB의 일치는 그 DB를 단다(요청·소스·상세가 그 DB로).
                 db: if ssms && !is_cur_db {
-                    hdb.clone()
+                    hdb
                 } else {
                     String::new()
                 },
-                schema: schema.clone(),
+                schema,
                 name,
                 kind,
                 status: String::new(),

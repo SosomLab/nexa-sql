@@ -48,15 +48,16 @@ def abi_version():
 
 
 def find_runtime(target_dir, name):
-    """target/<profile>/<name> 또는 build/libduckdb-sys-*/out/<name>(download-lib가 푼 자리)."""
+    """target/<profile>/<name> 또는 build/libduckdb-sys-*/out/<name> · build/libduckdb-sys/*/out/<name>(download-lib가 푼 자리)."""
     direct = os.path.join(target_dir, name)
     if os.path.isfile(direct):
         return direct
     build = os.path.join(target_dir, "build")
     if os.path.isdir(build):
         for d in sorted(os.listdir(build)):
-            if d.startswith("libduckdb-sys-"):
-                for root, _dirs, files in os.walk(os.path.join(build, d, "out")):
+            # 옛 배치 = libduckdb-sys-<hash>/out · cargo 1.100부터 = libduckdb-sys/<hash>/out.
+            if d == "libduckdb-sys" or d.startswith("libduckdb-sys-"):
+                for root, _dirs, files in os.walk(os.path.join(build, d)):
                     if name in files:
                         return os.path.join(root, name)
     return None

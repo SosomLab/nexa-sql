@@ -1127,6 +1127,9 @@ impl App {
             "run.statement" => self.run_sql(false),
             // Ctrl+\ = 새 결과 탭에 실행(T-93 · 끄면 Ctrl+Enter와 같다 · D-73).
             // 이 탭의 변수(탭 층 + 연결 공유 층)를 **실행할 수 있는 스크립트**로 새 편집기 탭에(내보내기 = 저장 · 가져오기 = 실행 · D-136).
+            // ★ 변수 창 ⟳와 같은 동작(stale 수식 재계산 · 11-13 — 팔레트·기동 명령으로도 부를 수 있게: 협업 V1이 없는 명령
+            //   `vars.refresh`를 보내 재계산 판정을 못 했다).
+            "vars.refresh" => self.vars_refresh_now(),
             "vars.script" => {
                 let mut all = self
                     .tab_vars
@@ -2107,7 +2110,7 @@ impl App {
                         } else {
                             format!("{ext_name}: {text}")
                         };
-                        cmds.push((c.id.clone(), label.clone(), label.to_lowercase()));
+                        cmds.push((c.id, label.clone(), label.to_lowercase()));
                     }
                 }
                 _ => {}

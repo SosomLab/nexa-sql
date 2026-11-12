@@ -218,6 +218,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
         Msg::MnProject,
         Msg::MnProjectAddFolder,
     ),
+    p("vars.refresh", Msg::MnView, Msg::BtnVarsRefresh),
     p("vars.script", Msg::MnView, Msg::MnVariablesScript),
     p("vars.show", Msg::MnView, Msg::MnShowVariables),
     p("file.close_tab", Msg::MnFile, Msg::MnCloseTab),

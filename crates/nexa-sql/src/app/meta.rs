@@ -645,7 +645,7 @@ impl App {
                     self.import_ctx = Some(app::import::ImportCtx {
                         existing: Some(table),
                         schema: Some(owner.schema.clone()).filter(|s| !s.is_empty()),
-                        name: Some(owner.name.clone()),
+                        name: Some(owner.name),
                         path: PathBuf::new(),
                         server,
                         dialect,

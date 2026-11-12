@@ -706,7 +706,7 @@ pub fn name_index(
         }
         // 부가 = SQL Server 테이블 반환 함수 코드 · Oracle 임시 객체 `TEMPORARY`(T-123) · 그 밖 빈 값.
         let extra = if dialect == Dialect::Mssql && matches!(ty.as_str(), "IF" | "TF" | "FT") {
-            ty.clone()
+            ty
         } else {
             hint
         };

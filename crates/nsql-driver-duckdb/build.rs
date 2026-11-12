@@ -10,9 +10,15 @@ fn main() {
     } else if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-arg-cdylib=-Wl,-rpath,@loader_path");
     }
-    // OUT_DIR = target/<profile>/build/nsql-driver-duckdb-<hash>/out → profile 폴더 = 3단계 위.
+    // OUT_DIR = target/<profile>/build/nsql-driver-duckdb-<hash>/out(cargo ≤ 1.99) 또는 …/build/nsql-driver-duckdb/<hash>/out
+    // (cargo 1.100부터 · 11-13 CI "libduckdb.so: cannot open shared object file") → 단계 수를 세지 않고 `build` 폴더의 부모를 찾는다.
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap_or_default());
-    let Some(profile_dir) = out.ancestors().nth(3).map(Path::to_path_buf) else {
+    let Some(profile_dir) = out
+        .ancestors()
+        .find(|a| a.file_name().is_some_and(|f| f == "build"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+    else {
         return;
     };
     let names: &[&str] = if cfg!(windows) {
@@ -27,15 +33,13 @@ fn main() {
     };
     for entry in build_dir.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.starts_with("libduckdb-sys-") {
+        // 옛 배치 = `libduckdb-sys-<hash>/out/` · 새 배치 = `libduckdb-sys/<hash>/out/`.
+        if name != "libduckdb-sys" && !name.starts_with("libduckdb-sys-") {
             continue;
         }
         for n in names {
             // download-lib는 out/ 아래(하위 폴더 포함)에 푼다.
-            for candidate in [entry.path().join("out").join(n)]
-                .into_iter()
-                .chain(find_in(&entry.path().join("out"), n, 3))
-            {
+            for candidate in find_in(&entry.path(), n, 5) {
                 if candidate.is_file() {
                     for dest_dir in [profile_dir.clone(), profile_dir.join("deps")] {
                         let dest = dest_dir.join(n);

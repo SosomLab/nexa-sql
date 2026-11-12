@@ -1950,7 +1950,7 @@ fn odbc_text_driver_csv_without_server() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 동봉 런타임(DuckDB의 duckdb.dll/libduckdb.so/.dylib)을 cdylib 옆으로 — download-lib가 `build/libduckdb-sys-*/out/`에 푼 것을 찾는다.
+/// 동봉 런타임(DuckDB의 duckdb.dll/libduckdb.so/.dylib)을 cdylib 옆으로 — download-lib가 `build/libduckdb-sys-*/out/`(새 배치 `build/libduckdb-sys/*/out/`)에 푼 것을 찾는다.
 fn copy_bundled_runtime(target: &std::path::Path, id: &str, dest_dir: &std::path::Path) {
     if id != "duckdb" {
         return;
@@ -1966,17 +1966,23 @@ fn copy_bundled_runtime(target: &std::path::Path, id: &str, dest_dir: &std::path
         return;
     };
     for e in rd.flatten() {
-        if !e
-            .file_name()
-            .to_string_lossy()
-            .starts_with("libduckdb-sys-")
-        {
+        // 옛 배치 = `libduckdb-sys-<hash>/out/` · cargo 1.100부터 = `libduckdb-sys/<hash>/out/`(11-13 CI).
+        let dir = e.file_name().to_string_lossy().into_owned();
+        let outs: Vec<std::path::PathBuf> = if dir.starts_with("libduckdb-sys-") {
+            vec![e.path().join("out")]
+        } else if dir == "libduckdb-sys" {
+            std::fs::read_dir(e.path())
+                .map(|rd| rd.flatten().map(|h| h.path().join("out")).collect())
+                .unwrap_or_default()
+        } else {
             continue;
-        }
-        let p = e.path().join("out").join(name);
-        if p.is_file() {
-            let _ = std::fs::copy(&p, dest_dir.join(name));
-            return;
+        };
+        for out in outs {
+            let p = out.join(name);
+            if p.is_file() {
+                let _ = std::fs::copy(&p, dest_dir.join(name));
+                return;
+            }
         }
     }
 }

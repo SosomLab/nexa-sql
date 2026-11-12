@@ -1207,7 +1207,7 @@ impl ProjectPanel {
                     }
                     if let Err(e) = &entries {
                         self.scan_errors += 1;
-                        self.scan_log.push((path.clone(), e.clone()));
+                        self.scan_log.push((path, e.clone()));
                     }
                     self.fill_children(i, entries);
                     applied = true;

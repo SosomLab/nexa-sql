@@ -306,7 +306,7 @@ pub(crate) fn scan(
                     | "WITH"
             ) {
                 if let Some(c) = clause.last_mut() {
-                    *c = Some(up.clone());
+                    *c = Some(up);
                 }
             }
             continue;
