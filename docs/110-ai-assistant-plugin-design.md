@@ -559,3 +559,38 @@ AI 도구 호출(run_query · set_setting · run_command …)
 
 전부 ✓ — (a) WHERE 없는 DELETE = 동의 → ▲ 대량 카드 → 영향 3행 카드 → 허용 0행 / 거부 3행 그대로 · (b) WHERE id=1 UPDATE = 카드 1장 → 실행 · `ai.guard_bulk_rows=1`이면 영향 1행 카드 · (c) `auto_write=dml` = (b) 카드 없이 · (a)는 여전히 2단계 · (d) DROP TABLE = ▲ 파괴적 → 영향 3행 · (e) 운영 = commit · `run.prod_confirm` off · `run.all` 셋 다 거부 줄 + 도구 오류 · `auto_write=dml`에도 ⛔ 카드 · 게이트 2를 1초 만에 허용 = 무시 → 4초 뒤 허용 = 실행 + 보류 커밋 안내 · (f) Auto + `tx.prod_hold` = 카드 / `editor.word_wrap` = 바로 · (g) 숨김 실행 = 실행 카드·Output 탭 없음 · F5는 종전대로 · (h) 읽기 전용 프로필 UPDATE = "not executed: 읽기 전용 프로필 …"(ok=false).
 관찰 = 게이트 2를 열린 지 약 1초 만에 [허용]하면 무시되고 카드가 남는 것(✓)은 확인했지만, 상태줄 덤프에는 "N초 뒤" 안내가 잡히지 않음(다른 자리에 보이는지 실기 확인) · 숨김 실행 직후 상태줄 오른쪽 칸에 그 조회의 "3행 · 0.000s"가 남음(실행 카드·Output 탭은 안 생김).
+
+## 18. AI ↔ 편집기 연동(2026-11-12 밤 · 사용자 요청 · 5ba8e377)
+
+### 18-1. 동작 6
+
+| # | 동작 | 진입점 |
+|---|---|---|
+| 1 | 편집기 → AI 요청(설명 · 오류 수정 · 최적화 · 첨부 · 마지막 오류) | 편집기 우클릭 "AI ▸" · 팔레트 `ai.explain_selection` · `ai.fix_statement` · `ai.optimize_statement` · `ai.attach_selection` · `ai.fix_error` · 사용자 메시지 = 프롬프트 + "(편집기 a~b행)" + ```sql 본문 |
+| 2 | 실행 오류 → AI | 오류 알림 토스트 버튼 [AI에게 마지막 오류 수정 요청](`ai.error_offer`) · Output 우클릭 |
+| 3 | AI 답 → 편집기 | 코드 블록 [교체](`ai.replace_target` = 선택/문장) · 답의 줄 번호 밑줄 클릭 = 그 줄로(`ai.line_links`) |
+| 4 | 그리드 → AI | 결과 그리드 "고급 복사 ▸ AI에 첨부"(첨부 칩) |
+| 5 | 편집 승인 | `edit_editor`/`set_editor_text` 승인 카드 = 변경 미리보기(`@@` · `-` · `+` · 문맥 `ai.diff_context`) |
+| 6 | 답의 표 | 마크다운 표 열 맞춤 + 머리 밑줄 |
+
+### 18-2. 변수 도구(도구 30)
+
+- `list_vars` · `get_var`(이름 · 형 · 층 · 종류 · 현재 값) · `set_var`(쓰기 · 카드 1 · 세션 변수는 클라이언트에 산다 = DR-8).
+- `run_query`가 `EXEC :V := 리터럴`만이면 앱 쓰기 등급(카드 1 · 행 데이터 동의 없음) — 협업 V1에서 SQLite 세션은 3장(동의 · 대량 2단계 · 영향 알 수 없음)으로 나옴 = 결함 후보(§18-4).
+
+### 18-3. 설정 8
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `ai.send_target` | side | 편집기 요청을 보낼 곳(side = 분할 창 · tab = 채팅 탭) |
+| `ai.error_offer` | on | 실행 오류 알림에 [AI에게 마지막 오류 수정 요청] 버튼 |
+| `ai.replace_target` | selection | 코드 블록 [교체] 대상(selection = 선택 · statement = 커서 문장) |
+| `ai.diff_context` | 3 | 변경 미리보기의 앞뒤 문맥 줄 수 |
+| `ai.line_links` | on | 답의 "N행"·"a~b행"을 밑줄 링크로 |
+| `ai.prompt_explain` · `ai.prompt_fix` · `ai.prompt_optimize` | (내장 문구) | 편집기 요청 프롬프트 문구 |
+
+### 18-4. 판정(협업 · [journal 11-12 §20](journal/2026-11-12.md))
+
+- ✓ 변수 도구 3 · 변경 미리보기 카드 · 오류 알림 버튼 + `ai.fix_error` 메시지 · 편집기 요청 메시지("(편집기 1~3행)" + sql) · 줄 링크 밑줄 · 표 열 맞춤 · 그리드 AI에 첨부.
+- 결함 후보 2 = ★ 결함 후보 ① = 편집기 명령 `ai.explain_selection`(그리고 `ai.fix_error`)을 실행하면 요청은 새 세션에서 돌지만, 분할 창에는 그 세션이 아니라 빈 "(new)" 세션이 뜸(명령 직후 0.2초부터 · 패널에서 요청 세션을 열어야 대화가 보임) · ★ 결함 후보 ② = SQLite 세션에서 `run_query` `EXEC :v1 := 'b'`가 앱 쓰기 카드 1장이 아니라 행 데이터 동의 → "▲ 대량 변경 — 2단계 검증 대상" → "영향 행 수: 알 수 없음(셀 수 없는 문장)" 3장(스크립트 명령 = Bulk로 분류된 듯 · 방언 의존 여부 확인 필요).
+- 관찰 = 변경 미리보기 머리 줄이 2행 교체인데 `@@ 1 @@`이고 `ai.diff_context`(기본 3)인데 앞뒤 문맥 줄이 안 보임 · 그리드 첨부 칩 글 "grid (1 rows)"(영어 복수형).

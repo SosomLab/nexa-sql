@@ -343,7 +343,7 @@
 
 명명 확인 = 그리드 편집 키 묶음(`grid.edit_*`)에 붙임 · 동작 스위치(Bool).
 
-### 6-37. 11-12 새 키(AI · 포맷 · [110 §16·§17](110-ai-assistant-plugin-design.md) · [95](95-sql-formatter.md))
+### 6-37. 11-12 새 키(AI 13 · 포맷 1 · 5ba8e377 8개 포함 · [110 §16·§17](110-ai-assistant-plugin-design.md) · [95](95-sql-formatter.md))
 
 | 키 | 종류 | 기본 | 분류 | 뜻 |
 |---|---|---|---|---|
@@ -352,6 +352,12 @@
 | `ai.guard_auto_write` | Choice off\|dml | off | AI | 비운영의 일반 변경(INSERT · WHERE 있는 UPDATE/DELETE) 자동 승인 · 운영에는 안 닿음 · 보호 키(AI가 못 바꿈) |
 | `ai.guard_bulk_rows` | Int | 1000 | AI | 영향 행 수가 이 이상이면 일반 변경도 2단계 · 보호 키 |
 | `format.table_alias_case` | Choice keep\|upper\|lower | keep | SQL 포맷 | 테이블 별칭·CTE 이름 + `별칭.컬럼` 참조의 대소문자 · kiros33 strict = upper |
+| `ai.send_target` | Choice side\|tab | side | AI | 편집기 요청(설명·수정·최적화·첨부)을 보낼 곳 |
+| `ai.error_offer` | Bool | on | AI | 실행 오류 알림에 AI 수정 요청 버튼 |
+| `ai.replace_target` | Choice selection\|statement | selection | AI | 코드 블록 [교체] 대상 |
+| `ai.diff_context` | Int | 3 | AI | 편집 승인 카드 변경 미리보기의 문맥 줄 수 |
+| `ai.line_links` | Bool | on | AI | 답의 줄 번호를 밑줄 링크로 |
+| `ai.prompt_explain` · `ai.prompt_fix` · `ai.prompt_optimize` | Text | (내장 문구) | AI | 편집기 요청 프롬프트 문구(비우면 내장) |
 
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
