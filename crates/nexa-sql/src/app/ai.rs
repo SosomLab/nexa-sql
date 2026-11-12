@@ -24,6 +24,14 @@ pub(crate) enum ApprovalReply {
         name: String,
         input: String,
         reply: mpsc::Sender<ToolReply>,
+        /// 2단계 검증 대상(대량·파괴적 변경 · guard.rs) — 허용 뒤 영향 확인 카드가 한 번 더.
+        two: bool,
+    },
+    /// ★ 게이트 2(영향 확인 카드 · guard.rs): 허용 = 실행 · 거부 = 오류 결과.
+    Stage2 {
+        name: String,
+        input: String,
+        reply: mpsc::Sender<ToolReply>,
     },
     /// 행 데이터 동의만(허용 = `rows_allowed` 뒤 도구 실행).
     Rows {
@@ -105,6 +113,9 @@ pub(crate) struct AiState {
     /// ★ 자동 표시 검증(11-12 "실행된다고 답했지만 실제 실행하면 오류"): 자동 표시 실행을 지켜보는 중(시작 시각) · 훅이 포맷으로 바꾼
     /// 마지막 답의 원문(세션 id · 메시지 번호 · 원문) — 포맷한 문장이 오류면 원문으로 되돌리고 원문을 다시 실행한다.
     pub auto_run: Option<Instant>,
+    /// ★ 게이트 2 준비(영향 행 수 사전 조회가 도는 중 · 도구 · 입력 · 답 통로 · 2단계 강제) · 영향 확인 카드를 띄운 시각(운영 = 대기 뒤에만 승인).
+    pub impact_wait: Option<(String, String, mpsc::Sender<ToolReply>, bool)>,
+    pub stage2_at: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
     ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
@@ -1987,7 +1998,9 @@ impl App {
                 ApprovalReply::Cli(tx) => {
                     let _ = tx.send(false);
                 }
-                ApprovalReply::Api { reply, .. } | ApprovalReply::Rows { reply, .. } => {
+                ApprovalReply::Api { reply, .. }
+                | ApprovalReply::Rows { reply, .. }
+                | ApprovalReply::Stage2 { reply, .. } => {
                     let _ = reply.send(ToolReply {
                         output: "cancelled".into(),
                         ok: false,
@@ -1995,6 +2008,14 @@ impl App {
                 }
             }
         }
+        // 게이트 2 준비 중(영향 조회)이던 요청도 취소로 답한다.
+        if let Some((_, _, reply, _)) = self.ai.impact_wait.take() {
+            let _ = reply.send(ToolReply {
+                output: "cancelled".into(),
+                ok: false,
+            });
+        }
+        self.ai.stage2_at = None;
         self.ai.pending = None;
         self.ai.status = t(Msg::AiStopped).into();
         self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
@@ -2160,8 +2181,11 @@ impl App {
             } => {
                 let auto = self.ai_run().is_some_and(|s| s.auto);
                 let short = ai::bridge::tool_short_name(&tool).to_string();
+                // ★ 게이트는 한 곳(`ai_tool_request` · guard.rs): 우리 MCP 도구는 CLI 권한 프롬프트에서 통과시키고 실제 호출에서
+                //   분류·정책·카드를 거친다(종전에는 여기와 도구 요청에서 카드가 두 번 떴다). 그 밖 도구는 종전대로.
+                let ours = short != tool;
                 let needs_user = short == "run_query" && !self.ai_sql_is_readonly(&summary);
-                if auto && !needs_user {
+                if ours || (auto && !needs_user) {
                     let _ = reply.send(true);
                     return;
                 }
@@ -2392,21 +2416,56 @@ impl App {
 
     /// 승인 카드 응답.
     pub(crate) fn ai_approve(&mut self, ok: bool) {
+        // ★ 게이트 2(운영): 영향 확인 카드는 뜬 뒤 `run.prod_confirm_ms`가 지나야 승인된다(습관적 연타 방지 · 거부는 바로).
+        if ok
+            && matches!(
+                self.ai.approval,
+                Some((_, _, _, ApprovalReply::Stage2 { .. }))
+            )
+        {
+            let wait = std::time::Duration::from_millis(
+                self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as u64,
+            );
+            if self.ai_guard_prod() && self.ai.stage2_at.is_some_and(|t| t.elapsed() < wait) {
+                let left =
+                    wait.saturating_sub(self.ai.stage2_at.map(|t| t.elapsed()).unwrap_or(wait));
+                self.ai.status = tf(Msg::AiGuardWait, &[&format!("{:.1}", left.as_secs_f32())]);
+                self.redraw();
+                return;
+            }
+        }
         let Some((_, _, _, r)) = self.ai.approval.take() else {
             return;
         };
+        let mut after: Option<(String, String, mpsc::Sender<ToolReply>, bool)> = None;
         let mut reenter: Option<(String, String, mpsc::Sender<ToolReply>)> = None;
         match r {
             ApprovalReply::Cli(tx) => {
                 let _ = tx.send(ok);
             }
-            ApprovalReply::Api { name, input, reply } => {
+            ApprovalReply::Api {
+                name,
+                input,
+                reply,
+                two,
+            } => {
+                if ok {
+                    after = Some((name, input, reply, two));
+                } else {
+                    let _ = reply.send(ToolReply {
+                        output: "denied by the user".into(),
+                        ok: false,
+                    });
+                }
+            }
+            ApprovalReply::Stage2 { name, input, reply } => {
+                self.ai.stage2_at = None;
                 if ok {
                     self.ai.write_ok = Some((name.clone(), input.clone()));
                     self.ai_exec_tool(&name, &input, reply);
                 } else {
                     let _ = reply.send(ToolReply {
-                        output: "denied by the user".into(),
+                        output: "denied by the user at the impact check".into(),
                         ok: false,
                     });
                 }
@@ -2443,7 +2502,110 @@ impl App {
         if let Some((name, input, reply)) = reenter {
             self.ai_tool_request(name, input, reply);
         }
+        if let Some((name, input, reply, two)) = after {
+            self.ai_after_card(name, input, reply, two);
+        }
         self.redraw();
+    }
+
+    // ───────────────────────── 데이터 보호 하네스(guard.rs · docs/110 §17) ─────────────────────────
+
+    /// 지금 세션이 운영 접속인가.
+    fn ai_guard_prod(&self) -> bool {
+        self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod)
+    }
+
+    /// 도구 호출의 핵심 인자(등급 판정용): run_query = SQL · set_setting = 키 · run_command = id.
+    fn ai_guard_arg(name: &str, input: &str) -> String {
+        let v = json_parse(input).unwrap_or(Json::Obj(Vec::new()));
+        match name {
+            "run_query" | "explain" => ai::jstr(&v, "sql"),
+            "set_setting" => ai::jstr(&v, "key"),
+            "run_command" => ai::jstr(&v, "id"),
+            _ => String::new(),
+        }
+    }
+
+    /// 게이트 1을 지난 뒤: 조회문이 아닌 `run_query`는 **영향 행 수를 먼저 센다**(단일 테이블 UPDATE/DELETE/TRUNCATE/DROP TABLE) —
+    /// 2단계 대상이거나 행 수가 `ai.guard_bulk_rows` 이상이면 게이트 2(영향 확인 카드) · 아니면 실행.
+    fn ai_after_card(
+        &mut self,
+        name: String,
+        input: String,
+        reply: mpsc::Sender<ToolReply>,
+        two: bool,
+    ) {
+        if name != "run_query" {
+            self.ai_exec_tool(&name, &input, reply);
+            return;
+        }
+        let sql = Self::ai_guard_arg(&name, &input);
+        let dialect = self.sess.connected.then_some(self.sess.dialect);
+        let count = ai::guard::impact_count_sql(&sql, dialect);
+        match count {
+            Some(q) if self.sess.connected && self.ai.pending.is_none() && self.gate_open() => {
+                self.ai.capture = None;
+                self.ai.pending = Some(PendingTool {
+                    reply: None,
+                    attach_label: None,
+                    since: Instant::now(),
+                    max_rows: 1,
+                    wait_editor: None,
+                    silent: true,
+                });
+                self.ai.impact_wait = Some((name, input, reply, two));
+                self.run_text_whole(q);
+                if !self.sess.busy {
+                    // 사전 조회가 시작되지 못했다(막힘) → 행 수를 모르는 채로 판정.
+                    self.ai.pending = None;
+                    if let Some((n, i, r, tw)) = self.ai.impact_wait.take() {
+                        self.ai_impact_done(n, i, r, tw, None);
+                    }
+                }
+            }
+            _ => self.ai_impact_done(name, input, reply, two, None),
+        }
+    }
+
+    /// 영향 행 수가 나왔다(`None` = 알 수 없음): 2단계 대상·기준 이상이면 게이트 2 · 아니면 실행.
+    fn ai_impact_done(
+        &mut self,
+        name: String,
+        input: String,
+        reply: mpsc::Sender<ToolReply>,
+        two: bool,
+        count: Option<u64>,
+    ) {
+        let limit = self.settings.int("ai.guard_bulk_rows").max(1) as u64;
+        if two || count.is_some_and(|n| n >= limit) {
+            let prod = self.ai_guard_prod();
+            let sql = Self::ai_guard_arg(&name, &input);
+            let rows = count
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| t(Msg::AiGuardUnknown).to_string());
+            let mut card = tf(Msg::AiGuardStage2, &[&rows]);
+            if prod {
+                card.push('\n');
+                card.push_str(t(Msg::AiGuardProd));
+            }
+            card.push('\n');
+            card.push_str(&redact(&sql));
+            let mut m = ChatMsg::new(Kind::Approval { tool: name.clone() }, card);
+            m.id = ai::stamp_id();
+            let mid = m.id.clone();
+            self.ai_push(m);
+            self.ai.stage2_at = Some(Instant::now());
+            self.ai.approval = Some((
+                mid,
+                name.clone(),
+                input.clone(),
+                ApprovalReply::Stage2 { name, input, reply },
+            ));
+            self.redraw();
+        } else {
+            self.ai.write_ok = Some((name.clone(), input.clone()));
+            self.ai_exec_tool(&name, &input, reply);
+        }
     }
 
     // ───────────────────────── 도구 실행(UI 스레드) ─────────────────────────
@@ -2484,13 +2646,30 @@ impl App {
             return;
         }
         let is_rows = matches!(tool.name, "run_query" | "get_result" | "explain");
-        let readonly_q = tool.name != "run_query" || {
-            let sql = json_parse(&input)
-                .ok()
-                .map(|v| ai::jstr(&v, "sql"))
-                .unwrap_or_default();
-            sql_is_readonly(&sql)
-        };
+        // ★ 데이터 보호 하네스(guard.rs): 분류 → 문맥 → 정책. 조회 판정은 방언 분류와 문자열 판정이 **둘 다** 조회라고 해야 조회.
+        let arg = Self::ai_guard_arg(tool.name, &input);
+        let dialect = self.sess.connected.then_some(self.sess.dialect);
+        let mut risk = ai::guard::classify_tool(tool.name, tool.write, &arg, dialect);
+        if tool.name == "run_query" && risk == ai::guard::Risk::Read && !sql_is_readonly(&arg) {
+            risk = ai::guard::Risk::Write;
+        }
+        let prod = self.ai_guard_prod();
+        let decision = ai::guard::decide(
+            risk,
+            ai::guard::Ctx {
+                prod,
+                auto,
+                auto_write: self.settings.get("ai.guard_auto_write") == Some("dml"),
+            },
+        );
+        if decision == ai::guard::Decision::Deny {
+            self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiGuardDenied)));
+            let _ = reply.send(ToolReply {
+                output: "refused: on a production connection the assistant cannot commit/rollback, change protection settings or run execution commands - the user must do this by hand. Tell the user what to do instead.".into(),
+                ok: false,
+            });
+            return;
+        }
         let short = tool.name.to_string();
         if is_rows && !rows_allowed {
             let mut m = ChatMsg::new(
@@ -2514,22 +2693,36 @@ impl App {
             ));
             return;
         }
-        if tool.write && (!auto || !readonly_q) {
-            let sql_in = json_parse(&input)
-                .ok()
-                .map(|v| ai::jstr(&v, "sql"))
-                .unwrap_or_default();
-            // 카드 본문: run_query면 JSON 대신 **SQL 본문**(읽기 쉽게 · 11-12) · 그 밖은 입력 JSON.
-            let body = if tool.name == "run_query" && !sql_in.trim().is_empty() {
-                redact(&sql_in)
+        if matches!(
+            decision,
+            ai::guard::Decision::Card | ai::guard::Decision::TwoStage
+        ) {
+            let two = decision == ai::guard::Decision::TwoStage;
+            // 카드 본문: run_query면 JSON 대신 **SQL 본문** · 그 밖은 입력 JSON. 머리 줄 = 운영 표시 · 등급 · WHERE 없음 경고.
+            let body = if tool.name == "run_query" && !arg.trim().is_empty() {
+                redact(&arg)
             } else {
                 redact(&input)
             };
-            let card = if tool.name == "run_query" && sql_dml_without_where(&sql_in) {
-                format!("{}\n{body}", t(Msg::AiNoWhereWarn))
-            } else {
-                body
+            let mut head: Vec<String> = Vec::new();
+            if prod {
+                head.push(t(Msg::AiGuardProd).to_string());
+            }
+            let label = match risk {
+                ai::guard::Risk::Bulk => Some(Msg::AiRiskBulk),
+                ai::guard::Risk::Destructive => Some(Msg::AiRiskDestructive),
+                ai::guard::Risk::TxEnd => Some(Msg::AiRiskTxEnd),
+                ai::guard::Risk::Protection => Some(Msg::AiRiskProtection),
+                _ => None,
             };
+            if let Some(l) = label {
+                head.push(t(l).to_string());
+            }
+            if tool.name == "run_query" && sql_dml_without_where(&arg) {
+                head.push(t(Msg::AiNoWhereWarn).to_string());
+            }
+            head.push(body);
+            let card = head.join("\n");
             let mut m = ChatMsg::new(
                 Kind::Approval {
                     tool: short.clone(),
@@ -2547,8 +2740,14 @@ impl App {
                     name: short,
                     input,
                     reply,
+                    two,
                 },
             ));
+            return;
+        }
+        // 바로 실행(조회 · 자동 승인된 일반 변경) — 자동 승인된 변경도 영향 행 수 기준은 거친다.
+        if tool.name == "run_query" && risk != ai::guard::Risk::Read {
+            self.ai_after_card(short, input, reply, false);
             return;
         }
         self.ai_exec_tool(&short, &input, reply);
@@ -2995,7 +3194,26 @@ impl App {
                 });
                 // ★ 도구 조회 = 숨김 실행(결과는 AI에게만 · 그리드·결과 탭은 그대로) — 사용자에게 보일 최종 조회는 턴 끝의
                 //   자동 표시(`ai.show_result`)나 코드 블록 ▦가 맡는다.
+                // ★ 변경 문장은 사용자가 승인 카드(운영 대량·파괴 = 2단계)로 확인했다 → 사람 경로의 "같은 본문 재실행" 무장은 통과로
+                //   친다(보류 커밋 · DDL 가드 · 객체 백업 · 읽기 전용 검사는 그대로 탄다).
+                let is_write = name == "run_query" && !sql_is_readonly(&src);
+                if is_write {
+                    self.prod_confirmed_once = true;
+                }
                 self.run_text_whole(src);
+                self.prod_confirmed_once = false;
+                // ★ 실행이 시작되지 못했으면(읽기 전용 · 보류 차단 · DDL 가드 · 백업 대기) 성공이 아니라 **실패로** 알린다 — 종전에는
+                //   250 ms 뒤 상태줄 글이 ok=true로 가서 어시스턴트가 "실행됨"으로 읽었다.
+                if !self.sess.busy {
+                    if let Some(mut p) = self.ai.pending.take() {
+                        if let Some(r) = p.reply.take() {
+                            let _ = r.send(err(format!(
+                                "not executed: {} (blocked by the app's protection, or waiting for an object backup - tell the user)",
+                                redact(&self.sess.status)
+                            )));
+                        }
+                    }
+                }
                 return;
             }
             "object_source" => {
@@ -3109,6 +3327,15 @@ impl App {
             }
             self.ai.status = t(if ok { Msg::AiRunDone } else { Msg::AiRunFailed }).into();
             self.redraw();
+            return true;
+        }
+        if let Some((name, input, reply, two)) = self.ai.impact_wait.take() {
+            let count = if ok {
+                ai::guard::parse_count(&text)
+            } else {
+                None
+            };
+            self.ai_impact_done(name, input, reply, two, count);
             return true;
         }
         if let Some(r) = p.reply {

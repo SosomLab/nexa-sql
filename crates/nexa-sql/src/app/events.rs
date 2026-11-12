@@ -1034,7 +1034,12 @@ impl App {
         self.editors.set_running(self.sess.run_editor, true);
         self.editors.set_error_line(self.sess.run_editor, None);
         let n = split_items(src, self.sess.dialect).len().max(1);
-        self.sess.run_card = self.run_toast.start(src, nsql_log::now_local().stamp(), n);
+        // AI 도구의 숨김 실행은 실행 카드를 띄우지 않는다(협업 V1 관찰 11-12: 과정 쿼리마다 "완료 1행" 카드가 떴다).
+        self.sess.run_card = if self.ai.pending.as_ref().is_some_and(|p| p.silent) {
+            None
+        } else {
+            self.run_toast.start(src, nsql_log::now_local().stamp(), n)
+        };
     }
 
     pub(crate) fn drain_events(&mut self) {

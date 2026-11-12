@@ -12,6 +12,7 @@ pub(crate) mod claude_cli;
 pub(crate) mod codex;
 #[cfg(test)]
 mod e2e;
+pub(crate) mod guard;
 pub(crate) mod hooks;
 pub(crate) mod host;
 pub(crate) mod mcp;

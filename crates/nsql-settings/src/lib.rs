@@ -378,6 +378,8 @@ const AI_VERBOSITY_OPTS: &[(&str, Msg)] = &[
     ("basic", Msg::ValAiVerbosityBasic),
     ("detail", Msg::ValAiVerbosityDetail),
 ];
+const AI_GUARD_AUTO_OPTS: &[(&str, Msg)] =
+    &[("off", Msg::ValAiGuardOff), ("dml", Msg::ValAiGuardDml)];
 const AI_SHOW_RESULT_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValAiShowAuto),
     ("manual", Msg::ValAiShowManual),
@@ -6480,6 +6482,26 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiShowResult,
         kind: SettingKind::Choice(AI_SHOW_RESULT_OPTS),
         default: "auto",
+    },
+    // ★ 데이터 보호 하네스(guard.rs · 사용자 11-12): 비운영 세션의 일반 변경 자동 승인 · 대량 기준 행 수. 운영 세션에는 닿지 않는다.
+    Entry {
+        key: "ai.guard_auto_write",
+        cat: Msg::CatAi,
+        label: Msg::LblAiGuardAutoWrite,
+        desc: Msg::DescAiGuardAutoWrite,
+        kind: SettingKind::Choice(AI_GUARD_AUTO_OPTS),
+        default: "off",
+    },
+    Entry {
+        key: "ai.guard_bulk_rows",
+        cat: Msg::CatAi,
+        label: Msg::LblAiGuardBulkRows,
+        desc: Msg::DescAiGuardBulkRows,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 100_000_000,
+        },
+        default: "1000",
     },
     Entry {
         key: "ai.result_tabs",

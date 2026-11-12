@@ -16,6 +16,10 @@ impl App {
 
     /// 편집기 탭의 Output 버퍼(없으면 만든다 · 그 탭의 결과 패널이 없으면 `None` = 실행한 적 없는 탭).
     fn output_view_mut(&mut self, ed: u64) -> Option<&mut OutputView> {
+        // AI 도구의 숨김 실행은 Output 탭에 적지 않는다(탭이 새로 생기던 관찰 11-12 · 오류는 도구 결과로 어시스턴트에게 간다).
+        if self.ai.pending.as_ref().is_some_and(|p| p.silent) {
+            return None;
+        }
         let (max, ts) = self.output_limits();
         let dbl = self.settings.int("ui.dblclick_ms").clamp(100, 1000) as u64;
         let panel = if ed == self.panel_editor {
