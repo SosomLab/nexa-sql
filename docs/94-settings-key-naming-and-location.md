@@ -353,7 +353,8 @@
 | `ai.guard_bulk_rows` | Int | 1000 | AI | 영향 행 수가 이 이상이면 일반 변경도 2단계 · 보호 키 |
 | `format.table_alias_case` | Choice keep\|upper\|lower | keep | SQL 포맷 | 테이블 별칭·CTE 이름 + `별칭.컬럼` 참조의 대소문자 · kiros33 strict = upper |
 | `ai.send_target` | Choice side\|tab | side | AI | 편집기 요청(설명·수정·최적화·첨부)을 보낼 곳 |
-| `ai.error_offer` | Bool | on | AI | 실행 오류 알림에 AI 수정 요청 버튼 |
+| `ai.error_offer` | Bool | **off**(b6ff48ba) | AI | 실행 오류 카드의 복사 버튼 왼쪽 [AI] |
+| `notice.ai_error_offer` | Bool | on | 알림 | 첫 AI 턴 뒤 한 번 "[AI] 버튼 켜기" 추천 토스트(보이면 끔 · b6ff48ba) |
 | `ai.replace_target` | Choice selection\|statement | selection | AI | 코드 블록 [교체] 대상 |
 | `ai.diff_context` | Int | 3 | AI | 편집 승인 카드 변경 미리보기의 문맥 줄 수 |
 | `ai.line_links` | Bool | on | AI | 답의 줄 번호를 밑줄 링크로 |
