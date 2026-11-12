@@ -10,10 +10,20 @@ use std::sync::mpsc;
 pub(crate) const API_VERSION: &str = "2023-06-01";
 
 /// 인증 — API 키(`x-api-key`) 또는 WIF 단명 토큰(`Authorization: Bearer` · 110 §14-5 · §15-5).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) enum ApiAuth {
     Key(String),
     Bearer(String),
+}
+
+/// ★ `{:?}`에 키·토큰 글자를 싣지 않는다(11-13 · 비밀은 로그·덤프·Debug 출력 금지) — 종류만 보인다.
+impl std::fmt::Debug for ApiAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ApiAuth::Key(_) => "ApiAuth::Key(***)",
+            ApiAuth::Bearer(_) => "ApiAuth::Bearer(***)",
+        })
+    }
 }
 
 impl ApiAuth {
