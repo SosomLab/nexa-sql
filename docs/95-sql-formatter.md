@@ -166,6 +166,8 @@
 
 시험: nsql-format `paren_group_seed` · `dialect_substitution` · `auto_alias_for_tables` · `table_description_comments`(+ 기존 15) · nsql-settings/i18n 등재.
 
+- ★ **11-12 수정(fdce771c · 사용자 "실행된다고 답했지만 실제 실행하면 오류")**: ① 이름으로 참조되는 테이블·CTE(`fg.col`)에는 자동 별칭을 붙이지 않는다(ORA-00904) ② `LISTAGG(…) WITHIN GROUP (…)`가 `GROUP`에서 끊겨 `AS WITHIN`이 되던 것(ORA-00923) ③ DB 링크 `T@LINK[.DOMAIN]` = 한 낱말(별칭이 `@` 앞에 끼던 것) · 회귀 시험 3 · 확장 sql-formatter-kiros33 1.3.6으로 재빌드(9166ed43). 협업 V1 = CLI·앱 Basic 3건 ✓ · 확장 엔진은 헤드리스 판정 불가([journal 11-12 §14](journal/2026-11-12.md)).
+
 
 ## 10. 강(river) 정렬 설계 — `format.indent_style = standard|river`(10-30 · D-416 · T-255 · 설계 = 협업 · ✅ 10-31 1차 구현 · ✅ 10-31 2차 = river 완료)
 
