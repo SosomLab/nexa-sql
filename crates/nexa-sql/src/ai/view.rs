@@ -1598,12 +1598,12 @@ impl AiView {
                     Vec::new()
                 } else if brief {
                     collect_code(&m.text, &mut self.code_blocks);
-                    let name = match &m.kind {
-                        Kind::ToolCall { name, .. } => name.clone(),
+                    let text = match &m.kind {
+                        Kind::ToolCall { name, input } => tool_brief(name, input),
                         _ => String::new(),
                     };
                     vec![Line {
-                        text: format!("{} ⚙ {name}", super::wall_time(m.at)),
+                        text: format!("{} ⚙ {text}", super::wall_time(m.at)),
                         kind: LineKind::Dim,
                     }]
                 } else {
@@ -3175,8 +3175,47 @@ pub(crate) fn wrap(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> Vec<String> 
     lines
 }
 
+/// ★ 기본 레벨의 도구 한 줄(사용자 11-12 "어떤 행위가 진행 중인지 1줄 로그"): 짧은 도구 이름 + 핵심 인자 요약(한 줄 · 70자).
+pub(crate) fn tool_brief(name: &str, input: &str) -> String {
+    let short = super::bridge::tool_short_name(name);
+    let arg = nsql_settings::json::parse(input)
+        .ok()
+        .and_then(|v| {
+            [
+                "sql", "query", "name", "id", "key", "path", "profile", "text",
+            ]
+            .iter()
+            .map(|k| super::jstr(&v, k))
+            .find(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_default();
+    let flat = arg.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.is_empty() {
+        return short.to_string();
+    }
+    let mut cut: String = flat.chars().take(70).collect();
+    if flat.chars().count() > 70 {
+        cut.push('…');
+    }
+    format!("{short} · {cut}")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tool_brief_shows_short_name_and_flat_argument() {
+        assert_eq!(
+            super::tool_brief(
+                "mcp__nexa-sql__run_query",
+                "{\"sql\":\"SELECT  1\\nFROM dual\"}"
+            ),
+            "run_query · SELECT 1 FROM dual"
+        );
+        assert_eq!(super::tool_brief("session_info", "{}"), "session_info");
+        let long = format!("{{\"query\":\"{}\"}}", "x".repeat(100));
+        assert!(super::tool_brief("search_objects", &long).ends_with('…'));
+    }
+
     use super::*;
 
     struct W;

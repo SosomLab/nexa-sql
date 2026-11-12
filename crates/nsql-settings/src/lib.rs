@@ -378,6 +378,10 @@ const AI_VERBOSITY_OPTS: &[(&str, Msg)] = &[
     ("basic", Msg::ValAiVerbosityBasic),
     ("detail", Msg::ValAiVerbosityDetail),
 ];
+const AI_SHOW_RESULT_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValAiShowAuto),
+    ("manual", Msg::ValAiShowManual),
+];
 const SCROLLBAR_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValScrollbarAuto),
     ("always", Msg::ValScrollbarAlways),
@@ -6467,6 +6471,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiVerbosity,
         kind: SettingKind::Choice(AI_VERBOSITY_OPTS),
         default: "basic",
+    },
+    // ★ 최종 조회문을 결과 그리드에 보이는 방법(사용자 11-12): auto = 턴이 끝나면 마지막 ```sql 조회문을 자동 실행 · manual = ▦ 버튼.
+    Entry {
+        key: "ai.show_result",
+        cat: Msg::CatAi,
+        label: Msg::LblAiShowResult,
+        desc: Msg::DescAiShowResult,
+        kind: SettingKind::Choice(AI_SHOW_RESULT_OPTS),
+        default: "auto",
     },
     Entry {
         key: "ai.result_tabs",

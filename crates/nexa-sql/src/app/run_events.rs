@@ -120,6 +120,11 @@ impl App {
         } else {
             tf(Msg::StRows, &[&n, &secs])
         };
+        // ★ AI 도구의 숨김 실행(11-12): 결과는 AI에게 줄 글로만 잡고 그리드·결과 탭·탭 제목은 건드리지 않는다.
+        if self.ai.pending.as_ref().is_some_and(|p| p.silent) {
+            self.ai_capture_result(&rs);
+            return;
+        }
         // 결과는 실행을 시작한 결과 탭의 그리드로(탭이 이미 닫혔으면 버림) · 탭 제목 갱신(T-93).
         // 이 결과를 만든 문장 하나를 그리드에 알린다 — 건수(Σ)·OFFSET 재질의·새로고침·SQL 복사가 스크립트 전체가
         // 아니라 **그 문장**을 쓴다 · 조회 문장이 아니면(EXEC/PRINT의 REF CURSOR 등) 건수 불가(09-19 규정).

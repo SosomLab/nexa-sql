@@ -42,6 +42,9 @@ pub(crate) struct PendingTool {
     pub max_rows: usize,
     /// 객체 소스 열기 대기(열기 전 활성 편집기 id).
     pub wait_editor: Option<u64>,
+    /// ★ 숨김 실행(11-12 사용자 "과정에 필요한 쿼리는 자체적으로 수행"): AI 도구 `run_query`/`explain`의 결과는 글로만 잡고
+    /// 결과 그리드·결과 탭에는 싣지 않는다(`on_ev_result_set`이 본다).
+    pub silent: bool,
 }
 
 #[derive(Default)]
@@ -95,6 +98,10 @@ pub(crate) struct AiState {
     /// ★ 미리 띄운 CLI 프로세스의 띄우기 서명(아직 턴을 안 보냄 · 11-12) · 미리 띄우기를 시도한 세션 id(세션당 한 번).
     pub warm: Option<String>,
     pub warm_sid: Option<String>,
+    /// ★ 세션이 바쁠 때 온 조회 도구 호출의 대기열(11-12 "session busy" 오류 대신 차례로 실행).
+    pub tool_queue: std::collections::VecDeque<(String, String, mpsc::Sender<ToolReply>)>,
+    /// ★ 턴이 끝난 뒤 결과 그리드에 자동으로 보일 최종 조회문(`ai.show_result=auto`).
+    pub auto_show: Option<String>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
     ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
     pub write_ok: Option<(String, String)>,
@@ -1258,6 +1265,7 @@ impl App {
             since: Instant::now(),
             max_rows: 8,
             wait_editor: None,
+            silent: false,
         });
         self.ai.run_block = Some((msg, block));
         self.ai.capture = None;
@@ -1305,7 +1313,11 @@ impl App {
             self.layout();
             self.sync_grid_tab();
         }
-        let fresh_prev = if self.settings.flag("ai.result_tabs") {
+        // ★ 활성 결과 탭이 한 번도 실행된 적 없이 비어 있으면(Result 1) 그 탭에 · 이미 결과가 있으면 새 결과 탭에(사용자 11-12).
+        let unused = !self.panel.output_active()
+            && self.grid.source_sql().trim().is_empty()
+            && self.grid.row_count() == 0;
+        let fresh_prev = if self.settings.flag("ai.result_tabs") && !unused {
             self.fresh_result_tab_for_run()
         } else {
             None
@@ -1981,6 +1993,18 @@ impl App {
         if self.ai_tick_pending() {
             changed = true;
         }
+        if self.ai.pending.is_none() && !self.sess.busy {
+            if let Some((name, input, reply)) = self.ai.tool_queue.pop_front() {
+                self.ai_exec_tool(&name, &input, reply);
+                changed = true;
+            } else if let Some(sql) = self.ai.auto_show.take() {
+                // 턴 끝 자동 표시: 접속돼 있고 문지기가 열려 있을 때만(막혔으면 조용히 건너뜀 · ▦로 수동 실행 가능).
+                if self.sess.connected && self.gate_open() {
+                    self.ai_run_grid(&sql);
+                    changed = true;
+                }
+            }
+        }
         if changed {
             self.ai_sync_panel();
         }
@@ -2147,6 +2171,31 @@ impl App {
                             if let Some(m) = self.ai_run_mut().and_then(|s| s.messages.get_mut(i)) {
                                 m.text = new;
                             }
+                        }
+                    }
+                    // ★ 최종 조회 자동 표시(사용자 11-12 "최종 쿼리이므로 자동 조회" · `ai.show_result` auto 기본 / manual): 정상으로 끝난
+                    //   턴의 마지막 답에 있는 **마지막 ```sql 블록**이 조회문이면 결과 그리드에 실행한다(쓰기 문장은 절대 자동 실행 안 함 ·
+                    //   채팅 뷰 탭에서는 탭을 뺏지 않으려고 건너뜀 = ▦ 수동).
+                    self.ai.tool_queue.clear();
+                    let bad = ["fail", "error", "exit", "interrupt", "cancel", "abort"];
+                    let ok_stop = !bad.iter().any(|b| stop.to_ascii_lowercase().contains(b));
+                    self.ai.auto_show = None;
+                    if ok_stop
+                        && self.settings.get("ai.show_result") != Some("manual")
+                        && !self.ai_view_active()
+                    {
+                        let sql = self
+                            .ai_run()
+                            .and_then(|s| {
+                                s.messages
+                                    .iter()
+                                    .skip(last_user)
+                                    .rev()
+                                    .find(|m| m.kind == Kind::Assistant)
+                            })
+                            .and_then(|m| ai::hooks::last_sql_block(&m.text));
+                        if let Some(sql) = sql.filter(|q| sql_is_readonly(q)) {
+                            self.ai.auto_show = Some(sql);
                         }
                     }
                     // ⑥ 턴 끝 시각: 이번 턴의 메시지(사용자 요청 포함)에 완료 시각을 적는다(요청 줄 = 최종 경과 · 응답 줄 = 완료).
@@ -2784,6 +2833,13 @@ impl App {
                     let _ = reply.send(err("empty sql".into()));
                     return;
                 }
+                // ★ 세션이 바쁘면(앞선 도구 조회가 도는 중) 오류 대신 대기열에(11-12 "session busy: Running…" 관찰) — 끝나면 차례로.
+                if self.sess.connected && (self.ai.pending.is_some() || self.sess.busy) {
+                    self.ai
+                        .tool_queue
+                        .push_back((name.to_string(), input.to_string(), reply));
+                    return;
+                }
                 // ★ 이중 안전장치: 비조회 SQL은 이 호출을 사용자가 카드로 허용한 기록(`write_ok`)이 있어야만 — 없으면 실행 거부 + 오류 줄.
                 if name == "run_query" && !sql_is_readonly(&sql) {
                     let ok_rec = self.ai.write_ok.take();
@@ -2823,15 +2879,11 @@ impl App {
                     since: Instant::now(),
                     max_rows,
                     wait_editor: None,
+                    silent: true,
                 });
-                // ★ AI 턴의 조회마다 새 결과 탭(사용자 11-12 "여러 번 실행되면 탭 추가" · `ai.result_tabs` 기본 on · 결과 없으면 거둠).
-                let fresh_prev = if self.settings.flag("ai.result_tabs") {
-                    self.fresh_result_tab_for_run()
-                } else {
-                    None
-                };
+                // ★ 도구 조회 = 숨김 실행(결과는 AI에게만 · 그리드·결과 탭은 그대로) — 사용자에게 보일 최종 조회는 턴 끝의
+                //   자동 표시(`ai.show_result`)나 코드 블록 ▦가 맡는다.
                 self.run_text_whole(src);
-                self.mark_fresh_run_tab(fresh_prev);
                 return;
             }
             "object_source" => {
@@ -2847,6 +2899,7 @@ impl App {
                             since: Instant::now(),
                             max_rows,
                             wait_editor: Some(before),
+                            silent: false,
                         });
                         return;
                     }
@@ -3387,6 +3440,7 @@ impl App {
                         since: Instant::now(),
                         max_rows,
                         wait_editor: None,
+                        silent: false,
                     });
                     if let Some(s) = self.ai_cur_mut() {
                         s.rows_allowed = true;

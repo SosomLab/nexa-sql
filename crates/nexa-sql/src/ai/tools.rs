@@ -171,7 +171,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "run_query",
-        desc: "Run SQL in the current session and return up to max_rows rows as text. SELECT runs after read-only check; any other statement asks the user first.",
+        desc: "Run SQL in the current session and return up to max_rows rows as text to you only (the user's result grid is not touched; use it freely for exploration). SELECT runs after read-only check; any other statement asks the user first. To show a result to the user, end your answer with the final query in one ```sql block: the app runs the last read-only block into the result grid.",
         write: true,
         props: &[
             ("sql", "string", "SQL statement", true),

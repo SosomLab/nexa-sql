@@ -286,8 +286,12 @@ impl App {
         self.sess.run_line_base = line_base;
         self.sess.run_src_base = None;
         let target = self.run_target_tab();
-        if let Some(g) = self.grid_for(target) {
-            g.set_source_sql(&src);
+        // AI 도구의 숨김 실행(`PendingTool::silent`)은 보이는 그리드의 실행문 원문을 건드리지 않는다(새로고침·건수가 엉뚱한 문장을 쓰지 않게).
+        let silent = self.ai.pending.as_ref().is_some_and(|p| p.silent);
+        if !silent {
+            if let Some(g) = self.grid_for(target) {
+                g.set_source_sql(&src);
+            }
         }
         self.sess.run_tab = target;
         self.sess.run_fresh_prev = None;

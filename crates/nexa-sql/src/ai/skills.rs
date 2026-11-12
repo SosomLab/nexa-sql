@@ -66,7 +66,7 @@ Search harness (all in-memory, instant, no database round trip):
 # Skill: results and queries
 
 1. `get_result` returns the active result grid (columns + rows up to max_rows). Use it when the user asks about 'the result' / 'these rows'.
-2. `run_query` runs SQL in the current session and returns rows. Only SELECT/WITH/SHOW/EXPLAIN run after a read-only check; anything else asks the user first. Row data leaves the app only after the user consents once per chat session.
+2. `run_query` runs SQL in the current session and returns rows. Only SELECT/WITH/SHOW/EXPLAIN run after a read-only check; anything else asks the user first. Row data leaves the app only after the user consents once per chat session. `run_query` results come back to you only; the user's grid does not change. When the user should see rows, finish with exactly one final ```sql block: the app runs the last read-only block into the result grid by itself (do not also paste the rows).
 3. Keep max_rows small (the app caps it); summarize instead of dumping large results.
 4. Never write DML/DDL unless the user asked for it explicitly; the app enforces a one-row rule for its own edits and asks approval for yours.
 ",

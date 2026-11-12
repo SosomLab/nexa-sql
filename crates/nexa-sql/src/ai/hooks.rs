@@ -3,6 +3,38 @@
 //! 뭉치·끝 공백 정리(코드 블록 안은 손대지 않음). 설정 `ai.hook_format_sql` · `ai.hook_tidy`(기본 켬). 순수 함수(시험).
 //! (PreTool 훅 = 승인·비밀 가림·행 데이터 동의는 `App::ai_tool_request`에 이미 있고 끌 수 없다.)
 
+/// 글의 **마지막** ```sql 코드 블록 본문(없으면 None) — 턴 끝 자동 표시(`ai.show_result`)가 쓴다.
+pub(crate) fn last_sql_block(text: &str) -> Option<String> {
+    let mut last: Option<String> = None;
+    let mut cur: Option<(bool, Vec<&str>)> = None;
+    for line in text.lines() {
+        let t = line.trim_end();
+        if t.trim_start().starts_with("```") {
+            match cur.take() {
+                Some((is_sql, body)) => {
+                    let b = body.join("\n");
+                    if is_sql && !b.trim().is_empty() {
+                        last = Some(b);
+                    }
+                }
+                None => {
+                    let lang = t
+                        .trim_start()
+                        .trim_start_matches('`')
+                        .trim()
+                        .to_ascii_lowercase();
+                    let is_sql =
+                        matches!(lang.as_str(), "sql" | "plsql" | "tsql" | "mysql" | "pgsql");
+                    cur = Some((is_sql, Vec::new()));
+                }
+            }
+        } else if let Some((_, body)) = cur.as_mut() {
+            body.push(line);
+        }
+    }
+    last
+}
+
 /// 턴 끝 후처리. `fmt` = SQL 한 덩이 → 포맷 결과(실패 = None → 원문 유지).
 pub(crate) fn post_turn(
     text: &str,
@@ -84,6 +116,14 @@ pub(crate) fn post_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_sql_block_picks_the_final_sql_fence() {
+        let t = "a\n```sql\nSELECT 1\n```\nb\n```text\nx\n```\n```sql\nSELECT 2\nFROM t\n```\nend";
+        assert_eq!(last_sql_block(t).as_deref(), Some("SELECT 2\nFROM t"));
+        assert_eq!(last_sql_block("no code"), None);
+        assert_eq!(last_sql_block("```python\nx\n```"), None);
+    }
 
     #[test]
     fn formats_sql_blocks_and_tidies_prose() {
