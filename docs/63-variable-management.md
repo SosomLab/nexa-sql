@@ -411,3 +411,9 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 - **안내** = 수식 지정인데 assign이면 변수 창 = 토스트 [켜고 수식으로](`vars.formula_on:<이름>\t<식>` = 설정을 use로 바꾸고 수식 지정) · AI = 도구 결과 끝 note("evaluated once … only remembered when vars.expand_at …").
 - **AI 경로 등급** = `set_var`(값·수식) · `run_query`의 `EXEC :이름 := 식`/클라이언트 명령만 = 조회 수준(카드 없음 · 운영 포함 · 보류 건너뜀) — 변수는 클라이언트에 산다(DR-8).
 - **남은 것** = 없는 변수를 쓰는 수식의 숨김 실행이 "변수 값 입력" 창에서 멈춤(결함 후보) · 사람 경로의 운영 2단 실행은 `VAR`/`EXEC :v :=`도 막음(AI 경로와 등급 불일치 = 관찰).
+
+### 11-13 — 운영 편집기 변수 대입 · 숨김 실행 값 입력 · 수식 dirty(7a4d4796 · [journal 11-13 §1](journal/2026-11-13.md))
+
+- **운영 편집기** = 실행 항목이 전부 변수 대입(`EXEC :이름 := 식`)·클라이언트 명령이면 운영 2단 확인·보류 커밋 생략(`sessions::assign_only_items`) → 사람 경로와 AI 경로의 등급이 같아짐(둘 다 조회 수준).
+- **AI 숨김 실행** = 값 입력이 필요한 변수가 있으면 입력 창 대신 취소 + "not executed: these variables have no value yet: …".
+- **★ 수식 원인(개발 확정)** = `set_formula`가 dirty를 안 찍어 계산값이 기존 값과 같으면 호스트가 수식을 몰랐음 · 호스트가 값을 고칠 때 의존 수식이 stale이 안 됨 → `nsql-script/vars.rs` 수정(다음 커밋). 통합 시험 `oracle_exec_bind_formula_is_remembered_in_use_mode` = Thin ✓ · OCI = 이 PC 판정 불가.
