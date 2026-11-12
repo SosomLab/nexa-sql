@@ -398,3 +398,9 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 - **글로벌 치환 변수 보존** — `vars/global.sql`(바인드 `VAR`/`EXEC` 줄과 한 파일)에 `DEFINE 이름 = '값'` 줄 · 스위치 = `vars.global_persist`(바인드와 공용) · nsql-script `varsfile::store_global_full` / `load_global_macros` / `macros_from_script` · 종전 `store_global`(바인드만)은 DEFINE 줄 보존 · GUI = 기동 때 읽어 `App.global_macros` → 모든 세션 러너 `Cmd::GlobalMacros` · `DEFINE x GLOBAL`이 바꾸면 즉시 저장 · CLI = `vars.cli_global=on`이면 `nsql run` 시작 때 읽고 끝에 씀.
 - **따옴표 규칙** — 쓸 때 늘 `'값'`으로 감싸고 `'` → `''` · 읽을 때 감싼 따옴표를 벗기고 `''` → `'` · 감싸지 않은 손 작성 줄은 앞뒤 trim(종전) · 줄바꿈 든 값은 건너뜀 · 이유 = 앞뒤 공백 보존(V1 1차 결함 `' x '` → `x`) · 확인 = `' x '`·`'it''s'`·`'PLANDB'` 재기동 왕복 ✓.
 - 함께(TODO만): T-433 `grid.offset_warn` 안내 위치([43 §9-3](43-fetch-model-and-result-tabs.md)) · T-434 아웃라인에서 값 없는 층 이동 `DEFINE 이름 SHARE|SHARED|LOCAL|TAB|UNSHARE|GLOBAL` 제외.
+
+### 11-12 — 수식 지정 · AI 변수 도구 · 무제 탭 변수 자동 저장(c3ff1460 · cc81d149 · [journal 11-12 §22](journal/2026-11-12.md))
+
+- **수식 지정(변수 창)** = 입력란에 `이름 := 수식`(또는 줄을 고르고 `= 수식`) → `EXEC :이름 := 수식` 실행과 같다 · 식 안의 `:` 없는 기존 변수 이름은 자동으로 `:이름`(순수 함수 `bind_bare_names` + 시험).
+- **AI 변수 도구** = `list_vars` · `get_var` · `set_var`(값 또는 `formula` · formula = `EXEC :이름 := 수식` 숨김 실행 → 답 = get_var 상태 · 승인 카드 1 · "앱 안에서만 · DB로 보내지 않음") · `run_query`가 `EXEC :V := 리터럴`만이면 클라이언트 처리(`local_assign` · 카드 1) — [110 §18](110-ai-assistant-plugin-design.md).
+- **★ 무제 탭 변수 자동 저장** = 실행으로 변수가 바뀌었을 때 · 변수 창/AI 도구로 고쳤을 때 `project_touch` → 프로젝트 자동 저장(`project.autosave_change_ms`)이 돌아 탭 항목 `vars`에 기록(종전 = 무제 탭 변수만 바꾸면 저장이 안 돌아 강제 종료 때 잃음) · 협업 V1 = 강제 종료 뒤 재기동에서 복원 ✓.

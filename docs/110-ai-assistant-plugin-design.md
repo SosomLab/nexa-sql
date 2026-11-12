@@ -597,6 +597,12 @@ AI 도구 호출(run_query · set_setting · run_command …)
 - 변경 미리보기 = 편집기 전체 기준 `@@ <시작 줄> @@` + 앞뒤 문맥 `ai.diff_context`(3)줄.
 - 편집기 우클릭 메뉴(하위 포함) 클릭은 라우팅 맨 앞에서 편집기로.
 
+### 18-3-b. 변수 수식 · 토글 명령(11-12 밤 · c3ff1460)
+
+- `set_var`에 `formula` 인자 = `EXEC :이름 := 수식`을 숨김 실행하고 답으로 get_var 상태를 돌려줌 · 결과 집합 없는 도구 실행의 답 = "completed…".
+- `run_command`의 토글 명령(`view.*` 등) = 상태 먼저 확인(`state` = on 기본 · off · toggle) · 이미 열린 창은 닫지 않고 앞으로("already on/open - left as it is (brought to the front)").
+- 협업 판정 = [journal 11-12 §22](journal/2026-11-12.md)(수식 값 5 ✓ · 토글 3단계 ✓ · 관찰 = SQLite 세션의 `set_var` formula 답이 `kind: value`(formula 아님 · `formula`·`depends on` 줄 없음 · 값 5는 맞음) · 이름이 `V3`(대문자)로 나옴).
+
 ### 18-4. 판정(협업 · [journal 11-12 §20](journal/2026-11-12.md))
 
 - ✓ 변수 도구 3 · 변경 미리보기 카드 · 오류 알림 버튼 + `ai.fix_error` 메시지 · 편집기 요청 메시지("(편집기 1~3행)" + sql) · 줄 링크 밑줄 · 표 열 맞춤 · 그리드 AI에 첨부.
