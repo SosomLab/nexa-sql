@@ -678,7 +678,9 @@ impl App {
     }
 
     /// 이전 세션 열기(이어하기: CLI = `--resume` · API = 대화 재구성) · `pinned` = 고정 탭(아니면 미리보기 탭).
-    pub(crate) fn ai_open_session(&mut self, id: &str, pinned: bool) {
+    /// `from_side` = 편집기 옆 분할 창의 [≡] 세션 선택에서 왔다(그 탭의 분할 창 세션을 바꾼다). 활동 막대 패널에서 온 것은
+    /// **늘 채팅 탭으로** 연다(1클릭 미리보기 · 더블클릭 고정) — 분할 창의 세션은 건드리지 않는다(사용자 11-12).
+    pub(crate) fn ai_open_session(&mut self, id: &str, pinned: bool, from_side: bool) {
         let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
             return;
         };
@@ -724,7 +726,7 @@ impl App {
         }
         self.ai_view.reset();
         self.ai_sync_panel();
-        if self.ai.side_rect.w > 0 && !self.ai_view_active() {
+        if from_side && self.ai.side_rect.w > 0 && !self.ai_view_active() {
             // 분할 창에서 고른 세션 = 이 편집기 탭에 연결.
             if let (Some(tid), Some(s)) = (self.ai.side_tab, self.ai_cur()) {
                 self.ai.tab_sessions.insert(tid, s.id.clone());
@@ -990,8 +992,8 @@ impl App {
                     self.ai_open_chat();
                     self.ai_view.show_page(Page::Profiles);
                 }
-                PanelAction::OpenSession(id) => self.ai_open_session(&id, false),
-                PanelAction::OpenSessionPinned(id) => self.ai_open_session(&id, true),
+                PanelAction::OpenSession(id) => self.ai_open_session(&id, false, false),
+                PanelAction::OpenSessionPinned(id) => self.ai_open_session(&id, true, false),
                 PanelAction::RenameSession(id, title) => {
                     if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == id) {
                         s.title = title.clone();
@@ -1134,7 +1136,7 @@ impl App {
                 ViewAction::ProfileLogin(p) => self.ai_wif_login(p),
                 ViewAction::RunCode { msg, block, sql } => self.ai_run_block(msg, block, &sql),
                 ViewAction::RunGrid(sql) => self.ai_run_grid(&sql),
-                ViewAction::OpenSession(id) => self.ai_open_session(&id, true),
+                ViewAction::OpenSession(id) => self.ai_open_session(&id, true, true),
                 ViewAction::NewSession(p) => {
                     if p != self.ai.tab {
                         self.ai_switch_tab(p);
