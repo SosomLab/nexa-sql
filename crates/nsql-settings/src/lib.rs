@@ -6512,7 +6512,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblAiErrorOffer,
         desc: Msg::DescAiErrorOffer,
         kind: SettingKind::Bool,
-        default: "on",
+        // 기본 끔(사용자 11-12) — AI를 한 번 써 본 뒤 추천 알림(`notice.ai_error_offer`)의 [켜기]로 켠다.
+        default: "off",
     },
     Entry {
         key: "ai.replace_target",
@@ -6877,6 +6878,15 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ 숨겨진 메시지(사용자 10-21 "다시 보지 않기 + 설정에서 다시 켜기"): 안내의 [다시 보지 않기] 버튼이 `off`로 적고, 이 분류에서 `on`으로
     //   되돌린다. 키 이름 = `notice.<안내>` · 새 "다시 보지 않기" 안내는 같은 접두로 여기에 등재한다.
+    // ★ AI 첫 사용 뒤 한 번 보이는 추천("실행 오류에 AI 수정 요청 알림 켜기" · 사용자 11-12) — 보인 뒤 off로 바뀐다.
+    Entry {
+        key: "notice.ai_error_offer",
+        cat: Msg::CatHiddenMessages,
+        label: Msg::LblNoticeAiErrOffer,
+        desc: Msg::DescNoticeAiErrOffer,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "notice.oracle_thin",
         cat: Msg::CatHiddenMessages,

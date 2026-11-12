@@ -119,7 +119,6 @@ pub(crate) struct AiState {
     pub fmt_orig: Option<(String, usize, String)>,
     /// ★ 마지막 실행 오류(문장 · 메시지 · 편집기 줄) — "AI에게 수정 요청"이 쓴다 · 알림 버튼을 마지막으로 띄운 시각(연달아 안 띄움).
     pub last_error: Option<(String, String, usize)>,
-    pub err_offer_at: Option<Instant>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
     ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
     pub write_ok: Option<(String, String)>,
@@ -776,6 +775,9 @@ impl App {
             .set_detail(self.settings.get("ai.verbosity") == Some("detail"));
         self.ai_view
             .set_line_links(self.settings.flag("ai.line_links"));
+        // 실행 오류 카드의 [AI] 버튼(설정이 바뀌면 바로).
+        self.run_toast
+            .configure_ai(self.ai_enabled() && self.settings.flag("ai.error_offer"));
         self.ai_view
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         let prov = self.ai_provider();
@@ -2295,6 +2297,22 @@ impl App {
                     let bad = ["fail", "error", "exit", "interrupt", "cancel", "abort"];
                     let ok_stop = !bad.iter().any(|b| stop.to_ascii_lowercase().contains(b));
                     self.ai.auto_show = None;
+                    // ★ 첫 사용 추천(사용자 11-12): 턴이 정상으로 끝났고 오류 알림이 꺼져 있으면 한 번만 [켜기] 알림(그 뒤 다시 안 보임).
+                    if ok_stop
+                        && std::env::var_os("NSQL_AI_MOCK").is_none()
+                        && !self.settings.flag("ai.error_offer")
+                        && self.settings.flag("notice.ai_error_offer")
+                    {
+                        let _ = self.settings.set("notice.ai_error_offer", "off");
+                        self.persist_settings();
+                        self.toasts.push_button(
+                            toast::ToastKind::Info,
+                            t(Msg::AiErrOfferHintTitle),
+                            t(Msg::AiErrOfferHintBody),
+                            t(Msg::AiErrOfferEnable),
+                            "ai.error_offer_on",
+                        );
+                    }
                     if ok_stop
                         && self.settings.get("ai.show_result") != Some("manual")
                         && !self.ai_view_active()
@@ -2528,32 +2546,91 @@ impl App {
     /// 대상 객체) · 어디서(접속 프로필 · 운영 여부). run_query/explain에만.
     fn ai_card_head(&self, name: &str, input: &str) -> Vec<String> {
         let mut out = Vec::new();
-        if !matches!(name, "run_query" | "explain") {
-            return out;
-        }
         let v = json_parse(input).unwrap_or(Json::Obj(Vec::new()));
-        let purpose = ai::jstr(&v, "purpose");
-        let sql = ai::jstr(&v, "sql");
-        let none = t(Msg::AiCardNoPurpose).to_string();
+        let g = |k: &str| ai::jstr(&v, k);
+        let purpose = g("purpose");
         let purpose = if purpose.trim().is_empty() {
-            none
+            t(Msg::AiCardNoPurpose).to_string()
         } else {
             redact(purpose.trim())
         };
         out.push(tf(Msg::AiCardPurpose, &[&purpose]));
-        let dialect = self.sess.connected.then_some(self.sess.dialect);
-        let (kind, targets) = ai::guard::summarize(&sql, dialect);
-        let tg = if targets.is_empty() {
-            "-".to_string()
-        } else {
-            targets.join(", ")
-        };
-        out.push(tf(Msg::AiCardWhat, &[&kind, &tg]));
         let env = t(if self.ai_guard_prod() {
             Msg::AiCardEnvProd
         } else {
             Msg::AiCardEnvOther
         });
+        // 무엇을: 도구별로 사람이 읽는 한 줄(대상·바뀌는 것).
+        let what = match name {
+            "run_query" | "explain" => {
+                let dialect = self.sess.connected.then_some(self.sess.dialect);
+                let (kind, targets) = ai::guard::summarize(&g("sql"), dialect);
+                let tg = if targets.is_empty() {
+                    "-".to_string()
+                } else {
+                    targets.join(", ")
+                };
+                out.push(tf(Msg::AiCardWhat, &[&kind, &tg]));
+                out.push(tf(Msg::AiCardWhere, &[&self.sess.profile, env]));
+                return out;
+            }
+            "set_var" => {
+                if matches!(g("null").as_str(), "true" | "1") {
+                    tf(Msg::AiDoSetVarNull, &[&g("name")])
+                } else {
+                    tf(Msg::AiDoSetVar, &[&g("name"), &redact(&g("value"))])
+                }
+            }
+            "edit_editor" => match self.ai_edit_plan(input) {
+                Ok(p) => tf(
+                    Msg::AiDoEditLines,
+                    &[&p.a.to_string(), &p.b.to_string(), &p.op],
+                ),
+                Err(_) => tf(Msg::AiDoOther, &[name]),
+            },
+            "set_editor_text" => t(match g("mode").as_str() {
+                "insert" => Msg::AiDoEditorInsert,
+                "new_tab" => Msg::AiDoEditorNewTab,
+                _ => Msg::AiDoEditorWhole,
+            })
+            .to_string(),
+            "run_command" => {
+                let id = g("id");
+                let label = crate::app::commands::PALETTE
+                    .iter()
+                    .find(|c| c.id == id)
+                    .map(|c| format!("{}: {}", t(c.menu), t(c.item)))
+                    .unwrap_or_else(|| id.clone());
+                tf(Msg::AiDoCommand, &[&label, &id])
+            }
+            "set_setting" => {
+                let key = g("key");
+                let now = self.settings.get(&key).unwrap_or("").to_string();
+                tf(
+                    Msg::AiDoSetting,
+                    &[&key, &redact(&now), &redact(&g("value"))],
+                )
+            }
+            "connect" => {
+                let scope = g("scope");
+                let scope = if scope.is_empty() {
+                    "shared".to_string()
+                } else {
+                    scope
+                };
+                tf(Msg::AiDoConnect, &[&g("profile"), &scope])
+            }
+            "set_extension_enabled" => tf(Msg::AiDoExt, &[&g("id"), &g("enabled")]),
+            "switch_tab" | "open_file" => {
+                let target = [g("title"), g("path"), g("index"), g("id")]
+                    .into_iter()
+                    .find(|x| !x.is_empty())
+                    .unwrap_or_default();
+                tf(Msg::AiDoOpen, &[&target])
+            }
+            other => tf(Msg::AiDoOther, &[other]),
+        };
+        out.push(tf(Msg::AiCardDo, &[&what]));
         out.push(tf(Msg::AiCardWhere, &[&self.sess.profile, env]));
         out
     }
@@ -2705,7 +2782,18 @@ impl App {
         //   앱 쓰기(사용자 11-12 "변수 값 하나 바꾸는데 승인 3~4번").
         let client_only = tool.name == "run_query" && {
             let items = split_items(&arg, self.sess.dialect);
-            !items.is_empty() && items.iter().all(|i| sessions::is_client_only(i))
+            // `EXEC :V := 리터럴`도 클라이언트가 처리한다(DR-8 · `local_assign` = 엔진·러너와 같은 판정).
+            let local_exec = |i: &str| {
+                matches!(
+                    nsql_script::command::parse_command(i),
+                    Ok(Some(nsql_script::command::Command::Exec { ref body }))
+                        if nsql_script::local_assign(body).is_some()
+                )
+            };
+            !items.is_empty()
+                && items
+                    .iter()
+                    .all(|i| sessions::is_client_only(i) || local_exec(i))
         };
         if client_only {
             risk = ai::guard::Risk::AppWrite;

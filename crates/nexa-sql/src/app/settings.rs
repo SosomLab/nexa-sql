@@ -1317,6 +1317,8 @@ impl App {
         let tick = self.settings.int("run.toast_tick_ms");
         self.run_toast.configure(on, hide, alpha);
         self.run_toast
+            .configure_ai(self.ai_enabled() && self.settings.flag("ai.error_offer"));
+        self.run_toast
             .configure_copy(self.settings.int("ui.copy_feedback_ms"));
         self.run_toast.configure_progress(prog, fade_to, spent);
         self.run_toast.configure_tick(tick);

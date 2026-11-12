@@ -1693,6 +1693,7 @@ impl AiView {
         let ic: MenuIcon = match which {
             0 => crate::toolicons::mi_copy(),
             9 => crate::toolicons::mi_text(),
+            10 => crate::toolicons::mi_swap(),
             1 => crate::toolicons::mi_edit(),
             3 => crate::toolicons::mi_add(),
             4 => crate::toolicons::mi_key(),
@@ -1940,7 +1941,7 @@ impl AiView {
                                 (Btn::GridCode(*ci), 8u8),
                                 (Btn::RunCode(*ci), 2u8),
                                 (Btn::InsertCode(*ci), 1u8),
-                                (Btn::ReplaceCode(*ci), 5u8),
+                                (Btn::ReplaceCode(*ci), 10u8),
                                 (Btn::CopyCode(*ci), 0u8),
                                 (Btn::WrapCode, 9u8),
                             ] {

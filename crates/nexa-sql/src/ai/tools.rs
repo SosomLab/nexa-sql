@@ -269,12 +269,30 @@ impl Tool {
                 )
             })
             .collect();
-        let required: Vec<Json> = self
+        let mut props = props;
+        let mut required: Vec<Json> = self
             .props
             .iter()
             .filter(|(_, _, _, req)| *req)
             .map(|(n, _, _, _)| Json::Str((*n).into()))
             .collect();
+        // ★ 쓰기 도구는 모두 `purpose`(승인 카드의 "목적" 줄 · 사용자 11-12 "승인 대상과 목표를 요약해서") — 표에 없으면 붙인다.
+        if self.write && !self.props.iter().any(|(n, _, _, _)| *n == "purpose") {
+            props.push((
+                "purpose".to_string(),
+                Json::Obj(vec![
+                    ("type".into(), Json::Str("string".into())),
+                    (
+                        "description".into(),
+                        Json::Str(
+                            "One short sentence in the user's language: what this does and why it is needed now (shown to the user on the approval card)"
+                                .into(),
+                        ),
+                    ),
+                ]),
+            ));
+            required.push(Json::Str("purpose".into()));
+        }
         Json::Obj(vec![
             ("type".into(), Json::Str("object".into())),
             ("properties".into(), Json::Obj(props)),

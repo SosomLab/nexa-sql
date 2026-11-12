@@ -630,6 +630,16 @@ fn shape_check(x: f32, y: f32) -> bool {
     stroke(x, y, (52.0, 136.0), (108.0, 192.0), 30.0)
         || stroke(x, y, (108.0, 192.0), (208.0, 72.0), 30.0)
 }
+/// 교체(⇄ · AI 코드 블록 [선택/문장 교체] · 사용자 11-12): 위 = 오른쪽 화살표 · 아래 = 왼쪽 화살표.
+pub(crate) fn mi_swap() -> MenuIcon {
+    menu_icon(shape_swap)
+}
+fn shape_swap(x: f32, y: f32) -> bool {
+    stroke(x, y, (44.0, 92.0), (168.0, 92.0), 22.0)
+        || tri(x, y, (216.0, 92.0), (160.0, 52.0), (160.0, 132.0))
+        || stroke(x, y, (88.0, 168.0), (212.0, 168.0), 22.0)
+        || tri(x, y, (40.0, 168.0), (96.0, 128.0), (96.0, 208.0))
+}
 pub(crate) fn mi_cut() -> MenuIcon {
     menu_icon(shape_cut)
 }

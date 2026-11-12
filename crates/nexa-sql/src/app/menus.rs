@@ -946,6 +946,14 @@ impl App {
             "ai.optimize_statement" => self.ai_editor_request("optimize"),
             "ai.attach_selection" => self.ai_editor_request("attach"),
             "ai.fix_error" => self.ai_fix_last_error(),
+            // 추천 알림의 [켜기] — 실행 오류에 "AI에게 수정 요청" 알림을 켠다.
+            "ai.error_offer_on" => {
+                let _ = self.settings.set("ai.error_offer", "on");
+                self.persist_settings();
+                self.run_toast.configure_ai(self.ai_enabled());
+                self.sess.status = t(Msg::AiErrOfferEnabled).into();
+                self.redraw();
+            }
             "ai.enabled" => {
                 let on = !self.settings.flag("ai.enabled");
                 let _ = self

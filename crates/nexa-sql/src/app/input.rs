@@ -1303,6 +1303,29 @@ impl App {
                 return;
             }
         }
+        // ★ 편집기 우클릭 메뉴(하위 메뉴 포함)가 열려 있고 커서가 그 사각형 안이면 **가장 먼저** 편집기가 받는다(사용자 11-12:
+        //   하위 메뉴가 결과 탭 줄·Output·분할 창 위로 펼쳐지면 아래 컨트롤이 클릭을 먼저 받아 항목이 잘 안 눌렸다 — 종전 판정은
+        //   패널·Output·뷰 탭 라우팅 **뒤**에 있었다). 바깥 클릭은 종전 경로로 흘러 메뉴를 닫는다.
+        if is_mouse || matches!(ev, InputEvent::RightDown { .. }) {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let pb = self.editors.cur().popup_bounds();
+            if !self.ai_view_active()
+                && self.editors.cur().popup_open()
+                && !pb.is_empty()
+                && pb.contains(cur)
+            {
+                self.ed_mut().on_event(&ev, &mut inv);
+                let pending = self.ed_mut().take_edit_ctx();
+                if let Some(act) = pending {
+                    self.clip_action(act);
+                }
+                self.redraw();
+                return;
+            }
+        }
         // 찾기 바 — 마우스는 바 안일 때 · 키/문자는 포커스일 때.
         if self.route_findbar(ev, is_ptr) {
             return;
@@ -1851,6 +1874,7 @@ impl App {
                         self.sess.status = t(Msg::ErrClipboard).into();
                     }
                 }
+                runtoast::RunToastHit::AskAi => self.menu_action("ai.fix_error"),
                 runtoast::RunToastHit::Card | runtoast::RunToastHit::None => {}
             },
             OverlayZone::Status(i) => self.status_item_act(i),

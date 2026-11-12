@@ -12,7 +12,6 @@
 use crate::ai::Attachment;
 use crate::*;
 use nsql_settings::json::{parse as json_parse, Json};
-use std::time::Instant;
 
 /// 편집기 부분 편집 계획(도구 `edit_editor` · 실행과 미리보기가 같은 계산을 쓴다).
 pub(crate) struct EditPlan {
@@ -23,8 +22,7 @@ pub(crate) struct EditPlan {
     pub a: usize,
     pub b: usize,
     pub op: String,
-    /// 범위의 지금 글 · 새 글(`select`면 None).
-    pub old: String,
+    /// 새 글(`select`면 None).
     pub new: Option<String>,
 }
 
@@ -98,8 +96,21 @@ impl App {
         self.ai_init();
         if self.settings.get("ai.send_target") == Some("tab") {
             self.ai_open_chat();
-        } else if !self.ai_side_on() {
-            self.ai_toggle_side();
+        } else {
+            if !self.ai_side_on() {
+                self.ai_toggle_side();
+            }
+            // ★ 지금 세션을 이 편집기 탭의 분할 창 세션으로 묶는다 — 묶지 않으면 첫 그리기(`ai_side_prepare`)가 "이 탭의 세션 없음"으로
+            //   보고 빈 세션을 새로 만들어, 방금 보낸 요청이 다른 세션에서 돌았다(협업 V1 11-12).
+            if self.ai.cur.is_none() {
+                self.ai_new_session();
+            }
+            let tid = self.editors.active_id();
+            if let Some(id) = self.ai_cur().map(|s| s.id.clone()) {
+                self.ai.tab_sessions.insert(tid, id);
+            }
+            self.ai.side_tab = Some(tid);
+            self.ai.on_chat = None;
         }
     }
 
@@ -162,7 +173,8 @@ impl App {
         self.ai_send(&format!("{prompt}\n{where_}\n\n```sql\n{sql}\n```"));
     }
 
-    /// 실행 오류를 기억하고(문장 · 메시지 · 편집기 줄) 설정 `ai.error_offer`면 "AI에게 수정 요청" 알림 버튼을 띄운다.
+    /// 실행 오류를 기억한다(문장 · 메시지 · 편집기 줄) — 요청 자리는 **기존 실행 오류 카드**의 [AI] 버튼(`ai.error_offer`) ·
+    /// Output·편집기 우클릭. 별도 알림은 만들지 않는다(사용자 11-12).
     /// AI 도구의 숨김 실행에서 난 오류 · AI가 꺼져 있을 때는 아무것도 하지 않는다.
     pub(crate) fn ai_note_error(&mut self, stmt: &str, message: &str, line: usize) {
         if !self.ai_enabled() || self.ai.pending.as_ref().is_some_and(|p| p.silent) {
@@ -172,26 +184,6 @@ impl App {
             return;
         }
         self.ai.last_error = Some((stmt.to_string(), message.to_string(), line));
-        if !self.settings.flag("ai.error_offer") {
-            return;
-        }
-        // 스크립트가 오류를 줄줄이 내도 알림은 한 번(3초).
-        let recent = self
-            .ai
-            .err_offer_at
-            .is_some_and(|t0| t0.elapsed() < std::time::Duration::from_secs(3));
-        if recent {
-            return;
-        }
-        self.ai.err_offer_at = Some(Instant::now());
-        let first = message.lines().next().unwrap_or("").to_string();
-        self.toasts.push_button(
-            toast::ToastKind::Info,
-            t(Msg::AiErrOfferTitle),
-            first,
-            t(Msg::MnAiFixError),
-            "ai.fix_error",
-        );
     }
 
     /// ★ 오류 → AI(알림 버튼 · Output 우클릭 · 팔레트 `ai.fix_error`): 마지막 오류의 문장·메시지·줄을 붙여 수정을 요청한다.
@@ -267,7 +259,7 @@ impl App {
         if let Some(s) = self.ai_cur_mut() {
             s.rows_allowed = true;
             s.attachments.push(Attachment::Text {
-                label: format!("grid ({n} rows)"),
+                label: format!("grid ({n} row(s))"),
                 body,
             });
         }
@@ -318,7 +310,6 @@ impl App {
             .map(|l| l.chars().count() + 1)
             .sum::<usize>()
             - 1;
-        let old = lines[a - 1..b].join("\n");
         let new = match op.as_str() {
             "select" => None,
             "replace" => Some(g("text").trim_end_matches('\n').to_string()),
@@ -334,7 +325,6 @@ impl App {
             a,
             b,
             op,
-            old,
             new,
         })
     }
@@ -348,14 +338,21 @@ impl App {
         let (head, cur, new) = match tool {
             "edit_editor" => {
                 let p = self.ai_edit_plan(input).ok()?;
-                let new = p.new?;
+                let new = p.new.clone()?;
+                // 편집기 전체 글에 계획을 적용한 글과 견준다(줄 번호 = 편집기 기준 · 앞뒤 문맥 줄 포함).
+                let full = self.editors.cur().text();
+                let chars: Vec<char> = full.chars().collect();
+                let end = (p.start + p.len).min(chars.len());
+                let after: String = chars[..p.start.min(chars.len())].iter().collect::<String>()
+                    + &new
+                    + &chars[end..].iter().collect::<String>();
                 (
                     tf(
                         Msg::AiPreviewLines,
                         &[&p.op, &p.a.to_string(), &p.b.to_string()],
                     ),
-                    p.old,
-                    new,
+                    full,
+                    after,
                 )
             }
             "set_editor_text" => {

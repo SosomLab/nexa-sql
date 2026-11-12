@@ -51,6 +51,8 @@ pub(crate) enum RunToastHit {
     Card,
     /// 1행 오른쪽 복사 버튼 — 그 실행의 SQL 원문(카드는 그대로 · 사용자 09-23).
     Copy(String),
+    /// 오류 카드의 [AI] 버튼 — 마지막 오류의 수정을 어시스턴트에 요청(카드는 그대로 · 사용자 11-12).
+    AskAi,
 }
 
 struct Run {
@@ -73,6 +75,8 @@ struct Run {
     rect: Rect,
     stop_rect: Rect,
     line_rect: Rect,
+    /// 오류 카드의 [AI] 버튼 자리(안 보이면 빈 사각형).
+    ai_rect: Rect,
     /// 1행 오른쪽 복사 버튼(부품 `copybtn` · 눌림 → 체크 → 복귀 · 사용자 09-23).
     copy: crate::copybtn::CopyBtn,
 }
@@ -92,6 +96,8 @@ pub(crate) struct RunToast {
     spent: f32,
     hover_line: Option<u64>,
     hover_stop: Option<u64>,
+    /// 오류 카드에 [AI] 버튼을 보인다.
+    ai_offer: bool,
     /// 복사 버튼 복귀 시간(설정 `ui.copy_feedback_ms` · 새 카드와 지금 카드 전부에 적용).
     copy_feedback: i64,
     /// 누적이 영역을 넘을 때 아래로 내려 본 양(px · 0 = 맨 위 = 최신).
@@ -147,6 +153,7 @@ impl RunToast {
             spent: 0.3,
             hover_line: None,
             hover_stop: None,
+            ai_offer: false,
             copy_feedback: crate::copybtn::DEFAULT_FEEDBACK_MS as i64,
             scroll: 0,
             follow: true,
@@ -154,6 +161,11 @@ impl RunToast {
             stack_rect: Rect::default(),
             overflow: 0,
         }
+    }
+
+    /// 오류 카드에 [AI] 버튼을 보일 것인가(설정 `ai.enabled` + `ai.error_offer` · 사용자 11-12 "기존 오류 카드에").
+    pub(crate) fn configure_ai(&mut self, on: bool) {
+        self.ai_offer = on;
     }
 
     /// 설정 `run.toast` · `run.toast_hide_ms`(0 = 수동 닫기 · 09-30 ms 단위) · `ui.toast_alpha`.
@@ -270,6 +282,7 @@ impl RunToast {
             rect: Rect::default(),
             stop_rect: Rect::default(),
             line_rect: Rect::default(),
+            ai_rect: Rect::default(),
             copy: {
                 let mut c = crate::copybtn::CopyBtn::new();
                 c.set_feedback_ms(self.copy_feedback);
@@ -491,6 +504,9 @@ impl RunToast {
             return RunToastHit::Stop;
         }
         // 복사 버튼 = 카드를 닫지 않고 SQL만 넘긴다(끝난 카드도) · 눌림 → 체크 → 복귀 시계를 시작.
+        if !r.ai_rect.is_empty() && r.ai_rect.contains(p) {
+            return RunToastHit::AskAi;
+        }
         if r.copy.hit(p) {
             let (id, sql) = (r.id, r.sql.clone());
             if let Some(run) = self.runs.iter_mut().find(|x| x.id == id) {
@@ -660,6 +676,7 @@ impl RunToast {
         let (alpha, fade_to, spent, hide_after) =
             (self.alpha, self.fade_to, self.spent, self.hide_after);
         let (hover_line, hover_stop) = (self.hover_line, self.hover_stop);
+        let ai_offer = self.ai_offer;
         let r = &mut self.runs[i];
         let fade = match r.ended {
             Some(e) if !hide_after.is_zero() => {
@@ -742,7 +759,27 @@ impl RunToast {
             copy_sz,
             copy_sz,
         );
-        let max_w = copy.x - px(6.0) - lx;
+        // ★ 오류 카드 = 복사 버튼 왼쪽에 [AI](수정 요청 · 설정이 켜져 있을 때만 · 별도 알림을 만들지 않는다 · 사용자 11-12).
+        let ai_w = if ai_offer && matches!(r.phase, Phase::Error(_)) {
+            dc.text_width("AI") + px(12.0)
+        } else {
+            0
+        };
+        if ai_w > 0 {
+            let b = Rect::new(copy.x - px(6.0) - ai_w, copy.y, ai_w, copy_sz);
+            r.ai_rect = b.intersection(&area);
+            dc.fill_round_rect_alpha(r.ai_rect, px(3.0), th.accent, a);
+            dc.text(
+                b.x + px(6.0),
+                b.y + (copy_sz - lh) / 2,
+                r.ai_rect,
+                "AI",
+                th.panel_bg,
+            );
+        } else {
+            r.ai_rect = Rect::default();
+        }
+        let max_w = copy.x - px(6.0) - lx - if ai_w > 0 { ai_w + px(6.0) } else { 0 };
         let mut line = r.line.clone();
         if dc.text_width(&line) > max_w {
             while dc.text_width(&format!("{line}…")) > max_w && line.pop().is_some() {}
