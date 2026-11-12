@@ -464,6 +464,18 @@ impl App {
         // 변수 창(· AI 도구 `set_var`)에서 고친 것도 프로젝트 자동 저장 대상(무제 탭의 변수 = 프로젝트 파일 · 11-12).
         self.project_touch();
         self.vars_win.redraw();
+        // ★ 값을 고쳤으면 그 값을 쓰는 수식 변수를 바로 다시 계산한다(사용자 11-13 "요청이 즉시 반영되면 좋겠다" · 사용 시 모드 ·
+        //   수식이 하나라도 있을 때만 · 접속 중이고 세션이 한가할 때만 — 아니면 다음 실행·⟳에서 계산된다).
+        let has_formula = local.iter().any(|v| v.formula.is_some())
+            || self.sess.shared_vars.iter().any(|v| v.formula.is_some());
+        if has_formula
+            && self.settings.get("vars.expand_at") == Some("use")
+            && self.sess.connected
+            && !self.sess.busy
+            && self.gate_open()
+        {
+            self.vars_refresh_now();
+        }
     }
 
     /// 글로벌 층이 바뀌었다(변수 창 · 스크립트 `VAR x GLOBAL`) — 파일에 남기고(`vars.global_persist`) 모든 세션에 전파.

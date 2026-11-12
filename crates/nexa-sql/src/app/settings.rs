@@ -1318,6 +1318,12 @@ impl App {
         self.run_toast.configure(on, hide, alpha);
         self.run_toast
             .configure_ai(self.ai_enabled() && self.settings.flag("ai.error_offer"));
+        let hint = if self.ai_enabled() && !self.settings.flag("ai.error_offer") {
+            t(Msg::AiErrOfferCardOn).to_string()
+        } else {
+            String::new()
+        };
+        self.run_toast.configure_ai_hint(&hint);
         self.run_toast
             .configure_copy(self.settings.int("ui.copy_feedback_ms"));
         self.run_toast.configure_progress(prog, fade_to, spent);

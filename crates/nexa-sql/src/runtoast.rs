@@ -53,6 +53,8 @@ pub(crate) enum RunToastHit {
     Copy(String),
     /// 오류 카드의 [AI] 버튼 — 마지막 오류의 수정을 어시스턴트에 요청(카드는 그대로 · 사용자 11-12).
     AskAi,
+    /// 오류 카드의 [AI 켜기] — 설정 `ai.error_offer`를 켠다(꺼져 있을 때만 보인다 · 사용자 11-13).
+    EnableAi,
 }
 
 struct Run {
@@ -98,6 +100,8 @@ pub(crate) struct RunToast {
     hover_stop: Option<u64>,
     /// 오류 카드에 [AI] 버튼을 보인다.
     ai_offer: bool,
+    /// 설정이 꺼져 있을 때의 [AI 켜기] 글(빈 글 = 버튼 없음).
+    ai_hint: String,
     /// 복사 버튼 복귀 시간(설정 `ui.copy_feedback_ms` · 새 카드와 지금 카드 전부에 적용).
     copy_feedback: i64,
     /// 누적이 영역을 넘을 때 아래로 내려 본 양(px · 0 = 맨 위 = 최신).
@@ -154,6 +158,7 @@ impl RunToast {
             hover_line: None,
             hover_stop: None,
             ai_offer: false,
+            ai_hint: String::new(),
             copy_feedback: crate::copybtn::DEFAULT_FEEDBACK_MS as i64,
             scroll: 0,
             follow: true,
@@ -166,6 +171,11 @@ impl RunToast {
     /// 오류 카드에 [AI] 버튼을 보일 것인가(설정 `ai.enabled` + `ai.error_offer` · 사용자 11-12 "기존 오류 카드에").
     pub(crate) fn configure_ai(&mut self, on: bool) {
         self.ai_offer = on;
+    }
+
+    /// 설정이 꺼져 있을 때 오류 카드에 보일 [AI 켜기] 글(빈 글 = 안 보임 · AI 자체가 꺼져 있으면 호스트가 빈 글을 준다).
+    pub(crate) fn configure_ai_hint(&mut self, label: &str) {
+        self.ai_hint = label.to_string();
     }
 
     /// 설정 `run.toast` · `run.toast_hide_ms`(0 = 수동 닫기 · 09-30 ms 단위) · `ui.toast_alpha`.
@@ -505,7 +515,11 @@ impl RunToast {
         }
         // 복사 버튼 = 카드를 닫지 않고 SQL만 넘긴다(끝난 카드도) · 눌림 → 체크 → 복귀 시계를 시작.
         if !r.ai_rect.is_empty() && r.ai_rect.contains(p) {
-            return RunToastHit::AskAi;
+            return if self.ai_offer {
+                RunToastHit::AskAi
+            } else {
+                RunToastHit::EnableAi
+            };
         }
         if r.copy.hit(p) {
             let (id, sql) = (r.id, r.sql.clone());
@@ -677,6 +691,11 @@ impl RunToast {
             (self.alpha, self.fade_to, self.spent, self.hide_after);
         let (hover_line, hover_stop) = (self.hover_line, self.hover_stop);
         let ai_offer = self.ai_offer;
+        let ai_label = if ai_offer {
+            "AI".to_string()
+        } else {
+            self.ai_hint.clone()
+        };
         let r = &mut self.runs[i];
         let fade = match r.ended {
             Some(e) if !hide_after.is_zero() => {
@@ -760,21 +779,26 @@ impl RunToast {
             copy_sz,
         );
         // ★ 오류 카드 = 복사 버튼 왼쪽에 [AI](수정 요청 · 설정이 켜져 있을 때만 · 별도 알림을 만들지 않는다 · 사용자 11-12).
-        let ai_w = if ai_offer && matches!(r.phase, Phase::Error(_)) {
-            dc.text_width("AI") + px(12.0)
+        let ai_w = if !ai_label.is_empty() && matches!(r.phase, Phase::Error(_)) {
+            dc.text_width(&ai_label) + px(12.0)
         } else {
             0
         };
         if ai_w > 0 {
             let b = Rect::new(copy.x - px(6.0) - ai_w, copy.y, ai_w, copy_sz);
             r.ai_rect = b.intersection(&area);
-            dc.fill_round_rect_alpha(r.ai_rect, px(3.0), th.accent, a);
+            if ai_offer {
+                dc.fill_round_rect_alpha(r.ai_rect, px(3.0), th.accent, a);
+            } else {
+                // 꺼진 상태 = 테두리만(켜면 채워진 [AI]로 바뀐다).
+                dc.stroke_round_rect_alpha(r.ai_rect, px(3.0), th.accent, 1.0, a);
+            }
             dc.text(
                 b.x + px(6.0),
                 b.y + (copy_sz - lh) / 2,
                 r.ai_rect,
-                "AI",
-                th.panel_bg,
+                &ai_label,
+                if ai_offer { th.panel_bg } else { th.accent },
             );
         } else {
             r.ai_rect = Rect::default();

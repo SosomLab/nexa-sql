@@ -218,6 +218,8 @@ pub(crate) struct AiView {
     detail: bool,
     /// 답 글의 줄 번호를 누를 수 있게(설정 `ai.line_links`).
     line_links: bool,
+    /// 마지막으로 그린 대본 글 폭(표 열 폭 계산용).
+    text_w: i32,
     /// 코드 상자의 긴 줄을 상자 폭에서 접는다(코드 상자 머리 버튼 · 꺼짐 = 상자 폭에서 자름).
     code_wrap: bool,
     blink: bool,
@@ -316,6 +318,7 @@ impl Default for AiView {
             detail: false,
             code_wrap: false,
             line_links: true,
+            text_w: 0,
             blink: true,
             busy_last: false,
             chip_models: Vec::new(),
@@ -606,6 +609,92 @@ impl AiView {
         lo
     }
 
+    /// 표 블록(이어진 표 줄)의 범위 [시작, 끝) — `li`가 든 블록.
+    fn table_block(ls: &[Line], li: usize) -> (usize, usize) {
+        let is = |k: &LineKind| matches!(k, LineKind::TableHead | LineKind::TableRow);
+        let mut s0 = li;
+        while s0 > 0 && is(&ls[s0 - 1].kind) {
+            s0 -= 1;
+        }
+        let mut e0 = li;
+        while e0 < ls.len() && is(&ls[e0].kind) {
+            e0 += 1;
+        }
+        (s0, e0)
+    }
+
+    /// 표 블록의 열 폭(칸 글 폭 + 간격의 최댓값 · 대본 폭 `w`보다 넓으면 넓은 열부터 줄인다) — 그리기·선택이 같이 쓴다.
+    fn table_widths(&self, dc: &mut dyn DrawCtx, rows: &[Line], w: i32) -> Vec<i32> {
+        let gap = self.s(14.0);
+        let mut cols: Vec<i32> = Vec::new();
+        for q in rows {
+            let bold = q.kind == LineKind::TableHead;
+            if bold {
+                dc.select_font(FontSlot::Base, true);
+            }
+            for (ci, cell) in q.text.split('\t').enumerate() {
+                let cw = dc.text_width(cell) + gap;
+                if ci < cols.len() {
+                    cols[ci] = cols[ci].max(cw);
+                } else {
+                    cols.push(cw);
+                }
+            }
+            if bold {
+                dc.select_font(FontSlot::Base, false);
+            }
+        }
+        let avail = (w - self.s(8.0)).max(self.s(60.0));
+        let min_w = self.s(36.0);
+        let mut guard = 0;
+        while cols.iter().sum::<i32>() > avail && guard < 4000 {
+            guard += 1;
+            let Some((mi, mw)) = cols.iter().copied().enumerate().max_by_key(|x| x.1) else {
+                break;
+            };
+            if mw <= min_w {
+                break;
+            }
+            cols[mi] = (mw - self.s(4.0)).max(min_w);
+        }
+        cols
+    }
+
+    /// 표 줄(칸을 탭으로 이은 글)의 글자 번호 `c` → 화면 x(열 배치 기준 · 칸 안에서는 글 폭 · 칸 폭을 넘지 않는다).
+    fn table_x_of(dc: &mut dyn DrawCtx, text: &str, cols: &[i32], lx: i32, c: usize) -> i32 {
+        let mut cx = lx;
+        let mut seen = 0usize;
+        for (ci, cell) in text.split('\t').enumerate() {
+            let n = cell.chars().count();
+            let cw = cols.get(ci).copied().unwrap_or(0);
+            if c <= seen + n {
+                let pre: String = cell.chars().take(c - seen).collect();
+                return cx + dc.text_width(&pre).min(cw.max(0));
+            }
+            // 탭 한 글자를 넘어간다.
+            seen += n + 1;
+            cx += cw;
+        }
+        cx
+    }
+
+    /// 표 줄에서 점 x → 글자 번호(그 칸 안의 가장 가까운 글자 경계).
+    fn table_col_at(dc: &mut dyn DrawCtx, text: &str, cols: &[i32], lx: i32, px: i32) -> usize {
+        let mut cx = lx;
+        let mut seen = 0usize;
+        let cells: Vec<&str> = text.split('\t').collect();
+        for (ci, cell) in cells.iter().enumerate() {
+            let n = cell.chars().count();
+            let cw = cols.get(ci).copied().unwrap_or(0);
+            if px < cx + cw || ci + 1 == cells.len() {
+                return seen + Self::col_at(dc, cell, cx, px).min(n);
+            }
+            seen += n + 1;
+            cx += cw;
+        }
+        seen
+    }
+
     /// 줄 종류 → 글 시작 x · 굵은 글꼴 여부(그릴 때와 같은 규칙).
     fn line_x(kind: &LineKind, x: i32, code_x: i32) -> (i32, bool) {
         match kind {
@@ -629,6 +718,28 @@ impl AiView {
         let Some(l) = self.lines.iter().flatten().nth(flat) else {
             return 0;
         };
+        // 표 줄 = 열 배치 기준(그릴 때와 같은 열 폭).
+        if matches!(l.kind, LineKind::TableHead | LineKind::TableRow) {
+            let mut base = 0usize;
+            for ls in &self.lines {
+                if flat < base + ls.len() {
+                    let li = flat - base;
+                    let (bs, be) = Self::table_block(ls, li);
+                    let head = l.kind == LineKind::TableHead;
+                    let cols = self.table_widths(dc, &ls[bs..be], self.text_w);
+                    if head {
+                        dc.select_font(FontSlot::Base, true);
+                    }
+                    let c = Self::table_col_at(dc, &l.text, &cols, x, px);
+                    if head {
+                        dc.select_font(FontSlot::Base, false);
+                    }
+                    return c;
+                }
+                base += ls.len();
+            }
+            return 0;
+        }
         let (lx, bold) = Self::line_x(&l.kind, x, code_x);
         if bold {
             dc.select_font(FontSlot::Base, true);
@@ -1732,6 +1843,7 @@ impl AiView {
         let pad = self.s(12.0);
         let x = b.x + pad;
         let w = (b.w - pad * 2).max(self.s(80.0));
+        self.text_w = w;
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
         let line_h = lh + self.s(4.0);
@@ -2059,41 +2171,7 @@ impl AiView {
                             if table.as_ref().is_none_or(|(end, _)| li >= *end) {
                                 let end =
                                     li + ls[li..].iter().take_while(|q| is_tbl(&q.kind)).count();
-                                let gap = self.s(14.0);
-                                let mut cols: Vec<i32> = Vec::new();
-                                for q in &ls[li..end] {
-                                    let bold = q.kind == LineKind::TableHead;
-                                    if bold {
-                                        dc.select_font(FontSlot::Base, true);
-                                    }
-                                    for (ci, cell) in q.text.split('\t').enumerate() {
-                                        let cw = dc.text_width(cell) + gap;
-                                        if ci < cols.len() {
-                                            cols[ci] = cols[ci].max(cw);
-                                        } else {
-                                            cols.push(cw);
-                                        }
-                                    }
-                                    if bold {
-                                        dc.select_font(FontSlot::Base, false);
-                                    }
-                                }
-                                // 창보다 넓으면 넓은 열부터 줄인다(가장 넓은 열을 고르게 깎는다 · 최소 폭).
-                                let avail = (w - self.s(8.0)).max(self.s(60.0));
-                                let min_w = self.s(36.0);
-                                let mut guard = 0;
-                                while cols.iter().sum::<i32>() > avail && guard < 4000 {
-                                    guard += 1;
-                                    let Some((mi, mw)) =
-                                        cols.iter().copied().enumerate().max_by_key(|x| x.1)
-                                    else {
-                                        break;
-                                    };
-                                    if mw <= min_w {
-                                        break;
-                                    }
-                                    cols[mi] = (mw - self.s(4.0)).max(min_w);
-                                }
+                                let cols = self.table_widths(dc, &ls[li..end], w);
                                 table = Some((end, cols));
                             }
                             if let Some((_, cols)) = &table {
@@ -2142,9 +2220,29 @@ impl AiView {
                         if bold {
                             dc.select_font(FontSlot::Base, true);
                         }
-                        let x0 = lx + dc.text_width(&l.text.chars().take(c0).collect::<String>());
-                        let mut x1 =
-                            lx + dc.text_width(&l.text.chars().take(c1).collect::<String>());
+                        let is_table = matches!(l.kind, LineKind::TableHead | LineKind::TableRow);
+                        let (x0, mut x1) = if is_table {
+                            // ★ 표 줄은 열 배치로 그려진다 → 선택 자리도 열 배치 기준(사용자 11-13 "선택과 복사한 글이 다르다").
+                            let (bs, be) = Self::table_block(ls, li);
+                            let head = l.kind == LineKind::TableHead;
+                            let cols = self.table_widths(dc, &ls[bs..be], w);
+                            if head {
+                                dc.select_font(FontSlot::Base, true);
+                            }
+                            let r = (
+                                Self::table_x_of(dc, &l.text, &cols, lx, c0),
+                                Self::table_x_of(dc, &l.text, &cols, lx, c1),
+                            );
+                            if head {
+                                dc.select_font(FontSlot::Base, false);
+                            }
+                            r
+                        } else {
+                            (
+                                lx + dc.text_width(&l.text.chars().take(c0).collect::<String>()),
+                                lx + dc.text_width(&l.text.chars().take(c1).collect::<String>()),
+                            )
+                        };
                         if bold {
                             dc.select_font(FontSlot::Base, false);
                         }

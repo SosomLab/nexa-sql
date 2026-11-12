@@ -979,6 +979,7 @@ impl App {
                 let _ = self.settings.set("ai.error_offer", "on");
                 self.persist_settings();
                 self.run_toast.configure_ai(self.ai_enabled());
+                self.run_toast.configure_ai_hint("");
                 self.sess.status = t(Msg::AiErrOfferEnabled).into();
                 self.redraw();
             }

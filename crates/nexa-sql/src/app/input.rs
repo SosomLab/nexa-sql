@@ -1875,6 +1875,7 @@ impl App {
                     }
                 }
                 runtoast::RunToastHit::AskAi => self.menu_action("ai.fix_error"),
+                runtoast::RunToastHit::EnableAi => self.menu_action("ai.error_offer_on"),
                 runtoast::RunToastHit::Card | runtoast::RunToastHit::None => {}
             },
             OverlayZone::Status(i) => self.status_item_act(i),

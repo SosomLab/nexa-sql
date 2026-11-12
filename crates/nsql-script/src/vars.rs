@@ -244,6 +244,11 @@ impl VarStore {
             .map(|d| norm(&d))
             .filter(|d| *d != key)
             .collect();
+        // ★ 수식이 새로 생기거나 바뀌면 **바뀐 것으로 표시**한다(사용자 11-13): 계산 결과가 지금 값과 같으면 값 대입은 "안 바뀜"이라
+        //   변수 표가 다시 알려지지 않았고, 호스트(변수 창 · AI 도구)는 수식이 등록된 줄을 몰랐다(값 7 → `:= :A + 2`도 7).
+        if self.formulas.get(&key).is_none_or(|f| f.text != text) {
+            self.dirty.insert(key.clone());
+        }
         self.formulas.insert(
             key,
             Formula {
@@ -547,7 +552,38 @@ impl VarStore {
 
     /// 탭 층을 통째로 갈아 끼운다(호스트가 실행 앞에 · 바뀜 표시는 건드리지 않는다).
     pub fn set_local(&mut self, states: Vec<VarState>) {
-        self.vars = Self::from_states(states);
+        // ★ 호스트(변수 창 · AI `set_var`)가 값을 고친 것도 **대입**이다(사용자 11-13 "VAR2를 바꿔도 수식 변수가 다시 계산되지
+        //   않고 재계산 버튼도 듣지 않는다"): 종전에는 표를 통째로 바꾸기만 해 의존 수식이 stale이 되지 않았다. 값이 실제로
+        //   바뀐(또는 새로 생긴) 이름만 본다 — 같은 값 재전달은 stale을 만들지 않는다(09-27 재계획 반복 방지와 같은 규칙).
+        let carried: Vec<(String, String, bool)> = states
+            .iter()
+            .filter_map(|st| st.formula.clone().map(|f| (norm(&st.name), f, st.stale)))
+            .collect();
+        let new = Self::from_states(states);
+        let changed: Vec<String> = new
+            .iter()
+            .filter(|(k, v)| self.vars.get(*k).is_none_or(|old| old.value != v.value))
+            .map(|(k, _)| k.clone())
+            .collect();
+        self.vars = new;
+        // 러너가 모르는 수식(앱 재시작 · 새 접속 뒤)은 호스트가 든 표에서 되살린다 — 수식의 원천은 변수 표다.
+        for (key, text, stale) in carried {
+            let deps: Vec<String> = crate::bind::unique_names(&crate::bind::extract_binds(&text))
+                .into_iter()
+                .map(|d| norm(&d))
+                .filter(|d| *d != key)
+                .collect();
+            self.formulas
+                .entry(key)
+                .or_insert(Formula { text, deps, stale });
+        }
+        for key in changed {
+            for (name, f) in self.formulas.iter_mut() {
+                if *name != key && f.deps.contains(&key) {
+                    f.stale = true;
+                }
+            }
+        }
     }
 
     /// 공유 층을 통째로 정한다(호스트의 변수 창이 고쳤을 때).
@@ -719,6 +755,60 @@ mod tests {
     /// 글로벌 층(docs/63 §11): 우선순위 tab > shared > global > fixed · `set_layer`로 세 층을 오간다 · 대입은 글로벌을 고치지 않고
     /// 탭 층에 가리는 값을 만든다 · 프로필 층은 옮길 수 없다.
     /// ★ D-355: 스냅숏에 수식·stale이 실린다 · 걷으면(take_all_stale) stale이 내려간다.
+    #[test]
+    fn formula_registration_is_reported_even_when_the_value_is_the_same() {
+        // ★ 11-13 회귀: 값 7인 변수에 `:= :A + 2`(= 7)를 등록하면 값은 안 바뀌어도 "바뀐 이름"에 실려야 한다.
+        let mut s = VarStore::default();
+        s.assign("A", Value::Int(5));
+        s.assign("B", Value::Int(7));
+        let _ = s.take_dirty();
+        s.set_formula("B", ":A + 2", vec!["A".into()]);
+        s.assign("B", Value::Int(7)); // 서버가 돌려준 같은 값.
+        let dirty = s.take_dirty();
+        assert!(
+            dirty.iter().any(|n| n.eq_ignore_ascii_case("B")),
+            "{dirty:?}"
+        );
+        // 같은 수식을 다시 등록하는 것은 바뀜이 아니다.
+        s.set_formula("B", ":A + 2", vec!["A".into()]);
+        s.assign("B", Value::Int(7));
+        assert!(s.take_dirty().is_empty());
+    }
+
+    #[test]
+    fn host_edit_marks_dependent_formulas_stale_and_restores_unknown_formulas() {
+        // ★ 11-13 회귀: 호스트가 탭 층을 바꿔 끼울 때 값이 바뀐 이름의 의존 수식은 stale · 같은 값이면 그대로.
+        let mut s = VarStore::default();
+        s.assign("A", Value::Int(5));
+        s.set_formula("B", ":A + 2", vec!["A".into()]);
+        s.assign("B", Value::Int(7));
+        let snap = s.local_states();
+        s.set_local(snap.clone());
+        assert!(
+            s.take_all_stale_formulas().is_empty(),
+            "같은 값 = stale 아님"
+        );
+        let mut edited = snap.clone();
+        for v in &mut edited {
+            if v.name.eq_ignore_ascii_case("A") {
+                v.value = Value::Int(4);
+            }
+        }
+        s.set_local(edited);
+        let stale = s.take_all_stale_formulas();
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert_eq!(stale[0].1, ":A + 2");
+        // 새 러너(수식을 모름)에 표를 주면 수식이 되살아난다.
+        let mut fresh = VarStore::default();
+        fresh.set_local(snap);
+        assert_eq!(
+            fresh
+                .formula_of("B")
+                .map(|f| (f.text.clone(), f.deps.clone())),
+            Some((":A + 2".to_string(), vec!["A".to_string()]))
+        );
+    }
+
     #[test]
     fn snapshot_carries_formula_and_stale() {
         let mut s = VarStore::default();

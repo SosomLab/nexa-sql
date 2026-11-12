@@ -780,6 +780,13 @@ impl App {
         // 실행 오류 카드의 [AI] 버튼(설정이 바뀌면 바로).
         self.run_toast
             .configure_ai(self.ai_enabled() && self.settings.flag("ai.error_offer"));
+        // 꺼져 있으면 같은 오류 카드에 [AI 켜기](사용자 11-13 "동일 토스트에서 켤 수 있게").
+        let hint = if self.ai_enabled() && !self.settings.flag("ai.error_offer") {
+            t(Msg::AiErrOfferCardOn).to_string()
+        } else {
+            String::new()
+        };
+        self.run_toast.configure_ai_hint(&hint);
         self.ai_view
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         let prov = self.ai_provider();
@@ -2300,22 +2307,6 @@ impl App {
                     let bad = ["fail", "error", "exit", "interrupt", "cancel", "abort"];
                     let ok_stop = !bad.iter().any(|b| stop.to_ascii_lowercase().contains(b));
                     self.ai.auto_show = None;
-                    // ★ 첫 사용 추천(사용자 11-12): 턴이 정상으로 끝났고 오류 알림이 꺼져 있으면 한 번만 [켜기] 알림(그 뒤 다시 안 보임).
-                    if ok_stop
-                        && std::env::var_os("NSQL_AI_MOCK").is_none()
-                        && !self.settings.flag("ai.error_offer")
-                        && self.settings.flag("notice.ai_error_offer")
-                    {
-                        let _ = self.settings.set("notice.ai_error_offer", "off");
-                        self.persist_settings();
-                        self.toasts.push_button(
-                            toast::ToastKind::Info,
-                            t(Msg::AiErrOfferHintTitle),
-                            t(Msg::AiErrOfferHintBody),
-                            t(Msg::AiErrOfferEnable),
-                            "ai.error_offer_on",
-                        );
-                    }
                     if ok_stop
                         && self.settings.get("ai.show_result") != Some("manual")
                         && !self.ai_view_active()
