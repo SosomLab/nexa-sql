@@ -480,6 +480,14 @@
 - **빈 세션 재사용**(`ai_new_session`): 같은 제공자에 대화 없는 세션이 있으면 새로 만들지 않고 그것으로 간다 — 분할 창이 탭마다 빈 "(new)"를 만들던 것과 "지우면 곧바로 새 빈 세션이 생겨 삭제가 안 되는 것처럼 보이던 것"을 함께 해소.
 - **헤드리스 판정(협업 · [journal 11-12 §14](journal/2026-11-12.md))** = 도구 2종 ✓ · 탭 3개 분할 창 [+] = 세션 1 ✓ · 패널 [+] 두 번 = 2 ✓ · 현재 세션 삭제 1 → 0 ✓.
 
+### 16-11 편집기 연동 보강 · 도구 27(2026-11-12 저녁 · 8c084629)
+
+- **도구 27** = list_commands · run_command · get_setting · set_setting · get_editor_text · set_editor_text · **edit_editor** · format_sql · search_objects · list_tabs · switch_tab · list_files · open_file · list_extensions · set_extension_enabled · meta_stats · describe_object · object_source · list_profiles · session_info · connect · run_query · get_result · get_output · get_log · explain · skill.
+- `get_editor_text` = 본문 + `<caret line column total_lines/>` · `<selection>` · `<statement_at_caret lines="a-b">`(AI가 "커서가 있는 문장"을 정확히 집도록).
+- `edit_editor`(쓰기 · 승인 카드) = op `replace`(+ `text`) · `sort_asc` · `sort_desc` · `unique` · `reverse` · `upper` · `lower` · `trim` · `select` · 범위 = `from_line`/`to_line`(없으면 선택 → 커서 문장) · 범위 밖 = 오류 · 되돌리기 = Ctrl+Z 한 단계 · 채팅 탭이 활성이면 거부(편집기 탭 또는 분할 창에서).
+- `explain` = 운영에서도 실행(문장 단위 · 2단 무장·보류 커밋 건너뜀 = 계획만 보고 데이터는 안 바꿈 · analyze 고정 끔).
+- 판정 = [journal 11-12 §19](journal/2026-11-12.md)(헤드리스 전부 ✓ · Oracle 실서버 explain·끌기 놓기 = 사용자 실기).
+
 ## 17. 데이터 보호 하네스(2026-11-12 오후 · 사용자 "요청과 실행 사이의 제어 · 운영은 보호 우선 · 대량 삭제/수정/테이블 제거는 최소 2단계" · e3b675bc)
 
 > 원문 = `crates/nexa-sql/src/ai/guard.rs` 머리 주석(순수 계층 · 시험 = 정책 표 전수 56 + 불변식 4). 이 절은 요약·판정 기록.
