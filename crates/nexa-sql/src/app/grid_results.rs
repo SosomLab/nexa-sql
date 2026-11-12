@@ -51,6 +51,9 @@ impl App {
             self.log_win
                 .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
         }
+        if let Some(text) = self.grid.take_ai_attach() {
+            self.ai_attach_grid(&text);
+        }
         if let Some((text, n)) = self.grid.take_copy() {
             if clipboard::write_text(&text) {
                 self.sess.status = tf(Msg::StCopied, &[&n.to_string()]);

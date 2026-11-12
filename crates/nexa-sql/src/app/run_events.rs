@@ -578,6 +578,17 @@ impl App {
         // ★ 같은 오류를 두 번 보이지 않는다(사용자 09-19 "오류가 왜 2번 출력되나"): 실행 상태 카드(`run.toast`)가
         //   이미 분류된 오류 요약을 빨간 카드로 보여 주므로, 카드가 켜져 있으면 오류 토스트는 띄우지 않는다
         //   (카드를 끈 사용자에게만 토스트 · 로그 창에는 종전대로 한 줄).
+        // ★ 오류 → AI(app/ai_editor.rs): 문장·메시지·편집기 줄을 기억하고 설정대로 "AI에게 수정 요청" 알림 버튼.
+        {
+            let ed_line = self.sess.run_line_base + line.max(1);
+            let msg = match &error.code {
+                Some(c) if !error.message.contains(&c.to_string()) => {
+                    format!("{c}: {}", error.message)
+                }
+                _ => error.message.clone(),
+            };
+            self.ai_note_error(&stmt, &msg, ed_line);
+        }
         let card_shows = self.settings.flag("run.toast");
         if let Some(label) = toast::class_label(cls.class).filter(|_| !card_shows) {
             let title = match &cls.code {

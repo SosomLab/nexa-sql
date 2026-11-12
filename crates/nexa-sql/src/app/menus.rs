@@ -940,6 +940,12 @@ impl App {
             }
             "ai.side" => self.ai_toggle_side(),
             "ai.detail" => self.ai_toggle_detail(),
+            // ★ 편집기 ↔ AI 연동(app/ai_editor.rs · 11-12).
+            "ai.explain_selection" => self.ai_editor_request("explain"),
+            "ai.fix_statement" => self.ai_editor_request("fix"),
+            "ai.optimize_statement" => self.ai_editor_request("optimize"),
+            "ai.attach_selection" => self.ai_editor_request("attach"),
+            "ai.fix_error" => self.ai_fix_last_error(),
             "ai.enabled" => {
                 let on = !self.settings.flag("ai.enabled");
                 let _ = self

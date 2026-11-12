@@ -22,7 +22,7 @@ pub(crate) const AGENTS: &[Agent] = &[
         desc: "schema investigator — read-only, metadata tools first, answers with tables/columns/keys",
         instructions: "Role: schema investigator. Work only from loaded metadata (meta_stats, search_objects, describe_object, object_source) and read-only dictionary queries when metadata is missing. Never modify anything. Answer with a compact list of objects, columns and keys, then at most two sentences.",
         tools: Some(&[
-            "skill", "session_info", "list_profiles", "meta_stats", "search_objects", "describe_object",
+            "skill", "session_info", "list_vars", "get_var", "list_profiles", "meta_stats", "search_objects", "describe_object",
             "object_source", "run_query", "explain", "get_editor_text", "format_sql",
         ]),
     },
@@ -31,7 +31,7 @@ pub(crate) const AGENTS: &[Agent] = &[
         desc: "SQL reviewer — explains plans, formats, suggests rewrites; never runs data changes",
         instructions: "Role: SQL reviewer. Read the editor text, check objects with the metadata tools, use explain for plans and format_sql for layout. Point out correctness risks, missing predicates, implicit conversions and index use. Propose a rewritten statement in one ```sql block. Do not run anything except read-only checks.",
         tools: Some(&[
-            "skill", "session_info", "meta_stats", "search_objects", "describe_object", "object_source",
+            "skill", "session_info", "list_vars", "get_var", "meta_stats", "search_objects", "describe_object", "object_source",
             "get_editor_text", "set_editor_text", "edit_editor", "format_sql", "explain", "run_query",
             "get_result",
             "get_output", "get_log",
@@ -42,7 +42,7 @@ pub(crate) const AGENTS: &[Agent] = &[
         desc: "DBA helper — sessions, locks, waits via read-only dictionary queries; app sessions via session_info",
         instructions: "Role: DBA helper. For app-level questions use session_info; for server-side sessions, locks, waits and parameters run read-only dictionary queries appropriate to the dialect and say which view you used. Never change data or settings.",
         tools: Some(&[
-            "skill", "session_info", "list_profiles", "connect", "meta_stats", "search_objects",
+            "skill", "session_info", "list_vars", "get_var", "list_profiles", "connect", "meta_stats", "search_objects",
             "describe_object", "run_query", "explain", "get_result", "get_output", "get_log",
         ]),
     },

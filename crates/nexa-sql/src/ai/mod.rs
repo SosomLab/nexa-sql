@@ -10,6 +10,7 @@ pub(crate) mod bridge;
 pub(crate) mod claude_api;
 pub(crate) mod claude_cli;
 pub(crate) mod codex;
+pub(crate) mod diff;
 #[cfg(test)]
 mod e2e;
 pub(crate) mod guard;

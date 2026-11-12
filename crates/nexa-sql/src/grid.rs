@@ -521,6 +521,8 @@ pub(crate) struct Grid {
     menu_area: Rect,
     /// 호스트가 가져갈 복사 텍스트(셀 수와 함께).
     pending_copy: Option<(String, usize)>,
+    /// AI 첨부로 보낼 선택 영역 글(마크다운 표 · 호스트가 거둔다).
+    pending_ai: Option<String>,
     /// 메뉴에서 고른 SQL 복사 종류(호스트가 키 정보를 받아 `copy_sql`로 완성 · docs/41).
     pending_sql: Option<SqlKind>,
     /// ★ T-8 GUI 2차(10-31): 우클릭 "파일로 내보내기 ▸ <형식>" — 고른 형식 코드(= 확장자 · D-448) · 호스트가 저장 창을 열고 원본 질의를
@@ -748,6 +750,7 @@ impl Default for Grid {
             menu: CtxMenu::new(),
             menu_area: Rect::default(),
             pending_copy: None,
+            pending_ai: None,
             pending_sql: None,
             pending_export: None,
             export_default: "xlsx".into(),
@@ -4985,6 +4988,10 @@ impl Grid {
     }
 
     /// 호스트가 클립보드에 쓸 텍스트(셀 수).
+    pub(crate) fn take_ai_attach(&mut self) -> Option<String> {
+        self.pending_ai.take()
+    }
+
     pub(crate) fn take_copy(&mut self) -> Option<(String, usize)> {
         self.pending_copy.take()
     }
@@ -5800,6 +5807,8 @@ impl Grid {
             CtxItem::item("copy_md", t(Msg::MnCopyMarkdown))
                 .with_icon(Some(toolicons::mi_markdown())),
             CtxItem::item("copy_json", t(Msg::MnCopyJson)).with_icon(Some(toolicons::mi_braces())),
+            // ★ 선택 영역을 AI 첨부로(app/ai_editor.rs · 11-12) — 상위 항목 수를 늘리지 않게 여기에.
+            CtxItem::item("ai_attach", t(Msg::MnAiAttachGrid)),
         ];
         let mut adv_item = CtxItem::submenu("adv", t(Msg::MnAdvancedCopy), adv);
         if let CtxItem::Item { enabled, .. } = &mut adv_item {
@@ -6102,6 +6111,10 @@ impl Grid {
             if code != "file" {
                 self.pending_export = Some(code.to_string());
             }
+            return;
+        }
+        if id == "ai_attach" {
+            self.pending_ai = self.copy_selection(CopyKind::Markdown).map(|x| x.0);
             return;
         }
         let kind = match id {

@@ -63,6 +63,13 @@ impl App {
             self.editors.cur_mut().goto_line(n);
             self.set_focus(Focus::Editor);
         }
+        let cmd = self
+            .panel
+            .output_active_mut()
+            .and_then(OutputView::take_cmd);
+        if let Some(id) = cmd {
+            self.menu_action(&id);
+        }
     }
 
     /// 활성 패널의 Output 자리표시 탭 하나(그리드는 빈 것 · 고정 = 자동 회수 제외 · 이름 있음 = 번호 매기기 제외).

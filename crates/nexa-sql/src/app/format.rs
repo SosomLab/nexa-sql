@@ -308,6 +308,28 @@ impl App {
         if let Some(group) = self.format_menu_items() {
             extras.push(group);
         }
+        // ★ "AI ▸"(app/ai_editor.rs · 사용자 11-12): AI가 켜져 있을 때만 · 하위 메뉴 하나(상위는 한 줄).
+        if self.ai_enabled() {
+            extras.push(nexa_ctl::controls::CtxItem::submenu(
+                "ai.group",
+                t(Msg::MnAiGroup),
+                vec![
+                    nexa_ctl::controls::CtxItem::item("ai.explain_selection", t(Msg::MnAiExplain)),
+                    nexa_ctl::controls::CtxItem::item("ai.fix_statement", t(Msg::MnAiFix)),
+                    nexa_ctl::controls::CtxItem::item(
+                        "ai.optimize_statement",
+                        t(Msg::MnAiOptimize),
+                    ),
+                    nexa_ctl::controls::CtxItem::Separator,
+                    nexa_ctl::controls::CtxItem::item("ai.attach_selection", t(Msg::MnAiAttachSel)),
+                    nexa_ctl::controls::CtxItem::maybe(
+                        "ai.fix_error",
+                        t(Msg::MnAiFixError),
+                        self.ai.last_error.is_some(),
+                    ),
+                ],
+            ));
+        }
         self.editors.set_menu_extras(extras);
     }
 

@@ -69,6 +69,8 @@ pub(crate) enum ViewAction {
     Slash(String),
     CopyText(String),
     InsertEditor(String),
+    ReplaceEditor(String),
+    GotoLine(usize),
     /// 코드 블록 [실행](메시지 번호 · 블록 번호 · SQL) — 결과는 그 블록 아래에(사용자 11-11).
     RunCode {
         msg: usize,
@@ -126,6 +128,9 @@ enum LineKind {
     Error,
     Role,
     Blank,
+    /// ★ 마크다운 표(사용자 11-12 "표 형식으로 일목요연하게"): 머리 줄 · 본문 줄 — 글 = 칸을 탭으로 이은 것(복사하면 TSV).
+    TableHead,
+    TableRow,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,6 +146,10 @@ enum Btn {
     RemoveAttachment(usize),
     Approve(bool),
     CopyCode(usize),
+    /// 코드 블록으로 편집기의 선택/커서 문장을 바꾼다.
+    ReplaceCode(usize),
+    /// 답 글의 줄 번호 → 편집기 그 줄로.
+    GotoLine(usize),
     /// 코드 상자 줄바꿈 토글(전체 코드 상자 공통 · 사용자 11-12).
     WrapCode,
     InsertCode(usize),
@@ -207,6 +216,8 @@ pub(crate) struct AiView {
     p_rows: Vec<String>,
     /// ★ 표시 레벨(사용자 11-12): false = basic(도구 호출/성공 결과 줄 숨김) · true = 상세 · 깜빡임 위상 · 마지막 busy.
     detail: bool,
+    /// 답 글의 줄 번호를 누를 수 있게(설정 `ai.line_links`).
+    line_links: bool,
     /// 코드 상자의 긴 줄을 상자 폭에서 접는다(코드 상자 머리 버튼 · 꺼짐 = 상자 폭에서 자름).
     code_wrap: bool,
     blink: bool,
@@ -304,6 +315,7 @@ impl Default for AiView {
             p_rows: Vec::new(),
             detail: false,
             code_wrap: false,
+            line_links: true,
             blink: true,
             busy_last: false,
             chip_models: Vec::new(),
@@ -671,6 +683,10 @@ impl AiView {
     /// 대본 끌기 선택·스크롤바 끌기 중인가 — 호스트가 영역 밖의 이동·놓기도 이 뷰로 보낸다(사용자 11-12).
     pub(crate) fn drag_active(&self) -> bool {
         self.dragging || self.bars.is_dragging()
+    }
+
+    pub(crate) fn set_line_links(&mut self, on: bool) {
+        self.line_links = on;
     }
 
     pub(crate) fn set_detail(&mut self, on: bool) {
@@ -1343,6 +1359,12 @@ impl AiView {
                     self.actions.push(ViewAction::CopyText(c.clone()));
                 }
             }
+            Btn::ReplaceCode(i) => {
+                if let Some(c) = self.code_blocks.get(i) {
+                    self.actions.push(ViewAction::ReplaceEditor(c.clone()));
+                }
+            }
+            Btn::GotoLine(n) => self.actions.push(ViewAction::GotoLine(n)),
             Btn::WrapCode => {
                 self.code_wrap = !self.code_wrap;
                 self.lines.clear();
@@ -1877,6 +1899,8 @@ impl AiView {
                 let mut in_code = false;
                 // 코드 상자 안 글은 상자 폭에서 자른다(사용자 11-12 "글씨가 상자를 덮는다").
                 let mut code_clip = tr;
+                // 표 블록의 열 폭(블록 첫 줄에서 한 번 잰다 · 끝 색인까지 유효).
+                let mut table: Option<(usize, Vec<i32>)> = None;
                 for (li, l) in ls.iter().enumerate() {
                     let yy = ly + li as i32 * line_h;
                     match &l.kind {
@@ -1916,6 +1940,7 @@ impl AiView {
                                 (Btn::GridCode(*ci), 8u8),
                                 (Btn::RunCode(*ci), 2u8),
                                 (Btn::InsertCode(*ci), 1u8),
+                                (Btn::ReplaceCode(*ci), 5u8),
                                 (Btn::CopyCode(*ci), 0u8),
                                 (Btn::WrapCode, 9u8),
                             ] {
@@ -1957,6 +1982,21 @@ impl AiView {
                         LineKind::Text => {
                             in_code = false;
                             dc.text(x, yy, tr, &l.text, th.text);
+                            // ★ 줄 번호 언급(263행 · line 12 …) = 누르면 편집기 그 줄로(밑줄 · 사용자 11-12).
+                            if self.line_links && !is_user {
+                                for (s0, s1, n) in super::diff::line_refs(&l.text) {
+                                    let x0 = x + dc.text_width(&l.text[..s0]);
+                                    let w0 = dc.text_width(&l.text[s0..s1]);
+                                    let r = Rect::new(x0, yy, w0, line_h);
+                                    if r.y >= tr.y && r.y + r.h <= tr.y + tr.h {
+                                        dc.fill_rect(
+                                            Rect::new(x0, yy + line_h - self.s(2.0), w0, 1),
+                                            th.accent,
+                                        );
+                                        self.buttons.push((Btn::GotoLine(n), r));
+                                    }
+                                }
+                            }
                         }
                         LineKind::Head => {
                             dc.select_font(FontSlot::Base, true);
@@ -2010,6 +2050,80 @@ impl AiView {
                             }
                         }
                         LineKind::Blank => {}
+                        LineKind::TableHead | LineKind::TableRow => {
+                            in_code = false;
+                            let is_tbl = |k: &LineKind| {
+                                matches!(k, LineKind::TableHead | LineKind::TableRow)
+                            };
+                            if table.as_ref().is_none_or(|(end, _)| li >= *end) {
+                                let end =
+                                    li + ls[li..].iter().take_while(|q| is_tbl(&q.kind)).count();
+                                let gap = self.s(14.0);
+                                let mut cols: Vec<i32> = Vec::new();
+                                for q in &ls[li..end] {
+                                    let bold = q.kind == LineKind::TableHead;
+                                    if bold {
+                                        dc.select_font(FontSlot::Base, true);
+                                    }
+                                    for (ci, cell) in q.text.split('\t').enumerate() {
+                                        let cw = dc.text_width(cell) + gap;
+                                        if ci < cols.len() {
+                                            cols[ci] = cols[ci].max(cw);
+                                        } else {
+                                            cols.push(cw);
+                                        }
+                                    }
+                                    if bold {
+                                        dc.select_font(FontSlot::Base, false);
+                                    }
+                                }
+                                // 창보다 넓으면 넓은 열부터 줄인다(가장 넓은 열을 고르게 깎는다 · 최소 폭).
+                                let avail = (w - self.s(8.0)).max(self.s(60.0));
+                                let min_w = self.s(36.0);
+                                let mut guard = 0;
+                                while cols.iter().sum::<i32>() > avail && guard < 4000 {
+                                    guard += 1;
+                                    let Some((mi, mw)) =
+                                        cols.iter().copied().enumerate().max_by_key(|x| x.1)
+                                    else {
+                                        break;
+                                    };
+                                    if mw <= min_w {
+                                        break;
+                                    }
+                                    cols[mi] = (mw - self.s(4.0)).max(min_w);
+                                }
+                                table = Some((end, cols));
+                            }
+                            if let Some((_, cols)) = &table {
+                                let head = l.kind == LineKind::TableHead;
+                                if head {
+                                    dc.select_font(FontSlot::Base, true);
+                                }
+                                let mut cx = x;
+                                for (ci, cell) in l.text.split('\t').enumerate() {
+                                    let cw = cols.get(ci).copied().unwrap_or(self.s(60.0));
+                                    let clip = {
+                                        let x0 = cx.max(tr.x);
+                                        let x1 = (cx + cw - self.s(6.0)).min(tr.x + tr.w);
+                                        Rect::new(x0, tr.y, (x1 - x0).max(0), tr.h)
+                                    };
+                                    dc.text(cx, yy, clip, cell, th.text);
+                                    cx += cw;
+                                }
+                                if head {
+                                    dc.select_font(FontSlot::Base, false);
+                                    let total: i32 = cols.iter().sum();
+                                    let ry = yy + line_h - 1;
+                                    if ry >= tr.y && ry < tr.y + tr.h {
+                                        dc.fill_rect(
+                                            Rect::new(x, ry, total.min(tr.w), 1),
+                                            th.border,
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     let _ = in_code;
                 }
@@ -2729,6 +2843,8 @@ impl AiView {
                     Btn::Back => Some(Msg::AiBackToList),
                     Btn::CopyCode(_) => Some(Msg::AiCopy),
                     Btn::WrapCode => Some(Msg::AiWrapCode),
+                    Btn::ReplaceCode(_) => Some(Msg::AiReplaceStmt),
+                    Btn::GotoLine(_) => Some(Msg::AiGotoLineTip),
                     Btn::InsertCode(_) => Some(Msg::AiInsertEditor),
                     Btn::RunCode(_) => Some(Msg::AiRunCode),
                     Btn::GridCode(_) => Some(Msg::AiRunGrid),
@@ -3003,7 +3119,11 @@ fn layout_msg(
     let mut local = 0usize;
     // ★ 코드 상자는 마지막 줄 아래로 몇 px 더 내려온다 — 바로 다음 줄이 글이면 상자 테두리와 겹쳤다(사용자 11-12) → 빈 줄 하나를 둔다.
     let mut after_code = false;
-    for raw in text.split('\n') {
+    let raws: Vec<&str> = text.split('\n').collect();
+    let mut ri = 0usize;
+    while ri < raws.len() {
+        let raw = raws[ri];
+        ri += 1;
         if let Some(rest) = raw.trim_start().strip_prefix("```") {
             if in_code {
                 codes.push(std::mem::take(&mut code_buf));
@@ -3052,6 +3172,32 @@ fn layout_msg(
                     kind: LineKind::Code,
                 });
             }
+        } else if matches!(m.kind, Kind::User | Kind::Assistant)
+            && table_cells(raw).is_some()
+            && raws.get(ri).is_some_and(|n| is_table_sep(n))
+        {
+            // ★ 마크다운 표: 머리 줄 + 구분 줄(건너뜀) + 본문 줄들 — 칸은 탭으로 이어 두고 그릴 때 열 폭을 맞춘다.
+            if std::mem::take(&mut after_code) {
+                out.push(Line {
+                    text: String::new(),
+                    kind: LineKind::Blank,
+                });
+            }
+            out.push(Line {
+                text: table_cells(raw).unwrap_or_default().join("\t"),
+                kind: LineKind::TableHead,
+            });
+            ri += 1;
+            while ri < raws.len() {
+                let Some(cells) = table_cells(raws[ri]) else {
+                    break;
+                };
+                out.push(Line {
+                    text: cells.join("\t"),
+                    kind: LineKind::TableRow,
+                });
+                ri += 1;
+            }
         } else if raw.trim().is_empty() {
             after_code = false;
             out.push(Line {
@@ -3099,6 +3245,28 @@ fn layout_msg(
 /// ★ 마크다운 한 줄 → 표시 글·종류(110 §6 "마크다운 렌더 = 2차" · 11-11): 제목(`#`) = 굵게 · 목록(`-`/`*`/`+` · `1.`) = `•`/번호 +
 /// 들여쓰기(체크박스 ☐/☑) · 인용(`>`) = 흐리게 `│` · 구분선(`---`/`***`) = 선 · 굵게 표식 `**x**`는 벗긴다. 인라인 코드 백틱은
 /// 그대로(고정폭 글꼴이 없으니 표식이 뜻을 전한다) · 표(`|`)도 그대로. 코드 블록 안·도구 결과에는 적용하지 않는다.
+/// 마크다운 표의 한 줄(`| a | b |`) → 칸(굵게 표시 제거 · 탭은 공백으로). 표 줄이 아니면 None.
+fn table_cells(raw: &str) -> Option<Vec<String>> {
+    let t = raw.trim();
+    if !t.starts_with('|') || t.len() < 2 {
+        return None;
+    }
+    let inner = t.strip_prefix('|')?;
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    Some(
+        inner
+            .split('|')
+            .map(|c| strip_bold(c.trim()).replace('\t', " ").replace('`', ""))
+            .collect(),
+    )
+}
+
+/// 표의 구분 줄(`|---|:--:|`)인가.
+fn is_table_sep(raw: &str) -> bool {
+    let t = raw.trim();
+    t.starts_with('|') && t.contains('-') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
+}
+
 fn md_line(raw: &str, base: LineKind) -> (String, LineKind) {
     let trimmed = raw.trim_start();
     let pad = " ".repeat((raw.len() - trimmed.len()).min(8));
@@ -3269,6 +3437,17 @@ pub(crate) fn tool_brief(name: &str, input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn markdown_table_lines_are_detected() {
+        assert_eq!(
+            super::table_cells("| a | **b** |").expect("row"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert!(super::table_cells("plain text").is_none());
+        assert!(super::is_table_sep("|---|:--:|"));
+        assert!(!super::is_table_sep("| a | b |"));
+    }
+
     #[test]
     fn tool_brief_shows_short_name_and_flat_argument() {
         assert_eq!(

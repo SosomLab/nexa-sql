@@ -378,6 +378,12 @@ const AI_VERBOSITY_OPTS: &[(&str, Msg)] = &[
     ("basic", Msg::ValAiVerbosityBasic),
     ("detail", Msg::ValAiVerbosityDetail),
 ];
+const AI_SEND_TARGET_OPTS: &[(&str, Msg)] =
+    &[("side", Msg::ValAiTargetSide), ("tab", Msg::ValAiTargetTab)];
+const AI_REPLACE_OPTS: &[(&str, Msg)] = &[
+    ("selection", Msg::ValAiReplaceSel),
+    ("statement", Msg::ValAiReplaceStmt),
+];
 const AI_GUARD_AUTO_OPTS: &[(&str, Msg)] =
     &[("off", Msg::ValAiGuardOff), ("dml", Msg::ValAiGuardDml)];
 const AI_SHOW_RESULT_OPTS: &[(&str, Msg)] = &[
@@ -6490,6 +6496,71 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAiShowResult,
         kind: SettingKind::Choice(AI_SHOW_RESULT_OPTS),
         default: "auto",
+    },
+    // ★ AI ↔ 편집기 연동(app/ai_editor.rs · 사용자 11-12 "설정으로 변경할 수 있도록").
+    Entry {
+        key: "ai.send_target",
+        cat: Msg::CatAi,
+        label: Msg::LblAiSendTarget,
+        desc: Msg::DescAiSendTarget,
+        kind: SettingKind::Choice(AI_SEND_TARGET_OPTS),
+        default: "side",
+    },
+    Entry {
+        key: "ai.error_offer",
+        cat: Msg::CatAi,
+        label: Msg::LblAiErrorOffer,
+        desc: Msg::DescAiErrorOffer,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ai.replace_target",
+        cat: Msg::CatAi,
+        label: Msg::LblAiReplaceTarget,
+        desc: Msg::DescAiReplaceTarget,
+        kind: SettingKind::Choice(AI_REPLACE_OPTS),
+        default: "selection",
+    },
+    Entry {
+        key: "ai.diff_context",
+        cat: Msg::CatAi,
+        label: Msg::LblAiDiffContext,
+        desc: Msg::DescAiDiffContext,
+        kind: SettingKind::Int { min: 0, max: 20 },
+        default: "3",
+    },
+    Entry {
+        key: "ai.line_links",
+        cat: Msg::CatAi,
+        label: Msg::LblAiLineLinks,
+        desc: Msg::DescAiLineLinks,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ai.prompt_explain",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPromptExplain,
+        desc: Msg::DescAiPromptExplain,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "ai.prompt_fix",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPromptFix,
+        desc: Msg::DescAiPromptFix,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "ai.prompt_optimize",
+        cat: Msg::CatAi,
+        label: Msg::LblAiPromptOptimize,
+        desc: Msg::DescAiPromptOptimize,
+        kind: SettingKind::Text,
+        default: "",
     },
     // ★ 데이터 보호 하네스(guard.rs · 사용자 11-12): 비운영 세션의 일반 변경 자동 승인 · 대량 기준 행 수. 운영 세션에는 닿지 않는다.
     Entry {

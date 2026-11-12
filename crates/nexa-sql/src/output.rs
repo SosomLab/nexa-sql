@@ -51,6 +51,8 @@ pub(crate) struct OutputView {
     dblclick_ms: u64,
     /// 두 번 클릭한 줄이 `N행:`/`line N:`이면 그 줄 번호(호스트가 거둬 편집기로 이동).
     goto: Option<usize>,
+    /// 우클릭 메뉴에서 고른 호스트 명령 id.
+    cmd: Option<String>,
 }
 
 impl OutputView {
@@ -66,6 +68,11 @@ impl OutputView {
         body.set_focus_ring(false);
         // 우클릭 메뉴는 팝업 층에서(`paint_popup` · 호스트가 맨 마지막에 부른다).
         body.set_popup_deferred(true);
+        // ★ 우클릭 "AI에게 수정 요청"(app/ai_editor.rs · 11-12) — 고른 id는 호스트가 `take_cmd`로 거둬 `menu_action`에.
+        body.set_menu_extras(vec![nexa_ctl::controls::CtxItem::item(
+            "ai.fix_error",
+            t(Msg::MnAiFixError),
+        )]);
         Self {
             bounds: Rect::default(),
             scale: 1.0,
@@ -82,6 +89,7 @@ impl OutputView {
             last_down: None,
             dblclick_ms: 400,
             goto: None,
+            cmd: None,
         }
     }
 
@@ -105,6 +113,11 @@ impl OutputView {
     }
 
     /// 두 번 클릭으로 고른 오류 줄(편집기 줄 번호 · 1부터).
+    /// 우클릭 메뉴에서 고른 호스트 명령(1회성).
+    pub(crate) fn take_cmd(&mut self) -> Option<String> {
+        self.cmd.take()
+    }
+
     pub(crate) fn take_goto(&mut self) -> Option<usize> {
         self.goto.take()
     }
@@ -292,12 +305,16 @@ impl OutputView {
 
     fn after_body(&mut self) {
         if let Some(a) = self.body.take_edit_ctx() {
-            if matches!(a, nexa_ctl::EditCtxAction::Copy) {
-                let text = self
-                    .body
-                    .copy_selection()
-                    .unwrap_or_else(|| self.body.text());
-                let _ = crate::clipboard::write_text(&text);
+            match a {
+                nexa_ctl::EditCtxAction::Copy => {
+                    let text = self
+                        .body
+                        .copy_selection()
+                        .unwrap_or_else(|| self.body.text());
+                    let _ = crate::clipboard::write_text(&text);
+                }
+                nexa_ctl::EditCtxAction::Custom(id) => self.cmd = Some(id),
+                _ => {}
             }
         }
     }

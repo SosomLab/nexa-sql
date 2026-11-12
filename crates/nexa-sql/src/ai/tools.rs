@@ -60,6 +60,28 @@ pub(crate) const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        name: "list_vars",
+        desc: "List the app's bind variables of the active editor tab (:NAME) and substitution variables (&NAME): name, type, layer (tab/shared/global/profile), current value (secrets masked), formula and whether it is stale. Use this - not a query - when the user asks about variables.",
+        write: false,
+        props: &[],
+    },
+    Tool {
+        name: "get_var",
+        desc: "Show one variable: whether it is a plain value or a formula, the formula text, the variables the formula depends on with their current values, and the current value. Answer the user directly from this.",
+        write: false,
+        props: &[("name", "string", "Variable name (without ':'; prefix '&' for a substitution variable)", true)],
+    },
+    Tool {
+        name: "set_var",
+        desc: "Set a variable's current value directly in the app (same as editing it in the Variables window; nothing is sent to the database). `value` is the literal text; null=true sets NULL. Creates the variable when it does not exist. Use this when the user asks to change a variable's value - do not edit the script and do not run EXEC.",
+        write: true,
+        props: &[
+            ("name", "string", "Variable name (without ':'; prefix '&' for a substitution variable)", true),
+            ("value", "string", "New value as text", false),
+            ("null", "boolean", "Set NULL instead of a value", false),
+        ],
+    },
+    Tool {
         name: "edit_editor",
         desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
         write: true,
@@ -336,7 +358,10 @@ run read-only queries, format SQL, manage tabs/files/extensions, change settings
 Prefer SELECT statements; any statement that modifies data or schema must be explicit and will require the user's approval.\n\n\
 Style (the user reads this in a narrow pane): answer first, no filler, do not restate the question; short sentences; prefer a short bullet list over prose; \
 at most one blank line between paragraphs; SQL goes in one fenced ```sql block (the app formats it and offers Copy/Insert/Run buttons), \
-followed by at most two short lines; no closing summaries or offers.\n\n\
+followed by at most two short lines; no closing summaries or offers. \
+Data goes in a markdown table by default (objects, columns, variables, settings, comparisons, findings with more than one attribute): \
+a header row, at most 6 columns and about 20 rows, short cell text; the app renders the table with aligned columns. \
+Use a bullet list only for items that have a single attribute.\n\n\
 Skills (application-layer playbooks). Nexa SQL itself holds the connection state and cached metadata: when a request matches a skill, \
 first call the `skill` tool with that name and follow it; prefer app tools (session_info, list_profiles, meta_stats, search_objects, describe_object, \
 get_result, list_tabs, list_files, list_extensions) over querying the DBMS, and query the database only when the skill says so or the user asks for server-side data.\n{skills}{agent_text}",

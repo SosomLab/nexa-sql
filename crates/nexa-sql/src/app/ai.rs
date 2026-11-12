@@ -117,6 +117,9 @@ pub(crate) struct AiState {
     pub impact_wait: Option<(String, String, mpsc::Sender<ToolReply>, bool)>,
     pub stage2_at: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
+    /// ★ 마지막 실행 오류(문장 · 메시지 · 편집기 줄) — "AI에게 수정 요청"이 쓴다 · 알림 버튼을 마지막으로 띄운 시각(연달아 안 띄움).
+    pub last_error: Option<(String, String, usize)>,
+    pub err_offer_at: Option<Instant>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
     ///   이 기록이 같을 때만 실행하고 바로 비운다. 어떤 경로가 확인을 건너뛰어도 실행은 막힌다.
     pub write_ok: Option<(String, String)>,
@@ -601,7 +604,7 @@ impl App {
     pub(crate) fn ai_cur(&self) -> Option<&Session> {
         self.ai.cur.and_then(|i| self.ai.sessions.get(i))
     }
-    fn ai_cur_mut(&mut self) -> Option<&mut Session> {
+    pub(crate) fn ai_cur_mut(&mut self) -> Option<&mut Session> {
         let i = self.ai.cur?;
         self.ai.sessions.get_mut(i)
     }
@@ -771,6 +774,8 @@ impl App {
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.ai_view
             .set_detail(self.settings.get("ai.verbosity") == Some("detail"));
+        self.ai_view
+            .set_line_links(self.settings.flag("ai.line_links"));
         self.ai_view
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         let prov = self.ai_provider();
@@ -1033,6 +1038,8 @@ impl App {
                     self.sess.status = t(Msg::StCopied).into();
                 }
                 ViewAction::InsertEditor(s) => self.ai_insert_editor(&s),
+                ViewAction::ReplaceEditor(s) => self.ai_replace_code(&s),
+                ViewAction::GotoLine(n) => self.ai_goto_line(n),
                 ViewAction::ProfileUse(arg) => {
                     if let Some(i) = arg.strip_prefix("edit:") {
                         if let Some(p) = i
@@ -1501,7 +1508,7 @@ impl App {
             });
     }
 
-    fn ai_insert_editor(&mut self, s: &str) {
+    pub(crate) fn ai_insert_editor(&mut self, s: &str) {
         if self.ai_view_active() {
             // 채팅 탭 자신에게는 넣을 수 없다 — 새 탭.
             self.editors.new_tab(None);
@@ -2026,7 +2033,7 @@ impl App {
         self.redraw();
     }
 
-    fn ai_push(&mut self, m: ChatMsg) {
+    pub(crate) fn ai_push(&mut self, m: ChatMsg) {
         if let Some(s) = self.ai_run_mut() {
             s.messages.push(m);
         }
@@ -2694,6 +2701,15 @@ impl App {
         if tool.name == "run_query" && risk == ai::guard::Risk::Read && !sql_is_readonly(&arg) {
             risk = ai::guard::Risk::Write;
         }
+        // ★ 클라이언트 전용 명령만으로 된 본문(`EXEC :V := 리터럴` · `VAR` · `DEFINE` …)은 DB로 가지 않는다 → 대량 변경이 아니라
+        //   앱 쓰기(사용자 11-12 "변수 값 하나 바꾸는데 승인 3~4번").
+        let client_only = tool.name == "run_query" && {
+            let items = split_items(&arg, self.sess.dialect);
+            !items.is_empty() && items.iter().all(|i| sessions::is_client_only(i))
+        };
+        if client_only {
+            risk = ai::guard::Risk::AppWrite;
+        }
         let prod = self.ai_guard_prod();
         let decision = ai::guard::decide(
             risk,
@@ -2712,7 +2728,7 @@ impl App {
             return;
         }
         let short = tool.name.to_string();
-        if is_rows && !rows_allowed {
+        if is_rows && !rows_allowed && !client_only {
             let mut lines = self.ai_card_head(tool.name, &input);
             lines.push(t(Msg::AiRowsConsent).to_string());
             if !arg.trim().is_empty() {
@@ -2747,6 +2763,9 @@ impl App {
             // 카드 본문: run_query면 JSON 대신 **SQL 본문** · 그 밖은 입력 JSON. 머리 줄 = 운영 표시 · 등급 · WHERE 없음 경고.
             let body = if tool.name == "run_query" && !arg.trim().is_empty() {
                 redact(&arg)
+            } else if let Some(pv) = self.ai_edit_preview(tool.name, &input) {
+                // ★ 편집기를 바꾸는 도구 = 전후 줄 미리보기(`ai.diff_context` · 0이면 입력 JSON 그대로).
+                pv
             } else {
                 redact(&input)
             };
@@ -2907,79 +2926,50 @@ impl App {
                     ))
                 }
             }
+            "list_vars" => ok(redact(&self.ai_vars_list())),
+            "get_var" => match self.ai_var_get(&g("name")) {
+                Ok(s) => ok(redact(&s)),
+                Err(e) => err(e),
+            },
+            "set_var" => {
+                let null = matches!(g("null").as_str(), "true" | "1");
+                match self.ai_var_set(&g("name"), &g("value"), null) {
+                    Ok(s) => ok(redact(&s)),
+                    Err(e) => err(e),
+                }
+            }
             "edit_editor" => {
                 if self.ai_view_active() {
                     err("the chat tab is active; switch to a SQL editor tab first".into())
                 } else {
-                    let op = g("op");
-                    let full = self.editors.cur().text();
-                    let lines: Vec<&str> = full.split('\n').collect();
-                    let n = lines.len();
-                    // 줄 범위: 인자 → 선택이 걸친 줄 → 커서 문장.
-                    let line_at =
-                        |ch: usize| full.chars().take(ch).filter(|c| *c == '\n').count() + 1;
-                    let (mut a, mut b) = (gi("from_line", 0), gi("to_line", 0));
-                    if a <= 0 {
-                        if let Some((s0, s1)) = self.editors.cur().selection() {
-                            let (lo, hi) = (s0.min(s1), s0.max(s1));
-                            a = line_at(lo) as i64;
-                            b = line_at(hi.saturating_sub(1).max(lo)) as i64;
-                        } else {
-                            let byte_pos = full
-                                .char_indices()
-                                .nth(self.editors.cur().caret())
-                                .map_or(full.len(), |(x, _)| x);
-                            if let Some(it) = nsql_script::statement_at_in(
-                                &full,
-                                byte_pos,
-                                Some(self.sess.dialect),
-                            ) {
-                                let lb =
-                                    |x: usize| full[..x.min(full.len())].matches('\n').count() + 1;
-                                a = lb(it.span.start) as i64;
-                                b = lb(it.span.end.saturating_sub(1).max(it.span.start)) as i64;
+                    match self.ai_edit_plan(input) {
+                        Err(e) => err(e),
+                        Ok(p) => {
+                            let mut inv = Invalidations::default();
+                            match p.new {
+                                None => {
+                                    self.ed_mut()
+                                        .select_range(p.start, p.start + p.len, &mut inv);
+                                    self.redraw();
+                                    ok(format!("selected lines {}..{}", p.a, p.b))
+                                }
+                                Some(t2) => {
+                                    self.ed_mut().replace_range(
+                                        p.start,
+                                        p.start + p.len,
+                                        &t2,
+                                        &mut inv,
+                                    );
+                                    self.redraw();
+                                    ok(format!(
+                                        "lines {}..{} {} done ({} line(s) now; undo with Ctrl+Z)",
+                                        p.a,
+                                        p.b,
+                                        p.op,
+                                        t2.split('\n').count()
+                                    ))
+                                }
                             }
-                        }
-                    }
-                    if b <= 0 {
-                        b = a;
-                    }
-                    if a <= 0 || a > b || b as usize > n {
-                        err(format!(
-                            "bad line range {a}..{b} (the editor has {n} lines)"
-                        ))
-                    } else {
-                        let (a, b) = (a as usize, b as usize);
-                        // 줄 a..=b의 글자 범위(끝 줄바꿈 제외).
-                        let start: usize =
-                            lines[..a - 1].iter().map(|l| l.chars().count() + 1).sum();
-                        let len: usize = lines[a - 1..b]
-                            .iter()
-                            .map(|l| l.chars().count() + 1)
-                            .sum::<usize>()
-                            - 1;
-                        let mut inv = Invalidations::default();
-                        let new_text = match op.as_str() {
-                            "select" => None,
-                            "replace" => Some(g("text").trim_end_matches('\n').to_string()),
-                            other => {
-                                ai::tools::lines_op(&lines[a - 1..b], other).map(|v| v.join("\n"))
-                            }
-                        };
-                        if op == "select" {
-                            self.ed_mut().select_range(start, start + len, &mut inv);
-                            self.redraw();
-                            ok(format!("selected lines {a}..{b}"))
-                        } else if let Some(t2) = new_text {
-                            self.ed_mut()
-                                .replace_range(start, start + len, &t2, &mut inv);
-                            self.redraw();
-                            ok(format!(
-                                "lines {a}..{b} {op} done ({} line(s) now; undo with Ctrl+Z)",
-                                t2.split('\n').count()
-                            ))
-                        } else {
-                            err(format!("unknown op {op}"))
                         }
                     }
                 }
@@ -3345,7 +3335,18 @@ impl App {
                     if is_write {
                         self.prod_confirmed_once = true;
                     }
-                    self.run_text_whole(src);
+                    // ★ 스크립트 명령(`EXEC :V := …` · `VAR` · `DEFINE`)이나 여러 문장이면 문장 단위로 — 통째(whole) 실행은 본문을
+                    //   한 항목으로 서버에 보내 변수 대입이 먹지 않았다(사용자 11-12 "아무 변화도 없어").
+                    let items = nsql_script::split_script_in(&src, Some(self.sess.dialect));
+                    let scripted = items.len() > 1
+                        || items
+                            .iter()
+                            .any(|i| matches!(i.kind, nsql_script::ItemKind::Command(_)));
+                    if scripted {
+                        self.run_text(src, 0, true);
+                    } else {
+                        self.run_text_whole(src);
+                    }
                 }
                 self.prod_confirmed_once = false;
                 // ★ 실행이 시작되지 못했으면(읽기 전용 · 보류 차단 · DDL 가드 · 백업 대기) 성공이 아니라 **실패로** 알린다 — 종전에는
