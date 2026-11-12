@@ -733,7 +733,16 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
             let _ = e.plan(&item);
         }
     }
-    e.vars.local_states()
+    // ★ 되살린 수식은 **재계산 전(stale)** 으로 싣는다(협업 V1 11-13 "재기동 뒤 a = 10 · b = 7 `:= :a + 2`가 그대로") — 저장 글은
+    //   stale 표시를 싣지 않아, 의존 값이 바뀐 채 저장된 수식 값이 맞는 값처럼 남았다. 값은 저장본 그대로 보이되 흐리게(⟳) ·
+    //   접속 뒤 첫 사용·재계산에서 다시 계산된다.
+    let mut out = e.vars.local_states();
+    for v in &mut out {
+        if v.formula.is_some() {
+            v.stale = true;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -839,6 +848,11 @@ mod tests {
             .expect("b");
         assert_eq!(b.value, Value::Int(7));
         assert_eq!(b.formula.as_deref(), Some(":a + 2"));
+        assert!(b.stale, "되살린 수식 = 재계산 전");
+        // 러너(새 표)가 받으면 재계산 대상에 오른다.
+        let mut r = VarStore::default();
+        r.set_local(back.clone());
+        assert_eq!(r.take_all_stale_formulas().len(), 1);
         let a = back
             .iter()
             .find(|v| v.name.eq_ignore_ascii_case("a"))
