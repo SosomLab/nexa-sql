@@ -343,6 +343,16 @@
 
 명명 확인 = 그리드 편집 키 묶음(`grid.edit_*`)에 붙임 · 동작 스위치(Bool).
 
+### 6-37. 11-12 새 키(AI · 포맷 · [110 §16·§17](110-ai-assistant-plugin-design.md) · [95](95-sql-formatter.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `ai.prewarm` | Bool | on | AI | CLI 모드에서 작성 상자에 글을 치기 시작하면 CLI 프로세스를 미리 띄움(세션당 1회 · 요청 안 보냄 · [39 §3-3](39-resource-governance.md)) |
+| `ai.show_result` | Choice auto\|manual | auto | AI | 턴 끝 마지막 답의 마지막 ```sql 조회문을 결과 그리드에 자동 실행(쓰기 제외 · 분할 창에서) |
+| `ai.guard_auto_write` | Choice off\|dml | off | AI | 비운영의 일반 변경(INSERT · WHERE 있는 UPDATE/DELETE) 자동 승인 · 운영에는 안 닿음 · 보호 키(AI가 못 바꿈) |
+| `ai.guard_bulk_rows` | Int | 1000 | AI | 영향 행 수가 이 이상이면 일반 변경도 2단계 · 보호 키 |
+| `format.table_alias_case` | Choice keep\|upper\|lower | keep | SQL 포맷 | 테이블 별칭·CTE 이름 + `별칭.컬럼` 참조의 대소문자 · kiros33 strict = upper |
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

@@ -515,6 +515,11 @@ AI 도구 호출(run_query · set_setting · run_command …)
 | TxEnd | COMMIT · ROLLBACK | 카드 | **거부** |
 | Protection | 보호 설정(`run.prod_*` · `tx.*` · `backup.*` · `ai.guard_*` · `ai.auto` · `ai.codex_auto` · `ai.permission_mode` · `ai.enabled` · `ai.max_rows`) · 실행 메뉴 명령(`run.*` · `tx.*` · `hold.*` · `conn.*` · `sess.*` · `grid.apply*` · `import.*`) | 카드(Auto여도) | **거부** |
 
+### 17-2-a. 승인 카드 머리 줄(11-12 저녁 · 873160ce)
+
+- 게이트 1 카드와 행 데이터 동의 카드 맨 위 3줄 = "목적: …"(`run_query` 새 필수 인자 `purpose` · 없으면 "(어시스턴트가 이유를 적지 않았습니다)") · "무엇을: <종류> · 대상: <객체>" · "어디서: <프로필> (운영/비운영)" → 그 아래 등급·경고 줄과 SQL 본문.
+- 협업 판정 = 동의 카드에 세 줄 + SQL 본문 ✓ · purpose 없을 때 안내 ✓([journal 11-12 §18](journal/2026-11-12.md)).
+
 ### 17-3. 운영 불변식 4(시험으로 고정)
 
 1. 운영에서 데이터를 바꾸는 요청은 절대 바로 실행되지 않는다.

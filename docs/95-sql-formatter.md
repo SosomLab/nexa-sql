@@ -38,6 +38,7 @@
 | `format.default` | `basic` \| 확장 id | basic | Shift+Alt+F가 쓰는 포맷터 |
 | `format.indent` · `format.indent_width` | editor/tab/space · editor/2/3/4/6/8 | **editor · editor** | 들여쓰기 단위 · 폭(정렬 탭 스톱) — **활성 탭 설정**(`editor`) = 포맷하는 탭의 상태줄 탭 크기/공백(사용자 09-29 · 옛 `format.indent_from_tab`은 폐기 · 꺼져 있던 사용자는 이주로 `tab`·`4` 명시) · 미리보기 = 실제 적용값 · CLI(`nsql format`)는 탭이 없어 `editor` = 탭·4 |
 | `format.keyword_case` · `identifier_case` · `function_case` | keep/upper/lower | upper · keep · keep | 대소문자(인용 식별자는 불변) |
+| `format.table_alias_case`(11-12 · 873160ce) | keep/upper/lower | keep | 테이블 별칭·CTE 이름과 그 `별칭.컬럼` 참조를 함께 바꿈(예: upper = `H AS (` · `t R` · `R.k` · `H.k`) · kiros33 strict = upper(확장 1.3.7) |
 | `format.comma` · `format.comma_gap` | leading/trailing · space/tab | **trailing** · space | 콤마 위치 · 콤마 뒤 간격(정렬된 AS·연산자 뒤 포함) — Basic 기본 = DBeaver 일반형(콤마 뒤 · 사용자 09-29 "내 기준은 kiros33에서") · `Options::default()`(라이브러리)는 leading 그대로 |
 | `format.logical_newline` | before/after | before | AND/OR 줄 앞/뒤 |
 | `format.logical_gap` | space/tab | space | 줄 앞 AND/OR와 조건 사이(공백/탭 · 줄 앞 배치일 때만 · 사용자 09-29) |
