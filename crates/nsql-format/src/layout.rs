@@ -3742,8 +3742,8 @@ FROM
             auto_alias: true,
             ..Options::default()
         };
-        let out = format_basic("select * from M4S_I002040@SB_PRD", &o);
-        assert!(out.contains("M4S_I002040@SB_PRD A"), "{out}");
+        let out = format_basic("select * from DMS_I002040@APP_PRD", &o);
+        assert!(out.contains("DMS_I002040@APP_PRD A"), "{out}");
         let out2 = format_basic("select x.c from s.t@lnk.example.com x where x.c = :b", &o);
         assert!(out2.contains("s.t@lnk.example.com x"), "{out2}");
         assert!(out2.contains(":b"), "{out2}");

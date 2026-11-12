@@ -7477,7 +7477,7 @@ impl Explorer {
                 }
                 _ => "-".to_string(),
             };
-            // ★ 코멘트(사용자 11-12 "TABLE - BISCM.M4S_I301090 - 기준정보 - 설비(워크센터)관리를 찾아야"): 이름은 코드라 뜻이 코멘트에 있다 —
+            // ★ 코멘트(사용자 11-12 "TABLE - APPDB.DMS_I301090 - 기준정보 - 설비(워크센터)관리를 찾아야"): 이름은 코드라 뜻이 코멘트에 있다 —
             //   모든 낱말이 코멘트(소문자)에 있으면 이름 점수 아래(350)로 적중 · 행에 `comment=` 열.
             let comment_lower = o.comment.map(|c| names.lower(c).to_string());
             let com_sc = comment_lower

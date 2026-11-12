@@ -3068,7 +3068,7 @@ impl App {
                 ok(out)
             }
             "connect" if g("scope").eq_ignore_ascii_case("private") => {
-                // ★ 전용(탭) 세션(사용자 11-11 "CONNECT SB_PRD; 명령만 실행되면 된다"): 편집기에서 친 것과 같은 길(`run_text_whole` →
+                // ★ 전용(탭) 세션(사용자 11-11 "CONNECT APP_PRD; 명령만 실행되면 된다"): 편집기에서 친 것과 같은 길(`run_text_whole` →
                 //   run.rs의 CONNECT 처리 = 이 탭의 전용 세션) · 새 API 없음 · 비밀번호는 호스트 안.
                 let p = g("profile");
                 match nsql_vault::Vault::open_default().and_then(|v| v.get(&p)) {

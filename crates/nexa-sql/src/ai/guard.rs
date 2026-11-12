@@ -581,8 +581,8 @@ mod tests {
     fn impact_count_sql_for_single_table_dml() {
         let f = |s: &str| impact_count_sql(s, None);
         assert_eq!(
-            f("DELETE FROM biscm.t WHERE id = 3 AND nm = 'a)b';").as_deref(),
-            Some("SELECT COUNT(*) FROM biscm.t WHERE id = 3 AND nm = 'a)b'")
+            f("DELETE FROM appdb.t WHERE id = 3 AND nm = 'a)b';").as_deref(),
+            Some("SELECT COUNT(*) FROM appdb.t WHERE id = 3 AND nm = 'a)b'")
         );
         assert_eq!(
             f("delete from t").as_deref(),
