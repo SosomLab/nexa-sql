@@ -1006,13 +1006,14 @@ mod wasm_registry_tests {
                 false,
             )
             .expect("format");
+        // 1.3.7: strict = 테이블 별칭 대문자(`a` → `A` · 선언과 참조 함께).
         // 정렬 열 = 가장 긴 항목(`\ta.long_column_name` = 22칸) 다음 탭 스톱(24) · 짧은 항목은 탭을 더 넣어 맞춘다.
         assert!(
-            out.contains("\ta.x\t\t\t\t\tAS\tx1\n,\ta.long_column_name\tAS\ty\n"),
+            out.contains("\tA.x\t\t\t\t\tAS\tx1\n,\tA.long_column_name\tAS\ty\n"),
             "{out}"
         );
         assert!(
-            out.contains("WHERE 1=1\nAND\ta.k\t=\t1\nAND\ta.z\t>\t2\n"),
+            out.contains("WHERE 1=1\nAND\tA.k\t=\t1\nAND\tA.z\t>\t2\n"),
             "{out}"
         );
         // 끈 확장은 목록에서 빠진다.

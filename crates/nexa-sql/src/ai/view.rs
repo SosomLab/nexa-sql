@@ -668,6 +668,11 @@ impl AiView {
     /// ★ 시계 틱(이벤트 루프 · 사용자 11-11 "작성 상자 스크롤바가 항상 표시"): 작성 상자·프로필 상자·대본 스크롤바의 자동 숨김은
     ///   이 틱이 있어야 진행된다(nexa-ctl `ScrollBars::tick` · 전역 `ui.scrollbars`를 따른다).
     /// 표시 레벨(바뀌면 줄 캐시를 버린다).
+    /// 대본 끌기 선택·스크롤바 끌기 중인가 — 호스트가 영역 밖의 이동·놓기도 이 뷰로 보낸다(사용자 11-12).
+    pub(crate) fn drag_active(&self) -> bool {
+        self.dragging || self.bars.is_dragging()
+    }
+
     pub(crate) fn set_detail(&mut self, on: bool) {
         if self.detail != on {
             self.detail = on;

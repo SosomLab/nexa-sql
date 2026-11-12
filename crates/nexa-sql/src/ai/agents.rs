@@ -32,7 +32,8 @@ pub(crate) const AGENTS: &[Agent] = &[
         instructions: "Role: SQL reviewer. Read the editor text, check objects with the metadata tools, use explain for plans and format_sql for layout. Point out correctness risks, missing predicates, implicit conversions and index use. Propose a rewritten statement in one ```sql block. Do not run anything except read-only checks.",
         tools: Some(&[
             "skill", "session_info", "meta_stats", "search_objects", "describe_object", "object_source",
-            "get_editor_text", "set_editor_text", "format_sql", "explain", "run_query", "get_result",
+            "get_editor_text", "set_editor_text", "edit_editor", "format_sql", "explain", "run_query",
+            "get_result",
             "get_output", "get_log",
         ]),
     },

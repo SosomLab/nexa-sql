@@ -53,9 +53,10 @@ Search harness (all in-memory, instant, no database round trip):
         body: "\
 # Skill: editor
 
-1. `get_editor_text` returns the whole text, the selection and the statement at the caret. Work on the selection when there is one, else the statement at the caret, else the whole text.
+1. `get_editor_text` returns the caret position (line, column), the whole text, the selection and the statement at the caret with its line range. Work on the selection when there is one, else the statement at the caret, else the whole text.
 2. `format_sql` formats with the app formatter (editor unchanged); `set_editor_text` replaces the text (undoable) or inserts at the caret with mode=insert. Replacing is a write: tell the user what changes.
 3. `explain` shows the execution plan of one statement in the current session.
+3a. `edit_editor` changes only a part: op=replace with from_line/to_line and text, or line operations sort_asc / sort_desc / unique / reverse / upper / lower / trim, or op=select to highlight lines for the user. Prefer it over replacing the whole text. Other editing commands (toggle comment, indent, duplicate/join/split/move lines, format) run through `list_commands` filter `edit.` and `run_command`.
 4. Put SQL you propose in a fenced ```sql block; the user can copy it, insert it, or run it from the block.
 ",
     },

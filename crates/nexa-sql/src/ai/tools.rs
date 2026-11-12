@@ -46,7 +46,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "get_editor_text",
-        desc: "Read the active editor: full text, the selection, and the statement at the caret.",
+        desc: "Read the active editor: caret position (line, column), full text, the selection, and the statement at the caret with its line range. Use this when the user says 'the query at the cursor' / 'this query'.",
         write: false,
         props: &[],
     },
@@ -57,6 +57,17 @@ pub(crate) const TOOLS: &[Tool] = &[
         props: &[
             ("text", "string", "SQL text", true),
             ("mode", "string", "replace (default) | insert | new_tab", false),
+        ],
+    },
+    Tool {
+        name: "edit_editor",
+        desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
+        write: true,
+        props: &[
+            ("op", "string", "replace | sort_asc | sort_desc | unique | reverse | upper | lower | trim | select", true),
+            ("from_line", "integer", "First line (1-based)", false),
+            ("to_line", "integer", "Last line (inclusive)", false),
+            ("text", "string", "New text for op=replace", false),
         ],
     },
     Tool {
@@ -334,8 +345,63 @@ get_result, list_tabs, list_files, list_extensions) over querying the DBMS, and 
     )
 }
 
+/// ★ 줄 단위 편집 연산(도구 `edit_editor` · 순수 · 사용자 11-12 "정렬, Permute 등 편집 기능"): 줄 묶음 → 바뀐 줄 묶음.
+/// 모르는 연산이면 `None`.
+pub(crate) fn lines_op(lines: &[&str], op: &str) -> Option<Vec<String>> {
+    let own = || lines.iter().map(|l| (*l).to_string()).collect::<Vec<_>>();
+    Some(match op {
+        "sort_asc" => {
+            let mut v = own();
+            v.sort_by_key(|l| l.to_lowercase());
+            v
+        }
+        "sort_desc" => {
+            let mut v = own();
+            v.sort_by_key(|l| std::cmp::Reverse(l.to_lowercase()));
+            v
+        }
+        "unique" => {
+            let mut seen = std::collections::HashSet::new();
+            own()
+                .into_iter()
+                .filter(|l| seen.insert(l.clone()))
+                .collect()
+        }
+        "reverse" => {
+            let mut v = own();
+            v.reverse();
+            v
+        }
+        "upper" => lines.iter().map(|l| l.to_uppercase()).collect(),
+        "lower" => lines.iter().map(|l| l.to_lowercase()).collect(),
+        "trim" => lines.iter().map(|l| l.trim_end().to_string()).collect(),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lines_op_sort_unique_reverse_case_trim() {
+        let l = ["b", "A", "c", "b"];
+        assert_eq!(
+            super::lines_op(&l, "sort_asc").expect("op"),
+            ["A", "b", "b", "c"]
+        );
+        assert_eq!(
+            super::lines_op(&l, "sort_desc").expect("op"),
+            ["c", "b", "b", "A"]
+        );
+        assert_eq!(super::lines_op(&l, "unique").expect("op"), ["b", "A", "c"]);
+        assert_eq!(
+            super::lines_op(&l, "reverse").expect("op"),
+            ["b", "c", "A", "b"]
+        );
+        assert_eq!(super::lines_op(&["x  "], "trim").expect("op"), ["x"]);
+        assert_eq!(super::lines_op(&["aB"], "upper").expect("op"), ["AB"]);
+        assert!(super::lines_op(&l, "nope").is_none());
+    }
+
     use super::*;
 
     #[test]

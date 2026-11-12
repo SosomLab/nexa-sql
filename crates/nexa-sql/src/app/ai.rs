@@ -2885,13 +2885,103 @@ impl App {
                         .char_indices()
                         .nth(self.editors.cur().caret())
                         .map_or(full.len(), |(b, _)| b);
-                    let stmt =
-                        nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect))
-                            .map(|it| full[it.span].to_string())
-                            .unwrap_or_default();
+                    let item =
+                        nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect));
+                    // ★ 커서 위치(사용자 11-12 "편집기의 커서 위치를 확인하는 함수"): 줄·열(1부터) · 커서 문장의 줄 범위 · 선택 줄 범위.
+                    let (line, col) = self.editors.caret_line_col();
+                    let line_of = |b: usize| full[..b.min(full.len())].matches('\n').count() + 1;
+                    let (stmt, range) = match &item {
+                        Some(it) => (
+                            full[it.span.clone()].to_string(),
+                            format!(
+                                " lines=\"{}-{}\"",
+                                line_of(it.span.start),
+                                line_of(it.span.end.saturating_sub(1).max(it.span.start))
+                            ),
+                        ),
+                        None => (String::new(), String::new()),
+                    };
+                    let total = full.matches('\n').count() + 1;
                     ok(format!(
-                        "<text>\n{full}\n</text>\n<selection>\n{sel}\n</selection>\n<statement_at_caret>\n{stmt}\n</statement_at_caret>"
+                        "<caret line=\"{line}\" column=\"{col}\" total_lines=\"{total}\"/>\n<text>\n{full}\n</text>\n<selection>\n{sel}\n</selection>\n<statement_at_caret{range}>\n{stmt}\n</statement_at_caret>"
                     ))
+                }
+            }
+            "edit_editor" => {
+                if self.ai_view_active() {
+                    err("the chat tab is active; switch to a SQL editor tab first".into())
+                } else {
+                    let op = g("op");
+                    let full = self.editors.cur().text();
+                    let lines: Vec<&str> = full.split('\n').collect();
+                    let n = lines.len();
+                    // 줄 범위: 인자 → 선택이 걸친 줄 → 커서 문장.
+                    let line_at =
+                        |ch: usize| full.chars().take(ch).filter(|c| *c == '\n').count() + 1;
+                    let (mut a, mut b) = (gi("from_line", 0), gi("to_line", 0));
+                    if a <= 0 {
+                        if let Some((s0, s1)) = self.editors.cur().selection() {
+                            let (lo, hi) = (s0.min(s1), s0.max(s1));
+                            a = line_at(lo) as i64;
+                            b = line_at(hi.saturating_sub(1).max(lo)) as i64;
+                        } else {
+                            let byte_pos = full
+                                .char_indices()
+                                .nth(self.editors.cur().caret())
+                                .map_or(full.len(), |(x, _)| x);
+                            if let Some(it) = nsql_script::statement_at_in(
+                                &full,
+                                byte_pos,
+                                Some(self.sess.dialect),
+                            ) {
+                                let lb =
+                                    |x: usize| full[..x.min(full.len())].matches('\n').count() + 1;
+                                a = lb(it.span.start) as i64;
+                                b = lb(it.span.end.saturating_sub(1).max(it.span.start)) as i64;
+                            }
+                        }
+                    }
+                    if b <= 0 {
+                        b = a;
+                    }
+                    if a <= 0 || a > b || b as usize > n {
+                        err(format!(
+                            "bad line range {a}..{b} (the editor has {n} lines)"
+                        ))
+                    } else {
+                        let (a, b) = (a as usize, b as usize);
+                        // 줄 a..=b의 글자 범위(끝 줄바꿈 제외).
+                        let start: usize =
+                            lines[..a - 1].iter().map(|l| l.chars().count() + 1).sum();
+                        let len: usize = lines[a - 1..b]
+                            .iter()
+                            .map(|l| l.chars().count() + 1)
+                            .sum::<usize>()
+                            - 1;
+                        let mut inv = Invalidations::default();
+                        let new_text = match op.as_str() {
+                            "select" => None,
+                            "replace" => Some(g("text").trim_end_matches('\n').to_string()),
+                            other => {
+                                ai::tools::lines_op(&lines[a - 1..b], other).map(|v| v.join("\n"))
+                            }
+                        };
+                        if op == "select" {
+                            self.ed_mut().select_range(start, start + len, &mut inv);
+                            self.redraw();
+                            ok(format!("selected lines {a}..{b}"))
+                        } else if let Some(t2) = new_text {
+                            self.ed_mut()
+                                .replace_range(start, start + len, &t2, &mut inv);
+                            self.redraw();
+                            ok(format!(
+                                "lines {a}..{b} {op} done ({} line(s) now; undo with Ctrl+Z)",
+                                t2.split('\n').count()
+                            ))
+                        } else {
+                            err(format!("unknown op {op}"))
+                        }
+                    }
                 }
             }
             "set_editor_text" => {
@@ -3243,10 +3333,20 @@ impl App {
                 // ★ 변경 문장은 사용자가 승인 카드(운영 대량·파괴 = 2단계)로 확인했다 → 사람 경로의 "같은 본문 재실행" 무장은 통과로
                 //   친다(보류 커밋 · DDL 가드 · 객체 백업 · 읽기 전용 검사는 그대로 탄다).
                 let is_write = name == "run_query" && !sql_is_readonly(&src);
-                if is_write {
+                if name == "explain" {
+                    // ★ 실행 계획(사용자 11-12 "운영에서 EXPLAIN이 보호에 막힌다"): 계획만 뽑는다(문장은 실행하지 않음 · analyze 끔).
+                    //   Oracle은 `BEGIN EXECUTE IMMEDIATE 'EXPLAIN PLAN FOR …'; END;` 블록이라 운영 2단 무장·보류 커밋에 걸렸다 →
+                    //   둘 다 건너뛴다(읽기 전용 검사 · DDL 가드는 그대로). 계획 스크립트는 여러 문장이라 문장 단위로 보낸다.
                     self.prod_confirmed_once = true;
+                    self.hold_skip_once = true;
+                    self.run_text(src, 0, true);
+                    self.hold_skip_once = false;
+                } else {
+                    if is_write {
+                        self.prod_confirmed_once = true;
+                    }
+                    self.run_text_whole(src);
                 }
-                self.run_text_whole(src);
                 self.prod_confirmed_once = false;
                 // ★ 실행이 시작되지 못했으면(읽기 전용 · 보류 차단 · DDL 가드 · 백업 대기) 성공이 아니라 **실패로** 알린다 — 종전에는
                 //   250 ms 뒤 상태줄 글이 ok=true로 가서 어시스턴트가 "실행됨"으로 읽었다.
@@ -4079,7 +4179,14 @@ impl App {
         }
         let pointer = is_mouse || is_wheel_ev(&ev);
         let popup = self.ai_view.popup_open();
-        if pointer && (in_view || popup) {
+        // ★ 끌기 중(대본 선택 · 스크롤바)이면 영역 밖의 이동·놓기도 뷰가 받는다 — 종전엔 밖에서 놓으면 놓기가 오지 않아
+        //   끌기 상태가 남았다(사용자 11-12 "Capture 상태로 남는다").
+        let drag_follow = self.ai_view.drag_active()
+            && matches!(
+                ev,
+                InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+            );
+        if pointer && (in_view || popup || drag_follow) {
             if matches!(
                 ev,
                 InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
