@@ -168,7 +168,7 @@
 
 > ★ **10-06 개정(사용자)**: "풀 테스트는 1일에 1회만 기본 진행하고 버전 배포 등 중요한 기점에 다시 한 번 수행되도록 · 매 빌드마다 테스트를 수행하는 것은 불필요" + "방금 개발한 기능을 테스트하는 목적 · 기능과 관련 있는 연관 기능에 대한 테스트 목적은 허용". → **풀 테스트(워크스페이스 전체 `cargo test` + 기능 전수 점검) = 하루 1회 기본 + 배포 등 중요 기점** · 빌드·재시작·커밋마다는 **바뀐 기능과 그 연관 기능의 시험만**. 아래 표·시점은 이 개정으로 고쳤다(옛 "V3 = 넷뿐"·"V2 = 커밋마다 워크스페이스 전체 시험"은 대체됨).
 
-> ★ **10-21 개정(사용자 · 개발 세션에 직접)**: ① **시험은 간략하게 · 필요할 때 사용자가 요청** — E2E 배치 · 기능 전수 · 실서버 4방언 재실행은 사용자 요청이 없으면 돌리지 않는다(V1 = 바뀐 기능의 덤프 판정 몇 개 · 캡처는 필요할 때만). 하루 1회 풀 테스트 기본(10-06)도 **사용자 요청 때만**으로 바뀐다. ② **빌드 전에 통합 테스트**(이 저장소에서는 = `cargo test -p nsql-drivers --test integration -- --test-threads=1` · integration.yml과 같은 명령 · 로컬은 저장 프로필 `NSQL_PG_PROFILE=Repository` `NSQL_ORACLE_PROFILE=APPDB` `NSQL_MSSQL_PROFILE=PLANDB`) — 먼저 대상 서버마다 TCP 도달 1회 → 도달하는 방언만 돌림 · 미도달 = "생략(미도달)" · 사용자가 제외를 요청하면 "생략(사용자 제외)"로 회신에 적는다.
+> ★ **10-21 개정(사용자 · 개발 세션에 직접)**: ① **시험은 간략하게 · 필요할 때 사용자가 요청** — E2E 배치 · 기능 전수 · 실서버 4방언 재실행은 사용자 요청이 없으면 돌리지 않는다(V1 = 바뀐 기능의 덤프 판정 몇 개 · 캡처는 필요할 때만). 하루 1회 풀 테스트 기본(10-06)도 **사용자 요청 때만**으로 바뀐다. ② **빌드 전에 통합 테스트**(이 저장소에서는 = `CARGO_TARGET_DIR=target/it cargo test -p nsql-drivers --test integration -- --test-threads=1` · ★ 11-13부터 **통합 전용 target 폴더** `CARGO_TARGET_DIR=target/it`(앱 빌드와 기능 조합이 달라 같은 폴더에서는 드라이버 3 + 앱을 무변경에도 번갈아 재컴파일 · 측정 = 통합 7분 08초 + 빌드 6분 05초 손해 · 개발 결정 · disk-check·tmp-clean은 target/it를 남김) · integration.yml과 같은 명령 · 로컬은 저장 프로필 `NSQL_PG_PROFILE=Repository` `NSQL_ORACLE_PROFILE=APPDB` `NSQL_MSSQL_PROFILE=PLANDB`) — 먼저 대상 서버마다 TCP 도달 1회 → 도달하는 방언만 돌림 · 미도달 = "생략(미도달)" · 사용자가 제외를 요청하면 "생략(사용자 제외)"로 회신에 적는다.
 >
 > ★ **Windows PC 통합 시험 = `NSQL_ORACLE_DRIVERS=thin`**(Instant Client 없는 PC) — 원문 = [61 §3](61-core-design-and-working-rules.md) · 로컬 프로필 이름은 PC마다 다름(`nsql conn list`).
 

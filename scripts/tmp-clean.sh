@@ -45,7 +45,7 @@ T="$ROOT/target"
 if [ -d "$T" ]; then
   for d in "$T"/*/; do
     n="$(basename "$d")"
-    case "$n" in debug|release|lite|doc|package|duckdb-download|packaging|v130-bundle|rel0*|x86_64-*|aarch64-*|wasm32-*|i686-*) continue;; esac
+    case "$n" in debug|release|lite|it|doc|package|duckdb-download|packaging|v130-bundle|rel0*|x86_64-*|aarch64-*|wasm32-*|i686-*) continue;; esac
     for h in "$d"home "$d"*/home; do [ -d "$h" ] && is_home_copy "$h" && add "$h" "즉시(프로필 사본)"; done
     quiet "$d" && add "$d" "target 산출물"
   done

@@ -9,7 +9,7 @@
 #     ② 시험·측정 산출물 폴더(`target/v*-*` · `target/t[0-9]*` · `func-check*` · `perf-*` · `capture-*` · `uicheck` · `ui[0-9]*` · `flick*` · `flush-*` ·
 #        `textref` · `tmp` · `mac-tests-*` · `clipv1` · `code-health` · `*.log`) — 결론은 journal에 있으므로 폴더는 버려도 된다
 #     ③ 세션 스크래치패드 캡처(PNG·BMP · /tmp/claude-*/…/scratchpad/cap)
-#   남기는 것: `target/debug`(실기 Debug exe) · `target/release`·`target/lite`(Release lite 판) · `duckdb-download`(build.rs 다운로드 캐시) ·
+#   남기는 것: `target/debug`(실기 Debug exe) · `target/release`·`target/lite`(Release lite 판) · `target/it`(통합 시험 전용 캐시 · 11-13) · `duckdb-download`(build.rs 다운로드 캐시) ·
 #     `packaging`·`v130-bundle`·`rel0*`(릴리스 자산 작업본 · 릴리스 규칙) · `cargo clean`은 사용자 지시 때만(재빌드 10분+).
 #   기준: 여유 < 20 GB = 경고 + 정리 권고 · 풀 테스트·릴리스 빌드·check-3os 전체 모드 전에는 여유 ≥ 30 GB 확인.
 set -u
