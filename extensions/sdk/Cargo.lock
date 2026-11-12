@@ -23,11 +23,11 @@ version = "0.1.0"
 
 [[package]]
 name = "nsql-format"
-version = "0.4.0"
+version = "0.7.2"
 
 [[package]]
 name = "nsql-seq"
-version = "0.4.0"
+version = "0.7.2"
 
 [[package]]
 name = "project-explorer-menus"
@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "sql-formatter-kiros33"
-version = "1.3.5"
+version = "1.3.6"
 dependencies = [
  "nexa-ext-sdk",
  "nsql-format",
