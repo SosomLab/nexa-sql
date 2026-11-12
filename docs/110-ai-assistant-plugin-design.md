@@ -446,6 +446,7 @@
 
 - 사용자 확인(11-12 새벽): 요청 고정 머리글 ✓ · 진행 상태 표시 ✓(표시 수준은 위 2로 수정) · 조회마다 새 결과 탭 ✓ · 세션 탭 ✓ · 객체 찾기 창 ✓.
 - 설정 키 그대로(32) · i18n +2(`AiActivityLine` · `AiWaitingFirst`) · 시험 +1(mcp discover).
+- ★ **두 번째 원인(11-12 오전 · 86eeac21 · 사용자 세 번째 지적 · [journal 11-12 §11](journal/2026-11-12.md))**: `discover` 수정 뒤에도 `nexa-sql:failed` 재현 → `ai/mcp.rs` `serve`가 읽기 제한(500 ms)마다 받던 줄 조각을 지워, 브리지가 줄 본문과 줄바꿈을 따로 쓰면 요청이 사라졌다(실측 119.5초 뒤 failed). 수정 = 줄 누적 보존 + `nodelay` · 브리지 한 번에 쓰기 → 연결 1~3초. 함께 = `ai.prewarm`(CLI 미리 띄우기 · 첫 응답 8.3 → 4.4초) · 실기 E2E `ai/e2e.rs`(`#[ignore]` · 협업 판정 = Claude·Codex 2/0 · `mcp=[nexa-sql:connected]`) · 회귀 시험 `request_split_across_read_timeout_is_answered`.
 
 ### 16-7 헤드리스 모의 도구 호출 · 에이전트 이력(2026-11-12 새벽 · 자율 진행 · 협업 제안)
 - **`NSQL_AI_MOCK_TOOL="name:{json};name2:{json}"`**(모의 호스트 `start_mock`): 지정한 도구들을 차례로 `ToolCall → ToolRequest → ToolResult`로 부르고, 각 결과 앞 200자를 " → name: …" 글로 되돌린다(basic 레벨은 도구 결과 줄을 숨기므로 덤프 본문으로 판정). 없으면 종전 `get_setting` 하나. 이로써 `meta_stats` · `search_objects`(코멘트·컬럼) · `list_tabs` · `connect`(scope=private 승인 카드) 같은 흐름을 헤드리스 V1로 판정할 수 있다.
