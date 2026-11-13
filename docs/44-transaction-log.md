@@ -215,3 +215,9 @@ pub struct TxRecord {
 남은 것: CLI `nsql run --log`에 ②③ 옵션(`--binds`) · 로그 창 검색이 ②③ 값도 찾기 · 값이 매우 길면(CLOB) 상세에서 잘라 보이기(`grid.lob_view_max_mb` 재사용) — T-251.
 
 > ★ **10-26 T-416** — 문장 행에 전달 모드 꼬리표(`OK · bind 2` · `TxEntry.delivery` · `bind N`/`declare-prepend`/`inline N`) = §9 3계층에 한 칸 · 실행 로그 완료 줄과 같은 꼬리표.
+
+### 9-y. 머리 줄 정렬·필터 · 상세 글상자(11-13 · 732d8bc4 · [journal 11-13 §10](journal/2026-11-13.md))
+
+- 머리 줄 = 부품 `listhead`(클릭 3단 정렬 · Shift 결합 · 깔때기 값 필터 · [30 §2](30-architecture-patterns.md)) — 7열(시간 · 종류 · 문장 · 소요 · 행 · 결과 · 트랜잭션) 전부.
+- 아래 상세 = 읽기 전용 글상자(끌어 선택 · 더블클릭 낱말 · 우클릭 복사/전체 선택 · Ctrl+C/A · 휠) · 푸터 맨 앞 "줄바꿈" 스위치 = 상세 줄바꿈 · 행 우클릭 메뉴는 창 전체 기준 배치 · 메뉴 바깥 클릭 = 닫고 진행.
+- 남은 것 = 실행 끝 수식 재계산 줄의 문장 글이 본 실행 항목 글로 찍힘(`app/run_events.rs` `on_ev_begin`의 `last_run_items.get(index)` · journal 11-13 §8 · 개발 다음 묶음).

@@ -52,6 +52,7 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
+| **목록 창 머리 줄 `listhead`**(11-13 · 732d8bc4) | nexa-sql `listhead.rs` | 창마다 따로 만들던 머리 줄 정렬(접속 창 `toggle_sort_key`)과 값 필터를 한 부품으로 — 클릭 3단 정렬(오름 · 내림 · 원래) · Shift 결합(순번 표시) · 깔때기 = 결과 그리드 ValuePick 재사용(`grid::funnel_glyph`) | 트랜잭션 로그 창 · 변수 창 · 접속(로그인) 창 |
 | **객체 찾기 질의 `nsql_catalog::find`**(10-15 · 113 §4) | nsql-catalog `find.rs`(순수 SQL 조립 `names_sql`/`columns_sql`/`source_sqls` + 클라이언트 `match_lines`/`line_matches` · 시험 7) | 이름·설명·컬럼·소스 본문을 방언별 사전 뷰 LIKE 1회로 — 대소문자(UPPER/ILIKE/COLLATE/instr/BINARY) · `ESCAPE '\\'` · 상한(ROWNUM/TOP/LIMIT) · 덩어리 정의는 클라이언트가 줄을 가른다 | 객체 찾기 전용 엔진 `findobj_engine`(v2) · CLI 후속 |
 | **창 전용 작업 엔진 `findobj_engine`**(10-15 · 113 §4 v2) | nexa-sql `findobj_engine.rs`(`Engine{start,cancel,try_recv}` · 계획 스레드 + 워커 N · `EngineMsg{Planned,Task,ServerDone}` · 취소 = `live` rev 비교) | 사용자 동작 하나를 서버 × 단위 × 단계 **작업**으로 쪼개 각자 세션으로 병렬 실행 · 창은 메시지를 합쳐 보여 주기만(메인 창·탐색기 스레드와 분리) · 깨우기는 `ExplorerSet::wake` 하나 | 객체 찾기 창 · (후보) 데이터 값 검색 · 다중 서버 일괄 작업 |
 | **객체 종류 → 아이콘 `exp_icons::object_icon`**(10-15) | nexa-sql `exp_icons.rs` | 탐색기 `icon_for` 안의 매핑을 꺼내 객체 찾기 창이 같은 아이콘을 쓴다 | 탐색기 트리 · 객체 찾기 결과 목록 |
