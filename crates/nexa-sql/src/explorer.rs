@@ -7669,6 +7669,11 @@ impl Explorer {
         s
     }
 
+    /// 객체로 이동(reveal)이 아직 도는 중인가(펼치기·적재를 기다리는 단계 기계 · AI 도구 `reveal_object`의 완료 판정).
+    pub(crate) fn reveal_pending(&self) -> bool {
+        self.reveal.is_some()
+    }
+
     /// ★ AI 도구 `describe_object`의 지연 적재(사용자 11-14 "메타에 컬럼이 있을 텐데 왜 `WHERE 1=0`으로 컬럼을 조회하나"):
     /// 탐색기는 **펼치거나 쓴 객체의 컬럼만** 읽어 둔다(지연 로딩) — 아직 안 읽은 객체를 물으면 종전에는 "not loaded"만 답해
     /// 어시스턴트가 빈 조회로 컬럼을 알아냈다. 이제 그 객체 하나의 컬럼·상세 적재를 건다.

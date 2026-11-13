@@ -1401,6 +1401,16 @@ impl App {
     }
 
     /// 지금 탭의 연결 해제(전용 = 그 세션 · 공유 = 그 공유 연결 전체).
+    /// ★ 어시스턴트의 접속 해제(승인 카드를 지난 `run_command conn.disconnect` · 11-14): 공유 연결을 다른 탭도 쓰고 있어도
+    /// 선택 메뉴("모두 해제 / 이 탭만 떼기")를 띄우지 않고 **그 연결을 끊는다** — 메뉴가 뜬 채 기다리는데 어시스턴트는 "끊었다"로
+    /// 알던 것(협업 V1). 실행 중·미커밋 변경은 호출 전에 걸러진다(`ai_tool_request`). 돌려주는 값 = 그 연결을 쓰던 탭 수.
+    pub(crate) fn disconnect_for_ai(&mut self) -> usize {
+        let bound = self.bound_tabs(self.sess.id);
+        self.sess.disc_path = Some(sessions::DiscPath::Toolbar);
+        self.disconnect_current();
+        bound
+    }
+
     fn disconnect_current(&mut self) {
         // 미커밋 문장이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30).
         if !self.sess.tx_pending.is_empty() {

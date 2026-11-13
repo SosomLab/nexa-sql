@@ -1604,6 +1604,10 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
         self.panes[self.shown].ex.ai_describe(schema, name)
     }
+    /// 보이는 칸의 객체 이동(reveal)이 아직 도는 중인가.
+    pub(crate) fn reveal_pending(&self) -> bool {
+        self.panes[self.shown].ex.reveal_pending()
+    }
     /// `describe_object`의 지연 적재(그 객체 하나) — `Explorer::ai_ensure_columns`.
     pub(crate) fn ai_ensure_columns(&mut self, schema: Option<&str>, name: &str) -> Option<bool> {
         let i = self.shown;

@@ -293,7 +293,7 @@ impl App {
     /// 북마크로 이동 — 열린 탭이면 전환 · 파일이면 열고 · 그 줄로.
     /// 북마크로 이동 — `permanent` = 정식 탭(더블클릭·Enter·메뉴 Open · 이미 미리보기로 열려 있으면 승격) ·
     /// false = 미리보기 탭(한 번 클릭 · 69 B4b · 프로젝트 탐색기와 같은 규칙 `project.preview_tab` · 편집하면 승격).
-    fn bm_goto(&mut self, id: u64, permanent: bool) {
+    pub(crate) fn bm_goto(&mut self, id: u64, permanent: bool) {
         let Some(b) = self.bookmarks.store.get(id).cloned() else {
             return;
         };

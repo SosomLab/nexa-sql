@@ -16,6 +16,8 @@ pub(crate) const SKILLS: &[Skill] = &[
         body: "\
 # Skill: connections (Nexa SQL application layer)
 
+To close connections use the `disconnect` tool (scope=current or all); it reports connections it skipped (busy / uncommitted changes). Do not use `run_command conn.disconnect` or `conn.toggle`, and never send a `DISCONNECT` statement through `run_query`.
+
 Nexa SQL (not the DBMS) owns the connection state. Answer from the app first.
 
 Terms:
@@ -28,6 +30,19 @@ Steps:
 2. Answer directly from that output. Do NOT run SQL against v$session, pg_stat_activity, sys.dm_exec_sessions or similar unless the user explicitly asks about server-side sessions, other users, locks or waits.
 3. Saved profiles: `list_profiles`. To open a connection: `connect` with the profile name. scope=shared (default) = app-wide shared connection: with a stored password it connects directly (then re-check with `session_info`); without one the connection window opens and you must tell the user to type the password and confirm the login there themselves. scope=private = the active editor tab's own session: the app runs `CONNECT <profile>;` in that tab (exactly what the user would type); it needs a stored password. You CAN create private sessions this way — do not say you cannot.
 4. 'Which schema/database am I in' = schema / current db from `session_info`; do not guess from SQL text.
+",
+    },
+    Skill {
+        name: "bookmarks",
+        when: "the user asks to add, list, rename, annotate, number, delete or jump to bookmarks (line marks in editor tabs)",
+        body: "\
+# Skill: bookmarks — line bookmarks in editor tabs
+
+1. `bookmarks` (action=list) shows every bookmark: id, document, line, text/label, note, number (0-9 quick jump), state. Use `filter` / scope=current to narrow.
+2. `bookmarks` action=goto with an id (or `mnemonic` = its number) opens the document and moves the caret there.
+3. `edit_bookmark` changes them (asks the user unless Auto is on): add (line of the active editor tab, default the caret line; give a label), rename (id + label), note (id + note), mnemonic (id + number 0-9, -1 clears), delete (id).
+4. To bookmark a line in another file: `open_file` with that line, then `edit_bookmark` add. Bookmarks need an editor tab - not the chat tab.
+5. Never use `run_command bookmark.toggle` to add one: it removes the bookmark when the line already has one.
 ",
     },
     Skill {
@@ -104,7 +119,7 @@ Search harness (all in-memory, instant, no database round trip):
 
 1. Locate with the metadata skill (`search_objects` → `describe_object`).
 2. Source/DDL: `object_source` opens the definition in an editor tab (procedures, views, triggers, packages, table DDL where supported).
-3. Explorer actions via `run_command`: `obj.reveal` (select the object at the caret in the explorer), `obj.info`, `obj.rows` (row count), `obj.sizes`, `obj.select_rows` (SELECT * tab), `obj.refresh` / `obj.refresh_meta` (reload a branch / metadata), `obj.compare` / `obj.compare_server` (compare definitions).
+3. To go to an object in the explorer use the `reveal_object` tool (name, optional schema / member) - it works from the chat too and returns the selected path; do NOT move the editor caret and run `obj.reveal` for this. Other explorer actions via `run_command` (they act on the node selected in the explorer, so reveal first): `obj.info`, `obj.rows` (row count), `obj.sizes`, `obj.select_rows` (SELECT * tab), `obj.refresh` / `obj.refresh_meta` (reload a branch / metadata), `obj.compare` / `obj.compare_server` (compare definitions).
 4. Never generate or run DDL that changes objects unless the user asked explicitly; it needs approval anyway.
 ",
     },
@@ -115,7 +130,7 @@ Search harness (all in-memory, instant, no database round trip):
 # Skill: project files
 
 1. `list_files` with path words (ANDed) finds files under the current project/folder root (hidden and build folders skipped, bounded). Empty query lists the first entries.
-2. `open_file` opens one in an editor tab (relative to the root or absolute).
+2. `open_file` opens one in an editor tab (relative to the root or absolute); with `line` the caret goes to that line.\n2a. `search_files` searches file CONTENTS (query + case / word / regex + `where` scope patterns) and returns `path:line:column` rows - then `open_file` with that line. `list_files` only matches path names.
 3. Project commands via `run_command`: `project.open`, `project.switch`, `project.save`, `project.close`; `file.open` opens the file dialog for the user; `view.project` shows the project panel.
 4. Do not read file contents through the shell; open the file and use `get_editor_text` if the content matters.
 ",

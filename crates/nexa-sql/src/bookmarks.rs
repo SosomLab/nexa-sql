@@ -404,6 +404,77 @@ impl Bookmarks {
 
     // ───────────── 명령 ─────────────
 
+    /// ★ 줄을 지정해 **추가**(토글 아님 · AI 도구 `edit_bookmark` · 11-14): 탭 `i`의 0 기준 줄 `line` — 같은 줄에 이미 있으면
+    /// 그 id · 줄이 문서 밖이면 `Err("line")` · 상한에 닿으면 상한 키 이름.
+    pub(crate) fn add_at(
+        &mut self,
+        ed: &Editors,
+        i: usize,
+        line: usize,
+    ) -> Result<u64, &'static str> {
+        if line >= Self::lines_of(ed, i).len() {
+            return Err("line");
+        }
+        let doc = Self::doc_key(ed, i);
+        let a = self.anchor_at(ed, i, line, 0);
+        let id = self.store.add(
+            doc,
+            a,
+            now_epoch(),
+            CASE_INSENSITIVE,
+            self.max_per_doc,
+            self.max_total,
+        )?;
+        self.touch();
+        Ok(id)
+    }
+
+    /// ★ AI 도구 `bookmarks`의 목록 줄(11-14): `id<TAB>문서<TAB>줄<TAB>표시 글<TAB>메모<TAB>번호<TAB>상태` — `filter`(소문자 부분
+    /// 일치 · 표시 글·문서·메모) · `only` = 이 문서만. 문서 이름은 호출자가 준다(패널이 탭 제목을 안다).
+    pub(crate) fn ai_rows(
+        &self,
+        filter: &str,
+        only: Option<&DocKey>,
+        name_of: &dyn Fn(&DocKey) -> String,
+    ) -> Vec<String> {
+        let f = filter.trim().to_lowercase();
+        self.store
+            .items
+            .iter()
+            .filter(|b| only.is_none_or(|d| b.doc.same(d, CASE_INSENSITIVE)))
+            .filter_map(|b| {
+                let doc = name_of(&b.doc);
+                let shown = b.display();
+                let note = b.note.clone().unwrap_or_default();
+                let hay = format!("{shown}\n{doc}\n{note}").to_lowercase();
+                if !f.is_empty() && !hay.contains(&f) {
+                    return None;
+                }
+                Some(format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    b.id,
+                    doc,
+                    b.anchor.line + 1,
+                    shown.chars().take(80).collect::<String>(),
+                    note.chars().take(80).collect::<String>(),
+                    b.mnemonic
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "-".into()),
+                    if b.is_live() { "live" } else { "invalid" }
+                ))
+            })
+            .collect()
+    }
+
+    /// 번호(0~9)가 붙은 살아 있는 북마크의 id(문서 무관 · 처음 것).
+    pub(crate) fn ai_by_mnemonic(&self, n: u8) -> Option<u64> {
+        self.store
+            .items
+            .iter()
+            .find(|b| b.mnemonic == Some(n) && b.is_live())
+            .map(|b| b.id)
+    }
+
     /// 캐럿 줄 토글 — `Ok(Some(true))` = 더함 · `Ok(Some(false))` = 뺌 · `Err` = 상한 키 이름.
     pub(crate) fn toggle_caret(&mut self, ed: &Editors, i: usize) -> Result<bool, &'static str> {
         let (line1, col1) = ed.caret_line_col();

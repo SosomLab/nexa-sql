@@ -2777,7 +2777,9 @@ impl AiView {
                 //   나머지는 글꼴의 ①③ 글자라, 글자 쪽은 글꼴이 정한 크기·기준선에 놓여 원의 크기와 높이가 서로 달랐다.
                 //   같은 지름·같은 자리의 원 셋 = 지금 단계는 채움(깜빡임 = 강조색 ↔ 흐린 색) · 나머지는 테두리.
                 let h = dc.text_height();
-                let d = h.clamp(self.s(10.0), self.s(16.0));
+                // 원은 줄 높이보다 작게(사용자 11-14 "원문자 크기는 조금 더 작게") · 숫자는 작은 글꼴(상태줄 슬롯)로 원 안에 맞춘다.
+                let d = (h * 3 / 4).clamp(self.s(9.0), self.s(13.0));
+                dc.select_font(FontSlot::Status, false);
                 for k in 0..3u8 {
                     let cur = k + 1 == info.stage;
                     let col = if cur && self.blink {
@@ -2803,6 +2805,7 @@ impl AiView {
                     );
                     sx += d + self.s(3.0);
                 }
+                dc.select_font(FontSlot::Base, false);
                 sx += self.s(6.0);
             }
             if !info.status.is_empty() && right - sx > self.s(60.0) {

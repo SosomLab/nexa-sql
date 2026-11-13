@@ -47,6 +47,14 @@ pub(crate) enum ApprovalReply {
     },
 }
 
+/// 도구가 기다리는 화면 쪽 비동기 일.
+pub(crate) enum AiWait {
+    /// 파일 내용 검색이 끝나기를(결과 줄 상한).
+    Search { limit: usize },
+    /// 객체 탐색기 이동이 끝나기를(찾던 이름 — 선택 경로에 있는지로 성공 판정).
+    Reveal { name: String },
+}
+
 /// 비동기 도구(실행 결과가 나중에 온다).
 pub(crate) struct PendingTool {
     pub reply: Option<mpsc::Sender<ToolReply>>,
@@ -58,6 +66,8 @@ pub(crate) struct PendingTool {
     pub wait_editor: Option<u64>,
     /// ★ 메타 적재 대기(`describe_object` · 11-14): (스키마 · 이름) — 그 객체의 컬럼이 읽히면(또는 상한이 지나면) 설명을 답한다.
     pub wait_meta: Option<(String, String)>,
+    /// ★ 화면 쪽 비동기 일을 기다린다(파일 검색 · 객체 탐색기 이동 · 11-14).
+    pub wait_ui: Option<AiWait>,
     /// ★ 숨김 실행(11-12 사용자 "과정에 필요한 쿼리는 자체적으로 수행"): AI 도구 `run_query`/`explain`의 결과는 글로만 잡고
     /// 결과 그리드·결과 탭에는 싣지 않는다(`on_ev_result_set`이 본다).
     pub silent: bool,
@@ -1382,6 +1392,7 @@ impl App {
             max_rows: 8,
             wait_editor: None,
             wait_meta: None,
+            wait_ui: None,
             silent: false,
             var_after: None,
         });
@@ -2779,7 +2790,20 @@ impl App {
                     .find(|c| c.id == id)
                     .map(|c| format!("{}: {}", t(c.menu), t(c.item)))
                     .unwrap_or_else(|| id.clone());
-                tf(Msg::AiDoCommand, &[&label, &id])
+                let line = tf(Msg::AiDoCommand, &[&label, &id]);
+                if ai::guard::is_disconnect_command(&id) {
+                    // 이 연결을 쓰는 탭 수를 카드에 보인다(허용 = 그 탭들 모두 미연결이 된다).
+                    format!(
+                        "{line}
+{}",
+                        tf(
+                            Msg::AiDoDisconnectTabs,
+                            &[&self.bound_tabs(self.sess.id).to_string(), &self.sess.desc]
+                        )
+                    )
+                } else {
+                    line
+                }
             }
             "set_setting" => {
                 let key = g("key");
@@ -2799,6 +2823,21 @@ impl App {
                 tf(Msg::AiDoConnect, &[&g("profile"), &scope])
             }
             "set_extension_enabled" => tf(Msg::AiDoExt, &[&g("id"), &g("enabled")]),
+            "disconnect" => tf(
+                Msg::AiDoDisconnect,
+                &[if g("scope") == "all" {
+                    "all"
+                } else {
+                    "current"
+                }],
+            ),
+            "edit_bookmark" => {
+                let target = [g("id"), g("label"), g("line")]
+                    .into_iter()
+                    .find(|x| !x.is_empty())
+                    .unwrap_or_default();
+                tf(Msg::AiDoBookmark, &[&g("action"), &target])
+            }
             "switch_tab" | "open_file" => {
                 let target = [g("title"), g("path"), g("index"), g("id")]
                     .into_iter()
@@ -2820,6 +2859,7 @@ impl App {
             "run_query" | "explain" => ai::jstr(&v, "sql"),
             "set_setting" => ai::jstr(&v, "key"),
             "run_command" => ai::jstr(&v, "id"),
+            "edit_editor" => ai::jstr(&v, "op"),
             _ => String::new(),
         }
     }
@@ -2850,6 +2890,7 @@ impl App {
                     max_rows: 1,
                     wait_editor: None,
                     wait_meta: None,
+                    wait_ui: None,
                     silent: true,
                     var_after: None,
                 });
@@ -3244,6 +3285,20 @@ impl App {
                                 ))
                             }
                         }
+                        None if ai::guard::is_disconnect_command(&id) => {
+                            // 공유 연결의 선택 메뉴를 띄우지 않고 끊는다(카드에 탭 수를 보였다) · 결과는 실제 상태로 답한다.
+                            let tabs = self.disconnect_for_ai();
+                            if self.sess.connected {
+                                err(format!(
+                                    "not disconnected yet: {} - tell the user",
+                                    redact(&self.sess.status)
+                                ))
+                            } else {
+                                ok(format!(
+                                    "disconnected ({tabs} tab(s) were using this connection; they are now unconnected)"
+                                ))
+                            }
+                        }
                         None => {
                             self.menu_action(&id);
                             ok(format!("ran {id}"))
@@ -3356,6 +3411,7 @@ impl App {
                         max_rows: 1,
                         wait_editor: None,
                         wait_meta: None,
+                        wait_ui: None,
                         silent: true,
                         var_after: Some(name_.clone()),
                     });
@@ -3532,6 +3588,258 @@ impl App {
                     None => err("no project or folder is open".into()),
                 }
             }
+            // ★ 북마크 · 파일 내용 검색 · 객체 탐색기 이동(사용자 11-14 "관련해서 필요한 API 및 MCP 구성") — 도구 표 하나가
+            //   API · CLI(MCP) · Codex에 함께 나간다.
+            // ★ 접속 해제 도구(사용자 11-14 "전체 연결을 모두 종료" · "연결된 모든 세션 해제"): scope=current(이 탭의 연결) |
+            //   all(열려 있는 연결 전부 · 공유·전용). 실행 중이거나 미커밋 변경이 있는 연결은 건너뛰고 알린다(끊지 않는다).
+            "disconnect" => {
+                let ids: Vec<u64> = if g("scope") == "all" {
+                    self.all_sess()
+                        .filter(|s| s.connected && !s.closing)
+                        .map(|s| s.id)
+                        .collect()
+                } else {
+                    vec![self.sess.id]
+                };
+                let mut done: Vec<String> = Vec::new();
+                let mut skipped: Vec<String> = Vec::new();
+                for id in ids {
+                    let r = self.with_sess(id, |a| {
+                        if !a.sess.connected {
+                            return None;
+                        }
+                        let desc = a.sess.desc.clone();
+                        if a.sess.busy || a.sess.aux > 0 {
+                            return Some((desc, Err("busy - a statement is running")));
+                        }
+                        if !a.sess.tx_pending.is_empty() || a.sess.prod_held.is_some() {
+                            return Some((
+                                desc,
+                                Err("uncommitted changes - the user must Commit or Rollback first"),
+                            ));
+                        }
+                        a.disconnect_for_ai();
+                        let left = a.sess.connected;
+                        Some((desc, if left { Err("still connected") } else { Ok(()) }))
+                    });
+                    match r.flatten() {
+                        Some((d, Ok(()))) => done.push(d),
+                        Some((d, Err(w))) => skipped.push(format!("{d} ({w})")),
+                        None => {}
+                    }
+                }
+                self.sync_sess_ui();
+                self.redraw();
+                let text = format!(
+                    "disconnected {}: {}\nnot disconnected {}: {}",
+                    done.len(),
+                    if done.is_empty() {
+                        "-".to_string()
+                    } else {
+                        done.join(", ")
+                    },
+                    skipped.len(),
+                    if skipped.is_empty() {
+                        "-".to_string()
+                    } else {
+                        skipped.join(", ")
+                    }
+                );
+                if done.is_empty() && skipped.is_empty() {
+                    ok("no open connection".into())
+                } else if done.is_empty() {
+                    err(redact(&text))
+                } else {
+                    ok(redact(&text))
+                }
+            }
+            "bookmarks" => {
+                if g("action") == "goto" {
+                    let id = match g("id").trim().parse::<u64>() {
+                        Ok(id) => Some(id),
+                        Err(_) => g("mnemonic")
+                            .trim()
+                            .parse::<u8>()
+                            .ok()
+                            .and_then(|n| self.bookmarks.ai_by_mnemonic(n)),
+                    };
+                    match id.filter(|id| self.bookmarks.store.get(*id).is_some()) {
+                        Some(id) => {
+                            self.bm_goto(id, true);
+                            self.redraw();
+                            ok(format!("went to bookmark {id}"))
+                        }
+                        None => err("no such bookmark (call bookmarks with action=list)".into()),
+                    }
+                } else {
+                    let cur = (g("scope") == "current" && !self.ai_view_active()).then(|| {
+                        crate::bookmarks::Bookmarks::doc_key(&self.editors, self.editors.active())
+                    });
+                    let rows = self
+                        .bookmarks
+                        .ai_rows(&g("filter"), cur.as_ref(), &|d| self.bm_panel.doc_name(d));
+                    ok(format!(
+                        "{} bookmark(s) · columns: id, document, line, text/label, note, number, state\n{}",
+                        rows.len(),
+                        rows.join("\n")
+                    ))
+                }
+            }
+            "edit_bookmark" => {
+                let action = g("action");
+                let id = g("id").trim().parse::<u64>().ok();
+                let known = id.filter(|id| self.bookmarks.store.get(*id).is_some());
+                let res: Result<String, String> = match (action.as_str(), known) {
+                    ("add", _) => {
+                        if self.ai_view_active() {
+                            Err("the chat tab is active; a bookmark needs an editor tab (switch_tab or open_file first)".into())
+                        } else {
+                            let i = self.editors.active();
+                            let line = gi("line", 0);
+                            let line0 = if line > 0 {
+                                (line - 1) as usize
+                            } else {
+                                self.editors.caret_line_col().0.saturating_sub(1)
+                            };
+                            match self.bookmarks.add_at(&self.editors, i, line0) {
+                                Ok(id) => {
+                                    let (label, note) = (g("label"), g("note"));
+                                    if !label.trim().is_empty() {
+                                        self.bookmarks.set_label(id, Some(label));
+                                    }
+                                    if !note.trim().is_empty() {
+                                        self.bookmarks.set_note(id, Some(note));
+                                    }
+                                    // 번호(니모닉 0~9)도 추가와 함께 줄 수 있다(사용자 11-14).
+                                    let n = gi("number", -1);
+                                    if (0..=9).contains(&n) {
+                                        self.bookmarks.set_mnemonic(id, Some(n as u8));
+                                    }
+                                    Ok(format!("added bookmark id={id} at line {}", line0 + 1))
+                                }
+                                Err("line") => {
+                                    Err(format!("line {} is outside the document", line0 + 1))
+                                }
+                                Err(e) => Err(format!("bookmark limit reached ({e})")),
+                            }
+                        }
+                    }
+                    (_, None) => {
+                        Err("no such bookmark id (call bookmarks with action=list)".into())
+                    }
+                    ("rename", Some(id)) => {
+                        self.bookmarks.set_label(id, Some(g("label")));
+                        Ok(format!("renamed bookmark {id}"))
+                    }
+                    ("note", Some(id)) => {
+                        self.bookmarks.set_note(id, Some(g("note")));
+                        Ok(format!("updated the note of bookmark {id}"))
+                    }
+                    ("mnemonic", Some(id)) => {
+                        let n = gi("number", -1);
+                        self.bookmarks
+                            .set_mnemonic(id, (0..=9).contains(&n).then_some(n as u8));
+                        Ok(format!(
+                            "bookmark {id}: number set to {}",
+                            if (0..=9).contains(&n) {
+                                n.to_string()
+                            } else {
+                                "none".into()
+                            }
+                        ))
+                    }
+                    ("delete", Some(id)) => {
+                        let _ = self.bookmarks.remove(id);
+                        Ok(format!("deleted bookmark {id}"))
+                    }
+                    _ => Err("unknown action (add | rename | note | mnemonic | delete)".into()),
+                };
+                self.bm_sync_ui();
+                self.redraw();
+                match res {
+                    Ok(s) => ok(s),
+                    Err(e) => err(e),
+                }
+            }
+            "search_files" => {
+                let q = g("query");
+                if q.trim().is_empty() {
+                    err("empty query".into())
+                } else if self.ai.pending.is_some() {
+                    err("busy - another tool is still waiting".into())
+                } else {
+                    // 검색 패널을 보이게 하고(값·결과가 화면에 남는다 · 사용자 11-14 "Search에 값을 입력하고 조회까지") 값을 넣어 실행.
+                    if !self.search.is_visible() {
+                        self.menu_action("view.search");
+                    }
+                    let flag = |k: &str| {
+                        matches!(g(k).to_ascii_lowercase().as_str(), "true" | "1" | "yes")
+                    };
+                    self.search.set_toggles(
+                        flag("case"),
+                        flag("word"),
+                        flag("regex"),
+                        flag("where_case"),
+                    );
+                    self.search.run_query(&q, Some(&g("where")));
+                    let _ = self.search.take_request();
+                    self.start_search();
+                    let limit = gi("limit", 100).clamp(1, 1000) as usize;
+                    self.ai.pending = Some(PendingTool {
+                        reply: Some(reply),
+                        attach_label: None,
+                        since: Instant::now(),
+                        max_rows: 0,
+                        wait_editor: None,
+                        wait_meta: None,
+                        wait_ui: Some(AiWait::Search { limit }),
+                        silent: false,
+                        var_after: None,
+                    });
+                    self.redraw();
+                    return;
+                }
+            }
+            "reveal_object" => {
+                let (name, schema, member) = (g("name"), g("schema"), g("member"));
+                if name.trim().is_empty() {
+                    err("empty object name".into())
+                } else if self.ai.pending.is_some() {
+                    err("busy - another tool is still waiting".into())
+                } else if !self.sess.connected {
+                    err("not connected - the object explorer shows objects of a connection".into())
+                } else {
+                    // 편집기 호버 카드의 [객체 탐색기에서 보기]와 같은 길: 이 탭의 연결(전용 세션 포함)의 서버 칸으로 탐색기를 보이고,
+                    //   스키마 → 종류 폴더 → 객체(→ 멤버) 순으로 펼쳐 선택한다(안 읽힌 가지는 읽고 이어 간다).
+                    let table = if schema.trim().is_empty() {
+                        name.trim().to_string()
+                    } else {
+                        format!("{}.{}", schema.trim(), name.trim())
+                    };
+                    let member = (!member.trim().is_empty()).then(|| member.trim().to_string());
+                    if self.reveal_table_member(&table, member) {
+                        self.ai.pending = Some(PendingTool {
+                            reply: Some(reply),
+                            attach_label: None,
+                            since: Instant::now(),
+                            max_rows: 0,
+                            wait_editor: None,
+                            wait_meta: None,
+                            wait_ui: Some(AiWait::Reveal {
+                                name: name.trim().to_string(),
+                            }),
+                            silent: false,
+                            var_after: None,
+                        });
+                        self.redraw();
+                        return;
+                    }
+                    err(format!(
+                        "could not reveal {table}: {} (find the exact name with search_objects first)",
+                        redact(&self.sess.status)
+                    ))
+                }
+            }
             "open_file" => {
                 let p = g("path");
                 let path = std::path::PathBuf::from(p.trim());
@@ -3546,11 +3854,25 @@ impl App {
                 if !path.is_file() {
                     err(format!("not a file: {}", path.display()))
                 } else {
-                    self.project_open_req(crate::project_panel::OpenReq {
-                        path: path.clone(),
-                        permanent: true,
-                    });
-                    ok(format!("opened {}", path.display()))
+                    // ★ 줄(·열)을 주면 열고 그 자리로(11-14 · 검색 결과로 가는 길 — 검색 패널에서 결과를 연 것과 같다).
+                    let line = gi("line", 0);
+                    if line > 0 {
+                        self.open_search_result(crate::search_panel::OpenReq {
+                            path: Some(path.clone()),
+                            tab: None,
+                            line: line as usize,
+                            col: (gi("column", 1).max(1) - 1) as usize,
+                            len: 0,
+                            permanent: true,
+                        });
+                        ok(format!("opened {} at line {line}", path.display()))
+                    } else {
+                        self.project_open_req(crate::project_panel::OpenReq {
+                            path: path.clone(),
+                            permanent: true,
+                        });
+                        ok(format!("opened {}", path.display()))
+                    }
                 }
             }
             "list_extensions" => {
@@ -3615,6 +3937,7 @@ impl App {
                             max_rows: 0,
                             wait_editor: None,
                             wait_meta: Some((schema, name)),
+                            wait_ui: None,
                             silent: false,
                             var_after: None,
                         });
@@ -3796,6 +4119,7 @@ impl App {
                     max_rows,
                     wait_editor: None,
                     wait_meta: None,
+                    wait_ui: None,
                     silent: true,
                     var_after: None,
                 });
@@ -3869,6 +4193,7 @@ impl App {
                             max_rows,
                             wait_editor: Some(before),
                             wait_meta: None,
+                            wait_ui: None,
                             silent: false,
                             var_after: None,
                         });
@@ -3930,7 +4255,40 @@ impl App {
         };
         let timeout = p.since.elapsed()
             > std::time::Duration::from_secs(self.settings.int("ai.timeout_secs").max(10) as u64);
-        let done_text: Option<(String, bool)> = if let Some((schema, name)) = &p.wait_meta {
+        let done_text: Option<(String, bool)> = if let Some(w) = &p.wait_ui {
+            match w {
+                // 파일 검색: 워커가 끝나면(또는 상한 시간) 결과 줄을 답한다.
+                AiWait::Search { limit } => (!self.search.searching() || timeout).then(|| {
+                    (
+                        self.search.ai_results(*limit),
+                        self.search.ai_error().is_none(),
+                    )
+                }),
+                // 객체 탐색기 이동: 단계 기계가 끝나면 선택된 경로를 답한다(이름이 경로에 없으면 실패로).
+                AiWait::Reveal { name } => (!self.explorer.reveal_pending()
+                    || p.since.elapsed() > std::time::Duration::from_secs(12))
+                .then(|| {
+                    let path = self
+                        .explorer
+                        .selected_path()
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    if path.to_lowercase().contains(&name.to_lowercase()) {
+                        (format!("selected in the object explorer: {path}"), true)
+                    } else {
+                        (
+                            format!(
+                                "could not reveal {name}: {} (selected now: {path})",
+                                redact(&self.sess.status)
+                            ),
+                            false,
+                        )
+                    }
+                }),
+            }
+        } else if let Some((schema, name)) = &p.wait_meta {
             // 메타 적재 대기(describe_object): 컬럼이 읽혔거나(오류 포함) 8초가 지나면 지금 아는 만큼 답한다.
             let s = (!schema.is_empty()).then_some(schema.as_str());
             if self.explorer.ai_columns_settled(s, name)
@@ -4458,6 +4816,7 @@ impl App {
                         max_rows,
                         wait_editor: None,
                         wait_meta: None,
+                        wait_ui: None,
                         silent: false,
                         var_after: None,
                     });

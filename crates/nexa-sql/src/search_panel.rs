@@ -401,6 +401,69 @@ impl SearchPanel {
         self.history = Some(h);
     }
 
+    /// ★ 검색 토글을 값으로 정한다(AI 도구 `search_files` · 11-14 — 종전에는 클릭으로만 바꿀 수 있었다).
+    pub(crate) fn set_toggles(&mut self, case: bool, word: bool, regex: bool, where_case: bool) {
+        for b in &mut self.btns {
+            if b.kind == BtnKind::Case {
+                b.checked = case;
+            } else if b.kind == BtnKind::Word {
+                b.checked = word;
+            } else if b.kind == BtnKind::Regex {
+                b.checked = regex;
+            }
+        }
+        for b in &mut self.where_btns {
+            if b.kind == BtnKind::Case {
+                b.checked = where_case;
+            }
+        }
+    }
+
+    /// 검색 오류(정규식 오류 등).
+    pub(crate) fn ai_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// ★ AI 도구 `search_files`의 결과 글(11-14): 첫 줄 = 요약(일치 수 · 파일 수 · 건너뛴 수 · 상태) · 이어서
+    /// `경로:줄:열<TAB>줄 글`(열 = 1 기준 문자 · 메모리 탭은 `tab:<제목>`) — `limit`줄까지.
+    pub(crate) fn ai_results(&self, limit: usize) -> String {
+        let total: usize = self.files.iter().map(|f| f.matches.len()).sum();
+        let mut out = format!(
+            "{total} match(es) in {} file(s) · skipped {} · {}",
+            self.files.len(),
+            self.skipped.len(),
+            self.status
+        );
+        if let Some(e) = &self.error {
+            out.push_str(&format!(" · error: {e}"));
+        }
+        out.push('\n');
+        let mut n = 0usize;
+        'rows: for f in &self.files {
+            let name = match &f.path {
+                Some(p) => p.display().to_string(),
+                None => format!("tab:{}", f.label),
+            };
+            for m in &f.matches {
+                if n >= limit {
+                    out.push_str(&format!(
+                        "... {} more (raise limit or narrow the query)\n",
+                        total - n
+                    ));
+                    break 'rows;
+                }
+                out.push_str(&format!(
+                    "{name}:{}:{}\t{}\n",
+                    m.line_no,
+                    m.col + 1,
+                    m.text.trim().chars().take(200).collect::<String>()
+                ));
+                n += 1;
+            }
+        }
+        out
+    }
+
     /// 자체 시험용: 검색어(와 범위)를 넣고 실행을 요청한다(`search.run:<글>[|<범위>]` 기동 명령 · 키 주입 없이 · 제외 로그·범위 필터 캡처 09-23).
     pub(crate) fn run_query(&mut self, q: &str, where_text: Option<&str>) {
         self.query.set_text(q);

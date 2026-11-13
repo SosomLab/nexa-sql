@@ -218,10 +218,16 @@ pub(crate) fn classify_tool(name: &str, write: bool, arg: &str, dialect: Option<
         "run_command" => {
             if is_protection_command(arg) {
                 Risk::Protection
+            } else if arg.trim().to_ascii_lowercase().starts_with("view.") {
+                // ★ 패널·창을 여닫는 명령(`view.*`)은 화면만 바꾼다 → 조회 등급(사용자 11-14 실기: 검색 패널을 여는 데 운영 승인
+                //   카드가 떴다).
+                Risk::Read
             } else {
                 Risk::AppWrite
             }
         }
+        // ★ `edit_editor op=select`는 캐럿·선택만 옮긴다(본문 불변) → 조회 등급(11-14 실기: 줄 선택에 승인 카드).
+        "edit_editor" if arg.trim().eq_ignore_ascii_case("select") => Risk::Read,
         _ if write => Risk::AppWrite,
         _ => Risk::Read,
     }
@@ -882,7 +888,10 @@ mod tests {
         assert_eq!(c("run_command", true, "conn.disconnect"), Risk::AppWrite);
         assert_eq!(c("run_command", true, "conn.connect"), Risk::Protection);
         assert_eq!(c("run_command", true, "run.all"), Risk::Protection);
-        assert_eq!(c("run_command", true, "view.log"), Risk::AppWrite);
+        assert_eq!(c("run_command", true, "view.log"), Risk::Read);
+        assert_eq!(c("run_command", true, "bookmark.toggle"), Risk::AppWrite);
+        assert_eq!(c("edit_editor", true, "select"), Risk::Read);
+        assert_eq!(c("edit_editor", true, "replace"), Risk::AppWrite);
         assert_eq!(c("set_editor_text", true, ""), Risk::AppWrite);
         assert_eq!(c("explain", true, "delete from t"), Risk::Read);
         assert_eq!(c("search_objects", false, ""), Risk::Read);
