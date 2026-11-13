@@ -251,8 +251,11 @@ impl App {
                 &format!("vars.formula_on:{name}\t{expr}"),
             );
         }
-        self.prod_confirmed_once = true;
-        self.hold_skip_once = true;
+        // ★ 건너뛰는 것은 **계산만 하는 식**일 때뿐(11-13 데이터 보호): 식 안에 사용자 루틴 호출이 있으면 그 루틴이 DML을 할 수
+        //   있으므로 보통 실행과 똑같이 운영 2단 확인·보류 커밋을 거친다(같은 수식을 제한 시간 안에 다시 적용하면 진행).
+        let plain = nsql_script::bind::expr_is_plain(&expr);
+        self.prod_confirmed_once = plain;
+        self.hold_skip_once = plain;
         self.run_text(format!("EXEC :{name} := {expr};"), 0, true);
         self.prod_confirmed_once = false;
         self.hold_skip_once = false;

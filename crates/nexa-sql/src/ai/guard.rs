@@ -514,6 +514,8 @@ pub(crate) fn is_bind_assign(body: &str) -> bool {
             .chars()
             .all(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '#'))
         && !rhs.trim().is_empty()
+        // ★ 식 안의 사용자 루틴 호출은 DML을 할 수 있다 → "계산만"이 아니다(11-13 · `nsql_script::bind::expr_is_plain`).
+        && nsql_script::bind::expr_is_plain(rhs)
 }
 
 /// 사전 조회 결과 글(열 머리 줄 + 값 줄)에서 행 수를 꺼낸다.
@@ -730,6 +732,12 @@ mod tests {
         assert!(is_bind_assign(":V := 'a'"));
         assert!(is_bind_assign(":VAR3 := :VAR2 + 2;"));
         assert!(!is_bind_assign("pkg.do_it(:V)"));
+        // 식 안의 사용자 루틴 호출 = 변수 대입 등급이 아니다(카드를 거친다 · 11-13).
+        assert!(!is_bind_assign(":V := pkg.audit_and_get(:A)"));
+        assert!(!is_bind_assign(":V := my_func(1) + 2"));
+        assert!(is_bind_assign(
+            ":V := UPPER(:A) || TO_CHAR(SYSDATE, 'YYYY')"
+        ));
         assert!(!is_bind_assign(":V := 1; delete from t"));
         assert!(!is_bind_assign("x := 1"));
         assert!(!is_bind_assign(":V :="));

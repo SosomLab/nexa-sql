@@ -217,28 +217,113 @@ impl VarStore {
 
     /// 대입 뒤: 이 이름 자신의 수식은 방금 계산됐으니 fresh · 값이 바뀌었으면 이 이름을 의존하는 수식은 stale.
     fn note_assigned(&mut self, key: &str, changed: bool) {
-        for (name, f) in self.formulas.iter_mut() {
-            if name == key {
-                f.stale = false;
-            } else if changed && f.deps.iter().any(|d| d == key) {
-                f.stale = true;
+        if let Some(f) = self.formulas.get_mut(key) {
+            f.stale = false;
+        }
+        if changed {
+            self.mark_dependents_stale(key);
+        }
+    }
+
+    /// ★ `key`를 **직접 또는 건너서** 의존하는 수식을 전부 stale로(사용자 11-13 "2단 이상 연쇄": X → B → C에서 X가 바뀌면 C도
+    /// 지금 값이 낡았다 — 직접 의존한 B만 표시하면 `:C`만 쓰는 문장이 한 번 옛 값을 썼다). `key` 자신은 건드리지 않는다.
+    fn mark_dependents_stale(&mut self, key: &str) {
+        let mut seen: Vec<String> = vec![key.to_string()];
+        let mut at = 0;
+        while at < seen.len() {
+            let cur = seen[at].clone();
+            at += 1;
+            for (name, f) in self.formulas.iter_mut() {
+                if !seen.contains(name) && f.deps.contains(&cur) {
+                    f.stale = true;
+                    seen.push(name.clone());
+                }
             }
         }
     }
 
-    /// stale인 수식 **전부**(`SHOW VARIABLES`처럼 모든 값을 보는 자리 = 사용 시점 · 사용자 09-27). 돌려주면서 stale을 내린다.
-    pub fn take_all_stale_formulas(&mut self) -> Vec<(String, String)> {
+    /// 수식 `name`이 건너서 의존하는 이름 전부(수식의 의존을 따라 내려간다 · 자기 자신 제외 · 순환이 있어도 끝난다).
+    fn deps_closure(&self, deps: &[String]) -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        let mut todo: Vec<String> = deps.to_vec();
+        while let Some(d) = todo.pop() {
+            if seen.contains(&d) {
+                continue;
+            }
+            if let Some(f) = self.formulas.get(&d) {
+                todo.extend(f.deps.iter().cloned());
+            }
+            seen.push(d);
+        }
+        seen
+    }
+
+    /// ★ `name := (deps를 쓰는 식)`을 등록하면 **순환**이 생기는가(사용자 11-13 "상호 순환 참조": `A := :B + 1` · `B := :A + 1`은
+    /// 한쪽을 재계산하면 다른 쪽이 낡아 재계획이 끝없이 돌고 서버 왕복이 이어진다). 생기면 순환에 든 이름들(등록할 이름부터).
+    /// 자기 자신만 쓰는 식(`A := :A + 1` = 증가)은 순환이 아니다(의존에서 뺀다).
+    #[must_use]
+    pub fn formula_cycle(&self, name: &str, deps: &[String]) -> Option<Vec<String>> {
+        let key = norm(name);
+        let deps: Vec<String> = deps.iter().map(|d| norm(d)).filter(|d| *d != key).collect();
+        for d in &deps {
+            let below = self.deps_closure(std::slice::from_ref(d));
+            if below.contains(&key) {
+                let mut path = vec![key.clone(), d.clone()];
+                path.extend(
+                    below
+                        .into_iter()
+                        .filter(|n| *n != key && n != d && self.formulas.contains_key(n))
+                        .filter(|n| self.deps_closure(std::slice::from_ref(n)).contains(&key)),
+                );
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// stale 수식 `cands` 중 **지금 계산해도 되는 것**(건너서 의존하는 수식에 stale이 없는 것)을 내리고 돌려준다 — 한 번에 한 층씩:
+    /// 호출자가 재계획하면 다음 층이 나온다(X → B → C = B 먼저 · 그 값으로 C). 준비된 것이 하나도 없으면(옛 저장본의 순환 등)
+    /// 전부 내려 끝낸다(무한 재계획 방지).
+    fn take_ready(&mut self, cands: Vec<String>) -> Vec<(String, String)> {
+        let stale_of = |s: &Self, n: &String| s.formulas.get(n).is_some_and(|f| f.stale);
+        let cands: Vec<String> = cands.into_iter().filter(|n| stale_of(self, n)).collect();
+        let mut ready: Vec<String> = cands
+            .iter()
+            .filter(|n| {
+                let deps = self
+                    .formulas
+                    .get(*n)
+                    .map(|f| f.deps.clone())
+                    .unwrap_or_default();
+                !self
+                    .deps_closure(&deps)
+                    .iter()
+                    .any(|d| d != *n && stale_of(self, d))
+            })
+            .cloned()
+            .collect();
+        if ready.is_empty() {
+            ready = cands;
+        }
         let mut out = Vec::new();
-        for (name, f) in self.formulas.iter_mut() {
-            if f.stale {
+        for key in ready {
+            if let Some(f) = self.formulas.get_mut(&key) {
                 f.stale = false;
                 // ★ stale이 내려간 것도 **바뀐 것**으로 알린다(협업 V1 11-13: 재계산 값이 옛 값과 같으면 대입이 "안 바뀜"이라
                 //   표가 다시 알려지지 않아 호스트에 `↻`가 남았다).
-                self.dirty.insert(name.clone());
-                out.push((name.clone(), f.text.clone()));
+                let text = f.text.clone();
+                self.dirty.insert(key.clone());
+                out.push((key, text));
             }
         }
         out
+    }
+
+    /// stale인 수식 **전부**(`SHOW VARIABLES`처럼 모든 값을 보는 자리 = 사용 시점 · 사용자 09-27). 돌려주면서 stale을 내린다.
+    /// ★ 한 번에 **한 층**(의존이 다 fresh인 것)만 — 호출자의 재계획이 다음 층을 꺼낸다(11-13 연쇄).
+    pub fn take_all_stale_formulas(&mut self) -> Vec<(String, String)> {
+        let all: Vec<String> = self.formulas.keys().cloned().collect();
+        self.take_ready(all)
     }
 
     /// 수식 등록(`EXEC :V := 식` · 사용 시 모드) — 같은 수식이면 그대로.
@@ -253,6 +338,10 @@ impl VarStore {
             .collect();
         // ★ 수식이 새로 생기거나 바뀌면 **바뀐 것으로 표시**한다(사용자 11-13): 계산 결과가 지금 값과 같으면 값 대입은 "안 바뀜"이라
         //   변수 표가 다시 알려지지 않았고, 호스트(변수 창 · AI 도구)는 수식이 등록된 줄을 몰랐다(값 7 → `:= :A + 2`도 7).
+        // ★ 순환이 되는 수식은 등록하지 않는다(값 대입으로만 남는다 · 엔진이 먼저 `formula_cycle`로 오류를 낸다 — 이것은 이중 안전).
+        if self.formula_cycle(&key, &deps).is_some() {
+            return;
+        }
         if self.formulas.get(&key).is_none_or(|f| f.text != *text) {
             self.dirty.insert(key.clone());
         }
@@ -267,19 +356,12 @@ impl VarStore {
     }
 
     /// 참조 이름들 중 stale인 수식 — 재계산할 (이름 · 수식). 돌려주면서 stale을 내린다(재계산 실패 시 무한 재계획 방지).
+    /// ★ 참조 이름이 **건너서** 의존하는 수식까지 보고, 한 번에 한 층(의존이 다 fresh인 것)만 돌려준다(11-13 연쇄 · `take_ready`).
     pub fn take_stale_formulas(&mut self, refs: &[String]) -> Vec<(String, String)> {
-        let mut out = Vec::new();
-        for r in refs {
-            let key = norm(r);
-            if let Some(f) = self.formulas.get_mut(&key) {
-                if f.stale {
-                    f.stale = false;
-                    self.dirty.insert(key.clone());
-                    out.push((key, f.text.clone()));
-                }
-            }
-        }
-        out
+        let refs: Vec<String> = refs.iter().map(|r| norm(r)).collect();
+        let mut cands = self.deps_closure(&refs);
+        cands.sort();
+        self.take_ready(cands)
     }
 
     /// 수식 보기(변수 창 표시용).
@@ -599,16 +681,14 @@ impl VarStore {
                 .map(|d| norm(&d))
                 .filter(|d| *d != key)
                 .collect();
-            self.formulas
-                .entry(key)
-                .or_insert(Formula { text, deps, stale });
+            // 옛 저장본에 순환이 들어 있으면 그 수식은 되살리지 않는다(값으로만 남는다 · 11-13).
+            if self.formulas.contains_key(&key) || self.formula_cycle(&key, &deps).is_some() {
+                continue;
+            }
+            self.formulas.insert(key, Formula { text, deps, stale });
         }
         for key in changed {
-            for (name, f) in self.formulas.iter_mut() {
-                if *name != key && f.deps.contains(&key) {
-                    f.stale = true;
-                }
-            }
+            self.mark_dependents_stale(&key);
         }
     }
 
@@ -792,6 +872,55 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn formula_chain_marks_and_recomputes_in_layers() {
+        use super::*;
+        // X → B → C: X가 바뀌면 B·C 모두 stale · `:C`만 참조해도 B가 먼저(한 층), 그다음 C.
+        let mut v = VarStore::default();
+        v.assign("X", Value::Int(1));
+        v.set_formula("B", ":X + 1", vec!["X".into()]);
+        v.assign("B", Value::Int(2));
+        v.set_formula("C", ":B * 2", vec!["B".into()]);
+        v.assign("C", Value::Int(4));
+        v.assign("X", Value::Int(10));
+        assert!(v.formula_of("B").unwrap().stale);
+        assert!(v.formula_of("C").unwrap().stale, "건너 의존도 stale");
+        let first = v.take_stale_formulas(&["C".into()]);
+        assert_eq!(first, vec![("B".to_string(), ":X + 1".to_string())]);
+        assert!(v.formula_of("C").unwrap().stale, "C는 다음 층");
+        v.assign("B", Value::Int(11));
+        let second = v.take_stale_formulas(&["C".into()]);
+        assert_eq!(second, vec![("C".to_string(), ":B * 2".to_string())]);
+        v.assign("C", Value::Int(22));
+        assert!(v.take_stale_formulas(&["C".into()]).is_empty());
+        // 전부 보기(SHOW VARIABLES)도 한 층씩.
+        v.assign("X", Value::Int(20));
+        assert_eq!(v.take_all_stale_formulas().len(), 1);
+        v.assign("B", Value::Int(21));
+        assert_eq!(v.take_all_stale_formulas().len(), 1);
+        assert!(v.take_all_stale_formulas().is_empty());
+    }
+
+    #[test]
+    fn formula_cycle_is_detected_and_not_registered() {
+        use super::*;
+        let mut v = VarStore::default();
+        v.set_formula("A", ":B + 1", vec!["B".into()]);
+        // 직접 순환.
+        assert!(v.formula_cycle("b", &["a".into()]).is_some());
+        v.set_formula("B", ":A + 1", vec!["A".into()]);
+        assert!(v.formula_of("B").is_none(), "순환 수식은 등록되지 않는다");
+        // 건너 순환: A → B → C → A.
+        v.set_formula("B", ":C + 1", vec!["C".into()]);
+        assert!(v.formula_of("B").is_some());
+        let path = v.formula_cycle("C", &["A".into()]).unwrap();
+        assert_eq!(path[0], "C");
+        assert!(path.contains(&"A".to_string()) && path.contains(&"B".to_string()));
+        // 자기 자신만 쓰는 식(증가)과 순환 없는 식은 통과.
+        assert!(v.formula_cycle("N", &["N".into()]).is_none());
+        assert!(v.formula_cycle("D", &["A".into()]).is_none());
+    }
+
     use super::*;
 
     /// ★ 비밀 키워드 전역(`SECRET_KEYWORDS`)을 바꾸거나 읽는 시험은 직렬로(병렬 시험이 섞이면 `v_password`가 비밀로 안 잡혀

@@ -26,6 +26,12 @@ pub(crate) enum ApprovalReply {
         reply: mpsc::Sender<ToolReply>,
         /// 2단계 검증 대상(대량·파괴적 변경 · guard.rs) — 허용 뒤 영향 확인 카드가 한 번 더.
         two: bool,
+        /// ★ 이 카드가 행 데이터 동의도 겸한다(11-13 사용자 "중복된 내용을 굳이 2번 표시하는건 낭비"): 쓰기 문장은 동의 카드와
+        /// 쓰기 확인 카드를 따로 띄우지 않고 한 장으로 — 허용 = `rows_allowed` + 실행.
+        rows: bool,
+        /// ★ 두 번 눌러 허용(운영 접속의 DB 쓰기 · 11-13 사용자 "Allow 버튼이 2중 확인 버튼"): 첫 누름 = 장전(`AiState::armed`) ·
+        /// `run.prod_confirm_ms` 안에 다시 누르면 실행 · 지나면 무효.
+        twice: bool,
     },
     /// ★ 게이트 2(영향 확인 카드 · guard.rs): 허용 = 실행 · 거부 = 오류 결과.
     Stage2 {
@@ -121,6 +127,8 @@ pub(crate) struct AiState {
     /// ★ 게이트 2 준비(영향 행 수 사전 조회가 도는 중 · 도구 · 입력 · 답 통로 · 2단계 강제) · 영향 확인 카드를 띄운 시각(운영 = 대기 뒤에만 승인).
     pub impact_wait: Option<(String, String, mpsc::Sender<ToolReply>, bool)>,
     pub stage2_at: Option<Instant>,
+    /// ★ 두 번 눌러 허용하는 카드의 첫 누름 시각(`ApprovalReply::Api::twice` · 시간이 지나면 `ai_tick_due`가 비운다).
+    pub armed: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
     /// ★ 마지막 실행 오류(문장 · 메시지 · 편집기 줄) — "AI에게 수정 요청"이 쓴다 · 알림 버튼을 마지막으로 띄운 시각(연달아 안 띄움).
     pub last_error: Option<(String, String, usize)>,
@@ -915,6 +923,12 @@ impl App {
                 .approving
                 .as_ref()
                 .map(|(id, ok, _)| (id.clone(), *ok)),
+            armed: self.ai.armed.and_then(|at| {
+                let wait = self.ai_twice_wait();
+                let left = wait.checked_sub(at.elapsed())?;
+                let id = self.ai.approval.as_ref()?.0.clone();
+                Some((id, left.as_millis() as u64, wait.as_millis() as u64))
+            }),
             profiles: self.ai.store.profiles.clone(),
             keyed,
             current_profile: self.ai.store.current.clone(),
@@ -1425,6 +1439,16 @@ impl App {
                 self.ai.approving = None;
             } else {
                 anim = Some(now + std::time::Duration::from_millis(60));
+            }
+            self.redraw();
+        }
+        // ★ 장전된 허용 버튼(두 번 눌러 허용 · 11-13): 남은 시간이 줄어드는 것이 보이게 다시 그리고, 시간이 지나면 무효로 되돌린다.
+        if let Some(at) = self.ai.armed {
+            if self.ai.approval.is_none() || now.duration_since(at) >= self.ai_twice_wait() {
+                self.ai.armed = None;
+            } else {
+                let next = now + std::time::Duration::from_millis(100);
+                anim = Some(anim.map_or(next, |a| a.min(next)));
             }
             self.redraw();
         }
@@ -2059,6 +2083,7 @@ impl App {
             });
         }
         self.ai.stage2_at = None;
+        self.ai.armed = None;
         self.ai.pending = None;
         self.ai.status = t(Msg::AiStopped).into();
         self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
@@ -2477,6 +2502,25 @@ impl App {
                 return;
             }
         }
+        // ★ 두 번 눌러 허용(운영의 DB 쓰기 · 11-13): 첫 누름은 장전만 — 제한 시간 안의 두 번째 누름이 실행한다. 장전 직후의
+        //   연타(350 ms 안)는 버린다(습관적 더블 클릭이 두 번으로 세어지지 않게) · 시간이 지난 뒤의 누름은 다시 장전.
+        if ok
+            && matches!(
+                self.ai.approval,
+                Some((_, _, _, ApprovalReply::Api { twice: true, .. }))
+            )
+        {
+            match self.ai.armed.map(|at| at.elapsed()) {
+                Some(e) if e < std::time::Duration::from_millis(350) => return,
+                Some(e) if e <= self.ai_twice_wait() => {}
+                _ => {
+                    self.ai.armed = Some(Instant::now());
+                    self.redraw();
+                    return;
+                }
+            }
+        }
+        self.ai.armed = None;
         let Some((card_id, _, _, r)) = self.ai.approval.take() else {
             return;
         };
@@ -2493,8 +2537,16 @@ impl App {
                 input,
                 reply,
                 two,
+                rows,
+                twice: _,
             } => {
                 if ok {
+                    // 동의를 겸한 카드(쓰기 문장 한 장) = 허용이 행 데이터 동의이기도 하다.
+                    if rows {
+                        if let Some(s) = self.ai_run_mut() {
+                            s.rows_allowed = true;
+                        }
+                    }
                     after = Some((name, input, reply, two));
                 } else {
                     let _ = reply.send(ToolReply {
@@ -2554,6 +2606,13 @@ impl App {
     }
 
     // ───────────────────────── 데이터 보호 하네스(guard.rs · docs/110 §17) ─────────────────────────
+
+    /// 두 번 눌러 허용의 제한 시간 = 사람 경로의 운영 확인과 같은 설정(`run.prod_confirm_ms`).
+    fn ai_twice_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(
+            self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as u64,
+        )
+    }
 
     /// 지금 세션이 운영 접속인가.
     fn ai_guard_prod(&self) -> bool {
@@ -2844,7 +2903,15 @@ impl App {
             return;
         }
         let short = tool.name.to_string();
-        if is_rows && !rows_allowed && !client_only {
+        let need_rows = is_rows && !rows_allowed && !client_only;
+        let carded = matches!(
+            decision,
+            ai::guard::Decision::Card | ai::guard::Decision::TwoStage
+        );
+        // ★ 쓰기 문장은 카드 한 장(11-13 사용자 "중복된 내용을 굳이 2번 표시하는건 낭비"): 어차피 SQL 본문이 든 쓰기 확인 카드가
+        //   뜨므로 동의 카드를 따로 띄우지 않고 그 카드에 동의 줄을 싣는다. 조회(카드 없음)·자동 승인된 쓰기는 예전대로 동의 카드.
+        let merge_rows = need_rows && carded && tool.name == "run_query";
+        if need_rows && !merge_rows {
             let mut lines = self.ai_card_head(tool.name, &input);
             lines.push(t(Msg::AiRowsConsent).to_string());
             if !arg.trim().is_empty() {
@@ -2886,9 +2953,15 @@ impl App {
                 redact(&input)
             };
             let mut head: Vec<String> = self.ai_card_head(tool.name, &input);
+            if merge_rows {
+                head.push(t(Msg::AiRowsConsentIncl).to_string());
+            }
             if prod {
                 head.push(t(Msg::AiGuardProd).to_string());
             }
+            // 두 번 눌러 허용 = 운영 접속의 DB 쓰기(영향 확인 카드가 따로 뜨는 2단계 대상은 그 카드가 두 번째 확인).
+            let twice = prod && tool.name == "run_query" && !two;
+            self.ai.armed = None;
             let label = match risk {
                 ai::guard::Risk::Bulk => Some(Msg::AiRiskBulk),
                 ai::guard::Risk::Destructive => Some(Msg::AiRiskDestructive),
@@ -2922,6 +2995,8 @@ impl App {
                     input,
                     reply,
                     two,
+                    rows: merge_rows,
+                    twice,
                 },
             ));
             return;
@@ -3085,6 +3160,10 @@ impl App {
                     && !formula.contains(';');
                 if !valid {
                     err("bad variable name or formula (one expression, no ';')".into())
+                } else if !nsql_script::bind::expr_is_plain(&formula) {
+                    // ★ 식 안의 사용자 루틴 호출은 DML을 할 수 있다(11-13 데이터 보호) — 카드 없는 `set_var`로는 보내지 않는다.
+                    //   `run_query`의 `EXEC :이름 := 식`은 쓰기 등급으로 분류돼 승인 카드(운영 = 두 번 눌러 허용)를 거친다.
+                    err("this formula calls a routine that is not a known built-in function, so it may change data. set_var cannot run it. If the user really wants it, send it with run_query as `EXEC :NAME := <formula>` - that goes through the write approval card.".into())
                 } else if self.ai_view_active() {
                     err("the chat tab is active; switch to a SQL editor tab first".into())
                 } else if !self.sess.connected || self.ai.pending.is_some() || !self.gate_open() {

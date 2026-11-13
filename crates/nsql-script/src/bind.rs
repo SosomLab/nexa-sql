@@ -17,6 +17,262 @@ pub fn extract_binds(sql: &str) -> Vec<BindRef> {
     extract_binds_with(sql, &classify(sql))
 }
 
+/// 식 안에서 불러도 **부작용이 없다고 아는** 이름(내장 스칼라·집계 함수 + 뒤에 `(`가 올 수 있는 예약어) — [`expr_is_plain`]의 허용 표.
+/// 여기 없는 이름의 호출은 사용자 루틴일 수 있다(자율 트랜잭션 함수 = DML) → "식 하나의 평가"로 보지 않는다.
+const PLAIN_CALLS: &[&str] = &[
+    // 예약어(뒤에 괄호가 올 수 있는 것).
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "EXISTS",
+    "CASE",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "END",
+    "BETWEEN",
+    "LIKE",
+    "IS",
+    "AS",
+    "ON",
+    "ANY",
+    "ALL",
+    "SOME",
+    "OVER",
+    "BY",
+    "DISTINCT",
+    "UNION",
+    "VALUES",
+    "INTERVAL",
+    "DATE",
+    "TIMESTAMP",
+    // 숫자.
+    "ABS",
+    "CEIL",
+    "CEILING",
+    "FLOOR",
+    "ROUND",
+    "TRUNC",
+    "TRUNCATE",
+    "MOD",
+    "POWER",
+    "SQRT",
+    "SIGN",
+    "EXP",
+    "LN",
+    "LOG",
+    "LOG10",
+    "GREATEST",
+    "LEAST",
+    "BITAND",
+    // 문자.
+    "UPPER",
+    "LOWER",
+    "INITCAP",
+    "SUBSTR",
+    "SUBSTRING",
+    "SUBSTRB",
+    "INSTR",
+    "LENGTH",
+    "LENGTHB",
+    "LEN",
+    "CHAR_LENGTH",
+    "TRIM",
+    "LTRIM",
+    "RTRIM",
+    "LPAD",
+    "RPAD",
+    "REPLACE",
+    "TRANSLATE",
+    "CONCAT",
+    "CONCAT_WS",
+    "CHR",
+    "ASCII",
+    "CHAR",
+    "REVERSE",
+    "LEFT",
+    "RIGHT",
+    "REPEAT",
+    "REPLICATE",
+    "STUFF",
+    "CHARINDEX",
+    "POSITION",
+    "REGEXP_REPLACE",
+    "REGEXP_SUBSTR",
+    "REGEXP_INSTR",
+    "REGEXP_LIKE",
+    "REGEXP_COUNT",
+    "HEX",
+    "RAWTOHEX",
+    "HEXTORAW",
+    "PRINTF",
+    "FORMAT",
+    // 변환·NULL.
+    "TO_CHAR",
+    "TO_NUMBER",
+    "TO_DATE",
+    "TO_TIMESTAMP",
+    "TO_CLOB",
+    "CAST",
+    "CONVERT",
+    "TRY_CAST",
+    "TRY_CONVERT",
+    "NVL",
+    "NVL2",
+    "COALESCE",
+    "NULLIF",
+    "IFNULL",
+    "ISNULL",
+    "IIF",
+    "IF",
+    "DECODE",
+    "TYPEOF",
+    // 날짜.
+    "SYSDATE",
+    "GETDATE",
+    "NOW",
+    "CURRENT_TIMESTAMP",
+    "SYSTIMESTAMP",
+    "SYSDATETIME",
+    "CURDATE",
+    "ADD_MONTHS",
+    "MONTHS_BETWEEN",
+    "LAST_DAY",
+    "NEXT_DAY",
+    "EXTRACT",
+    "DATEADD",
+    "DATEDIFF",
+    "DATEPART",
+    "DATENAME",
+    "DATE_ADD",
+    "DATE_SUB",
+    "DATE_FORMAT",
+    "DATE_TRUNC",
+    "YEAR",
+    "MONTH",
+    "DAY",
+    "EOMONTH",
+    "STRFTIME",
+    "JULIANDAY",
+    "NUMTODSINTERVAL",
+    "NUMTOYMINTERVAL",
+    // 집계·순위.
+    "COUNT",
+    "SUM",
+    "MIN",
+    "MAX",
+    "AVG",
+    "LISTAGG",
+    "STRING_AGG",
+    "GROUP_CONCAT",
+    "ROW_NUMBER",
+    "RANK",
+    "DENSE_RANK",
+    // 환경 읽기.
+    "SYS_CONTEXT",
+    "USERENV",
+    "DB_NAME",
+];
+
+/// ★ 식이 **계산만 하는 식**으로 보이는가(사용자 11-13 "해결해줘" · 데이터 보호): 수식 대입(`EXEC :V := 식`)은 "식 하나의 평가"라
+/// 운영 2단 확인·보류 커밋·승인 카드를 건너뛰는데, 식 안에 **사용자 루틴 호출**이 있으면 그 루틴이 DML을 할 수 있다(Oracle 자율
+/// 트랜잭션 함수 등). 보수적 판정 = 호출(`이름(`)이 전부 [`PLAIN_CALLS`]에 있고 · 한정 이름 호출(`pkg.f(`)·인용 이름 호출이 없고 ·
+/// 시퀀스 소비(`.NEXTVAL`)가 없을 때만 참. 문자열·주석 안은 보지 않는다. 모르는 이름 = 거짓(확인을 거치게 한다).
+#[must_use]
+pub fn expr_is_plain(expr: &str) -> bool {
+    let b = expr.as_bytes();
+    let mut i = 0;
+    // 마지막으로 본 뜻 있는 글자가 `.`인가(한정 이름).
+    let mut after_dot = false;
+    let next_is_paren = |mut j: usize| {
+        while j < b.len() && b[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        j < b.len() && b[j] == b'('
+    };
+    while i < b.len() {
+        let c = b[i];
+        match c {
+            b'\'' => {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'\'' {
+                        if b.get(i + 1) == Some(&b'\'') {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+                after_dot = false;
+            }
+            b'"' | b'`' => {
+                i += 1;
+                while i < b.len() && b[i] != c {
+                    i += 1;
+                }
+                i += 1;
+                if next_is_paren(i) {
+                    return false;
+                }
+                after_dot = false;
+            }
+            b'-' if b.get(i + 1) == Some(&b'-') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+            }
+            _ if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 => {
+                let s = i;
+                while i < b.len()
+                    && (b[i].is_ascii_alphanumeric()
+                        || matches!(b[i], b'_' | b'$' | b'#')
+                        || b[i] >= 0x80)
+                {
+                    i += 1;
+                }
+                let word = expr[s..i].to_ascii_uppercase();
+                // 바인드(`:이름`)는 변수 = 호출이 아니다.
+                let is_bind = s > 0 && b[s - 1] == b':';
+                if after_dot && matches!(word.as_str(), "NEXTVAL" | "CURRVAL") {
+                    return false;
+                }
+                if !is_bind
+                    && next_is_paren(i)
+                    && (after_dot || !PLAIN_CALLS.contains(&word.as_str()))
+                {
+                    return false;
+                }
+                after_dot = false;
+            }
+            b'.' => {
+                after_dot = true;
+                i += 1;
+            }
+            _ => {
+                if !c.is_ascii_whitespace() {
+                    after_dot = false;
+                }
+                i += 1;
+            }
+        }
+    }
+    true
+}
+
 /// ★ 글 안의 `:이름` 바인드 표기를 대문자로(사용자 11-13 "Formula에도 변수명은 대문자로") — 문자열·주석·인용 식별자 안과
 /// 그 밖의 글자는 그대로 · 이름은 ASCII만 바뀐다(한글 이름은 그대로).
 #[must_use]
@@ -133,6 +389,36 @@ pub fn unique_names(refs: &[BindRef]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn expr_is_plain_only_for_known_builtins() {
+        use super::expr_is_plain as p;
+        // 계산만 하는 식.
+        assert!(p(":A + 2"));
+        assert!(p(":ABC * (:D + 2) / 3"));
+        assert!(p("UPPER(:NAME) || '_' || TO_CHAR(SYSDATE, 'YYYYMMDD')"));
+        assert!(p("CASE WHEN :N > 10 THEN 'BIG' ELSE 'SMALL' END"));
+        assert!(p("nvl ( :x , 0 ) + 1"));
+        assert!(p(
+            "(SELECT COUNT(*) FROM EMP WHERE DEPT IN (1, 2) AND NAME = :D)"
+        ));
+        assert!(p("'pkg.f(1)' || :A"), "문자열 안은 호출이 아니다");
+        assert!(
+            p(":A /* pkg.f(1) */ + 1 -- g(2)"),
+            "주석 안은 호출이 아니다"
+        );
+        assert!(p("EMP.SAL + 1"), "한정 열 이름은 호출이 아니다");
+        // 사용자 루틴일 수 있는 호출 = 계산만 하는 식이 아니다.
+        assert!(!p("pkg.f(:A)"));
+        assert!(!p("my_func(1)"));
+        assert!(!p("1 + MY_FUNC (:A)"));
+        assert!(!p("dbo.fn_x(1)"));
+        assert!(!p("UPPER(app.audit_and_get(:A))"));
+        assert!(!p(r#""Weird Fn"(1)"#));
+        assert!(!p("(SELECT x FROM table_fn(1))"));
+        assert!(!p("SEQ_A.NEXTVAL"));
+        assert!(!p("s.seq_a . nextval + 1"));
+    }
+
     use super::*;
 
     #[test]

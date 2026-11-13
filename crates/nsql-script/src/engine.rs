@@ -751,6 +751,16 @@ impl Engine {
                     && lhs[1..].bytes().all(crate::lexer::is_ident_char)
                 {
                     let deps = crate::bind::unique_names(&crate::bind::extract_binds(rhs));
+                    // ★ 순환 수식은 실행하지 않는다(11-13 · 서로를 다시 낡게 만들어 재계획·서버 왕복이 끝나지 않는다).
+                    if let Some(path) = self.vars.formula_cycle(&lhs[1..], &deps) {
+                        let chain = path.join(" -> ");
+                        return vec![Action::Error(crate::tr!(
+                            "Circular formula: {} -> {} (a formula cannot depend on itself through other formulas)",
+                            "수식이 서로를 참조합니다: {} -> {} (수식은 다른 수식을 거쳐 자기 자신에 의존할 수 없습니다)",
+                            chain,
+                            path[0]
+                        ))];
+                    }
                     self.vars.set_formula(&lhs[1..], rhs.trim(), deps);
                 }
             }

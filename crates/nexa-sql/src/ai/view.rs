@@ -35,6 +35,9 @@ pub(crate) struct ViewInfo {
     /// ★ 처리 중인 승인 카드(카드 id · 누른 쪽 = 허용 여부 · 11-13 사용자 "누른 뒤 끝날 때까지 Disable + 진행 표시"): 이 카드의
     /// 버튼은 비활성으로 남고 누른 버튼에 진행 막대가 흐른다 — 호스트가 일이 끝나면 비운다([`AiView::paint_busy_button`]).
     pub approving: Option<(String, bool)>,
+    /// ★ 장전된 허용 버튼(카드 id · 남은 ms · 전체 ms · 11-13 "두 번 눌러 허용"): 허용 버튼 글이 "한 번 더"로 바뀌고 남은 시간
+    /// 막대가 줄어든다 — 시간이 지나면 호스트가 비워 원래 버튼으로 돌아간다.
+    pub armed: Option<(String, u64, u64)>,
     pub profiles: Vec<Profile>,
     /// 볼트에 키가 있는 프로필 이름.
     pub keyed: Vec<String>,
@@ -2284,13 +2287,32 @@ impl AiView {
                     if *aid == msg.id {
                         let yy = ly + block_h + self.s(2.0);
                         let mut bx = x + self.s(8.0);
+                        let armed = info.armed.as_ref().filter(|a| a.0 == msg.id);
+                        let again = armed.map(|a| {
+                            tf(Msg::AiAllowAgain, &[&a.1.div_ceil(1000).max(1).to_string()])
+                        });
                         for (btn, label, primary) in [
-                            (Btn::Approve(true), t(Msg::AiAllow), true),
+                            (
+                                Btn::Approve(true),
+                                again.as_deref().unwrap_or(t(Msg::AiAllow)),
+                                true,
+                            ),
                             (Btn::Approve(false), t(Msg::AiDeny), false),
                         ] {
                             let bw = dc.text_width(label) + self.s(24.0);
                             let r = Rect::new(bx, yy, bw, btn_h);
                             self.paint_button(dc, th, r, label, primary, btn);
+                            // 장전된 허용 버튼 = 남은 시간 막대(왼쪽에서 줄어든다).
+                            if let (true, Some((_, left, total))) = (primary, armed) {
+                                let h = self.s(2.0).max(2);
+                                let w = (r.w as u64 * *left / (*total).max(1)) as i32;
+                                if w > 0 {
+                                    dc.fill_rect(
+                                        Rect::new(r.x, r.bottom() - h, w, h),
+                                        Color(0x00FF_FFFF),
+                                    );
+                                }
+                            }
                             bx += bw + self.s(8.0);
                         }
                     }

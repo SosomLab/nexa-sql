@@ -1180,6 +1180,8 @@ pub(crate) fn is_bind_assign_exec(sql: &str) -> bool {
             .chars()
             .all(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '#'))
         && !rhs.trim().is_empty()
+        // ★ 식 안의 사용자 루틴 호출은 DML을 할 수 있다 → 운영 2단 확인·보류 커밋을 건너뛰지 않는다(11-13).
+        && nsql_script::bind::expr_is_plain(rhs)
 }
 
 /// ★ 실행할 항목이 **전부** 변수 대입·클라이언트 명령인가 — 그러면 운영 2단 확인·보류 커밋을 건너뛴다(조회와 같은 등급).
