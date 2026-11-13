@@ -397,6 +397,8 @@
 
 - ★ **메타 우선(11-14 · 2872aa63)** = `ai::guard::is_catalog_query(sql, dialect)`(데이터 사전만 읽는 조회 · 보수적) · `ai.meta_first`(기본 on) = 그 턴에 search_objects/describe_object/meta_stats 없이 카탈로그 run_query를 하면 한 번 "not executed: this reads the data dictionary…"로 되돌림(턴당 1회) · `ai.meta_auto`(기본 on) = 카탈로그 조회는 행 데이터 동의 카드 없이(`rows_allowed`는 그대로 · 사용자 표·조인은 종전대로 동의) · search_objects = 표·컬럼 코멘트도 검색(비ASCII 낱말 = 컬럼 코멘트까지) · 요약 줄 "comments loaded for: …" · 코멘트 미적재 스키마 = 지연 적재 + hint · describe_object 컬럼 줄 끝 `-- 코멘트` · 협업 판정 ✓([journal 11-14 §3](journal/2026-11-14.md)).
 
+- ★ **describe_object 컬럼 직접 적재 · 빈 결과 탐침(11-14 · 8b82af2a)** = 컬럼이 안 읽힌 객체는 앱이 직접 상세·컬럼을 청하고(`wait_meta`) 읽히거나 8초 뒤 답 — 모델에게 "WHERE 1=0으로 적재" 안내는 뺌 · `SELECT … WHERE 1=0|1=2|0=1`(맨 바깥 · 집합 연산·사용자 루틴 없음) = `ai.meta_auto` 아래 동의 카드 없이 · 협업 판정 ✓([journal 11-14 §4](journal/2026-11-14.md)).
+
 ## 16. 연계 구조 — MCP · hooks · skills · agents(2026-11-11 밤 · 사용자 "연계에 필요한 기능을 구성·개발하고 유기적 연계를 문서로")
 
 ### 16-1 네 개념과 공급자 추상(사용자 "용어는 Claude식 · Codex 등 다른 AI도 같은 기능을 추상화 + 구현부")
@@ -532,6 +534,7 @@ AI 도구 호출(run_query · set_setting · run_command …)
 | Bulk | WHERE 없는 UPDATE/DELETE · MERGE · 블록/EXEC · 스크립트 명령 · 영향 행 ≥ `ai.guard_bulk_rows`(1000) | 2단계 | 2단계 |
 | Destructive | DROP · TRUNCATE · ALTER · RENAME · CREATE OR REPLACE · GRANT/REVOKE | 2단계 | 2단계 |
 | TxEnd | COMMIT · ROLLBACK | 카드 | **거부** |
+| (AppWrite 예외 · 11-14 8b82af2a) | `run_command conn.disconnect`(접속 해제) | 카드 | **카드**(실행 메뉴 명령이지만 거부 아님) · 세션 실행 중/보조 작업 중 · 미커밋(tx_pending·prod_held)이면 "not executed: … busy / uncommitted changes …" |
 | (Read로 내림 · 11-12 c4b91fb9) | 변수 대입 = `set_var`(값·수식) · `run_query`가 `EXEC :이름 := 식`/클라이언트 명령만 | 바로 실행 | 바로 실행(보류 건너뜀) |
 | Protection | 보호 설정(`run.prod_*` · `tx.*` · `backup.*` · `ai.guard_*` · `ai.auto` · `ai.codex_auto` · `ai.permission_mode` · `ai.enabled` · `ai.max_rows`) · 실행 메뉴 명령(`run.*` · `tx.*` · `hold.*` · `conn.*` · `sess.*` · `grid.apply*` · `import.*`) | 카드(Auto여도) | **거부** |
 
