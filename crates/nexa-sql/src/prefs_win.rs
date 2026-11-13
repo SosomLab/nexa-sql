@@ -181,6 +181,13 @@ pub(crate) struct PrefsWin {
     /// ★ 검색 판정 문자열 캐시(설정 키별 · T-473 2차): (언어 · 소문자 "키 라벨" · 소문자 "설명 범주") — 글자마다 ≈810개 항목의
     ///   `format!`·`to_lowercase`·번역 호출을 다시 하지 않는다(협업 재측정: rebuild "e" Release 4~7 ms).
     hay_cache: std::collections::HashMap<&'static str, (nsql_i18n::Lang, String, String)>,
+    /// ★ 여는 중(11-13 "첫 로딩"): 호스트의 열기 준비(`refresh`)가 카드를 만들고 `open`이 또 만들던 것을 한 번으로 —
+    /// [`PrefsWin::begin_open`]이 세우고 `open`이 내린다(창이 없을 때만 뜻이 있다).
+    opening: bool,
+    /// 호스트의 열기 준비 시간(µs · 창을 만들기 전 = 정보 값·스냅샷·충돌 메모) — `[prefs] open` 계측 줄에 싣는다.
+    prep_us: u128,
+    /// 정보 값(`set_info`)을 마지막으로 받은 때 — 창이 뜬 직후의 포커스 재읽기를 건너뛰는 데 쓴다.
+    info_at: Option<std::time::Instant>,
     /// ★ 11-10 계측(docs/71 측정 먼저 · `prefs.dump`에 `perf …` 줄 · `NSQL_TRACE_FRAMES`면 stderr `[prefs]`): 열기 시작 시각 ·
     ///   창 생성 ms · 첫 그리기 ms · 마지막 `rebuild_cards` µs · 마지막 `paint` µs(그중 설명 줄바꿈 µs) · 그린 카드 수.
     perf: PrefsPerf,
@@ -524,6 +531,9 @@ impl PrefsWin {
             shown: false,
             card_cache: std::collections::HashMap::new(),
             hay_cache: std::collections::HashMap::new(),
+            opening: false,
+            prep_us: 0,
+            info_at: None,
             perf: PrefsPerf::default(),
             window: None,
             memo: crate::wingeom::Memo::default(),
@@ -589,6 +599,23 @@ impl PrefsWin {
     /// 읽기 전용 정보 값(자동 탐지 결과 · 파생 경로) — [`Self::refresh`] 앞에 부른다.
     pub(crate) fn set_info(&mut self, values: Vec<(String, String)>) {
         self.info = values.into_iter().collect();
+        self.info_at = Some(std::time::Instant::now());
+    }
+
+    /// 정보 값을 방금(`within` 안에) 받았나 — 창이 뜬 직후의 포커스 사건이 같은 파일 시스템 훑기를 또 하지 않게(11-13).
+    pub(crate) fn info_fresh(&self, within: std::time::Duration) -> bool {
+        self.info_at.is_some_and(|t| t.elapsed() < within)
+    }
+
+    /// ★ 열기 준비 시작(호스트 `open_prefs_now` 맨 앞 · 11-13): 창이 아직 없으면 준비 단계의 `refresh`는 스냅샷만 갱신하고
+    /// 카드는 `open`이 한 번만 만든다(종전 = 두 번).
+    pub(crate) fn begin_open(&mut self) {
+        self.opening = self.window.is_none();
+    }
+
+    /// 열기 준비에 든 시간(µs) — 계측 줄용.
+    pub(crate) fn set_prep_us(&mut self, us: u128) {
+        self.prep_us = us;
     }
 
     /// 레지스트리 스냅샷 갱신(열 때 · 값이 바뀔 때). 카드는 값만 갱신(입력 중인 상자는 건드리지 않음).
@@ -629,7 +656,9 @@ impl PrefsWin {
             self.copy_feedback_ms = ms;
         }
         if self.cards.is_empty() {
-            self.rebuild_cards();
+            if !self.opening {
+                self.rebuild_cards();
+            }
             return;
         }
         let proj = self
@@ -762,7 +791,8 @@ impl PrefsWin {
             }
         }
         // ★ 표시 순서 = 그룹 → 카테고리 → 키 접두 묶음 → 등재 순(사용자 09-28 "세션 관련 설정이 흩어지지 않게") — 검색 결과도 같은 순.
-        chosen.sort_by_key(|s| nsql_settings::display_order(s.entry.key));
+        // 순서 열쇠는 항목마다 한 번만 계산(11-13 · 비교 때마다 레지스트리를 찾지 않게).
+        chosen.sort_by_cached_key(|s| nsql_settings::display_order(s.entry.key));
         // ★ T-39b 범위 "프로젝트"(67 §8-4): 허용 키만 · 값 = 프로젝트 절의 값(없으면 실효값) · 강조선 = 절에 있는 키.
         let project_on = self.project_on();
         if project_on {
@@ -1186,6 +1216,7 @@ impl PrefsWin {
         over: Option<(i32, i32, u32, u32)>,
         owner: Option<&Window>,
     ) {
+        self.opening = false;
         if let Some(w) = &self.window {
             crate::winfocus::focus(w);
             return;
@@ -2829,7 +2860,8 @@ impl PrefsWin {
             }
             if trace_prefs() {
                 eprintln!(
-                    "[prefs] open create_ms={} first_paint_ms={} paint_us={} wrap_us={} cards={}",
+                    "[prefs] open prep_us={} create_ms={} first_paint_ms={} paint_us={} wrap_us={} cards={}",
+                    self.prep_us,
                     self.perf.create_ms,
                     self.perf.first_paint_ms,
                     self.perf.paint_us,

@@ -83,16 +83,18 @@ fn library_in(dir: &Path) -> Option<PathBuf> {
     if exact.is_file() {
         return Some(exact);
     }
+    // ★ 이름 먼저 · 파일 여부는 맞는 것만(11-13 "설정 창 첫 로딩이 느리다"): PATH의 큰 폴더(System32 = 수천 파일)에서 항목마다
+    //   `is_file`(Windows = 파일 열기 수준)을 부르던 것이 차가운 디스크에서 초 단위였다 — 이름 비교는 목록 읽기만으로 된다.
     let mut hits: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.is_file()
-                && p.file_name()
-                    .and_then(|f| f.to_str())
-                    .is_some_and(|f| f.to_ascii_lowercase().starts_with(name))
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|f| f.to_ascii_lowercase().starts_with(name))
         })
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
         .collect();
     hits.sort();
     hits.into_iter().next()
@@ -147,15 +149,16 @@ fn well_known_dirs(home: Option<&Path>) -> Vec<PathBuf> {
         let Ok(rd) = std::fs::read_dir(&parent) else {
             continue;
         };
+        // 이름 먼저 · 폴더 여부는 맞는 것만(위 `library_in`과 같은 이유 · `C:\` 항목마다 stat하지 않는다).
         let mut subs: Vec<PathBuf> = rd
             .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.is_dir()
-                    && p.file_name()
-                        .and_then(|f| f.to_str())
-                        .is_some_and(|f| f.to_ascii_lowercase().starts_with("instantclient"))
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|f| f.to_ascii_lowercase().starts_with("instantclient"))
             })
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
             .collect();
         // 가장 높은 버전(이름이 큰 것)이 먼저.
         subs.sort();

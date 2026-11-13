@@ -8398,10 +8398,26 @@ pub const REGISTRY: &[Entry] = &[
 /// 키로 항목 찾기.
 #[must_use]
 pub fn entry(key: &str) -> Option<&'static Entry> {
-    REGISTRY
-        .iter()
-        .find(|e| e.key == key)
+    registry_pos(key)
+        .map(|i| &REGISTRY[i])
         .or_else(|| dynamic_entries().into_iter().find(|e| e.key == key))
+}
+
+/// ★ 레지스트리 색인(키 → 등재 순번 · 11-13 "설정 창 첫 로딩"): [`entry`]·[`default_of`]·[`display_order`]가 키마다 표를 처음부터
+/// 훑어 목록 한 번(`Settings::list`)이 항목 수의 제곱이었다 — 첫 조회 때 한 번 만들고 끝까지 쓴다(같은 키가 둘이면 앞의 것).
+fn registry_pos(key: &str) -> Option<usize> {
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, usize>> =
+        std::sync::OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            let mut m = std::collections::HashMap::with_capacity(REGISTRY.len());
+            for (i, e) in REGISTRY.iter().enumerate() {
+                m.entry(e.key).or_insert(i);
+            }
+            m
+        })
+        .get(key)
+        .copied()
 }
 
 /// ★ 동적 항목(사용자 10-07 "모든 확장 = 설정에 사용 여부"): 컴파일 때 모르는 키(설치된 확장마다 `ext.<id>.use`)를 런타임에 등재한다.
@@ -9658,7 +9674,7 @@ pub fn is_advanced(key: &str) -> bool {
 /// 같은 카테고리에 여러 접두(`session.` `tx.` `vars.` `run.` `db.`)가 섞여 있어도 접두끼리 모인다 · 접두 묶음의 순서 = 그 접두가 처음 나온 자리.
 #[must_use]
 pub fn display_order(key: &str) -> (usize, usize, usize, usize) {
-    let Some(idx) = REGISTRY.iter().position(|e| e.key == key) else {
+    let Some(idx) = registry_pos(key) else {
         // 동적 항목(확장 "사용")은 그 분류의 **맨 앞**.
         if let Some(e) = dynamic_entries().into_iter().find(|e| e.key == key) {
             let (g, c) = tree_order(e.cat);

@@ -731,7 +731,7 @@ impl Engine {
         let body = body.trim_end_matches(';').trim();
         if let Some((raw, v)) = local_assign(body) {
             let name = raw.to_ascii_uppercase();
-            // 표에는 처음 쓴 표기로(D-142) — 찾기는 대문자 키라 같다.
+            // 표기·열쇠 = 대문자(저장소가 맞춘다 · 11-13).
             self.vars.assign(raw, v.clone());
             let mut acts = vec![Action::LocalAssign {
                 name: name.clone(),

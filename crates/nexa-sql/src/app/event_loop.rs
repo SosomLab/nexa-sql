@@ -1589,9 +1589,12 @@ impl App {
                 }
                 // 설정 창이 다시 활성화됐다 → 파일 있음/없음·별칭 수를 다시 본다(파일 시스템만 · 네트워크 0 · 라이브러리 로드 0).
                 PrefsAction::RefreshInfo => {
-                    self.prefs_win.set_info(dbms_info_values());
-                    self.prefs_win.refresh(&self.settings);
-                    self.prefs_win.redraw();
+                    // 방금 열면서 읽은 직후의 포커스 사건이면 건너뛴다(같은 파일 시스템 훑기를 두 번 하지 않게 · 11-13).
+                    if !self.prefs_win.info_fresh(std::time::Duration::from_secs(3)) {
+                        self.prefs_win.set_info(dbms_info_values());
+                        self.prefs_win.refresh(&self.settings);
+                        self.prefs_win.redraw();
+                    }
                 }
                 PrefsAction::BrowseFolder { key, current } => {
                     // 폴더 전용 대화상자(파일은 보이지 않는다) — 시작 = 지금 값(있고 폴더면) · 고르면 그 설정에 넣는다.
@@ -2277,6 +2280,9 @@ impl App {
             Some((p.x, p.y, sz.width, sz.height))
         });
         let owner = self.window.clone();
+        // ★ 열기 준비 시간을 잰다 · 카드는 `open`이 한 번만 만든다(11-13 "설정 창 첫 로딩이 느리다").
+        let prep_at = Instant::now();
+        self.prefs_win.begin_open();
         self.prefs_win.set_info(dbms_info_values());
         self.prefs_win
             .set_advanced(self.settings.flag("ui.prefs_advanced"));
@@ -2300,6 +2306,7 @@ impl App {
         if let Some((k, cat)) = self.prefs_focus.take() {
             self.prefs_win.focus_key(k, cat);
         }
+        self.prefs_win.set_prep_us(prep_at.elapsed().as_micros());
         self.prefs_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),

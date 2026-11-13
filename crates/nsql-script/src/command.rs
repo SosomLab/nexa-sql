@@ -580,8 +580,8 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
             .sum();
         (&rest[..n], rest[n..].trim())
     };
-    // 이름은 **친 그대로**(표기 보존 D-142 — 저장소의 열쇠는 `norm`이 대문자로 만든다 · 종전에는 여기서 대문자로 바꿔
-    // `VAR v_Name NUMBER`의 표기가 `V_NAME`으로 보였다 · T-151).
+    // 이름은 친 그대로 넘긴다 — 표기·열쇠는 저장소(`vars::norm`)가 **대문자 하나**로 만든다(사용자 11-13 · 종전 D-142
+    // 표기 보존을 뒤집음).
     let bare = name.trim_start_matches(':').to_string();
     let name = Some(bare.clone());
     if after.is_empty() {

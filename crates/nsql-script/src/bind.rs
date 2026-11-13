@@ -17,6 +17,24 @@ pub fn extract_binds(sql: &str) -> Vec<BindRef> {
     extract_binds_with(sql, &classify(sql))
 }
 
+/// ★ 글 안의 `:이름` 바인드 표기를 대문자로(사용자 11-13 "Formula에도 변수명은 대문자로") — 문자열·주석·인용 식별자 안과
+/// 그 밖의 글자는 그대로 · 이름은 ASCII만 바뀐다(한글 이름은 그대로).
+#[must_use]
+pub fn upper_binds(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut at = 0;
+    for b in extract_binds(sql) {
+        if b.start < at || b.end > sql.len() {
+            continue;
+        }
+        out.push_str(&sql[at..b.start]);
+        out.push_str(&sql[b.start..b.end].to_ascii_uppercase());
+        at = b.end;
+    }
+    out.push_str(&sql[at..]);
+    out
+}
+
 /// [`extract_binds`] — 분류를 이미 가진 호출자용(같은 글을 두 번 토큰화하지 않게 · docs/63 §4 계측).
 pub fn extract_binds_with(sql: &str, classes: &[Class]) -> Vec<BindRef> {
     let b = sql.as_bytes();

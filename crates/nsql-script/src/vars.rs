@@ -1,5 +1,6 @@
 //! 세션 변수 저장소 — SQL*Plus 바인드 테이블의 클라이언트 측 복제(docs/04 §8.2).
-//! 이름은 대소문자 무관(대문자 정규화 · 처음 쓴 표기는 `label`로 보존 · D-142). 값은 실행 사이에 **여기에만** 산다.
+//! 이름은 대소문자 무관 · **표기도 대문자 하나**(사용자 11-13 "변수는 모두 대문자로 관리 · 대소문자 동일" — 종전 D-142
+//! "처음 쓴 표기를 `label`로 보존"을 뒤집는다 · `label` = 대문자 이름). 값은 실행 사이에 **여기에만** 산다.
 //!
 //! ★ **네 층**(D-135 · docs/63 §7 · §11 글로벌 09-25): 찾는 순서 = **탭(local) → 연결 공유(shared) → 글로벌(global · 앱 전역 ·
 //! 디스크 보존) → 프로필(fixed · 읽기 전용)**. 글로벌은 "기본값" 성격 — 탭/연결의 대입은 글로벌을 고치지 않고 앞 층에 값을 만든다 ·
@@ -95,8 +96,9 @@ pub fn norm(name: &str) -> String {
     name.trim().trim_start_matches(':').to_ascii_uppercase()
 }
 
+/// 표시 이름 = 대문자(사용자 11-13 · 열쇠 [`norm`]과 같은 글자) — 저장본의 소문자 이름도 읽을 때 대문자가 된다.
 fn label_of(name: &str) -> String {
-    name.trim().trim_start_matches(':').to_string()
+    norm(name)
 }
 
 /// 비밀 이름 키워드 기본값(D-140) — 설정 `vars.secret_names`의 기본값과 같다.
@@ -242,6 +244,8 @@ impl VarStore {
     /// 수식 등록(`EXEC :V := 식` · 사용 시 모드) — 같은 수식이면 그대로.
     pub fn set_formula(&mut self, name: &str, text: &str, deps: Vec<String>) {
         let key = norm(name);
+        // 수식 글 안의 변수 이름도 대문자 하나로(사용자 11-13 "Formula에도 변수명은 대문자로 · 저장도 항상 대문자").
+        let text = &crate::bind::upper_binds(text);
         let deps: Vec<String> = deps
             .into_iter()
             .map(|d| norm(&d))
@@ -249,7 +253,7 @@ impl VarStore {
             .collect();
         // ★ 수식이 새로 생기거나 바뀌면 **바뀐 것으로 표시**한다(사용자 11-13): 계산 결과가 지금 값과 같으면 값 대입은 "안 바뀜"이라
         //   변수 표가 다시 알려지지 않았고, 호스트(변수 창 · AI 도구)는 수식이 등록된 줄을 몰랐다(값 7 → `:= :A + 2`도 7).
-        if self.formulas.get(&key).is_none_or(|f| f.text != text) {
+        if self.formulas.get(&key).is_none_or(|f| f.text != *text) {
             self.dirty.insert(key.clone());
         }
         self.formulas.insert(
@@ -588,6 +592,8 @@ impl VarStore {
     fn adopt_formulas(&mut self, carried: Vec<(String, String, bool)>, changed: Vec<String>) {
         // 러너가 모르는 수식(앱 재시작 · 새 접속 뒤)은 호스트가 든 표에서 되살린다 — 수식의 원천은 변수 표다.
         for (key, text, stale) in carried {
+            // 옛 저장본의 소문자 표기도 읽을 때 대문자로(11-13).
+            let text = crate::bind::upper_binds(&text);
             let deps: Vec<String> = crate::bind::unique_names(&crate::bind::extract_binds(&text))
                 .into_iter()
                 .map(|d| norm(&d))
@@ -878,15 +884,15 @@ mod tests {
         s.set_formula("b", ":a + 2", vec!["a".into()]);
         s.assign("b", Value::Int(7));
         let text = vars_to_script(&s.local_states());
-        assert!(text.contains("EXEC :b := 7\n"), "{text}");
-        assert!(text.contains("EXEC :b := :a + 2\n"), "{text}");
+        assert!(text.contains("EXEC :B := 7\n"), "{text}");
+        assert!(text.contains("EXEC :B := :A + 2\n"), "{text}");
         let back = vars_from_script(&text);
         let b = back
             .iter()
             .find(|v| v.name.eq_ignore_ascii_case("b"))
             .expect("b");
         assert_eq!(b.value, Value::Int(7));
-        assert_eq!(b.formula.as_deref(), Some(":a + 2"));
+        assert_eq!(b.formula.as_deref(), Some(":A + 2"));
         assert!(b.stale, "되살린 수식 = 재계산 전");
         // 러너(새 표)가 받으면 재계산 대상에 오른다.
         let mut r = VarStore::default();
@@ -918,7 +924,7 @@ mod tests {
             .iter()
             .find(|v| v.name.eq_ignore_ascii_case("b"))
             .expect("b");
-        assert_eq!(b.formula.as_deref(), Some(":a + 2"), "글로벌 층 수식 유지");
+        assert_eq!(b.formula.as_deref(), Some(":A + 2"), "글로벌 층 수식 유지");
         let mut r2 = VarStore::default();
         r2.set_shared(states);
         assert!(r2.formula_of("b").is_some(), "공유 층 수식 유지");
@@ -931,7 +937,7 @@ mod tests {
             .iter()
             .find(|v| v.name.eq_ignore_ascii_case("c"))
             .expect("c");
-        assert_eq!(c.formula.as_deref(), Some(":a * 3"));
+        assert_eq!(c.formula.as_deref(), Some(":A * 3"));
         assert!(c.stale && c.value == Value::Null);
     }
 
@@ -1077,7 +1083,7 @@ mod tests {
             .iter()
             .find(|(_, _, l, _)| *l == Layer::Global)
             .expect("global row");
-        assert_eq!(g.1.label, "Proj");
+        assert_eq!(g.1.label, "PROJ");
         assert!(g.3, "글로벌 줄 = 가려짐");
         let t = all
             .iter()
@@ -1149,7 +1155,7 @@ mod tests {
         s.assign("rc", Value::Cursor(nsql_core::CursorId(1)));
         s.assign("multi", Value::Str("a\nb".into()));
         let text = vars_to_script(&s.local_states());
-        assert!(text.contains("VAR n NUMBER"), "{text}");
+        assert!(text.contains("VAR N NUMBER"), "{text}");
         assert!(text.contains("EXEC :V_CD := 'O''Brien & co'"), "{text}");
         assert!(!text.contains("hunter2"), "비밀 값은 쓰지 않는다");
         let back = vars_from_script(&text);
@@ -1163,25 +1169,33 @@ mod tests {
         assert!(get("v_password").is_none() && get("multi").is_none());
     }
 
-    /// 선언한 이름의 표기는 친 그대로 남고(D-142 · T-151) 찾기는 대소문자를 가리지 않는다.
+    /// ★ 이름 표기 = 대문자 하나(사용자 11-13 · 종전 D-142 표기 보존을 뒤집음): 어떻게 쳐도 같은 변수 · 같은 표기.
     #[test]
-    fn declared_name_keeps_its_casing() {
+    fn names_are_uppercase_however_typed() {
         let mut s = VarStore::new();
         s.declare("v_OrderCnt", VarType::Number, None);
         assert_eq!(
             s.get("V_ORDERCNT").map(|v| v.label.as_str()),
-            Some("v_OrderCnt")
+            Some("V_ORDERCNT")
         );
         assert_eq!(
             s.get("v_ordercnt").map(|v| v.label.as_str()),
-            Some("v_OrderCnt")
+            Some("V_ORDERCNT")
         );
-        s.assign("V_ORDERCNT", Value::Int(3));
-        assert_eq!(
-            s.get("v_OrderCnt").map(|v| v.label.as_str()),
-            Some("v_OrderCnt"),
-            "대입은 표기를 바꾸지 않는다"
-        );
+        s.assign("v_ordercnt", Value::Int(3));
+        s.assign(":d", Value::Int(1));
+        assert_eq!(s.get("D").map(|v| v.label.as_str()), Some("D"));
+        assert_eq!(s.len(), 2, "표기만 다른 이름은 같은 변수");
+        // 호스트가 준 표(저장본의 소문자 이름)도 대문자로 돌아온다.
+        let mut st = s.local_states();
+        for v in &mut st {
+            v.name = v.name.to_ascii_lowercase();
+        }
+        s.set_local(st);
+        assert!(s
+            .local_states()
+            .iter()
+            .all(|v| v.name == v.name.to_ascii_uppercase()));
     }
 
     #[test]
@@ -1195,7 +1209,7 @@ mod tests {
         let v = s.get("V_PRG_NM").unwrap();
         assert!(!v.declared);
         assert_eq!(v.ty, VarType::Varchar2(4));
-        assert_eq!(v.label, "v_prg_nm", "처음 쓴 표기 보존(D-142)");
+        assert_eq!(v.label, "V_PRG_NM", "표기 = 대문자(11-13)");
         assert_eq!(s.len(), 2);
     }
 
@@ -1247,7 +1261,7 @@ mod tests {
         assert!(s.take_dirty().is_empty(), "같은 값 = 바뀜 아님");
         s.invalidate_cursors();
         assert_eq!(s.get("RC").unwrap().value, Value::Null);
-        assert_eq!(s.take_dirty(), vec!["rc".to_string()]);
+        assert_eq!(s.take_dirty(), vec!["RC".to_string()]);
         s.assign("v_db_password", Value::Str("p".into()));
         assert!(s.get("V_DB_PASSWORD").unwrap().secret);
         assert!(!s.get("X").unwrap().secret);

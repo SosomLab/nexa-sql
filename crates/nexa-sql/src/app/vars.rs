@@ -382,7 +382,8 @@ impl App {
                         Some(v) => set(v),
                         None => list.push(nsql_script::VarState {
                             secret: nsql_script::looks_secret(&name),
-                            name: name.clone(),
+                            // 표기 = 대문자 하나(사용자 11-13 "변수는 모두 대문자로 관리").
+                            name: name.to_ascii_uppercase(),
                             ty: nsql_core::VarType::infer(&value),
                             value: value.clone(),
                             declared: false,
