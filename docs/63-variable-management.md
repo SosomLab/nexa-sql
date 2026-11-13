@@ -148,7 +148,7 @@
 | D-139 | `SELECT … INTO` 0행·여러 행 | Oracle식 오류 / psql식 / 첫 행 | **Oracle식**(설정 `vars.into_policy`) · NULL = Null(지우지 않음) |
 | D-140 | 비밀 값 | 없음 / **`ACCEPT HIDE` + 이름 규칙(`*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`)으로 표시 → 가림·기록 안 함·저장 안 함** | 권장대로 |
 | D-141 | `&` 치환 | SQL\*Plus 그대로 / **Oracle 방언 탭에서만 기본 켬 · 주석 안 제외(지금) · 문자열 안은 선택 · 상태줄 토글** | 권장대로 · ✅ 10-30 문자열 안 선택(`script.define_in_strings`) · 상태줄 세그먼트(팝업 항목 = "&name substitution: auto \| on \| off" 짧은 3항목 · 설명은 설정 화면 · 사용자 10-30) |
-| D-142 | 이름 대소문자 | **무시(처음 쓴 표기 보존)** · `:"이름"`만 구분 · SQLite `:x @x $x` = 한 변수(**구현 10-05** · T-162 ① · `bind.rs` `unify_sqlite_markers`) | 권장대로 |
+| D-142 | 이름 대소문자 | **무시 · 대문자 하나로 표시·저장(수식 글의 `:이름` 포함 · 옛 저장본 소문자는 읽을 때 대문자 · **11-13 사용자 결정으로 표기 보존을 뒤집음** · c9579c58)** · `:"이름"`만 구분 · SQLite `:x @x $x` = 한 변수(**구현 10-05** · T-162 ① · `bind.rs` `unify_sqlite_markers`) | 권장대로 |
 | D-143 | 서버에 비추기 | 안 함 / **변수별 선택**(SESSION_CONTEXT · `set_config` · `SET @v` — PG는 트랜잭션을 탄다는 경고) | 뒤로 |
 
 ## 8. 시험 환경
@@ -308,7 +308,7 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 | `EXEC :x := 식` | 서버가 계산 | §3-1 재작성(Oracle `BEGIN … END;` · SQL Server 꼬리 행 + sql_variant 타입 복원 D-254 · PG/SQLite `SELECT (식)`) |
 | `EXEC SELECT a, b INTO :A, :B FROM …` | 1행을 자리 순서로 | 0행·여러 행 = 오류(`vars.into_policy` · D-139) · FROM 없는 INTO = T-162 흠 |
 | 자동 타입 | 선언 없이 생겼거나 타입 없이 선언한 변수는 **값마다** 타입을 다시 추론(1999 → NUMBER · 글자 → VARCHAR2(n) · NULL은 유지) | `Var.auto_ty` · 10-07 · **10-08 OUT 자리 재추론**(c86a67e): 자동 변수는 EXEC마다 루틴 서명(루틴당 1회 캐시 · `needs_type`)을 보고 **OUT/IN OUT 자리면 서명 타입으로 다시 맞춘다**(`VarStore::hint_type(name, ty, in_out)`) — OUT = 값 NULL로 덮어씀 · IN OUT + 같은 부류 = 값 유지 · IN 자리 · `VAR x 타입`으로 선언한 변수 = 그대로 |
-| 이름 | 대소문자 무시(처음 표기 보존) · SQLite `:x @x $x` = 한 변수 | D-142 |
+| 이름 | 대소문자 무시 · 대문자 하나로 표시·저장(수식 글 포함 · 11-13) · SQLite `:x @x $x` = 한 변수 | D-142 |
 
 > **사용자 시나리오(10-08 · Oracle · c86a67e)**: `EXEC SP_TEST1(:RET,'SSS')` → `:RET`이 자동 변수로 생겨 NUMBER 23 · 이어서 `EXEC SP_TEST2(:RET,'SSS')`(첫 인자 = REF CURSOR OUT) → 종전 = NUMBER 바인드 그대로 보내 **PLS-00306** · 지금 = OUT 자리라 `:RET`을 REF CURSOR로 다시 맞춰(값 NULL) 커서 결과가 나온다. 타입을 고정하고 싶으면 `VAR RET NUMBER`로 선언(선언 변수는 재추론 안 함).
 

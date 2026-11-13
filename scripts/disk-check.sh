@@ -5,7 +5,8 @@
 #         scripts/disk-check.sh --prune    # 아래 "지워도 되는 것"을 실제로 삭제(빌드 캐시 본체·실기 exe·릴리스 판은 남긴다)
 #         scripts/disk-check.sh --prune --cross   # + 교차 타깃 폴더(target/x86_64-*·aarch64-* · check-3os 전체 모드가 다시 만든다)
 #   ★ 삭제는 매번 사용자에게 질문(11-02 결정 · 1분 무응답 = 미삭제로 두고 진행) — 기본은 dry-run · `--prune`은 사용자가 답한 뒤에만.
-#   지울 후보(61 §2-4): ① 증분 컴파일 캐시 `target/*/incremental`(다음 빌드가 다시 만든다 · 빌드 1~2분 추가)
+#   지울 후보(61 §2-4): ① 증분 컴파일 캐시 `target/*/incremental`(다음 빌드가 다시 만든다 · 빌드 1~2분 추가 · ★ 정기 점검 = 11-13 Windows에서
+#      target/debug 330 GB(incremental 236 GB · 51만 파일)가 Debug 빌드를 느리게 한 원인으로 판단돼 전체 삭제 · 수십 GB면 정리 후보로 보고)
 #     ② 시험·측정 산출물 폴더(`target/v*-*` · `target/t[0-9]*` · `func-check*` · `perf-*` · `capture-*` · `uicheck` · `ui[0-9]*` · `flick*` · `flush-*` ·
 #        `textref` · `tmp` · `mac-tests-*` · `clipv1` · `code-health` · `*.log`) — 결론은 journal에 있으므로 폴더는 버려도 된다
 #     ③ 세션 스크래치패드 캡처(PNG·BMP · /tmp/claude-*/…/scratchpad/cap)
