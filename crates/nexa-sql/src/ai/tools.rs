@@ -104,7 +104,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "insert_sequence",
-        desc: "Insert a number/text sequence with the Insert Sequence extension - one value per caret (or replacing each selection), one undo step. Give from_line/to_line (+ at = line_end | line_start | column) to place the carets and insert in one call, or omit them to use the current carets. Values: either `expr` in the extension's syntax (start[+step][~format] e.g. `1+1~03` = 001, 002 ...; `10+10`; `a` for letters; a quoted template like `1+1~03 \"-{}\"`), or start / step / width (zero-padded digits) / prefix / suffix.",
+        desc: "Insert a number/text sequence with the Insert Sequence extension - one value per caret (or replacing each selection), one undo step. Give from_line/to_line (+ at = line_end | line_start | column) to place the carets and insert in one call, or omit them to use the current carets. prefix / suffix are added around each value (also together with expr). Values: either `expr` in the extension's syntax (start[+step][~format] e.g. `1+1~03` = 001, 002 ...; `10+10`; `a` for letters; a quoted template like `1+1~03 \"-{}\"`), or start / step / width (zero-padded digits) / prefix / suffix.",
         write: true,
         props: &[
             ("expr", "string", "Sequence expression, e.g. 1+1~03", false),
@@ -130,7 +130,7 @@ pub(crate) const TOOLS: &[Tool] = &[
         desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
         write: true,
         props: &[
-            ("op", "string", "replace | sort_asc | sort_desc | sort_num_asc | sort_num_desc | unique (= dedupe, removes duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | trim | select", true),
+            ("op", "string", "replace | sort_asc | sort_desc | sort_case (case-sensitive) | sort_num_asc | sort_num_desc | shuffle | unique (= dedupe, removes duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | snake | kebab | upper_camel | lower_camel | trim | select", true),
             ("from_line", "integer", "First line (1-based)", false),
             ("to_line", "integer", "Last line (inclusive)", false),
             ("text", "string", "New text for op=replace", false),
@@ -518,6 +518,24 @@ pub(crate) fn lines_op(lines: &[&str], op: &str) -> Option<Vec<String>> {
             v.sort_by_key(|l| std::cmp::Reverse(l.to_lowercase()));
             v
         }
+        // ★ 11-14(사용자 "Sort Lines (Case Sensitive)" · "Permute Lines: Shuffle"): 대소문자 구분 정렬(코드 순) · 무작위 섞기.
+        // 표기 변환(줄마다 · `convert_case`): snake_case · kebab-case · UpperCamelCase · lowerCamelCase.
+        "snake" | "kebab" | "upper_camel" | "lower_camel" => lines
+            .iter()
+            .map(|l| convert_case(l, op).unwrap_or_else(|| (*l).to_string()))
+            .collect(),
+        "sort_case" => {
+            let mut v = own();
+            v.sort();
+            v
+        }
+        "shuffle" => {
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E37_79B9_7F4A_7C15);
+            shuffled(own(), seed)
+        }
         "unique" | "dedupe" => {
             let mut seen = std::collections::HashSet::new();
             own()
@@ -564,6 +582,106 @@ pub(crate) fn lines_op(lines: &[&str], op: &str) -> Option<Vec<String>> {
         "trim" => lines.iter().map(|l| l.trim_end().to_string()).collect(),
         _ => return None,
     })
+}
+
+/// ★ 대소문자·표기 변환(사용자 11-14 "Convert Case" — 팔레트 8종 · AI `edit_editor`의 op): `kind` =
+/// upper | lower | swapcase | title | snake | kebab | upper_camel | lower_camel. 앞의 넷은 글자마다 · 뒤의 넷은 글을 낱말로
+/// 나눠(글자·숫자가 아닌 것 · 소문자→대문자 경계 · 약어 끝 `HTTPServer` = HTTP + Server) 그 표기로 잇는다(앞뒤 공백은 그대로).
+/// 모르는 kind = None.
+pub(crate) fn convert_case(text: &str, kind: &str) -> Option<String> {
+    Some(match kind {
+        "upper" => text.to_uppercase(),
+        "lower" => text.to_lowercase(),
+        "swapcase" => text
+            .chars()
+            .map(|c| {
+                if c.is_uppercase() {
+                    c.to_lowercase().collect::<String>()
+                } else {
+                    c.to_uppercase().collect::<String>()
+                }
+            })
+            .collect(),
+        "title" => title_case(text),
+        "snake" | "kebab" | "upper_camel" | "lower_camel" => {
+            let lead: String = text.chars().take_while(|c| c.is_whitespace()).collect();
+            let core = text.trim();
+            let tail = &text[lead.len() + core.len()..];
+            let words = split_words(core);
+            let cap = |w: &str| {
+                let mut cs = w.chars();
+                match cs.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + &cs.as_str().to_lowercase(),
+                    None => String::new(),
+                }
+            };
+            let joined = match kind {
+                "snake" => words
+                    .iter()
+                    .map(|w| w.to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join("_"),
+                "kebab" => words
+                    .iter()
+                    .map(|w| w.to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join("-"),
+                "upper_camel" => words.iter().map(|w| cap(w)).collect(),
+                _ => words
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| if i == 0 { w.to_lowercase() } else { cap(w) })
+                    .collect(),
+            };
+            format!("{lead}{joined}{tail}")
+        }
+        _ => return None,
+    })
+}
+
+/// 글을 낱말로: 글자·숫자가 아닌 것은 구분자 · 소문자/숫자 뒤의 대문자 = 새 낱말 · 대문자 연속 뒤 소문자가 오면 마지막 대문자부터 새 낱말.
+fn split_words(s: &str) -> Vec<String> {
+    let ch: Vec<char> = s.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for i in 0..ch.len() {
+        let c = ch[i];
+        if !c.is_alphanumeric() {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        let prev = i.checked_sub(1).map(|j| ch[j]);
+        let next = ch.get(i + 1).copied();
+        let boundary = prev.is_some_and(|p| {
+            p.is_alphanumeric()
+                && c.is_uppercase()
+                && (p.is_lowercase()
+                    || p.is_numeric()
+                    || (p.is_uppercase() && next.is_some_and(char::is_lowercase)))
+        });
+        if boundary && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// 줄 섞기(Fisher-Yates · xorshift64 — 외부 crate 없이 · 같은 씨앗이면 같은 순서).
+pub(crate) fn shuffled(mut v: Vec<String>, seed: u64) -> Vec<String> {
+    let mut x = seed | 1;
+    for i in (1..v.len()).rev() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        v.swap(i, (x % (i as u64 + 1)) as usize);
+    }
+    v
 }
 
 /// 낱말 첫 글자만 대문자(나머지 소문자) — 낱말 경계 = 글자·숫자가 아닌 것(`_` · 공백 · 구두점).
@@ -614,6 +732,48 @@ fn first_number(line: &str) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn convert_case_kinds() {
+        let c = |t: &str, k: &str| super::convert_case(t, k).expect("kind");
+        assert_eq!(c("Project Name-code", "snake"), "project_name_code");
+        assert_eq!(c("projectNameCode", "kebab"), "project-name-code");
+        assert_eq!(c("project_name_code", "upper_camel"), "ProjectNameCode");
+        assert_eq!(c("PROJECT_NAME_CODE", "lower_camel"), "projectNameCode");
+        assert_eq!(c("HTTPServer2Go", "snake"), "http_server2_go");
+        assert_eq!(
+            c("  item cd  ", "upper_camel"),
+            "  ItemCd  ",
+            "앞뒤 공백은 그대로"
+        );
+        assert_eq!(c("aBc", "swapcase"), "AbC");
+        assert_eq!(c("hello WORLD", "title"), "Hello World");
+        assert_eq!(c("Abc", "upper"), "ABC");
+        assert_eq!(c("Abc", "lower"), "abc");
+        assert!(super::convert_case("x", "nope").is_none());
+        assert_eq!(
+            super::lines_op(&["item cd", "use yn"], "snake").expect("op"),
+            ["item_cd", "use_yn"]
+        );
+    }
+
+    #[test]
+    fn lines_op_case_sensitive_sort_and_shuffle() {
+        let l = ["b", "A", "a", "B"];
+        assert_eq!(
+            super::lines_op(&l, "sort_case").expect("op"),
+            ["A", "B", "a", "b"]
+        );
+        // 섞기 = 같은 줄들 · 같은 씨앗이면 같은 순서.
+        let v: Vec<String> = (0..20).map(|i| i.to_string()).collect();
+        let a = super::shuffled(v.clone(), 7);
+        assert_eq!(a, super::shuffled(v.clone(), 7));
+        assert_ne!(a, v, "20줄이 그대로일 확률은 없다시피");
+        let mut sorted = a;
+        sorted.sort_by_key(|s| s.parse::<u32>().unwrap_or(0));
+        assert_eq!(sorted, v);
+        assert_eq!(super::lines_op(&l, "shuffle").expect("op").len(), 4);
+    }
+
     #[test]
     fn lines_op_title_swapcase_and_numeric_sort() {
         let l = ["item_cd  SOME text", "hello-world 2nd"];

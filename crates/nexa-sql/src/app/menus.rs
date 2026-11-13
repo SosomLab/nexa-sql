@@ -762,6 +762,22 @@ impl App {
             // 코드 완성 수동 트리거(Ctrl+Space · docs/76) · Goto Symbol(Ctrl+R) · 심볼 이동.
             "edit.complete" => self.intel_request(true),
             "goto.symbol" => self.open_goto_symbol(),
+            // 심벌이 없는 문서의 Goto Symbol 창에서 "문장도 심벌로"를 골랐다 → 문장 종류를 켜고 다시 연다(11-14).
+            "sym:statements" => {
+                for key in [
+                    "outline.show_select",
+                    "outline.show_dml",
+                    "outline.show_ddl",
+                    "outline.show_other",
+                ] {
+                    if self.settings.set(key, "on").is_ok() {
+                        self.apply_setting(key);
+                    }
+                }
+                self.persist_settings();
+                self.prefs_win.refresh(&self.settings);
+                self.open_goto_symbol();
+            }
             id if id.starts_with("sym:") => {
                 if let Ok(b) = id[4..].parse::<usize>() {
                     self.goto_byte(b);
@@ -838,6 +854,21 @@ impl App {
             "edit.duplicate_line" => self.editor_cmd(EditCommand::DuplicateLines),
             "edit.delete_line" => self.editor_cmd(EditCommand::DeleteLines),
             "edit.join_lines" => self.editor_cmd(EditCommand::JoinLines),
+            // ★ 줄 정렬·순서 바꾸기(팔레트 · 11-14): 선택한 줄들(없으면 문서 전체).
+            "edit.sort_lines" => self.editor_lines_op("sort_asc"),
+            "edit.sort_lines_case" => self.editor_lines_op("sort_case"),
+            "edit.permute_reverse" => self.editor_lines_op("reverse"),
+            "edit.permute_shuffle" => self.editor_lines_op("shuffle"),
+            "edit.permute_unique" => self.editor_lines_op("unique"),
+            // ★ Convert Case(팔레트 · 11-14): 선택(없으면 캐럿의 낱말)마다.
+            "edit.case_upper" => self.editor_convert_case("upper"),
+            "edit.case_lower" => self.editor_convert_case("lower"),
+            "edit.case_title" => self.editor_convert_case("title"),
+            "edit.case_swap" => self.editor_convert_case("swapcase"),
+            "edit.case_snake" => self.editor_convert_case("snake"),
+            "edit.case_kebab" => self.editor_convert_case("kebab"),
+            "edit.case_upper_camel" => self.editor_convert_case("upper_camel"),
+            "edit.case_lower_camel" => self.editor_convert_case("lower_camel"),
             "edit.swap_line_up" => self.editor_cmd(EditCommand::SwapLinesUp),
             "edit.swap_line_down" => self.editor_cmd(EditCommand::SwapLinesDown),
             "edit.toggle_comment" => self.editor_cmd(EditCommand::ToggleComment),

@@ -442,11 +442,16 @@ impl App {
             return;
         }
         // 항목 = Goto Anything `@`와 공용(goto.rs).
-        let cmds = self.goto_symbol_items();
+        let mut cmds = self.goto_symbol_items();
         if cmds.is_empty() {
+            // ★ 심벌이 없어도 창은 띄운다(사용자 11-14 "심벌 유무와 무관하게 창은 띄워줘": 상태줄 한 줄만 바뀌어 Ctrl+R이
+            //   안 먹는 것으로 보였다) — 안내 줄 + 문장(SELECT · DML · DDL · 그 밖)을 심벌로 켜는 줄(고르면 켜고 다시 연다).
             self.sess.status = t(Msg::OutlineEmpty).into();
-            self.redraw();
-            return;
+            cmds.push(("sym:none".to_string(), t(Msg::OutlineEmpty).to_string()));
+            cmds.push((
+                "sym:statements".to_string(),
+                t(Msg::OutlineShowStatements).to_string(),
+            ));
         }
         self.palette.set_commands(cmds);
         self.palette.open("");

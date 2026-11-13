@@ -2900,6 +2900,7 @@ impl App {
                     })
                 }
             }
+            "insert_sequence" if !self.ai_view_active() => self.ai_seq_precheck(&v),
             "insert_sequence" | "editor_carets" | "set_syntax" => {
                 self.ai_view_active().then(|| {
                     "the chat tab is active; this needs an editor tab (switch_tab first)"
@@ -3735,32 +3736,7 @@ impl App {
                     err("the chat tab is active; switch to a SQL editor tab first".into())
                 } else {
                     // 식 = `expr` 그대로 · 없으면 start/step/width/prefix/suffix로 조립(확장 문법: 시작±증가~0자릿수 "틀").
-                    let expr = {
-                        let e = g("expr");
-                        if !e.trim().is_empty() {
-                            Ok(e)
-                        } else {
-                            let (start, step, width) =
-                                (gi("start", 1), gi("step", 1), gi("width", 0));
-                            let (pre, suf) = (g("prefix"), g("suffix"));
-                            if pre.contains('"') || suf.contains('"') {
-                                Err("prefix/suffix with a double quote: pass the full `expr` instead".to_string())
-                            } else {
-                                let mut x = format!(
-                                    "{start}{}{}",
-                                    if step < 0 { "-" } else { "+" },
-                                    step.abs()
-                                );
-                                if width > 0 {
-                                    x.push_str(&format!("~0{width}"));
-                                }
-                                if !pre.is_empty() || !suf.is_empty() {
-                                    x.push_str(&format!(" \"{pre}{{}}{suf}\""));
-                                }
-                                Ok(x)
-                            }
-                        }
-                    };
+                    let expr = Self::ai_seq_expr(&v);
                     let placed = if gi("from_line", 0) > 0 {
                         self.ai_line_carets(
                             gi("from_line", 0),
@@ -4930,6 +4906,21 @@ impl App {
         match cmd {
             "/clear" => {
                 self.ai_new_session();
+            }
+            // ★ 세션 이름 바꾸기(사용자 11-14 "/rename") — 세션 목록에서 이름을 고친 것과 같은 길(`PanelAction::RenameSession`):
+            //   기록 저장 · 채팅 탭 제목 · 세션 목록에 바로 반영. 이름을 안 주면 쓰는 법만 알린다.
+            "/rename" => {
+                let title: String = arg.chars().take(80).collect();
+                match self.ai_cur().map(|s| s.id.clone()) {
+                    Some(id) if !title.trim().is_empty() => {
+                        self.ai_panel_actions_apply(PanelAction::RenameSession(
+                            id,
+                            title.trim().to_string(),
+                        ));
+                        self.ai.status = tf(Msg::AiRenamed, &[title.trim()]);
+                    }
+                    _ => self.ai.status = t_(Msg::AiRenameUsage),
+                }
             }
             "/mode" => {
                 let m = Mode::parse(arg);

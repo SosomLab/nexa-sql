@@ -341,6 +341,161 @@ impl App {
         })
     }
 
+    /// ★ Convert Case(사용자 11-14 · 팔레트 8종): 선택마다 그 글을 바꾼다 · 빈 캐럿이면 그 자리의 낱말(글자·숫자·`_`·`-`가 이어진 것).
+    /// 여러 구간을 한 번에(되돌리기 한 단계) · 바뀐 것이 없으면 아무것도 안 한다.
+    pub(crate) fn editor_convert_case(&mut self, kind: &str) {
+        if self.editors.active_view().is_some() {
+            return;
+        }
+        let edits: Vec<(usize, usize, String)> = {
+            let tb = self.editors.cur();
+            let buf = tb.buf();
+            let mut out: Vec<(usize, usize, String)> = Vec::new();
+            let mut last_end = 0usize;
+            for (a, b) in tb.regions() {
+                let (a, b) = if b > a {
+                    (a, b)
+                } else {
+                    // 빈 캐럿 = 그 자리의 낱말.
+                    let l = buf.line_of(a);
+                    let (ls, le) = (buf.line_start(l), buf.line_end(l));
+                    let line: Vec<char> = buf.slice_string(ls, le).chars().collect();
+                    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+                    let (mut i, mut j) = (a - ls, a - ls);
+                    while i > 0 && word(line[i - 1]) {
+                        i -= 1;
+                    }
+                    while j < line.len() && word(line[j]) {
+                        j += 1;
+                    }
+                    (ls + i, ls + j)
+                };
+                if b <= a || a < last_end {
+                    continue;
+                }
+                let old = buf.slice_string(a, b);
+                if let Some(new) = crate::ai::tools::convert_case(&old, kind) {
+                    if new != old {
+                        out.push((a, b, new));
+                    }
+                }
+                last_end = b;
+            }
+            out
+        };
+        if !edits.is_empty() {
+            let refs: Vec<(usize, usize, &str)> =
+                edits.iter().map(|(a, b, t)| (*a, *b, t.as_str())).collect();
+            let mut inv = nexa_ctl::Invalidations::default();
+            self.ed_mut().replace_many(&refs, &mut inv);
+        }
+        self.redraw();
+    }
+
+    /// ★ 줄 연산 명령(사용자 11-14 "Sort Lines · Sort Lines (Case Sensitive) · Permute Lines: Reverse / Shuffle / Unique" — 팔레트):
+    /// 선택이 걸친 줄들(선택이 줄 머리에서 끝나면 그 줄은 빼고) · 선택이 없으면 문서 전체에 `ai::tools::lines_op`을 적용한다.
+    /// 되돌리기 한 단계 · 바뀐 것이 없으면 아무것도 안 한다.
+    pub(crate) fn editor_lines_op(&mut self, op: &str) {
+        if self.editors.active_view().is_some() {
+            return;
+        }
+        let (start, end, text) = {
+            let tb = self.editors.cur();
+            let buf = tb.buf();
+            let regs = tb.regions();
+            let (la, lb) = match (regs.first(), regs.last()) {
+                (Some(&(a, _)), Some(&(_, b))) if regs.iter().any(|(x, y)| y > x) => {
+                    let (la, mut lb) = (buf.line_of(a), buf.line_of(b));
+                    if lb > la && b == buf.line_start(lb) {
+                        lb -= 1;
+                    }
+                    (la, lb)
+                }
+                _ => (0, buf.line_count().saturating_sub(1)),
+            };
+            let (s, e) = (buf.line_start(la), buf.line_end(lb));
+            (s, e, buf.slice_string(s, e))
+        };
+        let lines: Vec<&str> = text.split('\n').collect();
+        let Some(new) = crate::ai::tools::lines_op(&lines, op) else {
+            return;
+        };
+        let joined = new.join("\n");
+        if joined != text {
+            let mut inv = nexa_ctl::Invalidations::default();
+            self.ed_mut().replace_range(start, end, &joined, &mut inv);
+            self.sess.status = tf(
+                Msg::StLinesOp,
+                &[&lines.len().to_string(), &new.len().to_string()],
+            );
+        }
+        self.redraw();
+    }
+
+    /// ★ `insert_sequence`의 식(11-14): `expr` 그대로 · 없으면 start/step/width로 조립(확장 문법 `시작±증가~0자릿수`) ·
+    /// prefix/suffix가 있으면 틀 `"앞{}뒤"`을 덧붙인다(식과 함께 줘도 붙는다 — 협업 V1 관찰).
+    pub(crate) fn ai_seq_expr(v: &Json) -> Result<String, String> {
+        let g = |k: &str| crate::ai::jstr(v, k);
+        let gi = |k: &str, d: i64| match crate::ai::jget(v, k) {
+            Some(Json::Num(n)) => *n as i64,
+            Some(Json::Str(s)) => s.trim().parse().unwrap_or(d),
+            _ => d,
+        };
+        let e = g("expr");
+        let mut x = if e.trim().is_empty() {
+            let (start, step, width) = (gi("start", 1), gi("step", 1), gi("width", 0));
+            let mut x = format!("{start}{}{}", if step < 0 { "-" } else { "+" }, step.abs());
+            if width > 0 {
+                x.push_str(&format!("~0{width}"));
+            }
+            x
+        } else {
+            e.trim().to_string()
+        };
+        let (pre, suf) = (g("prefix"), g("suffix"));
+        if !pre.is_empty() || !suf.is_empty() {
+            if pre.contains('"') || suf.contains('"') || x.contains('"') {
+                return Err(
+                    "prefix/suffix cannot be combined with a quoted template or a double quote - put everything in `expr`"
+                        .into(),
+                );
+            }
+            x.push_str(&format!(" \"{pre}{{}}{suf}\""));
+        }
+        Ok(x)
+    }
+
+    /// 지금 `insert_sequence`를 할 수 없는 이유(확장 꺼짐 · 식 오류) — 승인 카드 전에 걸러 낸다.
+    pub(crate) fn ai_seq_precheck(&self, v: &Json) -> Option<String> {
+        use crate::extensions::insert_sequence;
+        let disabled = self.ext_disabled();
+        let Some((ext_id, _)) = self
+            .extensions
+            .prompt_owner(insert_sequence::CMD, &disabled)
+        else {
+            return Some(
+                "the Insert Sequence extension is disabled - enable it (set_extension_enabled insert-sequence) and try again"
+                    .into(),
+            );
+        };
+        let expr = match Self::ai_seq_expr(v) {
+            Ok(x) => x,
+            Err(e) => return Some(e),
+        };
+        let req = crate::extensions::TransformReq {
+            id: insert_sequence::CMD.to_string(),
+            text: expr,
+            n: 1,
+            regions: vec![(0, String::new())],
+            phase: "live".into(),
+            ..Default::default()
+        };
+        match self.extensions.transform(&ext_id, &req, &self.settings) {
+            Ok(out) => out.error.map(|e| format!("sequence expression error: {e}")),
+            Err(e) => Some(e),
+        }
+    }
+
     /// ★ 줄 범위에 캐럿(열 모드 · AI 도구 `editor_carets` / `insert_sequence` · 사용자 11-14 "15행부터 30행에 컬럼모드"): 줄마다
     /// 구간 하나 — `line_end`(기본) · `line_start` · `column`(1 기준 · 짧은 줄은 줄 끝으로) · `select_lines`(줄 전체 선택).
     pub(crate) fn ai_line_carets(

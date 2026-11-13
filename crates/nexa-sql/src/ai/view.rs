@@ -102,6 +102,7 @@ pub(crate) enum ViewAction {
 /// `/` 명령 표(이름 · 인자 유무 · 설명 키).
 pub(crate) const SLASH: &[(&str, bool, Msg)] = &[
     ("/clear", false, Msg::AiSlashClear),
+    ("/rename", true, Msg::AiSlashRename),
     ("/mode", true, Msg::AiSlashMode),
     ("/model", true, Msg::AiSlashModel),
     ("/effort", true, Msg::AiSlashEffort),

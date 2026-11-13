@@ -38,10 +38,10 @@ Steps:
         body: "\
 # Skill: text-edit — editor transformations
 
-1. Line transforms: `edit_editor` with op = sort_asc | sort_desc | sort_num_asc | sort_num_desc | unique (remove duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | trim, on from_line..to_line (omit both = the selection or the statement at the caret; whole file = 1..total_lines from `get_editor_text`).
+1. Line transforms: `edit_editor` with op = sort_asc | sort_desc | sort_case (case-sensitive) | sort_num_asc | sort_num_desc | shuffle | unique (remove duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | snake | kebab | upper_camel | lower_camel | trim, on from_line..to_line (omit both = the selection or the statement at the caret; whole file = 1..total_lines from `get_editor_text`).
 2. Column mode / multiple carets: `editor_carets` (from_line, to_line, mode = line_end | line_start | column | select_lines; clear = one caret). It only moves carets.
 3. Numbering: `insert_sequence` uses the Insert Sequence extension - one value per caret. Do 'lines 15-30, append a 3-digit number' in ONE call: from_line=15, to_line=30, at=line_end, start=1, width=3 (or expr `1+1~03`). prefix / suffix add text around each value. One undo step.
-4. Word wrap: `run_command` id `view.word_wrap` with state on/off (applies to all tabs).
+3a. The same as palette commands (act on the selected lines, or the whole file without a selection): `run_command` `edit.sort_lines`, `edit.sort_lines_case`, `edit.permute_reverse`, `edit.permute_shuffle`, `edit.permute_unique`.\n3b. Convert Case on the selection (or the word at each caret): `run_command` `edit.case_upper`, `edit.case_lower`, `edit.case_title`, `edit.case_swap`, `edit.case_snake`, `edit.case_kebab`, `edit.case_upper_camel`, `edit.case_lower_camel` - select the text first (`edit_editor` op=select or `editor_carets`).\n4. Word wrap: `run_command` id `view.word_wrap` with state on/off (applies to all tabs).
 5. Syntax (language) of the tab: `set_syntax` with the name (SQL, JSON, Plain Text, or an installed package). If the language is not installed the tool lists what is available - say so instead of guessing.
 6. Other edit commands (`run_command` `edit.duplicate_line`, `edit.join_lines`, `edit.toggle_comment`, `edit.indent`, `edit.upper_case` ...) act on the current carets / selection - set them first with `edit_editor` op=select or `editor_carets`.
 7. `get_editor_text` shows the caret list (`<carets>`), the selection and line numbers - check it before and after.
