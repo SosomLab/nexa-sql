@@ -7458,6 +7458,9 @@ impl Explorer {
         };
         let k = kind.trim().to_lowercase();
         let cur = snap.current_schema;
+        // ★ 한글 등 비ASCII 낱말이면 컬럼 **코멘트**도 늘 찾는다(11-14 메타 우선 하네스: 뜻은 코멘트에 있다 — `in_columns`는 컬럼
+        //   이름까지 넓히는 스위치로 남는다).
+        let col_comments_too = in_columns || words.iter().any(|w| !w.is_ascii());
         let mut hits: Vec<(i32, String)> = Vec::new();
         for (i, o) in snap.objs.iter().enumerate() {
             let kind_s = format!("{:?}", o.kind).to_lowercase();
@@ -7479,15 +7482,22 @@ impl Explorer {
             };
             // ★ 코멘트(사용자 11-12 "TABLE - APPDB.DMS_I301090 - 기준정보 - 설비(워크센터)관리를 찾아야"): 이름은 코드라 뜻이 코멘트에 있다 —
             //   모든 낱말이 코멘트(소문자)에 있으면 이름 점수 아래(350)로 적중 · 행에 `comment=` 열.
-            let comment_lower = o.comment.map(|c| names.lower(c).to_string());
+            // ★ 코멘트 원천 = 편집기 인라인 설명과 같게(11-14): 객체 항목 → 스키마 코멘트 지도(`comment_of`) → 상세(L3) 순.
+            let oid = nsql_run::meta::ObjId(i as u32);
+            let comment_sym = snap
+                .comment_of(names, oid)
+                .or_else(|| match snap.detail(oid) {
+                    nsql_run::meta::DetailState::Loaded { detail, .. } => detail.comment,
+                    _ => None,
+                });
+            let comment_lower = comment_sym.map(|c| names.lower(c).to_string());
             let com_sc = comment_lower
                 .as_deref()
                 .filter(|c| !words.is_empty() && words.iter().all(|w| c.contains(w.as_str())))
                 .map(|_| 350);
             let name_sc = words_score(&words, names.lower(o.name));
             if let Some(sc) = name_sc.max(com_sc) {
-                let comment_s = o
-                    .comment
+                let comment_s = comment_sym
                     .map(|c| names.get(c).chars().take(80).collect::<String>())
                     .unwrap_or_else(|| "-".into());
                 hits.push((
@@ -7503,26 +7513,48 @@ impl Explorer {
                     ),
                 ));
             }
-            // 컬럼 코멘트(읽힌 것만): 낱말이 전부 들어 있으면 컬럼 행(250).
-            if in_columns && !words.is_empty() {
-                if let Some(cc) = snap.col_comments.get(&nsql_run::meta::ObjId(i as u32)) {
-                    for (col, cm) in cc.iter() {
-                        if let Some(cm) = cm {
-                            let low = names.lower(*cm);
-                            if words.iter().all(|w| low.contains(w.as_str())) {
-                                hits.push((
-                                    250 + bonus,
-                                    format!(
-                                        "{}.{}.{}\tcolumn\tcomment={}\tof {}",
-                                        names.get(o.schema),
-                                        names.get(o.name),
-                                        names.get(*col),
-                                        names.get(*cm).chars().take(80).collect::<String>(),
-                                        kind_s
-                                    ),
-                                ));
-                            }
+            // 컬럼 코멘트(읽힌 것만 · 원천 셋 = 컬럼 항목 → 스키마 코멘트 → 상세): 낱말이 전부 들어 있으면 컬럼 행(250).
+            if col_comments_too && !words.is_empty() {
+                let mut seen: Vec<nsql_run::meta::Sym> = Vec::new();
+                let mut pairs: Vec<(nsql_run::meta::Sym, nsql_run::meta::Sym)> = Vec::new();
+                if let Some(nsql_run::meta::ColState::Loaded { cols, .. }) = cols {
+                    for c in cols.iter() {
+                        if let Some(cm) = c.comment {
+                            seen.push(c.name);
+                            pairs.push((c.name, cm));
                         }
+                    }
+                }
+                if let Some(cc) = snap.col_comments.get(&oid) {
+                    for (col, cm) in cc.iter() {
+                        if let (Some(cm), false) = (cm, seen.contains(col)) {
+                            seen.push(*col);
+                            pairs.push((*col, *cm));
+                        }
+                    }
+                }
+                if let nsql_run::meta::DetailState::Loaded { detail, .. } = snap.detail(oid) {
+                    for (col, cm) in detail.col_comments.iter() {
+                        if !seen.contains(col) {
+                            seen.push(*col);
+                            pairs.push((*col, *cm));
+                        }
+                    }
+                }
+                for (col, cm) in pairs {
+                    let low = names.lower(cm);
+                    if words.iter().all(|w| low.contains(w.as_str())) {
+                        hits.push((
+                            250 + bonus,
+                            format!(
+                                "{}.{}.{}\tcolumn\tcomment={}\tof {}",
+                                names.get(o.schema),
+                                names.get(o.name),
+                                names.get(col),
+                                names.get(cm).chars().take(80).collect::<String>(),
+                                kind_s
+                            ),
+                        ));
                     }
                 }
             }
@@ -7551,8 +7583,22 @@ impl Explorer {
         hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         let total = hits.len();
         let mut out = Vec::with_capacity(limit + 1);
+        // 코멘트를 읽어 둔 스키마(뜻으로 찾는 검색이 닿는 범위 — 모델이 "코멘트가 아직 없다"를 알 수 있게 · 11-14).
+        let mut com: Vec<&str> = snap.comment_schemas.iter().map(|s| names.get(*s)).collect();
+        com.sort_unstable();
+        let com_s = if com.is_empty() {
+            "none".to_string()
+        } else {
+            let shown: Vec<&str> = com.iter().take(6).copied().collect();
+            let more = com.len().saturating_sub(shown.len());
+            if more > 0 {
+                format!("{} +{more}", shown.join(", "))
+            } else {
+                shown.join(", ")
+            }
+        };
         out.push(format!(
-            "{total} hits (showing {}) · {} loaded objects in {} schemas · current schema {}",
+            "{total} hits (showing {}) · {} loaded objects in {} schemas · current schema {} · comments loaded for: {com_s}",
             total.min(limit),
             snap.objs.len(),
             snap.schemas.len(),
@@ -7560,6 +7606,31 @@ impl Explorer {
         ));
         out.extend(hits.into_iter().take(limit).map(|(_, l)| l));
         out
+    }
+
+    /// ★ AI 검색이 **뜻(코멘트)** 으로 못 찾았을 때(11-14): 그 스키마(빈 글 = 현재 스키마) 하나의 코멘트가 아직 없으면 적재를
+    /// 건다(지연 로딩 = 필요한 것만 · 설정 `meta.warm_comments`를 따른다). 걸었거나 이미 도는 중이면 그 스키마 이름.
+    pub(crate) fn ai_warm_comments(&mut self, schema: &str) -> Option<String> {
+        let snap = self.meta.snapshot();
+        let want = schema.trim();
+        let name = if want.is_empty() {
+            snap.current_schema
+                .map(|s| self.meta.names.get(s).to_string())?
+        } else {
+            // 등재된 표기로(대소문자 무시).
+            snap.schemas
+                .iter()
+                .map(|s| self.meta.names.get(*s))
+                .find(|n| n.eq_ignore_ascii_case(want))
+                .map(str::to_string)?
+        };
+        if self.meta.has_schema_comments(&name) {
+            return None;
+        }
+        self.enqueue_schema_comments(&name);
+        let queued = self.comment_inflight.as_deref() == Some(name.as_str())
+            || self.comment_q.iter().any(|s| *s == name);
+        queued.then_some(name)
     }
 
     /// ★ AI 도구 `meta_stats`: 스키마별 읽힌 객체 수(종류별) · 컬럼 읽힌 객체 수 — 모델이 사전 질의 전에 "앱이 아는 범위"를 안다.
@@ -7617,23 +7688,53 @@ impl Explorer {
         if let Some(x) = o.extra {
             s.push_str(&format!("extra={}\n", self.meta.names.get(x)));
         }
-        if let Some(c) = o.comment {
-            s.push_str(&format!("comment={}\n", self.meta.names.get(c)));
+        let names = &self.meta.names;
+        let detail = match snap.detail(id) {
+            nsql_run::meta::DetailState::Loaded { detail, .. } => Some(detail),
+            _ => None,
+        };
+        // 테이블 코멘트 = 편집기 인라인 설명과 같은 원천(객체 항목 → 스키마 코멘트 → 상세 · 11-14).
+        let table_comment = snap
+            .comment_of(names, id)
+            .or_else(|| detail.as_ref().and_then(|d| d.comment));
+        if let Some(c) = table_comment {
+            s.push_str(&format!("comment={}\n", names.get(c)));
         }
         match snap.cols.get(id.0 as usize) {
             Some(nsql_run::meta::ColState::Loaded { cols, .. }) => {
-                s.push_str("columns:\n");
+                // ★ 컬럼 코멘트도 함께(11-14 메타 우선 하네스: 종전에는 없어서 어시스턴트가 ALL_COL_COMMENTS를 SQL로 물었다) —
+                //   컬럼 항목 → 스키마 코멘트 → 상세 순 · 줄 끝 `-- 코멘트`.
+                s.push_str("columns (name, type, nullability, key, -- comment):\n");
+                let cc = snap.col_comments.get(&id);
                 for c in cols.iter() {
+                    let comment = c
+                        .comment
+                        .or_else(|| {
+                            cc.and_then(|v| {
+                                v.iter().find(|(n, _)| *n == c.name).and_then(|(_, m)| *m)
+                            })
+                        })
+                        .or_else(|| {
+                            detail.as_ref().and_then(|d| {
+                                d.col_comments
+                                    .iter()
+                                    .find(|(n, _)| *n == c.name)
+                                    .map(|(_, m)| *m)
+                            })
+                        });
                     s.push_str(&format!(
-                        "  {}\t{}\t{}{}\n",
-                        self.meta.names.get(c.name),
-                        self.meta.names.get(c.data_type),
+                        "  {}\t{}\t{}{}{}\n",
+                        names.get(c.name),
+                        names.get(c.data_type),
                         match c.nullable {
                             Some(true) => "NULL",
                             Some(false) => "NOT NULL",
                             None => "",
                         },
-                        if c.key & 1 != 0 { "\tPK" } else { "" }
+                        if c.key & 1 != 0 { "\tPK" } else { "" },
+                        comment
+                            .map(|m| format!("\t-- {}", names.get(m)))
+                            .unwrap_or_default()
                     ));
                 }
             }

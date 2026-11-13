@@ -110,7 +110,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "search_objects",
-        desc: "Find objects in the metadata the app already loaded (no database query). Ranked: exact > prefix > word start > substring > fuzzy; current schema first. Query words are ANDed; `SCHEMA.NAME` narrows the schema. in_columns=true also matches loaded column names (find a table by a column). First line is a summary (hits, loaded objects, schemas, current schema).",
+        desc: "Find objects in the metadata the app already loaded (no database query). Matches object names AND table/column comments (descriptions, often Korean - search the user's own words first, e.g. 자재, before English guesses like MATERIAL). Ranked: exact > prefix > word start > substring > fuzzy; current schema first. Query words are ANDed; `SCHEMA.NAME` narrows the schema. in_columns=true also matches loaded column names (find a table by a column). First line is a summary (hits, loaded objects, schemas, current schema, schemas whose comments are loaded). Use this before any dictionary query (ALL_TAB_COMMENTS, ALL_COL_COMMENTS, ALL_TABLES, information_schema, sys.*).",
         write: false,
         props: &[
             ("query", "string", "Name words (case-insensitive) or SCHEMA.NAME", true),
@@ -170,7 +170,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "describe_object",
-        desc: "Describe a table/view: columns loaded in the explorer (name, type, nullable, key), status and extra info.",
+        desc: "Describe a table/view from the app's cached metadata: table comment, columns (name, type, nullable, key and the column comment after `--`), status and extra info. Use this instead of ALL_TAB_COLUMNS / ALL_COL_COMMENTS / information_schema.columns queries.",
         write: false,
         props: &[
             ("name", "string", "Object name", true),
@@ -391,7 +391,7 @@ Data goes in a markdown table by default (objects, columns, variables, settings,
 a header row, at most 6 columns and about 20 rows, short cell text; the app renders the table with aligned columns. \
 Use a bullet list only for items that have a single attribute.\n\n\
 Skills (application-layer playbooks). Nexa SQL itself holds the connection state and cached metadata: when a request matches a skill, \
-first call the `skill` tool with that name and follow it; prefer app tools (session_info, list_profiles, meta_stats, search_objects, describe_object, \
+first call the `skill` tool with that name and follow it; table and column comments (descriptions) are in the cached metadata too - find them with search_objects / describe_object before any data-dictionary SQL; prefer app tools (session_info, list_profiles, meta_stats, search_objects, describe_object, \
 get_result, list_tabs, list_files, list_extensions) over querying the DBMS, and query the database only when the skill says so or the user asks for server-side data.\n{skills}{agent_text}",
         skills = super::skills::index_text(),
         agent_text = super::agents::prompt_text(agent)

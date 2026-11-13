@@ -1596,6 +1596,11 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     pub(crate) fn ai_meta_stats(&self) -> String {
         self.panes[self.shown].ex.ai_meta_stats()
     }
+    /// 검색이 0건일 때 그 스키마(빈 글 = 현재) 코멘트의 지연 적재를 건다 — 걸었으면 스키마 이름.
+    pub(crate) fn ai_warm_comments(&mut self, schema: &str) -> Option<String> {
+        let i = self.shown;
+        self.panes[i].ex.ai_warm_comments(schema)
+    }
     pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
         self.panes[self.shown].ex.ai_describe(schema, name)
     }

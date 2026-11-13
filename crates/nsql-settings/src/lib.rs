@@ -6572,6 +6572,24 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(AI_GUARD_AUTO_OPTS),
         default: "off",
     },
+    // ★ 카탈로그(메타) 조회 = 행 데이터 동의 없이(사용자 11-14 · 기본 켬): 데이터 사전만 읽는 조회문에 한한다.
+    // ★ 메타 우선 하네스(사용자 11-14 · 기본 켬): 사전 SQL 전에 앱이 적재해 둔 메타(이름·코멘트·컬럼)를 먼저 쓰게 한다.
+    Entry {
+        key: "ai.meta_first",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMetaFirst,
+        desc: Msg::DescAiMetaFirst,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ai.meta_auto",
+        cat: Msg::CatAi,
+        label: Msg::LblAiMetaAuto,
+        desc: Msg::DescAiMetaAuto,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ai.guard_bulk_rows",
         cat: Msg::CatAi,

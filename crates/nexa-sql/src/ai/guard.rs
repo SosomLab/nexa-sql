@@ -497,6 +497,240 @@ pub(crate) fn summarize(sql: &str, dialect: Option<Dialect>) -> (String, Vec<Str
     (kind, targets)
 }
 
+// ───────────────────────── 카탈로그(메타) 조회 판정 ─────────────────────────
+
+#[derive(Debug, PartialEq)]
+enum Tok {
+    Word(String),
+    /// 인용 식별자("…" · `…` · […]) — 카탈로그 이름으로 치지 않는다(보수적).
+    Quoted,
+    Sym(char),
+}
+
+/// 문자열·주석을 뺀 토큰(낱말은 대문자 · `$`·`#`·`_` 포함).
+fn cat_tokens(sql: &str) -> Vec<Tok> {
+    let ch: Vec<char> = sql.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < ch.len() {
+        let c = ch[i];
+        if c.is_whitespace() {
+            i += 1;
+        } else if c == '\'' {
+            i += 1;
+            while i < ch.len() {
+                if ch[i] == '\'' {
+                    if ch.get(i + 1) == Some(&'\'') {
+                        i += 2;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            i += 1;
+            out.push(Tok::Sym('\''));
+        } else if c == '"' || c == '`' || c == '[' {
+            let close = if c == '[' { ']' } else { c };
+            i += 1;
+            while i < ch.len() && ch[i] != close {
+                i += 1;
+            }
+            i += 1;
+            out.push(Tok::Quoted);
+        } else if c == '-' && ch.get(i + 1) == Some(&'-') {
+            while i < ch.len() && ch[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && ch.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i + 1 < ch.len() && !(ch[i] == '*' && ch[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+        } else if c.is_alphanumeric() || c == '_' {
+            let s = i;
+            while i < ch.len() && (ch[i].is_alphanumeric() || matches!(ch[i], '_' | '$' | '#')) {
+                i += 1;
+            }
+            out.push(Tok::Word(
+                ch[s..i].iter().collect::<String>().to_ascii_uppercase(),
+            ));
+        } else {
+            out.push(Tok::Sym(c));
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 이름(점으로 나뉜 조각 · 대문자)이 **데이터 사전(카탈로그) 객체**인가 — 방언별 규칙. 한정 없는 접두 규칙(`ALL_`·`USER_`·`PG_`)은
+/// 그 방언일 때만(다른 DBMS에서는 사용자 표 이름일 수 있다).
+fn is_catalog_name(parts: &[String], dialect: Option<Dialect>) -> bool {
+    let Some(name) = parts.last().map(String::as_str) else {
+        return false;
+    };
+    let schema = (parts.len() >= 2).then(|| parts[parts.len() - 2].as_str());
+    if parts.len() > 3 {
+        return false;
+    }
+    if schema.is_none() && name == "DUAL" {
+        return true;
+    }
+    let ora_dict = |n: &str| {
+        ["ALL_", "USER_", "DBA_", "CDB_", "V$", "GV$", "NLS_"]
+            .iter()
+            .any(|p| n.starts_with(p))
+            || matches!(
+                n,
+                "DUAL"
+                    | "DICT"
+                    | "DICTIONARY"
+                    | "TAB"
+                    | "TABS"
+                    | "CAT"
+                    | "COLS"
+                    | "OBJ"
+                    | "IND"
+                    | "SEQ"
+                    | "SYN"
+            )
+    };
+    match schema {
+        Some("INFORMATION_SCHEMA" | "PG_CATALOG" | "SYSCAT" | "SYSIBM" | "SYSSTAT") => true,
+        // SQL Server의 `sys.*` = 카탈로그 뷰 · Oracle의 `SYS.`은 사전 뷰 이름일 때만(`SYS.USER$` 같은 기반 표는 아니다).
+        Some("SYS") => match dialect {
+            Some(Dialect::Mssql) => true,
+            Some(Dialect::Oracle) => ora_dict(name),
+            _ => false,
+        },
+        Some("PUBLIC") => dialect == Some(Dialect::Oracle) && ora_dict(name),
+        Some(_) => false,
+        None => match dialect {
+            Some(Dialect::Oracle) => ora_dict(name),
+            Some(Dialect::Postgres) => name.starts_with("PG_"),
+            Some(Dialect::Sqlite) => {
+                matches!(
+                    name,
+                    "SQLITE_MASTER" | "SQLITE_SCHEMA" | "SQLITE_TEMP_MASTER"
+                )
+            }
+            _ => false,
+        },
+    }
+}
+
+/// `FROM` 다음 토큰부터 그 절이 끝날 때까지 — 표 참조가 **전부 카탈로그 이름**인가(파생 표·표 함수·DB 링크·인용 이름은 거짓).
+fn from_refs_are_catalog(t: &[Tok], mut i: usize, dialect: Option<Dialect>) -> bool {
+    const END: &[&str] = &[
+        "WHERE",
+        "GROUP",
+        "ORDER",
+        "HAVING",
+        "UNION",
+        "INTERSECT",
+        "MINUS",
+        "EXCEPT",
+        "CONNECT",
+        "START",
+        "FETCH",
+        "LIMIT",
+        "OFFSET",
+        "FOR",
+        "WINDOW",
+        "QUALIFY",
+    ];
+    const JOINW: &[&str] = &[
+        "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "NATURAL",
+    ];
+    let mut expect_ref = true;
+    let mut in_cond = false;
+    let mut depth = 0i32;
+    while i < t.len() {
+        if expect_ref {
+            // 이름(점으로 이은 낱말들)
+            let mut parts: Vec<String> = Vec::new();
+            loop {
+                match t.get(i) {
+                    Some(Tok::Word(w)) => parts.push(w.clone()),
+                    _ => return false,
+                }
+                i += 1;
+                if t.get(i) == Some(&Tok::Sym('.')) {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            // 표 함수 `f(` · DB 링크 `@` = 판정 불가.
+            if matches!(t.get(i), Some(Tok::Sym('(' | '@'))) || !is_catalog_name(&parts, dialect) {
+                return false;
+            }
+            // 별칭(`AS x` · `x`) 건너뛰기.
+            if t.get(i) == Some(&Tok::Word("AS".into())) {
+                i += 1;
+            }
+            if let Some(Tok::Word(w)) = t.get(i) {
+                let kw = END.contains(&w.as_str())
+                    || JOINW.contains(&w.as_str())
+                    || matches!(w.as_str(), "JOIN" | "ON" | "USING");
+                if !kw {
+                    i += 1;
+                }
+            }
+            expect_ref = false;
+            in_cond = false;
+            continue;
+        }
+        match &t[i] {
+            Tok::Sym('(') => depth += 1,
+            Tok::Sym(')') => {
+                depth -= 1;
+                if depth < 0 {
+                    return true; // 이 FROM을 감싼 괄호가 닫혔다 = 절 끝.
+                }
+            }
+            _ if depth > 0 => {}
+            Tok::Sym(',') => expect_ref = true,
+            Tok::Sym(';') => return true,
+            Tok::Word(w) if END.contains(&w.as_str()) => return true,
+            Tok::Word(w) if w == "JOIN" => expect_ref = true,
+            Tok::Word(w) if JOINW.contains(&w.as_str()) => {}
+            Tok::Word(w) if matches!(w.as_str(), "ON" | "USING") => in_cond = true,
+            _ if in_cond => {}
+            // 참조 뒤에 뜻 모를 토큰(PIVOT · SAMPLE · 파티션 절 …) = 판정 불가.
+            _ => return false,
+        }
+        i += 1;
+    }
+    !expect_ref
+}
+
+/// ★ **카탈로그(메타) 조회**인가(사용자 11-14 "테이블·컬럼 정보를 확인하기 위한 명령은 Allow 질문 없이"): 문장 하나 · 조회문 ·
+/// 모든 `FROM`/`JOIN`의 표가 데이터 사전 객체([`is_catalog_name`]) · 사용자 루틴 호출 없음([`nsql_script::bind::expr_is_plain`] —
+/// 함수가 표 데이터를 돌려줄 수 있다) · 파생 표·표 함수·DB 링크·인용 이름·CTE 없음. 하나라도 판정하지 못하면 거짓(= 종전대로
+/// 행 데이터 동의를 묻는다). 순수 · 조회 여부(읽기 전용)는 호출자가 따로 본다.
+pub(crate) fn is_catalog_query(sql: &str, dialect: Option<Dialect>) -> bool {
+    let body = sql.trim().trim_end_matches(';').trim();
+    if body.is_empty() || body.contains(';') || !nsql_script::bind::expr_is_plain(body) {
+        return false;
+    }
+    let t = cat_tokens(body);
+    if !matches!(t.first(), Some(Tok::Word(w)) if w == "SELECT") {
+        return false;
+    }
+    let mut seen = false;
+    for i in 0..t.len() {
+        if matches!(&t[i], Tok::Word(w) if w == "FROM") {
+            if !from_refs_are_catalog(&t, i + 1, dialect) {
+                return false;
+            }
+            seen = true;
+        }
+    }
+    seen
+}
+
 /// `EXEC` 본문이 **바인드 변수 대입**(`:이름 := 식`)인가 — 리터럴이든 식이든(식은 DB가 계산만 한다 · 트랜잭션 없음).
 /// 프로시저 호출(`pkg.proc(...)` · `:=` 없음) · 여러 문장(`;`) · 대입 대상이 바인드가 아닌 것은 아니다. 순수 판정.
 pub(crate) fn is_bind_assign(body: &str) -> bool {
@@ -725,6 +959,55 @@ mod tests {
         let (k, t) = summarize("drop table if exists t9", None);
         assert_eq!(k, "DROP");
         assert_eq!(t, vec!["t9".to_string()]);
+    }
+
+    #[test]
+    fn catalog_queries_are_recognized_conservatively() {
+        let o = |s: &str| is_catalog_query(s, Some(Dialect::Oracle));
+        let p = |s: &str| is_catalog_query(s, Some(Dialect::Postgres));
+        let m = |s: &str| is_catalog_query(s, Some(Dialect::Mssql));
+        // 데이터 사전만 읽는 조회.
+        assert!(o("SELECT owner, table_name, comments FROM all_tab_comments WHERE comments LIKE '%자재%' ORDER BY CASE WHEN comments LIKE '%마스터%' THEN 0 ELSE 1 END, owner"));
+        assert!(o("SELECT c.column_name, m.comments FROM all_tab_columns c JOIN all_col_comments m ON m.owner = c.owner AND m.table_name = c.table_name WHERE c.table_name = 'T1';"));
+        assert!(o(
+            "SELECT COUNT(*) FROM user_tables t, user_indexes i WHERE i.table_name = t.table_name"
+        ));
+        assert!(o("SELECT * FROM sys.dba_objects WHERE object_name IN (SELECT table_name FROM all_tables)"));
+        assert!(o("SELECT sysdate FROM dual"));
+        assert!(p(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        ));
+        assert!(p("SELECT relname FROM pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"));
+        assert!(m("SELECT name FROM sys.tables"));
+        // 사용자 표가 하나라도 끼면 아니다(쉼표 조인 · JOIN · ON 뒤 쉼표 · 하위 질의 · 파생 표).
+        assert!(!o("SELECT * FROM biscm.m4s_i002040"));
+        assert!(!o("SELECT * FROM all_tables t, emp e"));
+        assert!(!o(
+            "SELECT * FROM all_tables t JOIN emp e ON e.x = t.table_name"
+        ));
+        assert!(!o(
+            "SELECT * FROM all_tables t JOIN all_indexes i ON i.table_name = t.table_name, emp"
+        ));
+        assert!(!o(
+            "SELECT * FROM all_tables WHERE table_name IN (SELECT name FROM emp)"
+        ));
+        assert!(!o("SELECT * FROM (SELECT * FROM emp) x"));
+        assert!(!o("SELECT (SELECT MAX(sal) FROM emp) FROM dual"));
+        // 판정 못 하는 모양 = 아니다: 사용자 함수 · DB 링크 · 인용 이름 · 여러 문장 · CTE · 조회가 아닌 문장.
+        assert!(!o("SELECT pkg.get_all(1) FROM dual"));
+        assert!(!o(
+            "SELECT dbms_xmlgen.getxml('select * from emp') FROM dual"
+        ));
+        assert!(!o("SELECT * FROM all_tables@remote"));
+        assert!(!o(r#"SELECT * FROM "ALL_TABLES""#));
+        assert!(!o("SELECT * FROM all_tables; SELECT * FROM emp"));
+        assert!(!o("WITH x AS (SELECT * FROM emp) SELECT * FROM x"));
+        assert!(!o("DELETE FROM all_tables"));
+        // 접두 규칙은 그 방언에서만(다른 DBMS에서는 사용자 표일 수 있다) · Oracle의 SYS 기반 표는 아니다.
+        assert!(!p("SELECT * FROM user_accounts"));
+        assert!(!m("SELECT * FROM all_orders"));
+        assert!(!o("SELECT * FROM sys.user$"));
+        assert!(!is_catalog_query("SELECT * FROM all_tables", None));
     }
 
     #[test]

@@ -129,6 +129,8 @@ pub(crate) struct AiState {
     /// ★ 방금 허용한 쓰기 카드의 id(11-13 "모두 동일한 개념으로"): 영향 행 수가 나오면 **새 카드를 띄우지 않고** 이 카드에
     /// 영향 줄만 덧붙여 장전된 [허용]으로 되돌린다(`ai_impact_done`).
     pub last_card: Option<String>,
+    /// ★ 메타 우선 되돌림(11-14)을 한 턴(= 마지막 사용자 메시지 자리)에서 이미 했다 — 같은 턴의 다음 사전 조회는 보낸다.
+    pub meta_nudged_at: Option<usize>,
     /// ★ 도구 `run_query`의 실행이 **객체 백업 뒤로 미뤄졌다**(운영 DROP 등 · 11-13): 대기 중인 도구 호출(`pending`)을 버리지 않고
     /// 백업 → 재진입 실행의 결과를 같은 통로로 보낸다. 종전에는 "not executed"를 먼저 답했는데 백업이 끝나면 문장이 **실제로
     /// 실행**돼 어시스턴트가 아는 것과 DB가 어긋났다(재시도하면 이중 실행).
@@ -1341,8 +1343,19 @@ impl App {
     /// ★ 답의 코드 블록 실행(▶ · ▦ · 자동 표시)의 실행 길(협업 V1 11-14): 클라이언트 명령(`EXEC :V := …` · `VAR` · `DEFINE` · `PRINT`)이
     /// 들었거나 문장이 여럿이면 편집기와 같은 문장 단위 실행 · 아니면 통째(한 단위) — 종전에는 늘 통째로 보내 변수 대입이
     /// SQL 그대로 서버에 나가 문법 오류가 났다(도구 `run_query`는 이미 같은 판정을 쓴다).
-    fn ai_run_code(&mut self, src: String) {
-        let items = nsql_script::split_script_in(&src, Some(self.sess.dialect));
+    fn ai_run_code(&mut self, mut src: String) {
+        let mut items = nsql_script::split_script_in(&src, Some(self.sess.dialect));
+        // 끝에 `;`만 남은 빈 항목은 떼어 낸다(협업 V1 11-14: 답 정리 훅이 새 줄에 붙인 `;`가 문장 단위 실행에서 빈 문장으로 나가
+        //   SQLite "not an error" 오류 줄이 됐다 — `EXEC :P := 5` 다음 줄의 `;`).
+        while items.len() > 1
+            && items
+                .last()
+                .is_some_and(|i| i.text.trim().trim_matches(';').trim().is_empty())
+        {
+            if let Some(last) = items.pop() {
+                src.truncate(last.span.start.min(src.len()));
+            }
+        }
         let scripted = items.len() > 1
             || items
                 .iter()
@@ -3004,8 +3017,43 @@ impl App {
             });
             return;
         }
+        // ★ 메타 우선 하네스(사용자 11-14 "자체 로딩해서 관리하는 meta 데이터를 먼저 조회하도록" · 설정 `ai.meta_first` 기본 켬):
+        //   데이터 사전을 읽는 조회(`is_catalog_query`)인데 이번 턴에 앱 메타 도구(`search_objects` · `describe_object` ·
+        //   `meta_stats`)를 한 번도 쓰지 않았으면 **한 번** 되돌린다 — 이름·코멘트·컬럼은 앱이 이미 들고 있다(왕복 0).
+        //   같은 턴에 이미 되돌렸거나 메타 도구를 쓴 뒤면 그대로 보낸다(무한 반복 없음).
+        if tool.name == "run_query"
+            && self.settings.flag("ai.meta_first")
+            && ai::guard::is_catalog_query(&arg, dialect)
+        {
+            let (turn_at, used_meta) = self
+                .ai_cur()
+                .map(|s| {
+                    let lu = s.messages.iter().rposition(|m| m.kind == Kind::User);
+                    let used = s.messages[lu.map_or(0, |i| i + 1)..].iter().any(|m| {
+                        matches!(&m.kind, Kind::ToolCall { name, .. }
+                            if matches!(name.as_str(), "search_objects" | "describe_object" | "meta_stats"))
+                    });
+                    (lu, used)
+                })
+                .unwrap_or((None, true));
+            if !used_meta && self.ai.meta_nudged_at != turn_at {
+                self.ai.meta_nudged_at = turn_at;
+                let _ = reply.send(ToolReply {
+                    output: "not executed: this reads the data dictionary. Nexa SQL already caches object names, table/column comments and columns - call search_objects first (use the user's own words, e.g. Korean terms: comments are searched too), then describe_object for columns and column comments. Run a dictionary query only if those do not answer. (This reminder is sent once per turn.)".into(),
+                    ok: false,
+                });
+                return;
+            }
+        }
         let short = tool.name.to_string();
-        let need_rows = is_rows && !rows_allowed && !client_only;
+        // ★ 카탈로그(메타) 조회는 행 데이터 동의를 묻지 않는다(사용자 11-14 · 설정 `ai.meta_auto` 기본 켬): 테이블·컬럼·코멘트 같은
+        //   데이터 사전만 읽는 조회문(`guard::is_catalog_query` — 사용자 표·함수·파생 표가 하나라도 끼면 아님). 동의 상태
+        //   (`rows_allowed`)는 바꾸지 않는다 = 실제 데이터 조회는 여전히 한 번 묻는다.
+        let meta_free = matches!(tool.name, "run_query" | "explain")
+            && risk == ai::guard::Risk::Read
+            && self.settings.flag("ai.meta_auto")
+            && ai::guard::is_catalog_query(&arg, dialect);
+        let need_rows = is_rows && !rows_allowed && !client_only && !meta_free;
         let carded = matches!(
             decision,
             ai::guard::Decision::Card | ai::guard::Decision::TwoStage
@@ -3381,13 +3429,22 @@ impl App {
                     g("in_columns").to_ascii_lowercase().as_str(),
                     "true" | "1" | "yes"
                 );
-                let rows = self.explorer.ai_search_objects(
+                let mut rows = self.explorer.ai_search_objects(
                     &g("query"),
                     &g("kind"),
                     &g("schema"),
                     in_cols,
                     limit,
                 );
+                // ★ 0건 + 그 스키마의 코멘트가 아직 없음 = 적재를 걸고 알려 준다(11-14 메타 우선: 뜻으로 찾는 검색은 코멘트가
+                //   있어야 닿는다 · 스키마 하나만 = 지연 로딩) — 어시스턴트가 사전 SQL로 넘어가기 전에 한 번 더 부르게.
+                if rows.first().is_some_and(|l| l.starts_with("0 hits")) {
+                    if let Some(sc) = self.explorer.ai_warm_comments(&g("schema")) {
+                        rows.push(format!(
+                            "hint: table/column comments of schema {sc} were not loaded yet - loading them now. Call search_objects again in a moment (same words) before trying a dictionary query."
+                        ));
+                    }
+                }
                 ok(rows.join("\n"))
             }
             "meta_stats" => ok(self.explorer.ai_meta_stats()),

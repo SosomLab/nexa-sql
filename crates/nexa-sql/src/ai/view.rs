@@ -2753,8 +2753,21 @@ impl AiView {
                     } else {
                         th.text_dim
                     };
-                    dc.text(sx, tyc, b, g, col);
-                    sx += dc.text_width(g) + self.s(2.0);
+                    let gw = dc.text_width(g);
+                    if cur {
+                        // ★ 지금 단계 = **속이 채워진** 원 숫자(사용자 11-14 "깜빡이는 대상은 속이 채워진 원문자로") — 글꼴마다 ❶❷❸가
+                        //   없을 수 있어 직접 그린다: 같은 자리·같은 폭에 채운 원 + 바탕색 숫자(깜빡임 = 원 색이 강조색 ↔ 흐린 색).
+                        let h = dc.text_height();
+                        let d = gw.min(h).max(self.s(8.0));
+                        let circle = Rect::new(sx + (gw - d) / 2, tyc + (h - d) / 2, d, d);
+                        dc.fill_round_rect(circle, d / 2, col);
+                        let num = (k + 1).to_string();
+                        let nw = dc.text_width(&num);
+                        dc.text(sx + (gw - nw) / 2, tyc, b, &num, th.panel_bg);
+                    } else {
+                        dc.text(sx, tyc, b, g, col);
+                    }
+                    sx += gw + self.s(2.0);
                 }
                 sx += self.s(6.0);
             }
