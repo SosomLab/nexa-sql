@@ -2,13 +2,13 @@
 #   CLI 3회(nsql run --timing · Oracle 프로필 + 표 + PROJECT_CD 필터 · SQL Server 프로필). 결과 = target\bench-boost.csv + 중앙값 요약.
 # 사용:  pwsh -File scripts\bench-boost.ps1 [-Runs 3] [-Out target\bench-boost.csv]   (실행 전 cargo build --release · 프로필 비밀번호 저장돼 있어야)
 #   ★ T-452(10-29 · 익명화 뒤): 실서버 값은 매개변수 또는 env — -OracleProfile/$env:NSQL_E2E_ORACLE_PROFILE · -OracleTable/NSQL_E2E_ORACLE_TABLE ·
-#     -ProjectCd/NSQL_E2E_PROJECT_CD · -MssqlProfile/NSQL_E2E_MSSQL_PROFILE. 기본값은 익명(DEMODB_19c · M4S_I002040 · ACME · PLANDB) = 실서버에선 0행.
+#     -ProjectCd/NSQL_E2E_PROJECT_CD · -MssqlProfile/NSQL_E2E_MSSQL_PROFILE. 기본값은 익명(DEMODB_19c · DMS_T100040 · ACME · PLANDB) = 실서버에선 0행.
 param(
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [int]$Runs = 3,
     [string]$Out = "",
     [string]$OracleProfile = $(if ($env:NSQL_E2E_ORACLE_PROFILE) { $env:NSQL_E2E_ORACLE_PROFILE } else { "DEMODB_19c" }),
-    [string]$OracleTable = $(if ($env:NSQL_E2E_ORACLE_TABLE) { $env:NSQL_E2E_ORACLE_TABLE } else { "M4S_I002040" }),
+    [string]$OracleTable = $(if ($env:NSQL_E2E_ORACLE_TABLE) { $env:NSQL_E2E_ORACLE_TABLE } else { "DMS_T100040" }),
     [string]$ProjectCd = $(if ($env:NSQL_E2E_PROJECT_CD) { $env:NSQL_E2E_PROJECT_CD } else { "ACME" }),
     [string]$MssqlProfile = $(if ($env:NSQL_E2E_MSSQL_PROFILE) { $env:NSQL_E2E_MSSQL_PROFILE } else { "PLANDB" })
 )

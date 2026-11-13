@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # linux-fetch-consistency-e2e.sh — 페치 일관성 E2E(10-11 · 사용자 "Count 된 행보다 더 많이 조회되는 것 같다" · docs/43 §9).
-#   실서버(저장된 프로필 · 읽기만 · 임시 객체 0 · 키 주입 0 · 기동 명령만 · 61 §4)에서 큰 결과(기본 APPDB · M4S_I002040 · PROJECT_CD='ACME' · 12만 행)를
+#   실서버(저장된 프로필 · 읽기만 · 임시 객체 0 · 키 주입 0 · 기동 명령만 · 61 §4)에서 큰 결과(기본 APPDB · DMS_T100040 · PROJECT_CD='ACME' · 12만 행)를
 #   세 순서로 받고 **ROWID 열 전부**를 파일로 떠서(훅 `grid.col`) ① 행 수 = 서버 COUNT(*) ② 중복 0 ③ 누락 0(= ①∧②)을 판정한다.
 #     A 정상: 200행 → ⇊ 전체 조회 → 끝까지.
 #     B 사용자 순서: 200행 → ⇊ 전체 조회 → 중간 ■ → 스크롤 끝(자동 페이지 = 커서 없음·ORDER BY 없음 → 엄격 재질의·교체) → ⇊ 전체 조회 → 끝까지.
 #     C ORDER BY: B와 같되 ORDER BY ROWID(커서 없음 → OFFSET 페이지 · 교체 없음).
-# 사용: scripts/linux-fetch-consistency-e2e.sh -o <출력> [-P <실제 설정 폴더>] [-p APPDB] [-t "M4S_I002040 A WHERE 1=1 AND A.PROJECT_CD = 'ACME'"]
+# 사용: scripts/linux-fetch-consistency-e2e.sh -o <출력> [-P <실제 설정 폴더>] [-p APPDB] [-t "DMS_T100040 A WHERE 1=1 AND A.PROJECT_CD = 'ACME'"]
 #        [-e target/debug/nexa-sql] [-n target/release/nsql] [-w <전체 조회 대기 s · 기본 70>] [-O A,B,C]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
 . "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
 # ★ T-452(10-29 · 익명화 뒤): 실서버 값은 -p/-t 또는 env NSQL_E2E_ORACLE_PROFILE · NSQL_E2E_ORACLE_FROM(기본값은 익명 = 실서버에선 0행).
-OUT=""; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; P="${NSQL_E2E_ORACLE_PROFILE:-APPDB}"; FROM="${NSQL_E2E_ORACLE_FROM:-M4S_I002040 A WHERE 1=1 AND A.PROJECT_CD = 'ACME'}"
+OUT=""; PROF="${APPDATA:-$HOME/.config}/nexa-sql"; P="${NSQL_E2E_ORACLE_PROFILE:-APPDB}"; FROM="${NSQL_E2E_ORACLE_FROM:-DMS_T100040 A WHERE 1=1 AND A.PROJECT_CD = 'ACME'}"
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/release/nsql"; WAIT=70; ONLY=""
 while getopts "o:P:p:t:e:n:w:O:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; p) P=$OPTARG;; t) FROM=$OPTARG;; e) APP=$OPTARG;; n) NSQL=$OPTARG;; w) WAIT=$OPTARG;; O) ONLY=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out> [-P real-config] [-p profile] [-t \"<FROM … WHERE …>\"] [-e app] [-n nsql] [-w secs] [-O A,B,C]"; exit 2; }

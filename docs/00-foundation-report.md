@@ -70,8 +70,8 @@
 
 `nsql plan --dialect mssql examples/golden-session-vars.sql` 발췌:
 ```text
-[1] EXEC :V_PRG_NM := '…'      → LOCAL :V_PRG_NM = N'SP_DMP_MPO_DME_CREATE_BSY'   (DB 왕복 0)
-[4] EXEC SELECT … INTO :V_…    → SELECT @V_PROJECT_CD = A.PROJECT_CD, … FROM DMS_O301010 A …  (InOut ×5 · OUTPUT 회수)
+[1] EXEC :V_PRG_NM := '…'      → LOCAL :V_PRG_NM = N'SP_DMP_PLAN_JOB_CREATE'   (DB 왕복 0)
+[4] EXEC SELECT … INTO :V_…    → SELECT @V_PROJECT_CD = A.PROJECT_CD, … FROM DMS_T100020 A …  (InOut ×5 · OUTPUT 회수)
 [5] SELECT :V_PROJECT_CD, …    → SELECT @V_PROJECT_CD, … FROM DUAL   · V_PRG_NM Varchar2(25) In = N'SP_…'
 [6] connect user/pass@…        → CONNECT user/***@192.168.1.1:1521/db
 ```

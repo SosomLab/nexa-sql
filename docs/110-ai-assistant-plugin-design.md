@@ -516,7 +516,7 @@ AI 도구 호출(run_query · set_setting · run_command …)
 | 등급 | 예 | 비운영 | 운영 |
 |---|---|---|---|
 | Read | SELECT · explain | 바로 실행 | 바로 실행 |
-| AppWrite | 편집기 글 · 일반 설정 · 접속 · 확장 | Auto면 바로 · 아니면 카드 | 카드 |
+| AppWrite | 편집기 글 · 일반 설정 · 접속 · 확장 · 변수 삭제 `delete_var`(11-13 · 952e4728) | Auto면 바로 · 아니면 카드 | 카드 |
 | Write | INSERT · WHERE 있는 UPDATE/DELETE · CREATE · COMMENT | `ai.guard_auto_write=dml`이면 바로 · 아니면 카드 | 카드(자동 승인 안 닿음) |
 | Bulk | WHERE 없는 UPDATE/DELETE · MERGE · 블록/EXEC · 스크립트 명령 · 영향 행 ≥ `ai.guard_bulk_rows`(1000) | 2단계 | 2단계 |
 | Destructive | DROP · TRUNCATE · ALTER · RENAME · CREATE OR REPLACE · GRANT/REVOKE | 2단계 | 2단계 |
@@ -577,6 +577,8 @@ AI 도구 호출(run_query · set_setting · run_command …)
 ### 18-2. 변수 도구(도구 30)
 
 - `list_vars` · `get_var`(이름 · 형 · 층 · 종류 · 현재 값) · `set_var`(쓰기 · 카드 1 · 세션 변수는 클라이언트에 산다 = DR-8).
+- `delete_var`(11-13 · 952e4728 · 사용자 "AI가 변수를 삭제할 수 있게 · 모든 AI · API/CLI 공통") = AppWrite · 카드 1 · 도구 표 `tools::TOOLS` 하나라 API·CLI(MCP `nexa-sql`)·Codex(`dynamicTools`) 공통 · 변수 창 줄 삭제와 같은 길(`vars_apply(Delete)`) · 답 = `deleted <이름> (layers: …)` + 그 이름을 참조하던 수식 변수 안내 · 프로필 층만 있는 변수 = `not deleted`(읽기 전용) · 없는 이름 = 오류 · 협업 V1 ✓([journal 11-13 §6](journal/2026-11-13.md)).
+- 승인 카드 처리 중 표시(11-13 · 952e4728 · 사용자 "누른 뒤 끝날 때까지 Disable + 진행 표시 · 다른 버튼에도 쓸 기법") = 누르면 두 버튼 비활성 + 누른 버튼 아래 진행 막대(60 ms 다시 그리기) · 도구 실행·세션 작업이 끝나고 최소 시간(허용 400 ms · 거부 250 ms)이 지나면 버튼 줄을 거둠(`AiState.approving` · `ai_tick_due` · `paint_busy_button`) · 처리 중 재클릭 = 무시.
 - `run_query`가 `EXEC :V := 리터럴`만이면 앱 쓰기 등급(카드 1 · 행 데이터 동의 없음) — 협업 V1에서 SQLite 세션은 3장(동의 · 대량 2단계 · 영향 알 수 없음)으로 나옴 = 결함 후보(§18-4).
 
 ### 18-3. 설정 8

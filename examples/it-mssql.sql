@@ -1,5 +1,5 @@
 -- SQL Server 실기 스크립트: 같은 관용이 T-SQL로 재작성되어 동작한다
-EXEC :V_PRG_NM := 'SP_DMP_MPO_DME_CREATE_BSY'
+EXEC :V_PRG_NM := 'SP_DMP_PLAN_JOB_CREATE'
 EXEC
 SELECT COUNT(*), MAX(name)
 INTO :V_CNT, :V_MAX
