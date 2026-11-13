@@ -2099,6 +2099,9 @@ impl App {
         }
         // ★ 대기 중인 도구 호출에는 **멈춘 이유를 답한다**(협업 V1 11-13: 통로를 그냥 닫아 어시스턴트에 "timeout"으로 갔다) —
         //   백업 대기 중이었으면 실행 전에 취소된 것 · 그 밖은 이미 서버로 나갔을 수 있다(되돌리지 않는다 — 재시도 전에 확인하라고 알린다).
+        // ★ 어시스턴트가 돌린 문장이 아직 DB에서 도는 중이면 **그 실행도 취소**한다(협업 V1 11-13: ■ 뒤에도 긴 조회가 계속 돌아
+        //   세션이 묶였다 · 편집기 ■와 같은 길 `stop_run` — 두 번째 ■ = 강제 중지 규칙도 그대로).
+        let cancel_db = self.sess.busy && self.ai.pending.as_ref().is_some_and(|p| p.silent);
         if let Some(mut p) = self.ai.pending.take() {
             if let Some(r) = p.reply.take() {
                 let _ = r.send(ToolReply {
@@ -2110,6 +2113,9 @@ impl App {
                     ok: false,
                 });
             }
+        }
+        if cancel_db {
+            self.stop_run();
         }
         self.ai.status = t(Msg::AiStopped).into();
         self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
