@@ -162,6 +162,45 @@ impl ListHead {
         used + gap
     }
 
+    /// 깔때기만 그린다(정렬 표식·열 끌기·폭 조절을 스스로 하는 목록 — 접속 창 · 11-13) — `clip` = 머리 줄의 보이는 영역(가로
+    /// 스크롤로 잘린 칸의 깔때기는 그리지 않는다). 돌려주는 값 = 오른쪽에서 쓴 폭(그리지 않았으면 0).
+    pub(crate) fn paint_funnel(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        col: usize,
+        cell: Rect,
+        clip: Rect,
+        scale: f32,
+    ) -> i32 {
+        let px = |v: f32| (v * scale).round() as i32;
+        self.cells.push((col, cell));
+        let g = px(9.0).max(6);
+        let pad = px(6.0);
+        let fr = Rect::new(cell.right() - pad - g, cell.y + cell.h / 2 - g / 2, g, g);
+        if fr.x < cell.x || fr.x < clip.x || fr.right() > clip.right() {
+            return 0;
+        }
+        let filtered = self.filters.iter().any(|(c, _)| *c == col);
+        crate::grid::funnel_glyph(dc, fr, if filtered { th.accent } else { th.text_dim });
+        self.funnels.push((
+            col,
+            Rect::new(fr.x - pad / 2, cell.y, g + pad, cell.h).intersection(&cell),
+        ));
+        g + pad
+    }
+
+    /// 깔때기 누름만 처리(값 목록 예약) — 깔때기가 아니면 false(정렬·끌기는 창이 한다).
+    pub(crate) fn click_funnel(&mut self, p: Point) -> bool {
+        match self.funnels.iter().find(|(_, r)| r.contains(p)) {
+            Some((c, _)) => {
+                self.pending = Some(*c);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// 머리 줄에서 무엇을 눌렀나(깔때기가 먼저).
     pub(crate) fn hit(&self, p: Point) -> Option<HeadHit> {
         if let Some((c, _)) = self.funnels.iter().find(|(_, r)| r.contains(p)) {

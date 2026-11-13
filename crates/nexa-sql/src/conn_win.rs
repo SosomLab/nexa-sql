@@ -271,6 +271,9 @@ pub(crate) struct ConnWin {
     col_w_manual: bool,
     /// 결합 정렬 키(원본 열 · 오름차순).
     sort_keys: Vec<(usize, bool)>,
+    /// ★ 머리 줄 값 필터(깔때기 → 값 목록 · 공용 부품 `listhead` · 사용자 11-13 "접속 창 그리드에도 필터") — 정렬·열 끌기·폭 조절은
+    /// 이 창이 종전대로 한다(부품에서는 깔때기·값 목록·행 거르기만 쓴다).
+    head: crate::listhead::ListHead,
     /// 헤더 경계 드래그 = 폭 조절(열 · 시작 x · 시작 폭).
     hdr_resize: Option<(usize, i32, i32)>,
     /// 헤더 경계의 마지막 클릭(열 · 시각) — 400ms 안에 같은 경계를 다시 누르면 자동 맞춤(결과 그리드와 같은 규칙).
@@ -372,6 +375,7 @@ impl ConnWin {
             col_w: Vec::new(),
             col_w_manual: false,
             sort_keys: Vec::new(),
+            head: crate::listhead::ListHead::default(),
             hdr_resize: None,
             edge_click: None,
             autofit: None,
@@ -881,6 +885,8 @@ impl ConnWin {
                         .to_lowercase()
                         .contains(&q)
             })
+            // 머리 줄 값 필터(열마다 고른 값만 · 11-13).
+            .filter(|(_, p)| self.head.passes(|c| cell_of(p, c, &self.session_pw)))
             .map(|(i, _)| i)
             .collect();
         sort_shown(
@@ -1756,6 +1762,21 @@ impl ConnWin {
 
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> Vec<ConnWinAction> {
         let mut out = Vec::new();
+        // ★ 머리 줄 값 목록 팝업이 먼저(11-13 · 바깥 클릭 = 닫고 통과) — 결과가 바뀌었을 수 있으니 목록을 다시 거른다(선택은 이름으로 유지).
+        if self.head.is_open() && !matches!(ev, WindowEvent::RedrawRequested) {
+            let r = self
+                .head
+                .route(ev, &mut self.cursor, self.shift, self.primary);
+            let keep = self.selected_name();
+            self.refilter();
+            if let Some(n) = keep {
+                self.sel = self.shown.iter().position(|&i| self.profiles[i].name == n);
+            }
+            self.redraw();
+            if r == crate::listhead::Routed::Consumed {
+                return out;
+            }
+        }
         match ev {
             WindowEvent::CloseRequested => {
                 self.guarded(Guard::Close, &mut out);
@@ -2475,6 +2496,11 @@ impl ConnWin {
             } else if self.header_rect().contains(p) {
                 // 헤더: 경계 = 폭 조절 · 열 = 누르고 놓으면 정렬(Shift = 결합) · 끌면 이동(MouseUp에서 판정).
                 self.set_focus(WFocus::List);
+                // ★ 깔때기 = 그 열의 값 목록(11-13 · 다음 그리기에서 연다) — 정렬·끌기보다 먼저.
+                if self.head.click_funnel(p) {
+                    self.redraw();
+                    return;
+                }
                 if let Some(ci) = self.header_edge_at(x) {
                     // 같은 경계를 400ms 안에 다시 누르면 자동 맞춤(헤더 이름 + 보이는 전 행의 값 · 결과 그리드와 같은 규칙).
                     let now = Instant::now();
@@ -2804,10 +2830,15 @@ impl ConnWin {
             let col_order = self.col_order.clone();
             let mut cx = l.x + icons_w - self.scroll_x;
             let mut drop_x: Option<i32> = None;
+            self.head.begin_paint();
             for (pos, &ci) in col_order.iter().enumerate() {
                 let name = &col_names[ci];
                 let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
                 let clip = Rect::new(cx, l.y, cw, rh).intersection(&hcells);
+                // 깔때기(오른쪽 끝 · 걸린 열 = 강조색) — 정렬 배지·머리 글은 그 왼쪽.
+                let fu =
+                    self.head
+                        .paint_funnel(&mut dc, th, ci, Rect::new(cx, l.y, cw, rh), hcells, s);
                 if dragging.is_some_and(|d| d.0 == pos) {
                     dc.fill_rect(clip, th.sel_bg);
                 }
@@ -2825,10 +2856,11 @@ impl ConnWin {
                 });
                 let name_clip = if let Some(bd) = &badge {
                     let bw = dc.text_width(bd);
-                    dc.text(cx + cw - pad / 2 - bw, ty(l.y), clip, bd, th.accent);
-                    Rect::new(cx, l.y, (cw - bw - pad - pad / 2).max(0), rh).intersection(&hcells)
+                    dc.text(cx + cw - pad / 2 - bw - fu, ty(l.y), clip, bd, th.accent);
+                    Rect::new(cx, l.y, (cw - bw - pad - pad / 2 - fu).max(0), rh)
+                        .intersection(&hcells)
                 } else {
-                    Rect::new(cx, l.y, (cw - pad / 2).max(0), rh).intersection(&hcells)
+                    Rect::new(cx, l.y, (cw - pad / 2 - fu).max(0), rh).intersection(&hcells)
                 };
                 dc.text(cx + pad, ty(l.y), name_clip, name, th.text_dim);
                 // 열 경계선(폭 조절 손잡이 위치).
@@ -2837,6 +2869,16 @@ impl ConnWin {
                     th.border,
                 );
                 cx += cw;
+            }
+            // 깔때기를 눌렀으면 그 열의 값 목록을 연다(전체 프로필 기준 · 팝업은 창 안).
+            if self.head.wants_values() {
+                let (ps, pw) = (&self.profiles, &self.session_pw);
+                self.head.open_pending(
+                    |c| ps.iter().map(|p| cell_of(p, c, pw)).collect(),
+                    Rect::new(0, 0, wi, hi),
+                    s,
+                    rh,
+                );
             }
             // 삽입 위치 미리보기 — 목표 열 왼쪽(맨 끝이면 마지막 열 오른쪽)에 강조선(헤더 + 행 영역 전체 높이).
             if drop_pos.is_some() {
@@ -3017,6 +3059,7 @@ impl ConnWin {
                 draw_tooltip(&mut dc, th, anchor, wi, text, s);
             }
             // 우클릭 메뉴 · 입력란 편집 메뉴(최상위 — 다른 컨트롤이 메뉴 위에 그려지지 않게 맨 마지막).
+            self.head.paint_popup(&mut dc, th);
             self.menu.paint(&mut dc, th);
             self.filter.paint_popup(&mut dc, th);
             if detail_visible {
