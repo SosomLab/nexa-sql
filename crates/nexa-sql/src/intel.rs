@@ -2389,9 +2389,15 @@ impl Intel {
         let mut text = intel::apply_case(&c.text, &ctx.prefix, &self.cfg.insert_case);
         let mut caret_back = 0;
         // 접두 없이 고른 컬럼 = `A.컬럼`(기본 `intel.qualify_columns` · Alt = 반대).
+        // ★ 별칭 없는 **단일 테이블**이면 열 이름만(사용자 11-13 "alias가 없으면 그냥 컬럼 이름 · 전체 테이블 이름이 표시되지 않게" ·
+        //   `*` 펼치기와 같은 규칙) — 별칭이 있거나 테이블이 여럿이면 종전대로 한정(모호함 방지) · Alt는 여기서도 반대(= `테이블.열`).
+        let real: Vec<&intel::Alias> = ctx.aliases.iter().filter(|a| !a.local).collect();
+        let bare_solo = real.len() == 1
+            && real[0].alias.eq_ignore_ascii_case(&real[0].table)
+            && real[0].alias.eq_ignore_ascii_case(&c.qualifier);
         if c.kind == CandKind::Column
             && !c.qualifier.is_empty()
-            && (self.cfg.qualify_columns != plain)
+            && ((self.cfg.qualify_columns && !bare_solo) != plain)
         {
             text = format!("{}.{}", c.qualifier, text);
         }
@@ -4658,6 +4664,43 @@ mod tests {
             .expect("EMPNO");
         it.pick_with(&format!("intel:{i}"), true);
         assert_eq!(it.take_accept().expect("a").text, "EMPNO", "Alt = 컬럼만");
+    }
+
+    /// 별칭 없는 단일 테이블 = 열 이름만(Alt = `테이블.열`) · 별칭 없는 테이블이 둘이면 종전대로 테이블 이름 한정(11-13).
+    #[test]
+    fn bare_single_table_columns_are_not_qualified() {
+        let m = store();
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let host = Rect::new(0, 0, 800, 600);
+        let pick = |doc: &str, plain: bool| -> String {
+            let mut it = Intel::new(cfg());
+            assert!(it.request(
+                1,
+                1,
+                doc,
+                9,
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            let i = it
+                .cands
+                .iter()
+                .position(|c| c.text == "EMPNO")
+                .expect("EMPNO");
+            it.pick_with(&format!("intel:{i}"), plain);
+            it.take_accept().expect("a").text
+        };
+        assert_eq!(pick("SELECT em FROM emp", false), "EMPNO");
+        assert_eq!(pick("SELECT em FROM emp", true), "emp.EMPNO", "Alt = 한정");
+        assert_eq!(pick("SELECT em FROM emp, dept", false), "emp.EMPNO");
+        assert_eq!(pick("SELECT em FROM emp e", false), "e.EMPNO");
     }
 }
 

@@ -66,12 +66,35 @@ impl App {
         }
     }
 
+    /// ★ 변수 표의 주인 탭(사용자 11-13 "AI 탭에서 실행돼도 실행의 주체는 해당 탭"): 뷰 탭(AI 채팅 등)은 자기 변수 표가 없다 →
+    /// 가장 최근에 본 **편집기 탭**의 표를 쓴다(실행 때 보내는 표 · 실행 뒤 받는 표 · 변수 창 · 입력 창이 모두 같은 탭).
+    /// 편집기 탭이면 그 탭 그대로 · 편집기 탭이 하나도 없으면 그대로.
+    pub(crate) fn vars_tab(&self, id: u64) -> u64 {
+        let is_view = |t: u64| {
+            self.editors
+                .index_of_id(t)
+                .is_some_and(|i| self.editors.view_key_of(i).is_some())
+        };
+        if !is_view(id) {
+            return id;
+        }
+        self.editors
+            .tab_history()
+            .into_iter()
+            .rev()
+            .map(|(t, _)| t)
+            .find(|t| self.editors.index_of_id(*t).is_some() && !is_view(*t))
+            .unwrap_or(id)
+    }
+
     pub(crate) fn run_defines(&self) -> Option<Vec<(String, String)>> {
-        self.tab_defines.get(&self.editors.active_id()).map(|v| {
-            v.iter()
-                .map(|(n, raw, _)| (n.clone(), raw.clone()))
-                .collect()
-        })
+        self.tab_defines
+            .get(&self.vars_tab(self.editors.active_id()))
+            .map(|v| {
+                v.iter()
+                    .map(|(n, raw, _)| (n.clone(), raw.clone()))
+                    .collect()
+            })
     }
 
     /// 치환 변수 글로벌 층 → 러너에 보낼 `(이름, 원문)` 쌍(`Cmd::GlobalMacros` · T-153 후속 10-26).
@@ -99,7 +122,7 @@ impl App {
 
     /// 이름이 **프로필 층에만** 있는 변수인가(탭·공유·글로벌에 같은 이름이 없음) — 창에서 고치기·지우기·층 옮기기를 거절한다.
     fn is_profile_only_var(&self, name: &str) -> bool {
-        let tab = self.editors.active_id();
+        let tab = self.vars_tab(self.editors.active_id());
         let is = |v: &nsql_script::VarState| v.name.eq_ignore_ascii_case(name);
         self.sess.fixed_vars.iter().any(is)
             && !self.sess.shared_vars.iter().any(is)
@@ -111,7 +134,7 @@ impl App {
         const MAX: usize = 200;
         // ★ 👁 보기(11-11): 켜져 있으면 비밀 행에 원문을 실어 보낸다(창이 누르고 있는 동안만 그린다 · 로그·저장은 안 본다).
         let reveal_on = self.settings.flag("vars.reveal_secret");
-        let tab = self.editors.active_id();
+        let tab = self.vars_tab(self.editors.active_id());
         let changed = (self.vars_changed.0 == tab).then_some(&self.vars_changed.1);
         let local = self.tab_vars.get(&tab).map(Vec::as_slice).unwrap_or(&[]);
         // ★ 가림 판정(사용자 10-07): 공유 줄은 탭에 같은 이름이 있으면 · 글로벌 줄은 탭/공유에 있으면 가려진 줄(흐리게).
@@ -268,7 +291,7 @@ impl App {
         let key = name.trim_start_matches(':');
         let found = self
             .tab_vars
-            .get(&self.editors.active_id())
+            .get(&self.vars_tab(self.editors.active_id()))
             .into_iter()
             .flatten()
             .chain(self.sess.shared_vars.iter())
@@ -287,7 +310,7 @@ impl App {
         // ★ 결과(`RunEvent::Vars`)는 `sess.run_editor` 탭의 표에 반영된다 — 이 실행이 보내는 표(`run_vars` = 활성 탭)와 같은 탭으로
         //   맞춘다(협업 V1 11-13 "재기동 뒤 ⟳가 재계산하지 않는다": 그 탭에서 한 번도 실행하지 않았으면 `run_editor`가 다른 탭이라
         //   계산된 값이 엉뚱한 탭 표로 들어갔다 · 같은 실행 안에서는 앞선 실행이 맞춰 놓아 드러나지 않았다).
-        self.sess.run_editor = self.editors.active_id();
+        self.sess.run_editor = self.vars_tab(self.editors.active_id());
         self.sess.submit(
             pass,
             worker::Cmd::Run {
@@ -308,7 +331,7 @@ impl App {
     /// 변수 창의 동작을 표에 반영한다 — 탭 층은 App이 주인(바로 고친다 · 보존 파일도) · 공유 층은 워커에 통째로 알린다.
     pub(crate) fn vars_apply(&mut self, action: vars_win::VarsWinAction) {
         use vars_win::VarsWinAction as A;
-        let tab = self.editors.active_id();
+        let tab = self.vars_tab(self.editors.active_id());
         let is = |v: &nsql_script::VarState, n: &str| v.name.eq_ignore_ascii_case(n);
         let mut shared_dirty = false;
         let mut global_dirty = false;
@@ -537,7 +560,7 @@ impl App {
     pub(crate) fn run_vars(&self) -> Option<Vec<nsql_script::VarState>> {
         Some(
             self.tab_vars
-                .get(&self.editors.active_id())
+                .get(&self.vars_tab(self.editors.active_id()))
                 .cloned()
                 .unwrap_or_default(),
         )

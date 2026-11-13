@@ -2475,6 +2475,7 @@ impl Runner {
         self.run_depth -= 1;
         if self.run_depth == 0 {
             self.hold_finish(false, None, emit);
+            self.emit_vars_if_dirty(emit);
         }
         usize::from(!ok)
     }
@@ -2531,42 +2532,48 @@ impl Runner {
         }
         // 가장 바깥 실행이 끝났다 = 변수 표의 바뀐 것을 한 번에 알린다(`@스크립트` 안쪽에서는 알리지 않는다).
         if self.run_depth == 0 {
-            let changed = self.engine.vars.take_dirty();
-            let defines_dirty = std::mem::take(&mut self.engine.defines_dirty);
-            if !changed.is_empty() || defines_dirty {
-                // 층별로 따로(T-153 후속 10-26): 탭 층은 호스트가 다음 실행에 되돌려 주고 · 공유 층은 러너가 들고 · 글로벌 층은 호스트가 전파.
-                let mut layered =
-                    |layer: nsql_script::MacroLayer| -> Vec<(String, String, String)> {
-                        let pairs: Vec<(String, String)> = self
-                            .engine
-                            .defines
-                            .layer(layer)
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect();
-                        pairs
-                            .into_iter()
-                            .map(|(k, v)| {
-                                let shown = self.engine.define_display(&k, &v);
-                                (k, v, shown)
-                            })
-                            .collect()
-                    };
-                let defines = layered(nsql_script::MacroLayer::Local);
-                let defines_shared = layered(nsql_script::MacroLayer::Shared);
-                let defines_global = layered(nsql_script::MacroLayer::Global);
-                emit(RunEvent::Vars {
-                    local: self.engine.vars.local_states(),
-                    shared: self.engine.vars.shared_states(),
-                    global: self.engine.vars.global_states(),
-                    changed,
-                    defines,
-                    defines_shared,
-                    defines_global,
-                });
-            }
+            self.emit_vars_if_dirty(emit);
         }
         errors
+    }
+
+    /// ★ 변수 표의 바뀐 것을 한 번에 알린다(`RunEvent::Vars` · 바뀐 것이 없으면 아무것도 안 함) — 스크립트 실행과 **한 단위 실행**
+    /// (`run_whole`)이 함께 쓴다. 사용자 11-13: AI 탭의 ▶·▦·자동 표시와 객체 소스 탭 F5는 `run_whole`인데 이 알림이 없어, 입력 창에
+    /// 넣은 바인드 값이 호스트의 변수 표에 남지 않고(변수 창에 안 보임) 다음 실행 때 다시 물었다.
+    fn emit_vars_if_dirty(&mut self, emit: &mut dyn FnMut(RunEvent)) {
+        let changed = self.engine.vars.take_dirty();
+        let defines_dirty = std::mem::take(&mut self.engine.defines_dirty);
+        if !changed.is_empty() || defines_dirty {
+            // 층별로 따로(T-153 후속 10-26): 탭 층은 호스트가 다음 실행에 되돌려 주고 · 공유 층은 러너가 들고 · 글로벌 층은 호스트가 전파.
+            let mut layered = |layer: nsql_script::MacroLayer| -> Vec<(String, String, String)> {
+                let pairs: Vec<(String, String)> = self
+                    .engine
+                    .defines
+                    .layer(layer)
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                pairs
+                    .into_iter()
+                    .map(|(k, v)| {
+                        let shown = self.engine.define_display(&k, &v);
+                        (k, v, shown)
+                    })
+                    .collect()
+            };
+            let defines = layered(nsql_script::MacroLayer::Local);
+            let defines_shared = layered(nsql_script::MacroLayer::Shared);
+            let defines_global = layered(nsql_script::MacroLayer::Global);
+            emit(RunEvent::Vars {
+                local: self.engine.vars.local_states(),
+                shared: self.engine.vars.shared_states(),
+                global: self.engine.vars.global_states(),
+                changed,
+                defines,
+                defines_shared,
+                defines_global,
+            });
+        }
     }
 
     /// `@path`(cwd 기준) · `@@path`·`:r path`(호출 스크립트 폴더 기준 · 없으면 cwd) → 실제 경로.
@@ -4951,6 +4958,26 @@ SELECT * FROM t;
     }
 
     /// D-137: 빠진 입력 찾기 → 넣기 → 실행(바인드 = 타입 있는 값 · 치환 = 글자) · 다시 물을 것이 없다.
+    /// 한 단위 실행(`run_whole`)도 변수 표 변경을 알린다 — 입력 창 값이 호스트 표에 남는다(11-13).
+    #[test]
+    fn run_whole_reports_changed_vars() {
+        let mut r = runner();
+        r.apply_inputs(vec![(
+            nsql_script::InputKind::Bind,
+            "N".into(),
+            "41".into(),
+            None,
+        )]);
+        let mut ev: Vec<RunEvent> = Vec::new();
+        let mut no_prompt = |_: &str| None;
+        let errs = r.run_whole("SELECT :N + 1 AS n", &mut no_prompt, &mut |e| ev.push(e));
+        assert_eq!(errs, 0, "{ev:?}");
+        let told = ev.iter().any(
+            |e| matches!(e, RunEvent::Vars { local, .. } if local.iter().any(|v| v.name == "N")),
+        );
+        assert!(told, "Vars 알림에 N이 있어야 한다: {ev:?}");
+    }
+
     #[test]
     fn missing_inputs_then_apply() {
         // D-272: SQLite 기본은 미정의 `&`를 묻지 않는다 → 입력 창 기법 자체를 보는 이 시험은 `on`으로 고정.

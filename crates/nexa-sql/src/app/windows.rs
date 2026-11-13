@@ -392,12 +392,12 @@ impl App {
         self.redraw();
     }
 
-    /// 변수 창의 제목 = 지금 편집기 탭.
+    /// 변수 창의 제목 = 지금 편집기 탭(뷰 탭이 활성이면 그 짝 편집기 탭 · `vars_tab`).
     pub(crate) fn vars_win_context(&mut self) {
         if !self.vars_win.is_open() {
             return;
         }
-        let id = self.editors.active_id();
+        let id = self.vars_tab(self.editors.active_id());
         let title = self
             .editors
             .tab_list()

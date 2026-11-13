@@ -1157,7 +1157,9 @@ impl App {
                     defines_shared,
                     defines_global,
                 } => {
-                    self.tab_defines.insert(self.sess.run_editor, defines);
+                    // 변수 표의 주인 탭(뷰 탭에서 시작한 실행 = 짝 편집기 탭 · 11-13 `vars_tab`).
+                    let ved = self.vars_tab(self.sess.run_editor);
+                    self.tab_defines.insert(ved, defines);
                     self.sess.shared_macros = defines_shared;
                     // 스크립트가 치환 변수 글로벌 층을 바꿨으면(`DEFINE x GLOBAL`) 원천 갱신 + 모든 세션 러너에 전파(T-153 후속 10-26).
                     if defines_global != self.global_macros {
@@ -1171,18 +1173,18 @@ impl App {
                         self.global_vars_changed();
                     }
                     self.vars_changed = (
-                        self.sess.run_editor,
+                        ved,
                         changed.iter().map(|n| n.to_ascii_uppercase()).collect(),
                     );
                     self.vars_win.redraw();
-                    self.vars_persist_save(self.sess.run_editor, &local);
+                    self.vars_persist_save(ved, &local);
                     // ★ 변수 표가 바뀌었으면 프로젝트 자동 저장 대상(사용자 11-12 "변수가 다음 실행 때 없어진다"): 무제 탭의 변수는
                     //   프로젝트 파일에 담기는데(T-153 ③), 변경 감시(`project_change_gen`)가 변수를 보지 않아 변수만 바꾸면 저장되지
                     //   않았다 — 앱이 정상 종료되지 않으면(강제 종료·재빌드 재시작) 사라졌다.
-                    if self.tab_vars.get(&self.sess.run_editor) != Some(&local) {
+                    if self.tab_vars.get(&ved) != Some(&local) {
                         self.project_touch();
                     }
-                    self.tab_vars.insert(self.sess.run_editor, local);
+                    self.tab_vars.insert(ved, local);
                     self.sess.shared_vars = shared;
                     if !line.is_empty() {
                         self.log_win.push(LogEntry::new(
