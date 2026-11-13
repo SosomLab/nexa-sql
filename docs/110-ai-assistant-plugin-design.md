@@ -496,6 +496,7 @@
 ### 16-11 편집기 연동 보강 · 도구 27(2026-11-12 저녁 · 8c084629)
 
 - **도구 27** = list_commands · run_command · get_setting · set_setting · get_editor_text · set_editor_text · **edit_editor** · format_sql · search_objects · list_tabs · switch_tab · list_files · open_file · list_extensions · set_extension_enabled · meta_stats · describe_object · object_source · list_profiles · session_info · connect · run_query · get_result · get_output · get_log · explain · skill.
+- ★ **11-14 추가(0094d7c8)** = `bookmarks`(읽기 · list|goto · filter · scope · id · mnemonic) · `edit_bookmark`(쓰기 · add|rename|note|mnemonic|delete · 편집기 탭 필요) · `search_files`(읽기 · 비동기 · 검색 패널을 열고 채움 · query · case · word · regex · where(패널 문법 "폴더, *.sql") · where_case · limit) · `reveal_object`(읽기 · 비동기 · 객체 탐색기로 전환해 표/컬럼 선택 · name · schema · member) · `disconnect`(쓰기 · scope=current|all · 미커밋 연결은 남김) · `open_file` line·column · 새 스킬 `bookmarks` · objects(reveal_object) · files(search_files) · connections(disconnect) 스킬 갱신 · 협업 판정 = [journal 11-14 §5](journal/2026-11-14.md)(✗ search_files case·regex 토글 미적용).
 - `get_editor_text` = 본문 + `<caret line column total_lines/>` · `<selection>` · `<statement_at_caret lines="a-b">`(AI가 "커서가 있는 문장"을 정확히 집도록).
 - `edit_editor`(쓰기 · 승인 카드) = op `replace`(+ `text`) · `sort_asc` · `sort_desc` · `unique` · `reverse` · `upper` · `lower` · `trim` · `select` · 범위 = `from_line`/`to_line`(없으면 선택 → 커서 문장) · 범위 밖 = 오류 · 되돌리기 = Ctrl+Z 한 단계 · 채팅 탭이 활성이면 거부(편집기 탭 또는 분할 창에서).
 - `explain` = 운영에서도 실행(문장 단위 · 2단 무장·보류 커밋 건너뜀 = 계획만 보고 데이터는 안 바꿈 · analyze 고정 끔).
@@ -535,6 +536,8 @@ AI 도구 호출(run_query · set_setting · run_command …)
 | Destructive | DROP · TRUNCATE · ALTER · RENAME · CREATE OR REPLACE · GRANT/REVOKE | 2단계 | 2단계 |
 | TxEnd | COMMIT · ROLLBACK | 카드 | **거부** |
 | (AppWrite 예외 · 11-14 8b82af2a) | `run_command conn.disconnect`(접속 해제) | 카드 | **카드**(실행 메뉴 명령이지만 거부 아님) · 세션 실행 중/보조 작업 중 · 미커밋(tx_pending·prod_held)이면 "not executed: … busy / uncommitted changes …" |
+| (Read로 내림 · 11-14 0094d7c8) | `run_command view.*`(패널·창 열기) · `edit_editor op=select`(줄 선택) | 바로 실행 | 바로 실행 |
+| (AppWrite · 11-14 0094d7c8) | `edit_bookmark` · `disconnect` 도구 · `run_command conn.disconnect` = 공유 연결 선택 메뉴 없이 끊음(카드에 "이 연결을 쓰는 탭 N개") | 카드 | 카드 |
 | (Read로 내림 · 11-12 c4b91fb9) | 변수 대입 = `set_var`(값·수식) · `run_query`가 `EXEC :이름 := 식`/클라이언트 명령만 | 바로 실행 | 바로 실행(보류 건너뜀) |
 | Protection | 보호 설정(`run.prod_*` · `tx.*` · `backup.*` · `ai.guard_*` · `ai.auto` · `ai.codex_auto` · `ai.permission_mode` · `ai.enabled` · `ai.max_rows`) · 실행 메뉴 명령(`run.*` · `tx.*` · `hold.*` · `conn.*` · `sess.*` · `grid.apply*` · `import.*`) | 카드(Auto여도) | **거부** |
 

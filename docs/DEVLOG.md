@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-14 새벽 5 (Windows · 개발 × 협업 · AI 도구 5)** — bookmarks · edit_bookmark · search_files · reveal_object · disconnect · open_file 줄(0094d7c8) · 빌드 3분 41초 · V2·통합 ✓ · ✗ search_files case·regex 미적용 · [journal 11-14 §5](journal/2026-11-14.md)
 - **2026-11-14 새벽 4 (Windows · 개발 × 협업 · describe·접속 해제·작성 상자)** — describe_object 컬럼 직접 적재 · WHERE 1=0 동의 없이 · 접속 해제 승인 카드 · 작성 상자 높이 · 단계 원(8b82af2a) · 빌드 54초 · V2·통합 ✓ · [journal 11-14 §4](journal/2026-11-14.md)
 - **2026-11-14 새벽 3 (Windows · 개발 × 협업 · 메타 우선)** — 메타 우선 하네스 · 카탈로그 조회 동의 없이 · 코멘트 검색 · 진행 단계 채운 원(2872aa63) · 빌드 1분 31초 · V2·통합 ✓ · [journal 11-14 §3](journal/2026-11-14.md)
 - **2026-11-14 새벽 2 (Windows · 개발 × 협업 · AI 채팅 탭 독립)** — 채팅 탭 = 독립 단위(세션 표식 · 자기 연결·변수 표 · 편집기 기능 흐림) · 코드 블록 클라이언트 명령 문장 단위 · 변수 창 탭 전환 · 낱말 꼬리 교체(f18b7a68) · 빌드 57초 · V2 전부 ✓ · [journal 11-14 §2](journal/2026-11-14.md)
