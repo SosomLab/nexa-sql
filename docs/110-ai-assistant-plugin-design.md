@@ -395,6 +395,8 @@
 - **`/skills`**(사용자 11-11): 색인(이름 — 언제) + 안내 · `/skills <이름>` = 플레이북 본문(모델이 받는 영어 글 그대로) · 모르는 이름 = 목록 안내. 헤드리스 `ai.send:/…`는 슬래시로 푼다(협업 관찰).
 - MCP 구성 요약(사용자 질문 11-11): API 모드 = 요청 `tools`에 18종 직접 · Claude CLI = `--mcp-config`의 `nexa` 서버 하나(`nsql mcp-bridge` stdio ↔ 앱 TCP `ai.mcp_port`) + `--strict-mcp-config` + `--permission-prompt-tool mcp__nexa__approve` + `--append-system-prompt` · Codex = app-server `dynamicTools`(MCP 아님) · 스킬 본문은 `skill(name)`.
 
+- ★ **메타 우선(11-14 · 2872aa63)** = `ai::guard::is_catalog_query(sql, dialect)`(데이터 사전만 읽는 조회 · 보수적) · `ai.meta_first`(기본 on) = 그 턴에 search_objects/describe_object/meta_stats 없이 카탈로그 run_query를 하면 한 번 "not executed: this reads the data dictionary…"로 되돌림(턴당 1회) · `ai.meta_auto`(기본 on) = 카탈로그 조회는 행 데이터 동의 카드 없이(`rows_allowed`는 그대로 · 사용자 표·조인은 종전대로 동의) · search_objects = 표·컬럼 코멘트도 검색(비ASCII 낱말 = 컬럼 코멘트까지) · 요약 줄 "comments loaded for: …" · 코멘트 미적재 스키마 = 지연 적재 + hint · describe_object 컬럼 줄 끝 `-- 코멘트` · 협업 판정 ✓([journal 11-14 §3](journal/2026-11-14.md)).
+
 ## 16. 연계 구조 — MCP · hooks · skills · agents(2026-11-11 밤 · 사용자 "연계에 필요한 기능을 구성·개발하고 유기적 연계를 문서로")
 
 ### 16-1 네 개념과 공급자 추상(사용자 "용어는 Claude식 · Codex 등 다른 AI도 같은 기능을 추상화 + 구현부")
@@ -603,6 +605,8 @@ AI 도구 호출(run_query · set_setting · run_command …)
 |---|---|---|
 | `ai.send_target` | side | 편집기 요청을 보낼 곳(side = 분할 창 · tab = 채팅 탭) |
 | `ai.error_offer` | **off**(b6ff48ba) | 실행 오류 카드에 [AI] 버튼 |
+| `ai.meta_first` | on(2872aa63 · 11-14) | 카탈로그 조회 전에 앱이 적재한 메타(search_objects 등)를 먼저 — 아니면 턴당 1회 되돌림 |
+| `ai.meta_auto` | on(2872aa63 · 11-14) | 카탈로그 조회는 행 데이터 동의 카드 없이 |
 | `ai.replace_target` | selection | 코드 블록 [교체] 대상(selection = 선택 · statement = 커서 문장) |
 | `ai.diff_context` | 3 | 변경 미리보기의 앞뒤 문맥 줄 수 |
 | `ai.line_links` | on | 답의 "N행"·"a~b행"을 밑줄 링크로 |
