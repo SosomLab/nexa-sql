@@ -380,10 +380,18 @@ impl App {
         }
         // ★ 객체 변경 전 백업(114 §7-2 · 사용자 10-15): DROP · CREATE OR REPLACE/ALTER · TRUNCATE/RENAME 대상이 있으면 현재 DDL을
         //   먼저 파일로 받고(탐색기 메타 스레드 · 비동기) 끝나면 같은 인자로 재진입한다(건너뜀 깃발 = 재진입 · 삭제 창).
-        if !std::mem::take(&mut self.objbk_skip_once)
-            && self.objbk.is_none()
-            && self.objbk_plan(&src, line_base, all, whole)
-        {
+        let objbk_skip = std::mem::take(&mut self.objbk_skip_once);
+        // ★ 백업이 도는 동안의 다른 변경 실행은 받지 않는다(11-13 데이터 보호): 종전에는 백업 중이면 이 게이트를 통째로 건너뛰어
+        //   두 번째 DDL이 **백업 없이** 바로 실행됐고, 미뤄 둔 첫 실행과 순서도 뒤바뀌었다. 조회는 그대로 된다.
+        if !objbk_skip && self.objbk.is_some() && !crate::app::ai::sql_is_readonly(&src) {
+            let msg = t(Msg::StObjBackupBusy).to_string();
+            self.toasts
+                .push(toast::ToastKind::Info, t(Msg::ObjBackupTitle), msg.clone());
+            self.sess.status = msg;
+            self.redraw();
+            return;
+        }
+        if !objbk_skip && self.objbk.is_none() && self.objbk_plan(&src, line_base, all, whole) {
             return;
         }
         self.sess.busy = true;

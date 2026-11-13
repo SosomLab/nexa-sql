@@ -406,6 +406,8 @@ impl App {
         if run.prod {
             let msg = tf(Msg::OutObjBackupBlocked, &[&e]);
             self.objbk = None;
+            // AI 도구가 기다리던 실행이면 실패로 답한다(실행하지 않았다 · 11-13).
+            self.ai_objbk_result(Some(msg.clone()));
             self.output_push(ed, crate::output::OutKind::Error, &msg);
             self.toasts
                 .push(toast::ToastKind::Error, t(Msg::ObjBackupTitle), msg.clone());
@@ -441,14 +443,33 @@ impl App {
             ),
         );
         let (src, lb, all, whole) = (run.src, run.line_base, run.all, run.whole);
-        self.with_sess(run.sid, |a| {
+        // 재진입이 실제로 시작됐는가(문지기·열린 트랜잭션 가드에 막히면 시작되지 않는다) · 막혔으면 그 이유(상태줄 글).
+        let started = self.with_sess(run.sid, |a| {
             a.objbk_skip_once = true;
             a.prod_confirmed_once = true;
             a.run_text_in(src, lb, all, whole);
             a.objbk_skip_once = false;
             a.prod_confirmed_once = false;
+            if a.sess.busy {
+                None
+            } else {
+                Some(a.sess.status.clone())
+            }
         });
+        // ★ AI 도구가 기다리던 실행(11-13): 시작됐으면 결과는 보통 완료 판정이 보낸다 · 막혔으면(또는 세션이 사라졌으면) 실패로 답한다.
+        match started {
+            Some(None) => self.ai_objbk_result(None),
+            Some(Some(why)) => self.ai_objbk_result(Some(why)),
+            None => self.ai_objbk_result(Some("the session is gone".into())),
+        }
         self.redraw();
+    }
+
+    /// 방금 이 실행이 객체 백업을 시작했는가(AI 도구가 "실행이 미뤄졌다"를 알아보는 판정 · 백업 계획 직후에만 참).
+    pub(crate) fn objbk_just_started(&self) -> bool {
+        self.objbk
+            .as_ref()
+            .is_some_and(|r| r.started.elapsed() < std::time::Duration::from_secs(2))
     }
 
     /// 틱 — 응답 대기 상한 + 주기 정리(`backup.prune_interval_min` · 0 = 끔). 돌려주는 값 = 다음 깨울 시각.

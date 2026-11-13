@@ -129,6 +129,10 @@ pub(crate) struct AiState {
     /// ★ 방금 허용한 쓰기 카드의 id(11-13 "모두 동일한 개념으로"): 영향 행 수가 나오면 **새 카드를 띄우지 않고** 이 카드에
     /// 영향 줄만 덧붙여 장전된 [허용]으로 되돌린다(`ai_impact_done`).
     pub last_card: Option<String>,
+    /// ★ 도구 `run_query`의 실행이 **객체 백업 뒤로 미뤄졌다**(운영 DROP 등 · 11-13): 대기 중인 도구 호출(`pending`)을 버리지 않고
+    /// 백업 → 재진입 실행의 결과를 같은 통로로 보낸다. 종전에는 "not executed"를 먼저 답했는데 백업이 끝나면 문장이 **실제로
+    /// 실행**돼 어시스턴트가 아는 것과 DB가 어긋났다(재시도하면 이중 실행).
+    pub objbk_wait: bool,
     /// ★ 두 번 눌러 허용하는 카드의 첫 누름 시각(`ApprovalReply::Api::twice` · 시간이 지나면 `ai_tick_due`가 비운다).
     pub armed: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
@@ -2088,6 +2092,10 @@ impl App {
         }
         self.ai.last_card = None;
         self.ai.armed = None;
+        // ★ ■(중지): 백업 뒤로 미뤄 둔 AI의 실행은 **취소**한다(백업은 버리고 문장을 실행하지 않는다 — 멈춘 뒤에 DROP이 나가면 안 된다).
+        if std::mem::take(&mut self.ai.objbk_wait) {
+            self.objbk = None;
+        }
         self.ai.pending = None;
         self.ai.status = t(Msg::AiStopped).into();
         self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
@@ -2607,6 +2615,34 @@ impl App {
         std::time::Duration::from_millis(
             self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as u64,
         )
+    }
+
+    /// ★ 객체 백업이 끝났다(11-13): `fail` = 실행하지 못한 이유(백업 실패로 막힘 · 재진입이 보호 장치에 막힘) → 대기 중인 도구
+    /// 호출에 **실패로** 답한다 · `None` = 재진입 실행이 시작됐다 → 시간 초과를 지금부터 다시 세고 보통 완료 판정에 맡긴다.
+    pub(crate) fn ai_objbk_result(&mut self, fail: Option<String>) {
+        if !std::mem::take(&mut self.ai.objbk_wait) {
+            return;
+        }
+        match fail {
+            Some(why) => {
+                if let Some(mut p) = self.ai.pending.take() {
+                    if let Some(r) = p.reply.take() {
+                        let _ = r.send(ToolReply {
+                            output: format!(
+                                "not executed: {} (the statement was NOT run - tell the user)",
+                                redact(&why)
+                            ),
+                            ok: false,
+                        });
+                    }
+                }
+            }
+            None => {
+                if let Some(p) = self.ai.pending.as_mut() {
+                    p.since = Instant::now();
+                }
+            }
+        }
     }
 
     /// 지금 세션이 운영 접속인가.
@@ -3656,10 +3692,14 @@ impl App {
                 // ★ 실행이 시작되지 못했으면(읽기 전용 · 보류 차단 · DDL 가드 · 백업 대기) 성공이 아니라 **실패로** 알린다 — 종전에는
                 //   250 ms 뒤 상태줄 글이 ok=true로 가서 어시스턴트가 "실행됨"으로 읽었다.
                 if !self.sess.busy {
-                    if let Some(mut p) = self.ai.pending.take() {
+                    if self.objbk_just_started() {
+                        // ★ 객체 백업 뒤 실행(11-13): 답을 미룬다 — 백업이 끝나 재진입 실행이 끝나면 그 결과를, 백업이 실패하면
+                        //   (운영 = 실행 막음) 그 이유를 같은 통로로 보낸다(`ai_objbk_result`). 그동안 다음 도구는 줄을 선다.
+                        self.ai.objbk_wait = true;
+                    } else if let Some(mut p) = self.ai.pending.take() {
                         if let Some(r) = p.reply.take() {
                             let _ = r.send(err(format!(
-                                "not executed: {} (blocked by the app's protection, or waiting for an object backup - tell the user)",
+                                "not executed: {} (blocked by the app's protection - tell the user)",
                                 redact(&self.sess.status)
                             )));
                         }
@@ -3751,6 +3791,9 @@ impl App {
             } else {
                 None
             }
+        } else if self.ai.objbk_wait {
+            // 객체 백업 뒤 실행을 기다리는 중 — 완료·시간 초과 판정을 멈춘다(백업은 대상마다 자체 상한이 있다 · `ai_objbk_result`가 푼다).
+            None
         } else if !self.sess.busy && p.since.elapsed() > std::time::Duration::from_millis(250) {
             if self.sess.run_had_err {
                 Some((redact(&self.sess.status), false))
