@@ -194,6 +194,9 @@ impl Assembled {
 /// SSE 싱크 — `nsql_net::request`의 `sink`로 꽂혀 조각마다 이벤트 경계(`\n\n`)로 자르고 블록을 조립한다.
 pub(crate) struct SseSink<'a> {
     buf: Vec<u8>,
+    /// ★ 받은 본문의 앞부분 원문(상한 [`RAW_KEEP`] · 사용자 11-13 "HTTP 503: " 뒤가 비어 있었다): HTTP 오류의 본문은 SSE가 아니라
+    /// JSON 한 덩어리인데, `finish`가 남은 조각을 사건으로 풀다가(`data:` 줄이 없어) 버려 **오류 글이 늘 비었다** → 원문을 따로 든다.
+    raw: Vec<u8>,
     /// 조립 중 블록(인덱스 순) · 도구 입력 JSON 조각 · 사고 서명.
     pub out: Assembled,
     partial_json: Vec<String>,
@@ -204,6 +207,7 @@ impl<'a> SseSink<'a> {
     pub(crate) fn new(emit: &'a mut dyn FnMut(AiEvent)) -> Self {
         SseSink {
             buf: Vec::new(),
+            raw: Vec::new(),
             out: Assembled::default(),
             partial_json: Vec::new(),
             emit,
@@ -381,6 +385,10 @@ fn append_str(block: &mut Json, key: &str, add: &str) {
 
 impl Write for SseSink<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.raw.len() < RAW_KEEP {
+            let n = buf.len().min(RAW_KEEP - self.raw.len());
+            self.raw.extend_from_slice(&buf[..n]);
+        }
         self.buf.extend_from_slice(buf);
         self.drain_events();
         Ok(buf.len())
@@ -388,6 +396,48 @@ impl Write for SseSink<'_> {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+/// 오류 글에 쓰려고 드는 본문 원문의 상한(바이트).
+const RAW_KEEP: usize = 16 * 1024;
+
+/// ★ HTTP 오류 글(순수 · 11-13): `HTTP <상태>: <서버 메시지>` + 요청 id(문의·대조용) + 상태별 안내 한 줄. 본문이 비면 그렇다고 적는다
+/// (앞단 프록시·게이트웨이가 본문 없이 5xx를 내는 경우). 서버 메시지는 오류 JSON의 `error.message` · 아니면 본문 그대로(앞 400자).
+pub(crate) fn http_error_text(
+    status: u16,
+    body: &str,
+    request_id: Option<&str>,
+    retry_after: Option<&str>,
+) -> String {
+    use nsql_i18n::{t, tf, Msg};
+    let body = body.trim();
+    let msg = json_parse(body)
+        .ok()
+        .and_then(|v| jget(&v, "error").map(|e| jstr(e, "message")))
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| body.chars().take(400).collect());
+    let mut out = if msg.trim().is_empty() {
+        format!("HTTP {status}: {}", t(Msg::AiHttpEmptyBody))
+    } else {
+        format!("HTTP {status}: {}", msg.trim())
+    };
+    if let Some(id) = request_id.filter(|s| !s.is_empty()) {
+        out.push_str(&format!(" (request-id {id})"));
+    }
+    let hint = match status {
+        429 => Some(tf(
+            Msg::AiHttpRateLimited,
+            &[retry_after.filter(|s| !s.is_empty()).unwrap_or("?")],
+        )),
+        500 | 502 | 503 | 504 | 529 => Some(t(Msg::AiHttpUnavailable).to_string()),
+        401 | 403 => Some(t(Msg::AiHttpAuth).to_string()),
+        _ => None,
+    };
+    if let Some(h) = hint {
+        out.push('\n');
+        out.push_str(&h);
+    }
+    out
 }
 
 /// 한 턴의 네트워크 호출 — 응답을 조립해 돌려준다(HTTP 오류는 본문을 오류로).
@@ -428,14 +478,14 @@ pub(crate) fn stream_once(
             Ok(sink.out)
         }
         Ok(resp) => {
-            // 오류 본문은 SSE가 아니라 JSON 한 덩어리 — 싱크 버퍼에 남아 있다.
-            let text = String::from_utf8_lossy(&sink.buf).into_owned();
-            let msg = json_parse(text.trim())
-                .ok()
-                .and_then(|v| jget(&v, "error").map(|e| jstr(e, "message")))
-                .filter(|m| !m.is_empty())
-                .unwrap_or(text);
-            Err(format!("HTTP {}: {}", resp.status, msg.trim()))
+            // 오류 본문은 SSE가 아니라 JSON 한 덩어리 — 싱크가 따로 든 원문에서 읽는다(사건 버퍼는 `finish`가 이미 비웠다).
+            let text = String::from_utf8_lossy(&sink.raw).into_owned();
+            Err(http_error_text(
+                resp.status,
+                &text,
+                resp.header("request-id"),
+                resp.header("retry-after"),
+            ))
         }
         Err(e) => Err(e.to_string()),
     }
@@ -592,6 +642,43 @@ pub(crate) fn run_turn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn http_error_body_survives_the_sse_sink_and_reads_well() {
+        use super::*;
+        use std::io::Write;
+        // 오류 본문(JSON 한 덩어리 · SSE 아님)을 받아도 원문이 남는다 — 종전에는 `finish`가 버려 "HTTP 503: "만 보였다.
+        let mut emit = |_: AiEvent| {};
+        let mut sink = SseSink::new(&mut emit);
+        let body =
+            br#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        sink.write_all(body).expect("write to the sink");
+        sink.finish();
+        let text = String::from_utf8_lossy(&sink.raw).into_owned();
+        let e = http_error_text(503, &text, Some("req_123"), None);
+        assert!(
+            e.starts_with("HTTP 503: Overloaded (request-id req_123)"),
+            "{e}"
+        );
+        assert!(e.lines().count() == 2, "상태별 안내 한 줄: {e}");
+        // 본문이 비면 그렇다고 적는다(프록시·게이트웨이).
+        let e = http_error_text(503, "  ", None, None);
+        assert!(!e.trim_end().ends_with(':'), "{e}");
+        // JSON이 아닌 본문은 그대로(앞부분만) · 안내 없는 상태는 한 줄.
+        let e = http_error_text(418, "<html>teapot</html>", None, None);
+        assert_eq!(e, "HTTP 418: <html>teapot</html>");
+        // 429 = retry-after를 안내에 싣는다.
+        let e = http_error_text(
+            429,
+            r#"{"error":{"message":"rate limited"}}"#,
+            None,
+            Some("12"),
+        );
+        assert!(
+            e.starts_with("HTTP 429: rate limited") && e.contains("12"),
+            "{e}"
+        );
+    }
+
     use super::*;
 
     #[test]
