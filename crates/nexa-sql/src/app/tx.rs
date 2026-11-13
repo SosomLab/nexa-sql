@@ -311,6 +311,11 @@ impl App {
             self.sess.touch();
             self.sess.submit(pass, worker::Cmd::Commit);
             self.sync_gate();
+        } else {
+            // 문지기에 막혔다(실행 중) = 커밋을 보내지 못했다 — 말없이 끝나지 않게 알린다(11-13).
+            let msg = t(Msg::HoldCommitBlocked).to_string();
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.sess.status = msg;
         }
         self.sync_tx_ui();
     }
@@ -329,6 +334,11 @@ impl App {
             if self.sess.prod_held.is_some() {
                 self.tx_hold_card_show();
             }
+            // ★ 만료를 알린다(사용자 11-13 "Commit을 2중으로 클릭했는데 처리되지 않았다": 빠른 둘째 클릭은 툴바 연타 차단에
+            //   버려지고, 시간이 지나면 말없이 풀려 상태줄에는 "다시 누르면 반영"이 남아 있었다).
+            let msg = t(Msg::HoldCommitExpired).to_string();
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.sess.status = msg;
             self.sync_tx_ui();
             None
         } else {

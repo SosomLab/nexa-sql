@@ -800,6 +800,8 @@ impl App {
         self.run_toast.configure_ai_hint(&hint);
         self.ai_view
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
+        self.ai_view
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         let prov = self.ai_provider();
         let mode_now = self
             .ai_cur()
@@ -1447,7 +1449,7 @@ impl App {
             if self.ai.approval.is_none() || now.duration_since(at) >= self.ai_twice_wait() {
                 self.ai.armed = None;
             } else {
-                let next = now + std::time::Duration::from_millis(100);
+                let next = now + std::time::Duration::from_millis(33);
                 anim = Some(anim.map_or(next, |a| a.min(next)));
             }
             self.redraw();

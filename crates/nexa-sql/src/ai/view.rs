@@ -240,6 +240,18 @@ pub(crate) struct AiView {
     drag_from: Option<(usize, i32)>,
     drag_to: Option<(usize, i32)>,
     dragging: bool,
+    /// ★ 더블클릭한 점(평면 줄 · x px · 사용자 11-13 "더블클릭시 선택"): 다음 그리기에서 그 자리의 **낱말**을 선택으로 푼다.
+    word_pick: Option<(usize, i32)>,
+    /// 대본에서 마지막으로 누른 때·점(더블클릭 판정 — 이 앱의 호스트는 `InputEvent::DoubleClick`을 만들지 않는다 · 컨트롤이 스스로
+    /// `ui.dblclick_ms`로 판정하는 관례) · 간격(ms).
+    last_down: Option<(std::time::Instant, Point)>,
+    dblclick_ms: u128,
+    /// ★ 보낸 프롬프트 기록(오래된 것부터 · 사용자 11-13): 작성 상자 1행 1열에서 ↑ = 앞 기록 · 끝에서 ↓ = 다음 기록.
+    /// `hist_at` = 지금 보이는 기록 자리(없으면 새 글) · `hist_draft` = 기록을 보기 전에 쓰던 글(마지막 기록에서 ↓ = 되돌린다).
+    /// 메모리에만 둔다(디스크에 쓰지 않는다 = 프롬프트에 든 민감한 글이 남지 않게).
+    hist: Vec<String>,
+    hist_at: Option<usize>,
+    hist_draft: Option<String>,
     line_pos: Vec<(usize, i32, i32)>,
     /// 코드 블록 아이콘 버튼 틴트 캐시(종류 · 색).
     icon_cache: RefCell<Vec<(u8, Color, Rc<IconImage>)>>,
@@ -334,6 +346,12 @@ impl Default for AiView {
             drag_from: None,
             drag_to: None,
             dragging: false,
+            word_pick: None,
+            last_down: None,
+            dblclick_ms: 400,
+            hist: Vec::new(),
+            hist_at: None,
+            hist_draft: None,
             line_pos: Vec::new(),
             icon_cache: RefCell::new(Vec::new()),
             transcript: Rect::default(),
@@ -775,6 +793,11 @@ impl AiView {
         self.line_pos.last().map(|(i, _, _)| *i)
     }
 
+    /// 더블클릭 간격(설정 `ui.dblclick_ms`).
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
+    }
+
     pub(crate) fn set_max_lines(&mut self, n: i32) {
         self.max_lines = n.clamp(1, 60);
     }
@@ -955,9 +978,87 @@ impl AiView {
         } else {
             self.actions.push(ViewAction::Send(trimmed.to_string()));
         }
+        // 기록(같은 글을 연달아 보내면 한 번만 · 상한 200).
+        let sent = trimmed.to_string();
+        if self.hist.last() != Some(&sent) {
+            self.hist.push(sent);
+            if self.hist.len() > 200 {
+                self.hist.remove(0);
+            }
+        }
+        self.hist_at = None;
+        self.hist_draft = None;
         self.composer.set_text("");
         self.slash.clear();
         self.stick_bottom = true;
+    }
+
+    /// ★ 앞 기록으로(1행 1열에서 ↑): 처음 들어갈 때 쓰던 글을 임시로 보관한다 · 캐럿은 맨 앞(↑를 이어 누르면 계속 거슬러 간다).
+    /// 기록이 없으면 false(키는 상자가 처리).
+    fn hist_prev(&mut self) -> bool {
+        let idx = match self.hist_at {
+            None => {
+                let Some(last) = self.hist.len().checked_sub(1) else {
+                    return false;
+                };
+                self.hist_draft = Some(self.composer.text());
+                last
+            }
+            // 가장 오래된 기록 = 더 갈 곳이 없다(그대로).
+            Some(0) => return true,
+            Some(i) => i - 1,
+        };
+        self.hist_at = Some(idx);
+        let text = self.hist[idx].clone();
+        self.composer.set_text(&text);
+        let mut inv = Invalidations::default();
+        self.composer.select_range(0, 0, &mut inv);
+        self.update_slash();
+        true
+    }
+
+    /// ★ 다음 기록으로(마지막 행 마지막 칸에서 ↓): 마지막 기록에서 한 번 더 = 보관해 둔 쓰던 글을 되돌린다(유실 없음).
+    /// 기록을 보는 중이 아니면 false. 캐럿은 끝(↓를 이어 누르면 계속 내려간다).
+    fn hist_next(&mut self) -> bool {
+        let Some(i) = self.hist_at else {
+            return false;
+        };
+        if i + 1 < self.hist.len() {
+            self.hist_at = Some(i + 1);
+            let text = self.hist[i + 1].clone();
+            self.composer.set_text(&text);
+        } else {
+            self.hist_at = None;
+            let draft = self.hist_draft.take().unwrap_or_default();
+            self.composer.set_text(&draft);
+        }
+        self.update_slash();
+        true
+    }
+
+    /// 글자 자리 `col`(경계) 둘레의 **낱말** 범위(글자 인덱스 · 반열림) — 낱말 = 글자·숫자·`_`가 이어진 것. 경계가 낱말 끝이면
+    /// 그 앞 낱말 · 낱말이 아닌 글자 위면 그 글자 하나 · 빈 자리·공백이면 None.
+    fn word_bounds(text: &str, col: usize) -> Option<(usize, usize)> {
+        let ch: Vec<char> = text.chars().collect();
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let at = if col < ch.len() && word(ch[col]) {
+            col
+        } else if col > 0 && col <= ch.len() && word(ch[col - 1]) {
+            col - 1
+        } else if col < ch.len() && !ch[col].is_whitespace() {
+            return Some((col, col + 1));
+        } else {
+            return None;
+        };
+        let mut a = at;
+        while a > 0 && word(ch[a - 1]) {
+            a -= 1;
+        }
+        let mut b = at + 1;
+        while b < ch.len() && word(ch[b]) {
+            b += 1;
+        }
+        Some((a, b))
     }
 
     fn complete_slash(&mut self) -> bool {
@@ -1231,6 +1332,22 @@ impl AiView {
                     };
                     self.drag_to = None;
                     self.dragging = self.drag_from.is_some();
+                    // ★ 대본 더블클릭 = 그 자리 낱말 선택(11-13): 같은 자리(±4 px)를 `ui.dblclick_ms` 안에 다시 눌렀을 때.
+                    let now = std::time::Instant::now();
+                    let dbl = !in_c
+                        && self.last_down.is_some_and(|(t0, q)| {
+                            now.duration_since(t0).as_millis() < self.dblclick_ms
+                                && (q.x - p.x).abs() <= self.s(4.0)
+                                && (q.y - p.y).abs() <= self.s(4.0)
+                        });
+                    self.last_down = (!dbl && !in_c).then_some((now, p));
+                    if dbl {
+                        if let Some(l) = self.line_at(p) {
+                            self.dragging = false;
+                            self.drag_from = None;
+                            self.word_pick = Some((l, p.x));
+                        }
+                    }
                 }
                 true
             }
@@ -1238,6 +1355,23 @@ impl AiView {
                 if self.composer.bounds().contains(Point { x, y }) {
                     self.composer.set_focused(true);
                     self.composer.on_event(ev, &mut inv);
+                }
+                true
+            }
+            // ★ 더블클릭(11-13): 버튼 = 한 번 더 누른 것 · 작성 상자 = 상자의 낱말 선택 · 대본 = 그 자리 낱말 선택(다음 그리기에서 푼다).
+            InputEvent::DoubleClick { x, y, .. } => {
+                let p = Point { x, y };
+                self.pressed = self.buttons.iter().position(|(_, r)| r.contains(p));
+                if self.pressed.is_none() {
+                    if self.composer.bounds().contains(p) {
+                        self.composer.set_focused(true);
+                        self.composer.on_event(ev, &mut inv);
+                    } else if let Some(l) = self.line_at(p) {
+                        self.dragging = false;
+                        self.drag_from = None;
+                        self.drag_to = None;
+                        self.word_pick = Some((l, x));
+                    }
                 }
                 true
             }
@@ -1305,6 +1439,31 @@ impl AiView {
                 ..
             } if self.composer.is_focused() => {
                 self.submit();
+                true
+            }
+            // ★ 프롬프트 기록(11-13): 1행 1열의 ↑ = 앞 기록(쓰던 글은 임시 보관) · 맨 끝의 ↓ = 다음 기록 → 마지막 다음 = 쓰던 글.
+            //   그 밖의 자리에서는 상자의 보통 이동(첫 줄 ↑ = 줄 맨 앞 · 마지막 줄 ↓ = 줄 끝).
+            InputEvent::Key {
+                key: CtlKey::Up,
+                shift: false,
+                primary: false,
+            } if self.composer.is_focused()
+                && self.composer.selection().is_none_or(|(a, b)| a == b)
+                && self.composer.caret() == 0
+                && self.hist_prev() =>
+            {
+                true
+            }
+            InputEvent::Key {
+                key: CtlKey::Down,
+                shift: false,
+                primary: false,
+            } if self.composer.is_focused()
+                && self.hist_at.is_some()
+                && self.composer.selection().is_none_or(|(a, b)| a == b)
+                && self.composer.caret() == self.composer.text().chars().count()
+                && self.hist_next() =>
+            {
                 true
             }
             InputEvent::Key {
@@ -1980,6 +2139,16 @@ impl AiView {
                 self.drag_to = None;
             }
         }
+        if let Some((l, px)) = self.word_pick.take() {
+            let c = self.resolve_col(dc, l, px, x, code_x);
+            let bounds = self
+                .lines
+                .iter()
+                .flatten()
+                .nth(l)
+                .and_then(|line| Self::word_bounds(&line.text, c));
+            self.sel = bounds.map(|(a, b)| ((l, a), (l, b)));
+        }
         let lines = std::mem::take(&mut self.lines);
         self.line_pos.clear();
         let mut flat_base = 0usize;
@@ -2288,30 +2457,35 @@ impl AiView {
                         let yy = ly + block_h + self.s(2.0);
                         let mut bx = x + self.s(8.0);
                         let armed = info.armed.as_ref().filter(|a| a.0 == msg.id);
-                        let again = armed.map(|a| {
-                            tf(Msg::AiAllowAgain, &[&a.1.div_ceil(1000).max(1).to_string()])
-                        });
                         for (btn, label, primary) in [
-                            (
-                                Btn::Approve(true),
-                                again.as_deref().unwrap_or(t(Msg::AiAllow)),
-                                true,
-                            ),
+                            (Btn::Approve(true), t(Msg::AiAllow), true),
                             (Btn::Approve(false), t(Msg::AiDeny), false),
                         ] {
                             let bw = dc.text_width(label) + self.s(24.0);
                             let r = Rect::new(bx, yy, bw, btn_h);
                             self.paint_button(dc, th, r, label, primary, btn);
-                            // 장전된 허용 버튼 = 남은 시간 막대(왼쪽에서 줄어든다).
+                            // ★ 장전된 허용 버튼 = 운영 Commit 2단과 같은 모양(사용자 11-13 "숫자 방식이 아니라 Commit처럼"):
+                            //   위험색 바탕 + 왼쪽부터 차오르는 흰 게이지(28 % · `sessions::arm_ratio`) · 글은 그대로 "Allow"(숫자·문구 변경 없음).
                             if let (true, Some((_, left, total))) = (primary, armed) {
-                                let h = self.s(2.0).max(2);
-                                let w = (r.w as u64 * *left / (*total).max(1)) as i32;
-                                if w > 0 {
-                                    dc.fill_rect(
-                                        Rect::new(r.x, r.bottom() - h, w, h),
-                                        Color(0x00FF_FFFF),
-                                    );
+                                let rad = self.s(4.0);
+                                dc.fill_round_rect(r, rad, th.danger);
+                                let total_d = std::time::Duration::from_millis(*total);
+                                let gone =
+                                    std::time::Duration::from_millis(total.saturating_sub(*left));
+                                if let Some(ratio) = crate::sessions::arm_ratio(gone, total_d) {
+                                    let gw = (r.w as f32 * ratio).round() as i32;
+                                    if gw > 0 {
+                                        dc.fill_round_rect_alpha(
+                                            Rect::new(r.x, r.y, gw.min(r.w), r.h),
+                                            rad,
+                                            Color(0x00FF_FFFF),
+                                            0.28,
+                                        );
+                                    }
                                 }
+                                let tw = dc.text_width(label);
+                                let ty = dc.text_center_y(r.y, r.h);
+                                dc.text(r.x + (r.w - tw) / 2, ty, r, label, Color(0x00FF_FFFF));
                             }
                             bx += bw + self.s(8.0);
                         }
@@ -3692,6 +3866,65 @@ mod tests {
             .any(|l| matches!(l.kind, LineKind::CodeHead(0))));
         assert_eq!(lines.iter().filter(|l| l.kind == LineKind::Code).count(), 2);
         assert_eq!(ci, 1);
+    }
+
+    #[test]
+    fn word_bounds_picks_the_word_under_the_point() {
+        let w = AiView::word_bounds;
+        let t = "ID 8 행('샘플 8')을 COL_FLAG";
+        assert_eq!(w(t, 0), Some((0, 2)), "낱말 안");
+        assert_eq!(w(t, 2), Some((0, 2)), "낱말 끝 경계 = 그 앞 낱말");
+        assert_eq!(w(t, 3), Some((3, 4)));
+        assert_eq!(w(t, 6), Some((5, 6)), "경계 앞이 낱말이면 그 낱말");
+        assert_eq!(w(t, 7), Some((7, 8)), "낱말이 아닌 글자 = 그 글자 하나");
+        let n = t.chars().count();
+        assert_eq!(w(t, n - 3), Some((n - 8, n)), "밑줄은 낱말에 든다");
+        assert_eq!(w(t, n), Some((n - 8, n)), "줄 끝 = 마지막 낱말");
+        assert_eq!(w("a  b", 2), None, "공백 사이");
+        assert_eq!(w("", 0), None);
+    }
+
+    #[test]
+    fn prompt_history_walks_and_keeps_the_draft() {
+        let key = |k| InputEvent::Key {
+            key: k,
+            shift: false,
+            primary: false,
+        };
+        let mut v = AiView::default();
+        v.composer.set_focused(true);
+        for q in ["first", "second"] {
+            v.set_composer_text(q);
+            v.on_event(&key(CtlKey::Enter));
+        }
+        v.take_actions();
+        // 쓰던 글이 있는 채로: 끝(캐럿 5) ↑ = 줄 맨 앞(상자 기본) → 1행 1열 ↑ = 앞 기록.
+        v.set_composer_text("draft");
+        v.on_event(&key(CtlKey::Up));
+        assert_eq!(v.composer_text(), "draft", "첫 ↑는 줄 맨 앞으로만");
+        v.on_event(&key(CtlKey::Up));
+        assert_eq!(v.composer_text(), "second");
+        v.on_event(&key(CtlKey::Up));
+        assert_eq!(v.composer_text(), "first");
+        v.on_event(&key(CtlKey::Up));
+        assert_eq!(v.composer_text(), "first", "가장 오래된 기록에서 멈춘다");
+        // 맨 앞(캐럿 0) ↓ = 줄 끝(상자 기본) → 끝 ↓ = 다음 기록 → 마지막 다음 = 쓰던 글.
+        v.on_event(&key(CtlKey::Down));
+        assert_eq!(v.composer_text(), "first");
+        v.on_event(&key(CtlKey::Down));
+        assert_eq!(v.composer_text(), "second");
+        v.on_event(&key(CtlKey::Down));
+        assert_eq!(v.composer_text(), "draft", "쓰던 글이 돌아온다");
+        v.on_event(&key(CtlKey::Down));
+        assert_eq!(v.composer_text(), "draft", "기록 밖에서는 아무 일도 없다");
+        // 기록에서 고른 글을 보내면 기록에 남고 자리는 새 글로.
+        v.on_event(&key(CtlKey::Up));
+        v.on_event(&key(CtlKey::Up));
+        assert_eq!(v.composer_text(), "second");
+        v.on_event(&key(CtlKey::Enter));
+        assert_eq!(v.take_actions(), vec![ViewAction::Send("second".into())]);
+        assert_eq!(v.hist, vec!["first".to_string(), "second".to_string()]);
+        assert!(v.hist_at.is_none() && v.hist_draft.is_none());
     }
 
     #[test]

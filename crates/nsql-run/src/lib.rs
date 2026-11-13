@@ -846,6 +846,11 @@ fn tx_effect(sql: &str, rows_affected: Option<u64>, dialect: Dialect) -> TxEffec
         TxControl::End => return TxEffect::Ended,
         TxControl::None => {}
     }
+    // ★ 계산만 하는 변수 대입(`EXEC :V := 식` · 수식 재계산)은 데이터를 바꾸지 않는다(11-13 사용자 "Select만 했는데 Commit 창") —
+    //   블록(알 수 없는 문장 = 변경)으로 세면 운영 보류에 "1문장 · 0행 미커밋"이 뜬다. 사용자 루틴 호출이 든 식은 그대로 변경.
+    if nsql_script::bind::is_plain_bind_assign(sql) {
+        return TxEffect::Clean;
+    }
     let class = TxClass::of_sql_in(sql, Some(dialect));
     match class {
         TxClass::None => TxEffect::Clean,
@@ -4416,6 +4421,15 @@ SELECT * FROM t;
             TxEffect::UserHold
         );
         assert_eq!(e("BEGIN", None, Dialect::Postgres), TxEffect::UserHold);
+        // 계산만 하는 변수 대입 = 변경 아님 · 사용자 루틴 호출이 든 식 = 변경(11-13).
+        assert_eq!(
+            e("EXEC :S := 'a' || :N", None, Dialect::Oracle),
+            TxEffect::Clean
+        );
+        assert_eq!(
+            e("EXEC :S := pkg.f(:N)", None, Dialect::Oracle),
+            TxEffect::Change
+        );
         assert_eq!(
             e("update t set a=1", Some(0), Dialect::Oracle),
             TxEffect::Clean

@@ -273,6 +273,30 @@ pub fn expr_is_plain(expr: &str) -> bool {
     true
 }
 
+/// ★ 문장이 **계산만 하는 변수 대입**(`EXEC :이름 := 식` · 식 = [`expr_is_plain`])인가 — 데이터를 바꾸지 않으므로 트랜잭션 영향이
+/// 없다(사용자 11-13 "Select만 했는데 왜 Commit 창이 뜨는거지": 실행 끝의 수식 재계산이 운영 보류에 "1문장 · 0행 미커밋"으로
+/// 잡혔다). 여러 문장(`;`) · 프로시저 호출 · 사용자 루틴 호출이 든 식은 아니다.
+#[must_use]
+pub fn is_plain_bind_assign(sql: &str) -> bool {
+    let Ok(Some(crate::command::Command::Exec { body })) = crate::command::parse_command(sql)
+    else {
+        return false;
+    };
+    let body = body.trim().trim_end_matches(';').trim();
+    if body.contains(';') {
+        return false;
+    }
+    let Some((lhs, rhs)) = body.split_once(":=") else {
+        return false;
+    };
+    let lhs = lhs.trim();
+    lhs.starts_with(':')
+        && lhs.len() > 1
+        && lhs[1..].bytes().all(is_ident_char)
+        && !rhs.trim().is_empty()
+        && expr_is_plain(rhs)
+}
+
 /// ★ 글 안의 `:이름` 바인드 표기를 대문자로(사용자 11-13 "Formula에도 변수명은 대문자로") — 문자열·주석·인용 식별자 안과
 /// 그 밖의 글자는 그대로 · 이름은 ASCII만 바뀐다(한글 이름은 그대로).
 #[must_use]
@@ -389,6 +413,17 @@ pub fn unique_names(refs: &[BindRef]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn plain_bind_assign_is_exec_of_a_pure_expression() {
+        use super::is_plain_bind_assign as p;
+        assert!(p("EXEC :STR1 := '이름-' || :NAME"));
+        assert!(p("exec :n := (SELECT COUNT(*) FROM t WHERE a = :x);"));
+        assert!(!p("EXEC :V := pkg.audit_and_get(:A)"));
+        assert!(!p("EXEC pkg.do_it(:V)"));
+        assert!(!p("EXEC :V := 1; DELETE FROM t"));
+        assert!(!p("UPDATE t SET a = 1"));
+    }
+
     #[test]
     fn expr_is_plain_only_for_known_builtins() {
         use super::expr_is_plain as p;
