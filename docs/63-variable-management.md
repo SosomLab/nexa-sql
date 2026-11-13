@@ -412,6 +412,13 @@ CLI `nsql run`은 기본으로 `vars/global.sql`을 **읽지도 쓰지도 않는
 - **AI 경로 등급** = `set_var`(값·수식) · `run_query`의 `EXEC :이름 := 식`/클라이언트 명령만 = 조회 수준(카드 없음 · 운영 포함 · 보류 건너뜀) — 변수는 클라이언트에 산다(DR-8).
 - **남은 것** = 없는 변수를 쓰는 수식의 숨김 실행이 "변수 값 입력" 창에서 멈춤(결함 후보) · 사람 경로의 운영 2단 실행은 `VAR`/`EXEC :v :=`도 막음(AI 경로와 등급 불일치 = 관찰).
 
+### 11-13 저녁 — 수식 순환 거절 · 연쇄 한 층씩 · 사용자 루틴 호출 = 운영 확인(81ba5e5b · [journal 11-13 §8](journal/2026-11-13.md))
+
+- **계산 자리** = 수식은 클라이언트가 아니라 접속한 DB가 계산한다(Oracle `BEGIN :V := 식; END;`(서브쿼리면 `SELECT 식 INTO :V FROM DUAL`) · MSSQL `SET @V = 식` · PG/MySQL/SQLite `SELECT 식 AS "V"` · `nsql-script` `wrap_exec_with`) → 그 DB의 식(사칙·괄호·문자열 연결·내장 함수·CASE·스칼라 서브쿼리)이면 쓸 수 있다 · 접속이 없으면 계산하지 못한다 · 리터럴만 클라이언트(`local_assign`).
+- **순환** = `VarStore::formula_cycle` → 엔진이 "수식이 서로를 참조합니다: B -> A -> B"로 거절 · 순환 수식은 등록하지 않는다.
+- **연쇄** = 대입 때 건너 의존까지 stale · 재계산은 의존이 fresh인 한 층씩(Replan이 다음 층) — X 변경 뒤 `:C`(← B ← X)만 써도 새 값.
+- **plain 판정** = `bind::expr_is_plain`(호출이 전부 내장 함수 표에 있을 때만) — 사용자 루틴(`pkg.f(`)·모르는 이름·`.NEXTVAL`이 든 수식은 운영 2단 확인·보류·AI 카드를 거친다 · 변수 창 수식은 plain일 때만 확인 생략 · AI `set_var formula`는 plain이 아니면 거절(run_query로 안내).
+
 ### 11-13 — 운영 편집기 변수 대입 · 숨김 실행 값 입력 · 수식 dirty(7a4d4796 · [journal 11-13 §1](journal/2026-11-13.md))
 
 - **운영 편집기** = 실행 항목이 전부 변수 대입(`EXEC :이름 := 식`)·클라이언트 명령이면 운영 2단 확인·보류 커밋 생략(`sessions::assign_only_items`) → 사람 경로와 AI 경로의 등급이 같아짐(둘 다 조회 수준).
