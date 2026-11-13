@@ -6357,7 +6357,7 @@ impl Msg {
             Msg::LblEditorTripleClick => ["Editor: triple-click", "편집기: 트리플클릭"],
             Msg::DescEditorTripleClick => ["What a triple-click selects: the line (single-line boxes = all), everything, or nothing.", "트리플클릭이 선택하는 것: 줄(단일행 상자 = 전체) · 전체 · 없음."],
             Msg::LblEditorDblUnderscore => ["Editor: underscore is part of a word", "편집기: 밑줄(_)은 단어의 일부"],
-            Msg::DescEditorDblUnderscore => ["On: double-click on MP_VRSN_ID selects the whole identifier. Off: underscore separates words (selects VRSN).", "켬: MP_VRSN_ID를 더블클릭하면 식별자 전체. 끔: 밑줄이 단어를 나눈다(VRSN만)."],
+            Msg::DescEditorDblUnderscore => ["On: double-click on PLAN_VER_ID selects the whole identifier. Off: underscore separates words (selects VER).", "켬: PLAN_VER_ID를 더블클릭하면 식별자 전체. 끔: 밑줄이 단어를 나눈다(VER만)."],
             Msg::OptClickWord => ["word", "단어"],
             Msg::OptClickLine => ["line", "줄"],
             Msg::OptClickAll => ["all", "전체"],

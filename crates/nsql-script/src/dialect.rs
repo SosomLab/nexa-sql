@@ -628,7 +628,7 @@ mod tests {
     fn store() -> VarStore {
         let mut v = VarStore::new();
         v.assign("V_PROJECT_CD", Value::Str("ACME".into()));
-        v.assign("V_MP_VRSN_SEQ", Value::Int(3));
+        v.assign("V_PLAN_VER_SEQ", Value::Int(3));
         v
     }
 
@@ -637,13 +637,13 @@ mod tests {
         let mut v = store();
         let p = prepare(
             Dialect::Oracle,
-            "SELECT :V_PROJECT_CD, :V_MP_VRSN_SEQ, :V_NEW FROM DUAL",
+            "SELECT :V_PROJECT_CD, :V_PLAN_VER_SEQ, :V_NEW FROM DUAL",
             &mut v,
             false,
         );
         assert_eq!(
             p.sql,
-            "SELECT :V_PROJECT_CD, :V_MP_VRSN_SEQ, :V_NEW FROM DUAL"
+            "SELECT :V_PROJECT_CD, :V_PLAN_VER_SEQ, :V_NEW FROM DUAL"
         );
         assert_eq!(p.params.len(), 3);
         assert_eq!(p.params[0].value, Value::Str("ACME".into()));
@@ -656,11 +656,11 @@ mod tests {
         let mut v = store();
         let p = prepare(
             Dialect::Mssql,
-            "SELECT :V_PROJECT_CD AS cd, :V_MP_VRSN_SEQ AS seq",
+            "SELECT :V_PROJECT_CD AS cd, :V_PLAN_VER_SEQ AS seq",
             &mut v,
             false,
         );
-        assert_eq!(p.sql, "SELECT @V_PROJECT_CD AS cd, @V_MP_VRSN_SEQ AS seq");
+        assert_eq!(p.sql, "SELECT @V_PROJECT_CD AS cd, @V_PLAN_VER_SEQ AS seq");
         assert_eq!(p.params[0].direction, Direction::In);
         assert_eq!(p.params[1].ty.tsql_type(), "DECIMAL(38,10)");
         let p = prepare(Dialect::Mssql, "SELECT @x = 1", &mut v, true);
@@ -733,9 +733,9 @@ mod tests {
 
     #[test]
     fn select_into_rewrites_to_assignment_select() {
-        let sql = "SELECT\n\tA.PROJECT_CD\n,\tNVL(A.MP_VRSN_SEQ, 0)\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_SEQ\nFROM\n\tDMS_O301010 A\nWHERE A.PROJECT_CD = 'ACME'";
+        let sql = "SELECT\n\tA.PROJECT_CD\n,\tNVL(A.PLAN_VER_SEQ, 0)\nINTO\n\t:V_PROJECT_CD\n,\t:V_PLAN_VER_SEQ\nFROM\n\tDMS_T100020 A\nWHERE A.PROJECT_CD = 'ACME'";
         let t = rewrite_select_into_tsql(sql);
-        assert_eq!(t, "SELECT :V_PROJECT_CD = A.PROJECT_CD, :V_MP_VRSN_SEQ = NVL(A.MP_VRSN_SEQ, 0) FROM\n\tDMS_O301010 A\nWHERE A.PROJECT_CD = 'ACME'");
+        assert_eq!(t, "SELECT :V_PROJECT_CD = A.PROJECT_CD, :V_PLAN_VER_SEQ = NVL(A.PLAN_VER_SEQ, 0) FROM\n\tDMS_T100020 A\nWHERE A.PROJECT_CD = 'ACME'");
         assert_eq!(
             rewrite_select_into_tsql("SELECT 1 FROM t"),
             "SELECT 1 FROM t"
@@ -774,19 +774,19 @@ mod tests {
         let mut v = store();
         let p = prepare(
             Dialect::Postgres,
-            "SELECT :V_PROJECT_CD, :V_MP_VRSN_SEQ, :V_PROJECT_CD",
+            "SELECT :V_PROJECT_CD, :V_PLAN_VER_SEQ, :V_PROJECT_CD",
             &mut v,
             false,
         );
         // 바인드 하나뿐인 SELECT 항목 = 변수 표기가 열 이름(서버는 `?column?`을 준다 · 09-21).
         assert_eq!(
             p.sql,
-            "SELECT $1 AS \":V_PROJECT_CD\", $2 AS \":V_MP_VRSN_SEQ\", $1 AS \":V_PROJECT_CD\""
+            "SELECT $1 AS \":V_PROJECT_CD\", $2 AS \":V_PLAN_VER_SEQ\", $1 AS \":V_PROJECT_CD\""
         );
         assert_eq!(p.params.len(), 2);
         let p = prepare(
             Dialect::Mysql,
-            "SELECT :V_PROJECT_CD, :V_MP_VRSN_SEQ, :V_PROJECT_CD",
+            "SELECT :V_PROJECT_CD, :V_PLAN_VER_SEQ, :V_PROJECT_CD",
             &mut v,
             false,
         );

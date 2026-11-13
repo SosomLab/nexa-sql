@@ -946,7 +946,7 @@ pub(crate) struct Explorer {
     /// 자동 완성이 `스키마.`로 읽어 온 버킷(트리가 펼친 것·현재 스키마·사전은 제외) — 열린 문서가 그 이름을 더 이상 쓰지 않으면
     /// 즉시 해제한다(`reclaim_intel_buckets` · 사용자 09-23 "미사용 판정 즉시 회수").
     intel_buckets: Vec<(String, ObjectKind)>,
-    /// ★ 메타에 없는 객체의 컬럼 요청(이번 세션에 만든 테이블 = L1/디스크 캐시에 없음 · 사용자 09-26 `DEMO_BSY A.` 완성 안 됨):
+    /// ★ 메타에 없는 객체의 컬럼 요청(이번 세션에 만든 테이블 = L1/디스크 캐시에 없음 · 사용자 09-26 `DEMO_JOB A.` 완성 안 됨):
     ///   그 스키마 관계 목록을 다시 읽은 뒤 다시 요청 · 같은 이름은 한 번만(없는 이름을 키마다 되묻지 않게).
     pending_cols: Vec<(String, String, bool)>,
     missing_cols: HashSet<String>,

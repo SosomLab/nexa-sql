@@ -576,7 +576,7 @@ mod tests {
     use super::*;
     use crate::command::Command;
 
-    const GOLDEN: &str = "EXEC\t:V_PRG_NM\t\t\t:=\t'SP_DMP_MPO_DME_CREATE_BSY';\n\nEXEC DBMS_STATS.GATHER_TABLE_STATS(USER, 'DME_I301080', CASCADE=>TRUE, NO_INVALIDATE=>FALSE);\n\nEXEC SP_DMP_MP_VERSION_CREATE(:PC_RET, 'ACME', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'user01');\n\n\n--\tMP 버전에 기반한 변수 설정\nEXEC\nSELECT\n\tA.PROJECT_CD\n,\tA.MP_VRSN_ID\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_ID\nFROM\n\tDMS_O301010 A\nWHERE 1=1\nAND\tA.PROJECT_CD\t\t=\t'ACME'\n\nSELECT\n\t:V_PROJECT_CD\n,\t:V_PRG_NM\nFROM\n\tDUAL\n;\n";
+    const GOLDEN: &str = "EXEC\t:V_PRG_NM\t\t\t:=\t'SP_DMP_PLAN_JOB_CREATE';\n\nEXEC DBMS_STATS.GATHER_TABLE_STATS(USER, 'DME_T100010', CASCADE=>TRUE, NO_INVALIDATE=>FALSE);\n\nEXEC SP_DMP_VERSION_CREATE(:PC_RET, 'ACME', 'VER_202604_W16_V01', 'W', '20260415', '20260705', '', 'user01');\n\n\n--\tMP 버전에 기반한 변수 설정\nEXEC\nSELECT\n\tA.PROJECT_CD\n,\tA.PLAN_VER_ID\nINTO\n\t:V_PROJECT_CD\n,\t:V_PLAN_VER_ID\nFROM\n\tDMS_T100020 A\nWHERE 1=1\nAND\tA.PROJECT_CD\t\t=\t'ACME'\n\nSELECT\n\t:V_PROJECT_CD\n,\t:V_PRG_NM\nFROM\n\tDUAL\n;\n";
 
     /// ★ D-434: 방언을 아는 분할은 DuckDB·ClickHouse `FROM t` · PG `TABLE t`를 조회로(`SqlKind::Query`) · Oracle·방언 없음 = 종전 Other.
     #[test]
@@ -664,7 +664,7 @@ SELECT 1;
             matches!(&items[1].kind, ItemKind::Command(Command::Exec { body }) if body.starts_with("DBMS_STATS"))
         );
         assert!(
-            matches!(&items[2].kind, ItemKind::Command(Command::Exec { body }) if body.starts_with("SP_DMP_MP_VERSION_CREATE(:PC_RET"))
+            matches!(&items[2].kind, ItemKind::Command(Command::Exec { body }) if body.starts_with("SP_DMP_VERSION_CREATE(:PC_RET"))
         );
         match &items[3].kind {
             ItemKind::Command(Command::Exec { body }) => {

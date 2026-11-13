@@ -730,7 +730,7 @@ fn zone_dwell_target(
 }
 
 /// 카드 영역 안에서 **다른 링크로 바꿔도 되는가** — 링크와 같은 줄 띠(앵커의 세로 범위)에서만(이웃 단어 위에서는 바뀐다 · 10-06 결함) ·
-/// 카드로 올라가는 길에 지나는 **다른 줄**의 링크는 무시한다(사용자 10-08 "MP_VRSN_ID 카드가 마우스를 움직이면 사라짐" = 카드와 링크
+/// 카드로 올라가는 길에 지나는 **다른 줄**의 링크는 무시한다(사용자 10-08 "PLAN_VER_ID 카드가 마우스를 움직이면 사라짐" = 카드와 링크
 /// 사이 줄의 테이블 링크를 지나며 hot이 바뀌어 카드가 교체·소멸했다).
 fn switch_allowed_in_zone(anchor: Rect, p: Point) -> bool {
     p.y >= anchor.y && p.y < anchor.bottom()
@@ -3566,7 +3566,7 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
     #[test]
     fn unknown_objects_are_links_but_not_known() {
         let v = scan(
-            "select a.eng_time_index, a.ord_no, z.col1 from demo_bsy a, tb_order b, tb_lazy z",
+            "select a.eng_time_index, a.ord_no, z.col1 from demo_job a, tb_order b, tb_lazy z",
             Some(nsql_core::Dialect::Oracle),
             &Fake,
         );
@@ -3575,13 +3575,13 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'주문 상
                 .find(|l| l.name == n)
                 .unwrap_or_else(|| panic!("{n} {v:?}"))
         };
-        assert!(!find("demo_bsy").known);
+        assert!(!find("demo_job").known);
         assert!(find("tb_order").known);
         assert!(find("tb_lazy").known);
-        // demo_bsy는 메타에 없다 → 그 컬럼도 미확인.
+        // demo_job는 메타에 없다 → 그 컬럼도 미확인.
         assert_eq!(find("eng_time_index").kind, LinkKind::Column);
         assert!(!find("eng_time_index").known);
-        // b가 아니라 a.ord_no — a = demo_bsy(없음) → 미확인.
+        // b가 아니라 a.ord_no — a = demo_job(없음) → 미확인.
         assert!(!find("ord_no").known);
         // 컬럼 목록 미확정 테이블의 컬럼 = 정상 취급.
         assert!(find("col1").known);

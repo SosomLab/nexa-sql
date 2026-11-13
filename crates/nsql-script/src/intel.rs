@@ -2889,7 +2889,7 @@ mod tests {
     /// 완성이 `T1.컬럼`을 못 풀어 컬럼 설명 라벨 0개) · 바깥 `S`는 그대로 local · 같은 이름은 바깥이 이김 · 함수 괄호는 영향 없음.
     #[test]
     fn aliases_inside_subquery_are_visible() {
-        let src = "SELECT S.PROJECT_CD, MAX(S.INV_QTY) FROM ( SELECT T1.PROJECT_CD, T2.INV_QTY FROM DME_I301080 T1 JOIN DMS_I002150 T2 ON T1.PROJECT_CD = T2.PROJECT_CD WHERE T2.YYMMDD = (SELECT MAX(X.YYMMDD) FROM DMS_I002150 X) ) S WHERE |";
+        let src = "SELECT S.PROJECT_CD, MAX(S.INV_QTY) FROM ( SELECT T1.PROJECT_CD, T2.INV_QTY FROM DME_T100010 T1 JOIN DMS_T100030 T2 ON T1.PROJECT_CD = T2.PROJECT_CD WHERE T2.YYMMDD = (SELECT MAX(X.YYMMDD) FROM DMS_T100030 X) ) S WHERE |";
         let c = ctx(src);
         let names: Vec<(&str, &str, bool)> = c
             .aliases
@@ -2897,10 +2897,10 @@ mod tests {
             .map(|a| (a.alias.as_str(), a.table.as_str(), a.local))
             .collect();
         assert!(names.contains(&("S", "", true)), "{names:?}");
-        assert!(names.contains(&("T1", "DME_I301080", false)), "{names:?}");
-        assert!(names.contains(&("T2", "DMS_I002150", false)), "{names:?}");
+        assert!(names.contains(&("T1", "DME_T100010", false)), "{names:?}");
+        assert!(names.contains(&("T2", "DMS_T100030", false)), "{names:?}");
         assert!(
-            names.contains(&("X", "DMS_I002150", false)),
+            names.contains(&("X", "DMS_T100030", false)),
             "두 겹 안쪽도 {names:?}"
         );
         assert_eq!(names[0].0, "S", "바깥 먼저");

@@ -1471,7 +1471,7 @@ mod tests {
     #[test]
     fn oracle_exec_select_into_round_trip() {
         let mut e = Engine::new(Dialect::Oracle);
-        let src = "EXEC\nSELECT A.PROJECT_CD, A.MP_VRSN_SEQ INTO :V_PROJECT_CD, :V_MP_VRSN_SEQ FROM DMS_O301010 A WHERE A.PROJECT_CD = 'ACME'\n\nPRINT V_PROJECT_CD\n";
+        let src = "EXEC\nSELECT A.PROJECT_CD, A.PLAN_VER_SEQ INTO :V_PROJECT_CD, :V_PLAN_VER_SEQ FROM DMS_T100020 A WHERE A.PROJECT_CD = 'ACME'\n\nPRINT V_PROJECT_CD\n";
         let items = split_script(src);
         let acts = e.plan(&items[0]);
         let Action::Execute {
@@ -1499,7 +1499,7 @@ mod tests {
         let res = ExecResult {
             out_params: vec![
                 ("V_PROJECT_CD".into(), Value::Str("ACME".into())),
-                ("V_MP_VRSN_SEQ".into(), Value::Int(7)),
+                ("V_PLAN_VER_SEQ".into(), Value::Int(7)),
             ],
             ..Default::default()
         };
@@ -1512,7 +1512,7 @@ mod tests {
                 Value::Str("ACME".into())
             )])]
         );
-        assert_eq!(e.vars.get("v_mp_vrsn_seq").unwrap().ty, VarType::Number);
+        assert_eq!(e.vars.get("v_plan_ver_seq").unwrap().ty, VarType::Number);
     }
 
     #[test]
