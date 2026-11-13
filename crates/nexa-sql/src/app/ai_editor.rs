@@ -448,35 +448,100 @@ impl App {
         }
         if !r.formula.is_empty() {
             out.push_str(&format!("formula: {}\n", r.formula));
-            // 수식 안의 `:이름` = 의존 변수.
-            let mut deps: Vec<String> = Vec::new();
-            let chars: Vec<char> = r.formula.chars().collect();
-            let mut i = 0;
-            while i < chars.len() {
-                if chars[i] == ':'
-                    && chars
-                        .get(i + 1)
-                        .is_some_and(|c| c.is_alphabetic() || *c == '_')
-                {
-                    let mut j = i + 1;
-                    while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
-                        j += 1;
-                    }
-                    let d: String = chars[i + 1..j].iter().collect();
-                    if !deps.iter().any(|x| x.eq_ignore_ascii_case(&d)) {
-                        deps.push(d);
-                    }
-                    i = j;
-                } else {
-                    i += 1;
-                }
-            }
-            for d in deps {
+            for d in Self::ai_formula_deps(&r.formula) {
                 match find(&d) {
                     Some(x) => out.push_str(&format!("depends on: {} = {}\n", x.name, x.value)),
                     None => out.push_str(&format!("depends on: {d} (not set)\n")),
                 }
             }
+        }
+        Ok(out)
+    }
+
+    /// 수식 안의 `:이름` = 의존 변수(나온 순서 · 중복 없음 · 대소문자 무시).
+    fn ai_formula_deps(formula: &str) -> Vec<String> {
+        let mut deps: Vec<String> = Vec::new();
+        let chars: Vec<char> = formula.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == ':'
+                && chars
+                    .get(i + 1)
+                    .is_some_and(|c| c.is_alphabetic() || *c == '_')
+            {
+                let mut j = i + 1;
+                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                    j += 1;
+                }
+                let d: String = chars[i + 1..j].iter().collect();
+                if !deps.iter().any(|x| x.eq_ignore_ascii_case(&d)) {
+                    deps.push(d);
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        deps
+    }
+
+    /// ★ 도구 `delete_var`(사용자 11-13 "변수 삭제가 가능하도록" · API·CLI·Codex 공통 = 도구 표 하나): 변수 창에서 줄을 지운 것과
+    /// 같은 길(`vars_apply(Delete)` · 탭·공유·글로벌 층 · 프로필 층은 읽기 전용 · DB로 가는 것 없음). 답 = 지운 층 + 이 변수를
+    /// 쓰던 수식 변수(다시 계산할 수 없게 되므로 어시스턴트가 사용자에게 알린다).
+    pub(crate) fn ai_var_delete(&mut self, name: &str) -> Result<String, String> {
+        let key = name.trim().trim_start_matches(':').to_string();
+        if key.is_empty() {
+            return Err("empty variable name".into());
+        }
+        if self.ai_view_active() {
+            return Err("the chat tab is active; switch to a SQL editor tab first".into());
+        }
+        let rows = self.vars_rows();
+        let before: Vec<String> = rows
+            .iter()
+            .filter(|r| r.name.eq_ignore_ascii_case(&key))
+            .map(|r| Self::ai_layer_text(r.layer).to_string())
+            .collect();
+        if before.is_empty() {
+            return Err(format!(
+                "no variable named {key} in this tab (use list_vars)"
+            ));
+        }
+        let users: Vec<String> = rows
+            .iter()
+            .filter(|r| !r.name.eq_ignore_ascii_case(&key))
+            .filter(|r| {
+                Self::ai_formula_deps(&r.formula)
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(&key))
+            })
+            .map(|r| r.name.clone())
+            .collect();
+        drop(rows);
+        self.vars_apply(vars_win::VarsWinAction::Delete(key.clone()));
+        self.redraw();
+        let after: Vec<String> = self
+            .vars_rows()
+            .iter()
+            .filter(|r| r.name.eq_ignore_ascii_case(&key))
+            .map(|r| Self::ai_layer_text(r.layer).to_string())
+            .collect();
+        if after.len() == before.len() {
+            // 프로필 층만 있는 변수 등 — 상태줄 글이 이유.
+            return Err(format!("not deleted: {}", self.sess.status));
+        }
+        let mut out = format!("deleted {key} (layers: {}).\n", before.join(", "));
+        if !after.is_empty() {
+            out.push_str(&format!(
+                "note: {key} still exists in the read-only layer(s): {} - change it in the connection profile\n",
+                after.join(", ")
+            ));
+        }
+        if !users.is_empty() {
+            out.push_str(&format!(
+                "note: these formula variables referenced {key} and cannot be recalculated until it exists again: {}\n",
+                users.join(", ")
+            ));
         }
         Ok(out)
     }

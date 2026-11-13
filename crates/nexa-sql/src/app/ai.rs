@@ -65,6 +65,9 @@ pub(crate) struct AiState {
     pub store: ProfileStore,
     pub mcp: Option<ai::mcp::McpServer>,
     pub approval: Option<(String, String, String, ApprovalReply)>,
+    /// ★ 방금 답한 승인 카드(카드 id · 허용 여부 · 누른 시각 · 11-13): 일이 끝날 때까지 카드 버튼을 비활성 + 진행 막대로 남긴다 —
+    /// 비우는 곳 = `ai_tick_due`(최소 표시 시간이 지나고 도구 실행·세션 작업이 끝났을 때).
+    pub approving: Option<(String, bool, Instant)>,
     pub pending: Option<PendingTool>,
     pub capture: Option<String>,
     pub note: String,
@@ -907,6 +910,11 @@ impl App {
                 .approval
                 .as_ref()
                 .map(|(id, tool, sum, _)| (id.clone(), tool.clone(), sum.clone())),
+            approving: self
+                .ai
+                .approving
+                .as_ref()
+                .map(|(id, ok, _)| (id.clone(), *ok)),
             profiles: self.ai.store.profiles.clone(),
             keyed,
             current_profile: self.ai.store.current.clone(),
@@ -1407,9 +1415,22 @@ impl App {
 
     /// 턴 진행 중 1초마다 상태 줄 갱신 — 이벤트 루프 마감 계산에 넣는다(돌아올 시각).
     pub(crate) fn ai_tick_due(&mut self, now: Instant) -> Option<Instant> {
+        // ★ 처리 중 승인 카드(11-13): 진행 막대가 흐르게 60 ms마다 다시 그리고, 최소 표시 시간(누름이 눈에 보이게)이 지난 뒤
+        //   도구 실행·세션 작업이 끝났으면 카드 버튼을 거둔다(허용 = 접속·실행이 끝날 때까지 · 거부 = 최소 시간만).
+        let mut anim: Option<Instant> = None;
+        if let Some((_, ok, at)) = &self.ai.approving {
+            let min = std::time::Duration::from_millis(if *ok { 400 } else { 250 });
+            let working = *ok && (self.ai.pending.is_some() || self.sess.busy);
+            if now.duration_since(*at) >= min && !working {
+                self.ai.approving = None;
+            } else {
+                anim = Some(now + std::time::Duration::from_millis(60));
+            }
+            self.redraw();
+        }
         if !self.ai.host.as_ref().is_some_and(|h| h.busy) {
             self.ai.last_tick = None;
-            return None;
+            return anim;
         }
         let due = self
             .ai
@@ -1420,7 +1441,8 @@ impl App {
             self.ai_active_status();
             self.redraw();
         }
-        Some(self.ai.last_tick.unwrap_or(now) + std::time::Duration::from_secs(1))
+        let next = self.ai.last_tick.unwrap_or(now) + std::time::Duration::from_secs(1);
+        Some(anim.map_or(next, |a| a.min(next)))
     }
 
     /// ★ 이 세션이 쓸 수 있는 모델 목록: API = 프로필이 [검증] 때 받은 목록 · Codex CLI = 로그인 계정의 `model/list` · 그 밖 = 빈 목록(내장 표).
@@ -2455,9 +2477,11 @@ impl App {
                 return;
             }
         }
-        let Some((_, _, _, r)) = self.ai.approval.take() else {
+        let Some((card_id, _, _, r)) = self.ai.approval.take() else {
             return;
         };
+        // ★ 누른 뒤 = 처리 중(11-13): 카드 버튼은 비활성 + 진행 막대로 남고 `ai_tick_due`가 일이 끝나면 거둔다.
+        self.ai.approving = Some((card_id, ok, Instant::now()));
         let mut after: Option<(String, String, mpsc::Sender<ToolReply>, bool)> = None;
         let mut reenter: Option<(String, String, mpsc::Sender<ToolReply>)> = None;
         match r {
@@ -2580,6 +2604,7 @@ impl App {
                     tf(Msg::AiDoSetVar, &[&g("name"), &redact(&g("value"))])
                 }
             }
+            "delete_var" => tf(Msg::AiDoDeleteVar, &[&g("name")]),
             "edit_editor" => match self.ai_edit_plan(input) {
                 Ok(p) => tf(
                     Msg::AiDoEditLines,
@@ -3108,6 +3133,10 @@ impl App {
                     Err(e) => err(e),
                 }
             }
+            "delete_var" => match self.ai_var_delete(&g("name")) {
+                Ok(s) => ok(redact(&s)),
+                Err(e) => err(e),
+            },
             "edit_editor" => {
                 if self.ai_view_active() {
                     err("the chat tab is active; switch to a SQL editor tab first".into())

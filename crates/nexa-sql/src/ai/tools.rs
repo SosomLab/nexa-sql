@@ -86,6 +86,12 @@ pub(crate) const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        name: "delete_var",
+        desc: "Delete a variable from the app (same as deleting its row in the Variables window; nothing is sent to the database). Removes it from the tab, shared and global layers; profile variables are read-only and stay. The result lists formula variables that referenced it. Use this when the user asks to delete or remove a variable - set_var null=true only clears the value and keeps the variable.",
+        write: true,
+        props: &[("name", "string", "Variable name (without ':'; prefix '&' for a substitution variable)", true)],
+    },
+    Tool {
         name: "edit_editor",
         desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
         write: true,

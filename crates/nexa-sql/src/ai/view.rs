@@ -32,6 +32,9 @@ pub(crate) struct ViewInfo {
     pub busy: bool,
     /// 승인 대기(id · 도구 · 요약).
     pub approval: Option<(String, String, String)>,
+    /// ★ 처리 중인 승인 카드(카드 id · 누른 쪽 = 허용 여부 · 11-13 사용자 "누른 뒤 끝날 때까지 Disable + 진행 표시"): 이 카드의
+    /// 버튼은 비활성으로 남고 누른 버튼에 진행 막대가 흐른다 — 호스트가 일이 끝나면 비운다([`AiView::paint_busy_button`]).
+    pub approving: Option<(String, bool)>,
     pub profiles: Vec<Profile>,
     /// 볼트에 키가 있는 프로필 이름.
     pub keyed: Vec<String>,
@@ -2255,6 +2258,27 @@ impl AiView {
                         }
                     }
                 }
+                // ★ 처리 중 카드(11-13): 누른 버튼 = 진행 막대 · 둘 다 비활성(클릭 대상 아님 = 중복 클릭 없음).
+                if let (Kind::Approval { .. }, Some((aid, chosen))) = (&msg.kind, &info.approving) {
+                    if *aid == msg.id {
+                        let yy = ly + block_h + self.s(2.0);
+                        let mut bx = x + self.s(8.0);
+                        for (ok, label) in [(true, t(Msg::AiAllow)), (false, t(Msg::AiDeny))] {
+                            let bw = dc.text_width(label) + self.s(24.0);
+                            let r = Rect::new(bx, yy, bw, btn_h);
+                            self.paint_busy_button(
+                                dc,
+                                th,
+                                r,
+                                label,
+                                ok,
+                                ok == *chosen,
+                                info.now_ms,
+                            );
+                            bx += bw + self.s(8.0);
+                        }
+                    }
+                }
                 // 승인 카드 버튼(대기 중인 것만).
                 if let (Kind::Approval { .. }, Some((aid, _, _))) = (&msg.kind, &info.approval) {
                     if *aid == msg.id {
@@ -2273,7 +2297,8 @@ impl AiView {
                 }
             }
             let extra = if matches!(msg.kind, Kind::Approval { .. })
-                && info.approval.as_ref().is_some_and(|a| a.0 == msg.id)
+                && (info.approval.as_ref().is_some_and(|a| a.0 == msg.id)
+                    || info.approving.as_ref().is_some_and(|a| a.0 == msg.id))
             {
                 btn_h + self.s(6.0)
             } else {
@@ -2628,6 +2653,50 @@ impl AiView {
             },
         );
         self.buttons.push((btn, r));
+    }
+
+    /// ★ 처리 중 버튼(11-13 · 공용 기법): 눌린 뒤 일이 끝날 때까지 남는 **비활성** 모양 — 클릭 대상(`buttons`)에 넣지 않으므로
+    /// 다시 눌리지 않는다 · `active` = 사용자가 누른 버튼(아래에 진행 막대가 흐른다) · 나머지는 흐리게만. 다른 버튼도 호스트가
+    /// "처리 중" 상태를 `ViewInfo`로 주면 이 함수로 그린다.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_busy_button(
+        &self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        r: Rect,
+        label: &str,
+        primary: bool,
+        active: bool,
+        now_ms: u64,
+    ) {
+        if primary {
+            dc.fill_round_rect(r, self.s(4.0), th.accent);
+        } else {
+            dc.fill_round_rect(r, self.s(4.0), th.panel_bg_alt);
+            dc.stroke_round_rect(r, self.s(4.0), th.border, 1.0);
+        }
+        // 비활성 = 바탕색을 덮어 흐리게(누른 쪽은 덜 흐리게 — 무엇을 눌렀는지 보인다).
+        dc.fill_rect_alpha(r, th.panel_bg, if active { 0.35 } else { 0.65 });
+        let tw = dc.text_width(label);
+        let ty = dc.text_center_y(r.y, r.h);
+        dc.text(r.x + (r.w - tw) / 2, ty, r, label, th.text_dim);
+        if active {
+            // 흐르는 진행 막대(끝을 모르는 일): 버튼 아래 가장자리 · 1.2초에 한 번 왼쪽→오른쪽.
+            let h = self.s(2.0).max(2);
+            let seg = (r.w / 3).max(self.s(8.0));
+            let span = (r.w + seg).max(1) as u64;
+            let off = ((now_ms % 1200) * span / 1200) as i32 - seg;
+            let x0 = (r.x + off).max(r.x);
+            let x1 = (r.x + off + seg).min(r.right());
+            if x1 > x0 {
+                let col = if primary {
+                    nexa_ctl::Color(0x00FF_FFFF)
+                } else {
+                    th.accent
+                };
+                dc.fill_rect(Rect::new(x0, r.bottom() - h, x1 - x0, h), col);
+            }
+        }
     }
 
     fn paint_profiles(&mut self, dc: &mut dyn DrawCtx, th: &Theme, info: &ViewInfo) {

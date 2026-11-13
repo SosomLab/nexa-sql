@@ -599,6 +599,8 @@ mod tests {
         assert_eq!(c("explain", true, "delete from t"), Risk::Read);
         assert_eq!(c("search_objects", false, ""), Risk::Read);
         assert_eq!(c("set_var", true, ""), Risk::Read);
+        // 변수 삭제는 되돌릴 수 없는 앱 상태 변경 = 승인 카드(11-13).
+        assert_eq!(c("delete_var", true, ""), Risk::AppWrite);
     }
 
     /// 정책 표 전수(등급 7 × 운영 2 × Auto 2 × 자동 쓰기 2 = 56) + 불변식.
