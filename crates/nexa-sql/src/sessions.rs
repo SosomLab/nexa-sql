@@ -481,6 +481,11 @@ pub(crate) fn alters_session_state(stmt: &str) -> bool {
     if matches!(first, "CONNECT" | "DISCONNECT") {
         return false;
     }
+    // ★ 계산만 하는 변수 대입(`EXEC :V := 식` · 수식 재계산)은 서버 세션에 아무것도 남기지 않는다(변수는 클라이언트에 산다 · DR-8) —
+    //   `EXEC`라는 이유로 세션 상태로 보면 유휴 닫기가 꺼지고 재접속 안내가 뜬다(협업 V1 관찰 11-13).
+    if nsql_script::bind::is_plain_bind_assign(stmt) {
+        return false;
+    }
     let by_verb = match first {
         "SET" | "USE" | "PRAGMA" | "ATTACH" | "DETACH" | "PREPARE" | "DEALLOCATE" | "LISTEN"
         | "UNLISTEN" | "LOCK" | "EXEC" | "EXECUTE" | "CALL" | "BEGIN" | "DECLARE" | "DO"

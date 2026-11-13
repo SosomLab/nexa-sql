@@ -6,25 +6,37 @@ use crate::*;
 
 impl App {
     /// `drain_events`의 `RunEvent::Begin` 가지(220차 T-248 분해 · 동작 불변 · 11-01).
-    pub(crate) fn on_ev_begin(&mut self, index: usize, server: bool, summary: &str) {
+    /// `text` = 러너가 실어 준 문장 글(실행 끝의 수식 재계산처럼 **본 실행의 항목 목록 밖**에서 도는 문장 · 11-13) — 있으면 그 글을
+    /// 쓰고, 본 실행의 묶음·진행 표시(항목 번호 매핑 · 실행 카드 "n / 전체")는 건드리지 않는다.
+    pub(crate) fn on_ev_begin(
+        &mut self,
+        index: usize,
+        server: bool,
+        summary: &str,
+        text: Option<String>,
+    ) {
         // 접속 명령(`CONNECT`·`DISCONNECT`)은 문장이 아니다 — 트랜잭션 로그에 넣으면 `Done`이 없어 "실행 중"으로 남는다(139차 win).
         let conn_cmd = matches!(summary, "Connect" | "Disconnect");
-        if index == 0 {
+        let extra = text.is_some();
+        if index == 0 && !extra {
             self.txlog.select_session(self.sess.id).begin_batch();
         }
-        self.run_toast.set_phase(
-            self.sess.run_card,
-            runtoast::Phase::Running {
-                index,
-                total: self.sess.last_run_items.len(),
-            },
-        );
-        let stmt = self
-            .sess
-            .last_run_items
-            .get(index)
-            .cloned()
-            .unwrap_or_default();
+        if !extra {
+            self.run_toast.set_phase(
+                self.sess.run_card,
+                runtoast::Phase::Running {
+                    index,
+                    total: self.sess.last_run_items.len(),
+                },
+            );
+        }
+        let stmt = text.unwrap_or_else(|| {
+            self.sess
+                .last_run_items
+                .get(index)
+                .cloned()
+                .unwrap_or_default()
+        });
         // 세션 상태를 바꾸는 문장이 서버로 나가면 이 세션은 유휴로 닫지 않고, 재접속 때 한 번 알린다(docs/52 §6-4 · D-103).
         // 표식은 문장이 실제로 도는 세션에 붙는다(`CONNECT` 뒤 문장 = 새 세션). 켜지는 순간 원인 문장을 로그에 남긴다.
         // ★ T-123(219차): Oracle GTT에 넣는 평범한 INSERT/MERGE도 세션 상태(적재된 메타의 TEMPORARY · 왕복 0).

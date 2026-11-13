@@ -257,6 +257,10 @@ pub enum RunEvent {
         line: usize,
         summary: String,
         server: bool,
+        /// ★ 이 항목의 문장 글 — **호스트의 실행 항목 목록 밖에서 도는 실행**(실행 끝의 수식 재계산 `refresh_stale_vars`)만 싣는다
+        /// (사용자 11-13: 트랜잭션 로그가 재계산 줄을 직전 실행의 0번 문장으로 보였다 — 항목 번호가 0부터 다시 세어지는데 호스트는
+        /// 본 실행의 목록에서 글을 골랐다). 보통 실행은 `None`(호스트가 자기 목록에서 고른다 · 글 복사 0).
+        text: Option<String>,
     },
     /// 조회 결과. `more` = 페치 상한(`Runner::max_rows`)에서 잘렸다(서버에 행이 더 있다).
     /// `label` = 이 결과의 이름(REF CURSOR 변수 이름 등 · 호스트가 결과 탭 제목·머리줄로 쓴다 · 보통 조회는 `None`).
@@ -663,6 +667,8 @@ pub struct Runner {
     /// ★ 읽기 전용 프로필(T-31b · D-458 · 11-04 · `ConnectSpec.read_only`): 서버로 가는 문장 중 **조회만** 통과 — 변경·DDL·분류 밖
     ///   (CALL·EXEC·블록)·변경 적용(`apply_changes`)·가져오기(`import_file`)는 보내지 않고 거절한다(설정으로 못 끔 · 61 §1-7 정신).
     pub(crate) read_only: bool,
+    /// 수식 재계산 묶음을 돌리는 중(`refresh_stale_vars`) — `Begin`에 문장 글을 싣는다.
+    refresh_run: bool,
     hold_stmts: Vec<HeldStmt>,
     hold_total: u64,
     hold_block: bool,
@@ -909,6 +915,7 @@ impl Runner {
             page_tail: None,
             last_unit: None,
             read_end: ReadEnd::Auto,
+            refresh_run: false,
             hold: None,
             read_only: false,
             hold_stmts: Vec::new(),
@@ -2438,7 +2445,10 @@ impl Runner {
                 .collect();
             total += stale.len();
             let mut no_prompt = |_: &str| None;
-            if self.run_script(&src, &mut no_prompt, emit) > 0 {
+            self.refresh_run = true;
+            let errs = self.run_script(&src, &mut no_prompt, emit);
+            self.refresh_run = false;
+            if errs > 0 {
                 break;
             }
         }
@@ -2669,6 +2679,7 @@ impl Runner {
             line: item.line,
             summary: summary(item),
             server: goes_to_server(item),
+            text: self.refresh_run.then(|| item.text.clone()),
         });
         self.infer_call_bind_types(item);
         if item.text.contains("_DATE") || item.text.contains("_TIMESTAMP") {

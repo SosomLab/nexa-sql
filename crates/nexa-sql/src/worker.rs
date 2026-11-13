@@ -1217,6 +1217,7 @@ pub(crate) fn spawn(
                             line: 1,
                             summary: if analyze { "EXPLAIN ANALYZE".into() } else { "EXPLAIN".into() },
                             server: true,
+                            text: None,
                         });
                         let errs = match runner.explain(&stmt, nsql_script::plan::PlanOptions { analyze }) {
                             Ok(rep) => {

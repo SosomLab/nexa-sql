@@ -1073,9 +1073,10 @@ impl App {
                     index,
                     server,
                     ref summary,
+                    text,
                     ..
                 } => {
-                    self.on_ev_begin(index, server, summary);
+                    self.on_ev_begin(index, server, summary, text);
                 }
                 RunEvent::ResultSet {
                     index,
