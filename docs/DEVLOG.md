@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-14 새벽 8 (Windows · 개발 × 협업 · 잔여 묶음 · v0.8.0 준비)** — object_source 탭 없이 · Oracle 알려진 사전 뷰만 · /rename · 끝 빈 줄 · 여러 영역 유지(3b666fa7) · 빌드 58초 · V2·통합 ✓ · v0.8.0 노트 재료·드라이버 diff·절차·채널 조사(winget #447007 merged) · [journal 11-14 §9](journal/2026-11-14.md)
 - **2026-11-14 새벽 7 (Windows · 개발 × 협업 · 팔레트 줄·표기 · 결정 8)** — 팔레트 Sort/Permute/Convert Case 13 · Goto Symbol 빈 문서 · AI 줄 연산·표기 변환 · /rename(66ef42fc) · 사용자 결정 8건(push 한 번에 · 재시도·JS 구문 안 넣음 · v0.8.0 lite) · V2·통합 ✓ · ✗ /rename 미반영 · [journal 11-14 §7~§8](journal/2026-11-14.md)
 - **2026-11-14 새벽 6 (Windows · 개발 × 협업 · AI 편집기 도구)** — editor_carets · insert_sequence · set_syntax · 줄 연산 · filter_project · 불리언 인자·사전 검사 수정(2914bb85) · 빌드 1분 01초 · V2·통합 ✓ · [journal 11-14 §6](journal/2026-11-14.md)
 - **2026-11-14 새벽 5 (Windows · 개발 × 협업 · AI 도구 5)** — bookmarks · edit_bookmark · search_files · reveal_object · disconnect · open_file 줄(0094d7c8) · 빌드 3분 41초 · V2·통합 ✓ · ✗ search_files case·regex 미적용 · [journal 11-14 §5](journal/2026-11-14.md)
