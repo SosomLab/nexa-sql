@@ -1621,7 +1621,8 @@ impl AiView {
                 let items = vec![
                     CtxItem::item("file", t(Msg::AiAttachFile)),
                     CtxItem::item("clip", t(Msg::AiAttachClipboard)),
-                    CtxItem::item("grid", t(Msg::AiMenuGrid)),
+                    // 결과 그리드 첨부 = 편집기 탭의 그리드가 있어야 한다(독립 채팅 탭에서는 꺼짐).
+                    CtxItem::maybe("grid", t(Msg::AiMenuGrid), self.side_mode),
                 ];
                 let host = Rect::new(0, 0, self.bounds.right(), i32::MAX / 4);
                 let (ay, tw) = (anchor.y - self.s(4.0), self.s(200.0));
@@ -2234,6 +2235,22 @@ impl AiView {
                             ] {
                                 bx -= side;
                                 let r = Rect::new(bx, yy, side, side);
+                                // ★ 독립 채팅 탭(사용자 11-14): 편집기 탭이 필요한 버튼(결과 그리드에서 보기 · 편집기에 넣기 ·
+                                //   선택/문장 교체)은 **비활성** — 흐리게만 그리고 누름 대상에 넣지 않는다(분할 창에서는 그대로).
+                                if !self.side_mode && matches!(which, 8 | 1 | 10) {
+                                    if let Some(img) = self.block_icon(which, th.border) {
+                                        let icon = self.s(14.0);
+                                        let dst = Rect::new(
+                                            r.x + (r.w - icon) / 2,
+                                            r.y + (r.h - icon) / 2,
+                                            icon,
+                                            icon,
+                                        );
+                                        dc.image_scaled(dst, &img, tr);
+                                    }
+                                    bx -= self.s(2.0);
+                                    continue;
+                                }
                                 let idx = self.buttons.len();
                                 let hot = self.hover == Some(idx);
                                 if hot {
@@ -2276,7 +2293,8 @@ impl AiView {
                                     let x0 = x + dc.text_width(&l.text[..s0]);
                                     let w0 = dc.text_width(&l.text[s0..s1]);
                                     let r = Rect::new(x0, yy, w0, line_h);
-                                    if r.y >= tr.y && r.y + r.h <= tr.y + tr.h {
+                                    // 줄 번호 → 편집기 그 줄 = 편집기 옆 분할 창에서만(독립 채팅 탭에는 대상 편집기가 없다).
+                                    if self.side_mode && r.y >= tr.y && r.y + r.h <= tr.y + tr.h {
                                         dc.fill_rect(
                                             Rect::new(x0, yy + line_h - self.s(2.0), w0, 1),
                                             th.accent,

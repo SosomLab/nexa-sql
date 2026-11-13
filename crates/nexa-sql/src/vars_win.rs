@@ -132,6 +132,8 @@ pub(crate) struct VarsWin {
     row_h: i32,
     table: Rect,
     title_ctx: String,
+    /// 지금 보이는 표의 주인 탭(제목이 같은 탭끼리 옮겨도 갈아 그리게 · 11-14).
+    ctx_tab: u64,
     /// ★ 행 우클릭 메뉴(복사 · 11-13) · 그 행의 이름.
     menu: ContextMenu,
     menu_row: Option<String>,
@@ -166,6 +168,7 @@ impl VarsWin {
             row_h: 0,
             table: Rect::default(),
             title_ctx: String::new(),
+            ctx_tab: 0,
             menu: ContextMenu::new(),
             menu_row: None,
             head: ListHead::default(),
@@ -272,11 +275,15 @@ impl VarsWin {
         }
     }
 
-    /// 제목의 탭 이름(호스트가 탭 전환 때).
-    pub(crate) fn set_context(&mut self, ctx: &str) {
-        if self.title_ctx != ctx {
+    /// 제목의 탭 이름 · 탭 id(호스트가 탭 전환 때).
+    /// ★ 탭이 바뀌었으면 **제목이 같아도** 다시 그린다(사용자 11-14: 이름이 같은 탭(`Script_2` 여럿)끼리 옮기면 제목 비교만으로는
+    ///   바뀐 줄 몰라, 변수가 없는 탭으로 옮겨도 앞 탭의 목록이 남아 있었다).
+    pub(crate) fn set_context(&mut self, ctx: &str, tab: u64) {
+        if self.title_ctx != ctx || self.ctx_tab != tab {
             self.title_ctx = ctx.to_string();
+            self.ctx_tab = tab;
             self.selected = None;
+            self.scroll = 0;
             if let Some(w) = &self.window {
                 w.set_title(&self.title());
             }

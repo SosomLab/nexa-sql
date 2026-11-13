@@ -405,7 +405,7 @@ impl App {
             .find(|(t, _, _)| *t == id)
             .map(|(_, title, _)| title)
             .unwrap_or_default();
-        self.vars_win.set_context(&title);
+        self.vars_win.set_context(&title, id);
     }
 
     pub(crate) fn open_sessions_window(&mut self, el: &ActiveEventLoop) {

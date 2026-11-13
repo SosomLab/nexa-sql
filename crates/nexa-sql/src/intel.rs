@@ -4666,6 +4666,19 @@ mod tests {
         assert_eq!(it.take_accept().expect("a").text, "EMPNO", "Alt = 컬럼만");
     }
 
+    #[test]
+    fn word_tail_end_covers_the_rest_of_the_word() {
+        let t = "AND PROJECT_CD   =  :P";
+        // `PROJECT_|CD`(바이트 12) → 낱말 끝(14) · 낱말 끝에서는 그대로 · 공백 앞에서는 그대로.
+        assert_eq!(super::word_tail_end(t, 12), 14);
+        assert_eq!(super::word_tail_end(t, 14), 14);
+        assert_eq!(super::word_tail_end(t, 3), 3);
+        // 한글 낱말 · 문서 끝 · 범위 밖.
+        assert_eq!(super::word_tail_end("품목코드 x", 3), "품목코드".len());
+        assert_eq!(super::word_tail_end("abc", 3), 3);
+        assert_eq!(super::word_tail_end("abc", 9), 9);
+    }
+
     /// 별칭 없는 단일 테이블 = 열 이름만(Alt = `테이블.열`) · 별칭 없는 테이블이 둘이면 종전대로 테이블 이름 한정(11-13).
     #[test]
     fn bare_single_table_columns_are_not_qualified() {
@@ -4702,6 +4715,21 @@ mod tests {
         assert_eq!(pick("SELECT em FROM emp, dept", false), "emp.EMPNO");
         assert_eq!(pick("SELECT em FROM emp e", false), "e.EMPNO");
     }
+}
+
+/// ★ 낱말 한가운데에서 확정했을 때 **캐럿 뒤에 남은 낱말 꼬리**의 끝(바이트 · 순수 · 사용자 11-14): `PROJECT_|CD`에서 `PROJECT_CD`를
+/// 고르면 접두(`PROJECT_`)만 바뀌어 `PROJECT_CDCD`가 됐다 → 확정은 낱말 전체를 바꾼다. 꼬리 = 식별자 글자(글자·숫자·`_`·`$`·`#`)가
+/// 이어진 데까지 · `end`가 글자 경계가 아니거나 꼬리가 없으면 `end` 그대로.
+pub(crate) fn word_tail_end(text: &str, end: usize) -> usize {
+    if end > text.len() || !text.is_char_boundary(end) {
+        return end;
+    }
+    let tail: usize = text[end..]
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '#'))
+        .map(char::len_utf8)
+        .sum();
+    end + tail
 }
 
 /// 자동 별칭을 붙이는 자리인가(순수 · 10-21): 맨 관계 자리(`FROM |`) 또는 관계 사슬의 한정 이름(`FROM 스키마.|` · `FROM DB.소유자.|`).

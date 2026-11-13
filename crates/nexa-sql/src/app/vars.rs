@@ -66,16 +66,19 @@ impl App {
         }
     }
 
-    /// ★ 변수 표의 주인 탭(사용자 11-13 "AI 탭에서 실행돼도 실행의 주체는 해당 탭"): 뷰 탭(AI 채팅 등)은 자기 변수 표가 없다 →
-    /// 가장 최근에 본 **편집기 탭**의 표를 쓴다(실행 때 보내는 표 · 실행 뒤 받는 표 · 변수 창 · 입력 창이 모두 같은 탭).
-    /// 편집기 탭이면 그 탭 그대로 · 편집기 탭이 하나도 없으면 그대로.
+    /// ★ 변수 표의 주인 탭. **AI 채팅 탭은 독립 단위**(사용자 11-14 "채팅 탭을 독립 단위로 · 변수도 별도 관리"): 자기 연결과 자기
+    /// 변수 표를 가진다 = 그 탭 그대로(편집기 옆 분할 창은 활성 탭이 편집기 탭이라 그 탭의 표를 쓴다 = "현재 탭에 연결").
+    /// 그 밖의 뷰 탭(확장 뷰 등 · 자기 실행이 없는 탭)만 가장 최근의 편집기 탭 표를 본다. 편집기 탭이면 그 탭 그대로.
     pub(crate) fn vars_tab(&self, id: u64) -> u64 {
-        let is_view = |t: u64| {
+        let view_key = |t: u64| {
             self.editors
                 .index_of_id(t)
-                .is_some_and(|i| self.editors.view_key_of(i).is_some())
+                .and_then(|i| self.editors.view_key_of(i))
         };
-        if !is_view(id) {
+        let is_view = |t: u64| view_key(t).is_some();
+        let ai_chat =
+            view_key(id).is_some_and(|k| k.starts_with("ai.chat") || k.starts_with("ai.codex"));
+        if !is_view(id) || ai_chat {
             return id;
         }
         self.editors

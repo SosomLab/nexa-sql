@@ -1338,6 +1338,22 @@ impl App {
 
     /// ★ 코드 블록 [실행](사용자 11-11): 보이는 SQL을 사용자가 직접 실행하는 것과 같다 — `gate_pass()` → `run_text_whole`(DR-34) ·
     /// 결과는 그 블록 아래에 요약(조회 = 앞 8행 · 그 밖 = 상태 줄). 행 데이터는 화면에만(AI로 보내지 않는다).
+    /// ★ 답의 코드 블록 실행(▶ · ▦ · 자동 표시)의 실행 길(협업 V1 11-14): 클라이언트 명령(`EXEC :V := …` · `VAR` · `DEFINE` · `PRINT`)이
+    /// 들었거나 문장이 여럿이면 편집기와 같은 문장 단위 실행 · 아니면 통째(한 단위) — 종전에는 늘 통째로 보내 변수 대입이
+    /// SQL 그대로 서버에 나가 문법 오류가 났다(도구 `run_query`는 이미 같은 판정을 쓴다).
+    fn ai_run_code(&mut self, src: String) {
+        let items = nsql_script::split_script_in(&src, Some(self.sess.dialect));
+        let scripted = items.len() > 1
+            || items
+                .iter()
+                .any(|i| matches!(i.kind, nsql_script::ItemKind::Command(_)));
+        if scripted {
+            self.run_text(src, 0, true);
+        } else {
+            self.run_text_whole(src);
+        }
+    }
+
     fn ai_run_block(&mut self, msg: usize, block: usize, sql: &str) {
         if !self.sess.connected || !self.gate_open() || self.ai.pending.is_some() {
             self.ai.status = t(Msg::AiQueryBusy).into();
@@ -1356,7 +1372,7 @@ impl App {
         self.ai.run_block = Some((msg, block));
         self.ai.capture = None;
         self.ai.status = t(Msg::AiRunning).into();
-        self.run_text_whole(sql.to_string());
+        self.ai_run_code(sql.to_string());
     }
 
     /// 첨부에서 비밀을 가렸으면 Note + 상태줄로 알린다(0이면 조용).
@@ -1372,6 +1388,12 @@ impl App {
     /// 코드 블록 [그리드에서 결과 보기](사용자 11-11): 보이는 SQL을 보통 실행과 똑같이(`gate_open` → `run_text_whole` · DR-34) —
     /// 결과는 하단 결과 그리드로 · 대본에는 아무것도 안 붙인다 · AI로 안 보낸다.
     fn ai_run_grid(&mut self, sql: &str) {
+        // ★ 독립 채팅 탭에서는 편집기 탭이 필요한 동작을 하지 않는다(사용자 11-14 · 버튼도 비활성 — 명령·단축 경로의 이중 안전).
+        if self.ai_view_active() {
+            self.ai.status = t(Msg::AiNeedsEditorTab).into();
+            self.redraw();
+            return;
+        }
         if !self.sess.connected || !self.gate_open() || self.ai.pending.is_some() {
             self.ai.status = t(Msg::AiQueryBusy).into();
             self.redraw();
@@ -1408,7 +1430,7 @@ impl App {
         } else {
             None
         };
-        self.run_text_whole(sql.to_string());
+        self.ai_run_code(sql.to_string());
         self.mark_fresh_run_tab(fresh_prev);
         self.redraw();
     }
@@ -1575,6 +1597,12 @@ impl App {
     }
 
     pub(crate) fn ai_insert_editor(&mut self, s: &str) {
+        // ★ 독립 채팅 탭에서는 편집기 탭이 필요한 동작을 하지 않는다(사용자 11-14 · 버튼도 비활성 — 명령·단축 경로의 이중 안전).
+        if self.ai_view_active() {
+            self.ai.status = t(Msg::AiNeedsEditorTab).into();
+            self.redraw();
+            return;
+        }
         if self.ai_view_active() {
             // 채팅 탭 자신에게는 넣을 수 없다 — 새 탭.
             self.editors.new_tab(None);
@@ -3238,8 +3266,6 @@ impl App {
                     // ★ 식 안의 사용자 루틴 호출은 DML을 할 수 있다(11-13 데이터 보호) — 카드 없는 `set_var`로는 보내지 않는다.
                     //   `run_query`의 `EXEC :이름 := 식`은 쓰기 등급으로 분류돼 승인 카드(운영 = 두 번 눌러 허용)를 거친다.
                     err("this formula calls a routine that is not a known built-in function, so it may change data. set_var cannot run it. If the user really wants it, send it with run_query as `EXEC :NAME := <formula>` - that goes through the write approval card.".into())
-                } else if self.ai_view_active() {
-                    err("the chat tab is active; switch to a SQL editor tab first".into())
                 } else if !self.sess.connected || self.ai.pending.is_some() || !self.gate_open() {
                     err(format!(
                         "cannot evaluate the formula now: {}",
@@ -4211,6 +4237,10 @@ impl App {
             }
             "/clip" => self.ai_attach_clipboard(),
             // ★ 결과 그리드 선택 영역(없으면 보이는 결과 전체 · Markdown 표 · 행 상한 `ai.max_rows`).
+            "/grid" if self.ai_view_active() => {
+                // 독립 채팅 탭에는 결과 그리드가 없다(11-14).
+                self.ai.status = t_(Msg::AiNeedsEditorTab);
+            }
             "/grid" => {
                 let max = self.settings.int("ai.max_rows").max(1) as usize;
                 let text = self

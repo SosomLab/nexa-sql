@@ -203,6 +203,12 @@ impl App {
     /// ★ AI → 편집기(코드 블록 [교체]): 설정 `ai.replace_target`대로 선택(우선) 또는 커서 문장을 블록 글로 바꾼다 ·
     /// 대상이 없으면 커서에 넣는다. 되돌리기 가능.
     pub(crate) fn ai_replace_code(&mut self, code: &str) {
+        // ★ 독립 채팅 탭에서는 편집기 탭이 필요한 동작을 하지 않는다(사용자 11-14 · 버튼도 비활성 — 명령·단축 경로의 이중 안전).
+        if self.ai_view_active() {
+            self.ai.status = t(Msg::AiNeedsEditorTab).into();
+            self.redraw();
+            return;
+        }
         self.ai_target_editor();
         let prefer_sel = self.settings.get("ai.replace_target") != Some("statement");
         match self.ai_editor_target(prefer_sel) {
@@ -222,6 +228,12 @@ impl App {
 
     /// ★ 답의 줄 번호 클릭 → 편집기 그 줄로(캐럿 이동 + 스크롤 · 포커스는 편집기).
     pub(crate) fn ai_goto_line(&mut self, n: usize) {
+        // ★ 독립 채팅 탭에서는 편집기 탭이 필요한 동작을 하지 않는다(사용자 11-14 · 버튼도 비활성 — 명령·단축 경로의 이중 안전).
+        if self.ai_view_active() {
+            self.ai.status = t(Msg::AiNeedsEditorTab).into();
+            self.redraw();
+            return;
+        }
         self.ai_target_editor();
         self.ed_mut().goto_line(n.max(1));
         self.ai.side_focus = false;
@@ -493,9 +505,6 @@ impl App {
         if key.is_empty() {
             return Err("empty variable name".into());
         }
-        if self.ai_view_active() {
-            return Err("the chat tab is active; switch to a SQL editor tab first".into());
-        }
         let rows = self.vars_rows();
         let before: Vec<String> = rows
             .iter()
@@ -556,9 +565,6 @@ impl App {
         let key = name.trim().trim_start_matches(':').to_string();
         if key.is_empty() {
             return Err("empty variable name".into());
-        }
-        if self.ai_view_active() {
-            return Err("the chat tab is active; switch to a SQL editor tab first".into());
         }
         let action = if null {
             vars_win::VarsWinAction::SetNull(key.clone())

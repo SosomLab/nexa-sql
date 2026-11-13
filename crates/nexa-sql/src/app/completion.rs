@@ -355,7 +355,14 @@ impl App {
         };
         let text = self.editors.cur().text();
         let from = text[..a.replace.start.min(text.len())].chars().count();
-        let to = text[..a.replace.end.min(text.len())].chars().count();
+        // ★ 낱말 한가운데에서 확정 = 낱말 전체를 바꾼다(11-14 · 접두가 있을 때만 — 빈 자리에서 연 후보는 뒤 낱말을 건드리지 않는다).
+        let end_b = a.replace.end.min(text.len());
+        let end_b = if a.replace.start < a.replace.end {
+            crate::intel::word_tail_end(&text, end_b)
+        } else {
+            end_b
+        };
+        let to = text[..end_b].chars().count();
         let mut inv = Invalidations::default();
         self.ed_mut().replace_range(from, to, &a.text, &mut inv);
         if a.caret_back > 0 {

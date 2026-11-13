@@ -1024,7 +1024,13 @@ impl Editors {
             // 호스트가 아직 알려 주지 않은 탭(방금 만든 탭)도 **처음부터 고정 자리**(미연결 사선) — 나중에 표식이 생기며 제목이 밀리지 않는다(사용자 09-18).
             .map(|id| {
                 // 확장 뷰 탭 = 표식 없음(폭도 차지하지 않음 · 설정으로 켤 수 있다).
-                if !self.view_tab_badge && self.view_tabs.contains_key(id) {
+                // ★ AI 채팅 탭은 **독립 단위**(사용자 11-14 "채팅 탭을 독립 단위로 · 세션 아이콘을 탭에 동일하게"): 자기 연결을 가진
+                //   탭이므로 편집기 탭과 똑같이 세션 표식을 단다(표식 메뉴로 연결을 고른다).
+                let ai_chat = self
+                    .view_tabs
+                    .get(id)
+                    .is_some_and(|k| k.starts_with("ai.chat") || k.starts_with("ai.codex"));
+                if !self.view_tab_badge && self.view_tabs.contains_key(id) && !ai_chat {
                     return TabBadge::None;
                 }
                 self.sess_info
