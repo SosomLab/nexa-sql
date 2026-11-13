@@ -33,6 +33,21 @@ Steps:
 ",
     },
     Skill {
+        name: "text-edit",
+        when: "the user asks to transform editor text: sort lines, remove duplicate lines, change case (upper / lower / Capital), column mode or multiple carets, insert numbering / a sequence, word wrap, or change the syntax (language) of the tab",
+        body: "\
+# Skill: text-edit — editor transformations
+
+1. Line transforms: `edit_editor` with op = sort_asc | sort_desc | sort_num_asc | sort_num_desc | unique (remove duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | trim, on from_line..to_line (omit both = the selection or the statement at the caret; whole file = 1..total_lines from `get_editor_text`).
+2. Column mode / multiple carets: `editor_carets` (from_line, to_line, mode = line_end | line_start | column | select_lines; clear = one caret). It only moves carets.
+3. Numbering: `insert_sequence` uses the Insert Sequence extension - one value per caret. Do 'lines 15-30, append a 3-digit number' in ONE call: from_line=15, to_line=30, at=line_end, start=1, width=3 (or expr `1+1~03`). prefix / suffix add text around each value. One undo step.
+4. Word wrap: `run_command` id `view.word_wrap` with state on/off (applies to all tabs).
+5. Syntax (language) of the tab: `set_syntax` with the name (SQL, JSON, Plain Text, or an installed package). If the language is not installed the tool lists what is available - say so instead of guessing.
+6. Other edit commands (`run_command` `edit.duplicate_line`, `edit.join_lines`, `edit.toggle_comment`, `edit.indent`, `edit.upper_case` ...) act on the current carets / selection - set them first with `edit_editor` op=select or `editor_carets`.
+7. `get_editor_text` shows the caret list (`<carets>`), the selection and line numbers - check it before and after.
+",
+    },
+    Skill {
         name: "bookmarks",
         when: "the user asks to add, list, rename, annotate, number, delete or jump to bookmarks (line marks in editor tabs)",
         body: "\
@@ -130,7 +145,7 @@ Search harness (all in-memory, instant, no database round trip):
 # Skill: project files
 
 1. `list_files` with path words (ANDed) finds files under the current project/folder root (hidden and build folders skipped, bounded). Empty query lists the first entries.
-2. `open_file` opens one in an editor tab (relative to the root or absolute); with `line` the caret goes to that line.\n2a. `search_files` searches file CONTENTS (query + case / word / regex + `where` scope patterns) and returns `path:line:column` rows - then `open_file` with that line. `list_files` only matches path names.
+2. `open_file` opens one in an editor tab (relative to the root or absolute); with `line` the caret goes to that line.\n2b. `filter_project` shows the Project explorer panel and fills its 'Filter files' box (what the user means by 'search / filter in the project explorer').\n2a. `search_files` searches file CONTENTS (query + case / word / regex + `where` scope patterns) and returns `path:line:column` rows - then `open_file` with that line. `list_files` only matches path names.
 3. Project commands via `run_command`: `project.open`, `project.switch`, `project.save`, `project.close`; `file.open` opens the file dialog for the user; `view.project` shows the project panel.
 4. Do not read file contents through the shell; open the file and use `get_editor_text` if the content matters.
 ",

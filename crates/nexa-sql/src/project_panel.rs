@@ -700,6 +700,11 @@ impl ProjectPanel {
         }
     }
 
+    /// 지금 보이는 줄 수(필터 뒤 · AI 도구 `filter_project`의 답).
+    pub(crate) fn shown_rows(&self) -> usize {
+        self.rows.len()
+    }
+
     /// 필터 글을 넣고 바로 거른다(자체 시험 `project.filter:` · 키 주입 없이).
     pub(crate) fn set_filter_text(&mut self, text: &str) {
         self.filter.set_text(text);

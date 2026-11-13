@@ -341,6 +341,116 @@ impl App {
         })
     }
 
+    /// ★ 줄 범위에 캐럿(열 모드 · AI 도구 `editor_carets` / `insert_sequence` · 사용자 11-14 "15행부터 30행에 컬럼모드"): 줄마다
+    /// 구간 하나 — `line_end`(기본) · `line_start` · `column`(1 기준 · 짧은 줄은 줄 끝으로) · `select_lines`(줄 전체 선택).
+    pub(crate) fn ai_line_carets(
+        &self,
+        from: i64,
+        to: i64,
+        mode: &str,
+        column: i64,
+    ) -> Result<Vec<(usize, usize)>, String> {
+        let buf = self.editors.cur().buf();
+        let total = buf.line_count() as i64;
+        if from < 1 || from > total {
+            return Err(format!(
+                "from_line {from} is outside the document (1..{total})"
+            ));
+        }
+        let to = if to < from { from } else { to.min(total) };
+        if to - from >= 10_000 {
+            return Err("too many lines for multiple carets (limit 10000)".into());
+        }
+        Ok((from..=to)
+            .map(|l| {
+                let (s, e) = (
+                    buf.line_start((l - 1) as usize),
+                    buf.line_end((l - 1) as usize),
+                );
+                match mode {
+                    "line_start" => (s, s),
+                    "column" => {
+                        let p = (s + (column.max(1) - 1) as usize).min(e);
+                        (p, p)
+                    }
+                    "select_lines" => (s, e),
+                    _ => (e, e),
+                }
+            })
+            .collect())
+    }
+
+    /// ★ AI 도구 `insert_sequence`(11-14): 지금 구간(캐럿·선택)마다 Insert Sequence 확장이 낸 값을 넣는다 — 확장의 변환을
+    /// 직접 부르고(입력 창 없음) `replace_many`로 한 번에(되돌리기 한 단계) · 끝나면 캐럿은 각 값 끝.
+    pub(crate) fn ai_insert_sequence(&mut self, expr: &str) -> Result<String, String> {
+        use crate::extensions::insert_sequence;
+        let disabled = self.ext_disabled();
+        let Some((ext_id, _)) = self
+            .extensions
+            .prompt_owner(insert_sequence::CMD, &disabled)
+        else {
+            return Err(
+                "the Insert Sequence extension is disabled - enable it (set_extension_enabled insert-sequence) and try again"
+                    .into(),
+            );
+        };
+        let regions = self.editors.cur().regions();
+        let n = regions.len();
+        if n == 0 {
+            return Err("no caret in the editor".into());
+        }
+        let req = {
+            let buf = self.editors.cur().buf();
+            crate::extensions::TransformReq {
+                id: insert_sequence::CMD.to_string(),
+                text: expr.to_string(),
+                n,
+                regions: regions
+                    .iter()
+                    .take(2000)
+                    .map(|&(a, b)| (buf.line_of(a), buf.slice_string(a, b)))
+                    .collect(),
+                phase: "commit".into(),
+                ..Default::default()
+            }
+        };
+        let out = self.extensions.transform(&ext_id, &req, &self.settings)?;
+        if let Some(e) = out.error {
+            return Err(format!("sequence expression error: {e}"));
+        }
+        if out.values.len() != n {
+            return Err(format!(
+                "the extension returned {} value(s) for {n} caret(s)",
+                out.values.len()
+            ));
+        }
+        let edits: Vec<(usize, usize, &str)> = regions
+            .iter()
+            .zip(&out.values)
+            .map(|(&(a, b), v)| (a, b, v.as_str()))
+            .collect();
+        let mut ends = Vec::with_capacity(n);
+        let mut shift: isize = 0;
+        for (&(a, b), v) in regions.iter().zip(&out.values) {
+            let len = v.chars().count();
+            let from = (a as isize + shift) as usize;
+            ends.push((from + len, from + len));
+            shift += len as isize - (b - a) as isize;
+        }
+        let mut inv = nexa_ctl::Invalidations::default();
+        let tb = self.ed_mut();
+        tb.begin_undo_group();
+        tb.replace_many(&edits, &mut inv);
+        tb.set_regions_pub(&ends);
+        tb.end_undo_group();
+        self.redraw();
+        let first = out.values.first().cloned().unwrap_or_default();
+        let last = out.values.last().cloned().unwrap_or_default();
+        Ok(format!(
+            "inserted {n} value(s): {first} .. {last} (one undo step)"
+        ))
+    }
+
     /// ★ 변경 미리보기(승인 카드 본문 · 설정 `ai.diff_context` 0 = 끔): 편집기를 바꾸는 도구면 전후 줄 글 — 아니면 None.
     pub(crate) fn ai_edit_preview(&self, tool: &str, input: &str) -> Option<String> {
         let ctx = self.settings.int("ai.diff_context").clamp(0, 20) as usize;

@@ -2823,6 +2823,24 @@ impl App {
                 tf(Msg::AiDoConnect, &[&g("profile"), &scope])
             }
             "set_extension_enabled" => tf(Msg::AiDoExt, &[&g("id"), &g("enabled")]),
+            "insert_sequence" => {
+                let what = if g("expr").trim().is_empty() {
+                    format!(
+                        "start {} step {} width {}",
+                        g("start"),
+                        g("step"),
+                        g("width")
+                    )
+                } else {
+                    g("expr")
+                };
+                let place = if g("from_line").is_empty() {
+                    "-".to_string()
+                } else {
+                    format!("{}-{}", g("from_line"), g("to_line"))
+                };
+                tf(Msg::AiDoInsertSeq, &[&what, &place])
+            }
             "disconnect" => tf(
                 Msg::AiDoDisconnect,
                 &[if g("scope") == "all" {
@@ -2850,6 +2868,46 @@ impl App {
         out.push(tf(Msg::AiCardDo, &[&what]));
         out.push(tf(Msg::AiCardWhere, &[&self.sess.profile, env]));
         out
+    }
+
+    /// 승인 카드 전에 알 수 있는 실패(대상 없음 · 편집기 탭 필요) — 있으면 그 오류 글.
+    fn ai_precheck(&self, name: &str, input: &str) -> Option<String> {
+        let v = json_parse(input).unwrap_or(Json::Obj(Vec::new()));
+        let g = |k: &str| ai::jstr(&v, k);
+        match name {
+            "delete_var" => {
+                let key = g("name").trim().trim_start_matches(':').to_string();
+                (!key.is_empty()
+                    && !self
+                        .vars_rows()
+                        .iter()
+                        .any(|r| r.name.eq_ignore_ascii_case(&key)))
+                .then(|| format!("no variable named {key} in this tab (use list_vars)"))
+            }
+            "edit_bookmark" => {
+                if g("action") == "add" {
+                    self.ai_view_active().then(|| {
+                        "the chat tab is active; a bookmark needs an editor tab (switch_tab or open_file first)".to_string()
+                    })
+                } else {
+                    let known = g("id")
+                        .trim()
+                        .parse::<u64>()
+                        .ok()
+                        .is_some_and(|id| self.bookmarks.store.get(id).is_some());
+                    (!known).then(|| {
+                        "no such bookmark id (call bookmarks with action=list)".to_string()
+                    })
+                }
+            }
+            "insert_sequence" | "editor_carets" | "set_syntax" => {
+                self.ai_view_active().then(|| {
+                    "the chat tab is active; this needs an editor tab (switch_tab first)"
+                        .to_string()
+                })
+            }
+            _ => None,
+        }
     }
 
     /// 도구 호출의 핵심 인자(등급 판정용): run_query = SQL · set_setting = 키 · run_command = id.
@@ -3003,6 +3061,14 @@ impl App {
             .map(|s| (s.auto, s.rows_allowed))
             .unwrap_or((false, false));
         // ★ 에이전트 도구 허용(agents.rs · 11-11): 모델이 전체 목록을 받아도 역할 밖 도구는 여기서 막는다(API·CLI·Codex 공통).
+        // ★ 사전 검사(11-14 · 협업 V1 관찰 2회): 대상이 없거나 지금 할 수 없는 요청은 승인 카드를 띄우기 전에 거절한다.
+        if let Some(why) = self.ai_precheck(tool.name, &input) {
+            let _ = reply.send(ToolReply {
+                output: why,
+                ok: false,
+            });
+            return;
+        }
         let agent = self.ai_cur().map(|s| s.agent.clone()).unwrap_or_default();
         if !ai::agents::allows(&agent, tool.name) {
             let _ = reply.send(ToolReply {
@@ -3299,8 +3365,21 @@ impl App {
                                 ))
                             }
                         }
+                        None if id.starts_with("edit.") && self.ai_view_active() => {
+                            err("the chat tab is active; edit commands need an editor tab (switch_tab first)".into())
+                        }
                         None => {
+                            // ★ 편집 명령(`edit.*`)은 편집기에 포커스가 있어야 동작한다 — AI 패널에서 대화 중이면 무시되는데
+                            //   "ran"으로 답했다(11-14 조사). 명령 동안만 편집기 포커스로 보고, 명령이 포커스를 옮기지 않았으면 되돌린다.
+                            let prev = self.focus;
+                            let force = id.starts_with("edit.") && prev != Focus::Editor;
+                            if force {
+                                self.focus = Focus::Editor;
+                            }
                             self.menu_action(&id);
+                            if force && self.focus == Focus::Editor {
+                                self.focus = prev;
+                            }
                             ok(format!("ran {id}"))
                         }
                     }
@@ -3348,7 +3427,37 @@ impl App {
                     err("the chat tab is active; switch to a SQL editor tab first".into())
                 } else {
                     let full = self.editors.cur().text();
-                    let sel = self.editors.cur().copy_selection().unwrap_or_default();
+                    // ★ 선택·캐럿은 구간에서 직접 읽는다(11-14): `copy_selection`은 편집기에 포커스가 있을 때만 값을 줘, 채팅에
+                    //   입력 중이면 선택이 비어 보였다 · 멀티 캐럿(열 모드)도 함께 알린다(줄:열 · 앞 50개).
+                    let (sel, carets) = {
+                        let tb = self.editors.cur();
+                        let buf = tb.buf();
+                        let regs = tb.regions();
+                        let sel = regs
+                            .iter()
+                            .filter(|(a, b)| b > a)
+                            .map(|&(a, b)| buf.slice_string(a, b))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let list = regs
+                            .iter()
+                            .take(50)
+                            .map(|&(a, b)| {
+                                let l = buf.line_of(b);
+                                format!(
+                                    "L{}:C{}{}",
+                                    l + 1,
+                                    b - buf.line_start(l) + 1,
+                                    if b > a { "*" } else { "" }
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        (
+                            sel,
+                            format!("<carets count=\"{}\">{list}</carets>\n", regs.len()),
+                        )
+                    };
                     let byte_pos = full
                         .char_indices()
                         .nth(self.editors.cur().caret())
@@ -3371,7 +3480,7 @@ impl App {
                     };
                     let total = full.matches('\n').count() + 1;
                     ok(format!(
-                        "<caret line=\"{line}\" column=\"{col}\" total_lines=\"{total}\"/>\n<text>\n{full}\n</text>\n<selection>\n{sel}\n</selection>\n<statement_at_caret{range}>\n{stmt}\n</statement_at_caret>"
+                        "<caret line=\"{line}\" column=\"{col}\" total_lines=\"{total}\"/>\n{carets}<text>\n{full}\n</text>\n<selection>\n{sel}\n</selection>\n<statement_at_caret{range}>\n{stmt}\n</statement_at_caret>"
                     ))
                 }
             }
@@ -3508,7 +3617,7 @@ impl App {
                 let limit = gi("limit", 50).clamp(1, 500) as usize;
                 let in_cols = matches!(
                     g("in_columns").to_ascii_lowercase().as_str(),
-                    "true" | "1" | "yes"
+                    "true" | "1" | "yes" | "on"
                 );
                 let mut rows = self.explorer.ai_search_objects(
                     &g("query"),
@@ -3590,6 +3699,141 @@ impl App {
             }
             // ★ 북마크 · 파일 내용 검색 · 객체 탐색기 이동(사용자 11-14 "관련해서 필요한 API 및 MCP 구성") — 도구 표 하나가
             //   API · CLI(MCP) · Codex에 함께 나간다.
+            // ★ 편집기 기능(사용자 11-14 "AI를 통해서 사용할 수 있도록"): 열 모드(줄마다 캐럿) · 일련번호(Insert Sequence 확장) ·
+            //   탭의 구문 바꾸기. 줄 정렬·중복 제거·대소문자(Capital 포함)는 `edit_editor`의 op · 줄바꿈은 `run_command view.word_wrap`.
+            "editor_carets" => {
+                if self.ai_view_active() {
+                    err("the chat tab is active; switch to a SQL editor tab first".into())
+                } else if g("mode") == "clear" {
+                    let c = self.editors.cur().caret();
+                    self.ed_mut().set_regions_pub(&[(c, c)]);
+                    self.redraw();
+                    ok("back to a single caret".into())
+                } else {
+                    let mode = g("mode");
+                    match self.ai_line_carets(
+                        gi("from_line", 0),
+                        gi("to_line", 0),
+                        &mode,
+                        gi("column", 0),
+                    ) {
+                        Ok(v) => {
+                            let n = v.len();
+                            self.ed_mut().set_regions_pub(&v);
+                            self.redraw();
+                            ok(format!(
+                                "{n} caret(s) set ({}) - now use insert_sequence or an edit command",
+                                if mode.is_empty() { "line_end" } else { mode.as_str() }
+                            ))
+                        }
+                        Err(e) => err(e),
+                    }
+                }
+            }
+            "insert_sequence" => {
+                if self.ai_view_active() {
+                    err("the chat tab is active; switch to a SQL editor tab first".into())
+                } else {
+                    // 식 = `expr` 그대로 · 없으면 start/step/width/prefix/suffix로 조립(확장 문법: 시작±증가~0자릿수 "틀").
+                    let expr = {
+                        let e = g("expr");
+                        if !e.trim().is_empty() {
+                            Ok(e)
+                        } else {
+                            let (start, step, width) =
+                                (gi("start", 1), gi("step", 1), gi("width", 0));
+                            let (pre, suf) = (g("prefix"), g("suffix"));
+                            if pre.contains('"') || suf.contains('"') {
+                                Err("prefix/suffix with a double quote: pass the full `expr` instead".to_string())
+                            } else {
+                                let mut x = format!(
+                                    "{start}{}{}",
+                                    if step < 0 { "-" } else { "+" },
+                                    step.abs()
+                                );
+                                if width > 0 {
+                                    x.push_str(&format!("~0{width}"));
+                                }
+                                if !pre.is_empty() || !suf.is_empty() {
+                                    x.push_str(&format!(" \"{pre}{{}}{suf}\""));
+                                }
+                                Ok(x)
+                            }
+                        }
+                    };
+                    let placed = if gi("from_line", 0) > 0 {
+                        self.ai_line_carets(
+                            gi("from_line", 0),
+                            gi("to_line", 0),
+                            &g("at"),
+                            gi("column", 0),
+                        )
+                        .map(|v| self.ed_mut().set_regions_pub(&v))
+                    } else {
+                        Ok(())
+                    };
+                    match expr.and_then(|x| placed.and_then(|()| self.ai_insert_sequence(&x))) {
+                        Ok(s) => ok(s),
+                        Err(e) => err(e),
+                    }
+                }
+            }
+            "set_syntax" => {
+                if self.ai_view_active() {
+                    err("the chat tab is active; switch to an editor tab first".into())
+                } else {
+                    let want = g("name");
+                    let names = self.syntax.names();
+                    match names.iter().find(|n| n.eq_ignore_ascii_case(want.trim())) {
+                        Some(n) => {
+                            let n = n.clone();
+                            self.menu_action(&format!("syntax.set:{n}"));
+                            self.redraw();
+                            if self.editors.syntax_name() == n {
+                                ok(format!("the syntax of this tab is now {n}"))
+                            } else {
+                                err(format!("could not switch to {n}"))
+                            }
+                        }
+                        None => err(format!(
+                            "syntax '{}' is not installed. Available: {}. Other languages come from syntax packages (*.nexa-syntax in the Packages folder) - tell the user.",
+                            want.trim(),
+                            names.join(", ")
+                        )),
+                    }
+                }
+            }
+            // ★ 프로젝트 탐색기 필터(사용자 11-14 "프로젝트 탐색기 활동 탭으로 이동 → Filter files에 입력해 필터"): 패널을 보이고
+            //   필터 상자에 글·옵션을 넣는다(사람이 친 것과 같은 길 `set_filter_text`) · 빈 글 = 필터 해제.
+            "filter_project" => {
+                if !self.project_panel.is_visible() {
+                    self.menu_action("view.project");
+                }
+                let flag = |k: &str| {
+                    matches!(
+                        g(k).to_ascii_lowercase().as_str(),
+                        "true" | "1" | "yes" | "on"
+                    )
+                };
+                let q = g("query");
+                self.project_panel.set_filter_opts(
+                    flag("case"),
+                    flag("word"),
+                    flag("regex"),
+                    flag("path"),
+                );
+                self.project_panel.set_filter_text(q.trim());
+                self.redraw();
+                ok(if q.trim().is_empty() {
+                    "project explorer shown · filter cleared".to_string()
+                } else {
+                    format!(
+                        "project explorer shown · filter = '{}' · {} row(s) listed now (the list may still be updating; use list_files for the file names)",
+                        q.trim(),
+                        self.project_panel.shown_rows()
+                    )
+                })
+            }
             // ★ 접속 해제 도구(사용자 11-14 "전체 연결을 모두 종료" · "연결된 모든 세션 해제"): scope=current(이 탭의 연결) |
             //   all(열려 있는 연결 전부 · 공유·전용). 실행 중이거나 미커밋 변경이 있는 연결은 건너뛰고 알린다(끊지 않는다).
             "disconnect" => {
@@ -3773,7 +4017,10 @@ impl App {
                         self.menu_action("view.search");
                     }
                     let flag = |k: &str| {
-                        matches!(g(k).to_ascii_lowercase().as_str(), "true" | "1" | "yes")
+                        matches!(
+                            g(k).to_ascii_lowercase().as_str(),
+                            "true" | "1" | "yes" | "on"
+                        )
                     };
                     self.search.set_toggles(
                         flag("case"),

@@ -92,11 +92,45 @@ pub(crate) const TOOLS: &[Tool] = &[
         props: &[("name", "string", "Variable name (without ':'; prefix '&' for a substitution variable)", true)],
     },
     Tool {
+        name: "editor_carets",
+        desc: "Column mode / multiple carets in the active editor tab (changes only the selection, not the text): puts one caret on every line from from_line to to_line - mode=line_end (default), line_start, column (at `column`; shorter lines clamp to their end) or select_lines (each line selected). mode=clear returns to a single caret. Follow with insert_sequence, or with edit commands that act on every caret.",
+        write: false,
+        props: &[
+            ("from_line", "integer", "First line (1-based)", false),
+            ("to_line", "integer", "Last line (default = from_line)", false),
+            ("mode", "string", "line_end (default) | line_start | column | select_lines | clear", false),
+            ("column", "integer", "1-based column for mode=column", false),
+        ],
+    },
+    Tool {
+        name: "insert_sequence",
+        desc: "Insert a number/text sequence with the Insert Sequence extension - one value per caret (or replacing each selection), one undo step. Give from_line/to_line (+ at = line_end | line_start | column) to place the carets and insert in one call, or omit them to use the current carets. Values: either `expr` in the extension's syntax (start[+step][~format] e.g. `1+1~03` = 001, 002 ...; `10+10`; `a` for letters; a quoted template like `1+1~03 \"-{}\"`), or start / step / width (zero-padded digits) / prefix / suffix.",
+        write: true,
+        props: &[
+            ("expr", "string", "Sequence expression, e.g. 1+1~03", false),
+            ("start", "integer", "First value (default 1) when expr is empty", false),
+            ("step", "integer", "Increment (default 1)", false),
+            ("width", "integer", "Zero-padded width, e.g. 3 = 001", false),
+            ("prefix", "string", "Text before each value", false),
+            ("suffix", "string", "Text after each value", false),
+            ("from_line", "integer", "First line to put carets on (optional)", false),
+            ("to_line", "integer", "Last line", false),
+            ("at", "string", "line_end (default) | line_start | column", false),
+            ("column", "integer", "1-based column when at=column", false),
+        ],
+    },
+    Tool {
+        name: "set_syntax",
+        desc: "Set the syntax (language highlighting, comment marks, indentation) of the active editor tab, e.g. SQL, JSON, Plain Text or any installed syntax package. The name is matched case-insensitively; if it is not installed the answer lists the available names.",
+        write: false,
+        props: &[("name", "string", "Syntax name", true)],
+    },
+    Tool {
         name: "edit_editor",
         desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
         write: true,
         props: &[
-            ("op", "string", "replace | sort_asc | sort_desc | unique | reverse | upper | lower | trim | select", true),
+            ("op", "string", "replace | sort_asc | sort_desc | sort_num_asc | sort_num_desc | unique (= dedupe, removes duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | trim | select", true),
             ("from_line", "integer", "First line (1-based)", false),
             ("to_line", "integer", "Last line (inclusive)", false),
             ("text", "string", "New text for op=replace", false),
@@ -188,6 +222,18 @@ pub(crate) const TOOLS: &[Tool] = &[
             ("name", "string", "Object name", true),
             ("schema", "string", "Schema (optional, current schema when empty)", false),
             ("member", "string", "Column or member name to select under the object", false),
+        ],
+    },
+    Tool {
+        name: "filter_project",
+        desc: "Show the Project explorer panel and type into its 'Filter files' box so the tree lists only matching files (the same as the user typing there). query = text to filter by (empty clears the filter); case / word / regex / path (match the whole relative path instead of the file name) are the box's toggles. Use this when the user says 'in the project explorer, search / filter ...'. To get the matching names as text use list_files; for file contents use search_files.",
+        write: false,
+        props: &[
+            ("query", "string", "Filter text (empty = clear)", true),
+            ("case", "boolean", "Match case (default false)", false),
+            ("word", "boolean", "Whole word (default false)", false),
+            ("regex", "boolean", "Regular expression (default false)", false),
+            ("path", "boolean", "Match against the relative path (default false = file name)", false),
         ],
     },
     Tool {
@@ -472,7 +518,7 @@ pub(crate) fn lines_op(lines: &[&str], op: &str) -> Option<Vec<String>> {
             v.sort_by_key(|l| std::cmp::Reverse(l.to_lowercase()));
             v
         }
-        "unique" => {
+        "unique" | "dedupe" => {
             let mut seen = std::collections::HashSet::new();
             own()
                 .into_iter()
@@ -486,13 +532,117 @@ pub(crate) fn lines_op(lines: &[&str], op: &str) -> Option<Vec<String>> {
         }
         "upper" => lines.iter().map(|l| l.to_uppercase()).collect(),
         "lower" => lines.iter().map(|l| l.to_lowercase()).collect(),
+        // ★ 11-14(사용자 "대소문자 변환 · Capital 방식 등"): 낱말 첫 글자만 대문자 · 대소문자 뒤집기 · 숫자 정렬.
+        "title" => lines.iter().map(|l| title_case(l)).collect(),
+        "swapcase" => lines
+            .iter()
+            .map(|l| {
+                l.chars()
+                    .map(|c| {
+                        if c.is_uppercase() {
+                            c.to_lowercase().collect::<String>()
+                        } else {
+                            c.to_uppercase().collect::<String>()
+                        }
+                    })
+                    .collect()
+            })
+            .collect(),
+        "sort_num_asc" | "sort_num_desc" => {
+            let mut v = own();
+            v.sort_by(|a, b| {
+                let (ka, kb) = (first_number(a), first_number(b));
+                ka.partial_cmp(&kb)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+            });
+            if op == "sort_num_desc" {
+                v.reverse();
+            }
+            v
+        }
         "trim" => lines.iter().map(|l| l.trim_end().to_string()).collect(),
         _ => return None,
     })
 }
 
+/// 낱말 첫 글자만 대문자(나머지 소문자) — 낱말 경계 = 글자·숫자가 아닌 것(`_` · 공백 · 구두점).
+fn title_case(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut start = true;
+    for c in line.chars() {
+        if c.is_alphanumeric() {
+            if start {
+                out.extend(c.to_uppercase());
+            } else {
+                out.extend(c.to_lowercase());
+            }
+            start = false;
+        } else {
+            out.push(c);
+            start = true;
+        }
+    }
+    out
+}
+
+/// 줄의 첫 숫자(부호·소수 포함) — 없으면 맨 뒤로 가게 무한대.
+fn first_number(line: &str) -> f64 {
+    let b = line.as_bytes();
+    let mut i = 0;
+    while i < b.len() && !b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i >= b.len() {
+        return f64::INFINITY;
+    }
+    let neg = i > 0 && b[i - 1] == b'-';
+    let s = i;
+    while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+        i += 1;
+    }
+    let n: f64 = line[s..i]
+        .trim_end_matches('.')
+        .parse()
+        .unwrap_or(f64::INFINITY);
+    if neg {
+        -n
+    } else {
+        n
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lines_op_title_swapcase_and_numeric_sort() {
+        let l = ["item_cd  SOME text", "hello-world 2nd"];
+        assert_eq!(
+            super::lines_op(&l, "title").expect("op"),
+            ["Item_Cd  Some Text", "Hello-World 2nd"]
+        );
+        assert_eq!(
+            super::lines_op(&["aBc 1"], "swapcase").expect("op"),
+            ["AbC 1"]
+        );
+        let n = ["row 10", "row 2", "x", "row -1", "row 2.5"];
+        assert_eq!(
+            super::lines_op(&n, "sort_num_asc").expect("op"),
+            ["row -1", "row 2", "row 2.5", "row 10", "x"]
+        );
+        assert_eq!(
+            super::lines_op(&n, "sort_num_desc")
+                .expect("op")
+                .first()
+                .map(String::as_str),
+            Some("x")
+        );
+        assert_eq!(
+            super::lines_op(&["a", "b", "a"], "dedupe").expect("op"),
+            ["a", "b"]
+        );
+    }
+
     #[test]
     fn lines_op_sort_unique_reverse_case_trim() {
         let l = ["b", "A", "c", "b"];

@@ -2779,7 +2779,8 @@ impl AiView {
                 let h = dc.text_height();
                 // 원은 줄 높이보다 작게(사용자 11-14 "원문자 크기는 조금 더 작게") · 숫자는 작은 글꼴(상태줄 슬롯)로 원 안에 맞춘다.
                 let d = (h * 3 / 4).clamp(self.s(9.0), self.s(13.0));
-                dc.select_font(FontSlot::Status, false);
+                // 숫자는 원보다 확실히 작게(협업 V1 11-14: 같은 크기 글꼴이면 획이 테두리에 닿았다) — 기본 크기에서 3px 줄인다.
+                dc.select_font_sized(FontSlot::Status, false, -3.0);
                 for k in 0..3u8 {
                     let cur = k + 1 == info.stage;
                     let col = if cur && self.blink {
