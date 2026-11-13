@@ -53,6 +53,8 @@ pub(crate) enum AiWait {
     Search { limit: usize },
     /// 객체 탐색기 이동이 끝나기를(찾던 이름 — 선택 경로에 있는지로 성공 판정).
     Reveal { name: String },
+    /// 객체 소스를 **탭 없이** 읽는 중(`object_source` · 응답은 meta.rs `OpenSql`이 `ai_source_take`로 가로챈다).
+    Source,
 }
 
 /// 비동기 도구(실행 결과가 나중에 온다).
@@ -147,6 +149,11 @@ pub(crate) struct AiState {
     /// 백업 → 재진입 실행의 결과를 같은 통로로 보낸다. 종전에는 "not executed"를 먼저 답했는데 백업이 끝나면 문장이 **실제로
     /// 실행**돼 어시스턴트가 아는 것과 DB가 어긋났다(재시도하면 이중 실행).
     pub objbk_wait: bool,
+    /// ★ 탭 없이 읽는 객체 소스(사용자 11-14 "단순 분석 요청이면 탭을 열지 말 것"): 기다리는 출처(스키마 · 이름 · 종류 · 요청 시각)
+    /// — 탐색기의 소스 응답(`OpenSql`)이 이것과 같으면 탭을 열지 않고 `source_got`에 담는다(서버 히스토리 저장과 같은 가로채기).
+    pub source_wait: Option<(String, String, nsql_catalog::ObjectKind, Instant)>,
+    /// 가로챈 소스 글(또는 실패 글) — `ai_tick_pending`이 꺼내 도구 답으로 보낸다.
+    pub source_got: Option<(String, bool)>,
     /// ★ 두 번 눌러 허용하는 카드의 첫 누름 시각(`ApprovalReply::Api::twice` · 시간이 지나면 `ai_tick_due`가 비운다).
     pub armed: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
@@ -1054,14 +1061,7 @@ impl App {
                 }
                 PanelAction::OpenSession(id) => self.ai_open_session(&id, false, false),
                 PanelAction::OpenSessionPinned(id) => self.ai_open_session(&id, true, false),
-                PanelAction::RenameSession(id, title) => {
-                    if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == id) {
-                        s.title = title.clone();
-                        ai::history_save(s);
-                        let key = Self::ai_view_key(s.provider, &id);
-                        self.editors.set_view_title(&key, &title);
-                    }
-                }
+                PanelAction::RenameSession(id, title) => self.ai_rename_session(&id, &title),
                 PanelAction::DeleteSession(id) => self.ai_delete_session(&id),
             }
         }
@@ -2689,6 +2689,54 @@ impl App {
     fn ai_twice_wait(&self) -> std::time::Duration {
         std::time::Duration::from_millis(
             self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as u64,
+        )
+    }
+
+    /// ★ 탐색기의 소스 응답을 AI 도구(`object_source` · 탭 없이 읽기)가 가져간다 — 참 = 소비했다(호출자는 탭을 열지 않는다).
+    /// 기다리던 출처(스키마 · 이름 · 종류)와 같은 응답만 · 묵은 대기(시간 초과 뒤)는 비우고 보통 길로 보낸다 · 도구 호출이
+    /// 그 사이 멈췄으면(■) 글을 버린다(요청하지 않은 탭이 뒤늦게 열리지 않게).
+    pub(crate) fn ai_source_take(
+        &mut self,
+        origin: Option<&crate::explorer::ObjectOrigin>,
+        text: &str,
+    ) -> bool {
+        let Some((schema, name, kind, since)) = self.ai.source_wait.clone() else {
+            return false;
+        };
+        let limit =
+            std::time::Duration::from_secs(self.settings.int("ai.timeout_secs").max(10) as u64 + 5);
+        if since.elapsed() > limit {
+            self.ai.source_wait = None;
+            return false;
+        }
+        let same = origin.is_some_and(|o| {
+            o.kind == kind
+                && o.name.eq_ignore_ascii_case(&name)
+                && o.schema.eq_ignore_ascii_case(&schema)
+        });
+        if !same {
+            return false;
+        }
+        self.ai.source_wait = None;
+        if self.ai_source_waiting() {
+            self.ai.source_got = Some((text.to_string(), true));
+        }
+        // 요청 때의 "소스 읽는 중…" 상태줄을 지운다(탭이 열리지 않으므로 남는다).
+        self.sess.status = String::new();
+        true
+    }
+
+    /// 탐색기 오류가 소스를 기다리는 중에 왔다 → 그 글로 실패를 답한다(토스트·로그는 보통대로).
+    pub(crate) fn ai_source_fail(&mut self, body: &str) {
+        if self.ai.source_wait.take().is_some() && self.ai_source_waiting() {
+            self.ai.source_got = Some((redact(body), false));
+        }
+    }
+
+    fn ai_source_waiting(&self) -> bool {
+        matches!(
+            self.ai.pending.as_ref().and_then(|p| p.wait_ui.as_ref()),
+            Some(AiWait::Source)
         )
     }
 
@@ -4402,10 +4450,45 @@ impl App {
                 }
                 return;
             }
+            // ★ 객체 소스(사용자 11-14): 기본은 **탭을 열지 않고** 글만 읽어 답한다 — 분석·검증 요청이 편집기 탭을 늘리지 않게.
+            //   탭은 사용자가 열어 달라고 했을 때만(`open` = true · 종전 경로 그대로).
             "object_source" => {
                 let schema = g("schema");
                 let s = (!schema.is_empty()).then_some(schema.as_str());
+                let open = matches!(
+                    g("open").to_ascii_lowercase().as_str(),
+                    "true" | "1" | "yes" | "on"
+                );
                 match self.explorer.ai_object_info(s, &g("name")) {
+                    Some(_) if !open && !self.explorer.ai_source_ready() => {
+                        err("the object explorer is not connected; connect first".into())
+                    }
+                    Some(o) if !open => {
+                        // 패키지는 스펙이 기본 · `part` = body면 본문(`PackageBody` · 소스 열기의 "본문 열기"와 같은 길).
+                        let kind = if o.kind == nsql_catalog::ObjectKind::Package
+                            && g("part").eq_ignore_ascii_case("body")
+                        {
+                            nsql_catalog::ObjectKind::PackageBody
+                        } else {
+                            o.kind
+                        };
+                        self.ai.source_got = None;
+                        self.ai.source_wait =
+                            Some((o.schema.clone(), o.name.clone(), kind, Instant::now()));
+                        self.explorer.reload_source_for(None, &o, kind);
+                        self.ai.pending = Some(PendingTool {
+                            reply: Some(reply),
+                            attach_label: None,
+                            since: Instant::now(),
+                            max_rows,
+                            wait_editor: None,
+                            wait_meta: None,
+                            wait_ui: Some(AiWait::Source),
+                            silent: false,
+                            var_after: None,
+                        });
+                        return;
+                    }
                     Some(o) => {
                         let before = self.editors.active_id();
                         self.explorer.open_source_of(&o);
@@ -4486,6 +4569,10 @@ impl App {
                         self.search.ai_results(*limit),
                         self.search.ai_error().is_none(),
                     )
+                }),
+                // 탭 없이 읽는 객체 소스: 가로챈 글이 오면 답한다 · 안 오면(탐색기 요청이 밀려남 등) 시간 초과로 실패.
+                AiWait::Source => self.ai.source_got.take().or_else(|| {
+                    timeout.then(|| ("timed out reading the source".to_string(), false))
                 }),
                 // 객체 탐색기 이동: 단계 기계가 끝나면 선택된 경로를 답한다(이름이 경로에 없으면 실패로).
                 AiWait::Reveal { name } => (!self.explorer.reveal_pending()
@@ -4913,10 +5000,8 @@ impl App {
                 let title: String = arg.chars().take(80).collect();
                 match self.ai_cur().map(|s| s.id.clone()) {
                     Some(id) if !title.trim().is_empty() => {
-                        self.ai_panel_actions_apply(PanelAction::RenameSession(
-                            id,
-                            title.trim().to_string(),
-                        ));
+                        self.ai_rename_session(&id, title.trim());
+                        self.ai_sync_panel();
                         self.ai.status = tf(Msg::AiRenamed, &[title.trim()]);
                     }
                     _ => self.ai.status = t_(Msg::AiRenameUsage),
@@ -5079,6 +5164,16 @@ impl App {
         }
         self.ai_sync_panel();
         self.redraw();
+    }
+
+    /// 세션 이름 바꾸기(세션 목록의 이름 고치기 · `/rename` 공용): 기록 저장 + 채팅 탭 제목.
+    fn ai_rename_session(&mut self, id: &str, title: &str) {
+        if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == id) {
+            s.title = title.to_string();
+            ai::history_save(s);
+            let key = Self::ai_view_key(s.provider, id);
+            self.editors.set_view_title(&key, title);
+        }
     }
 
     fn ai_panel_actions_apply(&mut self, a: PanelAction) {

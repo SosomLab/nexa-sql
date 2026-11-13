@@ -371,6 +371,10 @@ impl App {
                     server,
                     took_ms,
                 } => {
+                    // ★ AI 도구 `object_source`(11-14): 분석용으로 읽은 소스 = 도구 답으로만(탭을 열지 않는다).
+                    if self.ai_source_take(origin.as_ref(), &text) {
+                        continue;
+                    }
                     // ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 받은 소스 = 히스토리에만(탭 불변) · 기다리던 출처와 같은 응답만 소비.
                     if let Some(w) = self.history_server_wait.take() {
                         let same = origin.as_ref().is_some_and(|o| {
@@ -515,6 +519,7 @@ impl App {
                 ExplorerAction::ServerInfo => self.sess_ui_dirty = true,
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
                 ExplorerAction::Fail { title, body } => {
+                    self.ai_source_fail(&body);
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("{title} - {body}")));
                     self.toasts

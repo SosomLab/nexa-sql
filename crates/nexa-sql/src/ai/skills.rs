@@ -38,6 +38,7 @@ Steps:
         body: "\
 # Skill: text-edit — editor transformations
 
+0. BUILT-IN FIRST: for sorting, case conversion, permute (reverse / shuffle / unique) and trimming always use the built-in operations below (`edit_editor` op=..., or the palette commands in 3a / 3b). They run inside the app: exact, instant, one undo step, and the text never leaves the editor. Do NOT read the text and retype it for something a built-in op does. Only when no built-in op can express the request (custom order such as 'by the 2nd comma field' or 'by month name', conditional case rules, a mixed rule, a transformation the op list lacks) fall back: read the WHOLE affected range with `get_editor_text`, compute the new text yourself, and write it back in ONE `edit_editor` op=replace over that same range - and say in your answer that it was done by rewriting rather than a built-in command. If a built-in op covers part of the job, do that part with the op and only the remainder by rewriting.
 1. Line transforms: `edit_editor` with op = sort_asc | sort_desc | sort_case (case-sensitive) | sort_num_asc | sort_num_desc | shuffle | unique (remove duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | snake | kebab | upper_camel | lower_camel | trim, on from_line..to_line (omit both = the selection or the statement at the caret; whole file = 1..total_lines from `get_editor_text`).
 2. Column mode / multiple carets: `editor_carets` (from_line, to_line, mode = line_end | line_start | column | select_lines; clear = one caret). It only moves carets.
 3. Numbering: `insert_sequence` uses the Insert Sequence extension - one value per caret. Do 'lines 15-30, append a 3-digit number' in ONE call: from_line=15, to_line=30, at=line_end, start=1, width=3 (or expr `1+1~03`). prefix / suffix add text around each value. One undo step.
@@ -133,7 +134,7 @@ Search harness (all in-memory, instant, no database round trip):
 # Skill: database objects
 
 1. Locate with the metadata skill (`search_objects` → `describe_object`).
-2. Source/DDL: `object_source` opens the definition in an editor tab (procedures, views, triggers, packages, table DDL where supported).
+2. Source/DDL: `object_source` returns the definition as text WITHOUT opening anything (procedures, views, triggers, packages - `part=body` for a package body, table DDL where supported). Analysing, verifying, tracing or explaining code must never open editor tabs; pass `open=true` only when the user asked to open / show the object in the editor.
 3. To go to an object in the explorer use the `reveal_object` tool (name, optional schema / member) - it works from the chat too and returns the selected path; do NOT move the editor caret and run `obj.reveal` for this. Other explorer actions via `run_command` (they act on the node selected in the explorer, so reveal first): `obj.info`, `obj.rows` (row count), `obj.sizes`, `obj.select_rows` (SELECT * tab), `obj.refresh` / `obj.refresh_meta` (reload a branch / metadata), `obj.compare` / `obj.compare_server` (compare definitions).
 4. Never generate or run DDL that changes objects unless the user asked explicitly; it needs approval anyway.
 ",

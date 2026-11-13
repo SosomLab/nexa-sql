@@ -347,6 +347,9 @@ impl App {
         if self.editors.active_view().is_some() {
             return;
         }
+        // 다시 선택할 구간(원래 시작 · 끝 · 글자 수 변화) — 빈 캐럿이 하나라도 있었으면 선택을 건드리지 않는다.
+        let mut keep: Vec<(usize, usize, isize)> = Vec::new();
+        let mut had_caret = false;
         let edits: Vec<(usize, usize, String)> = {
             let tb = self.editors.cur();
             let buf = tb.buf();
@@ -356,6 +359,7 @@ impl App {
                 let (a, b) = if b > a {
                     (a, b)
                 } else {
+                    had_caret = true;
                     // 빈 캐럿 = 그 자리의 낱말.
                     let l = buf.line_of(a);
                     let (ls, le) = (buf.line_start(l), buf.line_end(l));
@@ -374,11 +378,14 @@ impl App {
                     continue;
                 }
                 let old = buf.slice_string(a, b);
+                let mut delta = 0isize;
                 if let Some(new) = crate::ai::tools::convert_case(&old, kind) {
                     if new != old {
+                        delta = new.chars().count() as isize - old.chars().count() as isize;
                         out.push((a, b, new));
                     }
                 }
+                keep.push((a, b, delta));
                 last_end = b;
             }
             out
@@ -388,6 +395,21 @@ impl App {
                 edits.iter().map(|(a, b, t)| (*a, *b, t.as_str())).collect();
             let mut inv = nexa_ctl::Invalidations::default();
             self.ed_mut().replace_many(&refs, &mut inv);
+            if !had_caret {
+                let mut shift = 0isize;
+                let regs: Vec<(usize, usize)> = keep
+                    .iter()
+                    .map(|&(a, b, d)| {
+                        let r = (
+                            (a as isize + shift) as usize,
+                            (b as isize + shift + d) as usize,
+                        );
+                        shift += d;
+                        r
+                    })
+                    .collect();
+                self.ed_mut().set_regions_pub(&regs);
+            }
         }
         self.redraw();
     }
@@ -411,7 +433,13 @@ impl App {
                     }
                     (la, lb)
                 }
-                _ => (0, buf.line_count().saturating_sub(1)),
+                _ => {
+                    let mut last = buf.line_count().saturating_sub(1);
+                    if last > 0 && buf.line_start(last) == buf.line_end(last) {
+                        last -= 1;
+                    }
+                    (0, last)
+                }
             };
             let (s, e) = (buf.line_start(la), buf.line_end(lb));
             (s, e, buf.slice_string(s, e))

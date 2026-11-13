@@ -580,6 +580,148 @@ fn cat_tokens(sql: &str) -> Vec<Tok> {
     out
 }
 
+/// ★ 한정 없는 Oracle 이름이 **알려진 데이터 사전 뷰**인가(사용자 결정 11-14 "알려진 사전 뷰 목록만 통과") — 접두(`ALL_`·`USER_`·
+/// `DBA_`·`CDB_`) 뒤가 [`ORA_DICT_VIEWS`]에 있거나 · `V$`/`GV$` 뒤가 [`ORA_V_VIEWS`]에 있거나 · 짧은 사전 이름. 접두만 같은 이름
+/// (`USER_ORDERS` · `ALL_MY_DATA`)은 사용자 표일 수 있어 아니다(= 보통 조회처럼 행 데이터 동의를 묻는다). 순수.
+fn ora_dict_known(n: &str) -> bool {
+    if let Some(rest) = ["ALL_", "USER_", "DBA_", "CDB_"]
+        .iter()
+        .find_map(|p| n.strip_prefix(p))
+    {
+        return ORA_DICT_VIEWS.contains(&rest);
+    }
+    if let Some(rest) = n.strip_prefix("GV$").or_else(|| n.strip_prefix("V$")) {
+        return ORA_V_VIEWS.contains(&rest);
+    }
+    matches!(
+        n,
+        "DUAL"
+            | "DICT"
+            | "DICTIONARY"
+            | "TAB"
+            | "TABS"
+            | "CAT"
+            | "COLS"
+            | "OBJ"
+            | "IND"
+            | "SEQ"
+            | "SYN"
+            | "NLS_DATABASE_PARAMETERS"
+            | "NLS_SESSION_PARAMETERS"
+            | "NLS_INSTANCE_PARAMETERS"
+    )
+}
+
+/// 사전 뷰 이름의 접두(`ALL_`·`USER_`·`DBA_`·`CDB_`) 뒤 부분 — 객체 정의·구조·권한·통계만(행 데이터·감사 기록 뷰는 넣지 않는다).
+const ORA_DICT_VIEWS: &[&str] = &[
+    "ARGUMENTS",
+    "CATALOG",
+    "CLUSTERS",
+    "COLL_TYPES",
+    "COL_COMMENTS",
+    "COL_PRIVS",
+    "CONSTRAINTS",
+    "CONS_COLUMNS",
+    "DATA_FILES",
+    "DB_LINKS",
+    "DEPENDENCIES",
+    "DIRECTORIES",
+    "EDITIONS",
+    "ERRORS",
+    "EXTENTS",
+    "EXTERNAL_TABLES",
+    "FREE_SPACE",
+    "IDENTIFIERS",
+    "INDEXES",
+    "IND_COLUMNS",
+    "IND_EXPRESSIONS",
+    "IND_PARTITIONS",
+    "IND_STATISTICS",
+    "JOBS",
+    "LOBS",
+    "MVIEWS",
+    "MVIEW_COMMENTS",
+    "MVIEW_LOGS",
+    "NESTED_TABLES",
+    "OBJECTS",
+    "OBJECT_TABLES",
+    "PART_INDEXES",
+    "PART_KEY_COLUMNS",
+    "PART_TABLES",
+    "PLSQL_OBJECT_SETTINGS",
+    "POLICIES",
+    "PROCEDURES",
+    "PROFILES",
+    "QUEUES",
+    "QUEUE_TABLES",
+    "RECYCLEBIN",
+    "ROLES",
+    "ROLE_PRIVS",
+    "SCHEDULER_JOBS",
+    "SCHEDULER_PROGRAMS",
+    "SCHEDULER_SCHEDULES",
+    "SEGMENTS",
+    "SEQUENCES",
+    "SOURCE",
+    "SUBPART_KEY_COLUMNS",
+    "SYNONYMS",
+    "SYS_PRIVS",
+    "TABLES",
+    "TABLESPACES",
+    "TAB_COLS",
+    "TAB_COLUMNS",
+    "TAB_COL_STATISTICS",
+    "TAB_COMMENTS",
+    "TAB_HISTOGRAMS",
+    "TAB_IDENTITY_COLS",
+    "TAB_MODIFICATIONS",
+    "TAB_PARTITIONS",
+    "TAB_PRIVS",
+    "TAB_STATISTICS",
+    "TAB_SUBPARTITIONS",
+    "TRIGGERS",
+    "TRIGGER_COLS",
+    "TS_QUOTAS",
+    "TYPES",
+    "TYPE_ATTRS",
+    "TYPE_METHODS",
+    "UPDATABLE_COLUMNS",
+    "USERS",
+    "VIEWS",
+];
+
+/// `V$`/`GV$` 뒤 부분 — 인스턴스·세션 상태 뷰(자주 쓰는 것만).
+const ORA_V_VIEWS: &[&str] = &[
+    "CONTAINERS",
+    "DATABASE",
+    "DATAFILE",
+    "INSTANCE",
+    "LOCK",
+    "LOCKED_OBJECT",
+    "MYSTAT",
+    "NLS_PARAMETERS",
+    "OPEN_CURSOR",
+    "OPTION",
+    "PARAMETER",
+    "PDBS",
+    "PROCESS",
+    "RESERVED_WORDS",
+    "SESSION",
+    "SESSION_LONGOPS",
+    "SESSTAT",
+    "SGA",
+    "SQL",
+    "SQLAREA",
+    "SQL_PLAN",
+    "STATNAME",
+    "SYSSTAT",
+    "TABLESPACE",
+    "TEMPFILE",
+    "TIMEZONE_NAMES",
+    "TRANSACTION",
+    "VERSION",
+];
+
 /// 이름(점으로 나뉜 조각 · 대문자)이 **데이터 사전(카탈로그) 객체**인가 — 방언별 규칙. 한정 없는 접두 규칙(`ALL_`·`USER_`·`PG_`)은
 /// 그 방언일 때만(다른 DBMS에서는 사용자 표 이름일 수 있다).
 fn is_catalog_name(parts: &[String], dialect: Option<Dialect>) -> bool {
@@ -623,7 +765,7 @@ fn is_catalog_name(parts: &[String], dialect: Option<Dialect>) -> bool {
         Some("PUBLIC") => dialect == Some(Dialect::Oracle) && ora_dict(name),
         Some(_) => false,
         None => match dialect {
-            Some(Dialect::Oracle) => ora_dict(name),
+            Some(Dialect::Oracle) => ora_dict_known(name),
             Some(Dialect::Postgres) => name.starts_with("PG_"),
             Some(Dialect::Sqlite) => {
                 matches!(
@@ -1092,6 +1234,23 @@ mod tests {
         assert!(!p("SELECT * FROM user_accounts"));
         assert!(!m("SELECT * FROM all_orders"));
         assert!(!o("SELECT * FROM sys.user$"));
+        // ★ 한정 없는 Oracle 이름은 알려진 사전 뷰만(사용자 결정 11-14) — 접두만 같은 사용자 표는 아니다 · SYS 한정은 종전대로.
+        assert!(!o("SELECT * FROM user_orders"));
+        assert!(!o("SELECT * FROM all_my_data"));
+        assert!(!o("SELECT * FROM dba_backup_rows"));
+        assert!(!o("SELECT * FROM v$mytab"));
+        assert!(!o(
+            "SELECT * FROM all_tables t JOIN user_orders u ON u.t = t.table_name"
+        ));
+        assert!(o("SELECT banner FROM v$version"));
+        assert!(o(
+            "SELECT value FROM nls_session_parameters WHERE parameter = 'NLS_DATE_FORMAT'"
+        ));
+        assert!(o(
+            "SELECT text FROM user_source WHERE name = 'P1' ORDER BY line"
+        ));
+        assert!(o("SELECT * FROM cols WHERE table_name = 'T1'"));
+        assert!(o("SELECT * FROM sys.all_anything_else"));
         assert!(!is_catalog_query("SELECT * FROM all_tables", None));
     }
 

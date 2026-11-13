@@ -127,7 +127,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "edit_editor",
-        desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
+        desc: "Edit a part of the active editor (undoable). op = replace (put `text` in place of the range) | sort_asc | sort_desc | unique (drop duplicate lines, keep order) | reverse | upper | lower | trim (trailing spaces) | select (only select the range). Range = from_line..to_line (1-based, inclusive); without it the current selection's lines, else the statement at the caret. Sorting, case conversion and permute (reverse / shuffle / unique) must use these built-in ops first; use op=replace with text you computed from the whole range only when no built-in op can express the request. For other editing commands (comment, indent, duplicate/join/split/move lines, format) use list_commands filter=edit. and run_command.",
         write: true,
         props: &[
             ("op", "string", "replace | sort_asc | sort_desc | sort_case (case-sensitive) | sort_num_asc | sort_num_desc | shuffle | unique (= dedupe, removes duplicate lines) | reverse | upper | lower | title (Capitalize Each Word) | swapcase | snake | kebab | upper_camel | lower_camel | trim | select", true),
@@ -278,11 +278,13 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "object_source",
-        desc: "Open the DDL/source of an object in a tab and return its text (procedures, views, triggers ...).",
+        desc: "Read the DDL/source of an object and return its text (procedures, functions, packages, views, triggers ...). By default NOTHING is opened in the editor - use this freely to analyse, verify or explain code. Set open=true ONLY when the user explicitly asked to open / show the object in an editor tab (or the task is to edit it there); never open tabs just to read. For a package the specification is returned; pass part=body for the package body.",
         write: false,
         props: &[
             ("name", "string", "Object name", true),
             ("schema", "string", "Schema (optional)", false),
+            ("open", "boolean", "Open the source in an editor tab as well (default false; only on the user's explicit request)", false),
+            ("part", "string", "Package only: spec (default) or body", false),
         ],
     },
     Tool {

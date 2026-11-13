@@ -1626,6 +1626,10 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     pub(crate) fn open_source_of(&mut self, o: &nsql_catalog::ObjectInfo) {
         self.cur_mut().open_source_of(o);
     }
+    /// AI 도구 `object_source`: 보이는 칸이 소스를 읽을 수 있는가(오프라인이면 요청이 상태줄 안내로 끝나 답이 오지 않는다).
+    pub(crate) fn ai_source_ready(&self) -> bool {
+        !self.panes[self.shown].ex.is_offline()
+    }
 
     /// ★ T-123(219차): 그 서버 칸의 적재된 메타에서 객체 부가(`extra`) — 칸이 없거나 모르면 None · 서버 왕복 0.
     pub(crate) fn object_extra(
