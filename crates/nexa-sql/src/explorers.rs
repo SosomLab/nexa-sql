@@ -1604,6 +1604,14 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
         self.panes[self.shown].ex.ai_describe(schema, name)
     }
+    /// `describe_object`의 지연 적재(그 객체 하나) — `Explorer::ai_ensure_columns`.
+    pub(crate) fn ai_ensure_columns(&mut self, schema: Option<&str>, name: &str) -> Option<bool> {
+        let i = self.shown;
+        self.panes[i].ex.ai_ensure_columns(schema, name)
+    }
+    pub(crate) fn ai_columns_settled(&self, schema: Option<&str>, name: &str) -> bool {
+        self.panes[self.shown].ex.ai_columns_settled(schema, name)
+    }
     pub(crate) fn ai_object_info(
         &self,
         schema: Option<&str>,

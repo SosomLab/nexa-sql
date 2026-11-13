@@ -2071,7 +2071,34 @@ impl AiView {
         let top = b.y + self.s(4.0) + head_h;
         // ── 작성 영역 높이(아래에서 위로 잡는다)
         let text = self.composer.text();
-        let n_lines = (text.split('\n').count() as i32).clamp(1, self.max_lines);
+        // ★ 줄바꿈으로 접힌 줄도 줄 수에 넣는다(사용자 11-14 "줄바꿈 표시에 대해 행수 증가가 되지 않아 전체 내용이 안 보임"):
+        //   종전에는 Enter로 나눈 줄만 세어, 긴 한 줄이 접혀도 상자가 한 줄 높이였다. 낱말 단위로 폭을 재서 화면 줄 수를
+        //   어림한다(상자 안쪽 여백만큼 좁게 = 모자라게 세지 않는다) · 상한(`ai.composer_max_lines`)에 닿으면 그만 센다.
+        let avail = (w - self.s(28.0)).max(self.s(40.0));
+        let space_w = dc.text_width(" ").max(1);
+        let mut rows = 0i32;
+        'count: for line in text.split('\n') {
+            rows += 1;
+            let mut cur = 0i32;
+            for word in line.split(' ') {
+                let ww = dc.text_width(word);
+                if ww > avail {
+                    // 띄어쓰기 없는 긴 덩어리 = 글자 단위로 접힌다.
+                    let extra = (cur + ww) / avail;
+                    rows += extra;
+                    cur = (cur + ww) % avail + space_w;
+                } else if cur > 0 && cur + ww > avail {
+                    rows += 1;
+                    cur = ww + space_w;
+                } else {
+                    cur += ww + space_w;
+                }
+                if rows >= self.max_lines {
+                    break 'count;
+                }
+            }
+        }
+        let n_lines = rows.clamp(1, self.max_lines);
         let comp_h = n_lines * self.composer.line_h().max(lh) + self.s(14.0);
         let btn_h = lh + self.s(10.0);
         // ★ 첨부 칩 배치 = 여러 줄로 감쌈(사용자 11-11 "6개 첨부했는데 2개만 보임") — (번호 · 줄 · x · 본문 폭 · 라벨).
@@ -2746,28 +2773,35 @@ impl AiView {
             let mut sx = bx;
             // ★ 진행 단계 ①②③(사용자 11-12): 현재 단계는 깜빡인다(tick 500 ms) · 완료(3)·없음(0)은 안 그린다.
             if info.stage > 0 && info.stage < 3 && right - sx > self.s(40.0) {
-                for (k, g) in ["①", "②", "③"].iter().enumerate() {
-                    let cur = (k as u8 + 1) == info.stage;
+                // ★ 세 단계 모두 **직접 그린다**(사용자 11-14 "채움 문자의 높이가 맞지 않는다"): 종전에는 지금 단계만 도형(채운 원)이고
+                //   나머지는 글꼴의 ①③ 글자라, 글자 쪽은 글꼴이 정한 크기·기준선에 놓여 원의 크기와 높이가 서로 달랐다.
+                //   같은 지름·같은 자리의 원 셋 = 지금 단계는 채움(깜빡임 = 강조색 ↔ 흐린 색) · 나머지는 테두리.
+                let h = dc.text_height();
+                let d = h.clamp(self.s(10.0), self.s(16.0));
+                for k in 0..3u8 {
+                    let cur = k + 1 == info.stage;
                     let col = if cur && self.blink {
                         th.accent
                     } else {
                         th.text_dim
                     };
-                    let gw = dc.text_width(g);
+                    let circle = Rect::new(sx, tyc + (h - d) / 2, d, d);
                     if cur {
-                        // ★ 지금 단계 = **속이 채워진** 원 숫자(사용자 11-14 "깜빡이는 대상은 속이 채워진 원문자로") — 글꼴마다 ❶❷❸가
-                        //   없을 수 있어 직접 그린다: 같은 자리·같은 폭에 채운 원 + 바탕색 숫자(깜빡임 = 원 색이 강조색 ↔ 흐린 색).
-                        let h = dc.text_height();
-                        let d = gw.min(h).max(self.s(8.0));
-                        let circle = Rect::new(sx + (gw - d) / 2, tyc + (h - d) / 2, d, d);
                         dc.fill_round_rect(circle, d / 2, col);
-                        let num = (k + 1).to_string();
-                        let nw = dc.text_width(&num);
-                        dc.text(sx + (gw - nw) / 2, tyc, b, &num, th.panel_bg);
                     } else {
-                        dc.text(sx, tyc, b, g, col);
+                        dc.stroke_round_rect(circle, d / 2, col, 1.0);
                     }
-                    sx += gw + self.s(2.0);
+                    let num = (k + 1).to_string();
+                    let nw = dc.text_width(&num);
+                    let ny = dc.text_center_y(circle.y, circle.h);
+                    dc.text(
+                        sx + (d - nw) / 2,
+                        ny,
+                        b,
+                        &num,
+                        if cur { th.panel_bg } else { col },
+                    );
+                    sx += d + self.s(3.0);
                 }
                 sx += self.s(6.0);
             }

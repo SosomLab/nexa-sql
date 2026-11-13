@@ -170,7 +170,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "describe_object",
-        desc: "Describe a table/view from the app's cached metadata: table comment, columns (name, type, nullable, key and the column comment after `--`), status and extra info. Use this instead of ALL_TAB_COLUMNS / ALL_COL_COMMENTS / information_schema.columns queries.",
+        desc: "Describe a table/view from the app's cached metadata: table comment, columns (name, type, nullable, key and the column comment after `--`), status and extra info. Columns that are not loaded yet are loaded on demand for that one object (no `WHERE 1=0` probe needed). Use this instead of ALL_TAB_COLUMNS / ALL_COL_COMMENTS / information_schema.columns queries.",
         write: false,
         props: &[
             ("name", "string", "Object name", true),

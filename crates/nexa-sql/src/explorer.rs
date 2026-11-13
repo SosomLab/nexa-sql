@@ -7669,6 +7669,42 @@ impl Explorer {
         s
     }
 
+    /// ★ AI 도구 `describe_object`의 지연 적재(사용자 11-14 "메타에 컬럼이 있을 텐데 왜 `WHERE 1=0`으로 컬럼을 조회하나"):
+    /// 탐색기는 **펼치거나 쓴 객체의 컬럼만** 읽어 둔다(지연 로딩) — 아직 안 읽은 객체를 물으면 종전에는 "not loaded"만 답해
+    /// 어시스턴트가 빈 조회로 컬럼을 알아냈다. 이제 그 객체 하나의 컬럼·상세 적재를 건다.
+    /// `None` = 객체 없음 · `Some(true)` = 지금 답할 수 있다(이미 읽음 · 적재를 걸 수 없음) · `Some(false)` = 적재 중(기다린다).
+    pub(crate) fn ai_ensure_columns(&mut self, schema: Option<&str>, name: &str) -> Option<bool> {
+        use nsql_run::meta::ColState;
+        let snap = self.meta.snapshot();
+        let id = snap.lookup(&self.meta.names, schema, name).or_else(|| {
+            snap.lookup_any_schema(&self.meta.names, name)
+                .into_iter()
+                .next()
+        })?;
+        if matches!(snap.columns(id), ColState::Loaded { .. }) {
+            return Some(true);
+        }
+        self.request_detail(id);
+        self.request_columns_by_id(id);
+        let after = self.meta.snapshot();
+        Some(!matches!(after.columns(id), ColState::Loading))
+    }
+
+    /// 그 객체의 컬럼 적재가 끝났는가(읽음 또는 오류 = 더 기다리지 않는다 · 객체가 사라졌어도 참).
+    pub(crate) fn ai_columns_settled(&self, schema: Option<&str>, name: &str) -> bool {
+        use nsql_run::meta::ColState;
+        let snap = self.meta.snapshot();
+        let id = snap.lookup(&self.meta.names, schema, name).or_else(|| {
+            snap.lookup_any_schema(&self.meta.names, name)
+                .into_iter()
+                .next()
+        });
+        match id {
+            Some(id) => !matches!(snap.columns(id), ColState::Loading | ColState::Unknown),
+            None => true,
+        }
+    }
+
     /// ★ AI 도구 `describe_object`: 종류·상태·부가 + 탐색기에 이미 읽힌 컬럼(없으면 안내).
     pub(crate) fn ai_describe(&self, schema: Option<&str>, name: &str) -> Option<String> {
         let snap = self.meta.snapshot();

@@ -56,6 +56,8 @@ pub(crate) struct PendingTool {
     pub max_rows: usize,
     /// 객체 소스 열기 대기(열기 전 활성 편집기 id).
     pub wait_editor: Option<u64>,
+    /// ★ 메타 적재 대기(`describe_object` · 11-14): (스키마 · 이름) — 그 객체의 컬럼이 읽히면(또는 상한이 지나면) 설명을 답한다.
+    pub wait_meta: Option<(String, String)>,
     /// ★ 숨김 실행(11-12 사용자 "과정에 필요한 쿼리는 자체적으로 수행"): AI 도구 `run_query`/`explain`의 결과는 글로만 잡고
     /// 결과 그리드·결과 탭에는 싣지 않는다(`on_ev_result_set`이 본다).
     pub silent: bool,
@@ -1379,6 +1381,7 @@ impl App {
             since: Instant::now(),
             max_rows: 8,
             wait_editor: None,
+            wait_meta: None,
             silent: false,
             var_after: None,
         });
@@ -2846,6 +2849,7 @@ impl App {
                     since: Instant::now(),
                     max_rows: 1,
                     wait_editor: None,
+                    wait_meta: None,
                     silent: true,
                     var_after: None,
                 });
@@ -3000,6 +3004,24 @@ impl App {
             risk = ai::guard::Risk::Read;
             self.ai.write_ok = Some((tool.name.to_string(), input.clone()));
         }
+        // ★ 접속 해제(`run_command conn.disconnect` · 11-14): 운영에서도 승인 카드로 허용하되, **쓰고 있는 접속은 끊지 않는다** —
+        //   실행 중이거나 커밋하지 않은 변경(대기·운영 보류)이 있으면 거절한다(끊으면 DBMS에 따라 커밋되거나 사라진다).
+        if tool.name == "run_command" && ai::guard::is_disconnect_command(&arg) {
+            let why = if self.sess.busy || self.sess.aux > 0 {
+                Some("the connection is busy (a statement is running)")
+            } else if !self.sess.tx_pending.is_empty() || self.sess.prod_held.is_some() {
+                Some("the connection has uncommitted changes - the user must Commit or Rollback first (disconnecting could commit or lose them)")
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                let _ = reply.send(ToolReply {
+                    output: format!("not executed: {why}. Tell the user."),
+                    ok: false,
+                });
+                return;
+            }
+        }
         let prod = self.ai_guard_prod();
         let decision = ai::guard::decide(
             risk,
@@ -3049,10 +3071,12 @@ impl App {
         // ★ 카탈로그(메타) 조회는 행 데이터 동의를 묻지 않는다(사용자 11-14 · 설정 `ai.meta_auto` 기본 켬): 테이블·컬럼·코멘트 같은
         //   데이터 사전만 읽는 조회문(`guard::is_catalog_query` — 사용자 표·함수·파생 표가 하나라도 끼면 아님). 동의 상태
         //   (`rows_allowed`)는 바꾸지 않는다 = 실제 데이터 조회는 여전히 한 번 묻는다.
+        //   ★ 행을 돌려주지 않는 컬럼 확인 조회(`… WHERE 1=0` · `guard::is_empty_probe`)도 같다(사용자 11-14 "컬럼 정보를 읽는 경우
+        //   확인 없이") — 열 머리만 돌아온다.
         let meta_free = matches!(tool.name, "run_query" | "explain")
             && risk == ai::guard::Risk::Read
             && self.settings.flag("ai.meta_auto")
-            && ai::guard::is_catalog_query(&arg, dialect);
+            && (ai::guard::is_catalog_query(&arg, dialect) || ai::guard::is_empty_probe(&arg));
         let need_rows = is_rows && !rows_allowed && !client_only && !meta_free;
         let carded = matches!(
             decision,
@@ -3331,6 +3355,7 @@ impl App {
                         since: Instant::now(),
                         max_rows: 1,
                         wait_editor: None,
+                        wait_meta: None,
                         silent: true,
                         var_after: Some(name_.clone()),
                     });
@@ -3576,10 +3601,29 @@ impl App {
             }
             "describe_object" => {
                 let schema = g("schema");
+                let name = g("name");
                 let s = (!schema.is_empty()).then_some(schema.as_str());
-                match self.explorer.ai_describe(s, &g("name")) {
-                    Some(d) => ok(d),
+                // ★ 컬럼이 아직 안 읽힌 객체 = 그 객체 하나의 적재를 걸고 기다린다(11-14 · 지연 로딩 — 종전에는 "not loaded"를
+                //   답해 어시스턴트가 `SELECT … WHERE 1=0`으로 컬럼을 알아냈다). 답은 `ai_tick_pending`이 보낸다.
+                match self.explorer.ai_ensure_columns(s, &name) {
                     None => err("object not found in explorer; try search_objects".into()),
+                    Some(false) if self.ai.pending.is_none() => {
+                        self.ai.pending = Some(PendingTool {
+                            reply: Some(reply),
+                            attach_label: None,
+                            since: Instant::now(),
+                            max_rows: 0,
+                            wait_editor: None,
+                            wait_meta: Some((schema, name)),
+                            silent: false,
+                            var_after: None,
+                        });
+                        return;
+                    }
+                    _ => match self.explorer.ai_describe(s, &name) {
+                        Some(d) => ok(d),
+                        None => err("object not found in explorer; try search_objects".into()),
+                    },
                 }
             }
             "list_profiles" => ok(crate::worker::profile_names().join("\n")),
@@ -3751,6 +3795,7 @@ impl App {
                     since: Instant::now(),
                     max_rows,
                     wait_editor: None,
+                    wait_meta: None,
                     silent: true,
                     var_after: None,
                 });
@@ -3823,6 +3868,7 @@ impl App {
                             since: Instant::now(),
                             max_rows,
                             wait_editor: Some(before),
+                            wait_meta: None,
                             silent: false,
                             var_after: None,
                         });
@@ -3884,7 +3930,23 @@ impl App {
         };
         let timeout = p.since.elapsed()
             > std::time::Duration::from_secs(self.settings.int("ai.timeout_secs").max(10) as u64);
-        let done_text: Option<(String, bool)> = if let Some(before) = p.wait_editor {
+        let done_text: Option<(String, bool)> = if let Some((schema, name)) = &p.wait_meta {
+            // 메타 적재 대기(describe_object): 컬럼이 읽혔거나(오류 포함) 8초가 지나면 지금 아는 만큼 답한다.
+            let s = (!schema.is_empty()).then_some(schema.as_str());
+            if self.explorer.ai_columns_settled(s, name)
+                || p.since.elapsed() > std::time::Duration::from_secs(8)
+            {
+                Some(match self.explorer.ai_describe(s, name) {
+                    Some(d) => (d, true),
+                    None => (
+                        "object not found in explorer; try search_objects".to_string(),
+                        false,
+                    ),
+                })
+            } else {
+                None
+            }
+        } else if let Some(before) = p.wait_editor {
             let cur = self.editors.active_id();
             let text = self.editors.cur().text();
             if cur != before && !text.trim().is_empty() {
@@ -4395,6 +4457,7 @@ impl App {
                         since: Instant::now(),
                         max_rows,
                         wait_editor: None,
+                        wait_meta: None,
                         silent: false,
                         var_after: None,
                     });

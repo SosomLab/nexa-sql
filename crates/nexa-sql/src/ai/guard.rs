@@ -181,6 +181,11 @@ pub(crate) fn is_protection_setting(key: &str) -> bool {
 /// 실행·트랜잭션·접속을 건드리는 메뉴 명령인가(AI가 `run_command`로 부르면 SQL이 카드에 안 보인다).
 pub(crate) fn is_protection_command(id: &str) -> bool {
     let k = id.trim().to_ascii_lowercase();
+    // ★ 접속 해제는 예외(사용자 11-14 "다른 데서 사용 중인 게 아니라면 종료해도 괜찮다"): 데이터를 바꾸지 않는다 — 승인 카드 등급
+    //   (`AppWrite`)으로 두고, 실행 중·미커밋 변경이 있는 접속은 호스트가 따로 거절한다(`ai_tool_request`).
+    if is_disconnect_command(&k) {
+        return false;
+    }
     k.starts_with("run.")
         || k.starts_with("tx.")
         || k.starts_with("hold.")
@@ -188,6 +193,11 @@ pub(crate) fn is_protection_command(id: &str) -> bool {
         || k.starts_with("sess.")
         || k.starts_with("grid.apply")
         || k.starts_with("import.")
+}
+
+/// 지금 탭의 접속을 끊는 메뉴 명령인가.
+pub(crate) fn is_disconnect_command(id: &str) -> bool {
+    id.trim().eq_ignore_ascii_case("conn.disconnect")
 }
 
 /// 도구 호출의 등급. `write` = 도구 표의 쓰기 여부 · `arg` = 핵심 인자(run_query = SQL · set_setting = 키 · run_command = id).
@@ -706,6 +716,45 @@ fn from_refs_are_catalog(t: &[Tok], mut i: usize, dialect: Option<Dialect>) -> b
     !expect_ref
 }
 
+/// ★ **행을 돌려주지 않는 컬럼 확인 조회**인가(사용자 11-14 "컬럼 정보를 읽는 경우 확인 없이"): `SELECT … FROM t WHERE 1=0`처럼
+/// 맨 바깥 조건이 늘 거짓이라 **열 머리만** 돌아오는 조회 — 어시스턴트가 테이블의 컬럼을 알아내려고 보낸다(행 데이터 없음).
+/// 판정(보수적 · 토큰 기준 = 주석·문자열에 속지 않는다): 문장 하나 · `SELECT`로 시작 · 집합 연산(UNION 등) 없음 · 사용자 루틴 호출
+/// 없음 · 문장의 **마지막**이 괄호 밖의 `WHERE 1=0`(또는 `1=2` · `0=1`)일 때만. 그 밖(조건이 더 붙음 · `OR` · 다른 절)은 거짓.
+pub(crate) fn is_empty_probe(sql: &str) -> bool {
+    let body = sql.trim().trim_end_matches(';').trim();
+    if body.is_empty() || body.contains(';') || !nsql_script::bind::expr_is_plain(body) {
+        return false;
+    }
+    let t = cat_tokens(body);
+    if !matches!(t.first(), Some(Tok::Word(w)) if w == "SELECT") {
+        return false;
+    }
+    if t.iter().any(|x| {
+        matches!(x, Tok::Word(w) if matches!(w.as_str(), "UNION" | "INTERSECT" | "MINUS" | "EXCEPT"))
+    }) {
+        return false;
+    }
+    let n = t.len();
+    if n < 5 {
+        return false;
+    }
+    let never = matches!(
+        (&t[n - 3], &t[n - 2], &t[n - 1]),
+        (Tok::Word(a), Tok::Sym('='), Tok::Word(b))
+            if matches!((a.as_str(), b.as_str()), ("1", "0") | ("1", "2") | ("0", "1"))
+    );
+    if !never || !matches!(&t[n - 4], Tok::Word(w) if w == "WHERE") {
+        return false;
+    }
+    // 그 WHERE가 괄호 밖(맨 바깥 조회의 조건)이어야 한다.
+    let depth = t[..n - 4].iter().fold(0i32, |d, x| match x {
+        Tok::Sym('(') => d + 1,
+        Tok::Sym(')') => d - 1,
+        _ => d,
+    });
+    depth == 0
+}
+
 /// ★ **카탈로그(메타) 조회**인가(사용자 11-14 "테이블·컬럼 정보를 확인하기 위한 명령은 Allow 질문 없이"): 문장 하나 · 조회문 ·
 /// 모든 `FROM`/`JOIN`의 표가 데이터 사전 객체([`is_catalog_name`]) · 사용자 루틴 호출 없음([`nsql_script::bind::expr_is_plain`] —
 /// 함수가 표 데이터를 돌려줄 수 있다) · 파생 표·표 함수·DB 링크·인용 이름·CTE 없음. 하나라도 판정하지 못하면 거짓(= 종전대로
@@ -829,6 +878,9 @@ mod tests {
             Risk::Protection
         );
         assert_eq!(c("run_command", true, "run.commit"), Risk::Protection);
+        // 접속 해제 = 승인 카드 등급(운영에서도 거절하지 않는다 · 11-14) · 그 밖의 접속 명령은 여전히 보호.
+        assert_eq!(c("run_command", true, "conn.disconnect"), Risk::AppWrite);
+        assert_eq!(c("run_command", true, "conn.connect"), Risk::Protection);
         assert_eq!(c("run_command", true, "run.all"), Risk::Protection);
         assert_eq!(c("run_command", true, "view.log"), Risk::AppWrite);
         assert_eq!(c("set_editor_text", true, ""), Risk::AppWrite);
@@ -959,6 +1011,30 @@ mod tests {
         let (k, t) = summarize("drop table if exists t9", None);
         assert_eq!(k, "DROP");
         assert_eq!(t, vec!["t9".to_string()]);
+    }
+
+    #[test]
+    fn empty_probe_is_only_a_select_that_can_return_no_rows() {
+        let p = is_empty_probe;
+        assert!(p("SELECT * FROM BISCM.M4S_I301090 WHERE 1=0"));
+        assert!(p("select a, b from t where 1 = 0;"));
+        assert!(p("SELECT * FROM t x JOIN u y ON y.id = x.id WHERE 1=2"));
+        // 행이 돌아올 수 있는 모양은 아니다.
+        assert!(!p("SELECT * FROM t"));
+        assert!(!p("SELECT * FROM t WHERE 1=1"));
+        assert!(!p("SELECT * FROM t WHERE 1=0 OR 1=1"));
+        assert!(!p("SELECT * FROM t WHERE a = 1 AND 1=0 ORDER BY a"));
+        assert!(!p("SELECT * FROM t UNION ALL SELECT * FROM u WHERE 1=0"));
+        assert!(!p("SELECT * FROM t WHERE a IN (SELECT b FROM u WHERE 1=0)"));
+        assert!(!p("SELECT * FROM t -- WHERE 1=0"), "주석에 속지 않는다");
+        assert!(
+            !p("SELECT * FROM t WHERE c = ' WHERE 1=0'"),
+            "문자열에 속지 않는다"
+        );
+        assert!(!p("SELECT pkg.f(1) FROM t WHERE 1=0"), "사용자 루틴 호출");
+        assert!(!p("SELECT * FROM t WHERE 1=0; SELECT * FROM u"));
+        assert!(!p("DELETE FROM t WHERE 1=0"));
+        assert!(!p("WITH x AS (SELECT * FROM t) SELECT * FROM x WHERE 1=0"));
     }
 
     #[test]
