@@ -4,6 +4,7 @@
 //!
 //! 데이터는 호스트의 [`nsql_run::txlog::TxLog`]가 갖고, 창은 그릴 때 빌려 읽는다(복사 0 · 로그 창과 같은 창 골격).
 
+use crate::listhead::{ListHead, Routed, SortVal};
 use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{LabelSide, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -43,6 +44,8 @@ pub(crate) struct TxLogWin {
     shift: bool,
     primary: bool,
     search: TextBox,
+    /// ★ 상세 글 줄바꿈(맨 앞 스위치 · 사용자 11-13 "Wrap 옵션 · 하단 텍스트 Word-wrap" · 로그 창 푸터와 같은 모양).
+    sw_wrap: Switch,
     sw_all: Switch,
     sw_prev: Switch,
     sw_tab: Switch,
@@ -65,9 +68,14 @@ pub(crate) struct TxLogWin {
     blocking: Vec<String>,
     /// ★ 선택한 문장(entry id) → 표 아래 **3계층 상세**(① 바인드 원문 ② 이름/타입/값 매핑 ③ 값 치환 쿼리 · 사용자 09-28 · docs/44 §9).
     sel: Option<u64>,
-    /// 마지막 페인트의 상세 영역(휠 라우팅) · 상세 스크롤.
+    /// 마지막 페인트의 상세 영역(사건 라우팅).
     detail: Rect,
-    detail_scroll: i32,
+    /// ★ 상세 = 읽기 전용 글상자(사용자 11-13 "드래그·더블클릭으로 선택 · 복사 · 우클릭"): 선택·낱말/줄 선택·우클릭 편집 메뉴는
+    /// 상자가 스스로 한다 · 글은 선택 행(또는 그 글)이 바뀌었을 때만 갈아 끼운다(`detail_for` = id · 글 해시 — 매번 넣으면 선택이 날아간다).
+    detail_tb: TextBox,
+    detail_for: Option<(u64, u64)>,
+    /// ★ 머리 줄 정렬·값 필터(공용 부품 · 11-13).
+    head: ListHead,
 }
 
 /// 열 폭(논리 px · 문장 열은 나머지 전부).
@@ -103,6 +111,7 @@ impl TxLogWin {
             shift: false,
             primary: false,
             search: TextBox::new(t(Msg::PhTxSearch)).with_clearable(),
+            sw_wrap: Switch::new(t(Msg::LblLogSwWrap), false).with_label_side(LabelSide::Right),
             sw_all: Switch::new(t(Msg::TxSwAll), false).with_label_side(LabelSide::Right),
             sw_prev: Switch::new(t(Msg::TxSwPrev), true).with_label_side(LabelSide::Right),
             sw_tab: Switch::new(t(Msg::TxSwThisTab), false).with_label_side(LabelSide::Right),
@@ -123,7 +132,47 @@ impl TxLogWin {
             blocking: Vec::new(),
             sel: None,
             detail: Rect::new(0, 0, 0, 0),
-            detail_scroll: 0,
+            detail_tb: {
+                let mut tb = TextBox::new("").with_multiline();
+                tb.set_read_only(true);
+                tb.set_wrap(false);
+                tb.set_line_numbers(false);
+                tb.set_gutter_marks(false);
+                tb.set_minimap(false);
+                tb.set_focus_ring(false);
+                // 우클릭 편집 메뉴는 팝업 층에서(`paint_popup` · 맨 마지막에 그린다).
+                tb.set_popup_deferred(true);
+                tb
+            },
+            detail_for: None,
+            head: ListHead::default(),
+        }
+    }
+
+    /// 창 전체(팝업 배치의 host — 팝업은 창 밖으로 나가지 않는다).
+    fn win_rect(&self) -> Rect {
+        self.window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or_default()
+    }
+
+    /// 상세 글상자의 선택(없으면 전체)을 클립보드로.
+    fn copy_detail(&mut self) {
+        let text = self
+            .detail_tb
+            .copy_selection()
+            .unwrap_or_else(|| self.detail_tb.text());
+        let _ = crate::clipboard::write_text(&text);
+    }
+
+    /// 상세 글상자의 우클릭 편집 메뉴가 남긴 요청(읽기 전용 = 복사만 · 전체 선택은 상자가 스스로).
+    fn apply_detail_ctx(&mut self) {
+        if let Some(nexa_ctl::EditCtxAction::Copy) = self.detail_tb.take_edit_ctx() {
+            self.copy_detail();
         }
     }
 
@@ -238,6 +287,70 @@ impl TxLogWin {
     /// winit 사건 → 호스트 동작(Paint만 · 나머지는 창이 스스로).
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> TxLogAction {
         let mut inv = Invalidations::default();
+        // ★ 머리 줄 값 목록 팝업이 먼저(11-13 · 바깥 클릭 = 닫고 통과).
+        if self.head.is_open() && !matches!(ev, WindowEvent::RedrawRequested) {
+            let was = self.head.is_open();
+            let r = self
+                .head
+                .route(ev, &mut self.cursor, self.shift, self.primary);
+            if was {
+                self.scroll = 0;
+                self.redraw();
+            }
+            if r == Routed::Consumed {
+                return TxLogAction::None;
+            }
+        }
+        // ★ 상세 글상자의 편집 메뉴가 열려 있으면 마우스·Esc는 그 메뉴에만(읽기 전용 글상자 관례 · sqlprev_win).
+        if self.detail_tb.popup_open() {
+            let (x, y) = self.cursor;
+            let me = match ev {
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.cursor = (position.x as i32, position.y as i32);
+                    Some(InputEvent::MouseMove {
+                        x: self.cursor.0,
+                        y: self.cursor.1,
+                    })
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                } => Some(InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift: false,
+                    primary: false,
+                }),
+                WindowEvent::MouseInput {
+                    state: ElementState::Released,
+                    button: MouseButton::Left,
+                    ..
+                } => Some(InputEvent::MouseUp { x, y }),
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Right,
+                    ..
+                } => Some(InputEvent::RightDown { x, y }),
+                WindowEvent::KeyboardInput { event: kev, .. }
+                    if kev.state == ElementState::Pressed
+                        && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Escape)) =>
+                {
+                    Some(InputEvent::Key {
+                        key: CtlKey::Escape,
+                        shift: false,
+                        primary: false,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(e) = me {
+                self.detail_tb.on_event(&e, &mut inv);
+                self.apply_detail_ctx();
+                self.redraw();
+                return TxLogAction::None;
+            }
+        }
         // 우클릭 메뉴가 열려 있으면 모달(팝업 규칙: 항목 선택·Esc = 닫기 · 바깥 클릭 = 닫고 통과).
         if self.menu.is_open() {
             let (x, y) = self.cursor;
@@ -278,6 +391,8 @@ impl TxLogWin {
                 _ => None,
             };
             if let Some(e) = me {
+                // 바깥 클릭은 메뉴를 닫고 **그 클릭을 그대로 진행**한다(팝업 규칙 · 종전에는 삼켰다).
+                let outside = self.menu.is_outside_click(&e);
                 let consumed = self.menu.on_event(&e);
                 self.redraw();
                 if let Some(id) = self.menu.take_picked() {
@@ -290,7 +405,7 @@ impl TxLogWin {
                         _ => TxLogAction::None,
                     };
                 }
-                if consumed {
+                if consumed && !outside {
                     return TxLogAction::None;
                 }
             }
@@ -303,12 +418,22 @@ impl TxLogWin {
                 button: MouseButton::Right,
                 ..
             } => {
+                // ★ 상세 영역 우클릭 = 글상자의 편집 메뉴(복사 · 전체 선택 · 11-13).
+                let (x, y) = self.cursor;
+                if self.detail.contains(Point { x, y }) {
+                    self.search.set_focused(false);
+                    self.detail_tb.set_focused(true);
+                    self.detail_tb
+                        .on_event(&InputEvent::RightDown { x, y }, &mut inv);
+                    self.redraw();
+                    return TxLogAction::None;
+                }
                 // 행 위 우클릭 = 문장 메뉴(복사 · 편집기로).
                 if let Some(r) = self.hover {
                     if let Some(&id) = self.row_ids.get(r) {
                         self.menu_row = Some(id);
-                        let (x, y) = self.cursor;
-                        let host = self.table;
+                        // 팝업 host = 창 전체(아래쪽 행에서도 메뉴가 창 안에서 뒤집힌다 · 종전 = 표 본문이라 잘렸다).
+                        let host = self.win_rect();
                         self.menu.set_scale(self.scale);
                         crate::menu_icons::open_at(
                             &mut self.menu,
@@ -342,13 +467,13 @@ impl TxLogWin {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let e = crate::input::wheel_event(delta, self.shift);
-                if let InputEvent::Wheel { delta: px } = e {
-                    let (x, y) = self.cursor;
-                    if self.detail.contains(Point { x, y }) {
-                        self.detail_scroll = (self.detail_scroll - px / 3).max(0);
-                    } else {
-                        self.scroll = (self.scroll - px / 3).max(0);
-                    }
+                let (x, y) = self.cursor;
+                if self.detail.contains(Point { x, y }) {
+                    // 상세 글상자 안 스크롤(세로·가로).
+                    self.detail_tb.on_event(&e, &mut inv);
+                    self.redraw();
+                } else if let InputEvent::Wheel { delta: px } = e {
+                    self.scroll = (self.scroll - px / 3).max(0);
                     self.redraw();
                 }
             }
@@ -357,7 +482,14 @@ impl TxLogWin {
                 let (x, y) = self.cursor;
                 let mv = InputEvent::MouseMove { x, y };
                 self.search.on_event(&mv, &mut inv);
-                for sw in [&mut self.sw_all, &mut self.sw_prev, &mut self.sw_tab] {
+                // 상세 글상자 = 끌어서 선택(누른 채 상자 밖으로 나가도 이어지게 늘 준다).
+                self.detail_tb.on_event(&mv, &mut inv);
+                for sw in [
+                    &mut self.sw_wrap,
+                    &mut self.sw_all,
+                    &mut self.sw_prev,
+                    &mut self.sw_tab,
+                ] {
                     sw.on_event(&mv, &mut inv);
                 }
                 let over = if self.table.contains(Point { x, y }) && self.row_h > 0 {
@@ -388,23 +520,43 @@ impl TxLogWin {
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
                 if matches!(e, InputEvent::MouseDown { .. }) && !self.search.popup_open() {
-                    // 포커스 ≤ 1: 검색 상자는 클릭했을 때만(편집 메뉴 열림 중은 유지 · 10-13).
+                    // 포커스 ≤ 1: 검색 상자·상세 글상자 가운데 클릭한 하나만(편집 메뉴 열림 중은 유지 · 10-13).
                     self.search.set_focused(self.search.bounds().contains(p));
+                    self.detail_tb.set_focused(self.detail.contains(p));
+                    // ★ 머리 줄 = 정렬(클릭 · Shift = 결합) · 깔때기 = 값 필터(11-13).
+                    if self.head.click(p, self.shift) {
+                        self.scroll = 0;
+                        self.redraw();
+                        return TxLogAction::None;
+                    }
                     // 행 클릭 = 선택(3계층 상세) · 같은 행 다시 = 해제 · 빈 곳 = 해제.
                     if self.table.contains(p) {
                         let picked = self.hover.and_then(|r| self.row_ids.get(r).copied());
                         self.sel = if picked == self.sel { None } else { picked };
-                        self.detail_scroll = 0;
                     }
+                }
+                // 상세 글상자: 누름은 상자 안에서만 · 뗌은 늘(끌어 선택의 끝).
+                if up || self.detail.contains(p) {
+                    self.detail_tb.on_event(&e, &mut inv);
+                    self.apply_detail_ctx();
                 }
                 // 편집 메뉴가 떠 있으면(상자 밖) 항목 클릭도 상자로(사용자 10-13 "입력창 우클릭 메뉴 선택이 안 됨").
                 if up || self.search.bounds().contains(p) || self.search.popup_open() {
                     self.search.on_event(&e, &mut inv);
                 }
-                for sw in [&mut self.sw_all, &mut self.sw_prev, &mut self.sw_tab] {
+                for sw in [
+                    &mut self.sw_wrap,
+                    &mut self.sw_all,
+                    &mut self.sw_prev,
+                    &mut self.sw_tab,
+                ] {
                     if up || sw.bounds().contains(p) {
                         sw.on_event(&e, &mut inv);
                     }
+                }
+                // 줄바꿈 스위치 = 상세 글상자만 바꾼다(목록·필터와 무관).
+                if let Some(on) = self.sw_wrap.take_toggled() {
+                    self.detail_tb.set_wrap(on);
                 }
                 let toggled = self.sw_all.take_toggled().is_some()
                     | self.sw_prev.take_toggled().is_some()
@@ -431,6 +583,27 @@ impl TxLogWin {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 if matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Escape)) {
                     self.close();
+                    return TxLogAction::None;
+                }
+                // ★ 상세 글상자가 포커스면 Ctrl+C = 선택(없으면 전체) 복사 · Ctrl+A = 전체 선택 · 이동 키 = 상자(11-13).
+                if self.detail_tb.is_focused() {
+                    if self.primary {
+                        match crate::input::shortcut_letter(kev) {
+                            Some('c') => self.copy_detail(),
+                            Some('a') => {
+                                self.detail_tb.on_event(&InputEvent::SelectAll, &mut inv);
+                            }
+                            _ => {}
+                        }
+                    } else if let Some(e) = crate::input::text_key_event(
+                        kev,
+                        self.shift,
+                        self.primary,
+                        crate::input::TextKeys::Multi,
+                    ) {
+                        self.detail_tb.on_event(&e, &mut inv);
+                    }
+                    self.redraw();
                     return TxLogAction::None;
                 }
                 if let Some(e) = crate::input::text_key_event(
@@ -489,6 +662,7 @@ impl TxLogWin {
             let mut sx = pad / 2;
             let track_w = px(34.0);
             for (i, (sw, msg)) in [
+                (&mut self.sw_wrap, Msg::LblLogSwWrap),
                 (&mut self.sw_all, Msg::TxSwAll),
                 (&mut self.sw_prev, Msg::TxSwPrev),
                 (&mut self.sw_tab, Msg::TxSwThisTab),
@@ -590,12 +764,15 @@ impl TxLogWin {
             let hdr = Rect::new(table.x + 1, table.y + 1, table.w - 2, row_h);
             dc.fill_rect(hdr, th.chrome_bg);
             let mut cx = hdr.x;
-            for ((m, _), w) in cols.iter().zip(widths.iter()) {
+            self.head.begin_paint();
+            for (ci, ((m, _), w)) in cols.iter().zip(widths.iter()).enumerate() {
                 let cell = Rect::new(cx, hdr.y, *w, row_h);
+                // 정렬 삼각형 · 깔때기(오른쪽) — 머리 글은 그만큼 잘라 그린다.
+                let used = self.head.paint_cell(&mut dc, th, ci, cell, s);
                 dc.text(
                     cx + px(6.0),
                     hdr.y + (row_h - th_txt) / 2,
-                    cell,
+                    Rect::new(cx, hdr.y, (*w - used).max(0), row_h),
                     t(*m),
                     th.text,
                 );
@@ -610,7 +787,39 @@ impl TxLogWin {
                 (table.bottom() - 1 - hdr.bottom() - 1).max(0),
             );
             self.table = body;
-            let rows: Vec<&nsql_run::txlog::TxEntry> = log.entries(&self.filter).collect();
+            let mut rows: Vec<&nsql_run::txlog::TxEntry> = log.entries(&self.filter).collect();
+            // ★ 머리 줄 값 필터 · 정렬(11-13): 걸려 있을 때만 전체 행의 열 글을 만든다(평소 = 보이는 행만).
+            let win_host = Rect::new(0, 0, wi, hi);
+            if self.head.wants_values() {
+                let all = &rows;
+                self.head.open_pending(
+                    |col| {
+                        all.iter()
+                            .map(|e| row_cells(log, e, &log.outcome_of(e))[col].clone())
+                            .collect()
+                    },
+                    win_host,
+                    s,
+                    row_h,
+                );
+            }
+            if self.head.has_filters() {
+                rows.retain(|e| {
+                    let c = row_cells(log, e, &log.outcome_of(e));
+                    self.head.passes(|i| c[i].clone())
+                });
+            }
+            if self.head.has_sort() {
+                rows = self.head.sort_rows(rows, |e, col| match col {
+                    // 시간·소요·행 수는 원값으로(글자로 비교하면 틀어진다).
+                    0 => SortVal::text(&e.at),
+                    3 => e
+                        .duration
+                        .map_or(SortVal::Empty, |d| SortVal::Num(d.as_secs_f64())),
+                    4 => e.rows.map_or(SortVal::Empty, |n| SortVal::Num(n as f64)),
+                    _ => SortVal::text(&row_cells(log, e, &log.outcome_of(e))[col]),
+                });
+            }
             self.row_ids = rows.iter().map(|e| e.id).collect();
             self.rows_seen = rows.len();
             let max_scroll = (rows.len() as i32 * row_h - body.h).max(0);
@@ -653,53 +862,7 @@ impl TxLogWin {
                     TxOutcome::RolledBack | TxOutcome::Lost | TxOutcome::AutoRolledBack(_)
                 );
                 let fg = if dim { th.text_dim } else { th.text };
-                let cells: [String; 8] = [
-                    e.at.get(11..19).unwrap_or(&e.at).to_string(),
-                    format!(
-                        "SQL / {}",
-                        t(match e.purpose {
-                            Purpose::User => Msg::TxPurposeUser,
-                            Purpose::Meta => Msg::TxPurposeMeta,
-                            Purpose::Util => Msg::TxPurposeUtil,
-                        })
-                    ),
-                    one_line(&e.text, 200),
-                    e.duration
-                        .map(|d| format!("{:.3}s", d.as_secs_f64()))
-                        .unwrap_or_default(),
-                    e.rows.map(|n| n.to_string()).unwrap_or_default(),
-                    match &e.result {
-                        ExecOutcome::Running => t(Msg::TxResRunning).to_string(),
-                        ExecOutcome::Ok if !e.delivery.is_empty() => {
-                            format!("{} · {}", t(Msg::TxResOk), e.delivery)
-                        }
-                        ExecOutcome::Ok => t(Msg::TxResOk).to_string(),
-                        ExecOutcome::Err { code, message } => match code {
-                            Some(c) => format!("[{c}] {message}"),
-                            None => message.clone(),
-                        },
-                        ExecOutcome::Stopped { rows } => {
-                            tf(Msg::TxResStopped, &[&rows.to_string()])
-                        }
-                    },
-                    match &outcome {
-                        TxOutcome::Pending => t(Msg::TxOutPending).to_string(),
-                        TxOutcome::Auto => t(Msg::TxOutAuto).to_string(),
-                        TxOutcome::Committed => tf(Msg::TxOutCommitted, &[&ended(log, e)]),
-                        TxOutcome::RolledBack => tf(Msg::TxOutRolledBack, &[&ended(log, e)]),
-                        TxOutcome::ImplicitCommit(by) => tf(Msg::TxOutImplicit, &[by]),
-                        TxOutcome::Switched => t(Msg::TxOutSwitched).to_string(),
-                        TxOutcome::Lost => t(Msg::TxOutLost).to_string(),
-                        TxOutcome::ReadEnded => t(Msg::TxOutReadEnded).to_string(),
-                        TxOutcome::AutoRolledBack(m) => {
-                            tf(Msg::TxOutAutoRolledBack, &[&m.to_string()])
-                        }
-                        TxOutcome::AutoCommitted(m) => {
-                            tf(Msg::TxOutAutoCommitted, &[&m.to_string()])
-                        }
-                    },
-                    log.session_label(e.session).to_string(),
-                ];
+                let cells = row_cells(log, e, &outcome);
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
                     let cell = Rect::new(cx, y, *w, row_h);
@@ -736,7 +899,7 @@ impl TxLogWin {
                     th.text_dim,
                 );
             }
-            // ── 3계층 상세: ① 바인드 원문 ② 이름 · 타입 · 값 ③ 값 치환 쿼리(클라이언트 표시용 · 서버가 받은 문장이 아님).
+            // ── 3계층 상세: ① 바인드 원문 ② 이름 · 타입 · 값 ③ 값 치환 쿼리 — 읽기 전용 글상자(선택·복사·우클릭 · 11-13).
             if let Some(e) = sel_entry.as_ref().filter(|_| detail_h > 0) {
                 let d = self.detail;
                 dc.fill_rect(d, th.field_bg);
@@ -744,64 +907,31 @@ impl TxLogWin {
                 dc.fill_rect(Rect::new(d.x, d.bottom() - 1, d.w, 1), th.border);
                 dc.fill_rect(Rect::new(d.x, d.y, 1, d.h), th.border);
                 dc.fill_rect(Rect::new(d.right() - 1, d.y, 1, d.h), th.border);
-                // 줄 목록(굵게 · 글 · 색).
-                let mut lines: Vec<(bool, String, Color)> = Vec::new();
-                lines.push((true, format!("① {}", t(Msg::TxDetailSql)), th.text));
-                for l in e.text.lines() {
-                    lines.push((false, l.to_string(), th.text));
+                let text = detail_text(e);
+                let key = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    text.hash(&mut h);
+                    (e.id, h.finish())
+                };
+                let inv = &mut Invalidations::default();
+                if self.detail_for != Some(key) {
+                    // 글이 바뀌었을 때만 갈아 끼운다(매번 넣으면 선택이 날아간다) · 캐럿 = 맨 위.
+                    self.detail_tb.set_text(&text);
+                    self.detail_tb.select_range(0, 0, inv);
+                    self.detail_for = Some(key);
                 }
-                lines.push((
-                    true,
-                    format!(
-                        "② {}",
-                        tf(Msg::TxDetailBinds, &[&e.binds.len().to_string()])
-                    ),
-                    th.text,
-                ));
-                if e.binds.is_empty() {
-                    lines.push((false, t(Msg::TxDetailNoBinds).to_string(), th.text_dim));
-                } else {
-                    let nw = e
-                        .binds
-                        .iter()
-                        .map(|b| b.name.chars().count())
-                        .max()
-                        .unwrap_or(0)
-                        + 1;
-                    let tw = e
-                        .binds
-                        .iter()
-                        .map(|b| b.ty.chars().count())
-                        .max()
-                        .unwrap_or(0);
-                    for b in &e.binds {
-                        let dir = if b.out { "  (OUT)" } else { "" };
-                        lines.push((
-                            false,
-                            format!(":{:<nw$} {:<tw$}  {}{dir}", b.name, b.ty, b.value),
-                            th.text,
-                        ));
-                    }
-                }
-                lines.push((true, format!("③ {}", t(Msg::TxDetailBound)), th.text));
-                lines.push((false, t(Msg::TxDetailBoundNote).to_string(), th.text_dim));
-                for l in e.bound_sql().lines() {
-                    lines.push((false, l.to_string(), th.text));
-                }
-                let lh = th_txt + px(2.0);
-                let content_h = lines.len() as i32 * lh + px(8.0);
-                let max_scroll = (content_h - d.h).max(0);
-                self.detail_scroll = self.detail_scroll.clamp(0, max_scroll);
-                let inner = Rect::new(d.x + 1, d.y + 1, d.w - 2, d.h - 2);
-                let mut y = inner.y + px(4.0) - self.detail_scroll;
-                for (bold, text, color) in &lines {
-                    if y + lh > inner.y && y < inner.bottom() {
-                        dc.select_font(FontSlot::Base, *bold);
-                        dc.text(inner.x + px(8.0), y, inner, text, *color);
-                    }
-                    y += lh;
-                }
-                dc.select_font(FontSlot::Base, false);
+                self.detail_tb.set_scale(s);
+                self.detail_tb.set_bounds(
+                    Rect::new(d.x + 1, d.y + 1, (d.w - 2).max(0), (d.h - 2).max(0)),
+                    inv,
+                );
+                // 편집 메뉴는 창 전체 안에서 배치(상세가 창 아래쪽이라 위로 뒤집혀야 한다).
+                self.detail_tb.set_menu_host(Some(win_host));
+                self.detail_tb.paint(&mut dc, th);
+            } else {
+                self.detail_for = None;
+                self.detail_tb.set_focused(false);
             }
             // 푸터 오른쪽: 건수 · 열린 트랜잭션
             let open = log.open_record();
@@ -824,11 +954,97 @@ impl TxLogWin {
                 &info,
                 th.text_dim,
             );
+            // 팝업 = 맨 마지막 층(상세 편집 메뉴 · 머리 줄 값 목록 · 행 우클릭 메뉴).
+            if self.detail_tb.popup_open() {
+                self.detail_tb.paint_popup(&mut dc, th);
+            }
+            self.head.paint_popup(&mut dc, th);
             self.menu.paint(&mut dc, th);
         }
         let _ = buf.present();
         self.surface = Some(surface);
     }
+}
+
+/// 목록 한 줄의 열 글(그리기 · 값 필터 · 글자 정렬이 같은 글을 쓴다).
+fn row_cells(log: &TxLog, e: &nsql_run::txlog::TxEntry, outcome: &TxOutcome) -> [String; 8] {
+    [
+        e.at.get(11..19).unwrap_or(&e.at).to_string(),
+        format!(
+            "SQL / {}",
+            t(match e.purpose {
+                Purpose::User => Msg::TxPurposeUser,
+                Purpose::Meta => Msg::TxPurposeMeta,
+                Purpose::Util => Msg::TxPurposeUtil,
+            })
+        ),
+        one_line(&e.text, 200),
+        e.duration
+            .map(|d| format!("{:.3}s", d.as_secs_f64()))
+            .unwrap_or_default(),
+        e.rows.map(|n| n.to_string()).unwrap_or_default(),
+        match &e.result {
+            ExecOutcome::Running => t(Msg::TxResRunning).to_string(),
+            ExecOutcome::Ok if !e.delivery.is_empty() => {
+                format!("{} · {}", t(Msg::TxResOk), e.delivery)
+            }
+            ExecOutcome::Ok => t(Msg::TxResOk).to_string(),
+            ExecOutcome::Err { code, message } => match code {
+                Some(c) => format!("[{c}] {message}"),
+                None => message.clone(),
+            },
+            ExecOutcome::Stopped { rows } => tf(Msg::TxResStopped, &[&rows.to_string()]),
+        },
+        match outcome {
+            TxOutcome::Pending => t(Msg::TxOutPending).to_string(),
+            TxOutcome::Auto => t(Msg::TxOutAuto).to_string(),
+            TxOutcome::Committed => tf(Msg::TxOutCommitted, &[&ended(log, e)]),
+            TxOutcome::RolledBack => tf(Msg::TxOutRolledBack, &[&ended(log, e)]),
+            TxOutcome::ImplicitCommit(by) => tf(Msg::TxOutImplicit, &[by]),
+            TxOutcome::Switched => t(Msg::TxOutSwitched).to_string(),
+            TxOutcome::Lost => t(Msg::TxOutLost).to_string(),
+            TxOutcome::ReadEnded => t(Msg::TxOutReadEnded).to_string(),
+            TxOutcome::AutoRolledBack(m) => tf(Msg::TxOutAutoRolledBack, &[&m.to_string()]),
+            TxOutcome::AutoCommitted(m) => tf(Msg::TxOutAutoCommitted, &[&m.to_string()]),
+        },
+        log.session_label(e.session).to_string(),
+    ]
+}
+
+/// 3계층 상세 글(① 바인드 원문 ② 이름 · 타입 · 값 ③ 값 치환 쿼리 — 클라이언트 표시용 · 서버가 받은 문장이 아님).
+fn detail_text(e: &nsql_run::txlog::TxEntry) -> String {
+    let mut out: Vec<String> = Vec::new();
+    out.push(format!("① {}", t(Msg::TxDetailSql)));
+    out.extend(e.text.lines().map(str::to_string));
+    out.push(format!(
+        "② {}",
+        tf(Msg::TxDetailBinds, &[&e.binds.len().to_string()])
+    ));
+    if e.binds.is_empty() {
+        out.push(t(Msg::TxDetailNoBinds).to_string());
+    } else {
+        let nw = e
+            .binds
+            .iter()
+            .map(|b| b.name.chars().count())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let tw = e
+            .binds
+            .iter()
+            .map(|b| b.ty.chars().count())
+            .max()
+            .unwrap_or(0);
+        for b in &e.binds {
+            let dir = if b.out { "  (OUT)" } else { "" };
+            out.push(format!(":{:<nw$} {:<tw$}  {}{dir}", b.name, b.ty, b.value));
+        }
+    }
+    out.push(format!("③ {}", t(Msg::TxDetailBound)));
+    out.push(t(Msg::TxDetailBoundNote).to_string());
+    out.extend(e.bound_sql().lines().map(str::to_string));
+    out.join("\n")
 }
 
 fn ended(log: &TxLog, e: &nsql_run::txlog::TxEntry) -> String {

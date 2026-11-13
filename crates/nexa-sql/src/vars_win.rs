@@ -9,11 +9,13 @@
 //! 데이터는 호스트가 갖고(`App.tab_vars` · `Sess.shared_vars`) 창은 그릴 때 받은 줄만 본다. 다시 그리기는 변수 사건·탭 전환·
 //! 이 창의 입력이 있을 때만(매 프레임 0 · docs/63 §4).
 
+use crate::listhead::{ListHead, Routed, SortVal};
+use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, IconImage, Theme};
-use nexa_ctl::{Button, Control, InputEvent, Invalidations, TextBox, Widget};
+use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
 use std::rc::Rc;
@@ -71,6 +73,23 @@ pub(crate) enum VarsWinAction {
     Refresh,
     /// ★ T-420: 암묵(auto) 변수의 타입을 지금 값에서 추론해 고정(선언 변수로).
     FixType(String),
+    /// ★ 우클릭 메뉴 복사(사용자 11-13): 글 그대로 클립보드로(호스트가 실패를 상태줄에 알린다).
+    Copy(String),
+    /// 우클릭 "스크립트로 복사"(이름) — 호스트가 변수 상태에서 `VAR`/`EXEC` 줄을 만든다(`vars_to_script` · 비밀 생략 규칙 그대로).
+    CopyScript(String),
+}
+
+/// 행의 열 글(그리기 · 값 필터 · 정렬 · 행 복사가 같은 글을 쓴다 · 값 = 보여 주는 글 = 비밀이면 가린 글).
+fn row_cell(r: &VarRow, col: usize) -> String {
+    match col {
+        // 바인드 = `:이름` · 치환 변수 = `&이름` 그대로(139차 win V1 ④ `:&X` 표기 정리).
+        0 if r.name.starts_with('&') => r.name.clone(),
+        0 => format!(":{}", r.name),
+        1 => r.ty.clone(),
+        2 => r.value.clone(),
+        3 => r.formula.clone(),
+        _ => r.layer.word().to_string(),
+    }
 }
 
 /// 열(폭 0 = 남는 폭을 나눠 쓰는 유동 열 · Value 60 % · Formula 40 % · 각 최소 폭) — ★ Formula(사용자 10-25) = 사용 시 모드 수식(D-355 · `:A + 10`) ·
@@ -113,6 +132,12 @@ pub(crate) struct VarsWin {
     row_h: i32,
     table: Rect,
     title_ctx: String,
+    /// ★ 행 우클릭 메뉴(복사 · 11-13) · 그 행의 이름.
+    menu: ContextMenu,
+    menu_row: Option<String>,
+    /// ★ 머리 줄 정렬·값 필터(공용 부품 · 11-13) · 보이는 줄 → `rows` 자리(필터·정렬 뒤 · `hover`는 보이는 줄 번호).
+    head: ListHead,
+    view: Vec<usize>,
 }
 
 impl VarsWin {
@@ -141,6 +166,66 @@ impl VarsWin {
             row_h: 0,
             table: Rect::default(),
             title_ctx: String::new(),
+            menu: ContextMenu::new(),
+            menu_row: None,
+            head: ListHead::default(),
+            view: Vec::new(),
+        }
+    }
+
+    /// 창 전체(팝업 배치의 host).
+    fn win_rect(&self) -> Rect {
+        self.window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or_default()
+    }
+
+    /// 보이는 줄 번호 → 줄.
+    fn shown(&self, i: usize) -> Option<&VarRow> {
+        self.view.get(i).and_then(|&ri| self.rows.get(ri))
+    }
+
+    /// 필터·정렬을 적용한 보이는 줄 목록을 다시 만든다.
+    fn rebuild_view(&mut self) {
+        let mut idx: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| self.head.passes(|c| row_cell(&self.rows[i], c)))
+            .collect();
+        idx = self
+            .head
+            .sort_rows(idx, |&i, c| SortVal::text(&row_cell(&self.rows[i], c)));
+        self.view = idx;
+    }
+
+    /// 우클릭 메뉴에서 고른 항목 → 호스트 동작.
+    fn menu_action(&self, id: &str, name: &str) -> VarsWinAction {
+        let Some(r) = self.rows.iter().find(|r| r.name == name) else {
+            return VarsWinAction::None;
+        };
+        match id {
+            "copy_name" => VarsWinAction::Copy(row_cell(r, 0)),
+            // 값 = 원문(잘림·⟳ 표시 없는 글) · 비밀 값은 메뉴에서 꺼져 있다.
+            "copy_value" if !r.secret => VarsWinAction::Copy(r.edit.clone()),
+            "copy_formula" => {
+                VarsWinAction::Copy(r.formula.trim().trim_start_matches(":=").trim().to_string())
+            }
+            "copy_row" => VarsWinAction::Copy(
+                (0..COLS.len())
+                    .map(|c| row_cell(r, c))
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            ),
+            // 치환 변수(`&이름`)는 DEFINE 한 줄 · 바인드는 호스트가 변수 상태에서 만든다.
+            "copy_script" if r.name.starts_with('&') && !r.secret => VarsWinAction::Copy(format!(
+                "DEFINE {} = {}",
+                r.name.trim_start_matches('&'),
+                r.edit
+            )),
+            "copy_script" => VarsWinAction::CopyScript(r.name.clone()),
+            _ => VarsWinAction::None,
         }
     }
 
@@ -292,19 +377,119 @@ impl VarsWin {
         self.selected.clone().map(|n| (n, text))
     }
 
+    /// 보이는 줄 `i`를 고른다.
     fn select(&mut self, i: usize) {
-        let Some(r) = self.rows.get(i) else {
+        let Some((name, text)) = self.shown(i).map(|r| (r.name.clone(), r.edit.clone())) else {
             return;
         };
-        self.selected = Some(r.name.clone());
-        let text = r.edit.clone();
+        self.selected = Some(name);
         self.edit.set_text(&text);
         self.edit.set_focused(true);
     }
 
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> VarsWinAction {
         let mut inv = Invalidations::default();
+        // ★ 머리 줄 값 목록 팝업이 먼저(11-13 · 바깥 클릭 = 닫고 통과).
+        if self.head.is_open() && !matches!(ev, WindowEvent::RedrawRequested) {
+            let r = self
+                .head
+                .route(ev, &mut self.cursor, self.shift, self.primary);
+            self.scroll = 0;
+            self.rebuild_view();
+            self.redraw();
+            if r == Routed::Consumed {
+                return VarsWinAction::None;
+            }
+        }
+        // ★ 행 우클릭 메뉴가 열려 있으면 모달(항목 선택·Esc = 닫기 · 바깥 클릭 = 닫고 그 클릭을 그대로 진행).
+        if self.menu.is_open() {
+            let (x, y) = self.cursor;
+            let me = match ev {
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.cursor = (position.x as i32, position.y as i32);
+                    Some(InputEvent::MouseMove {
+                        x: self.cursor.0,
+                        y: self.cursor.1,
+                    })
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                } => Some(InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift: false,
+                    primary: false,
+                }),
+                WindowEvent::MouseInput {
+                    state: ElementState::Released,
+                    button: MouseButton::Left,
+                    ..
+                } => Some(InputEvent::MouseUp { x, y }),
+                WindowEvent::KeyboardInput { event: kev, .. }
+                    if kev.state == ElementState::Pressed
+                        && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Escape)) =>
+                {
+                    Some(InputEvent::Key {
+                        key: CtlKey::Escape,
+                        shift: false,
+                        primary: false,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(e) = me {
+                let outside = self.menu.is_outside_click(&e);
+                let consumed = self.menu.on_event(&e);
+                self.redraw();
+                if let Some(id) = self.menu.take_picked() {
+                    return match self.menu_row.take() {
+                        Some(name) => self.menu_action(&id, &name),
+                        None => VarsWinAction::None,
+                    };
+                }
+                if consumed && !outside {
+                    return VarsWinAction::None;
+                }
+            }
+        }
         match ev {
+            // ★ 행 우클릭 = 그 줄을 고르고 복사 메뉴(이름 · 값 · 수식 · 행 · 스크립트 · 사용자 11-13).
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                let (x, y) = self.cursor;
+                if let Some(i) = self.hover.filter(|_| self.table.contains(Point { x, y })) {
+                    self.select(i);
+                    if let Some(r) = self.shown(i).cloned() {
+                        self.menu_row = Some(r.name.clone());
+                        let host = self.win_rect();
+                        self.menu.set_scale(self.scale);
+                        crate::menu_icons::open_at(
+                            &mut self.menu,
+                            x,
+                            y,
+                            vec![
+                                CtxItem::item("copy_name", t(Msg::MnCopyName)),
+                                CtxItem::maybe("copy_value", t(Msg::VarsCopyValue), !r.secret),
+                                CtxItem::maybe(
+                                    "copy_formula",
+                                    t(Msg::VarsCopyFormula),
+                                    !r.formula.is_empty(),
+                                ),
+                                CtxItem::item("copy_row", t(Msg::MnCopyRow)),
+                                CtxItem::maybe("copy_script", t(Msg::VarsCopyScript), !r.secret),
+                            ],
+                            host,
+                            (200.0 * self.scale) as i32,
+                        );
+                    }
+                    self.redraw();
+                }
+            }
             WindowEvent::CloseRequested => self.close(),
             WindowEvent::RedrawRequested => return VarsWinAction::Paint,
             WindowEvent::Resized(_) => self.redraw(),
@@ -344,7 +529,7 @@ impl VarsWin {
                 }
                 let over = if self.table.contains(Point { x, y }) && self.row_h > 0 {
                     let r = ((y - self.table.y + self.scroll) / self.row_h) as usize;
-                    (r < self.rows.len()).then_some(r)
+                    (r < self.view.len()).then_some(r)
                 } else {
                     None
                 };
@@ -376,12 +561,18 @@ impl VarsWin {
                 if up && self.peek.take().is_some() {
                     self.redraw();
                 }
+                if !up && self.head.click(p, self.shift) {
+                    // ★ 머리 줄 = 정렬(클릭 · Shift = 결합) · 깔때기 = 값 필터(11-13).
+                    self.scroll = 0;
+                    self.rebuild_view();
+                    self.redraw();
+                    return VarsWinAction::None;
+                }
                 if !up {
                     if let Some(i) = self.hover.filter(|_| self.table.contains(p)) {
                         // ★ 비밀 행의 👁(값 열 오른쪽 끝)을 누르면 **누르고 있는 동안만** 원문(11-11 · 선택·입력란은 건드리지 않음).
                         let eye = self
-                            .rows
-                            .get(i)
+                            .shown(i)
                             .is_some_and(|r| r.secret && r.reveal.is_some())
                             && x >= self.eye_x.0
                             && x < self.eye_x.1;
@@ -436,13 +627,15 @@ impl VarsWin {
                         };
                     }
                     Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowUp)
-                        if !self.rows.is_empty() =>
+                        if !self.view.is_empty() =>
                     {
-                        let n = self.rows.len();
-                        let cur = self
-                            .selected
-                            .as_deref()
-                            .and_then(|s| self.rows.iter().position(|r| r.name == s));
+                        // 보이는 순서(필터·정렬 뒤)로 옮긴다.
+                        let n = self.view.len();
+                        let cur = self.selected.as_deref().and_then(|s| {
+                            self.view
+                                .iter()
+                                .position(|&ri| self.rows.get(ri).is_some_and(|r| r.name == s))
+                        });
                         let down =
                             matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::ArrowDown));
                         let next = match (cur, down) {
@@ -540,6 +733,7 @@ impl VarsWin {
         if self.rows != rows_in {
             self.rows = rows_in.to_vec();
         }
+        self.rebuild_view();
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
         let px = |v: f32| (v * s).round() as i32;
@@ -585,17 +779,30 @@ impl VarsWin {
             let hdr = Rect::new(table.x + 1, table.y + 1, table.w - 2, row_h);
             dc.fill_rect(hdr, th.chrome_bg);
             let mut cx = hdr.x;
-            for ((m, _), w) in COLS.iter().zip(widths.iter()) {
+            self.head.begin_paint();
+            for (ci, ((m, _), w)) in COLS.iter().zip(widths.iter()).enumerate() {
                 let cell = Rect::new(cx, hdr.y, *w, row_h);
+                // 정렬 삼각형 · 깔때기(오른쪽) — 머리 글은 그만큼 잘라 그린다.
+                let used = self.head.paint_cell(&mut dc, th, ci, cell, s);
                 dc.text(
                     cx + px(6.0),
                     hdr.y + (row_h - th_txt) / 2,
-                    cell,
+                    Rect::new(cx, hdr.y, (*w - used).max(0), row_h),
                     t(*m),
                     th.text,
                 );
                 dc.fill_rect(Rect::new(cx + w - 1, hdr.y, 1, row_h), th.border);
                 cx += w;
+            }
+            // 깔때기를 눌렀으면 그 열의 값 목록을 연다(전체 줄 기준).
+            if self.head.wants_values() {
+                let rows = &self.rows;
+                self.head.open_pending(
+                    |col| rows.iter().map(|r| row_cell(r, col)).collect(),
+                    Rect::new(0, 0, wi, hi),
+                    s,
+                    row_h,
+                );
             }
             let body = Rect::new(
                 table.x + 1,
@@ -604,7 +811,7 @@ impl VarsWin {
                 (table.bottom() - 1 - hdr.bottom() - 1).max(0),
             );
             self.table = body;
-            let max_scroll = (self.rows.len() as i32 * row_h - body.h).max(0);
+            let max_scroll = (self.view.len() as i32 * row_h - body.h).max(0);
             self.scroll = self.scroll.clamp(0, max_scroll);
             let first = (self.scroll / row_h.max(1)) as usize;
             let mut y = body.y - (self.scroll % row_h.max(1));
@@ -618,7 +825,13 @@ impl VarsWin {
                 );
             }
             let mut eye_x = self.eye_x;
-            for (ri, r) in self.rows.iter().enumerate().skip(first) {
+            for (ri, r) in self
+                .view
+                .iter()
+                .filter_map(|&i| self.rows.get(i))
+                .enumerate()
+                .skip(first)
+            {
                 if y >= body.bottom() {
                     break;
                 }
@@ -645,16 +858,11 @@ impl VarsWin {
                     _ => r.value.clone(),
                 };
                 let cells = [
-                    // 바인드 = `:이름` · 치환 변수 = `&이름` 그대로(139차 win V1 ④ `:&X` 표기 정리).
-                    if r.name.starts_with('&') {
-                        r.name.clone()
-                    } else {
-                        format!(":{}", r.name)
-                    },
-                    r.ty.clone(),
+                    row_cell(r, 0),
+                    row_cell(r, 1),
                     value_text,
-                    r.formula.clone(),
-                    r.layer.word().to_string(),
+                    row_cell(r, 3),
+                    row_cell(r, 4),
                 ];
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
@@ -714,6 +922,9 @@ impl VarsWin {
                 b.paint(&mut dc, th);
                 bx += bw + px(8.0);
             }
+            // 팝업 = 맨 마지막 층(머리 줄 값 목록 · 행 우클릭 메뉴).
+            self.head.paint_popup(&mut dc, th);
+            self.menu.paint(&mut dc, th);
         }
         let _ = buf.present();
         self.surface = Some(surface);

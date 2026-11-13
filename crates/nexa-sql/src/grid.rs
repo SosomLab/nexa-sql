@@ -9453,7 +9453,7 @@ pub(crate) fn type_badge(
     }
 }
 
-fn funnel_glyph(dc: &mut dyn DrawCtx, r: Rect, color: nexa_ctl::Color) {
+pub(crate) fn funnel_glyph(dc: &mut dyn DrawCtx, r: Rect, color: nexa_ctl::Color) {
     let g = r.w.max(6);
     let cup_h = (g * 55 / 100).max(3);
     let stem_w = (g / 3).max(2);

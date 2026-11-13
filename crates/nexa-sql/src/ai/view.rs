@@ -2457,8 +2457,15 @@ impl AiView {
                         let yy = ly + block_h + self.s(2.0);
                         let mut bx = x + self.s(8.0);
                         let armed = info.armed.as_ref().filter(|a| a.0 == msg.id);
+                        // 장전 중 = 운영 Commit 카드의 [커밋 (N)]처럼 남은 초를 붙인다(사용자 11-13 "Allow 버튼도 (3) 같은 잔여 초").
+                        let allow = match armed {
+                            Some((_, left, _)) => {
+                                format!("{} ({})", t(Msg::AiAllow), left.div_ceil(1000).max(1))
+                            }
+                            None => t(Msg::AiAllow).to_string(),
+                        };
                         for (btn, label, primary) in [
-                            (Btn::Approve(true), t(Msg::AiAllow), true),
+                            (Btn::Approve(true), allow.as_str(), true),
                             (Btn::Approve(false), t(Msg::AiDeny), false),
                         ] {
                             let bw = dc.text_width(label) + self.s(24.0);

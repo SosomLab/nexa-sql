@@ -262,6 +262,24 @@ impl App {
         self.project_touch();
     }
 
+    /// ★ 변수 하나의 스크립트 글(변수 창 우클릭 "스크립트로 복사" · 11-13): 탭 → 공유 → 글로벌 순으로 처음 찾은 것을
+    /// `vars_to_script`로(`VAR`·`EXEC` 줄 · 수식 줄 · 비밀 생략 규칙 그대로). 못 찾으면(프로필 층 등) `:이름`만.
+    pub(crate) fn vars_script_of(&self, name: &str) -> String {
+        let key = name.trim_start_matches(':');
+        let found = self
+            .tab_vars
+            .get(&self.editors.active_id())
+            .into_iter()
+            .flatten()
+            .chain(self.sess.shared_vars.iter())
+            .chain(self.global_vars.iter())
+            .find(|v| v.name.eq_ignore_ascii_case(key));
+        match found {
+            Some(v) => nsql_script::vars_to_script(std::slice::from_ref(v)),
+            None => format!(":{key}"),
+        }
+    }
+
     pub(crate) fn vars_refresh_now(&mut self) {
         let Some(pass) = self.gate_pass() else {
             return;
@@ -295,7 +313,8 @@ impl App {
         let mut shared_dirty = false;
         let mut global_dirty = false;
         match action {
-            A::None | A::Paint => return,
+            // 복사 동작은 호스트(event_loop)가 먼저 처리한다 — 변수 표를 바꾸지 않는다.
+            A::None | A::Paint | A::Copy(_) | A::CopyScript(_) => return,
             A::Refresh => {
                 self.vars_refresh_now();
                 return;

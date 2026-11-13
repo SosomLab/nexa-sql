@@ -126,7 +126,9 @@ pub(crate) struct AiState {
     pub auto_run: Option<Instant>,
     /// ★ 게이트 2 준비(영향 행 수 사전 조회가 도는 중 · 도구 · 입력 · 답 통로 · 2단계 강제) · 영향 확인 카드를 띄운 시각(운영 = 대기 뒤에만 승인).
     pub impact_wait: Option<(String, String, mpsc::Sender<ToolReply>, bool)>,
-    pub stage2_at: Option<Instant>,
+    /// ★ 방금 허용한 쓰기 카드의 id(11-13 "모두 동일한 개념으로"): 영향 행 수가 나오면 **새 카드를 띄우지 않고** 이 카드에
+    /// 영향 줄만 덧붙여 장전된 [허용]으로 되돌린다(`ai_impact_done`).
+    pub last_card: Option<String>,
     /// ★ 두 번 눌러 허용하는 카드의 첫 누름 시각(`ApprovalReply::Api::twice` · 시간이 지나면 `ai_tick_due`가 비운다).
     pub armed: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
@@ -2084,7 +2086,7 @@ impl App {
                 ok: false,
             });
         }
-        self.ai.stage2_at = None;
+        self.ai.last_card = None;
         self.ai.armed = None;
         self.ai.pending = None;
         self.ai.status = t(Msg::AiStopped).into();
@@ -2486,30 +2488,17 @@ impl App {
 
     /// 승인 카드 응답.
     pub(crate) fn ai_approve(&mut self, ok: bool) {
-        // ★ 게이트 2(운영): 영향 확인 카드는 뜬 뒤 `run.prod_confirm_ms`가 지나야 승인된다(습관적 연타 방지 · 거부는 바로).
-        if ok
-            && matches!(
-                self.ai.approval,
-                Some((_, _, _, ApprovalReply::Stage2 { .. }))
-            )
-        {
-            let wait = std::time::Duration::from_millis(
-                self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as u64,
-            );
-            if self.ai_guard_prod() && self.ai.stage2_at.is_some_and(|t| t.elapsed() < wait) {
-                let left =
-                    wait.saturating_sub(self.ai.stage2_at.map(|t| t.elapsed()).unwrap_or(wait));
-                self.ai.status = tf(Msg::AiGuardWait, &[&format!("{:.1}", left.as_secs_f32())]);
-                self.redraw();
-                return;
-            }
-        }
         // ★ 두 번 눌러 허용(운영의 DB 쓰기 · 11-13): 첫 누름은 장전만 — 제한 시간 안의 두 번째 누름이 실행한다. 장전 직후의
         //   연타(350 ms 안)는 버린다(습관적 더블 클릭이 두 번으로 세어지지 않게) · 시간이 지난 뒤의 누름은 다시 장전.
         if ok
             && matches!(
                 self.ai.approval,
-                Some((_, _, _, ApprovalReply::Api { twice: true, .. }))
+                Some((
+                    _,
+                    _,
+                    _,
+                    ApprovalReply::Api { twice: true, .. } | ApprovalReply::Stage2 { .. }
+                ))
             )
         {
             match self.ai.armed.map(|at| at.elapsed()) {
@@ -2527,7 +2516,7 @@ impl App {
             return;
         };
         // ★ 누른 뒤 = 처리 중(11-13): 카드 버튼은 비활성 + 진행 막대로 남고 `ai_tick_due`가 일이 끝나면 거둔다.
-        self.ai.approving = Some((card_id, ok, Instant::now()));
+        self.ai.approving = Some((card_id.clone(), ok, Instant::now()));
         let mut after: Option<(String, String, mpsc::Sender<ToolReply>, bool)> = None;
         let mut reenter: Option<(String, String, mpsc::Sender<ToolReply>)> = None;
         match r {
@@ -2549,6 +2538,8 @@ impl App {
                             s.rows_allowed = true;
                         }
                     }
+                    // 영향 확인이 이어지면 같은 카드에 잇는다(새 카드 없음).
+                    self.ai.last_card = Some(card_id);
                     after = Some((name, input, reply, two));
                 } else {
                     let _ = reply.send(ToolReply {
@@ -2558,7 +2549,6 @@ impl App {
                 }
             }
             ApprovalReply::Stage2 { name, input, reply } => {
-                self.ai.stage2_at = None;
                 if ok {
                     self.ai.write_ok = Some((name.clone(), input.clone()));
                     self.ai_exec_tool(&name, &input, reply);
@@ -2594,10 +2584,13 @@ impl App {
                 }
             }
         }
-        self.ai_push(ChatMsg::new(
-            Kind::Note,
-            t(if ok { Msg::AiAllowed } else { Msg::AiDenied }),
-        ));
+        // 2단계 대상의 첫 누름은 아직 허용이 끝난 것이 아니다(영향 확인이 같은 카드에서 이어진다) — "허용함" 줄은 실행 때.
+        if !(ok && after.as_ref().is_some_and(|a| a.3)) {
+            self.ai_push(ChatMsg::new(
+                Kind::Note,
+                t(if ok { Msg::AiAllowed } else { Msg::AiDenied }),
+            ));
+        }
         if let Some((name, input, reply)) = reenter {
             self.ai_tool_request(name, input, reply);
         }
@@ -2789,23 +2782,45 @@ impl App {
             let rows = count
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| t(Msg::AiGuardUnknown).to_string());
-            let mut card = tf(Msg::AiGuardStage2, &[&rows]);
-            if prod {
-                card.push('\n');
-                card.push_str(t(Msg::AiGuardProd));
-                // 대기 안내는 카드 안에도(상태줄 글은 다른 상태에 덮일 수 있다 · 협업 관찰 11-12).
-                let secs =
-                    self.settings.int("run.prod_confirm_ms").clamp(500, 30_000) as f32 / 1000.0;
-                card.push('\n');
-                card.push_str(&tf(Msg::AiGuardWait, &[&format!("{secs:.0}")]));
-            }
-            card.push('\n');
-            card.push_str(&redact(&sql));
-            let mut m = ChatMsg::new(Kind::Approval { tool: name.clone() }, card);
-            m.id = ai::stamp_id();
-            let mid = m.id.clone();
-            self.ai_push(m);
-            self.ai.stage2_at = Some(Instant::now());
+            // ★ 같은 카드 한 장(사용자 11-13 "이중 확인을 보완했는데 여기는 2번 다시 출력 · 모두 동일한 개념으로"): 방금 허용한
+            //   카드가 있으면 새 카드를 띄우지 않고 그 카드에 **영향 줄만** 덧붙인다(SQL 본문·운영 표시를 되풀이하지 않는다).
+            //   [허용]은 장전된 채(남은 초 + 게이지)로 돌아온다 = 한 번 더 누르면 실행 · 시간이 지나면 처음부터 두 번.
+            //   카드가 없는 길(자동 승인된 쓰기가 영향 기준에 걸림)만 새 카드.
+            let line = tf(Msg::AiGuardStage2, &[&rows]);
+            let reuse = self.ai.last_card.take().filter(|id| {
+                self.ai_cur().is_some_and(|s| {
+                    s.messages
+                        .iter()
+                        .any(|m| m.id == *id && matches!(m.kind, Kind::Approval { .. }))
+                })
+            });
+            let mid = match reuse {
+                Some(id) => {
+                    if let Some(s) = self.ai_run_mut() {
+                        if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                            m.text.push('\n');
+                            m.text.push_str(&line);
+                        }
+                    }
+                    id
+                }
+                None => {
+                    let mut card = line;
+                    if prod {
+                        card.push('\n');
+                        card.push_str(t(Msg::AiGuardProd));
+                    }
+                    card.push('\n');
+                    card.push_str(&redact(&sql));
+                    let mut m = ChatMsg::new(Kind::Approval { tool: name.clone() }, card);
+                    m.id = ai::stamp_id();
+                    let mid = m.id.clone();
+                    self.ai_push(m);
+                    mid
+                }
+            };
+            self.ai.approving = None;
+            self.ai.armed = Some(Instant::now());
             self.ai.approval = Some((
                 mid,
                 name.clone(),
@@ -2814,6 +2829,7 @@ impl App {
             ));
             self.redraw();
         } else {
+            self.ai.last_card = None;
             self.ai.write_ok = Some((name.clone(), input.clone()));
             self.ai_exec_tool(&name, &input, reply);
         }

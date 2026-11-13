@@ -80,6 +80,7 @@ mod keymap;
 mod keymap_file;
 mod keys_win;
 mod license_win;
+mod listhead;
 mod log_win;
 mod mem_win;
 mod memstat;

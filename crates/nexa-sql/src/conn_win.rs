@@ -195,29 +195,8 @@ fn cell_of(p: &Profile, col: usize, session: &HashMap<String, String>) -> String
     }
 }
 
-/// 헤더 클릭 정렬 키 갱신(결과 그리드와 같은 규칙): 일반 클릭 = 단일 키 3단(▲ → ▼ → 해제) ·
-/// Shift = 결합 키 추가/토글(dir2 방식).
-fn toggle_sort_key(keys: &mut Vec<(usize, bool)>, col: usize, additive: bool) {
-    let pos = keys.iter().position(|(c, _)| *c == col);
-    match (additive, pos) {
-        (false, Some(0)) if keys.len() == 1 => {
-            if keys[0].1 {
-                keys[0].1 = false;
-            } else {
-                keys.clear();
-            }
-        }
-        (false, _) => *keys = vec![(col, true)],
-        (true, Some(i)) => {
-            if keys[i].1 {
-                keys[i].1 = false;
-            } else {
-                keys.remove(i);
-            }
-        }
-        (true, None) => keys.push((col, true)),
-    }
-}
+// 헤더 클릭 정렬 키 규칙 = 목록 창 공용 부품(`listhead` · 11-13 — 트랜잭션 로그·변수 창과 같은 함수).
+use crate::listhead::toggle_sort_key;
 
 /// 결합 정렬(안정 · 대소문자 무관 · 빈 값은 뒤) — 표시 인덱스 벡터만 재배열.
 fn sort_shown(

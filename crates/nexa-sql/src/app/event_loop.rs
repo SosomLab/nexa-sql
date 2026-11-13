@@ -1733,6 +1733,18 @@ impl App {
                     self.vars_win
                         .paint(&rows, &self.ui_font, &self.theme, ui_px);
                 }
+                // ★ 우클릭 메뉴 복사(11-13): 글 그대로 · 스크립트는 변수 상태에서 만든다.
+                vars_win::VarsWinAction::Copy(text) => {
+                    if !clipboard::write_text(&text) {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                }
+                vars_win::VarsWinAction::CopyScript(name) => {
+                    let text = self.vars_script_of(&name);
+                    if !clipboard::write_text(&text) {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                }
                 other => self.vars_apply(other),
             }
             return true;
