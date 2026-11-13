@@ -2093,10 +2093,24 @@ impl App {
         self.ai.last_card = None;
         self.ai.armed = None;
         // ★ ■(중지): 백업 뒤로 미뤄 둔 AI의 실행은 **취소**한다(백업은 버리고 문장을 실행하지 않는다 — 멈춘 뒤에 DROP이 나가면 안 된다).
-        if std::mem::take(&mut self.ai.objbk_wait) {
+        let waiting = std::mem::take(&mut self.ai.objbk_wait);
+        if waiting {
             self.objbk = None;
         }
-        self.ai.pending = None;
+        // ★ 대기 중인 도구 호출에는 **멈춘 이유를 답한다**(협업 V1 11-13: 통로를 그냥 닫아 어시스턴트에 "timeout"으로 갔다) —
+        //   백업 대기 중이었으면 실행 전에 취소된 것 · 그 밖은 이미 서버로 나갔을 수 있다(되돌리지 않는다 — 재시도 전에 확인하라고 알린다).
+        if let Some(mut p) = self.ai.pending.take() {
+            if let Some(r) = p.reply.take() {
+                let _ = r.send(ToolReply {
+                    output: if waiting {
+                        "cancelled by the user before it ran - the statement was NOT executed".into()
+                    } else {
+                        "stopped by the user - the statement may already have been sent to the database; do not retry without checking (get_log) or asking the user".into()
+                    },
+                    ok: false,
+                });
+            }
+        }
         self.ai.status = t(Msg::AiStopped).into();
         self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiStopped)));
         self.ai.run = None;

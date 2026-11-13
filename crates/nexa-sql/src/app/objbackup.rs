@@ -442,6 +442,19 @@ impl App {
                 ],
             ),
         );
+        // ★ 백업을 기다리는 동안 **다른 세션의 탭**으로 옮겼으면 실행하지 않는다(11-13 데이터 보호): 재진입의 문지기(`gate_pass`)는
+        //   먼저 `sync_sess`로 **활성 탭의 세션**을 `self.sess`에 끼우므로, 그대로 두면 미뤄 둔 DROP이 원래 세션이 아니라 지금 보고
+        //   있는 탭의 세션(다른 DB일 수 있다)으로 나간다. 멈추고 알린다 — 원래 탭에서 다시 실행하면 된다(백업 파일은 남는다).
+        if self.sess_id_for_tab(ed) != run.sid {
+            let msg = t(Msg::OutObjBackupTabMoved).to_string();
+            self.output_push(ed, crate::output::OutKind::Error, &msg);
+            self.toasts
+                .push(toast::ToastKind::Error, t(Msg::ObjBackupTitle), msg.clone());
+            self.sess.status = msg.clone();
+            self.ai_objbk_result(Some(msg));
+            self.redraw();
+            return;
+        }
         let (src, lb, all, whole) = (run.src, run.line_base, run.all, run.whole);
         // 재진입이 실제로 시작됐는가(문지기·열린 트랜잭션 가드에 막히면 시작되지 않는다) · 막혔으면 그 이유(상태줄 글).
         let started = self.with_sess(run.sid, |a| {
