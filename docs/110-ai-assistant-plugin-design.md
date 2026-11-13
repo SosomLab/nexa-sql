@@ -560,7 +560,7 @@ AI 도구 호출(run_query · set_setting · run_command …)
 ### 17-6. 남은 것
 
 - `run.explain_analyze` 사람 경로(EXPLAIN ANALYZE는 실제 실행 · AI `explain`은 analyze 고정 끔).
-- 객체 백업(objbk) 재진입 결과 처리.
+- ~~객체 백업(objbk) 재진입 결과 처리~~ → ✅ 11-13 b74ae98c(백업으로 미뤄진 `run_query`는 pending 유지 · `ai.objbk_wait` 동안 시간 초과 판정 멈춤 · 백업 뒤 재진입 실행 결과를 같은 도구 호출로 · 운영 백업 실패 = 실패로 답함 · ■ = 미뤄 둔 실행 취소 · 협업 V1 ✓ [journal 11-13 §11](journal/2026-11-13.md) · 남은 관찰 = 백업 대기 중 ■의 결과 글 `timeout`).
 - 전체(whole) 실행 범위 불일치.
 
 ### 17-7. 헤드리스 판정(협업 · [journal 11-12 §15](journal/2026-11-12.md))
