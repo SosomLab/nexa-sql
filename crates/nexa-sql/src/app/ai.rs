@@ -149,6 +149,8 @@ pub(crate) struct AiState {
     /// 백업 → 재진입 실행의 결과를 같은 통로로 보낸다. 종전에는 "not executed"를 먼저 답했는데 백업이 끝나면 문장이 **실제로
     /// 실행**돼 어시스턴트가 아는 것과 DB가 어긋났다(재시도하면 이중 실행).
     pub objbk_wait: bool,
+    /// ★ 답하는 중에 보낸 요청의 대기 줄(세션 id · 글 · 11-14) — 턴이 끝나면 그 세션이 보이는 동안 차례로 보낸다.
+    pub send_queue: std::collections::VecDeque<(String, String)>,
     /// ★ 탭 없이 읽는 객체 소스(사용자 11-14 "단순 분석 요청이면 탭을 열지 말 것"): 기다리는 출처(스키마 · 이름 · 종류 · 요청 시각)
     /// — 탐색기의 소스 응답(`OpenSql`)이 이것과 같으면 탭을 열지 않고 `source_got`에 담는다(서버 히스토리 저장과 같은 가로채기).
     pub source_wait: Option<(String, String, nsql_catalog::ObjectKind, Instant)>,
@@ -1651,12 +1653,19 @@ impl App {
         if self.ai.cur.is_none() {
             self.ai_new_session();
         }
-        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
-            self.ai.status = t(Msg::AiBusyNote).into();
-            return;
-        }
         if ai::contains_secret(text) {
             self.ai_push(ChatMsg::new(Kind::Error, t(Msg::AiSecretBlocked)));
+            return;
+        }
+        // ★ 답하는 중에 보낸 요청은 **줄을 세운다**(사용자 11-14 "전송 기록에는 남지만 실제 AI에 전달은 되지 않은 것 같다" — 종전에는
+        //   상태 글만 바꾸고 버렸는데 입력창은 이미 비워져 글이 사라졌다) → 지금 턴이 끝나면 `ai_drain_send_queue`가 차례로 보낸다.
+        //   대본에는 실제로 보낼 때 올린다(턴 중간에 사용자 메시지를 끼우면 API 대화 순서가 깨진다) · ■ = 입력창으로 되돌림.
+        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            if let Some(sid) = self.ai_cur().map(|s| s.id.clone()) {
+                self.ai.send_queue.push_back((sid, text.to_string()));
+            }
+            self.ai.status = tf(Msg::AiQueuedNote, &[&self.ai.send_queue.len().to_string()]);
+            self.redraw();
             return;
         }
         let (mode, profile) = {
@@ -2115,7 +2124,48 @@ impl App {
         self.redraw();
     }
 
+    /// 대기 줄의 다음 요청을 보낸다(11-14) — 어시스턴트가 한가하고(턴 끝 · 도구·승인·자동 표시 없음) 맨 앞 요청의 세션이 지금
+    /// 보이는 세션일 때만. 없어진 세션의 요청은 버린다. 보냈으면 참.
+    fn ai_drain_send_queue(&mut self) -> bool {
+        if self.ai.send_queue.is_empty()
+            || self.ai.host.as_ref().is_some_and(|h| h.busy)
+            || self.ai.pending.is_some()
+            || !self.ai.tool_queue.is_empty()
+            || self.ai.approval.is_some()
+            || self.ai.auto_show.is_some()
+            || self.ai.auto_run.is_some()
+            || self.sess.busy
+        {
+            return false;
+        }
+        let sessions: Vec<String> = self.ai.sessions.iter().map(|s| s.id.clone()).collect();
+        self.ai.send_queue.retain(|(sid, _)| sessions.contains(sid));
+        let cur = self.ai_cur().map(|s| s.id.clone());
+        match self.ai.send_queue.front() {
+            Some((sid, _)) if Some(sid) == cur.as_ref() => {}
+            _ => return false,
+        }
+        let Some((_, text)) = self.ai.send_queue.pop_front() else {
+            return false;
+        };
+        self.ai_send(&text);
+        true
+    }
+
     pub(crate) fn ai_stop(&mut self) {
+        // ★ ■: 줄 세운 요청은 보내지 않고 **입력창으로 되돌린다**(쓰던 글이 있으면 그 뒤에 덧붙인다 · 글이 사라지지 않게).
+        if !self.ai.send_queue.is_empty() {
+            let mut back: Vec<String> = Vec::new();
+            let cur = self.ai_view.composer_text();
+            if !cur.trim().is_empty() {
+                back.push(cur);
+            }
+            back.extend(self.ai.send_queue.drain(..).map(|(_, text)| text));
+            self.ai_view.set_composer_text(&back.join(
+                "
+",
+            ));
+        }
         if let Some(h) = &mut self.ai.host {
             if h.interrupt_codex() {
                 h.busy = false;
@@ -2227,6 +2277,9 @@ impl App {
             self.ai_handle(ev);
         }
         if self.ai_tick_pending() {
+            changed = true;
+        }
+        if self.ai_drain_send_queue() {
             changed = true;
         }
         if self.ai.pending.is_none() && !self.sess.busy {
