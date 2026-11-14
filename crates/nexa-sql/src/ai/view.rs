@@ -1463,8 +1463,10 @@ impl AiView {
                     self.scale,
                 );
                 if c || ny != self.scroll_y {
+                    // 위로 움직였으면 바닥 붙임은 무조건 푼다(상한 어긋남과 무관하게) · 아래로는 바닥에 닿았을 때만 다시 붙는다.
+                    let up = ny < self.scroll_y;
                     self.scroll_y = ny;
-                    self.stick_bottom = ny >= (self.content_h - self.transcript.h).max(0);
+                    self.stick_bottom = !up && ny >= (self.content_h - self.transcript.h).max(0);
                     return true;
                 }
                 self.composer.on_event(ev, &mut inv);
@@ -2657,7 +2659,10 @@ impl AiView {
             }
         }
         dc.pop_clip();
-        self.content_h = (ly + self.scroll_y - tr.y).max(0);
+        // ★ 휠·끌기가 쓰는 높이는 **스크롤 상한을 잰 높이보다 작아지지 않게**(협업 V1 11-14 "답하는 중 10px 한 칸은 안 움직임"):
+        //   위에서 상한(`max_scroll`)은 진행 줄까지 넣은 어림 높이로 쟀는데 여기서 실제 그린 높이로 덮어쓰면 휠 쪽 상한이 더
+        //   작아져, 바닥에서 조금 올린 자리가 휠 쪽에서는 여전히 "바닥"으로 잘려 다시 붙었다.
+        self.content_h = (ly + self.scroll_y - tr.y).max(0).max(max_scroll + tr.h);
         self.bars.paint(
             dc,
             th,
