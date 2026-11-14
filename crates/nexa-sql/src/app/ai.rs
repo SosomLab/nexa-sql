@@ -942,7 +942,16 @@ impl App {
         } else {
             Vec::new()
         };
+        let cur_sid = self.ai_cur().map(|s| s.id.clone());
         ViewInfo {
+            // 비밀 모양은 가려서 보인다(대기 글은 아직 검사만 통과한 원문).
+            queued: self
+                .ai
+                .send_queue
+                .iter()
+                .filter(|(sid, _)| Some(sid) == cur_sid.as_ref())
+                .map(|(_, text)| redact(text))
+                .collect(),
             busy: self.ai.host.as_ref().is_some_and(|h| h.busy),
             approval: self
                 .ai
@@ -1081,6 +1090,21 @@ impl App {
                     self.open_file_dlg = Some(nexa_dlg::PickerMode::Open);
                 }
                 ViewAction::AttachClipboard => self.ai_attach_clipboard(),
+                // 대기 풀의 n번째(이 세션 것만 센 순번) 요청을 지운다.
+                ViewAction::Unqueue(n) => {
+                    let cur = self.ai_cur().map(|s| s.id.clone());
+                    let at = self
+                        .ai
+                        .send_queue
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (sid, _))| Some(sid) == cur.as_ref())
+                        .map(|(i, _)| i)
+                        .nth(n);
+                    if let Some(i) = at {
+                        self.ai.send_queue.remove(i);
+                    }
+                }
                 ViewAction::RemoveAttachment(i) => {
                     if let Some(s) = self.ai_cur_mut() {
                         if i < s.attachments.len() {

@@ -99,7 +99,7 @@ pub(crate) struct ExtPanel {
 const OPEN_DWELL_MS: u64 = 200;
 
 /// 끝 줄임(순수 · 글 폭 측정은 `dc`): `max_w` 안에 들어갈 때까지 뒤에서 글자를 떼고 "…"을 붙인다 · 들어가면 그대로.
-fn ellipsize_end(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> String {
+pub(crate) fn ellipsize_end(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> String {
     if dc.text_width(text) <= max_w {
         return text.to_string();
     }

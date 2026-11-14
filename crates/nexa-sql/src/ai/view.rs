@@ -26,10 +26,15 @@ pub(crate) enum Page {
     ProfileEdit,
 }
 
+/// 대기 풀에 한 번에 보이는 줄 수(더 있으면 휠).
+const QUEUE_ROWS: usize = 3;
+
 /// 호스트가 그릴 때 주는 상태(세션 본문은 따로 `&Session`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ViewInfo {
     pub busy: bool,
+    /// ★ 대기 풀(사용자 11-14): 답하는 중에 보낸 요청들(이 세션 것 · 보낼 순서) — 작성 상자 위에 한 줄씩 보이고 ×로 지운다.
+    pub queued: Vec<String>,
     /// 승인 대기(id · 도구 · 요약).
     pub approval: Option<(String, String, String)>,
     /// ★ 처리 중인 승인 카드(카드 id · 누른 쪽 = 허용 여부 · 11-13 사용자 "누른 뒤 끝날 때까지 Disable + 진행 표시"): 이 카드의
@@ -70,6 +75,8 @@ pub(crate) enum ViewAction {
     AttachFile,
     AttachClipboard,
     RemoveAttachment(usize),
+    /// 대기 풀의 n번째 요청을 지운다.
+    Unqueue(usize),
     Approve(String, bool),
     /// `/` 명령 한 줄(`/mode cli` …).
     Slash(String),
@@ -151,6 +158,7 @@ enum Btn {
     Send,
     Profiles,
     RemoveAttachment(usize),
+    Unqueue(usize),
     Approve(bool),
     CopyCode(usize),
     /// 코드 블록으로 편집기의 선택/커서 문장을 바꾼다.
@@ -231,6 +239,10 @@ pub(crate) struct AiView {
     code_wrap: bool,
     blink: bool,
     busy_last: bool,
+    /// 대기 풀 영역(휠 판정) · 첫 보이는 줄 · 전체 줄 수.
+    queue_rect: Rect,
+    queue_top: usize,
+    queue_len: usize,
     /// 마지막 그리기의 모델 선택지 · 현재 모델 · 노력도(칩 팝업용).
     chip_models: Vec<(String, String)>,
     model_now: String,
@@ -340,6 +352,9 @@ impl Default for AiView {
             text_w: 0,
             blink: true,
             busy_last: false,
+            queue_rect: Rect::new(0, 0, 0, 0),
+            queue_top: 0,
+            queue_len: 0,
             chip_models: Vec::new(),
             model_now: String::new(),
             effort_now: String::new(),
@@ -1417,6 +1432,18 @@ impl AiView {
                     self.composer.on_event(ev, &mut inv);
                     return true;
                 }
+                // 대기 풀 위 = 풀을 한 줄씩 굴린다(보이는 줄은 최대 `QUEUE_ROWS`).
+                if self.queue_rect.contains(self.mouse) {
+                    if let InputEvent::Wheel { delta, .. } = ev {
+                        let max = self.queue_len.saturating_sub(QUEUE_ROWS);
+                        self.queue_top = if *delta > 0 {
+                            self.queue_top.saturating_sub(1)
+                        } else {
+                            (self.queue_top + 1).min(max)
+                        };
+                    }
+                    return true;
+                }
                 let (_, ny, c) = self.bars.on_event(
                     ev,
                     self.transcript,
@@ -1631,6 +1658,7 @@ impl AiView {
             }
             Btn::Profiles => self.actions.push(ViewAction::ShowPage(Page::Profiles)),
             Btn::RemoveAttachment(i) => self.actions.push(ViewAction::RemoveAttachment(i)),
+            Btn::Unqueue(i) => self.actions.push(ViewAction::Unqueue(i)),
             Btn::Approve(ok) => self.actions.push(ViewAction::Approve(String::new(), ok)),
             Btn::CopyCode(i) => {
                 if let Some(c) = self.code_blocks.get(i) {
@@ -2071,7 +2099,9 @@ impl AiView {
         };
         let top = b.y + self.s(4.0) + head_h;
         // ── 작성 영역 높이(아래에서 위로 잡는다)
-        let text = self.composer.text();
+        // ★ 조합 중(IME preedit) 글자까지 넣어 센다(사용자 11-14): 한글 조합 글자가 다음 줄로 넘어가는 순간 본문 글만 세면 상자는
+        //   한 줄 높이인데 캐럿은 둘째 줄이라 첫 줄이 가려졌다(조합이 확정되거나 포커스를 잃어야 두 줄로 늘었다).
+        let text = self.composer.display_text();
         // ★ 줄바꿈으로 접힌 줄도 줄 수에 넣는다(사용자 11-14 "줄바꿈 표시에 대해 행수 증가가 되지 않아 전체 내용이 안 보임"):
         //   종전에는 Enter로 나눈 줄만 세어, 긴 한 줄이 접혀도 상자가 한 줄 높이였다. 낱말 단위로 폭을 재서 화면 줄 수를
         //   어림한다(상자 안쪽 여백만큼 좁게 = 모자라게 세지 않는다) · 상한(`ai.composer_max_lines`)에 닿으면 그만 센다.
@@ -2121,7 +2151,20 @@ impl AiView {
         let chip_rows = chips.last().map_or(0, |c| c.1 + 1);
         let chips_h = chip_rows * (btn_h + self.s(6.0));
         let hint_h = 0;
-        let bottom_h = comp_h + btn_h + chips_h + hint_h + self.s(24.0);
+        // ★ 대기 풀(사용자 11-14 "별도 스크롤 영역 · 삭제 가능 · 공간 최소"): 한 요청 = 한 줄(생략 표시) · 보이는 줄은 최대
+        //   `QUEUE_ROWS` · 더 있으면 휠로 굴린다. 대기가 없으면 자리 0.
+        self.queue_len = info.queued.len();
+        self.queue_top = self
+            .queue_top
+            .min(self.queue_len.saturating_sub(QUEUE_ROWS));
+        let queue_rows = self.queue_len.min(QUEUE_ROWS) as i32;
+        let queue_row_h = lh + self.s(4.0);
+        let queue_h = if queue_rows > 0 {
+            queue_rows * queue_row_h + self.s(6.0)
+        } else {
+            0
+        };
+        let bottom_h = comp_h + btn_h + chips_h + hint_h + queue_h + self.s(24.0);
         let comp_top = b.bottom() - bottom_h;
         self.transcript = Rect::new(b.x, top, b.w, (comp_top - top).max(0));
         // ── 대본
@@ -2616,6 +2659,47 @@ impl AiView {
         let mut cy = comp_top;
         dc.fill_rect(Rect::new(b.x, cy, b.w, 1), th.border);
         cy += self.s(8.0);
+        // 대기 풀: [순번/전체][글 한 줄 …][×] — 줄 높이만 쓴다.
+        self.queue_rect = Rect::new(x, cy, w, (queue_h - self.s(6.0)).max(0));
+        if queue_rows > 0 {
+            let qr = self.queue_rect;
+            dc.fill_round_rect(qr, self.s(4.0), th.panel_bg_alt);
+            let xq = dc.text_width("×") + self.s(12.0);
+            for k in 0..queue_rows as usize {
+                let i = self.queue_top + k;
+                let Some(q) = info.queued.get(i) else {
+                    break;
+                };
+                let ry = qr.y + k as i32 * queue_row_h;
+                let row = Rect::new(qr.x, ry, qr.w, queue_row_h);
+                let ty = dc.text_center_y(row.y, row.h);
+                let no = format!("{}/{}", i + 1, self.queue_len);
+                let no_w = dc.text_width(&no);
+                dc.text(row.x + self.s(6.0), ty, row, &no, th.text_dim);
+                let tx = row.x + self.s(6.0) + no_w + self.s(8.0);
+                let xr = Rect::new(row.right() - xq, ry, xq, queue_row_h);
+                let flat: String = q.split_whitespace().collect::<Vec<_>>().join(" ");
+                let label =
+                    crate::ext_panel::ellipsize_end(dc, &flat, (xr.x - tx - self.s(4.0)).max(0));
+                dc.text(
+                    tx,
+                    ty,
+                    Rect::new(tx, ry, (xr.x - tx).max(0), queue_row_h),
+                    &label,
+                    th.text,
+                );
+                let hot = self.hover == Some(self.buttons.len());
+                dc.text(
+                    xr.x + self.s(4.0),
+                    ty,
+                    xr,
+                    "×",
+                    if hot { th.warn } else { th.text_dim },
+                );
+                self.buttons.push((Btn::Unqueue(i), xr));
+            }
+            cy += queue_h;
+        }
         if !chips.is_empty() {
             // 칩 = [본문(클릭 = 미리보기)][×](사용자 11-11 · 이미지는 이름 W×H) · 줄은 위에서 계산한 배치대로.
             for (i, row, cx, bw, label) in &chips {
@@ -3293,6 +3377,7 @@ impl AiView {
                     Btn::Profiles => Some(Msg::AiProfiles),
                     Btn::PreviewAttachment(_) => Some(Msg::AiPreviewTip),
                     Btn::RemoveAttachment(_) => Some(Msg::AiRemoveTip),
+                    Btn::Unqueue(_) => Some(Msg::AiUnqueueTip),
                     Btn::Commands => Some(Msg::AiComposerKeys),
                     Btn::Auto => Some(Msg::AiTipAuto),
                     Btn::Send => Some(Msg::AiSendTip),
