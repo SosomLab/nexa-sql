@@ -149,8 +149,9 @@ pub(crate) struct AiState {
     /// 백업 → 재진입 실행의 결과를 같은 통로로 보낸다. 종전에는 "not executed"를 먼저 답했는데 백업이 끝나면 문장이 **실제로
     /// 실행**돼 어시스턴트가 아는 것과 DB가 어긋났다(재시도하면 이중 실행).
     pub objbk_wait: bool,
-    /// ★ 답하는 중에 보낸 요청의 대기 줄(세션 id · 글 · 11-14) — 턴이 끝나면 그 세션이 보이는 동안 차례로 보낸다.
-    pub send_queue: std::collections::VecDeque<(String, String)>,
+    /// ★ 답하는 중에 보낸 요청의 대기 줄(세션 id · 글 · **그때의 첨부** · 11-14) — 턴이 끝나면 그 세션이 보이는 동안 차례로 보낸다.
+    /// 첨부는 줄 세울 때 세션에서 떼어 요청에 묶는다(사용자 11-14 "글만 풀에 들어가고 이미지는 입력란 위에 남았다").
+    pub send_queue: std::collections::VecDeque<(String, String, Vec<ai::Attachment>)>,
     /// ★ 탭 없이 읽는 객체 소스(사용자 11-14 "단순 분석 요청이면 탭을 열지 말 것"): 기다리는 출처(스키마 · 이름 · 종류 · 요청 시각)
     /// — 탐색기의 소스 응답(`OpenSql`)이 이것과 같으면 탭을 열지 않고 `source_got`에 담는다(서버 히스토리 저장과 같은 가로채기).
     pub source_wait: Option<(String, String, nsql_catalog::ObjectKind, Instant)>,
@@ -949,8 +950,15 @@ impl App {
                 .ai
                 .send_queue
                 .iter()
-                .filter(|(sid, _)| Some(sid) == cur_sid.as_ref())
-                .map(|(_, text)| redact(text))
+                .filter(|(sid, _, _)| Some(sid) == cur_sid.as_ref())
+                .map(|(_, text, atts)| {
+                    // 첨부가 묶인 요청은 앞에 개수를 보인다(`[+2] 글 …`).
+                    if atts.is_empty() {
+                        redact(text)
+                    } else {
+                        format!("[+{}] {}", atts.len(), redact(text))
+                    }
+                })
                 .collect(),
             busy: self.ai.host.as_ref().is_some_and(|h| h.busy),
             approval: self
@@ -1098,7 +1106,7 @@ impl App {
                         .send_queue
                         .iter()
                         .enumerate()
-                        .filter(|(_, (sid, _))| Some(sid) == cur.as_ref())
+                        .filter(|(_, (sid, _, _))| Some(sid) == cur.as_ref())
                         .map(|(i, _)| i)
                         .nth(n);
                     if let Some(i) = at {
@@ -1685,8 +1693,10 @@ impl App {
         //   상태 글만 바꾸고 버렸는데 입력창은 이미 비워져 글이 사라졌다) → 지금 턴이 끝나면 `ai_drain_send_queue`가 차례로 보낸다.
         //   대본에는 실제로 보낼 때 올린다(턴 중간에 사용자 메시지를 끼우면 API 대화 순서가 깨진다) · ■ = 입력창으로 되돌림.
         if self.ai.host.as_ref().is_some_and(|h| h.busy) {
-            if let Some(sid) = self.ai_cur().map(|s| s.id.clone()) {
-                self.ai.send_queue.push_back((sid, text.to_string()));
+            // 첨부는 이 요청의 것 — 세션에서 떼어 함께 줄 세운다(입력란 위 칩이 사라지고 풀 줄에 `[+N]`).
+            if let Some(s) = self.ai_cur_mut() {
+                let (sid, atts) = (s.id.clone(), std::mem::take(&mut s.attachments));
+                self.ai.send_queue.push_back((sid, text.to_string(), atts));
             }
             self.ai.status = tf(Msg::AiQueuedNote, &[&self.ai.send_queue.len().to_string()]);
             self.redraw();
@@ -2163,16 +2173,26 @@ impl App {
             return false;
         }
         let sessions: Vec<String> = self.ai.sessions.iter().map(|s| s.id.clone()).collect();
-        self.ai.send_queue.retain(|(sid, _)| sessions.contains(sid));
+        self.ai
+            .send_queue
+            .retain(|(sid, _, _)| sessions.contains(sid));
         let cur = self.ai_cur().map(|s| s.id.clone());
         match self.ai.send_queue.front() {
-            Some((sid, _)) if Some(sid) == cur.as_ref() => {}
+            Some((sid, _, _)) if Some(sid) == cur.as_ref() => {}
             _ => return false,
         }
-        let Some((_, text)) = self.ai.send_queue.pop_front() else {
+        let Some((_, text, atts)) = self.ai.send_queue.pop_front() else {
             return false;
         };
+        // 이 요청에 묶인 첨부만 보낸다 — 그 사이 입력란에 새로 붙인 첨부(다음 요청 몫)는 잠시 빼 두었다가 되돌린다.
+        let held = self
+            .ai_cur_mut()
+            .map(|s| std::mem::replace(&mut s.attachments, atts))
+            .unwrap_or_default();
         self.ai_send(&text);
+        if let Some(s) = self.ai_cur_mut() {
+            s.attachments.extend(held);
+        }
         true
     }
 
@@ -2184,7 +2204,14 @@ impl App {
             if !cur.trim().is_empty() {
                 back.push(cur);
             }
-            back.extend(self.ai.send_queue.drain(..).map(|(_, text)| text));
+            let queued: Vec<_> = self.ai.send_queue.drain(..).collect();
+            for (sid, text, atts) in queued {
+                back.push(text);
+                // 묶여 있던 첨부도 그 세션의 입력란으로 되돌린다.
+                if let Some(s) = self.ai.sessions.iter_mut().find(|s| s.id == sid) {
+                    s.attachments.extend(atts);
+                }
+            }
             self.ai_view.set_composer_text(&back.join(
                 "
 ",
