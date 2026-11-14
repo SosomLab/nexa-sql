@@ -1318,8 +1318,9 @@ impl AiView {
                     self.scale,
                 );
                 if ny != self.scroll_y {
+                    // 스크롤바 끌기: 바닥에 닿으면 다시 붙는다(휠과 같은 규칙 · 11-14).
                     self.scroll_y = ny;
-                    self.stick_bottom = false;
+                    self.stick_bottom = ny >= (self.content_h - self.transcript.h).max(0);
                 }
                 changed || c || !inv.is_empty()
             }
@@ -1339,7 +1340,7 @@ impl AiView {
                     if c {
                         if ny != self.scroll_y {
                             self.scroll_y = ny;
-                            self.stick_bottom = false;
+                            self.stick_bottom = ny >= (self.content_h - self.transcript.h).max(0);
                         }
                         return true;
                     }
