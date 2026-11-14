@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-14 낮 (Windows · 개발 × 협업 · 끊긴 도구 호출)** — 도구 호출 도중 끊긴 응답 뒤 API 세션 HTTP 400 막힘 = 요청 전 이력 보정(4ffcef69) · 모의 서버 V1 ✓ · 관찰 = 프로필 폼 키 입력이 작성 상자에도 · [journal 11-14 §12](journal/2026-11-14.md)
+- **2026-11-14 오전 (Windows · 개발 × 협업 · 대기 풀)** — 답하는 중 보낸 요청을 입력창 위에 최대 3줄 · 휠 · × 삭제 · 작성 상자 줄 수 = 조합 글자 포함(1ee04a59) · 빌드 3분 1초 · V2·통합 ✓ · 조합 글자 넘김 = 사람 몫 · [journal 11-14 §11](journal/2026-11-14.md)
 - **2026-11-14 아침 (Windows · 개발 × 협업 · push · 대기 줄)** — push 7c8f2bbb..569ec219 · CI ✓ · 끝 연속 빈 줄 · 미접속 object_source · 답하는 중 보낸 요청 대기 줄(23b3f585) · DRIVER_VERSION 0.1.12 · 빌드 1분 30초 · V2·통합 ✓ · 결정 ⑨ 드라이버 함께 · ⑩ 37건 중 28건 완료 · [journal 11-14 §10](journal/2026-11-14.md)
 - **2026-11-14 새벽 8 (Windows · 개발 × 협업 · 잔여 묶음 · v0.8.0 준비)** — object_source 탭 없이 · Oracle 알려진 사전 뷰만 · /rename · 끝 빈 줄 · 여러 영역 유지(3b666fa7) · 빌드 58초 · V2·통합 ✓ · v0.8.0 노트 재료·드라이버 diff·절차·채널 조사(winget #447007 merged) · [journal 11-14 §9](journal/2026-11-14.md)
 - **2026-11-14 새벽 7 (Windows · 개발 × 협업 · 팔레트 줄·표기 · 결정 8)** — 팔레트 Sort/Permute/Convert Case 13 · Goto Symbol 빈 문서 · AI 줄 연산·표기 변환 · /rename(66ef42fc) · 사용자 결정 8건(push 한 번에 · 재시도·JS 구문 안 넣음 · v0.8.0 lite) · V2·통합 ✓ · ✗ /rename 미반영 · [journal 11-14 §7~§8](journal/2026-11-14.md)
