@@ -1567,9 +1567,10 @@ fn svg_tool(d: &str) -> ToolIcon {
     }
 }
 
-/// 편집기 옆 분할 표시 — 두 칸(왼쪽 넓게 · 오른쪽 좁게).
+/// 편집기 옆 대화 표시 — **AI를 가리키는 그림**(사용자 11-14 "AI를 가리키는 버튼으로"): 활동 막대 AI 탭(`mi_act_ai`)과 같은
+/// 여덟 꼭지 별(종전 = 두 칸 분할 그림이라 무엇을 여는지 알기 어려웠다).
 pub(crate) fn ai_side() -> ToolIcon {
-    svg_tool("M120-200v-560h440v560H120Zm520 0v-560h200v560H640Z")
+    svg_tool("M480 -880 L537 -619 L763 -763 L619 -537 L880 -480 L619 -423 L763 -197 L537 -341 L480 -80 L423 -341 L197 -197 L341 -423 L80 -480 L341 -537 L197 -763 L423 -619Z")
 }
 pub(crate) fn commit() -> ToolIcon {
     svg_tool("M382-240 154-468l 57-57 171 171 367-367 57 57-424 424Z")
@@ -1656,6 +1657,7 @@ pub(crate) fn prewarm() {
     let _ = fetch_all();
     let _ = fetch_stop();
     let _ = disconnect();
+    let _ = ai_side();
     let _ = commit();
     let _ = tx_log();
     let _ = sessions();
