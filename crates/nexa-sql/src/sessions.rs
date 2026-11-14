@@ -129,6 +129,8 @@ pub(crate) struct Sess {
     pub prod_arm_win: Duration,
     /// `prod_armed`가 툴바 Run 항목(run.statement · run.all)을 무장시키는 종류인가(실행 확인 = true · 유형 해제 = false).
     pub prod_arm_tool: bool,
+    /// 무장을 건 실행이 전체 실행(F5 · Run all)인가 — 툴바는 **그 버튼 하나만** 무장한다(사용자 11-14).
+    pub prod_arm_all: bool,
     /// ★ 운영 보류(114 §5 · 10-15): 커밋되지 않고 열린 변경(카드 · 상단 Commit 확인 · 다른 탭 차단 · 한도 = 롤백).
     pub prod_held: Option<HeldInfo>,
     /// 상단 Commit 빨간 2단(D-300): 첫 클릭 시각 — `tx.prod_commit_confirm_ms` 안 두 번째 클릭 = 커밋.
@@ -254,6 +256,7 @@ impl Sess {
             prod_armed: None,
             prod_arm_win: Duration::from_secs(3),
             prod_arm_tool: false,
+            prod_arm_all: false,
             ddl_now: Vec::new(),
             ddl_wait: Vec::new(),
             stateful: false,
@@ -889,6 +892,20 @@ pub(crate) fn arm_ratio(elapsed: Duration, total: Duration) -> Option<f32> {
         return None;
     }
     Some((elapsed.as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0))
+}
+
+/// ★ 운영 실행 2단의 무장 키(순수 · 사용자 11-14 "문장 실행으로 건 확인에 Run all까지 빨갛게 보인다"): 본문 해시에 실행
+///   방식(문장/전체)을 섞는다 — 문장 실행으로 건 무장은 문장 실행으로만, 전체 실행으로 건 무장은 전체 실행으로만 확인된다
+///   (본문이 한 문장뿐이라 두 방식의 본문이 같아도 서로를 확인해 주지 않는다).
+#[must_use]
+pub(crate) fn prod_arm_key(src_hash: u64, all: bool) -> u64 {
+    src_hash.rotate_left(1) ^ u64::from(all)
+}
+
+/// ★ 무장 표시를 받을 툴바 항목(순수): (`run.statement`, `run.all`) — 실행 확인(`tool`)일 때 무장을 건 쪽 하나만.
+#[must_use]
+pub(crate) fn prod_arm_targets(tool: bool, all: bool) -> (bool, bool) {
+    (tool && !all, tool && all)
 }
 
 pub(crate) fn commit_armed_ok(armed_for: Option<Duration>, confirm_ms: u64) -> bool {
@@ -2643,6 +2660,20 @@ mod hold_tests {
         );
         assert_eq!(arm_ratio(Duration::ZERO, Duration::ZERO), None);
         assert_eq!(arm_ratio(Duration::ZERO, Duration::from_secs(1)), Some(0.0));
+    }
+
+    #[test]
+    /// 무장은 건 쪽 버튼 하나만 · 유형 해제 무장(tool = false)은 어느 쪽도 아님 · 키는 방식이 다르면 다르다.
+    fn prod_arm_is_per_run_mode() {
+        assert_eq!(prod_arm_targets(true, false), (true, false));
+        assert_eq!(prod_arm_targets(true, true), (false, true));
+        assert_eq!(prod_arm_targets(false, false), (false, false));
+        assert_eq!(prod_arm_targets(false, true), (false, false));
+        for h in [0u64, 1, 0x8000_0000_0000_0000, u64::MAX, 0xDEAD_BEEF] {
+            assert_ne!(prod_arm_key(h, false), prod_arm_key(h, true), "{h:#x}");
+            assert_eq!(prod_arm_key(h, true), prod_arm_key(h, true));
+        }
+        assert_ne!(prod_arm_key(1, false), prod_arm_key(2, false));
     }
 
     #[test]

@@ -373,7 +373,7 @@ impl App {
         }
     }
 
-    /// ★ 운영 실행 2단(`prod_armed`)의 툴바 표시(10-23 2단 통일): 실행 확인이면 Run 두 항목을 빨간 무장 + 게이지 · 아니면(유형 해제 ·
+    /// ★ 운영 실행 2단(`prod_armed`)의 툴바 표시(10-23 2단 통일): 실행 확인이면 무장을 건 쪽 Run 항목(문장/전체 · 11-14)을 빨간 무장 + 게이지 · 아니면(유형 해제 ·
     ///   무장 없음) 원래대로. 호출 = 무장·해제 직후 + `prod_arm_tick`.
     pub(crate) fn prod_arm_ui(&mut self) {
         let ratio = self
@@ -383,8 +383,13 @@ impl App {
             .and_then(|(_, at)| sessions::arm_ratio(at.elapsed(), self.sess.prod_arm_win));
         let mut inv = Invalidations::default();
         let mut hit = false;
-        for id in ["run.statement", "run.all"] {
-            hit |= self.tool_dock.set_item_armed(id, ratio, &mut inv);
+        // 무장을 건 쪽 하나만(11-14) — 다른 쪽은 (앞선 무장이 남겼을 수 있는) 표시를 지운다.
+        let (stmt, all) =
+            sessions::prod_arm_targets(self.sess.prod_arm_tool, self.sess.prod_arm_all);
+        for (id, on) in [("run.statement", stmt), ("run.all", all)] {
+            hit |= self
+                .tool_dock
+                .set_item_armed(id, ratio.filter(|_| on), &mut inv);
         }
         if hit {
             for f in &self.tool_floats {

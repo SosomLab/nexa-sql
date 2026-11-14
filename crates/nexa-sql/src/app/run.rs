@@ -354,7 +354,8 @@ impl App {
                 &e3_items,
             )
         {
-            let key = nexa_fs::watch::content_hash(src.as_bytes());
+            // ★ 키 = 본문 + 실행 방식(11-14): 문장 실행으로 건 확인은 문장 실행으로만 · 전체 실행은 전체 실행으로만 통과한다.
+            let key = sessions::prod_arm_key(nexa_fs::watch::content_hash(src.as_bytes()), all);
             let armed = self
                 .sess
                 .prod_armed
@@ -363,7 +364,8 @@ impl App {
                 self.sess.prod_armed = Some((key, Instant::now()));
                 self.sess.prod_arm_win = confirm_window;
                 self.sess.prod_arm_tool = true;
-                // ★ 툴바 Run 두 항목 = 빨간 무장 + 게이지(10-23 2단 통일 · 틱이 갱신·만료).
+                self.sess.prod_arm_all = all;
+                // ★ 툴바 = **무장을 건 쪽** Run 항목 하나만 빨간 무장 + 게이지(10-23 2단 통일 · 11-14 방식별 · 틱이 갱신·만료).
                 self.prod_arm_ui();
                 let secs = (confirm_window.as_millis() as f64 / 1000.0).to_string();
                 self.sess.status = tf(Msg::StProdConfirm, &[&secs]);
