@@ -309,6 +309,7 @@ impl App {
                     self.ai_switch_cur(i);
                     self.ai.approval = None;
                     self.ai.pending = None;
+                    self.ai.objbk_wait = false;
                     self.ai_view.reset();
                     self.ai_sync_panel();
                 }
@@ -430,6 +431,7 @@ impl App {
                         self.ai_switch_cur(i);
                         self.ai.approval = None;
                         self.ai.pending = None;
+                        self.ai.objbk_wait = false;
                         self.ai_view.reset();
                     }
                 }
@@ -687,6 +689,7 @@ impl App {
             }
             self.ai.approval = None;
             self.ai.pending = None;
+            self.ai.objbk_wait = false;
             self.ai.status.clear();
             self.ai_view.reset();
             self.ai_sync_panel();
@@ -717,6 +720,7 @@ impl App {
         self.ai_view.set_composer_text("");
         self.ai.approval = None;
         self.ai.pending = None;
+        self.ai.objbk_wait = false;
         self.ai.status.clear();
         self.ai_view.reset();
         self.ai_sync_panel();
@@ -741,6 +745,7 @@ impl App {
         self.ai_switch_cur(i);
         self.ai.approval = None;
         self.ai.pending = None;
+        self.ai.objbk_wait = false;
         // API 대화 재구성(글만 · 도구 왕복은 뺀다).
         let msgs: Vec<Json> = self.ai.sessions[i]
             .messages
@@ -4503,6 +4508,8 @@ impl App {
                 // ★ 변경 문장은 사용자가 승인 카드(운영 대량·파괴 = 2단계)로 확인했다 → 사람 경로의 "같은 본문 재실행" 무장은 통과로
                 //   친다(보류 커밋 · DDL 가드 · 객체 백업 · 읽기 전용 검사는 그대로 탄다).
                 let is_write = name == "run_query" && !sql_is_readonly(&src);
+                // 이 호출 전에 이미 돌던 객체 백업(사람이 시작)인가 — 아래 "백업 대기" 판정이 남의 백업을 내 것으로 착각하지 않게.
+                let bk_before = self.objbk.is_some();
                 if name == "explain" {
                     // ★ 실행 계획(사용자 11-12 "운영에서 EXPLAIN이 보호에 막힌다"): 계획만 뽑는다(문장은 실행하지 않음 · analyze 끔).
                     //   Oracle은 `BEGIN EXECUTE IMMEDIATE 'EXPLAIN PLAN FOR …'; END;` 블록이라 운영 2단 무장·보류 커밋에 걸렸다 →
@@ -4539,7 +4546,9 @@ impl App {
                 // ★ 실행이 시작되지 못했으면(읽기 전용 · 보류 차단 · DDL 가드 · 백업 대기) 성공이 아니라 **실패로** 알린다 — 종전에는
                 //   250 ms 뒤 상태줄 글이 ok=true로 가서 어시스턴트가 "실행됨"으로 읽었다.
                 if !self.sess.busy {
-                    if self.objbk_just_started() {
+                    // ★ `!bk_before`(11-14): 사람이 시작한 백업이 도는 중이면 이 실행은 "백업 중" 안내로 **거절**됐다 — 종전에는
+                    //   그것을 내 백업 대기로 읽어, 백업이 끝난 뒤 사람 문장의 결과를 AI에게 "completed"로 답했다(실행 안 됐는데 성공).
+                    if !bk_before && self.objbk_just_started() {
                         // ★ 객체 백업 뒤 실행(11-13): 답을 미룬다 — 백업이 끝나 재진입 실행이 끝나면 그 결과를, 백업이 실패하면
                         //   (운영 = 실행 막음) 그 이유를 같은 통로로 보낸다(`ai_objbk_result`). 그동안 다음 도구는 줄을 선다.
                         self.ai.objbk_wait = true;
@@ -4733,7 +4742,9 @@ impl App {
             } else {
                 None
             }
-        } else if self.ai.objbk_wait {
+        } else if self.ai.objbk_wait || self.objbk.is_some() {
+            // (`objbk.is_some()` = 코드 블록 ▶·▦ 실행이 백업으로 미뤄진 경우 — 종전에는 250 ms 뒤 백업 대기 상태 글이 블록
+            //  결과로 붙었다 · 11-14.)
             // 객체 백업 뒤 실행을 기다리는 중 — 완료·시간 초과 판정을 멈춘다(백업은 대상마다 자체 상한이 있다 · `ai_objbk_result`가 푼다).
             None
         } else if !self.sess.busy && p.since.elapsed() > std::time::Duration::from_millis(250) {

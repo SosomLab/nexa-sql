@@ -654,6 +654,16 @@ pub(crate) fn run_turn(
         let _ = tx.send(AiEvent::Usage(u));
         messages.push(asm.assistant_message());
         let uses = asm.tool_uses();
+        // ★ 출력 한도에서 잘린 도구 호출(11-14 · 사용자 "AI가 프로시저를 고쳤다는데 반영이 없다"): 긴 본문(프로시저 전체)을 쓰다
+        //   `max_tokens`에 닿으면 호출은 대본에 남지만 **실행되지 않는다**(입력 JSON이 끝나지 않았다). 종전에는 상태줄 한 줄만
+        //   바뀌어 실행된 것처럼 보였다 → 실행하지 않았음을 오류 줄로 알린다.
+        if asm.stop_reason == "max_tokens" && !uses.is_empty() {
+            let names: Vec<&str> = uses.iter().map(|(_, n, _)| n.as_str()).collect();
+            let _ = tx.send(AiEvent::Error(format!(
+                "The reply hit the output limit (setting ai.max_tokens) while writing a tool call ({}), so that call was NOT run - nothing was changed. Raise ai.max_tokens and ask again.",
+                names.join(", ")
+            )));
+        }
         if asm.stop_reason != "tool_use" || uses.is_empty() {
             let _ = tx.send(AiEvent::Done {
                 stop: if asm.stop_reason.is_empty() {

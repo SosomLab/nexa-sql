@@ -303,6 +303,12 @@ impl App {
             self.hold_commit_ok_once = true;
             self.prod_confirmed_once = true;
             self.run_text_in(format!("COMMIT;\n{rest}"), 0, true, false);
+            // ★ 한 번짜리 깃발은 이 호출에서만(11-14): 실행이 문지기·DDL 가드에서 일찍 돌아가면 소비되지 않고 남아 **다음**
+            //   실행의 운영 2단 확인을 건너뛰게 했다. 객체 백업으로 미뤄졌으면 재진입이 쓰므로 커밋 허용만 남긴다.
+            self.prod_confirmed_once = false;
+            if self.objbk.is_none() {
+                self.hold_commit_ok_once = false;
+            }
             self.sync_tx_ui();
             return;
         }

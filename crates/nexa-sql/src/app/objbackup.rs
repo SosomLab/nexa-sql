@@ -115,9 +115,25 @@ fn fold_ident(stmt: &str, name: &str, dialect: Dialect) -> String {
     }
 }
 
+/// 문장 앞의 공백·주석(`-- …` 줄 · `/* … */`)을 뗀 나머지.
+fn skip_lead_comments(mut s: &str) -> &str {
+    loop {
+        s = s.trim_start();
+        if let Some(rest) = s.strip_prefix("--") {
+            s = rest.split_once('\n').map_or("", |(_, r)| r);
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = rest.split_once("*/").map_or("", |(_, r)| r);
+        } else {
+            return s;
+        }
+    }
+}
+
 /// `CREATE OR REPLACE …` / `CREATE OR ALTER …`(SQL Server)인가 — 새 객체만 만드는 보통 `CREATE`는 백업할 원본이 없다.
 fn is_create_replace(stmt: &str) -> bool {
-    let head: String = stmt
+    // ★ 머리 주석을 건너뛴다(11-14 데이터 보호): `/* 설명 */ CREATE OR REPLACE …`처럼 주석으로 시작하는 항목은 종류 판정
+    //   (`ddl_target` = 주석을 건너뜀)은 되는데 여기서 "보통 CREATE"로 떨어져 **백업 없이** 실행됐다.
+    let head: String = skip_lead_comments(stmt)
         .split_whitespace()
         .take(4)
         .map(str::to_ascii_uppercase)
@@ -655,6 +671,35 @@ mod tests {
             all(),
         ));
         assert_eq!(ms[0].1, "MyTab", "대소문자 무시 카탈로그는 그대로");
+    }
+
+    #[test]
+    /// 주석으로 시작하는 `CREATE OR REPLACE`도 백업 대상(11-14) · 주석 뒤 보통 CREATE는 여전히 제외.
+    fn leading_comments_do_not_hide_create_or_replace() {
+        let on = BkFlags {
+            drop: true,
+            replace: true,
+            truncate: true,
+        };
+        let v = |a: &[&str]| a.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        for sql in [
+            "/* fix */ CREATE OR REPLACE PROCEDURE app.p1 AS BEGIN NULL; END;",
+            "-- fix\n  -- more\nCREATE OR REPLACE PROCEDURE app.p1 AS BEGIN NULL; END;",
+            "/* a */ /* b */\n-- c\ncreate or replace procedure app.p1 as begin null; end;",
+        ] {
+            let t = backup_targets(&v(&[sql]), Dialect::Oracle, None, on);
+            assert_eq!(t.len(), 1, "{sql}");
+            assert_eq!(t[0].owner.name, "P1");
+            assert_eq!(t[0].action, BkAction::Replace);
+        }
+        let t = backup_targets(
+            &v(&["/* new */ CREATE PROCEDURE app.p2 AS BEGIN NULL; END;"]),
+            Dialect::Oracle,
+            None,
+            on,
+        );
+        assert!(t.is_empty());
+        assert_eq!(skip_lead_comments("/* never closed"), "");
     }
 
     #[test]
