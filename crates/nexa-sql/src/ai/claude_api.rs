@@ -659,9 +659,9 @@ pub(crate) fn run_turn(
         //   바뀌어 실행된 것처럼 보였다 → 실행하지 않았음을 오류 줄로 알린다.
         if asm.stop_reason == "max_tokens" && !uses.is_empty() {
             let names: Vec<&str> = uses.iter().map(|(_, n, _)| n.as_str()).collect();
-            let _ = tx.send(AiEvent::Error(format!(
-                "The reply hit the output limit (setting ai.max_tokens) while writing a tool call ({}), so that call was NOT run - nothing was changed. Raise ai.max_tokens and ask again.",
-                names.join(", ")
+            let _ = tx.send(AiEvent::Error(nsql_i18n::tf(
+                nsql_i18n::Msg::AiErrMaxTokensTool,
+                &[&names.join(", ")],
             )));
         }
         if asm.stop_reason != "tool_use" || uses.is_empty() {
