@@ -540,6 +540,63 @@ pub(crate) fn list_models(
     }
 }
 
+/// ★ 대화 이력 보정(사용자 11-14 "HTTP 400: messages.N.content.M.tool_use.input: Field required" — 그 세션의 모든 요청이 거절됨):
+/// 응답이 도구 호출 블록의 끝(`content_block_stop`) 전에 끊기면(■ 강제 종료 · 출력 한도 · 연결 끊김) 입력 없는 `tool_use`가
+/// 이력에 남고, 결과(`tool_result`)가 없는 `tool_use`도 같은 400을 만든다. 보내기 전에 고친다 —
+/// 바로 다음 사용자 메시지에 결과가 **없는** 도구 호출 = 실행되지 않은 것 → 그 자리를 글 블록("중단됨")으로 바꾼다 ·
+/// 결과는 있는데 입력만 없는 것 = 빈 입력 `{}`을 채운다. 돌려주는 값 = 고친 블록 수. 순수.
+pub(crate) fn repair_history(messages: &mut [Json]) -> usize {
+    let mut fixed = 0;
+    for i in 0..messages.len() {
+        if jstr(&messages[i], "role") != "assistant" {
+            continue;
+        }
+        let answered: Vec<String> = messages
+            .get(i + 1)
+            .filter(|m| jstr(m, "role") == "user")
+            .and_then(|m| jget(m, "content"))
+            .map(|c| match c {
+                Json::Arr(a) => a
+                    .iter()
+                    .filter(|b| jstr(b, "type") == "tool_result")
+                    .map(|b| jstr(b, "tool_use_id"))
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .unwrap_or_default();
+        let Json::Obj(items) = &mut messages[i] else {
+            continue;
+        };
+        let Some((_, Json::Arr(blocks))) = items.iter_mut().find(|(k, _)| k == "content") else {
+            continue;
+        };
+        for b in blocks.iter_mut() {
+            if jstr(b, "type") != "tool_use" {
+                continue;
+            }
+            if !answered.contains(&jstr(b, "id")) {
+                let name = jstr(b, "name");
+                *b = Json::Obj(vec![
+                    ("type".into(), Json::Str("text".into())),
+                    (
+                        "text".into(),
+                        Json::Str(format!(
+                            "[tool call `{name}` was interrupted before it ran]"
+                        )),
+                    ),
+                ]);
+                fixed += 1;
+            } else if jget(b, "input").is_none() {
+                if let Json::Obj(f) = b {
+                    f.push(("input".into(), Json::Obj(Vec::new())));
+                    fixed += 1;
+                }
+            }
+        }
+    }
+    fixed
+}
+
 /// 턴 루프(스레드에서) — 도구 호출이 끝날 때까지 되돌고 마지막 조립본을 돌려준다. `messages`는 호출자가 보관(다음 턴에 이어 씀).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_turn(
@@ -566,6 +623,8 @@ pub(crate) fn run_turn(
             });
             return;
         }
+        // 끊긴 도구 호출이 이력에 남아 있으면 보내기 전에 고친다(없으면 0 · 이미 400이 난 세션도 다음 요청에서 낫는다).
+        repair_history(messages);
         let body = request_body(
             model,
             effort,
@@ -642,6 +701,53 @@ pub(crate) fn run_turn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn interrupted_tool_calls_are_repaired_before_sending() {
+        use super::*;
+        let parse = |s: &str| json_parse(s).expect("test json");
+        let mut msgs = vec![
+            parse(r#"{"role":"user","content":[{"type":"text","text":"q"}]}"#),
+            // 결과는 있는데 입력이 없는 호출(t1) + 정상 호출(t2).
+            parse(
+                r#"{"role":"assistant","content":[{"type":"text","text":"a"},{"type":"tool_use","id":"t1","name":"search_files"},{"type":"tool_use","id":"t2","name":"get_setting","input":{"key":"x"}}]}"#,
+            ),
+            parse(
+                r#"{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"r1"},{"type":"tool_result","tool_use_id":"t2","content":"r2"}]}"#,
+            ),
+            // 끊긴 호출(t3 · 입력도 결과도 없음) 뒤에 사용자의 새 글.
+            parse(
+                r#"{"role":"assistant","content":[{"type":"tool_use","id":"t3","name":"object_source"}]}"#,
+            ),
+            parse(r#"{"role":"user","content":[{"type":"text","text":"again"}]}"#),
+            // 마지막이 끊긴 호출(다음 메시지 없음).
+            parse(
+                r#"{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"run_query","input":{"sql":"select 1"}}]}"#,
+            ),
+        ];
+        assert_eq!(repair_history(&mut msgs), 3);
+        let dump = |m: &Json| json_dump(m);
+        let a1 = dump(&msgs[1]);
+        assert!(
+            a1.contains(r#""id":"t1""#) && a1.contains(r#""input":{}"#),
+            "{a1}"
+        );
+        assert!(a1.contains(r#""input":{"key":"x"}"#), "{a1}");
+        let a3 = dump(&msgs[3]);
+        assert!(
+            !a3.contains("tool_use") && a3.contains("object_source"),
+            "{a3}"
+        );
+        let a5 = dump(&msgs[5]);
+        assert!(
+            !a5.contains("tool_use") && a5.contains("interrupted"),
+            "{a5}"
+        );
+        // 고칠 것이 없으면 그대로.
+        let before: Vec<String> = msgs.iter().map(dump).collect();
+        assert_eq!(repair_history(&mut msgs), 0);
+        assert_eq!(before, msgs.iter().map(dump).collect::<Vec<_>>());
+    }
+
     #[test]
     fn http_error_body_survives_the_sse_sink_and_reads_well() {
         use super::*;
