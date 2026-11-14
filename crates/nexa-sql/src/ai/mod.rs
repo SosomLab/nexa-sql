@@ -1019,6 +1019,22 @@ pub(crate) fn redact_count(text: &str) -> (String, usize) {
     (masked, n)
 }
 
+/// 진단 표식을 켰는가(`NSQL_TRACE_AI=1` · 기동 뒤 한 번만 읽는다).
+pub(crate) fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NSQL_TRACE_AI").is_some())
+}
+
+/// UI 스레드가 `what`에 쓴 시간(1 ms 이상만 · `NSQL_TRACE_AI=1` · 11-14 "AI 탭·세션 전환 멈춤" 실측용).
+pub(crate) fn trace_ms(what: &str, t0: std::time::Instant) {
+    if trace_on() {
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if ms >= 1.0 {
+            eprintln!("[ai] {what} {ms:.1} ms");
+        }
+    }
+}
+
 /// 이력 폴더.
 pub(crate) fn history_dir() -> Option<PathBuf> {
     ProfileStore::dir().map(|d| d.join("history"))

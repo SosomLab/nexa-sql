@@ -186,6 +186,18 @@ pub(crate) fn codex_list_models(
     r
 }
 
+/// 자식 프로세스 끝내기 — 종료 신호는 바로 보내고 **종료 대기는 다른 스레드에서**(11-14 "세션을 고를 때 잠시 멈춤"):
+/// `kill` 뒤 `wait`는 핸들 정리·백신 검사로 수십~수백 ms 걸릴 수 있는데 종전에는 UI 스레드가 기다렸다(세션 전환·새 세션·모드
+/// 변경마다). 스레드를 못 만들면 기다리지 않고 놓는다(프로세스는 이미 종료 신호를 받았다).
+fn reap(mut child: std::process::Child) {
+    let _ = child.kill();
+    let _ = std::thread::Builder::new()
+        .name("ai-reap".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+}
+
 /// 세션 하나의 호스트 상태(UI 스레드 소유).
 pub(crate) struct Host {
     pub tx: mpsc::Sender<AiEvent>,
@@ -817,18 +829,14 @@ impl Host {
     /// ■ — 진행 중인 턴을 끊는다(CLI는 프로세스 종료 · API는 깃발).
     pub(crate) fn stop(&mut self) {
         match std::mem::replace(&mut self.running, Running::Idle) {
-            Running::Cli { mut child, stdin } => {
+            Running::Cli { child, stdin } => {
                 drop(stdin);
-                let _ = child.kill();
-                let _ = child.wait();
+                reap(child);
             }
             Running::Api { stop } => stop.store(true, Ordering::Relaxed),
-            Running::Codex {
-                mut child, writer, ..
-            } => {
+            Running::Codex { child, writer, .. } => {
                 drop(writer);
-                let _ = child.kill();
-                let _ = child.wait();
+                reap(child);
             }
             Running::Idle | Running::Mock => {}
         }

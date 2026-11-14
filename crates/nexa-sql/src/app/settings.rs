@@ -1017,6 +1017,7 @@ impl App {
             | "ai.max_rows"
             | "ai.timeout_secs"
             | "ai.max_tokens"
+            | "ai.layout_cache_sessions"
             | "ai.history_keep_days"
             | "ai.mcp_port"
             | "ai.codex_path"

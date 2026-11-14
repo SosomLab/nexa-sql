@@ -96,6 +96,11 @@ pub(crate) struct AiState {
     /// CLI 모드 턴 사용량(result 줄이 합계 · Done에 더한다).
     pub cli_turn_usage: Option<Usage>,
     pub inited: bool,
+    /// AI 키를 가진 프로필 이름 캐시(읽은 때 · 이름 · 11-14) — `ai_sync_panel`이 호출마다 볼트를 열지 않게(볼트 열기 = 기기 키
+    /// 풀기 + 비밀 파일 읽기 · 마우스 이동·스트림 사건마다 돌았다). 프로필 동작 뒤 비우고 · 그 밖에는 15초 뒤 다시 읽는다.
+    pub keyed: Option<(Instant, Vec<String>)>,
+    /// 마지막 패널 동기화 시각 — 동작이 없던 사건(마우스 이동·글자 입력)의 동기화는 0.5초에 한 번으로 묶는다.
+    pub synced_at: Option<Instant>,
     /// ★ 활동 막대 탭(Claude / Codex · 11-11) — 패널·채팅 탭·세션 목록은 이 제공자 것만.
     pub tab: Provider,
     /// 탭을 떠날 때 보던 세션 id(돌아오면 복원).
@@ -350,7 +355,9 @@ impl App {
             self.ai.store = ProfileStore::load(&dir);
         }
         ai::history_prune(self.settings.int("ai.history_keep_days").max(0) as u64);
+        let t0 = Instant::now();
         self.ai.sessions = ai::history_list(200);
+        ai::trace_ms("history_list", t0);
         self.ai.cur = None;
         self.ai.tab = self.ai_provider_default();
         self.ai.side = self.settings.flag("ai.side");
@@ -733,6 +740,7 @@ impl App {
         let Some(i) = self.ai.sessions.iter().position(|s| s.id == id) else {
             return;
         };
+        let t0 = Instant::now();
         let prov = self.ai.sessions[i].provider;
         if prov != self.ai.tab {
             self.ai_switch_tab(prov);
@@ -776,6 +784,7 @@ impl App {
         }
         self.ai_view.reset();
         self.ai_sync_panel();
+        ai::trace_ms("open_session", t0);
         if from_side && self.ai.side_rect.w > 0 && !self.ai_view_active() {
             // 분할 창에서 고른 세션 = 이 편집기 탭에 연결.
             if let (Some(tid), Some(s)) = (self.ai.side_tab, self.ai_cur()) {
@@ -817,6 +826,11 @@ impl App {
     }
 
     pub(crate) fn ai_sync_panel(&mut self) {
+        let t0 = Instant::now();
+        let keyed = self.ai_keyed();
+        self.ai.synced_at = Some(t0);
+        self.ai_view
+            .set_layout_cache(self.settings.int("ai.layout_cache_sessions").max(0) as usize);
         self.ai_panel
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.ai_view
@@ -874,12 +888,6 @@ impl App {
             let fetched = self.ai_session_models(provider, mode_now, &profile_name);
             ai::model_items(provider, &fetched, &model)
         };
-        let keyed: Vec<String> = nsql_vault::Vault::open_default()
-            .map(|v| v.secret_names())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|n| n.strip_prefix("ai.").map(str::to_string))
-            .collect();
         let st = PanelState {
             provider,
             mode: cur
@@ -934,6 +942,36 @@ impl App {
             cli_note,
         };
         self.ai_panel.set_state(st);
+        ai::trace_ms("sync_panel", t0);
+    }
+
+    /// AI 키를 가진 프로필 이름(캐시 · `AiState::keyed`).
+    fn ai_keyed(&mut self) -> Vec<String> {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(15);
+        if let Some((at, v)) = &self.ai.keyed {
+            if at.elapsed() < TTL {
+                return v.clone();
+            }
+        }
+        let v: Vec<String> = nsql_vault::Vault::open_default()
+            .map(|v| v.secret_names())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|n| n.strip_prefix("ai.").map(str::to_string))
+            .collect();
+        self.ai.keyed = Some((Instant::now(), v.clone()));
+        v
+    }
+
+    /// 패널·뷰 사건 뒤의 동기화: 동작이 있었으면 바로 · 없었으면(마우스 이동·글자 입력) 0.5초에 한 번만.
+    fn ai_sync_after(&mut self, had: bool) {
+        let due = self
+            .ai
+            .synced_at
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500));
+        if had || due {
+            self.ai_sync_panel();
+        }
     }
 
     pub(crate) fn ai_view_info(&self) -> ViewInfo {
@@ -1018,7 +1056,9 @@ impl App {
     // ───────────────────────── 패널 · 뷰 동작 ─────────────────────────
 
     pub(crate) fn ai_panel_actions(&mut self) {
-        for a in self.ai_panel.take_actions() {
+        let acts = self.ai_panel.take_actions();
+        let had = !acts.is_empty();
+        for a in acts {
             match a {
                 PanelAction::SetMode(m) => {
                     let k = self.ai_pref_key("mode");
@@ -1089,12 +1129,14 @@ impl App {
                 PanelAction::DeleteSession(id) => self.ai_delete_session(&id),
             }
         }
-        self.ai_sync_panel();
+        self.ai_sync_after(had);
         self.redraw();
     }
 
     pub(crate) fn ai_view_actions(&mut self) {
-        for a in self.ai_view.take_actions() {
+        let acts = self.ai_view.take_actions();
+        let had = !acts.is_empty();
+        for a in acts {
             match a {
                 ViewAction::Send(text) => self.ai_send(&text),
                 ViewAction::Stop => self.ai_stop(),
@@ -1285,7 +1327,11 @@ impl App {
                 }
             }
         }
-        self.ai_sync_panel();
+        if had {
+            // 프로필·키 동작이 볼트를 바꿨을 수 있다.
+            self.ai.keyed = None;
+        }
+        self.ai_sync_after(had);
         self.redraw();
     }
 

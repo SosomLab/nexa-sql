@@ -202,6 +202,17 @@ enum Btn {
     BackChat,
 }
 
+/// 치워 둔 세션 하나의 줄 배치(폭·표시 레벨·코드 줄바꿈이 같을 때만 다시 쓴다).
+struct LayoutStash {
+    sid: String,
+    w: i32,
+    detail: bool,
+    code_wrap: bool,
+    lines: Vec<Vec<Line>>,
+    lens: Vec<u64>,
+    mcodes: Vec<Vec<String>>,
+}
+
 pub(crate) struct AiView {
     bounds: Rect,
     scale: f32,
@@ -213,8 +224,16 @@ pub(crate) struct AiView {
     buttons: Vec<(Btn, Rect)>,
     /// 대본 줄 캐시(메시지별) + 그 메시지 글 길이·폭.
     lines: Vec<Vec<Line>>,
-    lens: Vec<usize>,
+    lens: Vec<u64>,
     cache_w: i32,
+    /// 메시지별 코드 블록 본문(줄 캐시와 같은 색인 · `code_blocks`는 이것을 이어 붙인 것).
+    mcodes: Vec<Vec<String>>,
+    /// 줄 캐시를 버렸거나 꺼내 왔다 — 다음 그리기에서 코드 블록 목록을 다시 만든다.
+    lines_dirty: bool,
+    /// 줄 캐시가 가리키는 세션 id · 다른 세션의 줄 캐시(최근 것이 뒤 · 상한 = 설정 `ai.layout_cache_sessions`).
+    cache_sid: String,
+    stash: Vec<LayoutStash>,
+    stash_cap: usize,
     /// 코드 블록 본문(버튼 동작용) + 그 블록의 (메시지 번호 · 메시지 안 블록 번호).
     code_blocks: Vec<String>,
     code_owner: Vec<(usize, usize)>,
@@ -336,6 +355,11 @@ impl Default for AiView {
             buttons: Vec::new(),
             lines: Vec::new(),
             lens: Vec::new(),
+            mcodes: Vec::new(),
+            lines_dirty: true,
+            cache_sid: String::new(),
+            stash: Vec::new(),
+            stash_cap: 6,
             cache_w: 0,
             code_blocks: Vec::new(),
             code_owner: Vec::new(),
@@ -833,9 +857,62 @@ impl AiView {
             .set_placeholder(tf(Msg::AiComposerHint, &[p.title()]));
     }
 
-    pub(crate) fn reset(&mut self) {
+    /// 줄 캐시를 버린다(다음 그리기에서 다시 배치).
+    fn clear_lines(&mut self) {
         self.lines.clear();
         self.lens.clear();
+        self.mcodes.clear();
+        self.lines_dirty = true;
+    }
+
+    /// 지금 줄 캐시를 그 세션 이름으로 치워 둔다(상한을 넘으면 가장 오래된 것부터 버린다).
+    fn stash_lines(&mut self) {
+        if self.stash_cap == 0 || self.cache_sid.is_empty() || self.lines.is_empty() {
+            return;
+        }
+        let sid = self.cache_sid.clone();
+        self.stash.retain(|s| s.sid != sid);
+        self.stash.push(LayoutStash {
+            sid,
+            w: self.cache_w,
+            detail: self.detail,
+            code_wrap: self.code_wrap,
+            lines: std::mem::take(&mut self.lines),
+            lens: std::mem::take(&mut self.lens),
+            mcodes: std::mem::take(&mut self.mcodes),
+        });
+        while self.stash.len() > self.stash_cap {
+            self.stash.remove(0);
+        }
+        self.lines_dirty = true;
+    }
+
+    /// 치워 둔 줄 캐시를 꺼낸다(배치 조건이 달라졌으면 버린다).
+    fn unstash_lines(&mut self, sid: &str) {
+        let Some(p) = self.stash.iter().position(|s| s.sid == sid) else {
+            return;
+        };
+        let s = self.stash.remove(p);
+        if s.w == self.cache_w && s.detail == self.detail && s.code_wrap == self.code_wrap {
+            self.lines = s.lines;
+            self.lens = s.lens;
+            self.mcodes = s.mcodes;
+            self.lines_dirty = true;
+        }
+    }
+
+    /// 세션별 줄 배치 캐시 상한(설정 `ai.layout_cache_sessions` · 0 = 끔).
+    pub(crate) fn set_layout_cache(&mut self, n: usize) {
+        self.stash_cap = n.min(32);
+        while self.stash.len() > self.stash_cap {
+            self.stash.remove(0);
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        // 보던 세션의 줄은 치워 둔다(같은 세션으로 돌아오면 다시 배치하지 않는다 · 메시지별 열쇠로 다시 확인).
+        self.stash_lines();
+        self.clear_lines();
         self.scroll_y = 0;
         self.stick_bottom = true;
         self.hover = None;
@@ -857,8 +934,7 @@ impl AiView {
     pub(crate) fn set_detail(&mut self, on: bool) {
         if self.detail != on {
             self.detail = on;
-            self.lines.clear();
-            self.lens.clear();
+            self.clear_lines();
         }
     }
 
@@ -1685,8 +1761,7 @@ impl AiView {
             Btn::GotoLine(n) => self.actions.push(ViewAction::GotoLine(n)),
             Btn::WrapCode => {
                 self.code_wrap = !self.code_wrap;
-                self.lines.clear();
-                self.lens.clear();
+                self.clear_lines();
             }
             Btn::InsertCode(i) => {
                 if let Some(c) = self.code_blocks.get(i) {
@@ -1926,13 +2001,32 @@ impl AiView {
     // ───────────────────────── 그리기 ─────────────────────────
 
     fn rebuild_lines(&mut self, dc: &mut dyn DrawCtx, sess: &Session, w: i32) {
+        // ★ 세션별 배치 캐시(11-14 "다른 세션을 고를 때 잠시 멈춤"): 세션이 바뀌면 보던 세션의 줄을 치워 두고, 돌아오면 꺼내 쓴다
+        //   (메시지마다 열쇠로 다시 확인하므로 그 사이 바뀐 메시지만 다시 배치).
+        if self.cache_sid != sess.id {
+            self.stash_lines();
+            self.clear_lines();
+            self.cache_sid = sess.id.clone();
+        }
         if self.cache_w != w {
-            self.lines.clear();
-            self.lens.clear();
+            self.clear_lines();
             self.cache_w = w;
         }
-        self.lines.truncate(sess.messages.len());
-        self.lens.truncate(sess.messages.len());
+        if self.lines.is_empty() && !sess.messages.is_empty() {
+            self.unstash_lines(&sess.id);
+        }
+        // ★ 바뀐 것이 없으면 아무것도 하지 않는다 — 종전에는 그릴 때마다(마우스 이동 포함) 모든 메시지 글을 다시 훑어 코드 블록을
+        //   모았다(대화 길이에 비례).
+        let n = sess.messages.len();
+        let keys: Vec<u64> = sess.messages.iter().map(msg_key).collect();
+        if !self.lines_dirty && self.lines.len() == n && self.lens == keys {
+            return;
+        }
+        let t0 = std::time::Instant::now();
+        let mut laid = 0usize;
+        self.lines.truncate(n);
+        self.lens.truncate(n);
+        self.mcodes.truncate(n);
         self.code_blocks.clear();
         self.code_owner.clear();
         let mut code_i = 0usize;
@@ -1941,19 +2035,20 @@ impl AiView {
             Provider::Codex => "Codex",
         };
         for (i, m) in sess.messages.iter().enumerate() {
-            let key = msg_key(m);
-            let need = self.lines.get(i).is_none() || self.lens[i] != key;
+            let key = keys[i];
+            let need = i >= self.lines.len() || self.lens[i] != key;
             // ★ basic 표시(사용자 11-12 "알아보기 어려운 메시지가 너무 많다"): 도구 호출·성공한 도구 결과는 숨긴다(실패 결과·승인·오류·Note는 보임).
             // basic(사용자 11-12 "1분 넘도록 무슨 일인지 모른다" · CLI 모드는 턴 내내 도구만 오간다): 도구 호출은 **한 줄**(`⚙ 이름` · 인자 없음)로,
             //   성공한 도구 결과는 숨김 · detail = 전부.
             let hidden = !self.detail && matches!(m.kind, Kind::ToolResult { ok: true, .. });
             let brief = !self.detail && matches!(m.kind, Kind::ToolCall { .. });
             if need {
+                laid += 1;
+                // 이 메시지의 코드 블록 본문(코드 머리 줄 하나에 본문 하나 — 숨긴·한 줄 메시지는 머리 줄이 없으니 본문도 없다).
+                let mut codes: Vec<String> = Vec::new();
                 let lines = if hidden {
-                    collect_code(&m.text, &mut self.code_blocks);
                     Vec::new()
                 } else if brief {
-                    collect_code(&m.text, &mut self.code_blocks);
                     let text = match &m.kind {
                         Kind::ToolCall { name, input } => tool_brief(name, input),
                         _ => String::new(),
@@ -1963,39 +2058,34 @@ impl AiView {
                         kind: LineKind::Dim,
                     }]
                 } else {
-                    layout_msg(
-                        dc,
-                        m,
-                        w,
-                        &mut code_i,
-                        &mut self.code_blocks,
-                        who,
-                        self.code_wrap,
-                    )
+                    layout_msg(dc, m, w, &mut code_i, &mut codes, who, self.code_wrap)
                 };
                 if i < self.lines.len() {
                     self.lines[i] = lines;
                     self.lens[i] = key;
+                    self.mcodes[i] = codes;
                 } else {
                     self.lines.push(lines);
                     self.lens.push(key);
+                    self.mcodes.push(codes);
                 }
             } else {
-                // 캐시된 메시지의 코드 블록 번호를 이어 붙인다.
-                for l in &self.lines[i] {
-                    if let LineKind::CodeHead(_) = l.kind {
+                // 캐시된 메시지: 코드 블록 번호를 지금 순번으로 다시 매긴다(앞 메시지의 블록 수가 달라졌을 수 있다).
+                for l in &mut self.lines[i] {
+                    if let LineKind::CodeHead(ci) = &mut l.kind {
+                        *ci = code_i;
                         code_i += 1;
                     }
                 }
-                collect_code(&m.text, &mut self.code_blocks);
             }
-            let n = self.lines[i]
-                .iter()
-                .filter(|l| matches!(l.kind, LineKind::CodeHead(_)))
-                .count();
-            for k in 0..n {
+            for k in 0..self.mcodes[i].len() {
                 self.code_owner.push((i, k));
             }
+            self.code_blocks.extend(self.mcodes[i].iter().cloned());
+        }
+        self.lines_dirty = false;
+        if super::trace_on() {
+            super::trace_ms(&format!("rebuild_lines msgs={n} laid={laid}"), t0);
         }
     }
 
@@ -3864,8 +3954,10 @@ fn strip_bold(s: &str) -> String {
 }
 
 /// 메시지 배치 캐시 키 — 글 길이 + [실행] 결과 길이(결과가 붙으면 다시 배치).
-fn msg_key(m: &ChatMsg) -> usize {
-    m.text.len() + m.block_results.iter().map(|r| r.1.len() + 1).sum::<usize>()
+/// 만든 시각도 섞는다(11-14): 치워 둔 배치를 다시 쓸 때 길이만 같은 다른 메시지를 같은 것으로 보지 않게.
+fn msg_key(m: &ChatMsg) -> u64 {
+    let n = m.text.len() + m.block_results.iter().map(|r| r.1.len() + 1).sum::<usize>();
+    (n as u64) ^ m.at.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((m.attachments.len() as u64) << 56)
 }
 
 /// [실행] 결과를 코드 상자 안 꼬리 줄로(앞 12줄 · 한 줄 200자 · 실패는 경고색).
@@ -3897,57 +3989,91 @@ fn push_block_result(out: &mut Vec<Line>, m: &ChatMsg, local: usize) {
     }
 }
 
-fn collect_code(text: &str, codes: &mut Vec<String>) {
-    let mut in_code = false;
-    let mut buf = String::new();
-    for raw in text.split('\n') {
-        if raw.trim_start().starts_with("```") {
-            if in_code {
-                codes.push(std::mem::take(&mut buf));
-            }
-            in_code = !in_code;
-            continue;
-        }
-        if in_code {
-            if !buf.is_empty() {
-                buf.push('\n');
-            }
-            buf.push_str(raw);
-        }
-    }
-    if in_code {
-        codes.push(buf);
-    }
-}
-
 /// 단어 단위 줄 바꿈(한 단어가 폭을 넘으면 글자 단위).
+///
+/// ★ 폭은 **단어마다 한 번** 재서 더한다(11-14 · 종전 = 단어를 붙일 때마다 후보 줄 전체를 다시 재서 줄 길이의 제곱에 비례 —
+/// 긴 대화를 처음 배치할 때의 멈춤). 더한 값은 커닝·반올림 때문에 실제 폭과 조금 다를 수 있으므로, 한도에서 여유(`slack`) 안에
+/// 들 때만 후보 줄을 실제로 잰다(그 밖에는 더한 값으로 판정).
 pub(crate) fn wrap(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> Vec<String> {
+    const SLACK: i32 = 4;
+    let space_w = dc.text_width(" ");
     let mut lines = Vec::new();
     let mut cur = String::new();
+    let mut cur_w = 0i32;
+    // 지금 줄에 든 단어 수(더한 값의 오차 여유를 단어 수만큼 넓힌다).
+    let mut cur_n = 0i32;
     for word in text.split(' ') {
-        let cand = if cur.is_empty() {
-            word.to_string()
+        let ww = dc.text_width(word);
+        if cur.is_empty() {
+            if ww <= max_w {
+                cur.push_str(word);
+                cur_w = ww;
+                cur_n = 1;
+                continue;
+            }
         } else {
-            format!("{cur} {word}")
-        };
-        if dc.text_width(&cand) <= max_w || cur.is_empty() && dc.text_width(word) <= max_w {
-            cur = cand;
-            continue;
-        }
-        if !cur.is_empty() {
+            let est = cur_w + space_w + ww;
+            let slack = SLACK + cur_n;
+            let mut exact = None;
+            let fits = if est + slack <= max_w {
+                true
+            } else if est - slack > max_w {
+                false
+            } else {
+                let real = dc.text_width(&format!("{cur} {word}"));
+                exact = Some(real);
+                real <= max_w
+            };
+            if fits {
+                cur.push(' ');
+                cur.push_str(word);
+                cur_w = exact.unwrap_or(est);
+                cur_n += 1;
+                continue;
+            }
             lines.push(std::mem::take(&mut cur));
+            if ww <= max_w {
+                cur.push_str(word);
+                cur_w = ww;
+                cur_n = 1;
+                continue;
+            }
         }
         // 긴 단어는 글자 단위.
         let mut piece = String::new();
+        let mut piece_w = 0i32;
+        let mut piece_n = 0i32;
+        let mut buf = [0u8; 4];
         for ch in word.chars() {
-            let mut p2 = piece.clone();
-            p2.push(ch);
-            if dc.text_width(&p2) > max_w && !piece.is_empty() {
-                lines.push(std::mem::take(&mut piece));
+            let cw = dc.text_width(ch.encode_utf8(&mut buf));
+            if !piece.is_empty() {
+                let est = piece_w + cw;
+                let slack = SLACK + piece_n / 4;
+                let over = if est - slack > max_w {
+                    true
+                } else if est + slack <= max_w {
+                    false
+                } else {
+                    piece.push(ch);
+                    let real = dc.text_width(&piece);
+                    piece.pop();
+                    // 실제 폭으로 맞춰 둔다(오차가 쌓이지 않게).
+                    piece_w = real - cw;
+                    real > max_w
+                };
+                if over {
+                    lines.push(std::mem::take(&mut piece));
+                    piece_w = 0;
+                    piece_n = 0;
+                }
             }
             piece.push(ch);
+            piece_w += cw;
+            piece_n += 1;
         }
         cur = piece;
+        cur_w = piece_w;
+        cur_n = 1;
     }
     if !cur.is_empty() || lines.is_empty() {
         lines.push(cur);
@@ -4025,6 +4151,74 @@ mod tests {
         fn text(&mut self, _x: i32, _y: i32, _c: Rect, _t: &str, _f: nexa_ctl::Color) {}
         fn text_width(&mut self, text: &str) -> i32 {
             text.chars().count() as i32 * 8
+        }
+    }
+
+    /// 종전 줄 바꿈(후보 줄 전체를 매번 잰다) — 새 구현의 대조 기준.
+    fn wrap_naive(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut cur = String::new();
+        for word in text.split(' ') {
+            let cand = if cur.is_empty() {
+                word.to_string()
+            } else {
+                format!("{cur} {word}")
+            };
+            if dc.text_width(&cand) <= max_w || cur.is_empty() && dc.text_width(word) <= max_w {
+                cur = cand;
+                continue;
+            }
+            if !cur.is_empty() {
+                lines.push(std::mem::take(&mut cur));
+            }
+            let mut piece = String::new();
+            for ch in word.chars() {
+                let mut p2 = piece.clone();
+                p2.push(ch);
+                if dc.text_width(&p2) > max_w && !piece.is_empty() {
+                    lines.push(std::mem::take(&mut piece));
+                }
+                piece.push(ch);
+            }
+            cur = piece;
+        }
+        if !cur.is_empty() || lines.is_empty() {
+            lines.push(cur);
+        }
+        lines
+    }
+
+    /// 줄 바꿈을 단어별 폭 합산으로 바꿨다(11-14) — 난수 글·여러 폭에서 종전 구현과 결과가 같아야 한다.
+    #[test]
+    fn wrap_matches_naive_reference_on_random_text() {
+        let mut dc = W;
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let alphabet = ['a', 'b', '한', '글', 'x', '.', ','];
+        for _ in 0..400 {
+            let words = (next() % 30) as usize;
+            let mut text = String::new();
+            for wi in 0..words {
+                if wi > 0 {
+                    // 가끔 공백 두 칸(빈 단어).
+                    text.push_str(if next() % 9 == 0 { "  " } else { " " });
+                }
+                for _ in 0..(next() % 14) {
+                    text.push(alphabet[(next() % alphabet.len() as u64) as usize]);
+                }
+            }
+            for max_w in [8, 24, 40, 64, 120, 400] {
+                assert_eq!(
+                    wrap(&mut dc, &text, max_w),
+                    wrap_naive(&mut dc, &text, max_w),
+                    "text={text:?} max_w={max_w}"
+                );
+            }
         }
     }
 

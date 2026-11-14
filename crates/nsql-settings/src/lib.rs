@@ -6372,7 +6372,16 @@ pub const REGISTRY: &[Entry] = &[
             min: 256,
             max: 128000,
         },
-        default: "8192",
+        // 32000(사용자 11-14): 8192에서는 긴 프로시저 본문을 쓰는 도구 호출이 잘려 실행되지 않았다(생각 토큰도 이 한도에 든다).
+        default: "32000",
+    },
+    Entry {
+        key: "ai.layout_cache_sessions",
+        cat: Msg::CatAi,
+        label: Msg::LblAiLayoutCache,
+        desc: Msg::DescAiLayoutCache,
+        kind: SettingKind::Int { min: 0, max: 32 },
+        default: "6",
     },
     Entry {
         key: "ai.history_keep_days",
