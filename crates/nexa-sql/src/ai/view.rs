@@ -440,6 +440,12 @@ impl AiView {
         self.hover = None;
         self.pressed = None;
         self.buttons.clear();
+        // ★ 포커스는 그 페이지의 상자 하나만(11-14 결함): 프로필 폼으로 갈 때 작성 상자의 포커스를 풀지 않아, 폼에서 친 글자
+        //   (**API 키 포함**)가 포커스된 상자 전부 = 작성 상자에도 평문으로 들어갔다(협업 V1 관찰). 페이지를 바꾸면 전부 풀고
+        //   대화 페이지만 작성 상자에 준다.
+        for tb in self.boxes_mut() {
+            tb.set_focused(false);
+        }
         if p == Page::Chat {
             self.composer.set_focused(true);
         }
@@ -499,6 +505,9 @@ impl AiView {
         self.p_sa.set_text(&w.service_account);
         self.p_has_key = has_key;
         self.form_err.clear();
+        for tb in self.boxes_mut() {
+            tb.set_focused(false);
+        }
         self.p_name.set_focused(true);
     }
 
@@ -1897,7 +1906,8 @@ impl AiView {
             | InputEvent::SelectAll
             | InputEvent::Undo
             | InputEvent::Redo => {
-                for tb in self.boxes_mut() {
+                // 작성 상자(0번)는 이 페이지의 상자가 아니다 — 포커스가 남아 있어도 글자를 주지 않는다(API 키 누출 방지).
+                for tb in self.boxes_mut().into_iter().skip(1) {
                     if tb.is_focused() {
                         tb.on_event(ev, &mut inv);
                     }
@@ -4044,6 +4054,38 @@ mod tests {
         assert_eq!(w(t, n), Some((n - 8, n)), "줄 끝 = 마지막 낱말");
         assert_eq!(w("a  b", 2), None, "공백 사이");
         assert_eq!(w("", 0), None);
+    }
+
+    #[test]
+    fn profile_form_typing_never_reaches_the_composer() {
+        // ★ 11-14 결함: 프로필 폼에서 친 API 키가 대화 작성 상자에도 평문으로 들어갔다(작성 상자 포커스가 남아 있었다).
+        let mut v = AiView::default();
+        v.composer.set_focused(true);
+        v.set_composer_text("draft");
+        v.edit_profile(None, false);
+        assert!(
+            !v.composer.is_focused(),
+            "폼으로 가면 작성 상자 포커스를 푼다"
+        );
+        assert_eq!(v.boxes_mut().iter().filter(|b| b.is_focused()).count(), 1);
+        for tb in v.boxes_mut() {
+            tb.set_focused(false);
+        }
+        v.p_key.set_focused(true);
+        // 포커스가 (다른 경로로) 작성 상자에 남아 있어도 글자는 가지 않는다.
+        v.composer.set_focused(true);
+        for c in "sk-test".chars() {
+            v.on_event(&InputEvent::Char { c, now_ms: 0 });
+        }
+        assert_eq!(v.p_key.text(), "sk-test");
+        assert_eq!(
+            v.composer_text(),
+            "draft",
+            "폼의 글자가 작성 상자에 들어가면 안 된다"
+        );
+        // 대화로 돌아오면 작성 상자만.
+        v.show_page(Page::Chat);
+        assert!(v.composer.is_focused() && !v.p_key.is_focused());
     }
 
     #[test]
