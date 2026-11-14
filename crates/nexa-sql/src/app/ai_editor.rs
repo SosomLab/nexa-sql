@@ -435,7 +435,8 @@ impl App {
                 }
                 _ => {
                     let mut last = buf.line_count().saturating_sub(1);
-                    if last > 0 && buf.line_start(last) == buf.line_end(last) {
+                    // 끝의 빈 줄은 **연속된 것 전부** 뺀다(협업 V1 11-14: 둘 이상이면 하나만 빠져 빈 줄이 맨 위로 올라왔다).
+                    while last > 0 && buf.line_start(last) == buf.line_end(last) {
                         last -= 1;
                     }
                     (0, last)

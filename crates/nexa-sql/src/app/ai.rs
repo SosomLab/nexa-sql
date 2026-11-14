@@ -4459,10 +4459,15 @@ impl App {
                     g("open").to_ascii_lowercase().as_str(),
                     "true" | "1" | "yes" | "on"
                 );
+                // 미접속(오프라인 칸)은 객체 조회보다 먼저 알린다(메타가 비어 "not found"로 답하던 것 · 협업 V1 11-14).
+                if !self.explorer.ai_source_ready() {
+                    let _ = reply.send(ToolReply {
+                        output: "the object explorer is not connected; connect first".into(),
+                        ok: false,
+                    });
+                    return;
+                }
                 match self.explorer.ai_object_info(s, &g("name")) {
-                    Some(_) if !open && !self.explorer.ai_source_ready() => {
-                        err("the object explorer is not connected; connect first".into())
-                    }
                     Some(o) if !open => {
                         // 패키지는 스펙이 기본 · `part` = body면 본문(`PackageBody` · 소스 열기의 "본문 열기"와 같은 길).
                         let kind = if o.kind == nsql_catalog::ObjectKind::Package
