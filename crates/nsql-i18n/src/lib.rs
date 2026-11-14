@@ -10081,7 +10081,7 @@ impl Msg {
             Msg::AiValidating => ["Validating…", "검증 중…"],
             Msg::AiBusyNote => ["Still answering — press ■ to stop", "아직 답하는 중 — ■로 멈춥니다"],
             Msg::AiQueuedNote => ["Queued ({0}) — sent when the current answer finishes (■ stops and puts it back in the input)", "대기 {0}건 — 지금 답이 끝나면 보냅니다(■ = 멈추고 입력창으로 되돌림)"],
-            Msg::AiQueuedSteerNote => ["Queued ({0}) — handed to the running task at its next step, or sent when it finishes (■ stops and puts it back in the input)", "대기 {0}건 — 진행 중인 작업의 다음 단계에 반영하고, 그 전에 끝나면 이어서 보냅니다(■ = 멈추고 입력창으로 되돌림)"],
+            Msg::AiQueuedSteerNote => ["Queued ({0}) — joins the running task at its next step (■ = back to input)", "대기 {0}건 — 다음 단계에 반영합니다(■ = 입력창으로 되돌림)"],
             Msg::AiSteeredNote => ["Added {0} queued request(s) to the running task", "대기 요청 {0}건을 진행 중인 작업에 반영했습니다"],
             Msg::AiSecretBlocked => ["Not sent: the text looks like it contains a password or API key", "보내지 않음: 비밀번호나 API 키가 든 것 같습니다"],
             Msg::AiSecretMasked => ["Attached with {0} secret(s) masked as ****** (passwords and keys never leave this app)", "비밀 {0}곳을 ******로 가리고 첨부했습니다(비밀번호·키는 앱 밖으로 나가지 않습니다)"],

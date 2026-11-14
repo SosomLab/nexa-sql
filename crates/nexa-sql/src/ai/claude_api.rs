@@ -246,6 +246,8 @@ pub(crate) struct SseSink<'a> {
     pub out: Assembled,
     partial_json: Vec<String>,
     emit: &'a mut dyn FnMut(AiEvent),
+    /// ■ 깃발(11-15): 서 있으면 다음 조각에서 받기를 끊는다 — 종전에는 멈춘 뒤에도 응답을 끝까지 받았다.
+    stop: Option<&'a std::sync::atomic::AtomicBool>,
 }
 
 impl<'a> SseSink<'a> {
@@ -256,7 +258,14 @@ impl<'a> SseSink<'a> {
             out: Assembled::default(),
             partial_json: Vec::new(),
             emit,
+            stop: None,
         }
+    }
+
+    /// ■ 깃발을 건다 — 서면 `write`가 오류로 돌아가 요청이 끊긴다.
+    pub(crate) fn with_stop(mut self, stop: Option<&'a std::sync::atomic::AtomicBool>) -> Self {
+        self.stop = stop;
+        self
     }
 
     fn handle_event(&mut self, data: &str) {
@@ -430,6 +439,12 @@ fn append_str(block: &mut Json, key: &str, add: &str) {
 
 impl Write for SseSink<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self
+            .stop
+            .is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            return Err(std::io::Error::other("stopped"));
+        }
         if self.raw.len() < RAW_KEEP {
             let n = buf.len().min(RAW_KEEP - self.raw.len());
             self.raw.extend_from_slice(&buf[..n]);
@@ -493,6 +508,7 @@ pub(crate) fn stream_once(
     body: &Json,
     timeout_secs: u64,
     emit: &mut dyn FnMut(AiEvent),
+    stop: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Assembled, String> {
     let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
     let mut o = nsql_net::Options {
@@ -512,7 +528,7 @@ pub(crate) fn stream_once(
             .push(("anthropic-workspace-id".into(), workspace.to_string()));
     }
     let payload = json_dump(body).into_bytes();
-    let mut sink = SseSink::new(emit);
+    let mut sink = SseSink::new(emit).with_stop(stop);
     let r = nsql_net::request("POST", &url, Some(&payload), &o, &mut sink, &mut |_, _| {});
     sink.finish();
     match r {
@@ -660,6 +676,7 @@ pub(crate) fn run_turn(
 ) {
     let started = std::time::Instant::now();
     let mut total = Usage::default();
+    let stopped = || stop.load(std::sync::atomic::Ordering::Relaxed);
     for round in 0..64 {
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
             let _ = tx.send(AiEvent::Done {
@@ -682,8 +699,24 @@ pub(crate) fn run_turn(
         let mut emit = move |e: AiEvent| {
             let _ = tx2.send(e);
         };
-        let asm = match stream_once(base_url, auth, workspace, &body, timeout_secs, &mut emit) {
+        let asm = match stream_once(
+            base_url,
+            auth,
+            workspace,
+            &body,
+            timeout_secs,
+            &mut emit,
+            Some(stop),
+        ) {
             Ok(a) => a,
+            // ■로 끊은 요청은 오류가 아니다.
+            Err(_) if stopped() => {
+                let _ = tx.send(AiEvent::Done {
+                    stop: "cancelled".into(),
+                    ms: started.elapsed().as_millis() as u64,
+                });
+                return;
+            }
             Err(e) => {
                 let _ = tx.send(AiEvent::Error(e));
                 let _ = tx.send(AiEvent::Done {
@@ -720,8 +753,24 @@ pub(crate) fn run_turn(
             });
             return;
         }
+        // ★ ■ 뒤에는 도구를 부르지 않는다(협업 V1 11-15 · 데이터 보호): 종전에는 멈춤을 라운드 시작에서만 봐, 멈춘 뒤에도 받던
+        //   응답의 도구 호출(조회는 그대로 실행 · 쓰기는 승인 카드)이 UI로 갔다. 끊긴 호출은 다음 요청 전에 `repair_history`가 고친다.
+        if stopped() {
+            let _ = tx.send(AiEvent::Done {
+                stop: "cancelled".into(),
+                ms: started.elapsed().as_millis() as u64,
+            });
+            return;
+        }
         let mut results: Vec<(String, ToolReply)> = Vec::new();
         for (id, name, input) in uses {
+            if stopped() {
+                let _ = tx.send(AiEvent::Done {
+                    stop: "cancelled".into(),
+                    ms: started.elapsed().as_millis() as u64,
+                });
+                return;
+            }
             let (rtx, rrx) = mpsc::channel();
             let _ = tx.send(AiEvent::ToolRequest {
                 id: id.clone(),
@@ -854,6 +903,21 @@ mod tests {
         let before: Vec<String> = msgs.iter().map(dump).collect();
         assert_eq!(repair_history(&mut msgs), 0);
         assert_eq!(before, msgs.iter().map(dump).collect::<Vec<_>>());
+    }
+
+    /// ■ 깃발이 서면 싱크가 다음 조각에서 받기를 끊는다(11-15) — 서기 전 조각은 그대로 처리.
+    #[test]
+    fn sse_sink_stops_reading_once_the_stop_flag_is_set() {
+        use super::*;
+        use std::io::Write;
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut seen = 0usize;
+        let mut emit = |_: AiEvent| seen += 1;
+        let mut sink = SseSink::new(&mut emit).with_stop(Some(&stop));
+        sink.write_all(b"data: {\"type\":\"ping\"}\n\n")
+            .expect("before stop");
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(sink.write_all(b"data: {\"type\":\"ping\"}\n\n").is_err());
     }
 
     #[test]

@@ -208,6 +208,9 @@ pub(crate) struct Host {
     pub busy: bool,
     /// API 대화(요청 본문 messages · 사고 블록 포함) — 스레드와 공유.
     pub api_messages: Arc<Mutex<Vec<Json>>>,
+    /// API 대화의 세대(11-15) — 새 턴 시작·대화 교체마다 올린다. 턴 스레드는 끝날 때 **자기가 시작한 세대일 때만** 대화를
+    /// 되돌려 넣는다: 종전에는 ■ 뒤 늦게 끝난 스레드가 그 사이 시작한 새 턴(또는 다른 세션으로 바꾼 대화)을 통째로 덮어썼다.
+    pub api_gen: Arc<std::sync::atomic::AtomicU64>,
     /// CLI stderr 꼬리(실패 진단).
     pub stderr_tail: Arc<Mutex<Vec<String>>>,
 }
@@ -246,6 +249,7 @@ impl Host {
             running: Running::Idle,
             busy: false,
             api_messages: Arc::new(Mutex::new(Vec::new())),
+            api_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             stderr_tail: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -659,9 +663,14 @@ impl Host {
                 return Err("busy".into());
             }
         }
-        if let Ok(mut m) = self.api_messages.lock() {
-            m.push(claude_api::user_message(text, attachments));
-        }
+        let gen = self.api_gen.clone();
+        let my_gen = match self.api_messages.lock() {
+            Ok(mut m) => {
+                m.push(claude_api::user_message(text, attachments));
+                gen.fetch_add(1, Ordering::Relaxed) + 1
+            }
+            Err(_) => gen.fetch_add(1, Ordering::Relaxed) + 1,
+        };
         let stop = Arc::new(AtomicBool::new(false));
         let messages = self.api_messages.clone();
         let tx = self.tx.clone();
@@ -679,8 +688,14 @@ impl Host {
                     .spawn({
                         let tx = tx.clone();
                         let wake = wake.clone();
+                        let stop = stop2.clone();
                         move || {
                             for e in wrx {
+                                // ★ ■ 뒤의 사건은 버린다(협업 V1 11-15): 멈춘 턴의 늦은 글·도구 호출이 "멈춤" 아래에 붙거나,
+                                //   그 사이 시작한 새 턴에 섞였다. UI는 ■ 때 이미 턴을 닫았다(도구 요청은 보낸 쪽이 사라져 취소).
+                                if stop.load(Ordering::Relaxed) {
+                                    continue;
+                                }
                                 let _ = tx.send(e);
                                 wake();
                             }
@@ -723,7 +738,10 @@ impl Host {
                 );
                 drop(wtx);
                 if let Ok(mut m) = messages.lock() {
-                    *m = msgs;
+                    // 그 사이 새 턴이 시작됐거나 대화가 바뀌었으면 건드리지 않는다(세대 확인은 잠금 안에서).
+                    if gen.load(Ordering::Relaxed) == my_gen {
+                        *m = msgs;
+                    }
                 }
                 if let Ok(h) = forward {
                     let _ = h.join();
@@ -872,6 +890,7 @@ impl Host {
     pub(crate) fn reset_api(&mut self) {
         if let Ok(mut m) = self.api_messages.lock() {
             m.clear();
+            self.api_gen.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
