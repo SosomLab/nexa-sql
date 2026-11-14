@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-14 밤 (Windows · 개발 × 협업 · 운영 2단 버튼별 · AI 변경 실행 · AI 탭 멈춤)** — 2dd2cacf 운영 2단 확인 버튼별 · 5d2914fe CONNTYPE 2단 · 2d654aab 상태줄 "완료" · 6b83465c AI 변경 실행 네 곳(잘린 도구 호출 · 주석 뒤 CREATE OR REPLACE 백업 · 남의 백업 착각 · 깃발 잔류) · 565d7ffc · 9dec9a31/7a7c3a36 "AI" 아이콘 · a80ed442 AI 탭·세션 전환 멈춤 개선 + `ai.max_tokens` 32000 + `ai.layout_cache_sessions` · V2 631/0/6 · 통합 47/0/1 · 폴더 정리 ≈457 MB · [journal 11-14 §17~§18](journal/2026-11-14.md)
 - **2026-11-14 17:00 (Windows · 개발 × 협업 · v0.8.0 공개)** — drivers-v0.1.12(43570757179 · 봇 b54282ba) · 버전 fe274f35 · release 43571927690 · 공개 07:54:14Z · winget 첫 자동 갱신 PR #480015 · choco 0.8.0 push · Homebrew 4b280617 · pkg.sosomlab.com 0.8.0 · [journal 11-14 §16](journal/2026-11-14.md)
 - **2026-11-14 16:20 (Windows · 협업 · v0.8.0 릴리스 게이트)** — 7e5ef87f · nexa-sql 1440/0/8 · nexa-ui 691/0/6 · check-3os 전체 ✓ · 영어 ✓ · 통합 47/0/1 · CI ✓ = 통과 · [journal 11-14 §15](journal/2026-11-14.md)
 - **2026-11-14 오후 (Windows · 개발 × 협업 · 대본 굴리기)** — push 569ec219..cb624249 CI ✓ · 답하는 중 대본 위로 굴리기 3단(b7374d05 · 01d76d92 · f36eeb61 · 협업 V1이 10px 휠·끌기 바닥 붙임 결함을 차례로 찾음) · V2·통합 ✓ · [journal 11-14 §14](journal/2026-11-14.md)
