@@ -1207,11 +1207,14 @@ pub(crate) fn is_bind_assign_exec(sql: &str) -> bool {
 }
 
 /// ★ 실행할 항목이 **전부** 변수 대입·클라이언트 명령인가 — 그러면 운영 2단 확인·보류 커밋을 건너뛴다(조회와 같은 등급).
+/// ★ **`CONNTYPE`는 제외**(11-14 회귀 수정 · 협업 V1 관찰): 여기까지 온 `CONNTYPE`는 운영 유형을 **해제**하는 것 = 보호를 내리는
+///   변경이라 2단 확인을 거쳐야 한다(`prod_confirm_needed` 주석 · 사용자 10-01). 11-12에 이 판정을 넣으면서 클라이언트 명령
+///   전부를 건너뛰게 해 편집기의 `CONNTYPE tst` F5가 확인 없이 운영을 풀었다.
 pub(crate) fn assign_only_items(items: &[String]) -> bool {
     !items.is_empty()
         && items
             .iter()
-            .all(|i| is_client_only(i) || is_bind_assign_exec(i))
+            .all(|i| (is_client_only(i) && !is_conntype_cmd(i)) || is_bind_assign_exec(i))
 }
 
 /// ★ 실행이 **필요 없는** 항목인가(10-01 · 사용자 "운영 여부보다 실행 필요 판단이 먼저"): `CONNTYPE x`/`SET CONNTYPE x`의
@@ -2660,6 +2663,17 @@ mod hold_tests {
         );
         assert_eq!(arm_ratio(Duration::ZERO, Duration::ZERO), None);
         assert_eq!(arm_ratio(Duration::ZERO, Duration::from_secs(1)), Some(0.0));
+    }
+
+    #[test]
+    /// 운영 유형 해제(`CONNTYPE`)는 "대입·클라이언트 명령만"이 아니다 → 2단 확인을 건너뛰지 않는다(11-14 회귀).
+    fn conntype_is_not_assign_only() {
+        let v = |a: &[&str]| a.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        assert!(assign_only_items(&v(&["DEFINE X = 1"])));
+        assert!(!assign_only_items(&v(&["CONNTYPE tst"])));
+        assert!(!assign_only_items(&v(&["SET CONNTYPE dev"])));
+        assert!(!assign_only_items(&v(&["DEFINE X = 1", "CONNTYPE tst"])));
+        assert!(!assign_only_items(&[]));
     }
 
     #[test]
