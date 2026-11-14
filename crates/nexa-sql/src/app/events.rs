@@ -1384,6 +1384,10 @@ impl App {
             }
             if let Some(m) = done {
                 self.sess.status = m;
+            } else if self.sess.status == t(Msg::StRunning) {
+                // ★ 끝맺음 안내가 하나도 없던 실행(11-14 협업 V1: `DEFINE X = 1`만 F5 = 상태줄이 "실행 중…"으로 남음) —
+                //   클라이언트 명령만이라 결과·메시지 사건이 없으면 상태줄을 바꿀 것이 없었다. 실행은 끝났으므로 "완료"로.
+                self.sess.status = t(Msg::StRunFinished).into();
             }
             // 현재 문장 실행 뒤 캐럿(설정 `run.after_statement` · 사용자 09-16): stay / next_ok / next_always.
             if std::mem::take(&mut self.sess.single_run)

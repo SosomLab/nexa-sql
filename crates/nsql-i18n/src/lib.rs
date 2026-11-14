@@ -99,6 +99,7 @@ pub enum Msg {
     StInitial,
     StProfiles,
     StRunning,
+    StRunFinished,
     /// 실행 중인 탭은 닫을 수 없다(■로 중지 뒤에 · 09-19).
     StTabRunningClose,
     StConnecting,
@@ -5097,6 +5098,7 @@ impl Msg {
                 "저장된 프로필: {0} - 프로필 칸에서 고르세요",
             ],
             Msg::StRunning => ["Running…", "실행 중…"],
+            Msg::StRunFinished => ["Done", "완료"],
             Msg::StTabRunningClose => ["This tab is running - stop (■) before closing", "실행 중인 탭입니다 - ■로 중지한 뒤 닫으세요"],
             Msg::StConnecting => ["Connecting… {0}", "접속 중… {0}"],
             Msg::StRows => ["{0} rows · {1}s", "{0}행 · {1}s"],
@@ -10668,6 +10670,7 @@ impl Msg {
         Msg::StInitial,
         Msg::StProfiles,
         Msg::StRunning,
+        Msg::StRunFinished,
         Msg::StTabRunningClose,
         Msg::StConnecting,
         Msg::StRows,
