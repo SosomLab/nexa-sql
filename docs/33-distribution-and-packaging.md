@@ -179,7 +179,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - ★ **11-09 갱신(D-471 · 사용자)** = 배포 flag(`CHOCO_PUSH` · `WINGET_PUBLISH`)는 **기본 true 유지** · 배포 때 기존 게시 상태를 확인해 이미 등록·진행 중이면 **그 채널만 제외**(= 현행 guard 동작 · winget = 같은 패키지 열린 PR이 있으면 건너뜀 · choco = 직전 버전 미승인·대기 중 제출이 있으면 건너뜀 · 코드 변경 없음) → 릴리스 전 질문은 `RELEASE_FULL`·버전만 · 위 10-08 "릴리스마다 확인"의 플래그 부분을 대체 · [10 D-471](10-decision-record.md) · [journal 11-09 §2](journal/2026-11-09.md).
 - **v0.7.1(11-09) · v0.7.2(11-10) = D-471 적용** — 두 번 모두 choco 제출(직전 판 승인됨 · 검수 대기) · winget 건너뜀(PR #447007 0.5.0 검수 대기) · 다음 확인점 = #447007 머지 뒤 guard가 winget을 자동 제출하는지 · [journal 11-10 §4](journal/2026-11-10.md).
 - **v0.8.0(11-14) = winget 자동 갱신 첫 성공 · choco 제출** — guard winget 제출 true(#447007 0.5.0이 11-13 병합된 뒤 열린 PR 없음) → **PR #480015** "SosomLab.NexaSQL version 0.8.0"(검수 대기) · choco guard "마지막으로 올린 0.7.2 승인됨 · 대기 중인 제출 없음 — 제출." → 0.8.0 push(검수 대기) · 위 줄의 확인점(#447007 머지 뒤 자동 제출) 해소 · [journal 11-14 §16](journal/2026-11-14.md).
-- **v0.8.1(11-15) = winget 자동 제출 · choco 건너뜀** — guard winget 제출 true → **PR #480308**(OPEN) · choco = 0.8.0이 아직 "Pending automated review"(Scan Testing 대기)라 guard가 건너뜀(T-435 · nupkg 0.8.1 = 워크플로 아티팩트) → 0.8.0 승인 뒤 `channels=choco` 수동 dispatch · Homebrew 9f17d87 · pkg.sosomlab.com APT·RPM 0.8.1 ✓ · [journal 11-15 §6](journal/2026-11-15.md)
+- **v0.8.1(11-15) = winget 자동 제출 · choco 건너뜀** — guard winget 제출 true → **PR #480308**(병합 11-14 18:58Z) · choco = 0.8.0이 아직 "Pending automated review"(Scan Testing 대기)라 guard가 건너뜀(T-435 · nupkg 0.8.1 = 워크플로 아티팩트) → 0.8.0 승인 뒤 `channels=choco` 수동 dispatch · Homebrew 9f17d87 · pkg.sosomlab.com APT·RPM 0.8.1 ✓ · [journal 11-15 §6](journal/2026-11-15.md)
 
 ### 5-4. 남은 확인
 
