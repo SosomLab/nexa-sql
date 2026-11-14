@@ -2201,7 +2201,10 @@ impl AiView {
             .sum();
         self.content_h = total + self.s(8.0) + if info.busy { line_h } else { 0 };
         let max_scroll = (self.content_h - self.transcript.h).max(0);
-        if self.stick_bottom || (info.busy && self.scroll_y >= max_scroll - line_h * 2) {
+        // ★ 바닥 따라가기는 `stick_bottom` 하나로만(사용자 11-14 "답하는 중 천천히 위로 굴리면 전혀 올라가지 않는다"): 종전에는
+        //   답하는 중이면 바닥에서 두 줄 안쪽을 다시 바닥으로 끌어내려, 한 칸씩(두 줄 미만) 올리는 휠이 그릴 때마다 되돌려졌다
+        //   (빠르게 굴리면 두 줄을 넘어 빠져나감). 휠·끌기로 바닥을 떠나면 붙임이 풀리고, 바닥까지 내려오면 다시 붙는다.
+        if self.stick_bottom {
             self.scroll_y = max_scroll;
         }
         self.scroll_y = self.scroll_y.clamp(0, max_scroll);
