@@ -164,6 +164,7 @@
 | ★ Import 창 살펴보기 스레드 `import-inspect`(11-04 · T-8 ⑥ · [127 §2-2](127-data-import-design.md)) | 원료 옵션 변경당 1(끝나면 종료 · 뒤늦은 응답은 순번으로 버림) · 읽는 양 = 표본 `import.sample_rows`(1000 · 0 = 전부)행 + 미리보기 `import.preview_rows`(100) · xlsx는 시트 범위를 메모리에(셀 수 비례) · JSON 배열은 파일 전체(`import.json_max_mb` 256 상한 · 초과 = 거절 + JSON Lines 안내 — 배선 = ⑦) | `import.sample_rows` `import.preview_rows` `import.json_max_mb` | 1000 · 100 | 1000 · 100 | 200 · 50 | `app/import.rs::spawn_inspect` · `nsql_run::bulk::inspect_source` |
 | ★ 로컬 히스토리 디스크 쓰기(C-1 · 11-06 · [19 §3](19-compare-git-and-object-history.md) · [journal 11-06 §3](journal/2026-11-06.md)) | 파일 저장 때 1회(`save_to` 성공 뒤 · 새 스레드 0 · 내용 해시가 직전 시점과 같으면 쓰지 않음) · 위치 `NSQL_HOME/history/files/<fnv64>/<stamp>_<tag>_<hash>.sql` · 항목당 `history.max_per_item`(50)개 · 전체 `history.max_mb`(200 MB) 넘으면 오래된 것부터 정리 · git 거터는 기존 `gitstat` 감시 스레드의 HEAD 본문을 둘째 기준선으로 쓰므로 새 부하원 아님(끄기 = `editor.git_gutter`) | `history.enabled` · `history.max_per_item` · `history.max_mb` | on · 50 · 200 | on · 50 · 200 | on · 50 · 200 | `history.rs` · `app/history.rs` `history_on_save` |
 | ★ AI CLI 미리 띄우기(11-12 · 86eeac21 · [110 §16-6](110-ai-assistant-plugin-design.md)) | CLI 모드 세션에서 작성 상자에 글을 치기 시작하면 CLI 프로세스(claude 또는 codex) 1개를 미리 띄움 · 세션당 1회 · 이미 살아 있거나 턴 중이면 안 띄움 · 요청은 보내지 않음(사용량 0) · 모의(`NSQL_AI_MOCK`)는 제외 | `ai.prewarm`(기본 on · off = 보낼 때 띄움) | on | on | on | `app/ai.rs` `ai_prewarm` |
+| ★ AI 자식 종료 대기 스레드 `ai-reap`(11-14 · a80ed442) | ■ · 세션 전환으로 `Host::stop()`이 CLI 자식(claude·codex)을 끊을 때 1개 · 일회성(`kill`은 UI 스레드에서 동기 · `wait()`만 이 스레드로 넘겨 UI 멈춤 제거) · 끝나면 종료 · 상주 0 | 없음(구조 · 자식이 있을 때만 생긴다) | — | — | — | `ai/host.rs` `stop` |
 
 ### 3-4. GFX(화면 · "GPU")
 
@@ -213,6 +214,7 @@
 | 결과 셋 | **편집기 탭당 그리드 1**(13차 · `grid_stash`) · 각 ≤ `grid.max_rows` | `grid.max_rows` | 다음 실행 · 탭 닫힘(즉시) |
 | 로그 창 | (신설 상한) | `log.max_lines` | 초과 시 앞에서 버림 |
 | 실행 취소 | (신설 상한) | `editor.undo_max` | 탭 닫힘 |
+| ★ AI 대화 줄 배치 캐시(11-14 · a80ed442 · [110](110-ai-assistant-plugin-design.md)) — 세션별 배치 `stash` + 메시지별 코드 블록 `mcodes` | 세션 `ai.layout_cache_sessions`개(기본 6 · 0~32) · 한 세션 = 그 대화의 배치 줄 전부(협업 실측 2000메시지 첫 배치 ≈52 ms · Debug) | `ai.layout_cache_sessions`(0 = 끔 · 돌아올 때마다 다시 배치) | 상한 초과 = 오래된 세션부터 버림 · 프로세스 종료 |
 | 최근 파일·폴더 | `file.recent` 개수 | 기존(10) | — |
 | 탐색기 노드 | 펼친 것만 | — | 접기/해제 |
 | 폰트 mmap | 파일 기반(공유 페이지) | — | 26 §7 착시 주의 |
