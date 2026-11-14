@@ -954,6 +954,11 @@ pub(crate) enum AiEvent {
         input: String,
         reply: std::sync::mpsc::Sender<ToolReply>,
     },
+    /// ★ 진행 중 턴에 대기 요청 반영(사용자 11-15 · API 모드): 도구 결과를 돌려보내기 직전에 호스트 스레드가 "대기 풀에 이
+    /// 턴에 붙일 요청이 있는가"를 UI 스레드에 묻는다 — UI는 덧붙일 content 블록(없으면 빈 목록)을 `reply`로 준다.
+    SteerRequest {
+        reply: std::sync::mpsc::Sender<Vec<nsql_settings::json::Json>>,
+    },
     /// 승인 요청(쓰기 도구 · CLI 권한 프롬프트) — UI가 카드로 묻고 `reply`로 답한다.
     Approval {
         id: String,

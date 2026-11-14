@@ -777,6 +777,13 @@ impl Host {
                             "{\"key\":\"editor.word_wrap\"}".to_string(),
                         )]
                     });
+                // 도구 호출 전 지연(V1 · `NSQL_AI_MOCK_TOOL_DELAY_MS`): 턴이 도는 동안 요청을 하나 더 보낼 틈을 만든다.
+                if let Some(ms) = std::env::var("NSQL_AI_MOCK_TOOL_DELAY_MS")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(ms.min(10_000)));
+                }
                 for (k, (name, input)) in calls.into_iter().enumerate() {
                     let id = format!("m{}", k + 1);
                     let (rtx, rrx) = mpsc::channel();
@@ -806,6 +813,17 @@ impl Host {
                     });
                     if std::env::var_os("NSQL_AI_MOCK_TOOL").is_some() {
                         send(AiEvent::TextDelta(format!("\n→ {name}: {head}")));
+                    }
+                    // 진행 중 턴 반영(V1 · API 턴 루프와 같은 자리): 도구 결과 뒤에 대기 요청을 묻고, 받았으면 블록 수를 글로.
+                    let (stx, srx) = mpsc::channel();
+                    send(AiEvent::SteerRequest { reply: stx });
+                    if let Ok(blocks) = srx.recv_timeout(std::time::Duration::from_secs(5)) {
+                        if !blocks.is_empty() {
+                            send(AiEvent::TextDelta(format!(
+                                "\n[steered {} block(s)]",
+                                blocks.len()
+                            )));
+                        }
                     }
                 }
                 send(AiEvent::TextDelta(" done.".into()));

@@ -773,8 +773,13 @@ impl App {
                 _ => None,
             })
             .collect();
+        // user가 연달아 오면 한 메시지로 합친다(진행 중 턴에 반영한 요청 · 11-15).
+        let mut merged: Vec<Json> = Vec::new();
+        for m in msgs {
+            ai::claude_api::push_merged(&mut merged, m);
+        }
         // 마지막이 user면(답이 없었다) 떼어 낸다 — 다음 보내기의 user와 연속이 되지 않게.
-        let mut msgs = msgs;
+        let mut msgs = merged;
         while msgs.last().is_some_and(|m| ai::jstr(m, "role") == "user") {
             msgs.pop();
         }
@@ -1749,7 +1754,17 @@ impl App {
                 let (sid, atts) = (s.id.clone(), std::mem::take(&mut s.attachments));
                 self.ai.send_queue.push_back((sid, text.to_string(), atts));
             }
-            self.ai.status = tf(Msg::AiQueuedNote, &[&self.ai.send_queue.len().to_string()]);
+            // 안내: 진행 중 반영이 되는 턴(API 모드 · 설정 `ai.steer`)이면 "다음 단계에 반영"으로.
+            let steer = self.settings.flag("ai.steer")
+                && self.ai_run().is_some_and(|s| s.mode == Mode::Api);
+            self.ai.status = tf(
+                if steer {
+                    Msg::AiQueuedSteerNote
+                } else {
+                    Msg::AiQueuedNote
+                },
+                &[&self.ai.send_queue.len().to_string()],
+            );
             self.redraw();
             return;
         }
@@ -2417,8 +2432,54 @@ impl App {
         changed
     }
 
+    /// ★ 진행 중 턴에 대기 요청 반영(사용자 11-15 "대기 풀에 등록된 내용이 진행 중에도 순차 반영되게" · API 모드):
+    /// 호스트 스레드가 도구 결과를 돌려보내기 직전에 묻는다 → 이 턴이 도는 세션의 대기 요청을 **순서대로 전부** 넘기고, 넘긴
+    /// 것만 대기 풀에서 빼 대본에 사용자 글로 올린다. 글은 대기 풀에 넣을 때 이미 비밀 검사(`contains_secret`)를 지났고, 이
+    /// 글로 모델이 내는 도구 호출은 종전 관문(승인 카드 · 쓰기 가드 · 행 동의)을 그대로 지난다. 설정 `ai.steer`=off면 종전처럼
+    /// 턴이 끝난 뒤 보낸다.
+    fn ai_steer(&mut self, reply: std::sync::mpsc::Sender<Vec<Json>>) {
+        let run = self.ai_run().map(|s| s.id.clone());
+        let idx: Vec<usize> = match &run {
+            Some(r) if self.settings.flag("ai.steer") => self
+                .ai
+                .send_queue
+                .iter()
+                .enumerate()
+                .filter(|(_, (sid, _, _))| sid == r)
+                .map(|(i, _)| i)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut blocks: Vec<Json> = Vec::new();
+        for &i in &idx {
+            if let Some((_, text, atts)) = self.ai.send_queue.get(i) {
+                blocks.extend(ai::claude_api::steer_blocks(text, atts));
+            }
+        }
+        // 받는 쪽이 사라졌으면(턴이 이미 끝남) 대기 풀에 그대로 둔다 — 턴 뒤 보내기가 가져간다.
+        if reply.send(blocks).is_err() || idx.is_empty() {
+            return;
+        }
+        let mut taken = Vec::new();
+        for &i in idx.iter().rev() {
+            if let Some(x) = self.ai.send_queue.remove(i) {
+                taken.push(x);
+            }
+        }
+        let n = taken.len();
+        for (_, text, atts) in taken.into_iter().rev() {
+            let mut um = ChatMsg::new(Kind::User, &text);
+            um.attachments = atts.iter().map(|a| a.label().to_string()).collect();
+            self.ai_push(um);
+        }
+        self.ai.status = tf(Msg::AiSteeredNote, &[&n.to_string()]);
+        self.ai_view.reset_scroll_to_bottom();
+        self.redraw();
+    }
+
     fn ai_handle(&mut self, ev: AiEvent) {
         match ev {
+            AiEvent::SteerRequest { reply } => self.ai_steer(reply),
             AiEvent::Started { cli_session, note } => {
                 if let Some(s) = self.ai_run_mut() {
                     if cli_session.is_some() {

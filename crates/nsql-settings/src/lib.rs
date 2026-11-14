@@ -6549,6 +6549,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "ai.steer",
+        cat: Msg::CatAi,
+        label: Msg::LblAiSteer,
+        desc: Msg::DescAiSteer,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "ai.prompt_explain",
         cat: Msg::CatAi,
         label: Msg::LblAiPromptExplain,

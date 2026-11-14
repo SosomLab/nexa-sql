@@ -137,6 +137,51 @@ pub(crate) fn user_message(text: &str, attachments: &[Attachment]) -> Json {
 }
 
 /// 도구 결과 메시지(한 턴의 도구 호출 전부).
+/// 메시지의 content 블록 배열 끝에 블록을 덧붙인다(배열이 아니면 그대로 둔다).
+pub(crate) fn append_content(msg: &mut Json, blocks: Vec<Json>) {
+    if blocks.is_empty() {
+        return;
+    }
+    if let Json::Obj(fields) = msg {
+        if let Some((_, Json::Arr(content))) = fields.iter_mut().find(|(k, _)| k == "content") {
+            content.extend(blocks);
+        }
+    }
+}
+
+/// 진행 중 턴에 덧붙일 사용자 요청의 content 블록(첨부 블록 + 글) — [`user_message`]와 같은 모양.
+pub(crate) fn steer_blocks(text: &str, attachments: &[super::Attachment]) -> Vec<Json> {
+    match user_message(text, attachments) {
+        Json::Obj(fields) => fields
+            .into_iter()
+            .find_map(|(k, v)| match v {
+                Json::Arr(a) if k == "content" => Some(a),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// 대화 재구성: user 메시지가 연달아 오면(진행 중 턴에 반영한 요청 · 답 없이 끝난 요청) 앞 메시지에 합친다.
+pub(crate) fn push_merged(msgs: &mut Vec<Json>, m: Json) {
+    let is_user = |j: &Json| super::jstr(j, "role") == "user";
+    if is_user(&m) && msgs.last().is_some_and(is_user) {
+        if let (Some(last), Json::Obj(fields)) = (msgs.last_mut(), m) {
+            let blocks = fields
+                .into_iter()
+                .find_map(|(k, v)| match v {
+                    Json::Arr(a) if k == "content" => Some(a),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            append_content(last, blocks);
+        }
+        return;
+    }
+    msgs.push(m);
+}
+
 pub(crate) fn tool_result_message(results: &[(String, ToolReply)]) -> Json {
     Json::Obj(vec![
         ("role".into(), Json::Str("user".into())),
@@ -698,7 +743,20 @@ pub(crate) fn run_turn(
             });
             results.push((id, reply));
         }
-        messages.push(tool_result_message(&results));
+        let mut tr = tool_result_message(&results);
+        // ★ 진행 중 턴에 대기 요청 반영(사용자 11-15 "대기 풀의 요청이 진행 중에도 순차 반영되게"): 도구 결과를 돌려보내는 이
+        //   user 메시지 **끝에**(API 규칙 = tool_result 블록이 먼저) 대기 중인 사용자 글을 덧붙인다 → 모델이 다음 단계부터 읽는다.
+        //   UI가 답하지 않고 사건을 버리면(창 닫힘 등) 보낸 쪽이 사라져 바로 풀린다 — 시간 제한을 두지 않는 까닭 = 늦게 온 답을
+        //   놓치면 UI는 반영했다고 알고 요청은 사라진다.
+        if !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let (stx, srx) = mpsc::channel();
+            if tx.send(AiEvent::SteerRequest { reply: stx }).is_ok() {
+                if let Ok(blocks) = srx.recv() {
+                    append_content(&mut tr, blocks);
+                }
+            }
+        }
+        messages.push(tr);
         if round == 63 {
             let _ = tx.send(AiEvent::Error("too many tool rounds".into()));
         }
@@ -711,6 +769,46 @@ pub(crate) fn run_turn(
 
 #[cfg(test)]
 mod tests {
+    /// 진행 중 턴 반영(11-15): 덧붙인 사용자 글은 tool_result 블록 **뒤에** 오고(API 규칙) · 끊긴 호출 보정과 함께 쓸 수 있으며 ·
+    /// 대화 재구성에서 연달아 온 user는 한 메시지로 합쳐진다.
+    #[test]
+    fn steer_blocks_follow_tool_results_and_users_merge() {
+        let mut tr = tool_result_message(&[(
+            "t1".to_string(),
+            ToolReply {
+                output: "ok".into(),
+                ok: true,
+            },
+        )]);
+        append_content(&mut tr, steer_blocks("also check indexes", &[]));
+        append_content(&mut tr, Vec::new());
+        let dump = json_dump(&tr);
+        let (a, b) = (
+            dump.find("tool_result").expect("tool_result"),
+            dump.find("also check indexes").expect("steer text"),
+        );
+        assert!(a < b, "{dump}");
+        assert_eq!(dump.matches("\"type\"").count(), 2, "{dump}");
+        let mut msgs: Vec<Json> = Vec::new();
+        push_merged(&mut msgs, user_message("first", &[]));
+        push_merged(&mut msgs, user_message("second", &[]));
+        assert_eq!(msgs.len(), 1);
+        let d = json_dump(&msgs[0]);
+        assert!(
+            d.find("first").expect("first") < d.find("second").expect("second"),
+            "{d}"
+        );
+        push_merged(
+            &mut msgs,
+            Json::Obj(vec![
+                ("role".into(), Json::Str("assistant".into())),
+                ("content".into(), Json::Arr(Vec::new())),
+            ]),
+        );
+        push_merged(&mut msgs, user_message("third", &[]));
+        assert_eq!(msgs.len(), 3);
+    }
+
     #[test]
     fn interrupted_tool_calls_are_repaired_before_sending() {
         use super::*;
