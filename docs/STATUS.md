@@ -20,6 +20,8 @@
 >
 > ★ **11-11 비밀 변수 이름 규칙 설정화 + 👁 보기**([journal 11-10 §12](journal/2026-11-10.md) · f4483ecd · D-480) = `vars.secret_names`(기본 PASS,PWD,SECRET,TOKEN) · `vars.reveal_secret`(누르는 동안만) · V2 557/0 · CLI V1 3가지 ✓ · 👁 아이콘 캡처 ✓ · **사용자 실기 ✓**(비밀 행 · 👁 · 키워드 설정) · 관찰 = T-474(정정 = 실행 지연 정황)
 >
+> ★ **11-15 새벽 · 접기(word-wrap)로 넘어간 조각의 구문 색 유지**([journal 11-15 §1](journal/2026-11-15.md) · **nexa-ui** 3e8e33e · 미push) = 줄 주석·문자열·블록 주석·미니맵 ✓ · 접기 off 회귀 0 · V2 nexa-ui 692/0/6 · nexa-sql 631/0/6 · check-3os 두 저장소 ✓ · 통합 47/0/1 · Debug PID 52472 · push = 사용자 요청 때(nexa-ui 먼저)
+>
 > ★ **11-14 밤 · 운영 2단 확인 버튼별 · CONNTYPE 2단 · 상태줄 "완료" · AI 변경 실행 네 곳 · "AI" 아이콘 · AI 탭·세션 전환 멈춤 개선**([journal 11-14 §17~§18](journal/2026-11-14.md) · 2dd2cacf · 5d2914fe · 2d654aab · 6b83465c · 565d7ffc · 9dec9a31 · 7a7c3a36 · a80ed442) = V2 단위 631/0/6 · check-3os --quick ✓ · 통합(target/it) 47/0/1 · V1 ✓(2000메시지 첫 배치 ≈52 ms · 되돌아옴 다시 배치 0) · 결정 = `ai.max_tokens` 32000 · 멈춤 A~D 승인 · E 보류 · F 제외 · 폴더 정리 ≈457 MB · Debug PID 13732
 >
 > ★ **11-14 07:54Z · v0.8.0 공개(Latest) + drivers-v0.1.12(pre-release)**([journal 11-14 §16](journal/2026-11-14.md) · fe274f35 · release 43571927690 · drivers 43570757179 · 봇 b54282ba) = 자산 6(lite) · winget 첫 자동 갱신 PR #480015 · choco 0.8.0 push(검수 대기) · Homebrew 4b280617 · pkg.sosomlab.com APT·RPM 0.8.0 ✓
