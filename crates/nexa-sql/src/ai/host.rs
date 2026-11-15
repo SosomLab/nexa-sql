@@ -91,7 +91,9 @@ pub(crate) enum Running {
         effort: String,
         system: String,
     },
-    Mock,
+    Mock {
+        stop: Arc<AtomicBool>,
+    },
 }
 
 pub(crate) struct CodexLaunch {
@@ -189,13 +191,54 @@ pub(crate) fn codex_list_models(
 /// 자식 프로세스 끝내기 — 종료 신호는 바로 보내고 **종료 대기는 다른 스레드에서**(11-14 "세션을 고를 때 잠시 멈춤"):
 /// `kill` 뒤 `wait`는 핸들 정리·백신 검사로 수십~수백 ms 걸릴 수 있는데 종전에는 UI 스레드가 기다렸다(세션 전환·새 세션·모드
 /// 변경마다). 스레드를 못 만들면 기다리지 않고 놓는다(프로세스는 이미 종료 신호를 받았다).
+///
+/// ★ 손자까지(11-15 · 가짜 CLI 재현): CLI가 띄운 셸·긴 명령은 CLI만 죽이면 고아로 남았다(세션 전환·■·앱 종료 뒤에도 생존) →
+/// Unix는 자식을 자기 프로세스 그룹의 머리로 띄우고([`own_group`]) 여기서 **그룹째** 끝낸다. Windows는 종전대로(작업 개체 = 후속).
 fn reap(mut child: std::process::Child) {
+    kill_group(&child);
     let _ = child.kill();
     let _ = std::thread::Builder::new()
         .name("ai-reap".into())
         .spawn(move || {
             let _ = child.wait();
         });
+}
+
+/// 자식을 **자기 프로세스 그룹의 머리**로 띄운다(Unix · pgid = 자식 pid) — [`reap`]이 그룹째 끝낼 수 있게. 다른 OS는 그대로.
+fn own_group(cmd: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = cmd;
+    }
+}
+
+/// [`own_group`]으로 띄운 자식의 그룹 전체에 종료 신호(Unix `kill(-pgid, SIGKILL)`). 아직 `wait`하지 않은 자식만 넘긴다
+/// (pid가 재사용되지 않는 동안 · 그룹이 이미 없으면 ESRCH로 끝). pid 0·1은 보내지 않는다(0 = 내 그룹 · -1 = 전부).
+fn kill_group(child: &std::process::Child) {
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        const SIGKILL: i32 = 9;
+        if let Ok(pid) = i32::try_from(child.id()) {
+            if pid > 1 {
+                // SAFETY: 정수 둘을 받는 libc `kill` — 메모리를 건드리지 않는다. 대상은 우리가 그룹 머리로 띄운 자식의 그룹뿐.
+                unsafe {
+                    kill(-pid, SIGKILL);
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child;
+    }
 }
 
 /// 세션 하나의 호스트 상태(UI 스레드 소유).
@@ -273,6 +316,7 @@ impl Host {
         use super::codex;
         self.stop();
         let mut cmd = nsql_ext::net::quiet_command(&l.program);
+        own_group(&mut cmd);
         cmd.args(&l.prefix)
             .arg("app-server")
             .stdin(std::process::Stdio::piped())
@@ -570,6 +614,7 @@ impl Host {
     pub(crate) fn start_cli(&mut self, l: CliLaunch) -> Result<(), String> {
         self.stop();
         let mut cmd = nsql_ext::net::quiet_command(&l.program);
+        own_group(&mut cmd);
         cmd.args(&l.prefix)
             .args(&l.args)
             .stdin(std::process::Stdio::piped())
@@ -666,7 +711,9 @@ impl Host {
         let gen = self.api_gen.clone();
         let my_gen = match self.api_messages.lock() {
             Ok(mut m) => {
-                m.push(claude_api::user_message(text, attachments));
+                // ★ ■로 끊긴 턴은 꼬리가 user로 남는다(받던 답을 버림 · tool_result까지 넣고 멈춤) — 그대로 붙이면 user가
+                //   연달아 두 개인 본문이 된다(11-15 · 대화 재구성 경로와 같은 병합으로 한 메시지로).
+                claude_api::push_merged(&mut m, claude_api::user_message(text, attachments));
                 gen.fetch_add(1, Ordering::Relaxed) + 1
             }
             Err(_) => gen.fetch_add(1, Ordering::Relaxed) + 1,
@@ -758,6 +805,9 @@ impl Host {
 
     /// 각본 상대(헤드리스 V1 · `NSQL_AI_MOCK=1`): 글 조각 → 도구 요청(get_setting) → 결과 → 끝.
     pub(crate) fn start_mock(&mut self, text: &str, prices: String, model: String) {
+        // ■(11-15): API 턴과 같은 깃발 — 섰으면 다음 확인 자리에서 `cancelled`로 끝내고 늦은 사건을 내지 않는다.
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
         let tx = self.tx.clone();
         let wake = self.wake.clone();
         let text = text.to_string();
@@ -767,6 +817,17 @@ impl Host {
                 let send = |e: AiEvent| {
                     let _ = tx.send(e);
                     wake();
+                };
+                // 멈췄으면 끝 사건 하나만 내고 참(호출한 쪽이 바로 return).
+                let cancelled = || {
+                    if !stopped.load(Ordering::Relaxed) {
+                        return false;
+                    }
+                    send(AiEvent::Done {
+                        stop: "cancelled".into(),
+                        ms: 0,
+                    });
+                    true
                 };
                 send(AiEvent::Started {
                     cli_session: Some("mock".into()),
@@ -800,9 +861,17 @@ impl Host {
                     .ok()
                     .and_then(|v| v.trim().parse::<u64>().ok())
                 {
-                    std::thread::sleep(std::time::Duration::from_millis(ms.min(10_000)));
+                    // 잘게 자서 ■를 50 ms 안에 본다.
+                    let until = std::time::Instant::now()
+                        + std::time::Duration::from_millis(ms.min(10_000));
+                    while std::time::Instant::now() < until && !stopped.load(Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
                 }
                 for (k, (name, input)) in calls.into_iter().enumerate() {
+                    if cancelled() {
+                        return;
+                    }
                     let id = format!("m{}", k + 1);
                     let (rtx, rrx) = mpsc::channel();
                     send(AiEvent::ToolCall {
@@ -822,6 +891,9 @@ impl Host {
                             output: "timeout".into(),
                             ok: false,
                         });
+                    if cancelled() {
+                        return;
+                    }
                     let head: String = r.output.chars().take(200).collect();
                     send(AiEvent::ToolResult {
                         id,
@@ -844,6 +916,9 @@ impl Host {
                         }
                     }
                 }
+                if cancelled() {
+                    return;
+                }
                 send(AiEvent::TextDelta(" done.".into()));
                 send(AiEvent::Usage(Usage {
                     input: 10,
@@ -858,7 +933,7 @@ impl Host {
                     ms: 42,
                 });
             });
-        self.running = Running::Mock;
+        self.running = Running::Mock { stop };
         self.busy = true;
     }
 
@@ -874,7 +949,8 @@ impl Host {
                 drop(writer);
                 reap(child);
             }
-            Running::Idle | Running::Mock => {}
+            Running::Mock { stop } => stop.store(true, Ordering::Relaxed),
+            Running::Idle => {}
         }
         self.busy = false;
     }

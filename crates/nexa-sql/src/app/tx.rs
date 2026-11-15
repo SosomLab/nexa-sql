@@ -463,9 +463,36 @@ impl App {
         self.sess.tx_blocker_who.clear();
         self.sess.tx_pending.clear();
         self.sess.tx_read = false;
+        self.sess.tx_settled = false;
         self.sess.tx_dirty = false;
         self.sess.tx_stale_logged = false;
         self.sync_tx_ui();
+    }
+
+    /// ★ 호출 뒤 확인이 "미커밋 변경 없음"으로 나왔다(11-15 · `RunEvent::CallTxClean` · 설정 `tx.call_probe`) — 루틴이 안에서
+    /// COMMIT/ROLLBACK했거나 바꾼 것이 없다. 앞서 대기 중이던 문장도 서버에서는 이미 끝났으므로 대기 표시를 걷고(트랜잭션 로그 =
+    /// "호출 안에서 끝남"), 상태줄·로그로 알리고, 다음 서버 문장까지 Rollback을 비활성으로 둔다. 운영 보류 중에는 오지 않는다(러너).
+    pub(crate) fn tx_on_call_clean(&mut self, index: usize) {
+        let _ = index;
+        if self.settings.flag("session.autocommit") && self.sess.tx_pending.is_empty() {
+            return;
+        }
+        let open = !self.sess.tx_pending.is_empty() || self.sess.tx_dirty || self.sess.tx_read;
+        if open {
+            self.tx_close(TxOutcome::EndedInCall);
+        }
+        self.sess.tx_settled = true;
+        let msg = t(Msg::StTxCallClean).to_string();
+        self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+        self.sess.status = msg;
+        self.sync_tx_ui();
+    }
+
+    /// 서버로 문장이 나간다 — "미커밋 변경 없음" 확인은 여기까지만 유효하다(Rollback 다시 활성).
+    pub(crate) fn tx_unsettle(&mut self) {
+        if std::mem::take(&mut self.sess.tx_settled) {
+            self.sync_tx_ui();
+        }
     }
 
     /// 수동 모드의 조회 — 읽기 트랜잭션 표시(배지 없음 · 초록 · docs/44 §5).
@@ -1033,8 +1060,28 @@ impl App {
         // 툴바 Commit/Rollback = 지금 세션에 대기 문장이 있고 **세션이 한가할 때만**(통제 · docs/52 §3) · 색은 대기 여부 그대로.
         let open = self.gate().commit;
         let mut inv = Invalidations::default();
+        // ★ Rollback = 서버가 "미커밋 변경 없음"을 확인해 준 동안은 비활성(11-15 · 호출 안에서 끝난 트랜잭션 · 순수 판정).
+        let settled = self.sess.tx_settled;
+        let rollback_on = sessions::rollback_enabled(open, settled, self.sess.tx_pending.len());
+        if let Some(gid) = self.tool_dock.group_of("run.rollback").map(str::to_string) {
+            if let Some(bar) = self.tool_dock.bar_mut(&gid) {
+                bar.set_item_tip(
+                    "run.rollback",
+                    t(if open && !rollback_on {
+                        Msg::TipTxRollbackNone
+                    } else {
+                        Msg::TipRollback
+                    }),
+                );
+            }
+        }
         for id in ["run.commit", "run.rollback"] {
-            self.tool_dock.set_item_enabled(id, open, &mut inv);
+            let on = if id == "run.rollback" {
+                rollback_on
+            } else {
+                open
+            };
+            self.tool_dock.set_item_enabled(id, on, &mut inv);
             self.tool_dock.set_item_tone(
                 id,
                 if !has {

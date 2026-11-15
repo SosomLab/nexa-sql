@@ -51,6 +51,8 @@ pub enum TxOutcome {
     Lost,
     /// 변경 없는 읽기 트랜잭션을 앱이 끝냄(docs/56 L1 · `tx.read_end`).
     ReadEnded,
+    /// 호출 문장(CALL·EXEC·블록)이 끝난 뒤 서버에 미커밋 변경이 없었다 — 루틴이 안에서 끝냈다(11-15 · `tx.call_probe`).
+    EndedInCall,
     /// 유휴 미커밋을 앱이 자동으로 롤백함(docs/56 L2 · `tx.idle_action = rollback` · 유휴 분).
     AutoRolledBack(u64),
     /// 유휴 미커밋을 앱이 자동으로 커밋함(`tx.idle_action = commit`).

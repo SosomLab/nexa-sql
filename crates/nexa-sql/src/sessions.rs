@@ -108,6 +108,9 @@ pub(crate) struct Sess {
     pub tx_dirty: bool,
     pub tx_pending: Vec<TxItem>,
     pub tx_read: bool,
+    /// ★ 서버가 "미커밋 변경 없음"을 확인해 줬다(11-15 · 호출 뒤 확인 `RunEvent::CallTxClean`) — 다음 서버 문장이 나가거나
+    /// 트랜잭션 상태가 정리될 때까지 Rollback을 비활성으로 둔다(되돌릴 것이 없다는 것을 버튼이 말한다).
+    pub tx_settled: bool,
     pub tx_stale_logged: bool,
     /// 이 세션에서 마지막으로 문장을 실행한 시각 — 유휴 미커밋 판정의 시계(docs/56 L2 · "그 세션의 문장 실행만" = 활동).
     pub last_exec: Instant,
@@ -242,6 +245,7 @@ impl Sess {
             tx_dirty: false,
             tx_pending: Vec::new(),
             tx_read: false,
+            tx_settled: false,
             tx_stale_logged: false,
             last_exec: Instant::now(),
             tx_warned_at: None,
@@ -882,6 +886,13 @@ pub(crate) fn hold_blocks_run(held: bool, same_tab: bool, has_change: bool, has_
 /// ★ 트랜잭션 경계 가드(순수 · D-304 · `tx.ddl_commit_guard` · 운영은 늘 켬): 열린 변경 트랜잭션 + 암묵 커밋 문장 = 실행 전 차단.
 pub(crate) fn ddl_guard_blocks(guard_on: bool, tx_open: bool, implicit: bool) -> bool {
     guard_on && tx_open && implicit
+}
+
+/// ★ 툴바 Rollback 활성(순수 · 11-15 · MC/DC 시험 `rollback_enabled_mcdc`): 문지기가 커밋 계열을 허용하고(`gate_commit`),
+///   "서버에 미커밋 변경 없음"이 확인된 상태(`settled`)가 아니거나 그 뒤에 대기 문장이 다시 생겼을 때(`pending > 0`).
+#[must_use]
+pub(crate) const fn rollback_enabled(gate_commit: bool, settled: bool, pending: usize) -> bool {
+    gate_commit && (!settled || pending > 0)
 }
 
 /// ★ 상단 Commit 빨간 2단(순수 · D-300): 무장 뒤 경과가 확인 시간 안이면 두 번째 클릭 = 커밋.
@@ -2650,6 +2661,21 @@ mod hold_tests {
         assert!(!ddl_guard_blocks(false, true, true));
         assert!(!ddl_guard_blocks(true, false, true));
         assert!(!ddl_guard_blocks(true, true, false));
+    }
+
+    #[test]
+    /// Rollback 활성 MC/DC — 조건 셋(문지기 · 확인됨 · 대기 수)이 각각 홀로 결과를 뒤집는 쌍.
+    fn rollback_enabled_mcdc() {
+        // 기준: 문지기 허용 · 확인 안 됨 · 대기 0 = 켜짐(종전 동작).
+        assert!(rollback_enabled(true, false, 0));
+        // 문지기만 뒤집음 → 꺼짐.
+        assert!(!rollback_enabled(false, false, 0));
+        // 확인됨만 뒤집음 → 꺼짐(되돌릴 것 없음).
+        assert!(!rollback_enabled(true, true, 0));
+        // 그 상태에서 대기 수만 뒤집음 → 켜짐(확인 뒤 새 변경).
+        assert!(rollback_enabled(true, true, 1));
+        // 문지기가 막으면 나머지와 무관.
+        assert!(!rollback_enabled(false, true, 1));
     }
 
     #[test]

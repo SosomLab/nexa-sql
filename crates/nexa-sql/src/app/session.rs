@@ -708,6 +708,7 @@ impl App {
         let cur = self.sess.connected || self.sess.busy;
         self.sync_disconnect_btn(cur);
         self.sync_tab_conn_item(cur);
+        self.ai_sync_side_item();
     }
 
     /// ★ 툴바 "탭 연결정보"(사용자 09-28): 지금 탭의 서버 = 프로필 이름 > 계정@호스트 · 미연결 = "연결 없음" · 색 = 연결됨 초록 · 끊김 빨강.

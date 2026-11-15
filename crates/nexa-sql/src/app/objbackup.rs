@@ -213,8 +213,32 @@ pub(crate) fn backup_targets(
 }
 
 /// "그 객체가 없다"로 읽히는 DDL 생성 오류(새 객체 · 이미 없는 객체 = 백업할 원본 없음 → 건너뜀).
+///
+/// ★ 환경 오류는 "없다"가 아니다(11-15): `ODBC driver '…' not found` · `metadata not available (not connected)` ·
+/// `role "app" does not exist` 같은 글이 부분 문자열로 걸리면 **원본이 있는데 백업 없이** 실행으로 넘어간다 → 접속·드라이버·
+/// 계정·권한을 말하는 글은 먼저 걸러 백업 실패로 남긴다(운영 = 실행 막음 · 그 밖 = 설정대로).
 pub(crate) fn looks_missing(e: &str) -> bool {
     let l = e.to_lowercase();
+    if [
+        "driver",
+        "not connected",
+        "connection",
+        "connect ",
+        "timeout",
+        "timed out",
+        "role \"",
+        "login",
+        "permission",
+        "privilege",
+        "access denied",
+        "database \"",
+        "library",
+    ]
+    .iter()
+    .any(|n| l.contains(n))
+    {
+        return false;
+    }
     [
         "not found",
         "not available",
@@ -745,5 +769,13 @@ mod tests {
         assert!(looks_missing("main.no_such_t: DDL not available for Table"));
         assert!(!looks_missing("ORA-12170: TNS:Connect timeout occurred"));
         assert!(!looks_missing("connection reset"));
+        // 환경 오류(11-15) — 객체가 없다는 뜻이 아니다.
+        assert!(!looks_missing("ODBC driver 'PostgreSQL Unicode' not found"));
+        assert!(!looks_missing("metadata not available (not connected)"));
+        assert!(!looks_missing("FATAL: role \"app\" does not exist"));
+        assert!(!looks_missing("FATAL: database \"appdb\" does not exist"));
+        assert!(!looks_missing("libclntsh.so: shared library not found"));
+        assert!(looks_missing("relation \"public.t\" does not exist"));
+        assert!(looks_missing("ORA-04043: object APP.P does not exist"));
     }
 }

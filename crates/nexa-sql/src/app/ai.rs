@@ -497,8 +497,21 @@ impl App {
             self.set_focus(Focus::Editor);
         }
         self.ai_sync_panel();
+        self.ai_sync_side_item();
         self.layout();
         self.redraw();
+    }
+
+    /// 툴바 `ai.side` 켜짐 표시(11-15) — 옆 창은 편집기 탭마다 따로 켜므로 토글·탭 전환 때 지금 탭의 상태로 맞춘다.
+    pub(crate) fn ai_sync_side_item(&mut self) {
+        let on = self.ai_side_on();
+        let mut inv = Invalidations::default();
+        if self.tool_dock.set_item_checked("ai.side", on, &mut inv) {
+            for f in &self.tool_floats {
+                f.redraw();
+            }
+            self.redraw();
+        }
     }
 
     /// 설정 `ai.enabled` 적용(활동 막대 항목 · 끄면 패널·호스트 닫기).
@@ -3641,11 +3654,20 @@ impl App {
                             if force {
                                 self.focus = Focus::Editor;
                             }
+                            let bk_before = self.objbk.is_some();
                             self.menu_action(&id);
                             if force && self.focus == Focus::Editor {
                                 self.focus = prev;
                             }
-                            ok(format!("ran {id}"))
+                            // ★ 실행 명령이 객체 백업으로 미뤄졌으면(11-15) "ran"이 아니다 — 문장은 백업이 끝난 뒤에 돌고,
+                            //   백업이 실패하면(운영) 돌지 않는다. 어시스턴트가 "실행됨"으로 읽지 않게 그대로 알린다.
+                            if !bk_before && self.objbk_just_started() {
+                                ok(format!(
+                                    "{id}: NOT executed yet - the app is backing up the affected object(s) first; the statement runs when the backup finishes (or is blocked if it fails). Check get_status / the result before telling the user it ran"
+                                ))
+                            } else {
+                                ok(format!("ran {id}"))
+                            }
                         }
                     }
                 } else {

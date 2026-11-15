@@ -102,6 +102,15 @@ impl App {
             if (self.ai.side_rect.w > 0) != want {
                 self.layout();
             }
+            // 툴바 `ai.side` 켜짐 표시도 같은 자리에서(11-15 · 협업 V1: `tab.next`로 돌아온 탭에서 꺼짐으로 그려짐) — 활성 탭이
+            //   바뀌는 길(탭 클릭 · tab.next/prev · 새 파일 · 열기)이 여럿이라 그리기 직전에 지금 탭의 상태로 맞춘다(같으면 일 없음).
+            let on = self.ai_side_on();
+            let mut inv = Invalidations::default();
+            if self.tool_dock.set_item_checked("ai.side", on, &mut inv) {
+                for f in &self.tool_floats {
+                    f.redraw();
+                }
+            }
         }
         let caret_on = !self.settings.flag("editor.caret_blink")
             || !self.main_active

@@ -5977,6 +5977,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(TX_READ_END_OPTS),
         default: "auto",
     },
+    // 호출 뒤 미커밋 확인(11-15 · 사용자 "안에서 커밋됨 안내 + Rollback 비활성"): 수동 모드 CALL·EXEC·블록 뒤 왕복 1회.
+    Entry {
+        key: "tx.call_probe",
+        cat: Msg::CatTxSafety,
+        label: Msg::LblTxCallProbe,
+        desc: Msg::DescTxCallProbe,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "tx.remind_min",
         cat: Msg::CatTxSafety,

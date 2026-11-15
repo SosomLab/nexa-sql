@@ -30,6 +30,9 @@ impl App {
                 },
             );
         }
+        if server {
+            self.tx_unsettle();
+        }
         let stmt = text.unwrap_or_else(|| {
             self.sess
                 .last_run_items

@@ -301,6 +301,12 @@ pub enum RunEvent {
         index: usize,
         deferred: bool,
     },
+    /// ★ 수동 커밋 모드에서 **호출 문장(CALL·EXEC·블록) 뒤 서버에 미커밋 변경이 없다**(11-15 · 설정 `tx.call_probe`) — 루틴이
+    /// 안에서 COMMIT/ROLLBACK했거나 아무것도 바꾸지 않았다. 앞서 대기 중이던 변경도 함께 끝난 것이므로 호스트는 대기 표시를
+    /// 걷고 "되돌릴 것이 없다"를 알린다(Rollback 비활성). 바로 뒤에 `ReadTxEnded`가 올 수 있다(깨끗한 트랜잭션 정리).
+    CallTxClean {
+        index: usize,
+    },
     /// DML/DDL 완료.
     Done {
         index: usize,
@@ -466,6 +472,7 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         }
         // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
         RunEvent::ReadTxEnded { .. }
+        | RunEvent::CallTxClean { .. }
         | RunEvent::Vars { .. }
         | RunEvent::InputNeeded { .. }
         | RunEvent::Binds { .. } => Vec::new(),
@@ -661,6 +668,11 @@ pub struct Runner {
     page_tail: Option<(String, usize, Vec<Value>)>,
     /// 읽기 트랜잭션 자동 종료(설정 `tx.read_end` · docs/56 L1).
     pub read_end: ReadEnd,
+    /// ★ 호출 뒤 미커밋 확인(설정 `tx.call_probe` · 기본 켬 · 11-15): 수동 모드에서 CALL·EXEC·블록이 끝나면 `Caps::strict_probe`로
+    /// "이 트랜잭션이 쓴 것이 남았는가"를 한 번 묻는다(지원 방언만 · 왕복 1회 · 실패·모름 = 종전대로 변경으로 센다).
+    pub call_probe: bool,
+    /// 방금 문장에서 호출 뒤 확인이 "남은 변경 없음"으로 나왔다(다음 `CallTxClean` 사건 하나로 소비).
+    call_clean: bool,
     /// 열린 트랜잭션에 변경이 있었는가(수동 모드 · 커밋/롤백/암묵 커밋/접속에서 초기화).
     /// ★ 운영 보류 커밋(114 §5 · 10-15): 이번 실행의 정책(`None` = 보통) + 누적(보류 문장 · 합계 행 · 블록 · WHERE 없음) · COMMIT 직전 멈춤 번호.
     hold: Option<HoldPolicy>,
@@ -879,6 +891,21 @@ fn tx_effect(sql: &str, rows_affected: Option<u64>, dialect: Dialect) -> TxEffec
     }
 }
 
+/// 호출 문장인가 — 글만으로는 무엇을 바꾸는지(안에서 커밋하는지) 알 수 없는 문장: `CALL` · `EXEC[UTE]` · 익명 블록
+/// (`BEGIN … END` · `DECLARE`) 등 분류 밖 문장. DML·DDL·조회·트랜잭션 통제·계산만 하는 바인드 대입은 아니다.
+fn is_call_like(sql: &str, dialect: Dialect) -> bool {
+    use nsql_core::{TxClass, TxControl};
+    TxControl::of_sql(sql) == TxControl::None
+        && !nsql_script::bind::is_plain_bind_assign(sql)
+        && TxClass::of_sql_in(sql, Some(dialect)) == TxClass::Other
+}
+
+/// 호출 뒤 미커밋 확인을 보낼 것인가(11-15 · MC/DC 시험 `call_probe_due_mcdc`): 설정 켬 · 운영 보류 아님 · 호출 문장 ·
+/// 방언에 확인 질의가 있다 — 넷 모두 참일 때만(하나라도 거짓이면 왕복 0 · 종전 판정).
+const fn call_probe_due(setting: bool, held: bool, call_like: bool, has_probe: bool) -> bool {
+    setting && !held && call_like && has_probe
+}
+
 /// 러너가 아는 열린 커서의 상태(핸들 · 원문 · 지금까지 넘긴 행 수).
 #[derive(Debug)]
 struct OpenCursor {
@@ -915,6 +942,8 @@ impl Runner {
             page_tail: None,
             last_unit: None,
             read_end: ReadEnd::Auto,
+            call_probe: true,
+            call_clean: false,
             refresh_run: false,
             hold: None,
             read_only: false,
@@ -1874,7 +1903,23 @@ impl Runner {
 
     /// 이 문장 뒤 열린 트랜잭션을 끝내도 되는가(수동 모드 전용 · docs/56 L1). 문장의 흔적을 상태에 반영하고, 변경·사용자 통제가
     /// 없을 때만 참 — `Strict`면 서버에 "쓰기를 했는가"를 한 번 더 묻는다(쓰기가 보이면 변경으로 기록 · 질의 실패 = 끝내지 않음).
+    /// [`Self::read_end_due`] + 호출 뒤 확인이 깨끗했으면 `CallTxClean` 사건 하나(읽기 종료 사건보다 먼저).
+    fn read_end_due_ev(
+        &mut self,
+        sql: &str,
+        rows_affected: Option<u64>,
+        index: usize,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        let due = self.read_end_due(sql, rows_affected);
+        if std::mem::take(&mut self.call_clean) {
+            emit(RunEvent::CallTxClean { index });
+        }
+        due
+    }
+
     fn read_end_due(&mut self, sql: &str, rows_affected: Option<u64>) -> bool {
+        let mut probed = false;
         match tx_effect(sql, rows_affected, self.engine.dialect) {
             TxEffect::Ended => {
                 self.note_tx_ended();
@@ -1885,41 +1930,60 @@ impl Runner {
                 return false;
             }
             TxEffect::Change => {
-                self.tx_changed = true;
-                self.tx_stmts += 1;
-                return false;
+                // ★ 호출 문장(11-15 · `tx.call_probe`): 루틴이 안에서 COMMIT했는지는 글로 알 수 없다 → 서버에 한 번 묻는다.
+                //   "남은 쓰기 없음"이면 앞선 변경까지 끝난 것 — 변경 계수를 걷고 깨끗한 문장처럼 아래 판정으로 내려간다.
+                //   운영 보류 중(`hold`)에는 묻지 않는다(보류 계수·카드가 이 문장을 변경으로 센다 · 종전대로).
+                if call_probe_due(
+                    self.call_probe,
+                    self.hold.is_some(),
+                    is_call_like(sql, self.engine.dialect),
+                    self.engine.caps.strict_probe.is_some(),
+                ) && self.probe_wrote() == Some(false)
+                {
+                    self.call_clean = true;
+                    self.tx_changed = false;
+                    self.tx_stmts = 0;
+                    probed = true;
+                } else {
+                    self.tx_changed = true;
+                    self.tx_stmts += 1;
+                    return false;
+                }
             }
             TxEffect::Clean => {}
         }
         if self.read_end == ReadEnd::Off || self.tx_changed || self.tx_user {
             return false;
         }
-        if self.read_end == ReadEnd::Strict {
-            if let (Some(probe), Some(s)) = (self.engine.caps.strict_probe, self.session.as_mut()) {
-                let wrote = s
-                    .execute(&ExecRequest {
-                        sql: probe.to_string(),
-                        params: Vec::new(),
-                    })
-                    .ok()
-                    .and_then(|r| {
-                        r.result_sets
-                            .first()
-                            .and_then(|rs| rs.rows.first())
-                            .and_then(|row| row.first())
-                            .map(|v| v.display())
-                    });
-                match wrote.as_deref() {
-                    Some("0") => {}
-                    Some(_) => {
-                        self.tx_changed = true;
-                        return false;
-                    }
-                    None => return false,
+        if self.read_end == ReadEnd::Strict && !probed && self.engine.caps.strict_probe.is_some() {
+            match self.probe_wrote() {
+                Some(false) => {}
+                Some(true) => {
+                    self.tx_changed = true;
+                    return false;
                 }
+                None => return false,
             }
         }
         true
+    }
+
+    /// `Caps::strict_probe` 한 번 — 이 트랜잭션에 쓴 것이 남았는가(`Some(false)` = 없음 · `None` = 방언이 모르거나 질의 실패).
+    fn probe_wrote(&mut self) -> Option<bool> {
+        let (probe, s) = (self.engine.caps.strict_probe?, self.session.as_mut()?);
+        let v = s
+            .execute(&ExecRequest {
+                sql: probe.to_string(),
+                params: Vec::new(),
+            })
+            .ok()?
+            .result_sets
+            .first()?
+            .rows
+            .first()?
+            .first()
+            .map(|v| v.display())?;
+        Some(v != "0")
     }
 
     /// 열린 커서를 닫는다(없으면 무시). 미뤄 둔 자동 커밋이 있으면 여기서 커밋한다.
@@ -3420,7 +3484,7 @@ impl Runner {
                             self.tx_stmts = 0;
                         }
                     }
-                } else if self.read_end_due(&item.text, result.rows_affected) {
+                } else if self.read_end_due_ev(&item.text, result.rows_affected, index, emit) {
                     // ★ docs/56 L1: 수동 모드라도 변경이 없던 트랜잭션은 결과를 다 받은 뒤 끝낸다(ROLLBACK = 부작용 0).
                     let deferred = kept.is_some();
                     match kept.as_mut() {
@@ -6407,5 +6471,166 @@ mod read_only_tests {
         assert!(!evs3.iter().any(|e| matches!(e, RunEvent::Error { .. })));
         assert!(read_only_session_sql(Dialect::Postgres).is_some());
         assert!(read_only_session_sql(Dialect::Oracle).is_none());
+    }
+}
+
+#[cfg(test)]
+mod call_probe_tests {
+    //! ★ 호출 뒤 미커밋 확인(11-15 · `tx.call_probe`): 수동 모드에서 CALL·EXEC·블록 뒤 `Caps::strict_probe` 한 번 →
+    //! "남은 쓰기 없음"이면 `CallTxClean` + 변경 계수 걷기 · 남았거나 모르면 종전대로 변경.
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// 확인 질의(`SELECT CASE WHEN …`)에 정해 둔 답을 주는 가짜 세션(`None` = 질의 실패).
+    struct Probe {
+        log: Arc<Mutex<Vec<String>>>,
+        answer: Option<i64>,
+    }
+
+    impl Session for Probe {
+        fn dialect(&self) -> Dialect {
+            Dialect::Oracle
+        }
+        fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+            self.log.lock().expect("log").push(req.sql.clone());
+            let mut r = ExecResult::default();
+            if req.sql.starts_with("SELECT CASE WHEN") {
+                let Some(n) = self.answer else {
+                    return Err(DbError {
+                        code: None,
+                        message: "no privilege".into(),
+                        position: None,
+                    });
+                };
+                r.result_sets.push(ResultSet {
+                    columns: vec![Column {
+                        name: "W".into(),
+                        type_name: "NUMBER".into(),
+                    }],
+                    rows: vec![vec![Value::Int(n)]],
+                });
+            } else if req.sql.starts_with("INSERT") {
+                r.rows_affected = Some(1);
+            }
+            Ok(r)
+        }
+        fn fetch_cursor(&mut self, _c: nsql_core::CursorId) -> Result<ResultSet, DbError> {
+            Ok(ResultSet::default())
+        }
+        fn fetch_cursor_page(
+            &mut self,
+            _c: nsql_core::CursorId,
+            _max: usize,
+        ) -> Result<(ResultSet, Option<CursorHandle>), DbError> {
+            Ok((ResultSet::default(), None))
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            self.log.lock().expect("log").push("COMMIT".into());
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            self.log.lock().expect("log").push("ROLLBACK".into());
+            Ok(())
+        }
+    }
+
+    const SRC: &str = "INSERT INTO t VALUES (1);\nBEGIN p; END;\n/\n";
+
+    /// (오류 수 · `CallTxClean` 수 · 확인 질의 수 · ROLLBACK 수 · 끝난 뒤 변경 남음)
+    fn run(
+        answer: Option<i64>,
+        autocommit: bool,
+        probe: bool,
+    ) -> (usize, usize, usize, usize, bool) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let opener: Opener = Box::new(|_: &ConnectSpec| {
+            Err(DbError {
+                code: None,
+                message: "no".into(),
+                position: None,
+            })
+        });
+        let mut r = Runner::new(Dialect::Oracle, opener)
+            .with_session(
+                Box::new(Probe {
+                    log: Arc::clone(&log),
+                    answer,
+                }),
+                "fake",
+            )
+            .with_autocommit(autocommit);
+        r.call_probe = probe;
+        let mut ev = Vec::new();
+        let mut no_prompt = |_: &str| None;
+        let errs = r.run_script(SRC, &mut no_prompt, &mut |e| ev.push(e));
+        let clean = ev
+            .iter()
+            .filter(|e| matches!(e, RunEvent::CallTxClean { .. }))
+            .count();
+        let got = log.lock().expect("log").clone();
+        let probes = got
+            .iter()
+            .filter(|s| s.starts_with("SELECT CASE WHEN"))
+            .count();
+        let rollbacks = got.iter().filter(|s| *s == "ROLLBACK").count();
+        (errs, clean, probes, rollbacks, r.tx_changed)
+    }
+
+    #[test]
+    fn clean_answer_clears_change_and_reports_once() {
+        // 루틴이 안에서 끝냈다(쓰기 0): 사건 하나 · 확인 한 번 · 변경 계수 걷힘 · 깨끗한 트랜잭션은 읽기 종료 규칙으로 정리.
+        let (errs, clean, probes, rollbacks, changed) = run(Some(0), false, true);
+        assert_eq!((errs, clean, probes), (0, 1, 1));
+        assert!(!changed);
+        assert_eq!(rollbacks, 1, "깨끗한 트랜잭션 정리(ROLLBACK = 부작용 0)");
+    }
+
+    #[test]
+    fn dirty_or_unknown_answer_keeps_the_change() {
+        // 쓰기가 남았다 → 사건 없음 · 변경 유지 · 아무것도 끝내지 않는다.
+        let (errs, clean, probes, rollbacks, changed) = run(Some(1), false, true);
+        assert_eq!((errs, clean, probes, rollbacks), (0, 0, 1, 0));
+        assert!(changed);
+        // 확인 질의 실패(권한 등) = 모름 → 종전대로 변경.
+        let (errs, clean, probes, rollbacks, changed) = run(None, false, true);
+        assert_eq!((errs, clean, probes, rollbacks), (0, 0, 1, 0));
+        assert!(changed);
+    }
+
+    #[test]
+    fn no_probe_when_off_or_autocommit() {
+        // 설정 끔 = 왕복 0 · 종전 판정.
+        let (errs, clean, probes, _, changed) = run(Some(0), false, false);
+        assert_eq!((errs, clean, probes), (0, 0, 0));
+        assert!(changed);
+        // 자동 커밋 모드는 이 경로를 타지 않는다.
+        let (errs, clean, probes, _, _) = run(Some(0), true, true);
+        assert_eq!((errs, clean, probes), (0, 0, 0));
+    }
+
+    #[test]
+    fn call_probe_due_mcdc() {
+        // 기준 = 넷 모두 만족 → 보낸다 · 조건 하나씩만 뒤집으면 보내지 않는다.
+        assert!(call_probe_due(true, false, true, true));
+        assert!(!call_probe_due(false, false, true, true));
+        assert!(!call_probe_due(true, true, true, true));
+        assert!(!call_probe_due(true, false, false, true));
+        assert!(!call_probe_due(true, false, true, false));
+    }
+
+    #[test]
+    fn call_like_is_only_unclassified_statements() {
+        let o = Dialect::Oracle;
+        assert!(is_call_like("BEGIN p; END;", o));
+        assert!(is_call_like("DECLARE n NUMBER; BEGIN p(n); END;", o));
+        assert!(is_call_like("CALL p(1)", Dialect::Postgres));
+        assert!(is_call_like("EXEC dbo.p @a = 1", Dialect::Mssql));
+        // DML·DDL·조회·트랜잭션 통제·계산만 하는 대입은 아니다.
+        assert!(!is_call_like("INSERT INTO t VALUES (1)", o));
+        assert!(!is_call_like("CREATE TABLE t (a INT)", o));
+        assert!(!is_call_like("SELECT 1 FROM dual", o));
+        assert!(!is_call_like("COMMIT", o));
+        assert!(!is_call_like("BEGIN TRANSACTION", Dialect::Mssql));
+        assert!(!is_call_like("EXEC :V := 1 + 2", o));
     }
 }

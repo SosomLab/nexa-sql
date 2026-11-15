@@ -521,6 +521,8 @@ fn apply_fetch_settings(runner: &mut Runner) {
     runner.overlap_check = s.flag("grid.overlap_check");
     // docs/56 L1: 수동 모드의 변경 없는 트랜잭션 자동 종료.
     runner.read_end = nsql_run::ReadEnd::parse(s.get("tx.read_end").unwrap_or("auto"));
+    // 호출 뒤 미커밋 확인(11-15 · 기본 켬).
+    runner.call_probe = s.flag("tx.call_probe");
     // 실행 뒤 돌아온 REF CURSOR를 바로 결과로(끄면 `PRINT rc`).
     runner.auto_cursor = s.get("run.cursor_autoshow").is_none_or(|v| v == "on");
     runner.engine.settings.into_first = s.get("vars.into_policy") == Some("first");

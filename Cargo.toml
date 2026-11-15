@@ -72,7 +72,6 @@ nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
 nsql-driver-pg = { path = "crates/nsql-driver-pg" }
 nsql-driver-mysql = { path = "crates/nsql-driver-mysql" }
 nsql-driver-odbc = { path = "crates/nsql-driver-odbc" }
-nsql-driver-duckdb = { path = "crates/nsql-driver-duckdb" }
 nsql-driver-clickhouse = { path = "crates/nsql-driver-clickhouse" }
 nsql-driver-db2 = { path = "crates/nsql-driver-db2" }
 nsql-json = { path = "crates/nsql-json" }

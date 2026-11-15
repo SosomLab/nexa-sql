@@ -1004,6 +1004,7 @@ fn row_cells(log: &TxLog, e: &nsql_run::txlog::TxEntry, outcome: &TxOutcome) -> 
             TxOutcome::Switched => t(Msg::TxOutSwitched).to_string(),
             TxOutcome::Lost => t(Msg::TxOutLost).to_string(),
             TxOutcome::ReadEnded => t(Msg::TxOutReadEnded).to_string(),
+            TxOutcome::EndedInCall => t(Msg::TxOutEndedInCall).to_string(),
             TxOutcome::AutoRolledBack(m) => tf(Msg::TxOutAutoRolledBack, &[&m.to_string()]),
             TxOutcome::AutoCommitted(m) => tf(Msg::TxOutAutoCommitted, &[&m.to_string()]),
         },
