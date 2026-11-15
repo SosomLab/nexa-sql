@@ -900,6 +900,19 @@ fn tx_effect(sql: &str, rows_affected: Option<u64>, dialect: Dialect) -> TxEffec
     }
 }
 
+/// 그리드 편집 실행문의 영향 행 수 판정 글(87 §14 · 정확히 1행이어야 한다): 1행 = 없음 · 그 밖 = 이유. 행 수를 모르는
+/// 경우(드라이버가 알리지 않음)는 0행과 구별해 말한다 — 어느 쪽이든 거절이고 호출한 쪽이 되돌린다.
+fn apply_rows_error(rows: Option<u64>) -> Option<String> {
+    match rows {
+        Some(1) => None,
+        Some(n) => Some(format!("affected {n} rows (must be exactly 1)")),
+        None => Some(
+            "affected row count unknown - the server did not report it (e.g. SET NOCOUNT ON); must be exactly 1"
+                .to_string(),
+        ),
+    }
+}
+
 /// 호출 문장인가 — 글만으로는 무엇을 바꾸는지(안에서 커밋하는지) 알 수 없는 문장: `CALL` · `EXEC[UTE]` · 익명 블록
 /// (`BEGIN … END` · `DECLARE`) 등 분류 밖 문장. DML·DDL·조회·트랜잭션 통제·계산만 하는 바인드 대입은 아니다.
 fn is_call_like(sql: &str, dialect: Dialect) -> bool {
@@ -1848,7 +1861,10 @@ impl Runner {
                 let t0 = Instant::now();
                 match sess.execute(&st.req) {
                     Ok(r) => {
+                        // 행 수를 모르면(None · SQL Server `SET NOCOUNT ON` 등) 0으로 보고 **거절**한다(영향 1행 강제 · 판정은
+                        //   그대로) — 다만 문구는 "0행"이 아니라 "모름"으로(T-484 · 11-15: 실제로는 1행이 바뀌었을 수 있다).
                         let n = r.rows_affected.unwrap_or(0);
+                        let why = apply_rows_error(r.rows_affected);
                         rep.affected.push(n);
                         rep.log.push(ApplyLogItem {
                             sql: st.req.sql.clone(),
@@ -1856,14 +1872,13 @@ impl Runner {
                             guard: false,
                             elapsed: t0.elapsed(),
                             rows: Some(n),
-                            error: (n != 1)
-                                .then(|| format!("affected {n} rows (must be exactly 1)")),
+                            error: why.clone(),
                         });
                         if n != 1 {
                             rep.error = Some(ApplyError {
                                 index: i,
                                 phase: ApplyPhase::Execute,
-                                message: format!("affected {n} rows (must be exactly 1)"),
+                                message: why.unwrap_or_default(),
                                 label: st.label.clone(),
                             });
                             break;
@@ -6737,6 +6752,17 @@ mod call_probe_tests {
         // 자동 커밋 모드는 이 경로를 타지 않는다.
         let (errs, clean, probes, _, _) = run(Some(0), true, true);
         assert_eq!((errs, clean, probes), (0, 0, 0));
+    }
+
+    #[test]
+    fn apply_rows_error_tells_unknown_from_zero() {
+        assert_eq!(apply_rows_error(Some(1)), None);
+        assert_eq!(
+            apply_rows_error(Some(0)).as_deref(),
+            Some("affected 0 rows (must be exactly 1)")
+        );
+        assert!(apply_rows_error(Some(2)).is_some_and(|m| m.contains("affected 2 rows")));
+        assert!(apply_rows_error(None).is_some_and(|m| m.contains("unknown")));
     }
 
     #[test]
