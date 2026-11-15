@@ -668,15 +668,27 @@ AI 도구 호출(run_query · set_setting · run_command …)
 
 - **도구 없이 글만 쓰는 동안은 반영할 수 없다.** 다음 도구 결과가 없으면 턴이 끝난 뒤 보낸다.
 - 다른 세션을 보는 중에 넣은 대기 요청은 끼워 넣지 않는다(코드 필터 = 세션 id). 헤드리스로는 재현하지 못했다: 턴 중 세션 전환이 턴을 끊는다.
-- **Claude CLI · Codex 모드 = 미구현**(종전 대기열):
-  - CLI = 실행 중 stdin 입력이 받아들여지는지 실측이 필요하다.
-  - Codex = `turn/steer{threadId, expectedTurnId, input}`를 쓸 예정이다.
+- Claude CLI · Codex 모드 = **11-15 묶음 2로 구현**(§19-5) — 글만 쓰는 동안의 반영 방식이 모드마다 다르다(CLI = 턴 뒤 새 턴 · Codex = 같은 턴에서 다시 씀).
 - 모의 호스트(`NSQL_AI_MOCK`)는 모드와 무관하게 도구 결과 뒤 `SteerRequest`를 보내고 `[steered N block(s)]` 글을 남긴다.
   - 지연 = `NSQL_AI_MOCK_TOOL_DELAY_MS`(최대 10000 · 도구 호출 전 한 번).
-  - ■ 뒤에도 모의 스레드의 늦은 사건이 대본에 붙는다(협업 V1 관찰 · 실제 API 스레드에서도 그런지는 개발 판단).
+  - ■ 뒤 모의 스레드의 늦은 사건 = 11-15 잔여 묶음 1로 해소(`Running::Mock { stop }`).
 
 ### 19-4. 판정(협업 · [journal 11-15 §2](journal/2026-11-15.md))
 
 - 통과 = 두 요청 순서대로 반영 · 중복 전송 없음 · `ai.steer=off` 종전 · ■ 되돌림 · 안내 글 분기 · 이력 재열기 · 회귀 없음.
 - 미확인 = 다른 세션 대기 요청.
 - 관찰 = ■ 뒤 늦은 사건 · 기본 폭에서 steer 안내 가운데 생략.
+
+### 19-5. Claude CLI · Codex 모드(11-15 묶음 2 · 사용자 결정 ① 실측 근거 = [journal 11-15 §9~§12](journal/2026-11-15.md))
+
+- **실측 결론**: 두 모드 모두 턴 도중 넣은 요청을 **도구 결과 뒤 같은 턴**에 반영한다. 글만 쓰는 중이면 CLI는 그 턴이 끝난 뒤 **새 턴**으로, Codex는 **같은 턴에서 답을 처음부터 다시** 쓴다(앞 agentMessage 항목은 `item/completed` 없이 버려짐). 끝난 턴에 `turn/steer` = `-32600 "no active turn to steer"`.
+- **보내기** = `Host::steer(sid, text)` — 턴 중(busy)에만:
+  - CLI = stdin에 `claude_cli::steer_line`(보통 턴 줄 + 우리가 정한 `uuid`).
+  - Codex = `codex::turn_steer{threadId, expectedTurnId(읽기 스레드가 잡아 둔 turn), input}`.
+  - `steer_keys`에 (열쇠 · 세션 id · 글) 등재 · 모의·API·id 모름·쓰기 실패 = false(종전 대기열).
+- **반영 시점 알기**: CLI `command_lifecycle{command_uuid, state=started}` → `AiEvent::SteerState{key, started:true}` · Codex steer 응답 성공 = started:true / 오류 = started:false.
+- **UI** = `ai_send` busy 가지에서 `ai.steer` on + CLI/Codex + **첨부 없음 + `/`로 시작하지 않음**이면 대기 풀에 넣은 직후 `h.steer` → 풀에 둔 채 `started`가 오면 풀에서 빼 대본에 user로 올림(`ai_steer_state`) · started:false = 풀에 남아 턴 뒤 보내기.
+- **busy** = `Host::turn_done`: CLI에 넣은 줄이 아직 started 전이면 result 뒤에도 busy 유지(글 턴 = 곧 새 턴) · 프로세스 종료·CLI 아님·■ = 표식 비움.
+- **Codex 글 항목 경계** = `AiEvent::TextItem{done}`(agentMessage item/started·completed) → `ai_text_item`: steer 반영 뒤 완료 없이 새 항목이 시작되면 ① 반영 순간 적어 둔 "user 바로 뒤" 말풍선(버려진 항목의 늦은 델타) ② 앞 조각을 걷는다.
+- **제약** = 첨부가 있는 요청·`/` 명령은 steer하지 않는다(종전 대기열) · 다른 세션 대기 요청은 끼우지 않음(종전 필터).
+- **판정(협업 V1 · 실계정 · 격리 홈 · haiku / gpt-6-luna · effort low)** = ① CLI 도구 턴: user2가 도구 결과 뒤 1번 · 턴 1회 · busy 내려감 ② CLI 글 턴: result 뒤 busy 유지 → user2 → 둘째 답(BANANA) 1번 ③ Codex 도구 턴: user2 첫 도구 결과 뒤 · 답 "DONE1 BANANA" 하나 ④ Codex 글 턴: 1차 ✗(버려진 항목의 늦은 델타 "\n35\n36"이 남음) → 보강 → ✓(assistant 하나 = "1\n2\n3…400\nDONE1\nBANANA") ⑤ `ai.steer=off` = 턴 뒤 새 턴 ⑦ 모의 = `[steered 1 block(s)] done.` 종전 ⑧ 턴 중 `/clear` 뒤 claude·nsql mcp-bridge·codex app-server·codex-code-mode-host 0 · ⑥ 첨부·`/` = 코드 판정(steer 조건에서 제외).

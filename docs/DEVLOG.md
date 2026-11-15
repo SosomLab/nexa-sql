@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-15 밤 (Linux · 개발 × 협업 · 묶음 2 · CLI·Codex 진행 중 턴 반영)** — Claude CLI = stdin user 줄 + uuid · `command_lifecycle` · Codex = `turn/steer` · 글 턴 경계 처리 · V2 640/0/10 · V1 실계정 ①~⑧ ✓(④ 1차 ✗ → 보강 ✓) · 턴 중 /clear 뒤 실제 자식 0 · [journal 11-15 §12](journal/2026-11-15.md)
 - **2026-11-15 저녁 (Linux · 개발 × 협업 · 잔여 묶음 1)** — ■ 직후 user 병합 · 모의 ■ · 백업 대기 "NOT executed yet" 회신 · looks_missing 환경 오류 제외 · ai.side 켜짐 표시(그리기 직전 공통) · CLI·Codex 자식 프로세스 그룹(Unix · 손자 정리) · 빌드 경고 0 · ★ 호출 뒤 미커밋 확인 `tx.call_probe`(사용자 결정 ②) · V2 190/0 · 637/0/10 · 29/0 · 통합 47/0/1 · V1 ①~⑤ ✓(③ 1차 ✗ → 보강 ✓) · 실서버 실동작 미확인 · 실측 5 = CLI·Codex 둘 다 같은 턴 반영 · [journal 11-15 §10](journal/2026-11-15.md)
 - **2026-11-15 낮~저녁 (Linux · 개발 × 협업 · 전체 점검 · 잔여 마무리)** — 이 PC(4코어 · 7.3 GB) 처음부터 Debug 빌드 6분 27초 · nexa-ui 695/0/3 · nexa-license 36/0 · nexa-sql 1450/0/12 · clippy·fmt·check-3os --quick ✓ · 통합 47/0/1(실서버 3종 = 미도달) · 헤드리스 캡처 ✓ · 변경 분석(22커밋) · T-478 Distribution 줄(53629bb1) · CLI 모드 손자 프로세스 잔류 재현(좀비 없음) · T-474 Linux 재현 안 됨 · 사용자 결정 ①~④ · [journal 11-15 §9](journal/2026-11-15.md)
 - **2026-11-15 새벽 3 (Windows · 개발 × 협업 · v0.8.1 공개)** — 3327498b ■ 즉시 중지(T-476·T-477 · 로컬 스텁 V1 ✓) · nexa-ui 959c090(1.100 clippy · check-3os 새 툴체인 단계) · 버전 0f27db19 · 게이트 1446/0/8 · nexa-ui 692/0/6 · 통합 47/0/1 · check-3os 전체 ✓ · 영어 ✓ · release 43621466958 · 공개 17:50:04Z(Latest · lite 6) · winget PR #480308 · choco 건너뜀(0.8.0 심사 대기) · Homebrew 9f17d87 · pkg.sosomlab.com 0.8.1 ✓ · [journal 11-15 §4~§6](journal/2026-11-15.md)
