@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-15 저녁 · push 25be2859..51493347 · CI ✓**([journal 11-15 §11](journal/2026-11-15.md)) = ci 43700927481 ✓(3-OS · deny) · integration 43700927455 ✓ · Debug 재시작 PID 330224(Linux · 실제 설정) · 묶음 2 사전 실측 = CLI 글 턴은 새 턴 · `command_lifecycle`(uuid) 사건으로 소비 시점을 앎 · Codex 끝난 뒤 steer = -32600 · 글 턴 steer = 같은 턴(첫 항목 버려짐)
+>
 > ★ **11-15 저녁 · 잔여 묶음 1 · 호출 뒤 미커밋 확인 `tx.call_probe`**([journal 11-15 §10](journal/2026-11-15.md) · `fix/1115-residuals` · 커밋·push = 개발) = ■ 직후 user 병합 · 모의 ■ · 백업 대기 회신 · looks_missing · ai.side 켜짐 표시 · CLI·Codex 자식 프로세스 그룹(손자 정리 ✓) · 빌드 경고 0 · 수동 모드 CALL·EXEC·블록 뒤 확인 질의 1회 → 남은 변경 없으면 "안에서 끝남" + Rollback 비활성 · V2 ✓ · V1 ①~⑤ ✓ · 실서버 실동작 = 미확인(Windows 실기) · 실측 5 = CLI·Codex 둘 다 같은 턴 반영
 >
 > ★ **11-15 낮~저녁 · Linux PC 전체 점검 · 잔여 마무리**([journal 11-15 §9](journal/2026-11-15.md)) = 처음부터 Debug 빌드 6분 27초(4코어 · 7.3 GB) · nexa-ui 695/0/3 · nexa-license 36/0 · nexa-sql 1450/0/12 · clippy·fmt·check-3os --quick ✓ · 통합 47/0/1 · **실서버 3종 = 미도달**(이 VM은 사내망 밖) · 헤드리스 캡처 ✓ · T-478 ✅(53629bb1) · CLI 모드 = 자식 좀비 없음 · **손자 프로세스 생존**(프로세스 그룹 없음 · 개발 판단) · T-474 Linux 재현 안 됨(DEFINE 2개 = 30~60 ms) · 사용자 결정 = ① CLI·Codex 실계정 실험 승인 ② "안에서 커밋됨" 안내 = 개발 진행 ③ 이 기록 ④ 잔여 수정은 검증 뒤 push
