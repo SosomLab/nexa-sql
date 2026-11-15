@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-15 낮~저녁 · Linux PC 전체 점검 · 잔여 마무리**([journal 11-15 §9](journal/2026-11-15.md)) = 처음부터 Debug 빌드 6분 27초(4코어 · 7.3 GB) · nexa-ui 695/0/3 · nexa-license 36/0 · nexa-sql 1450/0/12 · clippy·fmt·check-3os --quick ✓ · 통합 47/0/1 · **실서버 3종 = 미도달**(이 VM은 사내망 밖) · 헤드리스 캡처 ✓ · T-478 ✅(53629bb1) · CLI 모드 = 자식 좀비 없음 · **손자 프로세스 생존**(프로세스 그룹 없음 · 개발 판단) · T-474 Linux 재현 안 됨(DEFINE 2개 = 30~60 ms) · 사용자 결정 = ① CLI·Codex 실계정 실험 승인 ② "안에서 커밋됨" 안내 = 개발 진행 ③ 이 기록 ④ 잔여 수정은 검증 뒤 push
+>
 > ★ **11-10 밤 자율 진행(22시까지)**([journal 11-10 §12](journal/2026-11-10.md)) = T-132 ① 치환 변수 비밀 가림(e0d92635 · D-476 · V2 556/0 · golden plan 같음 · CLI V1 ✓ · 변수 창은 사용자 실기) · T-328 check-3os 교차 폴백 + 실행 비트 점검(99ad640a) · C-1 hunk diff 팝업 1차(7ccff1c7 · be462daa · nexa-ui b8d0617 · V1 재판정 ✅ · [journal 11-10 §13](journal/2026-11-10.md)) · O-1 `server` 시점(8b7f7e73 · [journal 11-10 §14](journal/2026-11-10.md) · SQLite에서 `_server_` 미확인 + F5가 첫 문장만 실행한 정황 = 개발 확인 중) · -1352 lite 실기 ✓
 >
 > ★ **11-10 더블/트리플 클릭 뒤 드래그 = 단어/줄 단위**([journal 11-10 §11](journal/2026-11-10.md) · **nexa-ui** eaa86a7 · 미push) = 앵커 = 처음 단어/줄 · 캐럿 = 끄는 쪽 · 놓으면 해제 · V1 헤드리스 ✓ · V2 ✓ · Debug PID 10428
