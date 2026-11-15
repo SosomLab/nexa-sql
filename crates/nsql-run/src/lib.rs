@@ -307,6 +307,12 @@ pub enum RunEvent {
     CallTxClean {
         index: usize,
     },
+    /// ★ 호출 문장 뒤 서버에 **미커밋 변경이 남아 있다**(11-15 실서버 판정 · `tx.call_probe`) — 루틴이 쓴 것을 커밋하지 않았다.
+    /// 호출은 영향 행 수를 알리지 않아 호스트의 대기 목록에서 빠졌다(화면 = 대기 0 · Commit/Rollback 꺼짐인데 서버에는 열린
+    /// 트랜잭션) → 호스트가 이 문장을 대기 목록에 올린다. 확인 질의가 없거나 실패한 방언은 오지 않는다(종전대로).
+    CallTxDirty {
+        index: usize,
+    },
     /// DML/DDL 완료.
     Done {
         index: usize,
@@ -473,6 +479,7 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
         RunEvent::ReadTxEnded { .. }
         | RunEvent::CallTxClean { .. }
+        | RunEvent::CallTxDirty { .. }
         | RunEvent::Vars { .. }
         | RunEvent::InputNeeded { .. }
         | RunEvent::Binds { .. } => Vec::new(),
@@ -673,6 +680,8 @@ pub struct Runner {
     pub call_probe: bool,
     /// 방금 문장에서 호출 뒤 확인이 "남은 변경 없음"으로 나왔다(다음 `CallTxClean` 사건 하나로 소비).
     call_clean: bool,
+    /// 방금 문장에서 호출 뒤 확인이 "남은 변경 있음"으로 나왔다(다음 `CallTxDirty` 사건 하나로 소비).
+    call_dirty: bool,
     /// 열린 트랜잭션에 변경이 있었는가(수동 모드 · 커밋/롤백/암묵 커밋/접속에서 초기화).
     /// ★ 운영 보류 커밋(114 §5 · 10-15): 이번 실행의 정책(`None` = 보통) + 누적(보류 문장 · 합계 행 · 블록 · WHERE 없음) · COMMIT 직전 멈춤 번호.
     hold: Option<HoldPolicy>,
@@ -906,6 +915,26 @@ const fn call_probe_due(setting: bool, held: bool, call_like: bool, has_probe: b
     setting && !held && call_like && has_probe
 }
 
+/// 열린 트랜잭션 **수**를 권한 없이 물을 수 있는 방언의 질의(0 = 트랜잭션 없음) — 지금은 SQL Server(`@@TRANCOUNT`)뿐.
+/// 능력표(`Caps`)가 아니라 여기 두는 까닭 = 능력표는 확장 드라이버 ABI로 직렬화된다(ABI v2 불변).
+const fn tx_count_probe(dialect: Dialect) -> Option<&'static str> {
+    match dialect {
+        Dialect::Mssql => Some("SELECT @@TRANCOUNT"),
+        _ => None,
+    }
+}
+
+/// 트랜잭션 블록 안의 오류가 블록 전체를 중단시키는 방언(ROLLBACK 전까지 모든 문장 실패) — PostgreSQL.
+const fn error_aborts_tx(dialect: Dialect) -> bool {
+    matches!(dialect, Dialect::Postgres)
+}
+
+/// 오류 뒤 중단된 블록을 러너가 바로 되돌릴 것인가(MC/DC 시험 `abort_cleanup_due_mcdc`): 오류가 블록을 중단시키는 방언 ·
+/// 러너가 연 블록이 있다 · 그 블록에 변경이 없었다 · 사용자가 직접 연 블록이 아니다 — 넷 모두일 때만(잃을 것이 없을 때만).
+const fn abort_cleanup_due(aborts: bool, tx_open: bool, tx_changed: bool, tx_user: bool) -> bool {
+    aborts && tx_open && !tx_changed && !tx_user
+}
+
 /// 러너가 아는 열린 커서의 상태(핸들 · 원문 · 지금까지 넘긴 행 수).
 #[derive(Debug)]
 struct OpenCursor {
@@ -944,6 +973,7 @@ impl Runner {
             read_end: ReadEnd::Auto,
             call_probe: true,
             call_clean: false,
+            call_dirty: false,
             refresh_run: false,
             hold: None,
             read_only: false,
@@ -1915,6 +1945,9 @@ impl Runner {
         if std::mem::take(&mut self.call_clean) {
             emit(RunEvent::CallTxClean { index });
         }
+        if std::mem::take(&mut self.call_dirty) {
+            emit(RunEvent::CallTxDirty { index });
+        }
         due
     }
 
@@ -1933,18 +1966,25 @@ impl Runner {
                 // ★ 호출 문장(11-15 · `tx.call_probe`): 루틴이 안에서 COMMIT했는지는 글로 알 수 없다 → 서버에 한 번 묻는다.
                 //   "남은 쓰기 없음"이면 앞선 변경까지 끝난 것 — 변경 계수를 걷고 깨끗한 문장처럼 아래 판정으로 내려간다.
                 //   운영 보류 중(`hold`)에는 묻지 않는다(보류 계수·카드가 이 문장을 변경으로 센다 · 종전대로).
-                if call_probe_due(
+                let state = if call_probe_due(
                     self.call_probe,
                     self.hold.is_some(),
                     is_call_like(sql, self.engine.dialect),
-                    self.engine.caps.strict_probe.is_some(),
-                ) && self.probe_wrote() == Some(false)
-                {
+                    self.engine.caps.strict_probe.is_some()
+                        || tx_count_probe(self.engine.dialect).is_some(),
+                ) {
+                    self.call_state()
+                } else {
+                    None
+                };
+                if state == Some(false) {
                     self.call_clean = true;
                     self.tx_changed = false;
                     self.tx_stmts = 0;
                     probed = true;
                 } else {
+                    // `Some(true)` = 서버가 "쓴 것이 남았다"고 확인 → 호스트 대기 목록에 올리게 알린다 · `None` = 모름(종전).
+                    self.call_dirty = state == Some(true);
                     self.tx_changed = true;
                     self.tx_stmts += 1;
                     return false;
@@ -1966,6 +2006,79 @@ impl Runner {
             }
         }
         true
+    }
+
+    /// 호출 뒤 상태 — `Some(false)` = 미커밋 변경 없음 · `Some(true)` = 남음 · `None` = 모름. 먼저 **열린 트랜잭션 수**를
+    /// 묻는다(권한이 필요 없는 방언만 · SQL Server `@@TRANCOUNT` — 실서버 11-15: `sys.dm_tran_*`는 VIEW SERVER STATE가 없으면
+    /// 실패): 0이면 트랜잭션 자체가 없다 → 러너의 "열림" 표시도 내려 다음 문장이 시작문을 다시 보내게 한다(안 그러면 수동
+    /// 모드인데 서버가 문장마다 커밋한다). 그 밖에는 `strict_probe`.
+    fn call_state(&mut self) -> Option<bool> {
+        if self.probe_tx_gone() {
+            self.tx_open = false;
+            return Some(false);
+        }
+        self.probe_wrote()
+    }
+
+    /// 열린 트랜잭션 수 확인([`tx_count_probe`]) — 0이면 참(트랜잭션 없음). 방언이 모르거나 질의 실패 = 거짓.
+    fn probe_tx_gone(&mut self) -> bool {
+        let (Some(probe), Some(s)) = (tx_count_probe(self.engine.dialect), self.session.as_mut())
+        else {
+            return false;
+        };
+        s.execute(&ExecRequest {
+            sql: probe.to_string(),
+            params: Vec::new(),
+        })
+        .ok()
+        .and_then(|r| {
+            r.result_sets
+                .first()
+                .and_then(|rs| rs.rows.first())
+                .and_then(|row| row.first())
+                .map(|v| v.display())
+        })
+        .is_some_and(|v| v == "0")
+    }
+
+    /// ★ 문장이 **실패한 뒤**의 트랜잭션 정리(11-15 실서버 판정 · 수동 모드 · 운영 보류 아님):
+    /// - SQL Server: 안에서 COMMIT하는 프로시저는 오류 266(트랜잭션 수 불일치)으로 끝나는데 **커밋은 이미 일어났다** — 러너는
+    ///   여전히 "열림"으로 알아 시작문을 다시 보내지 않고, 뒤 문장은 서버에서 자동 커밋된다(화면은 대기 N · Rollback = 3903).
+    ///   → 호출 문장이 실패했으면 열린 트랜잭션 수를 묻고, 0이면 상태를 내리고 `CallTxClean`으로 알린다.
+    /// - PostgreSQL: 트랜잭션 블록 안의 오류는 블록을 중단시켜 ROLLBACK 전까지 모든 문장이 25P02로 실패한다. 러너가 연
+    ///   블록에 **변경이 없었으면**(잃을 것이 없다 · 중단된 블록은 어차피 커밋될 수 없다) 바로 ROLLBACK해 다음 문장이 돌게 한다.
+    ///   변경이 있던 블록은 건드리지 않는다(사용자가 대기 목록을 보고 Rollback).
+    fn after_error_tx(&mut self, sql: &str, index: usize, emit: &mut dyn FnMut(RunEvent)) {
+        if self.engine.settings.autocommit || self.hold.is_some() {
+            return;
+        }
+        if call_probe_due(
+            self.call_probe,
+            false,
+            is_call_like(sql, self.engine.dialect),
+            tx_count_probe(self.engine.dialect).is_some(),
+        ) && self.probe_tx_gone()
+        {
+            self.note_tx_ended();
+            emit(RunEvent::CallTxClean { index });
+            return;
+        }
+        if abort_cleanup_due(
+            error_aborts_tx(self.engine.dialect),
+            self.tx_open,
+            self.tx_changed,
+            self.tx_user,
+        ) {
+            if let Some(s) = self.session.as_mut() {
+                let _ = s.rollback();
+            }
+            self.tx_open = false;
+            self.tx_stmts = 0;
+            emit(RunEvent::ReadTxEnded {
+                index,
+                deferred: false,
+            });
+        }
     }
 
     /// `Caps::strict_probe` 한 번 — 이 트랜잭션에 쓴 것이 남았는가(`Some(false)` = 없음 · `None` = 방언이 모르거나 질의 실패).
@@ -3536,6 +3649,7 @@ impl Runner {
                     line: item.line,
                     error: e,
                 });
+                self.after_error_tx(&item.text, index, emit);
                 false
             }
         }
@@ -6632,5 +6746,208 @@ mod call_probe_tests {
         assert!(!is_call_like("COMMIT", o));
         assert!(!is_call_like("BEGIN TRANSACTION", Dialect::Mssql));
         assert!(!is_call_like("EXEC :V := 1 + 2", o));
+    }
+}
+
+#[cfg(test)]
+mod after_error_tx_tests {
+    //! ★ 실서버 판정(11-15)에서 나온 세 가지: 호출 뒤 "남은 변경 있음" 알림 · SQL Server 오류 266 뒤 상태 맞추기 ·
+    //! PostgreSQL 중단된 블록 정리.
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// 문장 글의 앞머리로 정해 둔 답을 주는 가짜 세션.
+    struct Fake {
+        log: Arc<Mutex<Vec<String>>>,
+        dialect: Dialect,
+        /// `SELECT @@TRANCOUNT`의 답.
+        trancount: i64,
+        /// `SELECT CASE WHEN …`(strict_probe)의 답 — `None` = 권한 없음(오류).
+        wrote: Option<i64>,
+        /// 이 앞머리로 시작하는 문장은 오류.
+        fail: &'static str,
+    }
+
+    fn one(n: i64) -> ExecResult {
+        let mut r = ExecResult::default();
+        r.result_sets.push(ResultSet {
+            columns: vec![Column {
+                name: "N".into(),
+                type_name: "int".into(),
+            }],
+            rows: vec![vec![Value::Int(n)]],
+        });
+        r
+    }
+
+    fn fail(msg: &str) -> DbError {
+        DbError {
+            code: Some(266),
+            message: msg.into(),
+            position: None,
+        }
+    }
+
+    impl Session for Fake {
+        fn dialect(&self) -> Dialect {
+            self.dialect
+        }
+        fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+            self.log.lock().expect("log").push(req.sql.clone());
+            if !self.fail.is_empty() && req.sql.starts_with(self.fail) {
+                return Err(fail("boom"));
+            }
+            if req.sql.starts_with("SELECT @@TRANCOUNT") {
+                return Ok(one(self.trancount));
+            }
+            if req.sql.starts_with("SELECT CASE WHEN") {
+                return self.wrote.map(one).ok_or_else(|| fail("no permission"));
+            }
+            let mut r = ExecResult::default();
+            if req.sql.starts_with("INSERT") {
+                r.rows_affected = Some(1);
+            }
+            Ok(r)
+        }
+        fn fetch_cursor(&mut self, _c: nsql_core::CursorId) -> Result<ResultSet, DbError> {
+            Ok(ResultSet::default())
+        }
+        fn fetch_cursor_page(
+            &mut self,
+            _c: nsql_core::CursorId,
+            _max: usize,
+        ) -> Result<(ResultSet, Option<CursorHandle>), DbError> {
+            Ok((ResultSet::default(), None))
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            self.log.lock().expect("log").push("COMMIT".into());
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            self.log.lock().expect("log").push("ROLLBACK".into());
+            Ok(())
+        }
+    }
+
+    fn run(f: Fake, src: &str) -> (Runner, Vec<RunEvent>, Vec<String>) {
+        let log = Arc::clone(&f.log);
+        let dialect = f.dialect;
+        let opener: Opener = Box::new(|_: &ConnectSpec| Err(fail("no")));
+        let mut r = Runner::new(dialect, opener)
+            .with_session(Box::new(f), "fake")
+            .with_autocommit(false);
+        let mut ev = Vec::new();
+        let mut no_prompt = |_: &str| None;
+        let _ = r.run_script(src, &mut no_prompt, &mut |e| ev.push(e));
+        let got = log.lock().expect("log").clone();
+        (r, ev, got)
+    }
+
+    fn fake(dialect: Dialect) -> Fake {
+        Fake {
+            log: Arc::new(Mutex::new(Vec::new())),
+            dialect,
+            trancount: 1,
+            wrote: Some(1),
+            fail: "",
+        }
+    }
+
+    fn count(ev: &[RunEvent], f: impl Fn(&RunEvent) -> bool) -> usize {
+        ev.iter().filter(|e| f(e)).count()
+    }
+
+    #[test]
+    fn dirty_call_is_reported_so_the_host_can_list_it() {
+        // 루틴이 쓴 것을 커밋하지 않았다 → 사건 하나 · 변경으로 센다 · 아무것도 끝내지 않는다.
+        let (r, ev, got) = run(fake(Dialect::Oracle), "BEGIN p; END;\n/\n");
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxDirty { .. })), 1);
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxClean { .. })), 0);
+        assert!(r.tx_changed);
+        assert!(
+            !got.iter().any(|s| s == "ROLLBACK" || s == "COMMIT"),
+            "{got:#?}"
+        );
+    }
+
+    #[test]
+    fn mssql_error_after_inner_commit_resets_the_open_flag() {
+        // 오류 266(안에서 COMMIT) 뒤 @@TRANCOUNT = 0 → 열림 표시를 내리고 깨끗함을 알린다 → 다음 문장은 시작문을 다시 보낸다.
+        let mut f = fake(Dialect::Mssql);
+        f.trancount = 0;
+        f.fail = "EXEC";
+        let (r, ev, got) = run(
+            f,
+            "INSERT INTO t VALUES (1);\nEXEC dbo.p;\nINSERT INTO t VALUES (2);\n",
+        );
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxClean { .. })), 1);
+        let begins = got.iter().filter(|s| s.starts_with("BEGIN TRAN")).count();
+        assert_eq!(begins, 2, "오류 뒤 문장 앞에 시작문을 다시: {got:#?}");
+        assert!(r.tx_open());
+        // 트랜잭션이 아직 열려 있으면(다른 오류) 아무것도 바꾸지 않는다.
+        let mut f = fake(Dialect::Mssql);
+        f.fail = "EXEC";
+        let (_, ev, got) = run(
+            f,
+            "INSERT INTO t VALUES (1);\nEXEC dbo.p;\nINSERT INTO t VALUES (2);\n",
+        );
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxClean { .. })), 0);
+        assert_eq!(
+            got.iter().filter(|s| s.starts_with("BEGIN TRAN")).count(),
+            1,
+            "{got:#?}"
+        );
+    }
+
+    #[test]
+    fn mssql_call_uses_trancount_when_the_strict_probe_is_denied() {
+        // `sys.dm_tran_*` 권한 없음(실서버) — 호출이 성공했고 @@TRANCOUNT = 0이면 깨끗함(권한 필요 없는 질의로 판정).
+        let mut f = fake(Dialect::Mssql);
+        f.trancount = 0;
+        f.wrote = None;
+        let (_, ev, _) = run(f, "EXEC dbo.p;\n");
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxClean { .. })), 1);
+        // 트랜잭션이 열려 있고 확인 질의가 막히면 = 모름 → 종전대로(사건 없음).
+        let mut f = fake(Dialect::Mssql);
+        f.wrote = None;
+        let (r, ev, _) = run(f, "EXEC dbo.p;\n");
+        assert_eq!(
+            count(&ev, |e| matches!(
+                e,
+                RunEvent::CallTxClean { .. } | RunEvent::CallTxDirty { .. }
+            )),
+            0
+        );
+        assert!(r.tx_changed);
+    }
+
+    #[test]
+    fn postgres_error_in_a_clean_block_rolls_it_back() {
+        // 변경 없는 블록에서 오류 = 중단된 블록을 바로 되돌려 다음 문장이 돈다.
+        let mut f = fake(Dialect::Postgres);
+        f.fail = "CALL";
+        let (r, ev, got) = run(f, "CALL p();\n");
+        assert_eq!(
+            got.iter().filter(|s| *s == "ROLLBACK").count(),
+            1,
+            "{got:#?}"
+        );
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::ReadTxEnded { .. })), 1);
+        assert!(!r.tx_open());
+        // 변경이 있던 블록은 건드리지 않는다(사용자가 대기 목록을 보고 Rollback).
+        let mut f = fake(Dialect::Postgres);
+        f.fail = "CALL";
+        let (r, _, got) = run(f, "INSERT INTO t VALUES (1);\nCALL p();\n");
+        assert!(!got.iter().any(|s| s == "ROLLBACK"), "{got:#?}");
+        assert!(r.tx_open() && r.tx_changed);
+    }
+
+    #[test]
+    fn abort_cleanup_due_mcdc() {
+        assert!(abort_cleanup_due(true, true, false, false));
+        assert!(!abort_cleanup_due(false, true, false, false));
+        assert!(!abort_cleanup_due(true, false, false, false));
+        assert!(!abort_cleanup_due(true, true, true, false));
+        assert!(!abort_cleanup_due(true, true, false, true));
     }
 }

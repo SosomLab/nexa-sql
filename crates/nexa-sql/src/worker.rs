@@ -2102,7 +2102,9 @@ pub(crate) fn spawn(
                             }
                             if trace_run {
                                 let d = format!("{e:?}");
-                                eprintln!("[run] ev {}", &d[..d.len().min(160)]);
+                                // 글자 경계로 자른다(11-15 · 바이트 160이 'µ' 안이면 패닉 → 세션을 버렸다).
+                                let head: String = d.chars().take(160).collect();
+                                eprintln!("[run] ev {head}");
                             }
                             emit(e);
                         };

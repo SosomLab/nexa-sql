@@ -1297,6 +1297,7 @@ impl App {
                 } => self.tx_on_held(stmts, total_rows, at_commit, remaining),
                 RunEvent::ReadTxEnded { index, deferred } => self.tx_on_read_ended(index, deferred),
                 RunEvent::CallTxClean { index } => self.tx_on_call_clean(index),
+                RunEvent::CallTxDirty { index } => self.tx_on_call_dirty(index),
                 RunEvent::Timing { index, timeline } => {
                     self.on_ev_timing(index, timeline);
                 }

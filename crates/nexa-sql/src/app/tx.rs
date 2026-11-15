@@ -45,6 +45,11 @@ impl App {
             }
             return;
         }
+        self.tx_push_pending(index, stmt, class);
+    }
+
+    /// 대기 목록에 문장 하나(트랜잭션 로그 연결 · 배지·툴바 동기화).
+    fn tx_push_pending(&mut self, index: usize, stmt: &str, class: nsql_core::TxClass) {
         let stamp = nsql_log::now_local().stamp();
         let when = stamp.get(11..16).unwrap_or("").to_string();
         self.txlog
@@ -58,9 +63,27 @@ impl App {
             summary: one_line(stmt, 60),
             class,
         });
+        self.sess.tx_done_index = Some(index);
         self.sess.tx_dirty = true;
         self.sess.tx_stale_logged = false;
         self.sync_tx_ui();
+    }
+
+    /// ★ 호출 뒤 확인이 "미커밋 변경이 남았다"로 나왔다(11-15 실서버 판정 · `RunEvent::CallTxDirty`): CALL·EXEC·블록은 영향 행
+    /// 수를 알리지 않아 `tx_on_done`의 대기 등재에서 빠진다 — 서버에는 열린 트랜잭션과 미커밋 행이 있는데 화면은 대기 0 ·
+    /// Commit/Rollback 꺼짐이었다. 서버가 확인해 준 문장을 대기 목록에 올린다(같은 문장을 이미 올렸으면 그대로).
+    pub(crate) fn tx_on_call_dirty(&mut self, index: usize) {
+        if self.sess.tx_done_index == Some(index) {
+            return;
+        }
+        let stmt = self
+            .sess
+            .last_run_items
+            .get(index)
+            .cloned()
+            .unwrap_or_default();
+        let class = nsql_core::TxClass::of_sql_in(&stmt, Some(self.sess.dialect));
+        self.tx_push_pending(index, &stmt, class);
     }
 
     /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
@@ -490,6 +513,7 @@ impl App {
 
     /// 서버로 문장이 나간다 — "미커밋 변경 없음" 확인은 여기까지만 유효하다(Rollback 다시 활성).
     pub(crate) fn tx_unsettle(&mut self) {
+        self.sess.tx_done_index = None;
         if std::mem::take(&mut self.sess.tx_settled) {
             self.sync_tx_ui();
         }
