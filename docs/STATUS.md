@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-15 밤 · push 51493347..4c87d8a8 · CI ✓ · 세션 마감**([journal 11-15 §13](journal/2026-11-15.md)) = ci 43702728193 ✓(3-OS · deny) · integration 43702728188 ✓ · 사용자 지시 "CLI 모드에서 Claude·Codex 모두 동작 확인" = §12 V1 ①~⑧ ✓ · tmp-clean 후보 0 · 사용자 인스턴스 PID 330224 그대로(51493347 판 · 새 판 재시작은 요청 때)
+>
 > ★ **11-15 밤 · 묶음 2 = Claude CLI·Codex 진행 중 턴 반영**([journal 11-15 §12](journal/2026-11-15.md) · `feat/1115-steer-cli-codex` · 커밋·push = 개발 · [110 §19-5](110-ai-assistant-plugin-design.md)) = 도구 턴 = 도구 결과 뒤 같은 턴 · 글 턴 = CLI 새 턴(busy 유지) · Codex 같은 턴 다시 쓰기(버려진 조각 걷기) · 첨부·`/` 제외 · V2 ✓ · V1 실계정 ①~⑧ ✓ · 실제 자식 정리 Linux ✓
 >
 > ★ **11-15 저녁 · push 25be2859..51493347 · CI ✓**([journal 11-15 §11](journal/2026-11-15.md)) = ci 43700927481 ✓(3-OS · deny) · integration 43700927455 ✓ · Debug 재시작 PID 330224(Linux · 실제 설정) · 묶음 2 사전 실측 = CLI 글 턴은 새 턴 · `command_lifecycle`(uuid) 사건으로 소비 시점을 앎 · Codex 끝난 뒤 steer = -32600 · 글 턴 steer = 같은 턴(첫 항목 버려짐)
