@@ -168,6 +168,20 @@
 
 09-19 80차: 트랜잭션 로그 창 **"차단 중" 띠**(`txlog_win.rs set_blocking` · `Sess.tx_blocker_who`) ✅ · 39 §3·26 §8 등재 ✅. 남은 것: ⑤ 접속 유형 프리셋(2차 · 결정 필요) · ~~트랜잭션 로그 창 상단 "차단 중" 띠~~ · MySQL 드라이버가 들어오면 L1 strict/L3 실기 · 부하원 원장(39 §3)·네트워크 표(26 §8)에 L3 폴링 등재.
 
+## 10. 호출 뒤 미커밋 확인(11-15 · 사용자 결정 ② · 설정 `tx.call_probe`)
+
+**문제** — 수동 커밋 모드에서 `CALL`/`EXEC`/익명 블록은 글만으로 무엇을 바꾸는지 알 수 없어 늘 "변경"으로 셌다. 루틴이 안에서 COMMIT/ROLLBACK하면 서버에는 열린 트랜잭션이 없는데 앱은 대기 표시·Rollback 버튼을 켜 둬, 사용자가 "되돌릴 수 있다"고 오해한다.
+
+**설계**
+- **언제** = 러너가 호출 문장(`is_call_like` = 트랜잭션 통제·계산만 하는 바인드 대입이 아니고 `TxClass::Other`)을 끝낸 직후, 순수 판정 `call_probe_due(설정 켬, 운영 보류 아님, 호출 문장, 방언에 확인 질의 있음)`이 참일 때만(MC/DC 시험).
+- **무엇을** = L1 strict와 같은 확인 질의 `Caps::strict_probe` 1회(같은 세션 · Oracle `dbms_transaction.local_transaction_id` · SQL Server `sys.dm_tran_session_transactions`×`dm_tran_database_transactions` · PostgreSQL) — 확인 질의가 없는 방언(SQLite 등)은 왕복 0 · 종전 판정.
+- **답** = "0" → `RunEvent::CallTxClean{index}` + 변경 계수 걷기(앞서 대기 중이던 변경도 함께 끝난 것) · "1" 또는 질의 실패 → 종전대로 변경으로 센다(보수적 · 데이터 보호 불변식과 같은 방향).
+- **호스트** = `tx_on_call_clean` → 대기 표시 걷기(`TxOutcome::EndedInCall` "ended inside the call" · 트랜잭션 로그) · 상태줄·로그 `StTxCallClean` · `Sess.tx_settled` → 툴바 Rollback 비활성 + 툴팁 `TipTxRollbackNone`(순수 `sessions::rollback_enabled` + MC/DC) · 다음 서버 문장 Begin에서 해제.
+- **묻지 않는 경우** = 자동 커밋 · 운영 보류 중(보류 계수·카드가 종전대로 센다) · 설정 끔 · 확인 질의 없는 방언.
+- **부하** = 호출 1회당 질의 1 · [26 §8](26-performance-architecture.md) · [39 §3-1](39-resource-governance.md) 등재 · `perf.boost` 대상 아님(데이터 안전 표시).
+
+**검증** — nsql-run `call_probe_tests` 5(분류 · MC/DC · 깨끗한 답 1회 보고 · 더러움/모름 = 변경 유지 · 끔·자동 커밋 = 질의 없음) · `rollback_enabled_mcdc` · 헤드리스 V1(SQLite = 종전 그대로) ✓ · **Oracle/SQL Server/PostgreSQL 실동작 = 미확인**(Windows 실기 · 시나리오 = [journal 11-15 §10](journal/2026-11-15.md)).
+
 ## 출처
 
 - DBeaver: [Transaction mode(Auto/Manual · Smart commit · idle transactions)](https://dbeaver.com/docs/dbeaver/Auto-and-Manual-Commit-Modes/) · [Connection Types(유형별 기본 · 유휴 트랜잭션 600/900/1800초 롤백)](https://github.com/dbeaver/dbeaver/wiki/Connection-Types) · [이슈 #7402(창을 닫아도 PG 트랜잭션 유지)](https://github.com/dbeaver/dbeaver/issues/7402) · [블로그 "Change the data in the smart way"](https://dbeaver.com/2022/05/26/change-the-data-in-the-smart-way/)

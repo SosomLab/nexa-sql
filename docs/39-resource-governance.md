@@ -114,6 +114,7 @@
 | 인텔리전스 메타(T-57 예정) | — | `intel.prefetch`(신설 · schema/none) | schema | schema | none | T-57 |
 | 실행 전 빠른 판정 | 신호등 비초록일 때 SYN 1 | `probe.enabled` | — | — | — | `Cmd::Run.preflight` |
 | 자동 재접속 | 실행 시 1회 | `connect.auto_reconnect` | 켬 | 켬 | 끔 | 워커 |
+| ★ 호출 뒤 미커밋 확인(11-15) = 수동 모드 CALL·EXEC·블록 뒤 확인 질의 1(같은 세션 · Oracle·SQL Server·PostgreSQL만) | 호출 1회당 1 | `tx.call_probe` | 켬 | 켬 | 켬(데이터 안전 표시 · `perf.boost` 대상 아님) | `nsql-run` `call_probe_due` |
 
 ### 3-2. NET ([26 §8](26-performance-architecture.md) 표 흡수)
 
