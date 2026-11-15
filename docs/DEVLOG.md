@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-15 밤 마감 (Linux · 개발 × 협업)** — T-484 dd184d54(그리드 편집 행 수 모름 문구 · 실서버 ✓) · push 6회 CI 전부 ✓ · 사용자 결정 ①~⑧ · 닫음 T-478·T-480~T-484 · 릴리스 대기 drivers-v0.1.13 · 다음 세션 시작점 새로 씀 · [journal 11-15 §20](journal/2026-11-15.md)
 - **2026-11-15 밤 늦게 4 (Linux · 개발 × 협업 · T-483)** — push 0f515137 CI ✓ · SQL Server NOCOUNT 뒤 DML 대기(호스트 + 드라이버 None) · V2 ✓(통합 47/0/1) · 실서버 V1 ✓ · lite 반영 = drivers-v0.1.13 · [journal 11-15 §18](journal/2026-11-15.md)
 - **2026-11-15 밤 늦게 3 (Linux · 개발 × 협업 · 묶음 4)** — push 1a49b687 CI ✓ · Debug 재시작 PID 367366 · 사용자 결정 ⑤~⑧ · MSSQL 모름 = EXEC 대기 · 266 뒤 안내 · 채팅 탭 /clear · ai.stop · V2 ✓ · V1 실서버·모의 ✓ · 새 관찰 T-483 · [journal 11-15 §16~§17](journal/2026-11-15.md)
 - **2026-11-15 밤 늦게 2 (Linux · 개발 × 협업 · 실서버 보강)** — `tx.call_probe` = CallTxDirty 대기 등재 · SQL Server @@TRANCOUNT·266 정리 · PG 오류 뒤 블록 정리 · 트레이스 글자 경계 · V2 ✓ · 실서버 A·B·C·R 재판정 ✓(남은 관찰 2) · [journal 11-15 §15](journal/2026-11-15.md)

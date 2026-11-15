@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `fix/1115-t484` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **dd184d54** + 기록 8dd0a14a · 브랜치 삭제 | 2 | T-484 = 그리드 편집 영향 행 수 모름 문구 · push CI ✓(43711232059 · 43711231976) · 실서버 확인 ✓ · [journal 11-15 §20](journal/2026-11-15.md) |
 | `fix/1115-t483` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **35ed8009** + 기록 dc4b620e · 브랜치 삭제 | 2 | T-483 = 영향 행 수 모르는 DML 대기 등재(`tx_pending_due`) · SQL Server 드라이버 NOCOUNT = None · push CI ✓(43708240054 · 43708240065) · lite 반영 = drivers-v0.1.13(사용자 결정) · [journal 11-15 §18~§19](journal/2026-11-15.md) |
 | `fix/1115-batch4` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **0f515137** + 기록 a2698343 · c9df0c61 · 브랜치 삭제 | 3 | 묶음 4 = SQL Server 모름 = EXEC 대기(결정 ⑤) · 266 뒤 안내(T-481) · 채팅 탭 `/clear` · `ai.stop`(T-480) · push CI ✓(43707058086 · 43707058072) · [journal 11-15 §16~§18](journal/2026-11-15.md) |
 | `fix/1115-call-probe-live` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **1a49b687** + 기록 db71ceea · d9b9e70c · 2b76aa9f · 8f1731f5 · 브랜치 삭제 | 5 | `tx.call_probe` 실서버 보강 = CallTxDirty 대기 등재 · SQL Server @@TRANCOUNT·266 정리 · PG 오류 뒤 블록 정리 · 트레이스 글자 경계 · push CI ✓(43705835532 · 43705835474) · [journal 11-15 §14~§16](journal/2026-11-15.md) |
