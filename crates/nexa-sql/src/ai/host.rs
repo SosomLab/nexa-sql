@@ -256,6 +256,13 @@ pub(crate) struct Host {
     pub api_gen: Arc<std::sync::atomic::AtomicU64>,
     /// CLI stderr 꼬리(실패 진단).
     pub stderr_tail: Arc<Mutex<Vec<String>>>,
+    /// ★ 턴 도중에 상대에게 **이미 넣은** 요청(11-15 · [`Host::steer`]): (식별자 · 세션 id · 글) — `SteerState` 사건으로 풀린다.
+    /// 남아 있는 동안 CLI는 지금 턴이 끝나도 곧바로 다음 턴을 돈다(글만 답하던 턴 · 실측) → [`Host::turn_done`]이 busy를 유지.
+    pub steer_keys: Vec<(String, String, String)>,
+    /// Codex `turn/steer` 요청 id(응답을 읽기 스레드가 `SteerState`로 바꾼다).
+    steer_ids: Arc<Mutex<Vec<u64>>>,
+    /// 넣는 줄 식별자 일련번호.
+    steer_seq: u64,
 }
 
 pub(crate) struct CliLaunch {
@@ -294,6 +301,9 @@ impl Host {
             api_messages: Arc::new(Mutex::new(Vec::new())),
             api_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             stderr_tail: Arc::new(Mutex::new(Vec::new())),
+            steer_keys: Vec::new(),
+            steer_ids: Arc::new(Mutex::new(Vec::new())),
+            steer_seq: 0,
         }
     }
 
@@ -346,6 +356,7 @@ impl Host {
         }
         let tx = self.tx.clone();
         let wake = self.wake.clone();
+        let steer_ids = self.steer_ids.clone();
         let (w2, th2, tu2, pd2, id2) = (
             writer.clone(),
             thread.clone(),
@@ -394,6 +405,19 @@ impl Host {
                     }
                     match codex::parse_line(&line) {
                         codex::Incoming::Response { id, result, error } => {
+                            // 턴 도중 넣기(`turn/steer`)의 응답 = 성공이면 같은 턴에 반영됨 · 오류면 턴이 이미 끝남(대기 풀 유지).
+                            let steered = steer_ids.lock().is_ok_and(|mut g| {
+                                let had = g.contains(&id);
+                                g.retain(|x| *x != id);
+                                had
+                            });
+                            if steered {
+                                emit(AiEvent::SteerState {
+                                    key: format!("codex-{id}"),
+                                    started: error.is_none(),
+                                });
+                                continue;
+                            }
                             if let Some(e) = error {
                                 emit(AiEvent::Error(format!("codex {id}: {e}")));
                                 if id <= 3 {
@@ -580,6 +604,90 @@ impl Host {
         }
         self.busy = true;
         Ok(())
+    }
+
+    /// ★ 진행 중인 턴에 사용자 글을 넣는다(11-15 · 실측: CLI = stdin에 `uuid` 붙인 줄 · Codex = `turn/steer`). 넣었으면 참 —
+    /// 그 뒤 `SteerState` 사건이 온다(`steer_keys`에 등재). 상대가 못 받는 상태(모의·API·스레드/턴 id 모름·쓰기 실패)면 거짓 =
+    /// 호출한 쪽은 종전대로 대기 풀에 둔다. 글만(첨부가 있는 요청은 넣지 않는다 — 호출한 쪽 판정).
+    pub(crate) fn steer(&mut self, sid: &str, text: &str) -> bool {
+        use super::codex;
+        if !self.busy {
+            return false;
+        }
+        self.steer_seq += 1;
+        let key = match &mut self.running {
+            Running::Cli {
+                stdin: Some(si), ..
+            } => {
+                // uuid 꼴(8-4-4-4-12 · 16진) — CLI가 그대로 `command_uuid`로 돌려준다.
+                let t = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos());
+                let key = format!(
+                    "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+                    (t >> 32) as u32,
+                    (t >> 16) as u16,
+                    (t as u16) & 0x0fff,
+                    (self.steer_seq as u16) & 0x0fff,
+                    (t as u64) & 0xffff_ffff_ffff
+                );
+                let line = claude_cli::steer_line(text, &key);
+                if si
+                    .write_all(line.as_bytes())
+                    .and_then(|()| si.write_all(b"\n"))
+                    .and_then(|()| si.flush())
+                    .is_err()
+                {
+                    return false;
+                }
+                key
+            }
+            Running::Codex {
+                writer,
+                thread,
+                turn,
+                next_id,
+                ..
+            } => {
+                let (Some(tid), Some(tu)) = (
+                    thread.lock().ok().and_then(|t| t.clone()),
+                    turn.lock().ok().and_then(|t| t.clone()),
+                ) else {
+                    return false;
+                };
+                let id = next_id.fetch_add(1, Ordering::Relaxed);
+                // 응답이 쓰기보다 먼저 읽히지 않게 id부터 등재.
+                if let Ok(mut g) = self.steer_ids.lock() {
+                    g.push(id);
+                }
+                let ok = writer.lock().is_ok_and(|mut w| {
+                    w.write_all(codex::turn_steer(id, &tid, &tu, text).as_bytes())
+                        .and_then(|()| w.write_all(b"\n"))
+                        .and_then(|()| w.flush())
+                        .is_ok()
+                });
+                if !ok {
+                    if let Ok(mut g) = self.steer_ids.lock() {
+                        g.retain(|x| *x != id);
+                    }
+                    return false;
+                }
+                format!("codex-{id}")
+            }
+            _ => return false,
+        };
+        self.steer_keys
+            .push((key, sid.to_string(), text.to_string()));
+        true
+    }
+
+    /// 턴 끝(`Done`) — busy를 내린다. 단 CLI에 넣어 둔 줄이 아직 읽히지 않았으면 CLI가 곧바로 다음 턴을 돌므로(실측 ⓓ)
+    /// busy를 유지한다(대기 풀 보내기·새 요청이 그 턴과 겹치지 않게). `exited` = 프로세스가 끝남 → 넣어 둔 줄도 사라졌다.
+    pub(crate) fn turn_done(&mut self, exited: bool) {
+        if exited || !matches!(self.running, Running::Cli { .. }) {
+            self.steer_keys.clear();
+        }
+        self.busy = !self.steer_keys.is_empty();
     }
 
     /// Codex 턴 중단(프로세스는 유지) — 턴 id를 모르면 false.
@@ -952,6 +1060,7 @@ impl Host {
             Running::Mock { stop } => stop.store(true, Ordering::Relaxed),
             Running::Idle => {}
         }
+        self.steer_keys.clear();
         self.busy = false;
     }
 
@@ -1014,5 +1123,20 @@ mod tests {
         assert!(woke.load(Ordering::Relaxed));
         let (prog, _) = resolve_cli("");
         assert!(!prog.is_empty());
+    }
+
+    /// 턴 도중 넣기(11-15): 상대가 없으면(한가함·모의) 넣지 않는다 · 턴 끝에서 CLI가 아니면 넣어 둔 표식을 비우고 busy를 내린다.
+    #[test]
+    fn steer_needs_a_live_peer_and_turn_done_clears() {
+        let mut h = Host::new(Arc::new(|| {}));
+        assert!(!h.steer("s1", "hi"), "한가한 호스트");
+        h.busy = true;
+        assert!(!h.steer("s1", "hi"), "상대 없음(Idle)");
+        h.steer_keys.push(("k".into(), "s1".into(), "hi".into()));
+        h.turn_done(false);
+        assert!(
+            !h.busy && h.steer_keys.is_empty(),
+            "CLI가 아니면 유지하지 않는다"
+        );
     }
 }

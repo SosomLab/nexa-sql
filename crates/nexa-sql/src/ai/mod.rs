@@ -959,6 +959,18 @@ pub(crate) enum AiEvent {
     SteerRequest {
         reply: std::sync::mpsc::Sender<Vec<nsql_settings::json::Json>>,
     },
+    /// ★ 진행 중 턴에 **호스트가 이미 넣은** 요청의 상태(11-15 · CLI·Codex 모드 · 실측): `key` = 넣을 때 붙인 식별자.
+    /// CLI = `command_lifecycle`의 `started`(그 줄을 모델이 읽기 시작 — 도구 결과 뒤 같은 턴, 글만 답하던 턴이면 그 턴이 끝난
+    /// 직후 새 턴) · Codex = `turn/steer` 응답(성공 = 같은 턴에 반영 · 오류 = 턴이 이미 끝남 → 대기 풀에 그대로).
+    SteerState {
+        key: String,
+        started: bool,
+    },
+    /// ★ Codex 답 글 항목의 경계(`item/started`·`item/completed` · agentMessage): 턴 도중 요청을 넣으면 받던 항목은 완료 없이
+    /// 버려지고 모델이 처음부터 다시 쓴다(실측 11-15) — UI가 버려진 앞부분을 대본에서 걷는 데 쓴다.
+    TextItem {
+        done: bool,
+    },
     /// 승인 요청(쓰기 도구 · CLI 권한 프롬프트) — UI가 카드로 묻고 `reply`로 답한다.
     Approval {
         id: String,

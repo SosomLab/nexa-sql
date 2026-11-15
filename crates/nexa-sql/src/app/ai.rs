@@ -165,6 +165,10 @@ pub(crate) struct AiState {
     /// ★ 두 번 눌러 허용하는 카드의 첫 누름 시각(`ApprovalReply::Api::twice` · 시간이 지나면 `ai_tick_due`가 비운다).
     pub armed: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
+    /// ★ Codex 답 글 항목이 시작된 자리(11-15): (세션 id · 메시지 번호 · 그때 글 길이 · 그 뒤 턴 도중 요청이 반영됐으면
+    /// **그 사용자 글 바로 뒤 메시지 번호**) — 반영 뒤 항목이 완료 없이 새 항목으로 넘어가면(모델이 처음부터 다시 씀) 이 자리
+    /// 뒤에 붙은 앞 조각과, 반영 뒤에 늦게 도착해 사용자 글 뒤 새 말풍선이 된 조각(협업 V1 11-15)을 함께 걷는다.
+    pub text_item: Option<(String, usize, usize, Option<usize>)>,
     /// ★ 마지막 실행 오류(문장 · 메시지 · 편집기 줄) — "AI에게 수정 요청"이 쓴다 · 알림 버튼을 마지막으로 띄운 시각(연달아 안 띄움).
     pub last_error: Option<(String, String, usize)>,
     /// ★ 이중 안전장치(11-12 P0 뒤): 사용자가 승인 카드로 **허용한 비조회 호출**(도구 · 입력) — `ai_exec_tool`의 run_query는 비조회 SQL이면
@@ -1767,9 +1771,25 @@ impl App {
                 let (sid, atts) = (s.id.clone(), std::mem::take(&mut s.attachments));
                 self.ai.send_queue.push_back((sid, text.to_string(), atts));
             }
-            // 안내: 진행 중 반영이 되는 턴(API 모드 · 설정 `ai.steer`)이면 "다음 단계에 반영"으로.
+            // 안내: 진행 중 반영이 되는 턴(설정 `ai.steer`)이면 "다음 단계에 반영"으로. API 모드 = 도구 결과 뒤에 호스트가 물어
+            //   온다(`ai_steer`) · CLI·Codex 모드(11-15 실측) = 지금 바로 상대에게 넣고(글만 · 첨부 있는 요청은 턴 뒤에) 대기 풀에는
+            //   그대로 둔다 — 상대가 읽기 시작했다는 사건(`SteerState`)이 오면 그때 대기 풀에서 빼 대본에 올린다.
             let steer = self.settings.flag("ai.steer")
-                && self.ai_run().is_some_and(|s| s.mode == Mode::Api);
+                && match self.ai_run().map(|s| (s.mode, s.id.clone())) {
+                    Some((Mode::Api, _)) => true,
+                    Some((_, sid)) => {
+                        let plain = self
+                            .ai
+                            .send_queue
+                            .back()
+                            .is_some_and(|(q, _, atts)| *q == sid && atts.is_empty());
+                        // `/clear` 같은 앱 명령은 상대에게 글로 넣지 않는다(턴 뒤 보내기가 명령으로 처리).
+                        plain
+                            && !text.trim_start().starts_with('/')
+                            && self.ai.host.as_mut().is_some_and(|h| h.steer(&sid, text))
+                    }
+                    None => false,
+                };
             self.ai.status = tf(
                 if steer {
                     Msg::AiQueuedSteerNote
@@ -2298,6 +2318,7 @@ impl App {
         }
         if let Some(h) = &mut self.ai.host {
             if h.interrupt_codex() {
+                h.steer_keys.clear();
                 h.busy = false;
             } else {
                 h.stop();
@@ -2450,6 +2471,78 @@ impl App {
     /// 것만 대기 풀에서 빼 대본에 사용자 글로 올린다. 글은 대기 풀에 넣을 때 이미 비밀 검사(`contains_secret`)를 지났고, 이
     /// 글로 모델이 내는 도구 호출은 종전 관문(승인 카드 · 쓰기 가드 · 행 동의)을 그대로 지난다. 설정 `ai.steer`=off면 종전처럼
     /// 턴이 끝난 뒤 보낸다.
+    /// ★ 호스트가 턴 도중에 넣어 둔 요청의 결과(11-15 · CLI·Codex 모드 · `Host::steer`): `started` = 상대가 그 글을 읽기
+    /// 시작했다 → 대기 풀에서 빼 대본에 사용자 글로 올린다(이 순간이 대화에서의 실제 자리) · 아니면(Codex: 턴이 이미 끝남)
+    /// 대기 풀에 그대로 둔다 — 턴 뒤 보내기(`ai_drain_send_queue`)가 가져간다. 모르는 식별자(■·세션 전환으로 지워짐)는 무시.
+    fn ai_steer_state(&mut self, key: &str, started: bool) {
+        let Some(h) = self.ai.host.as_mut() else {
+            return;
+        };
+        let Some(at) = h.steer_keys.iter().position(|(k, _, _)| k == key) else {
+            return;
+        };
+        let (_, sid, text) = h.steer_keys.remove(at);
+        if !started {
+            return;
+        }
+        // 대기 풀에서 뺀다 — 그 사이 사용자가 ×로 지웠어도 상대는 이미 읽었으므로 대본에는 올린다(답과 짝이 맞게).
+        if let Some(qi) = self
+            .ai
+            .send_queue
+            .iter()
+            .position(|(q, t, atts)| *q == sid && *t == text && atts.is_empty())
+        {
+            self.ai.send_queue.remove(qi);
+        }
+        // Codex: 받던 답 항목은 버려지고 다시 쓰인다 → 다음 항목이 시작될 때 앞 조각을 걷도록 표시.
+        self.ai_push(ChatMsg::new(Kind::User, &text));
+        let after = self.ai_run().map(|s| s.messages.len());
+        if let Some(mark) = self.ai.text_item.as_mut() {
+            mark.3 = after;
+        }
+        self.ai.status = tf(Msg::AiSteeredNote, &["1"]);
+        self.ai_view.reset_scroll_to_bottom();
+        self.redraw();
+    }
+
+    /// ★ Codex 답 글 항목의 경계(11-15 실측 ⓖ): 글만 답하는 도중 요청을 넣으면 받던 항목은 완료 사건 없이 버려지고 모델이
+    /// 처음부터 다시 쓴다 → 새 항목이 시작될 때, **요청이 반영된 뒤 완료되지 않은** 앞 항목의 조각을 대본에서 걷는다(중복·잘린
+    /// 글 방지). 반영이 없었으면 아무것도 걷지 않는다(완료 사건을 내지 않는 판에서도 글을 잃지 않게).
+    fn ai_text_item(&mut self, done: bool) {
+        let prev = self.ai.text_item.take();
+        if done {
+            return;
+        }
+        let Some(s) = self.ai_run_mut() else { return };
+        if let Some((sid, idx, len, Some(after))) = prev {
+            if sid == s.id {
+                // 버려진 항목의 늦은 조각(사용자 글 뒤 새 말풍선) 먼저 — 뒤 번호부터 걷어야 앞 번호가 그대로다.
+                if after > idx
+                    && s.messages
+                        .get(after)
+                        .is_some_and(|m| m.kind == Kind::Assistant)
+                {
+                    s.messages.remove(after);
+                }
+                if let Some(m) = s.messages.get_mut(idx) {
+                    if m.kind == Kind::Assistant && m.text.is_char_boundary(len) {
+                        m.text.truncate(len);
+                        if m.text.is_empty() {
+                            s.messages.remove(idx);
+                        }
+                    }
+                }
+            }
+        }
+        let mark = match s.messages.last() {
+            Some(m) if m.kind == Kind::Assistant => (s.messages.len() - 1, m.text.len()),
+            _ => (s.messages.len(), 0),
+        };
+        let sid = s.id.clone();
+        self.ai.text_item = Some((sid, mark.0, mark.1, None));
+        self.redraw();
+    }
+
     fn ai_steer(&mut self, reply: std::sync::mpsc::Sender<Vec<Json>>) {
         let run = self.ai_run().map(|s| s.id.clone());
         let idx: Vec<usize> = match &run {
@@ -2493,6 +2586,8 @@ impl App {
     fn ai_handle(&mut self, ev: AiEvent) {
         match ev {
             AiEvent::SteerRequest { reply } => self.ai_steer(reply),
+            AiEvent::SteerState { key, started } => self.ai_steer_state(&key, started),
+            AiEvent::TextItem { done } => self.ai_text_item(done),
             AiEvent::Started { cli_session, note } => {
                 if let Some(s) = self.ai_run_mut() {
                     if cli_session.is_some() {
@@ -2617,8 +2712,10 @@ impl App {
                     }
                 }
                 if let Some(h) = &mut self.ai.host {
-                    h.busy = false;
+                    // CLI에 넣어 둔 줄이 남아 있으면 곧 다음 턴이 돈다 → busy 유지(11-15 · `Host::turn_done`).
+                    h.turn_done(stop == "exit");
                 }
+                self.ai.text_item = None;
                 // ★ PostTurn 훅(hooks.rs · 사용자 11-11 "생성 쿼리를 앱 포맷으로 표시 · 출력 간결"): ```sql 블록 = 앱 포매터 · 빈 줄 정리 —
                 //   이번 턴의 **모든** 어시스턴트 메시지(마지막 사용자 메시지 뒤 · 협업 관찰 11-12 "도구 앞 메시지는 안 바뀜").
                 self.ai.fmt_orig = None;

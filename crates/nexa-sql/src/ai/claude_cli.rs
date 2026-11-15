@@ -87,6 +87,25 @@ pub(crate) fn user_turn_line(text: &str, images: &[(String, Vec<u8>)]) -> String
     nsql_settings::json::dump(&msg)
 }
 
+/// ★ 턴 도중에 넣는 사용자 줄(11-15 실측 · CLI 2.1.316): 보통 턴 줄에 `uuid`를 붙인다 → CLI가 그 값을 `command_lifecycle`
+/// 사건의 `command_uuid`로 돌려준다(queued → started → completed). 글만(이미지 없음).
+pub(crate) fn steer_line(text: &str, key: &str) -> String {
+    let line = user_turn_line(text, &[]);
+    let head = line.strip_suffix('}').unwrap_or(&line);
+    format!(
+        "{head},\"uuid\":{}}}",
+        nsql_settings::json::dump(&Json::Str(key.to_string()))
+    )
+}
+
+/// `command_lifecycle` 줄 → 넣은 줄이 읽히기 시작했다(`started`)만 사건으로(queued·completed는 쓰지 않는다).
+fn lifecycle_event(v: &Json) -> Option<AiEvent> {
+    (jstr(v, "state") == "started").then(|| AiEvent::SteerState {
+        key: jstr(v, "command_uuid"),
+        started: true,
+    })
+}
+
 /// stdout 한 줄 → 이벤트들(한 줄이 여러 이벤트가 될 수 있다 · 모르는 줄은 비움).
 pub(crate) fn parse_line(line: &str) -> Vec<AiEvent> {
     let line = line.trim();
@@ -99,6 +118,7 @@ pub(crate) fn parse_line(line: &str) -> Vec<AiEvent> {
     let ty = jstr(&v, "type");
     let mut out = Vec::new();
     match ty.as_str() {
+        "command_lifecycle" => out.extend(lifecycle_event(&v)),
         "system" => {
             let sub = jstr(&v, "subtype");
             match sub.as_str() {
@@ -316,5 +336,29 @@ mod tests {
         );
         assert_eq!(base64(b"Man"), "TWFu");
         assert_eq!(base64(b"Ma"), "TWE=");
+    }
+
+    /// 턴 도중 넣는 줄(11-15 실측): 보통 턴 줄 + `uuid` · `command_lifecycle`은 `started`만 사건이 된다.
+    #[test]
+    fn steer_line_carries_uuid_and_lifecycle_started_is_an_event() {
+        let line = steer_line(
+            "also say \"BANANA\"",
+            "11111111-2222-4333-8444-555555555555",
+        );
+        let v = nsql_settings::json::parse(&line).expect("json");
+        assert_eq!(jstr(&v, "type"), "user");
+        assert_eq!(jstr(&v, "uuid"), "11111111-2222-4333-8444-555555555555");
+        assert!(line.contains("BANANA"), "{line}");
+        let lc = |state: &str| {
+            parse_line(&format!(
+                r#"{{"type":"command_lifecycle","command_uuid":"k1","state":"{state}","uuid":"x","session_id":"s"}}"#
+            ))
+        };
+        assert!(lc("queued").is_empty());
+        assert!(lc("completed").is_empty());
+        match lc("started").as_slice() {
+            [AiEvent::SteerState { key, started: true }] => assert_eq!(key, "k1"),
+            other => panic!("{other:?}"),
+        }
     }
 }

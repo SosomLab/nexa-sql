@@ -157,6 +157,26 @@ pub(crate) fn turn_start(
     request(id, "turn/start", obj(p))
 }
 
+/// ★ 진행 중인 턴에 사용자 글 넣기(11-15 실측 · codex-cli 0.166 스키마 `TurnSteerParams`): `expectedTurnId`가 지금 도는 턴과
+/// 다르면(이미 끝남) 서버가 오류(-32600 "no active turn to steer")로 답한다 → 호출한 쪽은 종전 대기열로.
+pub(crate) fn turn_steer(id: u64, thread_id: &str, turn_id: &str, text: &str) -> String {
+    request(
+        id,
+        "turn/steer",
+        obj(vec![
+            ("threadId", s(thread_id)),
+            ("expectedTurnId", s(turn_id)),
+            (
+                "input",
+                Json::Arr(vec![obj(vec![
+                    ("type", s("text")),
+                    ("text", Json::Str(text.to_string())),
+                ])]),
+            ),
+        ]),
+    )
+}
+
 pub(crate) fn turn_interrupt(id: u64, thread_id: &str, turn_id: &str) -> String {
     request(
         id,
@@ -301,6 +321,9 @@ pub(crate) fn parse_line(line: &str) -> Incoming {
         "item/started" => {
             if let Some(item) = jget(&params, "item") {
                 let ty = jstr(item, "type");
+                if ty == "agentMessage" {
+                    out.push(AiEvent::TextItem { done: false });
+                }
                 if ty == "dynamicToolCall" || ty == "mcpToolCall" || ty == "commandExecution" {
                     out.push(AiEvent::ToolCall {
                         id: jstr(item, "id"),
@@ -324,6 +347,9 @@ pub(crate) fn parse_line(line: &str) -> Incoming {
         "item/completed" => {
             if let Some(item) = jget(&params, "item") {
                 let ty = jstr(item, "type");
+                if ty == "agentMessage" {
+                    out.push(AiEvent::TextItem { done: true });
+                }
                 if ty == "dynamicToolCall" || ty == "mcpToolCall" || ty == "commandExecution" {
                     let ok = !matches!(jget(item, "success"), Some(Json::Bool(false)));
                     let output = jget(item, "contentItems")
@@ -530,5 +556,32 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(model_ids(None).is_empty());
+    }
+
+    /// 턴 도중 넣기(11-15 실측): `turn/steer` 요청 꼴 · 답 글 항목의 시작/완료가 경계 사건이 된다(도구 항목은 종전대로).
+    #[test]
+    fn turn_steer_request_and_agent_message_item_bounds() {
+        let v = json_parse(&turn_steer(7, "thr", "tu", "more")).expect("json");
+        assert_eq!(jstr(&v, "method"), "turn/steer");
+        let p = jget(&v, "params").expect("params");
+        assert_eq!(jstr(p, "threadId"), "thr");
+        assert_eq!(jstr(p, "expectedTurnId"), "tu");
+        let item = |method: &str, ty: &str| match parse_line(&format!(
+            r#"{{"method":"{method}","params":{{"item":{{"type":"{ty}","id":"i1"}}}}}}"#
+        )) {
+            Incoming::Events(e) => e,
+            _ => Vec::new(),
+        };
+        assert!(matches!(
+            item("item/started", "agentMessage").as_slice(),
+            [AiEvent::TextItem { done: false }]
+        ));
+        assert!(matches!(
+            item("item/completed", "agentMessage").as_slice(),
+            [AiEvent::TextItem { done: true }]
+        ));
+        assert!(!item("item/started", "commandExecution")
+            .iter()
+            .any(|e| matches!(e, AiEvent::TextItem { .. })));
     }
 }
