@@ -1384,8 +1384,13 @@ impl App {
             } else {
                 self.run_toast.finish_keep(self.sess.run_card, done.clone());
             }
+            // ★ 실행 중 남긴 트랜잭션 안내(11-15 · SQL Server 오류 266 = 안에서 커밋됨)는 끝의 오류 요약이 덮지 않게 뒤에 잇는다.
+            let note = self.sess.run_note.take();
             if let Some(m) = done {
-                self.sess.status = m;
+                self.sess.status = match note {
+                    Some(n) => format!("{m} · {n}"),
+                    None => m,
+                };
             } else if self.sess.status == t(Msg::StRunning) {
                 // ★ 끝맺음 안내가 하나도 없던 실행(11-14 협업 V1: `DEFINE X = 1`만 F5 = 상태줄이 "실행 중…"으로 남음) —
                 //   클라이언트 명령만이라 결과·메시지 사건이 없으면 상태줄을 바꿀 것이 없었다. 실행은 끝났으므로 "완료"로.

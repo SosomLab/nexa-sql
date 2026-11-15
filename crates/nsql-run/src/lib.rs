@@ -924,6 +924,17 @@ const fn tx_count_probe(dialect: Dialect) -> Option<&'static str> {
     }
 }
 
+/// `EXEC`/`EXECUTE` 문장인가(프로시저 호출 — `SET`·`USE` 같은 분류 밖 문장과 구별).
+fn is_exec_stmt(sql: &str) -> bool {
+    matches!(nsql_core::first_keyword(sql).as_str(), "EXEC" | "EXECUTE")
+}
+
+/// 호출 뒤 상태를 **모를 때** 그 호출을 대기로 올릴 것인가(MC/DC 시험 `unknown_exec_pending_mcdc` · 사용자 결정 11-15):
+/// 확인을 보냈고 · 답이 모름이고 · 열린 트랜잭션 수를 아는 방언(SQL Server = 트랜잭션은 열려 있다)이고 · `EXEC` 문장일 때.
+const fn unknown_exec_pending(due: bool, unknown: bool, counts_tx: bool, exec: bool) -> bool {
+    due && unknown && counts_tx && exec
+}
+
 /// 트랜잭션 블록 안의 오류가 블록 전체를 중단시키는 방언(ROLLBACK 전까지 모든 문장 실패) — PostgreSQL.
 const fn error_aborts_tx(dialect: Dialect) -> bool {
     matches!(dialect, Dialect::Postgres)
@@ -1966,17 +1977,14 @@ impl Runner {
                 // ★ 호출 문장(11-15 · `tx.call_probe`): 루틴이 안에서 COMMIT했는지는 글로 알 수 없다 → 서버에 한 번 묻는다.
                 //   "남은 쓰기 없음"이면 앞선 변경까지 끝난 것 — 변경 계수를 걷고 깨끗한 문장처럼 아래 판정으로 내려간다.
                 //   운영 보류 중(`hold`)에는 묻지 않는다(보류 계수·카드가 이 문장을 변경으로 센다 · 종전대로).
-                let state = if call_probe_due(
+                let due = call_probe_due(
                     self.call_probe,
                     self.hold.is_some(),
                     is_call_like(sql, self.engine.dialect),
                     self.engine.caps.strict_probe.is_some()
                         || tx_count_probe(self.engine.dialect).is_some(),
-                ) {
-                    self.call_state()
-                } else {
-                    None
-                };
+                );
+                let state = if due { self.call_state() } else { None };
                 if state == Some(false) {
                     self.call_clean = true;
                     self.tx_changed = false;
@@ -1984,7 +1992,16 @@ impl Runner {
                     probed = true;
                 } else {
                     // `Some(true)` = 서버가 "쓴 것이 남았다"고 확인 → 호스트 대기 목록에 올리게 알린다 · `None` = 모름(종전).
-                    self.call_dirty = state == Some(true);
+                    // ★ SQL Server의 모름(사용자 결정 11-15 "EXEC를 대기로 올림"): `sys.dm_tran_*` 권한이 없으면 쓴 것이 남았는지
+                    //   물을 길이 없다 — 트랜잭션은 열려 있으므로(@@TRANCOUNT ≠ 0) `EXEC`는 대기로 올린다(미커밋이 화면에서
+                    //   숨지 않게 · 읽기만 하는 프로시저도 대기 1로 보인다).
+                    self.call_dirty = state == Some(true)
+                        || unknown_exec_pending(
+                            due,
+                            state.is_none(),
+                            tx_count_probe(self.engine.dialect).is_some(),
+                            is_exec_stmt(sql),
+                        );
                     self.tx_changed = true;
                     self.tx_stmts += 1;
                     return false;
@@ -6907,18 +6924,18 @@ mod after_error_tx_tests {
         f.wrote = None;
         let (_, ev, _) = run(f, "EXEC dbo.p;\n");
         assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxClean { .. })), 1);
-        // 트랜잭션이 열려 있고 확인 질의가 막히면 = 모름 → 종전대로(사건 없음).
+        // 트랜잭션이 열려 있고 확인 질의가 막히면 = 모름 → `EXEC`는 대기로 올린다(사용자 결정 11-15 · 미커밋이 숨지 않게).
         let mut f = fake(Dialect::Mssql);
         f.wrote = None;
         let (r, ev, _) = run(f, "EXEC dbo.p;\n");
-        assert_eq!(
-            count(&ev, |e| matches!(
-                e,
-                RunEvent::CallTxClean { .. } | RunEvent::CallTxDirty { .. }
-            )),
-            0
-        );
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxClean { .. })), 0);
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxDirty { .. })), 1);
         assert!(r.tx_changed);
+        // 같은 모름이라도 `EXEC`가 아닌 분류 밖 문장(`SET …`)은 올리지 않는다.
+        let mut f = fake(Dialect::Mssql);
+        f.wrote = None;
+        let (_, ev, _) = run(f, "SET NOCOUNT ON;\n");
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::CallTxDirty { .. })), 0);
     }
 
     #[test]
@@ -6940,6 +6957,15 @@ mod after_error_tx_tests {
         let (r, _, got) = run(f, "INSERT INTO t VALUES (1);\nCALL p();\n");
         assert!(!got.iter().any(|s| s == "ROLLBACK"), "{got:#?}");
         assert!(r.tx_open() && r.tx_changed);
+    }
+
+    #[test]
+    fn unknown_exec_pending_mcdc() {
+        assert!(unknown_exec_pending(true, true, true, true));
+        assert!(!unknown_exec_pending(false, true, true, true));
+        assert!(!unknown_exec_pending(true, false, true, true));
+        assert!(!unknown_exec_pending(true, true, false, true));
+        assert!(!unknown_exec_pending(true, true, true, false));
     }
 
     #[test]

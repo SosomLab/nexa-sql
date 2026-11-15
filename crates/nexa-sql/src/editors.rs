@@ -2171,6 +2171,29 @@ impl Editors {
         }
     }
 
+    /// ★ 지금 앞에 있는 뷰 탭의 열쇠를 바꾼다(11-15 · AI 채팅 탭에서 `/clear`·새 대화 = 그 탭이 새 세션을 가리키게 —
+    /// 종전에는 열쇠가 옛 세션으로 남아 그리기마다 옛 세션으로 되돌아갔다). 같은 열쇠의 탭이 따로 있으면 그 탭으로 간다
+    /// (열쇠 중복 금지). 지금 탭이 뷰 탭이 아니면 아무것도 하지 않는다.
+    pub(crate) fn rekey_active_view(&mut self, key: &str, title: &str) {
+        let id = self.active_id();
+        if !self.view_tabs.contains_key(&id) {
+            return;
+        }
+        if self
+            .view_tabs
+            .iter()
+            .any(|(other, k)| *other != id && k.as_str() == key)
+        {
+            self.open_view_tab(key, title);
+            return;
+        }
+        self.view_tabs.insert(id, key.to_string());
+        let i = self.active;
+        if self.titles[i] != title {
+            self.rename_tab(i, title);
+        }
+    }
+
     /// 열쇠가 맞는 뷰 탭의 제목 갱신(세션 제목이 첫 메시지로 정해질 때 · 이름 바꾸기).
     pub(crate) fn set_view_title(&mut self, key: &str, title: &str) {
         let found = self
@@ -3461,6 +3484,29 @@ mod load_tab_tests {
         let j = ed.active();
         ed.set_read_only(j, true);
         assert_eq!(ed.shown_title(j), "Info: X [RO]");
+    }
+
+    /// 지금 뷰 탭의 열쇠 바꾸기(11-15 · AI 채팅 탭 `/clear`): 탭 수는 그대로 · 열쇠·제목만 바뀐다 · 같은 열쇠의 탭이 따로
+    /// 있으면 그 탭으로 가고 열쇠는 겹치지 않는다 · 보통 편집기 탭에서는 아무 일도 없다.
+    #[test]
+    fn rekey_active_view_rebinds_without_duplicating_keys() {
+        let mut ed = editors();
+        ed.open_view_tab("ai.chat:old", "Old");
+        let (n, i) = (ed.len(), ed.active());
+        ed.rekey_active_view("ai.chat:new", "(new)");
+        assert_eq!((ed.len(), ed.active()), (n, i));
+        assert_eq!(ed.view_key_of(i).as_deref(), Some("ai.chat:new"));
+        assert_eq!(ed.shown_title(i), "(new)");
+        // 같은 열쇠의 탭이 따로 있으면 그 탭으로(열쇠 중복 없음).
+        ed.open_view_tab("ai.chat:other", "Other");
+        let j = ed.active();
+        ed.rekey_active_view("ai.chat:new", "(new)");
+        assert_eq!(ed.active(), i);
+        assert_eq!(ed.view_key_of(j).as_deref(), Some("ai.chat:other"));
+        // 뷰 탭이 아닌 탭 = 그대로.
+        ed.switch(0);
+        ed.rekey_active_view("ai.chat:zzz", "Z");
+        assert_eq!(ed.view_key_of(0), None);
     }
 
     /// 큰 파일 단계별 제한(사용자 09-21): 기준 단계 이상에서만 · 0 = 제한 없음 · 확장 효과만 끄고 자동 닫기는 남긴다 ·

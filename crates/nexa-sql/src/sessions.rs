@@ -114,6 +114,8 @@ pub(crate) struct Sess {
     /// 방금 끝난 문장을 대기 목록에 올렸으면 그 항목 번호(`tx_on_done`) — 호출 뒤 확인(`CallTxDirty`)이 같은 문장을 두 번
     /// 올리지 않게. 다음 서버 문장이 시작되면 비운다.
     pub tx_done_index: Option<usize>,
+    /// 이번 실행이 끝날 때 상태줄 오류 요약 뒤에 이어 붙일 안내(호출 뒤 "미커밋 변경 없음" · 실행 끝에서 한 번 쓰고 비운다).
+    pub run_note: Option<String>,
     pub tx_stale_logged: bool,
     /// 이 세션에서 마지막으로 문장을 실행한 시각 — 유휴 미커밋 판정의 시계(docs/56 L2 · "그 세션의 문장 실행만" = 활동).
     pub last_exec: Instant,
@@ -250,6 +252,7 @@ impl Sess {
             tx_read: false,
             tx_settled: false,
             tx_done_index: None,
+            run_note: None,
             tx_stale_logged: false,
             last_exec: Instant::now(),
             tx_warned_at: None,

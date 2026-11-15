@@ -582,6 +582,22 @@ impl App {
         self.ai_open_chat_tab(&id, prov, &title, true);
     }
 
+    /// ★ 채팅 탭이 앞에 있을 때 새 세션으로 옮겼으면(`/clear` · 새 대화) 그 탭이 새 세션을 가리키게 한다(11-15 · T-480 ③):
+    /// 탭 열쇠가 옛 세션으로 남으면 `ai_follow_view`가 그리기마다 옛 세션으로 되돌려 "지워지지 않는" 것처럼 보였다.
+    fn ai_rebind_chat_tab(&mut self) {
+        if !self.ai_view_active() {
+            return;
+        }
+        let Some((id, prov, title)) = self
+            .ai_cur()
+            .map(|s| (s.id.clone(), s.provider, s.title_or_default()))
+        else {
+            return;
+        };
+        self.editors
+            .rekey_active_view(&Self::ai_view_key(prov, &id), &title);
+    }
+
     /// 세션 하나를 뷰 탭으로(미리보기 = 1클릭 · 고정 = 더블클릭/새 대화 · 편집기 탭 규칙 · 11-12).
     fn ai_open_chat_tab(&mut self, id: &str, prov: Provider, title: &str, pinned: bool) {
         self.ai_chat_mark();
@@ -1307,6 +1323,7 @@ impl App {
                         self.ai_switch_tab(p);
                     }
                     self.ai_new_session();
+                    self.ai_rebind_chat_tab();
                     self.ai_view.set_provider(self.ai.tab);
                     if let (Some(tid), Some(s)) = (self.ai.side_tab, self.ai_cur()) {
                         self.ai.tab_sessions.insert(tid, s.id.clone());
@@ -5339,6 +5356,7 @@ impl App {
         match cmd {
             "/clear" => {
                 self.ai_new_session();
+                self.ai_rebind_chat_tab();
             }
             // ★ 세션 이름 바꾸기(사용자 11-14 "/rename") — 세션 목록에서 이름을 고친 것과 같은 길(`PanelAction::RenameSession`):
             //   기록 저장 · 채팅 탭 제목 · 세션 목록에 바로 반영. 이름을 안 주면 쓰는 법만 알린다.
@@ -5566,7 +5584,7 @@ impl App {
 
     // ───────────────────────── 헤드리스 명령(V1) ─────────────────────────
 
-    /// `ai.open` · `ai.panel` · `ai.send:<글>` · `ai.dump:<파일>` · `ai.approve:<yes|no>`. 처리했으면 true.
+    /// `ai.open` · `ai.panel` · `ai.send:<글>` · `ai.stop` · `ai.dump:<파일>` · `ai.approve:<yes|no>`. 처리했으면 true.
     pub(crate) fn ai_startup_cmd(&mut self, id: &str) -> bool {
         if id == "ai.open" {
             if !self.ai_enabled() {
@@ -5588,6 +5606,11 @@ impl App {
         }
         if let Some(p) = id.strip_prefix("ai.tab:") {
             self.ai_toggle_panel(Provider::parse(p));
+            return true;
+        }
+        // ■(11-15 · T-480 ①): 헤드리스 시험이 멈춤 경로(대기 풀 되돌리기 · 자식 종료 · 늦은 사건 버리기)를 탈 수 있게.
+        if id == "ai.stop" {
+            self.ai_stop();
             return true;
         }
         if let Some(text) = id.strip_prefix("ai.send:") {

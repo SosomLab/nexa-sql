@@ -507,6 +507,7 @@ impl App {
         self.sess.tx_settled = true;
         let msg = t(Msg::StTxCallClean).to_string();
         self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+        self.sess.run_note = Some(msg.clone());
         self.sess.status = msg;
         self.sync_tx_ui();
     }
