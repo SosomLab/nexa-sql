@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-15 밤 늦게 3 (Linux · 개발 × 협업 · 묶음 4)** — push 1a49b687 CI ✓ · Debug 재시작 PID 367366 · 사용자 결정 ⑤~⑧ · MSSQL 모름 = EXEC 대기 · 266 뒤 안내 · 채팅 탭 /clear · ai.stop · V2 ✓ · V1 실서버·모의 ✓ · 새 관찰 T-483 · [journal 11-15 §16~§17](journal/2026-11-15.md)
 - **2026-11-15 밤 늦게 2 (Linux · 개발 × 협업 · 실서버 보강)** — `tx.call_probe` = CallTxDirty 대기 등재 · SQL Server @@TRANCOUNT·266 정리 · PG 오류 뒤 블록 정리 · 트레이스 글자 경계 · V2 ✓ · 실서버 A·B·C·R 재판정 ✓(남은 관찰 2) · [journal 11-15 §15](journal/2026-11-15.md)
 - **2026-11-15 밤 늦게 (Linux · 개발 × 협업 · 실서버)** — 통합 47/0/1(프로필 3종 · 43초) · `tx.call_probe` 실서버 = Oracle A·C ✓ · PG R ✓ · MSSQL 권한 없음 = 종전 · 이상 4건 회신 · 임시 객체 0 · [journal 11-15 §14](journal/2026-11-15.md)
 - **2026-11-15 밤 (Linux · 개발 × 협업 · 묶음 2 · CLI·Codex 진행 중 턴 반영)** — Claude CLI = stdin user 줄 + uuid · `command_lifecycle` · Codex = `turn/steer` · 글 턴 경계 처리 · V2 640/0/10 · V1 실계정 ①~⑧ ✓(④ 1차 ✗ → 보강 ✓) · 턴 중 /clear 뒤 실제 자식 0 · [journal 11-15 §12](journal/2026-11-15.md)

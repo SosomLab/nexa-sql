@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-15 밤 · push 1a49b687 CI ✓ · Debug 재시작 PID 367366 · 묶음 4 V1 ✓**([journal 11-15 §16~§17](journal/2026-11-15.md) · `fix/1115-batch4` · 커밋·push = 개발) = 사용자 결정 ⑤(MSSQL 모름 = EXEC 대기 ✓) · ⑥(T-479 = Windows 세션 몫) · ⑦(재시작) · ⑧("백업 없음" = 해소로 닫음) · T-480·T-481·T-482 ✅ · 새 관찰 T-483(MSSQL `SET NOCOUNT ON` 뒤 DML 대기 미등재)
+>
 > ★ **11-15 밤 · `tx.call_probe` 실서버 보강 재판정 ✓**([journal 11-15 §15](journal/2026-11-15.md) · `fix/1115-call-probe-live` · 커밋·push = 개발) = COMMIT 없는 호출 = 대기 등재(Oracle·PG ✓) · SQL Server `@@TRANCOUNT` · 266 뒤 대기 걷기 · PG 오류 뒤 변경 없는 블록 ROLLBACK · 트레이스 패닉 해소 · V2 ✓(통합 47/0/1) · 남은 관찰 = MSSQL 266 뒤 상태줄 안내 가림 · MSSQL B = 권한 없으면 종전
 >
 > ★ **11-15 밤 · 실서버 열림 — 통합 47/0/1 · `tx.call_probe` 실동작**([journal 11-15 §14](journal/2026-11-15.md)) = Oracle 안에서 COMMIT ✓(안내 · 대기 0 · EndedInCall) · PG 쓰기 없는 호출 ✓ · SQL Server 확인 질의 권한 없음 = 종전 · 이상 4건(COMMIT 없는 호출 대기 미등재 · MSSQL 266 뒤 잔류 · PG aborted 미표시 · 트레이스 패닉) = 개발 판단 대기 · 임시 객체 0 확인
