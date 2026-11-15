@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-15 밤 늦게 2 (Linux · 개발 × 협업 · 실서버 보강)** — `tx.call_probe` = CallTxDirty 대기 등재 · SQL Server @@TRANCOUNT·266 정리 · PG 오류 뒤 블록 정리 · 트레이스 글자 경계 · V2 ✓ · 실서버 A·B·C·R 재판정 ✓(남은 관찰 2) · [journal 11-15 §15](journal/2026-11-15.md)
 - **2026-11-15 밤 늦게 (Linux · 개발 × 협업 · 실서버)** — 통합 47/0/1(프로필 3종 · 43초) · `tx.call_probe` 실서버 = Oracle A·C ✓ · PG R ✓ · MSSQL 권한 없음 = 종전 · 이상 4건 회신 · 임시 객체 0 · [journal 11-15 §14](journal/2026-11-15.md)
 - **2026-11-15 밤 (Linux · 개발 × 협업 · 묶음 2 · CLI·Codex 진행 중 턴 반영)** — Claude CLI = stdin user 줄 + uuid · `command_lifecycle` · Codex = `turn/steer` · 글 턴 경계 처리 · V2 640/0/10 · V1 실계정 ①~⑧ ✓(④ 1차 ✗ → 보강 ✓) · 턴 중 /clear 뒤 실제 자식 0 · [journal 11-15 §12](journal/2026-11-15.md)
 - **2026-11-15 저녁 (Linux · 개발 × 협업 · 잔여 묶음 1)** — ■ 직후 user 병합 · 모의 ■ · 백업 대기 "NOT executed yet" 회신 · looks_missing 환경 오류 제외 · ai.side 켜짐 표시(그리기 직전 공통) · CLI·Codex 자식 프로세스 그룹(Unix · 손자 정리) · 빌드 경고 0 · ★ 호출 뒤 미커밋 확인 `tx.call_probe`(사용자 결정 ②) · V2 190/0 · 637/0/10 · 29/0 · 통합 47/0/1 · V1 ①~⑤ ✓(③ 1차 ✗ → 보강 ✓) · 실서버 실동작 미확인 · 실측 5 = CLI·Codex 둘 다 같은 턴 반영 · [journal 11-15 §10](journal/2026-11-15.md)
