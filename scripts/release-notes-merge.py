@@ -24,10 +24,11 @@ def main() -> int:
     en = en.strip("\n") + (
         f"\n\nFull details: [docs/DEVLOG.md](https://github.com/SosomLab/nexa-sql/blob/v{ver}/docs/DEVLOG.md)"
         f" · [docs/journal](https://github.com/SosomLab/nexa-sql/tree/v{ver}/docs/journal)\n\n"
-        "Distribution note: this version is published to GitHub Releases, Homebrew (`kiros33/tap`), the Linux"
-        " repository (pkg.sosomlab.com) and Chocolatey (`choco install nexa-sql`, after moderation). winget is paused"
-        " until the first package review finishes."
-        # ★ 채널 상태가 바뀌면 이 줄도(v0.2.7 = choco 재개 · 고정 문구가 실제와 어긋나 공개 뒤 정정 · 10-21).
+        "Distribution note: this version is published to GitHub Releases, winget (`winget install SosomLab.NexaSQL`),"
+        " Chocolatey (`choco install nexa-sql`), Homebrew (`kiros33/tap`) and the Linux repository (pkg.sosomlab.com)."
+        " winget and Chocolatey pick it up after each repository's review, so they may lag behind for a while."
+        # ★ 채널 상태가 바뀌면 이 줄도(v0.2.7 = choco 재개 · 고정 문구가 실제와 어긋나 공개 뒤 정정 · 10-21 ·
+        #   T-478 11-15 = winget 재개 반영 · 검수 지연은 채널별 guard가 건너뛸 수 있어 "may lag"로 일반화).
     )
     try:
         cut = draft.index("---")
