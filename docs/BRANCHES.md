@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `fix/1115-batch4` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **0f515137** + 기록 a2698343 · c9df0c61 · 브랜치 삭제 | 3 | 묶음 4 = SQL Server 모름 = EXEC 대기(결정 ⑤) · 266 뒤 안내(T-481) · 채팅 탭 `/clear` · `ai.stop`(T-480) · push CI ✓(43707058086 · 43707058072) · [journal 11-15 §16~§18](journal/2026-11-15.md) |
 | `fix/1115-call-probe-live` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **1a49b687** + 기록 db71ceea · d9b9e70c · 2b76aa9f · 8f1731f5 · 브랜치 삭제 | 5 | `tx.call_probe` 실서버 보강 = CallTxDirty 대기 등재 · SQL Server @@TRANCOUNT·266 정리 · PG 오류 뒤 블록 정리 · 트레이스 글자 경계 · push CI ✓(43705835532 · 43705835474) · [journal 11-15 §14~§16](journal/2026-11-15.md) |
 | `feat/1115-steer-cli-codex` | 2026-11-15 밤(Linux) | 2026-11-15 → main ff · **4c87d8a8** + 기록 50e68a95 · 8d8d89be · 브랜치 삭제 | 3 | 묶음 2 = 진행 중 턴 반영을 Claude CLI·Codex 모드로(CLI stdin + uuid · `command_lifecycle` · Codex `turn/steer` · 글 턴 경계) · V1 실계정 ①~⑧ ✓ · push CI ✓(43702728193 · 43702728188) · [journal 11-15 §12~§13](journal/2026-11-15.md) |
 | `fix/1115-residuals` | 2026-11-15 저녁(Linux) | 2026-11-15 → main ff · **51493347** + 기록 53629bb1 · bca7bc77 · d90bc2c5 · 브랜치 삭제 | 4 | 잔여 묶음 1 = 호출 뒤 미커밋 확인 `tx.call_probe` · CLI·Codex 손자 프로세스 정리(Unix 프로세스 그룹) · ■ 직후 user 병합 · 모의 ■ · 백업 대기 회신 · looks_missing · ai.side 켜짐 표시 · 빌드 경고 0 · T-478 · push CI ✓(43700927481 · 43700927455) · [journal 11-15 §9~§11](journal/2026-11-15.md) |

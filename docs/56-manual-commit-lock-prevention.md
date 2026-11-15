@@ -182,7 +182,7 @@
 - **묻지 않는 경우** = 자동 커밋 · 운영 보류 중(보류 계수·카드가 종전대로 센다) · 설정 끔 · 확인 질의 없는 방언.
 - **부하** = 호출 1회당 질의 1 · [26 §8](26-performance-architecture.md) · [39 §3-1](39-resource-governance.md) 등재 · `perf.boost` 대상 아님(데이터 안전 표시).
 
-**검증** — nsql-run `call_probe_tests` 5(분류 · MC/DC · 깨끗한 답 1회 보고 · 더러움/모름 = 변경 유지 · 끔·자동 커밋 = 질의 없음) · `rollback_enabled_mcdc` · 헤드리스 V1(SQLite = 종전 그대로) ✓ · **실서버 판정(11-15 · Linux · [journal 11-15 §14~§15](journal/2026-11-15.md))** = Oracle A·B·C·REF CURSOR ✓ · SQL Server A·C ✓(266 뒤 정리) · B·중첩 = DMV 권한 없으면 종전 · PostgreSQL A(2D000 뒤 정상)·B·C·R ✓ · 자동 커밋 = 질의 0 ✓ · 266 뒤 안내 = 오류 요약 뒤에 이어 표시(T-481 · 묶음 4) · SQL Server 모름 = EXEC 대기(결정 ⑤ · 실서버 V1 ✓ · [journal 11-15 §17](journal/2026-11-15.md)) · 남은 것 = `SET NOCOUNT ON` 뒤 DML 대기 미등재(T-483 · 종전 규칙).
+**검증** — nsql-run `call_probe_tests` 5(분류 · MC/DC · 깨끗한 답 1회 보고 · 더러움/모름 = 변경 유지 · 끔·자동 커밋 = 질의 없음) · `rollback_enabled_mcdc` · 헤드리스 V1(SQLite = 종전 그대로) ✓ · **실서버 판정(11-15 · Linux · [journal 11-15 §14~§15](journal/2026-11-15.md))** = Oracle A·B·C·REF CURSOR ✓ · SQL Server A·C ✓(266 뒤 정리) · B·중첩 = DMV 권한 없으면 종전 · PostgreSQL A(2D000 뒤 정상)·B·C·R ✓ · 자동 커밋 = 질의 0 ✓ · 266 뒤 안내 = 오류 요약 뒤에 이어 표시(T-481 · 묶음 4) · SQL Server 모름 = EXEC 대기(결정 ⑤ · 실서버 V1 ✓ · [journal 11-15 §17](journal/2026-11-15.md)) · `SET NOCOUNT ON` 뒤 DML = 행 수 None → 대기 등재(T-483 ✅ · 호스트 `tx_pending_due` + SQL Server 드라이버 None · [journal 11-15 §18](journal/2026-11-15.md)).
 
 ## 출처
 

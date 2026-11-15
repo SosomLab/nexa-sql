@@ -9,6 +9,7 @@
 - ★ **릴리스 변형(D-352 · 사용자 10-23)** = 기본 **lite만** 만들고 채널에 게시 · **full(통합판)은 기본 미생성** — 릴리스마다 `WINGET_PUBLISH` · `CHOCO_PUSH`와 함께 **"full 변형 여부"(`full_variant` / `RELEASE_FULL`)를 사용자에게 확인** · full 자산은 `-full` 꼬리로 Release에만(채널 게시 없음).
 - ★ **드라이버 릴리스 전 `nsql_abi::DRIVER_VERSION` 올리기**(사용자 10-23 · 4fd25c2) — 드라이버는 앱과 따로 버전을 매긴다 · `drivers-v<ver>` 태그 = 상수 값이어야 한다(`package-drivers.py`가 다르면 중단) · 한 번 공개한 드라이버 버전은 다시 올리지 않으므로 고치려면 상수부터 올린다.
   - 예(10-23 첫 적용) = `drivers-v0.1.2` 전에 1a9f02f에서 `DRIVER_VERSION` 0.1.1 → 0.1.2 · 앱 릴리스 `v0.2.8`과 별개 번호.
+  - ★ **대기(11-15)** = SQL Server 드라이버 변경(T-483 · NOCOUNT 행 수 = None) → lite 사용자 반영 = 다음 드라이버 릴리스 `drivers-v0.1.13` · `DRIVER_VERSION` 0.1.12 → 0.1.13 올림 = **릴리스 결정(사용자)** · [journal 11-15 §18](journal/2026-11-15.md).
   - 예(10-28) = `drivers-v0.1.8` 전에 6144b7e1에서 `DRIVER_VERSION` 0.1.7 → 0.1.8(pg TLS · 사용자 결정 · drivers.yml 40649951326 · 앱 최신 v0.3.1과 별개).
   - 예(10-30) = `drivers-v0.1.9` 전에 a73f987f에서 `DRIVER_VERSION` 0.1.8 → 0.1.9(SQL Server 호출 상한 ABI · 사용자 결정 = 앱 v0.4.0과 함께 · drivers.yml 40909266914 · 봇 색인 20df99fb).
   - 예(11-03) = `drivers-v0.1.10` 전에 b4be6098에서 `DRIVER_VERSION` 0.1.9 → 0.1.10(PG 등급 접두 · ClickHouse FROM-first · ABI 불변 = 옛 0.1.9도 동작 · 사용자 결정 = 앱 v0.5.0과 함께 · drivers.yml 41584093920 ✓ · 봇 색인 665f5162 · 앱 release 41585197069 ✓ · 공개 05:57:24Z).
