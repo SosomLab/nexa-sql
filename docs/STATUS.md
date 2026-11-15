@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-15 밤 · push 35ed8009 CI ✓ · 세션 마감**([journal 11-15 §19](journal/2026-11-15.md)) = ci 43708240054 ✓(3-OS · deny) · integration 43708240065 ✓ · drivers 워크플로 안 돎(태그 없음) · 새 TODO T-484 · 사용자 인스턴스 PID 367366 = 1a49b687 판(묶음 4·T-483 반영은 재시작 때)
+>
 > ★ **11-15 밤 · push 0f515137 CI ✓ · T-483 V1 ✓**([journal 11-15 §18](journal/2026-11-15.md) · `fix/1115-t483` · 커밋·push = 개발) = SQL Server `SET NOCOUNT ON` 뒤 DML = 대기 등재(호스트 `tx_pending_due` + 드라이버 None) · 통합 47/0/1 · ★ **드라이버 변경 = lite 사용자는 드라이버 릴리스 `drivers-v0.1.13` 때 반영(DRIVER_VERSION 올림 = 사용자 결정)**
 >
 > ★ **11-15 밤 · push 1a49b687 CI ✓ · Debug 재시작 PID 367366 · 묶음 4 V1 ✓**([journal 11-15 §16~§17](journal/2026-11-15.md) · `fix/1115-batch4` · 커밋·push = 개발) = 사용자 결정 ⑤(MSSQL 모름 = EXEC 대기 ✓) · ⑥(T-479 = Windows 세션 몫) · ⑦(재시작) · ⑧("백업 없음" = 해소로 닫음) · T-480·T-481·T-482 ✅ · 새 관찰 T-483(MSSQL `SET NOCOUNT ON` 뒤 DML 대기 미등재)
