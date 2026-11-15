@@ -474,6 +474,25 @@ impl App {
     }
 
     /// 포커스 텍스트 박스(IME·편집 컨텍스트 라우팅).
+    /// ★ 앱 조합(맥 한글) 중인 음절을 지금 글 상자 본문에 확정한다 — 열린 팔레트의 입력 상자가 먼저 · 아니면 포커스 상자.
+    /// 조합 중이 아니면 비용 0(시스템 IME는 OS가 같은 일을 한다 · 셀 편집기는 nexa-ctl `LiveEditor::try_commit`이 스스로).
+    /// `confirm`(Enter·Tab = 호스트가 값을 읽어 가는 키)이면 **시스템 IME** 조합 글도 본문에 넣는다(11-16 · Windows처럼 확정이 키
+    /// 뒤에 오는 OS에서 마지막 음절이 빠지던 것) — 뒤따라 오는 같은 확정은 상자가 한 번 버린다(nexa-ctl `TextBox::commit_preedit`).
+    pub(crate) fn settle_composition(&mut self, confirm: bool) {
+        let mut inv = Invalidations::default();
+        let done = if self.palette.is_open() {
+            self.palette.commit_composition(confirm, &mut inv)
+        } else {
+            self.focused_textbox().is_some_and(|tb| {
+                tb.commit_composition(&mut inv)
+                    || (confirm && tb.commit_preedit(&mut inv).is_some())
+            })
+        };
+        if done {
+            self.redraw();
+        }
+    }
+
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
             // ★ 뷰 탭(확장 상세)이 활성이면 클립보드 동작(⌘/Ctrl+C·A)의 대상은 그 본문 상자(사용자 09-30).
@@ -710,6 +729,21 @@ impl App {
             if swallow.stop {
                 return;
             }
+        }
+        // ★ 조합 중 음절을 키 앞에서 확정(사용자 11-15 "Enter를 치면 마지막 글자가 빠진다" · 협업 실증 = 조건 바 · 팔레트 프롬프트 ·
+        //   검색 패널 · 찾기 이력): 이 키들은 호스트·패널이 가로채 상자에 닿지 않는 일이 많다 — 상자에 닿았다면 상자가 스스로 했을
+        //   확정(자모가 아닌 사건 = 먼저 확정)을 여기서 미리 한다. Backspace(`Char`)는 자모 단위 지우기라 대상이 아니다.
+        if matches!(
+            ev,
+            InputEvent::Key { .. } | InputEvent::Char { c: '\t', .. }
+        ) {
+            self.settle_composition(matches!(
+                ev,
+                InputEvent::Key {
+                    key: CtlKey::Enter,
+                    ..
+                } | InputEvent::Char { c: '\t', .. }
+            ));
         }
         self.route_dispatch(ev);
         // ★ 포커스 상자의 편집 메뉴 동작(복사·잘라내기·붙여넣기) 공통 수거(사용자 10-13 "Cut 메뉴 동작 안 함"): 편집기·찾기 바·

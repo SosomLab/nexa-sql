@@ -78,11 +78,14 @@ impl Picker {
         let w = anchor.w.max(p.s(320.0)).min(host.w.max(p.s(120.0)));
         let rows = p.items.len().clamp(1, MAX_ROWS) as i32;
         let h = p.head_h() + rows * p.row_h() + p.extras.len() as i32 * p.extra_h() + p.s(8.0);
-        let at = nexa_ctl::geom::place_popup(
+        // ★ 앵커(연 버튼)를 가리지 않게 놓는다(11-16 — 종전 `place_popup`은 아래에 안 들어가면 **끝을 앵커 바닥에** 맞춰 위로 뒤집어
+        //   칩을 덮었다: 같은 자리를 다시 누르면 닫히지 않고 팝업 안 노력도 줄이 눌렸다). 아래 → 앵커 바로 위 → 둘 다 안 될 때만 일반 규칙.
+        let at = nexa_ctl::geom::place_popup_beside(
             Point {
                 x: anchor.x,
                 y: anchor.bottom(),
             },
+            anchor,
             (w, h),
             host,
         );
@@ -391,6 +394,36 @@ mod tests {
                 desc: "desc".into(),
             })
             .collect()
+    }
+
+    /// 아래에 들어갈 자리가 없으면 앵커 **바로 위**에 놓는다 — 앵커(연 버튼)를 덮지 않는다(11-16 모델 칩 재클릭).
+    #[test]
+    fn popup_never_covers_its_anchor() {
+        let host = Rect::new(0, 0, 800, 600);
+        let anchor = Rect::new(400, 560, 200, 24);
+        let p = Picker::new(
+            "Select a model",
+            items(3),
+            None,
+            Vec::new(),
+            anchor,
+            host,
+            16,
+            1.0,
+        );
+        assert_eq!(p.bounds().bottom(), anchor.y, "앵커 바로 위");
+        let anchor = Rect::new(400, 10, 200, 24);
+        let p = Picker::new(
+            "Select a model",
+            items(3),
+            None,
+            Vec::new(),
+            anchor,
+            host,
+            16,
+            1.0,
+        );
+        assert_eq!(p.bounds().y, anchor.bottom(), "자리가 있으면 아래");
     }
 
     #[test]

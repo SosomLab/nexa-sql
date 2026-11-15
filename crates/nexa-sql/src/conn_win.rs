@@ -2079,6 +2079,27 @@ impl ConnWin {
 
     fn route(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
         let typed = matches!(ev, InputEvent::Char { c, .. } if !c.is_control());
+        // 조합 중 음절을 키 앞에서 확정(메인 창 `App::route`와 같은 규칙 · 11-15) — Enter·Tab이 상자를 거치지 않고 접속·이동한다.
+        if matches!(
+            ev,
+            InputEvent::Key { .. } | InputEvent::Char { c: '\t', .. }
+        ) {
+            if let Some(tb) = self.focused_tb() {
+                let mut inv = Invalidations::default();
+                // Enter·Tab = 시스템 IME 조합 글도 확정(뒤늦은 확정은 상자가 버린다 · 11-16).
+                if !tb.commit_composition(&mut inv)
+                    && matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Enter,
+                            ..
+                        } | InputEvent::Char { c: '\t', .. }
+                    )
+                {
+                    let _ = tb.commit_preedit(&mut inv);
+                }
+            }
+        }
         self.route_inner(ev, out);
         if typed {
             // 가린 칸(비밀번호)에 글자가 들어갔으면 입력 언어 안내(IME 조합은 `Ime` 사건 쪽에서) · 일반 키 = 영문(Linux 보정).

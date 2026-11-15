@@ -460,7 +460,7 @@ impl AiPanel {
 
     fn finish_rename(&mut self, commit: bool) {
         if let Some((id, tb)) = self.rename.take() {
-            let title = tb.text().trim().to_string();
+            let title = tb.display_text().trim().to_string();
             if commit && !title.is_empty() {
                 self.actions.push(PanelAction::RenameSession(id, title));
             }

@@ -1231,7 +1231,7 @@ impl App {
         } else if self.outline_panel.is_visible() {
             Some("view.outline")
         } else if self.ai_panel.is_visible() {
-            Some(self.ai.tab.act_id())
+            Some(self.ai.panel_tab.act_id())
         } else {
             None
         });

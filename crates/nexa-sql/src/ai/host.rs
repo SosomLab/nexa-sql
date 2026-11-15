@@ -88,7 +88,6 @@ pub(crate) enum Running {
         /// 스레드가 준비되기 전에 들어온 첫 턴(글 · 로컬 이미지 경로).
         pending: PendingTurn,
         next_id: Arc<std::sync::atomic::AtomicU64>,
-        effort: String,
         system: String,
     },
     Mock {
@@ -117,11 +116,11 @@ fn write_line(w: &mut dyn Write, line: &str) -> Result<(), String> {
 
 /// ★ Codex 모델 목록(110 §15-5 · 프로필 [검증]): `codex app-server`를 잠깐 띄워 initialize → (apiKey 로그인) → `model/list` 한 번 →
 /// 종료. 키가 비면 CLI 자체 로그인으로 조회. 30초 상한 · 콘솔 창 없음.
-pub(crate) fn codex_list_models(
+pub(crate) fn codex_list_model_infos(
     program: &str,
     prefix: &[String],
     api_key: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<super::codex::ModelInfo>, String> {
     use super::codex;
     let mut cmd = nsql_ext::net::quiet_command(program);
     cmd.args(prefix)
@@ -138,7 +137,7 @@ pub(crate) fn codex_list_models(
         let _ = child.kill();
         return Err(e);
     }
-    let (tx, rx) = mpsc::channel::<Result<Vec<String>, String>>();
+    let (tx, rx) = mpsc::channel::<Result<Vec<super::codex::ModelInfo>, String>>();
     let key = api_key.to_string();
     let reader = std::thread::Builder::new()
         .name("ai-codex-models".into())
@@ -163,7 +162,7 @@ pub(crate) fn codex_list_models(
                         }
                         2 => codex::model_list(3),
                         3 => {
-                            let _ = tx.send(Ok(codex::model_ids(result.as_ref())));
+                            let _ = tx.send(Ok(codex::model_infos(result.as_ref())));
                             return;
                         }
                         _ => continue,
@@ -186,6 +185,15 @@ pub(crate) fn codex_list_models(
         let _ = h.join();
     }
     r
+}
+
+/// 모델 id만([`codex_list_model_infos`] · 프로필 검증 · E2E).
+pub(crate) fn codex_list_models(
+    program: &str,
+    prefix: &[String],
+    api_key: &str,
+) -> Result<Vec<String>, String> {
+    codex_list_model_infos(program, prefix, api_key).map(|v| v.into_iter().map(|m| m.id).collect())
 }
 
 /// 자식 프로세스 끝내기 — 종료 신호는 바로 보내고 **종료 대기는 다른 스레드에서**(11-14 "세션을 고를 때 잠시 멈춤"):
@@ -254,6 +262,10 @@ pub(crate) struct Host {
     /// API 대화의 세대(11-15) — 새 턴 시작·대화 교체마다 올린다. 턴 스레드는 끝날 때 **자기가 시작한 세대일 때만** 대화를
     /// 되돌려 넣는다: 종전에는 ■ 뒤 늦게 끝난 스레드가 그 사이 시작한 새 턴(또는 다른 세션으로 바꾼 대화)을 통째로 덮어썼다.
     pub api_gen: Arc<std::sync::atomic::AtomicU64>,
+    /// CLI 프로세스의 세대(11-16) — 조건이 바뀌어 **일부러 내리고 다시 띄울 때**([`Host::retire_cli`]) 올린다. 출력 스레드는
+    /// 자기 세대일 때만 사건을 보낸다: 내린 프로세스의 늦은 "cli exited"·종료 사건이 새 프로세스의 턴에 끼어들지 않게
+    /// (메모 줄이 남고, 종료 사건이 도는 턴의 busy를 풀었다).
+    pub cli_gen: Arc<std::sync::atomic::AtomicU64>,
     /// CLI stderr 꼬리(실패 진단).
     pub stderr_tail: Arc<Mutex<Vec<String>>>,
     /// ★ 턴 도중에 상대에게 **이미 넣은** 요청(11-15 · [`Host::steer`]): (식별자 · 세션 id · 글) — `SteerState` 사건으로 풀린다.
@@ -300,6 +312,7 @@ impl Host {
             busy: false,
             api_messages: Arc::new(Mutex::new(Vec::new())),
             api_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            cli_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             stderr_tail: Arc::new(Mutex::new(Vec::new())),
             steer_keys: Vec::new(),
             steer_ids: Arc::new(Mutex::new(Vec::new())),
@@ -387,7 +400,7 @@ impl Host {
                     wake();
                 };
                 let start_thread = |send_line: &dyn Fn(String)| match &resume {
-                    Some(t) => send_line(codex::thread_resume(3, t)),
+                    Some(t) => send_line(codex::thread_resume(3, t, &model)),
                     None => send_line(codex::thread_start(3, &model, &cwd, true)),
                 };
                 for line in BufReader::new(out).lines().map_while(Result::ok) {
@@ -455,7 +468,7 @@ impl Host {
                                     if let Some((text, imgs)) = first {
                                         let id = id2.fetch_add(1, Ordering::Relaxed);
                                         send_line(codex::turn_start(
-                                            id, &tid, &text, &imgs, &effort, &system,
+                                            id, &tid, &text, &imgs, &model, &effort, &system,
                                         ));
                                     }
                                 }
@@ -564,21 +577,26 @@ impl Host {
             turn,
             pending,
             next_id,
-            effort: l.effort,
             system: l.system,
         };
         Ok(())
     }
 
     /// Codex 턴 — 스레드가 준비됐으면 바로 `turn/start` · 아니면 대기열(악수 뒤 읽기 스레드가 보낸다).
-    pub(crate) fn send_codex(&mut self, text: &str, local_images: &[String]) -> Result<(), String> {
+    /// 모델·노력도는 **턴마다 지금 값**(11-15 · 띄울 때 값이 아니다 — 살아 있는 프로세스에서 바꾼 것이 바로 먹게).
+    pub(crate) fn send_codex(
+        &mut self,
+        text: &str,
+        local_images: &[String],
+        model: &str,
+        effort: &str,
+    ) -> Result<(), String> {
         use super::codex;
         let Running::Codex {
             writer,
             thread,
             pending,
             next_id,
-            effort,
             system,
             ..
         } = &self.running
@@ -589,7 +607,7 @@ impl Host {
         match tid {
             Some(tid) => {
                 let id = next_id.fetch_add(1, Ordering::Relaxed);
-                let line = codex::turn_start(id, &tid, text, local_images, effort, system);
+                let line = codex::turn_start(id, &tid, text, local_images, model, effort, system);
                 let mut w = writer.lock().map_err(|_| "lock".to_string())?;
                 w.write_all(line.as_bytes())
                     .and_then(|()| w.write_all(b"\n"))
@@ -718,6 +736,12 @@ impl Host {
         true
     }
 
+    /// 떠 있는 CLI 프로세스를 **다시 띄우려고** 내린다(모델·노력도가 바뀜 · 11-16): 세대를 올려 그 프로세스의 남은 사건을 버린다.
+    pub(crate) fn retire_cli(&mut self) {
+        self.cli_gen.fetch_add(1, Ordering::Relaxed);
+        self.stop();
+    }
+
     /// CLI 프로세스 시작(세션당 한 번 · 이후 턴은 stdin 줄).
     pub(crate) fn start_cli(&mut self, l: CliLaunch) -> Result<(), String> {
         self.stop();
@@ -739,10 +763,16 @@ impl Host {
         };
         let tx = self.tx.clone();
         let wake = self.wake.clone();
+        let cli_gen = self.cli_gen.clone();
+        let mine = cli_gen.load(Ordering::Relaxed);
         let spawned = std::thread::Builder::new()
             .name("ai-cli-out".into())
             .spawn(move || {
                 for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    // 일부러 내린 프로세스(세대가 지남)의 사건은 버린다.
+                    if cli_gen.load(Ordering::Relaxed) != mine {
+                        return;
+                    }
                     let evs = claude_cli::parse_line(&line);
                     let mut any = false;
                     for e in evs {
@@ -752,6 +782,9 @@ impl Host {
                     if any {
                         wake();
                     }
+                }
+                if cli_gen.load(Ordering::Relaxed) != mine {
+                    return;
                 }
                 let _ = tx.send(AiEvent::Note("cli exited".into()));
                 let _ = tx.send(AiEvent::Done {

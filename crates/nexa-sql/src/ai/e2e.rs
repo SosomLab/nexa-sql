@@ -186,11 +186,11 @@ fn codex_cli_two_turns() {
     .unwrap();
     prewarm();
     println!("spawned +{:.1}s", t0.elapsed().as_secs_f32());
-    host.send_codex("Reply with the single word OK.", &[])
+    host.send_codex("Reply with the single word OK.", &[], "", "")
         .unwrap();
     let a = wait_turn(&host, Duration::from_secs(180));
     show("codex turn 1", &a);
-    host.send_codex("Reply with the single word AGAIN.", &[])
+    host.send_codex("Reply with the single word AGAIN.", &[], "", "")
         .unwrap();
     let b = wait_turn(&host, Duration::from_secs(120));
     show("codex turn 2", &b);

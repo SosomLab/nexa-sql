@@ -345,7 +345,7 @@ impl InputWin {
                 (
                     r.need.kind,
                     r.need.name.clone(),
-                    r.tb.text(),
+                    r.tb.display_text(),
                     r.chosen_type(),
                 )
             })

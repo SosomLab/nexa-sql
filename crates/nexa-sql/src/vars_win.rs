@@ -355,7 +355,7 @@ impl VarsWin {
 
     /// 입력란의 글 → (이름, 값): `이름 = 값`이면 그 이름 · 아니면 고른 줄의 이름.
     fn edit_target(&self) -> Option<(String, String)> {
-        let text = self.edit.text();
+        let text = self.edit.display_text();
         // ★ 수식(사용자 11-12 "변수 창에서 수식으로 지정"): `이름 := 수식`은 고른 줄이 있어도 그 이름의 수식 지정 — 값 앞에 `=`를
         //   붙여 호스트에 넘긴다(호스트가 `EXEC :이름 := 수식`으로 실행). 고른 줄에 `= 수식`만 쳐도 같다.
         if let Some((l, r)) = text.split_once(":=") {

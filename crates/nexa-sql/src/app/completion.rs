@@ -357,7 +357,23 @@ impl App {
         let from = text[..a.replace.start.min(text.len())].chars().count();
         // ★ 낱말 한가운데에서 확정 = 낱말 전체를 바꾼다(11-14 · 접두가 있을 때만 — 빈 자리에서 연 후보는 뒤 낱말을 건드리지 않는다).
         let end_b = a.replace.end.min(text.len());
-        let end_b = if a.replace.start < a.replace.end {
+        // ★ 후보를 만든 뒤 캐럿 앞에 낱말 글자가 더 붙었으면(11-16 — 조합 중 음절이 확정 키 앞에서 본문에 들어간 경우: 빈 접두로 연
+        //   팝업은 바꿀 범위가 비어 있어 `T.품목코드품`처럼 음절이 후보 뒤에 남았다) 그 글자까지가 접두다.
+        let caret_b = text
+            .char_indices()
+            .nth(self.editors.cur().caret())
+            .map_or(text.len(), |(i, _)| i);
+        let end_b = if caret_b > end_b
+            && text.is_char_boundary(end_b)
+            && text[end_b..caret_b]
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '#'))
+        {
+            caret_b
+        } else {
+            end_b
+        };
+        let end_b = if a.replace.start < end_b {
             crate::intel::word_tail_end(&text, end_b)
         } else {
             end_b

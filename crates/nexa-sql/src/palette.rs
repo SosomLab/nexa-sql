@@ -509,6 +509,19 @@ impl Palette {
     /// IME 조합 중 글자(preedit)를 입력 상자에 보인다 — 팔레트는 `Focus` 변형이 아니라 호스트가 IME 사건을 여기로 넘긴다(09-27 한글 버그).
     pub(crate) fn set_preedit(&mut self, text: &str, inv: &mut Invalidations) {
         self.input.set_preedit(text, inv);
+        // 목록은 조합 중 글자까지 바로 거른다(11-16 · 다른 검색 상자와 같은 규칙).
+        self.refilter(false);
+    }
+
+    /// 앱 조합 중인 음절을 입력 상자 본문에 확정한다(호스트 `App::settle_composition` · 11-15) — 확정한 것이 있으면 참.
+    /// `confirm`(Enter·Tab) = 시스템 IME 조합 글도 확정한다(뒤늦은 확정은 상자가 버린다 · 11-16).
+    pub(crate) fn commit_composition(&mut self, confirm: bool, inv: &mut Invalidations) -> bool {
+        let done = self.input.commit_composition(inv)
+            || (confirm && self.input.commit_preedit(inv).is_some());
+        if done {
+            self.refilter(false);
+        }
+        done
     }
 
     /// 지금 검색어(시험 · 라이브 프롬프트의 표현식 읽기 · docs/124).
@@ -676,7 +689,8 @@ impl Palette {
             self.matches.clear();
             return;
         }
-        let q = self.input.text();
+        // ★ 조합 중 음절까지 넣어 거른다(11-16): 종전에는 본문만 읽어, 조합 중 Enter가 마지막 음절 없이 걸러진 목록에서 골랐다.
+        let q = self.input.display_text();
         if !force && q == self.last_query {
             return;
         }

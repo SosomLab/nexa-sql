@@ -88,21 +88,30 @@ pub(crate) fn dynamic_tools() -> Json {
 
 pub(crate) fn thread_start(id: u64, model: &str, cwd: &str, with_tools: bool) -> String {
     let mut p = vec![
-        ("model", s(model)),
         ("cwd", s(cwd)),
         // 파일·명령 도구는 쓰지 않는다 — 승인은 그래도 받는다(우리 도구는 자체 승인 카드).
         ("approvalPolicy", s("untrusted")),
         ("sandbox", s("read-only")),
         ("serviceName", s("nexa-sql")),
     ];
+    // 모델이 비면 싣지 않는다 = Codex 설정의 기본 모델(계정 모델 목록을 아직 못 받은 CLI 로그인 · 11-15).
+    if !model.is_empty() {
+        p.push(("model", s(model)));
+    }
     if with_tools {
         p.push(("dynamicTools", dynamic_tools()));
     }
     request(id, "thread/start", obj(p))
 }
 
-pub(crate) fn thread_resume(id: u64, thread_id: &str) -> String {
-    request(id, "thread/resume", obj(vec![("threadId", s(thread_id))]))
+/// ★ 재개에도 모델을 싣는다(사용자 11-15 "모델을 바꿔도 적용되지 않음"): 싣지 않으면 스레드를 만들 때의 모델로 계속 돈다 —
+/// 계정이 못 쓰는 모델로 만들어진 스레드는 화면에서 모델을 바꿔도 같은 오류였다(codex-cli 0.166 `ThreadResumeParams.model`).
+pub(crate) fn thread_resume(id: u64, thread_id: &str, model: &str) -> String {
+    let mut p = vec![("threadId", s(thread_id))];
+    if !model.is_empty() {
+        p.push(("model", s(model)));
+    }
+    request(id, "thread/resume", obj(p))
 }
 
 /// 모델 목록(`model/list` · 프로필 [검증] = 키 확인 겸 목록 갱신 · 110 §15-5).
@@ -110,25 +119,75 @@ pub(crate) fn model_list(id: u64) -> String {
     request(id, "model/list", obj(vec![("limit", Json::Num(200.0))]))
 }
 
-/// `model/list` 응답 → 모델 id(숨김 제외 · 기본 모델 먼저 · 그 밖은 서버 순서).
-pub(crate) fn model_ids(result: Option<&Json>) -> Vec<String> {
+/// `model/list`의 모델 하나 — id · 그 모델이 받는 노력도(`supportedReasoningEfforts` · 서버 순서) · 기본 노력도(11-16).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ModelInfo {
+    pub id: String,
+    pub efforts: Vec<String>,
+    pub default_effort: String,
+}
+
+/// `model/list` 응답 → 모델 정보(숨김 제외 · 기본 모델 먼저 · 그 밖은 서버 순서).
+pub(crate) fn model_infos(result: Option<&Json>) -> Vec<ModelInfo> {
     let Some(Json::Arr(data)) = result.and_then(|r| jget(r, "data")) else {
         return Vec::new();
     };
-    let mut out: Vec<(bool, String)> = data
+    let mut out: Vec<(bool, ModelInfo)> = data
         .iter()
         .filter(|m| !matches!(jget(m, "hidden"), Some(Json::Bool(true))))
         .map(|m| {
             let id = jstr(m, "id");
+            let efforts = match jget(m, "supportedReasoningEfforts") {
+                Some(Json::Arr(a)) => a
+                    .iter()
+                    .map(|e| jstr(e, "reasoningEffort"))
+                    .filter(|e| !e.is_empty())
+                    .collect(),
+                _ => Vec::new(),
+            };
             (
                 matches!(jget(m, "isDefault"), Some(Json::Bool(true))),
-                if id.is_empty() { jstr(m, "model") } else { id },
+                ModelInfo {
+                    id: if id.is_empty() { jstr(m, "model") } else { id },
+                    efforts,
+                    default_effort: jstr(m, "defaultReasoningEffort"),
+                },
             )
         })
-        .filter(|(_, id)| !id.is_empty())
+        .filter(|(_, m)| !m.id.is_empty())
         .collect();
     out.sort_by_key(|(d, _)| !d);
-    out.into_iter().map(|(_, id)| id).collect()
+    out.into_iter().map(|(_, m)| m).collect()
+}
+
+/// `model/list` 응답 → 모델 id(숨김 제외 · 기본 모델 먼저 · 그 밖은 서버 순서).
+#[cfg(test)]
+pub(crate) fn model_ids(result: Option<&Json>) -> Vec<String> {
+    model_infos(result).into_iter().map(|m| m.id).collect()
+}
+
+/// 이 모델에 보낼 노력도(순수 · 11-16): 모델이 받는 값이면 그대로 · 목록을 모르면(빈 목록) 그대로 · 아니면 `order`(낮음 → 높음)에서
+/// **원하는 값보다 높지 않은 가장 높은** 지원 값 · 그것도 없으면 모델 기본값(없으면 지원 값의 첫째).
+pub(crate) fn fit_effort(want: &str, info: &ModelInfo, order: &[&str]) -> String {
+    if info.efforts.is_empty() || info.efforts.iter().any(|e| e == want) {
+        return want.to_string();
+    }
+    let rank = |e: &str| order.iter().position(|o| *o == e);
+    if let Some(w) = rank(want) {
+        if let Some(best) = info
+            .efforts
+            .iter()
+            .filter_map(|e| rank(e).filter(|r| *r <= w).map(|r| (r, e)))
+            .max_by_key(|(r, _)| *r)
+        {
+            return best.1.clone();
+        }
+    }
+    if info.default_effort.is_empty() {
+        info.efforts[0].clone()
+    } else {
+        info.default_effort.clone()
+    }
 }
 
 /// 턴 시작 — 글 + 이미지(파일 경로 · app-server는 base64 블록 대신 `localImage`).
@@ -137,6 +196,7 @@ pub(crate) fn turn_start(
     thread_id: &str,
     text: &str,
     local_images: &[String],
+    model: &str,
     effort: &str,
     system: &str,
 ) -> String {
@@ -151,6 +211,11 @@ pub(crate) fn turn_start(
     };
     input.push(obj(vec![("type", s("text")), ("text", Json::Str(body))]));
     let mut p = vec![("threadId", s(thread_id)), ("input", Json::Arr(input))];
+    // ★ 턴마다 지금 고른 모델(11-15 · `TurnStartParams.model` = 이 턴과 그 뒤 턴에 적용): 살아 있는 프로세스·재개한 스레드에서도
+    //   화면의 모델 변경이 바로 먹는다. 비면 싣지 않는다(스레드의 모델 그대로).
+    if !model.is_empty() {
+        p.push(("model", s(model)));
+    }
     if !effort.is_empty() {
         p.push(("effort", s(effort)));
     }
@@ -474,12 +539,18 @@ mod tests {
                 && ts.contains("\"run_query\"")
                 && ts.contains("\"approvalPolicy\":\"untrusted\"")
         );
-        let tu = turn_start(3, "thr_1", "hi", &["a.png".into()], "high", "sys");
+        let tu = turn_start(3, "thr_1", "hi", &["a.png".into()], "gpt-x", "high", "sys");
         assert!(
             tu.contains("\"localImage\"")
                 && tu.contains("<app_context>")
                 && tu.contains("\"effort\":\"high\"")
+                && tu.contains("\"model\":\"gpt-x\"")
         );
+        // 모델이 비면 어느 요청에도 싣지 않는다(Codex 기본 모델) · 재개에도 모델을 싣는다(11-15).
+        assert!(!turn_start(3, "t", "hi", &[], "", "", "").contains("\"model\""));
+        assert!(!thread_start(2, "", "C:/w", false).contains("\"model\""));
+        assert!(thread_resume(3, "t", "gpt-x").contains("\"model\":\"gpt-x\""));
+        assert!(!thread_resume(3, "t", "").contains("\"model\""));
         match parse_line(r#"{"method":"thread/started","params":{"thread":{"id":"thr_1"}}}"#) {
             Incoming::Events(e) => assert!(
                 matches!(&e[0], AiEvent::Started { cli_session: Some(t), .. } if t == "thr_1")
@@ -556,6 +627,49 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(model_ids(None).is_empty());
+    }
+
+    /// 모델별 노력도(11-16): 지원 값·기본값을 읽고, 지원하지 않는 값은 그보다 높지 않은 가장 높은 지원 값으로 맞춘다.
+    #[test]
+    fn model_efforts_parse_and_fit() {
+        let line = r#"{"id":3,"result":{"data":[{"id":"m1","isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"a"},{"reasoningEffort":"medium","description":"b"},{"reasoningEffort":"high","description":"c"}]},{"id":"m2"}]}}"#;
+        let Incoming::Response { result, .. } = parse_line(line) else {
+            panic!("response");
+        };
+        let infos = model_infos(result.as_ref());
+        assert_eq!(infos[0].efforts, vec!["low", "medium", "high"]);
+        assert_eq!(infos[0].default_effort, "medium");
+        let order = ["low", "medium", "high", "xhigh", "max"];
+        assert_eq!(
+            fit_effort("high", &infos[0], &order),
+            "high",
+            "지원 = 그대로"
+        );
+        assert_eq!(
+            fit_effort("max", &infos[0], &order),
+            "high",
+            "높지 않은 가장 높은 값"
+        );
+        assert_eq!(
+            fit_effort("odd", &infos[0], &order),
+            "medium",
+            "모르는 값 = 기본"
+        );
+        assert_eq!(
+            fit_effort("max", &infos[1], &order),
+            "max",
+            "목록을 모르면 그대로"
+        );
+        let only_high = ModelInfo {
+            id: "m3".into(),
+            efforts: vec!["high".into()],
+            default_effort: String::new(),
+        };
+        assert_eq!(
+            fit_effort("low", &only_high, &order),
+            "high",
+            "아래가 없으면 첫 지원 값"
+        );
     }
 
     /// 턴 도중 넣기(11-15 실측): `turn/steer` 요청 꼴 · 답 글 항목의 시작/완료가 경계 사건이 된다(도구 항목은 종전대로).

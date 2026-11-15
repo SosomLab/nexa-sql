@@ -182,7 +182,7 @@ impl ProfVarsWin {
 
     /// 입력란의 글 → (이름, 값): 고른 줄이 없으면 `이름 = 값` · 있으면 그 줄의 이름 + 글 전부가 값.
     fn edit_target(&self) -> Option<(String, String)> {
-        let text = self.edit.text();
+        let text = self.edit.display_text();
         if let Some(sel) = &self.selected {
             return Some((sel.clone(), text.trim().to_string()));
         }

@@ -314,6 +314,8 @@ pub(crate) struct AiView {
     provider: Provider,
     picker: Option<(Btn, Picker)>,
     lh: i32,
+    /// 마지막 그리기의 표면(창) 크기 — 고르기 팝업은 뷰 영역이 아니라 **창 안**에 놓는다(11-16 · `picker_host`).
+    surface: Option<(i32, i32)>,
     p_key: TextBox,
     /// 인증 = WIF(110 §14-5) · 아래 다섯 상자.
     p_wif: bool,
@@ -415,6 +417,7 @@ impl Default for AiView {
             provider: Provider::Claude,
             picker: None,
             lh: 16,
+            surface: None,
             p_key,
             p_wif: false,
             p_issuer: tb("https://login.microsoftonline.com/<tenant>/v2.0"),
@@ -1019,6 +1022,16 @@ impl AiView {
         &mut self.composer
     }
 
+    /// 고르기 팝업이 놓일 수 있는 영역 = 창 전체(표면 크기를 모르면 뷰 영역) — 팝업 층에 그리고 열려 있는 동안 사건도 뷰가 먼저
+    /// 받으므로 뷰 밖으로 나가도 된다(활동 패널의 팝업과 같은 규칙 · 11-16 "편집기 옆 창은 낮아서 모델 팝업이 위·아래 어디에도
+    /// 안 들어가 칩을 덮었다").
+    fn picker_host(&self) -> Rect {
+        match self.surface {
+            Some((w, h)) if w > 0 && h > 0 => Rect::new(0, 0, w, h),
+            _ => self.bounds,
+        }
+    }
+
     pub(crate) fn popup_open(&self) -> bool {
         self.composer.popup_open()
             || !self.slash.is_empty()
@@ -1068,7 +1081,18 @@ impl AiView {
         }
     }
 
+    /// ★ 조합 중 음절을 보내기 앞에서 확정한다(사용자 11-15 "접속 정보 확인 → '인'이 빠진 채 전송되고 입력란에 남는다" · 맥·Windows):
+    ///   이 뷰가 Enter를 가로채 작성 상자에는 키가 가지 않으므로 상자가 스스로 확정할 기회가 없었다. 앱 조합(맥 한글) =
+    ///   조합기를 비워 본문에 넣는다 · 시스템 IME = 조합 글을 본문에 넣는다 — 뒤따라 오는 같은 확정은 상자가 한 번 버린다(nexa-ctl `TextBox::commit_preedit` · 11-16).
+    fn settle_composition(&mut self) {
+        let mut inv = Invalidations::default();
+        if !self.composer.commit_composition(&mut inv) {
+            let _ = self.composer.commit_preedit(&mut inv);
+        }
+    }
+
     fn submit(&mut self) {
+        self.settle_composition();
         let text = self.composer.text();
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -1285,7 +1309,11 @@ impl AiView {
                 }
                 PickEvent::Close => {
                     self.picker = None;
-                    if !matches!(ev, InputEvent::MouseDown { .. }) {
+                    // ★ 팝업을 연 그 버튼을 다시 누른 것 = 닫기만(사용자 11-16 "세션 보기를 다시 누르면 목록이 닫히도록") — 종전에는
+                    //   바깥 클릭으로 닫힌 뒤 같은 클릭이 버튼에 닿아 곧바로 다시 열렸다. 그 밖의 바깥 클릭은 닫고 그대로 진행.
+                    let on_opener = matches!(*ev, InputEvent::MouseDown { x, y, .. }
+                        if self.buttons.iter().any(|(k, r)| *k == kind && r.contains(Point { x, y })));
+                    if on_opener || !matches!(ev, InputEvent::MouseDown { .. }) {
                         return true;
                     }
                 }
@@ -1343,6 +1371,7 @@ impl AiView {
                     shift: false,
                     ..
                 } => {
+                    self.settle_composition();
                     let text = self.composer.text();
                     if self.slash.len() == 1 && SLASH[self.slash[0]].0 == text.trim() {
                         self.submit();
@@ -1667,7 +1696,7 @@ impl AiView {
                         on: self.auto_now,
                     },
                 ];
-                let host = self.bounds;
+                let host = self.picker_host();
                 let w = self.s(340.0).min(host.w);
                 let anchor = Rect::new(anchor.right() - w, anchor.y, w, anchor.h);
                 let p = Picker::new(
@@ -1708,7 +1737,7 @@ impl AiView {
                         desc: p.title().to_string(),
                     });
                 }
-                let host = self.bounds;
+                let host = self.picker_host();
                 let anchor = Rect::new(
                     anchor.right() - self.s(320.0).min(host.w),
                     anchor.y,
@@ -1831,7 +1860,7 @@ impl AiView {
                     })
                     .collect();
                 let sel = items.iter().position(|i| i.id == cur);
-                let host = self.bounds;
+                let host = self.picker_host();
                 let p = Picker::new(
                     title,
                     items,
@@ -1878,7 +1907,11 @@ impl AiView {
                 PickEvent::Effort(_) | PickEvent::Toggle(_) => return true,
                 PickEvent::Close => {
                     self.picker = None;
-                    if !matches!(ev, InputEvent::MouseDown { .. }) {
+                    // ★ 팝업을 연 그 버튼을 다시 누른 것 = 닫기만(사용자 11-16 "세션 보기를 다시 누르면 목록이 닫히도록") — 종전에는
+                    //   바깥 클릭으로 닫힌 뒤 같은 클릭이 버튼에 닿아 곧바로 다시 열렸다. 그 밖의 바깥 클릭은 닫고 그대로 진행.
+                    let on_opener = matches!(*ev, InputEvent::MouseDown { x, y, .. }
+                        if self.buttons.iter().any(|(k, r)| *k == kind && r.contains(Point { x, y })));
+                    if on_opener || !matches!(ev, InputEvent::MouseDown { .. }) {
                         return true;
                     }
                 }
@@ -2134,6 +2167,7 @@ impl AiView {
         }
         dc.fill_rect(b, th.field_bg);
         self.buttons.clear();
+        self.surface = dc.surface_size();
         if self.page != Page::Chat {
             self.paint_profiles(dc, th, info);
             return;
@@ -2144,6 +2178,9 @@ impl AiView {
         self.text_w = w;
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
+        // ★ 고르기 팝업(모델 · 세션 목록 · 프로필)이 쓰는 글줄 높이 = 그릴 때마다 잰 값(11-16 "맥에서 세션 목록 간격이 좁다":
+        //   종전에는 프로필 편집 화면을 그릴 때만 적어, 그 화면을 연 적이 없으면 처음 값 16에 머물렀다 — 배율이 큰 화면에서 두 줄이 겹침).
+        self.lh = lh;
         let line_h = lh + self.s(4.0);
         // ── 머리 줄: 분할 창에서만(세션 제목 + [≡ 세션][+ 새 세션] · 사용자 11-11) · 탭에서는 없음.
         let mut head_h = 0;
@@ -3004,9 +3041,11 @@ impl AiView {
                 sx += self.s(6.0);
             }
             if !info.status.is_empty() && right - sx > self.s(60.0) {
-                let shown =
-                    nexa_ctl::draw::ellipsize_middle(dc, &info.status, right - sx - self.s(8.0));
-                dc.text(sx, tyc, b, &shown, th.text_dim);
+                let room = right - sx - self.s(8.0);
+                let shown = nexa_ctl::draw::ellipsize_middle(dc, &info.status, room);
+                // ★ 남는 자리 안에서만 그린다(사용자 11-16 스크린샷 "상태 글이 모델 칩 위에 겹침"): 줄임이 꺼져 있거나(전체 보기)
+                //   폭 실측이 어긋나도 칩을 침범하지 않게 자르기 영역을 그 자리로 좁힌다(종전 = 뷰 전체).
+                dc.text(sx, tyc, Rect::new(sx, cy, room, btn_h), &shown, th.text_dim);
             }
             if info.busy {
                 self.paint_button(dc, th, r, label, false, Btn::Send);
@@ -3172,6 +3211,7 @@ impl AiView {
         let w = (b.w - pad * 2).max(self.s(80.0));
         dc.select_font(FontSlot::Base, false);
         let lh = dc.text_height();
+        self.lh = lh;
         let row_h = lh + self.s(12.0);
         // 안 보이는 상자는 영역을 비운다(클릭·Tab 대상에서 제외 · 11-11 키 상자 결함) — 목록 페이지는 전부.
         let mut inv = Invalidations::default();
@@ -4289,6 +4329,50 @@ mod tests {
         // 대화로 돌아오면 작성 상자만.
         v.show_page(Page::Chat);
         assert!(v.composer.is_focused() && !v.p_key.is_focused());
+    }
+
+    /// 사용자 11-15(맥·Windows): 조합 중인 마지막 음절까지 보내고 입력란에 남기지 않는다 — 앱 조합(맥 한글) · 시스템 IME 둘 다.
+    #[test]
+    fn enter_sends_the_syllable_still_being_composed() {
+        let enter = InputEvent::Key {
+            key: CtlKey::Enter,
+            shift: false,
+            primary: false,
+        };
+        let sent = |v: &mut AiView| {
+            v.take_actions()
+                .into_iter()
+                .find_map(|a| match a {
+                    ViewAction::Send(s) => Some(s),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        // 앱 조합(맥 한글) 경로 = `TextBox::commit_composition`(nexa-ctl 시험 `commit_composition_before_host_command`) — 스위치가
+        //   프로세스 전역이라 병렬 시험에서 켜지 않는다(실기로 확인).
+        // 시스템 IME: preedit "인"인 채 Enter → 보낸 글에 들어가고, 뒤늦은 같은 확정은 한 번만 버린다.
+        let mut v = AiView::default();
+        v.composer.set_focused(true);
+        v.set_composer_text("접속 정보 확");
+        let mut inv = Invalidations::default();
+        v.composer.set_preedit("인", &mut inv);
+        v.on_event(&enter);
+        assert_eq!(sent(&mut v), "접속 정보 확인");
+        assert_eq!(v.composer.display_text(), "");
+        // 호스트가 넘기는 뒤늦은 확정(`set_preedit("")` + 글자) = 한 번만 버린다.
+        let late = |v: &mut AiView| {
+            let mut inv = Invalidations::default();
+            v.composer.set_preedit("", &mut inv);
+            v.composer.on_event(
+                &InputEvent::Char {
+                    c: '인', now_ms: 0
+                },
+                &mut inv,
+            );
+            v.composer.text()
+        };
+        assert_eq!(late(&mut v), "", "뒤늦은 확정 = 버린다");
+        assert_eq!(late(&mut v), "인", "한 번만");
     }
 
     #[test]

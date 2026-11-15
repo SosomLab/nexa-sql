@@ -654,7 +654,7 @@ impl FindObjWin {
     // ── 검색 ───────────────────────────────────────────────────────────────────────────────────────
 
     fn build_query(&self) -> Option<FindQuery> {
-        let text = self.qbar.text().trim().to_string();
+        let text = self.qbar.display_text().trim().to_string();
         if text.is_empty() {
             return None;
         }
@@ -704,7 +704,7 @@ impl FindObjWin {
         let kinds_all = kd.iter().all(|k| *k);
         let schemas: Vec<String> = self
             .schema
-            .text()
+            .display_text()
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -936,7 +936,7 @@ impl FindObjWin {
     ///   거른 뒤 스크롤을 새 길이 안으로 당긴다(종전 = 내려 둔 스크롤이 남아 **빈 화면** = "1433 입력 시 아무것도 안 보임"의 원인).
     fn apply_view(&mut self) {
         let keep = self.sel.and_then(|v| self.view.get(v).copied());
-        let f = self.filter.text().trim().to_lowercase();
+        let f = self.filter.display_text().trim().to_lowercase();
         let words: Vec<String> = f.split_whitespace().map(String::from).collect();
         let wq: Vec<Vec<char>> = words.iter().map(|w| w.chars().collect()).collect();
         let w: Vec<bool> = self.whats.iter().map(Checkbox::is_checked).collect();

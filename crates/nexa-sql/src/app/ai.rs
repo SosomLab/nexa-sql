@@ -103,6 +103,9 @@ pub(crate) struct AiState {
     pub synced_at: Option<Instant>,
     /// ★ 활동 막대 탭(Claude / Codex · 11-11) — 패널·채팅 탭·세션 목록은 이 제공자 것만.
     pub tab: Provider,
+    /// ★ 활동 막대 패널이 보이는 제공자(사용자 11-16 "활동 탭을 바꾸는 행위가 AI 탭의 세션과는 무관하도록"): 패널은 그 제공자의
+    /// 세션 목록을 보이고 독립 탭으로 열기만 한다 — `tab`·`cur`(분할 창·채팅 탭이 쓰는 작업 세션)는 건드리지 않는다.
+    pub panel_tab: Provider,
     /// 탭을 떠날 때 보던 세션 id(돌아오면 복원).
     pub last_claude: Option<String>,
     pub last_codex: Option<String>,
@@ -112,6 +115,12 @@ pub(crate) struct AiState {
     pub codex_login: Option<String>,
     /// ★ CLI 로그인 계정이 쓸 수 있는 Codex 모델(`model/list` · 로그인 상태 조회와 함께 · 사용자 11-11 "Free에서 안 되는 모델이 기본").
     pub codex_cli_models: Vec<String>,
+    /// ★ 그 모델들이 받는 노력도(`model/list`의 `supportedReasoningEfforts` · 모델 id → 정보 · 사용자 11-16 "무료에서도 max로
+    /// 지정할 수 있나") — 지원하지 않는 노력도는 보내기 전에 지원 값으로 맞추고 안내한다(`codex::fit_effort`).
+    pub codex_efforts: std::collections::HashMap<String, ai::codex::ModelInfo>,
+    /// 계정 모델 목록 조회가 끝났다(성공이든 실패든 · 11-16) — 끝나기 전의 턴은 모델·노력도를 싣지 않고(Codex 기본값) 보낸다.
+    /// 실패로 끝났으면(목록 없음) 고른 값을 그대로 보낸다(서버 오류가 그대로 보인다).
+    pub codex_list_done: bool,
     /// 코드 블록 [실행] 대기(메시지 번호 · 블록 번호) — 결과는 그 메시지의 `block_results`로.
     pub run_block: Option<(usize, usize)>,
     /// 진행 중 상태 줄 갱신 마지막 시각(1초 간격) · 턴 시작 시각(HH:MM:SS).
@@ -136,6 +145,9 @@ pub(crate) struct AiState {
     /// ★ 미리 띄운 CLI 프로세스의 띄우기 서명(아직 턴을 안 보냄 · 11-12) · 미리 띄우기를 시도한 세션 id(세션당 한 번).
     pub warm: Option<String>,
     pub warm_sid: Option<String>,
+    /// ★ 지금 떠 있는 Claude CLI 프로세스를 띄울 때의 모델 · 노력도(사용자 11-16 "opus로 바꿨는데 fable로 답한다"): CLI는 모델을
+    /// **띄울 때만** 받으므로, 대화 도중 칩에서 바꾸면 프로세스를 내리고 `--resume`으로 새 모델로 다시 띄워야 한다.
+    pub cli_me: Option<(String, String)>,
     /// ★ 세션이 바쁠 때 온 조회 도구 호출의 대기열(11-12 "session busy" 오류 대신 차례로 실행).
     pub tool_queue: std::collections::VecDeque<(String, String, mpsc::Sender<ToolReply>)>,
     /// ★ 턴이 끝난 뒤 결과 그리드에 자동으로 보일 최종 조회문(`ai.show_result=auto`).
@@ -288,6 +300,7 @@ impl App {
     pub(crate) fn ai_apply_provider_default(&mut self) {
         self.ai_init();
         let p = self.ai_provider_default();
+        self.ai.panel_tab = p;
         self.ai_switch_tab(p);
         self.ai_view.set_provider(p);
         self.ai_sync_panel();
@@ -364,6 +377,7 @@ impl App {
         ai::trace_ms("history_list", t0);
         self.ai.cur = None;
         self.ai.tab = self.ai_provider_default();
+        self.ai.panel_tab = self.ai.tab;
         self.ai.side = self.settings.flag("ai.side");
         if self.ai.side {
             let tid = self.editors.active_id();
@@ -549,9 +563,11 @@ impl App {
             self.ai_apply_enabled();
         }
         self.ai_init();
-        let on = !(self.ai_panel.is_visible() && self.ai.tab == p);
+        let on = !(self.ai_panel.is_visible() && self.ai.panel_tab == p);
         if on {
-            self.ai_switch_tab(p);
+            // ★ 패널이 보이는 제공자만 바꾼다(11-16) — 종전에는 작업 세션까지 그 제공자의 마지막 세션으로 바꿔, 편집기 옆 분할
+            //   창이 쓰던 세션이 활동 탭을 누를 때마다 딴 세션으로 넘어갔다.
+            self.ai.panel_tab = p;
             self.side_panel_close_others(p.act_id());
         }
         self.ai_panel.set_visible(on);
@@ -629,10 +645,19 @@ impl App {
 
     /// ★ 제공자별 설정 키(사용자 11-11 "Claude · Codex 설정을 따로"): Claude = `ai.<이름>` · Codex = `ai.codex_<이름>`.
     fn ai_pref_key(&self, name: &str) -> String {
-        match self.ai.tab {
+        Self::ai_pref_key_for(self.ai.tab, name)
+    }
+
+    fn ai_pref_key_for(p: Provider, name: &str) -> String {
+        match p {
             Provider::Claude => format!("ai.{name}"),
             Provider::Codex => format!("ai.codex_{name}"),
         }
+    }
+
+    /// 패널이 보이는 제공자의 작업 세션(작업 세션이 다른 제공자 것이면 없음 — 패널은 그 제공자의 기본값을 보인다 · 11-16).
+    fn ai_panel_cur(&self) -> Option<&Session> {
+        self.ai_cur().filter(|s| s.provider == self.ai.panel_tab)
     }
 
     fn ai_mode_default(&self) -> Mode {
@@ -889,11 +914,17 @@ impl App {
             .set_max_lines(self.settings.int("ai.composer_max_lines") as i32);
         self.ai_view
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
-        let prov = self.ai_provider();
-        let mode_now = self
-            .ai_cur()
-            .map(|s| s.mode)
-            .unwrap_or_else(|| self.ai_mode_default());
+        // ★ 패널 = 패널 탭의 제공자 기준(11-16): 작업 세션이 그 제공자 것일 때만 세션 값을, 아니면 그 제공자의 설정 기본값을 보인다.
+        let prov = self.ai.panel_tab;
+        let pref = |name: &str| Self::ai_pref_key_for(prov, name);
+        let mode_dflt = Mode::parse(self.settings.get(&pref("mode")).unwrap_or("api"));
+        let effort_dflt = self
+            .settings
+            .get(&pref("effort"))
+            .unwrap_or(ai::DEFAULT_EFFORT)
+            .to_string();
+        let auto_dflt = self.settings.flag(&pref("auto"));
+        let mode_now = self.ai_panel_cur().map(|s| s.mode).unwrap_or(mode_dflt);
         // CLI 모드 바닥 줄 = 실행 파일 경로(+ Codex는 `codex login status` 첫 줄).
         let cli_note = if mode_now == Mode::Cli {
             let (key, dflt) = match prov {
@@ -914,11 +945,13 @@ impl App {
         } else {
             String::new()
         };
-        let cur = self.ai_cur();
-        let provider = self.ai.tab;
-        let profile_name = cur
-            .map(|s| s.profile.clone())
-            .unwrap_or_else(|| self.ai.store.current.clone());
+        let cur = self.ai_panel_cur();
+        let provider = prov;
+        let profile_name = cur.map(|s| s.profile.clone()).unwrap_or_else(|| {
+            self.ai_profile_for(provider)
+                .map(|p| p.name)
+                .unwrap_or_default()
+        });
         let model = cur
             .map(|s| s.model.clone())
             .unwrap_or_else(|| self.ai_model_default(provider));
@@ -928,9 +961,7 @@ impl App {
         };
         let st = PanelState {
             provider,
-            mode: cur
-                .map(|s| s.mode)
-                .unwrap_or_else(|| self.ai_mode_default()),
+            mode: mode_now,
             profiles: self
                 .ai
                 .store
@@ -955,12 +986,8 @@ impl App {
             profile: profile_name,
             model,
             models,
-            effort: cur
-                .map(|s| s.effort.clone())
-                .unwrap_or_else(|| self.ai_effort_default()),
-            auto: cur
-                .map(|s| s.auto)
-                .unwrap_or_else(|| self.ai_auto_default()),
+            effort: cur.map(|s| s.effort.clone()).unwrap_or(effort_dflt),
+            auto: cur.map(|s| s.auto).unwrap_or(auto_dflt),
             sessions: self
                 .ai
                 .sessions
@@ -1096,13 +1123,17 @@ impl App {
     pub(crate) fn ai_panel_actions(&mut self) {
         let acts = self.ai_panel.take_actions();
         let had = !acts.is_empty();
+        // ★ 패널의 값 바꾸기 = 패널 탭 제공자의 설정 기본값(11-16) — 작업 세션에는 그 세션이 같은 제공자 것일 때만 함께 적용한다
+        //   (Codex 패널에서 모델을 바꿨는데 분할 창의 Claude 세션 모델이 바뀌는 일이 없게).
+        let pp = self.ai.panel_tab;
+        let same = self.ai_cur().is_some_and(|s| s.provider == pp);
+        let pref = |name: &str| Self::ai_pref_key_for(pp, name);
         for a in acts {
             match a {
                 PanelAction::SetMode(m) => {
-                    let k = self.ai_pref_key("mode");
-                    let _ = self.settings.set(&k, m.as_str());
+                    let _ = self.settings.set(&pref("mode"), m.as_str());
                     self.persist_settings();
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_cur_mut().filter(|_| same) {
                         if s.mode != m {
                             s.mode = m;
                             s.cli_session = None;
@@ -1118,7 +1149,7 @@ impl App {
                     self.ai_store_save();
                     let model = self.ai.store.current().map(|q| q.model.clone());
                     let effort = self.ai.store.current().map(|q| q.effort.clone());
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_cur_mut().filter(|_| same) {
                         s.profile = p;
                         if let Some(m) = model {
                             s.model = m;
@@ -1129,35 +1160,37 @@ impl App {
                     }
                 }
                 PanelAction::SetModel(m) => {
-                    let k = self.ai_pref_key("model");
-                    let _ = self.settings.set(&k, &m);
+                    let _ = self.settings.set(&pref("model"), &m);
                     self.persist_settings();
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_cur_mut().filter(|_| same) {
                         s.model = m;
                     }
                 }
                 PanelAction::SetEffort(e) => {
-                    let k = self.ai_pref_key("effort");
-                    let _ = self.settings.set(&k, &e);
+                    let _ = self.settings.set(&pref("effort"), &e);
                     self.persist_settings();
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_cur_mut().filter(|_| same) {
                         s.effort = e;
                     }
                 }
                 PanelAction::SetAuto(on) => {
-                    let k = self.ai_pref_key("auto");
-                    let _ = self.settings.set(&k, if on { "on" } else { "off" });
+                    let _ = self
+                        .settings
+                        .set(&pref("auto"), if on { "on" } else { "off" });
                     self.persist_settings();
-                    if let Some(s) = self.ai_cur_mut() {
+                    if let Some(s) = self.ai_cur_mut().filter(|_| same) {
                         s.auto = on;
                     }
                 }
+                // 새 대화·프로필 관리 = 패널 탭 제공자의 **독립 채팅 탭**으로(작업 세션은 그 탭이 앞에 오며 따라간다).
                 PanelAction::NewChat => {
+                    self.ai_switch_tab(pp);
                     self.ai_new_session();
                     self.ai_open_chat();
                 }
                 PanelAction::ManageProfiles => {
                     // 목록 페이지로(편집은 행·[편집]·[+]에서 · 사용자 11-11 "목록과 편집 분리").
+                    self.ai_switch_tab(pp);
                     self.ai_open_chat();
                     self.ai_view.show_page(Page::Profiles);
                 }
@@ -1166,6 +1199,10 @@ impl App {
                 PanelAction::RenameSession(id, title) => self.ai_rename_session(&id, &title),
                 PanelAction::DeleteSession(id) => self.ai_delete_session(&id),
             }
+        }
+        if had {
+            // 모델·노력도를 바꿨으면 계정·모델이 받는 값으로 바로 맞춘다(Codex · 11-16).
+            self.ai_codex_fix_model();
         }
         self.ai_sync_after(had);
         self.redraw();
@@ -1429,15 +1466,62 @@ impl App {
             });
     }
 
+    /// ★ 보이는 Codex CLI 세션의 모델을 계정 모델 목록에 맞춘다(사용자 11-16 "칩은 sol인데 실제 모델은 Luna · 바뀌었다는 안내도
+    /// 없다"): 목록을 받기 전에 보낸 턴은 모델을 싣지 않아 Codex 기본 모델로 돌았는데, 세션·칩에는 계정이 못 쓰는 모델이 그대로
+    /// 남았다 — 목록이 오면(또는 이미 있으면) 목록에 없는 모델을 계정 첫 모델로 바꾸고 대화가 있는 세션에는 안내 한 줄을 남긴다.
+    fn ai_codex_fix_model(&mut self) {
+        // 턴이 도는 중에는 대본에 끼어들지 않는다(답 글이 둘로 갈린다) — 턴이 끝날 때 다시 불린다.
+        if self.ai.host.as_ref().is_some_and(|h| h.busy) {
+            return;
+        }
+        let models = self.ai.codex_cli_models.clone();
+        let efforts = self.ai.codex_efforts.clone();
+        let Some(s) = self.ai_cur_mut() else { return };
+        if s.provider != Provider::Codex || s.mode != Mode::Cli {
+            return;
+        }
+        let mut notes: Vec<String> = Vec::new();
+        if let Some(first) = models.first().filter(|_| !models.contains(&s.model)) {
+            let old = std::mem::replace(&mut s.model, first.clone());
+            notes.push(tf(Msg::AiModelSwapped, &[&old, first]));
+        }
+        // 노력도 = 그 모델이 받는 값으로(11-16 · 목록을 모르는 모델은 그대로).
+        if let Some(info) = efforts.get(&s.model) {
+            let fit = ai::codex::fit_effort(&s.effort, info, ai::EFFORTS);
+            if fit != s.effort {
+                let old = std::mem::replace(&mut s.effort, fit.clone());
+                notes.push(tf(Msg::AiEffortSwapped, &[&s.model, &old, &fit]));
+            }
+        }
+        if notes.is_empty() {
+            return;
+        }
+        if s.messages.is_empty() {
+            // 빈 세션에는 대본 대신 상태 줄에만 알린다.
+            self.ai.status = notes.join(" · ");
+        } else {
+            for n in notes {
+                s.messages.push(ChatMsg::new(Kind::Note, n));
+            }
+        }
+        self.ai_sync_panel();
+        self.redraw();
+    }
+
     /// ★ Codex CLI 로그인 상태(`codex login status` 첫 줄 · 스레드 · 콘솔 창 없음) — Codex 탭이 CLI 모드일 때 한 번만.
     fn ai_codex_login_probe(&mut self) {
-        if self.ai.tab != Provider::Codex || self.ai.codex_login.is_some() {
+        let codex = self.ai.tab == Provider::Codex || self.ai.panel_tab == Provider::Codex;
+        if !codex || self.ai.codex_login.is_some() {
             return;
         }
         let mode_now = self
             .ai_cur()
+            .filter(|s| s.provider == Provider::Codex)
             .map(|s| s.mode)
-            .unwrap_or_else(|| self.ai_mode_default());
+            .unwrap_or_else(|| {
+                let k = Self::ai_pref_key_for(Provider::Codex, "mode");
+                Mode::parse(self.settings.get(&k).unwrap_or("api"))
+            });
         if mode_now != Mode::Cli {
             return;
         }
@@ -1467,8 +1551,19 @@ impl App {
                 let _ = tx.send(AiEvent::Note(format!("codexlogin:{line}")));
                 wake();
                 // 그 계정이 쓸 수 있는 모델 목록(키 없이 = CLI 로그인) → 모델 팝업·자동 이름의 기준.
-                if let Ok(models) = ai::host::codex_list_models(&prog, &prefix, "") {
-                    let _ = tx.send(AiEvent::Note(format!("codexmodels:{}", models.join(","))));
+                if let Ok(infos) = ai::host::codex_list_model_infos(&prog, &prefix, "") {
+                    // 노력도 먼저(모델 목록이 도착하며 도는 바로잡기가 이것을 본다) · `id=기본:값/값;…`.
+                    let efforts: Vec<String> = infos
+                        .iter()
+                        .map(|m| format!("{}={}:{}", m.id, m.default_effort, m.efforts.join("/")))
+                        .collect();
+                    let _ = tx.send(AiEvent::Note(format!("codexefforts:{}", efforts.join(";"))));
+                    let ids: Vec<&str> = infos.iter().map(|m| m.id.as_str()).collect();
+                    let _ = tx.send(AiEvent::Note(format!("codexmodels:{}", ids.join(","))));
+                    wake();
+                } else {
+                    // 조회 실패 = 빈 목록으로 "끝났다"만 알린다.
+                    let _ = tx.send(AiEvent::Note("codexmodels:".into()));
                     wake();
                 }
             });
@@ -1997,9 +2092,20 @@ impl App {
             self.ai_push(ChatMsg::new(Kind::Error, tf(Msg::AiNoKeyFor, &[profile])));
             return;
         }
+        // ★ 계정 모델 목록 조회를 여기서도 건다(11-16): 종전에는 활동 막대의 Codex 패널을 열 때만 조회해, 편집기 옆 창에서 바로
+        //   Codex 세션을 만들어 쓰면 목록이 끝내 오지 않았다(= 늘 모델을 싣지 않고 보냄 · 칩과 실제 모델이 어긋남). 한 번만 돈다.
+        if mode == Mode::Cli {
+            self.ai_codex_login_probe();
+        }
         // ★ CLI 로그인 계정(Free 등)이 못 쓰는 모델이면 계정 기본 모델로 바꿔 보내고 안내(사용자 11-11).
+        // ★ 계정 모델 목록을 아직 못 받았으면(로그인 확인이 도는 몇 초 · 사용자 11-15 맥 "쓸 수 있는 모델이 자동 선택되지 않음")
+        //   모델을 싣지 않는다 = Codex 설정의 기본 모델 — 종전에는 내장 기본값(계정이 못 쓸 수 있다)으로 스레드가 만들어졌다.
         let model_owned;
-        let model: &str = if mode == Mode::Cli
+        // 목록 조회가 아직 안 끝났다 = 모델도 노력도도 싣지 않는다(11-16 협업 V1 "첫 턴이 맞춤 전 노력도로 나감").
+        let unknown = mode == Mode::Cli && !self.ai.codex_list_done;
+        let model: &str = if unknown {
+            ""
+        } else if mode == Mode::Cli
             && !self.ai.codex_cli_models.is_empty()
             && !self.ai.codex_cli_models.iter().any(|m| m == model)
         {
@@ -2014,6 +2120,28 @@ impl App {
             &model_owned
         } else {
             model
+        };
+        // ★ 노력도 = 그 모델이 받는 값으로 맞춰 보내고 안내(11-16 · 목록을 모르면 그대로).
+        let effort_owned;
+        let effort: &str = match self.ai.codex_efforts.get(model) {
+            _ if unknown => "",
+            Some(info) if mode == Mode::Cli => {
+                let fit = ai::codex::fit_effort(effort, info, ai::EFFORTS);
+                if fit == effort {
+                    effort
+                } else {
+                    self.ai_push(ChatMsg::new(
+                        Kind::Note,
+                        tf(Msg::AiEffortSwapped, &[model, effort, &fit]),
+                    ));
+                    if let Some(s) = self.ai_cur_mut() {
+                        s.effort = fit.clone();
+                    }
+                    effort_owned = fit;
+                    &effort_owned
+                }
+            }
+            _ => effort,
         };
         if let Err(e) = self.ai_codex_ensure(key, model, effort, system, resume, false) {
             self.ai_push(ChatMsg::new(Kind::Error, e));
@@ -2044,7 +2172,7 @@ impl App {
             }
         }
         body.push_str(text);
-        if let Err(e) = self.ai_host().send_codex(&body, &images) {
+        if let Err(e) = self.ai_host().send_codex(&body, &images, model, effort) {
             self.ai_push(ChatMsg::new(Kind::Error, e));
         }
     }
@@ -2075,10 +2203,18 @@ impl App {
     ) -> Result<(), String> {
         let sig = self.ai_launch_sig(model, effort, system);
         if self.ai_host().is_cli_alive() {
-            if self.ai.warm.as_ref().is_none_or(|w| *w == sig) {
+            // ★ 대화 중인 프로세스도 모델·노력도가 바뀌었으면 다시 띄운다(11-16 · 종전 = 미리 띄운 프로세스만 조건을 비교해,
+            //   첫 턴 뒤에는 칩에서 모델을 바꿔도 옛 모델로 계속 답했다). 대화는 `resume`(CLI 세션 id)으로 이어진다.
+            let same_me = self
+                .ai
+                .cli_me
+                .as_ref()
+                .is_none_or(|(m, e)| m == model && e == effort);
+            if same_me && self.ai.warm.as_ref().is_none_or(|w| *w == sig) {
                 return Ok(());
             }
-            self.ai_host().stop();
+            // 내린 프로세스의 늦은 종료 사건이 새 턴에 끼어들지 않게 세대를 올리고 내린다.
+            self.ai_host().retire_cli();
         }
         self.ai.warm = None;
         if self.ai.mcp.is_none() {
@@ -2142,6 +2278,7 @@ impl App {
         self.ai_host()
             .start_cli(launch)
             .map_err(|e| tf(Msg::AiCliStartFailed, &[&e]))?;
+        self.ai.cli_me = Some((model.to_string(), effort.to_string()));
         if warm {
             self.ai.warm = Some(sig);
         }
@@ -2246,10 +2383,22 @@ impl App {
         let r = if provider == Provider::Codex {
             // 보내기와 같은 모델 보정(계정이 못 쓰는 모델 → 계정 첫 모델 · 안내는 보낼 때).
             let models = &self.ai.codex_cli_models;
-            let model = if !models.is_empty() && !models.contains(&model) {
+            let unknown = !self.ai.codex_list_done;
+            let model = if unknown {
+                // 목록 조회가 아직 안 끝남 = 보내기와 같이 모델·노력도를 싣지 않는다(Codex 기본값 · 11-15 · 11-16).
+                String::new()
+            } else if !models.is_empty() && !models.contains(&model) {
                 models[0].clone()
             } else {
                 model
+            };
+            let effort = if unknown {
+                String::new()
+            } else {
+                match self.ai.codex_efforts.get(&model) {
+                    Some(info) => ai::codex::fit_effort(&effort, info, ai::EFFORTS),
+                    None => effort,
+                }
             };
             self.ai_codex_ensure(String::new(), &model, &effort, &system, resume, true)
         } else {
@@ -2732,6 +2881,8 @@ impl App {
                     // CLI에 넣어 둔 줄이 남아 있으면 곧 다음 턴이 돈다 → busy 유지(11-15 · `Host::turn_done`).
                     h.turn_done(stop == "exit");
                 }
+                // 턴 도중에 도착한 계정 모델 목록으로 미뤄 둔 모델 바로잡기(11-16 · `ai_codex_fix_model`).
+                self.ai_codex_fix_model();
                 self.ai.text_item = None;
                 // ★ PostTurn 훅(hooks.rs · 사용자 11-11 "생성 쿼리를 앱 포맷으로 표시 · 출력 간결"): ```sql 블록 = 앱 포매터 · 빈 줄 정리 —
                 //   이번 턴의 **모든** 어시스턴트 메시지(마지막 사용자 메시지 뒤 · 협업 관찰 11-12 "도구 앞 메시지는 안 바뀜").
@@ -2837,9 +2988,18 @@ impl App {
                 };
                 // CLI가 로그인되지 않았으면 할 일을 안내(사용자 11-11 "이미 API로 연결했는데" — CLI 모드는 키를 쓰지 않는다).
                 let not_logged = text.contains("Not logged in") || text.contains("/login");
-                self.ai_push(ChatMsg::new(Kind::Error, redact(&text)));
-                if not_logged {
-                    self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiCliNotLoggedIn)));
+                // ★ 같은 오류를 연달아 두 번 적지 않는다(사용자 11-15 맥 화면): Codex는 실패한 턴을 `error` 알림과
+                //   `turn/completed`(failed) 두 번으로 알려 같은 글이 두 줄씩 찍혔다.
+                let text = redact(&text);
+                let dup = self
+                    .ai_run()
+                    .and_then(|s| s.messages.last())
+                    .is_some_and(|m| m.kind == Kind::Error && m.text == text);
+                if !dup {
+                    self.ai_push(ChatMsg::new(Kind::Error, text));
+                    if not_logged {
+                        self.ai_push(ChatMsg::new(Kind::Note, t(Msg::AiCliNotLoggedIn)));
+                    }
                 }
             }
             AiEvent::Note(n) => {
@@ -2888,13 +3048,36 @@ impl App {
                     };
                 } else if let Some(rest) = n.strip_prefix("codexlogin:") {
                     self.ai.codex_login = Some(rest.to_string());
+                } else if let Some(rest) = n.strip_prefix("codexefforts:") {
+                    self.ai.codex_efforts = rest
+                        .split(';')
+                        .filter_map(|one| {
+                            let (id, v) = one.split_once('=')?;
+                            let (dflt, list) = v.split_once(':')?;
+                            Some((
+                                id.to_string(),
+                                ai::codex::ModelInfo {
+                                    id: id.to_string(),
+                                    efforts: list
+                                        .split('/')
+                                        .filter(|e| !e.is_empty())
+                                        .map(String::from)
+                                        .collect(),
+                                    default_effort: dflt.to_string(),
+                                },
+                            ))
+                        })
+                        .collect();
                 } else if let Some(rest) = n.strip_prefix("codexmodels:") {
+                    self.ai.codex_list_done = true;
                     self.ai.codex_cli_models = rest
                         .split(',')
                         .map(str::trim)
                         .filter(|m| !m.is_empty())
                         .map(String::from)
                         .collect();
+                    // 목록이 왔다 — 보이는 Codex 세션의 모델이 계정이 못 쓰는 것이면 지금 바로잡는다(칩 = 실제 모델 · 11-16).
+                    self.ai_codex_fix_model();
                 } else if let Some(rest) = n.strip_prefix("wif:") {
                     self.ai.note = match rest.split_once(':') {
                         Some(("ok", name)) => {
@@ -5580,6 +5763,8 @@ impl App {
             }
             _ => {}
         }
+        // 모델·노력도를 바꿨으면 계정·모델이 받는 값으로 바로 맞춘다(Codex · 11-16).
+        self.ai_codex_fix_model();
     }
 
     // ───────────────────────── 헤드리스 명령(V1) ─────────────────────────
@@ -5600,7 +5785,7 @@ impl App {
             return true;
         }
         if id == "ai.panel" {
-            let p = self.ai.tab;
+            let p = self.ai.panel_tab;
             self.ai_toggle_panel(p);
             return true;
         }

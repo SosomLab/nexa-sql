@@ -399,11 +399,11 @@ impl App {
             ("view.outline", self.outline_panel.is_visible()),
             (
                 "view.ai",
-                self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Claude,
+                self.ai_panel.is_visible() && self.ai.panel_tab == crate::ai::Provider::Claude,
             ),
             (
                 "view.ai_codex",
-                self.ai_panel.is_visible() && self.ai.tab == crate::ai::Provider::Codex,
+                self.ai_panel.is_visible() && self.ai.panel_tab == crate::ai::Provider::Codex,
             ),
             ("ai.side", self.ai_side_on()),
             ("view.extensions", self.ext_panel.is_visible()),

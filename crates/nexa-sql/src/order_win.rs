@@ -609,7 +609,7 @@ impl OrderWin {
                         self.input.on_event(&ev, &mut inv);
                     }
                     if self.add.take_clicked() {
-                        let s = self.input.text();
+                        let s = self.input.display_text();
                         return self.add_item(&s);
                     }
                     if self.remove.take_clicked() {
@@ -636,7 +636,7 @@ impl OrderWin {
                 // 입력란에 포커스: Enter = 추가 · Esc = 글이 있으면 비우기, 없으면 닫기 · 그 밖 = 글자/편집 키.
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Enter) => {
-                        let s = self.input.text();
+                        let s = self.input.display_text();
                         self.add_item(&s)
                     }
                     Key::Named(NamedKey::Escape) => {
