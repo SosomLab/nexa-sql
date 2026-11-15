@@ -895,6 +895,14 @@ pub(crate) fn ddl_guard_blocks(guard_on: bool, tx_open: bool, implicit: bool) ->
     guard_on && tx_open && implicit
 }
 
+/// ★ 끝난 문장을 대기 목록에 올릴 것인가(순수 · MC/DC 시험 `tx_pending_due_mcdc`): 트랜잭션 DDL · 영향 행 > 0 ·
+///   **DML인데 영향 행 수를 모름**(11-15 실서버 · T-483: SQL Server `SET NOCOUNT ON` 뒤에는 INSERT도 행 수가 오지 않아
+///   "0행 · 대기 0"으로 보였는데 서버에는 미커밋 행이 있었다 — 모르면 변경으로 본다). 영향 0행으로 **확인된** DML은 올리지 않는다.
+#[must_use]
+pub(crate) fn tx_pending_due(ddl_pending: bool, dml: bool, rows: Option<u64>) -> bool {
+    ddl_pending || rows.is_some_and(|n| n > 0) || (dml && rows.is_none())
+}
+
 /// ★ 툴바 Rollback 활성(순수 · 11-15 · MC/DC 시험 `rollback_enabled_mcdc`): 문지기가 커밋 계열을 허용하고(`gate_commit`),
 ///   "서버에 미커밋 변경 없음"이 확인된 상태(`settled`)가 아니거나 그 뒤에 대기 문장이 다시 생겼을 때(`pending > 0`).
 #[must_use]
@@ -2668,6 +2676,21 @@ mod hold_tests {
         assert!(!ddl_guard_blocks(false, true, true));
         assert!(!ddl_guard_blocks(true, false, true));
         assert!(!ddl_guard_blocks(true, true, false));
+    }
+
+    #[test]
+    /// 대기 등재 MC/DC — 조건 셋이 각각 홀로 결과를 뒤집는 쌍.
+    fn tx_pending_due_mcdc() {
+        // 기준: 조회·영향 0행 = 올리지 않는다.
+        assert!(!tx_pending_due(false, false, Some(0)));
+        assert!(!tx_pending_due(false, true, Some(0)), "0행으로 확인된 DML");
+        // 트랜잭션 DDL만 참.
+        assert!(tx_pending_due(true, false, Some(0)));
+        // 영향 행 > 0만 참(분류와 무관).
+        assert!(tx_pending_due(false, false, Some(3)));
+        // DML + 행 수 모름 = 올린다 · 같은 모름이라도 DML이 아니면(호출·조회) 올리지 않는다.
+        assert!(tx_pending_due(false, true, None));
+        assert!(!tx_pending_due(false, false, None));
     }
 
     #[test]

@@ -35,7 +35,11 @@ impl App {
         let class = nsql_core::TxClass::of_sql_in(stmt, Some(self.sess.dialect));
         // 대기 대상: 영향 행 > 0인 DML · 트랜잭션 DDL 방언(PG·SQL Server·SQLite)의 DDL/TRUNCATE(docs/44 §5).
         let ddl_pending = class.is_ddl() && self.sess.dialect.ddl_transactional();
-        if !ddl_pending && !rows_affected.is_some_and(|n| n > 0) {
+        let dml = matches!(
+            class,
+            nsql_core::TxClass::Insert | nsql_core::TxClass::Update | nsql_core::TxClass::Delete
+        );
+        if !sessions::tx_pending_due(ddl_pending, dml, rows_affected) {
             return;
         }
         if auto {

@@ -1458,11 +1458,16 @@ impl MssqlSession {
                 )?;
                 // ★ 파라미터 배치는 `DECLARE @x … = @P1;`마다 DONE 1행이 붙어 `total()`이 부풀린다(3 파라미터 + UPDATE 1행 = 4 ·
                 //   4-DBMS E2E 09-26) → 마지막 문장(실제 DML)의 수만.
-                result.rows_affected = Some(if values.is_empty() {
-                    n.total()
+                // ★ 행 수가 **오지 않았으면 None**(11-15 실서버 · T-483): `SET NOCOUNT ON` 뒤에는 DONE 토큰에 수가 없어 종전에는
+                //   `Some(0)`으로 알렸다 → 호스트가 INSERT를 "0행 = 변경 없음"으로 읽어 대기 목록에 올리지 않았다(서버엔 미커밋 행).
+                //   모르는 것은 모른다고 알린다(호스트 = 행 수 모르는 DML은 대기로).
+                result.rows_affected = if n.rows_affected().is_empty() {
+                    None
+                } else if values.is_empty() {
+                    Some(n.total())
                 } else {
-                    n.rows_affected().last().copied().unwrap_or(0)
-                });
+                    n.rows_affected().last().copied()
+                };
             }
             Route::Batch => {
                 // SQL 배치(sp_executesql 아님) — `#temp`·SET·USE 같은 세션 상태가 남는다. 파라미터 없음.
