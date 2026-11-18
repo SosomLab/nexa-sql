@@ -292,4 +292,5 @@
 - **파생 테이블 출력 컬럼(`Alias.derived: Option<Derived>` · `projection`)**: 첫 최상위 `SELECT` 목록을 최상위 `FROM`(또는 `INTO`·집합 연산·끝)까지 콤마로 잘라 읽는다 — 이름 = `AS 별칭` → 암시 별칭(`식 별칭`) → `a.b` 점 사슬의 끝 이름 · **이름 없는 식은 뺀다** · `*`/`t.*` = 그 층 FROM의 **실테이블은 `Derived::stars`**(호스트가 메타에서 편다) · 안쪽 파생 테이블이면 그 컬럼 그대로 · CTE는 `WITH x (c1, c2) AS` 컬럼 목록 우선 · 재귀 깊이 상한. 하나도 못 읽으면(`is_empty`) 종전 폴백.
 - **호스트(nexa-sql `intel.rs`)**: `Intel::push_derived` · `cands_member` = 파생이면 **그 컬럼만**(문서 낱말 폴백 안 함) · `cands_expr_alias_cols` = 접두 없는 컬럼 후보에도 파생 컬럼(오른쪽 = 별칭).
 - **시험**: nsql-script `scoped_aliases_resolve_per_block_with_derived_columns` · `derived_star_cte_and_implicit_alias` · 기존 `aliases_inside_subquery_are_visible` = flat판으로 전환 · nexa-sql `derived_member_columns_only`.
-- **남는 일**: Ctrl 링크(objlink)도 범위 별칭으로(T-491).
+- ★ **2차(11-19 · 사용자 QA)**: `SELECT *` 뒤 "모든 컬럼 (N)" 조각(`cands_expr_star`) = **캐럿 블록의 FROM만**(`Alias.outer == 0` · 바깥 층 별칭은 뺀다) · 인라인 뷰/CTE는 그 SELECT 목록(+ 안의 `t.*` 실테이블) · 원천이 여럿이거나 별칭이 있으면 `별칭.컬럼` · 파생 컬럼의 **원본 추적**(`Derived.src` · `origin()` · `ColOrigin` = `[q.]col [AS x]` 꼴만 · 파생을 거쳐도 · 식·집계·리터럴 = 원본 없음 · 항목 앞 틈의 따옴표로 리터럴 판정 = 별칭 표 본체에 원문 전달 `alias_table_scoped_in(ws, pos, dialect, src)`) · Ctrl 링크도 범위 별칭(T-491 ✅ · [96](96-object-links.md) §1).
+- **남는 일**: (없음 — T-491 = 11-19 2차에서 해소).

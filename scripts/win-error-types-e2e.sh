@@ -10,13 +10,14 @@
 #     ③ 이동 뒤 캐럿 = L:C(열 없으면 L:1) ④ 표식 유형은 L:C = 표식 ⑤ 위치 없는 유형은 열 없음 · L = 문장 시작 줄 · 캐럿 = L:1 ⑥ (a)와 (b)의 L:C 같음.
 #   기대와 다르면 FAIL로 남기고 원문을 표에(판정 = 개발 세션).
 # 사용: scripts/win-error-types-e2e.sh -o <출력폴더> -P <실제 NSQL_HOME> [-d APPDB:oracle-oci] [-c T1,T4]
-#   -d = 프로필:방언(문서의 익명 이름 대신 **실제 볼트 프로필 이름**을 넘긴다 · `nsql conn list`) · -c = 케이스 일부만.
+#   -d = 프로필:방언(문서의 익명 이름 대신 **실제 볼트 프로필 이름**을 넘긴다 · `nsql conn list`) · -c = 케이스 일부만 · -D = Oracle 드라이버(oci 기본 · Instant Client 없는 PC = thin).
+#   ★ 11-19 첫 실행(Windows) = 이 PC에 Instant Client가 없어 OCI 판정 불가(DPI-1047) → `-D thin`으로 실행.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"
-OUT=""; PROF=""; LIST="APPDB:oracle-oci"; ONLY=""
+OUT=""; PROF=""; LIST="APPDB:oracle-oci"; ONLY=""; DRV=oci
 EXE="$ROOT/target/debug/nexa-sql.exe"
-while getopts "o:P:d:g:c:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; d) LIST=$OPTARG;; g) EXE=$OPTARG;; c) ONLY=$OPTARG;; esac; done
+while getopts "o:P:d:g:c:D:" o; do case $o in o) OUT=$OPTARG;; P) PROF=$OPTARG;; d) LIST=$OPTARG;; g) EXE=$OPTARG;; c) ONLY=$OPTARG;; D) DRV=$OPTARG;; esac; done
 [ -n "$OUT" ] && [ -n "$PROF" ] || { echo "usage: -o <out dir> -P <real NSQL_HOME> [-d 프로필:oracle-oci] [-c T1,T2] [-g gui]"; exit 2; }
 mkdir -p "$OUT"
 PY=$(command -v python3 || command -v python)
@@ -33,12 +34,13 @@ H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
 cp "$PROF/device.key" "$H/" 2>/dev/null
 cleanup() { rm -rf "$H"; }
 trap cleanup EXIT
-printf 'ui.lang=en\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=1200,800\neditor.error_goto=off\neditor.error_analyze=off\noracle.driver=oci\n' > "$H/settings.conf"
+printf 'ui.lang=en\ndemo.prompted=on\nexplorer.details=off\nwindow.main_size=1200,800\neditor.error_goto=off\neditor.error_analyze=off\noracle.driver=%s\n' "$DRV" > "$H/settings.conf"
 
 # 도우미(python · 파일로 써서 실행 — 표준 입력 실행 금지): make = 문서 조립 · judge = 판정 한 줄.
 HELP="$OUT/error_types_help.py"
 cat > "$HELP" <<'PY'
 import re, sys
+sys.stdout.reconfigure(encoding="utf-8")
 PRE = "SELECT 1 AS a FROM dual;\n-- error types e2e\n\n"
 POST = "SELECT 2 AS b FROM dual;\n"
 
@@ -74,7 +76,7 @@ def judge(sql_path, out_path, ed_path, s_line, e_line, mark, kind):
     except OSError:
         ed = ""
     s_line, e_line = int(s_line), int(e_line)
-    if kind == "tail":
+    if kind in ("tail", "tailnone"):
         e_line = len(doc)
     hi = None
     for i, l in enumerate(out):
@@ -92,8 +94,14 @@ def judge(sql_path, out_path, ed_path, s_line, e_line, mark, kind):
         return
     L = int(m.group(1)); C = int(m.group(2)) if m.group(2) else None
     at = None
-    if hi + 1 < len(out) and out[hi + 1].strip().startswith("at:"):
-        at = out[hi + 1].strip()[3:].strip()
+    # `at:` = 머리줄 뒤 이어지는 줄(들여쓴 줄 · 여러 줄 메시지 ORA-06550 두 줄 뒤에 올 수 있다) 중 하나.
+    for k in range(hi + 1, len(out)):
+        s = out[k]
+        if not s[:1].isspace():
+            break
+        if s.strip().startswith("at:"):
+            at = s.strip()[3:].strip()
+            break
     line_txt = doc[L - 1] if 0 < L <= len(doc) else ""
     tok = "-"
     if C:
@@ -114,7 +122,7 @@ def judge(sql_path, out_path, ed_path, s_line, e_line, mark, kind):
     if kind == "mark":
         r4 = "PASS" if C is not None and f"{L}:{C}" == mark else f"FAIL(기대 {mark})"
     r5 = "NA"
-    if kind == "none":
+    if kind in ("none", "tailnone"):
         r5 = "PASS" if C is None and L == s_line and got == f"{L}:1" else "FAIL"
     lc = f"{L}:{C}" if C else f"{L}"
     print("\t".join([code, tok, head + (f" ⏎ at: {at}" if at else ""), r1, r2, r3, r4, r5, lc]))
@@ -125,12 +133,13 @@ else:
     judge(*sys.argv[2:9])
 PY
 
-# 케이스 = 이름 · 유형(mark = 표식 기대 · none = 위치 없음 기대 · free = 서버가 준 자리 기록 · tail = 문서 끝까지 한 문장) · PL/SQL(1) · 본문.
+# 케이스 = 이름 · 유형(mark = 표식 기대 · none = 위치 없음 기대 · free = 서버가 준 자리 기록 · tail = 문서 끝까지 한 문장 · tailnone = tail + 위치 없음) · PL/SQL(1) · 본문.
+#   ★ 11-19 판정(개발): T1 = Oracle은 한정자 포함 식별자 시작(`d.`)을 가리킨다 · T10 ORA-01722 = 실행 오류여도 서버가 위치를 준다(`'x'`) · T8 = 서버가 아닌 Thin 드라이버 자체 파스 오류(닫지 않은 문자열이 뒤 문장을 삼킴 · 위치 미해석 = 문장 시작 줄) · T11 ORA-06550 = 메시지 줄·열(열 = 바이트 → 글자) · 위치 없는 유형 = T12만.
 TAB=$'\t'
 declare -a CASES=(
 "T1|mark|0|SELECT d.dummy
      , '가나다' AS k
-${TAB}, '라마' AS k2, d.§NO_SUCH_COL AS c
+${TAB}, '라마' AS k2, §d.NO_SUCH_COL AS c
   FROM dual d"
 "T2|mark|0|SELECT t.dummy
      , '가나다' AS k
@@ -154,7 +163,7 @@ ${TAB}, '라마' AS k2,
      , 1 AS n
   FROM dual
 ${TAB}WHERE '라마' = '라마' ORDER BY 1 extra_tok"
-"T8|tail|0|SELECT '가나다' AS k
+"T8|tailnone|0|SELECT '가나다' AS k
      , 1 AS n
 ${TAB}, '라마' AS k2, 'abc AS x
   FROM dual"
@@ -163,9 +172,9 @@ ${TAB}, '라마' AS k2, 'abc AS x
 ${TAB}, '라마' AS k2, COUNT(*) AS n
   FROM dual d
  GROUP BY '가나다'"
-"T10|none|0|SELECT '가나다' AS k
+"T10|mark|0|SELECT '가나다' AS k
      , 1 AS n
-${TAB}, '라마' AS k2, TO_NUMBER('x') AS v
+${TAB}, '라마' AS k2, TO_NUMBER(§'x') AS v
   FROM dual"
 "T11|mark|1|BEGIN
   NULL;
@@ -196,7 +205,7 @@ run_case() {
   say "  $id 문장 줄 $s_line-$e_line · 표식 $mark → $(echo "$row" | cut -f9) · $(echo "$row" | cut -f4-8 | tr '\t' ' ')"
 }
 
-say "error-types-e2e $(date '+%F %T') · 대상 = $LIST · 설정 = error_goto off · error_analyze off"
+say "error-types-e2e $(date '+%F %T') · 대상 = $LIST · 설정 = error_goto off · error_analyze off · oracle.driver=$DRV"
 : > "$OUT/rows.txt"
 IFS=',' read -ra PAIRS <<< "$LIST"
 for pair in "${PAIRS[@]}"; do

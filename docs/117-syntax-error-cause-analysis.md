@@ -17,6 +17,8 @@ T-371(131차)은 **서버가 알려 준 위치**로 캐럿을 옮긴다. 그 위
 
 식별자 오류(ORA-00904 · PG `column … does not exist` 등)는 서버 위치가 이미 정확하다 → 분석 대상이 **아니다**(부류 `ErrorClass::Syntax`만).
 
+★ **11-19 Oracle 위치 실측(오류 유형 E2E · Thin · `scripts/win-error-types-e2e.sh`)**: ORA-00904 = **한정자 포함 식별자 시작**(`d.NO_SUCH_COL`의 `d`) · ORA-01722(실행 중 변환 오류)도 위치를 준다(`'x'`) · PL/SQL 블록 컴파일 오류는 오프셋 대신 메시지 `ORA-06550: line N, column M`(한국어 NLS = `줄 N, 열M`)이고 **열 = 바이트**(한글 3글자 뒤 31 → 37) → `nsql_core::plsql_error_position(message, sql)`(줄 안 바이트 → 글자 · OCI `err_at` · Thin `fail_at` 공용) · 닫지 않은 문자열 = 서버가 아니라 Thin 드라이버 자체 파스 오류(`parse error at position N` · 위치 미해석 = 문장 시작 줄 · T-495) · [journal 11-19 §3](journal/2026-11-19.md).
+
 ## 2. 방식 — 파서가 아니라 "의심 지점 찾기"
 
 원인은 늘 서버 위치와 **같거나 앞**에 있다 → 구간 = **[문장 시작, 서버 위치]**(문장 하나 이하 · 비용의 핵심). 그 구간의 낱말 가운데 다음 셋을 **모두** 만족하는 것이 후보다.
