@@ -31,7 +31,7 @@
 | 후보 출처(29 §6-2 순위) | 무엇 | 범위 | 데이터 |
 |---|---|---|---|
 | 1 alias 컬럼 | `a.` → 그 테이블 컬럼(이름 · 타입 · NULL · PK) | 캐럿 문장의 alias 표 | `MetaStore::columns(id)`(없으면 "불러오는 중" + 즉시 채움 요청) |
-| 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` · ★ 10-21 `alias_table_deep` = **서브쿼리 안 별칭도 보임**(괄호별 재귀 · 같은 이름 = 바깥이 이김 · `context_at` = 완성·Ctrl 링크 공용) |
+| 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` · ★ 10-21 `alias_table_deep` = **서브쿼리 안 별칭도 보임**(괄호별 재귀 · 같은 이름 = 바깥이 이김) · ★ 11-19 **완성 = 캐럿 범위** `alias_table_scoped`(`context_at` · 캐럿이 든 괄호 블록부터 바깥으로 · 같은 이름 = **안쪽이 이김** · 형제·자식 서브쿼리 별칭은 안 보임 · 파생 테이블·CTE = 출력 컬럼 `Alias.derived` · §21) · Ctrl 링크 = 종전 문장 전체판 `context_at_flat`(`alias_table_deep` · 범위 별칭 전환 = T-491) |
 | 3 스키마 객체 | 테이블·뷰·시노님·시퀀스·프로시저·패키지 | 현재 스키마(+ `SCHEMA.` 입력 시 그 스키마 · D-80) | `Snapshot::prefix/prefix_any` |
 | 3' **문서 심볼**(신설) | `DEFINE`/`VARIABLE`/CTE/선언 변수/서브프로그램/라벨 | **현재 문서** 전체 | `outline::Outline::names()` |
 | 4 시스템 객체·내장 함수 | `DBMS_OUTPUT.` · `NVL(` · `ALL_TABLES` · `sys.tables` … | 접속 방언 | 정적 표 `nsql-script::builtins`(T-178 ✅ · 시그니처 도움 `intel.signature_help`) |
@@ -284,3 +284,12 @@
 |---|---|---|
 | **T-422(1차 · P1 · 중)** ✅ 075ceeca 모델 · 855b9ad6 패널·설정·Goto · 8ee6a791 V1 결함 2 | 20-2의 1~7 · 구현 = `Symbol.parent` 트리 · 열린 서브프로그램 스택(`subs` · 본문 있는 PROCEDURE/FUNCTION만 · `END 이름;`으로 내림 · 명세 선언 = 형제) · 필터 틀 오른쪽 토글 4(아이콘 = 행 셋/연필/표 격자/터미널) · 셰브론 + 탐색기 아이콘 + 접기(←/→ · 머리 [모두 펼침][모두 접음]) · 머리 = 보임/전체 · 설정 분류 Editors ▸ **Outline**(`CatOutline`) · 검증 = V2(개발) = nsql-script 165/0 → 166/0(서브프로그램 스택 시험 3) · nexa-sql 481/0 · nsql-settings 27/0 · nsql-i18n 9/0 · clippy -D warnings 0 · fmt ✓ · check-3os --quick ✓ · V1(협업 · 격리 · 캡처) = 머리 Outline (9/11) · 문장 행 0 · run_report 접힘 셰브론(v_total 숨김) · show_select=on = SELECT 행 + CTE 자식 · Goto Symbol 종류 중복 없음 · CI 855b9ad6 ✓ | `nsql-script/src/outline.rs`(2 · 3 · 4 parent) · `nexa-sql/src/outline_panel.rs`(토글 · 트리 · 접기 · 추종 · 아이콘) · `app/goto.rs`(6) · nsql-settings REGISTRY `outline.*` 7키(분류 Editors ▸ Outline · 라벨·설명 `Msg`) · i18n · 시험 = outline.rs 단위(CREATE 1행 · 매개변수 비선언 · parent) + 패널 보임 판정 순수 함수 MC/DC · 문서 76 · 94 · 39 |
 | **T-423(2차)** ✅ ② ✅ 4d160da9(데이터 그리드 컬럼 목록 = 마지막 포커스 그리드 → "Columns (n/n)" 평면 목록 · 이름·타입·체크(표시/숨김 = DR-33 `col_order` 투영 · 순수 함수 `col_order_toggled` · 마지막 한 열 보호) · 클릭/Enter = 열 선택·스크롤 · 우클릭 = 표시/숨김·모두 표시·이름 복사 · 열쇠 = (탭 \| GRID_KEY_BIT · `result_gen`) · 캐럿 추종 꺼짐 · `outline.grid_columns` · 호스트 명령 `outline.gridshow:/gridshowall/gridcol:` · V1 = "Columns (4/4)" ✓) · ① ✅ c9134a63(`outline.sort` position\|name\|kind = 종류별 묶음 → 이름 · DataGrip Group by type · 기본 position · 우클릭 = 심볼로 이동 · 이 문장 실행(캐럿 이동 뒤 `run.statement` = 문지기 통과) · 이름 복사 · 호스트 명령 `outline.goto:/run:/copy:` · V1 = kind·name 캡처 ✓ · 우클릭·실행 = 사용자 실기) · 남음 ② | Group by type · 아웃라인에서 문장 실행(우클릭 · `gate_open` 통과) · 정렬 name · **데이터 그리드 Structure**(DataGrip 데이터 편집기의 컬럼 목록·숨김/표시 — 우리 그리드엔 없음 · DR-33 `View` 투영 위 컬럼 선택기 후보) | — |
+
+## 21. 별칭 범위 · 파생 테이블 컬럼(11-19 · 사용자 QA "`C.`/`A.` 뒤가 전부 문서 낱말" · [journal 11-19 §2](journal/2026-11-19.md))
+
+- **원인(종전)**: ① `( SELECT … ) C`는 이름만 알고(`local` · 컬럼 없음) `cands_member`가 해석 실패로 보아 **문서 낱말 전부**로 폴백 ② 별칭 표가 캐럿을 보지 않고 문장 전체를 바깥 먼저 합쳐(같은 이름 = 바깥이 이김) 괄호 블록마다 다른 `A`를 바깥 하나로 해석.
+- **범위 규칙(완성 · `nsql_script::intel::alias_table_scoped(ws, pos)`)**: 캐럿을 감싸는 괄호 그룹을 안쪽부터 바깥으로 훑어 **그 층의 FROM/JOIN·CTE**만 모은다 · 같은 이름 = 안쪽이 이긴다 · 바깥 층은 보인다(상관 서브쿼리) · 형제·자식 서브쿼리 안의 별칭은 안 보인다. `context_at` = 범위판 · `context_at_flat` = 종전 문장 전체판(Ctrl 링크 `objlink` 전용 · T-491).
+- **파생 테이블 출력 컬럼(`Alias.derived: Option<Derived>` · `projection`)**: 첫 최상위 `SELECT` 목록을 최상위 `FROM`(또는 `INTO`·집합 연산·끝)까지 콤마로 잘라 읽는다 — 이름 = `AS 별칭` → 암시 별칭(`식 별칭`) → `a.b` 점 사슬의 끝 이름 · **이름 없는 식은 뺀다** · `*`/`t.*` = 그 층 FROM의 **실테이블은 `Derived::stars`**(호스트가 메타에서 편다) · 안쪽 파생 테이블이면 그 컬럼 그대로 · CTE는 `WITH x (c1, c2) AS` 컬럼 목록 우선 · 재귀 깊이 상한. 하나도 못 읽으면(`is_empty`) 종전 폴백.
+- **호스트(nexa-sql `intel.rs`)**: `Intel::push_derived` · `cands_member` = 파생이면 **그 컬럼만**(문서 낱말 폴백 안 함) · `cands_expr_alias_cols` = 접두 없는 컬럼 후보에도 파생 컬럼(오른쪽 = 별칭).
+- **시험**: nsql-script `scoped_aliases_resolve_per_block_with_derived_columns` · `derived_star_cte_and_implicit_alias` · 기존 `aliases_inside_subquery_are_visible` = flat판으로 전환 · nexa-sql `derived_member_columns_only`.
+- **남는 일**: Ctrl 링크(objlink)도 범위 별칭으로(T-491).
