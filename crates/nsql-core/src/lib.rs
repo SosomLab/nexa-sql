@@ -1440,6 +1440,24 @@ pub fn char_index_of_byte(s: &str, byte: usize) -> usize {
         .count()
 }
 
+/// ★ Oracle PL/SQL 컴파일 오류의 위치(11-19 · 사용자 "오류 유형별로 표시·이동"): 파스 오프셋이 없고 메시지에 `ORA-06550: line N, column M:`
+/// (한국어 NLS = `줄 N, 열M:` → 언어와 무관하게 **첫 두 숫자**)으로 온다 → 보낸 문장의 글자 인덱스. 줄 = 1부터 · **열 = 1부터 세는
+/// 바이트**(실서버 E2E: 한글 리터럴 3글자 뒤 31열이 37로 온다) → 그 줄 안에서 글자로 바꾼다. 줄이 문장 밖이면 `None`.
+/// OCI·Thin 두 드라이버가 같이 쓴다.
+#[must_use]
+pub fn plsql_error_position(message: &str, sql: &str) -> Option<usize> {
+    let rest = message.split("ORA-06550:").nth(1)?;
+    let head = rest.lines().next().unwrap_or(rest);
+    let mut nums = head
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty());
+    let line: usize = nums.next()?.parse().ok()?;
+    let col: usize = nums.next()?.parse().ok()?;
+    let start = char_index_of_line(sql, line)?;
+    let line_text: String = sql.chars().skip(start).take_while(|c| *c != '\n').collect();
+    Some(start + char_index_of_byte(&line_text, col.saturating_sub(1)))
+}
+
 /// 1부터 세는 줄 번호 → 그 줄 첫 글자의 글자 인덱스(T-371 · 줄 수를 넘으면 `None`).
 #[must_use]
 pub fn char_index_of_line(s: &str, line1: usize) -> Option<usize> {
@@ -1997,5 +2015,36 @@ mod errpos_tests {
         assert_eq!(char_index_of_line(s, 5), None, "줄 수 초과");
         assert_eq!(char_index_of_line(s, 0), None);
         assert_eq!(char_index_of_line("x\n", 2), Some(2), "끝 개행 뒤 빈 줄");
+    }
+}
+
+#[cfg(test)]
+mod plsql_errpos_tests {
+    use super::plsql_error_position;
+
+    #[test]
+    fn ora_06550_line_and_byte_column_map_to_char_index() {
+        let sql = "BEGIN\n  v := '가나다'; no_such_proc(1);\n  other(2);\nEND;";
+        let at = |p: usize, n: usize| sql.chars().skip(p).take(n).collect::<String>();
+        // 줄 2 · 한글 3글자(9바이트) 뒤 = 글자 열 15 · 바이트 열 21.
+        let msg = "ORA-06550: line 2, column 21:\nPLS-00201: identifier 'NO_SUCH_PROC' must be declared\nORA-06550: line 2, column 21:\nPL/SQL: Statement ignored";
+        let p = plsql_error_position(msg, sql).expect("pos");
+        assert_eq!(at(p, 12), "no_such_proc");
+        // 한국어 메시지(숫자만 읽는다 · `열3`처럼 붙어 있어도).
+        let ko = "ORA-06550: 줄 3, 열3:\nPLS-00201: 식별자가 정의되어야 합니다";
+        let p = plsql_error_position(ko, sql).expect("pos");
+        assert_eq!(at(p, 5), "other");
+        // 줄이 문장 밖 · ORA-06550이 아님 · 숫자 부족 · 열이 줄 길이를 넘으면 줄 끝.
+        assert_eq!(
+            plsql_error_position("ORA-06550: line 9, column 1:", sql),
+            None
+        );
+        assert_eq!(
+            plsql_error_position("ORA-00942: table or view does not exist", sql),
+            None
+        );
+        assert_eq!(plsql_error_position("ORA-06550: line 3", sql), None);
+        let p = plsql_error_position("ORA-06550: line 1, column 99:", sql).expect("pos");
+        assert_eq!(p, 5, "줄 끝(BEGIN 뒤)");
     }
 }

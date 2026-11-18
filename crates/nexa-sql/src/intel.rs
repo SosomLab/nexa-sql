@@ -1490,16 +1490,23 @@ impl Intel {
         //   별칭을 썼으면 `A.컬럼` · 하나뿐이고 별칭이 없으면 이름만). 안 읽은 테이블은 급한 채움 요청 + "불러오는 중".
         if ctx.kind == CtxKind::Expr && self.cfg.insert_columns {
             if let (Some(star), Some(m)) = (ctx.star.as_ref(), meta) {
-                let targets: Vec<&intel::Alias> = ctx
-                    .aliases
-                    .iter()
-                    .filter(|a| !a.local)
-                    .filter(|a| {
-                        star.qualifier
-                            .as_deref()
-                            .is_none_or(|q| a.alias.eq_ignore_ascii_case(q))
-                    })
-                    .collect();
+                // ★ 11-19(사용자 "`SELECT *`에서 전체 컬럼이 안 나온다 · 여러 서브쿼리/테이블이면 별칭 포함"): 대상 = **캐럿 블록의 FROM**
+                //   (`outer == 0` · 바깥 블록의 테이블은 `*`에 들지 않는다) · 인라인 뷰/CTE는 그 SELECT 목록(`derived`) ·
+                //   `A.*` = 그 별칭 하나(바깥 층 것이어도).
+                let targets: Vec<&intel::Alias> = match star.qualifier.as_deref() {
+                    Some(q) => intel::resolve_alias(&ctx.aliases, q)
+                        .filter(|a| a.alias.eq_ignore_ascii_case(q))
+                        .into_iter()
+                        .collect::<Vec<&intel::Alias>>(),
+                    None => ctx
+                        .aliases
+                        .iter()
+                        .filter(|a| a.outer == 0)
+                        .collect::<Vec<&intel::Alias>>(),
+                }
+                .into_iter()
+                .filter(|a| !a.local || a.derived.as_ref().is_some_and(|d| !d.is_empty()))
+                .collect();
                 let qualify = star.qualifier.is_some()
                     || targets.len() > 1
                     || targets
@@ -1508,41 +1515,57 @@ impl Intel {
                 let mut parts: Vec<String> = Vec::new();
                 let mut ready = !targets.is_empty();
                 for a in &targets {
-                    match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
-                        Some(id) => match m.snap.columns(id) {
-                            ColState::Loaded { cols, .. } => {
-                                for c in cols.iter() {
-                                    let name = m.names.get(c.name);
-                                    parts.push(if qualify {
-                                        format!("{}.{name}", a.alias)
-                                    } else {
-                                        name.to_string()
+                    // 이 별칭이 내보내는 컬럼 이름들 — 파생 = 이름 있는 컬럼 + `*`로 내보낸 실테이블 · 실테이블 = 그 자신.
+                    let mut names: Vec<String> = Vec::new();
+                    let tables: Vec<(Option<String>, String)> = match &a.derived {
+                        Some(d) => {
+                            names.extend(d.cols.iter().cloned());
+                            d.stars.clone()
+                        }
+                        None => vec![(a.schema.clone(), a.table.clone())],
+                    };
+                    for (schema, table) in &tables {
+                        match m.snap.lookup(m.names, schema.as_deref(), table) {
+                            Some(id) => match m.snap.columns(id) {
+                                ColState::Loaded { cols, .. } => {
+                                    for c in cols.iter() {
+                                        let name = m.names.get(c.name);
+                                        if !names.iter().any(|x| x.eq_ignore_ascii_case(name)) {
+                                            names.push(name.to_string());
+                                        }
+                                    }
+                                }
+                                ColState::Loading => {
+                                    ready = false;
+                                    self.loading = true;
+                                }
+                                ColState::Error(_) => ready = false,
+                                ColState::Unknown => {
+                                    ready = false;
+                                    self.loading = true;
+                                    self.needs.push(NeedColumns {
+                                        schema: schema.clone(),
+                                        table: table.to_string(),
+                                        urgent: true,
                                     });
                                 }
-                            }
-                            ColState::Loading => {
+                            },
+                            None => {
                                 ready = false;
-                                self.loading = true;
-                            }
-                            ColState::Error(_) => ready = false,
-                            ColState::Unknown => {
-                                ready = false;
-                                self.loading = true;
                                 self.needs.push(NeedColumns {
-                                    schema: a.schema.clone(),
-                                    table: a.table.clone(),
+                                    schema: schema.clone(),
+                                    table: table.to_string(),
                                     urgent: true,
                                 });
                             }
-                        },
-                        None => {
-                            ready = false;
-                            self.needs.push(NeedColumns {
-                                schema: a.schema.clone(),
-                                table: a.table.clone(),
-                                urgent: true,
-                            });
                         }
+                    }
+                    for name in names {
+                        parts.push(if qualify {
+                            format!("{}.{name}", a.alias)
+                        } else {
+                            name
+                        });
                     }
                 }
                 if ready && !parts.is_empty() {
@@ -4133,6 +4156,33 @@ mod tests {
         assert_eq!(
             it.cands[0].text, "EMPNO, ENAME",
             "한 테이블 · 별칭 없음 = 이름만"
+        );
+        // ★ 11-19: 원천이 인라인 뷰면 그 SELECT 목록 · 원천이 여럿이거나 별칭을 썼으면 `별칭.컬럼` · 캐럿 블록의 FROM만.
+        let doc =
+            "SELECT * FROM (SELECT E.EMPNO AS NO, MAX(E.ENAME) NM FROM EMP E GROUP BY E.EMPNO) A";
+        req(&mut it, &m, doc, 8);
+        assert_eq!(it.cands[0].kind, CandKind::Snippet);
+        assert_eq!(it.cands[0].text, "A.NO, A.NM", "인라인 뷰 = SELECT 목록");
+        let doc = "SELECT * FROM (SELECT E.* FROM EMP E) A JOIN DEPT B ON 1=1";
+        req(&mut it, &m, doc, 8);
+        assert_eq!(
+            it.cands[0].text, "A.EMPNO, A.ENAME, B.DEPTNO",
+            "인라인 뷰의 `E.*`는 실테이블 컬럼 · 실테이블과 섞임"
+        );
+        let doc = "SELECT X.* FROM (SELECT E.EMPNO FROM EMP E) X, DEPT B";
+        req(&mut it, &m, doc, 10);
+        assert_eq!(it.cands[0].text, "X.EMPNO");
+        let doc = "SELECT * FROM DEPT WHERE DEPTNO IN (SELECT E.EMPNO FROM EMP E)";
+        req(&mut it, &m, doc, 8);
+        assert_eq!(
+            it.cands[0].text, "DEPTNO",
+            "안쪽 서브쿼리의 테이블은 `*`에 들지 않는다"
+        );
+        let doc = "SELECT * FROM DEPT D WHERE EXISTS (SELECT * FROM EMP E WHERE 1=1)";
+        req(&mut it, &m, doc, 43);
+        assert_eq!(
+            it.cands[0].text, "E.EMPNO, E.ENAME",
+            "안쪽 `*` = 안쪽 FROM만(바깥 DEPT 제외)"
         );
         // 여러 줄 = 다음 줄 맨 앞에 쉼표(들여쓰기 없음 · 사용자 09-24) · 쉼표 뒤 공백은 Space/Tab.
         let mut c = cfg();

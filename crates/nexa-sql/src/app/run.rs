@@ -623,8 +623,13 @@ pub(crate) fn item_start_char(
 ) -> Option<usize> {
     let raw = src.get(span.clone())?;
     let lead = raw.len() - raw.trim_start().len();
-    let trimmed = raw.trim().trim_end_matches([';', '/']).trim_end();
-    (trimmed == text).then(|| src[..span.start + lead].chars().count())
+    // ★ 11-19(실서버 E2E T11): 끝 처리는 문장 종류마다 다르다 — SQL = 끝 `;` 제거 · **PL/SQL 블록 = `END;`의 `;`는 남기고 종결 `/`만
+    //   제거**. 종전에는 `;`·`/`를 한꺼번에 벗겨 블록(`…END;` ≠ `…END`)이 늘 "다르다"가 되어 블록 오류의 위치를 버렸다.
+    let whole = raw.trim();
+    let no_slash = whole.strip_suffix('/').map_or(whole, str::trim_end);
+    let bare = whole.trim_end_matches([';', '/']).trim_end();
+    (whole == text || no_slash == text || bare == text)
+        .then(|| src[..span.start + lead].chars().count())
 }
 
 /// ★ T-371: 오류 사건 → 편집기 캐럿 자리(글자 인덱스) — `base`(실행 `src`의 편집기 시작) + `start`(문장 시작) + `pos`(문장 안 위치 ·
@@ -655,6 +660,29 @@ mod errpos_tests {
             .collect();
         assert_eq!(s[0], Some(0));
         assert_eq!(s[1], Some(6), "개행 + 공백 2 뒤 = 글자 6(한글은 1글자)");
+    }
+
+    /// ★ 11-19: PL/SQL 블록(실행 텍스트가 `END;`로 끝난다)도 시작 위치를 준다 — `/` 종결이 있든 없든 · 앞에 다른 문장이 있어도.
+    #[test]
+    fn item_start_for_plsql_blocks_with_and_without_slash() {
+        let o = Some(nsql_core::Dialect::Oracle);
+        for src in [
+            "SELECT 1 FROM dual;\n\nBEGIN\n  NULL;\nEND;\n/\nSELECT 2 FROM dual;\n",
+            "SELECT 1 FROM dual;\n\nBEGIN\n  NULL;\nEND;\n",
+        ] {
+            let items = nsql_script::split_script_in(src, o);
+            let blk = items
+                .iter()
+                .find(|i| i.text.starts_with("BEGIN"))
+                .expect("block");
+            assert!(blk.text.ends_with("END;"), "{:?}", blk.text);
+            let start = item_start_char(src, &blk.span, &blk.text).expect("start");
+            assert_eq!(
+                src.chars().skip(start).take(5).collect::<String>(),
+                "BEGIN",
+                "{src:?}"
+            );
+        }
     }
 
     #[test]

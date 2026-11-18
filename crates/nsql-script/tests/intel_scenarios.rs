@@ -594,3 +594,51 @@ fn every_caret_position_is_safe_and_unambiguous() {
         }
     }
 }
+
+/// ★ 11-19 2차: 인라인 뷰 컬럼의 **원본 실테이블 컬럼**(그대로 내보낸 것만 · 블록을 거쳐도 따라간다 · 집계·식은 없음) —
+/// Ctrl 객체 설명·링크가 쓴다 · `outer` = 캐럿 블록에서 몇 층 바깥의 별칭인가(`*` 펼치기는 0층만).
+#[test]
+fn derived_origin_and_outer_rank() {
+    let origin = |c: &Context, alias: &str, col: &str| -> Option<(String, String)> {
+        resolve_alias(&c.aliases, alias)?
+            .derived
+            .as_ref()?
+            .origin(col)
+            .map(|(_, t, n)| (t.clone(), n.clone()))
+    };
+    let own = |t: &str, n: &str| Some((t.to_string(), n.to_string()));
+    // 가운데 블록.
+    let c = ctx_in(&qa_at("@5", "AND A.|"), Dialect::Oracle);
+    assert_eq!(origin(&c, "A", "SO_NO"), own("T_ORDER_REQ", "SO_NO"));
+    assert_eq!(origin(&c, "A", "ORDER_QTY"), None, "MAX(…) = 원본 없음");
+    assert_eq!(origin(&c, "A", "PROD_YN"), None, "리터럴 = 원본 없음");
+    assert_eq!(origin(&c, "B", "ALT_BOM"), own("T_BOM_RUN", "ALT_BOM"));
+    assert_eq!(origin(&c, "C", "SO_ITEM_NO"), own("T_STOCK", "SO_ITEM_NO"));
+    assert_eq!(
+        origin(&c, "C", "INV_QTY"),
+        None,
+        "SUM(…) AS 같은 이름 = 원본 없음"
+    );
+    assert!(
+        c.aliases.iter().take(3).all(|a| a.outer == 0),
+        "{:?}",
+        c.aliases
+    );
+    // 맨 바깥: 두 블록을 거쳐 원본까지.
+    let c = ctx_in(&qa_at("@7", "AND A.|"), Dialect::Oracle);
+    assert_eq!(origin(&c, "A", "SO_SEQ"), own("T_ORDER_REQ", "SO_SEQ"));
+    assert_eq!(
+        origin(&c, "A", "IN_ITEM_CD"),
+        own("T_BOM_RUN", "IN_ITEM_CD")
+    );
+    assert_eq!(origin(&c, "A", "LOC_LIST"), None, "LISTAGG 결과");
+    assert_eq!(origin(&c, "A", "EXEC_YN"), None, "CASE 식");
+    // 안쪽 블록: 그 블록의 A = 0층 · 바깥 블록의 C = 1층.
+    let c = ctx_in(&qa_at("@3", "AND A.|"), Dialect::Oracle);
+    let a = resolve_alias(&c.aliases, "A").unwrap();
+    assert_eq!((a.table.as_str(), a.outer), ("T_STOCK", 0));
+    assert_eq!(resolve_alias(&c.aliases, "C").unwrap().outer, 1);
+    // 함수 괄호 안의 `*`도 그 SELECT의 FROM이 0층.
+    let c = ctx_in("SELECT COUNT(*|) FROM t1 a WHERE 1=1", Dialect::Oracle);
+    assert_eq!(resolve_alias(&c.aliases, "a").unwrap().outer, 0);
+}

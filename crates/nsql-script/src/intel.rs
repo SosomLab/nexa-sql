@@ -66,6 +66,9 @@ pub struct Alias {
     pub table: String,
     /// CTE/서브쿼리(카탈로그에 없음).
     pub local: bool,
+    /// ★ 캐럿 블록에서 **몇 층 바깥**의 별칭인가(11-19 · [`alias_table_scoped`]만 채운다 · 0 = 캐럿이 든 블록(별칭이 있는 가장 안쪽 층) ·
+    /// 문장 전체 표 = 전부 0) — bare `*` 펼치기는 0층만 대상이다.
+    pub outer: u8,
     /// ★ 파생 테이블(`( SELECT … ) x` · CTE)의 **출력 컬럼**(사용자 11-19 "`C.` 뒤에는 서브쿼리가 SELECT한 컬럼만") — 실테이블 = `None`.
     pub derived: Option<Derived>,
 }
@@ -77,13 +80,38 @@ pub struct Derived {
     pub cols: Vec<String>,
     /// `*` · `t.*`로 통째로 내보낸 **실테이블** `(schema, table)` — 컬럼은 호스트가 메타에서 편다.
     pub stars: Vec<(Option<String>, String)>,
+    /// ★ `cols`와 나란히(11-19): 그 출력 컬럼이 **실테이블 컬럼을 그대로** 내보낸 것이면 원본 `(schema, table, column)` — `a.col [AS x]`
+    /// 꼴만(식·집계는 `None` · 안쪽 파생 테이블을 거쳐도 따라간다). Ctrl 링크·설명이 인라인 뷰 컬럼에서도 원본을 찾는 데 쓴다.
+    pub src: Vec<Option<ColOrigin>>,
 }
+
+/// 파생 컬럼의 원본 실테이블 컬럼 `(schema, table, column)`.
+pub type ColOrigin = (Option<String>, String, String);
 
 impl Derived {
     /// 읽어 낸 것이 하나도 없는가(SELECT 목록을 못 읽음 → 호스트는 종전 폴백으로).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cols.is_empty() && self.stars.is_empty()
+    }
+
+    /// 출력 컬럼 `name`의 원본 실테이블 컬럼(그대로 내보낸 것일 때만 · 대소문자 무시).
+    #[must_use]
+    pub fn origin(&self, name: &str) -> Option<&ColOrigin> {
+        let i = self
+            .cols
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(name))?;
+        self.src.get(i)?.as_ref()
+    }
+
+    fn push_col(&mut self, name: &str, src: Option<ColOrigin>) {
+        if !self.cols.iter().any(|c| c.eq_ignore_ascii_case(name)) {
+            // `src`는 `cols`와 같은 길이로 맞춘다(목록만 있는 CTE처럼 비어 있던 경우 포함).
+            self.src.resize(self.cols.len(), None);
+            self.cols.push(name.to_string());
+            self.src.push(src);
+        }
     }
 }
 
@@ -654,6 +682,7 @@ fn add_output_pseudo(ws: &[Word<'_>], aliases: &mut Vec<Alias>) {
                 schema: target.schema.clone(),
                 table: target.table.clone(),
                 local: false,
+                outer: 0,
                 derived: None,
             });
         }
@@ -1548,14 +1577,15 @@ fn context_at_raw(
     }
     let ws = words(text, &classes);
     // ★ 범위(사용자 11-19): 완성 = 캐럿이 든 괄호 블록부터 바깥으로(안쪽이 이긴다 · 형제 서브쿼리는 안 보인다).
-    let mut aliases = if scoped {
-        alias_table_scoped(&ws, rel)
+    let aliases = if scoped {
+        alias_table_scoped_in(&ws, rel, dialect, text)
     } else {
-        alias_table_deep(&ws)
+        let mut a = alias_table_deep(&ws);
+        if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.output_pseudo_tables) {
+            add_output_pseudo(&ws, &mut a);
+        }
+        a
     };
-    if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.output_pseudo_tables) {
-        add_output_pseudo(&ws, &mut aliases);
-    }
     // 접두 앞의 낱말들(접두 자체는 뺀다).
     let before: Vec<&Word<'_>> = ws.iter().filter(|w| w.end <= rel).collect();
     if before.is_empty() {
@@ -1898,7 +1928,7 @@ pub fn alias_table_deep(ws: &[Word<'_>]) -> Vec<Alias> {
 /// 서브쿼리 안은 보지 않는다(그 안까지 = [`alias_table_deep`]).
 #[must_use]
 pub fn alias_table(ws: &[Word<'_>]) -> Vec<Alias> {
-    alias_table_impl(ws, false, 0, &[])
+    alias_table_impl(ws, false, 0, &[], None)
 }
 
 /// ★ 캐럿 범위의 별칭 표(사용자 11-19 "서브쿼리는 괄호 블록 안에서만 별칭이 적용") — `pos`(낱말과 같은 바이트 기준)를 감싸는
@@ -1906,6 +1936,12 @@ pub fn alias_table(ws: &[Word<'_>]) -> Vec<Alias> {
 /// 위해 보인다 · **형제·자식 서브쿼리 안의 별칭은 안 보인다**. 파생 테이블은 [`Alias::derived`]에 출력 컬럼.
 #[must_use]
 pub fn alias_table_scoped(ws: &[Word<'_>], pos: usize) -> Vec<Alias> {
+    alias_table_scoped_src(ws, pos, None)
+}
+
+/// [`alias_table_scoped`] 본체 — `src` = 낱말을 뽑은 원문(문장 텍스트 · 있으면 낱말 사이에 숨은 **문자열 리터럴**을 가려
+/// 원본 추적이 `'Y' AS x`를 컬럼으로 오해하지 않는다 · 낱말 목록에는 문자열이 없다).
+fn alias_table_scoped_src(ws: &[Word<'_>], pos: usize, src: Option<&str>) -> Vec<Alias> {
     let mut opens: Vec<usize> = Vec::new();
     for (i, w) in ws.iter().enumerate() {
         if w.start >= pos {
@@ -1925,24 +1961,91 @@ pub fn alias_table_scoped(ws: &[Word<'_>], pos: usize) -> Vec<Alias> {
     let mut ctes: Vec<Alias> = Vec::new();
     let mut levels: Vec<Vec<Alias>> = Vec::new();
     for part in &parts {
-        let lv = alias_table_impl(part, true, 0, &ctes);
+        let lv = alias_table_impl(part, true, 0, &ctes, src);
         ctes.extend(lv.iter().filter(|a| is_cte(a)).cloned());
         levels.push(lv);
     }
     // 합치기 = 안쪽부터(같은 이름은 안쪽이 이긴다 · 같은 층의 같은 이름은 종전대로 처음 것).
     let mut out: Vec<Alias> = Vec::new();
+    // `outer` = 별칭이 있는 층만 센 순번(함수 괄호처럼 빈 층은 건너뛴다 → `COUNT(*|)`도 바로 그 SELECT의 FROM이 0층).
+    let mut rank = 0u8;
     for lv in levels.into_iter().rev() {
+        if lv.is_empty() {
+            continue;
+        }
         let mut here: Vec<Alias> = Vec::new();
-        for a in lv {
+        for mut a in lv {
             if !out.iter().any(|o| o.alias.eq_ignore_ascii_case(&a.alias))
                 && !here.iter().any(|o| o.alias.eq_ignore_ascii_case(&a.alias))
             {
+                a.outer = rank;
                 here.push(a);
             }
         }
         out.extend(here);
+        rank = rank.saturating_add(1);
     }
     out
+}
+
+/// [`alias_table_scoped`] + 방언 꼬리(SQL Server `OUTPUT INSERTED.`/`DELETED.` 의사 테이블) — 완성 문맥과 Ctrl 링크가 같이 쓴다.
+#[must_use]
+pub fn alias_table_scoped_in(
+    ws: &[Word<'_>],
+    pos: usize,
+    dialect: Option<Dialect>,
+    src: &str,
+) -> Vec<Alias> {
+    let mut a = alias_table_scoped_src(ws, pos, Some(src));
+    if dialect.is_some_and(|d| nsql_core::Caps::of(d).syntax.output_pseudo_tables) {
+        add_output_pseudo(ws, &mut a);
+    }
+    a
+}
+
+/// ★ SELECT 목록 한 항목이 **실테이블 컬럼을 그대로** 내보내는가(11-19) — `[q.]col` · `[q.]col AS x` · `[q.]col x`만. `q`는 그 층의
+/// 별칭(`level`)에서 풀고, 한정자가 없으면 그 층의 원천이 하나일 때만 그 원천. 파생 테이블이면 그 원본을 따라간다.
+fn item_origin(item: &[Word<'_>], level: &[Alias], literal_before: bool) -> Option<ColOrigin> {
+    // 항목 앞에 문자열 리터럴이 숨어 있다(`'Y' AS x` · `'Y' x`) = 컬럼이 아니다.
+    if literal_before {
+        return None;
+    }
+    let mut n = 0;
+    while n < item.len()
+        && (if n % 2 == 0 {
+            is_name(&item[n])
+        } else {
+            item[n].text == "."
+        })
+    {
+        n += 1;
+    }
+    if n % 2 == 0 {
+        return None;
+    }
+    let rest = &item[n..];
+    let alias_only = match rest {
+        [] => true,
+        [a] => is_name(a),
+        [k, a] => is_word(k, "AS") && is_name(a),
+        _ => false,
+    };
+    if !alias_only {
+        return None;
+    }
+    let col = item[n - 1].text;
+    let a = if n >= 3 {
+        resolve_alias(level, item[n - 3].text)?
+    } else if level.len() == 1 {
+        &level[0]
+    } else {
+        return None;
+    };
+    match &a.derived {
+        Some(d) => d.origin(col).cloned(),
+        None if !a.local => Some((a.schema.clone(), a.table.clone(), col.to_string())),
+        None => None,
+    }
 }
 
 /// CTE 정의 줄인가(`WITH x AS (` = `alias == table` · local).
@@ -2047,10 +2150,8 @@ fn select_item<'a>(item: &[Word<'a>]) -> ItemOut<'a> {
 /// 별칭 하나가 내보내는 것을 `out`에 보탠다(`*` 펼치기) — 파생 = 그 컬럼 그대로 · 실테이블 = `stars`.
 fn take_star(a: &Alias, out: &mut Derived) {
     if let Some(d) = &a.derived {
-        for c in &d.cols {
-            if !out.cols.iter().any(|x| x.eq_ignore_ascii_case(c)) {
-                out.cols.push(c.clone());
-            }
+        for (k, c) in d.cols.iter().enumerate() {
+            out.push_col(c, d.src.get(k).cloned().flatten());
         }
         for s in &d.stars {
             if !out.stars.contains(s) {
@@ -2067,14 +2168,14 @@ fn take_star(a: &Alias, out: &mut Derived) {
 
 /// ★ 쿼리(괄호 안쪽 낱말들)의 **출력 컬럼**(사용자 11-19) — 첫 최상위 `SELECT`의 목록을 최상위 `FROM`(또는 `INTO`·집합 연산·끝)까지
 /// 콤마로 잘라 읽는다. `*`·`t.*` = 그 층 FROM의 실테이블([`Derived::stars`]) 또는 안쪽 파생 테이블의 컬럼을 그대로.
-fn projection(ws: &[Word<'_>], depth: u8, ctes: &[Alias]) -> Derived {
+fn projection(ws: &[Word<'_>], depth: u8, ctes: &[Alias], src: Option<&str>) -> Derived {
     let mut out = Derived::default();
     if depth > DERIVED_DEPTH_MAX {
         return out;
     }
     // 통째로 괄호(`( (SELECT …) UNION … )`) = 첫 그룹 안으로.
     if ws.first().is_some_and(|w| w.text == "(") {
-        return projection(group_inner(ws, 0).0, depth + 1, ctes);
+        return projection(group_inner(ws, 0).0, depth + 1, ctes, src);
     }
     let mut i = 0;
     let mut sel = None;
@@ -2116,14 +2217,21 @@ fn projection(ws: &[Word<'_>], depth: u8, ctes: &[Alias]) -> Derived {
         if at_end || ws[j].text == "," {
             match select_item(&ws[start.min(ws.len())..j.min(ws.len())]) {
                 ItemOut::Name(n) => {
-                    if !out.cols.iter().any(|c| c.eq_ignore_ascii_case(n)) {
-                        out.cols.push(n.to_string());
-                    }
+                    let item = &ws[start.min(ws.len())..j.min(ws.len())];
+                    let lv = level
+                        .get_or_insert_with(|| alias_table_impl(ws, true, depth + 1, ctes, src));
+                    // 낱말 목록에는 문자열이 없다 → 앞 낱말과 이 항목 사이의 원문에 따옴표가 있으면 리터럴이 숨어 있다.
+                    let literal_before = start > 0
+                        && item.first().is_some_and(|f| {
+                            src.and_then(|s| s.get(ws[start - 1].end..f.start))
+                                .is_some_and(|g| g.contains('\''))
+                        });
+                    out.push_col(n, item_origin(item, lv, literal_before));
                 }
                 ItemOut::Unnamed => {}
                 ItemOut::Star(q) => {
-                    let lv =
-                        level.get_or_insert_with(|| alias_table_impl(ws, true, depth + 1, ctes));
+                    let lv = level
+                        .get_or_insert_with(|| alias_table_impl(ws, true, depth + 1, ctes, src));
                     match q {
                         Some(q) => {
                             if let Some(a) = resolve_alias(lv, q) {
@@ -2156,7 +2264,13 @@ fn projection(ws: &[Word<'_>], depth: u8, ctes: &[Alias]) -> Derived {
 
 /// [`alias_table`] 본체 — `level_only` = 이 층만(괄호 그룹 안으로 걸어 들어가지 않는다 · [`alias_table_scoped`]) · `depth` = 파생 재귀 깊이 ·
 /// `outer` = 바깥 층에서 보이는 CTE(가까운 층이 뒤).
-fn alias_table_impl(ws: &[Word<'_>], level_only: bool, depth: u8, outer: &[Alias]) -> Vec<Alias> {
+fn alias_table_impl(
+    ws: &[Word<'_>],
+    level_only: bool,
+    depth: u8,
+    outer: &[Alias],
+    src: Option<&str>,
+) -> Vec<Alias> {
     let mut out: Vec<Alias> = Vec::new();
     // CTE.
     let mut i = 0;
@@ -2191,11 +2305,13 @@ fn alias_table_impl(ws: &[Word<'_>], level_only: bool, depth: u8, outer: &[Alias
                             group_inner(ws, m + 1).0,
                             depth + 1,
                             &visible_ctes(outer, &out),
+                            src,
                         )
                     } else {
                         Derived {
                             cols: listed,
                             stars: Vec::new(),
+                            src: Vec::new(),
                         }
                     };
                     out.push(Alias {
@@ -2203,6 +2319,7 @@ fn alias_table_impl(ws: &[Word<'_>], level_only: bool, depth: u8, outer: &[Alias
                         schema: None,
                         table: nw.text.to_string(),
                         local: true,
+                        outer: 0,
                         derived: Some(derived),
                     });
                 }
@@ -2251,10 +2368,12 @@ fn alias_table_impl(ws: &[Word<'_>], level_only: bool, depth: u8, outer: &[Alias
                         schema: None,
                         table: String::new(),
                         local: true,
+                        outer: 0,
                         derived: Some(projection(
                             group_inner(ws, k).0,
                             depth + 1,
                             &visible_ctes(outer, &out),
+                            src,
                         )),
                     });
                     m += 1;
@@ -2303,6 +2422,7 @@ fn alias_table_impl(ws: &[Word<'_>], level_only: bool, depth: u8, outer: &[Alias
                     schema,
                     table,
                     local,
+                    outer: 0,
                     derived,
                 });
                 k = m;

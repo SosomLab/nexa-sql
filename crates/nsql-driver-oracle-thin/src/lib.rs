@@ -188,9 +188,12 @@ impl ThinSession {
     /// T-371: 실행 오류의 오프셋(서버 보고 = 바이트 · 한글 리터럴 뒤 오류로 실서버 E2E 확인 = 글자 열 19 ✓ `win-error-goto-e2e.sh`)을 보낸 문장의 글자 인덱스로.
     fn fail_at(&self, e: &oracledb::Error, sql: &str) -> DbError {
         let mut d = self.fail(e);
-        if let Some(p) = d.position {
-            d.position = Some(nsql_core::char_index_of_byte(sql, p));
-        }
+        // 오프셋 0 = 위치 없음(PL/SQL 컴파일 오류는 서버 오프셋이 0으로 온다 · OCI 쪽 `err`와 같은 규칙).
+        d.position = match d.position.filter(|p| *p > 0) {
+            Some(p) => Some(nsql_core::char_index_of_byte(sql, p)),
+            // ★ 11-19: PL/SQL 블록의 컴파일 오류 = 메시지의 `ORA-06550: line N, column M`(실서버 E2E T11).
+            None => nsql_core::plsql_error_position(&d.message, sql),
+        };
         d
     }
 

@@ -14,7 +14,71 @@ use crate::*;
 use nexa_ctl::controls::ctxmenu::CtxItem;
 use nexa_ctl::{LinkLine, LinkStyle};
 use nsql_run::meta::{ColState, DetailState, Interner, ObjId, Snapshot};
-use nsql_script::intel::{context_at_flat, resolve_alias, Alias};
+use nsql_script::intel::{alias_table_scoped_in, context_at_flat, resolve_alias, Alias};
+use nsql_script::outline::Word;
+
+/// ★ 문장 하나의 **범위 별칭**(사용자 11-19 "한 문장이면 문장 전체의 객체 설명" · T-491): 종전에는 문장에 별칭 표가 하나(같은 이름 =
+/// 바깥 것만)라 블록마다 `FROM t A`를 쓰면 안쪽 `A.컬럼`이 전부 인라인 뷰로 풀려 링크가 0개였다. 이제 토큰이 든 괄호 블록을 기준으로
+/// 푼다(완성과 같은 `alias_table_scoped` · 안쪽이 이김). 문장당 낱말 분석 1회 · 블록(가장 안쪽 `(`)당 별칭 표 1회 · 토큰은 앞에서
+/// 뒤로 오므로 괄호 스택을 이어서 민다(뒤로 가면 처음부터).
+struct StmtScope<'t> {
+    range: std::ops::Range<usize>,
+    /// 문장 원문(낱말 위치의 기준 · 숨은 문자열 리터럴 판정).
+    src: &'t str,
+    ws: Vec<Word<'t>>,
+    /// 다음에 볼 낱말 · 지금까지 열린 `(`의 낱말 색인.
+    wi: usize,
+    opens: Vec<usize>,
+    last: usize,
+    cache: HashMap<Option<usize>, Vec<Alias>>,
+    dialect: Option<nsql_core::Dialect>,
+}
+
+impl<'t> StmtScope<'t> {
+    fn new(
+        text: &'t str,
+        range: std::ops::Range<usize>,
+        dialect: Option<nsql_core::Dialect>,
+    ) -> Self {
+        let s = text.get(range.clone()).unwrap_or("");
+        let classes = nsql_script::lexer::classify(s);
+        StmtScope {
+            ws: nsql_script::outline::words(s, &classes),
+            src: s,
+            range,
+            wi: 0,
+            opens: Vec::new(),
+            last: 0,
+            cache: HashMap::new(),
+            dialect,
+        }
+    }
+
+    /// 문서 바이트 위치 `b`의 토큰이 보는 별칭 표.
+    fn aliases_at(&mut self, b: usize) -> &[Alias] {
+        let rel = b.saturating_sub(self.range.start);
+        if rel < self.last {
+            self.wi = 0;
+            self.opens.clear();
+        }
+        self.last = rel;
+        while self.wi < self.ws.len() && self.ws[self.wi].start < rel {
+            match self.ws[self.wi].text {
+                "(" => self.opens.push(self.wi),
+                ")" => {
+                    self.opens.pop();
+                }
+                _ => {}
+            }
+            self.wi += 1;
+        }
+        let key = self.opens.last().copied();
+        let (ws, dialect, src) = (&self.ws, self.dialect, self.src);
+        self.cache
+            .entry(key)
+            .or_insert_with(|| alias_table_scoped_in(ws, rel, dialect, src))
+    }
+}
 
 /// 링크 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,7 +281,7 @@ pub(crate) fn scan(
         cc
     };
     // 문장 문맥 캐시(별칭 표 · 문장 구간).
-    let mut stmt: Option<(std::ops::Range<usize>, Vec<Alias>)> = None;
+    let mut stmt: Option<StmtScope<'_>> = None;
     // 절 추적(괄호 깊이별 마지막 절).
     let mut clause: Vec<Option<String>> = vec![None];
     let sig = |k: usize| -> Option<&nsql_format::Token> {
@@ -338,20 +402,20 @@ pub(crate) fn scan(
         let b = t.span.0;
         let aliases: &[Alias] = {
             let fresh = match &stmt {
-                Some((r, _)) => !r.contains(&b),
+                Some(s) => !s.range.contains(&b),
                 None => true,
             };
             if fresh {
-                // 문장 전체를 한 번에 본다 = 범위 없는 별칭 표(완성은 캐럿 범위 `context_at`).
+                // 문장 구간만 여기서 얻고(별칭은 쓰지 않는다) 별칭은 토큰 위치마다 범위로 푼다.
                 let c = context_at_flat(text, b, dialect);
                 let r = if c.statement.is_empty() {
                     b..text.len()
                 } else {
-                    c.statement.clone()
+                    c.statement
                 };
-                stmt = Some((r, c.aliases));
+                stmt = Some(StmtScope::new(text, r, dialect));
             }
-            &stmt.as_ref().expect("stmt").1
+            stmt.as_mut().expect("stmt").aliases_at(b)
         };
         let cur_clause = clause.last().cloned().flatten();
         let relation_pos = (prev.is_some_and(|p| p.kind == Kind::Word)
@@ -516,6 +580,29 @@ pub(crate) fn scan(
                             name,
                             known,
                         });
+                    } else if let Some(d) = a.derived.as_ref() {
+                        // ★ 인라인 뷰·CTE 컬럼(11-19): 실테이블 컬럼을 그대로 내보낸 것이면 그 원본으로 링크(설명·카드가 원본을 보인다) ·
+                        //   `*`로 내보낸 실테이블이 그 컬럼을 가졌으면 그 테이블 · 식·집계는 링크 없음. 확인된 것만(미확인 표시 금지).
+                        let origin = d.origin(&name).cloned().or_else(|| {
+                            d.stars
+                                .iter()
+                                .find(|(s, t)| res.has_column(s.as_deref(), t, &name) == Some(true))
+                                .map(|(s, t)| (s.clone(), t.clone(), name.clone()))
+                        });
+                        if let Some((schema, table, col)) = origin {
+                            if is_relation(schema.as_deref(), &table)
+                                && res.has_column(schema.as_deref(), &table, &col) != Some(false)
+                            {
+                                out.push(Link {
+                                    range: (a0, a1),
+                                    kind: LinkKind::Column,
+                                    schema,
+                                    owner: Some(table),
+                                    name: col,
+                                    known: true,
+                                });
+                            }
+                        }
                     }
                     continue;
                 }
@@ -3293,7 +3380,41 @@ mod tests {
     }
 
     /// ★ 10-21(134차 win · 사용자 "서브쿼리 안 `T1.컬럼`의 설명이 안 보인다" = 협업 진단 Column 링크 0): 바깥 SELECT로 감싼 서브쿼리 안의
-    /// 별칭 컬럼도 링크가 되고(주인 = 그 별칭의 테이블) · 바깥의 서브쿼리 별칭(`S.`)은 local이라 링크 없음.
+    /// ★ 11-19(사용자 "한 문장인데 첫 서브쿼리에만 설명이 나온다"): 블록마다 같은 별칭 `A`가 다른 테이블 — 컬럼 링크의 주인이
+    /// **그 블록의 테이블**이고, 가운데·바깥 블록의 인라인 뷰 컬럼은 원본 컬럼으로(이름을 바꾼 것 포함 · 집계는 링크 없음).
+    #[test]
+    fn same_alias_in_each_block_links_to_its_own_table() {
+        let text = "SELECT * FROM ( \
+            SELECT A.ORD_NO, B.ITEM_NM, C.QTY_SUM \
+            FROM ( SELECT A.ORD_NO, A.ITEM_CD AS CD FROM TB_ORDER A ) A \
+            LEFT OUTER JOIN ( SELECT A.ITEM_CD, A.ITEM_NM FROM TB_ITEM A ) B ON B.ITEM_CD = A.CD \
+            LEFT OUTER JOIN ( SELECT A.ORD_NO, SUM(A.ITEM_CD) AS QTY_SUM FROM TB_ORDER A ) C ON C.ORD_NO = A.ORD_NO \
+            ) A WHERE A.ORD_NO = '1' ORDER BY A.ITEM_NM";
+        let v = scan(text, Some(nsql_core::Dialect::Oracle), &Fake);
+        let cols: Vec<(String, String)> = v
+            .iter()
+            .filter(|l| l.kind == LinkKind::Column && l.known)
+            .map(|l| (l.owner.clone().unwrap_or_default(), l.name.clone()))
+            .collect();
+        let count = |t: &str, c: &str| cols.iter().filter(|x| x.0 == t && x.1 == c).count();
+        // TB_ITEM의 컬럼은 둘째 블록 안(A.ITEM_CD · A.ITEM_NM) + 가운데(B.ITEM_NM · B.ITEM_CD) + 바깥(A.ITEM_NM).
+        assert_eq!(count("TB_ITEM", "ITEM_NM"), 3, "{cols:?}");
+        assert_eq!(count("TB_ITEM", "ITEM_CD"), 2, "{cols:?}");
+        // TB_ORDER.ITEM_CD = 첫 블록 안 A.ITEM_CD + 가운데 `A.CD`(이름을 바꾼 것 → 원본) + 셋째 블록 SUM(A.ITEM_CD).
+        assert_eq!(count("TB_ORDER", "ITEM_CD"), 3, "{cols:?}");
+        // TB_ORDER.ORD_NO = 첫 블록 1 + 셋째 블록 1 + 가운데 A.ORD_NO ×2 · C.ORD_NO 1 + 바깥 A.ORD_NO 1.
+        assert_eq!(count("TB_ORDER", "ORD_NO"), 6, "{cols:?}");
+        // 집계 결과(C.QTY_SUM)는 원본이 없다 → 링크 없음.
+        assert!(!cols.iter().any(|x| x.1 == "QTY_SUM"), "{cols:?}");
+        let tables: Vec<&str> = v
+            .iter()
+            .filter(|l| l.kind == LinkKind::Table)
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(tables, vec!["TB_ORDER", "TB_ITEM", "TB_ORDER"]);
+    }
+
+    /// 별칭 컬럼도 링크가 되고(주인 = 그 별칭의 테이블) · 바깥의 서브쿼리 별칭(`S.`)도 원본 컬럼으로 링크(11-19).
     #[test]
     fn alias_columns_inside_subquery_are_linked() {
         let text = "SELECT S.ORD_NO, MAX(S.ITEM_NM) FROM ( SELECT T1.ORD_NO, T2.ITEM_NM FROM TB_ORDER T1 JOIN TB_ITEM T2 ON T1.ITEM_CD = T2.ITEM_CD ) S WHERE S.ORD_NO = '1'";
@@ -3319,7 +3440,15 @@ mod tests {
             cols.contains(&("TB_ITEM".into(), "ITEM_CD".into(), true)),
             "{cols:?}"
         );
-        assert_eq!(cols.len(), 4, "바깥 `S.` 컬럼은 링크 아님 {cols:?}");
+        // ★ 11-19: 바깥 `S.` 컬럼도 인라인 뷰가 그대로 내보낸 원본으로 링크(S.ORD_NO ×2 → TB_ORDER · S.ITEM_NM → TB_ITEM).
+        assert_eq!(cols.len(), 7, "안쪽 4 + 바깥 `S.` 3 {cols:?}");
+        assert_eq!(
+            cols.iter()
+                .filter(|c| **c == ("TB_ORDER".to_string(), "ORD_NO".to_string(), true))
+                .count(),
+            3,
+            "{cols:?}"
+        );
         let tables: Vec<&str> = v
             .iter()
             .filter(|l| l.kind == LinkKind::Table)
