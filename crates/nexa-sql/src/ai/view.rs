@@ -145,6 +145,9 @@ enum LineKind {
     /// ★ 마크다운 표(사용자 11-12 "표 형식으로 일목요연하게"): 머리 줄 · 본문 줄 — 글 = 칸을 탭으로 이은 것(복사하면 TSV).
     TableHead,
     TableRow,
+    /// ★ 표 행의 **이어지는 줄**(11-19 · 칸 글이 열 폭을 넘어 접힌 둘째 줄부터 · 칸마다 그 줄의 조각을 탭으로 이음 · 머리의 이어지는
+    /// 줄은 `TableHead` 그대로).
+    TableCont,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -687,7 +690,12 @@ impl AiView {
 
     /// 표 블록(이어진 표 줄)의 범위 [시작, 끝) — `li`가 든 블록.
     fn table_block(ls: &[Line], li: usize) -> (usize, usize) {
-        let is = |k: &LineKind| matches!(k, LineKind::TableHead | LineKind::TableRow);
+        let is = |k: &LineKind| {
+            matches!(
+                k,
+                LineKind::TableHead | LineKind::TableRow | LineKind::TableCont
+            )
+        };
         let mut s0 = li;
         while s0 > 0 && is(&ls[s0 - 1].kind) {
             s0 -= 1;
@@ -795,7 +803,10 @@ impl AiView {
             return 0;
         };
         // 표 줄 = 열 배치 기준(그릴 때와 같은 열 폭).
-        if matches!(l.kind, LineKind::TableHead | LineKind::TableRow) {
+        if matches!(
+            l.kind,
+            LineKind::TableHead | LineKind::TableRow | LineKind::TableCont
+        ) {
             let mut base = 0usize;
             for ls in &self.lines {
                 if flat < base + ls.len() {
@@ -926,8 +937,25 @@ impl AiView {
     ///   이 틱이 있어야 진행된다(nexa-ctl `ScrollBars::tick` · 전역 `ui.scrollbars`를 따른다).
     /// 표시 레벨(바뀌면 줄 캐시를 버린다).
     /// 대본 끌기 선택·스크롤바 끌기 중인가 — 호스트가 영역 밖의 이동·놓기도 이 뷰로 보낸다(사용자 11-12).
+    /// ★ 11-19(사용자 "프롬프트 상자에서 누르고 영역 밖에서 놓으면 눌린 상태로 남는다"): **입력 상자의 끌기**(작성 상자 · 프로필 상자)도
+    /// 센다 — 빠져 있어서 밖에서 놓은 MouseUp이 이 뷰에 오지 않았다(분할 창은 앱의 포인터 캡처 표 밖이라 여기가 유일한 길).
     pub(crate) fn drag_active(&self) -> bool {
-        self.dragging || self.bars.is_dragging()
+        self.dragging
+            || self.bars.is_dragging()
+            || [
+                &self.composer,
+                &self.p_name,
+                &self.p_url,
+                &self.p_ws,
+                &self.p_key,
+                &self.p_issuer,
+                &self.p_client,
+                &self.p_rule,
+                &self.p_org,
+                &self.p_sa,
+            ]
+            .iter()
+            .any(|b| b.is_dragging())
     }
 
     pub(crate) fn set_line_links(&mut self, on: bool) {
@@ -2404,6 +2432,8 @@ impl AiView {
                 let mut code_clip = tr;
                 // 표 블록의 열 폭(블록 첫 줄에서 한 번 잰다 · 끝 색인까지 유효).
                 let mut table: Option<(usize, Vec<i32>)> = None;
+                // 그 블록에 접힌 행이 있는가(있으면 행마다 위에 가는 줄 = 행 경계).
+                let mut table_wrapped = false;
                 for (li, l) in ls.iter().enumerate() {
                     let yy = ly + li as i32 * line_h;
                     match &l.kind {
@@ -2570,15 +2600,20 @@ impl AiView {
                             }
                         }
                         LineKind::Blank => {}
-                        LineKind::TableHead | LineKind::TableRow => {
+                        LineKind::TableHead | LineKind::TableRow | LineKind::TableCont => {
                             in_code = false;
                             let is_tbl = |k: &LineKind| {
-                                matches!(k, LineKind::TableHead | LineKind::TableRow)
+                                matches!(
+                                    k,
+                                    LineKind::TableHead | LineKind::TableRow | LineKind::TableCont
+                                )
                             };
                             if table.as_ref().is_none_or(|(end, _)| li >= *end) {
                                 let end =
                                     li + ls[li..].iter().take_while(|q| is_tbl(&q.kind)).count();
                                 let cols = self.table_widths(dc, &ls[li..end], w);
+                                table_wrapped =
+                                    ls[li..end].iter().any(|q| q.kind == LineKind::TableCont);
                                 table = Some((end, cols));
                             }
                             if let Some((_, cols)) = &table {
@@ -2599,14 +2634,27 @@ impl AiView {
                                 }
                                 if head {
                                     dc.select_font(FontSlot::Base, false);
+                                }
+                                // 머리 밑줄 = 머리의 **마지막** 줄 아래 · 접힌 행이 있는 표는 행 첫 줄 위에 가는 줄(행 경계 ·
+                                //   머리 바로 다음 행은 밑줄이 이미 있다).
+                                let last_head = head
+                                    && ls.get(li + 1).is_none_or(|q| q.kind != LineKind::TableHead);
+                                let row_top = table_wrapped
+                                    && l.kind == LineKind::TableRow
+                                    && li > 0
+                                    && ls[li - 1].kind != LineKind::TableHead;
+                                let rule_y = if last_head {
+                                    Some(yy + line_h - 1)
+                                } else if row_top {
+                                    Some(yy)
+                                } else {
+                                    None
+                                };
+                                if let Some(ry) =
+                                    rule_y.filter(|ry| *ry >= tr.y && *ry < tr.y + tr.h)
+                                {
                                     let total: i32 = cols.iter().sum();
-                                    let ry = yy + line_h - 1;
-                                    if ry >= tr.y && ry < tr.y + tr.h {
-                                        dc.fill_rect(
-                                            Rect::new(x, ry, total.min(tr.w), 1),
-                                            th.border,
-                                        );
-                                    }
+                                    dc.fill_rect(Rect::new(x, ry, total.min(tr.w), 1), th.border);
                                 }
                             }
                         }
@@ -2627,7 +2675,10 @@ impl AiView {
                         if bold {
                             dc.select_font(FontSlot::Base, true);
                         }
-                        let is_table = matches!(l.kind, LineKind::TableHead | LineKind::TableRow);
+                        let is_table = matches!(
+                            l.kind,
+                            LineKind::TableHead | LineKind::TableRow | LineKind::TableCont
+                        );
                         let (x0, mut x1) = if is_table {
                             // ★ 표 줄은 열 배치로 그려진다 → 선택 자리도 열 배치 기준(사용자 11-13 "선택과 복사한 글이 다르다").
                             let (bs, be) = Self::table_block(ls, li);
@@ -3858,21 +3909,17 @@ fn layout_msg(
                     kind: LineKind::Blank,
                 });
             }
-            out.push(Line {
-                text: table_cells(raw).unwrap_or_default().join("\t"),
-                kind: LineKind::TableHead,
-            });
+            let head = table_cells(raw).unwrap_or_default();
             ri += 1;
+            let mut body: Vec<Vec<String>> = Vec::new();
             while ri < raws.len() {
                 let Some(cells) = table_cells(raws[ri]) else {
                     break;
                 };
-                out.push(Line {
-                    text: cells.join("\t"),
-                    kind: LineKind::TableRow,
-                });
+                body.push(cells);
                 ri += 1;
             }
+            table_lines(dc, &head, &body, w, &mut out);
         } else if raw.trim().is_empty() {
             after_code = false;
             out.push(Line {
@@ -4031,6 +4078,96 @@ fn push_block_result(out: &mut Vec<Line>, m: &ChatMsg, local: usize) {
 
 /// 단어 단위 줄 바꿈(한 단어가 폭을 넘으면 글자 단위).
 ///
+/// ★ 표 열 폭 배분(순수 · 11-19): 자연 폭(`natural` = 열마다 가장 넓은 칸 글)의 합이 `avail` 안이면 그대로 · 넘으면 **좁은 열부터
+/// 자연 폭을 주고 남은 폭을 남은 열에 고르게** 나눈다(짧은 열 = 줄, 코드 같은 것은 안 접히고 긴 설명 열만 접힌다) · 열 하한 `min_w`
+/// (자연 폭이 그보다 좁으면 자연 폭).
+pub(crate) fn table_fit(natural: &[i32], avail: i32, min_w: i32) -> Vec<i32> {
+    let n = natural.len();
+    if natural.iter().sum::<i32>() <= avail {
+        return natural.to_vec();
+    }
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| natural[i]);
+    let mut out = vec![0i32; n];
+    let mut left = avail.max(0);
+    for (k, &i) in order.iter().enumerate() {
+        let share = left / (n - k) as i32;
+        let w = natural[i].min(share).max(min_w.min(natural[i]));
+        out[i] = w;
+        left = (left - w).max(0);
+    }
+    out
+}
+
+/// ★ 마크다운 표 → 화면 줄(사용자 11-19 "표처럼 내용을 전달하는 것은 자동으로 줄바꿈" · 코드 블록의 줄바꿈 토글과 무관하게 **항상**):
+/// 열 폭을 대본 폭 `w` 안으로 배분([`table_fit`])하고 칸 글을 그 폭에서 접는다([`wrap`]) → 한 행 = 가장 많이 접힌 칸의 줄 수만큼의
+/// 줄(첫 줄 `TableRow` · 이어지는 줄 `TableCont` · 머리는 전부 `TableHead`) · 줄마다 칸의 그 줄 조각을 탭으로 잇는다(그리기·선택은
+/// 종전 "표 줄 = 탭으로 이은 칸" 그대로 · 줄 높이 고정 유지).
+fn table_lines(
+    dc: &mut dyn DrawCtx,
+    head: &[String],
+    body: &[Vec<String>],
+    w: i32,
+    out: &mut Vec<Line>,
+) {
+    let n = body
+        .iter()
+        .map(Vec::len)
+        .chain([head.len()])
+        .max()
+        .unwrap_or(0);
+    // 열 간격 어림 — 그릴 때의 간격(`s(14)`)보다 작지 않게(글꼴과 함께 커진다) → 접은 뒤의 열 합이 그릴 때 폭을 넘지 않는다.
+    let gap = dc.text_width("MM").max(14);
+    let min_w = dc.text_width("MMM").max(24);
+    let mut natural = vec![0i32; n];
+    dc.select_font(FontSlot::Base, true);
+    for (ci, c) in head.iter().enumerate() {
+        natural[ci] = natural[ci].max(dc.text_width(c));
+    }
+    dc.select_font(FontSlot::Base, false);
+    for r in body {
+        for (ci, c) in r.iter().enumerate() {
+            natural[ci] = natural[ci].max(dc.text_width(c));
+        }
+    }
+    let cols = table_fit(&natural, w - gap * n as i32, min_w);
+    let emit = |dc: &mut dyn DrawCtx,
+                cells: &[String],
+                first: LineKind,
+                rest: LineKind,
+                out: &mut Vec<Line>| {
+        let parts: Vec<Vec<String>> = cells
+            .iter()
+            .enumerate()
+            .map(|(ci, c)| {
+                if dc.text_width(c) <= cols[ci] {
+                    vec![c.clone()]
+                } else {
+                    wrap(dc, c, cols[ci])
+                }
+            })
+            .collect();
+        let k = parts.iter().map(Vec::len).max().unwrap_or(1).max(1);
+        for j in 0..k {
+            let text = parts
+                .iter()
+                .map(|c| c.get(j).map_or("", String::as_str))
+                .collect::<Vec<_>>()
+                .join("\t");
+            out.push(Line {
+                text,
+                kind: if j == 0 { first } else { rest },
+            });
+        }
+    };
+    dc.select_font(FontSlot::Base, true);
+    emit(dc, head, LineKind::TableHead, LineKind::TableHead, out);
+    dc.select_font(FontSlot::Base, false);
+    for r in body {
+        emit(dc, r, LineKind::TableRow, LineKind::TableCont, out);
+    }
+}
+
 /// ★ 폭은 **단어마다 한 번** 재서 더한다(11-14 · 종전 = 단어를 붙일 때마다 후보 줄 전체를 다시 재서 줄 길이의 제곱에 비례 —
 /// 긴 대화를 처음 배치할 때의 멈춤). 더한 값은 커닝·반올림 때문에 실제 폭과 조금 다를 수 있으므로, 한도에서 여유(`slack`) 안에
 /// 들 때만 후보 줄을 실제로 잰다(그 밖에는 더한 값으로 판정).
@@ -4191,6 +4328,122 @@ mod tests {
         fn text(&mut self, _x: i32, _y: i32, _c: Rect, _t: &str, _f: nexa_ctl::Color) {}
         fn text_width(&mut self, text: &str) -> i32 {
             text.chars().count() as i32 * 8
+        }
+    }
+
+    /// ★ 11-19: 표 열 배분 — 폭 안이면 자연 폭 · 넘으면 좁은 열은 그대로 두고 넓은 열만 줄인다 · 합은 폭 안.
+    #[test]
+    fn table_fit_keeps_narrow_columns_and_shares_the_rest() {
+        assert_eq!(table_fit(&[40, 80, 120], 300, 24), vec![40, 80, 120]);
+        let got = table_fit(&[16, 400, 300], 316, 24);
+        assert_eq!(got[0], 16, "좁은 열(줄 번호)은 그대로");
+        assert_eq!(got.iter().sum::<i32>(), 316, "{got:?}");
+        assert_eq!(got[1], got[2], "넓은 두 열은 고르게");
+        // 한 열만 넓다 = 그 열이 남은 폭을 다 쓴다.
+        assert_eq!(table_fit(&[16, 1000, 40], 256, 24), vec![16, 200, 40]);
+        // 폭이 터무니없이 좁아도 하한(자연 폭이 더 좁으면 자연 폭).
+        assert_eq!(table_fit(&[16, 400], 20, 24), vec![16, 24]);
+        assert_eq!(table_fit(&[], 100, 24), Vec::<i32>::new());
+    }
+
+    /// ★ 11-19(사용자 "표는 자동으로 줄바꿈"): 좁은 폭에서 긴 칸이 접히고(행 = 여러 줄 · 첫 줄 TableRow · 나머지 TableCont), 어느 줄도
+    /// 그 열 폭을 넘지 않으며, 줄들을 다시 이으면 원문 칸이 된다 · 넓은 폭에서는 종전과 같은 한 줄씩.
+    #[test]
+    fn table_rows_wrap_to_the_transcript_width() {
+        let mut dc = W;
+        let m = ChatMsg::new(
+            Kind::Assistant,
+            "| 줄 | 문제 | 조치 |\n|---|---|---|\n\
+             | 80 | AND A.STR 가 중간에 끊겨 문법 오류 입니다 | 삭제하거나 조건을 완성 하세요 |\n\
+             | 67 | 함수 없음 | 변경 |",
+        );
+        let lay = |dc: &mut W, w: i32| {
+            let mut ci = 0usize;
+            let mut codes = Vec::new();
+            layout_msg(dc, &m, w, &mut ci, &mut codes, "", false)
+        };
+        let table = |ls: &[Line]| -> Vec<(LineKind, Vec<String>)> {
+            ls.iter()
+                .filter(|l| {
+                    matches!(
+                        l.kind,
+                        LineKind::TableHead | LineKind::TableRow | LineKind::TableCont
+                    )
+                })
+                .map(|l| (l.kind, l.text.split('\t').map(str::to_string).collect()))
+                .collect()
+        };
+        // 넓다 = 접힘 없음.
+        let wide = table(&lay(&mut dc, 2000));
+        assert_eq!(wide.len(), 3);
+        assert!(wide.iter().all(|(k, _)| *k != LineKind::TableCont));
+        // 좁다(글자 8px · 폭 320) = 첫 본문 행이 여러 줄.
+        let narrow = table(&lay(&mut dc, 320));
+        let kinds: Vec<LineKind> = narrow.iter().map(|(k, _)| *k).collect();
+        assert_eq!(kinds[0], LineKind::TableHead);
+        assert_eq!(kinds[1], LineKind::TableRow);
+        assert!(kinds.contains(&LineKind::TableCont), "{kinds:?}");
+        assert_eq!(
+            kinds.iter().filter(|k| **k == LineKind::TableRow).count(),
+            2,
+            "행은 둘"
+        );
+        assert_eq!(
+            *kinds.last().expect("last"),
+            LineKind::TableRow,
+            "짧은 행은 한 줄"
+        );
+        // 모든 줄이 세 칸 · 열마다 폭 합이 대본 폭 안(간격 14px 포함).
+        assert!(narrow.iter().all(|(_, c)| c.len() == 3));
+        let col_w = |ci: usize| {
+            narrow
+                .iter()
+                .map(|(_, c)| c[ci].chars().count() as i32 * 8)
+                .max()
+                .unwrap_or(0)
+        };
+        let total: i32 = (0..3).map(|ci| col_w(ci) + 14).sum();
+        assert!(total <= 320, "열 합 {total} ≤ 320");
+        // 첫 행의 둘째 칸을 다시 이으면 원문.
+        let end = kinds
+            .iter()
+            .enumerate()
+            .skip(2)
+            .find(|(_, k)| **k == LineKind::TableRow)
+            .map_or(kinds.len(), |(i, _)| i);
+        let joined: Vec<&str> = narrow[1..end]
+            .iter()
+            .map(|(_, c)| c[1].as_str())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(
+            joined.join(" "),
+            "AND A.STR 가 중간에 끊겨 문법 오류 입니다"
+        );
+    }
+
+    /// ★ 11-19(사용자 "프롬프트 상자에서 누르고 영역 밖에서 놓으면 눌린 상태 유지"): 작성 상자 끌기 = `drag_active`(호스트가 영역 밖의
+    /// 이동·놓기를 이 뷰로 보내는 조건) · 밖 좌표의 MouseUp으로 풀린다.
+    #[test]
+    fn composer_drag_counts_as_drag_and_releases_outside() {
+        let mut v = AiView::default();
+        v.set_composer_text("hello world");
+        assert!(!v.drag_active());
+        let b = v.composer.bounds();
+        let mut inv = Invalidations::default();
+        v.composer.on_event(
+            &InputEvent::MouseDown {
+                x: b.x + 4,
+                y: b.y + 4,
+                shift: false,
+                primary: false,
+            },
+            &mut inv,
+        );
+        if v.composer.is_dragging() {
+            assert!(v.drag_active(), "작성 상자 끌기도 끌기");
+            v.on_event(&InputEvent::MouseUp { x: -500, y: -500 });
+            assert!(!v.composer.is_dragging() && !v.drag_active());
         }
     }
 

@@ -304,10 +304,26 @@ impl nsql_core::BulkSink for ArraySink<'_> {
 /// T-371: 실행 중 오류의 파스 오프셋(바이트)을 보낸 문장의 글자 인덱스로.
 fn err_at(e: &oracle::Error, sql: &str) -> DbError {
     let mut d = err(e);
-    if let Some(p) = d.position {
-        d.position = Some(nsql_core::char_index_of_byte(sql, p));
-    }
+    d.position = match d.position {
+        Some(p) => Some(nsql_core::char_index_of_byte(sql, p)),
+        // ★ 11-19: PL/SQL 블록의 컴파일 오류는 파스 오프셋이 0 · 위치는 메시지의 `ORA-06550: line N, column M`에 있다.
+        None => plsql_error_position(&d.message, sql),
+    };
     d
+}
+
+/// ★ `ORA-06550: line N, column M:`(PL/SQL 컴파일 오류 · 메시지 언어와 무관하게 **첫 두 숫자**) → 보낸 문장의 글자 인덱스.
+/// 줄·열 = 1부터 · 줄이 문장 밖이면 `None`(열이 줄 길이를 넘는지는 호스트가 문장 길이로 거른다).
+fn plsql_error_position(message: &str, sql: &str) -> Option<usize> {
+    let rest = message.split("ORA-06550:").nth(1)?;
+    let head = rest.lines().next().unwrap_or(rest);
+    let mut nums = head
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty());
+    let line: usize = nums.next()?.parse().ok()?;
+    let col: usize = nums.next()?.parse().ok()?;
+    let start = nsql_core::char_index_of_line(sql, line)?;
+    Some(start + col.saturating_sub(1))
 }
 
 fn err(e: &oracle::Error) -> DbError {
@@ -1117,3 +1133,34 @@ fn nsql_abi_open_from_spec(
     OracleSession::connect(spec)
 }
 nsql_abi::export_driver!("oracle-oci", "oracle", nsql_abi_open_from_spec);
+
+#[cfg(test)]
+mod plsql_errpos_tests {
+    use super::plsql_error_position;
+
+    #[test]
+    fn ora_06550_line_column_maps_to_char_index() {
+        let sql = "BEGIN\n  가나 := 1;\n  no_such_proc(1);\nEND;";
+        // 줄 3 · 열 3 = `no_such_proc`의 n(앞 줄의 한글도 글자 하나씩).
+        let msg = "ORA-06550: line 3, column 3:\nPLS-00201: identifier 'NO_SUCH_PROC' must be declared\nORA-06550: line 3, column 3:\nPL/SQL: Statement ignored";
+        let p = plsql_error_position(msg, sql).expect("pos");
+        assert_eq!(
+            sql.chars().skip(p).take(12).collect::<String>(),
+            "no_such_proc"
+        );
+        // 한국어 메시지(숫자만 읽는다).
+        let ko = "ORA-06550: 줄 2, 열 3:\nPLS-00201: 식별자가 정의되어야 합니다";
+        let p = plsql_error_position(ko, sql).expect("pos");
+        assert_eq!(sql.chars().skip(p).take(2).collect::<String>(), "가나");
+        // 줄이 문장 밖 · ORA-06550이 아님 · 숫자 부족.
+        assert_eq!(
+            plsql_error_position("ORA-06550: line 9, column 1:", sql),
+            None
+        );
+        assert_eq!(
+            plsql_error_position("ORA-00942: table or view does not exist", sql),
+            None
+        );
+        assert_eq!(plsql_error_position("ORA-06550: line 3", sql), None);
+    }
+}

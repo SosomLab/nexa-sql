@@ -309,6 +309,75 @@ struct ReqIn<'a> {
 }
 
 impl Intel {
+    /// ★ 파생 테이블(인라인 뷰 · CTE)의 출력 컬럼을 후보로(사용자 11-19) — 이름을 아는 컬럼은 그대로 · `*`로 통째로 내보낸
+    /// 실테이블은 메타에서 편다(안 읽었으면 채움 요청 + "불러오는 중"). `qualifier` = 접두 없는 완성에서 확정 때 붙일 별칭.
+    fn push_derived(
+        &mut self,
+        d: &intel::Derived,
+        qualifier: &str,
+        base: u32,
+        meta: Option<&MetaView<'_>>,
+        show_types: bool,
+        cands: &mut Vec<Cand>,
+    ) {
+        for (n, name) in d.cols.iter().enumerate() {
+            cands.push(Cand {
+                text: name.clone(),
+                kind: CandKind::Column,
+                detail: if show_types {
+                    "subquery".into()
+                } else {
+                    String::new()
+                },
+                source: 1,
+                tag: 0,
+                mark: String::new(),
+                order: base + n as u32,
+                qualifier: qualifier.to_string(),
+                layer: 0,
+            });
+        }
+        let Some(m) = meta else { return };
+        let after = base + d.cols.len() as u32;
+        for (schema, table) in &d.stars {
+            match m.snap.lookup(m.names, schema.as_deref(), table) {
+                Some(id) => match m.snap.columns(id) {
+                    ColState::Loaded { cols, .. } => {
+                        for c in cols.iter() {
+                            // 이름으로 이미 나온 컬럼(`a.*, a.x AS x`)은 한 번만.
+                            let name = m.names.get(c.name);
+                            if d.cols.iter().any(|x| x.eq_ignore_ascii_case(name)) {
+                                continue;
+                            }
+                            push_col(cands, id, c, m.names, show_types);
+                            if let Some(last) = cands.last_mut() {
+                                last.qualifier = qualifier.to_string();
+                                last.order += after;
+                            }
+                        }
+                    }
+                    ColState::Loading => self.loading = true,
+                    ColState::Unknown => {
+                        self.loading = true;
+                        self.needs.push(NeedColumns {
+                            schema: schema.clone().or_else(|| {
+                                m.snap.current_schema.map(|s| m.names.get(s).to_string())
+                            }),
+                            table: table.clone(),
+                            urgent: true,
+                        });
+                    }
+                    ColState::Error(_) => {}
+                },
+                None => self.needs.push(NeedColumns {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    urgent: true,
+                }),
+            }
+        }
+    }
+
     pub(crate) fn new(cfg: IntelCfg) -> Self {
         Intel {
             menu: ContextMenu::new(),
@@ -812,7 +881,12 @@ impl Intel {
         if let Some(a) = intel::resolve_alias(&ctx.aliases, qualifier) {
             // CTE/서브쿼리 = 카탈로그 없음 → 아래 문서 단어로(열 이름이 문서 안에 있다).
             resolved = !a.local;
-            if a.local {
+            if let Some(d) = a.derived.as_ref().filter(|d| !d.is_empty()) {
+                // ★ 파생 테이블(인라인 뷰 · CTE) = 그 SELECT 목록이 내보낸 컬럼만(사용자 11-19) — 문서 단어를 섞지 않는다.
+                //   목록을 못 읽었으면(빈 `derived`) 종전대로 아래 문서 단어로.
+                resolved = true;
+                self.push_derived(d, "", 0, meta, show_types, cands);
+            } else if a.local {
             } else if let Some(m) = meta {
                 match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
                     // ★ 데이터베이스·스키마 같은 "컬럼 없는" 객체가 이름만 같을 때(`FROM APPDB_MS.` · 10-01 ⑭)는 별칭 해석이 아니다 —
@@ -1662,6 +1736,11 @@ impl Intel {
                 qualifier: String::new(),
                 layer: 0,
             });
+            if let Some(d) = a.derived.as_ref() {
+                // 파생 테이블의 출력 컬럼도 접두 없는 후보로(확정 = `별칭.컬럼` · 11-19).
+                self.push_derived(d, &a.alias, ai as u32 * 1000, meta, show_types, cands);
+                continue;
+            }
             if a.local {
                 continue;
             }
@@ -4250,6 +4329,134 @@ mod tests {
         let (a2, b2) = window_of(&big, 10);
         assert_eq!(a2, 0);
         assert!(b2 < big.len() && big[b2..].starts_with("\n\n"), "{b2}");
+    }
+
+    /// ★ 자동완성 시나리오 — **팝업에 실제로 나오는 후보**(사용자 11-19 "시나리오 시험 자동화") · 문맥 수준 짝 =
+    /// `nsql-script/tests/intel_scenarios.rs`. 메타 = `store()`(EMP = EMPNO · ENAME). 기대 = 후보 글 전부(순서대로).
+    #[test]
+    fn scenario_candidates_follow_scope_and_projection() {
+        let m = store();
+        let snap = m.snapshot();
+        let view = MetaView {
+            names: &m.names,
+            snap,
+        };
+        let mut it = Intel::new(cfg());
+        let host = Rect::new(0, 0, 800, 600);
+        let mut run = |src: &str| -> Vec<(String, CandKind)> {
+            let caret = src.find('|').expect("caret");
+            let doc = src.replacen('|', "", 1);
+            it.request(
+                1,
+                1,
+                &doc,
+                caret,
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None,
+            );
+            it.cands.iter().map(|c| (c.text.clone(), c.kind)).collect()
+        };
+        // 두 인라인 뷰를 조인(사용자 문장의 축소판 · 블록마다 같은 별칭 `e`).
+        const J: &str = "SELECT * FROM (SELECT e.EMPNO, MAX(e.ENAME) AS NM FROM emp e WHERE 1=1 @1 GROUP BY e.EMPNO) a \
+             JOIN (SELECT e.EMPNO AS NO2, COUNT(*) CNT, 'x' AS TAG FROM emp e) c ON 1=1 @2 WHERE 1=1 @3";
+        let at = |mark: &str, put: &str| {
+            let mut s = J.to_string();
+            for k in ["@1", "@2", "@3"] {
+                s = s.replace(k, if k == mark { put } else { "" });
+            }
+            s
+        };
+        let cases: Vec<(&str, String, Vec<&str>)> = vec![
+            ("ON 절 c.", at("@2", "AND c.|"), vec!["NO2", "CNT", "TAG"]),
+            ("ON 절 a.", at("@2", "AND a.|"), vec!["EMPNO", "NM"]),
+            ("바깥 WHERE c.", at("@3", "AND c.|"), vec!["NO2", "CNT", "TAG"]),
+            ("안쪽 블록 e. = 실테이블", at("@1", "AND e.|"), vec!["EMPNO", "ENAME"]),
+            ("접두 거르기", at("@2", "AND c.CN|"), vec!["CNT"]),
+            (
+                "`*`가 실테이블을 편다(두 겹)",
+                "SELECT o.| FROM (SELECT * FROM (SELECT * FROM emp) i) o".to_string(),
+                vec!["EMPNO", "ENAME"],
+            ),
+            (
+                "CTE",
+                "WITH w AS (SELECT e.EMPNO AS ID, e.ENAME FROM emp e) SELECT w.| FROM w".to_string(),
+                vec!["ID", "ENAME"],
+            ),
+            (
+                "CTE 별칭 + 서브쿼리 안 참조",
+                "WITH w (A1, B1) AS (SELECT 1, 2 FROM dual) SELECT * FROM emp e WHERE EXISTS (SELECT 1 FROM w x WHERE x.|)"
+                    .to_string(),
+                vec!["A1", "B1"],
+            ),
+            (
+                "상관 서브쿼리 = 바깥 실테이블",
+                "SELECT (SELECT MAX(i.EMPNO) FROM emp i WHERE i.EMPNO = o.|) FROM emp o".to_string(),
+                vec!["EMPNO", "ENAME"],
+            ),
+        ];
+        for (name, sql, want) in &cases {
+            let got = run(sql);
+            let texts: Vec<&str> = got.iter().map(|(t, _)| t.as_str()).collect();
+            assert_eq!(&texts, want, "[{name}] {sql}");
+            assert!(
+                got.iter().all(|(_, k)| *k == CandKind::Column),
+                "[{name}] 문서 단어가 섞이지 않는다: {got:?}"
+            );
+        }
+        // 형제 서브쿼리의 별칭은 바깥에서 풀리지 않는다 → 그 서브쿼리의 컬럼이 **컬럼 후보로** 나오지 않는다.
+        let got = run("SELECT * FROM emp a WHERE a.EMPNO IN (SELECT b.EMPNO FROM emp b) AND b.|");
+        assert!(got.iter().all(|(_, k)| *k != CandKind::Column), "{got:?}");
+    }
+
+    #[test]
+    fn derived_member_columns_only() {
+        // ★ 사용자 11-19: 인라인 뷰 별칭 뒤 = 그 SELECT 목록의 컬럼만(문서 단어 없음) · `e.*` = 실테이블 컬럼을 편다 ·
+        //   같은 별칭이라도 캐럿이 든 블록의 것(안쪽 `e.` = emp).
+        let m = store();
+        let snap = m.snapshot();
+        let view = MetaView {
+            names: &m.names,
+            snap,
+        };
+        let mut it = Intel::new(cfg());
+        let host = Rect::new(0, 0, 800, 600);
+        let mut run = |src: &str| -> Vec<(String, CandKind)> {
+            let caret = src.find('|').expect("caret");
+            let doc = src.replacen('|', "", 1);
+            assert!(it.request(
+                1,
+                1,
+                &doc,
+                caret,
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            it.cands.iter().map(|c| (c.text.clone(), c.kind)).collect()
+        };
+        let got =
+            run("SELECT e.| FROM (SELECT e.EMPNO AS NO, MAX(e.ENAME) NM, other_word FROM emp e) e");
+        assert_eq!(
+            got,
+            vec![
+                ("NO".to_string(), CandKind::Column),
+                ("NM".to_string(), CandKind::Column),
+                ("other_word".to_string(), CandKind::Column)
+            ]
+        );
+        let got = run("SELECT s.| FROM (SELECT e.*, 1 AS ONE FROM emp e) s");
+        let texts: Vec<&str> = got.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, vec!["ONE", "EMPNO", "ENAME"]);
+        let got = run("SELECT * FROM (SELECT e.| FROM emp e) e");
+        let texts: Vec<&str> = got.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, vec!["EMPNO", "ENAME"]);
     }
 
     /// ★ 자기 감속(09-24 §187): 예산 0 ms → 요청마다 초과 → 두 번째 요청 뒤 그 탭의 문서 낱말이 꺼지고 알림 한 번.

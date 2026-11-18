@@ -503,7 +503,9 @@ impl App {
             self.sess.last_spec.as_ref().and_then(|s| s.dialect),
         );
         let (cls, summary) = toast::summarize(err_dialect, error.code, &error.message, &stmt);
-        self.sess.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
+        // ★ 11-19: 줄 번호 = 문서 기준(실행한 조각의 시작 줄을 더한다 · Output 줄과 같은 기준).
+        let doc_line = self.sess.run_line_base + line.max(1);
+        self.sess.status = tf(Msg::StErrorLine, &[&doc_line.to_string(), &summary]);
         // "테이블/뷰 없음"인데 탐색기에는 그 이름이 있다 = 트리가 낡았다 → 그 폴더만 다시(docs/57 T4).
         if cls.class == nsql_core::ErrorClass::NoTable
             && self.settings.flag("meta.refresh_on_missing")

@@ -59,9 +59,8 @@ impl App {
             .panel
             .output_active_mut()
             .and_then(OutputView::take_goto);
-        if let Some(n) = goto {
-            self.editors.cur_mut().goto_line(n);
-            self.set_focus(Focus::Editor);
+        if let Some((n, col)) = goto {
+            self.output_goto(n, col);
         }
         let cmd = self
             .panel
@@ -69,6 +68,40 @@ impl App {
             .and_then(OutputView::take_cmd);
         if let Some(id) = cmd {
             self.menu_action(&id);
+        }
+    }
+
+    /// 자체 시험(기동 명령 `output.goto_error:<n>`): 뒤에서 n번째 오류 줄을 두 번 클릭한 것과 같은 이동(Output 탭이 활성이 아니어도).
+    pub(crate) fn output_goto_error(&mut self, nth: usize) {
+        let goto = self.panel.output.as_mut().and_then(|v| {
+            v.goto_error_nth(nth);
+            v.take_goto()
+        });
+        if let Some((n, col)) = goto {
+            self.output_goto(n, col);
+        }
+    }
+
+    /// Output 오류 줄 → 편집기 줄(·열)로 캐럿.
+    fn output_goto(&mut self, n: usize, col: Option<usize>) {
+        {
+            self.editors.cur_mut().goto_line(n);
+            // ★ 11-19: 열이 있으면 그 글자로(줄 길이를 넘으면 줄 끝 · 실행 뒤 편집으로 줄이 짧아졌을 때).
+            if let Some(c) = col {
+                let ch = {
+                    let buf = self.editors.cur().buf();
+                    let l = (n - 1).min(buf.line_count().saturating_sub(1));
+                    let len = buf
+                        .line_text(l)
+                        .trim_end_matches(['\n', '\r'])
+                        .chars()
+                        .count();
+                    buf.line_start(l) + (c - 1).min(len)
+                };
+                let mut inv = Invalidations::default();
+                self.ed_mut().select_range(ch, ch, &mut inv);
+            }
+            self.set_focus(Focus::Editor);
         }
     }
 
@@ -303,12 +336,53 @@ impl App {
                 let text = driver_limits_text(driver, limits);
                 self.output_push(ed, OutKind::Warn, &text);
             }
-            RunEvent::Error { line, error, .. } => {
-                let text = tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]);
+            RunEvent::Error { index, line, error } => {
+                let text = self.error_output_text(*index, *line, error);
                 self.output_push(ed, OutKind::Error, &text);
             }
             _ => {}
         }
+    }
+
+    /// ★ 오류 사건 → Output 글(사용자 11-19 "line 1로만 나온다 · 두 번 클릭이 빗나간다"): 줄 번호는 **문서 기준**
+    /// (실행한 조각의 시작 줄 `run_line_base`를 더한다) · 서버가 문장 안 위치를 줬으면 그 글자의 줄·열 + 그 자리 소스 조각 한 줄.
+    /// 위치가 없거나 문서로 옮길 수 없으면(실행 텍스트가 원문과 다름 · 실행한 탭이 닫힘) 문장 시작 줄만.
+    fn error_output_text(
+        &mut self,
+        index: usize,
+        line: usize,
+        error: &nsql_core::DbError,
+    ) -> String {
+        let stmt_line = self.sess.run_line_base + line.max(1);
+        let start = self.sess.last_run_starts.get(index).copied().flatten();
+        let stmt_len = self
+            .sess
+            .last_run_items
+            .get(index)
+            .map_or(0, |s| s.chars().count());
+        let ch = error
+            .position
+            .filter(|p| *p > 0 && *p <= stmt_len)
+            .and_then(|p| app::run::error_caret(self.sess.run_src_base, start, Some(p), stmt_len));
+        let ed = self.sess.run_editor;
+        let at = ch.and_then(|ch| {
+            let buf = self.editors.buf_mut_by_id(ed)?.buf();
+            let l = buf.line_of(ch);
+            let col = ch.checked_sub(buf.line_start(l))?;
+            let text = buf.line_text(l);
+            let near: String = text
+                .trim_end_matches(['\n', '\r'])
+                .chars()
+                .skip(col)
+                .take(ERROR_NEAR_CHARS)
+                .collect();
+            Some((l + 1, col + 1, near))
+        });
+        error_output_line(
+            stmt_line,
+            at.as_ref().map(|(l, c, n)| (*l, *c, n.as_str())),
+            &error.message,
+        )
     }
 
     /// 자체 시험(기동 명령 `output.dump:<파일>`): 활성 패널의 Output 본문(없으면 `none`) — 첫 줄 = `shown|lines`.
@@ -322,6 +396,33 @@ impl App {
             ),
             None => "none".to_string(),
         }
+    }
+}
+
+/// Output 오류 줄에 덧붙이는 소스 조각의 최대 글자 수.
+const ERROR_NEAR_CHARS: usize = 60;
+
+/// 오류 줄 글(순수) — `at` = 서버 위치의 문서 (줄, 열, 그 자리부터의 소스 조각) · 없으면 문장 시작 줄 `stmt_line`만.
+pub(crate) fn error_output_line(
+    stmt_line: usize,
+    at: Option<(usize, usize, &str)>,
+    message: &str,
+) -> String {
+    match at {
+        Some((l, c, near)) => {
+            let head = tf(
+                Msg::OutErrorLineCol,
+                &[&l.to_string(), &c.to_string(), message],
+            );
+            let near = near.trim();
+            if near.is_empty() {
+                head
+            } else {
+                // 이어지는 줄(들여쓰기 = 같은 종류로 그려지고 두 번 클릭은 머리줄로 거슬러 올라간다).
+                format!("{head}\n  {}", tf(Msg::OutErrorAt, &[near]))
+            }
+        }
+        None => tf(Msg::LogLineSummary, &[&stmt_line.to_string(), message]),
     }
 }
 
@@ -357,4 +458,42 @@ pub(crate) fn driver_limits_text(driver: &str, limits: &[nsql_core::DriverLimit]
     lines.extend(limits.iter().map(|l| format!("• {}", t(limit_msg(*l)))));
     lines.push(t(Msg::LimitHintOracle).to_string());
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod error_line_tests {
+    use super::*;
+
+    /// ★ 11-19: 위치가 있으면 문서 줄·열 + 소스 조각 · 없으면 문장 시작 줄 — 그리고 그 글을 Output 파서가 다시 읽는다.
+    #[test]
+    fn error_line_has_doc_line_col_and_roundtrips() {
+        let with = error_output_line(
+            1,
+            Some((70, 54, "WITHIN GROUP (ORDER BY x)  ")),
+            "ORA-00923: x",
+        );
+        let mut lines = with.lines();
+        let head = lines.next().expect("head");
+        assert_eq!(
+            crate::output::parse_error_line(&format!("[00:50:02] ✖ {head}")),
+            Some((70, Some(54)))
+        );
+        let second = lines.next().expect("near");
+        assert!(
+            second.starts_with("  ") && second.ends_with("WITHIN GROUP (ORDER BY x)"),
+            "{second}"
+        );
+        let without = error_output_line(12, None, "ORA-00942: y");
+        assert_eq!(
+            crate::output::parse_error_line(&format!("✖ {without}")),
+            Some((12, None))
+        );
+        // 조각이 비면 머리줄만.
+        assert_eq!(
+            error_output_line(1, Some((3, 9, "  ")), "m")
+                .lines()
+                .count(),
+            1
+        );
+    }
 }

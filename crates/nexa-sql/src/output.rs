@@ -49,8 +49,8 @@ pub(crate) struct OutputView {
     /// 본문 마지막 MouseDown(시각 · y) — 두 번 클릭 판정.
     last_down: Option<(Instant, i32)>,
     dblclick_ms: u64,
-    /// 두 번 클릭한 줄이 `N행:`/`line N:`이면 그 줄 번호(호스트가 거둬 편집기로 이동).
-    goto: Option<usize>,
+    /// 두 번 클릭한 줄이 `N행:`/`line N:`(또는 `N행 M열:`/`line N, col M:`)이면 그 줄·열(호스트가 거둬 편집기로 이동).
+    goto: Option<(usize, Option<usize>)>,
     /// 우클릭 메뉴에서 고른 호스트 명령 id.
     cmd: Option<String>,
 }
@@ -137,15 +137,37 @@ impl OutputView {
         self.cmd.take()
     }
 
-    pub(crate) fn take_goto(&mut self) -> Option<usize> {
+    /// 자체 시험(기동 명령 `output.goto_error:<n>` · 11-19): 뒤에서 `nth`번째(1부터) 오류 머리줄을 **두 번 클릭한 것과 같은** 이동 요청.
+    pub(crate) fn goto_error_nth(&mut self, nth: usize) -> bool {
+        self.goto = self
+            .lines
+            .iter()
+            .rev()
+            .filter_map(|l| parse_error_line(l))
+            .nth(nth.saturating_sub(1));
+        self.goto.is_some()
+    }
+
+    pub(crate) fn take_goto(&mut self) -> Option<(usize, Option<usize>)> {
         self.goto.take()
     }
 
-    /// 캐럿이 있는 줄의 본문.
-    fn caret_line_text(&self) -> String {
+    /// ★ 캐럿 줄이 속한 오류 메시지의 위치(11-19): 그 줄이 오류 머리줄이 아니면(여러 줄 메시지의 이어지는 줄 · `위치:` 줄)
+    /// **들여쓴 줄을 거슬러 올라가** 머리줄을 찾는다 — 메시지 어느 줄을 두 번 눌러도 같은 자리로.
+    fn error_line_at_caret(&self) -> Option<(usize, Option<usize>)> {
         let b = self.body.buf();
-        let line = b.line_of(self.body.caret());
-        b.line_text(line).into_owned()
+        let mut line = b.line_of(self.body.caret());
+        loop {
+            let text = b.line_text(line);
+            if let Some(hit) = parse_error_line(&text) {
+                return Some(hit);
+            }
+            // 이어지는 줄 = 공백으로 시작(머리줄은 `[시각]` 또는 표식으로 시작).
+            if line == 0 || !text.starts_with(' ') {
+                return None;
+            }
+            line -= 1;
+        }
     }
 
     /// 설정이 바뀌면(`output.max_lines` · `output.timestamps`).
@@ -276,7 +298,7 @@ impl OutputView {
                     });
                     self.last_down = Some((now, y));
                     if dbl {
-                        self.goto = parse_error_line(&self.caret_line_text());
+                        self.goto = self.error_line_at_caret();
                         self.last_down = None;
                     }
                 }
@@ -461,7 +483,8 @@ mod hl_tests {
     }
 }
 
-pub(crate) fn parse_error_line(line: &str) -> Option<usize> {
+/// 오류 머리줄(`[시각] ✖ line N: …` · `N행: …` · 열 포함 `line N, col M: …` · `N행 M열: …`) → (줄, 열) — 둘 다 1부터.
+pub(crate) fn parse_error_line(line: &str) -> Option<(usize, Option<usize>)> {
     let mut s = line.trim_start();
     if s.starts_with('[') {
         s = s.split_once("] ").map_or(s, |(_, r)| r);
@@ -473,11 +496,22 @@ pub(crate) fn parse_error_line(line: &str) -> Option<usize> {
         return None;
     }
     let rest = &s[digits.len()..];
+    let n: usize = digits.parse().ok().filter(|n: &usize| *n > 0)?;
     if rest.starts_with("행:") || rest.starts_with(':') {
-        digits.parse().ok().filter(|n: &usize| *n > 0)
-    } else {
-        None
+        return Some((n, None));
     }
+    // 열: `, col M:` · `행 M열:`.
+    let (tail, close) = if let Some(t) = rest.strip_prefix(", col ") {
+        (t, ":")
+    } else {
+        (rest.strip_prefix("행 ")?, "열:")
+    };
+    let cd: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    if cd.is_empty() || !tail[cd.len()..].starts_with(close) {
+        return None;
+    }
+    let col: usize = cd.parse().ok().filter(|c: &usize| *c > 0)?;
+    Some((n, Some(col)))
 }
 
 /// `HH:MM:SS`(로컬).
@@ -512,12 +546,27 @@ mod tests {
 
     #[test]
     fn error_line_number_is_parsed() {
-        assert_eq!(parse_error_line("[12:00:00] ✖ 3행: Warning: x"), Some(3));
+        assert_eq!(
+            parse_error_line("[12:00:00] ✖ 3행: Warning: x"),
+            Some((3, None))
+        );
         assert_eq!(
             parse_error_line("[12:00:00] ✖ line 12: ORA-00942"),
-            Some(12)
+            Some((12, None))
         );
-        assert_eq!(parse_error_line("✖ 7행: boom"), Some(7));
+        assert_eq!(parse_error_line("✖ 7행: boom"), Some((7, None)));
+        // ★ 11-19: 열 포함(문서 기준 줄·열).
+        assert_eq!(
+            parse_error_line("[00:50:02] ✖ line 70, col 54: ORA-00923: x"),
+            Some((70, Some(54)))
+        );
+        assert_eq!(
+            parse_error_line("✖ 70행 54열: ORA-00923: x"),
+            Some((70, Some(54)))
+        );
+        assert_eq!(parse_error_line("✖ line 70, col : x"), None);
+        assert_eq!(parse_error_line("✖ 70행 열: x"), None);
+        assert_eq!(parse_error_line("           at: WITHIN GROUP"), None);
         assert_eq!(
             parse_error_line("[12:00:00] [1] 완료 · 0행 영향 · 12 ms"),
             None

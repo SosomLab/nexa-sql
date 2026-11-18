@@ -14,7 +14,7 @@ use crate::*;
 use nexa_ctl::controls::ctxmenu::CtxItem;
 use nexa_ctl::{LinkLine, LinkStyle};
 use nsql_run::meta::{ColState, DetailState, Interner, ObjId, Snapshot};
-use nsql_script::intel::{context_at, resolve_alias, Alias};
+use nsql_script::intel::{context_at_flat, resolve_alias, Alias};
 
 /// 링크 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -342,7 +342,8 @@ pub(crate) fn scan(
                 None => true,
             };
             if fresh {
-                let c = context_at(text, b, dialect);
+                // 문장 전체를 한 번에 본다 = 범위 없는 별칭 표(완성은 캐럿 범위 `context_at`).
+                let c = context_at_flat(text, b, dialect);
                 let r = if c.statement.is_empty() {
                     b..text.len()
                 } else {

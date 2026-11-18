@@ -640,6 +640,12 @@ cells={n}
             let _ = std::fs::write(path, self.output_dump());
             return;
         }
+        // 자체 시험(11-19 · 키·마우스 주입 0): Output의 뒤에서 n번째 오류 줄을 두 번 클릭한 것과 같은 이동 → `editor.dump`의 `caret=줄:열`로 판정.
+        if let Some(n) = id.strip_prefix("output.goto_error:") {
+            self.output_goto_error(n.parse().unwrap_or(1));
+            self.redraw();
+            return;
+        }
         // 자체 시험(09-30): 활성 편집 탭 덤프 — 첫 줄 `제목|탭 종류|읽기 전용` · 둘째 줄부터 본문(소스 열기·DDL 열기 결과를 파일로 대조).
         // 자체 시험(10-01 ⑭ · 키 주입 0): 캐럿 이동(`editor.caret:<글자 인덱스|end>`) · 완성 호출(`intel.probe`) · 후보 덤프(`intel.dump:<파일>`).
         if let Some(n) = id.strip_prefix("editor.caret:") {
