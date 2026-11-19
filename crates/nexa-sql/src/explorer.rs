@@ -342,6 +342,14 @@ enum Req {
         /// SSMS 트리(㉕-c): 그 DB로 `USE`한 뒤 전 스키마(`schema` 빈 값) — 키는 `DB.스키마`.
         db: Option<String>,
     },
+    /// ★ 객체 **하나**의 용량(사용자 11-19 "CTAS 뒤 용량이 바로 안 보인다"): 방금 만든 객체만 이름으로 읽는다 — 스키마 전체
+    ///   조회(`Sizes`)는 느리고 백그라운드 큐 뒤라 늦다. 급한 메타 세션으로 보낸다(질의 하나 · 세그먼트 이름 조건).
+    SizeOne {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+        name: String,
+    },
     /// ★ 데이터베이스 용량(사용자 10-01 ㉕ · SQL Server Databases 층) — 서버의 DB 전부 한 번(데이터·로그 파일 바이트).
     DbSizes {
         gen: u64,
@@ -650,6 +658,14 @@ enum Resp {
         kind: ObjectKind,
         db: Option<String>,
         r: Result<Vec<(String, u64)>, String>,
+    },
+    /// 객체 하나의 용량(`None` = 세그먼트 없음 · 조회 실패).
+    SizeOne {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+        name: String,
+        bytes: Option<u64>,
     },
     /// 데이터베이스 용량 전부(이름, 데이터, 로그 · 사용자 10-01 ㉕).
     DbSizes {
@@ -1051,6 +1067,13 @@ pub(crate) struct Explorer {
     sizes: HashMap<(String, ObjectKind, String), u64>,
     /// 용량을 **시도한** (스키마, 종류) — 빈 결과·실패도 포함(스키마 합의 `+` 판정 · MV 0개도 읽음).
     sizes_loaded: HashSet<(String, ObjectKind)>,
+    /// 보냈고 아직 답이 없는 용량 조회(스키마, 종류) — 그동안 값이 없는 객체 행은 빈 칸 대신 `…`(사용자 11-19).
+    sizes_pending: HashSet<(String, ObjectKind)>,
+    /// 방금 만든 객체(DDL)의 용량을 목록 갱신 뒤 이름 하나로 읽을 것 — (폴더 노드, 문장에 적힌 이름).
+    size_want: Vec<(usize, String)>,
+    /// 조용한 갱신이 도는 중에 **또** 요청된 노드 — 답이 오면 한 번 더 읽는다(사용자 11-19 · 종전 = 버려서 DDL 직전 목록이 남았다 ·
+    ///   루트의 스키마 목록은 `soft_again`/`schemas_resp_done`이 따로 맡는다).
+    soft_redo: HashSet<usize>,
     /// ★ 데이터베이스 용량(사용자 10-01 ㉕ · SQL Server Databases 층): DB 이름 → (데이터, 로그) 바이트 · 우클릭 "용량 확인"에서만 읽는다.
     db_sizes: HashMap<String, (u64, u64)>,
     /// ★ 진행 중인 "탐색기에서 보기"(㉗) — 응답마다 `step_reveal`이 한 단계씩 · 끝나면 None.
@@ -1261,6 +1284,7 @@ fn req_label(r: &Req) -> String {
         Req::Sizes {
             schema, kind, db, ..
         } => format!("sizes {schema} {kind:?} {db:?}"),
+        Req::SizeOne { schema, name, .. } => format!("size {schema}.{name}"),
         Req::DbSizes { .. } => "db-sizes".into(),
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
@@ -1958,6 +1982,28 @@ fn meta_thread(
                     r,
                 }
             }
+            Req::SizeOne {
+                gen,
+                schema,
+                kind,
+                name,
+            } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let bytes = with_session(&mut session, |s| {
+                    Ok(nsql_catalog::object_size_detail(s, &schema, &name, kind).map(|d| d.0))
+                })
+                .ok()
+                .flatten();
+                Resp::SizeOne {
+                    gen,
+                    schema,
+                    kind,
+                    name,
+                    bytes,
+                }
+            }
             Req::DbSizes { gen } => {
                 if gen != cur_gen {
                     continue;
@@ -2583,6 +2629,9 @@ impl Explorer {
             sizes_on: true,
             sizes: HashMap::new(),
             sizes_loaded: HashSet::new(),
+            sizes_pending: HashSet::new(),
+            size_want: Vec::new(),
+            soft_redo: HashSet::new(),
             db_sizes: HashMap::new(),
             reveal: None,
             reveal_done: false,
@@ -2682,6 +2731,8 @@ impl Explorer {
     fn reset_tree(&mut self) {
         self.soft.clear();
         self.soft_again.clear();
+        self.size_want.clear();
+        self.soft_redo.clear();
         self.lower_labels.clear();
         self.index_reset();
         self.complete_q.clear();
@@ -2695,6 +2746,7 @@ impl Explorer {
         self.desc_comments.clear();
         self.sizes.clear();
         self.sizes_loaded.clear();
+        self.sizes_pending.clear();
         self.db_sizes.clear();
         self.fresh.clear();
         self.missing_at.clear();
@@ -2727,6 +2779,7 @@ impl Explorer {
         if !on {
             self.sizes.clear();
             self.sizes_loaded.clear();
+            self.sizes_pending.clear();
             self.db_sizes.clear();
         }
     }
@@ -2765,7 +2818,20 @@ impl Explorer {
 
     /// 행 오른쪽에 보일 용량 글(없으면 None): 객체 = 자기 값 · 폴더 = 그 종류 합 · 스키마 = 읽힌 종류(테이블·MV·인덱스) 합. 순수.
     fn size_text(&self, n: &Node, parent: usize) -> Option<(String, usize, bool)> {
-        let bytes = self.size_bytes(n, parent)?;
+        let Some(bytes) = self.size_bytes(n, parent) else {
+            // ★ 읽는 중(사용자 11-19): 값이 아직 없는 객체 행은 그 (스키마, 종류) 조회가 도는 동안 `…` — "없음"과 "아직"을 가른다.
+            if let (true, NodeKind::Object(o)) = (self.sizes_on, &n.kind) {
+                if Self::sizeable(o.kind)
+                    && self
+                        .sizes_pending
+                        .iter()
+                        .any(|(s, k)| *k == o.kind && *s == o.schema)
+                {
+                    return Some(("…".to_string(), 0, true));
+                }
+            }
+            return None;
+        };
         // ★ 부분 합 표시(사용자 09-30 "확인된 용량만 보여 주는 것을 표시"): 스키마 행 = 테이블·MV·인덱스 셋이 다 읽히지 않았으면
         //   `27G+`(더 있을 수 있음 · 흐린 색) · 셋 다 읽히면 `27G`(단위 색). 미리 읽지 않는다.
         let partial = match &n.kind {
@@ -2925,6 +2991,7 @@ impl Explorer {
             ObjectKind::MaterializedView,
             ObjectKind::Index,
         ] {
+            self.sizes_pending.insert((schema.to_string(), kind));
             let _ = self.tx_bg.send(Req::Sizes {
                 gen: self.gen,
                 schema: schema.to_string(),
@@ -4510,6 +4577,13 @@ impl Explorer {
                     if gen != self.gen || !self.sizes_on {
                         continue;
                     }
+                    if db.is_none() {
+                        self.sizes_pending.remove(&(schema.clone(), kind));
+                    }
+                    // 실패를 조용히 삼키지 않는다(사용자 11-19 · 권한·질의 오류가 "빈 칸"으로만 보였다) — 진단 출력 한 줄.
+                    if let Err(e) = &r {
+                        eprintln!("explorer: object sizes {schema} {kind:?} failed: {e}");
+                    }
                     // SSMS(㉕-c): 이름이 `스키마.이름`으로 오고 키 스키마는 `DB.스키마` · 읽음 표식은 `DB.`(그 DB 전체).
                     if let Ok(list) = r {
                         for (name, bytes) in list {
@@ -4528,6 +4602,21 @@ impl Explorer {
                         None => schema,
                     };
                     self.sizes_loaded.insert((loaded_key, kind));
+                }
+                Resp::SizeOne {
+                    gen,
+                    schema,
+                    kind,
+                    name,
+                    bytes,
+                } => {
+                    if gen != self.gen || !self.sizes_on {
+                        continue;
+                    }
+                    if let Some(b) = bytes {
+                        self.sizes.insert((schema, kind, name), b);
+                        changed = true;
+                    }
                 }
                 Resp::DbSizes { gen, r } => {
                     if gen != self.gen || !self.sizes_on {
@@ -4677,6 +4766,7 @@ impl Explorer {
                                     }
                                     // ★ 용량(사용자 09-30 · 지연 로딩): 이 폴더의 종류가 용량 대상이면 백그라운드 메타 세션으로 한 번.
                                     if self.sizes_on && Self::sizeable(k) {
+                                        self.sizes_pending.insert((s.clone(), k));
                                         let _ = self.tx_bg.send(Req::Sizes {
                                             gen: self.gen,
                                             schema: s.clone(),
@@ -4788,9 +4878,16 @@ impl Explorer {
                             Some(d) => format!("{d}."),
                             None => owner.schema.clone(),
                         };
+                        // ★ 조용한 갱신(DDL 뒤 · F5)으로 다시 읽을 때는 용량도 다시(사용자 11-19 · 종전 = 처음 한 번뿐이라
+                        //   나중에 만든 인덱스가 빈 칸이었다).
                         if *sub == SubKind::Indexes
-                            && !self.sizes_loaded.contains(&(loaded_key, ObjectKind::Index))
+                            && (self.soft.contains(&node)
+                                || !self.sizes_loaded.contains(&(loaded_key, ObjectKind::Index)))
                         {
+                            if db.is_none() {
+                                self.sizes_pending
+                                    .insert((owner.schema.clone(), ObjectKind::Index));
+                            }
                             let _ = self.tx_bg.send(Req::Sizes {
                                 gen: self.gen,
                                 schema: if ssms {
@@ -5057,6 +5154,49 @@ impl Explorer {
                             body: e,
                         }),
                     }
+                }
+            }
+        }
+        // ★ 사용자 11-19: ① 도는 중에 또 요청된 조용한 갱신을 한 번 더 ② 방금 만든 객체의 용량을 이름 하나로.
+        if !self.soft_redo.is_empty() {
+            let again: Vec<usize> = self
+                .soft_redo
+                .iter()
+                .copied()
+                .filter(|i| !self.soft.contains(i))
+                .collect();
+            for i in again {
+                self.soft_redo.remove(&i);
+                if i < self.nodes.len() {
+                    self.soft_refresh(i);
+                }
+            }
+        }
+        if !self.size_want.is_empty() {
+            let wants = std::mem::take(&mut self.size_want);
+            for (folder, name) in wants {
+                // 목록 갱신이 아직 도는 중(또는 한 번 더 예약됨)이면 기다린다.
+                if self.soft.contains(&folder) || self.soft_redo.contains(&folder) {
+                    self.size_want.push((folder, name));
+                    continue;
+                }
+                let Some(f) = self.nodes.get(folder) else {
+                    continue;
+                };
+                let want = name.trim_matches(|c| c == '"' || c == '`' || c == '[' || c == ']');
+                let found = f.children.iter().find_map(|&c| match &self.nodes[c].kind {
+                    NodeKind::Object(o) if o.name.eq_ignore_ascii_case(want) => {
+                        Some((o.schema.clone(), o.kind, o.name.clone()))
+                    }
+                    _ => None,
+                });
+                if let Some((schema, kind, name)) = found {
+                    let _ = self.tx.send(Req::SizeOne {
+                        gen: self.gen,
+                        schema,
+                        kind,
+                        name,
+                    });
                 }
             }
         }
@@ -5482,7 +5622,14 @@ impl Explorer {
 
     /// 조용한 갱신 — 이미 읽어 둔 노드만(안 읽은 폴더는 펼칠 때 새로 읽으므로 할 일이 없다) · 상태·펼침은 건드리지 않는다.
     fn soft_refresh(&mut self, i: usize) -> bool {
-        if self.offline || self.nodes[i].state != LoadState::Loaded || self.soft.contains(&i) {
+        if self.offline || self.nodes[i].state != LoadState::Loaded {
+            return false;
+        }
+        // 이미 도는 중 = 그 요청은 이 변경보다 **먼저** 떠났을 수 있다 → 답이 오면 한 번 더(버리지 않는다 · `poll` 끝).
+        if self.soft.contains(&i) {
+            if i != 0 {
+                self.soft_redo.insert(i);
+            }
             return false;
         }
         let gen = self.gen;
@@ -6128,6 +6275,16 @@ impl Explorer {
         let mut n = 0;
         if t.verb.changes_list() {
             n += usize::from(self.soft_refresh(folder));
+            // ★ 새로 만든 객체의 용량은 그 이름 하나만 바로 읽는다(사용자 11-19 `CREATE TABLE … AS SELECT` 뒤 빈 칸 —
+            //   스키마 전체 조회는 느리고 백그라운드 큐 뒤다). 목록이 다시 읽힌 뒤 사전에 적힌 이름으로 보낸다(`poll` 끝).
+            if t.verb == DdlVerb::Create
+                && self.sizes_on
+                && Self::sizeable(kind)
+                && !self.ssms_mode()
+                && self.soft.contains(&folder)
+            {
+                self.size_want.push((folder, t.name.clone()));
+            }
             // 테이블이 사라지면 딸린 인덱스·트리거 목록도 바뀐다.
             if t.verb == DdlVerb::Drop && t.kind == DdlKind::Table {
                 for k in [ObjectKind::Index, ObjectKind::Trigger] {
@@ -6683,6 +6840,8 @@ impl Explorer {
         }
         self.soft.clear();
         self.soft_again.clear();
+        self.size_want.clear();
+        self.soft_redo.clear();
         self.source_pending = false;
         let _ = self.tx.send(Req::Open {
             gen: self.gen,
