@@ -360,6 +360,12 @@
 | `ai.line_links` | Bool | on | AI | 답의 줄 번호를 밑줄 링크로 |
 | `ai.prompt_explain` · `ai.prompt_fix` · `ai.prompt_optimize` | Text | (내장 문구) | AI | 편집기 요청 프롬프트 문구(비우면 내장) |
 
+### 6-38. 11-19 새 키 1(다중 인스턴스 동기화 · [67 §9](67-project-workspace.md) · 73c238a8)
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `project.external_change` | Choice auto\|ask\|off | auto | 프로젝트 | 다른 인스턴스(또는 git pull)가 프로젝트 파일을 바꿨을 때 — auto = 항목 단위 병합 · ask = 본문 변경은 늘 띠로 · off = 병합 안 함(마지막에 저장한 쪽이 이김) · 이름·꼴 = 파일의 `file.external_change`와 같은 짝 |
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

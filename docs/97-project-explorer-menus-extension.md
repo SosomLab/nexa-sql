@@ -83,6 +83,16 @@
 | `scripts/ext-build.ps1` | `$map`에 `project_explorer_menus` → `project-explorer-menus` 배치 줄 |
 | `extensions/sdk/Cargo.toml` | members에 `samples/project-explorer-menus` |
 
+### 2-5. 메뉴 표시 조건 `Menu::when`(11-19 · 사용자 "동작할 때만 표시" · 73c238a8 · 확장 0.2.1)
+
+| 항목 | 추가/변경 | 내용 |
+|---|---|---|
+| SDK `Menu.when: Option<String>` · `Menu::when(cond)` | 추가 | 메뉴 메타 JSON에 `"when"` · 없으면 늘 보임 |
+| 호스트 `MenuContribution.when` · `MenuCtx` | 추가 | 아는 조건 = `doc_file`(상황 문서가 디스크 파일에 묶여 있을 때만 · 미저장 탭에서 숨김) · **모르는 조건 = 보임**(새 조건을 쓴 확장을 옛 호스트가 열어도 메뉴가 사라지지 않게) |
+| `project-explorer-menus` 0.2.1 | 변경 | 편집기 메뉴에 `.when("doc_file")` · wasm 다시 빌드(76,593 바이트) · `extension.json` sha256 · `index.json` 0.2.1 |
+
+- 검증 = SDK 호스트 타깃 시험(`cargo test --target x86_64-pc-windows-msvc` · nexa-ext-sdk 6/0 · project-explorer-menus 2/0) · 설치본 반영 = `scripts/ext-sync-installed.ps1 -Id project-explorer-menus`(11-19 사용자 확인 뒤 실제 설정 폴더 그 확장만) · 미저장 탭에서 메뉴 숨김 = 사용자 실기.
+
 ## 3. 작업 기록 — 시간 순서(요청 → 추가/변경/삭제)
 
 | 일시 | 요청(사용자) | 추가 | 변경 | 삭제 | 비고 |

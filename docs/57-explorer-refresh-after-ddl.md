@@ -100,6 +100,15 @@
 
 남긴 것: "조회는 성공했는데 트리에 없는 이름"(FROM 절 분석)은 T2가 맡는다 · 메타 저장소(T-57 ②)가 들어오면 같은 트리거가 저장소를 갱신한다.
 
+## 6. 방금 만든 객체의 용량(11-19 · 사용자 "CTAS 뒤 용량 칸이 비어 있다" · 703bf2ba · [journal 11-19 §6](journal/2026-11-19.md))
+
+- **문제(종전)**: `CREATE TABLE … AS SELECT` 뒤 탐색기 용량 칸이 한동안(또는 F5 전까지) 비었다 — 용량은 스키마 전체 조회(백그라운드 큐 뒤)로만 읽었고, 조용한 갱신이 도는 중에 온 두 번째 요청은 버려졌다.
+- **`Req/Resp::SizeOne`**: DDL(Create)로 생긴 객체는 목록을 다시 읽은 뒤 **사전에 적힌 이름 하나**로 용량을 읽는다(급한 메타 세션).
+- **`soft_redo`**: 조용한 갱신이 도는 중에 또 요청되면 버리지 않고 답이 온 뒤 한 번 더(DDL 직전 목록이 남던 경우).
+- **`sizes_pending`**: 용량 조회가 도는 동안 값이 없는 객체 행 = 빈 칸 대신 `…`.
+- 용량 조회 실패를 진단 출력(`eprintln`)에 남긴다(종전 = 조용히 삼킴) · 테이블 아래 **Indexes** 폴더 = 조용한 갱신 때 인덱스 용량도 다시 읽는다(종전 = 처음 한 번).
+- 검증 = V2(nexa-sql 657/0/6) · **실서버 CTAS 용량 판정은 아직**(사용자 실기 또는 실서버 V1).
+
 ## 출처
 
 - DataGrip: [Metadata and introspection(smart refresh · incremental)](https://www.jetbrains.com/help/datagrip/introspection.html) · [Introspection levels](https://www.jetbrains.com/help/datagrip/introspection-levels.html) · [Cannot find a database object in Database Explorer](https://www.jetbrains.com/help/datagrip/cannot-find-a-database-object-in-the-database-tree-view.html)
