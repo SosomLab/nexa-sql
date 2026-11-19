@@ -28,7 +28,7 @@
 ## §3. 범위 셋(북마크 `ctrl.bookmark_scope` · 설명 `ctrl.desc_scope` — 값은 같은 셋)
 | 값 | 범위 | 비고 |
 |---|---|---|
-| `statement`(**기본**) | 캐럿이 있는 문장(`statement_at` 범위) | 보통 수십 줄 |
+| `statement`(**기본**) | 캐럿이 있는 문장(`statement_at` 범위) · ★ 11-19 **PL/SQL 블록 안에서는 캐럿이 든 `;` 문장**(`inner_statement_span` · 종전 = 프로시저·블록 전체 · 79897a93) | 보통 수십 줄 |
 | `visible` | `TextBox::visible_range` | 스크롤 때 다시 계산 |
 | `document` | 문서 전체 | 큰 파일 모드 L1 이상 · `objlink.max_kb` 초과면 Ctrl 표시 꺼짐 |
 

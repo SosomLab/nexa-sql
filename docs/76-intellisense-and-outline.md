@@ -31,7 +31,7 @@
 | 후보 출처(29 §6-2 순위) | 무엇 | 범위 | 데이터 |
 |---|---|---|---|
 | 1 alias 컬럼 | `a.` → 그 테이블 컬럼(이름 · 타입 · NULL · PK) | 캐럿 문장의 alias 표 | `MetaStore::columns(id)`(없으면 "불러오는 중" + 즉시 채움 요청) |
-| 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` · ★ 10-21 `alias_table_deep` = **서브쿼리 안 별칭도 보임**(괄호별 재귀 · 같은 이름 = 바깥이 이김) · ★ 11-19 **완성 = 캐럿 범위** `alias_table_scoped`(`context_at` · 캐럿이 든 괄호 블록부터 바깥으로 · 같은 이름 = **안쪽이 이김** · 형제·자식 서브쿼리 별칭은 안 보임 · 파생 테이블·CTE = 출력 컬럼 `Alias.derived` · §21) · Ctrl 링크 = 종전 문장 전체판 `context_at_flat`(`alias_table_deep` · 범위 별칭 전환 = T-491) |
+| 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` · ★ 10-21 `alias_table_deep` = **서브쿼리 안 별칭도 보임**(괄호별 재귀 · 같은 이름 = 바깥이 이김) · ★ 11-19 **완성 = 캐럿 범위** `alias_table_scoped`(`context_at` · 캐럿이 든 괄호 블록부터 바깥으로 · 같은 이름 = **안쪽이 이김** · 형제·자식 서브쿼리 별칭은 안 보임 · 파생 테이블·CTE = 출력 컬럼 `Alias.derived` · §21) · ★ 11-19 2차 Ctrl 링크도 범위 별칭(T-491 ✅) · ★ 11-19 4차 **같은 괄호 층의 가지 분리**(UNION·INTERSECT·MINUS·EXCEPT·`;` = 가지 경계 · 캐럿 가지의 FROM만 · 첫 가지 앞 WITH의 CTE는 모든 가지 · §21) |
 | 3 스키마 객체 | 테이블·뷰·시노님·시퀀스·프로시저·패키지 | 현재 스키마(+ `SCHEMA.` 입력 시 그 스키마 · D-80) | `Snapshot::prefix/prefix_any` |
 | 3' **문서 심볼**(신설) | `DEFINE`/`VARIABLE`/CTE/선언 변수/서브프로그램/라벨 | **현재 문서** 전체 | `outline::Outline::names()` |
 | 4 시스템 객체·내장 함수 | `DBMS_OUTPUT.` · `NVL(` · `ALL_TABLES` · `sys.tables` … | 접속 방언 | 정적 표 `nsql-script::builtins`(T-178 ✅ · 시그니처 도움 `intel.signature_help`) |
@@ -295,4 +295,10 @@
 - ★ **2차(11-19 · 사용자 QA)**: `SELECT *` 뒤 "모든 컬럼 (N)" 조각(`cands_expr_star`) = **캐럿 블록의 FROM만**(`Alias.outer == 0` · 바깥 층 별칭은 뺀다) · 인라인 뷰/CTE는 그 SELECT 목록(+ 안의 `t.*` 실테이블) · 원천이 여럿이거나 별칭이 있으면 `별칭.컬럼` · 파생 컬럼의 **원본 추적**(`Derived.src` · `origin()` · `ColOrigin` = `[q.]col [AS x]` 꼴만 · 파생을 거쳐도 · 식·집계·리터럴 = 원본 없음 · 항목 앞 틈의 따옴표로 리터럴 판정 = 별칭 표 본체에 원문 전달 `alias_table_scoped_in(ws, pos, dialect, src)`) · Ctrl 링크도 범위 별칭(T-491 ✅ · [96](96-object-links.md) §1).
 - ★ **3차(11-19 · 사용자 QA "FROM 절의 `A.` 뒤에는 컬럼이 들어갈 수 없다")**: 관계의 **별칭 자리**의 점 뒤(`FROM t A.|` · `JOIN s.t AS A.|` · `FROM ( … ) A.|` · FROM 목록 `,` 뒤 관계) = `CtxKind::None`(후보 없음 · nsql-script `relation_alias_pos` 순수 · `AS` 하나 건너뜀) · 컬럼 자리(ON · WHERE · CONNECT BY · START WITH · `FOR UPDATE OF` · 함수 괄호)와 한정 이름(`FROM 스키마.|`)은 종전대로 · 시험 `relation_alias_position_offers_nothing`(없음 7 · 유지 10) · 0050d732.
 - ★ **사용자 확인 완료(11-19)**: ① 범위·파생 컬럼(별칭 뒤 = 그 블록·그 SELECT 목록 컬럼만) ② `SELECT *` Ctrl+Space 펼치기(캐럿 블록 FROM만) = 사용자 실기 확인 ✅("완료 처리").
-- **남는 일**: (없음 — T-491 = 11-19 2차에서 해소 · 3차 = 별칭 자리 후보 없음).
+- ★ **4차(11-19 · 사용자 QA · 79897a93)**:
+  - **가지 분리**: `is_scope_separator`(UNION · INTERSECT · MINUS · EXCEPT · `;`) · `branch_of` → `alias_table_scoped_src`가 캐럿이 든 **가지**의 FROM만 모은다(첫 가지 앞 WITH의 CTE는 모든 가지에서 보임) — UNION 가지마다 같은 별칭 · PL/SQL 블록 안 형제 DML의 같은 별칭이 섞이지 않는다 · 완성 · Ctrl 링크(`StmtScope` 캐시 열쇠 = (괄호, 마지막 가름 낱말)) · 줄 끝 설명 공통.
+  - `inner_statement_span` = 분할 단위 안에서 캐럿이 든 `;` 문장 구간(줄 끝 설명 범위 · [111 §3](111-inline-labels-and-ctrl-hold.md)).
+  - **`CtxKind::AliasSlot`**: 관계 이름 바로 뒤(`FROM t A|` = 별칭을 적는 자리) = **키워드만**(컬럼·객체 후보 없음 · 호스트 `intel.rs` · CLI `complete.rs`) · `relation_alias_pos`가 Oracle DB 링크 꼬리(`t@link[.dom]`)를 건너뜀(`dblink_tail_start`) · `alias_table_impl`이 `t@link A`의 별칭을 읽는다.
+  - **`Want::DbLink`**(Oracle · 관계 이름에 바로 붙은 `@` 뒤 · 접두에서 `@` 뗌) → 호스트 `dblink_cands`(현재 스키마 + PUBLIC의 DB 링크 · 설명 = host · `need_kinds`로 지연 요청) · `@` 입력 때 링크 자리면 팝업(`completion.rs` `intel_site`).
+  - **V1(11-19 · 실서버 Oracle Thin 읽기 · 격리 홈)**: `FROM t@|` = DB 링크 1개 + host ✓ · `SELECT A.c FROM t1 A UNION ALL SELECT A.| FROM t2 A` = t2 컬럼만(26개 = t2 컬럼 수 · t1 = 32개) ✓ · `FROM t A|` = 키워드 8개 · 컬럼 0 ✓ · **사용자 확인 = "DB 링크 표시 · 동작"**.
+- **남는 일**: 원격(DB 링크 너머) 테이블 컬럼은 읽지 않음(`t@link A.|` 후보 없음 · T-501) · 도메인 붙은 링크 이름(`link.dom`)의 `.` 처리(T-501).

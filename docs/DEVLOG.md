@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-19 밤 (Windows · 개발 × 협업 · 4차 · `feat/1119-project-multi-instance-sync`)** — UNION 가지·PL/SQL 블록 안 문장별 별칭 · 별칭 자리 = 키워드만 · Oracle DB 링크 자동완성 · 줄 끝 설명 범위 = 블록 안 `;` 문장 · 79897a93 · nsql-script 200+14 · nsql-cli 29 · nexa-sql 657/0/6 · V1 실서버 4/4 · T-500 ✅ · T-501 · 사용자 "내용 정리 후 진행사항 최신화 · commit · main 병합 · push" · [journal 11-19 §7](journal/2026-11-19.md)
 - **2026-11-19 저녁 (Windows · 개발 × 협업 · `feat/1119-project-multi-instance-sync`)** — 다중 인스턴스 프로젝트 동기화(항목별 3-way · `projsync.rs` · 저장 보호 3길 · `project.external_change`) · CTAS 뒤 탐색기 용량(`SizeOne` · `soft_redo` · `…`) · 확장 `Menu::when` + project-explorer-menus 0.2.1 · 703bf2ba · 73c238a8 · nexa-sql 657/0/6 · V1 두 인스턴스 3경로 ✓ · T-497 ✅ · T-498·T-499 새로 · [journal 11-19 §6](journal/2026-11-19.md)
 - **2026-11-19 오전 (Windows · 개발 × 협업 · 3차 · `fix/1119-from-alias-pos`)** — 관계 별칭 자리(`FROM t A.|`) = 후보 없음(`relation_alias_pos` · 0050d732) · 자동완성 범위·파생 컬럼 + `SELECT *` 펼치기 = 사용자 확인 ✅(T-496) · V2 = fmt ✓ · clippy --tests -D warnings(nsql-script · nexa-sql) ✓ · nexa-sql 650/0/6 · check-3os --quick ✓ · 통합 시험 = 생략(드라이버 변경 없음 · nsql-script만) · [journal 11-19 §5](journal/2026-11-19.md)
 - **2026-11-19 새벽 마감 (Windows · 개발 × 협업 · 2차 묶음 · push 289f3af3)** — `*` 펼치기 = 캐럿 블록 FROM만 · Ctrl 링크 = 범위 별칭 + 인라인 뷰 컬럼 원본 추적(T-491 ✅) · PL/SQL ORA-06550 위치(공용 `plsql_error_position` · 열 = 바이트) · PL/SQL 블록 시작 위치(`item_start_char`) · 오류 유형 E2E(Thin) FAIL 0 · 기존 오류 캐럿 E2E 9/0 · nexa-sql 650/0/6 · ci **44379293295** ✓ · integration **44379293668** ✓ · [journal 11-19 §3~§4](journal/2026-11-19.md)

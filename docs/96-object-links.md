@@ -23,6 +23,7 @@
 
 - ★ **10-21 서브쿼리 안 별칭**(134차 win · 사용자 "서브쿼리 안 `T1.컬럼` 설명 라벨이 없다"): 별칭 표 = nsql-script `alias_table_deep`(괄호 그룹마다 재귀 · 바깥 먼저 · 같은 이름 = 바깥이 이김) → `( … ) S` 안 `T1.컬럼`/`T2.컬럼`도 Column 링크 · 시험 `alias_columns_inside_subquery_are_linked`.
 - ★ **11-19 범위 별칭 · 파생 컬럼 원본 추적**(T-491 · 사용자 QA "같은 별칭 A를 블록마다 쓰면 엉뚱한 테이블 설명"): `StmtScope`(문장당 낱말 1회 · 괄호 블록당 `alias_table_scoped_in` 1회 · 문장 원문 전달) → **토큰 위치의 범위 별칭**(캐럿 블록부터 바깥으로 · 같은 이름 = 안쪽이 이김 · 형제 서브쿼리 안 보임 = 완성과 같은 규칙 · [76 §21](76-intellisense-and-outline.md)) · 인라인 뷰 컬럼(`S.X`)은 `Derived.origin`으로 **원본 실테이블 컬럼**에 링크(식·리터럴 = 링크 없음) · 시험 `same_alias_in_each_block_links_to_its_own_table` · `alias_columns_inside_subquery_are_linked` 기대 4 → 7(바깥 `S.` 컬럼도 원본으로) · 종전 문장 전체판 `context_at_flat`은 objlink에서 더 안 씀. [journal 11-19 §3](journal/2026-11-19.md).
+- ★ **11-19 4차 가지 단위 별칭**(79897a93 · [76 §21](76-intellisense-and-outline.md)): 같은 괄호 층이라도 UNION·INTERSECT·MINUS·EXCEPT·`;`로 나뉜 **가지마다** 별칭을 따로 해석(`StmtScope` 캐시 열쇠 = (괄호, 마지막 가름 낱말)) — UNION 가지·PL/SQL 블록 안 형제 DML의 같은 별칭이 엉뚱한 테이블 설명을 보이지 않는다.
 
 | 자리 | 판정 | 링크 종류 |
 |---|---|---|
