@@ -301,4 +301,9 @@
   - **`CtxKind::AliasSlot`**: 관계 이름 바로 뒤(`FROM t A|` = 별칭을 적는 자리) = **키워드만**(컬럼·객체 후보 없음 · 호스트 `intel.rs` · CLI `complete.rs`) · `relation_alias_pos`가 Oracle DB 링크 꼬리(`t@link[.dom]`)를 건너뜀(`dblink_tail_start`) · `alias_table_impl`이 `t@link A`의 별칭을 읽는다.
   - **`Want::DbLink`**(Oracle · 관계 이름에 바로 붙은 `@` 뒤 · 접두에서 `@` 뗌) → 호스트 `dblink_cands`(현재 스키마 + PUBLIC의 DB 링크 · 설명 = host · `need_kinds`로 지연 요청) · `@` 입력 때 링크 자리면 팝업(`completion.rs` `intel_site`).
   - **V1(11-19 · 실서버 Oracle Thin 읽기 · 격리 홈)**: `FROM t@|` = DB 링크 1개 + host ✓ · `SELECT A.c FROM t1 A UNION ALL SELECT A.| FROM t2 A` = t2 컬럼만(26개 = t2 컬럼 수 · t1 = 32개) ✓ · `FROM t A|` = 키워드 8개 · 컬럼 0 ✓ · **사용자 확인 = "DB 링크 표시 · 동작"**.
-- **남는 일**: 원격(DB 링크 너머) 테이블 컬럼은 읽지 않음(`t@link A.|` 후보 없음 · T-501) · 도메인 붙은 링크 이름(`link.dom`)의 `.` 처리(T-501).
+- ★ **5~7차(11-19 밤 · 사용자 QA)**:
+  - **링크 자리 자동 별칭**(e7acf3bd): `Want::DbLink` 상황의 `alias_ok` = 관계 이름 사슬 앞 낱말로 `alias_allowed`(종전 false 고정) · 호스트 `dblink_table`(`@` 앞 테이블 이름) → 링크를 고르면 `t@링크 별칭`(별칭 = 테이블 이름으로 `nsql_core::alias::make` · 테이블과 같은 규칙).
+  - **링크 후보 설명 축약**(ac394ae3): host가 여러 줄 접속 기술자(`(DESCRIPTION=…(HOST=)(PORT=)…(SERVICE_NAME=))`)면 설명 칸이 이름 칸을 덮던 결함 → `dblink_host_brief` = `호스트:포트/서비스`(공백 정리 · 48자 상한) · V1 실서버 ✓.
+  - **`alias_follows_at` 오판**(f00ba3a8): 뒤 낱말 `INNER`(완성 키워드 표에 없음)를 별칭으로 보아 `FROM t@링크|⏎INNER JOIN …`·`FROM t|⏎INNER JOIN …`에서 별칭이 안 붙던 결함 → `NOT_ALIAS` 낱말도 키워드로.
+  - **UNION류 가지마다 자동 별칭 A부터** = 현 코드로 통과(시험 `auto_alias_restarts_in_each_set_operator_branch` · 호스트 `auto_alias_restarts_per_set_operator_branch`) · 사용자가 본 "넷째 줄만 B"는 재현 안 됨(집합 연산자를 쓰기 전에 테이블을 골랐거나 설치본 창 입력으로 추정).
+- **남는 일**: 원격(DB 링크 너머) 테이블 메타 = **T-502(보류 · 사용자가 직접 지시할 때만)** · 설정 `intel.dblink_remote_meta`는 구현 전 잠금 · 도메인 붙은 링크 이름(`link.dom`)의 `.` 처리(T-501).

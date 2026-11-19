@@ -281,6 +281,15 @@ Ctrl+P(Goto Anything)와 프로젝트 탐색기 필터는 프로젝트 폴더 �
 |---|---|---|
 | `grid.empty_text` | `''` | 결과 그리드에서 빈 문자열(길이 0) 셀에 흐리게 보이는 글자입니다. NULL(`grid.null_text`)과 구별하려는 표시이며, 복사·텍스트 보기에는 빈 채로 나갑니다. |
 
+## 그리드 복사의 NULL(11-19)
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `grid.copy_null` | 공백(`blank`) | 결과 그리드에서 셀을 복사할 때 NULL 셀을 무엇으로 쓸지 — 공백(빈 칸) · 보이는 글자(`grid.null_text`) · `NULL`. 셀 복사 · 머리글과 함께 복사 · CSV/텍스트/Markdown으로 복사에 적용됩니다. SQL·JSON으로 복사와 텍스트 보기 복사는 그대로입니다. |
+
+- 그리드 화면의 NULL 표시는 `grid.null_text`(기본 `NULL`) 그대로입니다 — 화면은 NULL로 보이고 복사만 빈 칸이 됩니다.
+- `intel.dblink_remote_meta`(DB 링크 너머 원격 테이블 메타)는 아직 구현 전이라 설정 창에서 잠겨 있습니다.
+
 ## Oracle 드라이버 — Thin / Instant Client(10-13)
 
 설정 ▸ DBMS ▸ Oracle 맨 위(고급 스위치를 켜야 보입니다).

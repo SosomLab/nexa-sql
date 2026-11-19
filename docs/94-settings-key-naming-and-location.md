@@ -360,11 +360,13 @@
 | `ai.line_links` | Bool | on | AI | 답의 줄 번호를 밑줄 링크로 |
 | `ai.prompt_explain` · `ai.prompt_fix` · `ai.prompt_optimize` | Text | (내장 문구) | AI | 편집기 요청 프롬프트 문구(비우면 내장) |
 
-### 6-38. 11-19 새 키 1(다중 인스턴스 동기화 · [67 §9](67-project-workspace.md) · 73c238a8)
+### 6-38. 11-19 새 키 3(다중 인스턴스 동기화 · [67 §9](67-project-workspace.md) · 73c238a8 · 그리드 복사 NULL ac394ae3 · 원격 메타 잠금 f00ba3a8)
 
 | 키 | 종류 | 기본 | 분류 | 뜻 |
 |---|---|---|---|---|
 | `project.external_change` | Choice auto\|ask\|off | auto | 프로젝트 | 다른 인스턴스(또는 git pull)가 프로젝트 파일을 바꿨을 때 — auto = 항목 단위 병합 · ask = 본문 변경은 늘 띠로 · off = 병합 안 함(마지막에 저장한 쪽이 이김) · 이름·꼴 = 파일의 `file.external_change`와 같은 짝 |
+| `grid.copy_null` | Choice blank\|shown\|null | **blank** | 결과 셋 | 그리드에서 복사할 때 NULL 셀 — blank = 빈 칸 · shown = `grid.null_text` 글자 · null = `NULL` · 범위 = 그리드 셀 복사(TSV · 머리글 포함 · CSV · 텍스트 · Markdown) · SQL·JSON 복사와 텍스트 보기 복사는 그대로 · ★ 기본 blank = 종전(NULL 글자 복사)과 달라짐(사용자 11-19) |
+| `intel.dblink_remote_meta` | Bool | off | 코드 완성 | DB 링크 너머 원격 테이블 메타 조회 — **구현 전 잠금**(`PENDING_KEYS` · 설정 창 잠김 · `set` 거부 "not available yet") · 기능 = T-502(보류 · 사용자 지시 때만) |
 
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.

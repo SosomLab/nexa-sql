@@ -162,6 +162,7 @@
 - **값 창 3택**: 편집 가능한 글 셀(`can_pick`)이면 **[NULL] [빈 문자열] [값]** 버튼 · NULL/빈 문자열 상태 = 본문 비움·읽기 전용 + 안내 줄("NULL - 값이 없습니다…" · "빈 문자열(길이 0) - NULL과 다릅니다…") · **[셀에 반영] = 고른 상태대로**(`ApplyCell.null`) · `ValueReq.is_null/empty_is_null` · 읽기 전용 결과 = 버튼·안내 없음(설계).
 - **Oracle**(`empty_is_null` = **방언 == Oracle** · 빈 문자열을 NULL로 저장) = [빈 문자열] 버튼 없음 + 안내 "이 DBMS는 빈 문자열을 NULL로 저장합니다(Oracle) - 빈 문자열 상태가 없습니다." · 우클릭 "빈 문자열로" 숨김. ⚠ 1차 구현은 `empty_is_null`을 설정 `grid.edit_empty`(Delete 비움 = NULL · 전 DBMS 기본)로 계산해 SQLite에도 Oracle 안내가 뜨고 메뉴가 빠졌음 → 방언 기준으로 정정(협업 V1 10-13).
 - **그리드 표식**: NULL = `grid.null_text`(기본 `NULL` 흐림) · **빈 문자열 = 설정 `grid.empty_text`(기본 `''` 흐림 · 그리기만 · 복사·텍스트 보기는 빈 채로)**.
+- ★ **복사의 NULL(11-19 · 사용자 · ac394ae3)** = 설정 `grid.copy_null`(blank 기본 · shown · null · `Grid::render_copy` · `CopyNull`) — 그리드 셀 복사(TSV · 머리글 · CSV · 텍스트 · Markdown)만 · SQL·JSON 복사 · 텍스트 보기 복사는 그대로 · 편집 붙여넣기의 NULL 판정(`text == grid.null_text`)과는 별개.
 - **우클릭 "빈 문자열로"** = 설정 `grid.edit_empty`와 무관하게 `''`를 넣는 전용 동작(`EditAction::SetEmpty` · nexa-ui keymap `grid.edit.set_empty` · `clear_selected_cells_with`) · Oracle 숨김.
 - 자체 시험 = 기동 명령 `cellview.null:<null|empty|value>` · `cellview.dump`의 `null=` 칸.
 - **값 창 UI(사용자 10-13)** = NULL/빈 문자열/값은 **라디오 한 줄(버튼 줄 위)** · 버튼 순서 = 파일에서 넣기 · 파일로 저장 · 복사 · 셀에 반영 · 닫기 · nexa-ctl `RadioGroup` 가로 모드(`set_horizontal` · 항목별 폭 `set_horizontal_widths` = 글리프+간격+라벨+여백 16 → 언어와 무관하게 간격 같음 · Oracle = 2항목) · `SqlPrevAction::Nullness` 변형 제거.
