@@ -53,6 +53,10 @@ impl App {
                 if *c == ',' && self.intel.cfg().auto && self.intel_named_arg_site() {
                     self.intel_request(false);
                 }
+                // ★ Oracle `테이블@` = DB 링크 자리 → 링크 목록을 바로 연다(사용자 11-19 · `@`는 트리거 글자가 아니다 — 이 자리에서만).
+                if *c == '@' && self.intel.cfg().auto && self.intel_site(false) {
+                    self.intel_request(false);
+                }
             }
             // Esc = 카드 숨김(완성 팝업과 같은 키) · 그 밖의 키·클릭 = 캐럿이 움직였으니 카드가 떠 있으면 다시 판정.
             InputEvent::Key {
@@ -392,6 +396,11 @@ impl App {
 
     /// 캐럿이 루틴 괄호 안의 인자 시작 자리인가(활성 탭 · 편집기 포커스 · 큰 파일 제외).
     fn intel_named_arg_site(&mut self) -> bool {
+        self.intel_site(true)
+    }
+
+    /// 캐럿 자리 판정 한 벌 — `named_arg` = 이름 지정 인자 자리 · 아니면 Oracle DB 링크 자리(활성 탭 · 편집기 포커스 · 큰 파일 제외).
+    fn intel_site(&mut self, named_arg: bool) -> bool {
         if self.focus != Focus::Editor {
             return false;
         }
@@ -407,8 +416,12 @@ impl App {
             .char_indices()
             .nth(caret_c)
             .map_or(text.len(), |(b, _)| b);
-        self.intel
-            .named_arg_site(&text, caret_b, Some(self.sess.dialect))
+        let dialect = Some(self.sess.dialect);
+        if named_arg {
+            self.intel.named_arg_site(&text, caret_b, dialect)
+        } else {
+            self.intel.dblink_site(&text, caret_b, dialect)
+        }
     }
 
     /// 시그니처 도움(`intel.signature_help`): 캐럿을 감싸는 `(`의 주인이 내장 함수면 상태줄에 시그니처 한 줄.

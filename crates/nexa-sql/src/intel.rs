@@ -206,6 +206,8 @@ pub(crate) struct Intel {
     need_objects: Vec<String>,
     /// 종류를 지정한 버킷 채움 요청(사용자 정의 타입 · 식 자리 함수·패키지 · 10-09) — `request_objects`가 안 읽는 종류.
     need_kinds: Vec<(String, ObjectKind)>,
+    /// `PUBLIC` 스키마의 DB 링크 목록을 이미 청했는가(메타에 `PUBLIC`이 없을 때 한 번만 · 11-19).
+    dblink_public_asked: bool,
     /// 마지막 요청이 남긴 **테이블 상세**(제약) 채움 요청 — `JOIN … ON` 조건 조각이 외래 키를 기다린다(T-178).
     need_details: Vec<nsql_run::meta::ObjId>,
     /// 루틴 인자 채움 요청(T-317 · `EXEC proc |`).
@@ -403,6 +405,7 @@ impl Intel {
             needs: Vec::new(),
             need_objects: Vec::new(),
             need_kinds: Vec::new(),
+            dblink_public_asked: false,
             need_details: Vec::new(),
             need_args: Vec::new(),
             loading: false,
@@ -694,6 +697,11 @@ impl Intel {
             }
             CtxKind::Expr | CtxKind::Start => {
                 self.cands_expr(&rq, &mut cands);
+            }
+            // ★ 관계의 별칭을 적는 자리(사용자 11-19 "`FROM t A` 자리에 컬럼 ALT_BOM이 나온다"): 새 이름 아니면 다음 절의 키워드뿐 —
+            //   컬럼·함수·객체·문서 낱말은 내지 않는다.
+            CtxKind::AliasSlot => {
+                self.cands_expr_keywords(&rq, &mut cands);
             }
         }
         // 접두를 뺀 문서 단어(자기 자신)는 후보에서 뺀다.
@@ -2332,6 +2340,11 @@ impl Intel {
         let mut kinds: Vec<ObjectKind> = Vec::new();
         let mut with_schemas = false;
         let mut databases = false;
+        // ★ DB 링크 자리(사용자 11-19): 현재 스키마 + PUBLIC의 링크 · 설명 칸 = host(어느 서버인지).
+        if w == intel::Want::DbLink {
+            self.dblink_cands(m, dialect, show_types, cands);
+            return;
+        }
         match w {
             intel::Want::Database => {
                 if dialect == Some(Dialect::Mysql) {
@@ -2383,8 +2396,8 @@ impl Intel {
                 kinds.push(ObjectKind::Type);
                 with_schemas = true;
             }
-            // 정렬 이름·앵커 속성은 위에서 끝났다(메타 없음).
-            intel::Want::Collation | intel::Want::TypeAttr => return,
+            // 정렬 이름·앵커 속성 · DB 링크는 위에서 끝났다.
+            intel::Want::Collation | intel::Want::TypeAttr | intel::Want::DbLink => return,
         }
         if databases {
             match m.names.find("") {
@@ -2419,6 +2432,67 @@ impl Intel {
                 cands.push(schema_cand(m, *s));
             }
         }
+    }
+
+    /// DB 링크 후보(사용자 11-19 · `Want::DbLink`): 현재 스키마와 `PUBLIC`의 `ObjectKind::DbLink` — 목록이 없으면 `(스키마, 종류)`로
+    /// 청한다(지연 로딩 · `need_kinds`). 이름 인덱스만 있는 버킷(L1)은 host가 없어 한 번 더 청한다(목록은 그대로 낸다).
+    /// `PUBLIC`은 스키마 목록(`ALL_USERS`)에 없어 따로 — 메타에 아직 없으면 접속당 한 번만 청한다(없는 서버에서 되풀이하지 않게).
+    fn dblink_cands(
+        &mut self,
+        m: &MetaView<'_>,
+        dialect: Option<Dialect>,
+        show_types: bool,
+        cands: &mut Vec<Cand>,
+    ) {
+        let kind = ObjectKind::DbLink;
+        let mut schemas: Vec<Sym> = m.snap.current_schema.into_iter().collect();
+        match m.names.find("PUBLIC") {
+            Some(p) => {
+                if !schemas.contains(&p) {
+                    schemas.push(p);
+                }
+            }
+            None => {
+                if !self.dblink_public_asked {
+                    self.dblink_public_asked = true;
+                    self.need_kinds.push(("PUBLIC".to_string(), kind));
+                }
+            }
+        }
+        for s in schemas {
+            self.note_coverage_kind(m, s, kind);
+            if matches!(m.snap.coverage(s, kind), Coverage::Names { .. }) {
+                let name = m.names.get(s);
+                if !self
+                    .need_kinds
+                    .iter()
+                    .any(|(n, k)| n.eq_ignore_ascii_case(name) && *k == kind)
+                {
+                    self.need_kinds.push((name.to_string(), kind));
+                }
+            }
+            for h in m.snap.prefix(m.names, s, kind, "", usize::MAX) {
+                let mut c = obj_cand(m, &h, kind, dialect, show_types);
+                let host = m
+                    .snap
+                    .object(h.id)
+                    .and_then(|o| o.extra)
+                    .map_or("", |e| m.names.get(e));
+                if show_types && !host.is_empty() {
+                    c.detail = host.to_string();
+                }
+                if !cands.iter().any(|x| x.text.eq_ignore_ascii_case(&c.text)) {
+                    cands.push(c);
+                }
+            }
+        }
+    }
+
+    /// ★ 캐럿이 Oracle DB 링크 자리(`FROM t@|`)인가 — `@`는 트리거 글자가 아니라 이 자리에서만 팝업을 연다(사용자 11-19).
+    pub(crate) fn dblink_site(&self, doc: &str, caret: usize, dialect: Option<Dialect>) -> bool {
+        self.cfg.enabled
+            && dialect == Some(Dialect::Oracle)
+            && intel::context_at(doc, caret, dialect).kind == CtxKind::Want(intel::Want::DbLink)
     }
 
     fn note_coverage(&mut self, m: &MetaView<'_>, schema: Sym, kind: ObjectKind) {

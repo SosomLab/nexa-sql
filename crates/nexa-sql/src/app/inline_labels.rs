@@ -269,6 +269,15 @@ impl App {
                 let it = nsql_script::statement_at_in(&text, byte_pos, Some(self.sess.dialect))?;
                 let s = it.span.start.min(text.len());
                 let e = it.span.end.clamp(s, text.len());
+                // ★ PL/SQL 블록(단독 `/`까지 한 단위) 안에서는 캐럿이 든 `;` 문장만(사용자 11-19 "프로시저 전체가 한 문장") —
+                //   보통 문장은 안쪽 `;`가 없어 그대로다. 구간 끝이 글자 경계가 아니면(없을 일) 단위 전체로 둔다.
+                let (is_, ie) =
+                    nsql_script::intel::inner_statement_span(&text[s..e], byte_pos.clamp(s, e) - s);
+                let (s, e) = if text.is_char_boundary(s + is_) && text.is_char_boundary(s + ie) {
+                    (s + is_, s + ie)
+                } else {
+                    (s, e)
+                };
                 let a = text[..s].chars().count();
                 let b = a + text[s..e].chars().count();
                 Some((base + a, base + b))

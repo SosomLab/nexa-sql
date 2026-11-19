@@ -682,3 +682,195 @@ fn derived_origin_and_outer_rank() {
     let c = ctx_in("SELECT COUNT(*|) FROM t1 a WHERE 1=1", Dialect::Oracle);
     assert_eq!(resolve_alias(&c.aliases, "a").unwrap().outer, 0);
 }
+
+/// ★ 11-19(사용자 "UNION을 쓰면서 같은 별칭을 쓰는 경우"): 집합 연산으로 이어진 SELECT들은 같은 괄호 층이어도 별칭이 서로 보이지
+/// 않는다 — 캐럿이 든 가지의 FROM만(종전 = 처음 것이 이겨 둘째 가지의 `A.`가 첫 가지 테이블로 풀렸다).
+#[test]
+fn set_operator_branches_resolve_their_own_alias() {
+    let o = Dialect::Oracle;
+    for (name, sql, table) in [
+        (
+            "union-1",
+            "SELECT A.| FROM t1 A UNION ALL SELECT A.c2 FROM t2 A",
+            "t1",
+        ),
+        (
+            "union-2",
+            "SELECT A.c1 FROM t1 A UNION ALL SELECT A.| FROM t2 A",
+            "t2",
+        ),
+        (
+            "union-2-where",
+            "SELECT A.c1 FROM t1 A UNION SELECT A.c2 FROM t2 A WHERE A.|",
+            "t2",
+        ),
+        (
+            "minus-3",
+            "SELECT A.c1 FROM t1 A MINUS SELECT A.c2 FROM t2 A INTERSECT SELECT A.| FROM t3 A",
+            "t3",
+        ),
+        (
+            "except",
+            "SELECT A.c1 FROM t1 A EXCEPT SELECT A.| FROM t2 A",
+            "t2",
+        ),
+        // 인라인 뷰 안의 UNION: 가지는 그 괄호 층에서 가른다.
+        (
+            "inline-union",
+            "SELECT X.c FROM (SELECT A.c FROM t1 A UNION ALL SELECT A.| FROM t2 A) X",
+            "t2",
+        ),
+        // 가지 안의 서브쿼리: 안쪽 층이 이기고 바깥은 그 가지의 것.
+        (
+            "branch-subquery-outer",
+            "SELECT 1 FROM t1 A UNION ALL SELECT 1 FROM t2 A WHERE EXISTS (SELECT 1 FROM t9 B WHERE B.k = A.|)",
+            "t2",
+        ),
+    ] {
+        check_in(name, sql, o, "A", &Want::Table(table));
+    }
+    // 다른 가지에만 있는 별칭은 안 보인다.
+    check_in(
+        "other-branch-hidden",
+        "SELECT B.c FROM t1 B UNION ALL SELECT A.| FROM t2 A",
+        o,
+        "B",
+        &Want::Hidden,
+    );
+    // 첫 가지 앞의 WITH는 모든 가지에서 보인다.
+    check_in(
+        "cte-visible-in-later-branch",
+        "WITH c AS (SELECT k, v FROM t0) SELECT 1 FROM t1 A UNION ALL SELECT c.| FROM c",
+        o,
+        "c",
+        &Want::Derived(&["k", "v"], &[]),
+    );
+    // 바깥 층의 UNION은 안쪽 블록에서 볼 때도 그 블록이 든 가지만(상관 서브쿼리의 바깥 = 그 가지).
+    check_in(
+        "outer-level-branch",
+        "SELECT 1 FROM t1 A UNION ALL SELECT (SELECT MAX(B.v) FROM t9 B WHERE B.k = A.|) FROM t2 A",
+        o,
+        "A",
+        &Want::Table("t2"),
+    );
+}
+
+/// ★ 11-19(사용자 "프로시저 전체가 한 문장으로 잡힌다"): PL/SQL 블록(단독 `/`까지 한 단위) 안의 문장들은 `;`로 갈라 본다 —
+/// 형제 문장의 같은 별칭이 섞이지 않고, 문장 구간도 캐럿이 든 `;` 문장 하나.
+#[test]
+fn plsql_block_statements_are_scoped_by_semicolon() {
+    let o = Dialect::Oracle;
+    let body = |put: &str| {
+        format!(
+            "CREATE OR REPLACE PROCEDURE p IS\n  v NUMBER;\nBEGIN\n  UPDATE t1 T SET T.c = 1 WHERE T.k = 1;\n  IF SQL%ROWCOUNT = 0 THEN\n    INSERT INTO t3 VALUES (1);\n  END IF;\n  UPDATE t2 T SET T.d = 2 WHERE {put};\n  DELETE FROM t4 X WHERE X.k = 'a;b';\nEND;\n"
+        )
+    };
+    // 둘째 UPDATE의 `T` = t2(첫 UPDATE의 t1이 아니다).
+    check_in("sibling-dml", &body("T.|"), o, "T", &Want::Table("t2"));
+    // 다른 문장의 별칭은 안 보인다.
+    check_in("other-stmt-hidden", &body("T.|"), o, "X", &Want::Hidden);
+
+    // 문장 구간: 캐럿이 든 `;` 문장 하나 · 문자열 안의 `;`는 세지 않는다.
+    let text = body("T.k = 2");
+    let at = |needle: &str| text.find(needle).unwrap();
+    let span = |pos: usize| {
+        let (s, e) = nsql_script::intel::inner_statement_span(&text, pos);
+        text[s..e].trim().to_string()
+    };
+    assert_eq!(
+        span(at("T.d = 2")),
+        "UPDATE t2 T SET T.d = 2 WHERE T.k = 2;"
+    );
+    assert_eq!(
+        span(at("X.k")),
+        "DELETE FROM t4 X WHERE X.k = 'a;b';",
+        "문자열 안의 `;`"
+    );
+    assert_eq!(
+        span(at("INSERT INTO t3")),
+        "IF SQL%ROWCOUNT = 0 THEN\n    INSERT INTO t3 VALUES (1);"
+    );
+    // `;` 바로 뒤 = 그 `;`로 끝난 문장.
+    let after = at("WHERE T.k = 1;") + "WHERE T.k = 1;".len();
+    // (앞의 `BEGIN`·`IF … THEN` 같은 제어 낱말은 그 문장 구간에 딸린다 — 경계는 `;`뿐.)
+    assert_eq!(
+        span(after),
+        "BEGIN\n  UPDATE t1 T SET T.c = 1 WHERE T.k = 1;"
+    );
+    // 안쪽 `;`가 없는 보통 문장 = 단위 전체.
+    let one = "SELECT a FROM t WHERE b = 1";
+    assert_eq!(
+        nsql_script::intel::inner_statement_span(one, 5),
+        (0, one.len())
+    );
+}
+
+/// ★ 11-19(사용자 "별칭 자리에 컬럼 ALT_BOM이 나온다"): 관계 이름 바로 뒤 = 별칭을 적는 자리 → `AliasSlot`(호스트 = 키워드만).
+/// Oracle DB 링크 꼬리(`t@link`)가 붙어도 같다 · 별칭 뒤·ON·WHERE는 식 자리 그대로.
+#[test]
+fn alias_slot_after_relation_name() {
+    let o = Dialect::Oracle;
+    for sql in [
+        "SELECT * FROM t1 A|",
+        "SELECT * FROM t1 |",
+        "SELECT * FROM s1.t1 A|",
+        "SELECT * FROM t1@lnk A|",
+        "SELECT * FROM s1.t1@lnk.example.com A|",
+        "SELECT * FROM t1 AS A|",
+        "SELECT * FROM t1 x JOIN t2 W|",
+        "SELECT * FROM t1 x, t2 y|",
+        "UPDATE t1 S|",
+    ] {
+        assert_eq!(ctx_in(sql, o).kind, CtxKind::AliasSlot, "{sql}");
+    }
+    for sql in [
+        "SELECT * FROM t1 A W|",
+        "SELECT * FROM t1 A WHERE A|",
+        "SELECT * FROM t1 x JOIN t2 y ON y|",
+        "SELECT A| FROM t1 A",
+    ] {
+        assert_eq!(ctx_in(sql, o).kind, CtxKind::Expr, "{sql}");
+    }
+    // 관계 이름 자체를 치는 중 = 관계 자리 그대로.
+    assert_eq!(ctx_in("SELECT * FROM t|", o).kind, CtxKind::Relation);
+    // DB 링크가 붙은 테이블의 별칭도 풀린다 · 링크 뒤 점(`A.`)은 별칭 자리 = 후보 없음.
+    check_in(
+        "dblink-alias",
+        "SELECT A.| FROM t1@lnk A",
+        o,
+        "A",
+        &Want::Table("t1"),
+    );
+    assert_eq!(ctx_in("SELECT * FROM t1@lnk A.|", o).kind, CtxKind::None);
+}
+
+/// ★ 11-19(사용자 "`테이블@`를 치면 링크 목록"): Oracle에서 관계 이름에 바로 붙은 `@` 뒤 = DB 링크 자리 — 접두·치환 구간에 `@`는 없다.
+#[test]
+fn oracle_dblink_position() {
+    use nsql_script::intel::Want as W;
+    let o = Dialect::Oracle;
+    for (sql, prefix) in [
+        ("SELECT * FROM t1@|", ""),
+        ("SELECT * FROM s1.t1@|", ""),
+        ("SELECT * FROM t1@SB|", "SB"),
+        ("SELECT * FROM t1 x JOIN s1.t2@LN| y ON 1=1", "LN"),
+        ("UPDATE t1@| SET c = 1", ""),
+        ("SELECT * FROM t0 a, t1@P|", "P"),
+    ] {
+        let c = ctx_in(sql, o);
+        assert_eq!(c.kind, CtxKind::Want(W::DbLink), "{sql}");
+        assert_eq!(c.prefix, prefix, "{sql}");
+        // 치환 구간 = 링크 이름만(`@` 뒤부터 캐럿까지).
+        assert_eq!(c.replace.len(), prefix.len(), "{sql}");
+    }
+    // 해당 없음: 공백을 둔 `@` · 별칭 뒤 · 식 자리 · 다른 방언(SQL Server 변수).
+    for (sql, d) in [
+        ("SELECT * FROM t1 @|", o),
+        ("SELECT * FROM t1 A@|", o),
+        ("SELECT c@| FROM t1", o),
+        ("SELECT * FROM t1 WHERE c = x@|", o),
+        ("SELECT * FROM t1@|", Dialect::Mssql),
+    ] {
+        assert_ne!(ctx_in(sql, d).kind, CtxKind::Want(W::DbLink), "{sql}");
+    }
+}

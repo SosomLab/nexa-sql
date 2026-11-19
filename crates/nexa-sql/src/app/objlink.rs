@@ -14,7 +14,9 @@ use crate::*;
 use nexa_ctl::controls::ctxmenu::CtxItem;
 use nexa_ctl::{LinkLine, LinkStyle};
 use nsql_run::meta::{ColState, DetailState, Interner, ObjId, Snapshot};
-use nsql_script::intel::{alias_table_scoped_in, context_at_flat, resolve_alias, Alias};
+use nsql_script::intel::{
+    alias_table_scoped_in, context_at_flat, is_scope_separator, resolve_alias, Alias,
+};
 use nsql_script::outline::Word;
 
 /// ★ 문장 하나의 **범위 별칭**(사용자 11-19 "한 문장이면 문장 전체의 객체 설명" · T-491): 종전에는 문장에 별칭 표가 하나(같은 이름 =
@@ -29,8 +31,10 @@ struct StmtScope<'t> {
     /// 다음에 볼 낱말 · 지금까지 열린 `(`의 낱말 색인.
     wi: usize,
     opens: Vec<usize>,
+    /// 지금까지 지난 마지막 **가름 낱말**(`UNION`류 · `;`)의 색인 — 같은 괄호 층이라도 가지가 바뀌면 별칭 표가 다르다(11-19).
+    sep: Option<usize>,
     last: usize,
-    cache: HashMap<Option<usize>, Vec<Alias>>,
+    cache: HashMap<(Option<usize>, Option<usize>), Vec<Alias>>,
     dialect: Option<nsql_core::Dialect>,
 }
 
@@ -48,6 +52,7 @@ impl<'t> StmtScope<'t> {
             range,
             wi: 0,
             opens: Vec::new(),
+            sep: None,
             last: 0,
             cache: HashMap::new(),
             dialect,
@@ -60,6 +65,7 @@ impl<'t> StmtScope<'t> {
         if rel < self.last {
             self.wi = 0;
             self.opens.clear();
+            self.sep = None;
         }
         self.last = rel;
         while self.wi < self.ws.len() && self.ws[self.wi].start < rel {
@@ -68,11 +74,16 @@ impl<'t> StmtScope<'t> {
                 ")" => {
                     self.opens.pop();
                 }
-                _ => {}
+                _ => {
+                    if is_scope_separator(&self.ws[self.wi]) {
+                        self.sep = Some(self.wi);
+                    }
+                }
             }
             self.wi += 1;
         }
-        let key = self.opens.last().copied();
+        // 열쇠 = (가장 안쪽 괄호, 마지막 가름 낱말) — 어느 층에서든 가지가 바뀌면 가름 낱말을 지나므로 열쇠가 달라진다.
+        let key = (self.opens.last().copied(), self.sep);
         let (ws, dialect, src) = (&self.ws, self.dialect, self.src);
         self.cache
             .entry(key)

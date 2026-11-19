@@ -26,6 +26,10 @@ pub enum CtxKind {
     Start,
     /// 식(SELECT 목록·WHERE·ON·SET …) — 컬럼(alias 표)·함수·키워드·문서 심볼.
     Expr,
+    /// ★ 관계의 **별칭을 적는 자리**(`FROM t A|` · `JOIN s.t x|` · `FROM t@link A|` · 사용자 11-19 "별칭 자리에 컬럼이 나온다"):
+    /// 여기 올 수 있는 것은 새 별칭 이름이거나 다음 절의 키워드(`WHERE` · `JOIN` · `ON` · `AS` …)뿐 — 호스트는 **키워드만** 낸다
+    /// (컬럼·함수·객체·문서 낱말 없음). 점 뒤(`FROM t A.|`)는 [`CtxKind::None`].
+    AliasSlot,
     /// ★ 특정 종류의 객체만 고르는 자리(10-01 ⑩ · [`Want`]): `USE |` = 데이터베이스 · `ALTER SESSION SET CURRENT_SCHEMA = |`·
     /// `SET search_path TO |` = 스키마 · `EXEC|CALL |` = 루틴 · `DROP VIEW |` 등 = 그 종류.
     Want(Want),
@@ -52,6 +56,9 @@ pub enum Want {
     /// `p IN |` · `RETURN |`/`RETURNS |` · `CREATE TABLE t (c |` · `ALTER TABLE … ADD c |` · `VAR x |` · PG `::|`. 호스트는 방언의
     /// 내장 자료형([`crate::builtins::types`]) + 메타의 사용자 정의 타입(`ObjectKind::Type` · 현재 스키마 + `스키마.`)을 낸다.
     DataType,
+    /// ★ Oracle **DB 링크 자리**(사용자 11-19 "`테이블@` 뒤에 링크 목록"): `FROM [s.]t@|` · `JOIN t@LN|` — 관계 이름에 바로 붙은 `@` 뒤.
+    /// 호스트는 메타의 `ObjectKind::DbLink`(현재 스키마 + PUBLIC)를 내고 설명 칸에 host를 보인다. 접두·치환 구간에 `@`는 없다.
+    DbLink,
     /// ★ `COLLATE |` 뒤 = 정렬 이름(사용자 10-09): 방언의 정적 표([`crate::builtins::collations`]) · 메타 불필요.
     Collation,
     /// ★ `이름%|` 뒤(Oracle PL/SQL · PL/pgSQL · 사용자 10-09) = `TYPE` · `ROWTYPE`(앵커 속성) · 메타 불필요.
@@ -1687,6 +1694,45 @@ fn context_at_raw(
     } else {
         None
     };
+    // ★ Oracle DB 링크 자리(11-19): 관계 이름에 **바로 붙은** `@`(`FROM t@|` · `FROM s.t@LN|`) — 접두에서 `@`를 떼어 링크 이름만
+    //   견준다. 공백을 둔 `t @x`·식 자리의 `@`는 해당 없음.
+    if dialect == Some(Dialect::Oracle) {
+        let at_prefix = prefix.starts_with('@');
+        let bare_at = prefix.is_empty() && last.text == "@" && last.end == rel;
+        if at_prefix || bare_at {
+            let (head, at_pos) = if bare_at {
+                (&before[..before.len() - 1], last.start)
+            } else {
+                (&before[..], rel)
+            };
+            if head.last().is_some_and(|w| is_name(w) && w.end == at_pos)
+                && relation_alias_pos(head)
+            {
+                let (prefix, replace) = if at_prefix {
+                    (prefix[1..].to_string(), (replace.start + 1)..replace.end)
+                } else {
+                    (prefix, replace)
+                };
+                return Context {
+                    kind: CtxKind::Want(Want::DbLink),
+                    prefix,
+                    replace,
+                    aliases,
+                    statement: stmt,
+                    paren_owner,
+                    paren_into,
+                    star: None,
+                    from_chain: false,
+                    clause,
+                    clause_pos,
+                    case_pos,
+                    stmt_kind,
+                    alias_ok: false,
+                    alias_follows: false,
+                };
+            }
+        }
+    }
     // ★ T-317: 사용자 루틴 인자 자리(`EXEC [s.]proc |` · `, |`) — 시스템 표(`Want::ProcParam`)에 없는 루틴.
     if let Some(name) = exec_user_routine(&before, dialect) {
         return Context {
@@ -1755,6 +1801,26 @@ fn context_at_raw(
             case_pos,
             stmt_kind,
             alias_ok,
+            alias_follows: false,
+        };
+    }
+    // ★ 관계 이름 바로 뒤(별칭을 적는 자리 · 11-19) — 식이 아니다.
+    if star.is_none() && relation_alias_pos(&before) {
+        return Context {
+            kind: CtxKind::AliasSlot,
+            prefix,
+            replace,
+            aliases,
+            statement: stmt,
+            paren_owner,
+            paren_into,
+            star: None,
+            from_chain: false,
+            clause,
+            clause_pos,
+            case_pos,
+            stmt_kind,
+            alias_ok: false,
             alias_follows: false,
         };
     }
@@ -1878,8 +1944,9 @@ fn relation_alias_pos(head: &[&Word<'_>]) -> bool {
     if last.text == ")" {
         return in_from_list(h);
     }
+    // Oracle DB 링크 꼬리(`t@link` · `s.t@link.example.com`)는 먼저 건너뛴다 — 낱말 `@link` 뒤의 `.조각`들까지.
+    let mut n = dblink_tail_start(h);
     // 이름 사슬을 거꾸로 건넌다.
-    let mut n = h.len();
     loop {
         if n == 0 || !is_name(h[n - 1]) {
             return false;
@@ -1900,6 +1967,19 @@ fn relation_alias_pos(head: &[&Word<'_>]) -> bool {
     pre.last().is_some_and(|w| {
         RELATION_AFTER.iter().any(|kw| is_word(w, kw)) || (w.text == "," && in_from_list(pre))
     })
+}
+
+/// `h`의 끝에 붙은 DB 링크 꼬리(`@link` + `.조각`들)가 시작하는 색인 — 꼬리가 없으면 `h.len()`.
+fn dblink_tail_start(h: &[&Word<'_>]) -> usize {
+    let mut m = h.len();
+    while m >= 2 && is_name(h[m - 1]) && h[m - 2].text == "." {
+        m -= 2;
+    }
+    if m >= 1 && !h[m - 1].quoted && h[m - 1].text.len() > 1 && h[m - 1].text.starts_with('@') {
+        m - 1
+    } else {
+        h.len()
+    }
 }
 
 /// 콤마 앞이 FROM 목록인가 — 마지막 절 키워드가 FROM/JOIN 계열이면.
@@ -2001,7 +2081,28 @@ fn alias_table_scoped_src(ws: &[Word<'_>], pos: usize, src: Option<&str>) -> Vec
     let mut ctes: Vec<Alias> = Vec::new();
     let mut levels: Vec<Vec<Alias>> = Vec::new();
     for part in &parts {
-        let lv = alias_table_impl(part, true, 0, &ctes, src);
+        // ★ 같은 층의 **가지**(사용자 11-19): `UNION`/`INTERSECT`/`MINUS`/`EXCEPT`로 이어진 SELECT들과 PL/SQL 블록 안의 `;` 문장들은
+        //   괄호 층은 같아도 별칭이 서로 보이지 않는다 — `pos`가 든 가지의 FROM만 모은다(종전 = 층 전체를 한 묶음 · 같은 이름은
+        //   처음 것이 이겨 둘째 가지의 `A.컬럼`이 첫 가지 테이블로 풀렸다).
+        let sub = branch_of(part, pos);
+        let lv = if sub.len() == part.len() {
+            alias_table_impl(part, true, 0, &ctes, src)
+        } else {
+            // 가지 밖(첫 가지 앞의 `WITH`)에서 정의한 CTE는 모든 가지에서 보인다 → 층 전체에서 CTE만 얻어 넘긴다.
+            let level_ctes: Vec<Alias> = alias_table_impl(part, true, 0, &ctes, src)
+                .into_iter()
+                .filter(is_cte)
+                .collect();
+            let mut vis = ctes.clone();
+            vis.extend(level_ctes.iter().cloned());
+            let mut lv = alias_table_impl(sub, true, 0, &vis, src);
+            for c in level_ctes {
+                if !lv.iter().any(|a| a.alias.eq_ignore_ascii_case(&c.alias)) {
+                    lv.push(c);
+                }
+            }
+            lv
+        };
         ctes.extend(lv.iter().filter(|a| is_cte(a)).cloned());
         levels.push(lv);
     }
@@ -2026,6 +2127,59 @@ fn alias_table_scoped_src(ws: &[Word<'_>], pos: usize, src: Option<&str>) -> Vec
         rank = rank.saturating_add(1);
     }
     out
+}
+
+/// 같은 괄호 층을 **별칭이 서로 안 보이는 가지**로 가르는 낱말인가 — 집합 연산자(`UNION` · `INTERSECT` · `MINUS` · `EXCEPT`)와
+/// 문장 끝 `;`(PL/SQL 블록 안의 문장들 · 분할 단위가 블록 전체라 한 층에 여러 문장이 든다). Ctrl 링크의 별칭 캐시도 이것으로 가른다.
+#[must_use]
+pub fn is_scope_separator(w: &Word<'_>) -> bool {
+    !w.quoted
+        && (w.text == ";"
+            || ["UNION", "INTERSECT", "MINUS", "EXCEPT"]
+                .iter()
+                .any(|k| w.text.eq_ignore_ascii_case(k)))
+}
+
+/// 층(`part` = 괄호 그룹 안쪽 또는 문장 전체)에서 `pos`가 든 가지 — 그 층의 가름 낱말만 본다(안쪽 괄호는 건너뛴다).
+/// 가름 낱말이 없으면 층 전체. `pos`가 가름 낱말의 시작과 같으면 앞 가지.
+fn branch_of<'w, 'a>(part: &'w [Word<'a>], pos: usize) -> &'w [Word<'a>] {
+    let (mut s, mut e) = (0, part.len());
+    let mut i = 0;
+    while i < part.len() {
+        if part[i].text == "(" {
+            i = skip_parens(part, i).max(i + 1);
+            continue;
+        }
+        if is_scope_separator(&part[i]) {
+            if part[i].start < pos {
+                s = i + 1;
+            } else {
+                e = i;
+                break;
+            }
+        }
+        i += 1;
+    }
+    &part[s..e]
+}
+
+/// ★ 분할 단위(`unit` = `statement_at`의 한 항목 원문) 안에서 `pos`(단위 기준 바이트)가 든 **`;` 문장**의 구간(사용자 11-19
+///   "프로시저 전체가 한 문장으로 잡힌다") — PL/SQL 블록은 단독 `/`까지가 한 단위라 안의 DML들이 한 문장으로 보였다. 문자열·주석 안의
+///   `;`는 낱말이 아니라 세지 않는다. 안쪽 `;`가 없는 보통 문장은 단위 전체. `pos`가 `;` 바로 뒤면 그 `;`로 끝난 문장.
+#[must_use]
+pub fn inner_statement_span(unit: &str, pos: usize) -> (usize, usize) {
+    let classes = crate::lexer::classify(unit);
+    let ws = crate::outline::words(unit, &classes);
+    let (mut s, mut e) = (0, unit.len());
+    for w in ws.iter().filter(|w| !w.quoted && w.text == ";") {
+        if w.end < pos {
+            s = w.end;
+        } else {
+            e = w.end;
+            break;
+        }
+    }
+    (s, e)
 }
 
 /// [`alias_table_scoped`] + 방언 꼬리(SQL Server `OUTPUT INSERTED.`/`DELETED.` 의사 테이블) — 완성 문맥과 Ctrl 링크가 같이 쓴다.
@@ -2437,6 +2591,19 @@ fn alias_table_impl(
                 }
                 let table = segs.pop().unwrap_or_default();
                 let schema = (!segs.is_empty()).then(|| segs.join("."));
+                // ★ Oracle DB 링크 꼬리(`t@link` · `t@link.example.com` · 사용자 11-19): 별칭은 그 뒤에 온다 — 건너뛰지 않으면
+                //   `@link`에서 멈춰 별칭을 못 읽었다(`FROM t@link A` → `A.` 미해석).
+                if ws
+                    .get(m)
+                    .is_some_and(|w| !w.quoted && w.text.len() > 1 && w.text.starts_with('@'))
+                {
+                    m += 1;
+                    while ws.get(m).is_some_and(|w| w.text == ".")
+                        && ws.get(m + 1).is_some_and(is_name)
+                    {
+                        m += 2;
+                    }
+                }
                 if ws.get(m).is_some_and(|w| is_word(w, "AS")) {
                     m += 1;
                 }

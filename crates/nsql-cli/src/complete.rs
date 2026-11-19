@@ -264,7 +264,8 @@ pub(crate) fn complete_with(
     let mut groups: Vec<Vec<String>> = Vec::new();
     match &ctx.kind {
         CtxKind::None => return (cursor, Vec::new()),
-        CtxKind::Start => groups.push(keywords()),
+        // 별칭을 적는 자리(11-19) = 키워드만(GUI와 같은 규칙).
+        CtxKind::Start | CtxKind::AliasSlot => groups.push(keywords()),
         CtxKind::Member { qualifier } => {
             if let Some(s) = session {
                 cache.ensure(s);
@@ -342,6 +343,8 @@ pub(crate) fn complete_with(
                     }
                     // 사용자 정의 타입(`ObjectKind::Type`)도 자료형 자리에.
                     Want::DataType => groups.push(cache.names(|k| k == ObjectKind::Type)),
+                    // Oracle DB 링크 자리(`FROM t@|` · 11-19).
+                    Want::DbLink => groups.push(cache.names(|k| k == ObjectKind::DbLink)),
                     _ => {}
                 }
             }
