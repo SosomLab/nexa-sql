@@ -107,6 +107,10 @@ pub struct Menu {
     pub label: Label,
     pub items: Vec<String>,
     pub target: MenuTarget,
+    /// ★ 표시 조건(사용자 11-19 "동작할 때만 표시") — 없으면 늘 보인다. 호스트가 아는 조건 이름:
+    ///   `doc_file` = 상황 문서가 디스크 파일에 묶여 있을 때만(미저장 탭에서는 숨김). 모르는 이름은 호스트가 "늘 보임"으로 본다
+    ///   (새 조건을 쓴 확장을 옛 호스트가 열어도 메뉴가 사라지지 않게).
+    pub when: Option<String>,
 }
 
 impl Menu {
@@ -116,6 +120,7 @@ impl Menu {
             label,
             items,
             target: MenuTarget::Editor,
+            when: None,
         }
     }
     pub fn project_explorer(id: &str, label: Label, items: Vec<String>) -> Menu {
@@ -124,7 +129,14 @@ impl Menu {
             label,
             items,
             target: MenuTarget::ProjectExplorer,
+            when: None,
         }
+    }
+    /// 표시 조건을 단다([`Menu::when`] · 예: `Menu::editor(..).when("doc_file")`).
+    #[must_use]
+    pub fn when(mut self, cond: &str) -> Menu {
+        self.when = Some(cond.into());
+        self
     }
 }
 
@@ -348,8 +360,11 @@ impl Meta {
                 self.menus
                     .iter()
                     .map(|m| {
-                        Json::obj()
-                            .with("id", m.id.as_str())
+                        let o = match &m.when {
+                            Some(w) => Json::obj().with("when", w.as_str()),
+                            None => Json::obj(),
+                        };
+                        o.with("id", m.id.as_str())
                             .with("label", m.label.to_json())
                             .with(
                                 "target",

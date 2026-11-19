@@ -304,6 +304,10 @@ impl App {
             &disabled,
             &|id| km.display_of(id),
             extensions::MenuTarget::Editor,
+            // 표시 조건(사용자 11-19): 미저장 탭에서는 파일 경로가 필요한 확장 메뉴를 숨긴다.
+            extensions::MenuCtx {
+                doc_file: self.editors.active_path().is_some(),
+            },
         );
         if let Some(group) = self.format_menu_items() {
             extras.push(group);

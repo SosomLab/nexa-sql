@@ -33,7 +33,7 @@
       "id": "project-explorer-menus",
       "dir": "project-explorer-menus",
       "name": "Project Explorer Menus",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "kind": "wasm",
       "summary": "Right-click menus for the open file and Project Explorer rows: open, reveal, copy path, show path (docs/97)"
     },

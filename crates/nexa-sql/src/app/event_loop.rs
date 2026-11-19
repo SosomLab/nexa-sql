@@ -885,9 +885,10 @@ impl ApplicationHandler<Wake> for App {
         }
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
-            // ★ T-39b: 프로젝트 파일이 밖에서 바뀌었으면 settings 절 재적용(메인 창으로 돌아올 때 한 번).
+            // ★ 67 §9(11-19): 프로젝트 파일이 밖에서(다른 인스턴스 · git pull) 바뀌었으면 항목 단위로 합친다(메인 창으로 돌아올 때 한 번 ·
+            //   종전 T-39b의 settings 절 재적용을 포함).
             if self.window.as_ref().is_some_and(|w| w.id() == id) {
-                self.project_reload_settings_if_changed();
+                let _ = self.project_sync_external(false);
             }
             // 라이선스 파일이 밖에서(CLI `nsql license install`) 바뀌었으면 배지·창을 다시(변경 서명만 봄 · 파일은 안 읽음).
             if self.licensing.refresh() {

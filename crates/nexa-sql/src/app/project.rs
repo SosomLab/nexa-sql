@@ -4,6 +4,33 @@
 
 use crate::*;
 
+/// 프로젝트 동기화 결과(`App::project_sync_external` · 67 §9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjSync {
+    /// 디스크가 기준본 그대로(또는 동기화 끔).
+    Same,
+    /// 다른 인스턴스의 문서를 합쳤다(바뀐 것이 없었어도 기준본은 옮겨졌다).
+    Merged,
+    /// 실행 중인 탭의 본문을 건드려야 해서 미뤘다 — 지금 저장하면 저쪽 변경을 덮는다.
+    Busy,
+}
+
+/// 문서 바이트의 지문(같은 프로세스 안 비교용 · 저장하지 않는다).
+fn doc_mark(doc: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(doc);
+    h.finish()
+}
+
+/// 새 문서 id — 겹치지 않는 40~48비트 값(JSON 숫자 = f64의 정수 범위 안 · 옛 파일의 작은 탭 id와도 안 겹친다).
+fn new_doc_id() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u32(std::process::id());
+    (h.finish() & ((1 << 48) - 1)) | (1 << 40)
+}
+
 /// 글자열 FNV-1a(변경 세대 섞기용 · T-253).
 fn fnv_str(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -434,6 +461,11 @@ impl App {
         } else {
             path.with_extension(project::EXT)
         };
+        // ★ 저장 보호(67 §9): 지금 프로젝트를 **같은 파일**에 쓰는 명시 저장(`project.save`)도 다른 인스턴스가 쓴 것을 먼저 합친다 —
+        //   자동 저장·닫기 길(`project_save`)만 합치고 이 길은 바로 덮어쓰던 구멍(협업 11-19 관찰). 새 프로젝트·다른 이름은 해당 없음.
+        if !self.project_new_fresh && self.project.path.as_deref() == Some(path.as_path()) {
+            let _ = self.project_sync_external(true);
+        }
         let fresh = std::mem::take(&mut self.project_new_fresh);
         let mut p = if fresh {
             project::Project::default()
@@ -514,10 +546,10 @@ impl App {
             // 🔧 저장·새 프로젝트·닫기 길: `bind_project`가 저장소를 비우고 워크스페이스 파일(옛 것)을 읽어 **방금 담은 북마크
             //   (니모닉 포함)가 사라지던 결함**(사용자 09-23) — 프로젝트 파일에 담긴 북마크를 그대로 되돌린다(복원 길은 `project_restore`가 한다).
             if let Some(js) = self.project.bookmarks.clone() {
-                self.bookmarks.load_json(&js);
+                self.bookmarks.load_doc_json(&js, &self.tab_doc_ids);
             }
             self.bm_sync_ui();
-            self.project_last_json = self.project.to_document();
+            self.project_note_disk(self.project.to_document());
             self.project_mark_saved_gen();
         }
     }
@@ -688,51 +720,292 @@ impl App {
         self.redraw();
     }
 
-    /// ★ T-39b(67 §8-4 · 58 정책): 프로젝트 파일이 **밖에서**(git pull · 다른 인스턴스) 바뀌었으면 `settings` 절만 다시 읽어 갈아 끼운다 —
-    ///   메인 창이 활성화될 때 한 번(열린 파일 확인과 같은 때) · 길이가 마지막 저장분과 같으면 읽지 않는다(값싼 1차 판정) · 탭·폴더는 건드리지
-    ///   않는다(우리 상태가 자동 저장으로 다시 쓰인다 · 종전과 같음).
-    pub(crate) fn project_reload_settings_if_changed(&mut self) {
+    /// 방금 읽거나 쓴 프로젝트 문서를 기준본으로 삼고 그 순간의 파일 서명을 기억한다(다음 동기화 = 서명이 달라졌을 때만 읽는다).
+    fn project_note_disk(&mut self, doc: Vec<u8>) {
+        self.project_ours_mark = doc_mark(&doc);
+        self.project_last_json = doc;
+        self.project_sig = self
+            .project
+            .path
+            .as_deref()
+            .and_then(nexa_fs::watch::file_sig);
+    }
+
+    /// 병합 열쇠 → 지금 열려 있는 탭 id.
+    fn project_tab_of(&self, k: &projsync::TabKey) -> Option<u64> {
+        (0..self.editors.tab_count())
+            .find(|&i| {
+                let path = self.editors.path_of(i);
+                match k {
+                    projsync::TabKey::File(p) => path.as_deref() == Some(p.as_path()),
+                    projsync::TabKey::Id(d) => {
+                        path.is_none() && self.tab_doc_ids.get(&self.editors.tab_id(i)) == Some(d)
+                    }
+                }
+            })
+            .map(|i| self.editors.tab_id(i))
+    }
+
+    /// ★ 다중 인스턴스 동기화(67 §9 · 사용자 11-19 "A에서 저장한 것을 B가 포커스 받을 때 갱신"): 프로젝트 파일이 **다른 인스턴스**
+    ///   (또는 git pull)로 바뀌었으면 항목 단위 3-way로 우리 상태에 합친다 — 기준본 = 마지막으로 읽거나 쓴 문서(`project_last_json`).
+    ///   - 탭 본문: 저쪽만 바꿈 = 조용히 반영(되돌리기 한 단계) · 둘 다 바꿈 = 줄 단위 병합(병합 전 백업) · 겹침 = 그 탭에 띠.
+    ///   - 탭 열기·닫기 · 폴더 · `settings` 절 · 북마크 = 항목 단위(`projsync::plan` · `Store::merge3`) · 화면 상태는 합치지 않는다.
+    ///
+    ///   부르는 때 = 메인 창이 포커스를 받을 때 + **저장 직전**(자동 저장 포함 = 덮어쓰기 방지). `force` = 실행 중인 탭이 있어도 진행
+    ///   (닫기·종료 길). 설정 `project.external_change` = `auto`(기본) / `ask`(본문은 늘 띠로) / `off`(종전 = 마지막에 쓴 쪽이 이김).
+    pub(crate) fn project_sync_external(&mut self, force: bool) -> ProjSync {
         let Some(path) = self.project.path.clone() else {
-            return;
+            return ProjSync::Same;
         };
-        if self.project_last_json.is_empty() {
-            return;
+        let mode = self
+            .settings
+            .get("project.external_change")
+            .unwrap_or("auto")
+            .to_string();
+        if self.project_last_json.is_empty() || mode == "off" {
+            return ProjSync::Same;
         }
-        let Ok(meta) = std::fs::metadata(&path) else {
-            return;
-        };
-        if meta.len() as usize == self.project_last_json.len() {
-            return;
+        // 값싼 1차 판정 = 서명(크기 · 수정 시각 · 파일 식별자). 파일이 없으면 다음 저장이 되살린다.
+        let sig = nexa_fs::watch::file_sig(&path);
+        if sig.is_none() || sig == self.project_sig {
+            return ProjSync::Same;
         }
         let Ok(bytes) = std::fs::read(&path) else {
-            return;
+            return ProjSync::Same;
         };
         if bytes == self.project_last_json {
-            return;
+            self.project_sig = sig;
+            return ProjSync::Same;
         }
-        let Ok(p) = project::Project::load(&path) else {
-            return;
+        // 못 읽는 문서(깨졌거나 쓰는 중)면 합칠 수 없다 — 종전처럼 우리 상태가 다음 저장에 쓰인다.
+        let (Ok(theirs), Ok(base)) = (
+            project::Project::from_bytes(&path, &bytes),
+            project::Project::from_bytes(&path, &self.project_last_json),
+        ) else {
+            return ProjSync::Same;
         };
-        if p.settings == self.project.settings {
-            return;
+        self.project_capture_state();
+        // 우리 것도 같은 길(문서 → 모델)로 풀어 비교한다(경로 표기·본문 바이트가 같은 규칙을 거치게).
+        let ours_doc = self.project.to_document();
+        // 마지막으로 쓰거나 맞춘 뒤 우리가 바꾼 것이 없는가 — 없으면 합친 뒤에도 "쓸 것 없음"으로 둔다(아래).
+        let was_clean = doc_mark(&ours_doc) == self.project_ours_mark;
+        let Ok(ours) = project::Project::from_bytes(&path, &ours_doc) else {
+            return ProjSync::Same;
+        };
+        let plan = projsync::plan(&base, &ours, &theirs);
+        // 실행 중인 탭의 본문은 바꾸지 않는다(실행 범위·오류 줄이 어긋난다) → 통째로 미룬다(기준본을 옮기지 않으므로 다음에 다시 온다).
+        let touches_running = plan.tabs.iter().any(|op| match op {
+            projsync::TabOp::Body { key, .. }
+            | projsync::TabOp::Revert { key, .. }
+            | projsync::TabOp::Close(key) => self
+                .project_tab_of(key)
+                .is_some_and(|id| self.editors.is_running(id)),
+            projsync::TabOp::Open(_) => false,
+        });
+        if touches_running && !force {
+            return ProjSync::Busy;
         }
-        self.project.settings = p.settings;
-        self.apply_project_settings();
-        let msg = tf(
-            Msg::LogProjectSettingsReloaded,
-            &[&nexa_fs::path::display(&path)],
-        );
-        self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
-        self.sess.status = msg;
-        self.redraw();
+        let keep_active = self.editors.active_id();
+        let opts = nsql_bookmarks::RelocateOpts::default();
+        let (mut applied, mut conflicts) = (0usize, 0usize);
+        for op in plan.tabs {
+            match op {
+                projsync::TabOp::Open(t) => {
+                    let (mut dirty, mut remap) = (0usize, Vec::new());
+                    if self
+                        .project_restore_tab(&t, &opts, &mut dirty, &mut remap)
+                        .is_some()
+                    {
+                        applied += 1;
+                    }
+                }
+                projsync::TabOp::Close(key) => {
+                    let Some(i) = self
+                        .project_tab_of(&key)
+                        .and_then(|id| self.editors.index_of_id(id))
+                    else {
+                        continue;
+                    };
+                    // 본문을 담지 못한 탭(상한 초과)이 고쳐져 있으면 닫지 않는다 — 계획은 "담긴 본문이 조상과 같다"만 보았다.
+                    let captured = ours
+                        .tabs
+                        .iter()
+                        .find(|t| projsync::key_of(t).as_ref() == Some(&key))
+                        .is_some_and(|t| t.text.is_some());
+                    if captured || !self.editors.is_dirty(i) {
+                        self.editors.close_tab_forced(i);
+                        applied += 1;
+                    }
+                }
+                projsync::TabOp::Body { key, base, theirs } => {
+                    let Some(id) = self.project_tab_of(&key) else {
+                        continue;
+                    };
+                    match self.project_sync_body(id, base, &theirs, mode == "ask") {
+                        Some(true) => applied += 1,
+                        Some(false) => conflicts += 1,
+                        None => {}
+                    }
+                }
+                projsync::TabOp::Revert { key, base } => {
+                    let projsync::TabKey::File(p) = &key else {
+                        continue;
+                    };
+                    let Some(id) = self.project_tab_of(&key) else {
+                        continue;
+                    };
+                    let Some(i) = self.editors.index_of_id(id) else {
+                        continue;
+                    };
+                    // 우리 버퍼가 조상 본문 그대로일 때만 디스크로 — 더 고쳤으면 파일 쪽 외부 변경 확인(`ext_check`)이 맡는다.
+                    let same = self
+                        .editors
+                        .tab_box(i)
+                        .is_some_and(|tb| tb.buf().eq_str(&base));
+                    if mode == "ask" || !same {
+                        continue;
+                    }
+                    if let (Ok(raw), Some(fsig)) = (std::fs::read(p), nexa_fs::watch::file_sig(p)) {
+                        let enc = self.editors.snapshot(i).map(|s| s.2.to_string());
+                        let (text, _, used) =
+                            Self::decode_bytes(&raw, enc.as_deref().unwrap_or("auto"));
+                        let (disk_eol, disk) = eol::detect(&text);
+                        self.editors.apply_external(
+                            i,
+                            Some(&disk),
+                            &disk,
+                            Some(disk_eol),
+                            Some(used),
+                        );
+                        let info = self.ext_files.entry(id).or_default();
+                        info.sig = Some(fsig);
+                        info.pending = None;
+                        info.ignored = None;
+                        info.diverged = false;
+                        applied += 1;
+                    }
+                }
+            }
+        }
+        if self.editors.index_of_id(keep_active).is_some()
+            && self.editors.active_id() != keep_active
+        {
+            self.editors.switch_to_id(keep_active);
+            self.sync_grid_tab();
+        }
+        if plan.folders != self.project.folders {
+            self.project.folders = plan.folders;
+            applied += 1;
+            self.project_changed(false);
+        }
+        if plan.settings != self.project.settings {
+            self.project.settings = plan.settings;
+            self.apply_project_settings();
+            applied += 1;
+        }
+        if theirs.bookmarks != base.bookmarks {
+            if let Some(tj) = theirs.bookmarks.as_deref() {
+                let n =
+                    self.bookmarks
+                        .merge_external(base.bookmarks.as_deref(), tj, &self.tab_doc_ids);
+                if n > 0 {
+                    applied += n;
+                    self.bm_sync_ui();
+                }
+            }
+        }
+        // 기준본 = 방금 합친 디스크 문서.
+        self.project_last_json = bytes;
+        self.project_sig = sig;
+        // ★ 우리가 바꾼 것이 없었으면 합친 결과를 "맞춘 상태"로 삼는다 — 저쪽 문서와 화면 상태만 다르다는 이유로 다시 쓰지 않는다
+        //   (두 유휴 인스턴스가 번갈아 덮어쓰는 것을 막는다). 바꾼 것이 있었으면 표식을 그대로 두어 다음 자동 저장이 합친 문서를 쓴다.
+        if was_clean {
+            self.project_capture_state();
+            self.project_ours_mark = doc_mark(&self.project.to_document());
+            self.project_mark_saved_gen();
+        }
+        if applied > 0 || conflicts > 0 {
+            let msg = if conflicts > 0 {
+                tf(
+                    Msg::StProjectSyncConflict,
+                    &[&applied.to_string(), &conflicts.to_string()],
+                )
+            } else {
+                tf(Msg::StProjectSynced, &[&applied.to_string()])
+            };
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.sess.status = msg;
+            self.project_touch();
+            self.ext_banner_sync();
+            self.sync_open_files();
+            self.layout();
+            self.redraw();
+        }
+        ProjSync::Merged
+    }
+
+    /// 저쪽에서 바뀐 탭 본문 하나를 우리 버퍼에 합친다(판정 = 파일의 외부 변경과 같은 `extfile::decide`) —
+    /// `Some(true)` = 반영 · `Some(false)` = 겹쳐서 띠로 물음 · `None` = 할 일 없음(이미 같음).
+    fn project_sync_body(
+        &mut self,
+        id: u64,
+        base: Option<String>,
+        theirs: &str,
+        ask: bool,
+    ) -> Option<bool> {
+        let i = self.editors.index_of_id(id)?;
+        let (buf, saved, _, _) = self.editors.snapshot(i)?;
+        let saved = saved.to_string();
+        let large = self.editors.is_large(i);
+        // 조상에 본문이 없던 파일 탭 = 그때는 디스크 그대로였다 → 기준 = 저장 기준 본문(큰 파일은 사본이 없어 버퍼를 기준으로).
+        let base = match base {
+            Some(b) => b,
+            None if self.editors.path_of(i).is_none() => String::new(),
+            None if large && !self.editors.is_dirty(i) => buf.clone(),
+            None => saved,
+        };
+        let max = (self.settings.int("file.external_merge_max_kb").max(16) as usize) * 1024;
+        let decision = extfile::decide(&extfile::DecideIn {
+            base: &base,
+            buf: &buf,
+            disk: theirs,
+            ask_always: ask,
+            merge_on: self.settings.flag("file.external_merge") && !large,
+            size_ok: theirs.len() <= max && buf.len() <= max,
+            format_changed: false,
+        });
+        match decision {
+            extfile::Decision::Ignore | extfile::Decision::AdoptBase => {
+                self.project_pending.remove(&id);
+                None
+            }
+            extfile::Decision::Reload => {
+                self.project_pending.remove(&id);
+                self.editors.apply_synced(i, theirs);
+                Some(true)
+            }
+            extfile::Decision::Merge(m) => {
+                self.project_pending.remove(&id);
+                let name = self.editors.title_of(i);
+                self.ext_backup(&name, &buf);
+                self.editors.apply_synced(i, &m.text);
+                Some(true)
+            }
+            extfile::Decision::Ask(n) => {
+                self.project_pending.insert(id, (theirs.to_string(), n));
+                Some(false)
+            }
+        }
     }
 
     /// 프로젝트 파일 저장 — 탐색기의 마지막 선택 위치를 담아서(닫기·전환·폴더 변경·종료 = 전부 이 길).
     pub(crate) fn project_save(&mut self) -> Result<(), String> {
+        // ★ 저장 보호(67 §9): 다른 인스턴스가 그 사이 썼으면 먼저 합친다 — 무조건 덮어쓰지 않는다(닫기·전환·종료 길 = 미루지 않음).
+        let _ = self.project_sync_external(true);
         self.project_capture_state();
         let r = self.project.save();
         if r.is_ok() {
-            self.project_last_json = self.project.to_document();
+            self.project_note_disk(self.project.to_document());
             self.project_mark_saved_gen();
         }
         r
@@ -778,7 +1051,13 @@ impl App {
                 line,
                 col,
                 preview: self.editors.preview_id() == Some(self.editors.tab_id(i)),
-                id: self.editors.tab_id(i),
+                // ★ 탭의 **문서 id**(67 §9 · 11-19): 탭 id는 인스턴스 안에서만 유일하므로(둘 다 1부터 센다) 같은 프로젝트를 연 두
+                //   인스턴스가 탭을 맞추려면 인스턴스와 무관한 값이 필요하다 — 복원한 탭은 파일에 적혀 있던 값을 잇고
+                //   (`project_restore_tab`), 새 탭은 처음 담을 때 겹치지 않는 값을 받는다.
+                id: *self
+                    .tab_doc_ids
+                    .entry(tab_id_now)
+                    .or_insert_with(new_doc_id),
                 indent: self.editors.indent_of(i),
                 view: self.editors.view_key_of(i),
                 read_only,
@@ -842,6 +1121,8 @@ impl App {
             .map(|i| self.editors.tab_id(i))
             .collect();
         self.capture_cache.retain(|id, _| live.contains(id));
+        self.tab_doc_ids.retain(|id, _| live.contains(id));
+        self.project_pending.retain(|id, _| live.contains(id));
         // 파일 탭의 미저장 본문 = 스냅숏(docs/70 §5 · 원본은 안 만진다) — ★ T-165 P3 ①(10-31): 쓰기는 여기(동기)가 아니라
         //   `backup_tick`의 저장 큐 + `backup-writer` 스레드가 맡는다(틱마다 바뀐 탭만 큐에 · 만료분만 본문을 떠서 보냄 · clean = 삭제).
         for (title, bytes) in over {
@@ -858,7 +1139,8 @@ impl App {
         }
         self.project.tabs = tabs;
         self.project.active = self.editors.active();
-        self.project.bookmarks = Some(self.bookmarks.store.to_json());
+        // ★ 67 §9: 이름 없는 탭의 북마크 열쇠도 문서 id로 적는다(탭 id는 인스턴스마다 다르다).
+        self.project.bookmarks = Some(self.bookmarks.doc_store(&self.tab_doc_ids).to_json());
         // ★ 좌측 패널 상태(사용자 09-23 "각 좌측 기능별로 복원"): 탐색기 펼침 · 보이던 패널 · 검색어 · 북마크 접힘 · 접속 표식.
         self.project.expanded = self.project_panel.expanded_dirs();
         self.project.panel = if self.project_panel.is_visible() {
@@ -909,117 +1191,7 @@ impl App {
         let mut restored_dirty = 0usize;
         let mut scratch_remap: Vec<(u64, u64)> = Vec::new();
         for t in &tabs {
-            let id = match &t.path {
-                Some(p) => {
-                    if !p.is_file() {
-                        None
-                    } else {
-                        if t.read_only {
-                            // 읽기 전용으로 열렸던 탭 = 같은 기준으로(사용자 10-13 · 이진이면 안내 탭 · 글이면 읽기 전용 열기 ·
-                            //   미리보기였으면 미리보기 안내로).
-                            if t.preview && fileload::sniff_binary(p) {
-                                let name = editors::file_title(p);
-                                self.open_binary_preview(p, &name);
-                            } else {
-                                self.load_file(p, "auto", LoadMode::ReadOnly);
-                            }
-                        } else if t.preview {
-                            // 미리보기 탭은 미리보기로(북마크·탐색기 한 번 클릭으로 연 것 · 편집하면 승격).
-                            self.project_open_req(project_panel::OpenReq {
-                                path: p.clone(),
-                                permanent: false,
-                            });
-                        } else {
-                            self.open_file(p);
-                        }
-                        let i = self.editors.active();
-                        if self.editors.active_path().as_deref() == Some(p.as_path()) {
-                            // ★ 미저장 편집분은 **프로젝트 파일**에서 그대로 올린다(사용자 09-23 "탭별로 저장해 자동 복구" · `backups/`는
-                            //   백업용으로만 · 복원에 쓰지 않는다). 디스크가 그 사이 바뀌었으면(해시 다름) 올리되 로그로 알린다.
-                            if let Some(body) = &t.text {
-                                if let Some(tb) = self.editors.tab_box_mut(i) {
-                                    tb.set_text(body);
-                                }
-                                restored_dirty += 1;
-                                if t.disk_hash != 0 && backups::disk_hash(p) != t.disk_hash {
-                                    self.log_win.push(LogEntry::new(
-                                        LogKind::Info,
-                                        tf(Msg::StBackupExternal, &[&p.to_string_lossy()]),
-                                    ));
-                                    // ★ T-165 P3 D-180(10-30 · 70 §9): 복원한 미저장 본문 ≠ 지금 디스크 → 외부 변경과 같은 길로
-                                    //   **탭 띠**(비교 / 다시 읽기 / 유지 · `extfile` 58 정책) — 종전 = 로그만.
-                                    if let (Ok(bytes), Some(sig)) =
-                                        (std::fs::read(p), nexa_fs::watch::file_sig(p))
-                                    {
-                                        let id = self.editors.tab_id(i);
-                                        self.ext_on_changed(id, p, sig, &bytes);
-                                    }
-                                }
-                            }
-                            self.restore_caret(i, t, &opts);
-                            if t.indent.is_some() {
-                                self.editors.set_indent_of(i, t.indent);
-                            }
-                            // 사용자가 바꾼 이름(파일 이름과 다르면) = 복원(사용자 09-28 · 프로젝트 모드 보존).
-                            let fname = p.file_name().map(|n| n.to_string_lossy().into_owned());
-                            if !t.title.is_empty() && fname.as_deref() != Some(t.title.as_str()) {
-                                self.editors.rename_tab(i, &t.title);
-                            }
-                            Some(self.editors.tab_id(i))
-                        } else {
-                            None
-                        }
-                    }
-                }
-                // ★ 뷰 탭(확장 상세) = 열쇠로 같은 뷰를 다시 연다 · 확장이 없어졌으면 탭도 없음(사용자 09-30).
-                None if t.view.is_some() => {
-                    let key = t.view.clone().unwrap_or_default();
-                    match key.strip_prefix("ext:") {
-                        Some(id) if self.ext_reopen_view(id) => Some(self.editors.active_id()),
-                        _ => None,
-                    }
-                }
-                None => {
-                    self.editors.new_tab(Some(t.title.clone()));
-                    let i = self.editors.active();
-                    if let Some(tb) = self.editors.tab_box_mut(i) {
-                        if let Some(txt) = &t.text {
-                            tb.set_text(txt);
-                        }
-                        // ★ 미리보기였던 경로 없는 탭(객체 찾기 미리보기 · 10-16 사용자 1안) = 미리보기로 복원 · 저장 지점을 찍어
-                        //   곧장 승격되지 않게(편집해야 정식). 정식 탭으로 보이던 종전 결함.
-                        if t.preview {
-                            tb.mark_saved();
-                        }
-                    }
-                    self.restore_caret(i, t, &opts);
-                    if t.indent.is_some() {
-                        self.editors.set_indent_of(i, t.indent);
-                    }
-                    let new_id = self.editors.tab_id(i);
-                    if t.preview {
-                        self.editors.set_preview_id(Some(new_id));
-                    }
-                    // ★ T-121 (e)(10-30): 저장 당시 프로필의 공유 세션에 다시 묶기(없으면 접속될 때까지 보관).
-                    if let Some(p) = &t.profile {
-                        self.restore_tab_bind(new_id, p);
-                    }
-                    // 무제 탭의 변수 표 복원(T-153 ③ · 새 탭 id로).
-                    if t.path.is_none() {
-                        if let Some(v) = &t.vars {
-                            let states = nsql_script::vars_from_script(v);
-                            if !states.is_empty() {
-                                self.tab_vars.insert(new_id, states);
-                            }
-                        }
-                    }
-                    // 이름 없는 탭의 북마크(`Scratch { tab }`)는 옛 id → 새 id로 재매핑(사용자 09-23 검토 · 본문이 그대로라 줄이 맞는다).
-                    if t.id != 0 {
-                        scratch_remap.push((t.id, new_id));
-                    }
-                    Some(new_id)
-                }
-            };
+            let id = self.project_restore_tab(t, &opts, &mut restored_dirty, &mut scratch_remap);
             ids.push(id);
         }
         if let Some(Some(id)) = ids.get(self.project.active) {
@@ -1069,11 +1241,138 @@ impl App {
             self.toasts
                 .push(toast::ToastKind::Info, t(Msg::MnProject).to_string(), msg);
         }
-        self.project_last_json = self.project.to_document();
+        self.project_note_disk(self.project.to_document());
         self.project_mark_saved_gen();
         self.sync_open_files();
         self.layout();
         self.redraw();
+    }
+
+    /// 저장된 탭 하나를 연다(`project_restore`의 한 바퀴 · 다중 인스턴스 동기화의 "저쪽이 새로 연 탭"도 이 길 · 67 §9) — 연 탭의 id.
+    ///   `restored_dirty` = 미저장 본문을 올린 파일 탭 수 · `scratch_remap` = 무제 탭의 (문서 id → 새 탭 id · 북마크 재매핑용).
+    fn project_restore_tab(
+        &mut self,
+        t: &project::TabState,
+        opts: &nsql_bookmarks::RelocateOpts,
+        restored_dirty: &mut usize,
+        scratch_remap: &mut Vec<(u64, u64)>,
+    ) -> Option<u64> {
+        let id = match &t.path {
+            Some(p) => {
+                if !p.is_file() {
+                    None
+                } else {
+                    if t.read_only {
+                        // 읽기 전용으로 열렸던 탭 = 같은 기준으로(사용자 10-13 · 이진이면 안내 탭 · 글이면 읽기 전용 열기 ·
+                        //   미리보기였으면 미리보기 안내로).
+                        if t.preview && fileload::sniff_binary(p) {
+                            let name = editors::file_title(p);
+                            self.open_binary_preview(p, &name);
+                        } else {
+                            self.load_file(p, "auto", LoadMode::ReadOnly);
+                        }
+                    } else if t.preview {
+                        // 미리보기 탭은 미리보기로(북마크·탐색기 한 번 클릭으로 연 것 · 편집하면 승격).
+                        self.project_open_req(project_panel::OpenReq {
+                            path: p.clone(),
+                            permanent: false,
+                        });
+                    } else {
+                        self.open_file(p);
+                    }
+                    let i = self.editors.active();
+                    if self.editors.active_path().as_deref() == Some(p.as_path()) {
+                        // ★ 미저장 편집분은 **프로젝트 파일**에서 그대로 올린다(사용자 09-23 "탭별로 저장해 자동 복구" · `backups/`는
+                        //   백업용으로만 · 복원에 쓰지 않는다). 디스크가 그 사이 바뀌었으면(해시 다름) 올리되 로그로 알린다.
+                        if let Some(body) = &t.text {
+                            if let Some(tb) = self.editors.tab_box_mut(i) {
+                                tb.set_text(body);
+                            }
+                            *restored_dirty += 1;
+                            if t.disk_hash != 0 && backups::disk_hash(p) != t.disk_hash {
+                                self.log_win.push(LogEntry::new(
+                                    LogKind::Info,
+                                    tf(Msg::StBackupExternal, &[&p.to_string_lossy()]),
+                                ));
+                                // ★ T-165 P3 D-180(10-30 · 70 §9): 복원한 미저장 본문 ≠ 지금 디스크 → 외부 변경과 같은 길로
+                                //   **탭 띠**(비교 / 다시 읽기 / 유지 · `extfile` 58 정책) — 종전 = 로그만.
+                                if let (Ok(bytes), Some(sig)) =
+                                    (std::fs::read(p), nexa_fs::watch::file_sig(p))
+                                {
+                                    let id = self.editors.tab_id(i);
+                                    self.ext_on_changed(id, p, sig, &bytes);
+                                }
+                            }
+                        }
+                        self.restore_caret(i, t, opts);
+                        if t.indent.is_some() {
+                            self.editors.set_indent_of(i, t.indent);
+                        }
+                        // 사용자가 바꾼 이름(파일 이름과 다르면) = 복원(사용자 09-28 · 프로젝트 모드 보존).
+                        let fname = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                        if !t.title.is_empty() && fname.as_deref() != Some(t.title.as_str()) {
+                            self.editors.rename_tab(i, &t.title);
+                        }
+                        Some(self.editors.tab_id(i))
+                    } else {
+                        None
+                    }
+                }
+            }
+            // ★ 뷰 탭(확장 상세) = 열쇠로 같은 뷰를 다시 연다 · 확장이 없어졌으면 탭도 없음(사용자 09-30).
+            None if t.view.is_some() => {
+                let key = t.view.clone().unwrap_or_default();
+                match key.strip_prefix("ext:") {
+                    Some(id) if self.ext_reopen_view(id) => Some(self.editors.active_id()),
+                    _ => None,
+                }
+            }
+            None => {
+                self.editors.new_tab(Some(t.title.clone()));
+                let i = self.editors.active();
+                if let Some(tb) = self.editors.tab_box_mut(i) {
+                    if let Some(txt) = &t.text {
+                        tb.set_text(txt);
+                    }
+                    // ★ 미리보기였던 경로 없는 탭(객체 찾기 미리보기 · 10-16 사용자 1안) = 미리보기로 복원 · 저장 지점을 찍어
+                    //   곧장 승격되지 않게(편집해야 정식). 정식 탭으로 보이던 종전 결함.
+                    if t.preview {
+                        tb.mark_saved();
+                    }
+                }
+                self.restore_caret(i, t, opts);
+                if t.indent.is_some() {
+                    self.editors.set_indent_of(i, t.indent);
+                }
+                let new_id = self.editors.tab_id(i);
+                if t.preview {
+                    self.editors.set_preview_id(Some(new_id));
+                }
+                // ★ T-121 (e)(10-30): 저장 당시 프로필의 공유 세션에 다시 묶기(없으면 접속될 때까지 보관).
+                if let Some(p) = &t.profile {
+                    self.restore_tab_bind(new_id, p);
+                }
+                // 무제 탭의 변수 표 복원(T-153 ③ · 새 탭 id로).
+                if t.path.is_none() {
+                    if let Some(v) = &t.vars {
+                        let states = nsql_script::vars_from_script(v);
+                        if !states.is_empty() {
+                            self.tab_vars.insert(new_id, states);
+                        }
+                    }
+                }
+                // 이름 없는 탭의 북마크(`Scratch { tab }`)는 옛 id → 새 id로 재매핑(사용자 09-23 검토 · 본문이 그대로라 줄이 맞는다).
+                if t.id != 0 {
+                    scratch_remap.push((t.id, new_id));
+                }
+                Some(new_id)
+            }
+        };
+        // ★ 문서 id 등록(67 §9): 이 탭을 다음에 담을 때 같은 id로 적는다 — 다른 인스턴스와 탭을 맞추는 열쇠.
+        if let (Some(id), true) = (id, t.id != 0) {
+            self.tab_doc_ids.insert(id, t.id);
+        }
+        id
     }
 
     /// 좌측 패널 상태 복원(사용자 09-23 "각 좌측 기능별"): 탐색기 펼침(선택은 `set_project`가) · 검색어 · 북마크 접힘 · 보이던 패널.
@@ -1451,13 +1750,19 @@ impl App {
         }
         self.project_touch_at = None;
         self.project_autosave_at = Instant::now();
+        // ★ 저장 보호(67 §9): 다른 인스턴스가 쓴 것을 먼저 합친다 · 실행 중인 탭 때문에 지금 못 합치면 이번 저장은 건너뛴다
+        //   (덮어쓰면 저쪽 변경이 사라진다 · 다음 주기에 다시).
+        if self.project_sync_external(false) == ProjSync::Busy {
+            return;
+        }
         self.project_capture_state();
         let js = self.project.to_document();
-        if js == self.project_last_json {
+        // 판정 = 우리가 마지막으로 쓰거나 맞춘 문서와 같은가(디스크 문서가 아니라 · 67 §9).
+        if doc_mark(&js) == self.project_ours_mark {
             // 🔧 쓸 것이 없어도 "저장됨"이다 — 세대만 다르고 문서가 같으면 `*`가 영원히 남던 결함(사용자 09-28).
             self.project_mark_saved_gen();
         } else if self.project.save().is_ok() {
-            self.project_last_json = js;
+            self.project_note_disk(js);
             self.project_mark_saved_gen();
         }
     }
@@ -2054,7 +2359,7 @@ impl App {
             return false;
         }
         self.project_capture_state();
-        self.project.to_document() != self.project_last_json
+        doc_mark(&self.project.to_document()) != self.project_ours_mark
     }
 
     /// 프로젝트 자동 저장·복원은 Pro(25 §13-3) — 설정이 켜져 있어도 게이트가 켜진 무료면 꺼진 것으로(기본은 게이트 끔 · D-145).

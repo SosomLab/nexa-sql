@@ -62,6 +62,7 @@ impl Extension for RainbowPairs {
             label: Label::Msg(Msg::MnBracketMenu),
             items: self.commands(),
             target: super::MenuTarget::Editor,
+            when: None,
         }]
     }
 

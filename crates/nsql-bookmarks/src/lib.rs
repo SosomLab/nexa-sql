@@ -879,6 +879,87 @@ impl Store {
         (live, self.items.len() - live)
     }
 
+    /// ★ 3-way 병합(다중 인스턴스 동기화 · nexa-sql docs/67 §9): `self` = 우리 저장소 · `base` = 공통 조상 · `theirs` = 다른 인스턴스가
+    ///   쓴 것. **항목 단위**(id)로 저쪽의 추가·변경·삭제를 받아들이되, 같은 항목을 양쪽이 바꿨으면 우리 것을 지킨다(나중에 쓰는 쪽).
+    ///   양쪽이 각자 새로 만든 항목의 id가 겹치면 저쪽 것에 새 id를 준다. 반환 = 받아들인 변경 수.
+    ///   문서별 불변식(같은 줄 중복 · 니모닉)은 호출자가 [`Store::normalize`]로 다시 세운다.
+    pub fn merge3(&mut self, base: &Store, theirs: &Store) -> usize {
+        let mut n = 0;
+        for g in &theirs.groups {
+            match base.groups.iter().find(|b| b.id == g.id) {
+                // 저쪽이 고친 그룹(이름·사용 여부) — 우리가 안 바꿨을 때만.
+                Some(b) => {
+                    if let Some(o) = self.groups.iter_mut().find(|o| o.id == g.id) {
+                        if (o.name != g.name || o.enabled != g.enabled)
+                            && o.name == b.name
+                            && o.enabled == b.enabled
+                        {
+                            o.name.clone_from(&g.name);
+                            o.enabled = g.enabled;
+                            n += 1;
+                        }
+                    }
+                }
+                // 저쪽이 새로 만든 그룹 — id가 비어 있을 때만(겹치면 우리 그룹이 그 id의 주인).
+                None => {
+                    if !self.groups.iter().any(|o| o.id == g.id) {
+                        self.groups.push(Group {
+                            default: false,
+                            ..g.clone()
+                        });
+                        n += 1;
+                    }
+                }
+            }
+        }
+        for t in &theirs.items {
+            match base.get(t.id) {
+                Some(b) => {
+                    if t != b {
+                        if let Some(o) = self.get_mut(t.id) {
+                            if *o == *b {
+                                *o = t.clone();
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+                None => {
+                    // 이미 같은 내용이 있으면(앞선 병합으로 받은 것 · id만 다름) 다시 넣지 않는다.
+                    let dup = self
+                        .items
+                        .iter()
+                        .any(|o| o.doc == t.doc && o.anchor == t.anchor && o.label == t.label);
+                    if dup {
+                        continue;
+                    }
+                    let mut nb = t.clone();
+                    if self.get(nb.id).is_some() {
+                        nb.id = self.next_id.max(theirs.next_id);
+                    }
+                    self.next_id = self.next_id.max(nb.id + 1);
+                    if !self.groups.iter().any(|g| g.id == nb.group) {
+                        nb.group = self.default_group();
+                    }
+                    self.items.push(nb);
+                    n += 1;
+                }
+            }
+        }
+        // 저쪽이 지운 항목 — 우리가 그대로 두고 있던 것만 지운다.
+        for b in &base.items {
+            if theirs.get(b.id).is_none() {
+                if let Some(pos) = self.items.iter().position(|o| o == b) {
+                    self.items.remove(pos);
+                    n += 1;
+                }
+            }
+        }
+        self.next_id = self.next_id.max(theirs.next_id);
+        self.next_group = self.next_group.max(theirs.next_group);
+        n
+    }
+
     // ───────────── JSON(69 §7-2) ─────────────
 
     #[must_use]
@@ -1494,5 +1575,60 @@ mod tests {
             (Some("이름"), Some(1))
         );
         assert_eq!(st.normalize(true), 0, "두 번째는 할 일 없음");
+    }
+
+    /// 다중 인스턴스 3-way 병합(nexa-sql 67 §9): 저쪽의 추가·변경·삭제를 받고 · 양쪽이 바꾼 항목은 우리 것 · 새 항목 id가 겹치면 새 id.
+    #[test]
+    fn merge3_takes_their_delta_and_keeps_our_edits() {
+        let at = |line: u32| Anchor {
+            line,
+            text: format!("line {line}"),
+            ..Anchor::default()
+        };
+        let doc = DocKey::file("a.sql");
+        let mut base = Store::new();
+        let keep = base.add(doc.clone(), at(1), 0, true, 0, 0).unwrap();
+        let theirs_edit = base.add(doc.clone(), at(2), 0, true, 0, 0).unwrap();
+        let theirs_del = base.add(doc.clone(), at(3), 0, true, 0, 0).unwrap();
+        let both_edit = base.add(doc.clone(), at(4), 0, true, 0, 0).unwrap();
+        let del_but_ours_edited = base.add(doc.clone(), at(5), 0, true, 0, 0).unwrap();
+
+        // 우리: both_edit·del_but_ours_edited에 이름 · 새 항목(줄 10).
+        let mut ours = base.clone();
+        ours.get_mut(both_edit).unwrap().label = Some("mine".into());
+        ours.get_mut(del_but_ours_edited).unwrap().label = Some("mine".into());
+        let ours_new = ours.add(doc.clone(), at(10), 0, true, 0, 0).unwrap();
+
+        // 저쪽: theirs_edit·both_edit에 이름 · theirs_del·del_but_ours_edited 삭제 · 새 항목(줄 20 · 우리 새 항목과 같은 id).
+        let mut theirs = base.clone();
+        theirs.get_mut(theirs_edit).unwrap().label = Some("theirs".into());
+        theirs.get_mut(both_edit).unwrap().label = Some("theirs".into());
+        theirs.remove(theirs_del);
+        theirs.remove(del_but_ours_edited);
+        let theirs_new = theirs.add(doc.clone(), at(20), 0, true, 0, 0).unwrap();
+        assert_eq!(ours_new, theirs_new, "두 인스턴스가 같은 id를 새로 쓴다");
+
+        let n = ours.merge3(&base, &theirs);
+        assert_eq!(n, 3, "변경 1 + 추가 1 + 삭제 1");
+        assert!(ours.get(keep).is_some());
+        assert_eq!(
+            ours.get(theirs_edit).unwrap().label.as_deref(),
+            Some("theirs")
+        );
+        assert!(ours.get(theirs_del).is_none());
+        assert_eq!(ours.get(both_edit).unwrap().label.as_deref(), Some("mine"));
+        assert!(
+            ours.get(del_but_ours_edited).is_some(),
+            "우리가 고친 것은 지우지 않는다"
+        );
+        assert_eq!(ours.get(ours_new).unwrap().anchor.line, 10);
+        let moved = ours.items.iter().find(|b| b.anchor.line == 20).unwrap();
+        assert_ne!(moved.id, ours_new, "겹친 id는 새로 준다");
+        assert!(ours.next_id > moved.id);
+
+        // 같은 문서를 다시 합쳐도 늘지 않는다(멱등 — 기준본이 옮겨지기 전 한 번 더 불려도).
+        let before = ours.items.len();
+        assert_eq!(ours.merge3(&base, &theirs), 0);
+        assert_eq!(ours.items.len(), before);
     }
 }

@@ -99,6 +99,7 @@ mod probe;
 mod profvars_win;
 mod project;
 mod project_panel;
+mod projsync;
 mod results;
 mod runtoast;
 mod rx;
@@ -498,6 +499,15 @@ struct App {
     project_autosave_at: Instant,
     /// 마지막으로 쓴/읽은 프로젝트 **문서 전체**(헤더 JSON + 탭 payload 블록 · `Project::to_document`) — 바뀜 비교용.
     project_last_json: Vec<u8>,
+    /// ★ 다중 인스턴스 동기화(67 §9 · 11-19): `project_last_json`을 읽거나 쓴 직후의 프로젝트 파일 서명 — 달라졌을 때만 파일을 읽는다.
+    project_sig: Option<nexa_fs::watch::FileSig>,
+    /// 우리 상태를 마지막으로 **쓰거나 맞춘** 시점의 문서 지문 — 자동 저장은 지금 문서가 이것과 다를 때만 쓴다. 디스크 문서와 비교하면
+    /// 화면 상태(활성 탭·캐럿)만 다른 두 유휴 인스턴스가 서로의 문서를 끝없이 번갈아 덮어쓴다.
+    project_ours_mark: u64,
+    /// 탭 id(이 인스턴스 안에서만 유일) → **문서 id**(프로젝트 파일에 적는 탭 `id` · 인스턴스가 달라도 같은 탭이면 같은 값 · 병합 열쇠).
+    tab_doc_ids: std::collections::HashMap<u64, u64>,
+    /// 다른 인스턴스가 고친 탭 본문 중 우리 편집과 겹쳐 확인을 기다리는 것(탭 id → 저쪽 본문 · 겹친 곳 수) — 탭 띠로 묻는다.
+    project_pending: std::collections::HashMap<u64, (String, usize)>,
     /// 자동 저장 캡처의 탭별 기억(탭 id → 앵커·스냅숏·디스크 해시 · 사용자 09-30).
     capture_cache: std::collections::HashMap<u64, backups::CaptureMark>,
     /// ★ T-165 P3 ①(70 §3~4 · 10-31): 파일 탭 스냅숏 저장 큐(열쇠 = 탭 id · 페이로드 = 경로) · 탭별 마지막으로 큐에 넣은 본문 세대 ·
@@ -2084,6 +2094,10 @@ fn main() {
         tab_defines: HashMap::new(),
         project_autosave_at: Instant::now(),
         project_last_json: Vec::new(),
+        project_sig: None,
+        project_ours_mark: 0,
+        tab_doc_ids: std::collections::HashMap::new(),
+        project_pending: std::collections::HashMap::new(),
         capture_cache: std::collections::HashMap::new(),
         backup_queue: nsql_core::SaveQueue::new(),
         backup_rev: HashMap::new(),

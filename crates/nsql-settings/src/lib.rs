@@ -4382,6 +4382,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "60",
     },
     // ★ 폴더 변경 감시(T-293 · D-263 · 10-07): 켬 · 묶음 시간 · 성능 프로필 low = 끔(39 §3 부하원 = 스레드 루트+1 · 유휴 CPU 0).
+    // ★ 다중 인스턴스 동기화(docs/67 §9 · 사용자 11-19): 다른 인스턴스가 프로젝트 파일을 바꿨을 때 — 파일의 `file.external_change`와 같은 꼴.
+    Entry {
+        key: "project.external_change",
+        cat: Msg::CatProject,
+        label: Msg::LblProjExtChange,
+        desc: Msg::DescProjExtChange,
+        kind: SettingKind::Choice(EXT_CHANGE_OPTS),
+        default: "auto",
+    },
     Entry {
         key: "project.watch",
         cat: Msg::CatProject,

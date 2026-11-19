@@ -96,8 +96,14 @@ impl Project {
     /// 파일에서 읽는다(경로는 절대로 되돌린다 · 없는 폴더도 목록에는 남긴다 — 탐색기가 "없음"으로 보인다).
     pub(crate) fn load(path: &Path) -> Result<Project, String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        Self::from_bytes(path, &bytes)
+    }
+
+    /// 문서 바이트에서 읽는다(`path` = 상대 경로의 기준 · 파일은 읽지 않는다) — 다중 인스턴스 동기화(67 §9)가 디스크 본과
+    /// 기준본(마지막으로 읽거나 쓴 문서)을 같은 길로 풀 때 쓴다.
+    pub(crate) fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Project, String> {
         // 헤더(JSON) + 탭 payload 블록(`projfile` · 09-23) — 옛 파일(마커 없음)은 블록 0 · 본문은 헤더의 `text`.
-        let (text, blobs) = nsql_settings::projfile::split(&bytes)?;
+        let (text, blobs) = nsql_settings::projfile::split(bytes)?;
         let json = parse(&text)?;
         let mut p = Project {
             path: Some(path.to_path_buf()),
@@ -449,7 +455,7 @@ impl Project {
         let Some(p) = &self.path else {
             return Err("no project path".into());
         };
-        std::fs::write(p, self.to_document()).map_err(|e| e.to_string())
+        write_atomic(p, &self.to_document())
     }
 
     /// 파일 전체 = JSON 헤더(`to_json`) + `%%NSQL-BLOBS%%` + 탭별 payload 블록(본문이 있는 탭 · `tab=<id> len=<n>` + 원문 바이트 ·
@@ -524,6 +530,24 @@ impl WorkMode {
 
 /// 상대 경로 → 절대(`base` 아래) · 이미 절대면 그대로.
 /// `[sql]` → `Some("sql")`(소문자 · 67 §8-1 VS Code `[언어]` 관례) · 평키 = None.
+/// ★ 원자적 쓰기(67 §9 · 다중 인스턴스): 같은 폴더의 임시 파일에 다 쓴 뒤 바꿔치기 — 쓰는 도중 다른 인스턴스가 읽어도 반쪽 문서를
+///   보지 않는다. 임시 이름에 프로세스 id를 넣어 두 인스턴스의 임시 파일이 겹치지 않게 한다. 바꿔치기가 막히면(읽는 쪽이 잡고 있음 ·
+///   읽기 전용 폴더의 기존 파일) 종전처럼 그 자리에 쓴다.
+pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, data).is_ok() {
+        if std::fs::rename(&tmp, path).is_ok() {
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+    std::fs::write(path, data).map_err(|e| e.to_string())
+}
+
 fn syntax_group(key: &str) -> Option<String> {
     let inner = key.strip_prefix('[')?.strip_suffix(']')?.trim();
     (!inner.is_empty()).then(|| inner.to_lowercase())

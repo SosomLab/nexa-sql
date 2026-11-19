@@ -2348,6 +2348,19 @@ impl Editors {
         self.sync_tabs();
     }
 
+    /// ★ 다른 인스턴스의 본문 반영(프로젝트 동기화 · 67 §9): 버퍼만 **되돌리기 한 단계**로 바꾼다(캐럿 유지) — 저장 기준(디스크 본문)은
+    ///   그대로라 파일 탭은 "디스크 대비 미저장"으로 남는다(저쪽에서도 미저장이던 편집). 바뀌었으면 true.
+    pub(crate) fn apply_synced(&mut self, i: usize, text: &str) -> bool {
+        if i >= self.bufs.len() {
+            return false;
+        }
+        let mut inv = Invalidations::default();
+        let changed = self.bufs[i].replace_all_undoable(text, &mut inv);
+        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
+        self.sync_tabs();
+        changed
+    }
+
     /// 활성 탭을 `path`에 저장한 뒤 — 경로·제목·스냅샷 갱신(구문은 새 확장자 기준).
     pub(crate) fn mark_saved(&mut self, path: &Path) {
         let i = self.active;

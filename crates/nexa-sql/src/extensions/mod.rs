@@ -77,6 +77,25 @@ pub(crate) struct MenuContribution {
     pub(crate) label: Label,
     pub(crate) items: Vec<Command>,
     pub(crate) target: MenuTarget,
+    /// ★ 표시 조건(사용자 11-19 · SDK `Menu::when`): `doc_file` = 상황 문서가 파일에 묶였을 때만 · 없거나 모르는 이름 = 늘 보임.
+    pub(crate) when: Option<String>,
+}
+
+/// 우클릭 메뉴를 만드는 순간의 상황(표시 조건 판정용).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MenuCtx {
+    /// 상황 문서(편집기 = 활성 탭 · 프로젝트 탐색기 = 그 행)가 디스크 파일인가.
+    pub(crate) doc_file: bool,
+}
+
+impl MenuContribution {
+    /// 이 상황에서 보이는가 — 모르는 조건 이름은 보이는 쪽(새 확장 × 옛 호스트에서 메뉴가 사라지지 않게).
+    pub(crate) fn shown(&self, ctx: MenuCtx) -> bool {
+        match self.when.as_deref() {
+            Some("doc_file") => ctx.doc_file,
+            _ => true,
+        }
+    }
 }
 
 /// ★ 확장이 선언하는 설정 항목(146차 · T-258 · docs/75 §9 ①): 호스트가 런타임 레지스트리에 등재해 설정 창·`Settings::get`이 안다.
@@ -620,6 +639,7 @@ impl Registry {
         disabled: &[String],
         display: &dyn Fn(&str) -> String,
         target: MenuTarget,
+        ctx: MenuCtx,
     ) -> Vec<CtxItem> {
         let mut out = Vec::new();
         for i in self.active_indices() {
@@ -627,7 +647,11 @@ impl Registry {
             if disabled.iter().any(|d| d == p.id()) {
                 continue;
             }
-            for m in p.menus().into_iter().filter(|m| m.target == target) {
+            for m in p
+                .menus()
+                .into_iter()
+                .filter(|m| m.target == target && m.shown(ctx))
+            {
                 // 하위 메뉴 안에서는 부모(확장) 이름 접두를 벗긴다(146차 · "Project Explorer Menus: 새 탭으로 열기" → "새 탭으로 열기").
                 let parent = m.label.text();
                 let items: Vec<CtxItem> = m

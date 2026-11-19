@@ -23,15 +23,15 @@ version = "0.1.0"
 
 [[package]]
 name = "nsql-format"
-version = "0.7.2"
+version = "0.8.2"
 
 [[package]]
 name = "nsql-seq"
-version = "0.7.2"
+version = "0.8.2"
 
 [[package]]
 name = "project-explorer-menus"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "nexa-ext-sdk",
 ]

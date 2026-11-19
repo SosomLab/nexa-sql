@@ -2,7 +2,7 @@
   "format": 1,
   "id": "project-explorer-menus",
   "name": "Project Explorer Menus",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "kind": "wasm",
   "summary": "Right-click menus for the open file and Project Explorer rows: open in new tab, reveal, copy path, show path (SDK sample · docs/97)",
   "description": "A starter extension for growing the right-click menu of the open file.\nStep 1 (this version): a 'Project Explorer Menus' submenu in the editor context menu with one command, Show file path, which asks the host for the active document's path (nx_host_get / Editor::doc_path) and writes it to the app log (developer mode, ext layer).\nStep 2 (0.2.0): the submenu also appears when right-clicking a file row in the Project Explorer (commands act on that row's path), plus file actions Open in new tab / Reveal in Project Explorer / Copy file path, a setting ext.project_explorer_menus.log_path (Preferences ▸ Extensions ▸ Project Explorer Menus) and a default shortcut Ctrl+Alt+Shift+P for Show file path.",
@@ -16,7 +16,7 @@
   "files": [
     {
       "path": "project_explorer_menus.wasm",
-      "sha256": "054e76e5972c2220f959000ae980812078483fc0f14db82ff81fcf87bda17dab",
+      "sha256": "381fbfa038a0ce2ec0072b394b8eb5d000bd5b8b90e249a8efc1c0b578561e53",
       "dest": "",
       "url": ""
     }

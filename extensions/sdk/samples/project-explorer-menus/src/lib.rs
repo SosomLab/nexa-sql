@@ -78,7 +78,9 @@ impl Extension for ProjectExplorerMenus {
                         CMD_REVEAL.into(),
                         CMD_COPY_PATH.into(),
                     ],
-                ),
+                )
+                // 세 명령 모두 파일 경로가 있어야 뜻이 있다 → 미저장 탭에서는 메뉴를 숨긴다(사용자 11-19).
+                .when("doc_file"),
                 // 프로젝트 탐색기 파일 행 우클릭(그 행의 경로 기준 · docs/97 §5 ①).
                 Menu::project_explorer(
                     "project-explorer-menus-tree",

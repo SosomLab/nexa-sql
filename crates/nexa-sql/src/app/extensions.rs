@@ -317,6 +317,8 @@ impl App {
                 &off,
                 &|id| km.display_of(id),
                 extensions::MenuTarget::ProjectExplorer,
+                // 파일 행의 메뉴 — 상황 문서는 늘 디스크 파일이다.
+                extensions::MenuCtx { doc_file: true },
             );
             self.project_panel.set_menu_extras(items);
         }
@@ -2319,7 +2321,7 @@ impl App {
     }
 
     /// 병합 전 본문 백업(`<설정 폴더>/backup/` · 최근 `file.external_backup_keep`개).
-    fn ext_backup(&mut self, name: &str, text: &str) {
+    pub(crate) fn ext_backup(&mut self, name: &str, text: &str) {
         let keep = self.settings.int("file.external_backup_keep").max(0) as usize;
         if keep == 0 {
             return;
@@ -2396,6 +2398,24 @@ impl App {
                 None
             }
         });
+        // ★ 67 §9(11-19): 다른 인스턴스가 고친 본문이 우리 편집과 겹친 탭(또는 `ask` 모드) — 같은 띠 · 같은 동작
+        //   (저쪽 내용 보기 / 저쪽 내용으로 / 현재 내용 유지) · 파일의 외부 변경 띠가 먼저.
+        let view = view.or_else(|| {
+            let (_, n) = self.project_pending.get(&id)?;
+            Some(extfile::BannerView {
+                text: if *n > 0 {
+                    tf(Msg::ProjBanConflict, &[&n.to_string()])
+                } else {
+                    t(Msg::ProjBanChanged).to_string()
+                },
+                buttons: vec![
+                    (extfile::BannerHit::Diff, t(Msg::BtnProjDiff).to_string()),
+                    (extfile::BannerHit::Reload, t(Msg::BtnProjTake).to_string()),
+                    (extfile::BannerHit::Keep, t(Msg::BtnExtKeep).to_string()),
+                ],
+                danger: false,
+            })
+        });
         // ★ T-167 B6 이동 제안 띠(D-163 · 69 §4-1): 외부 변경 띠가 없을 때만 · 이 탭의 제안 하나.
         let view = view.or_else(|| {
             let s = self.bm_suggest.as_ref().filter(|s| s.tab == id)?;
@@ -2464,6 +2484,42 @@ impl App {
             return;
         };
         let name = self.editors.active_title();
+        // ★ 67 §9: 파일의 외부 변경 대기가 없고 다른 인스턴스의 본문이 대기 중이면 띠의 세 버튼은 그쪽 것이다.
+        let ext_pending = self.ext_files.get(&id).is_some_and(|e| e.pending.is_some());
+        if !ext_pending && self.project_pending.contains_key(&id) {
+            match hit {
+                extfile::BannerHit::Diff => {
+                    let text = self.project_pending.get(&id).map(|p| p.0.clone());
+                    if let Some(text) = text {
+                        let title = tf(Msg::ProjOtherTitle, &[&name]);
+                        let created = self.editors.open_info_tab_like(&title, &text, Some(&name));
+                        if created {
+                            let tab = self.editors.active_id();
+                            self.make_unconnected(tab);
+                        }
+                        let di = self.editors.active();
+                        self.editors.set_read_only(di, true);
+                        self.set_focus(Focus::Editor);
+                    }
+                }
+                extfile::BannerHit::Reload => {
+                    if let Some((text, _)) = self.project_pending.remove(&id) {
+                        // 내 내용은 백업에 남기고(병합 전 백업과 같은 자리) 버퍼를 되돌리기 한 단계로 바꾼다.
+                        if let Some(mine) = self.editors.tab_box(i).map(|tb| tb.text()) {
+                            self.ext_backup(&name, &mine);
+                        }
+                        self.editors.apply_synced(i, &text);
+                        self.sess.status = tf(Msg::StProjTaken, &[&name]);
+                    }
+                }
+                extfile::BannerHit::Keep => {
+                    self.project_pending.remove(&id);
+                }
+                _ => {}
+            }
+            self.ext_banner_sync();
+            return;
+        }
         match hit {
             extfile::BannerHit::None | extfile::BannerHit::Body => {}
             extfile::BannerHit::Diff => {

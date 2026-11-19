@@ -796,6 +796,7 @@ impl WasmExtension {
                     label: label_of(jget(m, "label")),
                     items,
                     target,
+                    when: jget(m, "when").and_then(jstr).map(str::to_string),
                 })
             })
             .collect();

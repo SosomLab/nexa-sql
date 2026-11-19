@@ -249,6 +249,66 @@ impl Bookmarks {
         }
     }
 
+    /// ★ 프로젝트 문서에 담을 저장소(67 §9): 이름 없는 탭의 열쇠를 **문서 id**로 바꾼 사본 — 탭 id는 인스턴스마다 달라서
+    ///   그대로 적으면 다른 인스턴스가 읽을 때 어긋나고, 아무것도 안 바뀌어도 문서가 달라 보인다.
+    pub(crate) fn doc_store(&self, to_doc: &std::collections::HashMap<u64, u64>) -> Store {
+        let mut st = self.store.clone();
+        for b in &mut st.items {
+            if let DocKey::Scratch { tab } = &mut b.doc {
+                if let Some(d) = to_doc.get(tab) {
+                    *tab = *d;
+                }
+            }
+        }
+        st
+    }
+
+    /// 문서 id로 적힌 북마크(JSON)를 올리고 열쇠를 이 인스턴스의 탭 id로 되돌린다([`Self::doc_store`]의 반대).
+    pub(crate) fn load_doc_json(
+        &mut self,
+        text: &str,
+        to_doc: &std::collections::HashMap<u64, u64>,
+    ) -> bool {
+        if !self.load_json(text) {
+            return false;
+        }
+        let map: Vec<(u64, u64)> = to_doc
+            .iter()
+            .filter(|(tab, doc)| tab != doc)
+            .map(|(tab, doc)| (*doc, *tab))
+            .collect();
+        self.remap_scratch(&map);
+        true
+    }
+
+    /// ★ 다른 인스턴스가 쓴 북마크를 항목 단위 3-way로 합친다(67 §9 · [`Store::merge3`]) — `base` = 공통 조상 · `theirs` = 디스크 문서의
+    ///   북마크(둘 다 문서 id 공간). 받아들인 변경 수(0 = 그대로).
+    pub(crate) fn merge_external(
+        &mut self,
+        base: Option<&str>,
+        theirs: &str,
+        to_doc: &std::collections::HashMap<u64, u64>,
+    ) -> usize {
+        let Ok(theirs) = Store::from_json(theirs) else {
+            return 0;
+        };
+        let base = base
+            .and_then(|b| Store::from_json(b).ok())
+            .unwrap_or_default();
+        let mut ours = self.doc_store(to_doc);
+        let n = ours.merge3(&base, &theirs);
+        if n == 0 {
+            return 0;
+        }
+        ours.normalize(CASE_INSENSITIVE);
+        if self.load_doc_json(&ours.to_json(), to_doc) {
+            self.touch();
+            n
+        } else {
+            0
+        }
+    }
+
     /// 프로젝트 파일에 내장된 북마크(JSON)로 바꾼다(프로젝트 복원 · 사용자 09-23) — 실패하면 그대로.
     pub(crate) fn load_json(&mut self, text: &str) -> bool {
         match Store::from_json(text) {
