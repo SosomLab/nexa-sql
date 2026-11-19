@@ -3466,6 +3466,62 @@ mod tests {
         );
     }
 
+    /// ★ T-501(11-20): 도메인이 붙은 링크 이름 — 점 뒤에서도 링크 후보 · 확정 = `@` 뒤 전체를 링크 이름(+ 별칭)으로 바꾼다.
+    #[test]
+    fn dblink_domain_name_is_offered_and_replaced_whole() {
+        let host = Rect::new(0, 0, 800, 600);
+        let mut m = store();
+        m.load_bucket(
+            "SCOTT",
+            ObjectKind::DbLink,
+            &[
+                NewObj {
+                    name: "LNK.EXAMPLE.COM".into(),
+                    extra: Some("h1".into()),
+                    ..Default::default()
+                },
+                NewObj {
+                    name: "OTHER".into(),
+                    ..Default::default()
+                },
+            ],
+            1,
+        );
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let mut it = Intel::new(cfg());
+        for typed in ["LNK.", "LNK.EX", "LNK.EXAMPLE.C"] {
+            let doc = format!("SELECT * FROM SALES_CUSTOMER@{typed}");
+            assert!(it.request(
+                1,
+                1,
+                &doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            let i = it
+                .cands
+                .iter()
+                .position(|c| c.text == "LNK.EXAMPLE.COM")
+                .unwrap_or_else(|| panic!("{typed}: {}", it.dump_cands()));
+            it.pick(&format!("intel:{i}"));
+            let a = it.take_accept().expect("accept");
+            let at = doc.find('@').expect("@") + 1;
+            assert_eq!(
+                (a.replace.clone(), a.text.as_str()),
+                (at..doc.len(), "LNK.EXAMPLE.COM sc"),
+                "{typed}"
+            );
+        }
+    }
+
     #[test]
     fn dblink_position_lists_links_with_host_and_appends_alias() {
         let host = Rect::new(0, 0, 800, 600);

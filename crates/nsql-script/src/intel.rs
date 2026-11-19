@@ -1620,6 +1620,58 @@ fn context_at_raw(
     let (stmt_kind, clause, clause_pos, case_pos) = grammar_clause(&before, dialect);
     let (paren_owner, paren_into) = paren_owner(&before).unwrap_or((None, false));
     let last = before[before.len() - 1];
+    // ★ 도메인이 붙은 Oracle DB 링크 이름(T-501 · `FROM t@LINK.|` · `FROM t@LINK.EXAMPLE.CO|`): `@링크` 뒤로 **붙어서** 이어진
+    //   `.조각`들 안에서도 링크 자리 — 접두·치환 구간 = `@` 뒤 전체(`LINK.EXAMPLE.CO`). 점 가지(`qualifier.`)보다 먼저 본다
+    //   (종전 = 점 가지가 한정자를 못 찾아 후보 없음 · 조각만 치환).
+    if dialect == Some(Dialect::Oracle) {
+        let mut k = before.len();
+        let mut right = rel;
+        let mut dots = 0usize;
+        let at = loop {
+            if k == 0 {
+                break None;
+            }
+            let w = before[k - 1];
+            if w.end != right {
+                break None;
+            }
+            if w.text == "." {
+                dots += 1;
+            } else if !w.quoted && w.text.len() > 1 && w.text.starts_with('@') {
+                break Some(k - 1);
+            } else if !is_name(w) {
+                break None;
+            }
+            right = w.start;
+            k -= 1;
+        };
+        if let Some(ai) = at.filter(|_| dots > 0) {
+            let head = &before[..ai];
+            let at_start = before[ai].start;
+            if head.last().is_some_and(|w| is_name(w) && w.end == at_start)
+                && relation_alias_pos(head)
+            {
+                let from = stmt.start + at_start + 1;
+                return Context {
+                    kind: CtxKind::Want(Want::DbLink),
+                    prefix: src[from..caret].to_string(),
+                    replace: from..caret,
+                    aliases,
+                    statement: stmt,
+                    paren_owner,
+                    paren_into,
+                    star: None,
+                    from_chain: false,
+                    clause,
+                    clause_pos,
+                    case_pos,
+                    alias_ok: dblink_alias_ok(head, stmt_kind.as_deref(), dialect),
+                    stmt_kind,
+                    alias_follows: false,
+                };
+            }
+        }
+    }
     // `qualifier.` — 점이 접두 바로 앞에 붙어 있을 때만.
     if last.text == "." && last.end == rel {
         let mut q = String::new();
@@ -1718,16 +1770,7 @@ fn context_at_raw(
                 };
                 // ★ 자동 별칭(사용자 11-19 "링크가 붙은 테이블에도 Alias 붙이기"): 링크를 고르면 `t@link A` — 허용 여부는 관계 이름
                 //   사슬 **앞** 낱말(FROM/JOIN/…)로 보는 종전 규칙 그대로([`alias_allowed`] · 뒤에 별칭이 이미 있으면 호출자가 끈다).
-                let mut n = head.len();
-                while n > 0 && is_name(head[n - 1]) {
-                    n -= 1;
-                    if n >= 1 && head[n - 1].text == "." {
-                        n -= 1;
-                    } else {
-                        break;
-                    }
-                }
-                let alias_ok = alias_allowed(&head[..n], stmt_kind.as_deref(), dialect);
+                let alias_ok = dblink_alias_ok(head, stmt_kind.as_deref(), dialect);
                 return Context {
                     kind: CtxKind::Want(Want::DbLink),
                     prefix,
@@ -1982,6 +2025,20 @@ fn relation_alias_pos(head: &[&Word<'_>]) -> bool {
     pre.last().is_some_and(|w| {
         RELATION_AFTER.iter().any(|kw| is_word(w, kw)) || (w.text == "," && in_from_list(pre))
     })
+}
+
+/// DB 링크 자리의 자동 별칭 허용 — `head` = `@` 앞까지의 낱말(끝 = 관계 이름 사슬) · 사슬 **앞** 낱말로 [`alias_allowed`].
+fn dblink_alias_ok(head: &[&Word<'_>], stmt_kind: Option<&str>, dialect: Option<Dialect>) -> bool {
+    let mut n = head.len();
+    while n > 0 && is_name(head[n - 1]) {
+        n -= 1;
+        if n >= 1 && head[n - 1].text == "." {
+            n -= 1;
+        } else {
+            break;
+        }
+    }
+    alias_allowed(&head[..n], stmt_kind, dialect)
 }
 
 /// `h`의 끝에 붙은 DB 링크 꼬리(`@link` + `.조각`들)가 시작하는 색인 — 꼬리가 없으면 `h.len()`.

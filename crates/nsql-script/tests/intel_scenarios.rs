@@ -942,3 +942,48 @@ fn auto_alias_restarts_in_each_set_operator_branch() {
     let same = "select * from t3 A\nselect * from T|";
     assert_eq!(visible(same), vec!["A".to_string()]);
 }
+
+/// ★ T-501(11-20): 도메인이 붙은 DB 링크 이름 — `@링크` 뒤로 붙어서 이어진 `.조각` 안에서도 링크 자리 · 접두·치환 구간 = `@` 뒤 전체.
+#[test]
+fn oracle_dblink_domain_name() {
+    use nsql_script::intel::Want as W;
+    let o = Dialect::Oracle;
+    for (sql, prefix, alias_ok) in [
+        ("SELECT * FROM t1@LNK.|", "LNK.", true),
+        ("SELECT * FROM t1@LNK.EX|", "LNK.EX", true),
+        (
+            "SELECT * FROM s1.t1@LNK.EXAMPLE.CO|",
+            "LNK.EXAMPLE.CO",
+            true,
+        ),
+        (
+            "SELECT * FROM t0 a JOIN t1@LNK.EXAMPLE.|\nWHERE 1=1",
+            "LNK.EXAMPLE.",
+            true,
+        ),
+        ("INSERT INTO t1@LNK.EX|", "LNK.EX", false),
+    ] {
+        let c = ctx_in(sql, o);
+        assert_eq!(c.kind, CtxKind::Want(W::DbLink), "{sql}");
+        assert_eq!(c.prefix, prefix, "{sql}");
+        assert_eq!(c.replace.len(), prefix.len(), "{sql}");
+        assert_eq!(c.alias_ok, alias_ok, "{sql}");
+    }
+    // 해당 없음: 떨어져 있는 점 · 별칭의 멤버 · 다른 방언.
+    for (sql, d) in [
+        ("SELECT * FROM t1@LNK .|", o),
+        ("SELECT * FROM t1@LNK A WHERE A.|", o),
+        ("SELECT A.| FROM t1@LNK.EXAMPLE.COM A", o),
+        ("SELECT * FROM t1@LNK.|", Dialect::Mssql),
+    ] {
+        assert_ne!(ctx_in(sql, d).kind, CtxKind::Want(W::DbLink), "{sql}");
+    }
+    // 도메인 링크 뒤의 별칭도 풀린다.
+    check_in(
+        "domain-link-alias",
+        "SELECT A.| FROM t1@LNK.EXAMPLE.COM A",
+        o,
+        "A",
+        &Want::Table("t1"),
+    );
+}
