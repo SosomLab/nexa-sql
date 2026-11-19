@@ -293,4 +293,6 @@
 - **호스트(nexa-sql `intel.rs`)**: `Intel::push_derived` · `cands_member` = 파생이면 **그 컬럼만**(문서 낱말 폴백 안 함) · `cands_expr_alias_cols` = 접두 없는 컬럼 후보에도 파생 컬럼(오른쪽 = 별칭).
 - **시험**: nsql-script `scoped_aliases_resolve_per_block_with_derived_columns` · `derived_star_cte_and_implicit_alias` · 기존 `aliases_inside_subquery_are_visible` = flat판으로 전환 · nexa-sql `derived_member_columns_only`.
 - ★ **2차(11-19 · 사용자 QA)**: `SELECT *` 뒤 "모든 컬럼 (N)" 조각(`cands_expr_star`) = **캐럿 블록의 FROM만**(`Alias.outer == 0` · 바깥 층 별칭은 뺀다) · 인라인 뷰/CTE는 그 SELECT 목록(+ 안의 `t.*` 실테이블) · 원천이 여럿이거나 별칭이 있으면 `별칭.컬럼` · 파생 컬럼의 **원본 추적**(`Derived.src` · `origin()` · `ColOrigin` = `[q.]col [AS x]` 꼴만 · 파생을 거쳐도 · 식·집계·리터럴 = 원본 없음 · 항목 앞 틈의 따옴표로 리터럴 판정 = 별칭 표 본체에 원문 전달 `alias_table_scoped_in(ws, pos, dialect, src)`) · Ctrl 링크도 범위 별칭(T-491 ✅ · [96](96-object-links.md) §1).
-- **남는 일**: (없음 — T-491 = 11-19 2차에서 해소).
+- ★ **3차(11-19 · 사용자 QA "FROM 절의 `A.` 뒤에는 컬럼이 들어갈 수 없다")**: 관계의 **별칭 자리**의 점 뒤(`FROM t A.|` · `JOIN s.t AS A.|` · `FROM ( … ) A.|` · FROM 목록 `,` 뒤 관계) = `CtxKind::None`(후보 없음 · nsql-script `relation_alias_pos` 순수 · `AS` 하나 건너뜀) · 컬럼 자리(ON · WHERE · CONNECT BY · START WITH · `FOR UPDATE OF` · 함수 괄호)와 한정 이름(`FROM 스키마.|`)은 종전대로 · 시험 `relation_alias_position_offers_nothing`(없음 7 · 유지 10) · 0050d732.
+- ★ **사용자 확인 완료(11-19)**: ① 범위·파생 컬럼(별칭 뒤 = 그 블록·그 SELECT 목록 컬럼만) ② `SELECT *` Ctrl+Space 펼치기(캐럿 블록 FROM만) = 사용자 실기 확인 ✅("완료 처리").
+- **남는 일**: (없음 — T-491 = 11-19 2차에서 해소 · 3차 = 별칭 자리 후보 없음).

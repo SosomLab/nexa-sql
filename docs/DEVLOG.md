@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-19 오전 (Windows · 개발 × 협업 · 3차 · `fix/1119-from-alias-pos`)** — 관계 별칭 자리(`FROM t A.|`) = 후보 없음(`relation_alias_pos` · 0050d732) · 자동완성 범위·파생 컬럼 + `SELECT *` 펼치기 = 사용자 확인 ✅(T-496) · V2 = fmt ✓ · clippy --tests -D warnings(nsql-script · nexa-sql) ✓ · nexa-sql 650/0/6 · check-3os --quick ✓ · 통합 시험 = 생략(드라이버 변경 없음 · nsql-script만) · [journal 11-19 §5](journal/2026-11-19.md)
 - **2026-11-19 새벽 마감 (Windows · 개발 × 협업 · 2차 묶음 · push 289f3af3)** — `*` 펼치기 = 캐럿 블록 FROM만 · Ctrl 링크 = 범위 별칭 + 인라인 뷰 컬럼 원본 추적(T-491 ✅) · PL/SQL ORA-06550 위치(공용 `plsql_error_position` · 열 = 바이트) · PL/SQL 블록 시작 위치(`item_start_char`) · 오류 유형 E2E(Thin) FAIL 0 · 기존 오류 캐럿 E2E 9/0 · nexa-sql 650/0/6 · ci **44379293295** ✓ · integration **44379293668** ✓ · [journal 11-19 §3~§4](journal/2026-11-19.md)
 - **2026-11-19 오후 (Windows · 개발 × 협업 · 사용자 QA 4건)** — 자동완성 = 캐럿 범위 별칭 + 파생 테이블·CTE 출력 컬럼(문서 낱말 폴백 제거 · 시나리오 시험 ≈60) · 실행 오류 = Output 문서 기준 `line L, col C` + `at:` 조각 · 두 번 클릭 = 줄·열 · ORA-06550 위치 · AI 프롬프트 상자 밖 놓기 · AI 표 자동 줄바꿈 · V2 ✓ · 오류 유형 E2E·Debug 실기 = 빌드 뒤 · [journal 11-19 §2](journal/2026-11-19.md)
 - **2026-11-19 (Windows · 개발 × 협업 · 저장소 최신화·변경 분석)** — pull 2건(f6c6b530 드라이버 색인 0.1.13 · 9d1b527f v0.8.2 기록) · 9d1b527f CI 43741350016 ✓ · db2 정기 3회 ✓ · 채널 마무리 = winget #480985 병합(11-15 18:25Z) · choco 0.8.2 Approved · 대기 = nexa-ui check-3os 52줄·Cargo 경고(미해소) · [journal 11-19 §1](journal/2026-11-19.md)
