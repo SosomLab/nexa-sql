@@ -795,6 +795,10 @@ impl App {
                 let text = self.settings.get(key).unwrap_or("NULL").to_string();
                 self.all_grids().for_each(|g| g.set_null_text(&text));
             }
+            "grid.copy_null" => {
+                let mode = self.settings.get(key).unwrap_or("blank").to_string();
+                self.all_grids().for_each(|g| g.set_copy_null(&mode));
+            }
             "grid.empty_text" => {
                 let text = self.settings.get(key).unwrap_or("''").to_string();
                 self.all_grids().for_each(|g| g.set_empty_text(&text));

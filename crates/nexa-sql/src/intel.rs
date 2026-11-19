@@ -2488,7 +2488,7 @@ impl Intel {
                     .and_then(|o| o.extra)
                     .map_or("", |e| m.names.get(e));
                 if show_types && !host.is_empty() {
-                    c.detail = host.to_string();
+                    c.detail = dblink_host_brief(host);
                 }
                 if !cands.iter().any(|x| x.text.eq_ignore_ascii_case(&c.text)) {
                     cands.push(c);
@@ -2696,6 +2696,40 @@ impl Intel {
 /// 사전 버킷의 스키마 심볼(아직 이름조차 없으면 None = 한 번도 요청 안 함).
 fn dict_sym<'a>(m: &'a MetaView<'a>) -> Option<(&'a MetaView<'a>, Sym)> {
     m.names.find(nsql_catalog::DICT_SCHEMA).map(|s| (m, s))
+}
+
+/// DB 링크의 host를 후보 설명 칸에 맞게 줄인다(사용자 11-19 "이름은 안 보이고 설명만 보인다" — host가 여러 줄짜리 접속 기술자
+/// `(DESCRIPTION=(ADDRESS=…(HOST=h)(PORT=p))(CONNECT_DATA=(SERVICE_NAME=s)))`면 설명이 이름 칸을 덮었다): 기술자는
+/// `h:p/s`로 · 그 밖(TNS 별칭 · `h:p/s`)은 공백만 정리 · 어느 쪽이든 48자에서 자른다.
+fn dblink_host_brief(host: &str) -> String {
+    let flat: String = host.split_whitespace().collect::<Vec<_>>().join("");
+    let upper = flat.to_ascii_uppercase();
+    let field = |key: &str| -> Option<&str> {
+        let i = upper.find(&format!("({key}="))? + key.len() + 2;
+        let rest = flat.get(i..)?;
+        let end = rest.find(')')?;
+        Some(&rest[..end]).filter(|v| !v.is_empty())
+    };
+    let mut out = match field("HOST") {
+        Some(h) => {
+            let mut o = h.to_string();
+            if let Some(p) = field("PORT") {
+                o.push(':');
+                o.push_str(p);
+            }
+            if let Some(sv) = field("SERVICE_NAME").or_else(|| field("SID")) {
+                o.push('/');
+                o.push_str(sv);
+            }
+            o
+        }
+        None => flat,
+    };
+    if out.chars().count() > 48 {
+        out = out.chars().take(47).collect();
+        out.push('…');
+    }
+    out
 }
 
 /// `at`(= DB 링크 접두의 시작 · 바로 앞 글자가 `@`) 앞의 이름 한 낱말(`s.t@LN` → `t` · 인용 이름은 따옴표를 벗긴다).
@@ -3350,6 +3384,37 @@ mod tests {
     /// T-178 JOIN 조건 조각(통합): 제약을 모르면 상세 요청 + 불러오는 중 → 채워지면 첫 후보 = FK 조건 조각 · 설정 끔 = 없음.
     /// ★ 자료형 자리(사용자 10-09): 메타 없이도 방언 내장 자료형(정적 표)이 후보 · `CAST(x AS NU` 접두로 NUMBER가 맨 위 ·
     /// `intel.types` 끄면 내장 자료형 0 · 메타가 있으면 사용자 정의 타입(ObjectKind::Type)도 함께.
+    /// 사용자 11-19: 접속 기술자 host는 `호스트:포트/서비스`로 줄인다(줄바꿈·공백 포함 · 대소문자 무시) · 그 밖은 그대로 · 48자 상한.
+    #[test]
+    fn dblink_host_brief_rules() {
+        assert_eq!(
+            dblink_host_brief(
+                "(DESCRIPTION=
+  (ADDRESS=(PROTOCOL=TCP)(HOST=172.16.0.10)(PORT=1521))
+  (CONNECT_DATA=(SERVICE_NAME=APPDB)))"
+            ),
+            "172.16.0.10:1521/APPDB"
+        );
+        assert_eq!(
+            dblink_host_brief(
+                "(description=(address=(host=db1)(port=1522))(connect_data=(sid=ORCL)))"
+            ),
+            "db1:1522/ORCL"
+        );
+        assert_eq!(dblink_host_brief("PRD_TNS"), "PRD_TNS");
+        assert_eq!(
+            dblink_host_brief(
+                " db1:1521/svc 
+"
+            ),
+            "db1:1521/svc"
+        );
+        let long = "x".repeat(80);
+        let b = dblink_host_brief(&long);
+        assert_eq!(b.chars().count(), 48);
+        assert!(b.ends_with('…'));
+    }
+
     #[test]
     fn dblink_position_lists_links_with_host_and_appends_alias() {
         let host = Rect::new(0, 0, 800, 600);

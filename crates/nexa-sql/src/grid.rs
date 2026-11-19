@@ -381,6 +381,9 @@ pub(crate) struct Grid {
     row_numbers: bool,
     /// 설정 `grid.null_text` — NULL 셀 글자(그리드·텍스트 보기·복사 **공통** · 기본 `NULL` · 사용자 09-17).
     null_text: String,
+    /// 설정 `grid.copy_null` — 그리드 **복사** 때 null 셀(사용자 11-19): `blank` = 빈 칸 · `shown` = `null_text` · `null` = 글자 NULL.
+    /// 구조체 기본은 `shown`(호스트가 설정값을 넣는다 · 설정 기본 = `blank`).
+    copy_null: CopyNull,
     /// 설정 `grid.empty_text` — 빈 문자열 셀의 흐린 표식(**그리드만** · 기본 `''` · 비면 없음 · 사용자 10-12 설계 B).
     empty_text: String,
     /// 설정 `grid.filter_list_max` — 정규식 필터 조회 SQL ③단계 값 목록 상한(기본 1,000 · 사용자 09-30).
@@ -681,6 +684,7 @@ impl Default for Grid {
             top_border: true,
             row_focus_color: (None, None),
             null_text: "NULL".into(),
+            copy_null: CopyNull::Shown,
             empty_text: "''".into(),
             filter_list_max: 1000,
             filter_strip: true,
@@ -899,6 +903,7 @@ impl Grid {
             top_border: self.top_border,
             row_focus_color: self.row_focus_color,
             null_text: self.null_text.clone(),
+            copy_null: self.copy_null,
             empty_text: self.empty_text.clone(),
             filter_list_max: self.filter_list_max,
             filter_strip: self.filter_strip,
@@ -4027,6 +4032,11 @@ impl Grid {
         }
     }
 
+    /// 설정 `grid.copy_null` 적용(모르는 값 = `blank`).
+    pub(crate) fn set_copy_null(&mut self, mode: &str) {
+        self.copy_null = CopyNull::parse(mode);
+    }
+
     pub(crate) fn set_null_text(&mut self, text: &str) {
         if self.null_text == text {
             return;
@@ -5318,7 +5328,8 @@ impl Grid {
         let rows_len = nrows;
         let opts = GridOpts {
             max_col: 0, // 복사는 자르지 않는다.
-            null: self.null_text.clone(),
+            // null 셀 = 설정 `grid.copy_null`(공백 · 보이는 대로 · NULL · 사용자 11-19).
+            null: self.copy_null.text(&self.null_text).to_string(),
             ..GridOpts::default()
         };
         let (fmt, header) = match kind {
@@ -9603,6 +9614,36 @@ fn cell_opt(v: &Value) -> Option<String> {
     }
 }
 
+/// 그리드 복사 때 null 셀을 무엇으로 넣는가(설정 `grid.copy_null` · 사용자 11-19).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CopyNull {
+    /// 빈 칸(아무 글자도 넣지 않는다).
+    Blank,
+    /// 화면에 보이는 대로(`grid.null_text`).
+    Shown,
+    /// 글자 `NULL`.
+    Null,
+}
+
+impl CopyNull {
+    pub(crate) fn parse(s: &str) -> CopyNull {
+        match s {
+            "shown" => CopyNull::Shown,
+            "null" => CopyNull::Null,
+            _ => CopyNull::Blank,
+        }
+    }
+
+    /// 복사에 넣을 글자 — `shown` = 그리드의 NULL 글자.
+    fn text(self, shown: &str) -> &str {
+        match self {
+            CopyNull::Blank => "",
+            CopyNull::Shown => shown,
+            CopyNull::Null => "NULL",
+        }
+    }
+}
+
 fn cell_text(v: &Value, null: &str) -> String {
     match v {
         Value::Null => null.to_string(),
@@ -11019,6 +11060,44 @@ mod tests {
         let (many, n) = g.copy_selection(CopyKind::Tsv).expect("three rows");
         assert_eq!((many.as_str(), n), ("0\n1\n2", 3));
         assert!(!many.ends_with('\n'));
+    }
+
+    /// ★ 사용자 11-19: 그리드 복사 때 null 셀 = 설정 `grid.copy_null`(공백 · 보이는 대로 · NULL) — 화면 글자와 따로.
+    #[test]
+    fn copy_null_modes() {
+        let mut g = Grid::default();
+        g.set_result(ResultSet {
+            columns: vec![
+                Column {
+                    name: "id".into(),
+                    type_name: String::new(),
+                },
+                Column {
+                    name: "nm".into(),
+                    type_name: String::new(),
+                },
+            ],
+            rows: vec![vec![Value::Int(1), Value::Null]],
+        });
+        g.set_null_text("(null)");
+        g.select_all();
+        let copy = |g: &Grid| g.copy_selection(CopyKind::Tsv).map(|x| x.0);
+        // 구조체 기본 = 보이는 대로.
+        assert_eq!(copy(&g).as_deref(), Some("1\t(null)"));
+        g.set_copy_null("blank");
+        assert_eq!(copy(&g).as_deref(), Some("1\t"));
+        g.set_copy_null("null");
+        assert_eq!(copy(&g).as_deref(), Some("1\tNULL"));
+        g.set_copy_null("shown");
+        assert_eq!(copy(&g).as_deref(), Some("1\t(null)"));
+        // 모르는 값 = 공백(설정 기본).
+        g.set_copy_null("?");
+        assert_eq!(copy(&g).as_deref(), Some("1\t"));
+        // 머리글 포함·CSV도 같은 규칙.
+        assert_eq!(
+            g.copy_selection(CopyKind::Csv).map(|x| x.0).as_deref(),
+            Some("id,nm\n1,")
+        );
     }
 
     #[test]

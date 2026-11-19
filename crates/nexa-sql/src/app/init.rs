@@ -84,6 +84,12 @@ impl App {
             .unwrap_or("NULL")
             .to_string();
         self.grid.set_null_text(&null_text);
+        let copy_null = self
+            .settings
+            .get("grid.copy_null")
+            .unwrap_or("blank")
+            .to_string();
+        self.grid.set_copy_null(&copy_null);
         // ★ D-448: 내보내기 기본 형식(하위 메뉴 맨 위 ●).
         let export_fmt = self
             .settings

@@ -800,6 +800,12 @@ const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("tsv", Msg::ValFmtTsv),
     ("template", Msg::ValLogTemplate),
 ];
+/// `grid.copy_null`(사용자 11-19): 그리드 복사 때 null 셀 — 공백 · 보이는 대로(`grid.null_text`) · 글자 NULL.
+const COPY_NULL_OPTS: &[(&str, Msg)] = &[
+    ("blank", Msg::ValCopyNullBlank),
+    ("shown", Msg::ValCopyNullShown),
+    ("null", Msg::ValCopyNullNull),
+];
 const EXT_CHANGE_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValExtAuto),
     ("ask", Msg::ValExtAsk),
@@ -8382,6 +8388,16 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFetchMode,
         kind: SettingKind::Choice(FETCH_MODE_OPTS),
         default: "cursor",
+    },
+    // ★ 그리드 복사 때 null 셀(사용자 11-19 "NULL을 공백으로 복사 · 기본 = 공백 · 보이는 대로 · NULL 세 가지") — 화면 표시
+    //   (`grid.null_text`)와 따로 고른다(09-17 "한 설정 공통"에서 복사만 분리).
+    Entry {
+        key: "grid.copy_null",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridCopyNull,
+        desc: Msg::DescGridCopyNull,
+        kind: SettingKind::Choice(COPY_NULL_OPTS),
+        default: "blank",
     },
     // T-255(09-29): 결과 탭 "Copy SQL"을 기본 포맷터로 정돈해 복사.
     Entry {
