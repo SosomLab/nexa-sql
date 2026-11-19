@@ -181,6 +181,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - **v0.8.0(11-14) = winget 자동 갱신 첫 성공 · choco 제출** — guard winget 제출 true(#447007 0.5.0이 11-13 병합된 뒤 열린 PR 없음) → **PR #480015** "SosomLab.NexaSQL version 0.8.0"(검수 대기) · choco guard "마지막으로 올린 0.7.2 승인됨 · 대기 중인 제출 없음 — 제출." → 0.8.0 push(검수 대기) · 위 줄의 확인점(#447007 머지 뒤 자동 제출) 해소 · [journal 11-14 §16](journal/2026-11-14.md).
 - **v0.8.1(11-15) = winget 자동 제출 · choco 건너뜀** — guard winget 제출 true → **PR #480308**(병합 11-14 18:58Z) · choco = 0.8.0이 아직 "Pending automated review"(Scan Testing 대기)라 guard가 건너뜀(T-435 · nupkg 0.8.1 = 워크플로 아티팩트) → 0.8.0 승인 뒤 `channels=choco` 수동 dispatch · Homebrew 9f17d87 · pkg.sosomlab.com APT·RPM 0.8.1 ✓ · [journal 11-15 §6](journal/2026-11-15.md)
 - **v0.8.2(11-16) = winget 자동 제출 · choco 제출** — guard winget 제출 true → **PR #480985**(병합 2026-11-15T18:25:16Z) · choco guard "마지막으로 올린 0.8.0 승인됨 · 대기 중인 제출 없음 — 제출." → 0.8.2 push(검수 대기 · 0.8.1은 choco에 올리지 않고 건너뜀 = 위 줄의 수동 dispatch 불필요) · 드라이버 `drivers-v0.1.13` 함께(먼저 · pre-release) · Homebrew 0a26b62 · pkg.sosomlab.com APT·RPM 0.8.2 ✓ · [journal 11-16 §8](journal/2026-11-16.md)
+- **v0.9.0(11-20) = winget 자동 제출 · choco 제출** — guard winget 제출 true → **PR #484277**(검수 대기) · choco guard "마지막으로 올린 0.8.2 승인됨 · 대기 중인 제출 없음 — 제출." → 0.9.0 push(검수 대기) · 드라이버 `drivers-v0.1.14` 함께(먼저 · pre-release) · Homebrew f6c31a0 · pkg.sosomlab.com APT 0.9.0 ✓ · [journal 11-20 §3](journal/2026-11-20.md)
 
 ### 5-4. 남은 확인
 
