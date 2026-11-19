@@ -1713,6 +1713,18 @@ fn context_at_raw(
                 } else {
                     (prefix, replace)
                 };
+                // ★ 자동 별칭(사용자 11-19 "링크가 붙은 테이블에도 Alias 붙이기"): 링크를 고르면 `t@link A` — 허용 여부는 관계 이름
+                //   사슬 **앞** 낱말(FROM/JOIN/…)로 보는 종전 규칙 그대로([`alias_allowed`] · 뒤에 별칭이 이미 있으면 호출자가 끈다).
+                let mut n = head.len();
+                while n > 0 && is_name(head[n - 1]) {
+                    n -= 1;
+                    if n >= 1 && head[n - 1].text == "." {
+                        n -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                let alias_ok = alias_allowed(&head[..n], stmt_kind.as_deref(), dialect);
                 return Context {
                     kind: CtxKind::Want(Want::DbLink),
                     prefix,
@@ -1727,7 +1739,7 @@ fn context_at_raw(
                     clause_pos,
                     case_pos,
                     stmt_kind,
-                    alias_ok: false,
+                    alias_ok,
                     alias_follows: false,
                 };
             }

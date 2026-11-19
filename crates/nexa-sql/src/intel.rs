@@ -208,6 +208,8 @@ pub(crate) struct Intel {
     need_kinds: Vec<(String, ObjectKind)>,
     /// `PUBLIC` 스키마의 DB 링크 목록을 이미 청했는가(메타에 `PUBLIC`이 없을 때 한 번만 · 11-19).
     dblink_public_asked: bool,
+    /// 지금 팝업이 DB 링크 자리일 때 그 테이블 이름(`t@|`의 `t` · 링크를 고르면 붙일 별칭의 바탕 · 11-19).
+    dblink_table: String,
     /// 마지막 요청이 남긴 **테이블 상세**(제약) 채움 요청 — `JOIN … ON` 조건 조각이 외래 키를 기다린다(T-178).
     need_details: Vec<nsql_run::meta::ObjId>,
     /// 루틴 인자 채움 요청(T-317 · `EXEC proc |`).
@@ -406,6 +408,7 @@ impl Intel {
             need_objects: Vec::new(),
             need_kinds: Vec::new(),
             dblink_public_asked: false,
+            dblink_table: String::new(),
             need_details: Vec::new(),
             need_args: Vec::new(),
             loading: false,
@@ -690,6 +693,12 @@ impl Intel {
                 self.cands_proc_param(p, &rq, &mut cands);
             }
             CtxKind::Want(w) => {
+                // DB 링크 자리 = 링크를 고르면 붙일 별칭의 바탕(테이블 이름 · `@` 바로 앞 낱말)을 기억해 둔다(사용자 11-19).
+                self.dblink_table = if *w == intel::Want::DbLink {
+                    name_before_at(doc, ctx.replace.start)
+                } else {
+                    String::new()
+                };
                 self.want_cands(*w, meta, dialect, show_types, &mut cands);
             }
             CtxKind::Relation => {
@@ -2603,6 +2612,35 @@ impl Intel {
             //   한정 이름(`FROM 스키마.|` · `FROM DB.소유자.|` = `Member` + `from_chain`)도 같은 규칙(사용자 10-21 "마지막 테이블에 Alias가
             //   붙지 않아" — `Schema.Table A` · `Database.owner.Table A`). ★ 뒤에 별칭이 이미 있으면(`FROM DMS_I002040| A` ·
             //   `Context::alias_follows` · 사용자 10-29 "B A가 된다") 이름만 바꾼다.
+            // ★ DB 링크를 고른 자리(사용자 11-19 "링크드 서버의 경우 Alias 붙이기가 동작하지 않는다"): `FROM t@link A` — 별칭은
+            //   **테이블 이름**으로 만든다(링크 이름이 아니라 · 같은 부품 · 같은 설정). 허용·뒤따르는 별칭 판정은 테이블과 같다.
+            CandKind::Symbol
+                if self.cfg.insert_alias
+                    && ctx.kind == CtxKind::Want(intel::Want::DbLink)
+                    && ctx.alias_ok
+                    && !ctx.alias_follows
+                    && !self.dblink_table.is_empty() =>
+            {
+                let table = self.dblink_table.clone();
+                // 별칭 없이 적힌 그 테이블 자신(`t` = `t`)은 "쓰인 별칭"이 아니다.
+                let taken: Vec<&str> = ctx
+                    .aliases
+                    .iter()
+                    .filter(|a| {
+                        !(a.alias.eq_ignore_ascii_case(&table)
+                            && a.table.eq_ignore_ascii_case(&table))
+                    })
+                    .map(|a| a.alias.as_str())
+                    .collect();
+                let alias = nsql_core::alias::make(
+                    &table,
+                    &taken,
+                    self.cfg.alias_letters,
+                    self.cfg.alias_upper,
+                );
+                text.push(' ');
+                text.push_str(&alias);
+            }
             CandKind::Table | CandKind::View | CandKind::Synonym
                 if self.cfg.insert_alias
                     && alias_slot(ctx)
@@ -2658,6 +2696,34 @@ impl Intel {
 /// 사전 버킷의 스키마 심볼(아직 이름조차 없으면 None = 한 번도 요청 안 함).
 fn dict_sym<'a>(m: &'a MetaView<'a>) -> Option<(&'a MetaView<'a>, Sym)> {
     m.names.find(nsql_catalog::DICT_SCHEMA).map(|s| (m, s))
+}
+
+/// `at`(= DB 링크 접두의 시작 · 바로 앞 글자가 `@`) 앞의 이름 한 낱말(`s.t@LN` → `t` · 인용 이름은 따옴표를 벗긴다).
+/// `@`가 아니거나 이름이 없으면 빈 글.
+fn name_before_at(doc: &str, at: usize) -> String {
+    let b = doc.as_bytes();
+    if at == 0 || at > b.len() || b[at - 1] != b'@' {
+        return String::new();
+    }
+    let end = at - 1;
+    if end > 0 && b[end - 1] == b'"' {
+        // "인용 이름"@
+        let close = end - 1;
+        return match doc[..close].rfind('"') {
+            Some(open) => doc[open + 1..close].to_string(),
+            None => String::new(),
+        };
+    }
+    let mut s = end;
+    while s > 0 {
+        let c = b[s - 1];
+        if c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | b'#') || c >= 0x80 {
+            s -= 1;
+        } else {
+            break;
+        }
+    }
+    doc.get(s..end).unwrap_or("").to_string()
 }
 
 /// 채움 요청 목록에 한 번만(대소문자 무시).
@@ -3284,6 +3350,94 @@ mod tests {
     /// T-178 JOIN 조건 조각(통합): 제약을 모르면 상세 요청 + 불러오는 중 → 채워지면 첫 후보 = FK 조건 조각 · 설정 끔 = 없음.
     /// ★ 자료형 자리(사용자 10-09): 메타 없이도 방언 내장 자료형(정적 표)이 후보 · `CAST(x AS NU` 접두로 NUMBER가 맨 위 ·
     /// `intel.types` 끄면 내장 자료형 0 · 메타가 있으면 사용자 정의 타입(ObjectKind::Type)도 함께.
+    #[test]
+    fn dblink_position_lists_links_with_host_and_appends_alias() {
+        let host = Rect::new(0, 0, 800, 600);
+        let ask = |it: &mut Intel, doc: &str, view: Option<&MetaView<'_>>| {
+            it.request(
+                1,
+                1,
+                doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                view,
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None,
+            )
+        };
+        let mut m = store();
+        m.load_bucket(
+            "SCOTT",
+            ObjectKind::DbLink,
+            &[NewObj {
+                name: "LNK_PRD".into(),
+                extra: Some("prd-host".into()),
+                ..Default::default()
+            }],
+            1,
+        );
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let mut it = Intel::new(cfg());
+        let doc = "SELECT * FROM SALES_CUSTOMER@";
+        ask(&mut it, doc, Some(&view));
+        // 링크만(스키마·키워드·컬럼 없음) · 설명 칸 = host.
+        assert_eq!(
+            it.cands
+                .iter()
+                .map(|c| (c.text.as_str(), c.detail.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("LNK_PRD", "prd-host")],
+            "{}",
+            it.dump_cands()
+        );
+        // PUBLIC의 링크는 메타에 없으면 한 번만 청한다.
+        let kinds = it.take_need_kinds();
+        assert!(
+            kinds
+                .iter()
+                .any(|(s, k)| s == "PUBLIC" && *k == ObjectKind::DbLink),
+            "{kinds:?}"
+        );
+        // 확정 = 링크 이름 + 테이블 이름으로 만든 별칭(테이블 자리와 같은 부품).
+        it.pick("intel:0");
+        let a = it.take_accept().expect("accept");
+        assert_eq!(
+            (a.replace.clone(), a.text.as_str()),
+            (doc.len()..doc.len(), "LNK_PRD sc")
+        );
+        ask(&mut it, doc, Some(&view));
+        assert!(
+            !it.take_need_kinds().iter().any(|(s, _)| s == "PUBLIC"),
+            "PUBLIC은 다시 청하지 않는다"
+        );
+        // 뒤에 별칭이 이미 있으면 링크 이름만.
+        let doc2 = "SELECT * FROM SALES_CUSTOMER@LNK A WHERE 1=1";
+        let caret = doc2.find(" A WHERE").expect("caret");
+        it.request(
+            1,
+            2,
+            doc2,
+            caret,
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None,
+        );
+        it.pick("intel:0");
+        assert_eq!(it.take_accept().expect("accept").text, "LNK_PRD");
+        // 별칭을 허용하지 않는 자리(INSERT INTO)도 링크 이름만.
+        ask(&mut it, "INSERT INTO SALES_CUSTOMER@", Some(&view));
+        it.pick("intel:0");
+        assert_eq!(it.take_accept().expect("accept").text, "LNK_PRD");
+    }
+
     #[test]
     fn data_type_position_offers_builtin_and_user_types() {
         let host = Rect::new(0, 0, 800, 600);

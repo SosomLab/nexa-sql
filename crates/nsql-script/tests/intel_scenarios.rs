@@ -874,3 +874,27 @@ fn oracle_dblink_position() {
         assert_ne!(ctx_in(sql, d).kind, CtxKind::Want(W::DbLink), "{sql}");
     }
 }
+
+/// ★ 11-19(사용자 "링크가 붙은 테이블에도 Alias 붙이기"): DB 링크 자리의 자동 별칭 허용 = 테이블 자리와 같은 규칙(관계 이름 앞 낱말) ·
+/// 뒤에 별칭이 이미 있으면 붙이지 않는다(`alias_follows`).
+#[test]
+fn dblink_position_alias_rules() {
+    use nsql_script::intel::Want as W;
+    let o = Dialect::Oracle;
+    for (sql, ok, follows) in [
+        ("SELECT * FROM t1@|\nWHERE 1=1", true, false),
+        ("SELECT * FROM s1.t1@LN|", true, false),
+        ("SELECT * FROM t0 a JOIN t1@|", true, false),
+        ("SELECT * FROM t0 a, t1@|", true, false),
+        ("UPDATE t1@| SET c = 1", true, false),
+        // 이미 별칭이 뒤따른다 = 이름만 바꾼다.
+        ("SELECT * FROM t1@| A WHERE 1=1", true, true),
+        // 별칭을 허용하지 않는 자리.
+        ("INSERT INTO t1@|", false, false),
+        ("TRUNCATE TABLE t1@|", false, false),
+    ] {
+        let c = ctx_in(sql, o);
+        assert_eq!(c.kind, CtxKind::Want(W::DbLink), "{sql}");
+        assert_eq!((c.alias_ok, c.alias_follows), (ok, follows), "{sql}");
+    }
+}
