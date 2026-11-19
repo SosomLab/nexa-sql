@@ -14,6 +14,18 @@ use std::sync::{Arc, Mutex};
 const SECRET: [u8; 32] = [7u8; 32];
 static PUBLIC: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 
+/// ★ 로컬 포트를 쓰는 시험을 한 번에 하나씩(11-20 · ci 44561963546 ubuntu 간헐 실패): `unreachable_…`은 `:0`으로 얻은 포트를
+///   닫아 "닫힌 포트"로 쓰는데, 병렬로 도는 다른 시험의 로컬 서버(`serve` = `:0`)가 그 사이 **같은 포트를 다시 받으면** 도달 게이트가
+///   통과해 `Offline` 대신 `Index`로 실패했다(TOCTOU). 포트를 얻고 놓는 구간이 겹치지 않게 시험 전체를 잠근다.
+static NET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn net_lock() -> std::sync::MutexGuard<'static, ()> {
+    // 다른 시험이 단언 실패로 잠금을 오염시켜도 이 시험의 판정은 계속한다.
+    NET_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn keys() -> Vec<RootKey> {
     let pk = PUBLIC.get_or_init(|| SigningKey::from_bytes(&SECRET).verifying_key().to_bytes());
     vec![RootKey {
@@ -95,6 +107,7 @@ fn serve(routes: Routes) -> String {
 
 #[test]
 fn install_round_trip_over_local_server() {
+    let _net = net_lock();
     let root = std::env::temp_dir().join(format!("nsql-install-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let id = "fakedb";
@@ -314,6 +327,7 @@ fn install_round_trip_over_local_server() {
 /// ★ D-350 오프라인 전체 설치: 번들 zip(자산 zip + .sha256 + .sig · 다른 OS 자산은 건너뜀 · 서명 틀린 자산은 그것만 실패).
 #[test]
 fn offline_bundle_installs_every_asset_for_this_platform() {
+    let _net = net_lock();
     let root = std::env::temp_dir().join(format!("nsql-bundle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let plat = install::platform();
@@ -397,6 +411,7 @@ fn offline_bundle_installs_every_asset_for_this_platform() {
 /// 않고 `Offline` 종류로 **예산 안에** 끝난다(닫힌 포트 = 즉시 거부). 호스트는 이 종류로 오프라인 번들 안내를 낸다.
 #[test]
 fn unreachable_repository_fails_fast_with_offline_kind() {
+    let _net = net_lock();
     let root = std::env::temp_dir().join(format!("nsql-install-offline-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
