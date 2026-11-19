@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| `fix/1119-dblink-alias` | 2026-11-19(Windows) | (main ff 병합 예정 · 6f3613a5 위 · 해시·CI는 병합 뒤 다음 기록) | 4 | 사용자 QA 5~7차 = DB 링크 자리 자동 별칭 e7acf3bd · 그리드 복사 NULL·링크 설명 축약 ac394ae3 · `alias_follows` NOT_ALIAS·원격 메타 잠금 f00ba3a8 + 기록 |
+| `fix/1119-dblink-alias` | 2026-11-19(Windows) | 2026-11-20 → main ff 병합·삭제(**6f3613a5..b34ea0e2** push · ci **44551006619** ✓ · integration **44551006523** ✓) · e7acf3bd · ac394ae3 · f00ba3a8 + 기록 b34ea0e2 | 4 | 사용자 QA 5~7차 = DB 링크 자리 자동 별칭 e7acf3bd · 그리드 복사 NULL·링크 설명 축약 ac394ae3 · `alias_follows` NOT_ALIAS·원격 메타 잠금 f00ba3a8 + 기록 |
 | `feat/1119-project-multi-instance-sync` | 2026-11-19(Windows) | 2026-11-19 → main ff 병합·삭제(**9eb03963..6f3613a5** push · ci 44542522770 ✓ · integration 44542522697 ✓) · 703bf2ba · 73c238a8 · 79897a93 + 기록 001a3f48 · 6f3613a5 | 5 | 다중 인스턴스 프로젝트 동기화 · 탐색기 새 객체 용량 · 확장 메뉴 표시 조건 + 자동완성 4차(UNION 가지 · 별칭 자리 · DB 링크 · 설명 범위) |
 | `fix/1119-from-alias-pos` | 2026-11-19(Windows) | 2026-11-19 → main ff 병합·삭제(**9eb03963..6f3613a5** 안 · CI ✓) · 0050d732 + 기록 df1fd764 | 2 | 사용자 QA 3차 = FROM 절 별칭 자리(`FROM t A.|`) 후보 없음 · 0050d732 + 기록 · 자동완성 범위·`*` 펼치기 사용자 확인 완료 표기 |
 | `fix/1119-intel-errpos-ai` | 2026-11-19(Windows) | 2026-11-19 → main ff · **7b302814** · **289f3af3** + 기록 12c21ade · a37330d6 · 브랜치 삭제 | 4 | 사용자 QA 4건 + 2차 2건(`*` 펼치기 범위 · Ctrl 링크 범위 별칭·원본 추적 · PL/SQL 오류 위치) = 자동완성 범위 별칭·파생 테이블 컬럼·CTE · 오류 위치 문서 줄·열 + `at:` · ORA-06550 · AI 프롬프트 상자 밖 놓기 · AI 표 자동 줄바꿈 · [journal 11-19 §2](journal/2026-11-19.md) |
