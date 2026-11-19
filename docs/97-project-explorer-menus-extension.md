@@ -93,6 +93,11 @@
 
 - 검증 = SDK 호스트 타깃 시험(`cargo test --target x86_64-pc-windows-msvc` · nexa-ext-sdk 6/0 · project-explorer-menus 2/0) · 설치본 반영 = `scripts/ext-sync-installed.ps1 -Id project-explorer-menus`(11-19 사용자 확인 뒤 실제 설정 폴더 그 확장만) · 미저장 탭에서 메뉴 숨김 = 사용자 실기.
 
+### 2-6. 샘플 단위 시험 = CI 호스트 타깃(11-20 · T-499 · 393c4a7e · 83460b29)
+
+- `extensions/sdk` 작업공간의 기본 타깃은 wasm32라 그냥 `cargo test`는 실행 단계에서 실패한다(Windows = os error 193) → 샘플 단위 시험이 CI에서 한 번도 돌지 않아 sql-formatter-kiros33 기대값 9건이 8일 동안 낡아 있었다.
+- CI `ci.yml` 단계 **"ext sdk test (host target · linux)"** = `cargo test --workspace --target x86_64-unknown-linux-gnu`(working-directory `nexa-sql/extensions/sdk` · Linux 러너만) · 로컬 = `cargo test --workspace --target x86_64-pc-windows-msvc`.
+
 ## 3. 작업 기록 — 시간 순서(요청 → 추가/변경/삭제)
 
 | 일시 | 요청(사용자) | 추가 | 변경 | 삭제 | 비고 |

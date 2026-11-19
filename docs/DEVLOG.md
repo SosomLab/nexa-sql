@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-20 새벽 (Windows · 개발 × 협업 · `fix/1120-todo-cleanup`)** — 사용자 "T-498 · T-499 · T-501 마무리" = 새 탭 입력 포커스·제목 중복 방지(393c4a7e) · 포매터 샘플 시험 기대값(83460b29 · 협업) + CI 호스트 타깃 단계 · 도메인 DB 링크 이름(5c5747b6) · nsql-script 200+17 · nexa-sql 663/0/6 · SDK 전체 ✓ · V1 ①② ✓ · [journal 11-20](journal/2026-11-20.md)
 - **2026-11-20 00:1x (Windows · 사용자 실기)** — 11-19 묶음 실기 "완료"(T-497 · T-500 · T-503 · 동기화 양방향 · CTAS 용량 · 메뉴 숨김 · 가지 별칭 · 설명 범위 · 링크 별칭 · 복사 NULL · 원격 메타 잠김) · 명시 없음 = 겹침 띠 · `FROM t A.` · [journal 11-19 §9](journal/2026-11-19.md)
 - **2026-11-19 자정 (Windows · 개발 × 협업 · 5~7차 · `fix/1119-dblink-alias`)** — DB 링크 자리 자동 별칭 · 링크 후보 설명 = `호스트:포트/서비스` · `alias_follows` `NOT_ALIAS` · 그리드 복사 NULL `grid.copy_null`(기본 공백) · `intel.dblink_remote_meta` 구현 전 잠금(T-502 보류) · e7acf3bd · ac394ae3 · f00ba3a8 · fmt --check(nexa-sql · nexa-ui) ✓ · clippy --tests -D warnings(nsql-script · nsql-settings · nsql-i18n · nexa-sql) ✓ · nsql-script 200 + 16 · nsql-settings·nsql-i18n 9·33 · nexa-sql 661/0/6 · check-3os --quick ✓ · T-503 ✅ · 6f3613a5 CI ✓ · [journal 11-19 §8](journal/2026-11-19.md)
 - **2026-11-19 밤 (Windows · 개발 × 협업 · 4차 · `feat/1119-project-multi-instance-sync`)** — UNION 가지·PL/SQL 블록 안 문장별 별칭 · 별칭 자리 = 키워드만 · Oracle DB 링크 자동완성 · 줄 끝 설명 범위 = 블록 안 `;` 문장 · 79897a93 · nsql-script 200+14 · nsql-cli 29 · nexa-sql 657/0/6 · V1 실서버 4/4 · T-500 ✅ · T-501 · 사용자 "내용 정리 후 진행사항 최신화 · commit · main 병합 · push" · [journal 11-19 §7](journal/2026-11-19.md)
