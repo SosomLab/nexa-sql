@@ -525,8 +525,8 @@ mod tests {
         );
         // force_as(기본) = 순수 컬럼도 AS 컬럼명 · 4항목 모두 다음 탭 스톱(16)에 AS.
         let want = concat!(
-            "SELECT\n\ta.ord_no\tAS\tord_no\n,\ta.item_cd\tAS\titem_cd\n,\ta.ord_qty\tAS\tqty\n,\ta.ord_amt\tAS\tamt\n",
-            "FROM\n\ttb_order a\nWHERE 1=1\nAND\ta.plant_cd\t=\t'1200'\nAND\ta.stock_qty\t>\t0\nAND\ta.status_cd\t<>\t'X'\n"
+            "SELECT\n\tA.ord_no\tAS\tord_no\n,\tA.item_cd\tAS\titem_cd\n,\tA.ord_qty\tAS\tqty\n,\tA.ord_amt\tAS\tamt\n",
+            "FROM\n\ttb_order A\nWHERE 1=1\nAND\tA.plant_cd\t=\t'1200'\nAND\tA.stock_qty\t>\t0\nAND\tA.status_cd\t<>\t'X'\n"
         );
         assert_eq!(out, want);
     }
@@ -585,7 +585,7 @@ FROM T1";
             &Cfg::default(),
         );
         assert!(
-            out.contains("WHERE 1=1\nAND\ta.x\t=\t1\n---------\nUNION ALL\n---------\nSELECT\n"),
+            out.contains("WHERE 1=1\nAND\tA.x\t=\t1\n---------\nUNION ALL\n---------\nSELECT\n"),
             "{out}"
         );
     }
@@ -599,7 +599,7 @@ FROM T1";
             &Cfg::default(),
         );
         assert!(
-            out.contains(",\tsum(a.q) OVER (\n\t\tPARTITION BY a.k\n\t\tORDER BY a.d\n\t\tROWS BETWEEN 2 PRECEDING AND CURRENT ROW\n\t)"),
+            out.contains(",\tsum(A.q) OVER (\n\t\tPARTITION BY A.k\n\t\tORDER BY A.d\n\t\tROWS BETWEEN 2 PRECEDING AND CURRENT ROW\n\t)"),
             "{out}"
         );
         // ★ `)` 줄의 AS도 같은 블록 정렬 열(사용자 09-30 "다중 행 항목도 AS 정렬 대상") — 열 = 탭 4 기준 화면 폭.
@@ -614,7 +614,7 @@ FROM T1";
         assert_eq!(col_of("AS\tmov3"), col_of("AS\trn"), "{out}");
         assert!(out.contains("\t)\t"), "{out}");
         assert!(
-            out.contains("row_number() OVER (ORDER BY a.d)"),
+            out.contains("row_number() OVER (ORDER BY A.d)"),
             "짧은 것은 한 줄: {out}"
         );
         assert_eq!(
@@ -639,7 +639,7 @@ FROM T1";
             &Cfg::default(),
         );
         assert!(
-            out.contains("ORDER BY\n\tb.plant_cd\n,\tb.qty\t\tDESC\n;\n"),
+            out.contains("ORDER BY\n\tB.plant_cd\n,\tB.qty\t\tDESC\n;\n"),
             "{out}"
         );
     }
@@ -664,12 +664,12 @@ FROM T1";
             "{n}"
         );
         assert!(
-            n.contains("p.item_cd\tAS\titem_cd\n"),
+            n.contains("P.item_cd\tAS\titem_cd\n"),
             "겹치지 않으면 그대로: {n}"
         );
         let q = run(DupAlias::Qualified);
         assert!(
-            q.contains("AS\tplant_cd_p\n") && q.contains("AS\tplant_cd_t\n"),
+            q.contains("AS\tplant_cd_P\n") && q.contains("AS\tplant_cd_T\n"),
             "{q}"
         );
         let k = run(DupAlias::Keep);
@@ -687,24 +687,24 @@ FROM T1";
         let on = format(KIROS33_SAMPLE, &Options::default(), &Cfg::default());
         // AS 정렬: 짧은 식은 탭 3개 · 가장 긴 식(nvl…)은 탭 1개 → AS가 같은 열(다음 탭 스톱 24).
         // 순수 컬럼도 AS 컬럼명 · JOIN 중복 = 순번(기본).
-        assert!(on.contains("\tp.plant_cd\t\t\tAS\tplant_cd1\n"), "{on}");
-        assert!(on.contains(",\tt.plant_cd\t\t\tAS\tplant_cd2\n"), "{on}");
+        assert!(on.contains("\tP.plant_cd\t\t\tAS\tplant_cd1\n"), "{on}");
+        assert!(on.contains(",\tT.plant_cd\t\t\tAS\tplant_cd2\n"), "{on}");
         assert!(
-            on.contains(",\tp.item_cd\t\t\tAS\titem\n"),
+            on.contains(",\tP.item_cd\t\t\tAS\titem\n"),
             "force_as + align_as: {on}"
         );
-        assert!(on.contains(",\tnvl(p.plan_qty, 0)\tAS\tqty\n"), "{on}");
-        assert!(on.contains(",\ttrim(p.remark_txt)\tAS\tremark\n"), "{on}");
+        assert!(on.contains(",\tnvl(P.plan_qty, 0)\tAS\tqty\n"), "{on}");
+        assert!(on.contains(",\ttrim(P.remark_txt)\tAS\tremark\n"), "{on}");
         assert!(
             on.contains("END\tAS\tplan_size_grade\n"),
             "outlier = 앞뒤 탭 1개씩: {on}"
         );
         // 연산자 정렬: 짧은 왼쪽 식은 탭 3개 · 가장 긴 식(nvl…)은 탭 1개 → 연산자가 같은 열.
         assert!(
-            on.contains("AND\tp.plant_cd\t\t\t=\t'1200'\n"),
+            on.contains("AND\tP.plant_cd\t\t\t=\t'1200'\n"),
             "align_ops: {on}"
         );
-        assert!(on.contains("AND\tnvl(p.plan_qty, 0)\t>=\t10\n"), "{on}");
+        assert!(on.contains("AND\tnvl(P.plan_qty, 0)\t>=\t10\n"), "{on}");
         assert!(
             on.contains("---------\nUNION ALL\n---------\n"),
             "set_op_dashes: {on}"
@@ -727,17 +727,17 @@ FROM T1";
             ..Cfg::default()
         };
         let off = format(KIROS33_SAMPLE, &Options::default(), &off);
-        assert!(off.contains("p.item_cd item\n"), "{off}");
+        assert!(off.contains("P.item_cd item\n"), "{off}");
         assert!(
-            off.contains("\tp.plant_cd\n"),
+            off.contains("\tP.plant_cd\n"),
             "force_as 끔 = 순수 컬럼 그대로: {off}"
         );
         assert!(
-            off.contains("nvl(p.plan_qty, 0)\tAS\tqty\n"),
+            off.contains("nvl(P.plan_qty, 0)\tAS\tqty\n"),
             "정렬 끔 = 탭 1개: {off}"
         );
         assert!(
-            off.contains("AND\tp.plant_cd\t=\t'1200'\n"),
+            off.contains("AND\tP.plant_cd\t=\t'1200'\n"),
             "정렬 끔 = 간격만(strict 탭): {off}"
         );
         assert!(!off.contains("---------"), "{off}");
@@ -752,9 +752,9 @@ FROM T1";
             &Cfg::default(),
         );
         // force_as(기본) = 순수 컬럼도 AS 컬럼명(가장 긴 항목 sum(a.q) 다음 탭 스톱 16에 맞춰 탭 3개).
-        assert!(out.contains("\ta.k\t\t\tAS\tk\n"), "{out}");
+        assert!(out.contains("\tA.k\t\t\tAS\tk\n"), "{out}");
         assert!(
-            out.contains(",\tsum(a.q)\tAS\ttotal\n"),
+            out.contains(",\tsum(A.q)\tAS\ttotal\n"),
             "AS 강제 + 탭 정렬: {out}"
         );
         assert!(
@@ -766,7 +766,7 @@ FROM T1";
             ..Cfg::default()
         };
         let out = format("select sum(a.q) total from t a", &Options::default(), &cfg);
-        assert!(out.contains("sum(a.q) total"), "{out}");
+        assert!(out.contains("sum(A.q) total"), "{out}");
     }
 
     /// 1.1.0: Basic 공통 옵션이 그대로 얹힌다 — 테이블 설명(pair) · 괄호 그룹 시드 · 단어 연산자(4자 이상 = 공백 1개) · 멱등.
@@ -780,10 +780,10 @@ FROM T1";
             &common,
             &Cfg::default(),
         );
-        assert!(out.contains("tb_order a\t--\t주문\n"), "{out}");
+        assert!(out.contains("tb_order A\t--\t주문\n"), "{out}");
         assert!(out.contains("AND\t(1=0\n"), "{out}");
         assert!(
-            out.contains("a.z LIKE 'q%'") || out.contains("a.z\tLIKE 'q%'"),
+            out.contains("A.z LIKE 'q%'") || out.contains("A.z\tLIKE 'q%'"),
             "{out}"
         );
         assert_eq!(format(&out, &common, &Cfg::default()), out, "idempotent");
@@ -837,7 +837,7 @@ FROM T1";
         let out = format(src, &Options::default(), &Cfg::default());
         assert!(
             out.starts_with(
-                "SELECT\n\ta.x\t\t\t\tAS\tx\n,\tb.longer_col\tAS\ty\n,\ta.z\t\t\t\tAS\tz\n"
+                "SELECT\n\tA.x\t\t\t\tAS\tx\n,\tB.longer_col\tAS\ty\n,\tA.z\t\t\t\tAS\tz\n"
             ),
             "{out:?}"
         );
