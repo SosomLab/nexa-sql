@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| `fix/1120-todo-cleanup` | 2026-11-20(Windows) | (병합 대기 · main dcfcc1f7 위 · 해시는 병합 뒤) | 4 | TODO 마무리 = T-499 시험 기대값 83460b29 · T-501 도메인 링크 5c5747b6 · T-498 새 탭 포커스·제목 + T-499 CI 단계 393c4a7e + 기록 |
+| `fix/1120-todo-cleanup` | 2026-11-20(Windows) | 2026-11-20 → main ff 병합·삭제(**b34ea0e2..3e36558f** push · ci 44561963546 ✗ · integration 44561963620 ✗(2건 · 이번 변경 밖 · 실패 잡 재실행 중 attempt 2)) · 83460b29 · 5c5747b6 · 393c4a7e + 기록 3e36558f | 4 | TODO 마무리 = T-499 시험 기대값 83460b29 · T-501 도메인 링크 5c5747b6 · T-498 새 탭 포커스·제목 + T-499 CI 단계 393c4a7e + 기록 |
 | `fix/1119-dblink-alias` | 2026-11-19(Windows) | 2026-11-20 → main ff 병합·삭제(**6f3613a5..b34ea0e2** push · ci **44551006619** ✓ · integration **44551006523** ✓) · e7acf3bd · ac394ae3 · f00ba3a8 + 기록 b34ea0e2 | 4 | 사용자 QA 5~7차 = DB 링크 자리 자동 별칭 e7acf3bd · 그리드 복사 NULL·링크 설명 축약 ac394ae3 · `alias_follows` NOT_ALIAS·원격 메타 잠금 f00ba3a8 + 기록 |
 | `feat/1119-project-multi-instance-sync` | 2026-11-19(Windows) | 2026-11-19 → main ff 병합·삭제(**9eb03963..6f3613a5** push · ci 44542522770 ✓ · integration 44542522697 ✓) · 703bf2ba · 73c238a8 · 79897a93 + 기록 001a3f48 · 6f3613a5 | 5 | 다중 인스턴스 프로젝트 동기화 · 탐색기 새 객체 용량 · 확장 메뉴 표시 조건 + 자동완성 4차(UNION 가지 · 별칭 자리 · DB 링크 · 설명 범위) |
 | `fix/1119-from-alias-pos` | 2026-11-19(Windows) | 2026-11-19 → main ff 병합·삭제(**9eb03963..6f3613a5** 안 · CI ✓) · 0050d732 + 기록 df1fd764 | 2 | 사용자 QA 3차 = FROM 절 별칭 자리(`FROM t A.|`) 후보 없음 · 0050d732 + 기록 · 자동완성 범위·`*` 펼치기 사용자 확인 완료 표기 |
