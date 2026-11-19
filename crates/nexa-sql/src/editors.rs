@@ -1431,13 +1431,42 @@ impl Editors {
         std::mem::take(&mut self.new_tab_created)
     }
 
-    pub(crate) fn new_tab(&mut self, title: Option<String>) {
-        let title = title.unwrap_or_else(|| {
+    /// 새 무제 탭의 제목 — 번호는 계속 늘고(닫은 번호를 다시 쓰지 않는다) **이미 열린 탭의 제목은 건너뛴다**(T-498 · 11-20:
+    /// 프로젝트에서 `Script_2`를 복원한 뒤의 새 탭이 또 `Script_2`였다 · 이름을 바꿔 `Script_9`를 만든 경우도 같다).
+    fn next_script_title(&mut self) -> String {
+        loop {
             self.counter += 1;
-            format!("Script_{}", self.counter)
-        });
+            let t = format!("Script_{}", self.counter);
+            if !self.titles.contains(&t) {
+                return t;
+            }
+        }
+    }
+
+    pub(crate) fn new_tab(&mut self, title: Option<String>) {
+        let title = match title {
+            Some(t) => {
+                // 복원·지정 제목이 `Script_<n>`이면 번호를 거기까지 올린다(다음 새 탭이 그 번호를 다시 쓰지 않게 · T-498).
+                if let Some(n) = t
+                    .strip_prefix("Script_")
+                    .and_then(|n| n.parse::<usize>().ok())
+                {
+                    self.counter = self.counter.max(n);
+                }
+                t
+            }
+            None => self.next_script_title(),
+        };
         let syntax = self.syntax_for_title(&title);
-        let tb = self.make_box("", &syntax);
+        let mut tb = self.make_box("", &syntax);
+        // ★ 입력 포커스를 새 탭으로 넘긴다(T-498 · 11-20 · [`Self::switch`]와 같은 방식): 종전에는 이전 탭에 포커스가 남고 새 탭은
+        //   포커스 없이 활성이 돼, 클릭하기 전까지 타이핑·붙여넣기가 조용히 버려졌다(프로젝트 복원의 마지막 무제 탭 · 다중 인스턴스
+        //   동기화가 연 탭에서 돌아온 탭 · AI의 "새 탭에 넣기"). 포커스가 편집기에 없었으면(그리드 등) 넘길 것도 없다.
+        if let Some(prev) = self.bufs.get_mut(self.active) {
+            let focused = prev.is_focused();
+            prev.set_focused(false);
+            tb.set_focused(focused);
+        }
         self.bufs.push(tb);
         self.indents.push(None);
         self.paths.push(None);
@@ -2605,8 +2634,9 @@ impl Editors {
             self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
             self.eol[i] = self.default_eol;
             self.saved_eol[i] = self.default_eol;
-            self.counter += 1;
-            self.titles[i] = format!("Script_{}", self.counter);
+            // 자기 옛 제목은 겹침 판정에서 뺀다(비우는 탭 자신 · 처음 상태로 되돌리면 다시 `Script_1`).
+            self.titles[i].clear();
+            self.titles[i] = self.next_script_title();
             // 새 스크립트가 됐으니 id도 새로(짝 결과 그리드 비움).
             self.ids[i] = self.next_id;
             self.next_id += 1;
@@ -3853,6 +3883,46 @@ mod split_tests {
         assert!(!ed.tabs.is_grouped(base));
         ed.tab_click(base, false, false);
         assert!((0..ed.len()).all(|i| !ed.tabs.is_grouped(i)));
+    }
+
+    /// ★ T-498(11-20): ① 새 탭은 입력 포커스를 이어받는다 — 복원처럼 `new_tab(Some)`만 잇달아 부른 뒤에도 활성 탭에 타이핑·붙여넣기가
+    ///   들어간다(종전 = 포커스가 처음 탭에 남아 `paste`가 조용히 버려짐) · 포커스는 한 탭에만. ② 새 무제 탭 제목은 열린 탭과 겹치지
+    ///   않는다(복원된 `Script_2` 뒤의 새 탭 = `Script_3`).
+    #[test]
+    fn new_tab_takes_focus_and_never_reuses_an_open_title() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        ed.cur_mut().set_focused(true);
+        // 프로젝트 복원과 같은 순서: 제목 있는 탭 둘 → 활성 탭 고르기 → 옛 첫 탭 닫기.
+        ed.new_tab(Some("Script_1".into()));
+        ed.cur_mut().set_text("SELECT 'base' FROM dual");
+        ed.new_tab(Some("Script_2".into()));
+        let focused: Vec<bool> = (0..ed.len())
+            .map(|i| ed.tab_box(i).is_some_and(TextBox::is_focused))
+            .collect();
+        assert_eq!(focused.iter().filter(|f| **f).count(), 1, "{focused:?}");
+        assert!(ed.cur().is_focused(), "새 탭이 포커스를 이어받는다");
+        let first = ed.tab_id(0);
+        ed.switch_to_id(ed.tab_id(1));
+        if let Some(i) = ed.index_of_id(first) {
+            ed.close_tab_forced(i);
+        }
+        assert!(ed.cur().is_focused(), "돌아온 탭에도 포커스");
+        let mut inv = Invalidations::default();
+        let end = ed.cur().buf().len();
+        ed.cur_mut().select_range(end, end, &mut inv);
+        ed.cur_mut().paste(" -- pasted", &mut inv);
+        assert_eq!(ed.cur().text(), "SELECT 'base' FROM dual -- pasted");
+        // 새 무제 탭 = 열린 제목과 겹치지 않는 다음 번호.
+        ed.new_tab(None);
+        assert_eq!(ed.title_of(ed.active()), "Script_3");
+        let mut titles: Vec<String> = (0..ed.len()).map(|i| ed.title_of(i)).collect();
+        titles.sort();
+        titles.dedup();
+        assert_eq!(titles.len(), ed.len(), "{titles:?}");
+        // 포커스가 편집기에 없으면(그리드 등) 새 탭도 포커스 없이.
+        ed.cur_mut().set_focused(false);
+        ed.new_tab(None);
+        assert!(!ed.cur().is_focused());
     }
 
     /// 프로젝트 닫기 = 처음 실행 상태(사용자 09-23): 탭 전부(파일 · 미저장 스크립트 · 묶음) → 빈 `Script_1` 하나 · 번호 1부터.
