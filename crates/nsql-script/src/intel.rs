@@ -1643,7 +1643,9 @@ fn context_at_raw(
         //   별칭 허용 판정은 사슬 **앞** 낱말들(`chain_head` = FROM/JOIN/콤마로 끝남)로 — 관계 자리와 같은 규칙(`alias_allowed`).
         let alias_ok = from_chain && alias_allowed(chain_head, stmt_kind.as_deref(), dialect);
         // ★ 이름 없는 `.`(`ㅁ.`처럼 식별자가 아닌 글자 뒤 · 사용자 09-24 "별칭이 아니면 아무것도 보이지 않아야") = 고를 것 없음.
-        if q.is_empty() {
+        // ★ 관계의 **별칭 자리**(`FROM t A.|` · `JOIN s.t AS A.|` · `FROM ( … ) A.|` · 사용자 11-19 "FROM 절의 `A.` 뒤에는 컬럼이
+        //   들어갈 수 없다") = 고를 것 없음 — 컬럼은 ON·WHERE·SELECT 목록에서만([`relation_alias_pos`]).
+        if q.is_empty() || (!rel_pos && !q.contains('.') && relation_alias_pos(chain_head)) {
             return Context {
                 kind: CtxKind::None,
                 ..none
@@ -1861,6 +1863,44 @@ const NOT_OWNER: &[&str] = &[
     "PARTITION",
     "DISTINCT",
 ];
+
+/// ★ `head` 바로 뒤가 **관계의 별칭 자리**인가(11-19 · 순수) — `head`의 끝이 ① 관계 이름(`t` · `s.t` · `db.s.t`)이고 그 앞이
+/// FROM/JOIN/…(또는 FROM 목록의 `,`)이거나 ② FROM 목록 안에서 닫힌 괄호(`( SELECT … )` · `f(x)` · `PARTITION (p)`)일 때 ·
+/// 사이의 `AS` 하나는 건너뛴다. `ON`·`WHERE`·`CONNECT BY`·`FOR UPDATE OF` 뒤는 이름 앞이 관계 키워드가 아니라 거짓(= 컬럼 자리).
+fn relation_alias_pos(head: &[&Word<'_>]) -> bool {
+    let mut h = head;
+    if h.last().is_some_and(|w| is_word(w, "AS")) {
+        h = &h[..h.len() - 1];
+    }
+    let Some(last) = h.last() else {
+        return false;
+    };
+    if last.text == ")" {
+        return in_from_list(h);
+    }
+    // 이름 사슬을 거꾸로 건넌다.
+    let mut n = h.len();
+    loop {
+        if n == 0 || !is_name(h[n - 1]) {
+            return false;
+        }
+        n -= 1;
+        if n >= 1 && h[n - 1].text == "." {
+            n -= 1;
+        } else {
+            break;
+        }
+    }
+    let pre = &h[..n];
+    // `FOR UPDATE OF a.|`의 UPDATE는 관계 키워드가 아니다(잠금 대상 컬럼 자리).
+    if pre.len() >= 2 && is_word(pre[pre.len() - 1], "UPDATE") && is_word(pre[pre.len() - 2], "FOR")
+    {
+        return false;
+    }
+    pre.last().is_some_and(|w| {
+        RELATION_AFTER.iter().any(|kw| is_word(w, kw)) || (w.text == "," && in_from_list(pre))
+    })
+}
 
 /// 콤마 앞이 FROM 목록인가 — 마지막 절 키워드가 FROM/JOIN 계열이면.
 fn in_from_list(before: &[&Word<'_>]) -> bool {

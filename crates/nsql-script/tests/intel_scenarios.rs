@@ -288,6 +288,46 @@ fn qa_outer_block() {
     }
 }
 
+/// ★ 11-19(사용자 "FROM 절의 `A.` 뒤에는 컬럼이 들어갈 수 없다"): 관계의 별칭 자리 = 후보 없음 · 컬럼 자리(ON·WHERE·CONNECT BY ·
+/// 함수 괄호)와 한정 이름(`FROM 스키마.|`)은 그대로.
+#[test]
+fn relation_alias_position_offers_nothing() {
+    use nsql_script::intel::CtxKind;
+    let none = [
+        "SELECT a.x FROM t1 A.| GROUP BY a.x",
+        "SELECT * FROM s1.t1 A.|",
+        "SELECT * FROM t1 AS A.|",
+        "SELECT * FROM t1 x JOIN t2 A.| ON 1=1",
+        "SELECT * FROM t1 x, t2 A.|",
+        "SELECT * FROM (SELECT 1 c FROM t1) A.|",
+        "SELECT * FROM t1 x LEFT OUTER JOIN (SELECT a.c FROM t2 A.| WHERE 1=1) q ON 1=1",
+    ];
+    for sql in none {
+        let c = ctx_in(sql, Dialect::Oracle);
+        assert_eq!(c.kind, CtxKind::None, "{sql}");
+    }
+    let member = [
+        "SELECT * FROM t1 A JOIN t2 B ON A.|",
+        "SELECT * FROM t1 A WHERE A.|",
+        "SELECT A.| FROM t1 A",
+        "SELECT * FROM t1 A CONNECT BY PRIOR A.|",
+        "SELECT * FROM t1 A START WITH A.|",
+        "SELECT * FROM t1 A FOR UPDATE OF A.|",
+        "SELECT * FROM t1 A, TABLE(A.|) B",
+        "SELECT * FROM s1.|",
+        "SELECT * FROM t1 A, s1.|",
+        "UPDATE t1 A SET A.|",
+    ];
+    for sql in member {
+        let c = ctx_in(sql, Dialect::Oracle);
+        assert!(
+            matches!(c.kind, CtxKind::Member { .. }),
+            "{sql}: {:?}",
+            c.kind
+        );
+    }
+}
+
 /// 범위 규칙 — 같은 별칭 · 형제 · 상관 서브쿼리 · 함수 괄호.
 #[test]
 fn scope_rules() {
