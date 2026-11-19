@@ -1497,7 +1497,10 @@ pub fn alias_follows_at(src: &str, from: usize, dialect: Option<Dialect>) -> boo
         i += 1;
     }
     let word = src[s..i].to_ascii_uppercase();
-    word == "AS" || !keywords_for(dialect).any(|k| k == word)
+    // ★ 별칭이 될 수 없는 낱말(`NOT_ALIAS` — `INNER`·`LEFT`·`CROSS`·`NATURAL` …)도 키워드로 본다(사용자 11-19: 완성 키워드 표에는
+    //   `INNER`가 없어 `FROM t|⏎INNER JOIN …`에서 "별칭이 뒤따른다"로 오판 → 자동 별칭이 안 붙었다 · 별칭 표가 쓰는 목록과 같은 기준).
+    word == "AS"
+        || !(keywords_for(dialect).any(|k| k == word) || NOT_ALIAS.contains(&word.as_str()))
 }
 
 fn context_at_raw(

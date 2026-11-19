@@ -7383,6 +7383,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 2000 },
         default: "250",
     },
+    // ★ DB 링크 너머 원격 메타 조회(사용자 11-19): **자리만** — 구현 보류 · 기본 미사용 · 구현 전에는 바꿀 수 없다(`PENDING_KEYS`).
+    Entry {
+        key: "intel.dblink_remote_meta",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelDblinkRemote,
+        desc: Msg::DescIntelDblinkRemote,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "intel.trigger_chars",
         cat: Msg::CatIntel,
@@ -9398,6 +9407,16 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ),
 ];
 
+/// ★ **구현 전 설정**(사용자 11-19 "설정은 추가하되 미사용 상태에서 변경할 수 없도록"): 자리만 잡아 둔 키 — 설정 화면에서 늘 잠기고
+///   ([`locked_by_chain`]) `set`은 거부한다(기본값 그대로). 기능을 구현하면 여기서 뺀다.
+pub const PENDING_KEYS: &[&str] = &["intel.dblink_remote_meta"];
+
+/// 구현 전이라 바꿀 수 없는 키인가([`PENDING_KEYS`]).
+#[must_use]
+pub fn is_pending(key: &str) -> bool {
+    PENDING_KEYS.contains(&key)
+}
+
 /// 자식 키의 (부모, 조건).
 #[must_use]
 pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
@@ -9412,6 +9431,10 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 /// 같은 결함). 순수 함수(설정 창 `apply_deps`·`refresh` 둘 다 이것 하나) · 깊이 상한 8 = 순환 방어.
 #[must_use]
 pub fn locked_by_chain(key: &str, value_of: &dyn Fn(&str) -> String) -> bool {
+    // 구현 전 설정은 종속과 무관하게 늘 잠긴다.
+    if is_pending(key) {
+        return true;
+    }
     let mut cur = key;
     for _ in 0..8 {
         let Some((parent, dep)) = dependency(cur) else {
@@ -10183,6 +10206,14 @@ impl Settings {
                 "read-only".to_string(),
             ));
         }
+        if is_pending(key) {
+            // 구현 전 설정 — 기본값에서 바꿀 수 없다(설정 파일·CLI `config set`도).
+            return Err(SetError::InvalidValue(
+                key.to_string(),
+                raw.to_string(),
+                "not available yet".to_string(),
+            ));
+        }
         let n = normalize(e.kind, raw).ok_or_else(|| {
             SetError::InvalidValue(key.to_string(), raw.to_string(), allowed(e.kind))
         })?;
@@ -10794,6 +10825,21 @@ mod tests {
 
     /// DBMS 그룹(사용자 09-21): 읽기 전용 정보 키는 저장되지 않고 `set`을 거부한다 · Oracle 폴더·TNS_ADMIN은 직접 지정일 때만 ·
     /// 정보 키는 전부 레지스트리에 있고 DBMS 분류에 속한다.
+    /// 사용자 11-19: 구현 전 설정은 기본값에 잠긴다 — `set` 거부 · 설정 화면 잠금 · 값은 기본(off).
+    #[test]
+    fn pending_keys_are_locked_at_default() {
+        let mut s = Settings::from_text(std::path::PathBuf::from("x"), "");
+        for k in PENDING_KEYS {
+            let e = entry(k).expect(k);
+            assert_eq!(s.get(k), Some(e.default), "{k}");
+            assert!(s.set(k, "on").is_err(), "{k}");
+            assert!(s.set(k, e.default).is_err(), "{k}");
+            assert_eq!(s.get(k), Some(e.default), "{k}");
+            assert!(locked_by_chain(k, &|_| "on".to_string()), "{k}");
+        }
+        assert!(!is_pending("intel.trigger_chars"));
+    }
+
     #[test]
     fn dbms_info_keys_are_read_only_and_client_paths_need_manual_mode() {
         let mut s = Settings::from_text(std::path::PathBuf::from("x"), "");

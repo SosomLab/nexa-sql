@@ -3415,6 +3415,57 @@ mod tests {
         assert!(b.ends_with('…'));
     }
 
+    /// ★ 사용자 11-19 "union류는 A부터 다시 시작": 글자 방식 자동 별칭은 가지마다 A부터 — 같은 가지의 JOIN만 다음 글자.
+    #[test]
+    fn auto_alias_restarts_per_set_operator_branch() {
+        let host = Rect::new(0, 0, 800, 600);
+        let m = store();
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let mut c = cfg();
+        c.alias_letters = true;
+        c.alias_upper = true;
+        let mut it = Intel::new(c);
+        let mut picked = |doc: &str| -> String {
+            assert!(it.request(
+                1,
+                1,
+                doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            let i = it
+                .cands
+                .iter()
+                .position(|c| c.text == "SALES_CUSTOMER")
+                .expect("sc");
+            it.pick(&format!("intel:{i}"));
+            it.take_accept().expect("accept").text
+        };
+        let head = "select a.x from SALES_CUSTOMER A\nunion all\nselect a.x from SALES_CUSTOMER A\nunion all\nselect * from SALES_CUSTOMER A\n";
+        for op in ["union all", "union", "minus", "intersect"] {
+            assert_eq!(
+                picked(&format!("{head}{op}\nselect * from SALES_CUS")),
+                "SALES_CUSTOMER A",
+                "{op}"
+            );
+        }
+        // 같은 가지 안의 JOIN = 다음 글자.
+        assert_eq!(
+            picked(&format!(
+                "{head}union all\nselect * from SALES_CUSTOMER A join SALES_CUS"
+            )),
+            "SALES_CUSTOMER B"
+        );
+    }
+
     #[test]
     fn dblink_position_lists_links_with_host_and_appends_alias() {
         let host = Rect::new(0, 0, 800, 600);
@@ -3497,6 +3548,25 @@ mod tests {
         );
         it.pick("intel:0");
         assert_eq!(it.take_accept().expect("accept").text, "LNK_PRD");
+        // ★ 사용자 11-19: 별칭을 지운 뒤 링크 이름 끝에서 다시 고르기(Ctrl+Space) — 뒤가 `INNER JOIN …`(키워드)이면 별칭을 붙인다 ·
+        //   같은 문장의 다른 별칭(B)은 피한다.
+        let doc3 = "SELECT *\nFROM\n\tSALES_CUSTOMER@LNK_PRD\nINNER JOIN SALES_CUSTOMER B\n\tON 1=1\nWHERE 1=1\n;";
+        let caret = doc3.find("\nINNER").expect("caret");
+        it.request(
+            1,
+            3,
+            doc3,
+            caret,
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None,
+        );
+        it.pick("intel:0");
+        let a = it.take_accept().expect("accept");
+        assert_eq!(a.text, "LNK_PRD sc", "{:?}", a.replace);
         // 별칭을 허용하지 않는 자리(INSERT INTO)도 링크 이름만.
         ask(&mut it, "INSERT INTO SALES_CUSTOMER@", Some(&view));
         it.pick("intel:0");

@@ -887,6 +887,13 @@ fn dblink_position_alias_rules() {
         ("SELECT * FROM t0 a JOIN t1@|", true, false),
         ("SELECT * FROM t0 a, t1@|", true, false),
         ("UPDATE t1@| SET c = 1", true, false),
+        // 링크 이름 끝에서 다시 고르기 — 뒤가 키워드(INNER JOIN · WHERE)면 별칭이 뒤따르는 것이 아니다(사용자 11-19).
+        (
+            "SELECT *\nFROM\n\tt1@LN|\nINNER JOIN t2 B\n\tON 1=1",
+            true,
+            false,
+        ),
+        ("SELECT * FROM t1@LN| WHERE 1=1", true, false),
         // 이미 별칭이 뒤따른다 = 이름만 바꾼다.
         ("SELECT * FROM t1@| A WHERE 1=1", true, true),
         // 별칭을 허용하지 않는 자리.
@@ -897,4 +904,41 @@ fn dblink_position_alias_rules() {
         assert_eq!(c.kind, CtxKind::Want(W::DbLink), "{sql}");
         assert_eq!((c.alias_ok, c.alias_follows), (ok, follows), "{sql}");
     }
+}
+
+/// ★ 11-19(사용자 "union 및 유사 명령은 문장이 분리되므로 A부터 다시 시작"): 자동 별칭이 보는 "이미 쓰인 별칭" = 캐럿이 든 가지의
+/// 것뿐 — 앞 가지의 `A`는 보이지 않는다(가지마다 A부터). 테이블 이름을 치는 중(관계 자리)의 문맥으로 본다.
+#[test]
+fn auto_alias_restarts_in_each_set_operator_branch() {
+    let o = Dialect::Oracle;
+    let visible = |sql: &str| -> Vec<String> {
+        let c = ctx_in(sql, o);
+        assert_eq!(c.kind, CtxKind::Relation, "{sql}");
+        assert!(c.alias_ok, "{sql}");
+        c.aliases
+            .iter()
+            .filter(|a| !a.alias.eq_ignore_ascii_case(&c.prefix))
+            .map(|a| a.alias.clone())
+            .collect()
+    };
+    let head = "select a.ITEM_CD from t1 A\nunion all\nselect a.ITEM_CD from t2 A\nunion all\nselect * from t3 A\n";
+    for tail in [
+        "union all\nselect * from t4|",
+        "union all\nselect * from |",
+        "union\nselect * from T|",
+        "minus\nselect * from T|",
+        "intersect\nselect * from T|",
+    ] {
+        let sql = format!("{head}{tail}");
+        assert!(visible(&sql).is_empty(), "{sql}: {:?}", visible(&sql));
+    }
+    // 가운데 가지를 고쳐 쓸 때도 그 가지만(뒤 가지의 별칭도 안 보인다).
+    let mid = "select 1 from t1 A\nunion all\nselect * from T|\nunion all\nselect * from t3 B";
+    assert!(visible(mid).is_empty(), "{:?}", visible(mid));
+    // 같은 가지 안의 JOIN은 종전대로 다음 글자.
+    let join = "select 1 from t1 A\nunion all\nselect * from t2 A join T|";
+    assert_eq!(visible(join), vec!["A".to_string()]);
+    // 집합 연산자를 아직 안 썼으면 같은 문장 = 앞의 별칭이 보인다(그래서 다음 글자가 된다).
+    let same = "select * from t3 A\nselect * from T|";
+    assert_eq!(visible(same), vec!["A".to_string()]);
 }
