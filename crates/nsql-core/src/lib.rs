@@ -1458,6 +1458,86 @@ pub fn plsql_error_position(message: &str, sql: &str) -> Option<usize> {
     Some(start + char_index_of_byte(&line_text, col.saturating_sub(1)))
 }
 
+/// ★ 닫지 않은 따옴표·주석이 **시작한 자리**(글자 인덱스 · T-495 · 11-20): Oracle Thin 드라이버는 닫지 않은 `'…` · `"…` ·
+/// `q'[…` · `/* …`를 서버에 보내기 전에 스스로 거르는데(`parse error at position N in text …`), 그 N은 **문장 끝**(마지막 줄 안의
+/// 바이트 열)이라 고칠 자리를 가리키지 못한다 → 같은 어휘 규칙으로 문장을 훑어 끝까지 닫히지 않은 토큰이 열린 자리를 준다.
+/// 줄 주석(`--`) 안의 따옴표는 세지 않는다 · `''`는 닫고 다시 여는 것과 같아 따로 다루지 않는다. 전부 닫혀 있으면 `None`.
+#[must_use]
+pub fn unclosed_token_position(sql: &str) -> Option<usize> {
+    let cs: Vec<char> = sql.chars().collect();
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$' || c == '#';
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        let next = cs.get(i + 1).copied();
+        match c {
+            '-' if next == Some('-') => {
+                while i < cs.len() && cs[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if next == Some('*') => {
+                let open = i;
+                i += 2;
+                loop {
+                    match (cs.get(i), cs.get(i + 1)) {
+                        (Some('*'), Some('/')) => {
+                            i += 2;
+                            break;
+                        }
+                        (Some(_), _) => i += 1,
+                        (None, _) => return Some(open),
+                    }
+                }
+            }
+            // q'[…]' · Q'!…!' · nq'…' — 앞 글자가 이름의 일부면(`seq'`) 보통 문자열이다.
+            'q' | 'Q'
+                if next == Some('\'')
+                    && cs.get(i + 2).is_some()
+                    && (i == 0
+                        || !ident(cs[i - 1])
+                        || (matches!(cs[i - 1], 'n' | 'N') && (i < 2 || !ident(cs[i - 2])))) =>
+            {
+                let open = i;
+                let close = match cs[i + 2] {
+                    '[' => ']',
+                    '{' => '}',
+                    '(' => ')',
+                    '<' => '>',
+                    d => d,
+                };
+                i += 3;
+                loop {
+                    match (cs.get(i), cs.get(i + 1)) {
+                        (Some(a), Some('\'')) if *a == close => {
+                            i += 2;
+                            break;
+                        }
+                        (Some(_), _) => i += 1,
+                        (None, _) => return Some(open),
+                    }
+                }
+            }
+            '\'' | '"' => {
+                let open = i;
+                i += 1;
+                loop {
+                    match cs.get(i) {
+                        Some(a) if *a == c => {
+                            i += 1;
+                            break;
+                        }
+                        Some(_) => i += 1,
+                        None => return Some(open),
+                    }
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
 /// 1부터 세는 줄 번호 → 그 줄 첫 글자의 글자 인덱스(T-371 · 줄 수를 넘으면 `None`).
 #[must_use]
 pub fn char_index_of_line(s: &str, line1: usize) -> Option<usize> {
@@ -2021,6 +2101,34 @@ mod errpos_tests {
 #[cfg(test)]
 mod plsql_errpos_tests {
     use super::plsql_error_position;
+
+    /// ★ T-495: 닫지 않은 토큰이 **열린 자리**를 준다(문장 끝이 아니라) — 뒤 문장까지 삼킨 글에서도 · 한글 뒤에서도 글자 인덱스.
+    #[test]
+    fn unclosed_token_points_at_its_opener() {
+        use super::unclosed_token_position as pos;
+        let at = |sql: &str| pos(sql).map(|p| sql.chars().skip(p).take(6).collect::<String>());
+        // 닫지 않은 문자열 — 분할기가 뒤 문장까지 삼켰다(E2E T8 꼴).
+        let sql = "SELECT '가나' a, 'oops FROM dual;\nSELECT 2 FROM dual";
+        assert_eq!(at(sql).as_deref(), Some("'oops "));
+        // 전부 닫힘 · `''` 이스케이프 · 줄 주석 안의 따옴표 · 닫힌 블록 주석.
+        assert_eq!(
+            pos("SELECT 'it''s', \"Q\" FROM t -- don't\n WHERE a = 'x' /* ' */"),
+            None
+        );
+        // 블록 주석 · 큰따옴표 식별자 · q-문자열(짝 괄호 · 같은 글자 · N 접두).
+        assert_eq!(at("SELECT 1 /* open\nFROM dual").as_deref(), Some("/* ope"));
+        assert_eq!(at("SELECT \"Col FROM t").as_deref(), Some("\"Col F"));
+        assert_eq!(at("SELECT q'[a'b] FROM t").as_deref(), Some("q'[a'b"));
+        assert_eq!(pos("SELECT q'[a'b]', Q'!x'y!', nq'<z>' FROM t"), None);
+        assert_eq!(at("SELECT nq'<z> FROM t").as_deref(), Some("q'<z> "));
+        // 이름 끝의 q는 q-문자열이 아니다(`seq'…'` = 이름 + 보통 문자열).
+        assert_eq!(pos("SELECT seq'a' FROM t"), None);
+        assert_eq!(at("SELECT seq'a FROM t").as_deref(), Some("'a FRO"));
+        // q-문자열 안의 주석 표시는 주석이 아니다 · 주석 안의 q'도 아니다.
+        assert_eq!(pos("SELECT q'[--]' FROM t"), None);
+        assert_eq!(pos("SELECT 1 -- q'[\nFROM t"), None);
+        assert_eq!(pos(""), None);
+    }
 
     #[test]
     fn ora_06550_line_and_byte_column_map_to_char_index() {

@@ -644,13 +644,28 @@ impl AiView {
     }
 
     /// 선택한 대본 글(복사용 · 첫/끝 줄은 글자 경계까지 · 중간 줄은 통째) — 없으면 None.
+    ///
+    /// ★ 표(T-493 · 11-20): 선택이 **여러 화면 줄**에 걸치면 표는 **행 단위**로 낸다 — 걸친 행마다 한 줄 · 칸은 탭 · 접힌 칸 글은
+    /// 다시 이어서(종전 = 화면 줄마다 한 줄이라 칸 글이 줄마다 끊겨 붙여넣은 표가 깨졌다). 행의 일부만 걸쳐도 그 행 전체.
+    /// 한 화면 줄 안의 선택은 종전대로 글자 경계까지(칸 안의 낱말 복사).
     pub(crate) fn selection_text(&self) -> Option<String> {
         let (a, b) = self.sel_ordered()?;
         let flat: Vec<&Line> = self.lines.iter().flatten().collect();
         let last = flat.len().checked_sub(1)?;
         let (la, lb) = (a.0.min(last), b.0.min(last));
         let mut out = Vec::new();
+        let mut skip_to = 0usize;
         for (f, l) in flat.iter().enumerate().take(lb + 1).skip(la) {
+            if f < skip_to {
+                continue;
+            }
+            if la != lb {
+                if let Some((s0, e0)) = table_row_span(&flat, f) {
+                    out.push(table_row_text(&flat[s0..e0]));
+                    skip_to = e0;
+                    continue;
+                }
+            }
             let n = l.text.chars().count();
             let c0 = if f == la { a.1.min(n) } else { 0 };
             let c1 = if f == lb { b.1.min(n) } else { n };
@@ -727,7 +742,8 @@ impl AiView {
                 dc.select_font(FontSlot::Base, true);
             }
             for (ci, cell) in q.text.split('\t').enumerate() {
-                let cw = dc.text_width(cell) + gap;
+                // 접힌 조각 끝의 빈칸(다시 잇기용 · T-493)은 폭에 넣지 않는다.
+                let cw = dc.text_width(cell.trim_end()) + gap;
                 if ci < cols.len() {
                     cols[ci] = cols[ci].max(cw);
                 } else {
@@ -4153,7 +4169,9 @@ fn table_lines(
                 if dc.text_width(c) <= cols[ci] {
                     vec![c.clone()]
                 } else {
-                    wrap(dc, c, cols[ci])
+                    let mut pieces = wrap(dc, c, cols[ci]);
+                    keep_break_spaces(c, &mut pieces);
+                    pieces
                 }
             })
             .collect();
@@ -4176,6 +4194,69 @@ fn table_lines(
     for r in body {
         emit(dc, r, LineKind::TableRow, LineKind::TableCont, out);
     }
+}
+
+/// 접힌 칸 조각에 **원문의 띄어쓰기를 되돌려 붙인다**(T-493): [`wrap`]은 빈칸에서 접으며 그 빈칸을 버리고, 긴 낱말은 글자 사이에서
+/// 접는다 — 조각만으로는 다시 이을 때 빈칸이 있었는지 알 수 없다 → 빈칸에서 접힌 조각 끝에 그 빈칸을 남겨 두면 **그대로 이어 붙인
+/// 것 = 원문**이다(줄 끝 빈칸은 보이지 않고 폭 계산에서도 뺀다). 조각이 원문과 어긋나면(있을 수 없지만) 거기서 그만둔다.
+fn keep_break_spaces(src: &str, pieces: &mut [String]) {
+    let last = pieces.len().saturating_sub(1);
+    let mut pos = 0usize;
+    for (j, p) in pieces.iter_mut().enumerate() {
+        if !src[pos..].starts_with(p.as_str()) {
+            return;
+        }
+        pos += p.len();
+        if j < last && src[pos..].starts_with(' ') {
+            p.push(' ');
+            pos += 1;
+        }
+    }
+}
+
+/// `f`가 표 줄이면 그 줄이 든 **행**의 화면 줄 범위 [시작, 끝) — 본문 행 = `TableRow` + 이어지는 `TableCont` · 머리 행 = 이어진
+/// `TableHead`(표마다 머리는 한 행). 표 줄이 아니면 `None`.
+fn table_row_span(flat: &[&Line], f: usize) -> Option<(usize, usize)> {
+    let kind = flat.get(f)?.kind;
+    let (mut s0, mut e0) = (f, f + 1);
+    match kind {
+        LineKind::TableHead => {
+            while s0 > 0 && flat[s0 - 1].kind == LineKind::TableHead {
+                s0 -= 1;
+            }
+            while e0 < flat.len() && flat[e0].kind == LineKind::TableHead {
+                e0 += 1;
+            }
+        }
+        LineKind::TableRow | LineKind::TableCont => {
+            while s0 > 0 && flat[s0].kind == LineKind::TableCont {
+                s0 -= 1;
+            }
+            while e0 < flat.len() && flat[e0].kind == LineKind::TableCont {
+                e0 += 1;
+            }
+        }
+        _ => return None,
+    }
+    Some((s0, e0))
+}
+
+/// 한 행의 화면 줄들 → 복사할 한 줄(칸 = 탭 · 칸마다 조각을 그대로 이어 붙이고 끝 빈칸은 뗀다 · [`keep_break_spaces`]).
+fn table_row_text(rows: &[&Line]) -> String {
+    let mut cells: Vec<String> = Vec::new();
+    for l in rows {
+        for (ci, piece) in l.text.split('\t').enumerate() {
+            if ci == cells.len() {
+                cells.push(String::new());
+            }
+            cells[ci].push_str(piece);
+        }
+    }
+    cells
+        .iter()
+        .map(|c| c.trim_end())
+        .collect::<Vec<_>>()
+        .join("\t")
 }
 
 /// ★ 폭은 **단어마다 한 번** 재서 더한다(11-14 · 종전 = 단어를 붙일 때마다 후보 줄 전체를 다시 재서 줄 길이의 제곱에 비례 —
@@ -4408,7 +4489,7 @@ mod tests {
         let col_w = |ci: usize| {
             narrow
                 .iter()
-                .map(|(_, c)| c[ci].chars().count() as i32 * 8)
+                .map(|(_, c)| c[ci].trim_end().chars().count() as i32 * 8)
                 .max()
                 .unwrap_or(0)
         };
@@ -4421,15 +4502,53 @@ mod tests {
             .skip(2)
             .find(|(_, k)| **k == LineKind::TableRow)
             .map_or(kinds.len(), |(i, _)| i);
-        let joined: Vec<&str> = narrow[1..end]
-            .iter()
-            .map(|(_, c)| c[1].as_str())
-            .filter(|s| !s.is_empty())
-            .collect();
+        // (T-493: 빈칸에서 접힌 조각은 끝에 그 빈칸을 남긴다 → 그대로 이어 붙이면 원문.)
+        let joined: Vec<&str> = narrow[1..end].iter().map(|(_, c)| c[1].as_str()).collect();
         assert_eq!(
-            joined.join(" "),
+            joined.concat().trim_end(),
             "AND A.STR 가 중간에 끊겨 문법 오류 입니다"
         );
+        // ★ T-493: 여러 줄에 걸친 선택 = 표는 행 단위(칸 = 탭 · 접힌 칸은 다시 이어서) · 행의 일부만 걸쳐도 그 행 전체.
+        let lines = lay(&mut dc, 320);
+        let first_table = lines
+            .iter()
+            .position(|l| l.kind == LineKind::TableHead)
+            .expect("표 머리");
+        let cont = lines
+            .iter()
+            .position(|l| l.kind == LineKind::TableCont)
+            .expect("이어지는 줄");
+        let n = lines.len();
+        let mut v = AiView {
+            lines: vec![lines],
+            ..Default::default()
+        };
+        v.sel = Some(((first_table, 0), (n - 1, 999)));
+        assert_eq!(
+            v.selection_text().as_deref(),
+            Some(
+                "줄\t문제\t조치\n\
+                 80\tAND A.STR 가 중간에 끊겨 문법 오류 입니다\t삭제하거나 조건을 완성 하세요\n\
+                 67\t함수 없음\t변경"
+            )
+        );
+        // 이어지는 줄 한가운데서 시작해 다음 행 중간까지 = 두 행 전체.
+        v.sel = Some(((cont, 2), (n - 1, 1)));
+        assert_eq!(
+            v.selection_text().as_deref(),
+            Some(
+                "80\tAND A.STR 가 중간에 끊겨 문법 오류 입니다\t삭제하거나 조건을 완성 하세요\n\
+                 67\t함수 없음\t변경"
+            )
+        );
+        // 한 화면 줄 안의 선택 = 종전대로 글자 경계까지.
+        v.sel = Some(((n - 1, 0), (n - 1, 2)));
+        assert_eq!(v.selection_text().as_deref(), Some("67"));
+        // 긴 낱말이 글자 사이에서 접히면 빈칸 없이 이어진다 · 빈칸에서 접히면 빈칸이 돌아온다.
+        let mut pieces = vec!["abc".to_string(), "def".to_string(), "gh".to_string()];
+        keep_break_spaces("abcdef gh", &mut pieces);
+        assert_eq!(pieces.concat(), "abcdef gh");
+        assert_eq!(pieces, vec!["abc", "def ", "gh"]);
     }
 
     /// ★ 11-19(사용자 "프롬프트 상자에서 누르고 영역 밖에서 놓으면 눌린 상태 유지"): 작성 상자 끌기 = `drag_active`(호스트가 영역 밖의

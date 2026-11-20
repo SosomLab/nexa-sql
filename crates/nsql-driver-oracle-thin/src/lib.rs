@@ -194,6 +194,11 @@ impl ThinSession {
             // ★ 11-19: PL/SQL 블록의 컴파일 오류 = 메시지의 `ORA-06550: line N, column M`(실서버 E2E T11).
             None => nsql_core::plsql_error_position(&d.message, sql),
         };
+        // ★ T-495(11-20): 드라이버 자체 파스 오류(닫지 않은 따옴표·주석 = 서버에 가지 않는다)의 위치는 문장 끝이라 쓸모가 없다 →
+        //   닫히지 않은 토큰이 열린 자리로. 서버 오류(코드 있음)는 건드리지 않는다.
+        if d.position.is_none() && matches!(e.kind(), ErrorKind::ParseError(..)) {
+            d.position = nsql_core::unclosed_token_position(sql);
+        }
         d
     }
 
