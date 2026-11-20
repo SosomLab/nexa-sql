@@ -173,6 +173,12 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--perf",
+        arg: "<mode>",
+        desc: Msg::HlpOptPerf,
+        setting: Some("perf.mode"),
+    },
+    Opt {
         flags: "--analyze",
         arg: "",
         desc: Msg::HlpOptAnalyze,

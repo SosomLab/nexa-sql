@@ -323,6 +323,11 @@ fn parse_opts() -> Opts {
             "--overwrite" => o.overwrite = true,
             "--in-place" => o.in_place = true,
             "--preset" => o.preset = Some(val("--preset")),
+            // `--perf <모드>` = 값만 넘긴다(적용은 설정을 여는 자리 — [`apply_cli_perf`]).
+            "--perf" => {
+                let _ = val("--perf");
+            }
+            s if s.starts_with("--perf=") => {}
             "--log" => o.log = true,
             "--live" => o.live = Some(String::new()),
             s if s.starts_with("--live=") => o.live = Some(s["--live=".len()..].to_string()),
@@ -2818,7 +2823,10 @@ pub(crate) fn settings_cached() -> io::Result<&'static nsql_settings::Settings> 
     static CELL: std::sync::OnceLock<io::Result<nsql_settings::Settings>> =
         std::sync::OnceLock::new();
     CELL.get_or_init(|| {
-        let s = nsql_settings::Settings::open_default();
+        let mut s = nsql_settings::Settings::open_default();
+        if let Ok(s) = &mut s {
+            apply_cli_perf(s);
+        }
         // ★ 비밀 이름 키워드(설정 `vars.secret_names` · 11-11) — CLI의 PRINT·대입 메아리·글로벌 저장도 같은 규칙.
         if let Ok(s) = &s {
             nsql_script::set_secret_keywords(
@@ -2830,6 +2838,32 @@ pub(crate) fn settings_cached() -> io::Result<&'static nsql_settings::Settings> 
     })
     .as_ref()
     .map_err(|e| io::Error::new(e.kind(), e.to_string()))
+}
+
+/// ★ `--perf <모드>`(39 §4-5 · T-90 · 11-21): **이번 실행에만** 성능 모드를 덮는다 — 저장하지 않는 덮어쓰기(`set_overlay`)라
+/// `config set`이 저장해도 섞이지 않는다. 설정은 인자 해석보다 먼저 열리므로(언어) 여기서 인자를 직접 훑는다. 모르는 모드 = 종료 2.
+pub(crate) fn apply_cli_perf(s: &mut nsql_settings::Settings) {
+    let args: Vec<String> = std::env::args().collect();
+    let Some(mode) = cli_perf_arg(&args) else {
+        return;
+    };
+    if nsql_settings::PerfMode::parse(&mode).is_none()
+        || s.set_overlay("perf.mode", &mode, "cli").is_err()
+    {
+        eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliErrPerf, &[&mode]));
+        std::process::exit(2);
+    }
+}
+
+/// 인자에서 `--perf <모드>` / `--perf=<모드>`의 값(순수 · 없으면 `None` · 값 없이 끝나면 빈 글).
+fn cli_perf_arg(args: &[String]) -> Option<String> {
+    args.iter().enumerate().find_map(|(i, a)| {
+        if a == "--perf" {
+            Some(args.get(i + 1).cloned().unwrap_or_default())
+        } else {
+            a.strip_prefix("--perf=").map(str::to_string)
+        }
+    })
 }
 
 /// `--timing` 기동 구간 한 줄(process 시작 → 설정 → 인자 → 러너 준비 → 접속).
@@ -2960,6 +2994,22 @@ fn timing_line(json: bool, label: &str, tl: &nsql_core::Timeline) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// ★ `--perf` 값 찾기(T-90 · 39 §4-5): 띄어 쓴 꼴 · `=` 꼴 · 없음 · 값 없이 끝남(빈 글 = 모르는 모드로 걸린다).
+    #[test]
+    fn cli_perf_arg_forms() {
+        let a =
+            |v: &[&str]| super::cli_perf_arg(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            a(&["nsql", "run", "--perf", "low", "x.sql"]).as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            a(&["nsql", "config", "list", "perf", "--perf=balanced"]).as_deref(),
+            Some("balanced")
+        );
+        assert_eq!(a(&["nsql", "run", "x.sql"]), None);
+        assert_eq!(a(&["nsql", "run", "--perf"]).as_deref(), Some(""));
+    }
     /// T-8(215차): `-f insert`의 표 이름 = -t > 질의 FROM 추정 > T · `insert:NAME`·다른 형식은 그대로 · grid → csv.
     #[test]
     fn export_format_guesses_insert_table() {

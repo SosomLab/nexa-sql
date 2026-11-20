@@ -195,12 +195,17 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     // 탐색기 유휴 워터마크 주기(docs/57 T2) — low = 끔(내가 실행한 DDL 반영 T1은 사용자 동작에 딸린 1질의라 유지).
     ("meta.refresh_secs", b(Domain::Db, "300", "600", "0")),
     ("connect.auto_reconnect", b(Domain::Db, "on", "on", "off")),
+    // ★ 11-21(D-482 · T-90): 배선은 돼 있었으나 미등재였던 넷을 올린다 — `db.statement_timeout`은 올리지 않는다(D-61 기본 0 =
+    //   무제한 · 모드가 질의를 끊으면 안 된다). 페치 배열(왕복당 행) — low = 절반(메모리·첫 화면 지연).
+    ("db.fetch_size", b(Domain::Db, "200", "200", "100")),
     // ── NET(§3-2 · 26 §8 흡수)
     ("probe.enabled", b(Domain::Net, "on", "on", "off")),
     ("probe.interval", b(Domain::Net, "60", "120", "300")),
     ("probe.max_inflight", b(Domain::Net, "16", "8", "2")),
     ("probe.icmp", b(Domain::Net, "on", "on", "off")),
     ("connect.max_concurrent", b(Domain::Net, "4", "2", "1")),
+    // DNS 재풀이 간격(프로브) — 느린 모드일수록 오래 기억.
+    ("probe.dns_cache_secs", b(Domain::Net, "300", "600", "3600")),
     // ── CPU(§3-3)
     // `editor.highlight_max_kb`는 09-22 폐기(미배선 — 구문 강조 컷오프는 큰 파일 단계 L2 `file.large_syntax_level` · docs/72 §5).
     (
@@ -212,6 +217,10 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("project.icons", b(Domain::Cpu, "on", "on", "off")),
     // 파일 검색 한 파일 상한(docs/72 §4-1 · 09-28): full = SSD 8 MB · balanced = 4 MB · low = HDD 2 MB(디스크 읽기 시간 = CPU 도메인에 둔다).
     ("search.max_file_kb", b(Domain::Cpu, "8192", "4096", "2048")),
+    // 파일 검색 스레드(0 = 자동 · 코어 수에 맞춤) — low = 1(balanced의 "코어 절반"은 고정 값으로 적을 수 없어 자동 그대로).
+    ("search.threads", b(Domain::Cpu, "0", "0", "1")),
+    // .gitignore 존중(걷는 폴더를 줄인다) — 모든 모드 켬(원장 등재 = 끌 수 있는 스위치로 드러낸다).
+    ("search.gitignore", b(Domain::Cpu, "on", "on", "on")),
     // 코드 완성 자동 활성화(docs/76 · 타이핑마다 후보 계산 · 수동 Ctrl+Space는 남는다)
     ("intel.auto_activation", b(Domain::Cpu, "on", "on", "off")),
     // Linux IME 감시(09-27 · 가린 칸 포커스 동안 dbus-monitor 자식 + 스레드 · low = 끔 → 엔진 이름·토글 키 폴백)

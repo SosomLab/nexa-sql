@@ -22,10 +22,16 @@ fn usage() -> i32 {
 }
 
 fn open() -> Result<Settings, i32> {
-    Settings::open_default().map_err(|e| {
-        eprintln!("{}", tf(Msg::CfgOpenFailed, &[&e.to_string()]));
-        1
-    })
+    Settings::open_default()
+        .map(|mut s| {
+            // `nsql config list perf --perf low` = 그 모드의 실효 값을 미리 본다(저장하지 않는다).
+            crate::apply_cli_perf(&mut s);
+            s
+        })
+        .map_err(|e| {
+            eprintln!("{}", tf(Msg::CfgOpenFailed, &[&e.to_string()]));
+            1
+        })
 }
 
 fn save(s: &Settings) -> i32 {
