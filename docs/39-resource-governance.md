@@ -183,7 +183,7 @@
 | 슬라이드(패널) | `ui.slide_ms` | `ui.animations` | — | — | 0 | `conn_win` |
 | ★ **플래시 메시지**(09-27 · nexa-ctl `Flash` · 클릭 복사 "복사됨" 등 · 유지 + 페이드 동안 **프레임마다** 그 창만 다시 그림 · 타이머 0) | 끝나면 0 | `ui.flash_hold_ms`(2000) · `ui.flash_ms`(3000) | 2000/3000 | 1000/1500 | **300/200** | `license_win.rs` · nexa-ctl `controls/flash.rs` |
 | 토스트 남은 시간 표시(왼쪽 상태 막대가 위에서부터 옅어짐 + 카드 진척 페이드 · 09-22) | 카드가 떠 있는 동안 30ms 틱(실행 카드는 끝난 뒤 카운트다운 동안만 · 새 타이머 0) | `ui.toast_progress`(신설) · `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) | 켬 | 켬 | **끔**(향상 모드 = 종전 마지막 300ms 페이드만) | `toast` · `runtoast` |
-| 다시 그리기 단위 | 창 전체 | (구조 · 더티 영역 = T-90f 후보) | — | — | — | `paint` |
+| 다시 그리기 단위 | 창 전체 · ✅ 11-21 캐럿 깜빡임만 편집기 영역(T-224 · 켬일 때) | **`gfx.partial_redraw`**(Bool · 기본 **끔** · 성능 분류 · 사용자 D-482) — 끄면 종전대로 전체 | 끔 | 끔 | 끔 | `app/damage.rs` `redraw_rect`/`frame_plan` · `app/paint.rs` 클립 · `present.rs` `present_damage` |
 | 글리프 서브픽셀(1/3 px) | 켬 | `ui.text_subpixel`(신설 · HIDDEN) | 켬 | 켬 | 끔(캐시 1/3) | nexa-gfx `GlyphKey.sub` |
 | 아이콘 사전 스케일 캐시 | 크기별 | (구조) | — | — | — | `IconImage::resized` |
 | DBMS 아이콘 PNG 디코드 + 축소(10-04) | 처음 보일 때 1회(지연 디코드 · 64/20 원본 → 표시 크기) · 그 뒤 캐시 | (구조 · 키 없음 — 아래 3-6) | — | — | — | `dbms_icons::image` · `explorer.rs` `draw_brand` |
@@ -338,7 +338,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 ### 4-5. 표시·진단(사용자가 "왜 느린가/왜 꺼졌나"를 본다)
 
-> ✅ 11-21(ca43f383 · T-90 · D-482) = PERF 원장 등재 4 — `db.fetch_size` 200 / 200 / 100 · `probe.dns_cache_secs` 300 / 600 / 3600 · `search.threads` 0 / 0 / 1 · `search.gitignore` on / on / on(full / balanced / low) · `db.statement_timeout`은 **미등재**(사용자 D-482 · D-61 기본 0 유지 = 모드가 실행을 끊지 않게) · `nsql <명령> … --perf <auto|full|balanced|low>` = 그 실행에만(overlay · 저장 안 함) · ⚠ 11-21 V1 = 도움말에 아직 안 나옴 · 명령 **앞**에 쓰는 꼴(`nsql --perf low …`)은 미지원(아래 줄의 원 설계 꼴과 다름 · 개발 확인 중).
+> ✅ 11-21(ca43f383 · T-90 · D-482) = PERF 원장 등재 4 — `db.fetch_size` 200 / 200 / 100 · `probe.dns_cache_secs` 300 / 600 / 3600 · `search.threads` 0 / 0 / 1 · `search.gitignore` on / on / on(full / balanced / low) · `db.statement_timeout`은 **미등재**(사용자 D-482 · D-61 기본 0 유지 = 모드가 실행을 끊지 않게) · `nsql <명령> … --perf <auto|full|balanced|low>` = 그 실행에만(overlay · 저장 안 함) · 도움말(`--timing`이 있는 명령) 등재 · 명령 앞(`nsql --perf low …` · `--perf=low`)과 뒤 모두 허용(1d26b91c · V1 ✓).
 
 - **상태줄 ⚡ 세그먼트**: 모드 이름(`full`이면 숨김 · `custom`은 노란 점) · 클릭 = 모드 팝업(✓ 현재 · Tab Size 팝업과 같은 부품).
 - **로그 창 `perf` 종류**: 상한이 실제로 작동한 순간 1줄 — "구문 강조 생략: 2.3 MB > 1 MB(`editor.highlight_max_kb`)" · "페치 200행에서 중단(`grid.max_rows`)" · "프로브 대기: 동시 상한 8". 설정 키를 함께 적어 **한 번에 고칠 수 있게**.
