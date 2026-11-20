@@ -41,20 +41,30 @@ pub(crate) enum PendingKind {
 }
 
 impl ExtDetail {
-    /// 본문 상자에 넣을 글(세부 정보 표 + 설명 문단) — 순수 함수(시험).
+    /// 본문 상자에 넣을 글(세부 정보 표 + 설명 문단) — 라벨 폭 = 글자 수(시험 · 그리기 전 기본).
+    #[cfg(test)]
     pub(crate) fn body_text(&self) -> String {
+        let widths: Vec<i32> = self
+            .fields
+            .iter()
+            .map(|(l, _)| l.chars().count() as i32)
+            .collect();
+        self.body_text_px(&widths, 1)
+    }
+
+    /// 본문 글 — 라벨마다 **잰 폭**(`widths` · 본문 글꼴의 픽셀)으로 값 열을 맞춘다(T-449 · 11-21): 본문은 가변폭 UI 글꼴이라
+    /// 글자 수로 채우면 한글·긴 라벨에서 값 열이 들쭉날쭉했다 → 가장 넓은 라벨과의 차이를 빈칸 폭(`space`)으로 나눠 채운다
+    /// (어긋남 ≤ 빈칸 반 칸). 순수 함수.
+    pub(crate) fn body_text_px(&self, widths: &[i32], space: i32) -> String {
         let mut s = String::new();
         if !self.fields.is_empty() {
             s.push_str(t(Msg::ExtViewDetails));
             s.push('\n');
-            let w = self
-                .fields
-                .iter()
-                .map(|(l, _)| l.chars().count())
-                .max()
-                .unwrap_or(0);
-            for (label, value) in &self.fields {
-                let pad = w.saturating_sub(label.chars().count());
+            let space = space.max(1);
+            let w = widths.iter().copied().max().unwrap_or(0);
+            for (i, (label, value)) in self.fields.iter().enumerate() {
+                let gap = (w - widths.get(i).copied().unwrap_or(w)).max(0);
+                let pad = ((gap + space / 2) / space) as usize;
                 s.push_str("  ");
                 s.push_str(label);
                 s.push_str(&" ".repeat(pad));
@@ -439,7 +449,10 @@ impl ExtView {
         );
         if key != self.body_key {
             self.body_key = key;
-            self.body.set_text(&d.body_text());
+            dc.select_font(FontSlot::Base, false);
+            let widths: Vec<i32> = d.fields.iter().map(|(l, _)| dc.text_width(l)).collect();
+            let space = dc.text_width(" ");
+            self.body.set_text(&d.body_text_px(&widths, space));
         }
         let body_rect = Rect::new(
             x - self.s(4.0),
@@ -558,6 +571,9 @@ mod tests {
         let text = d.body_text();
         assert!(text.contains("  상태   켜짐\n  버전   1.2.0\n"), "{text}");
         assert!(text.contains("first para\n\nsecond para\n"), "{text}");
+        // ★ T-449: 잰 폭으로 채운다 — 좁은 라벨(10px)은 넓은 라벨(31px)과의 차이 21px ÷ 빈칸 5px = 4칸(반올림).
+        let px = d.body_text_px(&[10, 31], 5);
+        assert!(px.contains("  상태       켜짐\n  버전   1.2.0\n"), "{px}");
         let mut v = ExtView::default();
         assert!(v.body.is_read_only() && v.body.wrap());
         v.body.set_text(&text);

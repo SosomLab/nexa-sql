@@ -465,6 +465,7 @@ impl BookmarksPanel {
     fn rebuild(&mut self) {
         let sel_key = self.sel.and_then(|r| self.sel_key(r));
         let filtering = !self.filter.is_empty();
+        let matcher = self.filter.matcher();
         let mut rows: Vec<Row> = Vec::new();
         let groups = self.groups.clone();
         for g in &groups {
@@ -472,7 +473,7 @@ impl BookmarksPanel {
             for b in self.items.iter().filter(|b| b.group == g.id) {
                 let name = self.doc_name(&b.doc);
                 let hay = format!("{} {} {}", b.display(), b.anchor.text, name);
-                if filtering && !self.filter.matches(&hay) {
+                if filtering && !bookmark_matches(&matcher, &hay, b.anchor.line) {
                     continue;
                 }
                 match docs.iter_mut().find(|(k, _, _)| *k == b.doc) {
@@ -1691,8 +1692,30 @@ impl BookmarksPanel {
     }
 }
 
+/// 필터 판정(T-263 · docs/98 §6): 낱말·정규식은 종전대로 글에 · 구조 질의는 `line:`(화면에 보이는 1부터 세는 줄 · 숫자 비교)을 본다.
+fn bookmark_matches(m: &crate::filterbar::Matcher, hay: &str, line0: u32) -> bool {
+    let fields = [("line", (line0 + 1).to_string())];
+    m.matches_facts(&crate::filterbar::NodeFacts {
+        text: hay,
+        kind: Some("bookmark"),
+        size: None,
+        fields: &fields,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    /// ★ T-263: `line:` 술어가 북마크에 먹는다(1부터 세는 줄) · 낱말 필터는 종전대로.
+    #[test]
+    fn filter_line_predicate_reaches_bookmarks() {
+        use crate::filterbar::Matcher;
+        let ok =
+            |q: &str, line0: u32| super::bookmark_matches(&Matcher::plain(q), "load orders", line0);
+        assert!(ok("line:12", 11) && !ok("line:12", 12));
+        assert!(ok("line>100", 100) && !ok("line>100", 99));
+        assert!(ok("orders line:10..20", 9) && !ok("nope line:10..20", 9));
+        assert!(ok("orders", 0) && !ok("nope", 0));
+    }
     use super::*;
 
     fn panel_with_one_item() -> (BookmarksPanel, usize) {

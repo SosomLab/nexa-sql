@@ -388,6 +388,21 @@ fn size_pred(size: Option<u64>, op: Op, value: &str, hi: Option<&str>) -> bool {
     }
 }
 
+/// 숫자 술어(`키:값` = 같다 · 범위는 양끝 포함) — 사실이나 값이 숫자가 아니면 걸리지 않는다.
+fn num_pred(have: Option<&str>, op: Op, value: &str, hi: Option<&str>) -> bool {
+    let num = |s: &str| s.trim().parse::<u64>().ok();
+    let (Some(h), Some(v)) = (have.and_then(num), num(value)) else {
+        return false;
+    };
+    match op {
+        Op::Range => hi
+            .and_then(num)
+            .is_some_and(|x| h >= v.min(x) && h <= v.max(x)),
+        Op::Has => h == v,
+        _ => cmp_ok(h.cmp(&v), op),
+    }
+}
+
 /// 글 술어(`:` `=` = 부분/정확 일치 · `!=` · 순서 비교는 사전순).
 fn text_pred(have: Option<&str>, op: Op, value: &str) -> bool {
     let Some(h) = have else { return false };
@@ -444,6 +459,8 @@ fn eval_node(n: &Node, f: &dyn Facts) -> bool {
             "size" | "bytes" | "len" => size_pred(f.size(), *op, value, hi.as_deref()),
             "type" | "kind" => text_pred(f.kind(), *op, value),
             "name" => text_pred(Some(f.text()), *op, value),
+            // ★ 줄 번호(T-263 · 아웃라인·북마크): 숫자로 견준다 — `line:12`(= 12) · `line>100` · `line:10..50`.
+            "line" | "ln" => num_pred(f.field("line").as_deref(), *op, value, hi.as_deref()),
             other => text_pred(f.field(other).as_deref(), *op, value),
         },
     }
@@ -544,6 +561,35 @@ mod tests {
         assert!(parse("type!=view").matches(&F("a", Some("table"), None)));
         assert!(!parse("type:view").matches(&F("a", None, None)));
         assert!(parse("kind=table").matches(&F("a", Some("table"), None)));
+    }
+
+    /// ★ T-263: `line` = 숫자 비교(사전순이 아니다 — "9" < "10") · 사실이 없거나 값이 숫자가 아니면 걸리지 않는다.
+    #[test]
+    fn line_predicate_is_numeric() {
+        struct L(&'static str);
+        impl Facts for L {
+            fn text(&self) -> &str {
+                "x"
+            }
+            fn kind(&self) -> Option<&str> {
+                None
+            }
+            fn size(&self) -> Option<u64> {
+                None
+            }
+            fn field(&self, key: &str) -> Option<String> {
+                (key == "line" && !self.0.is_empty()).then(|| self.0.to_string())
+            }
+        }
+        assert!(parse("line:12").matches(&L("12")));
+        assert!(!parse("line:12").matches(&L("120")));
+        assert!(parse("line>9").matches(&L("10")));
+        assert!(!parse("line<9").matches(&L("10")));
+        assert!(parse("line:10..50").matches(&L("50")));
+        assert!(!parse("line:10..50").matches(&L("51")));
+        assert!(parse("x line>=3").matches(&L("3")));
+        assert!(!parse("line:abc").matches(&L("3")));
+        assert!(!parse("line:3").matches(&L("")));
     }
 
     #[test]

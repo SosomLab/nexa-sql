@@ -249,6 +249,25 @@ fn icon_kind(kind: SymKind, detail: &str) -> Option<IconKind> {
     })
 }
 
+/// 필터 판정(T-263 · docs/98 §6): 낱말·정규식은 종전대로 `이름 상세 종류` 글에 · 구조 질의는 `type:`(종류 — `CREATE` 대상은
+/// 상세의 객체 종류 `table`·`view`… · 별칭 `proc` `fn` `pkg`는 평가기가 안다)과 `line:`(숫자 비교)을 본다.
+fn row_matches(m: &crate::filterbar::Matcher, r: &Row) -> bool {
+    let hay = format!("{} {} {}", r.name, r.detail, r.kind.label());
+    let kind = if matches!(r.kind, SymKind::Object) && !r.detail.trim().is_empty() {
+        r.detail.to_lowercase()
+    } else {
+        r.kind.label().to_string()
+    }
+    .replace(' ', "");
+    let fields = [("line", r.line.to_string())];
+    m.matches_facts(&crate::filterbar::NodeFacts {
+        text: &hay,
+        kind: Some(&kind),
+        size: None,
+        fields: &fields,
+    })
+}
+
 #[derive(Clone, Debug)]
 struct Row {
     name: String,
@@ -769,11 +788,7 @@ impl OutlinePanel {
             // 일치 행 + 그 조상(접힘 무시).
             let mut keep = vec![false; self.all.len()];
             for v in &vis {
-                let r = &self.all[v.idx];
-                if self
-                    .filter
-                    .matches(&format!("{} {} {}", r.name, r.detail, r.kind.label()))
-                {
+                if row_matches(&self.filter.matcher(), &self.all[v.idx]) {
                     keep[v.idx] = true;
                     let mut p = v.parent;
                     while let Some(a) = p {
@@ -1489,6 +1504,34 @@ impl OutlinePanel {
 mod tests {
     use super::*;
     use nsql_script::outline::Symbol;
+
+    /// ★ T-263: `type:`(별칭 · CREATE 대상은 상세의 객체 종류) · `line:`(숫자)이 아웃라인에 먹는다 · 낱말 필터는 종전대로.
+    #[test]
+    fn filter_type_and_line_predicates_reach_rows() {
+        use crate::filterbar::Matcher;
+        let row = |kind: SymKind, name: &str, detail: &str, line: usize| Row {
+            name: name.into(),
+            detail: detail.into(),
+            kind,
+            line,
+            byte: 0,
+            char_idx: 0,
+            col: None,
+        };
+        let ok = |q: &str, r: &Row| row_matches(&Matcher::plain(q), r);
+        let f = row(SymKind::Function, "calc_tax", "", 12);
+        assert!(ok("type:function", &f) && ok("type:fn", &f) && !ok("type:procedure", &f));
+        assert!(
+            ok("line:12", &f) && !ok("line:1", &f) && ok("line>9", &f) && ok("line:10..20", &f)
+        );
+        assert!(ok("calc type:fn line<100", &f) && !ok("nope type:fn", &f));
+        let t = row(SymKind::Object, "orders", "TABLE", 3);
+        assert!(ok("type:table", &t) && ok("type:tbl", &t) && !ok("type:view", &t));
+        let b = row(SymKind::PackageBody, "pkg", "", 40);
+        assert!(ok("type:body", &b) && ok("type:packagebody", &b));
+        // 낱말만 = 종전(이름·상세·종류 라벨 글에 부분 일치).
+        assert!(ok("calc", &f) && ok("function", &f) && ok("table orders", &t));
+    }
 
     fn sym(kind: SymKind, name: &str, detail: &str, parent: Option<usize>, depth: u8) -> Symbol {
         Symbol {

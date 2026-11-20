@@ -712,6 +712,8 @@ pub struct Runner {
     tx_stmts: usize,
     hold_no_where: bool,
     hold_stop: Option<usize>,
+    /// 보류 모드에서 **0행**에 그친 DML 수(변경 아님 · 114 §9-2 B의 안내 한 줄 · T-356).
+    hold_zero: u32,
     tx_changed: bool,
     /// 사용자가 직접 트랜잭션을 열었거나 잠금을 잡았는가(자동 종료 제외 근거).
     tx_user: bool,
@@ -1022,6 +1024,7 @@ impl Runner {
             tx_stmts: 0,
             hold_no_where: false,
             hold_stop: None,
+            hold_zero: 0,
             tx_changed: false,
             tx_user: false,
             auto_cursor: true,
@@ -1610,6 +1613,7 @@ impl Runner {
         self.hold_block = false;
         self.hold_no_where = false;
         self.hold_stop = None;
+        self.hold_zero = 0;
     }
 
     /// 보류 모드의 문장 결과 누적(변경이면 기록 · 영향 0행 = 변경 아님 · 114 §9-2 B).
@@ -1617,10 +1621,21 @@ impl Runner {
         if self.hold.is_none() {
             return;
         }
+        let class = nsql_core::TxClass::of_sql_in(&item.text, Some(self.engine.dialect));
         if tx_effect(&item.text, rows, self.engine.dialect) != TxEffect::Change {
+            // 0행 DML = 변경 아님 — 세어만 둔다(실행 끝에 바뀐 것이 하나도 없으면 안내 한 줄 · T-356).
+            if rows == Some(0)
+                && matches!(
+                    class,
+                    nsql_core::TxClass::Insert
+                        | nsql_core::TxClass::Update
+                        | nsql_core::TxClass::Delete
+                )
+            {
+                self.hold_zero += 1;
+            }
             return;
         }
-        let class = nsql_core::TxClass::of_sql_in(&item.text, Some(self.engine.dialect));
         let block = matches!(class, nsql_core::TxClass::Other);
         let no_where = dml_without_where(&item.text);
         self.hold_total += rows.unwrap_or(0);
@@ -1646,7 +1661,13 @@ impl Runner {
         let Some(p) = self.hold else {
             return;
         };
+        // ★ T-356(114 §9-2 B · 11-21): 변경 문장을 돌렸지만 **한 행도 바뀌지 않았다** → 보류 없이 끝낸다는 것을 한 줄로 알린다
+        //   (종전 = 조용히 끝나 "보류 카드가 왜 안 뜨지"를 알 길이 없었다). 바뀐 것이 있으면 카드·커밋 안내가 대신한다.
+        let zero = std::mem::take(&mut self.hold_zero);
         if !self.tx_changed {
+            if zero > 0 {
+                emit(RunEvent::Message(tf(Msg::RunHoldNothingChanged, &[])));
+            }
             return;
         }
         // ★ 이번 실행에 새 변경이 없는데 사용자 `COMMIT`을 가로챘다(앞 실행의 보류만 열려 있음 · 10-16 사용자) — 빈 목록으로 알려
@@ -6874,6 +6895,9 @@ mod after_error_tx_tests {
             if req.sql.starts_with("INSERT") {
                 r.rows_affected = Some(1);
             }
+            if req.sql.starts_with("DELETE FROM zero_rows") {
+                r.rows_affected = Some(0);
+            }
             Ok(r)
         }
         fn fetch_cursor(&mut self, _c: nsql_core::CursorId) -> Result<ResultSet, DbError> {
@@ -6922,6 +6946,34 @@ mod after_error_tx_tests {
 
     fn count(ev: &[RunEvent], f: impl Fn(&RunEvent) -> bool) -> usize {
         ev.iter().filter(|e| f(e)).count()
+    }
+
+    /// ★ T-356(114 §9-2 B): 운영 보류 중 DML이 0행이면 보류 없이 끝나고 **안내 한 줄**이 나온다 · 바뀐 것이 있으면 안내 없이 보류.
+    #[test]
+    fn hold_with_zero_rows_ends_with_a_notice() {
+        let go = |src: &str| {
+            let f = fake(Dialect::Oracle);
+            let opener: Opener = Box::new(|_: &ConnectSpec| Err(fail("no")));
+            let mut r = Runner::new(Dialect::Oracle, opener).with_session(Box::new(f), "fake");
+            r.set_hold(Some(HoldPolicy::default()));
+            let mut ev = Vec::new();
+            let mut no_prompt = |_: &str| None;
+            let _ = r.run_script(src, &mut no_prompt, &mut |e| ev.push(e));
+            ev
+        };
+        let notice = tf(Msg::RunHoldNothingChanged, &[]);
+        let said =
+            |ev: &[RunEvent]| count(ev, |e| matches!(e, RunEvent::Message(m) if *m == notice));
+        let ev = go("DELETE FROM zero_rows WHERE id = 1;\n");
+        assert_eq!(said(&ev), 1, "{ev:#?}");
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::Held { .. })), 0);
+        // 0행 뒤에 실제 변경이 있으면 보류 카드가 대신한다(안내 없음).
+        let ev = go("DELETE FROM zero_rows WHERE id = 1;\nINSERT INTO t VALUES (1);\n");
+        assert_eq!(said(&ev), 0, "{ev:#?}");
+        assert_eq!(count(&ev, |e| matches!(e, RunEvent::Held { .. })), 1);
+        // 조회만 = 안내 없음.
+        let ev = go("SELECT 1 FROM dual;\n");
+        assert_eq!(said(&ev), 0, "{ev:#?}");
     }
 
     #[test]

@@ -304,12 +304,15 @@ pub fn object_details(
 }
 
 /// ★ 컬럼 상세(86 §3): 이름 · 설명(컬럼 코멘트) · 타입 · NOT NULL · 기본값 — 코멘트 질의 1(실패 = 없음).
+///
+/// ★ 주인 테이블 요약(T-225 · 86 §8 · 사용자 11-21 "이미 가진 값만"): `table` 줄 뒤에 **추가 왕복 없이** 아는 것만 덧붙인다 —
+/// 테이블 코멘트(같은 코멘트 질의가 함께 준다) · 상태 · 변경 시각(탐색기 목록이 이미 읽은 값). 비어 있으면 그 줄은 없다.
 pub fn column_details(
     s: &mut dyn Session,
     owner: &ObjectInfo,
     col: &ColumnInfo,
 ) -> Result<Vec<DetailSection>, DbError> {
-    let (_, col_comments) = comments(s, &owner.schema, &owner.name);
+    let (table_comment, col_comments) = comments(s, &owner.schema, &owner.name);
     let comment = col_comments
         .iter()
         .find(|(n, _)| n.eq_ignore_ascii_case(&col.name))
@@ -335,11 +338,29 @@ pub fn column_details(
         "table".into(),
         format!("{}.{}", owner.schema, owner.name),
     ]);
+    rows.extend(owner_summary_rows(
+        owner,
+        table_comment.as_deref().unwrap_or(""),
+    ));
     Ok(vec![DetailSection::table(
         SectionId::Properties,
         vec![HeaderId::Property, HeaderId::Value],
         rows,
     )])
+}
+
+/// 컬럼 상세에 덧붙이는 주인 테이블 요약 줄(T-225 · 순수 · 빈 값은 줄 없음): 코멘트 · 상태 · 변경 시각.
+#[must_use]
+pub fn owner_summary_rows(owner: &ObjectInfo, table_comment: &str) -> Vec<Vec<String>> {
+    [
+        ("table comment", table_comment),
+        ("table status", owner.status.as_str()),
+        ("table modified", owner.modified.as_str()),
+    ]
+    .into_iter()
+    .filter(|(_, v)| !v.trim().is_empty())
+    .map(|(k, v)| vec![k.to_string(), v.trim().to_string()])
+    .collect()
 }
 
 /// 표를 고정폭 글로(패널 본문·CLI 공용): 열 폭 = 글자 수 최대 · 두 칸 띄움 · 머리글은 호스트가 준 라벨.

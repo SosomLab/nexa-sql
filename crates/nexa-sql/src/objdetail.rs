@@ -517,6 +517,8 @@ impl DetailPanel {
                             ]);
                             r.push(vec!["default".into(), col.default.clone()]);
                             r.push(vec!["table".into(), format!("{}.{}", o.schema, o.name)]);
+                            // 주인 테이블 요약(T-225) — 서버 몫 전에는 탐색기가 아는 상태·변경 시각만(코멘트는 서버 몫과 함께 온다).
+                            r.extend(nsql_catalog::detail::owner_summary_rows(o, ""));
                             r
                         }
                         _ => {
