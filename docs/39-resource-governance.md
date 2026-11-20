@@ -338,6 +338,8 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 ### 4-5. 표시·진단(사용자가 "왜 느린가/왜 꺼졌나"를 본다)
 
+> ✅ 11-21(ca43f383 · T-90 · D-482) = PERF 원장 등재 4 — `db.fetch_size` 200 / 200 / 100 · `probe.dns_cache_secs` 300 / 600 / 3600 · `search.threads` 0 / 0 / 1 · `search.gitignore` on / on / on(full / balanced / low) · `db.statement_timeout`은 **미등재**(사용자 D-482 · D-61 기본 0 유지 = 모드가 실행을 끊지 않게) · `nsql <명령> … --perf <auto|full|balanced|low>` = 그 실행에만(overlay · 저장 안 함) · ⚠ 11-21 V1 = 도움말에 아직 안 나옴 · 명령 **앞**에 쓰는 꼴(`nsql --perf low …`)은 미지원(아래 줄의 원 설계 꼴과 다름 · 개발 확인 중).
+
 - **상태줄 ⚡ 세그먼트**: 모드 이름(`full`이면 숨김 · `custom`은 노란 점) · 클릭 = 모드 팝업(✓ 현재 · Tab Size 팝업과 같은 부품).
 - **로그 창 `perf` 종류**: 상한이 실제로 작동한 순간 1줄 — "구문 강조 생략: 2.3 MB > 1 MB(`editor.highlight_max_kb`)" · "페치 200행에서 중단(`grid.max_rows`)" · "프로브 대기: 동시 상한 8". 설정 키를 함께 적어 **한 번에 고칠 수 있게**.
 - **`nsql config list perf`** = 도메인별 표(키 · 현재 값 · 출처 = 개별/모드/기본) · `nsql config set perf.mode low` · `nsql --perf low`(1회성).
