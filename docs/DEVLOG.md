@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-21 밤 (Windows · T-272 닫음)** — DB 스냅샷 폴더(0aa83414) V2 ✓(34/0 · 9/0 · clippy · 675/0/6 · check-3os) · V1 미실행(사내 SQL Server 미도달) · 로그인/역할 창 = 하지 않음 · 메타 열쇠 = 잔여 제외(D-483) · [journal 11-21 §14](journal/2026-11-21.md)
+
 - **2026-11-21 밤 (Windows · 사용자 결정 D-483)** — T-90 39 §3 "(신설)" 키 6 전부 만들지 않음(원장 행 정정 · `net.license_check` 삭제) · `target/lite` 삭제(+4.8 GiB) · i-aud 점검 중단 · T-272 잔여 = 재질문 대기 · [journal 11-21 §13](journal/2026-11-21.md)
 
 - **2026-11-21 밤 (Windows · push · CI)** — 병합·push(nexa-ui 5e21883 ✓ · nexa-sql 805426d5) → CI ✗ 2건 = 비Windows clippy `drop_non_drop`(ai/host.rs reap) · T-49 OCI DBMS_OUTPUT 0줄 → d41a0469(clippy ✓ · OCI 사유 `DPI-1002: invalid OCI handle` · 대체도 0줄) → 6d5d8f15 묶음 OUT 바인드 8000글자 정적 바인드 → **ci ✓ · integration ✓(OCI·Thin `messages = 1504`)** · [journal 11-21 §12](journal/2026-11-21.md)
