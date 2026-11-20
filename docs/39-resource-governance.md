@@ -430,8 +430,8 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 | 단계 | 내용 | 크기 |
 |---|---|---|
 | **T-90a** | ✅ 09-16 49차: 레지스트리 `perf::PERF`(=`Entry::perf()` · 병행 append 충돌 회피로 필드 대신 별도 표 · 필드 이관 후속) + `perf.mode` + `Settings::effective` + `nsql config list perf` + 기존 키 PerfBinding · ~~잔여 = 상태줄 ⚡ · 설정 창 Performance 카드(모드 + 링크 행)~~ → ✅ 10-30 180차(D-405 · 위 "상태줄 ⚡" 절 · Performance 카드 = `CatPerformance` 분류 · 11-01 정합) | 중 |
-| **T-90b** | DB: `db.statement_timeout`(드라이버 cancel 포트 — Oracle `OCIBreak` · MSSQL attention · PG `pg_cancel_backend`/소켓 · SQLite `interrupt`) · `db.fetch_size` · 탐색기 숨김 = 세션 안 엶 | 중 |
-| **T-90c** | CPU/GFX: ~~`editor.highlight_max_kb`~~(09-22 폐기) · `editor.max_occurrences`(09-22 배선) · `ui.max_fps` · `ui.animations`(OS 동작 줄이기 = nexa-fs::sys) · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons` | 중 |
+| **T-90b** | DB: `db.statement_timeout`(드라이버 cancel 포트 — Oracle `OCIBreak` · MSSQL attention · PG `pg_cancel_backend`/소켓 · SQLite `interrupt`) · `db.fetch_size` · 탐색기 숨김 = 세션 안 엶 · ✅ **11-21 확인 = 전부 배선됨**(협업 코드 조사 · TODO T-90 행) | 중 |
+| **T-90c** | CPU/GFX: ~~`editor.highlight_max_kb`~~(09-22 폐기) · `editor.max_occurrences`(09-22 배선) · `ui.max_fps` · `ui.animations`(OS 동작 줄이기 = nexa-fs::sys) · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons` · ✅ **11-21 확인 = 전부 배선됨**(협업 코드 조사 · TODO T-90 행) | 중 |
 | **T-90d** | ✅ 09-16 49차: `log.max_lines` · `editor.undo_max` · `ui.glyph_cache` · `file.icon_cache` 세터 + 상한 테스트 + main.rs 배선 | 소 |
 | **T-90e** | 진단·게이트: `--trace-net` · `--trace-frames` · 기동 `--timing` · `memcycle.ps1` 시나리오 인자(L-2~L-8) · `perf.yml` CI 잡 · 로그 창 `perf` 종류 | 중 |
 | **T-90f** | (후보) 더티 영역 다시 그리기 · DNS 캐시 · auto 모드 자동 전환(D-58 뒤) | 대 |

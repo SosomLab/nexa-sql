@@ -42,9 +42,9 @@
 | 프로시저/함수 **시그니처**(인자 이름·타입·방향) | 완성 시그니처 도움 · hover · 실행 창 | 요청 때 |
 | 지연 채움 `Pending` 표식 + 완료 알림 | 팝업/카드가 "불러오는 중…" → 도착하면 갱신(98차 `NeedColumns`와 같은 길) | — |
 
-> ✅ **11-04 T-178 종결**(59d2f518 · [journal 11-04 §18](journal/2026-11-04.md)) = 위 표의 컬럼 타입·NULL·기본값·코멘트 · 키(PK/UK/FK 대상 · 컬럼 키 비트 `key_bits_for`) · 루틴 시그니처(`ArgState` 지연 채움) 채움 · 미확인(11-21 조사) = 행 수 추정·생성/변경 시각 · 컬럼/상세 `Pending` 표식. ⚠ 아래 원칙과 실제 구현이 다르다 — 실제 = 탐색기·nsql-catalog 질의 → `MetaStore::set_columns`/`set_detail` · `Session::describe()` = 접속 설명 `String`(nsql-core) · 서버 판·세션 정보 확장 = T-466(P2) · 원칙 폐기 vs T-466 대체 = **사용자 결정 대기(11-21)**.
+> ✅ **11-04 T-178 종결**(59d2f518 · [journal 11-04 §18](journal/2026-11-04.md)) = 위 표의 컬럼 타입·NULL·기본값·코멘트 · 키(PK/UK/FK 대상 · 컬럼 키 비트 `key_bits_for`) · 루틴 시그니처(`ArgState` 지연 채움) 채움 · 미확인(11-21 조사) = 행 수 추정·생성/변경 시각 · 컬럼/상세 `Pending` 표식. ⚠ 아래 원칙과 실제 구현이 다르다 — 실제 = 탐색기·nsql-catalog 질의 → `MetaStore::set_columns`/`set_detail` · `Session::describe()` = 접속 설명 `String`(nsql-core) · 서버 판·세션 정보 확장 = T-466(P2) · **사용자 결정(11-21 · [D-482](10-decision-record.md)) = 아래 원칙 폐기** — 채우는 길은 구현 그대로(탐색기·nsql-catalog 질의 → MetaStore) · T-466은 별개 유지.
 
-원칙: **드라이버 포트 하나**(`Session::describe(ObjectRef) -> ObjectInfo` · 4 드라이버 + 확장 ABI 22)로 채우고, UI는 `MetaStore`만 읽는다. **100차(mac · 09-23) 구현분** = 접속 직후 현재 스키마·권한 반영 사전 미리 읽기 · `스키마.` 시점 즉시 채움 · 미사용 버킷 즉시 회수([76 §9](76-intellisense-and-outline.md)) — 사용자 요구 "단일 원천 · 중복 0 · 유니버설 어댑터 · 미사용 즉시 회수"의 첫 적용. 남은 중복 = 트리 노드의 `ObjectInfo` 복사(T-184). 세션 통제(DR-34 `gate_open`)를 지나며, 실행 중이면 큐에 넣고 상태줄에 안내.
+원칙(⚠ 앞부분 11-21 폐기 · D-482): ~~**드라이버 포트 하나**(`Session::describe(ObjectRef) -> ObjectInfo` · 4 드라이버 + 확장 ABI 22)로 채우고~~, UI는 `MetaStore`만 읽는다. **100차(mac · 09-23) 구현분** = 접속 직후 현재 스키마·권한 반영 사전 미리 읽기 · `스키마.` 시점 즉시 채움 · 미사용 버킷 즉시 회수([76 §9](76-intellisense-and-outline.md)) — 사용자 요구 "단일 원천 · 중복 0 · 유니버설 어댑터 · 미사용 즉시 회수"의 첫 적용. 남은 중복 = 트리 노드의 `ObjectInfo` 복사(T-184). 세션 통제(DR-34 `gate_open`)를 지나며, 실행 중이면 큐에 넣고 상태줄에 안내.
 
 ### 1-3. `ObjectAction` — 어디서나 같은 동작 목록
 
