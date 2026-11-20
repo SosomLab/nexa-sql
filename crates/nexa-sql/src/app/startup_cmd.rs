@@ -1195,6 +1195,13 @@ cells={n}
             let _ = std::fs::write(path, self.tx_dump());
             return;
         }
+        // 자체 시험(T-224 · 11-21): `ui.active:on|off` = 주 창을 **키 창인 것처럼** 표시한다 — 헤드리스(포커스를 뺏지 않는 시험)에는
+        //   `WindowEvent::Focused`가 오지 않아 캐럿 깜빡임 틱(= 부분 프레임의 원천)이 돌지 않는다. 창 포커스 자체는 건드리지 않는다.
+        if let Some(v) = id.strip_prefix("ui.active:") {
+            self.main_active = v.trim() == "on";
+            self.redraw();
+            return;
+        }
         // 자체 시험(10-24): 설정 내보내기/가져오기 = 파일 창 없이 같은 길(`settings.export:<파일>` · `settings.import:<파일>`).
         if let Some(path) = id.strip_prefix("settings.export:") {
             self.settings_export_to(Path::new(path));

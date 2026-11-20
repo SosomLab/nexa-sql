@@ -529,7 +529,7 @@ const CMDS: &[Cmd] = &[
             ("reset <key>", Msg::HlpArgConfigReset),
             ("path", Msg::HlpArgConfigPath),
         ],
-        opts: &[],
+        opts: &["--perf"],
         notes: &[],
         examples: &["nsql config list", "nsql config list perf", "nsql config set perf.mode low", "nsql config set cli.width 160", "nsql config set ui.lang ko", "nsql config get grid.max_rows"],
     },

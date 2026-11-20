@@ -448,11 +448,18 @@ impl ExtView {
             d.fields.len() + d.description.len()
         );
         if key != self.body_key {
+            // ★ 다른 확장의 상세로 바뀌었으면 **맨 위부터** 보인다(11-21 V1: `set_text`가 캐럿을 글 끝에 두어 기본 창 크기에서 상세가
+            //   변경 이력까지 내려간 채 열렸고 "세부 정보"가 첫 화면에 없었다) · 같은 확장의 상태만 바뀐 것은 보던 자리 그대로.
+            let other = self.body_key.split('|').next() != Some(d.row.id.as_str());
             self.body_key = key;
             dc.select_font(FontSlot::Base, false);
             let widths: Vec<i32> = d.fields.iter().map(|(l, _)| dc.text_width(l)).collect();
             let space = dc.text_width(" ");
             self.body.set_text(&d.body_text_px(&widths, space));
+            if other {
+                self.body.goto_line(1);
+                self.body.set_vscroll_top(0);
+            }
         }
         let body_rect = Rect::new(
             x - self.s(4.0),
