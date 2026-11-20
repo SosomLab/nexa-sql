@@ -8804,7 +8804,7 @@ impl Msg {
             Msg::RunReadOnlyApply => ["Read-only profile: changes are not allowed", "읽기 전용 프로필: 변경할 수 없습니다"],
             Msg::LblReadOnly => ["Read only", "읽기 전용"],
             Msg::LblDeletedKeepDays => ["Keep deleted profiles (days)", "지운 프로필 보관 기간(일)"],
-            Msg::DescDeletedKeepDays => ["Deleted profiles are moved to profiles/.deleted and can be restored (toast Undo · nsql conn restore). Older files are purged when the connection window opens. 0 = purge at once.", "지운 프로필은 profiles/.deleted로 옮겨져 복구할 수 있다(토스트 되돌리기 · nsql conn restore). 기간이 지난 파일은 접속 창을 열 때 지운다. 0 = 즉시 삭제."],
+            Msg::DescDeletedKeepDays => ["Deleted profiles are moved to profiles/.deleted and can be restored (toast Undo · nsql conn restore). Older files are purged when the connection window opens. 0 = purge the next time the connection window opens; nsql conn rm purges right away.", "지운 프로필은 profiles/.deleted로 옮겨져 복구할 수 있다(토스트 되돌리기 · nsql conn restore). 기간이 지난 파일은 접속 창을 열 때 지운다. 0 = 다음에 접속 창을 열 때 지운다(nsql conn rm은 곧바로 지운다)."],
             Msg::MnProfilesExport => ["Export Connection Profiles…", "접속 프로필 내보내기…"],
             Msg::MnProfilesImport => ["Import Connection Profiles…", "접속 프로필 가져오기…"],
             Msg::StProfilesExported => ["{0} profile(s) exported to {1} (passwords excluded)", "프로필 {0}개를 {1}(으)로 내보냄(비밀번호 제외)"],
