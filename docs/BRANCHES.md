@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `work/t49-batch-and-fixes` | 2026-11-21(Windows · 798f6297 위 · 11-20 `work/t479-ai-backlog` 5커밋 포함) | 병합 대기(사용자 결정 11-21 = 묶음 검증 뒤 한 번에 · nexa-ui 5e21883f 먼저 · main a5efcaf8 미push 포함) · 병합·push 해시·CI = 병합 뒤 채움 | 25 | 11-20 개발 잔여 8건(T-479 · T-485~T-488 · T-492①② · T-493 · T-495) + 11-21 사용자 "지금 진행할 수 있는 개발 바로 진행" = T-49 DBMS_OUTPUT 묶음 회수 · T-356 B · T-263 · T-449 · T-225 · T-220 · T-90 PERF 4 + `--perf` · T-468 · T-224 `gfx.partial_redraw` · T-272 스토리지·연결된 서버 카탈로그 · 기록(D-482 · journal 11-20 §5 · 11-21) |
 | `release/0.9.0` | 2026-11-20(Windows) | 2026-11-20 → main ff 병합·삭제(push `9ebcb92e..5444c380` · 이어서 68a8b518 · 봇 4d3b5c0f) · 29b7ab26(DRIVER_VERSION 0.1.14) · 5444c380(버전 0.9.0) | 2 | v0.9.0 + drivers-v0.1.14 릴리스(태그 drivers-v0.1.14 = 68a8b518 · v0.9.0 = 4d3b5c0f) |
 | `fix/1120-install-test-flake` | 2026-11-20(Windows) | 2026-11-20 → main ff 병합·삭제(push `3e36558f..9ebcb92e` · ci 44564135489 = macOS 러너 미배정 취소 ×2 · 그 밖 ✓ · integration 44564135279 ✓) · 9ebcb92e + 기록 50f391b1 | 2 | 설치 시험 로컬 포트 경합 제거(ci 44561963546 ubuntu 간헐 실패) |
 | `fix/1120-todo-cleanup` | 2026-11-20(Windows) | 2026-11-20 → main ff 병합·삭제(**b34ea0e2..3e36558f** push · ci 44561963546 ✗ · integration 44561963620 ✗(2건 · 이번 변경 밖 · 실패 잡 재실행 중 attempt 2)) · 83460b29 · 5c5747b6 · 393c4a7e + 기록 3e36558f | 4 | TODO 마무리 = T-499 시험 기대값 83460b29 · T-501 도메인 링크 5c5747b6 · T-498 새 탭 포커스·제목 + T-499 CI 단계 393c4a7e + 기록 |
