@@ -703,7 +703,7 @@ AI 도구 호출(run_query · set_setting · run_command …)
 - ■ 직후 연속 user 두 개 = `start_api`가 `push_merged`로 하나로 합친다.
 - **모의 호스트 ■** = `Running::Mock { stop }` · 지연을 50 ms 조각으로 나눠 도구 루프 머리·결과 뒤·끝에서 `Done{stop:"cancelled"}`.
 - **기동 명령 `ai.stop`** = 헤드리스에서 ■과 같은 길(작성 상자에 대기 글 되돌림 · 대본 `[note] 멈춤`).
-- **CLI·Codex 자식 프로세스** = Unix는 `process_group(0)`로 띄우고 `reap`이 `kill(-pgid, SIGKILL)`을 먼저 보내 손자까지 정리 · **Windows는 직계 자식만**(작업 개체 = T-479).
+- **CLI·Codex 자식 프로세스** = Unix는 `process_group(0)`로 띄우고 `reap`이 `kill(-pgid, SIGKILL)`을 먼저 보내 손자까지 정리 · ★ **Windows = 작업 개체(T-479 · 11-20 028661f5)**: `nsql_ext::procjob::KillJob`(Job Object · `KILL_ON_JOB_CLOSE`) — CLI · Codex app-server · 모델 목록 조회를 띄운 직후 `attach` · `reap`이 `TerminateJobObject`로 손자(node · 셸 · mcp-bridge)까지 끝낸다 · 일찍 돌아가는 오류 길·앱 비정상 종료 = 핸들이 닫히며 정리(`Drop`) · 한계 = `spawn`~`attach` 사이(수십 µs)에 이미 띄운 손자는 밖에 남을 수 있다 · 넣기 실패(중첩 금지 OS) = 종전처럼 직계만 · 시험 `kill_takes_the_grandchild_too`(cmd → ping).
 - **Claude CLI 재기동 세대**(11-16 §6-1): `Host::cli_gen` + `retire_cli()`(세대를 올리고 stop) · `start_cli` 출력 스레드는 자기 세대일 때만 줄 사건 · `cli exited` · `Done{stop:"exit"}`을 보낸다 → 내린 프로세스의 늦은 사건이 새 턴의 busy를 풀거나 메모 줄을 남기지 않는다 · ■ · 세션 전환은 종전 `stop()`.
 
 ### 20-2. 모델 · 노력도 보정
@@ -713,7 +713,7 @@ AI 도구 호출(run_query · set_setting · run_command …)
 - **Codex 계정 목록**(11-16 §4): `ai_send_codex`가 CLI 로그인 모드면 `ai_codex_login_probe()`를 한 번 건다(패널을 열지 않아도) · `ai_codex_fix_model()` = 세션 모델이 계정 목록에 없으면 계정 첫 모델로 바꾸고 대화가 있으면 `AiModelSwapped` 안내 한 줄(턴 중이면 미룸 · 부르는 곳 = `codexmodels:` 수신 · `AiEvent::Done`).
 - **Codex 노력도**(11-16 §5 A): `codex::ModelInfo` · `model_infos()`(`supportedReasoningEfforts` · `defaultReasoningEffort`) · `fit_effort` = 지원하면 그대로 · 목록을 모르면 그대로 · 아니면 원하는 값보다 높지 않은 가장 높은 지원 값 · 그것도 없으면 기본값 · 안내 `AiEffortSwapped` · 부르는 곳 = 패널 동작 뒤 · `/model`·`/effort`·`/auto` 뒤 · 보내기 직전 · 미리 띄우기. 설정 키 `ai.codex_effort`는 바꾸지 않는다(세션 값에만).
 - **첫 턴**(11-16 §6 ①): `AiState::codex_list_done`(조회가 성공·실패로 끝남 · 실패 = 빈 `codexmodels:`) 전에는 모델도 노력도도 싣지 않는다(Codex 기본값) · 조회 실패로 끝나면 고른 값을 그대로 보낸다.
-- **한계**: 보정은 **CLI 로그인 모드만** — Codex API 키 모드는 목록 조회·맞춤 미적용(T-486).
+- ★ **API 키 모드(T-486 · 11-20 028661f5)**: 프로필 [검증] 때 `model/list`의 모델별 노력도를 프로필에 저장(`efforts=` 한 줄 · `codex::dump_efforts`/`parse_efforts` · 화면 `p_efforts`) → 보낼 때와 목록 도착(`validefforts:`) 때 `fit_effort`로 맞추고 안내 · **모델은 바꾸지 않는다**(API 키 모드는 계정 목록 보정 대상 아님) · 제약 = **기존 Codex 프로필은 [검증]을 다시 눌러야 노력도 표가 저장된다**(그 전 = 종전처럼 고른 값 그대로).
 
 ### 20-3. 활동 패널 ↔ 작업 세션 분리 · 채팅 탭
 
@@ -721,7 +721,9 @@ AI 도구 호출(run_query · set_setting · run_command …)
 - 채팅 탭에서 `/clear`·새 대화 = 그 탭의 보기 열쇠를 새 세션으로 바꾼다(`Editors::rekey_active_view` · `ai_rebind_chat_tab` · 11-15 §17 ③) — 종전에는 옛 세션 id 열쇠 때문에 `ai_follow_view`가 옛 세션으로 되돌렸다.
 - 툴바 `ai.side` 켜짐 표시 = `app/paint.rs` 그리기 직전에 `set_item_checked("ai.side", ai_side_on())`(활성 탭이 바뀌는 모든 길 공통 · 11-15 §10).
 - 활동 막대 Claude 탭 = 여덟 꼭지 별 · 툴바 `ai_side` = "AI" 글자(11-15 §2 · 3253f8bb).
-- **한계**: 활동 패널이 채팅 탭 전환을 따라가지 않는다(T-488) · 세션 둘에서 "패널에서 다른 세션을 열어도 분할 창은 원래 세션"은 사용자 실기 몫.
+- ★ **패널이 채팅 탭 따라가기(T-488 · 11-20 028661f5)**: 채팅 탭이 **바뀐 그때만** 보이는 패널의 제공자를 그 탭 것으로(`AiState::panel_follow` · `follow_key` · `app/paint.rs`) — 사용자가 활동 막대에서 고른 제공자를 매 프레임 되돌리지는 않는다.
+- **시험(T-485 · 11-20)** = 순수 함수로 떼어 고정: `AiState::panel_toggle`/`panel_cur` · `cli_reuse`(CLI 재사용 판정) · `codex_fix` · `host::pump_cli`(세대) · Picker 재클릭.
+- **한계**: 세션 둘에서 "패널에서 다른 세션을 열어도 분할 창은 원래 세션"은 사용자 실기 몫.
 
 ### 20-4. 고르기 팝업(모델 칩 · 세션 [≡] · 프로필 모델/노력도)
 
@@ -739,4 +741,10 @@ AI 도구 호출(run_query · set_setting · run_command …)
 
 ### 20-6. 남은 것(TODO)
 
-- T-479 Windows 손자 정리(Job Object) · T-485 단위 시험 보강 4건(패널 분리 · CLI 재기동/세대 · Codex 목록 뒤 바로잡기 · 재클릭 닫기) · T-486 API 키 모드 보정 · T-487 자동완성 완성 음절 뒤 선택 유지 · T-488 패널이 채팅 탭 따라가기 · T-490 Windows IME 실기.
+- ~~T-479 · T-485 · T-486 · T-487 · T-488~~ ✅ 11-20(작업 브랜치 `work/t479-ai-backlog` · [journal 11-20 §5](journal/2026-11-20.md)) · 사용자 실기 대기 = T-479 실제 claude/codex 손자 · T-486 Codex API 키 · T-488 화면 · T-487 한글 입력 · T-490 Windows IME 실기.
+
+### 20-7. 응답 표 행 단위 복사(T-493 · 11-20 0ae9e672)
+
+- 표 칸을 접을 때 빈칸에서 접힌 조각 끝에 그 빈칸을 남긴다(`keep_break_spaces` · 폭 계산에서는 뺀다) → 다시 이을 때 낱말이 붙지 않는다.
+- 여러 화면 줄에 걸친 선택 = 표를 **행 단위**로 낸다(칸 = 탭 · 접힌 칸은 다시 이어서 · `table_row_span`/`table_row_text` · `selection_text`) · 한 줄 안의 선택은 종전대로(화면 줄 글).
+- 판정 = 단위 시험 · 클립보드 결과는 사용자 실기(자동 시험에 클립보드 금지).

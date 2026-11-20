@@ -166,6 +166,7 @@
 | ★ 로컬 히스토리 디스크 쓰기(C-1 · 11-06 · [19 §3](19-compare-git-and-object-history.md) · [journal 11-06 §3](journal/2026-11-06.md)) | 파일 저장 때 1회(`save_to` 성공 뒤 · 새 스레드 0 · 내용 해시가 직전 시점과 같으면 쓰지 않음) · 위치 `NSQL_HOME/history/files/<fnv64>/<stamp>_<tag>_<hash>.sql` · 항목당 `history.max_per_item`(50)개 · 전체 `history.max_mb`(200 MB) 넘으면 오래된 것부터 정리 · git 거터는 기존 `gitstat` 감시 스레드의 HEAD 본문을 둘째 기준선으로 쓰므로 새 부하원 아님(끄기 = `editor.git_gutter`) | `history.enabled` · `history.max_per_item` · `history.max_mb` | on · 50 · 200 | on · 50 · 200 | on · 50 · 200 | `history.rs` · `app/history.rs` `history_on_save` |
 | ★ AI CLI 미리 띄우기(11-12 · 86eeac21 · [110 §16-6](110-ai-assistant-plugin-design.md)) | CLI 모드 세션에서 작성 상자에 글을 치기 시작하면 CLI 프로세스(claude 또는 codex) 1개를 미리 띄움 · 세션당 1회 · 이미 살아 있거나 턴 중이면 안 띄움 · 요청은 보내지 않음(사용량 0) · 모의(`NSQL_AI_MOCK`)는 제외 | `ai.prewarm`(기본 on · off = 보낼 때 띄움) | on | on | on | `app/ai.rs` `ai_prewarm` |
 | ★ AI 자식 종료 대기 스레드 `ai-reap`(11-14 · a80ed442) | ■ · 세션 전환으로 `Host::stop()`이 CLI 자식(claude·codex)을 끊을 때 1개 · 일회성(`kill`은 UI 스레드에서 동기 · `wait()`만 이 스레드로 넘겨 UI 멈춤 제거) · 끝나면 종료 · 상주 0 | 없음(구조 · 자식이 있을 때만 생긴다) | — | — | — | `ai/host.rs` `stop` |
+| ★ AI 자식 작업 개체(Windows Job Object · 11-20 · T-479 · 028661f5) | CLI(claude) · Codex app-server · 모델 목록 조회 자식 **하나당 핸들 1**(`nsql_ext::procjob::KillJob` · 띄운 직후 `attach` · `reap`/`Drop`에서 닫음 · `KILL_ON_JOB_CLOSE`) · 스레드·폴링 0 · Unix = 빈 값(프로세스 그룹) | `ai.enabled`(off = AI 자식을 띄우지 않으니 핸들 0) | — | — | — | `nsql-ext/src/procjob.rs` · `ai/host.rs` |
 
 ### 3-4. GFX(화면 · "GPU")
 

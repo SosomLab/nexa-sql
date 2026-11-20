@@ -17,7 +17,7 @@ T-371(131차)은 **서버가 알려 준 위치**로 캐럿을 옮긴다. 그 위
 
 식별자 오류(ORA-00904 · PG `column … does not exist` 등)는 서버 위치가 이미 정확하다 → 분석 대상이 **아니다**(부류 `ErrorClass::Syntax`만).
 
-★ **11-19 Oracle 위치 실측(오류 유형 E2E · Thin · `scripts/win-error-types-e2e.sh`)**: ORA-00904 = **한정자 포함 식별자 시작**(`d.NO_SUCH_COL`의 `d`) · ORA-01722(실행 중 변환 오류)도 위치를 준다(`'x'`) · PL/SQL 블록 컴파일 오류는 오프셋 대신 메시지 `ORA-06550: line N, column M`(한국어 NLS = `줄 N, 열M`)이고 **열 = 바이트**(한글 3글자 뒤 31 → 37) → `nsql_core::plsql_error_position(message, sql)`(줄 안 바이트 → 글자 · OCI `err_at` · Thin `fail_at` 공용) · 닫지 않은 문자열 = 서버가 아니라 Thin 드라이버 자체 파스 오류(`parse error at position N` · 위치 미해석 = 문장 시작 줄 · T-495) · [journal 11-19 §3](journal/2026-11-19.md).
+★ **11-19 Oracle 위치 실측(오류 유형 E2E · Thin · `scripts/win-error-types-e2e.sh`)**: ORA-00904 = **한정자 포함 식별자 시작**(`d.NO_SUCH_COL`의 `d`) · ORA-01722(실행 중 변환 오류)도 위치를 준다(`'x'`) · PL/SQL 블록 컴파일 오류는 오프셋 대신 메시지 `ORA-06550: line N, column M`(한국어 NLS = `줄 N, 열M`)이고 **열 = 바이트**(한글 3글자 뒤 31 → 37) → `nsql_core::plsql_error_position(message, sql)`(줄 안 바이트 → 글자 · OCI `err_at` · Thin `fail_at` 공용) · 닫지 않은 문자열 = 서버가 아니라 Thin 드라이버 자체 파스 오류(`parse error at position N` · 메시지의 위치는 문장 끝이라 쓸모없음 → ★ T-495 11-20 = 닫지 않은 토큰이 **열린 자리** · §6) · [journal 11-19 §3](journal/2026-11-19.md).
 
 ## 2. 방식 — 파서가 아니라 "의심 지점 찾기"
 
@@ -81,3 +81,11 @@ T-371(131차)은 **서버가 알려 준 위치**로 캐럿을 옮긴다. 그 위
 - **단위(nsql-script `errsuspect::tests` 12)** = OSA 전위 거리 1 · `DISTINC` 서버 위치 앞 · 구간 끝 = 서버 위치 낱말 포함 · 정확 키워드·짧은 낱말 제외 · 메타 캐시 이름 제외 · 별칭 한정자·멤버·호출·이름 자리 제외 · 앞 오타 뒤에도 절 키워드 유지 · 서브쿼리 안 오타 · 줄 단위 위치 = 그 줄 구간 · `near` 토큰 파싱 · 예산 만료 = 빈 결과 · 방언 공통 오타 묶음.
 - **호스트(nexa-sql `app/errsuspect.rs` 1)** = `analyze_wanted` MC/DC.
 - **E2E `scripts/win-error-goto-e2e.sh`**(T-371 ①② 유지 + T-372 ③④⑤) = ③ `SELECT DISTINC '가나다' AS x FROM dual` → 캐럿 1:8(5방언 전부 · SQL Server도 **열 8**) + Output `Suspected typo` · ④ 둘째 문장 = 2:8 · ⑤ SQLite만 `perf.boost=on` → 1:16(강제 끔 = 서버 위치). 기대 = 5방언 × 4 + 1 = 21 케이스. 결과 = journal 10-20 §1.
+
+## 6. 오류 위치의 남은 틈 메우기(11-20 · T-492 · T-495 · [journal 11-20 §5](journal/2026-11-20.md))
+
+- **T-492 ① 실행 뒤 편집 따라가기**(nexa-sql `output.rs` `ErrAnchor` · `follow_anchor` · `app/output.rs`): Output 오류 줄마다 닻(탭 · 찍힌 줄·열 · 버퍼 `epoch`·`change_seq`)을 남기고, 두 번 클릭(`output.goto_error`) 때 그 뒤의 줄 넣기·지우기를 `nsql_bookmarks::shift_line`으로 접어 지금 줄로 간다 · 같은 글이면 최근 닻 · 닻이 없거나 다른 탭이거나 기록이 끊기면(버퍼 통째 교체) 글의 숫자 그대로(종전).
+  - 제약 = **줄 단위 추적** — 같은 줄 안의 편집은 열을 따라가지 않는다 · **실행한 탭이 지금 탭일 때만**.
+  - 판정 = 시험 `error_anchor_follows_line_edits` · V1(SQLite · 5줄 문서 · 5번째 줄 실행 → 맨 위 두 줄 붙여넣기 → `output.goto_error:1` = 캐럿 7:16 · 편집 없음 = 5:16).
+- **T-492 ② 로그 창 줄 = 문서 기준**(`nsql_run::log_entries_at(ev, line_base)` · `app/events.rs`): GUI가 문서 일부(선택 · 캐럿 문장)를 실행하면 Begin/Error 줄에 실행 조각의 시작 줄을 더한다 · 줄을 모르는 사건(0)은 그대로 · CLI는 스크립트 줄 그대로(`log_entries` = base 0) · V1 = 5번째 줄 문장 실행 → 로그 `line 5: Query` · `line 5: near "x" …`.
+- **T-495 Thin 자체 파스 오류**(`nsql_core::unclosed_token_position(sql)` · Thin `fail_at`): `ErrorKind::ParseError`면 닫지 않은 따옴표 · 큰따옴표 · q-문자열 · 블록 주석이 **시작한 글자 인덱스**를 위치로 준다(줄 주석 제외 · 드라이버 메시지의 `position N`은 문장 끝) · Thin은 확장 드라이버라 **다음 드라이버 릴리스(DRIVER_VERSION 올림) 때 반영** — 그때 `scripts/win-error-types-e2e.sh` T8 기대값(지금 tailnone)을 갱신한다.

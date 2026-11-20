@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-20 저녁 (Windows · 개발 × 협업 · `work/t479-ai-backlog`)** — 개발 잔여 8건 ✅: T-479 Windows 작업 개체(손자까지 종료) · T-486 Codex API 키 노력도 · T-488 패널이 채팅 탭 따라가기 · T-485 시험 보강 · T-492 ① 오류 줄 닻 ② 로그 창 문서 줄 · T-487 다시 거를 때 선택 유지 · T-495 Thin 닫지 않은 토큰 위치(드라이버 릴리스 때) · T-493 AI 표 행 단위 복사 · V2 = clippy 지적 2(시험 unwrap → cd5f9522 협업) 뒤 fmt · clippy 0 · check-3os ✓ · 시험 nexa-sql 670/0/6 · nsql-ext 11/0 · nsql-run 104/0 · nsql-core 44/0 · Thin 7/0 · 통합 47/0/1 · V1 ✓ · nexa-ui 5e21883f(check-3os 중괄호 · 미사용 workspace 의존) · main 병합·push 대기([journal 11-20 §5](journal/2026-11-20.md))
+
 - **2026-11-20 (Windows · 협업)** — 채널 검수 끝(winget #484277 병합 2026-11-19T18:36:40Z · choco 0.9.0 Approved) · 040b8b7c CI = ci 44579253575 ✓ · T-489 ✅ = 110 §20(11-15~16 AI 변경 반영) · 개발 순서 T-479 → T-486 → T-485 → T-492①② → T-493 → T-495 → T-487 → T-488 · nexa-ui 잔손질 2건 조사([journal 11-20 §4](journal/2026-11-20.md))
 
 - **2026-11-20 새벽 (Windows · 릴리스)** — **v0.9.0 + drivers-v0.1.14 공개**(2026-11-19T17:32:51Z · lite · 게이트 = nexa-sql 1510/0/8 · nexa-ui 695/0/6 · sdk 24/0 · 통합 47/0/1 · check-3os ×2 · 영어 ✓) · winget PR #484277 · choco 0.9.0 push · Homebrew f6c31a0 · pkg.sosomlab.com 0.9.0 · [journal 11-20 §3](journal/2026-11-20.md)
