@@ -2185,6 +2185,10 @@ mod plsql_errpos_tests {
         assert_eq!(parts(32767), 5);
         assert!(sql.contains("> 8191 THEN") && sql.contains(":c5 := SUBSTR(l, 32765, 8191);"));
         assert!(!sql.contains(":c6"));
+        // OCI 어댑터가 쓰는 폭(8000글자 정적 바인드 = 32000) — 조각 5개가 줄 상한을 덮는다.
+        let sql = dbms_output_batch_sql(32000);
+        assert_eq!(parts(32000), 5);
+        assert!(sql.contains("> 8000 THEN") && sql.contains(":c5 := SUBSTR(l, 32001, 8000);"));
         let sql = dbms_output_batch_sql(16000);
         assert_eq!(parts(16000), 9);
         assert!(sql.contains("> 4000 THEN") && sql.contains(":c9 := SUBSTR(l, 32001, 4000);"));

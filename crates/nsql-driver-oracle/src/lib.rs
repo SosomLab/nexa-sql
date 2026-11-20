@@ -489,20 +489,27 @@ impl OracleSession {
         fn at(what: &'static str) -> impl Fn(oracle::Error) -> String {
             move |e| format!("{what}: {e}")
         }
+        // ★ OUT 바인드 폭 = **글자 수**(`oracle` crate의 `Varchar2(n)` = n글자 → ODPI 버퍼 n × 4바이트). 32767글자로 잡으면 버퍼가
+        //   32767바이트를 넘어 ODPI의 **동적 바인드**가 되는데, 그런 OUT 바인드를 여럿 건 블록은 실행 뒤 값 수거에서
+        //   `DPI-1002: invalid OCI handle`로 실패했다(11-21 CI · 서버는 이미 버퍼를 비운 뒤라 줄을 잃었다 · macOS IC 19.16의
+        //   `kolrarfc`도 같은 동적 바인드 자리). → 바인드마다 8000글자(= 32000바이트) 이하의 **정적 바인드**로 잡는다:
+        //   묶음 예산 = 그 글자 수만큼의 바이트 · 넘친 줄 = 그 글자 수씩 조각.
+        let unit = cap.min(32_000) / 4;
+        let sql_cap = unit * 4;
         let mut lines = Vec::new();
         let mut stmt = self
             .conn
-            .statement(&nsql_core::dbms_output_batch_sql(cap))
+            .statement(&nsql_core::dbms_output_batch_sql(sql_cap))
             .build()
             .map_err(at("prepare"))?;
-        let parts: Vec<String> = (1..=nsql_core::dbms_output_carry_parts(cap))
+        let parts: Vec<String> = (1..=nsql_core::dbms_output_carry_parts(sql_cap))
             .map(|i| format!("c{i}"))
             .collect();
         while lines.len() < max {
-            stmt.bind("buf", &OracleType::Varchar2(cap))
+            stmt.bind("buf", &OracleType::Varchar2(unit))
                 .map_err(at("bind buf"))?;
             for c in &parts {
-                stmt.bind(c.as_str(), &OracleType::Varchar2(cap))
+                stmt.bind(c.as_str(), &OracleType::Varchar2(unit))
                     .map_err(at("bind part"))?;
             }
             stmt.bind("st", &OracleType::Number(0, 0))
