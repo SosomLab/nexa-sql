@@ -1458,6 +1458,52 @@ pub fn plsql_error_position(message: &str, sql: &str) -> Option<usize> {
     Some(start + char_index_of_byte(&line_text, col.saturating_sub(1)))
 }
 
+/// ★ DBMS_OUTPUT **묶음 회수** 블록(T-49 · 11-21 · Oracle 두 드라이버 공용): 종전 = `GET_LINE` 한 줄에 왕복 한 번(1,000줄 = 1,000왕복).
+/// 이 블록은 서버에서 `GET_LINE`을 돌며 줄을 `<글자 수>:<글>` 꼴로 `:buf` 하나에 이어 붙여 **왕복 한 번에 여러 줄**을 준다
+/// (컬렉션 바인드가 필요 없다 — 두 드라이버 crate 어디서나 되는 VARCHAR2 OUT 둘 + NUMBER OUT 하나).
+///
+/// - `:buf` = 묶인 줄([`dbms_output_unpack`]) · 예산 = `cap / 4` 바이트(DB 문자셋 → 클라이언트 UTF-8로 늘어나도 OUT 폭 `cap` 안).
+/// - `:carry` = 예산에 들지 않아 **이미 꺼낸** 한 줄(되돌려 넣을 수 없다 → 따로 준다 · `cap` 바이트로 자른다 = 종전 4000 폭
+///   클라이언트는 긴 줄에서 ORA-06502로 뒤 줄까지 잃었다).
+/// - `:st` = 1 버퍼 끝 · 2 `:carry` 있음(더 남았을 수 있다 → 다시 부른다). 빈 줄(NULL)은 `0:`으로 보존된다.
+#[must_use]
+pub fn dbms_output_batch_sql(cap: u32) -> String {
+    let budget = (cap / 4).max(64);
+    format!(
+        "DECLARE l VARCHAR2(32767); s INTEGER; b VARCHAR2(32767); c VARCHAR2(32767); r PLS_INTEGER := 1; \
+         BEGIN \
+           LOOP \
+             DBMS_OUTPUT.GET_LINE(l, s); \
+             EXIT WHEN s <> 0; \
+             IF NVL(LENGTHB(b), 0) + NVL(LENGTHB(l), 0) + 8 > {budget} THEN \
+               c := SUBSTRB(l, 1, {cap}); r := 2; EXIT; \
+             END IF; \
+             b := b || TO_CHAR(NVL(LENGTH(l), 0)) || ':' || l; \
+           END LOOP; \
+           :buf := b; :carry := c; :st := r; \
+         END;"
+    )
+}
+
+/// [`dbms_output_batch_sql`]의 `:buf` → 줄들(`<글자 수>:<글>` 반복 · 글자 수 = Oracle `LENGTH` = 코드포인트). 꼴이 어긋나면
+/// (있을 수 없지만 문자셋 변환이 글자 수를 바꾼 경우) 남은 글을 한 줄로 내고 그친다 — 글을 버리지 않는다.
+pub fn dbms_output_unpack(buf: &str, out: &mut Vec<String>) {
+    let mut rest = buf;
+    while !rest.is_empty() {
+        let head = rest
+            .find(':')
+            .and_then(|c| Some((c, rest[..c].parse::<usize>().ok()?)));
+        let Some((colon, n)) = head else {
+            out.push(rest.to_string());
+            return;
+        };
+        let body = &rest[colon + 1..];
+        let end = body.char_indices().nth(n).map_or(body.len(), |(i, _)| i);
+        out.push(body[..end].to_string());
+        rest = &body[end..];
+    }
+}
+
 /// ★ 닫지 않은 따옴표·주석이 **시작한 자리**(글자 인덱스 · T-495 · 11-20): Oracle Thin 드라이버는 닫지 않은 `'…` · `"…` ·
 /// `q'[…` · `/* …`를 서버에 보내기 전에 스스로 거르는데(`parse error at position N in text …`), 그 N은 **문장 끝**(마지막 줄 안의
 /// 바이트 열)이라 고칠 자리를 가리키지 못한다 → 같은 어휘 규칙으로 문장을 훑어 끝까지 닫히지 않은 토큰이 열린 자리를 준다.
@@ -2101,6 +2147,29 @@ mod errpos_tests {
 #[cfg(test)]
 mod plsql_errpos_tests {
     use super::plsql_error_position;
+
+    /// ★ T-49: 묶음 풀기 — 빈 줄 보존 · 글 안의 `:`·숫자 · 한글(글자 수 기준) · 꼴이 어긋나면 남은 글을 한 줄로.
+    #[test]
+    fn dbms_output_batch_unpacks_lines() {
+        use super::{dbms_output_batch_sql, dbms_output_unpack};
+        let un = |s: &str| {
+            let mut v = Vec::new();
+            dbms_output_unpack(s, &mut v);
+            v
+        };
+        assert_eq!(un(""), Vec::<String>::new());
+        assert_eq!(un("2:ab0:3:12:"), vec!["ab", "", "12:"]);
+        assert_eq!(un("3:가나다5:a:1:b"), vec!["가나다", "a:1:b"]);
+        // 글자 수가 남은 글보다 크면 끝까지 · 머리가 숫자가 아니면 남은 글 그대로.
+        assert_eq!(un("9:abc"), vec!["abc"]);
+        assert_eq!(un("1:xoops"), vec!["x", "oops"]);
+        // 예산 = 폭의 1/4(문자셋 변환 여유) · 넘는 줄은 폭으로 잘라 :carry로.
+        let sql = dbms_output_batch_sql(32767);
+        assert!(sql.contains("> 8191 THEN") && sql.contains("SUBSTRB(l, 1, 32767)"));
+        let sql = dbms_output_batch_sql(4000);
+        assert!(sql.contains("> 1000 THEN") && sql.contains("SUBSTRB(l, 1, 4000)"));
+        assert!(sql.contains(":buf") && sql.contains(":carry") && sql.contains(":st"));
+    }
 
     /// ★ T-495: 닫지 않은 토큰이 **열린 자리**를 준다(문장 끝이 아니라) — 뒤 문장까지 삼킨 글에서도 · 한글 뒤에서도 글자 인덱스.
     #[test]

@@ -280,34 +280,37 @@ impl ThinSession {
         if !self.serveroutput {
             return lines;
         }
-        let Ok(builder) = self
-            .conn
-            .statement("BEGIN DBMS_OUTPUT.GET_LINE(:line, :status); END;")
-        else {
+        // ★ T-49(11-21): 한 줄에 왕복 한 번(`GET_LINE`) → 묶음 회수(왕복 한 번에 여러 줄 · OCI 어댑터와 같은 블록).
+        let sql = nsql_core::dbms_output_batch_sql(32767);
+        let Ok(builder) = self.conn.statement(&sql) else {
             return lines;
         };
         let Ok(mut stmt) = builder.build() else {
             return lines;
         };
-        for _ in 0..100_000 {
+        while lines.len() < 100_000 {
             let Ok(mut r) = stmt.execute_named(&[
-                ("line", &oracledb::DB_TYPE_VARCHAR),
-                ("status", &oracledb::DB_TYPE_NUMBER),
+                ("buf", &oracledb::DB_TYPE_VARCHAR),
+                ("carry", &oracledb::DB_TYPE_VARCHAR),
+                ("st", &oracledb::DB_TYPE_NUMBER),
             ]) else {
                 break;
             };
             let row = r.out_bind_data();
-            let status = out_index(&row, "status")
+            let st = out_index(&row, "st")
                 .and_then(|i| row.get::<Option<oracledb::OracleNumber>>(i).ok())
                 .flatten()
                 .map_or(1, |n| n.to_string().parse::<i64>().unwrap_or(1));
-            if status != 0 {
+            let text = |name: &str| {
+                out_index(&row, name)
+                    .and_then(|i| row.get::<Option<String>>(i).ok())
+                    .flatten()
+            };
+            nsql_core::dbms_output_unpack(text("buf").as_deref().unwrap_or(""), &mut lines);
+            if st != 2 {
                 break;
             }
-            let line = out_index(&row, "line")
-                .and_then(|i| row.get::<Option<String>>(i).ok())
-                .flatten();
-            lines.push(line.unwrap_or_default());
+            lines.push(text("carry").unwrap_or_default());
         }
         lines
     }
@@ -562,7 +565,7 @@ impl Session for ThinSession {
             result.messages = self.poll_dbms_output();
             let span = result.timing.push(Stage::OutputFlush, t.elapsed());
             span.rows = Some(result.messages.len() as u64);
-            span.note = Some("GET_LINE per line".into());
+            span.note = Some("GET_LINE batched".into());
         }
         Ok(result)
     }

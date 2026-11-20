@@ -437,27 +437,32 @@ impl OracleSession {
         lines
     }
 
-    /// `DBMS_OUTPUT.GET_LINE`을 `max`줄까지 — `:line` OUT 폭 = `cap` 바이트. `Err` = 바인드·실행이 클라이언트 쪽에서 실패(그때까지 읽은 줄은 버린다 ·
-    /// 호출자가 폭을 바꿔 다시 판단). 상태 ≠ 0(버퍼 끝) = 정상 종료.
+    /// DBMS_OUTPUT 줄을 `max`줄쯤까지(묶음 단위라 조금 넘을 수 있다) — OUT 폭 = `cap` 바이트. `Err` = 바인드·실행이 클라이언트 쪽에서
+    /// 실패(그때까지 읽은 줄은 버린다 · 호출자가 폭을 바꿔 다시 판단).
+    ///
+    /// ★ T-49(11-21): 한 줄에 왕복 한 번(`GET_LINE`) → **묶음 회수**([`nsql_core::dbms_output_batch_sql`] · 왕복 한 번에 여러 줄).
     fn get_lines_with(&mut self, cap: u32, max: usize) -> Result<Vec<String>, ()> {
         let mut lines = Vec::new();
         let mut stmt = self
             .conn
-            .statement("BEGIN DBMS_OUTPUT.GET_LINE(:line, :status); END;")
+            .statement(&nsql_core::dbms_output_batch_sql(cap))
             .build()
             .map_err(|_| ())?;
-        for _ in 0..max {
-            stmt.bind("line", &OracleType::Varchar2(cap))
+        while lines.len() < max {
+            stmt.bind("buf", &OracleType::Varchar2(cap))
                 .map_err(|_| ())?;
-            stmt.bind("status", &OracleType::Number(0, 0))
+            stmt.bind("carry", &OracleType::Varchar2(cap))
                 .map_err(|_| ())?;
+            stmt.bind("st", &OracleType::Number(0, 0)).map_err(|_| ())?;
             stmt.execute(&[]).map_err(|_| ())?;
-            let status: i64 = stmt.bind_value("status").unwrap_or(1);
-            if status != 0 {
+            let st: i64 = stmt.bind_value("st").unwrap_or(1);
+            let buf: Option<String> = stmt.bind_value("buf").map_err(|_| ())?;
+            nsql_core::dbms_output_unpack(buf.as_deref().unwrap_or(""), &mut lines);
+            if st != 2 {
                 break;
             }
-            let line: Option<String> = stmt.bind_value("line").map_err(|_| ())?;
-            lines.push(line.unwrap_or_default());
+            let carry: Option<String> = stmt.bind_value("carry").map_err(|_| ())?;
+            lines.push(carry.unwrap_or_default());
         }
         Ok(lines)
     }
@@ -876,7 +881,7 @@ impl Session for OracleSession {
             result.messages = self.poll_dbms_output();
             let span = result.timing.push(Stage::OutputFlush, t.elapsed());
             span.rows = Some(result.messages.len() as u64);
-            span.note = Some("GET_LINE per line".into());
+            span.note = Some("GET_LINE batched".into());
         }
         Ok(result)
     }

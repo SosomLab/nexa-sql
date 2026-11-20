@@ -385,6 +385,39 @@ fn oracle_session_variables_refcursor_and_dbms_output() {
     });
 }
 
+/// ★ T-49(11-21): DBMS_OUTPUT **묶음 회수** — 1,500줄 + 빈 줄 + `:`·한글이 든 줄 + 예산을 넘는 긴 줄(따로 실려 온다) + 꼬리 줄이
+/// 순서·내용 그대로 온다(두 드라이버). 긴 줄은 OUT 폭이 4000으로 내려간 클라이언트(macOS IC 19.16)에서만 4000으로 잘린다.
+#[test]
+fn oracle_dbms_output_batch_keeps_every_line() {
+    for_each_oracle(|mut r| {
+        let ev = run(
+            &mut r,
+            "SET SERVEROUTPUT ON\nBEGIN\n  FOR i IN 1..1500 LOOP DBMS_OUTPUT.PUT_LINE('L' || i); END LOOP;\n  DBMS_OUTPUT.PUT_LINE('');\n  DBMS_OUTPUT.PUT_LINE('한글:1:2');\n  DBMS_OUTPUT.PUT_LINE(RPAD('x', 20000, 'x'));\n  DBMS_OUTPUT.PUT_LINE('tail');\nEND;\n/\n",
+        );
+        let msgs: Vec<&str> = ev
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::Message(m) => Some(m.as_str()),
+                _ => None,
+            })
+            .collect();
+        let at = msgs.iter().position(|m| *m == "L1").expect("L1");
+        let got = &msgs[at..];
+        assert!(got.len() >= 1504, "줄 수 {}", got.len());
+        for (i, m) in got.iter().take(1500).enumerate() {
+            assert_eq!(*m, format!("L{}", i + 1));
+        }
+        assert_eq!(got[1500], "");
+        assert_eq!(got[1501], "한글:1:2");
+        assert!(
+            matches!(got[1502].len(), 20000 | 4000) && got[1502].bytes().all(|b| b == b'x'),
+            "긴 줄 {}",
+            got[1502].len()
+        );
+        assert_eq!(got[1503], "tail");
+    });
+}
+
 /// ★ 11-12(사용자 실기 · Oracle 운영): 사용 시 모드(`vars.expand_at = use`)에서 `EXEC :B := :A + 2`가 **수식으로 기억**되고
 /// 실행 끝 `Vars` 스냅숏에 실려야 한다(변수 창 Formula 열 · AI `get_var` kind = formula). OUT 흡수 뒤에도 남아야 한다.
 #[test]
